@@ -699,6 +699,45 @@ rfk_fls(uint32_t value)
 #define clear_bit(n, a) ((a)[0] &= ~BIT(n))
 #include <dev/ic/rtw8822c_rfk_phases.inc>
 
+/* Pure checks for the existing numeric lease. No service call or IO. */
+static int
+rfk_active_current(struct rtw88_softc *sc)
+{
+	if (!rtw8822c_rfk_active(sc))
+		return EINVAL;
+	if (!sc->sc_started || !sc->sc_running || sc->sc_stop_requested ||
+	    !sc->sc_rf_enabled || sc->sc_rfe > 6 || sc->sc_cut > 6)
+		return ENXIO;
+	if (sc->sc_rfk->generation != sc->sc_generation ||
+	    sc->sc_rfk->token != atomic_load_acquire(&rfk_serial) ||
+	    !sc->sc_resources_ready)
+		return ESTALE;
+	if (sc->sc_rfk->power_bound &&
+	    !rfk_power_current(sc, &sc->sc_rfk->power))
+		return ECANCELED;
+	return atomic_load_acquire(&rfk_global) == RFK_BUSY ? 0 : EBUSY;
+}
+
+int
+rtw8822c_rfk_validate(struct rtw88_softc *sc)
+{
+	int error;
+
+	error = rfk_active_current(sc);
+	if (error != 0)
+		return error;
+	if (sc->sc_rfk->error != 0)
+		return sc->sc_rfk->error;
+	if (sc->sc_rfk->cleanup_mode)
+		return ESTALE;
+	/* Before run binds the receipt, validate the newly tuned profile
+	 * without changing the token, binding or either RFK deadline. */
+	if (!sc->sc_rfk->power_bound &&
+	    !rfk_power_current(sc, &sc->sc_power_program))
+		return ESTALE;
+	return 0;
+}
+
 int
 rtw8822c_rfk_begin(struct rtw88_softc *sc,
     const struct rtw8822c_rfk_services *svc)
@@ -711,22 +750,13 @@ rtw8822c_rfk_begin(struct rtw88_softc *sc,
 	    svc->wait == NULL || svc->clock_ticks == NULL || svc->ticks_per_second == 0 ||
 	    svc->ticks_per_second > 1000000)
 		return EINVAL;
+	if (rtw8822c_rfk_active(sc)) {
+		error = rfk_active_current(sc);
+		return error == ECANCELED ? rfk_error(sc->sc_rfk, error) : error;
+	}
 	if (!sc->sc_started || !sc->sc_running || sc->sc_stop_requested ||
 	    !sc->sc_rf_enabled || sc->sc_rfe > 6 || sc->sc_cut > 6)
 		return ENXIO;
-	if (rtw8822c_rfk_active(sc)) {
-		/* The ordinary post-completion mailbox may have yielded Giant.
-		 * Revalidate the original lease without new IO, token rebinding
-		 * or extending RFK's deadline to ordinary mailbox latency. */
-		if (sc->sc_rfk->generation != sc->sc_generation ||
-		    sc->sc_rfk->token != atomic_load_acquire(&rfk_serial) ||
-		    !sc->sc_resources_ready)
-			return ESTALE;
-		if (sc->sc_rfk->power_bound &&
-		    !rfk_power_current(sc, &sc->sc_rfk->power))
-			return rfk_error(sc->sc_rfk, ECANCELED);
-		return atomic_load_acquire(&rfk_global) == RFK_BUSY ? 0 : EBUSY;
-	}
 	/* NetBSD atomic_cas_uint is atomic but supplies no implicit ordering
 	 * for the context published by a previous owner. Pair full barriers
 	 * here with drop/quarantine and serial publication below. */

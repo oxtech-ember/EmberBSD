@@ -26,6 +26,9 @@ int rtw8822c_rfk_blocked(void);
 int rtw8822c_rfk_active(const struct rtw88_softc *);
 int rtw8822c_rfk_begin(struct rtw88_softc *,
     const struct rtw8822c_rfk_services *);
+/* Existing active owner and tuned power receipt only. No allocation or IO.
+ * The caller serializes with PCI IRQ; no token/binding/deadline is changed. */
+int rtw8822c_rfk_validate(struct rtw88_softc *);
 int rtw8822c_rfk_run(struct rtw88_softc *);
 int rtw8822c_rfk_retire(struct rtw88_softc *);
 /* Current AUTH owner only, immediately after successful retirement. No IO. */

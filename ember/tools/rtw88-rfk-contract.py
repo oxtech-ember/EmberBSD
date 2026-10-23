@@ -58,3 +58,12 @@ services=replace(services,'void *kmem_zalloc(size_t n,int flags)',
 services=replace(services,'enable_allocations++;return p;',
     'enable_allocations++;rfk_alloc_yield();return p;')
 (out/'rtw88-enable-services.inc').write_text(services)
+
+# Preserve formatted worker failure evidence in this logging service.
+services=replace(services, 'void aprint_error_dev(device_t d,const char *fmt,...)',
+    'static char rfk_state_error[384];\nvoid aprint_error_dev(device_t d,const char *fmt,...)')
+services=replace(services, 'va_start(ap,fmt);vfprintf(stderr,fmt,ap);',
+    'va_start(ap,fmt);va_list copy;va_copy(copy,ap);'
+    'vsnprintf(rfk_state_error,sizeof(rfk_state_error),fmt,copy);va_end(copy);'
+    'vfprintf(stderr,fmt,ap);')
+(out/'rtw88-enable-services.inc').write_text(services)

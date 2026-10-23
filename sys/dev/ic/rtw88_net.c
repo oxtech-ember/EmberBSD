@@ -42,6 +42,9 @@ struct rtw88_net_rfk {
 	unsigned control_channel, notice_channel, notice_pending;
 	uint8_t control_ra[6], control_ta[6], control_bssid[6];
 	/* Numeric beacon observation only; this grants no transmission lease. */
+	uint64_t frontier;
+	uint32_t frontier_generation;
+	unsigned frontier_valid;
 	uint64_t beacon_epoch, beacon_us;
 	uint32_t beacon_generation;
 	unsigned beacon_channel, beacon_interval;
@@ -890,8 +893,10 @@ rtw88_net_state_work(struct work *work, void *cookie)
 #ifdef RTW88_RFK_EXPERIMENT
 		mutex_enter(net->lock);
 		if (epoch == net->policy.epoch && net->rfk.control_epoch == epoch) {
-			if (net->rfk.control_generation != net->core->sc_generation)
+			if (net->rfk.control_generation != net->core->sc_generation) {
 				net->rfk.beacon_epoch = 0;
+				net->rfk.frontier_valid = 0;
+			}
 			net->rfk.control_generation = net->core->sc_generation;
 		}
 		mutex_exit(net->lock);
@@ -976,10 +981,9 @@ rtw88_net_state_work(struct work *work, void *cookie)
 				    net->rfk.notice_pending) {
 					prepare_error = ECANCELED;
 				} else {
-					/* A same-channel observation before tuning is not
-					 * a new IRQ observation after this selection. */
-					net->rfk.beacon_epoch = 0;
 					prepare_error = rtw88_channel(net->core, channel);
+					if (prepare_error == 0)
+						prepare_error = rtw88_net_rfk_phase(net);
 				}
 				mutex_exit(net->lock);
 				if (prepare_error == 0)
@@ -994,7 +998,7 @@ rtw88_net_state_work(struct work *work, void *cookie)
 						prepare_error = ECANCELED;
 					} else {
 						net->rfk.ran = 1;
-						net->rfk.beacon_epoch = 0;
+						prepare_error = rtw88_net_rfk_phase(net);
 					}
 					mutex_exit(net->lock);
 				}
@@ -1163,6 +1167,8 @@ rtw88_net_state_work(struct work *work, void *cookie)
 			mutex_enter(net->lock);
 			current = epoch == net->policy.epoch && !net->policy.dying;
 			if (current) {
+				net->rfk.frontier_valid = 0;
+				net->rfk.beacon_epoch = 0;
 				/* A failed post-commit proof must withdraw acceptance.
 				 * commit(nonzero error) deliberately changes no policy. */
 				(void)rtw88_net_commit(&net->policy, epoch, 0, 0);
@@ -1304,6 +1310,7 @@ lock_request:
 	net->channel = ieee80211_chan2ieee(ic, ic->ic_curchan);
 #ifdef RTW88_RFK_EXPERIMENT
 	net->rfk.beacon_epoch = 0;
+	net->rfk.frontier_valid = 0;
 	net->rfk.control_epoch = 0;
 	net->rfk.notice_pending = 0;
 	if (!net->tx_quiet && ic->ic_opmode == IEEE80211_M_STA &&
@@ -1991,6 +1998,7 @@ rtw88_net_stop(struct ifnet *ifp, int disable)
 	(void)rtw88_net_request(&net->policy);
 #ifdef RTW88_RFK_EXPERIMENT
 	net->rfk.beacon_epoch = 0;
+	net->rfk.frontier_valid = 0;
 #endif
 	net->requested = IEEE80211_S_INIT;
 	net->state_arg = -1;

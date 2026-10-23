@@ -224,6 +224,43 @@ A separate source-backed TXAGC read protocol remains unimplemented.
 
 ## Source checks and limits
 
+### Completed RX DMA frontier
+
+The IRQ assigns each consumed RX descriptor a monotonic host sequence in its
+core generation. RFK snapshots the completed DMA producer after tune and after
+successful calibration, before each listen. Each snapshot uses the same PCI
+lock as IRQ. The worker validates its existing RFK token, generation, resources,
+power receipt and global quarantine before reading the producer. It does not
+allocate, rebind a token or extend the original six-second AUTH budget.
+The pure `rtw8822c_rfk_validate()` accepts only an active owner without a sticky
+run error or cleanup mode. It returns status without invoking a service or
+changing calibration state. It validates the tuned power receipt even before
+run binds it. The existing active `begin()` still records a bound-power
+cancellation; the phase validator leaves completed-owner retirement unchanged.
+
+Only a valid positive beacon from the matching generation with a nonzero
+sequence strictly greater than that phase frontier can renew presence. A zero
+frontier is valid when the snapshot succeeds. A failed snapshot closes AUTH
+through the existing INIT and owner-retirement path. Exhausted sequences fail
+closed. Mailbox retry retains the completed calibration, frontier and presence.
+A new request, stop or worker-generation change invalidates the frontier.
+
+Withdrawal parsing precedes this positive-observation fence. An older completed
+beacon, probe response or action that withdraws service still closes TX. Normal
+RX admission cannot hide that withdrawal, including when its queue is full.
+
+This excludes descriptors completed before the producer snapshot, including a
+tail beyond the IRQ's 64-descriptor budget. It does not timestamp radio reception
+or exclude an internal RX FIFO or incomplete DMA. This observation grants no
+regulatory permission. RFK stays default-OFF, VHT stays disabled and channel 64
+remains unadvertised.
+
+The host contract sends ordinary beacons through the actual RX ring, PHY decode,
+FCS stripping and network observer. It checks 100 old descriptors across two
+IRQs, later positive presence, authoritative old withdrawal, ring and tag wrap,
+zero sequence, generation mismatch, snapshot failures, counter exhaustion and
+mailbox retry retention. Focused body-parser tests seed numeric metadata.
+
 ### Physical boundary
 
 One cold single-user trial of `d8ebd899afea66704277280c70ec8b618863f863`

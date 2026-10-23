@@ -68,7 +68,10 @@ rtw88_net_rfk_rx_observe(struct rtw88_net *net, const uint8_t *frame, size_t len
 	}
 	/* Only an exact broadcast beacon can record presence. Probe responses,
 	 * local unicast and other multicast destinations cannot renew it. */
-	if (net->rfk.notice_pending ||
+	if (net->rfk.notice_pending || !net->rfk.frontier_valid ||
+	    net->rfk.frontier_generation != net->core->sc_generation ||
+	    info->generation != net->rfk.frontier_generation ||
+	    info->sequence == 0 || info->sequence <= net->rfk.frontier ||
 	    wh->i_fc[0] != (IEEE80211_FC0_TYPE_MGT | IEEE80211_FC0_SUBTYPE_BEACON))
 		return;
 	for (i = 0; i < IEEE80211_ADDR_LEN; i++) {
@@ -430,4 +433,39 @@ rtw88_net_rfk_begin(struct rtw88_net *net)
 			error = rtw8822c_rfk_begin(net->core, &svc);
 	}
 	return error;
+}
+
+/* Snapshot once at each phase boundary under the IRQ's PCI lock. Validate
+ * only an existing lease: inactive begin may allocate and rebind its token. */
+static int
+rtw88_net_rfk_phase(struct rtw88_net *net)
+{
+	uint64_t frontier;
+	int error;
+
+	KASSERT(mutex_owned(net->lock));
+	net->rfk.frontier_valid = 0;
+	net->rfk.beacon_epoch = 0;
+	if (net->policy.dying || net->rfk.notice_pending ||
+	    net->requested != IEEE80211_S_AUTH ||
+	    net->rfk.epoch != net->policy.epoch ||
+	    net->rfk.control_epoch != net->rfk.epoch)
+		return ECANCELED;
+	if (net->rfk.generation != net->core->sc_generation ||
+	    net->rfk.control_generation != net->rfk.generation ||
+	    net->rfk.channel != net->core->sc_channel ||
+	    net->rfk.control_channel != net->rfk.channel ||
+	    !net->core->sc_resources_ready || !rtw8822c_rfk_active(net->core))
+		return ESTALE;
+	error = rtw88_net_rfk_budget(net, rtw88_net_rfk_ticks(net));
+	if (error == 0)
+		error = rtw8822c_rfk_validate(net->core);
+	if (error == 0)
+		error = rtw88_rx_frontier(net->core, net->rfk.generation, &frontier);
+	if (error != 0)
+		return error;
+	net->rfk.frontier = frontier;
+	net->rfk.frontier_generation = net->rfk.generation;
+	net->rfk.frontier_valid = 1;
+	return 0;
 }
