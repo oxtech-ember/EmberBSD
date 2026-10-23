@@ -21,6 +21,19 @@ the association through the existing scan transition. Subsequent WME beacon
 updates require the current associated peer, channel and validated negotiation.
 Slot changes use the incoming capability field before EDCA apply.
 
+An HT offer snapshots two independent generations after actual queue admission.
+The HT attempt belongs to the HT contract. The association attempt snapshots
+the existing WME attempt; it is not another counter. A saved offer must match
+both live generations as well as its saved offer generation. An HT-only reset
+or a WME-only reset during synchronous apply therefore retires the saved HT
+offer, even if the provider profile stays unchanged.
+
+Association input consumes the live HT offered bit and WME offer flag before
+parsing the response. HT validation does not require those consumed flags.
+The same generation checks protect accepted RUN, protection and beacon state.
+The driver and the kernel must use matching rebuilt objects after a node
+layout change. Local generations do not add a nonce to association responses.
+
 Parameter parsing validates exact extent, vendor/type/subtype/version,
 reserved bits, all four unique ACIs, AIFSN and contention window ordering
 before committing a temporary candidate. TXOP remains a canonical u16 count

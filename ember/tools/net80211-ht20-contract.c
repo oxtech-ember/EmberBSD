@@ -181,6 +181,96 @@ ht_response(void)
 	m->m_len+=52; m->m_pkthdr.len=m->m_len;
 	return m;
 }
+
+static unsigned callback_reset;
+
+static int
+reset_during_apply(struct ieee80211com *ic, const struct chanAccParams *params,
+    unsigned slot)
+{
+
+	CHECK(strict_update(ic, params, slot) == 0);
+	if (callback_reset == 1)
+		ieee80211_ht20_reset(ic->ic_bss);
+	if (callback_reset == 2)
+		ieee80211_wme_reset(ic->ic_bss);
+	return 0;
+}
+
+static void
+test_callback_epoch_cancellation(void)
+{
+	for (unsigned reset = 0; reset < 3; reset++) {
+		struct ieee80211_ht20_profile profile;
+		uint32_t ht_attempt, wme_attempt;
+
+		ht_setup();
+		callback_reset = reset;
+		test_ic.ic_wme.wme_sta_apply = reset_during_apply;
+		CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ) == 0);
+		CHECK(test_node.ni_ht20.offered);
+		profile = admitted;
+		ht_attempt = test_node.ni_ht20.attempt;
+		wme_attempt = test_node.ni_wme_attempt;
+		release_capture();
+		deliver(ht_response(), IEEE80211_FC0_SUBTYPE_ASSOC_RESP);
+		CHECK(applies == 1 && !beacon_lock);
+		CHECK(profile.generation == admitted.generation &&
+		    profile.rx_mcs == admitted.rx_mcs &&
+		    profile.tx_mcs == admitted.tx_mcs &&
+		    profile.ready == admitted.ready && profile.ampdu == admitted.ampdu);
+		if (reset == 0) {
+			CHECK(test_node.ni_ht20.valid &&
+			    !test_node.ni_ht20.offered);
+			CHECK(test_node.ni_flags & IEEE80211_NODE_AMSDU_RX);
+			CHECK(test_node.ni_associd != 0);
+			CHECK(native_net.requested == IEEE80211_S_RUN);
+			CHECK(test_node.ni_ht20.attempt == ht_attempt &&
+			    test_node.ni_wme_attempt == wme_attempt);
+			continue;
+		}
+		/* Input owns failure cleanup after the synchronous callback. */
+		CHECK(!test_node.ni_ht20.valid && !test_node.ni_ht20.offered);
+		CHECK(!(test_node.ni_flags & IEEE80211_NODE_AMSDU_RX));
+		CHECK(test_node.ni_associd == 0);
+		CHECK(native_net.requested == IEEE80211_S_SCAN);
+		CHECK(test_ic.ic_state != IEEE80211_S_RUN &&
+		    !native_net.policy.accepting && !native_core.sc_ra.active);
+	}
+}
+
+static void
+test_saved_offer_epochs(void)
+{
+	for (unsigned reset = 0; reset < 3; reset++) {
+		struct ieee80211_ht20_node offer;
+		struct mbuf *m;
+		ht_setup();
+		CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ) == 0);
+		offer = test_node.ni_ht20;
+		release_capture();
+		if (reset == 1)
+			ieee80211_ht20_reset(&test_node);
+		if (reset == 2)
+			ieee80211_wme_reset(&test_node);
+		/* Isolate the epochs with every other admission guard satisfied.
+		 * Input consumes these offer bits before invoking the helper. */
+		test_node.ni_ht20.offered = test_node.ni_ht20.valid = 0;
+		test_node.ni_flags &= ~IEEE80211_NODE_WME_OFFER;
+		test_node.ni_flags |= IEEE80211_NODE_QOS | IEEE80211_NODE_WME_VALID;
+		m = ht_response();
+		CHECK(ieee80211_ht20_response(&test_ic, &test_node,
+		    IEEE80211_FC0_SUBTYPE_ASSOC_RESP, &offer,
+		    m->m_data + sizeof(struct ieee80211_frame) + 6,
+		    m->m_len - sizeof(struct ieee80211_frame) - 6, 1) ==
+		    (reset == 0 ? 0 : EINVAL));
+		CHECK(test_node.ni_ht20.valid == (reset == 0));
+		CHECK(!test_node.ni_ht20.offered);
+		CHECK(!!(test_node.ni_flags & IEEE80211_NODE_AMSDU_RX) ==
+		    (reset == 0));
+		m_freem(m);
+	}
+}
 static void
 test_actual_exchange(void)
 {
@@ -630,6 +720,8 @@ main(void)
     mutex_exit(&native_lock);
 	test_manual_ht_rejected();
 	test_actual_exchange();
+	test_callback_epoch_cancellation();
+	test_saved_offer_epochs();
 	test_local_admission();
 	test_producer_failures();
 	test_response_rejects();

@@ -104,6 +104,7 @@ ieee80211_ht20_offer(struct ieee80211com *ic, struct ieee80211_node *ni,
 	IEEE80211_ADDR_COPY(h->bssid, ni->ni_bssid);
 	h->subtype = type;
 	h->offer_attempt = h->attempt;
+	h->assoc_attempt = ni->ni_wme_attempt;
 	h->security = (ic->ic_flags & IEEE80211_F_PRIVACY) != 0;
 	h->offered = 1;
 }
@@ -124,6 +125,8 @@ ht20_current(struct ieee80211com *ic, struct ieee80211_node *ni,
 	    ((ic->ic_flags & IEEE80211_F_PRIVACY) == 0 ||
 	     ni->ni_rsn.rsn_ucastcipher == IEEE80211_CIPHER_AES_CCM) &&
 	    ni == ic->ic_bss && h->offer_attempt == h->attempt &&
+	    h->attempt == ni->ni_ht20.attempt &&
+	    h->assoc_attempt == ni->ni_wme_attempt &&
 	    h->channel == ic->ic_curchan && ni->ni_chan == ic->ic_curchan &&
 	    IEEE80211_ADDR_EQ(h->bssid, ni->ni_bssid) && ht20_local(ic, &local) &&
 	    local.generation == h->profile.generation &&

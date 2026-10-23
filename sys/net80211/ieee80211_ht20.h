@@ -27,6 +27,7 @@ struct ieee80211_ht20_profile {
 struct ieee80211_ht20_node {
 	uint32_t attempt, offer_attempt;
 	struct ieee80211_ht20_profile profile;
+	uint32_t assoc_attempt; /* Snapshot of the WME association attempt. */
 	struct ieee80211_channel *channel;
 	uint8_t bssid[6], subtype, offered, valid, security;
 	uint16_t tx_mcs, peer_rx_mcs, basic_mcs, peer_cap, operation;
