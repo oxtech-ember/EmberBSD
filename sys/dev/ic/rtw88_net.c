@@ -987,14 +987,28 @@ rtw88_net_state_work(struct work *work, void *cookie)
 				if (prepare_error == 0)
 					prepare_error = rtw8822c_rfk_run(net->core);
 				rtw88_net_rfk_rx_deliver(net);
-				/* A same-epoch value/provider change has no successor
-				 * request. Send it through the existing INIT/stop owner. */
-				if (prepare_error == ECANCELED && epoch == net->policy.epoch &&
-				    !net->policy.dying)
-					prepare_error = ESTALE;
-				if (prepare_error == 0)
-					net->rfk.ran = 1;
+				if (prepare_error == 0) {
+					mutex_enter(net->lock);
+					if (epoch != net->policy.epoch || net->policy.dying ||
+					    net->rfk.notice_pending) {
+						prepare_error = ECANCELED;
+					} else {
+						net->rfk.ran = 1;
+						net->rfk.beacon_epoch = 0;
+					}
+					mutex_exit(net->lock);
+				}
 			}
+		}
+		/* Retry retains the completed calibration and its new observation.
+		 * It cannot retune, clear the record or start another calibration. */
+		if (prepare_error == 0 && state == IEEE80211_S_AUTH) {
+			prepare_error = rtw88_net_rfk_listen(net);
+			/* Listening yielded Giant. Recheck the existing numeric owner
+			 * before ordinary I/O, without allocation or a new budget. */
+			if (prepare_error == 0)
+				prepare_error = rtw8822c_rfk_active(net->core) ?
+				    rtw88_net_rfk_begin(net) : ESTALE;
 		}
 #endif
 		/* Current core is stable under Giant; no pointers survive a sleep. */
@@ -1019,6 +1033,11 @@ rtw88_net_state_work(struct work *work, void *cookie)
 				continue;
 			mailbox_reserved = prepare_error == 0 && mailbox_count != 0;
 		}
+#ifdef RTW88_RFK_EXPERIMENT
+		/* A reserved mailbox did not freeze the stack while Giant slept. */
+		if (prepare_error == 0 && state == IEEE80211_S_AUTH)
+			prepare_error = rtw88_net_rfk_capture_current(net);
+#endif
 		mutex_enter(net->lock);
 		if (epoch != net->policy.epoch || net->policy.dying
 #ifdef RTW88_RFK_EXPERIMENT
@@ -1031,6 +1050,14 @@ rtw88_net_state_work(struct work *work, void *cookie)
 			continue;
 		}
 		error = prepare_error;
+#ifdef RTW88_RFK_EXPERIMENT
+		/* The locked epoch check above excluded a successor request.
+		 * A same-epoch snapshot change must use the INIT/stop owner. */
+		if (error == ECANCELED && state == IEEE80211_S_AUTH)
+			error = ESTALE;
+		if (error == 0 && state == IEEE80211_S_AUTH)
+			error = rtw88_net_rfk_beacon_check(net);
+#endif
 		memset(&diag, 0, sizeof(diag));
 		diag.state = state;
 		diag.channel = channel;
@@ -1092,6 +1119,10 @@ rtw88_net_state_work(struct work *work, void *cookie)
 		}
 		if (mailbox_reserved)
 			error = rtw88_fw_mailbox_end(net->core, error);
+#ifdef RTW88_RFK_EXPERIMENT
+		if (error == 0 && state == IEEE80211_S_AUTH)
+			error = rtw88_net_rfk_beacon_check(net);
+#endif
 		diag.core_channel = net->core->sc_channel;
 		diag.error = error;
 		error = rtw88_net_commit(&net->policy, epoch, error,
@@ -1116,7 +1147,13 @@ rtw88_net_state_work(struct work *work, void *cookie)
 		if (!current)
 			error = ECANCELED;
 		if (error == 0 && state == IEEE80211_S_AUTH) {
-			error = rtw8822c_rfk_seal(net->core);
+			mutex_enter(net->lock);
+			error = epoch != net->policy.epoch || net->policy.dying ||
+			    net->rfk.notice_pending ? ECANCELED :
+			    rtw88_net_rfk_beacon_check(net);
+			if (error == 0)
+				error = rtw8822c_rfk_seal(net->core);
+			mutex_exit(net->lock);
 			if (error != 0) {
 				diag.stage = RTW88_NET_STAGE_CORE;
 				diag.error = error;

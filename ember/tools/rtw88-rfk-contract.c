@@ -40,6 +40,9 @@ static const uint32_t rfk_original_tx=0x12345678,rfk_original_fifo=0xabcdef01;
 static int rfk_is(const char *name) { return strcmp(rfk_case,name)==0; }
 static int rfk_rx_quiet(void) { return rfk_is("quiet-rx") || rfk_is("quiet-rx-worker"); }
 static int rfk_power_before(void) { return strncmp(rfk_case,"power-before-",13)==0; }
+static unsigned rfk_precommit_checks;
+static void rfk_advance_us(uint64_t);
+static void rfk_real_profile_observe(void);
 static void rfk_after_owner_drop(void)
 {
     if(!rfk_net || !rfk_net->rfk.ran)return;
@@ -47,9 +50,19 @@ static void rfk_after_owner_drop(void)
     if(rfk_is("seal-power"))rfk_net->core->sc_power_program.valid=0;
     if(rfk_is("env-successor-scan"))
         CHECK(rtw88_net_newstate(&rfk_net->ic,IEEE80211_S_SCAN,0)==0);
+    if(rfk_is("post-setup-age") || rfk_is("post-setup-budget")) {
+        CHECK(rfk_fault==1 && !rfk_net->policy.accepting);
+        rfk_precommit_checks++;
+    }
+    if(rfk_is("post-real-provider"))rfk_real_profile_observe();
+    if(rfk_is("post-final-budget"))rfk_advance_us(20000);
+    if(rfk_is("post-final-age"))rfk_advance_us(716801);
     rtw88_test_rfk_drop_hook=NULL;
 }
 static unsigned rfk_last_owned_tick,rfk_owned_at_cancel;
+static unsigned rfk_post_mailbox_reads,rfk_post_mailbox_pauses;
+static unsigned rfk_post_station_commands;
+static unsigned rfk_real_observations;
 static uint64_t rfk_coef_at_us,rfk_clock_offset,rfk_first_owned_us;
 static unsigned rfk_yields,rfk_coef_reads,rfk_coef_target_reads,rfk_clock_wraps,rfk_min_early;
 static unsigned rfk_last_write;
@@ -88,9 +101,18 @@ static int rfk_once(const char *name) {
 }
 static unsigned rfk_rf18_writes,rfk_rf18_reads,rfk_rxbb_active,rfk_rxbb_end_io;
 static uint64_t rfk_alloc_power_serial;
-static unsigned rfk_spacing=16;
+static unsigned rfk_spacing=16,rfk_ready=0x3f;
 static int rfk_profile(struct ieee80211com *ic,struct ieee80211_ht20_profile *p)
-{ (void)ic;*p=(struct ieee80211_ht20_profile){7,0xff,0xff,0x3f,(uint8_t)rfk_spacing};return 0; }
+{ (void)ic;*p=(struct ieee80211_ht20_profile){7,0xff,0xff,(uint8_t)rfk_ready,(uint8_t)rfk_spacing};return 0; }
+static void rfk_real_profile_observe(void)
+{
+    struct ieee80211_ht20_profile profile={0};
+    CHECK(rfk_net->ic.ic_ht20_admit==rtw88_net_ht20_admit);
+    CHECK(rtw88_net_ht20_admit(&rfk_net->ic,&profile)==EOPNOTSUPP);
+    CHECK(profile.ready==0 && !rfk_net->core->sc_operating.sealed);
+    if(rfk_net->rfk.ran)CHECK(rtw88_net_rfk_capture_current(rfk_net)==0);
+    rfk_real_observations++;
+}
 static int rfk_c1_pause(unsigned ticks)
 {
     (void)ticks;CHECK(rtw8822c_rfk_active(rfk_net->core));
@@ -116,7 +138,7 @@ static void rfk_alloc_yield(void)
         CHECK(rtw88_net_newstate(&rfk_net->ic,IEEE80211_S_SCAN,0)==0);
     }
 }
-static unsigned rfk_beacons;
+static unsigned rfk_beacons,rfk_post_beacons;
 static uint64_t rfk_beacon_power_serial;
 static void rfk_beacon_emit(struct rtw88_net *net)
 {
@@ -135,9 +157,42 @@ static void rfk_beacon_emit(struct rtw88_net *net)
 }
 static void rfk_beacon_arrival(void)
 {
-    if(!rfk_net || rfk_handshakes || !rfk_net->rfk.drained ||
+    if(!rfk_net || (rfk_handshakes && !rfk_net->rfk.ran) || !rfk_net->rfk.drained ||
         rfk_rf18_writes<2 || rfk_net->core->sc_channel!=rfk_net->channel ||
         (rfk_is("presence-wait-timeout") || rfk_is("presence-wait-pretune")))return;
+    if(rfk_net->rfk.ran) {
+        if(rfk_is("post-only-pre") || rfk_post_beacons)return;
+        if(rfk_is("post-real-provider"))rfk_real_profile_observe();
+        if(rfk_is("post-generation")) {
+            rfk_net->core->sc_generation++;rfk_post_beacons++;
+            rfk_owned_at_cancel=rfk_owned_io;return;
+        }
+        if(rfk_is("post-wait-peer")) {
+            rfk_net->ic.ic_bss->ni_authmode^=1;rfk_post_beacons++;return;
+        }
+        if(rfk_is("post-successor")) {
+            CHECK(rtw88_net_newstate(&rfk_net->ic,IEEE80211_S_SCAN,0)==0);
+            rfk_post_beacons++;return;
+        }
+        if(rfk_is("post-withdrawal")) {
+            uint8_t notice[42]={0x80};memset(notice+4,0xff,6);
+            memcpy(notice+10,rfk_net->ic.ic_bss->ni_macaddr,6);
+            memcpy(notice+16,rfk_net->ic.ic_bss->ni_bssid,6);
+            notice[36]=37;notice[37]=3;notice[38]=1;notice[39]=40;notice[40]=1;
+            struct rtw88_rx_info info={.packet_size=41};
+            info.signal.valid=1;info.signal.channel=(uint8_t)rfk_net->channel;
+            info.signal.generation=rfk_net->core->sc_generation;
+            mutex_enter(rfk_net->lock);rtw88_net_rx_frame(rfk_net,notice,41,&info);
+            mutex_exit(rfk_net->lock);rfk_post_beacons++;return;
+        }
+        if(rfk_is("post-setup-budget") || rfk_is("post-final-budget") ||
+            rfk_is("post-mailbox-budget")) {
+            uint64_t left=rfk_is("post-setup-budget")?1000:10000;
+            CHECK(rfk_now_us()+left<rfk_net->rfk.deadline_us);
+            rfk_advance_us(rfk_net->rfk.deadline_us-rfk_now_us()-left);
+        }
+        rfk_beacon_emit(rfk_net);rfk_post_beacons++;return;
+    }
     if(!rfk_paused && rfk_is("presence-wait-late")) {
         rfk_paused=1;rfk_advance_us(6000000);
     }
@@ -157,6 +212,12 @@ static void rfk_beacon_arrival(void)
 static int rfk_pause(unsigned ticks)
 {
     rfk_beacon_arrival();
+    if(rfk_net->rfk.ran && rfk_post_mailbox_reads &&
+        !rfk_post_mailbox_pauses && (rfk_is("post-mailbox-retry") ||
+        rfk_is("post-mailbox-budget"))) {
+        rfk_post_mailbox_pauses++;
+        if(rfk_is("post-mailbox-budget"))rfk_advance_us(20000);
+    }
     CHECK(!mutex_owned(rfk_net->lock));
     if(!rfk_paused && rfk_rx_quiet() && rfk_gapk) {
         uint8_t notice[42]={0x80};
@@ -316,6 +377,15 @@ static int rfk_write4(void *cookie,uint32_t reg,uint32_t value)
     if(!error && reg==0x3a0c && rtw8822c_rfk_active(f.sc) &&
        !rfk_handshakes && rfk_once("power-partial"))return EIO;
     if(error)return error;
+    if(rfk_net && rfk_net->rfk.ran && f.sc->sc_mailbox.active &&
+        reg>=0x1d0 && reg<=0x1dc && (reg-0x1d0)%4==0 &&
+        (value&0xff)==1) {
+        rfk_post_station_commands++;
+        if(!rfk_fault && (rfk_is("post-setup-budget") || rfk_is("post-setup-age"))) {
+            rfk_fault=1;
+            rfk_advance_us(rfk_is("post-setup-budget")?2000:716801);
+        }
+    }
     if(!rtw8822c_rfk_active(f.sc))return 0;
     if(reg>=0x1f0 && reg<=0x1fc && (reg-0x1f0)%4==0 &&
        rfk_handshakes==1 && rfk_gapk==2 && rfk_once("end-ext-error"))return EIO;
@@ -434,6 +504,17 @@ static int rfk_read4(void *cookie,uint32_t reg,uint32_t *value)
 }
 static int rfk_read1(void *cookie,uint32_t reg,uint8_t *value)
 {
+    if(reg==0x1cc && rfk_net && rfk_net->rfk.ran && rfk_post_beacons) {
+        if((rfk_is("post-provider") || rfk_is("post-provider-ready")) && !rfk_fault) {
+            rfk_fault=1;
+            if(rfk_is("post-provider-ready"))rfk_ready=0x1f;
+            else rfk_spacing=20;
+        }
+        if((rfk_is("post-mailbox-retry") || rfk_is("post-mailbox-budget")) &&
+            !rfk_post_mailbox_reads++) {
+            *value=(uint8_t)(1U<<(f.sc->sc_h2c_box&3));return 0;
+        }
+    }
     rfk_io_tick();
     if(reg==0x1cc && rfk_coef && !rfk_paused &&
        (rfk_is("post-complete-change") || rfk_is("quarantine-complete") || rfk_is("power-mailbox"))) {
@@ -924,6 +1005,8 @@ main(void)
     }
     net->ic.ic_state = IEEE80211_S_SCAN;
     net->parent_state = rfk_parent_without_completion;
+    if(rfk_is("post-provider") || rfk_is("post-provider-ready"))
+        net->ic.ic_ht20_admit=rfk_profile;
     if(rfk_is("c1-spacing")) {
         net->ic.ic_ht20_admit=rfk_profile;
         active_ic=&net->ic;
@@ -935,6 +1018,7 @@ main(void)
         CHECK(rtw88_stop(&sc)==0);
         CHECK(rtw88_net_newstate(&net->ic,IEEE80211_S_INIT,0)==0);
     } else CHECK(rtw88_net_newstate(&net->ic, IEEE80211_S_AUTH, 0) == 0);
+    if(rfk_is("post-real-provider"))rfk_real_profile_observe();
     if(rfk_is("timing-minimum")) {
         static const unsigned intervals[]={10,600,20000};
         CHECK(rtw88_net_rfk_capture(net,net->rfk.values)==0);
@@ -975,6 +1059,43 @@ main(void)
         CHECK(rfk_parent_auth==1);
         CHECK(rfk_owned_io==prior_owned && rfk_trace_len==prior_shots);
         CHECK(!net->policy.accepting && !sc.sc_started);
+    }
+    if(strncmp(rfk_case,"post-",5)==0 && !rfk_is("post-complete-change")) {
+        CHECK(rfk_handshakes==2 && rfk_coef==1);
+        CHECK(!rtw8822c_rfk_active(&sc) && !rtw8822c_rfk_blocked());
+        if(rfk_is("post-good") || rfk_is("post-mailbox-retry") ||
+            rfk_is("post-real-provider")) {
+            CHECK(rfk_parent_auth==1 && rfk_post_beacons==1);
+            CHECK(sc.sc_operating.sealed && net->policy.accepting);
+            if(rfk_is("post-mailbox-retry"))CHECK(rfk_post_mailbox_pauses==1);
+            if(rfk_is("post-real-provider"))CHECK(rfk_real_observations==3);
+        } else if(rfk_is("post-successor")) {
+            CHECK(rfk_parent_auth==0 && rfk_parent_scan==1);
+            CHECK(net->requested==IEEE80211_S_SCAN && net->policy.accepting);
+            CHECK(sc.sc_started && !sc.sc_operating.sealed);
+        } else {
+            CHECK(rfk_parent_auth==0 && !net->policy.accepting);
+            CHECK(!sc.sc_started && !sc.sc_operating.sealed);
+            if(rfk_is("post-setup-age") || rfk_is("post-setup-budget"))
+                CHECK(rfk_precommit_checks==1);
+            if(rfk_is("post-setup-age") || rfk_is("post-final-age")) {
+                CHECK(rfk_now_us()<net->rfk.deadline_us);
+                CHECK(rfk_now_us()-net->rfk.beacon_us>=716800);
+            }
+            if(rfk_is("post-setup-budget") || rfk_is("post-final-budget") ||
+                rfk_is("post-mailbox-budget")) {
+                CHECK(rfk_now_us()>=net->rfk.deadline_us);
+                CHECK(rfk_now_us()-net->rfk.beacon_us<716800);
+            }
+            if(rfk_is("post-provider"))CHECK(rfk_fault && rfk_spacing==20);
+            if(rfk_is("post-provider-ready"))CHECK(rfk_fault && rfk_ready==0x1f);
+            if(rfk_is("post-withdrawal"))CHECK(net->tx_quiet);
+            if(rfk_is("post-generation")) {
+                CHECK(rfk_owned_at_cancel==rfk_owned_io);
+                CHECK(rfk_post_station_commands==0);
+            }
+        }
+        goto finish;
     }
     if(strncmp(rfk_case,"presence-wait-",14)==0) {
         if(rfk_is("presence-wait-good")) {
@@ -1115,7 +1236,10 @@ main(void)
         CHECK(sc.sc_stats.rfk.arms[1]==1 && sc.sc_stats.rfk.done[1]==1);
     }
     if(rfk_is("power-after-bind"))CHECK(rfk_paused && rfk_gapk==1 && rfk_iqk==0);
-    if(rfk_is("power-mailbox"))CHECK(rfk_paused && rfk_net->rfk.ran && rfk_coef==1);
+    if(rfk_is("power-mailbox")) {
+        CHECK(rfk_paused && rfk_net->rfk.ran && rfk_coef==1);
+        CHECK(rfk_post_station_commands==0);
+    }
     if(strncmp(rfk_case,"env-",4)==0 && !rfk_is("env-channel149") && !rfk_is("env-successor-scan")) {
         CHECK(rfk_coef==1 && !sc.sc_operating.sealed && !sc.sc_operating.prepared);
         CHECK(!sc.sc_started && (net->ec.ec_if.if_flags&IFF_RUNNING)==0);

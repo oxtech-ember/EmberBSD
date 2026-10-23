@@ -111,10 +111,20 @@ It also bounds later non-cleanup RFK I/O; allocation cannot extend that window.
 The core retains its existing eight-second cleanup deadline from its own start.
 A backward clock, expired budget or withdrawal cannot start calibration.
 RFK itself does not renew or consume this observation during calibration.
+After RFK completes, AUTH discards that record and waits for another observation.
+A mailbox retry retains the completed RFK and that second record.
+The full numeric stack snapshot remains equal to the original request.
+Provider calls stay outside the PCI lock, including after mailbox reservation.
+The original budget and beacon age are checked before setup and commit.
+After retirement, the same locked checks must pass before sealing AUTH.
+A same-epoch snapshot change uses the existing INIT/stop owner.
 This liveness check grants no regulatory transmission permission.
 The `presence-observe`, `presence-current` and `presence-wait-*` cases check
 closed/full queues, identity and time bounds, first arrival after tuning,
 withdrawal, cancellation, native stop and the original absolute deadline.
+The `post-*` cases separate beacon age expiry from budget expiry with a fresh
+beacon. They also check mailbox retry, provider changes, withdrawal and a
+successor request. The actual provider remains unready through RFK retirement.
 
 ## Originals, cancellation and quarantine
 

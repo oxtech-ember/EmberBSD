@@ -194,6 +194,20 @@ rtw88_net_rfk_capture(struct rtw88_net *net, uint32_t values[192])
 	return 0;
 }
 
+/* Giant owns provider calls. Never invoke this under the PCI lock. */
+static int
+rtw88_net_rfk_capture_current(struct rtw88_net *net)
+{
+	uint32_t values[192];
+	int error;
+
+	KASSERT(!mutex_owned(net->lock));
+	error = rtw88_net_rfk_capture(net, values);
+	if (error != 0)
+		return error;
+	return memcmp(values, net->rfk.values, sizeof(values)) != 0 ? ECANCELED : 0;
+}
+
 /* The native window starts before allocation. The core's later start must
  * not grant a second new-work budget after KM_SLEEP releases Giant. */
 static int
@@ -281,10 +295,23 @@ rtw88_net_rfk_beacon_current(const struct rtw88_net *net, uint64_t now)
 }
 
 static int
+rtw88_net_rfk_beacon_check(struct rtw88_net *net)
+{
+	uint64_t now;
+	int error;
+
+	KASSERT(mutex_owned(net->lock));
+	now = rtw88_net_rfk_ticks(net);
+	error = rtw88_net_rfk_budget(net, now);
+	if (error != 0)
+		return error;
+	return rtw88_net_rfk_beacon_current(net, now) ? 0 : ESTALE;
+}
+
+static int
 rtw88_net_rfk_wait(void *cookie, unsigned us, int cleanup)
 {
 	struct rtw88_net *net = cookie;
-	uint32_t values[192];
 	uint64_t count, now, previous, until;
 	unsigned remaining = us;
 	int error;
@@ -318,11 +345,9 @@ rtw88_net_rfk_wait(void *cookie, unsigned us, int cleanup)
 		/* Cleanup retains the old owner, not new request values. The
 		 * core rechecks its lease and deadline before the next IO. */
 		if (!cleanup) {
-			error = rtw88_net_rfk_capture(net, values);
+			error = rtw88_net_rfk_capture_current(net);
 			if (error != 0)
 				return error;
-			if (memcmp(values, net->rfk.values, sizeof(values)) != 0)
-				return ECANCELED;
 		}
 		now = rtw88_net_rfk_ticks(cookie);
 		if (now < previous)
@@ -341,17 +366,14 @@ static int
 rtw88_net_rfk_listen(struct rtw88_net *net)
 {
 	uint64_t now, previous = net->rfk.started_us, remaining;
-	uint32_t values[192];
 	int current, error;
 
 	KASSERT(!mutex_owned(net->lock));
 	for (;;) {
 		rtw88_net_rfk_rx_deliver(net);
-		error = rtw88_net_rfk_capture(net, values);
+		error = rtw88_net_rfk_capture_current(net);
 		if (error != 0)
 			return error;
-		if (memcmp(values, net->rfk.values, sizeof(values)) != 0)
-			return ECANCELED;
 		mutex_enter(net->lock);
 		now = rtw88_net_rfk_ticks(net);
 		error = now < previous ? ESTALE : rtw88_net_rfk_budget(net, now);
