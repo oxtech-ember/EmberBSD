@@ -753,7 +753,7 @@ native_sample(void *arg, const void *owner,
 
 /* Read HPD without changing provider state or acknowledging an interrupt. */
 static int
-native_detect(void *arg, const void *owner, bool *out)
+native_detect(const void *arg, const void *owner, bool *out)
 {
 	const struct sun60i_a733_hdmi_softc *sc = arg;
 	uint8_t status;

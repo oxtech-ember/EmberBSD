@@ -257,3 +257,7 @@ missing callbacks, and recovery from a transient query error. It performs no
 hardware I/O. Use `--cflags` for GCC analysis or ASan/UBSan. The output directory
 records the exact compiler command. The registration contract also checks that
 polling starts after registration and enables both connection edges.
+
+Cppcheck uses the recorded compilation database with `--inline-suppr`.
+One fixture annotation preserves the mutable client parameter of the real
+registry lookup. The read-only production HPD callback takes a const context.

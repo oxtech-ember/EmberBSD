@@ -89,7 +89,7 @@ struct sun60i_a733_output_ops {
 	int (*set_vblank_handler)(void *, const void *, sun60i_a733_vblank_fn,
 	    void *);
 	/* Optional read-only HPD query. A disconnect is not a provider fault. */
-	int (*detect)(void *, const void *, bool *);
+	int (*detect)(const void *, const void *, bool *);
 };
 int sun60i_a733_output_register(int, const struct sun60i_a733_output_ops *, void *);
 int sun60i_a733_output_get_mode(int, const void *,

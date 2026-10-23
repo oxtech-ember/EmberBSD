@@ -33,7 +33,7 @@ static int output_once, output_error;
 static const void *output_owner;
 static struct sun60i_a733_hdmi_softc hdmi;
 static void *output_arg = &hdmi;
-static struct { int (*detect)(void *, const void *, bool *); } ops;
+static struct { int (*detect)(const void *, const void *, bool *); } ops;
 static const __typeof__(ops) *output_ops = &ops;
 static int output_init(void) { return 0; }
 #define RUN_ONCE(o, f) do { if (!*(o)) { CHECK(f() == 0); *(o) = 1; } } while (0)
@@ -45,8 +45,10 @@ static int output_lookup(int node, const void *owner)
 /* sun60i_a733_output_detect */
 struct sun60i_a733_de352_client { const void *owner; } test_client;
 struct sun60i_de352_softc { kmutex_t lock; int output_phandle; } de;
+/* Match the mutable client argument of the real registry lookup. */
+// cppcheck-suppress constParameterPointer
 static struct sun60i_de352_softc *de352_lookup(int node,
-    const struct sun60i_a733_de352_client *candidate)
+    struct sun60i_a733_de352_client *candidate)
 { CHECK(node == 0); return candidate == &test_client ? &de : NULL; }
 /* sun60i_a733_de352_detect */
 struct a733_drm { kmutex_t lock; int fault;
