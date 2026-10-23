@@ -47,11 +47,18 @@ routing=replace(routing,'    struct ieee80211com ic;','''    struct ieee80211com
     device_t dev;
     unsigned configured_media;
     int (*parent_state)(struct ieee80211com *,enum ieee80211_state,int);''')
-routing=replace(routing,'static unsigned routing_ht20_withdrawals, routing_ht20_rejections;\n#include "routing-ht20-stub.inc"\n#define ieee80211_new_state route_new_state\n#include "routing-native.inc"','#include "rtw88-enable-services.inc"\nstruct rtw88_net; struct ieee80211_ht20_profile;\nstatic void rtw88_net_ht20_publish(struct rtw88_net *, const struct ieee80211_ht20_profile *);\n#define ieee80211_new_state route_new_state\n#include "routing-native.inc"\n#include "enable-native.inc"')
+routing=replace(routing,'static unsigned routing_ht20_withdrawals, routing_ht20_rejections;\n#include "routing-ht20-stub.inc"\n#define ieee80211_new_state route_new_state\n#include "routing-native.inc"','#include "rtw88-enable-services.inc"\nstruct rtw88_net; struct ieee80211_ht20_profile;\nstatic void rtw88_net_ht20_publish(struct rtw88_net *, const struct ieee80211_ht20_profile *);\nstatic int rtw88_net_ht20_local_policy(struct ieee80211com *);\nstatic int rtw88_net_ht20_profile_prepare(struct rtw88_net *, struct ieee80211_ht20_profile *);\n#define ieee80211_new_state route_new_state\n#include "routing-native.inc"\n#include "enable-native.inc"')
 # Keep the real RUN-to-SCAN checks, but omit counters owned by the routing stub.
 routing=replace(routing,'    unsigned ht20_withdrawals_before=routing_ht20_withdrawals;\n    unsigned ht20_rejections_before=routing_ht20_rejections;\n','')
 routing=replace(routing,'    CHECK(routing_ht20_withdrawals==ht20_withdrawals_before+1);\n    CHECK(routing_ht20_rejections==ht20_rejections_before);\n','')
 routing=replace(routing,'int main(void)\n{','int routing_base_main(void)\n{')
+# This fixture gets the production readiness helper from enable-native.inc below.
+# Keep its prototype visible to routing bodies without defining it twice.
+routing_native = (out/'routing-native.inc').read_text()
+routing_native, removed = re.subn(r'^static int\nrtw88_net_ht20_local_policy\(.*?^}\n', '', routing_native, count=1, flags=re.M|re.S)
+if removed != 1: raise ValueError('routing readiness helper extraction')
+(out/'enable-routing-native.inc').write_text(routing_native)
+routing = routing.replace('#include "routing-native.inc"', '#include "enable-routing-native.inc"')
 (out/'enable-routing.inc').write_text(routing)
 # Native channel/mode constants and IFM declarations; existing WME model owns types.
 parts=['static int enable_isset(const uint8_t *a,unsigned n) { assert(n<256);return (a[n/8]&(1U<<(n%8)))!=0; }']
@@ -92,7 +99,7 @@ parts=[net[:net.index('#include')], bsd[:bsd.index('#include')],
        '#define ifqueue queue\n', function(bsd,'ieee80211_drain_ifq','static void'),
        '#undef ifqueue\n']
 for name,result in [('rtw88_net_rxba_now','static uint64_t'),('rtw88_net_rxba_ticks','static int'),('rtw88_net_rxba_timeout','static void'),('rtw88_net_rxba_schedule','static int'),('rtw88_net_rxba_cancel','static void'),('rtw88_net_rxba_quiesce','static void'),('rtw88_net_rxba_attach','static void'),('rtw88_net_rxba_detach','static void'),('rtw88_net_basic_rates','static unsigned'),('rtw88_net_wme_apply','static int'),('rtw88_net_edca_prepare','static int'),('rtw88_net_ra_prepare','static int'),('rtw88_net_restart_peer','static int'),('rtw88_net_drain_wait','static int'),('rtw88_net_mailbox_wait','static int'),('rtw88_net_state_work','static void'),('rtw88_net_ht20_publish','static void'),
-('rtw88_net_ht20_admit','static int'),('rtw88_net_attach','int')]:
+('rtw88_net_ht20_local_policy','static int'),('rtw88_net_ht20_profile_prepare','static int'),('rtw88_net_ht20_admit','static int'),('rtw88_net_attach','int')]:
  # A source baseline may predate the checkpoint; no replacement body is supplied.
  if name in ('rtw88_net_drain_wait','rtw88_net_mailbox_wait') and not re.search(r'^'+name+r'\(',net,re.M):continue
  if name=='rtw88_net_rxba_attach':

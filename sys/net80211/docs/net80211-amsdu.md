@@ -1,9 +1,12 @@
 # Bounded native A-MSDU receive prerequisite
 
-This source prerequisite does not enable HT, VHT, WME or block acknowledgement.
-No negotiation path sets `IEEE80211_NODE_AMSDU_RX`.
+The parser alone does not enable HT, VHT, WME or block acknowledgement.
+The native STA path can admit bounded one-stream 5 GHz HT20 only when the
+RTL8822CE provider publishes all six readiness bits and the peer passes HT
+association checks. Missing readiness keeps the legacy profile. VHT and
+channel widths above 20 MHz remain unsupported. This is source-level support;
+no physical radio acceptance is implied.
 Unsolicited A-MSDU frames are rejected by default.
-The driver continues to advertise its existing legacy profile.
 
 ## Owner and profile
 
@@ -50,8 +53,11 @@ privacy, interface statistics, node statistics, and native delivery path.
 The existing `ieee80211_deliver_data` remains the delivery owner.
 The aggregate input is freed once after successful list creation.
 The caller retains cleanup ownership on every failure.
-Future negotiation must set and clear the new node flag with the peer association lifetime.
-It must also supply BA/reorder and crypto lifetime requirements before HT advertisement.
+The native STA association path sets and clears the node flag with the peer
+association lifetime, after the provider and peer HT checks pass. When privacy
+is enabled, HT admission requires AES-CCM. The RTL8822CE provider also requires
+ready RX block-ack callbacks, its state worker and soft interrupt, and the
+bounded WME/A-MSDU consumer before it publishes HT20.
 
 ## Primary sources and origin
 

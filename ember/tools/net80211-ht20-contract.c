@@ -93,6 +93,13 @@ static int rtw88_fw_mailbox_end(struct rtw88_softc *sc,int error)
 static inline int kpause(const char *name,bool intr,int ticks,int *lock)
 { (void)name;(void)intr;(void)ticks;(void)lock;
   assert(!"HT exchange does not model busy mailbox transport");return EWOULDBLOCK; }
+/* This association/worker fixture has no radio or power readiness model.
+ * Keep the newly attached profile disabled; the owning RTL8822CE readiness
+ * contract compiles and exercises the production helper. */
+static int
+rtw88_net_ht20_profile_prepare(struct rtw88_net *net,
+    struct ieee80211_ht20_profile *profile)
+{ (void)net; memset(profile,0,sizeof(*profile)); return EOPNOTSUPP; }
 #include "native-ht20-worker.inc"
 static int worker_parent(struct ieee80211com *ic,enum ieee80211_state state,int arg)
 {

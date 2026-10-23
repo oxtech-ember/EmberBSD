@@ -138,6 +138,7 @@ static int enable_wire_offer(struct rtw88_net *net)
     }
     return 0;
 }
+static int enable_ht20_ready_fixture;
 static struct rtw88_net *enable_attach(struct rtw88_softc *sc,kmutex_t *lock)
 {
     struct rtw88_net *net=NULL;
@@ -150,6 +151,13 @@ static struct rtw88_net *enable_attach(struct rtw88_softc *sc,kmutex_t *lock)
     int rc=rtw88_net_attach(sc,sc,lock,mac,&net);
     CHECK(rc==0 && net!=NULL);
     if(!net)return NULL;
+    /* Model the ordinary Ethernet and net80211 defaults only for the focused
+     * positive-readiness fixture; the shared baseline keeps HT disabled. */
+    if(enable_ht20_ready_fixture) {
+        net->ec.ec_if.if_mtu=1500;
+        net->ic.ic_rtsthreshold=RTW88_HT20_THRESHOLD_MAX;
+        net->ic.ic_fragthreshold=RTW88_HT20_THRESHOLD_MAX;
+    }
     CHECK(f.writes==writes);
     CHECK(net->ic.ic_wme.wme_sta_apply==rtw88_net_wme_apply);
     CHECK(net->ic.ic_rxba_ops==&rtw88_net_rxba_ops);
@@ -850,6 +858,60 @@ static struct rtw88_net *enable_ht20_negotiate(struct rtw88_softc *sc,
     CHECK(ic->ic_state==IEEE80211_S_RUN && net->policy.accepting);
     return net;
 }
+static void enable_ht20_runtime_readiness(void)
+{
+    struct rtw88_softc sc;
+    kmutex_t lock={.initialized=1};
+    struct ieee80211_ht20_profile profile;
+    enable_ht20_ready_fixture=1;
+    struct rtw88_net *net=enable_attach(&sc,&lock);
+    enable_ht20_ready_fixture=0;
+    if(!net)return;
+    CHECK(net->ic.ic_state==IEEE80211_S_ASSOC);
+    CHECK(rtw88_net_ht20_local_policy(&net->ic)==0);
+    CHECK(net->core->sc_resources_ready && net->core->sc_started &&
+        net->core->sc_running && net->core->sc_rf_enabled &&
+        !net->core->sc_stop_requested);
+    CHECK(net->core->sc_powered && net->core->sc_power_error==0 &&
+        net->core->sc_dma_master && net->core->sc_dma_error==0);
+    CHECK(net->core->sc_power_dirty); /* Still needs a clean off at shutdown. */
+    CHECK(ieee80211_rxba_ready(&net->ic));
+    CHECK(net->wq!=NULL && net->softint!=NULL);
+    CHECK((net->ic.ic_caps & IEEE80211_C_WME)!=0 &&
+        (net->ic.ic_flags & IEEE80211_F_WME)!=0 &&
+        net->ic.ic_wme.wme_sta_apply!=NULL);
+    CHECK(net->ic.ic_ht20_admit(&net->ic,&profile)==0);
+    CHECK(profile.generation!=0 && profile.rx_mcs==0xff &&
+        profile.tx_mcs==0xff && profile.ready==0x3f && profile.ampdu==16);
+
+    net->core->sc_rf_enabled=0;
+    CHECK(rtw88_net_ht20_profile_prepare(net,&profile)==EOPNOTSUPP);
+    net->core->sc_rf_enabled=1;
+    net->core->sc_powered=0;
+    CHECK(rtw88_net_ht20_profile_prepare(net,&profile)==EOPNOTSUPP);
+    net->core->sc_powered=1;
+    net->ic.ic_fragthreshold--;
+    CHECK(rtw88_net_ht20_profile_prepare(net,&profile)==EOPNOTSUPP);
+    net->ic.ic_fragthreshold++;
+    const struct ieee80211_rxba_ops *rxba=net->ic.ic_rxba_ops;
+    net->ic.ic_rxba_ops=NULL;
+    CHECK(rtw88_net_ht20_profile_prepare(net,&profile)==EOPNOTSUPP);
+    net->ic.ic_rxba_ops=rxba;
+    void *softint=net->softint;
+    net->softint=NULL;
+    CHECK(rtw88_net_ht20_profile_prepare(net,&profile)==EOPNOTSUPP);
+    net->softint=softint;
+    int (*wme_apply)(struct ieee80211com *,const struct chanAccParams *,unsigned)=
+        net->ic.ic_wme.wme_sta_apply;
+    net->ic.ic_wme.wme_sta_apply=NULL;
+    CHECK(rtw88_net_ht20_profile_prepare(net,&profile)==EOPNOTSUPP);
+    net->ic.ic_wme.wme_sta_apply=wme_apply;
+
+    CHECK(rtw88_net_newstate(&net->ic,IEEE80211_S_SCAN,0)==0);
+    rtw88_net_state_work(&net->state_work,net);
+    CHECK(net->ic.ic_ht20_admit(&net->ic,&profile)==EOPNOTSUPP);
+    enable_destroy(net);
+}
 static void enable_ht20_operation6(void)
 {
     struct rtw88_softc sc;kmutex_t lock={.initialized=1};
@@ -1214,6 +1276,7 @@ int RTW88_ENABLE_ENTRY(void)
     enable_run_callbacks=enable_first_producer=0;
     int result=routing_base_main();
     if(result!=0)return result;
+    enable_ht20_runtime_readiness();
     enable_ht20_operation6();
     enable_ht20_policy_fences();
     enable_ht20_plaintext_budget();

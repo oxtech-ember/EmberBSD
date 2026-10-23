@@ -87,6 +87,9 @@ static void rtw88_net_ht20_publish(struct rtw88_net *,
     const struct ieee80211_ht20_profile *);
 static int rtw88_net_ht20_admit(struct ieee80211com *,
     struct ieee80211_ht20_profile *);
+static int rtw88_net_ht20_local_policy(struct ieee80211com *);
+static int rtw88_net_ht20_profile_prepare(struct rtw88_net *,
+    struct ieee80211_ht20_profile *);
 
 /* This MPSAFE callout retains only interface-owned numeric tokens. The shared
  * stack and all node/key lifetime work run in the existing Giant softintr. */
@@ -474,6 +477,74 @@ rtw88_net_edca_prepare(struct ieee80211com *ic, unsigned media,
 	return 0;
 }
 
+/* The worker and network state machine share Giant; no PCI lock is held. */
+static int
+rtw88_net_ht20_local_policy(struct ieee80211com *ic)
+{
+	unsigned mtu;
+
+	if (ic == NULL || ic->ic_ifp == NULL)
+		return EINVAL;
+	mtu = ic->ic_ifp->if_mtu;
+	if (ic->ic_curchan == NULL || ic->ic_curmode != IEEE80211_MODE_11A ||
+	    ieee80211_chan2ieee(ic, ic->ic_curchan) <= 14 ||
+	    ic->ic_fixed_rate != IEEE80211_FIXED_RATE_NONE ||
+	    (ic->ic_flags & IEEE80211_F_DATAPAD) != 0 ||
+	    ic->ic_fragthreshold != RTW88_HT20_THRESHOLD_MAX ||
+	    mtu < RTW88_HT20_MTU_MIN || mtu > RTW88_HT20_MTU_MAX ||
+	    ic->ic_rtsthreshold < mtu + RTW88_HT20_TX_OVERHEAD +
+	    RTW88_HT20_FCS_SIZE ||
+	    ic->ic_rtsthreshold > RTW88_HT20_THRESHOLD_MAX)
+		return EOPNOTSUPP;
+	return 0;
+}
+
+/* Publish only a proven local 5 GHz HT20 envelope. Giant serializes core
+ * start/stop, protocol state and the non-MPSAFE state worker; the atomic
+ * snapshot then fences any delayed publication against a newer withdrawal. */
+static int
+rtw88_net_ht20_profile_prepare(struct rtw88_net *net,
+    struct ieee80211_ht20_profile *profile)
+{
+	struct ieee80211com *ic;
+	struct rtw88_softc *sc;
+	unsigned ready = 0;
+
+	if (net == NULL || profile == NULL || net->core == NULL)
+		return EINVAL;
+	memset(profile, 0, sizeof(*profile));
+	ic = &net->ic;
+	sc = net->core;
+	if (ic->ic_opmode != IEEE80211_M_STA ||
+	    rtw88_net_ht20_local_policy(ic) != 0)
+		return EOPNOTSUPP;
+	if (sc->sc_resources_ready && sc->sc_started && sc->sc_running &&
+	    sc->sc_rf_enabled && !sc->sc_stop_requested)
+		ready |= RTW88_NET_HT20_READY_RADIO;
+	/* power_dirty means shutdown still owes an off sequence, even while the
+	 * active power state is confirmed and healthy. */
+	if (sc->sc_resources_ready && sc->sc_powered &&
+	    sc->sc_power_error == 0 && sc->sc_dma_master && sc->sc_dma_error == 0)
+		ready |= RTW88_NET_HT20_READY_POWER;
+	/* This same bounded mixed-format/no-RTS policy is rechecked with the AP. */
+	ready |= RTW88_NET_HT20_READY_PROTECTION;
+	if (ieee80211_rxba_ready(ic))
+		ready |= RTW88_NET_HT20_READY_RXBA;
+	if (net->wq != NULL && net->softint != NULL)
+		ready |= RTW88_NET_HT20_READY_SCHEDULER;
+	if ((ic->ic_caps & IEEE80211_C_WME) != 0 &&
+	    (ic->ic_flags & IEEE80211_F_WME) != 0 &&
+	    ic->ic_wme.wme_sta_apply != NULL)
+		ready |= RTW88_NET_HT20_READY_AMSDU;
+	if (ready != RTW88_NET_HT20_READY_ALL)
+		return EOPNOTSUPP;
+	profile->rx_mcs = 0xff;
+	profile->tx_mcs = 0xff;
+	profile->ready = ready;
+	profile->ampdu = 0x10; /* Factor 0; conservative spacing 4. */
+	return 0;
+}
+
 /* Giant owns peer/policy fields. The provider never runs under PCI. */
 static int
 rtw88_net_tx_ht20_policy(struct ieee80211com *ic, struct rtw88_ra_config *cfg)
@@ -489,19 +560,11 @@ rtw88_net_tx_ht20_policy(struct ieee80211com *ic, struct rtw88_ra_config *cfg)
 	if (ic->ic_ifp == NULL)
 		return EINVAL;
 	mtu = ic->ic_ifp->if_mtu;
-	if (ic->ic_curmode != IEEE80211_MODE_11A ||
-	    ieee80211_chan2ieee(ic, ic->ic_curchan) <= 14 ||
-	    ic->ic_fixed_rate != IEEE80211_FIXED_RATE_NONE ||
+	if (rtw88_net_ht20_local_policy(ic) != 0 ||
 	    protection.qualification != IEEE80211_HT20_PROT_MF20_NO_RTS ||
 	    ni->ni_ht20.profile.rx_mcs != 0xff ||
 	    ni->ni_ht20.profile.tx_mcs != 0xff || ni->ni_ht20.tx_mcs == 0 ||
-	    (ni->ni_ht20.tx_mcs & ~0xffU) != 0 ||
-	    (ic->ic_flags & IEEE80211_F_DATAPAD) != 0 ||
-	    ic->ic_fragthreshold != RTW88_HT20_THRESHOLD_MAX ||
-	    mtu < RTW88_HT20_MTU_MIN || mtu > RTW88_HT20_MTU_MAX ||
-	    ic->ic_rtsthreshold < mtu + RTW88_HT20_TX_OVERHEAD +
-	    RTW88_HT20_FCS_SIZE ||
-	    ic->ic_rtsthreshold > RTW88_HT20_THRESHOLD_MAX)
+	    (ni->ni_ht20.tx_mcs & ~0xffU) != 0)
 		return EOPNOTSUPP;
 	/* Validate the MTU before adding the bounded encapsulation overhead. */
 	maximum = mtu + RTW88_HT20_TX_OVERHEAD;
@@ -718,6 +781,7 @@ rtw88_net_state_work(struct work *work, void *cookie)
 	unsigned channel, basic, slot, aid, i;
 	unsigned media, prepare_stage;
 	int use_ra, mailbox_retry, mailbox_reserved;
+	struct ieee80211_ht20_profile ht20_profile;
 	const uint8_t *bssid;
 	char failure[384];
 	uint8_t any;
@@ -966,6 +1030,7 @@ rtw88_net_state_work(struct work *work, void *cookie)
 #endif
 		if (error != ECANCELED) {
 			if (error != 0) {
+				rtw88_net_ht20_publish(net, NULL);
 				(void)ieee80211_ht20_state_request(ic, IEEE80211_S_INIT);
 				(void)rtw88_net_state_format(failure,
 				    sizeof(failure), &diag);
@@ -975,6 +1040,13 @@ rtw88_net_state_work(struct work *work, void *cookie)
 				if (diag.stage != RTW88_NET_STAGE_RESTART)
 					rtw88_stop(net->core);
 			} else {
+				if (state == IEEE80211_S_ASSOC) {
+					if (rtw88_net_ht20_profile_prepare(net,
+					    &ht20_profile) == 0)
+						rtw88_net_ht20_publish(net, &ht20_profile);
+					else
+						rtw88_net_ht20_publish(net, NULL);
+				}
 				error = net->parent_state(ic, state, arg);
 				if (error != 0) {
 					diag.stage = RTW88_NET_STAGE_CORE;

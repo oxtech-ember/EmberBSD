@@ -51,6 +51,8 @@ parts.append(shared[:shared.index('#include')])
 parts.append('void\n'+re.search(r'^ieee80211_wme_reset\(.*?^}',shared,re.M|re.S).group()+'\n')
 for name, result in [('rtw88_net_basic_rates','static unsigned'),
                      ('rtw88_net_edca_prepare','static int'),
+                     ('rtw88_net_ht20_local_policy','static int'),
+                     ('rtw88_net_ht20_profile_prepare','static int'),
                      ('rtw88_net_tx_ht20_policy','static int'),
                      ('rtw88_net_ra_prepare','static int'),
                      ('rtw88_net_restart_peer','static int'),

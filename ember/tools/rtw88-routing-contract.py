@@ -31,6 +31,10 @@ fixture = fixture.replace('struct queue ic_mgtq;', 'struct queue ic_mgtq;\nvoid 
 (out/'routing-model.inc').write_text(fixture)
 net = (src/'sys/dev/ic/rtw88_net.c').read_text()
 parts = [net[:net.index('#include')]]
+helper = re.search(r'^rtw88_net_ht20_local_policy\(.*?^}', net, re.M|re.S)
+if helper is None:
+    raise ValueError('HT20 local-policy helper')
+parts.append('static int\n' + helper.group() + '\n')
 ht20_stub = '''struct ieee80211_ht20_profile;
 static void
 rtw88_net_ht20_publish(struct rtw88_net *net,
