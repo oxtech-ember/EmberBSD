@@ -132,6 +132,7 @@ static int route_new_state(struct ieee80211com *ic,int state,int arg)
 { return rtw88_net_newstate(ic,(enum ieee80211_state)state,arg); }
 #include "routing-rxba-native.inc"
 #define ieee80211_new_state route_new_state
+static unsigned routing_ht20_withdrawals, routing_ht20_rejections;
 #include "routing-native.inc"
 #undef ieee80211_new_state
 static struct mbuf *scheduler(struct queue *q,int op)
@@ -472,7 +473,11 @@ int main(void)
     net.policy.queued=1;
     unsigned delivered=route_rx;
     uint64_t epoch_drops=net.policy.rx.delivery_epoch;
+    unsigned ht20_withdrawals_before=routing_ht20_withdrawals;
+    unsigned ht20_rejections_before=routing_ht20_rejections;
     CHECK(rtw88_net_newstate(&net.ic,IEEE80211_S_SCAN,-1)==0);
+    CHECK(routing_ht20_withdrawals==ht20_withdrawals_before+1);
+    CHECK(routing_ht20_rejections==ht20_rejections_before);
     CHECK(rtw88_net_commit(&net.policy,net.policy.epoch,0,1)==0);
     net.work_pending=0;net.ic.ic_state=IEEE80211_S_SCAN;
     rtw88_net_softintr(&net);

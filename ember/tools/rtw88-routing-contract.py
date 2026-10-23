@@ -31,6 +31,20 @@ fixture = fixture.replace('struct queue ic_mgtq;', 'struct queue ic_mgtq;\nvoid 
 (out/'routing-model.inc').write_text(fixture)
 net = (src/'sys/dev/ic/rtw88_net.c').read_text()
 parts = [net[:net.index('#include')]]
+ht20_stub = '''struct ieee80211_ht20_profile;
+static void
+rtw88_net_ht20_publish(struct rtw88_net *net,
+    const struct ieee80211_ht20_profile *profile)
+{
+    if (net == NULL || profile != NULL) {
+        routing_ht20_rejections++;
+        return;
+    }
+    routing_ht20_withdrawals++;
+}
+'''
+parts.append(ht20_stub)
+(out/'routing-ht20-stub.inc').write_text(ht20_stub)
 for m in re.finditer(r'^static (?:int|unsigned|void|struct mbuf \*)\n(rtw88_net_(?:tx_[a-z0-9_]+|start|newstate|softintr))\(.*?^}', net, re.M|re.S):
     parts.append(m.group())
 if 'rtw88_net_tx_dequeue_same(' in net:
@@ -156,3 +170,17 @@ encap=encap.replace(check, '''\tm = ieee80211_mbuf_adjust(ic, hdrsize, key, m);
 #endif''')
 parts+=['#define ieee80211_encap routing_native_encap\n',encap]
 (out/'routing-bpf.inc').write_text(''.join(parts).replace('#define IEEE80211_KEY_SWCRYPT 1',named_macro('sys/net80211/ieee80211_crypto.h','IEEE80211_KEY_SWCRYPT').strip()))
+
+# The routing model aliases unavailable WPA/ERP appenders to identity macros.
+# Keep the native assignments to their returned mbufs, and suppress only the
+# two resulting self-assignment false positives in this generated fixture.
+native_wme = out/'native-wme.inc'
+wme = native_wme.read_text()
+for statement in (
+    '\t\t\tfrm = ieee80211_add_wpa(frm, ic);',
+    '\t\t\tfrm = ieee80211_add_erp(frm, ic);',
+):
+    if wme.count(statement) != 1:
+        raise ValueError('native mbuf append fixture changed')
+    wme = wme.replace(statement, '// cppcheck-suppress selfAssignment\n' + statement)
+native_wme.write_text(wme)

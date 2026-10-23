@@ -24,6 +24,10 @@ cp "$src/sys/net80211/_ieee80211.h" "$work/include/net80211/"
 python3 "$tools/rtw88-fixed-contract.py" "$src" "$work/include"
 python3 "$tools/net80211-wme-contract.py" "$src" "$work/include"
 python3 "$tools/rtw88-routing-contract.py" "$src" "$work/include"
+${CC:-cc} -std=c11 -DNDEBUG -Wall -Wextra -Werror -Wno-unused-parameter \
+    -I"$work/include" "$tools/rtw88-routing-ht20-stub-contract.c" \
+    -o "$work/ht20-stub-contract"
+run_test "$work/ht20-stub-contract"
 ln -s "$src/sys/dev/ic" "$work/include/dev/ic"
 for header in sys/param.h sys/systm.h; do
     printf '#include <errno.h>\n#include "rtw88-test-kernel.h"\n' > "$work/include/$header"
@@ -59,7 +63,7 @@ for altq in 0 1; do
             -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \
             -c "$tools/rtw88-routing-contract.c" -o "$work/analysis.o"
         ${CC:-cc} -std=c11 -dM -E $flags - < /dev/null > "$work/predefines.h"
-        cppcheck --enable=warning,performance,portability --error-exitcode=1 \
+        cppcheck --inline-suppr --enable=warning,performance,portability --error-exitcode=1 \
             --check-level=exhaustive --include="$work/predefines.h" \
             -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \
             "$tools/rtw88-routing-contract.c" "$src/sys/dev/ic/rtw88_net_policy.c"
