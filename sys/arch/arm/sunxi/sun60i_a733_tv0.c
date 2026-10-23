@@ -179,6 +179,30 @@ sun60i_a733_tv0_start(struct sun60i_a733_tv0 *s)
 	return s->fault;
 }
 
+/* The owner must drain and disarm its vblank handler before this call. */
+int
+sun60i_a733_tv0_stop(struct sun60i_a733_tv0 *s)
+{
+	uint32_t value;
+	int error = tv_ready(s);
+
+	if (error != 0)
+		return error;
+	if (!s->prepared)
+		return EINVAL;
+	if (!s->started)
+		return EALREADY;
+	/* Stop timing before clearing its interrupt enables and W0C flags. */
+	tv_update(s, A733_TV0_REGS, 0x90, UINT32_C(0x80000000), 0);
+	tv_write(s, A733_TV0_REGS, 4, 0);
+	value = tv_read(s, A733_TV0_REGS, 4);
+	if (s->fault == 0 && (value & UINT32_C(0x5f005f00)) != 0)
+		tv_fail(s, EIO);
+	if (s->fault == 0)
+		s->started = false;
+	return s->fault;
+}
+
 int
 sun60i_a733_tv0_observe(struct sun60i_a733_tv0 *s, uint64_t *sequence)
 {

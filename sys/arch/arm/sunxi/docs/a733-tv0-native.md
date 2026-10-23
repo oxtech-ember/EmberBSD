@@ -45,6 +45,8 @@ The [clock phases](a733-output-clocks.md) preserve the separate clock lease.
 | Start 3 | TV0 0x33c | 0xffff0000 | 0: enable upper data outputs |
 | Start 4 | TV0 0x08c | 0x0f000000 | 0: enable sync outputs |
 | Start 5 | TV0 0x090 | 0x80000000 | Set TV0 enable |
+| Stop 1 | TV0 0x090 | 0x80000000 | Clear TV0 enable and check readback |
+| Stop 2 | TV0 0x004 | Known RW/W0C fields | Write 0: disable local IRQ sources and clear pending flags |
 | Observe | TV0 0x004 | Known RW/W0C fields | Preserve enables, write one to other W0C flags, clear vblank bit14 |
 
 Prepare refuses an active TV0 and vertical blanking of five lines or fewer.
@@ -104,3 +106,13 @@ The test also checks the interrupt-mode count observation without writes.
 Run `python3 -B ember/tools/a733-hdmi-native-contract.py` for the handler,
 arm, disarm, mask and callback checks with the actual provider source.
 Source and target compilation do not establish physical HDMI output.
+
+## Retained stop and restart
+
+`sun60i_a733_tv0_stop()` requires the owner to disarm and drain its IRQ
+handler first. It stops the timing generator and clears local IRQ state.
+It retains the prepared mode, sequence and resources for `start()`.
+It clears `started` only after all readbacks succeed. An uncertain failure
+retains the first fault and prevents restart. This is not a clock release.
+The pinned vendor close sequence also clears the TV control enable.
+This implementation uses the proved TV0 interrupt fields above.

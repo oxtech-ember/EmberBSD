@@ -97,10 +97,47 @@ pipeline(uint64_t *seq)
 	}
 	return error;
 }
+static void
+stop_restart(void)
+{
+	uint64_t seq;
+	unsigned first, count;
+
+	fixture();
+	CHECK(sun60i_a733_tv0_stop(&s) == EINVAL && !s.fault);
+	CHECK(pipeline(&seq) == 0);
+	first = m.ops;
+	CHECK(sun60i_a733_tv0_stop(&s) == 0);
+	count = m.ops - first;
+	CHECK(!s.started && s.prepared && s.sequence == 1);
+	CHECK((m.reg[0][0x90 / 4] & UINT32_C(0x80000000)) == 0);
+	CHECK((m.reg[0][1] & UINT32_C(0x5f005f00)) == 0);
+	CHECK(sun60i_a733_tv0_stop(&s) == EALREADY && !s.fault);
+	CHECK(sun60i_a733_tv0_start(&s) == 0 && s.started);
+	m.reg[0][1] |= UINT32_C(0x4000);
+	CHECK(sun60i_a733_tv0_observe(&s, &seq) == 0 && seq == 2);
+	for (unsigned fail = 1; fail <= count; fail++) {
+		fixture(); CHECK(pipeline(&seq) == 0);
+		m.fail = m.ops + fail;
+		CHECK(sun60i_a733_tv0_stop(&s) == EFAULT);
+		CHECK(s.started && s.prepared && s.sequence == 1);
+		first = m.ops;
+		CHECK(sun60i_a733_tv0_start(&s) == EFAULT && m.ops == first);
+		CHECK(sun60i_a733_tv0_stop(&s) == EFAULT && m.ops == first);
+	}
+	for (unsigned reject = 1; reject <= 2; reject++) {
+		fixture(); CHECK(pipeline(&seq) == 0);
+		m.reject = m.writes + reject;
+		CHECK(sun60i_a733_tv0_stop(&s) == EIO);
+		CHECK(s.started && s.prepared);
+	}
+}
+
 int
 main(void)
 {
 	uint64_t seq = 0;
+	stop_restart();
 	unsigned ops, writes;
 	struct sun60i_a733_output_mode invalid;
 	fixture();

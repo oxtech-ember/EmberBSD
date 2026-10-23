@@ -29,6 +29,8 @@ int sun60i_a733_tv0_route(struct sun60i_a733_tv0 *);
 int sun60i_a733_tv0_prepare(struct sun60i_a733_tv0 *,
     const struct sun60i_a733_output_mode *, enum sun60i_a733_tv0_profile);
 int sun60i_a733_tv0_start(struct sun60i_a733_tv0 *);
+/* Stop timing/IRQs after the owner drains its handler. Retain prepared mode. */
+int sun60i_a733_tv0_stop(struct sun60i_a733_tv0 *);
 /* ENOENT means no new event. All other failures are sticky. */
 int sun60i_a733_tv0_observe(struct sun60i_a733_tv0 *, uint64_t *);
 /*
