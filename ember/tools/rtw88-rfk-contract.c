@@ -5,6 +5,10 @@
  * It is not a fake successful RFK engine or an HT readiness assertion. */
 #include "rtw88-rfk-atomic-model.h"
 #include <stddef.h>
+#include <sys/resource.h>
+#include <sys/wait.h>
+#include <signal.h>
+#include <unistd.h>
 #define RTW88_ENABLE_ENTRY rfk_existing_enable_main
 #include "rtw88-enable-contract.c"
 #undef RTW88_ENABLE_ENTRY
@@ -1117,12 +1121,38 @@ rfk_validate_case(struct rtw88_net *net)
     return failures||core_failures;
 }
 
+/* Logging must retain the actual formatted worker evidence and reject a
+ * missing format before either varargs formatting call can use it. */
+static int
+rfk_logging_format(void)
+{
+    unsigned errors=enable_state_errors;
+    aprint_error_dev(NULL,"RFK log %u %s",7U,"ready");
+    CHECK(strcmp(rfk_state_error,"RFK log 7 ready")==0);
+    CHECK(enable_state_errors==errors+1);
+    pid_t child=fork();CHECK(child>=0);
+    if(child==0) {
+        const struct rlimit core={0,0};
+        if(setrlimit(RLIMIT_CORE,&core)!=0)_exit(126);
+        aprint_error_dev(NULL,NULL);
+        _exit(0);
+    }
+    if(child>0) {
+        int status=0;CHECK(waitpid(child,&status,0)==child);
+        CHECK(WIFSIGNALED(status) && WTERMSIG(status)==SIGABRT);
+    }
+    printf("Native RFK logging format: %u checks, %u failures\n",checks,failures);
+    return failures||core_failures;
+}
+
 int
 main(void)
 {
     /* Keep service symbols referenced when a causal control links this
      * harness to the old tick-based worker, without disabling warnings. */
     (void)nanouptime;(void)yield;
+    const char *selected=getenv("RTW88_RFK_CASE");
+    if(selected && strcmp(selected,"logging-format")==0)return rfk_logging_format();
     struct rtw88_softc sc;
     kmutex_t lock = {.initialized = 1};
     struct rtw88_net *net = enable_attach(&sc, &lock);
