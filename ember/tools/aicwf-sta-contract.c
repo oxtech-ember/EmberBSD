@@ -65,7 +65,9 @@ enum ieee80211_state {
 #define AICWF_SCANU_CANCEL_CFM 0x100b
 #define PR_NOWAIT 0
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
+#ifndef __arraycount
 #define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
+#endif
 #define roundup(x,y) (((x)+(y)-1)/(y)*(y))
 #define isset(a,n) ((a)[(n)/8] & (1u << ((n)%8)))
 #define setbit(a,n) ((a)[(n)/8] |= (1u << ((n)%8)))
@@ -81,9 +83,15 @@ static void device_printf(void *dev, const char *fmt, ...)
 #define IEEE80211_FC0_SUBTYPE_DEAUTH 0xc0
 #define IEEE80211_FC0_SUBTYPE_DISASSOC 0xa0
 #define IEEE80211_FC0_SUBTYPE_AUTH 0xb0
+#ifndef __BITS
 #define __BITS(hi, lo) (((1u << ((hi) - (lo) + 1)) - 1) << (lo))
+#endif
+#ifndef __BIT
 #define __BIT(n) (1u << (n))
+#endif
+#ifndef __SHIFTOUT
 #define __SHIFTOUT(v, m) (((v) & (m)) >> __builtin_ctz(m))
+#endif
 #include "abi.h"
 #include "routes.h"
 #include "actions.h"
@@ -221,10 +229,12 @@ static void le32enc(void *v, uint32_t x)
 #else
 #include <sys/endian.h>
 #endif
+#ifndef __NetBSD__
 static void le16enc(void *v, uint16_t x)
 { uint8_t *p=v; p[0]=x; p[1]=x>>8; }
 static void be16enc(void *v, uint16_t x)
 { uint8_t *p=v; p[0]=x>>8; p[1]=x; }
+#endif
 #include "ieee80211_rsn.h"
 #include "if_aicwf_vht.h"
 #include "if_aicwf_sta.h"

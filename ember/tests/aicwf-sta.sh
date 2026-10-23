@@ -6,7 +6,7 @@ set -eu
 src=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 driver=${AICWF_STA_SOURCE:-$src/sys/dev/sdmmc/if_aicwf.c}
 defs=${AICWF_STA_DEFS:-$src/external/bsd/wpa/dist/src/common/ieee802_11_defs.h}
-work=$(mktemp -d "${TMPDIR:-/tmp}/aicwf-sta.XXXXXXXX")
+work=$(mktemp -d "${TEST_OBJDIR:-${TMPDIR:-/tmp}}/aicwf-sta.XXXXXXXX")
 if [ "${AICWF_STA_KEEP:-0}" = 1 ]; then
     printf 'Test sources: %s\n' "$work"
 else
@@ -68,6 +68,14 @@ for spec in bsd_sta_init:void bsd_sta_tx_body:int bsd_sta_rx_body:int; do
         "$src/external/bsd/wpa/dist/src/drivers/driver_bsd.c" >> "$work/client.h"
 done
 cp "$src/ember/tools/aicwf-sta-contract.c" "$work/check.c"
+mkdir -p "$work/sys" "$work/net80211"
+ln -s "$src/sys/net80211/ieee80211_vht_ies.h" "$work/net80211/ieee80211_vht_ies.h"
+printf '#include <stdbool.h>\n#include <stdint.h>\n#include <string.h>\n' > "$work/sys/systm.h"
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -Wno-unused-parameter \
-    ${AICWF_STA_CFLAGS:-} -I"$work" "$work/check.c" -o "$work/check"
-"$work/check" "${AICWF_STA_CASE:-all}"
+    ${AICWF_STA_CFLAGS:-} -include stdbool.h -include stdint.h -I"$work" \
+    "$work/check.c" "$src/sys/net80211/ieee80211_vht_ies.c" -o "$work/check"
+if [ -n "${TEST_RUNNER:-}" ]; then
+    "$TEST_RUNNER" "$work/check" "${AICWF_STA_CASE:-all}"
+else
+    "$work/check" "${AICWF_STA_CASE:-all}"
+fi

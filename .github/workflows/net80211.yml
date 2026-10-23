@@ -6,6 +6,13 @@ name: Native net80211 crypto, scan, aggregation and WME contracts
     paths:
       - '.github/workflows/net80211.yml'
       - 'sys/net80211/**'
+      - 'sys/dev/sdmmc/if_aicwf.c'
+      - 'sys/dev/sdmmc/if_aicwf_*.h'
+      - 'ember/tests/aicwf-vht.sh'
+      - 'ember/tests/aicwf-sta.sh'
+      - 'ember/tools/aicwf-vht-test.c'
+      - 'ember/tools/aicwf-sta-contract.c'
+      - 'external/bsd/wpa/dist/src/common/ieee802_11_defs.h'
       - 'sys/crypto/aes/**'
       - 'sys/sys/mbuf.h'
       - 'sys/sys/queue.h'
@@ -46,6 +53,13 @@ name: Native net80211 crypto, scan, aggregation and WME contracts
     paths:
       - '.github/workflows/net80211.yml'
       - 'sys/net80211/**'
+      - 'sys/dev/sdmmc/if_aicwf.c'
+      - 'sys/dev/sdmmc/if_aicwf_*.h'
+      - 'ember/tests/aicwf-vht.sh'
+      - 'ember/tests/aicwf-sta.sh'
+      - 'ember/tools/aicwf-vht-test.c'
+      - 'ember/tools/aicwf-sta-contract.c'
+      - 'external/bsd/wpa/dist/src/common/ieee802_11_defs.h'
       - 'sys/crypto/aes/**'
       - 'sys/sys/mbuf.h'
       - 'sys/sys/queue.h'
@@ -103,6 +117,13 @@ jobs:
             /ember/tools/ccmp*
             /ember/tools/net80211-*
             /sys/net80211/
+            /sys/dev/sdmmc/if_aicwf.c
+            /sys/dev/sdmmc/if_aicwf_*.h
+            /ember/tests/aicwf-vht.sh
+            /ember/tests/aicwf-sta.sh
+            /ember/tools/aicwf-vht-test.c
+            /ember/tools/aicwf-sta-contract.c
+            /external/bsd/wpa/dist/src/common/ieee802_11_defs.h
             /sys/crypto/aes/
             /sys/sys/mbuf.h
             /sys/sys/queue.h
@@ -150,6 +171,9 @@ jobs:
           CCMP_TEST_CFLAGS: -O2 -g -gdwarf-4
           AMSDU_TEST_CFLAGS: -O2 -g -gdwarf-4
           PHY_IES_TEST_CFLAGS: -O2 -g -gdwarf-4
+          VHT_IES_TEST_CFLAGS: -O2 -g -gdwarf-4
+          AICWF_VHT_CFLAGS: -O2 -g -gdwarf-4
+          AICWF_STA_CFLAGS: -O2 -g -gdwarf-4
           WME_TEST_CFLAGS: -O2 -g -gdwarf-4
           MANUAL_SCAN_CFLAGS: -O2 -g -gdwarf-4
           TXOP_TEST_CFLAGS: -O2 -g -gdwarf-4
@@ -169,6 +193,9 @@ jobs:
           sh ember/tools/net80211-amsdu-contract.sh
           sh ember/tools/net80211-phy-ies-parser-contract.sh
           sh ember/tools/net80211-phy-ies-contract.sh
+          sh ember/tools/net80211-vht-ies-contract.sh
+          sh ember/tests/aicwf-vht.sh
+          sh ember/tests/aicwf-sta.sh
           python3 ember/tools/net80211-manual-scan-contract.py
           sh ember/tools/net80211-txop-contract.sh
           sh ember/tools/net80211-wme-contract.sh
@@ -191,6 +218,7 @@ jobs:
           sh ember/tools/net80211-crypto-bounds-contract.sh
           sh ember/tools/net80211-amsdu-analysis.sh
           sh ember/tools/net80211-phy-ies-analysis.sh
+          sh ember/tools/net80211-vht-ies-analysis.sh
           python3 ember/tools/net80211-manual-scan-contract.py
           sh ember/tools/net80211-txop-contract.sh
           sh ember/tools/net80211-wme-contract.sh
@@ -204,6 +232,9 @@ jobs:
           CCMP_TEST_CFLAGS: -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
           AMSDU_TEST_CFLAGS: -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
           PHY_IES_TEST_CFLAGS: -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
+          VHT_IES_TEST_CFLAGS: -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
+          AICWF_VHT_CFLAGS: -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
+          AICWF_STA_CFLAGS: -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
           WME_TEST_CFLAGS: -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
           MANUAL_SCAN_CFLAGS: -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
           TXOP_TEST_CFLAGS: -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
@@ -217,6 +248,9 @@ jobs:
           sh ember/tools/net80211-amsdu-contract.sh
           sh ember/tools/net80211-phy-ies-parser-contract.sh
           sh ember/tools/net80211-phy-ies-contract.sh
+          sh ember/tools/net80211-vht-ies-contract.sh
+          sh ember/tests/aicwf-vht.sh
+          sh ember/tests/aicwf-sta.sh
           python3 ember/tools/net80211-manual-scan-contract.py
           sh ember/tools/net80211-txop-contract.sh
           sh ember/tools/net80211-wme-contract.sh

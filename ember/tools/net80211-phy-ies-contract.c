@@ -106,7 +106,9 @@ copyout(const void *src, void *dst, size_t len)
 	return 0;
 }
 
+#ifndef __packed
 #define __packed __attribute__((packed))
+#endif
 #include "native-layouts.h"
 #define IEEE80211_FC0_SUBTYPE_PROBE_RESP 0x50
 #define IEEE80211_M_STA 1

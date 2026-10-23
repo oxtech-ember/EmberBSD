@@ -7,6 +7,8 @@
 #ifndef _DEV_SDMMC_IF_AICWF_VHT_H_
 #define _DEV_SDMMC_IF_AICWF_VHT_H_
 
+#include <net80211/ieee80211_vht_ies.h>
+
 #define AICWF_ME_CONFIG_LEN		112
 #define AICWF_ME_CONFIG_HT_INFO		0
 #define AICWF_ME_CONFIG_HT_AMPDU		2
@@ -94,31 +96,21 @@ static inline bool
 aicwf_assoc_ies_parse(const uint8_t *p, size_t len,
     struct aicwf_assoc_ies *info)
 {
-	size_t n;
+	struct ieee80211_vht_ies ies;
 
+	if (info == NULL)
+		return false;
 	memset(info, 0, sizeof(*info));
-	while (len != 0) {
-		if (len < 2 || p[1] > len - 2)
-			return false;
-		n = p[1];
-		if (p[0] == 191) {
-			if (n != 12 || info->vht)
-				return false;
-			info->vht = true;
-			info->cap = le32dec(p + 2);
-			info->rx_map = le16dec(p + 6);
-			info->tx_map = le16dec(p + 10);
-		} else if (p[0] == 192) {
-			if (n != 5 || info->operation)
-				return false;
-			info->operation = true;
-			info->op_width = p[2];
-			info->seg0 = p[3];
-			info->seg1 = p[4];
-		}
-		p += n + 2;
-		len -= n + 2;
-	}
+	if (ieee80211_vht_ies_parse(&ies, p, len) != 0)
+		return false;
+	info->vht = ies.cap_present;
+	info->operation = ies.operation_present;
+	info->cap = ies.cap.info;
+	info->rx_map = ies.cap.rx_map;
+	info->tx_map = ies.cap.tx_map;
+	info->op_width = ies.operation.width;
+	info->seg0 = ies.operation.seg0;
+	info->seg1 = ies.operation.seg1;
 	return true;
 }
 

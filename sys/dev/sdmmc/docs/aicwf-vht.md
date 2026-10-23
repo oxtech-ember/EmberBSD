@@ -63,7 +63,9 @@ Expose actual association information before treating an AP status label as proo
 The driver gates VHT80 on firmware `0x06090101`, VHT feature bits, PHY bandwidth
 and spatial-stream limits, and the available 5 GHz band. Other combinations
 retain the existing HT40 request. Successful connection indications report
-bounded VHT IEs and firmware channel metadata. Capability rates are not
+bounded VHT IEs and firmware channel metadata. The generic VHT TLV decoder
+uses the shared [net80211 wire codec](../../../net80211/docs/net80211-vht-ies.md).
+The firmware envelope and capability builder remain in this driver. Capability rates are not
 presented as negotiated link rates. The net80211 channel ABI is unchanged.
 
 The production builder and decoder pass 1703 ASan/UBSan checks.

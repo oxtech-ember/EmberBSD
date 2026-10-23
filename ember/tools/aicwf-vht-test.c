@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifndef __NetBSD__
 static uint16_t
 le16dec(const void *p)
 {
@@ -43,6 +44,8 @@ le32enc(void *p, uint32_t v)
 	b[2] = v >> 16;
 	b[3] = v >> 24;
 }
+
+#endif
 
 #include "if_aicwf_vht.h"
 

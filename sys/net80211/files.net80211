@@ -11,6 +11,7 @@ file	net80211/ieee80211_input.c		wlan
 file	net80211/ieee80211_amsdu.c		wlan
 file	net80211/ieee80211_beacon_ies.c	wlan
 file	net80211/ieee80211_phy_ies.c	wlan
+file	net80211/ieee80211_vht_ies.c	wlan
 file	net80211/ieee80211_ht20.c		wlan
 file	net80211/ieee80211_rxba.c		wlan
 file	net80211/ieee80211_ioctl.c		wlan
