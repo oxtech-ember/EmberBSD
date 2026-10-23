@@ -92,6 +92,18 @@ bus descriptor even for these reads.
 Each result contains raw `wPortStatus` and `wPortChange` values.
 Interpret them for the reported USB speed using `sys/dev/usb/usb.h`.
 A changed device cookie invalidates the observation.
-The process stops after 30 seconds if a controller does not finish a request.
+The tool arms a 30-second alarm. An uninterruptible kernel request can delay
+process termination.
 Live status can distinguish an absent connection from a missed change event;
 it does not establish the cause of a failed electrical connection.
+
+Run the host probe checks with the actual source and USB header:
+
+```sh
+CC=gcc-16 CFLAGS='-O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined' \
+    sh ember/tests/usb-hub-status.sh "$PWD" /absolute/work/hub-status-check
+```
+
+The fixture replaces only the file, ioctl and alarm calls. It checks request
+direction, port bounds, short reads, errors, descriptor cleanup and a changed
+device cookie. It does not test the target ioctl ABI or controller behavior.
