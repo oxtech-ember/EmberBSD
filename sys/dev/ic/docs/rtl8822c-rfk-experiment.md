@@ -76,6 +76,24 @@ ownership. It yields while waiting for actual device consumption. Consumption
 does not mean semantic IQK completion. A prior uncertain read/write remains
 sticky; cleanup cannot turn a later snapshot into permission to reuse DMA.
 
+## AP withdrawal during the closed RX interval
+
+The experimental native wrapper watches the selected STA peer before ordinary
+RX admission. A closed or full mbuf queue cannot hide a CSA, Extended CSA or
+Quiet announcement during RFK. The observer checks the descriptor, unprotected
+three-address management header, receiver, transmitter, BSSID, PHY channel and
+firmware generation. It uses the shared bounded announcement classifiers.
+Malformed beacon IE windows also withdraw permission.
+
+The interrupt records only a numeric epoch, generation and channel. Giant
+consumes that notice before RX delivery, state replacement, RFK continuation
+and the final station commit. A pending notice also closes all TX capacity and
+submit paths, including raw management and group frames. An accepted notice
+survives the same-peer stop boundary, including failed power-off or DMA stop.
+It cannot reopen TX or reload firmware. Detach remains the sticky quiet reset
+boundary. These checks do not provide a DFS beacon lease, passive scanning,
+regulatory admission or channel 64 support.
+
 ## Originals, cancellation and quarantine
 
 The owner captures the source-defined 0x520 and 0x1e70 originals before the early

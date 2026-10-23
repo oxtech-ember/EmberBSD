@@ -32,7 +32,7 @@ printf '#include <stddef.h>\n#define KM_SLEEP 0\nvoid *kmem_zalloc(size_t,int);\
 for header in sys/param.h sys/systm.h; do
     printf '#include <errno.h>\n#include "rtw88-test-kernel.h"\n' > "$work/include/$header"
 done
-scenarios=${RTW88_RFK_CASE:-timing-good timing-edge timing-wrap timing-minimum timing-late timing-none timing-stale timing-cancel timing-Q timing-stall timing-long-stall timing-read-expiry timing-new-expiry none positive vendor-end end-prezero end-held end-read-error end-ext-error end-write-error end-cancel end-Q end-deadline end-late-report stale-start stale-gapk stale-iqk stale-dpk stale-cal stale-coef snapshot-first snapshot-second write-gapk write-dpk restore-first restore-second cancel-gapk profile-gapk cancel-iqk cancel-dpk newfw-baseline zero-init c1-spacing alloc-cancel alloc-Q packet-write-error packet-read-error slow-io cleanup-expiry dying-cleanup post-complete-change rf18-width rf18-path rf18-channel rf18-band rf18-region rf18-read-error detach-baseline write-rxbb cancel-rxbb quarantine-rxbb quarantine-complete env-tmac env-rf18-a env-rf18-b env-macbw env-datasc env-read-error env-channel149 power-before-missing power-before-fw power-before-channel power-before-cut power-before-rfe power-before-regd power-before-serial power-after-bind power-mailbox power-partial env-retire-Q seal-power env-successor-scan quiet-rfk}
+scenarios=${RTW88_RFK_CASE:-timing-good timing-edge timing-wrap timing-minimum timing-late timing-none timing-stale timing-cancel timing-Q timing-stall timing-long-stall timing-read-expiry timing-new-expiry none positive vendor-end end-prezero end-held end-read-error end-ext-error end-write-error end-cancel end-Q end-deadline end-late-report stale-start stale-gapk stale-iqk stale-dpk stale-cal stale-coef snapshot-first snapshot-second write-gapk write-dpk restore-first restore-second cancel-gapk profile-gapk cancel-iqk cancel-dpk newfw-baseline zero-init c1-spacing alloc-cancel alloc-Q packet-write-error packet-read-error slow-io cleanup-expiry dying-cleanup post-complete-change rf18-width rf18-path rf18-channel rf18-band rf18-region rf18-read-error detach-baseline write-rxbb cancel-rxbb quarantine-rxbb quarantine-complete env-tmac env-rf18-a env-rf18-b env-macbw env-datasc env-read-error env-channel149 power-before-missing power-before-fw power-before-channel power-before-cut power-before-rfe power-before-regd power-before-serial power-after-bind power-mailbox power-partial env-retire-Q seal-power env-successor-scan quiet-rfk quiet-rx quiet-rx-worker control-races}
 for altq in 0 1; do
     flags=-UALTQ
     [ "$altq" = 0 ] || flags=-DALTQ
@@ -86,8 +86,10 @@ for altq in 0 1; do
             ${CC:-cc} -std=c11 -pthread -DRTW88_RFK_EXPERIMENT -D_DEFAULT_SOURCE -D_DARWIN_C_SOURCE -O0 -g -Wall -Werror -fanalyzer $flags \
                 -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \
                 -c "$unit" -o "$work/$name-analysis.o"
+            # Match this built-in experiment and the explicit ALTQ profile.
             cppcheck --enable=warning,performance,portability --error-exitcode=1 \
-                --check-level=exhaustive --include="$work/predefines.h" $flags -U_KERNEL -U_MODULE \
+                --check-level=exhaustive --include="$work/predefines.h" \
+                -DRTW88_RFK_EXPERIMENT $flags -U_KERNEL -U_MODULE \
                 -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" "$unit"
             ${CLANG:-clang} ${RTW88_CLANG_FLAGS:-} --analyze -std=c11 -pthread -DRTW88_RFK_EXPERIMENT -D_DEFAULT_SOURCE -D_DARWIN_C_SOURCE $flags \
                 -Wall -Werror -Xanalyzer -analyzer-output=text -Xanalyzer -analyzer-werror \

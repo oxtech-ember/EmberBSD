@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Origin: native RTL8822C worker contract service model, AI-assisted. */
 /* Explicit kernel registration/service model for the owning attach function. */
 #include <stdarg.h>
 #include <time.h>
@@ -37,8 +38,7 @@ static void rtw88_net_watchdog(struct ifnet *p) { (void)p; }
 static int rtw88_net_media_change(struct ifnet *p) { (void)p;return 0; }
 static void rtw88_net_scan(void *p) { (void)p; }
 static void rtw88_net_rx_frame(void *cookie,const uint8_t *frame,size_t len,
-    const struct rtw88_rx_info *info)
-{ (void)cookie;(void)frame;(void)len;(void)info; }
+    const struct rtw88_rx_info *info);
 void *kmem_zalloc(size_t n,int flags)
 { (void)flags;void *p=calloc(1,n);assert(p);enable_allocations++;return p; }
 void kmem_free(void *p,size_t n)

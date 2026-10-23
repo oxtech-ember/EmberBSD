@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Origin: native RTL8822C attach and worker source extraction, AI-assisted.
 # Execute owning attach and state work with actual shared WME and core consumers.
 from pathlib import Path
 import re
@@ -108,3 +109,8 @@ for name,result in [('rtw88_net_sta_quiet','static void'),('rtw88_net_rxba_now',
 (out/'enable-native.inc').write_text('\n'.join(parts))
 with (out/'enable-native.inc').open('a') as stream:
  stream.write(function(net,'rtw88_net_init','static int'))
+ # Reuse the existing explicit mbuf-allocation service. Keep the RX callback
+ # complete so RFK tests can deliver frames while ordinary admission is closed.
+ queue_service=read('ember/tools/rtw88-signal-queue-contract.c')
+ stream.write(queue_service[queue_service.index('#define if_ierrors'):queue_service.index('#include "signal-native-rx.inc"')])
+ stream.write(function(net,'rtw88_net_rx_frame','static void'))

@@ -17,33 +17,38 @@ ieee80211_beacon_ies_parse(struct ieee80211_beacon_ies *ies,
 	if (data == NULL && len != 0)
 		return -1;
 	while (left != 0) {
-		if (left < 2 || ie[1] > left - 2)
+		size_t payload;
+
+		if (left < 2)
+			return -1;
+		payload = ie[1];
+		if (payload > left - 2)
 			return -1;
 		switch (ie[0]) {
 		case 0: /* SSID */
 			pending.ssid = ie;
-			if (ie[1] <= 32)
+			if (payload <= 32)
 				pending.ssid_valid = ie;
 			break;
 		case 1: /* Supported Rates */
 			pending.rates = ie;
-			if (ie[1] <= 15)
+			if (payload <= 15)
 				pending.rates_valid = ie;
 			break;
 		case 2: /* FH Parameter Set */
-			if (ie[1] < 5)
+			if (payload < 5)
 				return -1;
 			pending.fh = ie;
 			break;
 		case 3: /* DS Parameter Set */
-			if (ie[1] < 1)
+			if (payload < 1)
 				return -1;
 			pending.ds = ie;
-			if (ie[1] == 1)
+			if (payload == 1)
 				pending.ds_exact = ie;
 			break;
 		case 5: /* TIM: count, period, control and at least one bitmap byte */
-			if (ie[1] < 4)
+			if (payload < 4)
 				return -1;
 			pending.tim = ie;
 			pending.timoff = len - left;
@@ -52,24 +57,24 @@ ieee80211_beacon_ies_parse(struct ieee80211_beacon_ies *ies,
 			break;
 		case 7: pending.country = ie; break;
 		case 37: /* Channel Switch Announcement: mode, channel, count. */
-			if (ie[1] != 3 || pending.csa != NULL ||
+			if (payload != 3 || pending.csa != NULL ||
 			    ie[2] > 1 || ie[3] == 0)
 				return -1;
 			pending.csa = ie;
 			break;
 		case 60: /* Extended CSA adds an operating class. */
-			if (ie[1] != 4 || pending.xcsa != NULL ||
+			if (payload != 4 || pending.xcsa != NULL ||
 			    ie[2] > 1 || ie[4] == 0)
 				return -1;
 			pending.xcsa = ie;
 			break;
 		case 40: /* Quiet: count, period, duration and offset. */
-			if (ie[1] != 6 || pending.quiet != NULL)
+			if (payload != 6 || pending.quiet != NULL)
 				return -1;
 			pending.quiet = ie;
 			break;
 		case 42: /* ERP */
-			if (ie[1] == 1)
+			if (payload == 1)
 				pending.erp = ie;
 			else
 				pending.bad_erp++;
@@ -77,30 +82,30 @@ ieee80211_beacon_ies_parse(struct ieee80211_beacon_ies *ies,
 		case 48: pending.rsn = pending.security = ie; break;
 		case 50: pending.xrates = ie; break;
 		case 54: /* Mobility Domain */
-			if (ie[1] >= 3)
+			if (payload >= 3)
 				pending.mdie = ie;
 			pending.unknown++;
 			break;
 		case 61: /* HT Operation: primary channel is observation only. */
-			if (ie[1] >= 22)
+			if (payload >= 22)
 				pending.ht = ie;
 			pending.unknown++;
 			break;
 		case 70:
-			if (ie[1] == 5)
+			if (payload == 5)
 				pending.rrm = ie;
 			break;
 		case 127:
 			pending.extcap = ie;
-			if (ie[1] >= 1 && ie[1] <= 32)
+			if (payload >= 1 && payload <= 32)
 				pending.extcap_bounded = ie;
 			break;
 		case 221: /* Microsoft WPA/WME OUI */
-			if (ie[1] >= 4 && ie[2] == 0 && ie[3] == 0x50 &&
+			if (payload >= 4 && ie[2] == 0 && ie[3] == 0x50 &&
 			    ie[4] == 0xf2) {
 				if (ie[5] == 1)
 					pending.security = ie;
-				else if (ie[5] == 2 && ie[1] >= 6 &&
+				else if (ie[5] == 2 && payload >= 6 &&
 				    (ie[6] == 0 || ie[6] == 1)) {
 					if (pending.wme != NULL)
 						pending.wme_duplicate = 1;
@@ -109,16 +114,16 @@ ieee80211_beacon_ies_parse(struct ieee80211_beacon_ies *ies,
 			}
 			break;
 		case 244:
-			if (ie[1] >= 1 && ie[1] <= 16 &&
-			    (ie[2] & 0x0f) + 1 == ie[1])
+			if (payload >= 1 && payload <= 16 &&
+			    (ie[2] & 0x0f) + 1U == payload)
 				pending.rsnx = ie;
 			break;
 		default:
 			pending.unknown++;
 			break;
 		}
-		left -= (size_t)ie[1] + 2;
-		ie += (size_t)ie[1] + 2;
+		left -= (size_t)payload + 2;
+		ie += (size_t)payload + 2;
 	}
 	(void)ieee80211_phy_ies_parse(&pending.phy, data, len);
 	*ies = pending;

@@ -1,7 +1,81 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Origin: native RFK owner and current-peer withdrawal services, AI-assisted. */
 /* Copyright (c) 2026 EmberBSD contributors. */
 /* Internal default-OFF RFK worker services. Giant owns all shared-stack values.
  * No node, key, channel or provider pointer survives a sleep as an identity. */
+
+/* PCI-serialized observation before ordinary RX admission. Keep only the
+ * current numeric withdrawal event; Giant owns every stack/state mutation.
+ * A closed or full mbuf queue cannot hide an AP's withdrawal during RFK. */
+static void
+rtw88_net_rfk_rx_observe(struct rtw88_net *net, const uint8_t *frame, size_t len,
+    const struct rtw88_rx_info *info)
+{
+	const struct ieee80211_frame *wh;
+	const uint8_t *body;
+	int notice;
+
+	KASSERT(mutex_owned(net->lock));
+	if (net->policy.dying || net->tx_quiet || !net->core->sc_running ||
+	    net->rfk.control_epoch == 0 ||
+	    net->rfk.control_epoch != net->policy.epoch ||
+	    net->rfk.control_generation != net->core->sc_generation ||
+	    net->rfk.control_channel != net->core->sc_channel ||
+	    frame == NULL || info == NULL || len < sizeof(*wh) ||
+	    len > RTW88_NET_MPDU_LIMIT || len != info->packet_size ||
+	    (info->flags & 0x13) != 0 || info->security != 0 ||
+	    !info->signal.valid ||
+	    info->signal.generation != net->rfk.control_generation ||
+	    info->signal.channel != net->rfk.control_channel)
+		return;
+	wh = (const void *)frame;
+	if ((wh->i_fc[1] & (IEEE80211_FC1_WEP | IEEE80211_FC1_MORE_FRAG |
+	    IEEE80211_FC1_ORDER | IEEE80211_FC1_DIR_MASK)) != 0 ||
+	    (wh->i_seq[0] & IEEE80211_SEQ_FRAG_MASK) != 0 ||
+	    (!IEEE80211_IS_MULTICAST(wh->i_addr1) &&
+	     !IEEE80211_ADDR_EQ(wh->i_addr1, net->rfk.control_ra)) ||
+	    !IEEE80211_ADDR_EQ(wh->i_addr2, net->rfk.control_ta) ||
+	    !IEEE80211_ADDR_EQ(wh->i_addr3, net->rfk.control_bssid))
+		return;
+	body = frame + sizeof(*wh);
+	len -= sizeof(*wh);
+	if (wh->i_fc[0] == (IEEE80211_FC0_TYPE_MGT | IEEE80211_FC0_SUBTYPE_BEACON) ||
+	    wh->i_fc[0] == (IEEE80211_FC0_TYPE_MGT | IEEE80211_FC0_SUBTYPE_PROBE_RESP))
+		notice = ieee80211_sta_beacon_announcement(body, len);
+	else if (wh->i_fc[0] == (IEEE80211_FC0_TYPE_MGT | IEEE80211_FC0_SUBTYPE_ACTION))
+		notice = ieee80211_sta_action_announcement(body, len);
+	else
+		return;
+	if (!notice)
+		return;
+	net->rfk.notice_epoch = net->rfk.control_epoch;
+	net->rfk.notice_generation = net->rfk.control_generation;
+	net->rfk.notice_channel = net->rfk.control_channel;
+	net->rfk.notice_pending = 1;
+	softint_schedule(net->softint);
+}
+
+static void
+rtw88_net_rfk_rx_deliver(struct rtw88_net *net)
+{
+	int current;
+
+	mutex_enter(net->lock);
+	current = net->rfk.notice_pending && !net->policy.dying &&
+	    net->rfk.notice_epoch == net->policy.epoch &&
+	    net->rfk.notice_epoch == net->rfk.control_epoch &&
+	    net->rfk.notice_generation == net->rfk.control_generation &&
+	    net->rfk.notice_channel == net->core->sc_channel &&
+	    net->rfk.notice_channel == net->rfk.control_channel;
+	net->rfk.notice_pending = 0;
+	mutex_exit(net->lock);
+	if (current) {
+		rtw88_net_sta_quiet(&net->ic);
+		(void)ieee80211_ht20_state_request(&net->ic, IEEE80211_S_INIT);
+		(void)rtw88_net_newstate(&net->ic, IEEE80211_S_INIT, -1);
+	}
+}
+
 static void
 rtw88_net_rfk_publish(struct rtw88_net *net)
 {
@@ -99,6 +173,8 @@ rtw88_net_rfk_enter(void *cookie, int cleanup)
 	if (net->rfk.generation != net->core->sc_generation ||
 	    net->core->sc_stop_requested || !net->core->sc_resources_ready)
 		error = ESTALE;
+	else if (net->rfk.notice_pending)
+		error = ECANCELED;
 	else if (!cleanup && (net->policy.dying ||
 	    net->rfk.epoch != net->policy.epoch ||
 	    net->requested != IEEE80211_S_AUTH))
@@ -156,6 +232,9 @@ rtw88_net_rfk_wait(void *cookie, unsigned us, int cleanup)
 			if (error != 0 && error != EWOULDBLOCK)
 				return error;
 		}
+		/* Giant is held again after the scheduler return. A pending AP
+		 * event must close TX before any later RFK or cleanup I/O. */
+		rtw88_net_rfk_rx_deliver(net);
 		/* Cleanup retains the old owner, not new request values. The
 		 * core rechecks its lease and deadline before the next IO. */
 		if (!cleanup) {
