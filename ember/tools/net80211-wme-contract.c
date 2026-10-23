@@ -349,6 +349,7 @@ if_start_lock(struct ifnet *ifp)
 	}
 }
 static int apply_error, beacon_lock, expect_uncommitted;
+static void (*during_apply)(struct ieee80211com *);
 static struct chanAccParams applied_params;
 static unsigned applied_slot;
 #define IEEE80211_BEACON_LOCK(ic)                                              \
@@ -384,6 +385,8 @@ strict_update(struct ieee80211com *ic, const struct chanAccParams *params,
 	applies++;
 	applied_params = *params;
 	applied_slot = slot;
+	if (during_apply != NULL)
+		during_apply(ic);
 	return apply_error;
 }
 static void
@@ -545,6 +548,7 @@ setup(void)
 		test_ic.ic_wme.wme_wmeBssChanParams.cap_wmeParams[ac] = p;
 	}
 	during_start = NULL;
+	during_apply = NULL;
 	adjust_failure = 0;
 	active_ic = &test_ic;
 	applies = 0;
@@ -1449,6 +1453,216 @@ test_wme_state_equal(const struct ieee80211_wme_state *a,
 	    test_chan_params_equal(&a->wme_chanParams, &b->wme_chanParams) &&
 	    test_chan_params_equal(&a->wme_bssChanParams, &b->wme_bssChanParams);
 }
+/* Each stale mode changes one selected callback owner value. */
+enum apply_change {
+	APPLY_UNCHANGED, APPLY_WME_RESET, APPLY_BSS, APPLY_MAC, APPLY_BSSID,
+	APPLY_CURRENT_CHANNEL, APPLY_NODE_CHANNEL, APPLY_STATE, APPLY_OPMODE,
+	APPLY_CIPHER, APPLY_PRIVACY, APPLY_WME_ENABLE, APPLY_WME_CAPABILITY,
+	APPLY_SHORT_SLOT, APPLY_MODE, APPLY_CALLBACK, APPLY_ATTEMPT,
+	APPLY_HT_RESET, APPLY_UNRELATED_FLAG
+};
+static enum apply_change apply_change;
+static struct ieee80211_node replacement_node, after_apply_node;
+static struct ieee80211_channel replacement_channel = {2437, 0};
+static struct ieee80211_wme_state after_apply_wme;
+static struct ieee80211com after_apply_ic;
+
+static int
+replacement_apply(struct ieee80211com *ic, const struct chanAccParams *params,
+    unsigned slot)
+{
+	(void)ic;
+	(void)params;
+	(void)slot;
+	abort(); /* Replacement must not be called by the completing transaction. */
+}
+
+static void
+change_apply_owner(struct ieee80211com *ic)
+{
+	struct ieee80211_node *ni = ic->ic_bss;
+
+	assert(beacon_lock);
+	switch (apply_change) {
+	case APPLY_WME_RESET:
+		ieee80211_wme_reset(ni);
+		break;
+	case APPLY_BSS:
+		replacement_node = *ni;
+		ic->ic_bss = &replacement_node;
+		break;
+	case APPLY_MAC:
+		ni->ni_macaddr[5] ^= 1;
+		break;
+	case APPLY_BSSID:
+		ni->ni_bssid[5] ^= 1;
+		break;
+	case APPLY_CURRENT_CHANNEL:
+		ic->ic_curchan = &replacement_channel;
+		break;
+	case APPLY_NODE_CHANNEL:
+		ni->ni_chan = &replacement_channel;
+		break;
+	case APPLY_STATE:
+		ic->ic_state = IEEE80211_S_AUTH;
+		break;
+	case APPLY_OPMODE:
+		ic->ic_opmode = IEEE80211_M_HOSTAP;
+		break;
+	case APPLY_CIPHER:
+		ni->ni_rsn.rsn_ucastcipher = IEEE80211_CIPHER_AES_CCM;
+		break;
+	case APPLY_PRIVACY:
+		ic->ic_flags ^= IEEE80211_F_PRIVACY;
+		break;
+	case APPLY_WME_ENABLE:
+		ic->ic_flags ^= IEEE80211_F_WME;
+		break;
+	case APPLY_WME_CAPABILITY:
+		ic->ic_caps ^= IEEE80211_C_WME;
+		break;
+	case APPLY_SHORT_SLOT:
+		ic->ic_flags ^= IEEE80211_F_SHSLOT;
+		break;
+	case APPLY_MODE:
+		ic->ic_curmode = IEEE80211_MODE_11B;
+		break;
+	case APPLY_CALLBACK:
+		ic->ic_wme.wme_sta_apply = replacement_apply;
+		break;
+	case APPLY_ATTEMPT:
+		ni->ni_wme_attempt++;
+		break;
+	case APPLY_HT_RESET:
+		ieee80211_ht20_reset(ni);
+		break;
+	case APPLY_UNRELATED_FLAG:
+		ic->ic_flags ^= IEEE80211_F_WMEUPDATE;
+		break;
+	case APPLY_UNCHANGED:
+		break;
+	}
+	if (apply_change >= APPLY_WME_RESET &&
+	    apply_change <= APPLY_ATTEMPT) {
+		/* A callback can replace live tables; rejection must retain them. */
+		ic->ic_wme.wme_wmeChanParams.cap_info = 11;
+		ic->ic_wme.wme_chanParams.cap_info = 12;
+		ic->ic_wme.wme_bssChanParams.cap_info = 13;
+		ic->ic_wme.wme_wmeBssChanParams.cap_info = 14;
+		for (unsigned ac = 0; ac < WME_NUM_AC; ac++)
+			ic->ic_wme.wme_params[ac].wmep_txopLimit = 600 + ac;
+	}
+	after_apply_wme = ic->ic_wme;
+	after_apply_node = *ni;
+	after_apply_ic = *ic;
+}
+
+static void
+test_apply_callback_owner(void)
+{
+	const int errors[] = {0, EIO, EOPNOTSUPP};
+
+	for (unsigned e = 0; e < sizeof(errors) / sizeof(errors[0]); e++) {
+		for (enum apply_change change = APPLY_WME_RESET;
+		    change <= APPLY_ATTEMPT; change++) {
+			struct chanAccParams candidate;
+			int error;
+
+			setup();
+			install_strict();
+			candidate = test_ic.ic_wme.wme_wmeBssChanParams;
+			candidate.cap_info = 3;
+			test_node.ni_wme_applied_chan = &replacement_channel;
+			test_node.ni_wme_applied_slot = 77;
+			apply_change = change;
+			apply_error = errors[e];
+			during_apply = change_apply_owner;
+			error = ieee80211_wme_apply_sta(&test_ic, &test_node,
+			    &candidate, 20);
+			if (error != (errors[e] != 0 ? errors[e] : EINVAL))
+				fprintf(stderr, "callback owner mode %u error %d: %d\n",
+				    (unsigned)change, errors[e], error);
+			CHECK(error == (errors[e] != 0 ? errors[e] : EINVAL));
+			CHECK(applies == 1 && !beacon_lock);
+			after_apply_wme.wme_sta_error = error;
+			CHECK(test_wme_state_equal(&test_ic.ic_wme, &after_apply_wme));
+			CHECK(test_node.ni_flags == after_apply_node.ni_flags);
+			CHECK(test_node.ni_wme_applied_chan ==
+			    after_apply_node.ni_wme_applied_chan);
+			CHECK(test_node.ni_wme_applied_slot ==
+			    after_apply_node.ni_wme_applied_slot);
+			/* The postcheck only owns its error and prepared publication. */
+			CHECK(test_ic.ic_bss == after_apply_ic.ic_bss);
+			CHECK(test_ic.ic_curchan == after_apply_ic.ic_curchan);
+			CHECK(test_ic.ic_state == after_apply_ic.ic_state);
+			CHECK(test_ic.ic_opmode == after_apply_ic.ic_opmode);
+			CHECK(test_ic.ic_curmode == after_apply_ic.ic_curmode);
+			CHECK(test_ic.ic_flags == after_apply_ic.ic_flags);
+			CHECK(test_ic.ic_caps == after_apply_ic.ic_caps);
+			CHECK(test_node.ni_wme_attempt == after_apply_node.ni_wme_attempt);
+			CHECK(IEEE80211_ADDR_EQ(test_node.ni_macaddr, after_apply_node.ni_macaddr));
+			CHECK(IEEE80211_ADDR_EQ(test_node.ni_bssid, after_apply_node.ni_bssid));
+			CHECK(test_node.ni_chan == after_apply_node.ni_chan);
+			CHECK(test_node.ni_rsn.rsn_ucastcipher ==
+			    after_apply_node.ni_rsn.rsn_ucastcipher);
+		}
+	}
+	for (enum apply_change change = APPLY_UNCHANGED;
+	    change <= APPLY_UNRELATED_FLAG; change++) {
+		struct chanAccParams candidate;
+
+		if (change != APPLY_UNCHANGED && change != APPLY_HT_RESET &&
+		    change != APPLY_UNRELATED_FLAG)
+			continue;
+		setup();
+		install_strict();
+		candidate = test_ic.ic_wme.wme_wmeBssChanParams;
+		candidate.cap_info = 3;
+		apply_change = change;
+		during_apply = change_apply_owner;
+		CHECK(ieee80211_wme_apply_sta(&test_ic, &test_node,
+		    &candidate, 20) == 0);
+		CHECK(applies == 1 && !beacon_lock);
+		CHECK(test_ic.ic_wme.wme_sta_error == 0);
+		CHECK(test_chan_params_equal(&test_ic.ic_wme.wme_wmeChanParams,
+		    &candidate));
+		CHECK(test_chan_params_equal(&test_ic.ic_wme.wme_chanParams,
+		    &applied_params));
+		CHECK(test_node.ni_wme_applied_chan == &test_channel);
+		CHECK(test_node.ni_wme_applied_slot == 20);
+		CHECK((test_node.ni_flags &
+		    (IEEE80211_NODE_QOS | IEEE80211_NODE_WME_VALID)) ==
+		    (IEEE80211_NODE_QOS | IEEE80211_NODE_WME_VALID));
+		if (change == APPLY_HT_RESET)
+			CHECK(test_node.ni_ht20.attempt == 1);
+		if (change == APPLY_UNRELATED_FLAG)
+			CHECK(test_ic.ic_flags & IEEE80211_F_WMEUPDATE);
+	}
+}
+
+static void
+test_wme_only_callback_cancel(void)
+{
+	for (enum apply_change change = APPLY_WME_RESET;
+	    change <= APPLY_ATTEMPT; change++) {
+		setup();
+		install_strict();
+		CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ) == 0);
+		CHECK(offered_on_wire(IEEE80211_FC0_SUBTYPE_ASSOC_REQ));
+		CHECK(!test_node.ni_ht20.offered);
+		apply_change = change;
+		during_apply = change_apply_owner;
+		deliver(response(1, 0, IEEE80211_FC0_SUBTYPE_ASSOC_RESP),
+		    IEEE80211_FC0_SUBTYPE_ASSOC_RESP);
+		CHECK(applies == 1 && !beacon_lock);
+		CHECK(test_ic.ic_wme.wme_sta_error == EINVAL);
+		CHECK(test_ic.ic_state == IEEE80211_S_SCAN);
+		CHECK(test_node.ni_associd == 0);
+		CHECK(!(test_node.ni_flags &
+		    (IEEE80211_NODE_QOS | IEEE80211_NODE_WME_VALID)));
+	}
+}
+
 static void
 test_strict_ioctl_reject(void)
 {
@@ -1655,6 +1869,8 @@ main(void)
 	test_strict_join_ownership();
 	test_invalid_apply_candidate();
 	test_apply_transaction();
+	test_apply_callback_owner();
+	test_wme_only_callback_cancel();
 	test_exchange();
 	test_parser();
 	test_parser_boundaries();

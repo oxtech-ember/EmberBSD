@@ -56,10 +56,24 @@ An optional wme_sta_apply callback accepts an immutable effective four-AC set
 and the new slot time. The shared pure preparation fills complete effective
 records and the compatibility wme_params view, including ACM and noack policy.
 The strict STA path commits peer/effective/compatibility tables, count and
-QoS flags only after callback success. Failure preserves the previous software
-tables and retires the association. Unchanged count skips apply only for the
-same applied channel and slot. A slot-only change uses the last valid set when
-no valid new WME IE is present.
+QoS flags only after callback success in the same live owner context. Under
+the existing beacon lock, apply snapshots the current BSS/node identity,
+MAC/BSSID, association attempt, state, opmode, current and node channels, mode,
+WME capability/enable, privacy, selected cipher, short-slot flag and callback.
+A changed selected value after callback success returns EINVAL before any
+prepared table, applied channel/slot or QoS flag is published. The callback's
+own state changes remain in place; apply records only its error on rejection.
+A nonzero callback error retains its original code. Callers retire a failed
+association after the lock is released. Apply does not invoke reset, state
+transitions or TX quiet while it holds that lock.
+
+An HT-only reset does not change the WME owner. WME can commit, while the HT
+owner rejects its retired saved offer through the independent HT generation.
+Unrelated interface flags do not invalidate WME apply. This bounded callback
+contract does not cover a callback issuing a complete new association request
+reentrantly. Unchanged count skips apply only for the same applied channel and
+slot. A slot-only change uses the last valid set when no valid new WME IE is
+present.
 
 The callback must be bounded, non-sleeping and synchronous. It must fence new
 hardware TX before returning an uncertain hardware error. Software rollback

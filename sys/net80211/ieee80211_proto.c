@@ -873,7 +873,11 @@ ieee80211_wme_apply_sta(struct ieee80211com *ic, struct ieee80211_node *ni,
 {
 	struct ieee80211_wme_state *wme = &ic->ic_wme;
 	struct ieee80211_wme_state prepared;
-	unsigned ac;
+	struct ieee80211_channel *channel, *node_channel;
+	int (*apply)(struct ieee80211com *, const struct chanAccParams *, unsigned);
+	u_int32_t attempt, flags, caps;
+	u_int8_t macaddr[IEEE80211_ADDR_LEN], bssid[IEEE80211_ADDR_LEN], cipher;
+	unsigned ac, opmode, state, mode;
 	int error;
 
 	if (ni == NULL || params == NULL)
@@ -908,8 +912,34 @@ ieee80211_wme_apply_sta(struct ieee80211com *ic, struct ieee80211_node *ni,
 	prepared = *wme;
 	prepared.wme_wmeChanParams = *params;
 	ieee80211_wme_prepare(ic, &prepared, 1);
+	/* Keep only the owner values used by this synchronous STA apply. */
+	channel = ic->ic_curchan;
+	node_channel = ni->ni_chan;
+	opmode = ic->ic_opmode;
+	state = ic->ic_state;
+	mode = ic->ic_curmode;
+	flags = ic->ic_flags &
+	    (IEEE80211_F_WME | IEEE80211_F_PRIVACY | IEEE80211_F_SHSLOT);
+	caps = ic->ic_caps & IEEE80211_C_WME;
+	attempt = ni->ni_wme_attempt;
+	cipher = ni->ni_rsn.rsn_ucastcipher;
+	IEEE80211_ADDR_COPY(macaddr, ni->ni_macaddr);
+	IEEE80211_ADDR_COPY(bssid, ni->ni_bssid);
+	apply = wme->wme_sta_apply;
 	/* The callback must fence TX before returning an uncertain HW failure. */
-	error = wme->wme_sta_apply(ic, &prepared.wme_chanParams, slot);
+	error = apply(ic, &prepared.wme_chanParams, slot);
+	if (error == 0 &&
+	    (ni != ic->ic_bss || opmode != ic->ic_opmode ||
+	     state != ic->ic_state || mode != ic->ic_curmode ||
+	     channel != ic->ic_curchan || node_channel != ni->ni_chan ||
+	     flags != (ic->ic_flags &
+	      (IEEE80211_F_WME | IEEE80211_F_PRIVACY | IEEE80211_F_SHSLOT)) ||
+	     caps != (ic->ic_caps & IEEE80211_C_WME) ||
+	     attempt != ni->ni_wme_attempt || cipher != ni->ni_rsn.rsn_ucastcipher ||
+	     !IEEE80211_ADDR_EQ(macaddr, ni->ni_macaddr) ||
+	     !IEEE80211_ADDR_EQ(bssid, ni->ni_bssid) ||
+	     apply != wme->wme_sta_apply))
+		error = EINVAL;
 	wme->wme_sta_error = error;
 	if (error == 0) {
 		wme->wme_wmeChanParams = prepared.wme_wmeChanParams;
