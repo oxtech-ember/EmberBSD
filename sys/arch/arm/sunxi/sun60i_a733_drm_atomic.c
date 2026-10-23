@@ -96,7 +96,7 @@ a733_drm_work(struct work *work, void *cookie)
 
 	plane = drm_atomic_get_new_plane_state(state, &sc->plane);
 	crtc = drm_atomic_get_new_crtc_state(state, &sc->crtc);
-	if (plane->fb != NULL) {
+	if (crtc->active && plane->fb != NULL) {
 		fb = container_of(plane->fb, struct a733_drm_fb, base);
 		frame = (struct sun60i_a733_drm_frame){
 			.format = plane->fb->format->format,
@@ -109,7 +109,8 @@ a733_drm_work(struct work *work, void *cookie)
 	}
 
 	/* This worker holds no modeset, reservation or provider lock. */
-	error = plane->fb != NULL ? a733_explicit_fence(plane->fence) : 0;
+	error = crtc->active && plane->fb != NULL ?
+	    a733_explicit_fence(plane->fence) : 0;
 	/* A vblank reference keeps the DRM count current through the flip. */
 	if (error == 0 && sc->vblank_irq) {
 		if (!sc->vblank_on) {
@@ -119,7 +120,9 @@ a733_drm_work(struct work *work, void *cookie)
 		vblank_ref = drm_crtc_vblank_get(&sc->crtc) == 0;
 	}
 	if (error == 0) {
-		if (plane->fb == NULL)
+		if (!crtc->active)
+			error = sun60i_a733_de352_stop(sc->client, &done);
+		else if (plane->fb == NULL)
 			error = sun60i_a733_de352_disable_plane(sc->client, &done);
 		else
 			error = sun60i_a733_drm_frame_submit(sc->client, &sc->native,
@@ -143,6 +146,10 @@ a733_drm_work(struct work *work, void *cookie)
 	a733_commit_event(sc, crtc, sequence, time_ns, error);
 	if (vblank_ref)
 		drm_crtc_vblank_put(&sc->crtc);
+	if (error == 0 && !crtc->active && sc->vblank_on) {
+		drm_crtc_vblank_off(&sc->crtc);
+		sc->vblank_on = false;
+	}
 	drm_atomic_helper_commit_hw_done(state);
 	drm_atomic_helper_cleanup_planes(sc->dev, state);
 	drm_atomic_helper_commit_cleanup_done(state);
@@ -242,10 +249,13 @@ a733_drm_atomic_check(struct drm_device *dev, struct drm_atomic_state *state)
 	connector = drm_atomic_get_connector_state(state, &sc->connector);
 	if (IS_ERR(connector))
 		return PTR_ERR(connector);
-	/*
-	 * The timing engine remains active. Only plane disable is supported.
-	 */
-	if (!crtc->enable || !crtc->active || connector->crtc != &sc->crtc)
+	if (!crtc->enable) {
+		if (crtc->active || plane->fb != NULL || plane->crtc != NULL ||
+		    connector->crtc != NULL)
+			return -EINVAL;
+		return drm_atomic_helper_check(dev, state);
+	}
+	if (connector->crtc != &sc->crtc)
 		return -EOPNOTSUPP;
 	if (!a733_drm_mode_matches(mode, &crtc->mode))
 		return -EINVAL;

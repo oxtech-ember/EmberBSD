@@ -80,4 +80,9 @@ int sun60i_a733_de352_detect(struct sun60i_a733_de352_client *, bool *);
 int sun60i_a733_de352_disable_plane(struct sun60i_a733_de352_client *,
     struct sun60i_a733_de352_completion *);
 
+/* Retire pixel DMA before stopping output. A later submit restarts timing.
+ * Retain all native leases and queues. An uncertain stop blocks restart. */
+int sun60i_a733_de352_stop(struct sun60i_a733_de352_client *,
+    struct sun60i_a733_de352_completion *);
+
 #endif

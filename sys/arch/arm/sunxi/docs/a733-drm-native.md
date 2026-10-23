@@ -278,3 +278,16 @@ A failed or uncertain list attempt retains both old pixels and the new queue.
 A later normal frame replaces the disabled list through the same proof.
 The timing engine and resource leases stay active. This is plane disable,
 not full output stop, DPMS off, detach, or permission to release hardware claims.
+
+## Retained CRTC stop and resume
+
+An inactive CRTC first installs the disabled-plane list and waits for the
+existing RCQ readback and two later vblanks. The native owner then stops TV0
+and DW-HDMI. Only a successful stop marks output stopped. The DRM worker
+completes the event and turns off common DRM vblank accounting.
+A later active commit restarts the retained timing before its new RCQ list.
+Producer fences are checked again on resume. Logical plane storage may stay
+in an inactive DRM state, but the old scanout READ fence retires through the
+proved disabled list. A stop failure retains old and pending storage.
+This mechanism retains clock leases and bootstrap resources. It is not
+power-domain shutdown, unplug mode renegotiation or physical acceptance.

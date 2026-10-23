@@ -174,6 +174,10 @@ int sun60i_a733_output_prepare(int node,const void *owner,const struct sun60i_a7
 { CHECK(node==7&&owner==lease_owner&&retained&&m->hdisplay==720);return prepare_error; }
 int sun60i_a733_output_start(int node,const void *owner)
 { CHECK(node==7&&owner==lease_owner&&retained&&(de[0x8100/4]&1));if(start_error)return start_error;started=true;if(!no_busy)de[0x8104/4]|=0x10;return 0; }
+static int stop_error;
+static unsigned stop_calls;
+int sun60i_a733_output_stop(int node,const void *owner)
+{ CHECK(node==7&&owner==lease_owner&&retained&&started);CHECK(de[0x1c1000/4]==0&&de[0x281000/4]==0x101);stop_calls++;if(stop_error)return stop_error;started=false;return 0; }
 int sun60i_a733_output_observed_vblank(int node,const void *owner,uint64_t *out)
 { CHECK(node==7&&owner==lease_owner&&retained&&started);event_polls++;if(no_vblank||event_polls%2||(event_limit&&sequence>=event_limit))return ENOENT;if(!same_sequence)sequence++;*out=sequence;return 0; }
 int sun60i_a733_output_fault(int node,const void *owner,int error)
@@ -504,6 +508,51 @@ plane_disable_checks(void)
   reboot_fixture(&sc);
  }
 }
+static void
+output_stop_checks(void)
+{
+ struct sun60i_de352_softc sc;
+ struct sun60i_a733_de352_state state;
+ struct sun60i_a733_de352_client *client;
+ struct sun60i_a733_de352_completion done,saved;
+ struct frame_fixture f;
+ struct sun60i_a733_de352_frame frame;
+ for(unsigned failure=0;failure<4;failure++) {
+  init(&sc);stop_error=0;stop_calls=0;de352_provider=&sc;
+  CHECK(de352_run(&sc)==0);sc.stage=1;
+  CHECK(sun60i_a733_de352_get_state(1,&state)==0);
+  CHECK(sun60i_a733_de352_acquire(1,&sc,&client)==0);
+  frame=frame_input(&f,state.dmat,0x20000000);
+  CHECK(sun60i_a733_de352_submit(client,&frame,&done)==0);saved=done;
+  if(failure==1)stop_error=EIO;
+  if(failure==2)no_vblank=true;
+  int error=sun60i_a733_de352_stop(client,&done);
+  if(failure==1||failure==2) {
+   CHECK(error!=0&&!sc.output_stopped&&f.held==1&&f.drops==0);
+   CHECK(stop_calls==(failure==1?1u:0u));
+   CHECK(sc.result!=0&&sc.pending.dma&&sc.pending.dma->published);
+   CHECK(memcmp(&done,&saved,sizeof(done))==0);
+  } else {
+   CHECK(error==0&&sc.output_stopped&&!started&&stop_calls==1);
+   CHECK(f.held==0&&f.drops==1&&sc.active.dma->disabled);
+   unsigned old_writes=writes;
+   CHECK(sun60i_a733_de352_stop(client,&done)==0);
+   CHECK(stop_calls==1&&writes==old_writes);
+   if(failure==3)start_error=EIO;
+   error=sun60i_a733_de352_submit(client,&frame,&done);
+   if(failure==3) {
+    CHECK(error==EIO&&sc.output_stopped&&sc.result==EIO);
+    CHECK(f.held==0&&f.drops==2);
+   } else {
+    CHECK(error==0&&!sc.output_stopped&&started);
+    CHECK(f.held==1&&!sc.active.dma->disabled);
+   }
+  }
+  reboot_fixture(&sc);
+ }
+ stop_error=0;
+}
+
 static void
 managed_init(struct sun60i_de352_softc *sc)
 {
@@ -856,6 +905,6 @@ int main(void)
  init(&sc);read_fault_region=3;read_fault_reg=0x414;CHECK(de352_run(&sc)==EIO&&sc.memory.valid==1&&sc.memory.iommu[0][0]==0&&sc.memory.nsi[0][0]==0);
  init(&sc);struct sysctlnode n={&sc.stage,sizeof(sc.stage)};u_int stage=2;CHECK(de352_sysctl(&n,&stage)==EINVAL&&writes==0);stage=1;CHECK(de352_sysctl(&n,&stage)==0&&sc.result==0);CHECK(de352_sysctl(&n,&stage)==EBUSY&&sc.result==0);reboot_fixture(&sc);
  managed_checks();
- scanout_checks();plane_disable_checks();
+ scanout_checks();plane_disable_checks();output_stop_checks();
  printf("A733 DE3.52 native coordinator: %u checks passed\n",checks);return 0;
 }

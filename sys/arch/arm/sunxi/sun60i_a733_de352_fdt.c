@@ -140,6 +140,7 @@ struct sun60i_de352_softc {
 	struct de352_run_trace run_trace;
 	struct de352_submit_trace submit_trace;
 	bool cold_initialized;
+	bool output_stopped;
 	bool valid, mapped, power_reserved, reserved, retained;
 	int stage, step, result, release_error;
 	uint32_t last_status;
@@ -1719,7 +1720,7 @@ de352_frame_drop(struct de352_frame *frame, bool retired)
 static int
 de352_update(struct sun60i_a733_de352_client *client,
     const struct sun60i_a733_de352_frame *frame,
-    struct sun60i_a733_de352_completion *out)
+    struct sun60i_a733_de352_completion *out, bool stop)
 {
 	struct sun60i_a733_de352_completion completion;
 	struct sun60i_a733_de352_state state = { 0 };
@@ -1748,6 +1749,14 @@ de352_update(struct sun60i_a733_de352_client *client,
 		mutex_exit(&sc->lock);
 		return error;
 	}
+	if (stop && sc->output_stopped) {
+		*out = (struct sun60i_a733_de352_completion){
+			.observed_sequence = sc->vblank,
+			.observed_time_ns = de352_now()
+		};
+		mutex_exit(&sc->lock);
+		return 0;
+	}
 	client->busy = true;
 	mutex_exit(&sc->lock);
 
@@ -1762,7 +1771,13 @@ de352_update(struct sun60i_a733_de352_client *client,
 		error = sun60i_a733_de352_dma_prepare_disabled(state.dmat, &next.dma);
 	mutex_enter(&sc->lock);
 	if (error == 0) {
-		error = de352_replace_ready(sc);
+		if (sc->output_stopped) {
+			error = sun60i_a733_output_start(sc->output_phandle, sc);
+			if (error == 0)
+				sc->output_stopped = false;
+		}
+		if (error == 0)
+			error = de352_replace_ready(sc);
 		if (error == 0) {
 			sc->pending = next;
 			error = de352_submit_dma(sc, next.dma, false);
@@ -1773,6 +1788,11 @@ de352_update(struct sun60i_a733_de352_client *client,
 			error = de352_replacement_vblank(sc, &completion);
 		if (error == 0)
 			error = de352_memory(sc);
+		if (error == 0 && stop) {
+			error = sun60i_a733_output_stop(sc->output_phandle, sc);
+			if (error == 0)
+				sc->output_stopped = true;
+		}
 		if (error != 0) {
 			sc->result = error;
 			(void)sun60i_a733_ccu_display_fault(sc->de0, sc, error);
@@ -1803,12 +1823,19 @@ sun60i_a733_de352_submit(struct sun60i_a733_de352_client *client,
 {
 	if (frame == NULL)
 		return EINVAL;
-	return de352_update(client, frame, out);
+	return de352_update(client, frame, out, false);
 }
 
 int
 sun60i_a733_de352_disable_plane(struct sun60i_a733_de352_client *client,
     struct sun60i_a733_de352_completion *out)
 {
-	return de352_update(client, NULL, out);
+	return de352_update(client, NULL, out, false);
+}
+
+int
+sun60i_a733_de352_stop(struct sun60i_a733_de352_client *client,
+    struct sun60i_a733_de352_completion *out)
+{
+	return de352_update(client, NULL, out, true);
 }

@@ -193,6 +193,15 @@ static int sun60i_a733_de352_disable_plane(const void *client,
  done->observed_sequence=17; done->observed_time_ns=123456789000;
  return submit_error;
 }
+static unsigned stopped;
+static int sun60i_a733_de352_stop(const void *client,
+    struct sun60i_a733_de352_completion *done)
+{
+ CHECK(client==current->client&&!current->lock&&!modeset_lock);
+ stopped++;
+ done->observed_sequence=17;done->observed_time_ns=123456789000;
+ return submit_error;
+}
 static int
 sun60i_a733_drm_frame_submit(void *client, const struct sun60i_a733_de352_state *native, struct drm_gem_cma_object *object, const struct sun60i_a733_drm_frame *f, struct sun60i_a733_de352_completion *done)
 {
@@ -216,6 +225,12 @@ static void drm_crtc_vblank_on(struct drm_crtc *c){
 	CHECK(c == &current->crtc && current->vblank_irq && !current->lock);
 	vblank_on_calls++;
 }
+static unsigned vblank_off_calls;
+static void drm_crtc_vblank_off(struct drm_crtc *c){
+ CHECK(c==&current->crtc&&current->vblank_on&&!current->lock);
+ CHECK(vblank_puts==vblank_gets);
+ vblank_off_calls++;
+}
 static int drm_crtc_vblank_get(struct drm_crtc *c){
 	CHECK(c == &current->crtc && current->vblank_on && !current->lock);
 	if (vblank_get_error == 0)
@@ -227,7 +242,7 @@ static void drm_crtc_vblank_put(struct drm_crtc *c){
 	vblank_puts++;
 }
 static uint64_t drm_crtc_vblank_count_and_time(struct drm_crtc *c, ktime_t *t){
-	CHECK(c == &current->crtc && vblank_gets > vblank_puts && submitted == 1);
+	CHECK(c == &current->crtc && vblank_gets > vblank_puts && (submitted == 1 || stopped == 1 || disabled == 1));
 	vblank_counts++;
 	*t = INT64_C(987654321000);
 	return UINT64_C(0x100000005);
@@ -383,6 +398,7 @@ reset(struct a733_drm *sc, struct drm_device *dev, struct drm_atomic_state *stat
 	order_length = 0;
 	order[0] = 0;
 	vblank_on_calls = vblank_gets = vblank_puts = vblank_counts = 0;
+	vblank_off_calls = stopped = disabled = 0;
 	vblank_get_error = 0;
 }
 int
@@ -491,11 +507,11 @@ main(void)
 			break;
 		case 2:
 			state.crtc.active = false;
-			expected = -EOPNOTSUPP;
+			expected = 0;
 			break;
 		case 3:
 			state.crtc.enable = false;
-			expected = -EOPNOTSUPP;
+			expected = -EINVAL;
 			break;
 		case 4:
 			state.plane.fb = NULL;
@@ -575,6 +591,27 @@ main(void)
 		CHECK(disabled==1&&submitted==0&&retained_reads==0&&waits==0);
 		CHECK(!sc.busy&&cleanup_done==1&&state_puts==1);
 		CHECK(sc.fault==(failure?EIO:0));
+	}
+	for(unsigned irq=0;irq<2;irq++)
+	for(unsigned failure=0;failure<2;failure++)
+	for(unsigned dpms=0;dpms<2;dpms++) {
+		reset(&sc,&dev,&state,&fb,&object);
+		sc.vblank_irq=irq!=0;
+		state.crtc.active=false;
+		if(!dpms) {
+			state.crtc.enable=false;state.plane.fb=NULL;
+			state.plane.crtc=NULL;state.connector.crtc=NULL;
+		}
+		struct dma_fence fence={-EINVAL,-EINVAL};
+		state.plane.fence=&fence;
+		CHECK(a733_drm_atomic_check(&dev,&state)==0);
+		submit_error=failure?EIO:0;
+		CHECK(a733_drm_atomic_commit(&dev,&state,true)==0);
+		run_worker();
+		CHECK(stopped==1&&submitted==0&&disabled==0&&waits==0);
+		CHECK(retained_reads==0&&cleanup_done==1&&!sc.busy);
+		CHECK(vblank_off_calls==((irq&&!failure)?1u:0u));
+		CHECK(sc.vblank_on==(irq&&failure));
 	}
 	printf("PASS %u bounded worker and atomic admission checks\n", checks);
 	return 0;
