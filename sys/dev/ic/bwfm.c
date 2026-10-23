@@ -47,6 +47,7 @@
 #include <dev/ic/bwfmreg.h>
 #include <dev/ic/bwfmvar.h>
 #include <dev/ic/bwfm_sae.h>
+#include <net80211/ieee80211_rsn.h>
 #include <dev/ic/bwfm_sta.h>
 #include <dev/ic/bwfm_scan.h>
 
@@ -2420,7 +2421,7 @@ bwfm_sta_security(struct bwfm_softc *sc)
 	static const uint8_t psk[] = { 0x00, 0x0f, 0xac, 2 };
 
 	if (sc->sc_sae_enabled)
-		return fullmac_sae_rsn_valid(ie, ic->ic_opt_ie_len);
+		return ieee80211_sae_rsn_valid(ie, ic->ic_opt_ie_len);
 	return (ic->ic_flags & IEEE80211_F_WPA) == IEEE80211_F_WPA2 &&
 	    ie != NULL && ic->ic_opt_ie_len >= 20 &&
 	    ie[0] == IEEE80211_ELEMID_RSN && ie[1] >= 18 &&
@@ -3017,7 +3018,7 @@ bwfm_sae_connect(struct bwfm_softc *sc)
 	size_t i;
 	int error;
 
-	if (!fullmac_sae_rsn_valid(ic->ic_opt_ie, ic->ic_opt_ie_len) ||
+	if (!ieee80211_sae_rsn_valid(ic->ic_opt_ie, ic->ic_opt_ie_len) ||
 	    !IEEE80211_ADDR_EQ(sc->sc_sae_bssid, ic->ic_bss->ni_bssid)) {
 		printf("%s: SAE requires CCMP, required PMF and the selected peer\n",
 		    DEVNAME(sc));

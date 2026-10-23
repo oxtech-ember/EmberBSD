@@ -3,8 +3,6 @@
 #ifndef _DEV_IC_BWFM_SAE_H_
 #define _DEV_IC_BWFM_SAE_H_
 
-#include "fullmac_sae.h"
-
 /* EXT_AUTH_REQ itself starts auth. CYW43455 request flags may be zero. */
 static inline bool
 bwfm_sae_request_valid(const uint8_t *p, size_t len, const uint8_t *peer,

@@ -38,7 +38,7 @@ static void le32enc(void *p, uint32_t v)
 #endif
 #include "abi.h"
 #include "flags.h"
-#include "fullmac_sae.h"
+#include "ieee80211_rsn.h"
 #include "bwfm_sta.h"
 enum { IEEE80211_M_STA, IEEE80211_M_HOSTAP };
 enum { IEEE80211_S_INIT, IEEE80211_S_SCAN, IEEE80211_S_AUTH,

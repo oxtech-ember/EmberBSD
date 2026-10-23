@@ -1,11 +1,11 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
-/* Shared bounded RSN validation for FullMAC external SAE drivers. */
-#ifndef _DEV_IC_FULLMAC_SAE_H_
-#define _DEV_IC_FULLMAC_SAE_H_
+/* Bounded RSN validation for SAE associations. */
+#ifndef _NET80211_IEEE80211_RSN_H_
+#define _NET80211_IEEE80211_RSN_H_
 
 /* An SAE association uses one CCMP pairwise cipher and requires PMF. */
 static inline bool
-fullmac_sae_rsn_valid(const uint8_t *p, size_t len)
+ieee80211_sae_rsn_valid(const uint8_t *p, size_t len)
 {
 	size_t end, pos, count;
 

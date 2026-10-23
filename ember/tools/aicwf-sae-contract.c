@@ -5,7 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "../../sys/dev/sdmmc/if_aicwf_sae.h"
-#include "../../sys/dev/ic/fullmac_sae.h"
+#include "../../sys/net80211/ieee80211_rsn.h"
 
 static unsigned checks;
 static void

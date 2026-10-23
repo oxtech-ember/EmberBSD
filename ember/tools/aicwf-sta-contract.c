@@ -225,7 +225,7 @@ static void le16enc(void *v, uint16_t x)
 { uint8_t *p=v; p[0]=x; p[1]=x>>8; }
 static void be16enc(void *v, uint16_t x)
 { uint8_t *p=v; p[0]=x>>8; p[1]=x; }
-#include "fullmac_sae.h"
+#include "ieee80211_rsn.h"
 #include "if_aicwf_vht.h"
 #include "if_aicwf_sta.h"
 static int splnet(void) { return 0; }

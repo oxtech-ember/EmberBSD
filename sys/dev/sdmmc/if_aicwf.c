@@ -67,7 +67,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <net80211/ieee80211_var.h>
 
 #include <dev/firmload.h>
-#include <dev/ic/fullmac_sae.h>
+#include <net80211/ieee80211_rsn.h>
 #include <dev/sdmmc/if_aicwf_sae.h>
 #include <dev/sdmmc/if_aicwf_fw_bip.h>
 #include <dev/sdmmc/if_aicwf_vht.h>
@@ -2034,7 +2034,7 @@ aicwf_connect(struct aicwf_softc *sc)
 	}
 	if (sc->sc_sae_enabled) {
 		if (ic->ic_opt_ie == NULL ||
-		    !fullmac_sae_rsn_valid(ic->ic_opt_ie, ic->ic_opt_ie_len) ||
+		    !ieee80211_sae_rsn_valid(ic->ic_opt_ie, ic->ic_opt_ie_len) ||
 		    !IEEE80211_ADDR_EQ(sc->sc_sae_bssid, ni->ni_bssid)) {
 			device_printf(sc->sc_dev, "SAE requires CCMP, required PMF and the selected peer\n");
 			return;
@@ -2258,7 +2258,7 @@ aicwf_sta_security(struct aicwf_softc *sc)
 	if (sc->sc_sae_enabled)
 		return ic->ic_opt_ie != NULL &&
 		    (sc->sc_sae_caps & IEEE80211_SAE_CAP_PMF) != 0 &&
-		    fullmac_sae_rsn_valid(ic->ic_opt_ie, ic->ic_opt_ie_len);
+		    ieee80211_sae_rsn_valid(ic->ic_opt_ie, ic->ic_opt_ie_len);
 	return (ic->ic_flags & IEEE80211_F_WPA) == IEEE80211_F_WPA2 &&
 	    aicwf_sta_psk_valid(ic->ic_opt_ie, ic->ic_opt_ie_len);
 }

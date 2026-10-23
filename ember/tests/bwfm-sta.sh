@@ -23,7 +23,7 @@ awk '/^#define[[:space:]]+IEEE80211_STA_/ {print}
 test -s "$work/abi.h"
 awk '/^#define[[:space:]]+IEEE80211_F_(WPA|WPA1|WPA2|SCAN)[[:space:]]/ {print}' \
     "$src/sys/net80211/ieee80211_var.h" > "$work/flags.h"
-cp "$src/sys/dev/ic/fullmac_sae.h" "$src/sys/dev/ic/bwfm_sta.h" "$work/"
+cp "$src/sys/net80211/ieee80211_rsn.h" "$src/sys/dev/ic/bwfm_sta.h" "$work/"
 cp "$src/ember/tools/bwfm-sta-contract.c" "$work/check.c"
 ${CC:-cc} -std=c99 -Wall -Wextra -Werror -Wno-unused-parameter ${CFLAGS:-} \
     -I"$work" "$work/check.c" -o "$work/check"
