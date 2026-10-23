@@ -568,7 +568,8 @@ ieee80211_set11gbasicrates(struct ieee80211_rateset *rs, enum ieee80211_phymode 
 void
 ieee80211_wme_reset(struct ieee80211_node *ni)
 {
-	ni->ni_flags &= ~(IEEE80211_NODE_WME_OFFER | IEEE80211_NODE_WME_VALID);
+	ni->ni_flags &= ~(IEEE80211_NODE_ASSOC_PENDING |
+	    IEEE80211_NODE_WME_OFFER | IEEE80211_NODE_WME_VALID);
 	if (ni->ni_ic->ic_opmode == IEEE80211_M_STA)
 		ni->ni_flags &= ~IEEE80211_NODE_QOS;
 	ni->ni_wme_applied_chan = NULL;

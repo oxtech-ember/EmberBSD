@@ -7,7 +7,7 @@ def body(p,n,result):
  s=read(p);prefix=s[:s.index('#include')]
  return prefix+result+'\n'+re.search(r'^'+n+r'\(.*?^}',s,re.M|re.S).group()+'\n'
 parts=[]
-for p,names in [('sys/net80211/ieee80211.h',['IEEE80211_ADDR_LEN','IEEE80211_NWID_LEN']),('sys/net80211/_ieee80211.h',['IEEE80211_RATE_MAXSIZE']),('sys/net80211/ieee80211_node.h',['IEEE80211_NODE_QOS','IEEE80211_NODE_WME_OFFER','IEEE80211_NODE_WME_VALID']),('sys/net80211/ieee80211_ioctl.h',['IEEE80211_SCAN_CAPINFO_HI','IEEE80211_SCAN_RSSI_DBM'])]:
+for p,names in [('sys/net80211/ieee80211.h',['IEEE80211_ADDR_LEN','IEEE80211_NWID_LEN']),('sys/net80211/_ieee80211.h',['IEEE80211_RATE_MAXSIZE']),('sys/net80211/ieee80211_node.h',['IEEE80211_NODE_QOS','IEEE80211_NODE_WME_OFFER','IEEE80211_NODE_WME_VALID','IEEE80211_NODE_ASSOC_PENDING']),('sys/net80211/ieee80211_ioctl.h',['IEEE80211_SCAN_CAPINFO_HI','IEEE80211_SCAN_RSSI_DBM'])]:
  for n in names:parts.append(re.search(r'^#define\s+'+n+r'\s+.*$',read(p),re.M).group()+'\n')
 s=read('sys/net80211/ieee80211_ioctl.h');parts.append(re.search(r'^struct ieee80211req_scan_result \{.*?^};',s,re.M|re.S).group()+'\n')
 (out/'scan-abi.h').write_text(''.join(parts))

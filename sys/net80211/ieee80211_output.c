@@ -311,7 +311,8 @@ ieee80211_mgmt_output(struct ieee80211com *ic, struct ieee80211_node *ni,
 	if (ba != NULL)
 		ieee80211_rxba_response_commit(ic, ni, ba);
 	/* Queue admission is not a hardware transmit or acknowledgement. */
-	if (wme_offer && ieee80211_wme_request_offer(m, type) &&
+	if ((type == IEEE80211_FC0_SUBTYPE_ASSOC_REQ ||
+	     type == IEEE80211_FC0_SUBTYPE_REASSOC_REQ) &&
 	    ic->ic_opmode == IEEE80211_M_STA &&
 	    ic->ic_state == IEEE80211_S_ASSOC && ni == ic->ic_bss &&
 	    ni->ni_chan == ic->ic_curchan) {
@@ -319,7 +320,9 @@ ieee80211_mgmt_output(struct ieee80211com *ic, struct ieee80211_node *ni,
 		ni->ni_wme_offer_chan = ic->ic_curchan;
 		IEEE80211_ADDR_COPY(ni->ni_wme_offer_bssid, wh->i_addr3);
 		ni->ni_wme_offer_type = type;
-		ni->ni_flags |= IEEE80211_NODE_WME_OFFER;
+		ni->ni_flags |= IEEE80211_NODE_ASSOC_PENDING;
+		if (wme_offer && ieee80211_wme_request_offer(m, type))
+			ni->ni_flags |= IEEE80211_NODE_WME_OFFER;
 	}
 	if (ieee80211_ht20_request_offer(m, type, ht20))
 		ieee80211_ht20_offer(ic, ni, type, ht20);

@@ -59,7 +59,7 @@ static void manualscan_node_cleanup(struct ieee80211_node *ni)
     CHECK(!state_lock.held);
     if(ni->key_live)key_deletes++;
     ni->key_live=0;ni->ni_associd=0;
-    ni->ni_flags&=~(IEEE80211_NODE_QOS|IEEE80211_NODE_WME_OFFER|IEEE80211_NODE_WME_VALID);
+    ni->ni_flags&=~(IEEE80211_NODE_QOS|IEEE80211_NODE_WME_OFFER|IEEE80211_NODE_WME_VALID|IEEE80211_NODE_ASSOC_PENDING);
     ieee80211_ht20_reset(ni);
 }
 static void ieee80211_begin_scan(struct ieee80211com *ic,int arg)

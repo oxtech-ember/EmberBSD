@@ -386,7 +386,7 @@ static void enable_negatives(void)
         m_freem(m);
         CHECK((ni->ni_flags&(IEEE80211_NODE_QOS|IEEE80211_NODE_WME_VALID))==0);
         CHECK(enable_run_callbacks==runs);
-        if(kind==0 || kind==8) {
+        if(kind==8) {
             CHECK(net->requested==IEEE80211_S_RUN);
             rtw88_net_state_work(&net->state_work,net);
             CHECK(ic->ic_state==IEEE80211_S_RUN && net->policy.accepting);
@@ -394,7 +394,8 @@ static void enable_negatives(void)
             rtw88_net_start(&net->ec.ec_if);
             CHECK(sc.sc_txq[RTW88_TXQ_BE].queued==1);
             CHECK(sc.sc_txq[RTW88_TXQ_VO].queued==0);
-        } else if(kind==7) {
+        } else if(kind==0 || kind==7) {
+            CHECK(ni->ni_associd==0);
             CHECK(ic->ic_state==IEEE80211_S_ASSOC && !net->work_pending);
             CHECK(f.writes==pre_response_writes);
         } else {

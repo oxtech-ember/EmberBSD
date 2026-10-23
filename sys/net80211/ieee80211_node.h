@@ -117,6 +117,7 @@ struct ieee80211_node {
 #define	IEEE80211_NODE_AMSDU_RX	0x0040		/* negotiated bounded RX */
 #define	IEEE80211_NODE_WME_OFFER	0x0080		/* current queued STA offer */
 #define	IEEE80211_NODE_WME_VALID	0x0100		/* committed parameter set */
+#define	IEEE80211_NODE_ASSOC_PENDING 0x0200	/* queued STA request */
 	u_int16_t		ni_associd;	/* assoc response */
 	u_int16_t		ni_txpower;	/* current transmit power */
 	u_int16_t		ni_vlan;	/* vlan tag */
@@ -126,6 +127,10 @@ struct ieee80211_node {
 	u_int8_t		*ni_extcap_ie;	/* captured extended capabilities */
 	u_int8_t		*ni_rsnx_ie;	/* captured RSNX ie */
 	u_int8_t		*ni_wme_ie;	/* captured WME ie */
+	/*
+	 * Historical WME names: one queued association request owns this key.
+	 * WME_OFFER separately proves that request carries a WME payload.
+	 */
 	u_int32_t		ni_wme_attempt;
 	u_int32_t		ni_wme_offer_attempt;
 	struct ieee80211_channel *ni_wme_offer_chan;

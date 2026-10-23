@@ -985,7 +985,8 @@ node_cleanup(struct ieee80211_node *ni)
 		ic->ic_set_tim(ni, 0);
 
 	ni->ni_associd = 0;
-	ni->ni_flags &= ~(IEEE80211_NODE_WME_OFFER | IEEE80211_NODE_WME_VALID);
+	ni->ni_flags &= ~(IEEE80211_NODE_ASSOC_PENDING |
+	    IEEE80211_NODE_WME_OFFER | IEEE80211_NODE_WME_VALID);
 	ni->ni_wme_applied_chan = NULL;
 	ni->ni_wme_applied_slot = 0;
 	if (ic->ic_opmode == IEEE80211_M_STA)

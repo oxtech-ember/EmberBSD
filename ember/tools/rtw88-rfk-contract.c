@@ -793,6 +793,8 @@ rfk_control_races(struct rtw88_net *initial)
         struct rtw88_net *net=enable_attach(&sc,&lock);
         CHECK(net!=NULL);if(!net)return 1;
         struct ieee80211com *ic=&net->ic;active_ic=ic;
+        CHECK(ieee80211_send_mgmt(ic,ic->ic_bss,IEEE80211_FC0_SUBTYPE_ASSOC_REQ,0)==0);
+        CHECK(enable_wire_offer(net));
         struct mbuf *m=enable_response(ic,1,0);
         ieee80211_recv_mgmt_assoc_resp(ic,m,ic->ic_bss,
             IEEE80211_FC0_SUBTYPE_ASSOC_RESP,0,0);

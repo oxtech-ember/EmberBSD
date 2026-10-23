@@ -31,7 +31,7 @@ parts.append('#define WME_NUM_AC 4\nstruct ieee80211com;\n')
 for name in ('wmeParams', 'chanAccParams', 'ieee80211_wme_state'):
     parts.append(re.search(r'^struct '+name+r' \{.*?^};', proto, re.M|re.S).group())
 for path, names in [('sys/net80211/ieee80211_var.h',r'IEEE80211_(?:C_[A-Z0-9_]+|F_[A-Z0-9_]+|FEXT_[A-Z0-9_]+|FIXED_RATE_NONE)'),
-                    ('sys/net80211/ieee80211_node.h',r'IEEE80211_NODE_(QOS|WME_VALID|WME_OFFER|AMSDU_RX)'),
+                    ('sys/net80211/ieee80211_node.h',r'IEEE80211_NODE_(QOS|WME_VALID|WME_OFFER|ASSOC_PENDING|AMSDU_RX)'),
                     ('sys/net80211/ieee80211.h',r'IEEE80211_RATE_(BASIC|VAL)'),
                     ('sys/net/if_media.h',r'_?IFM_\w+(?:\([^)]*\))?')]:
     source = re.sub(r'/\*.*?\*/', '', read(path).replace('\\\n', ''), flags=re.S)

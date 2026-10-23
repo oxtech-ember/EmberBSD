@@ -189,7 +189,8 @@ struct llc {
 #define M_SETCTX(m, n) ((m)->m_pkthdr.ctx = (n))
 #define M_WME_SETAC(m, value) ((m)->ac = (value))
 #define M_WME_GETAC(m) ((m)->ac)
-#define IF_ENQUEUE(q, m) ((q)->ifq_len++, (q)->m = (m))
+#define IF_ENQUEUE(q, m) do { if (during_enqueue) during_enqueue(); \
+	(q)->ifq_len++; (q)->m = (m); } while (0)
 #define IF_DROP(q) ((q)->ifq_drops++)
 #define IEEE80211_IS_CHAN_2GHZ(c) ((c)->ic_freq < 3000)
 #define IEEE80211_IS_CHAN_FHSS(c) 0
@@ -212,6 +213,8 @@ static struct ieee80211_node *last_freed;
 static struct ieee80211com *active_ic;
 static struct mbuf *captured;
 static void (*during_start)(void);
+static void (*during_enqueue)(void);
+static void (*during_prepend)(struct mbuf *);
 #define CHECK(x)                                                               \
 	do {                                                                   \
 		checks++;                                                      \
@@ -255,6 +258,7 @@ prepend(struct mbuf *m, int len)
 	m->m_len += len;
 	m->model_capacity += len;
 	m->m_pkthdr.len += len;
+	if (during_prepend) during_prepend(m);
 	return m;
 }
 #define M_PREPEND(m, n, how) ((m) = prepend(m, n))
@@ -548,6 +552,8 @@ setup(void)
 		test_ic.ic_wme.wme_wmeBssChanParams.cap_wmeParams[ac] = p;
 	}
 	during_start = NULL;
+	during_enqueue = NULL;
+	during_prepend = NULL;
 	during_apply = NULL;
 	adjust_failure = 0;
 	active_ic = &test_ic;
@@ -618,6 +624,62 @@ offered_on_wire(int subtype)
 	}
 	return false;
 }
+static void
+before_association_enqueue(void)
+{
+	CHECK(!(test_node.ni_flags & IEEE80211_NODE_ASSOC_PENDING));
+}
+
+static void
+test_pending_lifetime(void)
+{
+	for (unsigned legacy = 0; legacy < 2; legacy++) {
+		for (unsigned reassoc = 0; reassoc < 2; reassoc++) {
+			setup();
+			if (legacy) test_ic.ic_flags &= ~IEEE80211_F_WME;
+			test_node.ni_wme_attempt = UINT32_MAX;
+			during_enqueue = before_association_enqueue;
+			int req = reassoc ? IEEE80211_FC0_SUBTYPE_REASSOC_REQ :
+			    IEEE80211_FC0_SUBTYPE_ASSOC_REQ;
+			CHECK(request(req) == 0);
+			CHECK(test_node.ni_flags & IEEE80211_NODE_ASSOC_PENDING);
+			CHECK(!!(test_node.ni_flags & IEEE80211_NODE_WME_OFFER) == !legacy);
+			CHECK(test_node.ni_wme_attempt == 0 && test_node.ni_wme_offer_attempt == 0);
+			CHECK(test_node.ni_wme_offer_chan == &test_channel &&
+			    test_node.ni_wme_offer_type == req &&
+			    IEEE80211_ADDR_EQ(test_node.ni_wme_offer_bssid, test_node.ni_bssid));
+			release_capture();
+			deliver(response(1, 1, req + 0x10), req + 0x10);
+			CHECK(!(test_node.ni_flags & (IEEE80211_NODE_ASSOC_PENDING | IEEE80211_NODE_WME_OFFER)));
+			CHECK(request(req) == 0);
+			CHECK(test_node.ni_flags & IEEE80211_NODE_ASSOC_PENDING);
+			ieee80211_wme_reset(&test_node);
+			CHECK(!(test_node.ni_flags & IEEE80211_NODE_ASSOC_PENDING));
+			release_capture();
+		}
+	}
+	for (unsigned type = 0; type < 2; type++) {
+		setup();
+		CHECK(request(type ? IEEE80211_FC0_SUBTYPE_PROBE_RESP :
+		    IEEE80211_FC0_SUBTYPE_AUTH) == 0);
+		CHECK(!(test_node.ni_flags & IEEE80211_NODE_ASSOC_PENDING));
+		release_capture();
+	}
+	setup();
+	CHECK(ieee80211_send_probereq(&test_node, test_ic.ic_myaddr,
+	    test_node.ni_macaddr, test_node.ni_bssid, test_ic.ic_des_essid,
+	    0, NULL, 0) == 0);
+	CHECK(!(test_node.ni_flags & IEEE80211_NODE_ASSOC_PENDING));
+	release_capture();
+	/* Preserve the existing unbounded legacy queue policy. */
+	setup(); test_ic.ic_flags &= ~IEEE80211_F_WME;
+	test_ic.ic_mgtq.ifq_len = test_ic.ic_mgtq.ifq_maxlen = 1;
+	CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ) == 0);
+	CHECK(test_node.ni_flags & IEEE80211_NODE_ASSOC_PENDING);
+	CHECK(test_ic.ic_mgtq.ifq_drops == 0);
+	release_capture();
+}
+
 static void
 test_exchange(void)
 {
@@ -747,6 +809,7 @@ static void
 immediate_response(void)
 {
 	CHECK(offered_on_wire(IEEE80211_FC0_SUBTYPE_ASSOC_REQ));
+	CHECK(test_node.ni_flags & IEEE80211_NODE_ASSOC_PENDING);
 	deliver(response(1, 0, IEEE80211_FC0_SUBTYPE_ASSOC_RESP),
 		IEEE80211_FC0_SUBTYPE_ASSOC_RESP);
 }
@@ -1860,6 +1923,7 @@ test_scan_probe_policy(void)
 int
 main(void)
 {
+	test_pending_lifetime();
 	test_scan_probe_policy();
 	test_csa_beacon_stop();
 	test_strict_complete_views();

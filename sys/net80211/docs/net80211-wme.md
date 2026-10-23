@@ -14,12 +14,33 @@ not prove DMA completion, transmission or ACK. Association response frames
 have no attempt nonce: a delayed response from the same AP/channel cannot be
 cryptographically distinguished by the local generation.
 
-The matching association response consumes the pending offer. Unrelated peer,
-channel or subtype responses do not consume it. Missing or unsolicited WME
-retains legacy operation. Malformed or duplicate offered parameter IEs abort
-the association through the existing scan transition. Subsequent WME beacon
-updates require the current associated peer, channel and validated negotiation.
-Slot changes use the incoming capability field before EDCA apply.
+`IEEE80211_NODE_ASSOC_PENDING` permits one matching response for a queued
+STA ASSOC_REQ or REASSOC_REQ, including a request without WME. The historical
+`ni_wme_offer_attempt/chan/bssid/type` fields store the sole request identity.
+`ni_wme_attempt` remains its generation. `WME_OFFER` separately proves the WME
+payload. Queue admission publishes pending before `if_start`; allocation,
+prepend, HT byte-proof and bounded HT queue failures publish no pending.
+The existing legacy queue policy is unchanged. WME reset retires pending.
+AUTH, probe and BA Action producers do not create association pending.
+
+Input checks mode, state and receiver/transmitter/BSSID addresses first.
+It requires pending and the current request identity. A missing or mismatched
+request changes no HT/WME state, AID or worker request. An unrelated peer,
+channel or response subtype preserves the matching pending request.
+A matching response consumes pending and WME offer before fixed fields or
+TLVs are parsed, including malformed input, status failure and legacy fallback.
+A replay while the native RUN worker still leaves `ic_state` at ASSOC cannot
+replace the accepted HT state or enqueue another worker request.
+A new queued request permits one matching response again. No wire nonce exists:
+an identical old response after that new request remains indistinguishable.
+
+A matching response without WME retains legacy operation. Malformed or
+duplicate offered parameter IEs abort through the existing scan transition.
+Subsequent WME beacon updates require the current associated peer, channel
+and validated negotiation. Slot changes use incoming capability before apply.
+Firmware-managed association in bwfm and aicwf uses paired send/receive
+management overrides. It does not use this native request/response gate.
+The awi association overrides forward to the common producer and receiver.
 
 An HT offer snapshots two independent generations after actual queue admission.
 The HT attempt belongs to the HT contract. The association attempt snapshots

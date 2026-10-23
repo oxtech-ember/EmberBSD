@@ -365,7 +365,8 @@ main(void)
 	ni.ni_wme_applied_chan = ni.ni_chan;
 	ni.ni_wme_applied_slot = 9;
 	ni.ni_flags |= IEEE80211_NODE_QOS | IEEE80211_NODE_WME_OFFER |
-	    IEEE80211_NODE_WME_VALID | IEEE80211_NODE_AMSDU_RX;
+	    IEEE80211_NODE_WME_VALID | IEEE80211_NODE_ASSOC_PENDING |
+	    IEEE80211_NODE_AMSDU_RX;
 	ni.ni_ht20.attempt = 41;
 	ni.ni_ht20.offered = ni.ni_ht20.valid = 1;
 	/* Opaque mbuf storage is a kernel allocator model. The actual BA slot,
@@ -388,7 +389,7 @@ main(void)
 	check(ni.ni_wme_applied_chan == NULL && ni.ni_wme_applied_slot == 0,
 	    "native cleanup retires applied EDCA context");
 	check((ni.ni_flags & (IEEE80211_NODE_QOS | IEEE80211_NODE_WME_OFFER |
-	    IEEE80211_NODE_WME_VALID)) == 0,
+	    IEEE80211_NODE_WME_VALID | IEEE80211_NODE_ASSOC_PENDING)) == 0,
 	    "native cleanup retires negotiated QoS and pending WME state");
 	check(
 	    ni.ni_phy_ies.len == 0 && key_deletes == 1,

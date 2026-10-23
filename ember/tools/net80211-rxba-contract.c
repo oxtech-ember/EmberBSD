@@ -44,7 +44,6 @@ static unsigned ieee80211_chan2ieee(struct ieee80211com *ic,struct ieee80211_cha
 #define IEEE80211_M_AHDEMO 3
 #define IEEE80211_M_HOSTAP 6
 #define IEEE80211_M_MONITOR 8
-#define IEEE80211_NODE_WME_OFFER 0x80
 #define IEEE80211_NODE_STAT(...) ((void)0)
 #define M_DONTWAIT 0
 #define IFQ_MAXLEN 256
@@ -80,6 +79,7 @@ static void if_start_lock(struct ifnet *ifp)
  struct mbuf *m=ic->ic_mgtq.m;assert(m&&m->m_pkthdr.ctx);
  uint8_t *p=m->m_data;
  CHECK(m->m_len==33 && p[24]==3 && p[25]==1);
+ CHECK(!(ic->ic_bss->ni_flags & IEEE80211_NODE_ASSOC_PENDING));
  if(p[27]==0 && p[28]==0) {
   unsigned tid=((unsigned)p[29]|(unsigned)p[30]<<8)>>2&15;
   CHECK(tid<8 && ic->ic_bss->ni_rxba.tid[tid]!=NULL);

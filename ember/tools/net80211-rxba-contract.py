@@ -165,7 +165,7 @@ for name in ['ieee80211_ht20_write','ieee80211_ht20_offer']:
  if n!=1:raise ValueError('duplicate '+name)
 (out/'native-rxba-output.inc').write_text(s)
 with (out/'rxba-stack-constants.inc').open('a') as f:
- for filename,names in [('ieee80211_var.h',['IEEE80211_F_WME','IEEE80211_C_WME','IEEE80211_F_USEPROT']),('ieee80211_node.h',['IEEE80211_NODE_QOS','IEEE80211_NODE_WME_VALID'])]:
+ for filename,names in [('ieee80211_var.h',['IEEE80211_F_WME','IEEE80211_C_WME','IEEE80211_F_USEPROT']),('ieee80211_node.h',['IEEE80211_NODE_QOS','IEEE80211_NODE_WME_VALID','IEEE80211_NODE_WME_OFFER','IEEE80211_NODE_ASSOC_PENDING'])]:
   txt=(src/'sys/net80211'/filename).read_text()
   for name in names:f.write(re.search(r'^#define\s+'+name+r'\s+.*$',txt,re.M).group()+'\n')
 s=(out/'rxba-test-kernel.h').read_text()

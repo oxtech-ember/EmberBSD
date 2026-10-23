@@ -295,6 +295,118 @@ test_actual_exchange(void)
 	CHECK(native_net.requested==IEEE80211_S_SCAN && !test_node.ni_ht20.valid);
 }
 
+/* One queued request owns one response while the native RUN worker waits. */
+static void
+test_one_association_response(void)
+{
+	for (unsigned kind = 0; kind < 3; kind++) {
+		for (unsigned reassoc = 0; reassoc < 2; reassoc++) {
+			int req = reassoc ? IEEE80211_FC0_SUBTYPE_REASSOC_REQ :
+			    IEEE80211_FC0_SUBTYPE_ASSOC_REQ;
+			int resp = req + 0x10;
+			struct ieee80211_ht20_node ht;
+			struct rtw88_net worker;
+			struct ieee80211_wme_state wme;
+			unsigned flags, queues, aid;
+
+			ht_setup();
+			if (kind != 0) test_ic.ic_ht20_admit = NULL;
+			if (kind == 2) test_ic.ic_flags &= ~IEEE80211_F_WME;
+			CHECK(request(req) == 0);
+			release_capture();
+			deliver(kind == 0 ? ht_response() : response(1, 0, resp), resp);
+			CHECK(test_ic.ic_state == IEEE80211_S_ASSOC);
+			CHECK(native_net.requested == IEEE80211_S_RUN);
+			CHECK(!!test_node.ni_ht20.valid == (kind == 0));
+			ht = test_node.ni_ht20; worker = native_net;
+			wme = test_ic.ic_wme;
+			flags = test_node.ni_flags; aid = test_node.ni_associd;
+			queues = native_queues;
+			/* A different AID makes silent legacy reacceptance observable. */
+			struct mbuf *m = kind == 0 ? ht_response() : response(1, 0, resp);
+			m->m_data[sizeof(struct ieee80211_frame) + 4] = 7;
+			deliver(m, resp);
+			CHECK(memcmp(&ht, &test_node.ni_ht20, sizeof(ht)) == 0);
+			CHECK(memcmp(&worker, &native_net, sizeof(worker)) == 0);
+			CHECK(memcmp(&wme, &test_ic.ic_wme, sizeof(wme)) == 0);
+			CHECK(flags == test_node.ni_flags && aid == test_node.ni_associd);
+			CHECK(native_queues == queues && test_ic.ic_state == IEEE80211_S_ASSOC);
+		}
+	}
+	for (unsigned kind = 0; kind < 3; kind++) {
+		for (unsigned bad = 0; bad < 3; bad++) {
+			ht_setup();
+			if (kind != 0) test_ic.ic_ht20_admit = NULL;
+			if (kind == 2) test_ic.ic_flags &= ~IEEE80211_F_WME;
+			/* Unsolicited input must not replace any state or queue work. */
+			struct ieee80211_node node = test_node;
+			deliver(ht_response(), IEEE80211_FC0_SUBTYPE_ASSOC_RESP);
+			CHECK(memcmp(&node, &test_node, sizeof(node)) == 0);
+			CHECK(native_queues == 0);
+			CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ) == 0);
+			release_capture();
+			struct mbuf *m = response(1, bad == 0 ? 1 : 0,
+			    IEEE80211_FC0_SUBTYPE_ASSOC_RESP);
+			if (bad == 1) m->m_len = sizeof(struct ieee80211_frame) + 5;
+			if (bad == 2) m->m_data[sizeof(struct ieee80211_frame) + 7] = 255;
+			deliver(m, IEEE80211_FC0_SUBTYPE_ASSOC_RESP);
+			node = test_node;
+			struct rtw88_net worker = native_net;
+			test_ic.ic_state = IEEE80211_S_ASSOC;
+			deliver(ht_response(), IEEE80211_FC0_SUBTYPE_ASSOC_RESP);
+			CHECK(memcmp(&node, &test_node, sizeof(node)) == 0);
+			CHECK(memcmp(&worker, &native_net, sizeof(worker)) == 0);
+			/* A real new queued request grants exactly one response again. */
+			CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ) == 0);
+			release_capture();
+			deliver(kind == 0 ? ht_response() : response(1, 0,
+			    IEEE80211_FC0_SUBTYPE_ASSOC_RESP), IEEE80211_FC0_SUBTYPE_ASSOC_RESP);
+			CHECK(native_net.requested == IEEE80211_S_RUN && test_node.ni_associd == 1);
+		}
+	}
+}
+
+static void
+test_pending_identity_guards(void)
+{
+	for (unsigned kind = 0; kind < 3; kind++) {
+		for (unsigned bad = 0; bad < 10; bad++) {
+			struct ieee80211_channel other = {5180, 0};
+			ht_setup();
+			if (kind != 0) test_ic.ic_ht20_admit = NULL;
+			if (kind == 2) test_ic.ic_flags &= ~IEEE80211_F_WME;
+			CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ) == 0);
+			release_capture();
+			struct mbuf *m = ht_response();
+			struct ieee80211_frame *wh = mtod(m, struct ieee80211_frame *);
+			if (bad < 3) {
+				uint8_t *a = bad == 0 ? wh->i_addr1 : bad == 1 ? wh->i_addr2 : wh->i_addr3;
+				a[0] ^= 2;
+			}
+			if (bad == 3) test_ic.ic_curchan = &other;
+			if (bad == 4) test_node.ni_chan = &other;
+			if (bad == 6) test_node.ni_wme_attempt++;
+			if (bad == 7) test_node.ni_wme_offer_bssid[0] ^= 2;
+			if (bad == 8) test_ic.ic_opmode = IEEE80211_M_HOSTAP;
+			if (bad == 9) test_ic.ic_state = IEEE80211_S_AUTH;
+			struct ieee80211_node node = test_node;
+			struct ieee80211_wme_state wme = test_ic.ic_wme;
+			struct rtw88_net worker = native_net;
+			deliver(m, bad == 5 ? IEEE80211_FC0_SUBTYPE_REASSOC_RESP : IEEE80211_FC0_SUBTYPE_ASSOC_RESP);
+			CHECK(memcmp(&node, &test_node, sizeof(node)) == 0);
+			CHECK(memcmp(&wme, &test_ic.ic_wme, sizeof(wme)) == 0);
+			CHECK(memcmp(&worker, &native_net, sizeof(worker)) == 0);
+			test_ic.ic_curchan = test_node.ni_chan = &test_channel;
+			if (bad == 6) test_node.ni_wme_attempt--;
+			if (bad == 7) test_node.ni_wme_offer_bssid[0] ^= 2;
+			test_ic.ic_opmode = IEEE80211_M_STA;
+			test_ic.ic_state = IEEE80211_S_ASSOC;
+			deliver(kind == 0 ? ht_response() : response(1, 0, IEEE80211_FC0_SUBTYPE_ASSOC_RESP), IEEE80211_FC0_SUBTYPE_ASSOC_RESP);
+			CHECK(native_net.requested == IEEE80211_S_RUN && test_node.ni_associd == 1);
+		}
+	}
+}
+
 static void
 test_local_admission(void)
 {
@@ -322,6 +434,39 @@ test_local_admission(void)
 	}
 }
 static void
+corrupt_ht_request(struct mbuf *m)
+{
+	uint8_t *p = m->m_data + sizeof(struct ieee80211_frame) + 4;
+	uint8_t *end = m->m_data + m->m_len;
+	while (end - p >= 2 && p[1] <= end - p - 2) {
+		if (p[0] == 45) { p[2] ^= 1; return; }
+		p += p[1] + 2;
+	}
+	CHECK(0); /* A real HT request must reach the byte proof. */
+}
+
+static void
+test_pending_producer_boundaries(void)
+{
+	ht_setup();
+	during_prepend = corrupt_ht_request;
+	CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ) == EINVAL);
+	CHECK(!(test_node.ni_flags & IEEE80211_NODE_ASSOC_PENDING));
+	CHECK(!test_node.ni_ht20.offered && captured == NULL && node_refs == 1);
+	for (unsigned bad = 0; bad < 4; bad++) {
+		struct ieee80211_channel other = {5180, 0};
+		ht_setup();
+		if (bad == 0) test_ic.ic_opmode = IEEE80211_M_HOSTAP;
+		if (bad == 1) test_ic.ic_state = IEEE80211_S_AUTH;
+		if (bad == 2) test_node.ni_chan = &other;
+		if (bad == 3) test_ic.ic_bss = NULL;
+		CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ) == 0);
+		CHECK(!(test_node.ni_flags & IEEE80211_NODE_ASSOC_PENDING));
+		release_capture();
+	}
+}
+
+static void
 test_producer_failures(void)
 {
 	for (unsigned variant=0;variant<4;variant++) {
@@ -332,6 +477,7 @@ test_producer_failures(void)
 		if (variant==3) test_ic.ic_mgtq.ifq_len=IFQ_MAXLEN;
 		CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ)==(variant<2?ENOMEM:ENOBUFS));
 		CHECK(!test_node.ni_ht20.offered && !test_node.ni_ht20.valid);
+		CHECK(!(test_node.ni_flags & IEEE80211_NODE_ASSOC_PENDING));
 		CHECK(captured==NULL && node_refs==1);
 		if (variant>=2) CHECK(test_ic.ic_mgtq.ifq_drops==1);
 	}
@@ -719,10 +865,13 @@ main(void)
     CHECK(rtw88_tx_drain_snapshot(&boundary,&pending)==EOPNOTSUPP && pending==99);
     mutex_exit(&native_lock);
 	test_manual_ht_rejected();
+	test_one_association_response();
+	test_pending_identity_guards();
 	test_actual_exchange();
 	test_callback_epoch_cancellation();
 	test_saved_offer_epochs();
 	test_local_admission();
+	test_pending_producer_boundaries();
 	test_producer_failures();
 	test_response_rejects();
 	test_response_limits();

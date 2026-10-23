@@ -85,9 +85,14 @@ parts=[macro('IF_DEQUEUE'),macro('IF_POLL'),'#ifdef ALTQ\n',macro('IFQ_DEQUEUE')
 fixture=(out/'routing-model.inc').read_text()
 # Native management queues may hold multiple frames during a sleeping worker.
 # Keep owning enqueue/dequeue tails; the standalone WME capture models one pop.
-old_enqueue='#define IF_ENQUEUE(q, m) ((q)->ifq_len++, (q)->m = (m))'
+old_enqueue=('#define IF_ENQUEUE(q, m) do { if (during_enqueue) during_enqueue(); \\\n'
+             '\t(q)->ifq_len++; (q)->m = (m); } while (0)')
 if fixture.count(old_enqueue)!=1: raise ValueError('shared enqueue model changed')
-fixture=fixture.replace(old_enqueue,macro('IF_ENQUEUE')+macro('IF_DEQUEUE'))
+native_enqueue=macro('IF_ENQUEUE').replace('IF_ENQUEUE(', 'ROUTING_NATIVE_IF_ENQUEUE(', 1)
+# Keep the shared pre-enqueue observation hook around the complete native body.
+fixture=fixture.replace(old_enqueue,native_enqueue+
+    '#define IF_ENQUEUE(q, m) do { if (during_enqueue) during_enqueue(); '
+    'ROUTING_NATIVE_IF_ENQUEUE(q, m); } while (0)\n'+macro('IF_DEQUEUE'))
 old_pop='\tactive_ic->ic_mgtq.m = NULL;\n\tactive_ic->ic_mgtq.ifq_len--;'
 if fixture.count(old_pop)!=1: raise ValueError('shared capture pop changed')
 fixture=fixture.replace(old_pop,'\tIF_DEQUEUE(&active_ic->ic_mgtq, captured);')

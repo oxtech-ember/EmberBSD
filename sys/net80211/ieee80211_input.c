@@ -3023,12 +3023,12 @@ ieee80211_recv_mgmt_assoc_resp(struct ieee80211com *ic, struct mbuf *m0,
 		ic->ic_stats.is_rx_mgtdiscard++;
 		return;
 	}
-	if ((ni->ni_flags & IEEE80211_NODE_WME_OFFER) != 0 &&
-	    (ni->ni_wme_offer_attempt != ni->ni_wme_attempt ||
-	     ni->ni_wme_offer_chan != ic->ic_curchan ||
-	     ni->ni_chan != ic->ic_curchan ||
-	     !IEEE80211_ADDR_EQ(ni->ni_wme_offer_bssid, wh->i_addr3) ||
-	     subtype != ni->ni_wme_offer_type + 0x10)) {
+	if ((ni->ni_flags & IEEE80211_NODE_ASSOC_PENDING) == 0 ||
+	    ni->ni_wme_offer_attempt != ni->ni_wme_attempt ||
+	    ni->ni_wme_offer_chan != ic->ic_curchan ||
+	    ni->ni_chan != ic->ic_curchan ||
+	    !IEEE80211_ADDR_EQ(ni->ni_wme_offer_bssid, wh->i_addr3) ||
+	    subtype != ni->ni_wme_offer_type + 0x10) {
 		ic->ic_stats.is_rx_mgtdiscard++;
 		return;
 	}
@@ -3041,7 +3041,8 @@ ieee80211_recv_mgmt_assoc_resp(struct ieee80211com *ic, struct mbuf *m0,
 	    IEEE80211_ADDR_EQ(ni->ni_wme_offer_bssid, wh->i_addr3) &&
 	    subtype == ni->ni_wme_offer_type + 0x10;
 	/* Consume this attempt before any matching response can fail parsing. */
-	ni->ni_flags &= ~IEEE80211_NODE_WME_OFFER;
+	ni->ni_flags &= ~(IEEE80211_NODE_ASSOC_PENDING |
+	    IEEE80211_NODE_WME_OFFER);
 	ht20_offer = ni->ni_ht20;
 	ni->ni_ht20.offered = ni->ni_ht20.valid = 0;
 
