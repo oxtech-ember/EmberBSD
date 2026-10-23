@@ -93,7 +93,7 @@ fdt_memory_get(uint64_t *pstart, uint64_t *pend)
 	if (off == -FDT_ERR_NOTFOUND)
 		off = fdt_path_offset(fdt_data, "/memory");
 
-	while (off != -FDT_ERR_NOTFOUND) {
+	while (off >= 0) {
 		memory = fdtbus_offset2phandle(off);
 		for (index = 0;
 		     fdtbus_get_reg64(memory, index, &cur_addr, &cur_size) == 0;
@@ -115,6 +115,8 @@ fdt_memory_get(uint64_t *pstart, uint64_t *pend)
 		off = fdt_node_offset_by_prop_value(fdt_data, off,
 		    "device_type", "memory", sizeof("memory"));
 	}
+	if (off != -FDT_ERR_NOTFOUND)
+		panic("%s: %s", __func__, fdt_strerror(off));
 	if (nadd == 0)
 		panic("Cannot determine memory size");
 }

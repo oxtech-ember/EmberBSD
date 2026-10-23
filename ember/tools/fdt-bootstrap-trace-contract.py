@@ -6,11 +6,9 @@ import argparse
 import os
 from pathlib import Path
 import shlex
-import subprocess
 import tempfile
 
-LIB_SOURCES = ("fdt.c", "fdt_ro.c", "fdt_rw.c", "fdt_wip.c", "fdt_sw.c",
-               "fdt_empty_tree.c", "fdt_strerror.c")
+from fdt_contract import build_and_run
 
 
 def emit(source, work):
@@ -186,27 +184,12 @@ def main():
         args.emit.mkdir(parents=True, exist_ok=True)
         emit(args.source_root, args.emit)
         return
-    lib = args.source_root / "sys/external/bsd/libfdt/dist"
-    cc = shlex.split(os.environ.get("CC", "cc"))
     flags = shlex.split(os.environ.get("FDT_TRACE_CFLAGS", ""))
     with tempfile.TemporaryDirectory(prefix="fdt-bootstrap-") as tmp:
         work = Path(tmp)
         emit(args.source_root, work)
-        objects = []
-        # Preserve upstream diagnostics. The new fixture has its own -Werror gate.
-        for name in LIB_SOURCES:
-            obj = work / (name + ".o")
-            subprocess.run(cc + ["-std=c11", "-Wall", "-Wextra"] + flags +
-                           ["-I" + str(lib), "-c", str(lib / name), "-o", str(obj)], check=True)
-            objects.append(str(obj))
-        subprocess.run(cc + ["-std=c11", "-Wall", "-Wextra", "-Werror"] + flags +
-                       ["-I" + str(lib), str(work / "contract.c")] + objects +
-                       ["-o", str(work / "contract")], check=True)
-        command = [str(work / "contract")]
-        if args.dtb:
-            command.append(str(args.dtb))
-        subprocess.run(shlex.split(os.environ.get("TEST_RUNNER", "")) + command,
-                       check=True, timeout=30)
+        arguments = [str(args.dtb)] if args.dtb else []
+        build_and_run(args.source_root, work, flags, arguments)
 
 
 if __name__ == "__main__":
