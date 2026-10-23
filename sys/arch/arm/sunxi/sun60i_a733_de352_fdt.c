@@ -843,7 +843,7 @@ de352_configure(struct sun60i_de352_softc *sc)
 		{ 0x1c1084, 0xff, 0 },
 		{ 0x1c1088, 0x1fff1fff, w->channel_size },
 		{ 0x1c10f0, 0x3fff3fff, 0 }, { 0x1c10f8, 0x3fff3fff, 0 },
-		{ 0x281004, UINT32_MAX, 0 },
+		{ 0x281004, UINT32_MAX, UINT32_C(0xff000000) },
 		{ 0x281008, 0x1fff1fff, w->size },
 		{ 0x28100c, UINT32_MAX, 0 },
 		{ 0x281080, 0xf, 3 }, { 0x281084, 0x3f, 0 },

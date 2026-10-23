@@ -522,6 +522,7 @@ plane_disable_checks(void)
    CHECK(error==0&&f.held==0&&f.drops==1&&posts==2);
    CHECK(sc.active.dma->disabled&&!sc.active.held);
    CHECK(de[0x1c1000/4]==0&&de[0x281000/4]==0x101);
+   CHECK(de[0x281004/4]==0xff000000);
    CHECK(done.observed_sequence>=saved.observed_sequence+2);
    CHECK(sun60i_a733_de352_submit(client,&frame,&done)==0);
    CHECK(f.held==1&&f.drops==1&&!sc.active.dma->disabled);
@@ -898,6 +899,7 @@ int main(void)
  init(&sc);power_cells[1]=be32toh(0);sc.valid=false;de352_attach(NULL,&sc,&faa);CHECK(!sc.valid&&reads==0&&writes==0);
  init(&sc);iommu_status="okay";sc.valid=false;de352_attach(NULL,&sc,&faa);CHECK(!sc.valid&&clock_puts==1&&reads==0&&writes==0);
  init(&sc);CHECK(de352_run(&sc)==0);CHECK(sc.step==10&&sc.retained&&sc.dma&&sc.dma->published&&sc.vblank==2&&releases==0&&faults==0);
+ CHECK(de[0x281004/4]==0xff000000);
  CHECK(sc.submit_trace.version==1&&sc.submit_trace.valid==3&&sc.submit_trace.phase==ST_DONE&&sc.submit_trace.result==0);
  CHECK(sc.submit_trace.request_busy>=1&&sc.submit_trace.poll_samples>=1&&sc.submit_trace.regs_valid==0&&output_samples==0);CHECK(de352_run(&sc)==EBUSY);reboot_fixture(&sc);
  for(unsigned i=0;i<7;i++){init(&sc);clocks[0][i]^=1;CHECK(de352_run(&sc)==EBUSY&&reads==0&&writes==0&&begins==0&&releases==1&&power_releases==1);}

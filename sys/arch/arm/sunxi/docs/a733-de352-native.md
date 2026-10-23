@@ -378,8 +378,10 @@ restores the normal 0x100 BLD control through an accepted queue replacement.
 
 The pinned BSP `lowlevel_de/bld/de_bld_type.h` defines pipe0_fcolor_en at bit 0
 and pipe0_en at bit 8. These register facts do not import GPL implementation.
-The initial native configuration already sets the pipe fill and output
-background colors to zero. The disabled queue owns only its DMA list, and its
+The initial native configuration sets the pipe0 fill color to opaque black
+(`0xff000000`) and the output background color to zero. The pinned BSP
+`lowlevel_de/bld/de_bld.c` selects the same pipe0 fill value for RGB output.
+The disabled queue owns only its DMA list, and its
 publication/retirement synchronizes only that list. Uncertain completion does
 not release it or the previous frame. The retained output stop below follows
 this retirement proof.
