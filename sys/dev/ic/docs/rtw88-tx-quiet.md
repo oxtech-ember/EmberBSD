@@ -4,6 +4,9 @@
 `rtw88_tx_quiet()` runs under the caller's PCI serialization lock.
 It does not sleep. It first closes host producers and invalidates rate
 adaptation. Experimental RFK power and operating seals become invalid too.
+It advances the core generation. A start that yields inside the firmware
+loader checks this generation before device I/O and releases the loaded image
+on cancellation. It cannot clear a newer stop or quiet request.
 
 The helper writes `REG_TXPAUSE` (`0x0522`) to `0xff`. It separately clears
 `REG_CR.MACTXEN` (`0x0100`, bit 6), preserving the other CR bits.
@@ -28,6 +31,14 @@ The core fence can clear only through the existing full stop/start lifecycle.
 A wrapper that needs a persistent spectrum restriction must separately prevent
 automatic restart. This API alone does not advertise DFS support.
 
+The native STA wrapper registers the optional shared quiet callback.
+It withdraws the HT snapshot, closes the policy epoch and clears RUNNING
+before it invokes the core fence. Shared net80211 then purges RX BA and
+requests INIT. The existing worker retires RFK and stops the core.
+The wrapper's quiet latch survives INIT, SCAN, AUTH, RUN and interface init.
+Only detach removes the latch. There is no channel-switch retune or automatic
+recovery. The original fence error stays in the interface-owned record.
+
 An active RFK transaction also observes the host fence. Its restoration writes
 cannot reopen TX after this fence. An incomplete transaction can retain RFK
 quarantine and require a physical cold reset.
@@ -41,3 +52,6 @@ after mutation, initial CR read failure, each readback error or mismatch,
 and two different errors in one call to verify first-error retention.
 They check independent controls, all queue fences, no delay or DMA release,
 and explicit full stop/start recovery. This is software contract evidence.
+`ember/tools/rtw88-enable-contract.sh` also executes the actual shared beacon,
+native provider and state worker. It covers control faults, repeated requests,
+mailbox and drain sleep cancellation, and quiet during firmware loading.

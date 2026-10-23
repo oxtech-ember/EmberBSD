@@ -454,7 +454,7 @@ static unsigned drain_pending(void)
 }
 static int drain_write1(void *cookie,uint32_t reg,uint8_t value)
 {
-    if(reg==0x522)CHECK(drain_pending()==0);
+    if(reg==0x522)CHECK(drain_net->tx_quiet || drain_pending()==0);
     return write_1(cookie,reg,value);
 }
 static int drain_pause(unsigned ticks)
@@ -476,6 +476,10 @@ static int drain_pause(unsigned ticks)
         else if(action==4)route_ticks+=1001;
         else if(action==5)CHECK(rtw88_net_newstate(&drain_net->ic,IEEE80211_S_INIT,0)==0);
         else if(action==6)drain_profile.ampdu=32;
+        else if(action==7) {
+            drain_net->ic.ic_sta_quiet(&drain_net->ic);
+            CHECK(rtw88_net_newstate(&drain_net->ic,IEEE80211_S_INIT,-1)==0);
+        }
         if(action!=4)return EWOULDBLOCK;
     }
     if(drain_stall)return EWOULDBLOCK;
@@ -588,7 +592,7 @@ static void enable_drain_core(void)
 }
 static void enable_drain_edges(void)
 {
-    for(unsigned kind=0;kind<10;kind++) {
+    for(unsigned kind=0;kind<11;kind++) {
         struct rtw88_softc sc;kmutex_t lock={.initialized=1};
         struct rtw88_net *net=enable_attach(&sc,&lock);if(!net)return;
         active_ic=&net->ic;
@@ -618,6 +622,8 @@ static void enable_drain_edges(void)
         if(kind==7)CHECK(drain_reads==drain_after_pause_reads && sc.sc_stats.tx_done==done+1);
         if(kind==8)CHECK(net->ic.ic_state==IEEE80211_S_INIT && drain_pauses==2 && sc.sc_started);
         if(kind==9)CHECK(drain_reads==1 && sc.sc_stats.tx_done==done && !net->ic.ic_bss->ni_ht20.valid);
+        if(kind==10)CHECK(net->tx_quiet && drain_pauses==1 &&
+            !net->policy.accepting && !sc.sc_started && !sc.sc_dma_master);
         drain_fail_reg=drain_stall=0;enable_drain_pause_hook=NULL;drain_net=NULL;active_ic=NULL;sc.sc_ops=&ops;
         enable_destroy(net);
     }
@@ -689,6 +695,10 @@ static int mailbox_pause(unsigned ticks)
         else if(action==3)mailbox_net->core->sc_generation++;
         else if(action==4)mailbox_net->core->sc_h2c_box^=1;
         else if(action==6)route_ticks+=1001;
+        else if(action==7) {
+            mailbox_net->ic.ic_sta_quiet(&mailbox_net->ic);
+            CHECK(rtw88_net_newstate(&mailbox_net->ic,IEEE80211_S_INIT,-1)==0);
+        }
         else if(action==5)mailbox_profile.ampdu=32; /* Same generation. */
     }
     return EWOULDBLOCK;
@@ -729,7 +739,7 @@ static void enable_mailbox_case(void)
 
 static void enable_mailbox_edges(void)
 {
-    for(unsigned kind=0;kind<13;kind++) {
+    for(unsigned kind=0;kind<14;kind++) {
         struct rtw88_softc sc;kmutex_t lock={.initialized=1};
         struct rtw88_net *net=enable_attach(&sc,&lock);if(!net)return;
         struct rtw88_bus_ops bus=ops;
@@ -751,6 +761,7 @@ static void enable_mailbox_edges(void)
             CHECK(rtw88_net_newstate(&net->ic,IEEE80211_S_AUTH,0)==0);
             if(kind<5)mailbox_cancel=kind;
             if(kind==12)mailbox_cancel=6;
+            if(kind==13)mailbox_cancel=7;
             if(kind==5)mailbox_busy=100000; /* Deadline, not unbounded spinning. */
             if(kind==6 || kind==7) { mailbox_busy=0;mailbox_fail_read=kind-5; }
             if(kind==8) { mailbox_busy=0;mailbox_busy_at=2; }
@@ -772,6 +783,8 @@ static void enable_mailbox_edges(void)
         if(kind==3 || kind==4 || kind==11 || kind==12)
             CHECK(mailbox_reads==1 && mailbox_writes==0);
         if(kind==11)CHECK(!net->ic.ic_bss->ni_ht20.valid);
+        if(kind==13)CHECK(net->tx_quiet && mailbox_pauses==1 &&
+            mailbox_writes==0 && !sc.sc_dma_master);
         enable_pause_hook=NULL;mailbox_net=NULL;active_ic=NULL;
         mailbox_fail_write=0;mailbox_fail_read=0;mailbox_busy=0;
         enable_destroy(net);
@@ -1269,8 +1282,90 @@ static void enable_ht20_to_legacy_fixed(void)
 #ifndef RTW88_ENABLE_ENTRY
 #define RTW88_ENABLE_ENTRY main
 #endif
+static struct rtw88_net *quiet_start_net;
+static int enable_quiet_firmware_load(void *cookie,const char *driver,
+    const char *name,const uint8_t **data,size_t *len)
+{
+    int error=firmware_load(cookie,driver,name,data,len);
+    if(error==0)quiet_start_net->ic.ic_sta_quiet(&quiet_start_net->ic);
+    return error;
+}
+static void enable_quiet_during_start(void)
+{
+    struct rtw88_softc sc;kmutex_t lock={.initialized=1};
+    struct rtw88_net *net=enable_attach(&sc,&lock);if(!net)return;
+    CHECK(rtw88_stop(&sc)==0);
+    net->ec.ec_if.if_flags&=~IFF_RUNNING;
+    struct rtw88_bus_ops bus=ops;bus.firmware_load=enable_quiet_firmware_load;
+    sc.sc_ops=&bus;quiet_start_net=net;
+    unsigned writes=f.writes,masters=f.master_enables;
+    CHECK(rtw88_net_init(&net->ec.ec_if)==EINTR);
+    CHECK(net->tx_quiet && !sc.sc_started && !sc.sc_running);
+    CHECK(f.writes==writes && f.master_enables==masters);
+    CHECK((net->ec.ec_if.if_flags&IFF_RUNNING)==0);
+    sc.sc_ops=&ops;quiet_start_net=NULL;enable_destroy(net);
+}
+static void enable_sta_quiet(void)
+{
+    for(unsigned fault=0;fault<11;fault++) {
+        struct rtw88_softc sc;kmutex_t lock={.initialized=1};
+        struct rtw88_net *net=enable_attach(&sc,&lock);
+        if(!net)return;
+        struct ieee80211com *ic=&net->ic;
+        CHECK(ic->ic_sta_quiet!=NULL);
+        if(ic->ic_sta_quiet==NULL) { enable_destroy(net);continue; }
+        ic->ic_state=IEEE80211_S_RUN;
+        uint64_t epoch=net->policy.epoch;
+        struct rtw88_bus_ops spy=ops;
+        spy.read_1=quiet_read1;spy.write_1=quiet_write1;
+        sc.sc_ops=&spy;quiet_fault=fault;
+        quiet_pause_writes=quiet_cr_writes=quiet_cr_reads=0;
+        f.mmio[0x0100]=0xff;f.mmio[0x0522]=0;
+        unsigned delays=f.delays,syncs=f.syncs;
+        /* Drive the actual shared beacon consumer into the real provider. */
+        struct mbuf *notice=newbuf(sizeof(struct ieee80211_frame)+12+6);
+        struct ieee80211_frame *wh=(void *)notice->m_data;
+        wh->i_fc[0]=IEEE80211_FC0_TYPE_MGT|IEEE80211_FC0_SUBTYPE_BEACON;
+        memset(wh->i_addr1,0xff,6);
+        memcpy(wh->i_addr2,ic->ic_bss->ni_macaddr,6);
+        memcpy(wh->i_addr3,ic->ic_bss->ni_bssid,6);
+        uint8_t *ie=notice->m_data+sizeof(*wh)+12;
+        ie[0]=60;ie[1]=4;ie[2]=1;ie[3]=118;ie[4]=64;ie[5]=1;
+        ic->ic_bss->ni_ht20.valid=1;
+        ieee80211_recv_mgmt_beacon(ic,notice,ic->ic_bss,
+            IEEE80211_FC0_SUBTYPE_BEACON,0,0);
+        m_freem(notice);
+        CHECK(!ic->ic_bss->ni_ht20.valid);
+        CHECK(!net->policy.accepting && net->policy.epoch>epoch);
+        CHECK((net->ec.ec_if.if_flags&(IFF_RUNNING|IFF_OACTIVE))==0);
+        CHECK(sc.sc_stop_requested && !sc.sc_ra.active);
+        CHECK(net->tx_quiet && net->quiet_error==(fault==10?ETIMEDOUT:
+            fault==9?EINVAL:fault==8?ENXIO:fault?EIO:0));
+        CHECK(f.delays==delays && f.syncs==syncs && sc.sc_dma_master);
+        for(unsigned q=0;q<RTW88_NTXQ;q++)CHECK(rtw88_tx_available(&sc,q)==0);
+        unsigned writes=f.writes;
+        ic->ic_sta_quiet(ic);
+        CHECK(f.writes==writes);
+        quiet_fault=0;sc.sc_ops=&ops;
+        CHECK(rtw88_net_newstate(ic,IEEE80211_S_INIT,-1)==0);
+        /* A coalesced SCAN must not reopen admission or start firmware. */
+        CHECK(rtw88_net_newstate(ic,IEEE80211_S_SCAN,0)==EBUSY);
+        rtw88_net_state_work(&net->state_work,net);
+        CHECK(ic->ic_state==IEEE80211_S_INIT && !net->policy.accepting);
+        CHECK(!sc.sc_started && !sc.sc_dma_master);
+        unsigned loads=f.firmware_loads;
+        CHECK(rtw88_net_init(&net->ec.ec_if)==EBUSY);
+        CHECK(rtw88_net_newstate(ic,IEEE80211_S_AUTH,0)==EBUSY);
+        CHECK(rtw88_net_newstate(ic,IEEE80211_S_RUN,0)==EBUSY);
+        rtw88_net_state_work(&net->state_work,net);
+        CHECK(f.firmware_loads==loads && !sc.sc_started);
+        enable_destroy(net);
+    }
+}
 int RTW88_ENABLE_ENTRY(void)
 {
+    enable_quiet_during_start();
+    enable_sta_quiet();
     enable_drain_case();
     enable_drain_core();
     enable_drain_edges();

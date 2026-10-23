@@ -64,6 +64,7 @@ struct rtw88_net {
 	unsigned rx_head, rx_tail;
 	int work_pending;
 	int reset_required;	/* Linked-peer quiescence survives request coalescing. */
+	int tx_quiet, quiet_error; /* Sticky until detach; state requests cannot clear it. */
 	enum ieee80211_state requested;
 	unsigned channel;
 	unsigned configured_media; /* User configuration, not peer-selected mode. */
@@ -90,6 +91,29 @@ static int rtw88_net_ht20_admit(struct ieee80211com *,
 static int rtw88_net_ht20_local_policy(struct ieee80211com *);
 static int rtw88_net_ht20_profile_prepare(struct rtw88_net *,
     struct ieee80211_ht20_profile *);
+
+/* Giant owns the spectrum event. Close admission before serialized device I/O.
+ * Shared net80211 purges RX BA and requests INIT after this callback returns.
+ * The existing worker owns sleeping stop and DMA release. */
+static void
+rtw88_net_sta_quiet(struct ieee80211com *ic)
+{
+	struct rtw88_net *net = ic->ic_ifp->if_softc;
+	struct ifnet *ifp = &net->ec.ec_if;
+
+	if (net->tx_quiet)
+		return;
+	rtw88_net_ht20_publish(net, NULL);
+	callout_stop(&net->scan);
+	mutex_enter(net->lock);
+	net->tx_quiet = 1;
+	(void)rtw88_net_request(&net->policy);
+	ifp->if_flags &= ~(IFF_RUNNING | IFF_OACTIVE);
+	ifp->if_timer = 0;
+	net->tx_timer = 0;
+	net->quiet_error = rtw88_tx_quiet(net->core);
+	mutex_exit(net->lock);
+}
 
 /* This MPSAFE callout retains only interface-owned numeric tokens. The shared
  * stack and all node/key lifetime work run in the existing Giant softintr. */
@@ -662,7 +686,7 @@ rtw88_net_restart_peer(struct rtw88_net *net)
 	int error, start;
 
 	mutex_enter(net->lock);
-	if (!net->reset_required) {
+	if (!net->reset_required || net->tx_quiet) {
 		mutex_exit(net->lock);
 		return 0;
 	}
@@ -680,7 +704,8 @@ rtw88_net_restart_peer(struct rtw88_net *net)
 	/* Coalescing can bypass shared INIT's management-queue drain. */
 	ieee80211_drain_ifq(&net->ic.ic_mgtq);
 	mutex_enter(net->lock);
-	start = start && (ifp->if_flags & IFF_UP) != 0 && !net->policy.dying;
+	start = start && (ifp->if_flags & IFF_UP) != 0 &&
+	    !net->policy.dying && !net->tx_quiet;
 	mutex_exit(net->lock);
 	/* INIT must retain a real READY core for the next WPA SCAN_REQ. */
 	if (start) {
@@ -689,7 +714,8 @@ rtw88_net_restart_peer(struct rtw88_net *net)
 			return error;
 	}
 	mutex_enter(net->lock);
-	if (start && (net->policy.dying || (ifp->if_flags & IFF_UP) == 0)) {
+	if (start && (net->policy.dying || net->tx_quiet ||
+	    (ifp->if_flags & IFF_UP) == 0)) {
 		mutex_exit(net->lock);
 		error = rtw88_stop(net->core);
 		mutex_enter(net->lock);
@@ -842,7 +868,8 @@ rtw88_net_state_work(struct work *work, void *cookie)
 		}
 		/* Profile providers and shared state mutation require Giant. The
 		 * workqueue holds Giant through this check and parent publication. */
-		prepare_error = state == IEEE80211_S_RUN ?
+		prepare_error = net->tx_quiet ? EBUSY :
+		    state == IEEE80211_S_RUN ?
 		    ieee80211_ht20_state_request(ic, state) : 0;
 		if (state == IEEE80211_S_RUN && ic->ic_bss != NULL &&
 		    ic->ic_bss->ni_ht20.valid &&
@@ -1126,6 +1153,12 @@ rtw88_net_newstate(struct ieee80211com *ic, enum ieee80211_state state,
 {
 	struct rtw88_net *net = ic->ic_ifp->if_softc;
 	int enqueue = 0, ht20_error;
+	int quiet_error = net->tx_quiet && state != IEEE80211_S_INIT ? EBUSY : 0;
+
+	if (quiet_error != 0) {
+		state = IEEE80211_S_INIT;
+		arg = -1;
+	}
 
 	/* Drop stale readiness before leaving the association/RUN lifecycle. */
 	if (state != IEEE80211_S_ASSOC && state != IEEE80211_S_RUN)
@@ -1162,7 +1195,7 @@ rtw88_net_newstate(struct ieee80211com *ic, enum ieee80211_state state,
 	mutex_exit(net->lock);
 	if (enqueue)
 		workqueue_enqueue(net->wq, &net->state_work, NULL);
-	return ht20_error;
+	return quiet_error != 0 ? quiet_error : ht20_error;
 }
 
 static void
@@ -1789,6 +1822,8 @@ rtw88_net_init(struct ifnet *ifp)
 	unsigned channel;
 	int error;
 
+	if (net->tx_quiet)
+		return EBUSY;
 	if (net->policy.dying || net->ic.ic_opmode != IEEE80211_M_STA)
 		return EOPNOTSUPP;
 	if ((ifp->if_flags & IFF_RUNNING) != 0)
@@ -1997,6 +2032,7 @@ rtw88_net_attach(struct rtw88_softc *core, device_t dev, kmutex_t *lock,
 	if_initialize(ifp);
 	ieee80211_ifattach(ic);
 	rtw88_net_rxba_attach(net);
+	ic->ic_sta_quiet = rtw88_net_sta_quiet;
 	/* Register after ifattach, which initializes optional admission to NULL. */
 	rtw88_net_ht20_publish(net, NULL);
 	ic->ic_ht20_admit = rtw88_net_ht20_admit;

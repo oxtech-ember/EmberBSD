@@ -83,6 +83,7 @@ struct rtw88_net {
 	callout_t scan;
 	struct rtw88_net_policy policy;
 	int work_pending, reset_required;
+	int tx_quiet, quiet_error;
 	unsigned tx_timer, tx_completed;
 	enum ieee80211_state requested;
 	unsigned channel, configured_media;

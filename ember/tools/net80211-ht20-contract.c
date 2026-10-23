@@ -21,6 +21,7 @@ struct rtw88_net {
 	struct rtw88_net_policy policy;
 	int *lock;
 	int scan, work_pending, reset_required, state_arg, state_work;
+	int tx_quiet, quiet_error;
 	unsigned channel;
 	enum ieee80211_state requested;
 	void *wq;

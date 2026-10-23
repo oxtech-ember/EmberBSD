@@ -100,6 +100,12 @@ static void rfk_alloc_yield(void)
 static int rfk_pause(unsigned ticks)
 {
     CHECK(!mutex_owned(rfk_net->lock));
+    if(!rfk_paused && rfk_is("quiet-rfk") && rfk_gapk) {
+        rfk_paused=1;
+        rfk_net->ic.ic_sta_quiet(&rfk_net->ic);
+        rfk_owned_at_cancel=rfk_owned_io;
+        CHECK(rtw88_net_newstate(&rfk_net->ic,IEEE80211_S_INIT,-1)==0);
+    }
     if(rfk_is("timing-minimum") && ticks && !rtw8822c_rfk_active(f.sc)) {
         if(!rfk_min_early) { CHECK(ticks==2);route_ticks--;rfk_min_early=1; }
         else { CHECK(ticks==1);rfk_min_early=2; }
@@ -627,6 +633,13 @@ main(void)
         CHECK(rfk_paused==1 && rfk_gapk==1 && rfk_dpk==0 && rfk_iqk==0);
     }
     if(rfk_is("cancel-dpk"))CHECK(rfk_paused==1 && rfk_dpk==1 && rfk_cal_pwr==0 && rfk_coef==0);
+    if(rfk_is("quiet-rfk")) {
+        CHECK(rfk_paused && net->tx_quiet && rfk_gapk==1 && rfk_iqk==0);
+        CHECK(!net->policy.accepting && !sc.sc_started && !sc.sc_dma_master);
+        CHECK(!sc.sc_operating.sealed && !sc.sc_power_program.valid);
+        CHECK(rfk_owned_at_cancel==rfk_owned_io);
+        CHECK(rtw88_net_newstate(&net->ic,IEEE80211_S_AUTH,0)==EBUSY);
+    }
     if(rfk_is("cancel-iqk"))CHECK(rfk_paused==1 && rfk_iqk==1 && rfk_dpk==0);
     if(rfk_is("slow-io"))CHECK(rfk_last_owned_tick-started_tick<=8005 && rfk_parent_auth==0);
     if(rfk_is("cleanup-expiry"))CHECK(rfk_paused && rfk_owned_at_cancel==rfk_owned_io);

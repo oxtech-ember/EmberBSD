@@ -733,6 +733,8 @@ rtw88_tx_quiet(struct rtw88_softc *sc)
 	int error, e;
 
 	sc->sc_stop_requested = 1;
+	/* Also cancel a start that yielded inside the firmware loader. */
+	sc->sc_generation++;
 	rtw88_ra_invalidate(sc);
 #ifdef RTW88_RFK_EXPERIMENT
 	sc->sc_power_program.valid = 0;
@@ -859,10 +861,15 @@ rtw88_start(struct rtw88_softc *sc)
 	sc->sc_power_program.valid = 0;
 	sc->sc_operating.prepared = sc->sc_operating.sealed = 0;
 #endif
+	gen = sc->sc_generation;
 	error = sc->sc_ops->firmware_load(sc->sc_bus, RTW88_FW_DRV,
 	    RTW88_FW_IMG, &fw, &fw_len);
 	if (error != 0)
 		return error;
+	if (gen != sc->sc_generation) {
+		rtw88_release_fw(sc);
+		return EINTR;
+	}
 	error = rtw88_fw_parse(fw, fw_len, &info);
 	if (error != 0) {
 		rtw88_release_fw(sc);
