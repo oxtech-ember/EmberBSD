@@ -1,5 +1,6 @@
 #!/bin/sh
 # SPDX-License-Identifier: BSD-2-Clause
+# Origin: EmberBSD; preserve source paths containing whitespace in the test runner.
 set -eu
 tools=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 src=$(CDPATH= cd -- "$tools/../.." && pwd)
@@ -13,14 +14,13 @@ python3 "$tools/net80211-amsdu-contract.py" \
 mkdir -p "$work/sys" "$work/net80211"
 printf '#include <string.h>\n#include <stdint.h>\n' > "$work/sys/systm.h"
 ln -s "$src/sys/net80211/ieee80211_amsdu.h" "$work/net80211/ieee80211_amsdu.h"
-extra=
+set -- "$tools/net80211-amsdu-contract.c"
 if [ -f "$src/sys/net80211/ieee80211_amsdu.c" ]; then
-    extra="$src/sys/net80211/ieee80211_amsdu.c"
+    set -- "$@" "$src/sys/net80211/ieee80211_amsdu.c"
 fi
 ${CC:-gcc-16} -std=c11 -D_DEFAULT_SOURCE -D_DARWIN_C_SOURCE \
     -Wall -Wextra -Werror ${AMSDU_TEST_CFLAGS:-} -I"$work" \
-    -I"$src/sys/net80211" "$tools/net80211-amsdu-contract.c" \
-    $extra -o "$work/test"
+    -I"$src/sys/net80211" "$@" -o "$work/test"
 if [ -n "${TEST_RUNNER:-}" ]; then
     "$TEST_RUNNER" "$work/test"
 else
