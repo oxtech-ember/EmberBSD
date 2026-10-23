@@ -3,7 +3,6 @@
 
 #include <sys/types.h>
 #include <sys/ioctl.h>
-#include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdarg.h>
@@ -21,6 +20,13 @@
 #endif
 #include <dev/usb/usb.h>
 
+#define CHECK(x) do { \
+	if (!(x)) { \
+		fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #x); \
+		abort(); \
+	} \
+} while (0)
+
 enum fault {
 	NONE, OPEN, INFO, NOT_HUB, REQUEST, SHORT_STATUS, CHANGED, FINAL_INFO
 };
@@ -30,7 +36,7 @@ static int ports, opened, closed, infos, requests;
 static int
 probe_open(const char *path, int flags, ...)
 {
-	assert(strcmp(path, "/dev/fixture") == 0 && flags == O_RDWR);
+	CHECK(strcmp(path, "/dev/fixture") == 0 && flags == O_RDWR);
 	opened++;
 	if (fault == OPEN) {
 		errno = EACCES;
@@ -42,7 +48,7 @@ probe_open(const char *path, int flags, ...)
 static int
 probe_close(int fd)
 {
-	assert(fd == 17);
+	CHECK(fd == 17);
 	closed++;
 	return 0;
 }
@@ -50,7 +56,7 @@ probe_close(int fd)
 static unsigned
 probe_alarm(unsigned seconds)
 {
-	assert(seconds == 30);
+	CHECK(seconds == 30);
 	return 0;
 }
 
@@ -60,14 +66,14 @@ probe_ioctl(int fd, unsigned long command, ...)
 	va_list ap;
 	void *data;
 
-	assert(fd == 17);
+	CHECK(fd == 17);
 	va_start(ap, command);
 	data = va_arg(ap, void *);
 	va_end(ap);
 	if (command == USB_DEVICEINFO) {
 		struct usb_device_info *info = data;
 		infos++;
-		assert(info->udi_addr == 2);
+		CHECK(info->udi_addr == 2);
 		if (fault == INFO || (fault == FINAL_INFO && infos == 2)) {
 			errno = ENXIO;
 			return -1;
@@ -77,16 +83,16 @@ probe_ioctl(int fd, unsigned long command, ...)
 		info->udi_cookie.cookie = fault == CHANGED ? infos : 1;
 		return 0;
 	}
-	assert(command == USB_REQUEST);
+	CHECK(command == USB_REQUEST);
 	struct usb_ctl_request *req = data;
 	usb_port_status_t *status = req->ucr_data;
 	requests++;
-	assert(req->ucr_addr == 2 && req->ucr_flags == 0);
-	assert(req->ucr_request.bmRequestType == UT_READ_CLASS_OTHER);
-	assert(req->ucr_request.bRequest == UR_GET_STATUS);
-	assert(UGETW(req->ucr_request.wValue) == 0);
-	assert(UGETW(req->ucr_request.wIndex) == requests);
-	assert(UGETW(req->ucr_request.wLength) == sizeof(*status));
+	CHECK(req->ucr_addr == 2 && req->ucr_flags == 0);
+	CHECK(req->ucr_request.bmRequestType == UT_READ_CLASS_OTHER);
+	CHECK(req->ucr_request.bRequest == UR_GET_STATUS);
+	CHECK(UGETW(req->ucr_request.wValue) == 0);
+	CHECK(UGETW(req->ucr_request.wIndex) == requests);
+	CHECK(UGETW(req->ucr_request.wLength) == sizeof(*status));
 	if (fault == REQUEST && requests == 2) {
 		errno = EIO;
 		return -1;
@@ -111,27 +117,27 @@ main(void)
 	char *args[] = { "usb-hub-status", "/dev/fixture", "2", NULL };
 	const char *invalid[] = { "", "-1", "128", "2x", "999999999999999999999" };
 
-	assert(freopen("/dev/null", "w", stdout) != NULL);
+	CHECK(freopen("/dev/null", "w", stdout) != NULL);
 	for (fault = NONE; fault <= FINAL_INFO; fault++) {
 		ports = 4;
 		opened = closed = infos = requests = 0;
-		assert(hub_status_main(3, args) == (fault == NONE ? 0 : 1));
-		assert(opened == 1 && closed == (fault == OPEN ? 0 : 1));
-		assert(requests == (fault <= NOT_HUB && fault != NONE ? 0 : 4));
+		CHECK(hub_status_main(3, args) == (fault == NONE ? 0 : 1));
+		CHECK(opened == 1 && closed == (fault == OPEN ? 0 : 1));
+		CHECK(requests == (fault <= NOT_HUB && fault != NONE ? 0 : 4));
 	}
 	fault = NONE;
 	for (ports = 0; ports <= 256; ports += ports == 0 ? 255 : 1) {
 		opened = closed = infos = requests = 0;
-		assert(hub_status_main(3, args) == (ports == 255 ? 0 : 1));
-		assert(opened == 1 && closed == 1);
-		assert(requests == (ports == 255 ? 255 : 0));
+		CHECK(hub_status_main(3, args) == (ports == 255 ? 0 : 1));
+		CHECK(opened == 1 && closed == 1);
+		CHECK(requests == (ports == 255 ? 255 : 0));
 	}
 	for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); i++) {
 		args[2] = (char *)invalid[i];
 		opened = 0;
-		assert(hub_status_main(3, args) == 1 && opened == 0);
+		CHECK(hub_status_main(3, args) == 1 && opened == 0);
 	}
-	assert(hub_status_main(1, args) == 1);
+	CHECK(hub_status_main(1, args) == 1);
 	fprintf(stderr, "PASS: live hub probe admission, read-only requests and errors\n");
 	return 0;
 }
