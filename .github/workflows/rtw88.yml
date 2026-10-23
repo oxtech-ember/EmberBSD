@@ -195,6 +195,16 @@ jobs:
           apt-get update
           apt-get install -y --no-install-recommends valgrind libc6-dbg ruby clang cppcheck
           valgrind --version
+      - name: Execute source contracts under ASan and UBSan
+        env:
+          CC: gcc
+          RTW88_TEST_CFLAGS: -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: |
+          for contract in ember/tools/rtw*-contract.sh ember/tools/net80211-ht20-contract.sh ember/tools/net80211-rxba-contract.sh; do
+            sh "$contract"
+          done
       - name: Execute actual source under Memcheck and GCC path analysis
         env:
           CC: gcc
@@ -220,16 +230,6 @@ jobs:
           SH
           chmod 755 "$RUNNER_TEMP/memcheck"
           export TEST_RUNNER="$RUNNER_TEMP/memcheck"
-          for contract in ember/tools/rtw*-contract.sh ember/tools/net80211-ht20-contract.sh ember/tools/net80211-rxba-contract.sh; do
-            sh "$contract"
-          done
-      - name: Execute source contracts under ASan and UBSan
-        env:
-          CC: gcc
-          RTW88_TEST_CFLAGS: -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer
-          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
-          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
-        run: |
           for contract in ember/tools/rtw*-contract.sh ember/tools/net80211-ht20-contract.sh ember/tools/net80211-rxba-contract.sh; do
             sh "$contract"
           done
