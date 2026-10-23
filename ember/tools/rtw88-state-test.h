@@ -7,7 +7,9 @@
 typedef unsigned int u_int;
 #include <dev/ic/rtw88_net_policy.h>
 #include "native-state-types.inc"
+#ifndef __UNCONST
 #define __UNCONST(p) ((void *)(uintptr_t)(const void *)(p))
+#endif
 const struct ieee80211_channel ieee80211_channel_anyc={0,0};
 #define setbit(p,n) ((p)[(n)/8] |= (uint8_t)(1U<<((n)%8)))
 #define clrbit(p,n) ((p)[(n)/8] &= (uint8_t)~(1U<<((n)%8)))

@@ -297,6 +297,10 @@ int rtw88_fw_iqk_poll(struct rtw88_softc *);
 #endif
 /* Caller serializes startup/stop. Errors retain unsafe ownership for a retry. */
 int rtw88_stop(struct rtw88_softc *);
+/* PCI-serialized, non-sleeping TX fence. Close host producers first, pause all
+ * queues and disable MAC TX with readback. No DMA release or automatic resume.
+ * Any error means hardware quiet is unproven; retain the fence and call stop. */
+int rtw88_tx_quiet(struct rtw88_softc *);
 int rtw88_fw_mailbox_begin(struct rtw88_softc *, unsigned, int *);
 int rtw88_fw_mailbox_end(struct rtw88_softc *, int);
 /* PCI-serialized outstanding DATA/MGMT DMA, not RF idle or air ACK.

@@ -722,6 +722,43 @@ rtw88_release_fw(struct rtw88_softc *sc)
 		sc->sc_ops->firmware_release(sc->sc_bus);
 }
 
+/* REG_CR.MACTXEN and REG_TXPAUSE use pinned rtw88 reg.h definitions.
+ * Try both independent controls even when one fails. A failed write can have
+ * taken effect; report the first error and never restore either TX control.
+ */
+int
+rtw88_tx_quiet(struct rtw88_softc *sc)
+{
+	uint8_t cr, check;
+	int error, e;
+
+	sc->sc_stop_requested = 1;
+	rtw88_ra_invalidate(sc);
+#ifdef RTW88_RFK_EXPERIMENT
+	sc->sc_power_program.valid = 0;
+	sc->sc_operating.prepared = sc->sc_operating.sealed = 0;
+#endif
+	if (!sc->sc_resources_ready || !sc->sc_running || !sc->sc_started)
+		return ENXIO;
+	error = sc->sc_ops->write_1(sc->sc_bus, 0x0522, 0xff);
+	e = sc->sc_ops->read_1(sc->sc_bus, RTW88_REG_CR, &cr);
+	if (e == 0)
+		e = sc->sc_ops->write_1(sc->sc_bus, RTW88_REG_CR, cr & ~0x40);
+	if (error == 0)
+		error = e;
+	e = sc->sc_ops->read_1(sc->sc_bus, 0x0522, &check);
+	if (e == 0 && check != 0xff)
+		e = EIO;
+	if (error == 0)
+		error = e;
+	e = sc->sc_ops->read_1(sc->sc_bus, RTW88_REG_CR, &check);
+	if (e == 0 && (check & 0x40) != 0)
+		e = EIO;
+	if (error == 0)
+		error = e;
+	return error;
+}
+
 int
 rtw88_stop(struct rtw88_softc *sc)
 {
@@ -1034,7 +1071,7 @@ rtw88_fw_command(struct rtw88_softc *sc, uint8_t id, const void *payload,
 	uint32_t gen, w0, w1, ex_reg, box_reg;
 	int error;
 
-	if (!sc->sc_started || !sc->sc_rf_enabled)
+	if (!sc->sc_started || !sc->sc_rf_enabled || sc->sc_stop_requested)
 		return ENXIO;
 	if (size > 0 && payload == NULL)
 		return EINVAL;
@@ -1278,7 +1315,8 @@ rtw88_tx_available(struct rtw88_softc *sc, unsigned q)
 {
 	const struct rtw88_txq *txq;
 
-	if (q >= RTW88_NTXQ || !sc->sc_running || sc->sc_edca_error != 0 ||
+	if (q >= RTW88_NTXQ || !sc->sc_running || sc->sc_stop_requested ||
+	    sc->sc_edca_error != 0 ||
 	    sc->sc_ra.error != 0)
 		return 0;
 	txq = &sc->sc_txq[q];
@@ -1319,7 +1357,7 @@ rtw88_station_config(struct rtw88_softc *sc, const uint8_t *bssid,
 		return sc->sc_edca_error;
 	if (sc->sc_ra.error != 0)
 		return sc->sc_ra.error;
-	if (!sc->sc_running || !sc->sc_started)
+	if (!sc->sc_running || !sc->sc_started || sc->sc_stop_requested)
 		return ENXIO;
 	if (sc->sc_channel > 14 && (basic_rates & 0xf) != 0)
 		return EINVAL;
@@ -1828,7 +1866,7 @@ int
 rtw88_loopback(struct rtw88_softc *sc, int mode)
 {
 
-	if (!sc->sc_running)
+	if (!sc->sc_running || sc->sc_stop_requested)
 		return ENXIO;
 	switch (mode) {
 	case 0x00: case 0x01: case 0x03: case 0x07: case RTW88_LBMODE_IMMEDIATE:
@@ -1846,7 +1884,7 @@ rtw88_channel(struct rtw88_softc *sc, unsigned ch)
 	uint8_t pause;
 	int error;
 
-	if (!sc->sc_running)
+	if (!sc->sc_running || sc->sc_stop_requested)
 		return ENXIO;
 #ifdef RTW88_RFK_EXPERIMENT
 	sc->sc_operating.prepared = sc->sc_operating.sealed = 0;

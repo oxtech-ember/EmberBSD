@@ -2242,6 +2242,91 @@ test_tx_posted_diagnostics(void)
 
 /* The fixed-rate caller has its own stack layout. Its explicit core-only
  * reuse excludes this state fixture. The normal start runner keeps it. */
+/* Independent failures of each quiet control must leave host TX fenced. */
+static unsigned quiet_fault, quiet_pause_writes, quiet_cr_writes, quiet_cr_reads;
+static int
+quiet_write1(void *cookie, uint32_t reg, uint8_t value)
+{
+	if (reg == 0x0522 || reg == 0x0100) {
+		CHECK(f.sc->sc_stop_requested && !f.sc->sc_ra.configured &&
+		    !f.sc->sc_ra.active);
+		if (reg == 0x0522) {
+			quiet_pause_writes++;
+			if (quiet_fault == 1) return EIO;
+			if (quiet_fault == 10) return ETIMEDOUT;
+		} else {
+			quiet_cr_writes++;
+			if (quiet_fault == 4) return EIO;
+		}
+	}
+	int error = write_1(cookie, reg, value);
+	if ((reg == 0x0522 && quiet_fault == 2) ||
+	    (reg == 0x0100 && quiet_fault == 5)) return EIO;
+	return error;
+}
+static int
+quiet_read1(void *cookie, uint32_t reg, uint8_t *value)
+{
+	if (reg == 0x0522 && quiet_fault == 8) return ENXIO;
+	if (reg == 0x0100) {
+		quiet_cr_reads++;
+		if (quiet_fault == 3) return EIO;
+		if (quiet_cr_reads > 1 && (quiet_fault == 9 || quiet_fault == 10))
+			return EINVAL;
+	}
+	int error = read_1(cookie, reg, value);
+	if (error == 0 && reg == 0x0522 && quiet_fault == 6) *value = 0;
+	if (error == 0 && reg == 0x0100 && quiet_fault == 7 &&
+	    quiet_cr_reads > 1) *value |= 0x40;
+	return error;
+}
+static void
+test_tx_quiet_fence(void)
+{
+	struct rtw88_softc sc;
+	reset_bus(&sc);
+	CHECK(rtw88_tx_quiet(&sc) == ENXIO && sc.sc_stop_requested);
+	CHECK(f.writes == 0 && f.delays == 0);
+	for (unsigned fault = 0; fault < 11; fault++) {
+		if (!start_ok(&sc)) return;
+		struct rtw88_bus_ops spy = ops;
+		spy.read_1 = quiet_read1; spy.write_1 = quiet_write1;
+		sc.sc_ops = &spy;
+		sc.sc_ra.configured = sc.sc_ra.active = 1;
+		f.mmio[0x0100] = 0xff; f.mmio[0x0522] = 0;
+		quiet_fault = fault;
+		quiet_pause_writes = quiet_cr_writes = quiet_cr_reads = 0;
+		unsigned delays = f.delays, syncs = f.syncs;
+		int expected = fault == 10 ? ETIMEDOUT : fault == 9 ? EINVAL :
+		    fault == 8 ? ENXIO : fault ? EIO : 0;
+		CHECK(rtw88_tx_quiet(&sc) == expected);
+		CHECK(sc.sc_stop_requested && !sc.sc_ra.configured && !sc.sc_ra.active);
+		CHECK(sc.sc_running && sc.sc_started && sc.sc_dma_master);
+		CHECK(f.delays == delays && f.syncs == syncs);
+		CHECK(quiet_pause_writes == 1 && quiet_cr_writes == (fault == 3 ? 0U : 1U));
+		if (fault == 0) CHECK(f.mmio[0x0522] == 0xff && f.mmio[0x0100] == 0xbf);
+		if (fault == 1 || fault == 2) CHECK((f.mmio[0x0100] & 0x40) == 0);
+		if (fault == 3 || fault == 4) CHECK(f.mmio[0x0522] == 0xff);
+		uint8_t frame[24] = {0x80};
+		unsigned writes = f.writes;
+		for (unsigned q = 0; q < RTW88_NTXQ; q++) {
+			unsigned wp = sc.sc_txq[q].wp;
+			CHECK(rtw88_tx_available(&sc, q) == 0);
+			CHECK(rtw88_tx_raw(&sc, q, frame, sizeof(frame)) == ENXIO);
+			CHECK(sc.sc_txq[q].wp == wp);
+		}
+		CHECK(rtw88_channel(&sc, 36) == ENXIO);
+		CHECK(rtw88_loopback(&sc, 0) == ENXIO);
+		CHECK(rtw88_station_config(&sc, NULL, 0, 0x0f, 20, 0) == ENXIO);
+		CHECK(rtw88_fw_command(&sc, 1, NULL, 0) == ENXIO);
+		CHECK(f.writes == writes && f.syncs == syncs);
+		sc.sc_ops = &ops; quiet_fault = 0;
+		CHECK(rtw88_stop(&sc) == 0);
+		CHECK(rtw88_start(&sc) == 0 && !sc.sc_stop_requested);
+		rtw88_core_detach(&sc);
+	}
+}
+
 #ifndef RTW88_START_CORE_ONLY
 #include "rtw88-state-test.h"
 #endif
@@ -2250,6 +2335,7 @@ int
 main(void)
 {
 
+	test_tx_quiet_fence();
 	test_cold_dack_startup();
 	test_radio_dependencies();
 	test_power_system_integration();
