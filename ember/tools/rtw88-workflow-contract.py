@@ -35,3 +35,32 @@ if missing:
     print("rtw88 sparse checkout misses: " + ", ".join(missing), file=sys.stderr)
     raise SystemExit(1)
 print(f"rtw88 sparse checkout: {len(required)} inputs covered")
+
+# Sparse inputs must also trigger CI when changed on their own.
+for event in ("push", "pull_request"):
+    marker = next(i for i, line in enumerate(lines)
+                  if line == "  " + event + ":")
+    trigger_patterns = []
+    in_paths = False
+    for line in lines[marker + 1:]:
+        indent = len(line) - len(line.lstrip())
+        if line.strip() and indent <= 2:
+            break
+        if line == "    paths:":
+            in_paths = True
+            continue
+        if in_paths and line.strip() and indent <= 4:
+            break
+        if in_paths and line.startswith("      - "):
+            pattern = line.strip()[2:].strip("\"'")
+            if pattern.startswith("!"):
+                raise SystemExit("negative trigger patterns need ordered matching")
+            trigger_patterns.append(pattern)
+    missing = [path for path in required
+               if not any(fnmatch.fnmatchcase(path, pattern)
+                          for pattern in trigger_patterns)]
+    if missing:
+        print("rtw88 " + event + " trigger misses: " + ", ".join(missing),
+              file=sys.stderr)
+        raise SystemExit(1)
+print(f"rtw88 push/pull_request triggers: {len(required)} inputs covered")
