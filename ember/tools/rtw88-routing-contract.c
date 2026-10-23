@@ -131,8 +131,9 @@ static void workqueue_enqueue(struct workqueue *q,struct work *w,void *cookie)
 static int route_new_state(struct ieee80211com *ic,int state,int arg)
 { return rtw88_net_newstate(ic,(enum ieee80211_state)state,arg); }
 #include "routing-rxba-native.inc"
-#define ieee80211_new_state route_new_state
 static unsigned routing_ht20_withdrawals, routing_ht20_rejections;
+#include "routing-ht20-stub.inc"
+#define ieee80211_new_state route_new_state
 #include "routing-native.inc"
 #undef ieee80211_new_state
 static struct mbuf *scheduler(struct queue *q,int op)

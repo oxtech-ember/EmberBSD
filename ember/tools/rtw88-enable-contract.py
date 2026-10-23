@@ -47,7 +47,10 @@ routing=replace(routing,'    struct ieee80211com ic;','''    struct ieee80211com
     device_t dev;
     unsigned configured_media;
     int (*parent_state)(struct ieee80211com *,enum ieee80211_state,int);''')
-routing=replace(routing,'#define ieee80211_new_state route_new_state\n#include "routing-native.inc"','#include "rtw88-enable-services.inc"\nstruct rtw88_net; struct ieee80211_ht20_profile;\nstatic void rtw88_net_ht20_publish(struct rtw88_net *, const struct ieee80211_ht20_profile *);\n#define ieee80211_new_state route_new_state\n#include "routing-native.inc"\n#include "enable-native.inc"')
+routing=replace(routing,'static unsigned routing_ht20_withdrawals, routing_ht20_rejections;\n#include "routing-ht20-stub.inc"\n#define ieee80211_new_state route_new_state\n#include "routing-native.inc"','#include "rtw88-enable-services.inc"\nstruct rtw88_net; struct ieee80211_ht20_profile;\nstatic void rtw88_net_ht20_publish(struct rtw88_net *, const struct ieee80211_ht20_profile *);\n#define ieee80211_new_state route_new_state\n#include "routing-native.inc"\n#include "enable-native.inc"')
+# Keep the real RUN-to-SCAN checks, but omit counters owned by the routing stub.
+routing=replace(routing,'    unsigned ht20_withdrawals_before=routing_ht20_withdrawals;\n    unsigned ht20_rejections_before=routing_ht20_rejections;\n','')
+routing=replace(routing,'    CHECK(routing_ht20_withdrawals==ht20_withdrawals_before+1);\n    CHECK(routing_ht20_rejections==ht20_rejections_before);\n','')
 routing=replace(routing,'int main(void)\n{','int routing_base_main(void)\n{')
 (out/'enable-routing.inc').write_text(routing)
 # Native channel/mode constants and IFM declarations; existing WME model owns types.

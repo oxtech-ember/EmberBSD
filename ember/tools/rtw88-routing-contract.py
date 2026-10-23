@@ -43,7 +43,6 @@ rtw88_net_ht20_publish(struct rtw88_net *net,
     routing_ht20_withdrawals++;
 }
 '''
-parts.append(ht20_stub)
 (out/'routing-ht20-stub.inc').write_text(ht20_stub)
 for m in re.finditer(r'^static (?:int|unsigned|void|struct mbuf \*)\n(rtw88_net_(?:tx_[a-z0-9_]+|start|newstate|softintr))\(.*?^}', net, re.M|re.S):
     parts.append(m.group())
