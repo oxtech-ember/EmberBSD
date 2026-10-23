@@ -228,9 +228,10 @@ It rejects unrelated errors, wrong events and timeouts.
 It does not modify a submitted image.
 
 The consumer does not request disable or remove an active framebuffer.
-Close releases its userspace handles.
-The provider retains the final active frame under its native lifetime contract.
-The final white image can remain active until another accepted frame or reboot.
+Close releases its userspace handles. DRM framebuffer removal can then detach
+the primary plane through the verified RCQ retirement path. The last image
+can disappear when the descriptor closes; observe it while the consumer
+keeps the framebuffer active. A failed retirement retains the storage.
 Page-flip completion does not replace independent physical image observation.
 
 Run the actual-consumer host fixture:
