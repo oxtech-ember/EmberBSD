@@ -34,7 +34,7 @@ MAN=	aac.4 ac97.4 acardide.4 aceride.4 acphy.4 \
 	iavf.4 ibmcd.4 ibmhawk.4 ichsmb.4 icmp.4 icp.4 icsphy.4 iee.4 \
 	ieee80211.4 ietp.4 ifmedia.4 \
 	igc.4 igmafb.4 igphy.4 igpio.4 igsfb.4 iha.4 \
-	ihidev.4 ihphy.4 iic.4 ims.4 inet.4 ikphy.4 inphy.4 intersil7170.4 \
+	ihidev.4 ihphy.4 iic.4 ims.4 imt.4 inet.4 ikphy.4 inphy.4 intersil7170.4 \
 	intro.4 ioasic.4 ioat.4 iop.4 iophy.4 iopsp.4 ip.4 ipgphy.4 ipmi.4 \
 	ipw.4 irmce.4 isp.4 ismt.4 isv.4 itesio.4 iteide.4 iwi.4 iwm.4 iwn.4 \
 	ixg.4 ixl.4 ixpide.4 ixv.4 \

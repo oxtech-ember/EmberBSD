@@ -1,0 +1,53 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.Dd October 23, 2026
+.Dt IMT 4
+.Os
+.Sh NAME
+.Nm imt
+.Nd I2C Windows Precision Touchpad pointer
+.Sh SYNOPSIS
+.Cd "imt* at ihidev?"
+.Cd "wsmouse* at imt? mux 0"
+.Sh DESCRIPTION
+The
+.Nm
+driver reads Windows Precision Touchpad contact reports through
+.Xr ihidev 4 .
+It sends relative pointer motion and the physical left button to
+.Xr wsmouse 4 .
+It can generate a left click from a short single-finger tap.
+.Pp
+The driver requires complete parallel contact reports.
+It rejects frames with an invalid size, excessive contact count,
+duplicate contact identifiers, or coordinates outside the descriptor ranges.
+Hybrid reports, multitouch gestures, and tap dragging are not supported.
+.Pp
+The driver selects Precision Touchpad input mode when the device opens.
+The first contact sets the motion origin.
+It does not move the pointer until a subsequent contact report arrives.
+.Sh SYSCTL VARIABLES
+Each device provides
+.Va hw.imtN.tapping .
+The default value is zero.
+Set it to one to enable single-finger tap clicks.
+Taps longer than 180 milliseconds do not click.
+Motion beyond 50 native coordinate units cancels the tap.
+Multiple fingers, a physical button press, or a low-confidence contact also
+cancel the tap.
+.Pp
+Use
+.Pa /etc/sysctl.conf
+to preserve the setting across boots.
+.Sh SEE ALSO
+.Xr ihidev 4 ,
+.Xr wsmouse 4 ,
+.Xr sysctl 8
+.Sh HISTORY
+The driver uses the Windows Precision Touchpad report model from
+.Ox
+.Nm
+and
+.Nm hidmt .
+This implementation uses the
+.Nx
+HID parser and wscons pointer interface.

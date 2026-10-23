@@ -10,6 +10,9 @@ file    dev/hid/hid.c			hid
 define	hidms : tpcalib
 file    dev/hid/hidms.c			hidms
 
+define	hidmt
+file	dev/hid/hidmt.c			hidmt
+
 define	hidkbd
 file	dev/hid/hidkbd.c		hidkbd
 

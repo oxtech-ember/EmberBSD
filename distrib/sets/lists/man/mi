@@ -1457,6 +1457,7 @@
 ./usr/share/man/cat4/ikphy.0			man-sys-catman		.cat
 ./usr/share/man/cat4/imp.0			man-obsolete		obsolete
 ./usr/share/man/cat4/ims.0			man-sys-catman		.cat
+./usr/share/man/cat4/imt.0			man-sys-catman		.cat
 ./usr/share/man/cat4/inet.0			man-sys-catman		.cat
 ./usr/share/man/cat4/inet6.0			man-sys-catman		.cat
 ./usr/share/man/cat4/inphy.0			man-sys-catman		.cat
@@ -5058,6 +5059,7 @@
 ./usr/share/man/man4/ikphy.4			man-sys-man		.man
 ./usr/share/man/man4/imp.4			man-obsolete		obsolete
 ./usr/share/man/man4/ims.4			man-sys-man		.man
+./usr/share/man/man4/imt.4			man-sys-man		.man
 ./usr/share/man/man4/inet.4			man-sys-man		.man
 ./usr/share/man/man4/inet6.4			man-sys-man		.man
 ./usr/share/man/man4/inphy.4			man-sys-man		.man

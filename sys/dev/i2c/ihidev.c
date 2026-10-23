@@ -111,8 +111,9 @@ static int I2C_HID_POWER_OFF	= 0x1;
 static int	ihidev_match(device_t, cfdata_t, void *);
 static void	ihidev_attach(device_t, device_t, void *);
 static int	ihidev_detach(device_t, int);
-CFATTACH_DECL_NEW(ihidev, sizeof(struct ihidev_softc),
-    ihidev_match, ihidev_attach, ihidev_detach, NULL);
+static void	ihidev_childdet(device_t, device_t);
+CFATTACH_DECL2_NEW(ihidev, sizeof(struct ihidev_softc),
+    ihidev_match, ihidev_attach, ihidev_detach, NULL, NULL, ihidev_childdet);
 
 static bool	ihidev_intr_init(struct ihidev_softc *);
 static void	ihidev_intr_fini(struct ihidev_softc *);
@@ -287,10 +288,31 @@ ihidev_detach(device_t self, int flags)
 
 	if (sc->sc_report != NULL)
 		kmem_free(sc->sc_report, sc->sc_reportlen);
+	if (sc->sc_subdevs != NULL) {
+		kmem_free(sc->sc_subdevs,
+		    sc->sc_nrepid * sizeof(*sc->sc_subdevs));
+		sc->sc_subdevs = NULL;
+	}
 
 	mutex_destroy(&sc->sc_lock);
 
 	return 0;
+}
+
+static void
+ihidev_childdet(device_t self, device_t child)
+{
+	struct ihidev_softc *sc = device_private(self);
+	struct ihidev *scd = device_private(child);
+	int rep;
+
+	KASSERT(KERNEL_LOCKED_P());
+	mutex_enter(&sc->sc_lock);
+	/* One child can own every report ID. */
+	for (rep = 0; rep < sc->sc_nrepid; rep++)
+		if (sc->sc_subdevs[rep] == scd)
+			sc->sc_subdevs[rep] = NULL;
+	mutex_exit(&sc->sc_lock);
 }
 
 static bool
@@ -760,8 +782,9 @@ try_gpioint:
 	}
 #endif
 
+	/* wscons callbacks require the kernel lock before sc_lock. */
 	if (workqueue_create(&sc->sc_wq, device_xname(sc->sc_dev), ihidev_work,
-		sc, PRI_NONE, IPL_TTY, WQ_MPSAFE)) {
+		sc, PRI_NONE, IPL_TTY, 0)) {
 		aprint_error_dev(sc->sc_dev,
 		    "can't establish workqueue\n");
 		return false;
@@ -853,6 +876,7 @@ ihidev_work(struct work *wk, void *arg)
 
 	atomic_store_relaxed(&sc->sc_work_pending, 0);
 
+	KASSERT(KERNEL_LOCKED_P());
 	mutex_enter(&sc->sc_lock);
 
 	iic_acquire_bus(sc->sc_tag, 0);
@@ -1036,7 +1060,7 @@ ihidev_report_type_conv(int hid_type_id)
 int
 ihidev_get_report(struct device *dev, int type, int id, void *data, int len)
 {
-	struct ihidev_softc *sc = (struct ihidev_softc *)dev;
+	struct ihidev_softc *sc = device_private(dev);
 	struct i2c_hid_report_request rreq;
 	int ctype;
 
@@ -1060,7 +1084,7 @@ int
 ihidev_set_report(struct device *dev, int type, int id, void *data,
     int len)
 {
-	struct ihidev_softc *sc = (struct ihidev_softc *)dev;
+	struct ihidev_softc *sc = device_private(dev);
 	struct i2c_hid_report_request rreq;
 	int ctype;
 

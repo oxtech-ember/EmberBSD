@@ -5,3 +5,7 @@
 include "arch/amd64/conf/GENERIC_JSL_TRIAL"
 
 options PCI_RESOURCE
+
+# Windows Precision Touchpad contacts and optional single-finger tapping.
+imt* at ihidev?
+wsmouse* at imt? mux 0
