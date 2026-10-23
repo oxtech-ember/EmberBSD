@@ -227,12 +227,23 @@ types.append(re.search(r'^#define\s+CALLOUT_MPSAFE\s+.*$',(src/'sys/sys/callout.
 types.append(re.search(r'^#define\s+RTW88_NTXQ\s+.*$',var,re.M).group())
 types.append(re.search(r'^struct rtw88_net_rx \{.*?^};',net,re.M|re.S).group())
 types.append(re.search(r'^struct rtw88_net_stats \{.*?^};',(src/'sys/dev/ic/rtw88_net.h').read_text(),re.M|re.S).group())
+for filename,names in [('ieee80211_var.h',['IEEE80211_BINTVAL_MIN','IEEE80211_BINTVAL_MAX']),('_ieee80211.h',['IEEE80211_CHAN_ANYC'])]:
+ txt=(src/'sys/net80211'/filename).read_text()
+ for name in names:types.append(re.search(r'^#define\s+'+name+r'\s+.*$',txt,re.M).group())
 types.insert(0,'#undef IEEE80211_S_INIT\n#undef IEEE80211_S_RUN\n#undef IEEE80211_S_ASSOC\n#ifndef NATIVE_IEEE80211_STATE_DEFINED\n#define NATIVE_IEEE80211_STATE_DEFINED 1\n'+state_enum+'\n#endif')
 (out/'native-rxba-native-types.inc').write_text('\n'.join(types)+'\n')
+# The real native softintr observes AP presence before shared input. Keep its
+# complete body/parser dependencies instead of replacing the observer service.
+parts=[]
+for name in ['ieee80211_phy_ies.h','ieee80211_beacon_ies.h']:
+ parts.append(re.sub(r'^#include[^\n]*\n','',(src/'sys/net80211'/name).read_text(),flags=re.M))
+for path,name,result in [('ieee80211_phy_ies.c','ieee80211_phy_ies_parse','int'),('ieee80211_beacon_ies.c','ieee80211_beacon_ies_parse','int'),('ieee80211_beacon_ies.c','ieee80211_sta_beacon_interval','uint16_t')]:
+ parts.append(extract('sys/net80211/'+path,name,result))
+(out/'native-rxba-beacon.inc').write_text('\n'.join(parts))
 # These are the actual owning IRQ queue and Giant delivery consumers, not an
 # unused timer API. The baseline remains explicit until those bodies are present.
 with (out/'native-rxba-native.inc').open('a') as f:
- for name,result in [('rtw88_net_rx_frame','static void'),('rtw88_net_softintr','static void')]:
+ for name,result in [('rtw88_net_rx_frame','static void'),('rtw88_net_beacon_observe','static void'),('rtw88_net_softintr','static void')]:
   f.write(result+'\n'+re.search(r'^'+name+r'\(.*?^}',net,re.M|re.S).group()+'\n')
 
 s=(out/'rxba-test-kernel.h').read_text().replace('unsigned if_ipackets,if_ierrors,if_oerrors,if_obytes;', 'unsigned if_ipackets,if_ierrors,if_oerrors,if_obytes,if_opackets;')

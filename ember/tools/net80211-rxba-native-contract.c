@@ -1,10 +1,17 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Origin: native RX BA scheduling and AP presence contract, AI-assisted. */
 /* Actual native timer/provider bodies. Kernel scheduling and locks are models. */
 #define RXBA_SHARED_MAIN rxba_shared_main
 #include "net80211-rxba-contract.c"
 #include "rtw88_net_policy.h"
 #include "rtw88_hw.h"
+#ifndef __UNCONST
+#define __UNCONST(p) ((void *)(uintptr_t)(const void *)(p))
+#endif
 #include "native-rxba-native-types.inc"
+#include "native-rxba-beacon.inc"
+/* The channel identity is an explicit service in the common peer model. */
+const struct ieee80211_channel ieee80211_channel_anyc={0};
 #include <time.h>
 #undef ticks
 #define hz 1000
@@ -89,6 +96,45 @@ static struct ieee80211_node *ieee80211_find_rxnode(struct ieee80211com *ic,cons
 static struct mbuf *rtw88_net_rx_mbuf(const uint8_t *bytes,size_t len,struct ifnet *ifp)
 { (void)ifp;struct mbuf m={0};assert(len<=sizeof(m.storage));m.m_flags=M_PKTHDR;m.m_data=m.storage;memcpy(m.m_data,bytes,len);m.m_len=m.m_pkthdr.len=(int)len;return duplicate(&m); }
 #include "native-rxba-native.inc"
+static unsigned native_beacons_delivered;
+/* The shared fixture's management service owns Action frames only. Observe
+ * beacon delivery here; the actual native observer owns presence validation. */
+static void native_beacon_dispatch(struct ieee80211com *ic,struct mbuf *m,
+    struct ieee80211_node *ni,int subtype,int rssi,uint32_t stamp)
+{
+ (void)m;(void)rssi;(void)stamp;
+ CHECK(!native_lock && ni==ic->ic_bss);
+ CHECK(subtype==IEEE80211_FC0_SUBTYPE_BEACON);native_beacons_delivered++;
+}
+static void test_native_beacon_presence(void)
+{
+ for(unsigned malformed=0;malformed<2;malformed++) {
+  struct unit_fixture f;if(!unit_setup_mode(&f,10,64,0,0))return;
+  struct rtw88_softc core={.sc_generation=7};
+  struct rtw88_net net={.core=&core,.lock=&native_lock};
+  net.ic=f.ic;net.ec.ec_if=f.ifp;
+  net.ic.ic_ifp=&net.ec.ec_if;net.ec.ec_if.if_softc=&net;
+  net.ec.ec_if.model_ic=&net.ic;f.ni.ni_ic=&net.ic;f.ni.ni_associd=1;
+  net.ic.ic_recv_mgmt=native_beacon_dispatch;
+  uint8_t frame[41]={0x80};memset(frame+4,0xff,6);
+  memcpy(frame+10,f.ni.ni_macaddr,6);memcpy(frame+16,f.ni.ni_bssid,6);
+  frame[32]=100;frame[34]=1;frame[36]=malformed?255:0;
+  frame[38]=1;frame[39]=1;frame[40]=12;
+  struct rtw88_rx_info info={.packet_size=sizeof(frame)};
+  net.policy.epoch=4;net.policy.accepting=1;unit_now=100;
+  CHECK(rtw88_net_beacon_start(&net.policy,4,100)==0);
+  unsigned delivered=native_beacons_delivered;
+  unit_now=101;mutex_enter(net.lock);
+  rtw88_net_rx_frame(&net,frame,sizeof(frame),&info);mutex_exit(net.lock);
+  CHECK(net.policy.queued==1);
+  unit_now=102;rtw88_net_softintr(&net);
+  CHECK(net.policy.queued==0 && f.ni.references==1);
+  CHECK(native_beacons_delivered==delivered+1);
+  CHECK(net.policy.beacon_tick==(malformed?100U:101U));
+  CHECK(rtw88_net_beacon_poll(&net.policy,4,102,2)==(int)malformed);
+  f.ni.ni_ic=&f.ic;unit_close(&f);
+ }
+}
 static void test_native_timer(void)
 {
  struct unit_fixture f;if(!unit_setup(&f,10,64,0))return;
@@ -224,7 +270,7 @@ static void test_native_request_purge(void)
 }
 int main(void)
 {
- rxba_shared_main();test_native_timer();test_native_request_purge();
+ rxba_shared_main();test_native_timer();test_native_request_purge();test_native_beacon_presence();
  printf("RX BA native timer: %u checks, %u failures\n",checks,failures);
  return failures!=0;
 }
