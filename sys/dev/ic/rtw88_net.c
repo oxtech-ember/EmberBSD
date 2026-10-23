@@ -972,6 +972,17 @@ rtw88_net_state_work(struct work *work, void *cookie)
 #endif
 			    ) {
 				diag.stage = RTW88_NET_STAGE_CHANNEL;
+
+#ifdef RTW88_RFK_EXPERIMENT
+				/* ASSOC/RUN may retain the same proven channel.
+				 * A retune withdraws RFK and power provenance. Never
+				 * retain an unsealed, stale or different envelope. */
+				if ((state != IEEE80211_S_ASSOC &&
+				    state != IEEE80211_S_RUN) ||
+				    channel != net->core->sc_channel ||
+				    !net->core->sc_operating.sealed ||
+				    rtw8822c_rfk_seal(net->core) != 0)
+#endif
 				error = rtw88_channel(net->core, channel);
 			}
 			if (error == 0) {

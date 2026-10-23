@@ -669,6 +669,52 @@ main(void)
         CHECK(rtw88_net_ht20_profile_prepare(net,&profile)==0);
         rtw88_net_ht20_publish(net,&profile);
         CHECK(net->ic.ic_ht20_admit(&net->ic,&profile)==0);
+        /* The actual ASSOC and RUN workers must retain the already proven
+         * channel. Reprogramming it would withdraw the first HT offer. */
+        unsigned channel_writes=rfk_rf18_writes,shots=rfk_trace_len;
+        uint64_t power_serial=sc.sc_power_program.serial,token=sc.sc_operating.token;
+        const char *retain_fault=getenv("RTW88_RFK_RETAIN_FAULT");
+        if(retain_fault!=NULL) {
+            if(strcmp(retain_fault,"seal")==0)sc.sc_operating.sealed=0;
+            else if(strcmp(retain_fault,"generation")==0)sc.sc_operating.generation++;
+            else if(strcmp(retain_fault,"power")==0)sc.sc_power_program.valid=0;
+            else if(strcmp(retain_fault,"channel")==0) {
+                net->ic.ic_curchan=&net->ic.ic_channels[153];
+                net->ic.ic_bss->ni_chan=net->ic.ic_curchan;
+            } else CHECK(strcmp(retain_fault,"run-power")==0);
+        }
+        for(unsigned q=0;q<RTW88_NTXQ;q++)f.tx_hw_rp[q]=sc.sc_txq[q].wp;
+        CHECK(rtw88_net_newstate(&net->ic,IEEE80211_S_ASSOC,0)==0);
+        rtw88_net_state_work(&net->state_work,net);
+        CHECK(net->ic.ic_state==IEEE80211_S_ASSOC && net->policy.accepting);
+        if(retain_fault!=NULL && strcmp(retain_fault,"run-power")!=0) {
+            CHECK(!sc.sc_operating.sealed && !sc.sc_operating.prepared);
+            CHECK(sc.sc_power_program.serial!=power_serial);
+            CHECK(sc.sc_channel==(strcmp(retain_fault,"channel")==0?153U:149U));
+            CHECK(net->ic.ic_ht20_admit(&net->ic,&profile)==EOPNOTSUPP);
+            CHECK(ieee80211_send_mgmt(&net->ic,net->ic.ic_bss,IEEE80211_FC0_SUBTYPE_ASSOC_REQ,0)==0);
+            CHECK(!net->ic.ic_bss->ni_ht20.offered);
+            CHECK(rfk_trace_len==shots);
+        } else if(net->ic.ic_ht20_admit(&net->ic,&profile)==0) {
+            CHECK(sc.sc_operating.sealed && sc.sc_power_program.serial==power_serial);
+            CHECK(rfk_rf18_writes==channel_writes && rfk_trace_len==shots);
+            enable_ht20_exchange(&net->ic,net->ic.ic_ht20_admit,&profile,0);
+            if(retain_fault!=NULL)sc.sc_power_program.valid=0;
+            for(unsigned q=0;q<RTW88_NTXQ;q++)f.tx_hw_rp[q]=sc.sc_txq[q].wp;
+            rtw88_net_state_work(&net->state_work,net);
+            if(retain_fault!=NULL) {
+                CHECK(net->ic.ic_state==IEEE80211_S_INIT && !net->policy.accepting);
+                CHECK(!sc.sc_started && !sc.sc_operating.sealed && !sc.sc_ra.active);
+                CHECK(net->ic.ic_ht20_admit(&net->ic,&profile)==EOPNOTSUPP);
+            } else {
+                CHECK(net->ic.ic_state==IEEE80211_S_RUN && net->policy.accepting);
+                CHECK(sc.sc_operating.sealed && sc.sc_operating.token==token);
+                CHECK(sc.sc_power_program.serial==power_serial);
+                CHECK(sc.sc_ra.active && sc.sc_ra.phy==RTW88_RA_HT20_1SS);
+                CHECK(net->ic.ic_ht20_admit(&net->ic,&profile)==0);
+            }
+            CHECK(rfk_rf18_writes==channel_writes && rfk_trace_len==shots);
+        } else CHECK(0);
         struct rtw88_operating_envelope saved=sc.sc_operating;
         unsigned prior=rfk_io;
         sc.sc_operating.sealed=0;

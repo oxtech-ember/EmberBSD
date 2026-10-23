@@ -61,6 +61,17 @@ for altq in 0 1; do
             exit 1
         fi
         cat "$work/output"
+        if [ "$scenario" = env-channel149 ]; then
+            for fault in seal generation power channel run-power; do
+                if ! RTW88_RFK_CASE="$scenario" RTW88_RFK_RETAIN_FAULT="$fault" run_test "$work/test" > "$work/output"; then
+                    echo "RFK retained-channel fault: $fault"
+                    cat "$work/output"
+                    exit 1
+                fi
+                echo "RFK retained-channel fault: $fault"
+                cat "$work/output"
+            done
+        fi
     done
     if [ "${RTW88_RFK_ANALYZE:-0}" = 1 ]; then
         units=rtw88-rfk-contract.c

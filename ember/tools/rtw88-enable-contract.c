@@ -111,7 +111,7 @@ static void enable_ht20_exchange(struct ieee80211com *ic,
     m->m_len+=7;
     uint8_t *p=m->m_data+m->m_len;
     ieee80211_ht20_write(p,profile);p+=28;
-    p[0]=61;p[1]=22;p[2]=36;p[3]=operation?5:0;
+    p[0]=61;p[1]=22;p[2]=(uint8_t)ieee80211_chan2ieee(ic,ic->ic_curchan);p[3]=operation?5:0;
     p[4]=(uint8_t)operation;p[8]=1;p+=24;
     m->m_len=m->m_pkthdr.len=m->model_capacity=(int)(p-m->m_data);
     ieee80211_recv_mgmt_assoc_resp(ic,m,ni,IEEE80211_FC0_SUBTYPE_ASSOC_RESP,0,0);

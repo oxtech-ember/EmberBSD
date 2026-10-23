@@ -161,9 +161,14 @@ request keeps its own epoch and parent transition.
 Stop, channel and power mutations withdraw the snapshot before IO.
 
 HT admission revalidates an already sealed envelope without register IO.
-A channel reprogram clears that proof, including the ordinary ASSOC channel
-program. HT admission then stays closed. Both publication and the provider
-callback enforce this boundary, even if an old snapshot remains published.
+A channel reprogram clears that proof. Experimental ASSOC and RUN retain the
+current channel only when the existing seal still validates the same channel
+and operating envelope. This retention performs no channel or power writes and
+does not run RFK again. Missing or stale proofs and different channels cannot
+retain the envelope. If state preparation succeeds, they use the ordinary
+channel programmer, which withdraws the proof and keeps HT admission closed.
+Both publication and the provider callback enforce this boundary, even
+if an old snapshot remains published.
 This envelope does not establish mixed-format air traffic, hardware BlockAck, physical RFK convergence or hardware power indices.
 A separate source-backed TXAGC read protocol remains unimplemented.
 
@@ -210,6 +215,12 @@ this is not a two-device hardware-concurrency simulation.
 The formatter test executes the actual PCI statistics body at every buffer
 capacity, including maximum numeric values. The normal packet-H2C and legacy
 source suites remain separate regression gates.
+
+The channel-149 contract also executes AUTH, ASSOC, the shared HT offer/response
+exchange and RUN. It requires the original RFK token, power-program serial and
+channel writes to stay unchanged across those transitions. Missing seals, stale
+generation or power receipts, a changed channel and power loss before RUN are
+separate worker cases. These checks are host service models, not air traffic.
 
 The timing cases use a 100 Hz scheduler and time-driven coefficient reports.
 They cover a 5 ms completion, a tick-boundary start, crossing the 32-bit clock
