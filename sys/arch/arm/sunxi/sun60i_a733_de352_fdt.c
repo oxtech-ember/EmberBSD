@@ -1249,6 +1249,8 @@ sun60i_a733_de352_start(int phandle)
 		error = sc->result;
 	} else {
 		error = de352_run(sc);
+		if (error == EAGAIN && !sc->discovery_pending)
+			error = EIO;
 		sc->result = error;
 		/* Only a proved absent sink may retry retained discovery. */
 		if (error != EAGAIN)

@@ -75,6 +75,9 @@ static const struct device_compatible_entry compat_data[] = {
 static int
 native_fail(struct sun60i_a733_hdmi_softc *sc, int error)
 {
+	/* EAGAIN is reserved for a direct, checked HPD-low discovery return. */
+	if (error == EAGAIN)
+		error = EIO;
 	if (sc->fault == 0 && error != 0) {
 		sc->fault = error;
 		if (sc->dw.sc_io_error == 0)

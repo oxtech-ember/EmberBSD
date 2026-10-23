@@ -87,11 +87,12 @@ static unsigned calls, fail, reads, writes, maps, unmaps, clock_puts, faults, re
 static unsigned map_failure, wrong_node, bad_range, missing_property, reject_syscfg;
 static unsigned syscfg_writes, rail_voltage[2], rail_enabled[2], bad_name;
 static bool retained, ccu_hdmi, ccu_tv0, dw_started, tv_started, registered;
-static bool dcxo_drift, hpd_loss;
+static bool dcxo_drift, hpd_loss, hpd_after_ddc;
+static unsigned transient_step;
 static uint32_t sfr_hz, sysreg[2], core8[0x8000], top[17], tvregs[0x341/4+1], vo1[9];
 static uint32_t power_cells[2];
 static unsigned event[512], events;
-static int step(unsigned id) { CHECK(events < 512);event[events++]=id;return ++calls==fail?EIO:0; }
+static int step(unsigned id) { CHECK(events < 512);event[events++]=id;calls++;return id==transient_step?EAGAIN:calls==fail?EIO:0; }
 static void *device_private(device_t dev) { return dev; }
 static void aprint_naive(const char *s) { (void)s; }
 static void aprint_normal(const char *s) { (void)s; }
@@ -178,7 +179,7 @@ static int dwhdmi_native_stop(struct dwhdmi_softc *dw)
 int sun60i_a733_tv0_observe(struct sun60i_a733_tv0 *p,uint64_t *out)
 { CHECK(p->started&&tv_started);int e=p->io->ready(p->io->arg,p->owner);if(!e)e=step(19);if(!e)*out=++p->sequence;return e; }
 static int dwhdmi_native_init(struct dwhdmi_softc *dw)
-{ CHECK(ccu_hdmi);int e=step(20);if(!e){dw->sc_native_initialized=true;dw->sc_ic=dw;ddc_dw=dw;}return e; }
+{ CHECK(ccu_hdmi&&!dw->sc_native_initialized);int e=step(20);if(!e){dw->sc_native_initialized=true;dw->sc_ic=dw;ddc_dw=dw;}return e; }
 static int dwhdmi_native_prepare(struct dwhdmi_softc *dw,const struct drm_display_mode *m)
 { (void)dw;CHECK(m->clock==108000&&m->clock==m->crtc_clock&&m->hdisplay==1280&&m->htotal==1688&&m->vdisplay==1024&&m->vtotal==1066&&m->flags==5);return step(21); }
 static int dwhdmi_native_start(struct dwhdmi_softc *dw)
@@ -186,7 +187,7 @@ static int dwhdmi_native_start(struct dwhdmi_softc *dw)
 static int iic_acquire_bus(void *tag,int flags) { (void)flags;CHECK(tag==ddc_dw);return step(23); }
 static void iic_release_bus(void *tag,int flags) { (void)flags;CHECK(tag==ddc_dw);releases++; }
 static int iic_exec(void *tag,int op,int address,const void *cmd,size_t cmdlen,void *out,size_t len,int flags)
-{ (void)flags;CHECK(tag==ddc_dw&&op==I2C_OP_READ_WITH_STOP&&address==0x50&&cmdlen==1&&*(const uint8_t *)cmd==0&&len==128);CHECK(ddc_dw->sc_scl_hcnt==221&&ddc_dw->sc_scl_lcnt==245);int e=step(24);if(!e)memset(out,0,len);return e; }
+{ (void)flags;CHECK(tag==ddc_dw&&op==I2C_OP_READ_WITH_STOP&&address==0x50&&cmdlen==1&&*(const uint8_t *)cmd==0&&len==128);CHECK(ddc_dw->sc_scl_hcnt==221&&ddc_dw->sc_scl_lcnt==245);int e=step(24);if(!e){memset(out,0,len);if(hpd_after_ddc)hpd_loss=true;}return e; }
 static const struct videomode fixture_mode = {108000,1280,1328,1440,1688,1024,1025,1028,1066,5,"test"};
 int edid_parse_quiet(uint8_t *data,struct edid_info *out)
 { (void)data;CHECK(out->edid_nmodes==0);if(step(25))return -1;out->edid_modes[0]=fixture_mode;out->edid_modes[0].dot_clock=74250;out->edid_modes[1]=fixture_mode;out->edid_nmodes=2;out->edid_preferred_mode=&out->edid_modes[0];return 0; }
@@ -223,6 +224,7 @@ static void fixture(void)
  memset(&sc,0,sizeof(sc));memset(core8,0,sizeof(core8));memset(top,0,sizeof(top));memset(tvregs,0,sizeof(tvregs));memset(vo1,0,sizeof(vo1));
  calls=fail=reads=writes=maps=unmaps=clock_puts=faults=releases=0;
  map_failure=wrong_node=bad_range=missing_property=reject_syscfg=syscfg_writes=bad_name=events=0;
+ hpd_after_ddc=false;transient_step=0;
  retained=true;ccu_hdmi=ccu_tv0=dw_started=tv_started=registered=dcxo_drift=hpd_loss=false;
  intr_present=false;intr_establish=intr_disestablish=irq_reads=irq_writes=cb_calls=0;intr_fn=NULL;intr_arg=NULL;cb_sequence=0;
  rail_voltage[0]=800000;rail_voltage[1]=1800000;rail_enabled[0]=rail_enabled[1]=1;
@@ -546,6 +548,18 @@ int main(void)
  hpd_loss=false;CHECK(native_get_mode(&sc,&owner_cookie,&mode)==0&&sc.mode_valid);
  CHECK(mode.pixel_clock_hz==108000000&&sc.dw.sc_native_initialized);
  CHECK(native_prepare(&sc,&owner_cookie,&mode)==0&&native_start(&sc,&owner_cookie)==0);
+ fixture();attach();hpd_after_ddc=true;
+ mode=(struct sun60i_a733_output_mode){.pixel_clock_hz=42};
+ CHECK(native_get_mode(&sc,&owner_cookie,&mode)==EAGAIN&&sc.fault==0&&!sc.mode_valid);
+ CHECK(sc.dw.sc_native_initialized&&mode.pixel_clock_hz==42);
+ hpd_after_ddc=hpd_loss=false;
+ CHECK(native_get_mode(&sc,&owner_cookie,&mode)==0&&sc.mode_valid);
+ for(unsigned which=0;which<3;which++) {
+  fixture();attach();transient_step=which==0?1:which==1?23:24;
+  CHECK(native_get_mode(&sc,&owner_cookie,&mode)==EIO&&sc.fault==EIO);
+  unsigned saved_calls=calls;transient_step=0;
+  CHECK(native_get_mode(&sc,&owner_cookie,&mode)==EIO&&calls==saved_calls);
+ }
  fixture();attach();CHECK(native_get_mode(&sc,&owner_cookie,&mode)==0);dcxo_drift=true;old_writes=writes;CHECK(native_prepare(&sc,&owner_cookie,&mode)==EBUSY&&writes==old_writes);
  fixture();attach();CHECK(native_get_mode(&sc,&owner_cookie,&mode)==0);sysreg[1]|=0x01000000;old_writes=writes;CHECK(native_prepare(&sc,&owner_cookie,&mode)==EBUSY&&writes==old_writes);
  CHECK(native_ddc_counts(24000000,&h,&l)==0&&h==221&&l==245);
