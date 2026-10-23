@@ -4,6 +4,7 @@
 #include <string.h>
 #include <errno.h>
 #include <pthread.h>
+#include <sched.h>
 #include "rtw88_net_policy.h"
 
 
@@ -13,7 +14,7 @@ static unsigned checks, failures;
 
 struct ht20_snapshot_race {
 	volatile uint64_t word;
-	volatile unsigned done;
+	volatile unsigned done, first_read;
 	unsigned writer_failures, reader_failures, reads;
 };
 
@@ -35,6 +36,11 @@ ht20_snapshot_writer(void *arg)
 			break;
 		}
 		__atomic_store_n(&race->word, word, __ATOMIC_RELEASE);
+		if (i == 1) {
+			while (__atomic_load_n(&race->first_read,
+			    __ATOMIC_ACQUIRE) == 0)
+				(void)sched_yield();
+		}
 	}
 	__atomic_store_n(&race->done, 1, __ATOMIC_RELEASE);
 	return NULL;
@@ -59,6 +65,8 @@ ht20_snapshot_reader(void *arg)
 			    p.ampdu != ((p.generation & 7) << 2))
 				race->reader_failures++;
 			race->reads++;
+			__atomic_store_n(&race->first_read, 1,
+			    __ATOMIC_RELEASE);
 		}
 	} while (__atomic_load_n(&race->done, __ATOMIC_ACQUIRE) == 0);
 	return NULL;
@@ -118,18 +126,21 @@ ht20_snapshot_checks(void)
 	CHECK(rtw88_net_ht20_snapshot_encode(&p, &word) == EINVAL);
 	CHECK(rtw88_net_ht20_snapshot_decode(0, &decoded) == ENOENT);
 	CHECK(rtw88_net_ht20_snapshot_decode(UINT64_C(1) << 62, &decoded) == EINVAL);
-	writer_error = pthread_create(&writer, NULL, ht20_snapshot_writer, &race);
-	CHECK(writer_error == 0);
-	if (writer_error != 0)
-		return;
 	reader_error = pthread_create(&reader, NULL, ht20_snapshot_reader, &race);
 	CHECK(reader_error == 0);
-	if (reader_error == 0) {
+	if (reader_error != 0)
+		return;
+	writer_error = pthread_create(&writer, NULL, ht20_snapshot_writer, &race);
+	CHECK(writer_error == 0);
+	if (writer_error != 0) {
+		__atomic_store_n(&race.done, 1, __ATOMIC_RELEASE);
 		CHECK(pthread_join(reader, NULL) == 0);
+		return;
 	}
+	CHECK(pthread_join(reader, NULL) == 0);
 	CHECK(pthread_join(writer, NULL) == 0);
 	CHECK(race.writer_failures == 0 && race.reader_failures == 0);
-	CHECK(race.reads != 0 || reader_error != 0);
+	CHECK(race.reads != 0);
 }
 
 int
