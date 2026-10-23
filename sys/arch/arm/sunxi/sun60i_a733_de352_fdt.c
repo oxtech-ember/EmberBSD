@@ -106,6 +106,17 @@ struct de352_submit_trace {
 	struct sun60i_a733_output_sample sample;
 };
 CTASSERT(sizeof(struct de352_submit_trace) == 37 * sizeof(uint32_t));
+
+/* Cached last external update. A failed handoff keeps its exact readback. */
+enum {
+	UT_NONE, UT_PREPARE, UT_START, UT_READY, UT_SUBMIT,
+	UT_VBLANK, UT_MEMORY, UT_STOP, UT_DONE
+};
+struct de352_update_trace {
+	uint32_t version, valid, phase, submit_phase, result;
+	uint32_t reg, expected, observed;
+};
+CTASSERT(sizeof(struct de352_update_trace) == 8 * sizeof(uint32_t));
 static const uint32_t de352_submit_regs[ST_NREGS] = {
 	0x8100, 0x8104, 0x8108, 0x810c, 0x8110, 0x8114, 0x8118, 0x811c,
 	0x8010, 0x804c
@@ -139,6 +150,7 @@ struct sun60i_de352_softc {
 	struct de352_cold_trace cold_trace;
 	struct de352_run_trace run_trace;
 	struct de352_submit_trace submit_trace;
+	struct de352_update_trace update_trace;
 	bool cold_initialized;
 	bool output_stopped;
 	bool discovery_pending, discovery_cold, discovery_managed;
@@ -980,17 +992,23 @@ de352_submit_dma(struct sun60i_de352_softc *sc,
 
 	if (t != NULL)
 		t->phase = ST_MEMORY;
+	if (!initial)
+		sc->update_trace.submit_phase = ST_MEMORY;
 	error = de352_memory(sc);
 	if (error != 0)
 		return error;
 	if (t != NULL)
 		t->phase = ST_PUBLISH;
+	if (!initial)
+		sc->update_trace.submit_phase = ST_PUBLISH;
 	/* Retain both maps before even the first attempted pointer write. */
 	error = sun60i_a733_de352_dma_publish(dma);
 	if (error != 0)
 		return error;
 	if (t != NULL)
 		t->phase = ST_QUEUE;
+	if (!initial)
+		sc->update_trace.submit_phase = ST_QUEUE;
 	error = de352_field(sc, 0x8114, UINT32_MAX, (uint32_t)dma->queue.address);
 	if (error == 0)
 		error = de352_field(sc, 0x8118, 0xff, 0);
@@ -1010,6 +1028,8 @@ de352_submit_dma(struct sun60i_de352_softc *sc,
 		return error != 0 ? error : EIO;
 	if (t != NULL)
 		t->phase = ST_ACK;
+	if (!initial)
+		sc->update_trace.submit_phase = ST_ACK;
 	/* W1C: acknowledge only the prior RCQ finish and accept flags. */
 	error = bus_space_poke_4(sc->bst, sc->bsh, 0x8104, 0x0c);
 	if (error != 0)
@@ -1021,22 +1041,42 @@ de352_submit_dma(struct sun60i_de352_softc *sc,
 		return error != 0 ? error : EIO;
 	if (t != NULL)
 		t->phase = ST_REQUEST;
+	if (!initial)
+		sc->update_trace.submit_phase = ST_REQUEST;
 	error = de352_request(sc, t);
 	if (error == 0 && t != NULL)
 		t->phase = ST_POLL;
+	if (error == 0 && !initial)
+		sc->update_trace.submit_phase = ST_POLL;
 	if (error == 0)
 		error = de352_poll(sc, 4, t);
 	if (error != 0)
 		return error;
 	if (t != NULL)
 		t->phase = ST_COPY;
+	if (!initial)
+		sc->update_trace.submit_phase = ST_COPY;
 	/* A flag alone is not proof that this list reached the owned registers. */
 	for (u_int i = 0; i < __arraycount(words); i++) {
+		if (!initial) {
+			sc->update_trace.reg = 0x1c1000 + 4 * i;
+			sc->update_trace.expected = words[i];
+		}
 		error = de352_read(sc, 0x1c1000 + 4 * i, &value);
+		if (!initial && error == 0)
+			sc->update_trace.observed = value;
 		if (error != 0 || value != words[i])
 			return error != 0 ? error : EIO;
 	}
+	if (!initial) {
+		sc->update_trace.reg = 0x281000;
+		sc->update_trace.expected = dma->disabled ? 0x101 : 0x100;
+	}
 	error = de352_read(sc, 0x281000, &value);
+	if (!initial && error == 0)
+		sc->update_trace.observed = value;
+	if (error == 0 && !initial && value == sc->update_trace.expected)
+		sc->update_trace.submit_phase = ST_DONE;
 	return error != 0 ? error : value == (dma->disabled ? 0x101 : 0x100) ? 0 : EIO;
 }
 
@@ -1351,6 +1391,23 @@ de352_sysctl_submit_trace(SYSCTLFN_ARGS)
 }
 
 static int
+de352_sysctl_update_trace(SYSCTLFN_ARGS)
+{
+	struct sun60i_de352_softc *sc = rnode->sysctl_data;
+	struct sysctlnode node = *rnode;
+	struct de352_update_trace trace;
+
+	if (newp != NULL)
+		return EROFS;
+	mutex_enter(&sc->lock);
+	trace = sc->update_trace;
+	mutex_exit(&sc->lock);
+	node.sysctl_data = &trace;
+	node.sysctl_size = sizeof(trace);
+	return sysctl_lookup(SYSCTLFN_CALL(&node));
+}
+
+static int
 de352_sysctl_output_trace(SYSCTLFN_ARGS)
 {
 	struct sun60i_de352_softc *sc = rnode->sysctl_data;
@@ -1528,6 +1585,10 @@ de352_attach(device_t parent, device_t self, void *aux)
 	(void)sysctl_createv(&sc->sysctllog, 0, &node, NULL, CTLFLAG_READONLY,
 	    CTLTYPE_STRUCT, "submit_trace", SYSCTL_DESCR("Cached step 8 diagnostics"),
 	    de352_sysctl_submit_trace, 0, sc, sizeof(sc->submit_trace),
+	    CTL_CREATE, CTL_EOL);
+	(void)sysctl_createv(&sc->sysctllog, 0, &node, NULL, CTLFLAG_READONLY,
+	    CTLTYPE_STRUCT, "update_trace", SYSCTL_DESCR("Cached last external update"),
+	    de352_sysctl_update_trace, 0, sc, sizeof(sc->update_trace),
 	    CTL_CREATE, CTL_EOL);
 	(void)sysctl_createv(&sc->sysctllog, 0, &node, NULL, CTLFLAG_READONLY,
 	    CTLTYPE_STRUCT, "output_trace", SYSCTL_DESCR("Cached output preparation"),
@@ -1787,6 +1848,10 @@ de352_update(struct sun60i_a733_de352_client *client,
 		return 0;
 	}
 	client->busy = true;
+	sc->update_trace = (struct de352_update_trace){
+		.version = 1, .valid = 1, .phase = UT_PREPARE,
+		.reg = UINT32_MAX
+	};
 	mutex_exit(&sc->lock);
 
 	/* Both callbacks, allocation and producer lifetime are outside our lock. */
@@ -1801,23 +1866,32 @@ de352_update(struct sun60i_a733_de352_client *client,
 	mutex_enter(&sc->lock);
 	if (error == 0) {
 		if (sc->output_stopped) {
+			sc->update_trace.phase = UT_START;
 			error = sun60i_a733_output_start(sc->output_phandle, sc);
 			if (error == 0)
 				sc->output_stopped = false;
 		}
-		if (error == 0)
+		if (error == 0) {
+			sc->update_trace.phase = UT_READY;
 			error = de352_replace_ready(sc);
+		}
 		if (error == 0) {
 			sc->pending = next;
+			sc->update_trace.phase = UT_SUBMIT;
 			error = de352_submit_dma(sc, next.dma, false);
 		}
 		if (next.dma->published)
 			client->attempted = true;
-		if (error == 0)
+		if (error == 0) {
+			sc->update_trace.phase = UT_VBLANK;
 			error = de352_replacement_vblank(sc, &completion);
-		if (error == 0)
+		}
+		if (error == 0) {
+			sc->update_trace.phase = UT_MEMORY;
 			error = de352_memory(sc);
+		}
 		if (error == 0 && stop) {
+			sc->update_trace.phase = UT_STOP;
 			error = sun60i_a733_output_stop(sc->output_phandle, sc);
 			if (error == 0)
 				sc->output_stopped = true;
@@ -1833,6 +1907,10 @@ de352_update(struct sun60i_a733_de352_client *client,
 			*out = completion;
 		}
 	}
+	if (error == 0)
+		sc->update_trace.phase = UT_DONE;
+	sc->update_trace.result = error;
+	sc->update_trace.valid = 3;
 	if (error == 0 || next.dma == NULL || !next.dma->published)
 		memset(&sc->pending, 0, sizeof(sc->pending));
 	client->busy = false;

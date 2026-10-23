@@ -491,6 +491,21 @@ plane_disable_checks(void)
   if(failure==2)no_vblank=true;
   if(failure==3)corrupt_copy_reg=0x1c1000;
   int error=sun60i_a733_de352_disable_plane(client,&done);
+  CHECK(sc.update_trace.version==1&&sc.update_trace.valid==3);
+  CHECK(sc.update_trace.result==(uint32_t)error);
+  if(failure==1) CHECK(sc.update_trace.phase==UT_SUBMIT&&
+      sc.update_trace.submit_phase==ST_QUEUE);
+  if(failure==2) CHECK(sc.update_trace.phase==UT_VBLANK&&
+      sc.update_trace.submit_phase==ST_DONE);
+  if(failure==3) CHECK(sc.update_trace.phase==UT_SUBMIT&&
+      sc.update_trace.submit_phase==ST_COPY&&
+      sc.update_trace.reg==0x1c1000&&
+      sc.update_trace.observed!=sc.update_trace.expected);
+  struct sysctlnode node={.sysctl_data=&sc};
+  int old_reads=reads,old_writes=writes,old_maps=space_maps;
+  CHECK(de352_sysctl_update_trace(&node,NULL)==0);
+  CHECK(de352_sysctl_update_trace(&node,&sc)==EROFS);
+  CHECK(reads==old_reads&&writes==old_writes&&space_maps==old_maps);
   if(failure) {
    CHECK(error!=0&&f.held==1&&f.drops==0&&posts==0);
    CHECK(memcmp(&done,&saved,sizeof(done))==0);

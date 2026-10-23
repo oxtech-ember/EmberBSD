@@ -343,11 +343,27 @@ acknowledgment, 6 request during DE busy, 7 RCQ finish poll, 8 copy check
 and 9 step 8 complete. The status AND starts at all ones.
 The request and poll fields come from the existing reads in those loops.
 Only the first submission records them; later frame submissions do not.
+
 After a step 8 failure, the coordinator reads the ten registers and requests
 one output sample. It does this before it latches the output fault.
 These reads add no register write and do not change the write order.
 A timeout record identifies the wait that expired. It does not identify
 the cause of that timeout.
+
+## Cached external update diagnostics
+
+`hw.sun60ide0.update_trace` returns eight native-endian `uint32_t` words
+(32 bytes) under the DE lock. It performs no hardware access. The words are
+version, valid bits, update phase, RCQ submit phase, result, register,
+expected value and observed value. Version 1 identifies this layout. Valid
+bit 0 means an external update started; bit 1 means its result is complete.
+Update phases are 0 none, 1 preparation, 2 output start, 3 old-list check,
+4 RCQ submission, 5 vblank retirement, 6 memory admission, 7 output stop and
+8 complete. RCQ phases use the same values as `submit_trace`. The register
+and values identify the most recent RCQ copy readback; they are meaningful
+on a copy-check failure. A read error leaves the observed value zero. The
+record is overwritten by the next admitted external update. On a fault,
+the retained failure blocks later updates and preserves this record.
 
 ## Disabled primary plane
 
