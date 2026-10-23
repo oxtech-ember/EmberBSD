@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import platform
 import re
 import shlex
 import shutil
@@ -15,6 +16,9 @@ import tempfile
 
 def main():
     root = Path(__file__).resolve().parents[2]
+    if platform.system() == 'Darwin' and not os.environ.get('SDKROOT'):
+        os.environ['SDKROOT'] = subprocess.check_output(
+            ['xcrun', '--show-sdk-path'], text=True).strip()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--revision', help='Read the implementation from Git.')
     parser.add_argument('--work', required=True, type=Path)
