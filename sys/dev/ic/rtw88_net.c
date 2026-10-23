@@ -47,7 +47,7 @@ struct rtw88_net_rfk {
 struct rtw88_net_rx {
 	struct mbuf *m;
 	uint64_t epoch, arrived;
-	uint32_t tsf, generation;
+	uint32_t tsf, generation, tick;
 	uint8_t quality;
 };
 
@@ -1295,9 +1295,11 @@ rtw88_net_rx_frame(void *cookie, const uint8_t *frame, size_t len,
 	struct rtw88_net *net = cookie;
 	struct rtw88_net_rx *rx;
 	struct mbuf *m;
+	uint32_t tick;
 	int error;
 
 	KASSERT(mutex_owned(net->lock));
+	tick = (uint32_t)getticks();
 #ifdef RTW88_RFK_EXPERIMENT
 	/* Withdrawal must remain observable with closed/full ordinary admission. */
 	rtw88_net_rfk_rx_observe(net, frame, len, info);
@@ -1321,6 +1323,7 @@ rtw88_net_rx_frame(void *cookie, const uint8_t *frame, size_t len,
 	rx->epoch = net->policy.epoch;
 	rx->arrived = rtw88_net_rxba_now(&net->ic);
 	rx->tsf = info->tsf_low;
+	rx->tick = tick;
 	rx->generation = net->core->sc_generation;
 	rx->quality = info->signal.valid && info->signal.quality <= 100 &&
 	    info->signal.generation == rx->generation ? info->signal.quality : 0;
@@ -1394,7 +1397,7 @@ rtw88_net_softintr(void *cookie)
 		if (ic->ic_state == IEEE80211_S_RUN) {
 			mutex_enter(net->lock);
 			(void)rtw88_net_beacon_note(&net->policy, rx.epoch,
-			    (uint32_t)getticks(), mtod(rx.m, const uint8_t *),
+			    rx.tick, mtod(rx.m, const uint8_t *),
 			    rx.m->m_len, ic->ic_bss->ni_bssid);
 			mutex_exit(net->lock);
 		}

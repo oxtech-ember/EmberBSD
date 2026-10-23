@@ -1,7 +1,10 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Origin: native scan quality consumer contract, AI-assisted. */
 /* Execute actual add_scan, node_compare and scan copyout. No dBm ABI extension. */
 #include "signal-scan-model.inc"
+#ifndef __packed
 #define __packed __attribute__((packed))
+#endif
 #include "native-layouts.h"
 #define IEEE80211_DPRINTF(...) ((void)0)
 #define IEEE80211_FC0_SUBTYPE_PROBE_RESP 0x50

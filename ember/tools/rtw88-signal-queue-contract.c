@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Origin: native queued RX metadata and AP clock contract, AI-assisted. */
 /* Actual callback and softintr; allocation/stack dispatch is a bounded service.
  * The independent scan contract executes the actual consumer of the quality. */
 #include "signal-routing-model.inc"
@@ -9,6 +10,34 @@ static struct mbuf *rtw88_net_rx_mbuf(const uint8_t *frame,size_t len,struct ifn
 }
 #include "signal-native-rx.inc"
 int rtw88_signal_scan_check(unsigned,unsigned);
+
+static void beacon_arrival_clock(void) {
+    static const uint32_t start[]={100,100,UINT32_MAX-20,100};
+    static const uint32_t delay[]={900,1,41,900};
+    for(unsigned kind=0;kind<4;kind++) {
+        struct rtw88_softc sc={.sc_generation=7};kmutex_t lock={0};
+        struct rtw88_net net={.core=&sc,.lock=&lock};
+        struct ieee80211_node ni={0};uint8_t frame[41]={0x80};
+        struct rtw88_rx_info info={.packet_size=sizeof(frame)};
+        memset(ni.ni_bssid,0x22,6);memcpy(frame+10,ni.ni_bssid,6);
+        memcpy(frame+16,ni.ni_bssid,6);memset(frame+4,0xff,6);
+        frame[32]=100;frame[34]=1;frame[36]=0;frame[37]=0;
+        frame[38]=1;frame[39]=1;frame[40]=12;
+        net.ic.ic_bss=&ni;net.ic.ic_ifp=&net.ec.ec_if;
+        net.ec.ec_if.if_softc=&net;net.ic.ic_state=IEEE80211_S_RUN;
+        net.policy.epoch=4;net.policy.accepting=1;route_ticks=start[kind];
+        CHECK(rtw88_net_beacon_start(&net.policy,4,route_ticks)==0);
+        mutex_enter(&lock);rtw88_net_rx_frame(&net,frame,sizeof(frame),&info);
+        mutex_exit(&lock);CHECK(net.policy.queued==1);
+        route_ticks+=delay[kind];
+        if(kind==3)CHECK(rtw88_net_beacon_poll(&net.policy,4,route_ticks,40)==1);
+        rtw88_net_softintr(&net);
+        CHECK(net.policy.queued==0 && node_refs==1);
+        CHECK(net.policy.beacon_tick==start[kind]);
+        if(kind==3)CHECK(net.policy.beacon_report_tick==route_ticks);
+        CHECK(rtw88_net_beacon_poll(&net.policy,4,route_ticks,40)==(kind==0 || kind==2));
+    }
+}
 int main(void) {
     struct rtw88_softc sc={.sc_generation=7};kmutex_t lock={0};
     struct rtw88_net net={.core=&sc,.lock=&lock};struct ieee80211_node ni={0};
@@ -40,5 +69,6 @@ int main(void) {
     mutex_enter(&lock);rtw88_net_rx_frame(&net,frame,24,&rx);
     (void)rtw88_net_request(&net.policy);mutex_exit(&lock);
     delivered=route_rx;rtw88_net_softintr(&net);CHECK(route_rx==delivered && net.policy.queued==0);
+    beacon_arrival_clock();
     printf("rtw88 signal queue: %u checks, %u failures\n",checks,failures);return failures!=0;
 }

@@ -39,7 +39,7 @@ struct workqueue { unsigned queued; };
 struct rtw88_net_rx {
     struct mbuf *m;
     uint64_t epoch, arrived;
-    uint32_t tsf, generation;
+    uint32_t tsf, generation, tick;
     uint8_t quality;
 };
 struct rtw88_net {
@@ -116,7 +116,7 @@ static unsigned route_chan2ieee(const struct ieee80211_channel *ch)
 { return ch->ic_freq >= 5000 ? (ch->ic_freq - 5000) / 5 : 1U; }
 #define ieee80211_chan2ieee(ic,ch) ((void)(ic),route_chan2ieee(ch))
 static unsigned route_ticks=1;
-static unsigned getticks(void) { return route_ticks; }
+static inline unsigned getticks(void) { return route_ticks; }
 /* Default-OFF routing service; active timer/arrival ordering has its own actual native fixture. */
 static uint64_t rtw88_net_rxba_now(struct ieee80211com *ic) { (void)ic;return 1; }
 static struct ieee80211_node *ieee80211_find_rxnode(struct ieee80211com *ic,const void *wh)

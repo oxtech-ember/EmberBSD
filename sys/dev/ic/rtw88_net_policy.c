@@ -177,7 +177,13 @@ rtw88_net_beacon_note(struct rtw88_net_policy *p, uint64_t epoch, uint32_t now,
 		if (frame[16 + i] != bssid[i])
 			return ENOENT;
 	}
-	p->beacon_tick = p->beacon_report_tick = now;
+	p->beacon_tick = now;
+	/*
+	 * An IRQ-stamped beacon can be delivered after a miss was reported.
+	 * Preserve that report's interval; delayed RX must not rewind it.
+	 */
+	if ((uint32_t)(now - p->beacon_report_tick) <= UINT32_MAX / 2)
+		p->beacon_report_tick = now;
 	return 0;
 }
 

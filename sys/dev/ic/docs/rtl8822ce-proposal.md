@@ -677,6 +677,12 @@ It adds no second timer, AUTO-roaming override or radio capability.
 Actual AP disappearance and return remain a separate physical acceptance gate.
 Controlled reassociation and interface down/up do not establish that gate.
 
+Each queued RX entry retains its local IRQ arrival tick. The soft interrupt
+uses that tick for beacon supervision. Queue delay cannot renew AP presence.
+A delayed beacon also cannot rewind the interval of an already reported miss.
+The signal queue contract checks fresh delivery, delayed delivery, tick wrap,
+and delivery after a miss report. These checks do not establish a DFS lease.
+
 ## Bounded relative signal quality
 
 `rtw88_rx_signal_decode` consumes only the descriptor-bounded driver-info bytes.

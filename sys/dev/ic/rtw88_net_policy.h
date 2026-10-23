@@ -68,6 +68,7 @@ int		rtw88_net_rx_admit(struct rtw88_net_policy *, uint64_t,
 void		rtw88_net_rx_release(struct rtw88_net_policy *);
 int		rtw88_net_rx_ready(struct rtw88_net_policy *, uint64_t);
 int		rtw88_net_beacon_start(struct rtw88_net_policy *, uint64_t, uint32_t);
+/* The beacon timestamp is the local IRQ arrival tick, not delivery time. */
 int		rtw88_net_beacon_note(struct rtw88_net_policy *, uint64_t, uint32_t,
     const uint8_t *, size_t, const uint8_t[6]);
 int		rtw88_net_beacon_poll(struct rtw88_net_policy *, uint64_t, uint32_t,
