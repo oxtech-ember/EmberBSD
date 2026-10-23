@@ -28,6 +28,10 @@ A malformed or repeated switch element rejects the complete window.
 Consumers must handle parser failure before making a transmission decision.
 These views alone do not implement DFS client admission or channel switching.
 
+Quiet (element 40) has six payload bytes: count, period, duration and offset.
+It must be unique. All field values remain observations; the parser does not
+schedule a quiet interval. Malformed or repeated Quiet rejects the window.
+
 Most fields select the last matching element. Separate views retain admission:
 
 - `ssid` and `rates` select the last occurrence, even if too long.
@@ -61,7 +65,7 @@ transmission closed through the subsequent shared INIT request and cleanup.
 Before HT or legacy beacon validation, the native consumer checks current STA
 AUTH, ASSOC or RUN identity. The node must be the current BSS on the current
 channel. Source and BSSID must match the selected peer. A matching CSA or
-Extended CSA calls the provider, purges HT/RX BA storage and timer ownership,
+Extended CSA or Quiet calls the provider, purges HT/RX BA storage and timer ownership,
 then requests INIT. Any countdown, including
 zero, exits immediately. A malformed fixed body or IE window also exits.
 Both beacons and probe responses use this policy. Foreign peers, other states,
@@ -110,6 +114,11 @@ parser. These checks do not execute firmware or qualify kernel/hardware behavior
 Use Valgrind on a supported host; ASan/UBSan is a substitute, not a Valgrind run.
 
 ## Origin
+
+The Quiet wire layout was checked against `struct ieee80211_quiet_ie` in
+[FreeBSD ieee80211.h at d2145e9b96448da34d3cfede24c509af6d830c92](https://github.com/freebsd/freebsd-src/blob/d2145e9b96448da34d3cfede24c509af6d830c92/sys/net80211/ieee80211.h).
+The conservative consumer exits immediately for every Quiet element.
+It does not claim scheduled pause/resume support.
 
 The implementation is an original, AI-assisted extraction of the EmberBSD
 scan contracts at `b245e1c2a81cccb15ed877f0f2b403dba07d1609`.

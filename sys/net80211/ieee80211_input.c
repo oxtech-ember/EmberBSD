@@ -2289,7 +2289,8 @@ ieee80211_sta_csa_beacon(struct ieee80211com *ic, struct ieee80211_node *ni,
 	if (!ieee80211_sta_csa_current(ic, ni, wh))
 		return 0;
 	if (len >= 12 && ieee80211_beacon_ies_parse(&ies, body + 12,
-	    len - 12) == 0 && ies.csa == NULL && ies.xcsa == NULL)
+	    len - 12) == 0 && ies.csa == NULL && ies.xcsa == NULL &&
+	    ies.quiet == NULL)
 		return 0;
 	return ieee80211_sta_csa_exit(ic, ni);
 }

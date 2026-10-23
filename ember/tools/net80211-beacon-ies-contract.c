@@ -16,6 +16,24 @@ invalid(const uint8_t *p, size_t n)
 	CHECK(ieee80211_beacon_ies_parse(&ies, p, n) == -1);
 	CHECK(memcmp(&ies, &zero, sizeof(ies)) == 0);
 }
+static void
+quiet_announcements(void)
+{
+	struct ieee80211_beacon_ies ies;
+	const uint8_t quiet[] = {40,6,0,1,10,0,20,0};
+	const uint8_t duplicate[] = {40,6,0,1,10,0,20,0,40,6,1,0,0,0,0,0};
+	CHECK(ieee80211_beacon_ies_parse(&ies, quiet, sizeof(quiet)) == 0);
+	CHECK(ies.unknown == 0);
+	CHECK(ies.quiet == quiet);
+	invalid(duplicate, sizeof(duplicate));
+	for (unsigned len = 0; len <= 255; len++) {
+		uint8_t ie[257] = {40};
+		if (len == 6)
+			continue;
+		ie[1] = len;
+		invalid(ie, len + 2);
+	}
+}
 /* A switch cannot be hidden by a later duplicate or malformed body. */
 static void
 switch_announcements(void)
@@ -71,6 +89,7 @@ switch_announcements(void)
 int
 main(void)
 {
+	quiet_announcements();
 	struct ieee80211_beacon_ies ies;
 	switch_announcements();
 	uint8_t ie[257] = {0};

@@ -63,6 +63,11 @@ ieee80211_beacon_ies_parse(struct ieee80211_beacon_ies *ies,
 				return -1;
 			pending.xcsa = ie;
 			break;
+		case 40: /* Quiet: count, period, duration and offset. */
+			if (ie[1] != 6 || pending.quiet != NULL)
+				return -1;
+			pending.quiet = ie;
+			break;
 		case 42: /* ERP */
 			if (ie[1] == 1)
 				pending.erp = ie;
