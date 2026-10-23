@@ -24,8 +24,10 @@ awk '
     /ember,a733-preboot-|BEGIN A733 PREBOOT SNAPSHOT/ { duplicate = 1 }
     /^[ \t]*booti([ \t]|$)/ { boots++ }
     $0 == "booti 0x44000000 - ${fdt_addr_r}" { target++; bootline = NR }
-    $0 == "fdt addr ${fdt_addr_r}" { address++; addrline = NR }
-    $0 == "fdt resize 8192" { space++; spaceline = NR }
+    $0 == "fdt addr ${fdt_addr_r}" ||
+    $0 == "fdt addr ${fdt_addr_r} || exit 1" { address++; addrline = NR }
+    $0 == "fdt resize 8192" ||
+    $0 == "fdt resize 8192 || exit 1" { space++; spaceline = NR }
     END { exit duplicate || boots != 1 || target != 1 ||
         address != 1 || space != 1 || addrline >= spaceline ||
         spaceline >= bootline }

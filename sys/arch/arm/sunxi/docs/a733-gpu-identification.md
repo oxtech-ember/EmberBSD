@@ -3,7 +3,9 @@
 The native `sun60igpuid` consumer starts an A733 GPU through checked
 provider and firmware interfaces. A node without diagnostic properties uses
 PLL_GPU0 at 600 MHz and the native mountroot sequence below. Zero 3W selects
-this mode. Zero 4 keeps the explicit `netbsd,observe-only` mode.
+this mode. The separate [Zero 3W diagnostic DTB](a733-boot-modes.md)
+disables automatic GPU and KMS startup. Zero 4 keeps the explicit
+`netbsd,observe-only` GPU mode.
 Observe-only mode never maps GPU registers or starts firmware.
 The [driver](../sun60i_a733_gpu.c) is owned by EmberBSD.
 The previous explicit PLL600 sequence identifies the physical GPU; see the
@@ -323,8 +325,9 @@ No page table, VM context, connection state, or DMA ownership changes.
 All memory stays retained, and the same no-replay rule applies.
 This stage has software checks; physical acceptance requires a separate record.
 
-Normal boot never runs these stages. Keep the external hardware watchdog
-active during each explicit stage when no serial recovery is available.
+Native boot runs stages 1 through 17. Stages 18 and 19 require an explicit
+diagnostic request. Keep the external hardware watchdog active during each
+explicit stage when no serial recovery is available.
 
 Stage 12 is a [firmware metadata preflight](a733-gpu-fwinfo.md). It requires
 successful strict identification. It does not load or execute code on the GPU.

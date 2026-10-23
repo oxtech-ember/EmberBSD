@@ -4,6 +4,7 @@ An enabled display FDT attachment starts through `config_mountroot`.
 No userland stage script is required. An empty `netbsd,observe-only` property
 on the display node disables automatic startup. A nonempty value is invalid.
 The recovery property follows the existing A733 owner convention.
+The [Zero 3W diagnostic DTB](a733-boot-modes.md) sets it before kernel entry.
 The explicit stage control still uses the same startup implementation.
 
 The attachment reserves scanout memory and creates one `a733kms` workqueue.

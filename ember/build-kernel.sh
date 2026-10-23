@@ -21,7 +21,8 @@ success=no
 clear_outputs() {
     rm -f "$out/netbsd-$config" "$out/netbsd-$config.img" \
         "$out/bcm2837-rpi-zero-2-w.dtb" "$out/sun60i-a733-orangepi-zero4.dtb" \
-        "$out/sun60i-a733-orangepi-zero3w.dtb"
+        "$out/sun60i-a733-orangepi-zero3w.dtb" \
+        "$out/sun60i-a733-orangepi-zero3w-diagnostic.dtb"
     for module in if_cemac_acpi bcm2712btcom rp1wmcodec rpi5button; do
         rm -f "$out/$module.kmod"
     done
@@ -97,12 +98,14 @@ cd "$src/sys/external/gpl2/dts/dist"
     arch/arm/boot/dts/bcm2837-rpi-zero-2-w.dts > "$out/zero-2.dts"
 "$dtc" -I dts -O dtb -p 1024 -b 0 -@ -o "$stage/bcm2837-rpi-zero-2-w.dtb" \
     "$out/zero-2.dts" 2> "$out/zero-2-dtb.log"
-for board in orangepi-zero4 orangepi-zero3w; do
+for board in orangepi-zero4 orangepi-zero3w orangepi-zero3w-diagnostic; do
     "$cpp" -P -xassembler-with-cpp -I include -I arch/arm64/boot/dts/allwinner \
         "arch/arm64/boot/dts/allwinner/sun60i-a733-$board.dts" > "$out/$board.dts"
     "$dtc" -I dts -O dtb -o "$stage/sun60i-a733-$board.dtb" \
         "$out/$board.dts" 2> "$out/$board-dtb.log"
 done
+"$python" "$src/ember/tools/a733-boot-modes-contract.py" "$stage" \
+    > "$out/dtb-modes.log" 2>&1
 for module in if_cemac_acpi bcm2712btcom rp1wmcodec rpi5button; do
     cd "$src/sys/modules/$module"
     if [ "$mode" = cross ]; then

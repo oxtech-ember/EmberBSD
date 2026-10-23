@@ -229,6 +229,10 @@ cat > "$work/bin/dtc" <<'SH'
 set -eu
 echo "dtc $0 $*" >> "$TEST_LOG"
 [ "${FAIL_AT:-}" != dtb ]
+case "$*" in
+*sun60i-a733-orangepi-zero3w-diagnostic.dtb*)
+    [ "${FAIL_AT:-}" != diagnostic-dtb ];;
+esac
 while [ $# -gt 0 ]; do
     if [ "$1" = -o ]; then printf dtb > "$2"; exit; fi
     shift
@@ -258,13 +262,14 @@ sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1
 test -s "$TEST_OUT/netbsd-EMBER64"
 test -s "$TEST_OUT/rpi5button.kmod"
 test -s "$TEST_OUT/sun60i-a733-orangepi-zero3w.dtb"
+test -s "$TEST_OUT/sun60i-a733-orangepi-zero3w-diagnostic.dtb"
 grep -q 'build.sh .* -m evbarm -a aarch64 ' "$TEST_LOG"
 grep -q ' -u ' "$TEST_LOG"
 grep -q 'EMBER_KERNEL_OBJDIR=.*/obj/kernels/EMBER64' "$TEST_LOG"
 grep -q 'cpp .*/tools/bin/target-cpp ' "$TEST_LOG"
 grep -q 'dtc .*/tools/bin/nbdtc ' "$TEST_LOG"
 ! grep -q native-make "$TEST_LOG"
-check_contract_counts 7
+check_contract_counts 8
 # Reuse all objects, but the selected kernel must embed the new build identity.
 printf 'old-source-id\n' > "$TEST_OUT/obj/kernels/EMBER64/vers.c"
 printf 'old-object-id\n' > "$TEST_OUT/obj/kernels/EMBER64/vers.o"
@@ -283,7 +288,7 @@ test "$(cat "$TEST_OUT/obj/kernels/EMBER64/vers.o")" = new-source-id
 test "$(cat "$TEST_OUT/obj/kernels/EMBER64/keep.o")" = keep-object
 test "$(cat "$TEST_OUT/obj/kernels/OTHER/vers.c")" = other-source-id
 test "$(cat "$TEST_OUT/obj/kernels/OTHER/vers.o")" = other-object-id
-check_contract_counts 7
+check_contract_counts 8
 # A firmware-dependent contract is pending by default, never silently passed.
 ! grep -q '^pvr-query-contract ' "$TEST_LOG"
 grep -q 'PowerVR metadata query contract pending:' "$TEST_OUT/contracts.log"
@@ -303,6 +308,7 @@ grep -q 'injected contract failure: pvr-query-contract.sh' "$work/query.log"
 ! grep -q '^gpu-contract bcm2712-display-contract.sh ' "$TEST_LOG"
 outputs='netbsd-EMBER64 netbsd-EMBER64.img bcm2837-rpi-zero-2-w.dtb
 sun60i-a733-orangepi-zero4.dtb sun60i-a733-orangepi-zero3w.dtb
+sun60i-a733-orangepi-zero3w-diagnostic.dtb
 if_cemac_acpi.kmod bcm2712btcom.kmod rp1wmcodec.kmod rpi5button.kmod'
 root_argument_failures='linux-idr-contract.sh i915-elsq-desc-contract.sh
 i915-rps-lifetime-contract.sh drm-pci-identity-contract.sh linux-rcu-replace-contract.sh
@@ -311,7 +317,7 @@ bcmv3d-vblank-contract.rb bcmv3d-vblank-native-contract.rb bcmv3d-flip-contract.
 bcmv3d-scanout-contract.rb bcmv3d-job-resv-contract.rb serial-console-ready-contract.rb
 bootfb-serial-handoff-contract.rb'
 root_argument_failures_checked=0
-for failure in $root_argument_failures tools module cpp dtb contract a733-contract \
+for failure in $root_argument_failures tools module cpp dtb diagnostic-dtb contract a733-contract \
     a733-gpu-vm-contract.sh a733-gpu-fwcompute-vm-contract.sh \
     a733-gpu-fwheap-observe-contract.sh a733-gpu-fwbridge-contract.sh \
     a733-gpu-fwservice-contract.sh pvr-exec-contract.sh \
@@ -374,14 +380,14 @@ TEST_HOST=NetBSD EMBER_EXTERNAL_TOOLCHAIN=/cross/gcc16 \
 grep -q 'EXTERNAL_TOOLCHAIN=/cross/gcc16' "$TEST_LOG"
 grep -q 'TOOLCHAIN_MISSING=yes' "$TEST_LOG"
 ! grep -q native-make "$TEST_LOG"
-check_contract_counts 11
+check_contract_counts 12
 export TEST_OUT="$work/native"
 : > "$TEST_LOG"
 TEST_HOST=NetBSD EMBER_BUILD_MODE=native sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1
 grep -q native-make "$TEST_LOG"
 ! grep -q build.sh "$TEST_LOG"
 test -s "$TEST_OUT/bcm2712btcom.kmod"
-check_contract_counts 11
+check_contract_counts 12
 if EMBER_BUILD_MODE=native sh "$work/src/ember/build-kernel.sh" "$work/wrong-host" > "$work/run.log" 2>&1; then
     echo 'accepted native tools on Darwin' >&2; exit 1
 fi

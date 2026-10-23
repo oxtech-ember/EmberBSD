@@ -1,0 +1,14 @@
+// SPDX-License-Identifier: (GPL-2.0-only OR MIT)
+/* Zero 3W diagnostics. Select this tree before kernel entry. */
+
+#include "sun60i-a733-orangepi-zero3w.dts"
+
+/* Keep the existing explicit controls. Do not start GPU firmware at boot. */
+&gpu {
+	netbsd,observe-only;
+};
+
+/* Keep the existing explicit controls. Do not start KMS at boot. */
+&display {
+	netbsd,observe-only;
+};
