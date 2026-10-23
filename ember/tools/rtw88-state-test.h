@@ -242,6 +242,16 @@ ieee80211_setmode(struct ieee80211com *ic, enum ieee80211_phymode mode)
 	return 0;
 }
 static void
+rtw88_net_ht20_publish(struct rtw88_net *net,
+    const struct ieee80211_ht20_profile *profile)
+{
+	/* State tests model only fail-closed withdrawals; publication is tested
+	 * against the actual atomic policy in the dedicated readiness contract. */
+	CHECK(net != NULL);
+	CHECK(profile == NULL);
+}
+
+static void
 rtw88_net_stop(struct ifnet *ifp, int disable)
 {
 	struct rtw88_net *net=ifp->if_softc;

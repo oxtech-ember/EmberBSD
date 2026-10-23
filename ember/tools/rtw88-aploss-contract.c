@@ -66,6 +66,15 @@ struct rtw88_net {
     struct work state_work;
     void *wq;
 };
+static void
+rtw88_net_ht20_publish(struct rtw88_net *net,
+    const struct ieee80211_ht20_profile *profile)
+{
+	/* AP-loss extraction exercises only the disabled admission boundary. */
+	CHECK(net != NULL);
+	CHECK(profile == NULL);
+}
+
 struct ieee80211_leave_event { uint8_t iev_addr[6]; };
 static unsigned probes, requests, cleanup, events, link_down, begin_scans;
 static unsigned user_disconnects, user_aborts, user_tx_clear, user_scan_clear;
