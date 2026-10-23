@@ -120,6 +120,8 @@ int		dwhdmi_native_init(struct dwhdmi_softc *);
 int		dwhdmi_native_prepare(struct dwhdmi_softc *,
 		    const struct drm_display_mode *);
 int		dwhdmi_native_start(struct dwhdmi_softc *);
+/* Stop transmitter clocks. Retain the prepared mode and external PHY lease. */
+int		dwhdmi_native_stop(struct dwhdmi_softc *);
 
 uint8_t		dwhdmi_read(struct dwhdmi_softc *, bus_size_t);
 void		dwhdmi_write(struct dwhdmi_softc *, bus_size_t, uint8_t);

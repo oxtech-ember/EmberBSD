@@ -151,3 +151,12 @@ They add no read, write, delay, barrier or recovery operation.
 The DE coordinator exposes this record through its read-only `output_trace`
 sysctl. These cached diagnostics and host contracts do not establish physical
 HDMI output. The existing masks, time limits, ownership and retention apply.
+
+## Shared transmitter stop
+
+`dwhdmi_native_stop()` uses the existing DW-HDMI clock-disable helper.
+It checks the seven clock-disable fields before clearing native started state.
+It retains the prepared mode for `dwhdmi_native_start()`.
+An I/O failure or readback mismatch preserves uncertain started state and
+blocks further native writes. The platform must stop its TCON separately.
+This shared mechanism does not release an external PHY or clock lease.

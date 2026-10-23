@@ -58,7 +58,7 @@ struct dwhdmi_softc {
 static uint32_t registers[0x20000];
 static unsigned calls, fail_at, delay_calls, legacy_calls;
 static unsigned prints, tag_inits, writes;
-static bool ddc_timeout;
+static bool ddc_timeout, drop_clock_write;
 static void iic_tag_init(struct i2c_controller *ic) { (void)ic; tag_inits++; }
 static int count_print(const char *fmt, ...) { (void)fmt; prints++; return 0; }
 #define aprint_error_dev(dev, ...) count_print(__VA_ARGS__)
@@ -97,7 +97,8 @@ checked_write(struct dwhdmi_softc *sc, bus_size_t reg, uint8_t value)
 		return EFAULT;
 	CHECK(reg < __arraycount(registers));
 	writes++;
-	registers[reg] = value;
+	if (!drop_clock_write || reg != HDMI_MC_CLKDIS)
+		registers[reg] = value;
 	if (reg == HDMI_IH_I2CM_STAT0)
 		registers[reg] = 0; /* W1C model. */
 	if (reg == HDMI_I2CM_OPERATION && !ddc_timeout) {
@@ -115,7 +116,7 @@ fresh(void)
 	memset(registers, 0, sizeof(registers));
 	calls = fail_at = delay_calls = legacy_calls = 0;
 	prints = tag_inits = writes = 0;
-	ddc_timeout = false;
+	ddc_timeout = drop_clock_write = false;
 	sc.sc_reg_width = 1;
 	sc.sc_read = checked_read;
 	sc.sc_write = checked_write;
@@ -190,6 +191,45 @@ prepare(void)
 		CHECK(sc.sc_native_prepared == (failure > prepare_count));
 		CHECK(dwhdmi_native_start(&sc) == EFAULT && calls == failure);
 		CHECK(dwhdmi_native_prepare(&sc, &mode) == EFAULT && calls == failure);
+	}
+}
+
+static void
+stop_restart(void)
+{
+	struct dwhdmi_softc sc = fresh();
+	unsigned count;
+
+	CHECK(dwhdmi_native_stop(NULL) == EINVAL);
+	CHECK(dwhdmi_native_stop(&sc) == EINVAL && calls == 0);
+	sc.sc_flags = DWHDMI_USE_INTERNAL_PHY;
+	CHECK(dwhdmi_native_stop(&sc) == EOPNOTSUPP && calls == 0);
+	sc.sc_flags = 0;
+	CHECK(dwhdmi_native_prepare(&sc, &mode) == 0);
+	count = calls;
+	CHECK(dwhdmi_native_stop(&sc) == EALREADY && calls == count);
+	for (unsigned cycle = 0; cycle < 3; cycle++) {
+		CHECK(dwhdmi_native_start(&sc) == 0);
+		CHECK(dwhdmi_native_stop(&sc) == 0);
+		CHECK((registers[HDMI_MC_CLKDIS] & 0x7f) == 0x7f);
+		CHECK(!sc.sc_native_started && sc.sc_native_prepared);
+		CHECK(memcmp(&sc.sc_curmode, &mode, sizeof(mode)) == 0);
+		count = calls;
+		CHECK(dwhdmi_native_stop(&sc) == EALREADY && calls == count);
+	}
+	for (unsigned failure = 1; failure <= 3; failure++) {
+		sc = fresh();
+		CHECK(dwhdmi_native_prepare(&sc, &mode) == 0);
+		CHECK(dwhdmi_native_start(&sc) == 0);
+		if (failure <= 2)
+			fail_at = calls + failure;
+		else
+			drop_clock_write = true;
+		CHECK(dwhdmi_native_stop(&sc) == (failure <= 2 ? EFAULT : EIO));
+		CHECK(sc.sc_native_started && sc.sc_native_prepared);
+		count = calls;
+		CHECK(dwhdmi_native_start(&sc) == sc.sc_io_error && calls == count);
+		CHECK(dwhdmi_native_stop(&sc) == sc.sc_io_error && calls == count);
 	}
 }
 
@@ -306,7 +346,7 @@ initialization(void)
 int
 main(void)
 {
-	io(); prepare(); ddc(); ddc_counts(); initialization();
+	io(); prepare(); stop_restart(); ddc(); ddc_counts(); initialization();
 	printf("%u DW-HDMI checked I/O/native RGB checks passed\n", checks);
 	return 0;
 }

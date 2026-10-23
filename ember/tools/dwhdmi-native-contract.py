@@ -20,8 +20,8 @@ def main():
     names = ["dwhdmi_ddc_exec", "dwhdmi_read", "dwhdmi_write", "dwhdmi_vp_init",
              "dwhdmi_tx_init", "dwhdmi_cea_mode_uses_fractional_vblank",
              "dwhdmi_fc_init", "dwhdmi_mc_init", "dwhdmi_native_prepare",
-             "dwhdmi_native_start", "dwhdmi_init", "dwhdmi_native_init"]
-    text = source[source.index("#define\tHDMI_DESIGN_ID"):source.index("\nenum dwhdmi_dai_mixer_ctrl {")]
+             "dwhdmi_native_start", "dwhdmi_mc_disable", "dwhdmi_native_stop", "dwhdmi_init", "dwhdmi_native_init"]
+    text = source[:source.index("#include")] + source[source.index("#define\tHDMI_DESIGN_ID"):source.index("\nenum dwhdmi_dai_mixer_ctrl {")]
     for name in names:
         match = re.search(r"\n(?:static )?(?:int|uint8_t|void|bool)\n" + name + r"\(", source)
         if match is None:

@@ -605,6 +605,33 @@ dwhdmi_mc_disable(struct dwhdmi_softc *sc)
 	dwhdmi_write(sc, HDMI_MC_CLKDIS, 0xff);
 }
 
+/* Stop the shared transmitter clocks. Retain the mode for native restart. */
+int
+dwhdmi_native_stop(struct dwhdmi_softc *sc)
+{
+	uint8_t clocks;
+
+	if (sc == NULL)
+		return EINVAL;
+	if (sc->sc_read == NULL || sc->sc_write == NULL ||
+	    (sc->sc_flags & DWHDMI_USE_INTERNAL_PHY) != 0)
+		return EOPNOTSUPP;
+	if (sc->sc_io_error != 0)
+		return sc->sc_io_error;
+	if (!sc->sc_native_prepared)
+		return EINVAL;
+	if (!sc->sc_native_started)
+		return EALREADY;
+	dwhdmi_mc_disable(sc);
+	clocks = dwhdmi_read(sc, HDMI_MC_CLKDIS);
+	/* Bit 7 is reserved. Check only the seven clock-disable fields. */
+	if (sc->sc_io_error == 0 && (clocks & 0x7f) != 0x7f)
+		sc->sc_io_error = EIO;
+	if (sc->sc_io_error == 0)
+		sc->sc_native_started = false;
+	return sc->sc_io_error;
+}
+
 static void
 dwhdmi_audio_init(struct dwhdmi_softc *sc)
 {
