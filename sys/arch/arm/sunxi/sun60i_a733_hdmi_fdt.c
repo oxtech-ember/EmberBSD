@@ -442,17 +442,13 @@ native_select(struct sun60i_a733_hdmi_softc *sc)
 }
 
 static int
-native_get_mode(void *arg, const void *owner, struct sun60i_a733_output_mode *out)
+native_discover(struct sun60i_a733_hdmi_softc *sc, const void *owner)
 {
-	struct sun60i_a733_hdmi_softc *sc = arg;
-	struct sun60i_a733_display_hdmi_clock sfr;
-	uint32_t hpd;
-	uint8_t block = 0;
 	int error;
 
 	if (sc->fault != 0)
 		return sc->fault;
-	if (sc->owner != NULL || owner == NULL || out == NULL)
+	if (sc->owner != NULL || owner == NULL)
 		return native_fail(sc, EINVAL);
 	sc->owner = owner;
 	sc->phy.owner = owner;
@@ -480,11 +476,35 @@ native_get_mode(void *arg, const void *owner, struct sun60i_a733_output_mode *ou
 		error = native_resistor(sc);
 	if (error == 0)
 		error = sun60i_a733_hdmi_hpd_prepare(&sc->phy);
+	return native_fail(sc, error);
+}
+
+static int
+native_get_mode(void *arg, const void *owner, struct sun60i_a733_output_mode *out)
+{
+	struct sun60i_a733_hdmi_softc *sc = arg;
+	struct sun60i_a733_display_hdmi_clock sfr;
+	uint32_t hpd;
+	uint8_t block = 0;
+	int error;
+
+	if (sc->fault != 0)
+		return sc->fault;
+	if (owner == NULL || out == NULL ||
+	    (sc->owner != NULL && sc->owner != owner))
+		return EINVAL;
+	if (sc->mode_valid) {
+		*out = sc->mode;
+		return 0;
+	}
+	/* HPD discovery is retained and initialized once, without scanout. */
+	error = sc->owner == NULL ? native_discover(sc, owner) :
+	    native_ready(sc, owner);
 	if (error == 0)
 		error = native_phy_read(sc, A733_HDMI_CORE8, 0x3004, &hpd);
 	if (error == 0 && (hpd & 2) == 0)
-		error = ENXIO;
-	if (error == 0)
+		return EAGAIN;
+	if (error == 0 && !sc->dw.sc_native_initialized)
 		error = dwhdmi_native_init(&sc->dw);
 	if (error == 0)
 		error = sun60i_a733_ccu_display_hdmi_clock_state(sc->de0, owner, &sfr);
@@ -510,7 +530,7 @@ native_get_mode(void *arg, const void *owner, struct sun60i_a733_output_mode *ou
 	if (error == 0)
 		error = native_phy_read(sc, A733_HDMI_CORE8, 0x3004, &hpd);
 	if (error == 0 && (hpd & 2) == 0)
-		error = ENXIO;
+		return EAGAIN;
 	if (error != 0)
 		return native_fail(sc, error);
 	sc->mode_valid = true;

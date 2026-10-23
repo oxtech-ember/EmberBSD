@@ -60,7 +60,8 @@ struct sun60i_a733_output_sample {
  * call these dispatch functions. Provider storage and ops have kernel lifetime.
  * The provider obtains CCU/PCK leases with this owner before any MMIO write.
  * get_mode may run DDC. It must not start scanout. prepare must check HPD again.
- * A failure is retained. There is no detach or retry after a provider failure.
+ * get_mode may return EAGAIN only for checked HPD-low before scanout.
+ * Other failures are retained. There is no detach or retry after a fault.
  */
 struct sun60i_a733_hdmi_phy_trace;
 /*

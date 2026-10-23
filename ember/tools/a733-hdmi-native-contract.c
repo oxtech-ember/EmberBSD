@@ -68,6 +68,7 @@ struct drm_display_mode {
  unsigned flags;
 };
 struct dwhdmi_softc {
+ bool sc_native_initialized;
  device_t sc_dev;
  bus_space_tag_t sc_bst;
  bus_space_handle_t sc_bsh;
@@ -177,7 +178,7 @@ static int dwhdmi_native_stop(struct dwhdmi_softc *dw)
 int sun60i_a733_tv0_observe(struct sun60i_a733_tv0 *p,uint64_t *out)
 { CHECK(p->started&&tv_started);int e=p->io->ready(p->io->arg,p->owner);if(!e)e=step(19);if(!e)*out=++p->sequence;return e; }
 static int dwhdmi_native_init(struct dwhdmi_softc *dw)
-{ CHECK(ccu_hdmi);int e=step(20);if(!e){dw->sc_ic=dw;ddc_dw=dw;}return e; }
+{ CHECK(ccu_hdmi);int e=step(20);if(!e){dw->sc_native_initialized=true;dw->sc_ic=dw;ddc_dw=dw;}return e; }
 static int dwhdmi_native_prepare(struct dwhdmi_softc *dw,const struct drm_display_mode *m)
 { (void)dw;CHECK(m->clock==108000&&m->clock==m->crtc_clock&&m->hdisplay==1280&&m->htotal==1688&&m->vdisplay==1024&&m->vtotal==1066&&m->flags==5);return step(21); }
 static int dwhdmi_native_start(struct dwhdmi_softc *dw)
@@ -535,7 +536,16 @@ int main(void)
  for(unsigned n=1;n<=2;n++){fixture();attach();reject_syscfg=n;CHECK(native_get_mode(&sc,&owner_cookie,&mode)==EIO&&syscfg_writes==n&&!sc.syscfg_ready);}
  for(unsigned n=0;n<2;n++){fixture();attach();rail_enabled[n]=0;CHECK(native_get_mode(&sc,&owner_cookie,&mode)==EOPNOTSUPP&&writes==0);}
  for(unsigned n=0;n<2;n++){fixture();attach();rail_voltage[n]++;CHECK(native_get_mode(&sc,&owner_cookie,&mode)==EOPNOTSUPP&&writes==0);}
- fixture();attach();hpd_loss=true;CHECK(native_get_mode(&sc,&owner_cookie,&mode)==ENXIO&&sc.dw.sc_ic==NULL);
+ fixture();attach();hpd_loss=true;
+ mode=(struct sun60i_a733_output_mode){.pixel_clock_hz=42};
+ CHECK(native_get_mode(&sc,&owner_cookie,&mode)==EAGAIN&&sc.dw.sc_ic==NULL&&sc.fault==0);
+ CHECK(mode.pixel_clock_hz==42&&sc.owner==&owner_cookie&&sc.phy.hpd_prepared);
+ old_writes=writes;
+ CHECK(native_get_mode(&sc,&owner_cookie,&mode)==EAGAIN&&writes==old_writes&&sc.fault==0);
+ CHECK(native_get_mode(&sc,&mode,&mode)==EINVAL&&sc.fault==0);
+ hpd_loss=false;CHECK(native_get_mode(&sc,&owner_cookie,&mode)==0&&sc.mode_valid);
+ CHECK(mode.pixel_clock_hz==108000000&&sc.dw.sc_native_initialized);
+ CHECK(native_prepare(&sc,&owner_cookie,&mode)==0&&native_start(&sc,&owner_cookie)==0);
  fixture();attach();CHECK(native_get_mode(&sc,&owner_cookie,&mode)==0);dcxo_drift=true;old_writes=writes;CHECK(native_prepare(&sc,&owner_cookie,&mode)==EBUSY&&writes==old_writes);
  fixture();attach();CHECK(native_get_mode(&sc,&owner_cookie,&mode)==0);sysreg[1]|=0x01000000;old_writes=writes;CHECK(native_prepare(&sc,&owner_cookie,&mode)==EBUSY&&writes==old_writes);
  CHECK(native_ddc_counts(24000000,&h,&l)==0&&h==221&&l==245);

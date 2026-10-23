@@ -40,6 +40,9 @@ struct sun60i_a733_de352_completion {
  * get_state performs no display I/O. Before successful explicit stage 1 it
  * returns ENXIO or EAGAIN. Failure leaves every output argument unchanged.
  */
+/* Start retained discovery/scanout. EAGAIN means checked HPD-low only.
+ * Retry with the same provider. No DE register or DMA write precedes a sink. */
+int sun60i_a733_de352_start(int);
 int sun60i_a733_de352_get_state(int, struct sun60i_a733_de352_state *);
 int sun60i_a733_de352_acquire(int, const void *,
     struct sun60i_a733_de352_client **);

@@ -141,6 +141,7 @@ struct sun60i_de352_softc {
 	struct de352_submit_trace submit_trace;
 	bool cold_initialized;
 	bool output_stopped;
+	bool discovery_pending, discovery_cold, discovery_managed;
 	bool valid, mapped, power_reserved, reserved, retained;
 	int stage, step, result, release_error;
 	uint32_t last_status;
@@ -1068,6 +1069,13 @@ de352_run(struct sun60i_de352_softc *sc)
 
 	if (!sc->valid)
 		return ENXIO;
+	if (sc->discovery_pending) {
+		if (!sc->retained || !sc->reserved || !sc->power_reserved)
+			return EIO;
+		cold = sc->discovery_cold;
+		managed = sc->discovery_managed;
+		goto discover;
+	}
 	if (sc->retained || sc->reserved || sc->power_reserved)
 		return EBUSY;
 	sc->step = 1;
@@ -1103,7 +1111,18 @@ de352_run(struct sun60i_de352_softc *sc)
 		error = EPROTO;
 	if (error != 0)
 		goto fail;
+	sc->discovery_pending = true;
+	sc->discovery_cold = cold;
+	sc->discovery_managed = managed;
+discover:
 	sc->step = 4;
+	/* No DE map, cold-init, memory write or pixel DMA before a sink. */
+	error = sun60i_a733_output_get_mode(sc->output_phandle, sc, &sc->mode);
+	if (error == EAGAIN)
+		return error;
+	if (error != 0)
+		goto fail;
+	sc->discovery_pending = false;
 	if (cold) {
 		memset(&sc->cold_trace, 0, sizeof(sc->cold_trace));
 		sc->cold_trace.version = 1;
@@ -1134,10 +1153,6 @@ de352_run(struct sun60i_de352_softc *sc)
 	error = de352_open_core(sc);
 	if (error == 0)
 		error = de352_idle(sc);
-	if (error != 0)
-		goto fail;
-	sc->step = 5;
-	error = sun60i_a733_output_get_mode(sc->output_phandle, sc, &sc->mode);
 	if (error != 0)
 		goto fail;
 	sc->step = 6;
@@ -1221,6 +1236,28 @@ fail:
 	return error;
 }
 
+int
+sun60i_a733_de352_start(int phandle)
+{
+	struct sun60i_de352_softc *sc = de352_lookup(phandle, NULL);
+	int error;
+
+	if (sc == NULL)
+		return ENXIO;
+	mutex_enter(&sc->lock);
+	if (sc->stage == 1) {
+		error = sc->result;
+	} else {
+		error = de352_run(sc);
+		sc->result = error;
+		/* Only a proved absent sink may retry retained discovery. */
+		if (error != EAGAIN)
+			sc->stage = 1;
+	}
+	mutex_exit(&sc->lock);
+	return error;
+}
+
 static int
 de352_sysctl(SYSCTLFN_ARGS)
 {
@@ -1240,17 +1277,7 @@ de352_sysctl(SYSCTLFN_ARGS)
 		return error;
 	if (stage != 1)
 		return EINVAL;
-	if (!mutex_tryenter(&sc->lock))
-		return EBUSY;
-	if (sc->reserved || sc->retained || sc->power_reserved) {
-		mutex_exit(&sc->lock);
-		return EBUSY;
-	}
-	error = de352_run(sc);
-	sc->stage = 1;
-	sc->result = error;
-	mutex_exit(&sc->lock);
-	return error;
+	return sun60i_a733_de352_start(sc->phandle);
 }
 
 static int

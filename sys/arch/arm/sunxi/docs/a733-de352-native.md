@@ -374,3 +374,15 @@ Only success sets output stopped. Repeated stop performs no hardware work.
 A later submit restarts the prepared output before its new list.
 The bootstrap list, native tag, memory isolation and clock leases stay owned.
 Failures retain uncertain old and pending storage and block restart.
+
+## Sink discovery before scanout
+
+`sun60i_a733_de352_start()` is the shared start entry point. It serializes
+the retained DE owner. The diagnostic stage calls the same entry point.
+The first attempt acquires its clock and isolation leases, then asks the
+HDMI owner for a mode before any DE mapping, cold-init, memory write or DMA
+allocation. A checked low HPD returns `EAGAIN` without a sticky fault.
+The next attempt retains the same leases and repeats sink discovery only.
+A present sink admits the original checked scanout sequence once.
+A completed start is idempotent. Other failures retain the original fault
+boundary. This is retained discovery, not a release of clock ownership.

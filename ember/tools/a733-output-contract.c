@@ -129,7 +129,7 @@ vblank(void)
 struct provider_fixture {
 	unsigned calls[6];
 	unsigned fail_step;
-	bool no_vblank, invalid_mode;
+	bool no_vblank, invalid_mode, no_sink;
 	const void *owner;
 };
 
@@ -152,7 +152,8 @@ provider_mode(void *arg, const void *owner, struct sun60i_a733_output_mode *out)
 	*out = hd;
 	if (f->invalid_mode)
 		out->pixel_clock_hz = 0;
-	return provider_step(arg, owner, 0);
+	int error = provider_step(arg, owner, 0);
+	return error ? error : f->no_sink ? EAGAIN : 0;
 }
 
 static int
@@ -522,6 +523,25 @@ output_vblank_handler(void)
 }
 
 static void
+output_no_sink(void)
+{
+	struct provider_fixture f = { .owner = &f, .no_sink = true };
+	struct sun60i_a733_output_mode mode = {.pixel_clock_hz = 42};
+
+	provider_reset();
+	CHECK(sun60i_a733_output_register(7, &provider_ops, &f) == 0);
+	CHECK(sun60i_a733_output_get_mode(7, &f, &mode) == EAGAIN);
+	CHECK(output_error == 0 && !output_mode_valid && output_owner == &f);
+	CHECK(mode.pixel_clock_hz == 42);
+	CHECK(sun60i_a733_output_get_mode(7, &f, &mode) == EAGAIN);
+	CHECK(f.calls[0] == 2 && f.calls[4] == 0);
+	CHECK(sun60i_a733_output_get_mode(7, &mode, &mode) == EBUSY);
+	f.no_sink = false;
+	CHECK(sun60i_a733_output_get_mode(7, &f, &mode) == 0);
+	CHECK(output_mode_valid && f.calls[0] == 3 && mode.pixel_clock_hz == hd.pixel_clock_hz);
+}
+
+static void
 output_stop_restart(void)
 {
 	struct sun60i_a733_output_ops ops = provider_ops;
@@ -556,6 +576,7 @@ int
 main(void)
 {
 
+	output_no_sink();
 	output_stop_restart();
 	provider_reset();
 	timing();

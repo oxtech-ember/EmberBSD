@@ -92,9 +92,11 @@ sun60i_a733_output_get_mode(int phandle, const void *owner,
 		error = output_ops->get_mode(output_arg, owner, &mode);
 		if (error == 0)
 			error = sun60i_a733_tcon_timing_encode(&mode, &timing);
-		if (error != 0)
-			output_fail(error);
-		else {
+		if (error != 0) {
+			/* A checked HPD-low probe may retry with this same owner. */
+			if (error != EAGAIN)
+				output_fail(error);
+		} else {
 			output_mode = mode;
 			output_mode_valid = true;
 		}

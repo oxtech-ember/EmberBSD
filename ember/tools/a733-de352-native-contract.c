@@ -509,6 +509,24 @@ plane_disable_checks(void)
  }
 }
 static void
+no_sink_checks(void)
+{
+ struct sun60i_de352_softc sc;
+ init(&sc);de352_provider=&sc;mode_error=EAGAIN;
+ CHECK(sun60i_a733_de352_start(1)==EAGAIN);
+ CHECK(sc.discovery_pending&&sc.retained&&sc.stage==0);
+ CHECK(!sc.mapped&&sc.dma==NULL&&writes==0&&memory_writes==0&&faults==0);
+ int old_begins=begins;
+ CHECK(sun60i_a733_de352_start(1)==EAGAIN);
+ CHECK(begins==old_begins&&writes==0&&memory_writes==0&&faults==0);
+ mode_error=0;CHECK(sun60i_a733_de352_start(1)==0);
+ CHECK(sc.stage==1&&sc.result==0&&!sc.discovery_pending&&sc.dma->published);
+ int old_writes=writes;
+ CHECK(sun60i_a733_de352_start(1)==0&&writes==old_writes);
+ reboot_fixture(&sc);
+}
+
+static void
 output_stop_checks(void)
 {
  struct sun60i_de352_softc sc;
@@ -903,8 +921,8 @@ int main(void)
  init(&sc);clocks[1][0]=0;CHECK(de352_run(&sc)==EBUSY&&sc.memory.version==1&&sc.memory.valid==1&&sc.memory.clocks[1][0]==0);
  struct sysctlnode memnode={&sc,sizeof(sc.memory)};CHECK(de352_sysctl_memory(&memnode,NULL)==0);CHECK(de352_sysctl_memory(&memnode,&sc)==EROFS);
  init(&sc);read_fault_region=3;read_fault_reg=0x414;CHECK(de352_run(&sc)==EIO&&sc.memory.valid==1&&sc.memory.iommu[0][0]==0&&sc.memory.nsi[0][0]==0);
- init(&sc);struct sysctlnode n={&sc.stage,sizeof(sc.stage)};u_int stage=2;CHECK(de352_sysctl(&n,&stage)==EINVAL&&writes==0);stage=1;CHECK(de352_sysctl(&n,&stage)==0&&sc.result==0);CHECK(de352_sysctl(&n,&stage)==EBUSY&&sc.result==0);reboot_fixture(&sc);
+ init(&sc);de352_provider=&sc;struct sysctlnode n={&sc.stage,sizeof(sc.stage)};u_int stage=2;CHECK(de352_sysctl(&n,&stage)==EINVAL&&writes==0);stage=1;CHECK(de352_sysctl(&n,&stage)==0&&sc.result==0);CHECK(de352_sysctl(&n,&stage)==0&&sc.result==0);reboot_fixture(&sc);
  managed_checks();
- scanout_checks();plane_disable_checks();output_stop_checks();
+ scanout_checks();plane_disable_checks();output_stop_checks();no_sink_checks();
  printf("A733 DE3.52 native coordinator: %u checks passed\n",checks);return 0;
 }
