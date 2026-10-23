@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Origin: EmberBSD actual CSA/BA/CCMP consumer contracts, AI-assisted. */
 /* Actual Action producer/receive arm and BA/data/CCMP/Ethernet consumers.
  * Negotiated-peer admission and kernel services remain explicit models. */
 #define IEEE80211_NODE_AMSDU_RX 0x40
@@ -245,6 +246,60 @@ static void unit_input(struct unit_fixture *f,unsigned seq,uint64_t pn)
 {
  struct mbuf *m=unit_wire(f,seq,pn);
  CHECK(ieee80211_input(&f->ic,m,&f->ni,0,0)==IEEE80211_FC0_TYPE_DATA);
+}
+static unsigned unit_quiet_calls;
+static void unit_quiet(struct ieee80211com *ic)
+{
+ CHECK(ic->ic_state==IEEE80211_S_RUN && ic->ic_bss->ni_ht20.valid);
+ unit_quiet_calls++;
+}
+/* Exercise actual common input, Action dispatch and shared RX teardown. */
+static void test_csa_action_exit(void)
+{
+ /* The management dispatch must also reject an absent current peer. */
+ struct ieee80211com empty={0};struct mbuf absent={0};
+ empty.ic_opmode=IEEE80211_M_STA;empty.ic_state=IEEE80211_S_RUN;
+ absent.m_data=absent.storage;absent.m_len=absent.m_pkthdr.len=33;
+ absent.m_data[0]=0xd0;absent.m_data[24]=3;
+ unit_recv_action(&empty,&absent,NULL);
+ CHECK(empty.ic_stats.is_rx_mgtdiscard==1);
+ for(unsigned kind=0;kind<12;kind++) {
+  struct unit_fixture f;if(!unit_setup(&f,10,64,0))return;
+  unit_input(&f,11,11);CHECK(unit_token!=0 && f.ni.ni_rxba.bytes!=0);
+  f.ic.ic_sta_quiet=unit_quiet;unit_quiet_calls=0;
+  struct mbuf action={0};action.m_data=action.storage;
+  action.m_len=action.m_pkthdr.len=31;
+  uint8_t *p=action.m_data;p[0]=0xd0;
+  memcpy(p+4,f.ic.ic_myaddr,6);memcpy(p+10,f.ni.ni_macaddr,6);
+  memcpy(p+16,f.ni.ni_bssid,6);
+  const uint8_t csa[]={0,4,37,3,1,64,0};memcpy(p+24,csa,sizeof(csa));
+  if(kind==1)memset(p+4,255,6);
+  if(kind==2) { const uint8_t ext[]={4,4,1,118,64,0};memcpy(p+24,ext,sizeof(ext));action.m_len=action.m_pkthdr.len=30; }
+  if(kind==3)action.m_len=action.m_pkthdr.len=26; /* Truncated CSA action. */
+  if(kind==4)p[15]^=1;
+  if(kind==5)p[21]^=1;
+  if(kind==6)p[9]^=1;
+  if(kind==7)p[1]=IEEE80211_FC1_MORE_FRAG;
+  if(kind==8)f.ic.ic_sta_quiet=NULL;
+  if(kind==9)p[25]=2; /* A TPC request is not CSA. */
+  struct mbuf *received=duplicate(&action);
+  if(kind>=10) {
+   /* Split the two-byte Action prefix at both possible mbuf boundaries. */
+   unsigned split=kind==10?24:25;
+   struct mbuf *tail=calloc(1,sizeof(*tail));assert(tail);
+   tail->m_data=tail->storage;tail->m_len=received->m_len-split;
+   memcpy(tail->m_data,received->m_data+split,tail->m_len);
+   received->m_len=split;received->m_next=tail;
+  }
+  ieee80211_input(&f.ic,received,&f.ni,0,0);
+  unsigned want=kind<4 || kind>=10;
+  CHECK(unit_quiet_calls==want);
+  if(want) {
+   CHECK(f.ic.ic_state==IEEE80211_S_INIT && !f.ni.ni_ht20.valid);
+   CHECK(f.ni.ni_rxba.bytes==0 && unit_token==0 && rxba_output_count==0);
+  }
+  unit_close(&f);
+ }
 }
 static void test_absolute_deadline(void)
 {
@@ -831,7 +886,7 @@ static void test_negotiated_amsdu_crypto_order(void)
 #endif
 int RXBA_SHARED_MAIN(void)
 {
- test_absolute_deadline();test_window_and_wrap();test_key_and_mic_order();test_candidate_preflight();test_actual_key_lifecycle();test_actual_node_reuse();test_beacon_contract_purge();test_ht20_real_ccmp_budget();test_actual_bar_and_delba();test_clock_serial_quarantine();test_owned_storage_budget();test_null_crypto_order();test_owned_admission_withdrawal();test_actual_allocation_failures();test_repeat_replace_and_tid_deadlines();test_invalid_queued_frames();test_negotiated_amsdu_crypto_order();test_storage_walk_bounds();test_amsdu_current_without_ba();
+ test_csa_action_exit();test_absolute_deadline();test_window_and_wrap();test_key_and_mic_order();test_candidate_preflight();test_actual_key_lifecycle();test_actual_node_reuse();test_beacon_contract_purge();test_ht20_real_ccmp_budget();test_actual_bar_and_delba();test_clock_serial_quarantine();test_owned_storage_budget();test_null_crypto_order();test_owned_admission_withdrawal();test_actual_allocation_failures();test_repeat_replace_and_tid_deadlines();test_invalid_queued_frames();test_negotiated_amsdu_crypto_order();test_storage_walk_bounds();test_amsdu_current_without_ba();
  printf("RX BA actual primitive/CCMP units: %u checks, %u failures\n",checks,failures);
  return failures!=0;
 }

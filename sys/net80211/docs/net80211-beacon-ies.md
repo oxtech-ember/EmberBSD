@@ -61,15 +61,24 @@ transmission closed through the subsequent shared INIT request and cleanup.
 Before HT or legacy beacon validation, the native consumer checks current STA
 AUTH, ASSOC or RUN identity. The node must be the current BSS on the current
 channel. Source and BSSID must match the selected peer. A matching CSA or
-Extended CSA calls the provider, then requests INIT. Any countdown, including
+Extended CSA calls the provider, purges HT/RX BA storage and timer ownership,
+then requests INIT. Any countdown, including
 zero, exits immediately. A malformed fixed body or IE window also exits.
 Both beacons and probe responses use this policy. Foreign peers, other states,
 other channels and interfaces without a provider retain their existing path.
 
 This interface does not tune a successor channel or establish a DFS lease.
-No radio provider is registered by this change. Spectrum-management Action
-handling, beacon-loss policy, transmit-power constraints and driver hardware
-quiescence remain separate prerequisites before DFS channel admission.
+The Action receiver recognizes Spectrum Management CSA (category 0, action 4)
+and Public Extended CSA (category 4, action 4). It copies only the two-byte
+prefix across mbuf segments. The same peer/channel/lifecycle checks apply.
+The destination must be local or multicast; encrypted, fragmented, ordered and
+DS-directed headers do not invoke the provider. A recognized prefix exits even
+when the remaining payload is malformed. No successor is decoded or followed.
+The existing Block Ack Action validation remains in force for other frames.
+
+No radio provider is registered by this change. Beacon-loss policy,
+transmit-power constraints and driver hardware quiescence remain separate
+prerequisites before DFS channel admission.
 
 ## Checks
 

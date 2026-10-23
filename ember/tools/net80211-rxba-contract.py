@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Origin: EmberBSD actual CSA/BA/CCMP consumer contracts, AI-assisted.
 """Actual BA/Action/data/crypto/native consumers with explicit kernel/peer models.
 
 Full association management exchange and hardware programming are separate gates.
@@ -10,6 +11,8 @@ subprocess.run([sys.executable,str(src/'ember/tools/ccmp-contract-extract.py'),s
 for name in ['ieee80211_ht20.h','ieee80211_rxba.h']:
  (out/name).write_text((src/'sys/net80211'/name).read_text())
 s=(src/'ember/tools/ccmp-test-kernel.h').read_text()
+state_enum=re.search(r'^enum ieee80211_state \{.*?^};',(src/'sys/net80211/ieee80211_proto.h').read_text(),re.M|re.S).group()
+s=s.replace('struct ieee80211com {','#ifndef NATIVE_IEEE80211_STATE_DEFINED\n#define NATIVE_IEEE80211_STATE_DEFINED 1\n'+state_enum+'\n#endif\nstruct ieee80211com {',1)
 s=s.replace('struct ieee80211_node {','''#include "ieee80211_ht20.h"
 #include "ieee80211_rxba.h"
 struct ieee80211_node {
@@ -18,6 +21,7 @@ struct ieee80211_node {
  struct ieee80211com *ni_ic;
  int authorized;''')
 s=s.replace('struct ieee80211com {','''struct ieee80211com {
+ void (*ic_sta_quiet)(struct ieee80211com *);
  const struct ieee80211_rxba_ops *ic_rxba_ops;
  uint64_t ic_rxba_serial;
  int ic_state;
@@ -93,7 +97,8 @@ for name,result in [('ieee80211_defrag','static struct mbuf *'),('ieee80211_deca
 # Exact Action switch arm. Other management subtypes remain qualified by A/WME.
 s=pathlib.Path(os.environ.get('RXBA_INPUT_SOURCE',src/'sys/net80211/ieee80211_input.c')).read_text()
 arm=re.search(r'^\tcase IEEE80211_FC0_SUBTYPE_ACTION: \{.*?^\t}',s,re.M|re.S).group()
-(out/'native-rxba-action.inc').write_text(s[:s.index('#include')]+'static void\nunit_recv_action(struct ieee80211com *ic,struct mbuf *m0,struct ieee80211_node *ni) {\nstruct ieee80211_frame *wh=mtod(m0,struct ieee80211_frame *);\nswitch(IEEE80211_FC0_SUBTYPE_ACTION) {\n'+arm+'\n}\n}\n')
+helpers = ''.join(extract('sys/net80211/ieee80211_input.c',name,'static int') for name in ('ieee80211_sta_csa_current','ieee80211_sta_csa_exit','ieee80211_sta_csa_action')) if '\nieee80211_sta_csa_action(' in s else ''
+(out/'native-rxba-action.inc').write_text(s[:s.index('#include')]+helpers+'static void\nunit_recv_action(struct ieee80211com *ic,struct mbuf *m0,struct ieee80211_node *ni) {\nstruct ieee80211_frame *wh=mtod(m0,struct ieee80211_frame *);\nswitch(IEEE80211_FC0_SUBTYPE_ACTION) {\n'+arm+'\n}\n}\n')
 # Execute the full common input before its data/control/Action consumers.
 s=(out/'rxba-test-kernel.h').read_text()
 s=s.replace('struct { int unused; } if_snd;', 'struct { int unused; } if_snd;\n uint8_t if_broadcastaddr[6];')
@@ -221,7 +226,7 @@ types.append(re.search(r'^#define\s+CALLOUT_MPSAFE\s+.*$',(src/'sys/sys/callout.
 types.append(re.search(r'^#define\s+RTW88_NTXQ\s+.*$',var,re.M).group())
 types.append(re.search(r'^struct rtw88_net_rx \{.*?^};',net,re.M|re.S).group())
 types.append(re.search(r'^struct rtw88_net_stats \{.*?^};',(src/'sys/dev/ic/rtw88_net.h').read_text(),re.M|re.S).group())
-types.insert(0,'#undef IEEE80211_S_INIT\n#undef IEEE80211_S_RUN\n#undef IEEE80211_S_ASSOC\n'+re.search(r'^enum ieee80211_state \{.*?^};',(src/'sys/net80211/ieee80211_proto.h').read_text(),re.M|re.S).group())
+types.insert(0,'#undef IEEE80211_S_INIT\n#undef IEEE80211_S_RUN\n#undef IEEE80211_S_ASSOC\n#ifndef NATIVE_IEEE80211_STATE_DEFINED\n#define NATIVE_IEEE80211_STATE_DEFINED 1\n'+state_enum+'\n#endif')
 (out/'native-rxba-native-types.inc').write_text('\n'.join(types)+'\n')
 # These are the actual owning IRQ queue and Giant delivery consumers, not an
 # unused timer API. The baseline remains explicit until those bodies are present.

@@ -2231,6 +2231,50 @@ ieee80211_update_adhoc_node(struct ieee80211com *ic, struct ieee80211_node *ni,
 	}								\
 } while (0)
 
+static int
+ieee80211_sta_csa_current(struct ieee80211com *ic, struct ieee80211_node *ni,
+    const struct ieee80211_frame *wh)
+{
+	if (ic->ic_sta_quiet == NULL || ic->ic_opmode != IEEE80211_M_STA ||
+	    (ic->ic_state != IEEE80211_S_AUTH &&
+	     ic->ic_state != IEEE80211_S_ASSOC &&
+	     ic->ic_state != IEEE80211_S_RUN) || ni == NULL || ni != ic->ic_bss ||
+	    ni->ni_chan == NULL || ni->ni_chan != ic->ic_curchan ||
+	    !IEEE80211_ADDR_EQ(wh->i_addr2, ni->ni_macaddr) ||
+	    !IEEE80211_ADDR_EQ(wh->i_addr3, ni->ni_bssid))
+		return 0;
+	return 1;
+}
+
+/* Close TX before removing queued ciphertext and its timer ownership. */
+static int
+ieee80211_sta_csa_exit(struct ieee80211com *ic, struct ieee80211_node *ni)
+{
+	ic->ic_sta_quiet(ic);
+	ieee80211_ht20_reset(ni);
+	(void)ieee80211_new_state(ic, IEEE80211_S_INIT, -1);
+	return 1;
+}
+
+/* Recognize only the two standardized channel-switch Action prefixes.
+ * The conservative policy exits even if the remaining payload is malformed.
+ * No operating-class resolution or successor-channel selection is implied.
+ */
+static int
+ieee80211_sta_csa_action(struct ieee80211com *ic, struct ieee80211_node *ni,
+    const struct ieee80211_frame *wh, const uint8_t prefix[2])
+{
+	if (!ieee80211_sta_csa_current(ic, ni, wh) ||
+	    (wh->i_fc[1] & (IEEE80211_FC1_WEP | IEEE80211_FC1_MORE_FRAG |
+	    IEEE80211_FC1_ORDER | IEEE80211_FC1_DIR_MASK)) != 0 ||
+	    (wh->i_seq[0] & IEEE80211_SEQ_FRAG_MASK) != 0 ||
+	    (!IEEE80211_IS_MULTICAST(wh->i_addr1) &&
+	     !IEEE80211_ADDR_EQ(wh->i_addr1, ic->ic_myaddr)) ||
+	    (prefix[0] != 0 && prefix[0] != 4) || prefix[1] != 4)
+		return 0;
+	return ieee80211_sta_csa_exit(ic, ni);
+}
+
 /* A driver can opt into a conservative STA exit policy. Any matching CSA
  * withdraws this association, regardless of countdown or advertised successor.
  * A bad IE window from the current AP must not hide a switch announcement.
@@ -2242,20 +2286,12 @@ ieee80211_sta_csa_beacon(struct ieee80211com *ic, struct ieee80211_node *ni,
 {
 	struct ieee80211_beacon_ies ies;
 
-	if (ic->ic_sta_quiet == NULL || ic->ic_opmode != IEEE80211_M_STA ||
-	    (ic->ic_state != IEEE80211_S_AUTH &&
-	     ic->ic_state != IEEE80211_S_ASSOC &&
-	     ic->ic_state != IEEE80211_S_RUN) || ni == NULL || ni != ic->ic_bss ||
-	    ni->ni_chan == NULL || ni->ni_chan != ic->ic_curchan ||
-	    !IEEE80211_ADDR_EQ(wh->i_addr2, ni->ni_macaddr) ||
-	    !IEEE80211_ADDR_EQ(wh->i_addr3, ni->ni_bssid))
+	if (!ieee80211_sta_csa_current(ic, ni, wh))
 		return 0;
 	if (len >= 12 && ieee80211_beacon_ies_parse(&ies, body + 12,
 	    len - 12) == 0 && ies.csa == NULL && ies.xcsa == NULL)
 		return 0;
-	ic->ic_sta_quiet(ic);
-	(void)ieee80211_new_state(ic, IEEE80211_S_INIT, -1);
-	return 1;
+	return ieee80211_sta_csa_exit(ic, ni);
 }
 
 static void
@@ -3327,8 +3363,14 @@ ieee80211_recv_mgmt(struct ieee80211com *ic, struct mbuf *m0,
 	case IEEE80211_FC0_SUBTYPE_ACTION: {
 		uint8_t body[9];
 		int len = m0->m_pkthdr.len - (int)sizeof(*wh);
+		if (m0->m_len >= (int)sizeof(*wh) && len >= 2) {
+			m_copydata(m0, sizeof(*wh), 2, body);
+			if (ieee80211_sta_csa_action(ic, ni, wh, body))
+				return;
+		}
 		if (m0->m_len < (int)sizeof(*wh) || (len != 9 && len != 6) ||
-		    ic->ic_opmode != IEEE80211_M_STA || ni != ic->ic_bss ||
+		    ic->ic_opmode != IEEE80211_M_STA || ni == NULL ||
+		    ni != ic->ic_bss ||
 		    (wh->i_fc[1] & (IEEE80211_FC1_WEP | IEEE80211_FC1_MORE_FRAG |
 		    IEEE80211_FC1_ORDER)) != 0 ||
 		    (wh->i_seq[0] & IEEE80211_SEQ_FRAG_MASK) != 0 ||

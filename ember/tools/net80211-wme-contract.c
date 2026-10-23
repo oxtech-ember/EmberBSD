@@ -1145,6 +1145,7 @@ test_csa_beacon_stop(void)
 		test_ic.ic_sta_quiet = test_quiet;
 		quiet_calls = 0;
 		quiet_state = test_ic.ic_state;
+		test_node.ni_ht20.valid = 1;
 		struct mbuf *m = beacon(0);
 		if (kind == 0) {
 			m->m_len = m->m_pkthdr.len = sizeof(struct ieee80211_frame) + 11;
@@ -1157,6 +1158,7 @@ test_csa_beacon_stop(void)
 		    kind ? IEEE80211_FC0_SUBTYPE_PROBE_RESP : IEEE80211_FC0_SUBTYPE_BEACON, 0, 0);
 		m_freem(m);
 		CHECK(quiet_calls == 1 && test_ic.ic_state == IEEE80211_S_INIT);
+		CHECK(!test_node.ni_ht20.valid);
 	}
 	setup();
 	test_ic.ic_state = IEEE80211_S_RUN;
