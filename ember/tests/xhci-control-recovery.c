@@ -117,6 +117,7 @@ static pthread_mutex_t gate = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t gate_cv = PTHREAD_COND_INITIALIZER;
 static unsigned pause_command;
 static bool reset_entered, release_reset, recovery_waiting;
+static bool dequeue_failed;
 
 static void
 mutex_enter(kmutex_t *lock)
@@ -241,13 +242,14 @@ xhci_stop_endpoint(const struct usbd_pipe *p)
 	ring.state = XHCI_EPSTATE_STOPPED;
 }
 
-static void
+static bool
 xhci_set_dequeue(const struct usbd_pipe *p)
 {
 	assert(p == &test_pipe.xp_pipe && held == &controller.sc_lock);
 	assert(ring.state == XHCI_EPSTATE_STOPPED);
 	dequeues++;
 	command_pause(2);
+	return !dequeue_failed;
 }
 
 static void
@@ -337,6 +339,7 @@ reset(void)
 	ring.is_halted = true;
 	ring.state = XHCI_EPSTATE_HALTED;
 	descriptor.bmAttributes = UE_CONTROL;
+	dequeue_failed = false;
 }
 
 static void
@@ -344,6 +347,56 @@ run_task(void)
 {
 	test_pipe.xp_async_task.pending = false;
 	xhci_pipe_restart_async_task(&test_pipe.xp_pipe);
+}
+
+static void
+failed_recovery(bool asynchronous)
+{
+	reset();
+	dequeue_failed = true;
+	softintr = asynchronous;
+	mutex_enter(&controller.sc_lock);
+	assert(xhci_device_ctrl_start(&transfer.xx_xfer) == USBD_IN_PROGRESS);
+	mutex_exit(&controller.sc_lock);
+	softintr = false;
+	if (asynchronous)
+		run_task();
+	assert(ring.is_halted && !test_pipe.xp_restarting);
+	assert(resets == 1 && dequeues == 1);
+	assert(submissions == 0 && bells == 0 && timeouts == 1);
+	assert(transfer.xx_xfer.ux_status == USBD_IN_PROGRESS);
+	/* A later start can retry; it must not schedule a second timeout. */
+	dequeue_failed = false;
+	mutex_enter(&controller.sc_lock);
+	assert(xhci_device_ctrl_start(&transfer.xx_xfer) == USBD_IN_PROGRESS);
+	mutex_exit(&controller.sc_lock);
+	assert(!ring.is_halted && !test_pipe.xp_restarting);
+	assert(dequeues == 2 && submissions == 1 && bells == 1);
+	assert(timeouts == 1);
+}
+
+static void
+failed_abort(void)
+{
+	reset();
+	ring.is_halted = false;
+	ring.state = 4; /* RUNNING, not a pre-existing STALL. */
+	dequeue_failed = true;
+	transfer.xx_xfer.ux_status = USBD_CANCELLED;
+	mutex_enter(&controller.sc_lock);
+	xhci_abortx(&transfer.xx_xfer);
+	mutex_exit(&controller.sc_lock);
+	assert(ring.is_halted && !test_pipe.xp_restarting);
+	assert(stops == 1 && dequeues == 1 && resets == 0);
+	assert(submissions == 0 && bells == 0 && timeouts == 0);
+	/* The next request must recover the ring before it can submit. */
+	dequeue_failed = false;
+	transfer.xx_xfer.ux_status = USBD_NOT_STARTED;
+	mutex_enter(&controller.sc_lock);
+	assert(xhci_device_ctrl_start(&transfer.xx_xfer) == USBD_IN_PROGRESS);
+	mutex_exit(&controller.sc_lock);
+	assert(!ring.is_halted && dequeues == 2);
+	assert(submissions == 1 && bells == 1 && timeouts == 1);
 }
 
 static void
@@ -591,6 +644,12 @@ main(int argc, char **argv)
 	const char *which = argc == 2 ? argv[1] : "all";
 	alarm(15);
 	init();
+	if (!strcmp(which, "all") || !strcmp(which, "failure-inline"))
+		failed_recovery(false);
+	if (!strcmp(which, "all") || !strcmp(which, "failure-async"))
+		failed_recovery(true);
+	if (!strcmp(which, "all") || !strcmp(which, "failure-abort"))
+		failed_abort();
 	if (!strcmp(which, "all") || !strcmp(which, "contexts"))
 		contexts();
 	if (!strcmp(which, "all") || !strcmp(which, "stale-task"))

@@ -2366,13 +2366,12 @@ xhci_pipe_restart(struct usbd_pipe *pipe, bool force)
 	}
 
 	/*
-	 * Keep the halted state when the ring could not be restarted.
+	 * Mark the ring halted when recovery or a forced abort fails.
 	 * The next request retries recovery instead of enqueueing TRBs
 	 * the controller will never fetch.
 	 */
 	bool restarted = xhci_set_dequeue(pipe);
-	if (restarted)
-		tr->is_halted = false;
+	tr->is_halted = !restarted;
 	xp->xp_restarting = false;
 	cv_broadcast(&xp->xp_restart_cv);
 
@@ -4625,7 +4624,7 @@ xhci_device_ctrl_start(struct usbd_xfer *xfer)
 		(void)xhci_pipe_restart(pipe, false);
 		/* A concurrent abort claims the status before waiting for us. */
 		if (xfer->ux_status != USBD_IN_PROGRESS ||
-		    xfer != SIMPLEQ_FIRST(&pipe->up_queue))
+		    xfer != SIMPLEQ_FIRST(&pipe->up_queue) || tr->is_halted)
 			return USBD_IN_PROGRESS;
 	}
 

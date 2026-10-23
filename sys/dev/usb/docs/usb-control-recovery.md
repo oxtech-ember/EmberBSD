@@ -6,6 +6,9 @@ A process-context start can recover the ring before that task runs.
 Queued transfers started by completion use the USB task queue.
 One restart owner protects the ring while controller commands release the lock.
 The transfer becomes active before recovery can sleep, so cancellation can complete it.
+Failed recovery keeps the ring halted, including a failed forced abort.
+A control start must not submit or ring the doorbell after recovery fails.
+The active request keeps its existing timeout. A later start can retry recovery.
 
 ## Source regression
 
@@ -13,13 +16,18 @@ Run from the source root. Each output directory must be new.
 
 ```sh
 sh ember/tests/xhci-control-recovery.sh sys/dev/usb/xhci.c /absolute/work/xhci-check
-CC=clang CFLAGS='-O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined' \
+CC=gcc-16 CFLAGS='-O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined' \
     sh ember/tests/xhci-control-recovery.sh sys/dev/usb/xhci.c /absolute/work/xhci-asan
 ```
 
 The test extracts the actual driver functions and supplies pthread-based kernel doubles.
 It checks process and soft interrupt starts, terminal STALL with no next request,
 concurrent task/start recovery, and cancellation or timeout during either recovery command.
+It also injects a failed dequeue update in process and task context.
+It checks a forced abort of a running ring and recovery on the next request.
+The implementation before these failure checks submitted after failed inline
+recovery and did not mark a failed abort of a running ring as halted.
+The fixture models the dequeue command result; it does not execute controller commands.
 The earlier implementation fails the soft interrupt and cancellation interleavings.
 Recovery that depends on a later request fails the terminal STALL check.
 These tests verify synchronization. They do not model controller hardware or USB timing.
