@@ -11,7 +11,7 @@
 ./usr/libdata/debug/lib/libcrypto.so.16.0.debug			comp-sys-debug	debug,dynamicroot,openssl=35
 ./usr/libdata/debug/lib/libdevmapper.so.1.0.debug		comp-sys-debug	debug,dynamicroot,lvm
 ./usr/libdata/debug/lib/libdm.so.0.0.debug 			comp-sys-debug	debug,dynamicroot
-./usr/libdata/debug/lib/libedit.so.3.1.debug			comp-sys-debug	debug,dynamicroot
+./usr/libdata/debug/lib/libedit.so.3.2.debug			comp-sys-debug	debug,dynamicroot
 ./usr/libdata/debug/lib/libevent.so.5.0.debug			comp-sys-debug	debug,dynamicroot
 ./usr/libdata/debug/lib/libgcc_s.so.1.0.debug			comp-sys-debug	debug,dynamicroot,gcc
 ./usr/libdata/debug/lib/libipsec.so.3.0.debug			comp-sys-debug	debug,dynamicroot
@@ -105,7 +105,7 @@
 ./usr/libdata/debug/usr/lib/libdns_sd.so.0.0.debug		comp-mdns-debug	debug,compatfile,mdns
 ./usr/libdata/debug/usr/lib/libdtrace.so.3.0.debug		comp-sys-debug	debug,compatfile,dtrace
 ./usr/libdata/debug/usr/lib/libdwarf.so.2.2.debug		comp-sys-debug	debug,compatfile
-./usr/libdata/debug/usr/lib/libedit.so.3.1.debug		comp-sys-debug	debug,compatfile
+./usr/libdata/debug/usr/lib/libedit.so.3.2.debug		comp-sys-debug	debug,compatfile
 ./usr/libdata/debug/usr/lib/libelf.so.2.0.debug			comp-sys-debug	debug,compatfile
 ./usr/libdata/debug/usr/lib/libevent.so.5.0.debug		comp-sys-debug	debug,compatfile
 ./usr/libdata/debug/usr/lib/libevent_openssl.so.5.0.debug	comp-sys-debug	debug,compatfile

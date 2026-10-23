@@ -9,6 +9,7 @@ LIB=	edit
 LIBDPLIBS+=     terminfo ${.CURDIR}/../libterminfo
 
 .include "bsd.own.mk"
+.include "source.mk"
 
 COPTS+=	-Wunused-parameter
 CWARNFLAGS.gcc+=	-Wconversion
@@ -21,11 +22,25 @@ SRCS =	chared.c chartype.c common.c el.c eln.c emacs.c filecomplete.c \
 
 MAN=	editline.3 editrc.5 editline.7
 
+.PATH: ${LIBEDITDIR} ${EMBER_LIBEDIT_SOURCE}/doc ${.CURDIR}/TEST
+
+# The portable distribution retains the original mdoc files as .roff files.
+.for page in ${MAN}
+${page}: ${EMBER_LIBEDIT_SOURCE}/doc/${page}.roff
+	${_MKTARGET_CREATE}
+	${TOOL_CAT} ${.ALLSRC} > ${.TARGET}
+.endfor
+CLEANFILES+=${MAN}
+
 FILES+=			libedit.pc
 FILESOWN_libedit.pc=	${BINOWN}
 FILESGRP_libedit.pc=	${BINGRP}
 FILESMODE_libedit.pc=	${NONBINMODE}
 FILESDIR_libedit.pc=	/usr/lib/pkgconfig
+
+FILES+=			${EMBER_LIBEDIT_SOURCE}/ports.distinfo
+FILESNAME_${EMBER_LIBEDIT_SOURCE}/ports.distinfo=	editline.distinfo
+FILESDIR_${EMBER_LIBEDIT_SOURCE}/ports.distinfo=	/usr/share/emberbsd/ports
 
 MLINKS= \
 editline.3 el_deletestr.3 \
@@ -71,16 +86,14 @@ editline.3 tok_wline.3 \
 editline.3 tok_wreset.3 \
 editline.3 tok_wstr.3
 
-LIBEDITDIR?=${.CURDIR}
-
 INCS= histedit.h
 INCSDIR=/usr/include
 
 CLEANFILES+=common.h.tmp emacs.h.tmp fcns.h.tmp func.h.tmp
 CLEANFILES+=help.h.tmp vi.h.tmp tc1.o tc1 .depend
 
-CPPFLAGS+=-I. -I${LIBEDITDIR}
-CPPFLAGS+=-I. -I${.CURDIR}
+# Do not let portable compatibility headers shadow target libc headers.
+CPPFLAGS+=-I. -I${.CURDIR} -iquote ${LIBEDITDIR}
 #CPPFLAGS+=-DDEBUG_TTY -DDEBUG_KEY -DDEBUG -DDEBUG_REFRESH
 #CPPFLAGS+=-DDEBUG_PASTE -DDEBUG_EDIT
 
@@ -96,42 +109,42 @@ SUBDIR=	readline
 
 vi.h: vi.c makelist Makefile
 	${_MKTARGET_CREATE}
-	${HOST_SH} ${LIBEDITDIR}/makelist -h ${LIBEDITDIR}/vi.c \
+	AWK=${TOOL_AWK:Q} ${HOST_SH} ${LIBEDITDIR}/makelist -h ${LIBEDITDIR}/vi.c \
 	    > ${.TARGET}.tmp && \
 	    mv ${.TARGET}.tmp ${.TARGET}
 
 emacs.h: emacs.c makelist Makefile
 	${_MKTARGET_CREATE}
-	${HOST_SH} ${LIBEDITDIR}/makelist -h ${LIBEDITDIR}/emacs.c \
+	AWK=${TOOL_AWK:Q} ${HOST_SH} ${LIBEDITDIR}/makelist -h ${LIBEDITDIR}/emacs.c \
 	    > ${.TARGET}.tmp && \
 	    mv ${.TARGET}.tmp ${.TARGET}
 
 common.h: common.c makelist Makefile
 	${_MKTARGET_CREATE}
-	${HOST_SH} ${LIBEDITDIR}/makelist -h ${LIBEDITDIR}/common.c \
+	AWK=${TOOL_AWK:Q} ${HOST_SH} ${LIBEDITDIR}/makelist -h ${LIBEDITDIR}/common.c \
 	    > ${.TARGET}.tmp && \
 	    mv ${.TARGET}.tmp ${.TARGET}
 
 fcns.h: ${AHDR} makelist Makefile
 	${_MKTARGET_CREATE}
-	${HOST_SH} ${LIBEDITDIR}/makelist -fh ${AHDR} > ${.TARGET}.tmp && \
+	AWK=${TOOL_AWK:Q} ${HOST_SH} ${LIBEDITDIR}/makelist -fh ${AHDR} > ${.TARGET}.tmp && \
 	    mv ${.TARGET}.tmp ${.TARGET}
 
 func.h: ${AHDR} makelist Makefile
 	${_MKTARGET_CREATE}
-	${HOST_SH} ${LIBEDITDIR}/makelist -fc ${AHDR} > ${.TARGET}.tmp && \
+	AWK=${TOOL_AWK:Q} ${HOST_SH} ${LIBEDITDIR}/makelist -fc ${AHDR} > ${.TARGET}.tmp && \
 	    mv ${.TARGET}.tmp ${.TARGET}
 
 help.h: ${ASRC} makelist Makefile
 	${_MKTARGET_CREATE}
-	${HOST_SH} ${LIBEDITDIR}/makelist -bh ${ASRC} > ${.TARGET}.tmp && \
+	AWK=${TOOL_AWK:Q} ${HOST_SH} ${LIBEDITDIR}/makelist -bh ${ASRC} > ${.TARGET}.tmp && \
 	    mv ${.TARGET}.tmp ${.TARGET}
 
-tc1.o:	${LIBEDITDIR}/TEST/tc1.c
+tc1.o:	${.CURDIR}/TEST/tc1.c
 
 tc1:	libedit.a tc1.o
 	${_MKTARGET_LINK}
-	${CC} ${LDFLAGS} ${.ALLSRC} -o ${.TARGET} libedit.a ${LDADD} -ltermlib
+	${CC} ${LDFLAGS} tc1.o -o ${.TARGET} libedit.a ${LDADD} -lterminfo
 
 .include <bsd.lib.mk>
 .include <bsd.subdir.mk>

@@ -474,6 +474,8 @@
 ./usr/share/doc/usd/begin
 ./usr/share/doc/usd/edit
 ./usr/share/doc/usd/vi
+./usr/share/emberbsd
+./usr/share/emberbsd/ports
 ./usr/share/examples
 ./usr/share/examples/amd
 ./usr/share/examples/apm

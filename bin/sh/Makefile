@@ -2,6 +2,7 @@
 #	@(#)Makefile	8.4 (Berkeley) 5/5/95
 
 .include <bsd.own.mk>
+.include "${NETBSDSRCDIR}/lib/libedit/source.mk"
 
 PROG=	sh
 SHSRCS=	alias.c arith_token.c arithmetic.c cd.c echo.c error.c eval.c exec.c \
@@ -23,7 +24,7 @@ SCRIPT_ENV= \
 	MKTEMP=${TOOL_MKTEMP:Q} \
 	SED=${TOOL_SED:Q}
 
-CPPFLAGS+=-DSHELL -I. -I${.CURDIR} -I${NETBSDSRCDIR}/lib/libedit
+CPPFLAGS+=-DSHELL -I. -I${.CURDIR} -I${LIBEDITDIR}
 CPPFLAGS+= -DUSE_LRAND48
 CPPFLAGS+= -DREJECT_NULS
 

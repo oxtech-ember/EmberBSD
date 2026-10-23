@@ -8,5 +8,5 @@ Description: command line editor library providing generic line editing, history
 Version: 3.1
 Requires:
 Libs: -Wl,-R${libdir} -L${libdir} -ledit
-Libs.private: -ltermcap 
+Libs.private: -lterminfo
 Cflags: -I${includedir} -I${includedir}/readline

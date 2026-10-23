@@ -4,7 +4,9 @@ NOOBJ=		# defined
 
 .include <bsd.own.mk>
 
-.PATH:	${NETBSDSRCDIR}/lib/libedit
+.include "${.CURDIR}/../source.mk"
+
+.PATH:	${LIBEDITDIR}/editline
 
 INCS=		readline.h
 INCSDIR=	/usr/include/readline

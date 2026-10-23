@@ -1,3 +1,22 @@
+/* Target feature contract for the Ports libedit source on EmberBSD. */
+#include <sys/types.h>
+#include <sys/param.h>
+#include <sys/cdefs.h>
+#include <stdint.h>
+#include <wchar.h>
+
+#define HAVE_GETLINE 1
+#define HAVE_REALLOCARR 1
+#define HAVE_SIZE_MAX 1
+#define HAVE_STRLCAT 1
+#define HAVE_STRLCPY 1
+#define HAVE_STRUNVIS 1
+#define HAVE_STRVIS 1
+#define HAVE_SYS_TYPES_H 1
+#define HAVE_U_INT32_T 1
+#define HAVE_VIS 1
+#define HAVE_WCSDUP 1
+
 /* Define to 1 if you have the <curses.h> header file. */
 #define HAVE_CURSES_H 1
 

@@ -10,7 +10,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "../histedit.h"
+#include <histedit.h>
 
 
 static int continuation;
