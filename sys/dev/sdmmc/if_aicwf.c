@@ -66,6 +66,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 
 #include <net80211/ieee80211_var.h>
 #include <net80211/ieee80211_beacon_ies.h>
+#include <net80211/ieee80211_amsdu.h>
 
 #include <dev/firmload.h>
 #include <net80211/ieee80211_rsn.h>
@@ -3425,7 +3426,7 @@ aicwf_start(struct ifnet *ifp)
 static void
 aicwf_rx_input(struct aicwf_softc *sc, struct mbuf *m)
 {
-	struct ifnet * const ifp = &sc->sc_if;
+	const struct ifnet * const ifp = &sc->sc_if;
 	struct mbuf *next;
 	int s;
 
@@ -3584,11 +3585,12 @@ static struct mbuf *
 aicwf_rx_ether(struct aicwf_softc *sc, const uint8_t *dst,
     const uint8_t *src, const uint8_t *llc, size_t llc_len)
 {
-	static const uint8_t rfc1042[6] = { 0xaa, 0xaa, 0x03, 0, 0, 0 };
+	static const uint8_t snap[5] = { 0xaa, 0xaa, 0x03, 0, 0 };
 	struct ether_header *eh;
 	struct mbuf *m;
 
-	if (llc_len < 8 || memcmp(llc, rfc1042, 6) != 0)
+	if (llc_len < 8 || memcmp(llc, snap, sizeof(snap)) != 0 ||
+	    (llc[5] != 0 && llc[5] != 0xf8))
 		return NULL;
 	const size_t len = ETHER_HDR_LEN + llc_len - 8;
 	if (len + ETHER_ALIGN > MCLBYTES)
@@ -3614,6 +3616,51 @@ aicwf_rx_ether(struct aicwf_softc *sc, const uint8_t *dst,
 	m->m_nextpkt = NULL;
 	m_set_rcvif(m, &sc->sc_if);
 	return m;
+}
+
+/* The net80211 parser bounds each read against the supplied image size. */
+/* The shared reader ABI takes a mutable context; this reader only copies. */
+static int
+aicwf_amsdu_read(void *arg, size_t offset, size_t len, void *dst)
+{
+
+	memcpy(dst, (const uint8_t *)arg + offset, len);
+	return 0;
+}
+
+/* Validate the full aggregate before publishing any Ethernet packet. */
+static struct mbuf *
+aicwf_rx_amsdu(struct aicwf_softc *sc, const uint8_t *data, size_t len)
+{
+	struct ieee80211_amsdu_subframe sub;
+	struct mbuf *head = NULL, **tailp = &head, *m;
+	size_t offset = 0;
+	int result;
+
+	while ((result = ieee80211_amsdu_next(aicwf_amsdu_read,
+	    __UNCONST(data), len, sc->sc_ic.ic_myaddr, &offset, &sub)) == 1) {
+		/* Complete validation before the first allocation. */
+	}
+	if (result != 0)
+		return NULL;
+
+	offset = 0;
+	while ((result = ieee80211_amsdu_next(aicwf_amsdu_read,
+	    __UNCONST(data), len, sc->sc_ic.ic_myaddr, &offset, &sub)) == 1) {
+		m = aicwf_rx_ether(sc, sub.header, sub.header + ETHER_ADDR_LEN,
+		    data + sub.offset + ETHER_HDR_LEN, sub.length);
+		if (m == NULL) {
+			aicwf_rx_free(head);
+			return NULL;
+		}
+		*tailp = m;
+		tailp = &m->m_nextpkt;
+	}
+	if (result != 0) {
+		aicwf_rx_free(head);
+		return NULL;
+	}
+	return head;
 }
 
 /* Keep peer/key/replay admission atomic with retirement and rekey. */
@@ -3712,7 +3759,7 @@ struct aicwf_softc *sc, const uint8_t *pkt, size_t mpdu_len)
 	const uint32_t status = le32dec(pkt + AICWF_RXHDR_STATUS);
 	const uint32_t flags = le32dec(pkt + AICWF_RXHDR_FLAGS);
 	uint16_t seq;
-	struct mbuf *m = NULL, **tailp = &m;
+	struct mbuf *m = NULL;
 	bool qos = false, amsdu = false;
 	u_int tid = 0;
 	size_t hdr;
@@ -3786,27 +3833,7 @@ struct aicwf_softc *sc, const uint8_t *pkt, size_t mpdu_len)
 	} else {
 		/* Several packets in one frame, each with its addresses. */
 		sc->sc_ev_amsdu.ev_count++;
-		const uint8_t *sub = wh + hdr;
-		size_t left = mpdu_len - hdr;
-
-		while (left >= ETHER_HDR_LEN + 8) {
-			const size_t sub_len = be16dec(sub + 12);
-			struct mbuf *m0;
-
-			if (sub_len > left - ETHER_HDR_LEN)
-				break;
-			m0 = aicwf_rx_ether(sc, sub, sub + 6,
-			    sub + ETHER_HDR_LEN, sub_len);
-			if (m0 != NULL) {
-				*tailp = m0;
-				tailp = &m0->m_nextpkt;
-			}
-			const size_t step = roundup(ETHER_HDR_LEN + sub_len, 4);
-			if (step >= left)
-				break;
-			sub += step;
-			left -= step;
-		}
+		m = aicwf_rx_amsdu(sc, wh + hdr, mpdu_len - hdr);
 		if (m == NULL)
 			goto drop;
 	}
