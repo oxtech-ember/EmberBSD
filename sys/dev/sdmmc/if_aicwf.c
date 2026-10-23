@@ -1820,47 +1820,15 @@ aicwf_sae_current(struct aicwf_softc *sc, const struct ieee80211req_sae *req,
 }
 
 static int
-aicwf_sae_ioctl(struct aicwf_softc *sc, u_long cmd, struct ieee80211req *ireq)
+aicwf_sae(struct ieee80211com *ic, const struct ieee80211req_sae *req)
 {
-	struct ieee80211com * const ic = &sc->sc_ic;
-	struct ieee80211req_sae *req;
+	struct aicwf_softc *sc = ic->ic_ifp->if_softc;
 	uint8_t wire[44], cfm[2] = { 0xff };
 	uint64_t epoch;
 	uint16_t index;
-	int error;
+	int error = EINVAL;
 
-	if (cmd == SIOCG80211) {
-		if (ireq->i_len != 0)
-			return EINVAL;
-		ireq->i_val = sc->sc_sae_caps;
-		return 0;
-	}
-	error = kauth_authorize_network(kauth_cred_get(),
-	    KAUTH_NETWORK_INTERFACE, KAUTH_REQ_NETWORK_INTERFACE_SETPRIV,
-	    ic->ic_ifp, (void *)cmd, NULL);
-	if (error != 0)
-		return error;
-	if (ireq->i_len != sizeof(*req))
-		return EINVAL;
-	req = kmem_zalloc(sizeof(*req), KM_SLEEP);
-	error = copyin(ireq->i_data, req, sizeof(*req));
-	if (error != 0)
-		goto out;
-	error = EINVAL;
-	if (req->version != IEEE80211_SAE_VERSION ||
-	    req->reserved[0] != 0 || req->reserved[1] != 0 ||
-	    req->len > sizeof(req->data))
-		goto out;
 	if (req->op == IEEE80211_SAE_CONFIGURE) {
-		if (req->len != 1 || req->data[0] > 1 ||
-		    (req->data[0] &&
-		    !aicwf_sae_peer_valid(req->bssid, req->generation)))
-			goto out;
-		if (req->data[0] && (sc->sc_sae_caps == 0 ||
-		    ic->ic_opmode != IEEE80211_M_STA)) {
-			error = EOPNOTSUPP;
-			goto out;
-		}
 		aicwf_sae_advance(sc);
 		mutex_spin_enter(&sc->sc_epoch_lock);
 		sc->sc_configure_serial++;
@@ -1873,7 +1841,8 @@ aicwf_sae_ioctl(struct aicwf_softc *sc, u_long cmd, struct ieee80211req *ireq)
 		error = 0;
 		goto out;
 	}
-	if (!sc->sc_sae_enabled || req->generation != sc->sc_sae_generation ||
+	if (!sc->sc_sae_enabled || ic->ic_bss == NULL ||
+	    req->generation != sc->sc_sae_generation ||
 	    !IEEE80211_ADDR_EQ(req->bssid, sc->sc_sae_bssid) ||
 	    !IEEE80211_ADDR_EQ(req->bssid, ic->ic_bss->ni_bssid)) {
 		error = ESTALE;
@@ -1961,9 +1930,15 @@ aicwf_sae_ioctl(struct aicwf_softc *sc, u_long cmd, struct ieee80211req *ireq)
 	}
 	explicit_memset(wire, 0, sizeof(wire));
 out:
-	explicit_memset(req, 0, sizeof(*req));
-	kmem_free(req, sizeof(*req));
 	return error;
+}
+
+static int
+aicwf_sae_ioctl(struct aicwf_softc *sc, u_long cmd,
+    struct ieee80211req *ireq)
+{
+	return ieee80211_ioctl_sae(&sc->sc_ic, cmd, ireq, sc->sc_sae_caps,
+	    aicwf_sae);
 }
 
 /* Ask the firmware to join the network net80211 has chosen. */
@@ -2392,10 +2367,9 @@ aicwf_sta_mgmt(struct ieee80211com *ic, struct ieee80211req_sta_mgmt *req)
 	bool tx_notify = false, scan_notify = false;
 	int error = 0;
 
-	if (req->version != IEEE80211_STA_VERSION || req->reserved != 0 ||
-	    req->len > sizeof(req->data) ||
-	    (req->op != IEEE80211_STA_GET && req->flags != 0))
-		return EINVAL;
+	error = ieee80211_sta_request_validate(req);
+	if (error != 0)
+		return error;
 	mutex_enter(&sc->sc_lock);
 	if (!aicwf_sta_supported(sc)) {
 		error = EOPNOTSUPP;

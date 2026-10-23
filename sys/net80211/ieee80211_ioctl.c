@@ -56,6 +56,7 @@ __KERNEL_RCSID(0, "$NetBSD: ieee80211_ioctl.c,v 1.69 2021/09/21 15:00:34 christo
 #include <sys/systm.h>
 #include <sys/proc.h>
 #include <sys/kauth.h>
+#include <sys/kmem.h>
 #include <sys/module.h>
 #include <sys/compat_stub.h>
  
@@ -1454,6 +1455,78 @@ ieee80211_ioctl_get80211_fbsd(struct ieee80211com *ic, u_long cmd,
 }
 #endif /* COMPAT_FREEBSD_NET80211 */
 
+/* Validate the shared ABI before a chip callback can inspect the payload. */
+static int
+ieee80211_sae_request_valid(struct ieee80211com *ic,
+    const struct ieee80211req_sae *req, uint32_t caps)
+{
+	if (req->version != IEEE80211_SAE_VERSION ||
+	    req->reserved[0] != 0 || req->reserved[1] != 0 ||
+	    req->len > sizeof(req->data))
+		return EINVAL;
+	if (req->op == IEEE80211_SAE_CONFIGURE) {
+		if (req->len != 1 || req->data[0] > 1 ||
+		    (req->data[0] && (req->generation == 0 ||
+		    IEEE80211_IS_MULTICAST(req->bssid) ||
+		    memcmp(req->bssid, "\0\0\0\0\0\0", IEEE80211_ADDR_LEN) == 0)))
+			return EINVAL;
+		/* Disable must work after a firmware capability disappears. */
+		if (req->data[0] && (caps == 0 || ic->ic_opmode != IEEE80211_M_STA))
+			return EOPNOTSUPP;
+	}
+	return 0;
+}
+/*
+ * The caller holds no spin lock. The callback can sleep, but must not retain
+ * req. It owns chip state, association lifetime, and firmware operations.
+ */
+int
+ieee80211_ioctl_sae(struct ieee80211com *ic, u_long cmd,
+    struct ieee80211req *ireq, uint32_t caps,
+    int (*callback)(struct ieee80211com *, const struct ieee80211req_sae *))
+{
+	struct ieee80211req_sae *req;
+	int error;
+
+	if (callback == NULL)
+		return EOPNOTSUPP;
+	if (cmd == SIOCG80211) {
+		if (ireq->i_len != 0)
+			return EINVAL;
+		ireq->i_val = caps;
+		return 0;
+	}
+	if (cmd != SIOCS80211)
+		return EINVAL;
+	error = kauth_authorize_network(kauth_cred_get(),
+	    KAUTH_NETWORK_INTERFACE, KAUTH_REQ_NETWORK_INTERFACE_SETPRIV,
+	    ic->ic_ifp, (void *)cmd, NULL);
+	if (error != 0)
+		return error;
+	if (ireq->i_len != sizeof(*req))
+		return EINVAL;
+	req = kmem_zalloc(sizeof(*req), KM_SLEEP);
+	error = copyin(ireq->i_data, req, sizeof(*req));
+	if (error == 0)
+		error = ieee80211_sae_request_valid(ic, req, caps);
+	if (error == 0)
+		error = callback(ic, req);
+	explicit_memset(req, 0, sizeof(*req));
+	kmem_free(req, sizeof(*req));
+	return error;
+}
+
+/* Also used by chip callbacks that admit already-copied station requests. */
+int
+ieee80211_sta_request_validate(const struct ieee80211req_sta_mgmt *req)
+{
+	if (req->version != IEEE80211_STA_VERSION || req->reserved != 0 ||
+	    req->len > sizeof(req->data) ||
+	    (req->op != IEEE80211_STA_GET && req->flags != 0))
+		return EINVAL;
+	return 0;
+}
+
 static int
 ieee80211_ioctl_sta_mgmt(struct ieee80211com *ic, struct ieee80211req *ireq,
     bool set)
@@ -1470,8 +1543,7 @@ ieee80211_ioctl_sta_mgmt(struct ieee80211com *ic, struct ieee80211req *ireq,
 		error = copyin(ireq->i_data, req, sizeof(*req));
 		if (error)
 			goto out;
-		if (req->version != IEEE80211_STA_VERSION || req->reserved ||
-		    req->flags || req->len > sizeof(req->data) ||
+		if (ieee80211_sta_request_validate(req) != 0 ||
 		    req->op == IEEE80211_STA_GET) {
 			error = EINVAL;
 			goto out;
@@ -1484,6 +1556,7 @@ ieee80211_ioctl_sta_mgmt(struct ieee80211com *ic, struct ieee80211req *ireq,
 	if (!error && !set)
 		error = copyout(req, ireq->i_data, sizeof(*req));
 out:
+	explicit_memset(req, 0, sizeof(*req));
 	free(req, M_TEMP);
 	return error;
 }

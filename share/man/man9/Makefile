@@ -419,6 +419,8 @@ MLINKS+=iic.9 iic_acquire_bus.9 \
 	iic.9 iic_smbus_write_byte.9 \
 	iic.9 iic_smbus_read_byte.9 \
 	iic.9 iic_smbus_receive_byte.9
+MLINKS+=ieee80211_ioctl.9 ieee80211_ioctl_sae.9 \
+	ieee80211_ioctl.9 ieee80211_sta_request_validate.9
 MLINKS+=imax.9 imin.9 \
 	imax.9 lmax.9 \
 	imax.9 lmin.9 \

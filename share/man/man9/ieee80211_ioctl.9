@@ -27,11 +27,12 @@
 .\"
 .\" $FreeBSD: src/share/man/man9/ieee80211_ioctl.9,v 1.2 2004/07/07 12:59:39 ru Exp $
 .\"
-.Dd September 12, 2006
+.Dd October 23, 2026
 .Dt IEEE80211_IOCTL 9
 .Os
 .Sh NAME
-.Nm ieee80211_cfgget , ieee80211_cfgset , ieee80211_ioctl
+.Nm ieee80211_cfgget , ieee80211_cfgset , ieee80211_ioctl ,
+.Nm ieee80211_ioctl_sae , ieee80211_sta_request_validate
 .Nd 802.11 interface ioctl commands
 .Sh SYNOPSIS
 .In net80211/ieee80211_var.h
@@ -43,6 +44,16 @@
 .Fn ieee80211_cfgset "struct ieee80211com *ic" "u_long cmd" "void *data"
 .Ft int
 .Fn ieee80211_ioctl "struct ieee80211com *ic" "u_long cmd" "void *data"
+.Ft int
+.Fo ieee80211_ioctl_sae
+.Fa "struct ieee80211com *ic"
+.Fa "u_long cmd"
+.Fa "struct ieee80211req *ireq"
+.Fa "uint32_t caps"
+.Fa "int (*callback)(struct ieee80211com *, const struct ieee80211req_sae *)"
+.Fc
+.Ft int
+.Fn ieee80211_sta_request_validate "const struct ieee80211req_sta_mgmt *req"
 .Sh DESCRIPTION
 These
 functions are typically invoked by drivers in response to requests
@@ -72,6 +83,39 @@ when no match for
 .Fa cmd
 is found.
 .\"
+.Pp
+.Fn ieee80211_ioctl_sae
+handles the optional external SAE request ABI.
+The driver supplies its probed capabilities and a chip callback.
+A null callback returns
+.Er EOPNOTSUPP .
+GET returns capabilities without allocating or enabling SAE.
+SET authorizes the caller, copies and validates the request, and invokes
+only the supplied callback.
+The helper clears the entire temporary request before freeing it on every
+allocated path, including a partial copy fault or callback error.
+Invalid request fields return
+.Er EINVAL ;
+unsupported SAE enablement returns
+.Er EOPNOTSUPP .
+Authorization and callback errors are returned unchanged.
+.Pp
+Call the helper from a sleepable context, before raising the network IPL.
+The callback receives a kernel-owned request valid only until it returns.
+It must copy any data needed by deferred work.
+The chip driver owns state serialization, association lifetime checks,
+and firmware commands.
+Drivers that do not use external SAE need no callback or firmware dependency.
+.Pp
+.Fn ieee80211_sta_request_validate
+checks the version, reserved field, payload bound, and input flags of an
+already copied station request.
+It returns zero or
+.Er EINVAL .
+The existing
+.Va ic_sta_mgmt
+callback remains the station management dispatch interface.
+The common ioctl path also rejects GET operations submitted as SET.
 .Sh SEE ALSO
 .Xr wi 4 ,
 .Xr ifconfig 8 ,

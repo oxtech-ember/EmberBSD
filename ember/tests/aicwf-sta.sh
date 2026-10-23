@@ -27,7 +27,10 @@ awk '/^#define WLAN_ACTION_(WNM|RADIO_MEASUREMENT) / {print}
 awk '/^#define[[:space:]]+AICWF_(RXHDR_|RX_FLAG_UPLOAD|RX_DECR[[:space:]]|KEY_SLOT_PAIRWISE|HWKEY_NONE|SM_(CONNECT|DISCONNECT)|CONNECT_|AUTH_SAE|BAND_)/ {print}' \
     "$driver" > "$work/aicwf-defs.h"
 cp "$src/sys/dev/sdmmc/if_aicwf_sae.h" "$src/sys/dev/sdmmc/if_aicwf_vht.h" "$src/sys/dev/sdmmc/if_aicwf_sta.h" "$src/sys/net80211/ieee80211_rsn.h" "$work/"
-: > "$work/driver.h"
+sed '/^#include/,$d' "$src/sys/net80211/ieee80211_ioctl.c" > "$work/driver.h"
+awk '/^ieee80211_sta_request_validate\(/ {copy=1; print "static int"}
+    copy {print} copy && /^}/ {exit}' \
+    "$src/sys/net80211/ieee80211_ioctl.c" >> "$work/driver.h"
 for spec in aicwf_sta_action_valid:bool aicwf_sta_supported:bool \
     aicwf_sta_security:bool aicwf_sta_ready:bool aicwf_write_attempted:int \
     aicwf_write:int aicwf_cmd_reply:int aicwf_cmd:int aicwf_scan:void \

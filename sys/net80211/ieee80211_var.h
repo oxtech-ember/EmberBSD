@@ -311,6 +311,10 @@ struct ieee80211com *ieee80211_find_vap(const u_int8_t mac[IEEE80211_ADDR_LEN]);
 int	ieee80211_media_change(struct ifnet *);
 void	ieee80211_media_status(struct ifnet *, struct ifmediareq *);
 int	ieee80211_ioctl(struct ieee80211com *, u_long, void *);
+int	ieee80211_ioctl_sae(struct ieee80211com *, u_long,
+	    struct ieee80211req *, uint32_t,
+	    int (*)(struct ieee80211com *, const struct ieee80211req_sae *));
+int	ieee80211_sta_request_validate(const struct ieee80211req_sta_mgmt *);
 int	ieee80211_cfgget(struct ieee80211com *, u_long, void *);
 int	ieee80211_cfgset(struct ieee80211com *, u_long, void *);
 void	ieee80211_watchdog(struct ieee80211com *);

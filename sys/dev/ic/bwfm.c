@@ -920,15 +920,15 @@ bwfm_ioctl(struct ifnet *ifp, u_long cmd, void *data)
 
 	if (sc->sc_detaching)
 		return ENXIO;
+	if ((cmd == SIOCG80211 || cmd == SIOCS80211) &&
+	    ((struct ieee80211req *)data)->i_type == IEEE80211_IOC_SAE)
+		return bwfm_sae_ioctl(sc, cmd, data);
 	s = splnet();
 
 	switch (cmd) {
 	case SIOCG80211:
 	case SIOCS80211:
-		if (((struct ieee80211req *)data)->i_type == IEEE80211_IOC_SAE)
-			error = bwfm_sae_ioctl(sc, cmd, data);
-		else
-			error = ieee80211_ioctl(ic, cmd, data);
+		error = ieee80211_ioctl(ic, cmd, data);
 		break;
 
 	case SIOCSIFFLAGS:
@@ -2859,56 +2859,30 @@ bwfm_sae_probe(struct bwfm_softc *sc)
 }
 
 static int
-bwfm_sae_ioctl(struct bwfm_softc *sc, u_long cmd, struct ieee80211req *ireq)
+bwfm_sae(struct ieee80211com *ic, const struct ieee80211req_sae *req)
 {
-	struct ieee80211com *ic = &sc->sc_ic;
-	struct ieee80211req_sae *req;
+	struct bwfm_softc *sc = ic->ic_ifp->if_softc;
 	struct bwfm_wsec_key key;
 	uint8_t status[60], *frame;
 	size_t len;
 	uint16_t index;
-	int error;
+	int s, error = EINVAL;
 
-	if (cmd == SIOCG80211) {
-		if (ireq->i_len != 0)
-			return EINVAL;
-		ireq->i_val = sc->sc_sae_caps;
-		return 0;
+	/* Preserve the driver state serialization after the sleeping copyin. */
+	s = splnet();
+	if (sc->sc_detaching) {
+		error = ENXIO;
+		goto out;
 	}
-	error = kauth_authorize_network(kauth_cred_get(),
-	    KAUTH_NETWORK_INTERFACE, KAUTH_REQ_NETWORK_INTERFACE_SETPRIV,
-	    ic->ic_ifp, (void *)cmd, NULL);
-	if (error)
-		return error;
-	if (ireq->i_len != sizeof(*req))
-		return EINVAL;
-	req = kmem_zalloc(sizeof(*req), KM_SLEEP);
-	error = copyin(ireq->i_data, req, sizeof(*req));
-	if (error)
-		goto out;
-	error = EINVAL;
-	if (req->version != IEEE80211_SAE_VERSION ||
-	    req->reserved[0] != 0 || req->reserved[1] != 0 ||
-	    req->len > sizeof(req->data))
-		goto out;
 	if (req->op == IEEE80211_SAE_CONFIGURE) {
-		if (req->len != 1 || req->data[0] > 1 ||
-		    (req->data[0] && (req->generation == 0 ||
-		    IEEE80211_IS_MULTICAST(req->bssid) ||
-		    memcmp(req->bssid, "\0\0\0\0\0\0", 6) == 0)))
-			goto out;
-		if (req->data[0] && (sc->sc_sae_caps == 0 ||
-		    ic->ic_opmode != IEEE80211_M_STA)) {
-			error = EOPNOTSUPP;
-			goto out;
-		}
 		sc->sc_sae_enabled = req->data[0] != 0;
 		sc->sc_sae_generation = req->generation;
 		memcpy(sc->sc_sae_bssid, req->bssid, 6);
 		error = 0;
 		goto out;
 	}
-	if (!sc->sc_sae_enabled || req->generation != sc->sc_sae_generation ||
+	if (!sc->sc_sae_enabled || ic->ic_bss == NULL ||
+	    req->generation != sc->sc_sae_generation ||
 	    !IEEE80211_ADDR_EQ(req->bssid, sc->sc_sae_bssid) ||
 	    !IEEE80211_ADDR_EQ(req->bssid, ic->ic_bss->ni_bssid)) {
 		error = ESTALE;
@@ -2975,9 +2949,16 @@ bwfm_sae_ioctl(struct bwfm_softc *sc, u_long cmd, struct ieee80211req *ireq)
 		break;
 	}
 out:
-	explicit_memset(req, 0, sizeof(*req));
-	kmem_free(req, sizeof(*req));
+	splx(s);
 	return error;
+}
+
+static int
+bwfm_sae_ioctl(struct bwfm_softc *sc, u_long cmd,
+    struct ieee80211req *ireq)
+{
+	return ieee80211_ioctl_sae(&sc->sc_ic, cmd, ireq, sc->sc_sae_caps,
+	    bwfm_sae);
 }
 
 static int

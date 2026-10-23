@@ -4,6 +4,10 @@ set -eu
 src=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 work=$(mktemp -d "${TMPDIR:-/tmp}/aicwf-sae-lifetime.XXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
+awk '/^#define[[:space:]]+IEEE80211_SAE_/ {print}
+    /^struct ieee80211req_sae / {copy=1}
+    copy {print} copy && /^};/ {exit}' \
+    "$src/sys/net80211/ieee80211_ioctl.h" > "$work/abi.h"
 cat > "$work/check.c" <<'C'
 #include <stdbool.h>
 #include <stdint.h>
@@ -19,17 +23,12 @@ typedef unsigned long u_long;
 #define KAUTH_NETWORK_INTERFACE 0
 #define KAUTH_REQ_NETWORK_INTERFACE_SETPRIV 0
 #define KM_SLEEP 0
-#define IEEE80211_SAE_VERSION 1
 #define IEEE80211_M_STA 0
+#define IEEE80211_ADDR_LEN 6
+#include "abi.h"
 #define IEEE80211_S_AUTH 2
 #define IEEE80211_S_RUN 4
 #define IEEE80211_S_SCAN 1
-#define IEEE80211_SAE_CONFIGURE 0
-#define IEEE80211_SAE_AUTH_STATUS 1
-#define IEEE80211_SAE_TX_FRAME 2
-#define IEEE80211_SAE_SET_IGTK 3
-#define IEEE80211_SAE_DELETE_IGTK 4
-#define IEEE80211_SAE_TX_SA_QUERY 6
 #define AICWF_HWKEY_NONE 255
 #define AICWF_STA_NOTICE_LEN 28
 #define RTM_IEEE80211_STA_TX 1
@@ -52,8 +51,8 @@ typedef unsigned long u_long;
 #define kauth_authorize_network(...) 0
 #define device_printf(...) ((void)0)
 struct ieee80211_node {uint8_t ni_bssid[6];};
-struct ieee80211com {void *ic_ifp; int ic_opmode, ic_state; struct ieee80211_node *ic_bss; uint8_t ic_myaddr[6];};
-struct ieee80211req_sae {uint32_t generation; uint16_t version, op, len, reserved[2]; uint8_t bssid[6], data[1536];};
+struct ifnet { void *if_softc; };
+struct ieee80211com {struct ifnet *ic_ifp; int ic_opmode, ic_state; struct ieee80211_node *ic_bss; uint8_t ic_myaddr[6];};
 struct ieee80211req {int i_len,i_val; void *i_data;};
 struct aicwf_softc {struct ieee80211com sc_ic; int sc_dev, sc_vif, sc_lock, sc_epoch_lock, sc_if; uint16_t sc_sae_caps; bool sc_fw_bip_ready; bool sc_if_attached,sc_sae_enabled,sc_sae_pending,sc_sae_authenticated,sc_connecting,sc_connected; uint32_t sc_sae_generation; uint64_t sc_sae_epoch, sc_join_serial, sc_configure_serial; bool sc_ptk_valid; uint64_t sc_pmf_rx_pn; uint8_t sc_ptk[16]; uint8_t sc_sae_bssid[6],sc_igtk[2];};
 static void mutex_enter(int *p) { assert(!*p); *p = 1; }
@@ -134,7 +133,14 @@ static int aicwf_cmd_reply(struct aicwf_softc *sc, uint16_t id,
     return 0;
 }
 C
-for pair in aicwf_sae_advance_if:uint64_t aicwf_sae_advance:void aicwf_disconnect_ind:void aicwf_sae_current:bool aicwf_sae_ioctl:int aicwf_sae_clear_keys:void aicwf_disconnect:void; do
+# Retain the source notice with the copied common helper definitions.
+sed '/^#include/,$d' "$src/sys/net80211/ieee80211_ioctl.c" >> "$work/check.c"
+for name in ieee80211_sae_request_valid ieee80211_ioctl_sae; do
+    awk -v name="$name" '$0 ~ "^" name "\\(" {copy=1; print "static int"}
+        copy {print} copy && /^}/ {exit}' \
+        "$src/sys/net80211/ieee80211_ioctl.c" >> "$work/check.c"
+done
+for pair in aicwf_sae_advance_if:uint64_t aicwf_sae_advance:void aicwf_disconnect_ind:void aicwf_sae_current:bool aicwf_sae:int aicwf_sae_ioctl:int aicwf_sae_clear_keys:void aicwf_disconnect:void; do
     name=${pair%:*}
     type=${pair#*:}
     awk -v name="$name" -v type="$type" '$0 ~ "^" name "\\(" {copy=1; print "static " type}
@@ -146,12 +152,14 @@ int main(void)
 {
     struct ieee80211_node node = {{2,0,0,0,0,1}};
     struct aicwf_softc sc;
+    struct ifnet ifp = { .if_softc = &sc };
     struct ieee80211req_sae req;
     struct ieee80211req ireq = {.i_len=sizeof(req), .i_data=&req};
     unsigned op, mode;
     for (op = 0; op < 4; op++) {
         for (mode = 0; mode < 3; mode++) {
             memset(&sc, 0, sizeof(sc));
+            sc.sc_ic.ic_ifp = &ifp;
             memset(&req, 0, sizeof(req));
             sc.sc_ic.ic_bss = &node;
             sc.sc_ic.ic_state = IEEE80211_S_RUN;
@@ -203,6 +211,7 @@ int main(void)
     }
     /* Nonzero IPN cannot reach KEYADD without the exact image capability. */
     memset(&sc, 0, sizeof(sc));
+            sc.sc_ic.ic_ifp = &ifp;
     memset(&req, 0, sizeof(req));
     sc.sc_ic.ic_bss = &node;
     sc.sc_ic.ic_state = IEEE80211_S_RUN;
