@@ -160,6 +160,7 @@ jobs:
             /sys/net80211/ieee80211_ioctl.c
             /sys/net80211/ieee80211_netbsd.c
             /sys/net80211/ieee80211_phy_ies.h
+            /sys/net80211/ieee80211_beacon_ies.h
             /sys/net80211/_ieee80211.h
             /sys/net80211/ieee80211.h
             /sys/net80211/ieee80211_var.h
