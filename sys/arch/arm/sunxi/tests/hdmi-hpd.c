@@ -46,8 +46,8 @@ static int output_lookup(int node, const void *owner)
 struct sun60i_a733_de352_client { const void *owner; } test_client;
 struct sun60i_de352_softc { kmutex_t lock; int output_phandle; } de;
 /* Match the mutable client argument of the real registry lookup. */
-// cppcheck-suppress constParameterPointer
 static struct sun60i_de352_softc *de352_lookup(int node,
+    // cppcheck-suppress constParameterPointer
     struct sun60i_a733_de352_client *candidate)
 { CHECK(node == 0); return candidate == &test_client ? &de : NULL; }
 /* sun60i_a733_de352_detect */
