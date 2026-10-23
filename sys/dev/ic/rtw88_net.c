@@ -1295,11 +1295,11 @@ rtw88_net_rx_frame(void *cookie, const uint8_t *frame, size_t len,
 	struct rtw88_net *net = cookie;
 	struct rtw88_net_rx *rx;
 	struct mbuf *m;
-	uint32_t tick;
+	uint32_t arrival_tick;
 	int error;
 
 	KASSERT(mutex_owned(net->lock));
-	tick = (uint32_t)getticks();
+	arrival_tick = (uint32_t)getticks();
 #ifdef RTW88_RFK_EXPERIMENT
 	/* Withdrawal must remain observable with closed/full ordinary admission. */
 	rtw88_net_rfk_rx_observe(net, frame, len, info);
@@ -1323,7 +1323,7 @@ rtw88_net_rx_frame(void *cookie, const uint8_t *frame, size_t len,
 	rx->epoch = net->policy.epoch;
 	rx->arrived = rtw88_net_rxba_now(&net->ic);
 	rx->tsf = info->tsf_low;
-	rx->tick = tick;
+	rx->tick = arrival_tick;
 	rx->generation = net->core->sc_generation;
 	rx->quality = info->signal.valid && info->signal.quality <= 100 &&
 	    info->signal.generation == rx->generation ? info->signal.quality : 0;

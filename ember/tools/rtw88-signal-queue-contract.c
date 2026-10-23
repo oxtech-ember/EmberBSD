@@ -8,7 +8,12 @@
 static struct mbuf *rtw88_net_rx_mbuf(const uint8_t *frame,size_t len,struct ifnet *ifp) {
     (void)ifp;struct mbuf *m=newbuf(len);if(m)memcpy(m->m_data,frame,len);return m;
 }
+/* Match the kernel clock namespace at the actual RX callback boundary. */
+extern int tick;
+#pragma GCC diagnostic push
+#pragma GCC diagnostic error "-Wshadow"
 #include "signal-native-rx.inc"
+#pragma GCC diagnostic pop
 int rtw88_signal_scan_check(unsigned,unsigned);
 
 static void beacon_arrival_clock(void) {
