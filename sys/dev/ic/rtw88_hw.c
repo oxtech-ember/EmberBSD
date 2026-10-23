@@ -314,7 +314,7 @@ rtw88_rx_signal_decode(const uint8_t *p, size_t len,
     uint32_t generation, unsigned channel, struct rtw88_rx_signal *out)
 {
     struct rtw88_rx_signal v = { 0 };
-    unsigned path;
+    unsigned path, vht;
     int value, selected;
 
     if (out == NULL)
@@ -327,6 +327,7 @@ rtw88_rx_signal_decode(const uint8_t *p, size_t len,
         (rx->flags & (RTW88_RX_CRC_ERROR | RTW88_RX_ICV_ERROR | RTW88_RX_C2H)) != 0)
         goto invalid;
     v.rate = rx->rate;
+    vht = rx->rate >= 0x2c && rx->rate <= 0x3f;
     v.bandwidth = rx->bandwidth;
     v.reason = RTW88_SIGNAL_SHORT;
     if (p == NULL || len < 1 || len > 120)
@@ -345,7 +346,8 @@ rtw88_rx_signal_decode(const uint8_t *p, size_t len,
         v.gain[0] = p[2] & 63;
         v.gain[1] = p[19] & 63;
     } else {
-        v.rxsc = p[5] & 15; /* Legacy OFDM RXSC; no HT admission here. */
+        /* Legacy OFDM uses L_RXSC; bounded native VHT uses HT_RXSC. */
+        v.rxsc = vht ? (p[5] >> 4) & 15 : p[5] & 15;
     }
     v.reason = RTW88_SIGNAL_GENERATION;
     if (ctx == NULL || generation == 0 || ctx->generation != generation)
@@ -363,10 +365,12 @@ rtw88_rx_signal_decode(const uint8_t *p, size_t len,
         goto invalid;
     v.reason = RTW88_SIGNAL_RATE;
     if ((v.page == 0 && (rx->rate > 3 || channel > 14)) ||
-        (v.page == 1 && (rx->rate < 4 || rx->rate > 11)))
+        (v.page == 1 && !((rx->rate >= 4 && rx->rate <= 11) ||
+          (vht && channel > 14))))
         goto invalid;
     v.reason = RTW88_SIGNAL_WIDTH;
-    if (rx->bandwidth != 0 || (v.page == 1 && v.rxsc > 8))
+    if (rx->bandwidth != 0 || (v.page == 1 &&
+        (v.rxsc > 8 || (vht && v.rxsc == 0))))
         goto invalid;
     v.reason = RTW88_SIGNAL_GAIN;
     if (v.page == 0 && (!ctx->gain_valid || ctx->gain_error != 0 ||

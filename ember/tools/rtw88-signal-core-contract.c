@@ -6,12 +6,13 @@
 #include "rtw88-start-contract.c"
 #undef main
 int rtw88_signal_scan_check(unsigned,unsigned);
-static struct rtw88_rx_signal signal_observed[4];
+static struct rtw88_rx_signal signal_observed[16];
 static unsigned signal_count;
 static void signal_capture(void *cookie,const uint8_t *frame,size_t len,
     const struct rtw88_rx_info *info) {
-    (void)cookie;CHECK(frame[0]==0x08 && len==24 && signal_count<4);
-    if(signal_count<4) signal_observed[signal_count++]=info->signal;
+    (void)cookie;CHECK(frame[0]==0x08 && frame[1]==0x02 && len==24 && signal_count<16);
+    for(unsigned i=2;i<24;i++)CHECK(frame[i]==0);
+    if(signal_count<16) signal_observed[signal_count++]=info->signal;
 }
 static void signal_packet(struct rtw88_softc *sc,unsigned n,unsigned shift,unsigned strength) {
     uint8_t frame[28]={0x08,0x02};
@@ -74,6 +75,29 @@ int main(void) {
     f.rx_hw_idx=5;set_hisr0(1);CHECK(rtw88_intr(&sc)==1 && signal_count==4);
     CHECK(sc.sc_stats.signal_reasons[RTW88_SIGNAL_SHORT]==1);
     CHECK(sc.sc_stats.signal_reasons[0]==2 && sc.sc_stats.signal_reasons[RTW88_SIGNAL_MISSING]==1);
+    /* Actual descriptor -> core -> callback; optional signal does not own DATA. */
+    sc.sc_channel=36;
+    signal_packet(&sc,5,1,60);
+    uint8_t *vht=sc.sc_rxbuf[5].vaddr;
+    vht[12]=0x2c;vht[24+1+5]=0x19;vht[24+1+6]=36;
+    f.rx_hw_idx=6;set_hisr0(1);CHECK(rtw88_intr(&sc)==1 && signal_count==5);
+    CHECK(signal_observed[4].valid && signal_observed[4].quality==50);
+    const uint8_t codes[]={0x35,0x36,0x3f,0x2c,0x2c,0x40};
+    const uint8_t rxsc[]={0x89,0x19,0x19,0x01,0x91,0x19};
+    for(unsigned i=0;i<6;i++) {
+        unsigned n=6+i;signal_packet(&sc,n,0,90);
+        vht=sc.sc_rxbuf[n].vaddr;vht[12]=codes[i];vht[29]=rxsc[i];vht[30]=36;
+        f.rx_hw_idx=(uint16_t)(n+1);set_hisr0(1);
+        CHECK(rtw88_intr(&sc)==1 && signal_count==n);
+        CHECK(signal_observed[n-1].quality==(i<3?80:0));
+        CHECK(signal_observed[n-1].valid==(i<3));
+        if(i>=3)CHECK(signal_observed[n-1].reason==
+            (i==5?RTW88_SIGNAL_RATE:RTW88_SIGNAL_WIDTH));
+    }
+    /* ICV, like CRC above, keeps its separate payload rejection. */
+    signal_packet(&sc,12,0,60);vht=sc.sc_rxbuf[12].vaddr;
+    vht[1]|=0x80;f.rx_hw_idx=13;set_hisr0(1);
+    CHECK(rtw88_intr(&sc)==1 && signal_count==11);
     rtw88_stop(&sc);CHECK(sc.sc_phy.generation==0 && !sc.sc_phy.gain_valid);rtw88_core_detach(&sc);
     printf("rtw88 signal core: %u checks, %u failures\n",assertions,failures);
     return failures!=0;

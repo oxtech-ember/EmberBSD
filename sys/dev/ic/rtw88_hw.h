@@ -91,7 +91,13 @@ int rtw88_edca_encode(const struct rtw88_edca_params[RTW88_WME_NAC],
 #define RTW88_RX_SWDEC		0x08
 #define RTW88_RX_C2H		0x10
 
-/* Optional, generation-bound PHY observations. No calibrated dBm ABI. */
+/*
+ * Optional, generation-bound relative power observations. No calibrated dBm
+ * ABI or PHY-rate admission. Raw VHT1SS/2SS codes 0x2c..0x3f use page1,
+ * 5 GHz, descriptor BW 0 and explicit 20 MHz HT_RXSC 1..8 only. HT_RXSC 0
+ * needs a qualified configured-width producer and is unknown here. A valid
+ * power observation does not qualify MCS/NSS/BW/GI or VHT operation.
+ */
 #define RTW88_SIGNAL_MISSING 1U
 #define RTW88_SIGNAL_SHORT 2U
 #define RTW88_SIGNAL_PAGE 3U
@@ -154,7 +160,7 @@ int rtw88_tx_encode(uint8_t *, size_t, const struct rtw88_tx_info *);
  */
 /* PHY bytes are bounded by driver_info_size, not payload capacity. Always
  * replace *out, including invalid observations. Invalid PHY must not drop DATA.
- * Native legacy BW20 only. Power conversion follows pinned RTL8822C page0/1;
+ * Native BW20 observations only. Power conversion follows pinned RTL8822C page0/1;
  * quality is power_2_db(signal_power), not firmware two-path averaged RSSI. */
 int rtw88_rx_signal_decode(const uint8_t *, size_t, const struct rtw88_rx_info *,
     const struct rtw88_phy_state *, uint32_t, unsigned, struct rtw88_rx_signal *);

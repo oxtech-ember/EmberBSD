@@ -143,28 +143,60 @@ static void beacon_body_clock(void) {
 int main(void) {
     struct rtw88_softc sc={.sc_generation=7};kmutex_t lock={0};
     struct rtw88_net net={.core=&sc,.lock=&lock};struct ieee80211_node ni={0};
-    struct rtw88_rx_info rx={.signal={.generation=7,.valid=1,.quality=50}};
+    struct rtw88_rx_info rx={0};
     uint8_t frame[24]={8,2};unsigned observed[2];
+    uint8_t packet[24+8+24]={0};
+    struct rtw88_phy_state phy={.generation=7,.paths=3};
+    /* Eight-byte PHY storage; the real descriptor supplies the bounds. */
+    packet[0]=24;packet[2]=1;packet[3]=4;packet[12]=0x2c;
+    packet[24]=1;packet[25]=60;packet[26]=50;packet[29]=0x19;packet[30]=36;
+    memcpy(packet+32,frame,24);
     net.ic.ic_bss=&ni;net.ic.ic_ifp=&net.ec.ec_if;net.ec.ec_if.if_softc=&net;
     net.policy.epoch=4;net.policy.accepting=1;node_refs=1;
     for(unsigned i=0;i<2;i++) {
-        rx.signal.quality=(uint8_t)(i?80:50);
-        mutex_enter(&lock);rtw88_net_rx_frame(&net,frame,24,&rx);mutex_exit(&lock);
+        packet[25]=(uint8_t)(i?90:60);
+        CHECK(rtw88_rx_decode(packet,sizeof(packet),&rx)==0);
+        CHECK(rtw88_rx_signal_decode(packet+rx.driver_info_offset,
+            rx.driver_info_size,&rx,&phy,7,36,&rx.signal)==0);
+        CHECK(rx.signal.valid && rx.signal.quality==(i?80:50));
+        mutex_enter(&lock);rtw88_net_rx_frame(&net,packet+rx.payload_offset,
+            rx.packet_size,&rx);mutex_exit(&lock);
+        struct mbuf *queued=net.rx[net.rx_head].m;
+        CHECK(queued && queued->m_len==24 && memcmp(queued->m_data,frame,24)==0);
+        memset(packet+32,0xa5,24);
         memset(&rx,0,sizeof(rx)); /* Borrowed producer storage can change now. */
+        CHECK(queued && memcmp(queued->m_data,frame,24)==0);
         rtw88_net_softintr(&net);observed[i]=route_last_rssi;
-        rx.signal.generation=7;rx.signal.valid=1;
+        memcpy(packet+32,frame,24);
     }
     CHECK(observed[0]==50 && observed[1]==80);
     CHECK(rtw88_signal_scan_check(observed[0],observed[1])==0);
     /* The actual callback must attach unknown metadata to this frame only. */
     rx.signal.valid=0;mutex_enter(&lock);rtw88_net_rx_frame(&net,frame,24,&rx);mutex_exit(&lock);
     rtw88_net_softintr(&net);CHECK(route_last_rssi==0);
+    /* Unknown optional signal still delivers DATA from its actual descriptor. */
+    for(unsigned kind=0;kind<4;kind++) {
+        packet[12]=(uint8_t)(kind==2?0x40:0x2c);
+        packet[29]=(uint8_t)(kind==0?0x01:kind==1?0x91:0x19);
+        CHECK(rtw88_rx_decode(packet,sizeof(packet),&rx)==0);
+        CHECK(rtw88_rx_signal_decode(packet+rx.driver_info_offset,
+            kind==3?7:rx.driver_info_size,&rx,&phy,7,36,&rx.signal)==ENOENT);
+        unsigned before=route_rx;
+        mutex_enter(&lock);rtw88_net_rx_frame(&net,packet+rx.payload_offset,
+            rx.packet_size,&rx);mutex_exit(&lock);
+        memset(packet+32,0xa5,24);memset(&rx,0,sizeof(rx));
+        rtw88_net_softintr(&net);CHECK(route_rx==before+1 && route_last_rssi==0);
+        memcpy(packet+32,frame,24);
+    }
     unsigned delivered=route_rx;
     mutex_enter(&lock);rtw88_net_rx_frame(&net,frame,24,&rx);mutex_exit(&lock);
     sc.sc_generation++;rtw88_net_softintr(&net);CHECK(route_rx==delivered);
     CHECK(net.stats.fw_stale==1 && net.policy.queued==0);
     /* A stale signal observation does not invalidate its current DATA owner. */
-    rx.signal.valid=1;rx.signal.generation=7;rx.signal.quality=90;
+    packet[12]=0x2c;packet[29]=0x19;packet[25]=90;
+    CHECK(rtw88_rx_decode(packet,sizeof(packet),&rx)==0);
+    CHECK(rtw88_rx_signal_decode(packet+rx.driver_info_offset,
+        rx.driver_info_size,&rx,&phy,7,36,&rx.signal)==0);
     mutex_enter(&lock);rtw88_net_rx_frame(&net,frame,24,&rx);mutex_exit(&lock);
     rtw88_net_softintr(&net);CHECK(route_rx==delivered+1 && route_last_rssi==0);
     /* Epoch withdrawal still fences queued data independently of firmware age. */

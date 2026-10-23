@@ -429,6 +429,25 @@ Real gain bounds, validity and firmware generations are retained separately.
 `rtw88-signal-contract.sh` documents synthetic core/queue and actual scan-consumer
 boundaries; physical signal accuracy remains unqualified.
 
+Page1 legacy OFDM rates 4..11 retain L_RXSC, including RXSC 0. Raw VHT1SS/2SS
+codes 0x2c..0x3f use HT_RXSC from byte5 bits 7..4. This follows the field
+macros in [rtw8822c.h](https://github.com/freebsd/freebsd-src/blob/d2145e9b96448da34d3cfede24c509af6d830c92/sys/contrib/dev/rtw88/rtw8822c.h)
+and the bounded descriptor ranges in [main.h](https://github.com/freebsd/freebsd-src/blob/d2145e9b96448da34d3cfede24c509af6d830c92/sys/contrib/dev/rtw88/main.h).
+The adaptation selects the BSD-3-Clause option in `rtw88-source.LICENSE`.
+
+VHT power observation requires the existing generation, native AB paths and
+channel guards, a 5 GHz channel, descriptor BW 0 and explicit 20 MHz HT_RXSC 1..8.
+HT_RXSC 0 means the current configured width upstream. That width lacks a
+qualified native producer, so RXSC 0 and 9..15 remain unknown here.
+Eight bytes suffice for the bounded power prefix; EVM/CFO/SNR are not read.
+Unknown codes and invalid optional signal clear quality without dropping DATA.
+The parser, core and queue contracts execute this path through existing consumers.
+
+These raw code bounds do not qualify MCS/NSS/BW/GI legality. In particular,
+raw MCS9 observation does not establish that MCS9 is legal at 20 MHz.
+The change adds no rate status ABI, VHT advertisement, association or TX support.
+Wide channels, RF qualification and physical signal accuracy remain separate.
+
 ### DMA address contract
 
 The supported native PCI profile is **32-bit DMA addressing**.
