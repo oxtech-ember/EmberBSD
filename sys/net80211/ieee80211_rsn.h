@@ -9,7 +9,7 @@ ieee80211_sae_rsn_valid(const uint8_t *p, size_t len)
 {
 	size_t end, pos, count;
 
-	if (len < 22 || p[0] != 48 || p[1] < 20)
+	if (p == NULL || len < 22 || p[0] != 48 || p[1] < 20)
 		return false;
 	end = (size_t)p[1] + 2;
 	if (end > len || p[2] != 1 || p[3] != 0 ||

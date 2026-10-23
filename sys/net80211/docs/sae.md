@@ -4,12 +4,13 @@
 The helper accepts one CCMP pairwise cipher, SAE, and required PMF.
 An omitted group management cipher selects BIP-CMAC-128.
 An explicit group management cipher must select BIP-CMAC-128.
+It rejects a null input pointer, regardless of the supplied length.
 It checks the RSN element boundary and each optional PMKID field.
 It does not validate a complete association or authenticate a peer.
 
 The helper has no driver or firmware dependency. Both `bwfm` and `aicwf`
 use it before their chip-specific connection commands. The implementation
-and regression moved from the shared FullMAC header without a policy change.
+and regression originate in the shared FullMAC header.
 
 Run the portable RSN and driver SAE contracts from the source root:
 

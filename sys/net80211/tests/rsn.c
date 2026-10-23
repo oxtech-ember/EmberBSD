@@ -28,6 +28,8 @@ main(void)
 	uint8_t ie[64];
 	size_t n;
 
+	check(!ieee80211_sae_rsn_valid(NULL, 0), "null empty input rejected");
+	check(!ieee80211_sae_rsn_valid(NULL, 22), "null sized input rejected");
 	check(ieee80211_sae_rsn_valid(good, sizeof(good)), "SAE/CCMP/required PMF");
 	for (n = 0; n < sizeof(good); n++)
 		check(!ieee80211_sae_rsn_valid(good, n), "truncated RSN rejected");
