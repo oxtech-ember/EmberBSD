@@ -226,7 +226,7 @@ static void drm_crtc_vblank_on(struct drm_crtc *c){
 	vblank_on_calls++;
 }
 static unsigned vblank_off_calls;
-static void drm_crtc_vblank_off(struct drm_crtc *c){
+static void drm_crtc_vblank_off(const struct drm_crtc *c){
  CHECK(c==&current->crtc&&current->vblank_on&&!current->lock);
  CHECK(vblank_puts==vblank_gets);
  vblank_off_calls++;
