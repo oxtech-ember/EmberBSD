@@ -112,7 +112,8 @@ static int fdtbus_get_reg(int node,unsigned index,bus_addr_t *base,bus_size_t *s
  CHECK(index==0);
  *base=node==1?0x05000000:node==4?0x03900000:0x02020000;
  *size=node==1?0x400000:node==4?0x20000:0x10000;
- if(bad_base==node)(*base)++;return 0;
+ if(bad_base==node)(*base)++;
+ return 0;
 }
 static const void *fdtbus_get_prop(int node,const char *name,int *len)
 {
@@ -666,7 +667,9 @@ static void cold_reset_checks(void) {
  reboot_fixture(&sc);
  for(unsigned kind=0;kind<3;kind++){
   cold_init(&sc);iommu[0x10/4]=0x37fff;iommu[0x804/4]=1;
-  if(kind==0)cold_fault_write=1;if(kind==1)cold_readback_write=1;if(kind==2)cold_change_write=1;
+  if(kind==0)cold_fault_write=1;
+  if(kind==1)cold_readback_write=1;
+  if(kind==2)cold_change_write=1;
   CHECK(de352_run(&sc)!=0&&sc.retained&&sc.guard&&sc.guard->published&&sc.dma==NULL);
   CHECK(cold_writes==1&&cold_write_regs[0]==0x10&&writes==0&&!started&&ccu_faults==1&&releases==0);
   reboot_fixture(&sc);

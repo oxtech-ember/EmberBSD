@@ -85,7 +85,9 @@ static int bus_dmamap_load(bus_dma_tag_t t, bus_dmamap_t m, void *p,
 	m->dm_segs[0].ds_addr = address_override ? address_override :
 	    (guard_allocating ? 0x30000000 : loaded_count == 0 || overlap ? 0x100000 :
 	    0x1000000 + (uint64_t)(loaded_count - 1) * 0x10000);
-	if (!guard_allocating) loaded_count++; guard_allocating=false; loads++; return 0;
+	if (!guard_allocating)
+		loaded_count++;
+	guard_allocating=false; loads++; return 0;
 }
 static void bus_dmamap_unload(bus_dma_tag_t t, bus_dmamap_t p)
 { (void)t; (void)p; CHECK(loads > 0); loads--; }
