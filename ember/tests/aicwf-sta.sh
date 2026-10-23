@@ -1,6 +1,7 @@
 #!/bin/sh
 # Check the real AIC management path and the BSD station client contract.
 # SPDX-License-Identifier: BSD-2-Clause
+# Origin: EmberBSD; keep the extracted RX contract aligned with the driver ABI.
 set -eu
 src=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 driver=${AICWF_STA_SOURCE:-$src/sys/dev/sdmmc/if_aicwf.c}
@@ -51,7 +52,7 @@ awk '/^aicwf_rx_data\(/ {copy=1; print "static void"}
     copy && /Beacons and data frames without a body/ {exit}
     copy {print}' "$driver" >> "$work/driver.h"
 cat >> "$work/driver.h" <<'C'
-    (void)ifp; (void)&seq; (void)m; (void)tailp;
+    (void)ifp; (void)&seq; (void)m;
     (void)qos; (void)amsdu; (void)tid; (void)&hdr;
 }
 C
