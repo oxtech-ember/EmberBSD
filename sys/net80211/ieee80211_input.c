@@ -2270,7 +2270,7 @@ ieee80211_sta_csa_action(struct ieee80211com *ic, struct ieee80211_node *ni,
 	    (wh->i_seq[0] & IEEE80211_SEQ_FRAG_MASK) != 0 ||
 	    (!IEEE80211_IS_MULTICAST(wh->i_addr1) &&
 	     !IEEE80211_ADDR_EQ(wh->i_addr1, ic->ic_myaddr)) ||
-	    (prefix[0] != 0 && prefix[0] != 4) || prefix[1] != 4)
+	    !ieee80211_sta_action_announcement(prefix, 2))
 		return 0;
 	return ieee80211_sta_csa_exit(ic, ni);
 }
@@ -2284,13 +2284,9 @@ static int
 ieee80211_sta_csa_beacon(struct ieee80211com *ic, struct ieee80211_node *ni,
     const struct ieee80211_frame *wh, const uint8_t *body, size_t len)
 {
-	struct ieee80211_beacon_ies ies;
-
 	if (!ieee80211_sta_csa_current(ic, ni, wh))
 		return 0;
-	if (len >= 12 && ieee80211_beacon_ies_parse(&ies, body + 12,
-	    len - 12) == 0 && ies.csa == NULL && ies.xcsa == NULL &&
-	    ies.quiet == NULL)
+	if (!ieee80211_sta_beacon_announcement(body, len))
 		return 0;
 	return ieee80211_sta_csa_exit(ic, ni);
 }

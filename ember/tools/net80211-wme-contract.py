@@ -114,6 +114,8 @@ for name, result in (("ieee80211_crypto_getucastkey", "struct ieee80211_key *"),
 parts.append("#define ISREASSOC(st) ((st) == IEEE80211_FC0_SUBTYPE_REASSOC_RESP)\n")
 parts.append(function(ipt, "ieee80211_recv_mgmt_assoc_resp", "static void"))
 parts.append(function("sys/net80211/ieee80211_beacon_ies.c", "ieee80211_beacon_ies_parse", "int"))
+for name in ("ieee80211_sta_action_announcement", "ieee80211_sta_beacon_announcement"):
+    parts.append(function("sys/net80211/ieee80211_beacon_ies.c", name, "int"))
 if "\nieee80211_sta_csa_beacon(" in read(ipt):
     for name in ("ieee80211_sta_csa_current", "ieee80211_sta_csa_exit", "ieee80211_sta_csa_beacon"):
         parts.append(function(ipt, name, "static int"))

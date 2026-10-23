@@ -9,6 +9,27 @@
 static unsigned checks;
 #define CHECK(x) do { checks++; assert(x); } while (0)
 static void
+announcement_bodies(void)
+{
+	const uint8_t action[][2] = {{0,4},{4,4},{3,0},{0,2},{4,1}};
+	uint8_t beacon[20] = {0};
+	CHECK(ieee80211_sta_beacon_announcement(beacon, 12) == 0);
+	CHECK(ieee80211_sta_beacon_announcement(beacon, 11) == 1);
+	CHECK(ieee80211_sta_beacon_announcement(NULL, 0) == 1);
+	for (unsigned i = 0; i < sizeof(action) / sizeof(action[0]); i++) {
+		CHECK(ieee80211_sta_action_announcement(action[i], 2) == (i < 2));
+		CHECK(ieee80211_sta_action_announcement(action[i], 1) == 0);
+	}
+	CHECK(ieee80211_sta_action_announcement(NULL, 0) == 0);
+	CHECK(ieee80211_sta_action_announcement(NULL, 2) == 1);
+	beacon[12] = 40; beacon[13] = 6;
+	CHECK(ieee80211_sta_beacon_announcement(beacon, sizeof(beacon)) == 1);
+	beacon[12] = 127;
+	CHECK(ieee80211_sta_beacon_announcement(beacon, sizeof(beacon)) == 0);
+	beacon[13] = 7;
+	CHECK(ieee80211_sta_beacon_announcement(beacon, sizeof(beacon)) == 1);
+}
+static void
 invalid(const uint8_t *p, size_t n)
 {
 	struct ieee80211_beacon_ies ies, zero = {0};
@@ -89,6 +110,7 @@ switch_announcements(void)
 int
 main(void)
 {
+	announcement_bodies();
 	quiet_announcements();
 	struct ieee80211_beacon_ies ies;
 	switch_announcements();

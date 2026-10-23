@@ -124,3 +124,24 @@ ieee80211_beacon_ies_parse(struct ieee80211_beacon_ies *ies,
 	*ies = pending;
 	return 0;
 }
+
+int
+ieee80211_sta_action_announcement(const uint8_t *body, size_t len)
+{
+	if (len < 2)
+		return 0;
+	if (body == NULL)
+		return 1;
+	return (body[0] == 0 || body[0] == 4) && body[1] == 4;
+}
+
+int
+ieee80211_sta_beacon_announcement(const uint8_t *body, size_t len)
+{
+	struct ieee80211_beacon_ies ies;
+
+	if (body == NULL || len < 12 ||
+	    ieee80211_beacon_ies_parse(&ies, body + 12, len - 12) != 0)
+		return 1;
+	return ies.csa != NULL || ies.xcsa != NULL || ies.quiet != NULL;
+}

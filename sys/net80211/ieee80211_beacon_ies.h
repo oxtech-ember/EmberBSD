@@ -28,4 +28,12 @@ struct ieee80211_beacon_ies {
  */
 int ieee80211_beacon_ies_parse(struct ieee80211_beacon_ies *,
     const uint8_t *, size_t);
+/* Pure body classifiers after current-peer/RX-envelope validation.
+ * Beacon accepts the fixed body plus its IE window. Action recognizes the
+ * two channel-switch prefixes. Return 1 to withdraw transmission, else 0.
+ * Malformed beacon windows withdraw; short unidentified Actions do not.
+ * No peer selection, TX enable, timer mutation or memory allocation occurs.
+ */
+int ieee80211_sta_beacon_announcement(const uint8_t *, size_t);
+int ieee80211_sta_action_announcement(const uint8_t *, size_t);
 #endif

@@ -97,8 +97,9 @@ for name,result in [('ieee80211_defrag','static struct mbuf *'),('ieee80211_deca
 # Exact Action switch arm. Other management subtypes remain qualified by A/WME.
 s=pathlib.Path(os.environ.get('RXBA_INPUT_SOURCE',src/'sys/net80211/ieee80211_input.c')).read_text()
 arm=re.search(r'^\tcase IEEE80211_FC0_SUBTYPE_ACTION: \{.*?^\t}',s,re.M|re.S).group()
+announcement = extract('sys/net80211/ieee80211_beacon_ies.c','ieee80211_sta_action_announcement','int')
 helpers = ''.join(extract('sys/net80211/ieee80211_input.c',name,'static int') for name in ('ieee80211_sta_csa_current','ieee80211_sta_csa_exit','ieee80211_sta_csa_action')) if '\nieee80211_sta_csa_action(' in s else ''
-(out/'native-rxba-action.inc').write_text(s[:s.index('#include')]+helpers+'static void\nunit_recv_action(struct ieee80211com *ic,struct mbuf *m0,struct ieee80211_node *ni) {\nstruct ieee80211_frame *wh=mtod(m0,struct ieee80211_frame *);\nswitch(IEEE80211_FC0_SUBTYPE_ACTION) {\n'+arm+'\n}\n}\n')
+(out/'native-rxba-action.inc').write_text(s[:s.index('#include')]+announcement+helpers+'static void\nunit_recv_action(struct ieee80211com *ic,struct mbuf *m0,struct ieee80211_node *ni) {\nstruct ieee80211_frame *wh=mtod(m0,struct ieee80211_frame *);\nswitch(IEEE80211_FC0_SUBTYPE_ACTION) {\n'+arm+'\n}\n}\n')
 # Execute the full common input before its data/control/Action consumers.
 s=(out/'rxba-test-kernel.h').read_text()
 s=s.replace('struct { int unused; } if_snd;', 'struct { int unused; } if_snd;\n uint8_t if_broadcastaddr[6];')

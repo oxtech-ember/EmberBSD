@@ -28,6 +28,13 @@ A malformed or repeated switch element rejects the complete window.
 Consumers must handle parser failure before making a transmission decision.
 These views alone do not implement DFS client admission or channel switching.
 
+`ieee80211_sta_beacon_announcement()` classifies a complete fixed beacon body
+and IE window. `ieee80211_sta_action_announcement()` recognizes the two CSA
+Action prefixes. Both return a withdrawal decision without changing state.
+They allocate no memory and retain no input pointers. A caller must first
+validate the RX envelope and current peer identity. These classifiers never
+authorize transmission or refresh a beacon lease by themselves.
+
 Quiet (element 40) has six payload bytes: count, period, duration and offset.
 It must be unique. All field values remain observations; the parser does not
 schedule a quiet interval. Malformed or repeated Quiet rejects the window.
