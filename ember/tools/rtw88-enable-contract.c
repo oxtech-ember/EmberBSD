@@ -198,6 +198,11 @@ static struct rtw88_net *enable_attach(struct rtw88_softc *sc,kmutex_t *lock)
     }
     CHECK(net->configured_media==IFM_MAKEWORD(IFM_IEEE80211,IFM_AUTO,0,0));
     CHECK(rtw88_start(sc)==0);
+#ifdef RTW88_RFK_EXPERIMENT
+    CHECK(!sc->sc_phy.channel_valid);
+#else
+    CHECK(sc->sc_phy.channel_valid);
+#endif
     CHECK(ieee80211_setmode(&net->ic,IEEE80211_MODE_11A)==0);
     net->ic.ic_curchan=&net->ic.ic_channels[36];
     struct ieee80211_node *ni=net->ic.ic_bss;

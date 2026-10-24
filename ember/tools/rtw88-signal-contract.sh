@@ -35,7 +35,7 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror ${RTW88_TEST_CFLAGS:-} \
     "$src/sys/dev/ic/rtw8822c_coex.c" \
     "$src/sys/dev/ic/rtw8822c_txpwr.c" \
     -o "$work/test"
-run_test "$work/test"
+RTW88_SIGNAL_CONTEXT="$work/context" run_test "$work/test"
 cp "$src/sys/net80211/_ieee80211.h" "$work/include/net80211/"
 python3 "$tools/rtw88-fixed-contract.py" "$src" "$work/include"
 python3 "$tools/net80211-wme-contract.py" "$src" "$work/include"
@@ -58,7 +58,13 @@ ${CC:-cc} -std=c11 -Wall -Werror ${RTW88_TEST_CFLAGS:-} \
     "$src/sys/dev/ic/rtw8822c_coex.c" \
     "$src/sys/dev/ic/rtw8822c_txpwr.c" \
     -o "$work/queue"
-run_test "$work/queue"
+case ${RTW88_CONTEXT_ONLY:-} in
+matrix|failure|power-validation)
+    ;;
+*)
+    RTW88_SIGNAL_CONTEXT="$work/context" run_test "$work/queue"
+    ;;
+esac
 if [ "${RTW88_START_ANALYZE:-0}" = 1 ]; then
  printf 'void causal_null(void){int *p=0;*p=1;}\n' > "$work/causal.c"
  if ${CC:-cc} -std=c11 -O0 -Wall -Werror -fanalyzer -c "$work/causal.c" -o "$work/causal.o" > "$work/causal.log" 2>&1;then exit 1;fi

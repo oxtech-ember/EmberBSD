@@ -94,8 +94,9 @@ int rtw88_edca_encode(const struct rtw88_edca_params[RTW88_WME_NAC],
 /*
  * Optional, generation-bound relative power observations. No calibrated dBm
  * ABI or PHY-rate admission. Raw VHT1SS/2SS codes 0x2c..0x3f use page1,
- * 5 GHz, descriptor BW 0 and explicit 20 MHz HT_RXSC 1..8 only. HT_RXSC 0
- * needs a qualified configured-width producer and is unknown here. A valid
+ * 5 GHz and descriptor BW 0. HT_RXSC 1..8 explicitly indicate 20 MHz.
+ * HT_RXSC 0 additionally requires the complete native 20 MHz context,
+ * which core startup/retune publish only with RFK OFF. A valid
  * power observation does not qualify MCS/NSS/BW/GI or VHT operation.
  */
 #define RTW88_SIGNAL_MISSING 1U
@@ -113,6 +114,8 @@ struct rtw88_phy_state {
     uint32_t generation;
     int gain_error;
     uint8_t paths, gain_valid, gain_low, gain_high;
+    /* Complete core 20 MHz program, in this generation, with RFK OFF. */
+    uint8_t channel_valid;
 };
 struct rtw88_rx_signal {
     uint32_t generation;

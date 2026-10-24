@@ -1160,6 +1160,17 @@ main(void)
     struct rtw88_net *net = enable_attach(&sc, &lock);
     if (net == NULL)
         return 1;
+    /* Actual startup and warm retune never publish RXSC0 qualification ON. */
+    CHECK(!sc.sc_phy.channel_valid && rtw88_channel(&sc,36)==0);
+    CHECK(!sc.sc_phy.channel_valid);
+    struct rtw88_rx_info ctx_rx={.flags=RTW88_RX_PHY_STATUS,.rate=0x2c};
+    struct rtw88_rx_signal ctx_signal;
+    const uint8_t ctx_phy[8]={1,60,50,0,0,0,36,0};
+    CHECK(rtw88_rx_signal_decode(ctx_phy,8,&ctx_rx,&sc.sc_phy,sc.sc_generation,36,&ctx_signal)==ENOENT && ctx_signal.reason==RTW88_SIGNAL_WIDTH);
+    uint8_t explicit_phy[8];memcpy(explicit_phy,ctx_phy,8);explicit_phy[5]=0x19;
+    CHECK(rtw88_rx_signal_decode(explicit_phy,8,&ctx_rx,&sc.sc_phy,sc.sc_generation,36,&ctx_signal)==0 && ctx_signal.quality==50);
+    ctx_rx.rate=4;explicit_phy[5]=0;
+    CHECK(rtw88_rx_signal_decode(explicit_phy,8,&ctx_rx,&sc.sc_phy,sc.sc_generation,36,&ctx_signal)==0);
     rfk_case=getenv("RTW88_RFK_CASE");
     if(rfk_case==NULL)rfk_case="none";
     if(rfk_is("presence-observe"))return rfk_presence_observe(net);

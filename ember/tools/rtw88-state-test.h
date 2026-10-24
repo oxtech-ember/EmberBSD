@@ -109,6 +109,7 @@ static int state_shared_parent(struct ieee80211com *,enum ieee80211_state,int);
 static int state_shared_ieee80211_media_change(struct ifnet *);
 static int state_shared_ieee80211_setmode(struct ieee80211com *,enum ieee80211_phymode);
 static unsigned state_epoch_change;
+static unsigned state_retune_failure;
 static struct rtw88_net *state_current_net;
 static unsigned state_channel_calls, state_station_calls, state_negotiated;
 static uint32_t state_expected_words[4];
@@ -205,6 +206,7 @@ state_write4(void *cookie, uint32_t reg, uint32_t value)
 		if (state_io_count==state_fail_io && !state_after_effect) return EIO;
 	}
 	int e=write_4(cookie,reg,value);
+    if(state_retune_failure && reg==0x18a0)return EIO;
 	return e==0 && state_io_armed && state_io_count==state_fail_io ? EIO:e;
 }
 /* Arm only bus fault injection, then execute the actual core operation. */
@@ -741,6 +743,24 @@ test_native_state_fixed_clear(void)
 	state_fixture_finish(&s);
 }
 
+static void state_retune_barrier(void *cookie)
+{
+    CHECK(!state_lock.held);
+    intr_barrier(cookie);
+}
+static void test_native_state_retune_failure(void)
+{
+    struct state_fixture s;
+    if(!state_fixture_start(&s,36,9))return;
+    s.bus.intr_barrier=state_retune_barrier;state_retune_failure=1;
+    unsigned barriers=f.barriers;
+    rtw88_net_state_work(&s.net.state_work,&s.net);
+    CHECK(state_parent_tx==0 && state_parent_init==1);
+    CHECK(!s.net.policy.accepting && !s.net.work_pending);
+    CHECK(!s.sc.sc_running && s.sc.sc_stop_requested && !s.sc.sc_phy.channel_valid);
+    CHECK(f.barriers==barriers+1 && state_channel_calls==1 && state_station_calls==0);
+    state_retune_failure=0;state_fixture_finish(&s);
+}
 static void
 test_native_state_epoch(void)
 {
@@ -752,6 +772,7 @@ test_native_state_epoch(void)
 	CHECK(state_epoch_change==0 && state_parent_tx==1);
 	CHECK(state_channel_calls==1 && state_station_calls==1);
 	CHECK(state_io_count==7 && s.net.policy.accepting);
+    CHECK(s.sc.sc_running && !s.sc.sc_stop_requested && !s.sc.sc_power_error);
 	state_fixture_finish(&s);
 }
 

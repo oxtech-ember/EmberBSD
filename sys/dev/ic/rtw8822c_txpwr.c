@@ -291,6 +291,7 @@ rtw8822c_set_tx_power(struct rtw88_softc *sc,
 			    ((uint32_t)diff & 0x7f) << ((rate % 4) * 8);
 		}
 	}
+	sc->sc_phy.channel_valid = 0;
 	for (path = 0; path < 2; path++) {
 		error = write_power(sc, path ? 0x41a0 : 0x18a0, 0x7f0000,
 		    indices[path][3]);

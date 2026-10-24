@@ -479,13 +479,28 @@ int
 rtw8822c_set_channel(struct rtw88_softc *sc, unsigned ch)
 {
 	struct rtw8822c_io io = { sc, 0 };
+	uint32_t gen = sc->sc_generation;
 
 	if (channel_band(ch) == 0)
 		return EINVAL;
+	sc->sc_phy.channel_valid = 0;
+	if (sc->sc_stop_requested)
+		return EINTR;
 	channel_bb(&io, ch);
-	channel_mac(&io, ch);
-	channel_rf(&io, ch);
-	toggle_igi(&io);
+	if (io.error == 0 && (sc->sc_stop_requested || sc->sc_generation != gen))
+		io.error = EINTR;
+	if (io.error == 0)
+		channel_mac(&io, ch);
+	if (io.error == 0 && (sc->sc_stop_requested || sc->sc_generation != gen))
+		io.error = EINTR;
+	if (io.error == 0)
+		channel_rf(&io, ch);
+	if (io.error == 0 && (sc->sc_stop_requested || sc->sc_generation != gen))
+		io.error = EINTR;
+	if (io.error == 0)
+		toggle_igi(&io);
+	if (io.error == 0 && (sc->sc_stop_requested || sc->sc_generation != gen))
+		io.error = EINTR;
 	return io.error;
 }
 

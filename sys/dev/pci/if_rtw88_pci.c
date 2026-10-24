@@ -307,7 +307,7 @@ rtwce_channel(int *ch, int set)
 {
 	struct rtw88_pci_softc *psc;
 	struct rtw88_softc *sc;
-	int error = 0;
+	int error = 0, cleanup = 0;
 
 	psc = rtwce_diag_enter();
 	if (psc == NULL)
@@ -324,9 +324,13 @@ rtwce_channel(int *ch, int set)
 		error = EBUSY;
 	else if (*ch <= 0)
 		error = EINVAL;
-	else
+	else {
 		error = rtw88_channel(sc, (unsigned)*ch);
+		cleanup = error != 0 && sc->sc_stop_requested;
+	}
 	mutex_exit(&psc->sc_lock);
+	if (cleanup)
+		(void)rtw88_stop(sc);
 	mutex_exit(&rtwce_diag_lock);
 	return error;
 }

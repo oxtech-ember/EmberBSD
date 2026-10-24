@@ -1228,7 +1228,12 @@ start_ok(struct rtw88_softc *sc)
 		return 0;
 	CHECK(rtw88_start(sc) == 0);
 	CHECK(sc->sc_running);
-	/* Full MAC initialization owns the existing legacy hardware defaults. */
+#ifdef RTW88_RFK_EXPERIMENT
+    CHECK(!sc->sc_phy.channel_valid);
+#else
+    CHECK(sc->sc_phy.channel_valid);
+#endif
+    /* Full MAC initialization owns the existing legacy hardware defaults. */
 	CHECK(mmio32(0x500) == UINT32_C(0x002fa226));
 	CHECK(mmio32(0x504) == UINT32_C(0x005ea328));
 	CHECK(mmio32(0x508) == UINT32_C(0x005ea42b));
@@ -2542,7 +2547,8 @@ static int
 quiet_write1(void *cookie, uint32_t reg, uint8_t value)
 {
 	if (reg == 0x0522 || reg == 0x0100) {
-		CHECK(f.sc->sc_stop_requested && !f.sc->sc_ra.configured &&
+		CHECK(!f.sc->sc_phy.channel_valid);
+        CHECK(f.sc->sc_stop_requested && !f.sc->sc_ra.configured &&
 		    !f.sc->sc_ra.active);
 		if (reg == 0x0522) {
 			quiet_pause_writes++;
@@ -2682,6 +2688,7 @@ main(void)
 	test_native_state_reject_context();
 	test_native_state_fixed_clear();
 	test_native_state_epoch();
+    test_native_state_retune_failure();
 	test_native_band_media();
 	test_native_band_invalid_and_fault();
 #endif

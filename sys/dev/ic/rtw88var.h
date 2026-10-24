@@ -251,7 +251,7 @@ struct rtw88_softc {
 	uint64_t sc_rx_sequence;	/* Consumed slots in this generation. */
 	int sc_running;		/* Interrupts unmasked; rtw88_intr owns RX. */
 	int sc_edca_error;	/* TX quarantine until a full successful start. */
-	unsigned sc_channel;
+	unsigned sc_channel;	/* Last successful program; not proof after failure. */
 	unsigned sc_basic_rates;	/* Negotiated legacy descriptor-rate bitmap. */
 	int sc_linked;
 	struct rtw88_ra_state sc_ra;
@@ -382,7 +382,12 @@ int rtw88_station_config(struct rtw88_softc *, const uint8_t *, unsigned,
     unsigned, unsigned, int);
 /* Diagnostic loopback (rtlwifi LBMODE 0, 1, 3, 7 or 0x0b); 0 is normal. */
 int rtw88_loopback(struct rtw88_softc *, int);
-/* 20 MHz channel switch; caller holds the bus interrupt lock. */
+/*
+ * 20 MHz channel switch; caller holds the bus interrupt lock. A failed
+ * attempted mutation latches sc_stop_requested and closes host TX admission.
+ * The lifecycle owner must stop outside that lock before restarting. An
+ * initial read failure withdraws RX context but permits a safe warm retry.
+ */
 int rtw88_channel(struct rtw88_softc *, unsigned);
 /* Operator trigger. 1 starts, 0 stops. ENXIO until resources are ready. */
 int rtwce_bootstrap(int);

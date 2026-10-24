@@ -41,6 +41,8 @@ static int diag_detaching, diag_waiting;
 static unsigned diag_waits, diag_wakes;
 static struct rtw88_pci_softc *stats_latch;
 static int stats_max;
+static struct rtw88_pci_softc *context_cleanup;
+static unsigned context_barriers;
 static int acquire(void)
 
 {
@@ -493,6 +495,12 @@ void pci_intr_disestablish(pci_chipset_tag_t pc, void *ih)
 }
 void xc_barrier(unsigned flags)
 {
+    if(context_cleanup!=NULL) {
+        CHECK(flags==0 && !context_cleanup->sc_lock.held && rtwce_diag_lock.held);
+        CHECK(context_cleanup->sc_core.sc_resources_ready && f.bar && f.irq);
+        context_barriers++;
+        return;
+    }
 	CHECK(flags == 0 && f.pending && f.irq == 0);
 	CHECK(f.loaded == RTW88_NRING + RTW88_RX_BUFS + RTW88_NTXQ * RTW88_TX_SLOTS && f.locks == 1 && f.bar == 1);
 	const struct rtw88_pci_softc *p = f.arg;
@@ -619,10 +627,51 @@ int firmware_read(firmware_handle_t fh, long off, void *buf, size_t len)
 	(void)len;
 	return ENOENT;
 }
+static int context_read1(void *cookie,uint32_t reg,uint8_t *v) {
+    if(reg==0x522){*v=0;return 0;}
+    return rtw88_pci_ops.read_1(cookie,reg,v);
+}
+static int context_write1(void *cookie,uint32_t reg,uint8_t v) {
+    if(reg==0x522){CHECK(v==0xff);return EIO;}
+    return rtw88_pci_ops.write_1(cookie,reg,v);
+}
+static int context_master(void *cookie,int enable) {
+    (void)cookie;CHECK(!enable);return ETIMEDOUT;
+}
+static void test_context_cleanup(void) {
+    struct rtw88_pci_softc p;struct rtw88_bus_ops fault=rtw88_pci_ops;
+    reset(&p);rtw88_pci_attach(NULL,&p,&fixture_pa);
+    struct rtw88_net *net=p.sc_net;p.sc_net=NULL;
+    p.sc_core.sc_started=p.sc_core.sc_running=1;
+    fault.read_1=context_read1;fault.write_1=context_write1;p.sc_core.sc_ops=&fault;
+    context_cleanup=&p;context_barriers=0;int ch=36;
+    CHECK(rtwce_channel(&ch,0)==0 && context_barriers==0);
+    ch=-1;CHECK(rtwce_channel(&ch,1)==EINVAL && context_barriers==0);
+    ch=15;CHECK(rtwce_channel(&ch,1)==EINVAL && context_barriers==0);
+    p.sc_net=net;ch=36;CHECK(rtwce_channel(&ch,1)==EBUSY && context_barriers==0);
+    p.sc_net=NULL;p.sc_detaching=1;
+    CHECK(rtwce_channel(&ch,1)==EBUSY && context_barriers==0);
+    p.sc_detaching=0;
+    /* Detach is parked until the diagnostic completes its stop and gate. */
+    diag_race=&p;
+    p.sc_core.sc_ra.error=EACCES;p.sc_core.sc_edca_error=EINVAL;
+    p.sc_core.sc_dma_master=1;f.shutdown_fault=1;fault.bus_master=context_master;
+    CHECK(rtwce_channel(&ch,1)==EIO);
+    CHECK(context_barriers==1 && !p.sc_core.sc_running && !p.sc_core.sc_started);
+    CHECK(!p.sc_lock.held && !rtwce_diag_lock.held);
+    CHECK(diag_waits==1 && diag_wakes==1 && f.net_detach_calls==0);
+    CHECK(p.sc_core.sc_dma_error==ETIMEDOUT && p.sc_core.sc_dma_master);
+    CHECK(p.sc_core.sc_ra.error==EACCES && p.sc_core.sc_edca_error==EINVAL);
+    p.sc_core.sc_dma_error=p.sc_core.sc_dma_master=0;
+    context_cleanup=NULL;p.sc_core.sc_running=p.sc_core.sc_started=0;
+    p.sc_core.sc_ops=&rtw88_pci_ops;p.sc_net=net;
+    clean_detach(&p);
+}
 int main(void)
 {
 	struct rtw88_pci_softc p;
 	unsigned stages;
+	test_context_cleanup();
 	reset(&p);
 	CHECK(rtwce_bootstrap(1) == ENXIO);
 	CHECK(rtwce_started() == 0);

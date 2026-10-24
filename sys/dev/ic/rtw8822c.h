@@ -80,12 +80,16 @@ int rtw8822c_phy_pre(struct rtw88_softc *);
 int rtw8822c_phy_post(struct rtw88_softc *);
 /* Optional current-generation CCK gain readback; failure is recorded, not defaulted. */
 int rtw8822c_signal_cache(struct rtw88_softc *);
+/* Caller serializes against stop. This helper withdraws combined channel
+ * qualification before I/O and never publishes it. Cancellation is checked
+ * between BB, MAC, RF and IGI phases; the first bus error is retained. */
 int rtw8822c_set_channel(struct rtw88_softc *, unsigned);
 
 /*
  * 20 MHz, two-path TX power consumer. Accept explicit ETSI (2) or WW (12)
  * table domains only. The caller must authorize the channel and serialize
- * access while TX is stopped. No SAR, thermal correction or channel policy
+ * access while TX is stopped. It withdraws combined channel qualification
+ * before register I/O and never publishes it. No SAR, thermal correction or channel policy
  * is supplied here. Reject erased base calibration and signed arithmetic
  * outside 0..127 before any register access; never reproduce byte wrap.
  * Missing required limits return ENOTSUP. Unused 2G VHT rates inherit

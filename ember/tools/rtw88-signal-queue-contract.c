@@ -146,10 +146,18 @@ int main(void) {
     struct rtw88_rx_info rx={0};
     uint8_t frame[24]={8,2};unsigned observed[2];
     uint8_t packet[24+8+24]={0};
-    struct rtw88_phy_state phy={.generation=7,.paths=3};
+    struct rtw88_phy_state phy={0};
+    /* Serialized by the actual startup/retune fixture in this same runner.
+     * This boundary models transport of producer state, not its publication. */
+    const char *context=getenv("RTW88_SIGNAL_CONTEXT");
+    FILE *file=context?fopen(context,"rb"):NULL;CHECK(file!=NULL);
+    if(file==NULL)return 1;
+    CHECK(fread(&phy,sizeof(phy),1,file)==1);CHECK(fclose(file)==0);
+    CHECK(phy.channel_valid && phy.paths==3);
+    unsigned generation=phy.generation;sc.sc_generation=generation;
     /* Eight-byte PHY storage; the real descriptor supplies the bounds. */
     packet[0]=24;packet[2]=1;packet[3]=4;packet[12]=0x2c;
-    packet[24]=1;packet[25]=60;packet[26]=50;packet[29]=0x19;packet[30]=36;
+    packet[24]=1;packet[25]=60;packet[26]=50;packet[29]=0;packet[30]=36;
     memcpy(packet+32,frame,24);
     net.ic.ic_bss=&ni;net.ic.ic_ifp=&net.ec.ec_if;net.ec.ec_if.if_softc=&net;
     net.policy.epoch=4;net.policy.accepting=1;node_refs=1;
@@ -157,7 +165,7 @@ int main(void) {
         packet[25]=(uint8_t)(i?90:60);
         CHECK(rtw88_rx_decode(packet,sizeof(packet),&rx)==0);
         CHECK(rtw88_rx_signal_decode(packet+rx.driver_info_offset,
-            rx.driver_info_size,&rx,&phy,7,36,&rx.signal)==0);
+            rx.driver_info_size,&rx,&phy,generation,36,&rx.signal)==0);
         CHECK(rx.signal.valid && rx.signal.quality==(i?80:50));
         mutex_enter(&lock);rtw88_net_rx_frame(&net,packet+rx.payload_offset,
             rx.packet_size,&rx);mutex_exit(&lock);
@@ -178,9 +186,10 @@ int main(void) {
     for(unsigned kind=0;kind<4;kind++) {
         packet[12]=(uint8_t)(kind==2?0x40:0x2c);
         packet[29]=(uint8_t)(kind==0?0x01:kind==1?0x91:0x19);
+        if(kind==0)phy.channel_valid=0;else phy.channel_valid=1;
         CHECK(rtw88_rx_decode(packet,sizeof(packet),&rx)==0);
         CHECK(rtw88_rx_signal_decode(packet+rx.driver_info_offset,
-            kind==3?7:rx.driver_info_size,&rx,&phy,7,36,&rx.signal)==ENOENT);
+            kind==3?7:rx.driver_info_size,&rx,&phy,generation,36,&rx.signal)==ENOENT);
         unsigned before=route_rx;
         mutex_enter(&lock);rtw88_net_rx_frame(&net,packet+rx.payload_offset,
             rx.packet_size,&rx);mutex_exit(&lock);
@@ -196,7 +205,7 @@ int main(void) {
     packet[12]=0x2c;packet[29]=0x19;packet[25]=90;
     CHECK(rtw88_rx_decode(packet,sizeof(packet),&rx)==0);
     CHECK(rtw88_rx_signal_decode(packet+rx.driver_info_offset,
-        rx.driver_info_size,&rx,&phy,7,36,&rx.signal)==0);
+        rx.driver_info_size,&rx,&phy,generation,36,&rx.signal)==0);
     mutex_enter(&lock);rtw88_net_rx_frame(&net,frame,24,&rx);mutex_exit(&lock);
     rtw88_net_softintr(&net);CHECK(route_rx==delivered+1 && route_last_rssi==0);
     /* Epoch withdrawal still fences queued data independently of firmware age. */

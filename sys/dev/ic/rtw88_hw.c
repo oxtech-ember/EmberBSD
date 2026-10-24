@@ -370,7 +370,7 @@ rtw88_rx_signal_decode(const uint8_t *p, size_t len,
         goto invalid;
     v.reason = RTW88_SIGNAL_WIDTH;
     if (rx->bandwidth != 0 || (v.page == 1 &&
-        (v.rxsc > 8 || (vht && v.rxsc == 0))))
+        (v.rxsc > 8 || (vht && v.rxsc == 0 && !ctx->channel_valid))))
         goto invalid;
     v.reason = RTW88_SIGNAL_GAIN;
     if (v.page == 0 && (!ctx->gain_valid || ctx->gain_error != 0 ||

@@ -436,9 +436,22 @@ and the bounded descriptor ranges in [main.h](https://github.com/freebsd/freebsd
 The adaptation selects the BSD-3-Clause option in `rtw88-source.LICENSE`.
 
 VHT power observation requires the existing generation, native AB paths and
-channel guards, a 5 GHz channel, descriptor BW 0 and explicit 20 MHz HT_RXSC 1..8.
-HT_RXSC 0 means the current configured width upstream. That width lacks a
-qualified native producer, so RXSC 0 and 9..15 remain unknown here.
+channel guards, a 5 GHz channel and descriptor BW 0. HT_RXSC 1..8 explicitly
+indicate 20 MHz. HT_RXSC 0 means the configured width upstream
+(`rtw8822c.c` lines 2620-2627 at the same pinned revision). Core startup and
+retune now qualify the complete native 20 MHz PHY, power and pause program.
+Only this success publishes `sc_phy.channel_valid`, with unchanged generation
+and no stop request. Partial low-level calls, cache replacement, quiet, stop
+and failed retune withdraw it. RFK ON never publishes this qualification;
+its temporary channel programs require a separate lifetime audit. RXSC 9..15
+remain unknown. This boolean does not establish PPDU capture time or RF quality.
+
+A failed retune after any attempted pause write latches the existing host TX
+stop request. The last successful channel remains diagnostic only. The core
+retune does not restore pause after an error. The network worker owns shutdown;
+the diagnostic caller also stops outside the interrupt lock while retaining
+its lifetime gate. It returns the first retune error, preserving cleanup errors
+in the existing power and DMA fields. Host admission does not prove RF silence.
 Eight bytes suffice for the bounded power prefix; EVM/CFO/SNR are not read.
 Unknown codes and invalid optional signal clear quality without dropping DATA.
 The parser, core and queue contracts execute this path through existing consumers.

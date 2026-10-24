@@ -734,6 +734,7 @@ rtw88_tx_quiet(struct rtw88_softc *sc)
 	int error, e;
 
 	sc->sc_stop_requested = 1;
+	sc->sc_phy.channel_valid = 0;
 	/* Also cancel a start that yielded inside the firmware loader. */
 	sc->sc_generation++;
 	rtw88_ra_invalidate(sc);
@@ -862,6 +863,7 @@ rtw88_start(struct rtw88_softc *sc)
 	sc->sc_power_program.valid = 0;
 	sc->sc_operating.prepared = sc->sc_operating.sealed = 0;
 #endif
+	sc->sc_phy.channel_valid = 0;
 	gen = sc->sc_generation;
 	error = sc->sc_ops->firmware_load(sc->sc_bus, RTW88_FW_DRV,
 	    RTW88_FW_IMG, &fw, &fw_len);
@@ -969,6 +971,10 @@ rtw88_start(struct rtw88_softc *sc)
 	error = rtw8822c_set_channel(sc, RTW88_DEFAULT_CHANNEL);
 	if (error != 0)
 		goto fail;
+	if (sc->sc_stop_requested || sc->sc_generation != gen) {
+		error = EINTR;
+		goto fail;
+	}
 	stage = "TX power";
 	error = rtw8822c_efuse_decode(sc->sc_efuse_phys,
 	    sizeof(sc->sc_efuse_phys), &efuse);
@@ -981,6 +987,9 @@ rtw88_start(struct rtw88_softc *sc)
 		error = EINTR;
 		goto fail;
 	}
+#ifndef RTW88_RFK_EXPERIMENT
+	sc->sc_phy.channel_valid = 1;
+#endif
 	stage = "HCI start";
 	error = rtw88_hci_start(sc);
 	if (error != 0)
@@ -1943,15 +1952,12 @@ int
 rtw88_channel(struct rtw88_softc *sc, unsigned ch)
 {
 	struct rtw8822c_efuse efuse;
+	uint32_t gen;
 	uint8_t pause;
 	int error;
 
 	if (!sc->sc_running || sc->sc_stop_requested)
 		return ENXIO;
-#ifdef RTW88_RFK_EXPERIMENT
-	sc->sc_operating.prepared = sc->sc_operating.sealed = 0;
-	sc->sc_power_program.valid = 0;
-#endif
 	/* The calibrated 20 MHz profile has no policy for other channels. */
 	if (!((ch >= 1 && ch <= 13) ||
 	    (ch >= 36 && ch <= 64 && ch % 4 == 0) ||
@@ -1962,21 +1968,45 @@ rtw88_channel(struct rtw88_softc *sc, unsigned ch)
 	    sizeof(sc->sc_efuse_phys), &efuse);
 	if (error != 0)
 		return error;
+	sc->sc_phy.channel_valid = 0;
+	rtw88_ra_invalidate(sc);
+#ifdef RTW88_RFK_EXPERIMENT
+	sc->sc_operating.prepared = sc->sc_operating.sealed = 0;
+	sc->sc_power_program.valid = 0;
+#endif
+	gen = sc->sc_generation;
 	error = sc->sc_ops->read_1(sc->sc_bus, 0x0522, &pause);
 	if (error != 0)
-		return error;
+		return error; /* No write was attempted. A warm retry is safe. */
+	/* An attempted write can mutate hardware even when it returns an error. */
 	error = sc->sc_ops->write_1(sc->sc_bus, 0x0522, 0xff);
-	if (error != 0)
-		return error;
-	error = rtw8822c_set_channel(sc, ch);
+	if (error == 0 && (sc->sc_stop_requested || sc->sc_generation != gen))
+		error = EINTR;
+	if (error == 0)
+		error = rtw8822c_set_channel(sc, ch);
+	if (error == 0 && (sc->sc_stop_requested || sc->sc_generation != gen))
+		error = EINTR;
 	if (error == 0)
 		error = rtw8822c_set_tx_power(sc, &efuse, ch, 12);
+	if (error == 0 && (sc->sc_stop_requested || sc->sc_generation != gen))
+		error = EINTR;
 	if (error == 0)
 		error = sc->sc_ops->write_1(sc->sc_bus, 0x0522, pause);
-	/* A failed retune leaves TX paused. The caller must stop the core. */
-	if (error == 0)
-		sc->sc_channel = ch;
-	return error;
+	if (error == 0 && (sc->sc_stop_requested || sc->sc_generation != gen))
+		error = EINTR;
+	if (error != 0) {
+		/*
+		 * The lifecycle owner must stop outside the interrupt lock.
+		 * Keep host TX closed even if TXPAUSE was not accepted.
+		 */
+		sc->sc_stop_requested = 1;
+		return error;
+	}
+	sc->sc_channel = ch;
+#ifndef RTW88_RFK_EXPERIMENT
+	sc->sc_phy.channel_valid = 1;
+#endif
+	return 0;
 }
 
 int
