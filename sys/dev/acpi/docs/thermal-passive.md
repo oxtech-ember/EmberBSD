@@ -15,6 +15,10 @@ processors. Without `_TC1`, `_TC2` or `_PSL` the zone does not limit them.
 The zone samples every `_TSP` tenths of a second while it limits its
 processors and when it is within 5 K of `_PSV`. Otherwise it keeps `_TZP`.
 A missing or zero `_TSP`, or one not shorter than `_TZP`, keeps `_TZP`.
+The poll callout schedules the next poll before its sample runs; a sample
+that enters the `_TSP` band shortens the pending poll at once, so the first
+passive step is followed by the next within `_TSP`, not `_TZP`. Detach stops
+the callout again after the last queued sample.
 
 ## Processor performance
 

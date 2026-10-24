@@ -14,7 +14,7 @@ awk '/^#define[[:space:]]+ATZ/ { print }
 /^struct acpitz_(zone|softc) \{/ { copy = 1 }
 copy { print }
 copy && /^};/ { copy = 0 }' "$tz" > "$work/acpitz-types.h"
-awk '/^acpitz_(passive|passive_release)\(/ { print "static void"; copy = 1 }
+awk '/^acpitz_(passive|passive_release|tick|reschedule)\(/ { print "static void"; copy = 1 }
 /^acpitz_(poll_period|sysctl_passive)\(/ { print "static int"; copy = 1 }
 copy { print }
 copy && /^}/ { copy = 0 }' "$tz" > "$work/acpitz-passive.h"

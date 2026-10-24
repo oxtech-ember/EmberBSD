@@ -137,6 +137,34 @@ sysctl_lookup(SYSCTLFN_ARGS)
 typedef struct acpitz_softc *device_t;
 
 static struct acpitz_softc *device_private(device_t dv) { return dv; }
+
+/* Deferred ACPI work and the poll callout, in call order. */
+#define OSL_NOTIFY_HANDLER 0
+static void (*queued)(void *);
+static int scheduled, schedules;
+static char order[16];
+
+static ACPI_STATUS
+AcpiOsExecute(int type, void (*func)(void *), void *arg)
+{
+	(void)type;
+	(void)arg;
+	queued = func;
+	strncat(order, "q", sizeof(order) - strlen(order) - 1);
+	return 0;
+}
+
+static void
+callout_schedule(struct callout *c, int ticks)
+{
+	(void)c;
+	scheduled = ticks;
+	schedules++;
+	strncat(order, "s", sizeof(order) - strlen(order) - 1);
+}
+
+static void acpitz_get_status(void *);
+static void acpitz_reschedule(struct acpitz_softc *);
 static const char *acpitz_celcius_string(uint32_t t) { (void)t; return "t"; }
 
 static void
@@ -263,13 +291,22 @@ zone_init(struct acpitz_softc *sc, struct cpu_info **psl)
 	sc->sc_zone.prevtmp = sc->sc_zone.tmp;
 }
 
-/* One sample in 0.1 C, as acpitz_get_status records it. */
+/* One sample in 0.1 C, as acpitz_get_status records and ends it. */
+static unsigned int next_sample;
+
 static void
 sample(struct acpitz_softc *sc, unsigned int tenth_c)
 {
 	sc->sc_zone.prevtmp = sc->sc_zone.tmp;
 	sc->sc_zone.tmp = ATZ_ZEROC + tenth_c;
 	acpitz_passive(sc);
+	acpitz_reschedule(sc);
+}
+
+static void
+acpitz_get_status(void *opaque)
+{
+	sample(opaque, next_sample);
 }
 
 static void
@@ -395,6 +432,47 @@ zone_contract(void)
 	CHECK(acpitz_poll_period(&sc) == 300 * hz / 10);
 	sc.sc_zone.tzp = 0;
 	CHECK(acpitz_poll_period(&sc) == 1);
+
+	/*
+	 * acpitz_tick picks the next period before its queued sample runs.
+	 * A sample that crosses _PSV must start _TSP sampling at once.
+	 */
+	zone_init(&sc, psl);
+	sc.sc_ticking = true;
+	order[0] = '\0';
+	acpitz_tick(&sc);
+	CHECK(strcmp(order, "sq") == 0 && scheduled == 300 * hz / 10);
+	next_sample = 860;
+	schedules = 0;
+	queued(&sc);
+	CHECK(sc.sc_passive < ACPI_PERFLIMIT_NONE);
+	CHECK(schedules == 1 && scheduled == 10 * hz / 10);
+	/* Later samples keep _TSP; no reschedule repeats the same period. */
+	acpitz_tick(&sc);
+	queued(&sc);
+	CHECK(scheduled == 10 * hz / 10 && schedules == 2);
+	/* Entering the band below _PSV also shortens the pending poll. */
+	acpitz_passive_release(&sc);
+	zone_init(&sc, psl);
+	sc.sc_ticking = true;
+	acpitz_tick(&sc);
+	next_sample = 800;
+	queued(&sc);
+	CHECK(sc.sc_passive == ACPI_PERFLIMIT_NONE && scheduled == 10 * hz / 10);
+	/* A recovered zone returns to _TZP on the next tick. */
+	sc.sc_zone.tmp = ATZ_ZEROC + 400;
+	acpitz_tick(&sc);
+	CHECK(scheduled == 300 * hz / 10);
+	/* A stopping or not yet started zone neither polls nor reschedules. */
+	sc.sc_ticking = false;
+	schedules = 0;
+	queued = NULL;
+	acpitz_tick(&sc);
+	CHECK(schedules == 0 && queued == NULL);
+	sc.sc_zone.tmp = sc.sc_zone.psv;
+	acpitz_reschedule(&sc);
+	CHECK(schedules == 0);
+	acpitz_passive_release(&sc);
 
 	for (i = 1; i < MAXCPUS; i++)
 		acpi_perflimit_detach(&cpus[i]);

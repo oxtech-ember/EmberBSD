@@ -146,6 +146,8 @@ struct acpitz_softc {
 	size_t			 sc_psl_size;
 	unsigned int		 sc_passive;	/* _PSL limit, percent */
 	bool			 sc_passive_failed;
+	bool			 sc_ticking;	/* the poll callout may run */
+	int			 sc_period;	/* pending poll, ticks */
 };
 
 static int		acpitz_match(device_t, cfdata_t, void *);
@@ -181,6 +183,7 @@ static void		acpitz_print_processor_list(device_t);
 static void		acpitz_passive(device_t);
 static void		acpitz_passive_release(device_t);
 static int		acpitz_poll_period(const struct acpitz_softc *);
+static void		acpitz_reschedule(struct acpitz_softc *);
 static int		acpitz_sysctl_passive(SYSCTLFN_PROTO);
 
 CFATTACH_DECL_NEW(acpitz, sizeof(struct acpitz_softc),
@@ -260,7 +263,10 @@ acpitz_attach(device_t parent, device_t self, void *aux)
 	acpitz_init_envsys(self);
 	acpitz_init_sysctl(self);
 
-	callout_schedule(&sc->sc_callout, acpitz_poll_period(sc));
+	/* Samples queued before this point must not touch the callout. */
+	sc->sc_period = acpitz_poll_period(sc);
+	atomic_store_relaxed(&sc->sc_ticking, true);
+	callout_schedule(&sc->sc_callout, sc->sc_period);
 }
 
 static int
@@ -272,15 +278,19 @@ acpitz_detach(device_t self, int flags)
 	ACPI_STATUS rv;
 	int i;
 
+	/* A late tick or sample no longer queues work or rearms the callout. */
+	atomic_store_relaxed(&sc->sc_ticking, false);
 	sysctl_teardown(&sc->sc_sysctllog);
 	callout_halt(&sc->sc_callout, NULL);
-	callout_destroy(&sc->sc_callout);
 
 	pmf_device_deregister(self);
 	acpi_deregister_notify(sc->sc_node);
 
 	/* Drain queued thermal callbacks after stopping all their producers. */
 	sysmon_task_queue_barrier(0);
+	/* A sample that ran before the barrier may have shortened the poll. */
+	callout_halt(&sc->sc_callout, NULL);
+	callout_destroy(&sc->sc_callout);
 
 	/*
 	 * Although the device itself should not contain any power
@@ -460,6 +470,7 @@ acpitz_get_status(void *opaque)
 
 	acpitz_passive(dv);
 	acpitz_set_active(sc, active);
+	acpitz_reschedule(sc);
 }
 
 /*
@@ -552,6 +563,27 @@ acpitz_poll_period(const struct acpitz_softc *sc)
 	    (tmp != ATZ_TMP_INVALID && tmp + ATZ_PASSIVE_NEAR >= psv)))
 		period = tsp;
 	return MAX(1, (int)(period * hz / 10));
+}
+
+/*
+ * acpitz_reschedule: shorten the pending poll after a sample.
+ *
+ * acpitz_tick schedules the next poll before its queued sample runs.
+ * When that sample brings the zone near _PSV or into passive cooling,
+ * sampling at _TSP starts now rather than after the pending _TZP poll.
+ */
+static void
+acpitz_reschedule(struct acpitz_softc *sc)
+{
+	int period;
+
+	if (!atomic_load_relaxed(&sc->sc_ticking))
+		return;
+	period = acpitz_poll_period(sc);
+	if (period >= atomic_load_relaxed(&sc->sc_period))
+		return;
+	atomic_store_relaxed(&sc->sc_period, period);
+	callout_schedule(&sc->sc_callout, period);
 }
 
 static void
@@ -1175,10 +1207,17 @@ acpitz_tick(void *opaque)
 {
 	device_t dv = opaque;
 	struct acpitz_softc *sc = device_private(dv);
+	int period;
+
+	if (!atomic_load_relaxed(&sc->sc_ticking))
+		return;
+
+	/* Schedule first; the queued sample can then only shorten it. */
+	period = acpitz_poll_period(sc);
+	atomic_store_relaxed(&sc->sc_period, period);
+	callout_schedule(&sc->sc_callout, period);
 
 	(void)AcpiOsExecute(OSL_NOTIFY_HANDLER, acpitz_get_status, dv);
-
-	callout_schedule(&sc->sc_callout, acpitz_poll_period(sc));
 }
 
 static void

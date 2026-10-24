@@ -211,6 +211,16 @@ acpi_perflimit_set(struct cpu_info *ci, const void *owner, unsigned int limit)
 }
 
 static void acpitz_passive(device_t);
+
+/* Each completed sample must give the poll a chance to shorten. */
+static unsigned int reschedules;
+
+static void
+acpitz_reschedule(struct acpitz_softc *sc)
+{
+	(void)sc;
+	reschedules++;
+}
 static void acpitz_get_status(void *);
 static void acpitz_get_zone(void *, int);
 static void acpitz_set_active(struct acpitz_softc *, int);
@@ -256,7 +266,10 @@ main(void)
 	acpitz_get_zone(&sc, 1);
 	CHECK(allocations == 4);
 	at(&sc, 499, ATZ_ACTIVE_NONE);
+	CHECK(reschedules > 0);
+	on = reschedules;
 	at(&sc, 500, 3);
+	CHECK(reschedules == on + 1);
 	at(&sc, 450, 3);
 	at(&sc, 449, ATZ_ACTIVE_NONE);
 	at(&sc, 600, 2);
