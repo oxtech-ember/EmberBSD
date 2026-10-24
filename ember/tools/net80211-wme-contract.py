@@ -70,7 +70,9 @@ ht = read("sys/net80211/ieee80211_ht20.c")
 # Complete actual shared HT helper bodies, only includes supplied by service model.
 parts = [ht[:ht.index("#include")], ht[ht.index("int\nieee80211_ht20_optional"):]]
 phy = read("sys/net80211/ieee80211_phy_ies.c")
-parts.append(phy[phy.index("size_t\nieee80211_phy_ies_size"):])
+size_helper = phy[phy.index("size_t\nieee80211_phy_ies_size"):]
+parts.append(size_helper.replace("size_t\nieee80211_phy_ies_size",
+                                 "static size_t\nieee80211_phy_ies_size", 1))
 vht = read("sys/net80211/ieee80211_vht_ies.c")
 parts.append(vht[vht.index("static uint16_t"):])
 proto_source = read("sys/net80211/ieee80211_proto.c")
