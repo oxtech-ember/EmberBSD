@@ -93,6 +93,7 @@ prepare(struct rtw88_softc *sc)
 	sc->sc_ops = &ops;
 	sc->sc_resources_ready = sc->sc_running = sc->sc_started = 1;
 	sc->sc_channel = 1;
+	sc->sc_phy.channel = (struct rtw88_channel_tuple){1, 1, 20};
 	sc->sc_basic_rates = 0xf;
 	for (unsigned q = 0; q < RTW88_NTXQ; q++) {
 		struct rtw88_txq *txq = &sc->sc_txq[q];
