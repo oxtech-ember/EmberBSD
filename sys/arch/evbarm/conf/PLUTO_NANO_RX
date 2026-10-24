@@ -2,6 +2,9 @@
 # RX-only Pluto Nano RAM-root profile. Requires an RX-only FDT policy.
 include "arch/evbarm/conf/PLUTO_NANO_RAMDISK"
 
+# Check ownership and lock invariants in the experimental RAM receiver.
+options DIAGNOSTIC
+
 zynqspi* at fdt?
 spi* at zynqspi?
 ad9361phy* at spi?
