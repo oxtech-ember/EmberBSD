@@ -31,6 +31,8 @@ struct zynqudc_softc {
 	uint64_t cancel_epoch[ZUDC_SLOTS];
 	struct clk *clock;
 	bool ready, opened, closing;
+	bool phy_initial_valid;
+	uint8_t phy_function_initial, phy_otg_initial;
 	bool users[ZUDC_SLOTS];
 	bool endpoint_closed[ZUDC_SLOTS];
 	unsigned operations;
@@ -174,13 +176,24 @@ zynqudc_phy(struct zynqudc_softc *sc)
 	    ZUDC_ULPI_OTG_DM_PULLDOWN, true, NULL);
 	if (error != 0)
 		return error;
-	/* Normal HS transceiver, termination enabled; preserve unrelated bits. */
+	/* ULPI 1.1 table 40: attach as FS first; the controller negotiates HS. */
 	error = zynqudc_ulpi(sc, ZUDC_ULPI_FUNCTION, 0, false, &value);
 	if (error != 0)
 		return error;
 	value = (value & ~(ZUDC_ULPI_XCVR | ZUDC_ULPI_OPMODE)) |
-	    ZUDC_ULPI_TERMSELECT | ZUDC_ULPI_SUSPENDM;
-	return zynqudc_ulpi(sc, ZUDC_ULPI_FUNCTION, value, true, NULL);
+	    ZUDC_ULPI_XCVR_FS | ZUDC_ULPI_TERMSELECT | ZUDC_ULPI_SUSPENDM;
+	error = zynqudc_ulpi(sc, ZUDC_ULPI_FUNCTION, value, true, NULL);
+	if (error != 0)
+		return error;
+	/* Cache only these non-destructive register reads before RUN. */
+	error = zynqudc_ulpi(sc, ZUDC_ULPI_FUNCTION, 0, false,
+	    &sc->phy_function_initial);
+	if (error != 0)
+		return error;
+	error = zynqudc_ulpi(sc, 0x0a, 0, false, &sc->phy_otg_initial);
+	if (error == 0)
+		sc->phy_initial_valid = true;
+	return error;
 }
 
 /* The final reset hook cannot wait for hardclock, soft interrupts, or users. */
@@ -458,6 +471,52 @@ zynqudc_close(dev_t dev, int flags, int mode, struct lwp *l)
 	return error;
 }
 
+static void
+zynqudc_snapshot(struct zynqudc_softc *sc, struct usbperiph_snapshot *s)
+{
+	const struct zynqudc *c = &sc->core;
+
+	/* Includes all reserved fields and any ABI padding. */
+	memset(s, 0, sizeof(*s));
+	s->version = USBPERIPH_SNAPSHOT_VERSION;
+	s->generation = c->generation;
+	s->irq_count = c->irq_count;
+	s->setup_count = c->setup_count;
+	s->reset_count = c->reset_count;
+	s->disconnect_count = c->disconnect_count;
+	s->last_irq_status = c->last_irq_status;
+	memcpy(s->last_setup, c->last_setup, sizeof(s->last_setup));
+	s->flags = (c->connected ? USBPERIPH_SNAPSHOT_CONNECTED : 0) |
+	    (c->faulted ? USBPERIPH_SNAPSHOT_FAULTED : 0) |
+	    (c->suspended ? USBPERIPH_SNAPSHOT_SUSPENDED : 0) |
+	    (sc->stopping ? USBPERIPH_SNAPSHOT_STOPPING : 0) |
+	    (sc->phy_initial_valid ? USBPERIPH_SNAPSHOT_PHY_INITIAL_VALID : 0);
+	s->configuration = c->configuration;
+	s->address = c->address;
+	s->ep0_phase = c->ep0_phase;
+	for (unsigned i = 0; i < c->nep * 2; i++) {
+		if (c->req[i].active)
+			s->active_slots |= 1U << i;
+		if (c->req[i].retained)
+			s->retained_slots |= 1U << i;
+	}
+	s->phy_function_initial = sc->phy_function_initial;
+	s->phy_otg_initial = sc->phy_otg_initial;
+	/* These registers have no read-to-clear semantics. Never read ULPI here. */
+	s->command = bus_space_read_4(c->bst, c->bsh, ZUDC_CMD);
+	s->status = bus_space_read_4(c->bst, c->bsh, ZUDC_STS);
+	s->interrupt_enable = bus_space_read_4(c->bst, c->bsh, ZUDC_INTR);
+	s->port = bus_space_read_4(c->bst, c->bsh, ZUDC_PORT);
+	s->otg = bus_space_read_4(c->bst, c->bsh, ZUDC_OTG);
+	s->mode = bus_space_read_4(c->bst, c->bsh, ZUDC_MODE);
+	s->setup_status = bus_space_read_4(c->bst, c->bsh, ZUDC_SETUP);
+	s->prime = bus_space_read_4(c->bst, c->bsh, ZUDC_PRIME);
+	s->flush = bus_space_read_4(c->bst, c->bsh, ZUDC_FLUSH);
+	s->endpoint_status = bus_space_read_4(c->bst, c->bsh, ZUDC_STAT);
+	s->complete = bus_space_read_4(c->bst, c->bsh, ZUDC_COMPLETE);
+	s->epctrl0 = bus_space_read_4(c->bst, c->bsh, ZUDC_EPCTRL(0));
+}
+
 static int
 zynqudc_endpoint_gate(struct zynqudc_softc *sc,
     const struct usbperiph_endpoint_gate *gate)
@@ -613,6 +672,9 @@ zynqudc_ioctl(dev_t dev, u_long command, void *data, int flags, struct lwp *l)
 		break;
 	case USBPERIPH_IOC_DISCONNECT:
 		error = zynqudc_disconnect(&sc->core);
+		break;
+	case USBPERIPH_IOC_SNAPSHOT:
+		zynqudc_snapshot(sc, data);
 		break;
 	case USBPERIPH_IOC_ENDPOINT_GATE:
 		error = zynqudc_endpoint_gate(sc, data);

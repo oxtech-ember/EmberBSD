@@ -17,7 +17,8 @@ Hardware must report device support and at least three endpoint numbers.
 The driver checks the ULPI viewport with finite timeouts. It clears host
 VBUS drive, charge, and discharge controls before a function can connect.
 Device initialization sets OTGSC termination and retains the ULPI D- pulldown.
-It clears the ULPI D+ pulldown and enables normal transceiver termination.
+It clears the ULPI D+ pulldown and selects full-speed attachment termination.
+High-speed negotiation remains a controller operation after host reset.
 The existing EHCI path retains its host configuration.
 
 The hard interrupt disables controller interrupts and schedules a USB soft
@@ -94,6 +95,25 @@ The syscall copies the output structure back only when the driver succeeds.
 An error can therefore leave old field values in a reused user structure.
 If a close crosses copyout, discard the already copied data on that error.
 
+## Read-only diagnostics
+
+`USBPERIPH_IOC_SNAPSHOT` returns a fixed 144-byte version-1 snapshot on the
+owning descriptor. Reserved fields and padding are zero. The driver takes
+its existing lock and reads twelve controller registers without writes,
+read-to-clear registers, endpoint DMA contents, or ULPI transactions.
+The result contains lifecycle state, IRQ/setup/reset/disconnect counters,
+last handled IRQ and setup, endpoint ownership masks, and register state.
+Endpoint masks use bit `2 * endpoint_number + direction_in`.
+
+The PHY fields are cached initialization readbacks taken before RUN.
+`USBPERIPH_SNAPSHOT_PHY_INITIAL_VALID` marks them valid. They are not live
+PHY state and cannot prove the post-negotiation line configuration.
+As for other output ioctls, ignore the entire result if the ioctl fails.
+
+The diagnostic function prints snapshots before/after CONNECT, for at most
+four enumeration timeouts, and after configuration. It flushes each line
+so redirected logs remain visible while enumeration is incomplete.
+
 ## DMA ownership
 
 The controller owns one contiguous 2048-byte queue-head region and a
@@ -124,6 +144,12 @@ commit `f8809afec39a7048597f34f39372169be20735cf`:
 
 - `XilinxProcessorIPLib/drivers/usbps/src/xusbps_hw.h`
 - `XilinxProcessorIPLib/drivers/usbps/src/xusbps_endpoint.c`
+
+The initial full-speed ULPI setting follows Table 5-1 (ULPI 1.1 Table 40)
+of the [USB3320 data sheet](https://ww1.microchip.com/downloads/aemDocuments/documents/UNG/ProductDocuments/DataSheets/USB3320-Data-Sheet-DS00001792.pdf).
+An OTG peripheral starts with XcvrSelect=01, TermSelect=1, OpMode=00,
+D+ pulldown disabled, and D- pulldown enabled. HS selection with
+TermSelect=1 and normal OpMode is not a defined attachment state.
 
 Both donor files declare MIT. The endpoint file credits Xilinx, 2010–2021,
 and Advanced Micro Devices, 2023–2026. The implementation here is original

@@ -29,6 +29,9 @@ struct zynqudc {
 	struct usbperiph_config config;
 	struct usbperiph_event event;
 	uint64_t generation, sequence;
+	uint64_t irq_count, setup_count, reset_count, disconnect_count;
+	uint32_t last_irq_status;
+	uint8_t last_setup[8];
 	unsigned nep;
 	uint8_t configuration, address, pending_address, ep0_phase;
 	bool faulted, connected, suspended, valid_config, event_pending;

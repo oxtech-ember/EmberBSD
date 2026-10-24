@@ -34,13 +34,13 @@ typedef void *bus_dma_tag_t;
 typedef struct { uint64_t ds_addr; } bus_dma_segment_t;
 typedef struct dma_map { bus_dma_segment_t dm_segs[1]; } *bus_dmamap_t;
 static uint32_t mmio[0x300/4];
-static unsigned delays, syncs, primes;
+static unsigned delays, syncs, primes, mmio_writes;
 static bool final_context;
 static uint8_t ulpi_regs[256];
 static bool stuck_reset, stuck_flush, stuck_prime, tripwire_race;
 static inline uint32_t bus_space_read_4(bus_space_tag_t t, bus_space_handle_t h, unsigned r) { (void)t;(void)h; return mmio[r/4]; }
 static inline void bus_space_write_4(bus_space_tag_t t, bus_space_handle_t h, unsigned r, uint32_t v) {
- (void)t;(void)h;
+ (void)t;(void)h;mmio_writes++;
  if(r==0x170) {
   unsigned addr=(v>>16)&255;
   if(v&0x40000000U) {
@@ -66,6 +66,7 @@ static inline void delay(unsigned n) { delays+=n; }
 #include "driver.inc"
 #include "pattern.h"
 _Static_assert(sizeof(struct usbperiph_endpoint_gate)==16,"endpoint gate ABI size");
+_Static_assert(sizeof(struct usbperiph_snapshot)==144,"snapshot ABI size");
 static struct zynqudc fixture_core;
 static struct dma_map maps[ZUDC_SLOTS+1];
 static struct { _Alignas(2048) uint8_t bytes[4096]; } desc;
@@ -83,7 +84,7 @@ static struct usbperiph_config config(void) {
 }
 static void fixture(void) {
  memset(&fixture_core,0,sizeof(fixture_core));memset(mmio,0,sizeof(mmio));memset(&desc,0,sizeof(desc));
- memset(buffers,0,sizeof(buffers)); delays=syncs=primes=0;memset(ulpi_regs,0,sizeof(ulpi_regs));stuck_reset=stuck_flush=stuck_prime=tripwire_race=false;
+ memset(buffers,0,sizeof(buffers)); delays=syncs=primes=mmio_writes=0;memset(ulpi_regs,0,sizeof(ulpi_regs));stuck_reset=stuck_flush=stuck_prime=tripwire_race=false;
  fixture_core.nep=4;fixture_core.descriptors.kva=desc.bytes;fixture_core.descriptors.size=4096;fixture_core.descriptors.map=&maps[0];maps[0].dm_segs[0].ds_addr=0x100000;
  fixture_core.qh=(void *)desc.bytes;fixture_core.td=(void *)(desc.bytes+2048);
  for(unsigned i=0;i<ZUDC_SLOTS;i++) { fixture_core.req[i].data.kva=buffers[i];fixture_core.req[i].data.size=USBPERIPH_MAX_XFER;fixture_core.req[i].data.map=&maps[i+1];maps[i+1].dm_segs[0].ds_addr=0x200003+i*0x10000; }
@@ -171,7 +172,8 @@ static void wait_for(unsigned n) {
 static void test_device_phy(void) {
  struct zynqudc_softc phy={0};ulpi_regs[0x0a]=0x7f;
  CHECK(zynqudc_phy(&phy)==0);CHECK(ulpi_regs[0x0a]==4);
- CHECK((ulpi_regs[4]&0x5f)==0x44);
+ CHECK((ulpi_regs[4]&0x5f)==0x45);CHECK(phy.phy_initial_valid);
+ CHECK(phy.phy_function_initial==0x45);CHECK(phy.phy_otg_initial==4);
 }
 static void test_stopped_irq(void) {
  fixture();ready();memset(&attachment,0,sizeof(attachment));attachment.core=fixture_core;
@@ -331,6 +333,31 @@ static void test_gate_copyout_and_fault(void) {
  unsigned before=primes;CHECK(zynqudc_ioctl(0,USBPERIPH_IOC_XFER,&thread.x,0,NULL)==EIO);CHECK(primes==before);
  attachment_finish();stuck_flush=false;
 }
+static void test_snapshot(void) {
+ attachment_fixture(true);CHECK(zynqudc_phy(&attachment)==0);
+ CHECK(zynqudc_submit(&attachment.core,0x81,32,0)==0);
+ mmio[ZUDC_STS/4]=0x145;mmio[ZUDC_SETUP/4]=1;mmio[ZUDC_COMPLETE/4]=0x10000;
+ /* Cached PHY is visibly distinct from later live register values. */
+ ulpi_regs[4]=0x99;ulpi_regs[0x0a]=0x88;
+ struct usbperiph_snapshot snapshot;memset(&snapshot,0xa5,sizeof(snapshot));unsigned before=mmio_writes;
+ CHECK(zynqudc_ioctl(0,USBPERIPH_IOC_SNAPSHOT,&snapshot,0,NULL)==0);
+ CHECK(mmio_writes==before);CHECK(snapshot.version==1);CHECK(snapshot.reserved0==0);CHECK(snapshot.reserved1==0);
+ const uint8_t zero[6]={0};CHECK(memcmp(snapshot.reserved,zero,6)==0);
+ CHECK(snapshot.flags==0x11);CHECK(snapshot.configuration==1);CHECK(snapshot.address==0);CHECK(snapshot.ep0_phase==0);
+ CHECK(snapshot.irq_count==2);CHECK(snapshot.setup_count==1);CHECK(snapshot.reset_count==0);CHECK(snapshot.disconnect_count==0);
+ CHECK(snapshot.last_irq_status==1);const uint8_t last_setup[8]={0,9,1,0,0,0,0,0};
+ CHECK(memcmp(snapshot.last_setup,last_setup,8)==0);CHECK(snapshot.active_slots==8);CHECK(snapshot.retained_slots==0);
+ CHECK(snapshot.command==1);CHECK(snapshot.status==0x145);CHECK(snapshot.interrupt_enable==0x147);
+ CHECK(snapshot.mode==0xa);CHECK(snapshot.otg==8);CHECK(snapshot.port==0x80000000);
+ CHECK(snapshot.setup_status==1);CHECK(snapshot.complete==0x10000);CHECK(snapshot.endpoint_status==0x20000);
+ CHECK(mmio[ZUDC_STS/4]==0x145);CHECK(mmio[ZUDC_SETUP/4]==1);CHECK(mmio[ZUDC_COMPLETE/4]==0x10000);
+ CHECK(snapshot.phy_function_initial==0x45);CHECK(snapshot.phy_otg_initial==4);
+ zynqudc_softirq(&attachment);CHECK(zynqudc_ioctl(0,USBPERIPH_IOC_SNAPSHOT,&snapshot,0,NULL)==0);
+ CHECK(snapshot.irq_count==3);CHECK(snapshot.reset_count==1);CHECK(snapshot.active_slots==0);CHECK(snapshot.configuration==0);
+ CHECK(zynqudc_ioctl(0,USBPERIPH_IOC_DISCONNECT,NULL,0,NULL)==0);
+ CHECK(zynqudc_ioctl(0,USBPERIPH_IOC_SNAPSHOT,&snapshot,0,NULL)==0);CHECK(snapshot.disconnect_count==1);
+ CHECK((snapshot.flags&USBPERIPH_SNAPSHOT_CONNECTED)==0);attachment_finish();
+}
 static void test_cdev(void) {
  fixture();ready();setup(0,9,1,0,0);done(1,0,0);
  memset(&attachment,0,sizeof(attachment));attachment.core=fixture_core;attachment.ready=true;lookup=&attachment;
@@ -411,6 +438,7 @@ int main(void) {
  test_status_recipients();
  test_endpoint_gate();
  test_gate_copyout_and_fault();
+ test_snapshot();
  test_cdev();
  printf("zynqudc: %u checks passed\n",checks);return 0;
 }
