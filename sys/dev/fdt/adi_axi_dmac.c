@@ -2,7 +2,7 @@
 /* Origin: EmberBSD native ADI AXI DMAC driver. */
 /*
  * Native ADI AXI DMAC, finite single-segment transfers with checked teardown.
- * Register contract: Analog Devices AXI DMAC 4.3/4.4 HDL documentation,
+ * Register contract: Analog Devices AXI DMAC 4.3 through 4.5 HDL documentation,
  * https://analogdevicesinc.github.io/hdl/library/axi_dmac/index.html
  * Board-specific drain acknowledgement is supplied by a kernel consumer.
  */
@@ -40,6 +40,8 @@
 #define DMAC_DEST_STRIDE	0x420
 #define DMAC_SOURCE_STRIDE 0x424
 #define DMAC_DONE	0x428
+#define DMAC_DEBUG_STATUS 0x43c
+#define DMAC_DEBUG_IDLE_45C 0x701U
 #define DMAC_ENABLE	1
 #define DMAC_IRQ_EOT	2
 #define DMAC_IRQ_ALL	3
@@ -51,6 +53,7 @@ struct adi_axi_dmac_softc {
 	bus_space_tag_t sc_bst;
 	bus_space_handle_t sc_bsh;
 	bus_size_t sc_size;
+	bool sc_debug_idle_45c;
 	bus_dma_tag_t sc_dmat;
 	struct clk *sc_clk;
 	void *sc_ih;
@@ -89,6 +92,9 @@ struct adi_axi_dmac_channel {
 struct adi_axi_dmac_guard {
 	struct adi_axi_dmac_softc *g_sc;
 	device_t g_owner;
+	struct adi_axi_dmac_channel *g_channel;
+	bool g_bound;
+	bool g_prepared;
 };
 
 struct adi_axi_dmac_buffer {
@@ -127,10 +133,12 @@ dmac_interface(struct adi_axi_dmac_softc *sc, uint32_t core_version,
 
 	/* INTERFACE_DESCRIPTION reports log2(bytes per beat), not bits. */
 	if ((core_version >> 16) != 4 || ((core_version >> 8) & 255) < 3 ||
-	    ((core_version >> 8) & 255) > 4 || src_type > 2 || dst_type > 2 ||
+	    ((core_version >> 8) & 255) > 5 || src_type > 2 || dst_type > 2 ||
 	    (src_type == 0) == (dst_type == 0) ||
 	    src_width > 7 || dst_width > 7)
 		return EOPNOTSUPP;
+	/* Only this exact register layout has a reviewed reset-manager witness. */
+	sc->sc_debug_idle_45c = core_version == 0x00040563;
 	sc->sc_read = dst_type == 0;
 	sc->sc_stream_source = src_type == 1;
 	sc->sc_stream_dest = dst_type == 1;
@@ -142,6 +150,45 @@ static uint32_t
 dmac_read(struct adi_axi_dmac_softc *sc, bus_size_t reg)
 {
 	return bus_space_read_4(sc->sc_bst, sc->sc_bsh, reg);
+}
+
+/* The owner holds the guard lifetime and excludes all new submissions.
+ * This read-only poll can run inside a drain callback with sc_lock held.
+ * Transfer IDs are not a witness: the HDL clears both on CONTROL disable.
+ * 4.5.c without SG reports RESET state after all AXI responses and resets.
+ * A core with stripped debug registers reads zero and must time out.
+ */
+static int
+dmac_wait_idle_45c(struct adi_axi_dmac_softc *sc, unsigned int started,
+    unsigned int wait_ticks)
+{
+	if (!sc->sc_debug_idle_45c || sc->sc_size < DMAC_DEBUG_STATUS + 4)
+		return EOPNOTSUPP;
+	for (;;) {
+		if (dmac_read(sc, DMAC_CONTROL) == 0 &&
+		    dmac_read(sc, DMAC_SUBMIT) == 0 &&
+		    (dmac_read(sc, DMAC_DEBUG_STATUS) & 0xfffU) ==
+		    DMAC_DEBUG_IDLE_45C)
+			return 0;
+		if ((unsigned int)getticks() - started >= wait_ticks)
+			return ETIMEDOUT;
+		delay(10);
+	}
+}
+
+int
+adi_axi_dmac_guard_wait_idle(const struct adi_axi_dmac_guard *g,
+    unsigned int timeout_ms)
+{
+	struct adi_axi_dmac_softc *sc;
+
+	if (g == NULL || timeout_ms == 0 || timeout_ms > 60000)
+		return EINVAL;
+	sc = g->g_sc;
+	if (sc->sc_guard != g || sc->sc_quarantined)
+		return EIO;
+	return dmac_wait_idle_45c(sc, (unsigned int)getticks(),
+	    MAX(1, mstohz(timeout_ms)));
 }
 
 static void
@@ -232,8 +279,12 @@ adi_axi_dmac_guard_check(struct adi_axi_dmac_guard *g)
 	int error = 0;
 
 	mutex_enter(&sc->sc_lock);
-	if (sc->sc_guard != g || sc->sc_quarantined ||
-	    (dmac_read(sc, DMAC_CONTROL) & DMAC_ENABLE)) {
+	if (sc->sc_guard != g || sc->sc_quarantined || sc->sc_pending ||
+	    dmac_read(sc, DMAC_SUBMIT) != 0 ||
+	    (dmac_read(sc, DMAC_CONTROL) & DMAC_ENABLE) ||
+	    (g->g_prepared ? (sc->sc_channel != g->g_channel ||
+	    !sc->sc_drained) :
+	    sc->sc_channel != NULL)) {
 		dmac_quarantine_locked(sc);
 		error = EIO;
 	}
@@ -241,19 +292,49 @@ adi_axi_dmac_guard_check(struct adi_axi_dmac_guard *g)
 	return error;
 }
 
-void
+int
 adi_axi_dmac_unreserve(struct adi_axi_dmac_guard *g)
 {
 	struct adi_axi_dmac_softc *sc = g->g_sc;
+	struct adi_axi_dmac_channel *c = g->g_channel;
+	int error = 0;
 
 	mutex_enter(&sc->sc_lock);
-	KASSERT(sc->sc_guard == g);
-	KASSERT(!sc->sc_quarantined);
+	if (sc->sc_guard != g || sc->sc_quarantined) {
+		error = EIO;
+		goto out;
+	}
+	if (c != NULL && !LIST_EMPTY(&c->c_buffers)) {
+		error = EBUSY;
+		goto out;
+	}
+	if (g->g_prepared) {
+		if (sc->sc_channel != c || !sc->sc_drained || sc->sc_pending ||
+		    (dmac_read(sc, DMAC_CONTROL) & DMAC_ENABLE) ||
+		    dmac_read(sc, DMAC_SUBMIT) != 0) {
+			dmac_quarantine_locked(sc);
+			error = EIO;
+			goto out;
+		}
+		sc->sc_channel = NULL;
+	} else if (sc->sc_channel != NULL || sc->sc_pending ||
+	    (dmac_read(sc, DMAC_CONTROL) & DMAC_ENABLE) ||
+	    dmac_read(sc, DMAC_SUBMIT) != 0) {
+		dmac_quarantine_locked(sc);
+		error = EIO;
+		goto out;
+	}
 	sc->sc_guard = NULL;
+	out:
 	mutex_exit(&sc->sc_lock);
+	if (error != 0)
+		return error;
 	device_release(sc->sc_dev);
 	device_release(g->g_owner);
+	if (c != NULL)
+		kmem_free(c, sizeof(*c));
 	kmem_free(g, sizeof(*g));
+	return 0;
 }
 
 int
@@ -265,6 +346,8 @@ adi_axi_dmac_guard_cold_check(struct adi_axi_dmac_guard *g)
 	mutex_enter(&sc->sc_lock);
 	if (sc->sc_guard != g || sc->sc_quarantined || sc->sc_stopping ||
 	    sc->sc_used || sc->sc_channel != NULL || sc->sc_pending ||
+	    g->g_prepared || (g->g_channel != NULL &&
+	    !LIST_EMPTY(&g->g_channel->c_buffers)) ||
 	    (dmac_read(sc, DMAC_CONTROL) & DMAC_ENABLE) ||
 	    dmac_read(sc, DMAC_SUBMIT) != 0)
 		error = EIO;
@@ -294,12 +377,15 @@ dmac_stop_locked(struct adi_axi_dmac_channel *c, unsigned int timeout_ms,
 {
 	struct adi_axi_dmac_softc *sc = c->c_sc;
 	struct adi_axi_dmac_buffer *b;
+	unsigned int started, wait_ticks;
 	int error;
 
 	if (sc->sc_quarantined)
 		return EIO;
 	if (timeout_ms == 0 || timeout_ms > 60000)
 		return EINVAL;
+	started = (unsigned int)getticks();
+	wait_ticks = MAX(1, mstohz(timeout_ms));
 	sc->sc_drained = false;
 	mutex_enter(&sc->sc_irq_lock);
 	sc->sc_pending = false;
@@ -308,7 +394,9 @@ dmac_stop_locked(struct adi_axi_dmac_channel *c, unsigned int timeout_ms,
 	dmac_read(sc, DMAC_CONTROL);
 	mutex_exit(&sc->sc_irq_lock);
 	error = c->c_ops->drain(c->c_cookie, timeout_ms);
-	if (error == 0 && ((dmac_read(sc, DMAC_CONTROL) & DMAC_ENABLE) ||
+	if (error == 0 && sc->sc_debug_idle_45c)
+		error = dmac_wait_idle_45c(sc, started, wait_ticks);
+	else if (error == 0 && (dmac_read(sc, DMAC_CONTROL) != 0 ||
 	    dmac_read(sc, DMAC_SUBMIT) != 0))
 		error = EIO;
 	if (error != 0) {
@@ -333,6 +421,139 @@ dmac_stop_locked(struct adi_axi_dmac_channel *c, unsigned int timeout_ms,
 	return 0;
 }
 
+int
+adi_axi_dmac_guard_bind(struct adi_axi_dmac_guard *g,
+    const struct adi_axi_dmac_drain_ops *ops, void *cookie)
+{
+	struct adi_axi_dmac_softc *sc;
+	struct adi_axi_dmac_channel *c;
+	int error = 0;
+
+	if (g == NULL || ops == NULL || ops->drain == NULL)
+		return EINVAL;
+	sc = g->g_sc;
+	c = kmem_zalloc(sizeof(*c), KM_SLEEP);
+	c->c_sc = sc;
+	c->c_consumer = g->g_owner;
+	c->c_ops = ops;
+	c->c_cookie = cookie;
+	LIST_INIT(&c->c_buffers);
+	mutex_enter(&sc->sc_lock);
+	if (sc->sc_guard != g || sc->sc_quarantined)
+		error = EIO;
+	else if (g->g_bound)
+		error = EALREADY;
+	else if (sc->sc_channel != NULL)
+		error = EBUSY;
+	else {
+		g->g_channel = c;
+		g->g_bound = true;
+	}
+	mutex_exit(&sc->sc_lock);
+	if (error != 0)
+		kmem_free(c, sizeof(*c));
+	return error;
+}
+
+int
+adi_axi_dmac_guard_prepare(struct adi_axi_dmac_guard *g)
+{
+	struct adi_axi_dmac_softc *sc;
+	struct adi_axi_dmac_channel *c;
+	int error;
+
+	if (g == NULL)
+		return EINVAL;
+	sc = g->g_sc;
+	mutex_enter(&sc->sc_lock);
+	if (sc->sc_guard != g || sc->sc_quarantined || sc->sc_stopping) {
+		error = EIO;
+		goto out;
+	}
+	if (!g->g_bound || (c = g->g_channel) == NULL) {
+		error = ENXIO;
+		goto out;
+	}
+	if (g->g_prepared) {
+		if (sc->sc_channel != c || !sc->sc_drained || sc->sc_pending ||
+		    dmac_read(sc, DMAC_CONTROL) != 0 ||
+		    dmac_read(sc, DMAC_SUBMIT) != 0) {
+			dmac_quarantine_locked(sc);
+			error = EIO;
+		} else {
+			error = 0;
+		}
+		goto out;
+	}
+	/* This API admits finite ADI FIFO source to AXI memory only. */
+	if (!sc->sc_read || sc->sc_stream_source || sc->sc_stream_dest) {
+		error = EOPNOTSUPP;
+		goto out;
+	}
+	if (sc->sc_channel != NULL || sc->sc_pending) {
+		error = EBUSY;
+		goto out;
+	}
+	error = dmac_stop_locked(c, 1000, true);
+	if (error != 0)
+		goto out;
+	dmac_write(sc, DMAC_X_LENGTH, UINT32_MAX);
+	c->c_max_length = (uint64_t)dmac_read(sc, DMAC_X_LENGTH) + 1;
+	dmac_write(sc, DMAC_X_LENGTH, 0);
+	c->c_length_mask = dmac_read(sc, DMAC_X_LENGTH);
+	if (c->c_max_length == 0 || c->c_length_mask == UINT32_MAX) {
+		dmac_quarantine_locked(sc);
+		error = EIO;
+		goto out;
+	}
+	sc->sc_channel = c;
+	sc->sc_used = true;
+	g->g_prepared = true;
+	error = 0;
+out:
+	mutex_exit(&sc->sc_lock);
+	return error;
+}
+
+int
+adi_axi_dmac_guard_buffer_alloc(const struct adi_axi_dmac_guard *g, size_t size,
+	struct adi_axi_dmac_buffer **result)
+{
+	if (g == NULL || !g->g_prepared || g->g_channel == NULL)
+		return EINVAL;
+	return adi_axi_dmac_buffer_alloc(g->g_channel, size, result);
+}
+
+int
+adi_axi_dmac_guard_buffer_read(const struct adi_axi_dmac_guard *g,
+	struct adi_axi_dmac_buffer *b, void *data, size_t size)
+{
+	if (g == NULL || b == NULL || g->g_channel == NULL ||
+	    b->b_channel != g->g_channel)
+		return EINVAL;
+	return adi_axi_dmac_buffer_read(b, data, size);
+}
+
+int
+adi_axi_dmac_guard_transfer(const struct adi_axi_dmac_guard *g,
+	struct adi_axi_dmac_buffer *b, size_t size, unsigned int timeout_ms)
+{
+	if (g == NULL || !g->g_prepared || b == NULL ||
+	    b->b_channel != g->g_channel)
+		return EINVAL;
+	return adi_axi_dmac_transfer(b, size, timeout_ms);
+}
+
+int
+adi_axi_dmac_guard_buffer_free(const struct adi_axi_dmac_guard *g,
+	struct adi_axi_dmac_buffer *b)
+{
+	if (g == NULL || b == NULL || g->g_channel == NULL ||
+	    b->b_channel != g->g_channel)
+		return EINVAL;
+	return adi_axi_dmac_buffer_free(b);
+}
+
 /* PMF may sleep; the final hook must never sleep or call a consumer. */
 static bool
 adiaxidmac_shutdown(device_t dev, int howto)
@@ -348,6 +569,9 @@ adiaxidmac_shutdown(device_t dev, int howto)
 	mutex_exit(&sc->sc_buffer_lock);
 	if (sc->sc_quarantined)
 		error = EIO;
+	else if (sc->sc_guard != NULL)
+		/* Final shutdown cannot retire a lease pinned to a live owner. */
+		error = EBUSY;
 	else if (sc->sc_channel != NULL)
 		error = dmac_stop_locked(sc->sc_channel, 1000, true);
 	else if ((dmac_read(sc, DMAC_CONTROL) & DMAC_ENABLE) ||
@@ -387,7 +611,7 @@ adiaxidmac_shutdown_final(void *cookie)
 	    dmac_read(sc, DMAC_SUBMIT) != 0)
 		dmac_shutdown_halt(sc);
 	if (sc->sc_channel != NULL) {
-		struct adi_axi_dmac_buffer *b;
+		const struct adi_axi_dmac_buffer *b;
 
 		if (!sc->sc_drained)
 			dmac_shutdown_halt(sc);
@@ -801,7 +1025,7 @@ adiaxidmac_attach(device_t parent, device_t self, void *aux)
 	sc->sc_bst = faa->faa_bst;
 	sc->sc_dmat = faa->faa_dmat;
 	if (fdtbus_get_reg(sc->sc_phandle, 0, &address, &sc->sc_size) != 0 ||
-	    sc->sc_size < DMAC_DONE + 4) {
+	    sc->sc_size < DMAC_DEBUG_STATUS + 4) {
 		aprint_error(": invalid registers\n");
 		return;
 	}

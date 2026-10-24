@@ -3,7 +3,7 @@
 
 MAN=	aac.4 ac97.4 acardide.4 aceride.4 acphy.4 \
 	adbbt.4 adbkbd.4 adbms.4 \
-	adc.4 adm1026hm.4 admtemp.4 adt7462sm.4 \
+	adc.4 adiadc.4 adm1026hm.4 admtemp.4 adt7462sm.4 \
 	adv.4 adw.4 age.4 agp.4 agr.4 ahb.4 ahc.4 \
 	ahcisata.4 ahd.4 aht20temp.4 aibs.4 alc.4 ale.4 alipm.4 altmem.4 altq.4 \
 	am2315temp.4 amdgpio.4 amdpm.4 amdtemp.4 amhphy.4 amr.4 aps.4 asus.4 \

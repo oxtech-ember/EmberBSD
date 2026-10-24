@@ -859,7 +859,8 @@ ad9361_native_params_read(int phandle, uint32_t reference,
 		return EINVAL;
 	/* Native control cannot delegate state or transmitter control to pins. */
 	if (!params->frequency_division_duplex_mode_enable ||
-	    !params->two_rx_two_tx_mode_enable ||
+	    (!params->two_rx_two_tx_mode_enable &&
+	    (tx || params->one_rx_one_tx_mode_use_rx_num != 1)) ||
 	    params->frequency_division_duplex_independent_mode_enable ||
 	    params->ensm_enable_txnrx_control_enable ||
 	    params->external_tx_lo_enable || params->external_rx_lo_enable ||

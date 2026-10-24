@@ -52,3 +52,11 @@ cache coherency, downstream output and hardware drain remain board checks.
 The consumer must supply positive AXI drain acknowledgement after CONTROL
 is disabled. EOT proves finite DMA completion, not downstream analog output.
 No test replaces that consumer's hardware drain implementation.
+
+For exact no-SG version 4.5.c, the driver requires CONTROL and SUBMIT zero
+and DBG_STATUS bits 11:0 equal to 0x701. This reset-manager state proves
+that outstanding memory responses have drained. Equal transfer IDs do not
+prove drain after disable: hardware resets both IDs immediately. The host
+fixture models that early reset and delayed reset-manager completion.
+A stripped debug register, SG state, stalled clock or deadline expiry fails
+closed. Other versions still require the external drain provider.

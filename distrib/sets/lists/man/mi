@@ -849,6 +849,7 @@
 ./usr/share/man/cat4/adbkbd.0			man-sys-catman		.cat
 ./usr/share/man/cat4/adbms.0			man-sys-catman		.cat
 ./usr/share/man/cat4/adc.0			man-sys-catman		.cat
+./usr/share/man/cat4/adiadc.0			man-sys-catman		.cat
 ./usr/share/man/cat4/adm1026hm.0		man-sys-catman		.cat
 ./usr/share/man/cat4/adm1027.0			man-sys-catman		.cat
 ./usr/share/man/cat4/adm1030.0			man-sys-catman		.cat
@@ -4451,6 +4452,7 @@
 ./usr/share/man/man4/adbkbd.4			man-sys-man		.man
 ./usr/share/man/man4/adbms.4			man-sys-man		.man
 ./usr/share/man/man4/adc.4			man-sys-man		.man
+./usr/share/man/man4/adiadc.4			man-sys-man		.man
 ./usr/share/man/man4/adm1026hm.4		man-sys-man		.man
 ./usr/share/man/man4/adm1027.4			man-sys-man		.man
 ./usr/share/man/man4/adm1030.4			man-sys-man		.man

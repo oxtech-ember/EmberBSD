@@ -42,10 +42,12 @@ static int ad9361_native_validate(const struct adi_axi_rx_config *config)
 	    config->frequency_hz > 6000000000ULL ||
 	    config->sample_rate_hz == 0 || config->sample_rate_hz > 61440000 ||
 	    config->bandwidth_hz < 200000 || config->bandwidth_hz > 56000000 ||
-	    config->rf_port > 8 || config->rx_mask != 3 ||
-	    config->channel_mask == 0 || (config->channel_mask & ~15U) != 0)
+	    config->rf_port > 8 ||
+	    (config->rx_mask != 1 && config->rx_mask != 3) ||
+	    config->channel_mask == 0 ||
+	    (config->channel_mask & ~(config->rx_mask == 1 ? 3U : 15U)) != 0)
 		return EINVAL;
-	for (ch = 0; ch < 2; ch++) {
+	for (ch = 0; ch < (config->rx_mask == 1 ? 1U : 2U); ch++) {
 		if (config->gain_mode[ch] != ADI_AXI_GAIN_MANUAL &&
 		    config->gain_mode[ch] != ADI_AXI_GAIN_SLOW &&
 		    config->gain_mode[ch] != ADI_AXI_GAIN_FAST)
@@ -88,7 +90,7 @@ static int ad9361_native_apply(struct ad9361_native_bus *bus,
 	CHECK(ad9361_set_rx_lo_freq(phy, config->frequency_hz));
 	CHECK(ad9361_set_rx_sampling_freq(phy, config->sample_rate_hz));
 	CHECK(ad9361_set_rx_rf_bandwidth(phy, config->bandwidth_hz));
-	for (ch = 0; ch < 2; ch++) {
+	for (ch = 0; ch < (config->rx_mask == 1 ? 1U : 2U); ch++) {
 		CHECK(ad9361_set_rx_gain_control_mode(
 		    phy, ch, modes[config->gain_mode[ch]]));
 		if (config->gain_mode[ch] == ADI_AXI_GAIN_MANUAL) {
@@ -150,7 +152,8 @@ int ad9361_native_bootstrap(struct ad9361_native_bus *bus,
 	if (bus->first_error != 0)
 		return bus->first_error;
 	if (!settings->rx_only || settings->dev_sel != ID_AD9361 ||
-	    !settings->two_rx_two_tx_mode_enable ||
+	    (!settings->two_rx_two_tx_mode_enable &&
+	    settings->one_rx_one_tx_mode_use_rx_num != 1) ||
 	    !settings->frequency_division_duplex_mode_enable ||
 	    settings->frequency_division_duplex_independent_mode_enable ||
 	    settings->external_rx_lo_enable ||
@@ -158,6 +161,9 @@ int ad9361_native_bootstrap(struct ad9361_native_bus *bus,
 	    settings->ensm_enable_txnrx_control_enable ||
 	    settings->reference_clk_rate == 0)
 		return EOPNOTSUPP;
+	if (config->rx_mask !=
+	    (settings->two_rx_two_tx_mode_enable ? 3U : 1U))
+		return EINVAL;
 	if (settings->aux_adc_rate == 0 || settings->rssi_duration == 0)
 		return EINVAL;
 	params = no_os_malloc(sizeof(*params));
@@ -210,6 +216,10 @@ int ad9361_native_configure(struct ad9361_native_bus *bus,
 	error = ad9361_native_validate(config);
 	if (error != 0)
 		return error;
+	if (config->rx_mask != (phy->pdata->rx2tx2 ? 3U : 1U) ||
+	    (!phy->pdata->rx2tx2 &&
+	    phy->pdata->rx1tx1_mode_use_rx_num != 1))
+		return EINVAL;
 	tune.cookie = io->cookie;
 	tune.reset = io->reset;
 	tune.interface = io->interface;
@@ -247,7 +257,7 @@ ad9361_native_read_rx_status(struct ad9361_native_bus *bus,
 	if (bus->tx_enabled || !phy->pdata->rx_only)
 		return EPERM;
 	memset(status, 0, sizeof(*status));
-	for (ch = 0; ch < 2; ch++) {
+	for (ch = 0; ch < (phy->pdata->rx2tx2 ? 2U : 1U); ch++) {
 		memset(&rssi, 0, sizeof(rssi));
 		error = ad9361_native_result(bus,
 		    ad9361_get_rx_rssi(phy, ch, &rssi));

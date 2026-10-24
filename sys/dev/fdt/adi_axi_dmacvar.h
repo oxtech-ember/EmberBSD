@@ -75,6 +75,26 @@ int adi_axi_dmac_guard_check(struct adi_axi_dmac_guard *);
  * it does not turn disabled control bits into an AXI drain certificate.
  */
 int adi_axi_dmac_guard_cold_check(struct adi_axi_dmac_guard *);
-void adi_axi_dmac_unreserve(struct adi_axi_dmac_guard *);
+/* Positive hardware witness for exact 4.5.c without SG. No register writes,
+ * ownership changes, buffer publication or repeated sc_lock acquisition.
+ * The converter owner must keep this guard alive and exclude new submissions
+ * for the entire poll. Required source/destination clocks must stay running.
+ * Older/unknown layouts return EOPNOTSUPP; missing debug status times out.
+ */
+int adi_axi_dmac_guard_wait_idle(const struct adi_axi_dmac_guard *,
+	unsigned int timeout_ms);
+/* Bind a private consumer and prepare finite FIFO-to-memory capture. */
+int adi_axi_dmac_guard_bind(struct adi_axi_dmac_guard *,
+	const struct adi_axi_dmac_drain_ops *, void *);
+int adi_axi_dmac_guard_prepare(struct adi_axi_dmac_guard *);
+int adi_axi_dmac_guard_buffer_alloc(const struct adi_axi_dmac_guard *, size_t,
+	struct adi_axi_dmac_buffer **);
+int adi_axi_dmac_guard_buffer_read(const struct adi_axi_dmac_guard *,
+	struct adi_axi_dmac_buffer *, void *, size_t);
+int adi_axi_dmac_guard_transfer(const struct adi_axi_dmac_guard *,
+	struct adi_axi_dmac_buffer *, size_t, unsigned int timeout_ms);
+int adi_axi_dmac_guard_buffer_free(const struct adi_axi_dmac_guard *,
+	struct adi_axi_dmac_buffer *);
+int adi_axi_dmac_unreserve(struct adi_axi_dmac_guard *);
 
 #endif

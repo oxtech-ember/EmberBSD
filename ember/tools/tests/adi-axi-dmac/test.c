@@ -1,6 +1,9 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Origin: EmberBSD actual-source ADI AXI DMAC host regression. */
 #define _POSIX_C_SOURCE 200809L
+#if defined(__APPLE__) && !defined(_DARWIN_C_SOURCE)
+#define _DARWIN_C_SOURCE
+#endif
 #include <sys/queue.h>
 #include <assert.h>
 #include <errno.h>
@@ -54,6 +57,7 @@ typedef struct test_dmamap {
 } while (0)
 #define KASSERT CHECK
 #define __BIT(n) (UINT32_C(1) << (n))
+#undef __dead
 #define __dead __attribute__((noreturn))
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 #define KM_SLEEP 0
@@ -103,6 +107,8 @@ static size_t sync_sizes[128];
 static bus_dmamap_t dma_maps;
 static pthread_mutex_t maps_lock = PTHREAD_MUTEX_INITIALIZER;
 static bool drained, submitted;
+static unsigned idle_ready_after, idle_reads, drain_elapsed;
+static bool idle_pending;
 static uint64_t physical_address;
 static void *irq_cookie;
 static int adiaxidmac_intr(void *);
@@ -279,6 +285,11 @@ static const char *device_xname(device_t d) { (void)d; return "dmac-test"; }
 static int splhigh(void) { return 0; }
 static unsigned getticks(void) { return ticks; }
 static unsigned mstohz(unsigned ms) { return ms; }
+static inline void delay(unsigned us)
+{
+	CHECK(us > 0 && irq_lock->held == 0);
+	ticks++;
+}
 
 static uint32_t
 bus_space_read_4(bus_space_tag_t tag, bus_space_handle_t handle, size_t reg)
@@ -286,6 +297,14 @@ bus_space_read_4(bus_space_tag_t tag, bus_space_handle_t handle, size_t reg)
 	(void)tag;
 	(void)handle;
 	CHECK(reg < sizeof(registers) && (reg & 3) == 0);
+	if (reg == 0x43c && idle_pending) {
+		idle_reads++;
+		if (idle_ready_after != UINT_MAX &&
+		    idle_reads >= idle_ready_after) {
+			registers[reg / 4] = 0x701;
+			idle_pending = false;
+		}
+	}
 	return registers[reg / 4];
 }
 
@@ -459,6 +478,7 @@ bus_dmamap_sync(bus_dma_tag_t tag, bus_dmamap_t map, size_t offset,
 		    (map->sync_pre == BUS_DMASYNC_PREWRITE &&
 		    flags == BUS_DMASYNC_POSTWRITE));
 		CHECK(!map->dma_submitted || map->dma_drained);
+		CHECK(!map->dma_submitted || !idle_pending);
 		map->sync_size = 0;
 		map->sync_pre = 0;
 		map->dma_submitted = false;
@@ -487,7 +507,7 @@ deliver_irq(unsigned pending, uint32_t done)
  * No kernel scheduling or wall-clock timing is simulated.
  */
 static int
-cv_timedwait(kcondvar_t *cv, kmutex_t *lock, int delay)
+cv_timedwait(kcondvar_t *cv, kmutex_t *lock, int timeout_ticks)
 {
 	const uint32_t matching = __BIT(registers[0x404 / 4]);
 	const uint32_t other = __BIT((registers[0x404 / 4] + 1) % 4);
@@ -496,12 +516,12 @@ cv_timedwait(kcondvar_t *cv, kmutex_t *lock, int delay)
 
 	CHECK(cv == done_cv && cv->initialized && !cv->waiting);
 	CHECK(lock == irq_lock && lock->held == 1 && submitted);
-	CHECK(delay > 0 && wait_calls < sizeof(wait_delays) / sizeof(wait_delays[0]));
-	wait_delays[wait_calls++] = (unsigned)delay;
+	CHECK(timeout_ticks > 0 && wait_calls < sizeof(wait_delays) / sizeof(wait_delays[0]));
+	wait_delays[wait_calls++] = (unsigned)timeout_ticks;
 	cv->waiting = true;
 	cv->signaled = false;
 	if (irq_mode == IRQ_THREADED) {
-		const struct timespec limit = deadline((unsigned)delay);
+		const struct timespec limit = deadline((unsigned)timeout_ticks);
 		int error;
 
 		CHECK(pthread_mutex_lock(&gate_lock) == 0);
@@ -513,7 +533,7 @@ cv_timedwait(kcondvar_t *cv, kmutex_t *lock, int delay)
 		CHECK(error == 0 || error == ETIMEDOUT);
 		lock->held = 1;
 		cv->waiting = false;
-		ticks += error == 0 ? 1 : (unsigned)delay;
+		ticks += error == 0 ? 1 : (unsigned)timeout_ticks;
 		return error == 0 ? 0 : EWOULDBLOCK;
 	}
 	mutex_exit(lock);
@@ -523,7 +543,7 @@ cv_timedwait(kcondvar_t *cv, kmutex_t *lock, int delay)
 		deliver_irq(2, matching);
 		break;
 	case IRQ_WRONG_THEN_MATCH:
-		CHECK(delay >= 2);
+		CHECK(timeout_ticks >= 2);
 		ticks++;
 		deliver_irq(2, other);
 		CHECK(signal_calls == signals && !cv->signaled);
@@ -551,7 +571,7 @@ cv_timedwait(kcondvar_t *cv, kmutex_t *lock, int delay)
 		deliver_irq(2, other);
 		break;
 	case IRQ_TIMEOUT_MATCH:
-		ticks += (unsigned)delay;
+		ticks += (unsigned)timeout_ticks;
 		deliver_irq(2, matching);
 		expired = true;
 		break;
@@ -567,10 +587,10 @@ cv_timedwait(kcondvar_t *cv, kmutex_t *lock, int delay)
 	}
 	if (!cv->signaled && !spurious) {
 		CHECK(signal_calls == signals);
-		ticks += (unsigned)delay - (ticks - started);
+		ticks += (unsigned)timeout_ticks - (ticks - started);
 		expired = true;
 	}
-	CHECK(ticks - started <= (unsigned)delay);
+	CHECK(ticks - started <= (unsigned)timeout_ticks);
 	cv->waiting = false;
 	mutex_enter(lock);
 	return expired ? EWOULDBLOCK : 0;
@@ -598,6 +618,7 @@ buffer_memcpy(void *destination, const void *source, size_t size)
 }
 
 #include "api.h"
+#undef memcpy
 #define memcpy buffer_memcpy
 #include "driver.inc"
 #undef memcpy
@@ -618,7 +639,7 @@ pause_after_drain(const kmutex_t *lock)
 
 /* The kernel drain callback signature requires a mutable void pointer. */
 static int
-// cppcheck-suppress constParameterPointer
+// cppcheck-suppress constParameterCallback
 drain(void *cookie, unsigned timeout)
 {
 	bus_dmamap_t map;
@@ -627,6 +648,12 @@ drain(void *cookie, unsigned timeout)
 	CHECK(registers[DMAC_CONTROL / 4] == 0);
 	drain_calls++;
 	drained = drain_error == 0;
+	ticks += drain_elapsed;
+	idle_reads = 0;
+	idle_pending = drained && idle_ready_after != 0;
+	/* Exact HDL clears both IDs on disable, before outstanding BRESP. */
+	registers[0x42c / 4] = registers[0x404 / 4] = 0;
+	registers[0x43c / 4] = idle_pending ? 0x072 : 0x701;
 	CHECK(pthread_mutex_lock(&maps_lock) == 0);
 	for (map = dma_maps; map != NULL; map = map->next)
 		if (map->dma_submitted)
@@ -671,6 +698,8 @@ reset_fixture(uint32_t interface)
 	map_flags = load_flags = -1;
 	irq_mode = IRQ_MATCH;
 	submitted = drained = false;
+	idle_ready_after = idle_reads = drain_elapsed = 0;
+	idle_pending = false;
 	physical_address = 0x100000;
 	fixture.sc_dev = &fixture;
 	fixture.sc_phandle = 17;
@@ -702,7 +731,11 @@ check_interfaces(void)
 	CHECK(fixture.sc_read && fixture.sc_alignment == 8);
 	CHECK(dmac_interface(&fixture, 0x040461, 0x1303) == 0);
 	CHECK(fixture.sc_read && fixture.sc_stream_source);
-	CHECK(dmac_interface(&fixture, 0x040561, 0x0323) == EOPNOTSUPP);
+	/* Live Pluto v0.39 DMAC 4.5.c: burst-width bits accompany FIFO RX. */
+	CHECK(dmac_interface(&fixture, 0x040563, 0x00072303) == 0);
+	CHECK(fixture.sc_read && !fixture.sc_stream_source &&
+	    fixture.sc_alignment == 8);
+	CHECK(dmac_interface(&fixture, 0x040661, 0x0323) == EOPNOTSUPP);
 	CHECK(dmac_interface(&fixture, 0x040461, 0x0303) == EOPNOTSUPP);
 	CHECK(dmac_interface(&fixture, 0x040461, 0x2313) == EOPNOTSUPP);
 	CHECK(dmac_interface(&fixture, 0x040461, 0x0833) == EOPNOTSUPP);
@@ -858,6 +891,96 @@ check_quarantine(enum irq_mode irq)
 }
 
 static void
+check_hardware_idle(unsigned ready_after, int expected, unsigned start,
+    unsigned callback_ticks)
+{
+	struct adi_axi_dmac_channel *c;
+	struct adi_axi_dmac_buffer *b;
+	unsigned char data[64];
+
+	reset_fixture(0x2303);
+	CHECK(dmac_interface(&fixture, 0x040563, 0x2303) == 0);
+	c = acquire();
+	CHECK(adi_axi_dmac_buffer_alloc(c, sizeof(data), &b) == 0);
+	idle_ready_after = ready_after;
+	drain_elapsed = callback_ticks;
+	ticks = start;
+	CHECK(adi_axi_dmac_transfer(b, sizeof(data), 5) == expected);
+	if (expected == 0) {
+		CHECK(!idle_pending && idle_reads == ready_after);
+		CHECK(fixture.sc_drained && b->b_inflight == 0);
+		CHECK(adi_axi_dmac_buffer_read(b, data, sizeof(data)) == 0);
+	} else {
+		CHECK(fixture.sc_quarantined && !fixture.sc_drained);
+		CHECK(b->b_inflight == sizeof(data) && sync_calls == 1);
+		CHECK(adi_axi_dmac_buffer_read(b, data, sizeof(data)) == EBUSY);
+		CHECK(adi_axi_dmac_buffer_free(b) == EBUSY);
+		CHECK(adi_axi_dmac_stop(c, 5) == EIO);
+		/* Model power removal before retained memory can be released. */
+		fixture.sc_quarantined = false;
+	}
+	idle_ready_after = drain_elapsed = 0;
+	CHECK(adi_axi_dmac_stop(c, 5) == 0);
+	CHECK(adi_axi_dmac_buffer_free(b) == 0);
+	CHECK(adi_axi_dmac_release(c) == 0);
+	puts(expected == 0 ? "PASS RX publication waits for hardware idle" :
+	    "PASS hardware idle timeout retains DMA memory and original deadline");
+}
+
+static void
+check_guard_idle_witness(void)
+{
+	struct adi_axi_dmac_guard *g;
+	unsigned submits_before;
+
+	reset_fixture(0x2303);
+	CHECK(adi_axi_dmac_reserve(17, &fixture, &g) == 0);
+	CHECK(adi_axi_dmac_guard_wait_idle(g, 2) == EOPNOTSUPP);
+	CHECK(dmac_interface(&fixture, 0x040563, 0x2303) == 0);
+	submits_before = submits;
+	registers[0x43c / 4] = 0; /* Missing debug registers are not idle. */
+	CHECK(adi_axi_dmac_guard_wait_idle(g, 2) == ETIMEDOUT);
+	registers[0x43c / 4] = 0x701;
+	registers[DMAC_CONTROL / 4] = DMAC_ENABLE;
+	CHECK(adi_axi_dmac_guard_wait_idle(g, 2) == ETIMEDOUT);
+	registers[DMAC_CONTROL / 4] = 0;
+	registers[DMAC_SUBMIT / 4] = 1;
+	CHECK(adi_axi_dmac_guard_wait_idle(g, 2) == ETIMEDOUT);
+	registers[DMAC_SUBMIT / 4] = 0;
+	registers[0x43c / 4] = 0x781; /* Different SG topology is not accepted. */
+	CHECK(adi_axi_dmac_guard_wait_idle(g, 2) == ETIMEDOUT);
+	registers[0x43c / 4] = 0x701;
+	CHECK(adi_axi_dmac_guard_wait_idle(g, 2) == 0);
+	CHECK(submits == submits_before && !fixture.sc_drained);
+	CHECK(adi_axi_dmac_unreserve(g) == 0);
+	puts("PASS read-only exact-version reset-manager witness and absent-debug refusal");
+}
+
+static void
+check_guard_prepare_reuse(void)
+{
+	struct adi_axi_dmac_guard *g;
+	unsigned calls;
+
+	reset_fixture(0x2303);
+	CHECK(dmac_interface(&fixture, 0x040563, 0x2303) == 0);
+	CHECK(adi_axi_dmac_reserve(17, &fixture, &g) == 0);
+	CHECK(adi_axi_dmac_guard_bind(g, &drain_ops, &fixture) == 0);
+	CHECK(adi_axi_dmac_guard_prepare(g) == 0);
+	calls = drain_calls;
+	CHECK(adi_axi_dmac_guard_prepare(g) == 0);
+	CHECK(drain_calls == calls && fixture.sc_channel == g->g_channel);
+	fixture.sc_drained = false;
+	CHECK(adi_axi_dmac_guard_prepare(g) == EIO);
+	CHECK(fixture.sc_quarantined);
+	/* Simulate power removal before releasing the retained test owner. */
+	fixture.sc_quarantined = false;
+	fixture.sc_drained = true;
+	CHECK(adi_axi_dmac_unreserve(g) == 0);
+	puts("PASS repeated guard preparation reuses only the proved idle owner");
+}
+
+static void
 check_large_and_allocation(void)
 {
 	const size_t size = 2080000;
@@ -980,12 +1103,12 @@ check_concurrent_transfers(void)
 	CHECK(pthread_create(&second_thread, NULL, run_call, &second) == 0);
 	wait_flag(&lock_blocked);
 	check_not_returned(&second);
-	deliver_irq(DMAC_IRQ_EOT, __BIT(2));
+	deliver_irq(DMAC_IRQ_EOT, __BIT(fixture.sc_id));
 	CHECK(pthread_join(first_thread, NULL) == 0 && first.result == 0);
 	wait_transfer(2);
 	CHECK(adi_axi_dmac_buffer_write(b, initial, sizeof(initial)) == EBUSY);
 	CHECK(adi_axi_dmac_buffer_write(a, next, sizeof(next)) == 0);
-	deliver_irq(DMAC_IRQ_EOT, __BIT(2));
+	deliver_irq(DMAC_IRQ_EOT, __BIT(fixture.sc_id));
 	CHECK(pthread_join(second_thread, NULL) == 0 && second.result == 0);
 	CHECK(submits == 2 && sync_calls == 4 && drain_calls == 3);
 	CHECK(adi_axi_dmac_buffer_free(a) == 0);
@@ -1021,7 +1144,7 @@ check_concurrent_stop(bool failed)
 	CHECK(pthread_create(&stop_thread, NULL, run_call, &stop) == 0);
 	wait_flag(&lock_blocked);
 	check_not_returned(&stop);
-	deliver_irq(DMAC_IRQ_EOT, __BIT(2));
+	deliver_irq(DMAC_IRQ_EOT, __BIT(fixture.sc_id));
 	CHECK(pthread_join(transfer_thread, NULL) == 0);
 	CHECK(pthread_join(stop_thread, NULL) == 0);
 	CHECK(transfer.result == (failed ? EIO : 0));
@@ -1083,7 +1206,7 @@ check_copy_serialization(enum call_operation operation)
 	if (operation == CALL_TRANSFER) {
 		wait_transfer(1);
 		CHECK(memcmp(b->b_data, data, sizeof(data)) == 0);
-		deliver_irq(DMAC_IRQ_EOT, __BIT(2));
+		deliver_irq(DMAC_IRQ_EOT, __BIT(fixture.sc_id));
 	}
 	if (operation != CALL_RELEASE)
 		CHECK(pthread_join(other_thread, NULL) == 0 && other.result == 0);
@@ -1113,7 +1236,7 @@ check_postdrain_ownership(void)
 	transfer.buffer = b;
 	CHECK(pthread_create(&thread, NULL, run_call, &transfer) == 0);
 	wait_transfer(1);
-	deliver_irq(DMAC_IRQ_EOT, __BIT(2));
+	deliver_irq(DMAC_IRQ_EOT, __BIT(fixture.sc_id));
 	wait_flag(&postdrain_waiting);
 	CHECK(adi_axi_dmac_buffer_write(b, data, sizeof(data)) == EBUSY);
 	CHECK(adi_axi_dmac_buffer_read(b, data, sizeof(data)) == EBUSY);
@@ -1309,13 +1432,13 @@ check_concurrent_prepared(void)
 	CHECK(adi_axi_dmac_buffer_prepare(b, 64) == 0);
 	CHECK(sync_calls == 6);
 	check_not_returned(&first);
-	deliver_irq(DMAC_IRQ_EOT, __BIT(2));
+	deliver_irq(DMAC_IRQ_EOT, __BIT(fixture.sc_id));
 	CHECK(pthread_join(first_thread, NULL) == 0 && first.result == 0);
 	CHECK(sync_calls == 7 && b->b_prepared == 64 && a->b_inflight == 0);
 	CHECK(pthread_create(&second_thread, NULL, run_call, &second) == 0);
 	wait_transfer(2);
 	CHECK(sync_calls == 7); /* No PREWRITE at the second submission. */
-	deliver_irq(DMAC_IRQ_EOT, __BIT(2));
+	deliver_irq(DMAC_IRQ_EOT, __BIT(fixture.sc_id));
 	CHECK(pthread_join(second_thread, NULL) == 0 && second.result == 0);
 	CHECK(sync_calls == 8 && sync_flags[7] == BUS_DMASYNC_POSTWRITE);
 	CHECK(adi_axi_dmac_buffer_free(a) == 0);
@@ -1374,6 +1497,12 @@ main(void)
 	check_bounds_and_ownership();
 	check_quarantine(IRQ_MATCH);
 	check_quarantine(IRQ_NONE);
+	check_hardware_idle(3, 0, 0, 0);
+	check_hardware_idle(3, 0, UINT_MAX - 1, 0);
+	check_hardware_idle(UINT_MAX, ETIMEDOUT, 0, 0);
+	check_hardware_idle(3, ETIMEDOUT, 0, 4);
+	check_guard_idle_witness();
+	check_guard_prepare_reuse();
 	check_large_and_allocation();
 	check_concurrent_transfers();
 	check_concurrent_stop(false);

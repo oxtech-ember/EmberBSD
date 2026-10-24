@@ -84,3 +84,8 @@ For a causal comparison, `--source-file /path/to/ad9361.c` selects an alternate
 accessor. The unmodified ADI source at the revision cited above fails the
 transport-error assertion. These host checks do not model the analog converter
 or qualify a physical SPI link.
+
+The RX trace also exercises physical RX1 in 1R1T CMOS mode. It covers
+FDT parsing, clock bootstrap, PN tuning, retune, one-channel status and
+refusal of incompatible channel masks before hardware access. RX2 selection
+in 1R1T and TX in 1R1T remain unsupported by the native adapter.

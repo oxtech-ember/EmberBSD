@@ -1,6 +1,6 @@
 #	$NetBSD: Makefile,v 1.48 2022/08/20 11:42:49 riastradh Exp $
 
-SUBDIR=	apm ata bluetooth dec dm dmover dtv hdaudio hdmicec hid hpc \
+SUBDIR=	apm ata bluetooth dec dm dmover dtv fdt hdaudio hdmicec hid hpc \
 	i2c i2o ic ieee1394 ir isa \
 	microcode ofw pci pckbport pcmcia pud putter raidframe sbus scsipi \
 	spi sun tc usb vme wscons

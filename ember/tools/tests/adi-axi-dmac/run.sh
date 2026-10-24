@@ -18,12 +18,12 @@ awk '!/^#include/' "$source_dir/sys/dev/fdt/adi_axi_dmacvar.h" > "$work/api.h"
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -pthread ${CFLAGS:-} \
     -I"$work" "$dir/test.c" -o "$work/test"
 if [ "${ANALYZE:-no}" = yes ]; then
-    ${CC:-cc} -E -dM -include sys/queue.h - </dev/null |
+    ${CC:-cc} -std=c11 ${CFLAGS:-} -E -dM -I"$work" "$dir/test.c" |
         awk '/^#define LIST_/ { print }' > "$work/list.h"
     cppcheck --enable=warning,style,performance,portability --error-exitcode=98 \
         --inline-suppr --suppress=missingIncludeSystem \
         --include="$work/list.h" -I"$work" "$dir/test.c"
-    ${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -pthread -fanalyzer \
+    ${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -pthread ${CFLAGS:-} -fanalyzer \
         -I"$work" "$dir/test.c" -o "$work/analyzed"
 fi
 if [ "${RACECHECK:-no}" = yes ]; then

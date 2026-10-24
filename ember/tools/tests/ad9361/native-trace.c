@@ -51,7 +51,7 @@ struct fake {
 	bool corrupt_fast, corrupt_setup;
 	bool lose_lock_on_recall, corrupt_recall;
 } hw;
-static bool invalid_aux_rate, tx_fdt, conflicting_fdt;
+static bool invalid_aux_rate, tx_fdt, conflicting_fdt, one_rx_fdt;
 static const char * const tx_delays[] = {
     "adi,rx-data-clock-delay", "adi,rx-data-delay",
     "adi,tx-fb-clock-delay", "adi,tx-data-delay"
@@ -59,6 +59,9 @@ static const char * const tx_delays[] = {
 
 int OF_getproplen(int node, const char *name)
 {
+	if (one_rx_fdt && (strcmp(name, "adi,2rx-2tx-mode-enable") == 0 ||
+	    strcmp(name, "adi,lvds-mode-enable") == 0))
+		return -1;
 	if (strcmp(name, "adi,rx-only") == 0)
 		return !tx_fdt || conflicting_fdt ? 0 : -1;
 	if (strcmp(name, "adi,tx-enable") == 0)
@@ -209,7 +212,7 @@ static int adc_interface(void *c, bool two, bool lvds, bool half)
 	(void)c;
 	(void)lvds;
 	(void)half;
-	assert(two);
+	assert(two == !one_rx_fdt);
 	return 0;
 }
 static int adc_channels(void *c, uint32_t mask, uint32_t format)
@@ -469,6 +472,65 @@ static void test_tx(void)
 	printf("PASS TX explicit opt-in, fixed-delay bootstrap, fresh status, attenuation, mute, retune and every SPI failure (%u transfers); no RF simulated\n", count);
 }
 
+static void
+test_one_rx(void)
+{
+	AD9361_InitParam p, invalid;
+	struct ad9361_native_bus bus;
+	struct ad9361_rf_phy *phy = NULL;
+	struct adi_axi_rx_status status;
+	struct adi_axi_rx_config cfg = {
+	    .frequency_hz = 915000000ULL,
+	    .sample_rate_hz = 10000000,
+	    .bandwidth_hz = 8000000,
+	    .rx_mask = 1, .channel_mask = 3,
+	    .gain_mode = {ADI_AXI_GAIN_SLOW, ADI_AXI_GAIN_SLOW}};
+	struct adi_axi_adc_io io = {.cookie = &hw,
+	    .reset = adc_reset, .interface = adc_interface,
+	    .channels = adc_channels, .pn_select = adc_pn_select,
+	    .pn_status = adc_pn_status};
+	unsigned before;
+
+	one_rx_fdt = true;
+	tx_fdt = false;
+	assert(ad9361_native_params_from_fdt(1, 40000000, &p) == 0);
+	assert(!p.two_rx_two_tx_mode_enable && !p.lvds_mode_enable);
+	assert(p.one_rx_one_tx_mode_use_rx_num == 1);
+	memset(&hw, 0, sizeof(hw));
+	ad9361_native_bus_init(&bus, &hw, spi, reset);
+	invalid = p;
+	invalid.one_rx_one_tx_mode_use_rx_num = 2;
+	assert(ad9361_native_bootstrap(&bus, &invalid, &cfg, &phy) == EOPNOTSUPP);
+	assert(phy == NULL && hw.transfers == 0 && hw.resets == 0);
+	invalid = p;
+	invalid.two_rx_two_tx_mode_enable = true;
+	assert(ad9361_native_bootstrap(&bus, &invalid, &cfg, &phy) == EINVAL);
+	assert(phy == NULL && hw.transfers == 0 && hw.resets == 0);
+	assert(ad9361_native_bootstrap(&bus, &p, &cfg, &phy) == 0);
+	assert(phy != NULL && !phy->pdata->rx2tx2);
+	assert(ad9361_native_configure(&bus, phy, &cfg, &io) == 0);
+	assert(ad9361_native_retune_rx(&bus, phy, 918000000ULL) == 0);
+	assert(ad9361_native_read_rx_status(&bus, phy, &status) == 0);
+	assert(status.valid_mask == 1);
+	assert(hw.reg[REG_TX_ENABLE_FILTER_CTRL] < 0x40);
+	assert((hw.reg[REG_TX_SYNTH_POWER_DOWN_OVERRIDE] & 31) == 31);
+	before = hw.transfers;
+	cfg.rx_mask = 3; cfg.channel_mask = 15;
+	assert(ad9361_native_configure(&bus, phy, &cfg, &io) == EINVAL);
+	assert(hw.transfers == before);
+	cfg.rx_mask = 1; cfg.channel_mask = 15;
+	assert(ad9361_native_configure(&bus, phy, &cfg, &io) == EINVAL);
+	assert(hw.transfers == before);
+	ad9361_remove(phy);
+	tx_fdt = true;
+	assert(ad9361_native_params_from_fdt_tx(1, 40000000, &p) == EOPNOTSUPP);
+	one_rx_fdt = false;
+	tx_fdt = false;
+	memset(&hw, 0, sizeof(hw));
+	puts("PASS RX1 1R1T CMOS FDT, bootstrap, configure, retune, status, "
+	    "topology refusal and TX inhibition; no RF simulated");
+}
+
 int main(void)
 {
 	setvbuf(stdout, NULL, _IONBF, 0);
@@ -491,6 +553,7 @@ int main(void)
 				    .pn_status = adc_pn_status};
 	int r;
 
+	test_one_rx();
 	invalid_aux_rate = true;
 	assert(ad9361_native_params_from_fdt(1, 40000000, &p) == EINVAL);
 	invalid_aux_rate = false;

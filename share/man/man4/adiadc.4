@@ -1,0 +1,94 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.Dd October 24, 2026
+.Dt ADIADC 4
+.Os
+.Sh NAME
+.Nm adiadc
+.Nd finite receive sessions for an ADI AXI ADC
+.Sh SYNOPSIS
+.Cd "ad9361phy* at spi?"
+.Cd "adiaxidmac* at fdt?"
+.Cd "adiaxiadc* at fdt?"
+.In dev/fdt/adi_axi_adc.h
+.Sh DESCRIPTION
+The
+.Nm
+interface provides exclusive, receive-only access to an AD9361 converter
+and its FIFO-to-memory DMA channel.
+It implements finite captures, not a continuous recording service.
+The device node is owned by root with mode 0600.
+Only one session can open a converter at a time.
+.Pp
+Open the device with
+.Dv O_RDONLY .
+The interface has no write or memory mapping operation.
+Transmit controls are absent.
+The converter must have an explicit receive-only FDT policy.
+The current character interface requires 1R1T mode with physical RX1.
+A two-receiver configuration remains available to kernel consumers.
+.Sh IOCTLS
+Every request must specify
+.Dv ADI_AXI_ADC_ABI_VERSION
+and the exact structure size.
+Initialize reserved request fields to zero.
+.Bl -tag -width ADI_AXI_ADCIOC_CAPTURE
+.It Dv ADI_AXI_ADCIOC_CONFIG
+Configure frequency, sample rate, analog bandwidth, RF input and gain.
+Use
+.Dv ADI_AXI_ADC_RX1_MASK
+and
+.Dv ADI_AXI_ADC_RX1_IQ_CHANNEL_MASK .
+Gain and RSSI use millidecibel units.
+This request invalidates the previous capture.
+Hardware-specific range limits can be narrower than the ABI limits.
+.It Dv ADI_AXI_ADCIOC_CAPTURE
+Arm a finite capture with a sample count and a timeout.
+The first subsequent
+.Xr read 2
+starts DMA.
+The buffer must hold the complete capture.
+A short initial read fails before DMA starts.
+The count must produce an eight-byte aligned transfer of at most one MiB.
+.It Dv ADI_AXI_ADCIOC_STATUS
+Return the session state, captured count, capture error and fresh RX status.
+A configured or armed session is not a completed capture.
+Check status after reading all samples.
+Only entries selected by valid_mask have RSSI and gain data.
+.El
+.Pp
+Each complex sample contains two little-endian 16-bit words: I, then Q.
+Each word holds a signed 12-bit sample in bits 11 through 0.
+These samples do not provide calibrated RF power in dBm.
+.Sh DMA OWNERSHIP
+A capture retains its buffers until DMA completion and a positive drain witness.
+The exact no-SG DMAC 4.5.c reset-manager debug state is supported.
+Missing debug state or a drain timeout prevents release and poisons the session.
+Unknown hardware requires a supported external drain provider.
+DMA safety does not establish RF settling, capture continuity
+or antenna performance.
+.Sh FILES
+.Bl -tag -width /dev/adiadc0
+.It Pa /dev/adiadc0
+First finite receive device.
+.El
+.Sh ERRORS
+.Bl -tag -width EOPNOTSUPP
+.It Er EBUSY
+Another session owns the converter.
+.It Er EINVAL
+Invalid ABI, topology, count, timeout or configuration.
+.It Er EOPNOTSUPP
+The hardware or drain operation is unsupported.
+.It Er ETIMEDOUT
+Capture or hardware drain exceeded its deadline.
+.It Er EIO
+A hardware failure poisoned the session.
+.El
+.Sh SEE ALSO
+.Xr ioctl 2 ,
+.Xr read 2 ,
+.Xr fdt 4
+.Sh HISTORY
+The
+.Nm
+interface was added to EmberBSD in October 2026.

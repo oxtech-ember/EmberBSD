@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# RX-only Pluto Nano RAM-root profile. Requires an RX-only FDT policy.
+include "arch/evbarm/conf/PLUTO_NANO_RAMDISK"
+
+zynqspi* at fdt?
+spi* at zynqspi?
+ad9361phy* at spi?
+adiaxidmac* at fdt?
+adiaxiadc* at fdt?

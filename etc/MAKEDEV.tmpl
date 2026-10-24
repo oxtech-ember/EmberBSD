@@ -875,6 +875,11 @@ emcfan[0-9]*)
 	mkdev emcfan$unit c %emcfan_chr% $unit 660
 	;;
 
+adiadc[0-9]*)
+	unit=${i#adiadc}
+	mkdev adiadc$unit c %adiadc_chr% $unit 600
+	;;
+
 gpio)
 	makedev gpio0 gpio1 gpio2 gpio3 gpio4 gpio5 gpio6 gpio7
 	lndev gpio0 gpio
