@@ -662,6 +662,7 @@
 ./usr/include/dev/ic/z8530reg.h			comp-obsolete		obsolete
 ./usr/include/dev/ic/z8530sc.h			comp-obsolete		obsolete
 ./usr/include/dev/fdt/adi_axi_adc.h		comp-c-include
+./usr/include/dev/fdt/adi_axi_adc_stream.h	comp-c-include
 ./usr/include/dev/ieee1394/fwiso_ioctl.h	comp-obsolete		obsolete
 ./usr/include/dev/ir/irdaio.h			comp-c-include
 ./usr/include/dev/irdaio.h			comp-obsolete		obsolete

@@ -15,7 +15,7 @@ for marker in ('int\nadi_axi_adc_bootstrap(', 'static bool\nadiaxiadc_same_rx_pa
     functions.append(source[start:end])
 with tempfile.TemporaryDirectory(prefix='adi-adc-bootstrap-') as directory:
     work = Path(directory)
-    header = (root / 'sys/dev/fdt/adi_axi_adc.h').read_text()
+    header = (root / 'sys/dev/fdt/adi_axi_adc.h').read_text() + (root / 'sys/dev/fdt/adi_axi_adc_stream.h').read_text()
     (work / 'abi.inc').write_text('\n'.join(line for line in header.splitlines() if not line.startswith('#include')))
     (work / 'bootstrap.inc').write_text('\n'.join(functions))
     command = [os.environ['CC'], '-std=c11', '-Wall', '-Wextra', '-Werror']

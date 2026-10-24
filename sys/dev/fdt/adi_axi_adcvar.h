@@ -46,6 +46,8 @@ struct adi_axi_adc_io {
  * A bit in valid_mask certifies both measurements for the corresponding RX.
  */
 struct adi_axi_rx_status {
+	/* Zero means this provider cannot report the measured sample clock. */
+	uint32_t sample_rate_hz;
 	uint32_t valid_mask;
 	int32_t rssi_mdB[2];
 	int32_t gain_mdB[2];

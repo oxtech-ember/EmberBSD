@@ -1,21 +1,22 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd October 24, 2026
+.Dd October 25, 2026
 .Dt ADIADC 4
 .Os
 .Sh NAME
 .Nm adiadc
-.Nd finite receive sessions for an ADI AXI ADC
+.Nd receive sessions for an ADI AXI ADC
 .Sh SYNOPSIS
 .Cd "ad9361phy* at spi?"
 .Cd "adiaxidmac* at fdt?"
 .Cd "adiaxiadc* at fdt?"
 .In dev/fdt/adi_axi_adc.h
+.In dev/fdt/adi_axi_adc_stream.h
 .Sh DESCRIPTION
 The
 .Nm
 interface provides exclusive, receive-only access to an AD9361 converter
 and its FIFO-to-memory DMA channel.
-It implements finite captures, not a continuous recording service.
+It provides finite captures and a bounded FIFO receive stream.
 The device node is owned by root with mode 0600.
 Only one session can open a converter at a time.
 .Pp
@@ -61,6 +62,50 @@ Only entries selected by valid_mask have RSSI and gain data.
 Each complex sample contains two little-endian 16-bit words: I, then Q.
 Each word holds a signed 12-bit sample in bits 11 through 0.
 These samples do not provide calibrated RF power in dBm.
+.Sh STREAMING
+The additive stream requests use
+.Dv ADI_AXI_ADC_STREAM_ABI_VERSION
+and their exact structure sizes.
+The finite ABI remains version 1.
+.Pp
+.Dv ADI_AXI_ADCIOC_STREAM_START
+allocates three through sixteen blocks.
+Each block is eight-byte aligned and no larger than one MiB.
+The total DMA allocation is at most four MiB.
+The stream retains the exclusive converter lease and TX guards.
+Queued requests keep the DMAC enabled between blocks.
+Only the exact no-SG FIFO RX core 4.5.c is supported.
+.Pp
+.Xr read 2
+returns raw IQ and permits partial block reads.
+A read returns at most the remaining bytes in one block.
+.Dv O_NONBLOCK
+returns
+.Er EAGAIN
+when no completed block is ready.
+.Xr poll 2
+reports readable blocks, cancellation and errors.
+.Pp
+.Dv ADI_AXI_ADCIOC_STREAM_STATUS
+reports the generation, current block sequence and offset, completion counts,
+known discontinuities, ready blocks and last error.
+A zero sample clock means the provider cannot measure it.
+The reported clock is not inferred from the requested rate.
+.Pp
+Queue starvation or a hardware overflow latches
+.Er EOVERFLOW .
+The loss-unknown flag means the number of lost samples is unknown.
+No subsequent read returns data until stop and a new start.
+Dropped-block counts include only known exact counts; zero does not prove no loss.
+.Pp
+.Dv ADI_AXI_ADCIOC_STREAM_STOP
+cancels a blocked read and checks the hardware drain before freeing buffers.
+Close has the same cancellation and retention rules.
+Configuration cancels and drains an active stream before retuning.
+A new configuration or start advances the generation and invalidates old bytes.
+Stop and start require fresh configuration only when the converter needs it.
+A hardware drain timeout retains mappings and blocks restart.
+These mechanisms require physical qualification for sustained throughput.
 .Sh DMA OWNERSHIP
 A capture retains its buffers until DMA completion and a positive drain witness.
 The exact no-SG DMAC 4.5.c reset-manager debug state is supported.
@@ -71,12 +116,18 @@ or antenna performance.
 .Sh FILES
 .Bl -tag -width /dev/adiadc0
 .It Pa /dev/adiadc0
-First finite receive device.
+First receive device.
 .El
 .Sh ERRORS
 .Bl -tag -width EOPNOTSUPP
 .It Er EBUSY
 Another session owns the converter.
+.It Er ECANCELED
+A stop, close or configuration request canceled a blocked stream read.
+.It Er EOVERFLOW
+The stream has a known discontinuity; stop before starting another generation.
+.It Er EAGAIN
+A nonblocking stream read has no completed block.
 .It Er EINVAL
 Invalid ABI, topology, count, timeout or configuration.
 .It Er EOPNOTSUPP

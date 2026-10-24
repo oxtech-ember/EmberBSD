@@ -10,6 +10,7 @@
 #include <string.h>
 typedef unsigned long u_long;
 struct lwp { int unused; };
+#define _IO(a,b) (b)
 #define _IOW(a,b,c) (b)
 #define _IOWR(a,b,c) (b)
 #define __arraycount(a) (sizeof(a)/sizeof((a)[0]))
@@ -35,6 +36,10 @@ struct adi_axi_adc_lease {
  unsigned l_nguards; void *l_guards[8],*l_capture_guard;
 };
 struct adi_axi_adc_softc {
+ int sc_session_lock,sc_session_cv;void *sc_bst,*sc_bsh;
+ bool sc_session_busy,sc_session_open,sc_stream_cancel,sc_stream_active;
+ void *sc_stream_data;
+ struct adi_axi_adc_stream_status sc_stream_status;
  struct adi_axi_adc_lease *sc_lease;
  bool sc_capture_pending,sc_capture_valid,sc_configured;
  struct adi_axi_rx_config sc_config;
@@ -60,7 +65,7 @@ static int native_bootstrap(void *cookie,const struct adi_axi_rx_config *c) {
 }
 static struct adi_axi_adc_softc *adiaxiadc_cdev_lookup(dev_t d) { assert(d==0); return &adc; }
 static int adiaxiadc_session_claim(struct adi_axi_adc_softc *sc) { assert(sc==&adc);return 0; }
-static void adiaxiadc_session_release(struct adi_axi_adc_softc *sc) { assert(sc==&adc); }
+static void adiaxiadc_session_release(struct adi_axi_adc_softc *sc) { assert(sc==&adc);sc->sc_session_busy=false; }
 static bool adiaxiadc_reserved_zero(const uint32_t *p,size_t n) { while(n--)if(*p++)return false;return true; }
 static int adi_axi_dmac_guard_buffer_free(void *g,void *p) { (void)g;free(p);return 0; }
 static int adi_axi_dmac_guard_buffer_alloc(void *g,size_t n,void **p) { (void)g;*p=malloc(n);assert(*p);return 0; }
@@ -74,6 +79,14 @@ int adi_axi_adc_retune_rx(struct adi_axi_adc_lease *l,uint64_t frequency) {
  assert(l->l_quiet && initialized && frequency==918000000);retunes++;return 0;
 }
 static int adi_axi_adc_read_rx_status(struct adi_axi_adc_lease *l,struct adi_axi_rx_status *s) { (void)l;(void)s;return 0; }
+static void cv_wait(int *cv,int *lock) { (void)cv;(void)lock;assert(0); }
+static void cv_broadcast(int *cv) { (void)cv; }
+static int adiaxiadc_stream_start(struct adi_axi_adc_softc *sc,const void *data) { (void)sc;(void)data;return EOPNOTSUPP; }
+static int adiaxiadc_stream_stop(struct adi_axi_adc_softc *sc) { (void)sc;return 0; }
+#define ADC_DMA_STATUS 0x88
+struct adi_axi_dmac_stream_status { uint64_t completed_blocks,completed_bytes,discontinuities;unsigned ready; };
+static int adi_axi_dmac_guard_stream_next(void *g,void *b,struct adi_axi_dmac_stream_status *s) { (void)g;(void)b;memset(s,0,sizeof(*s));return EAGAIN; }
+static unsigned bus_space_read_4(void *a,void *b,unsigned reg) { (void)a;(void)b;(void)reg;return 0; }
 #include "bootstrap.inc"
 int main(void)
 {
@@ -85,7 +98,7 @@ int main(void)
   .frequency_hz=915000000,.sample_rate_hz=10000000,.bandwidth_hz=8000000,
   .rx_mask=1,.channel_mask=3,.timeout_ms=1000};
  struct adi_axi_rx_config cfg={.rx_mask=1};
- adc.sc_lease=&lease;
+ adc.sc_lease=&lease;adc.sc_session_open=true;
  assert(adiaxiadc_cdev_ioctl(0,ADI_AXI_ADCIOC_CONFIG,&config,0,NULL)==0);
  assert(initialized && adc.sc_configured && boots==1 && drains==2 && configures==1);
  config.frequency_hz=918000000;

@@ -2,5 +2,6 @@
 
 INCSDIR = /usr/include/dev/fdt
 INCS = adi_axi_adc.h
+INCS += adi_axi_adc_stream.h
 
 .include <bsd.kinc.mk>

@@ -20,6 +20,10 @@
 #include <sys/mutex.h>
 #include <sys/once.h>
 #include <sys/queue.h>
+#include <sys/poll.h>
+#include <sys/selinfo.h>
+#include <sys/select.h>
+#include <sys/vnode.h>
 #include <sys/systm.h>
 #include <sys/uio.h>
 
@@ -29,6 +33,7 @@
 #include <dev/fdt/adi_axi_adc_private.h>
 #include <dev/fdt/adi_axi_dmacvar.h>
 #include <dev/fdt/adi_axi_adc.h>
+#include <dev/fdt/adi_axi_adc_stream.h>
 
 #define ADC_VERSION	0x000
 #define ADC_RESET	0x040
@@ -67,6 +72,15 @@ struct adi_axi_adc_softc {
 	int sc_capture_error;
 	struct adi_axi_dmac_buffer *sc_capture_buffer;
 	uint8_t *sc_capture_data;
+ struct selinfo sc_stream_sel;
+ bool sc_stream_active;
+ bool sc_stream_cancel;
+ struct adi_axi_adc_stream_status sc_stream_status;
+ struct adi_axi_dmac_buffer *sc_stream_buffers[ADI_AXI_ADC_STREAM_MAX_BLOCKS];
+ struct adi_axi_dmac_buffer *sc_stream_current;
+ uint8_t *sc_stream_data;
+ size_t sc_stream_offset;
+ size_t sc_stream_valid;
 	LIST_ENTRY(adi_axi_adc_softc) sc_next;
 };
 
@@ -93,6 +107,9 @@ static LIST_HEAD(, adi_axi_adc_softc) adcs = LIST_HEAD_INITIALIZER(adcs);
 static int adiaxiadc_cdev_open(dev_t, int, int, struct lwp *);
 static int adiaxiadc_cdev_close(dev_t, int, int, struct lwp *);
 static int adiaxiadc_cdev_read(dev_t, struct uio *, int);
+static int adiaxiadc_cdev_poll(dev_t, int, struct lwp *);
+static int adiaxiadc_stream_stop(struct adi_axi_adc_softc *);
+static int adiaxiadc_stream_read(struct adi_axi_adc_softc *, struct uio *, int);
 static int adiaxiadc_cdev_ioctl(dev_t, u_long, void *, int, struct lwp *);
 static int adiaxiadc_dma_drain(void *, unsigned int);
 static int adiaxiadc_cdev_quiesce(void *, unsigned int);
@@ -113,6 +130,7 @@ dev_type_open(adiaxiadc_cdev_open);
 dev_type_close(adiaxiadc_cdev_close);
 dev_type_read(adiaxiadc_cdev_read);
 dev_type_ioctl(adiaxiadc_cdev_ioctl);
+dev_type_poll(adiaxiadc_cdev_poll);
 
 const struct cdevsw adiadc_cdevsw = {
 	.d_open = adiaxiadc_cdev_open,
@@ -122,7 +140,7 @@ const struct cdevsw adiadc_cdevsw = {
 	.d_ioctl = adiaxiadc_cdev_ioctl,
 	.d_stop = nostop,
 	.d_tty = notty,
-	.d_poll = nopoll,
+	.d_poll = adiaxiadc_cdev_poll,
 	.d_mmap = nommap,
 	.d_kqfilter = nokqfilter,
 	.d_discard = nodiscard,
@@ -859,13 +877,17 @@ adiaxiadc_cdev_close(dev_t dev, int flags, int mode, struct lwp *l)
 		mutex_exit(&sc->sc_session_lock);
 		return EBADF;
 	}
+	sc->sc_stream_cancel = true;
+	cv_broadcast(&sc->sc_session_cv);
 	while (sc->sc_session_busy)
 		cv_wait(&sc->sc_session_cv, &sc->sc_session_lock);
 	sc->sc_session_busy = true;
 	lease = sc->sc_lease;
 	mutex_exit(&sc->sc_session_lock);
 
-	if (lease != NULL && lease->l_configured)
+	if (sc->sc_stream_active || sc->sc_stream_data != NULL)
+		error = adiaxiadc_stream_stop(sc);
+	if (error == 0 && lease != NULL && lease->l_configured)
 		error = adi_axi_adc_stop(lease, 1000);
 	if (error == 0 && sc->sc_capture_buffer != NULL) {
 		if (lease == NULL || lease->l_capture_guard == NULL)
@@ -899,6 +921,229 @@ adiaxiadc_cdev_close(dev_t dev, int flags, int mode, struct lwp *l)
 	cv_broadcast(&sc->sc_session_cv);
 	mutex_exit(&sc->sc_session_lock);
 	return error;
+}
+
+/* Called at IPL_BIO. The bounded read wait also closes a lost-wakeup race. */
+static void
+adiaxiadc_stream_notify(void *cookie)
+{
+ struct adi_axi_adc_softc *sc = cookie;
+ selnotify(&sc->sc_stream_sel, 0, NOTE_SUBMIT);
+ cv_broadcast(&sc->sc_session_cv);
+}
+
+/* The session is busy. A failed drain keeps every mapping and allocation. */
+static int
+adiaxiadc_stream_stop(struct adi_axi_adc_softc *sc)
+{
+ struct adi_axi_adc_lease *l = sc->sc_lease;
+ int error;
+ if (l == NULL || l->l_capture_guard == NULL)
+  return EIO;
+ if (sc->sc_stream_active) {
+  error = adi_axi_dmac_guard_stream_stop(l->l_capture_guard, 1000);
+  if (error != 0) {
+   sc->sc_stream_status.last_error = error;
+   return error;
+  }
+  sc->sc_stream_active = false;
+  sc->sc_stream_status.flags &= ~ADI_AXI_ADC_STREAM_RUNNING;
+  error = adi_axi_adc_stop(l, 1000);
+  if (error != 0)
+   return error;
+ }
+ for (unsigned i = 0; i < ADI_AXI_ADC_STREAM_MAX_BLOCKS; i++) {
+  if (sc->sc_stream_buffers[i] == NULL)
+   continue;
+  error = adi_axi_dmac_guard_buffer_free(l->l_capture_guard,
+      sc->sc_stream_buffers[i]);
+  if (error != 0)
+   return error;
+  sc->sc_stream_buffers[i] = NULL;
+ }
+ if (sc->sc_stream_data != NULL) {
+  kmem_free(sc->sc_stream_data, sc->sc_stream_status.block_bytes);
+  sc->sc_stream_data = NULL;
+ }
+ sc->sc_stream_current = NULL;
+ sc->sc_stream_offset = sc->sc_stream_valid = 0;
+ selnotify(&sc->sc_stream_sel, 0, NOTE_SUBMIT);
+ return 0;
+}
+
+static int
+adiaxiadc_stream_start(struct adi_axi_adc_softc *sc,
+    const struct adi_axi_adc_stream_config *config)
+{
+ struct adi_axi_adc_lease *l = sc->sc_lease;
+ struct adi_axi_rx_status rxstatus;
+ uint64_t generation;
+ int error, stop_error;
+ if (config->abi_version != ADI_AXI_ADC_STREAM_ABI_VERSION ||
+     config->struct_size != sizeof(*config) ||
+     config->block_count < 3 || config->block_count > ADI_AXI_ADC_STREAM_MAX_BLOCKS ||
+     config->block_bytes == 0 || config->block_bytes > ADI_AXI_ADC_CAPTURE_MAX_BYTES ||
+     config->block_bytes % ADI_AXI_ADC_CAPTURE_ALIGNMENT != 0 ||
+     config->block_bytes > ADI_AXI_ADC_STREAM_MAX_BYTES / config->block_count ||
+     !adiaxiadc_reserved_zero(config->reserved, __arraycount(config->reserved)))
+  return EINVAL;
+ if (!sc->sc_configured || l == NULL || l->l_capture_guard == NULL)
+  return EINVAL;
+ if (sc->sc_stream_active || sc->sc_stream_data != NULL || sc->sc_capture_pending)
+  return EBUSY;
+ generation = sc->sc_stream_status.generation + 1;
+ memset(&sc->sc_stream_status, 0, sizeof(sc->sc_stream_status));
+ sc->sc_stream_status.generation = generation;
+ sc->sc_stream_status.block_bytes = config->block_bytes;
+ sc->sc_stream_status.block_count = config->block_count;
+ memset(&rxstatus, 0, sizeof(rxstatus));
+ error = adi_axi_adc_read_rx_status(l, &rxstatus);
+ if (error != 0 && error != EOPNOTSUPP)
+  return error;
+ sc->sc_stream_status.sample_rate_hz = rxstatus.sample_rate_hz;
+ sc->sc_stream_data = kmem_alloc(config->block_bytes, KM_SLEEP);
+ for (unsigned i = 0; i < config->block_count; i++) {
+  error = adi_axi_dmac_guard_buffer_alloc(l->l_capture_guard, config->block_bytes,
+      &sc->sc_stream_buffers[i]);
+  if (error != 0)
+   goto fail;
+ }
+ /* Clear the previous epoch overflow before enabling any DMA. */
+ bus_space_write_4(sc->sc_bst, sc->sc_bsh, ADC_DMA_STATUS, 4);
+ error = adi_axi_adc_start(l);
+ if (error != 0)
+  goto fail;
+ error = adi_axi_dmac_guard_stream_start(l->l_capture_guard);
+ if (error != 0) {
+  stop_error = adi_axi_adc_stop(l, 1000);
+  if (stop_error != 0)
+   return stop_error;
+  goto fail;
+ }
+ sc->sc_stream_active = true;
+ mutex_enter(&sc->sc_session_lock);
+ sc->sc_stream_cancel = false;
+ mutex_exit(&sc->sc_session_lock);
+ sc->sc_stream_status.flags = ADI_AXI_ADC_STREAM_RUNNING;
+ (void)adi_axi_dmac_guard_stream_notify(l->l_capture_guard,
+     adiaxiadc_stream_notify, sc);
+ for (unsigned i = 0; i < config->block_count; i++) {
+  error = adi_axi_dmac_guard_stream_submit(l->l_capture_guard,
+      sc->sc_stream_buffers[i], config->block_bytes);
+  if (error != 0)
+   goto fail;
+ }
+ return 0;
+fail:
+ stop_error = adiaxiadc_stream_stop(sc);
+ return stop_error != 0 ? stop_error : error;
+}
+
+static int
+adiaxiadc_stream_read(struct adi_axi_adc_softc *sc, struct uio *uio, int flags)
+{
+ const struct adi_axi_adc_lease *l = sc->sc_lease;
+ struct adi_axi_dmac_stream_status status;
+ size_t length, before;
+ int error;
+ for (;;) {
+  mutex_enter(&sc->sc_session_lock);
+  if (sc->sc_stream_cancel) {
+   mutex_exit(&sc->sc_session_lock);
+   return ECANCELED;
+  }
+  mutex_exit(&sc->sc_session_lock);
+  if (sc->sc_stream_status.last_error != 0)
+   return sc->sc_stream_status.last_error;
+  if (sc->sc_stream_valid != 0)
+   break;
+  error = adi_axi_dmac_guard_stream_next(l->l_capture_guard,
+      &sc->sc_stream_current, &status);
+  sc->sc_stream_status.completed_blocks = status.completed_blocks;
+  sc->sc_stream_status.completed_bytes = status.completed_bytes;
+  sc->sc_stream_status.ready_blocks = status.ready;
+  if (status.discontinuities != 0 ||
+      (bus_space_read_4(sc->sc_bst, sc->sc_bsh, ADC_DMA_STATUS) & 4)) {
+   sc->sc_stream_status.discontinuities = status.discontinuities ?
+       status.discontinuities : 1;
+   sc->sc_stream_status.flags |= ADI_AXI_ADC_STREAM_LOSS_UNKNOWN;
+   sc->sc_stream_status.last_error = EOVERFLOW;
+   return EOVERFLOW;
+  }
+  if (error != 0 && error != EAGAIN) {
+   sc->sc_stream_status.last_error = error;
+   return error;
+  }
+  if (error == 0) {
+   sc->sc_stream_status.sequence = status.sequence;
+   error = adi_axi_dmac_guard_buffer_read(l->l_capture_guard,
+       sc->sc_stream_current, sc->sc_stream_data,
+       sc->sc_stream_status.block_bytes);
+   if (error != 0)
+    return error;
+   sc->sc_stream_offset = 0;
+   sc->sc_stream_valid = sc->sc_stream_status.block_bytes;
+   break;
+  }
+  if (flags & IO_NDELAY)
+   return EAGAIN;
+  mutex_enter(&sc->sc_session_lock);
+  if (!sc->sc_stream_cancel)
+   (void)cv_timedwait(&sc->sc_session_cv, &sc->sc_session_lock, 1);
+  mutex_exit(&sc->sc_session_lock);
+ }
+ length = uimin(uio->uio_resid, sc->sc_stream_valid - sc->sc_stream_offset);
+ before = uio->uio_resid;
+ error = uiomove(sc->sc_stream_data + sc->sc_stream_offset, length, uio);
+ sc->sc_stream_offset += before - uio->uio_resid;
+ sc->sc_stream_status.block_offset = sc->sc_stream_offset;
+ if (sc->sc_stream_offset == sc->sc_stream_valid) {
+  sc->sc_stream_valid = 0;
+  int submit_error = adi_axi_dmac_guard_stream_submit(l->l_capture_guard,
+      sc->sc_stream_current, sc->sc_stream_status.block_bytes);
+  if (submit_error != 0) {
+   sc->sc_stream_status.last_error = submit_error;
+   if (error == 0)
+    error = submit_error;
+  }
+ }
+ return error;
+}
+
+static int
+adiaxiadc_cdev_poll(dev_t dev, int events, struct lwp *l)
+{
+ struct adi_axi_adc_softc *sc = adiaxiadc_cdev_lookup(dev);
+ struct adi_axi_dmac_stream_status status;
+ int ready = 0;
+ if (sc == NULL)
+  return POLLERR;
+ mutex_enter(&sc->sc_session_lock);
+ selrecord(l, &sc->sc_stream_sel);
+ if (!sc->sc_session_open || sc->sc_stream_cancel)
+  ready = POLLHUP;
+ else if (sc->sc_session_busy) {
+  mutex_exit(&sc->sc_session_lock);
+  return 0;
+ } else if (sc->sc_stream_status.last_error)
+  ready = POLLERR;
+ else if (sc->sc_stream_active && !sc->sc_session_busy) {
+  sc->sc_session_busy = true;
+  mutex_exit(&sc->sc_session_lock);
+  if (sc->sc_stream_valid != 0)
+   ready = events & (POLLIN | POLLRDNORM);
+  else if (adi_axi_dmac_guard_stream_next(sc->sc_lease->l_capture_guard,
+      NULL, &status) == 0) {
+   if (status.discontinuities != 0)
+    ready = POLLERR;
+   else
+    ready = events & (POLLIN | POLLRDNORM);
+  }
+  adiaxiadc_session_release(sc);
+  return ready;
+ }
+ mutex_exit(&sc->sc_session_lock);
+ return ready;
 }
 
 static int
@@ -947,7 +1192,6 @@ adiaxiadc_cdev_read(dev_t dev, struct uio *uio, int flags)
 	bool capture;
 	int error = 0;
 
-	(void)flags;
 	if (sc == NULL)
 		return ENXIO;
 	if (uio->uio_resid == 0)
@@ -961,6 +1205,13 @@ adiaxiadc_cdev_read(dev_t dev, struct uio *uio, int flags)
 		error = EBUSY;
 		goto unlock;
 	}
+ if (sc->sc_stream_active) {
+  sc->sc_session_busy = true;
+  mutex_exit(&sc->sc_session_lock);
+  error = adiaxiadc_stream_read(sc, uio, flags);
+  adiaxiadc_session_release(sc);
+  return error;
+ }
 	if (!sc->sc_capture_valid && !sc->sc_capture_pending) {
 		error = EINVAL;
 		goto unlock;
@@ -1037,15 +1288,61 @@ adiaxiadc_cdev_ioctl(dev_t dev, u_long command, void *data, int flags,
 	(void)l;
 	if (sc == NULL)
 		return ENXIO;
-	error = adiaxiadc_session_claim(sc);
+ if (command == ADI_AXI_ADCIOC_STREAM_STOP || command == ADI_AXI_ADCIOC_CONFIG) {
+  mutex_enter(&sc->sc_session_lock);
+  sc->sc_stream_cancel = true;
+  cv_broadcast(&sc->sc_session_cv);
+  while (sc->sc_session_busy)
+   cv_wait(&sc->sc_session_cv, &sc->sc_session_lock);
+  error = sc->sc_session_open ? 0 : EBADF;
+  if (error == 0)
+   sc->sc_session_busy = true;
+  mutex_exit(&sc->sc_session_lock);
+ } else
+  error = adiaxiadc_session_claim(sc);
 	if (error != 0)
 		return error;
 	lease = sc->sc_lease;
-	if (data == NULL || lease == NULL) {
+	if ((data == NULL && command != ADI_AXI_ADCIOC_STREAM_STOP) || lease == NULL) {
 		error = EINVAL;
 		goto out;
 	}
-	switch (command) {
+ switch (command) {
+ case ADI_AXI_ADCIOC_STREAM_START:
+  error = adiaxiadc_stream_start(sc, data);
+  break;
+ case ADI_AXI_ADCIOC_STREAM_STOP:
+  error = adiaxiadc_stream_stop(sc);
+  break;
+ case ADI_AXI_ADCIOC_STREAM_STATUS: {
+  struct adi_axi_adc_stream_status *status = data;
+  if (status->abi_version != ADI_AXI_ADC_STREAM_ABI_VERSION ||
+      status->struct_size != sizeof(*status)) {
+   error = EINVAL;
+   break;
+  }
+  if (sc->sc_stream_active) {
+   struct adi_axi_dmac_stream_status dma;
+   error = adi_axi_dmac_guard_stream_next(lease->l_capture_guard, NULL, &dma);
+   sc->sc_stream_status.completed_blocks = dma.completed_blocks;
+   sc->sc_stream_status.completed_bytes = dma.completed_bytes;
+   sc->sc_stream_status.ready_blocks = dma.ready;
+   if (dma.discontinuities != 0 ||
+       (bus_space_read_4(sc->sc_bst, sc->sc_bsh, ADC_DMA_STATUS) & 4)) {
+    sc->sc_stream_status.discontinuities = dma.discontinuities ?
+        dma.discontinuities : 1;
+    sc->sc_stream_status.flags |= ADI_AXI_ADC_STREAM_LOSS_UNKNOWN;
+    sc->sc_stream_status.last_error = EOVERFLOW;
+   } else if (error != 0 && error != EAGAIN)
+    sc->sc_stream_status.last_error = error;
+  }
+  *status = sc->sc_stream_status;
+  status->abi_version = ADI_AXI_ADC_STREAM_ABI_VERSION;
+  status->struct_size = sizeof(*status);
+  error = 0;
+  break;
+ }
+
 	case ADI_AXI_ADCIOC_CONFIG: {
 		struct adi_axi_adc_config *user = data;
 		struct adi_axi_rx_config config;
@@ -1067,6 +1364,12 @@ adiaxiadc_cdev_ioctl(dev_t dev, u_long command, void *data, int flags,
 			error = EINVAL;
 			break;
 		}
+  if (sc->sc_stream_active || sc->sc_stream_data != NULL) {
+   error = adiaxiadc_stream_stop(sc);
+   if (error != 0)
+    break;
+  }
+  sc->sc_stream_status.generation++;
 		sc->sc_capture_pending = false;
 		sc->sc_capture_valid = false;
 		sc->sc_capture_offset = 0;
@@ -1116,6 +1419,10 @@ adiaxiadc_cdev_ioctl(dev_t dev, u_long command, void *data, int flags,
 		break;
 	}
 	case ADI_AXI_ADCIOC_CAPTURE: {
+  if (sc->sc_stream_active) {
+   error = EBUSY;
+   break;
+  }
 		struct adi_axi_adc_capture *request = data;
 		size_t bytes;
 
@@ -1261,6 +1568,7 @@ adiaxiadc_attach(device_t parent, device_t self, void *aux)
 	}
 	mutex_init(&sc->sc_session_lock, MUTEX_DEFAULT, IPL_NONE);
 	cv_init(&sc->sc_session_cv, "adiadc");
+	selinit(&sc->sc_stream_sel);
 	adi_axi_registry_init();
 	mutex_enter(&adi_axi_registry_lock);
 	LIST_INSERT_HEAD(&adcs, sc, sc_next);
