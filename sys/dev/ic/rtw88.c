@@ -1900,6 +1900,11 @@ rtw88_tx_submit(struct rtw88_softc *sc, unsigned q, const void *frame,
 		/* tx.c get_highest_vht_tx_rate seed, not the lowest RA bit. */
 		tx.rate = 0x33; /* DESC_RATEVHT1SS_MCS7. */
 		tx.bandwidth = 2; /* DATA_BW 80 MHz. */
+		tx.data_sc = RTW88_TX_DATA_SC_DONT_CARE;
+	} else if (!rtw88_channel_narrow(sc)) {
+		/* The only admitted 80 MHz tuple is 36/42/80: primary 36 is
+		 * the lowest 20 MHz subchannel in this 80 MHz block. */
+		tx.data_sc = RTW88_TX_DATA_SC_20_LOWEST_OF_80;
 	}
 #endif
 	if (q == RTW88_TXQ_MGMT)

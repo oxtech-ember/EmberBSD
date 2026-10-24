@@ -49,6 +49,11 @@ int rtw88_hw_feature_decode(const uint8_t *, size_t, struct rtw88_hw_feature *);
 #define RTW88_TX_HWSEQ		0x0800
 #define RTW88_TX_FLAGS		0x0fff
 
+enum rtw88_tx_data_sc {
+	RTW88_TX_DATA_SC_DONT_CARE = 0,
+	RTW88_TX_DATA_SC_20_LOWEST_OF_80 = 4
+};
+
 struct rtw88_tx_info {
 	uint32_t packet_size;
 	uint32_t flags;

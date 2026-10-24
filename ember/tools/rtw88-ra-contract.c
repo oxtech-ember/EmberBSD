@@ -1141,6 +1141,8 @@ test_ra_vht80_formats(void)
 				desc = sc.sc_txq[RTW88_TXQ_BE].buf[wp].vaddr;
 				CHECK(desc[6] == 10 && (desc[16] & 0x7f) == 0x33);
 				CHECK(((desc[20] >> 5) & 3) == 2);
+				CHECK((desc[20] & 0x0f) ==
+				    RTW88_TX_DATA_SC_DONT_CARE);
 				CHECK((desc[13] & 0x05) == 0);
 			}
 			CHECK(sc.sc_stats.tx_ra_encoded == 2);
@@ -1171,12 +1173,16 @@ test_ra_vht80_formats(void)
 			    sizeof(mgmt)) == 0);
 			desc = sc.sc_txq[RTW88_TXQ_MGMT].buf[wp].vaddr;
 			CHECK((desc[16] & 0x7f) == 4 && ((desc[20] >> 5) & 3) == 0);
+			CHECK((desc[20] & 0x0f) ==
+			    RTW88_TX_DATA_SC_20_LOWEST_OF_80);
 			CHECK((desc[13] & 0x05) == 0x05);
 			wp = sc.sc_txq[RTW88_TXQ_BE].wp;
 			CHECK(rtw88_tx_fixed(&sc, RTW88_TXQ_BE, ra_frame,
 			    sizeof(ra_frame), &fixed) == 0);
 			desc = sc.sc_txq[RTW88_TXQ_BE].buf[wp].vaddr;
 			CHECK((desc[16] & 0x7f) == 11 && ((desc[20] >> 5) & 3) == 0);
+			CHECK((desc[20] & 0x0f) ==
+			    RTW88_TX_DATA_SC_20_LOWEST_OF_80);
 			CHECK(desc[6] == 7 && (desc[13] & 0x05) == 0x05); /* RATEID_G. */
 			/* Legacy and HT20 firmware-RA entries own no BW80 format. */
 			for (unsigned phy = 0; phy < 2; phy++) {
