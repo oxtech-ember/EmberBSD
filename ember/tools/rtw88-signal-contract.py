@@ -24,7 +24,6 @@ parts=[body('sys/net80211/ieee80211_input.c','ieee80211_saveie','void'),body('sy
 (out/'signal-add-scan.inc').write_text(''.join(parts))
 parts=['#define IEEE80211_CAPINFO_PRIVACY 0x10\n#define IEEE80211_RATE_VAL 0x7f\n#define IEEE80211_IS_CHAN_5GHZ(c) ((c)->ic_freq>3000)\n']
 for n,r in [('node_getrssi','static uint8_t'),('maxrate','static uint8_t'),('ieee80211_node_compare','static int')]:parts.append(body('sys/net80211/ieee80211_node.c',n,r))
-parts.append(body('sys/net80211/ieee80211_phy_ies.c','ieee80211_phy_ies_size','size_t'))
 (out/'signal-node-compare.inc').write_text(''.join(parts))
 
 (out/'signal-native-rx.inc').write_text(body('sys/dev/ic/rtw88_net.c','rtw88_net_rx_frame','static void'))
