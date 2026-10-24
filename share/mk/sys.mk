@@ -5,6 +5,14 @@
 # Do not put conditionals that are set on different files here and
 # expect them to work.
 
+# Select the qualified recipe shell before any shell query can run.
+.if defined(EMBER_NATIVE_TOOLS)
+.if empty(HOST_SH:M/*)
+.error EMBER_NATIVE_TOOLS requires an absolute HOST_SH
+.endif
+.SHELL: name=sh path=${HOST_SH}
+.endif
+
 unix?=		We run NetBSD.
 
 .SUFFIXES: .a .o .ln .s .S .c .cc .cpp .cxx .C .f .F .r .p .l .y .sh

@@ -32,6 +32,99 @@
 # Top level build wrapper, to build or cross-build NetBSD.
 #
 
+# An SDK caller can provide an immutable native-tool routing directory.
+# Read its OS-owned contract as data.  Do not execute emitted shell code.
+# This runs before shell detection or any external command.
+_ember_native_mode=false
+if test "${EMBER_NATIVE_TOOLS+set}" = set
+then
+    _ember_native_mode=true
+    case "${EMBER_NATIVE_TOOLS}" in
+    /*) ;;
+    *) echo >&2 "$0: EMBER_NATIVE_TOOLS must be an absolute path"; exit 1 ;;
+    esac
+    case "${EMBER_NATIVE_TOOLS}" in
+    *[!A-Za-z0-9_./+@%=-]*)
+        echo >&2 "$0: unsupported character in EMBER_NATIVE_TOOLS"; exit 1 ;;
+    esac
+    case "$0" in
+    */*) _ember_native_source=${0%/*} ;;
+    *) _ember_native_source=. ;;
+    esac
+    _ember_native_contract=${_ember_native_source}/tools/native-tools/contract
+    if test -f "${_ember_native_contract}" &&
+       test -f "${EMBER_NATIVE_TOOLS}/contract" &&
+       test ! -L "${EMBER_NATIVE_TOOLS}/contract"
+    then
+        :
+    else
+        echo >&2 "$0: native-tool contract is missing or not a regular file"
+        exit 1
+    fi
+    {
+        read -r _ember_native_magic _ember_native_version _ember_native_extra
+        if test "${_ember_native_magic} ${_ember_native_version}" != \
+            'EmberBSD-native-tools 1' || test -n "${_ember_native_extra}"
+        then
+            echo >&2 "$0: unsupported native-tool contract"; exit 1
+        fi
+        while read -r _ember_native_command _ember_native_role \
+            _ember_native_binding _ember_native_extra
+        do
+            case "${_ember_native_command}" in
+            ''|*[!A-Za-z0-9_+.-]*)
+                echo >&2 "$0: invalid command in native-tool contract"; exit 1 ;;
+            esac
+            if test -z "${_ember_native_role}" ||
+               test -z "${_ember_native_binding}" ||
+               test -n "${_ember_native_extra}" ||
+               test ! -L "${EMBER_NATIVE_TOOLS}/${_ember_native_command}" ||
+               test ! -x "${EMBER_NATIVE_TOOLS}/${_ember_native_command}"
+            then
+                echo >&2 "$0: missing native tool: ${_ember_native_command}"
+                exit 1
+            fi
+        done
+    } < "${_ember_native_contract}"
+
+    PATH=${EMBER_NATIVE_TOOLS}
+    export PATH
+    "${EMBER_NATIVE_TOOLS}/cmp" -s "${_ember_native_contract}" \
+        "${EMBER_NATIVE_TOOLS}/contract" || {
+        echo >&2 "$0: native-tool contract does not match this source"; exit 1
+    }
+    {
+        read -r _ember_native_magic _ember_native_version
+        while read -r _ember_native_command _ember_native_role _ember_native_binding
+        do
+            _ember_native_target=$("${EMBER_NATIVE_TOOLS}/readlink" \
+                "${EMBER_NATIVE_TOOLS}/${_ember_native_command}") || exit 1
+            case "${_ember_native_target}" in
+            /*) ;;
+            *) echo >&2 "$0: native-tool target must be absolute"; exit 1 ;;
+            esac
+            case "${_ember_native_target}" in
+            *[!A-Za-z0-9_./+@%=-]*)
+                echo >&2 "$0: unsupported character in native-tool target"; exit 1 ;;
+            esac
+            case "${_ember_native_binding}" in
+            HOST_SH) HOST_SH=${_ember_native_target} ;;
+            HOST_CC) HOST_CC=${_ember_native_target} ;;
+            HOST_CXX) HOST_CXX=${_ember_native_target} ;;
+            HOST_CPP) HOST_CPP=${_ember_native_target} ;;
+            HOST_AR) HOST_AR=${_ember_native_target} ;;
+            HOST_LD) HOST_LD=${_ember_native_target} ;;
+            HOST_RANLIB) HOST_RANLIB=${_ember_native_target} ;;
+            HOST_LN) HOST_LN=${_ember_native_target} ;;
+            MAKE) _ember_native_make=${_ember_native_target} ;;
+            SED) SED=${_ember_native_target} ;;
+            -) ;;
+            *) echo >&2 "$0: unsupported native-tool binding"; exit 1 ;;
+            esac
+        done
+    } < "${_ember_native_contract}"
+fi
+
 #
 # {{{ Begin shell feature tests.
 #
@@ -59,6 +152,12 @@ case "$1" in
     shift
     ;;
 esac
+
+# The caller has selected the interpreter.  Do not try another provider.
+if ${_ember_native_mode}
+then
+    re_exec_allowed=false
+fi
 
 # Solaris /bin/sh, and other SVR4 shells, do not support "!".
 # This is the first feature that we test, because subsequent
@@ -531,7 +630,12 @@ initdefaults()
 	''|unknown|*[!-_A-Za-z0-9]*) uname_p="${uname_m}" ;;
 	esac
 
-	id_u=$(id -u 2>/dev/null || /usr/xpg4/bin/id -u 2>/dev/null)
+	if ${_ember_native_mode}
+	then
+		id_u=$(id -u) || bomb "Selected id failed"
+	else
+		id_u=$(id -u 2>/dev/null || /usr/xpg4/bin/id -u 2>/dev/null)
+	fi
 
 	# If $PWD is a valid name of the current directory, POSIX mandates
 	# that pwd return it by default which causes problems in the
@@ -554,6 +658,19 @@ initdefaults()
 	setmakeenv HOST_SH "${HOST_SH}"
 	setmakeenv BSHELL "${HOST_SH}"
 	setmakeenv CONFIG_SHELL "${HOST_SH}"
+	if ${_ember_native_mode}
+	then
+		setmakeenv EMBER_NATIVE_TOOLS "${EMBER_NATIVE_TOOLS}"
+		setmakeenv PATH "${PATH}"
+		setmakeenv SHELL "${HOST_SH}"
+		setmakeenv SED "${SED}"
+		for _ember_native_var in HOST_CC HOST_CXX HOST_CPP HOST_AR \
+		    HOST_LD HOST_RANLIB HOST_LN
+		do
+			eval _ember_native_value=\"\${${_ember_native_var}}\"
+			setmakeenv "${_ember_native_var}" "${_ember_native_value}"
+		done
+	fi
 
 	# Set defaults.
 	#
@@ -999,6 +1116,7 @@ setmakeenv()
 
 safe_setmakeenv()
 {
+	check_native_override "$1" -V
 	case "$1" in
 
 	#	Look for any vars we want to prohibit here, like:
@@ -1018,6 +1136,7 @@ unsetmakeenv()
 
 safe_unsetmakeenv()
 {
+	check_native_override "$1" -Z
 	case "$1" in
 
 	#	Look for any vars user should not be able to unset
@@ -1026,6 +1145,17 @@ safe_unsetmakeenv()
 	[!A-Za-z_]* | *[!A-Za-z0-9_]*)	usage "Bad variable name (-Z): '$1'";;
 	esac
 	unsetmakeenv "$1"
+}
+
+# Keep the selected provider stable while command-line options are parsed.
+check_native_override()
+{
+	${_ember_native_mode} || return 0
+	case "$1" in
+	EMBER_NATIVE_*|_ember_native_*|PATH|HOST_SH|HOST_CC|HOST_CXX|HOST_CPP|\
+	HOST_AR|HOST_LD|HOST_RANLIB|HOST_LN|BSHELL|CONFIG_SHELL|SHELL|SED)
+		usage "Cannot change selected native tool variable $1 with $2" ;;
+	esac
 }
 
 # Clear all variables defined in makeenv.  Used to run a subprocess
@@ -1795,6 +1925,11 @@ print_tooldir_program()
 #
 print_tooldir_make()
 {
+	if ${_ember_native_mode}
+	then
+		echo "${_ember_native_make}"
+		return 0
+	fi
 	local possible_make
 	local possible_TOOLDIR
 	local tooldir_make
@@ -1871,6 +2006,15 @@ print_tooldir_make()
 #
 rebuildmake()
 {
+	if ${_ember_native_mode}
+	then
+		[ "${USETOOLS-yes}" = yes ] ||
+		    bomb "Selected native tools require USETOOLS=yes"
+		! ${do_rebuildmake} ||
+		    bomb "Refresh make through the native-tool producer; -r is not supported"
+		make=${_ember_native_make}
+		return
+	fi
 	make="$(print_tooldir_make)"
 	if [ -n "${make}" ] && [ -x "${make}" ]
 	then
@@ -2250,10 +2394,17 @@ EOF
 			fi
 		done
 
-		cat <<-EOF
+		if ${_ember_native_mode}
+		then
+			qmake=$(shell_quote "${_ember_native_make}")
+			echo ""
+			echo "exec ${qmake} \${1+\"\$@\"}"
+		else
+			cat <<-EOF
 
 			exec "\${TOOLDIR}/bin/${toolprefix}make" \${1+"\$@"}
 		EOF
+		fi
 	} | eval cat "${makewrapout}"
 	[ "${runcmd}" = echo ] && echo EOF
 	${runcmd} chmod +x "${makewrapper}"
