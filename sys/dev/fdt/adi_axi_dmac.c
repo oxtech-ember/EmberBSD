@@ -88,6 +88,13 @@ struct adi_axi_dmac_channel {
 	void *c_cookie;
 	uint64_t c_max_length;
 	uint32_t c_length_mask;
+ bool c_streaming;
+ bool c_stream_starved;
+ uint64_t c_submit_sequence;
+ uint64_t c_take_sequence;
+ struct adi_axi_dmac_stream_status c_stream_status;
+ void (*c_stream_notify)(void *);
+ void *c_stream_cookie;
 	LIST_HEAD(, adi_axi_dmac_buffer) c_buffers;
 };
 
@@ -110,6 +117,9 @@ struct adi_axi_dmac_buffer {
 	size_t b_inflight;
 	size_t b_prepared;
 	bool b_transferring;
+ unsigned b_stream_state; /* 0: free, 1: DMA, 2: ready, 3: caller */
+ uint32_t b_stream_id;
+ uint64_t b_stream_sequence;
 	LIST_ENTRY(adi_axi_dmac_buffer) b_next;
 };
 
@@ -436,8 +446,19 @@ dmac_stop_locked(struct adi_axi_dmac_channel *c, unsigned int timeout_ms,
 	mutex_enter(&sc->sc_irq_lock);
 	dmac_write(sc, DMAC_IRQ_PENDING, DMAC_IRQ_ALL);
 	mutex_exit(&sc->sc_irq_lock);
-	sc->sc_drained = true;
-	return 0;
+	c->c_streaming = false;
+ mutex_enter(&sc->sc_irq_lock);
+ c->c_stream_notify = NULL;
+ c->c_stream_cookie = NULL;
+ mutex_exit(&sc->sc_irq_lock);
+ LIST_FOREACH(b, &c->c_buffers, b_next) {
+  if (b->b_stream_state != 0) {
+   b->b_stream_state = 0;
+   b->b_valid = 0;
+  }
+ }
+ sc->sc_drained = true;
+ return 0;
 }
 
 int
@@ -938,6 +959,10 @@ adi_axi_dmac_transfer(struct adi_axi_dmac_buffer *b, size_t size,
 		error = ESHUTDOWN;
 		goto out;
 	}
+	if (c->c_streaming) {
+		error = EBUSY;
+		goto out;
+	}
 	if (sc->sc_stream_source) {
 		/* Early AXIS TLAST needs partial-length reporting, not a full-buffer
 		 * success inferred from EOT. Finite FIFO/MM transfers are supported.
@@ -1024,6 +1049,201 @@ out:
 	return error;
 }
 
+
+/* The operation and buffer locks exclude finite calls and CPU access. */
+int
+adi_axi_dmac_stream_start(struct adi_axi_dmac_channel *c)
+{
+ struct adi_axi_dmac_softc *sc = c->c_sc;
+ int error = 0;
+ mutex_enter(&sc->sc_lock);
+ if (sc->sc_quarantined || sc->sc_channel != c)
+  error = EIO;
+ else if (sc->sc_stopping)
+  error = ESHUTDOWN;
+ else if (c->c_streaming || !sc->sc_drained)
+  error = EBUSY;
+ else if (!sc->sc_debug_idle_45c || !sc->sc_read ||
+     sc->sc_stream_source || sc->sc_stream_dest)
+  error = EOPNOTSUPP;
+ else {
+  memset(&c->c_stream_status, 0, sizeof(c->c_stream_status));
+  c->c_submit_sequence = c->c_take_sequence = 0;
+  c->c_stream_starved = false;
+  c->c_streaming = true;
+  sc->sc_drained = false;
+  mutex_enter(&sc->sc_irq_lock);
+  dmac_write(sc, DMAC_IRQ_PENDING, DMAC_IRQ_ALL);
+  dmac_write(sc, DMAC_IRQ_MASK, 1);
+  dmac_write(sc, DMAC_CONTROL, DMAC_ENABLE);
+  mutex_exit(&sc->sc_irq_lock);
+ }
+ mutex_exit(&sc->sc_lock);
+ return error;
+}
+
+int
+adi_axi_dmac_stream_submit(struct adi_axi_dmac_buffer *b, size_t size)
+{
+ struct adi_axi_dmac_channel *c = b->b_channel;
+ struct adi_axi_dmac_softc *sc = c->c_sc;
+ const struct adi_axi_dmac_buffer *other;
+ uint32_t id;
+ int error = 0;
+ mutex_enter(&sc->sc_lock);
+ mutex_enter(&sc->sc_buffer_lock);
+ if (!c->c_streaming || sc->sc_quarantined || sc->sc_stopping) {
+  error = EIO;
+  goto out;
+ }
+ if (size == 0 || size > b->b_size || size > c->c_max_length ||
+     ((size - 1) & c->c_length_mask) != c->c_length_mask) {
+  error = EINVAL;
+  goto out;
+ }
+ if (b->b_inflight || b->b_stream_state == 2 ||
+     c->c_stream_status.queued >= 31 || dmac_read(sc, DMAC_SUBMIT)) {
+  error = EBUSY;
+  goto out;
+ }
+ id = dmac_read(sc, DMAC_ID);
+ if (id >= 32) {
+  error = EIO;
+  goto out;
+ }
+ LIST_FOREACH(other, &c->c_buffers, b_next)
+  if (other->b_inflight && other->b_stream_id == id) {
+   error = EBUSY;
+   goto out;
+  }
+ bus_dmamap_sync(sc->sc_dmat, b->b_map, 0, size, BUS_DMASYNC_PREREAD);
+ b->b_valid = 0;
+ b->b_inflight = size;
+ b->b_stream_state = 1;
+ b->b_stream_id = id;
+ b->b_stream_sequence = c->c_submit_sequence++;
+ c->c_stream_status.queued++;
+ mutex_enter(&sc->sc_irq_lock);
+ dmac_write(sc, DMAC_FLAGS, 0);
+ dmac_write(sc, DMAC_DEST, b->b_map->dm_segs[0].ds_addr);
+ dmac_write(sc, DMAC_X_LENGTH, size - 1);
+ dmac_write(sc, DMAC_Y_LENGTH, 0);
+ dmac_write(sc, DMAC_DEST_STRIDE, 0);
+ dmac_write(sc, DMAC_SOURCE_STRIDE, 0);
+ bus_space_barrier(sc->sc_bst, sc->sc_bsh, 0, sc->sc_size,
+     BUS_SPACE_BARRIER_WRITE);
+ dmac_write(sc, DMAC_SUBMIT, 1);
+ dmac_read(sc, DMAC_SUBMIT);
+ mutex_exit(&sc->sc_irq_lock);
+out:
+ mutex_exit(&sc->sc_buffer_lock);
+ mutex_exit(&sc->sc_lock);
+ return error;
+}
+
+int
+adi_axi_dmac_stream_next(struct adi_axi_dmac_channel *c,
+    struct adi_axi_dmac_buffer **result, struct adi_axi_dmac_stream_status *status)
+{
+ struct adi_axi_dmac_softc *sc = c->c_sc;
+ struct adi_axi_dmac_buffer *b, *first = NULL;
+ uint32_t done;
+ int error = EAGAIN;
+ if (status == NULL)
+  return EINVAL;
+ if (result != NULL)
+  *result = NULL;
+ mutex_enter(&sc->sc_lock);
+ mutex_enter(&sc->sc_buffer_lock);
+ if (!c->c_streaming || sc->sc_quarantined || sc->sc_stopping) {
+  error = EIO;
+  goto out;
+ }
+ done = dmac_read(sc, DMAC_DONE);
+ LIST_FOREACH(b, &c->c_buffers, b_next) {
+  if (b->b_stream_state == 1 && (done & __BIT(b->b_stream_id))) {
+   bus_dmamap_sync(sc->sc_dmat, b->b_map, 0, b->b_inflight,
+       BUS_DMASYNC_POSTREAD);
+   b->b_valid = b->b_inflight;
+   b->b_inflight = 0;
+   b->b_stream_state = 2;
+   c->c_stream_status.queued--;
+   c->c_stream_status.ready++;
+   c->c_stream_status.completed_blocks++;
+   c->c_stream_status.completed_bytes += b->b_valid;
+  }
+  if (b->b_stream_sequence == c->c_take_sequence && b->b_stream_state == 2)
+   first = b;
+ }
+ if (c->c_stream_status.queued == 0 && c->c_submit_sequence != 0 &&
+     !c->c_stream_starved) {
+  c->c_stream_starved = true;
+  c->c_stream_status.discontinuities++;
+ }
+ if (first != NULL && result == NULL)
+  error = 0;
+ if (first != NULL && result != NULL) {
+  first->b_stream_state = 3;
+  c->c_stream_status.ready--;
+  c->c_stream_status.sequence = c->c_take_sequence++;
+  *result = first;
+  error = 0;
+ }
+out:
+ *status = c->c_stream_status;
+ mutex_exit(&sc->sc_buffer_lock);
+ mutex_exit(&sc->sc_lock);
+ return error;
+}
+
+int
+adi_axi_dmac_guard_stream_notify(const struct adi_axi_dmac_guard *g,
+    void (*notify)(void *), void *cookie)
+{
+ struct adi_axi_dmac_softc *sc;
+ if (g == NULL || g->g_channel == NULL)
+  return EINVAL;
+ sc = g->g_sc;
+ mutex_enter(&sc->sc_lock);
+ mutex_enter(&sc->sc_irq_lock);
+ g->g_channel->c_stream_notify = notify;
+ g->g_channel->c_stream_cookie = cookie;
+ mutex_exit(&sc->sc_irq_lock);
+ mutex_exit(&sc->sc_lock);
+ return 0;
+}
+
+int
+adi_axi_dmac_guard_stream_start(const struct adi_axi_dmac_guard *g)
+{
+ if (g == NULL || !g->g_prepared || g->g_channel == NULL)
+  return EINVAL;
+ return adi_axi_dmac_stream_start(g->g_channel);
+}
+int
+adi_axi_dmac_guard_stream_submit(const struct adi_axi_dmac_guard *g,
+    struct adi_axi_dmac_buffer *b, size_t size)
+{
+ if (g == NULL || b == NULL || b->b_channel != g->g_channel)
+  return EINVAL;
+ return adi_axi_dmac_stream_submit(b, size);
+}
+int
+adi_axi_dmac_guard_stream_next(const struct adi_axi_dmac_guard *g,
+    struct adi_axi_dmac_buffer **result, struct adi_axi_dmac_stream_status *status)
+{
+ if (g == NULL || !g->g_prepared || g->g_channel == NULL)
+  return EINVAL;
+ return adi_axi_dmac_stream_next(g->g_channel, result, status);
+}
+int
+adi_axi_dmac_guard_stream_stop(const struct adi_axi_dmac_guard *g, unsigned ms)
+{
+ if (g == NULL || !g->g_prepared || g->g_channel == NULL)
+  return EINVAL;
+ return adi_axi_dmac_stop(g->g_channel, ms);
+}
+
 static int
 adiaxidmac_intr(void *cookie)
 {
@@ -1033,6 +1253,8 @@ adiaxidmac_intr(void *cookie)
 	mutex_enter(&sc->sc_irq_lock);
 	pending = dmac_read(sc, DMAC_IRQ_PENDING) & DMAC_IRQ_ALL;
 	if (pending != 0) {
+		if (sc->sc_channel != NULL && sc->sc_channel->c_stream_notify != NULL)
+			sc->sc_channel->c_stream_notify(sc->sc_channel->c_stream_cookie);
 		dmac_write(sc, DMAC_IRQ_PENDING, pending);
 		if (sc->sc_pending && (pending & DMAC_IRQ_EOT) &&
 		    (dmac_read(sc, DMAC_DONE) & __BIT(sc->sc_id))) {

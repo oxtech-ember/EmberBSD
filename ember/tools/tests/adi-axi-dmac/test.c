@@ -1568,6 +1568,43 @@ check_shutdown_access(void)
 	puts("PASS shutdown refuses subsequent CPU buffer access");
 }
 
+static void
+check_rx_queue(void)
+{
+ struct adi_axi_dmac_channel *c;
+ struct adi_axi_dmac_buffer *a, *b, *next;
+ struct adi_axi_dmac_stream_status status;
+ reset_fixture(0x2303);
+ CHECK(dmac_interface(&fixture, 0x040563, 0x2303) == 0);
+ c = acquire();
+ CHECK(adi_axi_dmac_buffer_alloc(c, 64, &a) == 0);
+ CHECK(adi_axi_dmac_buffer_alloc(c, 64, &b) == 0);
+ CHECK(adi_axi_dmac_stream_start(c) == 0);
+ registers[DMAC_ID / 4] = 31;
+ CHECK(adi_axi_dmac_stream_submit(a, 64) == 0);
+ CHECK(adi_axi_dmac_stream_submit(a, 64) == EBUSY);
+ registers[DMAC_ID / 4] = 0;
+ CHECK(adi_axi_dmac_stream_submit(b, 64) == 0);
+ CHECK(drain_calls == 1 && submits == 2);
+ CHECK(adi_axi_dmac_stream_next(c, &next, &status) == EAGAIN);
+ b->b_map->dma_drained = true;
+ registers[DMAC_DONE / 4] = __BIT(0);
+ CHECK(adi_axi_dmac_stream_next(c, &next, &status) == EAGAIN);
+ registers[DMAC_DONE / 4] |= __BIT(31);
+ /* Completion returns only the exact submitted range. */
+ a->b_map->dma_drained = b->b_map->dma_drained = true;
+ CHECK(adi_axi_dmac_stream_next(c, &next, &status) == 0 && next == a);
+ CHECK(status.sequence == 0 && status.completed_blocks == 2);
+ CHECK(adi_axi_dmac_stream_next(c, &next, &status) == 0 && next == b);
+ CHECK(status.sequence == 1);
+ CHECK(drain_calls == 1 && registers[DMAC_CONTROL / 4] == 1);
+ CHECK(adi_axi_dmac_stop(c, 100) == 0);
+ CHECK(adi_axi_dmac_buffer_free(a) == 0);
+ CHECK(adi_axi_dmac_buffer_free(b) == 0);
+ CHECK(adi_axi_dmac_release(c) == 0);
+ puts("PASS RX queue, ID wrap, ordered completion and no per-block drain");
+}
+
 int
 main(void)
 {
@@ -1575,6 +1612,7 @@ main(void)
 	(void)hz;
 	(void)adiaxidmac_shutdown_final;
 	check_interfaces();
+	check_rx_queue();
 	check_transfer(0x0323, IRQ_MATCH, 0, 0);
 	check_transfer(0x0313, IRQ_MATCH, 0, 0);
 	check_transfer(0x2303, IRQ_MATCH, 0, 0);

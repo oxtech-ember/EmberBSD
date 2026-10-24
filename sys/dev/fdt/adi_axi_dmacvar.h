@@ -98,3 +98,30 @@ int adi_axi_dmac_guard_buffer_free(const struct adi_axi_dmac_guard *,
 int adi_axi_dmac_unreserve(struct adi_axi_dmac_guard *);
 
 #endif
+
+/* RX FIFO queue. The caller serializes session lifetime and buffer release.
+ * next returns a synchronized, CPU-owned buffer. Re-submit returns ownership.
+ * Stop must succeed before freeing any mapping. No cyclic or SG DMA is used.
+ */
+struct adi_axi_dmac_stream_status {
+ uint64_t sequence;
+ uint64_t completed_blocks;
+ uint64_t completed_bytes;
+ uint64_t discontinuities;
+ uint32_t queued;
+ uint32_t ready;
+};
+int adi_axi_dmac_stream_start(struct adi_axi_dmac_channel *);
+int adi_axi_dmac_stream_submit(struct adi_axi_dmac_buffer *, size_t);
+int adi_axi_dmac_stream_next(struct adi_axi_dmac_channel *,
+ struct adi_axi_dmac_buffer **, struct adi_axi_dmac_stream_status *);
+int adi_axi_dmac_guard_stream_start(const struct adi_axi_dmac_guard *);
+int adi_axi_dmac_guard_stream_submit(const struct adi_axi_dmac_guard *,
+ struct adi_axi_dmac_buffer *, size_t);
+int adi_axi_dmac_guard_stream_next(const struct adi_axi_dmac_guard *,
+ struct adi_axi_dmac_buffer **, struct adi_axi_dmac_stream_status *);
+int adi_axi_dmac_guard_stream_stop(const struct adi_axi_dmac_guard *, unsigned);
+
+/* The notify callback runs at IPL_BIO and must not sleep or take driver locks. */
+int adi_axi_dmac_guard_stream_notify(const struct adi_axi_dmac_guard *,
+ void (*)(void *), void *);
