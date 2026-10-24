@@ -10,8 +10,10 @@ builder = File.expand_path('cix-p1-build-userland.sh', __dir__)
 abort 'FAIL: reduced userland builder is missing' unless File.file?(builder)
 checks = 0
 Dir.mktmpdir('ember-cix-userland-') do |work|
-  src, tools, compiler = %w[src tools compiler].map { |n| File.join(work, n) }
-  [src, tools + '/bin', compiler + '/bin'].each { |p| FileUtils.mkdir_p(p) }
+  src, tools, compiler, libedit = %w[src tools compiler libedit].map { |n| File.join(work, n) }
+  [src, tools + '/bin', compiler + '/bin', libedit].each { |p| FileUtils.mkdir_p(p) }
+  File.write(libedit + '/libedit-source.json', "{}\n")
+  File.write(libedit + '/ports.distinfo', "synthetic\n")
   File.write(compiler + '/libgcc.a', 'retained compiler runtime')
   File.write(compiler + '/libgcc_eh.a', 'retained compiler unwinder')
   File.write(compiler + '/bin/aarch64--netbsd-gcc', <<~SH)
@@ -129,7 +131,7 @@ Dir.mktmpdir('ember-cix-userland-') do |work|
     system('git', '-C', src, *args, exception: true)
   end
   run = lambda do |out, env = {}|
-    Open3.capture3({'TEST_FAIL_COMPONENT' => '', 'TEST_OMIT_BINARY' => '',
+    Open3.capture3({'EMBER_LIBEDIT_SOURCE' => libedit, 'TEST_FAIL_COMPONENT' => '', 'TEST_OMIT_BINARY' => '',
       'TEST_ELF_KIND' => '', 'TEST_FAIL_MKNOD_STAGE' => '', 'TEST_OMIT_DATA' => '',
       'TEST_BAD_DATA' => '', 'TEST_LATE_PROFILE_FILE' => '', 'TEST_LATE_DATA_FILE' => ''}.merge(env),
       'sh', builder, src, out, tools, compiler)
@@ -162,6 +164,12 @@ ssh_parts.each do |part|
   abort "FAIL: incomplete native SSH dependency #{part}" unless selected.map { |l| l.split.last } == wanted
   checks += 1
 end
+abort 'FAIL: prepared libedit source not passed to the build' unless
+  File.read(out + '/build-flags').include?("EMBER_LIBEDIT_SOURCE=#{libedit} ")
+checks += 1
+abort 'FAIL: prepared libedit receipt not recorded' unless
+  File.read(out + '/BUILD-INPUTS.txt').include?("#{libedit}/libedit-source.json")
+checks += 1
 %w[PAM KERBEROS LDAP YP SKEY HESIOD].each do |feature|
   flags = File.read(out + '/build-flags')
   abort "FAIL: optional auth feature enabled #{feature}" unless
@@ -224,6 +232,15 @@ checks += 1
   checks += 1
   _, _, status = run.call(out)
   abort 'FAIL: replaced existing output' if status.success?
+  checks += 1
+  _, stderr, status = run.call(work + '/no-libedit', 'EMBER_LIBEDIT_SOURCE' => '')
+  abort 'FAIL: accepted build without prepared libedit source' if status.success? ||
+    !stderr.include?('EMBER_LIBEDIT_SOURCE') || File.exist?(work + '/no-libedit')
+  checks += 1
+  File.unlink(libedit + '/libedit-source.json')
+  _, _, status = run.call(work + '/partial-libedit')
+  File.write(libedit + '/libedit-source.json', "{}\n")
+  abort 'FAIL: accepted incomplete prepared libedit source' if status.success? || File.exist?(work + '/partial-libedit')
   checks += 1
   _, _, status = run.call(work + '/old-gcc', 'TEST_GCC_VERSION' => '15.2.0')
   abort 'FAIL: accepted non-GCC16 compiler' if status.success? || File.exist?(work + '/old-gcc')

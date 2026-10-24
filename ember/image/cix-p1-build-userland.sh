@@ -16,6 +16,13 @@ for path in "$src" "$out" "$tools" "$compiler"; do
 done
 [ -d "$src" ] && [ -f "$src/build.sh" ] || exit 2
 [ ! -e "$out" ] && [ ! -L "$out" ] || exit 2
+# Base headers, libedit and sh consume the source prepared from the Ports recipe.
+libedit=${EMBER_LIBEDIT_SOURCE:-}
+case "$libedit" in /*) ;; *) echo 'EMBER_LIBEDIT_SOURCE must name the prepared absolute source.' >&2; exit 2;; esac
+case "$libedit" in *[!A-Za-z0-9_./-]*) echo 'Unsafe build path.' >&2; exit 2;; esac
+[ -f "$libedit/libedit-source.json" ] && [ -f "$libedit/ports.distinfo" ] || {
+    echo 'Prepared libedit source is incomplete.' >&2; exit 2
+}
 [ -x "$tools/bin/nbmake" ]
 for tool in nbmkesdb nbmkcsmapper; do [ -x "$tools/bin/$tool" ]; done
 command -v ruby >/dev/null
@@ -55,7 +62,7 @@ printf '%s\n' "source=$revision" "gcc=$version" "target=$machine" \
     "profile=reduced-static-c-development" > "$out/BUILD-INPUTS.pending"
 printf 'target-cppflags=%s\n' "$CPPFLAGS" >> "$out/BUILD-INPUTS.pending"
 for input in "$src/build.sh" "$0" "$here/cix-p1-i18n.rb" "$cc" "$runtime" \
-    "$tools/bin/nbmkesdb" "$tools/bin/nbmkcsmapper"; do
+    "$tools/bin/nbmkesdb" "$tools/bin/nbmkcsmapper" "$libedit/libedit-source.json"; do
     shasum -a 256 "$input" >> "$out/BUILD-INPUTS.pending"
 done
 shasum -a 256 "$0" "$here/cix-p1-i18n.rb" > "$out/PROFILE-SHA256.txt"
@@ -85,7 +92,7 @@ run wrapper sh "$src/build.sh" -U -u -j"$jobs" -m evbarm -a aarch64 \
     -V MKPAM=no -V USE_PAM=no -V MKKERBEROS=no -V USE_KERBEROS=no \
     -V MKLDAP=no -V USE_LDAP=no -V MKYP=no -V USE_YP=no \
     -V MKSKEY=no -V USE_SKEY=no -V MKHESIOD=no -V USE_HESIOD=no \
-    -V "BUILDINFO=EmberBSD:$revision" makewrapper
+    -V "EMBER_LIBEDIT_SOURCE=$libedit" -V "BUILDINFO=EmberBSD:$revision" makewrapper
 run obj "$wrapper" -C "$src" obj
 run directories "$wrapper" -C "$src" do-distrib-dirs
 run includes "$wrapper" -C "$src" -j"$jobs" includes

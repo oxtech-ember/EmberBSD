@@ -13,11 +13,15 @@ libgcc runtime is recorded by hash.
 
 ```sh
 BUILD_JOBS=2 HOST_CC=gcc-16 HOST_CXX=g++-16 \
+    EMBER_LIBEDIT_SOURCE=/absolute/prepared-libedit \
     sh ember/image/cix-p1-build-userland.sh \
     /absolute/clean-source /absolute/new-output \
     /absolute/host-tools /absolute/gcc16-prefix
 ```
 
+`EMBER_LIBEDIT_SOURCE` names the libedit source prepared by EmberBSD-SDK
+`scripts/prepare-libedit.py` from the Ports recipe ([base libedit](../../lib/libedit/README.md)).
+The builder rejects an absent or incomplete tree and records its receipt hash.
 The output path must not exist. Source and build paths must be absolute,
 without whitespace or shell metacharacters. The compiler must report GCC16
 and an AArch64 NetBSD ABI target. A dirty tracked source tree is rejected.
