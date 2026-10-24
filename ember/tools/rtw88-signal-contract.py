@@ -11,6 +11,10 @@ for p,names in [('sys/net80211/ieee80211.h',['IEEE80211_ADDR_LEN','IEEE80211_NWI
  for n in names:parts.append(re.search(r'^#define\s+'+n+r'\s+.*$',read(p),re.M).group()+'\n')
 s=read('sys/net80211/ieee80211_ioctl.h');parts.append(re.search(r'^struct ieee80211req_scan_result \{.*?^};',s,re.M|re.S).group()+'\n')
 (out/'scan-abi.h').write_text(''.join(parts))
+phy_header=read('sys/net80211/ieee80211_phy_ies.h')
+phy_size_decl='size_t ieee80211_phy_ies_size('
+if phy_header.count(phy_size_decl)!=1:raise ValueError('PHY IE size declaration')
+(out/'ieee80211_phy_ies.h').write_text(phy_header.replace(phy_size_decl,'static size_t ieee80211_phy_ies_size(',1))
 size_helper=body('sys/net80211/ieee80211_phy_ies.c','ieee80211_phy_ies_size','static size_t')
 (out/'get_scan_result.h').write_text(size_helper+body('sys/net80211/ieee80211_ioctl.c','get_scan_result','static void'))
 s=body('sys/net80211/ieee80211_ioctl.c','ieee80211_ioctl_getscanresults','static int').replace('\tp = ireq->i_data;','\tmemset(&u,0xa5,sizeof(u));\n\tp = ireq->i_data;')
