@@ -341,6 +341,7 @@ int
 zynqudc_disconnect(struct zynqudc *sc)
 {
 	int error;
+	sc->disconnect_count++;
 	zwrite(sc, ZUDC_CMD, 0);
 	zwrite(sc, ZUDC_INTR, 0);
 	sc->connected = false;
@@ -485,6 +486,8 @@ zsetup(struct zynqudc *sc)
 		zstall(sc);
 		return;
 	}
+	sc->setup_count++;
+	memcpy(sc->last_setup, setup, sizeof(sc->last_setup));
 	zwrite(sc, ZUDC_EPCTRL(0), 0x00800080);
 	sc->pending_address = 0xff;
 	sc->vendor_pending = false;
@@ -592,6 +595,8 @@ zynqudc_intr(struct zynqudc *sc)
 	uint32_t status = zread(sc, ZUDC_STS) & ZUDC_INT_MASK;
 	if (status == 0)
 		return 0;
+	sc->irq_count++;
+	sc->last_irq_status = status;
 	zwrite(sc, ZUDC_STS, status);
 	if (!sc->connected || sc->faulted) {
 		zwrite(sc, ZUDC_SETUP, 0xffff);
@@ -599,6 +604,7 @@ zynqudc_intr(struct zynqudc *sc)
 		return 1;
 	}
 	if (status & ZUDC_INT_URI) {
+		sc->reset_count++;
 		sc->configuration = sc->address = 0;
 		sc->pending_address = 0xff;
 		sc->ep0_phase = 0;

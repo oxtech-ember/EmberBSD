@@ -56,6 +56,37 @@ struct usbperiph_endpoint_gate {
 	uint32_t enable;
 };
 #define USBPERIPH_IOC_ENDPOINT_GATE _IOW('P', 7, struct usbperiph_endpoint_gate)
+/* Read-only snapshot; PHY fields are cached attach-time values, never live. */
+#define USBPERIPH_SNAPSHOT_VERSION 1
+#define USBPERIPH_SNAPSHOT_CONNECTED 0x01U
+#define USBPERIPH_SNAPSHOT_FAULTED 0x02U
+#define USBPERIPH_SNAPSHOT_SUSPENDED 0x04U
+#define USBPERIPH_SNAPSHOT_STOPPING 0x08U
+#define USBPERIPH_SNAPSHOT_PHY_INITIAL_VALID 0x10U
+struct usbperiph_snapshot {
+	uint32_t version;
+	uint32_t reserved0;
+	uint64_t generation;
+	uint64_t irq_count;
+	uint64_t setup_count;
+	uint64_t reset_count;
+	uint64_t disconnect_count;
+	uint32_t flags;
+	uint32_t configuration;
+	uint32_t address;
+	uint32_t ep0_phase;
+	uint32_t active_slots;
+	uint32_t retained_slots;
+	uint32_t last_irq_status;
+	uint32_t reserved1;
+	uint8_t last_setup[8];
+	uint8_t phy_function_initial;
+	uint8_t phy_otg_initial;
+	uint8_t reserved[6];
+	uint32_t command, status, interrupt_enable, port, otg, mode;
+	uint32_t setup_status, prime, flush, endpoint_status, complete, epctrl0;
+};
+#define USBPERIPH_IOC_SNAPSHOT _IOR('P', 8, struct usbperiph_snapshot)
 #define USBPERIPH_IOC_CONFIGURE _IOW('P', 0, struct usbperiph_config)
 #define USBPERIPH_IOC_CONNECT _IO('P', 1)
 #define USBPERIPH_IOC_DISCONNECT _IO('P', 2)

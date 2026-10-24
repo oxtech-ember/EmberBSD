@@ -26,6 +26,33 @@ number(const char *s, unsigned long long max)
 	return value;
 }
 
+static void
+diagnostic(int fd, const char *stage)
+{
+	struct usbperiph_snapshot s;
+	if (ioctl(fd, USBPERIPH_IOC_SNAPSHOT, &s) < 0) {
+		warn("snapshot %s", stage);
+		return;
+	}
+	printf("usb stage=%s version=%u gen=%llu flags=%x cfg=%u addr=%u phase=%u "
+	    "irq=%llu setup=%llu reset=%llu disconnect=%llu last_irq=%x "
+	    "last_setup=%02x%02x%02x%02x%02x%02x%02x%02x "
+	    "CMD=%08x STS=%08x INTR=%08x PORT=%08x OTG=%08x MODE=%08x "
+	    "SETUP=%08x PRIME=%08x FLUSH=%08x EPSTAT=%08x COMPLETE=%08x EP0=%08x "
+	    "active=%08x retained=%08x phy_initial_cached=%02x/%02x\n",
+	    stage, s.version, (unsigned long long)s.generation, s.flags,
+	    s.configuration, s.address, s.ep0_phase,
+	    (unsigned long long)s.irq_count, (unsigned long long)s.setup_count,
+	    (unsigned long long)s.reset_count, (unsigned long long)s.disconnect_count,
+	    s.last_irq_status, s.last_setup[0], s.last_setup[1], s.last_setup[2],
+	    s.last_setup[3], s.last_setup[4], s.last_setup[5], s.last_setup[6],
+	    s.last_setup[7], s.command, s.status, s.interrupt_enable, s.port, s.otg,
+	    s.mode, s.setup_status, s.prime, s.flush, s.endpoint_status, s.complete,
+	    s.epctrl0, s.active_slots, s.retained_slots, s.phy_function_initial,
+	    s.phy_otg_initial);
+	fflush(stdout);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -33,7 +60,7 @@ main(int argc, char **argv)
 	struct usbperiph_event event;
 	uint8_t buffer[USBPERIPH_MAX_XFER];
 	uint64_t bytes, total = 0;
-	unsigned vid, pid;
+	unsigned vid, pid, diagnostic_waits = 0;
 	bool loopback;
 	int fd;
 	const uint8_t device[18] = {18, 1, 0, 2, 0, 0, 0, 64,
@@ -75,18 +102,25 @@ main(int argc, char **argv)
 	fd = open(argv[1], O_RDWR);
 	if (fd < 0)
 		err(1, "open");
-	if (ioctl(fd, USBPERIPH_IOC_CONFIGURE, &config) < 0 ||
-	    ioctl(fd, USBPERIPH_IOC_CONNECT) < 0)
-		err(1, "configure/connect");
+	if (ioctl(fd, USBPERIPH_IOC_CONFIGURE, &config) < 0)
+		err(1, "configure");
+	diagnostic(fd, "before-connect");
+	if (ioctl(fd, USBPERIPH_IOC_CONNECT) < 0)
+		err(1, "connect");
+	diagnostic(fd, "after-connect");
 	for (;;) {
 		if (ioctl(fd, USBPERIPH_IOC_GET_EVENT, &event) < 0) {
-			if (errno == EWOULDBLOCK)
+			if (errno == EWOULDBLOCK) {
+				if (diagnostic_waits++ < 4)
+					diagnostic(fd, "enumeration-wait");
 				continue;
+			}
 			err(1, "enumeration event");
 		}
 		if (event.type == USBPERIPH_EVENT_CONFIGURE && event.configured == 1)
 			break;
 	}
+	diagnostic(fd, "configured");
 	while (total < bytes) {
 		struct usbperiph_xfer x = {
 			.buffer = (uintptr_t)buffer, .timeout_ms = 10000,
