@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Origin: EmberBSD native RTL8822CE RA and TX contracts, AI-assisted. */
 /* Actual RUN worker, caller and core. Kernel services use the startup model. */
 #define RTW88_STATE_TX_CALLER 1
 #define RTW88_STATE_RA_OBSERVE 1
@@ -816,6 +817,7 @@ test_ra_ht20_run(void)
 {
 	struct state_fixture s;
 	struct rtw88_ra_config tx_policy;
+	int error;
 
 	if (!state_fixture_start(&s, 36, 9))
 		return;
@@ -827,7 +829,12 @@ test_ra_ht20_run(void)
 	rtw88_net_state_work(&s.net.state_work, &s.net);
 	CHECK(ra_vht_runs == 1 && s.net.policy.accepting);
 	CHECK(s.sc.sc_ra.phy == RTW88_RA_HT20_1SS);
-	CHECK(rtw88_net_tx_ht20_policy(&s.net.ic, &tx_policy) == 0);
+	error = rtw88_net_tx_ht20_policy(&s.net.ic, &tx_policy);
+	CHECK(error == 0);
+	if (error != 0) {
+		state_fixture_finish(&s);
+		return;
+	}
 	mutex_enter(s.net.lock);
 	CHECK(rtw88_net_tx_ra_validate(&s.net, &tx_policy,
 	    s.net.policy.epoch) == 0);
@@ -1100,6 +1107,7 @@ test_ra_vht80_run(void)
 		    0, 0, 0, 0, 2, 2, 0, 0, 0, 0, 3, 0x10, 0 };
 		const uint8_t *desc;
 		unsigned slot, gen;
+		int error;
 
 		if (!state_fixture_start(&s, 36, 9))
 			continue;
@@ -1130,7 +1138,12 @@ test_ra_vht80_run(void)
 		}
 		rtw88_net_state_work(&s.net.state_work, &s.net);
 		CHECK(ra_vht_runs == 1 && s.net.policy.accepting);
-		CHECK(rtw88_net_tx_ht20_policy(&s.net.ic, &tx_policy) == 0);
+		error = rtw88_net_tx_ht20_policy(&s.net.ic, &tx_policy);
+		CHECK(error == 0);
+		if (error != 0) {
+			state_fixture_finish(&s);
+			continue;
+		}
 		mutex_enter(s.net.lock);
 		CHECK(rtw88_net_tx_ra_validate(&s.net, &tx_policy,
 		    s.net.policy.epoch) == 0);
