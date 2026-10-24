@@ -2016,17 +2016,34 @@ acpi_madt_walk(ACPI_STATUS (*func)(ACPI_SUBTABLE_HEADER *, void *), void *aux)
 void
 acpi_gtdt_walk(ACPI_STATUS (*func)(ACPI_GTDT_HEADER *, void *), void *aux)
 {
+	const ACPI_TABLE_GTDT *gtdt = (const ACPI_TABLE_GTDT *)gtdt_header;
 	ACPI_GTDT_HEADER *hdrp;
 	char *gtdtend, *where;
+	UINT32 count;
+
+	/*
+	 * Platform timers start at PlatformTimerOffset. Revision 3 places
+	 * the EL2 virtual timer between the fixed fields and the platform
+	 * timers, so the offset is not always sizeof(ACPI_TABLE_GTDT).
+	 */
+	if (gtdt_header->Length < sizeof(*gtdt) ||
+	    gtdt->PlatformTimerOffset < sizeof(*gtdt) ||
+	    gtdt->PlatformTimerOffset >= gtdt_header->Length)
+		return;
 
 	gtdtend = (char *)gtdt_header + gtdt_header->Length;
-	where = (char *)gtdt_header + sizeof (ACPI_TABLE_GTDT);
+	where = (char *)gtdt_header + gtdt->PlatformTimerOffset;
 
-	while (where < gtdtend) {
+	for (count = gtdt->PlatformTimerCount; count > 0; count--) {
+
+		if ((size_t)(gtdtend - where) < sizeof(*hdrp))
+			break;
 
 		hdrp = (ACPI_GTDT_HEADER *)where;
 
-		if (hdrp->Length == 0 || ACPI_FAILURE(func(hdrp, aux)))
+		if (hdrp->Length < sizeof(*hdrp) ||
+		    hdrp->Length > (size_t)(gtdtend - where) ||
+		    ACPI_FAILURE(func(hdrp, aux)))
 			break;
 
 		where += hdrp->Length;
