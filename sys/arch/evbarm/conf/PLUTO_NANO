@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# RAM-boot candidate for PlutoSDR Nano. Requires a verified Zynq FDT handoff.
+# Do not attach ADI radio or FPGA capture drivers in this first stage.
+include "arch/evbarm/conf/GENERIC"
+
+# The generic FDT lists register these PL drivers for automatic attachment.
+no ad9361phy* at spi?
+no adiaxidmac* at fdt?
+no adiaxiadc* at fdt?
+no zynqspi* at fdt?
+
+options EARLYCONS=zynq, CONSADDR=0xe0001000
