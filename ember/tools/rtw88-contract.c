@@ -527,7 +527,7 @@ test_tx_data_sc(void)
 	size_t j;
 	size_t i;
 
-	for (i = 0; i < __arraycount(codes); i++) {
+	for (i = 0; i < sizeof(codes) / sizeof(codes[0]); i++) {
 		info.data_sc = codes[i];
 		memset(data, 0xa5, sizeof(data));
 		CHECK(rtw88_tx_encode(data, sizeof(data), &info) == 0);
