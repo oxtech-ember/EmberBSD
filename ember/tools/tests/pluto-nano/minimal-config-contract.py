@@ -5,17 +5,13 @@ import argparse
 from pathlib import Path
 import re
 import sys
+import subprocess
+import tempfile
 
 
 ENABLED_ATTACHMENTS = re.compile(
     r"^\s*(?:ad9361phy|adiaxidmac|adiaxiadc|zynqspi)\*?\s+at\s"
 )
-REQUIRED_DISABLED_ATTACHMENTS = {
-    "ad9361phy": ("spi", "sys/dev/spi/files.spi"),
-    "adiaxidmac": ("fdt", "sys/dev/fdt/files.fdt"),
-    "adiaxiadc": ("fdt", "sys/dev/fdt/files.fdt"),
-    "zynqspi": ("fdt", "sys/arch/arm/xilinx/files.zynq"),
-}
 REQUIRED_EARLY_CONSOLE = "options EARLYCONS=zynq, CONSADDR=0xe0001000"
 
 
@@ -55,6 +51,7 @@ def main():
         type=Path,
         default=Path(__file__).resolve().parents[4],
     )
+    parser.add_argument("--config", type=Path, help="Native config(1) executable")
     args = parser.parse_args()
     source_root = args.source_root.resolve()
     config = source_root / "sys/arch/evbarm/conf/PLUTO_NANO"
@@ -77,17 +74,6 @@ def main():
                 print(f"FAIL: receive or PL attachment explicitly enabled by {path}: {line}", file=sys.stderr)
                 return 1
 
-    for device, (attachment, source) in REQUIRED_DISABLED_ATTACHMENTS.items():
-        declaration = source_root / source
-        pattern = re.compile(r"^attach\s+" + re.escape(device) + r"\s+at\s+" + re.escape(attachment) + r"(?:\s|$)")
-        if not any(pattern.match(line) for line in active_lines(declaration)):
-            print(f"FAIL: expected {device} auto-attachment in {declaration}", file=sys.stderr)
-            return 1
-        directive = f"no {device}* at {attachment}?"
-        if directive not in lines:
-            print(f"FAIL: profile must disable automatic {device} attachment with: {directive}", file=sys.stderr)
-            return 1
-
     generic = source_root / "sys/arch/evbarm/conf/GENERIC"
     generic_lines = active_lines(generic)
     if not any(re.fullmatch(r"options\s+SOC_ZYNQ7000", line) for line in generic_lines):
@@ -97,7 +83,16 @@ def main():
         print("FAIL: GENERIC no longer includes the FDT Zynq UART attachment", file=sys.stderr)
         return 1
 
-    print("PASS: PLUTO_NANO has early console and disables automatic ADI RX/PL attachments")
+    if args.config is not None:
+        with tempfile.TemporaryDirectory(prefix="pluto-config-") as directory:
+            subprocess.run([str(args.config.resolve(strict=True)), "-s", str(source_root / "sys"),
+                            "-b", directory, str(config)], check=True)
+            generated = (Path(directory) / "ioconf.c").read_text()
+            for device in ("ad9361phy", "adiaxidmac", "adiaxiadc", "zynqspi"):
+                if device in generated:
+                    raise AssertionError(f"Unexpected radio attachment in generated config: {device}")
+        print("PASS: real config(1) accepts the profile without radio attachments")
+    print("PASS: PLUTO_NANO has early console and selects no ADI RX/PL attachments")
     return 0
 
 

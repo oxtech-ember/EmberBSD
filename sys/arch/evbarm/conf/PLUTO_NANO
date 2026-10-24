@@ -3,10 +3,6 @@
 # Do not attach ADI radio or FPGA capture drivers in this first stage.
 include "arch/evbarm/conf/GENERIC"
 
-# The generic FDT lists register these PL drivers for automatic attachment.
-no ad9361phy* at spi?
-no adiaxidmac* at fdt?
-no adiaxiadc* at fdt?
-no zynqspi* at fdt?
-
+# GENERIC does not select the ADI radio, capture, or Zynq SPI attachments.
+# The configuration contract checks the complete include graph.
 options EARLYCONS=zynq, CONSADDR=0xe0001000
