@@ -203,7 +203,8 @@ rtw88_tx_encode(uint8_t *dst, size_t cap, const struct rtw88_tx_info *tx)
 	    (tx->flags & ~RTW88_TX_FLAGS) != 0 || tx->sequence > 4095 ||
 	    tx->report_sequence > 4095 || tx->queue > 19 ||
 	    tx->rate_id > 31 || tx->security > 3 || tx->rate > 127 ||
-	    tx->bandwidth > 3 || tx->stbc > 3 || tx->ampdu_density > 7 ||
+	    tx->bandwidth > 3 || tx->data_sc > 15 || tx->stbc > 3 ||
+	    tx->ampdu_density > 7 ||
 	    tx->ampdu_factor > 31 || tx->hw_ssn_sel > 3 || tx->tim_offset > 127)
 		return EINVAL;
 	if (tx->packet_offset != 0)
@@ -224,7 +225,8 @@ rtw88_tx_encode(uint8_t *dst, size_t cap, const struct rtw88_tx_info *tx)
 	    TXFLAG(RTW88_TX_NAV_USE_HDR, 15) | (uint32_t)tx->ampdu_factor << 17;
 	/* RTL8822C does not use the old DATA_RATE_FB_LIMIT field. */
 	w[4] = tx->rate;
-	w[5] = TXFLAG(RTW88_TX_SHORT_GI, 4) | (uint32_t)tx->bandwidth << 5 |
+	w[5] = tx->data_sc | TXFLAG(RTW88_TX_SHORT_GI, 4) |
+	    (uint32_t)tx->bandwidth << 5 |
 	    TXFLAG(RTW88_TX_LDPC, 7) | (uint32_t)tx->stbc << 8;
 	if ((tx->flags & RTW88_TX_RTS) != 0) {
 		w[4] |= UINT32_C(8) << 24; /* DESC_RATE24M. */

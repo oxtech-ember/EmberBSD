@@ -60,6 +60,7 @@ struct rtw88_tx_info {
 	uint8_t security;	/* Raw two-bit SEC_TYPE, not a cipher policy. */
 	uint8_t rate;
 	uint8_t bandwidth;
+	uint8_t data_sc;	/* RTL8822C TXDESC word5 DATA_SC, bits 0-3. */
 	uint8_t stbc;
 	uint8_t ampdu_density;
 	uint8_t ampdu_factor;	/* MAX_AGG_NUM encoding. */

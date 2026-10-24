@@ -485,6 +485,7 @@ test_tx_bounds(void)
 	BAD_TX(security, 4, EINVAL);
 	BAD_TX(rate, 128, EINVAL);
 	BAD_TX(bandwidth, 4, EINVAL);
+	BAD_TX(data_sc, 16, EINVAL);
 	BAD_TX(stbc, 4, EINVAL);
 	BAD_TX(ampdu_density, 8, EINVAL);
 	BAD_TX(ampdu_factor, 32, EINVAL);
@@ -500,12 +501,45 @@ test_tx_bounds(void)
 	info.queue = 19;
 	info.rate_id = info.ampdu_factor = 31;
 	info.security = info.bandwidth = info.stbc = info.hw_ssn_sel = 3;
+	info.data_sc = 15;
 	info.rate = info.tim_offset = 127;
 	info.ampdu_density = 7;
 	{
 		uint8_t data[48];
 
 		CHECK(rtw88_tx_encode(data, sizeof(data), &info) == 0);
+	}
+}
+
+/* DATA_SC shares TXDESC word5 with DATA_BW and format flags. */
+static void
+test_tx_data_sc(void)
+{
+	static const uint8_t codes[] = { 0, 4, 9, 10, 15 };
+	struct rtw88_tx_info info = {
+		.packet_size = 1,
+		.flags = RTW88_TX_SHORT_GI | RTW88_TX_LDPC,
+		.bandwidth = 2,
+		.stbc = 2
+	};
+	uint8_t data[RTW8822C_TX_PACKET_DESC_SIZE];
+	uint16_t checksum;
+	size_t j;
+	size_t i;
+
+	for (i = 0; i < __arraycount(codes); i++) {
+		info.data_sc = codes[i];
+		memset(data, 0xa5, sizeof(data));
+		CHECK(rtw88_tx_encode(data, sizeof(data), &info) == 0);
+		CHECK(data[20] == (0xd0 | codes[i]));
+		CHECK((data[21] & 3) == 2);
+		checksum = 0;
+		for (j = 0; j < sizeof(data); j += 2)
+			if (j != 28)
+				checksum ^= (uint16_t)data[j] |
+				    (uint16_t)data[j + 1] << 8;
+		CHECK(checksum == ((uint16_t)data[28] |
+		    (uint16_t)data[29] << 8));
 	}
 }
 
@@ -633,6 +667,7 @@ main(int argc, char **argv)
 	}
 	test_tx_exact();
 	test_tx_bounds();
+	test_tx_data_sc();
 	test_rx_bounds();
 	test_rx_exact();
 	test_dma_ranges();
