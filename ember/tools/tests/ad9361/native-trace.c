@@ -615,6 +615,7 @@ test_decoder_rates(void)
 	AD9361_InitParam p;
 	struct ad9361_native_bus bus;
 	struct ad9361_rf_phy *phy = NULL;
+	struct adi_axi_rx_status measured;
 	struct adi_axi_rx_config cfg = {
 	    .frequency_hz = 1090000000ULL, .sample_rate_hz = 2400000,
 	    .bandwidth_hz = 2000000, .rx_mask = 1, .channel_mask = 3,
@@ -641,6 +642,8 @@ test_decoder_rates(void)
 	assert(rx_clocks[ADC_FREQ] == 28800000);
 	assert(ad9361_native_read_rx_clock(&bus, phy, &rate) == 0);
 	assert(rate == 2399999);
+	assert(ad9361_native_read_rx_status(&bus, phy, &measured) == 0);
+	assert(measured.sample_rate_hz == 2399999);
 	assert(hw.reg[REG_TX_ENABLE_FILTER_CTRL] < 0x40);
 	assert((hw.reg[REG_TX_SYNTH_POWER_DOWN_OVERRIDE] & 31) == 31);
 	cfg.frequency_hz = 162000000ULL;
@@ -651,6 +654,8 @@ test_decoder_rates(void)
 	assert(error == 0);
 	assert(ad9361_native_read_rx_clock(&bus, phy, &rate) == 0);
 	assert(rate == 3071999);
+	assert(ad9361_native_read_rx_status(&bus, phy, &measured) == 0);
+	assert(measured.sample_rate_hz == 3071999);
 	assert(ad9361_calculate_rf_clock_chain(phy, 3072000, 1,
 	    rx_clocks, tx_clocks) == 0);
 	assert(rx_clocks[ADC_FREQ] == 36864000);
