@@ -641,7 +641,7 @@ static const struct ad9361_property properties[] = {
      false},
     {"adi,digital-interface-tune-fir-disable",
      offsetof(AD9361_InitParam, digital_interface_tune_fir_disable), 1, 1,
-     false, false},
+     true, false},
     {"adi,pp-tx-swap-enable", offsetof(AD9361_InitParam, pp_tx_swap_enable), 1,
      1, true, false},
     {"adi,pp-rx-swap-enable", offsetof(AD9361_InitParam, pp_rx_swap_enable), 1,

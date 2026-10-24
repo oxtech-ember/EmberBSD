@@ -39,6 +39,7 @@ struct prop {
 static const uint8_t present[1] = {0};
 static const struct prop props[] = {
     {"adi,rx-only", 0, present},
+    {"adi,digital-interface-tune-fir-disable", 0, present},
     {"adi,2rx-2tx-mode-enable", 0, present},
     {"adi,frequency-division-duplex-mode-enable", 0, present},
     {"adi,lvds-mode-enable", 0, present}};
