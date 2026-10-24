@@ -430,7 +430,7 @@ ieee80211_mgmt_output(struct ieee80211com *ic, struct ieee80211_node *ni,
 			ni->ni_flags |= IEEE80211_NODE_WME_OFFER;
 	}
 	if (ieee80211_ht20_request_offer(m, type, ht20, vht != NULL))
-		ieee80211_ht20_offer(ic, ni, type, ht20);
+		ieee80211_ht20_offer(ic, ni, type, ht20, vht);
 	if (timer) {
 		/*
 		 * Set the mgt frame timeout.

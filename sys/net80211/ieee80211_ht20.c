@@ -91,7 +91,8 @@ ieee80211_ht20_reset(struct ieee80211_node *ni)
 
 void
 ieee80211_ht20_offer(struct ieee80211com *ic, struct ieee80211_node *ni,
-    int type, const struct ieee80211_ht20_profile *profile)
+    int type, const struct ieee80211_ht20_profile *profile,
+    const struct ieee80211_vht_cap *vht)
 {
 	struct ieee80211_ht20_node *h = &ni->ni_ht20;
 
@@ -107,6 +108,11 @@ ieee80211_ht20_offer(struct ieee80211com *ic, struct ieee80211_node *ni,
 	h->assoc_attempt = ni->ni_wme_attempt;
 	h->security = (ic->ic_flags & IEEE80211_F_PRIVACY) != 0;
 	h->offered = 1;
+	memset(&h->vht, 0, sizeof(h->vht));
+	if (vht != NULL) {
+		h->vht.local = *vht;
+		h->vht.offered = 1;
+	}
 }
 
 static int
@@ -167,11 +173,14 @@ ieee80211_ht20_response(struct ieee80211com *ic, struct ieee80211_node *ni,
 {
 	const struct ieee80211_ht20_node *h = offer;
 	struct ieee80211_ht20_node candidate;
-	const uint8_t *cap = NULL, *op = NULL;
+	struct ieee80211_vht_ies vht;
+	struct ieee80211_vht_cap local_vht;
+	const uint8_t *response_ies = p, *cap = NULL, *op = NULL;
 	uint16_t rx, basic, caps, tx;
-	size_t size;
+	size_t size, total_len;
 	unsigned i, smps;
 
+	total_len = len;
 	if (!h->offered)
 		return 0; /* An unsolicited HT IE never activates a legacy station. */
 	if (!ht20_current(ic, ni, h) || subtype != h->subtype + 0x10 ||
@@ -228,6 +237,24 @@ ieee80211_ht20_response(struct ieee80211com *ic, struct ieee80211_node *ni,
 	memcpy(candidate.peer_htcap, cap, sizeof(candidate.peer_htcap));
 	memcpy(candidate.peer_htop, op, sizeof(candidate.peer_htop));
 	candidate.valid = 1;
+	/* Commit VHT only when this response matches a queued local offer. */
+	candidate.vht.offered = 0;
+	candidate.vht.valid = 0;
+	if (h->vht.offered && ic->ic_vht_admit != NULL &&
+	    ic->ic_vht_admit(ic, &local_vht) == 0 &&
+	    ieee80211_vht_ies_parse(&vht, response_ies, total_len) == 0 &&
+	    vht.cap_present && vht.operation_present &&
+	    ieee80211_vht_assoc80_candidate(&local_vht, response_ies, total_len,
+	    ieee80211_chan2ieee(ic, ic->ic_curchan)) == 0) {
+		candidate.vht.local = local_vht;
+		candidate.vht.peer = vht.cap;
+		candidate.vht.operation = vht.operation;
+		candidate.vht.maps.tx_map = ieee80211_vht_mcs_intersect(
+		    local_vht.tx_map, vht.cap.rx_map);
+		candidate.vht.maps.rx_map = ieee80211_vht_mcs_intersect(
+		    local_vht.rx_map, vht.cap.tx_map);
+		candidate.vht.valid = 1;
+	}
 	ni->ni_ht20 = candidate;
 	/* The current provider admitted the bounded A-MSDU receive consumer. */
 	ni->ni_flags |= IEEE80211_NODE_AMSDU_RX;
