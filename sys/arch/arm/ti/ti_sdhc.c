@@ -255,7 +255,7 @@ ti_sdhc_init(struct ti_sdhc_softc *sc, const struct ti_sdhc_config *conf)
 {
 	device_t dev = sc->sc.sc_dev;
 	uint32_t clkd, stat;
-	int error, timo, clksft, n;
+	int error, timo, clksft;
 	char intrstr[128];
 
 	const int tx_chan = sc->sc_edma_chan[EDMA_CHAN_TX];
@@ -360,10 +360,8 @@ no_dma:
 	SDHC_WRITE(sc, SDHC_CLOCK_CTL,
 	    SDHC_READ(sc, SDHC_CLOCK_CTL) & ~sc->sc.sc_clkmsk);
 	clkd = CLKD(80);
-	n = 1;
 	while (clkd & ~(sc->sc.sc_clkmsk >> clksft)) {
 		clkd >>= 1;
-		n <<= 1;
 	}
 	SDHC_WRITE(sc, SDHC_CLOCK_CTL,
 	    SDHC_READ(sc, SDHC_CLOCK_CTL) | (clkd << clksft));
