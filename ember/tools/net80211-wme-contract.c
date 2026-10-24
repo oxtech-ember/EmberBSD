@@ -1078,6 +1078,133 @@ test_vht_request_bytes(void)
 	}
 	test_channel.ic_freq = 2412;
 }
+static struct mbuf *
+vht_assoc_response(unsigned variant)
+{
+	uint8_t ies[96] = {0};
+	struct mbuf *m;
+	size_t len = 73;
+	uint8_t *cap, *op;
+
+	ies[0] = 45; ies[1] = 26; ies[2] = 0x02; /* HT40 support. */
+	ies[5] = 0xff; /* HT MCS0-7. */
+	ies[28] = 61; ies[29] = 22; ies[30] = 36;
+	ies[31] = 0x05; /* Primary36, HT40 above. */
+	cap = ies + 52;
+	cap[0] = 191; cap[1] = IEEE80211_VHT_CAP_LEN;
+	cap[6] = 0xfd; cap[7] = 0xff; /* Peer RX MCS0-8, NSS1. */
+	cap[10] = 0xfe; cap[11] = 0xff; /* Peer TX MCS0-9, NSS1. */
+	op = cap + 14;
+	op[0] = 192; op[1] = IEEE80211_VHT_OPERATION_LEN;
+	op[2] = 1; op[3] = 42; /* VHT80 center segment. */
+	op[5] = 0xfc; op[6] = 0xff; /* Basic MCS0-7, NSS1. */
+	switch (variant) {
+	case 1:
+		len = 52; /* No VHT response; HT fallback remains available. */
+		break;
+	case 2:
+		op[3] = 46; /* Wrong center. */
+		break;
+	case 3:
+		cap[6] = cap[7] = 0xff; /* Peer cannot receive VHT MCS. */
+		break;
+	case 4:
+		op[5] = 0xfd; /* AP requires unsupported MCS8. */
+		break;
+	case 5:
+		memcpy(ies + len, cap, 14); /* Duplicate capability. */
+		len += 14;
+		break;
+	case 6:
+		memcpy(ies + len, op, 7); /* Duplicate operation. */
+		len += 7;
+		break;
+	case 7:
+		/* A complete but wrong-length capability IE, followed by VHT Op. */
+		memmove(ies + 65, op, 7);
+		cap[1] = IEEE80211_VHT_CAP_LEN - 1;
+		len--;
+		break;
+	case 8:
+		op[1]++; /* Truncated final operation IE. */
+		break;
+	default:
+		break;
+	}
+	m = response(1, 0, IEEE80211_FC0_SUBTYPE_ASSOC_RESP);
+	assert(m != NULL && (size_t)m->m_len + len < sizeof(m->data) - 128);
+	memcpy(m->m_data + m->m_len, ies, len);
+	m->m_len += (int)len;
+	m->m_pkthdr.len = m->m_len;
+	m->model_capacity += len;
+	return m;
+}
+static void
+test_vht_assoc_response(void)
+{
+	struct ieee80211_channel other = {5200, 0};
+	struct mbuf *m;
+	struct ieee80211_frame *wh;
+	unsigned variant;
+
+	prepare_vht_request();
+	CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ) == 0);
+	deliver(vht_assoc_response(0), IEEE80211_FC0_SUBTYPE_ASSOC_RESP);
+	CHECK(test_ic.ic_state == IEEE80211_S_RUN);
+	CHECK(test_node.ni_ht20.valid);
+	CHECK(test_node.ni_ht20.vht.valid);
+	CHECK(test_node.ni_ht20.vht.peer.rx_map == 0xfffd);
+	CHECK(test_node.ni_ht20.vht.peer.tx_map == 0xfffe);
+	CHECK(test_node.ni_ht20.vht.maps.tx_map == 0xfffc);
+	CHECK(test_node.ni_ht20.vht.maps.rx_map == 0xfffc);
+	CHECK(test_node.ni_ht20.vht.operation.width == 1);
+	CHECK(test_node.ni_ht20.vht.operation.seg0 == 42);
+
+	/* Unsupported and malformed VHT responses retain HT20 where framing is
+	 * still valid, and a malformed TLV cannot leave negotiated state behind. */
+	for (variant = 1; variant <= 8; variant++) {
+		prepare_vht_request();
+		CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ) == 0);
+		deliver(vht_assoc_response(variant),
+		    IEEE80211_FC0_SUBTYPE_ASSOC_RESP);
+		CHECK(!test_node.ni_ht20.vht.valid);
+		if (variant == 8) {
+			CHECK(!test_node.ni_ht20.valid);
+			CHECK(test_ic.ic_state == IEEE80211_S_SCAN);
+		}
+		else {
+			CHECK(test_node.ni_ht20.valid);
+			CHECK(test_ic.ic_state == IEEE80211_S_RUN);
+		}
+	}
+
+	/* The offer is bound to the queued association's peer and attempt. */
+	for (variant = 0; variant < 4; variant++) {
+		prepare_vht_request();
+		CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ) == 0);
+		m = vht_assoc_response(0);
+		wh = mtod(m, struct ieee80211_frame *);
+		if (variant == 0)
+			wh->i_addr2[5] ^= 1;
+		else if (variant == 1)
+			test_node.ni_wme_attempt++;
+		else if (variant == 2)
+			test_ic.ic_curchan = &other;
+		deliver(m, variant == 3 ? IEEE80211_FC0_SUBTYPE_REASSOC_RESP :
+		    IEEE80211_FC0_SUBTYPE_ASSOC_RESP);
+		CHECK(test_ic.ic_state == IEEE80211_S_ASSOC);
+		CHECK(!test_node.ni_ht20.vht.valid);
+	}
+
+	/* A changed local capability invalidates VHT but retains HT20. */
+	prepare_vht_request();
+	CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ) == 0);
+	test_ic.ic_vht_admit = vht_bad_local_admit;
+	deliver(vht_assoc_response(0), IEEE80211_FC0_SUBTYPE_ASSOC_RESP);
+	CHECK(test_node.ni_ht20.valid);
+	CHECK(!test_node.ni_ht20.vht.valid);
+	test_channel.ic_freq = 2412;
+}
 static void
 test_parser_boundaries(void)
 {
@@ -2113,6 +2240,7 @@ main(void)
 	test_lifetime();
 	test_request_ie();
 	test_vht_request_bytes();
+	test_vht_assoc_response();
 	test_classification();
 	test_sequence();
 	test_beacon_update();

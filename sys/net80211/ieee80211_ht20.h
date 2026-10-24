@@ -3,6 +3,7 @@
 #ifndef _NET80211_IEEE80211_HT20_H_
 #define _NET80211_IEEE80211_HT20_H_
 #include <sys/types.h>
+#include <net80211/ieee80211_vht_ies.h>
 #define IEEE80211_HT20_READY_RXBA 0x01
 #define IEEE80211_HT20_READY_SCHEDULER 0x02
 #define IEEE80211_HT20_READY_AMSDU 0x04
@@ -24,9 +25,16 @@ struct ieee80211_ht20_profile {
 	uint16_t rx_mcs, tx_mcs;
 	uint8_t ready, ampdu; /* Factor0, provider-qualified spacing0..7. */
 };
+struct ieee80211_ht20_vht {
+	struct ieee80211_vht_cap local, peer;
+	struct ieee80211_vht_operation operation;
+	struct ieee80211_vht_mcs_maps maps;
+	uint8_t offered, valid;
+};
 struct ieee80211_ht20_node {
 	uint32_t attempt, offer_attempt;
 	struct ieee80211_ht20_profile profile;
+	struct ieee80211_ht20_vht vht;
 	uint32_t assoc_attempt; /* Snapshot of the WME association attempt. */
 	struct ieee80211_channel *channel;
 	uint8_t bssid[6], subtype, offered, valid, security;
