@@ -175,12 +175,15 @@ ieee80211_ht20_response(struct ieee80211com *ic, struct ieee80211_node *ni,
 	struct ieee80211_ht20_node candidate;
 	struct ieee80211_vht_ies vht;
 	struct ieee80211_vht_cap local_vht;
-	const uint8_t *response_ies = p, *cap = NULL, *op = NULL;
+	uint8_t phy_ies[IEEE80211_PHY_IES_MAXLEN];
+	const uint8_t *cap = NULL, *op = NULL;
 	uint16_t rx, basic, caps, tx;
-	size_t size, total_len;
+	size_t size, phy_len;
 	unsigned i, smps;
+	int vht_phy_overflow;
 
-	total_len = len;
+	phy_len = 0;
+	vht_phy_overflow = 0;
 	if (!h->offered)
 		return 0; /* An unsolicited HT IE never activates a legacy station. */
 	if (!ht20_current(ic, ni, h) || subtype != h->subtype + 0x10 ||
@@ -198,6 +201,17 @@ ieee80211_ht20_response(struct ieee80211com *ic, struct ieee80211_node *ni,
 			if (op != NULL || p[1] != 22)
 				goto bad;
 			op = p + 2;
+		}
+		/* The association response also carries Rates/WME/RSN IEs. Keep
+		 * only the bounded PHY IEs for the strict VHT candidate validator. */
+		if (p[0] == 45 || p[0] == 61 || p[0] == 191 || p[0] == 192) {
+			if (vht_phy_overflow ||
+			    size > sizeof(phy_ies) - phy_len)
+				vht_phy_overflow = 1;
+			else {
+				memcpy(phy_ies + phy_len, p, size);
+				phy_len += size;
+			}
 		}
 		p += size;
 		len -= size;
@@ -240,11 +254,12 @@ ieee80211_ht20_response(struct ieee80211com *ic, struct ieee80211_node *ni,
 	/* Commit VHT only when this response matches a queued local offer. */
 	candidate.vht.offered = 0;
 	candidate.vht.valid = 0;
-	if (h->vht.offered && ic->ic_vht_admit != NULL &&
+	if (!vht_phy_overflow && h->vht.offered &&
+	    ic->ic_vht_admit != NULL &&
 	    ic->ic_vht_admit(ic, &local_vht) == 0 &&
-	    ieee80211_vht_ies_parse(&vht, response_ies, total_len) == 0 &&
+	    ieee80211_vht_ies_parse(&vht, phy_ies, phy_len) == 0 &&
 	    vht.cap_present && vht.operation_present &&
-	    ieee80211_vht_assoc80_candidate(&local_vht, response_ies, total_len,
+	    ieee80211_vht_assoc80_candidate(&local_vht, phy_ies, phy_len,
 	    ieee80211_chan2ieee(ic, ic->ic_curchan)) == 0) {
 		candidate.vht.local = local_vht;
 		candidate.vht.peer = vht.cap;

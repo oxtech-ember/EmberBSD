@@ -1149,7 +1149,11 @@ test_vht_assoc_response(void)
 
 	prepare_vht_request();
 	CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ) == 0);
-	deliver(vht_assoc_response(0), IEEE80211_FC0_SUBTYPE_ASSOC_RESP);
+	m = vht_assoc_response(0);
+	/* The full response IE window includes ordinary Rates/WME alongside PHY. */
+	CHECK((size_t)(m->m_data + m->m_len - response_ie(m)) >
+	    IEEE80211_PHY_IES_MAXLEN);
+	deliver(m, IEEE80211_FC0_SUBTYPE_ASSOC_RESP);
 	CHECK(test_ic.ic_state == IEEE80211_S_RUN);
 	CHECK(test_node.ni_ht20.valid);
 	CHECK(test_node.ni_ht20.vht.valid);
