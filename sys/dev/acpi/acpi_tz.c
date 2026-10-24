@@ -45,6 +45,7 @@ __KERNEL_RCSID(0, "$NetBSD: acpi_tz.c,v 1.91 2022/05/22 11:27:35 andvar Exp $");
 
 #include <dev/acpi/acpireg.h>
 #include <dev/acpi/acpivar.h>
+#include <dev/acpi/acpi_perflimit.h>
 #include <dev/acpi/acpi_power.h>
 #include <dev/sysmon/sysmon_taskq.h>
 
@@ -86,6 +87,20 @@ ACPI_MODULE_NAME		("acpi_tz")
 #define ATZ_HYSTERESIS		50
 
 /*
+ * Passive cooling (ACPI 6.5, section 11.1.5.1) changes the performance
+ * of the _PSL processors every _TSP tenths of a second by
+ *
+ *	dP[%] = _TC1 * (Tn - Tn-1) + _TC2 * (Tn - _PSV)
+ *
+ * with temperatures in kelvin; here they are in 0.1 K. One step changes
+ * the limit by at most ATZ_PASSIVE_STEP percent. The zone samples at
+ * _TSP while it limits its processors or is within ATZ_PASSIVE_NEAR
+ * (0.1 K) of _PSV, so that a long _TZP does not delay the first step.
+ */
+#define ATZ_PASSIVE_STEP	25
+#define ATZ_PASSIVE_NEAR	50
+
+/*
  * All temperatures are reported in 0.1 Kelvin.
  * The ACPI specification assumes that K = C + 273.2
  * rather than the nominal 273.15 used by envsys(4).
@@ -101,6 +116,7 @@ struct acpitz_zone {
 	uint32_t		 psv;
 	uint32_t		 tc1;
 	uint32_t		 tc2;
+	uint32_t		 tsp;
 	uint32_t		 tmp;
 	uint32_t		 prevtmp;
 	uint32_t		 tzp;
@@ -128,6 +144,8 @@ struct acpitz_softc {
 	bool			 sc_have_fan;
 	struct cpu_info	       **sc_psl;
 	size_t			 sc_psl_size;
+	unsigned int		 sc_passive;	/* _PSL limit, percent */
+	bool			 sc_passive_failed;
 };
 
 static int		acpitz_match(device_t, cfdata_t, void *);
@@ -160,6 +178,10 @@ static int		acpitz_get_fanspeed(device_t, uint32_t *,
 static ACPI_STATUS	acpitz_set_fanspeed(device_t, uint32_t);
 #endif
 static void		acpitz_print_processor_list(device_t);
+static void		acpitz_passive(device_t);
+static void		acpitz_passive_release(device_t);
+static int		acpitz_poll_period(const struct acpitz_softc *);
+static int		acpitz_sysctl_passive(SYSCTLFN_PROTO);
 
 CFATTACH_DECL_NEW(acpitz, sizeof(struct acpitz_softc),
     acpitz_match, acpitz_attach, acpitz_detach, NULL);
@@ -193,6 +215,7 @@ acpitz_attach(device_t parent, device_t self, void *aux)
 	sc->sc_have_fan = false;
 	sc->sc_active = ATZ_ACTIVE_NONE;
 	sc->sc_fan_min_level = -1;
+	sc->sc_passive = ACPI_PERFLIMIT_NONE;
 	sc->sc_node = aa->aa_node;
 	sc->sc_zone.tzp = ATZ_TZP_RATE;
 
@@ -237,7 +260,7 @@ acpitz_attach(device_t parent, device_t self, void *aux)
 	acpitz_init_envsys(self);
 	acpitz_init_sysctl(self);
 
-	callout_schedule(&sc->sc_callout, sc->sc_zone.tzp * hz / 10);
+	callout_schedule(&sc->sc_callout, acpitz_poll_period(sc));
 }
 
 static int
@@ -281,6 +304,9 @@ acpitz_detach(device_t self, int flags)
 
 		ACPI_FREE(sc->sc_zone.al[i].Pointer);
 	}
+
+	/* No status callback remains; return the processors' performance. */
+	acpitz_passive_release(self);
 
 	if (sc->sc_psl)
 		kmem_free(sc->sc_psl, sc->sc_psl_size);
@@ -363,12 +389,6 @@ acpitz_get_status(void *opaque)
 		device_xname(dv), acpitz_celcius_string(sc->sc_zone.tmp)));
 
 	/*
-	 * XXX: Passive cooling is not yet supported.
-	 */
-	if ((sc->sc_flags & ATZ_F_PASSIVEONLY) != 0)
-		return;
-
-	/*
 	 * As noted in ACPI 4.0 (p. 420), the temperature
 	 * thresholds are conveyed in the optional _ACx
 	 * object (x = 0 ... 9). The smaller the x, the
@@ -438,7 +458,100 @@ acpitz_get_status(void *opaque)
 		}
 	}
 
+	acpitz_passive(dv);
 	acpitz_set_active(sc, active);
+}
+
+/*
+ * acpitz_passive: one passive cooling step for the _PSL processors.
+ */
+static void
+acpitz_passive(device_t dv)
+{
+	struct acpitz_softc *sc = device_private(dv);
+	const struct acpitz_zone *zone = &sc->sc_zone;
+	unsigned int i, limit;
+	int64_t delta;
+	int error, rv;
+
+	if (sc->sc_psl == NULL || zone->psv == ATZ_TMP_INVALID ||
+	    zone->tc1 == ATZ_TMP_INVALID || zone->tc2 == ATZ_TMP_INVALID)
+		return;
+	if (sc->sc_passive == ACPI_PERFLIMIT_NONE && zone->tmp < zone->psv &&
+	    !sc->sc_passive_failed)
+		return;
+
+	delta = (int64_t)zone->tc1 * ((int64_t)zone->tmp - zone->prevtmp) +
+	    (int64_t)zone->tc2 * ((int64_t)zone->tmp - zone->psv);
+	/* Round away from zero, so that a small trend still moves. */
+	delta = delta > 0 ? (delta + 9) / 10 : (delta - 9) / 10;
+	/* Below _PSV the processors recover even without a trend. */
+	if (zone->tmp < zone->psv && delta > -1)
+		delta = -1;
+	delta = MAX(-ATZ_PASSIVE_STEP, MIN(ATZ_PASSIVE_STEP, delta));
+
+	limit = sc->sc_passive;
+	if (delta > 0)
+		limit = (unsigned int)delta >= limit ? 0 :
+		    limit - (unsigned int)delta;
+	else
+		limit = MIN(ACPI_PERFLIMIT_NONE, limit + (unsigned int)-delta);
+
+	error = 0;
+	for (i = 0; sc->sc_psl[i] != NULL; i++) {
+		rv = acpi_perflimit_set(sc->sc_psl[i], sc, limit);
+		if (rv != 0 && error == 0)
+			error = rv;
+	}
+	if (error != 0 && !sc->sc_passive_failed)
+		aprint_error_dev(dv, "passive cooling limit %u%% failed: %d\n",
+		    limit, error);
+	sc->sc_passive_failed = error != 0;
+
+	if (sc->sc_passive == ACPI_PERFLIMIT_NONE &&
+	    limit < ACPI_PERFLIMIT_NONE)
+		aprint_normal_dev(dv, "passive cooling at %s C\n",
+		    acpitz_celcius_string(zone->tmp));
+	else if (sc->sc_passive < ACPI_PERFLIMIT_NONE &&
+	    limit == ACPI_PERFLIMIT_NONE)
+		aprint_normal_dev(dv, "passive cooling released at %s C\n",
+		    acpitz_celcius_string(zone->tmp));
+	atomic_store_relaxed(&sc->sc_passive, limit);
+}
+
+/*
+ * acpitz_passive_release: withdraw the zone's processor limits.
+ */
+static void
+acpitz_passive_release(device_t dv)
+{
+	struct acpitz_softc *sc = device_private(dv);
+	unsigned int i;
+
+	if (sc->sc_psl == NULL)
+		return;
+	for (i = 0; sc->sc_psl[i] != NULL; i++)
+		(void)acpi_perflimit_set(sc->sc_psl[i], sc,
+		    ACPI_PERFLIMIT_NONE);
+	atomic_store_relaxed(&sc->sc_passive, ACPI_PERFLIMIT_NONE);
+}
+
+/*
+ * acpitz_poll_period: callout ticks until the next zone sample.
+ */
+static int
+acpitz_poll_period(const struct acpitz_softc *sc)
+{
+	const struct acpitz_zone *zone = &sc->sc_zone;
+	uint32_t tsp = zone->tsp, tmp = zone->tmp, psv = zone->psv;
+	uint32_t period = zone->tzp;
+
+	if (sc->sc_psl != NULL && psv != ATZ_TMP_INVALID &&
+	    tsp != ATZ_TMP_INVALID && tsp != 0 && tsp < period &&
+	    (atomic_load_relaxed(&sc->sc_passive) < ACPI_PERFLIMIT_NONE ||
+	    (tmp != ATZ_TMP_INVALID && tmp + ATZ_PASSIVE_NEAR >= psv)))
+		period = tsp;
+	return MAX(1, (int)(period * hz / 10));
 }
 
 static void
@@ -474,33 +587,57 @@ acpitz_init_sysctl(device_t dv)
 {
 	struct acpitz_softc *sc = device_private(dv);
 	const struct sysctlnode *node;
+	bool fan, passive;
 	int error;
 
-	if (sc->sc_zone.al[0].Pointer == NULL)
+	fan = sc->sc_zone.al[0].Pointer != NULL;
+	passive = sc->sc_psl != NULL && sc->sc_zone.psv != ATZ_TMP_INVALID;
+	if (!fan && !passive)
 		return;
 
 	error = sysctl_createv(&sc->sc_sysctllog, 0, NULL, &node,
 	    0, CTLTYPE_NODE, device_xname(dv), NULL, NULL, 0, NULL, 0,
 	    CTL_HW, CTL_CREATE, CTL_EOL);
-	if (error == 0)
+	if (error == 0 && passive)
+		error = sysctl_createv(&sc->sc_sysctllog, 0, &node, NULL,
+		    CTLFLAG_READONLY, CTLTYPE_INT, "passive_limit",
+		    SYSCTL_DESCR("Passive cooling limit, percent of the "
+		    "processor performance range"),
+		    acpitz_sysctl_passive, 0, (void *)dv, 0, CTL_CREATE,
+		    CTL_EOL);
+	if (error == 0 && fan)
 		error = sysctl_createv(&sc->sc_sysctllog, 0, &node, NULL,
 		    CTLFLAG_READWRITE, CTLTYPE_INT, "force_fan",
 		    SYSCTL_DESCR("Keep maximum active cooling enabled"),
 		    acpitz_sysctl_fan, 0, (void *)dv, 0, CTL_CREATE, CTL_EOL);
-	if (error == 0)
+	if (error == 0 && fan)
 		error = sysctl_createv(&sc->sc_sysctllog, 0, &node, NULL,
 		    CTLFLAG_READWRITE, CTLTYPE_INT, "fan_max_only",
 		    SYSCTL_DESCR("Use maximum cooling for active thermal requests"),
 		    acpitz_sysctl_fan, 0, (void *)dv, 0, CTL_CREATE, CTL_EOL);
-	if (error == 0)
+	if (error == 0 && fan)
 		error = sysctl_createv(&sc->sc_sysctllog, 0, &node, NULL,
 		    CTLFLAG_READWRITE, CTLTYPE_INT, "fan_min_level",
 		    SYSCTL_DESCR("Minimum active cooling level (-1 uses firmware)"),
 		    acpitz_sysctl_fan_min, 0, (void *)dv, 0, CTL_CREATE, CTL_EOL);
 	if (error != 0) {
-		aprint_error_dev(dv, "could not create fan control: %d\n", error);
+		aprint_error_dev(dv, "could not create thermal control: %d\n",
+		    error);
 		sysctl_teardown(&sc->sc_sysctllog);
 	}
+}
+
+static int
+acpitz_sysctl_passive(SYSCTLFN_ARGS)
+{
+	struct sysctlnode node = *rnode;
+	device_t dv = rnode->sysctl_data;
+	struct acpitz_softc *sc = device_private(dv);
+	int value;
+
+	value = (int)atomic_load_relaxed(&sc->sc_passive);
+	node.sysctl_data = &value;
+	return sysctl_lookup(SYSCTLFN_CALL(&node));
 }
 
 static int
@@ -748,6 +885,7 @@ acpitz_get_zone(void *opaque, int verbose)
 	 *    _PSV : passive cooling policy threshold
 	 *    _TC1 : thermal constant for passive cooling
 	 *    _TC2 : thermal constant for passive cooling
+	 *    _TSP : passive cooling sampling period (tenths of seconds)
 	 */
 	(void)acpitz_get_integer(dv, "_TMP", &sc->sc_zone.tmp);
 	(void)acpitz_get_integer(dv, "_CRT", &sc->sc_zone.crt);
@@ -755,6 +893,7 @@ acpitz_get_zone(void *opaque, int verbose)
 	(void)acpitz_get_integer(dv, "_PSV", &sc->sc_zone.psv);
 	(void)acpitz_get_integer(dv, "_TC1", &sc->sc_zone.tc1);
 	(void)acpitz_get_integer(dv, "_TC2", &sc->sc_zone.tc2);
+	(void)acpitz_get_integer(dv, "_TSP", &sc->sc_zone.tsp);
 
 	/*
 	 * If _RTV is not present or present and zero,
@@ -791,6 +930,11 @@ acpitz_get_zone(void *opaque, int verbose)
 			aprint_verbose("%spassive %s C", comma ? ", " : "",
 			    acpitz_celcius_string(sc->sc_zone.psv));
 			comma = 1;
+			if (sc->sc_zone.tc1 != ATZ_TMP_INVALID &&
+			    sc->sc_zone.tc2 != ATZ_TMP_INVALID)
+				aprint_verbose(" (tc1 %u, tc2 %u, tsp %u)",
+				    sc->sc_zone.tc1, sc->sc_zone.tc2,
+				    sc->sc_zone.tsp);
 		}
 
 		if (valid_levels == 0) {
@@ -1033,7 +1177,7 @@ acpitz_tick(void *opaque)
 
 	(void)AcpiOsExecute(OSL_NOTIFY_HANDLER, acpitz_get_status, dv);
 
-	callout_schedule(&sc->sc_callout, sc->sc_zone.tzp * hz / 10);
+	callout_schedule(&sc->sc_callout, acpitz_poll_period(sc));
 }
 
 static void

@@ -38,11 +38,13 @@ __KERNEL_RCSID(0, "$NetBSD: acpi_cppc.c,v 1.3 2025/01/31 12:29:19 jmcneill Exp $
 #include <sys/cpu.h>
 #include <sys/device.h>
 #include <sys/kmem.h>
+#include <sys/mutex.h>
 #include <sys/sysctl.h>
 
 #include <dev/acpi/acpireg.h>
 #include <dev/acpi/acpivar.h>
 #include <dev/acpi/acpi_pcc.h>
+#include <dev/acpi/acpi_perflimit.h>
 
 #include <external/bsd/acpica/dist/include/amlresrc.h>
 
@@ -91,6 +93,13 @@ struct cppc_softc {
 	ACPI_INTEGER		sc_min_target;
 	u_int			sc_freq_range;
 	u_int			sc_perf_range;
+
+	/* sc_lock orders desired-performance writes. */
+	kmutex_t		sc_lock;
+	ACPI_INTEGER		sc_highest_perf;
+	ACPI_INTEGER		sc_lowest_perf;
+	ACPI_INTEGER		sc_user_perf;	/* machdep.cpufreq target */
+	u_int			sc_limit;	/* passive cooling, percent */
 };
 
 static int		cppc_match(device_t, cfdata_t, void *);
@@ -102,6 +111,8 @@ static ACPI_STATUS	cppc_read(struct cppc_softc *, CPCPackageElement,
 				  ACPI_INTEGER *);
 static ACPI_STATUS	cppc_write(struct cppc_softc *, CPCPackageElement,
 				   ACPI_INTEGER);
+static ACPI_INTEGER	cppc_limited_perf(const struct cppc_softc *);
+static int		cppc_perflimit_apply(void *, u_int);
 
 CFATTACH_DECL_NEW(acpicppc, sizeof(struct cppc_softc),
     cppc_match, cppc_attach, NULL, NULL);
@@ -152,6 +163,8 @@ cppc_attach(device_t parent, device_t self, void *aux)
 	sc->sc_dev = self;
 	sc->sc_cpuinfo = ci;
 	sc->sc_handle = handle;
+	sc->sc_limit = ACPI_PERFLIMIT_NONE;
+	mutex_init(&sc->sc_lock, MUTEX_DEFAULT, IPL_NONE);
 
 	rv = cppc_parse_cpc(sc);
 	if (ACPI_FAILURE(rv)) {
@@ -225,7 +238,7 @@ cppc_cpufreq_sysctl(SYSCTLFN_ARGS)
 	struct cppc_softc * const sc = rnode->sysctl_data;
 	struct sysctlnode node;
 	u_int fq, oldfq = 0;
-	ACPI_INTEGER val;
+	ACPI_INTEGER val, olduser;
 	ACPI_STATUS rv;
 	int error;
 
@@ -233,7 +246,13 @@ cppc_cpufreq_sysctl(SYSCTLFN_ARGS)
 	node.sysctl_data = &fq;
 
 	if (rnode->sysctl_num == sc->sc_node_target) {
-		rv = cppc_read(sc, CPCDesiredPerformanceReg, &val);
+		/*
+		 * The target is the user's request. A passive cooling
+		 * limit can hold the desired performance below it.
+		 */
+		mutex_enter(&sc->sc_lock);
+		val = sc->sc_user_perf;
+		mutex_exit(&sc->sc_lock);
 	} else {
 		/*
 		 * XXX We should measure the delivered performance and
@@ -241,9 +260,9 @@ cppc_cpufreq_sysctl(SYSCTLFN_ARGS)
 		 *     performance level.
 		 */
 		rv = cppc_read(sc, CPCDesiredPerformanceReg, &val);
-	}
-	if (ACPI_FAILURE(rv)) {
-		return EIO;
+		if (ACPI_FAILURE(rv)) {
+			return EIO;
+		}
 	}
 	if (val > UINT32_MAX) {
 		return ERANGE;
@@ -267,13 +286,61 @@ cppc_cpufreq_sysctl(SYSCTLFN_ARGS)
 		return EINVAL;
 	}
 
-	rv = cppc_write(sc, CPCDesiredPerformanceReg,
-	    cppc_freq_to_perf(sc, fq));
+	mutex_enter(&sc->sc_lock);
+	olduser = sc->sc_user_perf;
+	sc->sc_user_perf = cppc_freq_to_perf(sc, fq);
+	rv = cppc_write(sc, CPCDesiredPerformanceReg, cppc_limited_perf(sc));
 	if (ACPI_FAILURE(rv)) {
-		return EIO;
+		sc->sc_user_perf = olduser;
 	}
+	mutex_exit(&sc->sc_lock);
 
-	return 0;
+	return ACPI_FAILURE(rv) ? EIO : 0;
+}
+
+/*
+ * cppc_limited_perf --
+ *
+ *	Desired performance: the user's target, held at or below the
+ *	passive cooling limit. The limit is a percentage of the range
+ *	from the lowest to the highest performance.
+ */
+static ACPI_INTEGER
+cppc_limited_perf(const struct cppc_softc *sc)
+{
+	ACPI_INTEGER cap;
+
+	if (sc->sc_limit >= ACPI_PERFLIMIT_NONE ||
+	    sc->sc_highest_perf <= sc->sc_lowest_perf) {
+		return sc->sc_user_perf;
+	}
+	cap = sc->sc_lowest_perf + (sc->sc_highest_perf -
+	    sc->sc_lowest_perf) * sc->sc_limit / ACPI_PERFLIMIT_NONE;
+	return MIN(sc->sc_user_perf, cap);
+}
+
+/*
+ * cppc_perflimit_apply --
+ *
+ *	acpi_perflimit provider: write the limited desired performance.
+ */
+static int
+cppc_perflimit_apply(void *arg, u_int limit)
+{
+	struct cppc_softc * const sc = arg;
+	u_int oldlimit;
+	ACPI_STATUS rv;
+
+	mutex_enter(&sc->sc_lock);
+	oldlimit = sc->sc_limit;
+	sc->sc_limit = limit;
+	rv = cppc_write(sc, CPCDesiredPerformanceReg, cppc_limited_perf(sc));
+	if (ACPI_FAILURE(rv)) {
+		sc->sc_limit = oldlimit;
+	}
+	mutex_exit(&sc->sc_lock);
+
+	return ACPI_FAILURE(rv) ? EIO : 0;
 }
 
 /*
@@ -344,6 +411,13 @@ cppc_cpufreq_init(struct cppc_softc *sc)
 	}
 	sc->sc_max_target = cppc_perf_to_freq(sc, perf[0]);
 	sc->sc_min_target = cppc_perf_to_freq(sc, perf[3]);
+	sc->sc_highest_perf = perf[0];
+	sc->sc_lowest_perf = perf[3];
+	/* Without a readable request, the user's target is the highest. */
+	if (ACPI_FAILURE(cppc_read(sc, CPCDesiredPerformanceReg,
+	    &sc->sc_user_perf)) || sc->sc_user_perf == 0) {
+		sc->sc_user_perf = perf[0];
+	}
 
 	error = sysctl_createv(&log, 0, NULL, &node,
 	    CTLFLAG_PERMANENT, CTLTYPE_NODE, "machdep", NULL,
@@ -390,6 +464,13 @@ cppc_cpufreq_init(struct cppc_softc *sc)
 	    CTL_CREATE, CTL_EOL);
 	if (error != 0) {
 		goto sysctl_failed;
+	}
+
+	/* Passive cooling can lower this CPU; the sysctl target remains. */
+	error = acpi_perflimit_attach(ci, cppc_perflimit_apply, sc);
+	if (error != 0) {
+		aprint_error_dev(sc->sc_dev,
+		    "no passive cooling performance limit: %d\n", error);
 	}
 
 	return AE_OK;

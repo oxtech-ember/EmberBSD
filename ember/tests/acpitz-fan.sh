@@ -10,7 +10,7 @@ awk '/^#define[[:space:]]+ATZ/ { print }
 copy { print }
 copy && /^};/ { copy = 0 }' "$input" > "$work/acpitz-types.h"
 awk '
-/^acpitz_(get_zone_quiet|get_status|set_active|power_off|get_zone|sane_temp)\(/ {
+/^acpitz_(get_zone_quiet|get_status|set_active|power_off|get_zone|sane_temp|passive)\(/ {
     print "static void"; copy = 1
 }
 /^acpitz_(same_cooling|valid_level)\(/ { print "static bool"; copy = 1 }
@@ -19,4 +19,4 @@ copy { print }
 copy && /^}/ { copy = 0 }' "$input" > "$work/acpitz-control.h"
 ${CC:-cc} ${CFLAGS:-} -std=c99 -Wall -Wextra -Werror -I"$work" \
     "$src/ember/tools/acpitz-fan-contract.c" ${LDFLAGS:-} -o "$work/check"
-"$work/check"
+${TEST_RUNNER:-} "$work/check"

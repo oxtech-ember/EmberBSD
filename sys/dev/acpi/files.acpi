@@ -27,6 +27,7 @@ file	dev/acpi/acpi_i2c.c		acpi & iic
 file	dev/acpi/acpi_mcfg.c		acpi & pci
 file	dev/acpi/acpi_pci.c		acpi & pci
 file	dev/acpi/acpi_pci_link.c	acpi & pci
+file	dev/acpi/acpi_perflimit.c	acpi
 file	dev/acpi/acpi_power.c		acpi
 file	dev/acpi/acpi_quirks.c		acpi
 file	dev/acpi/acpi_resource.c	acpi

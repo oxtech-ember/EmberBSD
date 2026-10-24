@@ -195,6 +195,22 @@ acpitz_celcius_string(int value)
 	return "temperature";
 }
 
+/* Fan zones have no _PSL; passive cooling must not request a limit. */
+#define ACPI_PERFLIMIT_NONE 100u
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
+#define aprint_error_dev(...) ((void)0)
+
+static int
+acpi_perflimit_set(struct cpu_info *ci, const void *owner, unsigned int limit)
+{
+	(void)ci;
+	(void)owner;
+	(void)limit;
+	abort();
+}
+
+static void acpitz_passive(device_t);
 static void acpitz_get_status(void *);
 static void acpitz_get_zone(void *, int);
 static void acpitz_set_active(struct acpitz_softc *, int);
