@@ -1569,6 +1569,78 @@ check_shutdown_access(void)
 }
 
 static void
+check_rx_submit_backpressure(void)
+{
+ struct adi_axi_dmac_channel *c;
+ struct adi_axi_dmac_buffer *a, *b;
+ reset_fixture(0x2303);
+ CHECK(dmac_interface(&fixture, 0x040563, 0x2303) == 0);
+ c = acquire();
+ CHECK(adi_axi_dmac_buffer_alloc(c, 64, &a) == 0);
+ CHECK(adi_axi_dmac_buffer_alloc(c, 64, &b) == 0);
+ CHECK(adi_axi_dmac_stream_start(c) == 0);
+ registers[DMAC_ID / 4] = 7;
+ CHECK(adi_axi_dmac_stream_submit(a, 64) == 0);
+ registers[DMAC_SUBMIT / 4] = 1;
+ CHECK(adi_axi_dmac_stream_submit(b, 64) == 0);
+ CHECK(submits == 1 && b->b_stream_state == 4);
+ CHECK(adi_axi_dmac_buffer_free(a) == EBUSY);
+ registers[DMAC_ID / 4] = 8;
+ registers[DMAC_SUBMIT / 4] = 0;
+ deliver_irq(1, 0);
+ CHECK(submits == 2 && b->b_stream_state == 1);
+ CHECK(drain_calls == 1 && registers[DMAC_CONTROL / 4] == 1);
+ CHECK(adi_axi_dmac_stop(c, 100) == 0);
+ CHECK(adi_axi_dmac_buffer_free(a) == 0);
+ CHECK(adi_axi_dmac_buffer_free(b) == 0);
+ CHECK(adi_axi_dmac_release(c) == 0);
+ puts("PASS bounded software queue retries hardware request backpressure at SOT");
+}
+
+static void
+check_rx_queue_bounds(void)
+{
+ struct adi_axi_dmac_channel *c;
+ struct adi_axi_dmac_buffer *buffers[32], *next;
+ struct adi_axi_dmac_stream_status status;
+ unsigned char copy[64];
+ reset_fixture(0x2303);
+ c = acquire();
+ CHECK(adi_axi_dmac_stream_start(c) == EOPNOTSUPP);
+ CHECK(adi_axi_dmac_release(c) == 0);
+ reset_fixture(0x2303);
+ CHECK(dmac_interface(&fixture, 0x040563, 0x2303) == 0);
+ c = acquire();
+ for (unsigned i = 0; i < 32; i++)
+  CHECK(adi_axi_dmac_buffer_alloc(c, 64, &buffers[i]) == 0);
+ CHECK(adi_axi_dmac_stream_start(c) == 0);
+ CHECK(adi_axi_dmac_stream_start(c) == EBUSY);
+ for (unsigned i = 0; i < 31; i++) {
+  registers[DMAC_ID / 4] = i;
+  CHECK(adi_axi_dmac_stream_submit(buffers[i], 64) == 0);
+ }
+ registers[DMAC_ID / 4] = 31;
+ CHECK(adi_axi_dmac_stream_submit(buffers[31], 64) == EBUSY);
+ CHECK(adi_axi_dmac_transfer(buffers[31], 64, 1) == EBUSY);
+ CHECK(adi_axi_dmac_buffer_read(buffers[0], copy, 64) == EBUSY);
+ CHECK(adi_axi_dmac_stream_next(c, &next, &status) == EAGAIN);
+ CHECK(status.queued == 31 && status.completed_blocks == 0);
+ drain_error = ETIMEDOUT;
+ CHECK(adi_axi_dmac_stop(c, 10) == ETIMEDOUT);
+ CHECK(adi_axi_dmac_buffer_free(buffers[0]) == EBUSY);
+ CHECK(adi_axi_dmac_stream_next(c, &next, &status) == EIO);
+ CHECK(!c->c_streaming && fixture.sc_quarantined);
+ /* A host fixture restart models a coordinated power cycle. */
+ fixture.sc_quarantined = false;
+ drain_error = 0;
+ CHECK(adi_axi_dmac_stop(c, 10) == 0);
+ for (unsigned i = 0; i < 32; i++)
+  CHECK(adi_axi_dmac_buffer_free(buffers[i]) == 0);
+ CHECK(adi_axi_dmac_release(c) == 0);
+ puts("PASS RX queue bounds, unsupported core, finite exclusion and failed drain retention");
+}
+
+static void
 check_rx_queue(void)
 {
  struct adi_axi_dmac_channel *c;
@@ -1613,6 +1685,8 @@ main(void)
 	(void)adiaxidmac_shutdown_final;
 	check_interfaces();
 	check_rx_queue();
+	check_rx_queue_bounds();
+	check_rx_submit_backpressure();
 	check_transfer(0x0323, IRQ_MATCH, 0, 0);
 	check_transfer(0x0313, IRQ_MATCH, 0, 0);
 	check_transfer(0x2303, IRQ_MATCH, 0, 0);
