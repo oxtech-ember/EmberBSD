@@ -33,6 +33,7 @@
 #include <sys/cdefs.h>
 __KERNEL_RCSID(0, "$NetBSD: drm_sysfs.c,v 1.9 2021/12/19 12:30:31 riastradh Exp $");
 
+#include <sys/param.h>
 #include <sys/cpu.h>
 #include <sys/device.h>
 #include <sys/systm.h>
