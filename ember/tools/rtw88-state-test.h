@@ -767,6 +767,41 @@ static void test_native_state_retune_failure(void)
     state_retune_failure=0;state_fixture_finish(&s);
 }
 static void
+test_native_state_width_restart(void)
+{
+	struct state_fixture s;
+	unsigned barriers, generation;
+
+	if (!state_fixture_start(&s, 36, 9))
+		return;
+	rtw88_net_state_work(&s.net.state_work, &s.net);
+	CHECK(state_parent_tx == 1 && s.net.policy.accepting);
+	generation = s.sc.sc_generation;
+	CHECK(rtw88_net_newstate(&s.net.ic, IEEE80211_S_SCAN, 0) == 0);
+	CHECK(!s.net.reset_required);
+	rtw88_net_state_work(&s.net.state_work, &s.net);
+	CHECK(state_parent_tx == 2 && s.sc.sc_generation == generation);
+	/* Model a committed VHT80 tuple before leaving the association path. */
+	s.sc.sc_phy.channel = (struct rtw88_channel_tuple){36, 42, 80};
+	s.sc.sc_phy.channel_valid = 1;
+	s.sc.sc_linked = 0;
+	s.bus.intr_barrier = state_retune_barrier;
+	barriers = f.barriers;
+	generation = s.sc.sc_generation;
+	CHECK(rtw88_net_newstate(&s.net.ic, IEEE80211_S_SCAN, 0) == 0);
+	CHECK(s.net.reset_required);
+	rtw88_net_state_work(&s.net.state_work, &s.net);
+	CHECK(state_parent_tx == 3 && state_parent_init == 0);
+	CHECK(f.barriers == barriers + 1);
+	CHECK(s.sc.sc_generation > generation);
+	CHECK(s.sc.sc_phy.channel_valid);
+	CHECK(s.sc.sc_phy.channel.primary == 36);
+	CHECK(s.sc.sc_phy.channel.center == 36);
+	CHECK(s.sc.sc_phy.channel.width_mhz == 20);
+	CHECK(!s.net.reset_required && s.net.policy.accepting);
+	state_fixture_finish(&s);
+}
+static void
 test_native_state_epoch(void)
 {
 	struct state_fixture s;

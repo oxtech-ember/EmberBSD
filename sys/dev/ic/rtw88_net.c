@@ -76,7 +76,7 @@ struct rtw88_net {
 	struct rtw88_net_rx rx[RTW88_NET_RX_LIMIT];
 	unsigned rx_head, rx_tail;
 	int work_pending;
-	int reset_required;	/* Linked-peer quiescence survives request coalescing. */
+	int reset_required;	/* Linked/width stop survives request coalescing. */
 	int tx_quiet, quiet_error; /* Sticky until detach; state requests cannot clear it. */
 	enum ieee80211_state requested;
 	unsigned channel;
@@ -1306,8 +1306,6 @@ lock_request:
 		goto lock_request;
 	}
 #endif
-	if (net->core->sc_linked)
-		net->reset_required = 1;
 	rtw88_ra_invalidate(net->core);
 	(void)rtw88_net_request(&net->policy);
 	net->requested = state;
@@ -1316,6 +1314,12 @@ lock_request:
 	net->pending_channel.primary = net->channel;
 	net->pending_channel.center = net->channel;
 	net->pending_channel.width_mhz = 20;
+	/* A width change needs the sleepable stop/DMA fence even before the
+	 * protocol marks this peer linked. Preserve the warm same-width path. */
+	if (net->core->sc_linked || (net->core->sc_phy.channel_valid &&
+	    net->core->sc_phy.channel.width_mhz !=
+	    net->pending_channel.width_mhz))
+		net->reset_required = 1;
 #ifdef RTW88_RFK_EXPERIMENT
 	net->rfk.beacon_epoch = 0;
 	net->rfk.frontier_valid = 0;
