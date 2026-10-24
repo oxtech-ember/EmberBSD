@@ -291,6 +291,10 @@ int rtw88_start(struct rtw88_softc *);
  */
 int rtw88_start_tuple(struct rtw88_softc *,
 	const struct rtw88_channel_tuple *);
+#ifdef RTW88_VHT80
+/* Nonzero when 36/42/80 PHY and power are committed in this generation. */
+int rtw88_vht80_committed(const struct rtw88_softc *);
+#endif
 /*
  * One startup call per firmware epoch. Process context without the PCI spin
  * lock, with the same external ownership contract as rtw88_fw_packet below.

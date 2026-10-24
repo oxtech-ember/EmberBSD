@@ -295,6 +295,9 @@ static int state_ra_configure(struct rtw88_softc *, const struct rtw88_ra_config
 #define IEEE80211_ADDR_COPY(a,b) memcpy(a,b,6)
 #define IEEE80211_ADDR_EQ(a,b) (memcmp(a,b,6)==0)
 #include "native-rxba-lifecycle.inc"
+#ifndef mutex_owned
+#define mutex_owned(l) ((l)->held)
+#endif
 #include "native-state.inc"
 #ifdef RTW88_STATE_RA_OBSERVE
 #undef rtw88_ra_configure

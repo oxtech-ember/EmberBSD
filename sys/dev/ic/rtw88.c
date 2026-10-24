@@ -1589,7 +1589,7 @@ rtw88_channel_narrow(const struct rtw88_softc *sc)
  * The one qualified wide target: non-DFS primary36/center42/80, with the
  * actual PHY and power program committed in this generation.
  */
-static int
+int
 rtw88_vht80_committed(const struct rtw88_softc *sc)
 {
 	return sc->sc_phy.channel_valid && sc->sc_channel == 36 &&

@@ -714,6 +714,148 @@ test_ra_narrow_entries(void)
 	}
 }
 
+/* A negotiated profile is seeded as net80211 commits it; the WME contract
+ * executes the actual association negotiation. */
+static int
+ra_vht_ht20_admit(struct ieee80211com *ic, struct ieee80211_ht20_profile *p)
+{
+	(void)ic;
+	*p = (struct ieee80211_ht20_profile){ .generation = 777,
+	    .rx_mcs = 0xff, .tx_mcs = 0xff, .ready = IEEE80211_HT20_READY_ALL,
+	    .ampdu = 0x10 };
+	return 0;
+}
+static int
+ra_vht_wme_apply(struct ieee80211com *ic, const struct chanAccParams *p,
+    unsigned slot)
+{
+	(void)ic; (void)p; (void)slot;
+	return 0;
+}
+static uint64_t ra_vht_now(struct ieee80211com *ic) { (void)ic; return 1; }
+static int
+ra_vht_schedule(struct ieee80211com *ic, uint64_t a, uint64_t b)
+{
+	(void)ic; (void)a; (void)b;
+	return 0;
+}
+static void ra_vht_cancel(struct ieee80211com *ic) { (void)ic; }
+static const struct ieee80211_rxba_ops ra_vht_rxba = {
+	ra_vht_now, ra_vht_schedule, ra_vht_cancel
+};
+static unsigned ra_vht_runs;
+static int
+ra_vht_parent(struct ieee80211com *ic, enum ieee80211_state state, int arg)
+{
+	struct rtw88_net *net = ic->ic_ifp->if_softc;
+	struct rtw88_softc *sc = net->core;
+	unsigned box;
+
+	(void)arg;
+	CHECK(!state_lock.held);
+	ic->ic_state = state;
+	if (state != IEEE80211_S_RUN)
+		return 0;
+	CHECK(net->policy.accepting && !net->policy.dying);
+	box = (sc->sc_h2c_box - 1) & 3;
+	if (ic->ic_bss->ni_ht20.vht.valid) {
+		CHECK(mmio32(0x1d0 + 4 * box) == UINT32_C(0x522a0040));
+		CHECK(mmio32(0x1f0 + 4 * box) == UINT32_C(0x000ff010));
+	} else {
+		CHECK(mmio32(0x1d0 + 4 * box) == UINT32_C(0x40250040));
+	}
+	ra_vht_runs++;
+	return 0;
+}
+static void
+ra_vht_peer(struct state_fixture *s)
+{
+	struct ieee80211_ht20_node *h = &s->ni.ni_ht20;
+
+	s->net.ic.ic_flags = IEEE80211_F_SHSLOT | IEEE80211_F_WME;
+	s->net.ic.ic_caps = IEEE80211_C_WME;
+	s->net.ic.ic_wme.wme_sta_apply = ra_vht_wme_apply;
+	s->net.ic.ic_ht20_admit = ra_vht_ht20_admit;
+	s->net.ic.ic_rxba_ops = &ra_vht_rxba;
+	s->net.ic.ic_fragthreshold = RTW88_HT20_THRESHOLD_MAX;
+	s->net.ic.ic_rtsthreshold = RTW88_HT20_THRESHOLD_MAX;
+	s->net.ec.ec_if.if_mtu = 1500;
+	s->ni.ni_associd = 0xc001;
+	s->ni.ni_bssid[0] = 2;
+	state_legacy_peer(&s->net, &s->ni, 36);
+	s->ni.ni_flags = IEEE80211_NODE_QOS | IEEE80211_NODE_WME_VALID;
+	s->ni.ni_wme_applied_chan = s->net.ic.ic_curchan;
+	s->ni.ni_wme_applied_slot = 9;
+	for (unsigned ac = 0; ac < 4; ac++) {
+		struct wmeParams p = { 0, 2 + ac, 3, 5, 55 + ac, 0 };
+		s->net.ic.ic_wme.wme_chanParams.cap_wmeParams[ac] = p;
+	}
+	state_negotiated = 1;
+	memset(h, 0, sizeof(*h));
+	h->attempt = h->offer_attempt = 1;
+	h->profile = (struct ieee80211_ht20_profile){ .generation = 777,
+	    .rx_mcs = 0xff, .tx_mcs = 0xff, .ready = IEEE80211_HT20_READY_ALL,
+	    .ampdu = 0x10 };
+	h->channel = s->net.ic.ic_curchan;
+	memcpy(h->bssid, s->ni.ni_bssid, 6);
+	h->valid = 1;
+	h->tx_mcs = h->peer_rx_mcs = 0xff;
+	h->peer_cap = 0x000c;
+	h->peer_htcap[0] = 0x0c;
+	h->peer_htop[0] = 36;
+	h->peer_htop[1] = 5; /* Secondary above; the 80 MHz block is 36..48. */
+	h->vht.valid = 1;
+	h->vht.maps.tx_map = h->vht.maps.rx_map = RTW88_VHT_MAP_NSS1_MCS7;
+	s->net.ic.ic_state = IEEE80211_S_ASSOC;
+	s->net.parent_state = ra_vht_parent;
+}
+
+/* Both builds: the RUN TX gate revalidates the committed HT20 RA entry. */
+static void
+test_ra_ht20_run(void)
+{
+	struct state_fixture s;
+	struct rtw88_ra_config tx_policy;
+
+	if (!state_fixture_start(&s, 36, 9))
+		return;
+	ra_vht_peer(&s);
+	s.ni.ni_ht20.vht.valid = 0;
+	ra_vht_runs = 0;
+	CHECK(rtw88_net_newstate(&s.net.ic, IEEE80211_S_RUN, 0) == 0);
+	CHECK(!s.net.reset_required);
+	rtw88_net_state_work(&s.net.state_work, &s.net);
+	CHECK(ra_vht_runs == 1 && s.net.policy.accepting);
+	CHECK(s.sc.sc_ra.phy == RTW88_RA_HT20_1SS);
+	CHECK(rtw88_net_tx_ht20_policy(&s.net.ic, &tx_policy) == 0);
+	mutex_enter(s.net.lock);
+	CHECK(rtw88_net_tx_ra_validate(&s.net, &tx_policy,
+	    s.net.policy.epoch) == 0);
+	CHECK(rtw88_net_tx_ra_validate(&s.net, &tx_policy,
+	    s.net.policy.epoch + 1) == EPROTO);
+	tx_policy.ht.mtu--;
+	CHECK(rtw88_net_tx_ra_validate(&s.net, &tx_policy,
+	    s.net.policy.epoch) == EPROTO);
+	tx_policy.ht.mtu++;
+	s.sc.sc_ra.vht_tx_map = RTW88_VHT_MAP_NSS1_MCS7;
+	CHECK(rtw88_net_tx_ra_validate(&s.net, &tx_policy,
+	    s.net.policy.epoch) == EPROTO);
+	s.sc.sc_ra.vht_tx_map = 0;
+	/* A stale VHT80 entry for a peer that no longer negotiated VHT. */
+	tx_policy.phy = s.sc.sc_ra.phy = RTW88_RA_VHT80_1SS;
+	s.sc.sc_ra.ht_mcs = tx_policy.ht_mcs = 0xff;
+	CHECK(rtw88_net_tx_ra_validate(&s.net, &tx_policy,
+	    s.net.policy.epoch) == EPROTO);
+	tx_policy.phy = s.sc.sc_ra.phy = RTW88_RA_HT20_1SS;
+	s.ni.ni_ht20.vht.valid = 1; /* Not an HT20 entry any more. */
+	CHECK(rtw88_net_tx_ra_validate(&s.net, &tx_policy,
+	    s.net.policy.epoch) == EPROTO);
+	mutex_exit(s.net.lock);
+	/* Without a committed 36/42/80 core a VHT profile has no RA entry. */
+	CHECK(rtw88_net_tx_ht20_policy(&s.net.ic, &tx_policy) == EOPNOTSUPP);
+	state_fixture_finish(&s);
+}
+
 #ifdef RTW88_VHT80
 /* Pinned main.c/fw.c: rate ID10, BW80, VHT1, DIS_PT and NSS1 MCS0-7 plus
  * 6 Mbps. Data seeds VHT1SS MCS7 (0x33), never ctz(mask); every other
@@ -929,6 +1071,158 @@ test_ra_vht80_channel64_closed(void)
 		CHECK(rtw88_core_detach(&sc) == 0);
 	}
 }
+/* Inject a newer state request while the cold start owns the core. */
+static unsigned ra_vht_inject;
+static int (*ra_vht_read1_next)(void *, uint32_t, uint8_t *);
+static int
+ra_vht_read1(void *cookie, uint32_t reg, uint8_t *value)
+{
+	if (ra_vht_inject && state_current_net->core->sc_bootstrapping) {
+		ra_vht_inject = 0;
+		CHECK(rtw88_net_newstate(&state_current_net->ic,
+		    IEEE80211_S_SCAN, 0) == 0);
+	}
+	return ra_vht_read1_next(cookie, reg, value);
+}
+
+/*
+ * Actual RUN producer -> width stop/restart owner -> cold start at 36/42/80
+ * -> VHT RA -> native TX submit. A fallback or a later SCAN returns to 20.
+ */
+static void
+test_ra_vht80_run(void)
+{
+	for (unsigned variant = 0; variant < 4; variant++) {
+		struct state_fixture s;
+		struct rtw88_ra_config tx_policy;
+		struct ieee80211_vht_cap cap;
+		uint8_t frame[26] = { 0x88, 0x01, 0, 0, 2, 0, 0, 0, 0, 1, 2,
+		    0, 0, 0, 0, 2, 2, 0, 0, 0, 0, 3, 0x10, 0 };
+		const uint8_t *desc;
+		unsigned slot, gen;
+
+		if (!state_fixture_start(&s, 36, 9))
+			continue;
+		ra_vht_peer(&s);
+		ra_vht_runs = 0;
+		CHECK(rtw88_net_vht_admit(&s.net.ic, &cap) == 0);
+		CHECK(cap.info == 0 && cap.rx_highest == 0 && cap.tx_highest == 0);
+		CHECK(cap.rx_map == 0xfffc && cap.tx_map == 0xfffc);
+		if (variant == 1)
+			s.ni.ni_ht20.vht.valid = 0; /* HT20 fallback response. */
+		gen = s.sc.sc_generation;
+		CHECK(rtw88_net_newstate(&s.net.ic, IEEE80211_S_RUN, 0) == 0);
+		CHECK(s.net.reset_required == (variant != 1));
+		if (variant == 3) {
+			/* SCAN arrives while the 80 MHz cold start sleeps. */
+			ra_vht_read1_next = s.bus.read_1;
+			s.bus.read_1 = ra_vht_read1;
+			ra_vht_inject = 1;
+			rtw88_net_state_work(&s.net.state_work, &s.net);
+			CHECK(!ra_vht_inject && ra_vht_runs == 0);
+			CHECK(s.sc.sc_started && !s.net.reset_required);
+			CHECK(!rtw88_vht80_committed(&s.sc));
+			CHECK(s.sc.sc_phy.channel.width_mhz == 20 &&
+			    s.sc.sc_channel == 36);
+			s.bus.read_1 = ra_vht_read1_next;
+			state_fixture_finish(&s);
+			continue;
+		}
+		rtw88_net_state_work(&s.net.state_work, &s.net);
+		CHECK(ra_vht_runs == 1 && s.net.policy.accepting);
+		CHECK(rtw88_net_tx_ht20_policy(&s.net.ic, &tx_policy) == 0);
+		mutex_enter(s.net.lock);
+		CHECK(rtw88_net_tx_ra_validate(&s.net, &tx_policy,
+		    s.net.policy.epoch) == 0);
+		mutex_exit(s.net.lock);
+		CHECK((s.sc.sc_generation != gen) == (variant != 1));
+		if (variant == 1) {
+			CHECK(s.sc.sc_phy.channel.width_mhz == 20);
+			CHECK(s.sc.sc_ra.phy == RTW88_RA_HT20_1SS);
+			state_fixture_finish(&s);
+			continue;
+		}
+		CHECK(rtw88_vht80_committed(&s.sc));
+		CHECK(f.mmio[0x0483] == 0xa4);
+		CHECK(s.sc.sc_ra.active && s.sc.sc_ra.phy == RTW88_RA_VHT80_1SS);
+		mutex_enter(s.net.lock);
+		s.sc.sc_ra.vht_tx_map = 0xfffe;
+		CHECK(rtw88_net_tx_ra_validate(&s.net, &tx_policy,
+		    s.net.policy.epoch) == EPROTO);
+		s.sc.sc_ra.vht_tx_map = RTW88_VHT_MAP_NSS1_MCS7;
+		s.ni.ni_ht20.vht.maps.tx_map = 0xfffe;
+		CHECK(rtw88_net_tx_ra_validate(&s.net, &tx_policy,
+		    s.net.policy.epoch) == EPROTO);
+		s.ni.ni_ht20.vht.maps.tx_map = RTW88_VHT_MAP_NSS1_MCS7;
+		s.sc.sc_phy.channel_valid = 0; /* No committed 80 MHz program. */
+		CHECK(rtw88_net_tx_ra_validate(&s.net, &tx_policy,
+		    s.net.policy.epoch) == EPROTO);
+		s.sc.sc_phy.channel_valid = 1;
+		mutex_exit(s.net.lock);
+		slot = s.sc.sc_txq[RTW88_TXQ_BE].wp;
+		CHECK(rtw88_net_tx_submit(&s.net, &s.ni, RTW88_TXQ_BE, frame,
+		    sizeof(frame)) == 0);
+		desc = s.sc.sc_txq[RTW88_TXQ_BE].buf[slot].vaddr;
+		CHECK(desc[6] == 10 && (desc[16] & 0x7f) == 0x33);
+		CHECK(((desc[20] >> 5) & 3) == 2);
+		/* A node that no longer negotiated VHT cannot use the entry. */
+		s.ni.ni_ht20.vht.valid = 0;
+		slot = s.sc.sc_txq[RTW88_TXQ_BE].wp;
+		CHECK(rtw88_net_tx_submit(&s.net, &s.ni, RTW88_TXQ_BE, frame,
+		    sizeof(frame)) == EBUSY);
+		CHECK(s.sc.sc_txq[RTW88_TXQ_BE].wp == slot);
+		s.ni.ni_ht20.vht.valid = 1;
+		/* A changed negotiated map no longer matches the RA entry. */
+		s.ni.ni_ht20.vht.maps.tx_map = 0xfffe;
+		slot = s.sc.sc_txq[RTW88_TXQ_BE].wp;
+		CHECK(rtw88_net_tx_submit(&s.net, &s.ni, RTW88_TXQ_BE, frame,
+		    sizeof(frame)) == EBUSY);
+		CHECK(s.sc.sc_txq[RTW88_TXQ_BE].wp == slot);
+		s.ni.ni_ht20.vht.maps.tx_map = RTW88_VHT_MAP_NSS1_MCS7;
+		if (variant == 2) {
+			/* Leaving RUN returns to the narrow scanning core. */
+			gen = s.sc.sc_generation;
+			CHECK(rtw88_net_newstate(&s.net.ic, IEEE80211_S_SCAN, 0) == 0);
+			CHECK(s.net.reset_required);
+			rtw88_net_state_work(&s.net.state_work, &s.net);
+			CHECK(s.sc.sc_generation != gen && !rtw88_vht80_committed(&s.sc));
+			CHECK(s.sc.sc_phy.channel.width_mhz == 20 &&
+			    s.sc.sc_channel == 36);
+		}
+		state_fixture_finish(&s);
+	}
+	/* A VHT profile off primary 36 never targets the wide tuple. */
+	{
+		struct state_fixture s;
+
+		if (state_fixture_start(&s, 40, 9)) {
+			ra_vht_peer(&s);
+			CHECK(rtw88_net_newstate(&s.net.ic, IEEE80211_S_RUN, 0) == 0);
+			CHECK(!s.net.reset_required &&
+			    s.net.pending_channel.width_mhz == 20 &&
+			    s.net.pending_channel.primary == 40);
+			state_fixture_finish(&s);
+		}
+	}
+	/* Admission is a fail-closed local snapshot. */
+	for (unsigned variant = 0; variant < 4; variant++) {
+		struct state_fixture s;
+		struct ieee80211_vht_cap cap;
+
+		if (!state_fixture_start(&s, variant == 0 ? 40 : 36, 9))
+			continue;
+		ra_vht_peer(&s);
+		if (variant == 1) s.net.tx_quiet = 1;
+		if (variant == 2) s.net.ic.ic_fixed_rate = 0;
+		if (variant == 3) s.net.ic.ic_opmode = IEEE80211_M_HOSTAP;
+		memset(&cap, 0xa5, sizeof(cap));
+		CHECK(rtw88_net_vht_admit(&s.net.ic, &cap) == EOPNOTSUPP);
+		CHECK(cap.rx_map == 0 && cap.tx_map == 0 && cap.info == 0);
+		s.net.tx_quiet = 0;
+		s.net.ic.ic_opmode = IEEE80211_M_STA;
+		state_fixture_finish(&s);
+	}
+}
 #else
 /* Default build: no VHT RA entry and no wide frame of any format. */
 static void
@@ -971,9 +1265,11 @@ RTW88_RA_MAIN(void)
 	test_ra_reports_never_control_peer();
 	test_ra_narrow_entries();
 	test_ra_start_tuple();
+	test_ra_ht20_run();
 #ifdef RTW88_VHT80
 	test_ra_vht80_formats();
 	test_ra_vht80_channel64_closed();
+	test_ra_vht80_run();
 	printf("rtw88 VHT80 RA and TX formats: enabled\n");
 #else
 	test_ra_vht80_disabled();

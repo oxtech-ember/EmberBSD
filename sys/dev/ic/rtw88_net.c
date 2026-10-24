@@ -2,7 +2,8 @@
 /* Copyright (c) 2026 EmberBSD contributors. */
 /* Origin: original native net80211 integration, AI-assisted. */
 /*
- * One always-awake station, legacy 20 MHz rates and software crypto.
+ * One always-awake station, legacy/HT20 rates and software crypto; VHT80
+ * only with RTW88_VHT_EXPERIMENT.
  * DMA completion is not a radio ACK. RF calibration and power policy
  * belong to the core. This wrapper does not establish hardware acceptance.
  */
@@ -103,6 +104,10 @@ static void rtw88_net_ht20_publish(struct rtw88_net *,
 static int rtw88_net_ht20_admit(struct ieee80211com *,
     struct ieee80211_ht20_profile *);
 static int rtw88_net_ht20_local_policy(struct ieee80211com *);
+#ifdef RTW88_VHT80
+static int rtw88_net_vht_admit(struct ieee80211com *,
+    struct ieee80211_vht_cap *);
+#endif
 static int rtw88_net_ht20_profile_prepare(struct rtw88_net *,
     struct ieee80211_ht20_profile *);
 
@@ -559,6 +564,35 @@ rtw88_net_ht20_local_policy(struct ieee80211com *ic)
 	return 0;
 }
 
+#ifdef RTW88_VHT80
+/*
+ * Local VHT offer: NSS1 MCS0-7 receive and transmit at up to 80 MHz, with
+ * no optional feature and no 160 MHz. net80211 offers it only beside an
+ * admitted HT20 offer. Snapshot under Giant; no PHY change happens here.
+ * newstate(RUN) then targets 36/42/80 for a negotiated profile, and the
+ * width stop/restart owner enters it through rtw88_start_tuple().
+ */
+static int
+rtw88_net_vht_admit(struct ieee80211com *ic, struct ieee80211_vht_cap *cap)
+{
+	struct rtw88_net *net;
+
+	if (ic == NULL || cap == NULL || ic->ic_ifp == NULL)
+		return EINVAL;
+	memset(cap, 0, sizeof(*cap));
+	net = ic->ic_ifp->if_softc;
+	if (net == NULL || net->core == NULL)
+		return ENXIO;
+	if (net->tx_quiet || net->policy.dying ||
+	    ic->ic_opmode != IEEE80211_M_STA ||
+	    rtw88_net_ht20_local_policy(ic) != 0 ||
+	    ieee80211_chan2ieee(ic, ic->ic_curchan) != 36)
+		return EOPNOTSUPP;
+	cap->rx_map = cap->tx_map = RTW88_VHT_MAP_NSS1_MCS7;
+	return 0;
+}
+#endif
+
 /* Publish only a proven local 5 GHz HT20 envelope. Giant serializes core
  * start/stop, protocol state and the non-MPSAFE state worker; the atomic
  * snapshot then fences any delayed publication against a newer withdrawal. */
@@ -643,6 +677,75 @@ rtw88_net_tx_ht20_policy(struct ieee80211com *ic, struct rtw88_ra_config *cfg)
 	cfg->ht.mtu = mtu;
 	cfg->ht.max_mpdu = maximum;
 	cfg->ht.rts_threshold = ic->ic_rtsthreshold;
+	if (ni->ni_ht20.vht.valid) {
+#ifdef RTW88_VHT80
+		struct rtw88_net *net = ic->ic_ifp->if_softc;
+
+		/* The cold-start owner must already have committed 36/42/80. */
+		if (net == NULL || !rtw88_vht80_committed(net->core))
+			return EOPNOTSUPP;
+		cfg->phy = RTW88_RA_VHT80_1SS;
+		cfg->ht_mcs = 0;
+		cfg->vht_tx_map = ni->ni_ht20.vht.maps.tx_map;
+#else
+		return EOPNOTSUPP;
+#endif
+	}
+	return 0;
+}
+
+/* Called under net->lock before accepting another RUN payload. */
+static int
+rtw88_net_tx_ra_validate(struct rtw88_net *net,
+    const struct rtw88_ra_config *policy, uint64_t epoch)
+{
+	struct ieee80211com *ic = &net->ic;
+	struct ieee80211_node *ni = ic->ic_bss;
+	const struct ieee80211_ht20_node *h;
+	const struct rtw88_ra_state *ra = &net->core->sc_ra;
+	int vht;
+
+	KASSERT(mutex_owned(net->lock));
+	if (policy == NULL || ni == NULL)
+		return EPROTO;
+	h = &ni->ni_ht20;
+	vht = h->vht.valid;
+	if (!h->valid ||
+	    (vht && policy->phy != RTW88_RA_VHT80_1SS) ||
+	    (!vht && policy->phy != RTW88_RA_HT20_1SS) ||
+	    ra->phy != policy->phy || !ra->configured || !ra->active ||
+	    ra->error != 0 || ra->epoch != epoch ||
+	    ra->generation != net->core->sc_generation ||
+	    ra->channel != net->core->sc_channel ||
+	    ra->channel != ieee80211_chan2ieee(ic, ic->ic_curchan) ||
+	    (ni->ni_associd & 0x3fff) == 0 ||
+	    (ni->ni_associd & 0x3fff) > 2007 || ra->channel <= 14 ||
+	    ic->ic_curmode != IEEE80211_MODE_11A ||
+	    ic->ic_fixed_rate != IEEE80211_FIXED_RATE_NONE ||
+	    (ic->ic_flags & IEEE80211_F_USEPROT) != 0 ||
+	    ra->ht.qualification != policy->ht.qualification ||
+	    ra->ht.peer_cap != policy->ht.peer_cap ||
+	    ra->ht.secondary != policy->ht.secondary ||
+	    ra->ht.mtu != policy->ht.mtu ||
+	    ra->ht.max_mpdu != policy->ht.max_mpdu ||
+	    ra->ht.rts_threshold != policy->ht.rts_threshold ||
+	    h->profile.rx_mcs != 0xff || h->profile.tx_mcs != 0xff ||
+	    h->tx_mcs == 0 || (h->tx_mcs & ~0xffU) != 0 ||
+	    ra->profile_generation != h->profile.generation ||
+	    ra->ht_mcs != (vht ? 0 : h->tx_mcs) ||
+	    ra->ht_operation != h->operation)
+		return EPROTO;
+	if (vht) {
+#ifdef RTW88_VHT80
+		if (!rtw88_vht80_committed(net->core) ||
+		    h->vht.maps.tx_map != policy->vht_tx_map ||
+		    ra->vht_tx_map != policy->vht_tx_map)
+			return EPROTO;
+#else
+		return EPROTO;
+#endif
+	} else if (ra->vht_tx_map != 0)
+		return EPROTO;
 	return 0;
 }
 
@@ -713,6 +816,7 @@ static int
 rtw88_net_restart_peer(struct rtw88_net *net)
 {
 	struct ifnet *ifp = &net->ec.ec_if;
+	struct rtw88_channel_tuple tuple;
 	int error, start;
 
 	mutex_enter(net->lock);
@@ -746,10 +850,14 @@ rtw88_net_restart_peer(struct rtw88_net *net)
 	mutex_enter(net->lock);
 	start = start && (ifp->if_flags & IFF_UP) != 0 &&
 	    !net->policy.dying && !net->tx_quiet;
+	tuple = net->pending_channel;
 	mutex_exit(net->lock);
-	/* INIT must retain a real READY core for the next WPA SCAN_REQ. */
+	/* INIT must retain a real READY core for the next WPA SCAN_REQ.
+	 * Only this stopped core may change RF width, before HCI start. */
 	if (start) {
-		error = rtw88_start(net->core);
+		error = tuple.width_mhz != 20 ?
+		    rtw88_start_tuple(net->core, &tuple) :
+		    rtw88_start(net->core);
 		if (error != 0)
 			return error;
 	}
@@ -764,7 +872,9 @@ rtw88_net_restart_peer(struct rtw88_net *net)
 		mutex_exit(net->lock);
 		return error != 0 ? error : ECANCELED;
 	}
-	net->reset_required = 0;
+	/* A request during the sleeping start may want another width. */
+	net->reset_required = start &&
+	    net->pending_channel.width_mhz != tuple.width_mhz;
 	if (start)
 		ifp->if_flags |= IFF_RUNNING;
 	mutex_exit(net->lock);
@@ -1314,6 +1424,13 @@ lock_request:
 	net->pending_channel.primary = net->channel;
 	net->pending_channel.center = net->channel;
 	net->pending_channel.width_mhz = 20;
+#ifdef RTW88_VHT80
+	/* A negotiated VHT80 peer runs at 36/42/80; every other state is 20. */
+	if (state == IEEE80211_S_RUN && ic->ic_bss != NULL &&
+	    ic->ic_bss->ni_ht20.valid && ic->ic_bss->ni_ht20.vht.valid &&
+	    net->channel == 36)
+		net->pending_channel = (struct rtw88_channel_tuple){ 36, 42, 80 };
+#endif
 	/* A width change needs the sleepable stop/DMA fence even before the
 	 * protocol marks this peer linked. Preserve the warm same-width path. */
 	if (net->core->sc_linked || (net->core->sc_phy.channel_valid &&
@@ -1571,6 +1688,7 @@ rtw88_net_tx_submit(struct rtw88_net *net, struct ieee80211_node *ni,
 	struct rtw88_tx_fixed fixed;
 	unsigned i, j, aid;
 	int index = ic->ic_fixed_rate;
+	int vht;
 
 #ifdef RTW88_RFK_EXPERIMENT
 	/* Recheck after dequeue/crypto: IRQ can close the earlier capacity gate. */
@@ -1596,15 +1714,20 @@ rtw88_net_tx_submit(struct rtw88_net *net, struct ieee80211_node *ni,
 	if (aid == 0 || aid > 2007)
 		return EINVAL;
 	if (net->core->sc_ra.configured &&
-	    net->core->sc_ra.phy == RTW88_RA_HT20_1SS) {
-		if (!ni->ni_ht20.valid || index != IEEE80211_FIXED_RATE_NONE ||
+	    (net->core->sc_ra.phy == RTW88_RA_HT20_1SS ||
+	     net->core->sc_ra.phy == RTW88_RA_VHT80_1SS)) {
+		vht = net->core->sc_ra.phy == RTW88_RA_VHT80_1SS;
+		if (!ni->ni_ht20.valid || ni->ni_ht20.vht.valid != vht ||
+		    (vht && net->core->sc_ra.vht_tx_map !=
+		     ni->ni_ht20.vht.maps.tx_map) ||
+		    index != IEEE80211_FIXED_RATE_NONE ||
 		    ic->ic_curmode != IEEE80211_MODE_11A ||
 		    (ic->ic_flags & IEEE80211_F_USEPROT) != 0 ||
 		    ni->ni_ht20.profile.rx_mcs != 0xff ||
 		    ni->ni_ht20.profile.tx_mcs != 0xff ||
 		    net->core->sc_ra.channel != ieee80211_chan2ieee(ic, ni->ni_chan) ||
 		    net->core->sc_ra.profile_generation != ni->ni_ht20.profile.generation ||
-		    net->core->sc_ra.ht_mcs != ni->ni_ht20.tx_mcs ||
+		    net->core->sc_ra.ht_mcs != (vht ? 0 : ni->ni_ht20.tx_mcs) ||
 		    ni->ni_ht20.operation != net->core->sc_ra.ht_operation ||
 		    ni->ni_ht20.peer_cap != net->core->sc_ra.ht.peer_cap ||
 		    ni->ni_ht20.peer_htop[1] != net->core->sc_ra.ht.secondary ||
@@ -1809,6 +1932,10 @@ rtw88_net_start(struct ifnet *ifp)
 			available = net->policy.accepting && !net->policy.dying;
 			ht_expected = net->core->sc_ra.configured &&
 			    net->core->sc_ra.phy == RTW88_RA_HT20_1SS;
+#ifdef RTW88_VHT80
+			ht_expected |= net->core->sc_ra.configured &&
+			    net->core->sc_ra.phy == RTW88_RA_VHT80_1SS;
+#endif
 			mutex_exit(net->lock);
 			if (ht_expected || (ic->ic_bss != NULL &&
 			    (ic->ic_bss->ni_ht20.valid || ic->ic_bss->ni_ht20.offered ||
@@ -1823,31 +1950,9 @@ rtw88_net_start(struct ifnet *ifp)
 				mutex_enter(net->lock);
 				available = net->policy.accepting && !net->policy.dying &&
 				    net->policy.epoch == ht_epoch;
-				if (available && !error) {
-					const struct ieee80211_ht20_node *h = &ic->ic_bss->ni_ht20;
-					const struct rtw88_ra_state *ra = &net->core->sc_ra;
-					error = ra->phy != RTW88_RA_HT20_1SS || !ra->configured ||
-					    !ra->active || ra->error != 0 || ra->epoch != ht_epoch ||
-					    ra->generation != net->core->sc_generation ||
-					    ra->channel != net->core->sc_channel ||
-					    ra->channel != ieee80211_chan2ieee(ic, ic->ic_curchan) ||
-					    (ic->ic_bss->ni_associd & 0x3fff) == 0 ||
-					    (ic->ic_bss->ni_associd & 0x3fff) > 2007 ||
-					    ra->channel <= 14 || ic->ic_curmode != IEEE80211_MODE_11A ||
-					    ic->ic_fixed_rate != IEEE80211_FIXED_RATE_NONE ||
-					    (ic->ic_flags & IEEE80211_F_USEPROT) != 0 ||
-					    ra->ht.qualification != ht_policy.ht.qualification ||
-					    ra->ht.peer_cap != ht_policy.ht.peer_cap ||
-					    ra->ht.secondary != ht_policy.ht.secondary ||
-					    ra->ht.mtu != ht_policy.ht.mtu ||
-					    ra->ht.max_mpdu != ht_policy.ht.max_mpdu ||
-					    ra->ht.rts_threshold != ht_policy.ht.rts_threshold ||
-					    h->profile.rx_mcs != 0xff ||
-					    h->profile.tx_mcs != 0xff || h->tx_mcs == 0 ||
-					    (h->tx_mcs & ~0xffU) != 0 ||
-					    ra->profile_generation != h->profile.generation ||
-					    ra->ht_mcs != h->tx_mcs || ra->ht_operation != h->operation;
-				}
+				if (available && !error)
+					error = rtw88_net_tx_ra_validate(net,
+					    &ht_policy, ht_epoch);
 				mutex_exit(net->lock);
 				if (!available)
 					return; /* A newer request owns withdrawal. */
@@ -2243,6 +2348,9 @@ rtw88_net_attach(struct rtw88_softc *core, device_t dev, kmutex_t *lock,
 	/* Register after ifattach, which initializes optional admission to NULL. */
 	rtw88_net_ht20_publish(net, NULL);
 	ic->ic_ht20_admit = rtw88_net_ht20_admit;
+#ifdef RTW88_VHT80
+	ic->ic_vht_admit = rtw88_net_vht_admit;
+#endif
 	/* Opt in only after the strict consumer owns STA parameter apply. */
 	ic->ic_wme.wme_sta_apply = rtw88_net_wme_apply;
 	ic->ic_caps |= IEEE80211_C_WME;

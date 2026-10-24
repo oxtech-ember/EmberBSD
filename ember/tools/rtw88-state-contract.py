@@ -63,6 +63,7 @@ for name, result in [('rtw88_net_basic_rates','static unsigned'),
                      ('rtw88_net_ht20_local_policy','static int'),
                      ('rtw88_net_ht20_profile_prepare','static int'),
                      ('rtw88_net_tx_ht20_policy','static int'),
+                     ('rtw88_net_tx_ra_validate','static int __attribute__((unused))'),
                      ('rtw88_net_ra_prepare','static int'),
                      ('rtw88_net_restart_peer','static int'),
                      ('rtw88_net_drain_wait','static int'),('rtw88_net_mailbox_wait','static int'),
@@ -75,7 +76,15 @@ for name, result in [('rtw88_net_basic_rates','static unsigned'),
     if name == 'rtw88_net_edca_prepare' and '\n'+name+'(' not in net:
         continue
     parts.append(function(name,result))
+start_body = re.search(r'^rtw88_net_start\(.*?^}', net, re.M|re.S)
+if start_body is None or not re.search(
+        r'rtw88_net_tx_ra_validate\s*\(\s*net,\s*&ht_policy,\s*ht_epoch\s*\)',
+        start_body.group()):
+    raise ValueError('RUN path must validate the negotiated HT/VHT RA profile')
 parts.append('#ifdef RTW88_STATE_TX_CALLER\n' + function('rtw88_net_tx_submit', 'static int') + '#endif\n')
+# The VHT80 provider exists only in the experiment build.
+if '\nrtw88_net_vht_admit(' in net:
+    parts.append('#ifdef RTW88_VHT80\n' + function('rtw88_net_vht_admit', 'static int') + '#endif\n')
 (out/'native-state.inc').write_text('\n'.join(parts)+'\n')
 
 media = read('sys/net/if_media.c')
