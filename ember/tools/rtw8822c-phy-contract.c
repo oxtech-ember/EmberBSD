@@ -225,6 +225,50 @@ test_bad_channels(void)
 }
 
 static void
+test_tuple_geometry(void)
+{
+	static const struct {
+		struct rtw88_channel_tuple tuple;
+		unsigned index, cch20, cch40, cch80, data_sc;
+	} good[] = {
+		{ { 64, 64, 20 }, 0, 64, 64, 64, 0x00 },
+		{ { 64, 62, 40 }, 1, 64, 62, 62, 0x01 },
+		{ { 64, 58, 80 }, 3, 64, 62, 58, 0x93 },
+		{ { 36, 42, 80 }, 1, 36, 38, 42, 0x91 },
+	};
+	static const struct rtw88_channel_tuple bad[] = {
+		{ 64, 61, 40 }, { 64, 60, 40 }, { 64, 56, 80 },
+		{ 36, 44, 80 }, { 64, 58, 40 }, { 36, 38, 80 },
+		{ 52, 46, 80 }, { 64, 64, 80 }, { 36, 36, 40 }
+	};
+	struct rtw8822c_channel_geometry g;
+	struct rtw88_softc sc;
+	unsigned i;
+
+	for (i = 0; i < sizeof(good) / sizeof(good[0]); i++) {
+		CHECK(rtw8822c_channel_geometry(&good[i].tuple, &g) == 0);
+		CHECK(g.channel_index == good[i].index && g.cch20 == good[i].cch20 &&
+		    g.cch40 == good[i].cch40 && g.cch80 == good[i].cch80 &&
+		    g.data_sc == good[i].data_sc);
+	}
+	for (i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+		setup(&sc);
+		CHECK(rtw8822c_channel_geometry(&bad[i], &g) == EINVAL);
+		CHECK(rtw8822c_set_channel_tuple(&sc, &bad[i]) == EINVAL);
+		CHECK(model_ntrace == 0);
+	}
+	setup(&sc);
+	CHECK(rtw8822c_set_channel_tuple(&sc, &good[2].tuple) == 0);
+	CHECK(model_read(0x0483, 1) == 0x93);
+	CHECK((model_read(0x0668, 4) & 0x180) == 0x100);
+	CHECK((model_read(0x3c60, 4) & 0x3000) == 0x1000);
+	setup(&sc);
+	CHECK(rtw8822c_set_channel_tuple(&sc, &good[3].tuple) == 0);
+	CHECK(model_read(0x0483, 1) == 0x91);
+	CHECK((model_read(0x3c60, 4) & 0xff) == 42);
+}
+
+static void
 test_read_failure(void)
 {
 	struct rtw88_softc sc;
@@ -249,6 +293,7 @@ main(int argc, char **argv)
 	test_phy(argv[1]);
 	test_channels(argv[1]);
 	test_bad_channels();
+	test_tuple_geometry();
 	test_read_failure();
 	printf("rtw8822c PHY contract: %u assertions, %u failures\n", checks,
 	    failures);

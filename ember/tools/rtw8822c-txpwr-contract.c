@@ -15,6 +15,15 @@ static unsigned accesses, fail_at, cancel_at;
 static struct rtw88_softc sc;
 static struct rtw8822c_efuse efuse;
 
+/* Link the shared pure tuple geometry helper from the PHY translation unit. */
+int
+rtw8822c_dack(struct rtw88_softc *softc, struct rtw8822c_dack_result *result)
+{
+	(void)softc;
+	memset(result, 0, sizeof(*result));
+	return 0;
+}
+
 #ifdef RTW88_TXPWR_MISSING_LIMIT
 /* Real PG data, but a literal limit table with no HT2/VHT2 section. */
 static const struct rtw_txpwr_lmt_cfg_pair missing_rows[] = {
@@ -144,6 +153,116 @@ traces(const char *path)
 	CHECK(seen == n);
 }
 
+static void
+wide_tuples(void)
+{
+	const struct rtw88_channel_tuple tuples[] = {
+		{ 64, 64, 20 }, { 64, 62, 40 },
+		{ 64, 58, 80 }, { 36, 42, 80 }
+	};
+	static const unsigned rfe[] = { 0, 0, 0, 5 };
+	unsigned i;
+
+	for (i = 0; i < sizeof(tuples) / sizeof(tuples[0]); i++) {
+		int error;
+
+		reset(1, rfe[i]);
+		error = rtw8822c_set_tx_power_tuple(&sc, &efuse, &tuples[i], 2);
+		if (error != 0)
+			fprintf(stderr, "tuple %u/%u/%u: error %d\n",
+			    tuples[i].primary, tuples[i].center,
+			    tuples[i].width_mhz, error);
+		CHECK(error == 0);
+		CHECK(accesses != 0 && !sc.sc_phy.channel_valid);
+	}
+	{
+		const struct rtw88_channel_tuple invalid = { 64, 60, 40 };
+
+		reset(1, 0);
+		CHECK(rtw8822c_set_tx_power_tuple(&sc, &efuse, &invalid, 2) == EINVAL);
+		CHECK(accesses == 0);
+	}
+	{
+		const struct rtw88_channel_tuple tuple = { 64, 58, 80 };
+
+		reset(1, 0);
+		efuse.txpower[0][37] = 0xff;
+		CHECK(rtw8822c_set_tx_power_tuple(&sc, &efuse, &tuple, 2) == EINVAL);
+		CHECK(accesses == 0);
+	}
+	{
+		const struct rtw88_channel_tuple tuple20 = { 64, 64, 20 };
+		const struct rtw88_channel_tuple tuple40 = { 64, 62, 40 };
+		const struct rtw88_channel_tuple tuple80 = { 64, 58, 80 };
+		uint32_t before;
+
+		reset(1, 0);
+		CHECK(rtw8822c_set_tx_power_tuple(&sc, &efuse, &tuple20, 2) == 0);
+		before = model_read(0x18e8, 4);
+		reset(1, 0);
+		efuse.txpower[0][32] = 0xf0;
+		CHECK(rtw8822c_set_tx_power_tuple(&sc, &efuse, &tuple20, 2) == 0);
+		CHECK(model_read(0x18e8, 4) == before - 0x800);
+
+		reset(1, 0);
+		CHECK(rtw8822c_set_tx_power_tuple(&sc, &efuse, &tuple40, 2) == 0);
+		before = model_read(0x3a14, 4);
+		reset(1, 0);
+		efuse.txpower[0][33] = 0xf0;
+		CHECK(rtw8822c_set_tx_power_tuple(&sc, &efuse, &tuple40, 2) == 0);
+		CHECK((model_read(0x3a14, 4) & 0x7f) ==
+		    (((before & 0x7f) - 2) & 0x7f));
+
+		reset(1, 0);
+		CHECK(rtw8822c_set_tx_power_tuple(&sc, &efuse, &tuple80, 2) == 0);
+		before = model_read(0x3a2c, 4);
+		reset(1, 0);
+		efuse.txpower[0][37] = 0xf0;
+		CHECK(rtw8822c_set_tx_power_tuple(&sc, &efuse, &tuple80, 2) == 0);
+		CHECK((model_read(0x3a2c, 4) & 0x7f) ==
+		    (((before & 0x7f) - 2) & 0x7f));
+	}
+}
+
+static int
+raw_limit(const struct rtw8822c_table *table, unsigned regd, unsigned bw,
+	unsigned rs, unsigned channel)
+{
+	const struct rtw_txpwr_lmt_cfg_pair *rows = table->data;
+	unsigned i;
+
+	for (i = 0; i < table->count; i++)
+		if (rows[i].regd == regd && rows[i].band == 1 &&
+		    rows[i].bw == bw && rows[i].rs == rs &&
+		    rows[i].ch == channel)
+			return rows[i].txpwr_lmt;
+	return -128;
+}
+
+static void
+wide_raw_limits(void)
+{
+	const unsigned ch64[] = { 1, 2, 3 };
+	const int type0_20[] = { 62, 62, 38 };
+	const int type5_20[] = { 58, 58, 36 };
+	unsigned i;
+
+	for (i = 0; i < 3; i++) {
+		CHECK(raw_limit(&rtw8822c_txpwr_lmt_type0_tbl, 2, 0,
+		    ch64[i], 64) == type0_20[i]);
+		CHECK(raw_limit(&rtw8822c_txpwr_lmt_type5_tbl, 2, 0,
+		    ch64[i], 64) == type5_20[i]);
+	}
+	CHECK(raw_limit(&rtw8822c_txpwr_lmt_type0_tbl, 2, 1, 2, 62) == 64);
+	CHECK(raw_limit(&rtw8822c_txpwr_lmt_type0_tbl, 2, 1, 3, 62) == 40);
+	CHECK(raw_limit(&rtw8822c_txpwr_lmt_type5_tbl, 2, 1, 2, 62) == 64);
+	CHECK(raw_limit(&rtw8822c_txpwr_lmt_type5_tbl, 2, 1, 3, 62) == 40);
+	CHECK(raw_limit(&rtw8822c_txpwr_lmt_type0_tbl, 2, 2, 4, 58) == 64);
+	CHECK(raw_limit(&rtw8822c_txpwr_lmt_type0_tbl, 2, 2, 5, 58) == 40);
+	CHECK(raw_limit(&rtw8822c_txpwr_lmt_type5_tbl, 2, 2, 4, 58) == 64);
+	CHECK(raw_limit(&rtw8822c_txpwr_lmt_type5_tbl, 2, 2, 5, 58) == 40);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -257,6 +376,8 @@ main(int argc, char **argv)
 		CHECK(rtw8822c_set_tx_power(&sc, &efuse, 1, 12) == EINTR);
 		CHECK(accesses == i);
 	}
+	wide_tuples();
+	wide_raw_limits();
 	traces(argv[1]);
 	printf("%u RTL8822C TX power assertions passed\n", checks);
 	return EXIT_SUCCESS;

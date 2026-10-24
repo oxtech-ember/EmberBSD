@@ -67,7 +67,7 @@ static struct {
 	unsigned fail_alloc_at;	/* 1-based allocation that fails, or 0. */
 	unsigned alloc_calls;
 	unsigned delays;
-	unsigned writes, syncs;
+	unsigned reads, writes, syncs;
 	unsigned diag_reads;
 	uint32_t fail_diag_reg;
 	uint32_t fail_edca_reg;
@@ -170,6 +170,7 @@ read_1(void *cookie, uint32_t reg, uint8_t *out)
 	int error;
 
 	(void)cookie;
+	f.reads++;
 	error = access_ok(reg, 1);
 	if (error != 0)
 		return error;
@@ -200,6 +201,7 @@ read_2(void *cookie, uint32_t reg, uint16_t *out)
 	int error;
 
 	(void)cookie;
+	f.reads++;
 	error = access_ok(reg, 2);
 	if (error != 0)
 		return error;
@@ -216,6 +218,7 @@ read_4(void *cookie, uint32_t reg, uint32_t *out)
 	uint32_t v;
 
 	(void)cookie;
+	f.reads++;
 	if (reg == 0x3c60 || reg == 0x4c60) {
 		f.diag_reads++;
 		if (reg == f.fail_diag_reg)
@@ -566,6 +569,14 @@ mmio32(uint32_t reg)
 
 	return (uint32_t)f.mmio[reg] | (uint32_t)f.mmio[reg + 1] << 8 |
 	    (uint32_t)f.mmio[reg + 2] << 16 | (uint32_t)f.mmio[reg + 3] << 24;
+}
+
+static void
+set_test_channel(struct rtw88_softc *sc, unsigned channel)
+{
+
+	sc->sc_channel = channel;
+	sc->sc_phy.channel = (struct rtw88_channel_tuple){ channel, channel, 20 };
 }
 
 static void
@@ -2079,7 +2090,7 @@ test_tx_band_and_sequence(void)
 
 	if (!start_ok(&sc))
 		return;
-	sc.sc_channel = 36;
+	set_test_channel(&sc, 36);
 	CHECK(rtw88_tx_raw(&sc, RTW88_TXQ_MGMT, bcast_frame,
 	    sizeof(bcast_frame)) == 0);
 	pkt = sc.sc_txq[RTW88_TXQ_MGMT].buf[0].vaddr;
@@ -2094,7 +2105,7 @@ test_tx_band_and_sequence(void)
 	CHECK(pkt[5] == 0); /* BE TID 0, not the management QSEL. */
 	CHECK((pkt[33] & 0x80) == 0); /* Preserve software/CCMP sequence. */
 	CHECK((pkt[37] >> 4 | (unsigned)pkt[38] << 4) == 0x123);
-	sc.sc_channel = 1;
+	set_test_channel(&sc, 1);
 	CHECK(rtw88_tx_raw(&sc, RTW88_TXQ_MGMT, bcast_frame,
 	    sizeof(bcast_frame)) == 0);
 	pkt = sc.sc_txq[RTW88_TXQ_MGMT].buf[1].vaddr;
@@ -2117,7 +2128,7 @@ test_tx_data_rate_diagnostics(void)
 	data[0] = 0x08;
 	data[4] = 0x02; /* Unicast DATA, without retaining an address. */
 	for (i = 0; i < 12; i++) {
-		sc.sc_channel = i < 4 ? 1 : 36;
+		set_test_channel(&sc, i < 4 ? 1 : 36);
 		sc.sc_basic_rates = 1U << i;
 		CHECK(rtw88_tx_raw(&sc, RTW88_TXQ_BE, data, sizeof(data)) == 0);
 		pkt = sc.sc_txq[RTW88_TXQ_BE].buf[i].vaddr;
@@ -2140,11 +2151,11 @@ test_tx_data_rate_diagnostics(void)
 	CHECK(sc.sc_stats.tx_data_rate == 11 && sc.sc_stats.tx_data_basic == 0x800);
 	data[4] = 0x02;
 	sc.sc_basic_rates = 0;
-	sc.sc_channel = 36;
+	set_test_channel(&sc, 36);
 	CHECK(rtw88_tx_raw(&sc, RTW88_TXQ_BE, data, sizeof(data)) == 0);
 	CHECK(sc.sc_stats.tx_data_encoded == 13 && sc.sc_stats.tx_data_rate == 4);
 	CHECK(sc.sc_stats.tx_data_basic == 0 && sc.sc_stats.tx_data_rates[4] == 2);
-	sc.sc_channel = 1;
+	set_test_channel(&sc, 1);
 	CHECK(rtw88_tx_raw(&sc, RTW88_TXQ_BE, data, sizeof(data)) == 0);
 	CHECK(sc.sc_stats.tx_data_encoded == 14 && sc.sc_stats.tx_data_rate == 0);
 	CHECK(sc.sc_stats.tx_data_rates[0] == 2);

@@ -156,5 +156,19 @@ int main(void) {
         CHECK(rtw88_rx_signal_decode(bytes,len,&rx,state,gen,channel,&s)==ENOENT);
         CHECK(!s.valid && s.quality==0 && s.reason==reason);
     }
+    {
+        const struct rtw88_channel_tuple wide={36,42,80};
+        const struct rtw88_channel_tuple skew20={36,38,20};
+        const struct rtw88_channel_tuple narrow={36,36,20};
+        rx.flags=RTW88_RX_PHY_STATUS;rx.rate=0x2c;rx.bandwidth=0;
+        p[0]=1;p[1]=60;p[2]=50;p[5]=0x19;p[6]=36;
+        ctx.generation=7;ctx.paths=3;ctx.channel_valid=1;
+        CHECK(rtw88_rx_signal_decode_tuple(p,8,&rx,&ctx,7,&wide,&s)==ENOENT &&
+            !s.valid && s.reason==RTW88_SIGNAL_WIDTH);
+        CHECK(rtw88_rx_signal_decode_tuple(p,8,&rx,&ctx,7,&skew20,&s)==ENOENT &&
+            !s.valid && s.reason==RTW88_SIGNAL_WIDTH);
+        CHECK(rtw88_rx_signal_decode_tuple(p,8,&rx,&ctx,7,&narrow,&s)==0 &&
+            s.valid && s.quality==50);
+    }
     printf("rtw88 signal: %u checks, %u failures\n",checks,failures);return failures!=0;
 }

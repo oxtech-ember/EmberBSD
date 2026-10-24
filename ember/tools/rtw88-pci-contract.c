@@ -643,6 +643,8 @@ static void test_context_cleanup(void) {
     reset(&p);rtw88_pci_attach(NULL,&p,&fixture_pa);
     struct rtw88_net *net=p.sc_net;p.sc_net=NULL;
     p.sc_core.sc_started=p.sc_core.sc_running=1;
+    p.sc_core.sc_channel=36;
+    p.sc_core.sc_phy.channel=(struct rtw88_channel_tuple){36,36,20};
     fault.read_1=context_read1;fault.write_1=context_write1;p.sc_core.sc_ops=&fault;
     context_cleanup=&p;context_barriers=0;int ch=36;
     CHECK(rtwce_channel(&ch,0)==0 && context_barriers==0);

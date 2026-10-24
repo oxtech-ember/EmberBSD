@@ -61,6 +61,7 @@ struct rtw88_net {
     uint64_t rxba_token,rxba_deadline,rxba_due;
     enum ieee80211_state requested;
     unsigned channel;
+    struct rtw88_channel_tuple pending_channel;
     struct work state_work;
     struct workqueue *wq;
     unsigned tx_timer, tx_completed;

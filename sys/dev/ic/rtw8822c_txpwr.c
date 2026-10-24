@@ -85,8 +85,9 @@ power_by_rate(unsigned band, int values[2][64], int bases[2][6])
 }
 
 static int
-power_limits(unsigned band, unsigned channel, unsigned rfe, unsigned regd,
-    const int bases[2][6], int limits[6])
+power_limits(unsigned band, unsigned channel, unsigned bw, unsigned rfe,
+	unsigned regd, const int bases[2][6], unsigned required,
+	int limits[6])
 {
 	const struct rtw8822c_table *table = rfe == 5 ?
 	    &rtw8822c_txpwr_lmt_type5_tbl : &rtw8822c_txpwr_lmt_type0_tbl;
@@ -102,7 +103,7 @@ power_limits(unsigned band, unsigned channel, unsigned rfe, unsigned regd,
 
 		if (row->regd == regd)
 			configured = 1;
-		if (row->band != band || row->bw != 0 ||
+		if (row->band != band || row->bw != bw ||
 		    row->ch != channel || row->rs >= 6)
 			continue;
 		rs = row->rs;
@@ -144,7 +145,7 @@ power_limits(unsigned band, unsigned channel, unsigned rfe, unsigned regd,
 			}
 		}
 	}
-	if ((seen & (band ? 0x3eU : 0x3fU)) != (band ? 0x3eU : 0x3fU))
+	if ((seen & required) != required)
 		return ENOTSUP;
 	for (rs = 0; rs < 6; rs++)
 		limits[rs] -= bases[0][rs];
@@ -153,19 +154,55 @@ power_limits(unsigned band, unsigned channel, unsigned rfe, unsigned regd,
 
 /* All arithmetic is signed and checked before any hardware access. */
 static int
-power_indices(const struct rtw8822c_efuse *efuse, unsigned channel,
-    unsigned regd, uint8_t indices[2][64])
+power_indices(const struct rtw8822c_efuse *efuse,
+    const struct rtw88_channel_tuple *tuple,
+    const struct rtw8822c_channel_geometry *geometry, unsigned regd,
+    uint8_t indices[2][64])
 {
 	int values[2][64], bases[2][6], limits[6];
-	int group = channel_group(channel);
-	unsigned band = channel > 14, path, rs, j;
+	int group = channel_group(tuple->primary), upper_group;
+	unsigned band = tuple->primary > 14, path, rs, j;
 	int error;
 
 	if ((error = power_by_rate(band, values, bases)) != 0)
 		return error;
-	if ((error = power_limits(band, channel, efuse->rfe_option,
-	    regd, bases, limits)) != 0)
-		return error;
+	if (tuple->width_mhz == 80) {
+		int lower_group = channel_group(tuple->center - 6);
+
+		upper_group = channel_group(tuple->center + 2);
+		if (lower_group < 0 || upper_group != lower_group + 1 ||
+		    upper_group >= 14)
+			return ENOTSUP;
+		group = lower_group;
+	} else
+		upper_group = group;
+	if (tuple->width_mhz == 20) {
+		if ((error = power_limits(band, tuple->primary, 0,
+		    efuse->rfe_option, regd, bases, band ? 0x3eU : 0x3fU,
+		    limits)) != 0)
+			return error;
+	} else {
+		int lim20[6], lim40[6], lim80[6];
+
+		if ((error = power_limits(band, tuple->primary, 0,
+		    efuse->rfe_option, regd, bases, band ? 0x3eU : 0x3fU,
+		    lim20)) != 0 ||
+		    (error = power_limits(band, geometry->cch40, 1,
+		    efuse->rfe_option, regd, bases, 0x3cU, lim40)) != 0)
+			return error;
+		if (tuple->width_mhz == 80 &&
+		    (error = power_limits(band, tuple->center, 2,
+		    efuse->rfe_option, regd, bases, 0x30U, lim80)) != 0)
+			return error;
+		for (rs = 0; rs < 6; rs++) {
+			limits[rs] = lim20[rs];
+			if (rs >= 2 && lim40[rs] < limits[rs])
+				limits[rs] = lim40[rs];
+			if (rs >= 4 && tuple->width_mhz == 80 &&
+			    lim80[rs] < limits[rs])
+				limits[rs] = lim80[rs];
+		}
+	}
 	memset(indices, 0, 2 * 64 * sizeof(indices[0][0]));
 	for (path = 0; path < 2; path++) {
 		const uint8_t *cal = efuse->txpower[path];
@@ -175,23 +212,44 @@ power_indices(const struct rtw8822c_efuse *efuse, unsigned channel,
 			int base;
 
 			base_offset = band != 0 ? 18 + (unsigned)group :
-			    rs == 0 ? (channel == 14 ? 5 : (unsigned)group) :
+			    rs == 0 ? (tuple->primary == 14 ? 5 : (unsigned)group) :
 			    6 + (unsigned)group;
-			if (cal[base_offset] == 0xff)
+			if (cal[base_offset] == 0xff ||
+			    (tuple->width_mhz == 80 &&
+			    cal[18 + (unsigned)upper_group] == 0xff))
 				return EINVAL;
 			base = cal[base_offset];
+			if (tuple->width_mhz == 80)
+				base = (base + cal[18 + (unsigned)upper_group]) / 2;
 			if (base > 127)
 				return ERANGE;
 			if (rs != 0) {
 				unsigned diff = band != 0 ? 32 : 11;
-				int delta;
+				int delta = 0;
 
-				if (cal[diff] == 0xff ||
-				    ((rs == 3 || rs == 5) && cal[diff + 1] == 0xff))
-					return EINVAL;
-				delta = signed_nibble(cal[diff] >> (rs == 1 ? 0 : 4));
-				if (rs == 3 || rs == 5)
-					delta += signed_nibble(cal[diff + 1]);
+				if (tuple->width_mhz == 20 || rs == 1) {
+					if (cal[diff] == 0xff)
+						return EINVAL;
+					if (rs != 2 || tuple->width_mhz == 20)
+						delta = signed_nibble(cal[diff] >>
+						    (rs == 1 ? 0 : 4));
+				}
+				if (tuple->width_mhz == 20 && (rs == 3 || rs == 5)) {
+					if (cal[band != 0 ? 33 : diff + 1] == 0xff)
+						return EINVAL;
+					delta += signed_nibble(cal[band != 0 ? 33 : diff + 1]);
+				} else if (tuple->width_mhz >= 40 && band != 0 &&
+				    rs == 3) {
+					if (cal[33] == 0xff)
+						return EINVAL;
+					delta = signed_nibble(cal[33] >> 4);
+				} else if (tuple->width_mhz == 80 && band != 0 &&
+				    rs >= 4) {
+					diff = rs == 4 ? 37 : 38;
+					if (cal[diff] == 0xff)
+						return EINVAL;
+					delta = signed_nibble(cal[diff] >> 4);
+				}
 				base += 2 * delta;
 				if (base < 0 || base > 127)
 					return ERANGE;
@@ -245,10 +303,12 @@ write_power(struct rtw88_softc *sc, uint32_t addr, uint32_t mask,
 }
 
 int
-rtw8822c_set_tx_power(struct rtw88_softc *sc,
-    const struct rtw8822c_efuse *efuse, unsigned channel, unsigned regd)
+rtw8822c_set_tx_power_tuple(struct rtw88_softc *sc,
+    const struct rtw8822c_efuse *efuse,
+    const struct rtw88_channel_tuple *tuple, unsigned regd)
 {
 	uint8_t indices[2][64];
+	struct rtw8822c_channel_geometry geometry;
 	uint32_t diff_words[16] = { 0 };
 	unsigned path, rs, j, rate;
 	int error;
@@ -262,17 +322,23 @@ rtw8822c_set_tx_power(struct rtw88_softc *sc,
 		sc->sc_power_program.serial++;
 	}
 #endif
-	if (sc == NULL || efuse == NULL || sc->sc_ops == NULL ||
+	if (sc == NULL || efuse == NULL || tuple == NULL || sc->sc_ops == NULL ||
 	    sc->sc_ops->read_4 == NULL || sc->sc_ops->write_4 == NULL ||
-	    channel_group(channel) < 0 || sc->sc_rfe != efuse->rfe_option)
+	    sc->sc_rfe != efuse->rfe_option)
 		return EINVAL;
+	if ((error = rtw8822c_channel_geometry(tuple, &geometry)) != 0)
+		return error;
+	if (tuple->width_mhz != 20 && tuple->primary <= 14)
+		return EOPNOTSUPP;
+	if (channel_group(tuple->primary) < 0)
+		return ENOTSUP;
 	if (regd != 2 && regd != 12)
 		return ENOTSUP;
 	if (sc->sc_rfe > 6)
 		return ENOTSUP;
 	if (sc->sc_stop_requested)
 		return EINTR;
-	if ((error = power_indices(efuse, channel, regd, indices)) != 0)
+	if ((error = power_indices(efuse, tuple, &geometry, regd, indices)) != 0)
 		return error;
 	/* The shared TXAGC differences are signed seven-bit hardware fields. */
 	for (rs = 0; rs < 6; rs++) {
@@ -315,7 +381,7 @@ rtw8822c_set_tx_power(struct rtw88_softc *sc,
 #ifdef RTW88_RFK_EXPERIMENT
 	/* Publish only the exact values whose complete program succeeded. */
 	sc->sc_power_program.generation = sc->sc_generation;
-	sc->sc_power_program.channel = channel;
+	sc->sc_power_program.channel = tuple->primary;
 	sc->sc_power_program.regd = regd;
 	sc->sc_power_program.cut = sc->sc_cut;
 	sc->sc_power_program.rfe = sc->sc_rfe;
@@ -327,4 +393,13 @@ rtw8822c_set_tx_power(struct rtw88_softc *sc,
 	sc->sc_power_program.valid = 1;
 #endif
 	return 0;
+}
+
+int
+rtw8822c_set_tx_power(struct rtw88_softc *sc,
+    const struct rtw8822c_efuse *efuse, unsigned channel, unsigned regd)
+{
+	const struct rtw88_channel_tuple tuple = { channel, channel, 20 };
+
+	return rtw8822c_set_tx_power_tuple(sc, efuse, &tuple, regd);
 }

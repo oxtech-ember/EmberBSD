@@ -401,6 +401,36 @@ test_ra_ht20_numeric(void)
 			CHECK(mmio32(0x1f0+4*box)==mask);
 			CHECK(sc.sc_ra.profile_generation==777 && sc.sc_ra.ht_mcs==cfg.ht_mcs);
 			saved=sc.sc_ra;
+			{
+				struct rtw88_tx_fixed fixed = {
+					.associated = 1, .channel = 36, .rate500 = 12,
+					.peer_mask = 0xff0, .mode = RTW88_FIXED_11A
+				};
+				uint8_t mgmt[24] = { 0x80 };
+				uint8_t qos[26] = { 0x88, 0x01 };
+				uint8_t before[RTW8822C_TX_PACKET_DESC_SIZE];
+				struct rtw88_stats stats_before = sc.sc_stats;
+				unsigned wp = sc.sc_txq[RTW88_TXQ_BE].wp;
+				unsigned queued = sc.sc_txq[RTW88_TXQ_BE].queued;
+				unsigned syncs = f.syncs, writes = f.writes;
+				void *slot = sc.sc_txq[RTW88_TXQ_BE].buf[wp].vaddr;
+
+				memcpy(before, slot, sizeof(before));
+				sc.sc_phy.channel.width_mhz = 40;
+				CHECK(rtw88_tx_raw(&sc, RTW88_TXQ_MGMT,
+				    mgmt, sizeof(mgmt)) == EOPNOTSUPP);
+				CHECK(rtw88_tx_fixed(&sc, RTW88_TXQ_BE, ra_frame,
+				    sizeof(ra_frame), &fixed) == EOPNOTSUPP);
+				CHECK(rtw88_tx_auto(&sc, RTW88_TXQ_BE, qos,
+				    sizeof(qos), 9, 0) == EOPNOTSUPP);
+				CHECK(sc.sc_txq[RTW88_TXQ_BE].wp == wp &&
+				    sc.sc_txq[RTW88_TXQ_BE].queued == queued);
+				CHECK(f.syncs == syncs && f.writes == writes);
+				CHECK(memcmp(before, slot, sizeof(before)) == 0);
+				CHECK(memcmp(&stats_before, &sc.sc_stats,
+				    sizeof(stats_before)) == 0);
+				sc.sc_phy.channel.width_mhz = 20;
+			}
 			unsigned wp=sc.sc_txq[RTW88_TXQ_BE].wp;
 			CHECK(rtw88_tx_auto(&sc,RTW88_TXQ_BE,ra_frame,sizeof(ra_frame),9,1)==EOPNOTSUPP);
 			CHECK(sc.sc_txq[RTW88_TXQ_BE].wp==wp && memcmp(&saved,&sc.sc_ra,sizeof(saved))==0);

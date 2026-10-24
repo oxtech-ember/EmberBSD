@@ -34,10 +34,12 @@ static void signal_set32(uint32_t reg,uint32_t value) {
 }
 static void test_signal_cache(struct rtw88_softc *sc) {
     struct rtw88_bus_ops fault=ops;
+    struct rtw88_channel_tuple committed=sc->sc_phy.channel;
     signal_set32(0x1a98,(1U<<6)|(2U<<14));
     signal_set32(0x1aa8,8U<<16);signal_set32(0x1a70,4U<<24);
     CHECK(rtw8822c_signal_cache(sc)==0);
     CHECK(!sc->sc_phy.channel_valid);
+    CHECK(memcmp(&sc->sc_phy.channel,&committed,sizeof(committed))==0);
     CHECK(sc->sc_phy.gain_valid && sc->sc_phy.generation==sc->sc_generation &&
         sc->sc_phy.gain_low==20 && sc->sc_phy.gain_high==40);
     uint32_t regs[]={0x1a98,0x1aa8,0x1a70};fault.read_4=signal_read4;
@@ -45,14 +47,17 @@ static void test_signal_cache(struct rtw88_softc *sc) {
         sc->sc_ops=&fault;signal_fail_reg=regs[i];
         CHECK(rtw8822c_signal_cache(sc)==EIO);
         CHECK(!sc->sc_phy.channel_valid);
+        CHECK(memcmp(&sc->sc_phy.channel,&committed,sizeof(committed))==0);
         CHECK(!sc->sc_phy.gain_valid && sc->sc_phy.gain_error==EIO &&
             sc->sc_phy.generation==sc->sc_generation);
     }
     sc->sc_ops=&ops;signal_fail_reg=0;
     signal_set32(0x1a98,3U<<6);signal_set32(0x1a70,15U<<24);
     CHECK(rtw8822c_signal_cache(sc)==EINVAL && !sc->sc_phy.gain_valid);
+    CHECK(memcmp(&sc->sc_phy.channel,&committed,sizeof(committed))==0);
     signal_set32(0x1a98,(1U<<6)|(2U<<14));signal_set32(0x1a70,4U<<24);
     CHECK(rtw8822c_signal_cache(sc)==0);
+    CHECK(memcmp(&sc->sc_phy.channel,&committed,sizeof(committed))==0);
 }
 /* These tests start the actual core. No channel or PHY state is supplied. */
 static int context_write4(void *cookie,uint32_t reg,uint32_t v) {
@@ -68,11 +73,24 @@ static void context_rx(struct rtw88_softc *sc,unsigned n) {
 }
 static void context_success(void) {
     struct rtw88_softc sc;
+    const struct rtw88_channel_tuple wide={36,42,80};
     if(!start_ok(&sc))return;
     CHECK(rtw88_channel(&sc,36)==0);
+    unsigned reads=f.reads,writes=f.writes;
+    CHECK(rtw88_channel(&sc,64)==EOPNOTSUPP);
+    CHECK(f.reads==reads && f.writes==writes);
+    CHECK(rtw88_channel_apply(&sc,&wide)==EOPNOTSUPP);
+    CHECK(f.reads==reads && f.writes==writes);
+    CHECK(rtw88_channel(&sc,36)==0 && sc.sc_channel==36);
     sc.sc_rx_frame=signal_capture;signal_count=0;
     context_rx(&sc,0);
     CHECK(signal_observed[0].valid && signal_observed[0].quality==50);
+    sc.sc_phy.channel=(struct rtw88_channel_tuple){36,42,80};
+    context_rx(&sc,1);
+    CHECK(!signal_observed[1].valid && signal_observed[1].reason==RTW88_SIGNAL_WIDTH);
+    sc.sc_phy.channel=(struct rtw88_channel_tuple){36,38,20};
+    context_rx(&sc,2);
+    CHECK(!signal_observed[2].valid && signal_observed[2].reason==RTW88_SIGNAL_WIDTH);
     const char *path=getenv("RTW88_SIGNAL_CONTEXT");
     if(path!=NULL) {
         FILE *file=fopen(path,"wb");CHECK(file!=NULL);
@@ -310,7 +328,8 @@ int main(void) {
     CHECK(sc.sc_stats.signal_reasons[RTW88_SIGNAL_SHORT]==1);
     CHECK(sc.sc_stats.signal_reasons[0]==2 && sc.sc_stats.signal_reasons[RTW88_SIGNAL_MISSING]==1);
     /* Actual descriptor -> core -> callback; optional signal does not own DATA. */
-    sc.sc_channel=36;
+    CHECK(rtw88_channel(&sc,36)==0);
+    sc.sc_phy.channel_valid=0; /* Preserve the unqualified RXSC0 cases below. */
     signal_packet(&sc,5,1,60);
     uint8_t *vht=sc.sc_rxbuf[5].vaddr;
     vht[12]=0x2c;vht[24+1+5]=0x19;vht[24+1+6]=36;

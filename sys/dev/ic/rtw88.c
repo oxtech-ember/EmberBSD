@@ -835,6 +835,9 @@ rtw88_stop(struct rtw88_softc *sc)
 int
 rtw88_start(struct rtw88_softc *sc)
 {
+	const struct rtw88_channel_tuple default_channel = {
+		RTW88_DEFAULT_CHANNEL, RTW88_DEFAULT_CHANNEL, 20
+	};
 	const uint8_t *fw = NULL;
 	const char *stage = "identity";
 	size_t fw_len = 0;
@@ -968,7 +971,7 @@ rtw88_start(struct rtw88_softc *sc)
 	if (error != 0)
 		goto fail;
 	stage = "channel setup";
-	error = rtw8822c_set_channel(sc, RTW88_DEFAULT_CHANNEL);
+	error = rtw8822c_set_channel_tuple(sc, &default_channel);
 	if (error != 0)
 		goto fail;
 	if (sc->sc_stop_requested || sc->sc_generation != gen) {
@@ -979,10 +982,12 @@ rtw88_start(struct rtw88_softc *sc)
 	error = rtw8822c_efuse_decode(sc->sc_efuse_phys,
 	    sizeof(sc->sc_efuse_phys), &efuse);
 	if (error == 0)
-		error = rtw8822c_set_tx_power(sc, &efuse, RTW88_DEFAULT_CHANNEL, 12);
+		error = rtw8822c_set_tx_power_tuple(sc, &efuse,
+		    &default_channel, 12);
 	if (error != 0)
 		goto fail;
 	sc->sc_channel = RTW88_DEFAULT_CHANNEL;
+	sc->sc_phy.channel = default_channel;
 	if (sc->sc_stop_requested || sc->sc_generation != gen) {
 		error = EINTR;
 		goto fail;
@@ -1270,9 +1275,9 @@ rtw88_rx_one(struct rtw88_softc *sc, unsigned idx, uint64_t sequence)
 		sc->sc_stats.rx_errors++;
 		return;
 	}
-	(void)rtw88_rx_signal_decode((const uint8_t *)buf->vaddr +
+	(void)rtw88_rx_signal_decode_tuple((const uint8_t *)buf->vaddr +
 	    rx.driver_info_offset, rx.driver_info_size, &rx, &sc->sc_phy,
-	    sc->sc_generation, sc->sc_channel, &rx.signal);
+	    sc->sc_generation, &sc->sc_phy.channel, &rx.signal);
 	sc->sc_stats.signal = rx.signal;
 	sc->sc_stats.signal_reasons[rx.signal.reason]++;
 	if (rx.packet_size < RTW88_MIN_FRAME) {
@@ -1655,6 +1660,11 @@ rtw88_tx_submit(struct rtw88_softc *sc, unsigned q, const void *frame,
 	if (!sc->sc_resources_ready || !sc->sc_running || !sc->sc_started ||
 	    sc->sc_stop_requested)
 		return ENXIO;
+	/* The descriptor encoder and DMA engine are currently HT20-only. */
+	if (sc->sc_phy.channel.width_mhz != 20 ||
+	    sc->sc_phy.channel.primary != sc->sc_channel ||
+	    sc->sc_phy.channel.center != sc->sc_channel)
+		return EOPNOTSUPP;
 	if (frame == NULL || len < 24 ||
 	    len > RTW88_TX_BUF_SIZE - RTW8822C_TX_PACKET_DESC_SIZE)
 		return EMSGSIZE;
@@ -1949,21 +1959,32 @@ rtw88_loopback(struct rtw88_softc *sc, int mode)
 }
 
 int
-rtw88_channel(struct rtw88_softc *sc, unsigned ch)
+rtw88_channel_apply(struct rtw88_softc *sc,
+    const struct rtw88_channel_tuple *tuple)
 {
 	struct rtw8822c_efuse efuse;
+	struct rtw8822c_channel_geometry geometry;
 	uint32_t gen;
 	uint8_t pause;
+	unsigned ch;
 	int error;
 
 	if (!sc->sc_running || sc->sc_stop_requested)
 		return ENXIO;
-	/* The calibrated 20 MHz profile has no policy for other channels. */
-	if (!((ch >= 1 && ch <= 13) ||
-	    (ch >= 36 && ch <= 64 && ch % 4 == 0) ||
-	    (ch >= 100 && ch <= 144 && ch % 4 == 0) ||
-	    (ch >= 149 && ch <= 165 && (ch - 149) % 4 == 0)))
+	if (tuple == NULL)
 		return EINVAL;
+	/* No warm channel call may change RF bandwidth without a real stop fence. */
+	if (tuple->width_mhz != 20 ||
+	    sc->sc_phy.channel.width_mhz != tuple->width_mhz)
+		return EOPNOTSUPP;
+	if ((error = rtw8822c_channel_geometry(tuple, &geometry)) != 0)
+		return error;
+	ch = tuple->primary;
+	/* Live admission mirrors the passive, non-DFS net80211 channel set. */
+	if (!((ch >= 1 && ch <= 13) ||
+	    (ch >= 36 && ch <= 48 && (ch - 36) % 4 == 0) ||
+	    (ch >= 149 && ch <= 165 && (ch - 149) % 4 == 0)))
+		return EOPNOTSUPP;
 	error = rtw8822c_efuse_decode(sc->sc_efuse_phys,
 	    sizeof(sc->sc_efuse_phys), &efuse);
 	if (error != 0)
@@ -1983,11 +2004,11 @@ rtw88_channel(struct rtw88_softc *sc, unsigned ch)
 	if (error == 0 && (sc->sc_stop_requested || sc->sc_generation != gen))
 		error = EINTR;
 	if (error == 0)
-		error = rtw8822c_set_channel(sc, ch);
+		error = rtw8822c_set_channel_tuple(sc, tuple);
 	if (error == 0 && (sc->sc_stop_requested || sc->sc_generation != gen))
 		error = EINTR;
 	if (error == 0)
-		error = rtw8822c_set_tx_power(sc, &efuse, ch, 12);
+		error = rtw8822c_set_tx_power_tuple(sc, &efuse, tuple, 12);
 	if (error == 0 && (sc->sc_stop_requested || sc->sc_generation != gen))
 		error = EINTR;
 	if (error == 0)
@@ -2003,10 +2024,19 @@ rtw88_channel(struct rtw88_softc *sc, unsigned ch)
 		return error;
 	}
 	sc->sc_channel = ch;
+	sc->sc_phy.channel = *tuple;
 #ifndef RTW88_RFK_EXPERIMENT
 	sc->sc_phy.channel_valid = 1;
 #endif
 	return 0;
+}
+
+int
+rtw88_channel(struct rtw88_softc *sc, unsigned ch)
+{
+	const struct rtw88_channel_tuple tuple = { ch, ch, 20 };
+
+	return rtw88_channel_apply(sc, &tuple);
 }
 
 int

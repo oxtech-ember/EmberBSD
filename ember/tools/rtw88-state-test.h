@@ -87,6 +87,7 @@ struct rtw88_net {
 	unsigned tx_timer, tx_completed;
 	enum ieee80211_state requested;
 	unsigned channel, configured_media;
+	struct rtw88_channel_tuple pending_channel;
 	int state_arg;
 	int (*parent_state)(struct ieee80211com *, enum ieee80211_state, int);
 };
@@ -126,6 +127,8 @@ mutex_enter(kmutex_t *lock)
 		assert(net && net->lock == lock);
 		(void)rtw88_net_request(&net->policy);
 		net->channel = 36;
+			net->pending_channel =
+			    (struct rtw88_channel_tuple){36, 36, 20};
 		net->requested = IEEE80211_S_SCAN;
 		net->ic.ic_curchan = &net->ic.ic_channels[36];
 		net->ic.ic_curchan->ic_flags = IEEE80211_CHAN_A;
@@ -267,10 +270,11 @@ rtw88_net_stop(struct ifnet *ifp, int disable)
 	(void)rtw88_stop(net->core);
 }
 static int
-state_channel(struct rtw88_softc *sc, unsigned channel)
+state_channel_apply(struct rtw88_softc *sc,
+	const struct rtw88_channel_tuple *channel)
 {
 	state_channel_calls++;
-	return rtw88_channel(sc,channel);
+	return rtw88_channel_apply(sc,channel);
 }
 static int
 state_station(struct rtw88_softc *sc, const uint8_t *bssid, unsigned aid,
@@ -279,7 +283,7 @@ state_station(struct rtw88_softc *sc, const uint8_t *bssid, unsigned aid,
 	state_station_calls++;
 	return rtw88_station_config(sc,bssid,aid,basic,slot,linked);
 }
-#define rtw88_channel state_channel
+#define rtw88_channel_apply state_channel_apply
 #define rtw88_station_config state_station
 #define rtw88_edca_apply state_edca_apply
 #ifdef RTW88_STATE_RA_OBSERVE
@@ -295,7 +299,7 @@ static int state_ra_configure(struct rtw88_softc *, const struct rtw88_ra_config
 #undef rtw88_ra_configure
 #endif
 #undef rtw88_edca_apply
-#undef rtw88_channel
+#undef rtw88_channel_apply
 #undef rtw88_station_config
 /* Actual media initialization and default selection. List lookup is modeled. */
 #define KM_SLEEP 1

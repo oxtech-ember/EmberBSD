@@ -23,6 +23,7 @@ done
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror ${RTW88_TEST_CFLAGS:-} \
     -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \
     "$tools/rtw8822c-txpwr-contract.c" "$src/sys/dev/ic/rtw8822c_txpwr.c" \
+    "$src/sys/dev/ic/rtw8822c_phy.c" \
     "$src/sys/dev/ic/rtw8822c_table.c" -o "$work/test"
 if [ -n "${RTW88_TEST_OUTPUT:-}" ]; then cp "$work/test" "$RTW88_TEST_OUTPUT"; fi
 if [ "${RTW88_COMPILE_ONLY:-0}" != 1 ]; then
@@ -38,6 +39,7 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror ${RTW88_TEST_CFLAGS:-} \
     -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \
     -DRTW88_TXPWR_MISSING_LIMIT \
     "$tools/rtw8822c-txpwr-contract.c" "$src/sys/dev/ic/rtw8822c_txpwr.c" \
+    "$src/sys/dev/ic/rtw8822c_phy.c" \
     "$work/tables.o" -o "$work/missing"
 if [ "${RTW88_COMPILE_ONLY:-0}" != 1 ]; then
     run_test "$work/missing" "$tools/rtw8822c-txpwr.trace"

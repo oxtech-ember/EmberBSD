@@ -110,12 +110,20 @@ int rtw88_edca_encode(const struct rtw88_edca_params[RTW88_WME_NAC],
 #define RTW88_SIGNAL_NUMBER 9U
 #define RTW88_SIGNAL_PATH 10U
 #define RTW88_SIGNAL_REASONS 11U
+/* Internal operating channel. Width is expressed in MHz. */
+struct rtw88_channel_tuple {
+    unsigned primary;
+    unsigned center;
+    unsigned width_mhz;
+};
+
 struct rtw88_phy_state {
     uint32_t generation;
     int gain_error;
     uint8_t paths, gain_valid, gain_low, gain_high;
     /* Complete core 20 MHz program, in this generation, with RFK OFF. */
     uint8_t channel_valid;
+    struct rtw88_channel_tuple channel;
 };
 struct rtw88_rx_signal {
     uint32_t generation;
@@ -165,8 +173,14 @@ int rtw88_tx_encode(uint8_t *, size_t, const struct rtw88_tx_info *);
  * replace *out, including invalid observations. Invalid PHY must not drop DATA.
  * Native BW20 observations only. Power conversion follows pinned RTL8822C page0/1;
  * quality is power_2_db(signal_power), not firmware two-path averaged RSSI. */
+int rtw88_rx_signal_decode_tuple(const uint8_t *, size_t,
+    const struct rtw88_rx_info *,
+    const struct rtw88_phy_state *, uint32_t,
+    const struct rtw88_channel_tuple *, struct rtw88_rx_signal *);
+/* Compatibility decoder for historical 20 MHz fixtures and diagnostics. */
 int rtw88_rx_signal_decode(const uint8_t *, size_t, const struct rtw88_rx_info *,
-    const struct rtw88_phy_state *, uint32_t, unsigned, struct rtw88_rx_signal *);
+    const struct rtw88_phy_state *, uint32_t, unsigned,
+    struct rtw88_rx_signal *);
 int rtw88_rx_decode(const uint8_t *, size_t, struct rtw88_rx_info *);
 
 /*

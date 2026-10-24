@@ -80,6 +80,7 @@ struct rtw88_net {
 	int tx_quiet, quiet_error; /* Sticky until detach; state requests cannot clear it. */
 	enum ieee80211_state requested;
 	unsigned channel;
+	struct rtw88_channel_tuple pending_channel;
 	unsigned configured_media; /* User configuration, not peer-selected mode. */
 	int state_arg;
 	int (*parent_state)(struct ieee80211com *, enum ieee80211_state, int);
@@ -855,6 +856,7 @@ rtw88_net_state_work(struct work *work, void *cookie)
 	unsigned mailbox_box = 0, mailbox_count, mailbox_deadline = 0;
 	unsigned drain_deadline = 0;
 	unsigned channel, basic, slot, aid, i;
+	struct rtw88_channel_tuple channel_tuple;
 	unsigned media, prepare_stage;
 	int use_ra, mailbox_retry, mailbox_reserved;
 	struct ieee80211_ht20_profile ht20_profile;
@@ -885,6 +887,7 @@ rtw88_net_state_work(struct work *work, void *cookie)
 		epoch = net->policy.epoch;
 		state = net->requested;
 		channel = net->channel;
+		channel_tuple = net->pending_channel;
 		media = net->configured_media;
 		arg = net->state_arg;
 		mutex_exit(net->lock);
@@ -981,7 +984,8 @@ rtw88_net_state_work(struct work *work, void *cookie)
 				    net->rfk.notice_pending) {
 					prepare_error = ECANCELED;
 				} else {
-					prepare_error = rtw88_channel(net->core, channel);
+					prepare_error = rtw88_channel_apply(net->core,
+					    &channel_tuple);
 					if (prepare_error == 0)
 						prepare_error = rtw88_net_rfk_phase(net);
 				}
@@ -1102,7 +1106,8 @@ rtw88_net_state_work(struct work *work, void *cookie)
 				    !net->core->sc_operating.sealed ||
 				    rtw8822c_rfk_seal(net->core) != 0)
 #endif
-				error = rtw88_channel(net->core, channel);
+					error = rtw88_channel_apply(net->core,
+					    &channel_tuple);
 			}
 			if (error == 0) {
 				diag.stage = RTW88_NET_STAGE_STATION;
@@ -1308,6 +1313,9 @@ lock_request:
 	net->requested = state;
 	net->state_arg = arg;
 	net->channel = ieee80211_chan2ieee(ic, ic->ic_curchan);
+	net->pending_channel.primary = net->channel;
+	net->pending_channel.center = net->channel;
+	net->pending_channel.width_mhz = 20;
 #ifdef RTW88_RFK_EXPERIMENT
 	net->rfk.beacon_epoch = 0;
 	net->rfk.frontier_valid = 0;

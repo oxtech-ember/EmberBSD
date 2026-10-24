@@ -87,6 +87,7 @@ setup_fixed(struct rtw88_softc *sc)
 	frame[4] = frame[10] = frame[16] = 2;
 	sc->sc_basic_rates = 0xf;
 	sc->sc_channel = 1;
+	sc->sc_phy.channel = (struct rtw88_channel_tuple){1, 1, 20};
 	CHECK(ieee80211_chan2ieee(&net.ic, &channel) == 1);
 }
 static void
@@ -150,6 +151,8 @@ main(void)
 		if (!mode) {
 			channel.ic_freq = 5180;
 			sc.sc_channel = 36;
+			sc.sc_phy.channel =
+			    (struct rtw88_channel_tuple){36, 36, 20};
 		}
 		struct ieee80211_rateset *rs
 		    = &net.ic.ic_sup_rates[net.ic.ic_curmode];
@@ -239,6 +242,7 @@ main(void)
 	setup_fixed(&sc);
 	net.ic.ic_fixed_rate = 11;
 	sc.sc_channel = 36;
+	sc.sc_phy.channel = (struct rtw88_channel_tuple){36, 36, 20};
 	reject(&sc);
 	setup_fixed(&sc);
 	net.ic.ic_fixed_rate = 11;

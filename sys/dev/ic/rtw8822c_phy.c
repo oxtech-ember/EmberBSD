@@ -4,7 +4,8 @@
 /* Origin: FreeBSD a143197801c680b958ab662c88cf086668a1958b rtw88 PHY. */
 /*
  * Native adaptation of rtw8822c_phy_set_param (around the table load),
- * rtw_phy_init, rtw_bf_phy_init and rtw8822c_set_channel for 20 MHz.
+ * rtw_phy_init, rtw_bf_phy_init and rtw8822c_set_channel. Tuple geometry
+ * supports 20/40/80 MHz; live admission remains 20 MHz in the current core.
  * ember/tools/rtw8822c-phy.trace holds the reference register writes.
  * Cold ADC/DAC calibration runs before x2, trims and PA bias. Failed
  * measurements stop startup; the caller performs a complete power off.
@@ -341,9 +342,92 @@ channel_band(unsigned ch)
 	return 0;
 }
 
-static void
-channel_bb(struct rtw8822c_io *io, unsigned ch)
+static int
+channel_constituent(unsigned ch)
 {
+	if ((ch >= 1 && ch <= 14) ||
+	    (ch >= 36 && ch <= 64 && ch % 4 == 0) ||
+	    (ch >= 100 && ch <= 144 && ch % 4 == 0) ||
+	    (ch >= 149 && ch <= 177 && (ch - 149) % 4 == 0))
+		return 1;
+	return 0;
+}
+
+/* Validate the complete primary/center relationship before any bus access. */
+int
+rtw8822c_channel_geometry(const struct rtw88_channel_tuple *tuple,
+    struct rtw8822c_channel_geometry *out)
+{
+	struct rtw8822c_channel_geometry g = { 0 };
+	int delta;
+	unsigned i, ch;
+
+	if (tuple == NULL || out == NULL ||
+	    !channel_constituent(tuple->primary))
+		return EINVAL;
+	g.band = channel_band(tuple->primary);
+	if (g.band == 0 || channel_band(tuple->primary) !=
+	    channel_band(tuple->center))
+		return EINVAL;
+	g.cch20 = tuple->primary;
+	switch (tuple->width_mhz) {
+	case 20:
+		if (tuple->center != tuple->primary)
+			return EINVAL;
+		g.cch40 = g.cch80 = tuple->center;
+		g.channel_index = 0;
+		g.data_sc = 0;
+		break;
+	case 40:
+		delta = (int)tuple->primary - (int)tuple->center;
+		if (g.band != 5 || (delta != -2 && delta != 2))
+			return EINVAL;
+		g.cch40 = tuple->center;
+		g.cch80 = tuple->center;
+		g.channel_index = delta > 0 ? 1 : 2;
+		g.data_sc = g.channel_index;
+		break;
+	case 80:
+		delta = (int)tuple->primary - (int)tuple->center;
+		if (g.band != 5 || (delta != -6 && delta != -2 &&
+		    delta != 2 && delta != 6))
+			return EINVAL;
+		g.channel_index = delta == -6 ? 1 : delta == 6 ? 3 : 2;
+		g.cch40 = (unsigned)((int)tuple->center + (delta < 0 ? -4 : 4));
+		g.cch80 = tuple->center;
+		g.data_sc = g.channel_index |
+		    ((delta == -6 || delta == 6 ? 9U : 10U) << 4);
+		break;
+	default:
+		return EINVAL;
+	}
+	if (tuple->width_mhz == 40) {
+		for (i = 0; i < 2; i++) {
+			ch = (unsigned)((int)tuple->center + (i == 0 ? -2 : 2));
+			if (!channel_constituent(ch))
+				return EINVAL;
+		}
+	} else if (tuple->width_mhz == 80) {
+		if (tuple->center != 42 && tuple->center != 58 &&
+		    tuple->center != 106 && tuple->center != 122 &&
+		    tuple->center != 138 && tuple->center != 155)
+			return EINVAL;
+		for (i = 0; i < 4; i++) {
+			ch = (unsigned)((int)tuple->center + (i == 0 ? -6 :
+			    i == 1 ? -2 : i == 2 ? 2 : 6));
+			if (!channel_constituent(ch))
+				return EINVAL;
+		}
+	}
+	*out = g;
+	return 0;
+}
+
+static void
+channel_bb(struct rtw8822c_io *io, const struct rtw88_channel_tuple *tuple,
+    const struct rtw8822c_channel_geometry *g)
+{
+	unsigned ch = tuple->primary;
 
 	if (channel_band(ch) == 2) {
 		clr32(io, 0x1a14, 0x300);	/* BGCTRL: RX_IQ_WEIGHT */
@@ -406,27 +490,58 @@ channel_bb(struct rtw8822c_io *io, unsigned ch)
 		else
 			mask32(io, 0x0c30, 0xfff, 0x411);
 	}
-	/* 20 MHz. */
-	mask32(io, 0x0810, 0x3ff0, 0x19b);	/* DFIRBW */
-	mask32(io, 0x09b0, 0xf, 0x0);		/* TXBWCTL */
-	mask32(io, 0x09b0, 0xffc0, 0x0);
-	mask32(io, 0x09b4, 0x700, 0x7);		/* TXCLK */
-	mask32(io, 0x09b4, 0x700000, 0x6);
-	mask32(io, 0x1abc, UINT32_C(0x40000000), 0x0);	/* CCK_SOURCE: NBI */
-	mask32(io, 0x088c, 0xf000, 0x1);	/* SBD: SUBTUNE */
-	mask32(io, 0x0cbc, 0x200000, 0x0);	/* PT_CHSMO: PT_OPT */
+	switch (tuple->width_mhz) {
+	case 20:
+		mask32(io, 0x0810, 0x3ff0, 0x19b);	/* DFIRBW */
+		mask32(io, 0x09b0, 0xf, 0x0);	/* TXBWCTL */
+		mask32(io, 0x09b0, 0xffc0, 0x0);
+		mask32(io, 0x09b4, 0x700, 0x7);	/* TXCLK */
+		mask32(io, 0x09b4, 0x700000, 0x6);
+		mask32(io, 0x1abc, UINT32_C(0x40000000), 0x0);
+		mask32(io, 0x088c, 0xf000, 0x1);
+		mask32(io, 0x0cbc, 0x200000, 0x0);
+		break;
+	case 40:
+		mask32(io, 0x1a20, 0x10,
+		    g->channel_index == 2 ? 1 : 0); /* CCKSB */
+		mask32(io, 0x09b0, 0xf, 0x5);
+		mask32(io, 0x09b0, 0xc0, 0x0);
+		mask32(io, 0x09b0, 0xff00,
+		    g->channel_index | (g->channel_index << 4));
+		mask32(io, 0x1abc, UINT32_C(0x40000000), 0x1);
+		mask32(io, 0x088c, 0xf000, 0x1);
+		mask32(io, 0x0cbc, 0x200000, 0x1);
+		break;
+	case 80:
+		mask32(io, 0x09b0, 0xf, 0xa);
+		mask32(io, 0x09b0, 0xc0, 0x0);
+		mask32(io, 0x09b0, 0xff00,
+		    g->channel_index | (g->channel_index << 4));
+		mask32(io, 0x088c, 0xf000, 0x6);
+		mask32(io, 0x0cbc, 0x200000, 0x1);
+		break;
+	}
 }
 
 /* rtw_set_channel_mac, 20 MHz, primary channel index 0. */
 static void
-channel_mac(struct rtw8822c_io *io, unsigned ch)
+channel_mac(struct rtw8822c_io *io, const struct rtw88_channel_tuple *tuple,
+    const struct rtw8822c_channel_geometry *g)
 {
 	uint32_t v;
+	unsigned ch = tuple->primary;
 
-	w8(io, 0x0483, 0);			/* DATA_SC */
+	w8(io, 0x0483, g->data_sc);		/* DATA_SC */
 	v = rd(io, 0x0668, 4);			/* WMAC_TRXPTCL_CTL: RFMOD */
-	w32(io, 0x0668, v & ~0x180U);
-	v = rd(io, 0x0024, 4) & ~UINT32_C(0x300000);	/* AFE_CTRL1: 80M */
+	v &= ~0x180U;
+	if (tuple->width_mhz == 40)
+		v |= 0x80;
+	else if (tuple->width_mhz == 80)
+		v |= 0x100;
+	w32(io, 0x0668, v);
+	v = rd(io, 0x0024, 4);			/* AFE_CTRL1: 80M */
+	if (tuple->width_mhz != 80)
+		v &= ~UINT32_C(0x300000);
 	w32(io, 0x0024, v);
 	w8(io, 0x055c, 80);			/* USTIME_TSF */
 	w8(io, 0x0638, 80);			/* USTIME_EDCA */
@@ -448,10 +563,11 @@ rstb_3wire(struct rtw8822c_io *io, int enable)
 }
 
 static void
-channel_rf(struct rtw8822c_io *io, unsigned ch)
+channel_rf(struct rtw8822c_io *io, const struct rtw88_channel_tuple *tuple)
 {
 	uint32_t rf18;
 	unsigned path;
+	unsigned ch = tuple->center;
 
 	rf18 = read_rf(io, 0, RF_CFGCH, RFREG_MASK);
 	rf18 &= ~(UINT32_C(0x10300) | 0xff | UINT32_C(0x60000) | 0x3000);
@@ -462,12 +578,19 @@ channel_rf(struct rtw8822c_io *io, unsigned ch)
 		rf18 |= 0x40000;			/* RFSI_GT_CH140 */
 	else if (ch >= 100 && ch <= 144)
 		rf18 |= 0x20000;			/* RFSI_GE_CH80 */
-	rf18 |= 0x3000;					/* BW_20M */
+	if (tuple->width_mhz == 20)
+		rf18 |= 0x3000;			/* BW_20M */
+	else if (tuple->width_mhz == 40)
+		rf18 |= 0x2000;			/* BW_40M */
+	else
+		rf18 |= 0x1000;			/* BW_80M */
 	rstb_3wire(io, 0);
 	for (path = 0; path < 2; path++) {
 		write_rf(io, path, RF_LUTWE2, 0x04, 0x01);
 		write_rf(io, path, RF_LUTWA, 0x1f, 0x12);
-		write_rf(io, path, RF_LUTWD0, 0xfffff, 0x18);	/* RXBB 20M */
+		write_rf(io, path, RF_LUTWD0, 0xfffff,
+		    tuple->width_mhz == 20 ? 0x18 :
+		    tuple->width_mhz == 40 ? 0x10 : 0x08);
 		write_rf(io, path, RF_LUTWE2, 0x04, 0x00);
 	}
 	write_rf(io, 0, RF_CFGCH, RFREG_MASK, rf18);
@@ -476,25 +599,28 @@ channel_rf(struct rtw8822c_io *io, unsigned ch)
 }
 
 int
-rtw8822c_set_channel(struct rtw88_softc *sc, unsigned ch)
+rtw8822c_set_channel_tuple(struct rtw88_softc *sc,
+    const struct rtw88_channel_tuple *tuple)
 {
 	struct rtw8822c_io io = { sc, 0 };
+	struct rtw8822c_channel_geometry g;
 	uint32_t gen = sc->sc_generation;
+	int error;
 
-	if (channel_band(ch) == 0)
-		return EINVAL;
+	if ((error = rtw8822c_channel_geometry(tuple, &g)) != 0)
+		return error;
 	sc->sc_phy.channel_valid = 0;
 	if (sc->sc_stop_requested)
 		return EINTR;
-	channel_bb(&io, ch);
+	channel_bb(&io, tuple, &g);
 	if (io.error == 0 && (sc->sc_stop_requested || sc->sc_generation != gen))
 		io.error = EINTR;
 	if (io.error == 0)
-		channel_mac(&io, ch);
+		channel_mac(&io, tuple, &g);
 	if (io.error == 0 && (sc->sc_stop_requested || sc->sc_generation != gen))
 		io.error = EINTR;
 	if (io.error == 0)
-		channel_rf(&io, ch);
+		channel_rf(&io, tuple);
 	if (io.error == 0 && (sc->sc_stop_requested || sc->sc_generation != gen))
 		io.error = EINTR;
 	if (io.error == 0)
@@ -502,6 +628,14 @@ rtw8822c_set_channel(struct rtw88_softc *sc, unsigned ch)
 	if (io.error == 0 && (sc->sc_stop_requested || sc->sc_generation != gen))
 		io.error = EINTR;
 	return io.error;
+}
+
+int
+rtw8822c_set_channel(struct rtw88_softc *sc, unsigned ch)
+{
+	const struct rtw88_channel_tuple tuple = { ch, ch, 20 };
+
+	return rtw8822c_set_channel_tuple(sc, &tuple);
 }
 
 /* query_phy_status_page0 gain bounds, pinned RTL8822C phy_set_param.
@@ -515,6 +649,7 @@ rtw8822c_signal_cache(struct rtw88_softc *sc)
 
     v.generation = sc->sc_generation;
     v.paths = 3; /* Successful native config_trx_ab, before HCI start. */
+    v.channel = sc->sc_phy.channel;
     error = sc->sc_ops->read_4(sc->sc_bus, 0x1a98, &a);
     if (error == 0)
         error = sc->sc_ops->read_4(sc->sc_bus, 0x1aa8, &b);

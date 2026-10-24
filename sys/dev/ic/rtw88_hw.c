@@ -309,9 +309,10 @@ rtw88_dma_validate(uint64_t addr, size_t len, unsigned addr_bits)
  * FreeBSD d2145e9b96448da34d3cfede24c509af6d830c92, Realtek 2018-2019,
  * GPL-2.0 OR BSD-3-Clause. Native bounded byte loads and wide arithmetic. */
 int
-rtw88_rx_signal_decode(const uint8_t *p, size_t len,
+rtw88_rx_signal_decode_tuple(const uint8_t *p, size_t len,
     const struct rtw88_rx_info *rx, const struct rtw88_phy_state *ctx,
-    uint32_t generation, unsigned channel, struct rtw88_rx_signal *out)
+    uint32_t generation, const struct rtw88_channel_tuple *channel,
+    struct rtw88_rx_signal *out)
 {
     struct rtw88_rx_signal v = { 0 };
     unsigned path, vht;
@@ -357,19 +358,24 @@ rtw88_rx_signal_decode(const uint8_t *p, size_t len,
     if (ctx->paths != 3) /* Actual native TRX AB profile only. */
         goto invalid;
     v.reason = RTW88_SIGNAL_CHANNEL;
-    if (channel == 0 || channel != v.channel ||
-        !((channel >= 1 && channel <= 13) ||
-          (channel >= 36 && channel <= 64 && channel % 4 == 0) ||
-          (channel >= 100 && channel <= 144 && channel % 4 == 0) ||
-          (channel >= 149 && channel <= 165 && (channel - 149) % 4 == 0)))
+    if (channel == NULL || channel->primary == 0 ||
+        channel->primary != v.channel ||
+        !((channel->primary >= 1 && channel->primary <= 13) ||
+          (channel->primary >= 36 && channel->primary <= 64 &&
+          channel->primary % 4 == 0) ||
+          (channel->primary >= 100 && channel->primary <= 144 &&
+          channel->primary % 4 == 0) ||
+          (channel->primary >= 149 && channel->primary <= 165 &&
+          (channel->primary - 149) % 4 == 0)))
         goto invalid;
     v.reason = RTW88_SIGNAL_RATE;
-    if ((v.page == 0 && (rx->rate > 3 || channel > 14)) ||
+    if ((v.page == 0 && (rx->rate > 3 || channel->primary > 14)) ||
         (v.page == 1 && !((rx->rate >= 4 && rx->rate <= 11) ||
-          (vht && channel > 14))))
+          (vht && channel->primary > 14))))
         goto invalid;
     v.reason = RTW88_SIGNAL_WIDTH;
-    if (rx->bandwidth != 0 || (v.page == 1 &&
+    if (channel->width_mhz != 20 || channel->center != channel->primary ||
+        rx->bandwidth != 0 || (v.page == 1 &&
         (v.rxsc > 8 || (vht && v.rxsc == 0 && !ctx->channel_valid))))
         goto invalid;
     v.reason = RTW88_SIGNAL_GAIN;
@@ -404,4 +410,15 @@ invalid:
     v.valid = v.quality = 0;
     *out = v;
     return ENOENT;
+}
+
+int
+rtw88_rx_signal_decode(const uint8_t *p, size_t len,
+    const struct rtw88_rx_info *rx, const struct rtw88_phy_state *ctx,
+    uint32_t generation, unsigned channel, struct rtw88_rx_signal *out)
+{
+    const struct rtw88_channel_tuple tuple = { channel, channel, 20 };
+
+    return rtw88_rx_signal_decode_tuple(p, len, rx, ctx, generation,
+        &tuple, out);
 }

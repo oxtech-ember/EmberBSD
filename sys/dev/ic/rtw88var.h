@@ -383,11 +383,15 @@ int rtw88_station_config(struct rtw88_softc *, const uint8_t *, unsigned,
 /* Diagnostic loopback (rtlwifi LBMODE 0, 1, 3, 7 or 0x0b); 0 is normal. */
 int rtw88_loopback(struct rtw88_softc *, int);
 /*
- * 20 MHz channel switch; caller holds the bus interrupt lock. A failed
+ * Channel switch; caller holds the bus interrupt lock. Live operation is
+ * currently restricted to same-width 20 MHz tuples. A failed
  * attempted mutation latches sc_stop_requested and closes host TX admission.
  * The lifecycle owner must stop outside that lock before restarting. An
  * initial read failure withdraws RX context but permits a safe warm retry.
  */
+int rtw88_channel_apply(struct rtw88_softc *,
+	const struct rtw88_channel_tuple *);
+/* Narrow 20 MHz compatibility wrapper. */
 int rtw88_channel(struct rtw88_softc *, unsigned);
 /* Operator trigger. 1 starts, 0 stops. ENXIO until resources are ready. */
 int rtwce_bootstrap(int);
