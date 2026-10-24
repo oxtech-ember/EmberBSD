@@ -13,8 +13,8 @@
 #ifndef __DWARF_PARSER_HPP__
 #define __DWARF_PARSER_HPP__
 
-#include <cstdint>
-#include <cstdlib>
+#include <stdint.h>
+#include <stdlib.h>
 
 #include "dwarf2.h"
 #include "AddressSpace.hpp"

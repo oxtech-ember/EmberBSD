@@ -13,8 +13,8 @@
 #define __REGISTERS_HPP__
 
 #include <sys/endian.h>
-#include <cassert>
-#include <cstdint>
+#include <assert.h>
+#include <stdint.h>
 
 namespace _Unwind {
 

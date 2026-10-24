@@ -14,11 +14,11 @@
 #define __ADDRESSSPACE_HPP__
 
 #include <sys/rbtree.h>
-#include <cassert>
-#include <cstddef>
-#include <cstdint>
-#include <cstdlib>
-#include <cstring>
+#include <assert.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
 #include <dlfcn.h>
 #include <elf.h>
 #include <link.h>
