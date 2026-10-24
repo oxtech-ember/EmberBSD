@@ -28,7 +28,8 @@ No copyin, copyout, or condition wait runs under a hard interrupt lock.
 
 The installed header is `dev/usb/usbperiph.h`, ABI version 1.
 The device is `/dev/usbperiph0`, character major 369, minor 0.
-Create its node with owner-only permissions. Open it with `O_RDWR`.
+Run `sh MAKEDEV usbperiph0` from `/dev` to create an owner-only node.
+Open it with `O_RDWR`.
 One file descriptor owns the controller. Threads can transfer different
 endpoint directions concurrently through that descriptor.
 
