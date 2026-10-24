@@ -1001,7 +1001,10 @@ static void
 prepare_vht_request(void)
 {
 	setup();
-	test_channel.ic_freq = 5180;
+	test_ic.ic_channels[36].ic_freq = 5180;
+	test_ic.ic_curchan = &test_ic.ic_channels[36];
+	test_node.ni_chan = test_ic.ic_curchan;
+	CHECK(ieee80211_chan2ieee(&test_ic, test_ic.ic_curchan) == 36);
 	test_ic.ic_curmode = IEEE80211_MODE_11A;
 	test_node.ni_rates.rs_rates[0] = 0x82;
 	test_ic.ic_sup_rates[IEEE80211_MODE_11A].rs_nrates = 1;
