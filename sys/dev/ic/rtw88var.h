@@ -7,10 +7,15 @@
 #ifdef _KERNEL
 #include "opt_rtw88_rfk.h"
 #include "opt_rtw88_vht.h"
+#include "opt_rtw88_dfs.h"
 #endif
 /* VHT80 is an explicit experiment outside the HT-only RFK envelope. */
 #if defined(RTW88_VHT_EXPERIMENT) && !defined(RTW88_RFK_EXPERIMENT)
 #define RTW88_VHT80 1
+#endif
+/* Channel 64 slave operation is an explicit experiment outside RFK. */
+#if defined(RTW88_DFS64_EXPERIMENT) && !defined(RTW88_RFK_EXPERIMENT)
+#define RTW88_DFS64 1
 #endif
 #include <dev/ic/rtw88_hw.h>
 
@@ -263,6 +268,12 @@ struct rtw88_softc {
 	unsigned sc_basic_rates;	/* Negotiated legacy descriptor-rate bitmap. */
 	int sc_linked;
 	struct rtw88_ra_state sc_ra;
+	/* DFS slave TX permit for one channel in one core generation. */
+	struct {
+		uint32_t generation;
+		unsigned channel;
+		int valid;
+	} sc_dfs;
 	struct rtw88_txq sc_txq[RTW88_NTXQ];
 	/*
 	 * Optional network consumers. Called under the bus interrupt lock;
@@ -295,6 +306,20 @@ int rtw88_start_tuple(struct rtw88_softc *,
 /* Nonzero when 36/42/80 PHY and power are committed in this generation. */
 int rtw88_vht80_committed(const struct rtw88_softc *);
 #endif
+/*
+ * Every DFS channel denies host TX before descriptor and DMA unless a
+ * permit names this channel and core generation. Only channel 64 at
+ * 20 MHz, with RTW88_DFS64, can be opened. The caller holds the bus
+ * interrupt lock and must already hold its master's current beacon.
+ * Stop (and so every start) and every channel change withdraw it, and a
+ * retune into a DFS channel is refused while host frames are posted.
+ * Closing stops only new host frames: frames already posted need the
+ * rtw88_tx_quiet() owner. Not covered: MAC ACK/BA/CTS responses and raw
+ * H2C commands from the diagnostics path. The permit has no deadline;
+ * the caller withdraws it when its beacon evidence ends.
+ */
+int rtw88_dfs_open(struct rtw88_softc *, unsigned, uint32_t);
+void rtw88_dfs_close(struct rtw88_softc *);
 /*
  * One startup call per firmware epoch. Process context without the PCI spin
  * lock, with the same external ownership contract as rtw88_fw_packet below.

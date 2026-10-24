@@ -26,9 +26,11 @@ for header in sys/param.h sys/systm.h; do
     printf '#include <errno.h>\n#include "rtw88-test-kernel.h"\n' > "$work/include/$header"
 done
 # The default build has no VHT entry; the experiment build owns VHT80.
-for vht in 0 1; do
-    vflag=-URTW88_VHT_EXPERIMENT
-    [ "$vht" = 0 ] || vflag=-DRTW88_VHT_EXPERIMENT
+# A third build adds the DFS64 slave experiment to VHT.
+for vht in 0 1 2; do
+    vflag="-URTW88_VHT_EXPERIMENT -URTW88_DFS64_EXPERIMENT"
+    [ "$vht" = 0 ] || vflag="-DRTW88_VHT_EXPERIMENT -URTW88_DFS64_EXPERIMENT"
+    [ "$vht" != 2 ] || vflag="-DRTW88_VHT_EXPERIMENT -DRTW88_DFS64_EXPERIMENT"
     ${CC:-cc} -std=c11 -Wall -Wextra -Werror $vflag ${RTW88_TEST_CFLAGS:-} \
         -I"$work" -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \
         "$tools/rtw88-ra-contract.c" \
@@ -55,6 +57,9 @@ for vht in 0 1; do
     want=disabled
     [ "$vht" = 0 ] || want=enabled
     grep -F "rtw88 VHT80 RA and TX formats: $want" "$work/output" > /dev/null
+    want=disabled
+    [ "$vht" != 2 ] || want=enabled
+    grep -F "rtw88 DFS64 slave permit: $want" "$work/output" > /dev/null
     # Both real calibration quality scenarios must reach the startup warning.
     grep -F 'WARNING: cold calibration degraded: ADC nonconverged 0x1 DAC nonconverged 0; RF quality is unqualified' "$work/output" > /dev/null
     grep -F 'WARNING: cold calibration degraded: ADC nonconverged 0 DAC nonconverged 0x1; RF quality is unqualified' "$work/output" > /dev/null
@@ -70,6 +75,17 @@ for gate in '1 -DRTW88_VHT_EXPERIMENT' '0 -DRTW88_VHT_EXPERIMENT -DRTW88_RFK_EXP
         "$work/vht-gate.c" -o /dev/null
 done
 echo 'VHT80 gate: experiment only, never with RFK'
+# DFS64 is likewise its own experiment and never part of the RFK envelope.
+printf '#include <dev/ic/rtw88var.h>\n#if defined(RTW88_DFS64) != EXPECT\n#error RTW88_DFS64 gate\n#endif\n' > "$work/dfs-gate.c"
+for gate in '1 -DRTW88_DFS64_EXPERIMENT' '0 -DRTW88_DFS64_EXPERIMENT -DRTW88_RFK_EXPERIMENT' \
+    '0 -DRTW88_VHT_EXPERIMENT' '0'; do
+    set -- $gate
+    expect=$1; shift
+    ${CC:-cc} -std=c11 -E -DEXPECT="$expect" "$@" \
+        -I"$work" -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \
+        "$work/dfs-gate.c" -o /dev/null
+done
+echo 'DFS64 gate: experiment only, never with RFK'
 
 if [ "${RTW88_RA_ANALYZE:-0}" = 1 ]; then
     printf 'void causal_null(void) { int *p = 0; *p = 1; }\n' > "$work/causal.c"
@@ -81,7 +97,8 @@ if [ "${RTW88_RA_ANALYZE:-0}" = 1 ]; then
     echo 'GCC analyzer causal NULL gate: rejected'
     # Analyze the complete extracted worker in its executable source consumer.
     # O0 avoids compiler-optimization artifacts in this host kernel model.
-    for vflag in -URTW88_VHT_EXPERIMENT -DRTW88_VHT_EXPERIMENT; do
+    for vflag in -URTW88_VHT_EXPERIMENT -DRTW88_VHT_EXPERIMENT \
+        "-DRTW88_VHT_EXPERIMENT -DRTW88_DFS64_EXPERIMENT"; do
         ${CC:-cc} -std=c11 -O0 -g -Wall -Wextra -Werror -fanalyzer $vflag \
             -I"$work" -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \
             -c "$tools/rtw88-ra-contract.c" -o "$work/analysis.o"
@@ -90,7 +107,8 @@ if [ "${RTW88_RA_ANALYZE:-0}" = 1 ]; then
             -c "$src/sys/dev/ic/rtw88.c" -o "$work/core-analysis.o"
     done
     ${CC:-cc} -std=c11 -dM -E - < /dev/null > "$work/predefines.h"
-    for vflag in -URTW88_VHT_EXPERIMENT -DRTW88_VHT_EXPERIMENT; do
+    for vflag in -URTW88_VHT_EXPERIMENT -DRTW88_VHT_EXPERIMENT \
+        "-DRTW88_VHT_EXPERIMENT -DRTW88_DFS64_EXPERIMENT"; do
         cppcheck --enable=warning,performance,portability --error-exitcode=1 \
             --check-level=exhaustive --include="$work/predefines.h" $vflag \
             -I"$work" -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \

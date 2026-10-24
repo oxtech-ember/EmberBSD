@@ -775,6 +775,7 @@ rtw88_stop(struct rtw88_softc *sc)
 	sc->sc_stop_requested = 1;
 	memset(&sc->sc_mailbox, 0, sizeof(sc->sc_mailbox));
 	memset(&sc->sc_phy, 0, sizeof(sc->sc_phy));
+	rtw88_dfs_close(sc);
 	memset(&sc->sc_hw_feature, 0, sizeof(sc->sc_hw_feature));
 	rtw88_ra_invalidate(sc);
 	sc->sc_linked = 0;
@@ -833,8 +834,10 @@ rtw88_stop(struct rtw88_softc *sc)
 }
 
 /*
- * Live admission mirrors the passive, non-DFS net80211 channel set. The
- * only wide tuple is the qualified VHT80 target; channel 64 stays closed.
+ * Core admission: 2.4 GHz 1-13 and the 20 MHz 5 GHz channels below, a
+ * superset of the net80211 channel list. The only wide tuple is the
+ * qualified VHT80 target; channel 64 needs RTW88_DFS64, and every DFS
+ * channel still needs a slave TX permit before any host frame.
  */
 static int
 rtw88_channel_admit(const struct rtw88_channel_tuple *tuple)
@@ -849,6 +852,10 @@ rtw88_channel_admit(const struct rtw88_channel_tuple *tuple)
 		return 0;
 #ifdef RTW88_VHT80
 	if (tuple->width_mhz == 80 && ch == 36 && tuple->center == 42)
+		return 0;
+#endif
+#ifdef RTW88_DFS64
+	if (tuple->width_mhz == 20 && ch == 64 && tuple->center == 64)
 		return 0;
 #endif
 	return EOPNOTSUPP;
@@ -1599,6 +1606,54 @@ rtw88_vht80_committed(const struct rtw88_softc *sc)
 }
 #endif
 
+/* 5 GHz channels whose master must perform radar detection. */
+static int
+rtw88_channel_dfs(unsigned ch)
+{
+	return (ch >= 52 && ch <= 64) || (ch >= 100 && ch <= 144);
+}
+
+/*
+ * Host TX on a DFS channel needs a permit for this channel and core
+ * generation. Admitted DFS tuples are 20 MHz, so the primary is the span.
+ */
+static int
+rtw88_dfs_tx_permitted(const struct rtw88_softc *sc)
+{
+	return !rtw88_channel_dfs(sc->sc_channel) ||
+	    (sc->sc_dfs.valid && sc->sc_dfs.channel == sc->sc_channel &&
+	     sc->sc_dfs.generation == sc->sc_generation);
+}
+
+int
+rtw88_dfs_open(struct rtw88_softc *sc, unsigned ch, uint32_t gen)
+{
+	if (!sc->sc_running || !sc->sc_started || sc->sc_stop_requested)
+		return ENXIO;
+	if (gen != sc->sc_generation)
+		return ESTALE;
+#ifdef RTW88_DFS64
+	if (ch == 64 && sc->sc_channel == 64 && sc->sc_phy.channel_valid &&
+	    sc->sc_phy.channel.primary == 64 &&
+	    sc->sc_phy.channel.center == 64 &&
+	    sc->sc_phy.channel.width_mhz == 20) {
+		sc->sc_dfs.generation = gen;
+		sc->sc_dfs.channel = ch;
+		sc->sc_dfs.valid = 1;
+		return 0;
+	}
+#else
+	(void)ch;
+#endif
+	return EOPNOTSUPP;
+}
+
+void
+rtw88_dfs_close(struct rtw88_softc *sc)
+{
+	memset(&sc->sc_dfs, 0, sizeof(sc->sc_dfs));
+}
+
 int
 rtw88_ra_configure(struct rtw88_softc *sc, const struct rtw88_ra_config *cfg)
 {
@@ -1752,6 +1807,8 @@ rtw88_tx_submit(struct rtw88_softc *sc, unsigned q, const void *frame,
 	if (!sc->sc_resources_ready || !sc->sc_running || !sc->sc_started ||
 	    sc->sc_stop_requested)
 		return ENXIO;
+	if (!rtw88_dfs_tx_permitted(sc))
+		return EACCES;
 	if (rtw88_channel_narrow(sc)) {
 		if (ra_mode == 1 && sc->sc_ra.phy == RTW88_RA_VHT80_1SS)
 			return EOPNOTSUPP;
@@ -2096,11 +2153,21 @@ rtw88_channel_apply(struct rtw88_softc *sc,
 	ch = tuple->primary;
 	if (rtw88_channel_admit(tuple) != 0)
 		return EOPNOTSUPP;
+	/*
+	 * Keep host-ring frames off a DFS channel. This covers host ring
+	 * ownership only; frames held in the MAC need rtw88_tx_quiet().
+	 */
+	if (rtw88_channel_dfs(ch)) {
+		for (unsigned q = 0; q < RTW88_NTXQ; q++)
+			if (sc->sc_txq[q].queued != 0)
+				return EBUSY;
+	}
 	error = rtw8822c_efuse_decode(sc->sc_efuse_phys,
 	    sizeof(sc->sc_efuse_phys), &efuse);
 	if (error != 0)
 		return error;
 	sc->sc_phy.channel_valid = 0;
+	rtw88_dfs_close(sc);
 	rtw88_ra_invalidate(sc);
 #ifdef RTW88_RFK_EXPERIMENT
 	sc->sc_operating.prepared = sc->sc_operating.sealed = 0;

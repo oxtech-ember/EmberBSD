@@ -543,6 +543,10 @@ test_ra_ht20_protection_bounds(void)
 static void
 ra_wide_denied(struct rtw88_softc *sc, uint64_t epoch, int auto_error)
 {
+	/* A DFS channel is closed by the slave permit before any format. */
+	int error = sc->sc_channel == 64 && !(sc->sc_dfs.valid &&
+	    sc->sc_dfs.channel == 64 &&
+	    sc->sc_dfs.generation == sc->sc_generation) ? EACCES : EOPNOTSUPP;
 	struct rtw88_tx_fixed fixed = {
 		.associated = 1, .channel = sc->sc_channel, .rate500 = 12,
 		.peer_mask = 0xff0, .mode = RTW88_FIXED_11A
@@ -560,9 +564,9 @@ ra_wide_denied(struct rtw88_softc *sc, uint64_t epoch, int auto_error)
 
 	memcpy(before, slot, sizeof(before));
 	CHECK(rtw88_tx_raw(sc, RTW88_TXQ_MGMT, mgmt, sizeof(mgmt)) ==
-	    EOPNOTSUPP);
+	    error);
 	CHECK(rtw88_tx_fixed(sc, RTW88_TXQ_BE, ra_frame, sizeof(ra_frame),
-	    &fixed) == EOPNOTSUPP);
+	    &fixed) == error);
 	CHECK(rtw88_tx_auto(sc, RTW88_TXQ_BE, qos, sizeof(qos), epoch, 0) ==
 	    auto_error);
 	CHECK(sc->sc_txq[RTW88_TXQ_BE].wp == wp &&
@@ -600,7 +604,10 @@ static void
 test_ra_start_tuple(void)
 {
 	static const struct rtw88_channel_tuple closed[] = {
-		{ 64, 64, 20 }, { 64, 62, 40 }, { 64, 58, 80 }, { 36, 38, 40 },
+#ifndef RTW88_DFS64
+		{ 64, 64, 20 },
+#endif
+		{ 64, 62, 40 }, { 64, 58, 80 }, { 36, 38, 40 },
 		{ 36, 42, 40 }, { 36, 36, 80 }, { 40, 42, 80 }, { 36, 40, 20 },
 		{ 14, 14, 20 }
 	};
@@ -654,6 +661,143 @@ test_ra_start_tuple(void)
 	writes = f.writes;
 	CHECK(rtw88_channel_apply(&sc, &ra_vht80_target) == EOPNOTSUPP);
 	CHECK(f.reads == reads && f.writes == writes);
+	CHECK(rtw88_stop(&sc) == 0);
+	CHECK(rtw88_core_detach(&sc) == 0);
+}
+
+/*
+ * A DFS slave transmits only under a permit for this channel and core
+ * generation. Every frame class is denied before descriptor, DMA, ring or
+ * doorbell; only 64/64/20 with RTW88_DFS64 can be opened at all.
+ */
+static void
+ra_dfs_denied(struct rtw88_softc *sc)
+{
+	uint8_t mgmt[24] = { 0xb0 }; /* Authentication. */
+	struct rtw88_stats stats = sc->sc_stats;
+	unsigned wp = sc->sc_txq[RTW88_TXQ_MGMT].wp;
+	unsigned bwp = sc->sc_txq[RTW88_TXQ_BE].wp;
+	unsigned syncs = f.syncs, writes = f.writes;
+	struct rtw88_tx_fixed fixed = {
+		.associated = 1, .channel = sc->sc_channel, .rate500 = 12,
+		.peer_mask = 0xff0, .mode = RTW88_FIXED_11A
+	};
+
+	CHECK(rtw88_tx_raw(sc, RTW88_TXQ_MGMT, mgmt, sizeof(mgmt)) == EACCES);
+	CHECK(rtw88_tx_raw(sc, RTW88_TXQ_BE, ra_frame, sizeof(ra_frame)) ==
+	    EACCES);
+	CHECK(rtw88_tx_fixed(sc, RTW88_TXQ_BE, ra_frame, sizeof(ra_frame),
+	    &fixed) == EACCES);
+	/* The barrier precedes every frame-format check. */
+	CHECK(rtw88_tx_raw(sc, RTW88_TXQ_MGMT, mgmt, 10) == EACCES);
+	CHECK(sc->sc_txq[RTW88_TXQ_MGMT].wp == wp &&
+	    sc->sc_txq[RTW88_TXQ_BE].wp == bwp);
+	CHECK(f.syncs == syncs && f.writes == writes);
+	CHECK(memcmp(&stats, &sc->sc_stats, sizeof(stats)) == 0);
+}
+
+static void
+test_ra_dfs64(void)
+{
+	static const struct rtw88_channel_tuple dfs64 = { 64, 64, 20 };
+	uint8_t mgmt[24] = { 0xb0 };
+	struct rtw88_softc sc;
+	uint32_t gen = 0;
+	unsigned writes;
+
+	if (!start_ok(&sc))
+		return;
+	/* Every core-admitted DFS channel denies host TX without a permit. */
+	for (unsigned ch = 52; ch <= 144; ch += 4) {
+		if (ch > 60 && ch < 100)
+			continue;
+		CHECK(rtw88_channel(&sc, ch) == 0);
+		ra_dfs_denied(&sc);
+		CHECK(rtw88_dfs_open(&sc, ch, sc.sc_generation) == EOPNOTSUPP);
+		ra_dfs_denied(&sc);
+	}
+	/* Non-DFS channels keep transmitting; then no retune into DFS while
+	 * those frames are posted. */
+	for (unsigned i = 0; i < 12; i++) {
+		static const unsigned open_ch[] = { 1, 6, 13, 36, 40, 44, 48,
+		    149, 153, 157, 161, 165 };
+		CHECK(rtw88_channel(&sc, open_ch[i]) == 0);
+		CHECK(rtw88_tx_raw(&sc, RTW88_TXQ_MGMT, mgmt,
+		    sizeof(mgmt)) == 0);
+	}
+	writes = f.writes;
+	CHECK(rtw88_channel(&sc, 52) == EBUSY && f.writes == writes);
+	CHECK(sc.sc_channel == 165 && sc.sc_phy.channel_valid);
+	CHECK(rtw88_stop(&sc) == 0);
+	/* A stopped core reports its lifecycle before the DFS barrier. */
+	sc.sc_channel = 64;
+	CHECK(rtw88_tx_raw(&sc, RTW88_TXQ_MGMT, mgmt, sizeof(mgmt)) == ENXIO);
+#ifndef RTW88_DFS64
+	writes = f.writes;
+	CHECK(rtw88_start_tuple(&sc, &dfs64) == EOPNOTSUPP);
+	CHECK(f.writes == writes && !sc.sc_started);
+	CHECK(rtw88_start(&sc) == 0);
+	CHECK(rtw88_dfs_open(&sc, 64, sc.sc_generation) == EOPNOTSUPP);
+	/* Even a seeded 64/64/20 program cannot open without the option. */
+	sc.sc_channel = 64;
+	sc.sc_phy.channel = dfs64;
+	sc.sc_phy.channel_valid = 1;
+	CHECK(rtw88_dfs_open(&sc, 64, sc.sc_generation) == EOPNOTSUPP);
+	CHECK(!sc.sc_dfs.valid);
+	printf("rtw88 DFS64 slave permit: disabled\n");
+#else
+	CHECK(rtw88_start_tuple(&sc, &dfs64) == 0);
+	CHECK(sc.sc_channel == 64 && sc.sc_phy.channel_valid);
+	ra_dfs_denied(&sc);
+	/* With empty rings a warm 64 -> 64 retune succeeds and withdraws. */
+	CHECK(rtw88_dfs_open(&sc, 64, sc.sc_generation) == 0);
+	CHECK(rtw88_channel(&sc, 64) == 0 && !sc.sc_dfs.valid);
+	ra_dfs_denied(&sc);
+	gen = sc.sc_generation;
+	writes = f.writes;
+	CHECK(rtw88_dfs_open(&sc, 64, gen + 1) == ESTALE);
+	CHECK(rtw88_dfs_open(&sc, 60, gen) == EOPNOTSUPP);
+	CHECK(!sc.sc_dfs.valid && f.writes == writes);
+	ra_dfs_denied(&sc);
+	CHECK(rtw88_dfs_open(&sc, 64, gen) == 0 && f.writes == writes);
+	CHECK(rtw88_tx_raw(&sc, RTW88_TXQ_MGMT, mgmt, sizeof(mgmt)) == 0);
+	/* A permit names one generation and one channel. */
+	sc.sc_dfs.generation--;
+	ra_dfs_denied(&sc);
+	sc.sc_dfs.generation++;
+	sc.sc_dfs.channel = 60;
+	ra_dfs_denied(&sc);
+	sc.sc_dfs.channel = 64;
+	CHECK(rtw88_tx_raw(&sc, RTW88_TXQ_MGMT, mgmt, sizeof(mgmt)) == 0);
+	rtw88_dfs_close(&sc);
+	ra_dfs_denied(&sc);
+	/* A warm retune or a lifecycle restart withdraws the permit. */
+	CHECK(rtw88_dfs_open(&sc, 64, gen) == 0);
+	CHECK(rtw88_channel(&sc, 36) == 0 && !sc.sc_dfs.valid);
+	/* Frames still posted from 64 block a retune back into it. */
+	writes = f.writes;
+	CHECK(rtw88_channel(&sc, 64) == EBUSY && f.writes == writes);
+	CHECK(rtw88_stop(&sc) == 0);
+	CHECK(rtw88_start_tuple(&sc, &dfs64) == 0);
+	CHECK(rtw88_dfs_open(&sc, 64, sc.sc_generation) == 0);
+	CHECK(rtw88_stop(&sc) == 0 && !sc.sc_dfs.valid);
+	CHECK(rtw88_start_tuple(&sc, &dfs64) == 0);
+	ra_dfs_denied(&sc);
+	/* A stop request or a missing channel program cannot open it. */
+	sc.sc_phy.channel_valid = 0;
+	CHECK(rtw88_dfs_open(&sc, 64, sc.sc_generation) == EOPNOTSUPP);
+	sc.sc_phy.channel_valid = 1;
+	sc.sc_phy.channel.width_mhz = 40; /* Seeded wide program at 64. */
+	CHECK(rtw88_dfs_open(&sc, 64, sc.sc_generation) == EOPNOTSUPP);
+	sc.sc_phy.channel.width_mhz = 20;
+	sc.sc_stop_requested = 1;
+	CHECK(rtw88_dfs_open(&sc, 64, sc.sc_generation) == ENXIO);
+	sc.sc_stop_requested = 0;
+	CHECK(!sc.sc_dfs.valid);
+	printf("rtw88 DFS64 slave permit: enabled\n");
+#endif
+	(void)gen;
+	(void)writes;
 	CHECK(rtw88_stop(&sc) == 0);
 	CHECK(rtw88_core_detach(&sc) == 0);
 }
@@ -1060,6 +1204,8 @@ test_ra_vht80_channel64_closed(void)
 		if (!start_ok(&sc))
 			continue;
 		CHECK(ra_seed_tuple(&sc, tuples[i]));
+		/* A wide DFS tuple never receives a slave TX permit. */
+		CHECK(rtw88_dfs_open(&sc, 64, sc.sc_generation) == EOPNOTSUPP);
 		cfg.channel = 64;
 		CHECK(rtw88_station_config(&sc, bssid, 1, 0x150, 9, 1) == 0);
 		writes = f.writes;
@@ -1073,7 +1219,13 @@ test_ra_vht80_channel64_closed(void)
 		    .vht_tx_map = RTW88_VHT_MAP_NSS1_MCS7,
 		    .profile_generation = 777, .ht = cfg.ht,
 		    .configured = 1, .active = 1 };
+		ra_wide_denied(&sc, 9, EACCES);
+		/* With a forced permit the wide-format gate still refuses. */
+		sc.sc_dfs.generation = sc.sc_generation;
+		sc.sc_dfs.channel = 64;
+		sc.sc_dfs.valid = 1;
 		ra_wide_denied(&sc, 9, EOPNOTSUPP);
+		rtw88_dfs_close(&sc);
 		CHECK(rtw88_stop(&sc) == 0);
 		CHECK(rtw88_core_detach(&sc) == 0);
 	}
@@ -1284,6 +1436,7 @@ RTW88_RA_MAIN(void)
 	test_ra_narrow_entries();
 	test_ra_start_tuple();
 	test_ra_ht20_run();
+	test_ra_dfs64();
 #ifdef RTW88_VHT80
 	test_ra_vht80_formats();
 	test_ra_vht80_channel64_closed();

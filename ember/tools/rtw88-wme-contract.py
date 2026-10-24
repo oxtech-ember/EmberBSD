@@ -14,7 +14,9 @@ parts.append(re.search(r'static const struct \{.*?\} rtw88_txq_hw\[.*?\n\};', s,
 # RTW88_VHT80 branches in rtw88_tx_submit stay inactive here.
 for name, result in [('rtw88_put16','static void'),('rtw88_put32','static void'),
                      ('rtw88_tx_available','unsigned'),
-                     ('rtw88_channel_narrow','static int'),('rtw88_tx_submit','static int'),
+                     ('rtw88_channel_narrow','static int'),
+                     ('rtw88_channel_dfs','static int'),
+                     ('rtw88_dfs_tx_permitted','static int'),('rtw88_tx_submit','static int'),
                      ('rtw88_tx_raw','int'),('rtw88_tx_fixed','int'),
                      ('rtw88_edca_apply','int')]:
     match = re.search(r'^'+name+r'\([^;]*?\n\{', s, re.M)
