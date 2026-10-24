@@ -9,16 +9,18 @@ import pathlib,re,subprocess,sys,os
 src,out=map(pathlib.Path,sys.argv[1:])
 subprocess.run([sys.executable,str(src/'ember/tools/ccmp-contract-extract.py'),str(src),str(out)],check=True)
 (out/'net80211').mkdir(exist_ok=True)
-for name in ['ieee80211_ht20.h','ieee80211_rxba.h','ieee80211_vht_ies.h']:
+for name in ['ieee80211_ht20.h','ieee80211_rxba.h','ieee80211_vht_ies.h',
+             'ieee80211_phy_ies.h']:
  header=(src/'sys/net80211'/name).read_text()
  (out/name).write_text(header)
- if name=='ieee80211_vht_ies.h':
+ if name in ('ieee80211_vht_ies.h','ieee80211_phy_ies.h'):
   (out/'net80211'/name).write_text(header)
 s=(src/'ember/tools/ccmp-test-kernel.h').read_text()
 state_enum=re.search(r'^enum ieee80211_state \{.*?^};',(src/'sys/net80211/ieee80211_proto.h').read_text(),re.M|re.S).group()
 s=s.replace('struct ieee80211com {','#ifndef NATIVE_IEEE80211_STATE_DEFINED\n#define NATIVE_IEEE80211_STATE_DEFINED 1\n'+state_enum+'\n#endif\nstruct ieee80211com {',1)
 s=s.replace('struct ieee80211_node {','''#include "ieee80211_ht20.h"
 #include "ieee80211_rxba.h"
+#include <net80211/ieee80211_phy_ies.h>
 struct ieee80211_node {
  struct ieee80211_ht20_node ni_ht20;
  struct ieee80211_rxba_state ni_rxba;
@@ -165,7 +167,9 @@ s=s.replace('#include "native-key.inc"','#define IEEE80211_C_TKIPMIC 0x00020000\
 # Real profile/offer/parser and reset guards, with a synthetic provider only.
 s=(out/'rxba-test-kernel.h').read_text()
 s=s.replace('struct ieee80211com {','struct ieee80211_channel { unsigned ieee; };\nstruct ieee80211com {',1)
-s=s.replace('unsigned ic_caps;','unsigned ic_caps;\n int (*ic_ht20_admit)(struct ieee80211com *,struct ieee80211_ht20_profile *);',1)
+s=s.replace('unsigned ic_caps;','''unsigned ic_caps;
+ int (*ic_ht20_admit)(struct ieee80211com *,struct ieee80211_ht20_profile *);
+ int (*ic_vht_admit)(struct ieee80211com *,struct ieee80211_vht_cap *);''',1)
 s=s.replace('int authorized;', 'int authorized;\n struct { unsigned rsn_ucastcipher; } ni_rsn;',1)
 s=s.replace('struct { unsigned wme_hipri_traffic; } ic_wme;','struct { unsigned wme_hipri_traffic;void (*wme_sta_apply)(void); } ic_wme;')
 (out/'rxba-test-kernel.h').write_text(s)

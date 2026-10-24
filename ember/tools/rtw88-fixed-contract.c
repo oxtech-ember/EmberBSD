@@ -8,8 +8,9 @@
 #undef RTW88_START_CORE_ONLY
 #include "fixed-constants.inc"
 #include <net80211/_ieee80211.h>
-#include <net80211/ieee80211_ht20.h>
 #include <sys/types.h>
+#include <stdbool.h>
+#include <net80211/ieee80211_ht20.h>
 struct ieee80211_node;
 struct ifnet { unsigned if_mtu; };
 struct ieee80211com {
