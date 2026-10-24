@@ -1,0 +1,59 @@
+{
+  "format": "emberbsd-native-bootstrap-program",
+  "version": 1,
+  "name": "grep",
+  "origin": "EmberBSD (AI-assisted) source contract; implementation retains its BSD copyright notices.",
+  "canonical_host_recipe": "tools/grep/Makefile",
+  "source_makefile": "usr.bin/grep/Makefile",
+  "compiler": {
+    "family": "gcc",
+    "major": 16,
+    "abi": "native"
+  },
+  "sources": [
+    "usr.bin/grep/fastgrep.c",
+    "usr.bin/grep/file.c",
+    "usr.bin/grep/grep.c",
+    "usr.bin/grep/queue.c",
+    "usr.bin/grep/util.c"
+  ],
+  "headers": [
+    "usr.bin/grep/grep.h"
+  ],
+  "include_dirs": [
+    "usr.bin/grep"
+  ],
+  "cppflags": [
+    "-DWITHOUT_NLS",
+    "-DWITHOUT_BZ2",
+    "-DWITHOUT_GZIP"
+  ],
+  "cflags": [],
+  "link_flags": [],
+  "libraries": [],
+  "invocations": [
+    "grep",
+    "egrep",
+    "fgrep"
+  ],
+  "files": {
+    "input.txt": "hay\nneedle\na.b\n",
+    "patterns.txt": "needle\n^a.b$\n"
+  },
+  "runtime_cases": [
+    {"name": "stdin-match","invocation": "grep","args": ["needle"],"stdin": "hay\nneedle\n","exit": 0,"stdout": "needle\n","stderr": ""},
+    {"name": "stdin-no-match","invocation": "grep","args": ["absent"],"stdin": "hay\nneedle\n","exit": 1,"stdout": "","stderr": ""},
+    {"name": "extended","invocation": "grep","args": ["-E","^a(b|c)$"],"stdin": "ab\nac\nax\n","exit": 0,"stdout": "ab\nac\n","stderr": ""},
+    {"name": "fixed","invocation": "grep","args": ["-F","a.b"],"stdin": "axb\na.b\n","exit": 0,"stdout": "a.b\n","stderr": ""},
+    {"name": "quiet-match","invocation": "grep","args": ["-q","needle"],"stdin": "needle\n","exit": 0,"stdout": "","stderr": ""},
+    {"name": "quiet-no-match","invocation": "grep","args": ["-q","needle"],"stdin": "hay\n","exit": 1,"stdout": "","stderr": ""},
+    {"name": "line-number","invocation": "grep","args": ["-n","needle"],"stdin": "hay\nneedle\n","exit": 0,"stdout": "2:needle\n","stderr": ""},
+    {"name": "multiple-patterns","invocation": "grep","args": ["-e","needle","-e","hay"],"stdin": "hay\nneedle\nother\n","exit": 0,"stdout": "hay\nneedle\n","stderr": ""},
+    {"name": "pattern-file","invocation": "grep","args": ["-f","patterns.txt","input.txt"],"stdin": "","exit": 0,"stdout": "needle\na.b\n","stderr": ""},
+    {"name": "extended-alias","invocation": "egrep","args": ["^a(b|c)$"],"stdin": "ab\nac\nax\n","exit": 0,"stdout": "ab\nac\n","stderr": ""},
+    {"name": "fixed-alias","invocation": "fgrep","args": ["a.b"],"stdin": "axb\na.b\n","exit": 0,"stdout": "a.b\n","stderr": ""},
+    {"name": "invalid-regex","invocation": "grep","args": ["["],"stdin": "x\n","exit": 2,"stdout": "","stderr_nonempty": true},
+    {"name": "missing-file","invocation": "grep","args": ["needle","missing.txt"],"stdin": "","exit": 2,"stdout": "","stderr_nonempty": true},
+    {"name": "invalid-option","invocation": "grep","args": ["--not-a-grep-option"],"stdin": "","exit": 2,"stdout": "","stderr_nonempty": true}
+  ]
+}
