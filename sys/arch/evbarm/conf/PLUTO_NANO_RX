@@ -7,3 +7,6 @@ spi* at zynqspi?
 ad9361phy* at spi?
 adiaxidmac* at fdt?
 adiaxiadc* at fdt?
+
+# Attachment requires explicit peripheral role in the runtime FDT.
+zynqudc* at fdt?

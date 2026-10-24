@@ -45,3 +45,9 @@ file	arch/arm/xilinx/zynq_xadc.c		zynqxadc
 device	zynqspi: spibus
 attach	zynqspi at fdt
 file	arch/arm/xilinx/zynq_spi.c		zynqspi
+
+# Native USB peripheral, selected only by explicit FDT role
+device	zynqudc
+attach	zynqudc at fdt
+file	arch/arm/xilinx/zynq_usb_device.c	zynqudc
+file	arch/arm/xilinx/zynq_usb_device_core.c	zynqudc
