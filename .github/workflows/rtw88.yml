@@ -121,6 +121,12 @@ permissions:
 
 jobs:
   contracts:
+    # Memcheck and path analysis dominate; shards run in parallel and
+    # rtw88-workflow-contract.py proves each runner has exactly one shard.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [rfk, enable, routing, signal, rest-0, rest-1]
     runs-on: ubuntu-24.04
     timeout-minutes: 120
     container:
@@ -215,8 +221,12 @@ jobs:
           ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
         run: |
-          for contract in ember/tools/rtw*-contract.sh ember/tools/net80211-ht20-contract.sh ember/tools/net80211-rxba-contract.sh; do
-            sh "$contract"
+          contracts=$(sh ember/tools/rtw88-ci-shard.sh "${{ matrix.shard }}")
+          test -n "$contracts"
+          for contract in $contracts; do
+            echo "::group::$contract"
+            sh "$contract" || { rc=$?; echo "::endgroup::"; echo "::error::$contract failed ($rc)"; exit "$rc"; }
+            echo "::endgroup::"
           done
       - name: Execute actual source under Memcheck and GCC path analysis
         env:
@@ -245,6 +255,10 @@ jobs:
           SH
           chmod 755 "$RUNNER_TEMP/memcheck"
           export TEST_RUNNER="$RUNNER_TEMP/memcheck"
-          for contract in ember/tools/rtw*-contract.sh ember/tools/net80211-ht20-contract.sh ember/tools/net80211-rxba-contract.sh; do
-            sh "$contract"
+          contracts=$(sh ember/tools/rtw88-ci-shard.sh "${{ matrix.shard }}")
+          test -n "$contracts"
+          for contract in $contracts; do
+            echo "::group::$contract"
+            sh "$contract" || { rc=$?; echo "::endgroup::"; echo "::error::$contract failed ($rc)"; exit "$rc"; }
+            echo "::endgroup::"
           done
