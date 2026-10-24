@@ -1513,7 +1513,7 @@ rtw88_edca_apply(struct rtw88_softc *sc,
 	return error;
 }
 
-/* Pinned fw.c/fw.h RA_INFO register command; legacy or bounded HT20/1SS. */
+/* Pinned fw.c/fw.h RA_INFO register command; legacy, HT20/1SS or VHT80/1SS. */
 void
 rtw88_ra_invalidate(struct rtw88_softc *sc)
 {
@@ -1538,13 +1538,37 @@ rtw88_ht20_policy_check(const struct rtw88_ht20_policy *p, unsigned operation)
 	return 0;
 }
 
+/* Legacy, HT20 and every current descriptor path use the 20 MHz tuple. */
+static int
+rtw88_channel_narrow(const struct rtw88_softc *sc)
+{
+	return sc->sc_phy.channel.width_mhz == 20 &&
+	    sc->sc_phy.channel.primary == sc->sc_channel &&
+	    sc->sc_phy.channel.center == sc->sc_channel;
+}
+
+#ifdef RTW88_VHT80
+/*
+ * The one qualified wide target: non-DFS primary36/center42/80, with the
+ * actual PHY and power program committed in this generation.
+ */
+static int
+rtw88_vht80_committed(const struct rtw88_softc *sc)
+{
+	return sc->sc_phy.channel_valid && sc->sc_channel == 36 &&
+	    sc->sc_phy.channel.primary == 36 &&
+	    sc->sc_phy.channel.center == 42 &&
+	    sc->sc_phy.channel.width_mhz == 80;
+}
+#endif
+
 int
 rtw88_ra_configure(struct rtw88_softc *sc, const struct rtw88_ra_config *cfg)
 {
 	struct rtw88_ra_state ra = { 0 };
 	uint8_t payload[7] = { 0 };
 	unsigned mask;
-	int error;
+	int error, tuple_ok;
 
 	if (cfg == NULL || cfg->epoch == 0 || cfg->use_protection > 1 ||
 	    cfg->channel == 0 || cfg->channel != sc->sc_channel ||
@@ -1552,16 +1576,27 @@ rtw88_ra_configure(struct rtw88_softc *sc, const struct rtw88_ra_config *cfg)
 		return EINVAL;
 	if (cfg->phy == RTW88_RA_HT20_1SS) {
 		if (cfg->mode != RTW88_FIXED_11A || cfg->channel <= 14 ||
-		    cfg->use_protection != 0 ||
+		    cfg->use_protection != 0 || cfg->vht_tx_map != 0 ||
 		    rtw88_ht20_policy_check(&cfg->ht, cfg->ht_operation) != 0 ||
 		    cfg->profile_generation == 0 || cfg->ht_mcs == 0 ||
 		    (cfg->ht_mcs & ~0xffU) != 0)
 			return EOPNOTSUPP;
+#ifdef RTW88_VHT80
+	} else if (cfg->phy == RTW88_RA_VHT80_1SS) {
+		/* No HT-mixed entry; keep the mandatory 6 Mbps fallback. */
+		if (cfg->mode != RTW88_FIXED_11A || cfg->channel != 36 ||
+		    cfg->use_protection != 0 ||
+		    rtw88_ht20_policy_check(&cfg->ht, cfg->ht_operation) != 0 ||
+		    cfg->profile_generation == 0 || cfg->ht_mcs != 0 ||
+		    cfg->vht_tx_map != RTW88_VHT_MAP_NSS1_MCS7 ||
+		    (cfg->common_rates & 0x10) == 0)
+			return EOPNOTSUPP;
+#endif
 	} else if (cfg->phy != RTW88_RA_LEGACY || cfg->ht_mcs != 0 ||
 	    cfg->ht_operation != 0 || cfg->profile_generation != 0 ||
 	    cfg->ht.peer_cap != 0 || cfg->ht.mtu != 0 || cfg->ht.max_mpdu != 0 ||
 	    cfg->ht.rts_threshold != 0 || cfg->ht.secondary != 0 ||
-	    cfg->ht.qualification != 0) {
+	    cfg->ht.qualification != 0 || cfg->vht_tx_map != 0) {
 		return EINVAL;
 	}
 	mask = cfg->common_rates;
@@ -1588,6 +1623,14 @@ rtw88_ra_configure(struct rtw88_softc *sc, const struct rtw88_ra_config *cfg)
 	if (!sc->sc_running || !sc->sc_started || !sc->sc_linked ||
 	    sc->sc_stop_requested)
 		return ENXIO;
+	/* Each RA entry is qualified only for its committed channel tuple. */
+	tuple_ok = rtw88_channel_narrow(sc);
+#ifdef RTW88_VHT80
+	if (cfg->phy == RTW88_RA_VHT80_1SS)
+		tuple_ok = rtw88_vht80_committed(sc);
+#endif
+	if (!tuple_ok)
+		return EOPNOTSUPP;
 	ra.epoch = cfg->epoch;
 	ra.generation = sc->sc_generation;
 	ra.channel = cfg->channel;
@@ -1598,9 +1641,16 @@ rtw88_ra_configure(struct rtw88_softc *sc, const struct rtw88_ra_config *cfg)
 	ra.ht_operation = cfg->ht_operation;
 	ra.profile_generation = cfg->profile_generation;
 	ra.ht = cfg->ht;
+	ra.vht_tx_map = cfg->vht_tx_map;
 	if (cfg->phy == RTW88_RA_HT20_1SS) {
 		ra.rate_id = 5; /* Pinned RTW_RATEID_GN_N1SS, 5 GHz only. */
 		mask = (unsigned)cfg->ht_mcs << 12 | (mask & 0x30);
+#ifdef RTW88_VHT80
+	} else if (cfg->phy == RTW88_RA_VHT80_1SS) {
+		ra.rate_id = 10; /* Pinned RTW_RATEID_ARFR1_AC_1SS. */
+		/* main.c get_vht_ra_mask: NSS1 code0 is bits12..19. */
+		mask = 0xffU << 12 | (mask & 0x10);
+#endif
 	} else if ((mask & ~0xfU) == 0)
 		ra.rate_id = RTW88_RATEID_B_20M;
 	else if ((mask & 0xf) == 0)
@@ -1620,6 +1670,8 @@ rtw88_ra_configure(struct rtw88_softc *sc, const struct rtw88_ra_config *cfg)
 	}
 	payload[1] = ra.rate_id | (1U << 5); /* Initial RA level1, SGI0. */
 	payload[2] = 0x40; /* DIS_PT, BW20, LDPC0, NO_UPDATE0, VHT0. */
+	if (ra.phy == RTW88_RA_VHT80_1SS)
+		payload[2] |= 0x12; /* VHT1, BW80. */
 	payload[3] = (uint8_t)mask;
 	payload[4] = (uint8_t)(mask >> 8);
 	payload[5] = (uint8_t)(mask >> 16);
@@ -1650,6 +1702,9 @@ rtw88_tx_submit(struct rtw88_softc *sc, unsigned q, const void *frame,
 	unsigned avail, rates, qsel, hdrlen;
 	const uint8_t *bytes = frame;
 	int error;
+#ifdef RTW88_VHT80
+	int vht80 = 0;
+#endif
 
 	if (q >= RTW88_NTXQ)
 		return EINVAL;
@@ -1660,11 +1715,26 @@ rtw88_tx_submit(struct rtw88_softc *sc, unsigned q, const void *frame,
 	if (!sc->sc_resources_ready || !sc->sc_running || !sc->sc_started ||
 	    sc->sc_stop_requested)
 		return ENXIO;
-	/* The descriptor encoder and DMA engine are currently HT20-only. */
-	if (sc->sc_phy.channel.width_mhz != 20 ||
-	    sc->sc_phy.channel.primary != sc->sc_channel ||
-	    sc->sc_phy.channel.center != sc->sc_channel)
+	if (rtw88_channel_narrow(sc)) {
+		if (ra_mode == 1 && sc->sc_ra.phy == RTW88_RA_VHT80_1SS)
+			return EOPNOTSUPP;
+	} else {
+#ifdef RTW88_VHT80
+		/*
+		 * Qualified VHT80 formats only. Firmware-RA data is BW80 VHT,
+		 * or non-HT duplicate after its 6 Mbps fallback. Every other
+		 * frame is non-HT OFDM on primary20, placed by DATA_SC: raw
+		 * frames use 5 GHz basic OFDM and tx_fixed rejects 11A CCK.
+		 */
+		if (!rtw88_vht80_committed(sc) || ra_mode == 2 ||
+		    (ra_mode == 1 && sc->sc_ra.phy != RTW88_RA_VHT80_1SS))
+			return EOPNOTSUPP;
+		vht80 = ra_mode == 1;
+#else
+		/* Default descriptor encoder and DMA engine are 20 MHz only. */
 		return EOPNOTSUPP;
+#endif
+	}
 	if (frame == NULL || len < 24 ||
 	    len > RTW88_TX_BUF_SIZE - RTW8822C_TX_PACKET_DESC_SIZE)
 		return EMSGSIZE;
@@ -1725,6 +1795,13 @@ rtw88_tx_submit(struct rtw88_softc *sc, unsigned q, const void *frame,
 		tx.rate = (uint8_t)__builtin_ctz(sc->sc_ra.mask);
 		tx.flags &= ~(RTW88_TX_USE_RATE | RTW88_TX_DIS_RATE_FB);
 	}
+#ifdef RTW88_VHT80
+	if (vht80) {
+		/* tx.c get_highest_vht_tx_rate seed, not the lowest RA bit. */
+		tx.rate = 0x33; /* DESC_RATEVHT1SS_MCS7. */
+		tx.bandwidth = 2; /* DATA_BW 80 MHz. */
+	}
+#endif
 	if (q == RTW88_TXQ_MGMT)
 		tx.flags |= RTW88_TX_HWSEQ;
 	else
@@ -1852,7 +1929,8 @@ rtw88_tx_auto(struct rtw88_softc *sc, unsigned q, const void *frame,
 	    sc->sc_ra.generation != sc->sc_generation ||
 	    sc->sc_ra.channel != sc->sc_channel)
 		return EBUSY;
-	if (sc->sc_ra.phy == RTW88_RA_HT20_1SS) {
+	if (sc->sc_ra.phy == RTW88_RA_HT20_1SS ||
+	    sc->sc_ra.phy == RTW88_RA_VHT80_1SS) {
 		if (use_protection ||
 		    rtw88_ht20_policy_check(&sc->sc_ra.ht, sc->sc_ra.ht_operation) != 0 ||
 		    (bytes[1] & 0x04) != 0 || (bytes[22] & 15) != 0 ||

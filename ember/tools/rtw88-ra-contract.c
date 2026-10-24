@@ -376,7 +376,7 @@ test_ra_ht20_numeric(void)
 		switch(variant) {
 		case 1: cfg.ht_mcs=0x25; break;
 		case 2: cfg.common_rates=0x150; break;
-		case 3: cfg.phy=2; break;
+		case 3: cfg.phy=3; break; /* Undefined in every build. */
 		case 4: cfg.ht_mcs=0; break;
 		case 5: cfg.ht_mcs=0x100; break;
 		case 6: cfg.profile_generation=0; break;
@@ -538,6 +538,353 @@ test_ra_ht20_protection_bounds(void)
  }
 }
 
+/* Wide frames must be rejected before descriptor, DMA, ring or doorbell. */
+static void
+ra_wide_denied(struct rtw88_softc *sc, uint64_t epoch, int auto_error)
+{
+	struct rtw88_tx_fixed fixed = {
+		.associated = 1, .channel = sc->sc_channel, .rate500 = 12,
+		.peer_mask = 0xff0, .mode = RTW88_FIXED_11A
+	};
+	uint8_t mgmt[24] = { 0x80 };
+	uint8_t qos[26] = { 0x88, 0x01, 0, 0, 2 };
+	uint8_t before[RTW8822C_TX_PACKET_DESC_SIZE];
+	struct rtw88_stats stats = sc->sc_stats;
+	struct rtw88_ra_state ra = sc->sc_ra;
+	unsigned wp = sc->sc_txq[RTW88_TXQ_BE].wp;
+	unsigned mwp = sc->sc_txq[RTW88_TXQ_MGMT].wp;
+	unsigned queued = sc->sc_txq[RTW88_TXQ_BE].queued;
+	unsigned syncs = f.syncs, writes = f.writes;
+	void *slot = sc->sc_txq[RTW88_TXQ_BE].buf[wp].vaddr;
+
+	memcpy(before, slot, sizeof(before));
+	CHECK(rtw88_tx_raw(sc, RTW88_TXQ_MGMT, mgmt, sizeof(mgmt)) ==
+	    EOPNOTSUPP);
+	CHECK(rtw88_tx_fixed(sc, RTW88_TXQ_BE, ra_frame, sizeof(ra_frame),
+	    &fixed) == EOPNOTSUPP);
+	CHECK(rtw88_tx_auto(sc, RTW88_TXQ_BE, qos, sizeof(qos), epoch, 0) ==
+	    auto_error);
+	CHECK(sc->sc_txq[RTW88_TXQ_BE].wp == wp &&
+	    sc->sc_txq[RTW88_TXQ_MGMT].wp == mwp &&
+	    sc->sc_txq[RTW88_TXQ_BE].queued == queued);
+	CHECK(f.syncs == syncs && f.writes == writes);
+	CHECK(memcmp(before, slot, sizeof(before)) == 0);
+	CHECK(memcmp(&stats, &sc->sc_stats, sizeof(stats)) == 0);
+	CHECK(memcmp(&ra, &sc->sc_ra, sizeof(ra)) == 0);
+}
+
+/* Commit the target through the actual PHY and power programmers, as the
+ * stop/restart owner must do before it publishes the tuple. */
+static int
+ra_seed_tuple(struct rtw88_softc *sc, struct rtw88_channel_tuple target)
+{
+	struct rtw8822c_efuse efuse;
+
+	if (rtw8822c_efuse_decode(sc->sc_efuse_phys,
+	    sizeof(sc->sc_efuse_phys), &efuse) != 0 ||
+	    rtw8822c_set_channel_tuple(sc, &target) != 0 ||
+	    rtw8822c_set_tx_power_tuple(sc, &efuse, &target, 12) != 0)
+		return 0;
+	sc->sc_channel = target.primary;
+	sc->sc_phy.channel = target;
+	sc->sc_phy.channel_valid = 1;
+	return 1;
+}
+
+static const struct rtw88_ra_config ra_vht80_cfg = {
+	.epoch = 9, .channel = 36, .common_rates = 0xff0,
+	.mode = RTW88_FIXED_11A, .phy = RTW88_RA_VHT80_1SS,
+	.vht_tx_map = RTW88_VHT_MAP_NSS1_MCS7, .profile_generation = 777,
+	.ht = { .peer_cap = 0x0c, .mtu = 1500, .max_mpdu = 1550,
+	    .rts_threshold = 2346, .qualification = RTW88_HT20_PROT_MF20_NO_RTS }
+};
+
+/* Legacy and HT20 entries require the exact narrow committed tuple, and
+ * carry no VHT map; an undefined phy is rejected in every build. */
+static void
+test_ra_narrow_entries(void)
+{
+	static const struct rtw88_channel_tuple wrong[] = {
+		{ 36, 38, 20 }, { 40, 40, 20 }
+	};
+	const uint8_t bssid[6] = {2, 0, 0, 0, 0, 1};
+	const struct rtw88_ra_config legacy = { .epoch = 9, .channel = 36,
+	    .common_rates = 0xff0, .mode = RTW88_FIXED_11A };
+	struct rtw88_ra_config ht20 = ra_vht80_cfg;
+
+	ht20.phy = RTW88_RA_HT20_1SS;
+	ht20.ht_mcs = 0xff;
+	ht20.vht_tx_map = 0;
+	for (unsigned variant = 0; variant < 7; variant++) {
+		struct rtw88_softc sc;
+		struct rtw88_ra_config cfg = variant & 1 ? ht20 : legacy;
+		struct rtw88_ra_state saved;
+		unsigned box, writes;
+		int error, expected = EOPNOTSUPP;
+
+		if (!start_ok(&sc))
+			continue;
+		CHECK(rtw88_channel(&sc, 36) == 0);
+		CHECK(rtw88_station_config(&sc, bssid, 1, 0x150, 9, 1) == 0);
+		if (variant < 4)
+			sc.sc_phy.channel = wrong[variant / 2];
+		else if (variant < 6) {
+			cfg.vht_tx_map = RTW88_VHT_MAP_NSS1_MCS7;
+			if (!(variant & 1))
+				expected = EINVAL;
+		} else {
+			cfg.phy = 3;
+			expected = EINVAL;
+		}
+		box = sc.sc_h2c_box;
+		writes = f.writes;
+		saved = sc.sc_ra;
+		error = rtw88_ra_configure(&sc, &cfg);
+		CHECK(error == expected && f.writes == writes &&
+		    sc.sc_h2c_box == box);
+		CHECK(memcmp(&saved, &sc.sc_ra, sizeof(saved)) == 0);
+		CHECK(rtw88_stop(&sc) == 0);
+		CHECK(rtw88_core_detach(&sc) == 0);
+	}
+}
+
+#ifdef RTW88_VHT80
+/* Pinned main.c/fw.c: rate ID10, BW80, VHT1, DIS_PT and NSS1 MCS0-7 plus
+ * 6 Mbps. Data seeds VHT1SS MCS7 (0x33), never ctz(mask); every other
+ * accepted frame is non-HT on primary20 through DATA_SC 0xa4. */
+static void
+test_ra_vht80_formats(void)
+{
+	const uint8_t bssid[6] = {2, 0, 0, 0, 0, 1};
+
+	for (unsigned variant = 0; variant < 20; variant++) {
+		struct rtw88_softc sc;
+		struct rtw88_ra_config cfg = ra_vht80_cfg;
+		struct rtw88_ra_state saved;
+		unsigned box, writes;
+		int error;
+
+		if (!start_ok(&sc))
+			continue;
+		CHECK(rtw88_channel(&sc, 36) == 0);
+		CHECK(rtw88_station_config(&sc, bssid, 1, 0x150, 9, 1) == 0);
+		if (variant != 1) {
+			CHECK(ra_seed_tuple(&sc,
+			    (struct rtw88_channel_tuple){ 36, 42, 80 }));
+			CHECK(f.mmio[0x0483] == 0xa4);
+		}
+		switch (variant) {
+		case 2: cfg.vht_tx_map = 0xfffd; break; /* MCS8 is not local. */
+		case 3: cfg.vht_tx_map = 0xfffe; break;
+		case 4: cfg.vht_tx_map = 0xffff; break;
+		case 5: cfg.vht_tx_map = 0xfff0; break; /* NSS2 is outside 1SS. */
+		case 6: cfg.common_rates = 0xfe0; break; /* No 6 Mbps fallback. */
+		case 7: cfg.profile_generation = 0; break;
+		case 8: cfg.use_protection = 1; break;
+		case 9: cfg.ht_mcs = 0xff; break;
+		case 10: cfg.channel = 40; break;
+		case 11: sc.sc_phy.channel_valid = 0; break;
+		case 12: sc.sc_phy.channel.center = 38; break;
+		case 13: cfg.ht.qualification = 0; break;
+		case 14: cfg.mode = RTW88_FIXED_11G; break;
+		case 15: sc.sc_h2c_box = 0; f.busy_box = 1; break;
+		case 16: sc.sc_edca_error = EIO; break;
+		case 17: /* HT-mixed is not a qualified wide format. */
+			cfg.phy = RTW88_RA_HT20_1SS; cfg.ht_mcs = 0xff;
+			cfg.vht_tx_map = 0; break;
+		case 18: /* Legacy firmware RA has no BW80 descriptor owner. */
+			cfg = (struct rtw88_ra_config){ .epoch = 9,
+			    .channel = 36, .common_rates = 0xff0,
+			    .mode = RTW88_FIXED_11A };
+			break;
+		case 19: cfg.ht_operation = 1; break;
+		}
+		box = sc.sc_h2c_box;
+		writes = f.writes;
+		saved = sc.sc_ra;
+		error = rtw88_ra_configure(&sc, &cfg);
+		if (variant == 0) {
+			struct rtw88_tx_fixed fixed = {
+				.associated = 1, .channel = 36, .rate500 = 108,
+				.peer_mask = 0xff0, .mode = RTW88_FIXED_11A
+			};
+			uint8_t mgmt[24] = { 0x80 };
+			uint8_t packet[1551] = { 0x88, 0x01, 0, 0, 2 };
+			const uint8_t *desc;
+			unsigned wp;
+
+			CHECK(error == 0 && sc.sc_ra.active);
+			CHECK(sc.sc_ra.rate_id == 10 && sc.sc_ra.mask == 0x000ff010);
+			CHECK(sc.sc_ra.phy == RTW88_RA_VHT80_1SS &&
+			    sc.sc_ra.vht_tx_map == RTW88_VHT_MAP_NSS1_MCS7);
+			CHECK(sc.sc_basic_rates == 0x150);
+			/* Seven-byte RA_INFO: 00 2a 52 10 f0 0f 00. */
+			CHECK(mmio32(0x1d0 + 4 * box) == UINT32_C(0x522a0040));
+			CHECK(mmio32(0x1f0 + 4 * box) == UINT32_C(0x000ff010));
+			for (unsigned form = 0; form < 2; form++) {
+				wp = sc.sc_txq[RTW88_TXQ_BE].wp;
+				CHECK(rtw88_tx_auto(&sc, RTW88_TXQ_BE,
+				    form == 0 ? ra_frame : packet,
+				    form == 0 ? sizeof(ra_frame) : 1550, 9, 0) == 0);
+				desc = sc.sc_txq[RTW88_TXQ_BE].buf[wp].vaddr;
+				CHECK(desc[6] == 10 && (desc[16] & 0x7f) == 0x33);
+				CHECK(((desc[20] >> 5) & 3) == 2);
+				CHECK((desc[13] & 0x05) == 0);
+			}
+			CHECK(sc.sc_stats.tx_ra_encoded == 2);
+			wp = sc.sc_txq[RTW88_TXQ_BE].wp;
+			writes = f.writes;
+			CHECK(rtw88_tx_auto(&sc, RTW88_TXQ_BE, packet, 1551, 9, 0) ==
+			    EMSGSIZE);
+			packet[1] |= 0x80; /* HT Control is not qualified. */
+			CHECK(rtw88_tx_auto(&sc, RTW88_TXQ_BE, packet, 1550, 9, 0) ==
+			    EOPNOTSUPP);
+			saved = sc.sc_ra;
+			CHECK(rtw88_tx_auto(&sc, RTW88_TXQ_BE, ra_frame,
+			    sizeof(ra_frame), 9, 1) == EOPNOTSUPP);
+			CHECK(memcmp(&saved, &sc.sc_ra, sizeof(saved)) == 0);
+			CHECK(sc.sc_txq[RTW88_TXQ_BE].wp == wp && f.writes == writes);
+			/* A CCK basic set from a malformed 5 GHz peer reaches the
+			 * protection-limited path; it must not become a wide frame. */
+			sc.sc_basic_rates |= 1;
+			sc.sc_ra.common_rates |= 1;
+			sc.sc_ra.protection_limited = 1;
+			CHECK(rtw88_tx_auto(&sc, RTW88_TXQ_BE, ra_frame,
+			    sizeof(ra_frame), 9, 0) == EOPNOTSUPP);
+			CHECK(sc.sc_txq[RTW88_TXQ_BE].wp == wp && f.writes == writes);
+			sc.sc_ra = saved;
+			sc.sc_basic_rates = 0x150;
+			wp = sc.sc_txq[RTW88_TXQ_MGMT].wp;
+			CHECK(rtw88_tx_raw(&sc, RTW88_TXQ_MGMT, mgmt,
+			    sizeof(mgmt)) == 0);
+			desc = sc.sc_txq[RTW88_TXQ_MGMT].buf[wp].vaddr;
+			CHECK((desc[16] & 0x7f) == 4 && ((desc[20] >> 5) & 3) == 0);
+			CHECK((desc[13] & 0x05) == 0x05);
+			wp = sc.sc_txq[RTW88_TXQ_BE].wp;
+			CHECK(rtw88_tx_fixed(&sc, RTW88_TXQ_BE, ra_frame,
+			    sizeof(ra_frame), &fixed) == 0);
+			desc = sc.sc_txq[RTW88_TXQ_BE].buf[wp].vaddr;
+			CHECK((desc[16] & 0x7f) == 11 && ((desc[20] >> 5) & 3) == 0);
+			CHECK(desc[6] == 7 && (desc[13] & 0x05) == 0x05); /* RATEID_G. */
+			/* Legacy and HT20 firmware-RA entries own no BW80 format. */
+			for (unsigned phy = 0; phy < 2; phy++) {
+				saved = sc.sc_ra;
+				sc.sc_ra.phy = phy == 0 ? RTW88_RA_HT20_1SS :
+				    RTW88_RA_LEGACY;
+				wp = sc.sc_txq[RTW88_TXQ_BE].wp;
+				writes = f.writes;
+				CHECK(rtw88_tx_auto(&sc, RTW88_TXQ_BE, ra_frame,
+				    sizeof(ra_frame), 9, 0) == EOPNOTSUPP);
+				CHECK(sc.sc_txq[RTW88_TXQ_BE].wp == wp &&
+				    f.writes == writes);
+				sc.sc_ra = saved;
+			}
+			/* Every committed-tuple clause is required. */
+			{
+				static const struct rtw88_channel_tuple wrong[] = {
+					{ 36, 42, 40 }, { 36, 42, 20 }, { 40, 42, 80 },
+					{ 36, 38, 80 }
+				};
+				for (unsigned i = 0; i < __arraycount(wrong); i++) {
+					sc.sc_phy.channel = wrong[i];
+					ra_wide_denied(&sc, 9, EOPNOTSUPP);
+				}
+				sc.sc_phy.channel =
+				    (struct rtw88_channel_tuple){ 36, 42, 80 };
+				sc.sc_channel = 40;
+				ra_wide_denied(&sc, 9, EBUSY);
+				sc.sc_channel = 36;
+			}
+			/* A stale generation or a changed tuple closes all formats. */
+			sc.sc_generation++;
+			CHECK(rtw88_tx_auto(&sc, RTW88_TXQ_BE, ra_frame,
+			    sizeof(ra_frame), 9, 0) == EBUSY);
+			sc.sc_generation--;
+			sc.sc_phy.channel.width_mhz = 40;
+			sc.sc_phy.channel.center = 38;
+			ra_wide_denied(&sc, 9, EOPNOTSUPP);
+			sc.sc_phy.channel = (struct rtw88_channel_tuple){ 36, 42, 80 };
+			sc.sc_phy.channel_valid = 0;
+			ra_wide_denied(&sc, 9, EOPNOTSUPP);
+			sc.sc_phy.channel_valid = 1;
+			/* A VHT RA entry cannot survive a narrow committed tuple. */
+			sc.sc_phy.channel = (struct rtw88_channel_tuple){ 36, 36, 20 };
+			wp = sc.sc_txq[RTW88_TXQ_BE].wp;
+			writes = f.writes;
+			CHECK(rtw88_tx_auto(&sc, RTW88_TXQ_BE, ra_frame,
+			    sizeof(ra_frame), 9, 0) == EOPNOTSUPP);
+			CHECK(sc.sc_txq[RTW88_TXQ_BE].wp == wp && f.writes == writes);
+		} else if (variant == 15) {
+			CHECK(error == ETIMEDOUT && sc.sc_ra.error == ETIMEDOUT);
+			CHECK(!sc.sc_ra.configured && !sc.sc_ra.active);
+			f.busy_box = 0;
+		} else {
+			CHECK(error != 0 && f.writes == writes && sc.sc_h2c_box == box);
+			CHECK(memcmp(&saved, &sc.sc_ra, sizeof(saved)) == 0);
+		}
+		CHECK(rtw88_stop(&sc) == 0);
+		CHECK(rtw88_core_detach(&sc) == 0);
+	}
+}
+
+/* DFS primary64 tuples program in the model but never transmit. */
+static void
+test_ra_vht80_channel64_closed(void)
+{
+	static const struct rtw88_channel_tuple tuples[] = {
+		{ 64, 62, 40 }, { 64, 58, 80 }
+	};
+	const uint8_t bssid[6] = {2, 0, 0, 0, 0, 1};
+
+	for (unsigned i = 0; i < __arraycount(tuples); i++) {
+		struct rtw88_softc sc;
+		struct rtw88_ra_config cfg = ra_vht80_cfg;
+		unsigned writes;
+
+		if (!start_ok(&sc))
+			continue;
+		CHECK(ra_seed_tuple(&sc, tuples[i]));
+		cfg.channel = 64;
+		CHECK(rtw88_station_config(&sc, bssid, 1, 0x150, 9, 1) == 0);
+		writes = f.writes;
+		CHECK(rtw88_ra_configure(&sc, &cfg) != 0 && f.writes == writes);
+		ra_wide_denied(&sc, 9, EBUSY);
+		/* Even an active VHT80 entry cannot open DFS primary64 data. */
+		sc.sc_ra = (struct rtw88_ra_state){ .epoch = 9,
+		    .generation = sc.sc_generation, .channel = 64,
+		    .common_rates = 0xff0, .mask = 0x000ff010, .rate_id = 10,
+		    .phy = RTW88_RA_VHT80_1SS,
+		    .vht_tx_map = RTW88_VHT_MAP_NSS1_MCS7,
+		    .profile_generation = 777, .ht = cfg.ht,
+		    .configured = 1, .active = 1 };
+		ra_wide_denied(&sc, 9, EOPNOTSUPP);
+		CHECK(rtw88_stop(&sc) == 0);
+		CHECK(rtw88_core_detach(&sc) == 0);
+	}
+}
+#else
+/* Default build: no VHT RA entry and no wide frame of any format. */
+static void
+test_ra_vht80_disabled(void)
+{
+	struct rtw88_softc sc;
+	struct rtw88_ra_config cfg = ra_vht80_cfg;
+	unsigned writes, box;
+
+	if (!start_ok(&sc))
+		return;
+	CHECK(rtw88_channel(&sc, 36) == 0);
+	CHECK(ra_seed_tuple(&sc, (struct rtw88_channel_tuple){ 36, 42, 80 }));
+	box = sc.sc_h2c_box;
+	writes = f.writes;
+	CHECK(rtw88_ra_configure(&sc, &cfg) == EINVAL);
+	CHECK(f.writes == writes && sc.sc_h2c_box == box && !sc.sc_ra.configured);
+	ra_wide_denied(&sc, 9, EBUSY);
+	CHECK(rtw88_stop(&sc) == 0);
+	CHECK(rtw88_core_detach(&sc) == 0);
+}
+#endif
+
 #ifndef RTW88_RA_MAIN
 #define RTW88_RA_MAIN main
 #endif
@@ -555,6 +902,15 @@ RTW88_RA_MAIN(void)
 	test_ra_worker_failures();
 	test_ra_peer_numeric_masks();
 	test_ra_reports_never_control_peer();
+	test_ra_narrow_entries();
+#ifdef RTW88_VHT80
+	test_ra_vht80_formats();
+	test_ra_vht80_channel64_closed();
+	printf("rtw88 VHT80 RA and TX formats: enabled\n");
+#else
+	test_ra_vht80_disabled();
+	printf("rtw88 VHT80 RA and TX formats: disabled\n");
+#endif
 	printf("rtw88 operational legacy RA: %u assertions, %u failures\n",
 	    assertions, failures);
 	return failures != 0;

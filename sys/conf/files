@@ -742,6 +742,7 @@ file	dev/ic/atw.c			atw
 # Config base cannot be rtw88: names must not end in a digit. rtw is RTL8180.
 device	rtwce: arp, wlan, ifnet, firmload
 defflag	opt_rtw88_rfk.h	RTW88_RFK_EXPERIMENT
+defflag	opt_rtw88_vht.h	RTW88_VHT_EXPERIMENT
 file	dev/ic/rtw88.c			rtwce
 file	dev/ic/rtw88_fw_init.c		rtwce
 file	dev/ic/rtw88_hw.c		rtwce

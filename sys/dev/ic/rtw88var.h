@@ -6,6 +6,11 @@
 
 #ifdef _KERNEL
 #include "opt_rtw88_rfk.h"
+#include "opt_rtw88_vht.h"
+#endif
+/* VHT80 is an explicit experiment outside the HT-only RFK envelope. */
+#if defined(RTW88_VHT_EXPERIMENT) && !defined(RTW88_RFK_EXPERIMENT)
+#define RTW88_VHT80 1
 #endif
 #include <dev/ic/rtw88_hw.h>
 
@@ -79,6 +84,9 @@ struct rtw88_txq {
 
 #define RTW88_RA_LEGACY 0
 #define RTW88_RA_HT20_1SS 1
+#define RTW88_RA_VHT80_1SS 2
+/* Outbound local TX intersect peer RX: NSS1 MCS0-7, other NSS unsupported. */
+#define RTW88_VHT_MAP_NSS1_MCS7 0xfffcU
 #define RTW88_HT20_PROT_MF20_NO_RTS 1
 #define RTW88_HT20_MTU_MIN 32U
 #define RTW88_HT20_MTU_MAX 1500U
@@ -96,7 +104,7 @@ struct rtw88_ra_config {
 	unsigned channel, common_rates;
 	uint8_t mode, use_protection;
 	uint8_t phy;
-	uint16_t ht_mcs, ht_operation;
+	uint16_t ht_mcs, ht_operation, vht_tx_map;
 	uint32_t profile_generation;
 	struct rtw88_ht20_policy ht;
 };
@@ -105,7 +113,7 @@ struct rtw88_ra_state {
 	uint32_t generation;
 	unsigned channel, common_rates, mask;
 	uint8_t rate_id, phy;
-	uint16_t ht_mcs, ht_operation;
+	uint16_t ht_mcs, ht_operation, vht_tx_map;
 	uint32_t profile_generation;
 	struct rtw88_ht20_policy ht;
 	int configured, active, protection_limited, error;

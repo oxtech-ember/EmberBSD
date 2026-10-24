@@ -121,7 +121,7 @@ struct rtw88_phy_state {
     uint32_t generation;
     int gain_error;
     uint8_t paths, gain_valid, gain_low, gain_high;
-    /* Complete core 20 MHz program, in this generation, with RFK OFF. */
+    /* Complete core channel program, in this generation, with RFK OFF. */
     uint8_t channel_valid;
     struct rtw88_channel_tuple channel;
 };
