@@ -75,9 +75,14 @@ parts.append(re.search(r'^#define\s+IEEE80211_KEY_UNDEFINED\([^)]*\)\s+.*$',(src
 parts.append('#include "ieee80211_vht_ies.h"')
 vht=(src/'sys/net80211/ieee80211_vht_ies.c').read_text()
 parts.append(vht[vht.index('static uint16_t'):])
-for name,result in [('ieee80211_crypto_getucastkey','struct ieee80211_key *'),('ieee80211_send_setup','static void'),('ieee80211_wme_request_offer','static int'),('ieee80211_ht20_request_offer','static int'),('ieee80211_mgmt_output','static int'),('ieee80211_send_rxba_response','int')]:
+for name,result in [('ieee80211_crypto_getucastkey','struct ieee80211_key *'),('ieee80211_send_setup','static void'),('ieee80211_wme_request_offer','static int'),('ieee80211_ht20_request_offer','static int'),('ieee80211_vht_request_offer','static int'),('ieee80211_mgmt_output','static int'),('ieee80211_send_rxba_response','int')]:
  parts.append(extract('sys/net80211/ieee80211_output.c',name,result))
-(out/'native-rxba-output.inc').write_text('\n'.join(parts))
+output='\n'.join(parts)
+offer=re.search(r'^static int\nieee80211_vht_request_offer\(',output,re.M)
+mgmt=re.search(r'^static int\nieee80211_mgmt_output\(',output,re.M)
+if offer is None or mgmt is None or offer.start() >= mgmt.start():
+ raise ValueError('VHT request-offer definition must precede management-output consumer')
+(out/'native-rxba-output.inc').write_text(output)
 (out/'native-rxba-crypto-encap.inc').write_text(extract('sys/net80211/ieee80211_crypto.c','ieee80211_crypto_encap','struct ieee80211_key *'))
 # Complete data/CCMP/decapsulation/Ethernet consumers, with common kernel services.
 s=(out/'rxba-test-kernel.h').read_text()

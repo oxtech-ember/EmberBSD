@@ -14,9 +14,16 @@ def function(text,name,result):
 def replace(s,old,new):
  if s.count(old)!=1:raise ValueError(old)
  return s.replace(old,new)
+def replace_macro(s,name,new):
+ pattern=r'^#define[ \t]+'+re.escape(name)+r'\(ic, c\)[^\n]*(?:\\\r?\n[^\n]*)*'
+ s,n=re.subn(pattern,lambda _m:new,s,count=1,flags=re.M)
+ if n!=1:raise ValueError('macro '+name)
+ return s
 model=(out/'routing-model.inc').read_text()
 # Active HT negotiation must use the same actual channel helper as native code.
-model=replace(model,'#define ieee80211_chan2ieee(ic, c) 1U','struct ieee80211com; struct ieee80211_channel;\nunsigned ieee80211_chan2ieee(struct ieee80211com *,struct ieee80211_channel *);')
+model=replace_macro(model,'ieee80211_chan2ieee','struct ieee80211com; struct ieee80211_channel;\nunsigned ieee80211_chan2ieee(struct ieee80211com *,struct ieee80211_channel *);')
+if re.search(r'^#define[ \t]+ieee80211_chan2ieee\(',model,re.M):
+ raise ValueError('channel test macro remained active')
 model=replace(model,'#define isclr(a, n) (((a)[(n) / 8] & (1U << ((n) % 8))) == 0)', '#define isclr(a,n) (!enable_isset((a),(n)))')
 model=replace(model,'    int if_timer, if_flags;','''    int if_timer, if_flags;
     uint64_t if_baudrate;
