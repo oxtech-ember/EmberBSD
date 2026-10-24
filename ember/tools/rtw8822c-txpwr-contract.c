@@ -24,7 +24,22 @@ rtw8822c_dack(struct rtw88_softc *softc, struct rtw8822c_dack_result *result)
 	return 0;
 }
 
-#ifdef RTW88_TXPWR_MISSING_LIMIT
+#ifdef RTW88_TXPWR_DIFFERENTIAL_LIMIT
+/* Distinct synthetic 20/40/80 limits expose the constituent-width minima. */
+static const struct rtw_txpwr_lmt_cfg_pair differential_rows[] = {
+	{ 2, 1, 0, 1, 64, 30 }, { 2, 1, 0, 2, 64, 30 },
+	{ 2, 1, 0, 3, 64, 30 }, { 2, 1, 0, 4, 64, 30 },
+	{ 2, 1, 0, 5, 64, 30 },
+	{ 2, 1, 1, 2, 62, 20 }, { 2, 1, 1, 3, 62, 24 },
+	{ 2, 1, 1, 4, 62, 22 }, { 2, 1, 1, 5, 62, 26 },
+	{ 2, 1, 2, 4, 58, 10 }, { 2, 1, 2, 5, 58, 32 }
+};
+const struct rtw8822c_table rtw8822c_txpwr_lmt_type0_tbl = {
+	.data = differential_rows,
+	.count = sizeof(differential_rows) / sizeof(differential_rows[0]),
+	.kind = RTW8822C_TBL_TXPWR_LMT
+};
+#elif defined(RTW88_TXPWR_MISSING_LIMIT)
 /* Real PG data, but a literal limit table with no HT2/VHT2 section. */
 static const struct rtw_txpwr_lmt_cfg_pair missing_rows[] = {
 	{ 2, 0, 0, 0, 1, 60 },
@@ -239,6 +254,37 @@ raw_limit(const struct rtw8822c_table *table, unsigned regd, unsigned bw,
 	return -128;
 }
 
+#ifdef RTW88_TXPWR_DIFFERENTIAL_LIMIT
+static void
+differential_width_limits(void)
+{
+	const struct rtw88_channel_tuple tuple20 = { 64, 64, 20 };
+	const struct rtw88_channel_tuple tuple40 = { 64, 62, 40 };
+	const struct rtw88_channel_tuple tuple80 = { 64, 58, 80 };
+	uint32_t power20, power40, power80, rate40, rate80;
+
+	reset(1, 0);
+	CHECK(rtw8822c_set_tx_power_tuple(&sc, &efuse, &tuple20, 2) == 0);
+	power20 = model_read(0x18e8, 4);
+	reset(1, 0);
+	CHECK(rtw8822c_set_tx_power_tuple(&sc, &efuse, &tuple40, 2) == 0);
+	power40 = model_read(0x18e8, 4);
+	rate40 = model_read(0x3a14, 4);
+	reset(1, 0);
+	CHECK(rtw8822c_set_tx_power_tuple(&sc, &efuse, &tuple80, 2) == 0);
+	power80 = model_read(0x18e8, 4);
+	rate80 = model_read(0x3a2c, 4);
+	printf("differential TX-power registers: 20=0x%08x 40=0x%08x "
+	    "80=0x%08x 40-rate=0x%08x 80-rate=0x%08x\n",
+	    power20, power40, power80, rate40, rate80);
+	CHECK(power20 == 0x02dcf893);
+	CHECK(power40 == 0x02dcd093);
+	CHECK(power80 == 0x02dcd093);
+	CHECK(rate40 == 0x04047878);
+	CHECK(rate80 == 0x76766a6a);
+}
+#endif
+
 static void
 wide_raw_limits(void)
 {
@@ -271,6 +317,11 @@ main(int argc, char **argv)
 	uint32_t before;
 
 	CHECK(argc == 2);
+#ifdef RTW88_TXPWR_DIFFERENTIAL_LIMIT
+	differential_width_limits();
+	printf("%u differential-width assertions passed\n", checks);
+	return EXIT_SUCCESS;
+#endif
 #ifdef RTW88_TXPWR_MISSING_LIMIT
 	reset(1, 0);
 	CHECK(rtw8822c_set_tx_power(&sc, &efuse, 1, 2) == ENOTSUP);

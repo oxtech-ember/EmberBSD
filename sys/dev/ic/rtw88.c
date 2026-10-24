@@ -1982,7 +1982,8 @@ rtw88_channel_apply(struct rtw88_softc *sc,
 	ch = tuple->primary;
 	/* Live admission mirrors the passive, non-DFS net80211 channel set. */
 	if (!((ch >= 1 && ch <= 13) ||
-	    (ch >= 36 && ch <= 48 && (ch - 36) % 4 == 0) ||
+	    (ch >= 36 && ch <= 64 && ch % 4 == 0 && ch != 64) ||
+	    (ch >= 100 && ch <= 144 && ch % 4 == 0) ||
 	    (ch >= 149 && ch <= 165 && (ch - 149) % 4 == 0)))
 		return EOPNOTSUPP;
 	error = rtw8822c_efuse_decode(sc->sc_efuse_phys,

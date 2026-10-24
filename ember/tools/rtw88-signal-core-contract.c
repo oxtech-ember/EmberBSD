@@ -79,6 +79,16 @@ static void context_success(void) {
     unsigned reads=f.reads,writes=f.writes;
     CHECK(rtw88_channel(&sc,64)==EOPNOTSUPP);
     CHECK(f.reads==reads && f.writes==writes);
+    CHECK(rtw88_channel(&sc,52)==0);
+    CHECK(sc.sc_channel==52 && sc.sc_phy.channel.primary==52 && sc.sc_phy.channel.width_mhz==20);
+    CHECK(f.reads>reads && f.writes>writes);
+    reads=f.reads;writes=f.writes;
+    CHECK(rtw88_channel(&sc,100)==0);
+    CHECK(sc.sc_channel==100 && sc.sc_phy.channel.primary==100 && sc.sc_phy.channel.width_mhz==20);
+    CHECK(f.reads>reads && f.writes>writes);
+    reads=f.reads;writes=f.writes;
+    CHECK(rtw88_channel(&sc,64)==EOPNOTSUPP);
+    CHECK(f.reads==reads && f.writes==writes);
     CHECK(rtw88_channel_apply(&sc,&wide)==EOPNOTSUPP);
     CHECK(f.reads==reads && f.writes==writes);
     CHECK(rtw88_channel(&sc,36)==0 && sc.sc_channel==36);
