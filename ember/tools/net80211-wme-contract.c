@@ -24,7 +24,8 @@
 #define IEEE80211_T_FH 1
 #define IEEE80211_FH_CHANSET(c) 0
 #define IEEE80211_FH_CHANPAT(c) 0
-#define ieee80211_chan2ieee(ic, c) 1U
+#define ieee80211_chan2ieee(ic, c) \
+	((c) != NULL && (c)->ic_freq == 5180 ? 36U : 1U)
 #define ETHERTYPE_IP 0x0800
 #define IFNAMSIZ 16
 #define IEEE80211_MODE_MAX 7
@@ -94,6 +95,7 @@ static struct cipher ieee80211_cipher_none = { .ic_cipher = IEEE80211_CIPHER_NON
 struct ieee80211_node {
 	struct ieee80211_key ni_ucastkey;
 	struct ieee80211_ht20_node ni_ht20;
+	struct ieee80211_phy_ies ni_phy_ies;
 	struct ieee80211_rxba_state ni_rxba;
 	struct ieee80211com *ni_ic;
 	struct ieee80211_channel *ni_chan, *ni_wme_offer_chan,
@@ -147,6 +149,7 @@ struct ieee80211com {
 	const struct ieee80211_rxba_ops *ic_rxba_ops;
 	uint64_t ic_rxba_serial;
 	int (*ic_ht20_admit)(struct ieee80211com *, struct ieee80211_ht20_profile *);
+	int (*ic_vht_admit)(struct ieee80211com *, struct ieee80211_vht_cap *);
 	int ic_fixed_rate;
 	int (*ic_test_newstate)(struct ieee80211com *, int, int);
 	struct ieee80211_node_table ic_sta;
@@ -471,15 +474,6 @@ ieee80211_update_adhoc_node(struct ieee80211com *ic, struct ieee80211_node *ni,
 	(void)stamp;
 }
 static void ieee80211_probe_curchan(struct ieee80211com *, int);
-int
-ieee80211_phy_ies_parse(struct ieee80211_phy_ies *ies, const uint8_t *p,
-			size_t n)
-{
-	(void)p;
-	(void)n;
-	memset(ies, 0, sizeof(*ies));
-	return 0;
-}
 #define IEEE80211_NODE_LOCK(nt) ((void)(nt))
 #define IEEE80211_NODE_UNLOCK(nt) ((void)(nt))
 #define ieee80211_fix_rate(ni, flags) ((void)(ni), (void)(flags))
@@ -623,6 +617,28 @@ offered_on_wire(int subtype)
 		p += p[1] + 2;
 	}
 	return false;
+}
+static const uint8_t *
+request_ie(int subtype, uint8_t element, unsigned *matches)
+{
+	const uint8_t *p, *end, *found = NULL;
+	size_t fixed = sizeof(struct ieee80211_frame) + 4 +
+	    (subtype == IEEE80211_FC0_SUBTYPE_REASSOC_REQ ? 6 : 0);
+
+	assert(captured && matches != NULL);
+	*matches = 0;
+	p = captured->m_data + fixed;
+	end = captured->m_data + captured->m_len;
+	while (p < end) {
+		if ((size_t)(end - p) < 2 || p[1] > (size_t)(end - p) - 2)
+			return NULL;
+		if (p[0] == element) {
+			(*matches)++;
+			found = p;
+		}
+		p += p[1] + 2;
+	}
+	return found;
 }
 static void
 before_association_enqueue(void)
@@ -905,6 +921,159 @@ test_request_ie(void)
 		CHECK(applies == 0);
 	}
 	release_capture();
+}
+static uint64_t
+vht_now_ms(struct ieee80211com *ic)
+{
+	(void)ic;
+	return 1;
+}
+static int
+vht_schedule(struct ieee80211com *ic, uint64_t deadline, uint64_t token)
+{
+	(void)ic;
+	(void)deadline;
+	(void)token;
+	return 0;
+}
+static void
+vht_cancel(struct ieee80211com *ic)
+{
+	(void)ic;
+}
+static int
+vht_ht20_admit(struct ieee80211com *ic, struct ieee80211_ht20_profile *p)
+{
+	(void)ic;
+	p->generation = 1;
+	p->rx_mcs = p->tx_mcs = 0xff;
+	p->ready = IEEE80211_HT20_READY_ALL;
+	return 0;
+}
+static int
+vht_local_admit(struct ieee80211com *ic, struct ieee80211_vht_cap *cap)
+{
+	(void)ic;
+	*cap = (struct ieee80211_vht_cap){
+		.info = 0, .rx_map = 0xfffc, .rx_highest = 0,
+		.tx_map = 0xfffc, .tx_highest = 0
+	};
+	return 0;
+}
+static int
+vht_bad_local_admit(struct ieee80211com *ic, struct ieee80211_vht_cap *cap)
+{
+	int error = vht_local_admit(ic, cap);
+	cap->info = 1; /* Advertise an unqualified optional capability. */
+	return error;
+}
+static void
+vht_peer_candidate(struct ieee80211_node *ni)
+{
+	uint8_t raw[IEEE80211_PHY_IES_MAXLEN] = {0};
+	uint8_t *p = raw;
+
+	p[0] = 45; p[1] = 26; p[2] = 0x02;	/* HT20 plus 40 MHz support. */
+	p[5] = 0xff;					/* HT MCS0-7. */
+	p[28] = 61; p[29] = 22; p[30] = 36; p[31] = 0x05;	/* 36/40-above. */
+	p[52] = 191; p[53] = 12;
+	p[58] = 0xfc; p[59] = 0xff;		/* Peer RX MCS0-7, NSS1. */
+	p[62] = 0xfc; p[63] = 0xff;		/* Peer TX MCS0-7, NSS1. */
+	p[66] = 192; p[67] = 5; p[68] = 1; p[69] = 42;
+	p[71] = 0xfc; p[72] = 0xff;		/* Basic MCS0-7, NSS1. */
+	CHECK(ieee80211_phy_ies_parse(&ni->ni_phy_ies, raw, sizeof(raw)) == 0);
+}
+static int
+vht_wme_apply(struct ieee80211com *ic, const struct chanAccParams *params,
+	unsigned slot)
+{
+	(void)ic;
+	(void)params;
+	(void)slot;
+	return 0;
+}
+static const struct ieee80211_rxba_ops vht_rxba_ops = {
+	.now_ms = vht_now_ms,
+	.schedule = vht_schedule,
+	.cancel = vht_cancel
+};
+static void
+prepare_vht_request(void)
+{
+	setup();
+	test_channel.ic_freq = 5180;
+	test_ic.ic_curmode = IEEE80211_MODE_11A;
+	test_node.ni_rates.rs_rates[0] = 0x82;
+	test_ic.ic_sup_rates[IEEE80211_MODE_11A].rs_nrates = 1;
+	test_ic.ic_sup_rates[IEEE80211_MODE_11A].rs_rates[0] = 0x82;
+	vht_peer_candidate(&test_node);
+	test_ic.ic_ht20_admit = vht_ht20_admit;
+	test_ic.ic_rxba_ops = &vht_rxba_ops;
+	test_ic.ic_wme.wme_sta_apply = vht_wme_apply;
+	test_ic.ic_vht_admit = vht_local_admit;
+}
+static void
+test_vht_request_bytes(void)
+{
+	static const uint8_t expected_cap[12] = {
+		0, 0, 0, 0, 0xfc, 0xff, 0, 0, 0xfc, 0xff, 0, 0
+	};
+	const uint8_t *ht, *vht;
+	unsigned count;
+
+	test_channel.ic_freq = 5180;
+	setup();
+	test_ic.ic_vht_admit = NULL;
+	CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ) == 0);
+	(void)request_ie(IEEE80211_FC0_SUBTYPE_ASSOC_REQ, 191, &count);
+	CHECK(count == 0);
+	release_capture();
+
+	prepare_vht_request();
+	CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ) == 0);
+	ht = request_ie(IEEE80211_FC0_SUBTYPE_ASSOC_REQ, 45, &count);
+	CHECK(count == 1 && ht != NULL);
+	if (ht != NULL)
+		CHECK((ht[2] & 0x02) != 0);
+	vht = request_ie(IEEE80211_FC0_SUBTYPE_ASSOC_REQ, 191, &count);
+	CHECK(count == 1 && vht != NULL);
+	if (vht != NULL) {
+		CHECK(vht[1] == sizeof(expected_cap));
+		CHECK(memcmp(vht + 2, expected_cap, sizeof(expected_cap)) == 0);
+	}
+	release_capture();
+	for (unsigned variant = 0; variant < 10; variant++) {
+		prepare_vht_request();
+		switch (variant) {
+		case 0: test_node.ni_phy_ies.data[30] = 40; break;	/* Primary. */
+		case 1: test_node.ni_phy_ies.data[31] = 0x06; break;	/* HT below. */
+		case 2: test_node.ni_phy_ies.data[68] = 0; break;	/* 20/40 only. */
+		case 3: test_node.ni_phy_ies.data[69] = 46; break;	/* Center. */
+		case 4:
+			test_node.ni_phy_ies.data[58] = 0xff;
+			test_node.ni_phy_ies.data[59] = 0xff;
+			break;						/* Peer RX unsupported. */
+		case 5:
+			test_node.ni_phy_ies.data[62] = 0xff;
+			test_node.ni_phy_ies.data[63] = 0xff;
+			break;						/* Peer TX unsupported. */
+		case 6:
+			test_node.ni_phy_ies.data[71] = 0xfd;
+			break;						/* Basic map exceeds local. */
+		case 7: test_node.ni_rates.rs_rates[0] = 2; break;	/* No basic rate. */
+		case 8: test_ic.ic_vht_admit = vht_bad_local_admit; break;
+		case 9: test_node.ni_phy_ies.data[5] = 0; break;	/* No HT MCS0-7. */
+		}
+		CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ) == 0);
+		vht = request_ie(IEEE80211_FC0_SUBTYPE_ASSOC_REQ, 191, &count);
+		CHECK(count == 0 && vht == NULL);
+		ht = request_ie(IEEE80211_FC0_SUBTYPE_ASSOC_REQ, 45, &count);
+		CHECK(count == 1 && ht != NULL);
+		if (ht != NULL)
+			CHECK((ht[2] & 0x02) == 0);
+		release_capture();
+	}
+	test_channel.ic_freq = 2412;
 }
 static void
 test_parser_boundaries(void)
@@ -1940,6 +2109,7 @@ main(void)
 	test_parser_boundaries();
 	test_lifetime();
 	test_request_ie();
+	test_vht_request_bytes();
 	test_classification();
 	test_sequence();
 	test_beacon_update();

@@ -3,6 +3,14 @@
 # Origin: EmberBSD actual bounded VHT wire codec contract.
 set -eu
 src=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+if ! awk '
+	/^INCS=/ { active=1 }
+	active && /ieee80211_vht_ies[.]h/ { found=1 }
+	END { exit !found }
+' "$src/sys/net80211/Makefile"; then
+	echo "VHT contract header is missing from installed net80211 headers" >&2
+	exit 1
+fi
 work=$(mktemp -d "${TEST_OBJDIR:-${TMPDIR:-/tmp}}/net80211-vht-ies.XXXXXXXX")
 if [ "${VHT_IES_TEST_KEEP:-0}" = 1 ]; then
     printf 'Test sources: %s\n' "$work"

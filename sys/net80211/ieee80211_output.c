@@ -63,6 +63,7 @@ __KERNEL_RCSID(0, "$NetBSD: ieee80211_output.c,v 1.68 2024/07/05 04:31:53 rin Ex
 
 #include <net80211/ieee80211_netbsd.h>
 #include <net80211/ieee80211_var.h>
+#include <net80211/ieee80211_vht_ies.h>
 
 #include <net/bpf.h>
 
@@ -200,7 +201,7 @@ ieee80211_wme_request_offer(const struct mbuf *m, int type)
 /* Verify the actual queued producer, not merely a construction intention. */
 static int
 ieee80211_ht20_request_offer(const struct mbuf *m, int type,
-    const struct ieee80211_ht20_profile *profile)
+    const struct ieee80211_ht20_profile *profile, int vht)
 {
 	const uint8_t *p;
 	uint8_t expected[28];
@@ -217,6 +218,8 @@ ieee80211_ht20_request_offer(const struct mbuf *m, int type,
 	p = mtod(m, const uint8_t *) + fixed;
 	len = (size_t)m->m_len - fixed;
 	ieee80211_ht20_write(expected, profile);
+	if (vht)
+		expected[2] |= 0x02; /* Supported Channel Width Set. */
 	while (len != 0) {
 		if (len < 2 || p[1] > len - 2)
 			return 0;
@@ -234,9 +237,104 @@ ieee80211_ht20_request_offer(const struct mbuf *m, int type,
 }
 
 static int
+ieee80211_vht_basic_rates_supported(const struct ieee80211com *ic,
+    const struct ieee80211_node *ni)
+{
+	const struct ieee80211_rateset *local;
+	unsigned i, j;
+	int basic = 0, found;
+
+	if (ic->ic_curmode >= IEEE80211_MODE_MAX ||
+	    ni->ni_rates.rs_nrates == 0 ||
+	    ni->ni_rates.rs_nrates > IEEE80211_RATE_MAXSIZE)
+		return 0;
+	local = &ic->ic_sup_rates[ic->ic_curmode];
+	if (local->rs_nrates == 0 || local->rs_nrates > IEEE80211_RATE_MAXSIZE)
+		return 0;
+	for (i = 0; i < ni->ni_rates.rs_nrates; i++) {
+		uint8_t rate = ni->ni_rates.rs_rates[i];
+
+		if ((rate & IEEE80211_RATE_BASIC) == 0)
+			continue;
+		found = 0;
+		for (j = 0; j < local->rs_nrates; j++) {
+			if ((local->rs_rates[j] & IEEE80211_RATE_VAL) ==
+			    (rate & IEEE80211_RATE_VAL)) {
+				found = 1;
+				break;
+			}
+		}
+		if (!found)
+			return 0;
+		basic = 1;
+	}
+	return basic;
+}
+
+static int
+ieee80211_vht_request_prepare(struct ieee80211com *ic,
+    struct ieee80211_node *ni, struct ieee80211_vht_cap *cap)
+{
+	size_t len;
+
+	if (ic->ic_vht_admit == NULL || ic->ic_opmode != IEEE80211_M_STA ||
+	    ic->ic_state != IEEE80211_S_ASSOC || ni != ic->ic_bss ||
+	    ni->ni_chan != ic->ic_curchan || ic->ic_curchan == NULL ||
+	    ic->ic_curmode != IEEE80211_MODE_11A ||
+	    ieee80211_chan2ieee(ic, ic->ic_curchan) != 36 ||
+	    !ieee80211_vht_basic_rates_supported(ic, ni) ||
+	    ic->ic_vht_admit(ic, cap) != 0)
+		return 0;
+	len = ieee80211_phy_ies_size(&ni->ni_phy_ies,
+	    sizeof(ni->ni_phy_ies.data));
+	return len != 0 && ieee80211_vht_assoc80_candidate(cap,
+	    ni->ni_phy_ies.data, len, 36) == 0;
+}
+
+static int
+ieee80211_vht_request_offer(const struct mbuf *m, int type,
+    const struct ieee80211_vht_cap *cap)
+{
+	uint8_t expected[2 + IEEE80211_VHT_CAP_LEN];
+	const uint8_t *p;
+	size_t len, size, fixed;
+	int seen = 0;
+
+	if (cap == NULL || (type != IEEE80211_FC0_SUBTYPE_ASSOC_REQ &&
+	    type != IEEE80211_FC0_SUBTYPE_REASSOC_REQ))
+		return 0;
+	fixed = sizeof(struct ieee80211_frame) + 4 +
+	    (type == IEEE80211_FC0_SUBTYPE_REASSOC_REQ ? 6 : 0);
+	if (m->m_len < 0 || (size_t)m->m_len < fixed)
+		return 0;
+	expected[0] = 191;
+	expected[1] = IEEE80211_VHT_CAP_LEN;
+	if (ieee80211_vht_cap_encode(expected + 2, IEEE80211_VHT_CAP_LEN,
+	    cap) != 0)
+		return 0;
+	p = mtod(m, const uint8_t *) + fixed;
+	len = (size_t)m->m_len - fixed;
+	while (len != 0) {
+		if (len < 2 || p[1] > len - 2)
+			return 0;
+		size = (size_t)p[1] + 2;
+		if (p[0] == 191) {
+			if (seen || size != sizeof(expected) ||
+			    memcmp(p, expected, sizeof(expected)) != 0)
+				return 0;
+			seen = 1;
+		}
+		p += size;
+		len -= size;
+	}
+	return seen;
+}
+
+static int
 ieee80211_mgmt_output(struct ieee80211com *ic, struct ieee80211_node *ni,
     struct mbuf *m, int type, int timer, int wme_offer,
     const struct ieee80211_ht20_profile *ht20,
+    const struct ieee80211_vht_cap *vht,
     struct ieee80211_rxba_candidate *ba)
 {
 	struct ifnet *ifp = ic->ic_ifp;
@@ -288,7 +386,13 @@ ieee80211_mgmt_output(struct ieee80211com *ic, struct ieee80211_node *ni,
 
 	if (ht20 != NULL && (!wme_offer ||
 	    !ieee80211_wme_request_offer(m, type) ||
-	    !ieee80211_ht20_request_offer(m, type, ht20))) {
+	    !ieee80211_ht20_request_offer(m, type, ht20, vht != NULL))) {
+		M_SETCTX(m, NULL);
+		m_freem(m);
+		return EINVAL;
+	}
+	if (vht != NULL && (ht20 == NULL ||
+	    !ieee80211_vht_request_offer(m, type, vht))) {
 		M_SETCTX(m, NULL);
 		m_freem(m);
 		return EINVAL;
@@ -299,7 +403,8 @@ ieee80211_mgmt_output(struct ieee80211com *ic, struct ieee80211_node *ni,
 		return EINVAL;
 	}
 	/* New HT/BA producers require bounded queue admission. Legacy is unchanged. */
-	if ((ht20 != NULL || type == IEEE80211_FC0_SUBTYPE_ACTION) && ic->ic_mgtq.ifq_len >=
+	if ((ht20 != NULL || vht != NULL ||
+	    type == IEEE80211_FC0_SUBTYPE_ACTION) && ic->ic_mgtq.ifq_len >=
 	    (ic->ic_mgtq.ifq_maxlen > 0 ? ic->ic_mgtq.ifq_maxlen : IFQ_MAXLEN)) {
 		IF_DROP(&ic->ic_mgtq);
 		M_SETCTX(m, NULL);
@@ -324,7 +429,7 @@ ieee80211_mgmt_output(struct ieee80211com *ic, struct ieee80211_node *ni,
 		if (wme_offer && ieee80211_wme_request_offer(m, type))
 			ni->ni_flags |= IEEE80211_NODE_WME_OFFER;
 	}
-	if (ieee80211_ht20_request_offer(m, type, ht20))
+	if (ieee80211_ht20_request_offer(m, type, ht20, vht != NULL))
 		ieee80211_ht20_offer(ic, ni, type, ht20);
 	if (timer) {
 		/*
@@ -1464,7 +1569,7 @@ ieee80211_send_rxba_response(struct ieee80211com *ic, struct ieee80211_node *ni,
 	p[8] = timeout >> 8;
 	m->m_len = m->m_pkthdr.len = 9;
 	error = ieee80211_mgmt_output(ic, ni, m, IEEE80211_FC0_SUBTYPE_ACTION,
-	    0, 0, NULL, candidate);
+	    0, 0, NULL, NULL, candidate);
 	if (error != 0)
 		ieee80211_free_node(ni);
 	return error;
@@ -1580,8 +1685,9 @@ ieee80211_send_mgmt(struct ieee80211com *ic, struct ieee80211_node *ni,
 	struct mbuf *m;
 	u_int8_t *frm;
 	u_int16_t capinfo;
-	int ret, timer, status, wme_offer = 0, ht20_offer = 0;
+	int ret, timer, status, wme_offer = 0, ht20_offer = 0, vht_offer = 0;
 	struct ieee80211_ht20_profile ht20;
+	struct ieee80211_vht_cap vht;
 
 	IASSERT(ni != NULL, ("null node"));
 	if (ic->ic_opmode == IEEE80211_M_STA &&
@@ -1814,6 +1920,8 @@ ieee80211_send_mgmt(struct ieee80211com *ic, struct ieee80211_node *ni,
 		    (ic->ic_caps & IEEE80211_C_WME) &&
 		    (ic->ic_flags & IEEE80211_F_WME) && ni->ni_wme_ie != NULL,
 		    &ht20);
+		vht_offer = ht20_offer &&
+		    ieee80211_vht_request_prepare(ic, ni, &vht);
 		m = ieee80211_getmgtframe(&frm,
 			 sizeof(u_int16_t)
 		       + sizeof(u_int16_t)
@@ -1823,6 +1931,7 @@ ieee80211_send_mgmt(struct ieee80211com *ic, struct ieee80211_node *ni,
 		       + 2 + (IEEE80211_RATE_MAXSIZE - IEEE80211_RATE_SIZE)
 		       + sizeof(struct ieee80211_wme_info)
 		       + (ht20_offer ? 28 : 0)
+		       + (vht_offer ? 2 + IEEE80211_VHT_CAP_LEN : 0)
 		       + (ic->ic_opt_ie != NULL ? ic->ic_opt_ie_len : 0)
 		);
 		if (m == NULL)
@@ -1866,7 +1975,17 @@ ieee80211_send_mgmt(struct ieee80211com *ic, struct ieee80211_node *ni,
 		}
 		if (ht20_offer) {
 			ieee80211_ht20_write(frm, &ht20);
+			if (vht_offer)
+				frm[2] |= 0x02; /* Supported Channel Width Set. */
 			frm += 28;
+		}
+		if (vht_offer) {
+			*frm++ = 191;
+			*frm++ = IEEE80211_VHT_CAP_LEN;
+			if (ieee80211_vht_cap_encode(frm,
+			    IEEE80211_VHT_CAP_LEN, &vht) != 0)
+				senderr(EINVAL, is_tx_unknownmgt);
+			frm += IEEE80211_VHT_CAP_LEN;
 		}
 		if (ic->ic_opt_ie != NULL) {
 			memcpy(frm, ic->ic_opt_ie, ic->ic_opt_ie_len);
@@ -1951,7 +2070,7 @@ ieee80211_send_mgmt(struct ieee80211com *ic, struct ieee80211_node *ni,
 		/* NOTREACHED */
 	}
 	ret = ieee80211_mgmt_output(ic, ni, m, type, timer, wme_offer,
-	    ht20_offer ? &ht20 : NULL, NULL);
+	    ht20_offer ? &ht20 : NULL, vht_offer ? &vht : NULL, NULL);
 	if (ret != 0) {
 bad:
 		ieee80211_free_node(ni);

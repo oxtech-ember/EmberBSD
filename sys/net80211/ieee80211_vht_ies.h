@@ -75,4 +75,9 @@ struct ieee80211_vht_mcs_maps ieee80211_vht_mcs_candidates(
  */
 bool ieee80211_vht_mcs_meets(uint16_t, uint16_t);
 
+/* Candidate-only 36/42/80 association check. This does not grant regulatory
+ * permission; the caller must separately supply current channel policy. */
+int ieee80211_vht_assoc80_candidate(const struct ieee80211_vht_cap *,
+    const uint8_t *, size_t, unsigned);
+
 #endif /* _NET80211_IEEE80211_VHT_IES_H_ */

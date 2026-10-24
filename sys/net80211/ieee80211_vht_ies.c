@@ -135,3 +135,59 @@ ieee80211_vht_mcs_meets(uint16_t supported, uint16_t required)
 	}
 	return true;
 }
+
+/*
+ * Validate the narrowly supported non-DFS association candidate. Raw scan
+ * observations are rechecked here; they do not constitute negotiated state.
+ */
+int
+ieee80211_vht_assoc80_candidate(const struct ieee80211_vht_cap *local,
+    const uint8_t *ies, size_t len, unsigned primary)
+{
+	struct ieee80211_vht_ies peer;
+	const uint8_t *p, *end, *htcap = NULL, *htop = NULL;
+	size_t n;
+	unsigned seen = 0;
+
+	if (local == NULL || ies == NULL || len == 0 || len > 73 ||
+	    primary != 36 || local->info != 0 || local->rx_map != 0xfffc ||
+	    local->tx_map != 0xfffc || local->rx_highest != 0 ||
+	    local->tx_highest != 0 ||
+	    ieee80211_vht_ies_parse(&peer, ies, len) != 0 ||
+	    !peer.cap_present || !peer.operation_present ||
+	    peer.operation.width != 1 || peer.operation.seg0 != 42 ||
+	    peer.operation.seg1 != 0 ||
+	    !ieee80211_vht_mcs_meets(peer.cap.rx_map, local->tx_map) ||
+	    !ieee80211_vht_mcs_meets(peer.cap.tx_map, local->rx_map) ||
+	    !ieee80211_vht_mcs_meets(local->tx_map,
+	    peer.operation.basic_map) ||
+	    !ieee80211_vht_mcs_meets(local->rx_map,
+	    peer.operation.basic_map))
+		return -1;
+
+	p = ies;
+	end = ies + len;
+	while (p < end) {
+		if ((size_t)(end - p) < 2 || p[1] > (size_t)(end - p) - 2)
+			return -1;
+		n = (size_t)p[1] + 2;
+		if (p[0] == 45) {
+			if ((seen & 1) != 0 || p[1] != 26)
+				return -1;
+			seen |= 1;
+			htcap = p + 2;
+		} else if (p[0] == 61) {
+			if ((seen & 2) != 0 || p[1] != 22)
+				return -1;
+			seen |= 2;
+			htop = p + 2;
+		}
+		p += n;
+	}
+	if (htcap == NULL || htop == NULL || (htcap[0] & 0x02) == 0 ||
+	    htcap[3] != 0xff ||
+	    htop[0] != primary || (htop[1] & 0x03) != 1 ||
+	    (htop[1] & 0x04) == 0)
+		return -1;
+	return 0;
+}

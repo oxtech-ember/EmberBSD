@@ -39,7 +39,7 @@ proto = "sys/net80211/ieee80211_proto.h"
 ipt = "sys/net80211/ieee80211_input.c"
 output = "sys/net80211/ieee80211_output.c"
 node = "sys/net80211/ieee80211_node.c"
-parts = [read("sys/net80211/ieee80211_rxba.h"),"#ifndef NATIVE_IEEE80211_STATE_DEFINED\n#define NATIVE_IEEE80211_STATE_DEFINED 1\n" + re.search(r"^enum ieee80211_state \{.*?^\};", read(proto), re.M|re.S).group()+"\n#endif", read("sys/net80211/ieee80211_ht20.h"), read(wire), read("sys/net80211/ieee80211_phy_ies.h")]
+parts = [read("sys/net80211/ieee80211_rxba.h"),"#ifndef NATIVE_IEEE80211_STATE_DEFINED\n#define NATIVE_IEEE80211_STATE_DEFINED 1\n" + re.search(r"^enum ieee80211_state \{.*?^\};", read(proto), re.M|re.S).group()+"\n#endif", read("sys/net80211/ieee80211_ht20.h"), read("sys/net80211/ieee80211_vht_ies.h"), read(wire), read("sys/net80211/ieee80211_phy_ies.h")]
 for path, names in ((proto, ("wmeParams", "chanAccParams", "ieee80211_wme_state")),
                     ("sys/net80211/ieee80211_ioctl.h", ("ieee80211_stats", "ieee80211_nodestats", "ieee80211req")),
                     ("sys/net80211/_ieee80211.h", ("ieee80211_rateset",))):
@@ -69,6 +69,10 @@ for name in ("IEEE80211_KEY_UNDEFINED", "IEEE80211_KEY_SWCRYPT", "IEEE80211_CIPH
 ht = read("sys/net80211/ieee80211_ht20.c")
 # Complete actual shared HT helper bodies, only includes supplied by service model.
 parts = [ht[:ht.index("#include")], ht[ht.index("int\nieee80211_ht20_optional"):]]
+phy = read("sys/net80211/ieee80211_phy_ies.c")
+parts.append(phy[phy.index("size_t\nieee80211_phy_ies_size"):])
+vht = read("sys/net80211/ieee80211_vht_ies.c")
+parts.append(vht[vht.index("static uint16_t"):])
 proto_source = read("sys/net80211/ieee80211_proto.c")
 parts.append(proto_source[proto_source.index("typedef struct phyParamType"):proto_source.index("void\nieee80211_wme_initparams")])
 parts.append("#undef IEEE80211_NO_HOSTAP\n#define HIGH_PRI_SWITCH_THRESH 10\nvoid ieee80211_wme_reset(struct ieee80211_node *);\n")
@@ -115,6 +119,9 @@ for name, result in (("ieee80211_crypto_getucastkey", "struct ieee80211_key *"),
     if name == "ieee80211_mgmt_output" and "\nieee80211_wme_request_offer(" in read(output):
         parts.append(function(output, "ieee80211_wme_request_offer", "static int"))
         parts.append(function(output, "ieee80211_ht20_request_offer", "static int"))
+        parts.append(function(output, "ieee80211_vht_basic_rates_supported", "static int"))
+        parts.append(function(output, "ieee80211_vht_request_prepare", "static int"))
+        parts.append(function(output, "ieee80211_vht_request_offer", "static int"))
     parts.append(function(output, name, result))
 parts.append(re.search(r"^#define\s+IEEE80211_CHAN_PASSIVE\s+.*$", read("sys/net80211/_ieee80211.h"), re.M).group())
 parts.append(function(node, "ieee80211_probe_curchan", "static void"))
