@@ -740,6 +740,7 @@ rtw88_tx_quiet(struct rtw88_softc *sc)
 
 	sc->sc_stop_requested = 1;
 	sc->sc_phy.channel_valid = 0;
+	rtw88_dfs_close(sc);
 	/* Also cancel a start that yielded inside the firmware loader. */
 	sc->sc_generation++;
 	rtw88_ra_invalidate(sc);

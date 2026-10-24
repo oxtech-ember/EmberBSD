@@ -841,6 +841,11 @@ test_ra_dfs64(void)
 	CHECK(rtw88_dfs_open(&sc, 64, sc.sc_generation) == ENXIO);
 	sc.sc_stop_requested = 0;
 	CHECK(!sc.sc_dfs.valid);
+	CHECK(rtw88_dfs_open(&sc, 64, sc.sc_generation) == 0);
+	CHECK(rtw88_tx_quiet(&sc) == 0);
+	CHECK(!sc.sc_dfs.valid && sc.sc_stop_requested);
+	CHECK(rtw88_tx_raw(&sc, RTW88_TXQ_MGMT, mgmt, sizeof(mgmt)) ==
+	    ENXIO);
 	printf("rtw88 DFS64 slave permit: enabled\n");
 #endif
 	(void)gen;
