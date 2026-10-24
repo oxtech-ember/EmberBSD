@@ -2791,11 +2791,15 @@ static bool plcom_copy_on;
 static void
 plcom_copy_attach(struct plcom_instance *pi)
 {
+	const bus_addr_t console = (bus_addr_t)PLCOM_BCM2712_UART10;
+	const bus_addr_t copy = (bus_addr_t)PLCOM_RP1_UART0;
 	uint32_t cr;
 
-	if (pi->pi_iobase != PLCOM_BCM2712_UART10)
+	/* The Pi 5 PCIe window cannot be represented by a 32-bit bus tag. */
+	if ((uint64_t)console != PLCOM_BCM2712_UART10 ||
+	    (uint64_t)copy != PLCOM_RP1_UART0 || pi->pi_iobase != console)
 		return;
-	if (bus_space_map(pi->pi_iot, PLCOM_RP1_UART0, PAGE_SIZE, 0,
+	if (bus_space_map(pi->pi_iot, copy, PAGE_SIZE, 0,
 	    &plcom_copy_ioh) != 0)
 		return;
 	cr = bus_space_read_4(pi->pi_iot, plcom_copy_ioh, PL011COM_CR);
