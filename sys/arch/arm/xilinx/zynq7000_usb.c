@@ -68,6 +68,9 @@ zynqusb_match(device_t parent, struct cfdata *cf, void *aux)
 {
 	struct fdt_attach_args * const faa = aux;
 
+	const char *role = fdtbus_get_string(faa->faa_phandle, "dr_mode");
+	if (role != NULL && strcmp(role, "host") != 0)
+		return 0;
 	return of_compatible_match(faa->faa_phandle, compat_data);
 }
 

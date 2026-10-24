@@ -100,3 +100,5 @@ device-major gpioirq   char 365		   gpioirq
 device-major umcpmio   char 366		   umcpmio
 device-major emcfan    char 367		   emcfan
 device-major adiadc    char 368		   adiaxiadc
+
+device-major usbperiph char 369 zynqudc

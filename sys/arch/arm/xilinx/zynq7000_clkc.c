@@ -68,6 +68,8 @@ __KERNEL_RCSID(0, "$NetBSD: zynq7000_clkc.c,v 1.5 2022/11/11 20:29:47 jmcneill E
 #define	 ARM_CLK_CTRL_CPU_6OR4XCLKACT	__BIT(24)
 #define	 ARM_CLK_CTRL_DIVISOR		__BITS(13,8)
 #define	APER_CLK_CTRL	0x12c
+#define	 USB0_CPU_1XCLKACT	__BIT(2)
+#define	 USB1_CPU_1XCLKACT	__BIT(3)
 #define	 UART1_CPU_1XCLKACT	__BIT(21)
 #define	 UART0_CPU_1XCLKACT	__BIT(20)
 #define	 I2C1_CPU_1XCLKACT	__BIT(19)
@@ -395,7 +397,9 @@ zynq7000_clkc_clk_get_rate(void *priv, struct clk *clk)
 		return prate / div0 / div1;
 	} else if (clk == &sc->sc_clk[clkid_pcap]) {
 		return zynq7000_clkc_get_rate_iop(sc, PCAP_CLK_CTRL);
-	} else if (clk == &sc->sc_clk[clkid_uart0_aper] ||
+	} else if (clk == &sc->sc_clk[clkid_usb0_aper] ||
+		   clk == &sc->sc_clk[clkid_usb1_aper] ||
+		   clk == &sc->sc_clk[clkid_uart0_aper] ||
 		   clk == &sc->sc_clk[clkid_uart1_aper] ||
 		   clk == &sc->sc_clk[clkid_i2c0_aper] ||
 		   clk == &sc->sc_clk[clkid_i2c1_aper] ||
@@ -415,6 +419,27 @@ zynq7000_clkc_clk_enable(void *priv, struct clk *clk)
 	struct zynq7000_clkc_softc * const sc = priv;
 	uint32_t val, mask;
 	bus_addr_t reg;
+
+	if (clk == &sc->sc_clk[clkid_usb0_aper] ||
+	    clk == &sc->sc_clk[clkid_usb1_aper]) {
+		int error = 0;
+		mask = clk == &sc->sc_clk[clkid_usb0_aper] ?
+		    USB0_CPU_1XCLKACT : USB1_CPU_1XCLKACT;
+		syscon_lock(sc->sc_syscon);
+		val = syscon_read_4(sc->sc_syscon, APER_CLK_CTRL);
+		if ((val & mask) == 0) {
+			/* UG585 APER gates are protected by the common SLCR lock. */
+			uint32_t locked = syscon_read_4(sc->sc_syscon, SLCR_LOCKSTA) & 1;
+			syscon_write_4(sc->sc_syscon, SLCR_UNLOCK, SLCR_UNLOCK_KEY);
+			syscon_write_4(sc->sc_syscon, APER_CLK_CTRL, val | mask);
+			if (syscon_read_4(sc->sc_syscon, APER_CLK_CTRL) != (val | mask))
+				error = EIO;
+			if (locked)
+				syscon_write_4(sc->sc_syscon, SLCR_LOCK, SLCR_LOCK_KEY);
+		}
+		syscon_unlock(sc->sc_syscon);
+		return error;
+	}
 
 	/* FPGA threshold count bit zero is an active-high stop gate. */
 	if (clk >= &sc->sc_clk[clkid_fclk0] &&

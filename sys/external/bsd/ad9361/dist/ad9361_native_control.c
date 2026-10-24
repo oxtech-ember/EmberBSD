@@ -340,6 +340,9 @@ ad9361_native_read_rx_status(struct ad9361_native_bus *bus,
 	if (bus->tx_enabled || !phy->pdata->rx_only)
 		return EPERM;
 	memset(status, 0, sizeof(*status));
+	error = ad9361_native_read_rx_clock(bus, phy, &status->sample_rate_hz);
+	if (error != 0)
+		return error;
 	for (ch = 0; ch < (phy->pdata->rx2tx2 ? 2U : 1U); ch++) {
 		memset(&rssi, 0, sizeof(rssi));
 		error = ad9361_native_result(bus,
