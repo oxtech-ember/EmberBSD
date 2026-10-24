@@ -832,12 +832,44 @@ rtw88_stop(struct rtw88_softc *sc)
 	return sc->sc_dma_error != 0 ? sc->sc_dma_error : sc->sc_power_error;
 }
 
+/*
+ * Live admission mirrors the passive, non-DFS net80211 channel set. The
+ * only wide tuple is the qualified VHT80 target; channel 64 stays closed.
+ */
+static int
+rtw88_channel_admit(const struct rtw88_channel_tuple *tuple)
+{
+	unsigned ch = tuple->primary;
+
+	if (tuple->width_mhz == 20 && tuple->center == ch &&
+	    ((ch >= 1 && ch <= 13) ||
+	    (ch >= 36 && ch <= 64 && ch % 4 == 0 && ch != 64) ||
+	    (ch >= 100 && ch <= 144 && ch % 4 == 0) ||
+	    (ch >= 149 && ch <= 165 && (ch - 149) % 4 == 0)))
+		return 0;
+#ifdef RTW88_VHT80
+	if (tuple->width_mhz == 80 && ch == 36 && tuple->center == 42)
+		return 0;
+#endif
+	return EOPNOTSUPP;
+}
+
 int
 rtw88_start(struct rtw88_softc *sc)
 {
 	const struct rtw88_channel_tuple default_channel = {
 		RTW88_DEFAULT_CHANNEL, RTW88_DEFAULT_CHANNEL, 20
 	};
+
+	return rtw88_start_tuple(sc, &default_channel);
+}
+
+int
+rtw88_start_tuple(struct rtw88_softc *sc,
+    const struct rtw88_channel_tuple *target)
+{
+	struct rtw88_channel_tuple admitted;
+	const struct rtw88_channel_tuple *tuple = &admitted;
 	const uint8_t *fw = NULL;
 	const char *stage = "identity";
 	size_t fw_len = 0;
@@ -846,6 +878,12 @@ rtw88_start(struct rtw88_softc *sc)
 	uint32_t gen;
 	int error;
 
+	if (target == NULL)
+		return EINVAL;
+	/* Program exactly the admitted copy; firmware loading may sleep. */
+	admitted = *target;
+	if (rtw88_channel_admit(&admitted) != 0)
+		return EOPNOTSUPP;
 #ifdef RTW88_RFK_EXPERIMENT
 	if (rtw8822c_rfk_blocked())
 		return EBUSY;
@@ -971,7 +1009,7 @@ rtw88_start(struct rtw88_softc *sc)
 	if (error != 0)
 		goto fail;
 	stage = "channel setup";
-	error = rtw8822c_set_channel_tuple(sc, &default_channel);
+	error = rtw8822c_set_channel_tuple(sc, tuple);
 	if (error != 0)
 		goto fail;
 	if (sc->sc_stop_requested || sc->sc_generation != gen) {
@@ -982,12 +1020,11 @@ rtw88_start(struct rtw88_softc *sc)
 	error = rtw8822c_efuse_decode(sc->sc_efuse_phys,
 	    sizeof(sc->sc_efuse_phys), &efuse);
 	if (error == 0)
-		error = rtw8822c_set_tx_power_tuple(sc, &efuse,
-		    &default_channel, 12);
+		error = rtw8822c_set_tx_power_tuple(sc, &efuse, tuple, 12);
 	if (error != 0)
 		goto fail;
-	sc->sc_channel = RTW88_DEFAULT_CHANNEL;
-	sc->sc_phy.channel = default_channel;
+	sc->sc_channel = tuple->primary;
+	sc->sc_phy.channel = *tuple;
 	if (sc->sc_stop_requested || sc->sc_generation != gen) {
 		error = EINTR;
 		goto fail;
@@ -2051,18 +2088,13 @@ rtw88_channel_apply(struct rtw88_softc *sc,
 		return ENXIO;
 	if (tuple == NULL)
 		return EINVAL;
-	/* No warm channel call may change RF bandwidth without a real stop fence. */
-	if (tuple->width_mhz != 20 ||
-	    sc->sc_phy.channel.width_mhz != tuple->width_mhz)
+	/* A warm call never changes RF width; rtw88_start_tuple owns that. */
+	if (sc->sc_phy.channel.width_mhz != tuple->width_mhz)
 		return EOPNOTSUPP;
 	if ((error = rtw8822c_channel_geometry(tuple, &geometry)) != 0)
 		return error;
 	ch = tuple->primary;
-	/* Live admission mirrors the passive, non-DFS net80211 channel set. */
-	if (!((ch >= 1 && ch <= 13) ||
-	    (ch >= 36 && ch <= 64 && ch % 4 == 0 && ch != 64) ||
-	    (ch >= 100 && ch <= 144 && ch % 4 == 0) ||
-	    (ch >= 149 && ch <= 165 && (ch - 149) % 4 == 0)))
+	if (rtw88_channel_admit(tuple) != 0)
 		return EOPNOTSUPP;
 	error = rtw8822c_efuse_decode(sc->sc_efuse_phys,
 	    sizeof(sc->sc_efuse_phys), &efuse);

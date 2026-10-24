@@ -591,6 +591,72 @@ ra_seed_tuple(struct rtw88_softc *sc, struct rtw88_channel_tuple target)
 	return 1;
 }
 
+static const struct rtw88_channel_tuple ra_vht80_target = { 36, 42, 80 };
+
+/* A different RF width is entered only by a cold start after a real stop.
+ * Every rejection precedes bus I/O; warm calls keep the committed width. */
+static void
+test_ra_start_tuple(void)
+{
+	static const struct rtw88_channel_tuple closed[] = {
+		{ 64, 64, 20 }, { 64, 62, 40 }, { 64, 58, 80 }, { 36, 38, 40 },
+		{ 36, 42, 40 }, { 36, 36, 80 }, { 40, 42, 80 }, { 36, 40, 20 },
+		{ 14, 14, 20 }
+	};
+	struct rtw88_softc sc;
+	unsigned reads, writes;
+
+	if (!start_ok(&sc))
+		return;
+	CHECK(rtw88_stop(&sc) == 0);
+	for (unsigned i = 0; i < __arraycount(closed); i++) {
+		reads = f.reads;
+		writes = f.writes;
+		CHECK(rtw88_start_tuple(&sc, &closed[i]) == EOPNOTSUPP);
+		CHECK(f.reads == reads && f.writes == writes && !sc.sc_started);
+	}
+	reads = f.reads;
+	writes = f.writes;
+	CHECK(rtw88_start_tuple(&sc, NULL) == EINVAL);
+	CHECK(f.reads == reads && f.writes == writes && !sc.sc_started);
+#ifdef RTW88_VHT80
+	CHECK(rtw88_start_tuple(&sc, &ra_vht80_target) == 0);
+	CHECK(sc.sc_started && sc.sc_channel == 36 && sc.sc_phy.channel_valid);
+	CHECK(sc.sc_phy.channel.primary == 36 && sc.sc_phy.channel.center == 42 &&
+	    sc.sc_phy.channel.width_mhz == 80);
+	CHECK(f.mmio[0x0483] == 0xa4);
+	/* Same-width warm reprogramming remains available. */
+	CHECK(rtw88_channel_apply(&sc, &ra_vht80_target) == 0);
+	CHECK(sc.sc_phy.channel_valid && sc.sc_phy.channel.width_mhz == 80);
+	for (unsigned i = 0; i < 3; i++) {
+		static const struct rtw88_channel_tuple warm[] = {
+			{ 36, 36, 20 }, { 40, 40, 20 }, { 64, 58, 80 }
+		};
+		reads = f.reads;
+		writes = f.writes;
+		CHECK(rtw88_channel_apply(&sc, &warm[i]) == EOPNOTSUPP);
+		CHECK(f.reads == reads && f.writes == writes);
+		CHECK(sc.sc_phy.channel_valid && sc.sc_channel == 36);
+	}
+	CHECK(rtw88_stop(&sc) == 0);
+#else
+	reads = f.reads;
+	writes = f.writes;
+	CHECK(rtw88_start_tuple(&sc, &ra_vht80_target) == EOPNOTSUPP);
+	CHECK(f.reads == reads && f.writes == writes && !sc.sc_started);
+#endif
+	/* The ordinary narrow cold start, then no warm entry to 80 MHz. */
+	CHECK(rtw88_start_tuple(&sc,
+	    &(struct rtw88_channel_tuple){ 36, 36, 20 }) == 0);
+	CHECK(sc.sc_channel == 36 && sc.sc_phy.channel.width_mhz == 20);
+	reads = f.reads;
+	writes = f.writes;
+	CHECK(rtw88_channel_apply(&sc, &ra_vht80_target) == EOPNOTSUPP);
+	CHECK(f.reads == reads && f.writes == writes);
+	CHECK(rtw88_stop(&sc) == 0);
+	CHECK(rtw88_core_detach(&sc) == 0);
+}
+
 static const struct rtw88_ra_config ra_vht80_cfg = {
 	.epoch = 9, .channel = 36, .common_rates = 0xff0,
 	.mode = RTW88_FIXED_11A, .phy = RTW88_RA_VHT80_1SS,
@@ -666,13 +732,14 @@ test_ra_vht80_formats(void)
 
 		if (!start_ok(&sc))
 			continue;
-		CHECK(rtw88_channel(&sc, 36) == 0);
-		CHECK(rtw88_station_config(&sc, bssid, 1, 0x150, 9, 1) == 0);
 		if (variant != 1) {
-			CHECK(ra_seed_tuple(&sc,
-			    (struct rtw88_channel_tuple){ 36, 42, 80 }));
+			/* The real width owner: stop, then cold start at 80. */
+			CHECK(rtw88_stop(&sc) == 0);
+			CHECK(rtw88_start_tuple(&sc, &ra_vht80_target) == 0);
 			CHECK(f.mmio[0x0483] == 0xa4);
-		}
+		} else
+			CHECK(rtw88_channel(&sc, 36) == 0);
+		CHECK(rtw88_station_config(&sc, bssid, 1, 0x150, 9, 1) == 0);
 		switch (variant) {
 		case 2: cfg.vht_tx_map = 0xfffd; break; /* MCS8 is not local. */
 		case 3: cfg.vht_tx_map = 0xfffe; break;
@@ -903,6 +970,7 @@ RTW88_RA_MAIN(void)
 	test_ra_peer_numeric_masks();
 	test_ra_reports_never_control_peer();
 	test_ra_narrow_entries();
+	test_ra_start_tuple();
 #ifdef RTW88_VHT80
 	test_ra_vht80_formats();
 	test_ra_vht80_channel64_closed();

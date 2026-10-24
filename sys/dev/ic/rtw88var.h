@@ -285,6 +285,13 @@ int rtw88_core_attach(struct rtw88_softc *);
 int rtw88_core_detach(struct rtw88_softc *);
 int rtw88_start(struct rtw88_softc *);
 /*
+ * Cold start at an admitted channel tuple, programmed before HCI start.
+ * This is the only entry to a different RF width: rtw88_channel_apply
+ * keeps the committed width. Rejection precedes any bus I/O.
+ */
+int rtw88_start_tuple(struct rtw88_softc *,
+	const struct rtw88_channel_tuple *);
+/*
  * One startup call per firmware epoch. Process context without the PCI spin
  * lock, with the same external ownership contract as rtw88_fw_packet below.
  * The caller stops DMA on any error.
