@@ -50,7 +50,11 @@ s=re.sub(r'\bu_int\b','unsigned',s)
 (out/'native-state-types.inc').write_text(s+'\n')
 net = net_source
 ht=read('sys/net80211/ieee80211_ht20.c')
-parts=[net[:net.index('#include')], ht[:ht.index('#include')], ht[ht.index('int\nieee80211_ht20_optional'):]]
+vht = read('sys/net80211/ieee80211_vht_ies.c')
+parts=[net[:net.index('#include')], ht[:ht.index('#include')],
+       '#include <net80211/ieee80211_vht_ies.h>',
+       vht[vht.index('static uint16_t'):],
+       ht[ht.index('int\nieee80211_ht20_optional'):]]
 shared=read('sys/net80211/ieee80211_proto.c')
 parts.append(shared[:shared.index('#include')])
 parts.append('void\n'+re.search(r'^ieee80211_wme_reset\(.*?^}',shared,re.M|re.S).group()+'\n')
