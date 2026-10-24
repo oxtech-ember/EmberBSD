@@ -1081,11 +1081,17 @@ test_vht_request_bytes(void)
 static struct mbuf *
 vht_assoc_response(unsigned variant)
 {
-	uint8_t ies[96] = {0};
+	/*
+	 * Static and zeroed per call: works around a GCC16 -fanalyzer false
+	 * positive (use of uninitialized value at the memcpy below, seen only
+	 * in the Linux -O0 routing analysis). The fixture is single-threaded.
+	 */
+	static uint8_t ies[96];
 	struct mbuf *m;
 	size_t len = 73;
 	uint8_t *cap, *op;
 
+	memset(ies, 0, sizeof(ies));
 	ies[0] = 45; ies[1] = 26; ies[2] = 0x02; /* HT40 support. */
 	ies[5] = 0xff; /* HT MCS0-7. */
 	ies[28] = 61; ies[29] = 22; ies[30] = 36;
