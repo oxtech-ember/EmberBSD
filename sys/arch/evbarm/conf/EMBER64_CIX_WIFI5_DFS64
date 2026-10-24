@@ -1,0 +1,8 @@
+# Origin: EmberBSD CIX P1 Wi-Fi 5 and DFS64 software experiment, AI-assisted.
+# Controlled manual boot only; keep the ordinary/default kernel and boot
+# menu selections unchanged. RFK stays off: both experiments are compiled
+# out together with RTW88_RFK_EXPERIMENT. Hardware acceptance is pending.
+include "arch/evbarm/conf/EMBER64_CIX_PERIPHERALS"
+
+options RTW88_VHT_EXPERIMENT
+options RTW88_DFS64_EXPERIMENT
