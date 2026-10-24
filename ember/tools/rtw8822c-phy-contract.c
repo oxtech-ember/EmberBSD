@@ -211,6 +211,39 @@ test_channels(const char *path)
 }
 
 static void
+test_channel_sequence(const char *path, const char *name,
+	const struct rtw88_channel_tuple tuples[3])
+{
+	struct rtw88_softc sc;
+	char section[64];
+	unsigned i;
+
+	setup(&sc);
+	for (i = 0; i < 3; i++) {
+		model_ntrace = 0;
+		CHECK(rtw8822c_set_channel_tuple(&sc, &tuples[i]) == 0);
+		snprintf(section, sizeof(section), "%s-step%u", name, i + 1);
+		same_trace(path, section);
+	}
+}
+
+static void
+test_channel_sequences(const char *path)
+{
+	static const struct rtw88_channel_tuple narrow_to_wide[] = {
+		{ 64, 64, 20 }, { 64, 62, 40 }, { 64, 58, 80 }
+	};
+	static const struct rtw88_channel_tuple wide_to_narrow[] = {
+		{ 64, 58, 80 }, { 64, 64, 20 }, { 64, 62, 40 }
+	};
+
+	test_channel_sequence(path, "channel-sequence-20-40-80",
+	    narrow_to_wide);
+	test_channel_sequence(path, "channel-sequence-80-20-40",
+	    wide_to_narrow);
+}
+
+static void
 test_bad_channels(void)
 {
 	static const unsigned bad[] = { 0, 15, 35, 50, 65, 99, 145, 178, 255 };
@@ -234,7 +267,11 @@ test_tuple_geometry(void)
 		{ { 64, 64, 20 }, 0, 64, 64, 64, 0x00 },
 		{ { 64, 62, 40 }, 1, 64, 62, 62, 0x01 },
 		{ { 64, 58, 80 }, 3, 64, 62, 58, 0x93 },
-		{ { 36, 42, 80 }, 1, 36, 38, 42, 0x91 },
+		{ { 36, 42, 80 }, 4, 36, 38, 42, 0xa4 },
+		{ { 40, 42, 80 }, 2, 40, 38, 42, 0xa2 },
+		{ { 44, 42, 80 }, 1, 44, 46, 42, 0x91 },
+		{ { 48, 42, 80 }, 3, 48, 46, 42, 0x93 },
+		{ { 52, 58, 80 }, 4, 52, 54, 58, 0xa4 },
 	};
 	static const struct rtw88_channel_tuple bad[] = {
 		{ 64, 61, 40 }, { 64, 60, 40 }, { 64, 56, 80 },
@@ -264,8 +301,14 @@ test_tuple_geometry(void)
 	CHECK((model_read(0x3c60, 4) & 0x3000) == 0x1000);
 	setup(&sc);
 	CHECK(rtw8822c_set_channel_tuple(&sc, &good[3].tuple) == 0);
-	CHECK(model_read(0x0483, 1) == 0x91);
+	CHECK(model_read(0x0483, 1) == 0xa4);
 	CHECK((model_read(0x3c60, 4) & 0xff) == 42);
+	setup(&sc);
+	CHECK(rtw8822c_set_channel_tuple(&sc, &good[1].tuple) == 0);
+	CHECK((model_read(0x1a00, 4) & 0x10) == 0x10);
+	setup(&sc);
+	CHECK(rtw8822c_set_channel_tuple(&sc, &good[7].tuple) == 0);
+	CHECK((model_read(0x0c30, 4) & 0xfff) == 0x453);
 }
 
 static void
@@ -292,6 +335,7 @@ main(int argc, char **argv)
 	}
 	test_phy(argv[1]);
 	test_channels(argv[1]);
+	test_channel_sequences(argv[1]);
 	test_bad_channels();
 	test_tuple_geometry();
 	test_read_failure();

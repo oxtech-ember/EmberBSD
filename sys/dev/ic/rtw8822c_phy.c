@@ -392,11 +392,13 @@ rtw8822c_channel_geometry(const struct rtw88_channel_tuple *tuple,
 		if (g.band != 5 || (delta != -6 && delta != -2 &&
 		    delta != 2 && delta != 6))
 			return EINVAL;
-		g.channel_index = delta == -6 ? 1 : delta == 6 ? 3 : 2;
+		g.channel_index = delta == -6 ? 4 : delta == -2 ? 2 :
+		    delta == 2 ? 1 : 3;
 		g.cch40 = (unsigned)((int)tuple->center + (delta < 0 ? -4 : 4));
 		g.cch80 = tuple->center;
 		g.data_sc = g.channel_index |
-		    ((delta == -6 || delta == 6 ? 9U : 10U) << 4);
+		    ((g.channel_index == 1 || g.channel_index == 3 ?
+		    9U : 10U) << 4);
 		break;
 	default:
 		return EINVAL;
@@ -427,7 +429,7 @@ static void
 channel_bb(struct rtw8822c_io *io, const struct rtw88_channel_tuple *tuple,
     const struct rtw8822c_channel_geometry *g)
 {
-	unsigned ch = tuple->primary;
+	unsigned ch = tuple->center;
 
 	if (channel_band(ch) == 2) {
 		clr32(io, 0x1a14, 0x300);	/* BGCTRL: RX_IQ_WEIGHT */
@@ -502,8 +504,8 @@ channel_bb(struct rtw8822c_io *io, const struct rtw88_channel_tuple *tuple,
 		mask32(io, 0x0cbc, 0x200000, 0x0);
 		break;
 	case 40:
-		mask32(io, 0x1a20, 0x10,
-		    g->channel_index == 2 ? 1 : 0); /* CCKSB */
+		mask32(io, 0x1a00, 0x10,
+		    g->channel_index == 1 ? 1 : 0); /* CCKSB */
 		mask32(io, 0x09b0, 0xf, 0x5);
 		mask32(io, 0x09b0, 0xc0, 0x0);
 		mask32(io, 0x09b0, 0xff00,

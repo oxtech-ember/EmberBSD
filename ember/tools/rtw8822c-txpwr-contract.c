@@ -11,6 +11,7 @@
 #include "rtw8822c-mac-model.h"
 
 static unsigned checks;
+static unsigned delta_failures;
 static unsigned accesses, fail_at, cancel_at;
 static struct rtw88_softc sc;
 static struct rtw8822c_efuse efuse;
@@ -56,6 +57,10 @@ const struct rtw8822c_table rtw8822c_txpwr_lmt_type0_tbl = {
 #define CHECK(x) do { checks++; if (!(x)) { \
 	fprintf(stderr, "%s:%d: %s\n", __func__, __LINE__, #x); \
 	exit(EXIT_FAILURE); } } while (0)
+#define EXPECT(x) do { checks++; if (!(x)) { \
+	delta_failures++; \
+	fprintf(stderr, "%s:%d: expected %s\n", __func__, __LINE__, #x); \
+} } while (0)
 
 static int
 read4(void *cookie, uint32_t address, uint32_t *out)
@@ -199,16 +204,24 @@ wide_tuples(void)
 	}
 	{
 		const struct rtw88_channel_tuple tuple = { 64, 58, 80 };
+		int error;
 
 		reset(1, 0);
 		efuse.txpower[0][37] = 0xff;
-		CHECK(rtw8822c_set_tx_power_tuple(&sc, &efuse, &tuple, 2) == EINVAL);
-		CHECK(accesses == 0);
+		error = rtw8822c_set_tx_power_tuple(&sc, &efuse, &tuple, 2);
+		EXPECT(error == 0 && accesses != 0);
+		reset(1, 0);
+		efuse.txpower[0][38] = 0xff;
+		error = rtw8822c_set_tx_power_tuple(&sc, &efuse, &tuple, 2);
+		EXPECT(error == EINVAL && accesses == 0);
+		reset(1, 0);
+		efuse.txpower[0][39] = 0xff;
+		error = rtw8822c_set_tx_power_tuple(&sc, &efuse, &tuple, 2);
+		EXPECT(error == EINVAL && accesses == 0);
 	}
 	{
 		const struct rtw88_channel_tuple tuple20 = { 64, 64, 20 };
 		const struct rtw88_channel_tuple tuple40 = { 64, 62, 40 };
-		const struct rtw88_channel_tuple tuple80 = { 64, 58, 80 };
 		uint32_t before;
 
 		reset(1, 0);
@@ -228,16 +241,135 @@ wide_tuples(void)
 		CHECK((model_read(0x3a14, 4) & 0x7f) ==
 		    (((before & 0x7f) - 2) & 0x7f));
 
-		reset(1, 0);
-		CHECK(rtw8822c_set_tx_power_tuple(&sc, &efuse, &tuple80, 2) == 0);
-		before = model_read(0x3a2c, 4);
-		reset(1, 0);
-		efuse.txpower[0][37] = 0xf0;
-		CHECK(rtw8822c_set_tx_power_tuple(&sc, &efuse, &tuple80, 2) == 0);
-		CHECK((model_read(0x3a2c, 4) & 0x7f) ==
-		    (((before & 0x7f) - 2) & 0x7f));
 	}
 }
+
+static unsigned
+rate_field(uint32_t address, unsigned shift)
+{
+	return (model_read(address, 4) >> shift) & 0x7f;
+}
+
+static void
+width_efuse_deltas(void)
+{
+	const struct rtw88_channel_tuple tuple40 = { 64, 62, 40 };
+	const struct rtw88_channel_tuple tuple80 = { 64, 58, 80 };
+	unsigned before, after, ref_before, ref_after;
+	int error;
+
+	/* HT40 2SS efuse deltas also apply to the VHT2SS rate section. */
+	reset(1, 0);
+	error = rtw8822c_set_tx_power_tuple(&sc, &efuse, &tuple40, 2);
+	EXPECT(error == 0);
+	before = rate_field(0x3a34, 16); /* VHT2SS MCS0, rate54. */
+	reset(1, 0);
+	efuse.txpower[0][33] = 0xf0; /* HT40 2SS = -1; two TXGI steps. */
+	error = rtw8822c_set_tx_power_tuple(&sc, &efuse, &tuple40, 2);
+	EXPECT(error == 0);
+	after = rate_field(0x3a34, 16);
+	EXPECT(after == ((before - 2) & 0x7f));
+
+	/* BW80 uses the VHT80 1SS delta for the HT 1SS reference as well. */
+	reset(1, 0);
+	error = rtw8822c_set_tx_power_tuple(&sc, &efuse, &tuple80, 2);
+	EXPECT(error == 0);
+	ref_before = rate_field(0x18e8, 10);
+	reset(1, 0);
+	efuse.txpower[0][38] = 0xf0; /* VHT80 1SS = -1. */
+	error = rtw8822c_set_tx_power_tuple(&sc, &efuse, &tuple80, 2);
+	EXPECT(error == 0);
+	ref_after = rate_field(0x18e8, 10);
+	EXPECT(ref_after == ((ref_before - 2) & 0x7f));
+
+	/* VHT80 1SS also shifts VHT1SS against the HT reference, so it cancels. */
+	reset(1, 0);
+	error = rtw8822c_set_tx_power_tuple(&sc, &efuse, &tuple80, 2);
+	EXPECT(error == 0);
+	before = rate_field(0x3a2c, 0); /* VHT1SS MCS0, rate44. */
+	reset(1, 0);
+	efuse.txpower[0][37] = 0xf0; /* OFDM multi-SS byte is not VHT80. */
+	error = rtw8822c_set_tx_power_tuple(&sc, &efuse, &tuple80, 2);
+	EXPECT(error == 0);
+	after = rate_field(0x3a2c, 0);
+	EXPECT(after == before);
+
+	/* The 2SS width80 delta is added for HT and VHT 2SS rates. */
+	reset(1, 0);
+	error = rtw8822c_set_tx_power_tuple(&sc, &efuse, &tuple80, 2);
+	EXPECT(error == 0);
+	before = rate_field(0x3a14, 0); /* HT2SS MCS0, rate20. */
+	reset(1, 0);
+	efuse.txpower[0][39] = 0xf0; /* VHT80 2SS = -1. */
+	error = rtw8822c_set_tx_power_tuple(&sc, &efuse, &tuple80, 2);
+	EXPECT(error == 0);
+	after = rate_field(0x3a14, 0);
+	EXPECT(after == ((before - 2) & 0x7f));
+
+	reset(1, 0);
+	error = rtw8822c_set_tx_power_tuple(&sc, &efuse, &tuple80, 2);
+	EXPECT(error == 0);
+	before = rate_field(0x3a34, 16); /* VHT2SS MCS0. */
+	reset(1, 0);
+	efuse.txpower[0][38] = efuse.txpower[1][38] = 0xf0;
+	error = rtw8822c_set_tx_power_tuple(&sc, &efuse, &tuple80, 2);
+	EXPECT(error == 0);
+	after = rate_field(0x3a34, 16);
+	EXPECT(after == before); /* The shared 1SS delta shifts the reference too. */
+
+	reset(1, 0);
+	error = rtw8822c_set_tx_power_tuple(&sc, &efuse, &tuple80, 2);
+	EXPECT(error == 0);
+	before = rate_field(0x3a34, 16);
+	reset(1, 0);
+	efuse.txpower[0][39] = efuse.txpower[1][39] = 0xf0;
+	error = rtw8822c_set_tx_power_tuple(&sc, &efuse, &tuple80, 2);
+	EXPECT(error == 0);
+	after = rate_field(0x3a34, 16);
+	EXPECT(after == ((before - 2) & 0x7f));
+
+	/* BW80 averages its MCS base groups but leaves OFDM on the lower group. */
+	reset(1, 0);
+	error = rtw8822c_set_tx_power_tuple(&sc, &efuse, &tuple80, 2);
+	EXPECT(error == 0);
+	ref_before = rate_field(0x18e8, 10);
+	before = rate_field(0x3a04, 0); /* OFDM6M, rate4. */
+	reset(1, 0);
+	efuse.txpower[0][21] += 4; /* upper of groups2 and3 for center58. */
+	error = rtw8822c_set_tx_power_tuple(&sc, &efuse, &tuple80, 2);
+	EXPECT(error == 0);
+	ref_after = rate_field(0x18e8, 10);
+	after = rate_field(0x3a04, 0);
+	EXPECT(ref_after == ((ref_before + 2) & 0x1ff));
+	EXPECT(after == ((before - 2) & 0x7f));
+}
+
+#if defined(RTW88_RFK_EXPERIMENT) && \
+	!defined(RTW88_TXPWR_DIFFERENTIAL_LIMIT) && \
+	!defined(RTW88_TXPWR_MISSING_LIMIT)
+static void
+rfk_power_proof_width(void)
+{
+	const struct rtw88_channel_tuple tuple20 = { 64, 64, 20 };
+	const struct rtw88_channel_tuple tuple40 = { 64, 62, 40 };
+	const struct rtw88_channel_tuple tuple80 = { 64, 58, 80 };
+	uint64_t serial;
+
+	reset(1, 0);
+	CHECK(rtw8822c_set_tx_power_tuple(&sc, &efuse, &tuple20, 2) == 0);
+	CHECK(sc.sc_power_program.valid && sc.sc_power_program.ht_mcs == 0xff);
+	serial = sc.sc_power_program.serial;
+	CHECK(rtw8822c_set_tx_power_tuple(&sc, &efuse, &tuple40, 2) == 0);
+	CHECK(!sc.sc_power_program.valid);
+	CHECK(sc.sc_power_program.serial == serial + 1);
+	CHECK(rtw8822c_set_tx_power_tuple(&sc, &efuse, &tuple20, 2) == 0);
+	CHECK(sc.sc_power_program.valid && sc.sc_power_program.ht_mcs == 0xff);
+	serial = sc.sc_power_program.serial;
+	CHECK(rtw8822c_set_tx_power_tuple(&sc, &efuse, &tuple80, 2) == 0);
+	CHECK(!sc.sc_power_program.valid);
+	CHECK(sc.sc_power_program.serial == serial + 1);
+}
+#endif
 
 static int
 raw_limit(const struct rtw8822c_table *table, unsigned regd, unsigned bw,
@@ -317,6 +449,11 @@ main(int argc, char **argv)
 	uint32_t before;
 
 	CHECK(argc == 2);
+#if defined(RTW88_RFK_EXPERIMENT) && \
+	!defined(RTW88_TXPWR_DIFFERENTIAL_LIMIT) && \
+	!defined(RTW88_TXPWR_MISSING_LIMIT)
+	rfk_power_proof_width();
+#endif
 #ifdef RTW88_TXPWR_DIFFERENTIAL_LIMIT
 	differential_width_limits();
 	printf("%u differential-width assertions passed\n", checks);
@@ -428,6 +565,8 @@ main(int argc, char **argv)
 		CHECK(accesses == i);
 	}
 	wide_tuples();
+	width_efuse_deltas();
+	CHECK(delta_failures == 0);
 	wide_raw_limits();
 	traces(argv[1]);
 	printf("%u RTL8822C TX power assertions passed\n", checks);

@@ -215,11 +215,11 @@ power_indices(const struct rtw8822c_efuse *efuse,
 			    rs == 0 ? (tuple->primary == 14 ? 5 : (unsigned)group) :
 			    6 + (unsigned)group;
 			if (cal[base_offset] == 0xff ||
-			    (tuple->width_mhz == 80 &&
+			    (tuple->width_mhz == 80 && rs >= 2 &&
 			    cal[18 + (unsigned)upper_group] == 0xff))
 				return EINVAL;
 			base = cal[base_offset];
-			if (tuple->width_mhz == 80)
+			if (tuple->width_mhz == 80 && rs >= 2)
 				base = (base + cal[18 + (unsigned)upper_group]) / 2;
 			if (base > 127)
 				return ERANGE;
@@ -230,25 +230,28 @@ power_indices(const struct rtw8822c_efuse *efuse,
 				if (tuple->width_mhz == 20 || rs == 1) {
 					if (cal[diff] == 0xff)
 						return EINVAL;
-					if (rs != 2 || tuple->width_mhz == 20)
-						delta = signed_nibble(cal[diff] >>
-						    (rs == 1 ? 0 : 4));
+					delta = signed_nibble(cal[diff] >>
+					    (rs == 1 ? 0 : 4));
 				}
 				if (tuple->width_mhz == 20 && (rs == 3 || rs == 5)) {
 					if (cal[band != 0 ? 33 : diff + 1] == 0xff)
 						return EINVAL;
 					delta += signed_nibble(cal[band != 0 ? 33 : diff + 1]);
-				} else if (tuple->width_mhz >= 40 && band != 0 &&
-				    rs == 3) {
+				} else if (tuple->width_mhz == 40 && band != 0 &&
+				    (rs == 3 || rs == 5)) {
 					if (cal[33] == 0xff)
 						return EINVAL;
 					delta = signed_nibble(cal[33] >> 4);
 				} else if (tuple->width_mhz == 80 && band != 0 &&
-				    rs >= 4) {
-					diff = rs == 4 ? 37 : 38;
-					if (cal[diff] == 0xff)
+				    rs >= 2) {
+					if (cal[38] == 0xff)
 						return EINVAL;
-					delta = signed_nibble(cal[diff] >> 4);
+					delta = signed_nibble(cal[38] >> 4);
+					if (rs == 3 || rs == 5) {
+						if (cal[39] == 0xff)
+							return EINVAL;
+						delta += signed_nibble(cal[39] >> 4);
+					}
 				}
 				base += 2 * delta;
 				if (base < 0 || base > 127)
@@ -379,18 +382,20 @@ rtw8822c_set_tx_power_tuple(struct rtw88_softc *sc,
 			return error;
 	}
 #ifdef RTW88_RFK_EXPERIMENT
-	/* Publish only the exact values whose complete program succeeded. */
-	sc->sc_power_program.generation = sc->sc_generation;
-	sc->sc_power_program.channel = tuple->primary;
-	sc->sc_power_program.regd = regd;
-	sc->sc_power_program.cut = sc->sc_cut;
-	sc->sc_power_program.rfe = sc->sc_rfe;
-	sc->sc_power_program.ht_mcs = 0xff;
-	for (path = 0; path < 2; path++) {
-		sc->sc_power_program.ht_ref[path] = indices[path][19];
-		sc->sc_power_program.ht_diff[path] = diff_words[3 + path];
+	if (tuple->width_mhz == 20) {
+		/* This evidence qualifies only the existing HT20 RFK consumer. */
+		sc->sc_power_program.generation = sc->sc_generation;
+		sc->sc_power_program.channel = tuple->primary;
+		sc->sc_power_program.regd = regd;
+		sc->sc_power_program.cut = sc->sc_cut;
+		sc->sc_power_program.rfe = sc->sc_rfe;
+		sc->sc_power_program.ht_mcs = 0xff;
+		for (path = 0; path < 2; path++) {
+			sc->sc_power_program.ht_ref[path] = indices[path][19];
+			sc->sc_power_program.ht_diff[path] = diff_words[3 + path];
+		}
+		sc->sc_power_program.valid = 1;
 	}
-	sc->sc_power_program.valid = 1;
 #endif
 	return 0;
 }

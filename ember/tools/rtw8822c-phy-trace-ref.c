@@ -227,9 +227,31 @@ section(const char *name, unsigned from, unsigned to)
 int
 main(void)
 {
+	static const struct {
+		const char *name;
+		u8 channel, bw, primary_chan_idx;
+	} sequence_20_40_80[] = {
+		{ "channel-sequence-20-40-80-step1", 64,
+		    RTW_CHANNEL_WIDTH_20, RTW_SC_DONT_CARE },
+		{ "channel-sequence-20-40-80-step2", 62,
+		    RTW_CHANNEL_WIDTH_40, RTW_SC_20_UPPER },
+		{ "channel-sequence-20-40-80-step3", 58,
+		    RTW_CHANNEL_WIDTH_80, RTW_SC_20_UPMOST },
+	};
+	static const struct {
+		const char *name;
+		u8 channel, bw, primary_chan_idx;
+	} sequence_80_20_40[] = {
+		{ "channel-sequence-80-20-40-step1", 58,
+		    RTW_CHANNEL_WIDTH_80, RTW_SC_20_UPMOST },
+		{ "channel-sequence-80-20-40-step2", 64,
+		    RTW_CHANNEL_WIDTH_20, RTW_SC_DONT_CARE },
+		{ "channel-sequence-80-20-40-step3", 62,
+		    RTW_CHANNEL_WIDTH_40, RTW_SC_20_UPPER },
+	};
 	static const u8 channels[] = { 1, 6, 11, 13, 14, 36, 100, 149 };
 	struct rtw_dev dev;
-	char name[32];
+	char name[64];
 	unsigned i;
 
 	printf("# rtw8822c PHY and channel reference trace, FreeBSD a143197 rtw88\n");
@@ -260,6 +282,24 @@ main(void)
 		    RTW_SC_DONT_CARE);
 		snprintf(name, sizeof(name), "channel-%u", channels[i]);
 		section(name, 0, model_ntrace);
+	}
+	setup(&dev);
+	for (i = 0; i < ARRAY_SIZE(sequence_20_40_80); i++) {
+		unsigned from = model_ntrace;
+
+		rtw8822c_set_channel(&dev, sequence_20_40_80[i].channel,
+		    sequence_20_40_80[i].bw,
+		    sequence_20_40_80[i].primary_chan_idx);
+		section(sequence_20_40_80[i].name, from, model_ntrace);
+	}
+	setup(&dev);
+	for (i = 0; i < ARRAY_SIZE(sequence_80_20_40); i++) {
+		unsigned from = model_ntrace;
+
+		rtw8822c_set_channel(&dev, sequence_80_20_40[i].channel,
+		    sequence_80_20_40[i].bw,
+		    sequence_80_20_40[i].primary_chan_idx);
+		section(sequence_80_20_40[i].name, from, model_ntrace);
 	}
 	return 0;
 }
