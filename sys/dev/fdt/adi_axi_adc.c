@@ -73,6 +73,7 @@ struct adi_axi_adc_softc {
 	struct adi_axi_dmac_buffer *sc_capture_buffer;
 	uint8_t *sc_capture_data;
  struct selinfo sc_stream_sel;
+ kmutex_t sc_stream_sel_lock;
  bool sc_stream_active;
  bool sc_stream_cancel;
  struct adi_axi_adc_stream_status sc_stream_status;
@@ -109,6 +110,7 @@ static int adiaxiadc_cdev_close(dev_t, int, int, struct lwp *);
 static int adiaxiadc_cdev_read(dev_t, struct uio *, int);
 static int adiaxiadc_cdev_poll(dev_t, int, struct lwp *);
 static int adiaxiadc_stream_stop(struct adi_axi_adc_softc *);
+static void adiaxiadc_stream_notify(void *);
 static int adiaxiadc_stream_read(struct adi_axi_adc_softc *, struct uio *, int);
 static int adiaxiadc_cdev_ioctl(dev_t, u_long, void *, int, struct lwp *);
 static int adiaxiadc_dma_drain(void *, unsigned int);
@@ -806,6 +808,7 @@ adiaxiadc_session_release(struct adi_axi_adc_softc *sc)
 	sc->sc_session_busy = false;
 	cv_broadcast(&sc->sc_session_cv);
 	mutex_exit(&sc->sc_session_lock);
+ adiaxiadc_stream_notify(sc);
 }
 
 static bool
@@ -928,7 +931,9 @@ static void
 adiaxiadc_stream_notify(void *cookie)
 {
  struct adi_axi_adc_softc *sc = cookie;
+ mutex_enter(&sc->sc_stream_sel_lock);
  selnotify(&sc->sc_stream_sel, 0, NOTE_SUBMIT);
+ mutex_exit(&sc->sc_stream_sel_lock);
  cv_broadcast(&sc->sc_session_cv);
 }
 
@@ -941,16 +946,17 @@ adiaxiadc_stream_stop(struct adi_axi_adc_softc *sc)
  if (l == NULL || l->l_capture_guard == NULL)
   return EIO;
  if (sc->sc_stream_active) {
+  mutex_enter(&l->l_converter->c_lock);
   error = adi_axi_dmac_guard_stream_stop(l->l_capture_guard, 1000);
+  if (error == 0)
+   error = quiesce_locked(l, 1000);
+  mutex_exit(&l->l_converter->c_lock);
   if (error != 0) {
    sc->sc_stream_status.last_error = error;
    return error;
   }
   sc->sc_stream_active = false;
   sc->sc_stream_status.flags &= ~ADI_AXI_ADC_STREAM_RUNNING;
-  error = adi_axi_adc_stop(l, 1000);
-  if (error != 0)
-   return error;
  }
  for (unsigned i = 0; i < ADI_AXI_ADC_STREAM_MAX_BLOCKS; i++) {
   if (sc->sc_stream_buffers[i] == NULL)
@@ -967,7 +973,7 @@ adiaxiadc_stream_stop(struct adi_axi_adc_softc *sc)
  }
  sc->sc_stream_current = NULL;
  sc->sc_stream_offset = sc->sc_stream_valid = 0;
- selnotify(&sc->sc_stream_sel, 0, NOTE_SUBMIT);
+ adiaxiadc_stream_notify(sc);
  return 0;
 }
 
@@ -1088,9 +1094,13 @@ adiaxiadc_stream_read(struct adi_axi_adc_softc *sc, struct uio *uio, int flags)
   if (flags & IO_NDELAY)
    return EAGAIN;
   mutex_enter(&sc->sc_session_lock);
+  error = 0;
   if (!sc->sc_stream_cancel)
-   (void)cv_timedwait(&sc->sc_session_cv, &sc->sc_session_lock, 1);
+   error = cv_timedwait_sig(&sc->sc_session_cv, &sc->sc_session_lock, 1);
   mutex_exit(&sc->sc_session_lock);
+  /* No byte has moved on this call while it waits for its first block. */
+  if (error != 0 && error != EWOULDBLOCK)
+   return error;
  }
  length = uimin(uio->uio_resid, sc->sc_stream_valid - sc->sc_stream_offset);
  before = uio->uio_resid;
@@ -1119,7 +1129,9 @@ adiaxiadc_cdev_poll(dev_t dev, int events, struct lwp *l)
  if (sc == NULL)
   return POLLERR;
  mutex_enter(&sc->sc_session_lock);
+ mutex_enter(&sc->sc_stream_sel_lock);
  selrecord(l, &sc->sc_stream_sel);
+ mutex_exit(&sc->sc_stream_sel_lock);
  if (!sc->sc_session_open || sc->sc_stream_cancel)
   ready = POLLHUP;
  else if (sc->sc_session_busy) {
@@ -1127,9 +1139,10 @@ adiaxiadc_cdev_poll(dev_t dev, int events, struct lwp *l)
   return 0;
  } else if (sc->sc_stream_status.last_error)
   ready = POLLERR;
- else if (sc->sc_stream_active && !sc->sc_session_busy) {
-  sc->sc_session_busy = true;
-  mutex_exit(&sc->sc_session_lock);
+ else if (sc->sc_stream_active) {
+  /* Keep session admission locked across this read-only provider snapshot.
+   * Poll does not create a busy operation or notify its own empty scan.
+   */
   if (sc->sc_stream_valid != 0)
    ready = events & (POLLIN | POLLRDNORM);
   else if (adi_axi_dmac_guard_stream_next(sc->sc_lease->l_capture_guard,
@@ -1139,8 +1152,6 @@ adiaxiadc_cdev_poll(dev_t dev, int events, struct lwp *l)
    else
     ready = events & (POLLIN | POLLRDNORM);
   }
-  adiaxiadc_session_release(sc);
-  return ready;
  }
  mutex_exit(&sc->sc_session_lock);
  return ready;
@@ -1346,6 +1357,7 @@ adiaxiadc_cdev_ioctl(dev_t dev, u_long command, void *data, int flags,
 	case ADI_AXI_ADCIOC_CONFIG: {
 		struct adi_axi_adc_config *user = data;
 		struct adi_axi_rx_config config;
+  struct adi_axi_rx_status measured;
 		bool bootstrap;
 
 		if (user->abi_version != ADI_AXI_ADC_ABI_VERSION ||
@@ -1413,6 +1425,15 @@ adiaxiadc_cdev_ioctl(dev_t dev, u_long command, void *data, int flags,
 				error = adi_axi_adc_configure(lease, &config,
 				    user->timeout_ms);
 		}
+  sc->sc_stream_status.sample_rate_hz = 0;
+  if (error == 0) {
+   memset(&measured, 0, sizeof(measured));
+   error = adi_axi_adc_read_rx_status(lease, &measured);
+   if (error == EOPNOTSUPP)
+    error = 0;
+   else if (error == 0)
+    sc->sc_stream_status.sample_rate_hz = measured.sample_rate_hz;
+  }
 		sc->sc_configured = error == 0;
 		if (error == 0)
 			sc->sc_config = config;
@@ -1568,6 +1589,7 @@ adiaxiadc_attach(device_t parent, device_t self, void *aux)
 	}
 	mutex_init(&sc->sc_session_lock, MUTEX_DEFAULT, IPL_NONE);
 	cv_init(&sc->sc_session_cv, "adiadc");
+	mutex_init(&sc->sc_stream_sel_lock, MUTEX_DEFAULT, IPL_BIO);
 	selinit(&sc->sc_stream_sel);
 	adi_axi_registry_init();
 	mutex_enter(&adi_axi_registry_lock);

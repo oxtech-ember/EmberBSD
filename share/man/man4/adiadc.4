@@ -91,6 +91,7 @@ reports the generation, current block sequence and offset, completion counts,
 known discontinuities, ready blocks and last error.
 A zero sample clock means the provider cannot measure it.
 The reported clock is not inferred from the requested rate.
+A successful configuration exposes the measured clock before stream start.
 .Pp
 Queue starvation or a hardware overflow latches
 .Er EOVERFLOW .
@@ -122,6 +123,8 @@ First receive device.
 .Bl -tag -width EOPNOTSUPP
 .It Er EBUSY
 Another session owns the converter.
+.It Er EINTR
+A signal interrupted a blocked stream read before it moved bytes.
 .It Er ECANCELED
 A stop, close or configuration request canceled a blocked stream read.
 .It Er EOVERFLOW

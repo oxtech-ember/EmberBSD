@@ -46,6 +46,8 @@
 #define DMAC_IRQ_EOT	2
 #define DMAC_IRQ_ALL	3
 #define DMAC_FLAG_TLAST	2
+#define DMAC_STREAM_HW_IDS 4U
+#define DMAC_STREAM_MAX_QUEUED 31U
 
 struct adi_axi_dmac_softc {
 	device_t sc_dev;
@@ -90,6 +92,7 @@ struct adi_axi_dmac_channel {
 	uint32_t c_length_mask;
  bool c_streaming;
  bool c_stream_starved;
+ struct adi_axi_dmac_buffer *c_stream_latched;
  uint64_t c_submit_sequence;
  uint64_t c_take_sequence;
  struct adi_axi_dmac_stream_status c_stream_status;
@@ -117,7 +120,7 @@ struct adi_axi_dmac_buffer {
 	size_t b_inflight;
 	size_t b_prepared;
 	bool b_transferring;
- unsigned b_stream_state; /* 0: free, 1: DMA, 2: ready, 3: caller, 4: pending */
+ unsigned b_stream_state; /* 0: free, 1: accepted, 2: ready, 3: caller, 4: pending, 5: latched */
  uint32_t b_stream_id;
  uint64_t b_stream_sequence;
 	LIST_ENTRY(adi_axi_dmac_buffer) b_next;
@@ -421,6 +424,7 @@ dmac_stop_locked(struct adi_axi_dmac_channel *c, unsigned int timeout_ms,
  c->c_streaming = false;
  c->c_stream_notify = NULL;
  c->c_stream_cookie = NULL;
+ c->c_stream_latched = NULL;
 	dmac_write(sc, DMAC_IRQ_MASK, DMAC_IRQ_ALL);
 	dmac_write(sc, DMAC_CONTROL, 0);
 	dmac_read(sc, DMAC_CONTROL);
@@ -1058,6 +1062,23 @@ out:
 }
 
 
+/* The posted request is not accepted until SUBMIT clears and ID advances.
+ * Exact 4.5.c has two-bit IDs. Old DONE clears on SOT, not on SUBMIT.
+ * Only one register request can be latched, so an observed advance is unique.
+ */
+static void
+dmac_stream_accept_locked(struct adi_axi_dmac_channel *c)
+{
+ struct adi_axi_dmac_softc *sc = c->c_sc;
+ struct adi_axi_dmac_buffer *b = c->c_stream_latched;
+ if (b == NULL || dmac_read(sc, DMAC_SUBMIT) != 0)
+  return;
+ if (dmac_read(sc, DMAC_ID) != ((b->b_stream_id + 1) & 3U))
+  return;
+ b->b_stream_state = 1;
+ c->c_stream_latched = NULL;
+}
+
 /* IRQ lock protects queue state. PRE sync completes before state 4 is visible.
  * SOT frees the request latch. EOT and next() also retry queued requests.
  * The buffer list stays fixed until a positive stop removes the IRQ callback.
@@ -1070,6 +1091,8 @@ dmac_stream_pump_locked(struct adi_axi_dmac_channel *c)
  const struct adi_axi_dmac_buffer *other;
  uint32_t done;
  bool live = false, completed = false;
+ dmac_stream_accept_locked(c);
+ live = c->c_stream_latched != NULL;
  done = dmac_read(sc, DMAC_DONE);
  LIST_FOREACH(b, &c->c_buffers, b_next) {
   if (b->b_stream_state != 1)
@@ -1083,10 +1106,10 @@ dmac_stream_pump_locked(struct adi_axi_dmac_channel *c)
   c->c_stream_starved = true;
   c->c_stream_status.discontinuities++;
  }
- for (unsigned n = 0; n < 31; n++) {
+ for (unsigned n = 0; n < DMAC_STREAM_HW_IDS; n++) {
   struct adi_axi_dmac_buffer *first;
   uint32_t id;
-  if (dmac_read(sc, DMAC_SUBMIT) != 0)
+  if (c->c_stream_latched != NULL || dmac_read(sc, DMAC_SUBMIT) != 0)
    return;
   first = NULL;
   LIST_FOREACH(b, &c->c_buffers, b_next)
@@ -1096,13 +1119,14 @@ dmac_stream_pump_locked(struct adi_axi_dmac_channel *c)
   if (first == NULL)
    return;
   id = dmac_read(sc, DMAC_ID);
-  if (id >= 32)
+  if (id >= DMAC_STREAM_HW_IDS)
    return;
   LIST_FOREACH(other, &c->c_buffers, b_next)
    if (other->b_stream_state == 1 && other->b_stream_id == id)
     return;
   first->b_stream_id = id;
-  first->b_stream_state = 1;
+  first->b_stream_state = 5;
+  c->c_stream_latched = first;
   dmac_write(sc, DMAC_FLAGS, 0);
   dmac_write(sc, DMAC_DEST, first->b_map->dm_segs[0].ds_addr);
   dmac_write(sc, DMAC_X_LENGTH, first->b_inflight - 1);
@@ -1113,6 +1137,7 @@ dmac_stream_pump_locked(struct adi_axi_dmac_channel *c)
       BUS_SPACE_BARRIER_WRITE);
   dmac_write(sc, DMAC_SUBMIT, 1);
   dmac_read(sc, DMAC_SUBMIT);
+  dmac_stream_accept_locked(c);
  }
 }
 
@@ -1136,6 +1161,7 @@ adi_axi_dmac_stream_start(struct adi_axi_dmac_channel *c)
   memset(&c->c_stream_status, 0, sizeof(c->c_stream_status));
   c->c_submit_sequence = c->c_take_sequence = 0;
   c->c_stream_starved = false;
+  c->c_stream_latched = NULL;
   sc->sc_drained = false;
   mutex_enter(&sc->sc_irq_lock);
   c->c_streaming = true;
@@ -1166,7 +1192,7 @@ adi_axi_dmac_stream_submit(struct adi_axi_dmac_buffer *b, size_t size)
   goto out;
  }
  if (b->b_inflight || b->b_stream_state == 2 ||
-     c->c_stream_status.queued >= 31) {
+     c->c_stream_status.queued >= DMAC_STREAM_MAX_QUEUED) {
   error = EBUSY;
   goto out;
  }
@@ -1205,6 +1231,7 @@ adi_axi_dmac_stream_next(struct adi_axi_dmac_channel *c,
   error = EIO;
   goto out;
  }
+ dmac_stream_accept_locked(c);
  done = dmac_read(sc, DMAC_DONE);
  LIST_FOREACH(b, &c->c_buffers, b_next) {
   if (b->b_stream_state == 1 && (done & __BIT(b->b_stream_id))) {
@@ -1218,7 +1245,7 @@ adi_axi_dmac_stream_next(struct adi_axi_dmac_channel *c,
    c->c_stream_status.completed_blocks++;
    c->c_stream_status.completed_bytes += b->b_valid;
   }
-  if (b->b_stream_state == 1)
+  if (b->b_stream_state == 1 || b->b_stream_state == 5)
    live++;
   if (b->b_stream_sequence == c->c_take_sequence && b->b_stream_state == 2)
    first = b;

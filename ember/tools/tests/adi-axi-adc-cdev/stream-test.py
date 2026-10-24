@@ -6,11 +6,13 @@ from pathlib import Path
 import shlex
 import subprocess
 import tempfile
+import sys
 root = Path(__file__).resolve().parents[4]
 text = (root / 'sys/dev/fdt/adi_axi_adc.c').read_text()
 functions = []
-for name in ('adiaxiadc_stream_stop', 'adiaxiadc_stream_start', 'adiaxiadc_stream_read', 'adiaxiadc_cdev_poll'):
-    start = text.index('static int\n' + name + '(')
+for name in ('poison_locked', 'adiaxiadc_dma_drain', 'quiesce_locked', 'adiaxiadc_session_release', 'adiaxiadc_stream_notify', 'adiaxiadc_stream_stop', 'adiaxiadc_stream_start', 'adiaxiadc_stream_read', 'adiaxiadc_cdev_poll'):
+    kind = 'void' if name in ('poison_locked', 'adiaxiadc_session_release', 'adiaxiadc_stream_notify') else 'int'
+    start = text.index('static ' + kind + '\n' + name + '(')
     end = text.index('\n}\n', start) + 3
     functions.append(text[start:end])
 with tempfile.TemporaryDirectory(prefix='adi-stream-') as work:
@@ -21,4 +23,6 @@ with tempfile.TemporaryDirectory(prefix='adi-stream-') as work:
     if os.environ.get('ANALYZE') == 'yes':
         cmd += ['-fanalyzer']
     subprocess.run(cmd + ['-I' + str(work), str(Path(__file__).with_suffix('.c')), '-o', str(work / 'test')], check=True)
-    subprocess.run([str(work / 'test')], check=True)
+
+    for case in sys.argv[1:] or ['signal', 'selection', 'busy', 'stop', 'all']:
+        subprocess.run([str(work / 'test'), case], check=True)

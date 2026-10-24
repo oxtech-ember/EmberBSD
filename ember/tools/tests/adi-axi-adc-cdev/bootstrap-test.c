@@ -21,7 +21,7 @@ struct adi_axi_rx_config {
  uint32_t sample_rate_hz,bandwidth_hz,rf_port,rx_mask,channel_mask;
  int32_t gain_mdB[2]; unsigned gain_mode[2];
 };
-struct adi_axi_rx_status { uint32_t valid_mask; int32_t rssi_mdB[2],gain_mdB[2]; };
+struct adi_axi_rx_status { uint32_t sample_rate_hz,valid_mask; int32_t rssi_mdB[2],gain_mdB[2]; };
 struct adi_axi_adc_lease;
 struct converter_ops { int (*bootstrap)(void *,const struct adi_axi_rx_config *); };
 struct capture_ops { int (*cold_bootstrap)(void *); };
@@ -49,7 +49,7 @@ struct adi_axi_adc_softc {
 };
 static struct adi_axi_adc_softc adc;
 static unsigned drains,boots,configures,retunes;
-static int drain_error;
+static int drain_error,measurement_error;
 static bool initialized;
 static void mutex_enter(int *p) { (void)p; }
 static void mutex_exit(int *p) { (void)p; }
@@ -72,13 +72,13 @@ static int adi_axi_dmac_guard_buffer_alloc(void *g,size_t n,void **p) { (void)g;
 static void *kmem_alloc(size_t n,int flags) { (void)flags;void *p=malloc(n);assert(p);return p; }
 static void kmem_free(void *p,size_t n) { (void)n;free(p); }
 static int adi_axi_adc_configure(struct adi_axi_adc_lease *l,const struct adi_axi_rx_config *c,unsigned ms) {
- (void)l;(void)c;assert(ms==1000);if(!initialized)return ENXIO;configures++;return 0;
+ (void)c;assert(ms==1000);if(!initialized)return ENXIO;l->l_quiet=true;configures++;return 0;
 }
 int adi_axi_adc_retune_rx(struct adi_axi_adc_lease *l,uint64_t frequency);
 int adi_axi_adc_retune_rx(struct adi_axi_adc_lease *l,uint64_t frequency) {
  assert(l->l_quiet && initialized && frequency==918000000);retunes++;return 0;
 }
-static int adi_axi_adc_read_rx_status(struct adi_axi_adc_lease *l,struct adi_axi_rx_status *s) { (void)l;(void)s;return 0; }
+static int adi_axi_adc_read_rx_status(struct adi_axi_adc_lease *l,struct adi_axi_rx_status *s) { (void)l;if(measurement_error)return measurement_error;s->sample_rate_hz=2399999;return 0; }
 static void cv_wait(int *cv,int *lock) { (void)cv;(void)lock;assert(0); }
 static void cv_broadcast(int *cv) { (void)cv; }
 static int adiaxiadc_stream_start(struct adi_axi_adc_softc *sc,const void *data) { (void)sc;(void)data;return EOPNOTSUPP; }
@@ -95,12 +95,17 @@ int main(void)
  struct adi_axi_converter converter={.c_ops=&ops};
  struct adi_axi_adc_lease lease={.l_converter=&converter,.l_ops=&capture,.l_nguards=1};
  struct adi_axi_adc_config config={.abi_version=1,.struct_size=sizeof(config),
-  .frequency_hz=915000000,.sample_rate_hz=10000000,.bandwidth_hz=8000000,
+  .frequency_hz=915000000,.sample_rate_hz=2400000,.bandwidth_hz=8000000,
   .rx_mask=1,.channel_mask=3,.timeout_ms=1000};
  struct adi_axi_rx_config cfg={.rx_mask=1};
  adc.sc_lease=&lease;adc.sc_session_open=true;
  assert(adiaxiadc_cdev_ioctl(0,ADI_AXI_ADCIOC_CONFIG,&config,0,NULL)==0);
  assert(initialized && adc.sc_configured && boots==1 && drains==2 && configures==1);
+ struct adi_axi_adc_stream_status measured={.abi_version=2,.struct_size=sizeof(measured)};
+ assert(!adc.sc_stream_active);
+ assert(adiaxiadc_cdev_ioctl(0,ADI_AXI_ADCIOC_STREAM_STATUS,&measured,0,NULL)==0);
+ assert(measured.sample_rate_hz==2399999 && measured.sample_rate_hz!=config.sample_rate_hz);
+ puts("PASS CONFIG exposes measured sampling_frequency before STREAM_START");
  config.frequency_hz=918000000;
  assert(adiaxiadc_cdev_ioctl(0,ADI_AXI_ADCIOC_CONFIG,&config,0,NULL)==0);
  assert(boots==1 && configures==1 && retunes==1);
@@ -111,6 +116,15 @@ int main(void)
  lease.l_quiet=false;adc.sc_configured=false;
  assert(adiaxiadc_cdev_ioctl(0,ADI_AXI_ADCIOC_CONFIG,&config,0,NULL)==0);
  assert(boots==1 && configures==3);
+ measurement_error=EOPNOTSUPP;
+ assert(adiaxiadc_cdev_ioctl(0,ADI_AXI_ADCIOC_CONFIG,&config,0,NULL)==0);
+ assert(adiaxiadc_cdev_ioctl(0,ADI_AXI_ADCIOC_STREAM_STATUS,&measured,0,NULL)==0);
+ assert(measured.sample_rate_hz==0);
+ measurement_error=EIO;
+ assert(adiaxiadc_cdev_ioctl(0,ADI_AXI_ADCIOC_CONFIG,&config,0,NULL)==EIO);
+ assert(!adc.sc_configured && adc.sc_stream_status.sample_rate_hz==0);
+ measurement_error=0;
+ puts("PASS unavailable clock reports zero, failed clock readback refuses CONFIG success");
  converter.c_bootstrap_used=false;lease.l_quiet=false;lease.l_poisoned=false;
  drains=boots=0;initialized=false;drain_error=ETIMEDOUT;
  assert(adi_axi_adc_bootstrap(&lease,&cfg,1000)==ETIMEDOUT);

@@ -108,6 +108,7 @@ static size_t sync_sizes[128];
 static bus_dmamap_t dma_maps;
 static pthread_mutex_t maps_lock = PTHREAD_MUTEX_INITIALIZER;
 static bool drained, submitted;
+static bool request_model, delayed_sot;
 static unsigned idle_ready_after, idle_reads, drain_elapsed;
 static bool idle_pending, freeze_ticks;
 static unsigned delay_calls;
@@ -346,8 +347,12 @@ bus_space_write_4(bus_space_tag_t tag, bus_space_handle_t handle,
 		map->dma_submitted = true;
 		map->dma_drained = false;
 		CHECK(pthread_mutex_unlock(&maps_lock) == 0);
-		registers[0x428 / 4] &= ~__BIT(registers[0x404 / 4]);
-		registers[reg / 4] = 0;
+		if (!request_model || !delayed_sot) {
+   registers[0x428 / 4] &= ~__BIT(registers[0x404 / 4]);
+   registers[reg / 4] = 0;
+   if (request_model)
+    registers[0x404 / 4] = (registers[0x404 / 4] + 1) & 3;
+  }
 		submitted = true;
 		submits++;
 	}
@@ -704,6 +709,7 @@ reset_fixture(uint32_t interface)
 	map_flags = load_flags = -1;
 	irq_mode = IRQ_MATCH;
 	submitted = drained = false;
+ request_model = delayed_sot = false;
 	idle_ready_after = idle_reads = drain_elapsed = 0;
 	idle_pending = freeze_ticks = false;
 	delay_calls = 0;
@@ -1569,6 +1575,152 @@ check_shutdown_access(void)
 	puts("PASS shutdown refuses subsequent CPU buffer access");
 }
 
+/* Exercise ADC ownership through the actual DMAC bound callback chain. */
+#define ADI_AXI_ADC_STREAM_MAX_BLOCKS 16
+#define ADI_AXI_ADC_STREAM_RUNNING 1
+#define NOTE_SUBMIT 0
+struct adi_axi_converter { kmutex_t c_lock; bool c_poisoned; };
+struct adi_axi_capture_ops { int (*quiesce)(void *, unsigned); };
+struct adi_axi_adc_lease {
+ struct adi_axi_converter *l_converter;
+ const struct adi_axi_capture_ops *l_ops;
+ void *l_cookie;
+ struct adi_axi_dmac_guard *l_capture_guard;
+ bool l_poisoned, l_quiet, l_running;
+};
+struct adi_axi_adc_softc {
+ struct adi_axi_adc_lease *sc_lease;
+ bool sc_stream_active;
+ int sc_stream_sel;
+ struct { int last_error; unsigned flags, block_bytes; } sc_stream_status;
+ struct adi_axi_dmac_buffer *sc_stream_buffers[16], *sc_stream_current;
+ uint8_t *sc_stream_data;
+ size_t sc_stream_offset, sc_stream_valid;
+};
+static unsigned adc_stop_notifications;
+static volatile int adc_disable_error;
+void selnotify(int *, int, int);
+void selnotify(int *p, int events, int hint) { (void)p; (void)events; (void)hint; adc_stop_notifications++; }
+static bool mutex_owned(const kmutex_t *lock) { return lock->held == 1; }
+static int
+adc_disable_channels(struct adi_axi_adc_lease *l)
+{
+ CHECK(mutex_owned(&l->l_converter->c_lock));
+ return adc_disable_error;
+}
+static int
+check_dmas(struct adi_axi_adc_lease *l)
+{
+ CHECK(mutex_owned(&l->l_converter->c_lock));
+ return adi_axi_dmac_guard_check(l->l_capture_guard);
+}
+static void adiaxiadc_stream_notify(void *cookie)
+{
+ CHECK(cookie != NULL);
+ ((struct adi_axi_adc_softc *)cookie)->sc_stream_sel++;
+ adc_stop_notifications++;
+}
+int adi_axi_adc_stop(struct adi_axi_adc_lease *, unsigned);
+int adi_axi_adc_stop(struct adi_axi_adc_lease *l, unsigned ms)
+{
+ (void)ms;
+ CHECK(!mutex_owned(&l->l_converter->c_lock));
+ return 0;
+}
+#include "adc-stop.inc"
+
+static void
+check_converter_owned_stream_stop(void)
+{
+ (void)quiesce_locked;
+ (void)adiaxiadc_stream_notify;
+ struct adi_axi_converter converter = {0};
+ struct adi_axi_adc_lease lease = {.l_converter = &converter};
+ struct adi_axi_adc_softc adc = {.sc_lease = &lease};
+ const struct adi_axi_capture_ops consumer_ops = {.quiesce = drain};
+ const struct adi_axi_dmac_drain_ops bound_ops = {.drain = adiaxiadc_dma_drain};
+ reset_fixture(0x2303);
+ CHECK(dmac_interface(&fixture, 0x040563, 0x2303) == 0);
+ mutex_init(&converter.c_lock, MUTEX_DEFAULT, IPL_NONE);
+ lease.l_ops = &consumer_ops;
+ lease.l_cookie = &fixture;
+ CHECK(adi_axi_dmac_reserve(17, &fixture, &lease.l_capture_guard) == 0);
+ CHECK(adi_axi_dmac_guard_bind(lease.l_capture_guard, &bound_ops, &lease) == 0);
+ mutex_enter(&converter.c_lock);
+ CHECK(adi_axi_dmac_guard_prepare(lease.l_capture_guard) == 0);
+ mutex_exit(&converter.c_lock);
+ CHECK(adi_axi_dmac_guard_buffer_alloc(lease.l_capture_guard, 64,
+     &adc.sc_stream_buffers[0]) == 0);
+ request_model = true;
+ CHECK(adi_axi_dmac_guard_stream_start(lease.l_capture_guard) == 0);
+ CHECK(adi_axi_dmac_guard_stream_submit(lease.l_capture_guard,
+     adc.sc_stream_buffers[0], 64) == 0);
+ adc.sc_stream_active = true;
+ lease.l_running = true;
+ lease.l_quiet = false;
+ adc_stop_notifications = 0;
+ CHECK(adiaxiadc_stream_stop(&adc) == 0);
+ CHECK(!adc.sc_stream_active && adc.sc_stream_buffers[0] == NULL);
+ CHECK(lease.l_quiet && !lease.l_running && adc_stop_notifications == 1 && adc.sc_stream_sel == 1);
+ CHECK(adi_axi_dmac_unreserve(lease.l_capture_guard) == 0);
+ mutex_destroy(&converter.c_lock);
+ puts("PASS actual ADC stop -> DMAC stop -> bound ADC drain retains converter lock and positive drain");
+}
+
+static void
+check_rx_stale_done_before_sot(void)
+{
+ struct adi_axi_dmac_channel *c;
+ struct adi_axi_dmac_buffer *buffers[4], *next;
+ struct adi_axi_dmac_stream_status status;
+ unsigned char data[64];
+ reset_fixture(0x2303);
+ CHECK(dmac_interface(&fixture, 0x040563, 0x2303) == 0);
+ c = acquire();
+ for (unsigned i = 0; i < 4; i++)
+  CHECK(adi_axi_dmac_buffer_alloc(c, 64, &buffers[i]) == 0);
+ request_model = true;
+ CHECK(adi_axi_dmac_stream_start(c) == 0);
+ for (unsigned i = 0; i < 4; i++)
+  CHECK(adi_axi_dmac_stream_submit(buffers[i], 64) == 0);
+ CHECK(registers[DMAC_ID / 4] == 0); /* Exact two-bit wrap 3 -> 0. */
+ buffers[0]->b_map->dma_drained = true;
+ registers[DMAC_DONE / 4] = 1;
+ deliver_irq(2, 1);
+ CHECK(adi_axi_dmac_stream_next(c, &next, &status) == 0 && next == buffers[0]);
+ CHECK(status.completed_blocks == 1 && status.discontinuities == 0);
+ /* The next ID 0 request is latched while old DONE[0] remains set. */
+ delayed_sot = true;
+ CHECK(adi_axi_dmac_stream_submit(buffers[0], 64) == 0);
+ CHECK(registers[DMAC_SUBMIT / 4] == 1 && registers[DMAC_DONE / 4] == 1);
+ CHECK(adi_axi_dmac_stream_next(c, &next, &status) == EAGAIN);
+ CHECK(buffers[0]->b_inflight == 64 && buffers[0]->b_valid == 0);
+ CHECK(status.completed_blocks == 1 && status.discontinuities == 0);
+ CHECK(adi_axi_dmac_buffer_read(buffers[0], data, 64) == EBUSY);
+ /* SOT accepts the latched request and only then clears old DONE. */
+ registers[DMAC_DONE / 4] = 0;
+ registers[DMAC_SUBMIT / 4] = 0;
+ registers[DMAC_ID / 4] = 1;
+ deliver_irq(1, 0);
+ CHECK(adi_axi_dmac_stream_next(c, &next, &status) == EAGAIN);
+ CHECK(status.completed_blocks == 1 && status.discontinuities == 0);
+ /* EOT completes older requests 1,2,3 before the new request 0. */
+ for (unsigned i = 1; i <= 4; i++) {
+  unsigned id = i & 3;
+  buffers[id]->b_map->dma_drained = true;
+  registers[DMAC_DONE / 4] |= __BIT(id);
+  deliver_irq(2, registers[DMAC_DONE / 4]);
+  CHECK(adi_axi_dmac_stream_next(c, &next, &status) == 0 && next == buffers[id]);
+  CHECK(status.sequence == i && status.completed_blocks == i + 1);
+ }
+ CHECK(drain_calls == 1 && registers[DMAC_CONTROL / 4] == 1);
+ CHECK(adi_axi_dmac_stop(c, 100) == 0);
+ for (unsigned i = 0; i < 4; i++)
+  CHECK(adi_axi_dmac_buffer_free(buffers[i]) == 0);
+ CHECK(adi_axi_dmac_release(c) == 0);
+ puts("PASS exact four-ID wrap: stale DONE cannot publish a latched request before SOT/EOT");
+}
+
 static void
 check_rx_submit_backpressure(void)
 {
@@ -1579,14 +1731,15 @@ check_rx_submit_backpressure(void)
  c = acquire();
  CHECK(adi_axi_dmac_buffer_alloc(c, 64, &a) == 0);
  CHECK(adi_axi_dmac_buffer_alloc(c, 64, &b) == 0);
+ request_model = true;
  CHECK(adi_axi_dmac_stream_start(c) == 0);
- registers[DMAC_ID / 4] = 7;
+ registers[DMAC_ID / 4] = 3;
  CHECK(adi_axi_dmac_stream_submit(a, 64) == 0);
  registers[DMAC_SUBMIT / 4] = 1;
  CHECK(adi_axi_dmac_stream_submit(b, 64) == 0);
  CHECK(submits == 1 && b->b_stream_state == 4);
  CHECK(adi_axi_dmac_buffer_free(a) == EBUSY);
- registers[DMAC_ID / 4] = 8;
+ registers[DMAC_ID / 4] = 0;
  registers[DMAC_SUBMIT / 4] = 0;
  deliver_irq(1, 0);
  CHECK(submits == 2 && b->b_stream_state == 1);
@@ -1614,13 +1767,14 @@ check_rx_queue_bounds(void)
  c = acquire();
  for (unsigned i = 0; i < 32; i++)
   CHECK(adi_axi_dmac_buffer_alloc(c, 64, &buffers[i]) == 0);
+ request_model = true;
  CHECK(adi_axi_dmac_stream_start(c) == 0);
  CHECK(adi_axi_dmac_stream_start(c) == EBUSY);
  for (unsigned i = 0; i < 31; i++) {
-  registers[DMAC_ID / 4] = i;
+  registers[DMAC_ID / 4] = i & 3;
   CHECK(adi_axi_dmac_stream_submit(buffers[i], 64) == 0);
  }
- registers[DMAC_ID / 4] = 31;
+ registers[DMAC_ID / 4] = 3;
  CHECK(adi_axi_dmac_stream_submit(buffers[31], 64) == EBUSY);
  CHECK(adi_axi_dmac_transfer(buffers[31], 64, 1) == EBUSY);
  CHECK(adi_axi_dmac_buffer_read(buffers[0], copy, 64) == EBUSY);
@@ -1652,8 +1806,9 @@ check_rx_queue(void)
  c = acquire();
  CHECK(adi_axi_dmac_buffer_alloc(c, 64, &a) == 0);
  CHECK(adi_axi_dmac_buffer_alloc(c, 64, &b) == 0);
+ request_model = true;
  CHECK(adi_axi_dmac_stream_start(c) == 0);
- registers[DMAC_ID / 4] = 31;
+ registers[DMAC_ID / 4] = 3;
  CHECK(adi_axi_dmac_stream_submit(a, 64) == 0);
  CHECK(adi_axi_dmac_stream_submit(a, 64) == EBUSY);
  registers[DMAC_ID / 4] = 0;
@@ -1663,7 +1818,7 @@ check_rx_queue(void)
  b->b_map->dma_drained = true;
  registers[DMAC_DONE / 4] = __BIT(0);
  CHECK(adi_axi_dmac_stream_next(c, &next, &status) == EAGAIN);
- registers[DMAC_DONE / 4] |= __BIT(31);
+ registers[DMAC_DONE / 4] |= __BIT(3);
  /* Completion returns only the exact submitted range. */
  a->b_map->dma_drained = b->b_map->dma_drained = true;
  CHECK(adi_axi_dmac_stream_next(c, &next, &status) == 0 && next == a);
@@ -1685,6 +1840,8 @@ main(void)
 	(void)hz;
 	(void)adiaxidmac_shutdown_final;
 	check_interfaces();
+	check_converter_owned_stream_stop();
+	check_rx_stale_done_before_sot();
 	check_rx_queue();
 	check_rx_queue_bounds();
 	check_rx_submit_backpressure();

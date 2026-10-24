@@ -15,6 +15,15 @@ awk '
     { print }
 ' "$source_dir/sys/dev/fdt/adi_axi_dmac.c" > "$work/driver.inc"
 awk '!/^#include/' "$source_dir/sys/dev/fdt/adi_axi_dmacvar.h" > "$work/api.h"
+# Include the real ADC stop, its converter-bound callback, and quiesce path.
+awk '
+    /^(poison_locked|adiaxiadc_dma_drain|quiesce_locked|adiaxiadc_stream_stop)\(/ {
+        print $0 ~ /^poison_locked/ ? "static void" : "static int"
+        emit = 1
+    }
+    emit { print; if ($0 == "}") emit = 0 }
+' "$source_dir/sys/dev/fdt/adi_axi_adc.c" > "$work/adc-stop.inc"
+
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -pthread ${CFLAGS:-} \
     -I"$work" "$dir/test.c" -o "$work/test"
 if [ "${ANALYZE:-no}" = yes ]; then
