@@ -1113,7 +1113,12 @@ test_ra_vht80_run(void)
 			continue;
 		ra_vht_peer(&s);
 		ra_vht_runs = 0;
-		CHECK(rtw88_net_vht_admit(&s.net.ic, &cap) == 0);
+		error = rtw88_net_vht_admit(&s.net.ic, &cap);
+		CHECK(error == 0);
+		if (error != 0) {
+			state_fixture_finish(&s);
+			continue;
+		}
 		CHECK(cap.info == 0 && cap.rx_highest == 0 && cap.tx_highest == 0);
 		CHECK(cap.rx_map == 0xfffc && cap.tx_map == 0xfffc);
 		if (variant == 1)
