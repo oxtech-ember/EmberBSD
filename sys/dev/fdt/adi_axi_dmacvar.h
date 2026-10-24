@@ -97,8 +97,6 @@ int adi_axi_dmac_guard_buffer_free(const struct adi_axi_dmac_guard *,
 	struct adi_axi_dmac_buffer *);
 int adi_axi_dmac_unreserve(struct adi_axi_dmac_guard *);
 
-#endif
-
 /* RX FIFO queue. The caller serializes session lifetime and buffer release.
  * next returns a synchronized, CPU-owned buffer. Re-submit returns ownership.
  * Stop must succeed before freeing any mapping. No cyclic or SG DMA is used.
@@ -125,3 +123,5 @@ int adi_axi_dmac_guard_stream_stop(const struct adi_axi_dmac_guard *, unsigned);
 /* The notify callback runs at IPL_BIO and must not sleep or take driver locks. */
 int adi_axi_dmac_guard_stream_notify(const struct adi_axi_dmac_guard *,
  void (*)(void *), void *);
+
+#endif /* _DEV_FDT_ADI_AXI_DMACVAR_H_ */

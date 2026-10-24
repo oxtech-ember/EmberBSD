@@ -623,6 +623,7 @@ buffer_memcpy(void *destination, const void *source, size_t size)
 }
 
 #include "api.h"
+#include "api.h"
 #undef memcpy
 #define memcpy buffer_memcpy
 #include "driver.inc"
