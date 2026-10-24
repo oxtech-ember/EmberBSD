@@ -39,7 +39,13 @@ proto = "sys/net80211/ieee80211_proto.h"
 ipt = "sys/net80211/ieee80211_input.c"
 output = "sys/net80211/ieee80211_output.c"
 node = "sys/net80211/ieee80211_node.c"
-parts = [read("sys/net80211/ieee80211_rxba.h"),"#ifndef NATIVE_IEEE80211_STATE_DEFINED\n#define NATIVE_IEEE80211_STATE_DEFINED 1\n" + re.search(r"^enum ieee80211_state \{.*?^\};", read(proto), re.M|re.S).group()+"\n#endif", read("sys/net80211/ieee80211_ht20.h"), read("sys/net80211/ieee80211_vht_ies.h"), read(wire), read("sys/net80211/ieee80211_phy_ies.h")]
+phy_header = read("sys/net80211/ieee80211_phy_ies.h")
+phy_size_decl = "size_t ieee80211_phy_ies_size("
+if phy_header.count(phy_size_decl) != 1:
+    raise ValueError("PHY IE size declaration")
+phy_header = phy_header.replace(phy_size_decl,
+                                "static size_t ieee80211_phy_ies_size(", 1)
+parts = [read("sys/net80211/ieee80211_rxba.h"),"#ifndef NATIVE_IEEE80211_STATE_DEFINED\n#define NATIVE_IEEE80211_STATE_DEFINED 1\n" + re.search(r"^enum ieee80211_state \{.*?^\};", read(proto), re.M|re.S).group()+"\n#endif", read("sys/net80211/ieee80211_ht20.h"), read("sys/net80211/ieee80211_vht_ies.h"), read(wire), phy_header]
 for path, names in ((proto, ("wmeParams", "chanAccParams", "ieee80211_wme_state")),
                     ("sys/net80211/ieee80211_ioctl.h", ("ieee80211_stats", "ieee80211_nodestats", "ieee80211req")),
                     ("sys/net80211/_ieee80211.h", ("ieee80211_rateset",))):
