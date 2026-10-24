@@ -9,6 +9,10 @@ import sys
 import subprocess
 src, out = map(pathlib.Path, sys.argv[1:])
 subprocess.run([sys.executable,str(src/"ember/tools/net80211-rxba-lifecycle-extract.py"),str(src),str(out)],check=True)
+phy_ies = (src/'sys/net80211/ieee80211_phy_ies.h').read_text()
+(out/'ieee80211_phy_ies.h').write_text(phy_ies)
+(out/'net80211').mkdir(exist_ok=True)
+(out/'net80211/ieee80211_phy_ies.h').write_text(phy_ies)
 net_source = pathlib.Path(os.environ.get('RTW88_STATE_SOURCE',
     src/'sys/dev/ic/rtw88_net.c')).read_text()
 def read(path):
@@ -19,7 +23,8 @@ def function(name, result):
         raise ValueError(name)
     return result+'\n'+match.group()+'\n'
 proto = read('sys/net80211/ieee80211_proto.h')
-parts = [read('sys/net80211/ieee80211_rxba.h'),read('sys/net80211/_ieee80211.h'), read('sys/net80211/ieee80211_ht20.h')]
+parts = [read('sys/net80211/ieee80211_rxba.h'),read('sys/net80211/_ieee80211.h'), read('sys/net80211/ieee80211_ht20.h'),
+         '#include <net80211/ieee80211_phy_ies.h>']
 # The complete shared HT helper now reads the real management frame identity.
 wire = read('sys/net80211/ieee80211.h')
 parts.extend([wire[:wire.index('#ifndef')],

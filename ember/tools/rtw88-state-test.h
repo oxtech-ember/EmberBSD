@@ -49,6 +49,7 @@ struct ieee80211com {
 	const struct ieee80211_rxba_ops *ic_rxba_ops;
 	uint64_t ic_rxba_serial;
 	int (*ic_ht20_admit)(struct ieee80211com *, struct ieee80211_ht20_profile *);
+	int (*ic_vht_admit)(struct ieee80211com *, struct ieee80211_vht_cap *);
 	struct ifqueue ic_mgtq;
 	uint8_t ic_chan_active[32], ic_chan_scan[32];
 	struct { unsigned nt_scangen,nt_scan_epoch; } ic_scan,ic_sta;
