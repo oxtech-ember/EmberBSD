@@ -111,7 +111,8 @@ Dir.mktmpdir('ember-cix-userland-') do |work|
           usr/bin/stat usr/bin/wall usr/sbin/wpa_supplicant usr/sbin/wpa_cli \
           usr/sbin/powerd usr/libexec/getty sbin/mount_ptyfs usr/sbin/sshd \
           usr/libexec/sshd-session usr/libexec/sshd-auth usr/bin/ssh-keygen \
-          usr/bin/passwd usr/sbin/pwd_mkdb usr/sbin/envstat sbin/nvmectl sbin/wdogctl; do
+          usr/bin/passwd usr/sbin/pwd_mkdb usr/sbin/envstat sbin/nvmectl sbin/wdogctl \
+          usr/sbin/acpidump; do
           test "$file" = "$TEST_OMIT_BINARY" && continue
           mkdir -p "$dest/$(dirname "$file")"
           printf 'candidate\n' > "$dest/$file"
@@ -184,7 +185,8 @@ checks += 1
   inventory = out + '/I18N-INVENTORY.json'
   abort 'FAIL: separate DATA inventory absent' unless File.file?(inventory)
   checks += 1
-  %w[bin/stty usr.sbin/usbdevs sbin/mknod usr.sbin/envstat sbin/nvmectl sbin/wdogctl].each do |part|
+  %w[bin/stty usr.sbin/usbdevs sbin/mknod usr.sbin/envstat sbin/nvmectl sbin/wdogctl
+     usr.sbin/acpitools/acpidump].each do |part|
     selected = events.select { |line| line.include?("/#{part} ") }
     abort "FAIL: incomplete diagnostic component #{part}" unless
       selected.size == 3 && selected[0].end_with?(" obj\n") &&
@@ -276,14 +278,15 @@ end
   abort 'FAIL: accepted cohort without powerd' if status.success? || File.exist?(work + '/missing-powerd/BUILD-INPUTS.txt')
   checks += 1
   %w[bin/stty usr.sbin/usbdevs crypto/external/bsd/netpgp/libmj usr.sbin/envstat sbin/nvmectl
-     sbin/wdogctl].each_with_index do |part, index|
+     sbin/wdogctl usr.sbin/acpitools/acpidump].each_with_index do |part, index|
     output = work + '/failed-diagnostic-' + index.to_s
     _, _, status = run.call(output, 'TEST_FAIL_COMPONENT' => "/#{part} ")
     abort "FAIL: accepted failed diagnostic component #{part}" if status.success? ||
       File.exist?(output + '/BUILD-INPUTS.txt')
     checks += 1
   end
-  %w[bin/stty usr/sbin/usbdevs usr/sbin/envstat sbin/nvmectl sbin/wdogctl].each_with_index do |binary, index|
+  %w[bin/stty usr/sbin/usbdevs usr/sbin/envstat sbin/nvmectl sbin/wdogctl
+     usr/sbin/acpidump].each_with_index do |binary, index|
     output = work + '/missing-diagnostic-' + index.to_s
     _, _, status = run.call(output, 'TEST_OMIT_BINARY' => binary)
     abort "FAIL: accepted cohort without #{binary}" if status.success? ||

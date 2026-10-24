@@ -21,7 +21,7 @@ PROFILE_DATA = PROFILE_FILES.to_h do |file|
   path = file == 'cix-p1-root.sh' ? ROOT_SCRIPT : File.join(File.dirname(ROOT_SCRIPT), file)
   [file, File.binread(path)]
 end.freeze
-REQUIRED = %w[sbin/init sbin/ifconfig sbin/fsck sbin/fsck_ffs sbin/mount sbin/mount_tmpfs sbin/shutdown sbin/rndctl usr/sbin/wpa_supplicant usr/sbin/wpa_cli sbin/dhcpcd bin/sh bin/stty usr/sbin/usbdevs usr/bin/stat usr/libexec/getty usr/sbin/powerd sbin/mount_ptyfs usr/sbin/sshd usr/libexec/sshd-session usr/libexec/sshd-auth usr/bin/ssh-keygen usr/bin/passwd usr/sbin/pwd_mkdb usr/sbin/envstat sbin/nvmectl sbin/wdogctl].freeze
+REQUIRED = %w[sbin/init sbin/ifconfig sbin/fsck sbin/fsck_ffs sbin/mount sbin/mount_tmpfs sbin/shutdown sbin/rndctl usr/sbin/wpa_supplicant usr/sbin/wpa_cli sbin/dhcpcd bin/sh bin/stty usr/sbin/usbdevs usr/bin/stat usr/libexec/getty usr/sbin/powerd sbin/mount_ptyfs usr/sbin/sshd usr/libexec/sshd-session usr/libexec/sshd-auth usr/bin/ssh-keygen usr/bin/passwd usr/sbin/pwd_mkdb usr/sbin/envstat sbin/nvmectl sbin/wdogctl usr/sbin/acpidump].freeze
 RUNTIME = (REQUIRED + %w[usr/bin/wall usr/bin/netstat]).freeze
 I18N_REQUIRED = %w[iconv/iconv.dir esdb/esdb.dir esdb/esdb.alias esdb/ISO646/ISO646-US.esdb
   esdb/UTF/UTF-8.esdb csmapper/mapper.dir csmapper/ISO646/ISO646-US%UCS.646].freeze
@@ -434,7 +434,7 @@ check(File.read(f[:out] + '/root.spec').lines.any? { |line| line.start_with?('./
       'no USB controller beyond the selected diagnostic range')
     check(!device_paths.include?('./dev/plcom2') && !device_paths.include?('./dev/dplcom2'),
       'the DEBUG UART nodes are not staged')
-    %w[bin/stty usr/sbin/usbdevs usr/sbin/envstat sbin/nvmectl sbin/wdogctl].each do |binary|
+    %w[bin/stty usr/sbin/usbdevs usr/sbin/envstat sbin/nvmectl sbin/wdogctl usr/sbin/acpidump].each do |binary|
       check(File.executable?(root + '/' + binary), 'native diagnostic tool is staged: ' + binary)
     end
     check(!spec.include?("\n./console "), 'device spec does not create a root console path')

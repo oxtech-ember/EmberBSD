@@ -70,7 +70,8 @@ for file in sbin/init sbin/ifconfig sbin/fsck sbin/fsck_ffs sbin/mount \
     usr/bin/ssh-keygen usr/bin/passwd usr/sbin/pwd_mkdb \
     sbin/mount_tmpfs sbin/shutdown sbin/rndctl usr/sbin/wpa_supplicant \
     usr/sbin/wpa_cli sbin/dhcpcd bin/sh bin/stty usr/sbin/usbdevs \
-    usr/bin/stat usr/libexec/getty usr/sbin/powerd usr/sbin/envstat sbin/nvmectl sbin/wdogctl; do
+    usr/bin/stat usr/libexec/getty usr/sbin/powerd usr/sbin/envstat sbin/nvmectl sbin/wdogctl \
+    usr/sbin/acpidump; do
 	[ -x "$cohort/dest/$file" ] || {
 		echo "Missing runtime input: $file" >&2; exit 2
 	}

@@ -26,7 +26,7 @@ The profile starts native `powerd -d` in the background after root setup.
 Native AArch64 MAKEDEV supplies `/dev/power` through its `sysmon` entry.
 The profile also requires native `stty` and `usbdevs`, and requests USB control
 and controller nodes zero through nineteen. Native MAKEDEV supplies PLcom1/3
-and their dialout aliases. It also requires `envstat`, `nvmectl` and `wdogctl`;
+and their dialout aliases. It also requires `envstat`, `nvmectl`, `wdogctl` and `acpidump`;
 the `sysmon` entry supplies `/dev/sysmon` and `/dev/watchdog`, and `nvme0` the
 NVMe controller node. The DEBUG UART nodes are not included or opened.
 Daemon diagnostics go to `/var/log/powerd.log` with mode `0600`.
