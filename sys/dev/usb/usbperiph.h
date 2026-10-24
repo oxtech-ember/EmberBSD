@@ -45,6 +45,13 @@ struct usbperiph_reply {
 	uint32_t stall;
 	uint8_t data[USBPERIPH_MAX_CONTROL];
 };
+/* Zero generation accepts the current bus generation; nonzero must match. */
+struct usbperiph_endpoint_gate {
+	uint64_t generation;
+	uint32_t endpoint;
+	uint32_t enable;
+};
+#define USBPERIPH_IOC_ENDPOINT_GATE _IOW('P', 7, struct usbperiph_endpoint_gate)
 #define USBPERIPH_IOC_CONFIGURE _IOW('P', 0, struct usbperiph_config)
 #define USBPERIPH_IOC_CONNECT _IO('P', 1)
 #define USBPERIPH_IOC_DISCONNECT _IO('P', 2)

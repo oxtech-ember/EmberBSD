@@ -32,6 +32,7 @@ struct zynqudc_softc {
 	struct clk *clock;
 	bool ready, opened, closing;
 	bool users[ZUDC_SLOTS];
+	bool endpoint_closed[ZUDC_SLOTS];
 	unsigned operations;
 };
 
@@ -426,8 +427,10 @@ zynqudc_open(dev_t dev, int flags, int mode, struct lwp *l)
 		error = EBUSY;
 	else if (sc->core.faulted)
 		error = EIO;
-	else
+	else {
+		memset(sc->endpoint_closed, 0, sizeof(sc->endpoint_closed));
 		sc->opened = true;
+	}
 	mutex_exit(&sc->lock);
 	return error;
 }
@@ -456,6 +459,45 @@ zynqudc_close(dev_t dev, int flags, int mode, struct lwp *l)
 }
 
 static int
+zynqudc_endpoint_gate(struct zynqudc_softc *sc,
+    const struct usbperiph_endpoint_gate *gate)
+{
+	struct zynqudc *c = &sc->core;
+	unsigned ep = gate->endpoint, slot;
+	bool present = false;
+
+	if (gate->enable > 1 || (ep & ~0x8fU) != 0 ||
+	    (ep & 15) == 0 || (ep & 15) >= c->nep)
+		return EINVAL;
+	if (c->faulted)
+		return EIO;
+	if (gate->generation != 0 && gate->generation != c->generation)
+		return ESTALE;
+	if (!c->valid_config)
+		return ENXIO;
+	/* Validate installed descriptors, so a function can gate before CONNECT. */
+	for (unsigned off = 9; off < c->config.config_length;) {
+		const uint8_t *d = c->config.config + off;
+		if (d[1] == 5 && d[2] == ep && d[3] == 2) {
+			present = true;
+			break;
+		}
+		off += d[0];
+	}
+	if (!present)
+		return EINVAL;
+	slot = (ep & 15) * 2 + ((ep >> 7) & 1);
+	if (gate->enable != 0) {
+		sc->endpoint_closed[slot] = false;
+		return 0;
+	}
+	/* Close admission before drain, including a request outside copyin. */
+	sc->endpoint_closed[slot] = true;
+	sc->cancel_epoch[slot]++;
+	return zynqudc_cancel(c, ep, ECANCELED);
+}
+
+static int
 zynqudc_xfer(struct zynqudc_softc *sc, struct usbperiph_xfer *x)
 {
 	struct zynqudc *c = &sc->core;
@@ -472,6 +514,8 @@ zynqudc_xfer(struct zynqudc_softc *sc, struct usbperiph_xfer *x)
 	slot = (x->endpoint & 15) * 2 + ((x->endpoint >> 7) & 1);
 	if (c->faulted || c->req[slot].retained)
 		return EIO;
+	if (sc->endpoint_closed[slot])
+		return EPIPE;
 	if (sc->users[slot] || c->req[slot].active)
 		return EBUSY;
 	sc->users[slot] = true;
@@ -487,6 +531,10 @@ zynqudc_xfer(struct zynqudc_softc *sc, struct usbperiph_xfer *x)
 	mutex_enter(&sc->lock);
 	if (error != 0)
 		goto out;
+	if (c->faulted || sc->endpoint_closed[slot]) {
+		error = c->faulted ? EIO : EPIPE;
+		goto out;
+	}
 	if (sc->stopping || sc->closing || !sc->opened || generation != c->generation ||
 	    epoch != sc->cancel_epoch[slot]) {
 		error = ESTALE;
@@ -525,8 +573,11 @@ zynqudc_xfer(struct zynqudc_softc *sc, struct usbperiph_xfer *x)
 			mutex_exit(&sc->lock);
 			error = copyout(c->req[slot].data.kva, user, x->actual);
 			mutex_enter(&sc->lock);
-			if (error == 0 && x->generation != c->generation) {
-				error = ESTALE;
+			if (error == 0 && (c->faulted || sc->endpoint_closed[slot] ||
+			    epoch != sc->cancel_epoch[slot] ||
+			    x->generation != c->generation)) {
+				error = c->faulted ? EIO :
+				    (sc->endpoint_closed[slot] ? EPIPE : ESTALE);
 				x->actual = 0;
 			}
 		}
@@ -562,6 +613,9 @@ zynqudc_ioctl(dev_t dev, u_long command, void *data, int flags, struct lwp *l)
 		break;
 	case USBPERIPH_IOC_DISCONNECT:
 		error = zynqudc_disconnect(&sc->core);
+		break;
+	case USBPERIPH_IOC_ENDPOINT_GATE:
+		error = zynqudc_endpoint_gate(sc, data);
 		break;
 	case USBPERIPH_IOC_XFER:
 		error = zynqudc_xfer(sc, data);

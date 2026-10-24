@@ -67,6 +67,29 @@ retired merely because an interrupt occurred. `CANCEL` wakes its waiter.
 `DISCONNECT`, reset, and close retire all directions and wake waiters.
 Unrelated interrupts cannot extend a transfer's absolute deadline.
 
+`USBPERIPH_IOC_ENDPOINT_GATE` is additive to ABI version 1. Its 16-byte
+argument contains `uint64_t generation`, `uint32_t endpoint`, and
+`uint32_t enable`. Zero generation accepts the current bus generation.
+A nonzero value must match under the controller lock, or the call returns
+`ESTALE`. Addresses must name a nonzero bulk direction in the installed
+configuration descriptor. Thus a function can close gates before CONNECT.
+EP0 and unadvertised endpoint addresses are rejected.
+
+With enable zero, the driver closes admission under its lock before canceling
+and draining that direction. A blocked transfer wakes. Future XFER calls and
+requests returning from user copies cannot prime a closed direction.
+They return `EPIPE`. Reopening a gate does not revive a request whose copy
+crossed the close barrier; its changed cancellation epoch returns `ESTALE`.
+A canceled active request returns `ECANCELED`. Drain failure retains DMA and
+blocks reopening with `EIO`, as for existing cancellation failures.
+
+Enable one reopens the direction. Gates stay closed across disconnect and
+bus reset until explicitly reopened. A new exclusive open resets gates to
+open, preserving the generic counter and loopback behavior. A service must
+retire its old producer threads before reopening a new pipe session.
+If a close crosses copyout, the ioctl returns an error with actual zero;
+user space must discard the already copied data on that error.
+
 ## DMA ownership
 
 The controller owns one contiguous 2048-byte queue-head region and a

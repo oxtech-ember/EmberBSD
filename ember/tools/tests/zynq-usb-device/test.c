@@ -65,6 +65,7 @@ static inline void bus_dmamap_sync(bus_dma_tag_t t,bus_dmamap_t map,size_t off,s
 static inline void delay(unsigned n) { delays+=n; }
 #include "driver.inc"
 #include "pattern.h"
+_Static_assert(sizeof(struct usbperiph_endpoint_gate)==16,"endpoint gate ABI size");
 static struct zynqudc fixture_core;
 static struct dma_map maps[ZUDC_SLOTS+1];
 static struct { _Alignas(2048) uint8_t bytes[4096]; } desc;
@@ -148,13 +149,21 @@ static int cv_timedwait_sig(kcondvar_t *c,kmutex_t *m,int timeout) {
  int result=pthread_cond_timedwait(c,m,&t);
  return result==ETIMEDOUT?EWOULDBLOCK:result;
 }
-static int copyin(const void *src,void *dst,size_t len) { if(src==NULL)return EFAULT;memcpy(dst,src,len);return 0; }
-static int copyout(const void *src,void *dst,size_t len) { if(dst==NULL)return EFAULT;memcpy(dst,src,len);return 0; }
+static pthread_mutex_t copy_lock=PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t copy_cv=PTHREAD_COND_INITIALIZER;
+static bool pause_copyin, pause_copyout, copy_paused, resume_copy;
+static void copy_boundary(bool pause) {
+ pthread_mutex_lock(&copy_lock);
+ if(pause){copy_paused=true;pthread_cond_broadcast(&copy_cv);while(!resume_copy)pthread_cond_wait(&copy_cv,&copy_lock);}
+ pthread_mutex_unlock(&copy_lock);
+}
+static int copyin(const void *src,void *dst,size_t len) { if(src==NULL)return EFAULT;memcpy(dst,src,len);copy_boundary(pause_copyin);return 0; }
+static int copyout(const void *src,void *dst,size_t len) { if(dst==NULL)return EFAULT;memcpy(dst,src,len);copy_boundary(pause_copyout);return 0; }
 #include "cdev.inc"
 static struct zynqudc_softc attachment;
-struct transfer_thread { struct usbperiph_xfer x;int result; };
+struct transfer_thread { struct usbperiph_xfer x;int result;bool pause_entry; };
 static void *xfer_thread(void *cookie) {
- struct transfer_thread *t=cookie;t->result=zynqudc_ioctl(0,USBPERIPH_IOC_XFER,&t->x,0,NULL);return NULL;
+ struct transfer_thread *t=cookie;if(t->pause_entry)copy_boundary(true);t->result=zynqudc_ioctl(0,USBPERIPH_IOC_XFER,&t->x,0,NULL);return NULL;
 }
 static void wait_for(unsigned n) {
  pthread_mutex_lock(&waiter_lock);while(waiters<n)pthread_cond_wait(&waiter_cv,&waiter_lock);pthread_mutex_unlock(&waiter_lock);
@@ -249,6 +258,77 @@ static void test_status_recipients(void) {
  setup(0x82,0,0,0x83,2);CHECK((mmio[ZUDC_EPCTRL(0)/4]&0x10001)==0x10001);
  setup(0x82,0,0,0x80,2);CHECK((mmio[ZUDC_EPCTRL(0)/4]&0x10001)==0);done(1,0,0);done(0,0,0);
 }
+static void wait_copy(void) {
+ pthread_mutex_lock(&copy_lock);while(!copy_paused)pthread_cond_wait(&copy_cv,&copy_lock);pthread_mutex_unlock(&copy_lock);
+}
+static void release_copy(void) {
+ pthread_mutex_lock(&copy_lock);resume_copy=true;pthread_cond_broadcast(&copy_cv);pthread_mutex_unlock(&copy_lock);
+}
+static void test_endpoint_gate(void) {
+ attachment_fixture(true);struct usbperiph_endpoint_gate gate={.endpoint=0x81,.enable=0};
+ const uint8_t data[32]={0};unsigned before=primes;
+ struct usbperiph_xfer x={.buffer=(uintptr_t)data,.endpoint=0x81,.length=32,.timeout_ms=10};
+ /* A thread paused before ioctl entry must see the gate closed by CLOSE_PIPE. */
+ struct transfer_thread early={.x=x,.pause_entry=true};pthread_t early_id;
+ copy_paused=resume_copy=false;CHECK(pthread_create(&early_id,NULL,xfer_thread,&early)==0);wait_copy();
+ CHECK(attachment.operations==0);
+ CHECK(zynqudc_ioctl(0,USBPERIPH_IOC_ENDPOINT_GATE,&gate,0,NULL)==0);
+ release_copy();CHECK(pthread_join(early_id,NULL)==0);CHECK(early.result==EPIPE);
+ CHECK(zynqudc_ioctl(0,USBPERIPH_IOC_XFER,&x,0,NULL)==EPIPE);CHECK(primes==before);
+ gate.enable=1;CHECK(zynqudc_ioctl(0,USBPERIPH_IOC_ENDPOINT_GATE,&gate,0,NULL)==0);
+ pause_copyin=true;copy_paused=resume_copy=false;
+ struct transfer_thread thread={.x=x};pthread_t id;CHECK(pthread_create(&id,NULL,xfer_thread,&thread)==0);wait_copy();
+ gate.enable=0;CHECK(zynqudc_ioctl(0,USBPERIPH_IOC_ENDPOINT_GATE,&gate,0,NULL)==0);CHECK(primes==before);
+ release_copy();CHECK(pthread_join(id,NULL)==0);CHECK(thread.result==EPIPE);CHECK(primes==before);pause_copyin=false;
+ /* Reopen cannot resurrect an old request paused in its copy boundary. */
+ gate.enable=1;CHECK(zynqudc_ioctl(0,USBPERIPH_IOC_ENDPOINT_GATE,&gate,0,NULL)==0);
+ pause_copyin=true;copy_paused=resume_copy=false;CHECK(pthread_create(&id,NULL,xfer_thread,&thread)==0);wait_copy();
+ gate.enable=0;CHECK(zynqudc_ioctl(0,USBPERIPH_IOC_ENDPOINT_GATE,&gate,0,NULL)==0);
+ gate.enable=1;CHECK(zynqudc_ioctl(0,USBPERIPH_IOC_ENDPOINT_GATE,&gate,0,NULL)==0);
+ release_copy();CHECK(pthread_join(id,NULL)==0);CHECK(thread.result==ESTALE);CHECK(primes==before);pause_copyin=false;
+ CHECK(zynqudc_ioctl(0,USBPERIPH_IOC_XFER,&x,0,NULL)==ETIMEDOUT);CHECK(primes==before+1);
+ /* An admitted request is canceled before the close barrier returns. */
+ thread.x.timeout_ms=2000;unsigned old=waiters;CHECK(pthread_create(&id,NULL,xfer_thread,&thread)==0);wait_for(old+1);
+ gate.enable=0;CHECK(zynqudc_ioctl(0,USBPERIPH_IOC_ENDPOINT_GATE,&gate,0,NULL)==0);
+ CHECK(pthread_join(id,NULL)==0);CHECK(thread.result==ECANCELED);CHECK(!attachment.core.req[3].active);
+ gate.generation=attachment.core.generation+1;gate.enable=1;
+ CHECK(zynqudc_ioctl(0,USBPERIPH_IOC_ENDPOINT_GATE,&gate,0,NULL)==ESTALE);
+ CHECK(zynqudc_ioctl(0,USBPERIPH_IOC_XFER,&x,0,NULL)==EPIPE);
+ gate.generation=attachment.core.generation;CHECK(zynqudc_ioctl(0,USBPERIPH_IOC_ENDPOINT_GATE,&gate,0,NULL)==0);
+ gate.endpoint=0x80;CHECK(zynqudc_ioctl(0,USBPERIPH_IOC_ENDPOINT_GATE,&gate,0,NULL)==EINVAL);
+ gate.endpoint=0;CHECK(zynqudc_ioctl(0,USBPERIPH_IOC_ENDPOINT_GATE,&gate,0,NULL)==EINVAL);
+ gate.endpoint=0x83;CHECK(zynqudc_ioctl(0,USBPERIPH_IOC_ENDPOINT_GATE,&gate,0,NULL)==EINVAL);
+ gate.endpoint=0x81;gate.enable=2;CHECK(zynqudc_ioctl(0,USBPERIPH_IOC_ENDPOINT_GATE,&gate,0,NULL)==EINVAL);
+ CHECK(zynqudc_ioctl(0,USBPERIPH_IOC_DISCONNECT,NULL,0,NULL)==0);
+ gate.generation=0;gate.enable=0;CHECK(zynqudc_ioctl(0,USBPERIPH_IOC_ENDPOINT_GATE,&gate,0,NULL)==0);
+ CHECK(zynqudc_ioctl(0,USBPERIPH_IOC_CONNECT,NULL,0,NULL)==0);
+ /* Gates survive a new connection generation until explicitly reopened. */
+ CHECK(zynqudc_ioctl(0,USBPERIPH_IOC_XFER,&x,0,NULL)==EPIPE);
+ CHECK(zynqudc_close(0,0,0,NULL)==0);CHECK(zynqudc_open(0,FREAD|FWRITE,0,NULL)==0);
+ x.generation=0;CHECK(zynqudc_ioctl(0,USBPERIPH_IOC_XFER,&x,0,NULL)==ENXIO);attachment_finish();
+}
+static void test_gate_copyout_and_fault(void) {
+ attachment_fixture(true);uint8_t data[32]={0};struct transfer_thread thread={.x={
+  .buffer=(uintptr_t)data,.endpoint=1,.length=32,.timeout_ms=2000}};
+ struct usbperiph_endpoint_gate gate={.endpoint=1};pthread_t id;
+ pause_copyout=true;copy_paused=resume_copy=false;unsigned old=waiters;
+ CHECK(pthread_create(&id,NULL,xfer_thread,&thread)==0);wait_for(old+1);
+ mutex_enter(&attachment.lock);memset(buffers[2],0xa5,32);attachment.core.td[2].token=0;
+ mmio[ZUDC_STAT/4]&=~2U;mmio[ZUDC_COMPLETE/4]=2;mmio[ZUDC_STS/4]=1;
+ CHECK(zynqudc_intr(&attachment.core)==1);cv_broadcast(&attachment.cv);mutex_exit(&attachment.lock);
+ wait_copy();CHECK(zynqudc_ioctl(0,USBPERIPH_IOC_ENDPOINT_GATE,&gate,0,NULL)==0);
+ release_copy();CHECK(pthread_join(id,NULL)==0);CHECK(thread.result==EPIPE);CHECK(thread.x.actual==0);CHECK(data[0]==0xa5);
+ pause_copyout=false;CHECK(zynqudc_close(0,0,0,NULL)==0);attachment_finish();
+ memset(data,0,sizeof(data));attachment_fixture(true);thread.x.endpoint=0x81;thread.x.generation=0;old=waiters;
+ CHECK(pthread_create(&id,NULL,xfer_thread,&thread)==0);wait_for(old+1);
+ stuck_flush=true;gate.endpoint=0x81;
+ CHECK(zynqudc_ioctl(0,USBPERIPH_IOC_ENDPOINT_GATE,&gate,0,NULL)==ETIMEDOUT);
+ CHECK(pthread_join(id,NULL)==0);CHECK(thread.result==EIO);CHECK(attachment.core.req[3].active);
+ CHECK(attachment.core.req[3].retained);gate.enable=1;
+ CHECK(zynqudc_ioctl(0,USBPERIPH_IOC_ENDPOINT_GATE,&gate,0,NULL)==EIO);
+ unsigned before=primes;CHECK(zynqudc_ioctl(0,USBPERIPH_IOC_XFER,&thread.x,0,NULL)==EIO);CHECK(primes==before);
+ attachment_finish();stuck_flush=false;
+}
 static void test_cdev(void) {
  fixture();ready();setup(0,9,1,0,0);done(1,0,0);
  memset(&attachment,0,sizeof(attachment));attachment.core=fixture_core;attachment.ready=true;lookup=&attachment;
@@ -327,6 +407,8 @@ int main(void) {
  test_shutdown();
  test_event_budget();
  test_status_recipients();
+ test_endpoint_gate();
+ test_gate_copyout_and_fault();
  test_cdev();
  printf("zynqudc: %u checks passed\n",checks);return 0;
 }
