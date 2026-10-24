@@ -15,10 +15,17 @@ def replace(s,old,new):
  if s.count(old)!=1:raise ValueError(old)
  return s.replace(old,new)
 def replace_macro(s,name,new):
- pattern=r'^#define[ \t]+'+re.escape(name)+r'\(ic, c\)[^\n]*(?:\\\r?\n[^\n]*)*'
- s,n=re.subn(pattern,lambda _m:new,s,count=1,flags=re.M)
- if n!=1:raise ValueError('macro '+name)
- return s
+ lines=s.splitlines(keepends=True)
+ pattern=r'^#define[ \t]+'+re.escape(name)+r'\('
+ starts=[i for i,line in enumerate(lines) if re.match(pattern,line)]
+ if len(starts)!=1:raise ValueError('macro '+name)
+ start=starts[0]
+ end=start+1
+ while lines[end-1].rstrip('\r\n').endswith('\\'):
+  if end==len(lines):raise ValueError('unterminated macro '+name)
+  end+=1
+ newline='\n' if lines[end-1].endswith('\n') else ''
+ return ''.join(lines[:start])+new+newline+''.join(lines[end:])
 model=(out/'routing-model.inc').read_text()
 # Active HT negotiation must use the same actual channel helper as native code.
 model=replace_macro(model,'ieee80211_chan2ieee','struct ieee80211com; struct ieee80211_channel;\nunsigned ieee80211_chan2ieee(struct ieee80211com *,struct ieee80211_channel *);')
