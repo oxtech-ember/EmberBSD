@@ -18,9 +18,13 @@ struct usbperiph_config {
 	uint8_t config[USBPERIPH_MAX_CONFIG];
 	uint8_t strings[USBPERIPH_MAX_STRINGS]; /* Packed USB string descriptors. */
 };
+/*
+ * Initialize a fresh argument for each XFER. Outputs are valid only on success.
+ * On any ioctl error, discard the payload and ignore actual and generation.
+ */
 struct usbperiph_xfer {
 	uint64_t buffer;
-	uint64_t generation; /* Zero accepts current generation; returned on completion. */
+	uint64_t generation; /* Zero accepts current generation; returned only on success. */
 	uint32_t length;
 	uint32_t actual;
 	uint32_t timeout_ms;

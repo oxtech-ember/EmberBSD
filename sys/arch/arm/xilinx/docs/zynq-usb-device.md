@@ -61,7 +61,7 @@ a length up to 16384 bytes, and a timeout from 1 to 60000 milliseconds.
 The user address has a fixed-width 64-bit field. The kernel validates it
 against its pointer range. No user address enters a hardware descriptor.
 A zero generation accepts the current generation. A nonzero stale value
-returns `ESTALE`. Completion returns actual bytes and the request generation.
+returns `ESTALE`. A successful ioctl returns actual bytes and the request generation.
 Short OUT packets return their actual length. An active descriptor is not
 retired merely because an interrupt occurred. `CANCEL` wakes its waiter.
 `DISCONNECT`, reset, and close retire all directions and wake waiters.
@@ -87,8 +87,11 @@ Enable one reopens the direction. Gates stay closed across disconnect and
 bus reset until explicitly reopened. A new exclusive open resets gates to
 open, preserving the generic counter and loopback behavior. A service must
 retire its old producer threads before reopening a new pipe session.
-If a close crosses copyout, the ioctl returns an error with actual zero;
-user space must discard the already copied data on that error.
+Initialize a fresh XFER argument for each call. On any ioctl error, discard
+the payload and ignore all output fields, including actual and generation.
+The syscall copies the output structure back only when the driver succeeds.
+An error can therefore leave old field values in a reused user structure.
+If a close crosses copyout, discard the already copied data on that error.
 
 ## DMA ownership
 

@@ -317,7 +317,9 @@ static void test_gate_copyout_and_fault(void) {
  mmio[ZUDC_STAT/4]&=~2U;mmio[ZUDC_COMPLETE/4]=2;mmio[ZUDC_STS/4]=1;
  CHECK(zynqudc_intr(&attachment.core)==1);cv_broadcast(&attachment.cv);mutex_exit(&attachment.lock);
  wait_copy();CHECK(zynqudc_ioctl(0,USBPERIPH_IOC_ENDPOINT_GATE,&gate,0,NULL)==0);
- release_copy();CHECK(pthread_join(id,NULL)==0);CHECK(thread.result==EPIPE);CHECK(thread.x.actual==0);CHECK(data[0]==0xa5);
+ release_copy();CHECK(pthread_join(id,NULL)==0);CHECK(thread.result==EPIPE);
+ /* This direct cdev assertion checks kernel-local state, not syscall copyback. */
+ CHECK(thread.x.actual==0);CHECK(data[0]==0xa5);
  pause_copyout=false;CHECK(zynqudc_close(0,0,0,NULL)==0);attachment_finish();
  memset(data,0,sizeof(data));attachment_fixture(true);thread.x.endpoint=0x81;thread.x.generation=0;old=waiters;
  CHECK(pthread_create(&id,NULL,xfer_thread,&thread)==0);wait_for(old+1);
