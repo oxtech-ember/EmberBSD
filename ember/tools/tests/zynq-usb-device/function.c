@@ -42,6 +42,15 @@ main(int argc, char **argv)
 	    9, 4, 0, 0, 2, 0xff, 0, 0, 0,
 	    7, 5, 0x81, 2, 0, 2, 0, 7, 5, 1, 2, 0, 2, 0};
 
+	const uint8_t strings[] = {
+	    4, 3, 9, 4, 18, 3, 69, 0, 109, 0, 98, 0,
+	    101, 0, 114, 0, 66, 0, 83, 0, 68, 0, 48, 3,
+	    69, 0, 109, 0, 98, 0, 101, 0, 114, 0, 66, 0,
+	    83, 0, 68, 0, 32, 0, 85, 0, 83, 0, 66, 0,
+	    32, 0, 100, 0, 105, 0, 97, 0, 103, 0, 110, 0,
+	    111, 0, 115, 0, 116, 0, 105, 0, 99, 0
+	};
+
 	if (argc != 6 || (strcmp(argv[2], "counter") != 0 &&
 	    strcmp(argv[2], "loopback") != 0))
 		errx(1, "usage: %s device counter|loopback owned-vid owned-pid bytes",
@@ -53,12 +62,16 @@ main(int argc, char **argv)
 	if (vid == 0 || pid == 0 || bytes == 0)
 		errx(1, "identity and byte count must be nonzero");
 	memcpy(config.device, device, sizeof(device));
+	config.device[14] = 1;
+	config.device[15] = 2;
 	config.device[8] = vid;
 	config.device[9] = vid >> 8;
 	config.device[10] = pid;
 	config.device[11] = pid >> 8;
 	memcpy(config.config, desc, sizeof(desc));
 	config.config_length = sizeof(desc);
+	memcpy(config.strings, strings, sizeof(strings));
+	config.strings_length = sizeof(strings);
 	fd = open(argv[1], O_RDWR);
 	if (fd < 0)
 		err(1, "open");

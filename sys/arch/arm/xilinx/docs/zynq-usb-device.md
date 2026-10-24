@@ -96,8 +96,8 @@ is imported. The donor setup tripwire, queue-head fields, page pointers,
 prime, and flush sequences informed this code.
 
 The existing NetBSD-derived Zynq EHCI files remain the host implementation.
-OpenBSD's FDT EHCI and DragonFly's EHCI implementations were checked as
-host-path references. They do not supply this Zynq peripheral function ABI.
+FreeBSD's DWC OTG device path, OpenBSD's FDT EHCI, and DragonFly's EHCI
+implementations were checked as subsystem references. They do not supply this Zynq peripheral function ABI.
 
 ## Verification
 
@@ -117,7 +117,8 @@ the real controller and cdev bodies. It does not simulate a USB host or PHY.
 `ember/tools/tests/zynq-usb-device/function.c` is a target test function.
 Build it against this header and an EmberBSD sysroot. Its arguments are
 `device counter|loopback owned-vid owned-pid bytes`. The counter is a
-little-endian 32-bit increasing word sequence. Loopback echoes actual OUT
+little-endian 32-bit increasing word sequence. Its product string is
+`EmberBSD USB diagnostic`; it sets no default VID or PID. Loopback echoes actual OUT
 bytes. It prints transferred bytes and exits on transport errors.
 
 Physical acceptance still requires enumeration, high-speed operation,
