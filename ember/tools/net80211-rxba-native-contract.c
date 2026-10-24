@@ -23,6 +23,17 @@ const struct ieee80211_channel ieee80211_channel_anyc={0};
 struct callout_model { void (*fn)(void *);void *arg;int pending,initialized;unsigned ticks; };
 typedef struct callout_model callout_t;
 struct rtw88_softc { int sc_linked;struct { int active,configured; } sc_ra;struct rtw88_phy_state sc_phy;void *sc_rx_frame,*sc_tx_complete,*sc_net_cookie;uint32_t sc_generation;struct { unsigned queued; } sc_txq[RTW88_NTXQ]; };
+static uint64_t native_rx_sequence;
+static void
+native_rx_info(struct rtw88_rx_info *info, const struct rtw88_softc *core,
+    size_t len)
+{
+	memset(info, 0, sizeof(*info));
+	info->packet_size = (uint16_t)len;
+	info->generation = core->sc_generation;
+	info->sequence = ++native_rx_sequence;
+}
+
 struct rtw88_net {
  struct rtw88_softc *core;
  void *wq;int state_work,requested,state_arg,work_pending,reset_required;unsigned channel;
@@ -89,7 +100,7 @@ static struct ieee80211_node *ieee80211_find_rxnode(struct ieee80211com *ic,cons
  if(native_refill) {
   struct rtw88_net *net=ic->ic_ifp->if_softc;uint8_t bar[20]={0x84};bar[16]=4;
   memcpy(bar+4,ic->ic_myaddr,6);memcpy(bar+10,ic->ic_bss->ni_bssid,6);
-  struct rtw88_rx_info info={.packet_size=20};native_refill--;native_refilled++;
+  struct rtw88_rx_info info;native_rx_info(&info,net->core,20);native_refill--;native_refilled++;
   mutex_enter(net->lock);rtw88_net_rx_frame(net,bar,20,&info);mutex_exit(net->lock);
  }
  return ieee80211_ref_node(ic->ic_bss);
@@ -121,7 +132,7 @@ static void test_native_beacon_presence(void)
   memcpy(frame+10,f.ni.ni_macaddr,6);memcpy(frame+16,f.ni.ni_bssid,6);
   frame[32]=100;frame[34]=1;frame[36]=malformed?255:0;
   frame[38]=1;frame[39]=1;frame[40]=12;
-  struct rtw88_rx_info info={.packet_size=sizeof(frame)};
+  struct rtw88_rx_info info;native_rx_info(&info,&core,sizeof(frame));
   net.policy.epoch=4;net.policy.accepting=1;unit_now=100;
   CHECK(rtw88_net_beacon_start(&net.policy,4,100)==0);
   unsigned delivered=native_beacons_delivered;
@@ -174,25 +185,25 @@ static void test_native_timer(void)
   * shared BAR -> ordered CCMP/Ethernet consumer. */
  m=unit_wire(&f,13,13);ieee80211_input(&net.ic,m,&f.ni,0,0);
  rtw88_net_softintr(&net);CHECK(net.policy.rxba_mask==1 && rxba_output_count==1);
- struct mbuf *bar=unit_bar(&f,13,4);struct rtw88_rx_info info={.packet_size=20};
+ struct mbuf *bar=unit_bar(&f,13,4);struct rtw88_rx_info info;native_rx_info(&info,&core,20);
  mutex_enter(net.lock);rtw88_net_rx_frame(&net,bar->m_data,20,&info);mutex_exit(net.lock);
  m_freem(bar);CHECK(net.policy.queued==1);
  rtw88_net_softintr(&net);CHECK(net.policy.queued==0 && rxba_output_count==2 && rxba_output_seq[1]==13);
  /* A gap frame already queued by IRQ must run before an expired hole. */
  m=unit_wire(&f,15,15);ieee80211_input(&net.ic,m,&f.ni,0,0);
- m=unit_wire(&f,14,14);info.flags=RTW88_RX_SWDEC;info.security=3;info.packet_size=m->m_pkthdr.len;
+ m=unit_wire(&f,14,14);native_rx_info(&info,&core,m->m_pkthdr.len);info.flags=RTW88_RX_SWDEC;info.security=3;
  mutex_enter(net.lock);rtw88_net_rx_frame(&net,m->m_data,m->m_pkthdr.len,&info);mutex_exit(net.lock);m_freem(m);
  unit_now=1400;net.rxba_callout.fn(&net);rtw88_net_softintr(&net);
  CHECK(rxba_output_count==4 && rxba_output_seq[2]==14 && rxba_output_seq[3]==15);
  /* A gap that actually arrives after the absolute hole deadline is late. */
  m=unit_wire(&f,17,17);ieee80211_input(&net.ic,m,&f.ni,0,0);
  unit_now=1501;net.rxba_callout.fn(&net);
- m=unit_wire(&f,16,16);info.flags=RTW88_RX_SWDEC;info.security=3;info.packet_size=m->m_pkthdr.len;
+ m=unit_wire(&f,16,16);native_rx_info(&info,&core,m->m_pkthdr.len);info.flags=RTW88_RX_SWDEC;info.security=3;
  mutex_enter(net.lock);rtw88_net_rx_frame(&net,m->m_data,m->m_pkthdr.len,&info);mutex_exit(net.lock);m_freem(m);
  rtw88_net_softintr(&net);CHECK(rxba_output_count==5 && rxba_output_seq[4]==17);
  /* Refill cannot keep an old hole alive by repeatedly rescheduling due work. */
  m=unit_wire(&f,19,19);ieee80211_input(&net.ic,m,&f.ni,0,0);
- bar=unit_bar(&f,18,4);info.flags=info.security=0;info.packet_size=20;
+ bar=unit_bar(&f,18,4);native_rx_info(&info,&core,20);
  mutex_enter(net.lock);rtw88_net_rx_frame(&net,bar->m_data,20,&info);mutex_exit(net.lock);m_freem(bar);
  unit_now=1601;net.rxba_callout.fn(&net);native_refill=128;native_refilled=0;
  rtw88_net_softintr(&net);
@@ -205,17 +216,17 @@ static void test_native_timer(void)
  action.m_len=action.m_pkthdr.len=33;action.m_flags=M_PKTHDR;action.m_data[0]=0xd0;
  memcpy(action.m_data+4,net.ic.ic_myaddr,6);memcpy(action.m_data+10,f.ni.ni_bssid,6);memcpy(action.m_data+16,f.ni.ni_bssid,6);
  unsigned params=2|(16<<6);uint8_t req[9]={3,0,4,params,params>>8,5,0,(uint8_t)(24<<4),24>>4};memcpy(action.m_data+24,req,9);
- info=(struct rtw88_rx_info){.packet_size=33};
+ native_rx_info(&info,&core,33);
  mutex_enter(net.lock);rtw88_net_rx_frame(&net,action.m_data,33,&info);mutex_exit(net.lock);
  rtw88_net_softintr(&net);
  CHECK(unit_positive_posts==posts+1 && f.ni.references==1 && f.ni.ni_rxba.tid[0]->head==24);
  CHECK(net.rxba_token!=0 && net.rxba_deadline==1607 && net.policy.rxba_mask==1);
- bar=unit_bar(&f,15,4);info.packet_size=20;info.security=0;info.flags=RTW88_RX_CRC_ERROR;
+ bar=unit_bar(&f,15,4);native_rx_info(&info,&core,20);info.flags=RTW88_RX_CRC_ERROR;
  mutex_enter(net.lock);rtw88_net_rx_frame(&net,bar->m_data,20,&info);mutex_exit(net.lock);
- CHECK(net.policy.queued==0);info.flags=0;
+ CHECK(net.policy.queued==0);native_rx_info(&info,&core,20);
  mutex_enter(net.lock);rtw88_net_rx_frame(&net,bar->m_data,20,&info);rtw88_net_request(&net.policy);rtw88_net_commit(&net.policy,net.policy.epoch,0,1);mutex_exit(net.lock);
  rtw88_net_softintr(&net);CHECK(net.policy.queued==0 && net.policy.rx.delivery_epoch==1 && rxba_output_count==6);
- mutex_enter(net.lock);rtw88_net_rx_frame(&net,bar->m_data,20,&info);net.core->sc_generation++;mutex_exit(net.lock);
+ mutex_enter(net.lock);native_rx_info(&info,&core,20);rtw88_net_rx_frame(&net,bar->m_data,20,&info);net.core->sc_generation++;mutex_exit(net.lock);
  rtw88_net_softintr(&net);CHECK(net.policy.queued==0 && net.stats.fw_stale==1 && rxba_output_count==6);
  m_freem(bar);
  /* Stale due work cannot acquire a stale node: only the current BSS is ref'd. */

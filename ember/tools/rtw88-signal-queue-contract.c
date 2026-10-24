@@ -15,6 +15,13 @@ extern int tick;
 #include "signal-native-rx.inc"
 #pragma GCC diagnostic pop
 int rtw88_signal_scan_check(unsigned,unsigned);
+static uint64_t signal_rx_sequence;
+static void
+signal_rx_stamp(struct rtw88_rx_info *info, const struct rtw88_softc *sc)
+{
+    info->generation = sc->sc_generation;
+    info->sequence = ++signal_rx_sequence;
+}
 
 static void beacon_arrival_clock(void) {
     static const uint32_t start[]={100,100,UINT32_MAX-20,100};
@@ -23,7 +30,7 @@ static void beacon_arrival_clock(void) {
         struct rtw88_softc sc={.sc_generation=7};kmutex_t lock={0};
         struct rtw88_net net={.core=&sc,.lock=&lock};
         struct ieee80211_node ni={0};uint8_t frame[41]={0x80};
-        struct rtw88_rx_info info={.packet_size=sizeof(frame)};
+        struct rtw88_rx_info info={.packet_size=sizeof(frame),.sequence=1,.generation=7};
         memset(ni.ni_bssid,0x22,6);memcpy(frame+10,ni.ni_bssid,6);
         memcpy(frame+16,ni.ni_bssid,6);memset(frame+4,0xff,6);
         frame[32]=100;frame[34]=1;frame[36]=0;frame[37]=0;
@@ -117,7 +124,7 @@ static void beacon_body_clock(void) {
         case ANY_CHANNEL:net.ic.ic_curchan=IEEE80211_CHAN_ANYC;break;
         default:break;
         }
-        struct rtw88_rx_info info={.packet_size=len};
+        struct rtw88_rx_info info={.packet_size=len,.sequence=(uint64_t)i+1,.generation=7};
         net.policy.epoch=4;net.policy.accepting=1;route_ticks=100;
         CHECK(rtw88_net_beacon_start(&net.policy,4,route_ticks)==0);
         route_ticks=101;
@@ -164,6 +171,7 @@ int main(void) {
     for(unsigned i=0;i<2;i++) {
         packet[25]=(uint8_t)(i?90:60);
         CHECK(rtw88_rx_decode(packet,sizeof(packet),&rx)==0);
+        signal_rx_stamp(&rx,&sc);
         CHECK(rtw88_rx_signal_decode(packet+rx.driver_info_offset,
             rx.driver_info_size,&rx,&phy,generation,36,&rx.signal)==0);
         CHECK(rx.signal.valid && rx.signal.quality==(i?80:50));
@@ -180,7 +188,7 @@ int main(void) {
     CHECK(observed[0]==50 && observed[1]==80);
     CHECK(rtw88_signal_scan_check(observed[0],observed[1])==0);
     /* The actual callback must attach unknown metadata to this frame only. */
-    rx.signal.valid=0;mutex_enter(&lock);rtw88_net_rx_frame(&net,frame,24,&rx);mutex_exit(&lock);
+    rx.signal.valid=0;signal_rx_stamp(&rx,&sc);mutex_enter(&lock);rtw88_net_rx_frame(&net,frame,24,&rx);mutex_exit(&lock);
     rtw88_net_softintr(&net);CHECK(route_last_rssi==0);
     /* Unknown optional signal still delivers DATA from its actual descriptor. */
     for(unsigned kind=0;kind<4;kind++) {
@@ -188,6 +196,7 @@ int main(void) {
         packet[29]=(uint8_t)(kind==0?0x01:kind==1?0x91:0x19);
         if(kind==0)phy.channel_valid=0;else phy.channel_valid=1;
         CHECK(rtw88_rx_decode(packet,sizeof(packet),&rx)==0);
+        signal_rx_stamp(&rx,&sc);
         CHECK(rtw88_rx_signal_decode(packet+rx.driver_info_offset,
             kind==3?7:rx.driver_info_size,&rx,&phy,generation,36,&rx.signal)==ENOENT);
         unsigned before=route_rx;
@@ -198,18 +207,19 @@ int main(void) {
         memcpy(packet+32,frame,24);
     }
     unsigned delivered=route_rx;
-    mutex_enter(&lock);rtw88_net_rx_frame(&net,frame,24,&rx);mutex_exit(&lock);
+    signal_rx_stamp(&rx,&sc);mutex_enter(&lock);rtw88_net_rx_frame(&net,frame,24,&rx);mutex_exit(&lock);
     sc.sc_generation++;rtw88_net_softintr(&net);CHECK(route_rx==delivered);
     CHECK(net.stats.fw_stale==1 && net.policy.queued==0);
     /* A stale signal observation does not invalidate its current DATA owner. */
     packet[12]=0x2c;packet[29]=0x19;packet[25]=90;
     CHECK(rtw88_rx_decode(packet,sizeof(packet),&rx)==0);
+    signal_rx_stamp(&rx,&sc);
     CHECK(rtw88_rx_signal_decode(packet+rx.driver_info_offset,
         rx.driver_info_size,&rx,&phy,generation,36,&rx.signal)==0);
     mutex_enter(&lock);rtw88_net_rx_frame(&net,frame,24,&rx);mutex_exit(&lock);
     rtw88_net_softintr(&net);CHECK(route_rx==delivered+1 && route_last_rssi==0);
     /* Epoch withdrawal still fences queued data independently of firmware age. */
-    mutex_enter(&lock);rtw88_net_rx_frame(&net,frame,24,&rx);
+    signal_rx_stamp(&rx,&sc);mutex_enter(&lock);rtw88_net_rx_frame(&net,frame,24,&rx);
     (void)rtw88_net_request(&net.policy);mutex_exit(&lock);
     delivered=route_rx;rtw88_net_softintr(&net);CHECK(route_rx==delivered && net.policy.queued==0);
     beacon_arrival_clock();

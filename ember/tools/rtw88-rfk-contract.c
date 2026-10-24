@@ -42,6 +42,13 @@ static unsigned rfk_fault,rfk_paused,rfk_io,rfk_extra_us,rfk_owned_io;
 static unsigned rfk_notice_shots;
 static const uint32_t rfk_original_tx=0x12345678,rfk_original_fifo=0xabcdef01;
 static int rfk_is(const char *name) { return strcmp(rfk_case,name)==0; }
+static uint64_t rfk_rx_sequence;
+static void
+rfk_rx_stamp(struct rtw88_net *net, struct rtw88_rx_info *info)
+{
+    info->generation=net->core->sc_generation;
+    info->sequence=++rfk_rx_sequence;
+}
 static int rfk_rx_quiet(void) { return rfk_is("quiet-rx") || rfk_is("quiet-rx-worker"); }
 static int rfk_power_before(void) { return strncmp(rfk_case,"power-before-",13)==0; }
 static unsigned rfk_rf18_writes;
@@ -331,6 +338,7 @@ static int rfk_pause(unsigned ticks)
         info.packet_size=sizeof(notice);info.signal.valid=1;
         info.signal.channel=(uint8_t)rfk_net->channel;
         info.signal.generation=rfk_net->core->sc_generation;
+        rfk_rx_stamp(rfk_net,&info);
         CHECK(!rfk_net->policy.accepting);
         /* Invalid envelope/identity observations cannot withdraw this peer. */
         for(unsigned bad=0;bad<16;bad++) {
@@ -764,6 +772,7 @@ rfk_race_notice(struct rtw88_net *net)
     info.packet_size=sizeof(frame);info.signal.valid=1;
     info.signal.channel=(uint8_t)net->core->sc_channel;
     info.signal.generation=net->core->sc_generation;
+    rfk_rx_stamp(net,&info);
     rtw88_net_rx_frame(net,frame,sizeof(frame),&info);
     CHECK(net->rfk.notice_pending);
 }
@@ -947,7 +956,7 @@ rfk_presence_observe(struct rtw88_net *net)
     struct rtw88_rx_info info={.packet_size=41};
     info.signal.valid=1;info.signal.channel=64;
     info.signal.generation=net->core->sc_generation;
-    info.generation=net->core->sc_generation;info.sequence=1;
+    rfk_rx_stamp(net,&info);
     net->rfk.frontier=0;net->rfk.frontier_valid=1;
     net->rfk.frontier_generation=info.generation;
     unsigned io=rfk_io,writes=f.writes;
@@ -964,10 +973,13 @@ rfk_presence_observe(struct rtw88_net *net)
     uint8_t data[24]={8,2};struct rtw88_rx_info data_info={.packet_size=24};
     net->policy.accepting=1;
     mutex_enter(net->lock);
-    for(unsigned i=0;i<RTW88_NET_RX_LIMIT;i++)
+    for(unsigned i=0;i<RTW88_NET_RX_LIMIT;i++) {
+        rfk_rx_stamp(net,&data_info);
         rtw88_net_rx_frame(net,data,sizeof(data),&data_info);
+    }
     mutex_exit(net->lock);CHECK(net->policy.queued==RTW88_NET_RX_LIMIT);
     rfk_advance_us(53);expected=rtw88_net_rfk_ticks(net);
+    rfk_rx_stamp(net,&info);
     mutex_enter(net->lock);rtw88_net_rx_frame(net,frame,41,&info);mutex_exit(net->lock);
     CHECK(net->policy.queued==RTW88_NET_RX_LIMIT);
     CHECK(net->rfk.beacon_epoch==net->policy.epoch &&
@@ -978,6 +990,7 @@ rfk_presence_observe(struct rtw88_net *net)
     for(unsigned bad=0;bad<28;bad++) {
         uint8_t invalid[sizeof(frame)];memcpy(invalid,frame,sizeof(frame));
         struct rtw88_rx_info corrupt=info;size_t len=41;
+        rfk_rx_stamp(net,&corrupt);
         if(bad==0)invalid[0]=8;
         if(bad==1)memcpy(invalid+4,ic->ic_myaddr,6);
         if(bad==2)invalid[4]=1;
@@ -1020,6 +1033,7 @@ rfk_presence_observe(struct rtw88_net *net)
     for(unsigned i=0;i<sizeof(intervals)/sizeof(intervals[0]);i++) {
         frame[32]=(uint8_t)intervals[i];frame[33]=(uint8_t)(intervals[i]>>8);
         rfk_advance_us(17);expected=rtw88_net_rfk_ticks(net);
+        rfk_rx_stamp(net,&info);
         mutex_enter(net->lock);rtw88_net_rx_frame(net,frame,41,&info);mutex_exit(net->lock);
         CHECK(net->rfk.beacon_epoch==net->policy.epoch &&
             net->rfk.beacon_interval==intervals[i] && net->rfk.beacon_us==expected);
@@ -1038,11 +1052,13 @@ rfk_presence_observe(struct rtw88_net *net)
         size_t len=41+withdrawals[quiet].len;
         memcpy(notice+41,withdrawals[quiet].data,withdrawals[quiet].len);
         struct rtw88_rx_info notice_info=info;notice_info.packet_size=len;
+        rfk_rx_stamp(net,&notice_info);
         rfk_presence_seed(net,rtw88_net_rfk_ticks(net));
         net->rfk.notice_pending=0;
         mutex_enter(net->lock);rtw88_net_rx_frame(net,notice,len,&notice_info);mutex_exit(net->lock);
         CHECK(net->rfk.notice_pending && net->rfk.beacon_epoch==0);
         rfk_advance_us(19);
+        rfk_rx_stamp(net,&info);
         mutex_enter(net->lock);rtw88_net_rx_frame(net,frame,41,&info);mutex_exit(net->lock);
         CHECK(net->rfk.notice_pending && net->rfk.beacon_epoch==0);
     }
@@ -1192,8 +1208,10 @@ main(void)
     if(rfk_rx_quiet()) {
         uint8_t data[24]={8,2};struct rtw88_rx_info info={.packet_size=24};
         mutex_enter(net->lock);
-        for(unsigned i=0;i<RTW88_NET_RX_LIMIT;i++)
+        for(unsigned i=0;i<RTW88_NET_RX_LIMIT;i++) {
+            rfk_rx_stamp(net,&info);
             rtw88_net_rx_frame(net,data,sizeof(data),&info);
+        }
         CHECK(net->policy.queued==RTW88_NET_RX_LIMIT);
         mutex_exit(net->lock);
     }

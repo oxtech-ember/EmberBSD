@@ -39,6 +39,7 @@ struct workqueue { unsigned queued; };
 struct rtw88_net_rx {
     struct mbuf *m;
     uint64_t epoch, arrived;
+    uint64_t sequence;
     uint32_t tsf, generation, tick;
     uint8_t quality;
 };
