@@ -101,7 +101,7 @@ exynos5800_mpstart(void)
 	bus_space_tag_t bst = &armv7_generic_bs_tag;
 	bus_space_handle_t pmu_bsh, sysram_bsh;
 	uint64_t mpidr, bp_mpidr;
-	uint32_t val, started = 0;
+	uint32_t val;
 	u_int cpuindex, n;
 	int child;
 
@@ -162,7 +162,6 @@ exynos5800_mpstart(void)
 		for (n = 0x100000; n > 0; n--) {
 			val = bus_space_read_4(bst, pmu_bsh, EXYNOS5800_PMU_CORE_STATUS(cpu));
 			if ((val & EXYNOS5800_PMU_CORE_POWER_EN) == EXYNOS5800_PMU_CORE_POWER_EN) {
-				started |= __BIT(cpuindex);
 				break;
 			}
 		}
