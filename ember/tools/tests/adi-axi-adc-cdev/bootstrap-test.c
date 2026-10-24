@@ -37,12 +37,13 @@ struct adi_axi_adc_lease {
 struct adi_axi_adc_softc {
  struct adi_axi_adc_lease *sc_lease;
  bool sc_capture_pending,sc_capture_valid,sc_configured;
+ struct adi_axi_rx_config sc_config;
  size_t sc_capture_offset,sc_capture_bytes;
  void *sc_capture_buffer,*sc_capture_data;
  unsigned sc_capture_samples,sc_capture_timeout; int sc_capture_error;
 };
 static struct adi_axi_adc_softc adc;
-static unsigned drains,boots,configures;
+static unsigned drains,boots,configures,retunes;
 static int drain_error;
 static bool initialized;
 static void mutex_enter(int *p) { (void)p; }
@@ -68,6 +69,10 @@ static void kmem_free(void *p,size_t n) { (void)n;free(p); }
 static int adi_axi_adc_configure(struct adi_axi_adc_lease *l,const struct adi_axi_rx_config *c,unsigned ms) {
  (void)l;(void)c;assert(ms==1000);if(!initialized)return ENXIO;configures++;return 0;
 }
+int adi_axi_adc_retune_rx(struct adi_axi_adc_lease *l,uint64_t frequency);
+int adi_axi_adc_retune_rx(struct adi_axi_adc_lease *l,uint64_t frequency) {
+ assert(l->l_quiet && initialized && frequency==918000000);retunes++;return 0;
+}
 static int adi_axi_adc_read_rx_status(struct adi_axi_adc_lease *l,struct adi_axi_rx_status *s) { (void)l;(void)s;return 0; }
 #include "bootstrap.inc"
 int main(void)
@@ -83,8 +88,12 @@ int main(void)
  adc.sc_lease=&lease;
  assert(adiaxiadc_cdev_ioctl(0,ADI_AXI_ADCIOC_CONFIG,&config,0,NULL)==0);
  assert(initialized && adc.sc_configured && boots==1 && drains==2 && configures==1);
+ config.frequency_hz=918000000;
  assert(adiaxiadc_cdev_ioctl(0,ADI_AXI_ADCIOC_CONFIG,&config,0,NULL)==0);
- assert(boots==1 && configures==2);
+ assert(boots==1 && configures==1 && retunes==1);
+ config.sample_rate_hz=12000000;
+ assert(adiaxiadc_cdev_ioctl(0,ADI_AXI_ADCIOC_CONFIG,&config,0,NULL)==0);
+ assert(boots==1 && configures==2 && retunes==1);
  /* A new lease reuses initialized provider clocks, not a new cold proof. */
  lease.l_quiet=false;adc.sc_configured=false;
  assert(adiaxiadc_cdev_ioctl(0,ADI_AXI_ADCIOC_CONFIG,&config,0,NULL)==0);

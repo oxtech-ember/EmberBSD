@@ -40,6 +40,8 @@ and
 .Dv ADI_AXI_ADC_RX1_IQ_CHANNEL_MASK .
 Gain and RSSI use millidecibel units.
 This request invalidates the previous capture.
+The first configuration initializes RX clocks after safe DMA admission.
+A change to frequency alone preserves the sampling clocks and tuned link.
 Hardware-specific range limits can be narrower than the ABI limits.
 .It Dv ADI_AXI_ADCIOC_CAPTURE
 Arm a finite capture with a sample count and a timeout.

@@ -9,7 +9,7 @@ import tempfile
 root = Path(__file__).resolve().parents[4]
 source = (root / 'sys/dev/fdt/adi_axi_adc.c').read_text()
 functions = []
-for marker in ('int\nadi_axi_adc_bootstrap(', 'static int\nadiaxiadc_cdev_ioctl('):
+for marker in ('int\nadi_axi_adc_bootstrap(', 'static bool\nadiaxiadc_same_rx_path(', 'static int\nadiaxiadc_cdev_ioctl('):
     start = source.index(marker)
     end = source.index('\n}\n', start) + 3
     functions.append(source[start:end])

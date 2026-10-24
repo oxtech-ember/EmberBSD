@@ -57,6 +57,7 @@ struct adi_axi_adc_softc {
 	bool sc_session_open;
 	bool sc_session_busy;
 	bool sc_configured;
+	struct adi_axi_rx_config sc_config;
 	bool sc_capture_pending;
 	bool sc_capture_valid;
 	uint32_t sc_capture_samples;
@@ -1009,6 +1010,21 @@ unlock:
 	return error;
 }
 
+/* Frequency-only changes preserve sampling clocks and the tuned RX link. */
+static bool
+adiaxiadc_same_rx_path(const struct adi_axi_rx_config *a,
+    const struct adi_axi_rx_config *b)
+{
+
+	return a->sample_rate_hz == b->sample_rate_hz &&
+	    a->bandwidth_hz == b->bandwidth_hz && a->rf_port == b->rf_port &&
+	    a->rx_mask == b->rx_mask && a->channel_mask == b->channel_mask &&
+	    a->gain_mdB[0] == b->gain_mdB[0] &&
+	    a->gain_mdB[1] == b->gain_mdB[1] &&
+	    a->gain_mode[0] == b->gain_mode[0] &&
+	    a->gain_mode[1] == b->gain_mode[1];
+}
+
 static int
 adiaxiadc_cdev_ioctl(dev_t dev, u_long command, void *data, int flags,
 	struct lwp *l)
@@ -1085,10 +1101,18 @@ adiaxiadc_cdev_ioctl(dev_t dev, u_long command, void *data, int flags,
 		mutex_exit(&lease->l_converter->c_lock);
 		error = bootstrap ? adi_axi_adc_bootstrap(lease, &config,
 		    user->timeout_ms) : 0;
-		if (error == 0)
-			error = adi_axi_adc_configure(lease, &config,
-			    user->timeout_ms);
+		if (error == 0) {
+			if (sc->sc_configured &&
+			    adiaxiadc_same_rx_path(&sc->sc_config, &config))
+				error = adi_axi_adc_retune_rx(lease,
+				    config.frequency_hz);
+			else
+				error = adi_axi_adc_configure(lease, &config,
+				    user->timeout_ms);
+		}
 		sc->sc_configured = error == 0;
+		if (error == 0)
+			sc->sc_config = config;
 		break;
 	}
 	case ADI_AXI_ADCIOC_CAPTURE: {
