@@ -79,6 +79,11 @@ if match is None:
 shards = [s.strip() for s in match.group(1).split(",") if s.strip()]
 if len(shards) != len(set(shards)):
     raise SystemExit("rtw88 contract shards repeat")
+unknown = subprocess.run(["sh", str(root / "ember/tools/rtw88-ci-shard.sh"),
+                          "unknown"], capture_output=True, text=True)
+if (unknown.returncode != 2 or unknown.stdout != "" or
+        unknown.stderr != "unknown shard: unknown\n"):
+    raise SystemExit("rtw88 shard selector did not reject an unknown shard")
 selector = 'contracts=$(sh ember/tools/rtw88-ci-shard.sh "${{ matrix.shard }}")'
 runner = ('sh "$contract" || { rc=$?; echo "::endgroup::"; '
           'echo "::error::$contract failed ($rc)"; exit "$rc"; }')
