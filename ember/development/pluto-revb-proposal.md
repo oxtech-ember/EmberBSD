@@ -27,20 +27,31 @@ for other Pluto revisions. The scanner is a later separate change.
 
 ## Baseline and target
 
-- EmberBSD source baseline: `16c3eddc0d73750360f81620b1d36c61ca2dc38c`.
+- EmberBSD source baseline inspected for this proposal: `cffb12cd6ed5695582b7b9af10e69353bab70de8`.
 - Device: ADALM-Pluto Rev.B, Xilinx Zynq-7000 Z7010 and AD9363A; 512 MiB RAM
   and 32 MiB QSPI per the vendor documentation.
-- Current observed firmware: ADI `v0.39-dirty`; exact firmware source revision
-  and recoverable payload hash remain to be recorded.
+- Current observed firmware: ADI `v0.39-dirty`, Linux
+  `6.1.0-271883-gf3da30df6004-dirty`, U-Boot
+  `v0.20-PlutoSDR-00066-g90401ce9ce`, FPGA
+  `dev_prj_2018_r1-2241-g065c8-dirty`, and root filesystem
+  `2022.02.3-adi-5718-ge783aa`. Exact firmware source revision and recoverable
+  payload hash remain to be recorded.
 - Target ABI: NetBSD `earmv7hf`; intended cross compiler: GCC 16.
-- Board boot path: ADI RAM DFU is documented, but payload format, U-Boot command,
-  console and EmberBSD handoff on this device remain unverified.
+- Board boot path: ADI RAM DFU is documented. The current Mac read-only check
+  found the board in runtime USB mode and no DFU device; no reboot or transfer
+  was attempted. The CDC interface reaches a login prompt, while U-Boot console
+  visibility remains unverified.
 
-The [current official Pluto U-Boot defconfig](https://github.com/analogdevicesinc/u-boot/blob/adi-xlnx-u-boot-2025.1-y/configs/zynq_pluto_defconfig)
-explicitly disables `CONFIG_BOOTM_NETBSD` and enables a silent U-Boot console. The installed
-`v0.39-dirty` bootloader revision has not been pinned, so direct native NetBSD
-handoff cannot be assumed. A RAM-loaded U-Boot with NetBSD support or another
-verified handoff may be required.
+The installed U-Boot revision is pinned to upstream
+[`analogdevicesinc/u-boot-xlnx` commit `90401ce9ce`](https://github.com/analogdevicesinc/u-boot-xlnx/tree/90401ce9ce).
+At that exact source revision, the Zynq environment defines a RAM DFU target
+starting at `0x02080000` with size `0x01e00000`, and the RAM boot command expects
+a Linux FIT image. The same configuration undefines `CONFIG_BOOTM_NETBSD`.
+Even when enabled, the [NetBSD boot handler](https://raw.githubusercontent.com/analogdevicesinc/u-boot-xlnx/90401ce9ce/common/bootm_os.c)
+rejects FIT and expects a NetBSD stage-2 loader in a legacy image. RAM DFU alone
+therefore does not establish an EmberBSD boot path. A NetBSD-capable second
+bootloader and stage-2 handoff, or another verified route, is still required;
+no payload should be sent to the board until that handoff is proven off-device.
 
 ## Acceptance
 
@@ -69,6 +80,6 @@ Persistent QSPI installation requires a separate reviewed image/layout,
 verified recovery procedure and explicit approval after RAM-boot and RX
 acceptance.
 
-The proposal and implementation are AI-assisted. The source and physical
-results will be reported separately; this proposal does not claim tested board
-support.
+The proposal and implementation are AI-assisted by Codex. The source and
+physical results will be reported separately; this proposal does not claim
+tested board support.
