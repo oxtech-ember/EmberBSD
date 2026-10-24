@@ -41,6 +41,7 @@ __KERNEL_RCSID(0, "$NetBSD: amdgpu_dma_buf.c,v 1.3 2021/12/19 12:01:40 riastradh
 #include "amdgpu_gem.h"
 #include "amdgpu_dma_buf.h"
 #include <drm/amdgpu_drm.h>
+#include <drm/drm_prime.h>
 #include <linux/dma-buf.h>
 #include <linux/dma-fence-array.h>
 
@@ -101,8 +102,22 @@ int amdgpu_gem_prime_mmap(struct drm_gem_object *obj,
 			  struct vm_area_struct *vma)
 #endif
 {
-#ifdef __NetBSD__		/* XXX amdgpu prime */
-	return -ENODEV;
+#ifdef __NetBSD__
+	struct amdgpu_bo *bo = gem_to_amdgpu_bo(obj);
+	u64 asize = amdgpu_bo_size(bo);
+
+	if (amdgpu_ttm_adev(bo->tbo.bdev) == NULL)
+		return -ENODEV;
+	if (*offp < 0 || size == 0 || size > asize ||
+	    (u64)*offp > asize - size)
+		return -EINVAL;
+	if (amdgpu_ttm_tt_get_usermm(bo->tbo.ttm) ||
+	    (bo->flags & AMDGPU_GEM_CREATE_NO_CPU_ACCESS))
+		return -EPERM;
+
+	/* Use the native TTM pager and its buffer-object references. */
+	return drm_gem_prime_mmap(obj, offp, size, prot, flagsp, advicep,
+	    uobjp, maxprotp);
 #else
 	struct amdgpu_bo *bo = gem_to_amdgpu_bo(obj);
 	struct amdgpu_device *adev = amdgpu_ttm_adev(bo->tbo.bdev);

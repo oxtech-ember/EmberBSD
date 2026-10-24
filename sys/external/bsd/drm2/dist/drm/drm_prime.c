@@ -861,13 +861,24 @@ int drm_gem_prime_mmap(struct drm_gem_object *obj, off_t *offp, size_t size,
 int drm_gem_prime_mmap(struct drm_gem_object *obj, struct vm_area_struct *vma)
 #endif
 {
+#ifdef __NetBSD__
+	const unsigned long start = drm_vma_node_start(&obj->vma_node);
+	const off_t offmax = __type_max(off_t);
+	off_t base;
+#endif
 	struct drm_file *priv;
 	struct file *fil;
 	int ret;
 
 	/* Add the fake offset */
 #ifdef __NetBSD__
-	*offp += drm_vma_node_start(&obj->vma_node);
+	/* Native offsets are bytes, not Linux vm_pgoff page numbers. */
+	if (*offp < 0 || start > ((uintmax_t)offmax >> PAGE_SHIFT))
+		return -EINVAL;
+	base = (off_t)start << PAGE_SHIFT;
+	if (*offp > offmax - base)
+		return -EINVAL;
+	*offp += base;
 #else
 	vma->vm_pgoff += drm_vma_node_start(&obj->vma_node);
 #endif
