@@ -844,14 +844,15 @@ acpitz_get_zone(void *opaque, int verbose)
 
 	valid_levels = 0;
 
+	/* ATZ_NLEVELS is ten: each _ACx and _ALx name has one digit. */
 	for (i = 0; i < ATZ_NLEVELS; i++) {
 
-		(void)snprintf(buf, sizeof(buf), "_AC%d", i);
+		(void)snprintf(buf, sizeof(buf), "_AC%c", '0' + i);
 
 		if (acpitz_get_integer(dv, buf, &sc->sc_zone.ac[i]))
 			continue;
 
-		(void)snprintf(buf, sizeof(buf), "_AL%d", i);
+		(void)snprintf(buf, sizeof(buf), "_AL%c", '0' + i);
 
 		rv = acpi_eval_struct(sc->sc_node->ad_handle, buf,
 		    &sc->sc_zone.al[i]);
