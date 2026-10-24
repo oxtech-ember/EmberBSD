@@ -27,6 +27,8 @@ required = (
     "ember/tools/rtw88-workflow-contract.py",
     "sys/net80211/ieee80211_beacon_ies.c",
     "sys/net80211/ieee80211_beacon_ies.h",
+    "sys/net80211/ieee80211_vht_ies.c",
+    "sys/net80211/ieee80211_vht_ies.h",
 )
 missing = [path for path in required
            if not any(fnmatch.fnmatchcase(path, pattern)

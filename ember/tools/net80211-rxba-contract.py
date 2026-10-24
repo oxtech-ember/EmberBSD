@@ -8,7 +8,7 @@ Full association management exchange and hardware programming are separate gates
 import pathlib,re,subprocess,sys,os
 src,out=map(pathlib.Path,sys.argv[1:])
 subprocess.run([sys.executable,str(src/'ember/tools/ccmp-contract-extract.py'),str(src),str(out)],check=True)
-for name in ['ieee80211_ht20.h','ieee80211_rxba.h']:
+for name in ['ieee80211_ht20.h','ieee80211_rxba.h','ieee80211_vht_ies.h']:
  (out/name).write_text((src/'sys/net80211'/name).read_text())
 s=(src/'ember/tools/ccmp-test-kernel.h').read_text()
 state_enum=re.search(r'^enum ieee80211_state \{.*?^};',(src/'sys/net80211/ieee80211_proto.h').read_text(),re.M|re.S).group()
@@ -72,6 +72,9 @@ parts=[]
 for name,result in [('ieee80211_ht20_write','void'),('ieee80211_ht20_offer','void')]:
  parts.append(extract('sys/net80211/ieee80211_ht20.c',name,result))
 parts.append(re.search(r'^#define\s+IEEE80211_KEY_UNDEFINED\([^)]*\)\s+.*$',(src/'sys/net80211/ieee80211_crypto.h').read_text(),re.M).group())
+parts.append('#include "ieee80211_vht_ies.h"')
+vht=(src/'sys/net80211/ieee80211_vht_ies.c').read_text()
+parts.append(vht[vht.index('static uint16_t'):])
 for name,result in [('ieee80211_crypto_getucastkey','struct ieee80211_key *'),('ieee80211_send_setup','static void'),('ieee80211_wme_request_offer','static int'),('ieee80211_ht20_request_offer','static int'),('ieee80211_mgmt_output','static int'),('ieee80211_send_rxba_response','int')]:
  parts.append(extract('sys/net80211/ieee80211_output.c',name,result))
 (out/'native-rxba-output.inc').write_text('\n'.join(parts))
