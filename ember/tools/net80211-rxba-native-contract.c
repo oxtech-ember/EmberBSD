@@ -26,6 +26,7 @@ struct rtw88_softc { int sc_linked;struct { int active,configured; } sc_ra;void 
 struct rtw88_net {
  struct rtw88_softc *core;
  void *wq;int state_work,requested,state_arg,work_pending,reset_required;unsigned channel;
+ struct rtw88_channel_tuple pending_channel;
  int tx_quiet,quiet_error;
  int (*parent_state)(struct ieee80211com *,int,int);
  struct rtw88_net_rx rx[RTW88_NET_RX_LIMIT];

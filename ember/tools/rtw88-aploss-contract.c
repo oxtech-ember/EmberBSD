@@ -17,6 +17,7 @@
 #include <assert.h>
 #include <stdlib.h>
 #include "rtw88_net_policy.h"
+#include "rtw88_hw.h"
 #include "aploss-constants.inc"
 #include "ieee80211_ht20.h"
 #include "ieee80211_rxba.h"
@@ -59,6 +60,7 @@ struct rtw88_net {
     struct ieee80211com ic;
     struct rtw88_softc *core;
     struct rtw88_net_policy policy;
+    struct rtw88_channel_tuple pending_channel;
     int *lock;
     int scan, dev, work_pending, reset_required, state_arg;
     int tx_quiet, quiet_error;
