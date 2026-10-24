@@ -8,7 +8,7 @@
 
 /* Actual native callback and complete worker use explicit kernel/core services.
  * RF programming and full core I/O are not claimed by this exchange. */
-struct rtw88_softc { int sc_started, sc_running, sc_stop_requested; unsigned sc_channel, sc_generation, sc_h2c_box, modeled_tx_pending; int sc_linked; struct { int active, configured; } sc_ra; };
+struct rtw88_softc { int sc_started, sc_running, sc_stop_requested; unsigned sc_channel, sc_generation, sc_h2c_box, modeled_tx_pending; int sc_linked; struct { int active, configured; } sc_ra; struct rtw88_phy_state sc_phy; };
 struct rtw88_net {
 	struct { struct ifnet ec_if; } ec;
 	struct ieee80211com ic;

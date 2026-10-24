@@ -22,7 +22,7 @@ const struct ieee80211_channel ieee80211_channel_anyc={0};
 #define IFF_OACTIVE 0x400
 struct callout_model { void (*fn)(void *);void *arg;int pending,initialized;unsigned ticks; };
 typedef struct callout_model callout_t;
-struct rtw88_softc { int sc_linked;struct { int active,configured; } sc_ra;void *sc_rx_frame,*sc_tx_complete,*sc_net_cookie;uint32_t sc_generation;struct { unsigned queued; } sc_txq[RTW88_NTXQ]; };
+struct rtw88_softc { int sc_linked;struct { int active,configured; } sc_ra;struct rtw88_phy_state sc_phy;void *sc_rx_frame,*sc_tx_complete,*sc_net_cookie;uint32_t sc_generation;struct { unsigned queued; } sc_txq[RTW88_NTXQ]; };
 struct rtw88_net {
  struct rtw88_softc *core;
  void *wq;int state_work,requested,state_arg,work_pending,reset_required;unsigned channel;

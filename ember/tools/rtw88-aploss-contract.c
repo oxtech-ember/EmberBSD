@@ -55,7 +55,7 @@ struct ieee80211com {
     void (*ic_node_cleanup)(struct ieee80211_node *);
     int (*ic_ht20_admit)(struct ieee80211com *,struct ieee80211_ht20_profile *);
 };
-struct rtw88_softc { int sc_linked; struct { int active,configured; } sc_ra; };
+struct rtw88_softc { int sc_linked; struct { int active,configured; } sc_ra; struct rtw88_phy_state sc_phy; };
 struct rtw88_net {
     struct ieee80211com ic;
     struct rtw88_softc *core;
