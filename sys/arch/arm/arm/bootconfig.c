@@ -92,7 +92,8 @@ get_bootconf_option(char *opts, const char *opt, int type, void *result)
 		if (*ptr == '=' ||
 		    (type & BOOTOPT_TYPE_MASK) == BOOTOPT_TYPE_BOOLEAN) {
 			/* compare the option */
-			if (strncmp(optstart, opt, (ptr - optstart)) == 0) {
+			if (strlen(opt) == (size_t)(ptr - optstart) &&
+			    strncmp(optstart, opt, (ptr - optstart)) == 0) {
 				/* found */
 
 				if (*ptr == '=')
