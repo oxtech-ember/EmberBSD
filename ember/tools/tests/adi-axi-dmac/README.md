@@ -60,3 +60,13 @@ prove drain after disable: hardware resets both IDs immediately. The host
 fixture models that early reset and delayed reset-manager completion.
 A stripped debug register, SG state, stalled clock or deadline expiry fails
 closed. Other versions still require the external drain provider.
+
+Shutdown can retain a converter guard after a failed initialization. For exact
+4.5.c, PMF can record a separate reset-only drain certificate after disabling
+submission and observing the hardware witness. This does not return CPU
+ownership or free any guard, mapping or buffer. The final hook checks that
+certificate and the live hardware again. Quarantine, pending operations,
+nonzero buffer ownership or unavailable locks still prevent reset.
+The polling budget also expires when hardclock interrupts have stopped.
+The fixture covers retained ownership, rejected teardown, frozen ticks,
+PMF lock contention and final-hook fault cases in separate child processes.

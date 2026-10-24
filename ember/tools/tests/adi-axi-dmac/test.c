@@ -5,6 +5,7 @@
 #define _DARWIN_C_SOURCE
 #endif
 #include <sys/queue.h>
+#include <sys/wait.h>
 #include <assert.h>
 #include <errno.h>
 #include <limits.h>
@@ -74,7 +75,7 @@ typedef struct test_dmamap {
 #define BUS_DMASYNC_PREWRITE 4
 #define BUS_DMASYNC_POSTWRITE 8
 #define BUS_SPACE_BARRIER_WRITE 1
-#define SPINLOCK_BACKOFF_HOOK abort()
+#define SPINLOCK_BACKOFF_HOOK _exit(77)
 #define ONCE_DECL(name) bool name
 #define RUN_ONCE run_once
 
@@ -108,7 +109,9 @@ static bus_dmamap_t dma_maps;
 static pthread_mutex_t maps_lock = PTHREAD_MUTEX_INITIALIZER;
 static bool drained, submitted;
 static unsigned idle_ready_after, idle_reads, drain_elapsed;
-static bool idle_pending;
+static bool idle_pending, freeze_ticks;
+static unsigned delay_calls;
+static const unsigned hz = 1000;
 static uint64_t physical_address;
 static void *irq_cookie;
 static int adiaxidmac_intr(void *);
@@ -288,7 +291,9 @@ static unsigned mstohz(unsigned ms) { return ms; }
 static inline void delay(unsigned us)
 {
 	CHECK(us > 0 && irq_lock->held == 0);
-	ticks++;
+	delay_calls++;
+	if (!freeze_ticks)
+		ticks++;
 }
 
 static uint32_t
@@ -699,7 +704,8 @@ reset_fixture(uint32_t interface)
 	irq_mode = IRQ_MATCH;
 	submitted = drained = false;
 	idle_ready_after = idle_reads = drain_elapsed = 0;
-	idle_pending = false;
+	idle_pending = freeze_ticks = false;
+	delay_calls = 0;
 	physical_address = 0x100000;
 	fixture.sc_dev = &fixture;
 	fixture.sc_phandle = 17;
@@ -1447,6 +1453,98 @@ check_concurrent_prepared(void)
 	puts("PASS pthread prepare/cancel during DMA and prepared successor survives drain");
 }
 
+/* A retained converter lease is not itself evidence of active DMA. */
+static void
+check_guard_reset(void)
+{
+	struct adi_axi_dmac_guard *g;
+	struct adi_axi_dmac_buffer *b;
+	unsigned sync_before, drain_before;
+
+	reset_fixture(0x2303);
+	CHECK(dmac_interface(&fixture, 0x040563, 0x2303) == 0);
+	CHECK(adi_axi_dmac_reserve(17, &fixture, &g) == 0);
+	CHECK(adi_axi_dmac_guard_bind(g, &drain_ops, &fixture) == 0);
+	registers[0x43c / 4] = 0x701;
+	mutex_enter(&fixture.sc_lock);
+	CHECK(!adiaxidmac_shutdown(&fixture, 0));
+	mutex_exit(&fixture.sc_lock);
+	mutex_enter(&fixture.sc_buffer_lock);
+	CHECK(!adiaxidmac_shutdown(&fixture, 0));
+	mutex_exit(&fixture.sc_buffer_lock);
+	mutex_enter(&fixture.sc_irq_lock);
+	CHECK(!adiaxidmac_shutdown(&fixture, 0));
+	mutex_exit(&fixture.sc_irq_lock);
+	CHECK(adiaxidmac_shutdown(&fixture, 0));
+	CHECK(fixture.sc_guard == g && !fixture.sc_drained);
+	CHECK(drain_calls == 0 && sync_calls == 0 && submits == 0);
+	CHECK(adi_axi_dmac_unreserve(g) == ESHUTDOWN);
+	adiaxidmac_shutdown_final(&fixture);
+	CHECK(fixture.sc_guard == g && !fixture.sc_drained);
+	mutex_exit(&fixture.sc_buffer_lock);
+	mutex_exit(&fixture.sc_lock);
+	/* Model coordinated reset before retiring retained fixture ownership. */
+	fixture.sc_stopping = false;
+	CHECK(adi_axi_dmac_unreserve(g) == 0);
+
+	reset_fixture(0x2303);
+	CHECK(dmac_interface(&fixture, 0x040563, 0x2303) == 0);
+	CHECK(adi_axi_dmac_reserve(17, &fixture, &g) == 0);
+	CHECK(adi_axi_dmac_guard_bind(g, &drain_ops, &fixture) == 0);
+	CHECK(adi_axi_dmac_guard_prepare(g) == 0);
+	CHECK(adi_axi_dmac_guard_buffer_alloc(g, 64, &b) == 0);
+	sync_before = sync_calls; drain_before = drain_calls;
+	CHECK(adiaxidmac_shutdown(&fixture, 0));
+	CHECK(fixture.sc_guard == g && fixture.sc_channel == g->g_channel);
+	CHECK(sync_calls == sync_before && drain_calls == drain_before && submits == 0);
+	CHECK(adi_axi_dmac_guard_buffer_free(g, b) == ESHUTDOWN);
+	CHECK(adi_axi_dmac_release(g->g_channel) == ESHUTDOWN);
+	CHECK(adi_axi_dmac_unreserve(g) == ESHUTDOWN);
+	CHECK(fflush(NULL) == 0);
+	for (unsigned fault = 0; fault < 8; fault++) {
+		int status;
+		pid_t child;
+
+		child = fork();
+		CHECK(child >= 0);
+		if (child == 0) {
+			if (fault == 0) registers[0x43c / 4] = 0;
+			if (fault == 1) fixture.sc_quarantined = true;
+			if (fault == 2) fixture.sc_stopping = false;
+			if (fault == 3) mutex_enter(&fixture.sc_buffer_lock);
+			if (fault == 4) mutex_enter(&fixture.sc_irq_lock);
+			if (fault == 5) b->b_inflight = 64;
+			if (fault == 6) b->b_prepared = 64;
+			if (fault == 7) fixture.sc_reset_drained = false;
+			adiaxidmac_shutdown_final(&fixture);
+			_exit(0);
+		}
+		CHECK(waitpid(child, &status, 0) == child);
+		CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 77);
+	}
+	adiaxidmac_shutdown_final(&fixture);
+	CHECK(fixture.sc_guard == g && dma_maps == b->b_map);
+	CHECK(sync_calls == sync_before && drain_calls == drain_before);
+	mutex_exit(&fixture.sc_buffer_lock);
+	mutex_exit(&fixture.sc_lock);
+	fixture.sc_stopping = false;
+	CHECK(adi_axi_dmac_guard_buffer_free(g, b) == 0);
+	CHECK(adi_axi_dmac_unreserve(g) == 0);
+
+	reset_fixture(0x2303);
+	CHECK(dmac_interface(&fixture, 0x040563, 0x2303) == 0);
+	CHECK(adi_axi_dmac_reserve(17, &fixture, &g) == 0);
+	registers[0x43c / 4] = 0;
+	freeze_ticks = true;
+	CHECK(!adiaxidmac_shutdown(&fixture, 0));
+	CHECK(delay_calls > 0 && delay_calls <= 100000);
+	CHECK(ticks == 0 && fixture.sc_guard == g && !fixture.sc_drained);
+	freeze_ticks = false;
+	fixture.sc_stopping = false;
+	CHECK(adi_axi_dmac_unreserve(g) == 0);
+	puts("PASS reset-only hardware drain retains guard ownership; final faults and frozen hardclock refuse reset");
+}
+
 static void
 check_shutdown_access(void)
 {
@@ -1474,6 +1572,7 @@ int
 main(void)
 {
 	(void)alarm(30);
+	(void)hz;
 	(void)adiaxidmac_shutdown_final;
 	check_interfaces();
 	check_transfer(0x0323, IRQ_MATCH, 0, 0);
@@ -1520,6 +1619,7 @@ main(void)
 	check_prepare_failure(PREPARE_STOP_FAILURE);
 	check_concurrent_prepared();
 	check_copy_serialization(CALL_PREPARE);
+	check_guard_reset();
 	check_shutdown_access();
 	reset_fixture(0x0323);
 	CHECK(adiaxidmac_shutdown(&fixture, 0));

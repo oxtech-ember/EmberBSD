@@ -71,6 +71,8 @@ struct adi_axi_dmac_softc {
 	bool sc_stream_dest;
 	bool sc_quarantined;
 	bool sc_stopping;
+	/* Reset-only witness. Does not return CPU ownership or release a guard. */
+	bool sc_reset_drained;
 	bool sc_drained;
 	bool sc_used;
 	bool sc_pending;
@@ -158,21 +160,34 @@ dmac_read(struct adi_axi_dmac_softc *sc, bus_size_t reg)
  * 4.5.c without SG reports RESET state after all AXI responses and resets.
  * A core with stripped debug registers reads zero and must time out.
  */
+static bool
+dmac_idle_45c(struct adi_axi_dmac_softc *sc)
+{
+
+	return sc->sc_debug_idle_45c && sc->sc_size >= DMAC_DEBUG_STATUS + 4 &&
+	    dmac_read(sc, DMAC_CONTROL) == 0 &&
+	    dmac_read(sc, DMAC_SUBMIT) == 0 &&
+	    (dmac_read(sc, DMAC_DEBUG_STATUS) & 0xfffU) == DMAC_DEBUG_IDLE_45C;
+}
+
 static int
 dmac_wait_idle_45c(struct adi_axi_dmac_softc *sc, unsigned int started,
     unsigned int wait_ticks)
 {
+	uint64_t remaining_us;
+
 	if (!sc->sc_debug_idle_45c || sc->sc_size < DMAC_DEBUG_STATUS + 4)
 		return EOPNOTSUPP;
+	/* Shutdown and debugger entry can stop hardclock interrupts. */
+	remaining_us = ((uint64_t)wait_ticks * 1000000 + hz - 1) / hz;
 	for (;;) {
-		if (dmac_read(sc, DMAC_CONTROL) == 0 &&
-		    dmac_read(sc, DMAC_SUBMIT) == 0 &&
-		    (dmac_read(sc, DMAC_DEBUG_STATUS) & 0xfffU) ==
-		    DMAC_DEBUG_IDLE_45C)
+		if (dmac_idle_45c(sc))
 			return 0;
-		if ((unsigned int)getticks() - started >= wait_ticks)
+		if ((unsigned int)getticks() - started >= wait_ticks ||
+		    remaining_us < 10)
 			return ETIMEDOUT;
 		delay(10);
+		remaining_us -= 10;
 	}
 }
 
@@ -300,6 +315,10 @@ adi_axi_dmac_unreserve(struct adi_axi_dmac_guard *g)
 	int error = 0;
 
 	mutex_enter(&sc->sc_lock);
+	if (sc->sc_stopping) {
+		error = ESHUTDOWN;
+		goto out;
+	}
 	if (sc->sc_guard != g || sc->sc_quarantined) {
 		error = EIO;
 		goto out;
@@ -564,15 +583,30 @@ adiaxidmac_shutdown(device_t dev, int howto)
 	(void)howto;
 	if (!mutex_tryenter(&sc->sc_lock))
 		return false;
-	mutex_enter(&sc->sc_buffer_lock);
+	sc->sc_reset_drained = false;
+	if (!mutex_tryenter(&sc->sc_buffer_lock)) {
+		mutex_exit(&sc->sc_lock);
+		return false;
+	}
 	sc->sc_stopping = true;
 	mutex_exit(&sc->sc_buffer_lock);
 	if (sc->sc_quarantined)
 		error = EIO;
-	else if (sc->sc_guard != NULL)
-		/* Final shutdown cannot retire a lease pinned to a live owner. */
-		error = EBUSY;
-	else if (sc->sc_channel != NULL)
+	else if (sc->sc_guard != NULL) {
+		/* Retain every owner. This witness permits only a platform reset. */
+		if (sc->sc_pending || !mutex_tryenter(&sc->sc_irq_lock)) {
+			error = EBUSY;
+		} else {
+			dmac_write(sc, DMAC_IRQ_MASK, DMAC_IRQ_ALL);
+			dmac_write(sc, DMAC_CONTROL, 0);
+			dmac_read(sc, DMAC_CONTROL);
+			mutex_exit(&sc->sc_irq_lock);
+			error = dmac_wait_idle_45c(sc, (unsigned int)getticks(),
+			    MAX(1, mstohz(1000)));
+			if (error == 0)
+				sc->sc_reset_drained = true;
+		}
+	} else if (sc->sc_channel != NULL)
 		error = dmac_stop_locked(sc->sc_channel, 1000, true);
 	else if ((dmac_read(sc, DMAC_CONTROL) & DMAC_ENABLE) ||
 	    dmac_read(sc, DMAC_SUBMIT) != 0) {
@@ -603,17 +637,20 @@ adiaxidmac_shutdown_final(void *cookie)
 		dmac_shutdown_halt(sc);
 	if (!mutex_tryenter(&sc->sc_buffer_lock))
 		dmac_shutdown_halt(sc);
+	if (sc->sc_guard != NULL && (!sc->sc_stopping ||
+	    !sc->sc_reset_drained || !dmac_idle_45c(sc)))
+		dmac_shutdown_halt(sc);
 	sc->sc_stopping = true;
 	if (!mutex_tryenter(&sc->sc_irq_lock))
 		dmac_shutdown_halt(sc);
-	if (sc->sc_quarantined || sc->sc_guard != NULL || sc->sc_pending ||
+	if (sc->sc_quarantined || sc->sc_pending ||
 	    (dmac_read(sc, DMAC_CONTROL) & DMAC_ENABLE) ||
 	    dmac_read(sc, DMAC_SUBMIT) != 0)
 		dmac_shutdown_halt(sc);
 	if (sc->sc_channel != NULL) {
 		const struct adi_axi_dmac_buffer *b;
 
-		if (!sc->sc_drained)
+		if (!sc->sc_drained && sc->sc_guard == NULL)
 			dmac_shutdown_halt(sc);
 		LIST_FOREACH(b, &sc->sc_channel->c_buffers, b_next)
 			if (b->b_inflight != 0 || b->b_prepared != 0)
@@ -694,6 +731,10 @@ adi_axi_dmac_release(struct adi_axi_dmac_channel *c)
 	int error;
 
 	mutex_enter(&sc->sc_lock);
+	if (sc->sc_stopping && sc->sc_guard != NULL) {
+		mutex_exit(&sc->sc_lock);
+		return ESHUTDOWN;
+	}
 	if (!LIST_EMPTY(&c->c_buffers)) {
 		mutex_exit(&sc->sc_lock);
 		return EBUSY;
@@ -782,6 +823,10 @@ adi_axi_dmac_buffer_free(struct adi_axi_dmac_buffer *b)
 	struct adi_axi_dmac_softc *sc = b->b_channel->c_sc;
 
 	mutex_enter(&sc->sc_lock);
+	if (sc->sc_stopping && sc->sc_guard != NULL) {
+		mutex_exit(&sc->sc_lock);
+		return ESHUTDOWN;
+	}
 	mutex_enter(&sc->sc_buffer_lock);
 	if (sc->sc_quarantined || b->b_inflight != 0 || b->b_transferring) {
 		mutex_exit(&sc->sc_buffer_lock);
