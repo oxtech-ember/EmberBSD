@@ -79,6 +79,15 @@ struct rtw88_bus_ops {
 #define RTW88_TXQ_VO		4U
 #define RTW88_NTXQ		5U
 
+/* TX descriptor ring indices shared by the core and source contracts. */
+enum rtw88_tx_ring_index {
+	RTW88_TX_RING_BK = 0,
+	RTW88_TX_RING_BE = 1,
+	RTW88_TX_RING_VI = 2,
+	RTW88_TX_RING_VO = 3,
+	RTW88_TX_RING_MGMT = 5
+};
+
 struct rtw88_txq {
 	struct rtw88_dma buf[RTW88_TX_SLOTS];
 	unsigned nbuf;

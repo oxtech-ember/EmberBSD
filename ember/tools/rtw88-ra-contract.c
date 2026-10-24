@@ -674,14 +674,55 @@ static void
 ra_dfs_denied(struct rtw88_softc *sc)
 {
 	uint8_t mgmt[24] = { 0xb0 }; /* Authentication. */
+	uint8_t mgmt_before[RTW88_TX_BUF_SIZE], be_before[RTW88_TX_BUF_SIZE];
+	uint8_t mgmt_bd_before[RTW8822C_TX_BUFFER_DESC_SIZE];
+	uint8_t be_bd_before[RTW8822C_TX_BUFFER_DESC_SIZE];
 	struct rtw88_stats stats = sc->sc_stats;
 	unsigned wp = sc->sc_txq[RTW88_TXQ_MGMT].wp;
 	unsigned bwp = sc->sc_txq[RTW88_TXQ_BE].wp;
+	unsigned mqueued = sc->sc_txq[RTW88_TXQ_MGMT].queued;
+	unsigned bqueued = sc->sc_txq[RTW88_TXQ_BE].queued;
 	unsigned syncs = f.syncs, writes = f.writes;
+	uint8_t *mbuf, *bbuf, *mbd, *bbd;
 	struct rtw88_tx_fixed fixed = {
 		.associated = 1, .channel = sc->sc_channel, .rate500 = 12,
 		.peer_mask = 0xff0, .mode = RTW88_FIXED_11A
 	};
+
+	CHECK(wp < RTW88_TX_SLOTS && bwp < RTW88_TX_SLOTS);
+	if (wp >= RTW88_TX_SLOTS || bwp >= RTW88_TX_SLOTS)
+		return;
+	mbuf = sc->sc_txq[RTW88_TXQ_MGMT].buf[wp].vaddr;
+	bbuf = sc->sc_txq[RTW88_TXQ_BE].buf[bwp].vaddr;
+	CHECK(mbuf != NULL && bbuf != NULL);
+	if (mbuf == NULL || bbuf == NULL)
+		return;
+	CHECK(sc->sc_txq[RTW88_TXQ_MGMT].buf[wp].size >= sizeof(mgmt_before));
+	CHECK(sc->sc_txq[RTW88_TXQ_BE].buf[bwp].size >= sizeof(be_before));
+	if (sc->sc_txq[RTW88_TXQ_MGMT].buf[wp].size < sizeof(mgmt_before) ||
+	    sc->sc_txq[RTW88_TXQ_BE].buf[bwp].size < sizeof(be_before))
+		return;
+	CHECK(sc->sc_ring[RTW88_TX_RING_MGMT].vaddr != NULL &&
+	    sc->sc_ring[RTW88_TX_RING_BE].vaddr != NULL);
+	CHECK(sc->sc_ring[RTW88_TX_RING_MGMT].size >=
+	    RTW88_TX_SLOTS * sizeof(mgmt_bd_before));
+	CHECK(sc->sc_ring[RTW88_TX_RING_BE].size >=
+	    RTW88_TX_SLOTS * sizeof(be_bd_before));
+	if (sc->sc_ring[RTW88_TX_RING_MGMT].vaddr == NULL ||
+	    sc->sc_ring[RTW88_TX_RING_BE].vaddr == NULL ||
+	    sc->sc_ring[RTW88_TX_RING_MGMT].size <
+	    RTW88_TX_SLOTS * sizeof(mgmt_bd_before) ||
+	    sc->sc_ring[RTW88_TX_RING_BE].size <
+	    RTW88_TX_SLOTS * sizeof(be_bd_before))
+		return;
+	mbd = (uint8_t *)sc->sc_ring[RTW88_TX_RING_MGMT].vaddr +
+	    RTW8822C_TX_BUFFER_DESC_SIZE * wp;
+	bbd = (uint8_t *)sc->sc_ring[RTW88_TX_RING_BE].vaddr +
+	    RTW8822C_TX_BUFFER_DESC_SIZE * bwp;
+	memcpy(mgmt_before, mbuf, sizeof(mgmt_before));
+	memcpy(be_before, bbuf, sizeof(be_before));
+	memcpy(mgmt_bd_before, mbd, sizeof(mgmt_bd_before));
+	memcpy(be_bd_before, bbd, sizeof(be_bd_before));
 
 	CHECK(rtw88_tx_raw(sc, RTW88_TXQ_MGMT, mgmt, sizeof(mgmt)) == EACCES);
 	CHECK(rtw88_tx_raw(sc, RTW88_TXQ_BE, ra_frame, sizeof(ra_frame)) ==
@@ -692,6 +733,12 @@ ra_dfs_denied(struct rtw88_softc *sc)
 	CHECK(rtw88_tx_raw(sc, RTW88_TXQ_MGMT, mgmt, 10) == EACCES);
 	CHECK(sc->sc_txq[RTW88_TXQ_MGMT].wp == wp &&
 	    sc->sc_txq[RTW88_TXQ_BE].wp == bwp);
+	CHECK(sc->sc_txq[RTW88_TXQ_MGMT].queued == mqueued &&
+	    sc->sc_txq[RTW88_TXQ_BE].queued == bqueued);
+	CHECK(memcmp(mgmt_before, mbuf, sizeof(mgmt_before)) == 0);
+	CHECK(memcmp(be_before, bbuf, sizeof(be_before)) == 0);
+	CHECK(memcmp(mgmt_bd_before, mbd, sizeof(mgmt_bd_before)) == 0);
+	CHECK(memcmp(be_bd_before, bbd, sizeof(be_bd_before)) == 0);
 	CHECK(f.syncs == syncs && f.writes == writes);
 	CHECK(memcmp(&stats, &sc->sc_stats, sizeof(stats)) == 0);
 }
