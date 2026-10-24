@@ -109,7 +109,7 @@ Dir.mktmpdir('ember-cix-userland-') do |work|
           usr/bin/stat usr/bin/wall usr/sbin/wpa_supplicant usr/sbin/wpa_cli \
           usr/sbin/powerd usr/libexec/getty sbin/mount_ptyfs usr/sbin/sshd \
           usr/libexec/sshd-session usr/libexec/sshd-auth usr/bin/ssh-keygen \
-          usr/bin/passwd usr/sbin/pwd_mkdb; do
+          usr/bin/passwd usr/sbin/pwd_mkdb usr/sbin/envstat sbin/nvmectl sbin/wdogctl; do
           test "$file" = "$TEST_OMIT_BINARY" && continue
           mkdir -p "$dest/$(dirname "$file")"
           printf 'candidate\n' > "$dest/$file"
@@ -176,13 +176,17 @@ checks += 1
   inventory = out + '/I18N-INVENTORY.json'
   abort 'FAIL: separate DATA inventory absent' unless File.file?(inventory)
   checks += 1
-  %w[bin/stty usr.sbin/usbdevs sbin/mknod].each do |part|
+  %w[bin/stty usr.sbin/usbdevs sbin/mknod usr.sbin/envstat sbin/nvmectl sbin/wdogctl].each do |part|
     selected = events.select { |line| line.include?("/#{part} ") }
     abort "FAIL: incomplete diagnostic component #{part}" unless
       selected.size == 3 && selected[0].end_with?(" obj\n") &&
       selected[1].end_with?(" dependall\n") && selected[2].end_with?(" install\n")
     checks += 1
   end
+  abort 'FAIL: envstat before its static libmj dependency' unless
+    events.index { |line| line.include?('/crypto/external/bsd/netpgp/libmj ') && line.end_with?(" install\n") } <
+    events.index { |line| line.include?('/usr.sbin/envstat ') }
+  checks += 1
   abort 'FAIL: mknod before its static libc dependency' unless
     events.index { |line| line.include?('/lib/libc ') && line.end_with?(" install\n") } <
     events.index { |line| line.include?('/sbin/mknod ') }
@@ -194,7 +198,8 @@ checks += 1
   %w[lib/libc external/bsd/wpa/bin/wpa_supplicant
      external/bsd/dhcpcd/sbin/dhcpcd sbin/fsck_ffs sbin/mount_msdos
      sbin/mount_tmpfs sbin/gpt sbin/dkctl sbin/shutdown sbin/rndctl
-     usr.bin/stat usr.bin/wall libexec/getty usr.sbin/powerd].each do |part|
+     usr.bin/stat usr.bin/wall libexec/getty usr.sbin/powerd
+     crypto/external/bsd/netpgp/libmj].each do |part|
     abort "FAIL: missing component #{part}" unless events.any? { |l| l.include?("/#{part} ") }
     checks += 1
   end
@@ -253,14 +258,15 @@ end
   _, _, status = run.call(work + '/missing-powerd', 'TEST_OMIT_BINARY' => 'usr/sbin/powerd')
   abort 'FAIL: accepted cohort without powerd' if status.success? || File.exist?(work + '/missing-powerd/BUILD-INPUTS.txt')
   checks += 1
-  %w[bin/stty usr.sbin/usbdevs].each_with_index do |part, index|
+  %w[bin/stty usr.sbin/usbdevs crypto/external/bsd/netpgp/libmj usr.sbin/envstat sbin/nvmectl
+     sbin/wdogctl].each_with_index do |part, index|
     output = work + '/failed-diagnostic-' + index.to_s
     _, _, status = run.call(output, 'TEST_FAIL_COMPONENT' => "/#{part} ")
     abort "FAIL: accepted failed diagnostic component #{part}" if status.success? ||
       File.exist?(output + '/BUILD-INPUTS.txt')
     checks += 1
   end
-  %w[bin/stty usr/sbin/usbdevs].each_with_index do |binary, index|
+  %w[bin/stty usr/sbin/usbdevs usr/sbin/envstat sbin/nvmectl sbin/wdogctl].each_with_index do |binary, index|
     output = work + '/missing-diagnostic-' + index.to_s
     _, _, status = run.call(output, 'TEST_OMIT_BINARY' => binary)
     abort "FAIL: accepted cohort without #{binary}" if status.success? ||

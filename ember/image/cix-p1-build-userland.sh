@@ -104,7 +104,8 @@ for part in lib/csu lib/libc lib/libterminfo lib/libedit lib/libutil \
     external/bsd/libpcap/lib crypto/external/apache2/openssl/lib/libcommon \
     crypto/external/apache2/openssl/lib/libcrypto \
     crypto/external/apache2/openssl/lib/libdes \
-    crypto/external/apache2/openssl/lib/libssl external/bsd/blocklist/lib lib/libwrap; do
+    crypto/external/apache2/openssl/lib/libssl external/bsd/blocklist/lib lib/libwrap \
+    crypto/external/bsd/netpgp/libmj; do
     component "$part"
 done
 # libssh is a private object-tree dependency. It has no installed link library.
@@ -119,6 +120,7 @@ for part in bin/sh bin/cat bin/ls bin/cp bin/mv bin/rm bin/mkdir bin/chmod \
     usr.bin/printf usr.bin/wc usr.bin/nc usr.bin/sed usr.bin/grep \
     usr.bin/head usr.bin/tail external/historical/nawk/bin usr.bin/sort \
     usr.bin/tr usr.bin/mktemp usr.bin/netstat libexec/getty usr.sbin/powerd usr.sbin/usbdevs \
+    usr.sbin/envstat sbin/nvmectl sbin/wdogctl \
     external/bsd/wpa/bin/wpa_passphrase external/bsd/wpa/bin/wpa_supplicant \
     external/bsd/wpa/bin/wpa_cli crypto/external/bsd/openssh/bin/sshd \
     crypto/external/bsd/openssh/libexec/sshd-session crypto/external/bsd/openssh/libexec/sshd-auth \
@@ -139,7 +141,8 @@ for file in bin/sh bin/stty usr/sbin/usbdevs sbin/init sbin/mknod sbin/ifconfig 
     sbin/fsck_ffs sbin/mount_msdos sbin/mount_tmpfs sbin/gpt sbin/dkctl sbin/shutdown sbin/rndctl \
     sbin/mount_ptyfs usr/sbin/sshd usr/libexec/sshd-session usr/libexec/sshd-auth \
     usr/bin/ssh-keygen usr/bin/passwd usr/sbin/pwd_mkdb \
-    usr/bin/stat usr/bin/wall usr/sbin/wpa_supplicant usr/sbin/wpa_cli usr/sbin/powerd usr/libexec/getty; do
+    usr/bin/stat usr/bin/wall usr/sbin/wpa_supplicant usr/sbin/wpa_cli usr/sbin/powerd usr/libexec/getty \
+    usr/sbin/envstat sbin/nvmectl sbin/wdogctl; do
     [ -f "$out/dest/$file" ] || {
         echo "Missing required program: $file" >&2; exit 1
     }

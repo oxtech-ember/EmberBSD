@@ -21,13 +21,13 @@ PROFILE_DATA = PROFILE_FILES.to_h do |file|
   path = file == 'cix-p1-root.sh' ? ROOT_SCRIPT : File.join(File.dirname(ROOT_SCRIPT), file)
   [file, File.binread(path)]
 end.freeze
-REQUIRED = %w[sbin/init sbin/ifconfig sbin/fsck sbin/fsck_ffs sbin/mount sbin/mount_tmpfs sbin/shutdown sbin/rndctl usr/sbin/wpa_supplicant usr/sbin/wpa_cli sbin/dhcpcd bin/sh bin/stty usr/sbin/usbdevs usr/bin/stat usr/libexec/getty usr/sbin/powerd sbin/mount_ptyfs usr/sbin/sshd usr/libexec/sshd-session usr/libexec/sshd-auth usr/bin/ssh-keygen usr/bin/passwd usr/sbin/pwd_mkdb].freeze
+REQUIRED = %w[sbin/init sbin/ifconfig sbin/fsck sbin/fsck_ffs sbin/mount sbin/mount_tmpfs sbin/shutdown sbin/rndctl usr/sbin/wpa_supplicant usr/sbin/wpa_cli sbin/dhcpcd bin/sh bin/stty usr/sbin/usbdevs usr/bin/stat usr/libexec/getty usr/sbin/powerd sbin/mount_ptyfs usr/sbin/sshd usr/libexec/sshd-session usr/libexec/sshd-auth usr/bin/ssh-keygen usr/bin/passwd usr/sbin/pwd_mkdb usr/sbin/envstat sbin/nvmectl sbin/wdogctl].freeze
 RUNTIME = (REQUIRED + %w[usr/bin/wall usr/bin/netstat]).freeze
 I18N_REQUIRED = %w[iconv/iconv.dir esdb/esdb.dir esdb/esdb.alias esdb/ISO646/ISO646-US.esdb
   esdb/UTF/UTF-8.esdb csmapper/mapper.dir csmapper/ISO646/ISO646-US%UCS.646].freeze
 I18N_DATA = (I18N_REQUIRED + %w[esdb/esdb.dir.db esdb/esdb.alias.db csmapper/mapper.dir.db
   csmapper/charset.pivot csmapper/charset.pivot.pvdb]).map { |p| 'usr/share/i18n/' + p }.sort.freeze
-DIAGNOSTIC_TARGETS = (%w[usb] + (0..19).map { |i| "usb#{i}" } + %w[plcom1 plcom3]).freeze
+DIAGNOSTIC_TARGETS = (%w[usb] + (0..19).map { |i| "usb#{i}" } + %w[plcom1 plcom3 nvme0]).freeze
 FW_HASH = '36b483e37640359a6c686be4661b5f2d94928f93e126a2de09e67c5e04c01b26'
 HOST_PATH = [File.dirname(RbConfig.ruby), '/usr/bin', '/bin', '/usr/sbin', '/sbin'].uniq.join(':')
 REAL_SHASUM = HOST_PATH.split(':').map { |p| File.join(p, 'shasum') }.find { |p| File.executable?(p) }
@@ -420,6 +420,10 @@ check(File.read(f[:out] + '/root.spec').lines.any? { |line| line.start_with?('./
     check(spec.lines.any? { |s| s.split.first == './dev/console' && s.include?('type=char') && s.include?('device=netbsd,2,0') && s.include?('mode=600') }, 'MAKEDEV nodes are rooted under dev')
     check(spec.lines.any? { |s| s.split.first == './dev/power' && s.include?('type=char') && s.include?('device=netbsd,101,2') && s.include?('mode=640') },
       'native AArch64 MAKEDEV provides the sysmon power character device')
+    %w[sysmon watchdog].each do |name|
+      check(spec.lines.any? { |s| s.split.first == './dev/' + name && s.include?('type=char') && s.include?('device=netbsd,101,') },
+        'native AArch64 MAKEDEV provides the sysmon character device: ' + name)
+    end
     NATIVE_DIAGNOSTIC_SPEC.each do |native|
       expected = native.sub('./', './dev/')
       check(spec.lines.include?(expected), 'native diagnostic node specification retained: ' + expected.split.first)
@@ -430,7 +434,7 @@ check(File.read(f[:out] + '/root.spec').lines.any? { |line| line.start_with?('./
       'no USB controller beyond the selected diagnostic range')
     check(!device_paths.include?('./dev/plcom2') && !device_paths.include?('./dev/dplcom2'),
       'the DEBUG UART nodes are not staged')
-    %w[bin/stty usr/sbin/usbdevs].each do |binary|
+    %w[bin/stty usr/sbin/usbdevs usr/sbin/envstat sbin/nvmectl sbin/wdogctl].each do |binary|
       check(File.executable?(root + '/' + binary), 'native diagnostic tool is staged: ' + binary)
     end
     check(!spec.include?("\n./console "), 'device spec does not create a root console path')

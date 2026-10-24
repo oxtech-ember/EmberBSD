@@ -70,7 +70,7 @@ for file in sbin/init sbin/ifconfig sbin/fsck sbin/fsck_ffs sbin/mount \
     usr/bin/ssh-keygen usr/bin/passwd usr/sbin/pwd_mkdb \
     sbin/mount_tmpfs sbin/shutdown sbin/rndctl usr/sbin/wpa_supplicant \
     usr/sbin/wpa_cli sbin/dhcpcd bin/sh bin/stty usr/sbin/usbdevs \
-    usr/bin/stat usr/libexec/getty usr/sbin/powerd; do
+    usr/bin/stat usr/libexec/getty usr/sbin/powerd usr/sbin/envstat sbin/nvmectl sbin/wdogctl; do
 	[ -x "$cohort/dest/$file" ] || {
 		echo "Missing runtime input: $file" >&2; exit 2
 	}
@@ -124,7 +124,7 @@ printf 'profile=%s\n' "$profile_revision" >> "$root/etc/ember-build"
 # Request only the selected diagnostic nodes. Leave the DEBUG UART unexposed.
 MACHINE=aarch64 MACHINE_ARCH=aarch64 sh "$root/dev/MAKEDEV" -s ramdisk wscons sysmon ptm \
     usb usb0 usb1 usb2 usb3 usb4 usb5 usb6 usb7 usb8 usb9 \
-    usb10 usb11 usb12 usb13 usb14 usb15 usb16 usb17 usb18 usb19 plcom1 plcom3 \
+    usb10 usb11 usb12 usb13 usb14 usb15 usb16 usb17 usb18 usb19 plcom1 plcom3 nvme0 \
     > "$out/devices-raw.spec"
 sed -e '/^\. type=dir/d' -e 's,^\.,./dev,' "$out/devices-raw.spec" > "$out/devices.spec"
 "$tools/bin/nbmtree" -c -p "$root" -k type,mode,link > "$out/files.spec"

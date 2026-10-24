@@ -28,6 +28,11 @@ OpenSSL and libpcap. It relinks the console and network tools, WPA programs,
 DHCP client, filesystem checkers, mount helpers, GPT and wedge tools, stat,
 shutdown, wall, native getty, stty, usbdevs and mknod. It generates the target
 MAKEDEV script.
+The sensor diagnostics `envstat`, `nvmectl` and `wdogctl` use the same static
+libraries; `envstat` also needs the netpgp `libmj` archive, built before it.
+They read SoC thermal zones, NVMe health pages and watchdog state on the board.
+Host contracts check their selection and order; a target link and readings on
+the physical board are separate checks.
 Native `mknod` lets the installed target run its own architecture-specific
 MAKEDEV definitions. The builder requires and records `sbin/mknod` with the
 other static executables. It does not run mknod or create host device nodes.
