@@ -1436,6 +1436,9 @@ rtw88_rx_frontier(struct rtw88_softc *sc, uint32_t expected_generation,
 	return 0;
 }
 
+static int rtw88_dfs_tx_permitted(const struct rtw88_softc *);
+
+/* A closed DFS permit is no capacity: callers keep frames queued for it. */
 unsigned
 rtw88_tx_available(struct rtw88_softc *sc, unsigned q)
 {
@@ -1443,7 +1446,7 @@ rtw88_tx_available(struct rtw88_softc *sc, unsigned q)
 
 	if (q >= RTW88_NTXQ || !sc->sc_running || sc->sc_stop_requested ||
 	    sc->sc_edca_error != 0 ||
-	    sc->sc_ra.error != 0)
+	    sc->sc_ra.error != 0 || !rtw88_dfs_tx_permitted(sc))
 		return 0;
 	txq = &sc->sc_txq[q];
 	return txq->rp > txq->wp ? txq->rp - txq->wp - 1 :

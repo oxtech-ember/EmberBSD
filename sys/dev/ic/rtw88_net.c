@@ -90,6 +90,9 @@ struct rtw88_net {
 	struct rtw88_net_stats stats;
 	unsigned tx_timer;
 	unsigned tx_completed;
+#ifdef RTW88_DFS64
+	uint32_t dfs_tick;	/* Arrival of the beacon behind the permit. */
+#endif
 #ifdef RTW88_RFK_EXPERIMENT
 	struct rtw88_net_rfk rfk;
 #endif
@@ -99,6 +102,11 @@ static void rtw88_net_start(struct ifnet *);
 static void rtw88_net_stop(struct ifnet *, int);
 static int rtw88_net_init(struct ifnet *);
 static int rtw88_net_newstate(struct ieee80211com *, enum ieee80211_state, int);
+#ifdef RTW88_DFS64
+static void rtw88_net_dfs_beacon(struct rtw88_net *, const uint8_t *, size_t,
+    uint32_t, uint32_t, uint64_t, uint32_t, uint32_t);
+static int rtw88_net_dfs_expire(struct rtw88_net *, uint32_t, uint32_t);
+#endif
 static void rtw88_net_ht20_publish(struct rtw88_net *,
     const struct ieee80211_ht20_profile *);
 static int rtw88_net_ht20_admit(struct ieee80211com *,
@@ -1417,6 +1425,10 @@ lock_request:
 	}
 #endif
 	rtw88_ra_invalidate(net->core);
+#ifdef RTW88_DFS64
+	/* A new request needs new master evidence before any DFS TX. */
+	rtw88_dfs_close(net->core);
+#endif
 	(void)rtw88_net_request(&net->policy);
 	net->requested = state;
 	net->state_arg = arg;
@@ -1532,6 +1544,78 @@ rtw88_net_tx_complete(void *cookie, unsigned count)
 		softint_schedule(net->softint);
 }
 
+#ifdef RTW88_DFS64
+/*
+ * Channel 64 slave: a complete beacon from the selected master, without
+ * CSA or Quiet, received by this core generation in the current request
+ * and newer than the lease, opens the core TX permit for AUTH, ASSOC and
+ * RUN. Frames queued meanwhile wait: a closed permit is no TX capacity.
+ */
+static void
+rtw88_net_dfs_beacon(struct rtw88_net *net, const uint8_t *frame, size_t len,
+    uint32_t generation, uint32_t arrived, uint64_t epoch, uint32_t now,
+    uint32_t timeout)
+{
+	uint16_t interval;
+	struct ieee80211com *ic = &net->ic;
+	struct ieee80211_node *ni = ic->ic_bss;
+	unsigned i;
+
+	if (ic->ic_opmode != IEEE80211_M_STA ||
+	    (ic->ic_state != IEEE80211_S_AUTH &&
+	     ic->ic_state != IEEE80211_S_ASSOC &&
+	     ic->ic_state != IEEE80211_S_RUN) || ni == NULL ||
+	    ic->ic_curchan == NULL || ic->ic_curchan == IEEE80211_CHAN_ANYC ||
+	    ni->ni_chan != ic->ic_curchan ||
+	    ieee80211_chan2ieee(ic, ic->ic_curchan) != 64 ||
+	    frame == NULL || len < 36 || frame[0] != 0x80 ||
+	    (frame[1] & 0xc7) != 0 || (frame[22] & 15) != 0 ||
+	    memcmp(frame + 10, ni->ni_macaddr, IEEE80211_ADDR_LEN) != 0 ||
+	    memcmp(frame + 16, ni->ni_bssid, IEEE80211_ADDR_LEN) != 0)
+		return;
+	for (i = 0; i < IEEE80211_ADDR_LEN; i++) {
+		if (frame[4 + i] != 0xff)
+			return;
+	}
+	interval = ieee80211_sta_beacon_interval(frame + 24, len - 24, 64);
+	if (interval < IEEE80211_BINTVAL_MIN ||
+	    interval > IEEE80211_BINTVAL_MAX || now - arrived >= timeout)
+		return;
+	mutex_enter(net->lock);
+	if (!net->tx_quiet && !net->policy.dying && net->policy.accepting &&
+	    epoch == net->policy.epoch &&
+	    rtw88_dfs_open(net->core, 64, generation) == 0) {
+		net->dfs_tick = arrived;
+		net->ec.ec_if.if_timer = 1;
+	}
+	mutex_exit(net->lock);
+}
+
+/*
+ * Without a current master beacon the slave must stop. Close host and MAC
+ * TX through the quiet owner and leave a clean restart to the worker; a
+ * clock that moved backward also ends the lease. The watchdog polls once
+ * a second, so TX can outlive the last beacon by up to one more second.
+ * Return 1 when the caller must request INIT.
+ */
+static int
+rtw88_net_dfs_expire(struct rtw88_net *net, uint32_t now, uint32_t timeout)
+{
+	uint32_t elapsed;
+	int expired = 0;
+
+	mutex_enter(net->lock);
+	elapsed = now - net->dfs_tick;
+	if (net->core->sc_dfs.valid && timeout != 0 && elapsed >= timeout) {
+		net->quiet_error = rtw88_tx_quiet(net->core);
+		net->reset_required = 1;
+		expired = 1;
+	}
+	mutex_exit(net->lock);
+	return expired;
+}
+#endif
+
 /* Giant owns the current peer. Parse outside the PCI lock; publish only
  * the validated arrival clock under the existing policy/epoch gate. */
 static void
@@ -1622,6 +1706,13 @@ rtw88_net_softintr(void *cookie)
 			continue;
 		}
 		rtw88_net_beacon_observe(net, &rx);
+#ifdef RTW88_DFS64
+		if (rx.m->m_next == NULL && rx.m->m_len == rx.m->m_pkthdr.len)
+			rtw88_net_dfs_beacon(net, mtod(rx.m, const uint8_t *),
+			    (size_t)rx.m->m_len, rx.generation, rx.tick, rx.epoch,
+			    (uint32_t)getticks(), (uint32_t)MAX(hz,
+			    mstohz(rtw88_net_tu_to_ms(ic->ic_bmisstimeout))));
+#endif
 		ni = ieee80211_find_rxnode(ic,
 		    mtod(rx.m, struct ieee80211_frame_min *));
 		/* Relative unsigned index only. No signed dBm is passed through this ABI. */
@@ -2259,6 +2350,19 @@ rtw88_net_watchdog(struct ifnet *ifp)
 	if (net->tx_timer != 0)
 		ifp->if_timer = 1;
 	ieee80211_watchdog(&net->ic);
+#ifdef RTW88_DFS64
+	/* The DFS lease uses the RUN beacon-miss deadline, checked first. */
+	timeout = (uint32_t)MAX(hz,
+	    mstohz(rtw88_net_tu_to_ms(net->ic.ic_bmisstimeout)));
+	if (rtw88_net_dfs_expire(net, (uint32_t)getticks(), timeout)) {
+		aprint_error_dev(net->dev, "DFS master beacon lost; TX quiet\n");
+		(void)ieee80211_new_state(&net->ic, IEEE80211_S_INIT, -1);
+	}
+	mutex_enter(net->lock);
+	if (net->core->sc_dfs.valid)
+		ifp->if_timer = 1;
+	mutex_exit(net->lock);
+#endif
 	if (net->ic.ic_state == IEEE80211_S_RUN) {
 		/* if_timer polls once per second; retain the 7-beacon deadline. */
 		timeout = (uint32_t)MAX(hz,
@@ -2281,7 +2385,11 @@ int
 rtw88_net_attach(struct rtw88_softc *core, device_t dev, kmutex_t *lock,
     const uint8_t mac[6], struct rtw88_net **out)
 {
-	static const unsigned channels5[] = {36,40,44,48,149,153,157,161,165};
+	static const unsigned channels5[] = {36,40,44,48,
+#ifdef RTW88_DFS64
+	    64, /* Passive DFS slave only: TX needs the master's beacon. */
+#endif
+	    149,153,157,161,165};
 	struct rtw88_net *net;
 	struct ieee80211com *ic;
 	struct ifnet *ifp;
@@ -2326,7 +2434,8 @@ rtw88_net_attach(struct rtw88_softc *core, device_t dev, kmutex_t *lock,
 		    IEEE80211_CHAN_G | IEEE80211_CHAN_OFDM |
 		    IEEE80211_CHAN_PASSIVE;
 	}
-	/* Passive discovery, without DFS. Board regulatory limits still apply. */
+	/* Passive discovery; channel 64 only as a DFS slave with RTW88_DFS64.
+	 * Board regulatory limits still apply. */
 	for (i = 0; i < __arraycount(channels5); i++) {
 		ch = channels5[i];
 		ic->ic_channels[ch].ic_freq = ieee80211_ieee2mhz(ch,

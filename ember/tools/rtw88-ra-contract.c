@@ -854,6 +854,211 @@ test_ra_dfs64(void)
 	CHECK(rtw88_core_detach(&sc) == 0);
 }
 
+#ifdef RTW88_DFS64
+/* Actual worker transitions on channel 64 attempt one AUTH frame each. */
+static unsigned ra_dfs_parent_calls;
+static int ra_dfs_parent_tx;
+static int
+ra_dfs_parent(struct ieee80211com *ic, enum ieee80211_state state, int arg)
+{
+	struct rtw88_net *net = ic->ic_ifp->if_softc;
+	uint8_t auth[24] = { 0xb0 };
+
+	(void)arg;
+	CHECK(!state_lock.held);
+	ic->ic_state = state;
+	if (state == IEEE80211_S_INIT)
+		return 0;
+	ra_dfs_parent_calls++;
+	ra_dfs_parent_tx = rtw88_tx_raw(net->core, RTW88_TXQ_MGMT, auth,
+	    sizeof(auth));
+	return 0;
+}
+
+#define RA_DFS_BEACON_LEN 44
+/* A complete ESS beacon: interval 100 TU, SSID, one rate, DS channel 64. */
+static void
+ra_dfs_beacon(uint8_t frame[RA_DFS_BEACON_LEN], const struct ieee80211_node *ni)
+{
+	memset(frame, 0, RA_DFS_BEACON_LEN);
+	frame[0] = 0x80;
+	memset(frame + 4, 0xff, 6);
+	memcpy(frame + 10, ni->ni_macaddr, 6);
+	memcpy(frame + 16, ni->ni_bssid, 6);
+	frame[32] = 100;
+	frame[34] = 0x01;
+	frame[38] = 1; frame[39] = 1; frame[40] = 12;
+	frame[41] = 3; frame[42] = 1; frame[43] = 64;
+}
+
+static void
+ra_dfs_peer(struct state_fixture *s)
+{
+	static const uint8_t master[6] = { 2, 0, 0, 0, 0, 9 };
+	static const uint8_t bssid[6] = { 2, 0, 0, 0, 0, 8 };
+
+	state_legacy_peer(&s->net, &s->ni, 64);
+	s->ni.ni_associd = 0xc001;
+	/* Distinct transmitter and BSSID so each address check is visible. */
+	memcpy(s->ni.ni_macaddr, master, 6);
+	memcpy(s->ni.ni_bssid, bssid, 6);
+	s->net.parent_state = ra_dfs_parent;
+	ra_dfs_parent_calls = 0;
+	ra_dfs_parent_tx = 0;
+}
+
+/* Observe one beacon at tick with the current request and generation. */
+static void
+ra_dfs_observe(struct state_fixture *s, const uint8_t *frame, size_t len,
+    uint32_t tick)
+{
+	rtw88_net_dfs_beacon(&s->net, frame, len, s->sc.sc_generation, tick,
+	    s->net.policy.epoch, tick, 100);
+}
+
+/*
+ * Channel 64 slave through the actual newstate and state worker: the
+ * worker's channel program leaves TX closed, so the one AUTH/ASSOC frame
+ * net80211 sends waits (no capacity) until the selected master's current
+ * beacon opens TX. A lost lease or CSA/Quiet withdraws through
+ * rtw88_tx_quiet() before a clean restart.
+ */
+static void
+test_ra_dfs64_net(void)
+{
+	uint8_t auth[24] = { 0xb0 }, frame[RA_DFS_BEACON_LEN];
+	uint8_t bad[RA_DFS_BEACON_LEN], csa[RA_DFS_BEACON_LEN + 5];
+	struct state_fixture s;
+	uint32_t gen, timeout = 100, tick = 5000;
+	uint64_t epoch;
+
+	if (!state_fixture_start(&s, 64, 9))
+		return;
+	ra_dfs_peer(&s);
+	CHECK(rtw88_net_newstate(&s.net.ic, IEEE80211_S_AUTH, 0) == 0);
+	rtw88_net_state_work(&s.net.state_work, &s.net);
+	CHECK(ra_dfs_parent_calls == 1 && ra_dfs_parent_tx == EACCES);
+	CHECK(s.sc.sc_channel == 64 && !s.sc.sc_dfs.valid);
+	/* No capacity: the queued AUTH stays queued for the first beacon. */
+	CHECK(rtw88_tx_available(&s.sc, RTW88_TXQ_MGMT) == 0);
+	gen = s.sc.sc_generation;
+	epoch = s.net.policy.epoch;
+	ra_dfs_beacon(frame, &s.ni);
+	/* Foreign, malformed, stale or quiet observations open nothing. */
+	for (unsigned v = 0; v < 13; v++) {
+		size_t len = sizeof(bad);
+		memcpy(bad, frame, sizeof(bad));
+		switch (v) {
+		case 0: bad[16] ^= 1; break;		/* BSSID. */
+		case 1: bad[10] ^= 1; break;		/* Transmitter. */
+		case 2: bad[4] = 2; break;		/* Unicast receiver. */
+		case 3: bad[1] = 0x01; break;		/* ToDS is not a beacon. */
+		case 4: bad[22] = 1; break;		/* Fragment. */
+		case 5: bad[0] = 0x50; break;		/* Probe response. */
+		case 6: len = 35; break;
+		case 7: bad[34] = 0x02; break;		/* IBSS, not ESS. */
+		case 8: bad[43] = 60; break;		/* DS names another channel. */
+		case 9: bad[38] = 37; break;		/* CSA in place of rates. */
+		case 10: bad[32] = 0; break;		/* Interval 0 TU. */
+		case 11: len = 38; break;		/* No rates. */
+		case 12: break;
+		}
+		if (v == 12)
+			rtw88_net_dfs_beacon(&s.net, bad, len, gen, tick, epoch,
+			    tick + timeout, timeout); /* Evidence already stale. */
+		else
+			rtw88_net_dfs_beacon(&s.net, bad, len, gen, tick, epoch,
+			    tick, timeout);
+		CHECK(!s.sc.sc_dfs.valid);
+	}
+	/* A complete beacon that announces a channel switch opens nothing. */
+	memcpy(csa, frame, sizeof(frame));
+	csa[44] = 37; csa[45] = 3; csa[46] = 1; csa[47] = 100; csa[48] = 1;
+	rtw88_net_dfs_beacon(&s.net, csa, sizeof(csa), gen, tick, epoch, tick,
+	    timeout);
+	CHECK(!s.sc.sc_dfs.valid);
+	rtw88_net_dfs_beacon(&s.net, frame, sizeof(frame), gen - 1, tick, epoch,
+	    tick, timeout);
+	rtw88_net_dfs_beacon(&s.net, frame, sizeof(frame), gen, tick, epoch + 1,
+	    tick, timeout);
+	rtw88_net_dfs_beacon(&s.net, frame, sizeof(frame), gen, tick, epoch,
+	    tick, 0);
+	s.net.tx_quiet = 1;
+	ra_dfs_observe(&s, frame, sizeof(frame), tick);
+	s.net.tx_quiet = 0;
+	s.net.policy.dying = 1;
+	ra_dfs_observe(&s, frame, sizeof(frame), tick);
+	s.net.policy.dying = 0;
+	s.net.policy.accepting = 0; /* A request has withdrawn acceptance. */
+	ra_dfs_observe(&s, frame, sizeof(frame), tick);
+	s.net.policy.accepting = 1;
+	s.net.ic.ic_state = IEEE80211_S_SCAN;
+	ra_dfs_observe(&s, frame, sizeof(frame), tick);
+	s.net.ic.ic_state = IEEE80211_S_INIT;
+	ra_dfs_observe(&s, frame, sizeof(frame), tick);
+	s.net.ic.ic_state = IEEE80211_S_AUTH;
+	s.ni.ni_chan = NULL;
+	ra_dfs_observe(&s, frame, sizeof(frame), tick);
+	s.ni.ni_chan = s.net.ic.ic_curchan;
+	CHECK(!s.sc.sc_dfs.valid);
+	CHECK(rtw88_tx_raw(&s.sc, RTW88_TXQ_MGMT, auth, sizeof(auth)) == EACCES);
+	/* The master's current beacon opens AUTH TX and arms the watchdog. */
+	s.net.ec.ec_if.if_timer = 0;
+	ra_dfs_observe(&s, frame, sizeof(frame), tick);
+	CHECK(s.sc.sc_dfs.valid && s.net.dfs_tick == tick);
+	CHECK(s.net.ec.ec_if.if_timer == 1);
+	CHECK(rtw88_tx_available(&s.sc, RTW88_TXQ_MGMT) != 0);
+	CHECK(rtw88_tx_raw(&s.sc, RTW88_TXQ_MGMT, auth, sizeof(auth)) == 0);
+	/* A later beacon refreshes the lease. */
+	ra_dfs_observe(&s, frame, sizeof(frame), tick + 50);
+	CHECK(s.net.dfs_tick == tick + 50);
+	CHECK(rtw88_net_dfs_expire(&s.net, tick + timeout, timeout) == 0);
+	/* Every new request closes TX; the worker reprograms 64. */
+	CHECK(rtw88_net_newstate(&s.net.ic, IEEE80211_S_ASSOC, 0) == 0);
+	CHECK(!s.sc.sc_dfs.valid);
+	rtw88_net_state_work(&s.net.state_work, &s.net);
+	CHECK(ra_dfs_parent_calls == 2 && ra_dfs_parent_tx == EACCES);
+	CHECK(!s.sc.sc_dfs.valid);
+	CHECK(rtw88_net_newstate(&s.net.ic, IEEE80211_S_RUN, 0) == 0);
+	rtw88_net_state_work(&s.net.state_work, &s.net);
+	CHECK(ra_dfs_parent_calls == 3 && ra_dfs_parent_tx == EACCES);
+	CHECK(s.net.ic.ic_state == IEEE80211_S_RUN && s.net.policy.accepting);
+	ra_dfs_observe(&s, frame, sizeof(frame), tick);
+	CHECK(s.sc.sc_dfs.valid);
+	/* The lease ends one timeout after the beacon. A zero timeout ends
+	 * nothing; a backward clock fails closed. Loss quiets host and MAC TX
+	 * and requests a clean restart. */
+	CHECK(rtw88_net_dfs_expire(&s.net, tick + timeout - 1, timeout) == 0);
+	CHECK(rtw88_net_dfs_expire(&s.net, tick + timeout, 0) == 0);
+	CHECK(s.sc.sc_dfs.valid && !s.net.reset_required);
+	CHECK(rtw88_net_dfs_expire(&s.net, tick - 5, timeout) == 1);
+	CHECK(!s.sc.sc_dfs.valid && s.sc.sc_stop_requested);
+	CHECK(s.net.reset_required && s.net.quiet_error == 0);
+	CHECK(f.mmio[0x0522] == 0xff);
+	CHECK(rtw88_tx_raw(&s.sc, RTW88_TXQ_MGMT, auth, sizeof(auth)) == ENXIO);
+	CHECK(rtw88_net_dfs_expire(&s.net, tick + timeout, timeout) == 0);
+	gen = s.sc.sc_generation;
+	CHECK(rtw88_net_newstate(&s.net.ic, IEEE80211_S_INIT, -1) == 0);
+	rtw88_net_state_work(&s.net.state_work, &s.net);
+	CHECK(s.sc.sc_started && !s.sc.sc_stop_requested);
+	CHECK(!s.net.reset_required && s.sc.sc_generation != gen);
+	CHECK(!s.sc.sc_dfs.valid);
+	/* The forward wrap of the tick counter is an ordinary interval. */
+	CHECK(rtw88_net_newstate(&s.net.ic, IEEE80211_S_AUTH, 0) == 0);
+	rtw88_net_state_work(&s.net.state_work, &s.net);
+	ra_dfs_observe(&s, frame, sizeof(frame), UINT32_MAX - 10);
+	CHECK(s.sc.sc_dfs.valid);
+	CHECK(rtw88_net_dfs_expire(&s.net, 20, timeout) == 0);
+	/* CSA or Quiet withdraws through the shared quiet owner. */
+	rtw88_net_sta_quiet(&s.net.ic);
+	CHECK(s.net.tx_quiet && !s.sc.sc_dfs.valid);
+	ra_dfs_observe(&s, frame, sizeof(frame), tick);
+	CHECK(!s.sc.sc_dfs.valid);
+	CHECK(rtw88_tx_raw(&s.sc, RTW88_TXQ_MGMT, auth, sizeof(auth)) == ENXIO);
+	state_fixture_finish(&s);
+}
+#endif
+
 static const struct rtw88_ra_config ra_vht80_cfg = {
 	.epoch = 9, .channel = 36, .common_rates = 0xff0,
 	.mode = RTW88_FIXED_11A, .phy = RTW88_RA_VHT80_1SS,
@@ -1495,6 +1700,9 @@ RTW88_RA_MAIN(void)
 	test_ra_start_tuple();
 	test_ra_ht20_run();
 	test_ra_dfs64();
+#ifdef RTW88_DFS64
+	test_ra_dfs64_net();
+#endif
 #ifdef RTW88_VHT80
 	test_ra_vht80_formats();
 	test_ra_vht80_channel64_closed();

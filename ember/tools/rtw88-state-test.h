@@ -86,6 +86,7 @@ struct rtw88_net {
 	int work_pending, reset_required;
 	int tx_quiet, quiet_error;
 	unsigned tx_timer, tx_completed;
+	uint32_t dfs_tick;
 	enum ieee80211_state requested;
 	unsigned channel, configured_media;
 	struct rtw88_channel_tuple pending_channel;

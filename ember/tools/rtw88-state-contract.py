@@ -82,6 +82,32 @@ if start_body is None or not re.search(
         start_body.group()):
     raise ValueError('RUN path must validate the negotiated HT/VHT RA profile')
 parts.append('#ifdef RTW88_STATE_TX_CALLER\n' + function('rtw88_net_tx_submit', 'static int') + '#endif\n')
+# The DFS64 slave producer and lease exist only in the experiment build;
+# the quiet owner is shared by CSA and Quiet withdrawal.
+if '\nrtw88_net_dfs_beacon(' in net:
+    # Softintr and watchdog run in other fixtures; prove the producer and
+    # the lease are called from them before every net80211 input/poll.
+    soft = re.search(r'^rtw88_net_softintr\(.*?^}', net, re.M|re.S).group()
+    watch = re.search(r'^rtw88_net_watchdog\(.*?^}', net, re.M|re.S).group()
+    call = re.search(r'rtw88_net_dfs_beacon\(net, mtod\(rx\.m, const uint8_t \*\),\s*'
+                     r'\(size_t\)rx\.m->m_len, rx\.generation, rx\.tick, rx\.epoch,\s*'
+                     r'\(uint32_t\)getticks\(\), \(uint32_t\)MAX\(hz,', soft)
+    if (call is None or
+            soft.find('rtw88_net_dfs_beacon(') > soft.find('ieee80211_input(ic, rx.m')):
+        raise ValueError('softintr must check DFS beacons before input')
+    if not re.search(r'if \(rtw88_net_dfs_expire\(net, \(uint32_t\)getticks\(\), timeout\)\) \{'
+                     r'.*?ieee80211_new_state\(&net->ic, IEEE80211_S_INIT, -1\);', watch, re.S):
+        raise ValueError('watchdog must request INIT after a DFS beacon loss')
+    if watch.find('rtw88_net_dfs_expire(') > watch.find('rtw88_net_beacon_poll('):
+        raise ValueError('watchdog must end the DFS lease before the RUN poll')
+    var = read('sys/net80211/ieee80211_var.h')
+    limits = '\n'.join(re.findall(r'^#define\s+IEEE80211_BINTVAL_M(?:IN|AX)\s.*$', var, re.M))
+    proto = re.search(r'^uint16_t ieee80211_sta_beacon_interval\(.*?\);',
+                      read('sys/net80211/ieee80211_beacon_ies.h'), re.M|re.S).group()
+    parts.append('#ifdef RTW88_DFS64\n' + limits + '\n' + proto + '\n' +
+                 function('rtw88_net_dfs_beacon', 'static void') +
+                 function('rtw88_net_dfs_expire', 'static int') + '#endif\n')
+parts.append(function('rtw88_net_sta_quiet', 'static void __attribute__((unused))'))
 # The VHT80 provider exists only in the experiment build.
 if '\nrtw88_net_vht_admit(' in net:
     parts.append('#ifdef RTW88_VHT80\n' + function('rtw88_net_vht_admit', 'static int') + '#endif\n')

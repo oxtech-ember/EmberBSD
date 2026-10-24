@@ -25,6 +25,10 @@ ln -s "$src/sys/dev/ic" "$work/include/dev/ic"
 for header in sys/param.h sys/systm.h; do
     printf '#include <errno.h>\n#include "rtw88-test-kernel.h"\n' > "$work/include/$header"
 done
+# The DFS64 producer validates master beacons with the shared parser.
+mkdir -p "$work/net80211"
+[ -e "$work/net80211/ieee80211_beacon_ies.h" ] ||
+    ln -s "$src/sys/net80211/ieee80211_beacon_ies.h" "$work/net80211/ieee80211_beacon_ies.h"
 # The default build has no VHT entry; the experiment build owns VHT80.
 # A third build adds the DFS64 slave experiment to VHT.
 for vht in 0 1 2; do
@@ -47,6 +51,8 @@ for vht in 0 1 2; do
         "$src/sys/dev/ic/rtw8822c_table.c" \
         "$src/sys/dev/ic/rtw8822c_coex.c" \
         "$src/sys/dev/ic/rtw8822c_txpwr.c" \
+        "$src/sys/net80211/ieee80211_beacon_ies.c" \
+        "$src/sys/net80211/ieee80211_phy_ies.c" \
         -o "$work/test"
     if ! run_test "$work/test" > "$work/output"; then
         cat "$work/output"

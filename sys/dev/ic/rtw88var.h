@@ -421,7 +421,8 @@ int rtw88_ra_configure(struct rtw88_softc *, const struct rtw88_ra_config *);
 int rtw88_tx_auto(struct rtw88_softc *, unsigned, const void *, size_t,
     uint64_t, unsigned);
 
-/* Read software ring capacity while holding the bus interrupt lock. */
+/* Read software ring capacity while holding the bus interrupt lock.
+ * A DFS channel without a TX permit has no capacity. */
 unsigned rtw88_tx_available(struct rtw88_softc *, unsigned);
 /*
  * Legacy port0 station configuration, with software-only crypto. The
