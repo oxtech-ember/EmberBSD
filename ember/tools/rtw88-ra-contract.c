@@ -909,11 +909,18 @@ ra_dfs_peer(struct state_fixture *s)
 
 /* Observe one beacon at tick with the current request and generation. */
 static void
-ra_dfs_observe(struct state_fixture *s, const uint8_t *frame, size_t len,
-    uint32_t tick)
+ra_dfs_observe_sequence(struct state_fixture *s, const uint8_t *frame,
+	size_t len, uint64_t sequence, uint32_t tick)
 {
-	rtw88_net_dfs_beacon(&s->net, frame, len, s->sc.sc_generation, tick,
-	    s->net.policy.epoch, tick, 100);
+	rtw88_net_dfs_beacon(&s->net, frame, len, sequence,
+	    s->sc.sc_generation, tick, s->net.policy.epoch, tick, 100);
+}
+
+static void
+ra_dfs_observe(struct state_fixture *s, const uint8_t *frame, size_t len,
+	uint32_t tick)
+{
+	ra_dfs_observe_sequence(s, frame, len, s->net.dfs_frontier + 1, tick);
 }
 
 /*
@@ -935,10 +942,14 @@ test_ra_dfs64_net(void)
 	if (!state_fixture_start(&s, 64, 9))
 		return;
 	ra_dfs_peer(&s);
+	/* One beacon completed before the request is still in the DMA ring. */
+	f.rx_hw_idx = 1;
 	CHECK(rtw88_net_newstate(&s.net.ic, IEEE80211_S_AUTH, 0) == 0);
 	rtw88_net_state_work(&s.net.state_work, &s.net);
 	CHECK(ra_dfs_parent_calls == 1 && ra_dfs_parent_tx == EACCES);
 	CHECK(s.sc.sc_channel == 64 && !s.sc.sc_dfs.valid);
+	CHECK(s.net.dfs_frontier_valid && s.net.dfs_frontier == 1 &&
+	    s.net.dfs_frontier_generation == s.sc.sc_generation);
 	/* No capacity: the queued AUTH stays queued for the first beacon. */
 	CHECK(rtw88_tx_available(&s.sc, RTW88_TXQ_MGMT) == 0);
 	gen = s.sc.sc_generation;
@@ -964,25 +975,30 @@ test_ra_dfs64_net(void)
 		case 12: break;
 		}
 		if (v == 12)
-			rtw88_net_dfs_beacon(&s.net, bad, len, gen, tick, epoch,
+			rtw88_net_dfs_beacon(&s.net, bad, len,
+			    s.net.dfs_frontier + 1, gen, tick, epoch,
 			    tick + timeout, timeout); /* Evidence already stale. */
 		else
-			rtw88_net_dfs_beacon(&s.net, bad, len, gen, tick, epoch,
+			rtw88_net_dfs_beacon(&s.net, bad, len,
+			    s.net.dfs_frontier + 1, gen, tick, epoch,
 			    tick, timeout);
 		CHECK(!s.sc.sc_dfs.valid);
 	}
 	/* A complete beacon that announces a channel switch opens nothing. */
 	memcpy(csa, frame, sizeof(frame));
 	csa[44] = 37; csa[45] = 3; csa[46] = 1; csa[47] = 100; csa[48] = 1;
-	rtw88_net_dfs_beacon(&s.net, csa, sizeof(csa), gen, tick, epoch, tick,
-	    timeout);
+	rtw88_net_dfs_beacon(&s.net, csa, sizeof(csa), s.net.dfs_frontier + 1,
+	    gen, tick, epoch, tick, timeout);
 	CHECK(!s.sc.sc_dfs.valid);
-	rtw88_net_dfs_beacon(&s.net, frame, sizeof(frame), gen - 1, tick, epoch,
-	    tick, timeout);
-	rtw88_net_dfs_beacon(&s.net, frame, sizeof(frame), gen, tick, epoch + 1,
-	    tick, timeout);
-	rtw88_net_dfs_beacon(&s.net, frame, sizeof(frame), gen, tick, epoch,
-	    tick, 0);
+	rtw88_net_dfs_beacon(&s.net, frame, sizeof(frame), s.net.dfs_frontier + 1,
+	    gen - 1, tick, epoch, tick, timeout);
+	rtw88_net_dfs_beacon(&s.net, frame, sizeof(frame), s.net.dfs_frontier + 1,
+	    gen, tick, epoch + 1, tick, timeout);
+	rtw88_net_dfs_beacon(&s.net, frame, sizeof(frame), s.net.dfs_frontier + 1,
+	    gen, tick, epoch, tick, 0);
+	/* The old completed descriptor lies at the inclusive frontier. */
+	ra_dfs_observe_sequence(&s, frame, sizeof(frame), s.net.dfs_frontier, tick);
+	CHECK(!s.sc.sc_dfs.valid);
 	s.net.tx_quiet = 1;
 	ra_dfs_observe(&s, frame, sizeof(frame), tick);
 	s.net.tx_quiet = 0;

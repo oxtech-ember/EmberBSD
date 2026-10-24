@@ -55,6 +55,7 @@ struct rtw88_net_rfk {
 struct rtw88_net_rx {
 	struct mbuf *m;
 	uint64_t epoch, arrived;
+	uint64_t sequence;
 	uint32_t tsf, generation, tick;
 	uint8_t quality;
 };
@@ -91,6 +92,9 @@ struct rtw88_net {
 	unsigned tx_timer;
 	unsigned tx_completed;
 #ifdef RTW88_DFS64
+	uint64_t dfs_frontier;	/* RX descriptors completed before this request. */
+	uint32_t dfs_frontier_generation;
+	unsigned dfs_frontier_valid;
 	uint32_t dfs_tick;	/* Arrival of the beacon behind the permit. */
 #endif
 #ifdef RTW88_RFK_EXPERIMENT
@@ -104,7 +108,7 @@ static int rtw88_net_init(struct ifnet *);
 static int rtw88_net_newstate(struct ieee80211com *, enum ieee80211_state, int);
 #ifdef RTW88_DFS64
 static void rtw88_net_dfs_beacon(struct rtw88_net *, const uint8_t *, size_t,
-    uint32_t, uint32_t, uint64_t, uint32_t, uint32_t);
+    uint64_t, uint32_t, uint32_t, uint64_t, uint32_t, uint32_t);
 static int rtw88_net_dfs_expire(struct rtw88_net *, uint32_t, uint32_t);
 #endif
 static void rtw88_net_ht20_publish(struct rtw88_net *,
@@ -1227,6 +1231,21 @@ rtw88_net_state_work(struct work *work, void *cookie)
 					error = rtw88_channel_apply(net->core,
 					    &channel_tuple);
 			}
+#ifdef RTW88_DFS64
+			/* A descriptor may have completed before the state request but
+			 * remain in the hardware ring until after this commit. Do not let
+			 * that old frame become positive evidence for a new DFS lease. */
+			if (error == 0 && state != IEEE80211_S_INIT) {
+				net->dfs_frontier_valid = 0;
+				error = rtw88_rx_frontier(net->core,
+				    net->core->sc_generation, &net->dfs_frontier);
+				if (error == 0) {
+					net->dfs_frontier_generation =
+					    net->core->sc_generation;
+					net->dfs_frontier_valid = 1;
+				}
+			}
+#endif
 			if (error == 0) {
 				diag.stage = RTW88_NET_STAGE_STATION;
 				error = rtw88_station_config(net->core, bssid, aid,
@@ -1428,6 +1447,7 @@ lock_request:
 #ifdef RTW88_DFS64
 	/* A new request needs new master evidence before any DFS TX. */
 	rtw88_dfs_close(net->core);
+	net->dfs_frontier_valid = 0;
 #endif
 	(void)rtw88_net_request(&net->policy);
 	net->requested = state;
@@ -1525,7 +1545,8 @@ rtw88_net_rx_frame(void *cookie, const uint8_t *frame, size_t len,
 	rx->arrived = rtw88_net_rxba_now(&net->ic);
 	rx->tsf = info->tsf_low;
 	rx->tick = arrival_tick;
-	rx->generation = net->core->sc_generation;
+	rx->sequence = info->sequence;
+	rx->generation = info->generation;
 	rx->quality = info->signal.valid && info->signal.quality <= 100 &&
 	    info->signal.generation == rx->generation ? info->signal.quality : 0;
 	net->rx_tail = (net->rx_tail + 1) % RTW88_NET_RX_LIMIT;
@@ -1548,20 +1569,24 @@ rtw88_net_tx_complete(void *cookie, unsigned count)
 /*
  * Channel 64 slave: a complete beacon from the selected master, without
  * CSA or Quiet, received by this core generation in the current request
- * and newer than the lease, opens the core TX permit for AUTH, ASSOC and
- * RUN. Frames queued meanwhile wait: a closed permit is no TX capacity.
+ * and newer than the request's RX frontier and lease, opens the core TX
+ * permit for AUTH, ASSOC and RUN. Frames queued meanwhile wait: a closed
+ * permit is no TX capacity.
  */
 static void
 rtw88_net_dfs_beacon(struct rtw88_net *net, const uint8_t *frame, size_t len,
-    uint32_t generation, uint32_t arrived, uint64_t epoch, uint32_t now,
-    uint32_t timeout)
+    uint64_t sequence, uint32_t generation, uint32_t arrived, uint64_t epoch,
+    uint32_t now, uint32_t timeout)
 {
 	uint16_t interval;
 	struct ieee80211com *ic = &net->ic;
 	struct ieee80211_node *ni = ic->ic_bss;
 	unsigned i;
 
-	if (ic->ic_opmode != IEEE80211_M_STA ||
+	if (!net->dfs_frontier_valid ||
+	    net->dfs_frontier_generation != generation || sequence == 0 ||
+	    sequence <= net->dfs_frontier ||
+	    ic->ic_opmode != IEEE80211_M_STA ||
 	    (ic->ic_state != IEEE80211_S_AUTH &&
 	     ic->ic_state != IEEE80211_S_ASSOC &&
 	     ic->ic_state != IEEE80211_S_RUN) || ni == NULL ||
@@ -1609,6 +1634,7 @@ rtw88_net_dfs_expire(struct rtw88_net *net, uint32_t now, uint32_t timeout)
 	if (net->core->sc_dfs.valid && timeout != 0 && elapsed >= timeout) {
 		net->quiet_error = rtw88_tx_quiet(net->core);
 		net->reset_required = 1;
+		net->dfs_frontier_valid = 0;
 		expired = 1;
 	}
 	mutex_exit(net->lock);
@@ -1709,7 +1735,7 @@ rtw88_net_softintr(void *cookie)
 #ifdef RTW88_DFS64
 		if (rx.m->m_next == NULL && rx.m->m_len == rx.m->m_pkthdr.len)
 			rtw88_net_dfs_beacon(net, mtod(rx.m, const uint8_t *),
-			    (size_t)rx.m->m_len, rx.generation, rx.tick, rx.epoch,
+			    (size_t)rx.m->m_len, rx.sequence, rx.generation, rx.tick, rx.epoch,
 			    (uint32_t)getticks(), (uint32_t)MAX(hz,
 			    mstohz(rtw88_net_tu_to_ms(ic->ic_bmisstimeout))));
 #endif

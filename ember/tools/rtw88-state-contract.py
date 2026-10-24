@@ -85,12 +85,36 @@ parts.append('#ifdef RTW88_STATE_TX_CALLER\n' + function('rtw88_net_tx_submit', 
 # The DFS64 slave producer and lease exist only in the experiment build;
 # the quiet owner is shared by CSA and Quiet withdrawal.
 if '\nrtw88_net_dfs_beacon(' in net:
+    rx_type = re.search(r'^struct rtw88_net_rx \{.*?^};', net, re.M|re.S)
+    rx_frame = re.search(r'^rtw88_net_rx_frame\(.*?^}', net, re.M|re.S)
+    state_work = re.search(r'^rtw88_net_state_work\(.*?^}', net, re.M|re.S)
+    dfs_beacon = re.search(r'^rtw88_net_dfs_beacon\(.*?^}', net, re.M|re.S)
+    if (rx_type is None or not re.search(r'uint64_t[^;]*\bsequence\b',
+            rx_type.group()) or rx_frame is None or
+            not re.search(r'rx->sequence\s*=\s*info->sequence\s*;', rx_frame.group()) or
+            not re.search(r'rx->generation\s*=\s*info->generation\s*;',
+                          rx_frame.group())):
+        raise ValueError('DFS RX must retain descriptor sequence and generation')
+    if (state_work is None or
+            not re.search(r'rtw88_rx_frontier\s*\(\s*net->core\s*,\s*'
+                          r'net->core->sc_generation\s*,\s*&net->dfs_frontier\s*\)',
+                          state_work.group()) or
+            not re.search(r'net->dfs_frontier_valid\s*=\s*1\s*;',
+                          state_work.group())):
+        raise ValueError('state worker must snapshot a DFS RX descriptor frontier')
+    if (dfs_beacon is None or
+            not re.search(r'!net->dfs_frontier_valid', dfs_beacon.group()) or
+            not re.search(r'net->dfs_frontier_generation\s*!=\s*generation',
+                          dfs_beacon.group()) or
+            not re.search(r'sequence\s*<=\s*net->dfs_frontier', dfs_beacon.group())):
+        raise ValueError('DFS permit must reject descriptors at or before its frontier')
     # Softintr and watchdog run in other fixtures; prove the producer and
     # the lease are called from them before every net80211 input/poll.
     soft = re.search(r'^rtw88_net_softintr\(.*?^}', net, re.M|re.S).group()
     watch = re.search(r'^rtw88_net_watchdog\(.*?^}', net, re.M|re.S).group()
     call = re.search(r'rtw88_net_dfs_beacon\(net, mtod\(rx\.m, const uint8_t \*\),\s*'
-                     r'\(size_t\)rx\.m->m_len, rx\.generation, rx\.tick, rx\.epoch,\s*'
+                     r'\(size_t\)rx\.m->m_len, rx\.sequence, rx\.generation, '
+                     r'rx\.tick, rx\.epoch,\s*'
                      r'\(uint32_t\)getticks\(\), \(uint32_t\)MAX\(hz,', soft)
     if (call is None or
             soft.find('rtw88_net_dfs_beacon(') > soft.find('ieee80211_input(ic, rx.m')):
