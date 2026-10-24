@@ -389,16 +389,21 @@ adi_axi_adc_bootstrap(struct adi_axi_adc_lease *l,
 		error = EALREADY;
 		goto out;
 	}
-	if (c->c_ops->bootstrap == NULL || l->l_ops->cold_bootstrap == NULL) {
+	if (c->c_ops->bootstrap == NULL) {
 		error = EOPNOTSUPP;
 		goto out;
 	}
 	c->c_bootstrap_used = true;
-	error = 0;
-	for (unsigned int i = 0; i < l->l_nguards && error == 0; i++)
-		error = adi_axi_dmac_guard_cold_check(l->l_guards[i]);
-	if (error == 0)
-		error = l->l_ops->cold_bootstrap(l->l_cookie);
+	if (l->l_ops->cold_bootstrap != NULL) {
+		error = 0;
+		for (unsigned int i = 0; i < l->l_nguards && error == 0; i++)
+			error = adi_axi_dmac_guard_cold_check(l->l_guards[i]);
+		if (error == 0)
+			error = l->l_ops->cold_bootstrap(l->l_cookie);
+	} else {
+		/* Existing clocks permit a real drain before clock disruption. */
+		error = quiesce_locked(l, timeout_ms);
+	}
 	if (error == 0)
 		error = check_dmas(l);
 	if (error == 0)
@@ -1028,6 +1033,7 @@ adiaxiadc_cdev_ioctl(dev_t dev, u_long command, void *data, int flags,
 	case ADI_AXI_ADCIOC_CONFIG: {
 		struct adi_axi_adc_config *user = data;
 		struct adi_axi_rx_config config;
+		bool bootstrap;
 
 		if (user->abi_version != ADI_AXI_ADC_ABI_VERSION ||
 		    user->struct_size != sizeof(*user) ||
@@ -1074,7 +1080,14 @@ adiaxiadc_cdev_ioctl(dev_t dev, u_long command, void *data, int flags,
 		    sizeof(config.gain_mdB));
 		config.gain_mode[0] = user->gain_mode[0];
 		config.gain_mode[1] = user->gain_mode[1];
-		error = adi_axi_adc_configure(lease, &config, user->timeout_ms);
+		mutex_enter(&lease->l_converter->c_lock);
+		bootstrap = !lease->l_converter->c_bootstrap_used;
+		mutex_exit(&lease->l_converter->c_lock);
+		error = bootstrap ? adi_axi_adc_bootstrap(lease, &config,
+		    user->timeout_ms) : 0;
+		if (error == 0)
+			error = adi_axi_adc_configure(lease, &config,
+			    user->timeout_ms);
 		sc->sc_configured = error == 0;
 		break;
 	}

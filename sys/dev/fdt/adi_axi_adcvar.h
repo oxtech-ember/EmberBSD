@@ -96,8 +96,9 @@ void adi_axi_converter_control_exit(struct adi_axi_converter *);
  */
 int adi_axi_adc_acquire(int phandle, device_t consumer,
 	const struct adi_axi_capture_ops *, void *, struct adi_axi_adc_lease **);
-/* Establish RX clocks only from proved cold ownership, then require the real
- * quiesce acknowledgement. Success makes the lease quiet, not configured.
+/* Establish RX clocks after a trusted cold handoff, or a positive drain with
+ * existing clocks. Require a real drain after clock setup in both cases.
+ * Success makes the lease quiet, not configured.
  * One attempt per converter registration; no warm-session recovery path.
  * Any attempted proof/setup/drain failure poisons and retains the lease.
  */
