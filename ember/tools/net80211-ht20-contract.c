@@ -783,9 +783,9 @@ test_golden_and_reassociation(void)
 	ht_setup(); CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ)==0);
 	CHECK(ht_in_request()!=NULL && memcmp(ht_in_request(),golden,sizeof(golden))==0);
 	/* A packet missing its generated IE cannot prove a queued offer. */
-	CHECK(captured!=NULL && ieee80211_ht20_request_offer(captured,IEEE80211_FC0_SUBTYPE_ASSOC_REQ,&admitted));
+	CHECK(captured!=NULL && ieee80211_ht20_request_offer(captured,IEEE80211_FC0_SUBTYPE_ASSOC_REQ,&admitted,0));
 	uint8_t *p=ht_in_request(); if(p) p[0]=46;
-	CHECK(captured==NULL || !ieee80211_ht20_request_offer(captured,IEEE80211_FC0_SUBTYPE_ASSOC_REQ,&admitted));
+	CHECK(captured==NULL || !ieee80211_ht20_request_offer(captured,IEEE80211_FC0_SUBTYPE_ASSOC_REQ,&admitted,0));
 	release_capture();
 	ht_setup(); CHECK(request(IEEE80211_FC0_SUBTYPE_REASSOC_REQ)==0); release_capture();
 	struct mbuf *m=ht_response();
