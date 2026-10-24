@@ -1,0 +1,64 @@
+{
+  "format": "emberbsd-native-bootstrap-program",
+  "version": 1,
+  "origin": "EmberBSD (AI-assisted) source contract; implementation retains its BSD copyright notices.",
+  "compiler": {
+    "family": "gcc",
+    "major": 16,
+    "abi": "native"
+  },
+  "cflags": [],
+  "link_flags": [],
+  "libraries": [],
+  "name": "hostname",
+  "canonical_host_recipe": "tools/hostname/Makefile",
+  "source_makefile": "bin/hostname/Makefile",
+  "sources": [
+    "bin/hostname/hostname.c"
+  ],
+  "headers": [
+    "tools/compat/bootstrap_cdefs.h"
+  ],
+  "include_dirs": [],
+  "cppflags": [
+    "-include",
+    "tools/compat/bootstrap_cdefs.h"
+  ],
+  "invocations": [
+    "hostname"
+  ],
+  "files": {},
+  "runtime_cases": [
+    {
+      "name": "read-hostname",
+      "invocation": "hostname",
+      "args": [],
+      "stdin": "",
+      "exit": 0,
+      "stdout_nonempty": true,
+      "stderr": ""
+    },
+    {
+      "name": "short-hostname",
+      "invocation": "hostname",
+      "args": [
+        "-s"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout_nonempty": true,
+      "stderr": ""
+    },
+    {
+      "name": "invalid-option",
+      "invocation": "hostname",
+      "args": [
+        "-z"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    }
+  ]
+}

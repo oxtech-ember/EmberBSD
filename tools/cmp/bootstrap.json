@@ -1,0 +1,274 @@
+{
+  "format": "emberbsd-native-bootstrap-program",
+  "version": 1,
+  "origin": "EmberBSD (AI-assisted) source contract; implementation retains its BSD copyright notices.",
+  "compiler": {
+    "family": "gcc",
+    "major": 16,
+    "abi": "native"
+  },
+  "cflags": [],
+  "link_flags": [],
+  "libraries": [],
+  "name": "cmp",
+  "canonical_host_recipe": "tools/cmp/Makefile",
+  "source_makefile": "usr.bin/cmp/Makefile",
+  "sources": [
+    "usr.bin/cmp/cmp.c",
+    "usr.bin/cmp/misc.c",
+    "usr.bin/cmp/regular.c",
+    "usr.bin/cmp/special.c"
+  ],
+  "headers": [
+    "usr.bin/cmp/extern.h",
+    "tools/compat/bootstrap_cdefs.h"
+  ],
+  "include_dirs": [
+    "usr.bin/cmp"
+  ],
+  "cppflags": [
+    "-include",
+    "tools/compat/bootstrap_cdefs.h"
+  ],
+  "invocations": [
+    "cmp"
+  ],
+  "files": {
+    "same.txt": "abc\n",
+    "different.txt": "axc\n",
+    "short.txt": "abc",
+    "skip-left.txt": "xxabc\n",
+    "skip-right.txt": "yabc\n"
+  },
+  "runtime_cases": [
+    {
+      "name": "equal",
+      "invocation": "cmp",
+      "args": [
+        "same.txt",
+        "same.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "name": "different",
+      "invocation": "cmp",
+      "args": [
+        "same.txt",
+        "different.txt"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "same.txt different.txt differ: char 2, line 1\n",
+      "stderr": ""
+    },
+    {
+      "name": "silent-equal",
+      "invocation": "cmp",
+      "args": [
+        "-s",
+        "same.txt",
+        "same.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "name": "silent-different",
+      "invocation": "cmp",
+      "args": [
+        "-s",
+        "same.txt",
+        "different.txt"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "name": "list-differences",
+      "invocation": "cmp",
+      "args": [
+        "-l",
+        "same.txt",
+        "different.txt"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "     2 142 170\n",
+      "stderr": ""
+    },
+    {
+      "name": "stdin-equal",
+      "invocation": "cmp",
+      "args": [
+        "-",
+        "same.txt"
+      ],
+      "stdin": "abc\n",
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "name": "stdin-different",
+      "invocation": "cmp",
+      "args": [
+        "-",
+        "different.txt"
+      ],
+      "stdin": "abc\n",
+      "exit": 1,
+      "stdout": "stdin different.txt differ: char 2, line 1\n",
+      "stderr": ""
+    },
+    {
+      "name": "skip-both",
+      "invocation": "cmp",
+      "args": [
+        "skip-left.txt",
+        "skip-right.txt",
+        "2",
+        "1"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "name": "skip-first",
+      "invocation": "cmp",
+      "args": [
+        "skip-left.txt",
+        "same.txt",
+        "2"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "name": "stdin-skip",
+      "invocation": "cmp",
+      "args": [
+        "-",
+        "same.txt",
+        "2"
+      ],
+      "stdin": "xxabc\n",
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "name": "careful-equal",
+      "invocation": "cmp",
+      "args": [
+        "-c",
+        "same.txt",
+        "same.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "name": "shorter-file",
+      "invocation": "cmp",
+      "args": [
+        "short.txt",
+        "same.txt"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "silent-shorter",
+      "invocation": "cmp",
+      "args": [
+        "-s",
+        "short.txt",
+        "same.txt"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "name": "missing-file",
+      "invocation": "cmp",
+      "args": [
+        "missing.txt",
+        "same.txt"
+      ],
+      "stdin": "",
+      "exit": 2,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "silent-missing-file",
+      "invocation": "cmp",
+      "args": [
+        "-s",
+        "missing.txt",
+        "same.txt"
+      ],
+      "stdin": "",
+      "exit": 2,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "name": "conflicting-options",
+      "invocation": "cmp",
+      "args": [
+        "-l",
+        "-s",
+        "same.txt",
+        "same.txt"
+      ],
+      "stdin": "",
+      "exit": 2,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "invalid-option",
+      "invocation": "cmp",
+      "args": [
+        "-z",
+        "same.txt",
+        "same.txt"
+      ],
+      "stdin": "",
+      "exit": 2,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "stdin-twice",
+      "invocation": "cmp",
+      "args": [
+        "-",
+        "-"
+      ],
+      "stdin": "abc\n",
+      "exit": 2,
+      "stdout": "",
+      "stderr_nonempty": true
+    }
+  ]
+}
