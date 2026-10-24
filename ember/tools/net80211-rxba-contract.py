@@ -8,8 +8,12 @@ Full association management exchange and hardware programming are separate gates
 import pathlib,re,subprocess,sys,os
 src,out=map(pathlib.Path,sys.argv[1:])
 subprocess.run([sys.executable,str(src/'ember/tools/ccmp-contract-extract.py'),str(src),str(out)],check=True)
+(out/'net80211').mkdir(exist_ok=True)
 for name in ['ieee80211_ht20.h','ieee80211_rxba.h','ieee80211_vht_ies.h']:
- (out/name).write_text((src/'sys/net80211'/name).read_text())
+ header=(src/'sys/net80211'/name).read_text()
+ (out/name).write_text(header)
+ if name=='ieee80211_vht_ies.h':
+  (out/'net80211'/name).write_text(header)
 s=(src/'ember/tools/ccmp-test-kernel.h').read_text()
 state_enum=re.search(r'^enum ieee80211_state \{.*?^};',(src/'sys/net80211/ieee80211_proto.h').read_text(),re.M|re.S).group()
 s=s.replace('struct ieee80211com {','#ifndef NATIVE_IEEE80211_STATE_DEFINED\n#define NATIVE_IEEE80211_STATE_DEFINED 1\n'+state_enum+'\n#endif\nstruct ieee80211com {',1)

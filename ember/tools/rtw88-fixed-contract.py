@@ -6,6 +6,7 @@ src,out=map(pathlib.Path,sys.argv[1:])
 # The owning caller now reads the actual default-OFF HT capsule layout.
 (out/'net80211').mkdir(exist_ok=True)
 (out/'net80211/ieee80211_ht20.h').write_bytes((src/'sys/net80211/ieee80211_ht20.h').read_bytes())
+(out/'net80211/ieee80211_vht_ies.h').write_bytes((src/'sys/net80211/ieee80211_vht_ies.h').read_bytes())
 s=(src/'sys/dev/ic/rtw88_net.c').read_text()
 m=re.search(r'^rtw88_net_tx_submit\(.*?^}',s,re.M|re.S)
 body=('static int\n'+m.group()) if m else '''
