@@ -735,7 +735,7 @@ can_send(struct socket *so, struct mbuf *m, struct sockaddr *nam,
 {
 	struct canpcb *canp = sotocanpcb(so);
 	int error = 0;
-	int s;
+	int s = 0;
 
 	if (control != NULL) {
 		if (control->m_len != 0)
