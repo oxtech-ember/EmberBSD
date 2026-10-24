@@ -23,6 +23,7 @@ struct rtw88_net {
 	int scan, work_pending, reset_required, state_arg, state_work;
 	int tx_quiet, quiet_error;
 	unsigned channel;
+	struct rtw88_channel_tuple pending_channel;
 	enum ieee80211_state requested;
 	void *wq;
 };
@@ -62,6 +63,14 @@ static int rtw88_net_ra_prepare(struct ieee80211com *ic,unsigned ch,unsigned bas
 { (void)ic;(void)ch;(void)basic;(void)epoch;p->use_protection=0;assert(!native_lock);return 0; }
 static int rtw88_channel(struct rtw88_softc *sc,unsigned ch)
 { assert(native_lock);worker_hw_calls++;sc->sc_channel=ch;return 0; }
+static int
+rtw88_channel_apply(struct rtw88_softc *sc,
+    const struct rtw88_channel_tuple *tuple)
+{
+	assert(tuple != NULL && tuple->width_mhz == 20 &&
+	    tuple->primary == tuple->center);
+	return rtw88_channel(sc, tuple->primary);
+}
 static int rtw88_station_config(struct rtw88_softc *sc,const uint8_t *bssid,unsigned aid,unsigned basic,unsigned slot,int linked)
 { (void)bssid;(void)aid;(void)basic;(void)slot;assert(native_lock);worker_hw_calls++;sc->sc_linked=linked;return 0; }
 static int rtw88_edca_apply(struct rtw88_softc *sc,struct rtw88_edca_params *p,unsigned slot)

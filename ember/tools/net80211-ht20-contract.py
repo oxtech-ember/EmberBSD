@@ -40,3 +40,7 @@ with (out/'native-ht20-policy.h').open('a') as f:
 
 with (out/'native-ht20-policy.h').open('a') as f:
  f.write(re.search(r'^#define\s+RTW88_COMMAND_US\s+.*$',(src/'sys/dev/ic/rtw88var.h').read_text(),re.M).group()+'\n')
+
+with (out/'native-ht20-policy.h').open('a') as f:
+ f.write(re.search(r'^struct rtw88_channel_tuple \{.*?^\};',
+     (src/'sys/dev/ic/rtw88_hw.h').read_text(),re.M|re.S).group()+'\n')

@@ -41,17 +41,33 @@ const struct rtw8822c_table rtw8822c_txpwr_lmt_type0_tbl = {
 	.kind = RTW8822C_TBL_TXPWR_LMT
 };
 #elif defined(RTW88_TXPWR_MISSING_LIMIT)
-/* Real PG data, but a literal limit table with no HT2/VHT2 section. */
-static const struct rtw_txpwr_lmt_cfg_pair missing_rows[] = {
+/* Real PG data with selectable missing sections in the modeled limit table. */
+static struct rtw_txpwr_lmt_cfg_pair missing_rows[] = {
 	{ 2, 0, 0, 0, 1, 60 },
 	{ 2, 0, 0, 1, 1, 60 },
-	{ 2, 0, 0, 2, 1, 60 }
+	{ 2, 0, 0, 2, 1, 60 },
+	{ 2, 1, 0, 1, 36, 60 }, { 2, 1, 0, 2, 36, 60 },
+	{ 2, 1, 0, 3, 36, 60 }, { 2, 1, 0, 4, 36, 60 },
+	{ 2, 1, 0, 5, 36, 60 },
+	{ 2, 1, 1, 2, 38, 60 }, { 2, 1, 1, 3, 38, 60 },
+	{ 2, 1, 1, 4, 38, 60 }, { 2, 1, 1, 5, 38, 60 },
+	{ 2, 1, 2, 4, 42, 60 }, { 2, 1, 2, 5, 42, 60 }
 };
 const struct rtw8822c_table rtw8822c_txpwr_lmt_type0_tbl = {
 	.data = missing_rows,
 	.count = sizeof(missing_rows) / sizeof(missing_rows[0]),
 	.kind = RTW8822C_TBL_TXPWR_LMT
 };
+static void
+missing_width_rows(unsigned bw, int missing)
+{
+	unsigned i, channel = bw == 0 ? 36 : bw == 1 ? 38 : 42;
+
+	for (i = 0; i < sizeof(missing_rows) / sizeof(missing_rows[0]); i++) {
+		if (missing_rows[i].band == 1 && missing_rows[i].bw == bw)
+			missing_rows[i].ch = missing ? 255 : channel;
+	}
+}
 #endif
 
 #define CHECK(x) do { checks++; if (!(x)) { \
@@ -460,6 +476,20 @@ main(int argc, char **argv)
 	return EXIT_SUCCESS;
 #endif
 #ifdef RTW88_TXPWR_MISSING_LIMIT
+	const struct rtw88_channel_tuple tuple40 = { 36, 38, 40 };
+	const struct rtw88_channel_tuple tuple80 = { 36, 42, 80 };
+
+	missing_width_rows(1, 1);
+	reset(1, 0);
+	CHECK(rtw8822c_set_tx_power_tuple(&sc, &efuse, &tuple40, 2) == ENOTSUP);
+	CHECK(accesses == 0);
+	missing_width_rows(1, 0);
+	missing_width_rows(2, 1);
+	reset(1, 0);
+	CHECK(rtw8822c_set_tx_power_tuple(&sc, &efuse, &tuple80, 2) == ENOTSUP);
+	CHECK(accesses == 0);
+	missing_width_rows(2, 0);
+
 	reset(1, 0);
 	CHECK(rtw8822c_set_tx_power(&sc, &efuse, 1, 2) == ENOTSUP);
 	CHECK(accesses == 0);
