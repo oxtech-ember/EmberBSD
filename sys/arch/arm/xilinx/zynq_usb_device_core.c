@@ -111,7 +111,7 @@ zynqudc_init(struct zynqudc *sc)
 	/* Device mode and setup lockout disable. Never set host port power. */
 	zwrite(sc, ZUDC_MODE, 0x0a);
 	zwrite(sc, ZUDC_PORT, 0x80000000U); /* External ULPI, no VBUS drive. */
-	zwrite(sc, ZUDC_OTG, 0);
+	zwrite(sc, ZUDC_OTG, ZUDC_OTG_TERMINATION);
 	sc->generation = 1;
 	sc->pending_address = 0xff;
 	zqhinit(sc);
@@ -192,6 +192,20 @@ zynqudc_connect(struct zynqudc *sc)
 		return EIO;
 	if (!sc->valid_config)
 		return EINVAL;
+	if (sc->connected)
+		return EBUSY;
+	/* A distinct lifecycle cannot consume pending work from the last one. */
+	zwrite(sc, ZUDC_SETUP, 0xffff);
+	zwrite(sc, ZUDC_COMPLETE, ~0U);
+	zwrite(sc, ZUDC_STS, ~0U);
+	sc->generation++;
+	sc->pending_address = 0xff;
+	sc->ep0_phase = 0;
+	sc->suspended = false;
+	sc->vendor_pending = false;
+	zqhinit(sc);
+	zwrite(sc, ZUDC_ADDR, 0);
+	zwrite(sc, ZUDC_EPCTRL(0), 0x00800080);
 	zwrite(sc, ZUDC_INTR, ZUDC_INT_MASK);
 	zwrite(sc, ZUDC_CMD, ZUDC_RUN);
 	sc->connected = true;
@@ -206,6 +220,10 @@ zprime(struct zynqudc *sc, unsigned slot, uint32_t length)
 	uint64_t addr = r->data.map->dm_segs[0].ds_addr;
 	uint32_t bit = zbit(slot);
 
+	if (sc->faulted)
+		return EIO;
+	if (!sc->connected)
+		return ENXIO;
 	if (r->active || r->retained)
 		return EBUSY;
 	/* This engine has one request per direction. No live chain is patched. */
@@ -300,6 +318,11 @@ zynqudc_cancel(struct zynqudc *sc, unsigned ep, int status)
 	}
 	r->retained = r->active;
 	sc->faulted = true;
+	sc->connected = false;
+	sc->vendor_pending = false;
+	sc->generation++;
+	zwrite(sc, ZUDC_INTR, 0);
+	zwrite(sc, ZUDC_CMD, 0);
 	return ETIMEDOUT;
 }
 
@@ -327,6 +350,14 @@ zynqudc_disconnect(struct zynqudc *sc)
 	sc->pending_address = 0xff;
 	sc->generation++;
 	error = zcancelall(sc, ENXIO);
+	/* A queued soft interrupt must see no old setup or completion work. */
+	zwrite(sc, ZUDC_SETUP, 0xffff);
+	zwrite(sc, ZUDC_COMPLETE, ~0U);
+	zwrite(sc, ZUDC_STS, ~0U);
+	if (error == 0) {
+		for (unsigned ep = 1; ep < sc->nep; ep++)
+			zwrite(sc, ZUDC_EPCTRL(ep), 0);
+	}
 	zevent(sc, USBPERIPH_EVENT_DISCONNECT);
 	return error;
 }
@@ -476,14 +507,21 @@ zsetup(struct zynqudc *sc)
 		error = zcontrol(sc, status, 1, 1);
 	} else if ((setup[0] == 0x80 || setup[0] == 0x81 || setup[0] == 0x82) &&
 	    setup[1] == 0 && value == 0 && length == 2) {
-		if (setup[0] == 0x82) {
+		if (setup[0] == 0x80) {
+			if (index != 0)
+				goto bad;
+		} else if (setup[0] == 0x81) {
+			if (sc->configuration == 0 || index >= sc->config.config[4])
+				goto bad;
+		} else {
 			int slot = zslot(sc, index);
+			unsigned shift = (index & 0x80) ? 16 : 0;
 			if (slot < 0 || (slot >= 2 && sc->configuration == 0))
 				goto bad;
-			status[0] = (zread(sc, ZUDC_EPCTRL(index & 15)) >>
-			    ((index & 0x80) ? 16 : 0)) & 1;
-		} else if (index != 0) {
-			goto bad;
+			uint32_t ctrl = zread(sc, ZUDC_EPCTRL(index & 15)) >> shift;
+			if ((ctrl & 0x80) == 0)
+				goto bad;
+			status[0] = ctrl & 1;
 		}
 		error = zcontrol(sc, status, 2, 2);
 	} else if (setup[0] == 0x02 && (setup[1] == 1 || setup[1] == 3) &&
@@ -523,6 +561,10 @@ zsetup(struct zynqudc *sc)
 int
 zynqudc_reply(struct zynqudc *sc, const struct usbperiph_reply *r)
 {
+	if (sc->faulted)
+		return EIO;
+	if (!sc->connected)
+		return ENXIO;
 	if (!sc->vendor_pending || r->generation != sc->generation ||
 	    r->sequence != sc->event.sequence)
 		return ESTALE;
@@ -539,7 +581,8 @@ zynqudc_reply(struct zynqudc *sc, const struct usbperiph_reply *r)
 void
 zynqudc_tick(struct zynqudc *sc)
 {
-	if (sc->vendor_pending && ++sc->vendor_ticks >= 2)
+	if (sc->connected && !sc->faulted && sc->vendor_pending &&
+	    ++sc->vendor_ticks >= 2)
 		zstall(sc);
 }
 
@@ -550,6 +593,11 @@ zynqudc_intr(struct zynqudc *sc)
 	if (status == 0)
 		return 0;
 	zwrite(sc, ZUDC_STS, status);
+	if (!sc->connected || sc->faulted) {
+		zwrite(sc, ZUDC_SETUP, 0xffff);
+		zwrite(sc, ZUDC_COMPLETE, ~0U);
+		return 1;
+	}
 	if (status & ZUDC_INT_URI) {
 		sc->configuration = sc->address = 0;
 		sc->pending_address = 0xff;

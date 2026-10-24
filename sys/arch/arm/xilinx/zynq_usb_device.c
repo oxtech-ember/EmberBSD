@@ -12,6 +12,7 @@
 #include <sys/intr.h>
 #include <sys/kernel.h>
 #include <sys/mutex.h>
+#include <sys/pmf.h>
 #include <sys/systm.h>
 #include <dev/clk/clk_backend.h>
 #include <dev/fdt/fdtvar.h>
@@ -25,6 +26,8 @@ struct zynqudc_softc {
 	callout_t timer;
 	void *ih;
 	void *softih;
+	void *shutdownhook;
+	bool stopping, reset_drained;
 	uint64_t cancel_epoch[ZUDC_SLOTS];
 	struct clk *clock;
 	bool ready, opened, closing;
@@ -160,15 +163,108 @@ zynqudc_phy(struct zynqudc_softc *sc)
 	int error;
 
 	/* Clear host VBUS, charge and discharge bits in ULPI OTG control. */
-	error = zynqudc_ulpi(sc, 0x0c, 0x7e, true, NULL);
+	error = zynqudc_ulpi(sc, ZUDC_ULPI_OTG_CLEAR,
+	    ZUDC_ULPI_OTG_VBUS | ZUDC_ULPI_OTG_DP_PULLDOWN |
+	    ZUDC_ULPI_OTG_ID_PULLUP, true, NULL);
+	if (error != 0)
+		return error;
+	/* Device termination requires D- pulldown, never a host D+ pulldown. */
+	error = zynqudc_ulpi(sc, ZUDC_ULPI_OTG_SET,
+	    ZUDC_ULPI_OTG_DM_PULLDOWN, true, NULL);
 	if (error != 0)
 		return error;
 	/* Normal HS transceiver, termination enabled; preserve unrelated bits. */
-	error = zynqudc_ulpi(sc, 4, 0, false, &value);
+	error = zynqudc_ulpi(sc, ZUDC_ULPI_FUNCTION, 0, false, &value);
 	if (error != 0)
 		return error;
-	value = (value & ~0x1bU) | 4;
-	return zynqudc_ulpi(sc, 4, value, true, NULL);
+	value = (value & ~(ZUDC_ULPI_XCVR | ZUDC_ULPI_OPMODE)) |
+	    ZUDC_ULPI_TERMSELECT | ZUDC_ULPI_SUSPENDM;
+	return zynqudc_ulpi(sc, ZUDC_ULPI_FUNCTION, value, true, NULL);
+}
+
+/* The final reset hook cannot wait for hardclock, soft interrupts, or users. */
+static bool
+zynqudc_idle(struct zynqudc_softc *sc)
+{
+	struct zynqudc *c = &sc->core;
+	if (bus_space_read_4(c->bst, c->bsh, ZUDC_CMD) & ZUDC_RUN)
+		return false;
+	if (bus_space_read_4(c->bst, c->bsh, ZUDC_PRIME) != 0 ||
+	    bus_space_read_4(c->bst, c->bsh, ZUDC_FLUSH) != 0 ||
+	    bus_space_read_4(c->bst, c->bsh, ZUDC_STAT) != 0)
+		return false;
+	for (unsigned i = 0; i < c->nep * 2; i++)
+		if (c->req[i].active || c->req[i].retained)
+			return false;
+	return true;
+}
+
+static bool
+zynqudc_shutdown(device_t dev, int howto)
+{
+	struct zynqudc_softc *sc = device_private(dev);
+	int error;
+	(void)howto;
+
+	if (!mutex_tryenter(&sc->lock))
+		return false;
+	sc->stopping = true;
+	sc->reset_drained = false;
+	error = zynqudc_disconnect(&sc->core);
+	cv_broadcast(&sc->cv);
+	callout_stop(&sc->timer);
+	mutex_exit(&sc->lock);
+	/* PMF runs before the final interrupt-disabled phase and may wait. */
+	callout_halt(&sc->timer, NULL);
+	if (!mutex_tryenter(&sc->lock))
+		return false;
+	if (error == 0 && !sc->core.faulted && zynqudc_idle(sc))
+		sc->reset_drained = true;
+	bool drained = sc->reset_drained;
+	mutex_exit(&sc->lock);
+	return drained;
+}
+
+static void __dead
+zynqudc_shutdown_halt(struct zynqudc_softc *sc)
+{
+	(void)splhigh();
+	printf("%s: USB DMA shutdown is unproved; reset blocked. "
+	    "Remove power before restarting.\n", device_xname(sc->dev));
+	for (;;)
+		SPINLOCK_BACKOFF_HOOK;
+}
+
+static void
+zynqudc_shutdown_final(void *cookie)
+{
+	struct zynqudc_softc *sc = cookie;
+	if (!mutex_tryenter(&sc->lock))
+		zynqudc_shutdown_halt(sc);
+	if (!sc->stopping || !sc->reset_drained || sc->core.connected ||
+	    sc->core.faulted || !zynqudc_idle(sc))
+		zynqudc_shutdown_halt(sc);
+	bus_space_write_4(sc->core.bst, sc->core.bsh, ZUDC_INTR, 0);
+	if (bus_space_read_4(sc->core.bst, sc->core.bsh, ZUDC_INTR) != 0)
+		zynqudc_shutdown_halt(sc);
+	/* Keep the lock and all mappings until the platform reset. */
+}
+
+static bool
+zynqudc_register_shutdown(struct zynqudc_softc *sc)
+{
+	sc->shutdownhook = shutdownhook_establish(zynqudc_shutdown_final, sc);
+	if (sc->shutdownhook == NULL ||
+	    !pmf_device_register1(sc->dev, NULL, NULL, zynqudc_shutdown)) {
+		/* No controller admission without both reset coordination hooks. */
+		sc->stopping = true;
+		sc->core.faulted = true;
+		bus_space_write_4(sc->core.bst, sc->core.bsh, ZUDC_INTR, 0);
+		if (!zynqudc_idle(sc) && sc->shutdownhook == NULL)
+			zynqudc_shutdown_halt(sc);
+		return false;
+	}
+	return true;
 }
 
 static void
@@ -241,6 +337,10 @@ zynqudc_attach(device_t parent, device_t self, void *aux)
 		softint_disestablish(sc->softih);
 		goto destroy_locks;
 	}
+	if (!zynqudc_register_shutdown(sc)) {
+		aprint_error(": reset coordination unavailable; peripheral disabled\n");
+		return; /* Quarantine initialized mappings and the registered IRQ. */
+	}
 	sc->ready = true;
 	callout_schedule(&sc->timer, hz);
 	aprint_normal(": native USB peripheral, %u endpoints, interrupting on %s\n",
@@ -281,8 +381,9 @@ zynqudc_softirq(void *cookie)
 {
 	struct zynqudc_softc *sc = cookie;
 	mutex_enter(&sc->lock);
-	(void)zynqudc_intr(&sc->core);
-	if (sc->core.connected && !sc->core.faulted)
+	if (!sc->stopping)
+		(void)zynqudc_intr(&sc->core);
+	if (!sc->stopping && sc->core.connected && !sc->core.faulted)
 		bus_space_write_4(sc->core.bst, sc->core.bsh, ZUDC_INTR,
 		    ZUDC_INT_MASK);
 	cv_broadcast(&sc->cv);
@@ -294,9 +395,11 @@ zynqudc_timer(void *cookie)
 {
 	struct zynqudc_softc *sc = cookie;
 	mutex_enter(&sc->lock);
-	zynqudc_tick(&sc->core);
-	cv_broadcast(&sc->cv);
-	callout_schedule(&sc->timer, hz);
+	if (!sc->stopping) {
+		zynqudc_tick(&sc->core);
+		cv_broadcast(&sc->cv);
+		callout_schedule(&sc->timer, hz);
+	}
 	mutex_exit(&sc->lock);
 }
 
@@ -319,7 +422,7 @@ zynqudc_open(dev_t dev, int flags, int mode, struct lwp *l)
 	if ((flags & (FREAD | FWRITE)) != (FREAD | FWRITE))
 		return EACCES;
 	mutex_enter(&sc->lock);
-	if (sc->opened || sc->closing)
+	if (sc->stopping || sc->opened || sc->closing)
 		error = EBUSY;
 	else if (sc->core.faulted)
 		error = EIO;
@@ -384,7 +487,7 @@ zynqudc_xfer(struct zynqudc_softc *sc, struct usbperiph_xfer *x)
 	mutex_enter(&sc->lock);
 	if (error != 0)
 		goto out;
-	if (sc->closing || !sc->opened || generation != c->generation ||
+	if (sc->stopping || sc->closing || !sc->opened || generation != c->generation ||
 	    epoch != sc->cancel_epoch[slot]) {
 		error = ESTALE;
 		goto out;
@@ -393,14 +496,15 @@ zynqudc_xfer(struct zynqudc_softc *sc, struct usbperiph_xfer *x)
 	if (error != 0)
 		goto out;
 	/* Absolute deadline: unrelated endpoint IRQs cannot extend the timeout. */
-	int deadline = getticks() + mstohz(x->timeout_ms);
+	unsigned start = (unsigned)getticks();
+	unsigned budget = (unsigned)mstohz(x->timeout_ms);
 	while (c->req[slot].active && !c->faulted) {
-		int left = deadline - getticks();
-		if (left <= 0) {
+		unsigned elapsed = (unsigned)getticks() - start;
+		if (elapsed >= budget) {
 			error = ETIMEDOUT;
 			break;
 		}
-		error = cv_timedwait_sig(&sc->cv, &sc->lock, left);
+		error = cv_timedwait_sig(&sc->cv, &sc->lock, (int)(budget - elapsed));
 		if (error == EWOULDBLOCK)
 			error = ETIMEDOUT;
 		if (error != 0)
@@ -444,7 +548,7 @@ zynqudc_ioctl(dev_t dev, u_long command, void *data, int flags, struct lwp *l)
 	if (sc == NULL)
 		return ENXIO;
 	mutex_enter(&sc->lock);
-	if (!sc->opened || sc->closing) {
+	if (sc->stopping || !sc->opened || sc->closing) {
 		error = ENXIO;
 		goto unlock;
 	}
@@ -472,17 +576,26 @@ zynqudc_ioctl(dev_t dev, u_long command, void *data, int flags, struct lwp *l)
 			error = zynqudc_cancel(&sc->core, ep, ECANCELED);
 		}
 		break;
-	case USBPERIPH_IOC_GET_EVENT:
+	case USBPERIPH_IOC_GET_EVENT: {
+		unsigned start = (unsigned)getticks();
 		while (!sc->core.event_pending && !sc->closing &&
-		    !sc->core.faulted && error == 0)
-			error = cv_timedwait_sig(&sc->cv, &sc->lock, hz);
+		    !sc->core.faulted && !sc->stopping && error == 0) {
+			unsigned elapsed = (unsigned)getticks() - start;
+			if (elapsed >= (unsigned)hz) {
+				error = EWOULDBLOCK;
+				break;
+			}
+			error = cv_timedwait_sig(&sc->cv, &sc->lock,
+			    hz - (int)elapsed);
+		}
 		if (error == 0 && sc->core.event_pending) {
 			*(struct usbperiph_event *)data = sc->core.event;
 			sc->core.event_pending = false;
 		} else if (error == 0) {
-			error = sc->closing ? ENXIO : EIO;
+			error = sc->closing || sc->stopping ? ENXIO : EIO;
 		}
 		break;
+	}
 	case USBPERIPH_IOC_REPLY_SETUP:
 		error = zynqudc_reply(&sc->core, data);
 		break;

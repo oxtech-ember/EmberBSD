@@ -16,6 +16,8 @@ a decoded interrupt, and a register range of at least 512 bytes.
 Hardware must report device support and at least three endpoint numbers.
 The driver checks the ULPI viewport with finite timeouts. It clears host
 VBUS drive, charge, and discharge controls before a function can connect.
+Device initialization sets OTGSC termination and retains the ULPI D- pulldown.
+It clears the ULPI D+ pulldown and enables normal transceiver termination.
 The existing EHCI path retains its host configuration.
 
 The hard interrupt disables controller interrupts and schedules a USB soft
@@ -78,8 +80,15 @@ The setup tripwire protects the setup packet snapshot.
 Cancellation proves flush, prime, and active endpoint bits clear before
 returning ownership. Failed drain marks the controller faulted. Its DMA
 maps stay allocated and cannot be reused, copied into, or restarted.
-There is no detach path. All controller allocations remain until reboot.
-That deliberate limit avoids freeing DMA after an uncertain teardown.
+There is no detach path. All controller allocations remain until a proven reset.
+PMF shutdown blocks new admission, drains all endpoint directions, and stops
+the timer. A separate final shutdown hook runs without sleeping or hardclock
+polling. It requires the PMF drain certificate, an available lock, inactive
+requests, retained mappings without inflight DMA, and idle hardware registers.
+It blocks platform reset if that proof is absent, including panic or cold
+paths that skipped PMF. Failure to register either hook disables admission.
+Queued soft interrupts cannot prime descriptors after disconnect or fault.
+Reconnect clears old setup and completion work before a distinct generation.
 
 ## Source audit
 

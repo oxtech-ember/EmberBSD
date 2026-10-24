@@ -6,6 +6,7 @@
 #include <time.h>
 #include <stdatomic.h>
 #include <stdint.h>
+#include <setjmp.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -33,11 +34,25 @@ typedef void *bus_dma_tag_t;
 typedef struct { uint64_t ds_addr; } bus_dma_segment_t;
 typedef struct dma_map { bus_dma_segment_t dm_segs[1]; } *bus_dmamap_t;
 static uint32_t mmio[0x300/4];
-static unsigned delays, syncs;
+static unsigned delays, syncs, primes;
+static bool final_context;
+static uint8_t ulpi_regs[256];
 static bool stuck_reset, stuck_flush, stuck_prime, tripwire_race;
 static inline uint32_t bus_space_read_4(bus_space_tag_t t, bus_space_handle_t h, unsigned r) { (void)t;(void)h; return mmio[r/4]; }
 static inline void bus_space_write_4(bus_space_tag_t t, bus_space_handle_t h, unsigned r, uint32_t v) {
  (void)t;(void)h;
+ if(r==0x170) {
+  unsigned addr=(v>>16)&255;
+  if(v&0x40000000U) {
+   if(v&0x20000000U) {
+    if(addr==0x0c)ulpi_regs[0x0a]&=~(uint8_t)v;
+    else if(addr==0x0b)ulpi_regs[0x0a]|=(uint8_t)v;
+    else ulpi_regs[addr]=(uint8_t)v;
+   }
+   v=0x08000000U|((uint32_t)ulpi_regs[addr]<<8);
+  }else v=0x08000000U;
+ }
+ if(r==0x1b0)primes++;
  if(r==0x144 || r==0x1ac || r==0x1bc) { mmio[r/4]&=~v; return; }
  if(r==0x140 && (v&2) && !stuck_reset) v&=~2U;
  if(r==0x140 && (v&0x2000) && tripwire_race) { v&=~0x2000U; tripwire_race=false; }
@@ -67,7 +82,7 @@ static struct usbperiph_config config(void) {
 }
 static void fixture(void) {
  memset(&fixture_core,0,sizeof(fixture_core));memset(mmio,0,sizeof(mmio));memset(&desc,0,sizeof(desc));
- memset(buffers,0,sizeof(buffers)); delays=syncs=0;stuck_reset=stuck_flush=stuck_prime=tripwire_race=false;
+ memset(buffers,0,sizeof(buffers)); delays=syncs=primes=0;memset(ulpi_regs,0,sizeof(ulpi_regs));stuck_reset=stuck_flush=stuck_prime=tripwire_race=false;
  fixture_core.nep=4;fixture_core.descriptors.kva=desc.bytes;fixture_core.descriptors.size=4096;fixture_core.descriptors.map=&maps[0];maps[0].dm_segs[0].ds_addr=0x100000;
  fixture_core.qh=(void *)desc.bytes;fixture_core.td=(void *)(desc.bytes+2048);
  for(unsigned i=0;i<ZUDC_SLOTS;i++) { fixture_core.req[i].data.kva=buffers[i];fixture_core.req[i].data.size=USBPERIPH_MAX_XFER;fixture_core.req[i].data.map=&maps[i+1];maps[i+1].dm_segs[0].ds_addr=0x200003+i*0x10000; }
@@ -94,17 +109,39 @@ struct lwp;
 static void *lookup;
 static int zynqudc_cd;
 static const int hz = 1000;
+static void softint_schedule(void *cookie) { (void)cookie; }
+static void callout_schedule(callout_t *timer,int ticks) { (void)timer;(void)ticks; }
+static inline void *device_private(device_t dev) { return dev; }
+static const char *device_xname(device_t dev) { (void)dev;return "test-zynqudc"; }
+static bool mutex_tryenter(kmutex_t *m) { return pthread_mutex_trylock(m)==0; }
+static bool fail_hook, fail_pmf;
+static int hook_cookie;
+static void *shutdownhook_establish(void (*fn)(void *),void *cookie) { (void)fn;(void)cookie;return fail_hook?NULL:&hook_cookie; }
+static bool pmf_device_register1(device_t dev,void *suspend,void *resume,bool (*shutdown)(device_t,int)) { (void)dev;(void)suspend;(void)resume;(void)shutdown;return !fail_pmf; }
+static void callout_stop(callout_t *timer) { assert(!final_context);(void)timer; }
+static void callout_halt(callout_t *timer,void *lock) { assert(!final_context);(void)timer;(void)lock; }
+static int splhigh(void) { return 0; }
+static jmp_buf halt_jump;
+static _Noreturn void test_reset_halt(void) { longjmp(halt_jump,1); }
+#undef __dead
+#define __dead __attribute__((noreturn))
+#define SPINLOCK_BACKOFF_HOOK test_reset_halt()
+static void zynqudc_softirq(void *);
 static pthread_mutex_t waiter_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t waiter_cv = PTHREAD_COND_INITIALIZER;
 static unsigned waiters;
 static void *device_lookup_private(void *cd, unsigned unit) { (void)cd;return unit==0?lookup:NULL; }
-static void mutex_enter(kmutex_t *m) { assert(pthread_mutex_lock(m)==0); }
+static void mutex_enter(kmutex_t *m) { assert(!final_context);assert(pthread_mutex_lock(m)==0); }
 static void mutex_exit(kmutex_t *m) { assert(pthread_mutex_unlock(m)==0); }
 static void cv_broadcast(kcondvar_t *c) { assert(pthread_cond_broadcast(c)==0); }
-static void cv_wait(kcondvar_t *c,kmutex_t *m) { assert(pthread_cond_wait(c,m)==0); }
-static int getticks(void) { struct timespec t;clock_gettime(CLOCK_MONOTONIC,&t);return (int)(t.tv_sec*1000+t.tv_nsec/1000000); }
+static void cv_wait(kcondvar_t *c,kmutex_t *m) { assert(!final_context);assert(pthread_cond_wait(c,m)==0); }
+static bool event_spurious;
+static int event_ticks, event_budgets[8], event_waits;
+static int getticks(void) { assert(!final_context);if(event_spurious)return event_ticks;struct timespec t;clock_gettime(CLOCK_MONOTONIC,&t);return (int)(t.tv_sec*1000+t.tv_nsec/1000000); }
 static int mstohz(unsigned ms) { return (int)ms; }
 static int cv_timedwait_sig(kcondvar_t *c,kmutex_t *m,int timeout) {
+ assert(!final_context);
+ if(event_spurious) {event_budgets[event_waits++]=timeout;event_ticks+=MIN(timeout,400);return timeout<=400||event_waits==5?EWOULDBLOCK:0;}
  struct timespec t;clock_gettime(CLOCK_REALTIME,&t);t.tv_sec+=timeout/1000;t.tv_nsec+=(timeout%1000)*1000000;
  if(t.tv_nsec>=1000000000){t.tv_sec++;t.tv_nsec-=1000000000;}
  pthread_mutex_lock(&waiter_lock);waiters++;pthread_cond_broadcast(&waiter_cv);pthread_mutex_unlock(&waiter_lock);
@@ -121,6 +158,96 @@ static void *xfer_thread(void *cookie) {
 }
 static void wait_for(unsigned n) {
  pthread_mutex_lock(&waiter_lock);while(waiters<n)pthread_cond_wait(&waiter_cv,&waiter_lock);pthread_mutex_unlock(&waiter_lock);
+}
+static void test_device_phy(void) {
+ struct zynqudc_softc phy={0};ulpi_regs[0x0a]=0x7f;
+ CHECK(zynqudc_phy(&phy)==0);CHECK(ulpi_regs[0x0a]==4);
+ CHECK((ulpi_regs[4]&0x5f)==0x44);
+}
+static void test_stopped_irq(void) {
+ fixture();ready();memset(&attachment,0,sizeof(attachment));attachment.core=fixture_core;
+ attachment.ready=attachment.opened=true;lookup=&attachment;
+ pthread_mutex_init(&attachment.lock,NULL);pthread_cond_init(&attachment.cv,NULL);
+ const uint8_t request[8]={0x80,6,0,1,0,0,18,0};memcpy(attachment.core.qh[0].setup,request,8);
+ mmio[ZUDC_SETUP/4]=1;mmio[ZUDC_STS/4]=1;
+ CHECK(zynqudc_irq(&attachment)==1);unsigned before=primes;
+ CHECK(zynqudc_close(0,0,0,NULL)==0);zynqudc_softirq(&attachment);zynqudc_timer(&attachment);
+ CHECK(primes==before);
+ CHECK(zynqudc_open(0,FREAD|FWRITE,0,NULL)==0);
+ memcpy(attachment.core.qh[0].setup,request,8);mmio[ZUDC_SETUP/4]=1;mmio[ZUDC_STS/4]=1;
+ CHECK(zynqudc_ioctl(0,USBPERIPH_IOC_CONNECT,NULL,0,NULL)==0);
+ zynqudc_softirq(&attachment);CHECK(primes==before);
+ CHECK(zynqudc_close(0,0,0,NULL)==0);CHECK(!attachment.core.req[1].active);
+ pthread_cond_destroy(&attachment.cv);pthread_mutex_destroy(&attachment.lock);
+}
+static void attachment_fixture(bool configure) {
+ fixture();ready();
+ if(configure){setup(0,9,1,0,0);done(1,0,0);}
+ memset(&attachment,0,sizeof(attachment));attachment.core=fixture_core;
+ attachment.dev=&attachment;attachment.ready=attachment.opened=true;lookup=&attachment;
+ pthread_mutex_init(&attachment.lock,NULL);pthread_cond_init(&attachment.cv,NULL);
+ fail_hook=fail_pmf=false;
+}
+static void attachment_finish(void) {
+ pthread_cond_destroy(&attachment.cv);pthread_mutex_destroy(&attachment.lock);
+}
+static void expect_final(bool blocked) {
+ volatile bool halted=false;final_context=true;
+ if(setjmp(halt_jump)==0)zynqudc_shutdown_final(&attachment);else halted=true;
+ final_context=false;
+ CHECK(halted==blocked);
+ /* Both the positive certificate and a failing guard can retain the lock. */
+ int locked=pthread_mutex_trylock(&attachment.lock);CHECK(locked==0||locked==EBUSY);
+ pthread_mutex_unlock(&attachment.lock);
+}
+static void test_shutdown(void) {
+ attachment_fixture(true);CHECK(zynqudc_register_shutdown(&attachment));
+ CHECK(zynqudc_submit(&attachment.core,0x81,512,0)==0);
+ CHECK(zynqudc_shutdown(&attachment,0));CHECK(attachment.stopping);CHECK(attachment.reset_drained);
+ unsigned before=primes;zynqudc_softirq(&attachment);zynqudc_timer(&attachment);CHECK(primes==before);
+ expect_final(false);attachment_finish();
+ /* PMF skipped by panic or cold reboot: even apparently idle state is unproved. */
+ attachment_fixture(false);expect_final(true);attachment_finish();
+ attachment_fixture(false);mutex_enter(&attachment.lock);CHECK(!zynqudc_shutdown(&attachment,0));expect_final(true);attachment_finish();
+ attachment_fixture(true);CHECK(zynqudc_submit(&attachment.core,0x81,64,0)==0);
+ stuck_flush=true;CHECK(!zynqudc_shutdown(&attachment,0));CHECK(attachment.core.req[3].retained);
+ before=primes;zynqudc_softirq(&attachment);CHECK(primes==before);expect_final(true);attachment_finish();stuck_flush=false;
+ attachment_fixture(false);CHECK(zynqudc_shutdown(&attachment,0));mmio[ZUDC_STAT/4]=1;
+ expect_final(true);attachment_finish();
+ attachment_fixture(false);CHECK(zynqudc_disconnect(&attachment.core)==0);fail_hook=true;CHECK(!zynqudc_register_shutdown(&attachment));
+ CHECK(attachment.stopping);CHECK(zynqudc_connect(&attachment.core)==EIO);attachment_finish();
+ attachment_fixture(false);CHECK(zynqudc_disconnect(&attachment.core)==0);fail_pmf=true;CHECK(!zynqudc_register_shutdown(&attachment));
+ CHECK(attachment.stopping);CHECK(zynqudc_connect(&attachment.core)==EIO);expect_final(true);attachment_finish();
+}
+static void test_event_budget(void) {
+ attachment_fixture(false);attachment.core.event_pending=false;
+ event_spurious=true;event_ticks=event_waits=0;struct usbperiph_event event;
+ CHECK(zynqudc_ioctl(0,USBPERIPH_IOC_GET_EVENT,&event,0,NULL)==EWOULDBLOCK);
+ CHECK(event_ticks<=1000);CHECK(event_waits==3);CHECK(event_budgets[0]==1000);
+ CHECK(event_budgets[1]==600);CHECK(event_budgets[2]==200);
+ event_spurious=false;attachment_finish();
+}
+static void test_fault_irq(void) {
+ attachment_fixture(true);CHECK(zynqudc_submit(&attachment.core,0x81,32,0)==0);
+ stuck_flush=true;CHECK(zynqudc_cancel(&attachment.core,0x81,ECANCELED)==ETIMEDOUT);stuck_flush=false;
+ unsigned before=primes;const uint8_t request[8]={0x80,6,0,1,0,0,18,0};
+ memcpy(attachment.core.qh[0].setup,request,8);mmio[ZUDC_SETUP/4]=1;mmio[ZUDC_STS/4]=1;
+ zynqudc_softirq(&attachment);zynqudc_timer(&attachment);CHECK(primes==before);
+ CHECK(attachment.core.req[3].retained);CHECK(attachment.core.req[3].active);
+ struct usbperiph_reply reply={.generation=attachment.core.generation,.sequence=attachment.core.sequence};
+ CHECK(zynqudc_reply(&attachment.core,&reply)==EIO);CHECK(primes==before);attachment_finish();
+}
+static void test_status_recipients(void) {
+ fixture();CHECK(zynqudc_init(&fixture_core)==0);struct usbperiph_config c=config();
+ memmove(c.config+41,c.config+32,14);const uint8_t second[9]={9,4,1,0,2,0xff,0,0,0};
+ memcpy(c.config+32,second,9);c.config_length=55;c.config[2]=55;c.config[4]=2;c.config[13]=2;
+ CHECK(zynqudc_configure(&fixture_core,&c)==0);CHECK(zynqudc_connect(&fixture_core)==0);
+ setup(0x81,0,0,0,2);CHECK((mmio[ZUDC_EPCTRL(0)/4]&0x10001)==0x10001);
+ setup(0,9,1,0,0);done(1,0,0);setup(0x81,0,0,1,2);
+ CHECK((mmio[ZUDC_EPCTRL(0)/4]&0x10001)==0);CHECK(buffers[1][0]==0);done(1,0,0);done(0,0,0);
+ setup(0x81,0,0,2,2);CHECK((mmio[ZUDC_EPCTRL(0)/4]&0x10001)==0x10001);
+ setup(0x82,0,0,0x83,2);CHECK((mmio[ZUDC_EPCTRL(0)/4]&0x10001)==0x10001);
+ setup(0x82,0,0,0x80,2);CHECK((mmio[ZUDC_EPCTRL(0)/4]&0x10001)==0);done(1,0,0);done(0,0,0);
 }
 static void test_cdev(void) {
  fixture();ready();setup(0,9,1,0,0);done(1,0,0);
@@ -164,7 +291,7 @@ int main(void) {
  fixture();fixture_core.descriptors.map->dm_segs[0].ds_addr++;CHECK(zynqudc_init(&fixture_core)==EINVAL);
  fixture();fixture_core.descriptors.map->dm_segs[0].ds_addr=0x100000000ULL;CHECK(zynqudc_init(&fixture_core)==EFBIG);
  fixture();stuck_reset=true;CHECK(zynqudc_init(&fixture_core)==ETIMEDOUT);CHECK(delays<=ZUDC_POLL_US);
- fixture();ready();CHECK(mmio[ZUDC_MODE/4]==0xa);CHECK((mmio[ZUDC_PORT/4]&0x1000)==0);
+ fixture();ready();CHECK(mmio[ZUDC_MODE/4]==0xa);CHECK(mmio[ZUDC_OTG/4]==8);CHECK((mmio[ZUDC_PORT/4]&0x1000)==0);
  CHECK(zynqudc_submit(&fixture_core,0x81,128,0)==ENXIO);
  setup(0x80,6,0x100,0,18);CHECK(fixture_core.req[1].active);CHECK(memcmp(buffers[1],fixture_core.config.device,18)==0);done(1,0,0);CHECK(fixture_core.req[0].active);done(0,0,0);
  setup(0,5,17,0,0);CHECK(mmio[ZUDC_ADDR/4]==0);done(1,0,0);CHECK(mmio[ZUDC_ADDR/4]==17U<<25);
@@ -194,6 +321,12 @@ int main(void) {
  fixture();ready();setup(0,9,1,0,0);done(1,0,0);CHECK(zynqudc_submit(&fixture_core,0x81,32,0)==0);stuck_flush=true;CHECK(zynqudc_cancel(&fixture_core,0x81,ECANCELED)==ETIMEDOUT);CHECK(fixture_core.req[3].retained);CHECK(fixture_core.faulted);CHECK(fixture_core.req[3].active);CHECK(zynqudc_connect(&fixture_core)==EIO);
  fixture();ready();struct usbperiph_config bad=config();bad.config[2]=45;CHECK(zynqudc_configure(&fixture_core,&bad)==EBUSY);CHECK(zynqudc_disconnect(&fixture_core)==0);CHECK(zynqudc_configure(&fixture_core,&bad)==EINVAL);
  fixture();fixture_core.descriptors.map->dm_segs[0].ds_addr+=32;CHECK(zynqudc_init(&fixture_core)==EINVAL);
+ test_device_phy();
+ test_stopped_irq();
+ test_fault_irq();
+ test_shutdown();
+ test_event_budget();
+ test_status_recipients();
  test_cdev();
  printf("zynqudc: %u checks passed\n",checks);return 0;
 }
