@@ -609,6 +609,82 @@ test_extended_rx(void)
 	    "70/137/6000 MHz retunes, bounds and TX refusal; no RF simulated");
 }
 
+static void
+test_decoder_rates(void)
+{
+	AD9361_InitParam p;
+	struct ad9361_native_bus bus;
+	struct ad9361_rf_phy *phy = NULL;
+	struct adi_axi_rx_config cfg = {
+	    .frequency_hz = 1090000000ULL, .sample_rate_hz = 2400000,
+	    .bandwidth_hz = 2000000, .rx_mask = 1, .channel_mask = 3,
+	    .gain_mode = {ADI_AXI_GAIN_SLOW, ADI_AXI_GAIN_SLOW}};
+	struct adi_axi_adc_io io = {.cookie = &hw,
+	    .reset = adc_reset, .interface = adc_interface,
+	    .channels = adc_channels, .pn_select = adc_pn_select,
+	    .pn_status = adc_pn_status};
+	uint32_t rate, rx_clocks[6], tx_clocks[6];
+	uint8_t divider;
+	int error;
+
+	one_rx_fdt = true;
+	extended_rx_fdt = true;
+	memset(&hw, 0, sizeof(hw));
+	ad9361_native_bus_init(&bus, &hw, spi, reset);
+	assert(ad9361_native_params_from_fdt(1, 40000000, &p) == 0);
+	error = ad9361_native_bootstrap(&bus, &p, &cfg, &phy);
+	printf("decoder ADS-B bootstrap result=%d\n", error);
+	assert(error == 0);
+	assert(ad9361_native_configure(&bus, phy, &cfg, &io) == 0);
+	assert(ad9361_calculate_rf_clock_chain(phy, 2400000, 1,
+	    rx_clocks, tx_clocks) == 0);
+	assert(rx_clocks[ADC_FREQ] == 28800000);
+	assert(ad9361_native_read_rx_clock(&bus, phy, &rate) == 0);
+	assert(rate == 2399999);
+	assert(hw.reg[REG_TX_ENABLE_FILTER_CTRL] < 0x40);
+	assert((hw.reg[REG_TX_SYNTH_POWER_DOWN_OVERRIDE] & 31) == 31);
+	cfg.frequency_hz = 162000000ULL;
+	cfg.sample_rate_hz = 3072000;
+	cfg.bandwidth_hz = 600000;
+	error = ad9361_native_configure(&bus, phy, &cfg, &io);
+	printf("decoder AIS configure result=%d\n", error);
+	assert(error == 0);
+	assert(ad9361_native_read_rx_clock(&bus, phy, &rate) == 0);
+	assert(rate == 3071999);
+	assert(ad9361_calculate_rf_clock_chain(phy, 3072000, 1,
+	    rx_clocks, tx_clocks) == 0);
+	assert(rx_clocks[ADC_FREQ] == 36864000);
+	assert(ad9361_calculate_rf_clock_chain(phy, 1536000, 1,
+	    rx_clocks, tx_clocks) == -EINVAL);
+	assert(hw.reg[REG_TX_ENABLE_FILTER_CTRL] < 0x40);
+	assert((hw.reg[REG_TX_SYNTH_POWER_DOWN_OVERRIDE] & 31) == 31);
+	/* The getter must use hardware dividers, not cached parent rates. */
+	hw.reg[REG_RX_ENABLE_FILTER_CTRL] ^= RHB1_EN;
+	assert(ad9361_native_read_rx_clock(&bus, phy, &rate) == 0);
+	assert(rate == 6143999);
+	hw.reg[REG_RX_ENABLE_FILTER_CTRL] ^= RHB1_EN;
+	assert(ad9361_native_read_rx_clock(&bus, phy, &rate) == 0);
+	assert(rate == 3071999);
+	/* An invalid ADC divider must not become a plausible sample rate. */
+	divider = hw.reg[REG_BBPLL];
+	hw.reg[REG_BBPLL] &= ~7;
+	rate = 123456;
+	assert(ad9361_native_read_rx_clock(&bus, phy, &rate) == EIO);
+	assert(rate == 123456);
+	hw.reg[REG_BBPLL] = divider;
+	/* A transport failure must not publish a previous clock measurement. */
+	rate = 123456;
+	hw.fail_at = hw.transfers + 1;
+	assert(ad9361_native_read_rx_clock(&bus, phy, &rate) == EIO);
+	assert(rate == 123456);
+	ad9361_remove(phy);
+	one_rx_fdt = false;
+	extended_rx_fdt = false;
+	memset(&hw, 0, sizeof(hw));
+	puts("PASS native ADS-B 2.4 MSPS and AIS 3.072 MSPS clock paths, "
+	    "readback and TX inhibition; no RF simulated");
+}
+
 int main(void)
 {
 	setvbuf(stdout, NULL, _IONBF, 0);
@@ -633,6 +709,7 @@ int main(void)
 
 	test_one_rx();
 	test_extended_rx();
+	test_decoder_rates();
 	invalid_aux_rate = true;
 	assert(ad9361_native_params_from_fdt(1, 40000000, &p) == EINVAL);
 	invalid_aux_rate = false;

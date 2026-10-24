@@ -83,6 +83,63 @@ static int ad9361_native_result(struct ad9361_native_bus *bus, int ret)
 	return ret < 0 ? -ret : ret;
 }
 
+static int
+ad9361_native_rx_clock(struct ad9361_native_bus *bus, struct ad9361_rf_phy *phy,
+    uint32_t *sample, uint32_t *quantum)
+{
+	static const unsigned int clocks[] = {
+	    ADC_CLK, R2_CLK, R1_CLK, CLKRF_CLK, RX_SAMPL_CLK
+	};
+	uint32_t ref, bbpll, rate, divisor;
+	unsigned int i;
+
+	ref = ad9361_clk_factor_recalc_rate(phy->ref_clk_scale[BB_REFCLK],
+	    phy->clk_refin->rate);
+	if (ref == 0 || bus->first_error != 0)
+		return bus->first_error != 0 ? bus->first_error : EIO;
+	bbpll = ad9361_bbpll_recalc_rate(phy->ref_clk_scale[BBPLL_CLK], ref);
+	if (bbpll < MIN_BBPLL_FREQ || bbpll > MAX_BBPLL_FREQ)
+		return bus->first_error != 0 ? bus->first_error : EIO;
+	rate = bbpll;
+	for (i = 0; i < __arraycount(clocks); i++) {
+		if (rate == 0 || bus->first_error != 0)
+			return bus->first_error != 0 ? bus->first_error : EIO;
+		rate = ad9361_clk_factor_recalc_rate(phy->ref_clk_scale[clocks[i]],
+		    rate);
+		if (clocks[i] == ADC_CLK &&
+		    (rate < MIN_ADC_CLK || rate > MAX_ADC_CLK))
+			return bus->first_error != 0 ? bus->first_error : EIO;
+	}
+	if (rate == 0 || bus->first_error != 0)
+		return bus->first_error != 0 ? bus->first_error : EIO;
+	divisor = bbpll / rate;
+	if (divisor == 0)
+		return EIO;
+	/* One BBPLL fractional step, divided through the RX chain, plus
+	 * integer-Hz truncation. This is a programming bound, not RF accuracy.
+	 */
+	*quantum = 2 + howmany(howmany(ref, BBPLL_MODULUS), divisor);
+	*sample = rate;
+	return 0;
+}
+
+int
+ad9361_native_read_rx_clock(struct ad9361_native_bus *bus,
+    struct ad9361_rf_phy *phy, uint32_t *sample)
+{
+	uint32_t rate, quantum;
+	int error;
+
+	if (bus == NULL || phy == NULL || sample == NULL)
+		return EINVAL;
+	if (bus->tx_enabled || !phy->pdata->rx_only)
+		return EPERM;
+	error = ad9361_native_rx_clock(bus, phy, &rate, &quantum);
+	if (error == 0)
+		*sample = rate;
+	return error;
+}
+
 static int ad9361_native_apply(struct ad9361_native_bus *bus,
 			       struct ad9361_rf_phy *phy,
 			       const struct adi_axi_rx_config *config)
@@ -117,8 +174,9 @@ static int ad9361_native_apply(struct ad9361_native_bus *bus,
 				return EIO;
 		}
 	}
-	CHECK(ad9361_get_rx_sampling_freq(phy, &sample));
-	if (sample != config->sample_rate_hz)
+	CHECK(ad9361_native_rx_clock(bus, phy, &sample, &quantum));
+	if ((uint64_t)sample > (uint64_t)config->sample_rate_hz + quantum ||
+	    (uint64_t)sample + quantum < config->sample_rate_hz)
 		return EIO;
 	/*
 	 * RFPLL divider readback is quantized. The driver retains the actual

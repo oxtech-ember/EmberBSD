@@ -72,6 +72,16 @@ models. RFPLL readback, lock checks and TX inhibition still apply to every
 accepted receive configuration. This mode does not qualify analog performance
 outside the chip's specified range. It does not extend reception below 70 MHz.
 
+Receive sample-clock verification reads the BB reference scaler, BBPLL words,
+and all RX dividers from hardware. It does not trust cached parent rates.
+The accepted programming difference is one BBPLL fractional step divided
+through the RX chain, plus integer-Hz truncation. The clock getter returns
+the actual calculated integer rate and does not measure oscillator accuracy.
+The native regression covers 2.4 MSPS ADS-B and 3.072 MSPS AIS profiles.
+At a 40 MHz reference, those profiles calculate as 2399999 and 3071999 Hz.
+The 1.536 MSPS AIS profile needs RX FIR decimation and is not supplied by
+the current FIR-bypass configuration.
+
 Host regression, from the source root:
 
   AD9361_SANITIZE=1 sh ember/tools/tests/ad9361/native-test.sh "$PWD"

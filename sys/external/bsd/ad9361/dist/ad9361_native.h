@@ -72,6 +72,9 @@ int ad9361_native_configure(struct ad9361_native_bus *, struct ad9361_rf_phy *,
 			    const struct adi_axi_adc_io *);
 int ad9361_native_read_rx_status(struct ad9361_native_bus *,
 	struct ad9361_rf_phy *, struct adi_axi_rx_status *);
+/* Recalculate the RX sample clock from hardware, without cached parents. */
+int ad9361_native_read_rx_clock(struct ad9361_native_bus *,
+	struct ad9361_rf_phy *, uint32_t *);
 int ad9361_native_retune_rx(struct ad9361_native_bus *,
     struct ad9361_rf_phy *, uint64_t);
 int ad9361_native_params_from_fdt(int, uint32_t, AD9361_InitParam *);
