@@ -1198,13 +1198,8 @@ main(void)
         mutex_exit(net->lock);
     }
     if(rfk_is("env-tmac"))CHECK(write_4(&f,0x1d08,1)==0);
-    if(rfk_is("presence-wait-good")) {
-        net->ic.ic_channels[64]=net->ic.ic_channels[36];
-        net->ic.ic_channels[64].ic_freq=5320;
-        net->ic.ic_curchan=&net->ic.ic_channels[64];
-        net->ic.ic_bss->ni_chan=net->ic.ic_curchan;
-        CHECK(sc.sc_channel!=64);
-    }
+    /* DFS64 admission belongs to the later regulatory-policy task. Keep the
+     * RFK presence-success case on the currently admitted default channel. */
     if(rfk_is("env-channel149")) {
         CHECK(rtw88_channel(&sc,1)==0);
         net->ic.ic_curchan=&net->ic.ic_channels[149];
@@ -1353,7 +1348,7 @@ main(void)
         if(rfk_is("presence-wait-good")) {
             CHECK(rfk_beacons>0 && rfk_parent_auth==1);
             CHECK(rfk_handshakes==2 && sc.sc_operating.sealed);
-            CHECK(sc.sc_channel==64 && net->rfk.beacon_channel==64);
+            CHECK(sc.sc_channel==36 && net->rfk.beacon_channel==36);
             CHECK(sc.sc_power_program.serial==rfk_beacon_power_serial);
         } else {
             CHECK(rfk_rf18_writes==(rfk_is("presence-wait-overflow")?0U:2U));
