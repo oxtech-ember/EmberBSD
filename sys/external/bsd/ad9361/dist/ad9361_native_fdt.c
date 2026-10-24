@@ -797,6 +797,12 @@ ad9361_native_params_read(int phandle, uint32_t reference,
 		return EOPNOTSUPP;
 	}
 	*params = defaults;
+	{
+		static const char * const ad9363a[] = { "adi,ad9363a", NULL };
+
+		if (of_compatible(phandle, ad9363a))
+			params->dev_sel = ID_AD9363A;
+	}
 	params->reference_clk_rate = reference;
 	for (p = 0; p < __arraycount(properties); p++) {
 		property = &properties[p];

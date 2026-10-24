@@ -107,6 +107,15 @@ bool of_hasprop(int node, const char *name)
 {
 	return OF_getproplen(node, name) >= 0;
 }
+int of_compatible(int node, const char * const *names)
+{
+	const char *actual = one_rx_fdt ? "adi,ad9363a" : "adi,ad9361";
+	(void)node;
+	for (; *names != NULL; names++)
+		if (strcmp(*names, actual) == 0)
+			return 1;
+	return 0;
+}
 static int reset(void *cookie, bool high)
 {
 	struct fake *f = cookie;
@@ -495,6 +504,7 @@ test_one_rx(void)
 	tx_fdt = false;
 	assert(ad9361_native_params_from_fdt(1, 40000000, &p) == 0);
 	assert(!p.two_rx_two_tx_mode_enable && !p.lvds_mode_enable);
+	assert(p.dev_sel == ID_AD9363A);
 	assert(p.one_rx_one_tx_mode_use_rx_num == 1);
 	memset(&hw, 0, sizeof(hw));
 	ad9361_native_bus_init(&bus, &hw, spi, reset);
@@ -506,6 +516,10 @@ test_one_rx(void)
 	invalid.two_rx_two_tx_mode_enable = true;
 	assert(ad9361_native_bootstrap(&bus, &invalid, &cfg, &phy) == EINVAL);
 	assert(phy == NULL && hw.transfers == 0 && hw.resets == 0);
+	cfg.bandwidth_hz = 25000000;
+	assert(ad9361_native_bootstrap(&bus, &p, &cfg, &phy) == EINVAL);
+	assert(phy == NULL && hw.transfers == 0 && hw.resets == 0);
+	cfg.bandwidth_hz = 8000000;
 	assert(ad9361_native_bootstrap(&bus, &p, &cfg, &phy) == 0);
 	assert(phy != NULL && !phy->pdata->rx2tx2);
 	assert(ad9361_native_configure(&bus, phy, &cfg, &io) == 0);
@@ -515,6 +529,12 @@ test_one_rx(void)
 	assert(hw.reg[REG_TX_ENABLE_FILTER_CTRL] < 0x40);
 	assert((hw.reg[REG_TX_SYNTH_POWER_DOWN_OVERRIDE] & 31) == 31);
 	before = hw.transfers;
+	cfg.bandwidth_hz = 25000000;
+	assert(ad9361_native_configure(&bus, phy, &cfg, &io) == EINVAL);
+	assert(hw.transfers == before);
+	cfg.bandwidth_hz = 8000000;
+	assert(ad9361_native_retune_rx(&bus, phy, 100000000ULL) == EINVAL);
+	assert(hw.transfers == before);
 	cfg.rx_mask = 3; cfg.channel_mask = 15;
 	assert(ad9361_native_configure(&bus, phy, &cfg, &io) == EINVAL);
 	assert(hw.transfers == before);

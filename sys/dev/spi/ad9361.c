@@ -97,7 +97,8 @@ CFATTACH_DECL_NEW(ad9361phy, sizeof(struct ad9361_softc), ad9361_match,
 		  ad9361_attach, NULL, NULL);
 
 static const struct device_compatible_entry compat_data[] = {
-    {.compat = "adi,ad9361"}, DEVICE_COMPAT_EOL};
+    {.compat = "adi,ad9361"},
+    {.compat = "adi,ad9363a"}, DEVICE_COMPAT_EOL};
 
 static int ad9361_status(void *, struct adi_axi_rx_status *);
 static int ad9361_retune_rx(void *, uint64_t);

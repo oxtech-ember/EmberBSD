@@ -79,4 +79,5 @@ static inline uint64_t be64dec(const void *p)
 int OF_getproplen(int, const char *);
 int OF_getprop(int, const char *, void *, int);
 bool of_hasprop(int, const char *);
+int of_compatible(int, const char * const *);
 #endif

@@ -59,6 +59,18 @@ static int ad9361_native_validate(const struct adi_axi_rx_config *config)
 	return 0;
 }
 
+static int
+ad9361_native_validate_model(const struct adi_axi_rx_config *config,
+    enum dev_id model)
+{
+
+	if (model == ID_AD9363A && (config->bandwidth_hz > 20000000 ||
+	    config->frequency_hz < AD9363A_MIN_CARRIER_FREQ_HZ ||
+	    config->frequency_hz > AD9363A_MAX_CARRIER_FREQ_HZ))
+		return EINVAL;
+	return 0;
+}
+
 static int ad9361_native_result(struct ad9361_native_bus *bus, int ret)
 {
 
@@ -151,7 +163,8 @@ int ad9361_native_bootstrap(struct ad9361_native_bus *bus,
 		return error;
 	if (bus->first_error != 0)
 		return bus->first_error;
-	if (!settings->rx_only || settings->dev_sel != ID_AD9361 ||
+	if (!settings->rx_only || (settings->dev_sel != ID_AD9361 &&
+	    settings->dev_sel != ID_AD9363A) ||
 	    (!settings->two_rx_two_tx_mode_enable &&
 	    settings->one_rx_one_tx_mode_use_rx_num != 1) ||
 	    !settings->frequency_division_duplex_mode_enable ||
@@ -164,6 +177,9 @@ int ad9361_native_bootstrap(struct ad9361_native_bus *bus,
 	if (config->rx_mask !=
 	    (settings->two_rx_two_tx_mode_enable ? 3U : 1U))
 		return EINVAL;
+	error = ad9361_native_validate_model(config, settings->dev_sel);
+	if (error != 0)
+		return error;
 	if (settings->aux_adc_rate == 0 || settings->rssi_duration == 0)
 		return EINVAL;
 	params = no_os_malloc(sizeof(*params));
@@ -220,6 +236,9 @@ int ad9361_native_configure(struct ad9361_native_bus *bus,
 	    (!phy->pdata->rx2tx2 &&
 	    phy->pdata->rx1tx1_mode_use_rx_num != 1))
 		return EINVAL;
+	error = ad9361_native_validate_model(config, phy->dev_sel);
+	if (error != 0)
+		return error;
 	tune.cookie = io->cookie;
 	tune.reset = io->reset;
 	tune.interface = io->interface;
@@ -291,6 +310,10 @@ ad9361_native_retune_rx(struct ad9361_native_bus *bus,
 		return EINVAL;
 	if (bus->tx_enabled || !phy->pdata->rx_only)
 		return EPERM;
+	if (phy->dev_sel == ID_AD9363A &&
+	    (target < AD9363A_MIN_CARRIER_FREQ_HZ ||
+	    target > AD9363A_MAX_CARRIER_FREQ_HZ))
+		return EINVAL;
 	error = ad9361_native_result(bus, ad9361_rx_only_verify(phy));
 	if (error == 0)
 		error = ad9361_native_result(bus, ad9361_set_rx_lo_freq(phy, target));

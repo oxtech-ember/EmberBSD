@@ -14,6 +14,7 @@
 #include <sys/errno.h>
 #include <sys/file.h>
 #include <sys/ioctl.h>
+#include <sys/kernel.h>
 #include <sys/kmem.h>
 #include <sys/lwp.h>
 #include <sys/mutex.h>
