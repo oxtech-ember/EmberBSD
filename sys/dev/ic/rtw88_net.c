@@ -2266,6 +2266,9 @@ rtw88_net_watchdog(struct ifnet *ifp)
 		mutex_enter(net->lock);
 		missed = rtw88_net_beacon_poll(&net->policy,
 		    net->policy.epoch, (uint32_t)getticks(), timeout);
+		/* Expired AP beacon evidence cannot retain a DFS TX permit. */
+		if (missed)
+			rtw88_dfs_close(net->core);
 		mutex_exit(net->lock);
 		if (missed)
 			ieee80211_beacon_miss(&net->ic);

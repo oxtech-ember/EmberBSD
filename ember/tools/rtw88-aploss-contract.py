@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Origin: EmberBSD AP-loss source extractor, AI-assisted.
 # Execute actual AP-loss consumers. Only infrastructure is modeled by the C file.
 import pathlib
 import re
@@ -9,7 +10,7 @@ import subprocess
 src, out = map(pathlib.Path, sys.argv[1:3])
 subprocess.run([sys.executable,str(src/'ember/tools/net80211-rxba-lifecycle-extract.py'),str(src),str(out)],check=True)
 mutant = sys.argv[3] if len(sys.argv) > 3 else 'none'
-assert mutant in ('none', 'supervision', 'withdrawal', 'ra', 'notification')
+assert mutant in ('none', 'supervision', 'withdrawal', 'ra', 'notification', 'dfs')
 
 def read(path):
     return (src/path).read_text()
@@ -49,6 +50,16 @@ for path, names in [('sys/net80211/ieee80211_var.h', ['IEEE80211_BMISS_MAX', 'IE
 constants.append(re.search(r'^#define\s+IEEE80211_NODE_AMSDU_RX\s+.*$',read('sys/net80211/ieee80211_node.h'),re.M).group()+'\n')
 (out/'aploss-constants.inc').write_text(''.join(constants))
 (out/'ieee80211_ht20.h').write_text(read('sys/net80211/ieee80211_ht20.h'))
+watchdog = body(net, 'rtw88_net_watchdog', 'static void')
+close = '\t\tif (missed)\n\t\t\trtw88_dfs_close(net->core);'
+beacon_miss = '\t\tif (missed)\n\t\t\tieee80211_beacon_miss(&net->ic);'
+poll = '\t\tmissed = rtw88_net_beacon_poll('
+enter = '\t\tmutex_enter(net->lock);'
+leave = '\t\tmutex_exit(net->lock);'
+assert all(watchdog.count(s) == 1 for s in (enter, poll, close, leave, beacon_miss)) and \
+    watchdog.index(enter) < watchdog.index(poll) < watchdog.index(close) < \
+    watchdog.index(leave) < watchdog.index(beacon_miss), \
+    'DFS permit must close before beacon-miss handling'
 parts = [body('sys/net80211/ieee80211_ht20.c', 'ieee80211_ht20_reset', 'void'),
          body('sys/net80211/ieee80211_ht20.c', 'ieee80211_ht20_state_request', 'int'),
          '#define ieee80211_ht20_state_request aploss_checked_ht20_request\n',
@@ -56,7 +67,7 @@ parts = [body('sys/net80211/ieee80211_ht20.c', 'ieee80211_ht20_reset', 'void'),
          body(net, 'rtw88_net_newstate', 'static int'),
          body('sys/net80211/ieee80211.c', 'ieee80211_watchdog', 'static void'),
          body(proto, 'ieee80211_beacon_miss', 'static void'),
-         body(net, 'rtw88_net_watchdog', 'static void'),
+         watchdog,
          body('sys/net/if.c', 'if_slowtimo_countdown', 'static bool'),
          body(nbsd, 'ieee80211_notify_node_leave', 'static void'),
          body(node, 'ieee80211_sta_leave', 'static void')]
@@ -67,6 +78,9 @@ parts += [notice(net), 'static void native_run_supervision(struct rtw88_net *net
 scan = exact_block(read(proto), '\t\tcase IEEE80211_S_RUN:\n\t\t\t/* beacon miss */', '\t\t\tbreak;\n')
 parts += [notice(proto), 'static void shared_run_to_scan(struct ieee80211com *ic, int arg) {\nstruct ieee80211_node *ni=ic->ic_bss;\nswitch (IEEE80211_S_RUN) {\n', scan, '\ndefault: break;\n}\n}\n']
 text=''.join(parts)
+if mutant == 'dfs':
+    assert text.count(close) == 1
+    text=text.replace(close, '\t\t/* Causal mutant: permit retained after beacon loss. */')
 if mutant == 'supervision':
     # An idle station must not lose its watchdog after the initial invocation.
     old='\t\t/* Keep checking an idle station even when it has no outstanding TX. */\n\t\tifp->if_timer = 1;'

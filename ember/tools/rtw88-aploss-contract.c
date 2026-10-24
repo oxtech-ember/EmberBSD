@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Origin: native AP-loss and DFS permit contract, AI-assisted. */
 /* Actual idle watchdog -> beacon miss -> native fence -> disconnect consumers.
  * Layouts, clock/Giant/PCI, worker dispatch, node cleanup and event delivery are
  * explicit services. RF restart, actual sockets, supplicant autojoin and crypto
@@ -55,7 +56,18 @@ struct ieee80211com {
     void (*ic_node_cleanup)(struct ieee80211_node *);
     int (*ic_ht20_admit)(struct ieee80211com *,struct ieee80211_ht20_profile *);
 };
-struct rtw88_softc { int sc_linked; struct { int active,configured; } sc_ra; struct rtw88_phy_state sc_phy; };
+struct rtw88_softc {
+    int sc_linked;
+    struct { int active,configured; } sc_ra;
+    struct rtw88_phy_state sc_phy;
+    unsigned sc_channel;
+    struct { int valid; } sc_dfs;
+};
+static void rtw88_dfs_close(struct rtw88_softc *sc) {
+    CHECK(giant && pci);
+    if (sc->sc_dfs.valid)CHECK(sc->sc_channel==64);
+    sc->sc_dfs.valid=0;
+}
 struct rtw88_net {
     struct ieee80211com ic;
     struct rtw88_softc *core;
@@ -80,6 +92,7 @@ rtw88_net_ht20_publish(struct rtw88_net *net,
 
 struct ieee80211_leave_event { uint8_t iev_addr[6]; };
 static unsigned probes, requests, cleanup, events, link_down, begin_scans;
+static int expect_dfs_closed_probe;
 static unsigned user_disconnects, user_aborts, user_tx_clear, user_scan_clear;
 static int queued_event;
 static void mutex_enter(int *lock) { CHECK(lock==&pci_token && giant && !pci); pci=1; }
@@ -105,8 +118,10 @@ static int ieee80211_new_state(struct ieee80211com *ic,enum ieee80211_state s,in
 static void ieee80211_send_probereq(struct ieee80211_node *ni,const uint8_t *src,
     const uint8_t *dst,const uint8_t *bssid,const uint8_t *ssid,unsigned len,
     const void *ie,unsigned ielen) {
-    (void)ni;(void)src;(void)dst;(void)bssid;(void)ssid;(void)len;(void)ie;(void)ielen;
+    (void)src;(void)dst;(void)bssid;(void)ssid;(void)len;(void)ie;(void)ielen;
     CHECK(giant && !pci);probes++;
+    if(expect_dfs_closed_probe)
+        CHECK(!((struct rtw88_net *)ni->ni_ic->ic_ifp->if_softc)->core->sc_dfs.valid);
     if(probe_scan) { probe_scan=0; assert(probe_ic != NULL); (void)ieee80211_new_state(probe_ic,IEEE80211_S_SCAN,0); }
 }
 static void rt_ieee80211msg(struct ifnet *ifp,int type,void *data,unsigned len) {
@@ -167,7 +182,8 @@ static void setup(struct fixture *f) {
     f->core.sc_linked=1;f->core.sc_ra.active=f->core.sc_ra.configured=1;
     f->net.policy.epoch=7;f->net.policy.accepting=1;
     f->ni.ni_bssid[0]=2;f->ni.ni_macaddr[0]=2;
-    probes=requests=cleanup=events=link_down=begin_scans=0;queued_event=0;
+    probes=requests=cleanup=events=link_down=begin_scans=0;
+    queued_event=0;expect_dfs_closed_probe=0;
     user_disconnects=user_aborts=user_tx_clear=user_scan_clear=0;
     native_run_supervision(&f->net);CHECK(f->ifp.if_timer==1);giant=0;
 }
@@ -211,6 +227,34 @@ static void test_fast_watchdog_floor(void) {
         flush_scan(&f);
         CHECK(cleanup==1 && events==1 && link_down==1);
     }
+}
+static void test_dfs_permit_withdrawal(void) {
+    struct fixture f;uint8_t beacon[36]={0x80};setup(&f);uint32_t start=ticks;
+    f.net.ic.ic_curchan=64;f.core.sc_channel=64;
+    memcpy(beacon+16,f.ni.ni_bssid,6);
+    giant=1;
+    CHECK(rtw88_net_beacon_note(&f.net.policy,7,start,beacon,36,
+        f.ni.ni_bssid)==0);
+    giant=0;
+    f.core.sc_dfs.valid=1;
+    watchdog_at(&f,start+99);
+    CHECK(f.core.sc_dfs.valid && f.net.ic.ic_bmiss_count==0);
+    expect_dfs_closed_probe=1;
+    watchdog_at(&f,start+100);
+    expect_dfs_closed_probe=0;
+    CHECK(!f.core.sc_dfs.valid && f.net.ic.ic_bmiss_count==1);
+    /* A later beacon refresh does not reopen a permit; a future explicit
+     * master-evidence owner must make that decision. */
+    giant=1;
+    CHECK(rtw88_net_beacon_note(&f.net.policy,7,ticks+1,beacon,36,
+        f.ni.ni_bssid)==0);
+    giant=0;
+    CHECK(!f.core.sc_dfs.valid);
+    giant=1;
+    mutex_enter(f.net.lock);
+    rtw88_dfs_close(&f.core);
+    mutex_exit(f.net.lock);
+    giant=0;
 }
 static void test_silent_idle_chain(void) {
     struct fixture f;setup(&f);
@@ -301,7 +345,8 @@ static void test_quiet_request_guard(void) {
 }
 int main(void) {
     test_quiet_request_guard();
-    test_fast_watchdog_floor();test_silent_idle_chain();test_refresh_and_fences();
+    test_fast_watchdog_floor();test_dfs_permit_withdrawal();
+    test_silent_idle_chain();test_refresh_and_fences();
     test_clock_and_superseded_generation();test_ht_off_request_reset();
     test_roaming_and_userland_boundaries();
     printf("rtw88 AP-loss chain: %u checks, %u failures\n",checks,failures);
