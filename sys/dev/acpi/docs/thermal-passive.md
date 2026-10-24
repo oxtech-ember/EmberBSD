@@ -37,9 +37,13 @@ zone logs the failure once and retries on later samples.
 On the checked Orange Pi 6 Plus boot, 13 zones report passive 85 C and
 critical 98 C. Four list processors: `TZB0` cpu10/11, `TZB1` cpu0/1,
 `TZM0` cpu6/7 and `TZM1` cpu8/9. CPPC attaches to all twelve processors.
-Cores cpu2 to cpu5 are not in any `_PSL`. Whether the firmware provides
-`_TC1`, `_TC2` and `_TSP` is unverified until its tables are dumped; without
-the constants the zones do not limit processors.
+Cores cpu2 to cpu5 are not in any `_PSL`.
+
+The DSDT read with `acpidump` on 24 October 2026 gives every zone `_TC1` 4,
+`_TC2` 3, `_PSV` 358.2 K and `_CRT` 371.2 K; `_TSP` is 0.3 s (0.1 s in one
+zone) and `_TZP` 5 s or 1 s. At 1 K above `_PSV`, rising 0.5 K per sample,
+a step lowers the limit by 5 percent; 1 K below `_PSV` raises it by 3 percent.
+These are firmware constants, not a measured thermal response.
 
 ## Checks
 
