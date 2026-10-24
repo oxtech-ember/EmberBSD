@@ -59,6 +59,9 @@ int32_t ad9361_init(struct ad9361_rf_phy **ad9361_phy,
 	if (init_param == NULL || ad9361_phy == NULL)
 		return -EINVAL;
 	*ad9361_phy = NULL;
+	if (init_param->rx_extended_frequency_range &&
+	    (!init_param->rx_only || init_param->dev_sel != ID_AD9363A))
+		return -EINVAL;
 	if (init_param->native_tx_fixed_delays &&
 	    (init_param->rx_only || init_param->rx_clock_bootstrap ||
 	     !init_param->two_rx_two_tx_mode_enable ||
@@ -129,6 +132,8 @@ int32_t ad9361_init(struct ad9361_rf_phy **ad9361_phy,
 	phy->pdata->fdd_independent_mode =
 		init_param->frequency_division_duplex_independent_mode_enable;
 	phy->pdata->rx_only = init_param->rx_only;
+	phy->pdata->rx_extended_frequency_range =
+	    init_param->rx_extended_frequency_range;
 	phy->pdata->rx2tx2 = init_param->two_rx_two_tx_mode_enable;
 	phy->pdata->rx1tx1_mode_use_rx_num = init_param->one_rx_one_tx_mode_use_rx_num;
 	phy->pdata->rx1tx1_mode_use_tx_num = init_param->one_rx_one_tx_mode_use_tx_num;

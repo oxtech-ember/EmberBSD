@@ -930,6 +930,14 @@ int32_t ad9361_validate_rfpll(struct ad9361_rf_phy *phy, bool is_tx,
 {
 	switch (phy->dev_sel) {
 	case ID_AD9363A:
+		/* Preserve device identity, RF bandwidth and all TX limits. */
+		if (!is_tx && phy->pdata->rx_only &&
+		    phy->pdata->rx_extended_frequency_range) {
+			if (freq > MAX_CARRIER_FREQ_HZ ||
+			    freq < MIN_RX_CARRIER_FREQ_HZ)
+				return -EINVAL;
+			break;
+		}
 		if (freq > AD9363A_MAX_CARRIER_FREQ_HZ ||
 		    freq < AD9363A_MIN_CARRIER_FREQ_HZ)
 			return -EINVAL;

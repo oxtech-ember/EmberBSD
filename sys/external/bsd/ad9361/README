@@ -64,6 +64,14 @@ lifetime and reset ordering, and ember/tools/tests/ad9361/README.md for tests.
 Build integration is in sys/dev/spi/files.spi under ad9361phy. The generic
 ADC/converter and DMA providers are separate drivers.
 
+AD9363A keeps its 325 MHz to 3.8 GHz tuning limits by default. The boolean
+FDT property emberbsd,experimental-rx-extended-range opts a receive-only
+instance into 70 MHz to 6 GHz tuning. The driver preserves AD9363A identity
+and its 20 MHz RF bandwidth limit. The property is rejected for TX and other
+models. RFPLL readback, lock checks and TX inhibition still apply to every
+accepted receive configuration. This mode does not qualify analog performance
+outside the chip's specified range. It does not extend reception below 70 MHz.
+
 Host regression, from the source root:
 
   AD9361_SANITIZE=1 sh ember/tools/tests/ad9361/native-test.sh "$PWD"

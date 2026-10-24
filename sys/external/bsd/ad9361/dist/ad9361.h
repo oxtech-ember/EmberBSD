@@ -3135,6 +3135,7 @@ enum ad9361_clkout {
 struct ad9361_phy_platform_data {
 	/* Explicit receive-only mode: TX channels and synthesizer stay off. */
 	bool rx_only;
+	bool rx_extended_frequency_range;
 	bool			rx2tx2;
 	bool			fdd;
 	bool			fdd_independent_mode;

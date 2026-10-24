@@ -280,6 +280,9 @@ struct ad9361_property {
 };
 
 static const struct ad9361_property properties[] = {
+    {"emberbsd,experimental-rx-extended-range",
+     offsetof(AD9361_InitParam, rx_extended_frequency_range), 1, 1, true,
+     false},
     {"adi,2rx-2tx-mode-enable",
      offsetof(AD9361_InitParam, two_rx_two_tx_mode_enable), 1, 1, true, false},
     {"adi,1rx-1tx-mode-use-rx-num",
@@ -863,6 +866,9 @@ ad9361_native_params_read(int phandle, uint32_t reference,
 	}
 	if (params->aux_adc_rate == 0 || params->rssi_duration == 0)
 		return EINVAL;
+	if (params->rx_extended_frequency_range &&
+	    (tx || params->dev_sel != ID_AD9363A))
+		return EOPNOTSUPP;
 	/* Native control cannot delegate state or transmitter control to pins. */
 	if (!params->frequency_division_duplex_mode_enable ||
 	    (!params->two_rx_two_tx_mode_enable &&

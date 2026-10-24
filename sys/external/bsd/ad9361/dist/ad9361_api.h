@@ -19,6 +19,8 @@
 typedef struct {
 	/* Disable TX initialization, calibrations, channels and synthesizer. */
 	bool rx_only;
+	/* Explicit AD9363 receive experiment outside its qualified RF range. */
+	bool rx_extended_frequency_range;
 	bool rx_clock_bootstrap;
 	/* Native TX uses FDT delay taps. No digital tuning is claimed. */
 	bool native_tx_fixed_delays;

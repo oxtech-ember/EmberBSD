@@ -53,6 +53,7 @@ struct fake {
 	bool lose_lock_on_recall, corrupt_recall;
 } hw;
 static bool invalid_aux_rate, tx_fdt, conflicting_fdt, one_rx_fdt;
+static bool extended_rx_fdt;
 static const char * const tx_delays[] = {
     "adi,rx-data-clock-delay", "adi,rx-data-delay",
     "adi,tx-fb-clock-delay", "adi,tx-data-delay"
@@ -60,6 +61,8 @@ static const char * const tx_delays[] = {
 
 int OF_getproplen(int node, const char *name)
 {
+	if (strcmp(name, "emberbsd,experimental-rx-extended-range") == 0)
+		return extended_rx_fdt ? 0 : -1;
 	if (one_rx_fdt && (strcmp(name, "adi,2rx-2tx-mode-enable") == 0 ||
 	    strcmp(name, "adi,lvds-mode-enable") == 0))
 		return -1;
@@ -552,6 +555,60 @@ test_one_rx(void)
 	    "topology refusal and TX inhibition; no RF simulated");
 }
 
+static void
+test_extended_rx(void)
+{
+	AD9361_InitParam p;
+	struct ad9361_native_bus bus;
+	struct ad9361_rf_phy *phy = NULL;
+	struct adi_axi_rx_config cfg = {
+	    .frequency_hz = 137900000ULL, .sample_rate_hz = 10000000,
+	    .bandwidth_hz = 8000000, .rx_mask = 1, .channel_mask = 3,
+	    .gain_mode = {ADI_AXI_GAIN_SLOW, ADI_AXI_GAIN_SLOW}};
+	struct adi_axi_adc_io io = {.cookie = &hw,
+	    .reset = adc_reset, .interface = adc_interface,
+	    .channels = adc_channels, .pn_select = adc_pn_select,
+	    .pn_status = adc_pn_status};
+	const uint64_t targets[] = {
+	    70000000ULL, 137100000ULL, 137900000ULL, 6000000000ULL};
+	unsigned before;
+
+	one_rx_fdt = true;
+	extended_rx_fdt = false;
+	memset(&hw, 0, sizeof(hw));
+	ad9361_native_bus_init(&bus, &hw, spi, reset);
+	assert(ad9361_native_params_from_fdt(1, 40000000, &p) == 0);
+	assert(ad9361_native_bootstrap(&bus, &p, &cfg, &phy) == EINVAL);
+	assert(phy == NULL && hw.transfers == 0 && hw.resets == 0);
+	extended_rx_fdt = true;
+	assert(ad9361_native_params_from_fdt(1, 40000000, &p) == 0);
+	assert(ad9361_native_bootstrap(&bus, &p, &cfg, &phy) == 0);
+	assert(phy != NULL && phy->dev_sel == ID_AD9363A);
+	assert(ad9361_native_configure(&bus, phy, &cfg, &io) == 0);
+	for (unsigned i = 0; i < __arraycount(targets); i++) {
+		assert(ad9361_native_retune_rx(&bus, phy, targets[i]) == 0);
+		assert(hw.reg[REG_TX_ENABLE_FILTER_CTRL] < 0x40);
+		assert((hw.reg[REG_TX_SYNTH_POWER_DOWN_OVERRIDE] & 31) == 31);
+	}
+	before = hw.transfers;
+	assert(ad9361_native_retune_rx(&bus, phy, 69999999ULL) == EINVAL);
+	assert(ad9361_native_retune_rx(&bus, phy, 6000000001ULL) == EINVAL);
+	assert(ad9361_validate_rfpll(phy, true, 6000000000ULL) == -EINVAL);
+	cfg.bandwidth_hz = 20000001;
+	assert(ad9361_native_configure(&bus, phy, &cfg, &io) == EINVAL);
+	assert(hw.transfers == before);
+	ad9361_remove(phy);
+	/* The RX experiment must not enter the independently opted-in TX path. */
+	one_rx_fdt = false;
+	tx_fdt = true;
+	assert(ad9361_native_params_from_fdt_tx(1, 40000000, &p) == EOPNOTSUPP);
+	extended_rx_fdt = false;
+	tx_fdt = false;
+	memset(&hw, 0, sizeof(hw));
+	puts("PASS explicit AD9363A extended RX, unchanged identity and bandwidth, "
+	    "70/137/6000 MHz retunes, bounds and TX refusal; no RF simulated");
+}
+
 int main(void)
 {
 	setvbuf(stdout, NULL, _IONBF, 0);
@@ -575,6 +632,7 @@ int main(void)
 	int r;
 
 	test_one_rx();
+	test_extended_rx();
 	invalid_aux_rate = true;
 	assert(ad9361_native_params_from_fdt(1, 40000000, &p) == EINVAL);
 	invalid_aux_rate = false;
