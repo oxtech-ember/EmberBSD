@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Receive-disabled Pluto Nano kernel with an FDT-supplied RAM root.
+include "arch/evbarm/conf/PLUTO_NANO"
+
+# GENERIC already supplies md, MEMORY_DISK_HOOKS and MEMORY_DISK_DYNAMIC.
+options MEMORY_DISK_IS_ROOT
+options MEMORY_DISK_RBFLAGS=RB_SINGLE
