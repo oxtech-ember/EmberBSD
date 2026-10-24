@@ -5,6 +5,9 @@ version	20180827
 define	amdgpufbbus	{ }
 device	amdgpu: drmkms, drmkms_pci, drmkms_sched, drmkms_ttm, amdgpufbbus, firmload
 attach	amdgpu at pci
+# This code comes from the Linux kernel, which assumes signed
+# overflow is OK.
+makeoptions	amdgpu		"COPTS.amdgpu"+="-fwrapv"
 makeoptions	amdgpu		"CPPFLAGS.amdgpu"+="${CPPFLAGS.drmkms}"
 
 defflag	opt_amdgpu_cik.h	AMDGPU_CIK
@@ -13,6 +16,7 @@ defflag	opt_amdgpu_si.h		AMDGPU_SI
 device	amdgpufb: amdgpufbbus, drmfb, drmfb_pci, wsemuldisplaydev
 attach	amdgpufb at amdgpufbbus
 makeoptions	amdgpufb	"CPPFLAGS.amdgpufb"+="${CPPFLAGS.amdgpu}"
+makeoptions	amdgpufb	"COPTS.amdgpufb"+="${COPTS.amdgpu}"
 
 # Match order in dist/drm/amd/amdgpu/Makefile.
 makeoptions	amdgpu	"CPPFLAGS.amdgpu"+="-I$S/external/bsd/drm2/dist/drm/amd/include/asic_reg"
