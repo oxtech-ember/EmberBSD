@@ -176,12 +176,12 @@ zynqudc_phy(struct zynqudc_softc *sc)
 	    ZUDC_ULPI_OTG_DM_PULLDOWN, true, NULL);
 	if (error != 0)
 		return error;
-	/* ULPI 1.1 table 40: attach as FS first; the controller negotiates HS. */
+	/* UG585: leave D+ detached until prepared EP0 and IRQ precede RUN. */
 	error = zynqudc_ulpi(sc, ZUDC_ULPI_FUNCTION, 0, false, &value);
 	if (error != 0)
 		return error;
-	value = (value & ~(ZUDC_ULPI_XCVR | ZUDC_ULPI_OPMODE)) |
-	    ZUDC_ULPI_XCVR_FS | ZUDC_ULPI_TERMSELECT | ZUDC_ULPI_SUSPENDM;
+	value = (value & ~(ZUDC_ULPI_XCVR | ZUDC_ULPI_OPMODE |
+	    ZUDC_ULPI_TERMSELECT)) | ZUDC_ULPI_XCVR_FS | ZUDC_ULPI_SUSPENDM;
 	error = zynqudc_ulpi(sc, ZUDC_ULPI_FUNCTION, value, true, NULL);
 	if (error != 0)
 		return error;

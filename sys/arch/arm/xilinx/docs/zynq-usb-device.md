@@ -17,8 +17,10 @@ Hardware must report device support and at least three endpoint numbers.
 The driver checks the ULPI viewport with finite timeouts. It clears host
 VBUS drive, charge, and discharge controls before a function can connect.
 Device initialization sets OTGSC termination and retains the ULPI D- pulldown.
-It clears the ULPI D+ pulldown and selects full-speed attachment termination.
-High-speed negotiation remains a controller operation after host reset.
+It clears the ULPI D+ pulldown and prepares the full-speed transceiver.
+TermSelect stays clear while stopped. The controller owns D+ attachment
+through RUN after EP0 and interrupts are ready. High-speed negotiation
+remains a controller operation after host reset.
 The existing EHCI path retains its host configuration.
 
 The hard interrupt disables controller interrupts and schedules a USB soft
@@ -147,9 +149,13 @@ commit `f8809afec39a7048597f34f39372169be20735cf`:
 
 The initial full-speed ULPI setting follows Table 5-1 (ULPI 1.1 Table 40)
 of the [USB3320 data sheet](https://ww1.microchip.com/downloads/aemDocuments/documents/UNG/ProductDocuments/DataSheets/USB3320-Data-Sheet-DS00001792.pdf).
-An OTG peripheral starts with XcvrSelect=01, TermSelect=1, OpMode=00,
-D+ pulldown disabled, and D- pulldown enabled. HS selection with
+An operational OTG full-speed peripheral uses XcvrSelect=01, TermSelect=1,
+OpMode=00, D+ pulldown disabled, and D- pulldown enabled. HS selection with
 TermSelect=1 and normal OpMode is not a defined attachment state.
+However, software must not assert TermSelect during attachment preparation.
+[UG585 device initialization](https://docs.amd.com/r/en-US/ug585-zynq-7000-SoC-TRM/Device-Controller-Initialization-Overview)
+requires D+ pull-up to remain inactive until RUN. The controller starts
+attachment only after queue heads and interrupt delivery are prepared.
 
 Both donor files declare MIT. The endpoint file credits Xilinx, 2010–2021,
 and Advanced Micro Devices, 2023–2026. The implementation here is original
