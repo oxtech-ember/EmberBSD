@@ -842,8 +842,8 @@ rtw88_stop(struct rtw88_softc *sc)
 /*
  * Core 20 MHz admission: 2.4 GHz 1-13 and the 5 GHz channels below, a
  * superset of the net80211 channel list. Channel 64 needs RTW88_DFS64,
- * and every DFS channel still needs a slave TX permit before any host
- * frame.
+ * and every DFS channel (52-64, 100-144) still needs a slave TX permit
+ * before any host frame.
  */
 static int
 rtw88_channel_admit20(unsigned ch)
@@ -1705,8 +1705,8 @@ rtw88_dfs_open(struct rtw88_softc *sc, unsigned ch, uint32_t gen)
 	if (gen != sc->sc_generation)
 		return ESTALE;
 #ifdef RTW88_DFS64
-	if (ch == 64 && sc->sc_channel == 64 && sc->sc_phy.channel_valid &&
-	    sc->sc_phy.channel.primary == 64 &&
+	if (rtw88_channel_dfs(ch) && sc->sc_channel == ch &&
+	    sc->sc_phy.channel_valid && sc->sc_phy.channel.primary == ch &&
 	    rtw88_channel_admit(&sc->sc_phy.channel) == 0) {
 		sc->sc_dfs.generation = gen;
 		sc->sc_dfs.channel = ch;

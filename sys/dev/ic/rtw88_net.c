@@ -1712,11 +1712,11 @@ rtw88_net_tx_complete(void *cookie, unsigned count)
 
 #ifdef RTW88_DFS64
 /*
- * Channel 64 slave: a complete beacon from the selected master, without
- * CSA or Quiet, received by this core generation in the current request
- * and newer than the request's RX frontier and lease, opens the core TX
- * permit for AUTH, ASSOC and RUN. Frames queued meanwhile wait: a closed
- * permit is no TX capacity.
+ * DFS slave (52-64, 100-144): a complete beacon from the selected master,
+ * without CSA or Quiet, received by this core generation in the current
+ * request and newer than the request's RX frontier and lease, opens the
+ * core TX permit for AUTH, ASSOC and RUN. Frames queued meanwhile wait: a
+ * closed permit is no TX capacity.
  */
 static void
 rtw88_net_dfs_beacon(struct rtw88_net *net, const uint8_t *frame, size_t len,
@@ -1726,7 +1726,7 @@ rtw88_net_dfs_beacon(struct rtw88_net *net, const uint8_t *frame, size_t len,
 	uint16_t interval;
 	struct ieee80211com *ic = &net->ic;
 	struct ieee80211_node *ni = ic->ic_bss;
-	unsigned i;
+	unsigned channel, i;
 
 	if (!net->dfs_frontier_valid ||
 	    net->dfs_frontier_generation != generation || sequence == 0 ||
@@ -1737,7 +1737,8 @@ rtw88_net_dfs_beacon(struct rtw88_net *net, const uint8_t *frame, size_t len,
 	     ic->ic_state != IEEE80211_S_RUN) || ni == NULL ||
 	    ic->ic_curchan == NULL || ic->ic_curchan == IEEE80211_CHAN_ANYC ||
 	    ni->ni_chan != ic->ic_curchan ||
-	    ieee80211_chan2ieee(ic, ic->ic_curchan) != 64 ||
+	    (channel = ieee80211_chan2ieee(ic, ic->ic_curchan)) == 0 ||
+	    channel > IEEE80211_CHAN_MAX ||
 	    frame == NULL || len < 36 || frame[0] != 0x80 ||
 	    (frame[1] & 0xc7) != 0 || (frame[22] & 15) != 0 ||
 	    memcmp(frame + 10, ni->ni_macaddr, IEEE80211_ADDR_LEN) != 0 ||
@@ -1747,14 +1748,14 @@ rtw88_net_dfs_beacon(struct rtw88_net *net, const uint8_t *frame, size_t len,
 		if (frame[4 + i] != 0xff)
 			return;
 	}
-	interval = ieee80211_sta_beacon_interval(frame + 24, len - 24, 64);
+	interval = ieee80211_sta_beacon_interval(frame + 24, len - 24, channel);
 	if (interval < IEEE80211_BINTVAL_MIN ||
 	    interval > IEEE80211_BINTVAL_MAX || now - arrived >= timeout)
 		return;
 	mutex_enter(net->lock);
 	if (!net->tx_quiet && !net->policy.dying && net->policy.accepting &&
 	    epoch == net->policy.epoch &&
-	    rtw88_dfs_open(net->core, 64, generation) == 0) {
+	    rtw88_dfs_open(net->core, channel, generation) == 0) {
 		net->dfs_tick = arrived;
 		net->ec.ec_if.if_timer = 1;
 	}
@@ -2563,7 +2564,8 @@ rtw88_net_attach(struct rtw88_softc *core, device_t dev, kmutex_t *lock,
 {
 	static const unsigned channels5[] = {36,40,44,48,
 #ifdef RTW88_DFS64
-	    64, /* Passive DFS slave only: TX needs the master's beacon. */
+	    /* Passive DFS slave only: TX needs the master's beacon. */
+	    52,56,60,64,100,104,108,112,116,120,124,128,132,136,140,144,
 #endif
 	    149,153,157,161,165};
 	struct rtw88_net *net;
@@ -2610,7 +2612,7 @@ rtw88_net_attach(struct rtw88_softc *core, device_t dev, kmutex_t *lock,
 		    IEEE80211_CHAN_G | IEEE80211_CHAN_OFDM |
 		    IEEE80211_CHAN_PASSIVE;
 	}
-	/* Passive discovery; channel 64 only as a DFS slave with RTW88_DFS64.
+	/* Passive discovery; DFS channels only as a slave with RTW88_DFS64.
 	 * Board regulatory limits still apply. */
 	for (i = 0; i < __arraycount(channels5); i++) {
 		ch = channels5[i];
