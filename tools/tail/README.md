@@ -32,5 +32,19 @@ An unaligned file checks the mapping offset requirement.
 A two-window file places a newline immediately before the second window.
 Its one-line and two-line cases check that the scan neither skips nor duplicates that boundary.
 These are success expectations for the canonical implementation, not accepted failures.
-This initial profile keeps C unchanged so the selected compiler can establish the regression first.
+The unmodified source failed the unaligned case with `EINVAL` on the selected Darwin ABI.
+Earlier ordinary and aligned cases passed. The later boundary cases were not reached.
+The repair aligns each mapping base to the actual page size.
+Each mapping ends at the next unscanned byte and spans at most 10 MiB plus one page minus one byte.
+Only the physical EOF byte is skipped during newline counting.
+Every byte at a preceding window boundary is inspected once.
+The remaining mapped suffix is written before the caller resumes at that window's end.
+The same 31 cases and exact expected bytes remain unchanged.
+
+The existing [NetBSD scan](https://github.com/NetBSD/src/blob/trunk/usr.bin/tail/forward.c)
+was compared with the [OpenBSD stream scan](https://github.com/openbsd/src/blob/master/usr.bin/tail/forward.c).
+The [FreeBSD](https://github.com/freebsd/freebsd-src/blob/main/usr.bin/tail/misc.c) and
+[DragonFly BSD](https://github.com/DragonFlyBSD/DragonFlyBSD/blob/master/usr.bin/tail/misc.c)
+mapping helpers also align mapping offsets. No donor implementation was copied.
+The local repair preserves the existing source notices and follow state machine.
 Source and synthetic runner checks do not establish native correctness or memory acceptance.

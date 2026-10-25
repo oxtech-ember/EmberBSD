@@ -267,6 +267,7 @@ out:
 
 /*
  * rlines -- display the last offset lines of the file.
+ * EmberBSD (AI-assisted): align windows and retain each boundary byte.
  *
  * Non-zero return means than a (non-fatal) error occurred.
  */
@@ -277,26 +278,29 @@ rlines(FILE *fp, off_t off, struct stat *sbp)
 	off_t file_remaining;
 	char *p = NULL;
 	char *start = NULL;
-	off_t mmap_size;
+	size_t mmap_size;
 	off_t mmap_offset;
-	off_t mmap_remaining = 0;
+	size_t mmap_remaining = 0;
+	long pagesize;
 
 #define MMAP_MAXSIZE  (10 * 1024 * 1024)
 
 	if (!(file_size = sbp->st_size))
 		return 0;
 	file_remaining = file_size;
-
-	if (file_remaining > MMAP_MAXSIZE) {
-		mmap_size = MMAP_MAXSIZE;
-		mmap_offset = file_remaining - MMAP_MAXSIZE;
-	} else {
-		mmap_size = file_remaining;
-		mmap_offset = 0;
+	pagesize = sysconf(_SC_PAGESIZE);
+	if (pagesize <= 0) {
+		xerrx(0, "invalid page size");
+		return 1;
 	}
 
 	while (off) {
-		start = mmap(NULL, (size_t)mmap_size, PROT_READ,
+		/* Align the base, keeping the logical end of this window. */
+		mmap_offset = file_remaining > MMAP_MAXSIZE ?
+		    file_remaining - MMAP_MAXSIZE : 0;
+		mmap_offset -= mmap_offset % pagesize;
+		mmap_size = (size_t)(file_remaining - mmap_offset);
+		start = mmap(NULL, mmap_size, PROT_READ,
 			     MAP_FILE|MAP_SHARED, fileno(fp), mmap_offset);
 		if (start == MAP_FAILED) {
 			xerr(0, "%s", fname);
@@ -304,19 +308,23 @@ rlines(FILE *fp, off_t off, struct stat *sbp)
 		}
 
 		mmap_remaining = mmap_size;
-		/* Last char is special, ignore whether newline or not. */
-		for (p = start + mmap_remaining - 1 ; --mmap_remaining ; )
-			if (*--p == '\n' && !--off) {
+		p = start + mmap_size;
+		/* Only the byte at EOF is special, not each window's end. */
+		if (file_remaining == file_size) {
+			--p;
+			--mmap_remaining;
+		}
+		while (mmap_remaining != 0) {
+			--p;
+			--mmap_remaining;
+			if (*p == '\n' && !--off) {
 				++p;
+				++mmap_remaining;
 				break;
 			}
+		}
 
-		file_remaining -= mmap_size - mmap_remaining;
-
-		if (off == 0)
-			break;
-
-		if (file_remaining == 0)
+		if (off == 0 || mmap_offset == 0)
 			break;
 
 		if (munmap(start, mmap_size)) {
@@ -324,19 +332,13 @@ rlines(FILE *fp, off_t off, struct stat *sbp)
 			return 1;
 		}
 
-		if (mmap_offset >= MMAP_MAXSIZE) {
-			mmap_offset -= MMAP_MAXSIZE;
-		} else {
-			mmap_offset = 0;
-			mmap_size = file_remaining;
-		}
+		file_remaining = mmap_offset;
 	}
 
 	/*
 	 * Output the (perhaps partial) data in this mmap'd block.
 	 */
 	WR(p, mmap_size - mmap_remaining);
-	file_remaining += mmap_size - mmap_remaining;
 	if (munmap(start, mmap_size)) {
 		xerr(0, "%s", fname);
 		return 1;
