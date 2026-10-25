@@ -4,6 +4,5 @@
 
 HOSTPROGNAME=	${_TOOL_PREFIX}id
 HOST_SRCDIR=	usr.bin/id
-HOST_CPPFLAGS+= -include ${NETBSDSRCDIR}/tools/compat/bootstrap_cdefs.h
 
 .include "${.CURDIR}/../Makefile.host"

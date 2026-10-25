@@ -53,6 +53,7 @@ class IdSourceTests(unittest.TestCase):
     def test_normal_host_recipe_keeps_common_compatibility_integration(self):
         recipe = (ROOT / 'tools/id/Makefile').read_text()
         self.assertNotRegex(recipe, r'(?m)^NOCOMPATLIB\s*[:?+]?=')
+        self.assertNotIn('bootstrap_cdefs.h', recipe)
         source = (ROOT / 'usr.bin/id/id.c').read_text()
         self.assertIn('#if HAVE_NBTOOL_CONFIG_H\n#include "nbtool_config.h"\n#endif', source)
         self.assertLess(source.index('#include "nbtool_config.h"'),

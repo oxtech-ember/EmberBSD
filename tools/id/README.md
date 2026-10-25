@@ -25,7 +25,7 @@ Before any source header, ID requests `_DARWIN_UNLIMITED_GETGROUPS` on Apple hos
 This selects the public full-membership `getgroups` interface for macOS 10.6 and later.
 The source does not enable all Darwin extensions with `_DARWIN_C_SOURCE`.
 Other hosts retain their native group API.
-The forced bootstrap annotation header includes only `sys/cdefs.h`.
+The finite profile's forced annotation header includes only `sys/cdefs.h`.
 It does not declare `getgroups` before the source can select its interface.
 See Apple's [public unistd header](https://github.com/apple-oss-distributions/Libc/blob/main/include/unistd.h).
 
