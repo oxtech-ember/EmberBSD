@@ -73,12 +73,22 @@ static struct mbuf *unit_prepend(struct mbuf *m,unsigned len)
  m->m_data-=len;m->m_len+=len;m->m_pkthdr.len+=len;return m;
 }
 #define M_PREPEND(m,len,how) ((m)=unit_prepend((m),(len)))
-static unsigned unit_declined_posts;
+static unsigned unit_declined_posts,unit_txba_posts;
+static uint8_t unit_txba_req[9];
 static void if_start_lock(struct ifnet *ifp)
 {
  struct ieee80211com *ic=ifp->model_ic;
  struct mbuf *m=ic->ic_mgtq.m;assert(m&&m->m_pkthdr.ctx);
  uint8_t *p=m->m_data;
+ if(m->m_len==33 && p[24]==3 && p[25]==0) {
+  /* The originator's ADDBA Request to the associated AP. */
+  CHECK(p[0]==0xd0 && !memcmp(p+4,ic->ic_bss->ni_macaddr,6) &&
+      !memcmp(p+10,ic->ic_myaddr,6) && !memcmp(p+16,ic->ic_bss->ni_bssid,6));
+  memcpy(unit_txba_req,p+24,9);unit_txba_posts++;
+  ic->ic_mgtq.m=NULL;ic->ic_mgtq.ifq_len--;
+  ieee80211_free_node(m->m_pkthdr.ctx);m->m_pkthdr.ctx=NULL;m_freem(m);
+  return;
+ }
  CHECK(m->m_len==33 && p[24]==3 && p[25]==1);
  CHECK(!(ic->ic_bss->ni_flags & IEEE80211_NODE_ASSOC_PENDING));
  if(p[27]==0 && p[28]==0) {
@@ -914,11 +924,112 @@ static void test_negotiated_amsdu_crypto_order(void)
  CHECK((f.ni.ni_flags&IEEE80211_NODE_AMSDU_RX)==0 && unit_token==0 && rxba_output_count==0);
  unit_close(&f);
 }
+/* Originator: request, response, refusal, timeout, DELBA and bounds. */
+static int unit_addba_response(struct unit_fixture *f,uint8_t token,unsigned status,unsigned params)
+{
+ struct mbuf action={0};action.m_data=action.storage;action.m_len=action.m_pkthdr.len=33;
+ uint8_t rsp[9]={3,1,token,status,status>>8,params,params>>8,0,0};
+ action.m_data[0]=0xd0;memcpy(action.m_data+4,f->ic.ic_myaddr,6);
+ memcpy(action.m_data+10,f->ni.ni_bssid,6);memcpy(action.m_data+16,f->ni.ni_bssid,6);
+ memcpy(action.m_data+24,rsp,9);
+ return ieee80211_input(&f->ic,duplicate(&action),&f->ni,0,0);
+}
+static void test_txba_originator(void)
+{
+ struct unit_fixture f;if(!unit_setup_mode(&f,10,64,0,0))return;
+ struct ieee80211_txba_diag *d=&f.ni.ni_rxba.tx_diag;
+ unit_txba_posts=0;f.ni.ni_txseqs[1]=100;f.ni.ni_txseqs[6]=4095;
+ CHECK(ieee80211_txba_window(&f.ic,&f.ni,0)==0);
+ /* TID 0 and 5; bits above TID 7 never request. */
+ CHECK(ieee80211_txba_request(&f.ic,&f.ni,0x121)==0);
+ CHECK(unit_txba_posts==2 && d->requests==2);
+ uint8_t token=f.ni.ni_rxba.tx[0].token;
+ CHECK(token!=0 && f.ni.ni_rxba.tx[5].token!=token);
+ /* The last request (TID 5): immediate, 64 buffer, no timeout, next SSN. */
+ CHECK(unit_txba_req[0]==3 && unit_txba_req[1]==0 &&
+     unit_txba_req[2]==f.ni.ni_rxba.tx[5].token);
+ CHECK((unit_txba_req[3]|unit_txba_req[4]<<8)==(2|5<<2|64<<6));
+ CHECK(unit_txba_req[5]==0 && unit_txba_req[6]==0);
+ CHECK((unit_txba_req[7]|unit_txba_req[8]<<8)==4095<<4);
+ /* Outstanding requests are not repeated. */
+ CHECK(ieee80211_txba_request(&f.ic,&f.ni,1)==0 && unit_txba_posts==2);
+ CHECK(ieee80211_txba_window(&f.ic,&f.ni,0)==0);
+ /* A wrong token, TID or a response without a request is not an agreement. */
+ CHECK(unit_addba_response(&f,token^1,0,2|32<<6)==IEEE80211_FC0_TYPE_MGT);
+ CHECK(unit_addba_response(&f,token,0,2|1<<2|32<<6)==IEEE80211_FC0_TYPE_MGT);
+ CHECK(ieee80211_txba_window(&f.ic,&f.ni,0)==0 && d->invalid==2);
+ /* The matching response sets the recipient window, at most 64. */
+ CHECK(unit_addba_response(&f,token,0,2|32<<6)==IEEE80211_FC0_TYPE_MGT);
+ CHECK(ieee80211_txba_window(&f.ic,&f.ni,0)==32 && d->accepts==1);
+ CHECK(unit_addba_response(&f,token,0,2|32<<6)==IEEE80211_FC0_TYPE_MGT);
+ CHECK(d->invalid==3 && d->accepts==1);
+ CHECK(ieee80211_txba_window(&f.ic,&f.ni,8)==0);
+ /* Only RUN for the associated AP of this attempt reports a window. */
+ f.ic.ic_state=IEEE80211_S_ASSOC;CHECK(ieee80211_txba_window(&f.ic,&f.ni,0)==0);
+ f.ic.ic_state=IEEE80211_S_RUN;
+ f.ni.ni_ht20.attempt++;CHECK(ieee80211_txba_window(&f.ic,&f.ni,0)==0);
+ f.ni.ni_ht20.attempt--;CHECK(ieee80211_txba_window(&f.ic,&f.ni,0)==32);
+ /* TID 5 refused (status 37): idle, with the status kept, and backed off. */
+ CHECK(unit_addba_response(&f,f.ni.ni_rxba.tx[5].token,37,2|5<<2)==IEEE80211_FC0_TYPE_MGT);
+ CHECK(d->refusals==1 && d->last_status==37 && ieee80211_txba_window(&f.ic,&f.ni,5)==0);
+ CHECK(ieee80211_txba_request(&f.ic,&f.ni,0x20)==0 && unit_txba_posts==2);
+ unit_now+=IEEE80211_TXBA_RETRY_MS;
+ CHECK(ieee80211_txba_request(&f.ic,&f.ni,0x20)==0 && unit_txba_posts==3);
+ /* No response within RESPONSE_MS: a timeout, then the same back-off. */
+ unit_now+=IEEE80211_TXBA_RESPONSE_MS;
+ CHECK(ieee80211_txba_request(&f.ic,&f.ni,0x20)==0 && unit_txba_posts==3);
+ CHECK(d->timeouts==1 && f.ni.ni_rxba.tx[5].state==IEEE80211_TXBA_IDLE);
+ unit_now+=IEEE80211_TXBA_RETRY_MS;
+ CHECK(ieee80211_txba_request(&f.ic,&f.ni,0x20)==0 && unit_txba_posts==4);
+ /* Three requests per TID and association. */
+ unit_now+=IEEE80211_TXBA_RESPONSE_MS+IEEE80211_TXBA_RETRY_MS;
+ CHECK(ieee80211_txba_request(&f.ic,&f.ni,0x20)==0 && unit_txba_posts==4);
+ CHECK(d->timeouts==2 && f.ni.ni_rxba.tx[5].attempts==IEEE80211_TXBA_ATTEMPTS);
+ unit_now+=IEEE80211_TXBA_RETRY_MS;
+ CHECK(ieee80211_txba_request(&f.ic,&f.ni,0x20)==0 && unit_txba_posts==4);
+ /* The recipient's DELBA (initiator 0) ends TID 0; RX state is untouched. */
+ uint8_t del[6]={3,2,0,0,39,0};
+ CHECK(ieee80211_rxba_action(&f.ic,&f.ni,del,sizeof(del))==0);
+ CHECK(ieee80211_txba_window(&f.ic,&f.ni,0)==0 && d->delbas==1);
+ CHECK(ieee80211_txba_request(&f.ic,&f.ni,1)==0 && unit_txba_posts==4);
+ unit_now+=IEEE80211_TXBA_RETRY_MS;
+ CHECK(ieee80211_txba_request(&f.ic,&f.ni,1)==0 && unit_txba_posts==5);
+ CHECK(unit_addba_response(&f,f.ni.ni_rxba.tx[0].token,0,2|200<<6)==IEEE80211_FC0_TYPE_MGT);
+ CHECK(ieee80211_txba_window(&f.ic,&f.ni,0)==64);
+ /* A peer that is not current never requests: unauthorized, ASSOC, other node. */
+ f.ni.authorized=0;
+ CHECK(ieee80211_txba_request(&f.ic,&f.ni,2)==EINVAL && unit_txba_posts==5);
+ f.ni.authorized=1;f.ic.ic_state=IEEE80211_S_ASSOC;
+ CHECK(ieee80211_txba_request(&f.ic,&f.ni,2)==EINVAL && unit_txba_posts==5);
+ f.ic.ic_state=IEEE80211_S_RUN;
+ {
+  struct ieee80211_node other=f.ni;
+  CHECK(ieee80211_txba_request(&f.ic,&other,2)==EINVAL && unit_txba_posts==5);
+  CHECK(ieee80211_txba_window(&f.ic,&other,0)==0);
+ }
+ /* An unusable clock requests nothing. */
+ uint64_t now=unit_now;unit_now=UINT64_MAX;
+ CHECK(ieee80211_txba_request(&f.ic,&f.ni,2)==EOVERFLOW && unit_txba_posts==5);
+ unit_now=now;
+ /* Queue admission failure leaves the TID idle for a later attempt. */
+ unit_mgt_alloc_fail=1;
+ CHECK(ieee80211_txba_request(&f.ic,&f.ni,2)==ENOMEM && unit_txba_posts==5);
+ CHECK(f.ni.ni_rxba.tx[1].state==IEEE80211_TXBA_IDLE && f.ni.references==1);
+ unit_mgt_alloc_fail=0;
+ CHECK(ieee80211_txba_request(&f.ic,&f.ni,2)==0 && unit_txba_posts==6);
+ /* The peer reset ends every session; the counters remain. */
+ ieee80211_rxba_reset(&f.ic,&f.ni);
+ CHECK(ieee80211_txba_window(&f.ic,&f.ni,0)==0 && d->accepts==2 && d->requests==6);
+ for(unsigned t=0;t<8;t++)CHECK(f.ni.ni_rxba.tx[t].state==IEEE80211_TXBA_IDLE);
+ CHECK(f.ni.references==1);
+ unit_close(&f);
+}
 #ifndef RXBA_SHARED_MAIN
 #define RXBA_SHARED_MAIN main
 #endif
 int RXBA_SHARED_MAIN(void)
 {
+ test_txba_originator();
  test_csa_action_exit();test_absolute_deadline();test_window_and_wrap();test_key_and_mic_order();test_candidate_preflight();test_actual_key_lifecycle();test_actual_node_reuse();test_beacon_contract_purge();test_ht20_real_ccmp_budget();test_actual_bar_and_delba();test_clock_serial_quarantine();test_owned_storage_budget();test_null_crypto_order();test_owned_admission_withdrawal();test_premature_addba_declined();test_actual_allocation_failures();test_repeat_replace_and_tid_deadlines();test_invalid_queued_frames();test_negotiated_amsdu_crypto_order();test_storage_walk_bounds();test_amsdu_current_without_ba();
  printf("RX BA actual primitive/CCMP units: %u checks, %u failures\n",checks,failures);
  return failures!=0;

@@ -23,10 +23,40 @@ struct ieee80211_rxba_ops {
 	int (*schedule)(struct ieee80211com *, uint64_t, uint64_t);
 	void (*cancel)(struct ieee80211com *);
 };
+/*
+ * Originator (TX) block ack: one immediate-policy session per TID for the
+ * associated AP, requested only while the RX side would be current (RUN,
+ * authorized, negotiated HT). No A-MSDU inside A-MPDU, no BlockAckReq and
+ * no inactivity timeout of our own: the recipient ends a session by DELBA.
+ * A request without a response before RESPONSE_MS, a refusal or a DELBA
+ * idles the TID for RETRY_MS; ATTEMPTS bounds requests per association.
+ */
+#define IEEE80211_TXBA_WINDOW 64
+#define IEEE80211_TXBA_RESPONSE_MS 1000
+#define IEEE80211_TXBA_RETRY_MS 10000
+#define IEEE80211_TXBA_ATTEMPTS 3
+#define IEEE80211_TXBA_IDLE 0
+#define IEEE80211_TXBA_PENDING 1
+#define IEEE80211_TXBA_ACTIVE 2
+struct ieee80211_txba_tid {
+	uint64_t deadline;	/* PENDING: response due; IDLE: earliest retry. */
+	uint16_t window;	/* ACTIVE: recipient buffer, at most WINDOW. */
+	uint8_t state, token, attempts;
+};
+/* Numeric observations for diagnostics; they survive a peer reset. */
+struct ieee80211_txba_diag {
+	uint32_t requests, accepts, refusals, timeouts, delbas, invalid;
+	uint16_t last_status;
+};
 struct ieee80211_rxba_state {
 	struct ieee80211_rxba_tid *tid[IEEE80211_RXBA_TIDS];
 	uint64_t epoch, key_epoch, timer_token;
 	size_t bytes;
+	/* Originator sessions share the peer lifetime and reset. */
+	struct ieee80211_txba_tid tx[IEEE80211_RXBA_TIDS];
+	struct ieee80211_txba_diag tx_diag;
+	uint32_t tx_attempt;	/* ni_ht20.attempt the sessions belong to. */
+	uint8_t tx_token;
 };
 int ieee80211_rxba_ready(struct ieee80211com *);
 void ieee80211_rxba_reset(struct ieee80211com *, struct ieee80211_node *);
@@ -42,8 +72,17 @@ int ieee80211_rxba_response_check(struct ieee80211com *, struct ieee80211_node *
     struct mbuf *, struct ieee80211_rxba_candidate *);
 void ieee80211_rxba_response_commit(struct ieee80211com *, struct ieee80211_node *,
     struct ieee80211_rxba_candidate *);
+/* Request sessions for a TID mask; the caller is outside the driver start
+ * routine, since queueing the request starts output. */
+int ieee80211_txba_request(struct ieee80211com *, struct ieee80211_node *,
+    unsigned);
+/* The established recipient window for one TID, or 0 without a session. */
+unsigned ieee80211_txba_window(struct ieee80211com *, struct ieee80211_node *,
+    unsigned);
 /* Actual output/input continuations. Callers own one synchronous node reference. */
 int ieee80211_send_rxba_response(struct ieee80211com *, struct ieee80211_node *,
     uint8_t, uint16_t, uint16_t, uint16_t, struct ieee80211_rxba_candidate *);
+int ieee80211_send_txba_request(struct ieee80211com *, struct ieee80211_node *,
+    uint8_t, uint16_t, uint16_t, uint16_t);
 void ieee80211_input_ordered(struct ieee80211com *, struct ieee80211_node *, struct mbuf *);
 #endif
