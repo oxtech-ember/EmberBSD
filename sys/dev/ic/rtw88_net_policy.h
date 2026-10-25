@@ -39,11 +39,12 @@ struct rtw88_net_ht20_snapshot {
 struct rtw88_net_neg {
 	uint32_t ht20_offers, ht20_vht_offers, ht20_ht, ht20_vht;
 	uint32_t ht20_legacy, ht20_unoffered, ht20_bad, ht20_resets;
-	uint32_t ht20_status, ht20_norate, ht20_failures;
+	uint32_t ht20_status, ht20_norate, ht20_failures, ht20_state_fail;
 	uint16_t ht20_last_status;
 	uint32_t prepare_ok, prepare_fail, vht_admit, vht_refuse;
 	int32_t prepare_error, vht_error;
-	uint8_t ht20_reset_reason, ht20_failure_reason, prepare_ready;
+	uint8_t ht20_reset_reason, ht20_failure_reason, ht20_state_reason;
+	uint8_t prepare_ready;
 	uint8_t vht_chan[3];
 	uint8_t run_ht, run_vht, run_chan[3];
 	/*
@@ -54,6 +55,8 @@ struct rtw88_net_neg {
 	 */
 	uint32_t run_passes, run_restart_fail, run_cancels, run_fails;
 	uint32_t run_published;
+	/* newstate: RUN asked, turned into INIT, and queued for the worker. */
+	uint32_t run_requests, run_to_init, run_queued;
 	int32_t run_restart_error, run_error;
 	uint8_t run_stage;
 };
@@ -71,6 +74,8 @@ struct rtw88_net_neg {
 	(n)->ht20_norate = (d)->norate;					\
 	(n)->ht20_failures = (d)->failures;				\
 	(n)->ht20_failure_reason = (d)->failure_reason;			\
+	(n)->ht20_state_fail = (d)->state_fail;				\
+	(n)->ht20_state_reason = (d)->state_reason;			\
 	(n)->ht20_last_status = (d)->last_status;			\
 	(n)->ht20_reset_reason = (d)->reset_reason;			\
 } while (0)

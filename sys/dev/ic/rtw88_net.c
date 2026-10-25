@@ -1516,6 +1516,7 @@ rtw88_net_newstate(struct ieee80211com *ic, enum ieee80211_state state,
 {
 	struct rtw88_net *net = ic->ic_ifp->if_softc;
 	int enqueue = 0, ht20_error;
+	int run_asked = state == IEEE80211_S_RUN;
 	int quiet_error = net->tx_quiet && state != IEEE80211_S_INIT ? EBUSY : 0;
 
 	if (quiet_error != 0) {
@@ -1574,6 +1575,13 @@ lock_request:
 	net->dfs_frontier_valid = 0;
 #endif
 	(void)rtw88_net_request(&net->policy);
+	if (run_asked) {
+		net->neg.run_requests++;
+		if (state != IEEE80211_S_RUN)
+			net->neg.run_to_init++;
+	}
+	if (state == IEEE80211_S_RUN)
+		net->neg.run_queued++;
 	net->requested = state;
 	net->state_arg = arg;
 	net->channel = ieee80211_chan2ieee(ic, ic->ic_curchan);

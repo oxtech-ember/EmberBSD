@@ -1880,6 +1880,8 @@ test_ra_vht_run_tuples(void)
 			CHECK(ns.run_passes == 1 && ns.run_restart_fail == 0 &&
 			    ns.run_cancels == 0 && ns.run_fails == 0 &&
 			    ns.run_published == 1);
+			CHECK(ns.run_requests == 1 && ns.run_to_init == 0 &&
+			    ns.run_queued == 1);
 			CHECK(ns.run_ht == 1 && ns.run_vht == 1 &&
 			    ns.run_chan[0] == v[i].primary &&
 			    ns.run_chan[1] == v[i].center &&
@@ -1921,6 +1923,22 @@ test_ra_vht_run_tuples(void)
 		CHECK(desc[6] == 10 && (desc[16] & 0x7f) == 0x33);
 		CHECK(((desc[20] >> 5) & 3) == (v[i].width_mhz == 80 ? 2 : 1));
 		state_fixture_finish(&s);
+	}
+	/* A stale committed node turns RUN into INIT; the first clause shows. */
+	{
+		struct state_fixture s;
+
+		if (state_fixture_start(&s, 36, 9)) {
+			ra_vht_peer(&s);
+			s.ni.ni_ht20.attempt++; /* Offer attempt no longer current. */
+			(void)rtw88_net_newstate(&s.net.ic, IEEE80211_S_RUN, 0);
+			CHECK(s.net.neg.run_requests == 1 && s.net.neg.run_to_init == 1 &&
+			    s.net.neg.run_queued == 0);
+			CHECK(s.net.ic.ic_ht20_diag.state_fail == 1 &&
+			    s.net.ic.ic_ht20_diag.state_reason == 8);
+			CHECK(s.net.requested == IEEE80211_S_INIT);
+			state_fixture_finish(&s);
+		}
 	}
 	/* The provider admits only a tuple the core can enter on this channel. */
 	for (unsigned variant = 0; variant < 5; variant++) {
