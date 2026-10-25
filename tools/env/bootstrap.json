@@ -1,0 +1,280 @@
+{
+  "format": "emberbsd-native-bootstrap-program",
+  "version": 1,
+  "origin": "EmberBSD (AI-assisted) source contract; implementation retains its BSD copyright notices.",
+  "compiler": {
+    "family": "gcc",
+    "major": 16,
+    "abi": "native"
+  },
+  "cflags": [],
+  "link_flags": [],
+  "libraries": [],
+  "name": "env",
+  "canonical_host_recipe": "tools/env/Makefile",
+  "source_makefile": "usr.bin/env/Makefile",
+  "sources": [
+    "usr.bin/env/env.c"
+  ],
+  "headers": [
+    "tools/compat/bootstrap_cdefs.h"
+  ],
+  "include_dirs": [],
+  "cppflags": [
+    "-include",
+    "tools/compat/bootstrap_cdefs.h"
+  ],
+  "invocations": [
+    "env"
+  ],
+  "files": {},
+  "runtime_cases": [
+    {
+      "name": "empty",
+      "invocation": "env",
+      "args": [
+        "-i"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "name": "assignments",
+      "invocation": "env",
+      "args": [
+        "-i",
+        "A=one",
+        "B=two"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "A=one\nB=two\n",
+      "stderr": ""
+    },
+    {
+      "name": "replace",
+      "invocation": "env",
+      "args": [
+        "-i",
+        "A=one",
+        "A=two"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "A=two\n",
+      "stderr": ""
+    },
+    {
+      "name": "empty-value",
+      "invocation": "env",
+      "args": [
+        "-i",
+        "A="
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "A=\n",
+      "stderr": ""
+    },
+    {
+      "name": "value-equals",
+      "invocation": "env",
+      "args": [
+        "-i",
+        "A=one=two"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "A=one=two\n",
+      "stderr": ""
+    },
+    {
+      "name": "nul-output",
+      "invocation": "env",
+      "args": [
+        "-0",
+        "-i",
+        "A=one",
+        "B=two"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "A=one\u0000B=two\u0000",
+      "stderr": ""
+    },
+    {
+      "name": "terminator",
+      "invocation": "env",
+      "args": [
+        "-i",
+        "--",
+        "A=one",
+        "--"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "A=one\n",
+      "stderr": ""
+    },
+    {
+      "name": "child-clear",
+      "invocation": "env",
+      "args": [
+        "-i",
+        "A=one",
+        "./env",
+        "-i"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "name": "child-execution",
+      "invocation": "env",
+      "args": [
+        "-i",
+        "A=one",
+        "./env"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "A=one\n",
+      "stderr": ""
+    },
+    {
+      "name": "child-remove",
+      "invocation": "env",
+      "args": [
+        "-i",
+        "DROP=x",
+        "KEEP=y",
+        "./env",
+        "-u",
+        "DROP"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "KEEP=y\n",
+      "stderr": ""
+    },
+    {
+      "name": "child-directory",
+      "invocation": "env",
+      "args": [
+        "-i",
+        "PWD=wrong",
+        "A=x",
+        "./env",
+        "-C",
+        "."
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "A=x\n",
+      "stderr": ""
+    },
+    {
+      "name": "child-exit",
+      "invocation": "env",
+      "args": [
+        "-i",
+        "./env",
+        "-z"
+      ],
+      "stdin": "",
+      "exit": 125,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "missing-command",
+      "invocation": "env",
+      "args": [
+        "-i",
+        "./missing.txt"
+      ],
+      "stdin": "",
+      "exit": 127,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "nonexecutable-command",
+      "invocation": "env",
+      "args": [
+        "-i",
+        "./"
+      ],
+      "stdin": "",
+      "exit": 126,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "missing-directory",
+      "invocation": "env",
+      "args": [
+        "-i",
+        "-C",
+        "missing.txt"
+      ],
+      "stdin": "",
+      "exit": 125,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "invalid-option",
+      "invocation": "env",
+      "args": [
+        "-i",
+        "-z"
+      ],
+      "stdin": "",
+      "exit": 125,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "missing-directory-option",
+      "invocation": "env",
+      "args": [
+        "-i",
+        "-C"
+      ],
+      "stdin": "",
+      "exit": 125,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "missing-unset-option",
+      "invocation": "env",
+      "args": [
+        "-i",
+        "-u"
+      ],
+      "stdin": "",
+      "exit": 125,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "invalid-unset-name",
+      "invocation": "env",
+      "args": [
+        "-i",
+        "-u",
+        "A=B"
+      ],
+      "stdin": "",
+      "exit": 125,
+      "stdout": "",
+      "stderr_nonempty": true
+    }
+  ]
+}

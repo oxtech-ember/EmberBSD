@@ -63,7 +63,7 @@ int
 main(int argc, char **argv)
 {
 	struct utsname u;
-	char machine_arch[SYS_NMLN];
+	char machine_arch[sizeof u.machine];
 	int c;
 	int space = 0;
 	int print_mask = 0;

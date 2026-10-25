@@ -1,0 +1,235 @@
+{
+  "format": "emberbsd-native-bootstrap-program",
+  "version": 1,
+  "origin": "EmberBSD (AI-assisted) source contract; implementation retains its BSD copyright notices.",
+  "compiler": {
+    "family": "gcc",
+    "major": 16,
+    "abi": "native"
+  },
+  "cflags": [],
+  "link_flags": [],
+  "libraries": [],
+  "name": "uname",
+  "canonical_host_recipe": "tools/uname/Makefile",
+  "source_makefile": "usr.bin/uname/Makefile",
+  "sources": [
+    "usr.bin/uname/uname.c"
+  ],
+  "headers": [
+    "tools/compat/bootstrap_cdefs.h"
+  ],
+  "include_dirs": [],
+  "cppflags": [
+    "-include",
+    "tools/compat/bootstrap_cdefs.h"
+  ],
+  "invocations": [
+    "uname"
+  ],
+  "files": {},
+  "runtime_cases": [
+    {
+      "name": "default",
+      "invocation": "uname",
+      "args": [],
+      "stdin": "",
+      "exit": 0,
+      "stdout_uname": [
+        "sysname"
+      ],
+      "stderr": ""
+    },
+    {
+      "name": "sysname",
+      "invocation": "uname",
+      "args": [
+        "-s"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout_uname": [
+        "sysname"
+      ],
+      "stderr": ""
+    },
+    {
+      "name": "nodename",
+      "invocation": "uname",
+      "args": [
+        "-n"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout_uname": [
+        "nodename"
+      ],
+      "stderr": ""
+    },
+    {
+      "name": "release",
+      "invocation": "uname",
+      "args": [
+        "-r"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout_uname": [
+        "release"
+      ],
+      "stderr": ""
+    },
+    {
+      "name": "version",
+      "invocation": "uname",
+      "args": [
+        "-v"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout_uname": [
+        "version"
+      ],
+      "stderr": ""
+    },
+    {
+      "name": "machine",
+      "invocation": "uname",
+      "args": [
+        "-m"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout_uname": [
+        "machine"
+      ],
+      "stderr": ""
+    },
+    {
+      "name": "processor",
+      "invocation": "uname",
+      "args": [
+        "-p"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout_uname": [
+        "machine_arch"
+      ],
+      "stderr": ""
+    },
+    {
+      "name": "all",
+      "invocation": "uname",
+      "args": [
+        "-a"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout_uname": [
+        "sysname",
+        "nodename",
+        "release",
+        "version",
+        "machine"
+      ],
+      "stderr": ""
+    },
+    {
+      "name": "all-processor",
+      "invocation": "uname",
+      "args": [
+        "-ap"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout_uname": [
+        "sysname",
+        "nodename",
+        "release",
+        "version",
+        "machine",
+        "machine_arch"
+      ],
+      "stderr": ""
+    },
+    {
+      "name": "reordered",
+      "invocation": "uname",
+      "args": [
+        "-m",
+        "-s",
+        "-n"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout_uname": [
+        "sysname",
+        "nodename",
+        "machine"
+      ],
+      "stderr": ""
+    },
+    {
+      "name": "repeated",
+      "invocation": "uname",
+      "args": [
+        "-ssmm"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout_uname": [
+        "sysname",
+        "machine"
+      ],
+      "stderr": ""
+    },
+    {
+      "name": "terminator",
+      "invocation": "uname",
+      "args": [
+        "--"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout_uname": [
+        "sysname"
+      ],
+      "stderr": ""
+    },
+    {
+      "name": "invalid-option",
+      "invocation": "uname",
+      "args": [
+        "-z"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "operand",
+      "invocation": "uname",
+      "args": [
+        "unexpected"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "extra-operands",
+      "invocation": "uname",
+      "args": [
+        "one",
+        "two"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    }
+  ]
+}
