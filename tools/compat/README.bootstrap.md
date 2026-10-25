@@ -24,7 +24,8 @@ A failed control, incomplete probe roster or changed input refuses the build.
 No make, installer, shell-based configure or previous compatibility archive is needed.
 The existing SDK program controller owns execution, locks and output checks.
 
-The initial consumers are [cut](../cut/README.md) and [sort](../sort/README.md).
+The initial consumers are [cut](../cut/README.md), [sort](../sort/README.md)
+and [hexdump/od](../hexdump/README.md).
 Their finite native profiles use the same probes, source closure and configuration bytes.
 They currently accept Darwin GCC16 and an explicit native ABI.
 The normal OS compatibility recipe keeps its complete source list and configure route.

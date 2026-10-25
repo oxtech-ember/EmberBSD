@@ -1,0 +1,602 @@
+{
+  "format": "emberbsd-native-bootstrap-program",
+  "version": 1,
+  "origin": "EmberBSD (AI-assisted) source contract; implementation retains its BSD copyright notices.",
+  "compiler": {
+    "family": "gcc",
+    "major": 16,
+    "abi": "native"
+  },
+  "cflags": [],
+  "link_flags": [],
+  "libraries": [],
+  "name": "hexdump",
+  "canonical_host_recipe": "tools/hexdump/Makefile",
+  "source_makefile": "usr.bin/hexdump/Makefile",
+  "sources": [
+    "usr.bin/hexdump/conv.c",
+    "usr.bin/hexdump/display.c",
+    "usr.bin/hexdump/hexdump.c",
+    "usr.bin/hexdump/hexsyntax.c",
+    "usr.bin/hexdump/odsyntax.c",
+    "usr.bin/hexdump/parse.c",
+    "lib/libutil/efun.c",
+    "lib/libc/stdlib/reallocarr.c",
+    "common/lib/libc/stdlib/strtoi.c",
+    "common/lib/libc/stdlib/strtou.c"
+  ],
+  "headers": [
+    "usr.bin/hexdump/hexdump.h",
+    "tools/compat/bootstrap_cdefs.h",
+    "tools/compat/compat_efun.h",
+    "tools/compat/namespace.h",
+    "common/lib/libc/stdlib/_strtoi.h"
+  ],
+  "include_dirs": [
+    "usr.bin/hexdump",
+    "tools/compat",
+    "common/lib/libc/stdlib"
+  ],
+  "cppflags": [
+    "-DHAVE_NBTOOL_CONFIG_H=1",
+    "-include",
+    "nbtool_config.h"
+  ],
+  "compat": {
+    "path": "tools/compat/bootstrap-efun.json",
+    "sha256": "3aa76b9c12fbb0581205ac1477b5d1f11b79cf980acffbc74e2c9972410ac7d1"
+  },
+  "invocations": [
+    "hexdump",
+    "od"
+  ],
+  "files": {
+    "input.txt": "ABCD",
+    "empty.txt": "",
+    "elf.txt": "\u007fELFmore",
+    "bytes.txt": "\u0000\u0001\u007f\u0080\u00ff",
+    "fifteen.txt": "ABCDEFGHIJKLMNO",
+    "sixteen.txt": "ABCDEFGHIJKLMNOP",
+    "seventeen.txt": "ABCDEFGHIJKLMNOPQ",
+    "repeated.txt": [
+      {
+        "text": "ABCDEFGHIJKLMNOP",
+        "repeat": 3
+      }
+    ],
+    "left.txt": "AB",
+    "right.txt": "CD",
+    "format.txt": "4/1 \"%02x\" \"\\n\"\n"
+  },
+  "runtime_cases": [
+    {
+      "name": "hexdump-file",
+      "invocation": "hexdump",
+      "args": [
+        "-e",
+        "4/1 \"%02x\" \"\\n\"",
+        "input.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "41424344\n",
+      "stderr": ""
+    },
+    {
+      "name": "hexdump-stdin",
+      "invocation": "hexdump",
+      "args": [
+        "-e",
+        "4/1 \"%02x\" \"\\n\""
+      ],
+      "stdin": "ABCD",
+      "exit": 0,
+      "stdout": "41424344\n",
+      "stderr": ""
+    },
+    {
+      "name": "hexdump-empty",
+      "invocation": "hexdump",
+      "args": [
+        "-e",
+        "4/1 \"%02x\" \"\\n\"",
+        "empty.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "name": "ninja-stdin",
+      "invocation": "od",
+      "args": [
+        "-t",
+        "x1",
+        "-A",
+        "n",
+        "-v"
+      ],
+      "stdin": "AB\n",
+      "exit": 0,
+      "stdout": "          41  42  0a                                                    \n",
+      "stderr": ""
+    },
+    {
+      "name": "ninja-file",
+      "invocation": "od",
+      "args": [
+        "-t",
+        "x1",
+        "-A",
+        "n",
+        "-v",
+        "input.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "          41  42  43  44                                                \n",
+      "stderr": ""
+    },
+    {
+      "name": "ninja-bytes",
+      "invocation": "od",
+      "args": [
+        "-t",
+        "x1",
+        "-A",
+        "n",
+        "-v",
+        "bytes.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "          00  01  7f  c2  80  c3  bf                                    \n",
+      "stderr": ""
+    },
+    {
+      "name": "elf-first-four",
+      "invocation": "od",
+      "args": [
+        "-An",
+        "-tx1",
+        "-N4",
+        "elf.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "          7f  45  4c  46                                                \n",
+      "stderr": ""
+    },
+    {
+      "name": "one-byte",
+      "invocation": "od",
+      "args": [
+        "-t",
+        "x1",
+        "-A",
+        "n",
+        "-v"
+      ],
+      "stdin": "A",
+      "exit": 0,
+      "stdout": "          41                                                            \n",
+      "stderr": ""
+    },
+    {
+      "name": "fifteen-bytes",
+      "invocation": "od",
+      "args": [
+        "-t",
+        "x1",
+        "-A",
+        "n",
+        "-v",
+        "fifteen.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "          41  42  43  44  45  46  47  48  49  4a  4b  4c  4d  4e  4f    \n",
+      "stderr": ""
+    },
+    {
+      "name": "sixteen-bytes",
+      "invocation": "od",
+      "args": [
+        "-t",
+        "x1",
+        "-A",
+        "n",
+        "-v",
+        "sixteen.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "          41  42  43  44  45  46  47  48  49  4a  4b  4c  4d  4e  4f  50\n",
+      "stderr": ""
+    },
+    {
+      "name": "seventeen-bytes",
+      "invocation": "od",
+      "args": [
+        "-t",
+        "x1",
+        "-A",
+        "n",
+        "-v",
+        "seventeen.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "          41  42  43  44  45  46  47  48  49  4a  4b  4c  4d  4e  4f  50\n          51                                                            \n",
+      "stderr": ""
+    },
+    {
+      "name": "duplicate-rows",
+      "invocation": "od",
+      "args": [
+        "-t",
+        "x1",
+        "-A",
+        "n",
+        "repeated.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "          41  42  43  44  45  46  47  48  49  4a  4b  4c  4d  4e  4f  50\n*\n",
+      "stderr": ""
+    },
+    {
+      "name": "all-rows",
+      "invocation": "od",
+      "args": [
+        "-t",
+        "x1",
+        "-A",
+        "n",
+        "-v",
+        "repeated.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "          41  42  43  44  45  46  47  48  49  4a  4b  4c  4d  4e  4f  50\n          41  42  43  44  45  46  47  48  49  4a  4b  4c  4d  4e  4f  50\n          41  42  43  44  45  46  47  48  49  4a  4b  4c  4d  4e  4f  50\n",
+      "stderr": ""
+    },
+    {
+      "name": "skip-file",
+      "invocation": "od",
+      "args": [
+        "-t",
+        "x1",
+        "-A",
+        "n",
+        "-v",
+        "-j",
+        "1",
+        "-N",
+        "2",
+        "input.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "          42  43                                                        \n",
+      "stderr": ""
+    },
+    {
+      "name": "skip-stdin",
+      "invocation": "od",
+      "args": [
+        "-t",
+        "x1",
+        "-A",
+        "n",
+        "-v",
+        "-j",
+        "1",
+        "-N",
+        "2"
+      ],
+      "stdin": "ABCD",
+      "exit": 0,
+      "stdout": "          42  43                                                        \n",
+      "stderr": ""
+    },
+    {
+      "name": "zero-length",
+      "invocation": "od",
+      "args": [
+        "-t",
+        "x1",
+        "-A",
+        "n",
+        "-v",
+        "-N",
+        "0",
+        "input.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "name": "multiple-files",
+      "invocation": "od",
+      "args": [
+        "-t",
+        "x1",
+        "-A",
+        "n",
+        "-v",
+        "left.txt",
+        "right.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "          41  42  43  44                                                \n",
+      "stderr": ""
+    },
+    {
+      "name": "empty-od",
+      "invocation": "od",
+      "args": [
+        "-t",
+        "x1",
+        "-A",
+        "n",
+        "-v",
+        "empty.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "name": "address-d",
+      "invocation": "od",
+      "args": [
+        "-A",
+        "d",
+        "-tx1",
+        "seventeen.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "0000000   41  42  43  44  45  46  47  48  49  4a  4b  4c  4d  4e  4f  50\n0000016   51                                                            \n0000017\n",
+      "stderr": ""
+    },
+    {
+      "name": "address-o",
+      "invocation": "od",
+      "args": [
+        "-A",
+        "o",
+        "-tx1",
+        "seventeen.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "0000000   41  42  43  44  45  46  47  48  49  4a  4b  4c  4d  4e  4f  50\n0000020   51                                                            \n0000021\n",
+      "stderr": ""
+    },
+    {
+      "name": "address-x",
+      "invocation": "od",
+      "args": [
+        "-A",
+        "x",
+        "-tx1",
+        "seventeen.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "0000000   41  42  43  44  45  46  47  48  49  4a  4b  4c  4d  4e  4f  50\n0000010   51                                                            \n0000011\n",
+      "stderr": ""
+    },
+    {
+      "name": "unsigned-bytes",
+      "invocation": "od",
+      "args": [
+        "-An",
+        "-tu1",
+        "bytes.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "         000 001 127 194 128 195 191                                    \n",
+      "stderr": ""
+    },
+    {
+      "name": "octal-bytes",
+      "invocation": "od",
+      "args": [
+        "-An",
+        "-to1",
+        "bytes.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "         000 001 177 302 200 303 277                                    \n",
+      "stderr": ""
+    },
+    {
+      "name": "canonical-hexdump",
+      "invocation": "hexdump",
+      "args": [
+        "-C",
+        "sixteen.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "00000000  41 42 43 44 45 46 47 48  49 4a 4b 4c 4d 4e 4f 50  |ABCDEFGHIJKLMNOP|\n00000010\n",
+      "stderr": ""
+    },
+    {
+      "name": "format-file",
+      "invocation": "hexdump",
+      "args": [
+        "-f",
+        "format.txt",
+        "input.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "41424344\n",
+      "stderr": ""
+    },
+    {
+      "name": "hexdump-skip-length",
+      "invocation": "hexdump",
+      "args": [
+        "-s",
+        "1",
+        "-n",
+        "2",
+        "-e",
+        "2/1 \"%02x\" \"\\n\"",
+        "input.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "4243\n",
+      "stderr": ""
+    },
+    {
+      "name": "hexdump-multiple-files",
+      "invocation": "hexdump",
+      "args": [
+        "-e",
+        "4/1 \"%02x\" \"\\n\"",
+        "left.txt",
+        "right.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "41424344\n",
+      "stderr": ""
+    },
+    {
+      "name": "od-invalid-option",
+      "invocation": "od",
+      "args": [
+        "-z"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "hexdump-invalid-option",
+      "invocation": "hexdump",
+      "args": [
+        "-z"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "invalid-address",
+      "invocation": "od",
+      "args": [
+        "-A",
+        "q"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "invalid-type",
+      "invocation": "od",
+      "args": [
+        "-t",
+        "q"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "unsupported-size",
+      "invocation": "od",
+      "args": [
+        "-t",
+        "x3"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "negative-skip",
+      "invocation": "od",
+      "args": [
+        "-j",
+        "-1"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "negative-length",
+      "invocation": "od",
+      "args": [
+        "-N",
+        "-1"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "od-missing-file",
+      "invocation": "od",
+      "args": [
+        "-t",
+        "x1",
+        "-A",
+        "n",
+        "-v",
+        "missing.txt"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "missing-format-file",
+      "invocation": "hexdump",
+      "args": [
+        "-f",
+        "missing.txt"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "hexdump-missing-file",
+      "invocation": "hexdump",
+      "args": [
+        "-C",
+        "missing.txt"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    }
+  ]
+}
