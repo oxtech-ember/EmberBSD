@@ -70,3 +70,16 @@ nonzero buffer ownership or unavailable locks still prevent reset.
 The polling budget also expires when hardclock interrupts have stopped.
 The fixture covers retained ownership, rejected teardown, frozen ticks,
 PMF lock contention and final-hook fault cases in separate child processes.
+
+The streaming startup cases also compile actual ADC admission and channel
+MMIO functions. They keep converter ownership across all-guard quiet checks,
+RX queue setup, first-request acceptance, and final producer enable.
+The FIFO model reports overflow if the producer starts before that request.
+Delayed SOT must keep ADC channels disabled; successful submission alone
+does not prove that the hardware accepted a request.
+The prime wait has a fixed delay budget even when hardclock stops.
+Dirty TX guards, foreign leases, unreserved capture guards, invalid channel
+masks, queue errors and partial ADC enable failures must fail closed.
+Failed priming or enable requires a positive RX stop before buffer release.
+Failed drain or channel disable retains every submitted mapping.
+These models do not qualify physical FIFO timing or sustained reception.

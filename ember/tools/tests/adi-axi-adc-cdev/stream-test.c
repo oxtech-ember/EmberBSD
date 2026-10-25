@@ -34,7 +34,7 @@ struct adi_axi_dmac_buffer { int unused; };
 struct converter { int c_lock; bool c_poisoned; };
 struct capture_ops { int (*quiesce)(void *, unsigned); };
 struct adi_axi_adc_lease {
- void *l_capture_guard;
+ void *l_capture_guard,*l_guards[8];unsigned l_nguards;
  struct converter *l_converter;
  const struct capture_ops *l_ops;
  void *l_cookie;
@@ -167,7 +167,9 @@ static bool adiaxiadc_reserved_zero(const uint32_t *p,size_t n) { while(n--)if(*
 static int adi_axi_adc_read_rx_status(struct adi_axi_adc_lease *l,struct adi_axi_rx_status *s) { assert(l);s->sample_rate_hz=2399999;return 0; }
 static void *kmem_alloc(size_t n,int flags) { assert(n==64 && flags==KM_SLEEP);return allocation; }
 static int adi_axi_dmac_guard_buffer_alloc(void *g,size_t n,struct adi_axi_dmac_buffer **b) { assert(g && n==64);if(alloc_error)return alloc_error;*b=&block;allocated++;return 0; }
-static int adi_axi_adc_start(struct adi_axi_adc_lease *l) { assert(l);if(diagnostic_phases)overflow=4;return 0; }
+static int adi_axi_adc_start_validate_locked(struct adi_axi_adc_lease *l) {assert(l && mutex_owned(&l->l_converter->c_lock));return 0;}
+static int adi_axi_adc_start_commit_locked(struct adi_axi_adc_lease *l) {assert(l && mutex_owned(&l->l_converter->c_lock));if(diagnostic_phases)overflow=4;return 0;}
+static int adi_axi_dmac_guard_stream_prime(void *g,unsigned ms) {assert(g && ms==1000 && fixture->sc_lease->l_converter->c_lock);return 0;}
 static int adi_axi_dmac_guard_stream_start(void *g) { assert(g);if(diagnostic_phases)overflow=8;return 0; }
 static int adi_axi_dmac_guard_stream_notify(void *g,void (*fn)(void *),void *cookie) { assert(g && fn && cookie);return 0; }
 
@@ -179,6 +181,7 @@ int main(int argc,char **argv) {
  struct converter converter={0};
  const struct capture_ops ops={.quiesce=fixture_quiesce};
  struct adi_axi_adc_lease l={.l_capture_guard=&l,.l_converter=&converter,.l_ops=&ops,.l_cookie=&l};
+ l.l_guards[0]=&l;l.l_nguards=1;
  unsigned char copy[64],data[64];
  struct adi_axi_adc_softc sc={.sc_lease=&l,.sc_stream_data=copy,.sc_stream_status={.block_bytes=64}};
  struct uio u={.uio_resid=7,.data=data};fixture=&sc;
@@ -187,12 +190,12 @@ int main(int argc,char **argv) {
   struct adi_axi_adc_stream_config cfg={.abi_version=2,.struct_size=sizeof(cfg),.block_bytes=64,.block_count=3};
   assert(adiaxiadc_stream_start(&sc,&cfg)==0);
   assert(diagnostics==0); /* Nothing is printed during startup. */
-  const uint32_t phases[4]={0,4,8,12};
+  const uint32_t phases[4]={0,8,12,4};
   assert(memcmp(sc.sc_stream_start_status,phases,sizeof(phases))==0);
   u.uio_resid=64;overflow=4;loss=0;
   assert(adiaxiadc_stream_read(&sc,&u,0)==EOVERFLOW && u.uio_resid==64);
   assert(diagnostics==1 && snapshots==1 && strstr(diagnostic_line,"cause=1 "));
-  assert(strstr(diagnostic_line,"start=00000000/00000004/00000008/0000000c"));
+  assert(strstr(diagnostic_line,"start=00000000/00000008/0000000c/00000004"));
   assert(adiaxiadc_stream_read(&sc,&u,0)==EOVERFLOW && diagnostics==1);
   assert(adiaxiadc_stream_stop(&sc)==0);
   assert(adiaxiadc_stream_start(&sc,&cfg)==0);

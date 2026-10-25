@@ -1274,6 +1274,63 @@ out:
 }
 
 int
+adi_axi_dmac_guard_stream_prime(const struct adi_axi_dmac_guard *g,
+    unsigned int timeout_ms)
+{
+	struct adi_axi_dmac_channel *c;
+	struct adi_axi_dmac_softc *sc;
+	unsigned int remaining, started, wait_ticks;
+
+	if (g == NULL || !g->g_prepared || g->g_channel == NULL ||
+	    timeout_ms == 0 || timeout_ms > 1000)
+		return EINVAL;
+	c = g->g_channel;
+	sc = c->c_sc;
+	remaining = timeout_ms * 1000;
+	started = (unsigned int)getticks();
+	wait_ticks = MAX(1, mstohz(timeout_ms));
+	do {
+		int error = EAGAIN;
+
+		mutex_enter(&sc->sc_lock);
+		mutex_enter(&sc->sc_buffer_lock);
+		mutex_enter(&sc->sc_irq_lock);
+		if (!c->c_streaming || sc->sc_channel != c || sc->sc_quarantined ||
+		    sc->sc_stopping) {
+			error = EIO;
+		} else {
+			uint32_t done;
+
+			dmac_stream_pump_locked(c);
+			done = dmac_read(sc, DMAC_DONE);
+			if (c->c_stream_status.discontinuities != 0)
+				error = EOVERFLOW;
+			else {
+				const struct adi_axi_dmac_buffer *b;
+
+				LIST_FOREACH(b, &c->c_buffers, b_next) {
+					if (b->b_stream_sequence == 0 && b->b_stream_state == 1) {
+						error = (done & __BIT(b->b_stream_id)) ?
+						    EOVERFLOW : 0;
+						break;
+					}
+				}
+			}
+		}
+		mutex_exit(&sc->sc_irq_lock);
+		mutex_exit(&sc->sc_buffer_lock);
+		mutex_exit(&sc->sc_lock);
+		if (error != EAGAIN)
+			return error;
+		if ((unsigned int)getticks() - started >= wait_ticks ||
+		    remaining-- == 0)
+			return ETIMEDOUT;
+		/* This deadline also terminates if hardclock cannot advance. */
+		delay(1);
+	} while (true);
+}
+
+int
 adi_axi_dmac_guard_stream_snapshot(const struct adi_axi_dmac_guard *g,
     struct adi_axi_dmac_stream_snapshot *snapshot)
 {

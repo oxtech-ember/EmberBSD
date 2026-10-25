@@ -128,6 +128,12 @@ int adi_axi_dmac_stream_submit(struct adi_axi_dmac_buffer *, size_t);
 int adi_axi_dmac_stream_next(struct adi_axi_dmac_channel *,
  struct adi_axi_dmac_buffer **, struct adi_axi_dmac_stream_status *);
 int adi_axi_dmac_guard_stream_start(const struct adi_axi_dmac_guard *);
+/* Producer must remain disabled and all guards reserved by its owner.
+ * Wait for the first request's positive SOT acceptance before producer enable.
+ * Failure leaves the queue armed; the owner must positively stop/drain it.
+ */
+int adi_axi_dmac_guard_stream_prime(const struct adi_axi_dmac_guard *,
+ unsigned int timeout_ms);
 int adi_axi_dmac_guard_stream_submit(const struct adi_axi_dmac_guard *,
  struct adi_axi_dmac_buffer *, size_t);
 int adi_axi_dmac_guard_stream_next(const struct adi_axi_dmac_guard *,

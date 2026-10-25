@@ -24,6 +24,19 @@ awk '
     emit { print; if ($0 == "}") emit = 0 }
 ' "$source_dir/sys/dev/fdt/adi_axi_adc.c" > "$work/adc-stop.inc"
 
+# Execute ADC admission, channel MMIO and streaming startup against real DMAC.
+python3 - "$source_dir" "$work" <<'PYADC'
+import pathlib,sys
+root,work=map(pathlib.Path,sys.argv[1:]);text=(root/'sys/dev/fdt/adi_axi_adc.c').read_text();functions=[]
+for kind,name in [('int','check_dmas'),('bool','io_allowed'),('int','adc_disable_channels'),('int','adc_channels'),('int','adi_axi_adc_start_validate_locked'),('int','adi_axi_adc_start_commit_locked'),('int','adi_axi_adc_start_locked'),('int','adi_axi_adc_start'),('bool','adiaxiadc_reserved_zero'),('int','adiaxiadc_stream_start')]:
+ marker=('' if name=='adi_axi_adc_start' else 'static ')+kind+'\n'+name+'('
+ if marker not in text:continue
+ start=text.index(marker);end=text.index('\n}\n',start)+3;functions.append(text[start:end])
+(work/'adc-start.inc').write_text('\n'.join(functions))
+header=(root/'sys/dev/fdt/adi_axi_adc.h').read_text()+(root/'sys/dev/fdt/adi_axi_adc_stream.h').read_text()
+(work/'adc-abi.inc').write_text('\n'.join(l for l in header.splitlines() if not l.startswith('#include')))
+PYADC
+
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -O1 -g -pthread ${CFLAGS:-} \
     -I"$work" "$dir/test.c" -o "$work/test"
 if [ "${ANALYZE:-no}" = yes ]; then

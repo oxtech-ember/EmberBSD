@@ -94,7 +94,11 @@ enum irq_mode {
 	IRQ_THREADED
 };
 
-static uint32_t registers[0x500 / 4];
+static uint32_t registers[0x500 / 4],adc_registers[0x500/4],tx_registers[0x500/4];
+static unsigned accepted_requests,producer_too_early,prime_release_after,adc_clears;
+static bool startup_model,adc_enable_failure,queue_failure,prime_false_done;
+static kmutex_t *startup_owner_lock;
+static volatile int adc_disable_error,rx_status_error;
 static atomic_uint ticks;
 static unsigned drain_calls, sync_calls, submits;
 static enum irq_mode irq_mode;
@@ -112,10 +116,12 @@ static bool request_model, delayed_sot;
 static unsigned idle_ready_after, idle_reads, drain_elapsed;
 static bool idle_pending, freeze_ticks;
 static unsigned delay_calls;
+static uint64_t delay_us;
 static const unsigned hz = 1000;
 static uint64_t physical_address;
 static void *irq_cookie;
 static int adiaxidmac_intr(void *);
+static void startup_submit_hook(void);
 static void deliver_irq(unsigned, uint32_t);
 
 static pthread_mutex_t gate_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -292,7 +298,13 @@ static unsigned mstohz(unsigned ms) { return ms; }
 static inline void delay(unsigned us)
 {
 	CHECK(us > 0 && irq_lock->held == 0);
-	delay_calls++;
+	delay_calls++;delay_us+=us;
+ if(startup_model && registers[0x408/4] && prime_release_after && --prime_release_after==0) {
+  CHECK(!(adc_registers[0x400/4]&1) && !(adc_registers[0x440/4]&1));
+  registers[0x428/4]&=~__BIT(registers[0x404/4]);
+  if(prime_false_done)registers[0x428/4]|=__BIT(registers[0x404/4]);
+  registers[0x408/4]=0;registers[0x404/4]=(registers[0x404/4]+1)&3;accepted_requests++;
+ }
 	if (!freeze_ticks)
 		ticks++;
 }
@@ -301,17 +313,21 @@ static uint32_t
 bus_space_read_4(bus_space_tag_t tag, bus_space_handle_t handle, size_t reg)
 {
 	(void)tag;
-	(void)handle;
+	if(handle==adc_registers) {
+  CHECK(reg<sizeof(adc_registers));
+  return adc_registers[reg/4];
+ }
+ uint32_t *bank=handle==tx_registers?tx_registers:registers;
 	CHECK(reg < sizeof(registers) && (reg & 3) == 0);
 	if (reg == 0x43c && idle_pending) {
 		idle_reads++;
 		if (idle_ready_after != UINT_MAX &&
 		    idle_reads >= idle_ready_after) {
-			registers[reg / 4] = 0x701;
+			bank[reg / 4] = 0x701;
 			idle_pending = false;
 		}
 	}
-	return registers[reg / 4];
+	return bank[reg / 4];
 }
 
 static void
@@ -319,42 +335,55 @@ bus_space_write_4(bus_space_tag_t tag, bus_space_handle_t handle,
     size_t reg, uint32_t value)
 {
 	(void)tag;
-	(void)handle;
+	if(handle==adc_registers) {
+  CHECK(reg<sizeof(adc_registers));
+  if(reg==0x88){adc_registers[reg/4]&=~value;adc_clears++;return;}
+  if(reg>=0x400 && (reg-0x400)%0x40==0) {
+   if(startup_model && (value&1))CHECK(startup_owner_lock && startup_owner_lock->held);
+   if(startup_model && (value&1) && (!accepted_requests || !(registers[0x400/4]&1))) {adc_registers[0x88/4]|=4;producer_too_early++;}
+   if(adc_enable_failure && reg==0x440 && (value&1))value&=~1U;
+   if(adc_disable_error && !(value&1))value|=1;
+  }
+  adc_registers[reg/4]=value;return;
+ }
+ uint32_t *bank=handle==tx_registers?tx_registers:registers;
 	CHECK(reg < sizeof(registers) && (reg & 3) == 0);
 	if (reg == 0x084) {
-		registers[reg / 4] &= ~value;
+		bank[reg / 4] &= ~value;
 		return;
 	}
 	if (reg == 0x418)
 		value = (value & 0xffffff) | 7;
-	registers[reg / 4] = value;
+	bank[reg / 4] = value;
 	if (reg == 0x400 && value == 0)
-		registers[0x408 / 4] = 0;
+		bank[0x408 / 4] = 0;
 	if (reg == 0x408 && value == 1) {
 		bus_dmamap_t map;
-		uint64_t address = registers[0x414 / 4] != 0 ?
-		    registers[0x414 / 4] : registers[0x410 / 4];
+		uint64_t address = bank[0x414 / 4] != 0 ?
+		    bank[0x414 / 4] : bank[0x410 / 4];
 
-		CHECK(registers[0x400 / 4] == 1);
+		CHECK(bank[0x400 / 4] == 1);
 		CHECK(pthread_mutex_lock(&maps_lock) == 0);
 		for (map = dma_maps; map != NULL; map = map->next)
 			if (map->dm_segs[0].ds_addr == address)
 				break;
 		CHECK(map != NULL && !map->dma_submitted);
-		CHECK(map->sync_size == (size_t)registers[0x418 / 4] + 1);
+		CHECK(map->sync_size == (size_t)bank[0x418 / 4] + 1);
 		CHECK(map->sync_pre == BUS_DMASYNC_PREREAD ||
 		    map->sync_pre == BUS_DMASYNC_PREWRITE);
 		map->dma_submitted = true;
 		map->dma_drained = false;
 		CHECK(pthread_mutex_unlock(&maps_lock) == 0);
 		if (!request_model || !delayed_sot) {
-   registers[0x428 / 4] &= ~__BIT(registers[0x404 / 4]);
-   registers[reg / 4] = 0;
+   if(startup_model)accepted_requests++;
+   bank[0x428 / 4] &= ~__BIT(bank[0x404 / 4]);
+   bank[reg / 4] = 0;
    if (request_model)
-    registers[0x404 / 4] = (registers[0x404 / 4] + 1) & 3;
+    bank[0x404 / 4] = (bank[0x404 / 4] + 1) & 3;
   }
 		submitted = true;
 		submits++;
+  if(startup_model && queue_failure && submits==1)startup_submit_hook();
 	}
 }
 
@@ -695,7 +724,10 @@ reset_fixture(uint32_t interface)
 	buffer_lock = &fixture.sc_buffer_lock;
 	done_cv = &fixture.sc_done_cv;
 	memset(registers, 0, sizeof(registers));
-	ticks = drain_calls = sync_calls = submits = 0;
+ memset(adc_registers,0,sizeof(adc_registers));memset(tx_registers,0,sizeof(tx_registers));
+ accepted_requests=producer_too_early=prime_release_after=adc_clears=0;
+ startup_model=adc_enable_failure=queue_failure=prime_false_done=false;startup_owner_lock=NULL;adc_disable_error=rx_status_error=0;
+	ticks = drain_calls = sync_calls = submits = 0;delay_us=0;
 	wait_calls = signal_calls = 0;
 	before_wait_delivered = false;
 	thread_waits = 0;
@@ -1575,59 +1607,135 @@ check_shutdown_access(void)
 	puts("PASS shutdown refuses subsequent CPU buffer access");
 }
 
-/* Exercise ADC ownership through the actual DMAC bound callback chain. */
-#define ADI_AXI_ADC_STREAM_MAX_BLOCKS 16
-#define ADI_AXI_ADC_STREAM_RUNNING 1
+/* Exercise actual ADC admission and MMIO against the real DMAC guard. */
+#include "adc-abi.inc"
 #define NOTE_SUBMIT 0
-struct adi_axi_converter { kmutex_t c_lock; bool c_poisoned; };
+#define ADC_DMA_STATUS 0x88
+#define ADC_NCHANNELS 4
+#define ADC_CHANNEL(n) (0x400+(n)*0x40)
+#define ADC_FORMAT_MASK 0x370
+#define __arraycount(a) (sizeof(a)/sizeof((a)[0]))
+static int test_lwp;
+#define curlwp (&test_lwp)
+struct adi_axi_adc_lease;
+struct adi_axi_converter { kmutex_t c_lock; bool c_poisoned;struct adi_axi_adc_lease *c_lease; };
 struct adi_axi_capture_ops { int (*quiesce)(void *, unsigned); };
+struct adi_axi_adc_softc;
 struct adi_axi_adc_lease {
+ struct adi_axi_adc_softc *l_adc;
  struct adi_axi_converter *l_converter;
  const struct adi_axi_capture_ops *l_ops;
- void *l_cookie;
- struct adi_axi_dmac_guard *l_capture_guard;
- bool l_poisoned, l_quiet, l_running;
+ void *l_cookie,*l_configurer;
+ struct adi_axi_dmac_guard *l_capture_guard,*l_guards[8];unsigned l_nguards;
+ uint32_t l_channel_mask,l_channel_format;
+ bool l_poisoned, l_quiet, l_running,l_configured;
 };
 struct adi_axi_adc_softc {
  struct adi_axi_adc_lease *sc_lease;
- bool sc_stream_active;
+ void *sc_bst,*sc_bsh;
+ bool sc_stream_active,sc_configured,sc_capture_pending,sc_stream_cancel,sc_stream_fault_logged;
+ uint32_t sc_stream_start_status[4];
+ kmutex_t sc_session_lock;
  int sc_stream_sel;
- struct { int last_error; unsigned flags, block_bytes; } sc_stream_status;
+ struct adi_axi_adc_stream_status sc_stream_status;
  struct adi_axi_dmac_buffer *sc_stream_buffers[16], *sc_stream_current;
  uint8_t *sc_stream_data;
  size_t sc_stream_offset, sc_stream_valid;
 };
+struct adi_axi_rx_status {uint32_t sample_rate_hz;};
 static unsigned adc_stop_notifications;
-static volatile int adc_disable_error;
+static void startup_submit_hook(void) { fixture.sc_channel->c_max_length=32; }
 void selnotify(int *, int, int);
-void selnotify(int *p, int events, int hint) { (void)p; (void)events; (void)hint; adc_stop_notifications++; }
-static bool mutex_owned(const kmutex_t *lock) { return lock->held == 1; }
-static int
-adc_disable_channels(struct adi_axi_adc_lease *l)
-{
- CHECK(mutex_owned(&l->l_converter->c_lock));
- return adc_disable_error;
+void selnotify(int *p,int events,int hint) { (void)p;(void)events;(void)hint;adc_stop_notifications++; }
+static bool mutex_owned(const kmutex_t *lock) {return lock->held==1;}
+static void adiaxiadc_stream_notify(void *cookie) {CHECK(cookie);((struct adi_axi_adc_softc *)cookie)->sc_stream_sel++;adc_stop_notifications++;}
+static void *kmem_alloc(size_t n,int flags) {return kmem_zalloc(n,flags);}
+static int adi_axi_adc_read_rx_status(struct adi_axi_adc_lease *l,struct adi_axi_rx_status *s) {(void)l;s->sample_rate_hz=2399999;return rx_status_error;}
+static int adc_disable_channels(struct adi_axi_adc_lease *);
+static int check_dmas(struct adi_axi_adc_lease *);
+static int quiesce_locked(struct adi_axi_adc_lease *,unsigned);
+static void poison_locked(struct adi_axi_adc_lease *);
+static int adiaxiadc_stream_stop(struct adi_axi_adc_softc *);
+int adi_axi_adc_start(struct adi_axi_adc_lease *);
+int adi_axi_adc_stop(struct adi_axi_adc_lease *,unsigned);
+int adi_axi_adc_stop(struct adi_axi_adc_lease *l,unsigned ms) {
+ CHECK(!mutex_owned(&l->l_converter->c_lock));mutex_enter(&l->l_converter->c_lock);int e=quiesce_locked(l,ms);mutex_exit(&l->l_converter->c_lock);return e;
 }
-static int
-check_dmas(struct adi_axi_adc_lease *l)
-{
- CHECK(mutex_owned(&l->l_converter->c_lock));
- return adi_axi_dmac_guard_check(l->l_capture_guard);
-}
-static void adiaxiadc_stream_notify(void *cookie)
-{
- CHECK(cookie != NULL);
- ((struct adi_axi_adc_softc *)cookie)->sc_stream_sel++;
- adc_stop_notifications++;
-}
-int adi_axi_adc_stop(struct adi_axi_adc_lease *, unsigned);
-int adi_axi_adc_stop(struct adi_axi_adc_lease *l, unsigned ms)
-{
- (void)ms;
- CHECK(!mutex_owned(&l->l_converter->c_lock));
- return 0;
-}
+#include "adc-start.inc"
 #include "adc-stop.inc"
+
+static void
+check_producer_last_start(unsigned fault)
+{
+ struct adi_axi_converter converter={0};
+ struct adi_axi_dmac_softc tx={0};
+ struct adi_axi_dmac_guard txguard={.g_sc=&tx},foreign={0},*owned;
+ struct adi_axi_adc_lease lease={.l_converter=&converter,.l_configured=true,.l_quiet=true,.l_channel_mask=3,.l_channel_format=0x250};
+ struct adi_axi_adc_softc adc={.sc_lease=&lease,.sc_bsh=adc_registers,.sc_configured=true};
+ const struct adi_axi_capture_ops consumer_ops={.quiesce=drain};
+ const struct adi_axi_dmac_drain_ops bound_ops={.drain=adiaxiadc_dma_drain};
+ struct adi_axi_adc_stream_config config={.abi_version=2,.struct_size=sizeof(config),.block_bytes=64,.block_count=4};
+ reset_fixture(0x2303);CHECK(dmac_interface(&fixture,0x040563,0x2303)==0);
+ mutex_init(&converter.c_lock,MUTEX_DEFAULT,IPL_NONE);mutex_init(&adc.sc_session_lock,MUTEX_DEFAULT,IPL_NONE);
+ lease.l_adc=&adc;converter.c_lease=&lease;lease.l_ops=&consumer_ops;lease.l_cookie=&fixture;
+ CHECK(adi_axi_dmac_reserve(17,&fixture,&lease.l_capture_guard)==0);
+ CHECK(adi_axi_dmac_guard_bind(lease.l_capture_guard,&bound_ops,&lease)==0);
+ lease.l_guards[0]=lease.l_capture_guard;lease.l_nguards=1;
+ mutex_enter(&converter.c_lock);CHECK(adi_axi_dmac_guard_prepare(lease.l_capture_guard)==0);mutex_exit(&converter.c_lock);
+ owned=lease.l_capture_guard;
+ startup_model=true;startup_owner_lock=&converter.c_lock;request_model=true;delayed_sot=true;prime_release_after=2;
+ if(fault==1) {
+  mutex_init(&tx.sc_lock,MUTEX_DEFAULT,IPL_NONE);mutex_init(&tx.sc_buffer_lock,MUTEX_DEFAULT,IPL_NONE);mutex_init(&tx.sc_irq_lock,MUTEX_DEFAULT,IPL_BIO);tx.sc_bsh=tx_registers;tx.sc_guard=&txguard;
+  tx_registers[0x400/4]=1;lease.l_guards[1]=&txguard;lease.l_nguards=2;
+ } else if(fault==2)converter.c_lease=NULL;
+ else if(fault==3){foreign=*owned;lease.l_capture_guard=&foreign;}
+ else if(fault==4){delayed_sot=false;queue_failure=true;}
+ else if(fault==5 || fault==6 || fault==10) {adc_enable_failure=true;if(fault==6)drain_error=EIO;if(fault==10)adc_disable_error=EIO;}
+ else if(fault==7){prime_release_after=0;freeze_ticks=true;}
+ else if(fault==8)lease.l_channel_mask=0;
+ else if(fault==9)prime_false_done=true;
+ else if(fault==11)rx_status_error=EIO;
+ else if(fault==12)prime_release_after=0;
+ if(fault==1)CHECK(adi_axi_adc_start(&lease)==EIO);
+ if(fault==2)CHECK(adi_axi_adc_start(&lease)==EBUSY);
+ int result=adiaxiadc_stream_start(&adc,&config);
+ if(fault) {
+  CHECK(result!=0 && producer_too_early==0);
+  if(fault<=3)CHECK(submits==0 && accepted_requests==0 && !(registers[DMAC_CONTROL/4]&1));
+  if(fault==1)CHECK(result==EIO && tx.sc_quarantined && lease.l_poisoned);
+  if(fault==2)CHECK(result==EBUSY && !lease.l_poisoned);
+  if(fault==3)CHECK(result==EPERM);
+  if(fault==4)CHECK(result==EINVAL && submits==1);
+  if(fault==5)CHECK(result==EIO && lease.l_quiet && !lease.l_running);
+  if(fault==6 || fault==10) {
+   CHECK(fixture.sc_quarantined && lease.l_poisoned && adc.sc_stream_active);
+   CHECK(adc.sc_stream_data && adc.sc_stream_buffers[0] && dma_maps);
+   CHECK(adc.sc_stream_buffers[0]->b_inflight==64);
+   /* Test-only coordinated reset witness to retire retained fixture data. */
+   drain_error=0;adc_enable_failure=false;adc_disable_error=0;lease.l_poisoned=false;converter.c_poisoned=false;fixture.sc_quarantined=false;
+   CHECK(adiaxiadc_stream_stop(&adc)==0);
+  } else CHECK(adc.sc_stream_data==NULL && adc.sc_stream_buffers[0]==NULL && dma_maps==NULL);
+  if(fault==7)CHECK(result==ETIMEDOUT && accepted_requests==0 && delay_us==1000000 && ticks==0);
+  if(fault==8)CHECK(result==EIO && submits==0);
+  if(fault==9)CHECK(result==EOVERFLOW);
+  if(fault==11)CHECK(result==EIO && submits==0 && adc_clears==0);
+  if(fault==12)CHECK(result==ETIMEDOUT && accepted_requests==0 && ticks==1000 && delay_us<=1000000);
+  CHECK(!(adc_registers[0x400/4]&1) && !(adc_registers[0x440/4]&1));
+  lease.l_capture_guard=owned;lease.l_nguards=1;converter.c_lease=&lease;
+  if(fault==1){mutex_destroy(&tx.sc_irq_lock);mutex_destroy(&tx.sc_buffer_lock);mutex_destroy(&tx.sc_lock);}
+  CHECK(adi_axi_dmac_unreserve(owned)==0);
+  mutex_destroy(&adc.sc_session_lock);mutex_destroy(&converter.c_lock);
+  puts("PASS actual producer-last dirty TX/foreign lease/guard and queue/ADC-enable/prime failures drain or retain safely");return;
+ }
+ CHECK(result==0);
+ CHECK(producer_too_early==0 && adc_registers[0x88/4]==0 && accepted_requests>0);
+ CHECK(adc_clears==1 && lease.l_running && !lease.l_quiet && adc.sc_stream_active);
+ CHECK((adc_registers[0x400/4]&1) && (adc_registers[0x440/4]&1));
+ CHECK(adiaxiadc_stream_stop(&adc)==0 && lease.l_quiet && !lease.l_running);
+ CHECK(adi_axi_dmac_unreserve(lease.l_capture_guard)==0);
+ mutex_destroy(&adc.sc_session_lock);mutex_destroy(&converter.c_lock);
+ puts("PASS actual ADC admission/enable and DMAC delayed SOT prime before producer; HDL overflow stays clear");
+}
 
 static void
 check_converter_owned_stream_stop(void)
@@ -1636,7 +1744,8 @@ check_converter_owned_stream_stop(void)
  (void)adiaxiadc_stream_notify;
  struct adi_axi_converter converter = {0};
  struct adi_axi_adc_lease lease = {.l_converter = &converter};
- struct adi_axi_adc_softc adc = {.sc_lease = &lease};
+ struct adi_axi_adc_softc adc = {.sc_lease = &lease,.sc_bsh=adc_registers};
+ lease.l_adc=&adc;
  const struct adi_axi_capture_ops consumer_ops = {.quiesce = drain};
  const struct adi_axi_dmac_drain_ops bound_ops = {.drain = adiaxiadc_dma_drain};
  reset_fixture(0x2303);
@@ -1646,6 +1755,7 @@ check_converter_owned_stream_stop(void)
  lease.l_cookie = &fixture;
  CHECK(adi_axi_dmac_reserve(17, &fixture, &lease.l_capture_guard) == 0);
  CHECK(adi_axi_dmac_guard_bind(lease.l_capture_guard, &bound_ops, &lease) == 0);
+ lease.l_guards[0]=lease.l_capture_guard;lease.l_nguards=1;
  mutex_enter(&converter.c_lock);
  CHECK(adi_axi_dmac_guard_prepare(lease.l_capture_guard) == 0);
  mutex_exit(&converter.c_lock);
@@ -1879,6 +1989,7 @@ main(void)
 	(void)alarm(30);
 	(void)hz;
 	(void)adiaxidmac_shutdown_final;
+	for(unsigned fault=0;fault<13;fault++)check_producer_last_start(fault);
 	check_stream_snapshot();
 	check_interfaces();
 	check_converter_owned_stream_stop();

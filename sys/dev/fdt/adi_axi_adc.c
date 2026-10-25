@@ -77,7 +77,7 @@ struct adi_axi_adc_softc {
  bool sc_stream_active;
  bool sc_stream_cancel;
  bool sc_stream_fault_logged;
- /* Cached raw status after W1C, ADC enable, DMAC enable, and queue setup. */
+ /* Cached raw status after W1C, DMAC enable, prime, and ADC enable. */
  uint32_t sc_stream_start_status[4];
  struct adi_axi_adc_stream_status sc_stream_status;
  struct adi_axi_dmac_buffer *sc_stream_buffers[ADI_AXI_ADC_STREAM_MAX_BLOCKS];
@@ -193,10 +193,8 @@ out:
 static int
 check_dmas(struct adi_axi_adc_lease *l)
 {
-	int error;
-
 	for (unsigned int i = 0; i < l->l_nguards; i++) {
-		error = adi_axi_dmac_guard_check(l->l_guards[i]);
+		int error = adi_axi_dmac_guard_check(l->l_guards[i]);
 		if (error != 0)
 			return error;
 	}
@@ -348,10 +346,9 @@ static int
 adc_disable_channels(struct adi_axi_adc_lease *l)
 {
 	struct adi_axi_adc_softc *sc = l->l_adc;
-	uint32_t value;
 
 	for (unsigned int i = 0; i < ADC_NCHANNELS; i++) {
-		value = bus_space_read_4(sc->sc_bst, sc->sc_bsh, ADC_CHANNEL(i));
+		uint32_t value = bus_space_read_4(sc->sc_bst, sc->sc_bsh, ADC_CHANNEL(i));
 		bus_space_write_4(sc->sc_bst, sc->sc_bsh, ADC_CHANNEL(i), value & ~1U);
 		if (bus_space_read_4(sc->sc_bst, sc->sc_bsh, ADC_CHANNEL(i)) & 1U)
 			return EIO;
@@ -682,42 +679,57 @@ adi_axi_adc_start(struct adi_axi_adc_lease *l)
 	return error;
 }
 
+/* Keep the converter lock from quiet admission through producer enable. */
+static int
+adi_axi_adc_start_validate_locked(struct adi_axi_adc_lease *l)
+{
+	struct adi_axi_converter *c = l->l_converter;
+	int error;
+
+	KASSERT(mutex_owned(&c->c_lock));
+	if (l->l_poisoned || c->c_poisoned)
+		return EIO;
+	if (c->c_lease != l || !l->l_configured || !l->l_quiet || l->l_running)
+		return EBUSY;
+	error = check_dmas(l);
+	if (error == 0 && l->l_channel_mask == 0)
+		error = EIO;
+	if (error != 0)
+		poison_locked(l);
+	return error;
+}
+
+/* Only callers holding the validated converter transaction can commit.
+ * RX DMA may now be armed. Do not repeat quiet admission or stop it here.
+ */
+static int
+adi_axi_adc_start_commit_locked(struct adi_axi_adc_lease *l)
+{
+	int error;
+
+	KASSERT(mutex_owned(&l->l_converter->c_lock));
+	KASSERT(l->l_converter->c_lease == l && l->l_configured &&
+	    l->l_quiet && !l->l_running && !l->l_poisoned);
+	l->l_configurer = curlwp;
+	error = adc_channels(l, l->l_channel_mask, l->l_channel_format);
+	l->l_configurer = NULL;
+	if (error == 0) {
+		l->l_running = true;
+		l->l_quiet = false;
+	}
+	return error;
+}
+
 static int
 adi_axi_adc_start_locked(struct adi_axi_adc_lease *l)
 {
-	int error = 0;
+	int error;
 
-	KASSERT(mutex_owned(&l->l_converter->c_lock));
-	if (l->l_poisoned)
-		error = EIO;
-	else if (!l->l_configured || !l->l_quiet || l->l_running)
-		error = EBUSY;
-	else {
-		error = check_dmas(l);
-		if (error != 0)
-			poison_locked(l);
-		else {
-			if (l->l_channel_mask == 0) {
-				error = EIO;
-				poison_locked(l);
-			} else {
-				l->l_configurer = curlwp;
-				error = adc_channels(l, l->l_channel_mask,
-				    l->l_channel_format);
-				l->l_configurer = NULL;
-				if (error != 0) {
-					int setup_error = error;
-
-					if (quiesce_locked(l, 1000) != 0)
-						error = EIO;
-					else
-						error = setup_error;
-				} else {
-					l->l_running = true;
-					l->l_quiet = false;
-				}
-			}
-		}
+	error = adi_axi_adc_start_validate_locked(l);
+	if (error == 0) {
+		error = adi_axi_adc_start_commit_locked(l);
+		if (error != 0 && quiesce_locked(l, 1000) != 0)
+			error = EIO;
 	}
 	return error;
 }
@@ -984,78 +996,113 @@ static int
 adiaxiadc_stream_start(struct adi_axi_adc_softc *sc,
     const struct adi_axi_adc_stream_config *config)
 {
- struct adi_axi_adc_lease *l = sc->sc_lease;
- struct adi_axi_rx_status rxstatus;
- uint64_t generation;
- int error, stop_error;
- if (config->abi_version != ADI_AXI_ADC_STREAM_ABI_VERSION ||
-     config->struct_size != sizeof(*config) ||
-     config->block_count < 3 || config->block_count > ADI_AXI_ADC_STREAM_MAX_BLOCKS ||
-     config->block_bytes == 0 || config->block_bytes > ADI_AXI_ADC_CAPTURE_MAX_BYTES ||
-     config->block_bytes % ADI_AXI_ADC_CAPTURE_ALIGNMENT != 0 ||
-     config->block_bytes > ADI_AXI_ADC_STREAM_MAX_BYTES / config->block_count ||
-     !adiaxiadc_reserved_zero(config->reserved, __arraycount(config->reserved)))
-  return EINVAL;
- if (!sc->sc_configured || l == NULL || l->l_capture_guard == NULL)
-  return EINVAL;
- if (sc->sc_stream_active || sc->sc_stream_data != NULL || sc->sc_capture_pending)
-  return EBUSY;
- generation = sc->sc_stream_status.generation + 1;
- memset(&sc->sc_stream_status, 0, sizeof(sc->sc_stream_status));
- sc->sc_stream_fault_logged = false;
- memset(sc->sc_stream_start_status, 0, sizeof(sc->sc_stream_start_status));
- sc->sc_stream_status.generation = generation;
- sc->sc_stream_status.block_bytes = config->block_bytes;
- sc->sc_stream_status.block_count = config->block_count;
- memset(&rxstatus, 0, sizeof(rxstatus));
- error = adi_axi_adc_read_rx_status(l, &rxstatus);
- if (error != 0 && error != EOPNOTSUPP)
-  return error;
- sc->sc_stream_status.sample_rate_hz = rxstatus.sample_rate_hz;
- sc->sc_stream_data = kmem_alloc(config->block_bytes, KM_SLEEP);
- for (unsigned i = 0; i < config->block_count; i++) {
-  error = adi_axi_dmac_guard_buffer_alloc(l->l_capture_guard, config->block_bytes,
-      &sc->sc_stream_buffers[i]);
-  if (error != 0)
-   goto fail;
- }
- /* Clear the previous epoch overflow before enabling any DMA. */
- bus_space_write_4(sc->sc_bst, sc->sc_bsh, ADC_DMA_STATUS, 4);
- sc->sc_stream_start_status[0] =
-     bus_space_read_4(sc->sc_bst, sc->sc_bsh, ADC_DMA_STATUS);
- error = adi_axi_adc_start(l);
- if (error != 0)
-  goto fail;
- sc->sc_stream_start_status[1] =
-     bus_space_read_4(sc->sc_bst, sc->sc_bsh, ADC_DMA_STATUS);
- error = adi_axi_dmac_guard_stream_start(l->l_capture_guard);
- if (error != 0) {
-  stop_error = adi_axi_adc_stop(l, 1000);
-  if (stop_error != 0)
-   return stop_error;
-  goto fail;
- }
- sc->sc_stream_start_status[2] =
-     bus_space_read_4(sc->sc_bst, sc->sc_bsh, ADC_DMA_STATUS);
- sc->sc_stream_active = true;
- mutex_enter(&sc->sc_session_lock);
- sc->sc_stream_cancel = false;
- mutex_exit(&sc->sc_session_lock);
- sc->sc_stream_status.flags = ADI_AXI_ADC_STREAM_RUNNING;
- (void)adi_axi_dmac_guard_stream_notify(l->l_capture_guard,
-     adiaxiadc_stream_notify, sc);
- for (unsigned i = 0; i < config->block_count; i++) {
-  error = adi_axi_dmac_guard_stream_submit(l->l_capture_guard,
-      sc->sc_stream_buffers[i], config->block_bytes);
-  if (error != 0)
-   goto fail;
- }
- sc->sc_stream_start_status[3] =
-     bus_space_read_4(sc->sc_bst, sc->sc_bsh, ADC_DMA_STATUS);
- return 0;
+	struct adi_axi_adc_lease *l = sc->sc_lease;
+	struct adi_axi_rx_status rxstatus;
+	uint64_t generation;
+	bool capture_owned = false;
+	int error, stop_error;
+
+	if (config->abi_version != ADI_AXI_ADC_STREAM_ABI_VERSION ||
+	    config->struct_size != sizeof(*config) ||
+	    config->block_count < 3 || config->block_count > ADI_AXI_ADC_STREAM_MAX_BLOCKS ||
+	    config->block_bytes == 0 || config->block_bytes > ADI_AXI_ADC_CAPTURE_MAX_BYTES ||
+	    config->block_bytes % ADI_AXI_ADC_CAPTURE_ALIGNMENT != 0 ||
+	    config->block_bytes > ADI_AXI_ADC_STREAM_MAX_BYTES / config->block_count ||
+	    !adiaxiadc_reserved_zero(config->reserved, __arraycount(config->reserved)))
+		return EINVAL;
+	if (!sc->sc_configured || l == NULL || l->l_capture_guard == NULL)
+		return EINVAL;
+	if (sc->sc_stream_active || sc->sc_stream_data != NULL || sc->sc_capture_pending)
+		return EBUSY;
+	generation = sc->sc_stream_status.generation + 1;
+	memset(&sc->sc_stream_status, 0, sizeof(sc->sc_stream_status));
+	sc->sc_stream_fault_logged = false;
+	memset(sc->sc_stream_start_status, 0, sizeof(sc->sc_stream_start_status));
+	sc->sc_stream_status.generation = generation;
+	sc->sc_stream_status.block_bytes = config->block_bytes;
+	sc->sc_stream_status.block_count = config->block_count;
+	memset(&rxstatus, 0, sizeof(rxstatus));
+	error = adi_axi_adc_read_rx_status(l, &rxstatus);
+	if (error != 0 && error != EOPNOTSUPP)
+		return error;
+	sc->sc_stream_status.sample_rate_hz = rxstatus.sample_rate_hz;
+	sc->sc_stream_data = kmem_alloc(config->block_bytes, KM_SLEEP);
+	for (unsigned i = 0; i < config->block_count; i++) {
+		error = adi_axi_dmac_guard_buffer_alloc(l->l_capture_guard, config->block_bytes,
+		    &sc->sc_stream_buffers[i]);
+		if (error != 0)
+			goto fail;
+	}
+	/* The held converter transaction proves every guard quiet before arm.
+	 * Reserved guards exclude foreign consumers until producer enable.
+	 */
+	mutex_enter(&l->l_converter->c_lock);
+	error = adi_axi_adc_start_validate_locked(l);
+	if (error != 0)
+		goto fail_locked;
+	for (unsigned i = 0; i < l->l_nguards; i++)
+		if (l->l_guards[i] == l->l_capture_guard)
+			capture_owned = true;
+	if (!capture_owned) {
+		error = EPERM;
+		goto fail_locked;
+	}
+	/* Clear only the previous epoch while the producer remains disabled. */
+	bus_space_write_4(sc->sc_bst, sc->sc_bsh, ADC_DMA_STATUS, 4);
+	sc->sc_stream_start_status[0] =
+	    bus_space_read_4(sc->sc_bst, sc->sc_bsh, ADC_DMA_STATUS);
+	error = adi_axi_dmac_guard_stream_start(l->l_capture_guard);
+	if (error != 0)
+		goto fail_locked;
+	/* Track armed memory ownership even before the producer is committed. */
+	sc->sc_stream_active = true;
+	sc->sc_stream_start_status[1] =
+	    bus_space_read_4(sc->sc_bst, sc->sc_bsh, ADC_DMA_STATUS);
+	error = adi_axi_dmac_guard_stream_notify(l->l_capture_guard,
+	    adiaxiadc_stream_notify, sc);
+	if (error != 0)
+		goto fail_locked;
+	for (unsigned i = 0; i < config->block_count; i++) {
+		error = adi_axi_dmac_guard_stream_submit(l->l_capture_guard,
+		    sc->sc_stream_buffers[i], config->block_bytes);
+		if (error != 0)
+			goto fail_locked;
+	}
+	error = adi_axi_dmac_guard_stream_prime(l->l_capture_guard, 1000);
+	if (error != 0)
+		goto fail_locked;
+	sc->sc_stream_start_status[2] =
+	    bus_space_read_4(sc->sc_bst, sc->sc_bsh, ADC_DMA_STATUS);
+	error = adi_axi_adc_start_commit_locked(l);
+	if (error != 0)
+		goto fail_locked;
+	sc->sc_stream_start_status[3] =
+	    bus_space_read_4(sc->sc_bst, sc->sc_bsh, ADC_DMA_STATUS);
+	mutex_exit(&l->l_converter->c_lock);
+	mutex_enter(&sc->sc_session_lock);
+	sc->sc_stream_cancel = false;
+	mutex_exit(&sc->sc_session_lock);
+	sc->sc_stream_status.flags = ADI_AXI_ADC_STREAM_RUNNING;
+	return 0;
+fail_locked:
+	if (sc->sc_stream_active) {
+		/* Disable and positively drain armed RX before any all-guard check or
+		 * buffer free. The bound drain disables even partially enabled ADCs.
+		 */
+		stop_error = adi_axi_dmac_guard_stream_stop(l->l_capture_guard, 1000);
+		if (stop_error == 0)
+			stop_error = quiesce_locked(l, 1000);
+		if (stop_error != 0) {
+			sc->sc_stream_status.last_error = stop_error;
+			mutex_exit(&l->l_converter->c_lock);
+			return stop_error;
+		}
+		sc->sc_stream_active = false;
+	}
+	mutex_exit(&l->l_converter->c_lock);
 fail:
- stop_error = adiaxiadc_stream_stop(sc);
- return stop_error != 0 ? stop_error : error;
+	stop_error = adiaxiadc_stream_stop(sc);
+	return stop_error != 0 ? stop_error : error;
 }
 
 static int
