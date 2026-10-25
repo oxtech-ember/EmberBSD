@@ -1496,6 +1496,14 @@ rtw88_net_newstate(struct ieee80211com *ic, enum ieee80211_state state,
 		state = IEEE80211_S_INIT;
 		arg = -1;
 	}
+	/*
+	 * The accepted association response completed the management
+	 * transaction. The deferred RUN may cold-start a wider tuple for
+	 * longer than IEEE80211_TRANS_WAIT; stop the timer that would
+	 * otherwise abandon it for SCAN. The worker requests INIT on failure.
+	 */
+	if (state == IEEE80211_S_RUN)
+		ic->ic_mgt_timer = 0;
 	callout_stop(&net->scan);
 #ifdef RTW88_RFK_EXPERIMENT
 lock_request:
