@@ -27,6 +27,15 @@
  * SUCH DAMAGE.
  */
 
+/* EmberBSD (AI-assisted): request Darwin's full public group-membership API. */
+#if defined(__APPLE__) && !defined(_DARWIN_UNLIMITED_GETGROUPS)
+#define _DARWIN_UNLIMITED_GETGROUPS 1
+#endif
+
+#if HAVE_NBTOOL_CONFIG_H
+#include "nbtool_config.h"
+#endif
+
 #include <sys/cdefs.h>
 #ifndef lint
 __COPYRIGHT("@(#) Copyright (c) 1991, 1993\
