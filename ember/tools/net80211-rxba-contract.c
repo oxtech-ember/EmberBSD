@@ -180,7 +180,9 @@ static void unit_negotiate(struct unit_fixture *f)
  f->ic.ic_ht20_admit=unit_profile;unit_profile_generation=1;
  f->ic.ic_wme.wme_sta_apply=unit_apply;f->ic.ic_flags|=IEEE80211_F_WME;f->ic.ic_caps|=IEEE80211_C_WME;
  f->ni.ni_flags|=IEEE80211_NODE_QOS|IEEE80211_NODE_WME_VALID;
- f->ni.ni_rsn.rsn_ucastcipher=IEEE80211_CIPHER_AES_CCM;
+ /* The HT gate reads the station's own RSN element: CCMP pairwise. */
+ static uint8_t unit_rsn[22]={48,20,1,0,0,0x0f,0xac,4,1,0,0,0x0f,0xac,4,1,0,0,0x0f,0xac,2,0,0};
+ f->ic.ic_opt_ie=unit_rsn;f->ic.ic_opt_ie_len=sizeof(unit_rsn);
  f->channel.ieee=36;f->ni.ni_chan=f->ic.ic_curchan=&f->channel;
  f->ic.ic_state=IEEE80211_S_ASSOC;
  CHECK(ieee80211_ht20_prepare(&f->ic,&f->ni,1,&profile)==1);
@@ -842,7 +844,7 @@ static void test_amsdu_current_without_ba(void)
   if(stale==3)f.ic.ic_ht20_admit=NULL;
   if(stale==4)f.ni.ni_bssid[5]^=4;
   if(stale==5)f.ni.ni_ht20.attempt++;
-  if(stale==6)f.ni.ni_rsn.rsn_ucastcipher=IEEE80211_CIPHER_NONE;
+  if(stale==6)f.ic.ic_opt_ie=NULL; /* No CCMP RSN request any more. */
   ieee80211_input(&f.ic,unit_amsdu_wire(&f,10,10,48,0),&f.ni,0,0);
   if(stale==0)CHECK(rxba_output_count==2 && f.ni.ni_ht20.valid);
   else {

@@ -50,6 +50,40 @@ ht20_local(struct ieee80211com *ic, struct ieee80211_ht20_profile *p)
 	    (p->rx_mcs & 0xff) == 0xff && p->rx_mcs == p->tx_mcs;
 }
 
+/*
+ * The pairwise cipher this station requests: its own RSN element in the
+ * optional IEs, which wpa_supplicant installs before association. Its
+ * driver never sets the unicast cipher ioctl, so ni_rsn keeps the WEP
+ * default and cannot decide. Only one well-formed RSN element (version 1)
+ * with a single CCMP-128 pairwise suite qualifies; a WPA vendor element,
+ * TKIP or any additional pairwise suite does not.
+ */
+static int
+ht20_rsn_ccmp(const struct ieee80211com *ic)
+{
+	const uint8_t *p = ic->ic_opt_ie, *rsn = NULL;
+	size_t len = ic->ic_opt_ie_len, size;
+
+	if (p == NULL)
+		return 0;
+	while (len != 0) {
+		if (len < 2 || p[1] > len - 2)
+			return 0;
+		size = (size_t)p[1] + 2;
+		if (p[0] == 48) {
+			if (rsn != NULL)
+				return 0;
+			rsn = p;
+		}
+		p += size;
+		len -= size;
+	}
+	/* Version, group suite, pairwise count 1 and pairwise 00-0F-AC:4. */
+	return rsn != NULL && rsn[1] >= 12 && rsn[2] == 1 && rsn[3] == 0 &&
+	    rsn[8] == 1 && rsn[9] == 0 && rsn[10] == 0x00 &&
+	    rsn[11] == 0x0f && rsn[12] == 0xac && rsn[13] == 4;
+}
+
 int
 ieee80211_ht20_prepare(struct ieee80211com *ic, struct ieee80211_node *ni,
     int wme, struct ieee80211_ht20_profile *p)
@@ -58,8 +92,7 @@ ieee80211_ht20_prepare(struct ieee80211com *ic, struct ieee80211_node *ni,
 	if (!wme || ic->ic_wme.wme_sta_apply == NULL || ic->ic_opmode != IEEE80211_M_STA ||
 	    ic->ic_state != IEEE80211_S_ASSOC || ni != ic->ic_bss ||
 	    ni->ni_chan != ic->ic_curchan ||
-	    ((ic->ic_flags & IEEE80211_F_PRIVACY) != 0 &&
-	     ni->ni_rsn.rsn_ucastcipher != IEEE80211_CIPHER_AES_CCM))
+	    ((ic->ic_flags & IEEE80211_F_PRIVACY) != 0 && !ht20_rsn_ccmp(ic)))
 		return 0;
 	return ht20_local(ic, p);
 }
@@ -133,8 +166,7 @@ ht20_current(struct ieee80211com *ic, struct ieee80211_node *ni,
 	    (ni->ni_flags & (IEEE80211_NODE_QOS | IEEE80211_NODE_WME_VALID)) ==
 	    (IEEE80211_NODE_QOS | IEEE80211_NODE_WME_VALID) &&
 	    h->security == ((ic->ic_flags & IEEE80211_F_PRIVACY) != 0) &&
-	    ((ic->ic_flags & IEEE80211_F_PRIVACY) == 0 ||
-	     ni->ni_rsn.rsn_ucastcipher == IEEE80211_CIPHER_AES_CCM) &&
+	    ((ic->ic_flags & IEEE80211_F_PRIVACY) == 0 || ht20_rsn_ccmp(ic)) &&
 	    ni == ic->ic_bss && h->offer_attempt == h->attempt &&
 	    h->attempt == ni->ni_ht20.attempt &&
 	    h->assoc_attempt == ni->ni_wme_attempt &&

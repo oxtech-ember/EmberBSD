@@ -55,7 +55,10 @@ The aggregate input is freed once after successful list creation.
 The caller retains cleanup ownership on every failure.
 The native STA association path sets and clears the node flag with the peer
 association lifetime, after the provider and peer HT checks pass. When privacy
-is enabled, HT admission requires AES-CCM. The RTL8822CE provider also requires
+is enabled, HT admission requires the station's own RSN element in the
+optional IEs (installed by wpa_supplicant) to carry exactly one CCMP-128
+pairwise suite; the unicast cipher ioctl is not set by that supplicant and
+does not decide. The RTL8822CE provider also requires
 ready RX block-ack callbacks, its state worker and soft interrupt, and the
 bounded WME/A-MSDU consumer before it publishes HT20.
 

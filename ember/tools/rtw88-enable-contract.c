@@ -870,11 +870,13 @@ static struct rtw88_net *enable_ht20_negotiate(struct rtw88_softc *sc,
 {
     struct rtw88_net *net=enable_attach(sc,lock);
     if(!net)return NULL;
-    struct ieee80211com *ic=&net->ic;struct ieee80211_node *ni=ic->ic_bss;
+    struct ieee80211com *ic=&net->ic;
     ht20_net=net;ht20_profile=(struct ieee80211_ht20_profile){777,0xff,0xff,0x3f,16};
     static struct cipher ht20_cipher={.ic_header=8,.ic_trailer=8,.ic_cipher=IEEE80211_CIPHER_AES_CCM};
     route_key.wk_cipher=&ht20_cipher;route_key.wk_flags=IEEE80211_KEY_SWCRYPT;
-    ic->ic_flags|=IEEE80211_F_PRIVACY;ni->ni_rsn.rsn_ucastcipher=IEEE80211_CIPHER_AES_CCM;route_have_key=1;
+    /* The HT gate reads the station's own RSN element: CCMP pairwise. */
+    static uint8_t ht20_rsn[22]={48,20,1,0,0,0x0f,0xac,4,1,0,0,0x0f,0xac,4,1,0,0,0x0f,0xac,2,0,0};
+    ic->ic_flags|=IEEE80211_F_PRIVACY;ic->ic_opt_ie=ht20_rsn;ic->ic_opt_ie_len=sizeof(ht20_rsn);route_have_key=1;
     enable_ht20_exchange(ic,ht20_provider,&ht20_profile,ht20_test_operation);
     if(first<0)return net; /* Parser has queued actual RUN; worker is deferred. */
     if(first)queue_packet(&net->ec.ec_if.if_snd,ether_packet(0,0,0));
@@ -1142,7 +1144,7 @@ static void enable_ht20_precrypto_fences(void)
         case 8: sc.sc_generation++;break;
         case 9: ni->ni_bssid[0]^=2;break;
         case 10: ic->ic_flags&=~IEEE80211_F_PRIVACY;break;
-        case 11: ni->ni_rsn.rsn_ucastcipher=0;break;
+        case 11: ic->ic_opt_ie=NULL;break; /* No CCMP RSN request. */
         case 12: sc.sc_ra.phy=RTW88_RA_LEGACY;break;
         case 13: ic->ic_curmode=IEEE80211_MODE_11G;break;
         case 14: ic->ic_flags|=IEEE80211_F_USEPROT;break;

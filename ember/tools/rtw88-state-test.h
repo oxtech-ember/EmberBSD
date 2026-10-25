@@ -51,6 +51,8 @@ struct ieee80211com {
 	uint64_t ic_rxba_serial;
 	int (*ic_ht20_admit)(struct ieee80211com *, struct ieee80211_ht20_profile *);
 	struct ieee80211_ht20_diag ic_ht20_diag;
+	void *ic_opt_ie;
+	uint16_t ic_opt_ie_len;
 	int (*ic_vht_admit)(struct ieee80211com *,
 	    const struct ieee80211_vht_channel *, struct ieee80211_vht_cap *);
 	struct ifqueue ic_mgtq;

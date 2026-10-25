@@ -824,6 +824,58 @@ test_probe_and_optional_compatibility(void)
 	CHECK(!test_node.ni_ht20.offered && captured==NULL && node_refs==1);
 }
 
+/*
+ * With privacy, the HT/VHT gate reads the pairwise suite of this station's
+ * own RSN element in ic_opt_ie. wpa_supplicant installs that element but
+ * never sets the kernel unicast cipher, so ni_rsn keeps its WEP default.
+ * Exactly one RSN element with a single CCMP-128 pairwise suite qualifies.
+ */
+static void
+test_privacy_rsn_gate(void)
+{
+	static const uint8_t ccmp[22]={48,20,1,0,0,0x0f,0xac,4,1,0,0,0x0f,0xac,4,
+	    1,0,0,0x0f,0xac,2,0x80,0};
+	static const uint8_t two[26]={48,24,1,0,0,0x0f,0xac,4,2,0,0,0x0f,0xac,4,
+	    0,0x0f,0xac,2,1,0,0,0x0f,0xac,2,0,0};
+	static const uint8_t wpa[24]={221,22,0,0x50,0xf2,1,1,0,0,0x50,0xf2,4,1,0,
+	    0,0x50,0xf2,4,1,0,0,0x50,0xf2,2};
+	uint8_t ie[64];
+	for (unsigned variant=0;variant<15;variant++) {
+		size_t len=sizeof(ccmp);
+		memcpy(ie,ccmp,sizeof(ccmp));
+		switch(variant) {
+		case 1: ie[13]=2; break;			/* TKIP pairwise. */
+		case 2: memcpy(ie,two,sizeof(two)); len=sizeof(two); break;
+		case 3: memcpy(ie+len,ccmp,sizeof(ccmp)); len*=2; break; /* Two RSN. */
+		case 4: ie[1]=40; break;			/* Overlong element. */
+		case 5: len=0; break;				/* No RSN element. */
+		case 6: memcpy(ie,wpa,sizeof(wpa)); len=sizeof(wpa); break;
+		case 7: ie[2]=2; break;				/* RSN version 2. */
+		case 8: ie[1]=11; len=13; break;		/* No pairwise suite. */
+		case 9: ie[11]=0x0e; break;			/* Other OUI. */
+		case 10: ie[3]=1; break;			/* Version 0x0101. */
+		case 11: ie[9]=1; break;			/* Count 0x0101. */
+		case 12: ie[13]=8; break;			/* GCMP-128. */
+		case 13: ie[13]=10; break;			/* CCMP-256. */
+		case 14: ie[10]=1; break;			/* OUI byte 0. */
+		}
+		ht_setup();
+		test_ic.ic_flags|=IEEE80211_F_PRIVACY;
+		/* The kernel cipher field no longer decides either way. */
+		test_node.ni_rsn.rsn_ucastcipher=variant==0?
+		    IEEE80211_CIPHER_WEP:IEEE80211_CIPHER_AES_CCM;
+		test_ic.ic_opt_ie=len?ie:NULL; test_ic.ic_opt_ie_len=(uint16_t)len;
+		CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ)==0);
+		CHECK((ht_in_request()!=NULL)==(variant==0));
+		CHECK(test_node.ni_ht20.offered==(variant==0));
+		release_capture();
+		if (variant==0) {
+			deliver(ht_response(),IEEE80211_FC0_SUBTYPE_ASSOC_RESP);
+			CHECK(test_node.ni_ht20.valid);
+		}
+	}
+}
+
 static void
 test_profile_numeric_bounds(void)
 {
@@ -894,6 +946,7 @@ main(void)
 	test_protection_qualification();
 	test_golden_and_reassociation();
 	test_probe_and_optional_compatibility();
+	test_privacy_rsn_gate();
 	test_profile_numeric_bounds();
 	test_maximum_producer_budget();
 	printf("Native HT20 association: %u checks, %u failures\n",checks,failures);
