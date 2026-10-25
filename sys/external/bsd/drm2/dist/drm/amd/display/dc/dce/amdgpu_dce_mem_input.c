@@ -487,7 +487,6 @@ static void program_grph_pixel_format(
 		/* fall through */
 	case SURFACE_PIXEL_FORMAT_GRPH_ARGB16161616F: /* shouldn't this get float too? */
 	case SURFACE_PIXEL_FORMAT_GRPH_ARGB16161616:
-	case SURFACE_PIXEL_FORMAT_GRPH_ABGR16161616:
 		grph_depth = 3;
 		grph_format = 0;
 		break;
