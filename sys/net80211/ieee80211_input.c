@@ -3071,6 +3071,8 @@ ieee80211_recv_mgmt_assoc_resp(struct ieee80211com *ic, struct mbuf *m0,
 		if (ni != ic->ic_bss)	/* XXX never true? */
 			ni->ni_fails++;
 		ic->ic_stats.is_rx_auth_fail++;	/* XXX */
+		ic->ic_ht20_diag.status++;
+		ic->ic_ht20_diag.last_status = status;
 		return;
 	}
 	associd = le16toh(*(u_int16_t *)frm);
@@ -3118,6 +3120,7 @@ ieee80211_recv_mgmt_assoc_resp(struct ieee80211com *ic, struct mbuf *m0,
 		if (ni != ic->ic_bss)	/* XXX never true? */
 			ni->ni_fails++;
 		ic->ic_stats.is_rx_assoc_norate++;
+		ic->ic_ht20_diag.norate++;
 		ieee80211_new_state(ic, IEEE80211_S_SCAN, 0);
 		return;
 	}
@@ -3202,6 +3205,7 @@ ieee80211_recv_mgmt_assoc_resp(struct ieee80211com *ic, struct mbuf *m0,
 	return;
 ht20_failure:
 	/* Same association-failure ownership as the WME apply path above. */
+	ic->ic_ht20_diag.failures++;
 	ni->ni_associd = 0;
 	ieee80211_ht20_reset(ni);
 	ieee80211_wme_reset(ni);
