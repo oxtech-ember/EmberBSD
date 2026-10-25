@@ -1,0 +1,322 @@
+{
+  "format": "emberbsd-native-bootstrap-program",
+  "version": 1,
+  "origin": "EmberBSD (AI-assisted) source contract; implementation retains its BSD copyright notices.",
+  "compiler": {
+    "family": "gcc",
+    "major": 16,
+    "abi": "native"
+  },
+  "cflags": [],
+  "link_flags": [],
+  "libraries": [],
+  "name": "printf",
+  "canonical_host_recipe": "tools/printf/Makefile",
+  "source_makefile": "usr.bin/printf/Makefile",
+  "sources": [
+    "usr.bin/printf/printf.c"
+  ],
+  "headers": [
+    "tools/compat/bootstrap_cdefs.h"
+  ],
+  "include_dirs": [],
+  "cppflags": [
+    "-include",
+    "tools/compat/bootstrap_cdefs.h"
+  ],
+  "invocations": [
+    "printf"
+  ],
+  "files": {},
+  "runtime_cases": [
+    {
+      "name": "literal",
+      "invocation": "printf",
+      "args": [
+        "hello\n"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "hello\n",
+      "stderr": ""
+    },
+    {
+      "name": "empty-format",
+      "invocation": "printf",
+      "args": [
+        ""
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "name": "string",
+      "invocation": "printf",
+      "args": [
+        "%s\n",
+        "alpha"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "alpha\n",
+      "stderr": ""
+    },
+    {
+      "name": "repeat-format",
+      "invocation": "printf",
+      "args": [
+        "%s:%d\n",
+        "alpha",
+        "1",
+        "beta",
+        "2"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "alpha:1\nbeta:2\n",
+      "stderr": ""
+    },
+    {
+      "name": "default-arguments",
+      "invocation": "printf",
+      "args": [
+        "[%s][%d]\n"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "[][0]\n",
+      "stderr": ""
+    },
+    {
+      "name": "integer-bases",
+      "invocation": "printf",
+      "args": [
+        "%d %i %o %x %X %u\n",
+        "-42",
+        "010",
+        "8",
+        "31",
+        "31",
+        "42"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "-42 8 10 1f 1F 42\n",
+      "stderr": ""
+    },
+    {
+      "name": "floating-point",
+      "invocation": "printf",
+      "args": [
+        "%.2f\n",
+        "1.25"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "1.25\n",
+      "stderr": ""
+    },
+    {
+      "name": "long-double",
+      "invocation": "printf",
+      "args": [
+        "-L",
+        "%.2f\n",
+        "1.25"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "1.25\n",
+      "stderr": ""
+    },
+    {
+      "name": "string-width",
+      "invocation": "printf",
+      "args": [
+        "%6.3s\n",
+        "abcdef"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "   abc\n",
+      "stderr": ""
+    },
+    {
+      "name": "dynamic-width",
+      "invocation": "printf",
+      "args": [
+        "%*.*s\n",
+        "6",
+        "3",
+        "abcdef"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "   abc\n",
+      "stderr": ""
+    },
+    {
+      "name": "character",
+      "invocation": "printf",
+      "args": [
+        "%c\n",
+        "Zulu"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "Z\n",
+      "stderr": ""
+    },
+    {
+      "name": "quoted-number",
+      "invocation": "printf",
+      "args": [
+        "%d\n",
+        "'A"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "65\n",
+      "stderr": ""
+    },
+    {
+      "name": "literal-percent",
+      "invocation": "printf",
+      "args": [
+        "100%%\n"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "100%\n",
+      "stderr": ""
+    },
+    {
+      "name": "format-escapes",
+      "invocation": "printf",
+      "args": [
+        "a\\tb\\n"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "a\tb\n",
+      "stderr": ""
+    },
+    {
+      "name": "argument-escapes",
+      "invocation": "printf",
+      "args": [
+        "%b",
+        "a\\nb\\t"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "a\nb\t",
+      "stderr": ""
+    },
+    {
+      "name": "stop-escape",
+      "invocation": "printf",
+      "args": [
+        "%bTAIL",
+        "ab\\cignored"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "ab",
+      "stderr": ""
+    },
+    {
+      "name": "printable-expansion",
+      "invocation": "printf",
+      "args": [
+        "%B\n",
+        "a\nb"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "a\\nb\n",
+      "stderr": ""
+    },
+    {
+      "name": "option-terminator",
+      "invocation": "printf",
+      "args": [
+        "--",
+        "-x:%s\n",
+        "value"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "-x:value\n",
+      "stderr": ""
+    },
+    {
+      "name": "leading-dash",
+      "invocation": "printf",
+      "args": [
+        "-x"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "-x",
+      "stderr": ""
+    },
+    {
+      "name": "missing-format",
+      "invocation": "printf",
+      "args": [],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "invalid-directive",
+      "invocation": "printf",
+      "args": [
+        "%q"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "invalid-number",
+      "invocation": "printf",
+      "args": [
+        "%d",
+        "bad"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "0",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "partial-number",
+      "invocation": "printf",
+      "args": [
+        "%d",
+        "12junk"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "12",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "incomplete-directive",
+      "invocation": "printf",
+      "args": [
+        "%"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    }
+  ]
+}
