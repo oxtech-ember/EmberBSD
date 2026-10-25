@@ -26,9 +26,10 @@ python3 external/bsd/elftoolchain/tests/run-libelf-abi.py \
 
 The expected-base manifest is optional. When supplied, the runner verifies its
 regular-file payload hashes under the sysroot before it compiles the probe. The
-probe checks the public `Elf_Data` field layout, links against `libelf`, writes
-and reads ELF32 and ELF64 headers, section headers, and section data through
-libelf/GElf, and checks refusal of malformed ELF identification. A cross-built
+probe checks `STN_UNDEF` and the public `Elf_Data` field layout, links against
+`libelf`, writes and reads ELF32 and ELF64 headers, section headers, and section
+data through libelf/GElf, and checks refusal of malformed ELF identification.
+A cross-built
 probe needs an explicit `--runner` command to run on a compatible target. Use
 `--include-dir`, `--library-dir`, `--cflag`, and `--ldflag` to pass additional
 target-specific arguments.
