@@ -1,0 +1,143 @@
+{
+  "format": "emberbsd-native-bootstrap-program",
+  "version": 1,
+  "origin": "EmberBSD (AI-assisted) source contract; implementation retains its BSD copyright notices.",
+  "compiler": {
+    "family": "gcc",
+    "major": 16,
+    "abi": "native"
+  },
+  "cflags": [],
+  "link_flags": [],
+  "libraries": [],
+  "name": "pwd",
+  "canonical_host_recipe": "tools/pwd/Makefile",
+  "source_makefile": "bin/pwd/Makefile",
+  "sources": [
+    "bin/pwd/pwd.c"
+  ],
+  "headers": [
+    "tools/compat/bootstrap_cdefs.h"
+  ],
+  "include_dirs": [],
+  "cppflags": [
+    "-include",
+    "tools/compat/bootstrap_cdefs.h"
+  ],
+  "invocations": [
+    "pwd"
+  ],
+  "files": {},
+  "runtime_cases": [
+    {
+      "name": "physical-default",
+      "invocation": "pwd",
+      "args": [],
+      "stdin": "",
+      "exit": 0,
+      "stdout_work_root": true,
+      "stderr": ""
+    },
+    {
+      "name": "physical",
+      "invocation": "pwd",
+      "args": [
+        "-P"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout_work_root": true,
+      "stderr": ""
+    },
+    {
+      "name": "logical",
+      "invocation": "pwd",
+      "args": [
+        "-L"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout_work_root": true,
+      "stderr": ""
+    },
+    {
+      "name": "logical-then-physical",
+      "invocation": "pwd",
+      "args": [
+        "-L",
+        "-P"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout_work_root": true,
+      "stderr": ""
+    },
+    {
+      "name": "physical-then-logical",
+      "invocation": "pwd",
+      "args": [
+        "-P",
+        "-L"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout_work_root": true,
+      "stderr": ""
+    },
+    {
+      "name": "repeated-logical",
+      "invocation": "pwd",
+      "args": [
+        "-LL"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout_work_root": true,
+      "stderr": ""
+    },
+    {
+      "name": "repeated-physical",
+      "invocation": "pwd",
+      "args": [
+        "-PP"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout_work_root": true,
+      "stderr": ""
+    },
+    {
+      "name": "option-terminator",
+      "invocation": "pwd",
+      "args": [
+        "--"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout_work_root": true,
+      "stderr": ""
+    },
+    {
+      "name": "invalid-option",
+      "invocation": "pwd",
+      "args": [
+        "-z"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "extra-operand",
+      "invocation": "pwd",
+      "args": [
+        "unexpected"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    }
+  ]
+}
