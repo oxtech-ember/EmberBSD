@@ -1519,22 +1519,12 @@ rtw88_net_newstate(struct ieee80211com *ic, enum ieee80211_state state,
 	struct rtw88_net *net = ic->ic_ifp->if_softc;
 	int enqueue = 0, ht20_error;
 	int run_asked = state == IEEE80211_S_RUN;
-	uint64_t caller;
 	int quiet_error = net->tx_quiet && state != IEEE80211_S_INIT ? EBUSY : 0;
 
 	if (quiet_error != 0) {
 		state = IEEE80211_S_INIT;
 		arg = -1;
 	}
-	/*
-	 * Diagnostics only: the frame above ieee80211_new_state(). The
-	 * kernel keeps frame pointers; the value is a code address to
-	 * resolve against the kernel symbols, never dereferenced.
-	 */
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wframe-address"
-	caller = (uint64_t)(uintptr_t)__builtin_return_address(1);
-#pragma GCC diagnostic pop
 
 	/* Drop stale readiness before leaving the association/RUN lifecycle. */
 	if (state != IEEE80211_S_ASSOC && state != IEEE80211_S_RUN)
@@ -1596,7 +1586,6 @@ lock_request:
 		net->neg.run_replaced++;
 		net->neg.run_replaced_by = (uint8_t)state;
 		net->neg.run_replaced_arg = arg;
-		net->neg.run_replaced_caller = caller;
 	}
 	net->run_pending = state == IEEE80211_S_RUN;
 	if (state == IEEE80211_S_RUN)
