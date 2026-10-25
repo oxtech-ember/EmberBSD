@@ -21,6 +21,20 @@ Other hosts call their native `gid_t` interface directly.
 The existing libnbcompat `grp.h` supplies missing name lookup declarations;
 it does not provide this signature adapter.
 
+Darwin can return `-1` with the count of its filled prefix instead of the required size.
+The adapter grows its native integer array until it obtains a complete result.
+Only then does it return the required count or copy values into the caller's array.
+Failures leave caller storage and its count unchanged, except a complete required-size result.
+Each call permits at most `sizeof(int) * CHAR_BIT` native attempts.
+Capacity stops at `INT_MAX - 1`; Apple's backend computes capacity plus one.
+The eight outer stability attempts remain unchanged. There is no 128-group ceiling.
+
+A full-prefix failure means capacity exhaustion even when libc leaves a nonzero `errno`.
+The public return/count signature cannot distinguish an unrelated error with that same signature.
+Other failures, malformed counts and allocation errors refuse without exposing partial data.
+The [Apple implementation](https://github.com/apple-oss-distributions/Libinfo/blob/main/lookup.subproj/libinfo.c)
+defines this prefix behavior. The adapter uses no private sizing API.
+
 Before any source header, ID requests `_DARWIN_UNLIMITED_GETGROUPS` on Apple hosts.
 This selects the public full-membership `getgroups` interface for macOS 10.6 and later.
 The source does not enable all Darwin extensions with `_DARWIN_C_SOURCE`.
@@ -57,6 +71,8 @@ Historical verification retains accepted streams instead of querying current ide
 
 Run `tools/id/tests/source.py` with the explicit SDK Python for source checks.
 [grouplist.c](tests/grouplist.c) is a separate typed-ABI C diagnostic fixture.
+Its unexecuted controls cover 513 groups, prefix counts with stale `errno`, required-size counts,
+invalid results, initial/growth allocation failure, storage canaries and the signed capacity boundary.
 The normal OS ID tests also cover count growth, empty lists and API failures.
 Source and synthetic tests do not establish C correctness.
 Actual GCC16 builds, diagnostic fixture execution, OS tests, C analysis,

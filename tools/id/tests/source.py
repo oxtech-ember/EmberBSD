@@ -70,10 +70,20 @@ class IdSourceTests(unittest.TestCase):
     def test_host_abi_adapter_has_distinct_native_integer_storage(self):
         text = (ROOT / 'common/include/libutil/compat_grouplist.h').read_text()
         self.assertIn('int *native_groups', text)
-        self.assertIn('getgrouplist(user, native_base, native_groups, count)', text)
+        self.assertIn('getgrouplist(user, native_base, native_groups,', text)
+        self.assertIn('&native_count)', text)
         self.assertNotIn('(int *)', text)
         self.assertNotIn('mbr_', text)
         self.assertIn('return getgrouplist(user, base, groups, count)', text)
+
+    def test_darwin_complete_count_sizing_has_an_int_width_bound(self):
+        text = (ROOT / 'common/include/libutil/compat_grouplist.h').read_text()
+        self.assertIn('#define COMPAT_GROUPLIST_RETRIES (sizeof(int) * CHAR_BIT)', text)
+        self.assertIn('#define COMPAT_GROUPLIST_MAX (INT_MAX - 1)', text)
+        self.assertIn('compat_grouplist_next', text)
+        self.assertIn('native_count > capacity', text)
+        source = (ROOT / 'usr.bin/id/id.c').read_text()
+        self.assertIn('#define\tGROUP_RETRIES\t8', source)
 
     def test_fixed_profile_keeps_source_and_existing_aliases(self):
         value = json.loads((ROOT / 'tools/id/bootstrap.json').read_bytes())
