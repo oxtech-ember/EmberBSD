@@ -748,6 +748,10 @@ static void test_premature_addba_declined(void)
   CHECK(unit_declined_posts==1 && unit_positive_posts==0);
   CHECK(f.ic.ic_state==(kind==0?IEEE80211_S_ASSOC:IEEE80211_S_RUN));
   CHECK(f.ni.ni_ht20.valid && f.ni.ni_rxba.epoch==0 && f.ni.ni_rxba.bytes==0);
+  /* The driver queries the mask after every frame; with no session that
+   * query is empty and must not withdraw the association either. */
+  CHECK(ieee80211_rxba_mask(&f.ic,&f.ni)==0);
+  CHECK(f.ni.ni_ht20.valid && f.ic.ic_state!=IEEE80211_S_INIT);
   /* A premature DELBA has no session to remove and is ignored. */
   uint8_t delba[6]={3,2,0,0x08,1,0};
   CHECK(ieee80211_rxba_action(&f.ic,&f.ni,delba,sizeof(delba))!=0);

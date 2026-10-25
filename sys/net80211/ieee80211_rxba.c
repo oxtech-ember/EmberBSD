@@ -214,7 +214,9 @@ ieee80211_rxba_mask(struct ieee80211com *ic, struct ieee80211_node *ni)
 {
 	unsigned tid, mask = 0;
 
-	if (!rxba_require_current(ic, ni))
+	/* A query before RUN or authorization, with no session, is empty;
+	 * the driver asks after every received frame. */
+	if (rxba_premature(ic, ni) || !rxba_require_current(ic, ni))
 		return 0;
 	for (tid = 0; tid < IEEE80211_RXBA_TIDS; tid++)
 		if (ni->ni_rxba.tid[tid] != NULL)
