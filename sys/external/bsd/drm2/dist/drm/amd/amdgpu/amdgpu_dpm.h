@@ -25,6 +25,8 @@
 #ifndef __AMDGPU_DPM_H__
 #define __AMDGPU_DPM_H__
 
+struct amdgpu_ctx;
+
 enum amdgpu_int_thermal_type {
 	THERMAL_TYPE_NONE,
 	THERMAL_TYPE_EXTERNAL,
@@ -422,6 +424,8 @@ struct amdgpu_dpm {
 
 struct amdgpu_pm {
 	struct mutex		mutex;
+	struct mutex		stable_pstate_ctx_lock;
+	struct amdgpu_ctx	*stable_pstate_ctx;
 	u32                     current_sclk;
 	u32                     current_mclk;
 	u32                     default_sclk;

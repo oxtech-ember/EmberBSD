@@ -200,6 +200,16 @@ union drm_amdgpu_bo_list {
 #define AMDGPU_CTX_OP_FREE_CTX	2
 #define AMDGPU_CTX_OP_QUERY_STATE	3
 #define AMDGPU_CTX_OP_QUERY_STATE2	4
+#define AMDGPU_CTX_OP_GET_STABLE_PSTATE	5
+#define AMDGPU_CTX_OP_SET_STABLE_PSTATE	6
+
+/* Stable profiling pstate values for perfmon tools. */
+#define AMDGPU_CTX_STABLE_PSTATE_FLAGS_MASK	0xf
+#define AMDGPU_CTX_STABLE_PSTATE_NONE		0
+#define AMDGPU_CTX_STABLE_PSTATE_STANDARD	1
+#define AMDGPU_CTX_STABLE_PSTATE_MIN_SCLK	2
+#define AMDGPU_CTX_STABLE_PSTATE_MIN_MCLK	3
+#define AMDGPU_CTX_STABLE_PSTATE_PEAK		4
 
 /* GPU reset status */
 #define AMDGPU_CTX_NO_RESET		0
@@ -219,6 +229,8 @@ union drm_amdgpu_bo_list {
 /* indicate some errors are detected by RAS */
 #define AMDGPU_CTX_QUERY2_FLAGS_RAS_CE   (1<<3)
 #define AMDGPU_CTX_QUERY2_FLAGS_RAS_UE   (1<<4)
+/* indicate a GPU reset is in progress */
+#define AMDGPU_CTX_QUERY2_FLAGS_RESET_IN_PROGRESS (1<<5)
 
 /* Context priority level */
 #define AMDGPU_CTX_PRIORITY_UNSET       -2048
@@ -256,6 +268,11 @@ union drm_amdgpu_ctx_out {
 			/** Reset status since the last call of the ioctl. */
 			__u32	reset_status;
 		} state;
+
+		struct {
+			__u32	flags;
+			__u32	_pad;
+		} pstate;
 };
 
 union drm_amdgpu_ctx {
@@ -590,6 +607,9 @@ union drm_amdgpu_cs {
  */
 #define AMDGPU_IB_FLAG_RESET_GDS_MAX_WAVE_ID (1 << 4)
 
+/* Tell KMD to flush and invalidate caches before executing this IB. */
+#define AMDGPU_IB_FLAG_EMIT_MEM_SYNC (1 << 6)
+
 struct drm_amdgpu_cs_chunk_ib {
 	__u32 _pad;
 	/** AMDGPU_IB_FLAG_* */
@@ -657,6 +677,10 @@ struct drm_amdgpu_cs_chunk_data {
  */
 #define AMDGPU_IDS_FLAGS_FUSION         0x1
 #define AMDGPU_IDS_FLAGS_PREEMPTION     0x2
+/* Trusted Memory Zone (TMZ) is supported and enabled. */
+#define AMDGPU_IDS_FLAGS_TMZ            0x4
+/* Texture coordinate truncation is conformant. */
+#define AMDGPU_IDS_FLAGS_CONFORMANT_TRUNC_COORD 0x8
 
 /* indicate if acceleration can be working */
 #define AMDGPU_INFO_ACCEL_WORKING		0x00
@@ -758,11 +782,21 @@ struct drm_amdgpu_cs_chunk_data {
 	#define AMDGPU_INFO_SENSOR_STABLE_PSTATE_GFX_SCLK		0x8
 	/* Subquery id: Query GPU stable pstate memory clock */
 	#define AMDGPU_INFO_SENSOR_STABLE_PSTATE_GFX_MCLK		0x9
+	/* Subquery id: Query GPU peak pstate shader clock */
+	#define AMDGPU_INFO_SENSOR_PEAK_PSTATE_GFX_SCLK		0xa
+	/* Subquery id: Query GPU peak pstate memory clock */
+	#define AMDGPU_INFO_SENSOR_PEAK_PSTATE_GFX_MCLK		0xb
 /* Number of VRAM page faults on CPU access. */
 #define AMDGPU_INFO_NUM_VRAM_CPU_PAGE_FAULTS	0x1E
 #define AMDGPU_INFO_VRAM_LOST_COUNTER		0x1F
 /* query ras mask of enabled features*/
 #define AMDGPU_INFO_RAS_ENABLED_FEATURES	0x20
+/* query video encode/decode caps */
+#define AMDGPU_INFO_VIDEO_CAPS			0x21
+	/* Subquery id: Decode */
+	#define AMDGPU_INFO_VIDEO_CAPS_DECODE		0
+	/* Subquery id: Encode */
+	#define AMDGPU_INFO_VIDEO_CAPS_ENCODE		1
 
 /* RAS MASK: UMC (VRAM) */
 #define AMDGPU_INFO_RAS_ENABLED_UMC			(1 << 0)
@@ -859,6 +893,10 @@ struct drm_amdgpu_info {
 		struct {
 			__u32 type;
 		} sensor_info;
+
+		struct {
+			__u32 type;
+		} video_cap;
 	};
 };
 
@@ -954,7 +992,8 @@ struct drm_amdgpu_info_device {
 	__u32 enabled_rb_pipes_mask;
 	__u32 num_rb_pipes;
 	__u32 num_hw_gfx_contexts;
-	__u32 _pad;
+	/* PCIe version (the smaller of the GPU and the CPU/motherboard) */
+	__u32 pcie_gen;
 	__u64 ids_flags;
 	/** Starting virtual address for UMDs. */
 	__u64 virtual_address_offset;
@@ -1001,7 +1040,8 @@ struct drm_amdgpu_info_device {
 	__u32 gs_prim_buffer_depth;
 	/* max gs wavefront per vgt*/
 	__u32 max_gs_waves_per_vgt;
-	__u32 _pad1;
+	/* PCIe number of lanes (the smaller of the GPU and the CPU/motherboard) */
+	__u32 pcie_num_lanes;
 	/* always on cu bitmap */
 	__u32 cu_ao_bitmap[4][4];
 	/** Starting high virtual address for UMDs. */
@@ -1012,6 +1052,22 @@ struct drm_amdgpu_info_device {
 	__u32 pa_sc_tile_steering_override;
 	/* disabled TCCs */
 	__u64 tcc_disabled_mask;
+	__u64 min_engine_clock;
+	__u64 min_memory_clock;
+	/* GFX11+ cache properties. Older ASICs return zero. */
+	__u32 tcp_cache_size;
+	__u32 num_sqc_per_wgp;
+	__u32 sqc_data_cache_size;
+	__u32 sqc_inst_cache_size;
+	__u32 gl1c_cache_size;
+	__u32 gl2c_cache_size;
+	__u64 mall_size;
+	__u32 enabled_rb_pipes_mask_hi;
+	/* GFX11 CP shadow fields. Older chips return zero. */
+	__u32 shadow_size;
+	__u32 shadow_alignment;
+	__u32 csa_size;
+	__u32 csa_alignment;
 };
 
 struct drm_amdgpu_info_hw_ip {
@@ -1026,7 +1082,8 @@ struct drm_amdgpu_info_hw_ip {
 	__u32  ib_size_alignment;
 	/** Bitmask of available rings. Bit 0 means ring 0, etc. */
 	__u32  available_rings;
-	__u32  _pad;
+	/** IP discovery version (major:23:16, minor:15:8, revision:7:0). */
+	__u32  ip_discovery_version;
 };
 
 struct drm_amdgpu_info_num_handles {
@@ -1052,6 +1109,31 @@ struct drm_amdgpu_info_vce_clock_table {
 	struct drm_amdgpu_info_vce_clock_table_entry entries[AMDGPU_VCE_CLOCK_TABLE_ENTRIES];
 	__u32 num_valid_entries;
 	__u32 pad;
+};
+
+/* query video encode/decode caps */
+#define AMDGPU_INFO_VIDEO_CAPS_CODEC_IDX_MPEG2			0
+#define AMDGPU_INFO_VIDEO_CAPS_CODEC_IDX_MPEG4			1
+#define AMDGPU_INFO_VIDEO_CAPS_CODEC_IDX_VC1			2
+#define AMDGPU_INFO_VIDEO_CAPS_CODEC_IDX_MPEG4_AVC		3
+#define AMDGPU_INFO_VIDEO_CAPS_CODEC_IDX_HEVC			4
+#define AMDGPU_INFO_VIDEO_CAPS_CODEC_IDX_JPEG			5
+#define AMDGPU_INFO_VIDEO_CAPS_CODEC_IDX_VP9			6
+#define AMDGPU_INFO_VIDEO_CAPS_CODEC_IDX_AV1			7
+#define AMDGPU_INFO_VIDEO_CAPS_CODEC_IDX_COUNT			8
+
+struct drm_amdgpu_info_video_codec_info {
+	__u32 valid;
+	__u32 max_width;
+	__u32 max_height;
+	__u32 max_pixels_per_frame;
+	__u32 max_level;
+	__u32 pad;
+};
+
+struct drm_amdgpu_info_video_caps {
+	struct drm_amdgpu_info_video_codec_info
+		codec_info[AMDGPU_INFO_VIDEO_CAPS_CODEC_IDX_COUNT];
 };
 
 /*

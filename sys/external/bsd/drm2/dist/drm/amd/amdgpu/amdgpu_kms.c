@@ -48,6 +48,8 @@ __KERNEL_RCSID(0, "$NetBSD: amdgpu_kms.c,v 1.6 2021/12/19 12:02:39 riastradh Exp
 #include "amdgpu_gem.h"
 #include "amdgpu_display.h"
 #include "amdgpu_ras.h"
+#include "amdgpu_discovery.h"
+#include "amd_pcie.h"
 
 #include <linux/nbsd-namespace.h>
 void amdgpu_unregister_gpu_instance(struct amdgpu_device *adev)
@@ -321,6 +323,7 @@ static int amdgpu_hw_ip_info(struct amdgpu_device *adev,
 {
 	uint32_t ib_start_alignment = 0;
 	uint32_t ib_size_alignment = 0;
+	uint32_t ip_discovery_version = 0;
 	enum amd_ip_block_type type;
 	unsigned int num_rings = 0;
 	unsigned int i, j;
@@ -442,6 +445,35 @@ static int amdgpu_hw_ip_info(struct amdgpu_device *adev,
 
 	result->hw_ip_version_major = adev->ip_blocks[i].version->major;
 	result->hw_ip_version_minor = adev->ip_blocks[i].version->minor;
+	if (adev->asic_type >= CHIP_VEGA10) {
+		int hw_id = -1;
+		int major = 0, minor = 0, revision = 0;
+
+		switch (type) {
+		case AMD_IP_BLOCK_TYPE_GFX:
+			hw_id = GC_HWID;
+			break;
+		case AMD_IP_BLOCK_TYPE_SDMA:
+			hw_id = SDMA0_HWID;
+			break;
+		case AMD_IP_BLOCK_TYPE_UVD:
+		case AMD_IP_BLOCK_TYPE_VCN:
+		case AMD_IP_BLOCK_TYPE_JPEG:
+			hw_id = UVD_HWID;
+			break;
+		case AMD_IP_BLOCK_TYPE_VCE:
+			hw_id = VCE_HWID;
+			break;
+		default:
+			break;
+		}
+
+		if (hw_id >= 0 &&
+		    amdgpu_discovery_get_ip_version(adev, hw_id,
+			&major, &minor, &revision) == 0)
+			ip_discovery_version = (major << 16) | (minor << 8) | revision;
+	}
+	result->ip_discovery_version = ip_discovery_version;
 	result->capabilities_flags = 0;
 	result->available_rings = (1 << num_rings) - 1;
 	result->ib_start_alignment = ib_start_alignment;
@@ -709,16 +741,34 @@ static int amdgpu_info_ioctl(struct drm_device *dev, void *data, struct drm_file
 		if (adev->pm.dpm_enabled) {
 			dev_info.max_engine_clock = amdgpu_dpm_get_sclk(adev, false) * 10;
 			dev_info.max_memory_clock = amdgpu_dpm_get_mclk(adev, false) * 10;
+			dev_info.min_engine_clock = amdgpu_dpm_get_sclk(adev, true) * 10;
+			dev_info.min_memory_clock = amdgpu_dpm_get_mclk(adev, true) * 10;
 		} else {
 			dev_info.max_engine_clock = adev->clock.default_sclk * 10;
 			dev_info.max_memory_clock = adev->clock.default_mclk * 10;
+			dev_info.min_engine_clock = dev_info.max_engine_clock;
+			dev_info.min_memory_clock = dev_info.max_memory_clock;
 		}
 		dev_info.enabled_rb_pipes_mask = adev->gfx.config.backend_enable_mask;
 		dev_info.num_rb_pipes = adev->gfx.config.max_backends_per_se *
 			adev->gfx.config.max_shader_engines;
 		dev_info.num_hw_gfx_contexts = adev->gfx.config.max_hw_contexts;
-		dev_info._pad = 0;
+		/* Combine the GPU and platform PCIe capabilities. */
+		{
+			uint32_t pcie_gen_mask = adev->pm.pcie_gen_mask &
+				(adev->pm.pcie_gen_mask >> 16);
+
+			dev_info.pcie_gen = fls(pcie_gen_mask);
+		}
+		dev_info.pcie_num_lanes =
+			adev->pm.pcie_mlw_mask & CAIL_PCIE_LINK_WIDTH_SUPPORT_X32 ? 32 :
+			adev->pm.pcie_mlw_mask & CAIL_PCIE_LINK_WIDTH_SUPPORT_X16 ? 16 :
+			adev->pm.pcie_mlw_mask & CAIL_PCIE_LINK_WIDTH_SUPPORT_X12 ? 12 :
+			adev->pm.pcie_mlw_mask & CAIL_PCIE_LINK_WIDTH_SUPPORT_X8 ? 8 :
+			adev->pm.pcie_mlw_mask & CAIL_PCIE_LINK_WIDTH_SUPPORT_X4 ? 4 :
+			adev->pm.pcie_mlw_mask & CAIL_PCIE_LINK_WIDTH_SUPPORT_X2 ? 2 : 1;
 		dev_info.ids_flags = 0;
+		/* TMZ encrypted GEM allocations are unsupported; keep the flag clear. */
 		if (adev->flags & AMD_IS_APU)
 			dev_info.ids_flags |= AMDGPU_IDS_FLAGS_FUSION;
 		if (amdgpu_mcbp || amdgpu_sriov_vf(adev))
@@ -768,6 +818,19 @@ static int amdgpu_info_ioctl(struct drm_device *dev, void *data, struct drm_file
 				adev->gfx.config.pa_sc_tile_steering_override;
 
 		dev_info.tcc_disabled_mask = adev->gfx.config.tcc_disabled_mask;
+		/* GFX11-only fields remain zero for this driver's supported ASICs. */
+		dev_info.tcp_cache_size = 0;
+		dev_info.num_sqc_per_wgp = 0;
+		dev_info.sqc_data_cache_size = 0;
+		dev_info.sqc_inst_cache_size = 0;
+		dev_info.gl1c_cache_size = 0;
+		dev_info.gl2c_cache_size = 0;
+		dev_info.mall_size = 0;
+		dev_info.enabled_rb_pipes_mask_hi = 0;
+		dev_info.shadow_size = 0;
+		dev_info.shadow_alignment = 0;
+		dev_info.csa_size = 0;
+		dev_info.csa_alignment = 0;
 
 		return copy_to_user(out, &dev_info,
 				    min((size_t)size, sizeof(dev_info))) ? -EFAULT : 0;
@@ -919,6 +982,20 @@ static int amdgpu_info_ioctl(struct drm_device *dev, void *data, struct drm_file
 			}
 			ui32 /= 100;
 			break;
+		case AMDGPU_INFO_SENSOR_PEAK_PSTATE_GFX_SCLK:
+			if (amdgpu_dpm_read_sensor(adev,
+						   AMDGPU_PP_SENSOR_PEAK_PSTATE_SCLK,
+						   (void *)&ui32, &ui32_size))
+				return -EINVAL;
+			ui32 /= 100;
+			break;
+		case AMDGPU_INFO_SENSOR_PEAK_PSTATE_GFX_MCLK:
+			if (amdgpu_dpm_read_sensor(adev,
+						   AMDGPU_PP_SENSOR_PEAK_PSTATE_MCLK,
+						   (void *)&ui32, &ui32_size))
+				return -EINVAL;
+			ui32 /= 100;
+			break;
 		default:
 			DRM_DEBUG_KMS("Invalid request %d\n",
 				      info->sensor_info.type);
@@ -940,6 +1017,65 @@ static int amdgpu_info_ioctl(struct drm_device *dev, void *data, struct drm_file
 		return copy_to_user(out, &ras_mask,
 				min_t(u64, size, sizeof(ras_mask))) ?
 			-EFAULT : 0;
+	}
+	case AMDGPU_INFO_VIDEO_CAPS: {
+		const struct amdgpu_video_codecs *codecs;
+		struct drm_amdgpu_info_video_caps *caps;
+		int r;
+
+		if (!adev->asic_funcs->query_video_codecs)
+			return -EINVAL;
+		switch (info->video_cap.type) {
+		case AMDGPU_INFO_VIDEO_CAPS_DECODE:
+			r = amdgpu_asic_query_video_codecs(adev, false, &codecs);
+			if (r)
+				return -EINVAL;
+			break;
+		case AMDGPU_INFO_VIDEO_CAPS_ENCODE:
+			r = amdgpu_asic_query_video_codecs(adev, true, &codecs);
+			if (r)
+				return -EINVAL;
+			break;
+		default:
+			DRM_DEBUG_KMS("Invalid request %d\n",
+				      info->video_cap.type);
+			return -EINVAL;
+		}
+
+		caps = kzalloc(sizeof(*caps), GFP_KERNEL);
+		if (!caps)
+			return -ENOMEM;
+
+		for (i = 0; i < codecs->codec_count; i++) {
+			int idx = codecs->codec_array[i].codec_type;
+
+			switch (idx) {
+			case AMDGPU_VIDEO_CODEC_TYPE_MPEG2:
+			case AMDGPU_VIDEO_CODEC_TYPE_MPEG4:
+			case AMDGPU_VIDEO_CODEC_TYPE_MPEG4_AVC:
+			case AMDGPU_VIDEO_CODEC_TYPE_VC1:
+			case AMDGPU_VIDEO_CODEC_TYPE_HEVC:
+			case AMDGPU_VIDEO_CODEC_TYPE_JPEG:
+			case AMDGPU_VIDEO_CODEC_TYPE_VP9:
+			case AMDGPU_VIDEO_CODEC_TYPE_AV1:
+				caps->codec_info[idx].valid = 1;
+				caps->codec_info[idx].max_width =
+					codecs->codec_array[i].max_width;
+				caps->codec_info[idx].max_height =
+					codecs->codec_array[i].max_height;
+				caps->codec_info[idx].max_pixels_per_frame =
+					codecs->codec_array[i].max_pixels_per_frame;
+				caps->codec_info[idx].max_level =
+					codecs->codec_array[i].max_level;
+				break;
+			default:
+				break;
+			}
+		}
+		r = copy_to_user(out, caps,
+				 min((size_t)size, sizeof(*caps))) ? -EFAULT : 0;
+		kfree(caps);
+		return r;
 	}
 	default:
 		DRM_DEBUG_KMS("Invalid request %d\n", info->query);

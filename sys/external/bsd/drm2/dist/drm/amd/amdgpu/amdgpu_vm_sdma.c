@@ -76,7 +76,7 @@ static int amdgpu_vm_sdma_prepare(struct amdgpu_vm_update_params *p,
 	p->num_dw_left = ndw;
 
 	/* Wait for moves to be completed */
-	r = amdgpu_sync_fence(&p->job->sync, exclusive, false);
+	r = amdgpu_sync_fence(&p->job->sync, exclusive);
 	if (r)
 		return r;
 

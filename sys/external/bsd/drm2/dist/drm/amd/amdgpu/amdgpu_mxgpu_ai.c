@@ -255,7 +255,7 @@ static void xgpu_ai_mailbox_flr_work(struct work_struct *work)
 	 */
 	locked = mutex_trylock(&adev->lock_reset);
 	if (locked)
-		adev->in_gpu_reset = true;
+		amdgpu_set_in_reset(adev, true);
 
 	do {
 		if (xgpu_ai_mailbox_peek_msg(adev) == IDH_FLR_NOTIFICATION_CMPL)
@@ -267,7 +267,7 @@ static void xgpu_ai_mailbox_flr_work(struct work_struct *work)
 
 flr_done:
 	if (locked) {
-		adev->in_gpu_reset = false;
+		amdgpu_set_in_reset(adev, false);
 		mutex_unlock(&adev->lock_reset);
 	}
 

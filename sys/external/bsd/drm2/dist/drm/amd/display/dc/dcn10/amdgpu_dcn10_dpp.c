@@ -269,7 +269,8 @@ static void dpp1_setup_format_flags(enum surface_pixel_format input_format,\
 	if (input_format == SURFACE_PIXEL_FORMAT_GRPH_ARGB16161616F ||
 		input_format == SURFACE_PIXEL_FORMAT_GRPH_ABGR16161616F)
 		*fmt = PIXEL_FORMAT_FLOAT;
-	else if (input_format == SURFACE_PIXEL_FORMAT_GRPH_ARGB16161616)
+	else if (input_format == SURFACE_PIXEL_FORMAT_GRPH_ARGB16161616 ||
+		input_format == SURFACE_PIXEL_FORMAT_GRPH_ABGR16161616)
 		*fmt = PIXEL_FORMAT_FIXED16;
 	else
 		*fmt = PIXEL_FORMAT_FIXED;
@@ -380,6 +381,7 @@ void dpp1_cnv_setup (
 		select = INPUT_CSC_SELECT_ICSC;
 		break;
 	case SURFACE_PIXEL_FORMAT_GRPH_ARGB16161616:
+	case SURFACE_PIXEL_FORMAT_GRPH_ABGR16161616:
 		pixel_format = 22;
 		break;
 	case SURFACE_PIXEL_FORMAT_GRPH_ARGB16161616F:

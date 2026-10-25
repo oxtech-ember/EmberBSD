@@ -28,6 +28,7 @@
 __KERNEL_RCSID(0, "$NetBSD: amdgpu_ctx.c,v 1.8 2021/12/19 12:38:41 riastradh Exp $");
 
 #include <drm/drm_auth.h>
+#include <drm/drm_drv.h>
 #include "amdgpu.h"
 #include "amdgpu_sched.h"
 #include "amdgpu_ras.h"
@@ -65,6 +66,195 @@ static int amdgpu_ctx_priority_permit(struct drm_file *filp,
 		return 0;
 
 	return -EACCES;
+}
+
+static int amdgpu_ctx_stable_pstate_flags(u32 op, u32 flags,
+					  u32 *stable_pstate)
+{
+	if (op == AMDGPU_CTX_OP_GET_STABLE_PSTATE)
+		return flags ? -EINVAL : 0;
+
+	if (op != AMDGPU_CTX_OP_SET_STABLE_PSTATE ||
+	    (flags & ~AMDGPU_CTX_STABLE_PSTATE_FLAGS_MASK))
+		return -EINVAL;
+
+	*stable_pstate = flags & AMDGPU_CTX_STABLE_PSTATE_FLAGS_MASK;
+	if (*stable_pstate > AMDGPU_CTX_STABLE_PSTATE_PEAK)
+		return -EINVAL;
+
+	return 0;
+}
+
+static int amdgpu_ctx_get_stable_pstate(struct amdgpu_ctx *ctx,
+					u32 *stable_pstate)
+{
+	struct amdgpu_device *adev = ctx->adev;
+	enum amd_dpm_forced_level current_level;
+
+	if (is_support_sw_smu(adev))
+		current_level = smu_get_performance_level(&adev->smu);
+	else if (adev->powerplay.pp_funcs &&
+	    adev->powerplay.pp_funcs->get_performance_level)
+		current_level = amdgpu_dpm_get_performance_level(adev);
+	else
+		current_level = adev->pm.dpm.forced_level;
+
+	switch (current_level) {
+	case AMD_DPM_FORCED_LEVEL_PROFILE_STANDARD:
+		*stable_pstate = AMDGPU_CTX_STABLE_PSTATE_STANDARD;
+		break;
+	case AMD_DPM_FORCED_LEVEL_PROFILE_MIN_SCLK:
+		*stable_pstate = AMDGPU_CTX_STABLE_PSTATE_MIN_SCLK;
+		break;
+	case AMD_DPM_FORCED_LEVEL_PROFILE_MIN_MCLK:
+		*stable_pstate = AMDGPU_CTX_STABLE_PSTATE_MIN_MCLK;
+		break;
+	case AMD_DPM_FORCED_LEVEL_PROFILE_PEAK:
+		*stable_pstate = AMDGPU_CTX_STABLE_PSTATE_PEAK;
+		break;
+	default:
+		*stable_pstate = AMDGPU_CTX_STABLE_PSTATE_NONE;
+		break;
+	}
+
+	return 0;
+}
+
+static int amdgpu_ctx_force_stable_pstate(struct amdgpu_device *adev,
+					 enum amd_dpm_forced_level level)
+{
+	int r;
+
+	if (is_support_sw_smu(adev))
+		return smu_force_performance_level(&adev->smu, level);
+
+	if (!adev->powerplay.pp_funcs ||
+	    !adev->powerplay.pp_funcs->force_performance_level)
+		return -EOPNOTSUPP;
+
+	mutex_lock(&adev->pm.mutex);
+	if (adev->pm.dpm.thermal_active) {
+		r = -EINVAL;
+	} else {
+		r = amdgpu_dpm_force_performance_level(adev, level);
+		if (!r)
+			adev->pm.dpm.forced_level = level;
+	}
+	mutex_unlock(&adev->pm.mutex);
+
+	return r;
+}
+
+static int amdgpu_ctx_set_stable_pstate_locked(struct amdgpu_ctx *ctx,
+					       u32 stable_pstate)
+{
+	struct amdgpu_device *adev = ctx->adev;
+	enum amd_dpm_forced_level level;
+	u32 current_stable_pstate;
+	int r;
+
+	if (adev->pm.stable_pstate_ctx &&
+	    adev->pm.stable_pstate_ctx != ctx) {
+		r = -EBUSY;
+		goto done;
+	}
+
+	r = amdgpu_ctx_get_stable_pstate(ctx, &current_stable_pstate);
+	if (r)
+		goto done;
+	if (stable_pstate == current_stable_pstate) {
+		if (stable_pstate == AMDGPU_CTX_STABLE_PSTATE_NONE &&
+		    adev->pm.stable_pstate_ctx == ctx)
+			adev->pm.stable_pstate_ctx = NULL;
+		goto done;
+	}
+
+	switch (stable_pstate) {
+	case AMDGPU_CTX_STABLE_PSTATE_NONE:
+		level = AMD_DPM_FORCED_LEVEL_AUTO;
+		break;
+	case AMDGPU_CTX_STABLE_PSTATE_STANDARD:
+		level = AMD_DPM_FORCED_LEVEL_PROFILE_STANDARD;
+		break;
+	case AMDGPU_CTX_STABLE_PSTATE_MIN_SCLK:
+		level = AMD_DPM_FORCED_LEVEL_PROFILE_MIN_SCLK;
+		break;
+	case AMDGPU_CTX_STABLE_PSTATE_MIN_MCLK:
+		level = AMD_DPM_FORCED_LEVEL_PROFILE_MIN_MCLK;
+		break;
+	case AMDGPU_CTX_STABLE_PSTATE_PEAK:
+		level = AMD_DPM_FORCED_LEVEL_PROFILE_PEAK;
+		break;
+	default:
+		r = -EINVAL;
+		goto done;
+	}
+
+	r = amdgpu_ctx_force_stable_pstate(adev, level);
+	if (r)
+		goto done;
+
+	if (level == AMD_DPM_FORCED_LEVEL_AUTO)
+		adev->pm.stable_pstate_ctx = NULL;
+	else
+		adev->pm.stable_pstate_ctx = ctx;
+done:
+	return r;
+}
+
+static int amdgpu_ctx_set_stable_pstate(struct amdgpu_ctx *ctx,
+					 u32 stable_pstate)
+{
+	struct amdgpu_device *adev = ctx->adev;
+	int r;
+
+	mutex_lock(&adev->pm.stable_pstate_ctx_lock);
+	r = amdgpu_ctx_set_stable_pstate_locked(ctx, stable_pstate);
+	mutex_unlock(&adev->pm.stable_pstate_ctx_lock);
+
+	return r;
+}
+
+static void amdgpu_ctx_restore_stable_pstate(struct amdgpu_ctx *ctx)
+{
+	struct amdgpu_device *adev = ctx->adev;
+
+	mutex_lock(&adev->pm.stable_pstate_ctx_lock);
+	amdgpu_ctx_set_stable_pstate_locked(ctx, ctx->stable_pstate);
+	if (adev->pm.stable_pstate_ctx == ctx)
+		adev->pm.stable_pstate_ctx = NULL;
+	mutex_unlock(&adev->pm.stable_pstate_ctx_lock);
+}
+
+static int amdgpu_ctx_stable_pstate(struct amdgpu_device *adev,
+				    struct amdgpu_fpriv *fpriv,
+				    u32 id, bool set, u32 *stable_pstate)
+{
+	struct amdgpu_ctx_mgr *mgr;
+	struct amdgpu_ctx *ctx;
+	int r;
+
+	if (!fpriv)
+		return -EINVAL;
+
+	mgr = &fpriv->ctx_mgr;
+	mutex_lock(&mgr->lock);
+	ctx = idr_find(&mgr->ctx_handles, id);
+	if (!ctx) {
+		mutex_unlock(&mgr->lock);
+		return -EINVAL;
+	}
+
+	if (set) {
+		r = amdgpu_ctx_set_stable_pstate(ctx, *stable_pstate);
+	} else {
+		mutex_lock(&adev->pm.stable_pstate_ctx_lock);
+		r = amdgpu_ctx_get_stable_pstate(ctx, stable_pstate);
+		mutex_unlock(&adev->pm.stable_pstate_ctx_lock);
+	}
+
+	mutex_unlock(&mgr->lock);
+	return r;
 }
 
 static int amdgpu_ctx_init_entity(struct amdgpu_ctx *ctx, const u32 hw_ip, const u32 ring)
@@ -146,6 +336,7 @@ static int amdgpu_ctx_init(struct amdgpu_device *adev,
 			   struct drm_file *filp,
 			   struct amdgpu_ctx *ctx)
 {
+	u32 current_stable_pstate;
 	int r;
 
 	r = amdgpu_ctx_priority_permit(filp, priority);
@@ -165,6 +356,19 @@ static int amdgpu_ctx_init(struct amdgpu_device *adev,
 	ctx->vram_lost_counter = atomic_read(&adev->vram_lost_counter);
 	ctx->init_priority = priority;
 	ctx->override_priority = DRM_SCHED_PRIORITY_UNSET;
+
+	mutex_lock(&adev->pm.stable_pstate_ctx_lock);
+	r = amdgpu_ctx_get_stable_pstate(ctx, &current_stable_pstate);
+	if (!r) {
+		if (adev->pm.stable_pstate_ctx)
+			ctx->stable_pstate =
+			    adev->pm.stable_pstate_ctx->stable_pstate;
+		else
+			ctx->stable_pstate = current_stable_pstate;
+	}
+	mutex_unlock(&adev->pm.stable_pstate_ctx_lock);
+	if (r)
+		return r;
 
 	return 0;
 
@@ -189,6 +393,7 @@ static void amdgpu_ctx_fini(struct kref *ref)
 	struct amdgpu_ctx *ctx = container_of(ref, struct amdgpu_ctx, refcount);
 	struct amdgpu_device *adev = ctx->adev;
 	unsigned i, j;
+	int idx;
 
 	if (!adev)
 		return;
@@ -198,6 +403,11 @@ static void amdgpu_ctx_fini(struct kref *ref)
 			amdgpu_ctx_fini_entity(ctx->entities[i][j]);
 			ctx->entities[i][j] = NULL;
 		}
+	}
+
+	if (drm_dev_enter(adev->ddev, &idx)) {
+		amdgpu_ctx_restore_stable_pstate(ctx);
+		drm_dev_exit(idx);
 	}
 
 	mutex_destroy(&ctx->lock);
@@ -365,6 +575,9 @@ static int amdgpu_ctx_query2(struct amdgpu_device *adev,
 	if (ctx->reset_counter != atomic_read(&adev->gpu_reset_counter))
 		out->state.flags |= AMDGPU_CTX_QUERY2_FLAGS_RESET;
 
+	if (amdgpu_in_reset(adev))
+		out->state.flags |= AMDGPU_CTX_QUERY2_FLAGS_RESET_IN_PROGRESS;
+
 	if (ctx->vram_lost_counter != atomic_read(&adev->vram_lost_counter))
 		out->state.flags |= AMDGPU_CTX_QUERY2_FLAGS_VRAMLOST;
 
@@ -394,7 +607,7 @@ int amdgpu_ctx_ioctl(struct drm_device *dev, void *data,
 		     struct drm_file *filp)
 {
 	int r;
-	uint32_t id;
+	uint32_t id, stable_pstate;
 	enum drm_sched_priority priority;
 
 	union drm_amdgpu_ctx *args = data;
@@ -423,6 +636,25 @@ int amdgpu_ctx_ioctl(struct drm_device *dev, void *data,
 		break;
 	case AMDGPU_CTX_OP_QUERY_STATE2:
 		r = amdgpu_ctx_query2(adev, fpriv, id, &args->out);
+		break;
+	case AMDGPU_CTX_OP_GET_STABLE_PSTATE:
+		r = amdgpu_ctx_stable_pstate_flags(args->in.op,
+		    args->in.flags, &stable_pstate);
+		if (r)
+			break;
+		r = amdgpu_ctx_stable_pstate(adev, fpriv, id, false,
+		    &stable_pstate);
+		if (!r) {
+			args->out.pstate.flags = stable_pstate;
+			args->out.pstate._pad = 0;
+		}
+		break;
+	case AMDGPU_CTX_OP_SET_STABLE_PSTATE:
+		r = amdgpu_ctx_stable_pstate_flags(args->in.op,
+		    args->in.flags, &stable_pstate);
+		if (!r)
+			r = amdgpu_ctx_stable_pstate(adev, fpriv, id, true,
+			    &stable_pstate);
 		break;
 	default:
 		return -EINVAL;
