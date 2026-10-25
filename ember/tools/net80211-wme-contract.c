@@ -25,7 +25,8 @@
 #define IEEE80211_FH_CHANSET(c) 0
 #define IEEE80211_FH_CHANPAT(c) 0
 #define ieee80211_chan2ieee(ic, c) \
-	((c) != NULL && (c)->ic_freq == 5180 ? 36U : 1U)
+	((c) != NULL && (c)->ic_freq == 5180 ? 36U : \
+	 (c) != NULL && (c)->ic_freq == 5320 ? 64U : 1U)
 #define ETHERTYPE_IP 0x0800
 #define IFNAMSIZ 16
 #define IEEE80211_MODE_MAX 7
@@ -141,6 +142,7 @@ struct ieee80211_node_table {
 	const char *nt_name;
 	unsigned nt_inact_init;
 };
+struct ieee80211_vht_channel;
 struct ieee80211com {
 	void (*ic_sta_quiet)(struct ieee80211com *);
 	int (*ic_scan_probe_admit)(struct ieee80211com *);
@@ -149,7 +151,8 @@ struct ieee80211com {
 	const struct ieee80211_rxba_ops *ic_rxba_ops;
 	uint64_t ic_rxba_serial;
 	int (*ic_ht20_admit)(struct ieee80211com *, struct ieee80211_ht20_profile *);
-	int (*ic_vht_admit)(struct ieee80211com *, struct ieee80211_vht_cap *);
+	int (*ic_vht_admit)(struct ieee80211com *,
+	    const struct ieee80211_vht_channel *, struct ieee80211_vht_cap *);
 	int ic_fixed_rate;
 	int (*ic_test_newstate)(struct ieee80211com *, int, int);
 	struct ieee80211_node_table ic_sta;
@@ -950,10 +953,20 @@ vht_ht20_admit(struct ieee80211com *ic, struct ieee80211_ht20_profile *p)
 	p->ready = IEEE80211_HT20_READY_ALL;
 	return 0;
 }
+/* The last channel offered to the driver, and one it refuses. */
+static struct ieee80211_vht_channel vht_admitted, vht_refused;
+static unsigned vht_admissions;
 static int
-vht_local_admit(struct ieee80211com *ic, struct ieee80211_vht_cap *cap)
+vht_local_admit(struct ieee80211com *ic,
+    const struct ieee80211_vht_channel *chan, struct ieee80211_vht_cap *cap)
 {
 	(void)ic;
+	vht_admitted = *chan;
+	vht_admissions++;
+	if (chan->primary == vht_refused.primary &&
+	    chan->center == vht_refused.center &&
+	    chan->width_mhz == vht_refused.width_mhz)
+		return EOPNOTSUPP;
 	*cap = (struct ieee80211_vht_cap){
 		.info = 0, .rx_map = 0xfffc, .rx_highest = 0,
 		.tx_map = 0xfffc, .tx_highest = 0
@@ -961,26 +974,38 @@ vht_local_admit(struct ieee80211com *ic, struct ieee80211_vht_cap *cap)
 	return 0;
 }
 static int
-vht_bad_local_admit(struct ieee80211com *ic, struct ieee80211_vht_cap *cap)
+vht_bad_local_admit(struct ieee80211com *ic,
+    const struct ieee80211_vht_channel *chan, struct ieee80211_vht_cap *cap)
 {
-	int error = vht_local_admit(ic, cap);
+	int error = vht_local_admit(ic, chan, cap);
 	cap->info = 1; /* Advertise an unqualified optional capability. */
 	return error;
+}
+/* The AP's HT/VHT operation used by request, response and beacon. */
+static struct {
+	uint8_t primary, sco, width, seg0;
+	unsigned freq;
+} vht_bss = { 36, 1, 1, 42, 5180 };
+static void
+vht_phy_window(uint8_t *p)
+{
+	memset(p, 0, IEEE80211_PHY_IES_MAXLEN);
+	p[0] = 45; p[1] = 26; p[2] = 0x02;	/* HT20 plus 40 MHz support. */
+	p[5] = 0xff;					/* HT MCS0-7. */
+	p[28] = 61; p[29] = 22; p[30] = vht_bss.primary;
+	p[31] = (uint8_t)(0x04 | vht_bss.sco);	/* Secondary, any width. */
+	p[52] = 191; p[53] = 12;
+	p[58] = 0xfc; p[59] = 0xff;		/* Peer RX MCS0-7, NSS1. */
+	p[62] = 0xfc; p[63] = 0xff;		/* Peer TX MCS0-7, NSS1. */
+	p[66] = 192; p[67] = 5; p[68] = vht_bss.width; p[69] = vht_bss.seg0;
+	p[71] = 0xfc; p[72] = 0xff;		/* Basic MCS0-7, NSS1. */
 }
 static void
 vht_peer_candidate(struct ieee80211_node *ni)
 {
-	uint8_t raw[IEEE80211_PHY_IES_MAXLEN] = {0};
-	uint8_t *p = raw;
+	uint8_t raw[IEEE80211_PHY_IES_MAXLEN];
 
-	p[0] = 45; p[1] = 26; p[2] = 0x02;	/* HT20 plus 40 MHz support. */
-	p[5] = 0xff;					/* HT MCS0-7. */
-	p[28] = 61; p[29] = 22; p[30] = 36; p[31] = 0x05;	/* 36/40-above. */
-	p[52] = 191; p[53] = 12;
-	p[58] = 0xfc; p[59] = 0xff;		/* Peer RX MCS0-7, NSS1. */
-	p[62] = 0xfc; p[63] = 0xff;		/* Peer TX MCS0-7, NSS1. */
-	p[66] = 192; p[67] = 5; p[68] = 1; p[69] = 42;
-	p[71] = 0xfc; p[72] = 0xff;		/* Basic MCS0-7, NSS1. */
+	vht_phy_window(raw);
 	CHECK(ieee80211_phy_ies_parse(&ni->ni_phy_ies, raw, sizeof(raw)) == 0);
 }
 static int
@@ -1001,10 +1026,13 @@ static void
 prepare_vht_request(void)
 {
 	setup();
-	test_ic.ic_channels[36].ic_freq = 5180;
-	test_ic.ic_curchan = &test_ic.ic_channels[36];
+	test_ic.ic_channels[vht_bss.primary].ic_freq = vht_bss.freq;
+	test_ic.ic_curchan = &test_ic.ic_channels[vht_bss.primary];
 	test_node.ni_chan = test_ic.ic_curchan;
-	CHECK(ieee80211_chan2ieee(&test_ic, test_ic.ic_curchan) == 36);
+	CHECK(ieee80211_chan2ieee(&test_ic, test_ic.ic_curchan) ==
+	    vht_bss.primary);
+	vht_refused = (struct ieee80211_vht_channel){ 0, 0, 0 };
+	vht_admissions = 0;
 	test_ic.ic_curmode = IEEE80211_MODE_11A;
 	test_node.ni_rates.rs_rates[0] = 0x82;
 	test_ic.ic_sup_rates[IEEE80211_MODE_11A].rs_nrates = 1;
@@ -1049,8 +1077,8 @@ test_vht_request_bytes(void)
 		prepare_vht_request();
 		switch (variant) {
 		case 0: test_node.ni_phy_ies.data[30] = 40; break;	/* Primary. */
-		case 1: test_node.ni_phy_ies.data[31] = 0x06; break;	/* HT below. */
-		case 2: test_node.ni_phy_ies.data[68] = 0; break;	/* 20/40 only. */
+		case 1: test_node.ni_phy_ies.data[31] = 0x07; break;	/* HT below. */
+		case 2: test_node.ni_phy_ies.data[31] = 0x04; break;	/* HT20 only. */
 		case 3: test_node.ni_phy_ies.data[69] = 46; break;	/* Center. */
 		case 4:
 			test_node.ni_phy_ies.data[58] = 0xff;
@@ -1068,6 +1096,8 @@ test_vht_request_bytes(void)
 		case 9: test_node.ni_phy_ies.data[5] = 0; break;	/* No HT MCS0-7. */
 		}
 		CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ) == 0);
+		/* No channel derives for the first four: the driver is not asked. */
+		CHECK(variant >= 4 || vht_admissions == 0);
 		vht = request_ie(IEEE80211_FC0_SUBTYPE_ASSOC_REQ, 191, &count);
 		CHECK(count == 0 && vht == NULL);
 		ht = request_ie(IEEE80211_FC0_SUBTYPE_ASSOC_REQ, 45, &count);
@@ -1076,6 +1106,38 @@ test_vht_request_bytes(void)
 			CHECK((ht[2] & 0x02) == 0);
 		release_capture();
 	}
+	/* The exact AP channel reaches the driver, which may refuse it. */
+	for (unsigned bss = 0; bss < 4; bss++) {
+		static const struct {
+			uint8_t primary, sco, width, seg0, center, mhz;
+			unsigned freq;
+		} v[] = {
+			{ 36, 1, 1, 42, 42, 80, 5180 }, { 36, 1, 0, 0, 38, 40, 5180 },
+			{ 64, 3, 1, 58, 58, 80, 5320 }, { 64, 3, 0, 0, 62, 40, 5320 }
+		};
+		for (unsigned refuse = 0; refuse < 2; refuse++) {
+			vht_bss.primary = v[bss].primary;
+			vht_bss.sco = v[bss].sco;
+			vht_bss.width = v[bss].width;
+			vht_bss.seg0 = v[bss].seg0;
+			vht_bss.freq = v[bss].freq;
+			prepare_vht_request();
+			if (refuse)
+				vht_refused = (struct ieee80211_vht_channel){
+				    v[bss].primary, v[bss].center, v[bss].mhz };
+			CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ) == 0);
+			CHECK(vht_admissions == 1);
+			CHECK(vht_admitted.primary == v[bss].primary &&
+			    vht_admitted.center == v[bss].center &&
+			    vht_admitted.width_mhz == v[bss].mhz);
+			vht = request_ie(IEEE80211_FC0_SUBTYPE_ASSOC_REQ, 191,
+			    &count);
+			CHECK(count == !refuse);
+			release_capture();
+		}
+	}
+	vht_bss.primary = 36; vht_bss.sco = 1; vht_bss.width = 1;
+	vht_bss.seg0 = 42; vht_bss.freq = 5180;
 	test_channel.ic_freq = 2412;
 }
 static struct mbuf *
@@ -1092,18 +1154,11 @@ vht_assoc_response(unsigned variant)
 	uint8_t *cap, *op;
 
 	memset(ies, 0, sizeof(ies));
-	ies[0] = 45; ies[1] = 26; ies[2] = 0x02; /* HT40 support. */
-	ies[5] = 0xff; /* HT MCS0-7. */
-	ies[28] = 61; ies[29] = 22; ies[30] = 36;
-	ies[31] = 0x05; /* Primary36, HT40 above. */
+	vht_phy_window(ies);
 	cap = ies + 52;
-	cap[0] = 191; cap[1] = IEEE80211_VHT_CAP_LEN;
 	cap[6] = 0xfd; cap[7] = 0xff; /* Peer RX MCS0-8, NSS1. */
 	cap[10] = 0xfe; cap[11] = 0xff; /* Peer TX MCS0-9, NSS1. */
 	op = cap + 14;
-	op[0] = 192; op[1] = IEEE80211_VHT_OPERATION_LEN;
-	op[2] = 1; op[3] = 42; /* VHT80 center segment. */
-	op[5] = 0xfc; op[6] = 0xff; /* Basic MCS0-7, NSS1. */
 	switch (variant) {
 	case 1:
 		len = 52; /* No VHT response; HT fallback remains available. */
@@ -1169,6 +1224,9 @@ test_vht_assoc_response(void)
 	CHECK(test_node.ni_ht20.vht.maps.rx_map == 0xfffc);
 	CHECK(test_node.ni_ht20.vht.operation.width == 1);
 	CHECK(test_node.ni_ht20.vht.operation.seg0 == 42);
+	CHECK(test_node.ni_ht20.vht.channel.primary == 36 &&
+	    test_node.ni_ht20.vht.channel.center == 42 &&
+	    test_node.ni_ht20.vht.channel.width_mhz == 80);
 
 	/* Unsupported and malformed VHT responses retain HT20 where framing is
 	 * still valid, and a malformed TLV cannot leave negotiated state behind. */
@@ -1213,6 +1271,111 @@ test_vht_assoc_response(void)
 	deliver(vht_assoc_response(0), IEEE80211_FC0_SUBTYPE_ASSOC_RESP);
 	CHECK(test_node.ni_ht20.valid);
 	CHECK(!test_node.ni_ht20.vht.valid);
+	test_channel.ic_freq = 2412;
+}
+static struct mbuf *beacon(unsigned);
+static void deliver_beacon(struct mbuf *);
+/* A beacon carrying the AP's PHY window; variants change its VHT Operation. */
+static struct mbuf *
+vht_beacon(unsigned variant)
+{
+	struct mbuf *m = beacon(0);
+	uint8_t *p = m->m_data + m->m_len;
+	size_t len = 73;
+
+	vht_phy_window(p);
+	if (variant == 1)
+		p[69] = (uint8_t)(p[69] == 0 ? 1 : p[69] + 16); /* Moved. */
+	else if (variant == 2)
+		len = 66;				/* No VHT Operation. */
+	else if (variant == 3) {
+		memcpy(p + 73, p + 66, 7);		/* Duplicate. */
+		len += 7;
+	} else if (variant == 4)
+		p[68] = p[68] == 0 ? 1 : 0;		/* Width changed. */
+	else if (variant == 5) {
+		p[67] = 4;				/* Wrong length. */
+		len = 72;
+	} else if (variant == 6)
+		p[70] = 50;				/* Segment1 changed. */
+	else if (variant == 7)
+		p[71] = 0xfd;				/* Basic map changed. */
+	m->m_len += (int)len;
+	m->m_pkthdr.len = m->m_len;
+	m->model_capacity += len;
+	return m;
+}
+/*
+ * Response -> node channel -> beacon binding for wide and DFS primaries.
+ * The driver decides each derived channel; a changed VHT Operation
+ * withdraws the negotiated profile like a changed HT Operation.
+ */
+static void
+test_vht_channel_lifecycle(void)
+{
+	static const struct {
+		uint8_t primary, sco, width, seg0, center, mhz;
+		unsigned freq;
+	} v[] = {
+		{ 64, 3, 1, 58, 58, 80, 5320 }, { 64, 3, 0, 0, 62, 40, 5320 },
+		{ 36, 1, 1, 42, 42, 80, 5180 }, { 36, 1, 0, 0, 38, 40, 5180 }
+	};
+
+	for (unsigned i = 0; i < sizeof(v) / sizeof(v[0]); i++) {
+		for (unsigned variant = 0; variant < 10; variant++) {
+			vht_bss.primary = v[i].primary;
+			vht_bss.sco = v[i].sco;
+			vht_bss.width = v[i].width;
+			vht_bss.seg0 = v[i].seg0;
+			vht_bss.freq = v[i].freq;
+			prepare_vht_request();
+			CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ) == 0);
+			if (variant == 8)
+				vht_refused = (struct ieee80211_vht_channel){
+				    v[i].primary, v[i].center, v[i].mhz };
+			if (variant == 9)
+				vht_bss.width = vht_bss.width == 0 ? 1 : 0;
+			deliver(vht_assoc_response(0),
+			    IEEE80211_FC0_SUBTYPE_ASSOC_RESP);
+			CHECK(test_ic.ic_state == IEEE80211_S_RUN);
+			CHECK(test_node.ni_ht20.valid);
+			if (variant == 9) {
+				/* A response for another width than offered. */
+				vht_bss.width = v[i].width;
+				CHECK(!test_node.ni_ht20.vht.valid);
+				continue;
+			}
+			CHECK(vht_admitted.primary == v[i].primary &&
+			    vht_admitted.center == v[i].center &&
+			    vht_admitted.width_mhz == v[i].mhz);
+			if (variant == 8) {
+				/* The driver refused this channel: HT20 only. */
+				CHECK(!test_node.ni_ht20.vht.valid);
+				continue;
+			}
+			CHECK(test_node.ni_ht20.vht.valid);
+			CHECK(test_node.ni_ht20.vht.channel.primary ==
+			    v[i].primary);
+			CHECK(test_node.ni_ht20.vht.channel.center ==
+			    v[i].center);
+			CHECK(test_node.ni_ht20.vht.channel.width_mhz ==
+			    v[i].mhz);
+			deliver_beacon(vht_beacon(variant));
+			CHECK(test_node.ni_ht20.valid == (variant == 0));
+			CHECK(test_node.ni_ht20.vht.valid == (variant == 0));
+		}
+	}
+	/* An HT20-only node ignores a malformed or repeated VHT Operation. */
+	for (unsigned variant = 0; variant < 8; variant++) {
+		prepare_vht_request();
+		CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ) == 0);
+		deliver(vht_assoc_response(1), IEEE80211_FC0_SUBTYPE_ASSOC_RESP);
+		CHECK(test_node.ni_ht20.valid && !test_node.ni_ht20.vht.valid);
+		deliver_beacon(vht_beacon(variant));
+		CHECK(test_node.ni_ht20.valid);
+	}
+	vht_bss.primary = 36; vht_bss.sco = 1; vht_bss.width = 1;
+	vht_bss.seg0 = 42; vht_bss.freq = 5180;
 	test_channel.ic_freq = 2412;
 }
 static void
@@ -2251,6 +2414,7 @@ main(void)
 	test_request_ie();
 	test_vht_request_bytes();
 	test_vht_assoc_response();
+	test_vht_channel_lifecycle();
 	test_classification();
 	test_sequence();
 	test_beacon_update();

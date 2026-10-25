@@ -1509,6 +1509,8 @@ test_ra_vht80_channel64_closed(void)
 		CHECK(rtw88_core_detach(&sc) == 0);
 	}
 }
+/* The AP channel net80211 derives for the 36/42/80 peer. */
+static const struct ieee80211_vht_channel ra_vht_chan = { 36, 42, 80 };
 /* Inject a newer state request while the cold start owns the core. */
 static unsigned ra_vht_inject;
 static int (*ra_vht_read1_next)(void *, uint32_t, uint8_t *);
@@ -1544,7 +1546,7 @@ test_ra_vht80_run(void)
 			continue;
 		ra_vht_peer(&s);
 		ra_vht_runs = 0;
-		error = rtw88_net_vht_admit(&s.net.ic, &cap);
+		error = rtw88_net_vht_admit(&s.net.ic, &ra_vht_chan, &cap);
 		CHECK(error == 0);
 		if (error != 0) {
 			state_fixture_finish(&s);
@@ -1665,7 +1667,7 @@ test_ra_vht80_run(void)
 		if (variant == 2) s.net.ic.ic_fixed_rate = 0;
 		if (variant == 3) s.net.ic.ic_opmode = IEEE80211_M_HOSTAP;
 		memset(&cap, 0xa5, sizeof(cap));
-		CHECK(rtw88_net_vht_admit(&s.net.ic, &cap) == EOPNOTSUPP);
+		CHECK(rtw88_net_vht_admit(&s.net.ic, &ra_vht_chan, &cap) == EOPNOTSUPP);
 		CHECK(cap.rx_map == 0 && cap.tx_map == 0 && cap.info == 0);
 		s.net.tx_quiet = 0;
 		s.net.ic.ic_opmode = IEEE80211_M_STA;

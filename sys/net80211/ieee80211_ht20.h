@@ -29,6 +29,7 @@ struct ieee80211_ht20_vht {
 	struct ieee80211_vht_cap local, peer;
 	struct ieee80211_vht_operation operation;
 	struct ieee80211_vht_mcs_maps maps;
+	struct ieee80211_vht_channel channel;	/* Negotiated 40/80 MHz. */
 	uint8_t offered, valid;
 };
 struct ieee80211_ht20_node {
@@ -57,7 +58,8 @@ int ieee80211_ht20_prepare(struct ieee80211com *, struct ieee80211_node *,
     int, struct ieee80211_ht20_profile *);
 void ieee80211_ht20_write(uint8_t *, const struct ieee80211_ht20_profile *);
 void ieee80211_ht20_offer(struct ieee80211com *, struct ieee80211_node *, int,
-    const struct ieee80211_ht20_profile *, const struct ieee80211_vht_cap *);
+    const struct ieee80211_ht20_profile *, const struct ieee80211_vht_cap *,
+    const struct ieee80211_vht_channel *);
 void ieee80211_ht20_reset(struct ieee80211_node *);
 int ieee80211_ht20_response(struct ieee80211com *, struct ieee80211_node *,
     int, const struct ieee80211_ht20_node *, const uint8_t *, size_t, int);

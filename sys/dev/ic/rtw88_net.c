@@ -118,7 +118,7 @@ static int rtw88_net_ht20_admit(struct ieee80211com *,
 static int rtw88_net_ht20_local_policy(struct ieee80211com *);
 #ifdef RTW88_VHT80
 static int rtw88_net_vht_admit(struct ieee80211com *,
-    struct ieee80211_vht_cap *);
+    const struct ieee80211_vht_channel *, struct ieee80211_vht_cap *);
 #endif
 static int rtw88_net_ht20_profile_prepare(struct rtw88_net *,
     struct ieee80211_ht20_profile *);
@@ -585,11 +585,12 @@ rtw88_net_ht20_local_policy(struct ieee80211com *ic)
  * width stop/restart owner enters it through rtw88_start_tuple().
  */
 static int
-rtw88_net_vht_admit(struct ieee80211com *ic, struct ieee80211_vht_cap *cap)
+rtw88_net_vht_admit(struct ieee80211com *ic,
+    const struct ieee80211_vht_channel *chan, struct ieee80211_vht_cap *cap)
 {
 	struct rtw88_net *net;
 
-	if (ic == NULL || cap == NULL || ic->ic_ifp == NULL)
+	if (ic == NULL || chan == NULL || cap == NULL || ic->ic_ifp == NULL)
 		return EINVAL;
 	memset(cap, 0, sizeof(*cap));
 	net = ic->ic_ifp->if_softc;
@@ -598,7 +599,8 @@ rtw88_net_vht_admit(struct ieee80211com *ic, struct ieee80211_vht_cap *cap)
 	if (net->tx_quiet || net->policy.dying ||
 	    ic->ic_opmode != IEEE80211_M_STA ||
 	    rtw88_net_ht20_local_policy(ic) != 0 ||
-	    ieee80211_chan2ieee(ic, ic->ic_curchan) != 36)
+	    ieee80211_chan2ieee(ic, ic->ic_curchan) != 36 ||
+	    chan->primary != 36 || chan->center != 42 || chan->width_mhz != 80)
 		return EOPNOTSUPP;
 	cap->rx_map = cap->tx_map = RTW88_VHT_MAP_NSS1_MCS7;
 	return 0;

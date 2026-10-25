@@ -75,9 +75,25 @@ struct ieee80211_vht_mcs_maps ieee80211_vht_mcs_candidates(
  */
 bool ieee80211_vht_mcs_meets(uint16_t, uint16_t);
 
-/* Candidate-only 36/42/80 association check. This does not grant regulatory
- * permission; the caller must separately supply current channel policy. */
-int ieee80211_vht_assoc80_candidate(const struct ieee80211_vht_cap *,
-    const uint8_t *, size_t, unsigned);
+/* An AP operating channel as IEEE channel indices; width is 40 or 80. */
+struct ieee80211_vht_channel {
+	uint8_t primary;
+	uint8_t center;
+	uint8_t width_mhz;
+};
+
+/*
+ * Derive the 40 or 80 MHz channel of one bounded HT/VHT Operation window
+ * for the current primary. A 160 or 80+80 BSS yields its primary 80 MHz.
+ * VHT20 and malformed, inconsistent or off-block values fail (-1) and
+ * clear the output. This grants no regulatory or radio permission.
+ */
+int ieee80211_vht_channel_derive(const uint8_t *, size_t, unsigned,
+    struct ieee80211_vht_channel *);
+
+/* Candidate-only association check for one derived channel. This does not
+ * grant regulatory permission; the caller must separately admit it. */
+int ieee80211_vht_assoc_candidate(const struct ieee80211_vht_cap *,
+    const uint8_t *, size_t, const struct ieee80211_vht_channel *);
 
 #endif /* _NET80211_IEEE80211_VHT_IES_H_ */

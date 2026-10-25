@@ -273,7 +273,8 @@ ieee80211_vht_basic_rates_supported(const struct ieee80211com *ic,
 
 static int
 ieee80211_vht_request_prepare(struct ieee80211com *ic,
-    struct ieee80211_node *ni, struct ieee80211_vht_cap *cap)
+    struct ieee80211_node *ni, struct ieee80211_vht_cap *cap,
+    struct ieee80211_vht_channel *chan)
 {
 	size_t len;
 
@@ -281,14 +282,16 @@ ieee80211_vht_request_prepare(struct ieee80211com *ic,
 	    ic->ic_state != IEEE80211_S_ASSOC || ni != ic->ic_bss ||
 	    ni->ni_chan != ic->ic_curchan || ic->ic_curchan == NULL ||
 	    ic->ic_curmode != IEEE80211_MODE_11A ||
-	    ieee80211_chan2ieee(ic, ic->ic_curchan) != 36 ||
-	    !ieee80211_vht_basic_rates_supported(ic, ni) ||
-	    ic->ic_vht_admit(ic, cap) != 0)
+	    !ieee80211_vht_basic_rates_supported(ic, ni))
 		return 0;
 	len = ieee80211_phy_ies_size(&ni->ni_phy_ies,
 	    sizeof(ni->ni_phy_ies.data));
-	return len != 0 && ieee80211_vht_assoc80_candidate(cap,
-	    ni->ni_phy_ies.data, len, 36) == 0;
+	/* The driver admits the exact channel this AP advertised. */
+	return len != 0 && ieee80211_vht_channel_derive(ni->ni_phy_ies.data,
+	    len, ieee80211_chan2ieee(ic, ic->ic_curchan), chan) == 0 &&
+	    ic->ic_vht_admit(ic, chan, cap) == 0 &&
+	    ieee80211_vht_assoc_candidate(cap, ni->ni_phy_ies.data, len,
+	    chan) == 0;
 }
 
 static int
@@ -335,6 +338,7 @@ ieee80211_mgmt_output(struct ieee80211com *ic, struct ieee80211_node *ni,
     struct mbuf *m, int type, int timer, int wme_offer,
     const struct ieee80211_ht20_profile *ht20,
     const struct ieee80211_vht_cap *vht,
+    const struct ieee80211_vht_channel *vht_chan,
     struct ieee80211_rxba_candidate *ba)
 {
 	struct ifnet *ifp = ic->ic_ifp;
@@ -430,7 +434,7 @@ ieee80211_mgmt_output(struct ieee80211com *ic, struct ieee80211_node *ni,
 			ni->ni_flags |= IEEE80211_NODE_WME_OFFER;
 	}
 	if (ieee80211_ht20_request_offer(m, type, ht20, vht != NULL))
-		ieee80211_ht20_offer(ic, ni, type, ht20, vht);
+		ieee80211_ht20_offer(ic, ni, type, ht20, vht, vht_chan);
 	if (timer) {
 		/*
 		 * Set the mgt frame timeout.
@@ -1569,7 +1573,7 @@ ieee80211_send_rxba_response(struct ieee80211com *ic, struct ieee80211_node *ni,
 	p[8] = timeout >> 8;
 	m->m_len = m->m_pkthdr.len = 9;
 	error = ieee80211_mgmt_output(ic, ni, m, IEEE80211_FC0_SUBTYPE_ACTION,
-	    0, 0, NULL, NULL, candidate);
+	    0, 0, NULL, NULL, NULL, candidate);
 	if (error != 0)
 		ieee80211_free_node(ni);
 	return error;
@@ -1688,6 +1692,7 @@ ieee80211_send_mgmt(struct ieee80211com *ic, struct ieee80211_node *ni,
 	int ret, timer, status, wme_offer = 0, ht20_offer = 0, vht_offer = 0;
 	struct ieee80211_ht20_profile ht20;
 	struct ieee80211_vht_cap vht;
+	struct ieee80211_vht_channel vht_chan;
 
 	IASSERT(ni != NULL, ("null node"));
 	if (ic->ic_opmode == IEEE80211_M_STA &&
@@ -1921,7 +1926,7 @@ ieee80211_send_mgmt(struct ieee80211com *ic, struct ieee80211_node *ni,
 		    (ic->ic_flags & IEEE80211_F_WME) && ni->ni_wme_ie != NULL,
 		    &ht20);
 		vht_offer = ht20_offer &&
-		    ieee80211_vht_request_prepare(ic, ni, &vht);
+		    ieee80211_vht_request_prepare(ic, ni, &vht, &vht_chan);
 		m = ieee80211_getmgtframe(&frm,
 			 sizeof(u_int16_t)
 		       + sizeof(u_int16_t)
@@ -2070,7 +2075,8 @@ ieee80211_send_mgmt(struct ieee80211com *ic, struct ieee80211_node *ni,
 		/* NOTREACHED */
 	}
 	ret = ieee80211_mgmt_output(ic, ni, m, type, timer, wme_offer,
-	    ht20_offer ? &ht20 : NULL, vht_offer ? &vht : NULL, NULL);
+	    ht20_offer ? &ht20 : NULL, vht_offer ? &vht : NULL,
+	    vht_offer ? &vht_chan : NULL, NULL);
 	if (ret != 0) {
 bad:
 		ieee80211_free_node(ni);

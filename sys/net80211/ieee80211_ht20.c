@@ -92,7 +92,8 @@ ieee80211_ht20_reset(struct ieee80211_node *ni)
 void
 ieee80211_ht20_offer(struct ieee80211com *ic, struct ieee80211_node *ni,
     int type, const struct ieee80211_ht20_profile *profile,
-    const struct ieee80211_vht_cap *vht)
+    const struct ieee80211_vht_cap *vht,
+    const struct ieee80211_vht_channel *vht_chan)
 {
 	struct ieee80211_ht20_node *h = &ni->ni_ht20;
 
@@ -109,8 +110,10 @@ ieee80211_ht20_offer(struct ieee80211com *ic, struct ieee80211_node *ni,
 	h->security = (ic->ic_flags & IEEE80211_F_PRIVACY) != 0;
 	h->offered = 1;
 	memset(&h->vht, 0, sizeof(h->vht));
-	if (vht != NULL) {
+	/* Bind the offer to the channel the request admitted. */
+	if (vht != NULL && vht_chan != NULL) {
 		h->vht.local = *vht;
+		h->vht.channel = *vht_chan;
 		h->vht.offered = 1;
 	}
 }
@@ -175,6 +178,7 @@ ieee80211_ht20_response(struct ieee80211com *ic, struct ieee80211_node *ni,
 	struct ieee80211_ht20_node candidate;
 	struct ieee80211_vht_ies vht;
 	struct ieee80211_vht_cap local_vht;
+	struct ieee80211_vht_channel vht_chan;
 	uint8_t phy_ies[IEEE80211_PHY_IES_MAXLEN];
 	const uint8_t *cap = NULL, *op = NULL;
 	uint16_t rx, basic, caps, tx;
@@ -256,12 +260,20 @@ ieee80211_ht20_response(struct ieee80211com *ic, struct ieee80211_node *ni,
 	candidate.vht.valid = 0;
 	if (!vht_phy_overflow && h->vht.offered &&
 	    ic->ic_vht_admit != NULL &&
-	    ic->ic_vht_admit(ic, &local_vht) == 0 &&
+	    ieee80211_vht_channel_derive(phy_ies, phy_len,
+	    ieee80211_chan2ieee(ic, ic->ic_curchan), &vht_chan) == 0 &&
+	    ic->ic_vht_admit(ic, &vht_chan, &local_vht) == 0 &&
 	    ieee80211_vht_ies_parse(&vht, phy_ies, phy_len) == 0 &&
 	    vht.cap_present && vht.operation_present &&
-	    ieee80211_vht_assoc80_candidate(&local_vht, phy_ies, phy_len,
-	    ieee80211_chan2ieee(ic, ic->ic_curchan)) == 0) {
+	    ieee80211_vht_assoc_candidate(&local_vht, phy_ies, phy_len,
+	    &vht_chan) == 0 &&
+	    /* Commit only the channel and capability this offer carried. */
+	    vht_chan.primary == h->vht.channel.primary &&
+	    vht_chan.center == h->vht.channel.center &&
+	    vht_chan.width_mhz == h->vht.channel.width_mhz &&
+	    memcmp(&local_vht, &h->vht.local, sizeof(local_vht)) == 0) {
 		candidate.vht.local = local_vht;
+		candidate.vht.channel = vht_chan;
 		candidate.vht.peer = vht.cap;
 		candidate.vht.operation = vht.operation;
 		candidate.vht.maps.tx_map = ieee80211_vht_mcs_intersect(
@@ -326,8 +338,10 @@ ieee80211_ht20_beacon(struct ieee80211com *ic, struct ieee80211_node *ni,
     const struct ieee80211_frame *wh, const uint8_t *p, size_t len)
 {
 	const struct ieee80211_ht20_node *h = &ni->ni_ht20;
-	const uint8_t *cap = NULL, *op = NULL;
+	const uint8_t *cap = NULL, *op = NULL, *vop = NULL;
+	uint8_t vht_op[IEEE80211_VHT_OPERATION_LEN];
 	size_t size;
+	int vop_bad = 0;
 
 	if (!h->valid || ic->ic_opmode != IEEE80211_M_STA ||
 	    (ic->ic_state != IEEE80211_S_ASSOC &&
@@ -351,6 +365,11 @@ ieee80211_ht20_beacon(struct ieee80211com *ic, struct ieee80211_node *ni,
 			if (op != NULL || p[1] != sizeof(h->peer_htop))
 				goto bad;
 			op = p + 2;
+		} else if (p[0] == 192) {
+			/* Only a VHT node depends on this element. */
+			if (vop != NULL || p[1] != IEEE80211_VHT_OPERATION_LEN)
+				vop_bad = 1;
+			vop = p + 2;
 		}
 		p += size;
 		len -= size;
@@ -358,6 +377,12 @@ ieee80211_ht20_beacon(struct ieee80211com *ic, struct ieee80211_node *ni,
 	if (cap == NULL || op == NULL ||
 	    memcmp(cap, h->peer_htcap, sizeof(h->peer_htcap)) != 0 ||
 	    memcmp(op, h->peer_htop, sizeof(h->peer_htop)) != 0)
+		goto bad;
+	/* A negotiated VHT width is bound to the AP's VHT Operation. */
+	if (h->vht.valid && (vop == NULL || vop_bad ||
+	    ieee80211_vht_operation_encode(vht_op, sizeof(vht_op),
+	    &h->vht.operation) != 0 ||
+	    memcmp(vop, vht_op, sizeof(vht_op)) != 0))
 		goto bad;
 	return 0;
 bad:

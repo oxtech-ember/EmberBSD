@@ -90,6 +90,7 @@
 
 struct ieee80211_aclator;
 struct ieee80211_vht_cap;
+struct ieee80211_vht_channel;
 
 #define	IEEE80211_PS_SLEEP	0x1	/* STA is in power saving mode */
 
@@ -106,8 +107,10 @@ struct ieee80211com {
 	int (*ic_scan_probe_admit)(struct ieee80211com *);
 	/* Optional qualified HT20 provider; NULL means legacy only. */
 	int (*ic_ht20_admit)(struct ieee80211com *, struct ieee80211_ht20_profile *);
-	/* Optional local VHT capability provider; NULL means VHT stays disabled. */
-	int (*ic_vht_admit)(struct ieee80211com *, struct ieee80211_vht_cap *);
+	/* Optional local VHT capability provider for one AP-derived operating
+	 * channel; NULL means VHT stays disabled. */
+	int (*ic_vht_admit)(struct ieee80211com *,
+	    const struct ieee80211_vht_channel *, struct ieee80211_vht_cap *);
 	const struct ieee80211_rxba_ops *ic_rxba_ops;
 	uint64_t ic_rxba_serial;
 	SLIST_ENTRY(ieee80211com) ic_next;

@@ -136,58 +136,152 @@ ieee80211_vht_mcs_meets(uint16_t supported, uint16_t required)
 	return true;
 }
 
-/*
- * Validate the narrowly supported non-DFS association candidate. Raw scan
- * observations are rechecked here; they do not constitute negotiated state.
- */
-int
-ieee80211_vht_assoc80_candidate(const struct ieee80211_vht_cap *local,
-    const uint8_t *ies, size_t len, unsigned primary)
+/* Find the single HT Capabilities and HT Operation payloads, if present. */
+static int
+vht_ht_ies(const uint8_t *ies, size_t len, const uint8_t **htcap,
+    const uint8_t **htop)
 {
-	struct ieee80211_vht_ies peer;
-	const uint8_t *p, *end, *htcap = NULL, *htop = NULL;
+	const uint8_t *p = ies, *end = ies + len;
 	size_t n;
-	unsigned seen = 0;
 
-	if (local == NULL || ies == NULL || len == 0 || len > 73 ||
-	    primary != 36 || local->info != 0 || local->rx_map != 0xfffc ||
-	    local->tx_map != 0xfffc || local->rx_highest != 0 ||
-	    local->tx_highest != 0 ||
-	    ieee80211_vht_ies_parse(&peer, ies, len) != 0 ||
-	    !peer.cap_present || !peer.operation_present ||
-	    peer.operation.width != 1 || peer.operation.seg0 != 42 ||
-	    peer.operation.seg1 != 0 ||
-	    !ieee80211_vht_mcs_meets(peer.cap.rx_map, local->tx_map) ||
-	    !ieee80211_vht_mcs_meets(peer.cap.tx_map, local->rx_map) ||
-	    !ieee80211_vht_mcs_meets(local->tx_map,
-	    peer.operation.basic_map) ||
-	    !ieee80211_vht_mcs_meets(local->rx_map,
-	    peer.operation.basic_map))
-		return -1;
-
-	p = ies;
-	end = ies + len;
+	*htcap = *htop = NULL;
 	while (p < end) {
 		if ((size_t)(end - p) < 2 || p[1] > (size_t)(end - p) - 2)
 			return -1;
 		n = (size_t)p[1] + 2;
 		if (p[0] == 45) {
-			if ((seen & 1) != 0 || p[1] != 26)
+			if (*htcap != NULL || p[1] != 26)
 				return -1;
-			seen |= 1;
-			htcap = p + 2;
+			*htcap = p + 2;
 		} else if (p[0] == 61) {
-			if ((seen & 2) != 0 || p[1] != 22)
+			if (*htop != NULL || p[1] != 22)
 				return -1;
-			seen |= 2;
-			htop = p + 2;
+			*htop = p + 2;
 		}
 		p += n;
 	}
-	if (htcap == NULL || htop == NULL || (htcap[0] & 0x02) == 0 ||
-	    htcap[3] != 0xff ||
-	    htop[0] != primary || (htop[1] & 0x03) != 1 ||
-	    (htop[1] & 0x04) == 0)
+	return 0;
+}
+
+/* 5 GHz channel blocks of IEEE 802.11-2016 Annex E, by center index. */
+static int
+vht_center(int center, unsigned width)
+{
+	static const uint8_t c40[] = { 38, 46, 54, 62, 102, 110, 118, 126,
+	    134, 142, 151, 159 };
+	static const uint8_t c80[] = { 42, 58, 106, 122, 138, 155 };
+	static const uint8_t c160[] = { 50, 114, 163 };
+	const uint8_t *c = width == 40 ? c40 : width == 80 ? c80 : c160;
+	size_t i, n = width == 40 ? sizeof(c40) : width == 80 ?
+	    sizeof(c80) : sizeof(c160);
+
+	for (i = 0; i < n; i++)
+		if (c[i] == center)
+			return 1;
+	return 0;
+}
+
+int
+ieee80211_vht_channel_derive(const uint8_t *ies, size_t len,
+    unsigned primary, struct ieee80211_vht_channel *out)
+{
+	struct ieee80211_vht_ies vht;
+	const uint8_t *htcap, *htop;
+	int p = (int)primary, s0, s1, d, center, offset;
+	unsigned sco, width = 80;
+
+	if (out == NULL)
+		return -1;
+	memset(out, 0, sizeof(*out));
+	/* Also rejects an unknown channel's (unsigned)-1 index. HT
+	 * Capabilities is only required to be well formed here. */
+	if (primary > 196 || ieee80211_vht_ies_parse(&vht, ies, len) != 0 ||
+	    !vht.operation_present ||
+	    vht_ht_ies(ies, len, &htcap, &htop) != 0 || htop == NULL ||
+	    htop[0] != primary || (htop[1] & 0x04) == 0)
+		return -1;
+	sco = htop[1] & 0x03;
+	if (sco != 1 && sco != 3)
+		return -1;
+	s0 = vht.operation.seg0;
+	s1 = vht.operation.seg1;
+	d = s1 > s0 ? s1 - s0 : s0 - s1;
+	switch (vht.operation.width) {
+	case 0:
+		/* HT 40 MHz; both segments are reserved. */
+		width = 40;
+		center = sco == 1 ? p + 2 : p - 2;
+		break;
+	case 1:
+		/* Segment1 names the 160 MHz center or the secondary 80. */
+		if (s1 != 0 && !(d == 8 && vht_center(s1, 160)) &&
+		    !(d > 16 && vht_center(s1, 80)))
+			return -1;
+		center = s0;
+		break;
+	case 2:
+		if (!vht_center(s0, 160))
+			return -1;
+		center = p < s0 ? s0 - 8 : s0 + 8;
+		break;
+	case 3:
+		if (d <= 16 || !vht_center(s1, 80))
+			return -1;
+		center = s0;
+		break;
+	default:
+		return -1;
+	}
+	if (!vht_center(center, width))
+		return -1;
+	offset = p - center;
+	if (width == 80) {
+		/* The HT secondary must be this primary's 40 MHz partner. */
+		if (offset == -6 || offset == 2) {
+			if (sco != 1)
+				return -1;
+		} else if (offset == -2 || offset == 6) {
+			if (sco != 3)
+				return -1;
+		} else
+			return -1;
+	}
+	out->primary = (uint8_t)primary;
+	out->center = (uint8_t)center;
+	out->width_mhz = (uint8_t)width;
+	return 0;
+}
+
+/*
+ * Validate the strict local profile against one AP-derived operating
+ * channel. Raw scan observations are rechecked here; they do not
+ * constitute negotiated state.
+ */
+int
+ieee80211_vht_assoc_candidate(const struct ieee80211_vht_cap *local,
+    const uint8_t *ies, size_t len, const struct ieee80211_vht_channel *chan)
+{
+	struct ieee80211_vht_ies peer;
+	struct ieee80211_vht_channel derived;
+	const uint8_t *htcap, *htop;
+
+	if (local == NULL || chan == NULL || ies == NULL || len == 0 ||
+	    len > 73 || local->info != 0 || local->rx_map != 0xfffc ||
+	    local->tx_map != 0xfffc || local->rx_highest != 0 ||
+	    local->tx_highest != 0 ||
+	    ieee80211_vht_ies_parse(&peer, ies, len) != 0 ||
+	    !peer.cap_present || !peer.operation_present ||
+	    !ieee80211_vht_mcs_meets(peer.cap.rx_map, local->tx_map) ||
+	    !ieee80211_vht_mcs_meets(peer.cap.tx_map, local->rx_map) ||
+	    !ieee80211_vht_mcs_meets(local->tx_map,
+	    peer.operation.basic_map) ||
+	    !ieee80211_vht_mcs_meets(local->rx_map,
+	    peer.operation.basic_map) ||
+	    vht_ht_ies(ies, len, &htcap, &htop) != 0 || htcap == NULL ||
+	    (htcap[0] & 0x02) == 0 || htcap[3] != 0xff ||
+	    ieee80211_vht_channel_derive(ies, len, chan->primary,
+	    &derived) != 0 || derived.center != chan->center ||
+	    derived.width_mhz != chan->width_mhz)
 		return -1;
 	return 0;
 }

@@ -6,8 +6,9 @@ association metadata. Firmware envelopes, capability qualification and
 `ME_CONFIG` construction remain in the AICWF driver.
 
 The pure codec allocates no memory and retains no input pointers. It has no
-station, driver, clock or radio dependency. It does not enable VHT, select
-bandwidth, establish a rate, or grant channel/DFS transmission permission.
+station, driver, clock or radio dependency. It does not enable VHT,
+establish a rate, or grant channel/DFS transmission permission. The one
+interpretation it owns is the operating-channel derivation below.
 The existing 73-byte raw PHY snapshot and its lifecycle are separate.
 
 ## Values and decoding
@@ -32,7 +33,8 @@ Decoding is structural. It preserves unsupported or reserved semantic
 values for observation. Capability width-set zero excludes 160 MHz and
 80+80 MHz; it still includes the base VHT widths, including 80 MHz.
 Operation width zero refers to HT 20/40 MHz. Neither value means that this
-codec selected a 20 MHz link. Interpreting these values belongs to callers.
+codec selected a 20 MHz link. Apart from the channel derivation below,
+interpreting these values belongs to callers.
 
 The wire layouts were checked against FreeBSD `ieee80211.h` and
 `ieee80211_vht.c` at
@@ -75,6 +77,46 @@ MPDU policy or transmission permission. They do not qualify a radio.
 The entry encoding and TX/RX pairing were checked against the pinned
 FreeBSD `ieee80211_setup_vht_rates()` reference above. No station policy
 or highest-rate calculation is imported.
+
+## Operating channel and association candidate
+
+`ieee80211_vht_channel_derive(ies, len, primary, out)` turns one bounded
+HT/VHT Operation window into `struct ieee80211_vht_channel`: primary,
+center and width (40 or 80), all IEEE channel indices. It follows IEEE Std
+802.11ac-2013 Table 8-183x and §10.39.1. HT Operation supplies the primary,
+which must equal the caller's current channel, the secondary offset (above
+or below) and a set STA channel width bit. VHT width 0 is the HT 40 MHz
+channel; its segments are reserved and ignored. Width 1 is 80 MHz at
+segment 0. A nonzero segment 1 is accepted only as the 160 MHz center
+eight channels away or as a secondary 80 MHz more than 16 channels away;
+the result is the primary 80 MHz in both cases. The deprecated widths 2
+(160 at segment 0) and 3 (80+80) also yield the primary 80 MHz. The center
+must be an IEEE 802.11-2016 Annex E 5 GHz block (40: 38..159, 80: 42, 58,
+106, 122, 138, 155), and for 80 MHz the secondary offset must name the
+primary's own 40 MHz partner. VHT20, reserved widths, 2.4 GHz and every
+inconsistent value fail and clear the output. A station with Supported
+Channel Width Set 0 may operate on the primary 80 MHz of a 160 or 80+80
+BSS: §10.39.1 only requires that its PPDUs stay inside the primary
+segment, and the AP knows that set. Width 1 with a segment 1 that is
+neither 0, eight channels away nor more than 16 away is rejected, as is
+every primary from 169 to 177; Linux treats such odd values as plain
+80 MHz, so this is a deliberate strictness trade-off.
+
+`ieee80211_vht_assoc_candidate(local, ies, len, chan)` accepts only the
+strict local NSS1 MCS0-7 profile, a 73-byte or smaller window, mutual MCS
+maps, the AP Basic VHT map, HT 40 MHz support with MCS0-7, and a window
+that derives exactly `chan`. The station asks the driver through
+`ic_vht_admit(ic, chan, cap)` for that exact channel before both the
+association request offer and the response commit. The committed node keeps
+the channel in `ni_ht20.vht.channel`. The offer records the channel derived
+from the scan observation; a response commits VHT only when it derives the
+same channel and the provider returns the same capability, otherwise the
+association stays HT20. A later beacon whose VHT Operation differs byte for
+byte from the committed one, is missing, repeats or has another length
+withdraws the HT/VHT profile, as a changed HT Operation does. This is
+strict: a 160 MHz AP that narrows segment 1 also resets the profile. A
+node without VHT ignores VHT Operation framing in beacons. None of this
+grants regulatory, DFS or radio permission; the driver owns admission.
 
 ## Software contracts
 

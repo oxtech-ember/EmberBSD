@@ -44,12 +44,14 @@ struct ieee80211_node {
 	unsigned ni_flags, ni_associd, ni_wme_applied_slot, ni_fails;
 	uint8_t ni_bssid[6],ni_macaddr[6];
 };
+struct ieee80211_vht_channel;
 struct ieee80211com {
 	struct { void (*ia_detach)(struct ieee80211com *); } *ic_auth;
 	const struct ieee80211_rxba_ops *ic_rxba_ops;
 	uint64_t ic_rxba_serial;
 	int (*ic_ht20_admit)(struct ieee80211com *, struct ieee80211_ht20_profile *);
-	int (*ic_vht_admit)(struct ieee80211com *, struct ieee80211_vht_cap *);
+	int (*ic_vht_admit)(struct ieee80211com *,
+	    const struct ieee80211_vht_channel *, struct ieee80211_vht_cap *);
 	struct ifqueue ic_mgtq;
 	uint8_t ic_chan_active[32], ic_chan_scan[32];
 	struct { unsigned nt_scangen,nt_scan_epoch; } ic_scan,ic_sta;
