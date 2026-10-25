@@ -390,6 +390,55 @@ static const struct psp_funcs psp_v10_0_funcs = {
 	.ring_set_wptr = psp_v10_0_ring_set_wptr,
 };
 
+void
+psp_v10_0_ring_timeout(struct psp_context *psp, uint32_t expected,
+    uint64_t fence_mc_addr)
+{
+	struct amdgpu_device *adev = psp->adev;
+	uint32_t fence, control, wptr, rptr, addr_lo, addr_hi, size;
+	uint32_t vram_fence;
+	uint64_t offset;
+
+	/* These mailbox meanings apply to the Raven PSP v10 interface. */
+	if (adev->asic_type != CHIP_RAVEN ||
+	    psp->funcs != &psp_v10_0_funcs)
+		return;
+
+	fence = READ_ONCE(*(uint32_t *)psp->fence_buf);
+	control = RREG32_SOC15(MP0, 0, mmMP0_SMN_C2PMSG_64);
+	wptr = RREG32_SOC15(MP0, 0, mmMP0_SMN_C2PMSG_67);
+	rptr = RREG32_SOC15(MP0, 0, mmMP0_SMN_C2PMSG_68);
+	addr_lo = RREG32_SOC15(MP0, 0, mmMP0_SMN_C2PMSG_69);
+	addr_hi = RREG32_SOC15(MP0, 0, mmMP0_SMN_C2PMSG_70);
+	size = RREG32_SOC15(MP0, 0, mmMP0_SMN_C2PMSG_71);
+
+	DRM_ERROR("PSP v10 timeout: fence expected=%08x observed=%08x "
+	    "cmd=%08x status=%08x\n",
+	    expected, fence, READ_ONCE(psp->cmd_buf_mem->cmd_id),
+	    READ_ONCE(psp->cmd_buf_mem->resp.status));
+	DRM_ERROR("PSP v10 C2PMSG: 64=%08x 67/wptr=%08x "
+	    "68/rptr=%08x 69=%08x 70=%08x 71=%08x\n",
+	    control, wptr, rptr, addr_lo, addr_hi, size);
+	DRM_ERROR("PSP v10 MC: ring=%#"PRIx64" size=%#x "
+	    "cmd=%#"PRIx64" fence=%#"PRIx64" mapped_fence=%#"PRIx64"\n",
+	    psp->km_ring.ring_mem_mc_addr, psp->km_ring.ring_size,
+	    psp->cmd_buf_mc_addr, fence_mc_addr, psp->fence_buf_mc_addr);
+
+	/* Compare the CPU mapping with one bounded indexed VRAM read. */
+	if (fence_mc_addr < adev->gmc.vram_start || (fence_mc_addr & 3))
+		return;
+	offset = fence_mc_addr - adev->gmc.vram_start;
+	if (adev->gmc.real_vram_size < sizeof(vram_fence) ||
+	    offset > adev->gmc.real_vram_size - sizeof(vram_fence) ||
+	    offset > INT64_MAX - sizeof(vram_fence))
+		return;
+	vram_fence = 0;
+	amdgpu_device_vram_access(adev, (loff_t)offset, &vram_fence,
+	    sizeof(vram_fence), false);
+	DRM_ERROR("PSP v10 fence: indexed=%08x mapped_now=%08x\n",
+	    vram_fence, READ_ONCE(*(uint32_t *)psp->fence_buf));
+}
+
 void psp_v10_0_set_psp_funcs(struct psp_context *psp)
 {
 	psp->funcs = &psp_v10_0_funcs;

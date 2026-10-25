@@ -30,5 +30,6 @@
 #include "amdgpu_psp.h"
 
 void psp_v10_0_set_psp_funcs(struct psp_context *psp);
+void psp_v10_0_ring_timeout(struct psp_context *, uint32_t, uint64_t);
 
 #endif
