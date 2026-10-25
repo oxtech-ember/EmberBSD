@@ -1,0 +1,192 @@
+{
+  "format": "emberbsd-native-bootstrap-program",
+  "version": 1,
+  "origin": "EmberBSD (AI-assisted) source contract; implementation retains its BSD copyright notices.",
+  "compiler": {
+    "family": "gcc",
+    "major": 16,
+    "abi": "native"
+  },
+  "cflags": [],
+  "link_flags": [],
+  "libraries": [],
+  "name": "basename",
+  "canonical_host_recipe": "tools/basename/Makefile",
+  "source_makefile": "usr.bin/basename/Makefile",
+  "sources": [
+    "usr.bin/basename/basename.c"
+  ],
+  "headers": [
+    "tools/compat/bootstrap_cdefs.h"
+  ],
+  "include_dirs": [],
+  "cppflags": [
+    "-include",
+    "tools/compat/bootstrap_cdefs.h"
+  ],
+  "invocations": [
+    "basename"
+  ],
+  "files": {},
+  "runtime_cases": [
+    {
+      "name": "normal",
+      "invocation": "basename",
+      "args": [
+        "/usr/file"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "file\n",
+      "stderr": ""
+    },
+    {
+      "name": "empty",
+      "invocation": "basename",
+      "args": [
+        ""
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "\n",
+      "stderr": ""
+    },
+    {
+      "name": "root",
+      "invocation": "basename",
+      "args": [
+        "/"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "/\n",
+      "stderr": ""
+    },
+    {
+      "name": "slashes",
+      "invocation": "basename",
+      "args": [
+        "///"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "/\n",
+      "stderr": ""
+    },
+    {
+      "name": "trailing-slash",
+      "invocation": "basename",
+      "args": [
+        "/usr/bin/"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "bin\n",
+      "stderr": ""
+    },
+    {
+      "name": "no-directory",
+      "invocation": "basename",
+      "args": [
+        "file"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "file\n",
+      "stderr": ""
+    },
+    {
+      "name": "option-terminator",
+      "invocation": "basename",
+      "args": [
+        "--",
+        "-file"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "-file\n",
+      "stderr": ""
+    },
+    {
+      "name": "suffix",
+      "invocation": "basename",
+      "args": [
+        "/usr/file.txt",
+        ".txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "file\n",
+      "stderr": ""
+    },
+    {
+      "name": "other-suffix",
+      "invocation": "basename",
+      "args": [
+        "file.txt",
+        ".c"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "file.txt\n",
+      "stderr": ""
+    },
+    {
+      "name": "whole-suffix",
+      "invocation": "basename",
+      "args": [
+        "file",
+        "file"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "file\n",
+      "stderr": ""
+    },
+    {
+      "name": "empty-suffix",
+      "invocation": "basename",
+      "args": [
+        "file",
+        ""
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "file\n",
+      "stderr": ""
+    },
+    {
+      "name": "missing-operand",
+      "invocation": "basename",
+      "args": [],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "extra-operands",
+      "invocation": "basename",
+      "args": [
+        "one",
+        "two",
+        "three"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "invalid-option",
+      "invocation": "basename",
+      "args": [
+        "-z"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    }
+  ]
+}

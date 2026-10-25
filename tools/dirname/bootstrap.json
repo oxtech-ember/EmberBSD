@@ -1,0 +1,154 @@
+{
+  "format": "emberbsd-native-bootstrap-program",
+  "version": 1,
+  "origin": "EmberBSD (AI-assisted) source contract; implementation retains its BSD copyright notices.",
+  "compiler": {
+    "family": "gcc",
+    "major": 16,
+    "abi": "native"
+  },
+  "cflags": [],
+  "link_flags": [],
+  "libraries": [],
+  "name": "dirname",
+  "canonical_host_recipe": "tools/dirname/Makefile",
+  "source_makefile": "usr.bin/dirname/Makefile",
+  "sources": [
+    "usr.bin/dirname/dirname.c"
+  ],
+  "headers": [
+    "tools/compat/bootstrap_cdefs.h"
+  ],
+  "include_dirs": [],
+  "cppflags": [
+    "-include",
+    "tools/compat/bootstrap_cdefs.h"
+  ],
+  "invocations": [
+    "dirname"
+  ],
+  "files": {},
+  "runtime_cases": [
+    {
+      "name": "normal",
+      "invocation": "dirname",
+      "args": [
+        "/usr/file"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "/usr\n",
+      "stderr": ""
+    },
+    {
+      "name": "empty",
+      "invocation": "dirname",
+      "args": [
+        ""
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": ".\n",
+      "stderr": ""
+    },
+    {
+      "name": "root",
+      "invocation": "dirname",
+      "args": [
+        "/"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "/\n",
+      "stderr": ""
+    },
+    {
+      "name": "slashes",
+      "invocation": "dirname",
+      "args": [
+        "///"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "/\n",
+      "stderr": ""
+    },
+    {
+      "name": "trailing-slash",
+      "invocation": "dirname",
+      "args": [
+        "/usr/bin/"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "/usr\n",
+      "stderr": ""
+    },
+    {
+      "name": "no-directory",
+      "invocation": "dirname",
+      "args": [
+        "file"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": ".\n",
+      "stderr": ""
+    },
+    {
+      "name": "option-terminator",
+      "invocation": "dirname",
+      "args": [
+        "--",
+        "-file"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": ".\n",
+      "stderr": ""
+    },
+    {
+      "name": "dot",
+      "invocation": "dirname",
+      "args": [
+        "."
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": ".\n",
+      "stderr": ""
+    },
+    {
+      "name": "missing-operand",
+      "invocation": "dirname",
+      "args": [],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "extra-operands",
+      "invocation": "dirname",
+      "args": [
+        "one",
+        "two"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "invalid-option",
+      "invocation": "dirname",
+      "args": [
+        "-z"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    }
+  ]
+}
