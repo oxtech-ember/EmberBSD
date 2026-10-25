@@ -119,12 +119,22 @@ deviation is not a claim of conformance with the base-standard HT
 protection rules (IEEE Std 802.11-2016 §10.26.3), which 802.11ac §9.23.6
 applies to VHT stations. It rests on four preconditions of this stack:
 5 GHz, where every non-HT station is OFDM and defers on the L-SIG length of
-mixed-format HT and VHT PPDUs; single unaggregated MPDUs; no TXOP bursts;
+mixed-format HT and VHT PPDUs; one PPDU per channel access; no TXOP bursts;
 and no length-triggered RTS (the RTS threshold exceeds every MPDU).
+
+An A-MPDU of an established originator session keeps the second
+precondition. It is one PPDU, and its L-SIG length covers the whole PPDU
+(at most aPPDUMaxTime, 5.484 ms; the MAC's AMPDU_MAX_TIME limit is
+shorter). A non-HT station that decodes only the legacy preamble defers for
+that duration and then uses EIFS, as after any PPDU it cannot receive; EIFS
+covers the immediate BlockAck that follows after SIFS. Aggregation does not add a
+TXOP burst, an RTS or a CTS-to-self, and the MAC's hardware RTS selection
+(TX descriptor HW_RTS_EN) stays off. Protection-limited and legacy paths
+never aggregate.
 Non-member protection (mode 1), mode 2 without non-greenfield, OBSS non-HT
 presence and every other operation selector remain closed. Beacons are
 checked against the committed contract, not byte for byte: the HT
-Capabilities SM power save, Greenfield and A-MPDU parameters, and in HT
+Capabilities SM power save and Greenfield bits and MCS 0-7, and in HT
 Operation the primary channel, the secondary offset and STA channel width,
 the third information field and the Basic MCS set must stay unchanged,
 while the operation word may move within the admitted envelope (0 and 6,
