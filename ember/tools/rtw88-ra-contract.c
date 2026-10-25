@@ -469,7 +469,7 @@ static void
 test_ra_ht20_protection_bounds(void)
 {
  const uint8_t bssid[6]={2,0,0,0,0,1};
- for(unsigned kind=0;kind<26;kind++) {
+ for(unsigned kind=0;kind<28;kind++) {
   struct rtw88_softc sc;
   struct rtw88_ra_config cfg={.epoch=9,.channel=36,.common_rates=0xff0,
    .mode=RTW88_FIXED_11A,.phy=RTW88_RA_HT20_1SS,.ht_mcs=0xff,
@@ -505,11 +505,14 @@ test_ra_ht20_protection_bounds(void)
   case 23: cfg.ht.max_mpdu=4049;break;
   case 24: cfg.ht.qualification=2;break;
   case 25: cfg.phy=RTW88_RA_LEGACY;break;
+  case 26: cfg.ht_operation=0x17;break; /* OBSS non-HT STAs present. */
+  case 27: cfg.ht_operation=5;break; /* Non-member protection. */
   }
   unsigned writes=f.writes,box=sc.sc_h2c_box;
   struct rtw88_ra_state saved=sc.sc_ra;
   int error=rtw88_ra_configure(&sc,&cfg);
-  if(kind<6) {
+  /* Non-HT mixed mode 3 (and 7, with non-GF) is accepted like upstream. */
+  if(kind<6 || kind==20 || kind==21) {
    CHECK(error==0 && sc.sc_ra.active && sc.sc_ra.ht_operation==cfg.ht_operation);
    CHECK(sc.sc_ra.ht.max_mpdu==cfg.ht.max_mpdu && sc.sc_ra.ht.mtu==cfg.ht.mtu);
    uint8_t packet[4096]={0};packet[0]=0x88;packet[1]=1;packet[4]=2;packet[16]=2;
@@ -1609,6 +1612,9 @@ test_ra_vht_tuples(void)
 		CHECK(rtw88_vht_committed(&sc));
 		CHECK(rtw88_station_config(&sc, bssid, 1, 0x150, 9, 1) == 0);
 		cfg.channel = v[i].t.primary;
+		/* The observed primary-64 AP runs non-HT mixed mode 3. */
+		if (v[i].t.primary == 64)
+			cfg.ht_operation = 7;
 		box = sc.sc_h2c_box;
 		CHECK(rtw88_ra_configure(&sc, &cfg) == 0 && sc.sc_ra.active);
 		CHECK(sc.sc_ra.rate_id == 10 && sc.sc_ra.mask == 0x000ff010);
@@ -1631,6 +1637,8 @@ test_ra_vht_tuples(void)
 		CHECK(desc[6] == 10 && (desc[16] & 0x7f) == 0x33);
 		CHECK(((desc[20] >> 5) & 3) == (v[i].t.width_mhz == 80 ? 2 : 1));
 		CHECK((desc[20] & 0x0f) == RTW88_TX_DATA_SC_DONT_CARE);
+		/* Neither aggregation nor RTS protection in any mode. */
+		CHECK((desc[9] & 0x10) == 0 && (desc[13] & 0x10) == 0);
 		wp = sc.sc_txq[RTW88_TXQ_MGMT].wp;
 		CHECK(rtw88_tx_raw(&sc, RTW88_TXQ_MGMT, mgmt, sizeof(mgmt)) == 0);
 		desc = sc.sc_txq[RTW88_TXQ_MGMT].buf[wp].vaddr;

@@ -737,7 +737,7 @@ test_current_peer_beacons(void)
 static void
 test_protection_qualification(void)
 {
- for(unsigned kind=0;kind<21;kind++) {
+ for(unsigned kind=0;kind<23;kind++) {
   ht_setup();CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ)==0);release_capture();
   struct mbuf *m=ht_response();uint8_t *cap=m->m_data+m->m_len-52,*op=cap+28;
   op[3]=5;op[4]=6;
@@ -759,6 +759,8 @@ test_protection_qualification(void)
   case 15: op[6]=1;break;
   case 16: op[7]=0x80;break;
   case 17: op[5]=1;break;
+  case 21: op[4]=0x17;break; /* OBSS non-HT STAs present. */
+  case 22: op[4]=5;break; /* Non-member protection. */
   }
   deliver(m,IEEE80211_FC0_SUBTYPE_ASSOC_RESP);
   CHECK(test_node.ni_ht20.valid);
@@ -768,6 +770,7 @@ test_protection_qualification(void)
   struct ieee80211_ht20_protection result;
   memset(&result,0xff,sizeof(result));
   int error=ieee80211_ht20_tx_protection(&test_ic,&test_node,&result);
+  /* Non-HT mixed mode 3 (5 and 7) stays closed on this 2.4 GHz primary. */
   if(kind<3) {
    CHECK(error==0 && result.qualification==IEEE80211_HT20_PROT_MF20_NO_RTS);
    CHECK(result.generation==admitted.generation && result.peer_cap==0x0c);
