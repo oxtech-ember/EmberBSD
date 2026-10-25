@@ -2,13 +2,13 @@
   "format": "emberbsd-libelf-source",
   "version": 1,
   "recipe": {
-    "ports_commit": "ada03afb8c8129c1239c7268961d07c732722339",
+    "ports_commit": "2d5e67532cd4cbf8a0e6a868377542525e76b494",
     "recipe": "pkgsrc/devel/elftoolchain",
     "distname": "elftoolchain-0.7.1",
     "url": "https://downloads.sourceforge.net/project/elftoolchain/Sources/elftoolchain-0.7.1/elftoolchain-0.7.1.tar.bz2",
-    "makefile_sha256": "82fb60b31a7b8777ec1678dad98f5d7669879025d7163711938668c1e6ad2b48",
-    "distinfo_sha256": "057bcc2e208b01f19c89c327d0762249ca022f8457ed05b9800649786f86a0e4",
-    "base_source_sha256": "3c72eb12fecda3fa21715d2db781259a15121e3ca4c38cb4cccea82edbc4ea05",
+    "makefile_sha256": "e3122320c87d051c3198fb25c4a0cb98ade6544b575512d768f39fa0fa4cb158",
+    "distinfo_sha256": "d9542c52e67e973f9459508b71f7c1128185309e96fd8b93102bb965c5049e4b",
+    "base_source_sha256": "95a1af0dac7822ac2c3a7640b700a7510028b20729b612cedcf52bb63bda48bf",
     "upstream_svn_revision": 3417,
     "upstream_archive": {
       "size": 5361427,
@@ -35,6 +35,11 @@
         "name": "patch-01-libelf-version-map",
         "sha1": "5bb90a683f7e83eafe5144360845d6a46b706e86",
         "sha256": "54a1c7f23342db5fc0a3915aa26f1e8dee19d84f6808a5c9a1c2a6925d3b602c"
+      },
+      {
+        "name": "patch-02-symbol-table-indices",
+        "sha1": "97f44a1960ad86f161d27054e58ff1202209f47f",
+        "sha256": "2577471b490b20ab33c6a365cc87c66b057677fcd2fbe392beac97b61d699229"
       },
       {
         "name": "patch-am",
@@ -96,14 +101,14 @@
       "sha256": "5dc0239cd53ba69df30f8625b2433a2be3bd23f0e76e4ff8a89279dfbe5ae434"
     },
     "common/sys/elfconstants.m4": {
+      "size": 103866,
       "mode": 420,
-      "size": 103783,
-      "sha256": "0a99f1f81388369f7a0983c90f7634fc1a685c8861d2e8cf65fefbd8dc84a5aa"
+      "sha256": "8fe4accc51adeedc049ffd818ad34a12779e19c664ec851b3817b13752e58eec"
     },
     "common/sys/elfdefinitions.m4": {
+      "size": 20900,
       "mode": 420,
-      "size": 20823,
-      "sha256": "1e3175d879d34e83fb7e5eaf0fd30b42104c463116e00d57524029a2f64368aa"
+      "sha256": "c5570203f5132e6ca98dd57617d96d34d142e69363b2dd3e496560bdce56dc05"
     },
     "common/utarray.h": {
       "mode": 420,
@@ -716,5 +721,5 @@
       "sha256": "1ae772e44e79022bac43852afba69dbb4ce35b973a79519e3d0728f0059e2fb6"
     }
   },
-  "tree_sha256": "0f70ddf4aa75617adcf0953d4ba1f3959d82818f3d3f9f49ada33a4b65f7b08a"
+  "tree_sha256": "786de16158aedb742c57ad7fee1c7e78981f142044b33cac075f7ea15dfa5e7d"
 }

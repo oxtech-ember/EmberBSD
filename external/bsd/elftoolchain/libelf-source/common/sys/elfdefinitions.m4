@@ -192,6 +192,11 @@ DEFINE_SECTION_TYPE_ALIASES()
 #define	PN_XNUM			0xFFFFU /* Use extended section numbering. */
 
 /*
+ * Special indices into symbol tables.
+ */
+DEFINE_SYMBOL_TABLE_INDICES()
+
+/*
  * Symbol binding information.
  */
 DEFINE_SYMBOL_BINDINGS()

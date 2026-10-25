@@ -1570,6 +1570,10 @@ _(SHT_GNU_verneed,	SHT_SUNW_verneed)
 _(SHT_GNU_versym,	SHT_SUNW_versym)
 ')
 
+define(`DEFINE_SYMBOL_TABLE_INDICES',`dnl
+_(STN_UNDEF,		0, `undefined symbol')
+')
+
 #
 # Symbol binding information.
 #
