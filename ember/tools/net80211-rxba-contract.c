@@ -73,6 +73,7 @@ static struct mbuf *unit_prepend(struct mbuf *m,unsigned len)
  m->m_data-=len;m->m_len+=len;m->m_pkthdr.len+=len;return m;
 }
 #define M_PREPEND(m,len,how) ((m)=unit_prepend((m),(len)))
+static unsigned unit_declined_posts;
 static void if_start_lock(struct ifnet *ifp)
 {
  struct ieee80211com *ic=ifp->model_ic;
@@ -85,6 +86,7 @@ static void if_start_lock(struct ifnet *ifp)
   CHECK(tid<8 && ic->ic_bss->ni_rxba.tid[tid]!=NULL);
   unit_positive_posts++;
  }
+ if(p[27]==37 && p[28]==0)unit_declined_posts++;
  ic->ic_mgtq.m=NULL;ic->ic_mgtq.ifq_len--;
  ieee80211_free_node(m->m_pkthdr.ctx);m->m_pkthdr.ctx=NULL;m_freem(m);
 }
@@ -730,6 +732,29 @@ static void test_null_crypto_order(void)
  }
  unit_close(&f);
 }
+/*
+ * An AP commonly requests block ack right after association, while the
+ * driver still owns a deferred RUN or before the key handshake. Without
+ * a session that request is premature, not a contract violation: decline
+ * it (status 37) and keep the negotiated profile and the association.
+ */
+static void test_premature_addba_declined(void)
+{
+ for(unsigned kind=0;kind<2;kind++) {
+  struct unit_fixture f;if(!unit_setup_mode(&f,10,64,0,0))return;
+  if(kind==0)f.ic.ic_state=IEEE80211_S_ASSOC; else f.ni.authorized=0;
+  unit_declined_posts=0;
+  CHECK(unit_request(&f,20,0,7)==0);
+  CHECK(unit_declined_posts==1 && unit_positive_posts==0);
+  CHECK(f.ic.ic_state==(kind==0?IEEE80211_S_ASSOC:IEEE80211_S_RUN));
+  CHECK(f.ni.ni_ht20.valid && f.ni.ni_rxba.epoch==0 && f.ni.ni_rxba.bytes==0);
+  /* A premature DELBA has no session to remove and is ignored. */
+  uint8_t delba[6]={3,2,0,0x08,1,0};
+  CHECK(ieee80211_rxba_action(&f.ic,&f.ni,delba,sizeof(delba))!=0);
+  CHECK(f.ni.ni_ht20.valid && f.ic.ic_state!=IEEE80211_S_INIT);
+  unit_close(&f);
+ }
+}
 static void test_owned_admission_withdrawal(void)
 {
  struct unit_fixture f;if(!unit_setup(&f,10,64,0))return;
@@ -890,7 +915,7 @@ static void test_negotiated_amsdu_crypto_order(void)
 #endif
 int RXBA_SHARED_MAIN(void)
 {
- test_csa_action_exit();test_absolute_deadline();test_window_and_wrap();test_key_and_mic_order();test_candidate_preflight();test_actual_key_lifecycle();test_actual_node_reuse();test_beacon_contract_purge();test_ht20_real_ccmp_budget();test_actual_bar_and_delba();test_clock_serial_quarantine();test_owned_storage_budget();test_null_crypto_order();test_owned_admission_withdrawal();test_actual_allocation_failures();test_repeat_replace_and_tid_deadlines();test_invalid_queued_frames();test_negotiated_amsdu_crypto_order();test_storage_walk_bounds();test_amsdu_current_without_ba();
+ test_csa_action_exit();test_absolute_deadline();test_window_and_wrap();test_key_and_mic_order();test_candidate_preflight();test_actual_key_lifecycle();test_actual_node_reuse();test_beacon_contract_purge();test_ht20_real_ccmp_budget();test_actual_bar_and_delba();test_clock_serial_quarantine();test_owned_storage_budget();test_null_crypto_order();test_owned_admission_withdrawal();test_premature_addba_declined();test_actual_allocation_failures();test_repeat_replace_and_tid_deadlines();test_invalid_queued_frames();test_negotiated_amsdu_crypto_order();test_storage_walk_bounds();test_amsdu_current_without_ba();
  printf("RX BA actual primitive/CCMP units: %u checks, %u failures\n",checks,failures);
  return failures!=0;
 }
