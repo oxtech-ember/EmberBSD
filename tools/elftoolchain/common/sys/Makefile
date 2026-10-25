@@ -2,7 +2,8 @@
 
 .include <bsd.hostinit.mk>
 
-SRCDIR=	${.CURDIR}/../../../../external/bsd/elftoolchain/dist/common/sys
+.include "../../../../external/bsd/elftoolchain/libelf-source.mk"
+SRCDIR=	${EMBER_LIBELF_SOURCE}/common/sys
 
 .PATH:	${SRCDIR}
 

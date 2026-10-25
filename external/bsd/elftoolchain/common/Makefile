@@ -2,7 +2,8 @@
 
 .include <bsd.own.mk>
 
-TOP=	${.CURDIR}/../dist
+.include "../libelf-source.mk"
+TOP=	${EMBER_LIBELF_SOURCE}
 SRCDIR=	${TOP}/common
 
 .PATH:	${SRCDIR}

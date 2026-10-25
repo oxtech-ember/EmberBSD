@@ -47,7 +47,8 @@ SRCS=		elf_begin.c						\
 
 LIBELF_GENSRCS=	libelf_fsize.c libelf_msize.c libelf_convert.c
 
-LIBELF_DIR=	${.CURDIR}/../../../external/bsd/elftoolchain/dist/libelf
+.include "../../../external/bsd/elftoolchain/libelf-source.mk"
+LIBELF_DIR=	${EMBER_LIBELF_SOURCE}/libelf
 LIBELF_OBJDIR!=	cd ${.CURDIR} && ${PRINTOBJDIR}
 
 CLEANFILES+=	${LIBELF_GENSRCS}

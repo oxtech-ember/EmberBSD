@@ -58,10 +58,11 @@ SRCS= \
 	libdwarf_sections.c	\
 	libdwarf_str.c
 
+.include "../../../external/bsd/elftoolchain/libelf-source.mk"
 ELFTOOLCHAIN_DIR=${.CURDIR}/../../../external/bsd/elftoolchain/dist
 LIBDWARF_DIR=	${ELFTOOLCHAIN_DIR}/libdwarf
-LIBELF_DIR=	${ELFTOOLCHAIN_DIR}/libelf
-COMMON_DIR=	${ELFTOOLCHAIN_DIR}/common
+LIBELF_DIR=	${EMBER_LIBELF_SOURCE}/libelf
+COMMON_DIR=	${EMBER_LIBELF_SOURCE}/common
 
 INCS=		dwarf.h libdwarf.h
 INCSDIR=	/usr/include

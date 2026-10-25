@@ -1,6 +1,11 @@
-#!/bin/sh
-$ svn checkout https://svn.code.sf.net/p/elftoolchain/code/trunk elftoolchain-code
-$ mkdir dist.new
-$ dist/tools/netbsd-base-system-import.sh -m common -m libdwarf -m libelf -s elftoolchain-code -d dist.new
-$ cd dist.new
-cvs -d cvs.netbsd.org import src/external/bsd/elftoolchain FreeBSD rXXXX
+Canonical source ownership
+==========================
+
+EmberBSD-Ports owns the common headers and libelf implementation.
+See libelf.md for the prepared snapshot and validation contract.
+Do not import these components into dist or patch the generated snapshot.
+
+The dist/libdwarf implementation retains its separate BSD import history.
+Use dist/tools/netbsd-base-system-import.sh with -m libdwarf when preparing
+an upstream update. Review the selected revision and preserve its authorship.
+The build uses common headers from the validated libelf snapshot.
