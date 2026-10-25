@@ -250,7 +250,7 @@ AC_CHECK_FUNCS(atoll asprintf asnprintf basename devname dirfd dirname \
 	setgroupent setprogname setpassent \
 	snprintb_m snprintf strlcat strlcpy strmode \
 	strcasecmp strncasecmp strcasestr strndup strnlen strsep strsuftoll \
-	strtoi strtoll strtou strtonum \
+	strtoi strtoll strtou strtonum utimensat utimens lutimens \
 	user_from_uid uid_from_user vasprintf vasnprintf vsnprintf)
 
 AC_CHECK_DECLS([user_from_uid, uid_from_user, pwcache_userdb],,,[
