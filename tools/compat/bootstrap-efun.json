@@ -1,0 +1,53 @@
+{
+  "format": "emberbsd-native-bootstrap-compat",
+  "version": 1,
+  "name": "efun",
+  "origin": "EmberBSD (AI-assisted). Canonical OS implementations retain their original notices.",
+  "source_makefile": "tools/compat/Makefile",
+  "source_fragment": "tools/compat/efun.mk",
+  "sources": [
+    "lib/libutil/efun.c",
+    "lib/libc/stdlib/reallocarr.c",
+    "common/lib/libc/stdlib/strtoi.c",
+    "common/lib/libc/stdlib/strtou.c"
+  ],
+  "headers": [
+    "tools/compat/compat_efun.h",
+    "tools/compat/namespace.h",
+    "common/lib/libc/stdlib/_strtoi.h"
+  ],
+  "control": "tools/compat/probes/efun-control.c",
+  "probes": [
+    {
+      "name": "decl-reallocarr",
+      "source": "tools/compat/probes/decl-reallocarr.c",
+      "kind": "compile",
+      "macro": "HAVE_DECL_REALLOCARR"
+    },
+    {
+      "name": "decl-strtoi",
+      "source": "tools/compat/probes/decl-strtoi.c",
+      "kind": "compile",
+      "macro": "HAVE_DECL_STRTOI"
+    },
+    {
+      "name": "decl-strtou",
+      "source": "tools/compat/probes/decl-strtou.c",
+      "kind": "compile",
+      "macro": "HAVE_DECL_STRTOU"
+    },
+    {
+      "name": "func-esetfunc",
+      "source": "tools/compat/probes/func-esetfunc.c",
+      "kind": "link",
+      "macro": "HAVE_ESETFUNC"
+    },
+    {
+      "name": "func-reallocarr",
+      "source": "tools/compat/probes/func-reallocarr.c",
+      "kind": "link",
+      "macro": "HAVE_REALLOCARR"
+    }
+  ],
+  "config_header": "nbtool_config.h"
+}

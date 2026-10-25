@@ -3,7 +3,9 @@
 
 PROG=	cut
 
+.if !defined(HOSTPROG)
 LDADD+=	-lutil
 DPADD+=	${LIBUTIL}
+.endif
 
 .include <bsd.prog.mk>

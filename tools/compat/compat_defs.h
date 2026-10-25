@@ -149,18 +149,12 @@ typedef unsigned long ulong_t;
 #endif
 
 /* Need this since we can't depend on NetBSD's version to be around */
-#ifdef __UNCONST
-#undef __UNCONST
-#endif
-#define __UNCONST(a)   ((void *)(unsigned long)(const void *)(a))
 #ifdef __UNVOLATILE
 #undef __UNVOLATILE
 #endif
 #define __UNVOLATILE(a)        ((void *)(unsigned long)(volatile void *)(a))
 
 
-#undef __predict_false
-#define __predict_false(x) (x)
 #undef __predict_true
 #define __predict_true(x) (x)
 
@@ -212,8 +206,6 @@ struct group;
 #define __format_arg(x)
 #undef __restrict
 #define __restrict
-#undef __unused
-#define __unused
 #undef __arraycount
 #define	__arraycount(__x)	(sizeof(__x) / sizeof(__x[0]))
 #undef __USE
@@ -362,19 +354,7 @@ void     mi_vector_hash(const void * __restrict, size_t, uint32_t,
 #endif
 
 
-#if !HAVE_ESETFUNC
-void (*esetfunc(void (*)(int, const char *, ...)))(int, const char *, ...);
-size_t estrlcpy(char *, const char *, size_t);
-size_t estrlcat(char *, const char *, size_t);
-char *estrdup(const char *);
-char *estrndup(const char *, size_t);
-void *ecalloc(size_t, size_t);
-void *emalloc(size_t);
-void *erealloc(void *, size_t);
-FILE *efopen(const char *, const char *);
-int easprintf(char **, const char *, ...);
-int evasprintf(char **, const char *, va_list);
-#endif
+#include "compat_efun.h"
 
 #if !HAVE_DECL_FGETLN
 char *fgetln(FILE *, size_t *);
@@ -568,10 +548,6 @@ ssize_t pwrite(int, const void *, size_t, off_t);
 int raise_default_signal(int);
 #endif
 
-#if !HAVE_DECL_REALLOCARR
-int reallocarr(void *, size_t, size_t);
-#endif
-
 #if !HAVE_DECL_REALLOCARRAY
 void *reallocarray(void *, size_t, size_t);
 #endif
@@ -630,16 +606,6 @@ long long strtoll(const char *, char **, int);
 long long strtonum(const char *, long long, long long, const char **);
 #endif
 
-#if !HAVE_DECL_STRTOI
-intmax_t strtoi(const char * __restrict, char ** __restrict, int,
-    intmax_t, intmax_t, int *);
-#endif
-
-#if !HAVE_DECL_STRTOU
-uintmax_t strtou(const char * __restrict, char ** __restrict, int,
-    uintmax_t, uintmax_t, int *);
-#endif
-
 #if !HAVE_DECL_USER_FROM_UID
 const char *user_from_uid(uid_t, int);
 #endif
@@ -676,11 +642,6 @@ void vsyslog(int, const char *, va_list);
 
 mode_t getmode(const void *, mode_t);
 void *setmode(const char *);
-
-/* Eliminate assertions embedded in binaries. */
-
-#undef _DIAGASSERT
-#define _DIAGASSERT(x)
 
 /* Various sources use this */
 #undef	__RCSID

@@ -13,7 +13,7 @@ SRCS=		atoll.c basename.c cdbr.c cdbw.c dirname.c \
 		mi_vector_hash.c mkdtemp.c mkstemps.c \
 		mkstemp.c pread.c putc_unlocked.c pwcache.c pwrite.c \
 		pw_scan.c \
-		raise_default_signal.c rb.c reallocarr.c reallocarray.c \
+		raise_default_signal.c rb.c reallocarray.c \
 		rmd160.c rmd160hl.c \
 		regcomp.c regerror.c regexec.c regfree.c \
 		setenv.c setgroupent.c \
@@ -24,10 +24,12 @@ SRCS=		atoll.c basename.c cdbr.c cdbw.c dirname.c \
 		stat_flags.c strlcat.c strlcpy.c strmode.c \
 		strcasecmp.c strncasecmp.c strcasestr.c strndup.c strnlen.c \
 		strsep.c strsuftoll.c strtonum.c strtoll.c \
-		strtoi.c strtou.c \
 		unvis.c vis.c err.c errx.c errc.c verr.c verrx.c verrc.c \
 		vwarn.c vwarnx.c vwarnc.c warn.c warnx.c warnc.c \
-		fts.c glob.c efun.c
+		fts.c glob.c
+
+.include "${.CURDIR}/efun.mk"
+SRCS+=		${COMPAT_EFUN_SRCS}
 
 BUILD_OSTYPE!=  uname -s
 
