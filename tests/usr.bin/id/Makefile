@@ -14,6 +14,7 @@ BINDIR=		${TESTSDIR}
 PROG=		h_id
 .PATH:  	${NETBSDSRCDIR}/usr.bin/id
 SRCS=		id.c pwgr.c
+CPPFLAGS+=	-I${NETBSDSRCDIR}/common/include
 
 COPTS.id.c += -Wno-format-nonliteral
 

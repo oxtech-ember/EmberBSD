@@ -46,11 +46,15 @@ __RCSID("$NetBSD: id.c,v 1.32 2011/09/16 15:39:26 joerg Exp $");
 #include <err.h>
 #include <errno.h>
 #include <grp.h>
+#include <limits.h>
 #include <pwd.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+
+#include <libutil/compat_grouplist.h>
 
 static void current(void);
 static void pretty(struct passwd *);
@@ -58,8 +62,11 @@ static void group(struct passwd *, int);
 __dead static void usage(void);
 static void user(struct passwd *);
 static struct passwd *who(char *);
+static int process_groups(int);
+static int user_groups(struct passwd *);
+static void resize_groups(int);
 
-static int maxgroups;
+#define	GROUP_RETRIES	8
 static gid_t *groups;
 
 int
@@ -71,6 +78,7 @@ main(int argc, char *argv[])
 	int Gflag, gflag, nflag, pflag, rflag, uflag;
 	const char *opts;
 
+	setprogname(argv[0]);
 	Gflag = gflag = nflag = pflag = rflag = uflag = 0;
 
 	if (strcmp(getprogname(), "groups") == 0) {
@@ -131,10 +139,6 @@ main(int argc, char *argv[])
 
 	pw = *argv ? who(*argv) : NULL;
 
-	maxgroups = sysconf(_SC_NGROUPS_MAX);
-	if ((groups = malloc((maxgroups + 1) * sizeof(gid_t))) == NULL)
-		err(1, NULL);
-
 	if (gflag) {
 		id = pw ? pw->pw_gid : rflag ? getgid() : getegid();
 		if (nflag && (gr = getgrgid(id)))
@@ -171,6 +175,75 @@ done:
 	free(groups);
 
 	return 0;
+}
+
+/* Query actual membership. A sysconf limit can be smaller than this list. */
+static void
+resize_groups(int capacity)
+{
+	gid_t *next;
+
+	if (capacity <= 0 || (size_t)capacity > SIZE_MAX / sizeof(*groups)) {
+		errno = EOVERFLOW;
+		err(1, "group allocation");
+	}
+	if ((next = realloc(groups, (size_t)capacity * sizeof(*groups))) == NULL)
+		err(1, "group allocation");
+	groups = next;
+}
+
+static int
+process_groups(int offset)
+{
+	int capacity, count, attempt;
+
+	for (attempt = 0; attempt < GROUP_RETRIES; attempt++) {
+		count = getgroups(0, NULL);
+		if (count < 0)
+			err(1, "getgroups");
+		capacity = count ? count : 1;
+		if (capacity > INT_MAX - offset) {
+			errno = EOVERFLOW;
+			err(1, "group allocation");
+		}
+		resize_groups(capacity + offset);
+		count = getgroups(capacity, groups + offset);
+		if (count >= 0 && count <= capacity) {
+			if (offset)
+				groups[0] = getgid();
+			return count + offset;
+		}
+		if (count < 0 && errno != EINVAL)
+			err(1, "getgroups");
+		if (count >= 0)
+			errx(1, "getgroups: invalid membership result");
+	}
+	errx(1, "getgroups: membership changed too often");
+}
+
+static int
+user_groups(struct passwd *pw)
+{
+	int capacity, count, attempt, result;
+
+	capacity = 1;
+	for (attempt = 0; attempt < GROUP_RETRIES; attempt++) {
+		resize_groups(capacity);
+		count = capacity;
+		errno = 0;
+		result = compat_getgrouplist(pw->pw_name, pw->pw_gid,
+		    groups, &count);
+		if (result >= 0 && count > 0 && count <= capacity)
+			return count;
+		if (result == -1 && count > capacity) {
+			capacity = count;
+			continue;
+		}
+		if (errno == 0)
+			errno = EIO;
+		err(1, "getgrouplist");
+	}
+	errx(1, "getgrouplist: membership changed too often");
 }
 
 static void
@@ -223,6 +296,7 @@ current(void)
 	int cnt, ngroups;
 	const char *fmt;
 
+	ngroups = process_groups(0);
 	uid = getuid();
 	(void)printf("uid=%ju", (uintmax_t)uid);
 	if ((pw = getpwuid(uid)) != NULL)
@@ -241,7 +315,7 @@ current(void)
 		if ((gr = getgrgid(egid)) != NULL)
 			(void)printf("(%s)", gr->gr_name);
 	}
-	if ((ngroups = getgroups(maxgroups, groups)) != 0) {
+	if (ngroups != 0) {
 		for (fmt = " groups=%ju", lastid = -1, cnt = 0; cnt < ngroups;
 		    fmt = ",%ju", lastid = gid, cnt++) {
 			gid = groups[cnt];
@@ -261,18 +335,15 @@ user(struct passwd *pw)
 	struct group *gr;
 	const char *fmt;
 	int cnt, id, lastid, ngroups;
-	gid_t *glist = groups;
+	gid_t *glist;
 
+	ngroups = user_groups(pw);
+	glist = groups;
 	id = pw->pw_uid;
 	(void)printf("uid=%u(%s)", id, pw->pw_name);
 	(void)printf(" gid=%lu", (u_long)pw->pw_gid);
 	if ((gr = getgrgid(pw->pw_gid)) != NULL)
 		(void)printf("(%s)", gr->gr_name);
-	ngroups = maxgroups + 1;
-	if (getgrouplist(pw->pw_name, pw->pw_gid, glist, &ngroups) == -1) {
-		glist = malloc(ngroups * sizeof(gid_t));
-		(void) getgrouplist(pw->pw_name, pw->pw_gid, glist, &ngroups);
-	}
 	for (fmt = " groups=%u", lastid = -1, cnt = 0; cnt < ngroups;
 	    fmt=",%u", lastid = id, cnt++) {
 		id = glist[cnt];
@@ -283,8 +354,6 @@ user(struct passwd *pw)
 			(void)printf("(%s)", gr->gr_name);
 	}
 	(void)printf("\n");
-	if (glist != groups)
-		free(glist);
 }
 
 static void
@@ -294,20 +363,10 @@ group(struct passwd *pw, int nflag)
 	int cnt, ngroups;
 	gid_t id, lastid;
 	const char *fmt;
-	gid_t *glist = groups;
+	gid_t *glist;
 
-	if (pw) {
-		ngroups = maxgroups;
-		if (getgrouplist(pw->pw_name, pw->pw_gid, glist, &ngroups)
-		    == -1) {
-			glist = malloc(ngroups * sizeof(gid_t));
-			(void) getgrouplist(pw->pw_name, pw->pw_gid, glist,
-					    &ngroups);
-		}
-	} else {
-		glist[0] = getgid();
-		ngroups = getgroups(maxgroups, glist + 1) + 1;
-	}
+	ngroups = pw ? user_groups(pw) : process_groups(1);
+	glist = groups;
 	fmt = nflag ? "%s" : "%u";
 	for (lastid = -1, cnt = 0; cnt < ngroups; ++cnt) {
 		if (lastid == (id = glist[cnt]) || (cnt && id == glist[0]))
@@ -326,8 +385,6 @@ group(struct passwd *pw, int nflag)
 		lastid = id;
 	}
 	(void)printf("\n");
-	if (glist != groups)
-		free(glist);
 }
 
 static struct passwd *

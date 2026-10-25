@@ -1,0 +1,382 @@
+{
+  "format": "emberbsd-native-bootstrap-program",
+  "version": 1,
+  "origin": "EmberBSD (AI-assisted) source contract; implementation retains its BSD copyright notices.",
+  "compiler": {
+    "family": "gcc",
+    "major": 16,
+    "abi": "native"
+  },
+  "cflags": [],
+  "link_flags": [],
+  "libraries": [],
+  "name": "id",
+  "canonical_host_recipe": "tools/id/Makefile",
+  "source_makefile": "usr.bin/id/Makefile",
+  "sources": [
+    "usr.bin/id/id.c"
+  ],
+  "headers": [
+    "common/include/libutil/compat_grouplist.h",
+    "tools/compat/bootstrap_cdefs.h"
+  ],
+  "include_dirs": [
+    "common/include"
+  ],
+  "cppflags": [
+    "-include",
+    "tools/compat/bootstrap_cdefs.h"
+  ],
+  "invocations": [
+    "id",
+    "groups",
+    "whoami"
+  ],
+  "files": {},
+  "runtime_cases": [
+    {
+      "name": "current",
+      "invocation": "id",
+      "args": [],
+      "stdin": "",
+      "exit": 0,
+      "stdout_identity": "summary",
+      "stderr": ""
+    },
+    {
+      "name": "uid",
+      "invocation": "id",
+      "args": [
+        "-u"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout_identity": "uid",
+      "stderr": ""
+    },
+    {
+      "name": "real-uid",
+      "invocation": "id",
+      "args": [
+        "-ur"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout_identity": "ruid",
+      "stderr": ""
+    },
+    {
+      "name": "user-name",
+      "invocation": "id",
+      "args": [
+        "-un"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout_identity": "uname",
+      "stderr": ""
+    },
+    {
+      "name": "real-user-name",
+      "invocation": "id",
+      "args": [
+        "-urn"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout_identity": "runame",
+      "stderr": ""
+    },
+    {
+      "name": "gid",
+      "invocation": "id",
+      "args": [
+        "-g"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout_identity": "gid",
+      "stderr": ""
+    },
+    {
+      "name": "real-gid",
+      "invocation": "id",
+      "args": [
+        "-gr"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout_identity": "rgid",
+      "stderr": ""
+    },
+    {
+      "name": "group-name",
+      "invocation": "id",
+      "args": [
+        "-gn"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout_identity": "gname",
+      "stderr": ""
+    },
+    {
+      "name": "real-group-name",
+      "invocation": "id",
+      "args": [
+        "-grn"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout_identity": "rgname",
+      "stderr": ""
+    },
+    {
+      "name": "all-groups",
+      "invocation": "id",
+      "args": [
+        "-G"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout_identity": "groups",
+      "stderr": ""
+    },
+    {
+      "name": "all-group-names",
+      "invocation": "id",
+      "args": [
+        "-Gn"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout_identity": "group-names",
+      "stderr": ""
+    },
+    {
+      "name": "user-uid",
+      "invocation": "id",
+      "args": [
+        "-u",
+        "root"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout_identity": "root-uid",
+      "stderr": ""
+    },
+    {
+      "name": "named-user-name",
+      "invocation": "id",
+      "args": [
+        "-un",
+        "root"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout_identity": "root-uname",
+      "stderr": ""
+    },
+    {
+      "name": "user-gid",
+      "invocation": "id",
+      "args": [
+        "-g",
+        "root"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout_identity": "root-gid",
+      "stderr": ""
+    },
+    {
+      "name": "named-group-name",
+      "invocation": "id",
+      "args": [
+        "-gn",
+        "root"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout_identity": "root-gname",
+      "stderr": ""
+    },
+    {
+      "name": "user-groups",
+      "invocation": "id",
+      "args": [
+        "-G",
+        "root"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout_identity": "root-groups",
+      "stderr": ""
+    },
+    {
+      "name": "user-group-names",
+      "invocation": "id",
+      "args": [
+        "-Gn",
+        "root"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout_identity": "root-group-names",
+      "stderr": ""
+    },
+    {
+      "name": "user-summary",
+      "invocation": "id",
+      "args": [
+        "root"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout_identity": "root-summary",
+      "stderr": ""
+    },
+    {
+      "name": "user-pretty",
+      "invocation": "id",
+      "args": [
+        "-p",
+        "root"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout_identity": "root-pretty",
+      "stderr": ""
+    },
+    {
+      "name": "numeric-user",
+      "invocation": "id",
+      "args": [
+        "0"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout_identity": "numeric-root-summary",
+      "stderr": ""
+    },
+    {
+      "name": "groups-alias",
+      "invocation": "groups",
+      "args": [],
+      "stdin": "",
+      "exit": 0,
+      "stdout_identity": "group-names",
+      "stderr": ""
+    },
+    {
+      "name": "groups-user-alias",
+      "invocation": "groups",
+      "args": [
+        "root"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout_identity": "root-group-names",
+      "stderr": ""
+    },
+    {
+      "name": "whoami-alias",
+      "invocation": "whoami",
+      "args": [],
+      "stdin": "",
+      "exit": 0,
+      "stdout_identity": "uname",
+      "stderr": ""
+    },
+    {
+      "name": "invalid-option",
+      "invocation": "id",
+      "args": [
+        "-z"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "conflicting-format",
+      "invocation": "id",
+      "args": [
+        "-u",
+        "-g"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "names-without-format",
+      "invocation": "id",
+      "args": [
+        "-n"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "real-without-format",
+      "invocation": "id",
+      "args": [
+        "-r"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "extra-operands",
+      "invocation": "id",
+      "args": [
+        "root",
+        "extra"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "empty-user",
+      "invocation": "id",
+      "args": [
+        ""
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "whoami-operand",
+      "invocation": "whoami",
+      "args": [
+        "root"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "groups-option",
+      "invocation": "groups",
+      "args": [
+        "-r"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    }
+  ]
+}

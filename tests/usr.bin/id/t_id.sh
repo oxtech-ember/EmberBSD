@@ -294,8 +294,36 @@ uflag_body() {
 	atf_check -s exit:0 -o ignore -e empty grep ^usage: stderr
 }
 
+# EmberBSD (AI-assisted): actual-size, growth and failure regressions.
+atf_test_case group_count
+group_count_body() {
+	create_run_id
+	export LIBFAKE_GROUPS_MANY=1
+	echo "100 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17" >expout
+	atf_check -s exit:0 -o file:expout -e empty ./run_id.sh -G
+	atf_check -s exit:0 -o file:expout -e empty ./run_id.sh -G test
+	export LIBFAKE_GROUPS_GROW=1
+	atf_check -s exit:0 -o file:expout -e empty ./run_id.sh -G
+	unset LIBFAKE_GROUPS_MANY LIBFAKE_GROUPS_GROW
+	export LIBFAKE_GROUPS_ZERO=1
+	atf_check -s exit:0 -o inline:"100\n" -e empty ./run_id.sh -G
+	unset LIBFAKE_GROUPS_ZERO
+	export LIBFAKE_GROUPS_ERROR=1
+	atf_check -s exit:1 -o empty -e match:getgroups ./run_id.sh -G
+	unset LIBFAKE_GROUPS_ERROR
+	export LIBFAKE_GROUPS_MANY=1 LIBFAKE_GROUPS_UNSTABLE=1
+	atf_check -s exit:1 -o empty -e match:"changed too often" ./run_id.sh -G
+	unset LIBFAKE_GROUPS_MANY LIBFAKE_GROUPS_UNSTABLE
+	export LIBFAKE_GROUPLIST_UNSTABLE=1
+	atf_check -s exit:1 -o empty -e match:"changed too often" ./run_id.sh -G test
+	unset LIBFAKE_GROUPLIST_UNSTABLE
+	export LIBFAKE_GROUPLIST_ERROR=1
+	atf_check -s exit:1 -o empty -e match:getgrouplist ./run_id.sh -G test
+}
+
 atf_init_test_cases()
 {
+	atf_add_test_case group_count
 	atf_add_test_case default
 	atf_add_test_case primaries
 	atf_add_test_case Gflag

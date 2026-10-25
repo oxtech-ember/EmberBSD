@@ -104,46 +104,58 @@ getgrgid(gid_t gid)
 int
 getgrouplist(const char *name, gid_t basegid, gid_t *groups, int *ngroups)
 {
-	int cnt, ret;
+	int capacity, required, i;
 
-	if (strcmp(name, "root") == 0) {
-		if (*ngroups >= 1) {
-			groups[0] = basegid;
-			cnt = 1;
-		}
-
-		ret = (*ngroups >= cnt) ? 0 : -1;
-		*ngroups = cnt;
-	} else if (strcmp(name, "test") == 0) {
-		if (*ngroups >= 1) {
-			groups[0] = basegid;
-			cnt = 1;
-		}
-
-		if (*ngroups >= 2) {
-			groups[1] = 0;
-			cnt = 2;
-		}
-
-		ret = (*ngroups >= cnt) ? 0 : -1;
-		*ngroups = cnt;
-	} else
-		ret = -1;
-
-	return ret;
+	if (getenv("LIBFAKE_GROUPLIST_ERROR") != NULL) {
+		errno = EIO;
+		return -1;
+	}
+	if (strcmp(name, "root") == 0)
+		required = 1;
+	else if (strcmp(name, "test") == 0)
+		required = getenv("LIBFAKE_GROUPS_MANY") != NULL ? 19 : 2;
+	else {
+		errno = ENOENT;
+		return -1;
+	}
+	capacity = *ngroups;
+	if (getenv("LIBFAKE_GROUPLIST_UNSTABLE") != NULL) {
+		*ngroups = capacity + 1;
+		return -1;
+	}
+	*ngroups = required;
+	for (i = 0; i < required && i < capacity; i++)
+		groups[i] = i == 0 ? basegid : (gid_t)(i - 1);
+	return capacity >= required ? 0 : -1;
 }
 
 int
 getgroups(int gidsetlen, gid_t *gidset)
 {
-	if (gidsetlen < 2) {
+	static int queries;
+	int required, i;
+
+	if (getenv("LIBFAKE_GROUPS_ERROR") != NULL) {
+		errno = EIO;
+		return -1;
+	}
+	required = getenv("LIBFAKE_GROUPS_MANY") != NULL ? 18 : 2;
+	if (getenv("LIBFAKE_GROUPS_ZERO") != NULL)
+		required = 0;
+	if (gidsetlen == 0) {
+		queries++;
+		if (getenv("LIBFAKE_GROUPS_UNSTABLE") != NULL ||
+		    (queries == 1 && getenv("LIBFAKE_GROUPS_GROW") != NULL))
+			return 1;
+		return required;
+	}
+	if (gidsetlen < required) {
 		errno = EINVAL;
 		return -1;
 	}
-
-	gidset[0] = 100;
-	gidset[1] = 0;
-	return 2;
+	for (i = 0; i < required; i++)
+		gidset[i] = required == 2 ? (i == 0 ? 100 : 0) : (gid_t)i;
+	return required;
 }
 
 struct passwd *

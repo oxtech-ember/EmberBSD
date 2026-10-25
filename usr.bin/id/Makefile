@@ -2,6 +2,7 @@
 #	from: @(#)Makefile	8.1 (Berkeley) 6/6/93
 
 PROG=	id
+CPPFLAGS+= -I${NETBSDSRCDIR}/common/include
 MAN=	id.1 groups.1 whoami.1
 LINKS=   ${BINDIR}/id ${BINDIR}/groups
 LINKS+=  ${BINDIR}/id ${BINDIR}/whoami
