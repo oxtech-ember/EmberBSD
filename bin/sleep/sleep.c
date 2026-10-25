@@ -50,6 +50,7 @@ __RCSID("$NetBSD: sleep.c,v 1.30 2019/03/10 15:18:45 kre Exp $");
 #include <ctype.h>
 #include <err.h>
 #include <errno.h>
+#include <limits.h>
 #include <locale.h>
 #include <math.h>
 #include <signal.h>
@@ -148,10 +149,13 @@ main(int argc, char *argv[])
 			val = strtod_l(arg, &temp, LC_C_LOCALE);
 #endif
 		}
-		if (val < 0 || temp == arg || *temp != '\0')
+		if (!isfinite(val) || val < 0 || temp == arg || *temp != '\0')
 			usage();
 
 		ival = floor(val);
+		if (ival >= ldexp(1.0, (int)(sizeof(time_t) * CHAR_BIT) -
+		    ((time_t)-1 < 0)))
+			errx(1, "requested delay (%s) out of range", arg);
 		fval = (1000000000 * (val-ival));
 		ntime.tv_sec = ival;
 		if ((double)ntime.tv_sec != ival)

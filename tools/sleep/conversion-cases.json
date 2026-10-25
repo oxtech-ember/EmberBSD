@@ -1,0 +1,17 @@
+{
+  "origin": "EmberBSD contributors (AI-assisted). Native acceptance inputs, not an executor schema.",
+  "cases": [
+    {"argument": "nan", "exit": 1, "diagnostic": "usage"},
+    {"argument": "NaN", "exit": 1, "diagnostic": "usage"},
+    {"argument": "inf", "exit": 1, "diagnostic": "usage"},
+    {"argument": "+inf", "exit": 1, "diagnostic": "usage"},
+    {"argument": "1e300", "exit": 1, "diagnostic": "out of range"},
+    {"argument": "9223372036854775808.0", "exit": 1, "diagnostic": "out of range"},
+    {"argument": "0", "exit": 0, "diagnostic": ""},
+    {"argument": "0.0", "exit": 0, "diagnostic": ""},
+    {"argument": "0.001", "exit": 0, "diagnostic": ""},
+    {"argument": "1e-9999", "exit": 0, "diagnostic": ""},
+    {"argument": "1e-3", "exit": 0, "diagnostic": ""},
+    {"argument": "0x0.1", "exit": 0, "diagnostic": ""}
+  ]
+}

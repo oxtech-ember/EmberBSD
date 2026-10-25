@@ -23,10 +23,14 @@ Run source/data checks with the explicitly selected SDK Python:
 
 ```sh
 python3 -B tools/sleep/test-source.py
+python3 -B tools/sleep/test-conversion-source.py
 ```
 
 These checks execute no C. They do not establish native timing or signal behavior.
 The existing [ATF cases](../../tests/bin/sleep/t_sleep.sh) remain unchanged.
+Nonfinite durations and floating values beyond time_t are rejected before conversion.
+The [conversion inputs](conversion-cases.json) cover invalid and short valid values.
+They are future native test inputs, not a completed runtime test or SDK execution schema.
 
 ## Bounded native acceptance plan
 
