@@ -226,15 +226,6 @@ static int nv_query_video_codecs(struct amdgpu_device *adev, bool encode,
 				 const struct amdgpu_video_codecs **codecs)
 {
 	switch (adev->asic_type) {
-	case CHIP_SIENNA_CICHLID:
-	case CHIP_NAVY_FLOUNDER:
-	case CHIP_DIMGREY_CAVEFISH:
-	case CHIP_VANGOGH:
-		if (encode)
-			*codecs = &nv_video_codecs_encode;
-		else
-			*codecs = &sc_video_codecs_decode;
-		return 0;
 	case CHIP_NAVI10:
 	case CHIP_NAVI14:
 	case CHIP_NAVI12:
