@@ -109,6 +109,20 @@ struct adi_axi_dmac_stream_status {
  uint32_t queued;
  uint32_t ready;
 };
+#define ADI_AXI_DMAC_STREAM_STATES 6U
+/* Kernel diagnostic only. The owner keeps the guard alive. This does not
+ * pump requests, acknowledge interrupts, sync buffers or change ownership.
+ * Software fields share the queue locks; live hardware can still advance.
+ */
+struct adi_axi_dmac_stream_snapshot {
+	struct adi_axi_dmac_stream_status status;
+	uint32_t control, irq_pending, irq_mask, transfer_id;
+	uint32_t submit, done, debug_status;
+	/* Free, accepted, ready, caller, pending, and latched buffers. */
+	uint32_t states[ADI_AXI_DMAC_STREAM_STATES];
+};
+int adi_axi_dmac_guard_stream_snapshot(const struct adi_axi_dmac_guard *,
+	struct adi_axi_dmac_stream_snapshot *);
 int adi_axi_dmac_stream_start(struct adi_axi_dmac_channel *);
 int adi_axi_dmac_stream_submit(struct adi_axi_dmac_buffer *, size_t);
 int adi_axi_dmac_stream_next(struct adi_axi_dmac_channel *,

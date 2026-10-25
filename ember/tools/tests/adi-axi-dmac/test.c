@@ -1833,12 +1833,53 @@ check_rx_queue(void)
  puts("PASS RX queue, ID wrap, ordered completion and no per-block drain");
 }
 
+static void
+check_stream_snapshot(void)
+{
+#ifdef ADI_AXI_DMAC_STREAM_STATES
+ struct adi_axi_dmac_channel *c;
+ struct adi_axi_dmac_buffer *buffers[6];
+ struct adi_axi_dmac_stream_snapshot snap;
+ struct adi_axi_dmac_guard guard;
+ uint32_t before[sizeof(registers)/sizeof(registers[0])];
+ reset_fixture(0x2303);c=acquire();
+ guard=(struct adi_axi_dmac_guard){.g_sc=&fixture,.g_channel=c,.g_prepared=true};
+ CHECK(adi_axi_dmac_guard_stream_snapshot(NULL,&snap)==EINVAL);
+ CHECK(adi_axi_dmac_guard_stream_snapshot(&guard,NULL)==EINVAL);
+ for(unsigned i=0;i<6;i++) {
+  CHECK(adi_axi_dmac_buffer_alloc(c,64,&buffers[i])==0);
+  buffers[i]->b_stream_state=i;
+ }
+ c->c_stream_status.completed_blocks=7;c->c_stream_status.discontinuities=1;
+ registers[DMAC_ID/4]=2;registers[DMAC_SUBMIT/4]=1;
+ registers[DMAC_IRQ_PENDING/4]=3;registers[DMAC_DONE/4]=5;
+ memcpy(before,registers,sizeof(before));
+ unsigned sync_before=sync_calls,submit_before=submits;
+ CHECK(adi_axi_dmac_guard_stream_snapshot(&guard,&snap)==0);
+ CHECK(snap.transfer_id==2 && snap.submit==1 && snap.irq_pending==3 && snap.done==5);
+ CHECK(snap.status.completed_blocks==7 && snap.status.discontinuities==1);
+ for(unsigned i=0;i<6;i++)CHECK(snap.states[i]==1 && buffers[i]->b_stream_state==i);
+ CHECK(c->c_stream_status.completed_blocks==7 && c->c_stream_status.discontinuities==1);
+ CHECK(memcmp(before,registers,sizeof(before))==0 && sync_calls==sync_before && submits==submit_before);
+ CHECK(!fixture.sc_lock.held && !fixture.sc_buffer_lock.held && !fixture.sc_irq_lock.held);
+ guard.g_prepared=false;
+ CHECK(adi_axi_dmac_guard_stream_snapshot(&guard,&snap)==EINVAL);
+ for(unsigned i=0;i<6;i++){buffers[i]->b_stream_state=0;CHECK(adi_axi_dmac_buffer_free(buffers[i])==0);}
+ registers[DMAC_SUBMIT/4]=0;
+ CHECK(adi_axi_dmac_release(c)==0);
+ puts("PASS locked DMAC snapshot retains W1C/queue/DMA ownership without pumping, syncing or submitting");
+#else
+ CHECK(false && "missing non-destructive DMAC stream snapshot");
+#endif
+}
+
 int
 main(void)
 {
 	(void)alarm(30);
 	(void)hz;
 	(void)adiaxidmac_shutdown_final;
+	check_stream_snapshot();
 	check_interfaces();
 	check_converter_owned_stream_stop();
 	check_rx_stale_done_before_sot();

@@ -76,6 +76,9 @@ struct adi_axi_adc_softc {
  kmutex_t sc_stream_sel_lock;
  bool sc_stream_active;
  bool sc_stream_cancel;
+ bool sc_stream_fault_logged;
+ /* Cached raw status after W1C, ADC enable, DMAC enable, and queue setup. */
+ uint32_t sc_stream_start_status[4];
  struct adi_axi_adc_stream_status sc_stream_status;
  struct adi_axi_dmac_buffer *sc_stream_buffers[ADI_AXI_ADC_STREAM_MAX_BLOCKS];
  struct adi_axi_dmac_buffer *sc_stream_current;
@@ -999,6 +1002,8 @@ adiaxiadc_stream_start(struct adi_axi_adc_softc *sc,
   return EBUSY;
  generation = sc->sc_stream_status.generation + 1;
  memset(&sc->sc_stream_status, 0, sizeof(sc->sc_stream_status));
+ sc->sc_stream_fault_logged = false;
+ memset(sc->sc_stream_start_status, 0, sizeof(sc->sc_stream_start_status));
  sc->sc_stream_status.generation = generation;
  sc->sc_stream_status.block_bytes = config->block_bytes;
  sc->sc_stream_status.block_count = config->block_count;
@@ -1016,9 +1021,13 @@ adiaxiadc_stream_start(struct adi_axi_adc_softc *sc,
  }
  /* Clear the previous epoch overflow before enabling any DMA. */
  bus_space_write_4(sc->sc_bst, sc->sc_bsh, ADC_DMA_STATUS, 4);
+ sc->sc_stream_start_status[0] =
+     bus_space_read_4(sc->sc_bst, sc->sc_bsh, ADC_DMA_STATUS);
  error = adi_axi_adc_start(l);
  if (error != 0)
   goto fail;
+ sc->sc_stream_start_status[1] =
+     bus_space_read_4(sc->sc_bst, sc->sc_bsh, ADC_DMA_STATUS);
  error = adi_axi_dmac_guard_stream_start(l->l_capture_guard);
  if (error != 0) {
   stop_error = adi_axi_adc_stop(l, 1000);
@@ -1026,6 +1035,8 @@ adiaxiadc_stream_start(struct adi_axi_adc_softc *sc,
    return stop_error;
   goto fail;
  }
+ sc->sc_stream_start_status[2] =
+     bus_space_read_4(sc->sc_bst, sc->sc_bsh, ADC_DMA_STATUS);
  sc->sc_stream_active = true;
  mutex_enter(&sc->sc_session_lock);
  sc->sc_stream_cancel = false;
@@ -1039,10 +1050,55 @@ adiaxiadc_stream_start(struct adi_axi_adc_softc *sc,
   if (error != 0)
    goto fail;
  }
+ sc->sc_stream_start_status[3] =
+     bus_space_read_4(sc->sc_bst, sc->sc_bsh, ADC_DMA_STATUS);
  return 0;
 fail:
  stop_error = adiaxiadc_stream_stop(sc);
  return stop_error != 0 ? stop_error : error;
+}
+
+static int
+adiaxiadc_stream_loss(struct adi_axi_adc_softc *sc,
+    const struct adi_axi_dmac_stream_status *status, uint32_t adc_status)
+{
+	struct adi_axi_dmac_stream_snapshot dma;
+	unsigned int cause;
+	int error;
+
+	/* Latch the original error before diagnostic work. No provider or IRQ
+	 * lock is held here. Emit only once per START, in the owner's context.
+	 * Cause bit 0 is ADC overflow; bit 1 is software queue starvation.
+	 */
+	sc->sc_stream_status.discontinuities =
+	    status->discontinuities != 0 ? status->discontinuities : 1;
+	sc->sc_stream_status.flags |= ADI_AXI_ADC_STREAM_LOSS_UNKNOWN;
+	sc->sc_stream_status.last_error = EOVERFLOW;
+	if (sc->sc_stream_fault_logged)
+		return EOVERFLOW;
+	sc->sc_stream_fault_logged = true;
+	cause = ((adc_status & 4) != 0 ? 1U : 0U) |
+	    (status->discontinuities != 0 ? 2U : 0U);
+	memset(&dma, 0, sizeof(dma));
+	error = adi_axi_dmac_guard_stream_snapshot(
+	    sc->sc_lease->l_capture_guard, &dma);
+	aprint_error_dev(sc->sc_dev,
+	    "RX stream loss gen=%ju cause=%x adc=%08x "
+	    "start=%08x/%08x/%08x/%08x snaperr=%d "
+	    "disc=%ju blocks=%ju bytes=%ju q=%u ready=%u "
+	    "ctl=%x irq=%x mask=%x id=%x submit=%x done=%x debug=%x "
+	    "states=%u/%u/%u/%u/%u/%u\n",
+	    (uintmax_t)sc->sc_stream_status.generation, cause, adc_status,
+	    sc->sc_stream_start_status[0], sc->sc_stream_start_status[1],
+	    sc->sc_stream_start_status[2], sc->sc_stream_start_status[3], error,
+	    (uintmax_t)status->discontinuities,
+	    (uintmax_t)status->completed_blocks,
+	    (uintmax_t)status->completed_bytes, status->queued, status->ready,
+	    dma.control, dma.irq_pending, dma.irq_mask, dma.transfer_id,
+	    dma.submit, dma.done, dma.debug_status,
+	    dma.states[0], dma.states[1], dma.states[2], dma.states[3],
+	    dma.states[4], dma.states[5]);
+	return EOVERFLOW;
 }
 
 static int
@@ -1068,14 +1124,9 @@ adiaxiadc_stream_read(struct adi_axi_adc_softc *sc, struct uio *uio, int flags)
   sc->sc_stream_status.completed_blocks = status.completed_blocks;
   sc->sc_stream_status.completed_bytes = status.completed_bytes;
   sc->sc_stream_status.ready_blocks = status.ready;
-  if (status.discontinuities != 0 ||
-      (bus_space_read_4(sc->sc_bst, sc->sc_bsh, ADC_DMA_STATUS) & 4)) {
-   sc->sc_stream_status.discontinuities = status.discontinuities ?
-       status.discontinuities : 1;
-   sc->sc_stream_status.flags |= ADI_AXI_ADC_STREAM_LOSS_UNKNOWN;
-   sc->sc_stream_status.last_error = EOVERFLOW;
-   return EOVERFLOW;
-  }
+  uint32_t adc_status = bus_space_read_4(sc->sc_bst, sc->sc_bsh, ADC_DMA_STATUS);
+  if (status.discontinuities != 0 || (adc_status & 4) != 0)
+   return adiaxiadc_stream_loss(sc, &status, adc_status);
   if (error != 0 && error != EAGAIN) {
    sc->sc_stream_status.last_error = error;
    return error;
@@ -1334,16 +1385,14 @@ adiaxiadc_cdev_ioctl(dev_t dev, u_long command, void *data, int flags,
   }
   if (sc->sc_stream_active) {
    struct adi_axi_dmac_stream_status dma;
+   uint32_t adc_status;
    error = adi_axi_dmac_guard_stream_next(lease->l_capture_guard, NULL, &dma);
    sc->sc_stream_status.completed_blocks = dma.completed_blocks;
    sc->sc_stream_status.completed_bytes = dma.completed_bytes;
    sc->sc_stream_status.ready_blocks = dma.ready;
-   if (dma.discontinuities != 0 ||
-       (bus_space_read_4(sc->sc_bst, sc->sc_bsh, ADC_DMA_STATUS) & 4)) {
-    sc->sc_stream_status.discontinuities = dma.discontinuities ?
-        dma.discontinuities : 1;
-    sc->sc_stream_status.flags |= ADI_AXI_ADC_STREAM_LOSS_UNKNOWN;
-    sc->sc_stream_status.last_error = EOVERFLOW;
+   adc_status = bus_space_read_4(sc->sc_bst, sc->sc_bsh, ADC_DMA_STATUS);
+   if (dma.discontinuities != 0 || (adc_status & 4) != 0) {
+    (void)adiaxiadc_stream_loss(sc, &dma, adc_status);
    } else if (error != 0 && error != EAGAIN)
     sc->sc_stream_status.last_error = error;
   }

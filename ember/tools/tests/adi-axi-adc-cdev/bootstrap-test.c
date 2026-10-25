@@ -87,6 +87,7 @@ static int adiaxiadc_stream_stop(struct adi_axi_adc_softc *sc) { (void)sc;return
 struct adi_axi_dmac_stream_status { uint64_t completed_blocks,completed_bytes,discontinuities;unsigned ready; };
 static int adi_axi_dmac_guard_stream_next(void *g,void *b,struct adi_axi_dmac_stream_status *s) { (void)g;(void)b;memset(s,0,sizeof(*s));return EAGAIN; }
 static unsigned bus_space_read_4(void *a,void *b,unsigned reg) { (void)a;(void)b;(void)reg;return 0; }
+static int adiaxiadc_stream_loss(struct adi_axi_adc_softc *sc,const struct adi_axi_dmac_stream_status *s,uint32_t raw) { (void)sc;(void)s;(void)raw;assert(0 && "unexpected CONFIG test loss");return EOVERFLOW; }
 #include "bootstrap.inc"
 int main(void)
 {

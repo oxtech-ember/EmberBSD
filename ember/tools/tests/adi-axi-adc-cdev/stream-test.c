@@ -5,6 +5,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include <string.h>
 #include <sys/types.h>
 #ifndef ERESTART
@@ -43,6 +44,11 @@ struct adi_axi_dmac_stream_status {
  uint64_t sequence,completed_blocks,completed_bytes,discontinuities;
  unsigned queued,ready;
 };
+struct adi_axi_dmac_stream_snapshot {
+ struct adi_axi_dmac_stream_status status;
+ uint32_t control,irq_pending,irq_mask,transfer_id,submit,done,debug_status;
+ uint32_t states[6];
+};
 struct adi_axi_rx_status { uint32_t sample_rate_hz; };
 struct adi_axi_adc_stream_config { unsigned abi_version,struct_size,block_bytes,block_count,reserved[4]; };
 struct status {
@@ -58,6 +64,9 @@ struct adi_axi_adc_softc {
  bool sc_session_open,sc_session_busy,sc_stream_active,sc_configured,sc_capture_pending;
  struct adi_axi_dmac_buffer *sc_stream_buffers[16];
  bool sc_stream_cancel;
+ bool sc_stream_fault_logged;
+ uint32_t sc_stream_start_status[4];
+ void *sc_dev;
  struct status sc_stream_status;
  struct adi_axi_dmac_buffer *sc_stream_current;
  unsigned char *sc_stream_data;
@@ -67,11 +76,20 @@ struct adi_axi_adc_softc {
 struct uio { size_t uio_resid; unsigned char *data; };
 static int next_error;
 static unsigned submitted,waits,overflow,loss,partial_fault,freed,notified,recorded;
-static int stop_error,alloc_error,wait_result;
+static int stop_error,alloc_error,wait_result,snapshot_error;
 static bool enforce_sel_lock,registered,cluster_ready,inject_irq;
-static unsigned allocated;
-static unsigned char allocation[64];
 static struct adi_axi_adc_softc *fixture;
+static unsigned allocated,diagnostics,snapshots;
+static bool diagnostic_phases;
+static char diagnostic_line[2048];
+static void __attribute__((unused)) aprint_error_dev(void *dev,const char *format,...) {
+ (void)dev;assert(fixture && !fixture->sc_session_lock && !fixture->sc_stream_sel_lock);
+ assert(!fixture->sc_lease->l_converter->c_lock);
+ assert(fixture->sc_stream_status.last_error==EOVERFLOW);
+ va_list ap;va_start(ap,format);vsnprintf(diagnostic_line,sizeof(diagnostic_line),format,ap);va_end(ap);diagnostics++;
+}
+
+static unsigned char allocation[64];
 static struct adi_axi_dmac_buffer block;
 static void adiaxiadc_stream_notify(void *);
 static int adiaxiadc_dma_drain(void *,unsigned);
@@ -98,11 +116,16 @@ static int adi_axi_dmac_guard_stream_next(void *g,struct adi_axi_dmac_buffer **b
  if (!next_error && b) *b=&block;
  return next_error;
 }
+static int __attribute__((unused)) adi_axi_dmac_guard_stream_snapshot(void *g,struct adi_axi_dmac_stream_snapshot *s) {
+ assert(g && fixture && !fixture->sc_session_lock && !fixture->sc_lease->l_converter->c_lock);
+ snapshots++;if(snapshot_error)return snapshot_error;
+ memset(s,0,sizeof(*s));s->transfer_id=2;s->submit=1;s->done=3;s->states[4]=2;return 0;
+}
 static int adi_axi_dmac_guard_buffer_read(void *g,struct adi_axi_dmac_buffer *b,void *data,size_t size) {
  assert(g && b==&block && size==64);for(size_t i=0;i<size;i++)((unsigned char *)data)[i]=(unsigned char)i;return 0;
 }
 static int adi_axi_dmac_guard_stream_submit(void *g,struct adi_axi_dmac_buffer *b,size_t size) {
- assert(g && b==&block && size==64);submitted++;return 0;
+ assert(g && b==&block && size==64);submitted++;if(diagnostic_phases)overflow=12;return 0;
 }
 static unsigned bus_space_read_4(void *a,void *b,unsigned reg) { (void)a;(void)b;assert(reg==ADC_DMA_STATUS);return overflow; }
 static int uiomove(void *data,size_t size,struct uio *uio) {
@@ -144,8 +167,8 @@ static bool adiaxiadc_reserved_zero(const uint32_t *p,size_t n) { while(n--)if(*
 static int adi_axi_adc_read_rx_status(struct adi_axi_adc_lease *l,struct adi_axi_rx_status *s) { assert(l);s->sample_rate_hz=2399999;return 0; }
 static void *kmem_alloc(size_t n,int flags) { assert(n==64 && flags==KM_SLEEP);return allocation; }
 static int adi_axi_dmac_guard_buffer_alloc(void *g,size_t n,struct adi_axi_dmac_buffer **b) { assert(g && n==64);if(alloc_error)return alloc_error;*b=&block;allocated++;return 0; }
-static int adi_axi_adc_start(struct adi_axi_adc_lease *l) { assert(l);return 0; }
-static int adi_axi_dmac_guard_stream_start(void *g) { assert(g);return 0; }
+static int adi_axi_adc_start(struct adi_axi_adc_lease *l) { assert(l);if(diagnostic_phases)overflow=4;return 0; }
+static int adi_axi_dmac_guard_stream_start(void *g) { assert(g);if(diagnostic_phases)overflow=8;return 0; }
 static int adi_axi_dmac_guard_stream_notify(void *g,void (*fn)(void *),void *cookie) { assert(g && fn && cookie);return 0; }
 
 static void bus_space_write_4(void *a,void *b,unsigned reg,unsigned value) { (void)a;(void)b;assert(reg==ADC_DMA_STATUS && value==4);overflow=0; }
@@ -159,6 +182,37 @@ int main(int argc,char **argv) {
  unsigned char copy[64],data[64];
  struct adi_axi_adc_softc sc={.sc_lease=&l,.sc_stream_data=copy,.sc_stream_status={.block_bytes=64}};
  struct uio u={.uio_resid=7,.data=data};fixture=&sc;
+ if(strcmp(argv[1],"diagnostic")==0) {
+  diagnostic_phases=true;sc.sc_configured=true;sc.sc_stream_data=NULL;
+  struct adi_axi_adc_stream_config cfg={.abi_version=2,.struct_size=sizeof(cfg),.block_bytes=64,.block_count=3};
+  assert(adiaxiadc_stream_start(&sc,&cfg)==0);
+  assert(diagnostics==0); /* Nothing is printed during startup. */
+  const uint32_t phases[4]={0,4,8,12};
+  assert(memcmp(sc.sc_stream_start_status,phases,sizeof(phases))==0);
+  u.uio_resid=64;overflow=4;loss=0;
+  assert(adiaxiadc_stream_read(&sc,&u,0)==EOVERFLOW && u.uio_resid==64);
+  assert(diagnostics==1 && snapshots==1 && strstr(diagnostic_line,"cause=1 "));
+  assert(strstr(diagnostic_line,"start=00000000/00000004/00000008/0000000c"));
+  assert(adiaxiadc_stream_read(&sc,&u,0)==EOVERFLOW && diagnostics==1);
+  assert(adiaxiadc_stream_stop(&sc)==0);
+  assert(adiaxiadc_stream_start(&sc,&cfg)==0);
+  overflow=0;loss=1;
+  assert(adiaxiadc_stream_read(&sc,&u,0)==EOVERFLOW);
+  assert(diagnostics==2 && snapshots==2 && strstr(diagnostic_line,"cause=2 "));
+  assert(adiaxiadc_stream_stop(&sc)==0);
+  assert(adiaxiadc_stream_start(&sc,&cfg)==0);
+  overflow=4;loss=1;
+  assert(adiaxiadc_stream_read(&sc,&u,0)==EOVERFLOW);
+  assert(diagnostics==3 && snapshots==3 && strstr(diagnostic_line,"cause=3 "));
+  assert(adiaxiadc_stream_stop(&sc)==0);
+  assert(adiaxiadc_stream_start(&sc,&cfg)==0);
+  snapshot_error=EIO;overflow=4;loss=0;
+  assert(adiaxiadc_stream_read(&sc,&u,0)==EOVERFLOW && sc.sc_stream_status.last_error==EOVERFLOW);
+  assert(diagnostics==4 && snapshots==4 && strstr(diagnostic_line,"snaperr=5 "));
+  assert(strstr(diagnostic_line,"id=0 submit=0 done=0 debug=0"));
+  puts("PASS diagnostic snapshot failure preserves original loss and reports no stale registers");
+  puts("PASS actual START caches raw phases without logging; first loss separates ADC/DMAC/both once per epoch outside locks");return 0;
+ }
  if(strcmp(argv[1],"signal")==0) {
   next_error=EAGAIN;wait_result=EINTR;u.uio_resid=64;
   assert(adiaxiadc_stream_read(&sc,&u,0)==EINTR && u.uio_resid==64 && waits==1);

@@ -1274,6 +1274,48 @@ out:
 }
 
 int
+adi_axi_dmac_guard_stream_snapshot(const struct adi_axi_dmac_guard *g,
+    struct adi_axi_dmac_stream_snapshot *snapshot)
+{
+	struct adi_axi_dmac_channel *c;
+	struct adi_axi_dmac_softc *sc;
+	int error = 0;
+
+	if (g == NULL || !g->g_prepared || g->g_channel == NULL ||
+	    snapshot == NULL)
+		return EINVAL;
+	c = g->g_channel;
+	sc = c->c_sc;
+	mutex_enter(&sc->sc_lock);
+	mutex_enter(&sc->sc_buffer_lock);
+	mutex_enter(&sc->sc_irq_lock);
+	memset(snapshot, 0, sizeof(*snapshot));
+	if (sc->sc_channel != c) {
+		error = EIO;
+	} else {
+		const struct adi_axi_dmac_buffer *b;
+
+		snapshot->status = c->c_stream_status;
+		snapshot->control = dmac_read(sc, DMAC_CONTROL);
+		snapshot->irq_pending = dmac_read(sc, DMAC_IRQ_PENDING);
+		snapshot->irq_mask = dmac_read(sc, DMAC_IRQ_MASK);
+		snapshot->transfer_id = dmac_read(sc, DMAC_ID);
+		snapshot->submit = dmac_read(sc, DMAC_SUBMIT);
+		snapshot->done = dmac_read(sc, DMAC_DONE);
+		if (sc->sc_debug_idle_45c)
+			snapshot->debug_status = dmac_read(sc, DMAC_DEBUG_STATUS);
+		LIST_FOREACH(b, &c->c_buffers, b_next) {
+			if (b->b_stream_state < ADI_AXI_DMAC_STREAM_STATES)
+				snapshot->states[b->b_stream_state]++;
+		}
+	}
+	mutex_exit(&sc->sc_irq_lock);
+	mutex_exit(&sc->sc_buffer_lock);
+	mutex_exit(&sc->sc_lock);
+	return error;
+}
+
+int
 adi_axi_dmac_guard_stream_notify(const struct adi_axi_dmac_guard *g,
     void (*notify)(void *), void *cookie)
 {
