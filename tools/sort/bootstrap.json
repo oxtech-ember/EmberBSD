@@ -1,0 +1,555 @@
+{
+  "format": "emberbsd-native-bootstrap-program",
+  "version": 1,
+  "origin": "EmberBSD (AI-assisted) source contract; implementation retains its BSD copyright notices.",
+  "compiler": {
+    "family": "gcc",
+    "major": 16,
+    "abi": "native"
+  },
+  "cflags": [],
+  "link_flags": [],
+  "libraries": [],
+  "name": "sort",
+  "canonical_host_recipe": "tools/sort/Makefile",
+  "source_makefile": "usr.bin/sort/Makefile",
+  "sources": [
+    "usr.bin/sort/append.c",
+    "usr.bin/sort/fields.c",
+    "usr.bin/sort/files.c",
+    "usr.bin/sort/fsort.c",
+    "usr.bin/sort/init.c",
+    "usr.bin/sort/msort.c",
+    "usr.bin/sort/sort.c",
+    "usr.bin/sort/tmp.c",
+    "usr.bin/sort/radix_sort.c",
+    "lib/libutil/efun.c",
+    "lib/libc/stdlib/reallocarr.c",
+    "common/lib/libc/stdlib/strtoi.c",
+    "common/lib/libc/stdlib/strtou.c"
+  ],
+  "headers": [
+    "usr.bin/sort/sort.h",
+    "usr.bin/sort/fsort.h",
+    "usr.bin/sort/pathnames.h",
+    "tools/compat/bootstrap_cdefs.h",
+    "tools/compat/compat_efun.h",
+    "tools/compat/namespace.h",
+    "common/lib/libc/stdlib/_strtoi.h"
+  ],
+  "include_dirs": [
+    "usr.bin/sort",
+    "tools/compat",
+    "common/lib/libc/stdlib"
+  ],
+  "cppflags": [
+    "-DHAVE_NBTOOL_CONFIG_H=1",
+    "-include",
+    "nbtool_config.h"
+  ],
+  "compat": {
+    "path": "tools/compat/bootstrap-efun.json",
+    "sha256": "3aa76b9c12fbb0581205ac1477b5d1f11b79cf980acffbc74e2c9972410ac7d1"
+  },
+  "invocations": [
+    "sort"
+  ],
+  "files": {
+    "input.txt": "c\na\nb\na\n",
+    "empty.txt": "",
+    "partial.txt": "z\na",
+    "nul.txt": "\u0000b\n\u0000a\n",
+    "numbers.txt": "10\n-2\n2.5\n0\n",
+    "fields.txt": "a:10\nb:2\nc:-1\n",
+    "stable.txt": "z:2\na:1\ny:2\nb:1\n",
+    "left.txt": "a\nc\n",
+    "right.txt": "b\nd\n",
+    "duplicates.txt": "a\na\nb\n",
+    "records.txt": [
+      {
+        "text": "z\n",
+        "repeat": 65536
+      },
+      {
+        "text": "a\n",
+        "repeat": 65537
+      }
+    ],
+    "long.txt": [
+      {
+        "text": "z",
+        "repeat": 65537
+      },
+      "\n",
+      {
+        "text": "a",
+        "repeat": 65537
+      },
+      "\n"
+    ]
+  },
+  "runtime_cases": [
+    {
+      "name": "file",
+      "invocation": "sort",
+      "args": [
+        "input.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "a\na\nb\nc\n",
+      "stderr": ""
+    },
+    {
+      "name": "stdin",
+      "invocation": "sort",
+      "args": [],
+      "stdin": "beta\nalpha\n",
+      "exit": 0,
+      "stdout": "alpha\nbeta\n",
+      "stderr": ""
+    },
+    {
+      "name": "empty",
+      "invocation": "sort",
+      "args": [
+        "empty.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "name": "unterminated",
+      "invocation": "sort",
+      "args": [
+        "partial.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "a\nz\n",
+      "stderr": ""
+    },
+    {
+      "name": "nul-bytes",
+      "invocation": "sort",
+      "args": [
+        "nul.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "\u0000a\n\u0000b\n",
+      "stderr": ""
+    },
+    {
+      "name": "reverse",
+      "invocation": "sort",
+      "args": [
+        "-r",
+        "input.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "c\nb\na\na\n",
+      "stderr": ""
+    },
+    {
+      "name": "unique",
+      "invocation": "sort",
+      "args": [
+        "-u",
+        "input.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "a\nb\nc\n",
+      "stderr": ""
+    },
+    {
+      "name": "numeric",
+      "invocation": "sort",
+      "args": [
+        "-n",
+        "numbers.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "-2\n0\n2.5\n10\n",
+      "stderr": ""
+    },
+    {
+      "name": "numeric-reverse",
+      "invocation": "sort",
+      "args": [
+        "-rn",
+        "numbers.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "10\n2.5\n0\n-2\n",
+      "stderr": ""
+    },
+    {
+      "name": "numeric-field",
+      "invocation": "sort",
+      "args": [
+        "-t",
+        ":",
+        "-k",
+        "2,2n",
+        "fields.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "c:-1\nb:2\na:10\n",
+      "stderr": ""
+    },
+    {
+      "name": "stable-keys",
+      "invocation": "sort",
+      "args": [
+        "-s",
+        "-t",
+        ":",
+        "-k",
+        "2,2n",
+        "stable.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "a:1\nb:1\nz:2\ny:2\n",
+      "stderr": ""
+    },
+    {
+      "name": "fold-case",
+      "invocation": "sort",
+      "args": [
+        "-f"
+      ],
+      "stdin": "b\nA\nc\n",
+      "exit": 0,
+      "stdout": "A\nb\nc\n",
+      "stderr": ""
+    },
+    {
+      "name": "ignore-key-blanks",
+      "invocation": "sort",
+      "args": [
+        "-b",
+        "-k",
+        "1"
+      ],
+      "stdin": "  beta\n alpha\n",
+      "exit": 0,
+      "stdout": " alpha\n  beta\n",
+      "stderr": ""
+    },
+    {
+      "name": "dictionary",
+      "invocation": "sort",
+      "args": [
+        "-d"
+      ],
+      "stdin": "a-z\nab\n",
+      "exit": 0,
+      "stdout": "ab\na-z\n",
+      "stderr": ""
+    },
+    {
+      "name": "nonprinting",
+      "invocation": "sort",
+      "args": [
+        "-i"
+      ],
+      "stdin": "a\u0001z\nab\n",
+      "exit": 0,
+      "stdout": "ab\na\u0001z\n",
+      "stderr": ""
+    },
+    {
+      "name": "length",
+      "invocation": "sort",
+      "args": [
+        "-l"
+      ],
+      "stdin": "bbbb\nc\naa\n",
+      "exit": 0,
+      "stdout": "c\naa\nbbbb\n",
+      "stderr": ""
+    },
+    {
+      "name": "nul-records",
+      "invocation": "sort",
+      "args": [
+        "-R",
+        "\\0"
+      ],
+      "stdin": "b\u0000a\u0000",
+      "exit": 0,
+      "stdout": "a\u0000b\u0000",
+      "stderr": ""
+    },
+    {
+      "name": "merge",
+      "invocation": "sort",
+      "args": [
+        "-m",
+        "left.txt",
+        "right.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "a\nb\nc\nd\n",
+      "stderr": ""
+    },
+    {
+      "name": "merge-unique",
+      "invocation": "sort",
+      "args": [
+        "-mu",
+        "duplicates.txt",
+        "left.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "a\nb\nc\n",
+      "stderr": ""
+    },
+    {
+      "name": "check-sorted",
+      "invocation": "sort",
+      "args": [
+        "-c",
+        "left.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "name": "check-disorder",
+      "invocation": "sort",
+      "args": [
+        "-c",
+        "input.txt"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "check-quiet",
+      "invocation": "sort",
+      "args": [
+        "-C",
+        "input.txt"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "name": "check-unique",
+      "invocation": "sort",
+      "args": [
+        "-cu",
+        "duplicates.txt"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "stdin-operand",
+      "invocation": "sort",
+      "args": [
+        "-"
+      ],
+      "stdin": "b\na\n",
+      "exit": 0,
+      "stdout": "a\nb\n",
+      "stderr": ""
+    },
+    {
+      "name": "end-options",
+      "invocation": "sort",
+      "args": [
+        "--",
+        "input.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "a\na\nb\nc\n",
+      "stderr": ""
+    },
+    {
+      "name": "multiple-files",
+      "invocation": "sort",
+      "args": [
+        "left.txt",
+        "right.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "a\nb\nc\nd\n",
+      "stderr": ""
+    },
+    {
+      "name": "invalid-option",
+      "invocation": "sort",
+      "args": [
+        "-z"
+      ],
+      "stdin": "",
+      "exit": 2,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "invalid-key",
+      "invocation": "sort",
+      "args": [
+        "-k",
+        "0",
+        "input.txt"
+      ],
+      "stdin": "",
+      "exit": 2,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "conflicting-modes",
+      "invocation": "sort",
+      "args": [
+        "-c",
+        "-m",
+        "input.txt"
+      ],
+      "stdin": "",
+      "exit": 2,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "missing-file",
+      "invocation": "sort",
+      "args": [
+        "missing.txt"
+      ],
+      "stdin": "",
+      "exit": 2,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "check-multiple",
+      "invocation": "sort",
+      "args": [
+        "-c",
+        "left.txt",
+        "right.txt"
+      ],
+      "stdin": "",
+      "exit": 2,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "delimiter-clash",
+      "invocation": "sort",
+      "args": [
+        "-t",
+        "\n",
+        "input.txt"
+      ],
+      "stdin": "",
+      "exit": 2,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "spill-records",
+      "invocation": "sort",
+      "args": [
+        "records.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": [
+        {
+          "text": "a\n",
+          "repeat": 65537
+        },
+        {
+          "text": "z\n",
+          "repeat": 65536
+        }
+      ],
+      "stderr": ""
+    },
+    {
+      "name": "spill-unique",
+      "invocation": "sort",
+      "args": [
+        "-u",
+        "records.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "a\nz\n",
+      "stderr": ""
+    },
+    {
+      "name": "long-lines",
+      "invocation": "sort",
+      "args": [
+        "long.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": [
+        {
+          "text": "a",
+          "repeat": 65537
+        },
+        "\n",
+        {
+          "text": "z",
+          "repeat": 65537
+        },
+        "\n"
+      ],
+      "stderr": ""
+    },
+    {
+      "name": "long-keys",
+      "invocation": "sort",
+      "args": [
+        "-k",
+        "1",
+        "long.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": [
+        {
+          "text": "a",
+          "repeat": 65537
+        },
+        "\n",
+        {
+          "text": "z",
+          "repeat": 65537
+        },
+        "\n"
+      ],
+      "stderr": ""
+    }
+  ]
+}
