@@ -32,6 +32,7 @@
 __KERNEL_RCSID(0, "$NetBSD: amdgpu_kms.c,v 1.6 2021/12/19 12:02:39 riastradh Exp $");
 
 #include "amdgpu.h"
+#include "soc15_hw_ip.h"
 #include <drm/drm_debugfs.h>
 #include <drm/amdgpu_drm.h>
 #include "amdgpu_sched.h"
