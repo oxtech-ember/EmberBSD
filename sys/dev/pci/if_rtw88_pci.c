@@ -304,7 +304,8 @@ rtwce_stats(char *buf, size_t len)
 		    " vhtadmit %u/%u/%u.%u.%u/%d"
 		    " htresp %u/%u/%u/%u/%u htreset %u/%u"
 		    " assocfail %u/%u/%u/%u/%u"
-		    " htrun %u/%u/%u.%u.%u raphy %u/%d/%d"
+		    " htrun %u/%u/%u.%u.%u runpass %u/%u/%d/%u/%u/%d/%u/%u"
+		    " raphy %u/%d/%d"
 		    " tuple %u.%u.%u/%u",
 		    ns.neg.prepare_ok, ns.neg.prepare_fail, ns.neg.prepare_ready,
 		    (int)ns.neg.prepare_error, ns.neg.ht20_offers,
@@ -317,7 +318,11 @@ rtwce_stats(char *buf, size_t len)
 		    ns.neg.ht20_norate, ns.neg.ht20_failures,
 		    ns.neg.ht20_failure_reason, ns.neg.run_ht,
 		    ns.neg.run_vht, ns.neg.run_chan[0], ns.neg.run_chan[1],
-		    ns.neg.run_chan[2], sc->sc_ra.phy, sc->sc_ra.configured,
+		    ns.neg.run_chan[2], ns.neg.run_passes,
+		    ns.neg.run_restart_fail, (int)ns.neg.run_restart_error,
+		    ns.neg.run_cancels, ns.neg.run_fails, (int)ns.neg.run_error,
+		    ns.neg.run_stage, ns.neg.run_published,
+		    sc->sc_ra.phy, sc->sc_ra.configured,
 		    sc->sc_ra.active, sc->sc_phy.channel.primary,
 		    sc->sc_phy.channel.center, sc->sc_phy.channel.width_mhz,
 		    sc->sc_phy.channel_valid);

@@ -1876,6 +1876,10 @@ test_ra_vht_run_tuples(void)
 			    ns.vht_chan[1] == v[i].center &&
 			    ns.vht_chan[2] == v[i].width_mhz);
 			CHECK(ns.ht20_offers == 5 && ns.ht20_vht == 3);
+			/* One RUN pass restarted the width and published RUN. */
+			CHECK(ns.run_passes == 1 && ns.run_restart_fail == 0 &&
+			    ns.run_cancels == 0 && ns.run_fails == 0 &&
+			    ns.run_published == 1);
 			CHECK(ns.run_ht == 1 && ns.run_vht == 1 &&
 			    ns.run_chan[0] == v[i].primary &&
 			    ns.run_chan[1] == v[i].center &&
@@ -2047,6 +2051,10 @@ test_ra_vht80_run(void)
 			ra_vht_inject = 1;
 			rtw88_net_state_work(&s.net.state_work, &s.net);
 			CHECK(!ra_vht_inject && ra_vht_runs == 0);
+			/* The superseded RUN pass is counted as cancelled. */
+			CHECK(s.net.neg.run_passes == 1 &&
+			    s.net.neg.run_cancels == 1 &&
+			    s.net.neg.run_published == 0);
 			CHECK(s.sc.sc_started && !s.net.reset_required);
 			CHECK(!rtw88_vht_committed(&s.sc));
 			CHECK(s.sc.sc_phy.channel.width_mhz == 20 &&
