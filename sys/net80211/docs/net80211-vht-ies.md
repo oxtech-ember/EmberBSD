@@ -122,10 +122,14 @@ applies to VHT stations. It rests on four preconditions of this stack:
 mixed-format HT and VHT PPDUs; single unaggregated MPDUs; no TXOP bursts;
 and no length-triggered RTS (the RTS threshold exceeds every MPDU).
 Non-member protection (mode 1), mode 2 without non-greenfield, OBSS non-HT
-presence and every other operation selector remain closed. The HT
-Operation in beacons is compared byte for byte: an AP that changes its
-mode-3 word (for example to `0x0004`, or adds OBSS `0x0010`) withdraws the
-HT/VHT profile and the station reassociates.
+presence and every other operation selector remain closed. Beacons are
+checked against the committed contract, not byte for byte: the HT
+Capabilities SM power save, Greenfield and A-MPDU parameters, and in HT
+Operation the primary channel, the secondary offset and STA channel width,
+the third information field and the Basic MCS set must stay unchanged,
+while the operation word may move within the admitted envelope (0 and 6,
+and on 5 GHz 3 and 7). An AP that leaves it (for example `0x0004`, or
+OBSS `0x0010`) withdraws the HT/VHT profile and the station reassociates.
 
 ### Deviation: Basic VHT-MCS set
 
