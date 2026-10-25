@@ -446,7 +446,7 @@ static int amdgpu_hw_ip_info(struct amdgpu_device *adev,
 
 	result->hw_ip_version_major = adev->ip_blocks[i].version->major;
 	result->hw_ip_version_minor = adev->ip_blocks[i].version->minor;
-	if (adev->asic_type >= CHIP_VEGA10) {
+	if (adev->discovery && adev->asic_type >= CHIP_VEGA10) {
 		int hw_id = -1;
 		int major = 0, minor = 0, revision = 0;
 
