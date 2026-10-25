@@ -86,7 +86,8 @@
         "repeat": 65537
       },
       "\n"
-    ]
+    ],
+    "nul-records.txt": "b\u0000a\u0000"
   },
   "runtime_cases": [
     {
@@ -283,9 +284,10 @@
       "invocation": "sort",
       "args": [
         "-R",
-        "\\0"
+        "\\0",
+        "nul-records.txt"
       ],
-      "stdin": "b\u0000a\u0000",
+      "stdin": "",
       "exit": 0,
       "stdout": "a\u0000b\u0000",
       "stderr": ""

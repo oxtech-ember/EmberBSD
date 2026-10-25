@@ -23,6 +23,7 @@ Its ordinary and unique cases exercise temporary-file sorting and merge output.
 The temporary directory is the owned work directory. Debug shortcuts are not used.
 The long-line fixture exceeds 64 KiB and exercises keyed line-buffer growth.
 Both fixtures use the shared bounded data decoder and exact expected bytes.
+NUL-delimited records are read from an owned file. Shell stdin remains text-only.
 
 This initial profile does not exercise `-o`, file replacement permissions, non-C locales,
 or long-line order checking with `-c`. These capabilities remain in the implementation.
