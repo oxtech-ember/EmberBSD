@@ -647,14 +647,18 @@ static void
 test_current_peer_beacons(void)
 {
 	for (unsigned running = 0; running < 2; running++) {
-		for (unsigned variant = 0; variant < 28; variant++) {
+		for (unsigned variant = 0; variant < 32; variant++) {
 			struct mbuf *m;
 			struct ieee80211_frame *wh;
 			uint8_t *cap, *op;
 			uint64_t epoch;
-			int reject = variant != 0 && variant != 14 &&
+			/* Beacons may change the protection mode within the
+			 * supported set and HT capability bits the contract does
+			 * not use; everything the TX contract depends on stays. */
+			int reject = variant != 0 && variant != 1 && variant != 14 &&
 			    variant != 15 && variant != 16 && variant != 17 &&
-			    variant != 19 && variant != 23;
+			    variant != 19 && variant != 23 && variant != 30 &&
+			    variant != 31;
 
 			ht_setup();
 			CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ) == 0);
@@ -673,7 +677,7 @@ test_current_peer_beacons(void)
 			cap = m->m_data + m->m_len - 52;
 			op = cap + 28;
 			switch (variant) {
-			case 1: op[4] = 6; break; /* Changed operation. */
+			case 1: op[4] = 6; break; /* Mode 2 + non-GF: supported. */
 			case 2: op[3] = 5; break; /* Width/secondary channel. */
 			case 3: cap[0] = 46; break; /* Missing HT Capabilities. */
 			case 4: op[0] = 62; break; /* Missing HT Operation. */
@@ -686,9 +690,13 @@ test_current_peer_beacons(void)
 			case 11: op[8] ^= 1; break; /* Basic MCS changed. */
 			case 12: admitted.generation++; break;
 			case 13: test_ic.ic_ht20_admit = NULL; break;
-			case 14: wh->i_addr2[0] ^= 2; op[4] = 6; break;
-			case 15: wh->i_addr3[0] ^= 2; op[4] = 6; break;
-			case 16: case 17: op[4] = 6; break;
+			case 14: wh->i_addr2[0] ^= 2; op[3] = 5; break;
+			case 15: wh->i_addr3[0] ^= 2; op[3] = 5; break;
+			case 16: case 17: op[3] = 5; break;
+			case 28: op[4] = 7; break; /* Mode 3 is 5 GHz only. */
+			case 29: op[4] = 1; break; /* Non-member protection. */
+			case 30: cap[6] ^= 0xff; break; /* MCS8-15 bits: unused. */
+			case 31: cap[4] ^= 0x03; break; /* A-MPDU factor: unused. */
 			case 18: m->m_len = sizeof(*wh) + 11; break;
 			case 19: wh->i_fc[0] = IEEE80211_FC0_SUBTYPE_PROBE_RESP;
 				break;
@@ -710,7 +718,7 @@ test_current_peer_beacons(void)
 			case 23: /* A newer SCAN already owns the association. */
 				CHECK(rtw88_net_newstate(&test_ic, IEEE80211_S_SCAN, 0) == 0);
 				epoch = native_net.policy.epoch;
-				op[4] = 6;
+				op[3] = 5;
 				break;
 			}
 			ieee80211_recv_mgmt_beacon(&test_ic, m, &test_node,

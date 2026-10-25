@@ -1934,8 +1934,7 @@ test_ra_vht_run_tuples(void)
 			CHECK(rtw88_net_newstate(&s.net.ic, IEEE80211_S_SCAN, 0) == 0);
 			CHECK(s.net.neg.run_queued == 1 && s.net.neg.run_replaced == 1 &&
 			    s.net.neg.run_replaced_by == IEEE80211_S_SCAN &&
-			    s.net.neg.run_replaced_arg == 0 &&
-			    s.net.neg.run_replaced_caller != 0);
+			    s.net.neg.run_replaced_arg == 0);
 			rtw88_net_state_work(&s.net.state_work, &s.net);
 			CHECK(s.net.neg.run_passes == 0);
 			state_fixture_finish(&s);

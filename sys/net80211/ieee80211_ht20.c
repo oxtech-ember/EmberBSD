@@ -413,6 +413,29 @@ ieee80211_ht20_tx_protection(struct ieee80211com *ic, struct ieee80211_node *ni,
  * matching beacons before the legacy parser can return on a malformed TLV.
  * The caller owns the normal INIT request after this synchronous purge.
  */
+/*
+ * A beacon keeps the committed HT contract when every field the TX/RX
+ * contract uses is unchanged: HT Capabilities SMPS/greenfield bits and
+ * MCS0-7, and HT Operation primary, secondary offset/STA width, the
+ * octets 4-5 and the basic MCS set. The protection mode may change
+ * within the supported set (as ieee80211_ht20_tx_protection() accepts),
+ * since APs update it as non-HT stations come and go.
+ */
+static int
+ht20_beacon_contract(const struct ieee80211_ht20_node *h, const uint8_t *cap,
+    const uint8_t *op)
+{
+	uint16_t operation = (uint16_t)op[2] | (uint16_t)op[3] << 8;
+
+	return (cap[0] & 0x1c) == (h->peer_htcap[0] & 0x1c) &&
+	    cap[3] == h->peer_htcap[3] &&
+	    op[0] == h->peer_htop[0] && (op[1] & 0x07) == (h->peer_htop[1] & 0x07) &&
+	    (operation == 0 || operation == 6 ||
+	     ((operation == 3 || operation == 7) && op[0] > 14)) &&
+	    op[4] == h->peer_htop[4] && op[5] == h->peer_htop[5] &&
+	    memcmp(op + 6, h->peer_htop + 6, sizeof(h->peer_htop) - 6) == 0;
+}
+
 int
 ieee80211_ht20_beacon(struct ieee80211com *ic, struct ieee80211_node *ni,
     const struct ieee80211_frame *wh, const uint8_t *p, size_t len)
@@ -459,9 +482,7 @@ ieee80211_ht20_beacon(struct ieee80211com *ic, struct ieee80211_node *ni,
 		len -= size;
 	}
 	reason = IEEE80211_HT20_RESET_HT;
-	if (cap == NULL || op == NULL ||
-	    memcmp(cap, h->peer_htcap, sizeof(h->peer_htcap)) != 0 ||
-	    memcmp(op, h->peer_htop, sizeof(h->peer_htop)) != 0)
+	if (cap == NULL || op == NULL || !ht20_beacon_contract(h, cap, op))
 		goto bad;
 	reason = IEEE80211_HT20_RESET_VHT;
 	/* A negotiated VHT width is bound to the AP's VHT Operation. */

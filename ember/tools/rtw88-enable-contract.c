@@ -1221,7 +1221,7 @@ static void enable_ht20_beacon_withdrawal(void)
         *p++=IEEE80211_ELEMID_RATES;*p++=8;memcpy(p,ni->ni_rates.rs_rates,8);p+=8;
         ieee80211_ht20_write(p,&ht20_profile);p+=28;
         p[0]=61;p[1]=22;p[2]=36;p[8]=1;
-        if(kind==1)p[4]=6;
+        if(kind==1)p[3]=5; /* Secondary offset changed. */
         if(kind==2)m->m_len=(int)sizeof(*wh)+15; /* Early TLV error. */
         if(kind==3)ht20_profile.generation++;
         if(kind==4)CHECK(rtw88_net_newstate(ic,IEEE80211_S_SCAN,0)==0);
