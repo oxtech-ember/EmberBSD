@@ -153,28 +153,56 @@ ieee80211_ht20_offer(struct ieee80211com *ic, struct ieee80211_node *ni,
 	}
 }
 
-static int
-ht20_current(struct ieee80211com *ic, struct ieee80211_node *ni,
+/*
+ * The first failing clause of the committed HT/VHT contract, 1-based in
+ * this order, or 0 when current; numeric diagnostics use the value.
+ */
+static unsigned
+ht20_stale(struct ieee80211com *ic, struct ieee80211_node *ni,
     const struct ieee80211_ht20_node *h)
 {
 	struct ieee80211_ht20_profile local;
 
-	return ic->ic_opmode == IEEE80211_M_STA &&
-	    (ic->ic_state == IEEE80211_S_ASSOC || ic->ic_state == IEEE80211_S_RUN) &&
-	    (ic->ic_flags & IEEE80211_F_WME) && (ic->ic_caps & IEEE80211_C_WME) &&
-	    ic->ic_wme.wme_sta_apply != NULL &&
-	    (ni->ni_flags & (IEEE80211_NODE_QOS | IEEE80211_NODE_WME_VALID)) ==
-	    (IEEE80211_NODE_QOS | IEEE80211_NODE_WME_VALID) &&
-	    h->security == ((ic->ic_flags & IEEE80211_F_PRIVACY) != 0) &&
-	    ((ic->ic_flags & IEEE80211_F_PRIVACY) == 0 || ht20_rsn_ccmp(ic)) &&
-	    ni == ic->ic_bss && h->offer_attempt == h->attempt &&
-	    h->attempt == ni->ni_ht20.attempt &&
-	    h->assoc_attempt == ni->ni_wme_attempt &&
-	    h->channel == ic->ic_curchan && ni->ni_chan == ic->ic_curchan &&
-	    IEEE80211_ADDR_EQ(h->bssid, ni->ni_bssid) && ht20_local(ic, &local) &&
-	    local.generation == h->profile.generation &&
-	    local.rx_mcs == h->profile.rx_mcs && local.tx_mcs == h->profile.tx_mcs &&
-	    local.ampdu == h->profile.ampdu;
+	if (ic->ic_opmode != IEEE80211_M_STA ||
+	    (ic->ic_state != IEEE80211_S_ASSOC && ic->ic_state != IEEE80211_S_RUN))
+		return 1;
+	if ((ic->ic_flags & IEEE80211_F_WME) == 0 ||
+	    (ic->ic_caps & IEEE80211_C_WME) == 0)
+		return 2;
+	if (ic->ic_wme.wme_sta_apply == NULL)
+		return 3;
+	if ((ni->ni_flags & (IEEE80211_NODE_QOS | IEEE80211_NODE_WME_VALID)) !=
+	    (IEEE80211_NODE_QOS | IEEE80211_NODE_WME_VALID))
+		return 4;
+	if (h->security != ((ic->ic_flags & IEEE80211_F_PRIVACY) != 0))
+		return 5;
+	if ((ic->ic_flags & IEEE80211_F_PRIVACY) != 0 && !ht20_rsn_ccmp(ic))
+		return 6;
+	if (ni != ic->ic_bss)
+		return 7;
+	if (h->offer_attempt != h->attempt || h->attempt != ni->ni_ht20.attempt)
+		return 8;
+	if (h->assoc_attempt != ni->ni_wme_attempt)
+		return 9;
+	if (h->channel != ic->ic_curchan || ni->ni_chan != ic->ic_curchan)
+		return 10;
+	if (!IEEE80211_ADDR_EQ(h->bssid, ni->ni_bssid))
+		return 11;
+	if (!ht20_local(ic, &local))
+		return 12;
+	if (local.generation != h->profile.generation)
+		return 13;
+	if (local.rx_mcs != h->profile.rx_mcs ||
+	    local.tx_mcs != h->profile.tx_mcs || local.ampdu != h->profile.ampdu)
+		return 14;
+	return 0;
+}
+
+static int
+ht20_current(struct ieee80211com *ic, struct ieee80211_node *ni,
+    const struct ieee80211_ht20_node *h)
+{
+	return ht20_stale(ic, ni, h) == 0;
 }
 
 /* Full TLV preflight before the legacy association parser can return early. */
@@ -454,6 +482,7 @@ int
 ieee80211_ht20_state_request(struct ieee80211com *ic, int state)
 {
 	struct ieee80211_node *ni = ic->ic_bss;
+	unsigned reason;
 
 	if (ni == NULL || (!ni->ni_ht20.valid && !ni->ni_ht20.offered &&
 	    ni->ni_ht20.profile.generation == 0))
@@ -462,8 +491,12 @@ ieee80211_ht20_state_request(struct ieee80211com *ic, int state)
 		ieee80211_ht20_reset(ni);
 		return 0;
 	}
-	if ((ni->ni_ht20.valid && !ht20_current(ic, ni, &ni->ni_ht20)) ||
-	    ni->ni_ht20.offered) {
+	/* An unanswered offer reports 15; a stale node its first clause. */
+	reason = ni->ni_ht20.offered ? 15 :
+	    ni->ni_ht20.valid ? ht20_stale(ic, ni, &ni->ni_ht20) : 0;
+	if (reason != 0) {
+		ic->ic_ht20_diag.state_fail++;
+		ic->ic_ht20_diag.state_reason = (uint8_t)reason;
 		ieee80211_ht20_reset(ni);
 		return EINVAL;
 	}

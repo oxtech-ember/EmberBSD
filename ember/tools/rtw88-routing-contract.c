@@ -53,6 +53,7 @@ struct rtw88_net {
         unsigned elem_missing, elem_toobig, elem_toosmall, nodealloc, mgtdiscard;
     } stats;
     struct rtw88_net_neg neg;
+    int run_pending;
     struct ieee80211com ic;
     struct rtw88_softc *core;
     struct rtw88_net_policy policy;

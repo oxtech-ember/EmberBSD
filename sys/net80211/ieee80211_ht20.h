@@ -67,8 +67,10 @@ struct ieee80211_ht20_diag {
 	uint32_t ht, vht, legacy, unoffered, bad;
 	uint32_t resets;
 	uint32_t status, norate, failures;
+	uint32_t state_fail;	/* RUN requests refused as stale. */
 	uint16_t last_status;
 	uint8_t reset_reason, failure_reason;
+	uint8_t state_reason;	/* First stale clause, 15 = unanswered offer. */
 };
 /* A source-qualified primary20/mixed-format, single-MPDU protection result.
  * This is not a radio/PPDU or hardware BlockAck attestation. */

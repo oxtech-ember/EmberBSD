@@ -203,7 +203,8 @@ platform_create_sysctl(const char *key)
 		    key, err);
 }
 
-static void
+/* Keep the 128-byte buffer out of platform_init's stack frame. */
+static __noinline void
 platform_add(struct smbtable *tbl, const char *key, int idx)
 {
 	char tmpbuf[128]; /* XXX is this long enough? */

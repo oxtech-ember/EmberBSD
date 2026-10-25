@@ -80,6 +80,8 @@ int amdgpu_ib_get(struct amdgpu_device *adev, struct amdgpu_vm *vm,
 		}
 
 		ib->ptr = amdgpu_sa_bo_cpu_addr(ib->sa_bo);
+		/* Request cache synchronization for this SA-allocated IB. */
+		ib->flags = AMDGPU_IB_FLAG_EMIT_MEM_SYNC;
 
 		if (!vm)
 			ib->gpu_addr = amdgpu_sa_bo_gpu_addr(ib->sa_bo);
@@ -176,7 +178,7 @@ int amdgpu_ib_schedule(struct amdgpu_ring *ring, unsigned num_ibs,
 
 	need_ctx_switch = ring->current_ctx != fence_ctx;
 	if (ring->funcs->emit_pipeline_sync && job &&
-	    ((tmp = amdgpu_sync_get_fence(&job->sched_sync, NULL)) ||
+	    ((tmp = amdgpu_sync_get_fence(&job->sched_sync)) ||
 	     (amdgpu_sriov_vf(adev) && need_ctx_switch) ||
 	     amdgpu_vm_need_pipeline_sync(ring, job))) {
 		need_pipe_sync = true;
@@ -186,6 +188,9 @@ int amdgpu_ib_schedule(struct amdgpu_ring *ring, unsigned num_ibs,
 
 		dma_fence_put(tmp);
 	}
+	if ((ib->flags & AMDGPU_IB_FLAG_EMIT_MEM_SYNC) &&
+	    ring->funcs->emit_mem_sync)
+		ring->funcs->emit_mem_sync(ring);
 
 	if (ring->funcs->insert_start)
 		ring->funcs->insert_start(ring);

@@ -1944,7 +1944,7 @@ static int amdgpu_device_fw_loading(struct amdgpu_device *adev)
 			if (adev->ip_blocks[i].status.hw == true)
 				break;
 
-			if (adev->in_gpu_reset || adev->in_suspend) {
+			if (amdgpu_in_reset(adev) || adev->in_suspend) {
 				r = adev->ip_blocks[i].version->funcs->resume(adev);
 				if (r) {
 					DRM_ERROR("resume of IP block <%s> failed %d\n",
@@ -2994,6 +2994,8 @@ int amdgpu_device_init(struct amdgpu_device *adev,
 	atomic_set(&adev->irq.ih.lock, 0);
 	mutex_init(&adev->firmware.mutex);
 	mutex_init(&adev->pm.mutex);
+	mutex_init(&adev->pm.stable_pstate_ctx_lock);
+	adev->pm.stable_pstate_ctx = NULL;
 	mutex_init(&adev->gfx.gpu_clock_mutex);
 	mutex_init(&adev->srbm_mutex);
 	mutex_init(&adev->gfx.pipe_reserve_mutex);
@@ -3449,6 +3451,7 @@ void amdgpu_device_fini(struct amdgpu_device *adev)
 	mutex_destroy(&adev->gfx.pipe_reserve_mutex);
 	mutex_destroy(&adev->srbm_mutex);
 	mutex_destroy(&adev->gfx.gpu_clock_mutex);
+	mutex_destroy(&adev->pm.stable_pstate_ctx_lock);
 	mutex_destroy(&adev->pm.mutex);
 	mutex_destroy(&adev->firmware.mutex);
 }
@@ -4179,7 +4182,7 @@ static bool amdgpu_device_lock_adev(struct amdgpu_device *adev, bool trylock)
 		mutex_lock(&adev->lock_reset);
 
 	atomic_inc(&adev->gpu_reset_counter);
-	adev->in_gpu_reset = true;
+	amdgpu_set_in_reset(adev, true);
 	switch (amdgpu_asic_reset_method(adev)) {
 	case AMD_RESET_METHOD_MODE1:
 		adev->mp1_state = PP_MP1_STATE_SHUTDOWN;
@@ -4199,7 +4202,7 @@ static void amdgpu_device_unlock_adev(struct amdgpu_device *adev)
 {
 	amdgpu_vf_error_trans_all(adev);
 	adev->mp1_state = PP_MP1_STATE_NONE;
-	adev->in_gpu_reset = false;
+	amdgpu_set_in_reset(adev, false);
 	mutex_unlock(&adev->lock_reset);
 }
 

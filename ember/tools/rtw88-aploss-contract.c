@@ -74,6 +74,7 @@ struct rtw88_net {
     struct rtw88_softc *core;
     struct rtw88_net_policy policy;
     struct rtw88_net_neg neg;
+    int run_pending;
     struct rtw88_channel_tuple pending_channel;
     int *lock;
     int scan, dev, work_pending, reset_required, state_arg;
@@ -139,10 +140,10 @@ static void ieee80211_unref_node(struct ieee80211_node **ni) { (void)ni; }
 static void ieee80211_begin_scan(struct ieee80211com *ic,int arg) { (void)ic;(void)arg;CHECK(giant && !pci);begin_scans++; }
 /* This contract has no HT provider. If an active RUN capsule reaches this
  * service, fail loudly; full current-profile semantics belong to the HT suite. */
-static int ht20_current(struct ieee80211com *ic,struct ieee80211_node *ni,
+static unsigned ht20_stale(struct ieee80211com *ic,struct ieee80211_node *ni,
     const struct ieee80211_ht20_node *ht) {
     (void)ic;(void)ni;(void)ht;
-    CHECK(0);return 0;
+    CHECK(0);return 1;
 }
 static int aploss_checked_ht20_request(struct ieee80211com *ic,int state) {
     CHECK(giant && !pci && ic->ic_ht20_admit==NULL);

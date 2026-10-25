@@ -90,6 +90,7 @@ struct rtw88_net {
 	uint64_t rx_dropped;
 	struct rtw88_net_stats stats;
 	struct rtw88_net_neg neg;	/* Negotiation diagnostics, net->lock. */
+	int run_pending;		/* A queued RUN awaits its worker pass. */
 	unsigned tx_timer;
 	unsigned tx_completed;
 #ifdef RTW88_DFS64
@@ -1048,6 +1049,7 @@ rtw88_net_state_work(struct work *work, void *cookie)
 		}
 		epoch = net->policy.epoch;
 		state = net->requested;
+		net->run_pending = 0;
 		channel = net->channel;
 		channel_tuple = net->pending_channel;
 		media = net->configured_media;
@@ -1055,6 +1057,15 @@ rtw88_net_state_work(struct work *work, void *cookie)
 		mutex_exit(net->lock);
 		callout_stop(&net->scan);
 		restart_error = rtw88_net_restart_peer(net);
+		if (state == IEEE80211_S_RUN) {
+			mutex_enter(net->lock);
+			net->neg.run_passes++;
+			if (restart_error != 0) {
+				net->neg.run_restart_fail++;
+				net->neg.run_restart_error = restart_error;
+			}
+			mutex_exit(net->lock);
+		}
 #ifdef RTW88_RFK_EXPERIMENT
 		mutex_enter(net->lock);
 		if (epoch == net->policy.epoch && net->rfk.control_epoch == epoch) {
@@ -1149,8 +1160,15 @@ rtw88_net_state_work(struct work *work, void *cookie)
 			prepare_stage = RTW88_NET_STAGE_CORE;
 			prepare_error = rtw88_net_drain_wait(net, epoch, drain_gen,
 			    drain_deadline, state == IEEE80211_S_INIT, &mailbox_retry);
-			if (mailbox_retry || prepare_error == ECANCELED)
+			if (mailbox_retry || prepare_error == ECANCELED) {
+				if (prepare_error == ECANCELED &&
+				    state == IEEE80211_S_RUN) {
+					mutex_enter(net->lock);
+					net->neg.run_cancels++;
+					mutex_exit(net->lock);
+				}
 				continue;
+			}
 		}
 #ifdef RTW88_RFK_EXPERIMENT
 		if (prepare_error == 0 && state == IEEE80211_S_AUTH) {
@@ -1216,8 +1234,15 @@ rtw88_net_state_work(struct work *work, void *cookie)
 			prepare_error = rtw88_net_mailbox_wait(net, epoch,
 			    mailbox_gen, mailbox_box, mailbox_count, mailbox_deadline,
 			    &mailbox_retry);
-			if (mailbox_retry || prepare_error == ECANCELED)
+			if (mailbox_retry || prepare_error == ECANCELED) {
+				if (prepare_error == ECANCELED &&
+				    state == IEEE80211_S_RUN) {
+					mutex_enter(net->lock);
+					net->neg.run_cancels++;
+					mutex_exit(net->lock);
+				}
 				continue;
+			}
 			mailbox_reserved = prepare_error == 0 && mailbox_count != 0;
 		}
 #ifdef RTW88_RFK_EXPERIMENT
@@ -1381,6 +1406,17 @@ rtw88_net_state_work(struct work *work, void *cookie)
 		}
 		rtw88_net_rfk_publish(net);
 #endif
+		if (state == IEEE80211_S_RUN && error != 0) {
+			mutex_enter(net->lock);
+			if (error == ECANCELED)
+				net->neg.run_cancels++;
+			else {
+				net->neg.run_fails++;
+				net->neg.run_error = error;
+				net->neg.run_stage = (uint8_t)diag.stage;
+			}
+			mutex_exit(net->lock);
+		}
 		if (error != ECANCELED) {
 			if (error != 0) {
 				rtw88_net_ht20_publish(net, NULL);
@@ -1418,6 +1454,13 @@ rtw88_net_state_work(struct work *work, void *cookie)
 				/* The parent may have queued an HT/VHT offer. */
 				mutex_enter(net->lock);
 				RTW88_NET_NEG_HT20(&net->neg, &ic->ic_ht20_diag);
+				if (state == IEEE80211_S_RUN && error == 0)
+					net->neg.run_published++;
+				else if (state == IEEE80211_S_RUN) {
+					net->neg.run_fails++;
+					net->neg.run_error = error;
+					net->neg.run_stage = RTW88_NET_STAGE_CORE;
+				}
 				mutex_exit(net->lock);
 				if (error != 0) {
 					diag.stage = RTW88_NET_STAGE_CORE;
@@ -1475,6 +1518,7 @@ rtw88_net_newstate(struct ieee80211com *ic, enum ieee80211_state state,
 {
 	struct rtw88_net *net = ic->ic_ifp->if_softc;
 	int enqueue = 0, ht20_error;
+	int run_asked = state == IEEE80211_S_RUN;
 	int quiet_error = net->tx_quiet && state != IEEE80211_S_INIT ? EBUSY : 0;
 
 	if (quiet_error != 0) {
@@ -1533,6 +1577,18 @@ lock_request:
 	net->dfs_frontier_valid = 0;
 #endif
 	(void)rtw88_net_request(&net->policy);
+	if (run_asked) {
+		net->neg.run_requests++;
+		if (state != IEEE80211_S_RUN)
+			net->neg.run_to_init++;
+	}
+	if (net->run_pending) {
+		net->neg.run_replaced++;
+		net->neg.run_replaced_by = (uint8_t)state;
+	}
+	net->run_pending = state == IEEE80211_S_RUN;
+	if (state == IEEE80211_S_RUN)
+		net->neg.run_queued++;
 	net->requested = state;
 	net->state_arg = arg;
 	net->channel = ieee80211_chan2ieee(ic, ic->ic_curchan);

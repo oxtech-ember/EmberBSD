@@ -89,6 +89,7 @@ struct rtw88_net {
 	callout_t scan;
 	struct rtw88_net_policy policy;
 	struct rtw88_net_neg neg;
+	int run_pending;
 	int work_pending, reset_required;
 	int tx_quiet, quiet_error;
 	unsigned tx_timer, tx_completed;
