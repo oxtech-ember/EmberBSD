@@ -1016,7 +1016,7 @@ rfk_presence_observe(struct rtw88_net *net)
         if(bad==22){invalid[41]=61;invalid[42]=22;invalid[43]=36;len=65;corrupt.packet_size=65;}
         struct rtw88_net_rfk previous=net->rfk;
         if(bad==23)corrupt.sequence=0;
-        if(bad==24)net->rfk.frontier=1; /* Equality is not fresh. */
+        if(bad==24)net->rfk.frontier=corrupt.sequence; /* Equality is not fresh. */
         if(bad==25)corrupt.generation++;
         if(bad==26)net->rfk.frontier_generation++;
         if(bad==27)net->rfk.frontier_valid=0;
