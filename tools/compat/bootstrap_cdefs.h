@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Copyright (c) 2026 EmberBSD contributors. */
-/* Origin: EmberBSD (AI-assisted). Native bootstrap source annotations. */
+/* Origin: EmberBSD (AI-assisted). Native bootstrap source helpers. */
 #ifndef EMBERBSD_BOOTSTRAP_CDEFS_H
 #define EMBERBSD_BOOTSTRAP_CDEFS_H
 
@@ -21,6 +21,11 @@
 #endif
 #ifndef __dead
 #define __dead __attribute__((__noreturn__))
+#endif
+
+/* Match tools/compat/compat_defs.h without replacing a host definition. */
+#ifndef __arraycount
+#define __arraycount(x) (sizeof(x) / sizeof((x)[0]))
 #endif
 
 #endif /* EMBERBSD_BOOTSTRAP_CDEFS_H */

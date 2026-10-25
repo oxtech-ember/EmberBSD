@@ -1,0 +1,251 @@
+{
+  "format": "emberbsd-native-bootstrap-program",
+  "version": 1,
+  "origin": "EmberBSD (AI-assisted) source contract; implementation retains its BSD copyright notices.",
+  "compiler": {
+    "family": "gcc",
+    "major": 16,
+    "abi": "native"
+  },
+  "cflags": [],
+  "link_flags": [],
+  "libraries": [],
+  "name": "tr",
+  "canonical_host_recipe": "tools/tr/Makefile",
+  "source_makefile": "usr.bin/tr/Makefile",
+  "sources": [
+    "usr.bin/tr/str.c",
+    "usr.bin/tr/tr.c"
+  ],
+  "headers": [
+    "usr.bin/tr/extern.h",
+    "tools/compat/bootstrap_cdefs.h"
+  ],
+  "include_dirs": [
+    "usr.bin/tr"
+  ],
+  "cppflags": [
+    "-include",
+    "tools/compat/bootstrap_cdefs.h"
+  ],
+  "invocations": [
+    "tr"
+  ],
+  "files": {},
+  "runtime_cases": [
+    {
+      "name": "translate-range",
+      "invocation": "tr",
+      "args": [
+        "a-z",
+        "A-Z"
+      ],
+      "stdin": "alpha Beta\n",
+      "exit": 0,
+      "stdout": "ALPHA BETA\n",
+      "stderr": ""
+    },
+    {
+      "name": "translate-class",
+      "invocation": "tr",
+      "args": [
+        "[:lower:]",
+        "[:upper:]"
+      ],
+      "stdin": "aBc 123!\n",
+      "exit": 0,
+      "stdout": "ABC 123!\n",
+      "stderr": ""
+    },
+    {
+      "name": "delete-digits",
+      "invocation": "tr",
+      "args": [
+        "-d",
+        "[:digit:]"
+      ],
+      "stdin": "a1b23c\n",
+      "exit": 0,
+      "stdout": "abc\n",
+      "stderr": ""
+    },
+    {
+      "name": "delete-complement",
+      "invocation": "tr",
+      "args": [
+        "-cd",
+        "[:digit:]"
+      ],
+      "stdin": "a1b23\n",
+      "exit": 0,
+      "stdout": "123",
+      "stderr": ""
+    },
+    {
+      "name": "squeeze-class",
+      "invocation": "tr",
+      "args": [
+        "-s",
+        "[:space:]"
+      ],
+      "stdin": "a   b\n\n",
+      "exit": 0,
+      "stdout": "a b\n",
+      "stderr": ""
+    },
+    {
+      "name": "squeeze-set",
+      "invocation": "tr",
+      "args": [
+        "-s",
+        "ab"
+      ],
+      "stdin": "aaabbbccc",
+      "exit": 0,
+      "stdout": "abccc",
+      "stderr": ""
+    },
+    {
+      "name": "delete-and-squeeze",
+      "invocation": "tr",
+      "args": [
+        "-ds",
+        "[:digit:]",
+        " "
+      ],
+      "stdin": "a11   b2  c",
+      "exit": 0,
+      "stdout": "a b c",
+      "stderr": ""
+    },
+    {
+      "name": "translate-and-squeeze",
+      "invocation": "tr",
+      "args": [
+        "-s",
+        "a",
+        "b"
+      ],
+      "stdin": "aaa bb a",
+      "exit": 0,
+      "stdout": "b b b",
+      "stderr": ""
+    },
+    {
+      "name": "pad-last-character",
+      "invocation": "tr",
+      "args": [
+        "abc",
+        "x"
+      ],
+      "stdin": "abc cab\n",
+      "exit": 0,
+      "stdout": "xxx xxx\n",
+      "stderr": ""
+    },
+    {
+      "name": "repeat-sequence",
+      "invocation": "tr",
+      "args": [
+        "abc",
+        "[x*3]"
+      ],
+      "stdin": "abc\n",
+      "exit": 0,
+      "stdout": "xxx\n",
+      "stderr": ""
+    },
+    {
+      "name": "equivalence",
+      "invocation": "tr",
+      "args": [
+        "[=a=]",
+        "x"
+      ],
+      "stdin": "aba\n",
+      "exit": 0,
+      "stdout": "xbx\n",
+      "stderr": ""
+    },
+    {
+      "name": "octal-escape",
+      "invocation": "tr",
+      "args": [
+        "\\141",
+        "z"
+      ],
+      "stdin": "a cat\n",
+      "exit": 0,
+      "stdout": "z czt\n",
+      "stderr": ""
+    },
+    {
+      "name": "empty-input",
+      "invocation": "tr",
+      "args": [
+        "a",
+        "b"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "name": "invalid-option",
+      "invocation": "tr",
+      "args": [
+        "-z"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "missing-operand",
+      "invocation": "tr",
+      "args": [],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "empty-second-string",
+      "invocation": "tr",
+      "args": [
+        "a",
+        ""
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "unknown-class",
+      "invocation": "tr",
+      "args": [
+        "[:unknown:]",
+        "x"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "sequence-in-first-string",
+      "invocation": "tr",
+      "args": [
+        "[a*2]",
+        "b"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    }
+  ]
+}

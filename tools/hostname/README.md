@@ -18,8 +18,8 @@ C file, header and both canonical makefiles to one OS commit. Keep their BSD
 licenses, copyright notices and upstream identifiers.
 
 The shared [bootstrap annotation header](../compat/bootstrap_cdefs.h) includes
-the native `sys/cdefs.h`. It only defines missing source-ID, copyright and
-noreturn macros. It retains source strings and a real noreturn attribute.
+the native `sys/cdefs.h`. It defines missing source-ID, copyright, noreturn and
+array-count macros. It retains source strings and a real noreturn attribute.
 It supplies no function, changes no target header and suppresses no diagnostic.
 The full tools compatibility layer needs generated `nbtool_config.h`; forcing
 its config-dependent `compat_defs.h` into this direct build is not valid.

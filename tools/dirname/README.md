@@ -9,7 +9,8 @@ The implementation, BSD license and original copyright notices remain unchanged.
 This entry requires native libc, including `dirname`, `getopt`, `err` and locale APIs.
 It needs no generated source, configure output or extra library.
 Use the shared [bootstrap annotation header](../compat/bootstrap_cdefs.h).
-It supplies missing source-ID, copyright and noreturn annotations only.
+It supplies missing source-ID, copyright and noreturn annotations.
+It also provides a guarded array-count macro used by other native tools.
 Do not inject target headers or the generated full-tools compatibility layer.
 
 Use the existing SDK direct-source program profile, `dirname-bootstrap`.

@@ -11,8 +11,9 @@ This finite direct-source entry instead requires the native libc interfaces.
 Use the existing SDK direct-source `cat-bootstrap` profile.
 It requires native libc with `getprogname`, `setprogname`, file locking and standard stream/file APIs.
 It needs no generated source, configure output or additional library.
-The shared [annotation header](../compat/bootstrap_cdefs.h) only supplies missing
-source-ID, copyright and noreturn annotations. Do not inject target headers.
+The shared [annotation header](../compat/bootstrap_cdefs.h) supplies missing
+source-ID, copyright and noreturn annotations, plus a guarded array-count macro.
+Do not inject target headers.
 
 The SDK owns input admission, native GCC16 and ABI selection, process control,
 shared link resources and evidence. Pin all listed source members to one OS commit.
