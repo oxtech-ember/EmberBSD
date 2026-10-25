@@ -12,6 +12,7 @@ python=${NETBSD2_PYTHON:-$(command -v python3 || true)}
     echo 'set NETBSD2_PYTHON to the host Python 3 executable' >&2; exit 1;
 }
 "$python" "$src/ember/tests/efi-runtime-copy-contract.py" "$src"
+"$python" "$src/ember/tests/amdgpio-optional-aei-contract.py" "$src"
 "$python" "$src/ember/tools/bluetooth-uart-contract.py" "$src/sys/dev/ic/bcm2712btcom.c"
 "$python" "$src/ember/tools/bluetooth-rc-contract.py"
 sh "$src/ember/tools/a733-accelerator-clock-contract.sh"

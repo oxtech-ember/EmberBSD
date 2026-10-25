@@ -216,11 +216,10 @@ amdgpio_attach(device_t parent, device_t self, void *aux)
 	sc->sc_gc.gp_intr_unmask = amdgpio_intr_unmask;
 
 	rv = acpi_event_create_gpio(self, hdl, amdgpio_register_event, sc);
-	if (ACPI_FAILURE(rv)) {
-		if (rv != AE_NOT_FOUND) {
-			aprint_error_dev(self, "failed to create events: %s\n",
-			    AcpiFormatException(rv));
-		}
+	/* _AEI is optional; peripheral GpioInt consumers still need GPIO. */
+	if (ACPI_FAILURE(rv) && rv != AE_NOT_FOUND) {
+		aprint_error_dev(self, "failed to create events: %s\n",
+		    AcpiFormatException(rv));
 		goto done;
 	}
 

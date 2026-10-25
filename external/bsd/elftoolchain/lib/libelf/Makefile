@@ -1,7 +1,8 @@
 # $FreeBSD: head/lib/libelf/Makefile 261246 2014-01-28 21:38:54Z kaiw $
 .include <bsd.own.mk>
 
-TOP=	${.CURDIR}/../../dist
+.include "../../libelf-source.mk"
+TOP=	${EMBER_LIBELF_SOURCE}
 SRCDIR=	${TOP}/libelf
 
 .PATH:	${SRCDIR}
@@ -66,6 +67,10 @@ SRCS=	elf.c							\
 
 INCS=		libelf.h gelf.h
 INCSDIR=	/usr/include
+
+FILES+=			${EMBER_LIBELF_SOURCE}/ports.distinfo
+FILESNAME_${EMBER_LIBELF_SOURCE}/ports.distinfo=	elftoolchain.distinfo
+FILESDIR_${EMBER_LIBELF_SOURCE}/ports.distinfo=	/usr/share/emberbsd/ports
 
 GENSRCS=	libelf_fsize.c libelf_msize.c libelf_convert.c
 CLEANFILES+=	${GENSRCS}

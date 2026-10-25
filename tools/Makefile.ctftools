@@ -1,7 +1,8 @@
 #	$NetBSD: Makefile.ctftools,v 1.1 2025/04/12 10:00:17 rin Exp $
 
+.include "../external/bsd/elftoolchain/libelf-source.mk"
 ELFTOOLCHAIN_DIR=	${.CURDIR}/../../external/bsd/elftoolchain/dist
-LIBELF_DIR=		${ELFTOOLCHAIN_DIR}/libelf
+LIBELF_DIR=		${EMBER_LIBELF_SOURCE}/libelf
 LIBDWARF_DIR=		${ELFTOOLCHAIN_DIR}/libdwarf
 
 HOST_CPPFLAGS+=	-I${OSNETDIR}/sys \

@@ -67,7 +67,8 @@ INCSDIR=	/usr/include
 GENSRCS=	libelf_fsize.c libelf_msize.c libelf_convert.c
 CLEANFILES=	${GENSRCS}
 
-SHLIB_MAJOR=	1
+SHLIB_MAJOR=	2
+SHLIB_MINOR=	0
 
 WARNS?=	6
 

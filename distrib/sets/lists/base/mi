@@ -2519,6 +2519,7 @@
 ./usr/share/emberbsd				base-sys-share
 ./usr/share/emberbsd/ports			base-sys-share
 ./usr/share/emberbsd/ports/editline.distinfo	base-sys-share
+./usr/share/emberbsd/ports/elftoolchain.distinfo	base-sys-share
 ./usr/share/examples				base-sys-share
 ./usr/share/examples/amd			base-amd-examples
 ./usr/share/examples/apm			base-sys-examples

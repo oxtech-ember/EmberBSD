@@ -1,6 +1,7 @@
 # $FreeBSD: head/lib/libdwarf/Makefile 261246 2014-01-28 21:38:54Z kaiw $
 .include <bsd.own.mk>
 
+.include "../../libelf-source.mk"
 TOP=	${.CURDIR}/../../dist
 SRCDIR=	${TOP}/libdwarf
 
@@ -82,7 +83,7 @@ GENSRCS=	dwarf_pubnames.c dwarf_pubtypes.c dwarf_weaks.c \
 		dwarf_pro_funcs.c dwarf_pro_types.c		\
 		dwarf_pro_vars.c
 CLEANFILES=	${GENSRCS}
-CPPFLAGS+=	-I. -I${SRCDIR} -I${TOP}/common -I${TOP}/libelf
+CPPFLAGS+=	-I. -I${SRCDIR} -I${EMBER_LIBELF_SOURCE}/common -I${EMBER_LIBELF_SOURCE}/libelf
 
 LIBDPLIBS+=	elf ${.CURDIR}/../libelf
 
