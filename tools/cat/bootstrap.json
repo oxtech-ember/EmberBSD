@@ -1,0 +1,236 @@
+{
+  "format": "emberbsd-native-bootstrap-program",
+  "version": 1,
+  "origin": "EmberBSD (AI-assisted) source contract; implementation retains its BSD copyright notices.",
+  "compiler": {
+    "family": "gcc",
+    "major": 16,
+    "abi": "native"
+  },
+  "cflags": [],
+  "link_flags": [],
+  "libraries": [],
+  "name": "cat",
+  "canonical_host_recipe": "tools/cat/Makefile",
+  "source_makefile": "bin/cat/Makefile",
+  "sources": [
+    "bin/cat/cat.c"
+  ],
+  "headers": [
+    "tools/compat/bootstrap_cdefs.h"
+  ],
+  "include_dirs": [],
+  "cppflags": [
+    "-include",
+    "tools/compat/bootstrap_cdefs.h"
+  ],
+  "invocations": [
+    "cat"
+  ],
+  "files": {
+    "input.txt": "alpha\nbeta\n",
+    "second.txt": "gamma\n",
+    "empty.txt": ""
+  },
+  "runtime_cases": [
+    {
+      "name": "file",
+      "invocation": "cat",
+      "args": [
+        "input.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "alpha\nbeta\n",
+      "stderr": ""
+    },
+    {
+      "name": "stdin",
+      "invocation": "cat",
+      "args": [],
+      "stdin": "alpha\nbeta\n",
+      "exit": 0,
+      "stdout": "alpha\nbeta\n",
+      "stderr": ""
+    },
+    {
+      "name": "dash-stdin",
+      "invocation": "cat",
+      "args": [
+        "-"
+      ],
+      "stdin": "stream\n",
+      "exit": 0,
+      "stdout": "stream\n",
+      "stderr": ""
+    },
+    {
+      "name": "concatenate",
+      "invocation": "cat",
+      "args": [
+        "input.txt",
+        "second.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "alpha\nbeta\ngamma\n",
+      "stderr": ""
+    },
+    {
+      "name": "empty-file",
+      "invocation": "cat",
+      "args": [
+        "empty.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "name": "no-final-newline",
+      "invocation": "cat",
+      "args": [],
+      "stdin": "tail",
+      "exit": 0,
+      "stdout": "tail",
+      "stderr": ""
+    },
+    {
+      "name": "number-lines",
+      "invocation": "cat",
+      "args": [
+        "-n"
+      ],
+      "stdin": "a\n\nb\n",
+      "exit": 0,
+      "stdout": "     1\ta\n     2\t\n     3\tb\n",
+      "stderr": ""
+    },
+    {
+      "name": "number-nonblank",
+      "invocation": "cat",
+      "args": [
+        "-b"
+      ],
+      "stdin": "a\n\nb\n",
+      "exit": 0,
+      "stdout": "     1\ta\n\n     2\tb\n",
+      "stderr": ""
+    },
+    {
+      "name": "squeeze-blank",
+      "invocation": "cat",
+      "args": [
+        "-s"
+      ],
+      "stdin": "a\n\n\nb\n",
+      "exit": 0,
+      "stdout": "a\n\nb\n",
+      "stderr": ""
+    },
+    {
+      "name": "show-ends",
+      "invocation": "cat",
+      "args": [
+        "-e"
+      ],
+      "stdin": "a\n\n",
+      "exit": 0,
+      "stdout": "a$\n$\n",
+      "stderr": ""
+    },
+    {
+      "name": "show-tabs",
+      "invocation": "cat",
+      "args": [
+        "-t"
+      ],
+      "stdin": "\tA\n",
+      "exit": 0,
+      "stdout": "^IA\n",
+      "stderr": ""
+    },
+    {
+      "name": "show-control",
+      "invocation": "cat",
+      "args": [
+        "-v"
+      ],
+      "stdin": "\u0001\u007f\n",
+      "exit": 0,
+      "stdout": "^A^?\n",
+      "stderr": ""
+    },
+    {
+      "name": "missing-file",
+      "invocation": "cat",
+      "args": [
+        "missing.txt"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "invalid-option",
+      "invocation": "cat",
+      "args": [
+        "-z"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "continue-after-missing",
+      "invocation": "cat",
+      "args": [
+        "missing.txt",
+        "second.txt"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "gamma\n",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "unbuffered",
+      "invocation": "cat",
+      "args": [
+        "-u",
+        "input.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "alpha\nbeta\n",
+      "stderr": ""
+    },
+    {
+      "name": "regular-file",
+      "invocation": "cat",
+      "args": [
+        "-f",
+        "input.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "alpha\nbeta\n",
+      "stderr": ""
+    },
+    {
+      "name": "lock-stdout",
+      "invocation": "cat",
+      "args": [
+        "-l",
+        "input.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "alpha\nbeta\n",
+      "stderr": ""
+    }
+  ]
+}

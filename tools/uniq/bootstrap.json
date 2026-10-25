@@ -1,0 +1,210 @@
+{
+  "format": "emberbsd-native-bootstrap-program",
+  "version": 1,
+  "origin": "EmberBSD (AI-assisted) source contract; implementation retains its BSD copyright notices.",
+  "compiler": {
+    "family": "gcc",
+    "major": 16,
+    "abi": "native"
+  },
+  "cflags": [],
+  "link_flags": [],
+  "libraries": [],
+  "name": "uniq",
+  "canonical_host_recipe": "tools/uniq/Makefile",
+  "source_makefile": "usr.bin/uniq/Makefile",
+  "sources": [
+    "usr.bin/uniq/uniq.c"
+  ],
+  "headers": [
+    "tools/compat/bootstrap_cdefs.h"
+  ],
+  "include_dirs": [],
+  "cppflags": [
+    "-include",
+    "tools/compat/bootstrap_cdefs.h"
+  ],
+  "invocations": [
+    "uniq"
+  ],
+  "files": {
+    "input.txt": "a\na\nb\nc\nc\nc\n",
+    "empty.txt": ""
+  },
+  "runtime_cases": [
+    {
+      "name": "file",
+      "invocation": "uniq",
+      "args": [
+        "input.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "a\nb\nc\n",
+      "stderr": ""
+    },
+    {
+      "name": "stdin",
+      "invocation": "uniq",
+      "args": [],
+      "stdin": "a\na\nb\n",
+      "exit": 0,
+      "stdout": "a\nb\n",
+      "stderr": ""
+    },
+    {
+      "name": "empty-file",
+      "invocation": "uniq",
+      "args": [
+        "empty.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "name": "empty-stdin",
+      "invocation": "uniq",
+      "args": [],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "name": "counts",
+      "invocation": "uniq",
+      "args": [
+        "-c"
+      ],
+      "stdin": "a\na\nb\n",
+      "exit": 0,
+      "stdout": "   2 a\n   1 b\n",
+      "stderr": ""
+    },
+    {
+      "name": "duplicates",
+      "invocation": "uniq",
+      "args": [
+        "-d"
+      ],
+      "stdin": "a\na\nb\n",
+      "exit": 0,
+      "stdout": "a\n",
+      "stderr": ""
+    },
+    {
+      "name": "unique-lines",
+      "invocation": "uniq",
+      "args": [
+        "-u"
+      ],
+      "stdin": "a\na\nb\n",
+      "exit": 0,
+      "stdout": "b\n",
+      "stderr": ""
+    },
+    {
+      "name": "nonadjacent",
+      "invocation": "uniq",
+      "args": [],
+      "stdin": "a\nb\na\n",
+      "exit": 0,
+      "stdout": "a\nb\na\n",
+      "stderr": ""
+    },
+    {
+      "name": "skip-fields",
+      "invocation": "uniq",
+      "args": [
+        "-f",
+        "1"
+      ],
+      "stdin": "one same\ntwo same\nend other\n",
+      "exit": 0,
+      "stdout": "one same\nend other\n",
+      "stderr": ""
+    },
+    {
+      "name": "skip-chars",
+      "invocation": "uniq",
+      "args": [
+        "-s",
+        "1"
+      ],
+      "stdin": "aa\nba\ncc\n",
+      "exit": 0,
+      "stdout": "aa\ncc\n",
+      "stderr": ""
+    },
+    {
+      "name": "no-final-newline",
+      "invocation": "uniq",
+      "args": [],
+      "stdin": "tail",
+      "exit": 0,
+      "stdout": "tail",
+      "stderr": ""
+    },
+    {
+      "name": "invalid-fields",
+      "invocation": "uniq",
+      "args": [
+        "-f",
+        "-1"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "invalid-chars",
+      "invocation": "uniq",
+      "args": [
+        "-s",
+        "x"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "missing-file",
+      "invocation": "uniq",
+      "args": [
+        "missing.txt"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "extra-operands",
+      "invocation": "uniq",
+      "args": [
+        "one",
+        "two",
+        "three"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "invalid-option",
+      "invocation": "uniq",
+      "args": [
+        "-z"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    }
+  ]
+}

@@ -1,0 +1,233 @@
+{
+  "format": "emberbsd-native-bootstrap-program",
+  "version": 1,
+  "origin": "EmberBSD (AI-assisted) source contract; implementation retains its BSD copyright notices.",
+  "compiler": {
+    "family": "gcc",
+    "major": 16,
+    "abi": "native"
+  },
+  "cflags": [],
+  "link_flags": [],
+  "libraries": [],
+  "name": "head",
+  "canonical_host_recipe": "tools/head/Makefile",
+  "source_makefile": "usr.bin/head/Makefile",
+  "sources": [
+    "usr.bin/head/head.c"
+  ],
+  "headers": [
+    "tools/compat/bootstrap_cdefs.h"
+  ],
+  "include_dirs": [],
+  "cppflags": [
+    "-include",
+    "tools/compat/bootstrap_cdefs.h"
+  ],
+  "invocations": [
+    "head"
+  ],
+  "files": {
+    "input.txt": "line01\nline02\nline03\nline04\nline05\nline06\nline07\nline08\nline09\nline10\nline11\nline12\n",
+    "second.txt": "other01\nother02\n",
+    "empty.txt": ""
+  },
+  "runtime_cases": [
+    {
+      "name": "file-default",
+      "invocation": "head",
+      "args": [
+        "input.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "line01\nline02\nline03\nline04\nline05\nline06\nline07\nline08\nline09\nline10\n",
+      "stderr": ""
+    },
+    {
+      "name": "stdin-lines",
+      "invocation": "head",
+      "args": [
+        "-n",
+        "2"
+      ],
+      "stdin": "alpha\nbeta\ngamma\n",
+      "exit": 0,
+      "stdout": "alpha\nbeta\n",
+      "stderr": ""
+    },
+    {
+      "name": "stdin-bytes",
+      "invocation": "head",
+      "args": [
+        "-c",
+        "5"
+      ],
+      "stdin": "abcdef",
+      "exit": 0,
+      "stdout": "abcde",
+      "stderr": ""
+    },
+    {
+      "name": "legacy-count",
+      "invocation": "head",
+      "args": [
+        "-2",
+        "input.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "line01\nline02\n",
+      "stderr": ""
+    },
+    {
+      "name": "multiple-files",
+      "invocation": "head",
+      "args": [
+        "-n",
+        "1",
+        "input.txt",
+        "second.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "==> input.txt <==\nline01\n\n==> second.txt <==\nother01\n",
+      "stderr": ""
+    },
+    {
+      "name": "quiet-files",
+      "invocation": "head",
+      "args": [
+        "-q",
+        "-n",
+        "1",
+        "input.txt",
+        "second.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "line01\nother01\n",
+      "stderr": ""
+    },
+    {
+      "name": "verbose-file",
+      "invocation": "head",
+      "args": [
+        "-v",
+        "-n",
+        "1",
+        "input.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "==> input.txt <==\nline01\n",
+      "stderr": ""
+    },
+    {
+      "name": "empty-file",
+      "invocation": "head",
+      "args": [
+        "empty.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "name": "no-final-newline",
+      "invocation": "head",
+      "args": [],
+      "stdin": "tail",
+      "exit": 0,
+      "stdout": "tail",
+      "stderr": ""
+    },
+    {
+      "name": "short-file",
+      "invocation": "head",
+      "args": [
+        "-n",
+        "20",
+        "second.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "other01\nother02\n",
+      "stderr": ""
+    },
+    {
+      "name": "zero-lines",
+      "invocation": "head",
+      "args": [
+        "-n",
+        "0"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "negative-lines",
+      "invocation": "head",
+      "args": [
+        "-n",
+        "-1"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "invalid-bytes",
+      "invocation": "head",
+      "args": [
+        "-c",
+        "x"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "missing-file",
+      "invocation": "head",
+      "args": [
+        "missing.txt"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "invalid-option",
+      "invocation": "head",
+      "args": [
+        "-z"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "continue-after-missing",
+      "invocation": "head",
+      "args": [
+        "-q",
+        "-n",
+        "1",
+        "missing.txt",
+        "second.txt"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "other01\n",
+      "stderr_nonempty": true
+    }
+  ]
+}
