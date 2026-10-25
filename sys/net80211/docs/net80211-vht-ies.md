@@ -104,8 +104,44 @@ every primary from 169 to 177; Linux treats such odd values as plain
 
 `ieee80211_vht_assoc_candidate(local, ies, len, chan)` accepts only the
 strict local NSS1 MCS0-7 profile, a 73-byte or smaller window, mutual MCS
-maps, the AP Basic VHT map, HT 40 MHz support with MCS0-7, and a window
-that derives exactly `chan`. The station asks the driver through
+maps, HT 40 MHz support with MCS0-7, and a window that derives exactly
+`chan`.
+
+### Deviation: HT protection mode 3
+
+The HT Operation protection envelope shared by HT20 and VHT accepts
+operation words 0, 6 and, deliberately and on 5 GHz only, non-HT mixed
+mode 3 (`0x0003`, or `0x0007` with non-greenfield stations present). The
+observed AP above advertises `0x0007`. No RTS/CTS or CTS-to-self exchange
+is added. The upstream rtw88 driver requests RTS only through `use_rts` or
+the length threshold and does not read the HT Protection field; this
+deviation is not a claim of conformance with the base-standard HT
+protection rules (IEEE Std 802.11-2016 §10.26.3), which 802.11ac §9.23.6
+applies to VHT stations. It rests on four preconditions of this stack:
+5 GHz, where every non-HT station is OFDM and defers on the L-SIG length of
+mixed-format HT and VHT PPDUs; single unaggregated MPDUs; no TXOP bursts;
+and no length-triggered RTS (the RTS threshold exceeds every MPDU).
+Non-member protection (mode 1), mode 2 without non-greenfield, OBSS non-HT
+presence and every other operation selector remain closed. The HT
+Operation in beacons is compared byte for byte: an AP that changes its
+mode-3 word (for example to `0x0004`, or adds OBSS `0x0010`) withdraws the
+HT/VHT profile and the station reassociates.
+
+### Deviation: Basic VHT-MCS set
+
+IEEE Std 802.11ac-2013 §10.39.7 forbids association unless the station
+supports every NSS/MCS tuple of the AP's Basic VHT-MCS and NSS set. The
+candidate deliberately does not enforce that set. Real APs often list their
+own full support there; an observed 160 MHz AP on primary 64 sets
+`0xff9a` (NSS1, NSS2 and NSS4 MCS0-9 and NSS3 MCS0-8, i.e. a four-stream
+requirement), which would keep every NSS1 MCS0-7 station
+out of VHT. The association request offers VHT only when
+`ieee80211_vht_basic_rates_supported()` finds a nonempty legacy Basic Rate
+Set that the station supports, so group-addressed frames from such an AP
+remain non-HT (§9.7.5.3). The local TX map against the peer RX map and the
+local RX map against the peer TX map are still required. The committed
+Basic VHT-MCS map stays in `ni_ht20.vht.operation` and is still compared in
+every beacon. The station asks the driver through
 `ic_vht_admit(ic, chan, cap)` for that exact channel before both the
 association request offer and the response commit. The committed node keeps
 the channel in `ni_ht20.vht.channel`. The offer records the channel derived

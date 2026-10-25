@@ -92,7 +92,8 @@ int ieee80211_vht_channel_derive(const uint8_t *, size_t, unsigned,
     struct ieee80211_vht_channel *);
 
 /* Candidate-only association check for one derived channel. This does not
- * grant regulatory permission; the caller must separately admit it. */
+ * grant regulatory permission; the caller must separately admit it. The
+ * Basic VHT-MCS set is deliberately not enforced (see the source). */
 int ieee80211_vht_assoc_candidate(const struct ieee80211_vht_cap *,
     const uint8_t *, size_t, const struct ieee80211_vht_channel *);
 

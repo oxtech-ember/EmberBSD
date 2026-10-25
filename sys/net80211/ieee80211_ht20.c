@@ -293,6 +293,12 @@ bad:
 
 /*
  * Primary20 mixed-format does not need RTS solely for operation2/non-GF.
+ * Deliberate deviation: on 5 GHz, non-HT mixed mode 3 (0x0003, or 0x0007
+ * with non-GF) is accepted without RTS/CTS. The upstream rtw88 driver
+ * requests RTS only for use_rts or the length threshold and ignores the
+ * HT Protection field. This relies on OFDM-only non-HT stations deferring
+ * on the L-SIG of mixed-format HT and VHT PPDUs, and on the consumer
+ * sending single unaggregated MPDUs without TXOP bursts or length RTS.
  * Keep a narrower envelope than the wire standard: no greenfield/SMPS,
  * RIFS/PSMP/PCO/STBC/dual protection or other operation selectors. The native
  * consumer must also qualify frame length, threshold and TX aggregation.
@@ -314,7 +320,9 @@ ieee80211_ht20_tx_protection(struct ieee80211com *ic, struct ieee80211_node *ni,
 	cap = (uint16_t)h->peer_htcap[0] | (uint16_t)h->peer_htcap[1] << 8;
 	operation = (uint16_t)op[2] | (uint16_t)op[3] << 8;
 	if (cap != h->peer_cap || operation != h->operation ||
-	    (cap & 0x1c) != 0x0c || (operation != 0 && operation != 6) ||
+	    (cap & 0x1c) != 0x0c || (operation != 0 && operation != 3 &&
+	    operation != 6 && operation != 7) ||
+	    ((operation == 3 || operation == 7) && op[0] <= 14) ||
 	    (op[1] != 0 && op[1] != 5 && op[1] != 7) ||
 	    op[4] != 0 || op[5] != 0 ||
 	    op[0] != ieee80211_chan2ieee(ic, ic->ic_curchan) ||

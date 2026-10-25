@@ -433,7 +433,7 @@ assoc_candidate(void)
 		case 2: other.rx_highest = 1; break;
 		case 3: p[58] = p[59] = 0xff; break;	/* Peer cannot receive. */
 		case 4: p[62] = p[63] = 0xff; break;	/* Peer cannot transmit. */
-		case 5: p[71] = 0xfd; break;		/* Basic MCS8 required. */
+		case 5: p[0] = 221; break;		/* No HT Capabilities. */
 		case 6: p[2] = 0; break;		/* No HT 40 MHz support. */
 		case 7: p[5] = 0x7f; break;		/* Incomplete HT MCS0-7. */
 		case 8: n = 74; p[73] = 0; break;	/* Oversized window. */
@@ -441,9 +441,54 @@ assoc_candidate(void)
 		}
 		CHECK(ieee80211_vht_assoc_candidate(&other, p, n, &c) == -1);
 	}
+	/*
+	 * Deliberate deviation from IEEE 802.11ac-2013 §10.39.7: the Basic
+	 * VHT-MCS and NSS set is not enforced. The caller offers VHT only
+	 * beside a nonempty, supported legacy Basic Rate Set (§9.7.5.3).
+	 */
+	for (mutation = 0; mutation < 3; mutation++) {
+		static const uint16_t basic[] = { 0xfffd, 0xff9a, 0x0000 };
+
+		n = phy_window(p, 64, 3, 1, 58, 0);
+		p[71] = (uint8_t)basic[mutation];
+		p[72] = (uint8_t)(basic[mutation] >> 8);
+		CHECK(ieee80211_vht_channel_derive(p, n, 64, &c) == 0);
+		CHECK(ieee80211_vht_assoc_candidate(&local, p, n, &c) == 0);
+	}
 	n = phy_window(p, 64, 3, 1, 58, 0);
 	CHECK(ieee80211_vht_assoc_candidate(&local, p, n, NULL) == -1);
 	CHECK(ieee80211_vht_assoc_candidate(NULL, p, n, &c) == -1);
+}
+
+/*
+ * An observed 5 GHz AP: primary 64 with its secondary below, a 160 MHz
+ * BSS (segment0 58, segment1 50) and a four-stream Basic VHT-MCS set
+ * 0xff9a (NSS1, NSS2 and NSS4 MCS0-9, NSS3 MCS0-8). The NSS1 MCS0-7 station operates on the primary 80 MHz.
+ */
+static void
+observed_ap(void)
+{
+	static const uint8_t window[] = {
+		45, 0x1a, 0xee, 0x09, 0x17, 0xff, 0xff, 0xff, 0xff, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x18, 0x04, 0x87, 0x19, 0x00, 61, 0x16,
+		0x40, 0x07, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 191, 0x0c, 0xf6, 0x99, 0xcb, 0x33, 0x9a, 0xff,
+		0x30, 0x0c, 0x9a, 0xff, 0x30, 0x2c, 192, 0x05, 0x01, 0x3a,
+		0x32, 0x9a, 0xff
+	};
+	static const struct ieee80211_vht_cap local = {
+		.info = 0, .rx_map = 0xfffc, .rx_highest = 0,
+		.tx_map = 0xfffc, .tx_highest = 0
+	};
+	struct ieee80211_vht_channel c;
+
+	CHECK(sizeof(window) == 73);
+	CHECK(ieee80211_vht_channel_derive(window, sizeof(window), 64, &c) == 0);
+	CHECK(c.primary == 64 && c.center == 58 && c.width_mhz == 80);
+	CHECK(ieee80211_vht_assoc_candidate(&local, window, sizeof(window),
+	    &c) == 0);
 }
 
 int
@@ -468,6 +513,8 @@ main(int argc, char **argv)
 		channel_derive();
 	if (argc == 1 || strcmp(argv[1], "assoc-candidate") == 0)
 		assoc_candidate();
+	if (argc == 1 || strcmp(argv[1], "observed-ap") == 0)
+		observed_ap();
 	printf("PASS: %u shared VHT codec and MCS checks\n", checks);
 	return 0;
 }

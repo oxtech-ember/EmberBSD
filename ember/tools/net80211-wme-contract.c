@@ -985,15 +985,18 @@ vht_bad_local_admit(struct ieee80211com *ic,
 static struct {
 	uint8_t primary, sco, width, seg0;
 	unsigned freq;
-} vht_bss = { 36, 1, 1, 42, 5180 };
+	uint16_t operation;
+} vht_bss = { 36, 1, 1, 42, 5180, 0 };
 static void
 vht_phy_window(uint8_t *p)
 {
 	memset(p, 0, IEEE80211_PHY_IES_MAXLEN);
-	p[0] = 45; p[1] = 26; p[2] = 0x02;	/* HT20 plus 40 MHz support. */
+	p[0] = 45; p[1] = 26; p[2] = 0x0e;	/* 40 MHz, SMPS disabled. */
 	p[5] = 0xff;					/* HT MCS0-7. */
 	p[28] = 61; p[29] = 22; p[30] = vht_bss.primary;
 	p[31] = (uint8_t)(0x04 | vht_bss.sco);	/* Secondary, any width. */
+	p[32] = (uint8_t)vht_bss.operation;
+	p[33] = (uint8_t)(vht_bss.operation >> 8);
 	p[52] = 191; p[53] = 12;
 	p[58] = 0xfc; p[59] = 0xff;		/* Peer RX MCS0-7, NSS1. */
 	p[62] = 0xfc; p[63] = 0xff;		/* Peer TX MCS0-7, NSS1. */
@@ -1088,9 +1091,7 @@ test_vht_request_bytes(void)
 			test_node.ni_phy_ies.data[62] = 0xff;
 			test_node.ni_phy_ies.data[63] = 0xff;
 			break;						/* Peer TX unsupported. */
-		case 6:
-			test_node.ni_phy_ies.data[71] = 0xfd;
-			break;						/* Basic map exceeds local. */
+		case 6: test_node.ni_phy_ies.data[68] = 4; break;	/* Reserved width. */
 		case 7: test_node.ni_rates.rs_rates[0] = 2; break;	/* No basic rate. */
 		case 8: test_ic.ic_vht_admit = vht_bad_local_admit; break;
 		case 9: test_node.ni_phy_ies.data[5] = 0; break;	/* No HT MCS0-7. */
@@ -1106,6 +1107,14 @@ test_vht_request_bytes(void)
 			CHECK((ht[2] & 0x02) == 0);
 		release_capture();
 	}
+	/* The Basic VHT-MCS set is not enforced beside legacy basic rates. */
+	prepare_vht_request();
+	test_node.ni_phy_ies.data[71] = 0x9a;
+	test_node.ni_phy_ies.data[72] = 0xff;
+	CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ) == 0);
+	(void)request_ie(IEEE80211_FC0_SUBTYPE_ASSOC_REQ, 191, &count);
+	CHECK(count == 1);
+	release_capture();
 	/* The exact AP channel reaches the driver, which may refuse it. */
 	for (unsigned bss = 0; bss < 4; bss++) {
 		static const struct {
@@ -1170,7 +1179,10 @@ vht_assoc_response(unsigned variant)
 		cap[6] = cap[7] = 0xff; /* Peer cannot receive VHT MCS. */
 		break;
 	case 4:
-		op[5] = 0xfd; /* AP requires unsupported MCS8. */
+		op[2] = 4; /* Reserved VHT width. */
+		break;
+	case 9:
+		op[5] = 0x9a; /* Four-stream basic set 0xff9a: not enforced. */
 		break;
 	case 5:
 		memcpy(ies + len, cap, 14); /* Duplicate capability. */
@@ -1227,6 +1239,13 @@ test_vht_assoc_response(void)
 	CHECK(test_node.ni_ht20.vht.channel.primary == 36 &&
 	    test_node.ni_ht20.vht.channel.center == 42 &&
 	    test_node.ni_ht20.vht.channel.width_mhz == 80);
+	/* A Basic VHT-MCS set beyond the local profile still commits VHT. */
+	prepare_vht_request();
+	CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ) == 0);
+	deliver(vht_assoc_response(9), IEEE80211_FC0_SUBTYPE_ASSOC_RESP);
+	CHECK(test_ic.ic_state == IEEE80211_S_RUN);
+	CHECK(test_node.ni_ht20.vht.valid);
+	CHECK(test_node.ni_ht20.vht.operation.basic_map == 0xff9a);
 
 	/* Unsupported and malformed VHT responses retain HT20 where framing is
 	 * still valid, and a malformed TLV cannot leave negotiated state behind. */
@@ -1376,6 +1395,44 @@ test_vht_channel_lifecycle(void)
 	}
 	vht_bss.primary = 36; vht_bss.sco = 1; vht_bss.width = 1;
 	vht_bss.seg0 = 42; vht_bss.freq = 5180;
+	test_channel.ic_freq = 2412;
+}
+/*
+ * The shared HT/VHT protection envelope on a committed 5 GHz VHT node:
+ * exactly operation words 0, 3, 6 and 7 qualify; mode 3 is the deliberate
+ * no-RTS deviation for the observed AP (0x0007 on primary 64).
+ */
+static void
+test_vht_protection_modes(void)
+{
+	static const uint16_t high[] = { 0, 0x0100, 0x8000 };
+
+	for (unsigned h = 0; h < 3; h++) {
+		for (unsigned low = 0; low < 32; low++) {
+			struct ieee80211_ht20_protection result;
+			uint16_t operation = (uint16_t)(high[h] | low);
+			int ok = operation == 0 || operation == 3 ||
+			    operation == 6 || operation == 7;
+
+			vht_bss.primary = 64; vht_bss.sco = 3; vht_bss.width = 1;
+			vht_bss.seg0 = 58; vht_bss.freq = 5320;
+			vht_bss.operation = operation;
+			prepare_vht_request();
+			CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ) == 0);
+			deliver(vht_assoc_response(0),
+			    IEEE80211_FC0_SUBTYPE_ASSOC_RESP);
+			CHECK(test_ic.ic_state == IEEE80211_S_RUN);
+			CHECK(test_node.ni_ht20.valid && test_node.ni_ht20.vht.valid);
+			memset(&result, 0xff, sizeof(result));
+			CHECK((ieee80211_ht20_tx_protection(&test_ic, &test_node,
+			    &result) == 0) == ok);
+			CHECK(ok ? result.operation == operation &&
+			    result.qualification == IEEE80211_HT20_PROT_MF20_NO_RTS :
+			    result.qualification == 0);
+		}
+	}
+	vht_bss.primary = 36; vht_bss.sco = 1; vht_bss.width = 1;
+	vht_bss.seg0 = 42; vht_bss.freq = 5180; vht_bss.operation = 0;
 	test_channel.ic_freq = 2412;
 }
 static void
@@ -2415,6 +2472,7 @@ main(void)
 	test_vht_request_bytes();
 	test_vht_assoc_response();
 	test_vht_channel_lifecycle();
+	test_vht_protection_modes();
 	test_classification();
 	test_sequence();
 	test_beacon_update();

@@ -256,6 +256,15 @@ ieee80211_vht_channel_derive(const uint8_t *ies, size_t len,
  * Validate the strict local profile against one AP-derived operating
  * channel. Raw scan observations are rechecked here; they do not
  * constitute negotiated state.
+ *
+ * Deliberate deviation from IEEE 802.11ac-2013 §10.39.7: the AP's Basic
+ * VHT-MCS and NSS set is not enforced. Many APs list their own full
+ * support there (e.g. 0xff9a: NSS1, NSS2 and NSS4 MCS0-9, NSS3 MCS0-8),
+ * which would keep every
+ * NSS1 MCS0-7 station out of VHT. The association request offers VHT
+ * only beside a nonempty legacy Basic Rate Set that the station supports,
+ * so group-addressed frames stay non-HT (§9.7.5.3), and each MCS map
+ * direction is still checked.
  */
 int
 ieee80211_vht_assoc_candidate(const struct ieee80211_vht_cap *local,
@@ -273,10 +282,6 @@ ieee80211_vht_assoc_candidate(const struct ieee80211_vht_cap *local,
 	    !peer.cap_present || !peer.operation_present ||
 	    !ieee80211_vht_mcs_meets(peer.cap.rx_map, local->tx_map) ||
 	    !ieee80211_vht_mcs_meets(peer.cap.tx_map, local->rx_map) ||
-	    !ieee80211_vht_mcs_meets(local->tx_map,
-	    peer.operation.basic_map) ||
-	    !ieee80211_vht_mcs_meets(local->rx_map,
-	    peer.operation.basic_map) ||
 	    vht_ht_ies(ies, len, &htcap, &htop) != 0 || htcap == NULL ||
 	    (htcap[0] & 0x02) == 0 || htcap[3] != 0xff ||
 	    ieee80211_vht_channel_derive(ies, len, chan->primary,
