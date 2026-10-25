@@ -104,7 +104,8 @@ Parentheses are used for grouping in the usual manner.
 Additionally, the following keywords are recognized:
 .Bl -tag -width indent
 .It length Ar expr
-Returns the length of the specified string in bytes.
+Returns the length of the specified string in characters.
+An invalid multibyte sequence uses the byte count.
 .El
 .Pp
 Operator precedence (from highest to lowest):

@@ -31,6 +31,11 @@
  */
 
 %{
+/* EmberBSD (AI-assisted): use the normal host compatibility contract. */
+#if HAVE_NBTOOL_CONFIG_H
+#include "nbtool_config.h"
+#endif
+
 #include <sys/cdefs.h>
 __RCSID("$NetBSD: expr.y,v 1.55 2025/06/29 00:24:23 rillig Exp $");
 
@@ -42,6 +47,7 @@ __RCSID("$NetBSD: expr.y,v 1.55 2025/06/29 00:24:23 rillig Exp $");
 #include <locale.h>
 #include <regex.h>
 #include <stdarg.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -119,8 +125,7 @@ expr:	item
 |	LENGTH expr {
 		char *ln;
 
-		asprintf(&ln, "%zu", mbs_len($2, $2 + strlen($2)));
-		if (ln == NULL)
+		if (asprintf(&ln, "%zu", mbs_len($2, $2 + strlen($2))) == -1)
 			err(1, NULL);
 		$$ = ln;
 	}
@@ -233,8 +238,7 @@ eval_arith(const char *left, const char *op, const char *right)
 	}
 
 	char *val;
-	(void)asprintf(&val, "%lld", (long long int)res);
-	if (val == NULL)
+	if (asprintf(&val, "%lld", (long long int)res) == -1)
 		err(1, NULL);
 	return val;
 
@@ -300,33 +304,38 @@ eval_match(const char *str, const char *re)
 {
 	regex_t rp;
 	regmatch_t rm[2];
-	int rc;
+	const char *result;
+	char *val;
+	int rc, saved_errno;
 
-	if ((rc = regcomp(&rp, re, REG_BASIC)) != 0) {
+	/* Zero selects POSIX basic regular expressions. */
+	if ((rc = regcomp(&rp, re, 0)) != 0) {
 		char errbuf[256];
 		(void)regerror(rc, &rp, errbuf, sizeof(errbuf));
 		yyerror("%s", errbuf);
 	}
 
 	if (regexec(&rp, str, 2, rm, 0) == 0 && rm[0].rm_so == 0) {
-		char *val;
 		if (rm[1].rm_so >= 0) {
-			(void)asprintf(&val, "%.*s",
-				(int)(rm[1].rm_eo - rm[1].rm_so),
-				str + rm[1].rm_so);
+			rc = asprintf(&val, "%.*s",
+			    (int)(rm[1].rm_eo - rm[1].rm_so),
+			    str + rm[1].rm_so);
 		} else {
-			(void)asprintf(&val, "%zu",
+			rc = asprintf(&val, "%zu",
 			    mbs_len(str + rm[0].rm_so, str + rm[0].rm_eo));
 		}
-		if (val == NULL)
+		saved_errno = errno;
+		regfree(&rp);
+		if (rc == -1) {
+			errno = saved_errno;
 			err(1, NULL);
+		}
 		return val;
 	}
 
-	if (rp.re_nsub == 0)
-		return "0";
-	else
-		return "";
+	result = rp.re_nsub == 0 ? "0" : "";
+	regfree(&rp);
+	return result;
 }
 
 static const char x[] = "|&=<>+-*/%:()";

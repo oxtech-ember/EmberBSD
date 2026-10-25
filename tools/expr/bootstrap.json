@@ -1,0 +1,720 @@
+{
+  "format": "emberbsd-native-bootstrap-program",
+  "version": 1,
+  "name": "expr",
+  "origin": "EmberBSD (AI-assisted); canonical OS grammar and current selected Ports Byacc",
+  "canonical_host_recipe": "tools/expr/Makefile",
+  "source_makefile": "bin/expr/Makefile",
+  "compiler": {
+    "family": "gcc",
+    "major": 16,
+    "abi": "native"
+  },
+  "sources": [
+    "bin/expr/expr.y"
+  ],
+  "headers": [
+    "tools/compat/bootstrap_cdefs.h"
+  ],
+  "include_dirs": [],
+  "cppflags": [
+    "-include",
+    "tools/compat/bootstrap_cdefs.h"
+  ],
+  "cflags": [
+    "-fwrapv"
+  ],
+  "link_flags": [],
+  "libraries": [],
+  "invocations": [
+    "expr"
+  ],
+  "files": {},
+  "generation": {
+    "tool": "yacc",
+    "source": "bin/expr/expr.y",
+    "output": "expr.c",
+    "arguments": [
+      "-o",
+      "expr.c"
+    ]
+  },
+  "runtime_cases": [
+    {
+      "name": "literal",
+      "invocation": "expr",
+      "args": [
+        "7"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "7\n",
+      "stderr": ""
+    },
+    {
+      "name": "negative",
+      "invocation": "expr",
+      "args": [
+        "-3"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "-3\n",
+      "stderr": ""
+    },
+    {
+      "name": "leading-zero",
+      "invocation": "expr",
+      "args": [
+        "007"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "007\n",
+      "stderr": ""
+    },
+    {
+      "name": "initial-dash",
+      "invocation": "expr",
+      "args": [
+        "--",
+        "7"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "7\n",
+      "stderr": ""
+    },
+    {
+      "name": "zero",
+      "invocation": "expr",
+      "args": [
+        "0"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "0\n",
+      "stderr": ""
+    },
+    {
+      "name": "empty",
+      "invocation": "expr",
+      "args": [
+        ""
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "\n",
+      "stderr": ""
+    },
+    {
+      "name": "add",
+      "invocation": "expr",
+      "args": [
+        "2",
+        "+",
+        "3"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "5\n",
+      "stderr": ""
+    },
+    {
+      "name": "subtract",
+      "invocation": "expr",
+      "args": [
+        "2",
+        "-",
+        "5"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "-3\n",
+      "stderr": ""
+    },
+    {
+      "name": "multiply",
+      "invocation": "expr",
+      "args": [
+        "7",
+        "*",
+        "8"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "56\n",
+      "stderr": ""
+    },
+    {
+      "name": "divide",
+      "invocation": "expr",
+      "args": [
+        "-7",
+        "/",
+        "3"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "-2\n",
+      "stderr": ""
+    },
+    {
+      "name": "remainder",
+      "invocation": "expr",
+      "args": [
+        "-7",
+        "%",
+        "3"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "-1\n",
+      "stderr": ""
+    },
+    {
+      "name": "precedence",
+      "invocation": "expr",
+      "args": [
+        "2",
+        "+",
+        "3",
+        "*",
+        "4"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "14\n",
+      "stderr": ""
+    },
+    {
+      "name": "parentheses",
+      "invocation": "expr",
+      "args": [
+        "(",
+        "2",
+        "+",
+        "3",
+        ")",
+        "*",
+        "4"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "20\n",
+      "stderr": ""
+    },
+    {
+      "name": "signed-max",
+      "invocation": "expr",
+      "args": [
+        "9223372036854775806",
+        "+",
+        "1"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "9223372036854775807\n",
+      "stderr": ""
+    },
+    {
+      "name": "signed-min",
+      "invocation": "expr",
+      "args": [
+        "-9223372036854775807",
+        "-",
+        "1"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "-9223372036854775808\n",
+      "stderr": ""
+    },
+    {
+      "name": "equal",
+      "invocation": "expr",
+      "args": [
+        "02",
+        "=",
+        "2"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "1\n",
+      "stderr": ""
+    },
+    {
+      "name": "not-equal",
+      "invocation": "expr",
+      "args": [
+        "2",
+        "!=",
+        "3"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "1\n",
+      "stderr": ""
+    },
+    {
+      "name": "less",
+      "invocation": "expr",
+      "args": [
+        "2",
+        "<",
+        "3"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "1\n",
+      "stderr": ""
+    },
+    {
+      "name": "less-equal",
+      "invocation": "expr",
+      "args": [
+        "2",
+        "<=",
+        "2"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "1\n",
+      "stderr": ""
+    },
+    {
+      "name": "greater",
+      "invocation": "expr",
+      "args": [
+        "3",
+        ">",
+        "2"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "1\n",
+      "stderr": ""
+    },
+    {
+      "name": "greater-equal",
+      "invocation": "expr",
+      "args": [
+        "2",
+        ">=",
+        "2"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "1\n",
+      "stderr": ""
+    },
+    {
+      "name": "comparison-false",
+      "invocation": "expr",
+      "args": [
+        "2",
+        "=",
+        "3"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "0\n",
+      "stderr": ""
+    },
+    {
+      "name": "string-order",
+      "invocation": "expr",
+      "args": [
+        "a",
+        "<",
+        "b"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "1\n",
+      "stderr": ""
+    },
+    {
+      "name": "and-left",
+      "invocation": "expr",
+      "args": [
+        "007",
+        "&",
+        "3"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "007\n",
+      "stderr": ""
+    },
+    {
+      "name": "and-false",
+      "invocation": "expr",
+      "args": [
+        "7",
+        "&",
+        "0"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "0\n",
+      "stderr": ""
+    },
+    {
+      "name": "or-left",
+      "invocation": "expr",
+      "args": [
+        "007",
+        "|",
+        "3"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "007\n",
+      "stderr": ""
+    },
+    {
+      "name": "or-right",
+      "invocation": "expr",
+      "args": [
+        "0",
+        "|",
+        "abc"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "abc\n",
+      "stderr": ""
+    },
+    {
+      "name": "or-skip-divide",
+      "invocation": "expr",
+      "args": [
+        "1",
+        "|",
+        "1",
+        "/",
+        "0"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "1\n",
+      "stderr": ""
+    },
+    {
+      "name": "and-skip-divide",
+      "invocation": "expr",
+      "args": [
+        "0",
+        "&",
+        "1",
+        "/",
+        "0"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "0\n",
+      "stderr": ""
+    },
+    {
+      "name": "or-skip-regex",
+      "invocation": "expr",
+      "args": [
+        "1",
+        "|",
+        "a",
+        ":",
+        "["
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "1\n",
+      "stderr": ""
+    },
+    {
+      "name": "match-length",
+      "invocation": "expr",
+      "args": [
+        "abc",
+        ":",
+        "a.*"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "3\n",
+      "stderr": ""
+    },
+    {
+      "name": "match-capture",
+      "invocation": "expr",
+      "args": [
+        "abc",
+        ":",
+        "a\\(b\\)c"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "b\n",
+      "stderr": ""
+    },
+    {
+      "name": "match-anchored",
+      "invocation": "expr",
+      "args": [
+        "abc",
+        ":",
+        "b"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "0\n",
+      "stderr": ""
+    },
+    {
+      "name": "match-none",
+      "invocation": "expr",
+      "args": [
+        "abc",
+        ":",
+        "z"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "0\n",
+      "stderr": ""
+    },
+    {
+      "name": "capture-none",
+      "invocation": "expr",
+      "args": [
+        "abc",
+        ":",
+        "z\\(x\\)"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "\n",
+      "stderr": ""
+    },
+    {
+      "name": "slash-operand",
+      "invocation": "expr",
+      "args": [
+        "/usr/bin",
+        ":",
+        ".*/\\(.*\\)"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "bin\n",
+      "stderr": ""
+    },
+    {
+      "name": "length",
+      "invocation": "expr",
+      "args": [
+        "length",
+        "hello"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "5\n",
+      "stderr": ""
+    },
+    {
+      "name": "length-empty",
+      "invocation": "expr",
+      "args": [
+        "length",
+        ""
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "0\n",
+      "stderr": ""
+    },
+    {
+      "name": "length-regex",
+      "invocation": "expr",
+      "args": [
+        "length",
+        "abc",
+        ":",
+        "3"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "1\n",
+      "stderr": ""
+    },
+    {
+      "name": "nested-matches",
+      "invocation": "expr",
+      "args": [
+        "(",
+        "abc",
+        ":",
+        "a\\(bc\\)",
+        ")",
+        ":",
+        "b.*"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "2\n",
+      "stderr": ""
+    },
+    {
+      "name": "no-operands",
+      "invocation": "expr",
+      "args": [],
+      "stdin": "",
+      "exit": 2,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "dangling",
+      "invocation": "expr",
+      "args": [
+        "2",
+        "+"
+      ],
+      "stdin": "",
+      "exit": 2,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "unbalanced",
+      "invocation": "expr",
+      "args": [
+        "(",
+        "2",
+        "+",
+        "3"
+      ],
+      "stdin": "",
+      "exit": 2,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "noninteger",
+      "invocation": "expr",
+      "args": [
+        "a",
+        "+",
+        "2"
+      ],
+      "stdin": "",
+      "exit": 2,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "invalid-regex",
+      "invocation": "expr",
+      "args": [
+        "a",
+        ":",
+        "["
+      ],
+      "stdin": "",
+      "exit": 2,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "divide-zero",
+      "invocation": "expr",
+      "args": [
+        "1",
+        "/",
+        "0"
+      ],
+      "stdin": "",
+      "exit": 2,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "modulo-zero",
+      "invocation": "expr",
+      "args": [
+        "1",
+        "%",
+        "0"
+      ],
+      "stdin": "",
+      "exit": 2,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "add-overflow",
+      "invocation": "expr",
+      "args": [
+        "9223372036854775807",
+        "+",
+        "1"
+      ],
+      "stdin": "",
+      "exit": 2,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "subtract-underflow",
+      "invocation": "expr",
+      "args": [
+        "-9223372036854775808",
+        "-",
+        "1"
+      ],
+      "stdin": "",
+      "exit": 2,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "multiply-overflow",
+      "invocation": "expr",
+      "args": [
+        "9223372036854775807",
+        "*",
+        "2"
+      ],
+      "stdin": "",
+      "exit": 2,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "divide-overflow",
+      "invocation": "expr",
+      "args": [
+        "-9223372036854775808",
+        "/",
+        "-1"
+      ],
+      "stdin": "",
+      "exit": 2,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "conversion-range",
+      "invocation": "expr",
+      "args": [
+        "9223372036854775808",
+        "+",
+        "0"
+      ],
+      "stdin": "",
+      "exit": 2,
+      "stdout": "",
+      "stderr_nonempty": true
+    }
+  ]
+}
