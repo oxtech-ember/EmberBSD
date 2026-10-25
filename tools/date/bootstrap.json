@@ -1,0 +1,618 @@
+{
+  "format": "emberbsd-native-bootstrap-program",
+  "version": 1,
+  "origin": "EmberBSD (AI-assisted) source contract; implementation retains its BSD copyright notices.",
+  "compiler": {
+    "family": "gcc",
+    "major": 16,
+    "abi": "native"
+  },
+  "cflags": [],
+  "link_flags": [],
+  "libraries": [],
+  "name": "date",
+  "canonical_host_recipe": "tools/date/Makefile",
+  "source_makefile": "bin/date/Makefile",
+  "sources": [
+    "bin/date/date.c"
+  ],
+  "headers": [
+    "bin/date/extern.h",
+    "tools/compat/bootstrap_cdefs.h",
+    "tools/compat/bootstrap/nbtool_config.h"
+  ],
+  "include_dirs": [
+    "bin/date",
+    "tools/compat/bootstrap"
+  ],
+  "cppflags": [
+    "-DHAVE_NBTOOL_CONFIG_H=1",
+    "-include",
+    "tools/compat/bootstrap_cdefs.h"
+  ],
+  "invocations": [
+    "date"
+  ],
+  "files": {},
+  "runtime_cases": [
+    {
+      "name": "epoch",
+      "invocation": "date",
+      "args": [
+        "-u",
+        "-r",
+        "0",
+        "+%Y-%m-%dT%H:%M:%S"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "1970-01-01T00:00:00\n",
+      "stderr": ""
+    },
+    {
+      "name": "second",
+      "invocation": "date",
+      "args": [
+        "-u",
+        "-r",
+        "1",
+        "+%Y-%m-%dT%H:%M:%S"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "1970-01-01T00:00:01\n",
+      "stderr": ""
+    },
+    {
+      "name": "day",
+      "invocation": "date",
+      "args": [
+        "-u",
+        "-r",
+        "86400",
+        "+%Y-%m-%dT%H:%M:%S"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "1970-01-02T00:00:00\n",
+      "stderr": ""
+    },
+    {
+      "name": "before-epoch",
+      "invocation": "date",
+      "args": [
+        "-u",
+        "-r",
+        "-1",
+        "+%Y-%m-%dT%H:%M:%S"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "1969-12-31T23:59:59\n",
+      "stderr": ""
+    },
+    {
+      "name": "hex-seconds",
+      "invocation": "date",
+      "args": [
+        "-u",
+        "-r",
+        "0x10",
+        "+%Y-%m-%dT%H:%M:%S"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "1970-01-01T00:00:16\n",
+      "stderr": ""
+    },
+    {
+      "name": "octal-seconds",
+      "invocation": "date",
+      "args": [
+        "-u",
+        "-r",
+        "010",
+        "+%Y-%m-%dT%H:%M:%S"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "1970-01-01T00:00:08\n",
+      "stderr": ""
+    },
+    {
+      "name": "calendar-fields",
+      "invocation": "date",
+      "args": [
+        "-u",
+        "-r",
+        "0",
+        "+%j %w %Y %m %d"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "001 4 1970 01 01\n",
+      "stderr": ""
+    },
+    {
+      "name": "rfc-email",
+      "invocation": "date",
+      "args": [
+        "-u",
+        "-r",
+        "0",
+        "-R"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "Thu, 1 Jan 1970 00:00:00 +0000\n",
+      "stderr": ""
+    },
+    {
+      "name": "fixed-zone",
+      "invocation": "date",
+      "args": [
+        "-z",
+        "UTC-3",
+        "-r",
+        "0",
+        "+%Y-%m-%dT%H:%M:%S"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "1970-01-01T03:00:00\n",
+      "stderr": ""
+    },
+    {
+      "name": "empty-format",
+      "invocation": "date",
+      "args": [
+        "-u",
+        "-r",
+        "0",
+        "+"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "\n",
+      "stderr": ""
+    },
+    {
+      "name": "format-growth",
+      "invocation": "date",
+      "args": [
+        "-u",
+        "-r",
+        "0",
+        "+xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n",
+      "stderr": ""
+    },
+    {
+      "name": "iso-epoch",
+      "invocation": "date",
+      "args": [
+        "-u",
+        "-d",
+        "1970-01-01",
+        "+%Y-%m-%dT%H:%M:%S"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "1970-01-01T00:00:00\n",
+      "stderr": ""
+    },
+    {
+      "name": "iso-compact",
+      "invocation": "date",
+      "args": [
+        "-u",
+        "-d",
+        "20000229",
+        "+%Y-%m-%dT%H:%M:%S"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "2000-02-29T00:00:00\n",
+      "stderr": ""
+    },
+    {
+      "name": "iso-leap",
+      "invocation": "date",
+      "args": [
+        "-u",
+        "-d",
+        "2000-02-29T12:34:56",
+        "+%Y-%m-%dT%H:%M:%S"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "2000-02-29T12:34:56\n",
+      "stderr": ""
+    },
+    {
+      "name": "iso-hour",
+      "invocation": "date",
+      "args": [
+        "-u",
+        "-d",
+        "2000-02-29T12",
+        "+%Y-%m-%dT%H:%M:%S"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "2000-02-29T12:00:00\n",
+      "stderr": ""
+    },
+    {
+      "name": "iso-minute",
+      "invocation": "date",
+      "args": [
+        "-u",
+        "-d",
+        "2000-02-29 12:34",
+        "+%Y-%m-%dT%H:%M:%S"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "2000-02-29T12:34:00\n",
+      "stderr": ""
+    },
+    {
+      "name": "convert-canonical",
+      "invocation": "date",
+      "args": [
+        "-u",
+        "-j",
+        "-r",
+        "0",
+        "200002291234.56",
+        "+%Y-%m-%dT%H:%M:%S"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "2000-02-29T12:34:56\n",
+      "stderr": ""
+    },
+    {
+      "name": "format-first",
+      "invocation": "date",
+      "args": [
+        "-u",
+        "-j",
+        "-r",
+        "0",
+        "+%Y-%m-%dT%H:%M:%S",
+        "200002291234.56"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "2000-02-29T12:34:56\n",
+      "stderr": ""
+    },
+    {
+      "name": "setter-refused",
+      "invocation": "date",
+      "args": [
+        "-u",
+        "-r",
+        "0",
+        "200001010000.00",
+        "+%Y-%m-%dT%H:%M:%S"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "iso-empty",
+      "invocation": "date",
+      "args": [
+        "-u",
+        "-d",
+        "",
+        "+%Y-%m-%dT%H:%M:%S"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "iso-short-year",
+      "invocation": "date",
+      "args": [
+        "-u",
+        "-d",
+        "202",
+        "+%Y-%m-%dT%H:%M:%S"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "iso-year-nondigit",
+      "invocation": "date",
+      "args": [
+        "-u",
+        "-d",
+        "200x-01-01",
+        "+%Y-%m-%dT%H:%M:%S"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "iso-short-month",
+      "invocation": "date",
+      "args": [
+        "-u",
+        "-d",
+        "2000-0",
+        "+%Y-%m-%dT%H:%M:%S"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "iso-month-nondigit",
+      "invocation": "date",
+      "args": [
+        "-u",
+        "-d",
+        "2000-0x-01",
+        "+%Y-%m-%dT%H:%M:%S"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "iso-short-day",
+      "invocation": "date",
+      "args": [
+        "-u",
+        "-d",
+        "2000-01-0",
+        "+%Y-%m-%dT%H:%M:%S"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "iso-day-nondigit",
+      "invocation": "date",
+      "args": [
+        "-u",
+        "-d",
+        "2000-01-0x",
+        "+%Y-%m-%dT%H:%M:%S"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "iso-short-hour",
+      "invocation": "date",
+      "args": [
+        "-u",
+        "-d",
+        "2000-01-01T0",
+        "+%Y-%m-%dT%H:%M:%S"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "iso-short-minute",
+      "invocation": "date",
+      "args": [
+        "-u",
+        "-d",
+        "2000-01-01T00:0",
+        "+%Y-%m-%dT%H:%M:%S"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "iso-short-second",
+      "invocation": "date",
+      "args": [
+        "-u",
+        "-d",
+        "2000-01-01T00:00:0",
+        "+%Y-%m-%dT%H:%M:%S"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "iso-nonleap",
+      "invocation": "date",
+      "args": [
+        "-u",
+        "-d",
+        "1900-02-29",
+        "+%Y-%m-%dT%H:%M:%S"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "iso-month-range",
+      "invocation": "date",
+      "args": [
+        "-u",
+        "-d",
+        "2000-13-01",
+        "+%Y-%m-%dT%H:%M:%S"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "iso-day-range",
+      "invocation": "date",
+      "args": [
+        "-u",
+        "-d",
+        "2000-04-31",
+        "+%Y-%m-%dT%H:%M:%S"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "iso-hour-range",
+      "invocation": "date",
+      "args": [
+        "-u",
+        "-d",
+        "2000-01-01T24:00:00",
+        "+%Y-%m-%dT%H:%M:%S"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "iso-minute-range",
+      "invocation": "date",
+      "args": [
+        "-u",
+        "-d",
+        "2000-01-01T00:60:00",
+        "+%Y-%m-%dT%H:%M:%S"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "iso-second-range",
+      "invocation": "date",
+      "args": [
+        "-u",
+        "-d",
+        "2000-01-01T00:00:60",
+        "+%Y-%m-%dT%H:%M:%S"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "iso-trailing-data",
+      "invocation": "date",
+      "args": [
+        "-u",
+        "-d",
+        "2000-01-01Z",
+        "+%Y-%m-%dT%H:%M:%S"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "invalid-seconds",
+      "invocation": "date",
+      "args": [
+        "-u",
+        "-r",
+        "abc",
+        "+%Y-%m-%dT%H:%M:%S"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "empty-seconds",
+      "invocation": "date",
+      "args": [
+        "-u",
+        "-r",
+        "",
+        "+%Y-%m-%dT%H:%M:%S"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "overflow-seconds",
+      "invocation": "date",
+      "args": [
+        "-u",
+        "-r",
+        "99999999999999999999999",
+        "+%Y-%m-%dT%H:%M:%S"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "invalid-option",
+      "invocation": "date",
+      "args": [
+        "-Q"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "format-parser-unavailable",
+      "invocation": "date",
+      "args": [
+        "-u",
+        "-r",
+        "0",
+        "-f",
+        "%Y",
+        "2000"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    }
+  ]
+}
