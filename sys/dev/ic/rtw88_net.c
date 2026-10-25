@@ -91,6 +91,7 @@ struct rtw88_net {
 	struct rtw88_net_stats stats;
 	struct rtw88_net_neg neg;	/* Negotiation diagnostics, net->lock. */
 	int run_pending;		/* A queued RUN awaits its worker pass. */
+	unsigned txba_wanted;	/* TIDs sent without a session, net->lock. */
 	unsigned tx_timer;
 	unsigned tx_completed;
 #ifdef RTW88_DFS64
@@ -1836,6 +1837,9 @@ rtw88_net_softintr(void *cookie)
 	struct ieee80211_node *ni;
 	unsigned n, batch, completed, outstanding;
 	int valid, expire;
+#ifdef RTW88_VHT80
+	unsigned wanted;
+#endif
 
 #ifdef RTW88_RFK_EXPERIMENT
 	/* Giant owns node/capsule cleanup; the IRQ kept only numeric identity. */
@@ -1924,6 +1928,25 @@ rtw88_net_softintr(void *cookie)
 		if_statadd(ifp, if_opackets, completed);
 		net->tx_timer = outstanding != 0 ? 5 : 0;
 	}
+#ifdef RTW88_VHT80
+	/*
+	 * Request originator sessions for TIDs the TX path sent without one.
+	 * Queueing the request starts output, so it runs here under Giant,
+	 * outside rtw88_net_start; net80211 owns state, timeouts and retries.
+	 */
+	mutex_enter(net->lock);
+	wanted = net->txba_wanted;
+	net->txba_wanted = 0;
+	mutex_exit(net->lock);
+	if (wanted != 0 && ic->ic_bss != NULL &&
+	    (ifp->if_flags & IFF_RUNNING) != 0 && !net->policy.dying)
+		(void)ieee80211_txba_request(ic, ic->ic_bss, wanted);
+	if (ic->ic_bss != NULL) {
+		mutex_enter(net->lock);
+		RTW88_NET_NEG_TXBA(&net->neg, &ic->ic_bss->ni_rxba);
+		mutex_exit(net->lock);
+	}
+#endif
 	if ((ifp->if_flags & IFF_RUNNING) != 0 && !net->policy.dying) {
 		ifp->if_flags &= ~IFF_OACTIVE;
 		rtw88_net_start(ifp);
@@ -2007,6 +2030,38 @@ rtw88_net_tx_submit(struct rtw88_net *net, struct ieee80211_node *ni,
 			return EBUSY;
 		if (len > net->core->sc_ra.ht.max_mpdu)
 			return EMSGSIZE;
+#ifdef RTW88_VHT80
+		/*
+		 * QoS data of an established originator session may join an
+		 * A-MPDU. Bound MAX_AGG_NUM (2 * count MPDUs) by the recipient
+		 * window and the peer's maximum A-MPDU length: the VHT exponent
+		 * for a VHT peer, otherwise the HT one. Spacing is the peer's.
+		 * Other TIDs note their traffic for the softint's request.
+		 */
+		if (bytes[0] == 0x88 && len >= 26 && (bytes[24] & 15) < 8) {
+			struct rtw88_tx_agg agg;
+			unsigned tid = bytes[24] & 15, window, exponent, count;
+
+			window = ieee80211_txba_window(ic, ni, tid);
+			exponent = vht ? (ni->ni_ht20.vht.peer.info >> 23) & 7 :
+			    ni->ni_ht20.peer_htcap[2] & 3;
+			count = (((1U << (13 + exponent)) - 1) /
+			    net->core->sc_ra.ht.max_mpdu) / 2;
+			if (count > window / 2)
+				count = window / 2;
+			if (count > 31)
+				count = 31;
+			if (window == 0)
+				net->txba_wanted |= 1U << tid;
+			else if (count != 0) {
+				agg.tid = (uint8_t)tid;
+				agg.density = (ni->ni_ht20.peer_htcap[2] >> 2) & 7;
+				agg.count = (uint8_t)count;
+				return rtw88_tx_ampdu(net->core, q, frame, len,
+				    net->policy.epoch, &agg);
+			}
+		}
+#endif
 	} else if (ni->ni_ht20.valid) {
 		return EBUSY;
 	}

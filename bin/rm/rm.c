@@ -29,6 +29,10 @@
  * SUCH DAMAGE.
  */
 
+#if HAVE_NBTOOL_CONFIG_H
+#include "nbtool_config.h"
+#endif
+
 #include <sys/cdefs.h>
 #ifndef lint
 __COPYRIGHT("@(#) Copyright (c) 1990, 1993, 1994\
@@ -387,7 +391,7 @@ static int
 rm_overwrite(char *file, struct stat *sbp)
 {
 	struct stat sb, sb2;
-	int fd, randint;
+	int fd, flags, randint;
 	char randchar;
 
 	fd = -1;
@@ -400,7 +404,11 @@ rm_overwrite(char *file, struct stat *sbp)
 		return 0;
 
 	/* flags to try to defeat hidden caching by forcing seeks */
-	if ((fd = open(file, O_RDWR|O_SYNC|O_RSYNC|O_NOFOLLOW, 0)) == -1)
+	flags = O_RDWR | O_SYNC | O_NOFOLLOW;
+#if !defined(__APPLE__) || defined(O_RSYNC)
+	flags |= O_RSYNC;
+#endif
+	if ((fd = open(file, flags, 0)) == -1)
 		goto err;
 
 	if (fstat(fd, &sb2)) {
@@ -412,6 +420,15 @@ rm_overwrite(char *file, struct stat *sbp)
 		errno = EPERM;
 		goto err;
 	}
+
+#if defined(__APPLE__) && !defined(O_RSYNC)
+	/*
+	 * Request cache control before overwrite I/O. Small or misaligned
+	 * I/O can still use cached paths. Keep the explicit flush/readback.
+	 */
+	if (fcntl(fd, F_NOCACHE, 1) == -1)
+		goto err;
+#endif
 
 #define RAND_BYTES	1
 #define THIS_BYTE	0

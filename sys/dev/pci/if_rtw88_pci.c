@@ -307,7 +307,8 @@ rtwce_stats(char *buf, size_t len)
 		    " htstate %u/%u runreq %u/%u/%u/%u/%u/%d"
 		    " htrun %u/%u/%u.%u.%u runpass %u/%u/%d/%u/%u/%d/%u/%u"
 		    " raphy %u/%d/%d"
-		    " tuple %u.%u.%u/%u",
+		    " tuple %u.%u.%u/%u"
+		    " txba %u/%u/%u/%u/%u/%u/%u/%#x ampdu %llu",
 		    ns.neg.prepare_ok, ns.neg.prepare_fail, ns.neg.prepare_ready,
 		    (int)ns.neg.prepare_error, ns.neg.ht20_offers,
 		    ns.neg.ht20_vht_offers, ns.neg.vht_admit, ns.neg.vht_refuse,
@@ -330,7 +331,12 @@ rtwce_stats(char *buf, size_t len)
 		    sc->sc_ra.phy, sc->sc_ra.configured,
 		    sc->sc_ra.active, sc->sc_phy.channel.primary,
 		    sc->sc_phy.channel.center, sc->sc_phy.channel.width_mhz,
-		    sc->sc_phy.channel_valid);
+		    sc->sc_phy.channel_valid,
+		    ns.neg.txba_requests, ns.neg.txba_accepts,
+		    ns.neg.txba_refusals, ns.neg.txba_timeouts,
+		    ns.neg.txba_delbas, ns.neg.txba_invalid,
+		    ns.neg.txba_last_status, ns.neg.txba_active,
+		    (unsigned long long)sc->sc_stats.tx_ampdu_encoded);
 	}
 	mutex_exit(&psc->sc_lock);
 	mutex_exit(&rtwce_diag_lock);

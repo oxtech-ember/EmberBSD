@@ -1579,6 +1579,38 @@ ieee80211_send_rxba_response(struct ieee80211com *ic, struct ieee80211_node *ni,
 	return error;
 }
 
+/* ADDBA Request (9.6.5.2): token, parameter set, timeout, starting sequence. */
+int
+ieee80211_send_txba_request(struct ieee80211com *ic, struct ieee80211_node *ni,
+    uint8_t token, uint16_t params, uint16_t timeout, uint16_t ssn)
+{
+	struct mbuf *m;
+	uint8_t *p;
+	int error;
+
+	ieee80211_ref_node(ni);
+	m = ieee80211_getmgtframe(&p, 9);
+	if (m == NULL) {
+		ieee80211_free_node(ni);
+		return ENOMEM;
+	}
+	p[0] = 3;
+	p[1] = 0;
+	p[2] = token;
+	p[3] = params;
+	p[4] = params >> 8;
+	p[5] = timeout;
+	p[6] = timeout >> 8;
+	p[7] = ssn;
+	p[8] = ssn >> 8;
+	m->m_len = m->m_pkthdr.len = 9;
+	error = ieee80211_mgmt_output(ic, ni, m, IEEE80211_FC0_SUBTYPE_ACTION,
+	    0, 0, NULL, NULL, NULL, NULL);
+	if (error != 0)
+		ieee80211_free_node(ni);
+	return error;
+}
+
 /*
  * Send a probe request frame with the specified ssid
  * and any optional information element data.

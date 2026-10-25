@@ -1,0 +1,735 @@
+{
+  "format": "emberbsd-native-bootstrap-program",
+  "version": 1,
+  "origin": "EmberBSD (AI-assisted) source contract; implementation retains its BSD copyright notices.",
+  "compiler": {
+    "family": "gcc",
+    "major": 16,
+    "abi": "native"
+  },
+  "cflags": [],
+  "link_flags": [],
+  "libraries": [],
+  "name": "rm",
+  "canonical_host_recipe": "tools/rm/Makefile",
+  "source_makefile": "bin/rm/Makefile",
+  "sources": [
+    "bin/rm/rm.c"
+  ],
+  "headers": [
+    "tools/compat/bootstrap_cdefs.h"
+  ],
+  "include_dirs": [],
+  "cppflags": [
+    "-include",
+    "tools/compat/bootstrap_cdefs.h"
+  ],
+  "invocations": [
+    "rm"
+  ],
+  "files": {},
+  "runtime_cases": [
+    {
+      "name": "regular",
+      "invocation": "rm",
+      "args": [
+        "victim"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "victim": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          }
+        },
+        "expect": {
+          "victim": {
+            "type": "absent"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "multiple",
+      "invocation": "rm",
+      "args": [
+        "one",
+        "two"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "one": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          },
+          "two": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          }
+        },
+        "expect": {
+          "one": {
+            "type": "absent"
+          },
+          "two": {
+            "type": "absent"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "force-missing",
+      "invocation": "rm",
+      "args": [
+        "-f",
+        "missing"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {},
+        "expect": {
+          "missing": {
+            "type": "absent"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "missing-error",
+      "invocation": "rm",
+      "args": [
+        "missing"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {},
+        "expect": {
+          "missing": {
+            "type": "absent"
+          }
+        }
+      },
+      "stderr_nonempty": true
+    },
+    {
+      "name": "recursive",
+      "invocation": "rm",
+      "args": [
+        "-r",
+        "tree"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "tree": {
+            "type": "directory",
+            "mode": "0700"
+          },
+          "tree/child": {
+            "type": "directory",
+            "mode": "0700"
+          },
+          "tree/child/file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          }
+        },
+        "expect": {
+          "tree": {
+            "type": "absent"
+          },
+          "tree/child": {
+            "type": "absent"
+          },
+          "tree/child/file": {
+            "type": "absent"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "directory-refusal",
+      "invocation": "rm",
+      "args": [
+        "dir"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "dir": {
+            "type": "directory",
+            "mode": "0700"
+          }
+        },
+        "expect": {
+          "dir": {
+            "type": "directory",
+            "mode": "0700"
+          }
+        }
+      },
+      "stderr_nonempty": true
+    },
+    {
+      "name": "empty-directory",
+      "invocation": "rm",
+      "args": [
+        "-d",
+        "dir"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "dir": {
+            "type": "directory",
+            "mode": "0700"
+          }
+        },
+        "expect": {
+          "dir": {
+            "type": "absent"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "symlink",
+      "invocation": "rm",
+      "args": [
+        "alias"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          },
+          "alias": {
+            "type": "symlink",
+            "target": "file"
+          }
+        },
+        "expect": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          },
+          "alias": {
+            "type": "absent"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "dangling-symlink",
+      "invocation": "rm",
+      "args": [
+        "alias"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "alias": {
+            "type": "symlink",
+            "target": "missing"
+          }
+        },
+        "expect": {
+          "alias": {
+            "type": "absent"
+          },
+          "missing": {
+            "type": "absent"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "hardlink",
+      "invocation": "rm",
+      "args": [
+        "peer"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          },
+          "peer": {
+            "type": "hardlink",
+            "target": "file"
+          },
+          "survivor": {
+            "type": "hardlink",
+            "target": "file"
+          }
+        },
+        "expect": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          },
+          "peer": {
+            "type": "absent"
+          },
+          "survivor": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "same_inode_as": "file"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "interactive-yes",
+      "invocation": "rm",
+      "args": [
+        "-i",
+        "victim"
+      ],
+      "stdin": "y\n",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "victim": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          }
+        },
+        "expect": {
+          "victim": {
+            "type": "absent"
+          }
+        }
+      },
+      "stderr_nonempty": true
+    },
+    {
+      "name": "interactive-no",
+      "invocation": "rm",
+      "args": [
+        "-i",
+        "victim"
+      ],
+      "stdin": "n\n",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "victim": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          }
+        },
+        "expect": {
+          "victim": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          }
+        }
+      },
+      "stderr_nonempty": true
+    },
+    {
+      "name": "verbose",
+      "invocation": "rm",
+      "args": [
+        "-v",
+        "victim"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "victim\n",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "victim": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          }
+        },
+        "expect": {
+          "victim": {
+            "type": "absent"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "force-after-interactive",
+      "invocation": "rm",
+      "args": [
+        "-i",
+        "-f",
+        "victim"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "victim": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          }
+        },
+        "expect": {
+          "victim": {
+            "type": "absent"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "interactive-after-force",
+      "invocation": "rm",
+      "args": [
+        "-f",
+        "-i",
+        "victim"
+      ],
+      "stdin": "n\n",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "victim": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          }
+        },
+        "expect": {
+          "victim": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          }
+        }
+      },
+      "stderr_nonempty": true
+    },
+    {
+      "name": "recursive-symlink",
+      "invocation": "rm",
+      "args": [
+        "-r",
+        "alias"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "outside": {
+            "type": "directory",
+            "mode": "0700"
+          },
+          "outside/file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          },
+          "alias": {
+            "type": "symlink",
+            "target": "outside"
+          }
+        },
+        "expect": {
+          "outside": {
+            "type": "directory",
+            "mode": "0700"
+          },
+          "outside/file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          },
+          "alias": {
+            "type": "absent"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "whiteout-existing",
+      "invocation": "rm",
+      "args": [
+        "-W",
+        "victim"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "victim": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          }
+        },
+        "expect": {
+          "victim": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          }
+        }
+      },
+      "stderr_nonempty": true
+    },
+    {
+      "name": "whiteout-missing",
+      "invocation": "rm",
+      "args": [
+        "-W",
+        "missing"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {},
+        "expect": {
+          "missing": {
+            "type": "absent"
+          }
+        }
+      },
+      "stderr_nonempty": true
+    },
+    {
+      "name": "invalid-option",
+      "invocation": "rm",
+      "args": [
+        "-z"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {},
+        "expect": {}
+      },
+      "stderr_nonempty": true
+    },
+    {
+      "name": "missing-operand",
+      "invocation": "rm",
+      "args": [],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {},
+        "expect": {}
+      },
+      "stderr_nonempty": true
+    },
+    {
+      "name": "force-no-operand",
+      "invocation": "rm",
+      "args": [
+        "-f"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {},
+        "expect": {}
+      },
+      "stderr": ""
+    },
+    {
+      "name": "overwrite-empty",
+      "invocation": "rm",
+      "args": [
+        "-P",
+        "victim"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "victim": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          }
+        },
+        "expect": {
+          "victim": {
+            "type": "absent"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "overwrite-one",
+      "invocation": "rm",
+      "args": [
+        "-P",
+        "victim"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "victim": {
+            "type": "file",
+            "mode": "0600",
+            "data": "x"
+          }
+        },
+        "expect": {
+          "victim": {
+            "type": "absent"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "overwrite-block",
+      "invocation": "rm",
+      "args": [
+        "-P",
+        "victim"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "victim": {
+            "type": "file",
+            "mode": "0600",
+            "data": [
+              {
+                "text": "x",
+                "repeat": 8192
+              }
+            ]
+          }
+        },
+        "expect": {
+          "victim": {
+            "type": "absent"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "overwrite-tail",
+      "invocation": "rm",
+      "args": [
+        "-P",
+        "victim"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "victim": {
+            "type": "file",
+            "mode": "0600",
+            "data": [
+              {
+                "text": "x",
+                "repeat": 8193
+              }
+            ]
+          }
+        },
+        "expect": {
+          "victim": {
+            "type": "absent"
+          }
+        }
+      },
+      "stderr": ""
+    }
+  ]
+}

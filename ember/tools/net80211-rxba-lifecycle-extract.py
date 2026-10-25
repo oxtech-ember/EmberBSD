@@ -7,6 +7,8 @@ keeps real teardown in older consumers without pretending those run BA crypto.
 """
 import pathlib,re,sys
 src,out=map(pathlib.Path,sys.argv[1:3]);response='--response' in sys.argv[3:]
+# The originator window query, for fixtures that model RUN and the BSS node.
+txba='--txba' in sys.argv[3:]
 text=(src/'sys/net80211/ieee80211_rxba.c').read_text()
 (out/'ieee80211_rxba.h').write_text((src/'sys/net80211/ieee80211_rxba.h').read_text())
 (out/'net80211').mkdir(exist_ok=True)
@@ -22,6 +24,8 @@ static inline void rxba_contract_free(void *p,size_t size) { (void)size;free(p);
 #define kmem_intr_free rxba_contract_free
 ''')
 functions=[('ieee80211_rxba_ready','int'),('rxba_drop','static void'),('rxba_free_tid','static void'),('ieee80211_rxba_reset','void')]
+if txba:
+ functions.append(('ieee80211_txba_window','unsigned'))
 if response:
  node=(src/'sys/net80211/ieee80211_node.h').read_text()
  parts.append('static inline int\n'+re.search(r'^ieee80211_node_is_authorized\(.*?^}',node,re.M|re.S).group()+'\n')

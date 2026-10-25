@@ -81,7 +81,7 @@ parts.append(re.search(r'^#define\s+IEEE80211_KEY_UNDEFINED\([^)]*\)\s+.*$',(src
 parts.append('#include "ieee80211_vht_ies.h"')
 vht=(src/'sys/net80211/ieee80211_vht_ies.c').read_text()
 parts.append(vht[vht.index('static uint16_t'):])
-for name,result in [('ieee80211_crypto_getucastkey','struct ieee80211_key *'),('ieee80211_send_setup','static void'),('ieee80211_wme_request_offer','static int'),('ieee80211_ht20_request_offer','static int'),('ieee80211_vht_request_offer','static int'),('ieee80211_mgmt_output','static int'),('ieee80211_send_rxba_response','int')]:
+for name,result in [('ieee80211_crypto_getucastkey','struct ieee80211_key *'),('ieee80211_send_setup','static void'),('ieee80211_wme_request_offer','static int'),('ieee80211_ht20_request_offer','static int'),('ieee80211_vht_request_offer','static int'),('ieee80211_mgmt_output','static int'),('ieee80211_send_rxba_response','int'),('ieee80211_send_txba_request','int')]:
  parts.append(extract('sys/net80211/ieee80211_output.c',name,result))
 output='\n'.join(parts)
 offer=re.search(r'^static int\nieee80211_vht_request_offer\(',output,re.M)

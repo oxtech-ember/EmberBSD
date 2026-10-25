@@ -5,6 +5,7 @@ SHA512 (elftoolchain-0.7.1.tar.bz2) = 8226c468b393f0d567167a9dd6b16d2a226227e4d0
 Size (elftoolchain-0.7.1.tar.bz2) = 5361427 bytes
 SHA1 (patch-00-bsd-libelf-common) = 3cff8267b61d5b4477703a3b09d5620b961aeb3c
 SHA1 (patch-01-libelf-version-map) = 5bb90a683f7e83eafe5144360845d6a46b706e86
+SHA1 (patch-02-symbol-table-indices) = 97f44a1960ad86f161d27054e58ff1202209f47f
 SHA1 (patch-am) = 67678cb5e9ff5df7ebaa22e7bb1dc9538e1b3063
 SHA1 (patch-libdwarf_Makefile) = bea37cf65de237146dc51a71aed04581bc6c1d95
 SHA1 (patch-libelf_Makefile) = 26ab48a9a035f6115a69812d8114080c1c704ff2

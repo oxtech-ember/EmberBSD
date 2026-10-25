@@ -1,9 +1,10 @@
-# Bounded STA RX BlockAck foundation
+# Bounded STA BlockAck foundation
 
 The shared implementation is [ieee80211_rxba.c](../ieee80211_rxba.c).
 Its provider contract is [ieee80211_rxba.h](../ieee80211_rxba.h).
-This is a software receive foundation. It does not enable RTL8822CE HT or
-configure hardware BlockAck responses. The native HT provider remains NULL.
+This is a software receive foundation with a bounded originator. It does not
+configure hardware BlockAck responses itself; aggregation and BlockAck
+handling on the air belong to the driver and its MAC.
 
 ## Ownership and bounds
 
@@ -36,6 +37,32 @@ The narrow BAR ingress accepts a 20-byte compressed single-TID BAR for the
 current authorized peer and local address. CRC, ICV, C2H and length gates stay
 active. This does not admit arbitrary short control frames or configure an
 on-chip BA agreement.
+
+## Originator (TX) sessions
+
+`ieee80211_txba_request()` sends an ADDBA Request (IEEE Std 802.11-2016
+§9.6.5.2) for each TID in its mask that has no session, while the peer is
+current as above: RUN, the associated AP, authorized, negotiated HT. The
+request asks for immediate block ack, a 64-MPDU buffer, no A-MSDU in A-MPDU
+and no timeout, with the starting sequence number that encap assigns next
+to that TID. It is queued through the shared management queue and so starts
+output; callers stay outside the driver start routine.
+
+A matching ADDBA Response (same TID and dialog token, current association)
+with status 0, immediate policy and a nonzero buffer establishes the
+session with a window of at most 64. A refusal, a response that is not
+received within 1000 ms or a DELBA from the recipient idles that TID for
+10 s; three requests per TID and association bound the exchange. The
+originator sends no BlockAckReq and keeps no inactivity timer; it relies on
+the recipient's DELBA and reorder timeout, as the upstream rtw88 driver
+does. `ieee80211_txba_window()` reports the established window for one TID
+of the associated AP in RUN, and 0 otherwise. Sessions belong to one HT
+attempt and are cleared with the peer's receive state. The numeric
+`tx_diag` counters (requests, accepts, refusals, timeouts, DELBAs, invalid
+responses, last status) survive that reset.
+
+The driver decides per frame whether an MPDU of an established session is
+aggregated. Without a session nothing changes on the air.
 
 ## Null data and A-MSDU
 

@@ -64,7 +64,28 @@ struct rtw88_net_neg {
 	uint8_t run_replaced_by;
 	int32_t run_restart_error, run_error;
 	uint8_t run_stage;
+	/* Originator block ack (ieee80211_txba_diag) and active TIDs. */
+	uint32_t txba_requests, txba_accepts, txba_refusals, txba_timeouts;
+	uint32_t txba_delbas, txba_invalid;
+	uint16_t txba_last_status;
+	uint8_t txba_active;
 };
+/* Mirror the peer's originator state; Giant owns ba, the caller holds
+ * the neg lock. */
+#define RTW88_NET_NEG_TXBA(n, ba) do {					\
+	unsigned rtw88_neg_tid;						\
+	(n)->txba_requests = (ba)->tx_diag.requests;			\
+	(n)->txba_accepts = (ba)->tx_diag.accepts;			\
+	(n)->txba_refusals = (ba)->tx_diag.refusals;			\
+	(n)->txba_timeouts = (ba)->tx_diag.timeouts;			\
+	(n)->txba_delbas = (ba)->tx_diag.delbas;			\
+	(n)->txba_invalid = (ba)->tx_diag.invalid;			\
+	(n)->txba_last_status = (ba)->tx_diag.last_status;		\
+	(n)->txba_active = 0;						\
+	for (rtw88_neg_tid = 0; rtw88_neg_tid < 8; rtw88_neg_tid++)	\
+		if ((ba)->tx[rtw88_neg_tid].state == IEEE80211_TXBA_ACTIVE) \
+			(n)->txba_active |= 1U << rtw88_neg_tid;	\
+} while (0)
 /* Mirror ic_ht20_diag; Giant owns d, the caller holds the neg lock. */
 #define RTW88_NET_NEG_HT20(n, d) do {					\
 	(n)->ht20_offers = (d)->offers;					\

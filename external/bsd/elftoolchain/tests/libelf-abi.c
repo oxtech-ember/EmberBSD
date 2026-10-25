@@ -20,6 +20,8 @@
 #include <gelf.h>
 #include <libelf.h>
 
+_Static_assert(STN_UNDEF == 0,
+    "The undefined symbol table index must be zero");
 _Static_assert(sizeof(((Elf_Data *)0)->d_align) == sizeof(uint64_t),
     "Elf_Data.d_align must remain 64 bits");
 _Static_assert(sizeof(((Elf_Data *)0)->d_buf) == sizeof(void *),
@@ -61,7 +63,7 @@ static const unsigned char section_bytes[] = {
 	0x45, 0x6d, 0x62, 0x65, 0x72, 0x42, 0x53, 0x44
 };
 
-static void
+static _Noreturn void
 fail(const char *message)
 {
 	fprintf(stderr, "libelf-abi: %s\n", message);
