@@ -178,6 +178,22 @@ rxba_current(struct ieee80211com *ic, struct ieee80211_node *ni)
 	    ieee80211_ht20_state_request(ic, IEEE80211_S_RUN) == 0;
 }
 
+/*
+ * A negotiated peer without any block-ack session that is not yet in RUN
+ * or not yet authorized: an AP commonly requests block ack right after
+ * association, before a deferred driver RUN or the key handshake. That is
+ * premature, not a contract violation.
+ */
+static int
+rxba_premature(struct ieee80211com *ic, struct ieee80211_node *ni)
+{
+
+	return ni == ic->ic_bss && ni->ni_ht20.valid && ni->ni_rxba.epoch == 0 &&
+	    (ic->ic_state == IEEE80211_S_ASSOC ||
+	     (ic->ic_state == IEEE80211_S_RUN &&
+	      !ieee80211_node_is_authorized(ni)));
+}
+
 static int
 rxba_require_current(struct ieee80211com *ic, struct ieee80211_node *ni)
 {
@@ -583,7 +599,17 @@ ieee80211_rxba_action(struct ieee80211com *ic, struct ieee80211_node *ni,
 	unsigned params, timeout, ssn, tid, window, i;
 	int error;
 
-	if (p == NULL || len < 2 || p[0] != 3 || !rxba_require_current(ic, ni))
+	if (p == NULL || len < 2 || p[0] != 3)
+		return EINVAL;
+	/* Decline a premature request (status 37) and keep the association;
+	 * a premature DELBA has no session to remove. */
+	if (rxba_premature(ic, ni)) {
+		if (p[1] == 0 && len == 9)
+			return ieee80211_send_rxba_response(ic, ni, p[2], 37,
+			    rxba_le16(p + 3) & 0x3e, rxba_le16(p + 5), NULL);
+		return EINVAL;
+	}
+	if (!rxba_require_current(ic, ni))
 		return EINVAL;
 	if (p[1] == 2) {
 		if (len != 6)
