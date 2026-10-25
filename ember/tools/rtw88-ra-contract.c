@@ -1851,7 +1851,10 @@ test_ra_vht_run_tuples(void)
 		s.net.ic.ic_ht20_diag.offers = 5; /* Mirrored by the worker. */
 		s.net.ic.ic_ht20_diag.vht = 3;
 		CHECK(rtw88_net_vht_admit(&s.net.ic, &chan, &cap) == 0);
+		/* The association timer would abandon a long cold start. */
+		s.net.ic.ic_mgt_timer = 5;
 		CHECK(rtw88_net_newstate(&s.net.ic, IEEE80211_S_RUN, 0) == 0);
+		CHECK(s.net.ic.ic_mgt_timer == 0);
 		CHECK(s.net.reset_required);
 		CHECK(s.net.pending_channel.primary == v[i].primary &&
 		    s.net.pending_channel.center == v[i].center &&

@@ -47,18 +47,28 @@ struct ieee80211_ht20_node {
  * diagnostics. offers/vht_offers count queued association requests; ht,
  * vht, legacy and unoffered count accepted responses (vht is also ht);
  * bad counts rejected responses; resets counts beacon withdrawals of a
- * committed profile, with the last reason.
+ * committed profile, with the last reason. status/norate/failures count
+ * association responses that end before or around the HT consumer: a
+ * nonzero status (the last kept), a basic rate mismatch, and the HT
+ * failure path (short frame, refused IEs, consumer or RUN failure).
  */
 /* Peer, attempt, security, WME, or local provider readiness/generation. */
 #define IEEE80211_HT20_RESET_STALE 1
 #define IEEE80211_HT20_RESET_FRAMING 2
 #define IEEE80211_HT20_RESET_HT 3	/* HT Capabilities or Operation. */
 #define IEEE80211_HT20_RESET_VHT 4	/* VHT Operation. */
+/* Association HT failure path, by stage. */
+#define IEEE80211_HT20_FAIL_SHORT 1	/* Fixed fields missing. */
+#define IEEE80211_HT20_FAIL_IES 2	/* ieee80211_ht20_check_ies(). */
+#define IEEE80211_HT20_FAIL_CONSUMER 3	/* ieee80211_ht20_response(). */
+#define IEEE80211_HT20_FAIL_RUN 4	/* RUN transition. */
 struct ieee80211_ht20_diag {
 	uint32_t offers, vht_offers;
 	uint32_t ht, vht, legacy, unoffered, bad;
 	uint32_t resets;
-	uint8_t reset_reason;
+	uint32_t status, norate, failures;
+	uint16_t last_status;
+	uint8_t reset_reason, failure_reason;
 };
 /* A source-qualified primary20/mixed-format, single-MPDU protection result.
  * This is not a radio/PPDU or hardware BlockAck attestation. */

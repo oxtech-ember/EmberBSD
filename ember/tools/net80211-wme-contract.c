@@ -1424,6 +1424,48 @@ test_vht_diagnostics(void)
 	    IEEE80211_FC0_SUBTYPE_ASSOC_RESP);
 	CHECK(test_ic.ic_state == IEEE80211_S_RUN && !test_node.ni_ht20.valid);
 	CHECK(test_ic.ic_ht20_diag.legacy == 1 && test_ic.ic_ht20_diag.ht == 0);
+	/* A refused association keeps its status code for diagnostics. */
+	prepare_vht_request();
+	CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ) == 0);
+	deliver(response(1, 13, IEEE80211_FC0_SUBTYPE_ASSOC_RESP),
+	    IEEE80211_FC0_SUBTYPE_ASSOC_RESP);
+	CHECK(test_ic.ic_ht20_diag.status == 1 &&
+	    test_ic.ic_ht20_diag.last_status == 13 &&
+	    test_ic.ic_ht20_diag.failures == 0 && test_ic.ic_ht20_diag.ht == 0);
+	/* Pre-standard Broadcom HT elements beside the standard ones, as the
+	 * observed AP sends them, are ignored: VHT still commits. */
+	prepare_vht_request();
+	CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ) == 0);
+	m = vht_assoc_response(0);
+	{
+		static const uint8_t vendor[] = {
+			221, 30, 0x00, 0x90, 0x4c, 0x33, 0x0e, 0, 0x17, 0xff,
+			0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+			0, 0, 0, 0,
+			221, 26, 0x00, 0x90, 0x4c, 0x34, 64, 0x07, 0, 0, 0, 0, 0,
+			0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+		};
+
+		memcpy(m->m_data + m->m_len, vendor, sizeof(vendor));
+		m->m_len += (int)sizeof(vendor);
+		m->m_pkthdr.len = m->m_len;
+		m->model_capacity += sizeof(vendor);
+	}
+	deliver(m, IEEE80211_FC0_SUBTYPE_ASSOC_RESP);
+	CHECK(test_ic.ic_state == IEEE80211_S_RUN && test_node.ni_ht20.vht.valid);
+	CHECK(test_ic.ic_ht20_diag.failures == 0 && test_ic.ic_ht20_diag.vht == 1);
+	/* A repeated standard HT Capabilities element fails at the IE check. */
+	prepare_vht_request();
+	CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ) == 0);
+	m = vht_assoc_response(0);
+	memcpy(m->m_data + m->m_len, m->m_data + m->m_len - 73, 28);
+	m->m_len += 28;
+	m->m_pkthdr.len = m->m_len;
+	m->model_capacity += 28;
+	deliver(m, IEEE80211_FC0_SUBTYPE_ASSOC_RESP);
+	CHECK(test_ic.ic_state == IEEE80211_S_SCAN &&
+	    test_ic.ic_ht20_diag.failures == 1 &&
+	    test_ic.ic_ht20_diag.failure_reason == IEEE80211_HT20_FAIL_IES);
 	/* A response the HT consumer rejects ends the association. */
 	prepare_vht_request();
 	CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ) == 0);
@@ -1431,7 +1473,10 @@ test_vht_diagnostics(void)
 	m->m_data[m->m_len - 73 + 30] = 40; /* HT Operation primary. */
 	deliver(m, IEEE80211_FC0_SUBTYPE_ASSOC_RESP);
 	CHECK(test_ic.ic_state == IEEE80211_S_SCAN &&
-	    test_ic.ic_ht20_diag.bad == 1 && test_ic.ic_ht20_diag.ht == 0);
+	    test_ic.ic_ht20_diag.bad == 1 && test_ic.ic_ht20_diag.ht == 0 &&
+	    test_ic.ic_ht20_diag.failures == 1 &&
+	    test_ic.ic_ht20_diag.failure_reason ==
+	    IEEE80211_HT20_FAIL_CONSUMER);
 	/* No HT offer queued: an HT/VHT response is counted, stays legacy. */
 	prepare_vht_request();
 	test_ic.ic_ht20_admit = NULL;

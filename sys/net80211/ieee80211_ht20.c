@@ -194,9 +194,11 @@ ieee80211_ht20_check_ies(const uint8_t *p, size_t len)
 				return EINVAL;
 			seen |= bit;
 		}
-		if (p[0] == 221 && p[1] >= 4 && p[2] == 0 && p[3] == 0x90 &&
-		    p[4] == 0x4c && (p[5] == 0x33 || p[5] == 0x34))
-			return EINVAL; /* No vendor HT negotiation in this profile. */
+		/*
+		 * Pre-standard Broadcom HT elements (00:90:4c:33/34) in a
+		 * response duplicate the standard ones, which alone decide;
+		 * many APs still send them. They are ignored, never parsed.
+		 */
 		p += size;
 		len -= size;
 	}
