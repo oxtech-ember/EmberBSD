@@ -88,8 +88,12 @@ main(int argc, char *argv[])
 			pflag = 1;
 			break;
 		case 'm':
+			errno = 0;
 			if ((set = setmode(optarg)) == NULL) {
-				err(EXIT_FAILURE, "Cannot set file mode `%s'",
+				if (errno != 0)
+					err(EXIT_FAILURE, "Cannot set file mode `%s'",
+					    optarg);
+				errx(EXIT_FAILURE, "Cannot set file mode `%s'",
 				    optarg);
 				/* NOTREACHED */
 			}
