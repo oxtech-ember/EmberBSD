@@ -50,6 +50,7 @@ struct ieee80211com {
 	const struct ieee80211_rxba_ops *ic_rxba_ops;
 	uint64_t ic_rxba_serial;
 	int (*ic_ht20_admit)(struct ieee80211com *, struct ieee80211_ht20_profile *);
+	struct ieee80211_ht20_diag ic_ht20_diag;
 	int (*ic_vht_admit)(struct ieee80211com *,
 	    const struct ieee80211_vht_channel *, struct ieee80211_vht_cap *);
 	struct ifqueue ic_mgtq;
@@ -85,6 +86,7 @@ struct rtw88_net {
 	void *softint;
 	callout_t scan;
 	struct rtw88_net_policy policy;
+	struct rtw88_net_neg neg;
 	int work_pending, reset_required;
 	int tx_quiet, quiet_error;
 	unsigned tx_timer, tx_completed;

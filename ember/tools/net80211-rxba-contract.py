@@ -169,6 +169,7 @@ s=(out/'rxba-test-kernel.h').read_text()
 s=s.replace('struct ieee80211com {','struct ieee80211_channel { unsigned ieee; };\nstruct ieee80211_vht_channel;\nstruct ieee80211com {',1)
 s=s.replace('unsigned ic_caps;','''unsigned ic_caps;
  int (*ic_ht20_admit)(struct ieee80211com *,struct ieee80211_ht20_profile *);
+ struct ieee80211_ht20_diag ic_ht20_diag;
  int (*ic_vht_admit)(struct ieee80211com *,const struct ieee80211_vht_channel *,struct ieee80211_vht_cap *);''',1)
 s=s.replace('int authorized;', 'int authorized;\n struct { unsigned rsn_ucastcipher; } ni_rsn;',1)
 s=s.replace('struct { unsigned wme_hipri_traffic; } ic_wme;','struct { unsigned wme_hipri_traffic;void (*wme_sta_apply)(void); } ic_wme;')

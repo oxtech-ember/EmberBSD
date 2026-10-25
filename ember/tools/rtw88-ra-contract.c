@@ -1848,6 +1848,8 @@ test_ra_vht_run_tuples(void)
 			continue;
 		ra_vht_peer_at(&s, v[i]);
 		ra_vht_runs = 0;
+		s.net.ic.ic_ht20_diag.offers = 5; /* Mirrored by the worker. */
+		s.net.ic.ic_ht20_diag.vht = 3;
 		CHECK(rtw88_net_vht_admit(&s.net.ic, &chan, &cap) == 0);
 		CHECK(rtw88_net_newstate(&s.net.ic, IEEE80211_S_RUN, 0) == 0);
 		CHECK(s.net.reset_required);
@@ -1858,6 +1860,24 @@ test_ra_vht_run_tuples(void)
 		CHECK(ra_vht_runs == 1 && rtw88_vht_committed(&s.sc));
 		CHECK(s.sc.sc_phy.channel.center == v[i].center &&
 		    s.sc.sc_phy.channel.width_mhz == v[i].width_mhz);
+		{
+			/* The diagnostic summary records admission and RUN. */
+			struct rtw88_net_neg ns;
+
+			mutex_enter(s.net.lock);
+			ns = s.net.neg;
+			mutex_exit(s.net.lock);
+			CHECK(ns.vht_admit == 1 && ns.vht_refuse == 0 &&
+			    ns.vht_error == 0);
+			CHECK(ns.vht_chan[0] == v[i].primary &&
+			    ns.vht_chan[1] == v[i].center &&
+			    ns.vht_chan[2] == v[i].width_mhz);
+			CHECK(ns.ht20_offers == 5 && ns.ht20_vht == 3);
+			CHECK(ns.run_ht == 1 && ns.run_vht == 1 &&
+			    ns.run_chan[0] == v[i].primary &&
+			    ns.run_chan[1] == v[i].center &&
+			    ns.run_chan[2] == v[i].width_mhz);
+		}
 		CHECK(s.sc.sc_ra.active && s.sc.sc_ra.phy == RTW88_RA_VHT_1SS);
 		error = rtw88_net_tx_ht20_policy(&s.net.ic, &tx_policy);
 		CHECK(error == 0);
@@ -1923,6 +1943,49 @@ test_ra_vht_run_tuples(void)
 		    &cap) == want);
 		CHECK(want == 0 ? cap.rx_map == 0xfffc :
 		    cap.rx_map == 0 && cap.tx_map == 0 && cap.info == 0);
+		{
+			struct rtw88_net_neg ns;
+
+			mutex_enter(s.net.lock);
+			ns = s.net.neg;
+			mutex_exit(s.net.lock);
+			CHECK(ns.vht_admit == (want == 0) &&
+			    ns.vht_refuse == (want != 0) && ns.vht_error == want);
+			CHECK(ns.vht_chan[0] == closed[variant].chan.primary &&
+			    ns.vht_chan[1] == closed[variant].chan.center &&
+			    ns.vht_chan[2] == closed[variant].chan.width_mhz);
+		}
+		state_fixture_finish(&s);
+	}
+}
+/* The ASSOC worker records the HT profile provider result and its mask. */
+static void
+test_ra_ht_prepare_diag(void)
+{
+	for (unsigned variant = 0; variant < 2; variant++) {
+		struct state_fixture s;
+		struct rtw88_net_neg ns;
+
+		if (!state_fixture_start(&s, 36, 9))
+			continue;
+		ra_vht_peer(&s);
+		s.net.ic.ic_state = IEEE80211_S_AUTH;
+		if (variant == 1)
+			s.net.ic.ic_wme.wme_sta_apply = NULL; /* No AMSDU owner. */
+		CHECK(rtw88_net_newstate(&s.net.ic, IEEE80211_S_ASSOC, 0) == 0);
+		rtw88_net_state_work(&s.net.state_work, &s.net);
+		mutex_enter(s.net.lock);
+		ns = s.net.neg;
+		mutex_exit(s.net.lock);
+		CHECK(ns.prepare_ok + ns.prepare_fail == 1);
+		CHECK((ns.prepare_ok == 1) == (ns.prepare_error == 0));
+		CHECK(ns.prepare_ok == 0 ||
+		    ns.prepare_ready == RTW88_NET_HT20_READY_ALL);
+		/* The mask names the missing readiness, also on failure. */
+		CHECK(((ns.prepare_ready & RTW88_NET_HT20_READY_AMSDU) != 0) ==
+		    (variant == 0));
+		if (variant == 1)
+			CHECK(ns.prepare_fail == 1 && ns.prepare_error == EOPNOTSUPP);
 		state_fixture_finish(&s);
 	}
 }
@@ -2146,6 +2209,7 @@ RTW88_RA_MAIN(void)
 	test_ra_vht_dfs_closed();
 	test_ra_vht80_run();
 	test_ra_vht_run_tuples();
+	test_ra_ht_prepare_diag();
 	printf("rtw88 VHT80 RA and TX formats: enabled\n");
 #else
 	test_ra_vht80_disabled();

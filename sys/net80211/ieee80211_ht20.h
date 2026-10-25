@@ -42,6 +42,24 @@ struct ieee80211_ht20_node {
 	uint16_t tx_mcs, peer_rx_mcs, basic_mcs, peer_cap, operation;
 	uint8_t peer_htcap[26], peer_htop[22];
 };
+/*
+ * Numeric HT20/VHT negotiation observations owned by Giant, for read-only
+ * diagnostics. offers/vht_offers count queued association requests; ht,
+ * vht, legacy and unoffered count accepted responses (vht is also ht);
+ * bad counts rejected responses; resets counts beacon withdrawals of a
+ * committed profile, with the last reason.
+ */
+/* Peer, attempt, security, WME, or local provider readiness/generation. */
+#define IEEE80211_HT20_RESET_STALE 1
+#define IEEE80211_HT20_RESET_FRAMING 2
+#define IEEE80211_HT20_RESET_HT 3	/* HT Capabilities or Operation. */
+#define IEEE80211_HT20_RESET_VHT 4	/* VHT Operation. */
+struct ieee80211_ht20_diag {
+	uint32_t offers, vht_offers;
+	uint32_t ht, vht, legacy, unoffered, bad;
+	uint32_t resets;
+	uint8_t reset_reason;
+};
 /* A source-qualified primary20/mixed-format, single-MPDU protection result.
  * This is not a radio/PPDU or hardware BlockAck attestation. */
 #define IEEE80211_HT20_PROT_MF20_NO_RTS 1

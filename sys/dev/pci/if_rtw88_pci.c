@@ -141,6 +141,7 @@ rtwce_stats(char *buf, size_t len)
 	uint32_t r[RTW88_DIAG_REGS] = { 0 };
 	int n;
 
+	memset(&ns, 0, sizeof(ns));
 	psc = rtwce_diag_enter();
 	if (psc == NULL)
 		return ENXIO;
@@ -295,6 +296,27 @@ rtwce_stats(char *buf, size_t len)
 		    ns.beacon, ns.chanmismatch, ns.badchan, ns.elem_missing,
 		    ns.elem_toobig, ns.elem_toosmall, ns.nodealloc, ns.mgtdiscard,
 		    (unsigned long long)ns.fw_stale);
+	}
+	if (n > 0 && (size_t)n < len && psc->sc_net != NULL) {
+		/* HT/VHT negotiation: offer, provider, response, beacon, RUN, RA. */
+		n += snprintf(buf + n, len - (size_t)n,
+		    " htprep %u/%u/%#x/%d htoffer %u/%u"
+		    " vhtadmit %u/%u/%u.%u.%u/%d"
+		    " htresp %u/%u/%u/%u/%u htreset %u/%u"
+		    " htrun %u/%u/%u.%u.%u raphy %u/%u/%u"
+		    " tuple %u.%u.%u/%u",
+		    ns.neg.prepare_ok, ns.neg.prepare_fail, ns.neg.prepare_ready,
+		    (int)ns.neg.prepare_error, ns.neg.ht20_offers,
+		    ns.neg.ht20_vht_offers, ns.neg.vht_admit, ns.neg.vht_refuse,
+		    ns.neg.vht_chan[0], ns.neg.vht_chan[1], ns.neg.vht_chan[2],
+		    (int)ns.neg.vht_error, ns.neg.ht20_ht, ns.neg.ht20_vht,
+		    ns.neg.ht20_legacy, ns.neg.ht20_unoffered, ns.neg.ht20_bad,
+		    ns.neg.ht20_resets, ns.neg.ht20_reset_reason, ns.neg.run_ht,
+		    ns.neg.run_vht, ns.neg.run_chan[0], ns.neg.run_chan[1],
+		    ns.neg.run_chan[2], sc->sc_ra.phy, sc->sc_ra.configured,
+		    sc->sc_ra.active, sc->sc_phy.channel.primary,
+		    sc->sc_phy.channel.center, sc->sc_phy.channel.width_mhz,
+		    sc->sc_phy.channel_valid);
 	}
 	mutex_exit(&psc->sc_lock);
 	mutex_exit(&rtwce_diag_lock);

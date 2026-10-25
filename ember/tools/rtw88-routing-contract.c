@@ -52,6 +52,7 @@ struct rtw88_net {
         unsigned chained, first_short, beacon, chanmismatch, badchan, nomem, fw_stale;
         unsigned elem_missing, elem_toobig, elem_toosmall, nodealloc, mgtdiscard;
     } stats;
+    struct rtw88_net_neg neg;
     struct ieee80211com ic;
     struct rtw88_softc *core;
     struct rtw88_net_policy policy;

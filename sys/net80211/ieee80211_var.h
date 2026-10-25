@@ -107,6 +107,7 @@ struct ieee80211com {
 	int (*ic_scan_probe_admit)(struct ieee80211com *);
 	/* Optional qualified HT20 provider; NULL means legacy only. */
 	int (*ic_ht20_admit)(struct ieee80211com *, struct ieee80211_ht20_profile *);
+	struct ieee80211_ht20_diag ic_ht20_diag;
 	/* Optional local VHT capability provider for one AP-derived operating
 	 * channel; NULL means VHT stays disabled. */
 	int (*ic_vht_admit)(struct ieee80211com *,

@@ -55,6 +55,7 @@ struct ieee80211com {
     struct ieee80211_node_table ic_scan, ic_sta;
     void (*ic_node_cleanup)(struct ieee80211_node *);
     int (*ic_ht20_admit)(struct ieee80211com *,struct ieee80211_ht20_profile *);
+    struct ieee80211_ht20_diag ic_ht20_diag;
 };
 struct rtw88_softc {
     int sc_linked;
@@ -72,6 +73,7 @@ struct rtw88_net {
     struct ieee80211com ic;
     struct rtw88_softc *core;
     struct rtw88_net_policy policy;
+    struct rtw88_net_neg neg;
     struct rtw88_channel_tuple pending_channel;
     int *lock;
     int scan, dev, work_pending, reset_required, state_arg;

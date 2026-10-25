@@ -151,6 +151,7 @@ struct ieee80211com {
 	const struct ieee80211_rxba_ops *ic_rxba_ops;
 	uint64_t ic_rxba_serial;
 	int (*ic_ht20_admit)(struct ieee80211com *, struct ieee80211_ht20_profile *);
+	struct ieee80211_ht20_diag ic_ht20_diag;
 	int (*ic_vht_admit)(struct ieee80211com *,
 	    const struct ieee80211_vht_channel *, struct ieee80211_vht_cap *);
 	int ic_fixed_rate;
@@ -1065,6 +1066,9 @@ test_vht_request_bytes(void)
 
 	prepare_vht_request();
 	CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ) == 0);
+	/* Diagnostics count each queued HT offer and its VHT part. */
+	CHECK(test_ic.ic_ht20_diag.offers == 1 &&
+	    test_ic.ic_ht20_diag.vht_offers == 1);
 	ht = request_ie(IEEE80211_FC0_SUBTYPE_ASSOC_REQ, 45, &count);
 	CHECK(count == 1 && ht != NULL);
 	if (ht != NULL)
@@ -1099,6 +1103,8 @@ test_vht_request_bytes(void)
 		CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ) == 0);
 		/* No channel derives for the first four: the driver is not asked. */
 		CHECK(variant >= 4 || vht_admissions == 0);
+		CHECK(test_ic.ic_ht20_diag.offers == 1 &&
+		    test_ic.ic_ht20_diag.vht_offers == 0);
 		vht = request_ie(IEEE80211_FC0_SUBTYPE_ASSOC_REQ, 191, &count);
 		CHECK(count == 0 && vht == NULL);
 		ht = request_ie(IEEE80211_FC0_SUBTYPE_ASSOC_REQ, 45, &count);
@@ -1230,6 +1236,8 @@ test_vht_assoc_response(void)
 	CHECK(test_ic.ic_state == IEEE80211_S_RUN);
 	CHECK(test_node.ni_ht20.valid);
 	CHECK(test_node.ni_ht20.vht.valid);
+	CHECK(test_ic.ic_ht20_diag.ht == 1 && test_ic.ic_ht20_diag.vht == 1 &&
+	    test_ic.ic_ht20_diag.legacy == 0 && test_ic.ic_ht20_diag.bad == 0);
 	CHECK(test_node.ni_ht20.vht.peer.rx_map == 0xfffd);
 	CHECK(test_node.ni_ht20.vht.peer.tx_map == 0xfffe);
 	CHECK(test_node.ni_ht20.vht.maps.tx_map == 0xfffc);
@@ -1258,10 +1266,14 @@ test_vht_assoc_response(void)
 		if (variant == 8) {
 			CHECK(!test_node.ni_ht20.valid);
 			CHECK(test_ic.ic_state == IEEE80211_S_SCAN);
+			/* The TLV walk rejects it before the HT consumer. */
+			CHECK(test_ic.ic_ht20_diag.ht == 0);
 		}
 		else {
 			CHECK(test_node.ni_ht20.valid);
 			CHECK(test_ic.ic_state == IEEE80211_S_RUN);
+			CHECK(test_ic.ic_ht20_diag.ht == 1 &&
+			    test_ic.ic_ht20_diag.vht == 0);
 		}
 	}
 
@@ -1395,6 +1407,56 @@ test_vht_channel_lifecycle(void)
 	}
 	vht_bss.primary = 36; vht_bss.sco = 1; vht_bss.width = 1;
 	vht_bss.seg0 = 42; vht_bss.freq = 5180;
+	test_channel.ic_freq = 2412;
+}
+/*
+ * Negotiation diagnostics: a legacy response to an HT offer, a response
+ * without an offer, and each beacon withdrawal reason.
+ */
+static void
+test_vht_diagnostics(void)
+{
+	struct mbuf *m;
+
+	prepare_vht_request();
+	CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ) == 0);
+	deliver(response(1, 0, IEEE80211_FC0_SUBTYPE_ASSOC_RESP),
+	    IEEE80211_FC0_SUBTYPE_ASSOC_RESP);
+	CHECK(test_ic.ic_state == IEEE80211_S_RUN && !test_node.ni_ht20.valid);
+	CHECK(test_ic.ic_ht20_diag.legacy == 1 && test_ic.ic_ht20_diag.ht == 0);
+	/* A response the HT consumer rejects ends the association. */
+	prepare_vht_request();
+	CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ) == 0);
+	m = vht_assoc_response(0);
+	m->m_data[m->m_len - 73 + 30] = 40; /* HT Operation primary. */
+	deliver(m, IEEE80211_FC0_SUBTYPE_ASSOC_RESP);
+	CHECK(test_ic.ic_state == IEEE80211_S_SCAN &&
+	    test_ic.ic_ht20_diag.bad == 1 && test_ic.ic_ht20_diag.ht == 0);
+	/* No HT offer queued: an HT/VHT response is counted, stays legacy. */
+	prepare_vht_request();
+	test_ic.ic_ht20_admit = NULL;
+	CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ) == 0);
+	deliver(vht_assoc_response(0), IEEE80211_FC0_SUBTYPE_ASSOC_RESP);
+	CHECK(test_ic.ic_ht20_diag.offers == 0 &&
+	    test_ic.ic_ht20_diag.unoffered == 1 && !test_node.ni_ht20.valid);
+	for (unsigned reason = 1; reason <= 4; reason++) {
+		prepare_vht_request();
+		CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ) == 0);
+		deliver(vht_assoc_response(0), IEEE80211_FC0_SUBTYPE_ASSOC_RESP);
+		CHECK(test_node.ni_ht20.vht.valid);
+		m = vht_beacon(reason == 4 ? 1 : 0);
+		if (reason == IEEE80211_HT20_RESET_STALE)
+			test_node.ni_wme_attempt++;
+		else if (reason == IEEE80211_HT20_RESET_FRAMING)
+			m->m_data[m->m_len - 6] = 40; /* Overlong VHT Op. */
+		else if (reason == IEEE80211_HT20_RESET_HT)
+			m->m_data[m->m_len - 73 + 32] ^= 0x04;
+		CHECK(test_ic.ic_ht20_diag.resets == 0);
+		deliver_beacon(m);
+		CHECK(!test_node.ni_ht20.valid);
+		CHECK(test_ic.ic_ht20_diag.resets == 1 &&
+		    test_ic.ic_ht20_diag.reset_reason == reason);
+	}
 	test_channel.ic_freq = 2412;
 }
 /*
@@ -2473,6 +2535,7 @@ main(void)
 	test_vht_assoc_response();
 	test_vht_channel_lifecycle();
 	test_vht_protection_modes();
+	test_vht_diagnostics();
 	test_classification();
 	test_sequence();
 	test_beacon_update();

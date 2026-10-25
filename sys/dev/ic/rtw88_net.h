@@ -13,6 +13,7 @@ struct rtw88_net_stats {
 	uint64_t nomem, chained, first_short, fw_stale;
 	uint32_t beacon, chanmismatch, badchan, elem_missing;
 	uint32_t elem_toobig, elem_toosmall, nodealloc, mgtdiscard;
+	struct rtw88_net_neg neg;
 };
 /* PCI owns identify, the supplied lock, and core lifetime. No attach RF start. */
 int rtw88_net_attach(struct rtw88_softc *, device_t, kmutex_t *,

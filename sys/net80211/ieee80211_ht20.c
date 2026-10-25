@@ -109,12 +109,14 @@ ieee80211_ht20_offer(struct ieee80211com *ic, struct ieee80211_node *ni,
 	h->assoc_attempt = ni->ni_wme_attempt;
 	h->security = (ic->ic_flags & IEEE80211_F_PRIVACY) != 0;
 	h->offered = 1;
+	ic->ic_ht20_diag.offers++;
 	memset(&h->vht, 0, sizeof(h->vht));
 	/* Bind the offer to the channel the request admitted. */
 	if (vht != NULL && vht_chan != NULL) {
 		h->vht.local = *vht;
 		h->vht.channel = *vht_chan;
 		h->vht.offered = 1;
+		ic->ic_ht20_diag.vht_offers++;
 	}
 }
 
@@ -188,8 +190,11 @@ ieee80211_ht20_response(struct ieee80211com *ic, struct ieee80211_node *ni,
 
 	phy_len = 0;
 	vht_phy_overflow = 0;
-	if (!h->offered)
-		return 0; /* An unsolicited HT IE never activates a legacy station. */
+	if (!h->offered) {
+		/* An unsolicited HT IE never activates a legacy station. */
+		ic->ic_ht20_diag.unoffered++;
+		return 0;
+	}
 	if (!ht20_current(ic, ni, h) || subtype != h->subtype + 0x10 ||
 	    ieee80211_ht20_check_ies(p, len) != 0)
 		goto bad;
@@ -222,6 +227,7 @@ ieee80211_ht20_response(struct ieee80211com *ic, struct ieee80211_node *ni,
 	}
 	if (cap == NULL && op == NULL) {
 		ieee80211_ht20_reset(ni); /* Successful legacy response. */
+		ic->ic_ht20_diag.legacy++;
 		return 0;
 	}
 	if (!wme || cap == NULL || op == NULL ||
@@ -283,11 +289,15 @@ ieee80211_ht20_response(struct ieee80211com *ic, struct ieee80211_node *ni,
 		candidate.vht.valid = 1;
 	}
 	ni->ni_ht20 = candidate;
+	ic->ic_ht20_diag.ht++;
+	if (candidate.vht.valid)
+		ic->ic_ht20_diag.vht++;
 	/* The current provider admitted the bounded A-MSDU receive consumer. */
 	ni->ni_flags |= IEEE80211_NODE_AMSDU_RX;
 	return 0;
 bad:
 	ieee80211_ht20_reset(ni);
+	ic->ic_ht20_diag.bad++;
 	return EINVAL;
 }
 
@@ -350,6 +360,7 @@ ieee80211_ht20_beacon(struct ieee80211com *ic, struct ieee80211_node *ni,
 	uint8_t vht_op[IEEE80211_VHT_OPERATION_LEN];
 	size_t size;
 	int vop_bad = 0;
+	uint8_t reason = IEEE80211_HT20_RESET_STALE;
 
 	if (!h->valid || ic->ic_opmode != IEEE80211_M_STA ||
 	    (ic->ic_state != IEEE80211_S_ASSOC &&
@@ -357,7 +368,10 @@ ieee80211_ht20_beacon(struct ieee80211com *ic, struct ieee80211_node *ni,
 	    !IEEE80211_ADDR_EQ(wh->i_addr2, ni->ni_macaddr) ||
 	    !IEEE80211_ADDR_EQ(wh->i_addr3, ni->ni_bssid))
 		return 0;
-	if (!ht20_current(ic, ni, h) || len < 12)
+	if (!ht20_current(ic, ni, h))
+		goto bad;
+	reason = IEEE80211_HT20_RESET_FRAMING;
+	if (len < 12)
 		goto bad;
 	p += 12;
 	len -= 12;
@@ -382,10 +396,12 @@ ieee80211_ht20_beacon(struct ieee80211com *ic, struct ieee80211_node *ni,
 		p += size;
 		len -= size;
 	}
+	reason = IEEE80211_HT20_RESET_HT;
 	if (cap == NULL || op == NULL ||
 	    memcmp(cap, h->peer_htcap, sizeof(h->peer_htcap)) != 0 ||
 	    memcmp(op, h->peer_htop, sizeof(h->peer_htop)) != 0)
 		goto bad;
+	reason = IEEE80211_HT20_RESET_VHT;
 	/* A negotiated VHT width is bound to the AP's VHT Operation. */
 	if (h->vht.valid && (vop == NULL || vop_bad ||
 	    ieee80211_vht_operation_encode(vht_op, sizeof(vht_op),
@@ -395,6 +411,8 @@ ieee80211_ht20_beacon(struct ieee80211com *ic, struct ieee80211_node *ni,
 	return 0;
 bad:
 	ieee80211_ht20_reset(ni);
+	ic->ic_ht20_diag.resets++;
+	ic->ic_ht20_diag.reset_reason = reason;
 	return EINVAL;
 }
 

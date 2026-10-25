@@ -12,6 +12,7 @@ struct rtw88_softc { int sc_started, sc_running, sc_stop_requested; unsigned sc_
 struct rtw88_net {
 	struct { struct ifnet ec_if; } ec;
 	struct ieee80211com ic;
+	struct rtw88_net_neg neg;
 	volatile uint64_t ht20_snapshot;
 	volatile uint32_t ht20_generation;
 	void *dev, *softint;

@@ -89,6 +89,7 @@ struct rtw88_net {
 	uint8_t txbuf[RTW88_TX_BUF_SIZE];
 	uint64_t rx_dropped;
 	struct rtw88_net_stats stats;
+	struct rtw88_net_neg neg;	/* Negotiation diagnostics, net->lock. */
 	unsigned tx_timer;
 	unsigned tx_completed;
 #ifdef RTW88_DFS64
@@ -593,6 +594,7 @@ rtw88_net_vht_admit(struct ieee80211com *ic,
 {
 	struct rtw88_net *net;
 	struct rtw88_channel_tuple tuple;
+	int error = 0;
 
 	if (ic == NULL || chan == NULL || cap == NULL || ic->ic_ifp == NULL)
 		return EINVAL;
@@ -600,19 +602,30 @@ rtw88_net_vht_admit(struct ieee80211com *ic,
 	net = ic->ic_ifp->if_softc;
 	if (net == NULL || net->core == NULL)
 		return ENXIO;
+	KASSERT(!mutex_owned(net->lock));
+	tuple.primary = chan->primary;
+	tuple.center = chan->center;
+	tuple.width_mhz = chan->width_mhz;
 	if (net->tx_quiet || net->policy.dying ||
 	    ic->ic_opmode != IEEE80211_M_STA ||
 	    rtw88_net_ht20_local_policy(ic) != 0 ||
 	    ieee80211_chan2ieee(ic, ic->ic_curchan) != chan->primary ||
-	    (chan->width_mhz != 40 && chan->width_mhz != 80))
-		return EOPNOTSUPP;
-	tuple.primary = chan->primary;
-	tuple.center = chan->center;
-	tuple.width_mhz = chan->width_mhz;
-	if (rtw88_tuple_check(net->core, &tuple) != 0)
-		return EOPNOTSUPP;
-	cap->rx_map = cap->tx_map = RTW88_VHT_MAP_NSS1_MCS7;
-	return 0;
+	    (chan->width_mhz != 40 && chan->width_mhz != 80) ||
+	    rtw88_tuple_check(net->core, &tuple) != 0)
+		error = EOPNOTSUPP;
+	else
+		cap->rx_map = cap->tx_map = RTW88_VHT_MAP_NSS1_MCS7;
+	mutex_enter(net->lock);
+	if (error == 0)
+		net->neg.vht_admit++;
+	else
+		net->neg.vht_refuse++;
+	net->neg.vht_error = error;
+	net->neg.vht_chan[0] = chan->primary;
+	net->neg.vht_chan[1] = chan->center;
+	net->neg.vht_chan[2] = chan->width_mhz;
+	mutex_exit(net->lock);
+	return error;
 }
 #endif
 
@@ -672,8 +685,10 @@ rtw88_net_ht20_profile_prepare(struct rtw88_net *net,
 	    (ic->ic_flags & IEEE80211_F_WME) != 0 &&
 	    ic->ic_wme.wme_sta_apply != NULL)
 		ready |= RTW88_NET_HT20_READY_AMSDU;
-	if (ready != RTW88_NET_HT20_READY_ALL)
+	if (ready != RTW88_NET_HT20_READY_ALL) {
+		profile->ready = ready; /* Diagnostic only; never published. */
 		return EOPNOTSUPP;
+	}
 	profile->rx_mcs = 0xff;
 	profile->tx_mcs = 0xff;
 	profile->ready = ready;
@@ -1086,6 +1101,23 @@ rtw88_net_state_work(struct work *work, void *cookie)
 			prepare_error = restart_error;
 			prepare_stage = RTW88_NET_STAGE_RESTART;
 		}
+		/* Giant owns the node; publish only numbers, zero outside RUN. */
+		mutex_enter(net->lock);
+		memset(net->neg.run_chan, 0, sizeof(net->neg.run_chan));
+		net->neg.run_ht = net->neg.run_vht = 0;
+		mutex_exit(net->lock);
+		if (state == IEEE80211_S_RUN && ic->ic_bss != NULL) {
+			mutex_enter(net->lock);
+			net->neg.run_ht = ic->ic_bss->ni_ht20.valid;
+			net->neg.run_vht = ic->ic_bss->ni_ht20.vht.valid;
+			net->neg.run_chan[0] =
+			    ic->ic_bss->ni_ht20.vht.channel.primary;
+			net->neg.run_chan[1] =
+			    ic->ic_bss->ni_ht20.vht.channel.center;
+			net->neg.run_chan[2] =
+			    ic->ic_bss->ni_ht20.vht.channel.width_mhz;
+			mutex_exit(net->lock);
+		}
 		use_ra = state == IEEE80211_S_RUN &&
 		    ic->ic_fixed_rate == IEEE80211_FIXED_RATE_NONE;
 		if (prepare_error == 0 && use_ra) {
@@ -1362,13 +1394,31 @@ rtw88_net_state_work(struct work *work, void *cookie)
 					rtw88_stop(net->core);
 			} else {
 				if (state == IEEE80211_S_ASSOC) {
-					if (rtw88_net_ht20_profile_prepare(net,
-					    &ht20_profile) == 0)
+					int ht20_error;
+
+					memset(&ht20_profile, 0,
+					    sizeof(ht20_profile));
+					ht20_error = rtw88_net_ht20_profile_prepare(net,
+					    &ht20_profile);
+
+					if (ht20_error == 0)
 						rtw88_net_ht20_publish(net, &ht20_profile);
 					else
 						rtw88_net_ht20_publish(net, NULL);
+					mutex_enter(net->lock);
+					if (ht20_error == 0)
+						net->neg.prepare_ok++;
+					else
+						net->neg.prepare_fail++;
+					net->neg.prepare_error = ht20_error;
+					net->neg.prepare_ready = ht20_profile.ready;
+					mutex_exit(net->lock);
 				}
 				error = net->parent_state(ic, state, arg);
+				/* The parent may have queued an HT/VHT offer. */
+				mutex_enter(net->lock);
+				RTW88_NET_NEG_HT20(&net->neg, &ic->ic_ht20_diag);
+				mutex_exit(net->lock);
 				if (error != 0) {
 					diag.stage = RTW88_NET_STAGE_CORE;
 					diag.error = error;
@@ -1789,6 +1839,7 @@ rtw88_net_softintr(void *cookie)
 		net->stats.elem_toosmall = ic->ic_stats.is_rx_elem_toosmall;
 		net->stats.nodealloc = ic->ic_stats.is_rx_nodealloc;
 		net->stats.mgtdiscard = ic->ic_stats.is_rx_mgtdiscard;
+		RTW88_NET_NEG_HT20(&net->neg, &ic->ic_ht20_diag);
 		mutex_exit(net->lock);
 	}
 	/* Let already queued gap frames complete the window before expiring a
@@ -1820,6 +1871,7 @@ rtw88_net_get_stats(struct rtw88_net *net, struct rtw88_net_stats *stats)
 	KASSERT(mutex_owned(net->lock));
 	*stats = net->stats;
 	stats->rx = net->policy.rx;
+	stats->neg = net->neg;
 }
 
 /* Caller holds Giant and the bus lock; copy no node lifetime into the core. */
