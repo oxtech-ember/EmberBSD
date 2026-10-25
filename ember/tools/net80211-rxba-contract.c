@@ -480,7 +480,7 @@ static void test_beacon_contract_purge(void)
   ieee80211_ht20_write(body+12,&profile);
   body[40]=61;body[41]=22;body[42]=36;
   size_t len=sizeof(body);
-  if(kind==1)body[44]=6;
+  if(kind==1)body[43]=5; /* Secondary offset changed. */
   if(kind==2)body[14]^=0x10;
   if(kind==3)len--;
   if(kind==4)unit_profile_generation++;
