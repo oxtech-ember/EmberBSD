@@ -185,7 +185,9 @@ static void unit_negotiate(struct unit_fixture *f)
  f->ic.ic_opt_ie=unit_rsn;f->ic.ic_opt_ie_len=sizeof(unit_rsn);
  f->channel.ieee=36;f->ni.ni_chan=f->ic.ic_curchan=&f->channel;
  f->ic.ic_state=IEEE80211_S_ASSOC;
- CHECK(ieee80211_ht20_prepare(&f->ic,&f->ni,1,&profile)==1);
+ int prepared=ieee80211_ht20_prepare(&f->ic,&f->ni,1,&profile);
+ CHECK(prepared==1);
+ if(prepared!=1)return; /* No profile to write or offer on this path. */
  ieee80211_ht20_write(ies,&profile);ieee80211_ht20_offer(&f->ic,&f->ni,0,&profile,NULL,NULL);
  struct ieee80211_ht20_node offer=f->ni.ni_ht20;
  ies[28]=61;ies[29]=22;ies[30]=36;
