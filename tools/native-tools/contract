@@ -27,3 +27,4 @@ sort sort -
 tee tee -
 tr tr -
 uname uname -
+yacc yacc HOST_YACC

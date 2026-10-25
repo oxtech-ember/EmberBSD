@@ -589,6 +589,9 @@
 /* Define to 1 if you have the 'mkstemps' function. */
 #undef HAVE_MKSTEMPS
 
+/* Define to 1 if mktime_z is declared and links. */
+#undef HAVE_MKTIME_Z
+
 /* Define to 1 if you have the <ndir.h> header file, and it defines 'DIR'. */
 #undef HAVE_NDIR_H
 
@@ -827,6 +830,9 @@
 
 /* Define to 1 if you have the <termios.h> header file. */
 #undef HAVE_TERMIOS_H
+
+/* Define to 1 if timegm is declared and links. */
+#undef HAVE_TIMEGM
 
 /* Define to 1 if the system has the type 'uchar_t'. */
 #undef HAVE_UCHAR_T

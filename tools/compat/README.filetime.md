@@ -23,7 +23,8 @@ filesystems, C analysis and memory checks require separate validation.
 
 The component is an initial OS input only. It does not qualify the complete
 OS compatibility library, the separate Ports library, or an ordinary SDK provider.
-Metadata, listing and parsedate components remain separate future source changes.
+Metadata and listing components remain separate future source changes.
+The [parsedate component](README.parsedate.md) has a separate contract and acceptance.
 
 The native interface follows the existing NetBSD utimens implementation.
 [OpenBSD cp](https://github.com/openbsd/src/blob/master/bin/cp/utils.c) and
