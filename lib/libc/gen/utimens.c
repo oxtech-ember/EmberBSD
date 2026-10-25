@@ -29,6 +29,10 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
+#if HAVE_NBTOOL_CONFIG_H
+#include "nbtool_config.h"
+#endif
+
 #include <sys/cdefs.h>
 #if defined(LIBC_SCCS) && !defined(lint)
 __RCSID("$NetBSD: utimens.c,v 1.3 2023/08/01 07:04:15 mrg Exp $");
@@ -39,14 +43,20 @@ __RCSID("$NetBSD: utimens.c,v 1.3 2023/08/01 07:04:15 mrg Exp $");
 #include <fcntl.h>
 #include <sys/stat.h>
 
+#if !HAVE_NBTOOL_CONFIG_H || HAVE_UTIMENSAT
+#if !HAVE_NBTOOL_CONFIG_H || !HAVE_UTIMENS
 int
 utimens(const char *path, const struct timespec times[2])
 {
 	return utimensat(AT_FDCWD, path, times, 0);
 }
+#endif
 
+#if !HAVE_NBTOOL_CONFIG_H || !HAVE_LUTIMENS
 int
 lutimens(const char *path, const struct timespec times[2])
 {
 	return utimensat(AT_FDCWD, path, times, AT_SYMLINK_NOFOLLOW);
 }
+#endif
+#endif

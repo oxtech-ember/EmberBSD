@@ -6550,6 +6550,24 @@ then :
   printf "%s\n" "#define HAVE_STRTONUM 1" >>confdefs.h
 
 fi
+ac_fn_c_check_func "$LINENO" "utimensat" "ac_cv_func_utimensat"
+if test "x$ac_cv_func_utimensat" = xyes
+then :
+  printf "%s\n" "#define HAVE_UTIMENSAT 1" >>confdefs.h
+
+fi
+ac_fn_c_check_func "$LINENO" "utimens" "ac_cv_func_utimens"
+if test "x$ac_cv_func_utimens" = xyes
+then :
+  printf "%s\n" "#define HAVE_UTIMENS 1" >>confdefs.h
+
+fi
+ac_fn_c_check_func "$LINENO" "lutimens" "ac_cv_func_lutimens"
+if test "x$ac_cv_func_lutimens" = xyes
+then :
+  printf "%s\n" "#define HAVE_LUTIMENS 1" >>confdefs.h
+
+fi
 ac_fn_c_check_func "$LINENO" "user_from_uid" "ac_cv_func_user_from_uid"
 if test "x$ac_cv_func_user_from_uid" = xyes
 then :

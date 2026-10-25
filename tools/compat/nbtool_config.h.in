@@ -562,6 +562,15 @@
 /* Define to 1 if you have the 'lutimes' function. */
 #undef HAVE_LUTIMES
 
+/* Define to 1 if you have the 'lutimens' function. */
+#undef HAVE_LUTIMENS
+
+/* Define to 1 if you have the 'utimens' function. */
+#undef HAVE_UTIMENS
+
+/* Define to 1 if you have the 'utimensat' function. */
+#undef HAVE_UTIMENSAT
+
 /* Define to 1 if you have the <machine/bswap.h> header file. */
 #undef HAVE_MACHINE_BSWAP_H
 

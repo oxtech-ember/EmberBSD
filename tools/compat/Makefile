@@ -31,6 +31,9 @@ SRCS=		atoll.c basename.c cdbr.c cdbw.c dirname.c \
 .include "${.CURDIR}/efun.mk"
 SRCS+=		${COMPAT_EFUN_SRCS}
 
+.include "${.CURDIR}/filetime.mk"
+SRCS+=		${COMPAT_FILETIME_SRCS}
+
 BUILD_OSTYPE!=  uname -s
 
 # Disable use of pre-compiled headers for Clang on Darwin.
