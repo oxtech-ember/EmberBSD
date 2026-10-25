@@ -112,7 +112,8 @@ static size_t sync_sizes[128];
 static bus_dmamap_t dma_maps;
 static pthread_mutex_t maps_lock = PTHREAD_MUTEX_INITIALIZER;
 static bool drained, submitted;
-static bool request_model, delayed_sot;
+static bool request_model, delayed_sot, submit_raises_sot;
+static _Thread_local bool hard_irq;
 static unsigned idle_ready_after, idle_reads, drain_elapsed;
 static bool idle_pending, freeze_ticks;
 static unsigned delay_calls;
@@ -381,6 +382,7 @@ bus_space_write_4(bus_space_tag_t tag, bus_space_handle_t handle,
    if (request_model)
     bank[0x404 / 4] = (bank[0x404 / 4] + 1) & 3;
   }
+		if (submit_raises_sot) bank[0x084 / 4] |= 1;
 		submitted = true;
 		submits++;
   if(startup_model && queue_failure && submits==1)startup_submit_hook();
@@ -511,6 +513,7 @@ bus_dmamap_sync(bus_dma_tag_t tag, bus_dmamap_t map, size_t offset,
 		map->sync_size = size;
 		map->sync_pre = flags;
 	} else {
+		CHECK(!hard_irq);
 		CHECK(map->sync_size == size);
 		CHECK((map->sync_pre == BUS_DMASYNC_PREREAD &&
 		    flags == BUS_DMASYNC_POSTREAD) ||
@@ -534,7 +537,9 @@ deliver_irq(unsigned pending, uint32_t done)
 	registers[0x428 / 4] = done;
 	registers[0x084 / 4] = pending;
 	mutex_exit(irq_lock);
+	hard_irq = true;
 	CHECK(adiaxidmac_intr(irq_cookie) == (pending != 0));
+	hard_irq = false;
 	mutex_enter(irq_lock);
 	CHECK(registers[0x084 / 4] == 0);
 	mutex_exit(irq_lock);
@@ -741,7 +746,7 @@ reset_fixture(uint32_t interface)
 	map_flags = load_flags = -1;
 	irq_mode = IRQ_MATCH;
 	submitted = drained = false;
- request_model = delayed_sot = false;
+ request_model = delayed_sot = submit_raises_sot = hard_irq = false;
 	idle_ready_after = idle_reads = drain_elapsed = 0;
 	idle_pending = freeze_ticks = false;
 	delay_calls = 0;
@@ -1943,6 +1948,199 @@ check_rx_queue(void)
  puts("PASS RX queue, ID wrap, ordered completion and no per-block drain");
 }
 
+/* Break caught: IRQs must retire completed IDs and refill from the owned
+ * software queue while the CPU consumer is paused. Four IDs are not the ring.
+ */
+static void
+check_rx_sixteen_buffers_stalled_consumer(bool exhaust)
+{
+ struct adi_axi_dmac_channel *c;
+ struct adi_axi_dmac_buffer *buffers[16], *next;
+ struct adi_axi_dmac_stream_status status;
+ unsigned char copy[64];
+ reset_fixture(0x2303);
+ CHECK(dmac_interface(&fixture, 0x040563, 0x2303) == 0);
+ c = acquire();
+ for (unsigned i = 0; i < 16; i++)
+  CHECK(adi_axi_dmac_buffer_alloc(c, 64, &buffers[i]) == 0);
+ request_model = true;
+ CHECK(adi_axi_dmac_stream_start(c) == 0);
+ for (unsigned i = 0; i < 16; i++)
+  CHECK(adi_axi_dmac_stream_submit(buffers[i], 64) == 0);
+ CHECK(submits == 4);
+ /* Deliver the first four EOTs without stream_next/status/read calls. */
+ unsigned sync_before = sync_calls;
+ for (unsigned i = 0; i < 4; i++) {
+  memset(buffers[i]->b_data, (int)i + 1, 64);
+  buffers[i]->b_map->dma_drained = true;
+  deliver_irq(2, registers[DMAC_DONE / 4] | __BIT(i));
+ }
+ fprintf(stderr, "stalled consumer after four IRQs: submits=%u completed=%ju ready=%u queued=%u disc=%ju\n",
+     submits, (uintmax_t)c->c_stream_status.completed_blocks,
+     c->c_stream_status.ready, c->c_stream_status.queued,
+     (uintmax_t)c->c_stream_status.discontinuities);
+ CHECK(c->c_stream_status.completed_blocks == 4);
+ CHECK(c->c_stream_status.ready == 4 && c->c_stream_status.queued == 12);
+ CHECK(submits == 8 && c->c_stream_status.discontinuities == 0);
+ CHECK(sync_calls == sync_before); /* No hard-IRQ cache ownership transfer. */
+ /* A status-only poll must not acquire CPU ownership either. */
+ CHECK(adi_axi_dmac_stream_next(c, NULL, &status) == 0);
+ CHECK(sync_calls == sync_before && status.discontinuities == 0);
+ CHECK(adi_axi_dmac_buffer_read(buffers[0], copy, sizeof(copy)) == EBUSY);
+ if (exhaust) {
+  /* No consumer resumes. All sixteen maps complete once; real exhaustion
+   * remains visible. Do not read/publish any payload from this lost epoch. */
+  for (unsigned i = 4; i < 16; i++) {
+   CHECK(buffers[i]->b_stream_state == 1);
+   buffers[i]->b_map->dma_drained = true;
+   deliver_irq(2, registers[DMAC_DONE / 4] | __BIT(i & 3));
+   CHECK(c->c_stream_status.completed_blocks == i + 1);
+   CHECK(c->c_stream_status.ready == i + 1);
+   CHECK(c->c_stream_status.discontinuities == (i == 15 ? 1U : 0U));
+  }
+  CHECK(submits == 16 && c->c_stream_status.queued == 0);
+  CHECK(sync_calls == sync_before);
+ } else {
+  /* Healthy partial stall: consume the four completed maps in order while
+   * other requests remain live. POSTREAD must occur once at each exact take. */
+  for (unsigned i = 0; i < 4; i++) {
+   CHECK(adi_axi_dmac_stream_next(c, &next, &status) == 0);
+   CHECK(next == buffers[i] && status.sequence == i);
+   CHECK(status.discontinuities == 0 && sync_calls == sync_before + i + 1);
+   CHECK(adi_axi_dmac_buffer_read(next, copy, sizeof(copy)) == 0);
+   for (unsigned j = 0; j < sizeof(copy); j++) CHECK(copy[j] == i + 1);
+  }
+  for (unsigned i = 0; i < 4; i++)
+   CHECK(adi_axi_dmac_stream_submit(buffers[i], 64) == 0);
+  /* Resume sustained consume/resubmit through another map and ID wrap. */
+  for (unsigned seq = 4; seq < 20; seq++) {
+   struct adi_axi_dmac_buffer *b = buffers[seq & 15];
+   CHECK(b->b_stream_state == 1);
+   memset(b->b_data, (int)seq + 1, 64);
+   b->b_map->dma_drained = true;
+   deliver_irq(2, registers[DMAC_DONE / 4] | __BIT(seq & 3));
+   CHECK(c->c_stream_status.discontinuities == 0);
+   CHECK(adi_axi_dmac_stream_next(c, &next, &status) == 0);
+   CHECK(next == b && status.sequence == seq && status.discontinuities == 0);
+   CHECK(adi_axi_dmac_buffer_read(next, copy, sizeof(copy)) == 0);
+   for (unsigned j = 0; j < sizeof(copy); j++) CHECK(copy[j] == seq + 1);
+   CHECK(adi_axi_dmac_stream_submit(next, 64) == 0);
+  }
+ }
+
+ CHECK(adi_axi_dmac_stop(c, 100) == 0);
+ for (unsigned i = 0; i < 16; i++)
+  CHECK(adi_axi_dmac_buffer_free(buffers[i]) == 0);
+ CHECK(adi_axi_dmac_release(c) == 0);
+ puts(exhaust ? "PASS sixteen-buffer honest exhaustion without payload publication" :
+     "PASS sixteen-buffer IRQ retirement, healthy ordered take and deferred POSTREAD");
+}
+
+/* A new SOT generated by refill occurs before the old handler would clear
+ * captured SOT. HDL set dominance does not protect this earlier event. */
+static void
+check_rx_irq_refill_keeps_new_sot(void)
+{
+ struct adi_axi_dmac_channel *c;
+ struct adi_axi_dmac_buffer *buffers[8];
+ reset_fixture(0x2303);
+ CHECK(dmac_interface(&fixture, 0x040563, 0x2303) == 0);
+ c = acquire(); request_model = true;
+ for (unsigned i=0;i<8;i++) CHECK(adi_axi_dmac_buffer_alloc(c,64,&buffers[i])==0);
+ CHECK(adi_axi_dmac_stream_start(c)==0);
+ for (unsigned i=0;i<8;i++) CHECK(adi_axi_dmac_stream_submit(buffers[i],64)==0);
+ buffers[0]->b_map->dma_drained=true;
+ registers[DMAC_DONE/4]=1;registers[DMAC_IRQ_PENDING/4]=1;
+ submit_raises_sot=true;hard_irq=true;
+ CHECK(adiaxidmac_intr(&fixture)==1);
+ hard_irq=false;submit_raises_sot=false;
+ CHECK(submits==5 && registers[DMAC_IRQ_PENDING/4]==1);
+ CHECK(adiaxidmac_intr(&fixture)==1);
+ CHECK(registers[DMAC_IRQ_PENDING/4]==0);
+ CHECK(adi_axi_dmac_stop(c,100)==0);
+ for(unsigned i=0;i<8;i++)CHECK(adi_axi_dmac_buffer_free(buffers[i])==0);
+ CHECK(adi_axi_dmac_release(c)==0);
+ puts("PASS captured IRQ ACK precedes refill; newly raised same-kind SOT remains pending");
+}
+
+static void
+check_rx_prime_rejects_retired_first(void)
+{
+ struct adi_axi_dmac_channel *c;
+ struct adi_axi_dmac_buffer *buffers[4];
+ struct adi_axi_dmac_guard guard;
+ reset_fixture(0x2303);
+ CHECK(dmac_interface(&fixture,0x040563,0x2303)==0);
+ c=acquire();request_model=true;
+ guard=(struct adi_axi_dmac_guard){.g_sc=&fixture,.g_channel=c,.g_prepared=true};
+ for(unsigned i=0;i<4;i++)CHECK(adi_axi_dmac_buffer_alloc(c,64,&buffers[i])==0);
+ CHECK(adi_axi_dmac_stream_start(c)==0);
+ for(unsigned i=0;i<4;i++)CHECK(adi_axi_dmac_stream_submit(buffers[i],64)==0);
+ buffers[0]->b_map->dma_drained=true;deliver_irq(2,1);
+ CHECK(c->c_stream_status.discontinuities==0); /* Other requests still live. */
+ unsigned waits=delay_calls;
+ CHECK(adi_axi_dmac_guard_stream_prime(&guard,10)==EOVERFLOW);
+ CHECK(delay_calls==waits);
+ CHECK(adi_axi_dmac_stop(c,100)==0);
+ for(unsigned i=0;i<4;i++)CHECK(adi_axi_dmac_buffer_free(buffers[i])==0);
+ CHECK(adi_axi_dmac_release(c)==0);
+ puts("PASS prime rejects completed first request promptly while other IDs remain live");
+}
+
+static void
+check_rx_retired_stop_ownership(bool fail_drain)
+{
+ struct adi_axi_dmac_channel *c;
+ struct adi_axi_dmac_buffer *buffers[4];
+ unsigned char copy[64];
+ reset_fixture(0x2303);
+ CHECK(dmac_interface(&fixture,0x040563,0x2303)==0);
+ c=acquire();request_model=true;
+ for(unsigned i=0;i<4;i++)CHECK(adi_axi_dmac_buffer_alloc(c,64,&buffers[i])==0);
+ CHECK(adi_axi_dmac_stream_start(c)==0);
+ for(unsigned i=0;i<4;i++)CHECK(adi_axi_dmac_stream_submit(buffers[i],64)==0);
+ unsigned before=sync_calls;
+ buffers[0]->b_map->dma_drained=true;deliver_irq(2,1);
+ CHECK(buffers[0]->b_stream_state==2 && buffers[0]->b_inflight==64);
+ CHECK(sync_calls==before && adi_axi_dmac_buffer_read(buffers[0],copy,64)==EBUSY);
+ if(fail_drain) {
+  drain_error=ETIMEDOUT;
+  CHECK(adi_axi_dmac_stop(c,10)==ETIMEDOUT);
+  CHECK(sync_calls==before && buffers[0]->b_inflight==64);
+  for(unsigned i=0;i<4;i++)CHECK(adi_axi_dmac_buffer_free(buffers[i])==EBUSY);
+  /* Model the coordinated recovery used by the existing retention fixture. */
+  fixture.sc_quarantined=false;drain_error=0;
+ }
+ CHECK(adi_axi_dmac_stop(c,100)==0);
+ CHECK(sync_calls==before+4);
+ for(unsigned i=0;i<4;i++)CHECK(adi_axi_dmac_buffer_free(buffers[i])==0);
+ CHECK(adi_axi_dmac_release(c)==0);
+ puts(fail_drain ? "PASS failed drain retains unread IRQ-ready PRE ownership" :
+     "PASS positive stop POSTREADs unread IRQ-ready maps exactly once");
+}
+
+static void
+check_rx_coalesced_exhaustion_is_not_hidden(void)
+{
+ struct adi_axi_dmac_channel *c;
+ struct adi_axi_dmac_buffer *buffers[16];
+ reset_fixture(0x2303);
+ CHECK(dmac_interface(&fixture,0x040563,0x2303)==0);
+ c=acquire();request_model=true;
+ for(unsigned i=0;i<16;i++)CHECK(adi_axi_dmac_buffer_alloc(c,64,&buffers[i])==0);
+ CHECK(adi_axi_dmac_stream_start(c)==0);
+ for(unsigned i=0;i<16;i++)CHECK(adi_axi_dmac_stream_submit(buffers[i],64)==0);
+ for(unsigned i=0;i<4;i++)buffers[i]->b_map->dma_drained=true;
+ /* All hardware requests ended before service, despite software capacity. */
+ deliver_irq(2,15);
+ CHECK(c->c_stream_status.completed_blocks==4 && c->c_stream_status.discontinuities==1);
+ CHECK(c->c_stream_status.queued==12); /* Refill cannot erase the preceding gap. */
+ CHECK(adi_axi_dmac_stop(c,100)==0);
+ for(unsigned i=0;i<16;i++)CHECK(adi_axi_dmac_buffer_free(buffers[i])==0);
+ CHECK(adi_axi_dmac_release(c)==0);
+ puts("PASS coalesced all-hardware-complete gap remains loss with software capacity");
+}
+
 static void
 check_stream_snapshot(void)
 {
@@ -1987,6 +2185,13 @@ int
 main(void)
 {
 	(void)alarm(30);
+	check_rx_sixteen_buffers_stalled_consumer(false);
+	check_rx_sixteen_buffers_stalled_consumer(true);
+	check_rx_irq_refill_keeps_new_sot();
+	check_rx_prime_rejects_retired_first();
+	check_rx_retired_stop_ownership(false);
+	check_rx_retired_stop_ownership(true);
+	check_rx_coalesced_exhaustion_is_not_hidden();
 	(void)hz;
 	(void)adiaxidmac_shutdown_final;
 	for(unsigned fault=0;fault<13;fault++)check_producer_last_start(fault);

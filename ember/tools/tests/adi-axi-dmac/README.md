@@ -83,3 +83,12 @@ masks, queue errors and partial ADC enable failures must fail closed.
 Failed priming or enable requires a positive RX stop before buffer release.
 Failed drain or channel disable retains every submitted mapping.
 These models do not qualify physical FIFO timing or sustained reception.
+
+The sixteen-buffer cases pause the task consumer across four EOT interrupts.
+IRQ retirement releases hardware IDs and replenishes distinct pending maps.
+It retains PREREAD ownership; only the exact task take or positive stop performs POSTREAD.
+Status-only polls and hard interrupts must not acquire CPU ownership.
+Healthy resumed consumption checks sequence and payload order separately from exhaustion.
+Complete hardware exhaustion still reports loss, even when software maps remain pending.
+Failed drain retains unread ready maps. Refill must not clear a newly raised SOT.
+A completed first request must make startup priming fail before producer enable.

@@ -1097,9 +1097,18 @@ dmac_stream_pump_locked(struct adi_axi_dmac_channel *c)
  LIST_FOREACH(b, &c->c_buffers, b_next) {
   if (b->b_stream_state != 1)
    continue;
-  if (done & __BIT(b->b_stream_id))
+  if (done & __BIT(b->b_stream_id)) {
+   /* Retire only metadata in interrupt context. Keep PREREAD ownership
+    * until the exact task consumer takes this map, or a positive stop.
+    * Its hardware ID can now serve another independently owned map.
+    */
+   b->b_stream_state = 2;
+   c->c_stream_status.queued--;
+   c->c_stream_status.ready++;
+   c->c_stream_status.completed_blocks++;
+   c->c_stream_status.completed_bytes += b->b_inflight;
    completed = true;
-  else
+  } else
    live = true;
  }
  if (completed && !live && !c->c_stream_starved) {
@@ -1191,11 +1200,15 @@ adi_axi_dmac_stream_submit(struct adi_axi_dmac_buffer *b, size_t size)
   error = EINVAL;
   goto out;
  }
+ mutex_enter(&sc->sc_irq_lock);
  if (b->b_inflight || b->b_stream_state == 2 ||
      c->c_stream_status.queued >= DMAC_STREAM_MAX_QUEUED) {
+  mutex_exit(&sc->sc_irq_lock);
   error = EBUSY;
   goto out;
  }
+ mutex_exit(&sc->sc_irq_lock);
+ /* sc_lock excludes another submit; IRQ retirement can only reduce queued. */
  bus_dmamap_sync(sc->sc_dmat, b->b_map, 0, size, BUS_DMASYNC_PREREAD);
  b->b_valid = 0;
  b->b_inflight = size;
@@ -1217,8 +1230,6 @@ adi_axi_dmac_stream_next(struct adi_axi_dmac_channel *c,
 {
  struct adi_axi_dmac_softc *sc = c->c_sc;
  struct adi_axi_dmac_buffer *b, *first = NULL;
- uint32_t done;
- unsigned live = 0;
  int error = EAGAIN;
  if (status == NULL)
   return EINVAL;
@@ -1231,34 +1242,17 @@ adi_axi_dmac_stream_next(struct adi_axi_dmac_channel *c,
   error = EIO;
   goto out;
  }
- dmac_stream_accept_locked(c);
- done = dmac_read(sc, DMAC_DONE);
- LIST_FOREACH(b, &c->c_buffers, b_next) {
-  if (b->b_stream_state == 1 && (done & __BIT(b->b_stream_id))) {
-   bus_dmamap_sync(sc->sc_dmat, b->b_map, 0, b->b_inflight,
-       BUS_DMASYNC_POSTREAD);
-   b->b_valid = b->b_inflight;
-   b->b_inflight = 0;
-   b->b_stream_state = 2;
-   c->c_stream_status.queued--;
-   c->c_stream_status.ready++;
-   c->c_stream_status.completed_blocks++;
-   c->c_stream_status.completed_bytes += b->b_valid;
-  }
-  if (b->b_stream_state == 1 || b->b_stream_state == 5)
-   live++;
+ dmac_stream_pump_locked(c);
+ LIST_FOREACH(b, &c->c_buffers, b_next)
   if (b->b_stream_sequence == c->c_take_sequence && b->b_stream_state == 2)
    first = b;
- }
- if (live == 0 && c->c_stream_status.completed_blocks != 0 &&
-     !c->c_stream_starved) {
-  c->c_stream_starved = true;
-  c->c_stream_status.discontinuities++;
- }
- dmac_stream_pump_locked(c);
  if (first != NULL && result == NULL)
   error = 0;
  if (first != NULL && result != NULL) {
+  bus_dmamap_sync(sc->sc_dmat, first->b_map, 0, first->b_inflight,
+      BUS_DMASYNC_POSTREAD);
+  first->b_valid = first->b_inflight;
+  first->b_inflight = 0;
   first->b_stream_state = 3;
   c->c_stream_status.ready--;
   c->c_stream_status.sequence = c->c_take_sequence++;
@@ -1303,7 +1297,8 @@ adi_axi_dmac_guard_stream_prime(const struct adi_axi_dmac_guard *g,
 
 			dmac_stream_pump_locked(c);
 			done = dmac_read(sc, DMAC_DONE);
-			if (c->c_stream_status.discontinuities != 0)
+			if (c->c_stream_status.discontinuities != 0 ||
+			    c->c_stream_status.completed_blocks != 0)
 				error = EOVERFLOW;
 			else {
 				const struct adi_axi_dmac_buffer *b;
@@ -1429,11 +1424,12 @@ adiaxidmac_intr(void *cookie)
 	mutex_enter(&sc->sc_irq_lock);
 	pending = dmac_read(sc, DMAC_IRQ_PENDING) & DMAC_IRQ_ALL;
 	if (pending != 0) {
+		/* Refill can raise another SOT before a later W1C write. */
+		dmac_write(sc, DMAC_IRQ_PENDING, pending);
 		if (sc->sc_channel != NULL && sc->sc_channel->c_streaming)
 			dmac_stream_pump_locked(sc->sc_channel);
 		if (sc->sc_channel != NULL && sc->sc_channel->c_stream_notify != NULL)
 			sc->sc_channel->c_stream_notify(sc->sc_channel->c_stream_cookie);
-		dmac_write(sc, DMAC_IRQ_PENDING, pending);
 		if (sc->sc_pending && (pending & DMAC_IRQ_EOT) &&
 		    (dmac_read(sc, DMAC_DONE) & __BIT(sc->sc_id))) {
 			sc->sc_done = true;
