@@ -781,7 +781,18 @@ test_ra_dfs64(void)
 			continue;
 		CHECK(rtw88_channel(&sc, ch) == 0);
 		ra_dfs_denied(&sc);
+		/* Only the current primary, never a neighbour, can open. */
+		CHECK(rtw88_dfs_open(&sc, ch == 144 ? 140 : ch + 4,
+		    sc.sc_generation) == EOPNOTSUPP);
+		CHECK(!sc.sc_dfs.valid);
+#ifdef RTW88_DFS64
+		CHECK(rtw88_dfs_open(&sc, ch, sc.sc_generation + 1) == ESTALE);
+		CHECK(rtw88_dfs_open(&sc, ch, sc.sc_generation) == 0);
+		CHECK(sc.sc_dfs.valid && sc.sc_dfs.channel == ch);
+		rtw88_dfs_close(&sc);
+#else
 		CHECK(rtw88_dfs_open(&sc, ch, sc.sc_generation) == EOPNOTSUPP);
+#endif
 		ra_dfs_denied(&sc);
 	}
 	/* Non-DFS channels keep transmitting; then no retune into DFS while
@@ -897,9 +908,10 @@ ra_dfs_parent(struct ieee80211com *ic, enum ieee80211_state state, int arg)
 }
 
 #define RA_DFS_BEACON_LEN 44
-/* A complete ESS beacon: interval 100 TU, SSID, one rate, DS channel 64. */
+/* A complete ESS beacon: interval 100 TU, SSID, one rate, DS channel ch. */
 static void
-ra_dfs_beacon(uint8_t frame[RA_DFS_BEACON_LEN], const struct ieee80211_node *ni)
+ra_dfs_beacon(uint8_t frame[RA_DFS_BEACON_LEN], const struct ieee80211_node *ni,
+    unsigned ch)
 {
 	memset(frame, 0, RA_DFS_BEACON_LEN);
 	frame[0] = 0x80;
@@ -909,16 +921,16 @@ ra_dfs_beacon(uint8_t frame[RA_DFS_BEACON_LEN], const struct ieee80211_node *ni)
 	frame[32] = 100;
 	frame[34] = 0x01;
 	frame[38] = 1; frame[39] = 1; frame[40] = 12;
-	frame[41] = 3; frame[42] = 1; frame[43] = 64;
+	frame[41] = 3; frame[42] = 1; frame[43] = (uint8_t)ch;
 }
 
 static void
-ra_dfs_peer(struct state_fixture *s)
+ra_dfs_peer(struct state_fixture *s, unsigned ch)
 {
 	static const uint8_t master[6] = { 2, 0, 0, 0, 0, 9 };
 	static const uint8_t bssid[6] = { 2, 0, 0, 0, 0, 8 };
 
-	state_legacy_peer(&s->net, &s->ni, 64);
+	state_legacy_peer(&s->net, &s->ni, ch);
 	s->ni.ni_associd = 0xc001;
 	/* Distinct transmitter and BSSID so each address check is visible. */
 	memcpy(s->ni.ni_macaddr, master, 6);
@@ -945,14 +957,14 @@ ra_dfs_observe(struct state_fixture *s, const uint8_t *frame, size_t len,
 }
 
 /*
- * Channel 64 slave through the actual newstate and state worker: the
+ * DFS slave on primary ch through the actual newstate and state worker: the
  * worker's channel program leaves TX closed, so the one AUTH/ASSOC frame
  * net80211 sends waits (no capacity) until the selected master's current
  * beacon opens TX. A lost lease or CSA/Quiet withdraws through
  * rtw88_tx_quiet() before a clean restart.
  */
 static void
-test_ra_dfs64_net(void)
+test_ra_dfs64_net(unsigned ch)
 {
 	uint8_t auth[24] = { 0xb0 }, frame[RA_DFS_BEACON_LEN];
 	uint8_t bad[RA_DFS_BEACON_LEN], csa[RA_DFS_BEACON_LEN + 5];
@@ -960,22 +972,22 @@ test_ra_dfs64_net(void)
 	uint32_t gen, timeout = 100, tick = 5000;
 	uint64_t epoch;
 
-	if (!state_fixture_start(&s, 64, 9))
+	if (!state_fixture_start(&s, ch, 9))
 		return;
-	ra_dfs_peer(&s);
+	ra_dfs_peer(&s, ch);
 	/* One beacon completed before the request is still in the DMA ring. */
 	f.rx_hw_idx = 1;
 	CHECK(rtw88_net_newstate(&s.net.ic, IEEE80211_S_AUTH, 0) == 0);
 	rtw88_net_state_work(&s.net.state_work, &s.net);
 	CHECK(ra_dfs_parent_calls == 1 && ra_dfs_parent_tx == EACCES);
-	CHECK(s.sc.sc_channel == 64 && !s.sc.sc_dfs.valid);
+	CHECK(s.sc.sc_channel == ch && !s.sc.sc_dfs.valid);
 	CHECK(s.net.dfs_frontier_valid && s.net.dfs_frontier == 1 &&
 	    s.net.dfs_frontier_generation == s.sc.sc_generation);
 	/* No capacity: the queued AUTH stays queued for the first beacon. */
 	CHECK(rtw88_tx_available(&s.sc, RTW88_TXQ_MGMT) == 0);
 	gen = s.sc.sc_generation;
 	epoch = s.net.policy.epoch;
-	ra_dfs_beacon(frame, &s.ni);
+	ra_dfs_beacon(frame, &s.ni, ch);
 	/* Foreign, malformed, stale or quiet observations open nothing. */
 	for (unsigned v = 0; v < 13; v++) {
 		size_t len = sizeof(bad);
@@ -989,7 +1001,7 @@ test_ra_dfs64_net(void)
 		case 5: bad[0] = 0x50; break;		/* Probe response. */
 		case 6: len = 35; break;
 		case 7: bad[34] = 0x02; break;		/* IBSS, not ESS. */
-		case 8: bad[43] = 60; break;		/* DS names another channel. */
+		case 8: bad[43] = (uint8_t)(ch == 52 ? 56 : ch - 4); break;		/* DS names another channel. */
 		case 9: bad[38] = 37; break;		/* CSA in place of rates. */
 		case 10: bad[32] = 0; break;		/* Interval 0 TU. */
 		case 11: len = 38; break;		/* No rates. */
@@ -1007,7 +1019,7 @@ test_ra_dfs64_net(void)
 	}
 	/* A complete beacon that announces a channel switch opens nothing. */
 	memcpy(csa, frame, sizeof(frame));
-	csa[44] = 37; csa[45] = 3; csa[46] = 1; csa[47] = 100; csa[48] = 1;
+	csa[44] = 37; csa[45] = 3; csa[46] = 1; csa[47] = (uint8_t)(ch == 100 ? 104 : 100); csa[48] = 1;
 	rtw88_net_dfs_beacon(&s.net, csa, sizeof(csa), s.net.dfs_frontier + 1,
 	    gen, tick, epoch, tick, timeout);
 	CHECK(!s.sc.sc_dfs.valid);
@@ -1050,7 +1062,7 @@ test_ra_dfs64_net(void)
 	ra_dfs_observe(&s, frame, sizeof(frame), tick + 50);
 	CHECK(s.net.dfs_tick == tick + 50);
 	CHECK(rtw88_net_dfs_expire(&s.net, tick + timeout, timeout) == 0);
-	/* Every new request closes TX; the worker reprograms 64. */
+	/* Every new request closes TX; the worker reprograms ch. */
 	CHECK(rtw88_net_newstate(&s.net.ic, IEEE80211_S_ASSOC, 0) == 0);
 	CHECK(!s.sc.sc_dfs.valid);
 	rtw88_net_state_work(&s.net.state_work, &s.net);
@@ -1690,9 +1702,18 @@ test_ra_vht_dfs_closed(void)
 		cfg.channel = v[i].primary;
 		CHECK(rtw88_ra_configure(&sc, &cfg) == 0 && sc.sc_ra.active);
 		ra_wide_denied(&sc, 9, EACCES);
+		/* Another DFS primary never opens the current block. */
+		CHECK(rtw88_dfs_open(&sc, v[i].primary == 64 ? 60 : 64,
+		    sc.sc_generation) == EOPNOTSUPP);
+#ifdef RTW88_DFS64
+		CHECK(rtw88_dfs_open(&sc, v[i].primary, sc.sc_generation) == 0);
+		CHECK(rtw88_tx_auto(&sc, RTW88_TXQ_BE, ra_frame,
+		    sizeof(ra_frame), 9, 0) == 0);
+		rtw88_dfs_close(&sc);
+#else
 		CHECK(rtw88_dfs_open(&sc, v[i].primary, sc.sc_generation) ==
 		    EOPNOTSUPP);
-		CHECK(rtw88_dfs_open(&sc, 64, sc.sc_generation) == EOPNOTSUPP);
+#endif
 		ra_wide_denied(&sc, 9, EACCES);
 		CHECK(rtw88_stop(&sc) == 0);
 		CHECK(rtw88_core_detach(&sc) == 0);
@@ -2220,6 +2241,41 @@ test_ra_vht80_disabled(void)
 }
 #endif
 
+/*
+ * The attach channel list: UNII-2 and UNII-2C appear, passive only, only
+ * as DFS slave channels of the experiment build.
+ */
+static void
+test_ra_dfs_channel_list(void)
+{
+	static struct ieee80211com ic;
+	unsigned listed = 0;
+
+	memset(&ic, 0, sizeof(ic));
+	state_driver_channels(&ic);
+	for (unsigned ch = 36; ch <= 165; ch++) {
+		int want = ch % 4 == 0 ? ch <= 144 && (ch < 68 || ch >= 100) :
+		    ch >= 149 && (ch - 149) % 4 == 0;
+
+#ifndef RTW88_DFS64
+		if ((ch >= 52 && ch <= 64) || (ch >= 100 && ch <= 144))
+			want = 0;
+#endif
+		CHECK((ic.ic_channels[ch].ic_flags != 0) == want);
+		if (!want)
+			continue;
+		listed++;
+		CHECK(ic.ic_channels[ch].ic_flags ==
+		    (IEEE80211_CHAN_A | IEEE80211_CHAN_PASSIVE));
+		CHECK(ic.ic_channels[ch].ic_freq == 5000 + 5 * ch);
+	}
+#ifdef RTW88_DFS64
+	CHECK(listed == 4 + 4 + 12 + 5);
+#else
+	CHECK(listed == 4 + 5);
+#endif
+}
+
 #ifndef RTW88_RA_MAIN
 #define RTW88_RA_MAIN main
 #endif
@@ -2241,8 +2297,13 @@ RTW88_RA_MAIN(void)
 	test_ra_start_tuple();
 	test_ra_ht20_run();
 	test_ra_dfs64();
+	test_ra_dfs_channel_list();
 #ifdef RTW88_DFS64
-	test_ra_dfs64_net();
+	/* Both UNII-2 bands, each edge and the weather-radar block. */
+	for (unsigned i = 0; i < 6; i++) {
+		static const unsigned dfs_ch[] = { 52, 60, 64, 100, 124, 144 };
+		test_ra_dfs64_net(dfs_ch[i]);
+	}
 #endif
 #ifdef RTW88_VHT80
 	test_ra_vht80_formats();

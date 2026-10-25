@@ -328,10 +328,10 @@ int rtw88_tuple_check(const struct rtw88_softc *,
 #endif
 /*
  * Every DFS channel denies host TX before descriptor and DMA unless a
- * permit names this channel and core generation. Only primary 64, at an
- * admitted 20, 40 or 80 MHz tuple with RTW88_DFS64, can be opened. The
- * caller holds the bus interrupt lock and must already hold its master's
- * current beacon.
+ * permit names this channel and core generation. Only the current DFS
+ * primary, at an admitted 20, 40 or 80 MHz tuple with RTW88_DFS64, can be
+ * opened. The caller holds the bus interrupt lock and must already hold
+ * its master's current beacon.
  * Stop (and so every start) and every channel change withdraw it, and a
  * retune into a DFS channel is refused while host frames are posted.
  * Closing stops only new host frames: frames already posted need the
