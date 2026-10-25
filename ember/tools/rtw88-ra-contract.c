@@ -1881,7 +1881,7 @@ test_ra_vht_run_tuples(void)
 			    ns.run_cancels == 0 && ns.run_fails == 0 &&
 			    ns.run_published == 1);
 			CHECK(ns.run_requests == 1 && ns.run_to_init == 0 &&
-			    ns.run_queued == 1);
+			    ns.run_queued == 1 && ns.run_replaced == 0);
 			CHECK(ns.run_ht == 1 && ns.run_vht == 1 &&
 			    ns.run_chan[0] == v[i].primary &&
 			    ns.run_chan[1] == v[i].center &&
@@ -1923,6 +1923,21 @@ test_ra_vht_run_tuples(void)
 		CHECK(desc[6] == 10 && (desc[16] & 0x7f) == 0x33);
 		CHECK(((desc[20] >> 5) & 3) == (v[i].width_mhz == 80 ? 2 : 1));
 		state_fixture_finish(&s);
+	}
+	/* A queued RUN replaced before the worker takes it is counted. */
+	{
+		struct state_fixture s;
+
+		if (state_fixture_start(&s, 36, 9)) {
+			ra_vht_peer(&s);
+			CHECK(rtw88_net_newstate(&s.net.ic, IEEE80211_S_RUN, 0) == 0);
+			CHECK(rtw88_net_newstate(&s.net.ic, IEEE80211_S_SCAN, 0) == 0);
+			CHECK(s.net.neg.run_queued == 1 && s.net.neg.run_replaced == 1 &&
+			    s.net.neg.run_replaced_by == IEEE80211_S_SCAN);
+			rtw88_net_state_work(&s.net.state_work, &s.net);
+			CHECK(s.net.neg.run_passes == 0);
+			state_fixture_finish(&s);
+		}
 	}
 	/* A stale committed node turns RUN into INIT; the first clause shows. */
 	{

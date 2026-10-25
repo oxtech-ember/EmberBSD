@@ -304,7 +304,7 @@ rtwce_stats(char *buf, size_t len)
 		    " vhtadmit %u/%u/%u.%u.%u/%d"
 		    " htresp %u/%u/%u/%u/%u htreset %u/%u"
 		    " assocfail %u/%u/%u/%u/%u"
-		    " htstate %u/%u runreq %u/%u/%u"
+		    " htstate %u/%u runreq %u/%u/%u/%u/%u"
 		    " htrun %u/%u/%u.%u.%u runpass %u/%u/%d/%u/%u/%d/%u/%u"
 		    " raphy %u/%d/%d"
 		    " tuple %u.%u.%u/%u",
@@ -319,7 +319,8 @@ rtwce_stats(char *buf, size_t len)
 		    ns.neg.ht20_norate, ns.neg.ht20_failures,
 		    ns.neg.ht20_failure_reason, ns.neg.ht20_state_fail,
 		    ns.neg.ht20_state_reason, ns.neg.run_requests,
-		    ns.neg.run_to_init, ns.neg.run_queued, ns.neg.run_ht,
+		    ns.neg.run_to_init, ns.neg.run_queued, ns.neg.run_replaced,
+		    ns.neg.run_replaced_by, ns.neg.run_ht,
 		    ns.neg.run_vht, ns.neg.run_chan[0], ns.neg.run_chan[1],
 		    ns.neg.run_chan[2], ns.neg.run_passes,
 		    ns.neg.run_restart_fail, (int)ns.neg.run_restart_error,

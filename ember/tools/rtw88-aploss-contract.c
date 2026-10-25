@@ -74,6 +74,7 @@ struct rtw88_net {
     struct rtw88_softc *core;
     struct rtw88_net_policy policy;
     struct rtw88_net_neg neg;
+    int run_pending;
     struct rtw88_channel_tuple pending_channel;
     int *lock;
     int scan, dev, work_pending, reset_required, state_arg;

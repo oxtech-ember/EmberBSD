@@ -90,6 +90,7 @@ struct rtw88_net {
 	uint64_t rx_dropped;
 	struct rtw88_net_stats stats;
 	struct rtw88_net_neg neg;	/* Negotiation diagnostics, net->lock. */
+	int run_pending;		/* A queued RUN awaits its worker pass. */
 	unsigned tx_timer;
 	unsigned tx_completed;
 #ifdef RTW88_DFS64
@@ -1048,6 +1049,7 @@ rtw88_net_state_work(struct work *work, void *cookie)
 		}
 		epoch = net->policy.epoch;
 		state = net->requested;
+		net->run_pending = 0;
 		channel = net->channel;
 		channel_tuple = net->pending_channel;
 		media = net->configured_media;
@@ -1580,6 +1582,11 @@ lock_request:
 		if (state != IEEE80211_S_RUN)
 			net->neg.run_to_init++;
 	}
+	if (net->run_pending) {
+		net->neg.run_replaced++;
+		net->neg.run_replaced_by = (uint8_t)state;
+	}
+	net->run_pending = state == IEEE80211_S_RUN;
 	if (state == IEEE80211_S_RUN)
 		net->neg.run_queued++;
 	net->requested = state;

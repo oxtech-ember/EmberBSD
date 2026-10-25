@@ -44,6 +44,7 @@ struct rtw88_net {
  unsigned rx_head,rx_tail,tx_completed,tx_timer;uint64_t rx_dropped;
  struct rtw88_net_stats stats;
  struct rtw88_net_neg neg;
+ int run_pending;
  callout_t scan;
  struct { struct ifnet ec_if; } ec;
  struct ieee80211com ic;

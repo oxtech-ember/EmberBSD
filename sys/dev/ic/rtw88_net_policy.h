@@ -57,6 +57,9 @@ struct rtw88_net_neg {
 	uint32_t run_published;
 	/* newstate: RUN asked, turned into INIT, and queued for the worker. */
 	uint32_t run_requests, run_to_init, run_queued;
+	/* A queued RUN replaced before its pass, and the replacing state. */
+	uint32_t run_replaced;
+	uint8_t run_replaced_by;
 	int32_t run_restart_error, run_error;
 	uint8_t run_stage;
 };
