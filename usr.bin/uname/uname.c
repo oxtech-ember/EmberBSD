@@ -31,6 +31,44 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+/*
+ * Darwin processor families follow Apple shell_cmds uname/uname.c,
+ * Git blob 1b0e4fa01e9b013117c70cb8254cb9025980c687 (AI-assisted adaptation).
+ * https://github.com/apple-oss-distributions/shell_cmds/tree/main/uname
+ *
+ * Copyright (c) 2002 Juli Mallett.
+ * Copyright (c) 1993
+ *      The Regents of the University of California.  All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ * 3. All advertising materials mentioning features or use of this software
+ *    must display the following acknowledgement:
+ *      This product includes software developed by the University of
+ *      California, Berkeley and its contributors.
+ * 4. Neither the name of the University nor the names of its contributors
+ *    may be used to endorse or promote products derived from this software
+ *    without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE REGENTS AND CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+ * OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+ * SUCH DAMAGE.
+ */
+
 #include <sys/cdefs.h>
 #ifndef lint
 __RCSID("$NetBSD: uname.c,v 1.11 2011/09/06 18:35:13 joerg Exp $");
@@ -63,7 +101,11 @@ int
 main(int argc, char **argv)
 {
 	struct utsname u;
+#if defined(__APPLE__) && defined(__MACH__)
+	const char *machine_arch = NULL;
+#else
 	char machine_arch[sizeof u.machine];
+#endif
 	int c;
 	int space = 0;
 	int print_mask = 0;
@@ -113,12 +155,25 @@ main(int argc, char **argv)
 		/* NOTREACHED */
 	}
 	if (print_mask & PRINT_MACHINE_ARCH) {
+#if defined(__APPLE__) && defined(__MACH__)
+#if defined(__ppc__) || defined(__ppc64__) || defined(__powerpc__) || \
+    defined(__powerpc64__)
+		machine_arch = "powerpc";
+#elif defined(__i386__) || defined(__x86_64__)
+		machine_arch = "i386";
+#elif defined(__arm__) || defined(__arm64__) || defined(__aarch64__)
+		machine_arch = "arm";
+#else
+		errx(EXIT_FAILURE, "unsupported Darwin processor architecture");
+#endif
+#else
 		int mib[2] = { CTL_HW, HW_MACHINE_ARCH };
 		size_t len = sizeof (machine_arch);
 
 		if (sysctl(mib, sizeof (mib) / sizeof (mib[0]), machine_arch,
 		    &len, NULL, 0) < 0)
 			err(EXIT_FAILURE, "sysctl");
+#endif
 	}
 
 	if (print_mask & PRINT_SYSNAME) {
