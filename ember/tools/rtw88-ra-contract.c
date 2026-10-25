@@ -1943,6 +1943,42 @@ test_ra_vht_run_tuples(void)
 		desc = s.sc.sc_txq[RTW88_TXQ_BE].buf[slot].vaddr;
 		CHECK(desc[6] == 10 && (desc[16] & 0x7f) == 0x33);
 		CHECK(((desc[20] >> 5) & 3) == (v[i].width_mhz == 80 ? 2 : 1));
+		/* No originator session: no AGG_EN, and the TID is noted. */
+		CHECK((desc[9] & 0x10) == 0 && s.net.txba_wanted == 1);
+		s.net.txba_wanted = 0;
+		/* An established session aggregates within the peer limits:
+		 * window / 2, the VHT length exponent, MAX_AGG_NUM 31. */
+		s.ni.ni_ht20.peer_htcap[2] = 0x17; /* Spacing 5, HT exponent 3. */
+		s.ni.ni_rxba.tx_attempt = s.ni.ni_ht20.attempt;
+		s.ni.ni_rxba.tx[0].state = IEEE80211_TXBA_ACTIVE;
+		for (unsigned k = 0; k < 4; k++) {
+			static const unsigned window[] = { 64, 16, 64, 1 };
+			static const unsigned exponent[] = { 7, 7, 0, 7 };
+			unsigned want = k == 0 ? 31 : k == 1 ? 8 : k == 2 ?
+			    (8191 / s.sc.sc_ra.ht.max_mpdu) / 2 : 0;
+
+			s.ni.ni_rxba.tx[0].window = (uint16_t)window[k];
+			s.ni.ni_ht20.vht.peer.info = exponent[k] << 23;
+			slot = s.sc.sc_txq[RTW88_TXQ_BE].wp;
+			CHECK(rtw88_net_tx_submit(&s.net, &s.ni, RTW88_TXQ_BE,
+			    frame, sizeof(frame)) == 0);
+			desc = s.sc.sc_txq[RTW88_TXQ_BE].buf[slot].vaddr;
+			CHECK(desc[6] == 10 && (desc[16] & 0x7f) == 0x33);
+			CHECK(((desc[9] & 0x10) != 0) == (want != 0));
+			CHECK(((desc[10] >> 4) & 7) == (want != 0 ? 5 : 0));
+			CHECK(((desc[14] >> 1) & 0x1f) == want);
+			/* A window too small to aggregate is no missing session. */
+			CHECK(s.net.txba_wanted == 0);
+		}
+		CHECK(s.sc.sc_stats.tx_ampdu_encoded == 3);
+		/* A session of another attempt is no session. */
+		s.ni.ni_rxba.tx[0].window = 64;
+		s.ni.ni_rxba.tx_attempt++;
+		slot = s.sc.sc_txq[RTW88_TXQ_BE].wp;
+		CHECK(rtw88_net_tx_submit(&s.net, &s.ni, RTW88_TXQ_BE, frame,
+		    sizeof(frame)) == 0);
+		desc = s.sc.sc_txq[RTW88_TXQ_BE].buf[slot].vaddr;
+		CHECK((desc[9] & 0x10) == 0 && s.net.txba_wanted == 1);
 		state_fixture_finish(&s);
 	}
 	/* A queued RUN replaced before the worker takes it is counted. */
@@ -2276,6 +2312,134 @@ test_ra_dfs_channel_list(void)
 #endif
 }
 
+#ifdef RTW88_VHT80
+/*
+ * A-MPDU in the core: only rtw88_tx_ampdu on the active HT20 or VHT entry
+ * sets AGG_EN, the peer spacing and MAX_AGG_NUM. Auto RA, raw and fixed
+ * frames leave them clear; a malformed request, another frame class or a
+ * protection-limited or legacy entry reaches no descriptor, ring or
+ * doorbell.
+ */
+static void
+test_ra_vht_ampdu(void)
+{
+	static const struct rtw88_tx_agg good = { 0, 5, 21 };
+	const uint8_t bssid[6] = {2, 0, 0, 0, 0, 1};
+	uint8_t qos[26] = { 0x88, 0x01, 0, 0, 2, 0, 0, 0, 0, 1, 2, 0, 0, 0,
+	    0, 2, 2, 0, 0, 0, 0, 3, 0x10, 0, 0, 0 };
+	uint8_t mgmt[24] = { 0xd0 };
+	struct rtw88_ra_config cfg = ra_vht80_cfg;
+	struct rtw88_ra_state saved;
+	struct rtw88_softc sc;
+	const uint8_t *desc;
+	unsigned wp;
+
+	if (!start_ok(&sc))
+		return;
+	CHECK(rtw88_stop(&sc) == 0);
+	CHECK(rtw88_start_tuple(&sc, &ra_vht80_target) == 0);
+	CHECK(rtw88_station_config(&sc, bssid, 1, 0x150, 9, 1) == 0);
+	CHECK(rtw88_ra_configure(&sc, &cfg) == 0 && sc.sc_ra.active);
+	wp = sc.sc_txq[RTW88_TXQ_BE].wp;
+	CHECK(rtw88_tx_ampdu(&sc, RTW88_TXQ_BE, qos, sizeof(qos), 9, &good) ==
+	    0);
+	desc = sc.sc_txq[RTW88_TXQ_BE].buf[wp].vaddr;
+	CHECK((desc[9] & 0x10) != 0 && ((desc[10] >> 4) & 7) == 5);
+	CHECK(((desc[14] >> 1) & 0x1f) == 21);
+	/* Still the committed VHT80 firmware-RA format, without RTS. */
+	CHECK(desc[6] == 10 && (desc[16] & 0x7f) == 0x33);
+	CHECK(((desc[20] >> 5) & 3) == 2 && (desc[13] & 0x30) == 0);
+	CHECK(sc.sc_stats.tx_ampdu_encoded == 1);
+	for (unsigned path = 0; path < 2; path++) {
+		unsigned q = path == 0 ? RTW88_TXQ_BE : RTW88_TXQ_MGMT;
+
+		wp = sc.sc_txq[q].wp;
+		CHECK(path == 0 ? rtw88_tx_auto(&sc, q, qos, sizeof(qos), 9,
+		    0) == 0 : rtw88_tx_raw(&sc, q, mgmt, sizeof(mgmt)) == 0);
+		desc = sc.sc_txq[q].buf[wp].vaddr;
+		CHECK((desc[9] & 0x10) == 0 && (desc[10] & 0x70) == 0 &&
+		    (desc[14] & 0x3e) == 0);
+	}
+	CHECK(sc.sc_stats.tx_ampdu_encoded == 1);
+	for (unsigned v = 0; v < 15; v++) {
+		struct rtw88_tx_agg agg = good;
+		const struct rtw88_tx_agg *request = &agg;
+		struct rtw88_stats stats = sc.sc_stats;
+		uint8_t frame[26];
+		unsigned q = RTW88_TXQ_BE, writes = f.writes, bwp, mwp;
+		uint64_t epoch = 9;
+		size_t len = sizeof(frame);
+		int want = EINVAL;
+
+		memcpy(frame, qos, sizeof(frame));
+		saved = sc.sc_ra;
+		switch (v) {
+		case 0: request = NULL; break;
+		case 1: agg.tid = 8; break;
+		case 2: agg.density = 8; break;
+		case 3: agg.count = 0; break;
+		case 4: agg.count = 32; break;
+		case 5: agg.tid = 1; want = EOPNOTSUPP; break; /* Frame is TID 0. */
+		case 6: frame[0] = 0x08; want = EOPNOTSUPP; break; /* Not QoS. */
+		case 7: len = 25; want = EMSGSIZE; break;
+		case 8: frame[4] = 1; want = EOPNOTSUPP; break; /* Group DA. */
+		case 9: frame[24] |= 0x20; want = EOPNOTSUPP; break; /* No Ack. */
+		case 10: epoch = 10; want = EBUSY; break;
+		case 11: q = RTW88_TXQ_MGMT; want = EOPNOTSUPP; break;
+		case 12: /* A CCK basic set would let the limited path send. */
+			sc.sc_ra.protection_limited = 1;
+			sc.sc_basic_rates |= 1;
+			sc.sc_ra.common_rates |= 1;
+			want = EOPNOTSUPP;
+			break;
+		case 13: sc.sc_ra.phy = RTW88_RA_LEGACY; want = EOPNOTSUPP; break;
+		case 14: sc.sc_ra.active = 0; want = EBUSY; break;
+		}
+		bwp = sc.sc_txq[RTW88_TXQ_BE].wp;
+		mwp = sc.sc_txq[RTW88_TXQ_MGMT].wp;
+		CHECK(rtw88_tx_ampdu(&sc, q, frame, len, epoch, request) == want);
+		CHECK(sc.sc_txq[RTW88_TXQ_BE].wp == bwp &&
+		    sc.sc_txq[RTW88_TXQ_MGMT].wp == mwp && f.writes == writes);
+		CHECK(memcmp(&stats, &sc.sc_stats, sizeof(stats)) == 0);
+		sc.sc_ra = saved;
+		sc.sc_basic_rates = 0x150;
+	}
+	CHECK(rtw88_stop(&sc) == 0);
+	CHECK(rtw88_core_detach(&sc) == 0);
+	/* HT20 on the narrow tuple aggregates as well. There the
+	 * protection-limited CCK path can send, and it never aggregates. */
+	if (!start_ok(&sc))
+		return;
+	cfg = ra_vht80_cfg;
+	cfg.phy = RTW88_RA_HT20_1SS;
+	cfg.ht_mcs = 0xff;
+	cfg.vht_tx_map = 0;
+	CHECK(rtw88_channel(&sc, 36) == 0);
+	CHECK(rtw88_station_config(&sc, bssid, 1, 0x150, 9, 1) == 0);
+	CHECK(rtw88_ra_configure(&sc, &cfg) == 0 && sc.sc_ra.active);
+	wp = sc.sc_txq[RTW88_TXQ_BE].wp;
+	CHECK(rtw88_tx_ampdu(&sc, RTW88_TXQ_BE, qos, sizeof(qos), 9, &good) ==
+	    0);
+	desc = sc.sc_txq[RTW88_TXQ_BE].buf[wp].vaddr;
+	CHECK(desc[6] == 5 && (desc[9] & 0x10) != 0 &&
+	    ((desc[14] >> 1) & 0x1f) == 21);
+	sc.sc_ra.protection_limited = 1;
+	sc.sc_basic_rates |= 1;
+	sc.sc_ra.common_rates |= 1;
+	{
+		unsigned writes = f.writes;
+
+		wp = sc.sc_txq[RTW88_TXQ_BE].wp;
+		CHECK(rtw88_tx_ampdu(&sc, RTW88_TXQ_BE, qos, sizeof(qos), 9,
+		    &good) == EOPNOTSUPP);
+		CHECK(sc.sc_txq[RTW88_TXQ_BE].wp == wp && f.writes == writes);
+	}
+	CHECK(sc.sc_stats.tx_ampdu_encoded == 1);
+	CHECK(rtw88_stop(&sc) == 0);
+	CHECK(rtw88_core_detach(&sc) == 0);
+}
+#endif
+
 #ifndef RTW88_RA_MAIN
 #define RTW88_RA_MAIN main
 #endif
@@ -2315,6 +2479,7 @@ RTW88_RA_MAIN(void)
 	test_ra_vht_dfs_closed();
 	test_ra_vht80_run();
 	test_ra_vht_run_tuples();
+	test_ra_vht_ampdu();
 	test_ra_ht_prepare_diag();
 	printf("rtw88 VHT80 RA and TX formats: enabled\n");
 #else

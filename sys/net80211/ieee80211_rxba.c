@@ -3,7 +3,9 @@
 /* Bounded adaptation of FreeBSD net80211 RX BA sequence/window semantics,
  * d2145e9b96448da34d3cfede24c509af6d830c92 ieee80211_ht.c,
  * BSD-2-Clause, Copyright (c) 2007-2008 Sam Leffler, Errno Consulting.
- * No vap, LinuxKPI, M_AMPDU, or hardware BlockAck claim is imported. */
+ * No vap, LinuxKPI, M_AMPDU, or hardware BlockAck claim is imported.
+ * The originator (ieee80211_txba_*) is original: IEEE Std 802.11-2016
+ * 10.24.2 ADDBA exchange and 9.6.5 Block Ack Action frames only. */
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/errno.h>
@@ -154,6 +156,8 @@ ieee80211_rxba_reset(struct ieee80211com *ic, struct ieee80211_node *ni)
 	for (i = 0; i < IEEE80211_RXBA_TIDS; i++)
 		rxba_free_tid(ba, i);
 	ba->epoch = ba->key_epoch = 0;
+	memset(ba->tx, 0, sizeof(ba->tx));
+	ba->tx_attempt = 0;
 	KASSERT(ba->bytes == 0);
 }
 
@@ -222,6 +226,112 @@ ieee80211_rxba_mask(struct ieee80211com *ic, struct ieee80211_node *ni)
 		if (ni->ni_rxba.tid[tid] != NULL)
 			mask |= 1U << tid;
 	return mask;
+}
+
+/* Idle a TID for the retry interval; an unusable clock never retries. */
+static void
+txba_idle(struct ieee80211_txba_tid *t, uint64_t now)
+{
+
+	t->state = IEEE80211_TXBA_IDLE;
+	t->window = 0;
+	t->deadline = now == UINT64_MAX ||
+	    now > UINT64_MAX - IEEE80211_TXBA_RETRY_MS ? UINT64_MAX :
+	    now + IEEE80211_TXBA_RETRY_MS;
+}
+
+int
+ieee80211_txba_request(struct ieee80211com *ic, struct ieee80211_node *ni,
+    unsigned mask)
+{
+	struct ieee80211_rxba_state *ba = &ni->ni_rxba;
+	struct ieee80211_txba_tid *t;
+	uint64_t now;
+	unsigned tid, ssn;
+	int error;
+
+	if (ni != ic->ic_bss || !rxba_current(ic, ni))
+		return EINVAL;
+	now = ic->ic_rxba_ops->now_ms(ic);
+	if (now == UINT64_MAX || now > UINT64_MAX - IEEE80211_TXBA_RETRY_MS)
+		return EOVERFLOW;
+	if (ba->tx_attempt != ni->ni_ht20.attempt) {
+		memset(ba->tx, 0, sizeof(ba->tx));
+		ba->tx_attempt = ni->ni_ht20.attempt;
+	}
+	for (tid = 0; tid < IEEE80211_RXBA_TIDS; tid++) {
+		t = &ba->tx[tid];
+		if (t->state == IEEE80211_TXBA_PENDING && now >= t->deadline) {
+			ba->tx_diag.timeouts++;
+			txba_idle(t, now);
+		}
+		if ((mask & (1U << tid)) == 0 || t->state != IEEE80211_TXBA_IDLE ||
+		    t->attempts >= IEEE80211_TXBA_ATTEMPTS || now < t->deadline)
+			continue;
+		if (++ba->tx_token == 0)
+			ba->tx_token = 1;
+		/* The next sequence number encap assigns to this TID. */
+		ssn = ni->ni_txseqs[tid + 1] & 4095;
+		error = ieee80211_send_txba_request(ic, ni, ba->tx_token,
+		    2 | tid << 2 | IEEE80211_TXBA_WINDOW << 6, 0, ssn << 4);
+		if (error != 0)
+			return error;
+		t->state = IEEE80211_TXBA_PENDING;
+		t->token = ba->tx_token;
+		t->attempts++;
+		t->deadline = now + IEEE80211_TXBA_RESPONSE_MS;
+		ba->tx_diag.requests++;
+	}
+	return 0;
+}
+
+unsigned
+ieee80211_txba_window(struct ieee80211com *ic, struct ieee80211_node *ni,
+    unsigned tid)
+{
+	const struct ieee80211_txba_tid *t;
+
+	if (ni == NULL || ni != ic->ic_bss || tid >= IEEE80211_RXBA_TIDS ||
+	    ic->ic_state != IEEE80211_S_RUN || !ni->ni_ht20.valid ||
+	    ni->ni_rxba.tx_attempt != ni->ni_ht20.attempt)
+		return 0;
+	t = &ni->ni_rxba.tx[tid];
+	return t->state == IEEE80211_TXBA_ACTIVE ? t->window : 0;
+}
+
+/* The recipient's ADDBA Response to our outstanding request for its TID. */
+static int
+txba_response(struct ieee80211com *ic, struct ieee80211_node *ni,
+    const uint8_t *p, size_t len)
+{
+	struct ieee80211_rxba_state *ba = &ni->ni_rxba;
+	struct ieee80211_txba_tid *t;
+	unsigned status, params, tid, window;
+
+	if (len != 9)
+		return EINVAL;
+	status = rxba_le16(p + 3);
+	params = rxba_le16(p + 5);
+	tid = (params >> 2) & 15;
+	if (tid >= IEEE80211_RXBA_TIDS || ba->tx_attempt != ni->ni_ht20.attempt ||
+	    ba->tx[tid].state != IEEE80211_TXBA_PENDING ||
+	    ba->tx[tid].token != p[2]) {
+		ba->tx_diag.invalid++;
+		return EINVAL;
+	}
+	t = &ba->tx[tid];
+	ba->tx_diag.last_status = (uint16_t)status;
+	window = params >> 6;
+	/* A recipient timeout needs no state here: it ends with its DELBA. */
+	if (status != 0 || (params & 2) == 0 || window == 0) {
+		ba->tx_diag.refusals++;
+		txba_idle(t, ic->ic_rxba_ops->now_ms(ic));
+		return 0;
+	}
+	t->window = (uint16_t)MIN(window, IEEE80211_TXBA_WINDOW);
+	t->state = IEEE80211_TXBA_ACTIVE;
+	ba->tx_diag.accepts++;
+	return 0;
 }
 
 static void
@@ -620,10 +730,17 @@ ieee80211_rxba_action(struct ieee80211com *ic, struct ieee80211_node *ni,
 		tid = params >> 12;
 		if ((params & 0x7ff) != 0 || tid >= IEEE80211_RXBA_TIDS)
 			return EOPNOTSUPP;
-		if ((params & 0x800) != 0)
+		if ((params & 0x800) != 0) {
 			rxba_free_tid(ba, tid);
+		} else if (ba->tx[tid].state != IEEE80211_TXBA_IDLE) {
+			/* The recipient ends our originator session. */
+			ba->tx_diag.delbas++;
+			txba_idle(&ba->tx[tid], ic->ic_rxba_ops->now_ms(ic));
+		}
 		return rxba_reschedule(ic, ni);
 	}
+	if (p[1] == 1)
+		return txba_response(ic, ni, p, len);
 	if (p[1] != 0 || len != 9)
 		return EOPNOTSUPP;
 	params = rxba_le16(p + 3);

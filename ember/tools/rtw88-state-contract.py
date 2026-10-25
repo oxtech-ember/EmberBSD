@@ -8,7 +8,7 @@ import re
 import sys
 import subprocess
 src, out = map(pathlib.Path, sys.argv[1:])
-subprocess.run([sys.executable,str(src/"ember/tools/net80211-rxba-lifecycle-extract.py"),str(src),str(out)],check=True)
+subprocess.run([sys.executable,str(src/"ember/tools/net80211-rxba-lifecycle-extract.py"),str(src),str(out),"--txba"],check=True)
 phy_ies = (src/'sys/net80211/ieee80211_phy_ies.h').read_text()
 (out/'ieee80211_phy_ies.h').write_text(phy_ies)
 (out/'net80211').mkdir(exist_ok=True)

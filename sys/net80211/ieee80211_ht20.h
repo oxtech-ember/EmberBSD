@@ -72,8 +72,9 @@ struct ieee80211_ht20_diag {
 	uint8_t reset_reason, failure_reason;
 	uint8_t state_reason;	/* First stale clause, 15 = unanswered offer. */
 };
-/* A source-qualified primary20/mixed-format, single-MPDU protection result.
- * This is not a radio/PPDU or hardware BlockAck attestation. */
+/* A source-qualified primary20/mixed-format, one-PPDU protection result: a
+ * single MPDU or one A-MPDU, without RTS or TXOP bursts. This is not a
+ * radio or hardware BlockAck attestation. */
 #define IEEE80211_HT20_PROT_MF20_NO_RTS 1
 struct ieee80211_ht20_protection {
 	uint32_t generation;

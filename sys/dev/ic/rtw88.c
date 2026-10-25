@@ -1856,7 +1856,8 @@ rtw88_ra_configure(struct rtw88_softc *sc, const struct rtw88_ra_config *cfg)
 
 static int
 rtw88_tx_submit(struct rtw88_softc *sc, unsigned q, const void *frame,
-    size_t len, int fixed_rate, unsigned ra_mode)
+    size_t len, int fixed_rate, unsigned ra_mode,
+    const struct rtw88_tx_agg *agg)
 {
 	struct rtw88_tx_info tx;
 	struct rtw88_wme_map map;
@@ -1872,7 +1873,7 @@ rtw88_tx_submit(struct rtw88_softc *sc, unsigned q, const void *frame,
 	int vht = 0;
 #endif
 
-	if (q >= RTW88_NTXQ)
+	if (q >= RTW88_NTXQ || (agg != NULL && ra_mode != 1))
 		return EINVAL;
 	if (sc->sc_edca_error != 0)
 		return sc->sc_edca_error;
@@ -1970,6 +1971,12 @@ rtw88_tx_submit(struct rtw88_softc *sc, unsigned q, const void *frame,
 		tx.rate = (uint8_t)__builtin_ctz(sc->sc_ra.mask);
 		tx.flags &= ~(RTW88_TX_USE_RATE | RTW88_TX_DIS_RATE_FB);
 	}
+	if (agg != NULL) {
+		/* tx.c rtw_tx_fill_tx_desc: AGG_EN, AMPDU_DEN, MAX_AGG_NUM. */
+		tx.flags |= RTW88_TX_AMPDU;
+		tx.ampdu_density = agg->density;
+		tx.ampdu_factor = agg->count;
+	}
 #ifdef RTW88_VHT80
 	if (vht) {
 		/* tx.c get_highest_vht_tx_rate seed, not the lowest RA bit. */
@@ -2003,6 +2010,8 @@ rtw88_tx_submit(struct rtw88_softc *sc, unsigned q, const void *frame,
 			sc->sc_stats.tx_ra_encoded++;
 		else if (ra_mode == 2)
 			sc->sc_stats.tx_ra_protection_limited++;
+		if (agg != NULL)
+			sc->sc_stats.tx_ampdu_encoded++;
 		sc->sc_stats.tx_data_rate = (uint8_t)rate;
 		sc->sc_stats.tx_data_basic = (uint16_t)sc->sc_basic_rates;
 		if (rate < __arraycount(sc->sc_stats.tx_data_rates))
@@ -2038,7 +2047,7 @@ int
 rtw88_tx_raw(struct rtw88_softc *sc, unsigned q, const void *frame,
     size_t len)
 {
-	return rtw88_tx_submit(sc, q, frame, len, -1, 0);
+	return rtw88_tx_submit(sc, q, frame, len, -1, 0, NULL);
 }
 
 int
@@ -2085,12 +2094,13 @@ rtw88_tx_fixed(struct rtw88_softc *sc, unsigned q, const void *frame,
 	/* The current descriptor API has no qualified RTS/CTS protection policy. */
 	if (rate >= 4 && fixed->use_protection)
 		return EOPNOTSUPP;
-	return rtw88_tx_submit(sc, q, frame, len, (int)rate, 0);
+	return rtw88_tx_submit(sc, q, frame, len, (int)rate, 0, NULL);
 }
 
-int
-rtw88_tx_auto(struct rtw88_softc *sc, unsigned q, const void *frame,
-    size_t len, uint64_t epoch, unsigned use_protection)
+static int
+rtw88_tx_ra(struct rtw88_softc *sc, unsigned q, const void *frame,
+    size_t len, uint64_t epoch, unsigned use_protection,
+    const struct rtw88_tx_agg *agg)
 {
 	const uint8_t *bytes = frame;
 	unsigned basic, rate;
@@ -2121,6 +2131,11 @@ rtw88_tx_auto(struct rtw88_softc *sc, unsigned q, const void *frame,
 		if (len > sc->sc_ra.ht.max_mpdu)
 			return EMSGSIZE;
 	}
+	/* Aggregates exist only on an unprotected HT20 or VHT entry. */
+	if (agg != NULL && (use_protection || sc->sc_ra.protection_limited ||
+	    (sc->sc_ra.phy != RTW88_RA_HT20_1SS &&
+	     sc->sc_ra.phy != RTW88_RA_VHT_1SS)))
+		return EOPNOTSUPP;
 	if (use_protection) {
 		sc->sc_ra.active = 0;
 		sc->sc_ra.protection_limited = 1;
@@ -2132,12 +2147,38 @@ rtw88_tx_auto(struct rtw88_softc *sc, unsigned q, const void *frame,
 		rate = (unsigned)__builtin_ctz(basic);
 		if (rate >= 4 || (sc->sc_ra.common_rates & (1U << rate)) == 0)
 			return EOPNOTSUPP;
-		return rtw88_tx_submit(sc, q, frame, len, -1, 2);
+		return rtw88_tx_submit(sc, q, frame, len, -1, 2, NULL);
 	}
 	if (!sc->sc_ra.active)
 		return EBUSY;
-	return rtw88_tx_submit(sc, q, frame, len, -1, 1);
+	return rtw88_tx_submit(sc, q, frame, len, -1, 1, agg);
 }
+
+int
+rtw88_tx_auto(struct rtw88_softc *sc, unsigned q, const void *frame,
+    size_t len, uint64_t epoch, unsigned use_protection)
+{
+	return rtw88_tx_ra(sc, q, frame, len, epoch, use_protection, NULL);
+}
+
+#ifdef RTW88_VHT80
+int
+rtw88_tx_ampdu(struct rtw88_softc *sc, unsigned q, const void *frame,
+    size_t len, uint64_t epoch, const struct rtw88_tx_agg *agg)
+{
+	const uint8_t *bytes = frame;
+
+	if (agg == NULL || agg->tid >= 8 || agg->density > 7 ||
+	    agg->count == 0 || agg->count > 31)
+		return EINVAL;
+	/* A unicast QoS data MPDU of exactly the session's TID. */
+	if (frame == NULL || len < 26)
+		return EMSGSIZE;
+	if (bytes[0] != 0x88 || (bytes[24] & 15) != agg->tid)
+		return EOPNOTSUPP;
+	return rtw88_tx_ra(sc, q, frame, len, epoch, 0, agg);
+}
+#endif
 
 /* pci.c rtw_pci_tx_isr: completion is the chip's read index, nothing else. */
 static int

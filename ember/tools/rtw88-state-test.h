@@ -90,6 +90,7 @@ struct rtw88_net {
 	struct rtw88_net_policy policy;
 	struct rtw88_net_neg neg;
 	int run_pending;
+	unsigned txba_wanted;
 	int work_pending, reset_required;
 	int tx_quiet, quiet_error;
 	unsigned tx_timer, tx_completed;
