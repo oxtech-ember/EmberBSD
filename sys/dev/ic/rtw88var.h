@@ -9,7 +9,7 @@
 #include "opt_rtw88_vht.h"
 #include "opt_rtw88_dfs.h"
 #endif
-/* VHT80 is an explicit experiment outside the HT-only RFK envelope. */
+/* VHT 40/80 is an explicit experiment outside the HT-only RFK envelope. */
 #if defined(RTW88_VHT_EXPERIMENT) && !defined(RTW88_RFK_EXPERIMENT)
 #define RTW88_VHT80 1
 #endif
@@ -18,6 +18,9 @@
 #define RTW88_DFS64 1
 #endif
 #include <dev/ic/rtw88_hw.h>
+
+/* TX power regulatory table index used by every channel program. */
+#define RTW88_POWER_REGD 12
 
 struct rtw8822c_rfk;
 
@@ -98,7 +101,7 @@ struct rtw88_txq {
 
 #define RTW88_RA_LEGACY 0
 #define RTW88_RA_HT20_1SS 1
-#define RTW88_RA_VHT80_1SS 2
+#define RTW88_RA_VHT_1SS 2
 /* Outbound local TX intersect peer RX: NSS1 MCS0-7, other NSS unsupported. */
 #define RTW88_VHT_MAP_NSS1_MCS7 0xfffcU
 #define RTW88_HT20_PROT_MF20_NO_RTS 1
@@ -130,6 +133,7 @@ struct rtw88_ra_state {
 	uint16_t ht_mcs, ht_operation, vht_tx_map;
 	uint32_t profile_generation;
 	struct rtw88_ht20_policy ht;
+	struct rtw88_channel_tuple tuple;	/* Committed when configured. */
 	int configured, active, protection_limited, error;
 };
 
@@ -312,14 +316,22 @@ int rtw88_start(struct rtw88_softc *);
 int rtw88_start_tuple(struct rtw88_softc *,
 	const struct rtw88_channel_tuple *);
 #ifdef RTW88_VHT80
-/* Nonzero when 36/42/80 PHY and power are committed in this generation. */
-int rtw88_vht80_committed(const struct rtw88_softc *);
+/* Nonzero when an admitted 40/80 MHz PHY and power program is committed in
+ * this generation. */
+int rtw88_vht_committed(const struct rtw88_softc *);
+/* Zero when this tuple passes the admission and TX-power validation of
+ * rtw88_start_tuple() on this core; firmware, power-off state and bus
+ * errors are not covered. No I/O or write, but a stopping core or one
+ * without resources fails. Not a regulatory decision. */
+int rtw88_tuple_check(const struct rtw88_softc *,
+	const struct rtw88_channel_tuple *);
 #endif
 /*
  * Every DFS channel denies host TX before descriptor and DMA unless a
- * permit names this channel and core generation. Only channel 64 at
- * 20 MHz, with RTW88_DFS64, can be opened. The caller holds the bus
- * interrupt lock and must already hold its master's current beacon.
+ * permit names this channel and core generation. Only primary 64, at an
+ * admitted 20, 40 or 80 MHz tuple with RTW88_DFS64, can be opened. The
+ * caller holds the bus interrupt lock and must already hold its master's
+ * current beacon.
  * Stop (and so every start) and every channel change withdraw it, and a
  * retune into a DFS channel is refused while host frames are posted.
  * Closing stops only new host frames: frames already posted need the
@@ -437,8 +449,8 @@ int rtw88_station_config(struct rtw88_softc *, const uint8_t *, unsigned,
 /* Diagnostic loopback (rtlwifi LBMODE 0, 1, 3, 7 or 0x0b); 0 is normal. */
 int rtw88_loopback(struct rtw88_softc *, int);
 /*
- * Channel switch; caller holds the bus interrupt lock. Live operation is
- * currently restricted to same-width 20 MHz tuples. A failed
+ * Channel switch; caller holds the bus interrupt lock. A warm call keeps
+ * the committed width; only rtw88_start_tuple() changes it. A failed
  * attempted mutation latches sc_stop_requested and closes host TX admission.
  * The lifecycle owner must stop outside that lock before restarting. An
  * initial read failure withdraws RX context but permits a safe warm retry.

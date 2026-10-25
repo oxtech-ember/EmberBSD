@@ -305,26 +305,19 @@ write_power(struct rtw88_softc *sc, uint32_t addr, uint32_t mask,
 	return write_mask(sc, addr, mask, value);
 }
 
-int
-rtw8822c_set_tx_power_tuple(struct rtw88_softc *sc,
-    const struct rtw8822c_efuse *efuse,
-    const struct rtw88_channel_tuple *tuple, unsigned regd)
+/*
+ * Every check and index of one power program, before any hardware access:
+ * the shared prerequisite of the programmer and of the pure admission check.
+ */
+static int
+power_prepare(const struct rtw88_softc *sc, const struct rtw8822c_efuse *efuse,
+    const struct rtw88_channel_tuple *tuple, unsigned regd,
+    uint8_t indices[2][64], uint32_t diff_words[16])
 {
-	uint8_t indices[2][64];
 	struct rtw8822c_channel_geometry geometry;
-	uint32_t diff_words[16] = { 0 };
-	unsigned path, rs, j, rate;
+	unsigned rs, j, rate;
 	int error;
 
-#ifdef RTW88_RFK_EXPERIMENT
-	if (sc != NULL) {
-		sc->sc_operating.prepared = sc->sc_operating.sealed = 0;
-		sc->sc_power_program.valid = 0;
-		if (sc->sc_power_program.serial == UINT64_MAX)
-			return EOVERFLOW;
-		sc->sc_power_program.serial++;
-	}
-#endif
 	if (sc == NULL || efuse == NULL || tuple == NULL || sc->sc_ops == NULL ||
 	    sc->sc_ops->read_4 == NULL || sc->sc_ops->write_4 == NULL ||
 	    sc->sc_rfe != efuse->rfe_option)
@@ -360,6 +353,42 @@ rtw8822c_set_tx_power_tuple(struct rtw88_softc *sc,
 			    ((uint32_t)diff & 0x7f) << ((rate % 4) * 8);
 		}
 	}
+	return 0;
+}
+
+int
+rtw8822c_tx_power_check(const struct rtw88_softc *sc,
+    const struct rtw8822c_efuse *efuse,
+    const struct rtw88_channel_tuple *tuple, unsigned regd)
+{
+	uint8_t indices[2][64];
+	uint32_t diff_words[16] = { 0 };
+
+	return power_prepare(sc, efuse, tuple, regd, indices, diff_words);
+}
+
+int
+rtw8822c_set_tx_power_tuple(struct rtw88_softc *sc,
+    const struct rtw8822c_efuse *efuse,
+    const struct rtw88_channel_tuple *tuple, unsigned regd)
+{
+	uint8_t indices[2][64];
+	uint32_t diff_words[16] = { 0 };
+	unsigned path, rate;
+	int error;
+
+#ifdef RTW88_RFK_EXPERIMENT
+	if (sc != NULL) {
+		sc->sc_operating.prepared = sc->sc_operating.sealed = 0;
+		sc->sc_power_program.valid = 0;
+		if (sc->sc_power_program.serial == UINT64_MAX)
+			return EOVERFLOW;
+		sc->sc_power_program.serial++;
+	}
+#endif
+	if ((error = power_prepare(sc, efuse, tuple, regd, indices,
+	    diff_words)) != 0)
+		return error;
 	sc->sc_phy.channel_valid = 0;
 	for (path = 0; path < 2; path++) {
 		error = write_power(sc, path ? 0x41a0 : 0x18a0, 0x7f0000,

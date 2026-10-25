@@ -72,8 +72,8 @@ int rtw8822c_mac_init(struct rtw88_softc *);
  * rtw8822c_phy_set_param around rtw8822c_load_tables: BB/RF power-on
  * before, crystal, TRX paths AB, EDCCA and beamforming defaults after.
  * Postinit includes cold ADC/DAC calibration and RF trims; TX power is
- * separate. Tuple geometry/programming supports 20/40/80 MHz. Live channel
- * admission remains 20 MHz in the current core. EINVAL means invalid
+ * separate. Tuple geometry/programming supports 20/40/80 MHz; the core
+ * owns channel admission and 40 MHz pair alignment. EINVAL means invalid
  * geometry or a channel outside the reference 2.4/5 GHz bands.
  * Sequences match ember/tools/rtw8822c-phy.trace.
  */
@@ -112,6 +112,11 @@ int rtw8822c_set_channel(struct rtw88_softc *, unsigned);
  * rolled back. The caller must keep TX stopped after any failure.
  */
 int rtw8822c_set_tx_power_tuple(struct rtw88_softc *sc,
+	const struct rtw8822c_efuse *efuse,
+	const struct rtw88_channel_tuple *, unsigned regd);
+/* Every validation of rtw8822c_set_tx_power_tuple() with no I/O or state
+ * change: zero means the programmer would reach its first write. */
+int rtw8822c_tx_power_check(const struct rtw88_softc *sc,
 	const struct rtw8822c_efuse *efuse,
 	const struct rtw88_channel_tuple *, unsigned regd);
 /* Narrow 20 MHz compatibility wrapper. */

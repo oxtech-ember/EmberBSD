@@ -75,6 +75,10 @@ for name, result in [('rtw88_net_basic_rates','static unsigned'),
         continue
     if name == 'rtw88_net_edca_prepare' and '\n'+name+'(' not in net:
         continue
+    # The negotiated-tuple predicate exists only in the VHT experiment.
+    if name == 'rtw88_net_tx_ht20_policy' and '\nrtw88_net_vht_tuple(' in net:
+        parts.append('#ifdef RTW88_VHT80\n' +
+                     function('rtw88_net_vht_tuple', 'static int') + '#endif\n')
     parts.append(function(name,result))
 start_body = re.search(r'^rtw88_net_start\(.*?^}', net, re.M|re.S)
 if start_body is None or not re.search(

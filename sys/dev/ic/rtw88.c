@@ -840,31 +840,64 @@ rtw88_stop(struct rtw88_softc *sc)
 }
 
 /*
- * Core admission: 2.4 GHz 1-13 and the 20 MHz 5 GHz channels below, a
- * superset of the net80211 channel list. The only wide tuple is the
- * qualified VHT80 target; channel 64 needs RTW88_DFS64, and every DFS
- * channel still needs a slave TX permit before any host frame.
+ * Core 20 MHz admission: 2.4 GHz 1-13 and the 5 GHz channels below, a
+ * superset of the net80211 channel list. Channel 64 needs RTW88_DFS64,
+ * and every DFS channel still needs a slave TX permit before any host
+ * frame.
+ */
+static int
+rtw88_channel_admit20(unsigned ch)
+{
+	return (ch >= 1 && ch <= 13) ||
+	    (ch >= 36 && ch <= 64 && ch % 4 == 0 && ch != 64) ||
+#ifdef RTW88_DFS64
+	    ch == 64 ||
+#endif
+	    (ch >= 100 && ch <= 144 && ch % 4 == 0) ||
+	    (ch >= 149 && ch <= 165 && (ch - 149) % 4 == 0);
+}
+
+/*
+ * With RTW88_VHT80, a 5 GHz 40 or 80 MHz tuple on an IEEE 802.11-2016
+ * Annex E block whose every 20 MHz constituent is itself admitted.
+ * Blocks never straddle the DFS boundary, so a wide tuple is DFS exactly
+ * when its primary is.
  */
 static int
 rtw88_channel_admit(const struct rtw88_channel_tuple *tuple)
 {
-	unsigned ch = tuple->primary;
-
-	if (tuple->width_mhz == 20 && tuple->center == ch &&
-	    ((ch >= 1 && ch <= 13) ||
-	    (ch >= 36 && ch <= 64 && ch % 4 == 0 && ch != 64) ||
-	    (ch >= 100 && ch <= 144 && ch % 4 == 0) ||
-	    (ch >= 149 && ch <= 165 && (ch - 149) % 4 == 0)))
-		return 0;
 #ifdef RTW88_VHT80
-	if (tuple->width_mhz == 80 && ch == 36 && tuple->center == 42)
-		return 0;
+	static const uint8_t center40[] = { 38, 46, 54, 62, 102, 110, 118,
+	    126, 134, 142, 151, 159 };
+	struct rtw8822c_channel_geometry geometry;
+	unsigned i, span;
+	int aligned = 0;
 #endif
-#ifdef RTW88_DFS64
-	if (tuple->width_mhz == 20 && ch == 64 && tuple->center == 64)
-		return 0;
-#endif
+
+	if (tuple->width_mhz == 20)
+		return tuple->center == tuple->primary &&
+		    rtw88_channel_admit20(tuple->primary) ? 0 : EOPNOTSUPP;
+#ifdef RTW88_VHT80
+	if ((tuple->width_mhz != 40 && tuple->width_mhz != 80) ||
+	    tuple->primary <= 14 ||
+	    rtw8822c_channel_geometry(tuple, &geometry) != 0)
+		return EOPNOTSUPP;
+	/* The geometry already restricts 80 MHz to its six block centers. */
+	if (tuple->width_mhz == 80)
+		aligned = 1;
+	for (i = 0; i < __arraycount(center40); i++)
+		if (tuple->width_mhz == 40 && tuple->center == center40[i])
+			aligned = 1;
+	if (!aligned)
+		return EOPNOTSUPP;
+	span = tuple->width_mhz / 20;
+	for (i = 0; i < span; i++)
+		if (!rtw88_channel_admit20(tuple->center - (span - 1) * 2 + 4 * i))
+			return EOPNOTSUPP;
+	return 0;
+#else
 	return EOPNOTSUPP;
+#endif
 }
 
 int
@@ -1033,7 +1066,7 @@ rtw88_start_tuple(struct rtw88_softc *sc,
 	error = rtw8822c_efuse_decode(sc->sc_efuse_phys,
 	    sizeof(sc->sc_efuse_phys), &efuse);
 	if (error == 0)
-		error = rtw8822c_set_tx_power_tuple(sc, &efuse, tuple, 12);
+		error = rtw8822c_set_tx_power_tuple(sc, &efuse, tuple, RTW88_POWER_REGD);
 	if (error != 0)
 		goto fail;
 	sc->sc_channel = tuple->primary;
@@ -1566,7 +1599,8 @@ rtw88_edca_apply(struct rtw88_softc *sc,
 	return error;
 }
 
-/* Pinned fw.c/fw.h RA_INFO register command; legacy, HT20/1SS or VHT80/1SS. */
+/* Pinned fw.c/fw.h RA_INFO register command; legacy, HT20/1SS or VHT/1SS
+ * at 40 or 80 MHz. */
 void
 rtw88_ra_invalidate(struct rtw88_softc *sc)
 {
@@ -1602,16 +1636,42 @@ rtw88_channel_narrow(const struct rtw88_softc *sc)
 
 #ifdef RTW88_VHT80
 /*
- * The one qualified wide target: non-DFS primary36/center42/80, with the
- * actual PHY and power program committed in this generation.
+ * An admitted 40 or 80 MHz tuple whose actual PHY and power program is
+ * committed in this generation, with its primary in sc_channel.
  */
 int
-rtw88_vht80_committed(const struct rtw88_softc *sc)
+rtw88_vht_committed(const struct rtw88_softc *sc)
 {
-	return sc->sc_phy.channel_valid && sc->sc_channel == 36 &&
-	    sc->sc_phy.channel.primary == 36 &&
-	    sc->sc_phy.channel.center == 42 &&
-	    sc->sc_phy.channel.width_mhz == 80;
+	return sc->sc_phy.channel_valid &&
+	    sc->sc_phy.channel.primary == sc->sc_channel &&
+	    (sc->sc_phy.channel.width_mhz == 40 ||
+	     sc->sc_phy.channel.width_mhz == 80) &&
+	    rtw88_channel_admit(&sc->sc_phy.channel) == 0;
+}
+
+/*
+ * Pure admission of one tuple against this core's committed efuse:
+ * channel policy, PHY geometry and every TX power validation, with no
+ * I/O and no state change. Callers under Giant or the bus lock.
+ */
+int
+rtw88_tuple_check(const struct rtw88_softc *sc,
+    const struct rtw88_channel_tuple *tuple)
+{
+	struct rtw8822c_efuse efuse;
+	int error;
+
+	if (sc == NULL || tuple == NULL)
+		return EINVAL;
+	if (rtw88_channel_admit(tuple) != 0)
+		return EOPNOTSUPP;
+	if (!sc->sc_resources_ready)
+		return ENXIO;
+	error = rtw8822c_efuse_decode(sc->sc_efuse_phys,
+	    sizeof(sc->sc_efuse_phys), &efuse);
+	if (error != 0)
+		return error;
+	return rtw8822c_tx_power_check(sc, &efuse, tuple, RTW88_POWER_REGD);
 }
 #endif
 
@@ -1624,7 +1684,8 @@ rtw88_channel_dfs(unsigned ch)
 
 /*
  * Host TX on a DFS channel needs a permit for this channel and core
- * generation. Admitted DFS tuples are 20 MHz, so the primary is the span.
+ * generation. Admitted wide tuples are aligned blocks, so the primary
+ * decides for the whole span.
  */
 static int
 rtw88_dfs_tx_permitted(const struct rtw88_softc *sc)
@@ -1644,8 +1705,7 @@ rtw88_dfs_open(struct rtw88_softc *sc, unsigned ch, uint32_t gen)
 #ifdef RTW88_DFS64
 	if (ch == 64 && sc->sc_channel == 64 && sc->sc_phy.channel_valid &&
 	    sc->sc_phy.channel.primary == 64 &&
-	    sc->sc_phy.channel.center == 64 &&
-	    sc->sc_phy.channel.width_mhz == 20) {
+	    rtw88_channel_admit(&sc->sc_phy.channel) == 0) {
 		sc->sc_dfs.generation = gen;
 		sc->sc_dfs.channel = ch;
 		sc->sc_dfs.valid = 1;
@@ -1683,9 +1743,9 @@ rtw88_ra_configure(struct rtw88_softc *sc, const struct rtw88_ra_config *cfg)
 		    (cfg->ht_mcs & ~0xffU) != 0)
 			return EOPNOTSUPP;
 #ifdef RTW88_VHT80
-	} else if (cfg->phy == RTW88_RA_VHT80_1SS) {
+	} else if (cfg->phy == RTW88_RA_VHT_1SS) {
 		/* No HT-mixed entry; keep the mandatory 6 Mbps fallback. */
-		if (cfg->mode != RTW88_FIXED_11A || cfg->channel != 36 ||
+		if (cfg->mode != RTW88_FIXED_11A || cfg->channel <= 14 ||
 		    cfg->use_protection != 0 ||
 		    rtw88_ht20_policy_check(&cfg->ht, cfg->ht_operation) != 0 ||
 		    cfg->profile_generation == 0 || cfg->ht_mcs != 0 ||
@@ -1727,8 +1787,8 @@ rtw88_ra_configure(struct rtw88_softc *sc, const struct rtw88_ra_config *cfg)
 	/* Each RA entry is qualified only for its committed channel tuple. */
 	tuple_ok = rtw88_channel_narrow(sc);
 #ifdef RTW88_VHT80
-	if (cfg->phy == RTW88_RA_VHT80_1SS)
-		tuple_ok = rtw88_vht80_committed(sc);
+	if (cfg->phy == RTW88_RA_VHT_1SS)
+		tuple_ok = rtw88_vht_committed(sc);
 #endif
 	if (!tuple_ok)
 		return EOPNOTSUPP;
@@ -1743,11 +1803,12 @@ rtw88_ra_configure(struct rtw88_softc *sc, const struct rtw88_ra_config *cfg)
 	ra.profile_generation = cfg->profile_generation;
 	ra.ht = cfg->ht;
 	ra.vht_tx_map = cfg->vht_tx_map;
+	ra.tuple = sc->sc_phy.channel;
 	if (cfg->phy == RTW88_RA_HT20_1SS) {
 		ra.rate_id = 5; /* Pinned RTW_RATEID_GN_N1SS, 5 GHz only. */
 		mask = (unsigned)cfg->ht_mcs << 12 | (mask & 0x30);
 #ifdef RTW88_VHT80
-	} else if (cfg->phy == RTW88_RA_VHT80_1SS) {
+	} else if (cfg->phy == RTW88_RA_VHT_1SS) {
 		ra.rate_id = 10; /* Pinned RTW_RATEID_ARFR1_AC_1SS. */
 		/* main.c get_vht_ra_mask: NSS1 code0 is bits12..19. */
 		mask = 0xffU << 12 | (mask & 0x10);
@@ -1771,8 +1832,9 @@ rtw88_ra_configure(struct rtw88_softc *sc, const struct rtw88_ra_config *cfg)
 	}
 	payload[1] = ra.rate_id | (1U << 5); /* Initial RA level1, SGI0. */
 	payload[2] = 0x40; /* DIS_PT, BW20, LDPC0, NO_UPDATE0, VHT0. */
-	if (ra.phy == RTW88_RA_VHT80_1SS)
-		payload[2] |= 0x12; /* VHT1, BW80. */
+	if (ra.phy == RTW88_RA_VHT_1SS)
+		/* VHT1 and the committed width: BW40 1, BW80 2. */
+		payload[2] |= 0x10 | (ra.tuple.width_mhz == 80 ? 2 : 1);
 	payload[3] = (uint8_t)mask;
 	payload[4] = (uint8_t)(mask >> 8);
 	payload[5] = (uint8_t)(mask >> 16);
@@ -1804,7 +1866,8 @@ rtw88_tx_submit(struct rtw88_softc *sc, unsigned q, const void *frame,
 	const uint8_t *bytes = frame;
 	int error;
 #ifdef RTW88_VHT80
-	int vht80 = 0;
+	struct rtw8822c_channel_geometry geometry = { 0 };
+	int vht = 0;
 #endif
 
 	if (q >= RTW88_NTXQ)
@@ -1819,20 +1882,27 @@ rtw88_tx_submit(struct rtw88_softc *sc, unsigned q, const void *frame,
 	if (!rtw88_dfs_tx_permitted(sc))
 		return EACCES;
 	if (rtw88_channel_narrow(sc)) {
-		if (ra_mode == 1 && sc->sc_ra.phy == RTW88_RA_VHT80_1SS)
+		if (ra_mode == 1 && sc->sc_ra.phy == RTW88_RA_VHT_1SS)
 			return EOPNOTSUPP;
 	} else {
 #ifdef RTW88_VHT80
 		/*
-		 * Qualified VHT80 formats only. Firmware-RA data is BW80 VHT,
-		 * or non-HT duplicate after its 6 Mbps fallback. Every other
-		 * frame is non-HT OFDM on primary20, placed by DATA_SC: raw
-		 * frames use 5 GHz basic OFDM and tx_fixed rejects 11A CCK.
+		 * Qualified wide VHT formats only. Firmware-RA data is VHT at
+		 * the committed width its entry was configured for, or non-HT
+		 * duplicate after its 6 Mbps fallback. Every other frame is
+		 * non-HT OFDM on primary20, placed by DATA_SC: raw frames use
+		 * 5 GHz basic OFDM and tx_fixed rejects 11A CCK.
 		 */
-		if (!rtw88_vht80_committed(sc) || ra_mode == 2 ||
-		    (ra_mode == 1 && sc->sc_ra.phy != RTW88_RA_VHT80_1SS))
+		if (!rtw88_vht_committed(sc) || ra_mode == 2 ||
+		    (ra_mode == 1 && (sc->sc_ra.phy != RTW88_RA_VHT_1SS ||
+		     sc->sc_ra.tuple.primary != sc->sc_phy.channel.primary ||
+		     sc->sc_ra.tuple.center != sc->sc_phy.channel.center ||
+		     sc->sc_ra.tuple.width_mhz !=
+		     sc->sc_phy.channel.width_mhz)) ||
+		    rtw8822c_channel_geometry(&sc->sc_phy.channel,
+		    &geometry) != 0)
 			return EOPNOTSUPP;
-		vht80 = ra_mode == 1;
+		vht = ra_mode == 1;
 #else
 		/* Default descriptor encoder and DMA engine are 20 MHz only. */
 		return EOPNOTSUPP;
@@ -1899,15 +1969,16 @@ rtw88_tx_submit(struct rtw88_softc *sc, unsigned q, const void *frame,
 		tx.flags &= ~(RTW88_TX_USE_RATE | RTW88_TX_DIS_RATE_FB);
 	}
 #ifdef RTW88_VHT80
-	if (vht80) {
+	if (vht) {
 		/* tx.c get_highest_vht_tx_rate seed, not the lowest RA bit. */
 		tx.rate = 0x33; /* DESC_RATEVHT1SS_MCS7. */
-		tx.bandwidth = 2; /* DATA_BW 80 MHz. */
+		/* DATA_BW 40 MHz 1, 80 MHz 2. */
+		tx.bandwidth = sc->sc_phy.channel.width_mhz == 80 ? 2 : 1;
 		tx.data_sc = RTW88_TX_DATA_SC_DONT_CARE;
 	} else if (!rtw88_channel_narrow(sc)) {
-		/* The only admitted 80 MHz tuple is 36/42/80: primary 36 is
-		 * the lowest 20 MHz subchannel in this 80 MHz block. */
-		tx.data_sc = RTW88_TX_DATA_SC_20_LOWEST_OF_80;
+		/* Primary20 within the block: upper 1, lower 2, upmost 3 and
+		 * lowest 4, as the PHY geometry programs it. */
+		tx.data_sc = (uint8_t)geometry.channel_index;
 	}
 #endif
 	if (q == RTW88_TXQ_MGMT)
@@ -2038,7 +2109,7 @@ rtw88_tx_auto(struct rtw88_softc *sc, unsigned q, const void *frame,
 	    sc->sc_ra.channel != sc->sc_channel)
 		return EBUSY;
 	if (sc->sc_ra.phy == RTW88_RA_HT20_1SS ||
-	    sc->sc_ra.phy == RTW88_RA_VHT80_1SS) {
+	    sc->sc_ra.phy == RTW88_RA_VHT_1SS) {
 		if (use_protection ||
 		    rtw88_ht20_policy_check(&sc->sc_ra.ht, sc->sc_ra.ht_operation) != 0 ||
 		    (bytes[1] & 0x04) != 0 || (bytes[22] & 15) != 0 ||
@@ -2200,7 +2271,7 @@ rtw88_channel_apply(struct rtw88_softc *sc,
 	if (error == 0 && (sc->sc_stop_requested || sc->sc_generation != gen))
 		error = EINTR;
 	if (error == 0)
-		error = rtw8822c_set_tx_power_tuple(sc, &efuse, tuple, 12);
+		error = rtw8822c_set_tx_power_tuple(sc, &efuse, tuple, RTW88_POWER_REGD);
 	if (error == 0 && (sc->sc_stop_requested || sc->sc_generation != gen))
 		error = EINTR;
 	if (error == 0)

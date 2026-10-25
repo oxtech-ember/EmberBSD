@@ -2,8 +2,8 @@
 /* Copyright (c) 2026 EmberBSD contributors. */
 /* Origin: original native net80211 integration, AI-assisted. */
 /*
- * One always-awake station, legacy/HT20 rates and software crypto; VHT80
- * only with RTW88_VHT_EXPERIMENT.
+ * One always-awake station, legacy/HT20 rates and software crypto; VHT
+ * 40/80 only with RTW88_VHT_EXPERIMENT.
  * DMA completion is not a radio ACK. RF calibration and power policy
  * belong to the core. This wrapper does not establish hardware acceptance.
  */
@@ -580,15 +580,19 @@ rtw88_net_ht20_local_policy(struct ieee80211com *ic)
 /*
  * Local VHT offer: NSS1 MCS0-7 receive and transmit at up to 80 MHz, with
  * no optional feature and no 160 MHz. net80211 offers it only beside an
- * admitted HT20 offer. Snapshot under Giant; no PHY change happens here.
- * newstate(RUN) then targets 36/42/80 for a negotiated profile, and the
- * width stop/restart owner enters it through rtw88_start_tuple().
+ * admitted HT20 offer, for the exact 40 or 80 MHz channel it derived from
+ * the AP. That tuple must pass the pure core check of channel policy, PHY
+ * geometry and TX power, so the cold start can enter it. Snapshot under
+ * Giant; no PHY change happens here. newstate(RUN) then targets the
+ * negotiated tuple, and the width stop/restart owner enters it through
+ * rtw88_start_tuple().
  */
 static int
 rtw88_net_vht_admit(struct ieee80211com *ic,
     const struct ieee80211_vht_channel *chan, struct ieee80211_vht_cap *cap)
 {
 	struct rtw88_net *net;
+	struct rtw88_channel_tuple tuple;
 
 	if (ic == NULL || chan == NULL || cap == NULL || ic->ic_ifp == NULL)
 		return EINVAL;
@@ -599,11 +603,30 @@ rtw88_net_vht_admit(struct ieee80211com *ic,
 	if (net->tx_quiet || net->policy.dying ||
 	    ic->ic_opmode != IEEE80211_M_STA ||
 	    rtw88_net_ht20_local_policy(ic) != 0 ||
-	    ieee80211_chan2ieee(ic, ic->ic_curchan) != 36 ||
-	    chan->primary != 36 || chan->center != 42 || chan->width_mhz != 80)
+	    ieee80211_chan2ieee(ic, ic->ic_curchan) != chan->primary ||
+	    (chan->width_mhz != 40 && chan->width_mhz != 80))
+		return EOPNOTSUPP;
+	tuple.primary = chan->primary;
+	tuple.center = chan->center;
+	tuple.width_mhz = chan->width_mhz;
+	if (rtw88_tuple_check(net->core, &tuple) != 0)
 		return EOPNOTSUPP;
 	cap->rx_map = cap->tx_map = RTW88_VHT_MAP_NSS1_MCS7;
 	return 0;
+}
+#endif
+
+#ifdef RTW88_VHT80
+/* The committed core tuple is the one this node negotiated. */
+static int
+rtw88_net_vht_tuple(const struct rtw88_net *net,
+    const struct ieee80211_node *ni)
+{
+	const struct rtw88_channel_tuple *t = &net->core->sc_phy.channel;
+	const struct ieee80211_vht_channel *c = &ni->ni_ht20.vht.channel;
+
+	return rtw88_vht_committed(net->core) && t->primary == c->primary &&
+	    t->center == c->center && t->width_mhz == c->width_mhz;
 }
 #endif
 
@@ -695,10 +718,10 @@ rtw88_net_tx_ht20_policy(struct ieee80211com *ic, struct rtw88_ra_config *cfg)
 #ifdef RTW88_VHT80
 		struct rtw88_net *net = ic->ic_ifp->if_softc;
 
-		/* The cold-start owner must already have committed 36/42/80. */
-		if (net == NULL || !rtw88_vht80_committed(net->core))
+		/* The cold-start owner must already have committed its tuple. */
+		if (net == NULL || !rtw88_net_vht_tuple(net, ni))
 			return EOPNOTSUPP;
-		cfg->phy = RTW88_RA_VHT80_1SS;
+		cfg->phy = RTW88_RA_VHT_1SS;
 		cfg->ht_mcs = 0;
 		cfg->vht_tx_map = ni->ni_ht20.vht.maps.tx_map;
 #else
@@ -725,7 +748,7 @@ rtw88_net_tx_ra_validate(struct rtw88_net *net,
 	h = &ni->ni_ht20;
 	vht = h->vht.valid;
 	if (!h->valid ||
-	    (vht && policy->phy != RTW88_RA_VHT80_1SS) ||
+	    (vht && policy->phy != RTW88_RA_VHT_1SS) ||
 	    (!vht && policy->phy != RTW88_RA_HT20_1SS) ||
 	    ra->phy != policy->phy || !ra->configured || !ra->active ||
 	    ra->error != 0 || ra->epoch != epoch ||
@@ -751,7 +774,7 @@ rtw88_net_tx_ra_validate(struct rtw88_net *net,
 		return EPROTO;
 	if (vht) {
 #ifdef RTW88_VHT80
-		if (!rtw88_vht80_committed(net->core) ||
+		if (!rtw88_net_vht_tuple(net, ni) ||
 		    h->vht.maps.tx_map != policy->vht_tx_map ||
 		    ra->vht_tx_map != policy->vht_tx_map)
 			return EPROTO;
@@ -1459,11 +1482,16 @@ lock_request:
 	net->pending_channel.center = net->channel;
 	net->pending_channel.width_mhz = 20;
 #ifdef RTW88_VHT80
-	/* A negotiated VHT80 peer runs at 36/42/80; every other state is 20. */
+	/* A negotiated VHT peer runs at its 40/80 MHz tuple; every other
+	 * state is 20. */
 	if (state == IEEE80211_S_RUN && ic->ic_bss != NULL &&
 	    ic->ic_bss->ni_ht20.valid && ic->ic_bss->ni_ht20.vht.valid &&
-	    net->channel == 36)
-		net->pending_channel = (struct rtw88_channel_tuple){ 36, 42, 80 };
+	    ic->ic_bss->ni_ht20.vht.channel.primary == net->channel) {
+		net->pending_channel.center =
+		    ic->ic_bss->ni_ht20.vht.channel.center;
+		net->pending_channel.width_mhz =
+		    ic->ic_bss->ni_ht20.vht.channel.width_mhz;
+	}
 #endif
 	/* A width change needs the sleepable stop/DMA fence even before the
 	 * protocol marks this peer linked. Preserve the warm same-width path. */
@@ -1834,11 +1862,14 @@ rtw88_net_tx_submit(struct rtw88_net *net, struct ieee80211_node *ni,
 		return EINVAL;
 	if (net->core->sc_ra.configured &&
 	    (net->core->sc_ra.phy == RTW88_RA_HT20_1SS ||
-	     net->core->sc_ra.phy == RTW88_RA_VHT80_1SS)) {
-		vht = net->core->sc_ra.phy == RTW88_RA_VHT80_1SS;
+	     net->core->sc_ra.phy == RTW88_RA_VHT_1SS)) {
+		vht = net->core->sc_ra.phy == RTW88_RA_VHT_1SS;
 		if (!ni->ni_ht20.valid || ni->ni_ht20.vht.valid != vht ||
 		    (vht && net->core->sc_ra.vht_tx_map !=
 		     ni->ni_ht20.vht.maps.tx_map) ||
+#ifdef RTW88_VHT80
+		    (vht && !rtw88_net_vht_tuple(net, ni)) ||
+#endif
 		    index != IEEE80211_FIXED_RATE_NONE ||
 		    ic->ic_curmode != IEEE80211_MODE_11A ||
 		    (ic->ic_flags & IEEE80211_F_USEPROT) != 0 ||
@@ -2053,7 +2084,7 @@ rtw88_net_start(struct ifnet *ifp)
 			    net->core->sc_ra.phy == RTW88_RA_HT20_1SS;
 #ifdef RTW88_VHT80
 			ht_expected |= net->core->sc_ra.configured &&
-			    net->core->sc_ra.phy == RTW88_RA_VHT80_1SS;
+			    net->core->sc_ra.phy == RTW88_RA_VHT_1SS;
 #endif
 			mutex_exit(net->lock);
 			if (ht_expected || (ic->ic_bss != NULL &&
