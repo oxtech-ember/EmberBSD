@@ -43,7 +43,8 @@ struct rtw88_net_neg {
 	uint16_t ht20_last_status;
 	uint32_t prepare_ok, prepare_fail, vht_admit, vht_refuse;
 	int32_t prepare_error, vht_error;
-	uint8_t ht20_reset_reason, prepare_ready, vht_chan[3];
+	uint8_t ht20_reset_reason, ht20_failure_reason, prepare_ready;
+	uint8_t vht_chan[3];
 	uint8_t run_ht, run_vht, run_chan[3];
 };
 /* Mirror ic_ht20_diag; Giant owns d, the caller holds the neg lock. */
@@ -59,6 +60,7 @@ struct rtw88_net_neg {
 	(n)->ht20_status = (d)->status;					\
 	(n)->ht20_norate = (d)->norate;					\
 	(n)->ht20_failures = (d)->failures;				\
+	(n)->ht20_failure_reason = (d)->failure_reason;			\
 	(n)->ht20_last_status = (d)->last_status;			\
 	(n)->ht20_reset_reason = (d)->reset_reason;			\
 } while (0)

@@ -2998,6 +2998,7 @@ ieee80211_recv_mgmt_assoc_resp(struct ieee80211com *ic, struct mbuf *m0,
 	struct ieee80211_ht20_node ht20_offer;
 	const uint8_t *ht20_ies;
 	size_t ht20_len;
+	uint8_t ht20_reason = IEEE80211_HT20_FAIL_SHORT;
 	IEEE80211_DEBUGVAR(char ebuf[3 * ETHER_ADDR_LEN]);
 	u_int16_t capinfo, associd;
 	u_int16_t status;
@@ -3080,6 +3081,7 @@ ieee80211_recv_mgmt_assoc_resp(struct ieee80211com *ic, struct mbuf *m0,
 
 	ht20_ies = frm;
 	ht20_len = efrm - frm;
+	ht20_reason = IEEE80211_HT20_FAIL_IES;
 	if (ht20_offer.offered && ieee80211_ht20_check_ies(frm, ht20_len) != 0)
 		goto ht20_failure;
 	rates = xrates = wme = NULL;
@@ -3196,16 +3198,19 @@ ieee80211_recv_mgmt_assoc_resp(struct ieee80211com *ic, struct mbuf *m0,
 	    ni->ni_flags & IEEE80211_NODE_QOS ? ", QoS" : ""
 	);
 
+	ht20_reason = IEEE80211_HT20_FAIL_CONSUMER;
 	if (ieee80211_ht20_response(ic, ni, subtype, &ht20_offer,
 	    ht20_ies, ht20_len,
-	    (ni->ni_flags & IEEE80211_NODE_QOS) != 0) != 0 ||
-	    ieee80211_new_state(ic, IEEE80211_S_RUN, subtype) != 0) {
+	    (ni->ni_flags & IEEE80211_NODE_QOS) != 0) != 0)
 		goto ht20_failure;
-	}
+	ht20_reason = IEEE80211_HT20_FAIL_RUN;
+	if (ieee80211_new_state(ic, IEEE80211_S_RUN, subtype) != 0)
+		goto ht20_failure;
 	return;
 ht20_failure:
 	/* Same association-failure ownership as the WME apply path above. */
 	ic->ic_ht20_diag.failures++;
+	ic->ic_ht20_diag.failure_reason = ht20_reason;
 	ni->ni_associd = 0;
 	ieee80211_ht20_reset(ni);
 	ieee80211_wme_reset(ni);

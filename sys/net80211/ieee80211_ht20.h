@@ -57,13 +57,18 @@ struct ieee80211_ht20_node {
 #define IEEE80211_HT20_RESET_FRAMING 2
 #define IEEE80211_HT20_RESET_HT 3	/* HT Capabilities or Operation. */
 #define IEEE80211_HT20_RESET_VHT 4	/* VHT Operation. */
+/* Association HT failure path, by stage. */
+#define IEEE80211_HT20_FAIL_SHORT 1	/* Fixed fields missing. */
+#define IEEE80211_HT20_FAIL_IES 2	/* ieee80211_ht20_check_ies(). */
+#define IEEE80211_HT20_FAIL_CONSUMER 3	/* ieee80211_ht20_response(). */
+#define IEEE80211_HT20_FAIL_RUN 4	/* RUN transition. */
 struct ieee80211_ht20_diag {
 	uint32_t offers, vht_offers;
 	uint32_t ht, vht, legacy, unoffered, bad;
 	uint32_t resets;
 	uint32_t status, norate, failures;
 	uint16_t last_status;
-	uint8_t reset_reason;
+	uint8_t reset_reason, failure_reason;
 };
 /* A source-qualified primary20/mixed-format, single-MPDU protection result.
  * This is not a radio/PPDU or hardware BlockAck attestation. */
