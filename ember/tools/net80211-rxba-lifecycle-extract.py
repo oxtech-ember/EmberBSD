@@ -25,7 +25,7 @@ functions=[('ieee80211_rxba_ready','int'),('rxba_drop','static void'),('rxba_fre
 if response:
  node=(src/'sys/net80211/ieee80211_node.h').read_text()
  parts.append('static inline int\n'+re.search(r'^ieee80211_node_is_authorized\(.*?^}',node,re.M|re.S).group()+'\n')
- functions += [('rxba_withdraw','static void'),('rxba_le16','static uint16_t'),('rxba_current','static int'),('rxba_require_current','static int'),('ieee80211_rxba_mask','unsigned'),('ieee80211_rxba_response_check','int'),('ieee80211_rxba_response_commit','void')]
+ functions += [('rxba_withdraw','static void'),('rxba_le16','static uint16_t'),('rxba_current','static int'),('rxba_premature','static int'),('rxba_require_current','static int'),('ieee80211_rxba_mask','unsigned'),('ieee80211_rxba_response_check','int'),('ieee80211_rxba_response_commit','void')]
 for name,result in functions:parts.append(result+'\n'+re.search(r'^'+name+r'\(.*?^}',text,re.M|re.S).group()+'\n')
 parts.append('#undef kmem_intr_free\n')
 (out/'native-rxba-lifecycle.inc').write_text('\n'.join(parts))
