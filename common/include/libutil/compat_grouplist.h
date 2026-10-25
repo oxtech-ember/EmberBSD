@@ -20,6 +20,7 @@
 static inline int
 compat_grouplist_next(int capacity, int reported)
 {
+
 	if (capacity <= 0 || capacity > COMPAT_GROUPLIST_MAX ||
 	    reported < capacity) {
 		errno = EINVAL;
