@@ -368,7 +368,7 @@ channel_derive(void)
 	derive_rejects(p, n, 60);		/* Not the current primary. */
 	p[31] = 3;				/* No STA channel width. */
 	derive_rejects(p, n, 64);
-	n = phy_window(p, 64, 3, 1, 58, 0);
+	(void)phy_window(p, 64, 3, 1, 58, 0);
 	derive_rejects(p, 66, 64);		/* No VHT Operation. */
 	memcpy(p + 28, p + 52, 21);		/* No HT Operation. */
 	derive_rejects(p, 49, 64);

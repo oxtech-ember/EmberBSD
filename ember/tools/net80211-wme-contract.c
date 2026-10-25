@@ -1130,7 +1130,7 @@ test_vht_request_bytes(void)
 			CHECK(vht_admitted.primary == v[bss].primary &&
 			    vht_admitted.center == v[bss].center &&
 			    vht_admitted.width_mhz == v[bss].mhz);
-			vht = request_ie(IEEE80211_FC0_SUBTYPE_ASSOC_REQ, 191,
+			(void)request_ie(IEEE80211_FC0_SUBTYPE_ASSOC_REQ, 191,
 			    &count);
 			CHECK(count == !refuse);
 			release_capture();
