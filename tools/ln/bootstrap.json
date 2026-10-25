@@ -1,0 +1,458 @@
+{
+  "format": "emberbsd-native-bootstrap-program",
+  "version": 1,
+  "origin": "EmberBSD (AI-assisted) source contract; implementation retains its BSD copyright notices.",
+  "compiler": {
+    "family": "gcc",
+    "major": 16,
+    "abi": "native"
+  },
+  "cflags": [],
+  "link_flags": [],
+  "libraries": [],
+  "name": "ln",
+  "canonical_host_recipe": "tools/ln/Makefile",
+  "source_makefile": "bin/ln/Makefile",
+  "sources": [
+    "bin/ln/ln.c"
+  ],
+  "headers": [
+    "tools/compat/bootstrap_cdefs.h"
+  ],
+  "include_dirs": [],
+  "cppflags": [
+    "-include",
+    "tools/compat/bootstrap_cdefs.h"
+  ],
+  "invocations": [
+    "ln"
+  ],
+  "files": {},
+  "runtime_cases": [
+    {
+      "name": "hardlink",
+      "invocation": "ln",
+      "args": [
+        "file",
+        "peer"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          }
+        },
+        "expect": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          },
+          "peer": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "same_inode_as": "file"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "destination-directory",
+      "invocation": "ln",
+      "args": [
+        "file",
+        "dir"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          },
+          "dir": {
+            "type": "directory",
+            "mode": "0700"
+          }
+        },
+        "expect": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          },
+          "dir": {
+            "type": "directory",
+            "mode": "0700"
+          },
+          "dir/file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "same_inode_as": "file"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "relative-symlink",
+      "invocation": "ln",
+      "args": [
+        "-s",
+        "file",
+        "alias"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          }
+        },
+        "expect": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          },
+          "alias": {
+            "type": "symlink",
+            "target": "file"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "dangling-symlink",
+      "invocation": "ln",
+      "args": [
+        "-s",
+        "missing",
+        "alias"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {},
+        "expect": {
+          "missing": {
+            "type": "absent"
+          },
+          "alias": {
+            "type": "symlink",
+            "target": "missing"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "force",
+      "invocation": "ln",
+      "args": [
+        "-f",
+        "file",
+        "peer"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          },
+          "peer": {
+            "type": "file",
+            "mode": "0600",
+            "data": "old\n"
+          }
+        },
+        "expect": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          },
+          "peer": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "same_inode_as": "file"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "existing-error",
+      "invocation": "ln",
+      "args": [
+        "file",
+        "peer"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          },
+          "peer": {
+            "type": "file",
+            "mode": "0600",
+            "data": "old\n"
+          }
+        },
+        "expect": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          },
+          "peer": {
+            "type": "file",
+            "mode": "0600",
+            "data": "old\n"
+          }
+        }
+      },
+      "stderr_nonempty": true
+    },
+    {
+      "name": "physical-source",
+      "invocation": "ln",
+      "args": [
+        "-P",
+        "alias",
+        "peer"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          },
+          "alias": {
+            "type": "symlink",
+            "target": "file"
+          }
+        },
+        "expect": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          },
+          "alias": {
+            "type": "symlink",
+            "target": "file"
+          },
+          "peer": {
+            "type": "symlink",
+            "target": "file",
+            "same_inode_as": "alias"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "logical-source",
+      "invocation": "ln",
+      "args": [
+        "-L",
+        "alias",
+        "peer"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          },
+          "alias": {
+            "type": "symlink",
+            "target": "file"
+          }
+        },
+        "expect": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          },
+          "alias": {
+            "type": "symlink",
+            "target": "file"
+          },
+          "peer": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "same_inode_as": "file"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "replace-symlink",
+      "invocation": "ln",
+      "args": [
+        "-snf",
+        "file",
+        "alias"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          },
+          "other": {
+            "type": "directory",
+            "mode": "0700"
+          },
+          "alias": {
+            "type": "symlink",
+            "target": "other"
+          }
+        },
+        "expect": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          },
+          "other": {
+            "type": "directory",
+            "mode": "0700"
+          },
+          "alias": {
+            "type": "symlink",
+            "target": "file"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "verbose",
+      "invocation": "ln",
+      "args": [
+        "-v",
+        "file",
+        "peer"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "peer => file\n",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          }
+        },
+        "expect": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          },
+          "peer": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "same_inode_as": "file"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "missing-source",
+      "invocation": "ln",
+      "args": [
+        "missing",
+        "peer"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {},
+        "expect": {
+          "missing": {
+            "type": "absent"
+          },
+          "peer": {
+            "type": "absent"
+          }
+        }
+      },
+      "stderr_nonempty": true
+    },
+    {
+      "name": "missing-operand",
+      "invocation": "ln",
+      "args": [],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {},
+        "expect": {}
+      },
+      "stderr_nonempty": true
+    }
+  ]
+}

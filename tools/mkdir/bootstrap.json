@@ -1,0 +1,274 @@
+{
+  "format": "emberbsd-native-bootstrap-program",
+  "version": 1,
+  "origin": "EmberBSD (AI-assisted) source contract; implementation retains its BSD copyright notices.",
+  "compiler": {
+    "family": "gcc",
+    "major": 16,
+    "abi": "native"
+  },
+  "cflags": [],
+  "link_flags": [],
+  "libraries": [],
+  "name": "mkdir",
+  "canonical_host_recipe": "tools/mkdir/Makefile",
+  "source_makefile": "bin/mkdir/Makefile",
+  "sources": [
+    "bin/mkdir/mkdir.c"
+  ],
+  "headers": [
+    "tools/compat/bootstrap_cdefs.h"
+  ],
+  "include_dirs": [],
+  "cppflags": [
+    "-include",
+    "tools/compat/bootstrap_cdefs.h"
+  ],
+  "invocations": [
+    "mkdir"
+  ],
+  "files": {},
+  "runtime_cases": [
+    {
+      "name": "default",
+      "invocation": "mkdir",
+      "args": [
+        "dir"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {},
+        "expect": {
+          "dir": {
+            "type": "directory",
+            "mode": "0755"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "numeric",
+      "invocation": "mkdir",
+      "args": [
+        "-m",
+        "700",
+        "dir"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {},
+        "expect": {
+          "dir": {
+            "type": "directory",
+            "mode": "0700"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "symbolic",
+      "invocation": "mkdir",
+      "args": [
+        "-m",
+        "u=rwx,g=rx,o=",
+        "dir"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {},
+        "expect": {
+          "dir": {
+            "type": "directory",
+            "mode": "0750"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "multiple",
+      "invocation": "mkdir",
+      "args": [
+        "one",
+        "two"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {},
+        "expect": {
+          "one": {
+            "type": "directory",
+            "mode": "0755"
+          },
+          "two": {
+            "type": "directory",
+            "mode": "0755"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "parents",
+      "invocation": "mkdir",
+      "args": [
+        "-p",
+        "tree/child/leaf"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {},
+        "expect": {
+          "tree": {
+            "type": "directory",
+            "mode": "0755"
+          },
+          "tree/child": {
+            "type": "directory",
+            "mode": "0755"
+          },
+          "tree/child/leaf": {
+            "type": "directory",
+            "mode": "0755"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "existing-parents",
+      "invocation": "mkdir",
+      "args": [
+        "-p",
+        "dir"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "dir": {
+            "type": "directory",
+            "mode": "0700"
+          }
+        },
+        "expect": {
+          "dir": {
+            "type": "directory",
+            "mode": "0700"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "existing-error",
+      "invocation": "mkdir",
+      "args": [
+        "dir"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "dir": {
+            "type": "directory",
+            "mode": "0700"
+          }
+        },
+        "expect": {
+          "dir": {
+            "type": "directory",
+            "mode": "0700"
+          }
+        }
+      },
+      "stderr_nonempty": true
+    },
+    {
+      "name": "file-collision",
+      "invocation": "mkdir",
+      "args": [
+        "file"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          }
+        },
+        "expect": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          }
+        }
+      },
+      "stderr_nonempty": true
+    },
+    {
+      "name": "missing-parent",
+      "invocation": "mkdir",
+      "args": [
+        "missing/dir"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {},
+        "expect": {
+          "missing": {
+            "type": "absent"
+          },
+          "missing/dir": {
+            "type": "absent"
+          }
+        }
+      },
+      "stderr_nonempty": true
+    },
+    {
+      "name": "missing-operand",
+      "invocation": "mkdir",
+      "args": [],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {},
+        "expect": {}
+      },
+      "stderr_nonempty": true
+    }
+  ]
+}

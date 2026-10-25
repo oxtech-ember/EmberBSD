@@ -1,0 +1,431 @@
+{
+  "format": "emberbsd-native-bootstrap-program",
+  "version": 1,
+  "origin": "EmberBSD (AI-assisted) source contract; implementation retains its BSD copyright notices.",
+  "compiler": {
+    "family": "gcc",
+    "major": 16,
+    "abi": "native"
+  },
+  "cflags": [],
+  "link_flags": [],
+  "libraries": [],
+  "name": "chmod",
+  "canonical_host_recipe": "tools/chmod/Makefile",
+  "source_makefile": "bin/chmod/Makefile",
+  "sources": [
+    "bin/chmod/chmod.c"
+  ],
+  "headers": [
+    "tools/compat/bootstrap_cdefs.h"
+  ],
+  "include_dirs": [],
+  "cppflags": [
+    "-include",
+    "tools/compat/bootstrap_cdefs.h"
+  ],
+  "invocations": [
+    "chmod"
+  ],
+  "files": {},
+  "runtime_cases": [
+    {
+      "name": "numeric",
+      "invocation": "chmod",
+      "args": [
+        "640",
+        "file"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          }
+        },
+        "expect": {
+          "file": {
+            "type": "file",
+            "mode": "0640",
+            "data": "owned\n"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "symbolic-add",
+      "invocation": "chmod",
+      "args": [
+        "g+r",
+        "file"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          }
+        },
+        "expect": {
+          "file": {
+            "type": "file",
+            "mode": "0640",
+            "data": "owned\n"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "symbolic-remove",
+      "invocation": "chmod",
+      "args": [
+        "o-r",
+        "file"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "file": {
+            "type": "file",
+            "mode": "0644",
+            "data": "owned\n"
+          }
+        },
+        "expect": {
+          "file": {
+            "type": "file",
+            "mode": "0640",
+            "data": "owned\n"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "reference",
+      "invocation": "chmod",
+      "args": [
+        "--reference=ref",
+        "file"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "ref": {
+            "type": "file",
+            "mode": "0640",
+            "data": "owned\n"
+          },
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          }
+        },
+        "expect": {
+          "ref": {
+            "type": "file",
+            "mode": "0640",
+            "data": "owned\n"
+          },
+          "file": {
+            "type": "file",
+            "mode": "0640",
+            "data": "owned\n"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "multiple",
+      "invocation": "chmod",
+      "args": [
+        "640",
+        "one",
+        "two"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "one": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          },
+          "two": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          }
+        },
+        "expect": {
+          "one": {
+            "type": "file",
+            "mode": "0640",
+            "data": "owned\n"
+          },
+          "two": {
+            "type": "file",
+            "mode": "0640",
+            "data": "owned\n"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "recursive",
+      "invocation": "chmod",
+      "args": [
+        "-R",
+        "750",
+        "tree"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "tree": {
+            "type": "directory",
+            "mode": "0700"
+          },
+          "tree/file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          }
+        },
+        "expect": {
+          "tree": {
+            "type": "directory",
+            "mode": "0750"
+          },
+          "tree/file": {
+            "type": "file",
+            "mode": "0750",
+            "data": "owned\n"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "physical-symlink",
+      "invocation": "chmod",
+      "args": [
+        "-RP",
+        "750",
+        "tree"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "tree": {
+            "type": "directory",
+            "mode": "0700"
+          },
+          "tree/link": {
+            "type": "symlink",
+            "target": "missing"
+          }
+        },
+        "expect": {
+          "tree": {
+            "type": "directory",
+            "mode": "0750"
+          },
+          "tree/link": {
+            "type": "symlink",
+            "target": "missing"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "follow-symlink",
+      "invocation": "chmod",
+      "args": [
+        "640",
+        "alias"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          },
+          "alias": {
+            "type": "symlink",
+            "target": "file"
+          }
+        },
+        "expect": {
+          "file": {
+            "type": "file",
+            "mode": "0640",
+            "data": "owned\n"
+          },
+          "alias": {
+            "type": "symlink",
+            "target": "file"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "nofollow-symlink",
+      "invocation": "chmod",
+      "args": [
+        "-h",
+        "600",
+        "alias"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          },
+          "alias": {
+            "type": "symlink",
+            "target": "file"
+          }
+        },
+        "expect": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          },
+          "alias": {
+            "type": "symlink",
+            "target": "file",
+            "mode": "0600"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "hardlink",
+      "invocation": "chmod",
+      "args": [
+        "640",
+        "peer"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          },
+          "peer": {
+            "type": "hardlink",
+            "target": "file"
+          }
+        },
+        "expect": {
+          "file": {
+            "type": "file",
+            "mode": "0640",
+            "data": "owned\n"
+          },
+          "peer": {
+            "type": "file",
+            "mode": "0640",
+            "data": "owned\n",
+            "same_inode_as": "file"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "invalid-mode",
+      "invocation": "chmod",
+      "args": [
+        "invalid",
+        "file"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          }
+        },
+        "expect": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          }
+        }
+      },
+      "stderr_nonempty": true
+    },
+    {
+      "name": "missing-operand",
+      "invocation": "chmod",
+      "args": [],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {},
+        "expect": {}
+      },
+      "stderr_nonempty": true
+    }
+  ]
+}

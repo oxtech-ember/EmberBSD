@@ -40,6 +40,10 @@ static char const copyright[] =
 static char sccsid[] = "@(#)ln.c	8.2 (Berkeley) 3/31/94";
 #endif /* not lint */
 #endif
+#if HAVE_NBTOOL_CONFIG_H
+#include "nbtool_config.h"
+#endif
+
 #include <sys/cdefs.h>
 #ifdef __FBSDID
 __FBSDID("$FreeBSD: head/bin/ln/ln.c 251261 2013-06-02 17:55:00Z eadler $");

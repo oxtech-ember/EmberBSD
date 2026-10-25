@@ -29,6 +29,10 @@
  * SUCH DAMAGE.
  */
 
+#if HAVE_NBTOOL_CONFIG_H
+#include "nbtool_config.h"
+#endif
+
 #include <sys/cdefs.h>
 #ifndef lint
 __COPYRIGHT("@(#) Copyright (c) 1983, 1992, 1993\

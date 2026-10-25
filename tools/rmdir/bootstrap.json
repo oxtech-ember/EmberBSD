@@ -1,0 +1,280 @@
+{
+  "format": "emberbsd-native-bootstrap-program",
+  "version": 1,
+  "origin": "EmberBSD (AI-assisted) source contract; implementation retains its BSD copyright notices.",
+  "compiler": {
+    "family": "gcc",
+    "major": 16,
+    "abi": "native"
+  },
+  "cflags": [],
+  "link_flags": [],
+  "libraries": [],
+  "name": "rmdir",
+  "canonical_host_recipe": "tools/rmdir/Makefile",
+  "source_makefile": "bin/rmdir/Makefile",
+  "sources": [
+    "bin/rmdir/rmdir.c"
+  ],
+  "headers": [
+    "tools/compat/bootstrap_cdefs.h"
+  ],
+  "include_dirs": [],
+  "cppflags": [
+    "-include",
+    "tools/compat/bootstrap_cdefs.h"
+  ],
+  "invocations": [
+    "rmdir"
+  ],
+  "files": {},
+  "runtime_cases": [
+    {
+      "name": "empty",
+      "invocation": "rmdir",
+      "args": [
+        "dir"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "dir": {
+            "type": "directory",
+            "mode": "0700"
+          }
+        },
+        "expect": {
+          "dir": {
+            "type": "absent"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "multiple",
+      "invocation": "rmdir",
+      "args": [
+        "one",
+        "two"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "one": {
+            "type": "directory",
+            "mode": "0700"
+          },
+          "two": {
+            "type": "directory",
+            "mode": "0700"
+          }
+        },
+        "expect": {
+          "one": {
+            "type": "absent"
+          },
+          "two": {
+            "type": "absent"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "trailing-slash",
+      "invocation": "rmdir",
+      "args": [
+        "dir/"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "dir": {
+            "type": "directory",
+            "mode": "0700"
+          }
+        },
+        "expect": {
+          "dir": {
+            "type": "absent"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "verbose",
+      "invocation": "rmdir",
+      "args": [
+        "-v",
+        "dir"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "dir\n",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "dir": {
+            "type": "directory",
+            "mode": "0700"
+          }
+        },
+        "expect": {
+          "dir": {
+            "type": "absent"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "parents",
+      "invocation": "rmdir",
+      "args": [
+        "-p",
+        "tree/child/leaf"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "tree": {
+            "type": "directory",
+            "mode": "0700"
+          },
+          "tree/child": {
+            "type": "directory",
+            "mode": "0700"
+          },
+          "tree/child/leaf": {
+            "type": "directory",
+            "mode": "0700"
+          }
+        },
+        "expect": {
+          "tree": {
+            "type": "absent"
+          },
+          "tree/child": {
+            "type": "absent"
+          },
+          "tree/child/leaf": {
+            "type": "absent"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "nonempty",
+      "invocation": "rmdir",
+      "args": [
+        "dir"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "dir": {
+            "type": "directory",
+            "mode": "0700"
+          },
+          "dir/file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          }
+        },
+        "expect": {
+          "dir": {
+            "type": "directory",
+            "mode": "0700"
+          },
+          "dir/file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          }
+        }
+      },
+      "stderr_nonempty": true
+    },
+    {
+      "name": "regular-file",
+      "invocation": "rmdir",
+      "args": [
+        "file"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          }
+        },
+        "expect": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n"
+          }
+        }
+      },
+      "stderr_nonempty": true
+    },
+    {
+      "name": "missing-directory",
+      "invocation": "rmdir",
+      "args": [
+        "missing"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {},
+        "expect": {
+          "missing": {
+            "type": "absent"
+          }
+        }
+      },
+      "stderr_nonempty": true
+    },
+    {
+      "name": "missing-operand",
+      "invocation": "rmdir",
+      "args": [],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {},
+        "expect": {}
+      },
+      "stderr_nonempty": true
+    }
+  ]
+}
