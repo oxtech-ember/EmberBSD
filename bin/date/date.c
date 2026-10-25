@@ -235,7 +235,7 @@ badcanotime(const char *msg, const char *val, size_t where)
 inline static int
 digitstring(const char *s, int len)
 {
-	while (--len > 0) {
+	while (len-- > 0) {
 		if (!isdigit(*(unsigned char *)s))
 			return 0;
 		s++;
