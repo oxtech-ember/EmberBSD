@@ -303,7 +303,7 @@ rtwce_stats(char *buf, size_t len)
 		    " htprep %u/%u/%#x/%d htoffer %u/%u"
 		    " vhtadmit %u/%u/%u.%u.%u/%d"
 		    " htresp %u/%u/%u/%u/%u htreset %u/%u"
-		    " htrun %u/%u/%u.%u.%u raphy %u/%u/%u"
+		    " htrun %u/%u/%u.%u.%u raphy %u/%d/%d"
 		    " tuple %u.%u.%u/%u",
 		    ns.neg.prepare_ok, ns.neg.prepare_fail, ns.neg.prepare_ready,
 		    (int)ns.neg.prepare_error, ns.neg.ht20_offers,
