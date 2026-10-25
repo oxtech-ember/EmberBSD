@@ -192,6 +192,7 @@ struct rtw88_stats {
 	uint16_t tx_data_basic;
 	uint8_t tx_data_rate;
 	uint64_t tx_ra_encoded, tx_ra_protection_limited;
+	uint64_t tx_ampdu_encoded;	/* Descriptors with AGG_EN set. */
 	uint64_t ra_commands, ra_command_errors;
 	uint64_t ra_reports, ra_unattributed, ra_malformed, ra_foreign;
 	uint64_t ra_unsupported, ra_inactive, ra_trailing, ra_outside_mask;
@@ -432,6 +433,22 @@ void rtw88_ra_invalidate(struct rtw88_softc *);
 int rtw88_ra_configure(struct rtw88_softc *, const struct rtw88_ra_config *);
 int rtw88_tx_auto(struct rtw88_softc *, unsigned, const void *, size_t,
     uint64_t, unsigned);
+/*
+ * One QoS data MPDU of an established originator block-ack session, on
+ * the current HT20 or VHT firmware-RA entry: the MAC may aggregate it
+ * with its neighbours of the same TID into one A-MPDU PPDU. density is
+ * the peer's minimum MPDU start spacing code (0-7); count is MAX_AGG_NUM
+ * (1-31), at most 2 * count MPDUs, already bounded by the recipient
+ * window and the peer's maximum A-MPDU length. Every other frame, the
+ * legacy and protection-limited paths, and non-VHT builds never aggregate.
+ */
+struct rtw88_tx_agg {
+	uint8_t tid, density, count;
+};
+#ifdef RTW88_VHT80
+int rtw88_tx_ampdu(struct rtw88_softc *, unsigned, const void *, size_t,
+    uint64_t, const struct rtw88_tx_agg *);
+#endif
 
 /* Read software ring capacity while holding the bus interrupt lock.
  * A DFS channel without a TX permit has no capacity. */
