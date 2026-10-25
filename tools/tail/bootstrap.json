@@ -1,0 +1,481 @@
+{
+  "format": "emberbsd-native-bootstrap-program",
+  "version": 1,
+  "origin": "EmberBSD (AI-assisted) source contract; implementation retains its BSD copyright notices.",
+  "compiler": {
+    "family": "gcc",
+    "major": 16,
+    "abi": "native"
+  },
+  "cflags": [],
+  "link_flags": [],
+  "libraries": [],
+  "name": "tail",
+  "canonical_host_recipe": "tools/tail/Makefile",
+  "source_makefile": "usr.bin/tail/Makefile",
+  "sources": [
+    "usr.bin/tail/forward.c",
+    "usr.bin/tail/misc.c",
+    "usr.bin/tail/read.c",
+    "usr.bin/tail/reverse.c",
+    "usr.bin/tail/tail.c"
+  ],
+  "headers": [
+    "usr.bin/tail/extern.h",
+    "tools/compat/bootstrap_cdefs.h"
+  ],
+  "include_dirs": [
+    "usr.bin/tail"
+  ],
+  "cppflags": [
+    "-include",
+    "tools/compat/bootstrap_cdefs.h"
+  ],
+  "invocations": [
+    "tail",
+    "tac"
+  ],
+  "files": {
+    "input.txt": "alpha\nbeta\ngamma\n",
+    "other.txt": "delta\n",
+    "empty.txt": "",
+    "partial.txt": "alpha\nbeta\ngamma",
+    "below.txt": [
+      {
+        "text": "x",
+        "repeat": 10485753
+      },
+      "\nlast\n"
+    ],
+    "aligned.txt": [
+      {
+        "text": "x",
+        "repeat": 10485754
+      },
+      "\nlast\n"
+    ],
+    "unaligned.txt": [
+      {
+        "text": "x",
+        "repeat": 10485755
+      },
+      "\nlast\n"
+    ],
+    "boundary.txt": [
+      {
+        "text": "x",
+        "repeat": 10485759
+      },
+      "\n",
+      {
+        "text": "y",
+        "repeat": 10485759
+      },
+      "\n"
+    ]
+  },
+  "runtime_cases": [
+    {
+      "name": "default-file",
+      "invocation": "tail",
+      "args": [
+        "input.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "alpha\nbeta\ngamma\n",
+      "stderr": ""
+    },
+    {
+      "name": "last-lines",
+      "invocation": "tail",
+      "args": [
+        "-n",
+        "2",
+        "input.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "beta\ngamma\n",
+      "stderr": ""
+    },
+    {
+      "name": "from-line",
+      "invocation": "tail",
+      "args": [
+        "-n",
+        "+2",
+        "input.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "beta\ngamma\n",
+      "stderr": ""
+    },
+    {
+      "name": "last-bytes",
+      "invocation": "tail",
+      "args": [
+        "-c",
+        "6",
+        "input.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "gamma\n",
+      "stderr": ""
+    },
+    {
+      "name": "from-byte",
+      "invocation": "tail",
+      "args": [
+        "-c",
+        "+7",
+        "input.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "beta\ngamma\n",
+      "stderr": ""
+    },
+    {
+      "name": "zero-lines",
+      "invocation": "tail",
+      "args": [
+        "-n",
+        "0",
+        "input.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "name": "zero-bytes",
+      "invocation": "tail",
+      "args": [
+        "-c",
+        "0",
+        "input.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "name": "reverse-file",
+      "invocation": "tail",
+      "args": [
+        "-r",
+        "input.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "gamma\nbeta\nalpha\n",
+      "stderr": ""
+    },
+    {
+      "name": "reverse-lines",
+      "invocation": "tail",
+      "args": [
+        "-r",
+        "-n",
+        "2",
+        "input.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "gamma\nbeta\n",
+      "stderr": ""
+    },
+    {
+      "name": "reverse-bytes",
+      "invocation": "tail",
+      "args": [
+        "-r",
+        "-c",
+        "6",
+        "input.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "gamma\n",
+      "stderr": ""
+    },
+    {
+      "name": "empty-file",
+      "invocation": "tail",
+      "args": [
+        "empty.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "name": "unterminated-last-line",
+      "invocation": "tail",
+      "args": [
+        "-n",
+        "1",
+        "partial.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "gamma",
+      "stderr": ""
+    },
+    {
+      "name": "stdin",
+      "invocation": "tail",
+      "args": [
+        "-n",
+        "2"
+      ],
+      "stdin": "alpha\nbeta\ngamma\n",
+      "exit": 0,
+      "stdout": "beta\ngamma\n",
+      "stderr": ""
+    },
+    {
+      "name": "reverse-stdin",
+      "invocation": "tail",
+      "args": [
+        "-r"
+      ],
+      "stdin": "alpha\nbeta\ngamma\n",
+      "exit": 0,
+      "stdout": "gamma\nbeta\nalpha\n",
+      "stderr": ""
+    },
+    {
+      "name": "follow-pipe",
+      "invocation": "tail",
+      "args": [
+        "-f",
+        "-n",
+        "1"
+      ],
+      "stdin": "alpha\nbeta\ngamma\n",
+      "exit": 0,
+      "stdout": "gamma\n",
+      "stderr": ""
+    },
+    {
+      "name": "quiet-files",
+      "invocation": "tail",
+      "args": [
+        "-q",
+        "input.txt",
+        "other.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "alpha\nbeta\ngamma\ndelta\n",
+      "stderr": ""
+    },
+    {
+      "name": "verbose-file",
+      "invocation": "tail",
+      "args": [
+        "-v",
+        "other.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "==> other.txt <==\ndelta\n",
+      "stderr": ""
+    },
+    {
+      "name": "multiple-files",
+      "invocation": "tail",
+      "args": [
+        "input.txt",
+        "other.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "==> input.txt <==\nalpha\nbeta\ngamma\n\n==> other.txt <==\ndelta\n",
+      "stderr": ""
+    },
+    {
+      "name": "tac-file",
+      "invocation": "tac",
+      "args": [
+        "input.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "gamma\nbeta\nalpha\n",
+      "stderr": ""
+    },
+    {
+      "name": "tac-stdin",
+      "invocation": "tac",
+      "args": [],
+      "stdin": "alpha\nbeta\ngamma\n",
+      "exit": 0,
+      "stdout": "gamma\nbeta\nalpha\n",
+      "stderr": ""
+    },
+    {
+      "name": "invalid-option",
+      "invocation": "tail",
+      "args": [
+        "-z"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "invalid-count",
+      "invocation": "tail",
+      "args": [
+        "-n",
+        "bogus"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "conflicting-counts",
+      "invocation": "tail",
+      "args": [
+        "-n",
+        "1",
+        "-c",
+        "1"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "missing-file",
+      "invocation": "tail",
+      "args": [
+        "missing.txt"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "follow-multiple",
+      "invocation": "tail",
+      "args": [
+        "-f",
+        "input.txt",
+        "other.txt"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "follow-reverse",
+      "invocation": "tail",
+      "args": [
+        "-f",
+        "-r",
+        "input.txt"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr_nonempty": true
+    },
+    {
+      "name": "mmap-below",
+      "invocation": "tail",
+      "args": [
+        "-n",
+        "1",
+        "below.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "last\n",
+      "stderr": ""
+    },
+    {
+      "name": "mmap-aligned",
+      "invocation": "tail",
+      "args": [
+        "-n",
+        "1",
+        "aligned.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "last\n",
+      "stderr": ""
+    },
+    {
+      "name": "mmap-unaligned",
+      "invocation": "tail",
+      "args": [
+        "-n",
+        "1",
+        "unaligned.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "last\n",
+      "stderr": ""
+    },
+    {
+      "name": "mmap-boundary-line",
+      "invocation": "tail",
+      "args": [
+        "-n",
+        "1",
+        "boundary.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": [
+        {
+          "text": "y",
+          "repeat": 10485759
+        },
+        "\n"
+      ],
+      "stderr": ""
+    },
+    {
+      "name": "mmap-boundary-all",
+      "invocation": "tail",
+      "args": [
+        "-n",
+        "2",
+        "boundary.txt"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": [
+        {
+          "text": "x",
+          "repeat": 10485759
+        },
+        "\n",
+        {
+          "text": "y",
+          "repeat": 10485759
+        },
+        "\n"
+      ],
+      "stderr": ""
+    }
+  ]
+}
