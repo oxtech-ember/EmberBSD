@@ -38,13 +38,17 @@ There are no write/restore/unlock/reboot flags.
 
 ## What a successful result means
 
-The source inspector selects a USB row in the requested state and identifies
-model a133/compatible allwinner,a133. It checks the fixed31037849600-byte eMMC,
+The source inspector selects a USB row in the requested state and accepts only
+model `a133` or `QUAD-CORE A133 c3`, with compatible `allwinner,a133`.
+It pins the exact model during acquisition. It checks the fixed31037849600-byte eMMC,
 all17 GPT names/bounds/by-name targets and both GPT CRCs/layouts. It discovers
 and pins CID, serial/state, GPT fingerprint, lock properties and equal nonzero
 hardware boot sizes (at most32MiB each). Every payload is preceded and followed
 by source inspection. This is the documented YS-M33 profile, not generic A133
 board discovery or a proof of the enclosure's revision.
+
+The C3 model label permits read-only capture after all layout guards pass.
+It does not qualify a factory image, recovery transition or installation bundle.
 
 Binary reads have exact length limits, remote exit/diagnostic checks and bounded
 process cleanup. Seven exclusive `.partial` host files are counted/hashed,

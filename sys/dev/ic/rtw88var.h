@@ -102,8 +102,10 @@ struct rtw88_txq {
 #define RTW88_RA_LEGACY 0
 #define RTW88_RA_HT20_1SS 1
 #define RTW88_RA_VHT_1SS 2
-/* Outbound local TX intersect peer RX: NSS1 MCS0-7, other NSS unsupported. */
+/* Outbound local TX intersect peer RX: NSS1 MCS0-7 or MCS0-9, other NSS
+ * unsupported. The local profile offers MCS0-9. */
 #define RTW88_VHT_MAP_NSS1_MCS7 0xfffcU
+#define RTW88_VHT_MAP_NSS1_MCS9 0xfffeU
 #define RTW88_HT20_PROT_MF20_NO_RTS 1
 #define RTW88_HT20_MTU_MIN 32U
 #define RTW88_HT20_MTU_MAX 1500U
@@ -125,8 +127,9 @@ struct rtw88_ra_config {
 	uint32_t profile_generation;
 	struct rtw88_ht20_policy ht;
 	/* RA_INFO SGI_EN: the AP receives SGI at the committed width.
+	 * LDPC: the AP receives LDPC (RA_INFO LDPC and the descriptor).
 	 * HT20 and VHT entries of the VHT experiment only. */
-	uint8_t sgi;
+	uint8_t sgi, ldpc;
 };
 struct rtw88_ra_state {
 	uint64_t epoch;
@@ -137,7 +140,7 @@ struct rtw88_ra_state {
 	uint32_t profile_generation;
 	struct rtw88_ht20_policy ht;
 	struct rtw88_channel_tuple tuple;	/* Committed when configured. */
-	uint8_t sgi;
+	uint8_t sgi, ldpc;
 	int configured, active, protection_limited, error;
 };
 

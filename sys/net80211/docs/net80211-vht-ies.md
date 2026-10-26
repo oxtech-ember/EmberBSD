@@ -102,10 +102,14 @@ neither 0, eight channels away nor more than 16 away is rejected, as is
 every primary from 169 to 177; Linux treats such odd values as plain
 80 MHz, so this is a deliberate strictness trade-off.
 
-`ieee80211_vht_assoc_candidate(local, ies, len, chan)` accepts only the
-strict local NSS1 MCS0-7 profile, a 73-byte or smaller window, mutual MCS
-maps, HT 40 MHz support with MCS0-7, and a window that derives exactly
-`chan`.
+`ieee80211_vht_assoc_candidate(local, ies, len, chan)` accepts only a
+qualified local profile: one spatial stream with MCS0-7 or MCS0-9, equal RX
+and TX maps, and no capability bits other than RX LDPC and short GI for
+80 MHz. It also needs a 73-byte or
+smaller window, NSS1 in both intersections with the peer's maps (the
+negotiated maps; a peer supporting less than the local maximum still
+qualifies), HT 40 MHz support with MCS0-7, and a window that derives
+exactly `chan`.
 
 ### Deviation: HT protection mode 3
 

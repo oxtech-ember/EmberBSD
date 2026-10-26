@@ -46,7 +46,7 @@ module A133Usb
       devices = @channel.run(['devices','-l'])[:output].lines.map(&:split).select { |row| row.first == @serial }
       raise Invalid, 'usb_device_not_ready' unless devices.size == 1 && devices[0][1] == 'recovery' &&
         devices[0].any? { |field| field.start_with?('usb:') }
-      features = @channel.run(['-s',@serial,'features'])[:output].strip.split(',')
+      features = @channel.run(['-s',@serial,'features'])[:output].split(/[\s,]+/)
       raise Invalid, 'usb_shell_v2_required' unless features.include?('shell_v2')
       raise Invalid, 'usb_root_required' unless query('id -u') == '0'
       raise Invalid, 'usb_recovery_unlock_required' unless query('getprop ro.boot.flash.locked') == '0' &&

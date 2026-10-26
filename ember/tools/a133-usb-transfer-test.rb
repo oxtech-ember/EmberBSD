@@ -40,6 +40,12 @@ Dir.mktmpdir('a133-usb-') do |dir|
   abort 'FAIL: read-only verified range mutated device' unless inspected[:status]=='range_readback_verified' &&
     inspected[:writes_performed]==0 && before.mtime==after.mtime && before.ctime==after.ctime
   checks+=1
+  ["cmd\nshell_v2\nstat_v2\n", "cmd,shell_v2,stat_v2\n"].each do |features|
+    UsbFixture.state(dir,'features'=>features)
+    result=client.inspect!
+    abort 'FAIL: shell_v2 feature list format rejected' unless result[:status]=='recovery_inspection_complete'
+    checks+=1
+  end
   reject = lambda do |updates, reason, opts=options, attempted=false|
     UsbFixture.state(dir,updates)
     before = File.open(File.join(dir,'part17'),'rb') { |file| file.read(4096) }
@@ -57,6 +63,7 @@ Dir.mktmpdir('a133-usb-') do |dir|
   [ [{'cid'=>'f'*32},'usb_identity_changed'], [{'network'=>true},'usb_device_not_ready'],
     [{'duplicate'=>true},'usb_device_not_ready'], [{'state'=>'device'},'usb_device_not_ready'],
     [{'features'=>''},'usb_shell_v2_required'], [{'root'=>'2000'},'usb_root_required'],
+    [{'features'=>"cmd\nshell_v20\nstat_v2\n"},'usb_shell_v2_required'],
     [{'locked'=>'1'},'usb_recovery_unlock_required'], [{'verified'=>'green'},'usb_recovery_unlock_required'],
     [{'model'=>'OTHER'},'usb_board_mismatch'], [{'compatible'=>'allwinner,a64'},'usb_board_mismatch'],
     [{'numbers_bad'=>true},'usb_partition_layout_mismatch'], [{'mapping_bad'=>true},'usb_partition_mapping_mismatch'],

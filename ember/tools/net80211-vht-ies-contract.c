@@ -458,6 +458,50 @@ assoc_candidate(void)
 	n = phy_window(p, 64, 3, 1, 58, 0);
 	CHECK(ieee80211_vht_assoc_candidate(&local, p, n, NULL) == -1);
 	CHECK(ieee80211_vht_assoc_candidate(NULL, p, n, &c) == -1);
+	/*
+	 * The qualified one-stream MCS0-9 profile: equal RX and TX maps. A
+	 * peer supporting less on NSS1 still qualifies, since the negotiated
+	 * maps are the intersections; a peer without NSS1 in either
+	 * direction, MCS0-8, unequal maps or a second stream do not.
+	 */
+	for (mutation = 0; mutation < 9; mutation++) {
+		static const struct ieee80211_vht_cap mcs9 = {
+			.info = 0, .rx_map = 0xfffe, .rx_highest = 0,
+			.tx_map = 0xfffe, .tx_highest = 0
+		};
+		int want = 0;
+
+		n = phy_window(p, 64, 3, 1, 58, 0);
+		CHECK(ieee80211_vht_channel_derive(p, n, 64, &c) == 0);
+		other = mcs9;
+		switch (mutation) {
+		case 1: p[58] = 0xfe; p[62] = 0xfe; break; /* Peer MCS0-9. */
+		case 2: p[58] = 0xaa; p[59] = 0xaa; p[62] = 0xaa; p[63] = 0xaa;
+			break;				/* Four-stream peer. */
+		case 3: p[58] = 0xff; want = -1; break;	/* No NSS1 RX at peer. */
+		case 4: p[62] = 0xff; want = -1; break;	/* No NSS1 TX at peer. */
+		case 5: other.tx_map = 0xfffc; want = -1; break;
+		case 6: other.rx_map = other.tx_map = 0xfffd; want = -1; break;
+		case 7: other.rx_map = other.tx_map = 0xfffa; want = -1; break;
+		case 8: other.info = 0x40; want = -1; break; /* SGI160. */
+		}
+		CHECK(ieee80211_vht_assoc_candidate(&other, p, n, &c) == want);
+	}
+	/* The qualified receive capabilities: RX LDPC (bit4) and SGI80
+	 * (bit5). Every other capability bit stays unqualified. */
+	for (unsigned bit = 0; bit < 32; bit++) {
+		struct ieee80211_vht_cap caps = {
+			.info = 1U << bit, .rx_map = 0xfffe, .rx_highest = 0,
+			.tx_map = 0xfffe, .tx_highest = 0
+		};
+
+		n = phy_window(p, 64, 3, 1, 58, 0);
+		CHECK(ieee80211_vht_channel_derive(p, n, 64, &c) == 0);
+		CHECK(ieee80211_vht_assoc_candidate(&caps, p, n, &c) ==
+		    (bit == 4 || bit == 5 ? 0 : -1));
+		caps.info = 0x30;
+		CHECK(ieee80211_vht_assoc_candidate(&caps, p, n, &c) == 0);
+	}
 }
 
 /*
