@@ -428,7 +428,7 @@ DEPS+=	${SRCS:R:S/$/.d/g}
 .if !commands(${_s:T:R}.d)
 ${_s:T:R}.d: ${_s}
 	${_MKTARGET_CREATE}
-	${MKDEP} -f ${.TARGET}.tmp -- ${MKDEPFLAGS} ${MKDEP_AFLAGS} \
+	${MKDEP} -f ${.TARGET}.tmp -- ${_MKDEP_TARGET_FLAGS} ${MKDEPFLAGS} ${MKDEP_AFLAGS} \
 	    ${CPPFLAGS} ${CPPFLAGS.${_s:T}} ${_s}
 	mv -f ${.TARGET}.tmp ${.TARGET}
 .endif
@@ -438,7 +438,7 @@ ${_s:T:R}.d: ${_s}
 .if !commands(${_s:T:R}.d)
 ${_s:T:R}.d: ${_s}
 	${_MKTARGET_CREATE}
-	${MKDEP} -f ${.TARGET}.tmp -- ${MKDEPFLAGS} ${MKDEP_CFLAGS} \
+	${MKDEP} -f ${.TARGET}.tmp -- ${_MKDEP_TARGET_FLAGS} ${MKDEPFLAGS} ${MKDEP_CFLAGS} \
 	    ${CPPFLAGS} ${CPPFLAGS.${_s:T}} ${_s}
 	mv -f ${.TARGET}.tmp ${.TARGET}
 .endif
@@ -538,19 +538,19 @@ build_kernel: .USE
 .SUFFIXES: .s .d
 .s.d:
 	${_MKTARGET_CREATE}
-	${MKDEP} -f $@.tmp -- ${MKDEPFLAGS} ${MKDEP_AFLAGS} ${CPPFLAGS} ${CPPFLAGS.${<:T}} $<
+	${MKDEP} -f $@.tmp -- ${_MKDEP_TARGET_FLAGS} ${MKDEPFLAGS} ${MKDEP_AFLAGS} ${CPPFLAGS} ${CPPFLAGS.${<:T}} $<
 	mv -f $@.tmp $@
 
 .SUFFIXES: .S .d
 .S.d:
 	${_MKTARGET_CREATE}
-	${MKDEP} -f $@.tmp -- ${MKDEPFLAGS} ${MKDEP_AFLAGS} ${CPPFLAGS} ${CPPFLAGS.${<:T}} $<
+	${MKDEP} -f $@.tmp -- ${_MKDEP_TARGET_FLAGS} ${MKDEPFLAGS} ${MKDEP_AFLAGS} ${CPPFLAGS} ${CPPFLAGS.${<:T}} $<
 	mv -f $@.tmp $@
 
 .SUFFIXES: .c .d
 .c.d:
 	${_MKTARGET_CREATE}
-	${MKDEP} -f $@.tmp -- ${MKDEPFLAGS} ${MKDEP_CFLAGS} ${CPPFLAGS} ${CPPFLAGS.${<:T}} $<
+	${MKDEP} -f $@.tmp -- ${_MKDEP_TARGET_FLAGS} ${MKDEPFLAGS} ${MKDEP_CFLAGS} ${CPPFLAGS} ${CPPFLAGS.${<:T}} $<
 	mv -f $@.tmp $@
 
 .SUFFIXES: .c .o .go .po

@@ -18,11 +18,12 @@ MAKE = None
 
 
 class CompilerFamilyTests(unittest.TestCase):
-    def query(self, names, *variables):
+    def query(self, names, *variables, host_include=None):
         with tempfile.TemporaryDirectory(prefix="ember-compiler-family-") as work:
             fixture = Path(work) / "probe.mk"
             fixture.write_text('.include <sys.mk>\n.include <bsd.own.mk>\n'
-                               '.include <bsd.sys.mk>\n')
+                               '.include <bsd.sys.mk>\n' +
+                               ('.include <' + host_include + '>\n' if host_include else ''))
             command = [str(MAKE), "-r", "-m", str(SOURCE / "share/mk"),
                 "-f", str(fixture), "MAKECONF=/dev/null", "_SRC_TOP_=",
                 "USETOOLS=yes", "MACHINE=evbarm", "MACHINE_ARCH=aarch64",
@@ -34,8 +35,8 @@ class CompilerFamilyTests(unittest.TestCase):
             return subprocess.run(command, cwd=work, text=True,
                 capture_output=True, timeout=30)
 
-    def values(self, names, *variables):
-        result = self.query(names, *variables)
+    def values(self, names, *variables, host_include=None):
+        result = self.query(names, *variables, host_include=host_include)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         values = result.stdout.splitlines()
         self.assertEqual(len(values), len(names), result.stdout + result.stderr)
@@ -58,15 +59,22 @@ class CompilerFamilyTests(unittest.TestCase):
         self.assertIn("--ld-path=/sdk/bin/ld.lld", value["LDFLAGS"].split())
 
     def test_dependency_compilers_keep_target_arguments_outside_cc(self):
-        names = ('MKDEP', 'MKDEPCXX', 'MKDEPOBJC', 'MKDEPFLAGS')
+        names = ('MKDEP', 'MKDEPCXX', 'MKDEPOBJC', '_MKDEP_TARGET_FLAGS')
         value = self.values(names)
         for name, compiler in (('MKDEP', 'clang'), ('MKDEPCXX', 'clang++'),
                                ('MKDEPOBJC', 'clang')):
             self.assertEqual(value[name], 'CC=/sdk/bin/' + compiler + ' /build/tools/bin/nbmkdep')
-        self.assertIn('--target=aarch64--netbsd', value['MKDEPFLAGS'].split())
+        self.assertIn('--target=aarch64--netbsd', value['_MKDEP_TARGET_FLAGS'].split())
         value = self.values(names, 'EMBER_COMPILER_FAMILY=gcc')
         self.assertEqual(value['MKDEP'], 'CC=/sdk/bin/aarch64--netbsd-gcc /build/tools/bin/nbmkdep')
-        self.assertNotIn('--target=', value['MKDEPFLAGS'])
+        self.assertNotIn('--target=', value['_MKDEP_TARGET_FLAGS'])
+
+    def test_host_dependencies_do_not_inherit_target_flags(self):
+        for include in ('bsd.hostprog.mk', 'bsd.hostlib.mk'):
+            value = self.values(('_MKDEP_TARGET_FLAGS', 'MKDEPFLAGS'),
+                'MKDEPFLAGS=-Dcaller_owned', host_include=include)
+            self.assertEqual(value['_MKDEP_TARGET_FLAGS'].strip(), '')
+            self.assertEqual(value['MKDEPFLAGS'], '-Dcaller_owned')
 
     def test_explicit_gcc_retains_its_prefixed_tools(self):
         names = ("CC", "CPP", "CXX", "AS", "LD", "AR", "ACTIVE_CC", "LDFLAGS")

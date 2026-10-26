@@ -10,6 +10,7 @@ CFLAGS+=	${COPTS}
 MKDEP_SUFFIXES?=	.o .lo .d
 
 # Override these:
+_MKDEP_TARGET_FLAGS=	# Native dependencies must not inherit target flags.
 MKDEP:=		${HOST_MKDEP}
 MKDEPCXX:=	${HOST_MKDEPCXX}
 

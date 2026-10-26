@@ -34,7 +34,7 @@ ${SRCS:M*.[sS]:C|\.[Ss]|.d|}: assym.h
 assym.d: assym.h
 	${_MKTARGET_CREATE}
 	cat ${GENASSYM_CONF} ${GENASSYM_EXTRAS} | \
-	    ${GENASSYM} -- ${MKDEP} -f assym.dep -- ${GENASSYM_FLAGS}
+	    ${GENASSYM} -d -- ${MKDEP} -f assym.dep -- ${_MKDEP_TARGET_FLAGS} ${MKDEPFLAGS} ${GENASSYM_FLAGS}
 	${TOOL_SED} -e '1{N;s/\\\n//;}' -e 's/.*\.o:.*\.c/assym.h:/' < assym.dep >${.TARGET}
 	rm -f assym.dep
 

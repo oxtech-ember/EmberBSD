@@ -205,9 +205,26 @@ with SDK Python to syntax-check the actual source and make-selected flags.
 Add `--ls /absolute/native-ls` to check UTF-8 and control-character filenames
 under the installed `C.UTF-8` locale.
 
-External LLVM dependency commands pass `--target` through `MKDEPFLAGS`.
+External LLVM dependency commands pass `--target` separately from caller-owned
+`MKDEPFLAGS`. Native program and library dependency rules omit target flags.
 `mkdep` executes the `CC` pathname and does not forward fixed arguments from
 that environment value. Normal compiler commands keep their explicit target.
 Run `test-dependency-target.py --make "$NETBSD_MAKE" --work "$NEW_OUTPUT"`
 with SDK Python to exercise real C, C++, Objective-C and assembly dependency
 commands against an AArch64-only header. No target code executes.
+
+The command roster supplies `mktemp` for the actual `genassym` script and
+`head` for nested configure checks. The generator's `-d` mode invokes the
+supplied dependency command without adding assembly-output flags. Kernel
+`assym.d` uses this mode and the selected dependency target flags.
+
+Run the real generator and dependency regression with SDK Python:
+
+```sh
+"$PYTHON" tools/native-tools/test-genassym.py \
+  --sdk-source "$SDK_SOURCE" --host-prefix "$HOST_PREFIX" \
+  --mkdep /absolute/native-nbmkdep --work "$NEW_OUTPUT"
+```
+
+It checks AArch64 constants, a real dependency header, conflicting mode
+refusal and the routed `head` command. It does not execute target code.

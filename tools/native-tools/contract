@@ -20,12 +20,14 @@ env env -
 expr expr -
 find find -
 grep grep -
+head head -
 id id -
 ld ld HOST_LD
 ln ln HOST_LN
 ls ls -
 make make MAKE
 mkdir mkdir -
+mktemp mktemp -
 mv mv -
 nm nm -
 printf printf -

@@ -29,19 +29,24 @@ progname="$(basename "${0}")"
 : ${AWK:=awk}
 
 ccode=0		# generate temporary C file, compile it, execute result
+# Origin: EmberBSD (AI-assisted). Keep dependency and assembly modes separate.
+dcode=0		# invoke a dependency compiler without assembly output flags
 fcode=0		# generate Forth code
 
 usage()
 {
 
-	echo "usage: ${progname} [-c | -f] -- compiler command" >&2
+	echo "usage: ${progname} [-c | -d | -f] -- compiler command" >&2
 }
 
 set -e
 
-while getopts cf i
+while getopts cdf i
 do
 	case "$i" in
+	d)
+		dcode=1
+		;;
 	c)
 		ccode=1
 		;;
@@ -52,6 +57,12 @@ do
 done
 shift "$(($OPTIND - 1))"
 if [ $# -eq 0 ]; then
+	usage
+	exit 1
+fi
+
+# Dependency mode must not generate a host executable or Forth code.
+if [ "$dcode" = 1 ] && { [ "$ccode" = 1 ] || [ "$fcode" = 1 ]; }; then
 	usage
 	exit 1
 fi
@@ -196,7 +207,9 @@ END {
 }
 ' ccode="$ccode" fcode="$fcode" > "${genassym_temp}/assym.c" || exit 1
 
-if [ "$ccode" = 1 ]; then
+if [ "$dcode" = 1 ]; then
+	"$@" "${genassym_temp}/assym.c"
+elif [ "$ccode" = 1 ]; then
 	"$@" "${genassym_temp}/assym.c" -o "${genassym_temp}/genassym" && \
 	    "${genassym_temp}/genassym"
 elif [ "$fcode" = 1 ]; then

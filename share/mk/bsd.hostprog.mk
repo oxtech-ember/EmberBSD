@@ -90,6 +90,7 @@ LIBRUMPFS_UFS?=		/usr/lib/librumpfs_ufs.a
 MKDEP_SUFFIXES?=	.lo .ln .d
 
 # Override these:
+_MKDEP_TARGET_FLAGS=	# Native dependencies must not inherit target flags.
 INSTALL:=	${INSTALL:NSTRIP=*}
 MKDEP:=		${HOST_MKDEP}
 MKDEPCXX:=	${HOST_MKDEPCXX}

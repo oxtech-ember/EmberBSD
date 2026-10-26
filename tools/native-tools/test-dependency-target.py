@@ -16,12 +16,13 @@ source = Path(__file__).resolve().parents[2]
 work = args.work.resolve()
 work.mkdir(exist_ok=False)
 command = [args.make, '-C', str(source / 'tools')]
-for name in ('MKDEP', 'MKDEPCXX', 'MKDEPOBJC', 'MKDEPFLAGS'):
+for name in ('MKDEP', 'MKDEPCXX', 'MKDEPOBJC', '_MKDEP_TARGET_FLAGS', 'MKDEPFLAGS'):
     command.extend(('-V', '${' + name + '}'))
 result = subprocess.run(command, text=True, capture_output=True)
 if result.returncode:
     raise SystemExit(result.stdout + result.stderr)
-c, cxx, objc, flags = result.stdout.splitlines()
+c, cxx, objc, target_flags, flags = result.stdout.splitlines()
+flags = target_flags + ' ' + flags
 (work / 'target.h').write_text('#ifndef __aarch64__\n#error dependency compiler lost AArch64\n#endif\n')
 for suffix, selected, language in (('c', c, ''), ('cc', cxx, '__cplusplus'), ('m', objc, '__OBJC__'), ('S', c, '')):
     text = '#include "target.h"\n'
