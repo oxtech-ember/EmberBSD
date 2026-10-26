@@ -8,6 +8,14 @@ The finite [contract](bootstrap.json) uses native GCC16 and the selected host AB
 It includes the shared [annotation header](../compat/bootstrap_cdefs.h).
 Each filesystem case has isolated typed fixtures and exact final-state assertions.
 The SDK controls umask and checks paths, modes and link identities without following links.
-The contract contains 10 semantic cases.
+The contract contains 11 semantic cases.
 Source tests do not prove native API behavior. Compiler, runtime, memory and
 ordinary cross-host checks remain separate. No external file utility is selected.
+
+## Invalid-mode regression
+
+The fixed profile includes `mkdir -m invalid dir`.
+It requires the exact parser diagnostic and an unchanged empty filesystem.
+The original ten cases remain unchanged.
+Run `python3 -B tools/mkdir/test-source.py` with the selected SDK Python.
+This source/data check executes no C or native mkdir.

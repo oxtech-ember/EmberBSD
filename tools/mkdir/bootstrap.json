@@ -257,6 +257,24 @@
       "stderr_nonempty": true
     },
     {
+      "name": "invalid-mode",
+      "invocation": "mkdir",
+      "args": [
+        "-m",
+        "invalid",
+        "dir"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr": "mkdir: Cannot set file mode `invalid'\n",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {},
+        "expect": {}
+      }
+    },
+    {
       "name": "missing-operand",
       "invocation": "mkdir",
       "args": [],

@@ -170,8 +170,11 @@ done:	argv += optind;
 
 	if (reference == NULL) {
 		mode = *argv++;
+		errno = 0;
 		if ((set = setmode(mode)) == NULL) {
-			err(EXIT_FAILURE, "Cannot set file mode `%s'", mode);
+			if (errno != 0)
+				err(EXIT_FAILURE, "Cannot set file mode `%s'", mode);
+			errx(EXIT_FAILURE, "Cannot set file mode `%s'", mode);
 			/* NOTREACHED */
 		}
 		mval = 0;

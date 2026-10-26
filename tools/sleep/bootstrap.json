@@ -1,0 +1,273 @@
+{
+  "format": "emberbsd-native-bootstrap-program",
+  "version": 1,
+  "origin": "EmberBSD (AI-assisted) source contract; implementation retains its BSD copyright notices.",
+  "compiler": {
+    "family": "gcc",
+    "major": 16,
+    "abi": "native"
+  },
+  "cflags": [],
+  "link_flags": [],
+  "libraries": [
+    "m"
+  ],
+  "name": "sleep",
+  "canonical_host_recipe": "tools/sleep/Makefile",
+  "source_makefile": "bin/sleep/Makefile",
+  "sources": [
+    "bin/sleep/sleep.c"
+  ],
+  "headers": [
+    "bin/sleep/sleep_darwin.h",
+    "tools/compat/bootstrap_cdefs.h"
+  ],
+  "include_dirs": [
+    "bin/sleep"
+  ],
+  "cppflags": [
+    "-include",
+    "tools/compat/bootstrap_cdefs.h"
+  ],
+  "invocations": [
+    "sleep"
+  ],
+  "files": {},
+  "runtime_cases": [
+    {
+      "name": "zero",
+      "invocation": "sleep",
+      "args": [
+        "0"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "name": "fraction-zero",
+      "invocation": "sleep",
+      "args": [
+        "0.0"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "name": "plus-zero",
+      "invocation": "sleep",
+      "args": [
+        "+0"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "name": "underflow",
+      "invocation": "sleep",
+      "args": [
+        "1e-9999"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "name": "fraction",
+      "invocation": "sleep",
+      "args": [
+        "0.001"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "name": "scientific",
+      "invocation": "sleep",
+      "args": [
+        "1e-3"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "name": "hexadecimal",
+      "invocation": "sleep",
+      "args": [
+        "0x0.1"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "name": "fraction-elapsed",
+      "invocation": "sleep",
+      "args": [
+        "0.5"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "elapsed": {
+        "min_ns": 500000000,
+        "max_ns": 5000000000
+      }
+    },
+    {
+      "name": "missing",
+      "invocation": "sleep",
+      "args": [],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr": "usage: sleep seconds\n"
+    },
+    {
+      "name": "extra",
+      "invocation": "sleep",
+      "args": [
+        "0",
+        "0"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr": "usage: sleep seconds\n"
+    },
+    {
+      "name": "empty",
+      "invocation": "sleep",
+      "args": [
+        ""
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr": "usage: sleep seconds\n"
+    },
+    {
+      "name": "malformed",
+      "invocation": "sleep",
+      "args": [
+        "bad"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr": "usage: sleep seconds\n"
+    },
+    {
+      "name": "trailing",
+      "invocation": "sleep",
+      "args": [
+        "0x"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr": "usage: sleep seconds\n"
+    },
+    {
+      "name": "negative",
+      "invocation": "sleep",
+      "args": [
+        "--",
+        "-1"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr": "usage: sleep seconds\n"
+    },
+    {
+      "name": "nan",
+      "invocation": "sleep",
+      "args": [
+        "nan"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr": "usage: sleep seconds\n"
+    },
+    {
+      "name": "nan-uppercase",
+      "invocation": "sleep",
+      "args": [
+        "NaN"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr": "usage: sleep seconds\n"
+    },
+    {
+      "name": "infinity",
+      "invocation": "sleep",
+      "args": [
+        "inf"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr": "usage: sleep seconds\n"
+    },
+    {
+      "name": "infinity-plus",
+      "invocation": "sleep",
+      "args": [
+        "+inf"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr": "usage: sleep seconds\n"
+    },
+    {
+      "name": "large-float",
+      "invocation": "sleep",
+      "args": [
+        "1e300"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr": "sleep: requested delay (1e300) out of range\n"
+    },
+    {
+      "name": "time-t-bound",
+      "invocation": "sleep",
+      "args": [
+        "9223372036854775808.0"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr": "sleep: requested delay (9223372036854775808.0) out of range\n"
+    },
+    {
+      "name": "large-integer",
+      "invocation": "sleep",
+      "args": [
+        "9223372036854775808"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "stderr": "sleep: Requested delay (9223372036854775808) out of range\n"
+    }
+  ]
+}

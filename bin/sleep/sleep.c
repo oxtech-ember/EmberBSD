@@ -29,6 +29,10 @@
  * SUCH DAMAGE.
  */
 
+#if HAVE_NBTOOL_CONFIG_H
+#include "nbtool_config.h"
+#endif
+
 #include <sys/cdefs.h>
 #ifndef lint
 __COPYRIGHT("@(#) Copyright (c) 1988, 1993, 1994\
@@ -46,6 +50,7 @@ __RCSID("$NetBSD: sleep.c,v 1.30 2019/03/10 15:18:45 kre Exp $");
 #include <ctype.h>
 #include <err.h>
 #include <errno.h>
+#include <limits.h>
 #include <locale.h>
 #include <math.h>
 #include <signal.h>
@@ -54,6 +59,10 @@ __RCSID("$NetBSD: sleep.c,v 1.30 2019/03/10 15:18:45 kre Exp $");
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+
+#ifdef __APPLE__
+#include "sleep_darwin.h"
+#endif
 
 __dead static void alarmhandle(int);
 __dead static void usage(void);
@@ -133,12 +142,20 @@ main(int argc, char *argv[])
 		 * (but only if that is the potential problem)
 		 */
 		val = strtod(arg, &temp);
-		if (*temp != '\0')
+		if (*temp != '\0') {
+#ifdef __APPLE__
+			val = sleep_c_locale(arg, &temp);
+#else
 			val = strtod_l(arg, &temp, LC_C_LOCALE);
-		if (val < 0 || temp == arg || *temp != '\0')
+#endif
+		}
+		if (!isfinite(val) || val < 0 || temp == arg || *temp != '\0')
 			usage();
 
 		ival = floor(val);
+		if (ival >= ldexp(1.0, (int)(sizeof(time_t) * CHAR_BIT) -
+		    ((time_t)-1 < 0)))
+			errx(1, "requested delay (%s) out of range", arg);
 		fval = (1000000000 * (val-ival));
 		ntime.tv_sec = ival;
 		if ((double)ntime.tv_sec != ival)
@@ -177,7 +194,12 @@ main(int argc, char *argv[])
 
 	if (clock_gettime(CLOCK_MONOTONIC, &now) != 0)
 		err(EXIT_FAILURE, "clock_gettime");
+#ifdef __APPLE__
+	if (sleep_deadline(&now, &ntime, &endtime) != 0)
+		errx(EXIT_FAILURE, "cannot sleep beyond the end of time");
+#else
 	timespecadd(&now, &ntime, &endtime);
+#endif
 
 	if (endtime.tv_sec < now.tv_sec || (endtime.tv_sec == now.tv_sec &&
 	    endtime.tv_nsec <= now.tv_nsec))
@@ -187,8 +209,13 @@ main(int argc, char *argv[])
 	for (;;) {
 		int e;
 
-		if ((e = clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME,
-		     &endtime, NULL)) == 0)
+#ifdef __APPLE__
+		e = sleep_until(&endtime);
+#else
+		e = clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME,
+		    &endtime, NULL);
+#endif
+		if (e == 0)
 			return EXIT_SUCCESS;
 
 		if (!report_requested || e != EINTR) {
@@ -200,7 +227,11 @@ main(int argc, char *argv[])
 		if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) /* Huh? */
 			continue;
 
+#ifdef __APPLE__
+		sleep_difference(&endtime, &now, &ntime);
+#else
 		timespecsub(&endtime, &now, &ntime);
+#endif
 		report(ntime.tv_sec, original, msg);
 	}
 }
