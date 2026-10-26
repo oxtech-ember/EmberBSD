@@ -32,6 +32,10 @@
  * SUCH DAMAGE.
  */
 
+/* Origin: EmberBSD (AI-assisted). Keep the normal host compatibility route. */
+#if HAVE_NBTOOL_CONFIG_H
+#include "nbtool_config.h"
+#endif
 #include <sys/cdefs.h>
 #ifndef lint
 #if 0
@@ -48,6 +52,7 @@ __RCSID("$NetBSD: util.c,v 1.34 2011/08/29 14:44:21 joerg Exp $");
 #include <fts.h>
 #include <limits.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <vis.h>
@@ -69,7 +74,7 @@ safe_print(const char *src)
 		flags |= VIS_CSTYLE;
 
 	len = strlen(src);
-	if (len != 0 && SIZE_T_MAX/len <= 4) {
+	if (len != 0 && SIZE_MAX/len <= 4) {
 		errx(EXIT_FAILURE, "%s: name too long", src);
 		/* NOTREACHED */
 	}

@@ -32,6 +32,10 @@
  * SUCH DAMAGE.
  */
 
+/* Origin: EmberBSD (AI-assisted). Keep the normal host compatibility route. */
+#if HAVE_NBTOOL_CONFIG_H
+#include "nbtool_config.h"
+#endif
 #include <sys/cdefs.h>
 #ifndef lint
 #if 0
@@ -43,7 +47,7 @@ __RCSID("$NetBSD: print.c,v 1.59 2024/12/11 12:56:31 simonb Exp $");
 
 #include <sys/param.h>
 #include <sys/stat.h>
-#ifndef SMALL
+#if !defined(SMALL) && !HAVE_NBTOOL_CONFIG_H
 #include <sys/acl.h>
 #endif
 
@@ -57,9 +61,16 @@ __RCSID("$NetBSD: print.c,v 1.59 2024/12/11 12:56:31 simonb Exp $");
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#if !HAVE_NBTOOL_CONFIG_H
 #include <tzfile.h>
+#endif
 #include <unistd.h>
+#if HAVE_NBTOOL_CONFIG_H
+#include "compat_listing.h"
+#include "compat_acl.h"
+#else
 #include <util.h>
+#endif
 
 #include "ls.h"
 #include "extern.h"
@@ -412,7 +423,12 @@ printtime(time_t ftime)
 	for (i = 4; i < 11; ++i)
 		(void)putchar(longstring[i]);
 
+#if HAVE_NBTOOL_CONFIG_H
+/* Preserve the canonical 182-day display interval without private tzfile.h. */
+#define	SIXMONTHS	((365 / 2) * 24 * 60 * 60)
+#else
 #define	SIXMONTHS	((DAYSPERNYEAR / 2) * SECSPERDAY)
+#endif
 	if (f_sectime)
 		for (i = 11; i < 24; i++)
 			(void)putchar(longstring[i]);
@@ -470,9 +486,11 @@ printtype(u_int mode)
 	case S_IFSOCK:
 		(void)putchar('=');
 		return (1);
+#ifdef S_IFWHT
 	case S_IFWHT:
 		(void)putchar('%');
 		return (1);
+#endif
 	}
 	if (mode & (S_IXUSR | S_IXGRP | S_IXOTH)) {
 		(void)putchar('*');
@@ -515,6 +533,21 @@ static void
 aclmode(char *buf, const FTSENT *p)
 {
 	char name[MAXPATHLEN + 1];
+#if HAVE_NBTOOL_CONFIG_H
+	int present;
+
+	if (p->fts_level == FTS_ROOTLEVEL)
+		snprintf(name, sizeof(name), "%s", p->fts_name);
+	else
+		snprintf(name, sizeof(name), "%s/%s",
+		    p->fts_parent->fts_accpath, p->fts_name);
+	if (__nbcompat_acl_present_nofollow(name, &present) == -1) {
+		warn("%s", name);
+		return;
+	}
+	if (present)
+		buf[10] = '+';
+#else
 	int ret, trivial;
 	static dev_t previous_dev = NODEV;
 	static int supports_acls = -1;
@@ -576,5 +609,6 @@ aclmode(char *buf, const FTSENT *p)
 	if (!trivial)
 		buf[10] = '+';
 	acl_free(facl);
+#endif
 }
 #endif

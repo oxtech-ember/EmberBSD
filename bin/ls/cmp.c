@@ -32,6 +32,10 @@
  * SUCH DAMAGE.
  */
 
+/* Origin: EmberBSD (AI-assisted). Keep the normal host compatibility route. */
+#if HAVE_NBTOOL_CONFIG_H
+#include "nbtool_config.h"
+#endif
 #include <sys/cdefs.h>
 #ifndef lint
 #if 0
@@ -49,7 +53,15 @@ __RCSID("$NetBSD: cmp.c,v 1.17 2003/08/07 09:05:14 agc Exp $");
 
 #include "ls.h"
 #include "extern.h"
-
+#if HAVE_NBTOOL_CONFIG_H
+#include "compat_stat_time.h"
+#define ATIMENSEC_CMP(x, op, y) \
+	(__nbcompat_stat_atime(x).tv_nsec op __nbcompat_stat_atime(y).tv_nsec)
+#define CTIMENSEC_CMP(x, op, y) \
+	(__nbcompat_stat_ctime(x).tv_nsec op __nbcompat_stat_ctime(y).tv_nsec)
+#define MTIMENSEC_CMP(x, op, y) \
+	(__nbcompat_stat_mtime(x).tv_nsec op __nbcompat_stat_mtime(y).tv_nsec)
+#else
 #if defined(_POSIX_SOURCE) || defined(_POSIX_C_SOURCE) || \
     defined(_XOPEN_SOURCE) || defined(__NetBSD__)
 #define ATIMENSEC_CMP(x, op, y) ((x)->st_atimensec op (y)->st_atimensec)
@@ -62,6 +74,7 @@ __RCSID("$NetBSD: cmp.c,v 1.17 2003/08/07 09:05:14 agc Exp $");
 	((x)->st_ctimespec.tv_nsec op (y)->st_ctimespec.tv_nsec)
 #define MTIMENSEC_CMP(x, op, y) \
 	((x)->st_mtimespec.tv_nsec op (y)->st_mtimespec.tv_nsec)
+#endif
 #endif
 
 int

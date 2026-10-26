@@ -1,0 +1,1461 @@
+{
+  "format": "emberbsd-native-bootstrap-program",
+  "version": 1,
+  "name": "ls",
+  "origin": "EmberBSD (AI-assisted). Complete canonical ls; finite initial host checks.",
+  "canonical_host_recipe": "tools/ls/Makefile",
+  "source_makefile": "bin/ls/Makefile",
+  "compiler": {
+    "family": "gcc",
+    "major": 16,
+    "abi": "native"
+  },
+  "sources": [
+    "bin/ls/cmp.c",
+    "bin/ls/ls.c",
+    "bin/ls/main.c",
+    "bin/ls/print.c",
+    "bin/ls/util.c"
+  ],
+  "headers": [
+    "bin/ls/ls.h",
+    "bin/ls/extern.h",
+    "tools/compat/compat_stat_time.h"
+  ],
+  "include_dirs": [
+    "bin/ls",
+    "tools/compat"
+  ],
+  "cppflags": [],
+  "cflags": [],
+  "link_flags": [],
+  "libraries": [],
+  "invocations": [
+    "ls"
+  ],
+  "files": {},
+  "runtime_cases": [
+    {
+      "name": "names",
+      "invocation": "ls",
+      "args": [
+        "-1",
+        "a",
+        "z"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "a\nz\n",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "a": {
+            "type": "file",
+            "mode": "0600",
+            "data": "a"
+          },
+          "z": {
+            "type": "file",
+            "mode": "0600",
+            "data": "z"
+          }
+        },
+        "expect": {
+          "a": {
+            "type": "file",
+            "mode": "0600",
+            "data": "a"
+          },
+          "z": {
+            "type": "file",
+            "mode": "0600",
+            "data": "z"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "empty",
+      "invocation": "ls",
+      "args": [
+        "-1",
+        "."
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {},
+        "expect": {}
+      },
+      "stderr": ""
+    },
+    {
+      "name": "reverse",
+      "invocation": "ls",
+      "args": [
+        "-1",
+        "-r",
+        "a",
+        "z"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "z\na\n",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "a": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          },
+          "z": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          }
+        },
+        "expect": {
+          "a": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          },
+          "z": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "size",
+      "invocation": "ls",
+      "args": [
+        "-1",
+        "-S",
+        "a",
+        "z"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "z\na\n",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "a": {
+            "type": "file",
+            "mode": "0600",
+            "data": "a"
+          },
+          "z": {
+            "type": "file",
+            "mode": "0600",
+            "data": "zzz"
+          }
+        },
+        "expect": {
+          "a": {
+            "type": "file",
+            "mode": "0600",
+            "data": "a"
+          },
+          "z": {
+            "type": "file",
+            "mode": "0600",
+            "data": "zzz"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "size-reverse",
+      "invocation": "ls",
+      "args": [
+        "-1",
+        "-S",
+        "-r",
+        "a",
+        "z"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "a\nz\n",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "a": {
+            "type": "file",
+            "mode": "0600",
+            "data": "a"
+          },
+          "z": {
+            "type": "file",
+            "mode": "0600",
+            "data": "zzz"
+          }
+        },
+        "expect": {
+          "a": {
+            "type": "file",
+            "mode": "0600",
+            "data": "a"
+          },
+          "z": {
+            "type": "file",
+            "mode": "0600",
+            "data": "zzz"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "size-tie",
+      "invocation": "ls",
+      "args": [
+        "-1",
+        "-S",
+        "z",
+        "a"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "a\nz\n",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "a": {
+            "type": "file",
+            "mode": "0600",
+            "data": "a"
+          },
+          "z": {
+            "type": "file",
+            "mode": "0600",
+            "data": "z"
+          }
+        },
+        "expect": {
+          "a": {
+            "type": "file",
+            "mode": "0600",
+            "data": "a"
+          },
+          "z": {
+            "type": "file",
+            "mode": "0600",
+            "data": "z"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "mtime-seconds",
+      "invocation": "ls",
+      "args": [
+        "-1",
+        "-t",
+        "a",
+        "z"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "z\na\n",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "a": {
+            "type": "file",
+            "mode": "0600",
+            "data": "",
+            "mtime_ns": 1700000000000000000
+          },
+          "z": {
+            "type": "file",
+            "mode": "0600",
+            "data": "",
+            "mtime_ns": 1700000001000000000
+          }
+        },
+        "expect": {
+          "a": {
+            "type": "file",
+            "mode": "0600",
+            "data": "",
+            "mtime_ns": 1700000000000000000
+          },
+          "z": {
+            "type": "file",
+            "mode": "0600",
+            "data": "",
+            "mtime_ns": 1700000001000000000
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "mtime-nanoseconds",
+      "invocation": "ls",
+      "args": [
+        "-1",
+        "-t",
+        "a",
+        "z"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "z\na\n",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "a": {
+            "type": "file",
+            "mode": "0600",
+            "data": "",
+            "mtime_ns": 1700000000125000000
+          },
+          "z": {
+            "type": "file",
+            "mode": "0600",
+            "data": "",
+            "mtime_ns": 1700000000500000000
+          }
+        },
+        "expect": {
+          "a": {
+            "type": "file",
+            "mode": "0600",
+            "data": "",
+            "mtime_ns": 1700000000125000000
+          },
+          "z": {
+            "type": "file",
+            "mode": "0600",
+            "data": "",
+            "mtime_ns": 1700000000500000000
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "mtime-reverse",
+      "invocation": "ls",
+      "args": [
+        "-1",
+        "-t",
+        "-r",
+        "a",
+        "z"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "a\nz\n",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "a": {
+            "type": "file",
+            "mode": "0600",
+            "data": "",
+            "mtime_ns": 1700000000125000000
+          },
+          "z": {
+            "type": "file",
+            "mode": "0600",
+            "data": "",
+            "mtime_ns": 1700000000500000000
+          }
+        },
+        "expect": {
+          "a": {
+            "type": "file",
+            "mode": "0600",
+            "data": "",
+            "mtime_ns": 1700000000125000000
+          },
+          "z": {
+            "type": "file",
+            "mode": "0600",
+            "data": "",
+            "mtime_ns": 1700000000500000000
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "mtime-tie",
+      "invocation": "ls",
+      "args": [
+        "-1",
+        "-t",
+        "z",
+        "a"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "a\nz\n",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "a": {
+            "type": "file",
+            "mode": "0600",
+            "data": "",
+            "mtime_ns": 1700000000000000000
+          },
+          "z": {
+            "type": "file",
+            "mode": "0600",
+            "data": "",
+            "mtime_ns": 1700000000000000000
+          }
+        },
+        "expect": {
+          "a": {
+            "type": "file",
+            "mode": "0600",
+            "data": "",
+            "mtime_ns": 1700000000000000000
+          },
+          "z": {
+            "type": "file",
+            "mode": "0600",
+            "data": "",
+            "mtime_ns": 1700000000000000000
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "atime-nanoseconds",
+      "invocation": "ls",
+      "args": [
+        "-1",
+        "-u",
+        "-t",
+        "a",
+        "z"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "z\na\n",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "a": {
+            "type": "file",
+            "mode": "0600",
+            "data": "",
+            "atime_ns": 1700000000000000001
+          },
+          "z": {
+            "type": "file",
+            "mode": "0600",
+            "data": "",
+            "atime_ns": 1700000000000000002
+          }
+        },
+        "expect": {
+          "a": {
+            "type": "file",
+            "mode": "0600",
+            "data": "",
+            "atime_ns": 1700000000000000001
+          },
+          "z": {
+            "type": "file",
+            "mode": "0600",
+            "data": "",
+            "atime_ns": 1700000000000000002
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "atime-reverse",
+      "invocation": "ls",
+      "args": [
+        "-1",
+        "-u",
+        "-t",
+        "-r",
+        "a",
+        "z"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "a\nz\n",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "a": {
+            "type": "file",
+            "mode": "0600",
+            "data": "",
+            "atime_ns": 1700000000000000001
+          },
+          "z": {
+            "type": "file",
+            "mode": "0600",
+            "data": "",
+            "atime_ns": 1700000000000000002
+          }
+        },
+        "expect": {
+          "a": {
+            "type": "file",
+            "mode": "0600",
+            "data": "",
+            "atime_ns": 1700000000000000001
+          },
+          "z": {
+            "type": "file",
+            "mode": "0600",
+            "data": "",
+            "atime_ns": 1700000000000000002
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "directory-operand",
+      "invocation": "ls",
+      "args": [
+        "-1",
+        "-d",
+        "tree"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "tree\n",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "tree": {
+            "type": "directory",
+            "mode": "0700"
+          },
+          "tree/file": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          }
+        },
+        "expect": {
+          "tree": {
+            "type": "directory",
+            "mode": "0700"
+          },
+          "tree/file": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "recursive",
+      "invocation": "ls",
+      "args": [
+        "-1",
+        "-R",
+        "tree"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "a\nsub\n\ntree/sub:\nb\n",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "tree": {
+            "type": "directory",
+            "mode": "0700"
+          },
+          "tree/a": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          },
+          "tree/sub": {
+            "type": "directory",
+            "mode": "0700"
+          },
+          "tree/sub/b": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          }
+        },
+        "expect": {
+          "tree": {
+            "type": "directory",
+            "mode": "0700"
+          },
+          "tree/a": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          },
+          "tree/sub": {
+            "type": "directory",
+            "mode": "0700"
+          },
+          "tree/sub/b": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "recursive-leaf",
+      "invocation": "ls",
+      "args": [
+        "-1",
+        "-R",
+        "-O",
+        "tree"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "a\nsub\nb\n",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "tree": {
+            "type": "directory",
+            "mode": "0700"
+          },
+          "tree/a": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          },
+          "tree/sub": {
+            "type": "directory",
+            "mode": "0700"
+          },
+          "tree/sub/b": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          }
+        },
+        "expect": {
+          "tree": {
+            "type": "directory",
+            "mode": "0700"
+          },
+          "tree/a": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          },
+          "tree/sub": {
+            "type": "directory",
+            "mode": "0700"
+          },
+          "tree/sub/b": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "dotfiles",
+      "invocation": "ls",
+      "args": [
+        "-1",
+        "-A",
+        "."
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": ".hidden\nvisible\n",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          ".hidden": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          },
+          "visible": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          }
+        },
+        "expect": {
+          ".hidden": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          },
+          "visible": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "dot-entries",
+      "invocation": "ls",
+      "args": [
+        "-1",
+        "-a",
+        "."
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": ".\n..\n.hidden\nvisible\n",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          ".hidden": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          },
+          "visible": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          }
+        },
+        "expect": {
+          ".hidden": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          },
+          "visible": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "type-markers",
+      "invocation": "ls",
+      "args": [
+        "-1",
+        "-F",
+        "."
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "exec*\nplain\nsub/\nsym@\n",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "exec": {
+            "type": "file",
+            "mode": "0700",
+            "data": ""
+          },
+          "plain": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          },
+          "sub": {
+            "type": "directory",
+            "mode": "0700"
+          },
+          "sym": {
+            "type": "symlink",
+            "target": "plain"
+          }
+        },
+        "expect": {
+          "exec": {
+            "type": "file",
+            "mode": "0700",
+            "data": ""
+          },
+          "plain": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          },
+          "sub": {
+            "type": "directory",
+            "mode": "0700"
+          },
+          "sym": {
+            "type": "symlink",
+            "target": "plain"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "directory-markers",
+      "invocation": "ls",
+      "args": [
+        "-1",
+        "-p",
+        "."
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "plain\nsub/\nsym\n",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "plain": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          },
+          "sub": {
+            "type": "directory",
+            "mode": "0700"
+          },
+          "sym": {
+            "type": "symlink",
+            "target": "plain"
+          }
+        },
+        "expect": {
+          "plain": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          },
+          "sub": {
+            "type": "directory",
+            "mode": "0700"
+          },
+          "sym": {
+            "type": "symlink",
+            "target": "plain"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "operand-symlink-follow",
+      "invocation": "ls",
+      "args": [
+        "-1",
+        "sym"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "file\n",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "tree": {
+            "type": "directory",
+            "mode": "0700"
+          },
+          "tree/file": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          },
+          "sym": {
+            "type": "symlink",
+            "target": "tree"
+          }
+        },
+        "expect": {
+          "tree": {
+            "type": "directory",
+            "mode": "0700"
+          },
+          "tree/file": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          },
+          "sym": {
+            "type": "symlink",
+            "target": "tree"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "operand-symlink-directory",
+      "invocation": "ls",
+      "args": [
+        "-1",
+        "-d",
+        "sym"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "sym\n",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "tree": {
+            "type": "directory",
+            "mode": "0700"
+          },
+          "tree/file": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          },
+          "sym": {
+            "type": "symlink",
+            "target": "tree"
+          }
+        },
+        "expect": {
+          "tree": {
+            "type": "directory",
+            "mode": "0700"
+          },
+          "tree/file": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          },
+          "sym": {
+            "type": "symlink",
+            "target": "tree"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "operand-symlink-mark",
+      "invocation": "ls",
+      "args": [
+        "-1",
+        "-F",
+        "sym"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "sym@\n",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "tree": {
+            "type": "directory",
+            "mode": "0700"
+          },
+          "tree/file": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          },
+          "sym": {
+            "type": "symlink",
+            "target": "tree"
+          }
+        },
+        "expect": {
+          "tree": {
+            "type": "directory",
+            "mode": "0700"
+          },
+          "tree/file": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          },
+          "sym": {
+            "type": "symlink",
+            "target": "tree"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "logical-symlink",
+      "invocation": "ls",
+      "args": [
+        "-1",
+        "-L",
+        "-F",
+        "sym"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "file\n",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "tree": {
+            "type": "directory",
+            "mode": "0700"
+          },
+          "tree/file": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          },
+          "sym": {
+            "type": "symlink",
+            "target": "tree"
+          }
+        },
+        "expect": {
+          "tree": {
+            "type": "directory",
+            "mode": "0700"
+          },
+          "tree/file": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          },
+          "sym": {
+            "type": "symlink",
+            "target": "tree"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "dangling-symlink",
+      "invocation": "ls",
+      "args": [
+        "-1",
+        "-d",
+        "-F",
+        "sym"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "sym@\n",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "sym": {
+            "type": "symlink",
+            "target": "missing"
+          }
+        },
+        "expect": {
+          "sym": {
+            "type": "symlink",
+            "target": "missing"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "comma-stream",
+      "invocation": "ls",
+      "args": [
+        "-m",
+        "a",
+        "z"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "a, z\n",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "a": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          },
+          "z": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          }
+        },
+        "expect": {
+          "a": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          },
+          "z": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "column-single",
+      "invocation": "ls",
+      "args": [
+        "-C",
+        "name"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "name\n",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "name": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          }
+        },
+        "expect": {
+          "name": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "across-single",
+      "invocation": "ls",
+      "args": [
+        "-x",
+        "name"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "name \n",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "name": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          }
+        },
+        "expect": {
+          "name": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "octal-name",
+      "invocation": "ls",
+      "args": [
+        "-B",
+        "name"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "name\n",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "name": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          }
+        },
+        "expect": {
+          "name": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "cstyle-name",
+      "invocation": "ls",
+      "args": [
+        "-b",
+        "name"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "name\n",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "name": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          }
+        },
+        "expect": {
+          "name": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "safe-name",
+      "invocation": "ls",
+      "args": [
+        "-q",
+        "name"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "name\n",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "name": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          }
+        },
+        "expect": {
+          "name": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "raw-name",
+      "invocation": "ls",
+      "args": [
+        "-w",
+        "name"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "name\n",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "name": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          }
+        },
+        "expect": {
+          "name": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "long-empty",
+      "invocation": "ls",
+      "args": [
+        "-l",
+        "."
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {},
+        "expect": {}
+      },
+      "stderr": ""
+    },
+    {
+      "name": "numeric-empty",
+      "invocation": "ls",
+      "args": [
+        "-n",
+        "."
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {},
+        "expect": {}
+      },
+      "stderr": ""
+    },
+    {
+      "name": "human-empty",
+      "invocation": "ls",
+      "args": [
+        "-l",
+        "-h",
+        "."
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {},
+        "expect": {}
+      },
+      "stderr": ""
+    },
+    {
+      "name": "hardlink-names",
+      "invocation": "ls",
+      "args": [
+        "-1",
+        "a",
+        "peer"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "a\npeer\n",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "a": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          },
+          "peer": {
+            "type": "hardlink",
+            "target": "a"
+          }
+        },
+        "expect": {
+          "a": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          },
+          "peer": {
+            "type": "file",
+            "mode": "0600",
+            "data": "",
+            "same_inode_as": "a"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "missing",
+      "invocation": "ls",
+      "args": [
+        "-1",
+        "missing"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {},
+        "expect": {
+          "missing": {
+            "type": "absent"
+          }
+        }
+      },
+      "stderr": "ls: missing: No such file or directory\n"
+    },
+    {
+      "name": "continue-missing",
+      "invocation": "ls",
+      "args": [
+        "-1",
+        "a",
+        "missing"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "a\n",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "a": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          }
+        },
+        "expect": {
+          "a": {
+            "type": "file",
+            "mode": "0600",
+            "data": ""
+          },
+          "missing": {
+            "type": "absent"
+          }
+        }
+      },
+      "stderr": "ls: missing: No such file or directory\n"
+    },
+    {
+      "name": "invalid-option",
+      "invocation": "ls",
+      "args": [
+        "-z"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {},
+        "expect": {}
+      },
+      "stderr_nonempty": true
+    }
+  ],
+  "components": [
+    "listing"
+  ],
+  "control": "tools/ls/probes/control.c"
+}

@@ -15,7 +15,7 @@ module A133UsbBackup
     raise Invalid,'usb_backup_unsafe_parent' unless stat.directory? && stat.uid==Process.uid && stat.mode&07777==0700
     directory=File.join(File.realpath(parent),File.basename(directory))
     raise Invalid,'usb_backup_destination_exists' if File.exist?(directory) || File.symlink?(directory)
-    source=Source.new(adb:adb,serial:serial,state:'recovery',root_method:root_method,timeout:timeout)
+    source=CaptureSource.new(adb:adb,serial:serial,state:'recovery',root_method:root_method,timeout:timeout)
     Timeout.timeout(timeout,Deadline) do
       private_directory(File.dirname(directory)) do |parent_check|
         identity=source.mutable_inspect!

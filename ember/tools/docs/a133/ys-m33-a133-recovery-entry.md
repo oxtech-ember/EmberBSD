@@ -66,6 +66,18 @@ Existing helper keys, including empty values, are refused.
 `restore` requires `recovery` state and also accepts the exact profile-specific
 consumed values. The hook profile expects its hook absent and two helpers.
 The direct profile expects original bootcmd and four unused helpers.
+The direct profile also admits one measured runtime export from vendor saveenv.
+The original mac/wifi_mac/bt_mac/specialstr values must all be empty. The export
+sets a valid unicast mac and removes the other three empty keys. It adds only
+bootreason=unknow, fdtcontroladdr=7beb3280, fileaddr=40000000, filesize=2a338,
+rotpk_status=0, a 19-digit lowercase hexadecimal snum, and partitions matching the
+validated GPT name/index mapping. All other values must match the consumed plan.
+The hardware snum is distinct from the USB serial. Its format is checked;
+this does not authenticate its value. Device binding still uses USB serial/CID.
+Partial groups and different literals are refused. This admits restoration;
+it does not transfer hardware acceptance to other firmware or unlock profiles.
+Run `ruby ember/tools/a133-recovery-runtime-env-test.rb` for this contract.
+
 Valid CRC, termination and padding are mandatory; vendor export ordering,
 leading-empty marker and zero/FF padding may differ. Extra or modified variables,
 a changed tail, or an unrecognized export stop restoration without guessing.

@@ -129,7 +129,7 @@ SUBDIR += .WAIT texinfo \
 		.WAIT installboot \
 		pwd_mkdb strfile sunlabel vgrind zic
 .endif
-SUBDIR+= stat .WAIT config
+SUBDIR+= ls stat .WAIT config
 .if ${TOOLS_BUILDRUMP} == "no"
 SUBDIR+= xz-bin
 .endif

@@ -49,7 +49,7 @@ done
 SH
 case command
 when 'id -u' then puts state.fetch('root','0')
-when 'getprop ro.product.model' then puts 'a133'
+when 'getprop ro.product.model' then puts state.fetch('model','a133')
 when 'getprop ro.boot.flash.locked' then puts '0'
 when 'getprop ro.boot.verifiedbootstate' then puts 'orange'
 when 'cat /proc/device-tree/compatible' then STDOUT.write("allwinner,a133\0fixture,board\0")
