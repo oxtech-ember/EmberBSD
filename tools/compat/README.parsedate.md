@@ -9,8 +9,12 @@ The native libutil target keeps its original `mktime_z` call.
 The host build prefers a declared and linked `mktime_z(NULL, ...)`.
 Otherwise it uses a declared and linked `timegm`.
 The same [probe sources](probes) serve normal configure and the finite component.
-The [feature header](compat_parsedate_features.h) requests native extension declarations.
-It does not assert that a function exists. No host name selects an implementation.
+The [feature header](compat_parsedate_features.h) requests native UTC declarations.
+On NetBSD it loads restricted base types first, scopes `_NETBSD_SOURCE` to the
+real `<time.h>`, then removes that namespace before the compatibility guard.
+Other hosts do not receive `_NETBSD_SOURCE`. A caller-defined namespace remains
+an error. The header does not assert that a function exists; probes still select
+the implementation.
 Neither route changes `TZ` inside the parser.
 The existing `errno`, normalization checks and timezone arithmetic still apply.
 
@@ -49,7 +53,7 @@ The bounded plan has thirteen commands:
 4. `func-mktime_z`, the declaration and link probe
 5. `func-timegm`, the declaration and link probe
 6. `generate-parsedate`, selected Byacc with `-p __pd -o parsedate.c`
-7. `compile-parsedate`, selected GCC16 with the generated configuration
+7. `compile-parsedate`, selected native compiler with the generated configuration
 8. `archive-parsedate`, selected ar with the single `parsedate.o` member
 9. `index-parsedate`, selected ranlib
 10. `compile-parsedate-check`
@@ -77,11 +81,26 @@ The [source checks](test-parsedate.py) use Python's standard library only.
 They check complete parser preservation and normal/finite source agreement.
 They do not generate a parser or execute C code.
 
+The Linux feature regression compiles and runs the real native UTC control:
+
+```sh
+"$HOST_PREFIX/bin/python3.15" tools/compat/test-parsedate-features.py \
+    --source "$OS_SOURCE" --host-prefix "$HOST_PREFIX" --work "$NEW_OUTPUT"
+```
+
+It also rejects caller-owned `_NETBSD_SOURCE` and models NetBSD header ordering
+with guarded headers and the `__timegm50`/`__mktime_z50` ABI aliases.
+`--expect-rejection` checks the old header's namespace leak.
+The model does not replace native NetBSD compilation or runtime checks.
+
 The [C check](probes/parsedate-check.c) uses fixed times and fixed POSIX zones.
 It covers UTC, explicit offsets, local time, relative days, month clamping,
 valid negative epochs, preserved errno, malformed input, invalid dates and overflow.
 It also retains the parser's existing fractional-second truncation.
 These cases need execution through the selected SDK producer before acceptance.
+They passed against the normal Linux compatibility archive built with Clang
+23.1.4 after the scoped feature-header repair. The finite bootstrap producer
+and native NetBSD runtime retain their separate validation requirements.
 
 This source change does not qualify touch, an ordinary SDK or another host ABI.
 Nanosecond parsing, timezone database transitions, other time ranges, C analysis
