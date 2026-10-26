@@ -124,6 +124,9 @@ struct rtw88_ra_config {
 	uint16_t ht_mcs, ht_operation, vht_tx_map;
 	uint32_t profile_generation;
 	struct rtw88_ht20_policy ht;
+	/* RA_INFO SGI_EN: the AP receives SGI at the committed width.
+	 * HT20 and VHT entries of the VHT experiment only. */
+	uint8_t sgi;
 };
 struct rtw88_ra_state {
 	uint64_t epoch;
@@ -134,6 +137,7 @@ struct rtw88_ra_state {
 	uint32_t profile_generation;
 	struct rtw88_ht20_policy ht;
 	struct rtw88_channel_tuple tuple;	/* Committed when configured. */
+	uint8_t sgi;
 	int configured, active, protection_limited, error;
 };
 

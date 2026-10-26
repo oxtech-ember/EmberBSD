@@ -41,6 +41,8 @@ hidmt_parse(const void *desc, int len, struct hidmt_config *cfg)
 	struct hidmt_slot *slot = NULL;
 	int touchlevel = 0, fingerlevel = 0, configlevel = 0;
 	unsigned i;
+	unsigned feature_fields, mode_fields;
+	bool mode_range_ok;
 
 	memset(cfg, 0, sizeof(*cfg));
 	cfg->input_id = cfg->config_id = -1;
@@ -153,6 +155,33 @@ hidmt_parse(const void *desc, int len, struct hidmt_config *cfg)
 		    !hidmt_location_valid(&slot->id, cfg->input_size))
 			return 1;
 	}
+	/*
+	 * A direct SET is safe only when Input Mode is the sole variable in
+	 * its complete feature report.  Scan the whole report, including items
+	 * outside the configuration collection; constant padding is harmless.
+	 */
+	feature_fields = mode_fields = 0;
+	mode_range_ok = false;
+	hd = hid_start_parse(desc, len, hid_feature);
+	if (hd == NULL)
+		return 1;
+	while (hid_get_item(hd, &h)) {
+		if (h.kind != hid_feature || h.report_ID != (unsigned)cfg->config_id ||
+		    (h.flags & HIO_CONST))
+			continue;
+		feature_fields++;
+		if (h.usage == HID_USAGE2(HUP_DIGITIZERS, HUD_INPUT_MODE) &&
+		    (h.flags & HIO_VARIABLE) &&
+		    h.loc.size == cfg->mode.size && h.loc.pos == cfg->mode.pos &&
+		    h.loc.count == cfg->mode.count) {
+			mode_fields++;
+			mode_range_ok = h.logical_minimum <= 3 &&
+			    h.logical_maximum >= 3;
+		}
+	}
+	hid_end_parse(hd);
+	cfg->config_mode_only = feature_fields == 1 && mode_fields == 1 &&
+	    mode_range_ok;
 	return 0;
 fail:
 	hid_end_parse(hd);

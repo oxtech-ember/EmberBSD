@@ -144,6 +144,15 @@ imt_set_mode(struct imt_softc *sc, bool poll)
 	int error;
 
 	memset(mode, 0, cfg->config_size);
+	if (cfg->config_mode_only) {
+		/* No other feature values need preserving in this report. */
+		for (i = 0; i < cfg->mode.size; i++) {
+			unsigned bit = cfg->mode.pos + i;
+			mode[bit / 8] |= ((3U >> i) & 1U) << (bit % 8);
+		}
+		return ihidev_set_report_poll(sc->sc_hdev.sc_parent->sc_dev,
+		    hid_feature, cfg->config_id, mode, cfg->config_size, poll);
+	}
 	error = ihidev_get_report_poll(sc->sc_hdev.sc_parent->sc_dev, hid_feature,
 	    cfg->config_id, mode, cfg->config_size, poll);
 	if (error == 0) {
