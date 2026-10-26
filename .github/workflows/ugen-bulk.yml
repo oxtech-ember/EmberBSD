@@ -1,0 +1,57 @@
+name: Ugen synchronous bulk actual source contract
+
+'on':
+  pull_request:
+    paths:
+      - '.github/workflows/ugen-bulk.yml'
+      - 'sys/dev/usb/ugen.c'
+      - 'ember/tests/ugen-bulk-contract.py'
+      - 'ember/tests/ugen-bulk-fixture.c'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/ugen-bulk.yml'
+      - 'sys/dev/usb/ugen.c'
+      - 'ember/tests/ugen-bulk-contract.py'
+      - 'ember/tests/ugen-bulk-fixture.c'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    container:
+      image: gcc@sha256:3f73339bf0d3d64081cac3f6d9fdafc6dd4cef2b9c49e0a09f91e97cb0eb139a
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /sys/dev/usb/ugen.c
+            /ember/tests/ugen-bulk-contract.py
+            /ember/tests/ugen-bulk-fixture.c
+      - name: Prepare analysis tools
+        run: |
+          test "$(gcc -dumpfullversion)" = 16.2.0
+          apt-get update
+          apt-get install -y --no-install-recommends python3 valgrind libc6-dbg
+      - name: Run GCC16 source and path checks
+        env:
+          CC: gcc
+          CFLAGS: -fanalyzer -Werror
+        run: python3 ember/tests/ugen-bulk-contract.py sys/dev/usb/ugen.c "$RUNNER_TEMP/ugen-bulk-analyzer"
+      - name: Run ASan and UBSan
+        env:
+          CC: gcc
+        run: python3 ember/tests/ugen-bulk-contract.py sys/dev/usb/ugen.c "$RUNNER_TEMP/ugen-bulk-sanitize" --sanitize
+      - name: Run Memcheck
+        env:
+          CC: gcc
+          CFLAGS: -gdwarf-4
+          TEST_RUNNER: valgrind --tool=memcheck --error-exitcode=97 --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=all --track-origins=yes
+        run: python3 ember/tests/ugen-bulk-contract.py sys/dev/usb/ugen.c "$RUNNER_TEMP/ugen-bulk-memcheck"

@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import shlex
 import subprocess
+import sys
 
 p = argparse.ArgumentParser()
 p.add_argument("source", type=Path)
@@ -43,18 +44,22 @@ command = cc + ["-std=gnu17", "-O1", "-g", "-Wall", "-Wextra", "-Wno-unused-para
 # Full function declarations include variables used only by excluded RA/WB
 # arms. Baseline and candidate also need different subsets of bus helpers.
 command += ["-Wno-unused-variable", "-Wno-unused-function"]
+command += shlex.split(os.environ.get("CFLAGS", ""))
 if a.sanitize:
     command += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
 command += [str(c), "-o", str(a.output / "fixture")]
 subprocess.run(command, check=True)
 env = os.environ.copy()
 if a.sanitize:
-    env["ASAN_OPTIONS"] = "detect_leaks=0:halt_on_error=1:abort_on_error=1"
+    leaks = "0" if sys.platform == "darwin" else "1"
+    env["ASAN_OPTIONS"] = "detect_leaks=" + leaks + ":halt_on_error=1:abort_on_error=1"
     env["UBSAN_OPTIONS"] = "halt_on_error=1:print_stacktrace=1"
-r = subprocess.run([str(a.output / "fixture")], capture_output=True, text=True, env=env)
+runner = shlex.split(os.environ.get("TEST_RUNNER", ""))
+r = subprocess.run(runner + [str(a.output / "fixture")], capture_output=True, text=True, env=env)
 (a.output / "stdout").write_text(r.stdout)
 (a.output / "stderr").write_text(r.stderr)
-result = {"compile": command, "exit": r.returncode, "cases": r.stdout.splitlines(), "sanitized": a.sanitize}
+result = {"compile": command, "execute": runner + [str(a.output / "fixture")],
+          "exit": r.returncode, "cases": r.stdout.splitlines(), "sanitized": a.sanitize}
 (a.output / "result.json").write_text(json.dumps(result, indent=2))
 print(r.stdout, end="")
 if r.stderr:
