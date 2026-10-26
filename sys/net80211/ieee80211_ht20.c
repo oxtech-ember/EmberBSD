@@ -370,7 +370,8 @@ bad:
  * requests RTS only for use_rts or the length threshold and ignores the
  * HT Protection field. This relies on OFDM-only non-HT stations deferring
  * on the L-SIG of mixed-format HT and VHT PPDUs, and on the consumer
- * sending single unaggregated MPDUs without TXOP bursts or length RTS.
+ * sending one PPDU per channel access (a single MPDU or one A-MPDU)
+ * without TXOP bursts or length RTS.
  * Keep a narrower envelope than the wire standard: no greenfield/SMPS,
  * RIFS/PSMP/PCO/STBC/dual protection or other operation selectors. The native
  * consumer must also qualify frame length, threshold and TX aggregation.

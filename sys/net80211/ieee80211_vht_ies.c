@@ -253,9 +253,11 @@ ieee80211_vht_channel_derive(const uint8_t *ies, size_t len,
 }
 
 /*
- * Validate the strict local profile against one AP-derived operating
- * channel. Raw scan observations are rechecked here; they do not
- * constitute negotiated state.
+ * Validate the qualified local profile (one spatial stream, MCS0-7 or
+ * MCS0-9, equal RX and TX maps, no optional capability bits) against one
+ * AP-derived operating channel. Each negotiated direction is the
+ * intersection with the peer and must keep NSS1. Raw scan observations
+ * are rechecked here; they do not constitute negotiated state.
  *
  * Deliberate deviation from IEEE 802.11ac-2013 §10.39.7: the AP's Basic
  * VHT-MCS and NSS set is not enforced. Many APs list their own full
@@ -275,13 +277,14 @@ ieee80211_vht_assoc_candidate(const struct ieee80211_vht_cap *local,
 	const uint8_t *htcap, *htop;
 
 	if (local == NULL || chan == NULL || ies == NULL || len == 0 ||
-	    len > 73 || local->info != 0 || local->rx_map != 0xfffc ||
-	    local->tx_map != 0xfffc || local->rx_highest != 0 ||
-	    local->tx_highest != 0 ||
+	    len > 73 || local->info != 0 || local->rx_map != local->tx_map ||
+	    (local->rx_map != 0xfffc && local->rx_map != 0xfffe) ||
+	    local->rx_highest != 0 || local->tx_highest != 0 ||
 	    ieee80211_vht_ies_parse(&peer, ies, len) != 0 ||
 	    !peer.cap_present || !peer.operation_present ||
-	    !ieee80211_vht_mcs_meets(peer.cap.rx_map, local->tx_map) ||
-	    !ieee80211_vht_mcs_meets(peer.cap.tx_map, local->rx_map) ||
+	    /* Each negotiated direction keeps at least NSS1 MCS0-7. */
+	    (ieee80211_vht_mcs_intersect(local->tx_map, peer.cap.rx_map) & 3) == 3 ||
+	    (ieee80211_vht_mcs_intersect(local->rx_map, peer.cap.tx_map) & 3) == 3 ||
 	    vht_ht_ies(ies, len, &htcap, &htop) != 0 || htcap == NULL ||
 	    (htcap[0] & 0x02) == 0 || htcap[3] != 0xff ||
 	    ieee80211_vht_channel_derive(ies, len, chan->primary,

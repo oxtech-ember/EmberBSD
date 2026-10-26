@@ -616,7 +616,7 @@ rtw88_net_vht_admit(struct ieee80211com *ic,
 	    rtw88_tuple_check(net->core, &tuple) != 0)
 		error = EOPNOTSUPP;
 	else
-		cap->rx_map = cap->tx_map = RTW88_VHT_MAP_NSS1_MCS7;
+		cap->rx_map = cap->tx_map = RTW88_VHT_MAP_NSS1_MCS9;
 	mutex_enter(net->lock);
 	if (error == 0)
 		net->neg.vht_admit++;

@@ -1379,7 +1379,7 @@ test_ra_vht80_formats(void)
 		CHECK(rtw88_station_config(&sc, bssid, 1, 0x150, 9, 1) == 0);
 		switch (variant) {
 		case 2: cfg.vht_tx_map = 0xfffd; break; /* MCS8 is not local. */
-		case 3: cfg.vht_tx_map = 0xfffe; break;
+		case 3: cfg.vht_tx_map = RTW88_VHT_MAP_NSS1_MCS9; break;
 		case 4: cfg.vht_tx_map = 0xffff; break;
 		case 5: cfg.vht_tx_map = 0xfff0; break; /* NSS2 is outside 1SS. */
 		case 6: cfg.common_rates = 0xfe0; break; /* No 6 Mbps fallback. */
@@ -1534,6 +1534,20 @@ test_ra_vht80_formats(void)
 			CHECK(rtw88_tx_auto(&sc, RTW88_TXQ_BE, ra_frame,
 			    sizeof(ra_frame), 9, 0) == EOPNOTSUPP);
 			CHECK(sc.sc_txq[RTW88_TXQ_BE].wp == wp && f.writes == writes);
+		} else if (variant == 3) {
+			/* NSS1 MCS0-9: bits12..21, and the MCS9 descriptor seed. */
+			unsigned wp = sc.sc_txq[RTW88_TXQ_BE].wp;
+			const uint8_t *desc;
+
+			CHECK(error == 0 && sc.sc_ra.active &&
+			    sc.sc_ra.mask == 0x003ff010 &&
+			    sc.sc_ra.vht_tx_map == RTW88_VHT_MAP_NSS1_MCS9);
+			CHECK(mmio32(0x1d0 + 4 * box) == UINT32_C(0x522a0040));
+			CHECK(mmio32(0x1f0 + 4 * box) == UINT32_C(0x003ff010));
+			CHECK(rtw88_tx_auto(&sc, RTW88_TXQ_BE, ra_frame,
+			    sizeof(ra_frame), 9, 0) == 0);
+			desc = sc.sc_txq[RTW88_TXQ_BE].buf[wp].vaddr;
+			CHECK(desc[6] == 10 && (desc[16] & 0x7f) == 0x35);
 		} else if (variant == 20) {
 			CHECK(error == 0 && sc.sc_ra.active && sc.sc_ra.sgi == 1);
 			CHECK(mmio32(0x1d0 + 4 * box) == UINT32_C(0x52aa0040));
@@ -2111,7 +2125,8 @@ test_ra_vht_run_tuples(void)
 		memset(&cap, 0xa5, sizeof(cap));
 		CHECK(rtw88_net_vht_admit(&s.net.ic, &closed[variant].chan,
 		    &cap) == want);
-		CHECK(want == 0 ? cap.rx_map == 0xfffc :
+		CHECK(want == 0 ? cap.rx_map == RTW88_VHT_MAP_NSS1_MCS9 &&
+		    cap.tx_map == RTW88_VHT_MAP_NSS1_MCS9 :
 		    cap.rx_map == 0 && cap.tx_map == 0 && cap.info == 0);
 		{
 			struct rtw88_net_neg ns;
@@ -2201,7 +2216,9 @@ test_ra_vht80_run(void)
 			continue;
 		}
 		CHECK(cap.info == 0 && cap.rx_highest == 0 && cap.tx_highest == 0);
-		CHECK(cap.rx_map == 0xfffc && cap.tx_map == 0xfffc);
+		/* The local profile offers one stream with MCS0-9. */
+		CHECK(cap.rx_map == RTW88_VHT_MAP_NSS1_MCS9 &&
+		    cap.tx_map == RTW88_VHT_MAP_NSS1_MCS9);
 		if (variant == 1)
 			s.ni.ni_ht20.vht.valid = 0; /* HT20 fallback response. */
 		gen = s.sc.sc_generation;

@@ -102,8 +102,10 @@ struct rtw88_txq {
 #define RTW88_RA_LEGACY 0
 #define RTW88_RA_HT20_1SS 1
 #define RTW88_RA_VHT_1SS 2
-/* Outbound local TX intersect peer RX: NSS1 MCS0-7, other NSS unsupported. */
+/* Outbound local TX intersect peer RX: NSS1 MCS0-7 or MCS0-9, other NSS
+ * unsupported. The local profile offers MCS0-9. */
 #define RTW88_VHT_MAP_NSS1_MCS7 0xfffcU
+#define RTW88_VHT_MAP_NSS1_MCS9 0xfffeU
 #define RTW88_HT20_PROT_MF20_NO_RTS 1
 #define RTW88_HT20_MTU_MIN 32U
 #define RTW88_HT20_MTU_MAX 1500U
