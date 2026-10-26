@@ -464,7 +464,7 @@ assoc_candidate(void)
 	 * maps are the intersections; a peer without NSS1 in either
 	 * direction, MCS0-8, unequal maps or a second stream do not.
 	 */
-	for (mutation = 0; mutation < 9; mutation++) {
+	for (mutation = 0; mutation < 12; mutation++) {
 		static const struct ieee80211_vht_cap mcs9 = {
 			.info = 0, .rx_map = 0xfffe, .rx_highest = 0,
 			.tx_map = 0xfffe, .tx_highest = 0
@@ -482,8 +482,15 @@ assoc_candidate(void)
 		case 4: p[62] = 0xff; want = -1; break;	/* No NSS1 TX at peer. */
 		case 5: other.tx_map = 0xfffc; want = -1; break;
 		case 6: other.rx_map = other.tx_map = 0xfffd; want = -1; break;
-		case 7: other.rx_map = other.tx_map = 0xfffa; want = -1; break;
+		case 7: other.rx_map = other.tx_map = 0xfffa; break; /* 2SS. */
 		case 8: other.info = 0x40; want = -1; break; /* SGI160. */
+		case 9: other.rx_map = other.tx_map = 0xfffa; /* 4SS peer. */
+			p[58] = 0xaa; p[59] = 0xaa; p[62] = 0xaa; p[63] = 0xaa;
+			break;
+		case 10: other.rx_map = other.tx_map = 0xfff0; want = -1;
+			break;				/* 2SS MCS0-7 only. */
+		case 11: other.rx_map = other.tx_map = 0xffea; want = -1;
+			break;				/* Third stream. */
 		}
 		CHECK(ieee80211_vht_assoc_candidate(&other, p, n, &c) == want);
 	}

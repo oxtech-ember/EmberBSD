@@ -1362,7 +1362,7 @@ test_ra_vht80_formats(void)
 {
 	const uint8_t bssid[6] = {2, 0, 0, 0, 0, 1};
 
-	for (unsigned variant = 0; variant < 24; variant++) {
+	for (unsigned variant = 0; variant < 28; variant++) {
 		struct rtw88_softc sc;
 		struct rtw88_ra_config cfg = ra_vht80_cfg;
 		struct rtw88_ra_state saved;
@@ -1380,10 +1380,13 @@ test_ra_vht80_formats(void)
 			CHECK(rtw88_channel(&sc, 36) == 0);
 		CHECK(rtw88_station_config(&sc, bssid, 1, 0x150, 9, 1) == 0);
 		switch (variant) {
-		case 2: cfg.vht_tx_map = 0xfffd; break; /* MCS8 is not local. */
+		case 2: cfg.vht_tx_map = 0xfffd; break; /* NSS1 MCS0-8. */
 		case 3: cfg.vht_tx_map = RTW88_VHT_MAP_NSS1_MCS9; break;
 		case 4: cfg.vht_tx_map = 0xffff; break;
-		case 5: cfg.vht_tx_map = 0xfff0; break; /* NSS2 is outside 1SS. */
+		case 5: /* NSS2 needs proven 2T2R hardware. */
+			sc.sc_hw_feature.observed = 0;
+			cfg.vht_tx_map = 0xfff0;
+			break;
 		case 6: cfg.common_rates = 0xfe0; break; /* No 6 Mbps fallback. */
 		case 7: cfg.profile_generation = 0; break;
 		case 8: cfg.use_protection = 1; break;
@@ -1408,6 +1411,19 @@ test_ra_vht80_formats(void)
 		case 21: cfg.sgi = 2; break;
 		case 22: cfg.ldpc = 1; break; /* RA_INFO LDPC, byte2 bit2. */
 		case 23: cfg.ldpc = 2; break;
+		case 24: case 25: case 26: case 27: {
+			/* A 2T2R hardware-feature report of this boot. */
+			static const uint16_t map[] = { 0xfffa, 0xfff2, 0xffea,
+			    0xfff6 };
+
+			sc.sc_hw_feature.observed = 1;
+			sc.sc_hw_feature.report.known |= RTW88_HW_KNOWN_NSS |
+			    RTW88_HW_KNOWN_ANTENNAS;
+			sc.sc_hw_feature.report.nss = 2;
+			sc.sc_hw_feature.report.antennas = variant == 27 ? 1 : 2;
+			cfg.vht_tx_map = map[variant - 24];
+			break;
+		}
 		}
 		box = sc.sc_h2c_box;
 		writes = f.writes;
@@ -1539,6 +1555,26 @@ test_ra_vht80_formats(void)
 			CHECK(rtw88_tx_auto(&sc, RTW88_TXQ_BE, ra_frame,
 			    sizeof(ra_frame), 9, 0) == EOPNOTSUPP);
 			CHECK(sc.sc_txq[RTW88_TXQ_BE].wp == wp && f.writes == writes);
+		} else if (variant == 2 || variant == 24 || variant == 25) {
+			/* NSS1 MCS0-8; 2SS MCS0-9 (rate ID 9, bits 12..31);
+			 * NSS1 MCS0-9 with NSS2 MCS0-7. Seed: top of the top NSS. */
+			static const uint32_t want_mask[] = { 0x001ff010,
+			    0xfffff010, 0x3ffff010 };
+			static const uint8_t want_seed[] = { 0x34, 0x3f, 0x3d };
+			unsigned k = variant == 2 ? 0 : variant - 23;
+			unsigned wp = sc.sc_txq[RTW88_TXQ_BE].wp;
+			const uint8_t *desc;
+
+			CHECK(error == 0 && sc.sc_ra.active &&
+			    sc.sc_ra.mask == want_mask[k]);
+			CHECK(sc.sc_ra.rate_id == (variant == 2 ? 10 : 9));
+			CHECK(mmio32(0x1d0 + 4 * box) == (variant == 2 ?
+			    UINT32_C(0x522a0040) : UINT32_C(0x52290040)));
+			CHECK(mmio32(0x1f0 + 4 * box) == want_mask[k]);
+			CHECK(rtw88_tx_auto(&sc, RTW88_TXQ_BE, ra_frame,
+			    sizeof(ra_frame), 9, 0) == 0);
+			desc = sc.sc_txq[RTW88_TXQ_BE].buf[wp].vaddr;
+			CHECK((desc[16] & 0x7f) == want_seed[k]);
 		} else if (variant == 3) {
 			/* NSS1 MCS0-9: bits12..21, and the MCS9 descriptor seed. */
 			unsigned wp = sc.sc_txq[RTW88_TXQ_BE].wp;
@@ -2267,9 +2303,27 @@ test_ra_vht80_run(void)
 		/* RX LDPC and SGI80 reception; no other capability. */
 		CHECK(cap.info == 0x30 && cap.rx_highest == 0 &&
 		    cap.tx_highest == 0);
-		/* The local profile offers one stream with MCS0-9. */
+		/* Without a 2T2R report the local profile is one stream with
+		 * MCS0-9; with it, two streams. */
+		CHECK(rtw88_vht_nss(&s.sc) == 1);
 		CHECK(cap.rx_map == RTW88_VHT_MAP_NSS1_MCS9 &&
 		    cap.tx_map == RTW88_VHT_MAP_NSS1_MCS9);
+		{
+			struct rtw88_hw_feature_state saved = s.sc.sc_hw_feature;
+			struct ieee80211_vht_cap two;
+
+			s.sc.sc_hw_feature.observed = 1;
+			s.sc.sc_hw_feature.report.known |= RTW88_HW_KNOWN_NSS |
+			    RTW88_HW_KNOWN_ANTENNAS;
+			s.sc.sc_hw_feature.report.nss = 2;
+			s.sc.sc_hw_feature.report.antennas = 2;
+			CHECK(rtw88_net_vht_admit(&s.net.ic, &ra_vht_chan,
+			    &two) == 0);
+			CHECK(two.rx_map == RTW88_VHT_MAP_NSS2_MCS9 &&
+			    two.tx_map == RTW88_VHT_MAP_NSS2_MCS9 &&
+			    two.info == 0x30);
+			s.sc.sc_hw_feature = saved;
+		}
 		if (variant == 1)
 			s.ni.ni_ht20.vht.valid = 0; /* HT20 fallback response. */
 		gen = s.sc.sc_generation;
@@ -2634,6 +2688,33 @@ test_ra_sgi_narrow(void)
 	CHECK(rtw88_core_detach(&sc) == 0);
 }
 
+#ifdef RTW88_VHT80
+/* Two streams need this boot's 2T2R hardware-feature report. */
+static void
+test_ra_vht_nss(void)
+{
+	struct rtw88_softc sc;
+
+	memset(&sc, 0, sizeof(sc));
+	CHECK(rtw88_vht_nss(&sc) == 1);
+	sc.sc_hw_feature.report.nss = 2;
+	sc.sc_hw_feature.report.antennas = 2;
+	sc.sc_hw_feature.report.known = RTW88_HW_KNOWN_NSS |
+	    RTW88_HW_KNOWN_ANTENNAS;
+	CHECK(rtw88_vht_nss(&sc) == 1);		/* Not observed. */
+	sc.sc_hw_feature.observed = 1;
+	CHECK(rtw88_vht_nss(&sc) == 2);
+	sc.sc_hw_feature.report.known = RTW88_HW_KNOWN_NSS;
+	CHECK(rtw88_vht_nss(&sc) == 1);		/* Antennas unknown. */
+	sc.sc_hw_feature.report.known |= RTW88_HW_KNOWN_ANTENNAS;
+	sc.sc_hw_feature.report.antennas = 1;
+	CHECK(rtw88_vht_nss(&sc) == 1);
+	sc.sc_hw_feature.report.antennas = 2;
+	sc.sc_hw_feature.report.nss = 1;
+	CHECK(rtw88_vht_nss(&sc) == 1);
+}
+#endif
+
 #ifndef RTW88_RA_MAIN
 #define RTW88_RA_MAIN main
 #endif
@@ -2675,6 +2756,7 @@ RTW88_RA_MAIN(void)
 	test_ra_vht80_run();
 	test_ra_vht_run_tuples();
 	test_ra_vht_ampdu();
+	test_ra_vht_nss();
 	test_ra_ht_prepare_diag();
 	printf("rtw88 VHT80 RA and TX formats: enabled\n");
 #else

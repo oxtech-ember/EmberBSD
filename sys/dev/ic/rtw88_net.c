@@ -616,7 +616,9 @@ rtw88_net_vht_admit(struct ieee80211com *ic,
 	    rtw88_tuple_check(net->core, &tuple) != 0)
 		error = EOPNOTSUPP;
 	else {
-		cap->rx_map = cap->tx_map = RTW88_VHT_MAP_NSS1_MCS9;
+		/* Two streams only on proven 2T2R hardware. */
+		cap->rx_map = cap->tx_map = rtw88_vht_nss(net->core) == 2 ?
+		    RTW88_VHT_MAP_NSS2_MCS9 : RTW88_VHT_MAP_NSS1_MCS9;
 		/* RX LDPC (bit4; rtw8822c rx_ldpc) and SGI80 reception. */
 		cap->info = 0x30;
 	}
