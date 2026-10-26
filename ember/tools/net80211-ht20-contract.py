@@ -48,3 +48,8 @@ with (out/'native-ht20-policy.h').open('a') as f:
 with (out/'native-ht20-policy.h').open('a') as f:
  f.write(re.search(r'^struct rtw88_phy_state \{.*?^\};',
      (src/'sys/dev/ic/rtw88_hw.h').read_text(),re.M|re.S).group()+'\n')
+
+# The actual optional-IE ioctl the station's RSN gate reads.
+ioctl=(src/'sys/net80211/ieee80211_ioctl.c').read_text()
+(out/'native-ht20-setoptie.inc').write_text(ioctl[:ioctl.index('#include')]+'static int\n'+
+    re.search(r'^ieee80211_ioctl_setoptie\(.*?^}',ioctl,re.M|re.S).group()+'\n')

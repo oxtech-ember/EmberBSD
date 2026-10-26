@@ -868,6 +868,67 @@ test_golden_and_reassociation(void)
 	deliver(m,IEEE80211_FC0_SUBTYPE_REASSOC_RESP);
 	CHECK(test_node.ni_ht20.valid && native_net.requested==IEEE80211_S_RUN);
 }
+/* The actual setoptie with a copyin that can fault and counted storage. */
+static int optie_copyin_fail;
+static unsigned optie_live;
+static int optie_copyin(const void *in, void *out, size_t n)
+{ if (optie_copyin_fail) return EFAULT; memcpy(out, in, n); return 0; }
+static void *optie_malloc(size_t n)
+{ void *p = malloc(n != 0 ? n : 1); assert(p != NULL); optie_live++; return p; }
+static void optie_free(void *p)
+{ assert(optie_live > 0); optie_live--; free(p); }
+#ifndef IEEE80211_MAX_OPT_IE
+#define IEEE80211_MAX_OPT_IE 256
+#endif
+#ifndef M_WAITOK
+#define M_WAITOK 0
+#endif
+#define copyin optie_copyin
+#define malloc(n, t, f) optie_malloc(n)
+#define free(p, t) optie_free(p)
+#include "native-ht20-setoptie.inc"
+#undef copyin
+#undef malloc
+#undef free
+/* A faulting copyin keeps the installed element; nothing leaks. */
+static void
+test_setoptie_copyin_fault(void)
+{
+	uint8_t first[4] = { 221, 2, 1, 2 }, second[4] = { 48, 2, 1, 0 };
+	struct ieee80211req req;
+	uint8_t *saved;
+	unsigned saved_len;
+
+	ht_setup();
+	saved = test_ic.ic_opt_ie;
+	saved_len = test_ic.ic_opt_ie_len;
+	test_ic.ic_opt_ie = NULL;
+	test_ic.ic_opt_ie_len = 0;
+	memset(&req, 0, sizeof(req));
+	req.i_len = sizeof(first);
+	req.i_data = first;
+	CHECK(ieee80211_ioctl_setoptie(&test_ic, &req) == 0);
+	CHECK(test_ic.ic_opt_ie_len == 4 && optie_live == 1 &&
+	    memcmp(test_ic.ic_opt_ie, first, 4) == 0);
+	optie_copyin_fail = 1;
+	req.i_data = second;
+	CHECK(ieee80211_ioctl_setoptie(&test_ic, &req) == EFAULT);
+	CHECK(test_ic.ic_opt_ie_len == 4 && optie_live == 1 &&
+	    memcmp(test_ic.ic_opt_ie, first, 4) == 0);
+	optie_copyin_fail = 0;
+	req.i_len = IEEE80211_MAX_OPT_IE + 1;
+	CHECK(ieee80211_ioctl_setoptie(&test_ic, &req) == EINVAL);
+	CHECK(optie_live == 1 && memcmp(test_ic.ic_opt_ie, first, 4) == 0);
+	req.i_len = sizeof(second);
+	CHECK(ieee80211_ioctl_setoptie(&test_ic, &req) == 0);
+	CHECK(test_ic.ic_opt_ie_len == 4 && optie_live == 1 &&
+	    memcmp(test_ic.ic_opt_ie, second, 4) == 0);
+	optie_free(test_ic.ic_opt_ie);
+	test_ic.ic_opt_ie = saved;
+	test_ic.ic_opt_ie_len = saved_len;
+	CHECK(optie_live == 0);
+}
+
 static void
 test_probe_and_optional_compatibility(void)
 {
@@ -929,7 +990,7 @@ test_privacy_rsn_gate(void)
 		case 14: ie[10]=1; break;			/* OUI byte 0. */
 		}
 		ht_setup();
-		test_ic.ic_flags|=IEEE80211_F_PRIVACY;
+		test_ic.ic_flags|=IEEE80211_F_PRIVACY|IEEE80211_F_WPA2;
 		/* The kernel cipher field no longer decides either way. */
 		test_node.ni_rsn.rsn_ucastcipher=variant==0?
 		    IEEE80211_CIPHER_WEP:IEEE80211_CIPHER_AES_CCM;
@@ -942,6 +1003,25 @@ test_privacy_rsn_gate(void)
 			deliver(ht_response(),IEEE80211_FC0_SUBTYPE_ASSOC_RESP);
 			CHECK(test_node.ni_ht20.valid);
 		}
+	}
+	/* A stale CCMP RSN element without the WPA2 configuration (a killed
+	 * supplicant, then a WEP join) offers no HT. */
+	{
+		static const uint8_t rsn[22]={48,20,1,0,0,0x0f,0xac,4,1,0,0,
+		    0x0f,0xac,4,1,0,0,0x0f,0xac,2,0,0};
+
+		ht_setup();
+		test_ic.ic_flags|=IEEE80211_F_PRIVACY;
+		test_ic.ic_opt_ie=(uint8_t *)rsn; test_ic.ic_opt_ie_len=sizeof(rsn);
+		CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ)==0);
+		CHECK(ht_in_request()==NULL && !test_node.ni_ht20.offered);
+		release_capture();
+		ht_setup();
+		test_ic.ic_flags|=IEEE80211_F_PRIVACY|IEEE80211_F_WPA2;
+		test_ic.ic_opt_ie=(uint8_t *)rsn; test_ic.ic_opt_ie_len=sizeof(rsn);
+		CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ)==0);
+		CHECK(ht_in_request()!=NULL && test_node.ni_ht20.offered);
+		release_capture();
 	}
 }
 
@@ -1015,6 +1095,7 @@ main(void)
 	test_protection_qualification();
 	test_golden_and_reassociation();
 	test_probe_and_optional_compatibility();
+	test_setoptie_copyin_fault();
 	test_privacy_rsn_gate();
 	test_profile_numeric_bounds();
 	test_maximum_producer_budget();
