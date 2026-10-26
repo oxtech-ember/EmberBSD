@@ -49,7 +49,7 @@ def main():
     if len(set(targets)) != 1 or not targets[0].startswith("arm"):
         parser.error("requires matching ARM GCC16 frontends")
     make = [args.tools / "bin/nbmake", "-m", src / "share/mk",
-            "MACHINE=evbarm", "MACHINE_ARCH=earmv7hf", "USETOOLS=yes", "MAKECONF=/dev/null",
+            "EMBER_COMPILER_FAMILY=gcc", "MACHINE=evbarm", "MACHINE_ARCH=earmv7hf", "USETOOLS=yes", "MAKECONF=/dev/null",
             f"TOOLDIR={args.tools.resolve()}", f"NETBSDSRCDIR={src}",
             f"DESTDIR={args.sysroot.resolve()}", f"EXTERNAL_TOOLCHAIN={args.cc.parent.parent.resolve()}",
             f"CC={args.cc.resolve()}", f"OBJC={args.objc.resolve()}", f"MAKEOBJDIR={out}"]

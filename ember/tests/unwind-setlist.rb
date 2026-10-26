@@ -65,7 +65,7 @@ rows = []
   env = {'MAKE' => wrapper, 'MACHINE' => 'amd64', 'MACHINE_ARCH' => 'x86_64',
     'AWK' => tools + '/bin/nbawk', 'EGREP' => tools + '/bin/nbgrep -E',
     'HOST_SH' => '/bin/sh', 'DESTDIR' => destination,
-    'FIXTURE_GCC' => gcc, 'FIXTURE_EH' => eh,
+    'EMBER_COMPILER_FAMILY' => 'gcc', 'FIXTURE_GCC' => gcc, 'FIXTURE_EH' => eh,
     'EXTERNAL_TOOLCHAIN' => nil, 'EMBER_EXTERNAL_GCC_RUNTIME' => nil, 'MAKEFLAGS' => nil}
   values = {}
   {'graph' => ['lib', '${SUBDIR}'],

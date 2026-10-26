@@ -11,7 +11,8 @@ HOST_DBG?= -O
 
 .if ${MKDTRACE:Uno} != "no"
 # disable compiler options that interfere with dtrace
-HOST_DTRACE_OPTS?=	-fno-omit-frame-pointer -fno-optimize-sibling-calls -fno-ipa-sra
+HOST_DTRACE_OPTS?=	-fno-omit-frame-pointer -fno-optimize-sibling-calls \
+		${${EMBER_HOST_COMPILER_FAMILY:Uclang} == "gcc":? -fno-ipa-sra :}
 .endif
 
 # Helpers for cross-compiling

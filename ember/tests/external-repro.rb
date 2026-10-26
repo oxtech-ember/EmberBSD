@@ -35,7 +35,7 @@ Dir.mktmpdir('ember-external-repro-', '/tmp') do |work|
     File.write(dest + '/usr/include/probe.h', "const char dest_name[] = __FILE__;\n")
     File.write(x11 + '/include/xprobe.h', "const char x11_name[] = __FILE__;\n")
     args = [make, '-C', obj, '-m', os + '/share/mk', '-f', fixture, 'MKREPRO=yes',
-      'MKLLVM=no', 'NETBSDSRCDIR=' + src, 'NETBSDOBJDIR=' + obj,
+      'EMBER_COMPILER_FAMILY=gcc', 'MKLLVM=no', 'NETBSDSRCDIR=' + src, 'NETBSDOBJDIR=' + obj,
       'DESTDIR=' + dest, 'X11SRCDIR=' + x11, 'EXTERNAL_TOOLCHAIN=' + prefix]
     out, err, status = Open3.capture3(*args, 'check')
     abort "External GCC reproducible compile failed:\n#{out}#{err}" unless status.success?
@@ -64,6 +64,7 @@ Dir.mktmpdir('ember-external-repro-', '/tmp') do |work|
       abort 'Missing external object root was accepted' if status.success? || !err.include?('NETBSDOBJDIR')
       raw_make = File.dirname(make) + '/nbmake'
       native_args = [raw_make, '-C', obj, '-m', os + '/share/mk', '-f', fixture,
+        'EMBER_COMPILER_FAMILY=gcc', 'HAVE_GCC=12',
         'MACHINE=amd64', 'MACHINE_ARCH=x86_64', 'TOOLDIR=' + File.dirname(File.dirname(make)),
         'USETOOLS=yes', 'MAKECONF=/dev/null', 'MKREPRO=yes', 'MKLLVM=no',
         'NETBSDSRCDIR=' + src, 'NETBSDOBJDIR=' + obj, 'DESTDIR=' + dest, 'X11SRCDIR=' + x11]

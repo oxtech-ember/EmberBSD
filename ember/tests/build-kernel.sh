@@ -5,7 +5,7 @@ set -eu
 # An ambient product version must not replace the selected source version.
 export EMBER_VERSION=9.9
 # Fixtures select their own build mode and toolchain, independent of the shell.
-unset EMBER_BUILD_MODE EMBER_EXTERNAL_TOOLCHAIN PVR_QUERY_FIRMWARE
+unset EMBER_BUILD_MODE EMBER_EXTERNAL_TOOLCHAIN EMBER_COMPILER_FAMILY PVR_QUERY_FIRMWARE
 repo=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 work=$(mktemp -d "${TMPDIR:-/tmp}/ember-build-kernel.XXXXXX")
 work=$(CDPATH= cd -- "$work" && pwd -P)
@@ -165,6 +165,7 @@ echo "build.sh $*" >> "$TEST_LOG"
 mkdir -p "$TEST_OUT/tools/bin" "$TEST_OUT/obj/kernels/EMBER64"
 cp "$TEST_ROOT/bin/nbmake-evbarm" "$TEST_OUT/tools/bin/"
 cp "$TEST_ROOT/bin/cpp" "$TEST_OUT/tools/bin/target-cpp"
+cp "$TEST_ROOT/bin/cpp" "$TEST_OUT/tools/bin/target cpp"
 cp "$TEST_ROOT/bin/dtc" "$TEST_OUT/tools/bin/nbdtc"
 # Model make's incremental version object. BUILDINFO is not a dependency.
 version_obj="$TEST_OUT/obj/kernels/EMBER64/vers.o"
@@ -185,7 +186,12 @@ while [ $# -gt 0 ]; do
     -C) dir=$2; shift;;
     -V) case $2 in
         CPP) echo '${TOOL_CPP.${ACTIVE_CPP}}';;
-        '${CPP}') echo "$TEST_OUT/tools/bin/target-cpp";;
+        '${CPP}')
+            if [ "${TEST_CPP_SINGLE:-no}" = yes ]; then
+                echo "$TEST_OUT/tools/bin/target cpp"
+            else
+                echo "$TEST_OUT/tools/bin/target-cpp --target=aarch64--netbsd -E"
+            fi;;
         TOOL_DTC) echo '${TOOLDIR}/bin/${_TOOL_PREFIX}dtc';;
         '${TOOL_DTC}') echo "$TEST_OUT/tools/bin/nbdtc";;
         .OBJDIR) echo "$TEST_OUT/obj/modules/${dir##*/}";;
@@ -265,11 +271,13 @@ test -s "$TEST_OUT/sun60i-a733-orangepi-zero3w.dtb"
 test -s "$TEST_OUT/sun60i-a733-orangepi-zero3w-diagnostic.dtb"
 grep -q 'build.sh .* -m evbarm -a aarch64 ' "$TEST_LOG"
 grep -q ' -u ' "$TEST_LOG"
+grep -q ' -c clang ' "$TEST_LOG"
+grep -q 'cpp .*/target-cpp --target=aarch64--netbsd -E ' "$TEST_LOG"
 grep -q 'EMBER_KERNEL_OBJDIR=.*/obj/kernels/EMBER64' "$TEST_LOG"
 grep -q 'cpp .*/tools/bin/target-cpp ' "$TEST_LOG"
 grep -q 'dtc .*/tools/bin/nbdtc ' "$TEST_LOG"
 ! grep -q native-make "$TEST_LOG"
-check_contract_counts 8
+check_contract_counts 16
 # Reuse all objects, but the selected kernel must embed the new build identity.
 printf 'old-source-id\n' > "$TEST_OUT/obj/kernels/EMBER64/vers.c"
 printf 'old-object-id\n' > "$TEST_OUT/obj/kernels/EMBER64/vers.o"
@@ -288,10 +296,14 @@ test "$(cat "$TEST_OUT/obj/kernels/EMBER64/vers.o")" = new-source-id
 test "$(cat "$TEST_OUT/obj/kernels/EMBER64/keep.o")" = keep-object
 test "$(cat "$TEST_OUT/obj/kernels/OTHER/vers.c")" = other-source-id
 test "$(cat "$TEST_OUT/obj/kernels/OTHER/vers.o")" = other-object-id
-check_contract_counts 8
+check_contract_counts 16
 # A firmware-dependent contract is pending by default, never silently passed.
 ! grep -q '^pvr-query-contract ' "$TEST_LOG"
 grep -q 'PowerVR metadata query contract pending:' "$TEST_OUT/contracts.log"
+# Preserve the existing single-executable CPP spelling, including spaces.
+: > "$TEST_LOG"
+TEST_CPP_SINGLE=yes sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1
+grep -q 'cpp .*/tools/bin/target cpp -P ' "$TEST_LOG"
 : > "$work/pinned firmware"
 : > "$TEST_LOG"
 PVR_QUERY_FIRMWARE="$work/pinned firmware" sh "$work/src/ember/tools/kernel-contracts.sh" \
@@ -375,22 +387,27 @@ done
 test "$root_argument_failures_checked" -eq 15
 echo "PASS: $root_argument_failures_checked explicit-root contract failures stop dispatch and clear outputs"
 : > "$TEST_LOG"
-TEST_HOST=NetBSD EMBER_EXTERNAL_TOOLCHAIN=/cross/gcc16 \
+TEST_HOST=NetBSD EMBER_COMPILER_FAMILY=gcc EMBER_EXTERNAL_TOOLCHAIN=/cross/gcc16 \
     sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1
 grep -q 'EXTERNAL_TOOLCHAIN=/cross/gcc16' "$TEST_LOG"
+grep -q ' -c gcc ' "$TEST_LOG"
 grep -q 'TOOLCHAIN_MISSING=yes' "$TEST_LOG"
 ! grep -q native-make "$TEST_LOG"
-check_contract_counts 12
+check_contract_counts 20
 export TEST_OUT="$work/native"
 : > "$TEST_LOG"
 TEST_HOST=NetBSD EMBER_BUILD_MODE=native sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1
 grep -q native-make "$TEST_LOG"
 ! grep -q build.sh "$TEST_LOG"
 test -s "$TEST_OUT/bcm2712btcom.kmod"
-check_contract_counts 12
+check_contract_counts 20
 if EMBER_BUILD_MODE=native sh "$work/src/ember/build-kernel.sh" "$work/wrong-host" > "$work/run.log" 2>&1; then
     echo 'accepted native tools on Darwin' >&2; exit 1
 fi
+if EMBER_COMPILER_FAMILY=unknown sh "$work/src/ember/build-kernel.sh" "$work/bad-family" > "$work/run.log" 2>&1; then
+    echo 'accepted unknown compiler family' >&2; exit 1
+fi
+grep -q 'EMBER_COMPILER_FAMILY' "$work/run.log"
 if NETBSD2_JOBS=00 sh "$work/src/ember/build-kernel.sh" "$work/zero-jobs" > "$work/run.log" 2>&1; then
     echo 'accepted zero jobs' >&2; exit 1
 fi

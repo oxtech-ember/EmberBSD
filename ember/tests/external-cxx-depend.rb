@@ -36,7 +36,7 @@ File.write(work + '/query.mk', setup)
 args = [make, '-C', work, '-m', src + '/share/mk', 'NETBSDSRCDIR=' + src,
   'NETBSDOBJDIR=' + work, 'MAKEOBJDIR=' + work, 'TOOLDIR=' + File.dirname(File.dirname(make)),
   'MACHINE=amd64', 'MACHINE_ARCH=x86_64', 'MACHINE_GNU_PLATFORM=x86_64--netbsd',
-  'USETOOLS=yes', 'TOOLCHAIN_MISSING=yes', 'EXTERNAL_TOOLCHAIN=' + toolchain,
+  'EMBER_COMPILER_FAMILY=gcc', 'USETOOLS=yes', 'TOOLCHAIN_MISSING=yes', 'EXTERNAL_TOOLCHAIN=' + toolchain,
   'DESTDIR=' + sysroot, 'MKREPRO=no', 'MKCOMPAT=no', 'MKLLVM=no', 'MKLIBCXX=no',
   'MKCXX=yes', 'MKCTF=no', 'MKLINT=no', 'MKDEBUG=no', 'MKSHARE=no']
 selected = ['EMBER_EXTERNAL_GCC_RUNTIME=' + runtime]

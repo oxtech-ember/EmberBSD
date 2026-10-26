@@ -33,7 +33,7 @@ Dir.mktmpdir('ember-external-runtime-', '/tmp') do |work|
   File.write(prog, setup + "PROG_CXX=probe\nSRCS=probe.cc\nMAN=\n.include \"#{src}/share/mk/bsd.prog.mk\"\n")
   File.write(lib, setup + "LIB=probe\nLIBISCXX=yes\nSRCS=probe.cc\nSHLIB_MAJOR=1\nMAN=\n.include \"#{src}/share/mk/bsd.lib.mk\"\n")
   args = [make, '-C', work, '-m', src + '/share/mk', 'NETBSDSRCDIR=' + src,
-    'DESTDIR=' + work + '/dest', 'MKREPRO=no', 'MKCOMPAT=no', 'MKLLVM=no',
+    'EMBER_COMPILER_FAMILY=gcc', 'DESTDIR=' + work + '/dest', 'MKREPRO=no', 'MKCOMPAT=no', 'MKLLVM=no',
     'MACHINE=amd64', 'MACHINE_ARCH=x86_64', 'MACHINE_GNU_PLATFORM=x86_64--netbsd']
   query = lambda do |fixture, extra, name|
     require_ok(*capture(*args, '-f', fixture, *extra, '-v', name))

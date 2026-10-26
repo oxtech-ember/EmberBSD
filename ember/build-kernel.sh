@@ -6,6 +6,16 @@ src=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
 fail() { echo "$*" >&2; exit 1; }
 # Use settings from the selected source tree, including its product version.
 run_make() { "$make" -m "$src/share/mk" "$@"; }
+# Make returns an executable and fixed compiler arguments for CPP.
+# Toolchain paths do not contain whitespace. Do not evaluate shell syntax.
+run_cpp() (
+    if [ -x "$cpp" ]; then
+        exec "$cpp" "$@"
+    fi
+    set -f
+    set -- $cpp "$@"
+    "$@"
+)
 [ "$#" -ge 1 ] && [ "$#" -le 2 ] || fail 'usage: build-kernel.sh ABSOLUTE_OUTPUT [CONFIG]'
 out=$1
 config=${2:-EMBER64}
@@ -37,6 +47,11 @@ trap 'exit 1' HUP INT TERM
 # Never expose an earlier candidate or a partially copied result after failure.
 clear_outputs
 mode=${EMBER_BUILD_MODE:-cross}
+compiler_family=${EMBER_COMPILER_FAMILY:-clang}
+case "$compiler_family" in
+clang|gcc) ;;
+*) fail 'EMBER_COMPILER_FAMILY must be clang or gcc' ;;
+esac
 if [ "$mode" = auto ]; then
     mode=cross
     if [ "$(uname -s)" = NetBSD ] && [ "$(uname -p)" = aarch64 ]; then
@@ -70,7 +85,7 @@ if [ "$mode" = cross ]; then
     rm -f "$kernel_obj/vers.c" "$kernel_obj/vers.o"
     # The wrapper retains these directories and target settings for module builds.
     # -u reuses host tools and objects; it does not run target executables on the host.
-    set -- -U -u -j"$jobs" -m evbarm -a aarch64 \
+    set -- -U -u -j"$jobs" -c "$compiler_family" -m evbarm -a aarch64 \
         -O "$out/obj" -T "$out/tools" -D "$out/dest" \
         -V "KERNOBJDIR=$out/obj/kernels" -V MKCROSSGDB=no
     if [ -n "${EMBER_EXTERNAL_TOOLCHAIN:-}" ]; then
@@ -94,12 +109,12 @@ fi
 cp "$kernel_obj/netbsd" "$stage/netbsd-$config"
 cp "$kernel_obj/netbsd.img" "$stage/netbsd-$config.img"
 cd "$src/sys/external/gpl2/dts/dist"
-"$cpp" -P -xassembler-with-cpp -I include -I arch/arm/boot/dts \
+run_cpp -P -xassembler-with-cpp -I include -I arch/arm/boot/dts \
     arch/arm/boot/dts/bcm2837-rpi-zero-2-w.dts > "$out/zero-2.dts"
 "$dtc" -I dts -O dtb -p 1024 -b 0 -@ -o "$stage/bcm2837-rpi-zero-2-w.dtb" \
     "$out/zero-2.dts" 2> "$out/zero-2-dtb.log"
 for board in orangepi-zero4 orangepi-zero3w orangepi-zero3w-diagnostic; do
-    "$cpp" -P -xassembler-with-cpp -I include -I arch/arm64/boot/dts/allwinner \
+    run_cpp -P -xassembler-with-cpp -I include -I arch/arm64/boot/dts/allwinner \
         "arch/arm64/boot/dts/allwinner/sun60i-a733-$board.dts" > "$out/$board.dts"
     "$dtc" -I dts -O dtb -o "$stage/sun60i-a733-$board.dtb" \
         "$out/$board.dts" 2> "$out/$board-dtb.log"

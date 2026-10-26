@@ -24,7 +24,7 @@ Dir.mktmpdir('ember-aarch64-sets') do |dir|
   base_environment = {'PATH' => ENV.fetch('PATH'), 'HOME' => ENV.fetch('HOME', '/'), 'LC_ALL' => 'C',
     'MAKE' => wrapper, 'MAKECONF' => '/dev/null', 'NETBSDSRCDIR' => source,
     'MACHINE' => 'evbarm', 'MACHINE_ARCH' => 'aarch64', 'MACHINE_CPU' => 'aarch64'}
-  flags = %w[HAVE_GCC=12 TOOLCHAIN_MISSING=no MKGCC=yes MKGCCCMDS=no MKCXX=yes MKLIBSTDCXX=yes
+  flags = %w[EMBER_COMPILER_FAMILY=gcc HAVE_GCC=12 TOOLCHAIN_MISSING=no MKGCC=yes MKGCCCMDS=no MKCXX=yes MKLIBSTDCXX=yes
     MKLINKLIB=yes MKSTATICLIB=yes MKPIC=yes MKPICLIB=yes MKDYNAMICROOT=yes MKFIRMWARE=yes
     MKX11=no MKRUMP=no MKCOMPAT=no MKDEBUG=no MKDEBUGLIB=no MKDEBUGKERNEL=no MKKMOD=no
     MKATF=no MKKYUA=no MKMAN=no MKHTML=no MKDOC=no MKINFO=no MKLINT=no MKPROFILE=no

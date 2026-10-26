@@ -35,7 +35,7 @@ run = lambda do |work|
   base = [{'EXTERNAL_TOOLCHAIN' => nil, 'MAKEFLAGS' => nil, 'MFLAGS' => nil},
     File.dirname(make) + '/nbmake', '-C', work, '-m', src + '/share/mk', '-f', fixture,
     'NETBSDSRCDIR=' + src, 'SSP_GCC_PREFIX=' + gcc, 'TOOLDIR=' + File.dirname(File.dirname(make)),
-    'MACHINE=amd64', 'MACHINE_ARCH=x86_64', 'USETOOLS=yes', 'MAKECONF=/dev/null', 'USE_SSP=yes', 'MKREPRO=no']
+    'EMBER_COMPILER_FAMILY=gcc', 'MACHINE=amd64', 'MACHINE_ARCH=x86_64', 'USETOOLS=yes', 'MAKECONF=/dev/null', 'USE_SSP=yes', 'MKREPRO=no']
   query = lambda do |*extra|
     checked(*base, *extra, '-v', 'COPTS').split
   end

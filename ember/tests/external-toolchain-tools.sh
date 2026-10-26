@@ -4,7 +4,7 @@ set -eu
 [ "$#" = 2 ] || { echo "Usage: $0 NBMAKE_WRAPPER FULL_SOURCE" >&2; exit 2; }
 make=$1 src=$2
 bits=$("$make" -C "$src/tools" TOOLCHAIN_MISSING=yes \
-    EXTERNAL_TOOLCHAIN=/external/gcc16 MKCROSSGDB=no -V '${TOOLCHAIN_BITS}')
+    EMBER_COMPILER_FAMILY=gcc EXTERNAL_TOOLCHAIN=/external/gcc16 MKCROSSGDB=no -V '${TOOLCHAIN_BITS}')
 case " $bits " in *' gmake .WAIT binutils .WAIT dbsym mdsetimage '*) ;; *)
     echo "Missing ordered BFD dependency: $bits" >&2; exit 1 ;;
 esac

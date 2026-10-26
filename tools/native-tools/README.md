@@ -69,6 +69,30 @@ It cannot meet this interface through a `PATH` change alone.
 `HOST_SH`, `BSHELL`, `CONFIG_SHELL`, and `SHELL` use the selected shell.
 The make engine does not select its recipe shell from those variables alone.
 
+## Compiler families
+
+`EMBER_COMPILER_FAMILY=clang|gcc` selects target tools; the default is Clang.
+`build.sh -c clang|gcc` sets this value and preserves it in its make wrapper.
+`EMBER_HOST_COMPILER_FAMILY=clang|gcc` selects native compiler options
+independently. The SDK passes this value with the matching host prefix.
+Selecting GCC is explicit and never a fallback for an unsupported Clang target.
+
+The routing protocol accepts executable paths, not command strings. For LLVM,
+its `as` role must select the common Ports `clang-as` frontend, which adds
+integrated-assembler arguments with the selected native shell. A direct `as`
+symlink to Clang would lose those arguments. Target commands use the separate
+`EXTERNAL_TOOLCHAIN` interface, with explicit target and linker selection.
+
+Run the real make selection regression with an explicit host NetBSD make:
+
+```sh
+"$PYTHON" tools/native-tools/test-compiler-family.py --make "$NETBSD_MAKE" -v
+```
+
+It checks LLVM command arguments, explicit GCC routing, independent host and
+target DTrace flags, reproducible path maps, and invalid input rejection.
+These are make metadata checks, not compiler, runtime, kernel or device tests.
+
 ## Current validation boundary
 
 This first pilot covers `build.sh`, make selection, wrapper generation, and

@@ -36,7 +36,7 @@ run = lambda do |name, version, id, external, rebuild|
   # one timestamp tick, including the repeat case whose mtimes must not move.
   sleep 1.1 if previous
   args = [out + '/nbmake-amd64', '-C', dir, '-j2',
-    'EMBER_VERSION=' + version, 'EMBER_BUILD_ID=' + id]
+    'EMBER_COMPILER_FAMILY=gcc', 'EMBER_VERSION=' + version, 'EMBER_BUILD_ID=' + id]
   args << 'EMBER_EXTERNAL_GCC_RUNTIME=' + runtime if external
   args += targets
   stdout, stderr, status = Open3.capture3(*args)

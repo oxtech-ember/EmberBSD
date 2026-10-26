@@ -14,20 +14,21 @@ error2:
 	@(echo "bsd.own.mk must be included before bsd.sys.mk" >& 2; exit 1)
 .endif
 
-# XXX: LLVM does not support -iremap and -fdebug-*
-.if ${MKREPRO:Uno} == "yes" && ${MKLLVM:Uno} != "yes"
+.if ${MKREPRO:Uno} == "yes"
 .export NETBSDSRCDIR DESTDIR X11SRCDIR
 
-# External upstream GCC lacks NetBSD's environment and regex path maps.
+# Clang and external upstream GCC lack NetBSD's environment and regex maps.
 # Use explicit roots so MKREPRO does not depend on those compiler extensions.
-.if defined(EXTERNAL_TOOLCHAIN)
+.if defined(EXTERNAL_TOOLCHAIN) || ${EMBER_COMPILER_FAMILY} == "clang"
 .if defined(MAKEOBJDIRPREFIX)
 NETBSDOBJDIR= ${MAKEOBJDIRPREFIX}${NETBSDSRCDIR}
 .endif
 .if empty(NETBSDSRCDIR:M/*) || empty(NETBSDOBJDIR:M/*)
-.error External MKREPRO=yes requires absolute NETBSDSRCDIR and NETBSDOBJDIR
+.error MKREPRO=yes requires absolute NETBSDSRCDIR and NETBSDOBJDIR
 .endif
+.if ${EMBER_COMPILER_FAMILY} == "gcc"
 CPPFLAGS+= -Wp,-fno-canonical-system-headers
+.endif
 .if !empty(DESTDIR)
 REPROFLAGS+= -fdebug-prefix-map=${DESTDIR:Q}=
 REPROFLAGS+= -fmacro-prefix-map=${DESTDIR:Q}=

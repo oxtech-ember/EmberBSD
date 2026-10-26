@@ -14,6 +14,42 @@ MAKECONF?=	/etc/mk.conf
 # Product version is independent of the NetBSD compatibility version.
 EMBER_VERSION?=	1.0
 
+# Compiler families are explicit and independent for host and target code.
+# Do not select another family when a platform or language is unsupported.
+EMBER_COMPILER_FAMILY?=		clang
+EMBER_HOST_COMPILER_FAMILY?=	clang
+.if ${EMBER_COMPILER_FAMILY} != "clang" && ${EMBER_COMPILER_FAMILY} != "gcc"
+.error EMBER_COMPILER_FAMILY must be clang or gcc
+.endif
+.if ${EMBER_HOST_COMPILER_FAMILY} != "clang" && ${EMBER_HOST_COMPILER_FAMILY} != "gcc"
+.error EMBER_HOST_COMPILER_FAMILY must be clang or gcc
+.endif
+.if ${EMBER_COMPILER_FAMILY} == "clang"
+HAVE_LLVM?=	yes
+.if ${HAVE_LLVM} != "yes" || ${HAVE_GCC:U0} != 0
+.error HAVE_LLVM/HAVE_GCC conflicts with EMBER_COMPILER_FAMILY=clang
+.endif
+MKGCC?=		no
+.if defined(EXTERNAL_TOOLCHAIN)
+MKLLVM?=	no
+.else
+MKLLVM?=	yes
+.endif
+AVAILABLE_COMPILER?=	clang false
+.if defined(EMBER_EXTERNAL_GCC_RUNTIME)
+.error EMBER_EXTERNAL_GCC_RUNTIME requires EMBER_COMPILER_FAMILY=gcc
+.endif
+.else
+.if ${HAVE_LLVM:Uno} != "no"
+.error HAVE_LLVM conflicts with EMBER_COMPILER_FAMILY=gcc
+.endif
+HAVE_GCC?=	16
+AVAILABLE_COMPILER?=	gcc false
+.endif
+.if "${AVAILABLE_COMPILER:Nfalse}" != "${EMBER_COMPILER_FAMILY}"
+.error AVAILABLE_COMPILER conflicts with EMBER_COMPILER_FAMILY
+.endif
+
 #
 # CPU model, derived from MACHINE_ARCH
 #
@@ -366,6 +402,30 @@ _TOOL_PREFIX?=	nb
 # If an external toolchain base is specified, use it.
 #
 .if defined(EXTERNAL_TOOLCHAIN)						# {
+.if empty(EXTERNAL_TOOLCHAIN:tW:M/*) || \
+    "${EXTERNAL_TOOLCHAIN:tW:C,[A-Za-z0-9_./+@%=-],,g}" != ""
+.error EXTERNAL_TOOLCHAIN must be an absolute path without whitespace or shell metacharacters
+.endif
+.if ${EMBER_COMPILER_FAMILY} == "clang"
+AR=		${EXTERNAL_TOOLCHAIN}/bin/llvm-ar
+AS=		${EXTERNAL_TOOLCHAIN}/bin/clang --target=${MACHINE_GNU_PLATFORM} -c -x assembler
+# LLVM has no elfedit command. The OS still builds the BFD host helpers.
+ELFEDIT=	${TOOLDIR}/bin/${MACHINE_GNU_PLATFORM}-elfedit
+LD=		${EXTERNAL_TOOLCHAIN}/bin/ld.lld
+NM=		${EXTERNAL_TOOLCHAIN}/bin/llvm-nm
+OBJCOPY=	${EXTERNAL_TOOLCHAIN}/bin/llvm-objcopy
+OBJDUMP=	${EXTERNAL_TOOLCHAIN}/bin/llvm-objdump
+RANLIB=		${EXTERNAL_TOOLCHAIN}/bin/llvm-ranlib
+READELF=	${EXTERNAL_TOOLCHAIN}/bin/llvm-readelf
+SIZE=		${EXTERNAL_TOOLCHAIN}/bin/llvm-size
+STRINGS=	${EXTERNAL_TOOLCHAIN}/bin/llvm-strings
+STRIP=		${EXTERNAL_TOOLCHAIN}/bin/llvm-strip
+TOOL_CC.clang=	${EXTERNAL_TOOLCHAIN}/bin/clang --target=${MACHINE_GNU_PLATFORM}
+TOOL_CPP.clang=	${EXTERNAL_TOOLCHAIN}/bin/clang -E --target=${MACHINE_GNU_PLATFORM}
+TOOL_CXX.clang=	${EXTERNAL_TOOLCHAIN}/bin/clang++ --target=${MACHINE_GNU_PLATFORM}
+TOOL_OBJC.clang=	${TOOL_CC.clang}
+LDFLAGS+=	--ld-path=${EXTERNAL_TOOLCHAIN}/bin/ld.lld
+.else
 AR=		${EXTERNAL_TOOLCHAIN}/bin/${MACHINE_GNU_PLATFORM}-ar
 AS=		${EXTERNAL_TOOLCHAIN}/bin/${MACHINE_GNU_PLATFORM}-as
 ELFEDIT=	${EXTERNAL_TOOLCHAIN}/bin/${MACHINE_GNU_PLATFORM}-elfedit
@@ -384,11 +444,7 @@ TOOL_CPP.gcc=		${EXTERNAL_TOOLCHAIN}/bin/${MACHINE_GNU_PLATFORM}-cpp
 TOOL_CXX.gcc=		${EXTERNAL_TOOLCHAIN}/bin/${MACHINE_GNU_PLATFORM}-c++
 TOOL_FC.gcc=		${EXTERNAL_TOOLCHAIN}/bin/${MACHINE_GNU_PLATFORM}-gfortran
 TOOL_OBJC.gcc=		${EXTERNAL_TOOLCHAIN}/bin/${MACHINE_GNU_PLATFORM}-gcc
-
-TOOL_CC.clang=		${EXTERNAL_TOOLCHAIN}/bin/${MACHINE_GNU_PLATFORM}-clang
-TOOL_CPP.clang=		${EXTERNAL_TOOLCHAIN}/bin/${MACHINE_GNU_PLATFORM}-clang-cpp
-TOOL_CXX.clang=		${EXTERNAL_TOOLCHAIN}/bin/${MACHINE_GNU_PLATFORM}-clang++
-TOOL_OBJC.clang=	${EXTERNAL_TOOLCHAIN}/bin/${MACHINE_GNU_PLATFORM}-clang
+.endif
 .else									# } {
 # Define default locations for common tools.
 .if ${USETOOLS_BINUTILS:Uyes} == "yes"					#  {

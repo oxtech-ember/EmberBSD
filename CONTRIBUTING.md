@@ -173,7 +173,7 @@ Manual development does not require it; agent-assisted development should select
 | --- | --- |
 | Choose the owner and public instructions | `emberbsd-repository-guide` |
 | Add or qualify a board | `emberbsd-add-board` |
-| Prepare GCC16 tools and build a kernel | `emberbsd-build-kernel` |
+| Prepare the selected toolchain and build a kernel | `emberbsd-build-kernel` |
 | Build a static base set | `emberbsd-build-static-base` |
 | Repair shared dependencies | `emberbsd-port-software` |
 | Build an application or example | `emberbsd-develop-app` |

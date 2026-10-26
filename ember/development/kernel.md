@@ -36,11 +36,11 @@ It cannot prove controller timing, DMA, wiring, clocks or firmware behavior.
 
 Commit the candidate before a reproducible build.
 Use [the cross-build guide](../../tools/docs/cross-build.md) for clean exports, compiler selection, commands and outputs.
-Use [the Ports cross recipe](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/development-toolchain/cross)
-to prepare the common GCC16 kernel compiler.
-That mode does not require an application sysroot or supply a complete application runtime.
-The OS wrapper's default in-tree bootstrap is GCC12.5; record it if used for comparison.
-Do not label a bootstrap build as a GCC16 build.
+Use the common [Ports toolchain](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/development-toolchain)
+through the SDK. LLVM/Clang is the default; a rare platform may explicitly
+select GCC with `EMBER_COMPILER_FAMILY=gcc`. Kernel-only mode does not require
+an application sysroot or supply a complete application runtime.
+Keep historical GCC build results separate from Clang build and boot checks.
 
 Inspect the selected builder before choosing a configuration.
 `ember/build-kernel.sh` accepts AArch64 configurations but explicitly lists three DTBs and four board modules.

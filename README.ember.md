@@ -34,9 +34,11 @@ Document software mechanisms beside their subsystem. See [ownership](doc/emberbs
 
 ## Building
 
-Cross-build on the development host with the common GCC16 toolchain.
-Use a full source export of a pinned commit and an existing host Python 3.
-Select the external compiler explicitly; omitting it selects the older in-tree compiler.
+Cross-build on the development host with the common LLVM/Clang toolchain
+from Ports. Use a full source export of a pinned commit and the SDK host
+Python. Select the external prefix explicitly. Clang is the default compiler
+family; select `EMBER_COMPILER_FAMILY=gcc` only for a platform that needs GCC.
+Host tools and target code have independent compiler selections.
 See the [cross-build contract](tools/docs/cross-build.md) and
 [SDK release workflow](https://github.com/oxtech-ember/EmberBSD-SDK/blob/main/docs/os-release.md).
 
@@ -46,7 +48,7 @@ Ports recipe. Pass `EMBER_LIBEDIT_SOURCE` to native make or use the SDK
 Kernel and host-tool bootstrap builds do not require this source.
 
 ```sh
-EMBER_BUILD_MODE=cross EMBER_EXTERNAL_TOOLCHAIN=/absolute/gcc16 \
+EMBER_BUILD_MODE=cross EMBER_EXTERNAL_TOOLCHAIN=/absolute/llvm \
     sh ember/build-kernel.sh /absolute/output EMBER64
 ```
 

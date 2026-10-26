@@ -1299,7 +1299,7 @@ help()
     -c COMPILER    Select compiler from COMPILER:
                        clang
                        gcc
-                   [Default: gcc]
+                   [Default: clang]
     -D DEST        Set DESTDIR=DEST.  [Default: destdir.\${MACHINE}]
     -E             Set "expert" mode; disables various safety checks.
                    Should not be used without expert knowledge of the build
@@ -1418,11 +1418,8 @@ parseoptions()
 		-c)
 			eval ${optargcmd}
 			case "${OPTARG}" in
-			gcc)	# default, no variables needed
-				;;
-			clang)	setmakeenv HAVE_LLVM yes
-				setmakeenv MKLLVM yes
-				setmakeenv MKGCC no
+			gcc|clang)
+				setmakeenv EMBER_COMPILER_FAMILY "${OPTARG}"
 				;;
 			#pcc)	...
 			#	;;
@@ -1745,6 +1742,20 @@ parseoptions()
 	fi
 	setmakeenv MAKEWRAPPERMACHINE "${makewrappermachine:-${MACHINE}}"
 	setmakeenv MAKE_OBJDIR_CHECK_WRITABLE no
+	case "${EMBER_COMPILER_FAMILY:-clang}" in
+	clang|gcc)
+		setmakeenv EMBER_COMPILER_FAMILY "${EMBER_COMPILER_FAMILY:-clang}"
+		;;
+	*)	bomb "EMBER_COMPILER_FAMILY must be clang or gcc"
+		;;
+	esac
+	case "${EMBER_HOST_COMPILER_FAMILY:-clang}" in
+	clang|gcc)
+		setmakeenv EMBER_HOST_COMPILER_FAMILY "${EMBER_HOST_COMPILER_FAMILY:-clang}"
+		;;
+	*)	bomb "EMBER_HOST_COMPILER_FAMILY must be clang or gcc"
+		;;
+	esac
 }
 
 # sanitycheck --

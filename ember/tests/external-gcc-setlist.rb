@@ -35,7 +35,7 @@ runtime = %w[./lib/libgcc_s.so.1 ./usr/lib/libstdc++.so.9.1]
 end
 wrapper = work + '/make'
 arguments = [tools + '/bin/nbmake', '-m', root + '/share/mk', 'NETBSDSRCDIR=' + root,
-  'MACHINE=evbarm', 'MACHINE_ARCH=aarch64', 'HAVE_GCC=12', 'HAVE_UEFI=no',
+  'EMBER_COMPILER_FAMILY=gcc', 'MACHINE=evbarm', 'MACHINE_ARCH=aarch64', 'HAVE_GCC=12', 'HAVE_UEFI=no',
   'USETOOLS=no', 'MKCOMPAT=no', 'MKX11=no', 'MKKMOD=no', 'MKCXX=yes',
   'MKLIBSTDCXX=yes', 'MAKECONF=/dev/null', 'MAKEOBJDIR=' + work]
 File.write(wrapper, "#!/bin/sh\nexec " + Shellwords.join(arguments) +

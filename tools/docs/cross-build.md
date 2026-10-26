@@ -2,15 +2,21 @@
 
 EmberBSD does not require a NetBSD build host. The kernel wrapper uses the
 fork's standard `build.sh` on macOS and other foreign hosts. That script
-builds host executables which generate AArch64 NetBSD output. Use the common GCC16 external toolchain for target code.
+builds host executables which generate AArch64 EmberBSD output with the
+existing NetBSD-compatible target ABI. Use the common Ports LLVM/Clang
+toolchain through the SDK; GCC is an explicit alternative for platforms
+that require it.
 
 ## Build from pinned sources
 
 Export a clean commit of the **full source tree**. A kernel-only export
 without `tools`, `share/mk` and their source dependencies is insufficient.
-Use a host C/C++ compiler and the host Python 3 for the existing source
-contracts. On macOS, install the Xcode command-line tools first. Do not use
-the target's `/usr/pkg/etc/mk.conf` as the host OS build configuration.
+Use the SDK native C/C++ compiler, shell and Python for source contracts.
+The SDK supplies macOS host ABI headers and libraries separately from target
+inputs. Select native tools using the [routing contract](../native-tools/README.md).
+Initial tool acquisition follows the [SDK tool-selection contract](https://github.com/oxtech-ember/EmberBSD-SDK/blob/main/docs/tool-selection.md);
+ordinary builds use the selected prefixes without ambient tool fallback.
+Do not use the target's `/usr/pkg/etc/mk.conf` as the host configuration.
 
 ```sh
 revision=FULL_COMMIT_ID
@@ -18,7 +24,7 @@ src=/absolute/source
 out=/absolute/build-output
 mkdir "$src"
 git archive "$revision" | tar -xf - -C "$src"
-EMBER_BUILD_MODE=cross EMBER_EXTERNAL_TOOLCHAIN=/absolute/gcc16 \
+EMBER_BUILD_MODE=cross EMBER_EXTERNAL_TOOLCHAIN=/absolute/llvm \
     BUILDINFO="EmberBSD:$revision" NETBSD2_JOBS=6 \
     sh "$src/ember/build-kernel.sh" "$out" EMBER64
 ```
@@ -28,7 +34,7 @@ source export, kernel configuration and toolchain. The default `cross` mode
 uses `build.sh` on every host, including NetBSD.
 Cross-compile on the development machine; VMs and boards execute acceptance checks.
 The wrapper retains `native` and `auto` modes for compatibility. Those modes
-do not establish the selected GCC16 cross-build workflow.
+do not establish the selected SDK cross-build workflow.
 
 Cross builds keep host tools under `out/tools`, object files under `out/obj`
 and the kernel configuration's generated headers under `out/obj/kernels`.
@@ -63,13 +69,23 @@ sh ember/tests/darwin-host-flags.sh /absolute/source /absolute/nbmake-evbarm \
 
 ## Compiler selection
 
-The fork retains an older in-tree bootstrap compiler. Select the common
-GCC16 cross toolchain explicitly for current development. Its recipe belongs to
+The common toolchain recipe belongs to
 [EmberBSD-Ports](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/development-toolchain).
+`EMBER_COMPILER_FAMILY=clang|gcc` selects target tools and defaults to `clang`.
+`build.sh -c clang|gcc` sets the same selector and preserves it in the generated
+make wrapper. `EMBER_HOST_COMPILER_FAMILY=clang|gcc` independently selects
+host compiler options; the SDK supplies matching native commands. There is no
+automatic fallback to another family.
 
-To use a separately prepared GNU cross toolchain, provide its absolute
-prefix. It must supply `bin/aarch64--netbsd-gcc`, `cpp`, `c++` and the matching
-prefixed binutils commands expected by `EXTERNAL_TOOLCHAIN` in `share/mk`.
+Provide the absolute prefix through `EXTERNAL_TOOLCHAIN`, or
+`EMBER_EXTERNAL_TOOLCHAIN` when using `ember/build-kernel.sh`. LLVM prefixes
+supply unprefixed `clang`, `clang++`, `ld.lld` and `llvm-*` binary utilities.
+The OS passes `--target=${MACHINE_GNU_PLATFORM}` explicitly, uses Clang
+integrated assembly, and selects the prefix's linker with `--ld-path`.
+The prefix may contain only `A-Z a-z 0-9 _ . / + @ % = -`.
+
+For an explicit GCC alternative, set `EMBER_COMPILER_FAMILY=gcc` and supply
+`bin/aarch64--netbsd-gcc`, `cpp`, `c++` and matching triplet-prefixed binutils.
 Use a fresh output directory when changing toolchains.
 The wrapper sets `TOOLCHAIN_MISSING=yes` for this path to omit the in-tree
 bootstrap compiler and its host math libraries. Other required host tools
@@ -89,15 +105,17 @@ EMBER_BUILD_MODE=cross EMBER_EXTERNAL_TOOLCHAIN=/absolute/cross-prefix \
     NETBSD2_JOBS=6 sh "$src/ember/build-kernel.sh" /absolute/new-output EMBER64
 ```
 
-This parameter selects tools; it does not fetch or build a GCC16 cross
-compiler. The [Ports cross recipe](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/development-toolchain/cross)
-provides the host compiler and preserves its current source adaptations.
-Its `--kernel` mode builds frontends without an application sysroot; the
-application mode retains the target libc/header/runtime requirements.
+These selectors do not fetch a compiler or replace the target libc, headers
+or runtime. Kernel-only builds use their freestanding inputs. Application
+builds additionally need a compatible runtime from the common Ports producer.
+`EMBER_EXTERNAL_GCC_RUNTIME` remains a GCC-only adapter and is rejected when
+Clang is selected. LLVM runtime integration and target execution must be
+verified separately; selecting Clang does not validate old in-tree LLVM
+runtime sources or establish a complete Clang-built release.
 
-### Reproducible debug paths with external GCC
+### Reproducible debug paths
 
-Keep `MKREPRO=yes` when using the supported external GCC16 toolchain.
+Keep `MKREPRO=yes` with Clang or the explicit external GCC toolchain.
 Set `NETBSDSRCDIR` and `NETBSDOBJDIR` to the actual absolute source and
 object roots. With `build.sh -O /absolute/objects`, also pass
 `-V NETBSDOBJDIR=/absolute/objects`. The arbitrary `MAKEOBJDIR` expression
@@ -111,9 +129,10 @@ DESTDIR prefix. The object map takes precedence for generated sources
 below the source tree. Debug maps normalize DWARF. The existing macro-map
 policy separately normalizes `__FILE__` values.
 
-Upstream GCC16 does not implement NetBSD's `-iremap`, environment-variable
+Clang and upstream GCC do not implement NetBSD's `-iremap`, environment-variable
 prefix maps or `-fdebug-regex-map`. Those extensions remain selected only
-for the in-tree compiler. No compiler feature probe runs during make parsing,
+for the in-tree GCC compiler. The GNU-only `-fno-canonical-system-headers`
+option is never passed to Clang. No compiler feature probe runs during make parsing,
 and no unknown option is added to the external compiler command.
 
 Run the real amd64 compiler regression with an existing configured make

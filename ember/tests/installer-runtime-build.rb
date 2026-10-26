@@ -13,7 +13,7 @@ Dir.mktmpdir('ember-runtime-build-') do |d|
   files.each{|f|FileUtils.mkdir_p(File.dirname(stage+'/'+f));File.write(stage+'/'+f,'')}
   [[],['EMBER_EXTERNAL_GCC_RUNTIME='+stage]].each do |flags|
     out,err,st=Open3.capture3(wrapper,'-m',root+'/share/mk','-C',root+'/usr.sbin/sysinst/arch/amd64',
-      'NETBSDOBJDIR='+d+'/obj',*flags,'-V','CPPFLAGS')
+      'EMBER_COMPILER_FAMILY=gcc','NETBSDOBJDIR='+d+'/obj',*flags,'-V','CPPFLAGS')
     abort out+err unless st.success?
     abort 'Incorrect automatic runtime-image policy' unless out.include?('-DEMBER_BASE_RUNTIME_GCC16')==!flags.empty?
   end

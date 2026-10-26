@@ -46,7 +46,8 @@ DBG?=	-O1
 DBG?=	-O2
 .endif
 .if ${MKDTRACE:Uno} != "no"
-DTRACE_OPTS?=	-fno-omit-frame-pointer -fno-optimize-sibling-calls -fno-ipa-sra -fno-ipa-icf
+DTRACE_OPTS?=	-fno-omit-frame-pointer -fno-optimize-sibling-calls \
+		${${EMBER_COMPILER_FAMILY:Uclang} == "gcc":? -fno-ipa-sra -fno-ipa-icf :}
 .endif
 CFLAGS?=	${DBG}
 LDFLAGS?=

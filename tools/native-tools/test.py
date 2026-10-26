@@ -31,7 +31,8 @@ with open(os.environ["FIXTURE_LOG"], "a") as stream:
     stream.write(json.dumps({"command": name, "argv": args,
         "cwd": os.getcwd(), "env": {key: os.environ.get(key) for key in
         ("PATH", "HOST_CC", "HOST_CXX", "HOST_SH", "HOST_YACC", "HOST_MV_CP", "HOST_MV_RM", "CONFIG_SHELL", "BSHELL",
-         "SHELL", "HOST_CFLAGS", "HOST_LDFLAGS")}}) + "\n")
+         "SHELL", "HOST_CFLAGS", "HOST_LDFLAGS", "EMBER_COMPILER_FAMILY",
+         "EMBER_HOST_COMPILER_FAMILY")}}) + "\n")
 if name == "make":
     if "-f-" in args:
         text = sys.stdin.read()
@@ -202,6 +203,29 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(replay["env"]["HOST_MV_RM"], str(fixture.selected / "rm"))
         for key in ("HOST_SH", "BSHELL", "CONFIG_SHELL", "SHELL"):
             self.assertEqual(replay["env"][key], str(fixture.selected / "sh"))
+
+    def test_target_compiler_family_reaches_make_and_wrapper(self):
+        for selection, expected in (((), "clang"), (("-c", "clang"), "clang"),
+                                    (("-c", "gcc"), "gcc")):
+            with self.subTest(selection=selection):
+                fixture = Fixture(self)
+                host_family = "gcc" if expected == "clang" else "clang"
+                fixture.env["EMBER_HOST_COMPILER_FAMILY"] = host_family
+                result = fixture.run(*selection, "tools")
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                calls = [row for row in fixture.records() if row["command"] == "make"]
+                self.assertTrue(calls)
+                for call in calls:
+                    self.assertEqual(call["env"]["EMBER_COMPILER_FAMILY"], expected)
+                    self.assertEqual(call["env"]["EMBER_HOST_COMPILER_FAMILY"], host_family)
+                wrapper = fixture.tooldir / "bin/nbmake-amd64"
+                fixture.env.pop("EMBER_HOST_COMPILER_FAMILY")
+                result = subprocess.run([str(SHELL), str(wrapper), "family-replay"],
+                    cwd=fixture.source, env=fixture.env, text=True,
+                    capture_output=True, timeout=30)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(fixture.records()[-1]["env"]["EMBER_COMPILER_FAMILY"], expected)
+                self.assertEqual(fixture.records()[-1]["env"]["EMBER_HOST_COMPILER_FAMILY"], host_family)
 
     def test_missing_member(self):
         fixture = Fixture(self)
