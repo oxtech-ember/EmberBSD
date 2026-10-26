@@ -320,11 +320,14 @@ err:		if (unlink(to))
 		return (1);
 	}
 
-	if (fcpxattr(from_fd, to_fd) == -1) {
+	if (fcpxattr(from_fd, to_fd) == -1)
 		warn("%s: error copying extended attributes", to);
-		goto err;
-	}
 
+	if (close(from_fd)) {
+		warn("%s", from);
+		(void)close(to_fd);
+		return (1);
+	}
 #ifdef BSD4_4
 #if defined(__NetBSD__)
 	ts[0] = sbp->st_atimespec;
@@ -348,28 +351,17 @@ err:		if (unlink(to))
 	if (futimes(to_fd, tval))
 #endif
 #endif
-	{
 		warn("%s: set times", to);
-		goto err;
-	}
 	if (fchown(to_fd, sbp->st_uid, sbp->st_gid)) {
-		warn("%s: set owner/group", to);
-		goto err;
+		if (errno != EPERM)
+			warn("%s: set owner/group", to);
+		sbp->st_mode &= ~(S_ISUID | S_ISGID);
 	}
-	if (fchmod(to_fd, sbp->st_mode)) {
+	if (fchmod(to_fd, sbp->st_mode))
 		warn("%s: set mode", to);
-		goto err;
-	}
-	if (fchflags(to_fd, sbp->st_flags)) {
+	if (fchflags(to_fd, sbp->st_flags) && (errno != EOPNOTSUPP))
 		warn("%s: set flags (was: 0%07o)", to, sbp->st_flags);
-		goto err;
-	}
 
-	if (close(from_fd)) {
-		warn("%s", from);
-		(void)close(to_fd);
-		return (1);
-	}
 	if (close(to_fd)) {
 		warn("%s", to);
 		return (1);
