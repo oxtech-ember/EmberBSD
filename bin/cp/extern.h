@@ -49,10 +49,13 @@ extern sig_atomic_t pinfo;
 #include <sys/cdefs.h>
 
 __BEGIN_DECLS
-int	copy_fifo(struct stat *, int);
+int	copy_fifo(FTSENT *, int);
 int	copy_file(FTSENT *, int);
 int	copy_link(FTSENT *, int);
-int	copy_special(struct stat *, int);
+int	copy_special(FTSENT *, int);
+#if HAVE_NBTOOL_CONFIG_H
+int	preserve_host(FTSENT *, int, int);
+#endif
 int	set_utimes(const char *, struct stat *);
 int	setfile(struct stat *, int);
 int	preserve_dir_acls(struct stat *, char *, char *);

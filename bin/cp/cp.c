@@ -32,6 +32,10 @@
  * SUCH DAMAGE.
  */
 
+#if HAVE_NBTOOL_CONFIG_H
+#include "nbtool_config.h"
+#endif
+
 #include <sys/cdefs.h>
 #ifndef lint
 __COPYRIGHT(
@@ -218,7 +222,11 @@ main(int argc, char *argv[])
 	/* Set end of argument list for fts(3). */
 	argv[argc] = NULL;     
 	
+#ifdef SIGINFO
 	(void)signal(SIGINFO, progress);
+#else
+	(void)signal(SIGUSR1, progress);
+#endif
 	
 	/*
 	 * Cp has two distinct cases:
@@ -509,17 +517,31 @@ copy(char *argv[], enum op type, int fts_options)
 				 * normally want to preserve them on directories.
 				 */
 				if (pflag) {
-					if (setfile(curr->fts_statp, 0))
+#if HAVE_NBTOOL_CONFIG_H
+					if (preserve_host(curr, -1, -1))
+						this_failed = any_failed = 1;
+#else
+					if (setfile(curr->fts_statp, -1))
 						this_failed = any_failed = 1;
 #ifndef SMALL
 					if (preserve_dir_acls(curr->fts_statp,
 					    curr->fts_accpath, to.p_path) != 0)
 						this_failed = any_failed = 1;
 #endif
+#endif
 				}
+#if HAVE_NBTOOL_CONFIG_H
+				dne = popdne();
+				if (!pflag && !this_failed && dne &&
+				    chmod(to.p_path, curr->fts_statp->st_mode) == -1) {
+					warn("chmod: %s", to.p_path);
+					this_failed = any_failed = 1;
+				}
+#else
 				if (!this_failed && (dne = popdne()))
-					(void)chmod(to.p_path, 
+					(void)chmod(to.p_path,
 					    curr->fts_statp->st_mode);
+#endif
 			}
 			else
 			{
@@ -533,7 +555,7 @@ copy(char *argv[], enum op type, int fts_options)
 		case S_IFBLK:
 		case S_IFCHR:
 			if (Rflag) {
-				if (copy_special(curr->fts_statp, !dne))
+				if (copy_special(curr, !dne))
 					this_failed = any_failed = 1;
 			} else
 				if (copy_file(curr, dne))
@@ -541,7 +563,7 @@ copy(char *argv[], enum op type, int fts_options)
 			break;
 		case S_IFIFO:
 			if (Rflag) {
-				if (copy_fifo(curr->fts_statp, !dne))
+				if (copy_fifo(curr, !dne))
 					this_failed = any_failed = 1;
 			} else 
 				if (copy_file(curr, dne))

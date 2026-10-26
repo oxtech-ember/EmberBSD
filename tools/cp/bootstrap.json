@@ -1,0 +1,1379 @@
+{
+  "format": "emberbsd-native-bootstrap-program",
+  "version": 1,
+  "name": "cp",
+  "origin": "EmberBSD (AI-assisted). Complete canonical cp; finite initial host checks.",
+  "canonical_host_recipe": "tools/cp/Makefile",
+  "source_makefile": "bin/cp/Makefile",
+  "compiler": {
+    "family": "gcc",
+    "major": 16,
+    "abi": "native"
+  },
+  "sources": [
+    "bin/cp/cp.c",
+    "bin/cp/utils.c"
+  ],
+  "headers": [
+    "bin/cp/extern.h",
+    "tools/compat/compat_stat_time.h"
+  ],
+  "include_dirs": [
+    "bin/cp",
+    "tools/compat"
+  ],
+  "cppflags": [],
+  "cflags": [],
+  "link_flags": [],
+  "libraries": [],
+  "invocations": [
+    "cp"
+  ],
+  "files": {},
+  "runtime_cases": [
+    {
+      "name": "copy-text",
+      "invocation": "cp",
+      "args": [
+        "src",
+        "dst"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "src": {
+            "type": "file",
+            "mode": "0644",
+            "data": "payload\n"
+          }
+        },
+        "expect": {
+          "src": {
+            "type": "file",
+            "mode": "0644",
+            "data": "payload\n"
+          },
+          "dst": {
+            "type": "file",
+            "mode": "0644",
+            "data": "payload\n"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "copy-empty",
+      "invocation": "cp",
+      "args": [
+        "src",
+        "dst"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "src": {
+            "type": "file",
+            "mode": "0644",
+            "data": ""
+          }
+        },
+        "expect": {
+          "src": {
+            "type": "file",
+            "mode": "0644",
+            "data": ""
+          },
+          "dst": {
+            "type": "file",
+            "mode": "0644",
+            "data": ""
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "copy-binary",
+      "invocation": "cp",
+      "args": [
+        "src",
+        "dst"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "src": {
+            "type": "file",
+            "mode": "0644",
+            "data": "a\u0000b\u007f\n"
+          }
+        },
+        "expect": {
+          "src": {
+            "type": "file",
+            "mode": "0644",
+            "data": "a\u0000b\u007f\n"
+          },
+          "dst": {
+            "type": "file",
+            "mode": "0644",
+            "data": "a\u0000b\u007f\n"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "mmap-chunks",
+      "invocation": "cp",
+      "args": [
+        "src",
+        "dst"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "src": {
+            "type": "file",
+            "mode": "0644",
+            "data": [
+              {
+                "text": "0123456789abcdef",
+                "repeat": 16384
+              },
+              "end"
+            ]
+          }
+        },
+        "expect": {
+          "src": {
+            "type": "file",
+            "mode": "0644",
+            "data": [
+              {
+                "text": "0123456789abcdef",
+                "repeat": 16384
+              },
+              "end"
+            ]
+          },
+          "dst": {
+            "type": "file",
+            "mode": "0644",
+            "data": [
+              {
+                "text": "0123456789abcdef",
+                "repeat": 16384
+              },
+              "end"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "truncate",
+      "invocation": "cp",
+      "args": [
+        "src",
+        "dst"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "src": {
+            "type": "file",
+            "mode": "0644",
+            "data": "payload\n"
+          },
+          "dst": {
+            "type": "file",
+            "mode": "0600",
+            "data": "longer old contents\n"
+          }
+        },
+        "expect": {
+          "src": {
+            "type": "file",
+            "mode": "0644",
+            "data": "payload\n"
+          },
+          "dst": {
+            "type": "file",
+            "mode": "0600",
+            "data": "payload\n"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "new-mode",
+      "invocation": "cp",
+      "args": [
+        "src",
+        "dst"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "src": {
+            "type": "file",
+            "mode": "0751",
+            "data": "payload\n"
+          }
+        },
+        "expect": {
+          "src": {
+            "type": "file",
+            "mode": "0751",
+            "data": "payload\n"
+          },
+          "dst": {
+            "type": "file",
+            "mode": "0751",
+            "data": "payload\n"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "existing-mode",
+      "invocation": "cp",
+      "args": [
+        "src",
+        "dst"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "src": {
+            "type": "file",
+            "mode": "0751",
+            "data": "payload\n"
+          },
+          "dst": {
+            "type": "file",
+            "mode": "0600",
+            "data": "old"
+          }
+        },
+        "expect": {
+          "src": {
+            "type": "file",
+            "mode": "0751",
+            "data": "payload\n"
+          },
+          "dst": {
+            "type": "file",
+            "mode": "0600",
+            "data": "payload\n"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "preserve-times",
+      "invocation": "cp",
+      "args": [
+        "-p",
+        "src",
+        "dst"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "src": {
+            "type": "file",
+            "mode": "0640",
+            "data": "time\n",
+            "atime_ns": 1700000000123456789,
+            "mtime_ns": 1700000000987654321
+          }
+        },
+        "expect": {
+          "src": {
+            "type": "file",
+            "mode": "0640",
+            "data": "time\n",
+            "mtime_ns": 1700000000987654321
+          },
+          "dst": {
+            "type": "file",
+            "mode": "0640",
+            "data": "time\n",
+            "atime_ns": 1700000000123456789,
+            "mtime_ns": 1700000000987654321
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "preserve-pre-epoch",
+      "invocation": "cp",
+      "args": [
+        "-p",
+        "src",
+        "dst"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "src": {
+            "type": "file",
+            "mode": "0640",
+            "data": "time\n",
+            "atime_ns": -2000000000,
+            "mtime_ns": -1000000000
+          }
+        },
+        "expect": {
+          "src": {
+            "type": "file",
+            "mode": "0640",
+            "data": "time\n",
+            "mtime_ns": -1000000000
+          },
+          "dst": {
+            "type": "file",
+            "mode": "0640",
+            "data": "time\n",
+            "atime_ns": -2000000000,
+            "mtime_ns": -1000000000
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "preserve-existing-mode",
+      "invocation": "cp",
+      "args": [
+        "-p",
+        "src",
+        "dst"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "src": {
+            "type": "file",
+            "mode": "0751",
+            "data": "payload\n"
+          },
+          "dst": {
+            "type": "file",
+            "mode": "0751",
+            "data": "old"
+          }
+        },
+        "expect": {
+          "src": {
+            "type": "file",
+            "mode": "0751",
+            "data": "payload\n"
+          },
+          "dst": {
+            "type": "file",
+            "mode": "0751",
+            "data": "payload\n"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "recursive",
+      "invocation": "cp",
+      "args": [
+        "-R",
+        "tree",
+        "dst"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "tree": {
+            "type": "directory",
+            "mode": "0755"
+          },
+          "tree/file": {
+            "type": "file",
+            "mode": "0644",
+            "data": "nested\n"
+          }
+        },
+        "expect": {
+          "tree": {
+            "type": "directory",
+            "mode": "0755"
+          },
+          "tree/file": {
+            "type": "file",
+            "mode": "0644",
+            "data": "nested\n"
+          },
+          "dst": {
+            "type": "directory",
+            "mode": "0755"
+          },
+          "dst/file": {
+            "type": "file",
+            "mode": "0644",
+            "data": "nested\n"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "directory-postorder",
+      "invocation": "cp",
+      "args": [
+        "-Rp",
+        "tree",
+        "dst"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "tree": {
+            "type": "directory",
+            "mode": "0750",
+            "mtime_ns": 1700000000111111111
+          },
+          "tree/file": {
+            "type": "file",
+            "mode": "0640",
+            "data": "nested\n",
+            "mtime_ns": 1700000000222222222
+          }
+        },
+        "expect": {
+          "tree": {
+            "type": "directory",
+            "mode": "0750",
+            "mtime_ns": 1700000000111111111
+          },
+          "tree/file": {
+            "type": "file",
+            "mode": "0640",
+            "data": "nested\n",
+            "mtime_ns": 1700000000222222222
+          },
+          "dst": {
+            "type": "directory",
+            "mode": "0750",
+            "mtime_ns": 1700000000111111111
+          },
+          "dst/file": {
+            "type": "file",
+            "mode": "0640",
+            "data": "nested\n",
+            "mtime_ns": 1700000000222222222
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "hardlink",
+      "invocation": "cp",
+      "args": [
+        "-l",
+        "src",
+        "dst"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "src": {
+            "type": "file",
+            "mode": "0644",
+            "data": "payload\n"
+          }
+        },
+        "expect": {
+          "src": {
+            "type": "file",
+            "mode": "0644",
+            "data": "payload\n"
+          },
+          "dst": {
+            "type": "file",
+            "mode": "0644",
+            "data": "payload\n",
+            "same_inode_as": "src"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "same-file",
+      "invocation": "cp",
+      "args": [
+        "src",
+        "src"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "src": {
+            "type": "file",
+            "mode": "0644",
+            "data": "payload\n"
+          }
+        },
+        "expect": {
+          "src": {
+            "type": "file",
+            "mode": "0644",
+            "data": "payload\n"
+          }
+        }
+      },
+      "stderr": "cp: src and src are identical (not copied).\n"
+    },
+    {
+      "name": "missing-source",
+      "invocation": "cp",
+      "args": [
+        "missing",
+        "dst"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {},
+        "expect": {
+          "dst": {
+            "type": "absent"
+          }
+        }
+      },
+      "stderr_nonempty": true
+    },
+    {
+      "name": "directory-needs-recursion",
+      "invocation": "cp",
+      "args": [
+        "tree",
+        "dst"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "tree": {
+            "type": "directory",
+            "mode": "0755"
+          }
+        },
+        "expect": {
+          "tree": {
+            "type": "directory",
+            "mode": "0755"
+          },
+          "dst": {
+            "type": "absent"
+          }
+        }
+      },
+      "stderr": "cp: tree is a directory (not copied).\n"
+    },
+    {
+      "name": "directory-type-conflict",
+      "invocation": "cp",
+      "args": [
+        "-R",
+        "tree",
+        "dst"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "tree": {
+            "type": "directory",
+            "mode": "0755"
+          },
+          "dst": {
+            "type": "file",
+            "mode": "0644",
+            "data": "old"
+          }
+        },
+        "expect": {
+          "tree": {
+            "type": "directory",
+            "mode": "0755"
+          },
+          "dst": {
+            "type": "file",
+            "mode": "0644",
+            "data": "old"
+          }
+        }
+      },
+      "stderr_nonempty": true
+    },
+    {
+      "name": "physical-link",
+      "invocation": "cp",
+      "args": [
+        "-P",
+        "src",
+        "dst"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "target": {
+            "type": "file",
+            "mode": "0644",
+            "data": "target\n"
+          },
+          "src": {
+            "type": "symlink",
+            "target": "target"
+          }
+        },
+        "expect": {
+          "target": {
+            "type": "file",
+            "mode": "0644",
+            "data": "target\n"
+          },
+          "src": {
+            "type": "symlink",
+            "target": "target"
+          },
+          "dst": {
+            "type": "symlink",
+            "target": "target"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "follow-command-link",
+      "invocation": "cp",
+      "args": [
+        "-H",
+        "src",
+        "dst"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "target": {
+            "type": "file",
+            "mode": "0644",
+            "data": "target\n"
+          },
+          "src": {
+            "type": "symlink",
+            "target": "target"
+          }
+        },
+        "expect": {
+          "target": {
+            "type": "file",
+            "mode": "0644",
+            "data": "target\n"
+          },
+          "src": {
+            "type": "symlink",
+            "target": "target"
+          },
+          "dst": {
+            "type": "file",
+            "mode": "0644",
+            "data": "target\n"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "follow-all-link",
+      "invocation": "cp",
+      "args": [
+        "-L",
+        "src",
+        "dst"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "target": {
+            "type": "file",
+            "mode": "0644",
+            "data": "target\n"
+          },
+          "src": {
+            "type": "symlink",
+            "target": "target"
+          }
+        },
+        "expect": {
+          "target": {
+            "type": "file",
+            "mode": "0644",
+            "data": "target\n"
+          },
+          "src": {
+            "type": "symlink",
+            "target": "target"
+          },
+          "dst": {
+            "type": "file",
+            "mode": "0644",
+            "data": "target\n"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "recursive-physical",
+      "invocation": "cp",
+      "args": [
+        "-R",
+        "-P",
+        "tree",
+        "dst"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "tree": {
+            "type": "directory",
+            "mode": "0755"
+          },
+          "tree/target": {
+            "type": "file",
+            "mode": "0644",
+            "data": "target\n"
+          },
+          "tree/link": {
+            "type": "symlink",
+            "target": "target"
+          }
+        },
+        "expect": {
+          "tree": {
+            "type": "directory",
+            "mode": "0755"
+          },
+          "tree/target": {
+            "type": "file",
+            "mode": "0644",
+            "data": "target\n"
+          },
+          "tree/link": {
+            "type": "symlink",
+            "target": "target"
+          },
+          "dst": {
+            "type": "directory",
+            "mode": "0755"
+          },
+          "dst/target": {
+            "type": "file",
+            "mode": "0644",
+            "data": "target\n"
+          },
+          "dst/link": {
+            "type": "symlink",
+            "target": "target"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "recursive-command-only",
+      "invocation": "cp",
+      "args": [
+        "-R",
+        "-H",
+        "tree",
+        "dst"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "tree": {
+            "type": "directory",
+            "mode": "0755"
+          },
+          "tree/target": {
+            "type": "file",
+            "mode": "0644",
+            "data": "target\n"
+          },
+          "tree/link": {
+            "type": "symlink",
+            "target": "target"
+          }
+        },
+        "expect": {
+          "tree": {
+            "type": "directory",
+            "mode": "0755"
+          },
+          "tree/target": {
+            "type": "file",
+            "mode": "0644",
+            "data": "target\n"
+          },
+          "tree/link": {
+            "type": "symlink",
+            "target": "target"
+          },
+          "dst": {
+            "type": "directory",
+            "mode": "0755"
+          },
+          "dst/target": {
+            "type": "file",
+            "mode": "0644",
+            "data": "target\n"
+          },
+          "dst/link": {
+            "type": "symlink",
+            "target": "target"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "recursive-logical",
+      "invocation": "cp",
+      "args": [
+        "-R",
+        "-L",
+        "tree",
+        "dst"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "tree": {
+            "type": "directory",
+            "mode": "0755"
+          },
+          "tree/target": {
+            "type": "file",
+            "mode": "0644",
+            "data": "target\n"
+          },
+          "tree/link": {
+            "type": "symlink",
+            "target": "target"
+          }
+        },
+        "expect": {
+          "tree": {
+            "type": "directory",
+            "mode": "0755"
+          },
+          "tree/target": {
+            "type": "file",
+            "mode": "0644",
+            "data": "target\n"
+          },
+          "tree/link": {
+            "type": "symlink",
+            "target": "target"
+          },
+          "dst": {
+            "type": "directory",
+            "mode": "0755"
+          },
+          "dst/target": {
+            "type": "file",
+            "mode": "0644",
+            "data": "target\n"
+          },
+          "dst/link": {
+            "type": "file",
+            "mode": "0644",
+            "data": "target\n"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "archive",
+      "invocation": "cp",
+      "args": [
+        "-a",
+        "tree",
+        "dst"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "tree": {
+            "type": "directory",
+            "mode": "0755"
+          },
+          "tree/file": {
+            "type": "file",
+            "mode": "0640",
+            "data": "archive\n"
+          }
+        },
+        "expect": {
+          "tree": {
+            "type": "directory",
+            "mode": "0755"
+          },
+          "tree/file": {
+            "type": "file",
+            "mode": "0640",
+            "data": "archive\n"
+          },
+          "dst": {
+            "type": "directory",
+            "mode": "0755"
+          },
+          "dst/file": {
+            "type": "file",
+            "mode": "0640",
+            "data": "archive\n"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "multiple-sources",
+      "invocation": "cp",
+      "args": [
+        "a",
+        "b",
+        "dst"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "a": {
+            "type": "file",
+            "mode": "0644",
+            "data": "a"
+          },
+          "b": {
+            "type": "file",
+            "mode": "0644",
+            "data": "b"
+          },
+          "dst": {
+            "type": "directory",
+            "mode": "0755"
+          }
+        },
+        "expect": {
+          "a": {
+            "type": "file",
+            "mode": "0644",
+            "data": "a"
+          },
+          "b": {
+            "type": "file",
+            "mode": "0644",
+            "data": "b"
+          },
+          "dst": {
+            "type": "directory",
+            "mode": "0755"
+          },
+          "dst/a": {
+            "type": "file",
+            "mode": "0644",
+            "data": "a"
+          },
+          "dst/b": {
+            "type": "file",
+            "mode": "0644",
+            "data": "b"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "destination-directory",
+      "invocation": "cp",
+      "args": [
+        "src",
+        "dst"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "src": {
+            "type": "file",
+            "mode": "0644",
+            "data": "payload\n"
+          },
+          "dst": {
+            "type": "directory",
+            "mode": "0755"
+          }
+        },
+        "expect": {
+          "src": {
+            "type": "file",
+            "mode": "0644",
+            "data": "payload\n"
+          },
+          "dst": {
+            "type": "directory",
+            "mode": "0755"
+          },
+          "dst/src": {
+            "type": "file",
+            "mode": "0644",
+            "data": "payload\n"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "interactive-yes",
+      "invocation": "cp",
+      "args": [
+        "-i",
+        "src",
+        "dst"
+      ],
+      "stdin": "y\n",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "src": {
+            "type": "file",
+            "mode": "0644",
+            "data": "payload\n"
+          },
+          "dst": {
+            "type": "file",
+            "mode": "0600",
+            "data": "old"
+          }
+        },
+        "expect": {
+          "src": {
+            "type": "file",
+            "mode": "0644",
+            "data": "payload\n"
+          },
+          "dst": {
+            "type": "file",
+            "mode": "0600",
+            "data": "payload\n"
+          }
+        }
+      },
+      "stderr": "overwrite dst? "
+    },
+    {
+      "name": "interactive-no",
+      "invocation": "cp",
+      "args": [
+        "-i",
+        "src",
+        "dst"
+      ],
+      "stdin": "n\n",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "src": {
+            "type": "file",
+            "mode": "0644",
+            "data": "payload\n"
+          },
+          "dst": {
+            "type": "file",
+            "mode": "0600",
+            "data": "old"
+          }
+        },
+        "expect": {
+          "src": {
+            "type": "file",
+            "mode": "0644",
+            "data": "payload\n"
+          },
+          "dst": {
+            "type": "file",
+            "mode": "0600",
+            "data": "old"
+          }
+        }
+      },
+      "stderr": "overwrite dst? "
+    },
+    {
+      "name": "force-after-interactive",
+      "invocation": "cp",
+      "args": [
+        "-if",
+        "src",
+        "dst"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "src": {
+            "type": "file",
+            "mode": "0644",
+            "data": "payload\n"
+          },
+          "dst": {
+            "type": "file",
+            "mode": "0600",
+            "data": "old"
+          }
+        },
+        "expect": {
+          "src": {
+            "type": "file",
+            "mode": "0644",
+            "data": "payload\n"
+          },
+          "dst": {
+            "type": "file",
+            "mode": "0600",
+            "data": "payload\n"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "interactive-after-force",
+      "invocation": "cp",
+      "args": [
+        "-fi",
+        "src",
+        "dst"
+      ],
+      "stdin": "n\n",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "src": {
+            "type": "file",
+            "mode": "0644",
+            "data": "payload\n"
+          },
+          "dst": {
+            "type": "file",
+            "mode": "0600",
+            "data": "old"
+          }
+        },
+        "expect": {
+          "src": {
+            "type": "file",
+            "mode": "0644",
+            "data": "payload\n"
+          },
+          "dst": {
+            "type": "file",
+            "mode": "0600",
+            "data": "old"
+          }
+        }
+      },
+      "stderr": "overwrite dst? "
+    },
+    {
+      "name": "verbose",
+      "invocation": "cp",
+      "args": [
+        "-v",
+        "src",
+        "dst"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "src -> dst\n",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "src": {
+            "type": "file",
+            "mode": "0644",
+            "data": "payload\n"
+          }
+        },
+        "expect": {
+          "src": {
+            "type": "file",
+            "mode": "0644",
+            "data": "payload\n"
+          },
+          "dst": {
+            "type": "file",
+            "mode": "0644",
+            "data": "payload\n"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "missing-operands",
+      "invocation": "cp",
+      "args": [],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {},
+        "expect": {}
+      },
+      "stderr_nonempty": true
+    },
+    {
+      "name": "invalid-option",
+      "invocation": "cp",
+      "args": [
+        "-Q"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {},
+        "expect": {}
+      },
+      "stderr_nonempty": true
+    },
+    {
+      "name": "conflicting-recursion",
+      "invocation": "cp",
+      "args": [
+        "-Rr",
+        "src",
+        "dst"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {},
+        "expect": {}
+      },
+      "stderr_nonempty": true
+    }
+  ],
+  "components": [
+    "filetime",
+    "filemeta"
+  ],
+  "control": "tools/cp/probes/control.c"
+}
