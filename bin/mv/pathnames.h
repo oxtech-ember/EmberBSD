@@ -31,7 +31,13 @@
  *	@(#)pathnames.h	8.1 (Berkeley) 5/31/93
  */
 
-#ifdef RESCUEDIR
+#if HAVE_NBTOOL_CONFIG_H
+#if !defined(EMBERBSD_MV_CP) || !defined(EMBERBSD_MV_RM)
+#error "Select absolute SDK cp and rm paths for the host mv build"
+#endif
+#define	_PATH_RM	EMBERBSD_MV_RM
+#define	_PATH_CP	EMBERBSD_MV_CP
+#elif defined(RESCUEDIR)
 #define	_PATH_RM	RESCUEDIR "/rm"
 #define	_PATH_CP	RESCUEDIR "/cp"
 #else

@@ -4,12 +4,13 @@
 """Emit a diagnostic for the actual fastcopy close blocks, not a native mv."""
 import argparse
 from pathlib import Path
+import re
 
 
 def blocks(source):
     body = source.split('\nfastcopy(', 1)[1].split('\nstatic int\ncopy(', 1)[0]
-    source_close = body.split('\t\twarn("%s: error copying extended attributes", to);\n', 1)[1]
-    source_close = source_close.split('#ifdef BSD4_4', 1)[0]
+    match = re.search(r'\tif \(close\(from_fd\)\) \{[^{}]+\n\t\}', body)
+    source_close = match[0] if match else '\t(void)close(from_fd);\n'
     start = body.index('\tif (close(to_fd))')
     end = body.index('\n\t}', start) + len('\n\t}')
     return source_close, body[start:end]

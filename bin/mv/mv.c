@@ -32,6 +32,12 @@
  * SUCH DAMAGE.
  */
 
+#if HAVE_NBTOOL_CONFIG_H
+#define EMBERBSD_COMPAT_FILEMETA_NATIVE_HEADERS 1
+#include "nbtool_config.h"
+#undef EMBERBSD_COMPAT_FILEMETA_NATIVE_HEADERS
+#endif
+
 #include <sys/cdefs.h>
 #ifndef lint
 __COPYRIGHT("@(#) Copyright (c) 1989, 1993, 1994\
@@ -50,7 +56,12 @@ __RCSID("$NetBSD: mv.c,v 1.46 2020/06/24 16:58:12 riastradh Exp $");
 #include <sys/time.h>
 #include <sys/wait.h>
 #include <sys/stat.h>
+#if HAVE_NBTOOL_CONFIG_H
+#include "compat_filemeta.h"
+#include "compat_stat_time.h"
+#else
 #include <sys/extattr.h>
+#endif
 
 #include <err.h>
 #include <errno.h>
@@ -58,6 +69,7 @@ __RCSID("$NetBSD: mv.c,v 1.46 2020/06/24 16:58:12 riastradh Exp $");
 #include <grp.h>
 #include <locale.h>
 #include <pwd.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -75,12 +87,14 @@ static int	fastcopy(char *, char *, struct stat *);
 static int	wait_child(pid_t, const char *);
 __dead static void	usage(void);
 
+#ifdef SIGINFO
 static void
 progress(int sig __unused)
 {
 
 	pinfo++;
 }
+#endif
 
 int
 main(int argc, char *argv[])
@@ -121,7 +135,9 @@ main(int argc, char *argv[])
 
 	stdin_ok = isatty(STDIN_FILENO);
 
+#ifdef SIGINFO
 	(void)signal(SIGINFO, progress);
+#endif
 
 	/*
 	 * If the stat on the target fails or the target isn't a directory,
@@ -269,7 +285,7 @@ do_move(char *from, char *to)
 static int
 fastcopy(char *from, char *to, struct stat *sbp)
 {
-#if defined(__NetBSD__)
+#if HAVE_NBTOOL_CONFIG_H || defined(__NetBSD__)
 	struct timespec ts[2];
 #else
 	struct timeval tval[2];
@@ -321,6 +337,7 @@ err:		if (unlink(to))
 		return (1);
 	}
 
+#if !HAVE_NBTOOL_CONFIG_H
 	if (fcpxattr(from_fd, to_fd) == -1)
 		warn("%s: error copying extended attributes", to);
 
@@ -329,7 +346,11 @@ err:		if (unlink(to))
 		(void)close(to_fd);
 		return (1);
 	}
-#ifdef BSD4_4
+#endif
+#if HAVE_NBTOOL_CONFIG_H
+	ts[0] = __nbcompat_stat_atime(sbp);
+	ts[1] = __nbcompat_stat_mtime(sbp);
+#elif defined(BSD4_4)
 #if defined(__NetBSD__)
 	ts[0] = sbp->st_atimespec;
 	ts[1] = sbp->st_mtimespec;
@@ -343,7 +364,9 @@ err:		if (unlink(to))
 	tval[0].tv_usec = 0;
 	tval[1].tv_usec = 0;
 #endif
-#ifdef __SVR4
+#if HAVE_NBTOOL_CONFIG_H
+	if (futimens(to_fd, ts))
+#elif defined(__SVR4)
 	if (utimes(to, tval))
 #else
 #if defined(__NetBSD__)
@@ -360,8 +383,21 @@ err:		if (unlink(to))
 	}
 	if (fchmod(to_fd, sbp->st_mode))
 		warn("%s: set mode", to);
+#if HAVE_NBTOOL_CONFIG_H
+	/* Apply ACLs after ownership and mode, while both files remain open. */
+	if (__nbcompat_copy_filemeta_fd(from_fd, to_fd,
+	    NB_FILEMETA_XATTR | NB_FILEMETA_ACL) == -1)
+		warn("%s: error copying extended attributes or ACLs", to);
+	if (close(from_fd)) {
+		warn("%s", from);
+		(void)close(to_fd);
+		return (1);
+	}
+#endif
+#if !HAVE_NBTOOL_CONFIG_H || HAVE_STRUCT_STAT_ST_FLAGS
 	if (fchflags(to_fd, sbp->st_flags) && (errno != EOPNOTSUPP))
 		warn("%s: set flags (was: 0%07o)", to, sbp->st_flags);
+#endif
 
 	if (close(to_fd)) {
 		warn("%s", to);

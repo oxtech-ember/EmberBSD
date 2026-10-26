@@ -30,7 +30,7 @@ def check_characteristics_policy(source):
     metadata = re.sub(r'if \(close\(from_fd\)\)\s*\{[^{}]+\}', '', metadata)
     if 'return ' in metadata or 'goto ' in metadata:
         raise ValueError('characteristic warnings must not become fatal copy errors')
-    times = text[text.index('#ifdef BSD4_4'):text.index('if (fchown(')]
+    times = text[text.index('#if HAVE_NBTOOL_CONFIG_H\n\tts[0]'):text.index('if (fchown(')]
     if 'goto ' in times or 'return ' in times:
         raise ValueError('timestamp characteristic failure must not change exit status')
     if 'warn("%s: set times", to);' not in times:
@@ -47,7 +47,7 @@ def check_copy_errors(source):
         match = re.search(r'if \(close\(' + descriptor + r'\)\)\s*\{([^{}]+)\}', text)
         if match is None or match.start() >= remove or 'return (1);' not in match[1]:
             raise ValueError('a close failure must stop before source removal')
-    source_close = text[text.index('if (close(from_fd))'):text.index('#ifdef BSD4_4')]
+    source_close = text[text.index('if (close(from_fd))'):text.index('#if HAVE_NBTOOL_CONFIG_H\n\tts[0]')]
     if '(void)close(to_fd);' not in source_close:
         raise ValueError('source-close failure must release the destination descriptor')
     cleanup = text[text.index('err:'):text.index('if (fcpxattr(')]
