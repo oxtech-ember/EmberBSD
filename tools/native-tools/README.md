@@ -204,3 +204,10 @@ normal glibc namespace. Run `tools/ls/test-native.py --make "$NETBSD_MAKE"`
 with SDK Python to syntax-check the actual source and make-selected flags.
 Add `--ls /absolute/native-ls` to check UTF-8 and control-character filenames
 under the installed `C.UTF-8` locale.
+
+External LLVM dependency commands pass `--target` through `MKDEPFLAGS`.
+`mkdep` executes the `CC` pathname and does not forward fixed arguments from
+that environment value. Normal compiler commands keep their explicit target.
+Run `test-dependency-target.py --make "$NETBSD_MAKE" --work "$NEW_OUTPUT"`
+with SDK Python to exercise real C, C++, Objective-C and assembly dependency
+commands against an AArch64-only header. No target code executes.

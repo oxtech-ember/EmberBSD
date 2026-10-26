@@ -57,6 +57,17 @@ class CompilerFamilyTests(unittest.TestCase):
         self.assertEqual(value["ACTIVE_CXX"].strip(), "clang")
         self.assertIn("--ld-path=/sdk/bin/ld.lld", value["LDFLAGS"].split())
 
+    def test_dependency_compilers_keep_target_arguments_outside_cc(self):
+        names = ('MKDEP', 'MKDEPCXX', 'MKDEPOBJC', 'MKDEPFLAGS')
+        value = self.values(names)
+        for name, compiler in (('MKDEP', 'clang'), ('MKDEPCXX', 'clang++'),
+                               ('MKDEPOBJC', 'clang')):
+            self.assertEqual(value[name], 'CC=/sdk/bin/' + compiler + ' /build/tools/bin/nbmkdep')
+        self.assertIn('--target=aarch64--netbsd', value['MKDEPFLAGS'].split())
+        value = self.values(names, 'EMBER_COMPILER_FAMILY=gcc')
+        self.assertEqual(value['MKDEP'], 'CC=/sdk/bin/aarch64--netbsd-gcc /build/tools/bin/nbmkdep')
+        self.assertNotIn('--target=', value['MKDEPFLAGS'])
+
     def test_explicit_gcc_retains_its_prefixed_tools(self):
         names = ("CC", "CPP", "CXX", "AS", "LD", "AR", "ACTIVE_CC", "LDFLAGS")
         value = self.values(names, "EMBER_COMPILER_FAMILY=gcc")

@@ -522,9 +522,18 @@ INSTALL=	${TOOLDIR}/bin/${MACHINE_GNU_PLATFORM}-install
 LEX=		${TOOLDIR}/bin/${_TOOL_PREFIX}lex
 LINT=		CC=${CC:Q} ${TOOLDIR}/bin/${MACHINE_GNU_PLATFORM}-lint
 LORDER=		NM=${NM:Q} MKTEMP=${TOOL_MKTEMP:Q} ${TOOLDIR}/bin/${_TOOL_PREFIX}lorder
+.if defined(EXTERNAL_TOOLCHAIN) && ${EMBER_COMPILER_FAMILY} == "clang"
+# mkdep executes one CC pathname and does not forward arguments from CC.
+# Pass the selected target through its compiler-argument interface instead.
+MKDEP=		CC=${EXTERNAL_TOOLCHAIN}/bin/clang ${TOOLDIR}/bin/${_TOOL_PREFIX}mkdep
+MKDEPCXX=	CC=${EXTERNAL_TOOLCHAIN}/bin/clang++ ${TOOLDIR}/bin/${_TOOL_PREFIX}mkdep
+MKDEPOBJC=	CC=${EXTERNAL_TOOLCHAIN}/bin/clang ${TOOLDIR}/bin/${_TOOL_PREFIX}mkdep
+MKDEPFLAGS+=	--target=${MACHINE_GNU_PLATFORM}
+.else
 MKDEP=		CC=${CC:Q} ${TOOLDIR}/bin/${_TOOL_PREFIX}mkdep
 MKDEPCXX=	CC=${CXX:Q} ${TOOLDIR}/bin/${_TOOL_PREFIX}mkdep
 MKDEPOBJC=	CC=${OBJC:Q} ${TOOLDIR}/bin/${_TOOL_PREFIX}mkdep
+.endif
 PAXCTL=		${TOOLDIR}/bin/${_TOOL_PREFIX}paxctl
 TSORT=		${TOOLDIR}/bin/${_TOOL_PREFIX}tsort -q
 YACC=		${TOOLDIR}/bin/${_TOOL_PREFIX}yacc
