@@ -13,6 +13,8 @@ Dir.mktmpdir('a133-env-usage-') do |dir|
   before=Digest::SHA256.file(File.join(dir,'part2')).hexdigest
   cases=[
     [{},nil],
+    [{'mountinfo'=>root*100000},nil],
+    [{'mountinfo'=>root*100000,'thread_mountinfo'=>mount.call('179:2')},'usb_target_mounted'],
     [{'mountinfo'=>mount.call('179:17'),'unrelated_holders'=>true},nil],
     [{'mountinfo'=>mount.call('179:2')},'usb_target_mounted'],
     [{'mountinfo'=>mount.call('179:0')},'usb_target_mounted'],

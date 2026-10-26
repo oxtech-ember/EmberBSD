@@ -3,6 +3,7 @@
 require 'shellwords'
 require_relative 'a133-usb-channel'
 require_relative 'a133-backup-check'
+require_relative 'linux-mount-inventory'
 
 module A133UsbBackup
   class Invalid < StandardError; end
@@ -37,12 +38,16 @@ module A133UsbBackup
       @channel.run(['-s',@serial,'shell','-T',command("exec dd if=/dev/block/mmcblk0 bs=512 skip=#{skip} count=#{count} 2>/dev/null")],limit:count*512)[:output]
     end
 
+    def mount_ids(inventory_command)
+      reader=LinuxMountInventory::Reader.new
+      @channel.run(['-s',@serial,'shell','-T',command(inventory_command)]) { |chunk| reader.feed(chunk) }
+      reader.finish
+    rescue LinuxMountInventory::Invalid => error
+      raise Invalid,'usb_'+error.message,cause:nil
+    end
+
     def recovery_unmounted!(inventory_command='cat /proc/self/mountinfo')
-      rows = query(inventory_command,limit:1048576).lines.map(&:split)
-      raise Invalid,'usb_mount_inventory_invalid' if rows.empty? || !rows.all? do |fields|
-        fields.size>=10 && fields[2].match?(/\A[0-9]+:[0-9]+\z/) && (fields.index('-') || 0)>=6
-      end
-      ids = rows.map { |fields| fields[2] }.uniq
+      ids=mount_ids(inventory_command)
       mounted = query("for d in #{ids.join(' ')}; do if [ -e /sys/dev/block/$d ]; then echo $d; fi; done")
       raise Invalid,'usb_target_mounted' unless mounted.empty?
     end
@@ -97,7 +102,7 @@ module A133UsbBackup
     def mutable_inspect!
       raise Invalid,'usb_mutable_requires_recovery' unless @state=='recovery'
       profile=inspect!
-      recovery_unmounted!('for p in /proc/[0-9]*; do for t in "$p"/task/[0-9]*; do cat "$t/mountinfo" || exit 1; done; done')
+      recovery_unmounted!(LinuxMountInventory::COMMAND)
       swaps=query('cat /proc/swaps').lines.map(&:split)
       raise Invalid,'usb_swap_inventory_invalid' unless swaps.first==%w[Filename Type Size Used Priority]
       paths=['/sys/class/block/mmcblk0']+A133Backup::INVENTORY.map { |part| "/sys/class/block/mmcblk0p#{part[:index]}" }
@@ -114,11 +119,7 @@ module A133UsbBackup
       ids=query('cat /sys/class/block/mmcblk0/dev /sys/class/block/mmcblk0p2/dev').lines.map(&:strip)
       raise Invalid,'usb_environment_device_ids_invalid' unless ids.size==2 && ids.uniq.size==2 &&
         ids.all? { |id| id.match?(/\A[0-9]+:[0-9]+\z/) }
-      rows=query('for p in /proc/[0-9]*; do for t in "$p"/task/[0-9]*; do cat "$t/mountinfo" || exit 1; done; done',limit:1048576).lines.map(&:split)
-      raise Invalid,'usb_mount_inventory_invalid' if rows.empty? || !rows.all? do |fields|
-        fields.size>=10 && fields[2].match?(/\A[0-9]+:[0-9]+\z/) && (fields.index('-') || 0)>=6
-      end
-      raise Invalid,'usb_target_mounted' if rows.any? { |fields| ids.include?(fields[2]) }
+      raise Invalid,'usb_target_mounted' unless (ids & mount_ids(LinuxMountInventory::COMMAND)).empty?
       swaps=query('cat /proc/swaps').lines.map(&:split)
       raise Invalid,'usb_swap_inventory_invalid' unless swaps.first==%w[Filename Type Size Used Priority]
       holders=query('for p in /sys/class/block/mmcblk0 /sys/class/block/mmcblk0p2; do [ -d "$p/holders" ] && [ -r "$p/holders" ] && [ -x "$p/holders" ] || exit 1; for d in "$p"/holders/*; do if [ -e "$d" ]; then echo "$d"; fi; done; done')
@@ -155,6 +156,6 @@ module A133UsbBackup
     rescue Invalid,A133Usb::Invalid,A133Backup::Invalid => error
       raise Invalid,error.message,cause:nil
     end
-    private :valid_serial?,:supported_model?,:command,:query,:range,:recovery_unmounted!
+    private :valid_serial?,:supported_model?,:command,:query,:range,:mount_ids,:recovery_unmounted!
   end
 end
