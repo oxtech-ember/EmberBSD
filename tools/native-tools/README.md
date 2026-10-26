@@ -198,3 +198,9 @@ The test assembles an AArch64 ELF fixture. It checks symbol-table embedding,
 RAM-disk insertion/extraction and oversized-image refusal without target
 execution. On Linux, inspect `ldd` separately to confirm that compression
 libraries resolve inside the selected native prefix.
+
+On Linux, native `ls` requests XSI `wcwidth` declarations while preserving the
+normal glibc namespace. Run `tools/ls/test-native.py --make "$NETBSD_MAKE"`
+with SDK Python to syntax-check the actual source and make-selected flags.
+Add `--ls /absolute/native-ls` to check UTF-8 and control-character filenames
+under the installed `C.UTF-8` locale.
