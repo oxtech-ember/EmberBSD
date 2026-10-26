@@ -10,6 +10,7 @@ MKEXTRAVARS= \
 	EABI \
 	HAVE_ACPI \
 	HAVE_BINUTILS \
+	HAVE_COMMON_LIBCXX \
 	HAVE_EFI_RT \
 	HAVE_GCC \
 	HAVE_GDB \
@@ -48,6 +49,15 @@ MKEXTRAVARS= \
 
 .include <bsd.own.mk>
 .include <bsd.endian.mk>
+
+# The common runtime importer supplies its exact header/library inventory.
+# The old static libcxx rows describe only the bundled source producer.
+HAVE_COMMON_LIBCXX=no
+.if ${EMBER_COMPILER_FAMILY} == "clang" && ${MKCXX} == "yes" && \
+    ${MKLIBCXX} == "yes" && defined(EMBER_EXTERNAL_LLVM_RUNTIME) && \
+    ${EMBER_LLVM_RUNTIME_PHASE:Ufull} == "full"
+HAVE_COMMON_LIBCXX=yes
+.endif
 
 .if (${MKMAN} == "no" || empty(MANINSTALL:Mmaninstall))
 MKMANPAGES=no

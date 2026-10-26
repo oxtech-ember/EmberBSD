@@ -14,8 +14,8 @@ _BSD_LLVM_RUNTIME_MK_=1
     ${USETOOLS} != "yes" || ${ACTIVE_CC} != "clang" || ${ACTIVE_CXX} != "clang"
 .error EMBER_EXTERNAL_LLVM_RUNTIME requires the explicit external Clang toolchain
 .endif
-.if ${MKLIBCXX} != "no" || !empty(MLIBDIR:U)
-.error EMBER_EXTERNAL_LLVM_RUNTIME requires MKLIBCXX=no and a matching non-multilib stage
+.if !empty(MLIBDIR:U)
+.error EMBER_EXTERNAL_LLVM_RUNTIME requires a matching non-multilib stage
 .endif
 .if !defined(EMBER_LLVM_RESOURCE_DIR)
 .error EMBER_EXTERNAL_LLVM_RUNTIME requires the manifest-selected EMBER_LLVM_RESOURCE_DIR
@@ -29,12 +29,16 @@ _BSD_LLVM_RUNTIME_MK_=1
 .endfor
 _EMBER_LLVM_RUNTIME_PHASE=${EMBER_LLVM_RUNTIME_PHASE:Ufull}
 .if ${_EMBER_LLVM_RUNTIME_PHASE} == "bootstrap"
-.if ${MKCXX} != "no" || defined(PROG_CXX) || !empty(PROGS_CXX:U) || \
+.if ${MKCXX} != "no" || ${MKLIBCXX} != "no" || \
+    defined(PROG_CXX) || !empty(PROGS_CXX:U) || \
     (defined(LIBISCXX) && ${LIBISCXX} != "no")
 .error The bootstrap LLVM runtime requires MKCXX=no and C-only consumers
 .endif
 _EMBER_LLVM_FILES= lib/libunwind.a
 .elif ${_EMBER_LLVM_RUNTIME_PHASE} == "full"
+.if ${MKLIBCXX} != "no" && ${MKCXX} != "yes"
+.error The base LLVM C++ runtime requires MKCXX=yes
+.endif
 _EMBER_LLVM_FILES= include/c++/v1/vector include/c++/v1/__config_site \
     lib/libc++.a lib/libc++.so lib/libc++abi.a lib/libc++abi.so \
     lib/libunwind.a lib/libunwind.so

@@ -36,7 +36,7 @@ class LLVMSourceTests(unittest.TestCase):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("source route fixture\n")
 
-    def query(self, consumer, names, *variables, fixture_extra="", select_source=True):
+    def query(self, consumer, names, *variables, fixture_extra="", select_source=True, cwd=None):
         fixture = self.work / "probe.mk"
         fixture.write_text('.include <sys.mk>\n.include <bsd.own.mk>\n'
             'LIBC_MACHINE_CPU=aarch64\nLIBC_MACHINE_ARCH=aarch64\n'
@@ -51,7 +51,7 @@ class LLVMSourceTests(unittest.TestCase):
             *(["EMBER_LLVM_SOURCE=" + str(self.llvm)] if select_source else []), *variables]
         for name in names:
             command.extend(("-V", "${" + name + "}"))
-        return subprocess.run(command, cwd=self.work, text=True,
+        return subprocess.run(command, cwd=cwd or self.work, text=True,
             capture_output=True, timeout=30)
 
     def test_base_and_kernel_select_the_same_common_compiler_rt(self):
@@ -281,13 +281,51 @@ class LLVMSourceTests(unittest.TestCase):
         self.assertNotIn("external/", dependencies)
         self.assertIn(str(self.work / "runtime/lib/libc++.a"), artifacts.split())
 
+    def test_common_base_cxx_keeps_the_selected_runtime(self):
+        result = self.query("share/mk/bsd.prog.mk", ("MKLIBCXX", "LIBCXX", "CXXFLAGS"),
+            "PROG_CXX=probe", "MKCXX=yes", "MKLIBCXX=yes", *self.runtime_options())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        enabled, library, flags = result.stdout.splitlines()
+        self.assertEqual(enabled, "yes")
+        self.assertEqual(library, str(self.work / "runtime/lib/libc++.a"))
+        self.assertIn(str(self.work / "runtime/include/c++/v1"), flags)
+
+    def test_external_compiler_graph_never_builds_old_compiler_runtimes(self):
+        for family in ("clang", "gcc"):
+            with self.subTest(family=family):
+                selected = self.runtime_options() if family == "clang" else ()
+                result = self.query("lib/Makefile", ("MKGCC", "MKLLVM", "SUBDIR"),
+                    "EMBER_COMPILER_FAMILY=" + family, "MKCXX=yes",
+                    "MKLIBCXX=" + ("yes" if family == "clang" else "no"),
+                    "MKATF=no", "MKKYUA=no", "MKX11=no", "MKLLVMRT=no", *selected,
+                    cwd=SOURCE / "lib")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                gcc, llvm, subdirs = result.stdout.splitlines()
+                self.assertEqual((gcc, llvm), ("no", "no"))
+                for legacy in ("external/bsd/libc++", "libgcc", "libstdc++", "libsupc++",
+                               "libcxxrt", "external/bsd/compiler_rt"):
+                    self.assertNotIn(legacy, subdirs)
+
+    def test_set_selector_is_derived_from_the_effective_runtime_configuration(self):
+        options = self.runtime_options()
+        for family, base, external, expected in (
+                ("clang", "yes", True, "yes"), ("clang", "no", True, "no"),
+                ("clang", "yes", False, "no"), ("gcc", "no", False, "no")):
+            with self.subTest(family=family, base=base, external=external):
+                selected = options if external else ()
+                result = self.query("distrib/sets/mkvars.mk", ("HAVE_COMMON_LIBCXX",),
+                    "EMBER_COMPILER_FAMILY=" + family, "MKCXX=yes", "MKLIBCXX=" + base,
+                    "MKCOMPAT=no", "MKKMOD=no", "MKX11=no", *selected)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.strip(), expected)
+
     def test_runtime_rejects_mixed_families_and_incomplete_stage(self):
         options = self.runtime_options()
-        for setting in ("EMBER_COMPILER_FAMILY=gcc", "MKLIBCXX=yes", "MLIBDIR=compat",
-                        "EMBER_LLVM_RESOURCE_DIR=relative"):
-            with self.subTest(setting=setting):
+        for settings in (("EMBER_COMPILER_FAMILY=gcc",), ("MKLIBCXX=yes", "MKCXX=no"),
+                         ("MLIBDIR=compat",), ("EMBER_LLVM_RESOURCE_DIR=relative",)):
+            with self.subTest(settings=settings):
                 result = self.query("share/mk/bsd.prog.mk", ("LDFLAGS",),
-                    "PROG=probe", *options, setting)
+                    "PROG=probe", *options, *settings)
                 self.assertNotEqual(result.returncode, 0, result.stdout)
         (self.work / "runtime/include/c++/v1/__config_site").unlink()
         result = self.query("share/mk/bsd.prog.mk", ("LDFLAGS",), "PROG=probe", *options)

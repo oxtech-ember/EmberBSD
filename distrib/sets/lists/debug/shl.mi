@@ -84,7 +84,7 @@
 ./usr/libdata/debug/usr/lib/libbozohttpd.so.1.0.debug		comp-sys-debug	debug,compatfile
 ./usr/libdata/debug/usr/lib/libbsdmalloc.so.0.1.debug		comp-sys-debug	debug,compatfile
 ./usr/libdata/debug/usr/lib/libbz2.so.1.1.debug			comp-sys-debug	debug,compatfile
-./usr/libdata/debug/usr/lib/libc++.so.1.0.debug			comp-sys-debug	debug,compatfile,libcxx
+./usr/libdata/debug/usr/lib/libc++.so.1.0.debug			comp-sys-debug	debug,compatfile,libcxx,!common_libcxx
 ./usr/libdata/debug/usr/lib/libc.so.12.224.debug		comp-sys-debug	debug,compatfile
 ./usr/libdata/debug/usr/lib/libcbor.so.0.5.debug		comp-sys-debug	debug,compatfile
 ./usr/libdata/debug/usr/lib/libcom_err.so.8.0.debug		comp-krb5-debug	debug,compatfile,kerberos

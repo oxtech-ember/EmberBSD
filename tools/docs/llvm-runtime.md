@@ -64,10 +64,10 @@ For an external Clang application build, select these make variables:
 | `EMBER_EXTERNAL_LLVM_RUNTIME` | Manifest-selected staged `/usr/pkg/llvm` prefix |
 | `EMBER_LLVM_RESOURCE_DIR` | Exact target compiler-rt resource directory from that manifest |
 | `EMBER_LLVM_RUNTIME_PHASE` | `bootstrap` for initial C libraries; `full` (default) for the complete runtime |
-| `MKLIBCXX` | `no`, to omit the old in-tree C++ runtime producer |
+| `MKLIBCXX` | `yes` for the SDK's base C++ installation; `no` for a C-only bootstrap or an existing runtime-only configuration |
 | `MKCXX` | `yes` for final C++ consumers |
 
-The bootstrap phase requires `MKCXX=no`, the target compiler-rt resource
+The bootstrap phase requires `MKCXX=no` and `MKLIBCXX=no`, the target compiler-rt resource
 directory and `lib/libunwind.a`. It supplies the selected C runtime options
 to ordinary program and shared-library links, including libm and libpthread,
 without requiring libc++ artifacts that depend on those base libraries.
@@ -76,6 +76,29 @@ C++ consumers are rejected in this phase. The full stage supplies generated
 and libunwind libraries. The adapter rejects a
 mixed GCC selection, missing artifacts and unsupported multilib stages.
 Host generators and explicit freestanding links do not acquire these paths.
+
+With the common external runtime selected, `MKLIBCXX=yes` requires `MKCXX=yes`
+and never recurses into the bundled libc++/libcxxrt producer. The
+[SDK importer](https://github.com/oxtech-ember/EmberBSD-SDK/blob/main/docs/llvm-runtime.md#base-install-aliases)
+imports the single Ports runtime payload and derives relative leaf aliases for the
+base `usr/include/c++` and `usr/lib` paths from its verified artifact inventory.
+These remain real directories; existing conflicting files and unlisted legacy
+C++ headers are errors. No second list of modern C++ headers belongs in OS set
+files. Existing `MKLIBCXX=no` SDK records keep their previous installation
+contract. Explicit GCC continues to use its separate common GCC runtime.
+
+The SDK's derived set overlay is selected with `EMBER_SETS_SOURCE` only after
+the clean distribution check and runtime import. All native set helpers share
+that list root; an explicit `-s` overrides it. Scripts and make metadata stay
+in the OS source tree. The common C++ configuration disables the old bundled
+header/library records through `HAVE_COMMON_LIBCXX`; ordinary base directory
+records remain in place. Final checkflist and archive creation use the same
+derived lists and native METALOG. `maketars` keeps its temporary files in
+`TMPDIR` when supplied.
+
+Preserving these base paths does not establish binary compatibility with the
+former libcxxrt implementation. C++ exceptions, TLS and shared-library
+execution require target checks with the selected runtime.
 
 C++ compile and dependency commands select only the staged C++ headers.
 Link commands use `-stdlib=libc++`, `--rtlib=compiler-rt`,
@@ -117,6 +140,15 @@ mixed configurations. The optional prepared-source inventory covers AArch64,
 amd64, ARM EABI, PowerPC, SPARC64 and i386 source names. It does not compile
 those targets. The small temporary path fixtures are metadata fixtures and
 are never packaged as runtime libraries.
+
+[llvm-base-sets.py](../../ember/tests/llvm-base-sets.py) exercises the real
+makeflist/checkflist scripts through the SDK's selected native OS environment.
+Pass `--tools` for its complete routing directory and `--compiler` for the
+selected LLVM prefix. With `--native-tools` pointing to the built OS
+`TOOLDIR/bin` and `--gzip` to the selected SDK executable, it also creates
+and reads actual base/comp archives using native nbmtree/nbpax. The fixture
+checks relative aliases, missing/extra file refusal, list selection and
+temporary-path containment. Its small text payload is not an ABI test.
 
 A complete target acceptance still builds and links the real artifacts,
 compares libc exports and dependencies, and exercises C/C++ exceptions,

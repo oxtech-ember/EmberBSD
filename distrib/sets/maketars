@@ -156,7 +156,7 @@ if [ -z "${dest}" ]; then
 fi
 : ${etcdir:="${dest}/etc"}
 
-SDIR="$(${MKTEMP} -d "/tmp/${prog}.XXXXXX")"
+SDIR="$(${MKTEMP} -d "${TMPDIR:-/tmp}/${prog}.XXXXXX")" || exit 1
 TMPFILES=
 
 : ${setlistdir:="${dest}/etc/mtree"}
@@ -176,7 +176,7 @@ trap cleanup 0 2 3 13		# EXIT INT QUIT PIPE
 
 for setname in ${lists}; do
 	msg "Creating flist.${setname}"
-	${HOST_SH} "${setsdir}/makeflist" -a "${MACHINE_ARCH}" -m "${MACHINE}" \
+	${HOST_SH} "${rundir}/makeflist" -a "${MACHINE_ARCH}" -m "${MACHINE}" \
 	    -s "${setsdir}" "${setname}" > "${SDIR}/flist.${setname}" \
 	    || exit 1
 	if [ ! -s "${SDIR}/flist.${setname}" ]; then

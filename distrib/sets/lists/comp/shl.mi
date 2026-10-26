@@ -20,7 +20,7 @@
 ./usr/lib/libbozohttpd_pic.a			comp-c-piclib		compatfile,picinstall
 ./usr/lib/libbsdmalloc_pic.a			comp-c-piclib		compatfile,picinstall
 ./usr/lib/libbz2_pic.a				comp-c-piclib		compatfile,picinstall
-./usr/lib/libc++_pic.a				comp-c-piclib		compatfile,picinstall,libcxx
+./usr/lib/libc++_pic.a				comp-c-piclib		compatfile,picinstall,libcxx,!common_libcxx
 ./usr/lib/libc_pic.a				comp-c-piclib		compatfile,picinstall
 ./usr/lib/libcbor_pic.a				comp-c-piclib		compatfile,picinstall
 ./usr/lib/libcdk_pic.a				comp-obsolete		obsolete

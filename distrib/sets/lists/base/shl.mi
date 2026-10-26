@@ -255,9 +255,9 @@
 ./usr/lib/libbz2.so				base-sys-shlib		compatfile
 ./usr/lib/libbz2.so.1				base-sys-shlib		compatfile
 ./usr/lib/libbz2.so.1.1				base-sys-shlib		compatfile
-./usr/lib/libc++.so				base-sys-shlib		compatfile,libcxx
-./usr/lib/libc++.so.1				base-sys-shlib		compatfile,libcxx
-./usr/lib/libc++.so.1.0				base-sys-shlib		compatfile,libcxx
+./usr/lib/libc++.so				base-sys-shlib		compatfile,libcxx,!common_libcxx
+./usr/lib/libc++.so.1				base-sys-shlib		compatfile,libcxx,!common_libcxx
+./usr/lib/libc++.so.1.0				base-sys-shlib		compatfile,libcxx,!common_libcxx
 ./usr/lib/libc.so				base-sys-shlib		compatfile
 ./usr/lib/libc.so.12				base-sys-shlib		compatfile
 ./usr/lib/libc.so.12.224			base-sys-shlib		compatfile

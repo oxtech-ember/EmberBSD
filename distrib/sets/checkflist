@@ -45,13 +45,12 @@ trap cleanup 0 2 3 13		# EXIT INT QUIT PIPE
 
 origin=.
 xargs=""
-dargs=""
 metalog=
 allowextra=false
 allowmissing=false
 
 # handle args
-while getopts xbL:M:em ch; do
+while getopts xbL:M:ems: ch; do
 	case ${ch} in
 	x)
 		xargs="-x"
@@ -67,6 +66,9 @@ while getopts xbL:M:em ch; do
 	M)
 		metalog="${OPTARG}"
 		;;
+	s)
+		setsdir="${OPTARG}"
+		;;
 	e)
 		allowextra=true
 		;;
@@ -75,14 +77,16 @@ while getopts xbL:M:em ch; do
 		;;
 	*)
 		cat 1>&2 <<USAGE
-Usage: ${prog} [-x|-b|-L lists] [-M metalog] [-e] [-m]
+Usage: ${prog} [-x|-b|-L lists] [-M metalog] [-e] [-m] [-s setsdir]
 	-x		check only x11 lists
 	-b		check netbsd + x11 lists
 	-L base,x,ext	check specified lists
 	-M metalog	metalog file
+	-s setsdir	directory to find sets
 	-e		extra files are not considered an error
 	-m		missing files are not considered an error
 USAGE
+		es=1
 		exit 1
 		;;
 	esac
@@ -129,7 +133,7 @@ generate_dlist()
 
 generate_flist()
 {
-${HOST_SH} "${rundir}/makeflist" ${xargs} ${dargs} \
+${HOST_SH} "${rundir}/makeflist" ${xargs} -s "${setsdir}" \
 	| ${SORT} -u | ignore_exceptions >"${SETS_FLIST}"
 }
 

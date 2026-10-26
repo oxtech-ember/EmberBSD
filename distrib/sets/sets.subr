@@ -134,7 +134,9 @@ MKVARS="$( MAKEFLAGS= MAKEVERBOSE= ${MAKE} -B -f ${rundir}/mkvars.mk mkvars | ${
 
 #####
 
-setsdir=${rundir}
+# An SDK import may supply complete derived lists after distribution. Each
+# helper's explicit -s option still overrides this common default.
+setsdir=${EMBER_SETS_SOURCE-${rundir}}
 obsolete=0
 if [ "${MKKMOD}" = "no" ]; then
 	module=no			# MODULEs are off.

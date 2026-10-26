@@ -167,7 +167,9 @@ SUBDIR+=	../external/gpl2/lvm2/lib	# depends on libprop
 SUBDIR+=	../external/gpl3/${EXTERNAL_BINUTILS_SUBDIR}/lib	# libbfd depends on libz
 .endif
 
-.if (${MKLIBCXX} != "no")
+# The SDK imports the common runtime and its base aliases from one manifest.
+# Do not build the old bundled libc++/libcxxrt alongside that runtime.
+.if (${MKLIBCXX} != "no") && !defined(EMBER_EXTERNAL_LLVM_RUNTIME)
 SUBDIR+=	../external/bsd/libc++
 .endif
 
