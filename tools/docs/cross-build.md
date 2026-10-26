@@ -153,6 +153,8 @@ EMBER_NATIVE_TOOLS=/absolute/native-routing \
   -D /absolute/bootstrap-base -V NETBSDOBJDIR=/absolute/objects \
   -V EXTERNAL_TOOLCHAIN=/absolute/llvm \
   -V EMBER_LIBEDIT_SOURCE=/absolute/prepared-libedit \
+  -V EMBER_HOST_COMPILER_FAMILY=clang -V TOOLCHAIN_MISSING=yes \
+  -V MKLLVM=no -V MKLLVMRT=no -V MKLIBCXX=no \
   -V MAKECONF=/dev/null -V MKCOMPAT=no -V MKX11=no \
   -V MKMAN=no -V MKDOC=no -V MKINFO=no -V MKHTML=no \
   -V MKLINT=no -V MKKMOD=no -V MKDTB=no -V MKRUMP=no \
@@ -163,6 +165,10 @@ Pass the selected native compiler's host ABI flags as described in the
 [routing contract](../native-tools/README.md). Use `bootstrap-headers`
 instead of `bootstrap-crt` when only headers are needed. The destination is
 a partial base input tree, not an application sysroot, package or release.
+`TOOLCHAIN_MISSING=yes` selects the existing external compiler route; the
+`MKLLVM*` and `MKLIBCXX` settings keep old in-tree LLVM producers out of the
+bootstrap. The `tools` operation still builds host GNU make and Binutils for
+the BFD consumers `dbsym` and `mdsetimage`; these do not select GCC.
 Record the actual OS commit, target, compiler commands, prepared libedit
 identity and installed input files when the runtime producer consumes it.
 The complete SDK runtime checks remain separate and unchanged.

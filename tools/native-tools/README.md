@@ -29,6 +29,11 @@ The generated make wrapper preserves both selected paths.
 the initial build-variable query. A shell builtin does not supply that path.
 `-` makes the command available through the selected `PATH` only.
 The contract file contains the complete initial list of required roles.
+It includes utilities needed before the OS versions are built: `grep` for
+Clang detection, and `basename`, `diff`, `egrep`, `expr`, `ls`, `mv`, and
+`rmdir` for the initial configure scripts. `touch`, `find`, and `xargs`
+support the native configure and GNU host-tool make rules. Install these
+from the common native Ports recipes before publishing the routing directory.
 
 The SDK must publish a routing directory with these entries:
 
@@ -123,3 +128,19 @@ They do not prove that a real NetBSD make uses the selected recipe shell.
 Run that check with make from the selected host prefix.
 Use `--build-sh /path/to/older/build.sh` with
 `RoutingTests.test_tools_dispatch_and_wrapper_replay` as a causal negative control.
+
+Check the early configure paths and real `tools/compat` and `tools/gmake`
+Clang-detection queries with explicit test utilities:
+
+```sh
+"$PYTHON" tools/native-tools/test-bootstrap-routing.py \
+  --make "$NETBSD_MAKE" --shell "$TEST_SHELL" \
+  --utility-path "$TEST_UTILITY_PATH" -v
+```
+
+Only commands named by the OS contract enter the test `PATH`. The compiler
+fixture reports a Clang version and rejects every compilation. These checks
+cover configure argument parsing and arrival at that expected compiler error;
+they do not establish a successful configure or build. `--contract` accepts
+an older contract for a causal negative control. To check only the missing
+`grep` failure, select `BootstrapRoutingTests.test_real_makefiles_detect_clang`.
