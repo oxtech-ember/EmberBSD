@@ -25,6 +25,31 @@ Dir.mktmpdir('a133-direct-') do |dir|
   File.unlink(File.join(dir,'written'))
   abort 'FAIL: direct arm repeat wrote' unless call.call[:writes_performed]==0 && !File.exist?(File.join(dir,'written'))
   checks+=2
+  [context[:armed],context[:consumed],context[:original]].each do |live|
+    reset.call({},live)
+    result=entry.call.disarm(original_env:context[:original],backup:context[:backup])
+    abort 'FAIL: direct disarm bytes/receipt' unless result[:status]=='env_entry_disarmed' &&
+      result[:writes_performed]==(live==context[:original] ? 0 : 1) &&
+      File.binread(File.join(dir,'part2'))==context[:original]
+    checks+=1
+  end
+  reset.call({'state'=>'recovery'},context[:consumed])
+  begin
+    entry.call('recovery').disarm(original_env:context[:original],backup:context[:backup])
+    abort 'FAIL: disarm used in recovery'
+  rescue A133Usb::Invalid => error
+    abort 'FAIL: disarm state gate' unless error.message=='usb_entry_wrong_state' && error.write_attempted==false
+  end
+  checks+=1
+  reset.call({},context[:altered])
+  begin
+    entry.call.disarm(original_env:context[:original],backup:context[:backup])
+    abort 'FAIL: unknown env disarmed'
+  rescue A133Usb::Invalid => error
+    abort 'FAIL: unknown disarm gate' unless error.message=='usb_environment_unknown' && error.write_attempted==false &&
+      File.binread(File.join(dir,'part2'))==context[:altered] && !File.exist?(File.join(dir,'written'))
+  end
+  checks+=1
   reset.call({'state'=>'recovery'},context[:reordered])
   result=entry.call('recovery').restore(original_env:context[:original],backup:context[:backup])
   abort 'FAIL: direct consumed restoration' unless result[:writes_performed]==1 &&

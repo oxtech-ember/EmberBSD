@@ -69,7 +69,11 @@ module A133Recovery
 
     def transition(action,original_env,backup)
       attempted=false
-      required=action==:arm ? 'device' : 'recovery'
+      required=case action
+      when :arm,:disarm then 'device'
+      when :restore then 'recovery'
+      else raise A133Usb::Invalid,'usb_entry_action_invalid'
+      end
       raise A133Usb::Invalid,'usb_entry_wrong_state' unless @state==required
       selected=policy(original_env,backup)
       pinned=selected.data
@@ -77,7 +81,7 @@ module A133Recovery
       guard!(pinned)
       current=read_environment
       known=[pinned[:original_sha],pinned[:armed_sha]].include?(current[:sha])
-      known ||= action==:restore && consumed?(current,pinned)
+      known ||= action!=:arm && consumed?(current,pinned)
       raise A133Usb::Invalid,'usb_environment_unknown' unless known
       prefix=action==:arm ? pinned[:armed_prefix] : pinned[:original_prefix]
       expected=action==:arm ? pinned[:armed_sha] : pinned[:original_sha]
@@ -93,7 +97,8 @@ module A133Recovery
       end
       raise A133Usb::Invalid,'usb_environment_readback_mismatch' unless read_environment[:sha]==expected
       guard!(pinned)
-      {status:action==:arm ? 'env_entry_armed' : 'env_entry_restored',env_sha256:expected,
+      status={arm:'env_entry_armed',restore:'env_entry_restored',disarm:'env_entry_disarmed'}.fetch(action)
+      {status:status,env_sha256:expected,
         writes_performed:attempted ? 1 : 0,installation_ready:false}
     rescue A133Usb::Invalid,A133UsbBackup::Invalid,A133Recovery::Invalid,SystemCallError,IOError => error
       reason=error.is_a?(SystemCallError) || error.is_a?(IOError) ? 'usb_entry_io_failed' : error.message
@@ -108,6 +113,9 @@ module A133Recovery
 
     def restore(original_env:,backup:)
       transition(:restore,original_env,backup)
+    end
+    def disarm(original_env:,backup:)
+      transition(:disarm,original_env,backup)
     end
     private :policy,:read_hash,:read_environment,:guard!,:consumed?,:transition
   end
