@@ -3,7 +3,14 @@
 require_relative 'a133-recovery-env'
 require_relative 'a133-backup-check'
 require_relative 'a133-usb-channel'
+require_relative 'a133-usb-backup-source'
 module A133Recovery
+  class DirectSource < A133UsbBackup::Source
+    private
+    def supported_model?(model)
+      model=='QUAD-CORE A133 c3'
+    end
+  end
   class Policy
     attr_reader :data
     def self.identity!(serial,cid)
@@ -33,15 +40,20 @@ module A133Recovery
       original=original_env.b.dup.freeze
       raise A133Usb::Invalid,'original_environment_hash_mismatch' unless Digest::SHA256.hexdigest(original)==pinned['env']
       prefix=original.byteslice(0,A133Env::SIZE).freeze
-      armed=A133Recovery.prepare(prefix).freeze
+      plan=A133Recovery.entry_plan(prefix)
+      @profile=plan.fetch(:profile)
+      armed=plan.fetch(:armed_env)
       tail=original.byteslice(A133Env::SIZE,bytes-A133Env::SIZE)
-      consumed=A133Env.decode(prefix).fetch(:entries).to_h.merge(A133Recovery::UPDATES.reject { |key,_| key=='hook' })
-      consumed=consumed.each_with_object({}) { |(key,value),out| out[key.dup.freeze]=value.dup.freeze }.freeze
+      consumed=plan.fetch(:consumed)
       values={serial:@serial,cid:@cid,original_sha:pinned['env'],armed_sha:Digest::SHA256.hexdigest(armed+tail),
         original_prefix:prefix,armed_prefix:armed,tail_sha:Digest::SHA256.hexdigest(tail),
         consumed:consumed,boot_sha:pinned['boot'],bootloader_sha:pinned['bootloader'],recovery_sha:pinned['recovery'],gpt_sha:gpt_sha}.freeze
       @data=values.transform_values { |value| value.is_a?(String) ? value.freeze : value }.freeze
       freeze
+    end
+    def source(adb:,state:,root_method:,timeout:)
+      type=@profile=='direct' ? DirectSource : A133UsbBackup::Source
+      type.new(adb:adb,serial:@serial,state:state,root_method:root_method,timeout:timeout)
     end
     def matches?(expected,current)
       case expected

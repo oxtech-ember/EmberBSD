@@ -43,10 +43,29 @@ ASCII identifiers. Keep paths, env bytes and credentials private.
 ## States and write boundary
 
 `arm` requires `device` state and accepts only the complete original env or the
-exact prepared one-shot env with the original tail. It sets the existing hook
-that first clears/saves itself, then selects USB peripheral role and factory
-recovery. `restore` requires `recovery` state and also accepts the known consumed
-hook state: all original variables plus the two exact helper values, hook absent.
+exact prepared one-shot env with the original tail. The policy selects one
+of two exact factory profiles. The hook profile retains model `a133` and its
+existing clear/save hook. The direct profile requires `QUAD-CORE A133 c3`,
+`bootcmd=run setargs_nand boot_normal`, the direct factory boot/recovery scripts,
+no `boot_android`, and a retained nonempty `setargs_nand`.
+
+For the direct profile, `entry_plan` changes only bootcmd and adds four helpers.
+The proposed bootcmd is one `run` list:
+
+```text
+run ember_entry_restore ember_entry_save setargs_nand ember_entry_fdt ember_entry_usb boot_recovery
+```
+
+The first two single-command helpers restore the original bootcmd in RAM and
+save it before the later steps select FDT, USB device role and factory recovery.
+Normal bootcmd, boot_normal and setargs_nand retain their exact original values
+in the predicted consumed export; only four unused helper values remain.
+Reversing the host edits must restore the original prefix byte for byte.
+Existing helper keys, including empty values, are refused.
+
+`restore` requires `recovery` state and also accepts the exact profile-specific
+consumed values. The hook profile expects its hook absent and two helpers.
+The direct profile expects original bootcmd and four unused helpers.
 Valid CRC, termination and padding are mandatory; vendor export ordering,
 leading-empty marker and zero/FF padding may differ. Extra or modified variables,
 a changed tail, or an unrecognized export stop restoration without guessing.
@@ -75,6 +94,17 @@ submission or `true` once submission starts. A possible partial write remains
 an explicit stop; retain evidence and diagnose the observed state separately.
 
 ## Validation and remaining gates
+
+Run `ruby ember/tools/a133-recovery-direct-test.rb` and
+`ruby ember/tools/a133-recovery-direct-usb-test.rb` with the existing entry,
+readback and reboot suites. The direct plan uses the multi-variable `run`
+failure contract in [U-Boot 2018.05](https://github.com/u-boot/u-boot/blob/v2018.05/common/cli.c#L113)
+and the [command-line documentation](https://docs.u-boot.org/en/latest/usage/cmdline.html#general-rules).
+These sources do not establish behavior of a vendor build.
+
+Only Entry/Readback and their Reboot caller select the direct source.
+The ordinary mutation source and unlock/protect/trial profiles are unchanged.
+Calling `prepare`, `protect` or `trial` directly still refuses this direct env.
 
 Host suites independently encode factory/consumed env and use actual `dd` on
 sparse files with the production geometry. They exercise identity/GPT binding,
