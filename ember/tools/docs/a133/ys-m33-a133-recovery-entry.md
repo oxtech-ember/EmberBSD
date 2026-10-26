@@ -81,13 +81,21 @@ It requires holder directories for the whole eMMC and every expected partition
 to exist and be readable/traversable before enumeration.
 No automatic unmount or swap shutdown is performed.
 
+`Entry.disarm(original_env:, backup:)` cancels entry from `device` state.
+It accepts only original, armed, or the exact known consumed env and restores
+the original prefix with the same full-env/tail, identity, usage and critical
+partition checks. An already original env performs no write. Unknown or partial
+states stop without adoption. The result is `env_entry_disarmed`, not a reboot
+or recovery receipt. Recovery state still uses `restore`; no automatic cancellation
+or rollback follows a failed operation.
+
 The only write is131072 bytes at the beginning of `/dev/block/mmcblk0p2`, using
 binary non-PTY shell-v2 `dd ... conv=notrunc` followed by `sync`. Exact-state
 repeats verify without rewriting. They do not repeat a failed sync and cannot
 establish cold-power durability. There is no automatic retry, rollback,
 reboot, unlock, GPT write, other-partition write or hardware boot-area write.
 
-Successful receipts have `status: 'env_entry_armed'` or `'env_entry_restored'`,
+Successful receipts have `status: 'env_entry_armed'`, `'env_entry_restored'`, or `'env_entry_disarmed'`,
 `env_sha256`, `writes_performed: 0/1`, and `installation_ready: false`.
 Failures are redacted `A133Usb::Invalid` with `write_attempted: false` before
 submission or `true` once submission starts. A possible partial write remains

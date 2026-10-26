@@ -909,19 +909,23 @@ test_setoptie_copyin_fault(void)
 	req.i_data = first;
 	CHECK(ieee80211_ioctl_setoptie(&test_ic, &req) == 0);
 	CHECK(test_ic.ic_opt_ie_len == 4 && optie_live == 1 &&
+	    test_ic.ic_opt_ie != NULL &&
 	    memcmp(test_ic.ic_opt_ie, first, 4) == 0);
 	optie_copyin_fail = 1;
 	req.i_data = second;
 	CHECK(ieee80211_ioctl_setoptie(&test_ic, &req) == EFAULT);
 	CHECK(test_ic.ic_opt_ie_len == 4 && optie_live == 1 &&
+	    test_ic.ic_opt_ie != NULL &&
 	    memcmp(test_ic.ic_opt_ie, first, 4) == 0);
 	optie_copyin_fail = 0;
 	req.i_len = IEEE80211_MAX_OPT_IE + 1;
 	CHECK(ieee80211_ioctl_setoptie(&test_ic, &req) == EINVAL);
-	CHECK(optie_live == 1 && memcmp(test_ic.ic_opt_ie, first, 4) == 0);
+	CHECK(optie_live == 1 && test_ic.ic_opt_ie != NULL &&
+	    memcmp(test_ic.ic_opt_ie, first, 4) == 0);
 	req.i_len = sizeof(second);
 	CHECK(ieee80211_ioctl_setoptie(&test_ic, &req) == 0);
 	CHECK(test_ic.ic_opt_ie_len == 4 && optie_live == 1 &&
+	    test_ic.ic_opt_ie != NULL &&
 	    memcmp(test_ic.ic_opt_ie, second, 4) == 0);
 	optie_free(test_ic.ic_opt_ie);
 	test_ic.ic_opt_ie = saved;
