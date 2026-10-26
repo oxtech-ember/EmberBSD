@@ -130,6 +130,8 @@ class FilemetaSourceTests(unittest.TestCase):
 
     def test_native_check_uses_independent_getters_and_retains_source_fixtures(self):
         check = (COMPAT / 'probes/filemeta-check.c').read_text()
+        self.assertIn('#include "filemeta-fixture-support.h"', check)
+        check += (COMPAT / 'probes/filemeta-fixture-support.h').read_text()
         for call in ('fgetxattr(', 'acl_get_fd_np(', 'acl_to_text(', 'fstatfs(', 'dup2('):
             self.assertIn(call, check)
         for case in ('ACL_ENTRY_FILE_INHERIT', 'ACL_ENTRY_DIRECTORY_INHERIT',
