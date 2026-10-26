@@ -33,7 +33,10 @@ AH_TOP([/*      $][NetBSD$    */
 #ifndef __NETBSD_NBTOOL_CONFIG_H__
 #define __NETBSD_NBTOOL_CONFIG_H__])
 
-AH_BOTTOM([#if defined(EMBERBSD_COMPAT_ACL_NATIVE_HEADERS) && HAVE_LISTING_ACL_BSD
+AH_BOTTOM([#if defined(EMBERBSD_COMPAT_FILEMETA_NATIVE_HEADERS)
+#include "compat_filemeta_features.h"
+#endif
+#if defined(EMBERBSD_COMPAT_ACL_NATIVE_HEADERS) && HAVE_LISTING_ACL_BSD
 #include "compat_acl_features.h"
 #endif
 #include "compat_defs.h"
@@ -288,6 +291,48 @@ AC_CACHE_CHECK([for listing acl darwin], [ac_cv_listing_acl_darwin], [
 	[ac_cv_listing_acl_darwin=yes], [ac_cv_listing_acl_darwin=no])])
 AS_IF([test "x$ac_cv_listing_acl_darwin" = xyes], [
     AC_DEFINE([HAVE_LISTING_ACL_DARWIN], [1], [Define to 1 if the listing acl darwin probe links.])])
+
+# Use the same typed metadata probes in normal and finite builds.
+AC_CACHE_CHECK([filemeta-open native declarations and link], [ac_cv_filemeta_open], [
+    AC_LINK_IFELSE([AC_LANG_SOURCE([[#include "$srcdir/probes/filemeta-open.c"]])],
+        [ac_cv_filemeta_open=yes], [ac_cv_filemeta_open=no])])
+AS_IF([test "x$ac_cv_filemeta_open" = xyes], [
+    AC_DEFINE([HAVE_FILEMETA_OPEN], [1], [Define to 1 if filemeta-open native declarations and link.])])
+AC_CACHE_CHECK([filemeta-regular-open native declarations and link], [ac_cv_filemeta_regular_open], [
+    AC_LINK_IFELSE([AC_LANG_SOURCE([[#include "$srcdir/probes/filemeta-regular-open.c"]])],
+        [ac_cv_filemeta_regular_open=yes], [ac_cv_filemeta_regular_open=no])])
+AS_IF([test "x$ac_cv_filemeta_regular_open" = xyes], [
+    AC_DEFINE([HAVE_FILEMETA_REGULAR_OPEN], [1], [Define to 1 if filemeta-regular-open native declarations and link.])])
+AC_CACHE_CHECK([filemeta-acl-darwin native declarations and link], [ac_cv_filemeta_acl_darwin], [
+    AC_LINK_IFELSE([AC_LANG_SOURCE([[#include "$srcdir/probes/filemeta-acl-darwin.c"]])],
+        [ac_cv_filemeta_acl_darwin=yes], [ac_cv_filemeta_acl_darwin=no])])
+AS_IF([test "x$ac_cv_filemeta_acl_darwin" = xyes], [
+    AC_DEFINE([HAVE_FILEMETA_ACL_DARWIN], [1], [Define to 1 if filemeta-acl-darwin native declarations and link.])])
+AC_CACHE_CHECK([filemeta-acl-bsd native declarations and link], [ac_cv_filemeta_acl_bsd], [
+    AC_LINK_IFELSE([AC_LANG_SOURCE([[#include "$srcdir/probes/filemeta-acl-bsd.c"]])],
+        [ac_cv_filemeta_acl_bsd=yes], [ac_cv_filemeta_acl_bsd=no])])
+AS_IF([test "x$ac_cv_filemeta_acl_bsd" = xyes], [
+    AC_DEFINE([HAVE_FILEMETA_ACL_BSD], [1], [Define to 1 if filemeta-acl-bsd native declarations and link.])])
+AC_CACHE_CHECK([filemeta-xattr-darwin native declarations and link], [ac_cv_filemeta_xattr_darwin], [
+    AC_LINK_IFELSE([AC_LANG_SOURCE([[#include "$srcdir/probes/filemeta-xattr-darwin.c"]])],
+        [ac_cv_filemeta_xattr_darwin=yes], [ac_cv_filemeta_xattr_darwin=no])])
+AS_IF([test "x$ac_cv_filemeta_xattr_darwin" = xyes], [
+    AC_DEFINE([HAVE_FILEMETA_XATTR_DARWIN], [1], [Define to 1 if filemeta-xattr-darwin native declarations and link.])])
+AC_CACHE_CHECK([filemeta-xattr-bsd-int native declarations and link], [ac_cv_filemeta_xattr_bsd_int], [
+    AC_LINK_IFELSE([AC_LANG_SOURCE([[#include "$srcdir/probes/filemeta-xattr-bsd-int.c"]])],
+        [ac_cv_filemeta_xattr_bsd_int=yes], [ac_cv_filemeta_xattr_bsd_int=no])])
+AS_IF([test "x$ac_cv_filemeta_xattr_bsd_int" = xyes], [
+    AC_DEFINE([HAVE_FILEMETA_XATTR_BSD_INT], [1], [Define to 1 if filemeta-xattr-bsd-int native declarations and link.])])
+AC_CACHE_CHECK([filemeta-xattr-bsd-ssize native declarations and link], [ac_cv_filemeta_xattr_bsd_ssize], [
+    AC_LINK_IFELSE([AC_LANG_SOURCE([[#include "$srcdir/probes/filemeta-xattr-bsd-ssize.c"]])],
+        [ac_cv_filemeta_xattr_bsd_ssize=yes], [ac_cv_filemeta_xattr_bsd_ssize=no])])
+AS_IF([test "x$ac_cv_filemeta_xattr_bsd_ssize" = xyes], [
+    AC_DEFINE([HAVE_FILEMETA_XATTR_BSD_SSIZE], [1], [Define to 1 if filemeta-xattr-bsd-ssize native declarations and link.])])
+AC_CACHE_CHECK([filemeta-representation-darwin native declarations and link], [ac_cv_filemeta_representation_darwin], [
+    AC_LINK_IFELSE([AC_LANG_SOURCE([[#include "$srcdir/probes/filemeta-representation-darwin.c"]])],
+        [ac_cv_filemeta_representation_darwin=yes], [ac_cv_filemeta_representation_darwin=no])])
+AS_IF([test "x$ac_cv_filemeta_representation_darwin" = xyes], [
+    AC_DEFINE([HAVE_FILEMETA_REPRESENTATION_DARWIN], [1], [Define to 1 if filemeta-representation-darwin native declarations and link.])])
 
 # Use the same declaration and link probes as the finite parsedate component.
 AC_CACHE_CHECK([for mktime_z with its time.h declaration], [ac_cv_func_mktime_z], [
