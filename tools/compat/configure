@@ -6600,6 +6600,188 @@ then :
 fi
 
 
+# Shared listing declarations and native backend link probes.
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for listing getbsize" >&5
+printf %s "checking for listing getbsize... " >&6; }
+if test ${ac_cv_listing_getbsize+y}
+then :
+  printf %s "(cached) " >&6
+else case e in #(
+  e)
+    cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+#include "$srcdir/probes/listing-getbsize.c"
+_ACEOF
+if ac_fn_c_try_link "$LINENO"
+then :
+  ac_cv_listing_getbsize=yes
+else case e in #(
+  e) ac_cv_listing_getbsize=no ;;
+esac
+fi
+rm -f core conftest.err conftest.$ac_objext conftest.beam \
+    conftest$ac_exeext conftest.$ac_ext ;;
+esac
+fi
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $ac_cv_listing_getbsize" >&5
+printf "%s\n" "$ac_cv_listing_getbsize" >&6; }
+if test "x$ac_cv_listing_getbsize" = xyes
+then :
+
+    printf "%s\n" "#define HAVE_LISTING_NATIVE_GETBSIZE 1" >>confdefs.h
+
+fi
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for listing humanize" >&5
+printf %s "checking for listing humanize... " >&6; }
+if test ${ac_cv_listing_humanize+y}
+then :
+  printf %s "(cached) " >&6
+else case e in #(
+  e)
+    cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+#include "$srcdir/probes/listing-humanize.c"
+_ACEOF
+if ac_fn_c_try_link "$LINENO"
+then :
+  ac_cv_listing_humanize=yes
+else case e in #(
+  e) ac_cv_listing_humanize=no ;;
+esac
+fi
+rm -f core conftest.err conftest.$ac_objext conftest.beam \
+    conftest$ac_exeext conftest.$ac_ext ;;
+esac
+fi
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $ac_cv_listing_humanize" >&5
+printf "%s\n" "$ac_cv_listing_humanize" >&6; }
+if test "x$ac_cv_listing_humanize" = xyes
+then :
+
+    printf "%s\n" "#define HAVE_LISTING_NATIVE_HUMANIZE 1" >>confdefs.h
+
+fi
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for listing native flags" >&5
+printf %s "checking for listing native flags... " >&6; }
+if test ${ac_cv_listing_native_flags+y}
+then :
+  printf %s "(cached) " >&6
+else case e in #(
+  e)
+    cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+#include "$srcdir/probes/listing-native-flags.c"
+_ACEOF
+if ac_fn_c_try_link "$LINENO"
+then :
+  ac_cv_listing_native_flags=yes
+else case e in #(
+  e) ac_cv_listing_native_flags=no ;;
+esac
+fi
+rm -f core conftest.err conftest.$ac_objext conftest.beam \
+    conftest$ac_exeext conftest.$ac_ext ;;
+esac
+fi
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $ac_cv_listing_native_flags" >&5
+printf "%s\n" "$ac_cv_listing_native_flags" >&6; }
+if test "x$ac_cv_listing_native_flags" = xyes
+then :
+
+    printf "%s\n" "#define HAVE_LISTING_NATIVE_FLAGS 1" >>confdefs.h
+
+fi
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for listing stat flags" >&5
+printf %s "checking for listing stat flags... " >&6; }
+if test ${ac_cv_listing_stat_flags+y}
+then :
+  printf %s "(cached) " >&6
+else case e in #(
+  e)
+    cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+#include "$srcdir/probes/listing-stat-flags.c"
+_ACEOF
+if ac_fn_c_try_link "$LINENO"
+then :
+  ac_cv_listing_stat_flags=yes
+else case e in #(
+  e) ac_cv_listing_stat_flags=no ;;
+esac
+fi
+rm -f core conftest.err conftest.$ac_objext conftest.beam \
+    conftest$ac_exeext conftest.$ac_ext ;;
+esac
+fi
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $ac_cv_listing_stat_flags" >&5
+printf "%s\n" "$ac_cv_listing_stat_flags" >&6; }
+if test "x$ac_cv_listing_stat_flags" = xyes
+then :
+
+    printf "%s\n" "#define HAVE_LISTING_STAT_FLAGS 1" >>confdefs.h
+
+fi
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for listing acl bsd" >&5
+printf %s "checking for listing acl bsd... " >&6; }
+if test ${ac_cv_listing_acl_bsd+y}
+then :
+  printf %s "(cached) " >&6
+else case e in #(
+  e)
+    cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+#include "$srcdir/probes/listing-acl-bsd.c"
+_ACEOF
+if ac_fn_c_try_link "$LINENO"
+then :
+  ac_cv_listing_acl_bsd=yes
+else case e in #(
+  e) ac_cv_listing_acl_bsd=no ;;
+esac
+fi
+rm -f core conftest.err conftest.$ac_objext conftest.beam \
+    conftest$ac_exeext conftest.$ac_ext ;;
+esac
+fi
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $ac_cv_listing_acl_bsd" >&5
+printf "%s\n" "$ac_cv_listing_acl_bsd" >&6; }
+if test "x$ac_cv_listing_acl_bsd" = xyes
+then :
+
+    printf "%s\n" "#define HAVE_LISTING_ACL_BSD 1" >>confdefs.h
+
+fi
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for listing acl darwin" >&5
+printf %s "checking for listing acl darwin... " >&6; }
+if test ${ac_cv_listing_acl_darwin+y}
+then :
+  printf %s "(cached) " >&6
+else case e in #(
+  e)
+    cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+#include "$srcdir/probes/listing-acl-darwin.c"
+_ACEOF
+if ac_fn_c_try_link "$LINENO"
+then :
+  ac_cv_listing_acl_darwin=yes
+else case e in #(
+  e) ac_cv_listing_acl_darwin=no ;;
+esac
+fi
+rm -f core conftest.err conftest.$ac_objext conftest.beam \
+    conftest$ac_exeext conftest.$ac_ext ;;
+esac
+fi
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $ac_cv_listing_acl_darwin" >&5
+printf "%s\n" "$ac_cv_listing_acl_darwin" >&6; }
+if test "x$ac_cv_listing_acl_darwin" = xyes
+then :
+
+    printf "%s\n" "#define HAVE_LISTING_ACL_DARWIN 1" >>confdefs.h
+
+fi
+
 # Use the same declaration and link probes as the finite parsedate component.
 { printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for mktime_z with its time.h declaration" >&5
 printf %s "checking for mktime_z with its time.h declaration... " >&6; }

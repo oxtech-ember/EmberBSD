@@ -20,6 +20,24 @@
 /* Define to 1 if <alloca.h> works. */
 #undef HAVE_ALLOCA_H
 
+/* Define to 1 if the listing getbsize probe links. */
+#undef HAVE_LISTING_NATIVE_GETBSIZE
+
+/* Define to 1 if the listing humanize probe links. */
+#undef HAVE_LISTING_NATIVE_HUMANIZE
+
+/* Define to 1 if the listing native flags probe links. */
+#undef HAVE_LISTING_NATIVE_FLAGS
+
+/* Define to 1 if the listing stat flags probe links. */
+#undef HAVE_LISTING_STAT_FLAGS
+
+/* Define to 1 if the listing acl bsd probe links. */
+#undef HAVE_LISTING_ACL_BSD
+
+/* Define to 1 if the listing acl darwin probe links. */
+#undef HAVE_LISTING_ACL_DARWIN
+
 /* Define to 1 if you have the <arpa/nameser.h> header file. */
 #undef HAVE_ARPA_NAMESER_H
 

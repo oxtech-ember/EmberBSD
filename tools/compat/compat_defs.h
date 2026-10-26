@@ -459,8 +459,8 @@ int __nbcompat_heapsort_r(void *, size_t, size_t,
 int heapsort (void *, size_t, size_t, int (*)(const void *, const void *));
 #endif
 
-char	       *flags_to_string(unsigned long, const char *);
-int		string_to_flags(char **, unsigned long *, unsigned long *);
+#include "compat_listing.h"
+#include "compat_acl.h"
 
 /*
  * HAVE_X_FROM_Y and HAVE_PWCACHE_FOODB go together, because we cannot

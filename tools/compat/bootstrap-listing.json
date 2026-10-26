@@ -1,0 +1,77 @@
+{
+  "format": "emberbsd-native-bootstrap-component",
+  "version": 1,
+  "name": "listing",
+  "initial_only": true,
+  "source_makefile": "tools/compat/Makefile",
+  "source_fragment": "tools/compat/listing.mk",
+  "sources": [
+    "lib/libc/gen/getbsize.c",
+    "lib/libc/gen/humanize_number.c",
+    "lib/libutil/stat_flags.c",
+    "tools/compat/compat_acl.c"
+  ],
+  "headers": [
+    "tools/compat/compat_listing.h",
+    "tools/compat/compat_acl.h",
+    "tools/compat/namespace.h",
+    "tools/compat/bootstrap_cdefs.h"
+  ],
+  "archive": "libnbcompat.a",
+  "required_tool_roles": [
+    "cc",
+    "ar",
+    "ranlib"
+  ],
+  "control": "tools/compat/probes/listing-control.c",
+  "check": "tools/compat/probes/listing-check.c",
+  "probes": [
+    {
+      "name": "listing-getbsize",
+      "source": "tools/compat/probes/listing-getbsize.c",
+      "macro": "HAVE_LISTING_NATIVE_GETBSIZE"
+    },
+    {
+      "name": "listing-humanize",
+      "source": "tools/compat/probes/listing-humanize.c",
+      "macro": "HAVE_LISTING_NATIVE_HUMANIZE"
+    },
+    {
+      "name": "listing-native-flags",
+      "source": "tools/compat/probes/listing-native-flags.c",
+      "macro": "HAVE_LISTING_NATIVE_FLAGS"
+    },
+    {
+      "name": "listing-stat-flags",
+      "source": "tools/compat/probes/listing-stat-flags.c",
+      "macro": "HAVE_LISTING_STAT_FLAGS"
+    },
+    {
+      "name": "listing-acl-bsd",
+      "source": "tools/compat/probes/listing-acl-bsd.c",
+      "macro": "HAVE_LISTING_ACL_BSD"
+    },
+    {
+      "name": "listing-acl-darwin",
+      "source": "tools/compat/probes/listing-acl-darwin.c",
+      "macro": "HAVE_LISTING_ACL_DARWIN"
+    }
+  ],
+  "required_capabilities": [
+    "HAVE_LISTING_STAT_FLAGS",
+    "HAVE_LISTING_ACL_DARWIN"
+  ],
+  "config_preamble": "/* Actual listing probes only; not a full OS configuration. */\n#ifndef EMBERBSD_LISTING_CONFIG_H\n#define EMBERBSD_LISTING_CONFIG_H\n#include \"bootstrap_cdefs.h\"\n#define HAVE_NBTOOL_CONFIG_H 1\n",
+  "config_postamble": "#define HAVE_STRUCT_STAT_ST_FLAGS HAVE_LISTING_STAT_FLAGS\n#include \"compat_listing.h\"\n#include \"compat_acl.h\"\n#endif /* EMBERBSD_LISTING_CONFIG_H */\n",
+  "provenance": [
+    "tools/compat/configure.ac",
+    "tools/compat/configure",
+    "tools/compat/nbtool_config.h.in",
+    "tools/compat/compat_defs.h",
+    "tools/compat/README.listing.md",
+    "tools/compat/test-listing.py",
+    "include/stdlib.h",
+    "include/util.h",
+    "tests/lib/libc/gen/t_humanize_number.c"
+  ]
+}

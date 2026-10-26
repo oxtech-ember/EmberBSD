@@ -253,6 +253,39 @@ AC_CHECK_FUNCS(atoll asprintf asnprintf basename devname dirfd dirname \
 	strtoi strtoll strtou strtonum utimensat utimens lutimens \
 	user_from_uid uid_from_user vasprintf vasnprintf vsnprintf)
 
+
+# Shared listing declarations and native backend link probes.
+AC_CACHE_CHECK([for listing getbsize], [ac_cv_listing_getbsize], [
+    AC_LINK_IFELSE([AC_LANG_SOURCE([[#include "$srcdir/probes/listing-getbsize.c"]])],
+	[ac_cv_listing_getbsize=yes], [ac_cv_listing_getbsize=no])])
+AS_IF([test "x$ac_cv_listing_getbsize" = xyes], [
+    AC_DEFINE([HAVE_LISTING_NATIVE_GETBSIZE], [1], [Define to 1 if the listing getbsize probe links.])])
+AC_CACHE_CHECK([for listing humanize], [ac_cv_listing_humanize], [
+    AC_LINK_IFELSE([AC_LANG_SOURCE([[#include "$srcdir/probes/listing-humanize.c"]])],
+	[ac_cv_listing_humanize=yes], [ac_cv_listing_humanize=no])])
+AS_IF([test "x$ac_cv_listing_humanize" = xyes], [
+    AC_DEFINE([HAVE_LISTING_NATIVE_HUMANIZE], [1], [Define to 1 if the listing humanize probe links.])])
+AC_CACHE_CHECK([for listing native flags], [ac_cv_listing_native_flags], [
+    AC_LINK_IFELSE([AC_LANG_SOURCE([[#include "$srcdir/probes/listing-native-flags.c"]])],
+	[ac_cv_listing_native_flags=yes], [ac_cv_listing_native_flags=no])])
+AS_IF([test "x$ac_cv_listing_native_flags" = xyes], [
+    AC_DEFINE([HAVE_LISTING_NATIVE_FLAGS], [1], [Define to 1 if the listing native flags probe links.])])
+AC_CACHE_CHECK([for listing stat flags], [ac_cv_listing_stat_flags], [
+    AC_LINK_IFELSE([AC_LANG_SOURCE([[#include "$srcdir/probes/listing-stat-flags.c"]])],
+	[ac_cv_listing_stat_flags=yes], [ac_cv_listing_stat_flags=no])])
+AS_IF([test "x$ac_cv_listing_stat_flags" = xyes], [
+    AC_DEFINE([HAVE_LISTING_STAT_FLAGS], [1], [Define to 1 if the listing stat flags probe links.])])
+AC_CACHE_CHECK([for listing acl bsd], [ac_cv_listing_acl_bsd], [
+    AC_LINK_IFELSE([AC_LANG_SOURCE([[#include "$srcdir/probes/listing-acl-bsd.c"]])],
+	[ac_cv_listing_acl_bsd=yes], [ac_cv_listing_acl_bsd=no])])
+AS_IF([test "x$ac_cv_listing_acl_bsd" = xyes], [
+    AC_DEFINE([HAVE_LISTING_ACL_BSD], [1], [Define to 1 if the listing acl bsd probe links.])])
+AC_CACHE_CHECK([for listing acl darwin], [ac_cv_listing_acl_darwin], [
+    AC_LINK_IFELSE([AC_LANG_SOURCE([[#include "$srcdir/probes/listing-acl-darwin.c"]])],
+	[ac_cv_listing_acl_darwin=yes], [ac_cv_listing_acl_darwin=no])])
+AS_IF([test "x$ac_cv_listing_acl_darwin" = xyes], [
+    AC_DEFINE([HAVE_LISTING_ACL_DARWIN], [1], [Define to 1 if the listing acl darwin probe links.])])
+
 # Use the same declaration and link probes as the finite parsedate component.
 AC_CACHE_CHECK([for mktime_z with its time.h declaration], [ac_cv_func_mktime_z], [
     AC_LINK_IFELSE([AC_LANG_SOURCE([[#include "$srcdir/probes/func-mktime_z.c"]])],
