@@ -23,13 +23,15 @@ Continue at [Create an isolated VM](#create-an-isolated-vm).
 ## Optional: build the image from source
 
 Use the [SDK release builder](https://github.com/oxtech-ember/EmberBSD-SDK/blob/main/docs/os-release.md)
-for a current GCC16 build from a pinned EmberBSD commit. SDK owns the host
-requirements, inputs, build commands, release receipts and publication checks.
+for a build from a pinned EmberBSD commit. Clang/LLVM is the default; GCC is
+an explicit platform alternative. SDK owns the host requirements, inputs,
+build commands, release receipts and publication checks.
 Use a full ISO with its matching sets for this offline walkthrough.
 Each new image needs its own installation acceptance.
 
 The published candidate above used the older in-tree GCC 12.5 bootstrap.
-It remains a bounded installer reference, not a complete current GCC16 release.
+It remains a bounded installer reference; each current SDK build needs its own
+release and installation acceptance.
 
 ## Create an isolated VM
 

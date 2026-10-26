@@ -158,7 +158,7 @@ pkg_admin check
 ```
 
 Follow the selected Ports profile for repository configuration, build instructions and acceptance checks.
-Do not assume upstream binary packages contain this fork's adaptations or the common GCC16 profile.
+Do not assume upstream binary packages contain this fork's adaptations or match its selected compiler/runtime profile.
 Package installation is not an OS-base upgrade.
 Before removal, inspect reverse dependencies with `pkg_info -R PACKAGE`; then use `pkg_delete PACKAGE`.
 Retain package inventory and application data backups before updating dependencies.
@@ -171,7 +171,7 @@ For the amd64 UEFI no-X11 VM profile, use [the complete installer upgrade and re
 It installs the coherent kernel, modules and userland before the first new-system boot.
 It preserves the previous powered-off disk and UEFI variables for complete recovery.
 The [headless AArch64 base update](../../ember/tools/docs/aarch64-base-update.md) has a physical Pi 5 receipt.
-It records its in-tree GCC12 bootstrap boundary separately from the common GCC16 toolchain.
+Its recorded in-tree GCC12 bootstrap does not validate the current SDK compiler/runtime selection.
 Do not treat that receipt as acceptance on another board or of a complete general release.
 
 1. Read the selected recipe, release/build notes and [UPDATING](../../UPDATING).
