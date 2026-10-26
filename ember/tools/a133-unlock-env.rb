@@ -3,6 +3,7 @@
 require 'digest'
 require 'json'
 require_relative 'a133-env-edit'
+require_relative 'a133-recovery-env'
 
 module A133Unlock
   class Invalid < StandardError; end
@@ -23,18 +24,40 @@ module A133Unlock
   }.transform_values(&:freeze).freeze
   module_function
 
-  def prepare(data)
+  def plan(data)
     raise Invalid, 'invalid_environment' unless data.is_a?(String) && data.bytesize == A133Env::SIZE
     original = data.b.dup.freeze
     vars = A133Env.decode(original).fetch(:entries).to_h
     raise Invalid, 'unlock_hook_already_present' if UPDATES.keys.any? { |key| vars.key?(key) }
-    raise Invalid, 'unsupported_factory_environment' unless PROFILE.all? { |key, value| vars[key] == value }
-    candidate = A133Env.patch(original, UPDATES)
-    restored = A133Env.patch(candidate, UPDATES.transform_values { '' })
+    if vars['bootcmd']==A133Recovery::DIRECT_PROFILE.fetch('bootcmd')
+      entry=A133Recovery.entry_plan(original)
+      recovery_command=A133Env.decode(entry.fetch(:armed_env)).fetch(:entries).to_h.fetch('bootcmd')
+      helpers={'ember_unlock_flag'=>UPDATES.fetch('ember_unlock_flag'),
+        'ember_unlock_next'=>"setenv bootcmd #{recovery_command}; run ember_entry_save ember_reset",
+        'ember_reset'=>UPDATES.fetch('ember_reset')}
+      updates=A133Recovery::DIRECT_HELPERS.merge(helpers).merge('bootcmd'=>'run ember_unlock_flag ember_unlock_next')
+      reverse=updates.transform_values { '' }.merge('bootcmd'=>vars.fetch('bootcmd'))
+      consumed=entry.fetch(:consumed).merge(helpers)
+    else
+      raise Invalid, 'unsupported_factory_environment' unless PROFILE.all? { |key, value| vars[key] == value }
+      updates=UPDATES
+      reverse=updates.transform_values { '' }
+      consumed=vars.merge(UPDATES.reject { |key,_| key=='hook' })
+    end
+    candidate = A133Env.patch(original, updates)
+    restored = A133Env.patch(candidate, reverse)
     raise Invalid, 'non_reversible_environment' unless restored == original
-    candidate.freeze
+    consumed=consumed.to_h { |key,value| [key.dup.freeze,value.dup.freeze] }.freeze
+    {armed_env:candidate.freeze,consumed:consumed,changed_variables:updates.keys.sort.map(&:freeze).freeze}.freeze
   rescue A133Env::Invalid
     raise Invalid, 'invalid_environment', cause: nil
+  rescue A133Recovery::Invalid => error
+    reason=error.message=='recovery_hook_already_present' ? 'unlock_hook_already_present' : error.message
+    raise Invalid,reason,cause:nil
+  end
+
+  def prepare(data)
+    plan(data).fetch(:armed_env)
   end
 end
 
@@ -63,7 +86,8 @@ if $PROGRAM_NAME == __FILE__
       raise A133Unlock::Invalid, 'invalid_environment' unless bytes && bytes.bytesize == A133Env::SIZE
       bytes
     end
-    candidate = A133Unlock.prepare(data)
+    plan = A133Unlock.plan(data)
+    candidate = plan.fetch(:armed_env)
     File.open(partial, File::WRONLY | File::CREAT | File::EXCL, 0600) do |file|
       partial_stat = file.stat
       file.write(candidate)
@@ -75,7 +99,7 @@ if $PROGRAM_NAME == __FILE__
     result[:status] = 'unlock_copy_prepared'
     result[:input_sha256] = Digest::SHA256.hexdigest(data)
     result[:output_sha256] = Digest::SHA256.hexdigest(candidate)
-    result[:changed_variables] = A133Unlock::UPDATES.keys.sort
+    result[:changed_variables] = plan.fetch(:changed_variables)
   rescue A133Unlock::Invalid, SystemCallError, IOError => error
     result[:status] = 'preparation_stopped'
     result[:reason] = error.is_a?(A133Unlock::Invalid) ? error.message : 'host_file_error'

@@ -5,13 +5,13 @@
 [Factory USB reboot](ys-m33-a133-recovery-reboot.md)
 
 The [offline preparer](../../a133-unlock-env.rb) produces the vendor unlock
-hook for the inspected factory profile. It reads a private copied 128KiB env
+hook for an exact inspected factory profile. It reads a private copied 128KiB env
 prefix and creates one new private file. It performs no USB operation, device
 write, reboot or unlock, and always reports `installation_ready=false`.
 
 ## Exact profile and preservation
 
-The original must have these values and none of the seven reserved hook keys,
+The hook-based original must have these values and none of the seven reserved hook keys,
 including a key with an empty value:
 
 ```text
@@ -27,10 +27,18 @@ factory early stages reload the unlock flag. On the next loader pass, the
 one-shot hook clears itself and saves normal boot before selecting USB device
 mode and loading signed recovery. The normal boot scripts stay unchanged.
 
+The direct C3 profile uses the exact `bootcmd`, `boot_normal`, `boot_recovery`
+and nonempty `setargs_nand` checks from the
+[locked-entry planner](ys-m33-a133-recovery-entry.md). It has no `hook` or
+`boot_android`. Its temporary `bootcmd` runs the same vendor unlock command,
+saves that planner's one-shot recovery command, then resets. The next pass
+restores the original `bootcmd` before saving and entering signed recovery.
+The entry helpers and unlock helpers must be absent, including empty keys.
+
 The preparer validates CRC32, unique entries, termination and capacity. It
 preserves unknown/opaque values, empty variables, leading-empty encoding,
-padding and entry order. Removing exactly the added seven variables must
-reproduce every original byte. A foreign profile, occupied hook, malformed
+padding and entry order. Removing the added helpers, and restoring the direct
+profile's `bootcmd`, must reproduce every original byte. A foreign profile, occupied hook, malformed
 image or insufficient capacity is refused without publishing a candidate.
 
 This reversibility applies to the env file. Restoring env does not undo a
@@ -90,6 +98,7 @@ Accepted EmberBSD trial boot and complete Android restoration remain separate.
 
 ```sh
 ruby ember/tools/a133-unlock-env-test.rb
+ruby ember/tools/a133-unlock-direct-test.rb
 ruby ember/tools/a133-unlock-env-cleanup-test.rb
 ruby ember/tools/a133-env-edit-test.rb
 ruby ember/tools/a133-recovery-env-test.rb

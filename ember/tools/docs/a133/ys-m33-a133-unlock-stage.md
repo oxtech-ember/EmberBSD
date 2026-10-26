@@ -35,6 +35,12 @@ receipt = A133Unlock::Stage.run(
 ```
 
 A fresh journal requires locked1/green Android and the exact original env.
+The source policy selects the original `a133` model for the hook profile and
+the exact `QUAD-CORE A133 c3` model for the direct profile. Generic source
+admission is unchanged. The direct profile accepts only the measured bounded
+vendor saveenv export described by the locked-entry policy; unrelated changes stop it.
+The caller supplies the selected root method in each USB epoch. Choosing
+`adbd` does not itself restart the daemon as root.
 The stage changes only131072 prefix bytes with sync, verifies all16MiB, and
 then submits one normal ADB reboot. Returned recovery must be unlocked0/orange,
 root-readable, unmounted and identified through the same selected USB serial,
@@ -94,6 +100,8 @@ ruby ember/tools/a133-unlock-stage.rb /private/existing-unlock-session
 ruby ember/tools/a133-unlock-journal-test.rb
 ruby ember/tools/a133-unlock-journal-regression-test.rb
 ruby ember/tools/a133-unlock-stage-test.rb
+ruby ember/tools/a133-unlock-direct-test.rb
+ruby ember/tools/a133-unlock-direct-usb-test.rb
 ruby ember/tools/a133-unlock-stage-persistence-test.rb
 ruby ember/tools/a133-unlock-stage-cli-test.rb
 ruby ember/tools/a133-unlock-stage-admission-test.rb

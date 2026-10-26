@@ -42,12 +42,13 @@ module A133Unlock
       @channel=A133Usb::Channel.new(@adb,@timeout)
       raise A133Unlock::Invalid,'original_environment_size_mismatch' unless original_env.is_a?(String)
       original=original_env.b.dup.freeze
-      @base=A133Recovery::Policy.new(serial:@serial,cid:@cid,original_env:original,backup:backup).data
+      @policy=A133Recovery::Policy.new(serial:@serial,cid:@cid,original_env:original,backup:backup)
+      @base=@policy.data
       @original_prefix=@base[:original_prefix]
-      @armed_prefix=A133Unlock.prepare(@original_prefix)
+      plan=A133Unlock.plan(@original_prefix)
+      @armed_prefix=plan.fetch(:armed_env)
       @armed_sha=Digest::SHA256.hexdigest(@armed_prefix+original.byteslice(131072,16777216-131072)).freeze
-      values=A133Env.decode(@original_prefix).fetch(:entries).to_h.merge(A133Unlock::UPDATES.reject { |key,_| key=='hook' })
-      @consumed=values.to_h { |key,value| [key.dup.freeze,value.dup.freeze] }.freeze
+      @consumed=plan.fetch(:consumed)
       parts=mutable.is_a?(Hash) ? mutable['partition_sha256'] : nil
       raise A133Unlock::Invalid,'invalid_unlock_mutable' unless mutable.is_a?(Hash) &&
         mutable['serial']==@serial && mutable['cid']==@cid && mutable['status']=='mutable_integrity_verified' &&
@@ -81,7 +82,7 @@ module A133Unlock
     def observe
       state=inventory
       raise A133Unlock::Invalid,'usb_unlock_device_not_ready' unless @roots.key?(state)
-      @source=A133UsbBackup::Source.new(adb:@adb,serial:@serial,state:state,root_method:@roots.fetch(state),timeout:@timeout)
+      @source=@policy.source(adb:@adb,state:state,root_method:@roots.fetch(state),timeout:@timeout)
       profile=@source.environment_inspect!
       raise A133Unlock::Invalid,'usb_unlock_identity_mismatch' unless profile[:serial]==@serial && profile[:cid]==@cid
       raise A133Unlock::Invalid,'usb_unlock_gpt_mismatch' unless profile[:gpt_sha256]==@base[:gpt_sha]
@@ -101,7 +102,7 @@ module A133Unlock
       @source.environment_inspect!
       mode=if sha.hexdigest==@base[:original_sha] then 'original'
         elsif sha.hexdigest==@armed_sha then 'armed'
-        elsif tail.hexdigest==@base[:tail_sha] && A133Env.decode(prefix).fetch(:entries).to_h==@consumed then 'consumed'
+        elsif tail.hexdigest==@base[:tail_sha] && @policy.consumed_prefix_matches?(prefix,expected:@consumed) then 'consumed'
         end
       raise A133Unlock::Invalid,'usb_unlock_environment_unknown' unless mode
       hardware=@store.snapshot['hardware_bytes']

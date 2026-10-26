@@ -55,8 +55,7 @@ module A133Recovery
       type=@profile=='direct' ? DirectSource : A133UsbBackup::Source
       type.new(adb:adb,serial:@serial,state:state,root_method:root_method,timeout:timeout)
     end
-    def consumed_values_match?(actual)
-      expected=@data[:consumed]
+    def consumed_values_match?(actual,expected=@data[:consumed])
       return true if actual==expected
       return false unless @profile=='direct' && %w[mac wifi_mac bt_mac specialstr].all? { |k| expected[k]=='' }
       runtime={'bootreason'=>'unknow','fdtcontroladdr'=>'7beb3280','fileaddr'=>'40000000',
@@ -72,6 +71,12 @@ module A133Recovery
       normalized=actual.reject { |k,_| runtime.key?(k) || k=='snum' }
       %w[mac wifi_mac bt_mac specialstr].each { |k| normalized[k]='' }
       normalized==expected
+    end
+
+    def consumed_prefix_matches?(prefix,expected:)
+      consumed_values_match?(A133Env.decode(prefix).fetch(:entries).to_h,expected)
+    rescue A133Env::Invalid
+      false
     end
 
     def matches?(expected,current)
