@@ -398,7 +398,7 @@
           },
           "dst": {
             "type": "file",
-            "mode": "0751",
+            "mode": "0600",
             "data": "old"
           }
         },
@@ -1369,6 +1369,63 @@
         "expect": {}
       },
       "stderr_nonempty": true
+    },
+    {
+      "name": "recursive-command-root-link",
+      "invocation": "cp",
+      "args": [
+        "-R",
+        "-H",
+        "-p",
+        "root",
+        "dst"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "stderr": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "tree": {
+            "type": "directory",
+            "mode": "0750"
+          },
+          "tree/file": {
+            "type": "file",
+            "mode": "0640",
+            "data": "root link\n"
+          },
+          "root": {
+            "type": "symlink",
+            "target": "tree"
+          }
+        },
+        "expect": {
+          "tree": {
+            "type": "directory",
+            "mode": "0750"
+          },
+          "tree/file": {
+            "type": "file",
+            "mode": "0640",
+            "data": "root link\n"
+          },
+          "root": {
+            "type": "symlink",
+            "target": "tree"
+          },
+          "dst": {
+            "type": "directory",
+            "mode": "0750"
+          },
+          "dst/file": {
+            "type": "file",
+            "mode": "0640",
+            "data": "root link\n"
+          }
+        }
+      }
     }
   ],
   "components": [

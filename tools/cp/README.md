@@ -7,7 +7,7 @@ It does not select SMALL or omit features. Target ACL and xattr code remains nat
 The [finite contract](bootstrap.json) uses separately accepted filetime and
 filemeta component receipts. It does not replace the normal compatibility library.
 The selected GCC16 compiles both sources and a mandatory native API control.
-There are 34 source-owned cases. Their fixtures remain inside the case directory.
+There are 35 source-owned cases. Their fixtures remain inside the case directory.
 The control requires real descriptor-zero handling, nanosecond timestamps,
 file flags, no-follow directory access, symlink times and the public metadata API.
 It is not a cp implementation or proof of every cp metadata operation.
@@ -27,7 +27,8 @@ configuration or native structure member family. It does not invent HAVE values.
 [The source controls](test-source.py) check routing and preserved native code.
 Actual GCC16, runtime, C analysis, memory and other-host checks remain separate.
 The finite cases cover byte copying, truncation, modes, exact timestamps, recursive
-postorder, link selection, hardlink identity, prompts and errors. They do not prove
+postorder, link selection, hardlink identity, prompts and errors.
+The -H case explicitly follows a command-line directory symlink with -p. They do not prove
 that cp preserves nonempty ACLs or xattrs. Those consumer checks need real typed
 metadata fixture setup and observation around the owned cp child. API controls
 and a separately accepted component cannot replace that test.
