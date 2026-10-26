@@ -34,6 +34,9 @@ Clang detection, and `basename`, `diff`, `egrep`, `expr`, `ls`, `mv`, and
 `rmdir` for the initial configure scripts. `touch`, `find`, and `xargs`
 support the native configure and GNU host-tool make rules. Install these
 from the common native Ports recipes before publishing the routing directory.
+`cut` supplies Flex version fields. `uniq` preserves the definitions emitted by
+Autoconf when generating configuration headers. `nm` keeps native symbol probes
+on the selected LLVM or GNU implementation instead of an absolute system fallback.
 
 The SDK must publish a routing directory with these entries:
 
@@ -128,6 +131,13 @@ They do not prove that a real NetBSD make uses the selected recipe shell.
 Run that check with make from the selected host prefix.
 Use `--build-sh /path/to/older/build.sh` with
 `RoutingTests.test_tools_dispatch_and_wrapper_replay` as a causal negative control.
+
+Run `test-configure.py --source "$OS_SOURCE" --sdk-source "$SDK_SOURCE"`
+`--host-prefix "$HOST_PREFIX" --work "$NEW_OUTPUT"` with SDK Python to exercise
+the real Texinfo configure script under the same restricted command mapping.
+It requires the resulting standard-header definitions. The old mapping can
+exit zero while silently losing them; `--expect-broken-header` reproduces that
+failure without treating an unrelated configure failure as the expected result.
 
 Check the early configure paths and real `tools/compat` and `tools/gmake`
 Clang-detection queries with explicit test utilities:
