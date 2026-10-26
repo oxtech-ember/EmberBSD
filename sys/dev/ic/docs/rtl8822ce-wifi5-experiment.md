@@ -17,7 +17,10 @@ by an ordinary reboot.
 ## Profile
 
 - Rates: HT20 MCS0-7 and VHT one spatial stream MCS0-7 at 20, 40 or 80 MHz,
-  long guard interval, BCC, no STBC or beamforming. The width follows the
+  BCC, no STBC or beamforming. Firmware rate adaptation may transmit with
+  the short guard interval when the AP receives it at the committed width
+  (HT SGI20 for HT20, HT SGI40 at 40 MHz, VHT SGI80 at 80 MHz); the station
+  does not advertise short-GI reception. The width follows the
   tuple the AP's HT and VHT Operation derive, if the core admits it and can
   build its TX power program. Firmware rate adaptation uses rate ID 5 for
   HT20 and 10 for VHT, with the committed width in RA_INFO.
@@ -45,8 +48,8 @@ per channel access) are described in
 `htprep`, `htoffer`, `vhtadmit`, `htresp`, `htreset`, `assocfail`,
 `htstate`, `runreq`, `htrun` and `runpass` for preparation, offer, admission,
 response, beacon resets and the RUN worker; `raphy` and `tuple` for the
-committed RA entry and channel tuple; `txrate` for the encoded descriptor
-seed; and `txba` (requests, accepts, refusals, timeouts, DELBAs, invalid
+committed RA entry and channel tuple, with `sgi` for its SGI_EN bit;
+`txrate` for the encoded descriptor seed; and `txba` (requests, accepts, refusals, timeouts, DELBAs, invalid
 responses, last status, active TID mask) with `ampdu` (descriptors with
 AGG_EN). These are encoding and protocol observations, not air-rate or ACK
 reports.
@@ -83,5 +86,5 @@ that pair, not of the board alone:
 | e89e8b965, A-MPDU | 89.2 and 84.4 Mbit/s | 93.1 and 95.5 Mbit/s |
 
 Not established: association on 52-60 or 100-144, other APs, two spatial
-streams, MCS8-9, short guard interval, LDPC, long-duration stability and
-the default boot selection.
+streams, MCS8-9, LDPC, long-duration stability and the default boot
+selection.

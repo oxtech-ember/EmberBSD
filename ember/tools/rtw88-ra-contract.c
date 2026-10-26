@@ -1307,6 +1307,22 @@ test_ra_ht20_run(void)
 		state_fixture_finish(&s);
 		return;
 	}
+	/* HT20 SGI follows the AP's SGI20 bit, in the experiment only. */
+	CHECK(tx_policy.sgi == 0);
+	{
+		struct rtw88_ra_config sgi_policy = tx_policy;
+
+		s.ni.ni_ht20.peer_htcap[0] |= 0x20;
+		s.ni.ni_ht20.peer_cap |= 0x20;
+		CHECK(rtw88_net_tx_ht20_policy(&s.net.ic, &sgi_policy) == 0);
+#ifdef RTW88_VHT80
+		CHECK(sgi_policy.sgi == 1);
+#else
+		CHECK(sgi_policy.sgi == 0);
+#endif
+		s.ni.ni_ht20.peer_htcap[0] &= (uint8_t)~0x20;
+		s.ni.ni_ht20.peer_cap &= (uint16_t)~0x20;
+	}
 	mutex_enter(s.net.lock);
 	CHECK(rtw88_net_tx_ra_validate(&s.net, &tx_policy,
 	    s.net.policy.epoch) == 0);
@@ -1344,7 +1360,7 @@ test_ra_vht80_formats(void)
 {
 	const uint8_t bssid[6] = {2, 0, 0, 0, 0, 1};
 
-	for (unsigned variant = 0; variant < 20; variant++) {
+	for (unsigned variant = 0; variant < 22; variant++) {
 		struct rtw88_softc sc;
 		struct rtw88_ra_config cfg = ra_vht80_cfg;
 		struct rtw88_ra_state saved;
@@ -1386,6 +1402,8 @@ test_ra_vht80_formats(void)
 			    .mode = RTW88_FIXED_11A };
 			break;
 		case 19: cfg.ht_operation = 1; break;
+		case 20: cfg.sgi = 1; break; /* RA_INFO SGI_EN, byte1 bit7. */
+		case 21: cfg.sgi = 2; break;
 		}
 		box = sc.sc_h2c_box;
 		writes = f.writes;
@@ -1401,7 +1419,7 @@ test_ra_vht80_formats(void)
 			const uint8_t *desc;
 			unsigned wp;
 
-			CHECK(error == 0 && sc.sc_ra.active);
+			CHECK(error == 0 && sc.sc_ra.active && sc.sc_ra.sgi == 0);
 			CHECK(sc.sc_ra.rate_id == 10 && sc.sc_ra.mask == 0x000ff010);
 			CHECK(sc.sc_ra.phy == RTW88_RA_VHT_1SS &&
 			    sc.sc_ra.vht_tx_map == RTW88_VHT_MAP_NSS1_MCS7);
@@ -1516,6 +1534,10 @@ test_ra_vht80_formats(void)
 			CHECK(rtw88_tx_auto(&sc, RTW88_TXQ_BE, ra_frame,
 			    sizeof(ra_frame), 9, 0) == EOPNOTSUPP);
 			CHECK(sc.sc_txq[RTW88_TXQ_BE].wp == wp && f.writes == writes);
+		} else if (variant == 20) {
+			CHECK(error == 0 && sc.sc_ra.active && sc.sc_ra.sgi == 1);
+			CHECK(mmio32(0x1d0 + 4 * box) == UINT32_C(0x52aa0040));
+			CHECK(mmio32(0x1f0 + 4 * box) == UINT32_C(0x000ff010));
 		} else if (variant == 15) {
 			CHECK(error == ETIMEDOUT && sc.sc_ra.error == ETIMEDOUT);
 			CHECK(!sc.sc_ra.configured && !sc.sc_ra.active);
@@ -1914,6 +1936,33 @@ test_ra_vht_run_tuples(void)
 		if (error != 0) {
 			state_fixture_finish(&s);
 			continue;
+		}
+		/* SGI follows the AP at the committed width: VHT SGI80 for 80,
+		 * HT SGI40 for 40; the other bit, or none, keeps long GI. */
+		CHECK(tx_policy.sgi == 0);
+		for (unsigned bit = 0; bit < 2; bit++) {
+			struct rtw88_ra_config sgi_policy = tx_policy;
+			uint8_t htcap = s.ni.ni_ht20.peer_htcap[0];
+			uint16_t peer_cap = s.ni.ni_ht20.peer_cap;
+
+			if (bit == 0) {
+				s.ni.ni_ht20.vht.peer.info = 0x20;
+			} else {
+				s.ni.ni_ht20.peer_htcap[0] |= 0x40;
+				s.ni.ni_ht20.peer_cap |= 0x40;
+			}
+			CHECK(rtw88_net_tx_ht20_policy(&s.net.ic, &sgi_policy) == 0);
+			CHECK(sgi_policy.sgi ==
+			    (v[i].width_mhz == (bit == 0 ? 80 : 40)));
+			s.ni.ni_ht20.vht.peer.info = 0;
+			s.ni.ni_ht20.peer_htcap[0] = htcap;
+			s.ni.ni_ht20.peer_cap = peer_cap;
+			/* A committed long-GI entry does not match an SGI policy. */
+			sgi_policy.sgi = 1;
+			mutex_enter(s.net.lock);
+			CHECK(rtw88_net_tx_ra_validate(&s.net, &sgi_policy,
+			    s.net.policy.epoch) == EPROTO);
+			mutex_exit(s.net.lock);
 		}
 		mutex_enter(s.net.lock);
 		CHECK(rtw88_net_tx_ra_validate(&s.net, &tx_policy,
@@ -2440,6 +2489,44 @@ test_ra_vht_ampdu(void)
 }
 #endif
 
+/*
+ * SGI on the narrow tuple: an HT20 entry carries RA_INFO SGI_EN only in
+ * the VHT experiment build; a legacy entry never does.
+ */
+static void
+test_ra_sgi_narrow(void)
+{
+	const uint8_t bssid[6] = {2, 0, 0, 0, 0, 1};
+	struct rtw88_ra_config legacy = { .epoch = 9, .channel = 36,
+	    .common_rates = 0xff0, .mode = RTW88_FIXED_11A, .sgi = 1 };
+	struct rtw88_ra_config ht20 = ra_vht80_cfg;
+	struct rtw88_softc sc;
+	unsigned box, writes;
+
+	if (!start_ok(&sc))
+		return;
+	CHECK(rtw88_channel(&sc, 36) == 0);
+	CHECK(rtw88_station_config(&sc, bssid, 1, 0x150, 9, 1) == 0);
+	writes = f.writes;
+	CHECK(rtw88_ra_configure(&sc, &legacy) == EINVAL && f.writes == writes);
+	ht20.phy = RTW88_RA_HT20_1SS;
+	ht20.ht_mcs = 0xff;
+	ht20.vht_tx_map = 0;
+	ht20.sgi = 1;
+	box = sc.sc_h2c_box;
+#ifdef RTW88_VHT80
+	CHECK(rtw88_ra_configure(&sc, &ht20) == 0 && sc.sc_ra.sgi == 1);
+	CHECK(mmio32(0x1d0 + 4 * box) == UINT32_C(0x40a50040));
+#else
+	CHECK(rtw88_ra_configure(&sc, &ht20) == EOPNOTSUPP &&
+	    f.writes == writes && sc.sc_h2c_box == box);
+#endif
+	ht20.sgi = 0;
+	CHECK(rtw88_ra_configure(&sc, &ht20) == 0 && sc.sc_ra.sgi == 0);
+	CHECK(rtw88_stop(&sc) == 0);
+	CHECK(rtw88_core_detach(&sc) == 0);
+}
+
 #ifndef RTW88_RA_MAIN
 #define RTW88_RA_MAIN main
 #endif
@@ -2458,6 +2545,7 @@ RTW88_RA_MAIN(void)
 	test_ra_peer_numeric_masks();
 	test_ra_reports_never_control_peer();
 	test_ra_narrow_entries();
+	test_ra_sgi_narrow();
 	test_ra_start_tuple();
 	test_ra_ht20_run();
 	test_ra_dfs64();

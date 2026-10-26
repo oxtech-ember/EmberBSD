@@ -731,6 +731,11 @@ rtw88_net_tx_ht20_policy(struct ieee80211com *ic, struct rtw88_ra_config *cfg)
 	cfg->ht.mtu = mtu;
 	cfg->ht.max_mpdu = maximum;
 	cfg->ht.rts_threshold = ic->ic_rtsthreshold;
+	cfg->sgi = 0;
+#ifdef RTW88_VHT80
+	/* HT Capabilities SGI20 (bit5) for an HT20 entry. */
+	cfg->sgi = (protection.peer_cap & 0x20) != 0;
+#endif
 	if (ni->ni_ht20.vht.valid) {
 #ifdef RTW88_VHT80
 		struct rtw88_net *net = ic->ic_ifp->if_softc;
@@ -741,6 +746,11 @@ rtw88_net_tx_ht20_policy(struct ieee80211com *ic, struct rtw88_ra_config *cfg)
 		cfg->phy = RTW88_RA_VHT_1SS;
 		cfg->ht_mcs = 0;
 		cfg->vht_tx_map = ni->ni_ht20.vht.maps.tx_map;
+		/* VHT Capabilities SGI80 (bit5) at 80 MHz, HT SGI40 (bit6)
+		 * at 40 MHz. */
+		cfg->sgi = ni->ni_ht20.vht.channel.width_mhz == 80 ?
+		    (ni->ni_ht20.vht.peer.info & 0x20) != 0 :
+		    (protection.peer_cap & 0x40) != 0;
 #else
 		return EOPNOTSUPP;
 #endif
@@ -783,6 +793,7 @@ rtw88_net_tx_ra_validate(struct rtw88_net *net,
 	    ra->ht.mtu != policy->ht.mtu ||
 	    ra->ht.max_mpdu != policy->ht.max_mpdu ||
 	    ra->ht.rts_threshold != policy->ht.rts_threshold ||
+	    ra->sgi != policy->sgi ||
 	    h->profile.rx_mcs != 0xff || h->profile.tx_mcs != 0xff ||
 	    h->tx_mcs == 0 || (h->tx_mcs & ~0xffU) != 0 ||
 	    ra->profile_generation != h->profile.generation ||
