@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Origin: EmberBSD Precision Touchpad feature-report safety metadata. */
 #ifndef _DEV_HID_HIDMTVAR_H_
 #define _DEV_HID_HIDMTVAR_H_
 
@@ -13,6 +14,7 @@ struct hidmt_slot {
 struct hidmt_config {
 	int input_id, config_id;
 	unsigned input_size, config_size, nslots;
+	bool config_mode_only;
 	int minx, maxx, miny, maxy;
 	struct hid_location mode, count, button;
 	struct hidmt_slot slots[HIDMT_MAX_CONTACTS];

@@ -1,10 +1,23 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Origin: EmberBSD Precision Touchpad feature-report safety regression. */
 #include <sys/types.h>
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
 #include <dev/hid/hidmtvar.h>
 #include "ptp_descriptor.h"
+
+static size_t
+find_bytes(const unsigned char *data, size_t size, const unsigned char *pattern,
+    size_t pattern_size)
+{
+	size_t i;
+
+	for (i = 0; i + pattern_size <= size; i++)
+		if (memcmp(data + i, pattern, pattern_size) == 0)
+			return i;
+	return size;
+}
 
 size_t hidmt_test_allocations;
 
@@ -19,8 +32,89 @@ main(void)
 
 	assert(hidmt_parse(ptp_descriptor, sizeof(ptp_descriptor), &cfg) == 0);
 	assert(cfg.input_id == 4 && cfg.config_id == 3);
+	assert(cfg.config_mode_only);
 	assert(cfg.nslots == 5 && cfg.input_size == 29);
 	assert(cfg.maxx == 3684 && cfg.maxy == 2176);
+	{
+		unsigned char mixed[sizeof(ptp_descriptor)];
+		struct hidmt_config mixed_cfg;
+		static const unsigned char feature_id_5[] = { 0x85, 0x05 };
+		size_t offset;
+
+		memcpy(mixed, ptp_descriptor, sizeof(mixed));
+		offset = find_bytes(mixed, sizeof(mixed), feature_id_5,
+		    sizeof(feature_id_5));
+		assert(offset < sizeof(mixed));
+		mixed[offset + 1] = 0x03;
+		assert(hidmt_parse(mixed, sizeof(mixed), &mixed_cfg) == 0);
+		assert(!mixed_cfg.config_mode_only);
+	}
+	{
+		static const unsigned char mode_field[] = {
+		    0x85, 0x03, 0x09, 0x22, 0xa1, 0x02, 0x09, 0x52,
+		    0x15, 0x00, 0x25, 0x0a, 0x75, 0x08, 0x95, 0x01,
+		    0xb1, 0x02
+		};
+		unsigned char changed[sizeof(ptp_descriptor)];
+		struct hidmt_config changed_cfg;
+		size_t offset;
+
+		/* An array feature field must never enable the direct SET path. */
+		memcpy(changed, ptp_descriptor, sizeof(changed));
+		offset = find_bytes(changed, sizeof(changed), mode_field,
+		    sizeof(mode_field));
+		assert(offset < sizeof(changed));
+		changed[offset + sizeof(mode_field) - 1] = 0x00;
+		assert(hidmt_parse(changed, sizeof(changed), &changed_cfg) == 0);
+		assert(!changed_cfg.config_mode_only);
+
+		/* Input Mode 3 is unavailable when the logical range ends at 2. */
+		memcpy(changed, ptp_descriptor, sizeof(changed));
+		offset = find_bytes(changed, sizeof(changed), mode_field,
+		    sizeof(mode_field));
+		assert(offset < sizeof(changed));
+		changed[offset + 11] = 0x02;
+		assert(hidmt_parse(changed, sizeof(changed), &changed_cfg) == 0);
+		assert(!changed_cfg.config_mode_only);
+	}
+	{
+		static const unsigned char vendor_id[] = {
+		    0x85, 0x0e, 0x09, 0x01, 0x19
+		};
+		static const unsigned char extra_feature[] = {
+		    0x85, 0x03, 0x09, 0x01, 0x75, 0x08, 0x95, 0x01,
+		    0xb1, 0x02, 0x85, 0x0e
+		};
+		unsigned char changed[sizeof(ptp_descriptor) + sizeof(extra_feature)];
+		size_t offset;
+
+		memcpy(changed, ptp_descriptor, sizeof(ptp_descriptor));
+		offset = find_bytes(changed, sizeof(ptp_descriptor), vendor_id,
+		    sizeof(vendor_id));
+		assert(offset < sizeof(ptp_descriptor));
+		offset += 2;
+		memmove(changed + offset + sizeof(extra_feature), changed + offset,
+		    sizeof(ptp_descriptor) - offset);
+		memcpy(changed + offset, extra_feature, sizeof(extra_feature));
+		assert(hidmt_parse(changed, sizeof(changed), &cfg) == 0);
+		assert(!cfg.config_mode_only);
+	}
+	/* An unsafe report reparse must clear a previously true classification. */
+	{
+		unsigned char changed[sizeof(ptp_descriptor)];
+		static const unsigned char feature_id_5[] = { 0x85, 0x05 };
+		size_t offset;
+
+		memcpy(changed, ptp_descriptor, sizeof(changed));
+		assert(hidmt_parse(ptp_descriptor, sizeof(ptp_descriptor), &cfg) == 0);
+		assert(cfg.config_mode_only);
+		offset = find_bytes(changed, sizeof(changed), feature_id_5,
+		    sizeof(feature_id_5));
+		assert(offset < sizeof(changed));
+		changed[offset + 1] = 0x03;
+		assert(hidmt_parse(changed, sizeof(changed), &cfg) == 0);
+		assert(!cfg.config_mode_only);
+	}
 	/* First finger: confidence, tip, contact id 2; x=1000, y=800. */
 	input[0] = 3 | (2 << 2);
 	input[1] = 1000 & 255; input[2] = 1000 >> 8;
