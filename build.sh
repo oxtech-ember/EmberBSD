@@ -117,6 +117,8 @@ then
             HOST_RANLIB) HOST_RANLIB=${_ember_native_target} ;;
             HOST_LN) HOST_LN=${_ember_native_target} ;;
             HOST_YACC) HOST_YACC=${_ember_native_target} ;;
+            HOST_MV_CP) HOST_MV_CP=${_ember_native_target} ;;
+            HOST_MV_RM) HOST_MV_RM=${_ember_native_target} ;;
             MAKE) _ember_native_make=${_ember_native_target} ;;
             SED) SED=${_ember_native_target} ;;
             -) ;;
@@ -666,7 +668,7 @@ initdefaults()
 		setmakeenv SHELL "${HOST_SH}"
 		setmakeenv SED "${SED}"
 		for _ember_native_var in HOST_CC HOST_CXX HOST_CPP HOST_AR \
-		    HOST_LD HOST_RANLIB HOST_LN HOST_YACC
+		    HOST_LD HOST_RANLIB HOST_LN HOST_YACC HOST_MV_CP HOST_MV_RM
 		do
 			eval _ember_native_value=\"\${${_ember_native_var}}\"
 			setmakeenv "${_ember_native_var}" "${_ember_native_value}"
@@ -726,7 +728,7 @@ initdefaults()
 	#
 	tmpdir="${TMPDIR-/tmp}/nbbuild$$"
 	mkdir "${tmpdir}" || bomb "Cannot mkdir: ${tmpdir}"
-	trap "cd /; rm -r -f \"${tmpdir}\"" 0
+	trap '_build_status=$?; cd /; rm -r -f "${tmpdir}"; exit "${_build_status}"' 0
 	results="${tmpdir}/build.sh.results"
 
 	# Set source directories
@@ -1154,7 +1156,8 @@ check_native_override()
 	${_ember_native_mode} || return 0
 	case "$1" in
 	EMBER_NATIVE_*|_ember_native_*|PATH|HOST_SH|HOST_CC|HOST_CXX|HOST_CPP|\
-	HOST_AR|HOST_LD|HOST_RANLIB|HOST_LN|HOST_YACC|BSHELL|CONFIG_SHELL|SHELL|SED)
+	HOST_AR|HOST_LD|HOST_RANLIB|HOST_LN|HOST_YACC|HOST_MV_CP|HOST_MV_RM|\
+	BSHELL|CONFIG_SHELL|SHELL|SED)
 		usage "Cannot change selected native tool variable $1 with $2" ;;
 	esac
 }

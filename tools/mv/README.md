@@ -41,3 +41,6 @@ Both roots retain their fixtures and result files for inspection.
 These cases do not inspect nonempty ACL/xattr values or nested loader routes.
 Cppcheck, path analysis, memory checks, other hosts, and full native operation
 remain separate from source checks.
+
+The selected SDK native-tool contract supplies `HOST_MV_CP` and `HOST_MV_RM`
+through `build.sh`. Direct make callers must supply both selectors.

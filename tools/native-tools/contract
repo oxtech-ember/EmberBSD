@@ -7,7 +7,7 @@ cat cat -
 cc cc HOST_CC
 chmod chmod -
 cmp cmp -
-cp cp -
+cp cp HOST_MV_CP
 cpp cpp HOST_CPP
 date date -
 dirname dirname -
@@ -17,10 +17,11 @@ ld ld HOST_LD
 ln ln HOST_LN
 make make MAKE
 mkdir mkdir -
+printf printf -
 pwd pwd -
 ranlib ranlib HOST_RANLIB
 readlink readlink -
-rm rm -
+rm rm HOST_MV_RM
 sed sed SED
 sh sh HOST_SH
 sort sort -

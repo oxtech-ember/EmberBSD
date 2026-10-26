@@ -22,6 +22,9 @@ command native-role binding
 `SED` selects the quoting utility used by `build.sh`.
 `HOST_YACC` selects Byacc before the compatibility library is built.
 That library generates the complete OS date parser before `tools/yacc` exists.
+`HOST_MV_CP` and `HOST_MV_RM` bind the child tools compiled into host `mv`.
+The generated make wrapper preserves both selected paths.
+`printf` is required when the selected shell has no built-in `printf`.
 `-` makes the command available through the selected `PATH` only.
 The contract file contains the complete initial list of required roles.
 

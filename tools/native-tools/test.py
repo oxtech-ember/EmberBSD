@@ -30,7 +30,7 @@ args = sys.argv[1:]
 with open(os.environ["FIXTURE_LOG"], "a") as stream:
     stream.write(json.dumps({"command": name, "argv": args,
         "cwd": os.getcwd(), "env": {key: os.environ.get(key) for key in
-        ("PATH", "HOST_CC", "HOST_CXX", "HOST_SH", "HOST_YACC", "CONFIG_SHELL", "BSHELL",
+        ("PATH", "HOST_CC", "HOST_CXX", "HOST_SH", "HOST_YACC", "HOST_MV_CP", "HOST_MV_RM", "CONFIG_SHELL", "BSHELL",
          "SHELL", "HOST_CFLAGS", "HOST_LDFLAGS")}}) + "\n")
 if name == "make":
     if "-f-" in args:
@@ -55,6 +55,9 @@ elif name == "pwd":
     print(os.getcwd())
 elif name == "dirname":
     print(os.path.dirname(args[0]) or ".")
+elif name == "printf" and args[0] == "%s\\n":
+    for arg in args[1:]:
+        print(arg)
 elif name == "date":
     print("fixture-date")
 elif name == "mkdir":
@@ -139,6 +142,7 @@ class Fixture:
         self.env = {"PATH": str(self.hostile), "EMBER_NATIVE_TOOLS": str(self.routing),
             "HOST_CC": "/unselected/cc", "HOST_CXX": "/unselected/c++",
             "HOST_SH": "/unselected/sh", "HOST_YACC": "/unselected/yacc",
+            "HOST_MV_CP": "/unselected/cp", "HOST_MV_RM": "/unselected/rm",
             "SED": str(self.hostile / "sed"),
             "TMPDIR": str(self.root / "scratch"), "MACHINE": "amd64",
             "MACHINE_ARCH": "x86_64", "TOOLDIR": str(self.tooldir),
@@ -180,6 +184,8 @@ class RoutingTests(unittest.TestCase):
             self.assertEqual(row["env"]["HOST_CXX"], str(fixture.selected / "c++"))
             self.assertEqual(row["env"]["HOST_SH"], str(fixture.selected / "sh"))
             self.assertEqual(row["env"]["HOST_YACC"], str(fixture.selected / "yacc"))
+            self.assertEqual(row["env"]["HOST_MV_CP"], str(fixture.selected / "cp"))
+            self.assertEqual(row["env"]["HOST_MV_RM"], str(fixture.selected / "rm"))
             self.assertEqual(row["env"]["HOST_CFLAGS"], "-O2 -fPIC")
         wrapper = fixture.tooldir / "bin/nbmake-amd64"
         content = wrapper.read_text()
@@ -192,6 +198,8 @@ class RoutingTests(unittest.TestCase):
         replay = fixture.records()[-1]
         self.assertEqual(replay["argv"], ["fixture-replay"])
         self.assertEqual(replay["env"]["HOST_YACC"], str(fixture.selected / "yacc"))
+        self.assertEqual(replay["env"]["HOST_MV_CP"], str(fixture.selected / "cp"))
+        self.assertEqual(replay["env"]["HOST_MV_RM"], str(fixture.selected / "rm"))
         for key in ("HOST_SH", "BSHELL", "CONFIG_SHELL", "SHELL"):
             self.assertEqual(replay["env"][key], str(fixture.selected / "sh"))
 
@@ -199,6 +207,11 @@ class RoutingTests(unittest.TestCase):
         fixture = Fixture(self)
         (fixture.routing / "cc").unlink()
         self.assert_refused(fixture, "missing native tool: cc")
+
+    def test_missing_printf_is_refused(self):
+        fixture = Fixture(self)
+        (fixture.routing / "printf").unlink()
+        self.assert_refused(fixture, "missing native tool: printf")
 
     def test_missing_yacc_is_refused(self):
         fixture = Fixture(self)
@@ -261,7 +274,9 @@ class RoutingTests(unittest.TestCase):
         for option, variable in (("-V", "PATH=/bin"), ("-Z", "HOST_SH"),
                 ("-V", "_ember_native_make=/bin/false"),
                 ("-V", "SED=/bin/false"), ("-V", "HOST_YACC=/bin/false"),
-                ("-Z", "HOST_YACC")):
+                ("-Z", "HOST_YACC"), ("-V", "HOST_MV_CP=/bin/false"),
+                ("-V", "HOST_MV_RM=/bin/false"), ("-Z", "HOST_MV_CP"),
+                ("-Z", "HOST_MV_RM")):
             with self.subTest(variable=variable):
                 fixture = Fixture(self)
                 self.assert_refused(fixture, "Cannot change selected native tool",
