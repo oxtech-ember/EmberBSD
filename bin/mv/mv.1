@@ -132,6 +132,12 @@ rm -f destination_path && \e
 cp -PRp source_file destination_path && \e
 rm -rf source_file
 .Ed
+.Pp
+If a regular-file copy fails to preserve metadata or close a file,
+.Nm
+reports an error and keeps the source file.
+This includes failures to preserve ownership or file flags.
+The destination can be incomplete or absent after a failed copy.
 .Sh EXIT STATUS
 .Ex -std mv
 .Sh SEE ALSO
