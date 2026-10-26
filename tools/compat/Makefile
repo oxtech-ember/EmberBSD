@@ -21,12 +21,15 @@ SRCS=		atoll.c basename.c cdbr.c cdbw.c dirname.c \
 		sha256hl.c sha384hl.c sha512hl.c \
 		shquote.c \
 		snprintb.c snprintf.c \
-		stat_flags.c strlcat.c strlcpy.c strmode.c \
+		strlcat.c strlcpy.c strmode.c \
 		strcasecmp.c strncasecmp.c strcasestr.c strndup.c strnlen.c \
 		strsep.c strsuftoll.c strtonum.c strtoll.c \
 		unvis.c vis.c err.c errx.c errc.c verr.c verrx.c verrc.c \
 		vwarn.c vwarnx.c vwarnc.c warn.c warnx.c warnc.c \
 		fts.c glob.c
+
+.include "${.CURDIR}/listing.mk"
+SRCS+=		${COMPAT_LISTING_SRCS}
 
 .include "${.CURDIR}/efun.mk"
 SRCS+=		${COMPAT_EFUN_SRCS}
@@ -104,6 +107,8 @@ CONFIGURE_ARGS+=--silent
 .endif
 
 config.cache: include/.stamp configure nbtool_config.h.in defs.mk.in
+config.cache: ${COMPAT_LISTING_PROBES:@p@ probes/${p}.c @}
+config.cache: compat_acl_features.h
 config.cache: probes/func-mktime_z.c probes/func-timegm.c compat_parsedate_features.h
 	rm -f ${.TARGET}.tmp ${.TARGET}
 	CC=${HOST_CC:Q} CFLAGS=${HOST_CFLAGS:Q} CPPFLAGS=${HOST_CPPFLAGS:Q} \
@@ -116,9 +121,9 @@ config.cache: probes/func-mktime_z.c probes/func-timegm.c compat_parsedate_featu
 defs.mk: config.cache
 	@touch ${.TARGET}
 
-INCFILES=	nbtool_config.h
+INCFILES=	nbtool_config.h compat_listing.h compat_acl.h
 INCSUBDIRS=	sys machine rpc arpa
-CLEANDIRFILES+= ${INCFILES}
+CLEANDIRFILES+= nbtool_config.h
 
 # CLEANDIRFILES may not contain directory names
 cleandir:	cleandir.include

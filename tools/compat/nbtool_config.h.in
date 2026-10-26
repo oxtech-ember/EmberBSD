@@ -20,6 +20,24 @@
 /* Define to 1 if <alloca.h> works. */
 #undef HAVE_ALLOCA_H
 
+/* Define to 1 if the listing getbsize probe links. */
+#undef HAVE_LISTING_NATIVE_GETBSIZE
+
+/* Define to 1 if the listing humanize probe links. */
+#undef HAVE_LISTING_NATIVE_HUMANIZE
+
+/* Define to 1 if the listing native flags probe links. */
+#undef HAVE_LISTING_NATIVE_FLAGS
+
+/* Define to 1 if the listing stat flags probe links. */
+#undef HAVE_LISTING_STAT_FLAGS
+
+/* Define to 1 if the listing acl bsd probe links. */
+#undef HAVE_LISTING_ACL_BSD
+
+/* Define to 1 if the listing acl darwin probe links. */
+#undef HAVE_LISTING_ACL_DARWIN
+
 /* Define to 1 if you have the <arpa/nameser.h> header file. */
 #undef HAVE_ARPA_NAMESER_H
 
@@ -991,5 +1009,8 @@
 /* Define if you have u_int8_t, but not uint8_t. */
 #undef uint8_t
 
+#if defined(EMBERBSD_COMPAT_ACL_NATIVE_HEADERS) && HAVE_LISTING_ACL_BSD
+#include "compat_acl_features.h"
+#endif
 #include "compat_defs.h"
 #endif /* !__NETBSD_NBTOOL_CONFIG_H__ */

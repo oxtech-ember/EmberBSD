@@ -51,7 +51,11 @@ __RCSID("$NetBSD: stat_flags.c,v 1.3 2022/04/19 20:32:17 rillig Exp $");
 #include <string.h>
 #include <stdlib.h>
 
+#if HAVE_NBTOOL_CONFIG_H
+#include "compat_listing.h"
+#else
 #include "util.h"
+#endif
 
 #define	SAPPEND(s) do {							\
 	if (prefix != NULL)						\

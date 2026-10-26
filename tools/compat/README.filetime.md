@@ -23,7 +23,8 @@ filesystems, C analysis and memory checks require separate validation.
 
 The component is an initial OS input only. It does not qualify the complete
 OS compatibility library, the separate Ports library, or an ordinary SDK provider.
-Metadata and listing components remain separate future source changes.
+Metadata components remain separate future source changes.
+The [listing component](README.listing.md) has a separate contract and acceptance.
 The [parsedate component](README.parsedate.md) has a separate contract and acceptance.
 
 The native interface follows the existing NetBSD utimens implementation.
