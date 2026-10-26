@@ -29,6 +29,10 @@
  * SUCH DAMAGE.
  */
 
+#if HAVE_NBTOOL_CONFIG_H
+#include "nbtool_config.h"
+#endif
+
 #include <sys/cdefs.h>
 #ifndef lint
 __COPYRIGHT("@(#) Copyright (c) 1988, 1993, 1994, 2003\
@@ -85,13 +89,25 @@ main(int argc, char **argv)
 	int Hflag, Lflag, Rflag, ch, fflag, fts_options, hflag, rval, vflag, dflag;
 	char *cp, *reference;
 	int (*change_owner)(const char *, uid_t, gid_t);
+#if HAVE_NBTOOL_CONFIG_H
+	size_t namelen;
+#endif
 
 	setprogname(*argv);
 
 	(void)setlocale(LC_ALL, "");
 
 	myname = getprogname();
+#if HAVE_NBTOOL_CONFIG_H
+	/* Native tools can have a prefix and a host executable suffix. */
+	namelen = strlen(myname);
+	if (namelen >= 4 && strcmp(myname + namelen - 4, ".exe") == 0)
+		namelen -= 4;
+	ischown = namelen >= 5 &&
+	    memcmp(myname + namelen - 5, "chown", 5) == 0;
+#else
 	ischown = (myname[2] == 'o');
+#endif
 	reference = NULL;
 
 	Hflag = Lflag = Rflag = fflag = hflag = vflag = dflag = 0;
