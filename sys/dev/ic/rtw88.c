@@ -1612,10 +1612,11 @@ static int
 rtw88_ht20_policy_check(const struct rtw88_ht20_policy *p, unsigned operation)
 {
 
-	/* The net80211 envelope: modes 0, 2 with non-GF, and non-HT mixed 3. */
+	/* The net80211 envelope: mode 0 (also with non-GF present), mode 2
+	 * with non-GF, and non-HT mixed mode 3. */
 	if (p->qualification != RTW88_HT20_PROT_MF20_NO_RTS ||
-	    (operation != 0 && operation != 3 && operation != 6 &&
-	     operation != 7) ||
+	    (operation != 0 && operation != 3 && operation != 4 &&
+	     operation != 6 && operation != 7) ||
 	    (p->peer_cap & 0x1c) != 0x0c ||
 	    (p->secondary != 0 && p->secondary != 5 && p->secondary != 7) ||
 	    p->mtu < RTW88_HT20_MTU_MIN || p->mtu > RTW88_HT20_MTU_MAX ||

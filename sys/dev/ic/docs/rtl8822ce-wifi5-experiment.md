@@ -35,8 +35,9 @@ by an ordinary reboot.
   HT20 or VHT entry. MAX_AGG_NUM is bounded by half the recipient window and
   the AP's maximum A-MPDU length; the start spacing is the AP's. Raw, fixed,
   legacy and protection-limited frames are never aggregated.
-- Protection: HT protection modes 0 and 6, and on 5 GHz 3 and 7, without
-  RTS or CTS-to-self. Beacons may change the mode within that set.
+- Protection: HT operation words 0, 4 and 6, and on 5 GHz 3 and 7,
+  without RTS or CTS-to-self. Beacons may change the word within that set;
+  `htbcn` showed the AP moving between `0x0007` and `0x0004`.
 
 The deliberate deviations (Basic VHT-MCS set, protection mode 3, one PPDU
 per channel access) are described in

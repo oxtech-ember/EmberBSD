@@ -1495,7 +1495,7 @@ test_vht_diagnostics(void)
 		else if (reason == IEEE80211_HT20_RESET_FRAMING)
 			m->m_data[m->m_len - 6] = 40; /* Overlong VHT Op. */
 		else if (reason == IEEE80211_HT20_RESET_HT)
-			m->m_data[m->m_len - 73 + 32] ^= 0x04;
+			m->m_data[m->m_len - 73 + 32] ^= 0x01; /* Mode 1. */
 		CHECK(test_ic.ic_ht20_diag.resets == 0);
 		deliver_beacon(m);
 		CHECK(!test_node.ni_ht20.valid);
@@ -1529,7 +1529,7 @@ test_vht_protection_modes(void)
 			struct ieee80211_ht20_protection result;
 			uint16_t operation = (uint16_t)(high[h] | low);
 			int ok = operation == 0 || operation == 3 ||
-			    operation == 6 || operation == 7;
+			    operation == 4 || operation == 6 || operation == 7;
 
 			vht_bss.primary = 64; vht_bss.sco = 3; vht_bss.width = 1;
 			vht_bss.seg0 = 58; vht_bss.freq = 5320;

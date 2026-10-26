@@ -114,10 +114,12 @@ exactly `chan`.
 ### Deviation: HT protection mode 3
 
 The HT Operation protection envelope shared by HT20 and VHT accepts
-operation words 0, 6 and, deliberately and on 5 GHz only, non-HT mixed
-mode 3 (`0x0003`, or `0x0007` with non-greenfield stations present). The
-observed AP above advertises `0x0007`. No RTS/CTS or CTS-to-self exchange
-is added. The upstream rtw88 driver requests RTS only through `use_rts` or
+operation words 0, 4 (mode 0 with non-greenfield stations present, which
+needs no protection for a station that never sends greenfield), 6 and,
+deliberately and on 5 GHz only, non-HT mixed mode 3 (`0x0003`, or
+`0x0007` with non-greenfield stations present). The observed AP above
+advertises `0x0007` and moves between `0x0007` and `0x0004`. No RTS/CTS
+or CTS-to-self exchange is added. The upstream rtw88 driver requests RTS only through `use_rts` or
 the length threshold and does not read the HT Protection field; this
 deviation is not a claim of conformance with the base-standard HT
 protection rules (IEEE Std 802.11-2016 §10.26.3), which 802.11ac §9.23.6
@@ -141,8 +143,8 @@ checked against the committed contract, not byte for byte: the HT
 Capabilities SM power save and Greenfield bits and MCS 0-7, and in HT
 Operation the primary channel, the secondary offset and STA channel width,
 the third information field and the Basic MCS set must stay unchanged,
-while the operation word may move within the admitted envelope (0 and 6,
-and on 5 GHz 3 and 7). An AP that leaves it (for example `0x0004`, or
+while the operation word may move within the admitted envelope (0, 4 and
+6, and on 5 GHz 3 and 7). An AP that leaves it (for example mode 1 or
 OBSS `0x0010`) withdraws the HT/VHT profile and the station reassociates.
 
 ### Deviation: Basic VHT-MCS set

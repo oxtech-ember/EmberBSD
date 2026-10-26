@@ -469,7 +469,7 @@ static void
 test_ra_ht20_protection_bounds(void)
 {
  const uint8_t bssid[6]={2,0,0,0,0,1};
- for(unsigned kind=0;kind<28;kind++) {
+ for(unsigned kind=0;kind<29;kind++) {
   struct rtw88_softc sc;
   struct rtw88_ra_config cfg={.epoch=9,.channel=36,.common_rates=0xff0,
    .mode=RTW88_FIXED_11A,.phy=RTW88_RA_HT20_1SS,.ht_mcs=0xff,
@@ -507,12 +507,13 @@ test_ra_ht20_protection_bounds(void)
   case 25: cfg.phy=RTW88_RA_LEGACY;break;
   case 26: cfg.ht_operation=0x17;break; /* OBSS non-HT STAs present. */
   case 27: cfg.ht_operation=5;break; /* Non-member protection. */
+  case 28: cfg.ht_operation=4;break; /* Mode 0, non-GF present. */
   }
   unsigned writes=f.writes,box=sc.sc_h2c_box;
   struct rtw88_ra_state saved=sc.sc_ra;
   int error=rtw88_ra_configure(&sc,&cfg);
   /* Non-HT mixed mode 3 (and 7, with non-GF) is accepted like upstream. */
-  if(kind<6 || kind==20 || kind==21) {
+  if(kind<6 || kind==20 || kind==21 || kind==28) {
    CHECK(error==0 && sc.sc_ra.active && sc.sc_ra.ht_operation==cfg.ht_operation);
    CHECK(sc.sc_ra.ht.max_mpdu==cfg.ht.max_mpdu && sc.sc_ra.ht.mtu==cfg.ht.mtu);
    uint8_t packet[4096]={0};packet[0]=0x88;packet[1]=1;packet[4]=2;packet[16]=2;
