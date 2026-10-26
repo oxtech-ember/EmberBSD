@@ -46,6 +46,9 @@ Base headers and userland require the libedit source prepared from the canonical
 Ports recipe. Pass `EMBER_LIBEDIT_SOURCE` to native make or use the SDK
 `--libedit-source` option. See the [base libedit contract](lib/libedit/README.md).
 Kernel and host-tool bootstrap builds do not require this source.
+The native [bootstrap headers and CRT operations](tools/docs/cross-build.md#headers-and-crt-for-runtime-bootstrap)
+prepare the limited base inputs needed before the common LLVM runtime exists.
+They do not produce a complete application sysroot.
 
 ```sh
 EMBER_BUILD_MODE=cross EMBER_EXTERNAL_TOOLCHAIN=/absolute/llvm \

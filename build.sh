@@ -1254,6 +1254,8 @@ help()
     obj                 Run "make obj".  [Default unless -o is used]
     tools               Build and install tools.
     libs                Build and install target headers and libraries.
+    bootstrap-headers   Install limited base headers for runtime bootstrap.
+    bootstrap-crt       Install bootstrap headers and build OS CRT objects.
     install=IDIR        Run "make installworld" to IDIR to install all sets
                         except 'etc'.  Useful after "distribution" or "release".
     kernel=CONF         Build kernel with config file CONF.
@@ -1669,6 +1671,8 @@ parseoptions()
 			;;
 
 		build|\
+		bootstrap-headers|\
+		bootstrap-crt|\
 		cleandir|\
 		distribution|\
 		dtb|\
@@ -3076,6 +3080,7 @@ main()
 			statusmsg "Successful make ${op}"
 			;;
 
+		bootstrap-headers|bootstrap-crt|\
 		cleandir|obj|sourcesets|syspkgs|params|show-params)
 			${runcmd} "${makewrapper}" ${parallel} ${op} ||
 			    bomb "Failed to make ${op}"

@@ -113,6 +113,68 @@ Clang is selected. LLVM runtime integration and target execution must be
 verified separately; selecting Clang does not validate old in-tree LLVM
 runtime sources or establish a complete Clang-built release.
 
+### Headers and CRT for runtime bootstrap
+
+The native `build.sh` operations `bootstrap-headers` and `bootstrap-crt`
+prepare preliminary inputs for the common Ports LLVM runtime producer.
+They use the same source export, target, external compiler and native tool
+routing as other OS builds. Build the required OS host tools once with
+`tools`, or reuse compatible tools at the selected `-T` path.
+
+`bootstrap-headers` installs only the headers selected by `include`, `sys`,
+`lib/libpthread`, and `lib/libedit`, including their native header subdirectories.
+This supplies machine/system headers, C interfaces, pthread interfaces and
+the prepared common libedit histedit/readline interfaces. It does not install
+all base-library headers. It never enters `lib/libc` or the compiler runtime
+directories, so the old in-tree `unwind.h` and compiler-rt headers are excluded.
+The runtime producer adds the headers from its selected common LLVM source.
+
+Validate the libedit source against the selected Ports recipe with SDK
+[`prepare-libedit.py --validate`](https://github.com/oxtech-ember/EmberBSD-SDK/blob/main/docs/libedit.md)
+before building. `EMBER_LIBEDIT_SOURCE` is required even for this limited
+headers operation. The native file rule also installs its exact
+`ports.distinfo` at `/usr/share/emberbsd/ports/editline.distinfo`; this records
+the header source selection and does not claim an installed libedit library.
+Keep the prepared source and source export unchanged during the build.
+
+`bootstrap-crt` first runs `bootstrap-headers`, then only `lib/csu`
+`dependall` and `install`. It installs the OS startup and termination objects
+and their native aliases. Compilation and relocatable `ld -r` merges do not
+require a libc, builtins or unwind archive. This operation does not link a
+target executable or shared library.
+
+For example, with an existing SDK native routing directory and selected
+native shell, prepare amd64 inputs outside the source tree:
+
+```sh
+EMBER_NATIVE_TOOLS=/absolute/native-routing \
+  /absolute/host-prefix/bin/mksh "$src/build.sh" -U -u -c clang \
+  -m amd64 -a x86_64 -O /absolute/objects -T /absolute/os-tools \
+  -D /absolute/bootstrap-base -V NETBSDOBJDIR=/absolute/objects \
+  -V EXTERNAL_TOOLCHAIN=/absolute/llvm \
+  -V EMBER_LIBEDIT_SOURCE=/absolute/prepared-libedit \
+  -V MAKECONF=/dev/null -V MKCOMPAT=no -V MKX11=no \
+  -V MKMAN=no -V MKDOC=no -V MKINFO=no -V MKHTML=no \
+  -V MKLINT=no -V MKKMOD=no -V MKDTB=no -V MKRUMP=no \
+  tools bootstrap-crt
+```
+
+Pass the selected native compiler's host ABI flags as described in the
+[routing contract](../native-tools/README.md). Use `bootstrap-headers`
+instead of `bootstrap-crt` when only headers are needed. The destination is
+a partial base input tree, not an application sysroot, package or release.
+Record the actual OS commit, target, compiler commands, prepared libedit
+identity and installed input files when the runtime producer consumes it.
+The complete SDK runtime checks remain separate and unchanged.
+
+`tools/native-tools/test-bootstrap-base.py --make /selected/bmake` checks
+the real make flow, ordered CRT dispatch, early source/destination refusals,
+failure propagation, the amd64 header graph and CRT command expansion.
+`tools/native-tools/test.py --shell /selected/sh` checks `build.sh` dispatch.
+These tests use synthetic stage commands and do not compile or install a base.
+Actual headers/CRT compilation with the native Ports prefix remains a separate
+check before consuming their outputs.
+
 ### Reproducible debug paths
 
 Keep `MKREPRO=yes` with Clang or the explicit external GCC toolchain.

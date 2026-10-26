@@ -160,6 +160,17 @@ class Fixture:
 
 
 class RoutingTests(unittest.TestCase):
+    def test_bootstrap_headers_and_crt_dispatch(self):
+        for goal in ("bootstrap-headers", "bootstrap-crt"):
+            with self.subTest(goal=goal):
+                fixture = Fixture(self)
+                result = fixture.run(goal)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                calls = [row for row in fixture.records() if row["command"] == "make"]
+                self.assertTrue(any(row["argv"] == [goal] and
+                    row["cwd"] == str(fixture.source) for row in calls))
+                self.assertFalse(any(row["argv"] == ["build_install"] for row in calls))
+
     def assert_refused(self, fixture, message, *args):
         result = fixture.run(*args, "makewrapper")
         self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)

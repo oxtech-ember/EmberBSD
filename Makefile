@@ -35,6 +35,10 @@
 #
 #
 # Targets:
+#   bootstrap-headers:
+#	Install the base headers needed by the common LLVM runtime producer.
+#   bootstrap-crt:
+#	Install bootstrap headers and build only the native OS CRT objects.
 #   build:
 #	Builds a full release of NetBSD in DESTDIR, except for the
 #	/etc configuration files.
@@ -469,6 +473,40 @@ do-tools: .PHONY .MAKE
 
 do-lib: .PHONY .MAKE
 	${MAKEDIRTARGET} lib build_install
+
+# These are preliminary runtime inputs, not the complete base includes/libs.
+# In particular, do not enter libc: its old runtime headers and implementations
+# are not inputs to the common Ports LLVM producer.
+.if make(bootstrap-headers) || make(bootstrap-crt)
+.if empty(DESTDIR) || ${DESTDIR} == "/"
+.error Bootstrap headers and CRT require a separate DESTDIR
+.endif
+.include "${NETBSDSRCDIR}/lib/libedit/source.mk"
+.endif
+
+bootstrap-headers: .PHONY .MAKE
+.if ${MKOBJDIRS} != "no"
+	${MAKEDIRTARGET} . do-top-obj
+	${MAKEDIRTARGET} etc/mtree obj
+.endif
+	${MAKEDIRTARGET} . do-distrib-dirs
+.for dir in include sys lib/libpthread lib/libedit
+.if ${MKOBJDIRS} != "no"
+	${MAKEDIRTARGET} ${dir} obj
+.endif
+	${MAKEDIRTARGET} ${dir} includes
+.endfor
+	${MAKEDIRTARGET} lib/libedit ${DESTDIR}/usr/share/emberbsd/ports/editline.distinfo
+
+bootstrap-crt: .PHONY .MAKE bootstrap-headers
+.if ${MKOBJDIRS} != "no"
+	${MAKEDIRTARGET} lib/csu obj
+.endif
+.if ${MKUPDATE} == "no"
+	${MAKEDIRTARGET} lib/csu cleandir
+.endif
+	${MAKEDIRTARGET} lib/csu dependall
+	${MAKEDIRTARGET} lib/csu install
 
 do-compat-lib: .PHONY .MAKE
 	${MAKEDIRTARGET} compat build_install BOOTSTRAP_SUBDIRS="../../../lib"
