@@ -54,8 +54,9 @@ class LLVMSourceTests(unittest.TestCase):
         return subprocess.run(command, cwd=self.work, text=True,
             capture_output=True, timeout=30)
 
-    def test_libc_and_kernel_select_the_same_common_compiler_rt(self):
+    def test_base_and_kernel_select_the_same_common_compiler_rt(self):
         for consumer in ("lib/libc/compiler_rt/Makefile.inc",
+                         "lib/libm/compiler_rt/Makefile.inc",
                          "sys/lib/libkern/Makefile.compiler-rt"):
             for family in ("clang", "gcc"):
                 with self.subTest(consumer=consumer, family=family):
@@ -67,6 +68,7 @@ class LLVMSourceTests(unittest.TestCase):
 
     def test_base_and_kernel_require_common_sources_for_both_compilers(self):
         for consumer in ("lib/libc/compiler_rt/Makefile.inc",
+                         "lib/libm/compiler_rt/Makefile.inc",
                          "sys/lib/libkern/Makefile.compiler-rt",
                          "sys/lib/libunwind/Makefile.inc"):
             for family in ("clang", "gcc"):
@@ -87,6 +89,7 @@ class LLVMSourceTests(unittest.TestCase):
                    ("i386", "i386", "i386"))
         for machine, arch, cpu in targets:
             for consumer in ("lib/libc/compiler_rt/Makefile.inc",
+                             "lib/libm/compiler_rt/Makefile.inc",
                              "sys/lib/libkern/Makefile.compiler-rt"):
                 with self.subTest(architecture=arch, consumer=consumer):
                     result = self.query(consumer, ("SRCS",),

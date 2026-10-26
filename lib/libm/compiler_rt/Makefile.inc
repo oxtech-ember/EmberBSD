@@ -1,7 +1,14 @@
 # $NetBSD: Makefile.inc,v 1.12 2024/05/09 19:54:38 riastradh Exp $
 
 COMPILER_RT_DIR=	${NETBSDSRCDIR}/sys/external/bsd/compiler_rt
-COMPILER_RT_SRCDIR=	${COMPILER_RT_DIR}/dist
+.include <bsd.llvm-source.mk>
+.if !defined(EMBER_LLVM_SOURCE)
+.error Set EMBER_LLVM_SOURCE to the common Ports-prepared LLVM source root
+.endif
+COMPILER_RT_SRCDIR=	${EMBER_COMPILER_RT_SOURCE}
+.if !exists(${COMPILER_RT_SRCDIR}/lib/builtins/int_lib.h)
+.error EMBER_LLVM_SOURCE is missing compiler-rt/lib/builtins/int_lib.h
+.endif
 
 .if ${MACHINE_CPU} == "powerpc"
 COMPILER_RT_CPU_DIR=	${COMPILER_RT_SRCDIR}/lib/builtins/ppc
