@@ -14,6 +14,7 @@
   "headers": [
     "tools/compat/compat_listing.h",
     "tools/compat/compat_acl.h",
+    "tools/compat/compat_acl_features.h",
     "tools/compat/namespace.h",
     "tools/compat/bootstrap_cdefs.h"
   ],
@@ -62,7 +63,7 @@
     "HAVE_LISTING_ACL_DARWIN"
   ],
   "config_preamble": "/* Actual listing probes only; not a full OS configuration. */\n#ifndef EMBERBSD_LISTING_CONFIG_H\n#define EMBERBSD_LISTING_CONFIG_H\n#include \"bootstrap_cdefs.h\"\n#define HAVE_NBTOOL_CONFIG_H 1\n",
-  "config_postamble": "#define HAVE_STRUCT_STAT_ST_FLAGS HAVE_LISTING_STAT_FLAGS\n#include \"compat_listing.h\"\n#include \"compat_acl.h\"\n#endif /* EMBERBSD_LISTING_CONFIG_H */\n",
+  "config_postamble": "#define HAVE_STRUCT_STAT_ST_FLAGS HAVE_LISTING_STAT_FLAGS\n#if defined(EMBERBSD_COMPAT_ACL_NATIVE_HEADERS) && HAVE_LISTING_ACL_BSD\n#include \"compat_acl_features.h\"\n#endif\n#include \"compat_listing.h\"\n#include \"compat_acl.h\"\n#endif /* EMBERBSD_LISTING_CONFIG_H */\n",
   "provenance": [
     "tools/compat/configure.ac",
     "tools/compat/configure",
@@ -72,6 +73,12 @@
     "tools/compat/test-listing.py",
     "include/stdlib.h",
     "include/util.h",
-    "tests/lib/libc/gen/t_humanize_number.c"
+    "tests/lib/libc/gen/t_humanize_number.c",
+    "include/unistd.h",
+    "sys/sys/unistd.h",
+    "sys/sys/stat.h",
+    "sys/sys/types.h",
+    "sys/sys/endian.h",
+    "sys/sys/featuretest.h"
   ]
 }

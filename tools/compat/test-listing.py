@@ -12,6 +12,77 @@ ROOT = Path(__file__).resolve().parents[2]
 COMPAT = ROOT / 'tools/compat'
 
 class ListingSourceTests(unittest.TestCase):
+    def test_acl_native_headers_use_one_scoped_netbsd_adapter(self):
+        source = (COMPAT / 'compat_acl.c').read_text()
+        self.assertIn('#define EMBERBSD_COMPAT_ACL_NATIVE_HEADERS 1\n#include "nbtool_config.h"\n#undef EMBERBSD_COMPAT_ACL_NATIVE_HEADERS', source)
+        hook = ('#if defined(EMBERBSD_COMPAT_ACL_NATIVE_HEADERS) && HAVE_LISTING_ACL_BSD\n'
+                '#include "compat_acl_features.h"\n#endif\n')
+        for name in ('configure.ac', 'nbtool_config.h.in'):
+            text = (COMPAT / name).read_text()
+            self.assertIn(hook + '#include "compat_defs.h"', text)
+        probe = (COMPAT / 'probes/listing-acl-bsd.c').read_text()
+        self.assertEqual(re.search(r'^#include (.*)$', probe, re.M).group(1),
+                         '"compat_acl_features.h"')
+        value = json.loads((COMPAT / 'bootstrap-listing.json').read_text())
+        self.assertIn(hook, value['config_postamble'])
+        self.assertIn('tools/compat/compat_acl_features.h', value['headers'])
+        adapter = (COMPAT / 'compat_acl_features.h').read_text()
+        # Restricted types/endian must precede the local feature expansion.
+        start = adapter.index('#define _NETBSD_SOURCE 1')
+        end = adapter.index('#undef _NETBSD_SOURCE')
+        for header in ('sys/types.h', 'sys/endian.h', 'sys/time.h', 'sys/param.h'):
+            self.assertLess(adapter.index('#include <' + header + '>'), start)
+        for header in ('sys/stat.h', 'sys/acl.h', 'unistd.h'):
+            pos = adapter.index('#include <' + header + '>')
+            self.assertLess(start, pos)
+            self.assertLess(pos, end)
+        self.assertIn('#if defined(__NetBSD__)', adapter)
+        self.assertIn('#ifdef _NETBSD_SOURCE\n#error', adapter)
+        self.assertNotIn('HAVE_LISTING_', adapter)
+        self.assertNotIn('extern ', adapter)
+        defs = (COMPAT / 'compat_defs.h').read_text()
+        self.assertIn('#error _NETBSD_SOURCE is *not* to be defined.', defs)
+        self.assertNotIn('compat_acl_features.h', defs)
+        self.assertIn('config.cache: compat_acl_features.h', (COMPAT / 'Makefile').read_text())
+        self.assertIn('#undef EMBERBSD_COMPAT_ACL_NATIVE_HEADERS\n'
+                      '/* Finite Darwin builds preinclude their configuration before this source. */\n'
+                      '#if HAVE_LISTING_ACL_BSD\n#include "compat_acl_features.h"\n#endif', source)
+        for path in value['sources']:
+            if path != 'tools/compat/compat_acl.c':
+                self.assertNotIn('EMBERBSD_COMPAT_ACL_NATIVE_HEADERS', (ROOT / path).read_text())
+
+    def test_netbsd_extension_preload_preserves_normal_fallback_definitions(self):
+        # These retained source headers explain why restricted preload is required.
+        endian = (ROOT / 'sys/sys/endian.h').read_text()
+        self.assertIn('#ifdef _NETBSD_SOURCE', endian)
+        self.assertIn('__GEN_ENDIAN_ENC(16, be)', endian)
+        types = (ROOT / 'sys/sys/types.h').read_text()
+        self.assertIn('#include <machine/endian.h>', types)
+        feature = (ROOT / 'sys/sys/featuretest.h').read_text()
+        self.assertIn('!defined(_XOPEN_SOURCE) && !defined(_NETBSD_SOURCE)', feature)
+        defs = (COMPAT / 'compat_defs.h').read_text()
+        self.assertIn('#if !HAVE_DECL_BE16ENC\n__GEN_ENDIAN_ENC(16, be)', defs)
+        native = (ROOT / 'sys/sys/stat.h').read_text()
+        pattern = r'^#define\s+((?:UF|SF)_[A-Z]+)\s+(0x[0-9a-fA-F]+)'
+        native_flags = dict(re.findall(pattern, native, re.M))
+        for name, value in re.findall(pattern, defs, re.M):
+            self.assertEqual(value, native_flags[name], name)
+        for path, identifier in (('include/unistd.h', ' lpathconf('),
+                                 ('sys/sys/unistd.h', '_PC_ACL_NFS4'),
+                                 ('sys/sys/stat.h', 'S_ISWHT(')):
+            stack = []
+            found = False
+            for line in (ROOT / path).read_text().splitlines():
+                if re.match(r'^#\s*(if|ifdef|ifndef)\b', line):
+                    stack.append(line)
+                elif re.match(r'^#\s*endif\b', line):
+                    stack.pop()
+                if identifier in line:
+                    self.assertTrue(any('_NETBSD_SOURCE' in guard for guard in stack), path)
+                    found = True
+                    break
+            self.assertTrue(found, path)
+
     def test_normal_and_finite_share_full_source_fragment(self):
         fragment = COMPAT / 'listing.mk'
         self.assertTrue(fragment.is_file(), 'the common listing source fragment is missing')

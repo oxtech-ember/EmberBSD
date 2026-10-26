@@ -20,6 +20,17 @@ The BSD backend preserves the [ls ACL selection](../../bin/ls/print.c):
 NFS4, then ACCESS, with device and whiteout exclusion.
 An unavailable backend returns ENOTSUP. It never reports an unsupported ACL as absent.
 
+[compat_acl_features.h](compat_acl_features.h) opens the NetBSD ACL header namespace
+only for the shared backend probe and its implementation.
+The normal configuration selects POSIX headers before this adapter runs.
+Restricted types, endian, time and parameter headers are loaded first.
+This prevents duplicate fallback definitions in compat_defs.h.
+The adapter then loads native stat, ACL and unistd declarations with a local
+`_NETBSD_SOURCE` definition. It removes that definition before compat_defs.h.
+Caller-supplied `_NETBSD_SOURCE` remains an error. Other host namespaces remain unchanged.
+The finite Darwin configuration includes the same adapter, which does nothing on Darwin.
+This build-only header is a source input, not a public component export.
+
 The Darwin backend uses public lstatx_np and filesec property APIs.
 An absent FILESEC_ACL property means no ACL. A failed path lookup remains an error.
 A present property must produce a valid ACL before its first entry is inspected.

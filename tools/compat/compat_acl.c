@@ -5,7 +5,13 @@
  * Public native API composition. No Apple implementation is copied.
  * BSD selection follows bin/ls/print.c; target ls remains unchanged.
  */
+#define EMBERBSD_COMPAT_ACL_NATIVE_HEADERS 1
 #include "nbtool_config.h"
+#undef EMBERBSD_COMPAT_ACL_NATIVE_HEADERS
+/* Finite Darwin builds preinclude their configuration before this source. */
+#if HAVE_LISTING_ACL_BSD
+#include "compat_acl_features.h"
+#endif
 #include <sys/types.h>
 #include <sys/stat.h>
 #if HAVE_LISTING_ACL_BSD || HAVE_LISTING_ACL_DARWIN

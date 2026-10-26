@@ -33,7 +33,10 @@ AH_TOP([/*      $][NetBSD$    */
 #ifndef __NETBSD_NBTOOL_CONFIG_H__
 #define __NETBSD_NBTOOL_CONFIG_H__])
 
-AH_BOTTOM([#include "compat_defs.h"
+AH_BOTTOM([#if defined(EMBERBSD_COMPAT_ACL_NATIVE_HEADERS) && HAVE_LISTING_ACL_BSD
+#include "compat_acl_features.h"
+#endif
+#include "compat_defs.h"
 #endif /* !__NETBSD_NBTOOL_CONFIG_H__ */])
 
 AC_DEFUN([NB_NETBSD], [dnl

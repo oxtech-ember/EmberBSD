@@ -108,6 +108,7 @@ CONFIGURE_ARGS+=--silent
 
 config.cache: include/.stamp configure nbtool_config.h.in defs.mk.in
 config.cache: ${COMPAT_LISTING_PROBES:@p@ probes/${p}.c @}
+config.cache: compat_acl_features.h
 config.cache: probes/func-mktime_z.c probes/func-timegm.c compat_parsedate_features.h
 	rm -f ${.TARGET}.tmp ${.TARGET}
 	CC=${HOST_CC:Q} CFLAGS=${HOST_CFLAGS:Q} CPPFLAGS=${HOST_CPPFLAGS:Q} \

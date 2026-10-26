@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Copyright (c) 2026 EmberBSD contributors. */
 /* Origin: EmberBSD (AI-assisted). */
+#include "compat_acl_features.h"
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/acl.h>
