@@ -1774,12 +1774,17 @@ ieee80211_ioctl_setoptie(struct ieee80211com *ic, struct ieee80211req *ireq)
 	if (ie == NULL)
 		return ENOMEM;
 	error = copyin(ireq->i_data, ie, ireq->i_len);
+	if (error != 0) {
+		/* Keep the installed element; never publish unwritten bytes. */
+		free(ie, M_DEVBUF);
+		return error;
+	}
 	/* XXX sanity check data? */
 	if (ic->ic_opt_ie != NULL)
 		free(ic->ic_opt_ie, M_DEVBUF);
 	ic->ic_opt_ie = ie;
 	ic->ic_opt_ie_len = ireq->i_len;
-	return error;
+	return 0;
 }
 
 static int

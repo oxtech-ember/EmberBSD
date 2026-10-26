@@ -38,7 +38,8 @@ Publish the directory atomically through the SDK publication interface.
 Do not append ambient directories to its `PATH`.
 
 The OS checks protocol compatibility and routing completeness.
-The SDK owns tool qualification, identities, hashes, ABI flags, and lifetime.
+The SDK checks the selected host prefix, executable architecture, and tool routes.
+It supplies native ABI flags. No qualification receipt or tool hash is required.
 This interface does not copy the SDK native-toolset schema.
 The OS accepts absolute paths with characters from
 `A-Z a-z 0-9 _ . / + @ % = -` only.
@@ -70,12 +71,12 @@ The make engine does not select its recipe shell from those variables alone.
 This first pilot covers `build.sh`, make selection, wrapper generation, and
 dispatch to the `tools` make target.
 It does not qualify a native toolset or all nested configure routes.
-Generated `TOOLDIR` tools need separate provenance and closure checks.
+Generated `TOOLDIR` tools remain build outputs for the selected host.
 Some tools makefiles add `TOOLDIR/bin` to `PATH`.
 Third-party configure scripts can call absolute host paths.
-These routes need an accepted producer contract before a production build.
-The SDK sysroot and release execution gates must stay closed until that proof.
-This OS interface is not permission to bypass them.
+Use the selected prefix for those commands and fix any external tool selection.
+A known missing tool or incorrect route must report its concrete error.
+There is no separate producer admission or unconditional SDK execution gate.
 
 Run the control-flow checks with one explicit test shell and Python:
 
@@ -87,6 +88,6 @@ The tests execute the actual `build.sh` with synthetic tools and make.
 They replay its generated wrapper and check refusal cases.
 They do not run configure, a compiler, or a native-tool qualification probe.
 They do not prove that a real NetBSD make uses the selected recipe shell.
-That check must use the qualified make after native-toolset admission.
+Run that check with make from the selected host prefix.
 Use `--build-sh /path/to/older/build.sh` with
 `RoutingTests.test_tools_dispatch_and_wrapper_replay` as a causal negative control.

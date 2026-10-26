@@ -37,6 +37,10 @@ SRCS+=		${COMPAT_EFUN_SRCS}
 .include "${.CURDIR}/filetime.mk"
 SRCS+=		${COMPAT_FILETIME_SRCS}
 
+.include "${.CURDIR}/filemeta.mk"
+SRCS+=		${COMPAT_FILEMETA_SRCS}
+compat_filemeta.o: ${COMPAT_FILEMETA_HEADERS}
+
 BUILD_OSTYPE!=  uname -s
 
 # Disable use of pre-compiled headers for Clang on Darwin.
@@ -107,8 +111,10 @@ CONFIGURE_ARGS+=--silent
 .endif
 
 config.cache: include/.stamp configure nbtool_config.h.in defs.mk.in
+config.cache: ${COMPAT_FILEMETA_PROBES} ${COMPAT_FILEMETA_HEADERS}
 config.cache: ${COMPAT_LISTING_PROBES:@p@ probes/${p}.c @}
-config.cache: compat_acl_features.h
+config.cache: compat_acl_features.h compat_native_features.h compat_native_acl.h
+compat_acl.o: compat_acl_features.h compat_native_features.h compat_native_acl.h
 config.cache: probes/func-mktime_z.c probes/func-timegm.c compat_parsedate_features.h
 	rm -f ${.TARGET}.tmp ${.TARGET}
 	CC=${HOST_CC:Q} CFLAGS=${HOST_CFLAGS:Q} CPPFLAGS=${HOST_CPPFLAGS:Q} \
@@ -121,7 +127,8 @@ config.cache: probes/func-mktime_z.c probes/func-timegm.c compat_parsedate_featu
 defs.mk: config.cache
 	@touch ${.TARGET}
 
-INCFILES=	nbtool_config.h compat_listing.h compat_acl.h
+INCFILES=	nbtool_config.h compat_listing.h compat_acl.h compat_filemeta.h \
+		compat_stat_time.h
 INCSUBDIRS=	sys machine rpc arpa
 CLEANDIRFILES+= nbtool_config.h
 

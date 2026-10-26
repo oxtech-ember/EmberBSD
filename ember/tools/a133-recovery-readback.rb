@@ -10,8 +10,8 @@ module A133Recovery
         adb.encoding.ascii_compatible? && adb.valid_encoding? && !adb.b.include?("\0")
       @policy=policy
       @state=state.is_a?(String) ? state.dup.freeze : state
-      @source=A133UsbBackup::Source.new(adb:adb.is_a?(String) ? adb.dup.freeze : adb,
-        serial:policy.data[:serial],state:@state,root_method:root_method,timeout:timeout)
+      @source=policy.source(adb:adb.is_a?(String) ? adb.dup.freeze : adb,
+        state:@state,root_method:root_method,timeout:timeout)
     rescue A133Usb::Invalid,A133UsbBackup::Invalid => error
       raise_failure(error)
     end

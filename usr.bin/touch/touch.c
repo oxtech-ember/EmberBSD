@@ -29,6 +29,11 @@
  * SUCH DAMAGE.
  */
 
+/* Origin: EmberBSD (AI-assisted). Keep the normal host compatibility route. */
+#if HAVE_NBTOOL_CONFIG_H
+#include "nbtool_config.h"
+#endif
+
 #include <sys/cdefs.h>
 #ifndef lint
 __COPYRIGHT("@(#) Copyright (c) 1993\
@@ -52,15 +57,30 @@ __RCSID("$NetBSD: touch.c,v 1.40 2024/02/10 00:19:30 kre Exp $");
 #include <fcntl.h>
 #include <limits.h>
 #include <math.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <locale.h>
 #include <time.h>
-#include <tzfile.h>
 #include <unistd.h>
-#include <util.h>
 #include <getopt.h>
+
+#if HAVE_NBTOOL_CONFIG_H
+#include "compat_filetime.h"
+#include "compat_parsedate.h"
+/* ISO C struct tm years count from 1900. */
+#ifndef TM_YEAR_BASE
+#define TM_YEAR_BASE 1900
+#endif
+#if HAVE_STRUCT_STAT_ST_ATIM
+#define st_atimespec st_atim
+#define st_mtimespec st_mtim
+#endif
+#else
+#include <tzfile.h>
+#include <util.h>
+#endif
 
 static void	stime_arg0(const char *, struct timespec *);
 static void	stime_arg1(char *, struct timespec *);
@@ -204,8 +224,10 @@ main(int argc, char *argv[])
 			ts[1] = sb.st_mtimespec;
 
 		if (Dflag &&
-		    timespeccmp(&ts[0], &sb.st_atimespec, ==) &&
-		    timespeccmp(&ts[1], &sb.st_mtimespec, ==))
+		    ts[0].tv_sec == sb.st_atimespec.tv_sec &&
+		    ts[0].tv_nsec == sb.st_atimespec.tv_nsec &&
+		    ts[1].tv_sec == sb.st_mtimespec.tv_sec &&
+		    ts[1].tv_nsec == sb.st_mtimespec.tv_nsec)
 			continue;
 
 		/* Try utimes(2). */
@@ -238,8 +260,9 @@ main(int argc, char *argv[])
 static void
 stime_arg0(const char *arg, struct timespec *tsp)
 {
+	errno = 0;
 	tsp[1].tv_sec = tsp[0].tv_sec = parsedate(arg, NULL, NULL);
-	if (tsp[0].tv_sec == NO_TIME)
+	if (tsp[0].tv_sec == NO_TIME && errno != 0)
 		errx(EXIT_FAILURE, "Could not parse `%s'", arg);
 	tsp[0].tv_nsec = tsp[1].tv_nsec = 0;
 }
@@ -305,8 +328,9 @@ stime_arg1(char *arg, struct timespec *tsp)
 
 	t->tm_isdst = -1;		/* Figure out DST. */
 	tm = *t;
+	errno = 0;
 	tsp[0].tv_sec = tsp[1].tv_sec = mktime(t);
-	if (tsp[0].tv_sec == NO_TIME || difftm(t, &tm))
+	if ((tsp[0].tv_sec == NO_TIME && errno != 0) || difftm(t, &tm))
  terr:		errx(EXIT_FAILURE, "out of range or bad time specification:\n"
 		    "\t'%s' should be [[CC]YY]MMDDhhmm[.ss]", initarg);
 
@@ -339,8 +363,9 @@ stime_arg2(const char *arg, int year, struct timespec *tsp)
 
 	t->tm_isdst = -1;		/* Figure out DST. */
 	tm = *t;
+	errno = 0;
 	tsp[0].tv_sec = tsp[1].tv_sec = mktime(t);
-	if (tsp[0].tv_sec == NO_TIME || difftm(t, &tm))
+	if ((tsp[0].tv_sec == NO_TIME && errno != 0) || difftm(t, &tm))
 		errx(EXIT_FAILURE,
 		    "out of range or bad time specification: MMDDhhmm[YY]");
 

@@ -1612,10 +1612,11 @@ static int
 rtw88_ht20_policy_check(const struct rtw88_ht20_policy *p, unsigned operation)
 {
 
-	/* The net80211 envelope: modes 0, 2 with non-GF, and non-HT mixed 3. */
+	/* The net80211 envelope: mode 0 (also with non-GF present), mode 2
+	 * with non-GF, and non-HT mixed mode 3. */
 	if (p->qualification != RTW88_HT20_PROT_MF20_NO_RTS ||
-	    (operation != 0 && operation != 3 && operation != 6 &&
-	     operation != 7) ||
+	    (operation != 0 && operation != 3 && operation != 4 &&
+	     operation != 6 && operation != 7) ||
 	    (p->peer_cap & 0x1c) != 0x0c ||
 	    (p->secondary != 0 && p->secondary != 5 && p->secondary != 7) ||
 	    p->mtu < RTW88_HT20_MTU_MIN || p->mtu > RTW88_HT20_MTU_MAX ||
@@ -1637,6 +1638,48 @@ rtw88_channel_narrow(const struct rtw88_softc *sc)
 }
 
 #ifdef RTW88_VHT80
+struct rtw88_vht_rate_set {
+	unsigned mask;
+	uint8_t rate_id, seed;
+};
+
+unsigned
+rtw88_vht_nss(const struct rtw88_softc *sc)
+{
+	const struct rtw88_hw_feature *r = &sc->sc_hw_feature.report;
+	const unsigned known = RTW88_HW_KNOWN_NSS | RTW88_HW_KNOWN_ANTENNAS;
+
+	return sc->sc_hw_feature.observed && (r->known & known) == known &&
+	    r->nss == 2 && r->antennas == 2 ? 2 : 1;
+}
+
+/*
+ * main.c get_rate_id/get_vht_ra_mask and tx.c get_highest_vht_tx_rate
+ * for one negotiated VHT TX map: NSS1 required, NSS2 only on proven 2T2R
+ * hardware, no third stream. Entries 0, 1 and 2 are MCS0-7, 0-8 and 0-9:
+ * NSS1 bits 12..21 and NSS2 bits 22..31 of the RA mask. The descriptor
+ * seed is the highest MCS of the highest stream.
+ */
+static int
+rtw88_vht_rates(const struct rtw88_softc *sc, unsigned map,
+    struct rtw88_vht_rate_set *out)
+{
+	static const unsigned bits[3] = { 0xff, 0x1ff, 0x3ff };
+	unsigned nss1 = map & 3, nss2 = (map >> 2) & 3;
+
+	if ((map >> 4) != 0xfff || nss1 == 3 ||
+	    (nss2 != 3 && rtw88_vht_nss(sc) < 2))
+		return EOPNOTSUPP;
+	if (out == NULL)
+		return 0;
+	out->mask = bits[nss1] << 12 | (nss2 != 3 ? bits[nss2] << 22 : 0);
+	/* RTW_RATEID_ARFR0_AC_2SS and _ARFR1_AC_1SS; DESC_RATEVHT2SS_MCS0
+	 * 0x36 and DESC_RATEVHT1SS_MCS0 0x2c. */
+	out->rate_id = nss2 != 3 ? 9 : 10;
+	out->seed = (uint8_t)(nss2 != 3 ? 0x36 + 7 + nss2 : 0x2c + 7 + nss1);
+	return 0;
+}
+
 /*
  * An admitted 40 or 80 MHz tuple whose actual PHY and power program is
  * committed in this generation, with its primary in sc_channel.
@@ -1736,10 +1779,11 @@ rtw88_ra_configure(struct rtw88_softc *sc, const struct rtw88_ra_config *cfg)
 	if (cfg == NULL || cfg->epoch == 0 || cfg->use_protection > 1 ||
 	    cfg->channel == 0 || cfg->channel != sc->sc_channel ||
 	    cfg->common_rates == 0 || (cfg->common_rates & ~0xfffU) != 0 ||
-	    cfg->sgi > 1 || (cfg->sgi && cfg->phy == RTW88_RA_LEGACY))
+	    cfg->sgi > 1 || (cfg->sgi && cfg->phy == RTW88_RA_LEGACY) ||
+	    cfg->ldpc > 1 || (cfg->ldpc && cfg->phy == RTW88_RA_LEGACY))
 		return EINVAL;
 #ifndef RTW88_VHT80
-	if (cfg->sgi)
+	if (cfg->sgi || cfg->ldpc)
 		return EOPNOTSUPP;
 #endif
 	if (cfg->phy == RTW88_RA_HT20_1SS) {
@@ -1756,7 +1800,7 @@ rtw88_ra_configure(struct rtw88_softc *sc, const struct rtw88_ra_config *cfg)
 		    cfg->use_protection != 0 ||
 		    rtw88_ht20_policy_check(&cfg->ht, cfg->ht_operation) != 0 ||
 		    cfg->profile_generation == 0 || cfg->ht_mcs != 0 ||
-		    cfg->vht_tx_map != RTW88_VHT_MAP_NSS1_MCS7 ||
+		    rtw88_vht_rates(sc, cfg->vht_tx_map, NULL) != 0 ||
 		    (cfg->common_rates & 0x10) == 0)
 			return EOPNOTSUPP;
 #endif
@@ -1811,15 +1855,19 @@ rtw88_ra_configure(struct rtw88_softc *sc, const struct rtw88_ra_config *cfg)
 	ra.ht = cfg->ht;
 	ra.vht_tx_map = cfg->vht_tx_map;
 	ra.sgi = cfg->sgi;
+	ra.ldpc = cfg->ldpc;
 	ra.tuple = sc->sc_phy.channel;
 	if (cfg->phy == RTW88_RA_HT20_1SS) {
 		ra.rate_id = 5; /* Pinned RTW_RATEID_GN_N1SS, 5 GHz only. */
 		mask = (unsigned)cfg->ht_mcs << 12 | (mask & 0x30);
 #ifdef RTW88_VHT80
 	} else if (cfg->phy == RTW88_RA_VHT_1SS) {
-		ra.rate_id = 10; /* Pinned RTW_RATEID_ARFR1_AC_1SS. */
-		/* main.c get_vht_ra_mask: NSS1 code0 is bits12..19. */
-		mask = 0xffU << 12 | (mask & 0x10);
+		struct rtw88_vht_rate_set rates;
+
+		(void)rtw88_vht_rates(sc, cfg->vht_tx_map, &rates);
+		ra.rate_id = rates.rate_id;
+		ra.vht_seed = rates.seed;
+		mask = rates.mask | (mask & 0x10);
 #endif
 	} else if ((mask & ~0xfU) == 0)
 		ra.rate_id = RTW88_RATEID_B_20M;
@@ -1840,7 +1888,8 @@ rtw88_ra_configure(struct rtw88_softc *sc, const struct rtw88_ra_config *cfg)
 	}
 	/* Initial RA level1; bit7 SGI_EN lets firmware RA choose short GI. */
 	payload[1] = ra.rate_id | (1U << 5) | (unsigned)ra.sgi << 7;
-	payload[2] = 0x40; /* DIS_PT, BW20, LDPC0, NO_UPDATE0, VHT0. */
+	/* DIS_PT, BW20, NO_UPDATE0, VHT0; bit2 LDPC. */
+	payload[2] = 0x40 | (unsigned)ra.ldpc << 2;
 	if (ra.phy == RTW88_RA_VHT_1SS)
 		/* VHT1 and the committed width: BW40 1, BW80 2. */
 		payload[2] |= 0x10 | (ra.tuple.width_mhz == 80 ? 2 : 1);
@@ -1977,6 +2026,9 @@ rtw88_tx_submit(struct rtw88_softc *sc, unsigned q, const void *frame,
 		tx.rate_id = sc->sc_ra.rate_id;
 		tx.rate = (uint8_t)__builtin_ctz(sc->sc_ra.mask);
 		tx.flags &= ~(RTW88_TX_USE_RATE | RTW88_TX_DIS_RATE_FB);
+		/* tx.c: DATA_LDPC follows the entry's LDPC. */
+		if (sc->sc_ra.ldpc)
+			tx.flags |= RTW88_TX_LDPC;
 	}
 	if (agg != NULL) {
 		/* tx.c rtw_tx_fill_tx_desc: AGG_EN, AMPDU_DEN, MAX_AGG_NUM. */
@@ -1987,7 +2039,7 @@ rtw88_tx_submit(struct rtw88_softc *sc, unsigned q, const void *frame,
 #ifdef RTW88_VHT80
 	if (vht) {
 		/* tx.c get_highest_vht_tx_rate seed, not the lowest RA bit. */
-		tx.rate = 0x33; /* DESC_RATEVHT1SS_MCS7. */
+		tx.rate = sc->sc_ra.vht_seed;
 		/* DATA_BW 40 MHz 1, 80 MHz 2. */
 		tx.bandwidth = sc->sc_phy.channel.width_mhz == 80 ? 2 : 1;
 		tx.data_sc = RTW88_TX_DATA_SC_DONT_CARE;

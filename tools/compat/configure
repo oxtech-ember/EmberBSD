@@ -6782,6 +6782,248 @@ then :
 
 fi
 
+# Use the same typed metadata probes in normal and finite builds.
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for filemeta-open native declarations and link" >&5
+printf %s "checking for filemeta-open native declarations and link... " >&6; }
+if test ${ac_cv_filemeta_open+y}
+then :
+  printf %s "(cached) " >&6
+else case e in #(
+  e)
+    cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+#include "$srcdir/probes/filemeta-open.c"
+_ACEOF
+if ac_fn_c_try_link "$LINENO"
+then :
+  ac_cv_filemeta_open=yes
+else case e in #(
+  e) ac_cv_filemeta_open=no ;;
+esac
+fi
+rm -f core conftest.err conftest.$ac_objext conftest.beam \
+    conftest$ac_exeext conftest.$ac_ext ;;
+esac
+fi
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $ac_cv_filemeta_open" >&5
+printf "%s\n" "$ac_cv_filemeta_open" >&6; }
+if test "x$ac_cv_filemeta_open" = xyes
+then :
+
+    printf "%s\n" "#define HAVE_FILEMETA_OPEN 1" >>confdefs.h
+
+fi
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for filemeta-regular-open native declarations and link" >&5
+printf %s "checking for filemeta-regular-open native declarations and link... " >&6; }
+if test ${ac_cv_filemeta_regular_open+y}
+then :
+  printf %s "(cached) " >&6
+else case e in #(
+  e)
+    cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+#include "$srcdir/probes/filemeta-regular-open.c"
+_ACEOF
+if ac_fn_c_try_link "$LINENO"
+then :
+  ac_cv_filemeta_regular_open=yes
+else case e in #(
+  e) ac_cv_filemeta_regular_open=no ;;
+esac
+fi
+rm -f core conftest.err conftest.$ac_objext conftest.beam \
+    conftest$ac_exeext conftest.$ac_ext ;;
+esac
+fi
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $ac_cv_filemeta_regular_open" >&5
+printf "%s\n" "$ac_cv_filemeta_regular_open" >&6; }
+if test "x$ac_cv_filemeta_regular_open" = xyes
+then :
+
+    printf "%s\n" "#define HAVE_FILEMETA_REGULAR_OPEN 1" >>confdefs.h
+
+fi
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for filemeta-acl-darwin native declarations and link" >&5
+printf %s "checking for filemeta-acl-darwin native declarations and link... " >&6; }
+if test ${ac_cv_filemeta_acl_darwin+y}
+then :
+  printf %s "(cached) " >&6
+else case e in #(
+  e)
+    cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+#include "$srcdir/probes/filemeta-acl-darwin.c"
+_ACEOF
+if ac_fn_c_try_link "$LINENO"
+then :
+  ac_cv_filemeta_acl_darwin=yes
+else case e in #(
+  e) ac_cv_filemeta_acl_darwin=no ;;
+esac
+fi
+rm -f core conftest.err conftest.$ac_objext conftest.beam \
+    conftest$ac_exeext conftest.$ac_ext ;;
+esac
+fi
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $ac_cv_filemeta_acl_darwin" >&5
+printf "%s\n" "$ac_cv_filemeta_acl_darwin" >&6; }
+if test "x$ac_cv_filemeta_acl_darwin" = xyes
+then :
+
+    printf "%s\n" "#define HAVE_FILEMETA_ACL_DARWIN 1" >>confdefs.h
+
+fi
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for filemeta-acl-bsd native declarations and link" >&5
+printf %s "checking for filemeta-acl-bsd native declarations and link... " >&6; }
+if test ${ac_cv_filemeta_acl_bsd+y}
+then :
+  printf %s "(cached) " >&6
+else case e in #(
+  e)
+    cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+#include "$srcdir/probes/filemeta-acl-bsd.c"
+_ACEOF
+if ac_fn_c_try_link "$LINENO"
+then :
+  ac_cv_filemeta_acl_bsd=yes
+else case e in #(
+  e) ac_cv_filemeta_acl_bsd=no ;;
+esac
+fi
+rm -f core conftest.err conftest.$ac_objext conftest.beam \
+    conftest$ac_exeext conftest.$ac_ext ;;
+esac
+fi
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $ac_cv_filemeta_acl_bsd" >&5
+printf "%s\n" "$ac_cv_filemeta_acl_bsd" >&6; }
+if test "x$ac_cv_filemeta_acl_bsd" = xyes
+then :
+
+    printf "%s\n" "#define HAVE_FILEMETA_ACL_BSD 1" >>confdefs.h
+
+fi
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for filemeta-xattr-darwin native declarations and link" >&5
+printf %s "checking for filemeta-xattr-darwin native declarations and link... " >&6; }
+if test ${ac_cv_filemeta_xattr_darwin+y}
+then :
+  printf %s "(cached) " >&6
+else case e in #(
+  e)
+    cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+#include "$srcdir/probes/filemeta-xattr-darwin.c"
+_ACEOF
+if ac_fn_c_try_link "$LINENO"
+then :
+  ac_cv_filemeta_xattr_darwin=yes
+else case e in #(
+  e) ac_cv_filemeta_xattr_darwin=no ;;
+esac
+fi
+rm -f core conftest.err conftest.$ac_objext conftest.beam \
+    conftest$ac_exeext conftest.$ac_ext ;;
+esac
+fi
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $ac_cv_filemeta_xattr_darwin" >&5
+printf "%s\n" "$ac_cv_filemeta_xattr_darwin" >&6; }
+if test "x$ac_cv_filemeta_xattr_darwin" = xyes
+then :
+
+    printf "%s\n" "#define HAVE_FILEMETA_XATTR_DARWIN 1" >>confdefs.h
+
+fi
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for filemeta-xattr-bsd-int native declarations and link" >&5
+printf %s "checking for filemeta-xattr-bsd-int native declarations and link... " >&6; }
+if test ${ac_cv_filemeta_xattr_bsd_int+y}
+then :
+  printf %s "(cached) " >&6
+else case e in #(
+  e)
+    cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+#include "$srcdir/probes/filemeta-xattr-bsd-int.c"
+_ACEOF
+if ac_fn_c_try_link "$LINENO"
+then :
+  ac_cv_filemeta_xattr_bsd_int=yes
+else case e in #(
+  e) ac_cv_filemeta_xattr_bsd_int=no ;;
+esac
+fi
+rm -f core conftest.err conftest.$ac_objext conftest.beam \
+    conftest$ac_exeext conftest.$ac_ext ;;
+esac
+fi
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $ac_cv_filemeta_xattr_bsd_int" >&5
+printf "%s\n" "$ac_cv_filemeta_xattr_bsd_int" >&6; }
+if test "x$ac_cv_filemeta_xattr_bsd_int" = xyes
+then :
+
+    printf "%s\n" "#define HAVE_FILEMETA_XATTR_BSD_INT 1" >>confdefs.h
+
+fi
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for filemeta-xattr-bsd-ssize native declarations and link" >&5
+printf %s "checking for filemeta-xattr-bsd-ssize native declarations and link... " >&6; }
+if test ${ac_cv_filemeta_xattr_bsd_ssize+y}
+then :
+  printf %s "(cached) " >&6
+else case e in #(
+  e)
+    cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+#include "$srcdir/probes/filemeta-xattr-bsd-ssize.c"
+_ACEOF
+if ac_fn_c_try_link "$LINENO"
+then :
+  ac_cv_filemeta_xattr_bsd_ssize=yes
+else case e in #(
+  e) ac_cv_filemeta_xattr_bsd_ssize=no ;;
+esac
+fi
+rm -f core conftest.err conftest.$ac_objext conftest.beam \
+    conftest$ac_exeext conftest.$ac_ext ;;
+esac
+fi
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $ac_cv_filemeta_xattr_bsd_ssize" >&5
+printf "%s\n" "$ac_cv_filemeta_xattr_bsd_ssize" >&6; }
+if test "x$ac_cv_filemeta_xattr_bsd_ssize" = xyes
+then :
+
+    printf "%s\n" "#define HAVE_FILEMETA_XATTR_BSD_SSIZE 1" >>confdefs.h
+
+fi
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for filemeta-representation-darwin native declarations and link" >&5
+printf %s "checking for filemeta-representation-darwin native declarations and link... " >&6; }
+if test ${ac_cv_filemeta_representation_darwin+y}
+then :
+  printf %s "(cached) " >&6
+else case e in #(
+  e)
+    cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+#include "$srcdir/probes/filemeta-representation-darwin.c"
+_ACEOF
+if ac_fn_c_try_link "$LINENO"
+then :
+  ac_cv_filemeta_representation_darwin=yes
+else case e in #(
+  e) ac_cv_filemeta_representation_darwin=no ;;
+esac
+fi
+rm -f core conftest.err conftest.$ac_objext conftest.beam \
+    conftest$ac_exeext conftest.$ac_ext ;;
+esac
+fi
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $ac_cv_filemeta_representation_darwin" >&5
+printf "%s\n" "$ac_cv_filemeta_representation_darwin" >&6; }
+if test "x$ac_cv_filemeta_representation_darwin" = xyes
+then :
+
+    printf "%s\n" "#define HAVE_FILEMETA_REPRESENTATION_DARWIN 1" >>confdefs.h
+
+fi
+
 # Use the same declaration and link probes as the finite parsedate component.
 { printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for mktime_z with its time.h declaration" >&5
 printf %s "checking for mktime_z with its time.h declaration... " >&6; }

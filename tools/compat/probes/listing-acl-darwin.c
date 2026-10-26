@@ -15,6 +15,7 @@ static int (*volatile get)(filesec_t, filesec_property_t, void *) =
     filesec_get_property;
 static int (*volatile status)(const char *, struct stat *, filesec_t) =
     lstatx_np;
+static int (*volatile status_fd)(int, struct stat *, filesec_t) = fstatx_np;
 static int (*volatile valid)(acl_t) = acl_valid;
 static int (*volatile first)(acl_t, int, acl_entry_t *) = acl_get_entry;
 static int (*volatile release)(void *) = acl_free;
@@ -24,6 +25,7 @@ main(void)
 {
 	(void)(FILESEC_ACL + ACL_FIRST_ENTRY + ACL_TYPE_EXTENDED);
 	return (create == NULL || destroy == NULL || query == NULL ||
-	    get == NULL || status == NULL || valid == NULL || first == NULL ||
+	    get == NULL || status == NULL || status_fd == NULL ||
+	    valid == NULL || first == NULL ||
 	    release == NULL);
 }
