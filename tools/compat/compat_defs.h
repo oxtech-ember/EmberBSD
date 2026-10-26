@@ -356,6 +356,7 @@ void     mi_vector_hash(const void * __restrict, size_t, uint32_t,
 
 #include "compat_efun.h"
 #include "compat_filetime.h"
+#include "compat_parsedate.h"
 
 #if !HAVE_DECL_FGETLN
 char *fgetln(FILE *, size_t *);

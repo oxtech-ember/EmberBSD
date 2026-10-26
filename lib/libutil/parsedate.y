@@ -10,6 +10,11 @@
 /* SUPPRESS 287 on yaccpar_sccsid *//* Unused static variable */
 /* SUPPRESS 288 on yyerrlab *//* Label unused */
 
+#if HAVE_NBTOOL_CONFIG_H
+#include "compat_parsedate_features.h"
+#include "nbtool_config.h"
+#endif
+
 #include <sys/cdefs.h>
 #ifdef __RCSID
 __RCSID("$NetBSD: parsedate.y,v 1.40 2024/05/02 14:19:56 christos Exp $");
@@ -21,7 +26,12 @@ __RCSID("$NetBSD: parsedate.y,v 1.40 2024/05/02 14:19:56 christos Exp $");
 #include <limits.h>
 #include <string.h>
 #include <time.h>
+#if HAVE_NBTOOL_CONFIG_H
+#include <stdint.h>
+#include "compat_parsedate.h"
+#else
 #include <util.h>
+#endif
 #include <stdlib.h>
 
 /* NOTES on rebuilding parsedate.c (particularly for inclusion in CVS
@@ -819,7 +829,13 @@ Convert(
 	    tm.tm_isdst = 0;	/* hence cannot be summer time */
 	    otm = tm;
 	    errno = 0;
+#if !HAVE_NBTOOL_CONFIG_H || HAVE_MKTIME_Z
 	    result = mktime_z(NULL, &tm);
+#elif HAVE_TIMEGM
+	    result = timegm(&tm);
+#else
+#error "parsedate needs a probed UTC conversion backend"
+#endif
 	    if (result != -1 || errno == 0) {
 		    result += Timezone * 60;
 		    if (DSTmode == DSTon)	/* if specified sumer time */

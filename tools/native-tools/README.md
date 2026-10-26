@@ -20,6 +20,8 @@ command native-role binding
 `binding` names a `HOST_*` variable, `MAKE`, `SED`, or `-`.
 `MAKE` selects the NetBSD make implementation.
 `SED` selects the quoting utility used by `build.sh`.
+`HOST_YACC` selects Byacc before the compatibility library is built.
+That library generates the complete OS date parser before `tools/yacc` exists.
 `-` makes the command available through the selected `PATH` only.
 The contract file contains the complete initial list of required roles.
 

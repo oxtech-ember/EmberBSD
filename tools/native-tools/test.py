@@ -30,7 +30,7 @@ args = sys.argv[1:]
 with open(os.environ["FIXTURE_LOG"], "a") as stream:
     stream.write(json.dumps({"command": name, "argv": args,
         "cwd": os.getcwd(), "env": {key: os.environ.get(key) for key in
-        ("PATH", "HOST_CC", "HOST_CXX", "HOST_SH", "CONFIG_SHELL", "BSHELL",
+        ("PATH", "HOST_CC", "HOST_CXX", "HOST_SH", "HOST_YACC", "CONFIG_SHELL", "BSHELL",
          "SHELL", "HOST_CFLAGS", "HOST_LDFLAGS")}}) + "\n")
 if name == "make":
     if "-f-" in args:
@@ -138,7 +138,8 @@ class Fixture:
             (self.routing / command).symlink_to(target)
         self.env = {"PATH": str(self.hostile), "EMBER_NATIVE_TOOLS": str(self.routing),
             "HOST_CC": "/unselected/cc", "HOST_CXX": "/unselected/c++",
-            "HOST_SH": "/unselected/sh", "SED": str(self.hostile / "sed"),
+            "HOST_SH": "/unselected/sh", "HOST_YACC": "/unselected/yacc",
+            "SED": str(self.hostile / "sed"),
             "TMPDIR": str(self.root / "scratch"), "MACHINE": "amd64",
             "MACHINE_ARCH": "x86_64", "TOOLDIR": str(self.tooldir),
             "DESTDIR": str(self.root / "destdir"),
@@ -171,13 +172,14 @@ class RoutingTests(unittest.TestCase):
         self.assertTrue(any(row["argv"] == ["build_install"] and
             row["cwd"] == str(fixture.source / "tools") for row in calls))
         self.assertFalse(fixture.sentinel.exists())
-        self.assertFalse({"cc", "c++", "cpp", "ar", "as", "ld", "ranlib"} &
+        self.assertFalse({"cc", "c++", "cpp", "ar", "as", "ld", "ranlib", "yacc"} &
             {row["command"] for row in records})
         for row in calls:
             self.assertEqual(row["env"]["PATH"], str(fixture.routing))
             self.assertEqual(row["env"]["HOST_CC"], str(fixture.selected / "cc"))
             self.assertEqual(row["env"]["HOST_CXX"], str(fixture.selected / "c++"))
             self.assertEqual(row["env"]["HOST_SH"], str(fixture.selected / "sh"))
+            self.assertEqual(row["env"]["HOST_YACC"], str(fixture.selected / "yacc"))
             self.assertEqual(row["env"]["HOST_CFLAGS"], "-O2 -fPIC")
         wrapper = fixture.tooldir / "bin/nbmake-amd64"
         content = wrapper.read_text()
@@ -189,6 +191,7 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         replay = fixture.records()[-1]
         self.assertEqual(replay["argv"], ["fixture-replay"])
+        self.assertEqual(replay["env"]["HOST_YACC"], str(fixture.selected / "yacc"))
         for key in ("HOST_SH", "BSHELL", "CONFIG_SHELL", "SHELL"):
             self.assertEqual(replay["env"][key], str(fixture.selected / "sh"))
 
@@ -196,6 +199,11 @@ class RoutingTests(unittest.TestCase):
         fixture = Fixture(self)
         (fixture.routing / "cc").unlink()
         self.assert_refused(fixture, "missing native tool: cc")
+
+    def test_missing_yacc_is_refused(self):
+        fixture = Fixture(self)
+        (fixture.routing / "yacc").unlink()
+        self.assert_refused(fixture, "missing native tool: yacc")
 
     def test_regular_member_is_refused(self):
         fixture = Fixture(self)
@@ -252,7 +260,8 @@ class RoutingTests(unittest.TestCase):
     def test_routing_overrides_are_refused(self):
         for option, variable in (("-V", "PATH=/bin"), ("-Z", "HOST_SH"),
                 ("-V", "_ember_native_make=/bin/false"),
-                ("-V", "SED=/bin/false")):
+                ("-V", "SED=/bin/false"), ("-V", "HOST_YACC=/bin/false"),
+                ("-Z", "HOST_YACC")):
             with self.subTest(variable=variable):
                 fixture = Fixture(self)
                 self.assert_refused(fixture, "Cannot change selected native tool",

@@ -1,0 +1,48 @@
+{
+  "format": "emberbsd-native-bootstrap-component",
+  "version": 1,
+  "name": "parsedate",
+  "origin": "EmberBSD (AI-assisted). Complete canonical OS date parser reachover.",
+  "initial_only": true,
+  "source_makefile": "tools/compat/Makefile",
+  "source_fragment": "tools/compat/parsedate.mk",
+  "sources": ["lib/libutil/parsedate.y"],
+  "headers": [
+    "tools/compat/compat_parsedate.h",
+    "tools/compat/compat_parsedate_features.h",
+    "tools/compat/bootstrap_cdefs.h"
+  ],
+  "provenance": [
+    "tools/compat/README.parsedate.md",
+    "tools/compat/configure.ac",
+    "tools/compat/configure",
+    "tools/compat/nbtool_config.h.in",
+    "tools/compat/compat_defs.h",
+    "lib/libutil/Makefile"
+  ],
+  "required_tool_roles": ["cc", "yacc", "ar", "ranlib"],
+  "generator": {
+    "role": "yacc",
+    "arguments": ["-p", "__pd", "-o", "parsedate.c"],
+    "source": "lib/libutil/parsedate.y",
+    "output": "parsedate.c"
+  },
+  "control": "tools/compat/probes/parsedate-control.c",
+  "check": "tools/compat/probes/parsedate-check.c",
+  "required_capabilities": ["HAVE_TIMEGM"],
+  "probes": [
+    {
+      "name": "func-mktime_z",
+      "source": "tools/compat/probes/func-mktime_z.c",
+      "macro": "HAVE_MKTIME_Z"
+    },
+    {
+      "name": "func-timegm",
+      "source": "tools/compat/probes/func-timegm.c",
+      "macro": "HAVE_TIMEGM"
+    }
+  ],
+  "config_preamble": "/* Actual date parser probes only; not a full OS configuration. */\n#ifndef EMBERBSD_PARSEDATE_CONFIG_H\n#define EMBERBSD_PARSEDATE_CONFIG_H\n#include \"compat_parsedate_features.h\"\n#include \"bootstrap_cdefs.h\"\n#define HAVE_NBTOOL_CONFIG_H 1\n",
+  "config_postamble": "#include \"compat_parsedate.h\"\n#endif\n",
+  "archive": "libnbcompat.a"
+}

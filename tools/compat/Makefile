@@ -87,11 +87,24 @@ _CURDIR:=	${.CURDIR}
 
 SRCS:=		${SRCS:M*.c}
 
+.include "${.CURDIR}/parsedate.mk"
+SRCS+=		${COMPAT_PARSEDATE_SRCS}
+DPSRCS+=	${COMPAT_PARSEDATE_SRCS}
+CLEANFILES+=	${COMPAT_PARSEDATE_SRCS}
+
+# compat precedes tools/yacc. The caller must select an existing SDK Byacc.
+.if !defined(HOST_YACC) || empty(HOST_YACC)
+.error "Set HOST_YACC to the selected absolute SDK Byacc path"
+.elif empty(HOST_YACC:M/*) || ${HOST_YACC:[#]} != 1
+.error "Set HOST_YACC to the selected absolute SDK Byacc path"
+.endif
+
 .if ${MAKEVERBOSE} == 0
 CONFIGURE_ARGS+=--silent
 .endif
 
 config.cache: include/.stamp configure nbtool_config.h.in defs.mk.in
+config.cache: probes/func-mktime_z.c probes/func-timegm.c compat_parsedate_features.h
 	rm -f ${.TARGET}.tmp ${.TARGET}
 	CC=${HOST_CC:Q} CFLAGS=${HOST_CFLAGS:Q} CPPFLAGS=${HOST_CPPFLAGS:Q} \
 		LDFLAGS=${HOST_LDFLAGS:Q} \
@@ -170,6 +183,10 @@ HOST_CPPFLAGS+=	${CPPFLAGS}
 HOST_MKDEP_OBJ!= cd ${.CURDIR}/../host-mkdep && ${PRINTOBJDIR}
 HOST_MKDEP=	${HOST_MKDEP_OBJ}/host-mkdep
 MKDEP=		${HOST_MKDEP}
+
+parsedate.c: ${.CURDIR}/../../lib/libutil/${COMPAT_PARSEDATE_YSRCS}
+	${_MKTARGET_YACC}
+	${HOST_YACC:Q} ${COMPAT_PARSEDATE_YFLAGS} -o ${.TARGET} ${.ALLSRC}
 
 # Use uninstalled copy of the install program
 INSTALL_OBJ!=	cd ${NETBSDSRCDIR}/tools/binstall && ${PRINTOBJDIR}

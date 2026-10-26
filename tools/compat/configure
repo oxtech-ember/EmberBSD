@@ -6600,6 +6600,73 @@ then :
 fi
 
 
+# Use the same declaration and link probes as the finite parsedate component.
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for mktime_z with its time.h declaration" >&5
+printf %s "checking for mktime_z with its time.h declaration... " >&6; }
+if test ${ac_cv_func_mktime_z+y}
+then :
+  printf %s "(cached) " >&6
+else case e in #(
+  e)
+    cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+#include "$srcdir/probes/func-mktime_z.c"
+_ACEOF
+if ac_fn_c_try_link "$LINENO"
+then :
+  ac_cv_func_mktime_z=yes
+else case e in #(
+  e) ac_cv_func_mktime_z=no ;;
+esac
+fi
+rm -f core conftest.err conftest.$ac_objext conftest.beam \
+    conftest$ac_exeext conftest.$ac_ext ;;
+esac
+fi
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $ac_cv_func_mktime_z" >&5
+printf "%s\n" "$ac_cv_func_mktime_z" >&6; }
+if test "x$ac_cv_func_mktime_z" = xyes
+then :
+
+    printf "%s\n" "#define HAVE_MKTIME_Z 1" >>confdefs.h
+
+fi
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: checking for timegm with its time.h declaration" >&5
+printf %s "checking for timegm with its time.h declaration... " >&6; }
+if test ${ac_cv_func_timegm+y}
+then :
+  printf %s "(cached) " >&6
+else case e in #(
+  e)
+    cat confdefs.h - <<_ACEOF >conftest.$ac_ext
+/* end confdefs.h.  */
+#include "$srcdir/probes/func-timegm.c"
+_ACEOF
+if ac_fn_c_try_link "$LINENO"
+then :
+  ac_cv_func_timegm=yes
+else case e in #(
+  e) ac_cv_func_timegm=no ;;
+esac
+fi
+rm -f core conftest.err conftest.$ac_objext conftest.beam \
+    conftest$ac_exeext conftest.$ac_ext ;;
+esac
+fi
+{ printf "%s\n" "$as_me:${as_lineno-$LINENO}: result: $ac_cv_func_timegm" >&5
+printf "%s\n" "$ac_cv_func_timegm" >&6; }
+if test "x$ac_cv_func_timegm" = xyes
+then :
+
+    printf "%s\n" "#define HAVE_TIMEGM 1" >>confdefs.h
+
+fi
+if test "x$ac_cv_func_mktime_z" != xyes && test "x$ac_cv_func_timegm" != xyes
+then :
+  as_fn_error $? "parsedate needs a declared UTC conversion backend" "$LINENO" 5
+fi
+
+
 ac_fn_check_decl "$LINENO" "user_from_uid" "ac_cv_have_decl_user_from_uid" "
 #include <pwd.h>
 

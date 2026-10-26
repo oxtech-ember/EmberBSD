@@ -253,6 +253,20 @@ AC_CHECK_FUNCS(atoll asprintf asnprintf basename devname dirfd dirname \
 	strtoi strtoll strtou strtonum utimensat utimens lutimens \
 	user_from_uid uid_from_user vasprintf vasnprintf vsnprintf)
 
+# Use the same declaration and link probes as the finite parsedate component.
+AC_CACHE_CHECK([for mktime_z with its time.h declaration], [ac_cv_func_mktime_z], [
+    AC_LINK_IFELSE([AC_LANG_SOURCE([[#include "$srcdir/probes/func-mktime_z.c"]])],
+	[ac_cv_func_mktime_z=yes], [ac_cv_func_mktime_z=no])])
+AS_IF([test "x$ac_cv_func_mktime_z" = xyes], [
+    AC_DEFINE([HAVE_MKTIME_Z], [1], [Define to 1 if mktime_z is declared and links.])])
+AC_CACHE_CHECK([for timegm with its time.h declaration], [ac_cv_func_timegm], [
+    AC_LINK_IFELSE([AC_LANG_SOURCE([[#include "$srcdir/probes/func-timegm.c"]])],
+	[ac_cv_func_timegm=yes], [ac_cv_func_timegm=no])])
+AS_IF([test "x$ac_cv_func_timegm" = xyes], [
+    AC_DEFINE([HAVE_TIMEGM], [1], [Define to 1 if timegm is declared and links.])])
+AS_IF([test "x$ac_cv_func_mktime_z" != xyes && test "x$ac_cv_func_timegm" != xyes],
+    [AC_MSG_ERROR([parsedate needs a declared UTC conversion backend])])
+
 AC_CHECK_DECLS([user_from_uid, uid_from_user, pwcache_userdb],,,[
 #include <pwd.h>
 ])
