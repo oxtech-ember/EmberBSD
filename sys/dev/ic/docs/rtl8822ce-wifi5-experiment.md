@@ -75,15 +75,18 @@ Orange Pi 6 Plus, one AP (BSS on primary 64, 160 MHz, HT protection mode
 | 918e351cf | RUN at 64/58/80 MHz, VHT MCS7 seed, WPA COMPLETED, DHCP, ping |
 | ec6609372 | Passive scan visits 52-64 and 100-144; no other DFS AP present |
 | e89e8b965 | ADDBA accepted for TID 0; about 370 000 AGG_EN descriptors without errors, drops or resets |
+| 702a3f9c5 | SGI_EN committed (`sgi 1`); about 295 000 AGG_EN descriptors without errors or drops; one beacon HT reset (reason 3), recovered without a cold restart |
 
 TCP, 128 MiB per run, timed on the peer from first to last byte. The peer
 is itself a Wi-Fi client of the same AP, so the figures are the limit of
-that pair, not of the board alone:
+that pair, not of the board alone. SGI changes only the board's transmit
+direction; the peer-to-board figures are already at the pair's limit:
 
 | Kernel | Board to peer | Peer to board |
 |---|---|---|
 | ec6609372, no A-MPDU | 55.1 and 54.4 Mbit/s | 64.4 and 65.8 Mbit/s |
 | e89e8b965, A-MPDU | 89.2 and 84.4 Mbit/s | 93.1 and 95.5 Mbit/s |
+| 702a3f9c5, A-MPDU and SGI | 100.9 and 93.9 Mbit/s | 95.0 and 96.1 Mbit/s |
 
 Not established: association on 52-60 or 100-144, other APs, two spatial
 streams, MCS8-9, LDPC, long-duration stability and the default boot
