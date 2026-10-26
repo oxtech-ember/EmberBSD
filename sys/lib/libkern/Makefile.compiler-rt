@@ -2,15 +2,14 @@
 
 COMPILER_RT_DIR:=	${.PARSEDIR}/../../external/bsd/compiler_rt
 .include <bsd.llvm-source.mk>
-.if defined(EMBER_LLVM_SOURCE)
+.if !defined(EMBER_LLVM_SOURCE)
+.error Set EMBER_LLVM_SOURCE to the common Ports-prepared LLVM source root
+.endif
 COMPILER_RT_SRCDIR=	${EMBER_COMPILER_RT_SOURCE}
 .if !exists(${COMPILER_RT_SRCDIR}/lib/builtins/int_lib.h)
 .error EMBER_LLVM_SOURCE is missing compiler-rt/lib/builtins/int_lib.h
 .endif
 CPPFLAGS+=	-I${COMPILER_RT_SRCDIR}/include
-.else
-COMPILER_RT_SRCDIR=	${COMPILER_RT_DIR}/dist
-.endif
 
 .if ${MACHINE_ARCH} == "powerpc"
 COMPILER_RT_CPU_DIR=	${COMPILER_RT_SRCDIR}/lib/builtins/ppc

@@ -3,7 +3,9 @@
 
 COMPILER_RT_DIR=	${NETBSDSRCDIR}/sys/external/bsd/compiler_rt
 .include <bsd.llvm-source.mk>
-.if defined(EMBER_LLVM_SOURCE)
+.if !defined(EMBER_LLVM_SOURCE)
+.error Set EMBER_LLVM_SOURCE to the common Ports-prepared LLVM source root
+.endif
 COMPILER_RT_SRCDIR=	${EMBER_COMPILER_RT_SOURCE}
 .for _ember_rt_file in lib/builtins/int_lib.h lib/builtins/comparetf2.c \
     include/profile/InstrProfData.inc
@@ -12,9 +14,6 @@ COMPILER_RT_SRCDIR=	${EMBER_COMPILER_RT_SOURCE}
 .endif
 .endfor
 CPPFLAGS+=	-I${COMPILER_RT_SRCDIR}/include
-.else
-COMPILER_RT_SRCDIR=	${COMPILER_RT_DIR}/dist
-.endif
 
 .if ${LIBC_MACHINE_ARCH} == "powerpc" || ${LIBC_MACHINE_ARCH} == "powerpc64"
 COMPILER_RT_CPU_DIR=	${COMPILER_RT_SRCDIR}/lib/builtins/ppc
@@ -249,7 +248,6 @@ GENERIC_SRCS+= \
 	InstrProfilingValue.c \
 	InstrProfilingWriter.c
 
-.if defined(EMBER_LLVM_SOURCE)
 # Modern compiler-rt splits the profiling implementation across these units.
 # Preserve the old public libc GCDA entry points through the common Ports
 # compatibility mode; ordinary profiling runtimes retain the upstream ABI.
@@ -263,7 +261,6 @@ CPPFLAGS.GCDAProfiling.c+= -DCOMPILER_RT_LIBC_LEGACY_GCOV
 .for _ember_profile_src in GCDAProfiling.c InstrProfilingUtil.c
 CPPFLAGS.${_ember_profile_src}+= -DCOMPILER_RT_HAS_FCNTL_LCK=1 -DCOMPILER_RT_HAS_UNAME=1
 .endfor
-.endif
 
 .if ${MKPROFILE} != "no"
 POBJS+= InstrProfilingRuntime.po

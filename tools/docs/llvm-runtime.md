@@ -7,7 +7,7 @@ EmberBSD libc, headers, CRT objects, target triplet and ABI integration.
 
 ## Source inputs and libc
 
-Set `EMBER_LLVM_SOURCE` to the absolute prepared LLVM monorepo root. The
+Libc and kernel builds require `EMBER_LLVM_SOURCE`, the absolute prepared LLVM monorepo root. The
 runtime source subset must include `runtimes/CMakeLists.txt`, `compiler-rt`
 and `libunwind`; a raw archive extraction does not supply the common patches.
 The same source selection works with Clang and the explicit GCC alternative.
@@ -17,8 +17,8 @@ SDK, rather than another source acquisition path in the OS.
 
 `lib/libc/compiler_rt/Makefile.inc` and
 `sys/lib/libkern/Makefile.compiler-rt` select builtins from that root. The
-native architecture object lists remain in the OS. A selected but missing
-source never falls back to the bundled compiler-rt copy. Modern profiling
+native architecture object lists remain in the OS. Missing common source is
+an error for both Clang and GCC; there is no bundled-source fallback. Modern profiling
 support uses the matching common profiling sources and include directory.
 
 The AArch64 hard-float libc comparison object alone enables

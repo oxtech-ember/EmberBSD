@@ -36,7 +36,7 @@ class LLVMSourceTests(unittest.TestCase):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("source route fixture\n")
 
-    def query(self, consumer, names, *variables, fixture_extra=""):
+    def query(self, consumer, names, *variables, fixture_extra="", select_source=True):
         fixture = self.work / "probe.mk"
         fixture.write_text('.include <sys.mk>\n.include <bsd.own.mk>\n'
             'LIBC_MACHINE_CPU=aarch64\nLIBC_MACHINE_ARCH=aarch64\n'
@@ -48,7 +48,7 @@ class LLVMSourceTests(unittest.TestCase):
             "MACHINE_GNU_PLATFORM=aarch64--netbsd", "TOOLDIR=/build/tools",
             "DESTDIR=/target/root", "NETBSDSRCDIR=" + str(SOURCE),
             "HOST_OSTYPE=Darwin-27-arm64", "EXTERNAL_TOOLCHAIN=/sdk",
-            "EMBER_LLVM_SOURCE=" + str(self.llvm), *variables]
+            *(["EMBER_LLVM_SOURCE=" + str(self.llvm)] if select_source else []), *variables]
         for name in names:
             command.extend(("-V", "${" + name + "}"))
         return subprocess.run(command, cwd=self.work, text=True,
@@ -64,6 +64,17 @@ class LLVMSourceTests(unittest.TestCase):
                     self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertEqual(result.stdout.strip(),
                                      str(self.llvm / "compiler-rt"))
+
+    def test_base_and_kernel_require_common_sources_for_both_compilers(self):
+        for consumer in ("lib/libc/compiler_rt/Makefile.inc",
+                         "sys/lib/libkern/Makefile.compiler-rt",
+                         "sys/lib/libunwind/Makefile.inc"):
+            for family in ("clang", "gcc"):
+                with self.subTest(consumer=consumer, family=family):
+                    result = self.query(consumer, ("SRCS",),
+                        "EMBER_COMPILER_FAMILY=" + family, select_source=False)
+                    self.assertNotEqual(result.returncode, 0, result.stdout)
+                    self.assertIn("EMBER_LLVM_SOURCE", result.stderr)
 
     def test_prepared_source_inventory(self):
         if PREPARED_LLVM is None:

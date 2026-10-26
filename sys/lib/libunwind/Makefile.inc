@@ -1,8 +1,10 @@
 #	$NetBSD: Makefile.inc,v 1.14 2021/11/22 16:41:32 thorpej Exp $
 
 .include <bsd.llvm-source.mk>
+.if !defined(EMBER_LLVM_SOURCE)
+.error Set EMBER_LLVM_SOURCE to the common Ports-prepared LLVM source root
+.endif
 
-.if defined(EMBER_LLVM_SOURCE)
 # Ports builds the complete, position-independent archive using the common
 # libunwind recipe. Keep unwind symbols in both libc archives and libc.so;
 # adding a shared-library dependency would change the existing libc ABI.
@@ -35,27 +37,4 @@ llvm_unwind.o llvm_unwind.pico: ${EMBER_LIBUNWIND_ARCHIVE}
 	${LD} -r -o ${.TARGET}.tmp --whole-archive ${EMBER_LIBUNWIND_ARCHIVE} --no-whole-archive
 	mv -f ${.TARGET}.tmp ${.TARGET}
 CLEANFILES+=	llvm_unwind.o.tmp llvm_unwind.pico.tmp
-.endif
-
-.else
-.if defined(EMBER_LIBUNWIND_ARCHIVE)
-.error EMBER_LIBUNWIND_ARCHIVE requires EMBER_LLVM_SOURCE for matching public headers
-.endif
-.PATH:	${NETBSDSRCDIR}/sys/lib/libunwind
-
-SRCS+=	libunwind.cxx \
-	unwind_registers.S
-
-INCS+=	unwind.h
-
-COPTS.libunwind.cxx+=	${${ACTIVE_CXX} == "gcc":? -std=c++0x : -std=c++11 }
-COPTS.libunwind.cxx+=	-funwind-tables -fno-rtti
-COPTS.libunwind.cxx+=	-fno-exceptions -fvisibility=hidden
-COPTS.libunwind.cxx+=	-Wno-old-style-cast
-CPPFLAGS.libunwind.cxx+=-I${NETBSDSRCDIR}/sys/lib/libunwind
-
-.if ${LIBC_MACHINE_CPU} == "arm"
-COPTS.libunwind.cxx+=	${${ACTIVE_CC} == "gcc":? -mfpu=vfp3 :}
-AFLAGS.unwind_registers.S+=	${${ACTIVE_CC} == "clang":? -mfpu=vfp3 :}
-.endif
 .endif

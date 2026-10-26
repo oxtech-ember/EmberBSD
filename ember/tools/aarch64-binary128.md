@@ -1,9 +1,11 @@
 <!-- Origin: EmberBSD; AI-assisted bounded AArch64 libc binary128 FENV guide. -->
 # AArch64 libc binary128 comparison exceptions
 
-EmberBSD adapts the existing LLVM compiler-rt `comparetf2.c` in libc.
-The owner is the OS repository. Its original MIT/UI notices remain in the
-source; this is a local adaptation, not an upstream LLVM import.
+EmberBSD's libc exception policy is a patch in the
+[common Ports compiler-rt owner](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/pkgsrc/lang/compiler-rt).
+The prepared LLVM source retains upstream Apache licensing and the
+transferred adaptation's MIT/NCSA notice and credits. The OS owns the libc
+selection and target ABI tests.
 
 `lib/libc/compiler_rt/Makefile.inc` sets the source-local
 `COMPILER_RT_NETBSD_AARCH64_FENV` macro only for AArch64 with
@@ -13,7 +15,7 @@ soft-float and other targets reject an erroneous opt-in at compilation.
 Consumers without the macro retain the previous quiet exception policy.
 The lint-only stub checks syntax and is not executable-object evidence.
 
-All helpers use a private integer classifier and comparison core. The
+All helpers retain the current upstream integer comparison core and result types. The
 numeric return conventions and the ELF `__cmptf2` alias remain unchanged.
 Equality (`__eqtf2`, `__netf2`) and unordered (`__unordtf2`) comparisons
 raise INVALID for signaling NaNs. Ordered (`__letf2`, `__lttf2`, `__getf2`,
@@ -28,13 +30,16 @@ or add a libc dependency on libm. See the [Arm FCMPE reference](https://document
 
 ## Host production-source contract
 
-From the source root, run:
+From the Ports source root, select the prepared source and native compiler:
 
 ```sh
-sh ember/tools/aarch64-binary128-contract.sh
-sh ember/tools/aarch64-binary128-boundaries.sh
+export CC=/absolute/native-prefix/bin/clang
+export BINARY128_SOURCE=/absolute/prepared-llvm/compiler-rt/lib/builtins/comparetf2.c
+export TMPDIR=/absolute/check-work
+sh pkgsrc/lang/compiler-rt/tests/aarch64-binary128-contract.sh
+sh pkgsrc/lang/compiler-rt/tests/aarch64-binary128-boundaries.sh
 BINARY128_TEST_CFLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer' \
-    sh ember/tools/aarch64-binary128-contract.sh
+    sh pkgsrc/lang/compiler-rt/tests/aarch64-binary128-contract.sh
 ```
 
 The C/shell fixture compiles the complete production source. It replaces
@@ -102,7 +107,7 @@ An optional `binary128_prefix` selects namespaced entry points. Rename
 all eight symbols in the object with `objcopy --redefine-syms` before
 linking; this preserves the real alias and any baseline internal relocations.
 Defining names with `-D` alone is insufficient because the existing
-`FNALIAS` macro stringifies its target. Check exports, undefined symbols,
+alias macros stringify their targets. Check exports, undefined symbols,
 relocations and disassembly on the unrenamed candidate too. Do not use
 `-Bsymbolic` to conceal public-helper calls or installed-library bindings.
 
@@ -124,7 +129,7 @@ This check covers packaging selection; it does not execute the floating-point te
 
 ## Native candidate validation
 
-On 2026-10-07, GCC 12.5 and GCC 16.2 on NetBSD 11/AArch64 in UTM built the
+Before the common LLVM migration, on 2026-10-07, GCC 12.5 and GCC 16.2 on NetBSD 11/AArch64 in UTM built the
 actual source as static/PIC objects and private namespaced DSOs. The actual
 ATF Makefile built both test executables. Each candidate passed the 3,600-row
 masked matrix, all 16 controlled modes and the trap cases. IOE was writable;
