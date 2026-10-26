@@ -70,8 +70,10 @@ The direct profile also admits one measured runtime export from vendor saveenv.
 The original mac/wifi_mac/bt_mac/specialstr values must all be empty. The export
 sets a valid unicast mac and removes the other three empty keys. It adds only
 bootreason=unknow, fdtcontroladdr=7beb3280, fileaddr=40000000, filesize=2a338,
-rotpk_status=0, snum matching the selected serial, and partitions matching the
+rotpk_status=0, a 19-digit lowercase hexadecimal snum, and partitions matching the
 validated GPT name/index mapping. All other values must match the consumed plan.
+The hardware snum is distinct from the USB serial. Its format is checked;
+this does not authenticate its value. Device binding still uses USB serial/CID.
 Partial groups and different literals are refused. This admits restoration;
 it does not transfer hardware acceptance to other firmware or unlock profiles.
 Run `ruby ember/tools/a133-recovery-runtime-env-test.rb` for this contract.

@@ -15,7 +15,7 @@ Dir.mktmpdir('runtime-env-') do |dir|
   backup=context[:backup].merge('partition_sha256'=>context[:backup]['partition_sha256'].merge('env'=>Digest::SHA256.hexdigest(original)))
   policy=A133Recovery::Policy.new(serial:RebootFixture::SERIAL,cid:UsbFixture::CID,original_env:original,backup:backup)
   export=policy.data[:consumed].reject {|k,_|%w[wifi_mac bt_mac specialstr].include?(k)}.merge(
-    'mac'=>'02:12:34:56:78:90','snum'=>RebootFixture::SERIAL,'bootreason'=>'unknow',
+    'mac'=>'02:12:34:56:78:90','snum'=>'0011223344556677889','bootreason'=>'unknow',
     'fdtcontroladdr'=>'7beb3280','fileaddr'=>'40000000','filesize'=>'2a338','rotpk_status'=>'0',
     'partitions'=>A133Backup::INVENTORY.map {|p|"#{p[:name]}@mmcblk0p#{p[:index]}"}.join(':'))
   current=lambda {|v|{prefix:encode.call(v),tail_sha:policy.data[:tail_sha]}}

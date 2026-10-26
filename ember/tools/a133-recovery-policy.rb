@@ -60,15 +60,16 @@ module A133Recovery
       return true if actual==expected
       return false unless @profile=='direct' && %w[mac wifi_mac bt_mac specialstr].all? { |k| expected[k]=='' }
       runtime={'bootreason'=>'unknow','fdtcontroladdr'=>'7beb3280','fileaddr'=>'40000000',
-        'filesize'=>'2a338','rotpk_status'=>'0','snum'=>@serial,
+        'filesize'=>'2a338','rotpk_status'=>'0',
         'partitions'=>A133Backup::INVENTORY.map { |part| "#{part[:name]}@mmcblk0p#{part[:index]}" }.join(':')}
+      return false unless !expected.key?('snum') && actual['snum'].is_a?(String) && actual['snum'].match?(/\A[0-9a-f]{19}\z/)
       return false unless runtime.keys.none? { |k| expected.key?(k) } && runtime.all? { |k,v| actual[k]==v }
       mac=actual['mac']
       return false unless mac.is_a?(String) && mac.match?(/\A(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}\z/)
       octets=mac.split(':').map { |v| v.to_i(16) }
       return false unless octets.first&1==0 && octets.any? { |v| v!=0 }
       return false unless %w[wifi_mac bt_mac specialstr].none? { |k| actual.key?(k) }
-      normalized=actual.reject { |k,_| runtime.key?(k) }
+      normalized=actual.reject { |k,_| runtime.key?(k) || k=='snum' }
       %w[mac wifi_mac bt_mac specialstr].each { |k| normalized[k]='' }
       normalized==expected
     end
