@@ -306,6 +306,10 @@ NVME_CTASSERT(sizeof(struct nvme_cqe) == 16, "bad size for nvme_cqe");
 #define NVM_ADMIN_DEL_IOSQ	0x00 /* Delete I/O Submission Queue */
 #define NVM_ADMIN_ADD_IOSQ	0x01 /* Create I/O Submission Queue */
 #define NVM_ADMIN_GET_LOG_PG	0x02 /* Get Log Page */
+#define  NVM_LOG_PAGE_SMART_HEALTH	0x02 /* SMART / Health Information */
+#define  NVM_LOG_PAGE_SMART_HEALTH_LEN	512
+/* Composite Temperature in the SMART log page: kelvin, little endian */
+#define  NVM_SMART_COMPOSITE_TEMP	1
 #define NVM_ADMIN_DEL_IOCQ	0x04 /* Delete I/O Completion Queue */
 #define NVM_ADMIN_ADD_IOCQ	0x05 /* Create I/O Completion Queue */
 #define NVM_ADMIN_IDENTIFY	0x06 /* Identify */

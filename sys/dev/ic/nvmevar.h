@@ -25,6 +25,8 @@
 #include <sys/queue.h>
 #include <sys/buf.h>
 
+#include <dev/sysmon/sysmonvar.h>
+
 struct nvme_dmamem {
 	bus_dmamap_t		ndm_map;
 	bus_dma_segment_t	ndm_seg;
@@ -169,6 +171,12 @@ struct nvme_softc {
 #define	NVME_QUIRK_NOMSI		__BIT(1)
 
 	char			sc_modelname[81];
+
+	struct sysmon_envsys	*sc_sme;	/* composite temperature */
+	envsys_data_t		sc_temp;
+	struct nvme_dmamem	*sc_smart;	/* SMART log page buffer */
+	bool			sc_temp_suspended;
+	bool			sc_temp_dead;	/* log page command timed out */
 };
 
 #define	lemtoh16(p)	le16toh(*((uint16_t *)(p)))

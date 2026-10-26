@@ -483,7 +483,7 @@ setup_intx:
 	return 0;
 }
 
-MODULE(MODULE_CLASS_DRIVER, nvme, "pci,dk_subr");
+MODULE(MODULE_CLASS_DRIVER, nvme, "pci,dk_subr,sysmon_envsys");
 
 #ifdef _MODULE
 #include "ioconf.c"

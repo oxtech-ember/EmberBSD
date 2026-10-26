@@ -24,6 +24,7 @@ __KERNEL_RCSID(0, "$NetBSD: nvme.c,v 1.69 2024/03/11 21:10:46 riastradh Exp $");
 #include <sys/systm.h>
 #include <sys/kernel.h>
 #include <sys/atomic.h>
+#include <sys/endian.h>
 #include <sys/bus.h>
 #include <sys/buf.h>
 #include <sys/conf.h>
@@ -136,6 +137,12 @@ static void	nvme_pt_done(struct nvme_queue *, struct nvme_ccb *,
 static int	nvme_command_passthrough(struct nvme_softc *,
 		    struct nvme_pt_command *, uint32_t, struct lwp *, bool);
 
+static void	nvme_sensors_attach(struct nvme_softc *);
+static void	nvme_sensors_detach(struct nvme_softc *);
+static int	nvme_smart_temperature(struct nvme_softc *, uint32_t *);
+static void	nvme_sensors_refresh(struct sysmon_envsys *, envsys_data_t *);
+static void	nvme_sensors_get_limits(struct sysmon_envsys *, envsys_data_t *,
+		    sysmon_envsys_lim_t *, uint32_t *);
 static int	nvme_set_number_of_queues(struct nvme_softc *, u_int, u_int *,
 		    u_int *);
 
@@ -143,6 +150,7 @@ static int	nvme_set_number_of_queues(struct nvme_softc *, u_int, u_int *,
 #define NVME_TIMO_IDENT		10	/* probe identify timeout */
 #define NVME_TIMO_PT		-1	/* passthrough cmd timeout */
 #define NVME_TIMO_SY		60	/* sync cache timeout */
+#define NVME_TIMO_LOG		5	/* temperature log page timeout */
 
 /*
  * Some controllers, at least Apple NVMe, always require split
@@ -469,6 +477,7 @@ nvme_attach(struct nvme_softc *sc)
 	sc->sc_namespaces = kmem_zalloc(sizeof(*sc->sc_namespaces) * sc->sc_nn,
 	    KM_SLEEP);
 	nvme_rescan(sc->sc_dev, NULL, NULL);
+	nvme_sensors_attach(sc);
 
 	return 0;
 
@@ -570,6 +579,8 @@ nvme_detach(struct nvme_softc *sc, int flags)
 	if (error)
 		return error;
 
+	nvme_sensors_detach(sc);
+
 	error = nvme_shutdown(sc);
 	if (error)
 		return error;
@@ -587,6 +598,7 @@ int
 nvme_suspend(struct nvme_softc *sc)
 {
 
+	sc->sc_temp_suspended = true;
 	return nvme_shutdown(sc);
 }
 
@@ -627,6 +639,7 @@ nvme_resume(struct nvme_softc *sc)
 	if (!sc->sc_use_mq)
 		nvme_write4(sc, NVME_INTMC, 1);
 
+	sc->sc_temp_suspended = false;
 	return 0;
 
 disable:
@@ -1631,6 +1644,159 @@ done:
 	nvme_dmamem_free(sc, mem);
 
 	return rv;
+}
+
+/*
+ * Composite temperature of the controller for envstat(8) and powerd(8):
+ * the SMART / Health Information log page, controller scope, read with the
+ * polled admin path of identify.  A refresh never waits for a command
+ * slot; a busy, failed or unreported reading is invalid, and so is any
+ * reading while the controller is suspended.  The warning and critical
+ * composite temperatures of the controller become the sensor limits.
+ */
+static void
+nvme_sensors_attach(struct nvme_softc *sc)
+{
+	struct sysmon_envsys *sme;
+
+	sc->sc_smart = nvme_dmamem_alloc(sc, NVM_LOG_PAGE_SMART_HEALTH_LEN);
+	if (sc->sc_smart == NULL) {
+		aprint_error_dev(sc->sc_dev,
+		    "unable to allocate the temperature log page\n");
+		return;
+	}
+
+	sme = sysmon_envsys_create();
+	sc->sc_temp.units = ENVSYS_STEMP;
+	sc->sc_temp.state = ENVSYS_SINVALID;
+	sc->sc_temp.flags = ENVSYS_FMONLIMITS;
+	strlcpy(sc->sc_temp.desc, "composite temperature",
+	    sizeof(sc->sc_temp.desc));
+	sme->sme_name = device_xname(sc->sc_dev);
+	sme->sme_cookie = sc;
+	sme->sme_refresh = nvme_sensors_refresh;
+	sme->sme_get_limits = nvme_sensors_get_limits;
+	if (sysmon_envsys_sensor_attach(sme, &sc->sc_temp) != 0 ||
+	    sysmon_envsys_register(sme) != 0) {
+		aprint_error_dev(sc->sc_dev,
+		    "unable to register the temperature sensor\n");
+		sysmon_envsys_destroy(sme);
+		nvme_dmamem_free(sc, sc->sc_smart);
+		sc->sc_smart = NULL;
+		return;
+	}
+	sc->sc_sme = sme;
+}
+
+static void
+nvme_sensors_detach(struct nvme_softc *sc)
+{
+
+	/* Unregistering also destroys the sysmon object. */
+	if (sc->sc_sme != NULL) {
+		sysmon_envsys_unregister(sc->sc_sme);
+		sc->sc_sme = NULL;
+	}
+	if (sc->sc_smart != NULL) {
+		nvme_dmamem_free(sc, sc->sc_smart);
+		sc->sc_smart = NULL;
+	}
+}
+
+static int
+nvme_smart_temperature(struct nvme_softc *sc, uint32_t *kelvin)
+{
+	struct nvme_sqe sqe;
+	struct nvme_ccb *ccb;
+	uint32_t k;
+	int rv;
+
+	if (sc->sc_temp_suspended || sc->sc_temp_dead)
+		return ENXIO;
+
+	ccb = nvme_ccb_get(sc->sc_admin_q, false);
+	if (ccb == NULL)
+		return EBUSY;
+
+	memset(&sqe, 0, sizeof(sqe));
+	sqe.opcode = NVM_ADMIN_GET_LOG_PG;
+	htolem32(&sqe.nsid, 0xffffffff);
+	htolem64(&sqe.entry.prp[0], NVME_DMA_DVA(sc->sc_smart));
+	htolem32(&sqe.cdw10, NVM_LOG_PAGE_SMART_HEALTH |
+	    ((NVM_LOG_PAGE_SMART_HEALTH_LEN / 4 - 1) << 16));
+
+	ccb->ccb_done = nvme_empty_done;
+	ccb->ccb_cookie = &sqe;
+
+	nvme_dmamem_sync(sc, sc->sc_smart, BUS_DMASYNC_PREREAD);
+	rv = nvme_poll(sc, sc->sc_admin_q, ccb, nvme_sqe_fill, NVME_TIMO_LOG);
+	nvme_dmamem_sync(sc, sc->sc_smart, BUS_DMASYNC_POSTREAD);
+
+	/*
+	 * nvme_poll returns 1 only on a timeout (completion statuses are
+	 * even).  The command may still complete: retire its slot instead
+	 * of reusing it, let a late completion do nothing, and stop the
+	 * sensor rather than risk it again every refresh.
+	 */
+	if (rv == 1) {
+		ccb->ccb_done = nvme_empty_done;
+		sc->sc_temp_dead = true;
+		aprint_error_dev(sc->sc_dev,
+		    "temperature log page timed out; sensor stopped\n");
+		return ETIMEDOUT;
+	}
+
+	nvme_ccb_put(sc->sc_admin_q, ccb);
+
+	if (rv != 0)
+		return EIO;
+
+	/*
+	 * Zero means not reported.  Anything above 1000 K is no device
+	 * temperature and would not fit the sensor's micro-kelvins.
+	 */
+	k = le16dec((const uint8_t *)NVME_DMA_KVA(sc->sc_smart) +
+	    NVM_SMART_COMPOSITE_TEMP);
+	if (k == 0 || k > 1000)
+		return EIO;
+	*kelvin = k;
+	return 0;
+}
+
+static void
+nvme_sensors_refresh(struct sysmon_envsys *sme, envsys_data_t *edata)
+{
+	struct nvme_softc *sc = sme->sme_cookie;
+	uint32_t k;
+
+	if (nvme_smart_temperature(sc, &k) != 0) {
+		edata->state = ENVSYS_SINVALID;
+		return;
+	}
+	edata->value_cur = k * 1000000;
+	edata->state = ENVSYS_SVALID;
+}
+
+static void
+nvme_sensors_get_limits(struct sysmon_envsys *sme, envsys_data_t *edata,
+    sysmon_envsys_lim_t *limits, uint32_t *props)
+{
+	struct nvme_softc *sc = sme->sme_cookie;
+	const uint16_t warn = sc->sc_identify.wctemp;
+	const uint16_t crit = sc->sc_identify.cctemp;
+
+	/*
+	 * NVMe names the lowest overheating temperature; sysmon alarms
+	 * strictly above a limit.
+	 */
+	if (warn != 0 && warn <= 1000) {
+		limits->sel_warnmax = warn * 1000000 - 1;
+		*props |= PROP_WARNMAX;
+	}
+	if (crit != 0 && crit <= 1000) {
+		limits->sel_critmax = crit * 1000000 - 1;
+		*props |= PROP_CRITMAX;
+	}
 }
 
 static int

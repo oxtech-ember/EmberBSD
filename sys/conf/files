@@ -1457,7 +1457,7 @@ file	dev/ic/dm9000.c			dme
 
 # NVM Express Controller
 #
-device	nvme {nsid = -1}
+device	nvme {nsid = -1}: sysmon_envsys
 file	dev/ic/nvme.c			nvme
 
 attach	ld at nvme with ld_nvme
