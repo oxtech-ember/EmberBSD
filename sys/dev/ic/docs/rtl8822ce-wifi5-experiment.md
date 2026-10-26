@@ -47,7 +47,10 @@ per channel access) are described in
 `hw.rtwce_stats` reports the negotiation and data path as numbers:
 `htprep`, `htoffer`, `vhtadmit`, `htresp`, `htreset`, `assocfail`,
 `htstate`, `runreq`, `htrun` and `runpass` for preparation, offer, admission,
-response, beacon resets and the RUN worker; `raphy` and `tuple` for the
+response, beacon resets and the RUN worker; `htbcn` for the last beacon
+reset: its clause (`IEEE80211_HT20_BEACON_*` in `ieee80211_ht20.h`), HT
+Capabilities octets 0-3 and HT Operation octets 0-5 of the beacon and of
+the committed contract, and the first differing Basic HT-MCS octet; `raphy` and `tuple` for the
 committed RA entry and channel tuple, with `sgi` for its SGI_EN bit;
 `txrate` for the encoded descriptor seed; and `txba` (requests, accepts, refusals, timeouts, DELBAs, invalid
 responses, last status, active TID mask) with `ampdu` (descriptors with

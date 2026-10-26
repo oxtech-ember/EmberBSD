@@ -1893,6 +1893,17 @@ test_ra_vht_run_tuples(void)
 		ra_vht_runs = 0;
 		s.net.ic.ic_ht20_diag.offers = 5; /* Mirrored by the worker. */
 		s.net.ic.ic_ht20_diag.vht = 3;
+		s.net.ic.ic_ht20_diag.reset_clause = IEEE80211_HT20_BEACON_PROTECTION;
+		for (unsigned b = 0; b < 6; b++) {
+			if (b < 4) {
+				s.net.ic.ic_ht20_diag.reset_cap[b] = (uint8_t)(0x10 + b);
+				s.net.ic.ic_ht20_diag.reset_peer_cap[b] = (uint8_t)(0x20 + b);
+			}
+			s.net.ic.ic_ht20_diag.reset_op[b] = (uint8_t)(0x30 + b);
+			s.net.ic.ic_ht20_diag.reset_peer_op[b] = (uint8_t)(0x40 + b);
+			if (b < 3)
+				s.net.ic.ic_ht20_diag.reset_mcs[b] = (uint8_t)(0x50 + b);
+		}
 		CHECK(rtw88_net_vht_admit(&s.net.ic, &chan, &cap) == 0);
 		/* The association timer would abandon a long cold start. */
 		s.net.ic.ic_mgt_timer = 5;
@@ -1919,6 +1930,18 @@ test_ra_vht_run_tuples(void)
 			    ns.vht_chan[1] == v[i].center &&
 			    ns.vht_chan[2] == v[i].width_mhz);
 			CHECK(ns.ht20_offers == 5 && ns.ht20_vht == 3);
+			/* The last beacon reset's clause and octets, verbatim. */
+			CHECK(ns.ht20_reset_clause ==
+			    IEEE80211_HT20_BEACON_PROTECTION);
+			for (unsigned b = 0; b < 6; b++) {
+				if (b < 4)
+					CHECK(ns.ht20_reset_cap[b] == 0x10 + b &&
+					    ns.ht20_reset_peer_cap[b] == 0x20 + b);
+				CHECK(ns.ht20_reset_op[b] == 0x30 + b &&
+				    ns.ht20_reset_peer_op[b] == 0x40 + b);
+				if (b < 3)
+					CHECK(ns.ht20_reset_mcs[b] == 0x50 + b);
+			}
 			/* One RUN pass restarted the width and published RUN. */
 			CHECK(ns.run_passes == 1 && ns.run_restart_fail == 0 &&
 			    ns.run_cancels == 0 && ns.run_fails == 0 &&
