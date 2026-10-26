@@ -167,9 +167,9 @@ class RoutingTests(unittest.TestCase):
                 result = fixture.run(goal)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 calls = [row for row in fixture.records() if row["command"] == "make"]
-                self.assertTrue(any(row["argv"] == [goal] and
+                self.assertTrue(any(row["argv"] == ["MACHINE=amd64", "MACHINE_ARCH=x86_64", goal] and
                     row["cwd"] == str(fixture.source) for row in calls))
-                self.assertFalse(any(row["argv"] == ["build_install"] for row in calls))
+                self.assertFalse(any(row["argv"] == ["MACHINE=amd64", "MACHINE_ARCH=x86_64", "build_install"] for row in calls))
 
     def assert_refused(self, fixture, message, *args):
         result = fixture.run(*args, "makewrapper")
@@ -185,7 +185,7 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         records = fixture.records()
         calls = [row for row in records if row["command"] == "make"]
-        self.assertTrue(any(row["argv"] == ["build_install"] and
+        self.assertTrue(any(row["argv"] == ["MACHINE=amd64", "MACHINE_ARCH=x86_64", "build_install"] and
             row["cwd"] == str(fixture.source / "tools") for row in calls))
         self.assertFalse(fixture.sentinel.exists())
         self.assertFalse({"cc", "c++", "cpp", "ar", "as", "ld", "ranlib", "yacc"} &
@@ -208,7 +208,7 @@ class RoutingTests(unittest.TestCase):
             timeout=30)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         replay = fixture.records()[-1]
-        self.assertEqual(replay["argv"], ["fixture-replay"])
+        self.assertEqual(replay["argv"], ["MACHINE=amd64", "MACHINE_ARCH=x86_64", "fixture-replay"])
         self.assertEqual(replay["env"]["HOST_YACC"], str(fixture.selected / "yacc"))
         self.assertEqual(replay["env"]["HOST_MV_CP"], str(fixture.selected / "cp"))
         self.assertEqual(replay["env"]["HOST_MV_RM"], str(fixture.selected / "rm"))

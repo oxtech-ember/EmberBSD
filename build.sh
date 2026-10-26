@@ -1069,6 +1069,17 @@ listarch()
 	return 0
 }
 
+# A Ports make can have a compiled-in MACHINE_ARCH. Exporting the target
+# environment does not override that value. Pass target identity explicitly.
+run_target_make()
+{
+	if ${_ember_native_mode}
+	then
+		set -- "MACHINE=${MACHINE}" "MACHINE_ARCH=${MACHINE_ARCH}" "$@"
+	fi
+	"${make}" "$@"
+}
+
 # nobomb_getmakevar --
 # Given the name of a make variable in $1, show make's idea of the
 # value of that variable, or return 1 if there's an error.
@@ -1076,7 +1087,7 @@ listarch()
 nobomb_getmakevar()
 {
 	[ -x "${make}" ] || return 1
-	"${make}" -m ${TOP}/share/mk -s -B -f- _x_ <<EOF || return 1
+	run_target_make -m ${TOP}/share/mk -s -B -f- _x_ <<EOF || return 1
 _x_:
 	echo \${$1}
 .include <bsd.prog.mk>
@@ -2192,7 +2203,7 @@ validatemakeparams()
 			bomb "Can't create top level object directory" \
 			     "${TOP_obj}"
 		else
-		    ${runcmd} "${make}" -m "${TOP}/share/mk" obj NOSUBDIR= ||
+		    ${runcmd} run_target_make -m "${TOP}/share/mk" obj NOSUBDIR= ||
 			    bomb "Can't create top level object directory" \
 				 "using make obj"
 		fi
@@ -2201,7 +2212,7 @@ validatemakeparams()
 		# is available.
 		#
 		${runcmd} cd tools
-		${runcmd} "${make}" -m "${TOP}/share/mk" obj NOSUBDIR= ||
+		${runcmd} run_target_make -m "${TOP}/share/mk" obj NOSUBDIR= ||
 		    bomb "Failed to make obj in tools"
 		${runcmd} cd "${TOP}"
 	fi
@@ -2417,7 +2428,7 @@ EOF
 		then
 			qmake=$(shell_quote "${_ember_native_make}")
 			echo ""
-			echo "exec ${qmake} \${1+\"\$@\"}"
+			echo "exec ${qmake} MACHINE=\"\${MACHINE}\" MACHINE_ARCH=\"\${MACHINE_ARCH}\" \${1+\"\$@\"}"
 		else
 			cat <<-EOF
 
