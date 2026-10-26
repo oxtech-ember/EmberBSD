@@ -8,6 +8,13 @@ require_relative 'a133-capture-check'
 
 module A133UsbBackup
   class Deadline < StandardError; end
+  # Capture admission does not widen the source used by mutation stages.
+  class CaptureSource < Source
+    private
+    def supported_model?(model)
+      model=='QUAD-CORE A133 c3' || super
+    end
+  end
   module_function
 
   def directory_sync(directory)
@@ -111,7 +118,7 @@ module A133UsbBackup
     raise Invalid,'usb_backup_unsafe_parent' unless stat.directory? && stat.uid==Process.uid && stat.mode&07777==0700
     directory = File.join(File.realpath(parent),File.basename(directory))
     raise Invalid,'usb_backup_destination_exists' if File.exist?(directory) || File.symlink?(directory)
-    source = Source.new(adb:adb,serial:serial,state:state,root_method:root_method,timeout:timeout)
+    source = CaptureSource.new(adb:adb,serial:serial,state:state,root_method:root_method,timeout:timeout)
     Timeout.timeout(timeout,Deadline) do
       private_directory(File.dirname(directory)) do |parent_check|
         identity = source.inspect!
