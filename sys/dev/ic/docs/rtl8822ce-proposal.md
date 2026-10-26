@@ -1,6 +1,9 @@
 # Native RTL8822CE station driver proposal
 
 Status: staged implementation. Legacy WPA2 station checks pass on both bands.
+HT and VHT run in the separate manual
+[Wi-Fi 5 experiment](rtl8822ce-wifi5-experiment.md); the HT sections below
+record how that path was staged.
 
 ## Problem and target
 
@@ -292,7 +295,12 @@ firmware telemetry and throughput. Reconnection data is a separate result:
 old queued DMA is not proven drained by this atom, and reports cannot be
 attributed across reassociation. Legacy recovery must remain available.
 
-## Shared HT20 association staging (driver admission remains off)
+## Shared HT20 association staging (historical)
+
+This section records the first staging step. The driver now registers its
+provider; the current profile is the
+[Wi-Fi 5 experiment](rtl8822ce-wifi5-experiment.md).
+
 
 The shared stack has a bounded HT20 offer/response capsule and the native
 request callback consumes its generation/peer/channel fence. Protocol attach
@@ -360,7 +368,7 @@ any real HT advertisement. Wire semantics are adapted from FreeBSD net80211 at
 `d2145e9b96448da34d3cfede24c509af6d830c92`, using its BSD license option and
 preserved notices; no LinuxKPI/vap ABI is imported.
 
-## Host-only HT20 one-stream rate path
+## Host-only HT20 one-stream rate path (historical)
 
 The native source has a bounded HT20/one-stream AUTO rate consumer. Host tests
 execute actual queued HT offer/response, RUN preparation, H2C `0x40` serialization,
@@ -394,9 +402,10 @@ MCS reports remain unattributed firmware-generation telemetry. Native attach
 still registers no HT provider, emits no HT offer and enables no HT PHY.
 Qualified RFK, normal transmit mode and hardware RX BA with software CCMP remain
 separate gates. The earlier channel 149 trial timed out during authentication;
-its AP operation `0x0006` is now inside the host policy envelope only. No physical
-HT20, HT40, VHT80, 2SS, SGI, TX A-MPDU, maximum speed or Wi-Fi5 acceptance
-is claimed.
+its AP operation `0x0006` is now inside the host policy envelope only. Later
+hardware results for VHT80 and TX A-MPDU are recorded with the
+[Wi-Fi 5 experiment](rtl8822ce-wifi5-experiment.md#hardware-results); 2SS, SGI
+and maximum speed remain unclaimed.
 
 ## Firmware hardware-feature snapshot
 

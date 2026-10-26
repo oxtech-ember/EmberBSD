@@ -1735,8 +1735,13 @@ rtw88_ra_configure(struct rtw88_softc *sc, const struct rtw88_ra_config *cfg)
 
 	if (cfg == NULL || cfg->epoch == 0 || cfg->use_protection > 1 ||
 	    cfg->channel == 0 || cfg->channel != sc->sc_channel ||
-	    cfg->common_rates == 0 || (cfg->common_rates & ~0xfffU) != 0)
+	    cfg->common_rates == 0 || (cfg->common_rates & ~0xfffU) != 0 ||
+	    cfg->sgi > 1 || (cfg->sgi && cfg->phy == RTW88_RA_LEGACY))
 		return EINVAL;
+#ifndef RTW88_VHT80
+	if (cfg->sgi)
+		return EOPNOTSUPP;
+#endif
 	if (cfg->phy == RTW88_RA_HT20_1SS) {
 		if (cfg->mode != RTW88_FIXED_11A || cfg->channel <= 14 ||
 		    cfg->use_protection != 0 || cfg->vht_tx_map != 0 ||
@@ -1805,6 +1810,7 @@ rtw88_ra_configure(struct rtw88_softc *sc, const struct rtw88_ra_config *cfg)
 	ra.profile_generation = cfg->profile_generation;
 	ra.ht = cfg->ht;
 	ra.vht_tx_map = cfg->vht_tx_map;
+	ra.sgi = cfg->sgi;
 	ra.tuple = sc->sc_phy.channel;
 	if (cfg->phy == RTW88_RA_HT20_1SS) {
 		ra.rate_id = 5; /* Pinned RTW_RATEID_GN_N1SS, 5 GHz only. */
@@ -1832,7 +1838,8 @@ rtw88_ra_configure(struct rtw88_softc *sc, const struct rtw88_ra_config *cfg)
 		sc->sc_ra = ra;
 		return 0;
 	}
-	payload[1] = ra.rate_id | (1U << 5); /* Initial RA level1, SGI0. */
+	/* Initial RA level1; bit7 SGI_EN lets firmware RA choose short GI. */
+	payload[1] = ra.rate_id | (1U << 5) | (unsigned)ra.sgi << 7;
 	payload[2] = 0x40; /* DIS_PT, BW20, LDPC0, NO_UPDATE0, VHT0. */
 	if (ra.phy == RTW88_RA_VHT_1SS)
 		/* VHT1 and the committed width: BW40 1, BW80 2. */
