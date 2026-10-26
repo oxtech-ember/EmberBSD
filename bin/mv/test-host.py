@@ -31,6 +31,7 @@ class HostSourceTests(unittest.TestCase):
         self.assertNotIn('NOCOMPATLIB', text)
         self.assertIn('HOST_MV_${_mv_child}', text)
         self.assertIn('exists(', text)
+        self.assertRegex((ROOT / 'tools/Makefile').read_text(), r'SUBDIR\+=.*\bcp\b.*\bmv\b')
 
     def test_host_metadata_order_and_warning_policy(self):
         text = (ROOT / 'bin/mv/mv.c').read_text()

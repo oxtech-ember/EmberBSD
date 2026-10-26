@@ -105,7 +105,7 @@ dependall-date: dependall-host-mkdep dependall-compat
 SUBDIR=	host-mkdep compat binstall .WAIT date \
 	.WAIT mktemp .WAIT sed .WAIT genassym
 .if ${TOOLS_BUILDRUMP} == "no"
-SUBDIR+= cap_mkdb cp crunchgen ctags gencat hexdump \
+SUBDIR+= cap_mkdb cp mv crunchgen ctags gencat hexdump \
 		${LINT_BITS} \
 		makewhatis mtree nbperf .WAIT uudecode
 .endif
