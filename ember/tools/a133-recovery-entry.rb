@@ -15,6 +15,7 @@ module A133Recovery
       @state=state.is_a?(String) ? state.dup.freeze : state
       @root_method=root_method.is_a?(String) ? root_method.dup.freeze : root_method
       adb=adb.is_a?(String) ? adb.dup.freeze : adb
+      @source_options={adb:adb,state:@state,root_method:@root_method,timeout:timeout}.freeze
       @source=A133UsbBackup::Source.new(adb:adb,serial:@serial,state:@state,
         root_method:@root_method,timeout:timeout)
       @channel=A133Usb::Channel.new(adb,timeout)
@@ -25,7 +26,7 @@ module A133Recovery
     end
 
     def policy(original_env,backup)
-      A133Recovery::Policy.new(serial:@serial,cid:@cid,original_env:original_env,backup:backup).data
+      A133Recovery::Policy.new(serial:@serial,cid:@cid,original_env:original_env,backup:backup)
     end
 
     def read_hash(role)
@@ -70,7 +71,9 @@ module A133Recovery
       attempted=false
       required=action==:arm ? 'device' : 'recovery'
       raise A133Usb::Invalid,'usb_entry_wrong_state' unless @state==required
-      pinned=policy(original_env,backup)
+      selected=policy(original_env,backup)
+      pinned=selected.data
+      @source=selected.source(**@source_options)
       guard!(pinned)
       current=read_environment
       known=[pinned[:original_sha],pinned[:armed_sha]].include?(current[:sha])
