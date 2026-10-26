@@ -25,6 +25,8 @@ That library generates the complete OS date parser before `tools/yacc` exists.
 `HOST_MV_CP` and `HOST_MV_RM` bind the child tools compiled into host `mv`.
 The generated make wrapper preserves both selected paths.
 `printf` is required when the selected shell has no built-in `printf`.
+`echo` is required by make's direct execution of simple recipes, including
+the initial build-variable query. A shell builtin does not supply that path.
 `-` makes the command available through the selected `PATH` only.
 The contract file contains the complete initial list of required roles.
 
@@ -112,6 +114,9 @@ Run the control-flow checks with one explicit test shell and Python:
 ```
 
 The tests execute the actual `build.sh` with synthetic tools and make.
+Run `test-make.py --make /selected/bmake --shell /selected/sh --echo /selected/echo`
+with native executables to check the initial variable-query recipe through
+the contract's routed command names.
 They replay its generated wrapper and check refusal cases.
 They do not run configure, a compiler, or a native-tool qualification probe.
 They do not prove that a real NetBSD make uses the selected recipe shell.

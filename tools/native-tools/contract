@@ -11,6 +11,7 @@ cp cp HOST_MV_CP
 cpp cpp HOST_CPP
 date date -
 dirname dirname -
+echo echo -
 env env -
 id id -
 ld ld HOST_LD
