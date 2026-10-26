@@ -127,8 +127,9 @@ struct rtw88_ra_config {
 	uint32_t profile_generation;
 	struct rtw88_ht20_policy ht;
 	/* RA_INFO SGI_EN: the AP receives SGI at the committed width.
+	 * LDPC: the AP receives LDPC (RA_INFO LDPC and the descriptor).
 	 * HT20 and VHT entries of the VHT experiment only. */
-	uint8_t sgi;
+	uint8_t sgi, ldpc;
 };
 struct rtw88_ra_state {
 	uint64_t epoch;
@@ -139,7 +140,7 @@ struct rtw88_ra_state {
 	uint32_t profile_generation;
 	struct rtw88_ht20_policy ht;
 	struct rtw88_channel_tuple tuple;	/* Committed when configured. */
-	uint8_t sgi;
+	uint8_t sgi, ldpc;
 	int configured, active, protection_limited, error;
 };
 

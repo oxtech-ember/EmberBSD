@@ -615,8 +615,11 @@ rtw88_net_vht_admit(struct ieee80211com *ic,
 	    (chan->width_mhz != 40 && chan->width_mhz != 80) ||
 	    rtw88_tuple_check(net->core, &tuple) != 0)
 		error = EOPNOTSUPP;
-	else
+	else {
 		cap->rx_map = cap->tx_map = RTW88_VHT_MAP_NSS1_MCS9;
+		/* RX LDPC (bit4; rtw8822c rx_ldpc) and SGI80 reception. */
+		cap->info = 0x30;
+	}
 	mutex_enter(net->lock);
 	if (error == 0)
 		net->neg.vht_admit++;
@@ -731,10 +734,11 @@ rtw88_net_tx_ht20_policy(struct ieee80211com *ic, struct rtw88_ra_config *cfg)
 	cfg->ht.mtu = mtu;
 	cfg->ht.max_mpdu = maximum;
 	cfg->ht.rts_threshold = ic->ic_rtsthreshold;
-	cfg->sgi = 0;
+	cfg->sgi = cfg->ldpc = 0;
 #ifdef RTW88_VHT80
-	/* HT Capabilities SGI20 (bit5) for an HT20 entry. */
+	/* HT Capabilities SGI20 (bit5) and LDPC (bit0) for an HT20 entry. */
 	cfg->sgi = (protection.peer_cap & 0x20) != 0;
+	cfg->ldpc = (protection.peer_cap & 0x01) != 0;
 #endif
 	if (ni->ni_ht20.vht.valid) {
 #ifdef RTW88_VHT80
@@ -751,6 +755,8 @@ rtw88_net_tx_ht20_policy(struct ieee80211com *ic, struct rtw88_ra_config *cfg)
 		cfg->sgi = ni->ni_ht20.vht.channel.width_mhz == 80 ?
 		    (ni->ni_ht20.vht.peer.info & 0x20) != 0 :
 		    (protection.peer_cap & 0x40) != 0;
+		/* VHT Capabilities RX LDPC (bit4). */
+		cfg->ldpc = (ni->ni_ht20.vht.peer.info & 0x10) != 0;
 #else
 		return EOPNOTSUPP;
 #endif
@@ -793,7 +799,7 @@ rtw88_net_tx_ra_validate(struct rtw88_net *net,
 	    ra->ht.mtu != policy->ht.mtu ||
 	    ra->ht.max_mpdu != policy->ht.max_mpdu ||
 	    ra->ht.rts_threshold != policy->ht.rts_threshold ||
-	    ra->sgi != policy->sgi ||
+	    ra->sgi != policy->sgi || ra->ldpc != policy->ldpc ||
 	    h->profile.rx_mcs != 0xff || h->profile.tx_mcs != 0xff ||
 	    h->tx_mcs == 0 || (h->tx_mcs & ~0xffU) != 0 ||
 	    ra->profile_generation != h->profile.generation ||

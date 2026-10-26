@@ -1312,16 +1312,17 @@ test_ra_ht20_run(void)
 	{
 		struct rtw88_ra_config sgi_policy = tx_policy;
 
-		s.ni.ni_ht20.peer_htcap[0] |= 0x20;
-		s.ni.ni_ht20.peer_cap |= 0x20;
+		s.ni.ni_ht20.peer_htcap[0] |= 0x21;
+		s.ni.ni_ht20.peer_cap |= 0x21;
 		CHECK(rtw88_net_tx_ht20_policy(&s.net.ic, &sgi_policy) == 0);
 #ifdef RTW88_VHT80
-		CHECK(sgi_policy.sgi == 1);
+		/* HT20 SGI20 and HT LDPC from the AP's HT Capabilities. */
+		CHECK(sgi_policy.sgi == 1 && sgi_policy.ldpc == 1);
 #else
-		CHECK(sgi_policy.sgi == 0);
+		CHECK(sgi_policy.sgi == 0 && sgi_policy.ldpc == 0);
 #endif
-		s.ni.ni_ht20.peer_htcap[0] &= (uint8_t)~0x20;
-		s.ni.ni_ht20.peer_cap &= (uint16_t)~0x20;
+		s.ni.ni_ht20.peer_htcap[0] &= (uint8_t)~0x21;
+		s.ni.ni_ht20.peer_cap &= (uint16_t)~0x21;
 	}
 	mutex_enter(s.net.lock);
 	CHECK(rtw88_net_tx_ra_validate(&s.net, &tx_policy,
@@ -1360,7 +1361,7 @@ test_ra_vht80_formats(void)
 {
 	const uint8_t bssid[6] = {2, 0, 0, 0, 0, 1};
 
-	for (unsigned variant = 0; variant < 22; variant++) {
+	for (unsigned variant = 0; variant < 24; variant++) {
 		struct rtw88_softc sc;
 		struct rtw88_ra_config cfg = ra_vht80_cfg;
 		struct rtw88_ra_state saved;
@@ -1404,6 +1405,8 @@ test_ra_vht80_formats(void)
 		case 19: cfg.ht_operation = 1; break;
 		case 20: cfg.sgi = 1; break; /* RA_INFO SGI_EN, byte1 bit7. */
 		case 21: cfg.sgi = 2; break;
+		case 22: cfg.ldpc = 1; break; /* RA_INFO LDPC, byte2 bit2. */
+		case 23: cfg.ldpc = 2; break;
 		}
 		box = sc.sc_h2c_box;
 		writes = f.writes;
@@ -1437,6 +1440,7 @@ test_ra_vht80_formats(void)
 				CHECK(((desc[20] >> 5) & 3) == 2);
 				CHECK((desc[20] & 0x0f) ==
 				    RTW88_TX_DATA_SC_DONT_CARE);
+				CHECK((desc[20] & 0x80) == 0); /* BCC. */
 				CHECK((desc[13] & 0x05) == 0);
 			}
 			CHECK(sc.sc_stats.tx_ra_encoded == 2);
@@ -1548,6 +1552,23 @@ test_ra_vht80_formats(void)
 			    sizeof(ra_frame), 9, 0) == 0);
 			desc = sc.sc_txq[RTW88_TXQ_BE].buf[wp].vaddr;
 			CHECK(desc[6] == 10 && (desc[16] & 0x7f) == 0x35);
+		} else if (variant == 22) {
+			/* LDPC in RA_INFO and in the data descriptor seed. */
+			unsigned wp = sc.sc_txq[RTW88_TXQ_BE].wp;
+			const uint8_t *desc;
+
+			CHECK(error == 0 && sc.sc_ra.active && sc.sc_ra.ldpc == 1);
+			CHECK(mmio32(0x1d0 + 4 * box) == UINT32_C(0x562a0040));
+			CHECK(rtw88_tx_auto(&sc, RTW88_TXQ_BE, ra_frame,
+			    sizeof(ra_frame), 9, 0) == 0);
+			desc = sc.sc_txq[RTW88_TXQ_BE].buf[wp].vaddr;
+			CHECK((desc[20] & 0x80) != 0);
+			/* Non-RA frames keep BCC. */
+			wp = sc.sc_txq[RTW88_TXQ_MGMT].wp;
+			CHECK(rtw88_tx_raw(&sc, RTW88_TXQ_MGMT,
+			    (uint8_t[24]){ 0xd0 }, 24) == 0);
+			desc = sc.sc_txq[RTW88_TXQ_MGMT].buf[wp].vaddr;
+			CHECK((desc[20] & 0x80) == 0);
 		} else if (variant == 20) {
 			CHECK(error == 0 && sc.sc_ra.active && sc.sc_ra.sgi == 1);
 			CHECK(mmio32(0x1d0 + 4 * box) == UINT32_C(0x52aa0040));
@@ -1976,7 +1997,33 @@ test_ra_vht_run_tuples(void)
 		}
 		/* SGI follows the AP at the committed width: VHT SGI80 for 80,
 		 * HT SGI40 for 40; the other bit, or none, keeps long GI. */
-		CHECK(tx_policy.sgi == 0);
+		CHECK(tx_policy.sgi == 0 && tx_policy.ldpc == 0);
+		/* VHT LDPC follows the AP's VHT RX LDPC bit, not the HT one. */
+		{
+			struct rtw88_ra_config ldpc_policy = tx_policy;
+
+			s.ni.ni_ht20.vht.peer.info = 0x10;
+			CHECK(rtw88_net_tx_ht20_policy(&s.net.ic, &ldpc_policy) == 0);
+			CHECK(ldpc_policy.ldpc == 1 && ldpc_policy.sgi == 0);
+			s.ni.ni_ht20.vht.peer.info = 0;
+			s.ni.ni_ht20.peer_htcap[0] |= 0x01;
+			s.ni.ni_ht20.peer_cap |= 0x01;
+			CHECK(rtw88_net_tx_ht20_policy(&s.net.ic, &ldpc_policy) == 0);
+			CHECK(ldpc_policy.ldpc == 0);
+			s.ni.ni_ht20.peer_htcap[0] &= (uint8_t)~0x01;
+			s.ni.ni_ht20.peer_cap &= (uint16_t)~0x01;
+			/* Only the LDPC bit differs from the committed entry. */
+			CHECK(rtw88_net_tx_ht20_policy(&s.net.ic, &ldpc_policy) == 0);
+			mutex_enter(s.net.lock);
+			CHECK(rtw88_net_tx_ra_validate(&s.net, &ldpc_policy,
+			    s.net.policy.epoch) == 0);
+			mutex_exit(s.net.lock);
+			ldpc_policy.ldpc = 1;
+			mutex_enter(s.net.lock);
+			CHECK(rtw88_net_tx_ra_validate(&s.net, &ldpc_policy,
+			    s.net.policy.epoch) == EPROTO);
+			mutex_exit(s.net.lock);
+		}
 		for (unsigned bit = 0; bit < 2; bit++) {
 			struct rtw88_ra_config sgi_policy = tx_policy;
 			uint8_t htcap = s.ni.ni_ht20.peer_htcap[0];
@@ -1994,6 +2041,7 @@ test_ra_vht_run_tuples(void)
 			s.ni.ni_ht20.vht.peer.info = 0;
 			s.ni.ni_ht20.peer_htcap[0] = htcap;
 			s.ni.ni_ht20.peer_cap = peer_cap;
+			CHECK(sgi_policy.ldpc == 0);
 			/* A committed long-GI entry does not match an SGI policy. */
 			sgi_policy.sgi = 1;
 			mutex_enter(s.net.lock);
@@ -2126,7 +2174,7 @@ test_ra_vht_run_tuples(void)
 		CHECK(rtw88_net_vht_admit(&s.net.ic, &closed[variant].chan,
 		    &cap) == want);
 		CHECK(want == 0 ? cap.rx_map == RTW88_VHT_MAP_NSS1_MCS9 &&
-		    cap.tx_map == RTW88_VHT_MAP_NSS1_MCS9 :
+		    cap.tx_map == RTW88_VHT_MAP_NSS1_MCS9 && cap.info == 0x30 :
 		    cap.rx_map == 0 && cap.tx_map == 0 && cap.info == 0);
 		{
 			struct rtw88_net_neg ns;
@@ -2215,7 +2263,9 @@ test_ra_vht80_run(void)
 			state_fixture_finish(&s);
 			continue;
 		}
-		CHECK(cap.info == 0 && cap.rx_highest == 0 && cap.tx_highest == 0);
+		/* RX LDPC and SGI80 reception; no other capability. */
+		CHECK(cap.info == 0x30 && cap.rx_highest == 0 &&
+		    cap.tx_highest == 0);
 		/* The local profile offers one stream with MCS0-9. */
 		CHECK(cap.rx_map == RTW88_VHT_MAP_NSS1_MCS9 &&
 		    cap.tx_map == RTW88_VHT_MAP_NSS1_MCS9);
@@ -2549,6 +2599,22 @@ test_ra_sgi_narrow(void)
 	CHECK(rtw88_station_config(&sc, bssid, 1, 0x150, 9, 1) == 0);
 	writes = f.writes;
 	CHECK(rtw88_ra_configure(&sc, &legacy) == EINVAL && f.writes == writes);
+	legacy.sgi = 0;
+	legacy.ldpc = 1;
+	CHECK(rtw88_ra_configure(&sc, &legacy) == EINVAL && f.writes == writes);
+	ht20.ldpc = 1;
+	ht20.phy = RTW88_RA_HT20_1SS;
+	ht20.ht_mcs = 0xff;
+	ht20.vht_tx_map = 0;
+	box = sc.sc_h2c_box;
+#ifdef RTW88_VHT80
+	CHECK(rtw88_ra_configure(&sc, &ht20) == 0 && sc.sc_ra.ldpc == 1);
+	CHECK(mmio32(0x1d0 + 4 * box) == UINT32_C(0x44250040));
+#else
+	CHECK(rtw88_ra_configure(&sc, &ht20) == EOPNOTSUPP &&
+	    f.writes == writes && sc.sc_h2c_box == box);
+#endif
+	ht20.ldpc = 0;
 	ht20.phy = RTW88_RA_HT20_1SS;
 	ht20.ht_mcs = 0xff;
 	ht20.vht_tx_map = 0;
