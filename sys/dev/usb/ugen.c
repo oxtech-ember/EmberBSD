@@ -121,6 +121,8 @@ fail:
 #define	UGEN_CHUNK	128	/* chunk size for read */
 #define	UGEN_IBSIZE	1020	/* buffer size */
 #define	UGEN_BBSIZE	1024
+/* Normal bulk I/O must retain short-transfer boundaries. */
+#define	UGEN_BULK_BSIZE	(64 * 1024)
 
 #define UGEN_NISOREQS	4	/* number of outstanding xfer requests */
 #define UGEN_NISORFRMS	8	/* number of transactions per req */
@@ -850,6 +852,8 @@ ugen_do_read(struct ugen_softc *sc, int endpt, struct uio *uio, int flag)
 {
 	struct ugen_endpoint *sce = &sc->sc_endpoints[endpt][IN];
 	uint32_t n, tn;
+	uint32_t bufsize;
+	char *dbuf;
 	struct usbd_xfer *xfer;
 	usbd_status err;
 	int error = 0;
@@ -969,16 +973,20 @@ ugen_do_read(struct ugen_softc *sc, int endpt, struct uio *uio, int flag)
 			mutex_exit(&sc->sc_lock);
 			break;
 		}
-		error = usbd_create_xfer(sce->pipeh, UGEN_BBSIZE,
+		if (uio->uio_resid == 0)
+			break;
+		bufsize = MIN((size_t)UGEN_BULK_BSIZE, uio->uio_resid);
+		error = usbd_create_xfer(sce->pipeh, bufsize,
 		    0, 0, &xfer);
 		if (error)
 			return error;
-		while ((n = uimin(UGEN_BBSIZE, uio->uio_resid)) != 0) {
+		dbuf = usbd_get_buffer(xfer);
+		while ((n = MIN((size_t)bufsize, uio->uio_resid)) != 0) {
 			DPRINTFN(1, "start transfer %jd bytes", n, 0, 0, 0);
 			tn = n;
 			err = usbd_bulk_transfer(xfer, sce->pipeh,
 			    sce->state & UGEN_SHORT_OK ? USBD_SHORT_XFER_OK : 0,
-			    sce->timeout, sc->sc_buffer, &tn);
+			    sce->timeout, dbuf, &tn);
 			if (err) {
 				if (err == USBD_INTERRUPTED)
 					error = EINTR;
@@ -989,7 +997,7 @@ ugen_do_read(struct ugen_softc *sc, int endpt, struct uio *uio, int flag)
 				break;
 			}
 			DPRINTFN(1, "got %jd bytes", tn, 0, 0, 0);
-			error = uiomove(sc->sc_buffer, tn, uio);
+			error = uiomove(dbuf, tn, uio);
 			if (error || tn < n)
 				break;
 		}
@@ -1062,6 +1070,7 @@ ugen_do_write(struct ugen_softc *sc, int endpt, struct uio *uio,
 	uint32_t n;
 	int error = 0;
 	uint32_t tn;
+	uint32_t bufsize;
 	char *dbuf;
 	struct usbd_xfer *xfer;
 	usbd_status err;
@@ -1154,17 +1163,21 @@ ugen_do_write(struct ugen_softc *sc, int endpt, struct uio *uio,
 			mutex_exit(&sc->sc_lock);
 			break;
 		}
-		error = usbd_create_xfer(sce->pipeh, UGEN_BBSIZE,
+		if (uio->uio_resid == 0)
+			break;
+		bufsize = MIN((size_t)UGEN_BULK_BSIZE, uio->uio_resid);
+		error = usbd_create_xfer(sce->pipeh, bufsize,
 		    0, 0, &xfer);
 		if (error)
 			return error;
-		while ((n = uimin(UGEN_BBSIZE, uio->uio_resid)) != 0) {
-			error = uiomove(sc->sc_buffer, n, uio);
+		dbuf = usbd_get_buffer(xfer);
+		while ((n = MIN((size_t)bufsize, uio->uio_resid)) != 0) {
+			error = uiomove(dbuf, n, uio);
 			if (error)
 				break;
 			DPRINTFN(1, "transfer %jd bytes", n, 0, 0, 0);
 			err = usbd_bulk_transfer(xfer, sce->pipeh, 0, sce->timeout,
-			    sc->sc_buffer, &n);
+			    dbuf, &n);
 			if (err) {
 				if (err == USBD_INTERRUPTED)
 					error = EINTR;
