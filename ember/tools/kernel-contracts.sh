@@ -1,11 +1,12 @@
 #!/bin/sh
 # Existing source contracts: portable subset on the build host, all on NetBSD.
 set -eu
-[ "$#" -ge 1 ] && [ "$#" -le 2 ] || {
-    echo 'usage: kernel-contracts.sh SOURCE_ROOT [all|portable]' >&2; exit 1;
+[ "$#" -ge 1 ] && [ "$#" -le 3 ] || {
+    echo 'usage: kernel-contracts.sh SOURCE_ROOT [all|portable] [PVR_FIRMWARE]' >&2; exit 1;
 }
 src=$(CDPATH= cd -- "$1" && pwd)
 mode=${2:-all}
+if [ "$#" -eq 3 ]; then PVR_QUERY_FIRMWARE=$3; export PVR_QUERY_FIRMWARE; fi
 case "$mode" in all|portable) ;; *) echo 'invalid contract mode' >&2; exit 1;; esac
 python=${NETBSD2_PYTHON:-$(command -v python3 || true)}
 [ -n "$python" ] && [ -x "$python" ] || {

@@ -25,6 +25,8 @@ out=/absolute/build-output
 mkdir "$src"
 git archive "$revision" | tar -xf - -C "$src"
 EMBER_BUILD_MODE=cross EMBER_EXTERNAL_TOOLCHAIN=/absolute/llvm \
+    EMBER_LLVM_SOURCE=/absolute/prepared-llvm \
+    EMBERBSD_SDK_SOURCE=/absolute/sdk-source EMBER_HOST_PREFIX=/absolute/native-prefix \
     BUILDINFO="EmberBSD:$revision" NETBSD2_JOBS=6 \
     sh "$src/ember/build-kernel.sh" "$out" EMBER64
 ```
@@ -53,9 +55,26 @@ build log alone does not prove that the kernel has new metadata. A failed build
 returns nonzero and does not leave the previous candidate at the deliverable
 paths. Build logs remain in the output directory.
 
-`NETBSD2_JOBS` selects concurrency. `NETBSD2_PYTHON` can select an existing
-host Python executable; there is no fixed Python 3.13 requirement. These
-legacy Python source contracts have not yet been replaced.
+`NETBSD2_JOBS` selects concurrency. Set `EMBERBSD_SDK_SOURCE` to the SDK
+checkout and `EMBER_HOST_PREFIX` to the selected native prefix. The wrapper
+uses the SDK's [native-check runner](https://github.com/oxtech-ember/EmberBSD-SDK/blob/main/docs/native-checks.md)
+for host source contracts, with executable compiler bindings that preserve
+native ABI flags even when a contract ignores `CFLAGS`. The prefix supplies
+Python, Ruby and shell tools. Its `bin/python3.15` starts both shared runners;
+there is no ambient Python override. Native compiler
+selection is `EMBER_HOST_COMPILER_FAMILY=clang` by default, independent of the
+target family. The native-OS runner also routes every `build.sh` and generated
+make invocation, preserving native `HOST_*` arguments without assigning
+native `CC` or `CFLAGS` to target builds. Native and cross modes both use
+`build.sh tools kernel=...` and require an explicit `EMBER_EXTERNAL_TOOLCHAIN`.
+For Clang this may be the same LLVM prefix as the native tools. Native mode
+still requires NetBSD/AArch64 and executes the complete source contract suite.
+An ambient target `CC` does not select the host test compiler.
+
+Both compiler families require `EMBER_LLVM_SOURCE` from the
+[common source producer](llvm-runtime.md). The kernel wrapper forwards it
+to the kernel and matched module builds. This freestanding source input
+does not require an application sysroot or C++ runtime.
 
 Darwin host tools retain `-no-cpp-precomp` only for Clang. Modern GNU GCC
 rejects that legacy Apple flag. The actual Makefile/compiler regression covers
@@ -102,6 +121,8 @@ both source Makefiles with each make and three source-directory layouts;
 
 ```sh
 EMBER_BUILD_MODE=cross EMBER_EXTERNAL_TOOLCHAIN=/absolute/cross-prefix \
+    EMBER_LLVM_SOURCE=/absolute/prepared-llvm \
+    EMBERBSD_SDK_SOURCE=/absolute/sdk-source EMBER_HOST_PREFIX=/absolute/native-prefix \
     NETBSD2_JOBS=6 sh "$src/ember/build-kernel.sh" /absolute/new-output EMBER64
 ```
 

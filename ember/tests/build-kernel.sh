@@ -5,7 +5,7 @@ set -eu
 # An ambient product version must not replace the selected source version.
 export EMBER_VERSION=9.9
 # Fixtures select their own build mode and toolchain, independent of the shell.
-unset EMBER_BUILD_MODE EMBER_EXTERNAL_TOOLCHAIN EMBER_COMPILER_FAMILY PVR_QUERY_FIRMWARE
+unset EMBERBSD_SDK_SOURCE EMBER_HOST_PREFIX EMBER_HOST_COMPILER_FAMILY EMBER_BUILD_MODE EMBER_EXTERNAL_TOOLCHAIN EMBER_COMPILER_FAMILY EMBER_LLVM_SOURCE PVR_QUERY_FIRMWARE
 repo=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 work=$(mktemp -d "${TMPDIR:-/tmp}/ember-build-kernel.XXXXXX")
 work=$(CDPATH= cd -- "$work" && pwd -P)
@@ -33,6 +33,10 @@ mkdir -p "$work/src/ember/tools" "$work/bin" "$work/src/tools" \
     "$work/src/ember/tests" \
     "$work/src/share/mk" "$work/src/sys/arch/evbarm/conf" \
     "$work/src/sys/external/gpl2/dts/dist"
+mkdir -p "$work/llvm/runtimes" "$work/llvm/compiler-rt/lib/builtins"
+: > "$work/llvm/runtimes/CMakeLists.txt"
+: > "$work/llvm/compiler-rt/lib/builtins/int_lib.h"
+export EMBER_LLVM_SOURCE="$work/llvm"
 cp "$repo/ember/build-kernel.sh" "$work/src/ember/"
 cp "$repo/ember/tools/kernel-contracts.sh" "$work/src/ember/tools/"
 # Model only dispatcher arguments and exit status. These fixtures do not
@@ -48,6 +52,11 @@ for contract in a733-accelerator-clock a733-power a733-display-observer a733-gpu
 set -eu
 echo "a733-contract ${0##*/} $*" >> "$TEST_LOG"
 test "$#" -eq 0
+test "$CC" = "$TEST_ROOT/bin/host-cc"
+test "$CXX" = "$TEST_ROOT/bin/host-cxx"
+test "$CFLAGS" = -Dfixture_host
+test "$CXXFLAGS" = -Dfixture_cxx
+test "$LDFLAGS" = -Lfixture-host
 if [ "${FAIL_AT:-}" = a733-contract ] || [ "${FAIL_AT:-}" = "${0##*/}" ]; then
     echo "injected contract failure: ${0##*/}" >&2
     exit 1
@@ -141,6 +150,9 @@ case $1 in -s) echo "${TEST_HOST:-Darwin}";; -m|-p) echo aarch64;; -r) echo 11.0
 SH
 cat > "$work/bin/python3" <<'SH'
 #!/bin/sh
+case $1 in
+    */scripts/run-native-check.py|*/scripts/run-native-os.py) runner=$1; shift; exec sh "$runner" "$@";;
+esac
 echo "contract $*" >> "$TEST_LOG"
 case $1 in
     */drm-dmabuf-contract.py)
@@ -161,6 +173,12 @@ set -eu
 echo "build.sh $*" >> "$TEST_LOG"
 [ -z "${EMBER_VERSION:-}" ]
 [ "${MAKECONF:-}" = /dev/null ]
+[ "${HOST_CC:-}" = "$TEST_ROOT/bin/host-cc" ]
+[ "${HOST_CFLAGS:-}" = -Dfixture_host ]
+[ -z "${CC:-}" ] && [ -z "${CFLAGS:-}" ]
+case " $* " in *" -V HOST_CC=$TEST_ROOT/bin/host-cc "*) ;; *) exit 83;; esac
+case " $* " in *" -V HOST_CFLAGS=-Dfixture_host "*) ;; *) exit 84;; esac
+for argument do case $argument in BUILDINFO=*) BUILDINFO=${argument#BUILDINFO=};; esac; done
 [ "${FAIL_AT:-}" != tools ]
 mkdir -p "$TEST_OUT/tools/bin" "$TEST_OUT/obj/kernels/EMBER64"
 cp "$TEST_ROOT/bin/nbmake-evbarm" "$TEST_OUT/tools/bin/"
@@ -185,6 +203,11 @@ while [ $# -gt 0 ]; do
     case $1 in
     -C) dir=$2; shift;;
     -V) case $2 in
+        '${HOST_CC}') echo "$TEST_ROOT/bin/host-cc";;
+        '${HOST_CXX}') echo "$TEST_ROOT/bin/host-cxx";;
+        '${HOST_CFLAGS}') echo -Dfixture_host;;
+        '${HOST_CXXFLAGS}') echo -Dfixture_cxx;;
+        '${HOST_LDFLAGS}') echo -Lfixture-host;;
         CPP) echo '${TOOL_CPP.${ACTIVE_CPP}}';;
         '${CPP}')
             if [ "${TEST_CPP_SINGLE:-no}" = yes ]; then
@@ -217,7 +240,22 @@ echo "native-make $*" >> "$TEST_LOG"
 [ -z "${EMBER_VERSION:-}" ]
 [ "$1" = -m ] && [ "$2" = "$TEST_ROOT/src/share/mk" ]
 shift 2
-if [ "${1:-}" = -V ]; then echo "$PWD"; exit; fi
+test "$1" = "EMBER_LLVM_SOURCE=$TEST_ROOT/llvm"
+shift
+while [ $# -gt 0 ]; do
+    case $1 in
+    -V) case $2 in
+        '${HOST_CC}') echo "$TEST_ROOT/bin/host-cc";;
+        '${HOST_CXX}') echo "$TEST_ROOT/bin/host-cxx";;
+        '${HOST_CFLAGS}') echo -Dfixture_host;;
+        '${HOST_CXXFLAGS}') echo -Dfixture_cxx;;
+        '${HOST_LDFLAGS}') echo -Lfixture-host;;
+        *) echo "$PWD";;
+        esac
+        exit;;
+    esac
+    shift
+done
 [ "${FAIL_AT:-}" != kernel ]
 case $PWD in
 */compile/*) printf kernel > netbsd; printf image > netbsd.img;;
@@ -253,9 +291,109 @@ if [ "$last" = "$(cd "$TEST_OUT" && pwd -P)/" ]; then
     [ "${FAIL_AT:-}" != publish ] || exit 1
 fi
 SCRIPT
+mkdir -p "$work/sdk/scripts"
+cat > "$work/sdk/scripts/run-native-check.py" <<'SH'
+#!/bin/sh
+set -eu
+role= log= prefix= family= bindings= cwd= ruby=no
+while [ "$#" -gt 0 ]; do
+    case $1 in
+    --host-prefix) prefix=$2;;
+    --compiler-family) family=$2;;
+    --required-role) test "$2" = ruby; ruby=yes;;
+    --tool) role=$2;;
+    --cwd) cwd=$2;;
+    --bindings) bindings=$2;;
+    --log) log=$2;;
+    --) shift; break;;
+    *) exit 81;;
+    esac
+    shift 2
+done
+test "$prefix" = "$TEST_ROOT"
+test "$family" = "${EMBER_HOST_COMPILER_FAMILY:-clang}"
+test "$cwd" = "$TEST_ROOT/src"
+test "$bindings" = "$TEST_OUT/native-check-commands"
+test "$ruby" = yes
+echo "native-check $family $role $bindings" >> "$TEST_LOG"
+# The real SDK discards consumer interpreter overrides before selecting its tools.
+unset NETBSD2_PYTHON
+export CC="$TEST_ROOT/bin/host-cc" CXX="$TEST_ROOT/bin/host-cxx"
+export CFLAGS=-Dfixture_host CXXFLAGS=-Dfixture_cxx LDFLAGS=-Lfixture-host
+# Match process.run_logged: a fresh log is created exclusively.
+(set -C; : > "$log")
+case $role in
+python) "$TEST_ROOT/bin/python3" "$@" > "$log" 2>&1;;
+sh) sh "$@" > "$log" 2>&1;;
+*) exit 82;;
+esac
+SH
+cat > "$work/sdk/scripts/run-native-os.py" <<'SH'
+#!/bin/sh
+set -eu
+prefix= family= source= routing= cwd= log= capture=no mode=direct append=no
+while [ "$#" -gt 0 ]; do
+    case $1 in
+    --host-prefix) prefix=$2; shift;;
+    --compiler-family) family=$2; shift;;
+    --source) source=$2; shift;;
+    --routing) routing=$2; shift;;
+    --cwd) cwd=$2; shift;;
+    --log) log=$2; shift;;
+    --capture) capture=yes;;
+    --append-log) append=yes;;
+    --build-sh) mode=build;;
+    --shell) mode=shell;;
+    --) shift; break;;
+    *) exit 85;;
+    esac
+    shift
+done
+test "$prefix" = "$TEST_ROOT"
+test "$family" = "${EMBER_HOST_COMPILER_FAMILY:-clang}"
+test "$source" = "$TEST_ROOT/src"
+test "$routing" = "$TEST_OUT/native-build-tools"
+mkdir -p "$routing"
+for command in sh cp rm rmdir cat mkdir dirname basename uname grep sed awk tr sort touch printf ln pwd; do
+    selected=$(command -v "$command")
+    case $selected in /*) ;; *)
+        for directory in /usr/bin /bin; do
+            if [ -x "$directory/$command" ]; then selected="$directory/$command"; break; fi
+        done;;
+    esac
+    test -x "$selected"
+    test -e "$routing/$command" || ln -s "$selected" "$routing/$command"
+done
+export HOST_CC="$TEST_ROOT/bin/host-cc" HOST_CXX="$TEST_ROOT/bin/host-cxx"
+export HOST_CFLAGS=-Dfixture_host HOST_CXXFLAGS=-Dfixture_cxx HOST_LDFLAGS=-Lfixture-host
+export EMBER_NATIVE_TOOLS="$routing" EMBER_HOST_COMPILER_FAMILY="$family" MAKECONF=/dev/null
+unset CC CXX CPP CFLAGS CXXFLAGS CPPFLAGS LDFLAGS BUILDINFO
+cd "$cwd"
+echo "native-os $family $mode $*" >> "$TEST_LOG"
+case $mode in
+build) set -- sh "$source/build.sh" -V "HOST_CC=$HOST_CC" -V "HOST_CFLAGS=$HOST_CFLAGS" -V "EMBER_HOST_COMPILER_FAMILY=$family" "$@";;
+shell) set -- sh "$@";;
+direct) case $1 in /*) ;; *) exit 86;; esac;;
+esac
+if [ "$capture" = yes ]; then exec "$@"; fi
+if [ "$append" = yes ]; then
+    "$@" >> "$log" 2>&1
+else
+    (set -C; : > "$log")
+    "$@" > "$log" 2>&1
+fi
+SH
+ln -s python3 "$work/bin/python3.15"
+export EMBER_EXTERNAL_TOOLCHAIN=/cross/clang
+export EMBERBSD_SDK_SOURCE="$work/sdk" EMBER_HOST_PREFIX="$work"
+for tool in host-cc host-cxx; do
+    printf '#!/bin/sh\nexit 99\n' > "$work/bin/$tool"
+done
 chmod +x "$work/bin/"* "$work/src/build.sh"
 export PATH="$work/bin:$PATH" NETBSD2_PYTHON="$work/bin/python3" NETBSD2_JOBS=2
 export RUBY="$work/bin/ruby"
+# Deliberately invalid target commands must not be used by host contracts.
+export CC=/target/compiler CXX=/target/compiler-cxx CFLAGS=-Dwrong_target CXXFLAGS=-Dwrong_target LDFLAGS=-Lwrong-target
 check_contract_counts() {
     test "$(grep -c '^contract ' "$TEST_LOG")" -eq "$1"
     test "$(grep -c '^a733-contract ' "$TEST_LOG")" -eq 24
@@ -272,6 +410,7 @@ test -s "$TEST_OUT/sun60i-a733-orangepi-zero3w-diagnostic.dtb"
 grep -q 'build.sh .* -m evbarm -a aarch64 ' "$TEST_LOG"
 grep -q ' -u ' "$TEST_LOG"
 grep -q ' -c clang ' "$TEST_LOG"
+grep -Fq -- "-V EMBER_LLVM_SOURCE=$EMBER_LLVM_SOURCE" "$TEST_LOG"
 grep -q 'cpp .*/target-cpp --target=aarch64--netbsd -E ' "$TEST_LOG"
 grep -q 'EMBER_KERNEL_OBJDIR=.*/obj/kernels/EMBER64' "$TEST_LOG"
 grep -q 'cpp .*/tools/bin/target-cpp ' "$TEST_LOG"
@@ -306,12 +445,12 @@ TEST_CPP_SINGLE=yes sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/ru
 grep -q 'cpp .*/tools/bin/target cpp -P ' "$TEST_LOG"
 : > "$work/pinned firmware"
 : > "$TEST_LOG"
-PVR_QUERY_FIRMWARE="$work/pinned firmware" sh "$work/src/ember/tools/kernel-contracts.sh" \
+CC="$work/bin/host-cc" CXX="$work/bin/host-cxx" CFLAGS=-Dfixture_host CXXFLAGS=-Dfixture_cxx LDFLAGS=-Lfixture-host PVR_QUERY_FIRMWARE="$work/pinned firmware" sh "$work/src/ember/tools/kernel-contracts.sh" \
     "$work/src" portable > "$work/query.log" 2>&1
 test "$(grep -c '^pvr-query-contract ' "$TEST_LOG")" -eq 1
 ! grep -q 'PowerVR metadata query contract pending:' "$work/query.log"
 : > "$TEST_LOG"
-if PVR_QUERY_FIRMWARE="$work/pinned firmware" FAIL_AT=pvr-query-contract.sh \
+if CC="$work/bin/host-cc" CXX="$work/bin/host-cxx" CFLAGS=-Dfixture_host CXXFLAGS=-Dfixture_cxx LDFLAGS=-Lfixture-host PVR_QUERY_FIRMWARE="$work/pinned firmware" FAIL_AT=pvr-query-contract.sh \
     sh "$work/src/ember/tools/kernel-contracts.sh" "$work/src" portable \
     > "$work/query.log" 2>&1; then
     echo 'accepted firmware query failure' >&2; exit 1
@@ -397,8 +536,8 @@ check_contract_counts 20
 export TEST_OUT="$work/native"
 : > "$TEST_LOG"
 TEST_HOST=NetBSD EMBER_BUILD_MODE=native sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1
-grep -q native-make "$TEST_LOG"
-! grep -q build.sh "$TEST_LOG"
+! grep -q native-make "$TEST_LOG"
+grep -q build.sh "$TEST_LOG"
 test -s "$TEST_OUT/bcm2712btcom.kmod"
 check_contract_counts 20
 if EMBER_BUILD_MODE=native sh "$work/src/ember/build-kernel.sh" "$work/wrong-host" > "$work/run.log" 2>&1; then
@@ -408,6 +547,39 @@ if EMBER_COMPILER_FAMILY=unknown sh "$work/src/ember/build-kernel.sh" "$work/bad
     echo 'accepted unknown compiler family' >&2; exit 1
 fi
 grep -q 'EMBER_COMPILER_FAMILY' "$work/run.log"
+for llvm in '' relative "$work/missing-llvm" "$work/bad source"; do
+    : > "$TEST_LOG"
+    if EMBER_LLVM_SOURCE="$llvm" sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1; then
+        echo 'accepted missing or invalid common LLVM sources' >&2; exit 1
+    fi
+    grep -q EMBER_LLVM_SOURCE "$work/run.log"
+    ! grep -q '^build.sh ' "$TEST_LOG"
+    test ! -e "$TEST_OUT/netbsd-EMBER64"
+done
+for invalid in sdk prefix family target; do
+    : > "$TEST_LOG"
+    if (
+        case $invalid in
+        sdk) EMBERBSD_SDK_SOURCE="$work/missing-sdk"; export EMBERBSD_SDK_SOURCE;;
+        prefix) EMBER_HOST_PREFIX=relative; export EMBER_HOST_PREFIX;;
+        family) EMBER_HOST_COMPILER_FAMILY=unknown; export EMBER_HOST_COMPILER_FAMILY;;
+        target) EMBER_EXTERNAL_TOOLCHAIN=; export EMBER_EXTERNAL_TOOLCHAIN;;
+        esac
+        sh "$work/src/ember/build-kernel.sh" "$TEST_OUT"
+    ) > "$work/run.log" 2>&1; then
+        echo "accepted invalid native-check input: $invalid" >&2; exit 1
+    fi
+    ! grep -q '^build.sh ' "$TEST_LOG"
+    test ! -e "$TEST_OUT/netbsd-EMBER64"
+done
+export TEST_OUT="$work/host-gcc"
+: > "$TEST_LOG"
+NETBSD2_PYTHON=/outside/bin/python3 PVR_QUERY_FIRMWARE="$work/pinned firmware" EMBER_HOST_COMPILER_FAMILY=gcc \
+    sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1
+grep -q '^native-check gcc sh ' "$TEST_LOG"
+grep -q ' -c clang ' "$TEST_LOG"
+grep -q '^pvr-query-contract ' "$TEST_LOG"
+check_contract_counts 16
 if NETBSD2_JOBS=00 sh "$work/src/ember/build-kernel.sh" "$work/zero-jobs" > "$work/run.log" 2>&1; then
     echo 'accepted zero jobs' >&2; exit 1
 fi

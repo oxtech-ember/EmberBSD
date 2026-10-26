@@ -39,7 +39,10 @@ Use [the cross-build guide](../../tools/docs/cross-build.md) for clean exports, 
 Use the common [Ports toolchain](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/development-toolchain)
 through the SDK. LLVM/Clang is the default; a rare platform may explicitly
 select GCC with `EMBER_COMPILER_FAMILY=gcc`. Kernel-only mode does not require
-an application sysroot or supply a complete application runtime.
+an application sysroot or supply a complete application runtime. Both families
+consume the common Ports-prepared LLVM sources through `EMBER_LLVM_SOURCE`.
+Host contracts use the shared SDK native-check runner and independent
+`EMBER_HOST_PREFIX`/`EMBER_HOST_COMPILER_FAMILY` selection.
 Keep historical GCC build results separate from Clang build and boot checks.
 
 Inspect the selected builder before choosing a configuration.
