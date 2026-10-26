@@ -72,6 +72,7 @@ static sig_atomic_t pinfo;
 static int	copy(char *, char *);
 static int	do_move(char *, char *);
 static int	fastcopy(char *, char *, struct stat *);
+static int	wait_child(pid_t, const char *);
 __dead static void	usage(void);
 
 static void
@@ -379,48 +380,50 @@ err:		if (unlink(to))
 }
 
 static int
+wait_child(pid_t pid, const char *path)
+{
+	int status;
+
+	if (pid == -1) {
+		warn("%s: vfork", path);
+		return (1);
+	}
+	while (waitpid(pid, &status, 0) == -1) {
+		if (errno == EINTR)
+			continue;
+		warn("%s: waitpid", path);
+		return (1);
+	}
+	if (!WIFEXITED(status)) {
+		warnx("%s: did not terminate normally", path);
+		return (1);
+	}
+	if (WEXITSTATUS(status)) {
+		warnx("%s: terminated with %d (non-zero) status",
+		    path, WEXITSTATUS(status));
+		return (1);
+	}
+	return (0);
+}
+
+static int
 copy(char *from, char *to)
 {
 	pid_t pid;
-	int status;
 
 	if ((pid = vfork()) == 0) {
 		execl(_PATH_CP, "mv", vflg ? "-PRpv" : "-PRp", "--", from, to, NULL);
 		warn("%s", _PATH_CP);
 		_exit(1);
 	}
-	if (waitpid(pid, &status, 0) == -1) {
-		warn("%s: waitpid", _PATH_CP);
+	if (wait_child(pid, _PATH_CP))
 		return (1);
-	}
-	if (!WIFEXITED(status)) {
-		warnx("%s: did not terminate normally", _PATH_CP);
-		return (1);
-	}
-	if (WEXITSTATUS(status)) {
-		warnx("%s: terminated with %d (non-zero) status",
-		    _PATH_CP, WEXITSTATUS(status));
-		return (1);
-	}
 	if (!(pid = vfork())) {
 		execl(_PATH_RM, "mv", "-rf", "--", from, NULL);
 		warn("%s", _PATH_RM);
 		_exit(1);
 	}
-	if (waitpid(pid, &status, 0) == -1) {
-		warn("%s: waitpid", _PATH_RM);
-		return (1);
-	}
-	if (!WIFEXITED(status)) {
-		warnx("%s: did not terminate normally", _PATH_RM);
-		return (1);
-	}
-	if (WEXITSTATUS(status)) {
-		warnx("%s: terminated with %d (non-zero) status",
-		    _PATH_RM, WEXITSTATUS(status));
-		return (1);
-	}
-	return (0);
+	return (wait_child(pid, _PATH_RM));
 }
 
 static void
