@@ -42,11 +42,21 @@ class FixtureContract(unittest.TestCase):
         self.assertIn('O_CREAT | O_EXCL', text)
         self.assertIn('XATTR_NOFOLLOW', (ROOT / 'probes/filemeta-fixture-support.h').read_text())
 
+    def test_move_observation_is_regular_replacement_only(self):
+        text = (ROOT / 'probes/filemeta-fixture.c').read_text()
+        self.assertIn('strcmp(argv[1], "observe-move")', text)
+        self.assertIn('move && selected == 3', text)
+        self.assertIn('acl_empty_path("dst", wanted)', text)
+        self.assertIn('errno != ENOATTR', text)
+        manifest = json.loads((ROOT / 'filemeta-fixture.json').read_bytes())
+        self.assertEqual(manifest['move_cases'],
+                         ['file-replace', 'file-overlay', 'empty-acl-overlay'])
+
     def test_manifest_names_four_independent_operations(self):
         path = ROOT / 'filemeta-fixture.json'
         self.assertTrue(path.is_file())
         manifest = json.loads(path.read_bytes())
-        self.assertEqual(manifest['operations'], ['prepare', 'observe'])
+        self.assertEqual(manifest['operations'], ['prepare', 'observe', 'observe-move'])
         self.assertEqual(manifest['cases'], ['file-replace', 'file-overlay', 'empty-acl-overlay', 'directory-inherit'])
         self.assertEqual(manifest['paths'], ['src', 'dst'])
         self.assertEqual(manifest['source'], 'tools/compat/probes/filemeta-fixture.c')

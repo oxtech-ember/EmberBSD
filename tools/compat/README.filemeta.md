@@ -76,7 +76,7 @@ require full runtime traces. Runtime evidence records the actual filesystem type
 `probes/filemeta-fixture-support.h` owns shared diagnostic setters and independent
 getters. The component check and `probes/filemeta-fixture.c` use this same code.
 The fixture does not call the metadata-copy API, `cp`, or a shell.
-It accepts only `prepare|observe` and a case name from `filemeta-fixture.json`.
+It accepts only `prepare|observe|observe-move` and fixed case names from `filemeta-fixture.json`.
 Its file names are fixed as `src` and `dst` in the current test directory.
 
 Build `probes/filemeta-fixture.c` with the selected native SDK GCC16 tuple.
@@ -122,3 +122,18 @@ Primary API and behavior references:
 * [DragonFly caller behavior](https://github.com/DragonFlyBSD/DragonFlyBSD/blob/b639e42052d8492e5d665956ec8218900a9c8ec7/bin/cp/utils.c).
 
 This is new EmberBSD API composition. No donor implementation was copied.
+
+### Cross-device move observation
+
+`observe-move` supports the three regular-file cases only. It refuses the directory case.
+It checks source xattrs and ACLs, including an empty source ACL.
+It requires the destination-only xattr to be absent after replacement.
+The existing `observe` operation retains the copy overlay contract.
+
+Prepare each case in fresh directories on two different filesystems.
+The destination directory needs its own `src` identity witness and initial `dst`.
+This witness is not the moved source; expected metadata comes from fixed native fixture values.
+Require `observe-move` to fail before moving the primary source to the other filesystem's `dst`.
+Then require source removal, exact destination data, and a successful `observe-move`.
+Use a real rename probe to require `EXDEV` before these checks.
+The fixture invokes neither `mv` nor the metadata-copy API.

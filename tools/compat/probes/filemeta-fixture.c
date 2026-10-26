@@ -78,30 +78,72 @@ out:
 	return (result);
 }
 
+/* Darwin can represent an empty ACL by an absent filesec property. */
 static int
-observe(unsigned int selected)
+acl_empty_path(const char *path, acl_t empty_acl)
+{
+	filesec_t security;
+	struct stat st;
+	acl_t observed = NULL;
+	int present, equal = 0, saved;
+
+	security = filesec_init();
+	if (security == NULL)
+		return (0);
+	if (lstatx_np(path, &st, security) == -1 ||
+	    filesec_query_property(security, FILESEC_ACL, &present) == -1)
+		goto out;
+	if (!present) {
+		equal = 1;
+		goto out;
+	}
+	if (filesec_get_property(security, FILESEC_ACL, &observed) == 0 &&
+	    observed != NULL)
+		equal = acl_values_equal(observed, empty_acl);
+out:
+	saved = errno;
+	if (observed != NULL)
+		(void)acl_free(observed);
+	filesec_free(security);
+	errno = saved;
+	return (equal);
+}
+
+static int
+observe(unsigned int selected, int move)
 {
 	struct stat before[2], after;
 	const char *const paths[] = { "src", "dst" };
+	unsigned char value;
 	acl_t wanted;
 	unsigned int index;
 	int result = 1, saved;
 
+	if (move && selected == 3)
+		return (2);
 	for (index = 0; index < 2; index++) {
 		if (lstat(paths[index], &before[index]) == -1 ||
 		    (selected == 3 ? !S_ISDIR(before[index].st_mode) :
 		    !S_ISREG(before[index].st_mode)))
 			return (1);
 	}
-	wanted = make_acl(selected == 3);
+	wanted = move && selected == 2 ? acl_init(0) : make_acl(selected == 3);
 	if (wanted == NULL)
 		return (1);
 	/* Direct-child native getters never open an existing regular path. */
 	if (!value_path_equals("dst", shared, binary, sizeof(binary)) ||
 	    !value_path_equals("dst", empty, "", 0) ||
-	    (selected != 0 && !value_path_equals("dst", retained, "keep", 4)) ||
-	    !acl_path_equals("dst", wanted))
+	    (!move && selected != 0 &&
+	    !value_path_equals("dst", retained, "keep", 4)) ||
+	    !(move && selected == 2 ? acl_empty_path("dst", wanted) :
+	    acl_path_equals("dst", wanted)))
 		goto out;
+	if (move) {
+		errno = 0;
+		if (getxattr("dst", retained, &value, sizeof(value), 0,
+		    XATTR_NOFOLLOW) != -1 || errno != ENOATTR)
+			goto out;
+	}
 	for (index = 0; index < 2; index++) {
 		if (lstat(paths[index], &after) == -1 ||
 		    before[index].st_dev != after.st_dev ||
@@ -133,7 +175,9 @@ main(int argc, char **argv)
 	if (strcmp(argv[1], "prepare") == 0)
 		result = prepare(selected);
 	else if (strcmp(argv[1], "observe") == 0)
-		result = observe(selected);
+		result = observe(selected, 0);
+	else if (strcmp(argv[1], "observe-move") == 0)
+		result = observe(selected, 1);
 	else
 		return (2);
 	if (result != 0)

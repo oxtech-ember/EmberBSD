@@ -8,7 +8,8 @@
   ],
   "operations": [
     "prepare",
-    "observe"
+    "observe",
+    "observe-move"
   ],
   "cases": [
     "file-replace",
@@ -19,5 +20,10 @@
   "paths": [
     "src",
     "dst"
+  ],
+  "move_cases": [
+    "file-replace",
+    "file-overlay",
+    "empty-acl-overlay"
   ]
 }
