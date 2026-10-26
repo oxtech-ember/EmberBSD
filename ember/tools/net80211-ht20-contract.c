@@ -648,9 +648,29 @@ test_current_peer_beacons(void)
 {
 	for (unsigned running = 0; running < 2; running++) {
 		for (unsigned variant = 0; variant < 32; variant++) {
+			/* Reset reason and clause for each rejected variant. */
+			static const uint8_t want_reason[32] = {
+			    [2] = 3, [3] = 3, [4] = 3, [5] = 2, [6] = 2, [7] = 2,
+			    [8] = 2, [9] = 3, [10] = 3, [11] = 3, [12] = 1,
+			    [13] = 1, [18] = 2, [20] = 1, [21] = 1, [22] = 3,
+			    [24] = 2, [25] = 2, [26] = 1, [27] = 1, [28] = 3,
+			    [29] = 3 };
+			static const uint8_t want_clause[32] = {
+			    [2] = IEEE80211_HT20_BEACON_SECONDARY,
+			    [3] = IEEE80211_HT20_BEACON_NO_CAP,
+			    [4] = IEEE80211_HT20_BEACON_NO_OP,
+			    [9] = IEEE80211_HT20_BEACON_SMPS,
+			    [10] = IEEE80211_HT20_BEACON_MCS,
+			    [11] = IEEE80211_HT20_BEACON_BASIC_MCS,
+			    [22] = IEEE80211_HT20_BEACON_PRIMARY,
+			    [28] = IEEE80211_HT20_BEACON_PROTECTION,
+			    [29] = IEEE80211_HT20_BEACON_PROTECTION };
 			struct mbuf *m;
 			struct ieee80211_frame *wh;
 			uint8_t *cap, *op;
+			uint8_t seen_cap[4], seen_op[6], peer_cap[4], peer_op[6];
+			uint8_t peer_mcs0 = 0;
+			uint32_t resets;
 			uint64_t epoch;
 			/* Beacons may change the protection mode within the
 			 * supported set and HT capability bits the contract does
@@ -721,9 +741,45 @@ test_current_peer_beacons(void)
 				op[3] = 5;
 				break;
 			}
+			/* The committed and offered octets the diagnostics copy. */
+			memcpy(peer_cap, test_node.ni_ht20.peer_htcap, 4);
+			memcpy(peer_op, test_node.ni_ht20.peer_htop, 6);
+			peer_mcs0 = test_node.ni_ht20.peer_htop[6];
+			memcpy(seen_cap, cap + 2, 4);
+			memcpy(seen_op, op + 2, 6);
+			resets = test_ic.ic_ht20_diag.resets;
 			ieee80211_recv_mgmt_beacon(&test_ic, m, &test_node,
 			    variant == 19 ? IEEE80211_FC0_SUBTYPE_PROBE_RESP :
 			    IEEE80211_FC0_SUBTYPE_BEACON, 0, 0);
+			if (reject) {
+				const struct ieee80211_ht20_diag *d =
+				    &test_ic.ic_ht20_diag;
+
+				CHECK(d->resets == resets + 1 &&
+				    d->reset_reason == want_reason[variant]);
+				if (want_reason[variant] == IEEE80211_HT20_RESET_STALE)
+					CHECK(d->reset_clause != 0);
+				else
+					CHECK(d->reset_clause == want_clause[variant]);
+				if (want_reason[variant] == IEEE80211_HT20_RESET_HT) {
+					static const uint8_t zero[6];
+
+					CHECK(memcmp(d->reset_peer_cap, peer_cap, 4) == 0);
+					CHECK(memcmp(d->reset_peer_op, peer_op, 6) == 0);
+					CHECK(memcmp(d->reset_cap, variant == 3 ? zero :
+					    seen_cap, 4) == 0);
+					CHECK(memcmp(d->reset_op, variant == 4 ? zero :
+					    seen_op, 6) == 0);
+					if (variant == 11)
+						CHECK(d->reset_mcs[0] == 0 &&
+						    d->reset_mcs[1] == op[8] &&
+						    d->reset_mcs[2] == peer_mcs0);
+					else
+						CHECK(d->reset_mcs[0] == 0 &&
+						    d->reset_mcs[1] == 0 &&
+						    d->reset_mcs[2] == 0);
+				}
+			}
 			m_freem(m);
 			if (reject) {
 				CHECK(!test_node.ni_ht20.valid && !test_node.ni_ht20.offered);

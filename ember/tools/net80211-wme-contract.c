@@ -1501,6 +1501,16 @@ test_vht_diagnostics(void)
 		CHECK(!test_node.ni_ht20.valid);
 		CHECK(test_ic.ic_ht20_diag.resets == 1 &&
 		    test_ic.ic_ht20_diag.reset_reason == reason);
+		/* The clause names the field: the operation word leaves the
+		 * envelope, or the VHT Operation differs from the contract. */
+		if (reason == IEEE80211_HT20_RESET_HT)
+			CHECK(test_ic.ic_ht20_diag.reset_clause ==
+			    IEEE80211_HT20_BEACON_PROTECTION);
+		else if (reason == IEEE80211_HT20_RESET_VHT)
+			CHECK(test_ic.ic_ht20_diag.reset_clause ==
+			    IEEE80211_HT20_BEACON_VHT_CHANGED);
+		else if (reason == IEEE80211_HT20_RESET_FRAMING)
+			CHECK(test_ic.ic_ht20_diag.reset_clause == 0);
 	}
 	test_channel.ic_freq = 2412;
 }

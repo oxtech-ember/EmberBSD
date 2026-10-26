@@ -57,6 +57,23 @@ struct ieee80211_ht20_node {
 #define IEEE80211_HT20_RESET_FRAMING 2
 #define IEEE80211_HT20_RESET_HT 3	/* HT Capabilities or Operation. */
 #define IEEE80211_HT20_RESET_VHT 4	/* VHT Operation. */
+/*
+ * The clause of a beacon reset: for RESET_HT and RESET_VHT the field that
+ * left the contract; for RESET_STALE the ht20_stale() clause; 0 for
+ * framing.
+ */
+#define IEEE80211_HT20_BEACON_SMPS 1	/* HT Capabilities SMPS/Greenfield. */
+#define IEEE80211_HT20_BEACON_MCS 2	/* HT Capabilities MCS 0-7. */
+#define IEEE80211_HT20_BEACON_PRIMARY 3	/* HT Operation primary channel. */
+#define IEEE80211_HT20_BEACON_SECONDARY 4 /* Secondary offset, STA width. */
+#define IEEE80211_HT20_BEACON_PROTECTION 5 /* Operation word envelope. */
+#define IEEE80211_HT20_BEACON_OCTET4 6	/* HT Operation information octet 4. */
+#define IEEE80211_HT20_BEACON_OCTET5 7	/* HT Operation information octet 5. */
+#define IEEE80211_HT20_BEACON_BASIC_MCS 8 /* Basic HT-MCS set. */
+#define IEEE80211_HT20_BEACON_NO_CAP 9	/* No HT Capabilities. */
+#define IEEE80211_HT20_BEACON_NO_OP 10	/* No HT Operation. */
+#define IEEE80211_HT20_BEACON_VHT_MISSING 11 /* VHT Operation absent/bad. */
+#define IEEE80211_HT20_BEACON_VHT_CHANGED 12 /* VHT Operation differs. */
 /* Association HT failure path, by stage. */
 #define IEEE80211_HT20_FAIL_SHORT 1	/* Fixed fields missing. */
 #define IEEE80211_HT20_FAIL_IES 2	/* ieee80211_ht20_check_ies(). */
@@ -71,6 +88,15 @@ struct ieee80211_ht20_diag {
 	uint16_t last_status;
 	uint8_t reset_reason, failure_reason;
 	uint8_t state_reason;	/* First stale clause, 15 = unanswered offer. */
+	/* The last beacon reset: its clause (IEEE80211_HT20_BEACON_*), the
+	 * beacon's and the committed HT Capabilities octets 0-3 and HT
+	 * Operation octets 0-5 (element bodies, zero for an absent element),
+	 * and the first differing Basic HT-MCS octet: index, beacon,
+	 * committed (all zero unless that clause). */
+	uint8_t reset_clause;
+	uint8_t reset_cap[4], reset_peer_cap[4];
+	uint8_t reset_op[6], reset_peer_op[6];
+	uint8_t reset_mcs[3];
 };
 /* A source-qualified primary20/mixed-format, one-PPDU protection result: a
  * single MPDU or one A-MPDU, without RTS or TXOP bursts. This is not a

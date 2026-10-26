@@ -421,19 +421,61 @@ ieee80211_ht20_tx_protection(struct ieee80211com *ic, struct ieee80211_node *ni,
  * within the supported set (as ieee80211_ht20_tx_protection() accepts),
  * since APs update it as non-HT stations come and go.
  */
-static int
+/* Return 0, or the first IEEE80211_HT20_BEACON_* clause that differs. */
+static unsigned
 ht20_beacon_contract(const struct ieee80211_ht20_node *h, const uint8_t *cap,
     const uint8_t *op)
 {
 	uint16_t operation = (uint16_t)op[2] | (uint16_t)op[3] << 8;
 
-	return (cap[0] & 0x1c) == (h->peer_htcap[0] & 0x1c) &&
-	    cap[3] == h->peer_htcap[3] &&
-	    op[0] == h->peer_htop[0] && (op[1] & 0x07) == (h->peer_htop[1] & 0x07) &&
-	    (operation == 0 || operation == 6 ||
-	     ((operation == 3 || operation == 7) && op[0] > 14)) &&
-	    op[4] == h->peer_htop[4] && op[5] == h->peer_htop[5] &&
-	    memcmp(op + 6, h->peer_htop + 6, sizeof(h->peer_htop) - 6) == 0;
+	if ((cap[0] & 0x1c) != (h->peer_htcap[0] & 0x1c))
+		return IEEE80211_HT20_BEACON_SMPS;
+	if (cap[3] != h->peer_htcap[3])
+		return IEEE80211_HT20_BEACON_MCS;
+	if (op[0] != h->peer_htop[0])
+		return IEEE80211_HT20_BEACON_PRIMARY;
+	if ((op[1] & 0x07) != (h->peer_htop[1] & 0x07))
+		return IEEE80211_HT20_BEACON_SECONDARY;
+	if (operation != 0 && operation != 6 &&
+	    !((operation == 3 || operation == 7) && op[0] > 14))
+		return IEEE80211_HT20_BEACON_PROTECTION;
+	if (op[4] != h->peer_htop[4])
+		return IEEE80211_HT20_BEACON_OCTET4;
+	if (op[5] != h->peer_htop[5])
+		return IEEE80211_HT20_BEACON_OCTET5;
+	if (memcmp(op + 6, h->peer_htop + 6, sizeof(h->peer_htop) - 6) != 0)
+		return IEEE80211_HT20_BEACON_BASIC_MCS;
+	return 0;
+}
+
+/* Record the clause and octets of a beacon reset before the purge. */
+static void
+ht20_beacon_diag(struct ieee80211_ht20_diag *d,
+    const struct ieee80211_ht20_node *h, unsigned clause, const uint8_t *cap,
+    const uint8_t *op)
+{
+	unsigned i;
+
+	d->reset_clause = (uint8_t)clause;
+	memset(d->reset_cap, 0, sizeof(d->reset_cap));
+	memset(d->reset_op, 0, sizeof(d->reset_op));
+	memset(d->reset_mcs, 0, sizeof(d->reset_mcs));
+	memcpy(d->reset_peer_cap, h->peer_htcap, sizeof(d->reset_peer_cap));
+	memcpy(d->reset_peer_op, h->peer_htop, sizeof(d->reset_peer_op));
+	if (cap != NULL)
+		memcpy(d->reset_cap, cap, sizeof(d->reset_cap));
+	if (op != NULL)
+		memcpy(d->reset_op, op, sizeof(d->reset_op));
+	if (clause != IEEE80211_HT20_BEACON_BASIC_MCS || op == NULL)
+		return;
+	for (i = 6; i < sizeof(h->peer_htop); i++) {
+		if (op[i] != h->peer_htop[i]) {
+			d->reset_mcs[0] = (uint8_t)(i - 6);
+			d->reset_mcs[1] = op[i];
+			d->reset_mcs[2] = h->peer_htop[i];
+			break;
+		}
+	}
 }
 
 int
@@ -446,6 +488,7 @@ ieee80211_ht20_beacon(struct ieee80211com *ic, struct ieee80211_node *ni,
 	size_t size;
 	int vop_bad = 0;
 	uint8_t reason = IEEE80211_HT20_RESET_STALE;
+	unsigned clause;
 
 	if (!h->valid || ic->ic_opmode != IEEE80211_M_STA ||
 	    (ic->ic_state != IEEE80211_S_ASSOC &&
@@ -453,7 +496,8 @@ ieee80211_ht20_beacon(struct ieee80211com *ic, struct ieee80211_node *ni,
 	    !IEEE80211_ADDR_EQ(wh->i_addr2, ni->ni_macaddr) ||
 	    !IEEE80211_ADDR_EQ(wh->i_addr3, ni->ni_bssid))
 		return 0;
-	if (!ht20_current(ic, ni, h))
+	clause = ht20_stale(ic, ni, h);
+	if (clause != 0)
 		goto bad;
 	reason = IEEE80211_HT20_RESET_FRAMING;
 	if (len < 12)
@@ -482,17 +526,27 @@ ieee80211_ht20_beacon(struct ieee80211com *ic, struct ieee80211_node *ni,
 		len -= size;
 	}
 	reason = IEEE80211_HT20_RESET_HT;
-	if (cap == NULL || op == NULL || !ht20_beacon_contract(h, cap, op))
+	clause = cap == NULL ? IEEE80211_HT20_BEACON_NO_CAP :
+	    op == NULL ? IEEE80211_HT20_BEACON_NO_OP :
+	    ht20_beacon_contract(h, cap, op);
+	if (clause != 0)
 		goto bad;
 	reason = IEEE80211_HT20_RESET_VHT;
 	/* A negotiated VHT width is bound to the AP's VHT Operation. */
-	if (h->vht.valid && (vop == NULL || vop_bad ||
-	    ieee80211_vht_operation_encode(vht_op, sizeof(vht_op),
-	    &h->vht.operation) != 0 ||
-	    memcmp(vop, vht_op, sizeof(vht_op)) != 0))
-		goto bad;
+	if (h->vht.valid) {
+		clause = IEEE80211_HT20_BEACON_VHT_MISSING;
+		if (vop == NULL || vop_bad ||
+		    ieee80211_vht_operation_encode(vht_op, sizeof(vht_op),
+		    &h->vht.operation) != 0)
+			goto bad;
+		clause = IEEE80211_HT20_BEACON_VHT_CHANGED;
+		if (memcmp(vop, vht_op, sizeof(vht_op)) != 0)
+			goto bad;
+	}
 	return 0;
 bad:
+	/* Framing failures leave clause 0 from the stale check. */
+	ht20_beacon_diag(&ic->ic_ht20_diag, h, clause, cap, op);
 	ieee80211_ht20_reset(ni);
 	ic->ic_ht20_diag.resets++;
 	ic->ic_ht20_diag.reset_reason = reason;
