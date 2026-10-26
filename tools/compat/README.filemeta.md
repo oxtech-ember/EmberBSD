@@ -71,6 +71,36 @@ FD zero, directory paths, source ACL absence, protected symlink targets, and err
 Fixtures have fixed names and are removed without following links. Both executables
 require full runtime traces. Runtime evidence records the actual filesystem type.
 
+## Copy behavior test
+
+`probes/filemeta-fixture-support.h` owns shared diagnostic setters and independent
+getters. The component check and `probes/filemeta-fixture.c` use this same code.
+The fixture does not call the metadata-copy API, `cp`, or a shell.
+It accepts only `prepare|observe` and a case name from `filemeta-fixture.json`.
+Its file names are fixed as `src` and `dst` in the current test directory.
+
+Build `probes/filemeta-fixture.c` with the selected native SDK GCC16 tuple.
+Use `-Wall -Wextra -Werror` and the tuple's native ABI and driver options.
+Then run the test with explicit executable paths and a new work directory:
+
+```sh
+"$SDK_PYTHON" tools/compat/test-copy-metadata.py \
+    --fixture "$FILEMETA_FIXTURE" --cp "$SDK_CP" --work-root "$NEW_TEST_DIRECTORY"
+```
+
+The four cases test binary and empty xattrs, replacement, destination-only xattrs,
+empty-source ACL overlay, ordered ACL entries, and directory inheritance flags.
+Each case must fail observation before copying and pass after the real `cp` call.
+Directory copying uses `cp -Rp src/. dst` to update the existing destination.
+The runner also checks file data and directory contents. It retains command logs.
+The work directory must be fresh; the runner never removes an existing directory.
+The runner retains explicit `ASAN_OPTIONS` and `UBSAN_OPTIONS` for instrumented
+fixtures. A run with leak detection disabled does not check memory leaks.
+
+These tests currently require Darwin ACL and xattr interfaces. They do not prove
+symlink metadata, other filesystems, EXDEV moves, allocation faults, or memory safety.
+They are behavior tests, not an admission requirement for an installed tool.
+
 Source checks do not prove native support. C compilation, ordinary NetBSD and
 other BSD builds, Cppcheck, path analysis, memory checks, allocation faults, other
 filesystems, and cross-filesystem moves require separate evidence.

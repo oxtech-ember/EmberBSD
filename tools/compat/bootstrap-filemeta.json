@@ -14,6 +14,7 @@
     "tools/compat/compat_acl_features.h",
     "tools/compat/compat_native_acl.h",
     "tools/compat/probes/filemeta-xattr-bsd-probe.h",
+    "tools/compat/probes/filemeta-fixture-support.h",
     "tools/compat/bootstrap_cdefs.h"
   ],
   "provenance": [

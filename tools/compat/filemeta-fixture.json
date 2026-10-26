@@ -1,0 +1,23 @@
+{
+  "format": "emberbsd-native-metadata-fixture",
+  "version": 1,
+  "host": "Darwin",
+  "source": "tools/compat/probes/filemeta-fixture.c",
+  "headers": [
+    "tools/compat/probes/filemeta-fixture-support.h"
+  ],
+  "operations": [
+    "prepare",
+    "observe"
+  ],
+  "cases": [
+    "file-replace",
+    "file-overlay",
+    "empty-acl-overlay",
+    "directory-inherit"
+  ],
+  "paths": [
+    "src",
+    "dst"
+  ]
+}

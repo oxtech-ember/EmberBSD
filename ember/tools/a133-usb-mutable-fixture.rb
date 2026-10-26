@@ -21,6 +21,32 @@ if command.start_with?('exec /system/xbin/su ')
   abort 'fixture rejected root wrapper' unless tokens.size==6 && tokens.first(5)==['exec','/system/xbin/su','0','/system/bin/sh','-c']
   command=tokens.last
 end
+namespace_command=<<~'SH'.strip
+for p in /proc/[0-9]*; do
+  (
+    if ! cd "$p" 2>/dev/null; then
+      [ ! -e "$p" ] && exit 0
+      exit 1
+    fi
+    if ! [ -r task ] || ! [ -x task ]; then
+      [ -x . ] && [ ! -e stat ] && exit 0
+      exit 1
+    fi
+    for t in task/[0-9]*; do
+      [ -e "$t" ] || continue
+      (
+        if ! cd "$t" 2>/dev/null; then
+          [ ! -e "$t" ] && exit 0
+          exit 1
+        fi
+        if ! cat mountinfo 2>/dev/null; then
+          [ -x . ] && [ ! -e stat ] || exit 1
+        fi
+      ) || exit 1
+    done
+  ) || exit 1
+done
+SH
 case command
 when 'id -u' then puts state.fetch('root','0')
 when 'getprop ro.product.model' then puts 'a133'
@@ -29,12 +55,12 @@ when 'getprop ro.boot.verifiedbootstate' then puts 'orange'
 when 'cat /proc/device-tree/compatible' then STDOUT.write("allwinner,a133\0fixture,board\0")
 when 'cat /proc/self/mountinfo' then STDOUT.write("1 0 0:1 / / rw - rootfs rootfs rw\n")
 when 'for p in /proc/[0-9]*; do cat "$p/mountinfo" || exit 1; done',
-  'for p in /proc/[0-9]*; do for t in "$p"/task/[0-9]*; do cat "$t/mountinfo" || exit 1; done; done'
+  namespace_command
   if state['inventory_unreadable']
     STDERR.write('PRIVATE_PROCESS_DIAGNOSTIC'); exit 1
   end
   STDOUT.write(state.fetch('mountinfo',"1 0 0:1 / / rw - rootfs rootfs rw\n"))
-  if command.include?('/task/')
+  if command==namespace_command
     if state['thread_unreadable']
       STDERR.write('PRIVATE_THREAD_DIAGNOSTIC'); exit 1
     end

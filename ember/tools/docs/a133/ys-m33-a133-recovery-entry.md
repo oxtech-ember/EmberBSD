@@ -79,6 +79,14 @@ conservative profile can refuse factory Android using zram. Recovery retains
 the stricter guard against any mounted eMMC block partition, holder or swap.
 It requires holder directories for the whole eMMC and every expected partition
 to exist and be readable/traversable before enumeration.
+The shared Linux inventory reader streams at most64MiB and retains distinct device
+IDs. Each row is limited to64KiB; at most4096 IDs are accepted. Malformed,
+empty or excessive inventories stop the operation. The task walk pins proc
+folders and tolerates failed reads only after observing task exit. Live
+unreadable tasks still stop the operation. This is a sampled inventory, not
+an atomic snapshot of all namespaces.
+Run `ruby ember/tools/linux-mount-inventory-test.rb` and
+`ruby ember/tools/a133-env-usage-test.rb` for stream and namespace regressions.
 No automatic unmount or swap shutdown is performed.
 
 `Entry.disarm(original_env:, backup:)` cancels entry from `device` state.
