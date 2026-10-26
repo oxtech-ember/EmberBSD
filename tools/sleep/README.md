@@ -24,13 +24,39 @@ Run source/data checks with the explicitly selected SDK Python:
 ```sh
 python3 -B tools/sleep/test-source.py
 python3 -B tools/sleep/test-conversion-source.py
+python3 -B tools/sleep/test-bootstrap.py
 ```
 
 These checks execute no C. They do not establish native timing or signal behavior.
 The existing [ATF cases](../../tests/bin/sleep/t_sleep.sh) remain unchanged.
 Nonfinite durations and floating values beyond time_t are rejected before conversion.
-The [conversion inputs](conversion-cases.json) cover invalid and short valid values.
-They are future native test inputs, not a completed runtime test or SDK execution schema.
+The [canonical initial contract](bootstrap.json) contains the conversion and CLI cases.
+It replaces the separate conversion input list. These are planned checks, not completed native results.
+
+## Initial native profile
+
+The SDK `sleep-bootstrap` profile compiles the complete canonical C file and Darwin helper.
+It uses the selected native GCC16, common annotation header, accounted host ABI and `-lm`.
+The normal host recipe remains unchanged and keeps its compatibility library.
+The 21 cases produce 24 commands, including one separate runtime observation of `sleep 0`.
+Eight successful cases cover zero, fractional, scientific, hexadecimal and underflow conversion.
+Thirteen negative cases have exact exit and stderr bytes in the C locale.
+No system sleep, private C implementation or arbitrary process hook is used.
+
+Only the `0.5` case requests an elapsed observation from 500000000 through 5000000000 nanoseconds.
+The common runner measures the whole owned command call with its monotonic clock.
+This includes startup, the selected shell pipeline, redirections, process drainage and log completion.
+It excludes prior source validation, context-lock acquisition and later output verification.
+The polling timeout is at most five seconds; startup and drainage can take longer.
+An observation outside the interval fails after drainage. This is not a hard wall-clock kill deadline.
+Scheduler and process-control overhead are included. The interval does not prove nanosleep accuracy
+or prove that its internal wait lasted 0.5 seconds.
+Retained evidence binds the exact case, start, end, difference and measurement scope.
+Untimed cases have no elapsed record.
+
+This finite profile is intended for initial configure consumers, including libarchive.
+Signal behavior, alternate locales, injected failures, C analysis, memory and ordinary qualification
+remain separate checks. Source/data tests do not establish any native result.
 
 ## Bounded native acceptance plan
 
@@ -44,7 +70,7 @@ No native acceptance or completed producer is provided by this source change.
 | Locale | C locale, an independently verified comma-radix locale, and C-radix fallback within that locale |
 | Deadline | Zero and expired intervals, nanosecond borrow/carry, seconds overflow and carry overflow |
 | Errors | Clock failure, nanosleep failure, locale allocation failure and locale release failure |
-| Timing | A 0.5-second request must not finish before 0.5 seconds; a 5-second watchdog bounds the observation |
+| Timing | The initial profile observes the whole owned 0.5-second command within 0.5–5 seconds; precise internal timing remains separate |
 | SIGINFO | A 2-second request receives SIGINFO after 0.25 seconds; it reports progress and retains the original deadline |
 | SIGALRM | A 4-second request receives SIGALRM after 0.25 seconds; it exits zero before the original deadline |
 

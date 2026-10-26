@@ -27,14 +27,14 @@ class ConversionSourceTests(unittest.TestCase):
         self.assertIn('ntime.tv_sec = strtol(arg, &temp, 10);', self.source)
 
     def test_bounded_native_inputs_cover_invalid_and_valid_conversions(self):
-        data = json.loads((ROOT / 'tools/sleep/conversion-cases.json').read_text())
-        cases = {case['argument']: case for case in data['cases']}
-        self.assertEqual(len(cases), 12)
+        data = json.loads((ROOT / 'tools/sleep/bootstrap.json').read_text())
+        cases = {case['args'][0]: case for case in data['runtime_cases'] if len(case['args']) == 1}
+        self.assertEqual(len(data['runtime_cases']), 21)
         for text in ('nan', 'NaN', 'inf', '+inf', '1e300', '9223372036854775808.0'):
             self.assertEqual(cases[text]['exit'], 1)
         for text in ('0', '0.0', '0.001', '1e-9999', '1e-3', '0x0.1'):
             self.assertEqual(cases[text]['exit'], 0)
-            self.assertEqual(cases[text]['diagnostic'], '')
+            self.assertEqual(cases[text]['stderr'], '')
 
 
 if __name__ == '__main__':
