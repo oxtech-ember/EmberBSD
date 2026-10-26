@@ -421,7 +421,7 @@ wait_child(pid_t pid, const char *path)
 	int status;
 
 	if (pid == -1) {
-		warn("%s: vfork", path);
+		warn("%s: create child", path);
 		return (1);
 	}
 	while (waitpid(pid, &status, 0) == -1) {
@@ -447,14 +447,24 @@ copy(char *from, char *to)
 {
 	pid_t pid;
 
-	if ((pid = vfork()) == 0) {
+#if HAVE_NBTOOL_CONFIG_H
+	pid = fork();
+#else
+	pid = vfork();
+#endif
+	if (pid == 0) {
 		execl(_PATH_CP, "mv", vflg ? "-PRpv" : "-PRp", "--", from, to, NULL);
 		warn("%s", _PATH_CP);
 		_exit(1);
 	}
 	if (wait_child(pid, _PATH_CP))
 		return (1);
-	if (!(pid = vfork())) {
+#if HAVE_NBTOOL_CONFIG_H
+	pid = fork();
+#else
+	pid = vfork();
+#endif
+	if (pid == 0) {
 		execl(_PATH_RM, "mv", "-rf", "--", from, NULL);
 		warn("%s", _PATH_RM);
 		_exit(1);

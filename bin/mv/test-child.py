@@ -27,10 +27,11 @@ def diagnostic(source):
 #define _PATH_RM "selected-rm"
 static int vflg;
 static int phase, spawn_error, wait_error, exit_error, signal_error;
+static int fork_calls, vfork_calls;
 static int interrupted_phase, interruptions, waits, warnings, wrong_pid;
 
 static pid_t
-controlled_vfork(void)
+controlled_spawn(void)
 {
 
 	phase++;
@@ -40,6 +41,22 @@ controlled_vfork(void)
 		return -1;
 	}
 	return 100 + phase;
+}
+
+static pid_t
+controlled_fork(void)
+{
+
+	fork_calls++;
+	return controlled_spawn();
+}
+
+static pid_t
+controlled_vfork(void)
+{
+
+	vfork_calls++;
+	return controlled_spawn();
 }
 
 static pid_t
@@ -84,6 +101,7 @@ unreachable_exec(const char *path, const char *arg, ...)
 	abort();
 }
 
+#define fork controlled_fork
 #define vfork controlled_vfork
 #define waitpid controlled_wait
 #define warn controlled_warn
@@ -96,6 +114,8 @@ int
 main(void)
 {
 	unsigned int i;
+	(void)controlled_fork;
+	(void)controlled_vfork;
 	int result, failed, expected_phase, expected_waits;
 	/* Success, both spawn errors, both wait errors, exits, signals, EINTR. */
 	const int cases[][6] = {
@@ -115,7 +135,13 @@ main(void)
 		interrupted_phase = cases[i][4];
 		interruptions = cases[i][5];
 		phase = waits = warnings = wrong_pid = 0;
+		fork_calls = vfork_calls = 0;
 		result = copy("source", "destination");
+#if HAVE_NBTOOL_CONFIG_H
+		assert(fork_calls == phase && vfork_calls == 0);
+#else
+		assert(vfork_calls == phase && fork_calls == 0);
+#endif
 		failed = spawn_error || wait_error || exit_error || signal_error;
 		expected_phase = spawn_error == 1 || wait_error == 1 ||
 		    exit_error == 1 || signal_error == 1 ? 1 : 2;

@@ -33,6 +33,11 @@ class HostSourceTests(unittest.TestCase):
         self.assertIn('exists(', text)
         self.assertRegex((ROOT / 'tools/Makefile').read_text(), r'SUBDIR\+=.*\bcp\b.*\bmv\b')
 
+    def test_host_fork_preserves_target_vfork(self):
+        text = (ROOT / "bin/mv/mv.c").read_text()
+        branch = "#if HAVE_NBTOOL_CONFIG_H\n\tpid = fork();\n#else\n\tpid = vfork();\n#endif"
+        self.assertEqual(text.count(branch), 2)
+
     def test_host_metadata_order_and_warning_policy(self):
         text = (ROOT / 'bin/mv/mv.c').read_text()
         begin = text.index('if (fchmod(to_fd, sbp->st_mode))')
