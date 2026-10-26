@@ -49,9 +49,9 @@ Cppcheck remains pending until the common CMake and analyzer dependencies are bu
 This finite contract does not qualify all command-line combinations. Nonempty
 long-format metadata, ACL-bearing long output, file-flag output, terminal layout,
 non-ASCII locales, nonprintable names, signals, and injected I/O failures need
-separate tests. Cppcheck, path analysis, memory checks, and ordinary host
-builds remain separate checks. Successful source/data tests do
-not prove compilation or native execution.
+separate tests. Other-host builds and analysis of the uninstrumented listing
+archive remain separate checks. The results above apply to the tested Darwin
+program and control, not every command-line or platform combination.
 
 Run `test-source.py` with the selected SDK Python to check the source contract
 and independent timestamp-ordering oracles. It starts no compiler or ls process.
