@@ -21,7 +21,45 @@ module A133Recovery
     'ember_trial_rearm' => 'setenv boot_normal run ember_recovery_once',
     'ember_trial_save' => 'saveenv'
   }.transform_values(&:freeze).freeze
+  DIRECT_PROFILE = {
+    'bootcmd'=>'run setargs_nand boot_normal',
+    'boot_normal'=>'sunxi_flash read 45000000 boot;bootm 45000000',
+    'boot_recovery'=>'sunxi_flash read 45000000 recovery;bootm 45000000'
+  }.transform_values(&:freeze).freeze
+  DIRECT_HELPERS = {
+    'ember_entry_restore'=>'setenv bootcmd run setargs_nand boot_normal',
+    'ember_entry_save'=>'saveenv',
+    'ember_entry_fdt'=>'fdt addr ${fdtcontroladdr}',
+    'ember_entry_usb'=>'fdt set /soc@03000000/usbc0@0 usb_port_type <0>'
+  }.transform_values(&:freeze).freeze
   module_function
+
+  # Only locked factory entry uses this plan. Unlock/protect/trial keep their profile.
+  def entry_plan(data)
+    vars=A133Env.decode(data).fetch(:entries).to_h
+    if vars['bootcmd']==DIRECT_PROFILE.fetch('bootcmd')
+      reserved=DIRECT_HELPERS.keys+%w[hook boot_android ember_restore_normal ember_recovery_once]
+      raise Invalid,'recovery_hook_already_present' if reserved.any? { |key| vars.key?(key) }
+      raise Invalid,'unsupported_factory_environment' unless DIRECT_PROFILE.all? { |key,value| vars[key]==value } &&
+        vars['setargs_nand'].is_a?(String) && !vars['setargs_nand'].empty?
+      updates=DIRECT_HELPERS.merge('bootcmd'=>'run ember_entry_restore ember_entry_save setargs_nand ember_entry_fdt ember_entry_usb boot_recovery')
+      armed=A133Env.patch(data,updates)
+      reverse=DIRECT_HELPERS.transform_values { '' }.merge('bootcmd'=>DIRECT_PROFILE.fetch('bootcmd'))
+      raise Invalid,'non_reversible_environment' unless A133Env.patch(armed,reverse)==data
+      consumed=vars.merge(DIRECT_HELPERS)
+      profile='direct'
+    else
+      armed=prepare(data)
+      consumed=vars.merge(UPDATES.reject { |key,_| key=='hook' })
+      profile='hook'
+    end
+    consumed=consumed.to_h { |key,value| [key.dup.freeze,value.dup.freeze] }.freeze
+    {profile:profile.freeze,armed_env:armed.freeze,consumed:consumed,installation_ready:false}.freeze
+  rescue A133Env::Invalid
+    raise Invalid,'invalid_environment',cause:nil
+  rescue Invalid => error
+    raise Invalid,error.message,cause:nil
+  end
 
   def prepare(data)
     vars = A133Env.decode(data).fetch(:entries).to_h

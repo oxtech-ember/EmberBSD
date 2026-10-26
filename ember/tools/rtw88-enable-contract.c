@@ -876,7 +876,7 @@ static struct rtw88_net *enable_ht20_negotiate(struct rtw88_softc *sc,
     route_key.wk_cipher=&ht20_cipher;route_key.wk_flags=IEEE80211_KEY_SWCRYPT;
     /* The HT gate reads the station's own RSN element: CCMP pairwise. */
     static uint8_t ht20_rsn[22]={48,20,1,0,0,0x0f,0xac,4,1,0,0,0x0f,0xac,4,1,0,0,0x0f,0xac,2,0,0};
-    ic->ic_flags|=IEEE80211_F_PRIVACY;ic->ic_opt_ie=ht20_rsn;ic->ic_opt_ie_len=sizeof(ht20_rsn);route_have_key=1;
+    ic->ic_flags|=IEEE80211_F_PRIVACY|IEEE80211_F_WPA2;ic->ic_opt_ie=ht20_rsn;ic->ic_opt_ie_len=sizeof(ht20_rsn);route_have_key=1;
     enable_ht20_exchange(ic,ht20_provider,&ht20_profile,ht20_test_operation);
     if(first<0)return net; /* Parser has queued actual RUN; worker is deferred. */
     if(first)queue_packet(&net->ec.ec_if.if_snd,ether_packet(0,0,0));
@@ -1036,8 +1036,10 @@ static void enable_ht20_actual_key_budget(void)
   struct ieee80211com *ic=&net->ic;struct ieee80211_node *ni=ic->ic_bss;
   struct cipher good=*route_key.wk_cipher,bad=good;
   struct ieee80211_key valid=route_key;valid.wk_cipher=&good;
-  int reject=kind==2 || (kind>=4 && kind<=10) || (kind>=15 && kind<=18) || kind==20;
-  int pae=(kind>=11 && kind<=14) || kind==17 || kind>=20,encrypt=!pae || kind==12 || kind==14;
+  /* HT with privacy needs WPA2: EAPOL is then encrypted with the key, so
+   * a non-CCMP key (21) is refused like any other frame. */
+  int reject=kind==2 || (kind>=4 && kind<=10) || (kind>=15 && kind<=18) || kind==20 || kind==21;
+  int pae=(kind>=11 && kind<=14) || kind==17 || kind>=20,encrypt=!pae || kind==12 || kind==13 || kind==14;
   route_key.wk_cipher=&bad;
   switch(kind) {
   case 1: route_have_key=0;ic->ic_def_txkey=0;ic->ic_nw_keys[0]=valid;break;
@@ -1051,15 +1053,15 @@ static void enable_ht20_actual_key_budget(void)
   case 9: route_key.wk_cipher=NULL;break;
   case 10: case 11: route_have_key=0;break;
   case 12: ic->ic_flags|=IEEE80211_F_WPA;break;
-  case 13: ic->ic_flags&=~IEEE80211_F_WPA;break;
+  case 13: ic->ic_flags&=~IEEE80211_F_WPA1;break; /* HT keeps needing WPA2. */
   case 14: route_have_key=0;ic->ic_def_txkey=0;ic->ic_nw_keys[0]=valid;ic->ic_flags|=IEEE80211_F_WPA;break;
   case 15: route_have_key=0;ic->ic_def_txkey=0;ic->ic_nw_keys[0]=valid;ic->ic_nw_keys[0].wk_flags=0;break;
   case 16: route_have_key=0;ic->ic_def_txkey=0;break;
   case 17: route_have_key=0;ic->ic_def_txkey=0;ic->ic_nw_keys[0]=valid;
    ic->ic_nw_keys[0].wk_cipher=&bad;bad.ic_cipher=1;ic->ic_flags|=IEEE80211_F_WPA;break;
   }
-  if(kind==20){route_key.wk_cipher=NULL;ic->ic_flags&=~IEEE80211_F_WPA;}
-  if(kind==21){bad.ic_cipher=1;ic->ic_flags&=~IEEE80211_F_WPA;}
+  if(kind==20){route_key.wk_cipher=NULL;ic->ic_flags&=~IEEE80211_F_WPA1;}
+  if(kind==21){bad.ic_cipher=1;ic->ic_flags&=~IEEE80211_F_WPA1;}
   if(kind==18){route_have_key=0;ic->ic_def_txkey=4;}
   if(kind==19){route_have_key=0;ic->ic_def_txkey=3;ic->ic_nw_keys[3]=valid;}
   /* Install the modeled keys explicitly; both guard and real encap now run

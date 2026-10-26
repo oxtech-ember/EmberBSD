@@ -2310,7 +2310,7 @@ test_ra_vht80_run(void)
 		    cap.tx_map == RTW88_VHT_MAP_NSS1_MCS9);
 		{
 			struct rtw88_hw_feature_state saved = s.sc.sc_hw_feature;
-			struct ieee80211_vht_cap two;
+			struct ieee80211_vht_cap two = { 0 };
 
 			s.sc.sc_hw_feature.observed = 1;
 			s.sc.sc_hw_feature.report.known |= RTW88_HW_KNOWN_NSS |

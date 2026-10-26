@@ -23,47 +23,21 @@
 #include "compat_acl.h"
 
 #if HAVE_LISTING_ACL_DARWIN
+#include "compat_native_acl.h"
+
 static int
 presence(const char *path, int *present)
 {
-	filesec_t security;
 	struct stat st;
 	acl_t acl = NULL;
-	acl_entry_t entry;
-	int valid, result = -1, saved;
+	int result, saved;
 
-	security = filesec_init();
-	if (security == NULL)
+	if (__nbcompat_darwin_acl_read(-1, path, &st, &acl) == -1)
 		return (-1);
-	if (lstatx_np(path, &st, security) == -1 ||
-	    filesec_query_property(security, FILESEC_ACL, &valid) == -1)
-		goto out;
-	if (!valid) {
-		*present = 0;
-		result = 0;
-		goto out;
-	}
-	if (filesec_get_property(security, FILESEC_ACL, &acl) == -1)
-		goto out;
-	if (acl == NULL) {
-		errno = EINVAL;
-		goto out;
-	}
-	if (acl_valid(acl) == -1)
-		goto out;
-	/* For a valid Darwin ACL, FIRST_ENTRY gives EINVAL only if empty. */
-	if (acl_get_entry(acl, ACL_FIRST_ENTRY, &entry) == 0)
-		*present = 1;
-	else if (errno == EINVAL)
-		*present = 0;
-	else
-		goto out;
-	result = 0;
-out:
+	result = __nbcompat_darwin_acl_nonempty(acl, present);
 	saved = errno;
 	if (acl != NULL)
 		(void)acl_free(acl);
-	filesec_free(security);
 	errno = saved;
 	return (result);
 }

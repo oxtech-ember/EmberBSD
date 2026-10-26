@@ -1,0 +1,54 @@
+{
+  "format": "emberbsd-native-bootstrap-component",
+  "version": 1,
+  "name": "filemeta",
+  "origin": "EmberBSD (AI-assisted). Shared native metadata API composition.",
+  "initial_only": true,
+  "source_makefile": "tools/compat/Makefile",
+  "source_fragment": "tools/compat/filemeta.mk",
+  "sources": ["tools/compat/compat_filemeta.c"],
+  "headers": [
+    "tools/compat/compat_filemeta.h",
+    "tools/compat/compat_filemeta_features.h",
+    "tools/compat/compat_native_features.h",
+    "tools/compat/compat_acl_features.h",
+    "tools/compat/compat_native_acl.h",
+    "tools/compat/probes/filemeta-xattr-bsd-probe.h",
+    "tools/compat/bootstrap_cdefs.h"
+  ],
+  "provenance": [
+    "tools/compat/README.filemeta.md",
+    "tools/compat/test-filemeta.py",
+    "tools/compat/configure.ac",
+    "tools/compat/configure",
+    "tools/compat/nbtool_config.h.in",
+    "tools/compat/compat_defs.h",
+    "lib/libc/gen/extattr.c",
+    "sys/sys/extattr.h",
+    "sys/sys/fcntl.h",
+    "sys/sys/acl.h",
+    "sys/sys/featuretest.h"
+  ],
+  "required_tool_roles": ["cc", "ar", "ranlib"],
+  "control": "tools/compat/probes/filemeta-control.c",
+  "check": "tools/compat/probes/filemeta-check.c",
+  "required_capabilities": [
+    "HAVE_FILEMETA_OPEN",
+    "HAVE_FILEMETA_ACL_DARWIN",
+    "HAVE_FILEMETA_XATTR_DARWIN",
+    "HAVE_FILEMETA_REPRESENTATION_DARWIN"
+  ],
+  "probes": [
+    {"name": "filemeta-open", "source": "tools/compat/probes/filemeta-open.c", "macro": "HAVE_FILEMETA_OPEN"},
+    {"name": "filemeta-regular-open", "source": "tools/compat/probes/filemeta-regular-open.c", "macro": "HAVE_FILEMETA_REGULAR_OPEN"},
+    {"name": "filemeta-acl-darwin", "source": "tools/compat/probes/filemeta-acl-darwin.c", "macro": "HAVE_FILEMETA_ACL_DARWIN"},
+    {"name": "filemeta-acl-bsd", "source": "tools/compat/probes/filemeta-acl-bsd.c", "macro": "HAVE_FILEMETA_ACL_BSD"},
+    {"name": "filemeta-xattr-darwin", "source": "tools/compat/probes/filemeta-xattr-darwin.c", "macro": "HAVE_FILEMETA_XATTR_DARWIN"},
+    {"name": "filemeta-xattr-bsd-int", "source": "tools/compat/probes/filemeta-xattr-bsd-int.c", "macro": "HAVE_FILEMETA_XATTR_BSD_INT"},
+    {"name": "filemeta-xattr-bsd-ssize", "source": "tools/compat/probes/filemeta-xattr-bsd-ssize.c", "macro": "HAVE_FILEMETA_XATTR_BSD_SSIZE"},
+    {"name": "filemeta-representation-darwin", "source": "tools/compat/probes/filemeta-representation-darwin.c", "macro": "HAVE_FILEMETA_REPRESENTATION_DARWIN"}
+  ],
+  "config_preamble": "/* Actual metadata probes only; not a full OS configuration. */\n#ifndef EMBERBSD_FILEMETA_CONFIG_H\n#define EMBERBSD_FILEMETA_CONFIG_H\n#include \"bootstrap_cdefs.h\"\n#define HAVE_NBTOOL_CONFIG_H 1\n",
+  "config_postamble": "#include \"compat_filemeta.h\"\n#endif\n",
+  "archive": "libnbcompat.a"
+}

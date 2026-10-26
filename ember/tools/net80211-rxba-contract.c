@@ -218,7 +218,7 @@ static int unit_setup_mode(struct unit_fixture *f,unsigned head,unsigned window,
  f->ic.ic_ifp=&f->ifp;f->ifp.model_ic=&f->ic;f->ni.references=1;f->ic.ic_bss=&f->ni;f->ni.ni_ic=&f->ic;
  f->ic.ic_myaddr[0]=f->ni.ni_macaddr[0]=f->ni.ni_bssid[0]=2;
  f->ic.ic_myaddr[5]=1;f->ni.ni_macaddr[5]=f->ni.ni_bssid[5]=2;
- f->ifp.if_percpuq=&f->ic;f->ic.ic_flags=IEEE80211_F_PRIVACY;f->ic.ic_recv_mgmt=unit_mgmt_dispatch;f->ic.ic_state=IEEE80211_S_RUN;f->ic.ic_opmode=IEEE80211_M_STA;f->ic.ic_rxba_ops=&unit_ops;
+ f->ifp.if_percpuq=&f->ic;f->ic.ic_flags=IEEE80211_F_PRIVACY|IEEE80211_F_WPA2;f->ic.ic_recv_mgmt=unit_mgmt_dispatch;f->ic.ic_state=IEEE80211_S_RUN;f->ic.ic_opmode=IEEE80211_M_STA;f->ic.ic_rxba_ops=&unit_ops;
  f->ni.authorized=1;unit_negotiate(f);
  init_key(&f->ic,&f->ni.ni_ucastkey,0,0x19);init_key(&f->ic,&f->tx,0,0x19);
  if(!ba)return 1;

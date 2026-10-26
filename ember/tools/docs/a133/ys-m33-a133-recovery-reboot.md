@@ -57,6 +57,9 @@ It is shared across the offline epoch. Every source must match the fixed
 31,037,849,600-byte17-partition layout, paired GPT, board, root and lock state.
 Whole bootloader/boot/recovery and full env are read before and after reboot;
 hardware boot-area sizes must match across the transition.
+The policy selects the exact hook or direct factory profile documented by
+[Entry](ys-m33-a133-recovery-entry.md#states-and-write-boundary). Direct C3
+support does not expand admission for unlock or image writes.
 
 `enter_recovery` requires the exact armed env in `device` state and verifies
 the known consumed env in `recovery`. The consumed export may reorder entries
@@ -104,6 +107,16 @@ scheduling reboot. Causes/private diagnostics are discarded. Preserve a
 possible reboot/write marker and freshly observe the actual device after
 interruption. A local subprocess exit does not prove remote cancellation.
 The API supplies no durable journal or global device lease.
+
+A recovery or Android daemon can restart without root. If destination
+readback reports `usb_root_required` after a submitted reboot, do not repeat
+that reboot. The operator must separately check USB identity/state, establish
+the authorized root transport and keepalive, and freshly verify retained
+capture evidence. A new `Policy` and `Readback.verify` can then check `consumed`
+in recovery or `original` in Android without submitting another reboot.
+Record this as a separate observed recovery step; the failed invocation is
+not a successful `factory_recovery_verified` or `factory_android_verified`
+receipt. Other failure reasons require their own diagnosis, not this procedure.
 
 Actual-process sparse fixtures independently encode vendor exports, simulate
 one native reboot and exercise the complete Entry arm/restore round trip,

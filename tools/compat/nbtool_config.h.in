@@ -607,6 +607,30 @@
 /* Define to 1 if you have the 'mkstemps' function. */
 #undef HAVE_MKSTEMPS
 
+/* Define to 1 if filemeta-open native declarations and link. */
+#undef HAVE_FILEMETA_OPEN
+
+/* Define to 1 if filemeta-regular-open native declarations and link. */
+#undef HAVE_FILEMETA_REGULAR_OPEN
+
+/* Define to 1 if filemeta-acl-darwin native declarations and link. */
+#undef HAVE_FILEMETA_ACL_DARWIN
+
+/* Define to 1 if filemeta-acl-bsd native declarations and link. */
+#undef HAVE_FILEMETA_ACL_BSD
+
+/* Define to 1 if filemeta-xattr-darwin native declarations and link. */
+#undef HAVE_FILEMETA_XATTR_DARWIN
+
+/* Define to 1 if filemeta-xattr-bsd-int native declarations and link. */
+#undef HAVE_FILEMETA_XATTR_BSD_INT
+
+/* Define to 1 if filemeta-xattr-bsd-ssize native declarations and link. */
+#undef HAVE_FILEMETA_XATTR_BSD_SSIZE
+
+/* Define to 1 if filemeta-representation-darwin native declarations and link. */
+#undef HAVE_FILEMETA_REPRESENTATION_DARWIN
+
 /* Define to 1 if mktime_z is declared and links. */
 #undef HAVE_MKTIME_Z
 
@@ -1009,6 +1033,9 @@
 /* Define if you have u_int8_t, but not uint8_t. */
 #undef uint8_t
 
+#if defined(EMBERBSD_COMPAT_FILEMETA_NATIVE_HEADERS)
+#include "compat_filemeta_features.h"
+#endif
 #if defined(EMBERBSD_COMPAT_ACL_NATIVE_HEADERS) && HAVE_LISTING_ACL_BSD
 #include "compat_acl_features.h"
 #endif
