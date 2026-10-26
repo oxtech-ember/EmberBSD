@@ -55,17 +55,35 @@ module A133Recovery
       type=@profile=='direct' ? DirectSource : A133UsbBackup::Source
       type.new(adb:adb,serial:@serial,state:state,root_method:root_method,timeout:timeout)
     end
+    def consumed_values_match?(actual)
+      expected=@data[:consumed]
+      return true if actual==expected
+      return false unless @profile=='direct' && %w[mac wifi_mac bt_mac specialstr].all? { |k| expected[k]=='' }
+      runtime={'bootreason'=>'unknow','fdtcontroladdr'=>'7beb3280','fileaddr'=>'40000000',
+        'filesize'=>'2a338','rotpk_status'=>'0','snum'=>@serial,
+        'partitions'=>A133Backup::INVENTORY.map { |part| "#{part[:name]}@mmcblk0p#{part[:index]}" }.join(':')}
+      return false unless runtime.keys.none? { |k| expected.key?(k) } && runtime.all? { |k,v| actual[k]==v }
+      mac=actual['mac']
+      return false unless mac.is_a?(String) && mac.match?(/\A(?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}\z/)
+      octets=mac.split(':').map { |v| v.to_i(16) }
+      return false unless octets.first&1==0 && octets.any? { |v| v!=0 }
+      return false unless %w[wifi_mac bt_mac specialstr].none? { |k| actual.key?(k) }
+      normalized=actual.reject { |k,_| runtime.key?(k) }
+      %w[mac wifi_mac bt_mac specialstr].each { |k| normalized[k]='' }
+      normalized==expected
+    end
+
     def matches?(expected,current)
       case expected
       when 'original' then current[:sha]==@data[:original_sha]
       when 'armed' then current[:sha]==@data[:armed_sha]
       when 'consumed'
-        current[:tail_sha]==@data[:tail_sha] && A133Env.decode(current[:prefix]).fetch(:entries).to_h==@data[:consumed]
+        current[:tail_sha]==@data[:tail_sha] && consumed_values_match?(A133Env.decode(current[:prefix]).fetch(:entries).to_h)
       else false
       end
     rescue A133Env::Invalid
       false
     end
-    private :sha?
+    private :sha?,:consumed_values_match?
   end
 end

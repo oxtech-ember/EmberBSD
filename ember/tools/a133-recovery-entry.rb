@@ -61,12 +61,6 @@ module A133Recovery
       raise A133Usb::Invalid,'usb_recovery_changed' unless read_hash('recovery')==policy[:recovery_sha]
     end
 
-    def consumed?(current,policy)
-      current[:tail_sha]==policy[:tail_sha] && A133Env.decode(current[:prefix]).fetch(:entries).to_h==policy[:consumed]
-    rescue A133Env::Invalid
-      false
-    end
-
     def transition(action,original_env,backup)
       attempted=false
       required=case action
@@ -81,7 +75,7 @@ module A133Recovery
       guard!(pinned)
       current=read_environment
       known=[pinned[:original_sha],pinned[:armed_sha]].include?(current[:sha])
-      known ||= action!=:arm && consumed?(current,pinned)
+      known ||= action!=:arm && selected.matches?('consumed',current)
       raise A133Usb::Invalid,'usb_environment_unknown' unless known
       prefix=action==:arm ? pinned[:armed_prefix] : pinned[:original_prefix]
       expected=action==:arm ? pinned[:armed_sha] : pinned[:original_sha]
@@ -117,6 +111,6 @@ module A133Recovery
     def disarm(original_env:,backup:)
       transition(:disarm,original_env,backup)
     end
-    private :policy,:read_hash,:read_environment,:guard!,:consumed?,:transition
+    private :policy,:read_hash,:read_environment,:guard!,:transition
   end
 end
