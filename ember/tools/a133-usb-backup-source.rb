@@ -53,7 +53,7 @@ module A133UsbBackup
       raise Invalid,'usb_backup_device_not_ready' unless valid_serial?(row.first) && row[1]==@state &&
         row.any? { |field| field.start_with?('usb:') }
       @serial ||= row.first.dup.freeze
-      features = @channel.run(['-s',@serial,'features'])[:output].strip.split(',')
+      features = @channel.run(['-s',@serial,'features'])[:output].split(/[\s,]+/)
       raise Invalid,'usb_shell_v2_required' unless features.include?('shell_v2')
       raise Invalid,'usb_root_required' unless query('id -u')=='0'
       raise Invalid,'usb_board_mismatch' unless query('getprop ro.product.model')=='a133' &&
