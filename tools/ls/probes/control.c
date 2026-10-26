@@ -21,7 +21,7 @@
 #include <wchar.h>
 #include <wctype.h>
 
-#include "ls_stat.h"
+#include "compat_stat_time.h"
 
 static int
 compare(const FTSENT **a, const FTSENT **b)
@@ -73,10 +73,13 @@ main(void)
 	if (fd == -1 || write(fd, "x", 1) != 1 ||
 	    futimens(fd, times) == -1 || fstatat(dir, "file", &st, AT_SYMLINK_NOFOLLOW) == -1)
 		goto out;
-	if (!S_ISREG(st.st_mode) || st.st_mtime != times[1].tv_sec ||
-	    LS_ATIMENSEC(&st) != times[0].tv_nsec ||
-	    LS_MTIMENSEC(&st) != times[1].tv_nsec ||
-	    LS_CTIMENSEC(&st) < 0 || LS_CTIMENSEC(&st) >= 1000000000)
+	if (!S_ISREG(st.st_mode) ||
+	    __nbcompat_stat_atime(&st).tv_sec != times[0].tv_sec ||
+	    __nbcompat_stat_atime(&st).tv_nsec != times[0].tv_nsec ||
+	    __nbcompat_stat_mtime(&st).tv_sec != times[1].tv_sec ||
+	    __nbcompat_stat_mtime(&st).tv_nsec != times[1].tv_nsec ||
+	    __nbcompat_stat_ctime(&st).tv_nsec < 0 ||
+	    __nbcompat_stat_ctime(&st).tv_nsec >= 1000000000)
 		goto out;
 	if (symlinkat("file", dir, "link") == -1)
 		goto out;

@@ -20,10 +20,11 @@
   "headers": [
     "bin/ls/ls.h",
     "bin/ls/extern.h",
-    "bin/ls/ls_stat.h"
+    "tools/compat/compat_stat_time.h"
   ],
   "include_dirs": [
-    "bin/ls"
+    "bin/ls",
+    "tools/compat"
   ],
   "cppflags": [],
   "cflags": [],

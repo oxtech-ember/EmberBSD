@@ -29,12 +29,15 @@ class SourceContract(unittest.TestCase):
         self.assertIn('warn("%s", name)', text)
 
     def test_typed_nanosecond_access_and_integer_width(self):
-        header = (ROOT / 'bin/ls/ls_stat.h').read_text()
+        self.assertFalse((ROOT / 'bin/ls/ls_stat.h').exists())
+        text = (ROOT / 'bin/ls/cmp.c').read_text()
+        host = text.split('#if HAVE_NBTOOL_CONFIG_H\n#include "compat_stat_time.h"', 1)[1]
+        host, target = host.split('#else', 1)
         for stem in ('a', 'm', 'c'):
-            for suffix in ('tim.tv_nsec', 'timensec', 'timespec.tv_nsec'):
-                self.assertIn('st_' + stem + suffix, header)
-        self.assertIn('HAVE_STRUCT_STAT_ST_ATIM', header)
-        self.assertIn('HAVE_STRUCT_STAT_ST_MTIMENSEC', header)
+            self.assertIn('__nbcompat_stat_' + stem + 'time(x).tv_nsec', host)
+            self.assertIn('(x)->st_' + stem + 'timensec', target)
+            self.assertIn('(x)->st_' + stem + 'timespec.tv_nsec', target)
+        self.assertNotIn('HAVE_STRUCT_STAT_ST_', host)
         self.assertIn('SIZE_MAX/len', (ROOT / 'bin/ls/util.c').read_text())
 
     def test_required_api_control_and_exact_source_roster(self):
@@ -42,12 +45,25 @@ class SourceContract(unittest.TestCase):
         self.assertEqual(manifest['sources'], [f'bin/ls/{unit}.c' for unit in UNITS])
         self.assertEqual(manifest['components'], ['listing'])
         self.assertEqual(manifest['control'], 'tools/ls/probes/control.c')
+        self.assertEqual(manifest['headers'], ['bin/ls/ls.h', 'bin/ls/extern.h',
+                                               'tools/compat/compat_stat_time.h'])
+        self.assertEqual(manifest['include_dirs'], ['bin/ls', 'tools/compat'])
+        self.assertEqual(len(manifest['runtime_cases']), 38)
         control = (ROOT / manifest['control']).read_text()
         for name in ('fts_open', 'fts_children', 'fts_read', 'fts_set', 'fts_close',
                      'openat', 'fstatat', 'futimens', 'strvis', 'strmode',
                      'user_from_uid', 'group_from_gid', 'mbrtowc', 'wcrtomb', 'wcwidth'):
             self.assertIn(name + '(', control)
         self.assertNotIn('system(', control)
+        self.assertIn('#include \"compat_stat_time.h\"', control)
+        self.assertNotIn('ls_stat.h', control)
+        for stem in ('a', 'm', 'c'):
+            self.assertIn('__nbcompat_stat_' + stem + 'time(&st)', control)
+        for stem, index in (('a', 0), ('m', 1)):
+            for field in ('tv_sec', 'tv_nsec'):
+                self.assertIn(f'__nbcompat_stat_{stem}time(&st).{field} != times[{index}].{field}', control)
+        self.assertIn('123456789', control)
+        self.assertIn('987654321', control)
 
     def test_time_sorting_oracles_are_independent_of_names(self):
         manifest = json.loads((ROOT / 'tools/ls/bootstrap.json').read_text())

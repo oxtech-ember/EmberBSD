@@ -8,23 +8,25 @@ native libc, libutil, ACL interfaces, and command-line behavior.
 Host builds use the shared listing and ACL declarations. ACL presence comes
 from the shared no-follow adapter. An unsupported ACL operation remains an
 error. Hosts without `struct stat.st_flags` reject requested flag output.
-Timestamp comparisons use typed native fields selected by the normal
-configuration. They retain the native nanosecond fields on Darwin.
+Host timestamp comparisons use the shared installed `compat_stat_time.h`
+accessors. Normal configuration selects the real native fields. Target builds
+keep their canonical stat aliases and do not include a host tools header.
 
 ## Initial SDK contract
 
-`bootstrap.json` defines the finite `ls-bootstrap` contract. The SDK validates
-the complete source roster and one independently accepted `listing` component.
-Its archive and public headers remain separate, hash-bound inputs. The SDK does
+`bootstrap.json` defines the initial `ls-bootstrap` source contract. It uses
+the complete source roster and the built `listing` component.
+Its archive and public headers remain separate inputs. The SDK does
 not copy this C implementation or invent a replacement configuration header.
 
 Before compiling ls, the SDK compiles, links, and runs `probes/control.c` with
 the same selected compiler, ABI, and component inputs. This required control
 checks native FTS traversal, no-follow descriptor operations, nanosecond stat
-fields, `vis`, `strmode`, password/group lookup, and wide-character operations.
+fields through the same shared accessor, `vis`, `strmode`, password/group lookup,
+and wide-character operations.
 It creates and removes only its owned work-directory fixture. A failed control
-stops production. Both the control and ls need actual loader traces in the
-independent runtime audit. Only the final ls image can become a seed tool.
+stops the build. The control checks native APIs; it is not an installed tool.
+Builds do not require qualification receipts or an independent admission gate.
 
 The 38 cases test exact streams and filesystem observations. They cover names,
 hidden entries, recursion, symlinks, hardlinks, size ordering, and time ordering.
@@ -36,7 +38,7 @@ This finite contract does not qualify all command-line combinations. Nonempty
 long-format metadata, ACL-bearing long output, file-flag output, terminal layout,
 non-ASCII locales, nonprintable names, signals, and injected I/O failures need
 separate tests. Cppcheck, path analysis, memory checks, and ordinary host
-qualification remain separate requirements. Successful source/data tests do
+builds remain separate checks. Successful source/data tests do
 not prove compilation or native execution.
 
 Run `test-source.py` with the selected SDK Python to check the source contract
