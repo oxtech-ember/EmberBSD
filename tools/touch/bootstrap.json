@@ -1,0 +1,1299 @@
+{
+  "format": "emberbsd-native-bootstrap-program",
+  "version": 1,
+  "name": "touch",
+  "origin": "EmberBSD (AI-assisted) source contract; canonical implementation retains BSD notices.",
+  "canonical_host_recipe": "tools/touch/Makefile",
+  "source_makefile": "usr.bin/touch/Makefile",
+  "compiler": {
+    "family": "gcc",
+    "major": 16,
+    "abi": "native"
+  },
+  "sources": [
+    "usr.bin/touch/touch.c"
+  ],
+  "headers": [],
+  "include_dirs": [],
+  "cppflags": [],
+  "cflags": [],
+  "link_flags": [],
+  "libraries": [
+    "m"
+  ],
+  "components": [
+    "filetime",
+    "parsedate"
+  ],
+  "invocations": [
+    "touch"
+  ],
+  "files": {},
+  "runtime_cases": [
+    {
+      "name": "create-epoch",
+      "invocation": "touch",
+      "args": [
+        "-d",
+        "@0",
+        "file"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {},
+        "expect": {
+          "file": {
+            "type": "file",
+            "mode": "0644",
+            "data": "",
+            "atime_ns": 0,
+            "mtime_ns": 0
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "parser-minus-one",
+      "invocation": "touch",
+      "args": [
+        "-d",
+        "@-1",
+        "file"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 946684800125000000,
+            "mtime_ns": 978307200500000000
+          }
+        },
+        "expect": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": -1000000000,
+            "mtime_ns": -1000000000
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "parser-month-name",
+      "invocation": "touch",
+      "args": [
+        "-d",
+        "January 1, 2000 00:00 UTC",
+        "file"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 946684800125000000,
+            "mtime_ns": 978307200500000000
+          }
+        },
+        "expect": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 946684800000000000,
+            "mtime_ns": 946684800000000000
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "parser-zone",
+      "invocation": "touch",
+      "args": [
+        "-d",
+        "2000-01-01 00:00:00 +0530",
+        "file"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 946684800125000000,
+            "mtime_ns": 978307200500000000
+          }
+        },
+        "expect": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 946665000000000000,
+            "mtime_ns": 946665000000000000
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "iso-leap",
+      "invocation": "touch",
+      "args": [
+        "-d",
+        "2024-02-29T12:34:56Z",
+        "file"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 946684800125000000,
+            "mtime_ns": 978307200500000000
+          }
+        },
+        "expect": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 1709210096000000000,
+            "mtime_ns": 1709210096000000000
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "iso-dot",
+      "invocation": "touch",
+      "args": [
+        "-d",
+        "2024-02-29T12:34:56.125Z",
+        "file"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 946684800125000000,
+            "mtime_ns": 978307200500000000
+          }
+        },
+        "expect": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 1709210096125000000,
+            "mtime_ns": 1709210096125000000
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "iso-comma",
+      "invocation": "touch",
+      "args": [
+        "-d",
+        "2024-02-29T12:34:56,5Z",
+        "file"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 946684800125000000,
+            "mtime_ns": 978307200500000000
+          }
+        },
+        "expect": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 1709210096500000000,
+            "mtime_ns": 1709210096500000000
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "iso-local-utc",
+      "invocation": "touch",
+      "args": [
+        "-d",
+        "2024-02-29T12:34:56",
+        "file"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 946684800125000000,
+            "mtime_ns": 978307200500000000
+          }
+        },
+        "expect": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 1709210096000000000,
+            "mtime_ns": 1709210096000000000
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "iso-minus-one",
+      "invocation": "touch",
+      "args": [
+        "-d",
+        "1969-12-31T23:59:59Z",
+        "file"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 946684800125000000,
+            "mtime_ns": 978307200500000000
+          }
+        },
+        "expect": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": -1000000000,
+            "mtime_ns": -1000000000
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "numeric-minus-one",
+      "invocation": "touch",
+      "args": [
+        "-t",
+        "196912312359.59",
+        "file"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 946684800125000000,
+            "mtime_ns": 978307200500000000
+          }
+        },
+        "expect": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": -1000000000,
+            "mtime_ns": -1000000000
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "numeric-leap",
+      "invocation": "touch",
+      "args": [
+        "-t",
+        "202402291234.56",
+        "file"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 946684800125000000,
+            "mtime_ns": 978307200500000000
+          }
+        },
+        "expect": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 1709210096000000000,
+            "mtime_ns": 1709210096000000000
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "legacy-year",
+      "invocation": "touch",
+      "args": [
+        "0101000000",
+        "file"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 946684800125000000,
+            "mtime_ns": 978307200500000000
+          }
+        },
+        "expect": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 946684800000000000,
+            "mtime_ns": 946684800000000000
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "access-only",
+      "invocation": "touch",
+      "args": [
+        "-a",
+        "-d",
+        "@0",
+        "file"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 946684800125000000,
+            "mtime_ns": 978307200500000000
+          }
+        },
+        "expect": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 0,
+            "mtime_ns": 978307200500000000
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "modify-only",
+      "invocation": "touch",
+      "args": [
+        "-m",
+        "-d",
+        "@0",
+        "file"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 946684800125000000,
+            "mtime_ns": 978307200500000000
+          }
+        },
+        "expect": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 946684800125000000,
+            "mtime_ns": 0
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "reference",
+      "invocation": "touch",
+      "args": [
+        "-r",
+        "ref",
+        "file"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "ref": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 123456789,
+            "mtime_ns": 987654321
+          },
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 946684800125000000,
+            "mtime_ns": 978307200500000000
+          }
+        },
+        "expect": {
+          "ref": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 123456789,
+            "mtime_ns": 987654321
+          },
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 123456789,
+            "mtime_ns": 987654321
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "reference-follow",
+      "invocation": "touch",
+      "args": [
+        "-r",
+        "alias",
+        "file"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "ref": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 123456789,
+            "mtime_ns": 987654321
+          },
+          "alias": {
+            "type": "symlink",
+            "target": "ref",
+            "atime_ns": 2000000000,
+            "mtime_ns": 3000000000
+          },
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 946684800125000000,
+            "mtime_ns": 978307200500000000
+          }
+        },
+        "expect": {
+          "ref": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 123456789,
+            "mtime_ns": 987654321
+          },
+          "alias": {
+            "type": "symlink",
+            "target": "ref"
+          },
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 123456789,
+            "mtime_ns": 987654321
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "reference-nofollow",
+      "invocation": "touch",
+      "args": [
+        "-R",
+        "alias",
+        "file"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "ref": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 123456789,
+            "mtime_ns": 987654321
+          },
+          "alias": {
+            "type": "symlink",
+            "target": "ref",
+            "atime_ns": 2000000000,
+            "mtime_ns": 3000000000
+          },
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 946684800125000000,
+            "mtime_ns": 978307200500000000
+          }
+        },
+        "expect": {
+          "ref": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 123456789,
+            "mtime_ns": 987654321
+          },
+          "alias": {
+            "type": "symlink",
+            "target": "ref",
+            "atime_ns": 2000000000,
+            "mtime_ns": 3000000000
+          },
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 2000000000,
+            "mtime_ns": 3000000000
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "link-only",
+      "invocation": "touch",
+      "args": [
+        "-h",
+        "-d",
+        "@0",
+        "alias"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 946684800125000000,
+            "mtime_ns": 978307200500000000
+          },
+          "alias": {
+            "type": "symlink",
+            "target": "file",
+            "atime_ns": 2000000000,
+            "mtime_ns": 3000000000
+          }
+        },
+        "expect": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 946684800125000000,
+            "mtime_ns": 978307200500000000
+          },
+          "alias": {
+            "type": "symlink",
+            "target": "file",
+            "atime_ns": 0,
+            "mtime_ns": 0
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "dangling-link",
+      "invocation": "touch",
+      "args": [
+        "-h",
+        "-d",
+        "@0",
+        "alias"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "alias": {
+            "type": "symlink",
+            "target": "missing",
+            "atime_ns": 2000000000,
+            "mtime_ns": 3000000000
+          }
+        },
+        "expect": {
+          "alias": {
+            "type": "symlink",
+            "target": "missing",
+            "atime_ns": 0,
+            "mtime_ns": 0
+          },
+          "missing": {
+            "type": "absent"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "nofollow-missing",
+      "invocation": "touch",
+      "args": [
+        "-h",
+        "-d",
+        "@0",
+        "missing"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {},
+        "expect": {
+          "missing": {
+            "type": "absent"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "no-create",
+      "invocation": "touch",
+      "args": [
+        "-c",
+        "-d",
+        "@0",
+        "missing"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {},
+        "expect": {
+          "missing": {
+            "type": "absent"
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "directory",
+      "invocation": "touch",
+      "args": [
+        "-d",
+        "@0",
+        "dir"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "dir": {
+            "type": "directory",
+            "mode": "0700",
+            "atime_ns": 946684800125000000,
+            "mtime_ns": 978307200500000000
+          }
+        },
+        "expect": {
+          "dir": {
+            "type": "directory",
+            "mode": "0700",
+            "atime_ns": 0,
+            "mtime_ns": 0
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "multiple",
+      "invocation": "touch",
+      "args": [
+        "-d",
+        "@0",
+        "one",
+        "two"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "one": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 946684800125000000,
+            "mtime_ns": 978307200500000000
+          },
+          "two": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 946684800125000000,
+            "mtime_ns": 978307200500000000
+          }
+        },
+        "expect": {
+          "one": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 0,
+            "mtime_ns": 0
+          },
+          "two": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 0,
+            "mtime_ns": 0
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "already-same",
+      "invocation": "touch",
+      "args": [
+        "-D",
+        "-d",
+        "@0",
+        "file"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 0,
+            "mtime_ns": 0
+          }
+        },
+        "expect": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 0,
+            "mtime_ns": 0
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "invalid-date",
+      "invocation": "touch",
+      "args": [
+        "-d",
+        "not-a-date",
+        "file"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 946684800125000000,
+            "mtime_ns": 978307200500000000
+          }
+        },
+        "expect": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 946684800125000000,
+            "mtime_ns": 978307200500000000
+          }
+        }
+      },
+      "stderr": "touch: Could not parse `not-a-date'\n"
+    },
+    {
+      "name": "invalid-calendar",
+      "invocation": "touch",
+      "args": [
+        "-t",
+        "202302300000",
+        "file"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 946684800125000000,
+            "mtime_ns": 978307200500000000
+          }
+        },
+        "expect": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 946684800125000000,
+            "mtime_ns": 978307200500000000
+          }
+        }
+      },
+      "stderr": "touch: out of range or bad time specification:\n\t'202302300000' should be [[CC]YY]MMDDhhmm[.ss]\n"
+    },
+    {
+      "name": "invalid-legacy",
+      "invocation": "touch",
+      "args": [
+        "0230000000",
+        "file"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 946684800125000000,
+            "mtime_ns": 978307200500000000
+          }
+        },
+        "expect": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 946684800125000000,
+            "mtime_ns": 978307200500000000
+          }
+        }
+      },
+      "stderr": "touch: out of range or bad time specification: MMDDhhmm[YY]\n"
+    },
+    {
+      "name": "missing-reference",
+      "invocation": "touch",
+      "args": [
+        "-r",
+        "missing",
+        "file"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {},
+        "expect": {
+          "missing": {
+            "type": "absent"
+          },
+          "file": {
+            "type": "absent"
+          }
+        }
+      },
+      "stderr_nonempty": true
+    },
+    {
+      "name": "missing-parent",
+      "invocation": "touch",
+      "args": [
+        "-d",
+        "@0",
+        "missing/file"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {},
+        "expect": {
+          "missing": {
+            "type": "absent"
+          },
+          "missing/file": {
+            "type": "absent"
+          }
+        }
+      },
+      "stderr_nonempty": true
+    },
+    {
+      "name": "continue-after-error",
+      "invocation": "touch",
+      "args": [
+        "-d",
+        "@0",
+        "missing/file",
+        "file"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 946684800125000000,
+            "mtime_ns": 978307200500000000
+          }
+        },
+        "expect": {
+          "missing": {
+            "type": "absent"
+          },
+          "missing/file": {
+            "type": "absent"
+          },
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 0,
+            "mtime_ns": 0
+          }
+        }
+      },
+      "stderr_nonempty": true
+    },
+    {
+      "name": "missing-operand",
+      "invocation": "touch",
+      "args": [],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {},
+        "expect": {}
+      },
+      "stderr": "Usage: touch [-acDfhm] [-d|--date datetime] [-R|-r|--reference file] [-t time] file ...\n"
+    },
+    {
+      "name": "invalid-option",
+      "invocation": "touch",
+      "args": [
+        "-z"
+      ],
+      "stdin": "",
+      "exit": 1,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {},
+        "expect": {}
+      },
+      "stderr_nonempty": true
+    },
+    {
+      "name": "ignored-force",
+      "invocation": "touch",
+      "args": [
+        "-f",
+        "-d",
+        "@0",
+        "file"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 946684800125000000,
+            "mtime_ns": 978307200500000000
+          }
+        },
+        "expect": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 0,
+            "mtime_ns": 0
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "long-date",
+      "invocation": "touch",
+      "args": [
+        "--date",
+        "@0",
+        "file"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 946684800125000000,
+            "mtime_ns": 978307200500000000
+          }
+        },
+        "expect": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 0,
+            "mtime_ns": 0
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "long-reference",
+      "invocation": "touch",
+      "args": [
+        "--reference",
+        "ref",
+        "file"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "ref": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 123456789,
+            "mtime_ns": 987654321
+          },
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 946684800125000000,
+            "mtime_ns": 978307200500000000
+          }
+        },
+        "expect": {
+          "ref": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 123456789,
+            "mtime_ns": 987654321
+          },
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 123456789,
+            "mtime_ns": 987654321
+          }
+        }
+      },
+      "stderr": ""
+    },
+    {
+      "name": "hardlink",
+      "invocation": "touch",
+      "args": [
+        "-d",
+        "@0",
+        "alias"
+      ],
+      "stdin": "",
+      "exit": 0,
+      "stdout": "",
+      "filesystem": {
+        "umask": "0022",
+        "fixtures": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 946684800125000000,
+            "mtime_ns": 978307200500000000
+          },
+          "alias": {
+            "type": "hardlink",
+            "target": "file"
+          }
+        },
+        "expect": {
+          "file": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 0,
+            "mtime_ns": 0
+          },
+          "alias": {
+            "type": "file",
+            "mode": "0600",
+            "data": "owned\n",
+            "atime_ns": 0,
+            "mtime_ns": 0,
+            "same_inode_as": "file"
+          }
+        }
+      },
+      "stderr": ""
+    }
+  ]
+}

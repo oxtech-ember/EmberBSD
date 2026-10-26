@@ -24,7 +24,7 @@ if command.start_with?('exec /system/xbin/su ')
 end
 case command
 when 'id -u' then puts state.fetch('root','0')
-when 'getprop ro.product.model' then puts 'a133'
+when 'getprop ro.product.model' then puts state.fetch('model','a133')
 when 'getprop ro.boot.flash.locked' then puts state.fetch('locked','1')
 when 'getprop ro.boot.verifiedbootstate' then puts state.fetch('verified','green')
 when 'cat /proc/device-tree/compatible' then STDOUT.write("allwinner,a133\0fixture,board\0")

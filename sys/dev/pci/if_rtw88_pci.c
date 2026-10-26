@@ -308,7 +308,7 @@ rtwce_stats(char *buf, size_t len)
 		    " htrun %u/%u/%u.%u.%u runpass %u/%u/%d/%u/%u/%d/%u/%u"
 		    " raphy %u/%d/%d"
 		    " tuple %u.%u.%u/%u"
-		    " txba %u/%u/%u/%u/%u/%u/%u/%#x ampdu %llu sgi %u",
+		    " txba %u/%u/%u/%u/%u/%u/%u/%#x ampdu %llu sgi %u ldpc %u",
 		    ns.neg.prepare_ok, ns.neg.prepare_fail, ns.neg.prepare_ready,
 		    (int)ns.neg.prepare_error, ns.neg.ht20_offers,
 		    ns.neg.ht20_vht_offers, ns.neg.vht_admit, ns.neg.vht_refuse,
@@ -337,7 +337,7 @@ rtwce_stats(char *buf, size_t len)
 		    ns.neg.txba_delbas, ns.neg.txba_invalid,
 		    ns.neg.txba_last_status, ns.neg.txba_active,
 		    (unsigned long long)sc->sc_stats.tx_ampdu_encoded,
-		    sc->sc_ra.sgi);
+		    sc->sc_ra.sgi, sc->sc_ra.ldpc);
 	}
 	if (n > 0 && (size_t)n < len && psc->sc_net != NULL) {
 		const struct rtw88_net_neg *g = &ns.neg;

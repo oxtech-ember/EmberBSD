@@ -370,7 +370,8 @@ bad:
  * requests RTS only for use_rts or the length threshold and ignores the
  * HT Protection field. This relies on OFDM-only non-HT stations deferring
  * on the L-SIG of mixed-format HT and VHT PPDUs, and on the consumer
- * sending single unaggregated MPDUs without TXOP bursts or length RTS.
+ * sending one PPDU per channel access (a single MPDU or one A-MPDU)
+ * without TXOP bursts or length RTS.
  * Keep a narrower envelope than the wire standard: no greenfield/SMPS,
  * RIFS/PSMP/PCO/STBC/dual protection or other operation selectors. The native
  * consumer must also qualify frame length, threshold and TX aggregation.
@@ -393,7 +394,7 @@ ieee80211_ht20_tx_protection(struct ieee80211com *ic, struct ieee80211_node *ni,
 	operation = (uint16_t)op[2] | (uint16_t)op[3] << 8;
 	if (cap != h->peer_cap || operation != h->operation ||
 	    (cap & 0x1c) != 0x0c || (operation != 0 && operation != 3 &&
-	    operation != 6 && operation != 7) ||
+	    operation != 4 && operation != 6 && operation != 7) ||
 	    ((operation == 3 || operation == 7) && op[0] <= 14) ||
 	    (op[1] != 0 && op[1] != 5 && op[1] != 7) ||
 	    op[4] != 0 || op[5] != 0 ||
@@ -436,7 +437,7 @@ ht20_beacon_contract(const struct ieee80211_ht20_node *h, const uint8_t *cap,
 		return IEEE80211_HT20_BEACON_PRIMARY;
 	if ((op[1] & 0x07) != (h->peer_htop[1] & 0x07))
 		return IEEE80211_HT20_BEACON_SECONDARY;
-	if (operation != 0 && operation != 6 &&
+	if (operation != 0 && operation != 4 && operation != 6 &&
 	    !((operation == 3 || operation == 7) && op[0] > 14))
 		return IEEE80211_HT20_BEACON_PROTECTION;
 	if (op[4] != h->peer_htop[4])

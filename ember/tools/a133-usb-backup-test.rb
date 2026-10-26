@@ -57,6 +57,16 @@ Dir.mktmpdir('usb-backup-') do |parent|
   bound = A133Capture.verify(File.join(dir,'capture.json'),serial:'CAPTURE_TEST_SERIAL',cid:'0123456789abcdef0123456789abcdef')
   abort 'FAIL: collector manifest unusable by next stage' unless bound['hardware_boot_copies_verified']==true
   checks+=1
+  ["cmd\nshell_v2\nstat_v2\n", "cmd,shell_v2,stat_v2\n"].each do |features|
+    setup.call('features'=>features)
+    result=run.call(destination.call)
+    abort 'FAIL: shell_v2 feature list format rejected' unless result[:status]=='usb_backup_captured'
+    checks+=1
+  end
+  setup.call('model'=>'QUAD-CORE A133 c3')
+  result=run.call(destination.call)
+  abort 'FAIL: C3 read-only capture rejected' unless result[:status]=='usb_backup_captured'
+  checks+=1
   reject = lambda do |reason,dir,&block|
     begin
       block.call
@@ -74,8 +84,11 @@ Dir.mktmpdir('usb-backup-') do |parent|
     ['usb_backup_device_not_ready',{'network'=>true}],
     ['usb_backup_device_not_ready',{'state'=>'offline'}],
     ['usb_shell_v2_required',{'features'=>'shell'}],
+    ['usb_shell_v2_required',{'features'=>"cmd\nshell_v20\nstat_v2\n"}],
     ['usb_root_required',{'root'=>'2000'}],
     ['usb_board_mismatch',{'model'=>'other'}],
+    ['usb_board_mismatch',{'model'=>'QUAD-CORE A133 c3-extra'}],
+    ['usb_board_mismatch',{'model'=>'QUAD-CORE A133 c3','compatible'=>'allwinner,a64'}],
     ['usb_partition_layout_mismatch',{'numbers_bad'=>true}],
     ['usb_partition_mapping_mismatch',{'mapping_bad'=>true}],
     ['usb_backup_hardware_layout_mismatch',{'hardware_bad'=>true}],
@@ -85,6 +98,7 @@ Dir.mktmpdir('usb-backup-') do |parent|
     ['usb_command_failed',{'mode'=>'remote_error'}],
     ['usb_diagnostics',{'mode'=>'noisy'}],
     ['usb_backup_source_changed',{'mode'=>'cid_drift'}],
+    ['usb_backup_source_changed',{'mode'=>'model_drift'}],
     ['critical_copy_hash_mismatch',{'mode'=>'copy_drift'}]
   ]
   cases.each do |reason,state|

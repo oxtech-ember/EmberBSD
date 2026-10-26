@@ -647,15 +647,15 @@ static void
 test_current_peer_beacons(void)
 {
 	for (unsigned running = 0; running < 2; running++) {
-		for (unsigned variant = 0; variant < 32; variant++) {
+		for (unsigned variant = 0; variant < 33; variant++) {
 			/* Reset reason and clause for each rejected variant. */
-			static const uint8_t want_reason[32] = {
+			static const uint8_t want_reason[33] = {
 			    [2] = 3, [3] = 3, [4] = 3, [5] = 2, [6] = 2, [7] = 2,
 			    [8] = 2, [9] = 3, [10] = 3, [11] = 3, [12] = 1,
 			    [13] = 1, [18] = 2, [20] = 1, [21] = 1, [22] = 3,
 			    [24] = 2, [25] = 2, [26] = 1, [27] = 1, [28] = 3,
 			    [29] = 3 };
-			static const uint8_t want_clause[32] = {
+			static const uint8_t want_clause[33] = {
 			    [2] = IEEE80211_HT20_BEACON_SECONDARY,
 			    [3] = IEEE80211_HT20_BEACON_NO_CAP,
 			    [4] = IEEE80211_HT20_BEACON_NO_OP,
@@ -678,7 +678,7 @@ test_current_peer_beacons(void)
 			int reject = variant != 0 && variant != 1 && variant != 14 &&
 			    variant != 15 && variant != 16 && variant != 17 &&
 			    variant != 19 && variant != 23 && variant != 30 &&
-			    variant != 31;
+			    variant != 31 && variant != 32;
 
 			ht_setup();
 			CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ) == 0);
@@ -717,6 +717,7 @@ test_current_peer_beacons(void)
 			case 29: op[4] = 1; break; /* Non-member protection. */
 			case 30: cap[6] ^= 0xff; break; /* MCS8-15 bits: unused. */
 			case 31: cap[4] ^= 0x03; break; /* A-MPDU factor: unused. */
+			case 32: op[4] = 4; break; /* Mode 0, non-GF present. */
 			case 18: m->m_len = sizeof(*wh) + 11; break;
 			case 19: wh->i_fc[0] = IEEE80211_FC0_SUBTYPE_PROBE_RESP;
 				break;
@@ -816,7 +817,7 @@ test_protection_qualification(void)
   case 3: op[4]=1;break;
   case 4: op[4]=2;break;
   case 5: op[4]=3;break;
-  case 6: op[4]=4;break;
+  case 6: op[4]=4;break; /* Mode 0 with non-GF present: qualifies. */
   case 7: op[4]=7;break;
   case 8: cap[2]|=0x10;break;
   case 9: cap[2]&=~0x0c;break;
@@ -840,10 +841,10 @@ test_protection_qualification(void)
   memset(&result,0xff,sizeof(result));
   int error=ieee80211_ht20_tx_protection(&test_ic,&test_node,&result);
   /* Non-HT mixed mode 3 (5 and 7) stays closed on this 2.4 GHz primary. */
-  if(kind<3) {
+  if(kind<3 || kind==6) {
    CHECK(error==0 && result.qualification==IEEE80211_HT20_PROT_MF20_NO_RTS);
    CHECK(result.generation==admitted.generation && result.peer_cap==0x0c);
-   CHECK(result.operation==(kind==1?0:6) && result.secondary==(kind==1?0:kind==2?7:5));
+   CHECK(result.operation==(kind==1?0:kind==6?4:6) && result.secondary==(kind==1?0:kind==2?7:5));
   } else CHECK(error!=0 && result.qualification==0 && result.generation==0);
  }
 }

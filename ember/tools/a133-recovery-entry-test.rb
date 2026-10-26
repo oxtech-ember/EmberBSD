@@ -64,6 +64,8 @@ Dir.mktmpdir('a133-entry-') do |dir|
     abort 'FAIL: preflight wrote storage' unless attempted || (File.binread(File.join(dir,'part2'))==before && !File.exist?(File.join(dir,'written')))
     checks+=1
   end
+  reset.call('state'=>'device','model'=>'QUAD-CORE A133 c3')
+  failed.call('usb_board_mismatch',false)
   %w[adbd vendor_su].each do |method|
     reset.call({'state'=>'device','mountinfo'=>"1 0 0:1 / / rw - rootfs rootfs rw\n2 1 179:17 / /data rw - ext4 /dev/block/mmcblk0p17 rw\n"})
     result=call.call(:arm,backup,original,{root_method:method})

@@ -21,6 +21,10 @@ module A133UsbBackup
       value.is_a?(String) && value.bytesize.between?(1,128) && value.match?(/\A[a-zA-Z0-9._-]+\z/)
     end
 
+    def supported_model?(model)
+      model=='a133'
+    end
+
     def command(value)
       @root_method=='adbd' ? value : "exec /system/xbin/su 0 /system/bin/sh -c #{Shellwords.escape(value)}"
     end
@@ -53,10 +57,11 @@ module A133UsbBackup
       raise Invalid,'usb_backup_device_not_ready' unless valid_serial?(row.first) && row[1]==@state &&
         row.any? { |field| field.start_with?('usb:') }
       @serial ||= row.first.dup.freeze
-      features = @channel.run(['-s',@serial,'features'])[:output].strip.split(',')
+      features = @channel.run(['-s',@serial,'features'])[:output].split(/[\s,]+/)
       raise Invalid,'usb_shell_v2_required' unless features.include?('shell_v2')
       raise Invalid,'usb_root_required' unless query('id -u')=='0'
-      raise Invalid,'usb_board_mismatch' unless query('getprop ro.product.model')=='a133' &&
+      model = query('getprop ro.product.model')
+      raise Invalid,'usb_board_mismatch' unless supported_model?(model) &&
         query('cat /proc/device-tree/compatible').split("\0").include?('allwinner,a133')
       inventory = A133Backup::INVENTORY
       paths = ['/sys/class/block/mmcblk0/size','/sys/class/block/mmcblk0/device/cid'] +
@@ -79,7 +84,7 @@ module A133UsbBackup
       total = A133Backup::BYTES/512
       head,tail = range(0,34),range(total-34,34)
       A133Backup.validate_gpt(head,tail,A133Backup::BYTES,inventory)
-      profile = {serial:@serial,cid:cid,state:@state,root_method:@root_method,hardware_bytes:hardware[0]*512,
+      profile = {serial:@serial,cid:cid,model:model,state:@state,root_method:@root_method,hardware_bytes:hardware[0]*512,
         gpt_sha256:Digest::SHA256.hexdigest(head+tail),locked:query('getprop ro.boot.flash.locked'),
         verified:query('getprop ro.boot.verifiedbootstate')}
       raise Invalid,'usb_backup_source_changed' if @profile && @profile!=profile
@@ -150,6 +155,6 @@ module A133UsbBackup
     rescue Invalid,A133Usb::Invalid,A133Backup::Invalid => error
       raise Invalid,error.message,cause:nil
     end
-    private :valid_serial?,:command,:query,:range,:recovery_unmounted!
+    private :valid_serial?,:supported_model?,:command,:query,:range,:recovery_unmounted!
   end
 end

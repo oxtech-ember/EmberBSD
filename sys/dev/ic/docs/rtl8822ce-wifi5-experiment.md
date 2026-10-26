@@ -16,14 +16,19 @@ by an ordinary reboot.
 
 ## Profile
 
-- Rates: HT20 MCS0-7 and VHT one spatial stream MCS0-7 at 20, 40 or 80 MHz,
-  BCC, no STBC or beamforming. Firmware rate adaptation may transmit with
-  the short guard interval when the AP receives it at the committed width
-  (HT SGI20 for HT20, HT SGI40 at 40 MHz, VHT SGI80 at 80 MHz); the station
-  does not advertise short-GI reception. The width follows the
-  tuple the AP's HT and VHT Operation derive, if the core admits it and can
-  build its TX power program. Firmware rate adaptation uses rate ID 5 for
-  HT20 and 10 for VHT, with the committed width in RA_INFO.
+- Rates: HT20 MCS0-7, and VHT at 40 or 80 MHz with MCS0-9 on one spatial
+  stream, or on two when this boot's firmware hardware-feature report is
+  2T2R (two streams, two antennas). The negotiated maps are the
+  intersection with the AP's, so an AP with fewer streams or MCS0-7 still
+  negotiates VHT. No STBC or beamforming. Firmware rate adaptation uses
+  rate ID 5 for HT20, 10 for one VHT stream and 9 for two, with the
+  committed width in RA_INFO. It may transmit with the short guard interval
+  when the AP receives it at the committed width (HT SGI20 for HT20, HT
+  SGI40 at 40 MHz, VHT SGI80 at 80 MHz) and with LDPC when the AP receives
+  LDPC (VHT RX LDPC, or HT LDPC for HT20). The VHT Capabilities advertise
+  RX LDPC and short-GI reception at 80 MHz; the HT Capabilities stay
+  long-GI BCC. The width follows the tuple the AP's HT and VHT Operation
+  derive, if the core admits it and can build its TX power program.
 - Channels: 36-48 and 149-165. With `RTW88_DFS64_EXPERIMENT`, 52-64 and
   100-144 are listed as passive DFS slave channels. Host TX on them needs a
   current beacon of the selected AP, and CSA, Quiet, beacon loss, a retune
@@ -35,8 +40,9 @@ by an ordinary reboot.
   HT20 or VHT entry. MAX_AGG_NUM is bounded by half the recipient window and
   the AP's maximum A-MPDU length; the start spacing is the AP's. Raw, fixed,
   legacy and protection-limited frames are never aggregated.
-- Protection: HT protection modes 0 and 6, and on 5 GHz 3 and 7, without
-  RTS or CTS-to-self. Beacons may change the mode within that set.
+- Protection: HT operation words 0, 4 and 6, and on 5 GHz 3 and 7,
+  without RTS or CTS-to-self. Beacons may change the word within that set;
+  `htbcn` showed the AP moving between `0x0007` and `0x0004`.
 
 The deliberate deviations (Basic VHT-MCS set, protection mode 3, one PPDU
 per channel access) are described in
@@ -92,5 +98,5 @@ direction; the peer-to-board figures are already at the pair's limit:
 | 702a3f9c5, A-MPDU and SGI | 100.9 and 93.9 Mbit/s | 95.0 and 96.1 Mbit/s |
 
 Not established: association on 52-60 or 100-144, other APs, two spatial
-streams, MCS8-9, LDPC, long-duration stability and the default boot
+streams on the air, long-duration stability and the default boot
 selection.

@@ -26,7 +26,7 @@ when 'id -u' then puts state.fetch('root','0')
 when 'getprop ro.product.model' then puts state.fetch('model','a133')
 when 'getprop ro.boot.flash.locked' then puts state.fetch('locked',state.fetch('state','device')=='device' ? '1' : '0')
 when 'getprop ro.boot.verifiedbootstate' then puts state.fetch('verified',state.fetch('state','device')=='device' ? 'green' : 'orange')
-when 'cat /proc/device-tree/compatible' then STDOUT.write("allwinner,a133\0fixture,board\0")
+when 'cat /proc/device-tree/compatible' then STDOUT.write(state.fetch('compatible',"allwinner,a133\0fixture,board\0"))
 when 'cat /proc/self/mountinfo' then STDOUT.write(state.fetch('mountinfo',"1 0 0:1 / / rw - rootfs rootfs rw\n"))
 when 'cat /sys/class/block/mmcblk0/size /sys/class/block/mmcblk0/device/cid /sys/class/block/mmcblk0p1/start /sys/class/block/mmcblk0p1/size /sys/class/block/mmcblk0p2/start /sys/class/block/mmcblk0p2/size /sys/class/block/mmcblk0p3/start /sys/class/block/mmcblk0p3/size /sys/class/block/mmcblk0p4/start /sys/class/block/mmcblk0p4/size /sys/class/block/mmcblk0boot0/size /sys/class/block/mmcblk0boot1/size'
   puts(state['numbers_bad'] ? 1 : 512)
@@ -63,6 +63,8 @@ else
     when 'oversized' then STDOUT.write('x')
     when 'cid_drift'
       state['cid']='f'*32; File.write(File.join(base,'state.json'),JSON.generate(state))
+    when 'model_drift'
+      state['model']='QUAD-CORE A133 c3'; File.write(File.join(base,'state.json'),JSON.generate(state))
     when 'copy_drift' then File.binwrite(File.join(base,'boot.bin'),'x'*8192)
     end
   end
