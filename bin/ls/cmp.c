@@ -32,6 +32,10 @@
  * SUCH DAMAGE.
  */
 
+/* Origin: EmberBSD (AI-assisted). Keep the normal host compatibility route. */
+#if HAVE_NBTOOL_CONFIG_H
+#include "nbtool_config.h"
+#endif
 #include <sys/cdefs.h>
 #ifndef lint
 #if 0
@@ -49,20 +53,11 @@ __RCSID("$NetBSD: cmp.c,v 1.17 2003/08/07 09:05:14 agc Exp $");
 
 #include "ls.h"
 #include "extern.h"
+#include "ls_stat.h"
 
-#if defined(_POSIX_SOURCE) || defined(_POSIX_C_SOURCE) || \
-    defined(_XOPEN_SOURCE) || defined(__NetBSD__)
-#define ATIMENSEC_CMP(x, op, y) ((x)->st_atimensec op (y)->st_atimensec)
-#define CTIMENSEC_CMP(x, op, y) ((x)->st_ctimensec op (y)->st_ctimensec)
-#define MTIMENSEC_CMP(x, op, y) ((x)->st_mtimensec op (y)->st_mtimensec)
-#else
-#define ATIMENSEC_CMP(x, op, y) \
-	((x)->st_atimespec.tv_nsec op (y)->st_atimespec.tv_nsec)
-#define CTIMENSEC_CMP(x, op, y) \
-	((x)->st_ctimespec.tv_nsec op (y)->st_ctimespec.tv_nsec)
-#define MTIMENSEC_CMP(x, op, y) \
-	((x)->st_mtimespec.tv_nsec op (y)->st_mtimespec.tv_nsec)
-#endif
+#define ATIMENSEC_CMP(x, op, y) (LS_ATIMENSEC(x) op LS_ATIMENSEC(y))
+#define CTIMENSEC_CMP(x, op, y) (LS_CTIMENSEC(x) op LS_CTIMENSEC(y))
+#define MTIMENSEC_CMP(x, op, y) (LS_MTIMENSEC(x) op LS_MTIMENSEC(y))
 
 int
 namecmp(const FTSENT *a, const FTSENT *b)

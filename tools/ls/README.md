@@ -1,0 +1,43 @@
+# Native host ls
+
+This recipe builds all five canonical `bin/ls` translation units. It uses
+`tools/Makefile.host` and the normal `libnbcompat` configuration. It does not
+select `SMALL` or omit the compatibility library. The target recipe keeps its
+native libc, libutil, ACL interfaces, and command-line behavior.
+
+Host builds use the shared listing and ACL declarations. ACL presence comes
+from the shared no-follow adapter. An unsupported ACL operation remains an
+error. Hosts without `struct stat.st_flags` reject requested flag output.
+Timestamp comparisons use typed native fields selected by the normal
+configuration. They retain the native nanosecond fields on Darwin.
+
+## Initial SDK contract
+
+`bootstrap.json` defines the finite `ls-bootstrap` contract. The SDK validates
+the complete source roster and one independently accepted `listing` component.
+Its archive and public headers remain separate, hash-bound inputs. The SDK does
+not copy this C implementation or invent a replacement configuration header.
+
+Before compiling ls, the SDK compiles, links, and runs `probes/control.c` with
+the same selected compiler, ABI, and component inputs. This required control
+checks native FTS traversal, no-follow descriptor operations, nanosecond stat
+fields, `vis`, `strmode`, password/group lookup, and wide-character operations.
+It creates and removes only its owned work-directory fixture. A failed control
+stops production. Both the control and ls need actual loader traces in the
+independent runtime audit. Only the final ls image can become a seed tool.
+
+The 38 cases test exact streams and filesystem observations. They cover names,
+hidden entries, recursion, symlinks, hardlinks, size ordering, and time ordering.
+The time cases distinguish entries within one second and test reverse and tie
+ordering. They support the high-resolution `ls -t` use in configure scripts.
+The API control does not substitute for these canonical-program cases.
+
+This finite contract does not qualify all command-line combinations. Nonempty
+long-format metadata, ACL-bearing long output, file-flag output, terminal layout,
+non-ASCII locales, nonprintable names, signals, and injected I/O failures need
+separate tests. Cppcheck, path analysis, memory checks, and ordinary host
+qualification remain separate requirements. Successful source/data tests do
+not prove compilation or native execution.
+
+Run `test-source.py` with the selected SDK Python to check the source contract
+and independent timestamp-ordering oracles. It starts no compiler or ls process.

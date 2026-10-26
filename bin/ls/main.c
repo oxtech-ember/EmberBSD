@@ -29,6 +29,10 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
+/* Origin: EmberBSD (AI-assisted). Keep the normal host compatibility route. */
+#if HAVE_NBTOOL_CONFIG_H
+#include "nbtool_config.h"
+#endif
 #include <sys/cdefs.h>
 
 #ifndef lint

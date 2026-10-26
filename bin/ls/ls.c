@@ -32,6 +32,10 @@
  * SUCH DAMAGE.
  */
 
+/* Origin: EmberBSD (AI-assisted). Keep the normal host compatibility route. */
+#if HAVE_NBTOOL_CONFIG_H
+#include "nbtool_config.h"
+#endif
 #include <sys/cdefs.h>
 #ifndef lint
 __COPYRIGHT("@(#) Copyright (c) 1989, 1993, 1994\
@@ -63,7 +67,11 @@ __RCSID("$NetBSD: ls.c,v 1.79 2024/12/11 12:56:31 simonb Exp $");
 #include <termios.h>
 #include <pwd.h>
 #include <grp.h>
+#if HAVE_NBTOOL_CONFIG_H
+#include "compat_listing.h"
+#else
 #include <util.h>
+#endif
 
 #include "ls.h"
 #include "extern.h"
@@ -593,8 +601,13 @@ display(FTSENT *p, FTSENT *list)
 				if ((glen = strlen(group)) > maxgroup)
 					maxgroup = glen;
 				if (f_flags) {
+#if !HAVE_NBTOOL_CONFIG_H || HAVE_STRUCT_STAT_ST_FLAGS
 					flags =
 					    flags_to_string((u_long)sp->st_flags, "-");
+#else
+					errx(EXIT_FAILURE,
+					    "file flags are not supported on this host");
+#endif
 					if ((flen = strlen(flags)) > maxflags)
 						maxflags = flen;
 				} else

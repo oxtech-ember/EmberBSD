@@ -4,8 +4,10 @@
 PROG=	ls
 SRCS=	cmp.c ls.c main.c print.c util.c
 
+.if !defined(HOSTPROG)
 LDADD+=	-lutil
 DPADD+=	${LIBUTIL}
+.endif
 
 .ifdef SMALLPROG
 CPPFLAGS+= -DSMALL
