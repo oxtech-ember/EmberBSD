@@ -104,7 +104,7 @@ dependall-date: dependall-host-mkdep dependall-compat
 # Dependencies in SUBDIR below ordered to maximize parallel ability.
 # See above for special treatment for host-mkdep, compat, and binstall.
 #
-SUBDIR=	host-mkdep compat binstall .WAIT date \
+SUBDIR=	host-mkdep compat binstall .WAIT date hostname \
 	.WAIT mktemp .WAIT sed .WAIT genassym
 .if ${TOOLS_BUILDRUMP} == "no"
 SUBDIR+= cap_mkdb chown cp mv crunchgen ctags gencat hexdump \

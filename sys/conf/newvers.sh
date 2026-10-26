@@ -154,6 +154,7 @@ if [ ! -e version ]; then
 fi
 
 DATE=${TOOL_DATE:-date}
+hostname_command=${TOOL_HOSTNAME:-hostname}
 AWK=${TOOL_AWK:-awk}
 Rflag=false
 nflag=false
@@ -210,7 +211,7 @@ else
 		v=$(cat version)
 		t=$(LC_ALL=C ${DATE})
 		u=${USER-root}
-		h=$(hostname)
+		h=$("${hostname_command}")
 		d=$(pwd)
 		# Increment the serial number in the version file
 		echo $(expr ${v} + 1) > version

@@ -17,7 +17,7 @@ newvers: vers.o
 vers.o: ${SYSTEM_OBJ:O} Makefile $S/conf/newvers.sh \
 		$S/conf/osrelease.sh ${_NETBSD_VERSION_DEPENDS}
 	${_MKMSG_CREATE} vers.c
-	TOOL_AWK=${TOOL_AWK} TOOL_DATE=${TOOL_DATE} \
+	TOOL_AWK=${TOOL_AWK} TOOL_DATE=${TOOL_DATE} TOOL_HOSTNAME=${TOOL_HOSTNAME} \
 	    ${HOST_SH} $S/conf/newvers.sh ${_NVFLAGS}
 	${_MKTARGET_COMPILE}
 	${CC} ${CFLAGS} ${CPPFLAGS} ${PROF} -c vers.c
