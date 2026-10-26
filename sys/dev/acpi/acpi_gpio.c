@@ -180,7 +180,7 @@ acpi_gpio_translate(ACPI_RESOURCE_GPIO *res, void **gpiop, int *pin)
 {
 	struct acpi_devnode *ad, *gpioad = NULL;
 	ACPI_HANDLE hdl;
-	ACPI_RESOURCE_SOURCE *rs;
+	const ACPI_RESOURCE_SOURCE *rs;
 	ACPI_STATUS rv;
 	int xpin;
 
@@ -225,13 +225,18 @@ struct acpi_gpio_resource_context {
 	u_int index;
 	u_int conntype;
 	u_int curindex;
-	ACPI_RESOURCE_GPIO *res;
+	void *gpiop;
+	int pin;
+	int irqmode;
+	int found;
+	const char *caller;
 };
 
 static ACPI_STATUS
 acpi_gpio_parse(ACPI_RESOURCE *res, void *context)
 {
 	struct acpi_gpio_resource_context *ctx = context;
+	ACPI_STATUS rv;
 
 	if (res->Type != ACPI_RESOURCE_TYPE_GPIO) {
 		return AE_OK;
@@ -239,70 +244,78 @@ acpi_gpio_parse(ACPI_RESOURCE *res, void *context)
 	if (res->Data.Gpio.ConnectionType != ctx->conntype) {
 		return AE_OK;
 	}
-	if (ctx->curindex == ctx->index) {
-		ctx->res = &res->Data.Gpio;
-		return AE_CTRL_TERMINATE;
+	if (ctx->curindex++ != ctx->index) {
+		return AE_OK;
 	}
-	ctx->curindex++;
+	/* The resource and its nested pointers are valid only in this callback. */
+	rv = acpi_gpio_translate(&res->Data.Gpio, &ctx->gpiop, &ctx->pin);
+	if (ACPI_FAILURE(rv)) {
+		printf("%s: translate failed: %s\n", ctx->caller,
+		    AcpiFormatException(rv));
+		return rv;
+	}
+	if (ctx->conntype == ACPI_RESOURCE_GPIO_TYPE_INT) {
+		if (res->Data.Gpio.Triggering == ACPI_LEVEL_SENSITIVE) {
+			ctx->irqmode = res->Data.Gpio.Polarity == ACPI_ACTIVE_HIGH ?
+			    GPIO_INTR_HIGH_LEVEL : GPIO_INTR_LOW_LEVEL;
+		} else {
+			KASSERT(res->Data.Gpio.Triggering == ACPI_EDGE_SENSITIVE);
+			if (res->Data.Gpio.Polarity == ACPI_ACTIVE_LOW) {
+				ctx->irqmode = GPIO_INTR_NEG_EDGE;
+			} else if (res->Data.Gpio.Polarity == ACPI_ACTIVE_HIGH) {
+				ctx->irqmode = GPIO_INTR_POS_EDGE;
+			} else {
+				KASSERT(res->Data.Gpio.Polarity == ACPI_ACTIVE_BOTH);
+				ctx->irqmode = GPIO_INTR_DOUBLE_EDGE;
+			}
+		}
+	}
+	ctx->found = 1;
+	return AE_CTRL_TERMINATE;
+}
+
+static ACPI_STATUS
+acpi_gpio_get(ACPI_HANDLE hdl, u_int index, u_int conntype, void **gpiop,
+    int *pin, int *irqmode)
+{
+	struct acpi_gpio_resource_context ctx = {
+		.index = index,
+		.conntype = conntype,
+		.caller = conntype == ACPI_RESOURCE_GPIO_TYPE_INT ?
+		    "acpi_gpio_get_int" : "acpi_gpio_get_io",
+	};
+	ACPI_STATUS rv;
+
+	rv = AcpiWalkResources(hdl, "_CRS", acpi_gpio_parse, &ctx);
+	if (ACPI_FAILURE(rv)) {
+		return rv;
+	}
+	if (!ctx.found) {
+		return AE_NOT_FOUND;
+	}
+
+	*gpiop = ctx.gpiop;
+	*pin = ctx.pin;
+	if (irqmode != NULL) {
+		*irqmode = ctx.irqmode;
+	}
+
 	return AE_OK;
-	
 }
 
 ACPI_STATUS
 acpi_gpio_get_int(ACPI_HANDLE hdl, u_int index, void **gpiop, int *pin,
     int *irqmode)
 {
-	struct acpi_gpio_resource_context ctx = {
-		.index = index,
-		.conntype = ACPI_RESOURCE_GPIO_TYPE_INT,
-	};
-	ACPI_RESOURCE_GPIO *gpio;
-	ACPI_STATUS rv;
 
-	rv = AcpiWalkResources(hdl, "_CRS", acpi_gpio_parse, &ctx);
-	if (ACPI_FAILURE(rv)) {
-		return rv;
-	}
-	gpio = ctx.res;
-
-	rv = acpi_gpio_translate(gpio, gpiop, pin);
-	if (ACPI_FAILURE(rv)) {
-		printf("%s: translate failed: %s\n", __func__,
-		    AcpiFormatException(rv));
-		return rv;
-	}
-
-        if (gpio->Triggering == ACPI_LEVEL_SENSITIVE) {
-                *irqmode = gpio->Polarity == ACPI_ACTIVE_HIGH ? 
-                    GPIO_INTR_HIGH_LEVEL : GPIO_INTR_LOW_LEVEL;
-        } else {
-                KASSERT(gpio->Triggering == ACPI_EDGE_SENSITIVE);
-                if (gpio->Polarity == ACPI_ACTIVE_LOW) { 
-                        *irqmode = GPIO_INTR_NEG_EDGE;
-                } else if (gpio->Polarity == ACPI_ACTIVE_HIGH) {
-                        *irqmode = GPIO_INTR_POS_EDGE;
-                } else {
-                        KASSERT(gpio->Polarity == ACPI_ACTIVE_BOTH);
-                        *irqmode = GPIO_INTR_DOUBLE_EDGE;
-                }
-        }
-
-	return AE_OK;
+	return acpi_gpio_get(hdl, index, ACPI_RESOURCE_GPIO_TYPE_INT,
+	    gpiop, pin, irqmode);
 }
 
 ACPI_STATUS
 acpi_gpio_get_io(ACPI_HANDLE hdl, u_int index, void **gpiop, int *pin)
 {
-	struct acpi_gpio_resource_context ctx = {
-		.index = index,
-		.conntype = ACPI_RESOURCE_GPIO_TYPE_INT,
-	};
-	ACPI_STATUS rv;
 
-	rv = AcpiWalkResources(hdl, "_CRS", acpi_gpio_parse, &ctx);
-	if (ACPI_FAILURE(rv)) {
-		return rv;
-	}
-
-	return acpi_gpio_translate(ctx.res, gpiop, pin);
+	return acpi_gpio_get(hdl, index, ACPI_RESOURCE_GPIO_TYPE_IO,
+	    gpiop, pin, NULL);
 }

@@ -339,6 +339,29 @@ rtwce_stats(char *buf, size_t len)
 		    (unsigned long long)sc->sc_stats.tx_ampdu_encoded,
 		    sc->sc_ra.sgi);
 	}
+	if (n > 0 && (size_t)n < len && psc->sc_net != NULL) {
+		const struct rtw88_net_neg *g = &ns.neg;
+
+		/* Last beacon reset: clause / HT Cap 0-3 beacon.committed /
+		 * HT Op 0-5 beacon.committed / Basic MCS index.beacon.committed. */
+		n += snprintf(buf + n, len - (size_t)n,
+		    " htbcn %u/%02x%02x%02x%02x.%02x%02x%02x%02x"
+		    "/%02x%02x%02x%02x%02x%02x.%02x%02x%02x%02x%02x%02x"
+		    "/%u.%02x.%02x",
+		    g->ht20_reset_clause,
+		    g->ht20_reset_cap[0], g->ht20_reset_cap[1],
+		    g->ht20_reset_cap[2], g->ht20_reset_cap[3],
+		    g->ht20_reset_peer_cap[0], g->ht20_reset_peer_cap[1],
+		    g->ht20_reset_peer_cap[2], g->ht20_reset_peer_cap[3],
+		    g->ht20_reset_op[0], g->ht20_reset_op[1],
+		    g->ht20_reset_op[2], g->ht20_reset_op[3],
+		    g->ht20_reset_op[4], g->ht20_reset_op[5],
+		    g->ht20_reset_peer_op[0], g->ht20_reset_peer_op[1],
+		    g->ht20_reset_peer_op[2], g->ht20_reset_peer_op[3],
+		    g->ht20_reset_peer_op[4], g->ht20_reset_peer_op[5],
+		    g->ht20_reset_mcs[0], g->ht20_reset_mcs[1],
+		    g->ht20_reset_mcs[2]);
+	}
 	mutex_exit(&psc->sc_lock);
 	mutex_exit(&rtwce_diag_lock);
 	return n < 0 || (size_t)n >= len ? ENOSPC : 0;

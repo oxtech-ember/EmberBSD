@@ -44,6 +44,11 @@ struct rtw88_net_neg {
 	uint32_t prepare_ok, prepare_fail, vht_admit, vht_refuse;
 	int32_t prepare_error, vht_error;
 	uint8_t ht20_reset_reason, ht20_failure_reason, ht20_state_reason;
+	/* The last beacon reset's clause and octets (ieee80211_ht20_diag). */
+	uint8_t ht20_reset_clause;
+	uint8_t ht20_reset_cap[4], ht20_reset_peer_cap[4];
+	uint8_t ht20_reset_op[6], ht20_reset_peer_op[6];
+	uint8_t ht20_reset_mcs[3];
 	uint8_t prepare_ready;
 	uint8_t vht_chan[3];
 	uint8_t run_ht, run_vht, run_chan[3];
@@ -104,6 +109,17 @@ struct rtw88_net_neg {
 	(n)->ht20_state_reason = (d)->state_reason;			\
 	(n)->ht20_last_status = (d)->last_status;			\
 	(n)->ht20_reset_reason = (d)->reset_reason;			\
+	(n)->ht20_reset_clause = (d)->reset_clause;			\
+	memcpy((n)->ht20_reset_cap, (d)->reset_cap,			\
+	    sizeof((n)->ht20_reset_cap));				\
+	memcpy((n)->ht20_reset_peer_cap, (d)->reset_peer_cap,		\
+	    sizeof((n)->ht20_reset_peer_cap));				\
+	memcpy((n)->ht20_reset_op, (d)->reset_op,			\
+	    sizeof((n)->ht20_reset_op));				\
+	memcpy((n)->ht20_reset_peer_op, (d)->reset_peer_op,		\
+	    sizeof((n)->ht20_reset_peer_op));				\
+	memcpy((n)->ht20_reset_mcs, (d)->reset_mcs,			\
+	    sizeof((n)->ht20_reset_mcs));				\
 } while (0)
 struct rtw88_net_rx_counts {
 	uint64_t accepted, inactive, epoch, invalid, size;
