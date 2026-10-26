@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Origin: EmberBSD direct Precision Touchpad mode regression. */
 #include <assert.h>
 #include <errno.h>
 #include <stdbool.h>
@@ -79,8 +80,9 @@ static bool (*suspend_cb)(device_t, const pmf_qual_t *);
 static bool (*resume_cb)(device_t, const pmf_qual_t *);
 static int get_error, set_error, open_error;
 static bool expect_poll;
-static unsigned events;
+static unsigned events, get_calls, set_calls;
 static unsigned last_buttons;
+static uint8_t last_set_mode;
 static int wsmousedevprint;
 static int
 sysctl_createv(void *log, ...)
@@ -146,7 +148,9 @@ hid_report_size(const void *d, int n, enum hid_kind k, uint8_t r)
 int
 hidmt_parse(const void *d, int n, struct hidmt_config *c)
 {
-	*c = (struct hidmt_config){.config_size = 1, .config_id = 3, .input_id = 4, .mode = {.size = 2, .pos = 0}};
+	*c = (struct hidmt_config){.config_size = 1, .config_id = 3,
+	    .input_id = 4, .mode = {.size = 2, .pos = 0},
+	    .config_mode_only = true};
 	return 0;
 }
 int
@@ -178,6 +182,7 @@ static int
 ihidev_get_report_poll(device_t d, int t, int id, void *b, int n, bool poll)
 {
 	assert(poll == expect_poll);
+	get_calls++;
 	*(uint8_t *)b = 0xa0;
 	return get_error;
 }
@@ -185,7 +190,8 @@ static int
 ihidev_set_report_poll(device_t d, int t, int id, void *b, int n, bool poll)
 {
 	assert(poll == expect_poll);
-	assert(*(uint8_t *)b == 0xa3);
+	set_calls++;
+	last_set_mode = *(uint8_t *)b;
 	if (!set_error)
 		((struct ihidev_softc *)d->private)->mode = 3;
 	return set_error;
@@ -212,7 +218,13 @@ main(void)
 	test_mouse = &mouse;
 	imt_attach(&parent, &child, &aux);
 	assert(suspend_cb && resume_cb);
+	/* A mode-only report can be written directly, without a GET. */
+	set_error = EIO;
+	assert(imt_enable(&sc) == EIO && bus.refs == 0);
+	assert(get_calls == 0 && set_calls == 1 && last_set_mode == 0x03);
+	set_error = 0;
 	assert(imt_enable(&sc) == 0 && bus.refs == 1 && bus.mode == 3);
+	assert(get_calls == 0 && set_calls == 2 && last_set_mode == 0x03);
 	assert(imt_enable(&sc) == EBUSY && bus.refs == 1);
 	sc.sc_pointer.tap_candidate = true;
 	assert(suspend_cb(&child, NULL));
@@ -226,6 +238,7 @@ main(void)
 	expect_poll = true;
 	assert(resume_cb(&child, NULL));
 	assert(bus.mode == 3 && bus.refs == 1);
+	assert(get_calls == 0 && last_set_mode == 0x03);
 	imt_intr(&sc.sc_hdev, NULL, 0);
 	assert(events == before + 1 && last_buttons == 0);
 	assert(suspend_cb(&child, NULL));
@@ -237,11 +250,40 @@ main(void)
 	assert(events == before);
 	set_error = 0;
 	get_error = EIO;
-	assert(!resume_cb(&child, NULL) && bus.refs == 1);
+	assert(resume_cb(&child, NULL) && bus.mode == 3 && bus.refs == 1);
+	assert(get_calls == 0 && last_set_mode == 0x03);
 	get_error = 0;
 	sc.sc_pointer.tap_candidate = true;
 	assert(resume_cb(&child, NULL) && bus.mode == 3 && bus.refs == 1);
 	assert(!sc.sc_pointer.tap_candidate);
+	/* A composite report must preserve its unrelated 0xa0 feature bits. */
+	sc.sc_config.config_mode_only = false;
+	assert(suspend_cb(&child, NULL));
+	bus.mode = 0;
+	{
+		unsigned gets = get_calls, sets = set_calls;
+
+		assert(resume_cb(&child, NULL) && bus.mode == 3 && bus.refs == 1);
+		assert(get_calls == gets + 1 && set_calls == sets + 1);
+		assert(last_set_mode == 0xa3);
+	}
+	assert(suspend_cb(&child, NULL));
+	bus.mode = 0;
+	get_error = EIO;
+	{
+		unsigned gets = get_calls, sets = set_calls;
+
+		assert(!resume_cb(&child, NULL) && bus.mode == 0 && bus.refs == 1);
+		assert(get_calls == gets + 1 && set_calls == sets);
+	}
+	get_error = 0;
+	{
+		unsigned gets = get_calls, sets = set_calls;
+
+		assert(resume_cb(&child, NULL) && bus.mode == 3 && bus.refs == 1);
+		assert(get_calls == gets + 1 && set_calls == sets + 1);
+		assert(last_set_mode == 0xa3);
+	}
 	imt_disable(&sc);
 	assert(bus.refs == 0);
 	assert(suspend_cb(&child, NULL));
@@ -249,9 +291,20 @@ main(void)
 	assert(resume_cb(&child, NULL) && bus.mode == 0 && bus.refs == 0);
 	expect_poll = false;
 	get_error = EIO;
-	assert(imt_enable(&sc) == EIO && bus.refs == 0);
+	{
+		unsigned gets = get_calls, sets = set_calls;
+
+		assert(imt_enable(&sc) == EIO && bus.refs == 0);
+		assert(get_calls == gets + 1 && set_calls == sets);
+	}
 	get_error = 0;
-	assert(imt_enable(&sc) == 0 && bus.refs == 1);
+	{
+		unsigned gets = get_calls, sets = set_calls;
+
+		assert(imt_enable(&sc) == 0 && bus.refs == 1);
+		assert(get_calls == gets + 1 && set_calls == sets + 1);
+		assert(last_set_mode == 0xa3);
+	}
 	assert(suspend_cb(&child, NULL));
 	imt_disable(&sc);
 	assert(bus.refs == 0);
