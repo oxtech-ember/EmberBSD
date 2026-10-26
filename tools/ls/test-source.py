@@ -66,6 +66,15 @@ class SourceContract(unittest.TestCase):
         self.assertNotEqual(nano['a']['mtime_ns'], nano['z']['mtime_ns'])
         self.assertEqual(cases['mtime-nanoseconds']['stdout'], 'z\na\n')
 
+    def test_across_columns_retains_canonical_trailing_padding(self):
+        manifest = json.loads((ROOT / 'tools/ls/bootstrap.json').read_text())
+        case = next(case for case in manifest['runtime_cases'] if case['name'] == 'across-single')
+        self.assertEqual(case['args'], ['-x', 'name'])
+        self.assertEqual(case['stdout'], 'name \n')
+        source = (ROOT / 'bin/ls/print.c').read_text()
+        body = source.split('printacol(DISPLAY *dp)', 1)[1].split('printstream(DISPLAY *dp)', 1)[0]
+        self.assertIn('while (chcnt++ < colwidth)', body)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -1154,7 +1154,7 @@
       ],
       "stdin": "",
       "exit": 0,
-      "stdout": "name\n",
+      "stdout": "name \n",
       "filesystem": {
         "umask": "0022",
         "fixtures": {
