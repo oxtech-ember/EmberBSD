@@ -125,3 +125,8 @@ ruby ember/tools/a133-usb-mutable-thread-test.rb
 ruby ember/tools/a133-usb-backup-test.rb
 ruby ember/tools/a133-usb-backup-lifetime-test.rb
 ```
+
+The read-only collector uses the same exact C3 capture-model admission as the
+full backup collector. Generic write sources remain unchanged. Serial/CID, GPT,
+all task mounts, swaps and holders remain checked around recovery reads.
+Run `ruby ember/tools/a133-usb-mutable-c3-test.rb` for the C3 admission cases.
