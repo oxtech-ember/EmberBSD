@@ -1,5 +1,11 @@
 # Initial listing compatibility component
 
+Manifest version 2 shares native header setup and Darwin ACL acquisition with
+other host components. Its 37 source members retain the same four objects,
+19 commands, five public exports, and semantic checks. Version 1 remains a
+historical source-bound contract; new source bytes require a new acceptance.
+The shared internal headers are not public exports.
+
 [bootstrap-listing.json](bootstrap-listing.json) selects four complete translation units.
 The normal compatibility library uses the same [source fragment](listing.mk).
 The getbsize, humanize_number and stat_flags bodies keep their original licenses.
