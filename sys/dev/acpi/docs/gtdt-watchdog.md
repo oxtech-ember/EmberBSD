@@ -19,15 +19,31 @@ the board on 24 October 2026. Before this walk, the board attached only
 `swwdog0`.
 
 `sbsawdt` maps both frames and registers disarmed with sysmon; it writes
-no register until `wdogctl` arms it. On the first timeout the hardware
-raises WS0 (GSIV 408, not handled by the driver); on the second it raises
-WS1, which the platform must turn into a reset. Whether WS1 resets this
-board is unverified.
+no register until `wdogctl` arms it. The offset is half the period: on the
+first timeout the hardware raises WS0 (GSIV 408, not handled by the
+driver), on the second WS1, which resets this board.
+
+The system counter runs at 1 GHz, so the 5 second maximum period needs a
+64-bit offset computation; in 32 bits it wrapped to about 0.35 s and the
+board reset before the first kernel tickle. The refresh frame identifies
+itself (`W_IIDR` 0xa111070e, as the control frame) but ignores writes to
+WRR: the compare value does not move, while a write to WOR, also an
+explicit refresh, moves it. `sbsawdt` therefore refreshes by writing WRR
+and rewriting the same offset to WOR.
+
+Board acceptance on 26 October 2026 with these changes: armed without
+tickles, the board reset 5.08 s after `wdogctl -e -p 5`; armed with kernel
+tickles (`wdogctl -k -p 5`), it ran for 3 minutes and disarmed cleanly.
 
 ## Checks
 
 `ember/tests/acpi-gtdt.sh` runs the production walk with byte-built
 revision 2 and 3 tables, including the CIX P1 layout, count and bounds
 cases. The previous walk returns no entry for the CIX P1 table.
+`ember/tests/sbsawdt-setmode.sh` runs the production setmode, refresh and
+tickle functions against a register model (counter, WCS, WOR, compare
+value) for three implementations: both registers refresh, WRR ignored, WOR
+not refreshing. Seven deliberate faults must be caught. The model updates
+the compare value at once; hardware timing is checked on the board.
 Board acceptance: `wdogctl` lists `sbsawdt0`; an armed watchdog that is
-not refreshed resets the board.
+not refreshed resets the board; kernel tickles keep it running.

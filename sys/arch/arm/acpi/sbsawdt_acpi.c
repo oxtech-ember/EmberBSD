@@ -77,6 +77,7 @@ struct sbsawdt_acpi_softc {
 
 	uint32_t		sc_cntfreq;
 	uint32_t		sc_max_period;
+	uint32_t		sc_wor;		/* offset of the armed watchdog */
 	struct sysmon_wdog	sc_smw;
 };
 
@@ -86,13 +87,14 @@ struct sbsawdt_acpi_softc {
 	bus_space_write_4((sc)->sc_bst, (sc)->sc_bsh_r, (reg), (val))
 
 #define	CONTROL_RD4(sc, reg)		\
-	bus_space_read_4((sc)->sc_bst, (sc)->sc_bsh_c, (reg), (val))
+	bus_space_read_4((sc)->sc_bst, (sc)->sc_bsh_c, (reg))
 #define	CONTROL_WR4(sc, reg, val)	\
 	bus_space_write_4((sc)->sc_bst, (sc)->sc_bsh_c, (reg), (val))
 
 static int	sbsawdt_acpi_match(device_t, cfdata_t, void *);
 static void	sbsawdt_acpi_attach(device_t, device_t, void *);
 
+static void	sbsawdt_acpi_refresh(struct sbsawdt_acpi_softc *);
 static int	sbsawdt_acpi_tickle(struct sysmon_wdog *);
 static int	sbsawdt_acpi_setmode(struct sysmon_wdog *);
 
@@ -151,12 +153,27 @@ sbsawdt_acpi_attach(device_t parent, device_t self, void *aux)
 		aprint_error_dev(self, "couldn't register with sysmon\n");
 }
 
+/*
+ * A write to WRR in the refresh frame is the usual explicit refresh; a
+ * write to WOR in the control frame is one too.  CIX P1 identifies its
+ * refresh frame (W_IIDR matches) but ignores WRR writes: the compare
+ * value does not move and the board resets one period after arming,
+ * while a WOR write refreshes.  Write both, rewriting the same offset.
+ */
+static void
+sbsawdt_acpi_refresh(struct sbsawdt_acpi_softc *sc)
+{
+
+	REFRESH_WR4(sc, R_WRR_REG, 0);
+	CONTROL_WR4(sc, C_WOR_REG, sc->sc_wor);
+}
+
 static int
 sbsawdt_acpi_tickle(struct sysmon_wdog *smw)
 {
 	struct sbsawdt_acpi_softc * const sc = smw->smw_cookie;
 
-	REFRESH_WR4(sc, R_WRR_REG, 0);
+	sbsawdt_acpi_refresh(sc);
 
 	return 0;
 }
@@ -182,12 +199,20 @@ sbsawdt_acpi_setmode(struct sysmon_wdog *smw)
 	 * second time that the offset is reached, the WD1 signal is raised
 	 * which will either interrupt privileged software or cause a PE reset.
 	 */
-	const uint32_t wor = smw->smw_period * sc->sc_cntfreq / 2;
+	/*
+	 * In 64 bits: with the 1 GHz system counter of ARMv8.6 systems a
+	 * 5 second period already overflows 32-bit arithmetic, and the
+	 * wrapped offset reset the board before the first kernel tickle.
+	 */
+	const uint64_t wor = (uint64_t)smw->smw_period * sc->sc_cntfreq / 2;
+	if (wor > UINT32_MAX)
+		return EINVAL;
 
+	sc->sc_wor = (uint32_t)wor;
 	CONTROL_WR4(sc, C_WCS_REG, 0);
-	CONTROL_WR4(sc, C_WOR_REG, wor);
+	CONTROL_WR4(sc, C_WOR_REG, sc->sc_wor);
 	CONTROL_WR4(sc, C_WCS_REG, C_WCS_EN);
-	REFRESH_WR4(sc, R_WRR_REG, 0);
+	sbsawdt_acpi_refresh(sc);
 
 	return 0;
 }

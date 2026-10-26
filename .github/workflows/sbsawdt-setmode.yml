@@ -1,0 +1,71 @@
+name: SBSA watchdog setmode actual source contract
+
+'on':
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/sbsawdt-setmode.yml'
+      - 'sys/arch/arm/acpi/sbsawdt_acpi.c'
+      - 'ember/tests/sbsawdt-setmode.sh'
+      - 'ember/tools/sbsawdt-setmode-contract.c'
+  pull_request:
+    paths:
+      - '.github/workflows/sbsawdt-setmode.yml'
+      - 'sys/arch/arm/acpi/sbsawdt_acpi.c'
+      - 'ember/tests/sbsawdt-setmode.sh'
+      - 'ember/tools/sbsawdt-setmode-contract.c'
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    container:
+      # Official GCC16.2 Linux amd64 image used by the native driver contracts.
+      image: gcc@sha256:3f73339bf0d3d64081cac3f6d9fdafc6dd4cef2b9c49e0a09f91e97cb0eb139a
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /sys/arch/arm/acpi/sbsawdt_acpi.c
+            /ember/tests/sbsawdt-setmode.sh
+            /ember/tools/sbsawdt-setmode-contract.c
+      - name: Check compiler and prepare analysis tools
+        run: |
+          test "$(gcc -dumpfullversion)" = 16.2.0
+          gcc -dumpmachine
+          apt-get update
+          apt-get install -y --no-install-recommends valgrind libc6-dbg
+          valgrind --version
+      - name: Run GCC16 fanalyzer
+        env:
+          CC: gcc
+          CFLAGS: -O2 -g -gdwarf-4 -fanalyzer
+        run: |
+          sh ember/tests/sbsawdt-setmode.sh
+      - name: Run native ASan and UBSan
+        env:
+          CC: gcc
+          CFLAGS: -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer
+          UBSAN_OPTIONS: halt_on_error=1
+        run: |
+          sh ember/tests/sbsawdt-setmode.sh
+      - name: Run actual source contracts under Memcheck
+        env:
+          CC: gcc
+          CFLAGS: -O2 -g -gdwarf-4
+        run: |
+          cat > "$RUNNER_TEMP/sbsawdt-setmode-memcheck" <<'SH'
+          #!/bin/sh
+          exec valgrind --tool=memcheck --error-exitcode=97 \
+            --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=all \
+            --track-origins=yes "$@"
+          SH
+          chmod 755 "$RUNNER_TEMP/sbsawdt-setmode-memcheck"
+          export TEST_RUNNER="$RUNNER_TEMP/sbsawdt-setmode-memcheck"
+          sh ember/tests/sbsawdt-setmode.sh
