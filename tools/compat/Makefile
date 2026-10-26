@@ -121,7 +121,7 @@ config.cache: probes/func-mktime_z.c probes/func-timegm.c compat_parsedate_featu
 defs.mk: config.cache
 	@touch ${.TARGET}
 
-INCFILES=	nbtool_config.h compat_listing.h compat_acl.h
+INCFILES=	nbtool_config.h compat_listing.h compat_acl.h compat_stat_time.h
 INCSUBDIRS=	sys machine rpc arpa
 CLEANDIRFILES+= nbtool_config.h
 
