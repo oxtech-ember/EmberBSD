@@ -29,6 +29,12 @@
  * SUCH DAMAGE.
  */
 
+#if HAVE_NBTOOL_CONFIG_H
+#define EMBERBSD_COMPAT_FILEMETA_NATIVE_HEADERS 1
+#include "nbtool_config.h"
+#undef EMBERBSD_COMPAT_FILEMETA_NATIVE_HEADERS
+#endif
+
 #include <sys/cdefs.h>
 #ifndef lint
 #if 0
@@ -38,15 +44,22 @@ __RCSID("$NetBSD: utils.c,v 1.50 2024/01/15 17:41:06 christos Exp $");
 #endif
 #endif /* not lint */
 
+#if !HAVE_NBTOOL_CONFIG_H
 #define _ACL_PRIVATE
+#endif
 #include <sys/mman.h>
 #include <sys/param.h>
 #include <sys/stat.h>
 #include <sys/time.h>
+#if !HAVE_NBTOOL_CONFIG_H
 #ifndef SMALL
 #include <sys/acl.h>
 #endif
 #include <sys/extattr.h>
+#else
+#include "compat_filemeta.h"
+#include "compat_stat_time.h"
+#endif
 
 #include <err.h>
 #include <errno.h>
@@ -68,8 +81,13 @@ set_utimes(const char *file, struct stat *fs)
 {
     struct timespec ts[2];
 
+#if HAVE_NBTOOL_CONFIG_H
+    ts[0] = __nbcompat_stat_atime(fs);
+    ts[1] = __nbcompat_stat_mtime(fs);
+#else
     ts[0] = fs->st_atimespec;
     ts[1] = fs->st_mtimespec;
+#endif
 
     if (lutimens(file, ts)) {
 	warn("lutimens: %s", file);
@@ -255,6 +273,10 @@ copy_file(FTSENT *entp, int dne)
 		}
 	}
 
+#if HAVE_NBTOOL_CONFIG_H
+	if (!rval && pflag && preserve_host(entp, from_fd, to_fd))
+		rval = 1;
+#else
 	if (pflag && (fcpxattr(from_fd, to_fd) != 0))
 		warn("%s: error copying extended attributes", to.p_path);
 
@@ -263,15 +285,25 @@ copy_file(FTSENT *entp, int dne)
 		rval = 1;
 #endif
 
+#endif
+#if HAVE_NBTOOL_CONFIG_H
+	if (close(from_fd)) {
+		warn("%s", entp->fts_path);
+		rval = 1;
+	}
+#else
 	(void)close(from_fd);
+#endif
 
 	if (rval == 1) {
 		(void)close(to_fd);
 		return (1);
 	}
 
+#if !HAVE_NBTOOL_CONFIG_H
 	if (pflag && setfile(fs, to_fd))
 		rval = 1;
+#endif
 	/*
 	 * If the source was setuid or setgid, lose the bits unless the
 	 * copy is owned by the same user and group.
@@ -293,10 +325,12 @@ copy_file(FTSENT *entp, int dne)
 		warn("%s", to.p_path);
 		rval = 1;
 	}
+#if !HAVE_NBTOOL_CONFIG_H
 	/* set the mod/access times now after close of the fd */
 	if (pflag && set_utimes(to.p_path, fs)) { 
 	    rval = 1;
 	}
+#endif
 	return (rval);
 }
 
@@ -319,12 +353,18 @@ copy_link(FTSENT *p, int exists)
 		warn("symlink: %s", target);
 		return (1);
 	}
-	return (pflag ? setfile(p->fts_statp, 0) : 0);
+#if HAVE_NBTOOL_CONFIG_H
+	return (pflag ? preserve_host(p, -1, -1) : 0);
+#else
+	return (pflag ? setfile(p->fts_statp, -1) : 0);
+#endif
 }
 
 int
-copy_fifo(struct stat *from_stat, int exists)
+copy_fifo(FTSENT *entp, int exists)
 {
+	struct stat *from_stat = entp->fts_statp;
+
 	if (exists && unlink(to.p_path)) {
 		warn("unlink: %s", to.p_path);
 		return (1);
@@ -333,12 +373,18 @@ copy_fifo(struct stat *from_stat, int exists)
 		warn("mkfifo: %s", to.p_path);
 		return (1);
 	}
-	return (pflag ? setfile(from_stat, 0) : 0);
+#if HAVE_NBTOOL_CONFIG_H
+	return (pflag ? preserve_host(entp, -1, -1) : 0);
+#else
+	return (pflag ? setfile(from_stat, -1) : 0);
+#endif
 }
 
 int
-copy_special(struct stat *from_stat, int exists)
+copy_special(FTSENT *entp, int exists)
 {
+	struct stat *from_stat = entp->fts_statp;
+
 	if (exists && unlink(to.p_path)) {
 		warn("unlink: %s", to.p_path);
 		return (1);
@@ -347,72 +393,189 @@ copy_special(struct stat *from_stat, int exists)
 		warn("mknod: %s", to.p_path);
 		return (1);
 	}
-	return (pflag ? setfile(from_stat, 0) : 0);
+#if HAVE_NBTOOL_CONFIG_H
+	return (pflag ? preserve_host(entp, -1, -1) : 0);
+#else
+	return (pflag ? setfile(from_stat, -1) : 0);
+#endif
 }
 
 
-/*
- * Function: setfile
- *
- * Purpose:
- *   Set the owner/group/permissions for the "to" file to the information
- *   in the stat structure.  If fd is zero, also call set_utimes() to set
- *   the mod/access times.  If fd is non-zero, the caller must do a utimes
- *   itself after close(fd).
- */
-int
-setfile(struct stat *fs, int fd)
+static int
+set_owner_mode(struct stat *fs, int fd)
 {
-	int rval, islink;
+	int rval;
 
 	rval = 0;
-	islink = S_ISLNK(fs->st_mode);
 	fs->st_mode &= S_ISUID | S_ISGID | S_IRWXU | S_IRWXG | S_IRWXO;
 
 	/*
+	 * Host preservation reports every ownership failure.
 	 * Changing the ownership probably won't succeed, unless we're root
 	 * or POSIX_CHOWN_RESTRICTED is not set.  Set uid/gid before setting
 	 * the mode; current BSD behavior is to remove all setuid bits on
 	 * chown.  If chown fails, lose setuid/setgid bits.
 	 */
-	if (fd ? fchown(fd, fs->st_uid, fs->st_gid) :
+	if (fd >= 0 ? fchown(fd, fs->st_uid, fs->st_gid) :
 	    lchown(to.p_path, fs->st_uid, fs->st_gid)) {
+#if !HAVE_NBTOOL_CONFIG_H
 		if (errno != EPERM) {
+#endif
 			warn("chown: %s", to.p_path);
 			rval = 1;
+#if !HAVE_NBTOOL_CONFIG_H
 		}
+#endif
 		fs->st_mode &= ~(S_ISUID | S_ISGID);
 	}
-	if (fd ? fchmod(fd, fs->st_mode) : lchmod(to.p_path, fs->st_mode)) {
+	if (fd >= 0 ? fchmod(fd, fs->st_mode) : lchmod(to.p_path, fs->st_mode)) {
 		warn("chmod: %s", to.p_path);
 		rval = 1;
 	}
 
+	return (rval);
+}
+
+static int
+set_flags(struct stat *fs, int fd, int islink)
+{
+	int rval = 0;
+
 	if (!islink && !Nflag) {
+#if !HAVE_NBTOOL_CONFIG_H || defined(__NetBSD__) || \
+    defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__DragonFly__) || \
+    defined(__APPLE__)
 		unsigned long fflags = fs->st_flags;
 		/*
 		 * XXX
-		 * NFS doesn't support chflags; ignore errors unless
+		 * The target NFS path ignores errors unless
 		 * there's reason to believe we're losing bits.
 		 * (Note, this still won't be right if the server
 		 * supports flags and we were trying to *remove* flags
 		 * on a file that we copied, i.e., that we didn't create.)
 		 */
 		errno = 0;
-		if ((fd ? fchflags(fd, fflags) :
-		    chflags(to.p_path, fflags)) == -1)
-			if (errno != EOPNOTSUPP || fs->st_flags != 0) {
-				warn("chflags: %s", to.p_path);
-				rval = 1;
-			}
+		if ((fd >= 0 ? fchflags(fd, fflags) :
+		    chflags(to.p_path, fflags)) == -1) {
+#if !HAVE_NBTOOL_CONFIG_H
+			if (errno == EOPNOTSUPP && fs->st_flags == 0)
+				return (0);
+#endif
+			warn("chflags: %s", to.p_path);
+			rval = 1;
+		}
+#else
+		errno = ENOTSUP;
+		warn("chflags: %s", to.p_path);
+		rval = 1;
+#endif
 	}
-	/* if fd is non-zero, caller must call set_utimes() after close() */
-	if (fd == 0 && set_utimes(to.p_path, fs))
-	    rval = 1;
 	return (rval);
 }
 
-#ifndef SMALL
+/*
+ * Function: setfile
+ *
+ * Purpose:
+ *   Set the owner/group/permissions for the "to" file to the information
+ *   in the stat structure.  If fd is negative, also call set_utimes() to set
+ *   the mod/access times.  If fd is nonnegative, the caller must do a utimes
+ *   itself after close(fd).
+ */
+int
+setfile(struct stat *fs, int fd)
+{
+	int islink = S_ISLNK(fs->st_mode);
+	int rval = set_owner_mode(fs, fd);
+
+	if (set_flags(fs, fd, islink))
+		rval = 1;
+	/* if fd is nonnegative, caller must call set_utimes() after close() */
+	if (fd < 0 && set_utimes(to.p_path, fs))
+		rval = 1;
+	return (rval);
+}
+
+#if HAVE_NBTOOL_CONFIG_H
+/*
+ * Keep metadata on the same open objects used for data copying. Directories
+ * reach this function after their children. Paths select no-follow operations.
+ */
+int
+preserve_host(FTSENT *entp, int from_fd, int to_fd)
+{
+	struct stat actual, *fs = entp->fts_statp;
+	struct timespec times[2];
+	int from_flags, own_fds, rval, islink;
+
+	own_fds = 0;
+	rval = 1;
+	islink = S_ISLNK(fs->st_mode);
+	times[0] = __nbcompat_stat_atime(fs);
+	times[1] = __nbcompat_stat_mtime(fs);
+	if (S_ISDIR(fs->st_mode)) {
+		from_flags = O_RDONLY | O_DIRECTORY;
+		if (!(Lflag || rflag ||
+		    (Hflag && entp->fts_level == FTS_ROOTLEVEL)))
+			from_flags |= O_NOFOLLOW;
+		from_fd = open(entp->fts_path, from_flags);
+		if (from_fd == -1) {
+			warn("%s", entp->fts_path);
+			return (1);
+		}
+		to_fd = open(to.p_path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
+		own_fds = 1;
+		if (to_fd == -1) {
+			warn("%s", to.p_path);
+			goto out;
+		}
+	}
+	if (from_fd >= 0) {
+		if (fstat(from_fd, &actual) == -1) {
+			warn("%s", entp->fts_path);
+			goto out;
+		}
+		if (actual.st_dev != fs->st_dev || actual.st_ino != fs->st_ino ||
+		    (actual.st_mode & S_IFMT) != (fs->st_mode & S_IFMT)) {
+			errno = EAGAIN;
+			warn("source changed: %s", entp->fts_path);
+			goto out;
+		}
+	}
+	if (set_owner_mode(fs, to_fd))
+		goto out;
+	if ((from_fd >= 0 ?
+	    __nbcompat_copy_filemeta_fd(from_fd, to_fd,
+	    NB_FILEMETA_XATTR | NB_FILEMETA_ACL) :
+	    __nbcompat_copy_filemeta_nofollow(entp->fts_path, to.p_path,
+	    NB_FILEMETA_XATTR | NB_FILEMETA_ACL)) == -1) {
+		warn("metadata: %s", to.p_path);
+		goto out;
+	}
+	if (to_fd >= 0 ? futimens(to_fd, times) : lutimens(to.p_path, times)) {
+		warn("timestamps: %s", to.p_path);
+		goto out;
+	}
+	if (set_flags(fs, to_fd, islink))
+		goto out;
+	rval = 0;
+out:
+	if (own_fds) {
+		if (to_fd >= 0 && close(to_fd)) {
+			warn("%s", to.p_path);
+			rval = 1;
+		}
+		if (close(from_fd)) {
+			warn("%s", entp->fts_path);
+			rval = 1;
+		}
+	}
+	return (rval);
+}
+#endif
+
+
+#if !HAVE_NBTOOL_CONFIG_H && !defined(SMALL)
 int
 preserve_fd_acls(int source_fd, int dest_fd)
 {
