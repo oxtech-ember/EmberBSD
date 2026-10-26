@@ -929,7 +929,7 @@ test_privacy_rsn_gate(void)
 		case 14: ie[10]=1; break;			/* OUI byte 0. */
 		}
 		ht_setup();
-		test_ic.ic_flags|=IEEE80211_F_PRIVACY;
+		test_ic.ic_flags|=IEEE80211_F_PRIVACY|IEEE80211_F_WPA2;
 		/* The kernel cipher field no longer decides either way. */
 		test_node.ni_rsn.rsn_ucastcipher=variant==0?
 		    IEEE80211_CIPHER_WEP:IEEE80211_CIPHER_AES_CCM;
@@ -942,6 +942,25 @@ test_privacy_rsn_gate(void)
 			deliver(ht_response(),IEEE80211_FC0_SUBTYPE_ASSOC_RESP);
 			CHECK(test_node.ni_ht20.valid);
 		}
+	}
+	/* A stale CCMP RSN element without the WPA2 configuration (a killed
+	 * supplicant, then a WEP join) offers no HT. */
+	{
+		static const uint8_t rsn[22]={48,20,1,0,0,0x0f,0xac,4,1,0,0,
+		    0x0f,0xac,4,1,0,0,0x0f,0xac,2,0,0};
+
+		ht_setup();
+		test_ic.ic_flags|=IEEE80211_F_PRIVACY;
+		test_ic.ic_opt_ie=(uint8_t *)rsn; test_ic.ic_opt_ie_len=sizeof(rsn);
+		CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ)==0);
+		CHECK(ht_in_request()==NULL && !test_node.ni_ht20.offered);
+		release_capture();
+		ht_setup();
+		test_ic.ic_flags|=IEEE80211_F_PRIVACY|IEEE80211_F_WPA2;
+		test_ic.ic_opt_ie=(uint8_t *)rsn; test_ic.ic_opt_ie_len=sizeof(rsn);
+		CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ)==0);
+		CHECK(ht_in_request()!=NULL && test_node.ni_ht20.offered);
+		release_capture();
 	}
 }
 
