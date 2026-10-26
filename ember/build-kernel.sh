@@ -128,6 +128,13 @@ set -- -U -u -j"$jobs" -c "$compiler_family" -m evbarm -a aarch64 \
     -V "KERNOBJDIR=$out/obj/kernels" -V MKCROSSGDB=no \
     -V "EMBER_LLVM_SOURCE=$llvm_source" \
     -V "EXTERNAL_TOOLCHAIN=$EMBER_EXTERNAL_TOOLCHAIN" -V TOOLCHAIN_MISSING=yes
+if [ "${EMBER_HOST_BFD_CONFIG+x}" ]; then
+    case "$EMBER_HOST_BFD_CONFIG" in
+    /*) [ -f "$EMBER_HOST_BFD_CONFIG" ] || fail 'common host BFD configuration missing';;
+    *) fail 'EMBER_HOST_BFD_CONFIG must be an absolute file path';;
+    esac
+    set -- "$@" -V "EMBER_HOST_BFD_CONFIG=$EMBER_HOST_BFD_CONFIG"
+fi
 if [ -n "${BUILDINFO:-}" ]; then set -- "$@" -V "BUILDINFO=$BUILDINFO"; fi
 (cd "$src"; run_native_os --log "$out/build.log" --append-log --build-sh -- "$@" tools "kernel=$config")
 # Use the same selected command mapping for subsequent orchestration utilities.

@@ -5,7 +5,7 @@ set -eu
 # An ambient product version must not replace the selected source version.
 export EMBER_VERSION=9.9
 # Fixtures select their own build mode and toolchain, independent of the shell.
-unset EMBERBSD_SDK_SOURCE EMBER_HOST_PREFIX EMBER_HOST_COMPILER_FAMILY EMBER_BUILD_MODE EMBER_EXTERNAL_TOOLCHAIN EMBER_COMPILER_FAMILY EMBER_LLVM_SOURCE PVR_QUERY_FIRMWARE
+unset EMBER_HOST_BFD_CONFIG EMBERBSD_SDK_SOURCE EMBER_HOST_PREFIX EMBER_HOST_COMPILER_FAMILY EMBER_BUILD_MODE EMBER_EXTERNAL_TOOLCHAIN EMBER_COMPILER_FAMILY EMBER_LLVM_SOURCE PVR_QUERY_FIRMWARE
 repo=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 work=$(mktemp -d "${TMPDIR:-/tmp}/ember-build-kernel.XXXXXX")
 work=$(CDPATH= cd -- "$work" && pwd -P)
@@ -555,6 +555,22 @@ for llvm in '' relative "$work/missing-llvm" "$work/bad source"; do
     grep -q EMBER_LLVM_SOURCE "$work/run.log"
     ! grep -q '^build.sh ' "$TEST_LOG"
     test ! -e "$TEST_OUT/netbsd-EMBER64"
+done
+# An explicit common BFD input reaches build.sh as ordinary make data.
+: > "$work/host-bfd.mk"
+: > "$TEST_LOG"
+if EMBER_HOST_BFD_CONFIG="$work/host-bfd.mk" FAIL_AT=tools \
+    sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1; then
+    echo 'accepted injected tools failure' >&2; exit 1
+fi
+grep -Fq "EMBER_HOST_BFD_CONFIG=$work/host-bfd.mk" "$TEST_LOG"
+for bfd in '' relative "$work/missing-bfd.mk"; do
+    : > "$TEST_LOG"
+    if EMBER_HOST_BFD_CONFIG="$bfd" sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1; then
+        echo 'accepted invalid common host BFD input' >&2; exit 1
+    fi
+    grep -qi 'BFD' "$work/run.log"
+    ! grep -q '^build.sh ' "$TEST_LOG"
 done
 for invalid in sdk prefix family target; do
     : > "$TEST_LOG"

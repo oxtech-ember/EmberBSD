@@ -2,6 +2,7 @@
 
 .include <bsd.own.mk>
 .include <bsd.endian.mk>
+.include "${.PARSEDIR}/host-bfd.mk"
 
 # Make sure that the ordered build/install processing applies when using
 # plain make.
@@ -53,7 +54,8 @@ TOOLCHAIN_BITS+= pcc
 . endif
 .endif
 
-.if ${TOOLCHAIN_MISSING} != "no" && defined(EXTERNAL_TOOLCHAIN)
+.if ${TOOLCHAIN_MISSING} != "no" && defined(EXTERNAL_TOOLCHAIN) && \
+    !defined(EMBER_HOST_BFD_CONFIG)
 # dbsym and mdsetimage need build-host BFD, even with an external compiler.
 TOOLCHAIN_BITS+= gmake .WAIT binutils .WAIT
 .endif

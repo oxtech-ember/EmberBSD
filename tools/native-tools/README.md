@@ -154,3 +154,47 @@ cover configure argument parsing and arrival at that expected compiler error;
 they do not establish a successful configure or build. `--contract` accepts
 an older contract for a causal negative control. To check only the missing
 `grep` failure, select `BootstrapRoutingTests.test_real_makefiles_detect_clang`.
+
+The native build route passes `MACHINE` and `MACHINE_ARCH` as make command-line
+inputs. This also overrides a Ports make's compiled-in host architecture.
+The generated cross wrapper retains those inputs for recursive make calls.
+Run `test-target-identity.py --sdk-source "$SDK_SOURCE" --host-prefix "$HOST_PREFIX"`
+`--work "$NEW_OUTPUT"` with SDK Python. It creates and queries a real AArch64
+wrapper without compiling tools or target code.
+
+## Common host BFD
+
+With an external toolchain, set `EMBER_HOST_BFD_CONFIG` to the absolute
+`host-bfd.mk` emitted by the common Ports Binutils producer. The kernel wrapper
+passes this optional input to `build.sh`. The tools graph then uses the common
+BFD headers and static link dependencies for `dbsym` and `mdsetimage`, and
+omits its old local Binutils provider. Keep the complete common producer
+result while these consumers use it. No application sysroot is needed.
+
+An explicitly selected missing input, target mismatch or missing dependency
+fails instead of selecting the old provider. An unset variable retains the
+existing in-tree build route. This input does not change target compiler
+selection or native userland Binutils builds.
+
+```sh
+"$PYTHON" tools/native-tools/test-host-bfd.py --make "$NETBSD_MAKE" -v
+```
+
+The regression queries the real make graph, include flags and dependencies.
+It checks both native helpers and invalid inputs. Its synthetic headers and
+archives are not compiled. Build and execute the helpers with real common
+BFD outputs before claiming native helper acceptance.
+
+For actual helper execution, run:
+
+```sh
+"$PYTHON" tools/native-tools/test-host-bfd-runtime.py \
+  --binutils-prefix /absolute/common-binutils/prefix \
+  --dbsym /absolute/native-dbsym --mdsetimage /absolute/native-mdsetimage \
+  --work /absolute/new-helper-check
+```
+
+The test assembles an AArch64 ELF fixture. It checks symbol-table embedding,
+RAM-disk insertion/extraction and oversized-image refusal without target
+execution. On Linux, inspect `ldd` separately to confirm that compression
+libraries resolve inside the selected native prefix.
