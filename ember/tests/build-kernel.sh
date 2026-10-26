@@ -384,7 +384,8 @@ else
 fi
 SH
 ln -s python3 "$work/bin/python3.15"
-export EMBER_EXTERNAL_TOOLCHAIN=/cross/clang
+: > "$work/host-bfd.mk"
+export EMBER_EXTERNAL_TOOLCHAIN=/cross/clang EMBER_HOST_BFD_CONFIG="$work/host-bfd.mk"
 export EMBERBSD_SDK_SOURCE="$work/sdk" EMBER_HOST_PREFIX="$work"
 for tool in host-cc host-cxx; do
     printf '#!/bin/sh\nexit 99\n' > "$work/bin/$tool"
@@ -572,7 +573,7 @@ for bfd in '' relative "$work/missing-bfd.mk"; do
     grep -qi 'BFD' "$work/run.log"
     ! grep -q '^build.sh ' "$TEST_LOG"
 done
-for invalid in sdk prefix family target; do
+for invalid in sdk prefix family target bfd; do
     : > "$TEST_LOG"
     if (
         case $invalid in
@@ -580,6 +581,7 @@ for invalid in sdk prefix family target; do
         prefix) EMBER_HOST_PREFIX=relative; export EMBER_HOST_PREFIX;;
         family) EMBER_HOST_COMPILER_FAMILY=unknown; export EMBER_HOST_COMPILER_FAMILY;;
         target) EMBER_EXTERNAL_TOOLCHAIN=; export EMBER_EXTERNAL_TOOLCHAIN;;
+        bfd) unset EMBER_HOST_BFD_CONFIG;;
         esac
         sh "$work/src/ember/build-kernel.sh" "$TEST_OUT"
     ) > "$work/run.log" 2>&1; then

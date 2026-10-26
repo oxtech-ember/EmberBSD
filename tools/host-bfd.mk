@@ -1,6 +1,10 @@
 # SPDX-License-Identifier: BSD-2-Clause
 # Origin: EmberBSD (AI-assisted).
 # Ordinary make inputs from the common Ports Binutils producer.
+.if defined(EXTERNAL_TOOLCHAIN) && defined(EMBER_NATIVE_TOOLS) && \
+    !defined(EMBER_HOST_BFD_CONFIG)
+.error Explicit native tools require EMBER_HOST_BFD_CONFIG for external-toolchain helpers
+.endif
 .if defined(EMBER_HOST_BFD_CONFIG) && !defined(_EMBER_HOST_BFD_INCLUDED)
 _EMBER_HOST_BFD_INCLUDED= yes
 .if !defined(EXTERNAL_TOOLCHAIN)

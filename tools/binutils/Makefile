@@ -2,6 +2,24 @@
 
 .include <bsd.hostinit.mk>
 
+.include "${.CURDIR}/../host-bfd.mk"
+.if defined(EMBER_HOST_BFD_CONFIG)
+
+# The common producer retains build/ and prefix/ under the same work root.
+# LLVM has no elfedit; share/mk and tests/compat/linux use this OS tool path.
+EMBER_HOST_ELFEDIT= ${EMBER_HOST_BFD_BUILD:H}/prefix/bin/${MACHINE_GNU_PLATFORM}-elfedit
+.if !exists(${EMBER_HOST_ELFEDIT})
+.error Missing common host Binutils elfedit
+.endif
+realinstall: ${TOOLDIR}/bin/${MACHINE_GNU_PLATFORM}-elfedit
+${TOOLDIR}/bin/${MACHINE_GNU_PLATFORM}-elfedit: ${EMBER_HOST_ELFEDIT}
+	${_MKTARGET_INSTALL}
+	mkdir -p ${TOOLDIR}/bin
+	${HOST_INSTALL_FILE} -m ${BINMODE} ${.ALLSRC} ${.TARGET}
+
+.include <bsd.hostprog.mk>
+.else
+
 MODULE=		binutils
 MAKE_PROGRAM=	${TOOL_GMAKE}
 
@@ -92,3 +110,4 @@ native-binutils: .native/.configure_done
 clean: clean.native
 clean.native:
 	-rm -r -f .native
+.endif # EMBER_HOST_BFD_CONFIG

@@ -166,23 +166,30 @@ wrapper without compiling tools or target code.
 
 With an external toolchain, set `EMBER_HOST_BFD_CONFIG` to the absolute
 `host-bfd.mk` emitted by the common Ports Binutils producer. The kernel wrapper
-passes this optional input to `build.sh`. The tools graph then uses the common
+requires this input and passes it to `build.sh`. The tools graph then uses the common
 BFD headers and static link dependencies for `dbsym` and `mdsetimage`, and
-omits its old local Binutils provider. Keep the complete common producer
+omits its old local Binutils provider. With Clang, `tools/binutils` only
+installs the common producer's `prefix/bin/TRIPLET-elfedit` into the existing
+OS tool path used by `tests/compat/linux`. The generated BFD `BUILD` directory
+and installed `prefix` retain their common work root. Keep the complete common producer
 result while these consumers use it. No application sysroot is needed.
 
 An explicitly selected missing input, target mismatch or missing dependency
 fails instead of selecting the old provider. An unset variable retains the
-existing in-tree build route. This input does not change target compiler
-selection or native userland Binutils builds.
+existing in-tree route for generic make or `build.sh` invocations. An explicit
+`EMBER_NATIVE_TOOLS` mapping with an external compiler requires the common
+input, as do the Ember kernel wrapper and SDK producers. This does not
+change target compiler selection or native userland Binutils builds.
 
 ```sh
-"$PYTHON" tools/native-tools/test-host-bfd.py --make "$NETBSD_MAKE" -v
+"$PYTHON" tools/native-tools/test-host-bfd.py --make "$NETBSD_MAKE" \
+  --install "$NATIVE_PREFIX/bin/bsdinstall" -v
 ```
 
 The regression queries the real make graph, include flags and dependencies.
-It checks both native helpers and invalid inputs. Its synthetic headers and
-archives are not compiled. Build and execute the helpers with real common
+It checks both compiler families, native helpers and invalid inputs. With
+`--install`, it copies an elfedit fixture through the real install target.
+Its synthetic headers and archives are not compiled. Build and execute the helpers with real common
 BFD outputs before claiming native helper acceptance.
 
 For actual helper execution, run:
@@ -194,7 +201,10 @@ For actual helper execution, run:
   --work /absolute/new-helper-check
 ```
 
-The test assembles an AArch64 ELF fixture. It checks symbol-table embedding,
+The test assembles an AArch64 ELF fixture by default; `--target amd64` selects
+the AMD64 producer instead. Add `--elfedit /absolute/installed-elfedit` to
+check the OS tool's Linux OSABI edit without changing other ELF bytes.
+It checks symbol-table embedding,
 RAM-disk insertion/extraction and oversized-image refusal without target
 execution. On Linux, inspect `ldd` separately to confirm that compression
 libraries resolve inside the selected native prefix.

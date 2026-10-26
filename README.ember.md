@@ -39,6 +39,8 @@ from Ports. Use a full source export of a pinned commit and the SDK host
 Python. Select the external prefix explicitly. Clang is the default compiler
 family; select `EMBER_COMPILER_FAMILY=gcc` only for a platform that needs GCC.
 Host tools and target code have independent compiler selections.
+The kernel wrapper also requires the common native [BFD input](tools/native-tools/README.md#common-host-bfd)
+through `EMBER_HOST_BFD_CONFIG`; this host input needs no application sysroot.
 The [LLVM source and runtime interface](tools/docs/llvm-runtime.md) connects
 base libraries to the common Ports producer while retaining the OS CRT and ABI.
 See the [cross-build contract](tools/docs/cross-build.md) and
@@ -54,6 +56,7 @@ They do not produce a complete application sysroot.
 
 ```sh
 EMBER_BUILD_MODE=cross EMBER_EXTERNAL_TOOLCHAIN=/absolute/llvm \
+    EMBER_HOST_BFD_CONFIG=/absolute/binutils-aarch64/host-bfd.mk \
     EMBER_LLVM_SOURCE=/absolute/prepared-llvm \
     EMBERBSD_SDK_SOURCE=/absolute/sdk-source EMBER_HOST_PREFIX=/absolute/native-prefix \
     sh ember/build-kernel.sh /absolute/output EMBER64

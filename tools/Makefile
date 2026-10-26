@@ -54,10 +54,16 @@ TOOLCHAIN_BITS+= pcc
 . endif
 .endif
 
-.if ${TOOLCHAIN_MISSING} != "no" && defined(EXTERNAL_TOOLCHAIN) && \
-    !defined(EMBER_HOST_BFD_CONFIG)
+.if ${TOOLCHAIN_MISSING} != "no" && defined(EXTERNAL_TOOLCHAIN)
+. if defined(EMBER_HOST_BFD_CONFIG)
+.  if ${EMBER_COMPILER_FAMILY} == "clang"
+# Keep the existing elfedit install target; its source is the common producer.
+TOOLCHAIN_BITS+= binutils .WAIT
+.  endif
+. else
 # dbsym and mdsetimage need build-host BFD, even with an external compiler.
 TOOLCHAIN_BITS+= gmake .WAIT binutils .WAIT
+. endif
 .endif
 
 .if ${TOOLCHAIN_MISSING} == "no" || defined(EXTERNAL_TOOLCHAIN)

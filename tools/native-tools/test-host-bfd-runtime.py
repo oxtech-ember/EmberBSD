@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
 # Origin: EmberBSD (AI-assisted).
-"""Exercise real native BFD helpers on an AArch64 ELF fixture."""
+"""Exercise real native BFD helpers on a selected ELF fixture."""
 import argparse
 import os
 from pathlib import Path
@@ -11,6 +11,8 @@ import subprocess
 parser = argparse.ArgumentParser(description=__doc__)
 for name in ('binutils-prefix', 'dbsym', 'mdsetimage', 'work'):
     parser.add_argument('--' + name, required=True, type=Path)
+parser.add_argument('--target', choices=('aarch64', 'amd64'), default='aarch64')
+parser.add_argument('--elfedit', type=Path, help='installed OS elfedit for the compatibility-test path')
 args = parser.parse_args()
 work = args.work.resolve()
 work.mkdir(exist_ok=False)
@@ -36,8 +38,9 @@ for name, marker, capacity in (('db_symtab', 'EMBER-SYMBOLS-001', 8192),
                  f'.globl _{name}\n_{name}: .fill {capacity},1,0\n')
 (work / 'input.s').write_text(assembly)
 binutils = args.binutils_prefix.resolve() / 'bin'
-run(binutils / 'aarch64--netbsd-as', '-o', 'input.o', 'input.s')
-run(binutils / 'aarch64--netbsd-ld', '-Ttext=0x10000', '-o', 'kernel.elf', 'input.o')
+triplet = 'aarch64--netbsd' if args.target == 'aarch64' else 'x86_64--netbsd'
+run(binutils / (triplet + '-as'), '-o', 'input.o', 'input.s')
+run(binutils / (triplet + '-ld'), '-Ttext=0x10000', '-o', 'kernel.elf', 'input.o')
 kernel = work / 'kernel.elf'
 before = kernel.read_bytes()
 marker = b'EMBER-SYMBOLS-001'
@@ -66,4 +69,13 @@ before = kernel.read_bytes()
 run(args.mdsetimage, kernel, 'too-large.bin', expected=1)
 if kernel.read_bytes() != before:
     raise SystemExit('rejected oversized image changed the kernel')
-print('real AArch64 dbsym embedding and mdsetimage insert/extract/refusal passed')
+if args.elfedit is not None:
+    image = work / 'linux-abi.elf'
+    before = kernel.read_bytes()
+    image.write_bytes(before)
+    run(args.elfedit, '--output-osabi', 'Linux', image)
+    after = image.read_bytes()
+    if after[7] != 3 or before[:7] != after[:7] or before[8:] != after[8:]:
+        raise SystemExit('elfedit did not change only the requested ELF OSABI')
+    print('installed elfedit changes only the ELF OSABI for the Linux compatibility-test path')
+print('real ' + args.target + ' dbsym embedding and mdsetimage insert/extract/refusal passed')
