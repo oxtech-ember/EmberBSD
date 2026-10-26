@@ -39,6 +39,8 @@ from Ports. Use a full source export of a pinned commit and the SDK host
 Python. Select the external prefix explicitly. Clang is the default compiler
 family; select `EMBER_COMPILER_FAMILY=gcc` only for a platform that needs GCC.
 Host tools and target code have independent compiler selections.
+The [LLVM source and runtime interface](tools/docs/llvm-runtime.md) connects
+base libraries to the common Ports producer while retaining the OS CRT and ABI.
 See the [cross-build contract](tools/docs/cross-build.md) and
 [SDK release workflow](https://github.com/oxtech-ember/EmberBSD-SDK/blob/main/docs/os-release.md).
 

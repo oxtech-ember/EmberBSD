@@ -4,6 +4,7 @@
 .include <bsd.init.mk>
 .include <bsd.shlib.mk>
 .include <bsd.gcc.mk>
+.include <bsd.llvm-runtime.mk>
 .include <bsd.sanitizer.mk>
 
 # Pull in <bsd.sys.mk> here so we can override its .c.o rule
@@ -634,7 +635,9 @@ LDADD+= -lgcc
 
 .if ${LIBISCXX} != "no"
 LIBCC:=	${CXX}
-. if ${MKLIBCXX} == "yes"
+. if ${_EMBER_LLVM_RUNTIME:Uno} == "yes"
+DPADD+=	${LIBCXX}
+. elif ${MKLIBCXX} == "yes"
 LIBDPLIBS+=     c++	${.CURDIR}/../../../../../external/bsd/libc++/lib
 . else
 LIBDPLIBS+=     stdc++	${.CURDIR}/../../../../../external/gpl3/${EXTERNAL_GCC_SUBDIR}/lib/libstdc++-v3

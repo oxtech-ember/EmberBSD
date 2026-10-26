@@ -109,9 +109,9 @@ These selectors do not fetch a compiler or replace the target libc, headers
 or runtime. Kernel-only builds use their freestanding inputs. Application
 builds additionally need a compatible runtime from the common Ports producer.
 `EMBER_EXTERNAL_GCC_RUNTIME` remains a GCC-only adapter and is rejected when
-Clang is selected. LLVM runtime integration and target execution must be
-verified separately; selecting Clang does not validate old in-tree LLVM
-runtime sources or establish a complete Clang-built release.
+Clang is selected. Use the [common LLVM source and runtime interface](llvm-runtime.md)
+for libc, kernel builtins and C++ consumers. Source routing and target execution
+are separate checks; selecting Clang does not establish a complete release.
 
 ### Headers and CRT for runtime bootstrap
 

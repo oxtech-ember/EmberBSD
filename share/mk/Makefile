@@ -10,7 +10,8 @@ FILES=	bsd.README bsd.buildinstall.mk bsd.clang-analyze.mk bsd.clean.mk \
 	bsd.dep.mk bsd.doc.mk bsd.dtb.mk bsd.endian.mk bsd.files.mk bsd.gcc.mk \
 	bsd.host.mk bsd.hostinit.mk bsd.hostlib.mk bsd.hostprog.mk bsd.inc.mk \
 	bsd.info.mk bsd.init.mk bsd.ioconf.mk bsd.kernobj.mk bsd.kinc.mk \
-	bsd.klinks.mk bsd.kmodule.mk bsd.lib.mk bsd.links.mk bsd.lua.mk \
+	bsd.klinks.mk bsd.kmodule.mk bsd.lib.mk bsd.links.mk \
+	bsd.llvm-runtime.mk bsd.llvm-source.mk bsd.lua.mk \
 	bsd.man.mk bsd.nls.mk \
 	bsd.obj.mk bsd.own.mk bsd.prog.mk bsd.rpc.mk \
 	bsd.sanitizer.mk bsd.shlib.mk \

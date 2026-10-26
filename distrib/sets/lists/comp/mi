@@ -96,6 +96,7 @@
 ./usr/bin/xgettext				comp-c-bin
 ./usr/bin/xstr					comp-obsolete		obsolete
 ./usr/bin/yacc					comp-c-bin
+./usr/include/__libunwind_config.h			comp-c-include		llvm_unwind,!libgcc_eh
 ./usr/include/a.out.h				comp-c-include
 ./usr/include/adosfs/adosfs.h			comp-c-include
 ./usr/include/aio.h				comp-c-include
@@ -3743,6 +3744,8 @@
 ./usr/include/unistd.h				comp-c-include
 ./usr/include/unwind.h				comp-c-include		gcc,libgcc_eh
 ./usr/include/unwind.h				comp-c-include		!libgcc_eh
+./usr/include/unwind_arm_ehabi.h			comp-c-include		llvm_unwind,!libgcc_eh
+./usr/include/unwind_itanium.h			comp-c-include		llvm_unwind,!libgcc_eh
 ./usr/include/usb.h				comp-obsolete		obsolete
 ./usr/include/usbhid.h				comp-c-include
 ./usr/include/util.h				comp-c-include

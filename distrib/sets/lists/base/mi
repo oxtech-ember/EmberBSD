@@ -5146,6 +5146,8 @@
 ./usr/share/mk/bsd.kmodule.mk			base-mk-share		share
 ./usr/share/mk/bsd.lib.mk			base-mk-share		share
 ./usr/share/mk/bsd.links.mk			base-mk-share		share
+./usr/share/mk/bsd.llvm-runtime.mk			base-mk-share		share
+./usr/share/mk/bsd.llvm-source.mk			base-mk-share		share
 ./usr/share/mk/bsd.lua.mk			base-mk-share		share
 ./usr/share/mk/bsd.man.mk			base-mk-share		share
 ./usr/share/mk/bsd.nls.mk			base-mk-share		share

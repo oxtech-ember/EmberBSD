@@ -6,6 +6,7 @@
 .include <bsd.init.mk>
 .include <bsd.shlib.mk>
 .include <bsd.gcc.mk>
+.include <bsd.llvm-runtime.mk>
 .include <bsd.sanitizer.mk>
 
 ##### Sanitizer specific flags.

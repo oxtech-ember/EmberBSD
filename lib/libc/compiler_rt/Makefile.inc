@@ -2,7 +2,19 @@
 # Origin: EmberBSD; AI-assisted source-local AArch64 binary128 FENV opt-in.
 
 COMPILER_RT_DIR=	${NETBSDSRCDIR}/sys/external/bsd/compiler_rt
+.include <bsd.llvm-source.mk>
+.if defined(EMBER_LLVM_SOURCE)
+COMPILER_RT_SRCDIR=	${EMBER_COMPILER_RT_SOURCE}
+.for _ember_rt_file in lib/builtins/int_lib.h lib/builtins/comparetf2.c \
+    include/profile/InstrProfData.inc
+.if !exists(${COMPILER_RT_SRCDIR}/${_ember_rt_file})
+.error EMBER_LLVM_SOURCE is missing compiler-rt/${_ember_rt_file}
+.endif
+.endfor
+CPPFLAGS+=	-I${COMPILER_RT_SRCDIR}/include
+.else
 COMPILER_RT_SRCDIR=	${COMPILER_RT_DIR}/dist
+.endif
 
 .if ${LIBC_MACHINE_ARCH} == "powerpc" || ${LIBC_MACHINE_ARCH} == "powerpc64"
 COMPILER_RT_CPU_DIR=	${COMPILER_RT_SRCDIR}/lib/builtins/ppc
@@ -236,6 +248,22 @@ GENERIC_SRCS+= \
 	InstrProfilingUtil.c \
 	InstrProfilingValue.c \
 	InstrProfilingWriter.c
+
+.if defined(EMBER_LLVM_SOURCE)
+# Modern compiler-rt splits the profiling implementation across these units.
+# Preserve the old public libc GCDA entry points through the common Ports
+# compatibility mode; ordinary profiling runtimes retain the upstream ABI.
+GENERIC_SRCS+= \
+	InstrProfilingInternal.c \
+	InstrProfilingMerge.c \
+	InstrProfilingMergeFile.c \
+	InstrProfilingNameVar.c \
+	InstrProfilingVersionVar.c
+CPPFLAGS.GCDAProfiling.c+= -DCOMPILER_RT_LIBC_LEGACY_GCOV
+.for _ember_profile_src in GCDAProfiling.c InstrProfilingUtil.c
+CPPFLAGS.${_ember_profile_src}+= -DCOMPILER_RT_HAS_FCNTL_LCK=1 -DCOMPILER_RT_HAS_UNAME=1
+.endfor
+.endif
 
 .if ${MKPROFILE} != "no"
 POBJS+= InstrProfilingRuntime.po

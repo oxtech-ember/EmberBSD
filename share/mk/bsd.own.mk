@@ -268,6 +268,14 @@ HAVE_LIBGCC_EH?=	no
 HAVE_LIBGCC_EH?=	yes
 .endif
 
+# Public unwind header closure differs when libc incorporates the common
+# Ports archive. Export the actual selection for distribution set lists.
+.if defined(EMBER_LLVM_SOURCE)
+HAVE_LLVM_UNWIND=	yes
+.else
+HAVE_LLVM_UNWIND=	no
+.endif
+
 # Coverity does not like SSP
 .if defined(COVERITY_TOP_CONFIG) || \
     ${MACHINE} == "alpha" || \
