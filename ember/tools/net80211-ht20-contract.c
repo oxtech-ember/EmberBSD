@@ -732,7 +732,6 @@ test_current_peer_beacons(void)
 				/* Keep cap/op on the delivered copy, not the freed mbuf. */
 				cap = copy->m_data + (cap - m->m_data);
 				op = cap + 28;
-				wh = mtod(copy, struct ieee80211_frame *);
 				m_freem(m); m = copy;
 				break;
 			}
