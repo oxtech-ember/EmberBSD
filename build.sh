@@ -2150,25 +2150,48 @@ validatemakeparams()
 		TOOLCHAIN_MISSING=no
 		EXTERNAL_TOOLCHAIN=
 	else
-		TOOLCHAIN_MISSING=$(bomb_getmakevar TOOLCHAIN_MISSING)
-		EXTERNAL_TOOLCHAIN=$(bomb_getmakevar EXTERNAL_TOOLCHAIN)
-	fi
-	if [ "${TOOLCHAIN_MISSING}" = yes ] && [ -z "${EXTERNAL_TOOLCHAIN}" ]
-	then
-		${runcmd} echo "ERROR: build.sh (in-tree cross-toolchain)" \
-						"is not yet available for"
-		${runcmd} echo "	MACHINE:      ${MACHINE}"
-		${runcmd} echo "	MACHINE_ARCH: ${MACHINE_ARCH}"
-		${runcmd} echo ""
-		${runcmd} echo "All builds for this platform should be done" \
-						"via a traditional make"
-		${runcmd} echo "If you wish to use an external" \
-						"cross-toolchain, set"
-		${runcmd} echo "	EXTERNAL_TOOLCHAIN=<path to" \
-						"toolchain root>"
-		${runcmd} echo "in either the environment or mk.conf and rerun"
-		${runcmd} echo "	${progname} $*"
-		exit 1
+		_target_toolchain_required=false
+		_tools_requested=false
+		for _operation in ${operations}
+		do
+			case "${_operation}" in
+			tools)
+				_tools_requested=true
+				;;
+			build|bootstrap-crt|distribution|release|libs|kernel=*|kernel.gdb=*|\
+			kernels|modules|installmodules=*|pkg=*|rump|rumptest)
+				_target_toolchain_required=true
+				;;
+			makewrapper|params|show-params|cleandir|obj|sourcesets|sets|syspkgs|\
+			bootstrap-headers|dtb|install=*|releasekernel=*|disk-image=*|\
+			iso-image|iso-image-source|live-image|install-image)
+				;;
+			*)
+				_target_toolchain_required=true
+				;;
+			esac
+		done
+		if ${_target_toolchain_required} || ${_tools_requested}
+		then
+			EXTERNAL_TOOLCHAIN=$(bomb_getmakevar EXTERNAL_TOOLCHAIN)
+			if [ -z "${EXTERNAL_TOOLCHAIN}" ] && ${_tools_requested} &&
+			   ! ${_target_toolchain_required}
+			then
+				TOOLCHAIN_MISSING=$(bomb_getmakevar TOOLCHAIN_MISSING)
+				MKLLVM=$(bomb_getmakevar MKLLVM)
+				MKLLVMRT=$(bomb_getmakevar MKLLVMRT)
+				if [ "${TOOLCHAIN_MISSING}" = yes ] &&
+				   [ "${MKLLVM}" = no ] && [ "${MKLLVMRT}" = no ]
+				then
+					_tools_requested=false
+				fi
+			fi
+			if { ${_target_toolchain_required} || ${_tools_requested}; } &&
+			   [ -z "${EXTERNAL_TOOLCHAIN}" ]
+			then
+				bomb "This build operation requires EXTERNAL_TOOLCHAIN from the selected SDK compiler prefix"
+			fi
+		fi
 	fi
 
 	if [ "${MKOBJDIRS}" != no ]
@@ -3025,6 +3048,13 @@ main()
 	initdefaults
 	_args=$*
 	parseoptions "$@"
+	if [ -n "${operations}" ] && [ "${runcmd}" != echo ] &&
+	   ! ${_ember_native_mode}
+	then
+		bomb "build.sh operations require EMBER_NATIVE_TOOLS; see" \
+		     "tools/native-tools/README.md and" \
+		     "EmberBSD-SDK docs/native-os.md (scripts/run-native-os.py)"
+	fi
 
 	sanitycheck
 

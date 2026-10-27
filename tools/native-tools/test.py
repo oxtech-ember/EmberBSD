@@ -32,15 +32,20 @@ with open(os.environ["FIXTURE_LOG"], "a") as stream:
         "cwd": os.getcwd(), "env": {key: os.environ.get(key) for key in
         ("PATH", "HOST_CC", "HOST_CXX", "HOST_SH", "HOST_YACC", "HOST_MV_CP", "HOST_MV_RM", "CONFIG_SHELL", "BSHELL",
          "SHELL", "HOST_CFLAGS", "HOST_LDFLAGS", "EMBER_COMPILER_FAMILY",
-         "EMBER_HOST_COMPILER_FAMILY")}}) + "\n")
+         "EMBER_HOST_COMPILER_FAMILY", "EXTERNAL_TOOLCHAIN")}}) + "\n")
 if name == "make":
     if "-f-" in args:
         text = sys.stdin.read()
         key = re.search(r"echo \$\{([^}]+)\}", text).group(1)
         values = {"MKOBJDIRS": "no", "MKUNPRIVED": "yes", "MKUPDATE": "yes",
-            "TOOLCHAIN_MISSING": "no", "EXTERNAL_TOOLCHAIN": "",
+            "TOOLCHAIN_MISSING": "no",
+            "EXTERNAL_TOOLCHAIN": os.environ.get("EXTERNAL_TOOLCHAIN", ""),
+            "MKLLVM": os.environ.get("FIXTURE_MKLLVM", "yes"),
+            "MKLLVMRT": os.environ.get("FIXTURE_MKLLVMRT", "yes"),
             "MAKECONF": os.environ["FIXTURE_ROOT"] + "/no-mk.conf",
             "RELEASEMACHINEDIR": "amd64"}
+        values["TOOLCHAIN_MISSING"] = os.environ.get(
+            "FIXTURE_TOOLCHAIN_MISSING", values["TOOLCHAIN_MISSING"])
         print(values.get(key, os.environ.get(key, "")))
     sys.exit(0)
 if name == "cmp":
@@ -155,16 +160,116 @@ class Fixture:
         return subprocess.run([str(SHELL), "build.sh", "-U", *args],
             cwd=self.source, env=self.env, text=True, capture_output=True, timeout=30)
 
+    def run_without_native_tools(self, *args):
+        env = dict(self.env)
+        env.pop("EMBER_NATIVE_TOOLS", None)
+        for key in ("HOST_SH", "HOST_CC", "HOST_CXX", "HOST_CPP", "HOST_AR",
+                    "HOST_LD", "HOST_RANLIB", "HOST_LN", "HOST_YACC",
+                    "HOST_MV_CP", "HOST_MV_RM", "SED"):
+            env.pop(key, None)
+        env["PATH"] = str(self.routing)
+        return subprocess.run([str(SHELL), "build.sh", "-U", *args],
+            cwd=self.source, env=env, text=True, capture_output=True, timeout=30)
+
     def records(self):
         return [json.loads(line) for line in self.log.read_text().splitlines()]
 
 
 class RoutingTests(unittest.TestCase):
+    def test_real_operations_require_native_routing_before_make_bootstrap(self):
+        fixture = Fixture(self)
+        result = fixture.run_without_native_tools("build")
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("EMBER_NATIVE_TOOLS", result.stderr)
+        self.assertIn("tools/native-tools/README.md", result.stderr)
+        self.assertFalse(fixture.sentinel.exists())
+        self.assertFalse(any(row["command"] in ("make", "cc")
+                             for row in fixture.records()))
+
+    def test_target_build_requires_external_toolchain(self):
+        fixture = Fixture(self)
+        result = fixture.run("build")
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("EXTERNAL_TOOLCHAIN", result.stderr)
+        calls = [row for row in fixture.records() if row["command"] == "make"]
+        self.assertFalse(any(row["argv"] == ["MACHINE=amd64", "MACHINE_ARCH=x86_64", "build"]
+                             for row in calls))
+
+    def test_metadata_operation_and_help_need_no_target_toolchain(self):
+        fixture = Fixture(self)
+        result = fixture.run("show-params")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(any(row["command"] == "make" for row in fixture.records()))
+        result = fixture.run_without_native_tools("-h")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_dry_run_does_not_require_native_tools(self):
+        fixture = Fixture(self)
+        (fixture.tooldir / "bin/nbmake").unlink()
+        (fixture.tooldir / "bin/nbmake").symlink_to(fixture.selected / "make")
+        result = fixture.run_without_native_tools("-T", str(fixture.tooldir), "-n", "build")
+        self.assertNotIn("operations require EMBER_NATIVE_TOOLS", result.stderr)
+        self.assertNotIn("requires EXTERNAL_TOOLCHAIN", result.stderr)
+
+    def test_tools_require_disabled_compiler_producers_on_missing_toolchain(self):
+        fixture = Fixture(self)
+        fixture.env["FIXTURE_TOOLCHAIN_MISSING"] = "yes"
+        fixture.env["FIXTURE_MKLLVM"] = "no"
+        fixture.env["FIXTURE_MKLLVMRT"] = "no"
+        result = fixture.run("tools")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(any(row["argv"] == ["MACHINE=amd64", "MACHINE_ARCH=x86_64", "build_install"]
+                            and row["cwd"] == str(fixture.source / "tools")
+                            for row in fixture.records() if row["command"] == "make"))
+
+    def test_tools_compiler_exception_does_not_cover_other_operations(self):
+        for operation in ("libs", "kernel=GENERIC", "bootstrap-crt"):
+            with self.subTest(operation=operation):
+                fixture = Fixture(self)
+                fixture.env["FIXTURE_TOOLCHAIN_MISSING"] = "yes"
+                fixture.env["FIXTURE_MKLLVM"] = "no"
+                fixture.env["FIXTURE_MKLLVMRT"] = "no"
+                result = fixture.run("tools", operation)
+                self.assertNotEqual(result.returncode, 0,
+                    result.stdout + result.stderr)
+                self.assertIn("EXTERNAL_TOOLCHAIN", result.stderr)
+                self.assertFalse(any(row["argv"] == ["MACHINE=amd64",
+                    "MACHINE_ARCH=x86_64", operation] for row in fixture.records()
+                    if row["command"] == "make"))
+
+    def test_tools_compiler_exception_allows_metadata_operation(self):
+        fixture = Fixture(self)
+        fixture.env["FIXTURE_TOOLCHAIN_MISSING"] = "yes"
+        fixture.env["FIXTURE_MKLLVM"] = "no"
+        fixture.env["FIXTURE_MKLLVMRT"] = "no"
+        result = fixture.run("tools", "show-params")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(any(row["command"] == "make" and
+            row["argv"] == ["MACHINE=amd64", "MACHINE_ARCH=x86_64", "build_install"]
+            and row["cwd"] == str(fixture.source / "tools")
+            for row in fixture.records()))
+        self.assertTrue(any(row["command"] == "make" and
+            row["argv"][-1] == "show-params" for row in fixture.records()))
+
+    def test_tools_with_compiler_targets_require_external_toolchain(self):
+        fixture = Fixture(self)
+        fixture.env["FIXTURE_TOOLCHAIN_MISSING"] = "yes"
+        fixture.env["FIXTURE_MKLLVM"] = "no"
+        fixture.env["FIXTURE_MKLLVMRT"] = "yes"
+        result = fixture.run("tools")
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("EXTERNAL_TOOLCHAIN", result.stderr)
+        self.assertFalse(any(row["argv"] == ["MACHINE=amd64", "MACHINE_ARCH=x86_64", "build_install"]
+                             and row["cwd"] == str(fixture.source / "tools")
+                             for row in fixture.records() if row["command"] == "make"))
+
     def test_bootstrap_headers_and_crt_dispatch(self):
         for goal in ("bootstrap-headers", "bootstrap-crt"):
             with self.subTest(goal=goal):
                 fixture = Fixture(self)
-                result = fixture.run(goal)
+                args = ("-V", "EXTERNAL_TOOLCHAIN=/selected/target", goal) \
+                    if goal == "bootstrap-crt" else (goal,)
+                result = fixture.run(*args)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 calls = [row for row in fixture.records() if row["command"] == "make"]
                 self.assertTrue(any(row["argv"] == ["MACHINE=amd64", "MACHINE_ARCH=x86_64", goal] and
@@ -181,7 +286,8 @@ class RoutingTests(unittest.TestCase):
 
     def test_tools_dispatch_and_wrapper_replay(self):
         fixture = Fixture(self)
-        result = fixture.run("-V", "HOST_CFLAGS=-O2 -fPIC", "tools")
+        result = fixture.run("-V", "HOST_CFLAGS=-O2 -fPIC", "-V",
+            "EXTERNAL_TOOLCHAIN=/selected/target", "tools")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         records = fixture.records()
         calls = [row for row in records if row["command"] == "make"]
@@ -222,7 +328,8 @@ class RoutingTests(unittest.TestCase):
                 fixture = Fixture(self)
                 host_family = "gcc" if expected == "clang" else "clang"
                 fixture.env["EMBER_HOST_COMPILER_FAMILY"] = host_family
-                result = fixture.run(*selection, "tools")
+                result = fixture.run(*selection, "-V",
+                    "EXTERNAL_TOOLCHAIN=/selected/target", "tools")
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 calls = [row for row in fixture.records() if row["command"] == "make"]
                 self.assertTrue(calls)

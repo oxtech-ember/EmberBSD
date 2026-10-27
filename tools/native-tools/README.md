@@ -75,6 +75,13 @@ Refresh make through the native-tool producer.
 The old make bootstrap uses configure scripts with absolute host-tool probes.
 It cannot meet this interface through a `PATH` change alone.
 
+Every real `build.sh` operation requires this selected native-tool routing
+before sanity checks or make bootstrap. Help, parse-time queries and `-n`
+remain available without it. Use the SDK's
+[`scripts/run-native-os.py`](https://github.com/oxtech-ember/EmberBSD-SDK/blob/main/docs/native-os.md)
+for OS operations; it selects the native prefix and supplies the routing
+directory. This also applies to metadata operations such as `show-params`.
+
 `share/mk/sys.mk` selects the recipe shell with `.SHELL` before shell queries.
 `HOST_SH`, `BSHELL`, `CONFIG_SHELL`, and `SHELL` use the selected shell.
 The make engine does not select its recipe shell from those variables alone.
@@ -113,7 +120,13 @@ Some tools makefiles add `TOOLDIR/bin` to `PATH`.
 Third-party configure scripts can call absolute host paths.
 Use the selected prefix for those commands and fix any external tool selection.
 A known missing tool or incorrect route must report its concrete error.
-There is no separate producer admission or unconditional SDK execution gate.
+Operations that build target code also require explicit `EXTERNAL_TOOLCHAIN`
+from the selected SDK compiler prefix. `tools` may omit it only when the
+resolved make configuration has `TOOLCHAIN_MISSING=yes`, `MKLLVM=no`, and
+`MKLLVMRT=no`; the in-tree tools graph otherwise includes compiler or runtime
+targets. Artifact-only operations such as sets, source sets, and image packing
+do not need a target compiler prefix. These checks select the producer
+boundary; they do not validate the SDK compiler prefix's origin or contents.
 
 Run the control-flow checks with one explicit test shell and Python:
 
