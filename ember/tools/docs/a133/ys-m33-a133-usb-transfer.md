@@ -62,8 +62,10 @@ prove historical provenance. The caller must capture/bind/revalidate it.
 
 `protected_env` is the original per-device env modified into the previously
 tested protected profile and already written/read back by the orchestrator.
-CRC, retained bootcmd/Android/recovery scripts, boot_normal running only
-ember_recovery_once and its exact USB-device-role helper are required.
+Both profiles require CRC and their exact recovery helpers.
+The hook profile retains bootcmd and boot_android, with boot_normal running only ember_recovery_once.
+The direct profile retains boot_normal and boot_recovery, with bootcmd set to `run setargs_nand ember_recovery_once`.
+It also requires the pinned factory setargs_nand template and exact FDT/USB-device-role helpers.
 The complete live 128-KiB prefix must match. This profile keeps recovery
 armed while image writes occur; it differs from the one-shot preparation
 hook which clears itself before recovery.

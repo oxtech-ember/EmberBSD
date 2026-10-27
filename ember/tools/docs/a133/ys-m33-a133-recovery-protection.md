@@ -63,10 +63,12 @@ active swaps and eMMC holders. The live GPT digest must match mutable evidence.
 The full original recovery partition hash is checked before and after env
 transition. Concurrent transient use between observations is not ruled out.
 
-`A133Recovery.protect` accepts the known factory profile, rejects existing hook
-keys even when empty, preserves bootcmd and unrelated/opaque values, changes
-only boot_normal to `run ember_recovery_once` and adds the existing helper.
-Reversing those two changes must restore the original bytes, including padding.
+`A133Recovery.protect` accepts the two pinned factory profiles and refuses reserved helpers even when empty.
+For the hook profile, it preserves bootcmd and changes boot_normal to `run ember_recovery_once`.
+For the direct profile, it preserves boot_normal and changes bootcmd to `run setargs_nand ember_recovery_once`.
+The direct profile requires the exact `DIRECT_SETARGS` factory template from the implementation.
+Its recovery helper selects the control FDT and USB device mode before running the retained boot_recovery script.
+Both profiles preserve unrelated values and require byte-exact reversal, including padding.
 
 The live full env must equal either the original partition hash or the derived
 protected partition hash. An original state receives exactly131072 binary
