@@ -77,9 +77,6 @@ COPTS.dt_dof.c		+= -Wno-stack-protector
 COPTS.dt_handle.c	+= -Wno-stack-protector
 COPTS.dt_ident.c	+= -Wno-stack-protector
 COPTS.dt_link.c		+= -Wno-stack-protector
-# EmberBSD: GCC16 -Werror=unused-but-set-variable on the illumos rel
-# cursor; writes are consumed conditionally further down.
-COPTS.dt_link.c		+= -Wno-error=unused-but-set-variable
 # EmberBSD: -Wuse-after-free is a GCC 12 option; Clang rejects it with -Werror.
 COPTS.dt_open.c		+= ${${ACTIVE_CC} == "gcc" && ${HAVE_GCC:U0} >= 12:? -Wno-error=use-after-free :}
 COPTS.dt_options.c	+= -Wno-stack-protector
