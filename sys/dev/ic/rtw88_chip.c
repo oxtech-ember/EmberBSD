@@ -80,7 +80,8 @@ rtw88_station_config(struct rtw88_softc *sc, const uint8_t *bssid, unsigned aid,
 }
 
 int
-rtw88_edca_apply(struct rtw88_softc *sc, const struct rtw88_edca_params *params, unsigned slot)
+rtw88_edca_apply(struct rtw88_softc *sc,
+    const struct rtw88_edca_params params[RTW88_WME_NAC], unsigned slot)
 {
 	if (sc == NULL || sc->sc_chip == NULL || sc->sc_chip->edca == NULL)
 		return EINVAL;

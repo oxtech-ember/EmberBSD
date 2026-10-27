@@ -24,10 +24,21 @@ for line in lines[marker + 1:]:
     if line.strip():
         patterns.append(line.strip().lstrip("/"))
 
+# The full Git index remains available in a sparse checkout. Derive this
+# family from it, so future transport units and headers also need coverage.
+pci_inputs = subprocess.check_output(
+    ["git", "-C", str(root), "ls-files", "--", "sys/dev/pci/rtw88_pci_*"],
+    text=True,
+).splitlines()
+if not pci_inputs:
+    raise SystemExit("rtw88 workflow has no tracked PCI transport inputs")
+
 required = (
     ".github/workflows/rtw88.yml",
     "ember/tools/rtw88-workflow-contract.py",
     "ember/tools/rtw88-ci-shard.sh",
+    "sys/dev/pci/if_rtw88_pci.c",
+    *pci_inputs,
     "sys/net80211/ieee80211_beacon_ies.c",
     "sys/net80211/ieee80211_beacon_ies.h",
     "sys/net80211/ieee80211_vht_ies.c",
@@ -39,6 +50,9 @@ missing = [path for path in required
 if missing:
     print("rtw88 sparse checkout misses: " + ", ".join(missing), file=sys.stderr)
     raise SystemExit(1)
+unavailable = [path for path in required if not (root / path).is_file()]
+if unavailable:
+    raise SystemExit("rtw88 sparse worktree misses: " + ", ".join(unavailable))
 print(f"rtw88 sparse checkout: {len(required)} inputs covered")
 
 # Sparse inputs must also trigger CI when changed on their own.
