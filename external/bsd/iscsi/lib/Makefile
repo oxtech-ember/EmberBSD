@@ -25,5 +25,6 @@ LIBDPLIBS+=      pthread  ${.CURDIR}/../../../../lib/libpthread
 
 COPTS.target.c+=	${CC_WNO_FORMAT_TRUNCATION}
 COPTS.md5c.c+=		-Wno-error=deprecated-non-prototype
+COPTS.md5hl.c+=		-Wno-error=deprecated-non-prototype
 
 .include <bsd.lib.mk>
