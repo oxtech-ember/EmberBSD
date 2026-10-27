@@ -1,28 +1,34 @@
-name: Fixed-source warning demote contract
+name: Clang make-rule contracts
 
 'on':
   pull_request:
     paths:
       - '.github/workflows/warning-demotes.yml'
+      - 'ember/tests/clang-repro-external-sources.py'
       - 'ember/tests/clang-warning-demotes.py'
       - 'external/cddl/osnet/lib/libdtrace/Makefile'
+      - 'lib/libc/Makefile'
       - 'lib/libpam/libpam/Makefile'
       - 'share/mk/bsd.own.mk'
+      - 'share/mk/bsd.sys.mk'
   push:
     branches: [main]
     paths:
       - '.github/workflows/warning-demotes.yml'
+      - 'ember/tests/clang-repro-external-sources.py'
       - 'ember/tests/clang-warning-demotes.py'
       - 'external/cddl/osnet/lib/libdtrace/Makefile'
+      - 'lib/libc/Makefile'
       - 'lib/libpam/libpam/Makefile'
       - 'share/mk/bsd.own.mk'
+      - 'share/mk/bsd.sys.mk'
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  contracts:
+  clang-make-rules:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -32,13 +38,17 @@ jobs:
           persist-credentials: false
           sparse-checkout-cone-mode: false
           sparse-checkout: |
+            /ember/tests/clang-repro-external-sources.py
             /ember/tests/clang-warning-demotes.py
             /external/cddl/osnet/lib/libdtrace/Makefile
+            /lib/libc/Makefile
             /lib/libpam/libpam/Makefile
-            /share/mk/bsd.own.mk
-      - name: Install bmake
+            /share/mk/
+      - name: Install bmake and Clang
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends python3 bmake
+          sudo apt-get install -y --no-install-recommends python3 bmake clang
       - name: Check per-file COPTS for warning demotes
         run: python3 -B ember/tests/clang-warning-demotes.py --make /usr/bin/bmake -v
+      - name: Check MKREPRO maps for external source roots
+        run: python3 -B ember/tests/clang-repro-external-sources.py --make /usr/bin/bmake --clang /usr/bin/clang
