@@ -1011,6 +1011,19 @@ plcom_shutdown(struct plcom_softc *sc)
 {
 	struct plcom_instance *pi = &sc->sc_pi;
 	struct tty *tp = sc->sc_tty;
+	int n;
+
+	/*
+	 * plcomstart() reports output done once it is in the FIFO; let the
+	 * FIFO drain before the transmitter is turned off, for at most 100 ms.
+	 */
+	if (pi->pi_type == PLCOM_TYPE_PL011 ||
+	    pi->pi_type == PLCOM_TYPE_GENERIC_UART) {
+		for (n = 0; n < 1000 &&
+		    ISSET(PREAD4(pi, PL01XCOM_FR), PL01X_FR_BUSY); n++)
+			delay(100);
+	}
+
 	mutex_spin_enter(&sc->sc_lock);
 
 	/* If we were asserting flow control, then deassert it. */
@@ -2100,6 +2113,7 @@ plcomstart(struct tty *tp)
 	struct plcom_softc *sc =
 		device_lookup_private(&plcom_cd, PLCOMUNIT(tp->t_dev));
 	struct plcom_instance *pi = &sc->sc_pi;
+	bool done;
 
 	if (PLCOM_ISALIVE(sc) == 0)
 		return;
@@ -2129,35 +2143,57 @@ plcomstart(struct tty *tp)
 	SET(tp->t_state, TS_BUSY);
 	sc->sc_tx_busy = 1;
 
-	/* Enable transmit completion interrupts if necessary. */
 	switch (pi->pi_type) {
 	case PLCOM_TYPE_PL010:
+		/* Enable transmit completion interrupts if necessary. */
 		if (!ISSET(sc->sc_cr, PL010_CR_TIE)) {
 			SET(sc->sc_cr, PL010_CR_TIE);
 			PWRITE1(pi, PL010COM_CR, sc->sc_cr);
 		}
+
+		/* Output the first chunk of the contiguous buffer. */
+		{
+			int n;
+
+			n = sc->sc_tbc;
+			if (n > sc->sc_burstlen)
+				n = sc->sc_burstlen;
+			PWRITEM1(pi, PL01XCOM_DR, sc->sc_tba, n);
+			sc->sc_tbc -= n;
+			sc->sc_tba += n;
+		}
 		break;
 	case PLCOM_TYPE_PL011:
 	case PLCOM_TYPE_GENERIC_UART:
-		if (!ISSET(sc->sc_imsc, PL011_INT_TX)) {
+		/*
+		 * The PL011 raises its transmit interrupt when the FIFO level
+		 * falls through the trigger level, not for a FIFO that has
+		 * stayed empty since reset.  A first chunk shorter than the
+		 * trigger level would wait for that interrupt forever, and
+		 * every later parameter change would be held behind it.
+		 * Fill the FIFO here instead: a chunk that fits is done
+		 * without the interrupt, a longer one leaves a full FIFO
+		 * whose draining raises it.
+		 */
+		while (sc->sc_tbc > 0 &&
+		    !ISSET(PREAD4(pi, PL01XCOM_FR), PL01X_FR_TXFF)) {
+			PWRITE1(pi, PL01XCOM_DR, *sc->sc_tba);
+			sc->sc_tbc--;
+			sc->sc_tba++;
+		}
+		if (sc->sc_tbc == 0) {
+			sc->sc_tx_busy = 0;
+			sc->sc_tx_done = 1;
+		} else if (!ISSET(sc->sc_imsc, PL011_INT_TX)) {
 			SET(sc->sc_imsc, PL011_INT_TX);
 			PWRITE4(pi, PL011COM_IMSC, sc->sc_imsc);
 		}
 		break;
 	}
-
-	/* Output the first chunk of the contiguous buffer. */
-	{
-		int n;
-
-		n = sc->sc_tbc;
-		if (n > sc->sc_burstlen)
-			n = sc->sc_burstlen;
-		PWRITEM1(pi, PL01XCOM_DR, sc->sc_tba, n);
-		sc->sc_tbc -= n;
-		sc->sc_tba += n;
-	}
+	done = sc->sc_tx_done;
 	mutex_spin_exit(&sc->sc_lock);
+	if (done)
+		softint_schedule(sc->sc_si);
 }
 
 /*

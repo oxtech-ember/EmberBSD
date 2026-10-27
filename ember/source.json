@@ -175,6 +175,7 @@
     "heartbeat-dump.diff",
     "net80211-rsnxe-scan.diff",
     "plcom-modem-intr.diff",
+    "plcom-pl011-tx-fill.diff",
     "plcom-rp1-shared-irq.diff",
     "plcom-rp1-uart0-copy.diff",
     "rp1wm8960.diff",

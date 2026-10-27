@@ -30,7 +30,7 @@ case "$(basename "$0") $*" in
 esac
 ''')
     stub.chmod(0o755)
-    for name in ("sysctl", "btconfig", "modstat", "modload", "btattach", "bthcid", "sdpd", "bluetooth-control", "gpioctl", "sleep"):
+    for name in ("sysctl", "btconfig", "modstat", "modload", "btattach", "bthcid", "sdpd", "bluetooth-control", "gpioctl", "sleep", "timeout"):
         (base / name).symlink_to(stub)
     script = base / "rc"
     script.write_text(source.read_text().replace('/etc/rc.subr', str(subr))
@@ -56,9 +56,10 @@ esac
             configure = "btconfig btuart0 name Asenta NetBSD class 0x000104 pscan iscan -auth -encrypt switch sniff -master"
             good &= lines.index("bluetooth-control btuart0 init Asenta NetBSD") < lines.index(configure)
         elif case == "pi3":
-            good &= "modload bcmexpgpio" in lines
-            good &= "gpioctl gpio0 32 set alt3" in lines and "gpioctl gpio0 33 set alt3" in lines
-            good &= "btattach -i 115200 bcm43xx /dev/dplcom0 921600" in lines
+            pins = ["gpioctl gpio0 %d set alt3" % pin for pin in (30, 31, 32, 33)]
+            good &= all(pin in lines for pin in pins) and "modload bcmexpgpio" in lines
+            good &= good and max(lines.index(pin) for pin in pins) < lines.index("modload bcmexpgpio")
+            good &= "timeout 60 btattach -i 115200 bcm43xx /dev/dplcom0 921600" in lines
             good &= resets == ["btconfig btuart0 enable"]
         elif case == "orangepi":
             good &= "btattach -f btuart /dev/dty01 1500000" in lines

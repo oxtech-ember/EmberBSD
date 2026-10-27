@@ -1,7 +1,9 @@
 /*
  * Raspberry Pi 3 B: the Bluetooth controller's power pin (BT_ON) is line 0
  * of the firmware's GPIO expander, which only the VideoCore mailbox reaches.
- * Loading this module powers the controller; unloading powers it off.
+ * Loading this module power-cycles the controller and leaves it on;
+ * unloading powers it off.  After boot the controller answers HCI only
+ * after BT_ON has gone low and high again.
  * Pi 3 B's devicetree names the line "BT_ON" in gpio-line-names, index 0.
  */
 #include <sys/cdefs.h>
@@ -10,6 +12,8 @@
 #include <sys/module.h>
 #include <sys/endian.h>
 #include <sys/cpu.h>
+#include <sys/kernel.h>
+#include <sys/proc.h>
 
 #include <arm/broadcom/bcm2835_mbox.h>
 #include <evbarm/rpi/vcio.h>
@@ -52,8 +56,15 @@ bcmexpgpio_set(unsigned int line, unsigned int state)
 static int
 bcmexpgpio_modcmd(modcmd_t cmd, void *arg)
 {
+	int error;
+
 	switch (cmd) {
 	case MODULE_CMD_INIT:
+		error = bcmexpgpio_set(EXPGPIO_BT_ON, 0);
+		if (error != 0)
+			return error;
+		/* Held low for a second, as on the bench. */
+		kpause("btpower", false, hz, NULL);
 		return bcmexpgpio_set(EXPGPIO_BT_ON, 1);
 	case MODULE_CMD_FINI:
 		return bcmexpgpio_set(EXPGPIO_BT_ON, 0);
