@@ -11,13 +11,16 @@ rcvar=$name
 start_cmd=ember_bluetooth_start
 stop_cmd=:
 
+# btattach detaches once the controller is initialised and waits for ever on a
+# silent one, which would hold sshd back. Every call is bounded by timeout(1);
+# the detached daemon leaves timeout's process group and keeps running.
 ember_bluetooth_attach()
 {
 	case "$1" in
 	'Raspberry Pi 5 Model B')
 		modstat | awk '{print $1}' | grep -qx bcm2712btcom || \
 		    modload bcm2712btcom || return 1
-		btattach -f -i 115200 bcm43xx /dev/dty00 115200 ;;
+		timeout 60 btattach -f -i 115200 bcm43xx /dev/dty00 115200 ;;
 	raspberrypi,3-model-b)
 		# The devicetree's pin setup for the PL011 is not applied. Select
 		# the pins before the controller is powered, then power-cycle it
@@ -28,12 +31,11 @@ ember_bluetooth_attach()
 		modstat | awk '{print $1}' | grep -qx bcmexpgpio || \
 		    modload bcmexpgpio || return 1
 		sleep 1
-		# The devicetree wires no flow control. btattach returns once
-		# the patch RAM is loaded; a silent controller must not stall boot.
+		# The devicetree wires no flow control.
 		timeout 60 btattach -i 115200 bcm43xx /dev/dplcom0 921600 ;;
 	xunlong,orangepi-zero4|xunlong,orangepi-zero3w)
 		# aicwf(4) uploaded the controller's patches with the baud rate.
-		btattach -f btuart /dev/dty01 1500000 ;;
+		timeout 60 btattach -f btuart /dev/dty01 1500000 ;;
 	esac
 }
 

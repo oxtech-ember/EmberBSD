@@ -2,10 +2,17 @@
 """Execute the real rc script with external commands replaced at the boundary."""
 import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 
 source = Path(__file__).resolve().parents[1] / "etc/rc.d/ember_bluetooth"
+# A silent controller keeps btattach waiting for ever; the stub below cannot
+# show that, so every call in the source must carry its own limit.
+unbounded = [line for line in source.read_text().splitlines()
+             if re.search(r"\bbtattach\b", line) and not re.match(r"\s*#", line)
+             and not re.match(r"\s*timeout [0-9]+ btattach ", line)]
+print("bounded: " + ("FAIL\n" + "\n".join(unbounded) if unbounded else "PASS"))
 with tempfile.TemporaryDirectory(prefix="bluetooth-rc-") as directory:
     base = Path(directory)
     subr = base / "rc.subr"
@@ -36,7 +43,7 @@ esac
     script.write_text(source.read_text().replace('/etc/rc.subr', str(subr))
                       .replace('/etc/ember/bluetooth.conf', str(base / 'absent.conf'))
                       .replace('/opt/ember/bin/bluetooth-control', str(base / 'bluetooth-control')))
-    failed = False
+    failed = bool(unbounded)
     for case in ("live", "cold", "orangepi", "pi3", "foreign", "rejected"):
         log = base / "commands"
         log.write_text("")
@@ -47,11 +54,11 @@ esac
         resets = [line for line in lines if line in ("btconfig btuart0 disable", "btconfig btuart0 enable")]
         good = result.returncode == (1 if case == "rejected" else 0)
         if case in ("live", "rejected"):
-            good &= not resets and not any(line.startswith(("modload ", "btattach ")) for line in lines)
+            good &= not resets and not any(line.startswith(("modload ", "timeout ", "btattach ")) for line in lines)
         elif case == "cold":
             good &= resets == ["btconfig btuart0 enable", "btconfig btuart0 disable", "btconfig btuart0 enable"]
             good &= lines.index("btconfig btuart0 disable") < lines.index("bluetooth-control btuart0 init Asenta NetBSD")
-            good &= any(line.startswith("btattach ") for line in lines)
+            good &= "timeout 60 btattach -f -i 115200 bcm43xx /dev/dty00 115200" in lines
             good &= "btconfig btuart0 -pscan -iscan" in lines
             configure = "btconfig btuart0 name Asenta NetBSD class 0x000104 pscan iscan -auth -encrypt switch sniff -master"
             good &= lines.index("bluetooth-control btuart0 init Asenta NetBSD") < lines.index(configure)
@@ -62,7 +69,7 @@ esac
             good &= "timeout 60 btattach -i 115200 bcm43xx /dev/dplcom0 921600" in lines
             good &= resets == ["btconfig btuart0 enable"]
         elif case == "orangepi":
-            good &= "btattach -f btuart /dev/dty01 1500000" in lines
+            good &= "timeout 60 btattach -f btuart /dev/dty01 1500000" in lines
             good &= not any(line.startswith("modload ") for line in lines)
             good &= "btconfig btuart0 enable" in lines
         else:
