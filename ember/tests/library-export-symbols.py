@@ -14,12 +14,12 @@ import subprocess
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("make", "cc", "linker", "nm", "shell", "native-tools", "work"):
+    for name in ("make", "cc", "linker", "nm", "readelf", "shell", "native-tools", "work"):
         parser.add_argument("--" + name, type=Path, required=True)
     parser.add_argument("--mk-root", type=Path,
                         help="optional make include overlay for a baseline check")
     args = parser.parse_args()
-    for name in ("make", "cc", "linker", "nm", "shell"):
+    for name in ("make", "cc", "linker", "nm", "readelf", "shell"):
         path = getattr(args, name)
         if not path.is_absolute() or not path.is_file():
             parser.error("--" + name + " must name an absolute tool")
@@ -54,16 +54,18 @@ def main():
          "-c", "fixture.c", "-o", "fixture.o"])
     run([args.linker, "-shared", "--version-script=fixture.map", "fixture.o",
          "-o", "libfixture.so.1.0"])
-    expected = "api@@VER_2\napi@VER_1\nplain@@VER_2\n"
+    expected = "VER_1\nVER_2\napi@@VER_2\napi@VER_1\nplain@@VER_2\n"
     make = [args.make, "-r"]
+    make += ["-m", source / "share/mk"]
     if args.mk_root:
         make += ["-m", args.mk_root]
-    make += ["-m", source / "share/mk", "MAKECONF=/dev/null", "_SRC_TOP_=",
+    make += ["MAKECONF=/dev/null", "_SRC_TOP_=",
              "NETBSDSRCDIR=" + str(source), "MACHINE=amd64", "MACHINE_ARCH=x86_64",
              "MACHINE_GNU_PLATFORM=x86_64--netbsd", "USETOOLS=no", "MKDEBUG=no",
              "MKPROFILE=no", "MKDEBUGLIB=no", "MKLINT=no", "SOLIB=", "DPADD=",
              "DPLIBC=", "SHLIB_LDSTARTFILE=", "SHLIB_LDENDFILE=",
-             "HOST_SH=" + str(args.shell), "EMBER_NATIVE_TOOLS=" + str(args.native_tools)]
+             "HOST_SH=" + str(args.shell), "EMBER_NATIVE_TOOLS=" + str(args.native_tools),
+             "READELF=" + str(args.readelf)]
 
     def case(name, symbols=expected):
         directory = work / name
@@ -79,7 +81,7 @@ def main():
     run(make + ["NM=" + str(args.nm), "libfixture.so.1.0.diffsym"], valid)
     assert (valid / "libfixture.so.1.0.actsym").read_text() == expected
     assert (valid / "libfixture.so.1.0.diffsym").read_bytes() == b""
-    for suffix in ("raw", "names", "filtered", "tmp"):
+    for suffix in ("raw", "names", "versions", "filtered", "tmp"):
         assert not (valid / ("libfixture.so.1.0.actsym." + suffix)).exists()
     print("versioned exported symbols: PASS", flush=True)
 
@@ -89,6 +91,18 @@ def main():
     assert "actual symbols differ from expected symbols" in result.stdout + result.stderr
     assert not (mismatch / "libfixture.so.1.0.diffsym").exists()
     print("ABI mismatch rejected: PASS", flush=True)
+
+    # A version name in the expected list must come from a real definition.
+    (work / "plain.c").write_text('int plain(void) { return 3; }\n')
+    run([args.cc, "--no-default-config", "--target=x86_64--netbsd", "-fPIC",
+         "-c", "plain.c", "-o", "plain.o"])
+    run([args.linker, "-shared", "plain.o", "-o", "unversioned.so"])
+    missing = case("missing-version", "VER_1\nplain\n")
+    shutil.copyfile(work / "unversioned.so", missing / "libfixture.so.1.0")
+    result = run(make + ["NM=" + str(args.nm), "libfixture.so.1.0.diffsym"],
+                 missing, success=False)
+    assert "actual symbols differ from expected symbols" in result.stdout + result.stderr
+    print("missing version definition rejected: PASS", flush=True)
 
     failing_nm = work / "failing-nm"
     failing_nm.write_text("#!" + str(args.shell) + "\n"
@@ -106,9 +120,24 @@ def main():
             assert target.read_text() == "previous_valid_list\n"
         else:
             assert not target.exists()
-        for suffix in ("raw", "names", "filtered", "tmp"):
+        for suffix in ("raw", "names", "versions", "filtered", "tmp"):
             assert not Path(str(target) + "." + suffix).exists()
     print("failed nm cannot publish or replace a symbol list: PASS", flush=True)
+
+    failing_readelf = work / "failing-readelf"
+    failing_readelf.write_text("#!" + str(args.shell) + "\n"
+                              "printf 'Version definition section partial\\n'\nexit 7\n")
+    failing_readelf.chmod(0o755)
+    directory = case("failed-readelf")
+    target = directory / "libfixture.so.1.0.actsym"
+    target.write_text("previous_valid_list\n")
+    os.utime(target, (1, 1))
+    run(make + ["NM=" + str(args.nm), "READELF=" + str(failing_readelf),
+                "libfixture.so.1.0.actsym"], directory, success=False)
+    assert target.read_text() == "previous_valid_list\n"
+    for suffix in ("raw", "names", "versions", "filtered", "tmp"):
+        assert not Path(str(target) + "." + suffix).exists()
+    print("failed readelf preserves the symbol list: PASS", flush=True)
 
 
 if __name__ == "__main__":

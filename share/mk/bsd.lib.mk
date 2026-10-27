@@ -768,25 +768,30 @@ ${_LIB.so.full}.actsym: ${_LIB.so.full}
 	# LLD records version nodes in .gnu.version_d without nm-visible
 	# symbols; fold non-BASE VERDEF names into actsym for LIB_EXPSYM.
 	@set -e; \
-	trap 'rm -f ${.TARGET}.raw ${.TARGET}.names ${.TARGET}.filtered ${.TARGET}.tmp ${.TARGET}.vers' 0; \
+	trap 'rm -f ${.TARGET}.raw ${.TARGET}.versions ${.TARGET}.names ${.TARGET}.filtered ${.TARGET}.tmp' 0; \
 	${NM} --dynamic --extern-only --defined-only ${.ALLSRC} >${.TARGET}.raw; \
+	LC_ALL=C ${READELF} --version-info --wide ${.ALLSRC} >${.TARGET}.versions; \
 	cut -d' ' -f3 ${.TARGET}.raw >${.TARGET}.names; \
 	${_EXPSYM_FILTER}; \
-	if ${READELF} --version-info ${.ALLSRC} >${.TARGET}.vers 2>/dev/null; then \
-		awk '/Version definition section/{in_vd=1; next} \
-			/^Version / && $$0 !~ /definition/{in_vd=0} \
-			in_vd && /Name:/ && $$0 !~ /Flags: BASE/ { \
-				for (i = 1; i <= NF; i++) \
-					if ($$i == "Name:") print $$(i + 1) \
-			}' ${.TARGET}.vers >>${.TARGET}.filtered; \
-	fi; \
+	LC_ALL=C awk '/^Version definition section / { in_defs=1; next } \
+	    in_defs && /^$$/ { in_defs=0 } \
+	    in_defs && /Rev:/ && /Flags:/ && /Index:/ && /Name:/ { \
+	      base=0; name=""; \
+	      for (i=1; i<=NF; i++) { \
+	        if ($$i == "Flags:") \
+	          for (j=i+1; j<=NF && $$j != "Index:"; j++) \
+	            if ($$j == "BASE") base=1; \
+	        if ($$i == "Name:" && i<NF) name=$$(i+1); \
+	      } \
+	      if (!base && name != "") print name; \
+	    }' ${.TARGET}.versions >>${.TARGET}.filtered; \
 	LC_ALL=C sort -u ${.TARGET}.filtered >${.TARGET}.tmp; \
 	${MV} ${.TARGET}.tmp ${.TARGET}
 CLEANFILES+=	${_LIB.so.full}.actsym
 CLEANFILES+=	${_LIB.so.full}.actsym.tmp
-CLEANFILES+=	${_LIB.so.full}.actsym.raw ${_LIB.so.full}.actsym.names
+CLEANFILES+=	${_LIB.so.full}.actsym.raw ${_LIB.so.full}.actsym.versions
+CLEANFILES+=	${_LIB.so.full}.actsym.names
 CLEANFILES+=	${_LIB.so.full}.actsym.filtered
-CLEANFILES+=	${_LIB.so.full}.actsym.vers
 CLEANFILES+=	${_LIB.so.full}.diffsym
 CLEANFILES+=	${_LIB.so.full}.diffsym.tmp
 update-symbols: .PHONY
