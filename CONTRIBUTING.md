@@ -106,7 +106,8 @@ Run relevant shared-path regressions on an existing configuration.
 Keep kernel, modules, firmware and userland compatible.
 Never accept leftover artifacts after a failed build.
 
-Use Cppcheck and applicable GCC/Clang path analysis for changed C/C++ sources and tests.
+Use Cppcheck and Clang Static Analyzer for changed C/C++ sources and tests.
+Add GCC `-fanalyzer` only for code built with an explicit GCC platform profile.
 Use actual target headers and compiler settings.
 Run executable contracts with Valgrind on a supported platform.
 Record unavailable tools and use appropriate sanitizers or kernel diagnostics.

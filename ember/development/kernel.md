@@ -77,7 +77,8 @@ Follow the selected subsystem's commands rather than rerunning unrelated full bu
 
 For C/C++, run Cppcheck on the affected source and executable contracts.
 Use target headers, macros and actual compile options, preferably a compilation database.
-Add GCC `-fanalyzer` for C and Clang Static Analyzer for supported C/C++ paths.
+Add Clang Static Analyzer for supported C/C++ paths.
+Use GCC `-fanalyzer` only for code built with an explicit GCC platform profile.
 Record analyzer versions, coverage, findings, and each justified suppression.
 Compare inherited findings when adapting an upstream implementation.
 
