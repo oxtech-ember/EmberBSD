@@ -27,7 +27,8 @@ for line in lines[marker + 1:]:
 # The full Git index remains available in a sparse checkout. Derive this
 # family from it, so future transport units and headers also need coverage.
 pci_inputs = subprocess.check_output(
-    ["git", "-C", str(root), "ls-files", "--", "sys/dev/pci/rtw88_pci_*"],
+    ["git", "-c", f"safe.directory={root}", "-C", str(root),
+     "ls-files", "--", "sys/dev/pci/rtw88_pci_*"],
     text=True,
 ).splitlines()
 if not pci_inputs:
