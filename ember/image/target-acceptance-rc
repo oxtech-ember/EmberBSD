@@ -1,0 +1,39 @@
+#!/bin/sh
+# SPDX-License-Identifier: BSD-2-Clause
+# Run the disposable target suite after the selected read-only FFS root mounts.
+set -eu
+
+fail()
+{
+	if [ -n "${nonce-}" ]; then
+		echo "EMBERBSD-ACCEPTANCE $nonce FAIL $1"
+	fi
+	echo "target acceptance: $1" >&2
+	/sbin/shutdown -p now
+	exit 1
+}
+
+nonce=$(cat /etc/emberbsd-target-acceptance.nonce 2>/dev/null || true)
+case $nonce in ''|*[!A-Za-z0-9_-]*) fail invalid-nonce;; esac
+root_device=$(cat /etc/emberbsd-target-acceptance-root-device 2>/dev/null || true)
+case $root_device in ld*[a-p]) ;; *) fail invalid-root-device;; esac
+
+mounted=$(/sbin/mount -p | awk '$2 == "/" { print $1 " " $3 " " $4; count++ } END { if (count != 1) exit 1 }') ||
+	fail root-mount-query
+set -- $mounted
+[ "$1" = "/dev/$root_device" ] && [ "$2" = ffs ] || fail unexpected-root-device
+case ,$3, in *,ro,*) ;; *) fail root-is-not-read-only;; esac
+echo "EMBERBSD-ACCEPTANCE $nonce ROOT $1 $2 $3"
+EMBERBSD_ACCEPTANCE_NONCE=$nonce
+export EMBERBSD_ACCEPTANCE_NONCE
+
+/sbin/mount -t tmpfs tmpfs /tmp || fail scratch-mount
+mkdir -p /tmp/emberbsd-target-tests || fail scratch-create
+cp -R /tests/. /tmp/emberbsd-target-tests/ || fail tests-copy
+cd /tmp/emberbsd-target-tests || fail tests-directory
+if ./run-target.sh --target aarch64 .; then
+	echo "EMBERBSD-ACCEPTANCE $nonce COMPLETE"
+	/sbin/shutdown -p now
+	exit 0
+fi
+fail guest-tests
