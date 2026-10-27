@@ -183,3 +183,7 @@ A complete target acceptance still builds and links the real artifacts,
 compares libc exports and dependencies, and exercises C/C++ exceptions,
 static links and the target FENV tests. A metadata or source-model check does
 not establish that result or a booted Clang-built release.
+
+## Bootstrap shared libraries
+
+During `EMBER_LLVM_RUNTIME_PHASE=bootstrap`, shared links pass `-Wl,--exclude-libs,libunwind.a` so the static archive can satisfy unwind references without expanding `LIB_EXPSYM` on consumers such as libexecinfo.

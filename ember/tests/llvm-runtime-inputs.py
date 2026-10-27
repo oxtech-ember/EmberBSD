@@ -394,6 +394,7 @@ class LLVMSourceTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn("/sdk/bin/clang --target=aarch64--netbsd", result.stdout)
                 self.assertIn("--rtlib=compiler-rt --unwindlib=libunwind", result.stdout)
+                self.assertIn("-Wl,--exclude-libs,libunwind.a", result.stdout)
                 self.assertIn("-resource-dir=" + str(self.work / "bootstrap/lib/clang/23"), result.stdout)
                 self.assertNotIn("-lgcc", result.stdout)
                 self.assertNotIn("include/c++", result.stdout)
@@ -401,6 +402,18 @@ class LLVMSourceTests(unittest.TestCase):
             result = self.query("share/mk/bsd.lib.mk", ("LDFLAGS",), "LIB=probe",
                 *options, setting)
             self.assertNotEqual(result.returncode, 0, result.stdout)
+
+    def test_bootstrap_shared_links_exclude_static_libunwind(self):
+        # Bootstrap has only libunwind.a. Shared libraries must not publish its
+        # unwind ABI through LIB_EXPSYM; exclude-libs keeps the objects private.
+        options = self.bootstrap_options()
+        result = self.query("share/mk/bsd.lib.mk", ("LDFLAGS",),
+            "LIB=execinfo", "SHLIB_MAJOR=0", "SHLIB_MINOR=0", "SRCS=probe.c",
+            *options)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        flags = result.stdout.split()
+        self.assertIn("-Wl,--exclude-libs,libunwind.a", flags)
+        self.assertIn("--unwindlib=libunwind", flags)
 
     def test_application_runtime_keeps_os_crt_and_explicit_driver_ordering(self):
         names = ("CXX", "CXXFLAGS", "MKDEPCXXFLAGS", "LDFLAGS",

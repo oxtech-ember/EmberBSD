@@ -66,6 +66,12 @@ LDFLAGS+=	-resource-dir=${EMBER_LLVM_RESOURCE_DIR} \
 		--rtlib=compiler-rt --unwindlib=libunwind \
 		-L${EMBER_EXTERNAL_LLVM_RUNTIME}/lib \
 		-Wl,-rpath-link,${EMBER_EXTERNAL_LLVM_RUNTIME}/lib
+# Bootstrap has only libunwind.a. Keep its objects for unresolved unwind
+# references, but do not export them from ordinary shared libraries; otherwise
+# consumers such as libexecinfo fail LIB_EXPSYM against the public ABI.
+.if ${_EMBER_LLVM_RUNTIME_PHASE} == "bootstrap"
+LDFLAGS+=	-Wl,--exclude-libs,libunwind.a
+.endif
 .if ${_EMBER_LLVM_RUNTIME_PHASE} == "full"
 LDFLAGS+=	-Wl,-rpath,/usr/pkg/llvm/lib
 .endif
