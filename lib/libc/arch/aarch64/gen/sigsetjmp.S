@@ -39,7 +39,9 @@
 /* LINTSTUB: int __sigsetjmp14(sigjmp_buf *, int); */
 
 ENTRY(__sigsetjmp14)
-	cbnz	w1, _C_LABEL(__setjmp14)
+	cbz	w1, 1f
+	b	_C_LABEL(__setjmp14)
+1:
 	b	_C_LABEL(_setjmp)
 END(__sigsetjmp14)
 
@@ -47,6 +49,8 @@ END(__sigsetjmp14)
 
 ENTRY(__siglongjmp14)
 	ldr	x3, [x0, #_JB_MAGIC]
-	tbnz	x3, #0, _C_LABEL(__longjmp14)
+	tbz	x3, #0, 1f
+	b	_C_LABEL(__longjmp14)
+1:
 	b	_C_LABEL(_longjmp)
 END(__siglongjmp14)
