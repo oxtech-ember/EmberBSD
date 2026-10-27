@@ -102,8 +102,6 @@ __RCSID("$NetBSD: driver.c,v 1.36 2021/05/02 12:50:45 rillig Exp $");
  */
 
 static bool localmode;			/* true -> AF_UNIX; false -> AF_INET */
-static bool inetd_spawned;		/* invoked via inetd? */
-static bool standard_port = true;	/* listening on standard port? */
 
 static struct sockaddr_storage huntaddr;
 static struct sockaddr_storage stataddr;
@@ -218,7 +216,6 @@ main(int ac, char **av)
 			server = true;
 			break;
 		  case 'p':
-			standard_port = false;
 			if (getnum(optarg, &optargnum) < 0) {
 				localmode = true;
 				huntsockpath = optarg;
@@ -396,7 +393,6 @@ init(void)
 	len = sizeof(stdinaddr);
 	if (getsockname(STDIN_FILENO, (struct sockaddr *)&stdinaddr,
 			&len) >= 0) {
-		inetd_spawned = true;
 		/* force localmode, assimilate stdin as appropriate */
 		if (stdinaddr.ss_family == AF_UNIX) {
 			localmode = true;
@@ -466,9 +462,6 @@ init(void)
 		contactport = getsockport(contactsock);
 		statport = getsockport(statsock);
 		huntport = getsockport(huntsock);
-		if (contactport != TEST_PORT) {
-			standard_port = false;
-		}
 	}
 
 	/*
