@@ -17,6 +17,8 @@
  *
  *	3. Altered versions must be plainly marked as such, and must not
  *		be misrepresented as being the original software.
+ *** THIS IS AN ALTERED VERSION. EmberBSD contributors converted function
+ *** definitions to prototypes in 2026, preserving their types and bodies.
  */
 
 #include <sys/cdefs.h>

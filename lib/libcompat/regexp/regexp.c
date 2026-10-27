@@ -17,6 +17,8 @@
  *
  *	3. Altered versions must be plainly marked as such, and must not
  *		be misrepresented as being the original software.
+ *** THIS IS AN ALTERED VERSION. EmberBSD contributors converted function
+ *** definitions to prototypes in 2026, preserving their types and bodies.
  *** THIS IS AN ALTERED VERSION.  It was altered by John Gilmore,
  *** hoptoad!gnu, on 27 Dec 1986, to add \n as an alternative to |
  *** to assist in implementing egrep.
@@ -1145,8 +1147,7 @@ regnext(char *p)
  - regdump - dump a regexp onto stdout in vaguely comprehensible form
  */
 void
-regdump(r)
-regexp *r;
+regdump(regexp *r)
 {
 	char *s;
 	char op = EXACTLY;	/* Arbitrary non-END op. */
@@ -1188,8 +1189,7 @@ regexp *r;
  - regprop - printable representation of opcode
  */
 static char *
-regprop(op)
-char *op;
+regprop(char *op)
 {
 	char *p;
 	static char buf[50];

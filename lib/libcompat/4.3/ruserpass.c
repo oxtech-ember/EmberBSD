@@ -263,7 +263,7 @@ bad:
 }
 
 static int
-token()
+token(void)
 {
 	char *cp;
 	int c;
