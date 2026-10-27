@@ -150,6 +150,13 @@ selected helper. A helper that calls `__fe_getround` or `__fe_raise_inexact`
 (`addtf3.c`) requires exactly one `fp_mode.c` entry. The file comes from
 `compiler-rt/lib/builtins/aarch64`.
 
+On amd64, modern LLVM also enables `__powitf2` for `__float128`, separately
+from the 80-bit `long double` ABI. The libc source list includes its
+`__multf3` and `__divtf3` dependencies from the same common recipe. Add
+`--linker /absolute/native-prefix/bin/ld.lld` to verify a strict target shared
+link without a runtime archive; omitting either arithmetic helper must fail.
+This is a link check, not target execution.
+
 Pass `--native-tools /absolute/native-command-routing` and
 `--install /absolute/os-tools/bin/TRIPLET-install` together to exercise actual
 `bsd.inc.mk` installation with the selected shell, utilities and OS installer.

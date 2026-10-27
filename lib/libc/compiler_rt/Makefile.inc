@@ -134,6 +134,12 @@ GENERIC_SRCS+=	\
 
 .endif # IEEE 754 only machines
 
+# Modern compiler-rt enables __powitf2 for amd64 __float128 even though
+# long double remains 80-bit.  Its arithmetic must also resolve inside libc.
+.if ${LIBC_MACHINE_ARCH} == "x86_64"
+GENERIC_SRCS+= divtf3.c multf3.c
+.endif
+
 # LLVM compiler-rt exposes xf_float/xf_bits only on its supported 80-bit
 # long-double targets.  Keep the NetBSD m68k/ia64 ABI sources available even
 # where the selected Clang cannot validate those target ABIs.

@@ -20,6 +20,7 @@ PREPARED_LLVM = None
 NATIVE_TOOLS = None
 INSTALL = None
 CLANG = None
+LINKER = None
 SYSROOT = None
 
 
@@ -116,6 +117,51 @@ class LLVMSourceTests(unittest.TestCase):
                 str(builtins / "fixunsxfdi.c")], text=True, capture_output=True, timeout=30)
             self.assertNotEqual(result.returncode, 0)
             self.assertRegex(result.stderr, r"unknown type name 'xf_(?:float|bits)'")
+
+    def test_binary128_power_has_one_arithmetic_provider(self):
+        for family in ("clang", "gcc"):
+            for machine, arch in (("amd64", "x86_64"), ("evbarm", "aarch64"),
+                                  ("evbarm", "aarch64eb"), ("i386", "i386")):
+                with self.subTest(family=family, architecture=arch):
+                    result = self.query("lib/libc/compiler_rt/Makefile.inc", ("SRCS",),
+                        "EMBER_COMPILER_FAMILY=" + family, machine=machine, arch=arch)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    sources = result.stdout.split()
+                    self.assertEqual(sources.count("powitf2.c"), 1)
+                    for helper in ("divtf3.c", "multf3.c"):
+                        self.assertEqual(sources.count(helper), 0 if arch == "i386" else 1)
+
+    def test_amd64_binary128_power_links_without_external_runtime(self):
+        if any(value is None for value in (PREPARED_LLVM, CLANG, LINKER, SYSROOT)):
+            self.skipTest("pass --prepared-llvm, --clang, --linker and --sysroot for actual target links")
+        result = self.query("lib/libc/compiler_rt/Makefile.inc", ("SRCS",),
+            "EMBER_LLVM_SOURCE=" + str(PREPARED_LLVM), machine="amd64", arch="x86_64")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        selected = result.stdout.split()
+        objects = {}
+        for source in ("powitf2.c", "multf3.c", "divtf3.c"):
+            self.assertIn(source, selected)
+            output = self.work / (source + ".o")
+            compiled = subprocess.run([str(CLANG), "--no-default-config",
+                "--target=x86_64--netbsd", "--sysroot=" + str(SYSROOT),
+                "-ffreestanding", "-fPIC", "-O2", "-Wall", "-Wextra", "-Werror",
+                "-c", str(PREPARED_LLVM / "compiler-rt/lib/builtins" / source),
+                "-o", str(output)], capture_output=True, text=True, timeout=30)
+            self.assertEqual(compiled.returncode, 0, compiled.stderr)
+            objects[source] = str(output)
+        # Strict links expose each dependency; no compiler driver can inject
+        # another runtime archive and accidentally make these controls pass.
+        for omitted in ("multf3.c", "divtf3.c", None):
+            with self.subTest(omitted=omitted):
+                linked = subprocess.run([str(LINKER), "-shared", "-z", "defs",
+                    "-o", str(self.work / "power.so"),
+                    *(obj for source, obj in objects.items() if source != omitted)],
+                    capture_output=True, text=True, timeout=30)
+                if omitted is None:
+                    self.assertEqual(linked.returncode, 0, linked.stderr)
+                else:
+                    self.assertNotEqual(linked.returncode, 0)
+                    self.assertIn("undefined symbol: __" + omitted[:-2], linked.stderr)
 
     def test_base_and_kernel_select_the_same_common_compiler_rt(self):
         for consumer in ("lib/libc/compiler_rt/Makefile.inc",
@@ -454,6 +500,7 @@ if __name__ == "__main__":
     parser.add_argument("--source", type=Path, default=SOURCE)
     parser.add_argument("--prepared-llvm", type=Path)
     parser.add_argument("--clang", type=Path)
+    parser.add_argument("--linker", type=Path, help="selected target ELF linker")
     parser.add_argument("--sysroot", type=Path)
     parser.add_argument("--native-tools", type=Path,
                         help="selected OS native command routing directory")
@@ -463,6 +510,7 @@ if __name__ == "__main__":
     SOURCE = args.source.resolve()
     PREPARED_LLVM = args.prepared_llvm.resolve() if args.prepared_llvm else None
     CLANG = args.clang.resolve() if args.clang else None
+    LINKER = args.linker.resolve() if args.linker else None
     SYSROOT = args.sysroot.resolve() if args.sysroot else None
     if bool(args.native_tools) != bool(args.install):
         parser.error("--native-tools and --install must be selected together")
