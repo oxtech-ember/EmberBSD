@@ -34,14 +34,17 @@
  * Functions sorted alphabetically.
  */
 #define	PR_LMID_EVERY 0
+/* EmberBSD: the Solaris base link map ID. */
+#define	LM_ID_BASE 0
 #define	PGRAB_RDONLY	PATTACH_RDONLY
 #define	PGRAB_FORCE	PATTACH_FORCE
 
 #define	Psetrun(p, a1, a2) proc_continue((p))
 #define	Pxlookup_by_addr(p, a, n, s, sym, i) \
     proc_addr2sym(p, a, n, s, sym)
+/* EmberBSD: evaluate the link map ID that FreeBSD libproc does not take. */
 #define	Pxlookup_by_name(p, l, s1, s2, sym, a) \
-    proc_name2sym(p, s1, s2, sym, a)
+    ((void)(l), proc_name2sym(p, s1, s2, sym, a))
 #define	Paddr_to_map proc_addr2map
 #define	Pcreate_error strerror
 #define	Pdelbkpt proc_bkptdel

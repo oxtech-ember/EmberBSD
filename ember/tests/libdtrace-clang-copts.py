@@ -3,10 +3,12 @@
 # Copyright (c) 2026 The EmberBSD Project contributors.
 # Developed with AI assistance.
 
-"""Check that Clang accepts every per-file libdtrace compiler option.
+"""Check the libdtrace compiler options and compatibility macros with Clang.
 
 Clang with -Werror rejects a warning option that only GCC knows, such as
 -Wno-error=use-after-free, so GCC-only options must not reach Clang.
+The libproc compatibility macros must evaluate the link map ID that the
+caller sets, or Clang reports -Wunused-but-set-variable in dt_pid.c.
 """
 
 import argparse
@@ -19,6 +21,27 @@ import unittest
 
 SOURCE = Path(__file__).resolve().parents[2]
 MAKEFILE = SOURCE / "external/cddl/osnet/lib/libdtrace/Makefile"
+COMPAT = SOURCE / "external/cddl/osnet/lib/libdtrace/libproc_compat.h"
+# The dt_proc.c and dt_pid_get_types() patterns: LM_ID_BASE, and a link map
+# ID that is set and then only given to Pxlookup_by_name().
+LOOKUP_FIXTURE = """\
+#include "libproc_compat.h"
+int proc_name2sym(void *, const char *, const char *, void *, void *);
+int lookup(void *p, const char *mod, const char *fn, void *sym, void *si, int named);
+int
+lookup(void *p, const char *mod, const char *fn, void *sym, void *si, int named)
+{
+	long lmid;
+
+	if (Pxlookup_by_name(p, LM_ID_BASE, "a.out", "main", sym, si) == 0)
+		return 0;
+	if (named)
+		lmid = 1;
+	else
+		lmid = 0;
+	return Pxlookup_by_name(p, lmid, mod, fn, sym, si);
+}
+"""
 MAKE = None
 CLANG = None
 
@@ -64,6 +87,15 @@ class LibdtraceCloptsTests(unittest.TestCase):
                     input="int dtrace_probe;\n", text=True, capture_output=True,
                     timeout=60)
                 self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_lookup_by_name_uses_the_link_map_id(self):
+        if CLANG is None:
+            self.skipTest("pass --clang to compile the libproc_compat.h fixture")
+        result = subprocess.run(
+            [str(CLANG), "--target=aarch64--netbsd", "-Wall", "-Werror", "-fsyntax-only",
+             "-I" + str(COMPAT.parent), "-x", "c", "-"],
+            input=LOOKUP_FIXTURE, text=True, capture_output=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
 
 def main():
