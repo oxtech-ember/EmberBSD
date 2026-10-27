@@ -181,7 +181,7 @@ imalloc(size_t nbytes)
 		if (morepages(NPOOLPAGES) == 0)
 			return NULL;
 		op = (union overhead *)(pagepool_start);
-		m = sizeof (*op) - (((char *)op - (char *)NULL) & (n - 1));
+		m = sizeof (*op) - ((uintptr_t)op & (n - 1));
 		if (n < m)
 			n += pagesz - m;
 		else
