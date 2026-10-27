@@ -9,7 +9,9 @@ dt_link.c, dt_pid.c and openpam_dynamic.c were fixed in the code, so their
 per-file COPTS must not demote a warning with -Wno-error= for any compiler,
 and must not give Clang an option that disables the fixed warning.
 GCC-only options that bsd.own.mk or an ${ACTIVE_CC} test select stay allowed.
-The COPTS lines and the CC_WNO_* definitions are evaluated with bmake.
+libpam no longer has sources that trip Clang's tautological-pointer-compare,
+so its library-wide CWARNFLAGS/COPTS must not demote or disable it either.
+The COPTS/CWARNFLAGS lines and the CC_WNO_* definitions are evaluated with bmake.
 """
 
 import argparse
@@ -31,14 +33,33 @@ CASES = (
     ("lib/libpam/libpam/Makefile", "openpam_dynamic.c",
      ("cast-function-type", "cast-function-type-mismatch")),
 )
+# (Makefile, warnings fixed in every source of that library)
+LIBRARY_CASES = (
+    ("lib/libpam/libpam/Makefile", ("tautological-pointer-compare",)),
+)
+# Library-wide options; bsd.sys.mk adds CWARNFLAGS.${ACTIVE_CC} to CWARNFLAGS.
+LIBRARY_VARIABLES = ("COPTS", "CWARNFLAGS", "CWARNFLAGS.clang")
 COMPILERS = (("clang", None), ("gcc", "16"))
 MAKE = None
 
 
 def copts(makefile, source, compiler, gcc_version):
     """Return the COPTS.<source> options for a compiler, evaluated by bmake."""
-    variable = "COPTS." + source
-    pattern = re.compile(r"%s\s*\+?=" % re.escape(variable))
+    return evaluate(makefile, ("COPTS." + source,), compiler, gcc_version)
+
+
+def library_options(makefile, compiler, gcc_version):
+    """Return the library-wide warning options for a compiler."""
+    return evaluate(makefile, LIBRARY_VARIABLES, compiler, gcc_version,
+                    "${COPTS} ${CWARNFLAGS} ${CWARNFLAGS.${ACTIVE_CC}}")
+
+
+def evaluate(makefile, variables, compiler, gcc_version, expression=None):
+    """Evaluate the assignments to variables in makefile with bmake."""
+    if expression is None:
+        expression = " ".join("${%s}" % v for v in variables)
+    pattern = re.compile(r"(?:%s)\s*[+:?!]?=" %
+                         "|".join(re.escape(v) for v in variables))
     lines = [line for line in (SOURCE / makefile).read_text().splitlines()
              if pattern.match(line)]
     wno = [line for line in OWN_MK.read_text().splitlines()
@@ -50,7 +71,7 @@ def copts(makefile, source, compiler, gcc_version):
     with tempfile.TemporaryDirectory() as work:
         (Path(work) / "probe.mk").write_text(probe)
         result = subprocess.run(
-            [str(MAKE), "-r", "-f", "probe.mk", "-V", "${%s}" % variable],
+            [str(MAKE), "-r", "-f", "probe.mk", "-V", expression],
             cwd=work, text=True, capture_output=True, timeout=30)
     if result.returncode:
         raise AssertionError(result.stderr)
@@ -77,6 +98,14 @@ class WarningDemoteTests(unittest.TestCase):
                 disabled = [o for o in options for w in warnings
                             if o in ("-Wno-" + w, "-Wno-error=" + w)]
                 self.assertEqual(disabled, [], "%s: %s" % (makefile, source))
+
+    def test_clang_keeps_library_wide_fixed_warnings(self):
+        for makefile, warnings in LIBRARY_CASES:
+            with self.subTest(makefile=makefile):
+                options = library_options(makefile, "clang", None)
+                disabled = [o for o in options for w in warnings
+                            if o in ("-Wno-" + w, "-Wno-error=" + w)]
+                self.assertEqual(disabled, [], makefile)
 
 
 def main():
