@@ -764,12 +764,17 @@ ${_LIB.so.full}.diffsym: ${LIB_EXPSYM} ${_LIB.so.full}.actsym
 	fi
 ${_LIB.so.full}.actsym: ${_LIB.so.full}
 	${_MKTARGET_CREATE}
-	${NM} --dynamic --extern-only --defined-only --with-symbol-versions \
-		${.ALLSRC} \
-	| cut -d' ' -f3	${_EXPSYM_PIPE_GREP} | LC_ALL=C sort -u >${.TARGET}.tmp
+# GNU nm and llvm-nm show symbol versions by default.
+# Run nm separately so a failure cannot publish an empty symbol list.
+	${NM} --dynamic --extern-only --defined-only \
+		${.ALLSRC} >${.TARGET}.nm.tmp
+	cut -d' ' -f3 ${.TARGET}.nm.tmp ${_EXPSYM_PIPE_GREP} \
+	    | LC_ALL=C sort -u >${.TARGET}.tmp
 	${MV} ${.TARGET}.tmp ${.TARGET}
+	rm -f ${.TARGET}.nm.tmp
 CLEANFILES+=	${_LIB.so.full}.actsym
 CLEANFILES+=	${_LIB.so.full}.actsym.tmp
+CLEANFILES+=	${_LIB.so.full}.actsym.nm.tmp
 CLEANFILES+=	${_LIB.so.full}.diffsym
 CLEANFILES+=	${_LIB.so.full}.diffsym.tmp
 update-symbols: .PHONY
