@@ -137,8 +137,13 @@ try_module(const char *modpath)
 		if (dlmodule) {
 			module->func[i] = dlmodule->func[i];
 		} else {
-			module->func[i] = (pam_func_t)dlfunc(module->dlh,
-			    pam_sm_func_name[i]);
+			/*
+			 * EmberBSD: void (*)(void) matches every function
+			 * type, so the cast does not trigger
+			 * -Wcast-function-type-mismatch.
+			 */
+			module->func[i] = (pam_func_t)(void (*)(void))dlfunc(
+			    module->dlh, pam_sm_func_name[i]);
 			/*
 			 * This openpam_log() call is a major source of
 			 * log spam, and the cases that matter are caught
