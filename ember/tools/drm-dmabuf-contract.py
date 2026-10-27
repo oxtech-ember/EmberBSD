@@ -51,6 +51,9 @@ def prepare_sync(root, base, work):
         "static int (*actual_ioctl)(struct file *, u_long, void *) = " +
         dispatch + ";\n", encoding="utf-8")
     (work / "dmabuf-abi.h").write_bytes((root / "sys/sys/dmabuf.h").read_bytes())
+    # Keep the native BSD ioctl encoding on hosts with a different ioctl ABI.
+    (work / "sys").mkdir(exist_ok=True)
+    (work / "sys/ioccom.h").write_bytes((root / "sys/sys/ioccom.h").read_bytes())
 
 
 def main():
