@@ -56,10 +56,11 @@ __weak_alias(xdr_sizeof,_xdr_sizeof)
 
 static bool_t x_putlong(XDR *, const long *);
 static bool_t x_putbytes(XDR *, const char *, u_int);
+static bool_t x_getlong(XDR *, long *);
+static bool_t x_getbytes(XDR *, char *, u_int);
 static u_int x_getpostn(XDR *);
 static bool_t x_setpostn(XDR *, u_int);
 static int32_t *x_inline(XDR *, u_int);
-static int harmless(void);
 static void x_destroy(XDR *);
 
 /* ARGSUSED */
@@ -119,11 +120,16 @@ x_inline(XDR *xdrs, u_int len)
 	}
 }
 
-static int
-harmless(void)
+static bool_t
+x_getlong(XDR *xdrs __unused, long *longp __unused)
 {
-	/* Always return FALSE/NULL, as the case may be */
-	return (0);
+	return (FALSE);
+}
+
+static bool_t
+x_getbytes(XDR *xdrs __unused, char *bp __unused, u_int len __unused)
+{
+	return (FALSE);
 }
 
 static void
@@ -144,9 +150,6 @@ xdr_sizeof(xdrproc_t func, void *data)
 	XDR x;
 	struct xdr_ops ops;
 	bool_t stat;
-	/* to stop ANSI-C compiler from complaining */
-	typedef  bool_t (* dummyfunc1)(XDR *, long *);
-	typedef  bool_t (* dummyfunc2)(XDR *, caddr_t, u_int);
 
 	ops.x_putlong = x_putlong;
 	ops.x_putbytes = x_putbytes;
@@ -155,9 +158,8 @@ xdr_sizeof(xdrproc_t func, void *data)
 	ops.x_setpostn = x_setpostn;
 	ops.x_destroy = x_destroy;
 
-	/* the other harmless ones */
-	ops.x_getlong =  (dummyfunc1) harmless;
-	ops.x_getbytes = (dummyfunc2) harmless;
+	ops.x_getlong = x_getlong;
+	ops.x_getbytes = x_getbytes;
 
 	x.x_op = XDR_ENCODE;
 	x.x_ops = &ops;

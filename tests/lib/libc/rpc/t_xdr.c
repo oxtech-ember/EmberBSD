@@ -142,10 +142,37 @@ ATF_TC_BODY(xdr_void_callback, tc)
 	ATF_REQUIRE_MSG(xdr_void(NULL, NULL), "xdr_void NULL call failed");
 }
 
+static bool_t
+sizeof_probe(XDR *x, const void *data)
+{
+	long value = 123;
+	char bytes[] = "abc";
+
+	(void)data;
+	ATF_REQUIRE(!XDR_GETLONG(x, &value));
+	ATF_REQUIRE_EQ(value, 123);
+	ATF_REQUIRE(!XDR_GETBYTES(x, bytes, 3));
+	ATF_REQUIRE(memcmp(bytes, "abc", sizeof(bytes)) == 0);
+	ATF_REQUIRE(XDR_PUTLONG(x, &value));
+	ATF_REQUIRE(XDR_PUTBYTES(x, bytes, 3));
+	return TRUE;
+}
+
+ATF_TC(xdr_sizeof_ops);
+ATF_TC_HEAD(xdr_sizeof_ops, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "Checks size stream operations");
+}
+ATF_TC_BODY(xdr_sizeof_ops, tc)
+{
+	ATF_REQUIRE_EQ(xdr_sizeof(sizeof_probe, NULL), BYTES_PER_XDR_UNIT + 3);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, xdr);
 	ATF_TP_ADD_TC(tp, xdr_void_callback);
+	ATF_TP_ADD_TC(tp, xdr_sizeof_ops);
 
 	return atf_no_error();
 }
