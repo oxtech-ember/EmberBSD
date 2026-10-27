@@ -15,7 +15,8 @@ inputs = %w[sys/dev/fdt/simplefb.c sys/dev/fdt/simplefb_subr.c sys/dev/fdt/simpl
             sys/dev/wscons/wsdisplayvar.h sys/arch/arm/fdt/arm_simplefb.c
             sys/arch/evbarm/fdt/fdt_bus_machdep.c sys/kern/subr_autoconf.c
             sys/dev/wscons/wsdisplay_vcons_util.c ember/tools/earlyfb-hooks-contract.c
-            ember/tools/bootfb-issuer-contract.c ember/tools/bootfb-issuer-contract.rb]
+            ember/tools/bootfb-issuer-contract.c ember/tools/bootfb-issuer-contract.rb
+            ember/tools/autoconf-test-lwp.h]
 files = inputs.to_h { |p| [p, File.read(source + '/' + p)] }
 # Retain nested option branches in the actual outer source block.
 def conditional(text, marker)
@@ -69,6 +70,7 @@ run = lambda do |label, argv|
   status
 end
 Dir.mktmpdir('bootfb-issuer-', ENV.fetch('TMPDIR', '/tmp')) do |work|
+  File.write(work + '/autoconf-test-lwp.h', files.fetch('ember/tools/autoconf-test-lwp.h'))
   puts "boot framebuffer fixture temporary directory: #{work}"
   saved = nil
   begin

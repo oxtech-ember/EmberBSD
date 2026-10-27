@@ -75,6 +75,8 @@ Dir.mktmpdir('bootfb-serial-handoff-',ENV.fetch('TMPDIR','/tmp')) do |work|
     final=auto[/^struct finalize_hook \{.*?^static int config_finalize_done;/m]
     abort 'config state absent' unless state && queue && final
     glue=<<~C
+      /* The console-close fixture already owns curlwp and its process. */
+      typedef struct lwp lwp_t;
       static int config_misc_lock, config_misc_cv, boothowto, config_do_twiddle;
       static unsigned hz=100;
       static bool init_started;

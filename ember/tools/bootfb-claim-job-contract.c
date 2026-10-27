@@ -31,7 +31,9 @@ static int acpi_resource_parse_ops_default;
 static unsigned queue_calls, claim_waits, wakeups, thread_exits;
 static unsigned observe_calls, takeover_calls, render_calls;
 static int observe_error, takeover_error, register_error;
+#ifdef WSDISPLAY_BOOTFB_DEFER
 static bool force_immediate;
+#endif
 static unsigned bad_resource;
 static ACPI_INTEGER acpi_sta, acpi_cca;
 static int acpi_parse_error;
@@ -242,7 +244,10 @@ static void claim_fresh(void)
 	queue_calls = claim_waits = wakeups = thread_exits = pending_waits = 0;
 	observe_calls = takeover_calls = render_calls = 0;
 	observe_error = takeover_error = register_error = acpi_parse_error = 0;
-	force_immediate = false; bad_resource = render_failure = renderer_reads = 0;
+#ifdef WSDISPLAY_BOOTFB_DEFER
+	force_immediate = false;
+#endif
+	bad_resource = render_failure = renderer_reads = 0;
 	acpi_sta = 15; acpi_cca = 0; expected_owner = NULL;
 }
 static void attach_gpu(void)

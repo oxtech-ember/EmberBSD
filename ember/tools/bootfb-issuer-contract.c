@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <sys/types.h>
 #include <sys/queue.h>
+#include "autoconf-test-lwp.h"
 #include <sys/bus.h>
 #include <sys/device.h>
 #include <inttypes.h>
@@ -15,7 +16,7 @@
 struct cfattach { const char *ca_name; };
 
 static int kernel_depth = 1;
-#ifdef WSDISPLAY_BOOTFB_DEFER
+#if defined(WSDISPLAY_BOOTFB_DEFER) || defined(BOOTFB_CLAIM_JOB_CONTRACT)
 static int cold = 1;
 #endif
 static void fixture_lock(int);

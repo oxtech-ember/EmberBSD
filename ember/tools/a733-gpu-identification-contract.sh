@@ -38,10 +38,10 @@ sed -n '1,/^#include /p' "$autoconf" | sed '/^#include /d' \
     > "$work/autoconf.h"
 sed -n '/^struct deferred_config {/,/^};/p; /^struct finalize_hook {/,/^};/p' \
     "$autoconf" > "$work/autoconf-structs.h"
-for name in config_defer config_process_deferred config_finalize_register \
+for name in config_defer config_mountroot_done config_process_deferred config_finalize_register \
     config_finalize config_mountroot config_mountroot_thread; do
     case "$name" in
-    config_process_deferred|config_mountroot_thread) printf 'static void\n' ;;
+    config_mountroot_done|config_process_deferred|config_mountroot_thread) printf 'static void\n' ;;
     config_finalize_register) printf 'int\n' ;;
     *) printf 'void\n' ;;
     esac >> "$work/autoconf.h"

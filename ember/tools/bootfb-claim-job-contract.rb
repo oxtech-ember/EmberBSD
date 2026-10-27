@@ -49,7 +49,8 @@ paths = %w[sys/arch/arm/broadcom/bcm2712_v3d_acpi.c sys/arch/arm/broadcom/bcm271
            sys/external/bsd/drm2/bcmv3d/bcmv3d_bo_stats.h
            sys/external/bsd/drm2/dist/include/uapi/drm/v3d_drm.h sys/kern/subr_autoconf.c
            ember/tools/bootfb-issuer-contract.c ember/tools/bootfb-issuer-contract.rb
-           ember/tools/bootfb-claim-job-contract.c ember/tools/bootfb-claim-job-contract.rb]
+           ember/tools/bootfb-claim-job-contract.c ember/tools/bootfb-claim-job-contract.rb
+           ember/tools/autoconf-test-lwp.h]
 files = paths.to_h { |p| [p, File.binread(source + '/' + p)] }
 Dir.mktmpdir('bootfb-claim-job-', ENV.fetch('TMPDIR', '/tmp')) do |work|
   puts 'claim job temporary directory: ' + work
@@ -76,8 +77,14 @@ Dir.mktmpdir('bootfb-claim-job-', ENV.fetch('TMPDIR', '/tmp')) do |work|
     state = auto[/^struct deferred_config \{.*?^TAILQ_HEAD\(deferred_config_head, deferred_config\);/m]
     queue = auto[/^static struct deferred_config_head interrupt_config_queue =\n\s*TAILQ_HEAD_INITIALIZER\(interrupt_config_queue\);/]
     abort 'actual queue absent' unless state && queue
+    mountroot = %w[mountroot_config_queue mountroot_config_running].map do |name|
+      declaration = auto[/^static struct deferred_config_head #{name} =\n\s*TAILQ_HEAD_INITIALIZER\(#{name}\);/]
+      abort "actual queue absent: #{name}" unless declaration
+      declaration
+    end.join("\n")
+    mountroot += "\n" + function(auto, 'config_mountroot_done')
     body = %w[config_pending_incr config_pending_decr config_interrupts config_interrupts_thread config_process_deferred].map { |n| function(auto, n) }.join("\n")
-    File.write(work + '/interrupt-functions.h', notice(auto) + state + "\n" + queue + "\n" + body)
+    File.write(work + '/interrupt-functions.h', notice(auto) + state + "\n" + queue + "\n" + mountroot + "\n" + body)
     drv = files.fetch('sys/external/bsd/drm2/bcmv3d/bcmv3d_drv.h')
     type = drv[/^struct bcmv3d_device \{.*?^};/m]
     constants = drv.lines.grep(/^#define BCMV3D_VA_(START|SIZE)\b/).join

@@ -10,6 +10,7 @@
 #include <sys/queue.h>
 #include <time.h>
 #include <sys/types.h>
+#include "autoconf-test-lwp.h"
 /* Keep provider calls and checks active in release builds. */
 #define assert(c) do { \
 	if (!(c)) { \
@@ -82,6 +83,8 @@ static struct deferred_config_head deferred_config_queue =
     TAILQ_HEAD_INITIALIZER(deferred_config_queue);
 static struct deferred_config_head mountroot_config_queue =
     TAILQ_HEAD_INITIALIZER(mountroot_config_queue);
+static struct deferred_config_head mountroot_config_running =
+    TAILQ_HEAD_INITIALIZER(mountroot_config_running);
 static bool root_is_mounted;
 static unsigned mountroot_exits;
 static void kthread_exit(int error) { assert(error == 0); mountroot_exits++; }
@@ -90,6 +93,10 @@ static TAILQ_HEAD(, finalize_hook) config_finalize_list =
 static TAILQ_HEAD(, device) config_pending =
     TAILQ_HEAD_INITIALIZER(config_pending);
 static int config_finalize_done, config_misc_lock, config_misc_cv;
+static void cv_broadcast(int *cv)
+{
+	assert(cv == &config_misc_cv && config_misc_lock != 0);
+}
 static int config_do_twiddle, boothowto;
 static const unsigned int hz = 100;
 struct pdevinit { void (*pdev_attach)(int); int pdev_count; };
@@ -1125,6 +1132,7 @@ reset(void)
 	assert(TAILQ_EMPTY(&deferred_config_queue));
 	assert(TAILQ_EMPTY(&config_finalize_list));
 	assert(TAILQ_EMPTY(&mountroot_config_queue));
+	assert(TAILQ_EMPTY(&mountroot_config_running));
 	root_is_mounted = false;
 	mountroot_exits = 0;
 	native_fixture = native_identify_error = false;
@@ -3380,6 +3388,7 @@ native_run(void)
 	root_is_mounted = true;
 	config_mountroot_thread(NULL);
 	CHECK(mountroot_exits == 1 && TAILQ_EMPTY(&mountroot_config_queue));
+	CHECK(TAILQ_EMPTY(&mountroot_config_running));
 	CHECK(sc.sc_start_attempted && sc.sc_clock_source == 1);
 	CHECK(prepares == 0);
 }

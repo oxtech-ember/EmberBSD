@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <stdatomic.h>
 #include <sys/queue.h>
+#include "autoconf-test-lwp.h"
 
 struct test_device {
 	struct test_device *dv_parent;
@@ -20,11 +21,7 @@ struct test_device {
 typedef struct test_device *device_t;
 typedef pthread_mutex_t kmutex_t;
 typedef pthread_cond_t kcondvar_t;
-typedef struct test_lwp { int unused; } lwp_t;
-
-_Thread_local lwp_t test_lwp;
 static _Thread_local bool config_lock_owned;
-#define curlwp (&test_lwp)
 #define KM_SLEEP 0
 #define KASSERT assert
 #define KERNEL_LOCKED_P() 1
