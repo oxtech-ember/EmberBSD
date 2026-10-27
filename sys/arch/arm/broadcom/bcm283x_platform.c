@@ -758,7 +758,8 @@ bcm283x_bootparams(bus_space_tag_t iot, bus_space_handle_t ioh)
 
 		bootconfig.dramblocks = 0;
 
-		for (int i = 0; i < n && i < DRAM_BLOCKS; i++) {
+		for (int i = 0; i < n && i < DRAM_BLOCKS &&
+		    i < __arraycount(vptp_mem->mem); i++) {
 			bootconfig.dram[i].address =
 			    le32toh(vptp_mem->mem[i].base);
 			bootconfig.dram[i].pages =
@@ -790,7 +791,7 @@ bcm283x_bootparams(bus_space_tag_t iot, bus_space_handle_t ioh)
 		    le32toh(vb.vbt_emmcclockrate.rate));
 	if (vcprop_tag_success_p(&vb.vbt_emmc2clockrate.tag))
 		printf("%s: emmc2 clock  %d\n", __func__,
-		    le32toh(vb.vbt_emmcclockrate.rate));
+		    le32toh(vb.vbt_emmc2clockrate.rate));
 	if (vcprop_tag_success_p(&vb.vbt_fwrev.tag))
 		printf("%s: firmware rev %x\n", __func__,
 		    le32toh(vb.vbt_fwrev.rev));
