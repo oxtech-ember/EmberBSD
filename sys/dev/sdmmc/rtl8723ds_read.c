@@ -31,113 +31,60 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <sys/types.h>
 #ifdef _KERNEL
 #include <sys/errno.h>
-#include <sys/systm.h>
+#include <sys/null.h>
 #else
 #include <errno.h>
-#include <string.h>
 #endif
-#include <libfdt.h>
 #include "rtl8723ds_read.h"
-
-/* rtw88/sdio.h domain mapping; only direct byte reads while MAC is off. */
-#define RTL_LOCAL 0x10250000U
-#define RTL_MAC 0x10260000U
-#define RTL_HOST "/soc@03000000/sdmmc@04021000"
-
-static bool
-rtl8723ds_prop(const void *fdt, int node, const char *name,
-    const void *want, int size)
-{
-	const void *p;
-	int len;
-
-	p = fdt_getprop(fdt, node, name, &len);
-	return p != NULL && len == size && memcmp(p, want, size) == 0;
-}
-
-bool
-rtl8723ds_read_match(const void *fdt, int host, uint16_t vendor,
-    uint16_t product, int function, int interface)
-{
-	fdt32_t reg[4];
-
-	if (fdt == NULL || fdt_check_header(fdt) != 0 ||
-	    vendor != 0x024c || product != 0xd723 || function != 1 ||
-	    interface != 7 || host < 0 || host != fdt_path_offset(fdt, RTL_HOST))
-		return false;
-	if (fdt_stringlist_count(fdt, 0, "compatible") < 1 ||
-	    fdt_node_check_compatible(fdt, 0, "allwinner,a133") != 0 ||
-	    !rtl8723ds_prop(fdt, 0, "ember,ys-m33-sdio-probe", "", 0) ||
-	    !rtl8723ds_prop(fdt, 0, "ember,ys-m33-rtl8723ds-read-probe", "", 0) ||
-	    !rtl8723ds_prop(fdt, host, "ember,ys-m33-sdio-host", "", 0) ||
-	    !rtl8723ds_prop(fdt, host, "compatible", "allwinner,sun50i-a100-mmc",
-	    sizeof("allwinner,sun50i-a100-mmc")) ||
-	    !rtl8723ds_prop(fdt, host, "status", "okay", 5))
-		return false;
-	reg[0] = 0; reg[1] = cpu_to_fdt32(0x04021000);
-	reg[2] = 0; reg[3] = cpu_to_fdt32(0x1000);
-	return rtl8723ds_prop(fdt, host, "reg", reg, sizeof(reg));
-}
+#include "rtw88_sdio_io.h"
 
 int
 rtl8723ds_read8(const struct rtl8723ds_read_ops *ops, unsigned int function,
     uint32_t address, uint8_t *value)
 {
-	uint32_t response, argument;
-	int error;
+	struct rtw88_sdio_ops common = { 0 };
 
-	if (ops == NULL || ops->command == NULL || value == NULL ||
-	    function > 1 || address > 0x1ffff)
+	if (ops == NULL)
 		return EINVAL;
-	/* CMD52 read: no WRITE, RAW or reserved bits, no silent address masking. */
-	argument = (function << 28) | (address << 9);
-	error = ops->command(ops->cookie, argument, &response);
-	if (error != 0)
-		return error;
-	/* R5 CRC, illegal command, error, bad function and out-of-range flags. */
-	if (response & 0x8000)
-		return EILSEQ;
-	if (response & 0x4b00)
-		return EIO;
-	*value = response & 0xff;
-	return 0;
+	common.command52 = ops->command;
+	common.cookie = ops->cookie;
+	return rtw88_sdio_cmd52(&common, function, address, false, value);
 }
 
 int
 rtl8723ds_read32(const struct rtl8723ds_read_ops *ops, uint32_t address,
     uint32_t *value)
 {
-	uint32_t offset, bus, limit, result = 0;
-	uint8_t byte;
+	struct rtw88_sdio_ops common = { 0 };
+	uint8_t bytes[4], scratch[4];
+	struct rtw88_sdio_bus bus = {
+		.ops = &common, .max_request = 512,
+		.read_scratch = scratch, .read_scratch_len = sizeof(scratch)
+	};
+	enum rtw88_sdio_domain domain;
 	int error;
 
-	if (value == NULL)
+	if (ops == NULL || value == NULL)
 		return EINVAL;
 	switch (address & 0xffff0000U) {
-	case RTL_LOCAL:
-		limit = 0xfff;
-		bus = 0;
+	case 0x10250000U:
+		domain = RTW88_SDIO_LOCAL;
 		break;
-	case RTL_MAC:
-		limit = 0xffff;
-		bus = 0x10000;
+	case 0x10260000U:
+		domain = RTW88_SDIO_MAC;
 		break;
 	default:
 		return EINVAL;
 	}
-	offset = address & 0xffff;
-	if (offset > limit - 3)
-		return EINVAL;
-	bus |= offset;
-	for (unsigned int i = 0; i < 4; i++) {
-		error = rtl8723ds_read8(ops, 1, bus + i, &byte);
-		if (error != 0)
-			return error;
-		result |= (uint32_t)byte << (i * 8);
-	}
-	*value = result;
+	common.command52 = ops->command;
+	common.cookie = ops->cookie;
+	error = rtw88_sdio_transfer(&bus, domain, address & 0xffff,
+	    bytes, sizeof(bytes), false);
+	if (error != 0)
+		return error;
+	*value = (uint32_t)bytes[0] | ((uint32_t)bytes[1] << 8) |
+	    ((uint32_t)bytes[2] << 16) | ((uint32_t)bytes[3] << 24);
 	return 0;
 }

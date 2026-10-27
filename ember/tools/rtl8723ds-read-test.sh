@@ -18,6 +18,8 @@ awk '
 ${CC:-cc} -std=c99 -Wall -Wextra -Werror -Wno-unused-parameter ${CPPFLAGS:-} \
     -I"$tmp" -I"$src/sys/dev/sdmmc" "$src/ember/tools/rtl8723ds-read-test.c" \
     "$src/sys/dev/sdmmc/rtl8723ds_read.c" \
+    "$src/sys/dev/sdmmc/rtl8723ds_match.c" \
+    "$src/sys/dev/sdmmc/rtw88_sdio_io.c" \
     "$src/sys/arch/arm/sunxi/sun50i_a133_fdt.c" \
     ${LDFLAGS:-} -lfdt -o "$tmp/test"
 "$tmp/test"

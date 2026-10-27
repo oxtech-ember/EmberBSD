@@ -6,6 +6,10 @@ radio limits belong to [DevBoards](https://github.com/oxtech-ember/EmberBSD-DevB
 
 ## Match and read contract
 
+The read and function wrappers use the [shared SDIO helpers](rtw88-sdio-io.md).
+FDT/CIS admission remains in `rtl8723ds_match.c` and the native probe match body.
+The diagnostic attachment does not enable the shared CMD53 path.
+
 Require SDIO function1, manufacturer 0x024c, product0xd723, interface0x07, a pure
 I/O card and the actual FDT MMC1 parent. Use the common function0 CIS, not the
 possibly absent per-function MANFID. Validate the common-CIS owner and function0
