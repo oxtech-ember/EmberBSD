@@ -221,6 +221,17 @@ DESTDIR prefix. The object map takes precedence for generated sources
 below the source tree. Debug maps normalize DWARF. The existing macro-map
 policy separately normalizes `__FILE__` values.
 
+Prepared external sources and staged runtimes are outside `NETBSDSRCDIR`.
+`share/mk/bsd.sys.mk` maps each selected root with `-ffile-prefix-map`:
+`EMBER_LIBEDIT_SOURCE`, `EMBER_LIBEVENT_SOURCE`, `EMBER_LIBARCHIVE_SOURCE` and
+`EMBER_LLVM_SOURCE` go to `/usr/src/external/NAME`. `EMBER_EXTERNAL_LLVM_RUNTIME`
+goes to `/usr/pkg/llvm` and `EMBER_EXTERNAL_GCC_RUNTIME` to `/usr/pkg/gcc16`.
+The `lib/libc` tags use the same list. Each root must be an absolute path
+without special characters; otherwise the build stops.
+`ember/tests/clang-repro-external-sources.py --make BMAKE --clang CLANG`
+compiles probes from two host roots and requires byte-identical objects
+without a host path.
+
 Clang and upstream GCC do not implement NetBSD's `-iremap`, environment-variable
 prefix maps or `-fdebug-regex-map`. Those extensions remain selected only
 for the in-tree GCC compiler. The GNU-only `-fno-canonical-system-headers`
