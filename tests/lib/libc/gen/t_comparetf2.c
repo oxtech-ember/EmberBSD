@@ -370,10 +370,73 @@ ATF_TC_BODY(invalid_traps, tc)
 	ATF_CHECK_EQ(read_fpsr(), sr);
 }
 
+ATF_TC(addtf3_rounding);
+ATF_TC_HEAD(addtf3_rounding, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Check binary128 addition rounding and inexact flags");
+}
+ATF_TC_BODY(addtf3_rounding, tc)
+{
+	const int modes[] = { FE_TONEAREST, FE_UPWARD, FE_DOWNWARD,
+	    FE_TOWARDZERO };
+	volatile long double one = 1.0L, half_ulp = 0x1p-113L;
+	const char *prefix = atf_tc_get_config_var_wd(tc, "binary128_prefix", "");
+	void *functions[__arraycount(helpers)], *handle, *symbol;
+	long double (*add)(long double, long double);
+	Dl_info add_provider, compare_provider;
+	struct stat add_file, compare_file;
+	char name[128];
+	fenv_t saved;
+	size_t i;
+	int n;
+
+	handle = open_helpers(tc, functions);
+	n = snprintf(name, sizeof(name), "%s__addtf3", prefix);
+	ATF_REQUIRE(n > 0 && (size_t)n < sizeof(name));
+	symbol = dlsym(handle, name);
+	ATF_REQUIRE_MSG(symbol != NULL, "missing %s", name);
+	ATF_REQUIRE(dladdr(symbol, &add_provider) != 0);
+	ATF_REQUIRE(dladdr(functions[0], &compare_provider) != 0);
+	ATF_REQUIRE(add_provider.dli_fname != NULL &&
+	    compare_provider.dli_fname != NULL);
+	ATF_REQUIRE(stat(add_provider.dli_fname, &add_file) == 0);
+	ATF_REQUIRE(stat(compare_provider.dli_fname, &compare_file) == 0);
+	ATF_REQUIRE(add_file.st_dev == compare_file.st_dev &&
+	    add_file.st_ino == compare_file.st_ino);
+	add = (long double (*)(long double, long double))symbol;
+	ATF_REQUIRE(fegetenv(&saved) == 0);
+	for (i = 0; i < __arraycount(modes); i++) {
+		long double result;
+		int raised;
+
+		ATF_REQUIRE(fesetround(modes[i]) == 0);
+		ATF_REQUIRE(fegetround() == modes[i]);
+		ATF_REQUIRE(feclearexcept(FE_ALL_EXCEPT) == 0);
+		result = add(one, half_ulp);
+		raised = fetestexcept(FE_INEXACT);
+		ATF_CHECK(result == (modes[i] == FE_UPWARD ?
+		    0x1.0000000000000000000000000001p0L : 1.0L));
+		ATF_CHECK(raised != 0);
+		ATF_REQUIRE(feclearexcept(FE_ALL_EXCEPT) == 0);
+		result = add(-one, -half_ulp);
+		ATF_CHECK(result == (modes[i] == FE_DOWNWARD ?
+		    -0x1.0000000000000000000000000001p0L : -1.0L));
+		ATF_CHECK(fetestexcept(FE_INEXACT) != 0);
+		ATF_REQUIRE(feclearexcept(FE_ALL_EXCEPT) == 0);
+		result = add(one, one);
+		ATF_CHECK(result == 2.0L);
+		ATF_CHECK(fetestexcept(FE_INEXACT) == 0);
+	}
+	ATF_REQUIRE(fesetenv(&saved) == 0);
+	(void)dlclose(handle);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, masked_matrix);
 	ATF_TP_ADD_TC(tp, controlled_modes);
 	ATF_TP_ADD_TC(tp, invalid_traps);
+	ATF_TP_ADD_TC(tp, addtf3_rounding);
 	return atf_no_error();
 }

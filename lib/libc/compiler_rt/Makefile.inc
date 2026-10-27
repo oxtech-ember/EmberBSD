@@ -289,6 +289,7 @@ GENERIC_SRCS+= \
 GENERIC_SRCS+= \
 	clear_cache.c \
 	addtf3.c \
+	fp_mode.c \
 	divtf3.c \
 	multf3.c \
 	subtf3.c \
@@ -303,6 +304,8 @@ GENERIC_SRCS+= \
 	floatunditf.c \
 	floatsitf.c \
 	floatditf.c
+CPPFLAGS.fp_mode.c+= -I${COMPILER_RT_SRCDIR}/lib/builtins \
+	-include ${.CURDIR}/compiler_rt/fp_mode_visibility.h
 LINTFLAGS.addtf3.c += -X 132
 LINTFLAGS.divtf3.c += -X 132
 LINTFLAGS.extenddftf2.c += -X 117,132
