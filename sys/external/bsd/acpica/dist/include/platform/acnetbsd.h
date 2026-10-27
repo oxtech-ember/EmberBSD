@@ -154,6 +154,9 @@
 #define __ACNETBSD_H__
 
 #define ACPI_UINTPTR_T          uintptr_t
+/* EmberBSD, 2026-10-27: Match the Linux port's address and offset helpers. */
+#define ACPI_TO_INTEGER(p)     ((uintptr_t) (p))
+#define ACPI_OFFSET(d, f)       offsetof(d, f)
 #define ACPI_USE_LOCAL_CACHE
 #define ACPI_CAST_PTHREAD_T(x)  ((ACPI_THREAD_ID) ACPI_TO_INTEGER (x))
 
@@ -241,6 +244,7 @@
 #else /* defined(_KERNEL) || defined(_STANDALONE) */
 
 #include <ctype.h>
+#include <stddef.h>
 #include <stdint.h>
 
 /* Not building kernel code, so use libc */
