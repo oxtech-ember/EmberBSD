@@ -33,6 +33,7 @@ __RCSID("$NetBSD: h_sort.c,v 1.3 2025/03/02 23:11:19 riastradh Exp $");
 #include <err.h>
 #include <getopt.h>
 #include <stdio.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -59,6 +60,80 @@ struct context {
 	const char	*buf;
 	const size_t	*linepos;
 };
+
+static int sort_cookie;
+
+static int
+bytecmp(const void *a, const void *b)
+{
+	return *(const unsigned char *)a - *(const unsigned char *)b;
+}
+
+static int
+bytecmp_r(const void *a, const void *b, void *cookie)
+{
+	assert(cookie == &sort_cookie);
+	return bytecmp(a, b);
+}
+
+static void
+check_sort_alignment(void)
+{
+	_Alignas(void *) unsigned char storage[1 + 65 * (sizeof(void *) + 1)];
+	const size_t sizes[] = { sizeof(void *) / 2, sizeof(void *),
+	    sizeof(void *) + 1 };
+	const size_t counts[] = { 0, 1, 5, 65 };
+	bool seen[65];
+	size_t s, n, offset, i, j;
+	int mode;
+	unsigned char *base, *a, *b;
+
+	for (s = 0; s < __arraycount(sizes); s++) {
+		for (n = 0; n < __arraycount(counts); n++) {
+			for (offset = 0; offset < 2; offset++) {
+				for (mode = 0; mode < 4; mode++) {
+					base = storage + offset;
+					memset(seen, 0, sizeof(seen));
+					for (i = 0; i < counts[n]; i++) {
+						a = base + i * sizes[s];
+						memset(a, 0, sizes[s]);
+						a[0] = (unsigned char)((i / 3) % 7);
+						a[1] = (unsigned char)i;
+					}
+					switch (mode) {
+					case 0:
+						assert(mergesort(base, counts[n], sizes[s],
+						    bytecmp) == 0);
+						break;
+					case 1:
+						assert(mergesort_r(base, counts[n], sizes[s],
+						    bytecmp_r, &sort_cookie) == 0);
+						break;
+					case 2:
+						qsort(base, counts[n], sizes[s], bytecmp);
+						break;
+					default:
+						qsort_r(base, counts[n], sizes[s], bytecmp_r,
+						    &sort_cookie);
+						break;
+					}
+					for (j = 0; j < counts[n]; j++) {
+						b = base + j * sizes[s];
+						assert(b[1] < counts[n] && !seen[b[1]]);
+						seen[b[1]] = true;
+						assert(b[0] == (b[1] / 3) % 7);
+						if (j == 0)
+							continue;
+						a = b - sizes[s];
+						assert(a[0] <= b[0]);
+						if (mode < 2 && a[0] == b[0])
+							assert(a[1] < b[1]);
+					}
+				}
+			}
+		}
+	}
+}
 
 static int
 cmp(const void *va, const void *vb, void *cookie)
@@ -113,6 +188,10 @@ main(int argc, char **argv)
 	}
 	argc -= optind;
 	argv += optind;
+	if (argc == 1 && strcmp(argv[0], "sort_alignment") == 0) {
+		check_sort_alignment();
+		return 0;
+	}
 	if (argc != 1)
 		usage();
 	if (strcmp(argv[0], "heapsort_r") == 0)

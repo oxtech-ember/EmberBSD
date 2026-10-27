@@ -112,4 +112,16 @@ atf_init_test_cases()
 	sortfn_case mergesort_r
 	sortfn_case qsort_r
 	stablesortfn_case mergesort_r
+	atf_add_test_case sort_alignment
+}
+
+atf_test_case sort_alignment
+sort_alignment_head()
+{
+	atf_set descr "Test sort alignment and merge sort stability"
+}
+sort_alignment_body()
+{
+	atf_check -s exit:0 -o empty \
+	    "$(atf_get_srcdir)"/h_sort sort_alignment
 }

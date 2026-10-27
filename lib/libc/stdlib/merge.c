@@ -60,6 +60,7 @@ __RCSID("$NetBSD: merge.c,v 1.17 2025/03/02 16:35:41 riastradh Exp $");
 
 #include <assert.h>
 #include <errno.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -102,7 +103,7 @@ static void insertionsort(u_char *, size_t, size_t,
  */
 /* Assumption: PSIZE is a power of 2. */
 #define EVAL(p) ((u_char **)(void *)					\
-    (((u_char *)(void *)(p) + PSIZE - 1 - (u_char *) 0) & ~(PSIZE - 1)))
+    (((uintptr_t)(p) + PSIZE - 1) & ~(PSIZE - 1)))
 
 /*
  * Arguments are as for qsort.
@@ -128,12 +129,8 @@ mergesort_r(void *base, size_t nmemb, size_t size,
 	if (nmemb == 0)
 		return (0);
 
-	/*
-	 * XXX
-	 * Stupid subtraction for the Cray.
-	 */
 	iflag = 0;
-	if (!(size % ISIZE) && !(((char *)base - (char *)0) % ISIZE))
+	if (!(size % ISIZE) && !((uintptr_t)base % ISIZE))
 		iflag = 1;
 
 	if ((list2 = malloc(nmemb * size + PSIZE)) == NULL)
