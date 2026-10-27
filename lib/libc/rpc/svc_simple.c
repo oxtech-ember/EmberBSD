@@ -265,7 +265,7 @@ universal(struct svc_req *rqstp, SVCXPRT *transp)
 	 * enforce "procnum 0 is echo" convention
 	 */
 	if (rqstp->rq_proc == NULLPROC) {
-		if (svc_sendreply(transp, (xdrproc_t) xdr_void, NULL) ==
+		if (svc_sendreply(transp, xdr_void, NULL) ==
 		    FALSE) {
 			warnx("%s: svc_sendreply failed", __func__);
 		}
@@ -295,7 +295,7 @@ universal(struct svc_req *rqstp, SVCXPRT *transp)
 			}
 			outdata = (*(pl->p_progname))(xdrbuf);
 			if (outdata == NULL &&
-				pl->p_outproc != (xdrproc_t) xdr_void){
+				pl->p_outproc != xdr_void){
 				/* there was an error */
 				mutex_unlock(&proglst_lock);
 				return;

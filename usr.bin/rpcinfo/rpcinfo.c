@@ -397,8 +397,8 @@ ip_ping(u_short portnum, const char *trans, int argc, char **argv)
 	}
 	addr.sin_port = htons(portnum);
 	client = clnt_com_create(&addr, prognum, vers, &fd, trans);
-	rpc_stat = CLNT_CALL(client, NULLPROC, (xdrproc_t)xdr_void,
-	    NULL, (xdrproc_t)xdr_void, NULL, to);
+	rpc_stat = CLNT_CALL(client, NULLPROC, xdr_void,
+	    NULL, xdr_void, NULL, to);
 	if (argc != 2) {
 		/* Version number was known */
 		if (pstatus(client, prognum, vers) < 0)
@@ -421,8 +421,8 @@ ip_ping(u_short portnum, const char *trans, int argc, char **argv)
 		addr.sin_port = htons(portnum);
 		client = clnt_com_create(&addr, (unsigned int)prognum,
 		    MAX_VERS, &fd, trans);
-		rpc_stat = CLNT_CALL(client, NULLPROC, (xdrproc_t)xdr_void,
-		    NULL, (xdrproc_t)xdr_void, NULL, to);
+		rpc_stat = CLNT_CALL(client, NULLPROC, xdr_void,
+		    NULL, xdr_void, NULL, to);
 		if (rpc_stat == RPC_PROGVERSMISMATCH) {
 			clnt_geterr(client, &rpcerr);
 			minvers = rpcerr.re_vers.low;
@@ -448,8 +448,8 @@ ip_ping(u_short portnum, const char *trans, int argc, char **argv)
 	for (vers = minvers; vers <= maxvers; vers++) {
 		addr.sin_port = htons(portnum);
 		client = clnt_com_create(&addr, prognum, vers, &fd, trans);
-		rpc_stat = CLNT_CALL(client, NULLPROC, (xdrproc_t)xdr_void,
-		    NULL, (xdrproc_t)xdr_void, NULL, to);
+		rpc_stat = CLNT_CALL(client, NULLPROC, xdr_void,
+		    NULL, xdr_void, NULL, to);
 		if (pstatus(client, prognum, vers) < 0)
 		    failure = 1;
 		(void)CLNT_DESTROY(client);
@@ -505,7 +505,7 @@ pmapdump(int argc, char **argv)
 	minutetimeout.tv_usec = 0;
 
 	clnt_st = CLNT_CALL(client, (unsigned int)PMAPPROC_DUMP,
-	    (xdrproc_t)xdr_void, NULL, (xdrproc_t)xdr_pmaplist_ptr,
+	    xdr_void, NULL, (xdrproc_t)xdr_pmaplist_ptr,
 	    (char *)(void *)&head, minutetimeout);
 	if (clnt_st != RPC_SUCCESS) {
 		if ((clnt_st == RPC_PROGVERSMISMATCH) ||
@@ -632,7 +632,7 @@ brdcst(int argc, char **argv)
 	prognum = getprognum(argv[0]);
 	vers = getvers(argv[1]);
 	rpc_stat = rpc_broadcast(prognum, vers, NULLPROC,
-	    (xdrproc_t)xdr_void, NULL, (xdrproc_t)xdr_void,
+	    xdr_void, NULL, xdr_void,
 	    NULL, (resultproc_t) reply_proc, NULL);
 	if ((rpc_stat != RPC_SUCCESS) && (rpc_stat != RPC_TIMEDOUT))
 		errx(1, "broadcast failed: %s", clnt_sperrno(rpc_stat));
@@ -718,7 +718,7 @@ rpcbdump(int dumptype, const char *netid, int argc, char **argv)
 		    clnt_spcreateerror(""));
 	minutetimeout.tv_sec = 60;
 	minutetimeout.tv_usec = 0;
-	clnt_st = CLNT_CALL(client, RPCBPROC_DUMP, (xdrproc_t)xdr_void,
+	clnt_st = CLNT_CALL(client, RPCBPROC_DUMP, xdr_void,
 		NULL, (xdrproc_t)xdr_rpcblist_ptr, (char *)(void *)&head,
 		minutetimeout);
 	if (clnt_st != RPC_SUCCESS) {
@@ -731,7 +731,7 @@ rpcbdump(int dumptype, const char *netid, int argc, char **argv)
 		    vers = RPCBVERS4;
 		    clnt_control(client, CLSET_VERS, (char *)(void *)&vers);
 		    clnt_st = CLNT_CALL(client, RPCBPROC_DUMP,
-			(xdrproc_t)xdr_void, NULL,
+			xdr_void, NULL,
 			(xdrproc_t)xdr_rpcblist_ptr, (char *)(void *)&head,
 			minutetimeout);
 		    if (clnt_st != RPC_SUCCESS)
@@ -745,7 +745,7 @@ rpcbdump(int dumptype, const char *netid, int argc, char **argv)
 			vers = PMAPVERS;
 			clnt_control(client, CLSET_VERS, (char *)(void *)&vers);
 			clnt_st = CLNT_CALL(client, (unsigned int)PMAPPROC_DUMP,
-				(xdrproc_t)xdr_void, NULL,
+				xdr_void, NULL,
 				(xdrproc_t)xdr_pmaplist_ptr,
 				(char *)(void *)&pmaphead, minutetimeout);
 			if (clnt_st != RPC_SUCCESS)
@@ -1032,7 +1032,7 @@ rpcbgetstat(int argc, char **argv)
 	minutetimeout.tv_sec = 60;
 	minutetimeout.tv_usec = 0;
 	(void)memset(&inf, 0, sizeof (rpcb_stat_byvers));
-	if (CLNT_CALL(client, RPCBPROC_GETSTAT, (xdrproc_t)xdr_void, NULL,
+	if (CLNT_CALL(client, RPCBPROC_GETSTAT, xdr_void, NULL,
 	    (xdrproc_t)xdr_rpcb_stat_byvers, (char *)(void *)&inf,
 	    minutetimeout) != RPC_SUCCESS) {
 		errx(1, "Can't contact rpcbind (%s)",
@@ -1312,8 +1312,8 @@ addrping(const char *address, const char *netid, int argc, char **argv)
 		versnum = getvers(argv[1]);
 	}
 	client = clnt_addr_create(address, nconf, prognum, versnum);
-	rpc_stat = CLNT_CALL(client, NULLPROC, (xdrproc_t)xdr_void,
-	    NULL, (xdrproc_t)xdr_void, NULL, to);
+	rpc_stat = CLNT_CALL(client, NULLPROC, xdr_void,
+	    NULL, xdr_void, NULL, to);
 	if (argc == 2) {
 		/* Version number was known */
 		if (pstatus(client, prognum, versnum) < 0)
@@ -1337,8 +1337,8 @@ addrping(const char *address, const char *netid, int argc, char **argv)
 		 */
 		(void)CLNT_DESTROY(client);
 		client = clnt_addr_create(address, nconf, prognum, MAX_VERS);
-		rpc_stat = CLNT_CALL(client, NULLPROC, (xdrproc_t)xdr_void,
-		    NULL, (xdrproc_t)xdr_void, NULL, to);
+		rpc_stat = CLNT_CALL(client, NULLPROC, xdr_void,
+		    NULL, xdr_void, NULL, to);
 		if (rpc_stat == RPC_PROGVERSMISMATCH) {
 			clnt_geterr(client, &rpcerr);
 			minvers = rpcerr.re_vers.low;
@@ -1363,8 +1363,8 @@ addrping(const char *address, const char *netid, int argc, char **argv)
 	(void)CLNT_DESTROY(client);
 	for (versnum = minvers; versnum <= maxvers; versnum++) {
 		client = clnt_addr_create(address, nconf, prognum, versnum);
-		rpc_stat = CLNT_CALL(client, NULLPROC, (xdrproc_t)xdr_void,
-		    NULL, (xdrproc_t)xdr_void, NULL, to);
+		rpc_stat = CLNT_CALL(client, NULLPROC, xdr_void,
+		    NULL, xdr_void, NULL, to);
 		if (pstatus(client, prognum, versnum) < 0)
 			failure = 1;
 		(void)CLNT_DESTROY(client);
@@ -1419,8 +1419,8 @@ progping(const char *netid, int argc, char **argv)
 	}
 	to.tv_sec = 10;
 	to.tv_usec = 0;
-	rpc_stat = CLNT_CALL(client, NULLPROC, (xdrproc_t)xdr_void,
-	    NULL, (xdrproc_t)xdr_void, NULL, to);
+	rpc_stat = CLNT_CALL(client, NULLPROC, xdr_void,
+	    NULL, xdr_void, NULL, to);
 	if (argc == 3) {
 		/* Version number was known */
 		if (pstatus(client, prognum, versnum) < 0)
@@ -1444,7 +1444,7 @@ progping(const char *netid, int argc, char **argv)
 		(void)CLNT_CONTROL(client, CLSET_VERS,
 		    (char *)(void *)&versnum);
 		rpc_stat = CLNT_CALL(client, NULLPROC,
-		    (xdrproc_t)xdr_void, NULL, (xdrproc_t)xdr_void, NULL, to);
+		    xdr_void, NULL, xdr_void, NULL, to);
 		if (rpc_stat == RPC_PROGVERSMISMATCH) {
 			clnt_geterr(client, &rpcerr);
 			minvers = rpcerr.re_vers.low;
@@ -1469,8 +1469,8 @@ progping(const char *netid, int argc, char **argv)
 	for (versnum = minvers; versnum <= maxvers; versnum++) {
 		(void)CLNT_CONTROL(client, CLSET_VERS,
 		    (char *)(void *)&versnum);
-		rpc_stat = CLNT_CALL(client, NULLPROC, (xdrproc_t)xdr_void,
-		    NULL, (xdrproc_t)xdr_void, NULL, to);
+		rpc_stat = CLNT_CALL(client, NULLPROC, xdr_void,
+		    NULL, xdr_void, NULL, to);
 		if (pstatus(client, prognum, versnum) < 0)
 			failure = 1;
 	}

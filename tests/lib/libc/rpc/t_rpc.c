@@ -102,13 +102,13 @@ server(struct svc_req *rqstp, SVCXPRT *transp)
 
 	switch (rqstp->rq_proc) {
 	case NULLPROC:
-		if (!svc_sendreply(transp, (xdrproc_t)xdr_void, NULL))
+		if (!svc_sendreply(transp, xdr_void, NULL))
 			ERRX(, "svc_sendreply failed %d", 0);
 		return;
 	case PLUSONE:
 		break;
 	case DESTROY:
-		if (!svc_sendreply(transp, (xdrproc_t)xdr_void, NULL))
+		if (!svc_sendreply(transp, xdr_void, NULL))
 			ERRX(, "svc_sendreply failed %d", 0);
 		svc_destroy(transp);
 		exit(0);
@@ -205,8 +205,8 @@ regtest(const char *hostname, const char *transp, const char *arg, int p)
 	DPRINTF("Got %d\n", resp);
 	if (++num != resp)
 		ERRX(EXIT_FAILURE, "expected %d got %d", num, resp);
-	rv = clnt_call(clnt, DESTROY, (xdrproc_t)xdr_void, NULL,
-	    (xdrproc_t)xdr_void, NULL, tout);
+	rv = clnt_call(clnt, DESTROY, xdr_void, NULL,
+	    xdr_void, NULL, tout);
 	if (rv != RPC_SUCCESS)
 		ERRX(EXIT_FAILURE, "clnt_call: %s", clnt_sperrno(rv));
 	clnt_destroy(clnt);
@@ -222,7 +222,7 @@ allhosts(const char *transp)
 	enum clnt_stat  clnt_stat;
 
 	clnt_stat = rpc_broadcast(RPCBPROG, RPCBVERS, RPCBPROC_NULL,
-	    (xdrproc_t)xdr_void, NULL, (xdrproc_t)xdr_void,
+	    xdr_void, NULL, xdr_void,
 	    NULL, (resultproc_t)reply, transp);
 	if (clnt_stat != RPC_SUCCESS && clnt_stat != RPC_TIMEDOUT)
 		ERRX(EXIT_FAILURE, "%s", clnt_sperrno(clnt_stat));

@@ -141,7 +141,7 @@ yppasswddprog_1(struct svc_req *rqstp, SVCXPRT *transp)
 
 	switch (rqstp->rq_proc) {
 	case NULLPROC:
-		(void)svc_sendreply(transp, (xdrproc_t)xdr_void, NULL);
+		(void)svc_sendreply(transp, xdr_void, NULL);
 		return;
 
 	case YPPASSWDPROC_UPDATE:

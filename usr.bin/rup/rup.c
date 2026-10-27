@@ -322,7 +322,7 @@ allhosts(void)
 	}
 
 	clnt_stat = rpc_broadcast(RSTATPROG, RSTATVERS_TIME, RSTATPROC_STATS,
-	    (xdrproc_t)xdr_void, NULL, (xdrproc_t)xdr_statstime, (caddr_t)(void *)&host_stat,
+	    xdr_void, NULL, (xdrproc_t)xdr_statstime, (caddr_t)(void *)&host_stat,
 	    (resultproc_t)rstat_reply, "udp");
 	if (clnt_stat != RPC_SUCCESS && clnt_stat != RPC_TIMEDOUT)
 		errx(1, "%s", clnt_sperrno(clnt_stat));

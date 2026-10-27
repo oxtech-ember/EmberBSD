@@ -155,8 +155,8 @@ ypprog_2(struct svc_req *rqstp, SVCXPRT *transp)
 
 	switch (rqstp->rq_proc) {
 	case YPPROC_NULL:
-		xdr_argument = (xdrproc_t)xdr_void;
-		xdr_result = (xdrproc_t)xdr_void;
+		xdr_argument = xdr_void;
+		xdr_result = xdr_void;
 		local = ypproc_null_2_svc;
 		SVCNAME("null_2");
 		break;
@@ -204,8 +204,8 @@ ypprog_2(struct svc_req *rqstp, SVCXPRT *transp)
 		break;
 
 	case YPPROC_CLEAR:
-		xdr_argument = (xdrproc_t)xdr_void;
-		xdr_result = (xdrproc_t)xdr_void;
+		xdr_argument = xdr_void;
+		xdr_result = xdr_void;
 		local = ypproc_clear_2_svc;
 		SVCNAME("clear_2");
 		break;

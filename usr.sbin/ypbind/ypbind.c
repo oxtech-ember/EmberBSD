@@ -910,8 +910,8 @@ ypbindprog_2(struct svc_req *rqstp, register SVCXPRT *transp)
 
 	switch (rqstp->rq_proc) {
 	case YPBINDPROC_NULL:
-		xdr_argument = (xdrproc_t)xdr_void;
-		xdr_result = (xdrproc_t)xdr_void;
+		xdr_argument = xdr_void;
+		xdr_result = xdr_void;
 		local = ypbindproc_null_2;
 		break;
 
@@ -936,7 +936,7 @@ ypbindprog_2(struct svc_req *rqstp, register SVCXPRT *transp)
 		}
 
 		xdr_argument = (xdrproc_t)xdr_ypbind_setdom;
-		xdr_result = (xdrproc_t)xdr_void;
+		xdr_result = xdr_void;
 		local = ypbindproc_setdom_2;
 		break;
 
@@ -1264,7 +1264,7 @@ try_again:
 		}
 	}
 	xdr.x_op = XDR_FREE;
-	msg.acpted_rply.ar_results.proc = (xdrproc_t)xdr_void;
+	msg.acpted_rply.ar_results.proc = xdr_void;
 	xdr_destroy(&xdr);
 
 	return RPC_SUCCESS;
@@ -1321,7 +1321,7 @@ try_again:
 		}
 	}
 	xdr.x_op = XDR_FREE;
-	msg.acpted_rply.ar_results.proc = (xdrproc_t)xdr_void;
+	msg.acpted_rply.ar_results.proc = xdr_void;
 	xdr_destroy(&xdr);
 
 	return RPC_SUCCESS;

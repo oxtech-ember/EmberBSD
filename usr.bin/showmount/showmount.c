@@ -166,7 +166,7 @@ main(int argc, char **argv)
 
 	if (rpcs & DODUMP)
 		if ((estat = tcp_callrpc(host, RPCPROG_MNT, mntvers,
-			 RPCMNT_DUMP, (xdrproc_t)xdr_void, NULL,
+			 RPCMNT_DUMP, xdr_void, NULL,
 			 (xdrproc_t)xdr_mntdump, (char *)&mntdump)) != 0) {
 			fprintf(stderr, "showmount: Can't do Mountdump rpc: ");
 			clnt_perrno(estat);
@@ -174,7 +174,7 @@ main(int argc, char **argv)
 		}
 	if (rpcs & (DOEXPORTS | DOPARSABLEEXPORTS))
 		if ((estat = tcp_callrpc(host, RPCPROG_MNT, mntvers,
-			 RPCMNT_EXPORT, (xdrproc_t)xdr_void, NULL,
+			 RPCMNT_EXPORT, xdr_void, NULL,
 			 (xdrproc_t)xdr_exports, (char *)&exports)) != 0) {
 			fprintf(stderr, "showmount: Can't do Exports rpc: ");
 			clnt_perrno(estat);

@@ -612,7 +612,7 @@ mntsrv(struct svc_req *rqstp, SVCXPRT *transp)
 	ret = 0;
 	switch (rqstp->rq_proc) {
 	case NULLPROC:
-		if (!svc_sendreply(transp, (xdrproc_t)xdr_void, NULL))
+		if (!svc_sendreply(transp, xdr_void, NULL))
 			syslog(LOG_ERR, "Can't send reply");
 		return;
 	case MOUNTPROC_MNT:
@@ -725,7 +725,7 @@ out:
 			svcerr_weakauth(transp);
 			return;
 		}
-		if (!svc_sendreply(transp, (xdrproc_t)xdr_void, NULL))
+		if (!svc_sendreply(transp, xdr_void, NULL))
 			syslog(LOG_ERR, "Can't send reply");
 		return;
 	case MOUNTPROC_UMNTALL:
@@ -736,7 +736,7 @@ out:
 			svcerr_weakauth(transp);
 			return;
 		}
-		if (!svc_sendreply(transp, (xdrproc_t)xdr_void, NULL))
+		if (!svc_sendreply(transp, xdr_void, NULL))
 			syslog(LOG_ERR, "Can't send reply");
 		return;
 	case MOUNTPROC_EXPORT:
@@ -2281,7 +2281,7 @@ send_umntall(int n)
 {
 #ifndef MOUNTD_RUMP
 	(void)clnt_broadcast(RPCPROG_MNT, RPCMNT_VER1, RPCMNT_UMNTALL,
-	    (xdrproc_t)xdr_void, NULL, (xdrproc_t)xdr_void, NULL,
+	    xdr_void, NULL, xdr_void, NULL,
 	    (resultproc_t)umntall_each);
 #endif
 	exit(0);

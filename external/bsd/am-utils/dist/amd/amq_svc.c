@@ -184,8 +184,8 @@ amq_program_1(struct svc_req *rqstp, SVCXPRT *transp)
   switch (rqstp->rq_proc) {
 
   case AMQPROC_NULL:
-    xdr_argument = (xdrproc_t) xdr_void;
-    xdr_result = (xdrproc_t) xdr_void;
+    xdr_argument = xdr_void;
+    xdr_result = xdr_void;
     local = (amqsvcproc_t) amqproc_null_1_svc;
     break;
 
@@ -197,18 +197,18 @@ amq_program_1(struct svc_req *rqstp, SVCXPRT *transp)
 
   case AMQPROC_UMNT:
     xdr_argument = (xdrproc_t) xdr_amq_string;
-    xdr_result = (xdrproc_t) xdr_void;
+    xdr_result = xdr_void;
     local = (amqsvcproc_t) amqproc_umnt_1_svc;
     break;
 
   case AMQPROC_STATS:
-    xdr_argument = (xdrproc_t) xdr_void;
+    xdr_argument = xdr_void;
     xdr_result = (xdrproc_t) xdr_amq_mount_stats;
     local = (amqsvcproc_t) amqproc_stats_1_svc;
     break;
 
   case AMQPROC_EXPORT:
-    xdr_argument = (xdrproc_t) xdr_void;
+    xdr_argument = xdr_void;
     xdr_result = (xdrproc_t) xdr_amq_mount_tree_list;
     local = (amqsvcproc_t) amqproc_export_1_svc;
     break;
@@ -220,19 +220,19 @@ amq_program_1(struct svc_req *rqstp, SVCXPRT *transp)
     break;
 
   case AMQPROC_GETMNTFS:
-    xdr_argument = (xdrproc_t) xdr_void;
+    xdr_argument = xdr_void;
     xdr_result = (xdrproc_t) xdr_amq_mount_info_qelem;
     local = (amqsvcproc_t) amqproc_getmntfs_1_svc;
     break;
 
   case AMQPROC_GETVERS:
-    xdr_argument = (xdrproc_t) xdr_void;
+    xdr_argument = xdr_void;
     xdr_result = (xdrproc_t) xdr_amq_string;
     local = (amqsvcproc_t) amqproc_getvers_1_svc;
     break;
 
   case AMQPROC_GETPID:
-    xdr_argument = (xdrproc_t) xdr_void;
+    xdr_argument = xdr_void;
     xdr_result = (xdrproc_t) xdr_int;
     local = (amqsvcproc_t) amqproc_getpid_1_svc;
     break;
@@ -253,7 +253,7 @@ amq_program_1(struct svc_req *rqstp, SVCXPRT *transp)
     break;
 
   case AMQPROC_GETMAPINFO:
-    xdr_argument = (xdrproc_t) xdr_void;
+    xdr_argument = xdr_void;
     xdr_result = (xdrproc_t) xdr_amq_map_info_qelem;
     local = (amqsvcproc_t) amqproc_getmapinfo_1_svc;
     break;

@@ -99,8 +99,8 @@ clnt_create_vers(
 	}
 	to.tv_sec = 10;
 	to.tv_usec = 0;
-	rpc_stat = clnt_call(clnt, NULLPROC, (xdrproc_t) xdr_void,
-	    NULL, (xdrproc_t) xdr_void, NULL, to);
+	rpc_stat = clnt_call(clnt, NULLPROC, xdr_void,
+	    NULL, xdr_void, NULL, to);
 	if (rpc_stat == RPC_SUCCESS) {
 		*vers_out = vers_high;
 		return (clnt);
@@ -119,8 +119,8 @@ clnt_create_vers(
 			goto error;
 		}
 		CLNT_CONTROL(clnt, CLSET_VERS, (char *)(void *)&vers_high);
-		rpc_stat = clnt_call(clnt, NULLPROC, (xdrproc_t) xdr_void,
-		    NULL, (xdrproc_t) xdr_void, NULL, to);
+		rpc_stat = clnt_call(clnt, NULLPROC, xdr_void,
+		    NULL, xdr_void, NULL, to);
 		if (rpc_stat == RPC_SUCCESS) {
 			*vers_out = vers_high;
 			return (clnt);

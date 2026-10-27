@@ -424,7 +424,7 @@ call_again:
 	for (;;) {
 		reply_msg.acpted_rply.ar_verf = _null_auth;
 		reply_msg.acpted_rply.ar_results.where = NULL;
-		reply_msg.acpted_rply.ar_results.proc = (xdrproc_t)xdr_void;
+		reply_msg.acpted_rply.ar_results.proc = xdr_void;
 		if (! xdrrec_skiprecord(xdrs)) {
 			release_fd_lock(ct->ct_fd, mask);
 			return (ct->ct_error.re_status);

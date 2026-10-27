@@ -24,7 +24,7 @@ nlm_sm_notify_0(struct nlm_sm_status *argp, void *clnt_res, CLIENT *clnt, struct
 {
 	return (CLNT_CALL_EXT(clnt, ext, NLM_SM_NOTIFY,
 		(xdrproc_t) xdr_nlm_sm_status, (caddr_t) argp,
-		(xdrproc_t) xdr_void, (caddr_t) clnt_res,
+		xdr_void, (caddr_t) clnt_res,
 		timo));
 }
 
@@ -78,7 +78,7 @@ nlm_test_msg_1(struct nlm_testargs *argp, void *clnt_res, CLIENT *clnt, struct r
 {
 	return (CLNT_CALL_EXT(clnt, ext, NLM_TEST_MSG,
 		(xdrproc_t) xdr_nlm_testargs, (caddr_t) argp,
-		(xdrproc_t) xdr_void, (caddr_t) clnt_res,
+		xdr_void, (caddr_t) clnt_res,
 		timo));
 }
 
@@ -87,7 +87,7 @@ nlm_lock_msg_1(struct nlm_lockargs *argp, void *clnt_res, CLIENT *clnt, struct r
 {
 	return (CLNT_CALL_EXT(clnt, ext, NLM_LOCK_MSG,
 		(xdrproc_t) xdr_nlm_lockargs, (caddr_t) argp,
-		(xdrproc_t) xdr_void, (caddr_t) clnt_res,
+		xdr_void, (caddr_t) clnt_res,
 		timo));
 }
 
@@ -96,7 +96,7 @@ nlm_cancel_msg_1(struct nlm_cancargs *argp, void *clnt_res, CLIENT *clnt, struct
 {
 	return (CLNT_CALL_EXT(clnt, ext, NLM_CANCEL_MSG,
 		(xdrproc_t) xdr_nlm_cancargs, (caddr_t) argp,
-		(xdrproc_t) xdr_void, (caddr_t) clnt_res,
+		xdr_void, (caddr_t) clnt_res,
 		timo));
 }
 
@@ -105,7 +105,7 @@ nlm_unlock_msg_1(struct nlm_unlockargs *argp, void *clnt_res, CLIENT *clnt, stru
 {
 	return (CLNT_CALL_EXT(clnt, ext, NLM_UNLOCK_MSG,
 		(xdrproc_t) xdr_nlm_unlockargs, (caddr_t) argp,
-		(xdrproc_t) xdr_void, (caddr_t) clnt_res,
+		xdr_void, (caddr_t) clnt_res,
 		timo));
 }
 
@@ -114,7 +114,7 @@ nlm_granted_msg_1(struct nlm_testargs *argp, void *clnt_res, CLIENT *clnt, struc
 {
 	return (CLNT_CALL_EXT(clnt, ext, NLM_GRANTED_MSG,
 		(xdrproc_t) xdr_nlm_testargs, (caddr_t) argp,
-		(xdrproc_t) xdr_void, (caddr_t) clnt_res,
+		xdr_void, (caddr_t) clnt_res,
 		timo));
 }
 
@@ -123,7 +123,7 @@ nlm_test_res_1(nlm_testres *argp, void *clnt_res, CLIENT *clnt, struct rpc_calle
 {
 	return (CLNT_CALL_EXT(clnt, ext, NLM_TEST_RES,
 		(xdrproc_t) xdr_nlm_testres, (caddr_t) argp,
-		(xdrproc_t) xdr_void, (caddr_t) clnt_res,
+		xdr_void, (caddr_t) clnt_res,
 		timo));
 }
 
@@ -132,7 +132,7 @@ nlm_lock_res_1(nlm_res *argp, void *clnt_res, CLIENT *clnt, struct rpc_callextra
 {
 	return (CLNT_CALL_EXT(clnt, ext, NLM_LOCK_RES,
 		(xdrproc_t) xdr_nlm_res, (caddr_t) argp,
-		(xdrproc_t) xdr_void, (caddr_t) clnt_res,
+		xdr_void, (caddr_t) clnt_res,
 		timo));
 }
 
@@ -141,7 +141,7 @@ nlm_cancel_res_1(nlm_res *argp, void *clnt_res, CLIENT *clnt, struct rpc_callext
 {
 	return (CLNT_CALL_EXT(clnt, ext, NLM_CANCEL_RES,
 		(xdrproc_t) xdr_nlm_res, (caddr_t) argp,
-		(xdrproc_t) xdr_void, (caddr_t) clnt_res,
+		xdr_void, (caddr_t) clnt_res,
 		timo));
 }
 
@@ -150,7 +150,7 @@ nlm_unlock_res_1(nlm_res *argp, void *clnt_res, CLIENT *clnt, struct rpc_callext
 {
 	return (CLNT_CALL_EXT(clnt, ext, NLM_UNLOCK_RES,
 		(xdrproc_t) xdr_nlm_res, (caddr_t) argp,
-		(xdrproc_t) xdr_void, (caddr_t) clnt_res,
+		xdr_void, (caddr_t) clnt_res,
 		timo));
 }
 
@@ -159,7 +159,7 @@ nlm_granted_res_1(nlm_res *argp, void *clnt_res, CLIENT *clnt, struct rpc_callex
 {
 	return (CLNT_CALL_EXT(clnt, ext, NLM_GRANTED_RES,
 		(xdrproc_t) xdr_nlm_res, (caddr_t) argp,
-		(xdrproc_t) xdr_void, (caddr_t) clnt_res,
+		xdr_void, (caddr_t) clnt_res,
 		timo));
 }
 
@@ -195,7 +195,7 @@ nlm_free_all_3(nlm_notify *argp, void *clnt_res, CLIENT *clnt, struct rpc_callex
 {
 	return (CLNT_CALL_EXT(clnt, ext, NLM_FREE_ALL,
 		(xdrproc_t) xdr_nlm_notify, (caddr_t) argp,
-		(xdrproc_t) xdr_void, (caddr_t) clnt_res,
+		xdr_void, (caddr_t) clnt_res,
 		timo));
 }
 
@@ -249,7 +249,7 @@ nlm4_test_msg_4(nlm4_testargs *argp, void *clnt_res, CLIENT *clnt, struct rpc_ca
 {
 	return (CLNT_CALL_EXT(clnt, ext, NLM4_TEST_MSG,
 		(xdrproc_t) xdr_nlm4_testargs, (caddr_t) argp,
-		(xdrproc_t) xdr_void, (caddr_t) clnt_res,
+		xdr_void, (caddr_t) clnt_res,
 		timo));
 }
 
@@ -258,7 +258,7 @@ nlm4_lock_msg_4(nlm4_lockargs *argp, void *clnt_res, CLIENT *clnt, struct rpc_ca
 {
 	return (CLNT_CALL_EXT(clnt, ext, NLM4_LOCK_MSG,
 		(xdrproc_t) xdr_nlm4_lockargs, (caddr_t) argp,
-		(xdrproc_t) xdr_void, (caddr_t) clnt_res,
+		xdr_void, (caddr_t) clnt_res,
 		timo));
 }
 
@@ -267,7 +267,7 @@ nlm4_cancel_msg_4(nlm4_cancargs *argp, void *clnt_res, CLIENT *clnt, struct rpc_
 {
 	return (CLNT_CALL_EXT(clnt, ext, NLM4_CANCEL_MSG,
 		(xdrproc_t) xdr_nlm4_cancargs, (caddr_t) argp,
-		(xdrproc_t) xdr_void, (caddr_t) clnt_res,
+		xdr_void, (caddr_t) clnt_res,
 		timo));
 }
 
@@ -276,7 +276,7 @@ nlm4_unlock_msg_4(nlm4_unlockargs *argp, void *clnt_res, CLIENT *clnt, struct rp
 {
 	return (CLNT_CALL_EXT(clnt, ext, NLM4_UNLOCK_MSG,
 		(xdrproc_t) xdr_nlm4_unlockargs, (caddr_t) argp,
-		(xdrproc_t) xdr_void, (caddr_t) clnt_res,
+		xdr_void, (caddr_t) clnt_res,
 		timo));
 }
 
@@ -285,7 +285,7 @@ nlm4_granted_msg_4(nlm4_testargs *argp, void *clnt_res, CLIENT *clnt, struct rpc
 {
 	return (CLNT_CALL_EXT(clnt, ext, NLM4_GRANTED_MSG,
 		(xdrproc_t) xdr_nlm4_testargs, (caddr_t) argp,
-		(xdrproc_t) xdr_void, (caddr_t) clnt_res,
+		xdr_void, (caddr_t) clnt_res,
 		timo));
 }
 
@@ -294,7 +294,7 @@ nlm4_test_res_4(nlm4_testres *argp, void *clnt_res, CLIENT *clnt, struct rpc_cal
 {
 	return (CLNT_CALL_EXT(clnt, ext, NLM4_TEST_RES,
 		(xdrproc_t) xdr_nlm4_testres, (caddr_t) argp,
-		(xdrproc_t) xdr_void, (caddr_t) clnt_res,
+		xdr_void, (caddr_t) clnt_res,
 		timo));
 }
 
@@ -303,7 +303,7 @@ nlm4_lock_res_4(nlm4_res *argp, void *clnt_res, CLIENT *clnt, struct rpc_callext
 {
 	return (CLNT_CALL_EXT(clnt, ext, NLM4_LOCK_RES,
 		(xdrproc_t) xdr_nlm4_res, (caddr_t) argp,
-		(xdrproc_t) xdr_void, (caddr_t) clnt_res,
+		xdr_void, (caddr_t) clnt_res,
 		timo));
 }
 
@@ -312,7 +312,7 @@ nlm4_cancel_res_4(nlm4_res *argp, void *clnt_res, CLIENT *clnt, struct rpc_calle
 {
 	return (CLNT_CALL_EXT(clnt, ext, NLM4_CANCEL_RES,
 		(xdrproc_t) xdr_nlm4_res, (caddr_t) argp,
-		(xdrproc_t) xdr_void, (caddr_t) clnt_res,
+		xdr_void, (caddr_t) clnt_res,
 		timo));
 }
 
@@ -321,7 +321,7 @@ nlm4_unlock_res_4(nlm4_res *argp, void *clnt_res, CLIENT *clnt, struct rpc_calle
 {
 	return (CLNT_CALL_EXT(clnt, ext, NLM4_UNLOCK_RES,
 		(xdrproc_t) xdr_nlm4_res, (caddr_t) argp,
-		(xdrproc_t) xdr_void, (caddr_t) clnt_res,
+		xdr_void, (caddr_t) clnt_res,
 		timo));
 }
 
@@ -330,7 +330,7 @@ nlm4_granted_res_4(nlm4_res *argp, void *clnt_res, CLIENT *clnt, struct rpc_call
 {
 	return (CLNT_CALL_EXT(clnt, ext, NLM4_GRANTED_RES,
 		(xdrproc_t) xdr_nlm4_res, (caddr_t) argp,
-		(xdrproc_t) xdr_void, (caddr_t) clnt_res,
+		xdr_void, (caddr_t) clnt_res,
 		timo));
 }
 
@@ -366,6 +366,6 @@ nlm4_free_all_4(nlm4_notify *argp, void *clnt_res, CLIENT *clnt, struct rpc_call
 {
 	return (CLNT_CALL_EXT(clnt, ext, NLM4_FREE_ALL,
 		(xdrproc_t) xdr_nlm4_notify, (caddr_t) argp,
-		(xdrproc_t) xdr_void, (caddr_t) clnt_res,
+		xdr_void, (caddr_t) clnt_res,
 		timo));
 }

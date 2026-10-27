@@ -62,8 +62,8 @@ static const char tbl_hdr[] = "struct rpcgen_table %s_table[] = {\n";
 static const char tbl_end[] = "};\n";
 
 static const char null_entry[] = "\t(char *(*)())0,\n\
- \t(xdrproc_t)xdr_void,\t\t0,\n\
- \t(xdrproc_t)xdr_void,\t\t0,\n";
+ \txdr_void,\t\t0,\n\
+ \txdr_void,\t\t0,\n";
 
 static const char tbl_nproc[] =
     "unsigned int %s_nproc =\n\t(unsigned int)(sizeof(%s_table)/sizeof(%s_table[0]));\n\n";

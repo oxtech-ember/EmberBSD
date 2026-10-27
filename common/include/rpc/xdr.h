@@ -274,6 +274,14 @@ struct xdr_discrim {
  * These are the "generic" xdr routines.
  */
 __BEGIN_DECLS
+/*
+ * EmberBSD: xdr_void has the xdrproc_t signature and ignores its arguments.
+ * Upstream NetBSD and libtirpc declare xdr_void(void); FreeBSD a231e2990776
+ * made the same change.  Clang rejects the (xdrproc_t) casts of the old
+ * declaration with -Wcast-function-type-mismatch, and the call through
+ * xdrproc_t passes arguments that it does not declare.  C uses of xdr_void
+ * as a filter stay source and ABI compatible.
+ */
 extern bool_t	xdr_void(XDR *, const void *);
 extern bool_t	xdr_int(XDR *, int *);
 extern bool_t	xdr_u_int(XDR *, unsigned int *);

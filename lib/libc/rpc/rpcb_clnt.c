@@ -1022,7 +1022,7 @@ rpcb_getmaps(const struct netconfig *nconf, const char *host)
 		return (head);
 	}
 	clnt_st = CLNT_CALL(client, (rpcproc_t)RPCBPROC_DUMP,
-	    (xdrproc_t) xdr_void, NULL, (xdrproc_t) xdr_rpcblist_ptr,
+	    xdr_void, NULL, (xdrproc_t) xdr_rpcblist_ptr,
 	    (char *)(void *)&head, tottimeout);
 	if (clnt_st == RPC_SUCCESS)
 		goto done;
@@ -1040,7 +1040,7 @@ rpcb_getmaps(const struct netconfig *nconf, const char *host)
 		vers = RPCBVERS;
 		CLNT_CONTROL(client, CLSET_VERS, (char *)(void *)&vers);
 		if (CLNT_CALL(client, (rpcproc_t)RPCBPROC_DUMP,
-		    (xdrproc_t) xdr_void, NULL, (xdrproc_t) xdr_rpcblist_ptr,
+		    xdr_void, NULL, (xdrproc_t) xdr_rpcblist_ptr,
 		    (char *)(void *)&head, tottimeout) == RPC_SUCCESS)
 			goto done;
 	}
@@ -1173,7 +1173,7 @@ rpcb_gettime(const char *host, time_t *timep)
 	}
 
 	st = CLNT_CALL(client, (rpcproc_t)RPCBPROC_GETTIME,
-		(xdrproc_t) xdr_void, NULL,
+		xdr_void, NULL,
 		(xdrproc_t) xdr_int, (char *)(void *)timep, tottimeout);
 
 	if ((st == RPC_PROGVERSMISMATCH) || (st == RPC_PROGUNAVAIL)) {
@@ -1183,7 +1183,7 @@ rpcb_gettime(const char *host, time_t *timep)
 			vers = RPCBVERS;
 			CLNT_CONTROL(client, CLSET_VERS, (char *)(void *)&vers);
 			st = CLNT_CALL(client, (rpcproc_t)RPCBPROC_GETTIME,
-				(xdrproc_t) xdr_void, NULL,
+				xdr_void, NULL,
 				(xdrproc_t) xdr_int, (char *)(void *)timep,
 				tottimeout);
 		}

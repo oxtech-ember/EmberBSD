@@ -439,7 +439,7 @@ write_program(definition *def, const char *storage)
 		if (!nullproc(vp->procs)) {
 			f_print(fout, "\tcase NULLPROC:\n");
 			f_print(fout,
-			    "\t\t(void) svc_sendreply(%s, (xdrproc_t)xdr_void, NULL);\n", TRANSP);
+			    "\t\t(void) svc_sendreply(%s, xdr_void, NULL);\n", TRANSP);
 			print_return("\t\t");
 			f_print(fout, "\n");
 		}

@@ -261,7 +261,7 @@ allhosts(void)
 
 	memset((char *)&up, 0, sizeof(up));
 	clnt_stat = rpc_broadcast(RUSERSPROG, RUSERSVERS_IDLE,
-	    RUSERSPROC_NAMES, (xdrproc_t)xdr_void, NULL,
+	    RUSERSPROC_NAMES, xdr_void, NULL,
 	    (xdrproc_t)xdr_utmpidlearr, (char *)&up,
 	    (resultproc_t)rusers_reply, "udp");
 	if (clnt_stat != RPC_SUCCESS && clnt_stat != RPC_TIMEDOUT)

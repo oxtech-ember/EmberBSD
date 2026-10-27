@@ -294,11 +294,11 @@ rusers_service(struct svc_req *rqstp, SVCXPRT *transp)
 
 	switch (rqstp->rq_proc) {
 	case NULLPROC:
-		(void)svc_sendreply(transp, (xdrproc_t)xdr_void, NULL);
+		(void)svc_sendreply(transp, xdr_void, NULL);
 		goto leave;
 
 	case RUSERSPROC_NUM:
-		xdr_argument = (xdrproc_t)xdr_void;
+		xdr_argument = xdr_void;
 		xdr_result = (xdrproc_t)xdr_int;
 		switch (rqstp->rq_vers) {
 		case RUSERSVERS_3:
@@ -314,7 +314,7 @@ rusers_service(struct svc_req *rqstp, SVCXPRT *transp)
 		break;
 
 	case RUSERSPROC_NAMES:
-		xdr_argument = (xdrproc_t)xdr_void;
+		xdr_argument = xdr_void;
 		xdr_result = (xdrproc_t)xdr_utmp_array;
 		switch (rqstp->rq_vers) {
 		case RUSERSVERS_3:
@@ -334,7 +334,7 @@ rusers_service(struct svc_req *rqstp, SVCXPRT *transp)
 		break;
 
 	case RUSERSPROC_ALLNAMES:
-		xdr_argument = (xdrproc_t)xdr_void;
+		xdr_argument = xdr_void;
 		xdr_result = (xdrproc_t)xdr_utmp_array;
 		switch (rqstp->rq_vers) {
 		case RUSERSVERS_3:

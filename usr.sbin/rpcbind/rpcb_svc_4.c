@@ -91,7 +91,7 @@ rpcb_service_4(struct svc_req *rqstp, SVCXPRT *transp)
 			fprintf(stderr, "RPCBPROC_NULL\n");
 #endif
 		check_access(transp, rqstp->rq_proc, NULL, RPCBVERS4);
-		(void) svc_sendreply(transp, (xdrproc_t) xdr_void, NULL);
+		(void) svc_sendreply(transp, xdr_void, NULL);
 		return;
 
 	case RPCBPROC_SET:
@@ -135,7 +135,7 @@ rpcb_service_4(struct svc_req *rqstp, SVCXPRT *transp)
 		if (debugging)
 			fprintf(stderr, "RPCBPROC_DUMP\n");
 #endif
-		xdr_argument = (xdrproc_t)xdr_void;
+		xdr_argument = xdr_void;
 		xdr_result = (xdrproc_t)xdr_rpcblist_ptr;
 		local = rpcbproc_dump_4_local;
 		break;
@@ -162,7 +162,7 @@ rpcb_service_4(struct svc_req *rqstp, SVCXPRT *transp)
 		if (debugging)
 			fprintf(stderr, "RPCBPROC_GETTIME\n");
 #endif
-		xdr_argument = (xdrproc_t)xdr_void;
+		xdr_argument = xdr_void;
 		xdr_result = (xdrproc_t)xdr_u_long;
 		local = rpcbproc_gettime_com;
 		break;
@@ -202,7 +202,7 @@ rpcb_service_4(struct svc_req *rqstp, SVCXPRT *transp)
 		if (debugging)
 			fprintf(stderr, "RPCBPROC_GETSTAT\n");
 #endif
-		xdr_argument = (xdrproc_t)xdr_void;
+		xdr_argument = xdr_void;
 		xdr_result = (xdrproc_t)xdr_rpcb_stat_byvers;
 		local = rpcbproc_getstat;
 		break;

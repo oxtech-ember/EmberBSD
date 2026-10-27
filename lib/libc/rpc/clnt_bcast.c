@@ -635,7 +635,7 @@ rpc_broadcast_exp(
 			/* else some kind of deserialization problem ... */
 
 			xdrs->x_op = XDR_FREE;
-			msg.acpted_rply.ar_results.proc = (xdrproc_t) xdr_void;
+			msg.acpted_rply.ar_results.proc = xdr_void;
 			(void) xdr_replymsg(xdrs, &msg);
 			(void) (*xresults)(xdrs, resultsp);
 			XDR_DESTROY(xdrs);

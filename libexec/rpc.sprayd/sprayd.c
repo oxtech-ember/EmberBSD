@@ -131,7 +131,7 @@ spray_service(struct svc_req *rqstp, SVCXPRT *transp)
 		/*FALLTHROUGH*/
 
 	case NULLPROC:
-		(void)svc_sendreply(transp, (xdrproc_t)xdr_void, NULL);
+		(void)svc_sendreply(transp, xdr_void, NULL);
 		return;
 
 	case SPRAYPROC_SPRAY:

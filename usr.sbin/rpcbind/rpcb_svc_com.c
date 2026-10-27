@@ -1296,7 +1296,7 @@ handle_reply(int fd, SVCXPRT *xprt)
 
 	reply_msg.acpted_rply.ar_verf = _null_auth;
 	reply_msg.acpted_rply.ar_results.where = 0;
-	reply_msg.acpted_rply.ar_results.proc = (xdrproc_t) xdr_void;
+	reply_msg.acpted_rply.ar_results.proc = xdr_void;
 
 	xdrmem_create(&reply_xdrs, buffer, (u_int)inlen, XDR_DECODE);
 	if (!xdr_replymsg(&reply_xdrs, &reply_msg)) {

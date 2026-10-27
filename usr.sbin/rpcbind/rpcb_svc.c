@@ -89,7 +89,7 @@ rpcb_service_3(struct svc_req *rqstp, SVCXPRT *transp)
 #endif
 		/* This call just logs, no actual checks */
 		check_access(transp, rqstp->rq_proc, NULL, RPCBVERS);
-		(void) svc_sendreply(transp, (xdrproc_t)xdr_void, NULL);
+		(void) svc_sendreply(transp, xdr_void, NULL);
 		return;
 
 	case RPCBPROC_SET:
@@ -115,7 +115,7 @@ rpcb_service_3(struct svc_req *rqstp, SVCXPRT *transp)
 		if (debugging)
 			fprintf(stderr, "RPCBPROC_DUMP\n");
 #endif
-		xdr_argument = (xdrproc_t)xdr_void;
+		xdr_argument = xdr_void;
 		xdr_result = (xdrproc_t)xdr_rpcblist_ptr;
 		local = rpcbproc_dump_3_local;
 		break;
@@ -129,7 +129,7 @@ rpcb_service_3(struct svc_req *rqstp, SVCXPRT *transp)
 		if (debugging)
 			fprintf(stderr, "RPCBPROC_GETTIME\n");
 #endif
-		xdr_argument = (xdrproc_t)xdr_void;
+		xdr_argument = xdr_void;
 		xdr_result = (xdrproc_t)xdr_u_long;
 		local = rpcbproc_gettime_com;
 		break;

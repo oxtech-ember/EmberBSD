@@ -92,14 +92,14 @@ yppush_xfrrespprog_1(struct svc_req *rqstp, SVCXPRT *transp)
 	_rpcsvcdirty = 1;
 	switch (rqstp->rq_proc) {
 	case YPPUSHPROC_NULL:
-		xdr_argument = (xdrproc_t)xdr_void;
-		xdr_result = (xdrproc_t)xdr_void;
+		xdr_argument = xdr_void;
+		xdr_result = xdr_void;
 		local = yppushproc_null_1_svc;
 		break;
 
 	case YPPUSHPROC_XFRRESP:
 		xdr_argument = (xdrproc_t)xdr_yppushresp_xfr;
-		xdr_result = (xdrproc_t)xdr_void;
+		xdr_result = xdr_void;
 		local = yppushproc_xfrresp_1_svc;
 		break;
 

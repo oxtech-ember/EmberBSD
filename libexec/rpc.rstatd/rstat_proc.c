@@ -300,11 +300,11 @@ rstat_service(struct svc_req *rqstp, SVCXPRT *transp)
 
 	switch (rqstp->rq_proc) {
 	case NULLPROC:
-		(void)svc_sendreply(transp, (xdrproc_t)xdr_void, NULL);
+		(void)svc_sendreply(transp, xdr_void, NULL);
 		goto leave;
 
 	case RSTATPROC_STATS:
-		xdr_argument = (xdrproc_t)xdr_void;
+		xdr_argument = xdr_void;
 		xdr_result = (xdrproc_t)xdr_statstime;
                 switch (rqstp->rq_vers) {
                 case RSTATVERS_ORIG:
@@ -326,7 +326,7 @@ rstat_service(struct svc_req *rqstp, SVCXPRT *transp)
 		break;
 
 	case RSTATPROC_HAVEDISK:
-		xdr_argument = (xdrproc_t)xdr_void;
+		xdr_argument = xdr_void;
 		xdr_result = (xdrproc_t)xdr_u_int;
                 switch (rqstp->rq_vers) {
                 case RSTATVERS_ORIG:

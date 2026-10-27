@@ -80,7 +80,7 @@ pmap_service(struct svc_req *rqstp, SVCXPRT *xprt)
 			fprintf(stderr, "PMAPPROC_NULL\n");
 #endif
 		check_access(xprt, rqstp->rq_proc, NULL, PMAPVERS);
-		if ((!svc_sendreply(xprt, (xdrproc_t) xdr_void, NULL)) &&
+		if ((!svc_sendreply(xprt, xdr_void, NULL)) &&
 			debugging) {
 			if (doabort) {
 				rpcbind_abort();
@@ -342,7 +342,7 @@ sendreply:
 static bool_t
 pmapproc_dump(struct svc_req *rqstp __unused, SVCXPRT *xprt)
 {
-	if (!svc_getargs(xprt, (xdrproc_t)xdr_void, NULL)) {
+	if (!svc_getargs(xprt, xdr_void, NULL)) {
 		svcerr_decode(xprt);
 		return (FALSE);
 	}

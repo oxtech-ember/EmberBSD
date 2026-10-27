@@ -157,12 +157,12 @@ wallprog_1(struct svc_req *rqstp, SVCXPRT *transp)
 
 	switch (rqstp->rq_proc) {
 	case NULLPROC:
-		(void)svc_sendreply(transp, (xdrproc_t)xdr_void, NULL);
+		(void)svc_sendreply(transp, xdr_void, NULL);
 		goto leave;
 
 	case WALLPROC_WALL:
 		xdr_argument = (xdrproc_t)xdr_wrapstring;
-		xdr_result = (xdrproc_t)xdr_void;
+		xdr_result = xdr_void;
 		local = (char *(*) __P((char **, struct svc_req *)))
 			wallproc_wall_1_svc;
 		break;

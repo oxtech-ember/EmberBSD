@@ -154,8 +154,8 @@ nfs_program_2(struct svc_req *rqstp, SVCXPRT *transp)
   switch (rqstp->rq_proc) {
 
   case NFSPROC_NULL:
-    xdr_argument = (xdrproc_t) xdr_void;
-    xdr_result = (xdrproc_t) xdr_void;
+    xdr_argument = xdr_void;
+    xdr_result = xdr_void;
     local = (nfssvcproc_t) nfsproc_null_2_svc;
     break;
 
@@ -172,8 +172,8 @@ nfs_program_2(struct svc_req *rqstp, SVCXPRT *transp)
     break;
 
   case NFSPROC_ROOT:
-    xdr_argument = (xdrproc_t) xdr_void;
-    xdr_result = (xdrproc_t) xdr_void;
+    xdr_argument = xdr_void;
+    xdr_result = xdr_void;
     local = (nfssvcproc_t) nfsproc_root_2_svc;
     break;
 
@@ -202,8 +202,8 @@ nfs_program_2(struct svc_req *rqstp, SVCXPRT *transp)
     break;
 
   case NFSPROC_WRITECACHE:
-    xdr_argument = (xdrproc_t) xdr_void;
-    xdr_result = (xdrproc_t) xdr_void;
+    xdr_argument = xdr_void;
+    xdr_result = xdr_void;
     local = (nfssvcproc_t) nfsproc_writecache_2_svc;
     break;
 
@@ -331,8 +331,8 @@ nfs_program_3(struct svc_req *rqstp, register SVCXPRT *transp)
 
   switch (rqstp->rq_proc) {
   case AM_NFS3_NULL:
-    _xdr_argument = (xdrproc_t) xdr_void;
-    _xdr_result = (xdrproc_t) xdr_void;
+    _xdr_argument = xdr_void;
+    _xdr_result = xdr_void;
     local = (nfssvcproc_t) am_nfs3_null_3_svc;
     break;
 

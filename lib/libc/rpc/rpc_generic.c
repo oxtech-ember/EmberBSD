@@ -481,8 +481,8 @@ rpc_nullproc(CLIENT *clnt)
 {
 	struct timeval TIMEOUT = {25, 0};
 
-	if (clnt_call(clnt, NULLPROC, (xdrproc_t) xdr_void, NULL,
-		(xdrproc_t) xdr_void, NULL, TIMEOUT) != RPC_SUCCESS) {
+	if (clnt_call(clnt, NULLPROC, xdr_void, NULL,
+		xdr_void, NULL, TIMEOUT) != RPC_SUCCESS) {
 		return (NULL);
 	}
 	return ((void *) clnt);
