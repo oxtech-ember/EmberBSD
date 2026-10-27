@@ -149,6 +149,11 @@ CPPFLAGS+=	-DRTLD_DEFAULT_LIBRARY_PATH=\"${SHLIBDIR}:${LIBDIR}\"
 .endif
 
 LDADD+=		-Wl,--version-script=${.CURDIR}/symbols.map
+# LLD defaults to --no-undefined-version; symbols.map lists arch-optional
+# entries (e.g. ___tls_get_addr, __gnu_Unwind_Find_exidx) that GNU ld ignored.
+.if ${HAVE_LLVM:Uno} == "yes"
+LDADD+=		-Wl,--undefined-version
+.endif
 LDADD+=		-L${CLIBOBJ} -L${DESTDIR}${LIBDIR}
 .if ${MKPICLIB} != "no"
 LDADD+=		-lc_pic
