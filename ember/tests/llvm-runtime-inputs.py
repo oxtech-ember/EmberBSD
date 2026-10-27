@@ -307,6 +307,54 @@ class LLVMSourceTests(unittest.TestCase):
             "EMBER_LIBUNWIND_ARCHIVE=" + str(archive))
         self.assertEqual(result.stdout.strip(), "yes")
 
+    def test_unwind_metadata_does_not_add_libc_dependencies(self):
+        if any(value is None for value in (CLANG, LINKER, NATIVE_TOOLS, INSTALL)):
+            self.skipTest("select Clang, linker and native tools for real ELF checks")
+        archiver = CLANG.with_name("llvm-ar")
+        objcopy = CLANG.with_name("llvm-objcopy")
+        for arch, machine in (("aarch64", "evbarm"), ("x86_64", "amd64")):
+            with self.subTest(arch=arch):
+                work = self.work / arch
+                work.mkdir()
+                source = work / "unwind.c"
+                source.write_text('#pragma comment(lib, "ember_missing_dependency")\n'
+                                  'int ember_unwind_marker(void) { return 23; }\n')
+                item, archive = work / "unwind.o", work / "libunwind.a"
+                compiled = subprocess.run([str(CLANG), "--no-default-config",
+                    "--target=" + arch + "--netbsd", "-fPIC", "-c", str(source),
+                    "-o", str(item)], capture_output=True, text=True)
+                self.assertEqual(compiled.returncode, 0, compiled.stderr)
+                subprocess.run([str(archiver), "rcs", str(archive), str(item)], check=True)
+                raw = work / "raw.o"
+                subprocess.run([str(LINKER), "-r", "-o", str(raw),
+                    "--whole-archive", str(archive), "--no-whole-archive"], check=True)
+                rejected = subprocess.run([str(LINKER), "-shared", "-z", "defs",
+                    "-o", str(work / "raw.so"), str(raw)],
+                    capture_output=True, text=True)
+                self.assertNotEqual(rejected.returncode, 0)
+                self.assertIn("ember_missing_dependency", rejected.stderr)
+                prepared = self.query("sys/lib/libunwind/Makefile.inc", (),
+                    "EMBER_LIBUNWIND_ARCHIVE=" + str(archive),
+                    "LD=" + str(LINKER), "OBJCOPY=" + str(objcopy),
+                    "llvm_unwind.o", native=True, cwd=work,
+                    machine=machine, arch=arch)
+                self.assertEqual(prepared.returncode, 0, prepared.stdout + prepared.stderr)
+                output = work / "llvm_unwind.o"
+                linked = subprocess.run([str(LINKER), "-shared", "-z", "defs",
+                    "-o", str(work / "prepared.so"), str(output)],
+                    capture_output=True, text=True)
+                self.assertEqual(linked.returncode, 0, linked.stderr)
+                symbols = subprocess.run([str(CLANG.with_name("llvm-nm")),
+                    "--dynamic", "--defined-only", str(work / "prepared.so")],
+                    capture_output=True, text=True)
+                self.assertEqual(symbols.returncode, 0, symbols.stderr)
+                self.assertIn("ember_unwind_marker", symbols.stdout.split())
+                before, after = work / "before.text", work / "after.text"
+                for item, data in ((raw, before), (output, after)):
+                    subprocess.run([str(objcopy), "--dump-section=.text=" + str(data),
+                                    str(item)], check=True)
+                self.assertEqual(before.read_bytes(), after.read_bytes())
+
     def test_header_and_object_stages_precede_the_unwind_archive(self):
         for goal in ("includes", "obj"):
             with self.subTest(goal=goal):

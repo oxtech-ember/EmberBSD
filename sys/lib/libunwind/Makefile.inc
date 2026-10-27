@@ -33,9 +33,11 @@ INCSNAME_${EMBER_LIBUNWIND_SOURCE:C,/,_,g}_include_${_ember_unwind_header}= ${_e
 .error EMBER_LIBUNWIND_ARCHIVE requires MKPROFILE=no and MKDEBUGLIB=no
 .endif
 OBJS+=	llvm_unwind.o
+# libc owns thread stubs; unwind autolink hints must not add libpthread.
 llvm_unwind.o llvm_unwind.pico: ${EMBER_LIBUNWIND_ARCHIVE}
 	${_MKTARGET_LINK}
 	${LD} -r -o ${.TARGET}.tmp --whole-archive ${EMBER_LIBUNWIND_ARCHIVE} --no-whole-archive
+	${OBJCOPY} --remove-section=.deplibs ${.TARGET}.tmp
 	mv -f ${.TARGET}.tmp ${.TARGET}
 CLEANFILES+=	llvm_unwind.o.tmp llvm_unwind.pico.tmp
 .endif
