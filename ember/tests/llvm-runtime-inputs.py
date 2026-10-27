@@ -18,6 +18,8 @@ MAKE = None
 PREPARED_LLVM = None
 NATIVE_TOOLS = None
 INSTALL = None
+CLANG = None
+SYSROOT = None
 
 
 class LLVMSourceTests(unittest.TestCase):
@@ -39,16 +41,20 @@ class LLVMSourceTests(unittest.TestCase):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("source route fixture\n")
 
-    def query(self, consumer, names, *variables, fixture_extra="", select_source=True, cwd=None, native=False):
+    def query(self, consumer, names, *variables, fixture_extra="", select_source=True, cwd=None, native=False,
+              machine="evbarm", arch="aarch64", cpu=None):
         fixture = self.work / "probe.mk"
         fixture.write_text('.include <sys.mk>\n.include <bsd.own.mk>\n'
-            'LIBC_MACHINE_CPU=aarch64\nLIBC_MACHINE_ARCH=aarch64\n'
+            'NETBSDSRCDIR=' + str(SOURCE) + '\n'
+            '.include "' + str(SOURCE / "lib/libc/libcincludes.mk") + '"\n'
             '.include "' + str(SOURCE / consumer) + '"\n' + fixture_extra)
+        cpu = cpu or arch
+        gnu_arch = {"aarch64eb": "aarch64_be"}.get(arch, arch)
         command = [str(MAKE), "-r", "-m", str(SOURCE / "share/mk"),
             "-f", str(fixture), "MAKECONF=/dev/null", "_SRC_TOP_=",
-            "USETOOLS=yes", "MACHINE=evbarm", "MACHINE_ARCH=aarch64",
+            "USETOOLS=yes", "MACHINE=" + machine, "MACHINE_ARCH=" + arch,
             "MKPROFILE=no", "MKDEBUGLIB=no",
-            "MACHINE_GNU_PLATFORM=aarch64--netbsd", "TOOLDIR=/build/tools",
+            "MACHINE_GNU_PLATFORM=" + gnu_arch + "--netbsd", "TOOLDIR=/build/tools",
             "DESTDIR=/target/root", "NETBSDSRCDIR=" + str(SOURCE),
             "HOST_OSTYPE=Darwin-27-arm64", "EXTERNAL_TOOLCHAIN=/sdk",
             *(["EMBER_LLVM_SOURCE=" + str(self.llvm)] if select_source else []), *variables]
@@ -61,6 +67,54 @@ class LLVMSourceTests(unittest.TestCase):
             command.extend(("-V", "${" + name + "}"))
         return subprocess.run(command, cwd=cwd or self.work, text=True,
             capture_output=True, timeout=30, env=environment)
+
+    def test_xf_helpers_follow_the_target_long_double_abi(self):
+        cases = (("amd64", "x86_64", "x86_64", True, False),
+                 ("i386", "i386", "i386", True, False),
+                 ("m68k", "m68k", "m68k", True, True),
+                 ("ia64", "ia64", "ia64", True, False),
+                 ("evbarm", "aarch64", "aarch64", False, False),
+                 ("evbarm", "aarch64eb", "aarch64", False, False))
+        xf = {"fixunsxfdi.c", "fixunsxfsi.c", "floatdixf.c", "floatundixf.c",
+              "powixf2.c", "fixxfdi.c", "fixunsxfti.c", "fixxfti.c",
+              "floattixf.c", "floatuntixf.c"}
+        softfloat = self.query("lib/libc/softfloat/Makefile.inc", ("SRCS.softfloat",),
+                               machine="evbarm", arch="aarch64", cpu="aarch64")
+        self.assertEqual(softfloat.returncode, 0, softfloat.stderr)
+        self.assertTrue({"nexf2.c", "gtxf2.c", "gexf2.c", "negxf2.c"}.issubset(
+            set(softfloat.stdout.split())))
+        for machine, arch, cpu, has_xf, m68k in cases:
+            with self.subTest(machine=machine, arch=arch):
+                result = self.query("lib/libc/compiler_rt/Makefile.inc",
+                    ("MACHINE_CPU", "LIBC_MACHINE_ARCH", "LIBC_MACHINE_CPU",
+                     "GENERIC_SRCS"),
+                    machine=machine, arch=arch, cpu=cpu)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                actual_cpu, libc_arch, libc_cpu, sources = result.stdout.splitlines()
+                self.assertEqual((actual_cpu, libc_arch, libc_cpu), (cpu, arch, cpu))
+                selected = set(sources.split())
+                self.assertEqual(xf & selected, xf - ({"fixxfdi.c"} if m68k else set()) if has_xf else set())
+                if arch.startswith("aarch64"):
+                    self.assertTrue({"comparetf2.c", "fixunsdfti.c", "fixunssfti.c",
+                                     "floattidf.c", "floattisf.c", "floatuntidf.c",
+                                     "floatuntisf.c"}.issubset(selected))
+
+    def test_xf_and_tf_helpers_compile_for_selected_targets(self):
+        if PREPARED_LLVM is None or CLANG is None or SYSROOT is None:
+            self.skipTest("pass --prepared-llvm, --clang and --sysroot for actual target compile probes")
+        builtins = PREPARED_LLVM / "compiler-rt/lib/builtins"
+        for triple in ("x86_64--netbsd", "i386--netbsd"):
+            result = subprocess.run([str(CLANG), "--target=" + triple, "--sysroot=" + str(SYSROOT), "-fsyntax-only",
+                str(builtins / "fixunsxfdi.c")], text=True, capture_output=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr)
+        for triple in ("aarch64--netbsd", "aarch64_be--netbsd"):
+            result = subprocess.run([str(CLANG), "--target=" + triple, "--sysroot=" + str(SYSROOT), "-fsyntax-only",
+                str(builtins / "fixtfdi.c")], text=True, capture_output=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            result = subprocess.run([str(CLANG), "--target=" + triple, "--sysroot=" + str(SYSROOT), "-fsyntax-only",
+                str(builtins / "fixunsxfdi.c")], text=True, capture_output=True, timeout=30)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertRegex(result.stderr, r"unknown type name 'xf_(?:float|bits)'")
 
     def test_base_and_kernel_select_the_same_common_compiler_rt(self):
         for consumer in ("lib/libc/compiler_rt/Makefile.inc",
@@ -367,6 +421,8 @@ if __name__ == "__main__":
     parser.add_argument("--make", required=True, type=Path)
     parser.add_argument("--source", type=Path, default=SOURCE)
     parser.add_argument("--prepared-llvm", type=Path)
+    parser.add_argument("--clang", type=Path)
+    parser.add_argument("--sysroot", type=Path)
     parser.add_argument("--native-tools", type=Path,
                         help="selected OS native command routing directory")
     parser.add_argument("--install", type=Path, help="selected NetBSD install executable")
@@ -374,6 +430,8 @@ if __name__ == "__main__":
     MAKE = args.make.resolve()
     SOURCE = args.source.resolve()
     PREPARED_LLVM = args.prepared_llvm.resolve() if args.prepared_llvm else None
+    CLANG = args.clang.resolve() if args.clang else None
+    SYSROOT = args.sysroot.resolve() if args.sysroot else None
     if bool(args.native_tools) != bool(args.install):
         parser.error("--native-tools and --install must be selected together")
     NATIVE_TOOLS = args.native_tools.resolve() if args.native_tools else None

@@ -62,8 +62,6 @@ GENERIC_SRCS+= \
 	fixunsdfsi.c \
 	fixunssfdi.c \
 	fixunssfsi.c \
-	fixunsxfdi.c \
-	fixunsxfsi.c \
 	int_util.c \
 	lshrti3.c \
 	modti3.c \
@@ -126,22 +124,35 @@ GENERIC_SRCS+= \
 GENERIC_SRCS+=	\
 	floatdidf.c \
 	floatdisf.c \
-	floatdixf.c \
 	floatundidf.c \
 	floatundisf.c \
-	floatundixf.c \
 	negdf2.c \
 	negsf2.c \
 	powidf2.c \
 	powisf2.c \
-	powitf2.c \
-	powixf2.c
+	powitf2.c
 
 .endif # IEEE 754 only machines
 
-.if ${LIBC_MACHINE_ARCH} != "m68k"
+# LLVM compiler-rt exposes xf_float/xf_bits only on its supported 80-bit
+# long-double targets.  Keep the NetBSD m68k/ia64 ABI sources available even
+# where the selected Clang cannot validate those target ABIs.
+.if ${LIBC_MACHINE_ARCH} == "x86_64" || ${LIBC_MACHINE_ARCH} == "i386" || \
+    ${LIBC_MACHINE_ARCH} == "m68k" || ${LIBC_MACHINE_ARCH} == "ia64"
+GENERIC_SRCS+= \
+	fixunsxfdi.c \
+	fixunsxfsi.c \
+	floatdixf.c \
+	floatundixf.c \
+	powixf2.c \
+	fixunsxfti.c \
+	fixxfti.c \
+	floattixf.c \
+	floatuntixf.c
+. if ${LIBC_MACHINE_ARCH} != "m68k"
 GENERIC_SRCS+= \
 	fixxfdi.c
+.endif
 .endif
 
 
@@ -157,14 +168,10 @@ CPPFLAGS.comparetf2.c+= -DCOMPILER_RT_NETBSD_AARCH64_FENV
 GENERIC_SRCS+= \
 	fixunsdfti.c \
 	fixunssfti.c \
-	fixunsxfti.c \
-	fixxfti.c \
 	floattidf.c \
 	floattisf.c \
-	floattixf.c \
 	floatuntidf.c \
-	floatuntisf.c \
-	floatuntixf.c
+	floatuntisf.c
 
 # These have h/w instructions which are always used.
 .if ${LIBC_MACHINE_ARCH} != "alpha" && ${LIBC_MACHINE_CPU} != "aarch64" \

@@ -136,6 +136,16 @@ python3 -B ember/tests/llvm-runtime-inputs.py \
     --prepared-llvm /absolute/prepared-llvm -v
 ```
 
+Pass `--clang /absolute/native-prefix/bin/clang` and `--sysroot
+/absolute/target-headers` to compile representative compiler-rt helpers for
+x86_64, i386, AArch64 little endian and AArch64 big endian. The metadata cases
+also verify that LLVM's 80-bit `xf` helpers remain selected for x86_64, i386,
+m68k and ia64 (with the existing m68k `fixxfdi` exception), while AArch64 keeps
+its binary128 helpers and excludes `xf` helpers. NetBSD's separate SoftFloat
+`floatx80` helpers remain selected. The source-selection check follows
+`LIBC_MACHINE_ARCH` and `LIBC_MACHINE_CPU` as derived by the OS make rules; it
+does not claim Clang ABI acceptance for m68k or ia64.
+
 Pass `--native-tools /absolute/native-command-routing` and
 `--install /absolute/os-tools/bin/TRIPLET-install` together to exercise actual
 `bsd.inc.mk` installation with the selected shell, utilities and OS installer.
@@ -145,8 +155,9 @@ These checks exercise libc/kernel source selection, header-before-runtime
 staging, application flags, CRT paths, C++ dependency selection, and rejected
 mixed configurations. The optional prepared-source inventory covers AArch64,
 amd64, ARM EABI, PowerPC, SPARC64 and i386 source names. It does not compile
-those targets. The small temporary path fixtures are metadata fixtures and
-are never packaged as runtime libraries.
+those targets. Compile probes require the optional selected compiler and
+target header sysroot; the small temporary path fixtures are metadata fixtures
+and are never packaged as runtime libraries.
 
 [llvm-base-sets.py](../../ember/tests/llvm-base-sets.py) exercises the real
 makeflist/checkflist scripts through the SDK's selected native OS environment.
