@@ -100,8 +100,6 @@ SRCS+=	fmt_scaled.c
 SRCS+=	readpassphrase.c getpeereid.c getrrsetbyname.c
 COPTS.monitor_fdpass.c+=-Wno-stack-protector
 COPTS.sntrup761.c+=	-Wno-stack-protector
-# EmberBSD: OpenSSH readpassphrase K&R defs under Clang -Werror.
-COPTS.readpassphrase.c+=	-Wno-error=deprecated-non-prototype
 
 .ifdef WITH_OPENSSL
 SRCS+=		${OPENSSL_SRCS}

@@ -44,11 +44,7 @@ __RCSID("$NetBSD: readpassphrase.c,v 1.9 2019/01/27 02:08:33 pgoyette Exp $");
 #include <readpassphrase.h>
 
 char *
-readpassphrase(prompt, buf, bufsiz, flags)
-	const char *prompt;
-	char *buf;
-	size_t bufsiz;
-	int flags;
+readpassphrase(const char *prompt, char *buf, size_t bufsiz, int flags)
 {
 #ifdef GETPASS_ECHO
 	int gflags = GETPASS_ECHO_NL;
@@ -143,8 +139,7 @@ readpassphrase(prompt, buf, bufsiz, flags)
 }
 
 char *
-getpass(prompt)
-        const char *prompt;
+getpass(const char *prompt)
 {
 	static char buf[_PASSWORD_LEN + 1];
 
