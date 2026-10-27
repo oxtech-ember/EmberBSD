@@ -219,7 +219,6 @@ uint64_t tk_nin;
 uint64_t tk_nout;
 uint64_t tk_rawcc;
 
-static kauth_listener_t tty_listener;
 
 #define	TTY_MINQSIZE	0x00400
 #define	TTY_MAXQSIZE	0x10000
@@ -3068,7 +3067,7 @@ tty_init(void)
 	tty_sigsih = softint_establish(SOFTINT_CLOCK, ttysigintr, NULL);
 	KASSERT(tty_sigsih != NULL);
 
-	tty_listener = kauth_listen_scope(KAUTH_SCOPE_DEVICE,
+	(void)kauth_listen_scope(KAUTH_SCOPE_DEVICE,
 	    tty_listener_cb, NULL);
 
 	sysctl_kern_tty_setup();

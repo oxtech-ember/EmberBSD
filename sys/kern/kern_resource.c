@@ -65,7 +65,6 @@ __KERNEL_RCSID(0, "$NetBSD: kern_resource.c,v 1.195 2023/10/04 20:28:06 ad Exp $
 rlim_t			maxdmap = MAXDSIZ;
 rlim_t			maxsmap = MAXSSIZ;
 
-static kauth_listener_t	resource_listener;
 static struct sysctllog	*proc_sysctllog;
 
 static int	donice(struct lwp *, struct proc *, int);
@@ -138,7 +137,7 @@ void
 resource_init(void)
 {
 
-	resource_listener = kauth_listen_scope(KAUTH_SCOPE_PROCESS,
+	(void)kauth_listen_scope(KAUTH_SCOPE_PROCESS,
 	    resource_listener_cb, NULL);
 
 	sysctl_proc_setup();

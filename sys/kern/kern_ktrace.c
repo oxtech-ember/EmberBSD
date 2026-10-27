@@ -170,7 +170,6 @@ int ktrace_on;
 static TAILQ_HEAD(, ktr_desc) ktdq = TAILQ_HEAD_INITIALIZER(ktdq);
 static pool_cache_t kte_cache;
 
-static kauth_listener_t ktrace_listener;
 
 static void
 ktd_wakeup(struct ktr_desc *ktd)
@@ -257,7 +256,7 @@ ktrinit(void)
 	kte_cache = pool_cache_init(sizeof(struct ktrace_entry), 0, 0, 0,
 	    "ktrace", &pool_allocator_nointr, IPL_NONE, NULL, NULL, NULL);
 
-	ktrace_listener = kauth_listen_scope(KAUTH_SCOPE_PROCESS,
+	(void)kauth_listen_scope(KAUTH_SCOPE_PROCESS,
 	    ktrace_listener_cb, NULL);
 }
 

@@ -60,7 +60,6 @@ __KERNEL_RCSID(0, "$NetBSD: sys_sched.c,v 1.50 2023/04/09 09:18:09 riastradh Exp
 #include <sys/unistd.h>
 
 static struct sysctllog *sched_sysctl_log;
-static kauth_listener_t sched_listener;
 
 /*
  * Convert user priority or the in-kernel priority or convert the current
@@ -705,6 +704,6 @@ sched_init(void)
 
 	sysctl_sched_setup(&sched_sysctl_log);
 
-	sched_listener = kauth_listen_scope(KAUTH_SCOPE_PROCESS,
+	(void)kauth_listen_scope(KAUTH_SCOPE_PROCESS,
 	    sched_listener_cb, NULL);
 }

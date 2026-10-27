@@ -216,7 +216,6 @@ static int if_cloners_count;
 /* Packet filtering hook for interfaces. */
 pfil_head_t *			if_pfil __read_mostly;
 
-static kauth_listener_t if_listener;
 
 static int doifioctl(struct socket *, u_long, void *, struct lwp *);
 static void sysctl_sndq_setup(struct sysctllog **, const char *,
@@ -309,7 +308,7 @@ ifinit(void)
 	encapinit();
 #endif
 
-	if_listener = kauth_listen_scope(KAUTH_SCOPE_NETWORK,
+	(void)kauth_listen_scope(KAUTH_SCOPE_NETWORK,
 	    if_listener_cb, NULL);
 
 	/* interfaces are available, inform socket code */

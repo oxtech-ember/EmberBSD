@@ -170,7 +170,6 @@ static const char logcoredump[] =
 static const char lognocoredump[] =
     "pid %d (%s), uid %d: exited on signal %d (core not dumped, err = %d)\n";
 
-static kauth_listener_t signal_listener;
 
 static int
 signal_listener_cb(kauth_cred_t cred, kauth_action_t action, void *cookie,
@@ -220,7 +219,7 @@ signal_init(void)
 	callout_init(&proc_stop_ch, CALLOUT_MPSAFE);
 	callout_setfunc(&proc_stop_ch, proc_stop_callout, NULL);
 
-	signal_listener = kauth_listen_scope(KAUTH_SCOPE_PROCESS,
+	(void)kauth_listen_scope(KAUTH_SCOPE_PROCESS,
 	    signal_listener_cb, NULL);
 }
 

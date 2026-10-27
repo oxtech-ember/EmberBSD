@@ -56,7 +56,6 @@ __KERNEL_RCSID(0, "$NetBSD: sys_pset.c,v 1.24 2020/05/23 23:42:43 ad Exp $");
 static pset_info_t **	psets;
 static u_int		psets_max;
 static u_int		psets_count;
-static kauth_listener_t	psets_listener;
 
 static int	psets_realloc(int);
 static int	psid_validate(psetid_t, bool);
@@ -98,7 +97,7 @@ psets_init(void)
 	psets = kmem_zalloc(psets_max * sizeof(void *), KM_SLEEP);
 	psets_count = 0;
 
-	psets_listener = kauth_listen_scope(KAUTH_SCOPE_SYSTEM,
+	(void)kauth_listen_scope(KAUTH_SCOPE_SYSTEM,
 	    psets_listener_cb, NULL);
 }
 

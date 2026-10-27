@@ -1120,7 +1120,7 @@ struct netbsd32_export_args {
 };
 
 struct netbsd32_mountd_exports_list {
-	const netbsd32_charp	mel_path;
+	netbsd32_charp		mel_path;
 	netbsd32_size_t		mel_nexports;
 	netbsd32_export_argsp	mel_exports;
 };

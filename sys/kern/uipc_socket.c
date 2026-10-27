@@ -175,7 +175,6 @@ static kcondvar_t socurkva_cv;
 #endif
 bool sofixedbuf = SOFIXEDBUF;
 
-static kauth_listener_t socket_listener;
 
 #define	SOCK_LOAN_CHUNK		65536
 
@@ -469,7 +468,7 @@ soinit(void)
 	if (sb_max_set(sb_max))
 		panic("bad initial sb_max value: %lu", sb_max);
 
-	socket_listener = kauth_listen_scope(KAUTH_SCOPE_NETWORK,
+	(void)kauth_listen_scope(KAUTH_SCOPE_NETWORK,
 	    socket_listener_cb, NULL);
 }
 

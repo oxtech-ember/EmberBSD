@@ -154,7 +154,6 @@ __KERNEL_RCSID(0, "$NetBSD: route.c,v 1.239 2025/06/12 08:27:40 ozaki-r Exp $");
 
 struct rtstat		rtstat;
 
-static int		rttrash;	/* routes not in table but not freed */
 
 static struct pool	rtentry_pool;
 static struct pool	rttimer_pool;
@@ -271,7 +270,6 @@ static struct psref_class *rt_psref_class __read_mostly;
 static int _rtcache_debug = 0;
 #endif /* RTFLUSH_DEBUG */
 
-static kauth_listener_t route_listener;
 
 static int rtdeletemsg(struct rtentry *);
 
@@ -494,7 +492,7 @@ rt_init(void)
 	rn_init();	/* initialize all zeroes, all ones, mask table */
 	rtbl_init();
 
-	route_listener = kauth_listen_scope(KAUTH_SCOPE_NETWORK,
+	(void)kauth_listen_scope(KAUTH_SCOPE_NETWORK,
 	    route_listener_cb, NULL);
 }
 
@@ -700,7 +698,6 @@ _rt_free(struct rtentry *rt)
 #endif
 
 	rt_assert_inactive(rt);
-	rttrash--;
 	ifa = rt->rt_ifa;
 	rt->rt_ifa = NULL;
 	ifafree(ifa);
@@ -1187,7 +1184,6 @@ rtrequest1(int req, struct rt_addrinfo *info, struct rtentry **ret_nrt)
 		if (ifa->ifa_rtrequest)
 			ifa->ifa_rtrequest(RTM_DELETE, rt, info);
 		ifa = NULL;
-		rttrash++;
 		if (ret_nrt) {
 			*ret_nrt = rt;
 			rt_ref(rt);

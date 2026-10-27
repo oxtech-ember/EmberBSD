@@ -608,12 +608,12 @@ sunxi_mmc_attach_i(device_t self)
 	struct sdmmcbus_attach_args saa;
 	uint32_t width;
 	const bool supports_hs200 =
-		of_hasprop(sc->sc_phandle, "mmc-hs200-1_2v") |
+		of_hasprop(sc->sc_phandle, "mmc-hs200-1_2v") ||
 		of_hasprop(sc->sc_phandle, "mmc-hs200-1_8v");
 
 	const bool supports_ddr =
-		of_hasprop(sc->sc_phandle, "mmc-ddr-1_2v") |
-		of_hasprop(sc->sc_phandle, "mmc-ddr-1_8v") |
+		of_hasprop(sc->sc_phandle, "mmc-ddr-1_2v") ||
+		of_hasprop(sc->sc_phandle, "mmc-ddr-1_8v") ||
 		of_hasprop(sc->sc_phandle, "mmc-ddr-3_3v");
 
 	if (sc->sc_pwrseq)

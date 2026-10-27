@@ -235,7 +235,6 @@ u_int plcom_rbuf_size = PLCOM_RING_SIZE;
 u_int plcom_rbuf_hiwat = (PLCOM_RING_SIZE * 1) / 4;
 u_int plcom_rbuf_lowat = (PLCOM_RING_SIZE * 3) / 4;
 
-static int	plcomconsunit = -1;
 #ifdef WSDISPLAY_BOOTFB_HANDOFF
 extern struct consdev plcomcons;
 #endif
@@ -2960,7 +2959,6 @@ plcomcnattach(struct plcom_instance *pi, int rate, int frequency,
 	cn_init_magic(&plcom_cnm_state);
 	cn_set_magic("\047\001"); /* default magic is BREAK */
 
-	plcomconsunit = unit;
 	plcomconsrate = rate;
 	plcomconscflag = cflag;
 

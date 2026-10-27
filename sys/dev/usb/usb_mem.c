@@ -89,7 +89,10 @@ Static struct usb_dma_block_qh usb_blk_fraglist =
 Static struct usb_dma_block_qh usb_blk_fulllist =
 	LIST_HEAD_INITIALIZER(usb_blk_fulllist);
 #endif
+#ifdef USB_DEBUG
+/* Retain this exported counter for USB debugger inspection. */
 Static u_int usb_blk_nfree = 0;
+#endif
 /* XXX should have different free list for different tags (for speed) */
 Static LIST_HEAD(, usb_frag_dma) usb_frag_freelist =
 	LIST_HEAD_INITIALIZER(usb_frag_freelist);
@@ -137,7 +140,9 @@ usb_block_allocmem(bus_dma_tag_t tag, size_t size, size_t align,
 		    b->align >= align &&
 		    (b->flags & USB_DMA_COHERENT) == dmaflags) {
 			LIST_REMOVE(b, next);
+#ifdef USB_DEBUG
 			usb_blk_nfree--;
+#endif
 			*dmap = b;
 			if (zero) {
 				memset(b->kaddr, 0, b->size);
@@ -258,7 +263,9 @@ usb_block_freemem(usb_dma_block_t *b)
 	LIST_REMOVE(b, next);
 #endif
 	LIST_INSERT_HEAD(&usb_blk_freelist, b, next);
+#ifdef USB_DEBUG
 	usb_blk_nfree++;
+#endif
 }
 
 int

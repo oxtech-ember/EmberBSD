@@ -69,7 +69,7 @@ def function(text, name)
   matches.first
 end
 arm = files.fetch(inputs[0])
-state = arm[/^static struct arm_simplefb_softc \{.*?^static bus_space_handle_t arm_simplefb_bsh;/m]
+state = arm[/^static struct arm_simplefb_softc \{.*?^static bus_addr_t arm_simplefb_addr;/m]
 abort 'missing actual ARM state' unless state
 registration = conditional(files.fetch(inputs[2]), "#ifdef WSDISPLAY_EARLYFB_HOOKS\nenum {")
 abort 'missing actual MI registration' unless registration

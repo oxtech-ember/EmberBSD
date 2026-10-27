@@ -77,7 +77,9 @@ __KERNEL_RCSID(0, "$NetBSD: plfb_fdt.c,v 1.5 2021/01/27 03:10:19 thorpej Exp $")
 
 #define	PLFB_BPP		32
 
+#ifndef WSDISPLAY_MULTICONS
 static int plfb_console_phandle = -1;
+#endif
 
 struct plfb_softc {
 	struct genfb_softc	sc_gen;
@@ -366,7 +368,9 @@ plfb_console_match(int phandle)
 static void
 plfb_console_consinit(struct fdt_attach_args *faa, u_int uart_freq)
 {
+#ifndef WSDISPLAY_MULTICONS
 	plfb_console_phandle = faa->faa_phandle;
+#endif
 	genfb_cnattach();
 }
 

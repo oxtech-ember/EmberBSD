@@ -13,7 +13,7 @@ EXTRA_CLEAN+=	${k}.ldscript
 ${k}: ${k}.ldscript
 ${k}.ldscript: ${KERNLDSCRIPT} assym.h
 	${_MKTARGET_CREATE}
-	${CPP} -I. ${KERNLDSCRIPT} | grep -v '^#' | grep -v '^$$' >$@
+	${CPP} -x c -I. ${KERNLDSCRIPT} | grep -v '^#' | grep -v '^$$' >$@
 .endfor
 LINKSCRIPT=	-T ${.TARGET}.ldscript
 .endif

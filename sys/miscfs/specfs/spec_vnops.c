@@ -181,7 +181,6 @@ const struct vnodeopv_entry_desc spec_vnodeop_entries[] = {
 const struct vnodeopv_desc spec_vnodeop_opv_desc =
 	{ &spec_vnodeop_p, spec_vnodeop_entries };
 
-static kauth_listener_t rawio_listener;
 static struct kcondvar specfs_iocv;
 
 /*
@@ -228,7 +227,7 @@ void
 spec_init(void)
 {
 
-	rawio_listener = kauth_listen_scope(KAUTH_SCOPE_DEVICE,
+	(void)kauth_listen_scope(KAUTH_SCOPE_DEVICE,
 	    rawio_listener_cb, NULL);
 	cv_init(&specfs_iocv, "specio");
 }

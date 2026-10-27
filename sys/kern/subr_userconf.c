@@ -43,7 +43,6 @@ extern struct cfdata cfdata[];
 
 static int userconf_base = 16;			/* Base for "large" numbers */
 static int userconf_maxdev = -1;		/* # of used device slots   */
-static int userconf_totdev = -1;		/* # of device slots        */
 #if 0
 static int userconf_maxlocnames = -1;		/* # of locnames            */
 #endif
@@ -89,7 +88,6 @@ userconf_init(void)
 		i++;
 
 	userconf_maxdev = i - 1;
-	userconf_totdev = i - 1;
 
 	userconf_bootinfo();
 }

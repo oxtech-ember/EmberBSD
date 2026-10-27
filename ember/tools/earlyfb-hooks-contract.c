@@ -72,22 +72,27 @@ static struct consdev wsdisplay_cons, old_cons, *cn_tab, *wsdisplay_ocn;
 static struct wsscreen_internal wsdisplay_console_conf;
 static struct display_device *wsdisplay_console_device;
 static int wsdisplay_console_initted, wsdisplay_cons_pollmode;
+#ifdef WSDISPLAY_MULTICONS
 static bool wsdisplay_multicons_suspended, wsdisplay_multicons_enable;
+#endif
 static void (*wsdisplay_cons_kbd_pollc)(dev_t, int);
 struct fixture_msgbuf { int msg_bufr, msg_bufx, msg_bufs; char *msg_bufc; };
 static char messages[] = "abc";
 static struct fixture_msgbuf messages_info = { 0, 3, 4, messages };
 static struct fixture_msgbuf *msgbufp = &messages_info;
+#ifdef WSDISPLAY_EARLYFB_HOOKS
 static const char *panicstr;
 static _Thread_local bool hard_interrupt, soft_interrupt;
+static bool require_reader, inject_at_bound, panic_at_update, reenter;
+#endif
 static _Thread_local int read_depth;
 static atomic_uint readers;
 static atomic_uint enters, exits;
 static unsigned int output_calls, maps, updates, attaches;
 static unsigned int kbd_on, kbd_off, old_on, old_off, old_output;
-static bool require_reader, pause_output, pause_update, output_waiting;
+static bool pause_output, pause_update, output_waiting;
 static bool update_waiting, release_output, release_update, fail_map;
-static bool no_node, inject_at_bound, panic_at_update, reenter, change_binding;
+static bool no_node, change_binding;
 static pthread_mutex_t gate = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t wake = PTHREAD_COND_INITIALIZER;
 #ifdef WSDISPLAY_EARLYFB_HOOKS
@@ -292,7 +297,9 @@ static void vcons_update_screen(struct vcons_screen *scr)
 		CHECK(pthread_cond_broadcast(&wake) == 0);
 		while (!release_update) CHECK(pthread_cond_wait(&wake, &gate) == 0);
 	}
+#ifdef WSDISPLAY_EARLYFB_HOOKS
 	if (panic_at_update) panicstr = "fixture panic";
+#endif
 	if (change_binding) wsdisplay_console_initted = 2;
 	CHECK(pthread_mutex_unlock(&gate) == 0);
 }
@@ -333,7 +340,9 @@ static void reset(void)
 	wsdisplay_console_initted = 0; wsdisplay_console_device = NULL;
 	old_cons = (struct consdev){ .cn_putc = old_putc, .cn_pollc = old_pollc };
 	cn_tab = &old_cons; wsdisplay_ocn = NULL;
+#ifdef WSDISPLAY_MULTICONS
 	wsdisplay_multicons_enable = true; wsdisplay_multicons_suspended = false;
+#endif
 	wsdisplay_cons_kbd_pollc = kbd_pollc;
 	fixture_address = 4096; fixture_size = 8192; fixture_width = 32;
 	fixture_height = 16; fixture_stride = 128; fixture_format = "x8r8g8b8";
@@ -341,13 +350,18 @@ static void reset(void)
 	fixture_ranges_length = 0; fixture_node_parent = 2; fixture_chosen_parent = 3;
 	fixture_stdout = 1; fixture_get_reg_calls = 0; fixture_reg_error = false;
 	fixture_blob = &fixture_blob_a; fixture_handle = 1;
+#ifdef WSDISPLAY_EARLYFB_HOOKS
 	panicstr = NULL; hard_interrupt = soft_interrupt = false;
+#endif
 	maps = updates = attaches = output_calls = 0;
 	kbd_on = kbd_off = old_on = old_off = old_output = 0;
 	pause_output = pause_update = output_waiting = update_waiting = false;
 	release_output = release_update = fail_map = no_node = false;
-	inject_at_bound = panic_at_update = reenter = change_binding = false;
+	change_binding = false;
+#ifdef WSDISPLAY_EARLYFB_HOOKS
+	inject_at_bound = panic_at_update = reenter = false;
 	require_reader = true;
+#endif
 #ifdef WSDISPLAY_EARLYFB_HOOKS
 	wsdisplay_early_phase = WSDISPLAY_EARLY_NONE;
 #endif
@@ -396,8 +410,13 @@ int main(void)
 	CHECK(maps == 1 && attaches == 0 && updates == 0);
 	reset(); no_node = true; arm_simplefb_preattach();
 	CHECK(maps == 0 && attaches == 0);
-	reset(); inject_at_bound = reenter = true; arm_simplefb_preattach();
+	reset();
+#ifdef WSDISPLAY_EARLYFB_HOOKS
+	inject_at_bound = reenter = true;
+#endif
+	arm_simplefb_preattach();
 	CHECK(maps == 1 && attaches == 1 && updates == 1);
+	CHECK(fixture_get_reg_calls == 1);
 	CHECK(atomic_load(&readers) == 0 && enters == exits);
 #ifdef WSDISPLAY_EARLYFB_HOOKS
 	CHECK(wsdisplay_early_output_snapshot(&value) == 0);
@@ -447,7 +466,10 @@ int main(void)
 	wsdisplay_cnputc(0, 'P');
 #endif
 	/* A foreign cookie does not become a tracked ARM early backend. */
-	reset(); arm_simplefb_preattach(); require_reader = false;
+	reset(); arm_simplefb_preattach();
+#ifdef WSDISPLAY_EARLYFB_HOOKS
+	require_reader = false;
+#endif
 	wsdisplay_console_conf.emulcookie = &old_cons;
 	old = enters; wsdisplay_cnputc(0, 'f');
 	CHECK(enters == exits);

@@ -45,7 +45,7 @@ __KERNEL_RCSID(0, "$NetBSD: tegra_cpufreq.c,v 1.5 2017/04/22 23:53:24 jmcneill E
 
 static u_int cpufreq_busy;
 static struct sysctllog *cpufreq_log;
-static int cpufreq_node_target, cpufreq_node_current, cpufreq_node_available;
+static int cpufreq_node_target;
 
 static const struct tegra_cpufreq_func *cpufreq_func = NULL;
 
@@ -109,7 +109,6 @@ tegra_cpufreq_register(const struct tegra_cpufreq_func *cf)
 	    CTL_CREATE, CTL_EOL);
 	if (error)
 		goto sysctl_failed;
-	cpufreq_node_current = node->sysctl_num;
 
 	error = sysctl_createv(&cpufreq_log, 0, &freqnode, &node,
 	    0, CTLTYPE_STRING, "available", NULL,
@@ -117,7 +116,6 @@ tegra_cpufreq_register(const struct tegra_cpufreq_func *cf)
 	    CTL_CREATE, CTL_EOL);
 	if (error)
 		goto sysctl_failed;
-	cpufreq_node_available = node->sysctl_num;
 
 	device_printf(curcpu()->ci_dev,
 	    "setting speed to %d MHz\n", availfreq[0]);

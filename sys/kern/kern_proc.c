@@ -264,7 +264,6 @@ static specificdata_domain_t proc_specificdata_domain;
 
 static pool_cache_t proc_cache;
 
-static kauth_listener_t proc_listener;
 
 static void fill_proc(const struct proc *, struct proc *, bool);
 static int fill_pathname(struct lwp *, pid_t, void *, size_t *);
@@ -426,7 +425,7 @@ procinit(void)
 	proc_cache = pool_cache_init(sizeof(struct proc), proc_alignment, 0, 0,
 	    "procpl", NULL, IPL_NONE, proc_ctor, NULL, NULL);
 
-	proc_listener = kauth_listen_scope(KAUTH_SCOPE_PROCESS,
+	(void)kauth_listen_scope(KAUTH_SCOPE_PROCESS,
 	    proc_listener_cb, NULL);
 }
 

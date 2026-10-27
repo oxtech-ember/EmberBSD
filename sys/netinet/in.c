@@ -181,7 +181,6 @@ static int			hostzeroisbroadcast = HOSTZEROBROADCAST;
 LIST_HEAD(in_multihashhead, in_multi);		/* Type of the hash head */
 
 static struct pool		inmulti_pool;
-static u_int			in_multientries;
 static struct in_multihashhead *in_multihashtbl;
 static u_long			in_multihash;
 static krwlock_t		in_multilock;
@@ -1741,7 +1740,6 @@ in_addmulti(struct in_addr *ap, ifnet_t *ifp)
 	LIST_INSERT_HEAD(
 	    &IN_MULTI_HASH(inm->inm_addr.s_addr, ifp),
 	    inm, inm_list);
-	in_multientries++;
 	rw_exit(&in_multilock);
 
 	return inm;
@@ -1778,7 +1776,6 @@ in_delmulti(struct in_multi *inm)
 	 * Unlink from list.
 	 */
 	LIST_REMOVE(inm, inm_list);
-	in_multientries--;
 	rw_exit(&in_multilock);
 
 	pool_put(&inmulti_pool, inm);

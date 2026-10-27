@@ -115,7 +115,6 @@ static int	module_thread_ticks;
 int (*module_load_vfs_vec)(const char *, int, bool, module_t *,
 			   prop_dictionary_t *) = (void *)eopnotsupp;
 
-static kauth_listener_t	module_listener;
 
 static specificdata_domain_t module_specificdata_domain;
 
@@ -474,7 +473,7 @@ module_init(void)
 	LEGACY_MODULE_PATH;
 #endif
 
-	module_listener = kauth_listen_scope(KAUTH_SCOPE_SYSTEM,
+	(void)kauth_listen_scope(KAUTH_SCOPE_SYSTEM,
 	    module_listener_cb, NULL);
 
 	__link_set_foreach(mip, modules) {

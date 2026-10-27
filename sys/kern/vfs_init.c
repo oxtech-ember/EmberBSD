@@ -119,7 +119,6 @@ const struct vnodeopv_desc * const vfs_special_vnodeopv_descs[] = {
 struct vfs_list_head vfs_list =			/* vfs list */
     LIST_HEAD_INITIALIZER(vfs_list);
 
-static kauth_listener_t mount_listener;
 
 /*
  * This code doesn't work if the defn is **vnodop_defns with cc.
@@ -439,7 +438,7 @@ vfsinit(void)
 	 */
 	vfs_hooks_init();
 
-	mount_listener = kauth_listen_scope(KAUTH_SCOPE_SYSTEM,
+	(void)kauth_listen_scope(KAUTH_SCOPE_SYSTEM,
 	    mount_listener_cb, NULL);
 
 	/*

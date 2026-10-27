@@ -108,8 +108,6 @@ static struct vcons_data arm_simplefb_vcons_data;
 static struct vcons_screen arm_simplefb_screen;
 
 static bus_addr_t arm_simplefb_addr;
-static bus_size_t arm_simplefb_size;
-static bus_space_handle_t arm_simplefb_bsh;
 
 #ifdef WSDISPLAY_BOOTFB_DEFER
 /* Written only by the real preattach, then published once after replay. */
@@ -380,8 +378,6 @@ arm_simplefb_preattach(void)
 		goto out;
 
 	arm_simplefb_addr = addr;
-	arm_simplefb_size = size;
-	arm_simplefb_bsh = bsh;
 
 	sc->sc_width = fb.sf_width;
 	sc->sc_height = fb.sf_height;

@@ -632,7 +632,6 @@ filter_touch(struct knote *kn, struct kevent *kev, long type)
 	return kn->kn_fop->f_touch(kn, kev, type);
 }
 
-static kauth_listener_t	kqueue_listener;
 
 static int
 kqueue_listener_cb(kauth_cred_t cred, kauth_action_t action, void *cookie,
@@ -665,7 +664,7 @@ kqueue_init(void)
 
 	rw_init(&kqueue_filter_lock);
 
-	kqueue_listener = kauth_listen_scope(KAUTH_SCOPE_PROCESS,
+	(void)kauth_listen_scope(KAUTH_SCOPE_PROCESS,
 	    kqueue_listener_cb, NULL);
 }
 

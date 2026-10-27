@@ -216,7 +216,6 @@ vmem_t *kmem_meta_arena = NULL;
 static kmutex_t vmem_btag_refill_lock;
 static kmutex_t vmem_btag_lock;
 static LIST_HEAD(, vmem_btag) vmem_btag_freelist;
-static size_t vmem_btag_freelist_count = 0;
 static struct pool vmem_btag_pool;
 static bool vmem_btag_pool_initialized __read_mostly;
 
@@ -272,7 +271,6 @@ bt_refill_locked(vmem_t *vm)
 		bt->bt_flags = 0;
 		LIST_INSERT_HEAD(&vm->vm_freetags, bt, bt_freelist);
 		vm->vm_nfreetags++;
-		vmem_btag_freelist_count--;
 		VMEM_EVCNT_INCR(static_bt_inuse);
 	}
 	mutex_exit(&vmem_btag_lock);
@@ -383,7 +381,6 @@ bt_freetrim(vmem_t *vm, int freelimit)
 		    && bt < &static_bts[STATIC_BT_COUNT]) {
 			mutex_enter(&vmem_btag_lock);
 			LIST_INSERT_HEAD(&vmem_btag_freelist, bt, bt_freelist);
-			vmem_btag_freelist_count++;
 			mutex_exit(&vmem_btag_lock);
 			VMEM_EVCNT_DECR(static_bt_inuse);
 		} else {
@@ -717,7 +714,6 @@ vmem_bootstrap(void)
 		bt_t *bt = &static_bts[static_bt_count];
 		LIST_INSERT_HEAD(&vmem_btag_freelist, bt, bt_freelist);
 		VMEM_EVCNT_INCR(static_bt_count);
-		vmem_btag_freelist_count++;
 	}
 	vmem_bootstrapped = TRUE;
 }
