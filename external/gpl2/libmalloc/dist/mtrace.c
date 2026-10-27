@@ -31,7 +31,7 @@ Cambridge, MA 02139, USA.
 #include <stdio.h>
 
 #ifndef	__GNU_LIBRARY__
-extern char *getenv ();
+extern char *getenv (const char *);
 #else
 #include <stdlib.h>
 #endif
@@ -60,13 +60,13 @@ static __ptr_t (*tr_old_realloc_hook) __P ((__ptr_t ptr, __malloc_size_t size));
 
 void tr_break __P ((void));
 void
-tr_break ()
+tr_break (void)
 {
 }
 
 static void tr_where __P ((void));
 static void
-tr_where ()
+tr_where (void)
 {
   if (_mtrace_file)
     {
@@ -77,8 +77,7 @@ tr_where ()
 
 static void tr_freehook __P ((__ptr_t));
 static void
-tr_freehook (ptr)
-     __ptr_t ptr;
+tr_freehook (__ptr_t ptr)
 {
   tr_where ();
   fprintf (mallstream, "- %p\n", ptr);	/* Be sure to print it first.  */
@@ -144,7 +143,7 @@ tr_reallochook (__ptr_t ptr, __malloc_size_t size)
    don't forget to set a breakpoint on tr_break!  */
 
 void
-mtrace ()
+mtrace (void)
 {
   char *mallfile;
 
@@ -172,7 +171,7 @@ mtrace ()
 }
 
 void
-muntrace ()
+muntrace (void)
 {
   if (mallstream == NULL)
     return;

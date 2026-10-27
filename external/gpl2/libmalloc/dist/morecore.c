@@ -41,12 +41,7 @@ extern __ptr_t __sbrk __P ((int increment));
    and return the start of data space, or NULL on errors.
    If INCREMENT is negative, shrink data space.  */
 __ptr_t
-__default_morecore (increment)
-#ifdef __STDC__
-     ptrdiff_t increment;
-#else
-     int increment;
-#endif
+__default_morecore (__malloc_ptrdiff_t increment)
 {
   __ptr_t result = (__ptr_t) __sbrk ((int) increment);
   if (result == (__ptr_t) -1)

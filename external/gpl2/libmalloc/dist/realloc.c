@@ -37,9 +37,7 @@ Cambridge, MA 02139, USA.
 /* Like bcopy except never gets confused by overlap.  */
 
 static void
-safe_bcopy (from, to, size)
-     char *from, *to;
-     int size;
+safe_bcopy (char *from, char *to, int size)
 {
   if (size <= 0 || from == to)
     return;
@@ -107,9 +105,7 @@ __ptr_t (*__realloc_hook) __P ((__ptr_t __ptr, __malloc_size_t __size));
    new region.  This module has incestuous knowledge of the
    internals of both free and malloc. */
 __ptr_t
-realloc (ptr, size)
-     __ptr_t ptr;
-     __malloc_size_t size;
+realloc (__ptr_t ptr, __malloc_size_t size)
 {
   __ptr_t result;
   int type;

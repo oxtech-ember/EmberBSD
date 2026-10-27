@@ -47,14 +47,14 @@ static int warnlevel;
 
 /* Function to call to issue a warning;
    0 means don't issue them.  */
-static void (*warn_function) ();
+static void (*warn_function) (const char *);
 
 /* Get more memory space, complaining if we're near the end. */
 
 static void
-check_memory_limits ()
+check_memory_limits (void)
 {
-  extern POINTER (*__morecore) ();
+  extern POINTER (*__morecore) (ptrdiff_t);
 
   register POINTER cp;
   unsigned long five_percent;
@@ -121,11 +121,9 @@ check_memory_limits ()
    also declare where the end of pure storage is. */
 
 void
-memory_warnings (start, warnfun)
-     POINTER start;
-     void (*warnfun) ();
+memory_warnings (POINTER start, void (*warnfun) (const char *))
 {
-  extern void (* __after_morecore_hook) ();     /* From gmalloc.c */
+  extern void (* __after_morecore_hook) (void);     /* From gmalloc.c */
 
   if (start)
     data_space_start = start;

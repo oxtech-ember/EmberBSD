@@ -39,8 +39,7 @@ extern size_t __getpagesize __P ((void));
 static __malloc_size_t pagesize;
 
 __ptr_t
-valloc (size)
-     __malloc_size_t size;
+valloc (__malloc_size_t size)
 {
   if (pagesize == 0)
     pagesize = __getpagesize ();

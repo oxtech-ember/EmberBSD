@@ -28,6 +28,8 @@ Cambridge, MA 02139, USA.  */
    rather than all of them.  This means allowing for a possible
    hole between the first bloc and the end of malloc storage.  */
 
+#include <stddef.h>
+
 #ifdef emacs
 
 #include <config.h>
@@ -65,8 +67,6 @@ extern void safe_bcopy ();
 
 #else	/* Not emacs.  */
 
-#include <stddef.h>
-
 typedef size_t SIZE;
 typedef void *POINTER;
 
@@ -89,12 +89,12 @@ typedef void *POINTER;
    automatic variable, and loses its value each time Emacs is started up.  */
 static int r_alloc_initialized = 0;
 
-static void r_alloc_init ();
+static void r_alloc_init (void);
 
 /* Declarations for working with the malloc, ralloc, and system breaks.  */
 
 /* Function to set the real break value.  */
-static POINTER (*real_morecore) ();
+static POINTER (*real_morecore) (ptrdiff_t);
 
 /* The break value, as seen by malloc.  */
 static POINTER virtual_break_value;
@@ -194,8 +194,7 @@ static bloc_ptr first_bloc, last_bloc;
 /* Find the heap that ADDRESS falls within.  */
 
 static heap_ptr
-find_heap (address)
-    POINTER address;
+find_heap (POINTER address)
 {
   heap_ptr heap;
 
@@ -227,9 +226,7 @@ find_heap (address)
    allocate the memory.  */
 
 static POINTER
-obtain (address, size)
-    POINTER address;
-    SIZE size;
+obtain (POINTER address, SIZE size)
 {
   heap_ptr heap;
   SIZE already_available;
@@ -310,7 +307,7 @@ obtain (address, size)
    it can also eliminate the last heap entirely.  */
 
 static void
-relinquish ()
+relinquish (void)
 {
   register heap_ptr h;
   int excess = 0;
@@ -360,8 +357,7 @@ relinquish ()
    to that block.  */
 
 static bloc_ptr
-find_bloc (ptr)
-     POINTER *ptr;
+find_bloc (POINTER *ptr)
 {
   register bloc_ptr p = first_bloc;
 
@@ -381,8 +377,7 @@ find_bloc (ptr)
    memory for the new block.  */
 
 static bloc_ptr
-get_bloc (size)
-     SIZE size;
+get_bloc (SIZE size)
 {
   register bloc_ptr new_bloc;
   register heap_ptr heap;
@@ -438,10 +433,7 @@ get_bloc (size)
    Do not touch the contents of blocs or break_value.  */
 
 static int
-relocate_blocs (bloc, heap, address)
-    bloc_ptr bloc;
-    heap_ptr heap;
-    POINTER address;
+relocate_blocs (bloc_ptr bloc, heap_ptr heap, POINTER address)
 {
   register bloc_ptr b = bloc;
 
@@ -494,8 +486,7 @@ relocate_blocs (bloc, heap, address)
    before that of BEFORE.  */
 
 static void
-reorder_bloc (bloc, before)
-     bloc_ptr bloc, before;
+reorder_bloc (bloc_ptr bloc, bloc_ptr before)
 {
   bloc_ptr prev, next;
 
@@ -523,9 +514,7 @@ reorder_bloc (bloc, before)
    with heap HEAP and bloc BLOC.  */
 
 static void
-update_heap_bloc_correspondence (bloc, heap)
-     bloc_ptr bloc;
-     heap_ptr heap;
+update_heap_bloc_correspondence (bloc_ptr bloc, heap_ptr heap)
 {
   register bloc_ptr b;
 
@@ -587,9 +576,7 @@ update_heap_bloc_correspondence (bloc, heap)
    that come after BLOC in memory.  */
 
 static int
-resize_bloc (bloc, size)
-    bloc_ptr bloc;
-    SIZE size;
+resize_bloc (bloc_ptr bloc, SIZE size)
 {
   register bloc_ptr b;
   heap_ptr heap;
@@ -658,8 +645,7 @@ resize_bloc (bloc, size)
    This may return space to the system.  */
 
 static void
-free_bloc (bloc)
-     bloc_ptr bloc;
+free_bloc (bloc_ptr bloc)
 {
   heap_ptr heap = bloc->heap;
 
@@ -722,8 +708,7 @@ static int r_alloc_freeze_level;
    GNU malloc package.  */
 
 POINTER 
-r_alloc_sbrk (size)
-     long size;
+r_alloc_sbrk (ptrdiff_t size)
 {
   register bloc_ptr b;
   POINTER address;
@@ -860,9 +845,7 @@ r_alloc_sbrk (size)
    return zero.  */
 
 POINTER
-r_alloc (ptr, size)
-     POINTER *ptr;
-     SIZE size;
+r_alloc (POINTER *ptr, SIZE size)
 {
   register bloc_ptr new_bloc;
 
@@ -885,8 +868,7 @@ r_alloc (ptr, size)
    Store 0 in *PTR to show there's no block allocated.  */
 
 void
-r_alloc_free (ptr)
-     register POINTER *ptr;
+r_alloc_free (register POINTER *ptr)
 {
   register bloc_ptr dead_bloc;
 
@@ -909,9 +891,7 @@ r_alloc_free (ptr)
    return zero.  */
 
 POINTER
-r_re_alloc (ptr, size)
-     POINTER *ptr;
-     SIZE size;
+r_re_alloc (POINTER *ptr, SIZE size)
 {
   register bloc_ptr bloc;
 
@@ -935,8 +915,7 @@ r_re_alloc (ptr, size)
    malloc must return a null pointer.  */
 
 void
-r_alloc_freeze (size)
-     long size;
+r_alloc_freeze (long size)
 {
   /* If already frozen, we can't make any more room, so don't try.  */
   if (r_alloc_freeze_level > 0)
@@ -950,7 +929,7 @@ r_alloc_freeze (size)
 }
 
 void
-r_alloc_thaw ()
+r_alloc_thaw (void)
 {
   if (--r_alloc_freeze_level < 0)
     abort ();
@@ -958,12 +937,12 @@ r_alloc_thaw ()
 
 /* The hook `malloc' uses for the function which gets more space
    from the system.  */
-extern POINTER (*__morecore) ();
+extern POINTER (*__morecore) (ptrdiff_t);
 
 /* Initialize various things for memory allocation.  */
 
 static void
-r_alloc_init ()
+r_alloc_init (void)
 {
   if (r_alloc_initialized)
     return;
@@ -1004,7 +983,7 @@ r_alloc_init ()
 #include <assert.h>
 
 void
-r_alloc_check ()
+r_alloc_check (void)
 {
     int found = 0;
     heap_ptr h, ph = 0;

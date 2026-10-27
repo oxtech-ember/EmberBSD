@@ -28,7 +28,7 @@ Cambridge, MA 02139, USA.
 #endif
 
 struct mstats
-mstats ()
+mstats (void)
 {
   struct mstats result;
 

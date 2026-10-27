@@ -25,9 +25,7 @@ Cambridge, MA 02139, USA.  */
 __ptr_t (*__memalign_hook) __P ((size_t __size, size_t __alignment));
 
 __ptr_t
-memalign (alignment, size)
-     __malloc_size_t alignment;
-     __malloc_size_t size;
+memalign (__malloc_size_t alignment, __malloc_size_t size)
 {
   __ptr_t result;
   unsigned long int adj;

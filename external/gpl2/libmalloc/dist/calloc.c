@@ -28,9 +28,7 @@ Cambridge, MA 02139, USA.
 /* Allocate an array of NMEMB elements each SIZE bytes long.
    The entire array is initialized to zeros.  */
 __ptr_t
-calloc (nmemb, size)
-     register __malloc_size_t nmemb;
-     register __malloc_size_t size;
+calloc (register __malloc_size_t nmemb, register __malloc_size_t size)
 {
   register __ptr_t result = malloc (nmemb * size);
 

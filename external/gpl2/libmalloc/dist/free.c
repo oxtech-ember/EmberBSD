@@ -36,8 +36,7 @@ struct alignlist *_aligned_blocks = NULL;
 /* Return memory to the heap.
    Like `free' but don't call a __free_hook if there is one.  */
 void
-_free_internal (ptr)
-     __ptr_t ptr;
+_free_internal (__ptr_t ptr)
 {
   int type;
   __malloc_size_t block, blocks;
@@ -189,8 +188,7 @@ _free_internal (ptr)
 
 /* Return memory to the heap.  */
 void
-free (ptr)
-     __ptr_t ptr;
+free (__ptr_t ptr)
 {
   register struct alignlist *l;
 

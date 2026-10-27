@@ -36,8 +36,7 @@ function_alias(cfree, free, void, (ptr),
 #else
 
 void
-cfree (ptr)
-     __ptr_t ptr;
+cfree (__ptr_t ptr)
 {
   free (ptr);
 }

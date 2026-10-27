@@ -55,10 +55,7 @@ struct hdr
 #else
 static void flood __P ((__ptr_t, int, __malloc_size_t));
 static void
-flood (ptr, val, size)
-     __ptr_t ptr;
-     int val;
-     __malloc_size_t size;
+flood (__ptr_t ptr, int val, __malloc_size_t size)
 {
   char *cp = ptr;
   while (size--)
@@ -68,8 +65,7 @@ flood (ptr, val, size)
 
 static enum mcheck_status checkhdr __P ((const struct hdr *));
 static enum mcheck_status
-checkhdr (hdr)
-     const struct hdr *hdr;
+checkhdr (const struct hdr *hdr)
 {
   enum mcheck_status status;
   switch (hdr->magic)
@@ -94,8 +90,7 @@ checkhdr (hdr)
 
 static void freehook __P ((__ptr_t));
 static void
-freehook (ptr)
-     __ptr_t ptr;
+freehook (__ptr_t ptr)
 {
   struct hdr *hdr = ((struct hdr *) ptr) - 1;
   checkhdr (hdr);
@@ -108,8 +103,7 @@ freehook (ptr)
 
 static __ptr_t mallochook __P ((__malloc_size_t));
 static __ptr_t
-mallochook (size)
-     __malloc_size_t size;
+mallochook (__malloc_size_t size)
 {
   struct hdr *hdr;
 
@@ -128,9 +122,7 @@ mallochook (size)
 
 static __ptr_t reallochook __P ((__ptr_t, __malloc_size_t));
 static __ptr_t
-reallochook (ptr, size)
-     __ptr_t ptr;
-     __malloc_size_t size;
+reallochook (__ptr_t ptr, __malloc_size_t size)
 {
   struct hdr *hdr = ((struct hdr *) ptr) - 1;
   __malloc_size_t osize = hdr->size;
@@ -157,8 +149,7 @@ reallochook (ptr, size)
 }
 
 static void
-mabort (status)
-     enum mcheck_status status;
+mabort (enum mcheck_status status)
 {
   const char *msg;
   switch (status)
@@ -191,10 +182,9 @@ mabort (status)
 static int mcheck_used = 0;
 
 int
-mcheck (func)
-     void (*func) __P ((enum mcheck_status));
+mcheck (void (*__abortfunc) __P ((enum mcheck_status)))
 {
-  abortfunc = (func != NULL) ? func : &mabort;
+  abortfunc = (__abortfunc != NULL) ? __abortfunc : &mabort;
 
   /* These hooks may not be safely inserted if malloc is already in use.  */
   if (!__malloc_initialized && !mcheck_used)

@@ -66,8 +66,7 @@ void (*__after_morecore_hook) __P ((void));
 /* Aligned allocation.  */
 static __ptr_t align __P ((__malloc_size_t));
 static __ptr_t
-align (size)
-     __malloc_size_t size;
+align (__malloc_size_t size)
 {
   __ptr_t result;
   unsigned long int adj;
@@ -91,7 +90,7 @@ align (size)
 /* Set everything up and remember that we have.  */
 static int initialize __P ((void));
 static int
-initialize ()
+initialize (void)
 {
   if (__malloc_initialize_hook)
     (*__malloc_initialize_hook) ();
@@ -118,8 +117,7 @@ initialize ()
    growing the heap info table as necessary. */
 static __ptr_t morecore __P ((__malloc_size_t));
 static __ptr_t
-morecore (size)
-     __malloc_size_t size;
+morecore (__malloc_size_t size)
 {
   __ptr_t result;
   malloc_info *newinfo, *oldinfo;
@@ -162,8 +160,7 @@ morecore (size)
 
 /* Allocate memory from the heap.  */
 __ptr_t
-malloc (size)
-     __malloc_size_t size;
+malloc (__malloc_size_t size)
 {
   __ptr_t result;
   __malloc_size_t block, blocks, lastblocks, start;
@@ -353,23 +350,19 @@ malloc (size)
    and _realloc.  Make them use the GNU functions.  */
 
 __ptr_t
-_malloc (size)
-     __malloc_size_t size;
+_malloc (__malloc_size_t size)
 {
   return malloc (size);
 }
 
 void
-_free (ptr)
-     __ptr_t ptr;
+_free (__ptr_t ptr)
 {
   free (ptr);
 }
 
 __ptr_t
-_realloc (ptr, size)
-     __ptr_t ptr;
-     __malloc_size_t size;
+_realloc (__ptr_t ptr, __malloc_size_t size)
 {
   return realloc (ptr, size);
 }
