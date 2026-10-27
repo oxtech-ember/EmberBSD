@@ -106,9 +106,7 @@ module A133Usb
     def protection_valid!(data)
       raise Invalid, 'invalid_protected_environment' unless data.is_a?(String)
       vars = A133Env.decode(data).fetch(:entries).to_h
-      profile = A133Recovery::PROFILE.merge('boot_normal'=>'run ember_recovery_once')
-      raise Invalid, 'invalid_protected_environment' unless profile.all? { |key,value| vars[key] == value } &&
-        vars['ember_recovery_once'] == A133Recovery::UPDATES['ember_recovery_once']
+      raise Invalid, 'invalid_protected_environment' unless A133Recovery.protected_profile?(vars)
     rescue A133Env::Invalid
       raise Invalid, 'invalid_protected_environment'
     end

@@ -26,15 +26,34 @@ module A133Recovery
     'boot_normal'=>'sunxi_flash read 45000000 boot;bootm 45000000',
     'boot_recovery'=>'sunxi_flash read 45000000 recovery;bootm 45000000'
   }.transform_values(&:freeze).freeze
+  # Protection executes only this known factory command, not arbitrary helpers.
+  DIRECT_SETARGS = 'setenv bootargs earlyprintk=${earlyprintk} initcall_debug=${initcall_debug} ' \
+    'console=${console} loglevel=${loglevel} root=${nand_root} init=${init} partitions=${partitions} ' \
+    'cma=${cma} snum=${snum} mac_addr=${mac} wifi_mac=${wifi_mac} bt_mac=${bt_mac} ' \
+    'specialstr=${specialstr} gpt=1'
+  DIRECT_SETARGS.freeze
   DIRECT_HELPERS = {
     'ember_entry_restore'=>'setenv bootcmd run setargs_nand boot_normal',
     'ember_entry_save'=>'saveenv',
     'ember_entry_fdt'=>'fdt addr ${fdtcontroladdr}',
     'ember_entry_usb'=>'fdt set /soc@03000000/usbc0@0 usb_port_type <0>'
   }.transform_values(&:freeze).freeze
+  PROTECTION_UPDATES = {
+    'boot_normal' => 'run ember_recovery_once',
+    'ember_recovery_once' => UPDATES.fetch('ember_recovery_once').dup
+  }.transform_values(&:freeze).freeze
+  DIRECT_PROTECTION_UPDATES = DIRECT_HELPERS.slice('ember_entry_fdt', 'ember_entry_usb').merge(
+    'ember_recovery_once' => 'run ember_entry_fdt ember_entry_usb boot_recovery',
+    'bootcmd' => 'run setargs_nand ember_recovery_once'
+  ).transform_values(&:freeze).freeze
+  DIRECT_TRIAL_HELPERS = TRIAL_HELPERS.merge(
+    'ember_trial_rearm' => 'setenv bootcmd run setargs_nand ember_recovery_once',
+    'ember_trial_load' => 'sunxi_flash read 45000000 boot',
+    'ember_trial_boot' => 'bootm 45000000'
+  ).transform_values(&:freeze).freeze
   module_function
 
-  # Only locked factory entry uses this plan. Unlock/protect/trial keep their profile.
+  # Factory entry restores its original boot selection before recovery.
   def entry_plan(data)
     vars=A133Env.decode(data).fetch(:entries).to_h
     if vars['bootcmd']==DIRECT_PROFILE.fetch('bootcmd')
@@ -76,37 +95,49 @@ module A133Recovery
   def protect(data)
     vars = A133Env.decode(data).fetch(:entries).to_h
     raise Invalid, 'recovery_hook_already_present' if UPDATES.keys.any? { |key| vars.key?(key) }
-    raise Invalid, 'unsupported_factory_environment' unless PROFILE.all? { |key, value| vars[key] == value }
-    candidate = A133Env.patch(data, {
-      'boot_normal' => 'run ember_recovery_once',
-      'ember_recovery_once' => UPDATES.fetch('ember_recovery_once')
-    })
-    restored = A133Env.patch(candidate, {
-      'boot_normal' => PROFILE.fetch('boot_normal'), 'ember_recovery_once' => ''
-    })
+    if vars['bootcmd'] == DIRECT_PROFILE.fetch('bootcmd')
+      raise Invalid, 'recovery_hook_already_present' if DIRECT_HELPERS.keys.any? { |key| vars.key?(key) }
+      raise Invalid, 'unsupported_factory_environment' unless DIRECT_PROFILE.all? { |key, value| vars[key] == value } &&
+        vars['setargs_nand'] == DIRECT_SETARGS
+      updates = DIRECT_PROTECTION_UPDATES
+    else
+      raise Invalid, 'unsupported_factory_environment' unless PROFILE.all? { |key, value| vars[key] == value }
+      updates = PROTECTION_UPDATES
+    end
+    candidate = A133Env.patch(data, updates)
+    restored = A133Env.patch(candidate, updates.to_h { |key, _| [key, vars.fetch(key, '')] })
     raise Invalid, 'non_reversible_environment' unless restored == data
     candidate
   rescue A133Env::Invalid
     raise Invalid, 'invalid_environment', cause: nil
   end
 
-  # A single run list stops before boot_android if rearming or saveenv fails.
-  # The saved state retains both inert helpers but always selects recovery.
+  # Shared byte-profile check for image writers. This does not inspect a device.
+  def protected_profile?(vars)
+    return false unless vars.is_a?(Hash)
+    hook = PROFILE.merge(PROTECTION_UPDATES)
+    return true if hook.all? { |key, value| vars[key] == value }
+    DIRECT_PROFILE.merge(DIRECT_PROTECTION_UPDATES).all? { |key, value| vars[key] == value } &&
+      vars['setargs_nand'] == DIRECT_SETARGS
+  end
+
+  # A single run list stops before kernel loading if rearming or saveenv fails.
+  # The saved state retains inert helpers but always selects recovery.
   # These copied bytes do not establish vendor execution or first-boot acceptance.
   def trial(data)
     raise Invalid, 'invalid_environment', cause: nil unless data.is_a?(String) && data.bytesize == A133Env::SIZE
     original = data.b.dup.freeze
     vars = A133Env.decode(original).fetch(:entries).to_h
-    raise Invalid, 'trial_hook_already_present', cause: nil if TRIAL_HELPERS.keys.any? { |key| vars.key?(key) }
+    direct = vars['bootcmd'] == DIRECT_PROFILE.fetch('bootcmd')
+    helpers = direct ? DIRECT_TRIAL_HELPERS : TRIAL_HELPERS
+    raise Invalid, 'trial_hook_already_present', cause: nil if helpers.keys.any? { |key| vars.key?(key) }
     protected = protect(original)
-    rearmed = A133Env.patch(protected, TRIAL_HELPERS)
-    candidate = A133Env.patch(rearmed, {
-      'boot_normal' => 'run ember_trial_rearm ember_trial_save boot_android'
-    })
-    restored = A133Env.patch(candidate, {
-      'boot_normal' => PROFILE.fetch('boot_normal'), 'ember_recovery_once' => '',
-      'ember_trial_rearm' => '', 'ember_trial_save' => ''
-    })
+    rearmed = A133Env.patch(protected, helpers)
+    boot = direct ? {'bootcmd' => 'run ember_trial_rearm ember_trial_save setargs_nand ember_trial_load ember_trial_boot'} :
+      {'boot_normal' => 'run ember_trial_rearm ember_trial_save boot_android'}
+    candidate = A133Env.patch(rearmed, boot)
+    changed = helpers.keys + (direct ? DIRECT_PROTECTION_UPDATES.keys : PROTECTION_UPDATES.keys)
+    restored = A133Env.patch(candidate, changed.to_h { |key| [key, vars.fetch(key, '')] })
     raise Invalid, 'non_reversible_environment', cause: nil unless restored == original
     {trial_env: candidate.freeze, rearmed_env: rearmed.freeze, installation_ready: false}.freeze
   rescue A133Env::Invalid
