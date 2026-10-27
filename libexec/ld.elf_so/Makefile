@@ -88,6 +88,9 @@ SRCS+=		symbol.c
 SRCS+=		symver.c
 SRCS+=		tls.c
 SRCS+=		xmalloc.c
+# EmberBSD: xmalloc.c aligns via (char *)op - (char *)NULL; Clang -Werror
+# rejects this as -Wnull-pointer-subtraction. Demote for Clang only.
+COPTS.xmalloc.c+=	${${ACTIVE_CC} == "clang" :? -Wno-error=null-pointer-subtraction :}
 SRCS+=		xprintf.c
 
 .if ${USE_FORT} == "yes"
