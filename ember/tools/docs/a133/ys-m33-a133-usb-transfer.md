@@ -34,6 +34,10 @@ requires recovery with no mounted block-backed filesystems, even read-only ones.
 These checks distinguish the inspected profile; they do not authenticate
 vendor firmware or establish that another YS-M33 revision has identical hardware.
 YS-M33 is the board label, not its recorded Android model property.
+The standalone read-only CLI and `Client#inspect!` without a protected profile
+remain strict to model `a133`. Composed writes derive the expected model only
+from the validated protected environment bytes: the hook profile uses `a133`,
+and the exact direct C3 profile uses `QUAD-CORE A133 c3`.
 
 ## API integration boundary
 

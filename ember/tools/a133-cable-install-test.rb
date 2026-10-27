@@ -32,9 +32,12 @@ Dir.mktmpdir('a133-cable-stage-') do |dir|
     'ember_save_env'=>'saveenv','ember_reset'=>'reset','ember_restore_normal'=>'setenv hook; saveenv',
     'ember_recovery_once'=>'fdt addr ${fdtcontroladdr}; fdt set /soc@03000000/usbc0@0 usb_port_type <0>; run boot_recovery'}
   File.binwrite(File.join(dir,'unlock-consumed.bin'),RebootFixture.encode(vars.merge(additions.reject { |key,_| key=='hook' })))
-  File.write(File.join(dir,'adb-source.rb'),File.read(File.join(__dir__,'a133-recovery-protection-fixture.rb')))
-  File.write(File.join(dir,'adb-writer.rb'),File.read(File.join(__dir__,'a133-usb-transfer-fixture.rb')))
-  File.write(File.join(dir,'adb'),File.read(File.join(__dir__,'a133-cable-install-fixture.rb')))
+  install_adb=lambda do
+    File.write(File.join(dir,'adb-source.rb'),File.read(File.join(__dir__,'a133-recovery-protection-fixture.rb')))
+    File.write(File.join(dir,'adb-writer.rb'),File.read(File.join(__dir__,'a133-usb-transfer-fixture.rb')))
+    File.write(File.join(dir,'adb'),File.read(File.join(__dir__,'a133-cable-install-fixture.rb')))
+  end
+  install_adb.call
   mutable={'status'=>'mutable_integrity_verified','serial'=>RebootFixture::SERIAL,'cid'=>UsbFixture::CID,
     'mutable_copies_verified'=>true,'gpt_sha256'=>factory[:backup]['gpt_sha256'],
     'observation'=>'recovery_unmounted_two_matching_reads','filesystem_consistency'=>'not_established_by_integrity_check',
@@ -135,5 +138,52 @@ Dir.mktmpdir('a133-cable-stage-') do |dir|
   File.write(manifest,JSON.generate(document.merge('source_commit'=>'invalid')))
   stopped.call('invalid_source_commit') { A133Cable.run(**options.call) }
   abort 'FAIL: release admission performed effects' unless effects.call.empty? && !File.exist?(File.join(dir,'observed'))
+
+  # A direct-profile cable run must keep its model-bound source through unlock,
+  # recovery protection, image writes, and subsequent journal inspection.
+  File.write(manifest,JSON.generate(document))
+  factory=RebootFixture.create(dir,direct:true)
+  install_adb.call
+  original=factory[:original]
+  mutable=mutable.merge('gpt_sha256'=>factory[:backup]['gpt_sha256'])
+  File.binwrite(File.join(dir,'unlock-consumed.bin'),factory[:unlock_consumed].byteslice(0,131072))
+  reset.call
+  direct_result=A133Cable.run(**options.call)
+  abort 'FAIL: direct C3 composed stage' unless direct_result[:status]=='cable_write_stage_verified' &&
+    direct_result[:image_writes_performed]==3 && effects.call==%w[unlock_env reboot unlock_env protection mmcblk0p17 mmcblk0p3 mmcblk0p1]
+  checks+=1
+  direct_session=session
+  state=JSON.parse(File.read(File.join(dir,'state.json')))
+  File.write(File.join(dir,'state.json'),JSON.generate(state.merge('model'=>'a133')))
+  before=effects.call
+  stopped.call('usb_board_mismatch') { A133Cable.run(**options.call) }
+  abort 'FAIL: foreign model resumed direct journal' unless effects.call==before
+  checks+=1
+  state=JSON.parse(File.read(File.join(dir,'state.json')))
+  File.write(File.join(dir,'state.json'),JSON.generate(state.merge('model'=>'QUAD-CORE A133 c3')))
+
+  # A journal created for C3 cannot be resumed under the generic hook profile.
+  factory=RebootFixture.create(dir)
+  install_adb.call
+  original=factory[:original]
+  File.binwrite(File.join(dir,'unlock-consumed.bin'),RebootFixture.encode(vars.merge(additions.reject { |key,_| key=='hook' })))
+  session=direct_session
+  before=effects.call
+  stopped.call('cable_journal_context_changed') { A133Cable.run(**options.call) }
+  abort 'FAIL: cross-profile resume touched device' unless effects.call==before
+  checks+=1
+
+  # Invalid direct factory bytes fail before any fixture USB operation.
+  factory=RebootFixture.create(dir,direct:true)
+  install_adb.call
+  bad_prefix=A133Env.patch(factory[:original].byteslice(0,131072),{'setargs_nand'=>'setenv bootargs substituted'})
+  original=bad_prefix+factory[:original].byteslice(131072,16777216-131072)
+  factory=factory.merge(original:original,backup:factory[:backup].merge('partition_sha256'=>
+    factory[:backup]['partition_sha256'].merge('env'=>Digest::SHA256.hexdigest(original))))
+  File.binwrite(File.join(dir,'unlock-consumed.bin'),factory[:unlock_consumed].byteslice(0,131072))
+  reset.call
+  stopped.call('unsupported_factory_environment') { A133Cable.run(**options.call) }
+  abort 'FAIL: refused direct profile observed USB' unless effects.call.empty? && !File.exist?(File.join(dir,'observed'))
+  checks+=1
 end
 puts "Cable composition: #{checks} native composition, interrupted preparation and resume cases passed"

@@ -113,12 +113,18 @@ module A133Recovery
   end
 
   # Shared byte-profile check for image writers. This does not inspect a device.
-  def protected_profile?(vars)
-    return false unless vars.is_a?(Hash)
+  def protected_profile_model(vars)
+    return nil unless vars.is_a?(Hash)
     hook = PROFILE.merge(PROTECTION_UPDATES)
-    return true if hook.all? { |key, value| vars[key] == value }
-    DIRECT_PROFILE.merge(DIRECT_PROTECTION_UPDATES).all? { |key, value| vars[key] == value } &&
-      vars['setargs_nand'] == DIRECT_SETARGS
+    return 'a133' if hook.all? { |key, value| vars[key] == value }
+    return 'QUAD-CORE A133 c3' if DIRECT_PROFILE.merge(DIRECT_PROTECTION_UPDATES).all? do |key, value|
+      vars[key] == value
+    end && vars['setargs_nand'] == DIRECT_SETARGS
+    nil
+  end
+
+  def protected_profile?(vars)
+    !protected_profile_model(vars).nil?
   end
 
   # A single run list stops before kernel loading if rearming or saveenv fails.

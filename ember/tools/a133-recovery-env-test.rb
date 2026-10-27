@@ -24,6 +24,14 @@ encode = lambda do |entries, pad = 0, leading = true|
   [Zlib.crc32(body)].pack('V') + body
 end
 checks = 0
+hook_protected = A133Env.decode(A133Recovery.protect(encode.call(vars)))[:entries].to_h
+abort 'FAIL: hook protected model' unless A133Recovery.protected_profile_model(hook_protected) == 'a133'
+direct_factory = A133Recovery::DIRECT_PROFILE.merge('setargs_nand' => A133Recovery::DIRECT_SETARGS)
+direct_prefix = encode.call(direct_factory)
+direct_protected = A133Env.decode(A133Recovery.protect(direct_prefix))[:entries].to_h
+abort 'FAIL: direct protected model' unless A133Recovery.protected_profile_model(direct_protected) == 'QUAD-CORE A133 c3'
+abort 'FAIL: malformed direct setargs classified' unless
+  A133Recovery.protected_profile_model(direct_protected.merge('setargs_nand' => 'setenv bootargs changed')).nil?
 [[0, true], [255, false]].each do |pad, leading|
   original = encode.call(vars, pad, leading)
   candidate = A133Recovery.prepare(original)

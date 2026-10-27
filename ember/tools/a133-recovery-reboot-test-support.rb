@@ -20,7 +20,7 @@ module RebootFixture
       vars.delete('boot_android')
       vars['bootcmd']='run setargs_nand boot_normal'
       vars['boot_normal']='sunxi_flash read 45000000 boot;bootm 45000000'
-      vars['setargs_nand']='setenv bootargs retained_args'
+      vars['setargs_nand']=A133Recovery::DIRECT_SETARGS
       helpers={'ember_entry_restore'=>'setenv bootcmd run setargs_nand boot_normal',
         'ember_entry_save'=>'saveenv',
         'ember_entry_fdt'=>'fdt addr ${fdtcontroladdr}',
@@ -28,6 +28,12 @@ module RebootFixture
     end
     tail=("\0\r\n\xffTAIL_KEEP".b*1400000).byteslice(0,16777216-131072)
     consumed=vars.merge(helpers.reject { |key,_| key=='hook' })
+    unlock_consumed=consumed
+    if direct
+      unlock_consumed=consumed.merge('ember_unlock_flag'=>'pst write fastboot_status_flag unlocked',
+        'ember_unlock_next'=>'setenv bootcmd run ember_entry_restore ember_entry_save setargs_nand ember_entry_fdt ember_entry_usb boot_recovery; run ember_entry_save ember_reset',
+        'ember_reset'=>'reset')
+    end
     armed=vars.merge(helpers)
     armed['bootcmd']='run ember_entry_restore ember_entry_save setargs_nand ember_entry_fdt ember_entry_usb boot_recovery' if direct
     original=encode(vars)+tail
@@ -40,7 +46,8 @@ module RebootFixture
     %w[bootloader boot recovery].zip([1,3,6]).each { |role,index| backup['partition_sha256'][role]=Digest::SHA256.file(File.join(dir,"part#{index}")).hexdigest }
     context={backup:backup,original:original,armed:encode(armed)+tail,
       model:direct ? 'QUAD-CORE A133 c3' : 'a133',
-      consumed:encode(consumed)+tail,reordered:encode(consumed.to_a.reverse.to_h,true,"\0")+tail,
+      consumed:encode(consumed)+tail,unlock_consumed:encode(unlock_consumed)+tail,
+      reordered:encode(consumed.to_a.reverse.to_h,true,"\0")+tail,
       altered:encode(consumed.merge('bootdelay'=>'3'))+tail}
     File.binwrite(File.join(dir,'consumed-prefix.bin'),context[:consumed].byteslice(0,131072))
     reset(dir,context)

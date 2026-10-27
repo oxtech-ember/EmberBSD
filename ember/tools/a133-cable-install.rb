@@ -20,8 +20,8 @@ module A133Cable
     else value
     end
   end
-  def recovery_guard(store,context,adb,timeout,root_method,env_hashes)
-    source=A133UsbBackup::Source.new(adb:adb,serial:context['serial'],state:'recovery',root_method:root_method,timeout:timeout)
+  def recovery_guard(store,context,policy,adb,timeout,root_method,env_hashes)
+    source=policy.source(adb:adb,state:'recovery',root_method:root_method,timeout:timeout)
     inspect=proc do
       hardware=store.snapshot['hardware_bytes']
       profile=source.mutable_inspect!
@@ -51,7 +51,8 @@ module A133Cable
     unlock=A133Unlock::Stage.new(directory:File.join(directory,'unlock'),adb:adb,serial:serial,cid:cid,
       original_env:original_env,backup:backup,mutable:mutable,locked_round_trip_verified:locked_round_trip_verified,
       timeout:timeout,wait_timeout:wait_timeout,device_root_method:device_root_method,recovery_root_method:recovery_root_method)
-    base=A133Recovery::Policy.new(serial:serial,cid:cid,original_env:original_env,backup:backup).data
+    policy=A133Recovery::Policy.new(serial:serial,cid:cid,original_env:original_env,backup:backup)
+    base=policy.data
     protected=A133Recovery.protect(base[:original_prefix]).freeze
     protected_sha=Digest::SHA256.hexdigest(protected+original_env.byteslice(131072,16777216-131072)).freeze
     bundle_sha=A133Install.bundle_digest(A133Bundle.verify(manifest)[:receipt]).freeze
@@ -77,8 +78,8 @@ module A133Cable
         end
         protection_hashes=[base[:original_sha],protected_sha].freeze
         image_hashes=[protected_sha].freeze
-        preparation_guard=proc { recovery_guard(store,context,adb,timeout,recovery_root_method,protection_hashes) }
-        image_guard=proc { recovery_guard(store,context,adb,timeout,recovery_root_method,image_hashes) }
+        preparation_guard=proc { recovery_guard(store,context,policy,adb,timeout,recovery_root_method,protection_hashes) }
+        image_guard=proc { recovery_guard(store,context,policy,adb,timeout,recovery_root_method,image_hashes) }
         preparation_guard.call
         store.record('protecting')
         latest=store.report

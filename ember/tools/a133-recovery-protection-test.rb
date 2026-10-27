@@ -29,7 +29,7 @@ Dir.mktmpdir('a133-protection-') do |dir|
     head=file.read(17408); file.seek(31037849600-17408); head+file.read(17408)
   end
   backup=UsbFixture.backup(dir).merge('serial'=>serial,'critical_copies_verified'=>true,
-    'hardware_boot_copies_verified'=>true)
+    'hardware_boot_copies_verified'=>true,'gpt_sha256'=>Digest::SHA256.hexdigest(disk))
   backup['partition_sha256']['env']=Digest::SHA256.hexdigest(original)
   mutable={'status'=>'mutable_integrity_verified','serial'=>serial,'cid'=>UsbFixture::CID,
     'gpt_sha256'=>Digest::SHA256.hexdigest(disk),'mutable_copies_verified'=>true,

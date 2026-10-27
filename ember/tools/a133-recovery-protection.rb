@@ -3,7 +3,7 @@
 require 'stringio'
 require 'shellwords'
 require_relative 'a133-recovery-env'
-require_relative 'a133-usb-backup-source'
+require_relative 'a133-recovery-policy'
 
 module A133Recovery
   class Protection
@@ -18,8 +18,8 @@ module A133Recovery
       @serial,@cid=serial.dup.freeze,cid.dup.freeze
       @root_method=root_method.is_a?(String) ? root_method.dup.freeze : root_method
       adb=adb.is_a?(String) ? adb.dup.freeze : adb
-      @source=A133UsbBackup::Source.new(adb:adb,serial:@serial,state:'recovery',
-        root_method:@root_method,timeout:timeout)
+      @adb=adb
+      @timeout=timeout
       @channel=A133Usb::Channel.new(adb,timeout)
     rescue A133Usb::Invalid,A133UsbBackup::Invalid => error
       failure=A133Usb::Invalid.new(error.message)
@@ -80,6 +80,8 @@ module A133Recovery
     def install(original_env:,backup:,mutable:)
       attempted=false
       pinned=policy(original_env,backup,mutable)
+      selector=A133Recovery::Policy.new(serial:@serial,cid:@cid,original_env:original_env,backup:backup)
+      @source=selector.source(adb:@adb,state:'recovery',root_method:@root_method,timeout:@timeout)
       guard!(pinned)
       current=read_hash('env')
       raise A133Usb::Invalid,'usb_environment_unknown' unless

@@ -42,7 +42,14 @@ module A133Usb
       digest.hexdigest
     end
 
-    def inspect!
+    def inspect!(protected_env: nil)
+      expected_model='a133'
+      unless protected_env.nil?
+        raise Invalid,'invalid_protected_environment' unless protected_env.is_a?(String)
+        vars=A133Env.decode(protected_env).fetch(:entries).to_h
+        expected_model=A133Recovery.protected_profile_model(vars)
+        raise Invalid,'invalid_protected_environment' unless expected_model
+      end
       devices = @channel.run(['devices','-l'])[:output].lines.map(&:split).select { |row| row.first == @serial }
       raise Invalid, 'usb_device_not_ready' unless devices.size == 1 && devices[0][1] == 'recovery' &&
         devices[0].any? { |field| field.start_with?('usb:') }
@@ -51,7 +58,7 @@ module A133Usb
       raise Invalid, 'usb_root_required' unless query('id -u') == '0'
       raise Invalid, 'usb_recovery_unlock_required' unless query('getprop ro.boot.flash.locked') == '0' &&
         query('getprop ro.boot.verifiedbootstate') == 'orange'
-      raise Invalid, 'usb_board_mismatch' unless query('getprop ro.product.model') == 'a133' &&
+      raise Invalid, 'usb_board_mismatch' unless query('getprop ro.product.model') == expected_model &&
         query('cat /proc/device-tree/compatible').split("\0").include?('allwinner,a133')
       inventory = A133Backup::INVENTORY
       paths = ['/sys/class/block/mmcblk0/size','/sys/class/block/mmcblk0/device/cid'] +
@@ -88,6 +95,8 @@ module A133Usb
       {status: 'recovery_inspection_complete', writes_performed: 0, installation_ready: false}
     rescue A133Backup::Invalid => error
       raise Invalid, error.message
+    rescue A133Env::Invalid
+      raise Invalid,'invalid_protected_environment'
     end
 
     def backup_valid!(backup)
@@ -112,7 +121,7 @@ module A133Usb
     end
 
     def guard!(backup, env)
-      inspect!
+      inspect!(protected_env:env)
       raise Invalid, 'usb_environment_changed' unless range(2,0,256) == env
       raise Invalid, 'usb_recovery_changed' unless range_sha(6,33554432) == backup['partition_sha256']['recovery']
       raise Invalid,'usb_additional_guard_failed' if @additional_guard && @additional_guard.call!=true

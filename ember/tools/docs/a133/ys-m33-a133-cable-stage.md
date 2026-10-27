@@ -64,6 +64,9 @@ read/write guard: outer lock scope, unlocked USB recovery, CID/GPT/hardware,
 all-task mount inventories/swaps/holders and the full env hash. Protection
 accepts the pinned original/protected env pair; images require exact protected
 env. Standalone core guards remain mandatory alongside these additional checks.
+The shared policy retains the selected factory profile across recovery guards:
+hook-profile operations require model `a133`, and direct-profile operations
+require `QUAD-CORE A133 c3`. A resume with a different profile/model is refused.
 Exact original or exact protected full env is accepted; unknown partial env
 stops without a blind repair. The env tail and retained recovery are checked.
 

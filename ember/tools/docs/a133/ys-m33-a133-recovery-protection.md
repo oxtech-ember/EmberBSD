@@ -69,6 +69,9 @@ For the direct profile, it preserves boot_normal and changes bootcmd to `run set
 The direct profile requires the exact `DIRECT_SETARGS` factory template from the implementation.
 Its recovery helper selects the control FDT and USB device mode before running the retained boot_recovery script.
 Both profiles preserve unrelated values and require byte-exact reversal, including padding.
+After the original environment, backup and mutable evidence pass validation,
+the protection source is selected from that pinned policy: hook stays on model
+`a133`, while the exact direct profile uses `QUAD-CORE A133 c3`.
 
 The live full env must equal either the original partition hash or the derived
 protected partition hash. An original state receives exactly131072 binary

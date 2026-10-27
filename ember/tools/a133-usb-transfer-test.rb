@@ -40,6 +40,32 @@ Dir.mktmpdir('a133-usb-') do |dir|
   abort 'FAIL: read-only verified range mutated device' unless inspected[:status]=='range_readback_verified' &&
     inspected[:writes_performed]==0 && before.mtime==after.mtime && before.ctime==after.ctime
   checks+=1
+  direct_factory=A133Recovery::DIRECT_PROFILE.merge('setargs_nand'=>A133Recovery::DIRECT_SETARGS)
+  direct_body=(direct_factory.map { |key,value| key.b+'='+value.b+"\0" }.join+"\0").ljust(131068,"\0".b)
+  direct_env=A133Recovery.protect([Zlib.crc32(direct_body)].pack('V')+direct_body)
+  File.binwrite(File.join(dir,'part2'),direct_env)
+  UsbFixture.state(dir,'model'=>'QUAD-CORE A133 c3')
+  begin
+    client.inspect!
+    abort 'FAIL: standalone generic inspection accepted C3'
+  rescue A133Usb::Invalid => error
+    abort 'FAIL: standalone inspection refusal reason' unless error.message=='usb_board_mismatch'
+  end
+  direct_options=options.merge(protected_env:direct_env,sha256:Digest::SHA256.hexdigest(original))
+  direct_result=client.write_verified(**direct_options)
+  abort 'FAIL: protected C3 image write path' unless direct_result[:status]=='range_write_verified' &&
+    direct_result[:writes_performed]==1
+  checks+=2
+  UsbFixture.state(dir,'model'=>'a133')
+  begin
+    client.verify_installed(**direct_options.reject { |key,_| key==:path })
+    abort 'FAIL: protected C3 accepted foreign model'
+  rescue A133Usb::Invalid => error
+    abort 'FAIL: foreign C3 model refusal reason' unless error.message=='usb_board_mismatch'
+  end
+  checks+=1
+  File.binwrite(File.join(dir,'part2'),UsbFixture.env)
+  UsbFixture.state(dir)
   ["cmd\nshell_v2\nstat_v2\n", "cmd,shell_v2,stat_v2\n"].each do |features|
     UsbFixture.state(dir,'features'=>features)
     result=client.inspect!
