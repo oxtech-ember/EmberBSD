@@ -121,9 +121,31 @@ ATF_TC_BODY(xdr, tc)
 	xdr_destroy(&x);
 }
 
+ATF_TC(xdr_void_callback);
+ATF_TC_HEAD(xdr_void_callback, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+		"Checks xdr_void has the generic XDR callback signature");
+}
+ATF_TC_BODY(xdr_void_callback, tc)
+{
+	xdrproc_t proc = xdr_void;
+	XDR x;
+	char value = 0;
+
+	x.x_op = XDR_ENCODE;
+	ATF_REQUIRE_MSG(proc(&x, &value), "xdr_void ENCODE failed");
+	x.x_op = XDR_DECODE;
+	ATF_REQUIRE_MSG(proc(&x, &value), "xdr_void DECODE failed");
+	x.x_op = XDR_FREE;
+	ATF_REQUIRE_MSG(proc(&x, &value), "xdr_void FREE failed");
+	ATF_REQUIRE_MSG(xdr_void(NULL, NULL), "xdr_void NULL call failed");
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, xdr);
+	ATF_TP_ADD_TC(tp, xdr_void_callback);
 
 	return atf_no_error();
 }

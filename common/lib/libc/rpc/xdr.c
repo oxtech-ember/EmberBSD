@@ -133,8 +133,8 @@ xdr_free(xdrproc_t proc, char *objp)
  * XDR nothing
  */
 bool_t
-xdr_void(void) {
-
+xdr_void(XDR *xdrs __unused, const void *ptr __unused)
+{
 	return (TRUE);
 }
 

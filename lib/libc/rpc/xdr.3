@@ -125,7 +125,7 @@
 .Fn xdr_vector "XDR *xdrs" "char *arrp" "u_int size" \
 "u_int elsize" "xdrproc_t elproc"
 .Ft int
-.Fn xdr_void "void"
+.Fn xdr_void "XDR *xdrs" "const void *ptr"
 .Ft int
 .Fn xdr_wrapstring "XDR *xdrs" "char **sp"
 .Sh DESCRIPTION
@@ -488,7 +488,7 @@ is an XDR filter that translates between the array elements' C form,
 and their external representation.
 This routine returns one if it succeeds, zero otherwise.
 .It Fn xdr_void
-This routine always returns one.
+This routine ignores both arguments and always returns one.
 It may be passed to RPC routines that require a function parameter,
 where nothing is to be done.
 .It Fn xdr_wrapstring

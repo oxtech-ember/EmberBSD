@@ -274,7 +274,7 @@ struct xdr_discrim {
  * These are the "generic" xdr routines.
  */
 __BEGIN_DECLS
-extern bool_t	xdr_void(void);
+extern bool_t	xdr_void(XDR *, const void *);
 extern bool_t	xdr_int(XDR *, int *);
 extern bool_t	xdr_u_int(XDR *, unsigned int *);
 extern bool_t	xdr_long(XDR *, long *);
