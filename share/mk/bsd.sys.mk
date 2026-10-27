@@ -74,6 +74,24 @@ REPROFLAGS+=	-fdebug-regex-map='/usr/src/(.*)/obj\..*=/usr/obj/\1'
 REPROFLAGS+=	-fdebug-regex-map='/usr/src/(.*)/obj\..*/(.*)=/usr/obj/\1/\2'
 .endif
 
+# EmberBSD external sources and staged runtimes are outside NETBSDSRCDIR.
+# Map each selected root to a canonical path. The SDK is then the same on
+# every build host. REPRO_EXTERNAL_ROOTS also feeds lib/libc tags.
+.for _var _path in EMBER_LIBEDIT_SOURCE /usr/src/external/libedit \
+    EMBER_LIBEVENT_SOURCE /usr/src/external/libevent \
+    EMBER_LIBARCHIVE_SOURCE /usr/src/external/libarchive \
+    EMBER_LLVM_SOURCE /usr/src/external/llvm \
+    EMBER_EXTERNAL_LLVM_RUNTIME /usr/pkg/llvm \
+    EMBER_EXTERNAL_GCC_RUNTIME /usr/pkg/gcc16
+.if !empty(${_var}:U)
+.if empty(${_var}:M/*) || !empty(${_var}:C,[A-Za-z0-9_./+-],,g)
+.error MKREPRO=yes requires ${_var} to be an absolute path without special characters
+.endif
+REPRO_EXTERNAL_ROOTS+=	${${_var}}=${_path}
+REPROFLAGS+=	-ffile-prefix-map=${${_var}}=${_path}
+.endif
+.endfor
+
 LINTFLAGS+=	-R${NETBSDSRCDIR}=/usr/src -R${X11SRCDIR}=/usr/xsrc
 LINTFLAGS+=	-R${DESTDIR}=
 

@@ -129,6 +129,7 @@ NLS=	C.msg Pig.msg ca.msg cs.msg de.msg es.msg fi.msg fr.msg nl.msg \
 .if ${MKREPRO:Uno} == "yes"
 REGEX_SPECIALS=[][)(^$$.?*\\;]
 MKREPRO_SED=   -e 's;${NETBSDSRCDIR:C/${REGEX_SPECIALS}/\\\\&/g};/usr/src;'
+MKREPRO_SED+=  ${REPRO_EXTERNAL_ROOTS:@_r@-e 's;${_r:C/=.*//:C/${REGEX_SPECIALS}/\\\\&/g};${_r:C/^[^=]*=//};'@}
 .endif
 
 .if !defined(MLIBDIR) && ${RUMPRUN} != "yes"
