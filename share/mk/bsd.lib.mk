@@ -774,10 +774,10 @@ ${_LIB.so.full}.actsym: ${_LIB.so.full}
 	${_EXPSYM_FILTER}; \
 	if ${READELF} --version-info ${.ALLSRC} >${.TARGET}.vers 2>/dev/null; then \
 		awk '/Version definition section/{in_vd=1; next} \
-			/^Version / && \$$0 !~ /definition/{in_vd=0} \
-			in_vd && /Name:/ && \$$0 !~ /Flags: BASE/ { \
+			/^Version / && $$0 !~ /definition/{in_vd=0} \
+			in_vd && /Name:/ && $$0 !~ /Flags: BASE/ { \
 				for (i = 1; i <= NF; i++) \
-					if (\$$i == "Name:") print \$$(i + 1) \
+					if ($$i == "Name:") print $$(i + 1) \
 			}' ${.TARGET}.vers >>${.TARGET}.filtered; \
 	fi; \
 	LC_ALL=C sort -u ${.TARGET}.filtered >${.TARGET}.tmp; \
