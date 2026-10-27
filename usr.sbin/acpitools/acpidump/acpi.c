@@ -3430,6 +3430,10 @@ acpi_tcpa_evname(struct TCPAevent *event)
 		break;
 
 	case EVENT_TAG:
+		if (event->event_size < sizeof(pc_event->event_id)) {
+			asprintf(&eventname, "<short tag>");
+			break;
+		}
 		switch (pc_event->event_id) {
 		case SMBIOS:
 		case BIS_CERT:
@@ -3532,9 +3536,8 @@ acpi_handle_tcpa(ACPI_TABLE_HEADER *sdp)
 		    (uintptr_t)vaddr)
 			break;
 		event = (struct TCPAevent *)(void *)vaddr;
-		if ((uintptr_t)vaddr + event->event_size >= (uintptr_t)vend)
-			break;
-		if ((uintptr_t)vaddr + event->event_size < (uintptr_t)vaddr)
+		if (event->event_size > (uintptr_t)vend - (uintptr_t)vaddr -
+		    sizeof(struct TCPAevent))
 			break;
 		if (event->event_type == 0 && event->event_size == 0)
 			break;
