@@ -212,7 +212,6 @@ openpam_static_modules.o: openpam_static.o ${STATIC_MODULE_LIBS}
 	${CC} ${LDFLAGS} -nostdlib -o ${.TARGET} -r -Wl,--whole-archive \
 	    openpam_static.o ${STATIC_MODULE_LIBS}
 
-CWARNFLAGS.clang+=	-Wno-error=tautological-pointer-compare
 COPTS.openpam_dynamic.c+=	${CC_WNO_CAST_FUNCTION_TYPE}
 
 .include <bsd.lib.mk>
