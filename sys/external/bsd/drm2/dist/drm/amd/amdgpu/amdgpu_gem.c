@@ -792,9 +792,12 @@ int amdgpu_mode_dumb_create(struct drm_file *file_priv,
 	struct amdgpu_device *adev = dev->dev_private;
 	struct drm_gem_object *gobj;
 	uint32_t handle;
+	/* Match amdgpufb_create_pinned_object: contiguous VRAM for scanout. */
 	u64 flags = AMDGPU_GEM_CREATE_CPU_ACCESS_REQUIRED |
+		    AMDGPU_GEM_CREATE_VRAM_CONTIGUOUS |
 		    AMDGPU_GEM_CREATE_CPU_GTT_USWC;
 	u32 domain;
+	u32 height;
 	int r;
 
 	/*
@@ -807,7 +810,9 @@ int amdgpu_mode_dumb_create(struct drm_file *file_priv,
 
 	args->pitch = amdgpu_align_pitch(adev, args->width,
 					 DIV_ROUND_UP(args->bpp, 8), 0);
-	args->size = (u64)args->pitch * args->height;
+	/* Same height pad as amdgpufb_create_pinned_object. */
+	height = ALIGN(args->height, 8);
+	args->size = (u64)args->pitch * height;
 	args->size = ALIGN(args->size, PAGE_SIZE);
 	domain = amdgpu_bo_get_preferred_pin_domain(adev,
 				amdgpu_display_supported_domains(adev, flags));
