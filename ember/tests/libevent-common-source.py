@@ -49,7 +49,11 @@ groups = {'libevent': core, 'libevent_openssl': ['bufferevent_openssl'],
 flags = [str(args.clang), '--target=aarch64--netbsd', '--sysroot=' + str(args.sysroot),
          '-std=gnu11', '-O2', '-fPIC', '-DHAVE_CONFIG_H', '-I' + str(args.source),
          '-I' + str(config), '-I' + str(args.source / 'include'), '-Wall',
-         '-Wstrict-prototypes', '-Wmissing-prototypes', '-Werror']
+         '-Wstrict-prototypes', '-Wmissing-prototypes',
+         # The Clang WARNS=4 options of the OS libevent build (bsd.sys.mk).
+         '-Wextra', '-Wno-unused-parameter', '-Wno-sign-compare', '-Wno-pointer-sign',
+         '-Wpointer-arith', '-Wreturn-type', '-Wswitch', '-Wshadow', '-Wcast-qual',
+         '-Wwrite-strings', '-Wformat=2', '-Wmissing-noreturn', '-Werror']
 with tempfile.TemporaryDirectory(dir=args.work_dir) as temporary:
     work = Path(temporary)
     version = work / 'version.c'
