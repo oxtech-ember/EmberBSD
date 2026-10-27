@@ -21,15 +21,13 @@ static	char *clocktos ARGS((clock_t t));
 
 /* :, false and true */
 int
-c_label(wp)
-	char **wp;
+c_label(char **wp)
 {
 	return wp[0][0] == 'f' ? 1 : 0;
 }
 
 int
-c_shift(wp)
-	char **wp;
+c_shift(char **wp)
 {
 	struct block *l = e->loc;
 	int n;
@@ -60,8 +58,7 @@ c_shift(wp)
 }
 
 int
-c_umask(wp)
-	char **wp;
+c_umask(char **wp)
 {
 	int i;
 	char *cp;
@@ -180,8 +177,7 @@ c_umask(wp)
 }
 
 int
-c_dot(wp)
-	char **wp;
+c_dot(char **wp)
 {
 	char *file, *cp;
 	char **argv;
@@ -219,8 +215,7 @@ c_dot(wp)
 }
 
 int
-c_wait(wp)
-	char **wp;
+c_wait(char **wp)
 {
 	int UNINITIALIZED(rv);
 	int sig;
@@ -242,8 +237,7 @@ c_wait(wp)
 }
 
 int
-c_read(wp)
-	char **wp;
+c_read(char **wp)
 {
 	int c = 0;
 	int expandv = 1, history = 0;
@@ -426,8 +420,7 @@ c_read(wp)
 }
 
 int
-c_eval(wp)
-	char **wp;
+c_eval(char **wp)
 {
 	struct source *s;
 	int rv;
@@ -470,8 +463,7 @@ c_eval(wp)
 }
 
 int
-c_trap(wp)
-	char **wp;
+c_trap(char **wp)
 {
 	int i;
 	char *s;
@@ -532,8 +524,7 @@ c_trap(wp)
 }
 
 int
-c_exitreturn(wp)
-	char **wp;
+c_exitreturn(char **wp)
 {
 	int how = LEXIT;
 	int n;
@@ -575,8 +566,7 @@ c_exitreturn(wp)
 }
 
 int
-c_brkcont(wp)
-	char **wp;
+c_brkcont(char **wp)
 {
 	int n, quit;
 	struct env *ep, *last_ep = (struct env *) 0;
@@ -630,8 +620,7 @@ c_brkcont(wp)
 }
 
 int
-c_set(wp)
-	char **wp;
+c_set(char **wp)
 {
 	int argi, setargs;
 	struct block *l = e->loc;
@@ -666,8 +655,7 @@ c_set(wp)
 }
 
 int
-c_unset(wp)
-	char **wp;
+c_unset(char **wp)
 {
 	char *id;
 	int optc, unset_var = 1;
@@ -702,8 +690,7 @@ c_unset(wp)
 }
 
 int
-c_times(wp)
-	char **wp;
+c_times(char **wp)
 {
 	struct tms all;
 
@@ -720,9 +707,7 @@ c_times(wp)
  * time pipeline (really a statement, not a built-in command)
  */
 int
-timex(t, f)
-	struct op *t;
-	int f;
+timex(struct op *t, int f)
 {
 #define TF_NOARGS	BIT(0)
 #define TF_NOREAL	BIT(1)		/* don't report real time */
@@ -777,9 +762,7 @@ timex(t, f)
 }
 
 void
-timex_hook(t, app)
-	struct op *t;
-	char ** volatile *app;
+timex_hook(struct op *t, char ** volatile *app)
 {
 	char **wp = *app;
 	int optc;
@@ -812,8 +795,7 @@ timex_hook(t, app)
 }
 
 static char *
-clocktos(t)
-	clock_t t;
+clocktos(clock_t t)
 {
 	static char temp[22]; /* enough for 64 bit clock_t */
 	int i;
@@ -838,8 +820,7 @@ clocktos(t)
 
 /* exec with no args - args case is taken care of in comexec() */
 int
-c_exec(wp)
-	char ** wp;
+c_exec(char ** wp)
 {
 	int i;
 
@@ -866,8 +847,7 @@ c_exec(wp)
 
 /* dummy function, special case in comexec() */
 int
-c_builtin(wp)
-	char ** wp;
+c_builtin(char ** wp)
 {
 	return 0;
 }

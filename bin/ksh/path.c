@@ -38,12 +38,8 @@ static char	*do_phys_path ARGS((XString *, char *, const char *));
  *	was appended to result.
  */
 int
-make_path(cwd, file, cdpathp, xsp, phys_pathp)
-	const char *cwd;
-	const char *file;
-	char	**cdpathp;	/* & of : separated list */
-	XString	*xsp;
-	int	*phys_pathp;
+make_path(const char *cwd, const char *file, char **cdpathp, XString *xsp, int *phys_pathp)
+/* & of : separated list */
 {
 	int	rval = 0;
 	int	use_cdpath = 1;
@@ -116,8 +112,7 @@ make_path(cwd, file, cdpathp, xsp, phys_pathp)
  * ie, simplify_path("/a/b/c/./../d/..") returns "/a/b"
  */
 void
-simplify_path(pathx)
-	char	*pathx;
+simplify_path(char *pathx)
 {
 	char	*cur;
 	char	*t;
@@ -184,8 +179,7 @@ simplify_path(pathx)
 
 
 void
-set_current_wd(pathx)
-	char *pathx;
+set_current_wd(char *pathx)
 {
 	int len;
 	char *p = pathx;
@@ -204,8 +198,7 @@ set_current_wd(pathx)
 
 #ifdef S_ISLNK
 char *
-get_phys_path(pathx)
-	const char *pathx;
+get_phys_path(const char *pathx)
 {
 	XString xs;
 	char *xp;
@@ -225,10 +218,7 @@ get_phys_path(pathx)
 }
 
 static char *
-do_phys_path(xsp, xp, pathx)
-	XString *xsp;
-	char *xp;
-	const char *pathx;
+do_phys_path(XString *xsp, char *xp, const char *pathx)
 {
 	const char *p, *q;
 	int len, llen;

@@ -28,10 +28,7 @@ static void     iofree ARGS((struct ioword **iow, Area *ap));
  */
 
 static void
-ptree(t, indent, shf)
-	struct op *t;
-	int indent;
-	struct shf *shf;
+ptree(struct op *t, int indent, struct shf *shf)
 {
 	char **w;
 	struct ioword **ioact;
@@ -215,10 +212,7 @@ ptree(t, indent, shf)
 }
 
 static void
-pioact(shf, indent, iop)
-	struct shf *shf;
-	int indent;
-	struct ioword *iop;
+pioact(struct shf *shf, int indent, struct ioword *iop)
 {
 	int flag = iop->flag;
 	int type = flag & IOTYPE;
@@ -276,9 +270,7 @@ pioact(shf, indent, iop)
  */
 
 static void
-tputC(c, shf)
-	int c;
-	struct shf *shf;
+tputC(int c, struct shf *shf)
 {
 	if ((c&0x60) == 0) {		/* C0|C1 */
 		tputc((c&0x80) ? '$' : '^', shf);
@@ -291,9 +283,7 @@ tputC(c, shf)
 }
 
 static void
-tputS(wp, shf)
-	char *wp;
-	struct shf *shf;
+tputS(char *wp, struct shf *shf)
 {
 	int c, quoted=0;
 
@@ -403,11 +393,7 @@ snptreef(char *s, int n, const char *fmt, ...)
 }
 
 static void
-vfptreef(shf, indent, fmt, va)
-	struct shf *shf;
-	int indent;
-	const char *fmt;
-	va_list va;
+vfptreef(struct shf *shf, int indent, const char *fmt, va_list va)
 {
 	int c;
 
@@ -475,9 +461,7 @@ vfptreef(shf, indent, fmt, va)
  */
 
 struct op *
-tcopy(t, ap)
-	struct op *t;
-	Area *ap;
+tcopy(struct op *t, Area *ap)
 {
 	struct op *r;
 	char **tw, **rw;
@@ -526,9 +510,7 @@ tcopy(t, ap)
 }
 
 char *
-wdcopy(wp, ap)
-	const char *wp;
-	Area *ap;
+wdcopy(const char *wp, Area *ap)
 {
 	size_t len = wdscan(wp, EOS) - wp;
 	return memcpy(alloc(len, ap), wp, len);
@@ -536,9 +518,7 @@ wdcopy(wp, ap)
 
 /* return the position of prefix c in wp plus 1 */
 char *
-wdscan(wp, c)
-	const char *wp;
-	int c;
+wdscan(const char *wp, int c)
 {
 	int nest = 0;
 
@@ -594,8 +574,7 @@ wdscan(wp, c)
  * (string is allocated from ATEMP)
  */
 char *
-wdstrip(wp)
-	const char *wp;
+wdstrip(const char *wp)
 {
 	struct shf shf;
 	int c;
@@ -662,9 +641,7 @@ wdstrip(wp)
 }
 
 static	struct ioword **
-iocopy(iow, ap)
-	struct ioword **iow;
-	Area *ap;
+iocopy(struct ioword **iow, Area *ap)
 {
 	struct ioword **ior;
 	int i;
@@ -697,9 +674,7 @@ iocopy(iow, ap)
  */
 
 void
-tfree(t, ap)
-	struct op *t;
-	Area *ap;
+tfree(struct op *t, Area *ap)
 {
 	char **w;
 
@@ -731,9 +706,7 @@ tfree(t, ap)
 }
 
 static	void
-iofree(iow, ap)
-	struct ioword **iow;
-	Area *ap;
+iofree(struct ioword **iow, Area *ap)
 {
 	struct ioword **iop;
 	struct ioword *p;

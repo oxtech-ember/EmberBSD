@@ -19,8 +19,7 @@ static int      tnamecmp    ARGS((void *p1, void *p2));
 
 
 unsigned int
-hash(n)
-	const char * n;
+hash(const char * n)
 {
 	unsigned int h = 0;
 
@@ -30,10 +29,7 @@ hash(n)
 }
 
 void
-tinit(tp, ap, tsize)
-	struct table *tp;
-	Area *ap;
-	int tsize;
+tinit(struct table *tp, Area *ap, int tsize)
 {
 	tp->areap = ap;
 	tp->tbls = NULL;
@@ -43,9 +39,7 @@ tinit(tp, ap, tsize)
 }
 
 static void
-texpand(tp, nsize)
-	struct table *tp;
-	int nsize;
+texpand(struct table *tp, int nsize)
 {
 	int i;
 	struct tbl *tblp, **p;
@@ -79,10 +73,10 @@ texpand(tp, nsize)
 }
 
 struct tbl *
-mytsearch(tp, n, h)
-	struct table *tp;	/* table */
-	const char *n;		/* name to enter */
-	unsigned int h;			/* hash(n) */
+mytsearch(struct table *tp, const char *n, unsigned int h)
+/* table */
+/* name to enter */
+/* hash(n) */
 {
 	struct tbl **pp, *p;
 
@@ -102,10 +96,10 @@ mytsearch(tp, n, h)
 }
 
 struct tbl *
-tenter(tp, n, h)
-	struct table *tp;	/* table */
-	const char *n;		/* name to enter */
-	unsigned int h;			/* hash(n) */
+tenter(struct table *tp, const char *n, unsigned int h)
+/* table */
+/* name to enter */
+/* hash(n) */
 {
 	struct tbl **pp, *p;
 	int len;
@@ -144,24 +138,20 @@ tenter(tp, n, h)
 }
 
 void
-mytdelete(p)
-	struct tbl *p;
+mytdelete(struct tbl *p)
 {
 	p->flag = 0;
 }
 
 void
-ksh_twalk(ts, tp)
-	struct tstate *ts;
-	struct table *tp;
+ksh_twalk(struct tstate *ts, struct table *tp)
 {
 	ts->left = tp->size;
 	ts->next = tp->tbls;
 }
 
 struct tbl *
-tnext(ts)
-	struct tstate *ts;
+tnext(struct tstate *ts)
 {
 	while (--ts->left >= 0) {
 		struct tbl *p = *ts->next++;
@@ -172,15 +162,13 @@ tnext(ts)
 }
 
 static int
-tnamecmp(p1, p2)
-	void *p1, *p2;
+tnamecmp(void *p1, void *p2)
 {
 	return strcmp(((struct tbl *)p1)->name, ((struct tbl *)p2)->name);
 }
 
 struct tbl **
-tsort(tp)
-	struct table *tp;
+tsort(struct table *tp)
 {
 	int i;
 	struct tbl **p, **sp, **dp;

@@ -64,9 +64,7 @@ static void	alt_expand ARGS((XPtrV *wp, char *start, char *exp_start,
 
 /* compile and expand word */
 char *
-substitute(cp, f)
-	const char *cp;
-	int f;
+substitute(const char *cp, int f)
 {
 	struct source *s, *sold;
 
@@ -85,9 +83,7 @@ substitute(cp, f)
  * expand arg-list
  */
 char **
-eval(ap, f)
-	char **ap;
-	int f;
+eval(char **ap, int f)
 {
 	XPtrV w;
 
@@ -105,9 +101,7 @@ eval(ap, f)
  * expand string
  */
 char *
-evalstr(cp, f)
-	char *cp;
-	int f;
+evalstr(char *cp, int f)
 {
 	XPtrV w;
 
@@ -123,9 +117,7 @@ evalstr(cp, f)
  * used from iosetup to expand redirection files
  */
 char *
-evalonestr(cp, f)
-	char *cp;
-	int f;
+evalonestr(char *cp, int f)
 {
 	XPtrV w;
 
@@ -158,10 +150,10 @@ typedef struct SubType {
 } SubType;
 
 void
-expand(cp, wp, f)
-	char *cp;		/* input word */
-	XPtrV *wp;		/* output words */
-	int f;			/* DO* flags */
+expand(char *cp, XPtrV *wp, int f)
+/* input word */
+/* output words */
+/* DO* flags */
 {
 	int UNINITIALIZED(c);
 	int type;		/* expansion type */
@@ -694,12 +686,9 @@ expand(cp, wp, f)
  * Prepare to generate the string returned by ${} substitution.
  */
 static int
-varsub(xp, sp, word, stypep, slenp)
-	Expand *xp;
-	char *sp;
-	char *word;
-	int *stypep;	/* becomes qualifier type */
-	int *slenp;	/* " " len (=, :=, etc.) valid iff *stypep != 0 */
+varsub(Expand *xp, char *sp, char *word, int *stypep, int *slenp)
+/* becomes qualifier type */
+/* " " len (=, :=, etc.) valid iff *stypep != 0 */
 {
 	int c;
 	int state;	/* next state: XBASE, XARG, XSUB, XNULLSUB */
@@ -845,9 +834,7 @@ varsub(xp, sp, word, stypep, slenp)
  * Run the command in $(...) and read its output.
  */
 static int
-comsub(xp, cp)
-	Expand *xp;
-	char *cp;
+comsub(Expand *xp, char *cp)
 {
 	Source *s, *sold;
 	struct op *t;
@@ -900,10 +887,7 @@ comsub(xp, cp)
  */
 
 static char *
-trimsub(str, pat, how)
-	char *str;
-	char *pat;
-	int how;
+trimsub(char *str, char *pat, int how)
 {
 	char *end = strchr(str, 0);
 	char *p, c;
@@ -953,10 +937,7 @@ trimsub(str, pat, how)
 
 /* XXX cp not const 'cause slashes are temporarily replaced with nulls... */
 static void
-ksh_glob(cp, wp, markdirs)
-	char *cp;
-	XPtrV *wp;
-	int markdirs;
+ksh_glob(char *cp, XPtrV *wp, int markdirs)
 {
 	int oldsize = XPsize(*wp);
 
@@ -976,10 +957,7 @@ ksh_glob(cp, wp, markdirs)
  * the number of matches found.
  */
 int
-glob_str(cp, wp, markdirs)
-	char *cp;
-	XPtrV *wp;
-	int markdirs;
+glob_str(char *cp, XPtrV *wp, int markdirs)
 {
 	int oldsize = XPsize(*wp);
 	XString xs;
@@ -993,12 +971,12 @@ glob_str(cp, wp, markdirs)
 }
 
 static void
-globit(xs, xpp, sp, wp, check)
-	XString *xs;		/* dest string */
-	char **xpp;		/* ptr to dest end */
-	char *sp;		/* source path */
-	XPtrV *wp;		/* output list */
-	int check;		/* GF_* flags */
+globit(XString *xs, char **xpp, char *sp, XPtrV *wp, int check)
+/* dest string */
+/* ptr to dest end */
+/* source path */
+/* output list */
+/* GF_* flags */
 {
 	char *np;		/* next source component */
 	char *xp = *xpp;
@@ -1174,10 +1152,7 @@ copy_non_glob(xs, xpp, p)
 
 /* remove MAGIC from string */
 char *
-debunk(dp, sp, dlen)
-	char *dp;
-	const char *sp;
-	size_t dlen;
+debunk(char *dp, const char *sp, size_t dlen)
 {
 	char *d;
 	const char *s;
@@ -1208,11 +1183,7 @@ debunk(dp, sp, dlen)
  * past the name, otherwise returns 0.
  */
 static char *
-maybe_expand_tilde(p, dsp, dpp, isassign)
-	char *p;
-	XString *dsp;
-	char **dpp;
-	int isassign;
+maybe_expand_tilde(char *p, XString *dsp, char **dpp, int isassign)
 {
 	XString ts;
 	char *dp = *dpp;
@@ -1250,8 +1221,7 @@ maybe_expand_tilde(p, dsp, dpp, isassign)
  */
 
 static char *
-tilde(cp)
-	char *cp;
+tilde(char *cp)
 {
 	char *dp;
 
@@ -1277,8 +1247,7 @@ tilde(cp)
  */
 
 static char *
-homedir(name)
-	char *name;
+homedir(char *name)
 {
 	struct tbl *ap;
 
@@ -1305,11 +1274,7 @@ homedir(name)
 
 #ifdef BRACE_EXPAND
 static void
-alt_expand(wp, start, exp_start, end, fdo)
-	XPtrV *wp;
-	char *start, *exp_start;
-	char *end;
-	int fdo;
+alt_expand(XPtrV *wp, char *start, char *exp_start, char *end, int fdo)
 {
 	int UNINITIALIZED(count);
 	char *brace_start, *brace_end, *UNINITIALIZED(comma);

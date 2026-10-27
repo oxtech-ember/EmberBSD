@@ -76,8 +76,7 @@ static Source	*hist_source;
 
 
 int
-c_fc(wp)
-	char **wp;
+c_fc(char **wp)
 {
 	struct shf *shf;
 	struct temp UNINITIALIZED(*tf);
@@ -294,8 +293,7 @@ c_fc(wp)
 
 /* Save cmd in history, execute cmd (cmd gets trashed) */
 static int
-hist_execute(cmd)
-	char *cmd;
+hist_execute(char *cmd)
 {
 	Source *sold;
 	int ret;
@@ -335,11 +333,7 @@ hist_execute(cmd)
 }
 
 static int
-hist_replace(hp, pat, rep, globalv)
-	char **hp;
-	const char *pat;
-	const char *rep;
-	int globalv;
+hist_replace(char **hp, const char *pat, const char *rep, int globalv)
 {
 	char *line;
 
@@ -384,10 +378,7 @@ hist_replace(hp, pat, rep, globalv)
  * pattern is a number or string
  */
 static char **
-hist_get(str, approx, allow_cur)
-	const char *str;
-	int approx;
-	int allow_cur;
+hist_get(const char *str, int approx, int allow_cur)
 {
 	char **hp = (char **) 0;
 	int n;
@@ -428,8 +419,7 @@ hist_get(str, approx, allow_cur)
 
 /* Return a pointer to the newest command in the history */
 static char **
-hist_get_newest(allow_cur)
-	int allow_cur;
+hist_get_newest(int allow_cur)
 {
 	if (histptr < histlist || (!allow_cur && histptr == histlist)) {
 		bi_errorf("no history (yet)");
@@ -442,7 +432,7 @@ hist_get_newest(allow_cur)
 
 /* Return a pointer to the newest command in the history */
 static char **
-hist_get_oldest()
+hist_get_oldest(void)
 {
 	if (histptr <= histlist) {
 		bi_errorf("no history (yet)");
@@ -455,7 +445,7 @@ hist_get_oldest()
 /* Back up over last histsave */
 /******************************/
 static void
-histbackup()
+histbackup(void)
 {
 	static int last_line = -1;
 
@@ -471,20 +461,19 @@ histbackup()
  * Return the current position.
  */
 char **
-histpos()
+histpos(void)
 {
 	return current;
 }
 
 int
-histN()
+histN(void)
 {
 	return curpos;
 }
 
 int
-histnum(n)
-	int	n;
+histnum(int n)
 {
 	int	last = histptr - histlist;
 
@@ -505,11 +494,7 @@ histnum(n)
  * direction.
  */
 int
-findhist(start, fwd, str, anchored)
-	int	start;
-	int	fwd;
-	const char  *str;
-	int	anchored;
+findhist(int start, int fwd, const char *str, int anchored)
 {
 	char	**hp;
 	int	maxhist = histptr - histlist;
@@ -533,8 +518,7 @@ findhist(start, fwd, str, anchored)
  *	this means reallocating the dataspace
  */
 void
-sethistsize(n)
-	int n;
+sethistsize(int n)
 {
 	if (n > 0 && n != histsize) {
 		int cursize = histptr - histlist;
@@ -558,8 +542,7 @@ sethistsize(n)
  *	maintenance
  */
 void
-sethistfile(name)
-	const char *name;
+sethistfile(const char *name)
 {
 	/* if not started then nothing to do */
 	if (hstarted == 0)
@@ -598,7 +581,7 @@ sethistfile(name)
  *	initialise the history vector
  */
 void
-init_histvec()
+init_histvec(void)
 {
 	if (histlist == NULL) {
 		histsize = HISTORYSIZE;
@@ -612,10 +595,9 @@ init_histvec()
  * save command in history
  */
 void
-histsave(lno, cmd, dowrite)
-	int lno;	/* ignored (compatibility with COMPLEX_HISTORY) */
-	const char *cmd;
-	int dowrite;	/* ignored (compatibility with COMPLEX_HISTORY) */
+histsave(int lno, const char *cmd, int dowrite)
+/* ignored (compatibility with COMPLEX_HISTORY) */
+/* ignored (compatibility with COMPLEX_HISTORY) */
 {
 	char **hp = histptr;
 	char *cp;
@@ -639,9 +621,7 @@ histsave(lno, cmd, dowrite)
  * commands
  */
 void
-histappend(cmd, nl_separate)
-	const char *cmd;
-	int	nl_separate;
+histappend(const char *cmd, int nl_separate)
 {
 	int	hlen, clen;
 	char	*p;
@@ -667,8 +647,7 @@ histappend(cmd, nl_separate)
  * to save its history.
  */
 void
-hist_init(s)
-	Source *s;
+hist_init(Source *s)
 {
 	char *f;
 	FILE *fh;
@@ -733,7 +712,7 @@ hist_init(s)
  */
 
 void
-hist_finish()
+hist_finish(void)
 {
   static int once;
   int fd;

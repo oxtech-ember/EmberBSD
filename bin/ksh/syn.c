@@ -67,7 +67,7 @@ static	int	symbol;		/* yylex value */
 	((reject) ? (symbol) : (REJECT, symbol = yylex(cf)))
 
 static void
-yyparse()
+yyparse(void)
 {
 	int c;
 
@@ -82,8 +82,7 @@ yyparse()
 }
 
 static struct op *
-pipeline(cf)
-	int cf;
+pipeline(int cf)
 {
 	struct op *t, *p, *tl = NULL;
 
@@ -103,7 +102,7 @@ pipeline(cf)
 }
 
 static struct op *
-andor()
+andor(void)
 {
 	struct op *t, *p;
 	int c;
@@ -121,8 +120,7 @@ andor()
 }
 
 static struct op *
-c_list(multi)
-	int multi;
+c_list(int multi)
 {
 	struct op *t = NULL, *p, *tl = NULL;
 	int c;
@@ -159,8 +157,7 @@ c_list(multi)
 }
 
 static struct ioword *
-synio(cf)
-	int cf;
+synio(int cf)
 {
 	struct ioword *iop;
 	int ishere;
@@ -184,16 +181,14 @@ synio(cf)
 }
 
 static void
-musthave(c, cf)
-	int c, cf;
+musthave(int c, int cf)
 {
 	if ((token(cf)) != c)
 		syntaxerr((char *) 0);
 }
 
 static struct op *
-nested(type, smark, emark)
-	int type, smark, emark;
+nested(int type, int smark, int emark)
 {
 	struct op *t;
 	struct nesting_state old_nesting;
@@ -206,8 +201,7 @@ nested(type, smark, emark)
 }
 
 static struct op *
-get_command(cf)
-	int cf;
+get_command(int cf)
 {
 	struct op *t;
 	int c, iopn = 0, syniocf;
@@ -423,7 +417,7 @@ get_command(cf)
 }
 
 static struct op *
-dogroup()
+dogroup(void)
 {
 	int c;
 	struct op *list;
@@ -446,7 +440,7 @@ dogroup()
 }
 
 static struct op *
-thenpart()
+thenpart(void)
 {
 	struct op *t;
 
@@ -460,7 +454,7 @@ thenpart()
 }
 
 static struct op *
-elsepart()
+elsepart(void)
 {
 	struct op *t;
 
@@ -483,7 +477,7 @@ elsepart()
 }
 
 static struct op *
-caselist()
+caselist(void)
 {
 	struct op *t, *tl;
 	int c;
@@ -509,8 +503,7 @@ caselist()
 }
 
 static struct op *
-casepart(endtok)
-	int endtok;
+casepart(int endtok)
 {
 	struct op *t;
 	int c;
@@ -538,9 +531,8 @@ casepart(endtok)
 }
 
 static struct op *
-function_body(name, ksh_func)
-	char *name;
-	int ksh_func;	/* function foo { ... } vs foo() { .. } */
+function_body(char *name, int ksh_func)
+/* function foo { ... } vs foo() { .. } */
 {
 	char *sname, *p;
 	struct op *t;
@@ -599,7 +591,7 @@ function_body(name, ksh_func)
 }
 
 static char **
-wordlist()
+wordlist(void)
 {
 	int c;
 	XPtrV args;
@@ -629,10 +621,7 @@ wordlist()
  */
 
 static struct op *
-block(type, t1, t2, wp)
-	int type;
-	struct op *t1, *t2;
-	char **wp;
+block(int type, struct op *t1, struct op *t2, char **wp)
 {
 	struct op *t;
 
@@ -687,7 +676,7 @@ const	struct tokeninfo {
 };
 
 void
-initkeywords()
+initkeywords(void)
 {
 	struct tokeninfo const *tt;
 	struct tbl *p;
@@ -704,8 +693,7 @@ initkeywords()
 }
 
 static void
-syntaxerr(what)
-	const char *what;
+syntaxerr(const char *what)
 {
 	char redir[6];	/* 2<<- is the longest redirection, I think */
 	const char *s;
@@ -757,9 +745,7 @@ syntaxerr(what)
 }
 
 static void
-nesting_push(save, tok)
-	struct nesting_state *save;
-	int tok;
+nesting_push(struct nesting_state *save, int tok)
 {
 	*save = nesting;
 	nesting.start_token = tok;
@@ -767,15 +753,13 @@ nesting_push(save, tok)
 }
 
 static void
-nesting_pop(saved)
-	struct nesting_state *saved;
+nesting_pop(struct nesting_state *saved)
 {
 	nesting = *saved;
 }
 
 static struct op *
-newtp(type)
-	int type;
+newtp(int type)
 {
 	struct op *t;
 
@@ -790,8 +774,7 @@ newtp(type)
 }
 
 struct op *
-compile(s)
-	Source *s;
+compile(Source *s)
 {
 	nesting.start_token = 0;
 	nesting.start_line = 0;
@@ -812,8 +795,7 @@ compile(s)
  *	$
  */
 static int
-assign_command(s)
-	char *s;
+assign_command(char *s)
 {
 	char c = *s;
 
@@ -827,8 +809,7 @@ assign_command(s)
 
 /* Check if we are in the middle of reading an alias */
 static int
-inalias(s)
-	struct source *s;
+inalias(struct source *s)
 {
 	for (; s && s->type == SALIAS; s = s->next)
 		if (!(s->flags & SF_ALIASEND))
@@ -861,9 +842,7 @@ const char db_gthan[] = { CHAR, '>', EOS };
  * TM_UNOP and TM_BINOP, the returned value is a Test_op).
  */
 static int
-dbtestp_isa(te, meta)
-	Test_env *te;
-	Test_meta meta;
+dbtestp_isa(Test_env *te, Test_meta meta)
 {
 	int c = tpeek(ARRAYVAR | (meta == TM_BINOP ? 0 : CONTIN));
 	int uqword = 0;
@@ -911,10 +890,7 @@ dbtestp_isa(te, meta)
 }
 
 static const char *
-dbtestp_getopnd(te, op, do_eval)
-	Test_env *te;
-	Test_op op;
-	int do_eval;
+dbtestp_getopnd(Test_env *te, Test_op op, int do_eval)
 {
 	int c = tpeek(ARRAYVAR);
 
@@ -928,21 +904,13 @@ dbtestp_getopnd(te, op, do_eval)
 }
 
 static int
-dbtestp_eval(te, op, opnd1, opnd2, do_eval)
-	Test_env *te;
-	Test_op op;
-	const char *opnd1;
-	const char *opnd2;
-	int do_eval;
+dbtestp_eval(Test_env *te, Test_op op, const char *opnd1, const char *opnd2, int do_eval)
 {
 	return 1;
 }
 
 static void
-dbtestp_error(te, offset, msg)
-	Test_env *te;
-	int offset;
-	const char *msg;
+dbtestp_error(Test_env *te, int offset, const char *msg)
 {
 	te->flags |= TEF_ERROR;
 

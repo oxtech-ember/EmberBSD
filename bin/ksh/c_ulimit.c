@@ -48,8 +48,7 @@ extern	long ulimit();
 #endif /* RLIM_INFINITY */
 
 int
-c_ulimit(wp)
-	char **wp;
+c_ulimit(char **wp)
 {
 	static const struct limits {
 		const char	*name;
