@@ -3714,6 +3714,7 @@ main(void)
 	test_trace_report();
 	test_hwr_report();
 	test_scratch_error_snapshot();
+	CHECK(fwheap_calls == 0 && fwvm_calls == 0);
 	printf("PASS: %u A733 GPU identification checks\n", checks);
 	return 0;
 }
