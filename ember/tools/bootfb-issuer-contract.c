@@ -8,12 +8,20 @@
 #include <sys/bus.h>
 #include <sys/device.h>
 #include <inttypes.h>
+#ifndef __printflike
+#define __printflike(fmtarg, firstvararg) \
+	__attribute__((__format__(__printf__, fmtarg, firstvararg)))
+#endif
 struct cfattach { const char *ca_name; };
 
-static int kernel_depth = 1, cold = 1;
+static int kernel_depth = 1;
+#ifdef WSDISPLAY_BOOTFB_DEFER
+static int cold = 1;
+#endif
 static void fixture_lock(int);
 static void fixture_unlock(void);
 static void fixture_before_map(bus_space_tag_t);
+static bool fixture_bootfb_cpu_map_method(bus_space_tag_t);
 static int wsdisplay_bootfb_test_phase(void);
 int generic_bs_map(void *, bus_addr_t, bus_size_t, int, bus_space_handle_t *);
 int armv7_generic_bs_map(void *, bus_addr_t, bus_size_t, int, bus_space_handle_t *);
@@ -48,7 +56,8 @@ static bool genfb_mapping;
 static unsigned genfb_attaches, genfb_initializations, pmf_calls;
 static void fixture_before_map(bus_space_tag_t tag)
 {
-	CHECK(tag->bs_map == generic_bs_map || tag->bs_map == nonposted_mmio_bs_map);
+	CHECK(fixture_bootfb_cpu_map_method(tag) ||
+	    tag->bs_map == nonposted_mmio_bs_map);
 	if (genfb_mapping) CHECK(wsdisplay_bootfb_test_phase() == 4);
 }
 
@@ -69,6 +78,17 @@ int unknown_map(void *c, bus_addr_t a, bus_size_t s, int f,
 	(void)c; (void)a; (void)s; (void)f; (void)h; CHECK(false); return 1;
 }
 #include "md-functions.h"
+#ifdef WSDISPLAY_BOOTFB_DEFER
+static bool fixture_bootfb_cpu_map_method(bus_space_tag_t tag)
+{
+	return tag != NULL && tag->bs_map == BOOTFB_CPU_MAP;
+}
+#else
+static bool fixture_bootfb_cpu_map_method(bus_space_tag_t tag)
+{
+	return tag != NULL && tag->bs_map == generic_bs_map;
+}
+#endif
 
 struct properties {
 	uint64_t override, address, virtual_address;
@@ -210,9 +230,16 @@ static void fresh(void)
 	memset(&simplefb_sc, 0, sizeof(simplefb_sc));
 	memset(&display, 0, sizeof(display)); display.private = &simplefb_sc;
 	display.driver = "genfb"; display.attachment.ca_name = "simplefb";
+#ifdef WSDISPLAY_BOOTFB_DEFER
+	arm_generic_bs_tag.bs_map = BOOTFB_CPU_MAP;
+#else
 	arm_generic_bs_tag.bs_map = generic_bs_map;
+#endif
 	attachment_tag = &arm_generic_bs_tag;
-	config_finalize_done = 0; kernel_depth = 1; cold = 1;
+	config_finalize_done = 0; kernel_depth = 1;
+#ifdef WSDISPLAY_BOOTFB_DEFER
+	cold = 1;
+#endif
 	genfb_attaches = genfb_initializations = pmf_calls = 0;
 	hook_allocations = hook_frees = invalid_assertions = 0;
 	genfb_mapping = false;

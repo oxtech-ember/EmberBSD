@@ -25,8 +25,12 @@ def stripped(text)
   text.lines.reject { |line| line.start_with?('#include ') }.join
 end
 mi = files.fetch(paths[0])
-a = mi.index('static int' + "\t" + 'plcomconsunit = -1;')
-b = mi.index('static int ppscap =', a)
+provider_start = /^#ifdef WSDISPLAY_BOOTFB_HANDOFF\nextern struct consdev plcomcons;\n#endif\n\nstatic struct plcom_instance plcomcons_info;\n/
+ppscap_start = /^static int ppscap\s*=/
+abort 'provider state start is not unique' unless mi.scan(provider_start).size == 1
+abort 'ppscap state end is not unique' unless mi.scan(ppscap_start).size == 1
+a = mi.match(provider_start).begin(0)
+b = mi.match(ppscap_start, a).begin(0)
 abort 'provider and console state not found' unless a && b
 originals = {
   'plcomvar.inc' => stripped(files.fetch(paths[1])),
@@ -44,9 +48,11 @@ end
 %w[provider.inc common.inc].each { |name| originals[name] = notice(mi) + originals[name] }
 originals['acpi.inc'] = notice(files.fetch(paths[4])) + originals.fetch('acpi.inc')
 originals['fdt.inc'] = notice(files.fetch(paths[5])) + originals.fetch('fdt.inc')
-# Only unused unchanged callback parameters receive fixture declaration attributes.
+# Only unused unchanged parameters receive fixture declaration attributes.
 originals['common.inc'].sub!('plcom_detach(device_t self, int flags)',
   'plcom_detach(device_t self, int flags __attribute__((__unused__)))')
+originals['common.inc'].sub!("plcomcnattach(struct plcom_instance *pi, int rate, int frequency,\n    tcflag_t cflag, int unit)",
+  "plcomcnattach(struct plcom_instance *pi, int rate, int frequency,\n    tcflag_t cflag, int unit __attribute__((__unused__)))")
 originals['fdt.inc'].sub!('plcom_fdt_attach(device_t parent,',
   'plcom_fdt_attach(device_t parent __attribute__((__unused__)),')
 controls = {

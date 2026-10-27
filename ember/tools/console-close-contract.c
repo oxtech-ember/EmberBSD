@@ -1,5 +1,8 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Actual console/issuer/FDT bodies. Kernel scheduling services are controlled. */
+#if defined(__linux__) && !defined(_GNU_SOURCE)
+#define _GNU_SOURCE
+#endif
 #include <sys/types.h>
 #include <stdbool.h>
 #include <stdint.h>

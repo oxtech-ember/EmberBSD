@@ -168,7 +168,7 @@ Dir.mktmpdir('bootfb-serial-handoff-',ENV.fetch('TMPDIR','/tmp')) do |work|
       abort 'endian function missing '+n unless matches.size==1
       matches.first
     end
-    File.write(work+'/native-endian.h',notice(endian)+"\n#ifndef __CAST\n#define __CAST(t,v) ((t)(v))\n#endif\n"+endian_functions.join("\n"))
+    File.write(work+'/native-endian.h',notice(endian)+"\n#ifndef __CAST\n#define __CAST(t,v) ((t)(v))\n#endif\n#ifndef __unused\n#define __unused __attribute__((__unused__))\n#endif\n"+endian_functions.join("\n"))
     helpers=%w[bcmv3d_bootfb_exchange bcmv3d_bootfb_notify bcmv3d_display_read bcmv3d_display_write bcmv3d_display_barrier bcmv3d_display_delay bcmv3d_display_clocks bcmv3d_bootfb_stop_display bcmv3d_bootfb_writeback_idle bcmv3d_bootfb_program_mmu4 bcmv3d_publish_io_error bcmv3d_publish_read bcmv3d_publish_write bcmv3d_publish_barrier bcmv3d_publish_delay bcmv3d_bootfb_publish bcmv3d_bootfb_detect bcmv3d_bootfb_start_vblank bcmv3d_bootfb_claim_job bcmv3d_bootfb_queue bcmv3d_bootfb_retain bcmv3d_bootfb_cancel bcmv3d_finalize]
     File.write(work+'/native-job.h',notice(acpi)+(acpi[/^static const unsigned int bcmv3d_display_indices.*?^};/m] || abort("indices absent"))+"\n"+(acpi[/^static const unsigned int bcmv3d_publish_indices.*?^};/m] || abort('publish indices absent'))+"\nstatic void bcmv3d_bootfb_retain(struct bcmv3d_softc *, int);\nstatic void bcmv3d_bootfb_cancel(struct bcmv3d_softc *, int);\n"+helpers.map { |n| function(acpi,n) }.join("\n"))
     ws=File.read(source+'/sys/dev/wscons/wsdisplay.c')

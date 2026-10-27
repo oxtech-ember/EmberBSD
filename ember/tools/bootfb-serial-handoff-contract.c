@@ -1,5 +1,11 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Actual joined boot job, issuer, close, facade and PLCOM provider. */
+#if defined(__linux__) && !defined(_GNU_SOURCE)
+#define _GNU_SOURCE
+#endif
+#if defined(__linux__)
+#include <sys/sysmacros.h>
+#endif
 #include <sys/queue.h>
 #include <limits.h>
 #include <stdarg.h>
