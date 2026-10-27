@@ -1,0 +1,62 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\" Copyright (c) 2026 EmberBSD contributors.
+.Dd October 27, 2026
+.Dt RTWSDIO 4
+.Os
+.Sh NAME
+.Nm rtwsdio
+.Nd Realtek RTL8723DS SDIO firmware bootstrap
+.Sh SYNOPSIS
+.Cd "rtwsdio* at sdmmc?"
+.Sh DESCRIPTION
+The
+.Nm
+driver matches function 1 of SDIO devices with vendor 0x024c
+and product 0xd723.
+It loads and validates RTL8723D firmware through
+.Xr firmload 9 .
+This stage provides a firmware bootstrap without a network interface.
+It does not provide scanning, association, packet transfer or WPA.
+.Pp
+The native host must be enabled in the device tree,
+marked non-removable and connected to a registered standard MMC power sequence.
+Diagnostic SDIO profiles are excluded.
+The board configuration owns power resources, polarity and delays.
+The driver does not operate board GPIOs or regulators.
+A disabled board profile remains disabled.
+.Pp
+Both the host and card must support a 512-byte block size.
+The driver checks the card CIS and verifies block-size writes by readback.
+It preserves other functions' enable bits.
+Bus operations run on the SD/MMC host task queue.
+Operational receive and transmit interrupts remain masked.
+.Sh FILES
+.Bl -tag -width Ds -compact
+.It Pa /libdata/firmware/rtw88/rtw8723d_fw.bin
+RTL8723D firmware, supplied by the Ports rtw88-firmware package.
+Other configured
+.Xr firmload 9
+search roots are also supported.
+.El
+.Sh DIAGNOSTICS
+.Bl -diag
+.It firmware ready (bootstrap only)
+The chip reported completion of the firmware bootstrap.
+This message does not establish radio or network readiness.
+.It no configured native power profile
+The host does not satisfy native board admission.
+No bootstrap is scheduled.
+.It bootstrap/IRQ failed: errno
+Firmware, transport or interrupt setup failed.
+The driver attempts to release its acquired resources.
+.It cleanup failed: errno
+A card operation failed during resource release.
+The first cleanup error is reported.
+.El
+.Sh SEE ALSO
+.Xr sdmmc 4 ,
+.Xr firmload 9
+.Sh LIMITATIONS
+Host contract tests and target compilation do not establish physical
+power, SDIO interrupt delivery, firmware start or WLAN operation.
+Board enablement and hardware acceptance require separate validation.

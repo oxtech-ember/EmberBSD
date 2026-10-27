@@ -46,6 +46,8 @@ Enabling this controller requires a separate verified board power profile.
 That profile must use standard `mmc-pwrseq` and define GPIO and regulator ownership.
 Revision-specific schematics and matching vendor source must establish polarity and delays.
 The diagnostic root opt-in does not enable the native controller.
+The [native bootstrap](../../../../dev/sdmmc/docs/rtw88-sdio-bootstrap.md)
+also checks this admission boundary before scheduling firmware work.
 
 From the OS root, run `python3.15 ember/tools/a133-wlan-fdt-test.py SOURCE OUTPUT`
 with the SDK Python. The script compiles the actual board DTB. Select `HOST_CC`

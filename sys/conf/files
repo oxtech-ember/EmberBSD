@@ -738,6 +738,10 @@ file	dev/ic/athrate-sample.c		ath
 device	atw: arp, wlan, ifnet, smc93cx6
 file	dev/ic/atw.c			atw
 
+# Realtek RTL8723D legacy bootstrap, independent of the PCI/network core.
+define rtw8723d_boot
+file	dev/ic/rtw8723d_boot.c		rtw8723d_boot
+
 # Realtek RTL8822CE native station core.
 # Config base cannot be rtw88: names must not end in a digit. rtw is RTL8180.
 device	rtwce: arp, wlan, ifnet, firmload

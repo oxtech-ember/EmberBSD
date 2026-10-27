@@ -59,7 +59,7 @@ MAN=	aac.4 ac97.4 acardide.4 aceride.4 acphy.4 \
 	pxagpio.4 pxaip.4 pxg.4 qat.4 qe.4 qec.4 qemufwcfg.4 qsphy.4 \
 	r128fb.4 radeonfb.4 \
 	raid.4 ral.4 ray.4 rcons.4 rdcphy.4 re.4 rge.4 rgephy.4 rlphy.4 \
-	rnd.4 route.4 rs5c372rtc.4 rtk.4 rtsx.4 rtw.4 rtwn.4 rum.4 run.4 \
+	rnd.4 route.4 rs5c372rtc.4 rtk.4 rtsx.4 rtw.4 rtwn.4 rtwsdio.4 rum.4 run.4 \
 	s390rtc.4 satalink.4 sbus.4 schide.4 \
 	scmd.4 scmdi2c.4 scmdspi.4 scsi.4 sctp.4 sd.4 se.4 seeprom.4 sem.4 \
 	ses.4 sf.4 sfb.4 sgp40mox.4 sgsmix.4 shb.4 shmif.4 shpcic.4 sht3xtemp.4 \

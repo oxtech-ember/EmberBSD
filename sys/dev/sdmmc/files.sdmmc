@@ -39,6 +39,11 @@ file	dev/sdmmc/if_bwi_sdio.c		bwi_sdio
 define rtw88_sdio_io
 file	dev/sdmmc/rtw88_sdio_io.c		rtw88_sdio_io
 
+# Native bootstrap does not attach a network interface.
+device rtwsdio: firmload, rtw88_sdio_io, rtw8723d_boot
+attach rtwsdio at sdmmc
+file	dev/sdmmc/if_rtw88_sdio.c		rtwsdio
+
 device rtl8723dsprobe: rtw88_sdio_io
 attach rtl8723dsprobe at sdmmc
 file	dev/sdmmc/rtl8723ds_probe.c	rtl8723dsprobe
