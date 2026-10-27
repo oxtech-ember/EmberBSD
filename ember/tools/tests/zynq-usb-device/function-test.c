@@ -15,7 +15,7 @@
 static unsigned events, transfers;
 static const char *scenario;
 static unsigned event_index, quiets, attempts;
-static bool connected;
+static bool bus_connected;
 
 static bool
 is_case(const char *name)
@@ -48,7 +48,7 @@ test_ioctl(int fd, unsigned long op, ...)
 
 	assert(fd == 7);
 	if (op == USBPERIPH_IOC_CONNECT) {
-		connected = true;
+		bus_connected = true;
 		return 0;
 	}
 	if (op == USBPERIPH_IOC_DISCONNECT)
@@ -62,7 +62,7 @@ test_ioctl(int fd, unsigned long op, ...)
 		struct usbperiph_snapshot *s = arg;
 		memset(s, 0, sizeof(*s));
 		s->version = USBPERIPH_SNAPSHOT_VERSION;
-		s->generation = events ? events : connected ? 1 : 0;
+		s->generation = events ? events : bus_connected ? 1 : 0;
 		s->configuration = events != 0;
 		return 0;
 	}
@@ -72,7 +72,8 @@ test_ioctl(int fd, unsigned long op, ...)
 		    is_case("reset") ? 3 : 2;
 		if (event_index++ >= count) {
 			/* Catch a non-progressing suspend/disconnect wait. */
-			assert(++quiets == 1);
+			quiets++;
+			assert(quiets == 1);
 			errno = EWOULDBLOCK;
 			return -1;
 		}
@@ -108,7 +109,8 @@ test_ioctl(int fd, unsigned long op, ...)
 			return -1;
 		}
 		if (is_case("late-cancel")) {
-			assert(++attempts == 1);
+			attempts++;
+			assert(attempts == 1);
 			errno = ECANCELED;
 			return -1;
 		}
