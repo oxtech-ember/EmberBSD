@@ -141,7 +141,7 @@ SCRIPT
 : > "$work/src/tools/Makefile"
 : > "$work/src/share/mk/bsd.own.mk"
 : > "$work/src/sys/arch/evbarm/conf/EMBER64"
-for module in if_cemac_acpi bcm2712btcom rp1wmcodec rpi5button; do
+for module in if_cemac_acpi bcm2712btcom bcmexpgpio rp1wmcodec rpi5button; do
     mkdir -p "$work/src/sys/modules/$module"
 done
 cat > "$work/bin/uname" <<'SH'
@@ -412,6 +412,7 @@ export TEST_OUT="$work/cross"
 sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1
 test -s "$TEST_OUT/netbsd-EMBER64"
 test -s "$TEST_OUT/rpi5button.kmod"
+test -s "$TEST_OUT/bcmexpgpio.kmod"
 test -s "$TEST_OUT/sun60i-a733-orangepi-zero3w.dtb"
 test -s "$TEST_OUT/sun60i-a733-orangepi-zero3w-diagnostic.dtb"
 grep -q 'build.sh .* -m evbarm -a aarch64 ' "$TEST_LOG"
@@ -467,7 +468,7 @@ grep -q 'injected contract failure: pvr-query-contract.sh' "$work/query.log"
 outputs='netbsd-EMBER64 netbsd-EMBER64.img bcm2837-rpi-zero-2-w.dtb
 sun60i-a733-orangepi-zero4.dtb sun60i-a733-orangepi-zero3w.dtb
 sun60i-a733-orangepi-zero3w-diagnostic.dtb
-if_cemac_acpi.kmod bcm2712btcom.kmod rp1wmcodec.kmod rpi5button.kmod'
+if_cemac_acpi.kmod bcm2712btcom.kmod bcmexpgpio.kmod rp1wmcodec.kmod rpi5button.kmod'
 root_argument_failures='linux-idr-contract.sh i915-elsq-desc-contract.sh
 i915-rps-lifetime-contract.sh drm-pci-identity-contract.sh linux-rcu-replace-contract.sh
 drm-gem-fb-contract.rb bcmv3d-resv-contract.rb bcmv3d-read-contract.rb

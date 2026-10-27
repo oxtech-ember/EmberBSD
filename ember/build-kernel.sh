@@ -35,7 +35,7 @@ clear_outputs() {
         "$out/bcm2837-rpi-zero-2-w.dtb" "$out/sun60i-a733-orangepi-zero4.dtb" \
         "$out/sun60i-a733-orangepi-zero3w.dtb" \
         "$out/sun60i-a733-orangepi-zero3w-diagnostic.dtb"
-    for module in if_cemac_acpi bcm2712btcom rp1wmcodec rpi5button; do
+    for module in if_cemac_acpi bcm2712btcom bcmexpgpio rp1wmcodec rpi5button; do
         rm -f "$out/$module.kmod"
     done
 }
@@ -156,7 +156,7 @@ for board in orangepi-zero4 orangepi-zero3w orangepi-zero3w-diagnostic; do
 done
 run_native_check python "$out/dtb-modes.log" \
     "$src/ember/tools/a733-boot-modes-contract.py" "$stage"
-for module in if_cemac_acpi bcm2712btcom rp1wmcodec rpi5button; do
+for module in if_cemac_acpi bcm2712btcom bcmexpgpio rp1wmcodec rpi5button; do
     cd "$src/sys/modules/$module"
     run_make_build obj
     run_make_build -j"$jobs" EMBER_KERNEL_CONFIG="$config" \
@@ -174,5 +174,5 @@ run_native_check sh "$out/contracts.log" "$src/ember/tools/kernel-contracts.sh" 
     "$src" "$contracts" "${PVR_QUERY_FIRMWARE:-}"
 cp "$stage/"* "$out/"
 success=yes
-echo "kernel and four modules built ($mode): $out"
+echo "kernel and five modules built ($mode): $out"
 cat "$out/contracts.log"
