@@ -39,8 +39,7 @@ __RCSID("$NetBSD: cfree.c,v 1.4 2003/08/07 16:44:15 agc Exp $");
 #include <stdlib.h>
 
 void
-cfree(p)
-	void *p;
+cfree(void *p)
 {
 	free(p);
 }
