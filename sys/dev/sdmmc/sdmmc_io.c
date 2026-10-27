@@ -32,6 +32,7 @@ __KERNEL_RCSID(0, "$NetBSD: sdmmc_io.c,v 1.21.28.2 2025/12/18 18:26:52 martin Ex
 #include <sys/proc.h>
 #include <sys/systm.h>
 
+#include <dev/sdmmc/sdmmc_io_status.h>
 #include <dev/sdmmc/sdmmc_ioreg.h>
 #include <dev/sdmmc/sdmmcchip.h>
 #include <dev/sdmmc/sdmmcreg.h>
@@ -48,6 +49,7 @@ struct sdmmc_intr_handler {
 	char *ih_name;
 	int (*ih_fun)(void *);
 	void *ih_arg;
+	bool ih_owns_master;
 	TAILQ_ENTRY(sdmmc_intr_handler) entry;
 };
 
@@ -368,6 +370,8 @@ sdmmc_io_rw_direct(struct sdmmc_softc *sc, struct sdmmc_function *sf,
 		cmd.c_flags |= SCF_TOUT_OK;
 
 	error = sdmmc_mmc_command(sc, &cmd);
+	if (error == 0)
+		error = sdmmc_io_r5_error(cmd.c_resp[0]);
 	if (error == 0)
 		*datap = SD_R5_DATA(cmd.c_resp);
 
@@ -699,32 +703,92 @@ sdmmc_io_send_op_cond(struct sdmmc_softc *sc, u_int32_t ocr, u_int32_t *ocrp)
  * Card interrupt handling
  */
 
+/* Caller holds sc_mtx across the complete CCCR read/modify/write/readback. */
+static int
+sdmmc_intr_update_locked(struct sdmmc_function *sf, bool enable, bool *changed)
+{
+	struct sdmmc_softc *sc;
+	u_char value = 0, wanted, data;
+	unsigned bit;
+	int error;
+
+	if (changed != NULL)
+		*changed = false;
+	if (sf == NULL || sf->sc == NULL || sf->number < 0 || sf->number > 7)
+		return EINVAL;
+	sc = sf->sc;
+	KASSERT(mutex_owned(&sc->sc_mtx));
+	if (sc->sc_fn0 == NULL)
+		return ENXIO;
+	error = sdmmc_io_rw_direct(sc, sc->sc_fn0, SD_IO_CCCR_FN_INTEN,
+	    &value, SD_ARG_CMD52_READ, false);
+	if (error != 0)
+		return error;
+	bit = 1U << sf->number;
+	wanted = enable ? (u_char)(value | bit) : (u_char)(value & ~bit);
+	if (wanted == value)
+		return 0;
+	/* The caller owns this change even if the following write is uncertain. */
+	if (changed != NULL)
+		*changed = true;
+	data = wanted;
+	error = sdmmc_io_rw_direct(sc, sc->sc_fn0, SD_IO_CCCR_FN_INTEN,
+	    &data, SD_ARG_CMD52_WRITE, false);
+	if (error != 0)
+		return error;
+	data = 0;
+	error = sdmmc_io_rw_direct(sc, sc->sc_fn0, SD_IO_CCCR_FN_INTEN,
+	    &data, SD_ARG_CMD52_READ, false);
+	if (error == 0 && (data & bit) != (wanted & bit))
+		error = EIO;
+	return error;
+}
+
+static int
+sdmmc_intr_set_checked(struct sdmmc_function *sf, bool enable)
+{
+	struct sdmmc_softc *sc;
+	bool held;
+	int error;
+
+	if (sf == NULL || sf->sc == NULL)
+		return EINVAL;
+	sc = sf->sc;
+	held = mutex_owned(&sc->sc_mtx);
+	if (!held)
+		mutex_enter(&sc->sc_mtx);
+	error = sdmmc_intr_update_locked(sf, enable, NULL);
+	if (!held)
+		mutex_exit(&sc->sc_mtx);
+	return error;
+}
+
+int
+sdmmc_intr_enable_checked(struct sdmmc_function *sf)
+{
+
+	return sdmmc_intr_set_checked(sf, true);
+}
+
+int
+sdmmc_intr_disable_checked(struct sdmmc_function *sf)
+{
+
+	return sdmmc_intr_set_checked(sf, false);
+}
+
 void
 sdmmc_intr_enable(struct sdmmc_function *sf)
 {
-	struct sdmmc_softc *sc = sf->sc;
-	struct sdmmc_function *sf0 = sc->sc_fn0;
-	uint8_t reg;
 
-	SDMMC_LOCK(sc);
-	reg = sdmmc_io_read_1(sf0, SD_IO_CCCR_FN_INTEN);
-	reg |= 1 << sf->number;
-	sdmmc_io_write_1(sf0, SD_IO_CCCR_FN_INTEN, reg);
-	SDMMC_UNLOCK(sc);
+	(void)sdmmc_intr_enable_checked(sf);
 }
 
 void
 sdmmc_intr_disable(struct sdmmc_function *sf)
 {
-	struct sdmmc_softc *sc = sf->sc;
-	struct sdmmc_function *sf0 = sc->sc_fn0;
-	uint8_t reg;
 
-	SDMMC_LOCK(sc);
-	reg = sdmmc_io_read_1(sf0, SD_IO_CCCR_FN_INTEN);
-	reg &= ~(1 << sf->number);
-	sdmmc_io_write_1(sf0, SD_IO_CCCR_FN_INTEN, reg);
-	SDMMC_UNLOCK(sc);
+	(void)sdmmc_intr_disable_checked(sf);
 }
 
 /*
@@ -732,63 +796,102 @@ sdmmc_intr_disable(struct sdmmc_function *sf)
  * interrupt may be shared with different SDIO functions, multiple
  * handlers can be established.
  */
-void *
-sdmmc_intr_establish(device_t dev, int (*fun)(void *), void *arg,
-    const char *name)
+int
+sdmmc_intr_establish_checked(device_t dev, int (*fun)(void *), void *arg,
+    const char *name, void **cookiep)
 {
-	struct sdmmc_softc *sc = device_private(dev);
+	struct sdmmc_softc *sc;
 	struct sdmmc_intr_handler *ih;
+	int error;
 
+	if (dev == NULL || fun == NULL || name == NULL || cookiep == NULL)
+		return EINVAL;
+	sc = device_private(dev);
 	if (sc->sc_sct->card_enable_intr == NULL)
-		return NULL;
+		return ENOTSUP;
+	KASSERT(!mutex_owned(&sc->sc_mtx));
 
 	ih = malloc(sizeof *ih, M_DEVBUF, M_WAITOK|M_ZERO);
 	if (ih == NULL)
-		return NULL;
+		return ENOMEM;
 
 	ih->ih_name = malloc(strlen(name) + 1, M_DEVBUF, M_WAITOK|M_ZERO);
 	if (ih->ih_name == NULL) {
 		free(ih, M_DEVBUF);
-		return NULL;
+		return ENOMEM;
 	}
-	strlcpy(ih->ih_name, name, strlen(name));
+	strlcpy(ih->ih_name, name, strlen(name) + 1);
 	ih->ih_softc = sc;
 	ih->ih_fun = fun;
 	ih->ih_arg = arg;
 
 	mutex_enter(&sc->sc_mtx);
 	if (TAILQ_EMPTY(&sc->sc_intrq)) {
-		sdmmc_intr_enable(sc->sc_fn0);
+		error = sdmmc_intr_update_locked(sc->sc_fn0, true, &ih->ih_owns_master);
+		if (error != 0) {
+			if (ih->ih_owns_master)
+				(void)sdmmc_intr_update_locked(sc->sc_fn0, false, NULL);
+			mutex_exit(&sc->sc_mtx);
+			free(ih->ih_name, M_DEVBUF);
+			free(ih, M_DEVBUF);
+			return error;
+		}
 		sdmmc_chip_card_enable_intr(sc->sc_sct, sc->sc_sch, 1);
 	}
 	TAILQ_INSERT_TAIL(&sc->sc_intrq, ih, entry);
 	mutex_exit(&sc->sc_mtx);
 
-	return ih;
+	*cookiep = ih;
+	return 0;
+}
+
+void *
+sdmmc_intr_establish(device_t dev, int (*fun)(void *), void *arg,
+    const char *name)
+{
+	void *cookie = NULL;
+
+	(void)sdmmc_intr_establish_checked(dev, fun, arg, name, &cookie);
+	return cookie;
 }
 
 /*
  * Disestablish the given handler.
  */
-void
-sdmmc_intr_disestablish(void *cookie)
+int
+sdmmc_intr_disestablish_checked(void *cookie)
 {
 	struct sdmmc_intr_handler *ih = cookie;
-	struct sdmmc_softc *sc = ih->ih_softc;
+	struct sdmmc_softc *sc;
+	int error = 0;
 
-	if (sc->sc_sct->card_enable_intr == NULL)
-		return;
+	if (ih == NULL)
+		return 0;
+	sc = ih->ih_softc;
+	KASSERT(!mutex_owned(&sc->sc_mtx));
 
 	mutex_enter(&sc->sc_mtx);
 	TAILQ_REMOVE(&sc->sc_intrq, ih, entry);
 	if (TAILQ_EMPTY(&sc->sc_intrq)) {
-		sdmmc_chip_card_enable_intr(sc->sc_sct, sc->sc_sch, 0);
-		sdmmc_intr_disable(sc->sc_fn0);
+		if (sc->sc_sct->card_enable_intr != NULL)
+			sdmmc_chip_card_enable_intr(sc->sc_sct, sc->sc_sch, 0);
+		if (ih->ih_owns_master)
+			error = sdmmc_intr_update_locked(sc->sc_fn0, false, NULL);
+	} else if (ih->ih_owns_master) {
+		TAILQ_FIRST(&sc->sc_intrq)->ih_owns_master = true;
 	}
 	mutex_exit(&sc->sc_mtx);
 
 	free(ih->ih_name, M_DEVBUF);
 	free(ih, M_DEVBUF);
+	return error;
+}
+
+void
+sdmmc_intr_disestablish(void *cookie)
+{
+
+	(void)sdmmc_intr_disestablish_checked(cookie);
 }
 
 /*

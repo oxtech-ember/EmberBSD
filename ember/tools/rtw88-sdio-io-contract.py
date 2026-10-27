@@ -21,6 +21,8 @@ source = root / "sys/dev/sdmmc/rtw88_sdio_io.c"
 if not header.exists() or not source.exists():
     raise SystemExit("Missing native rtw88 SDIO transport implementation")
 (include / header.name).write_bytes(header.read_bytes())
+(include / "sdmmc_io_status.h").write_bytes(
+    (root / "sys/dev/sdmmc/sdmmc_io_status.h").read_bytes())
 cc = shlex.split(os.environ["HOST_CC"])
 flags = ["-std=c11", "-O1", "-g", "-Wall", "-Wextra", "-Werror",
          "-I" + str(out / "include")]

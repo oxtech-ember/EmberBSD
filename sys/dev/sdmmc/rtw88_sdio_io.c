@@ -38,14 +38,7 @@
 #include <string.h>
 #endif
 #include "rtw88_sdio_io.h"
-
-static int
-rtw88_sdio_r5(uint32_t response)
-{
-	if ((response & 0x8000) != 0)
-		return EILSEQ;
-	return (response & 0x4b00) != 0 ? EIO : 0;
-}
+#include "sdmmc_io_status.h"
 
 int
 rtw88_sdio_cmd52(const struct rtw88_sdio_ops *ops, unsigned int function,
@@ -62,7 +55,7 @@ rtw88_sdio_cmd52(const struct rtw88_sdio_ops *ops, unsigned int function,
 		arg |= 0x80000000U | *value;
 	error = ops->command52(ops->cookie, arg, &response);
 	if (error == 0)
-		error = rtw88_sdio_r5(response);
+		error = sdmmc_io_r5_error(response);
 	if (error == 0 && !write)
 		*value = response & 0xff;
 	return error;
@@ -164,7 +157,7 @@ rtw88_sdio_transfer(struct rtw88_sdio_bus *bus, enum rtw88_sdio_domain domain,
 			error = bus->ops->command53(bus->ops->cookie, arg,
 			    &buffer[done], chunk, &response);
 			if (error == 0)
-				error = rtw88_sdio_r5(response);
+				error = sdmmc_io_r5_error(response);
 			if (error != 0)
 				return error;
 		}

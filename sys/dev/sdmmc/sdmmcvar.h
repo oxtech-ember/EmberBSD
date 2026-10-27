@@ -362,6 +362,11 @@ int	sdmmc_set_relative_addr(struct sdmmc_softc *, struct sdmmc_function *);
 
 void	sdmmc_intr_enable(struct sdmmc_function *);
 void	sdmmc_intr_disable(struct sdmmc_function *);
+int	sdmmc_intr_enable_checked(struct sdmmc_function *);
+int	sdmmc_intr_disable_checked(struct sdmmc_function *);
+int	sdmmc_intr_establish_checked(device_t, int (*)(void *), void *,
+	    const char *, void **);
+int	sdmmc_intr_disestablish_checked(void *);
 void	*sdmmc_intr_establish(device_t, int (*)(void *), void *, const char *);
 void	sdmmc_intr_disestablish(void *);
 void	sdmmc_intr_task(void *);
