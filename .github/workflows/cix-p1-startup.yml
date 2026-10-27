@@ -40,6 +40,35 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        id: python
+        with:
+          python-version: '3.15'
+      # The userland test runs its builder with PATH limited to this prefix.
+      - name: Provide the native SDK tool prefix
+        env:
+          PYTHON: ${{ steps.python.outputs.python-path }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends mksh original-awk
+          native=$RUNNER_TEMP/native-prefix
+          mkdir -p "$native/bin" "$native/gnu/bin"
+          ln -s /usr/bin/mksh "$native/bin/mksh"
+          ln -s /usr/bin/original-awk "$native/bin/nawk"
+          ln -s /usr/bin/ruby "$native/bin/ruby"
+          ln -s /usr/bin/shasum "$native/bin/shasum"
+          ln -s "$PYTHON" "$native/bin/python3.15"
+          for tool in '[' basename cat chmod cksum cmp comm cp cut date dd diff \
+              dirname du echo env expr false find grep head id install ln ls \
+              m4 make mkdir mktemp mv od paste patch printf pwd readlink \
+              realpath rm rmdir sed seq sha256sum sleep sort stat tail tee \
+              test touch tr true uname uniq wc xargs; do
+            test -x "/usr/bin/$tool"
+            ln -s "/usr/bin/$tool" "$native/gnu/bin/$tool"
+          done
+          "$native/bin/python3.15" -c 'import sys; assert sys.version_info[:2] == (3, 15)'
+          "$native/bin/mksh" -c 'echo native prefix: $KSH_VERSION'
+          echo "EMBER_TEST_NATIVE_PREFIX=$native" >> "$GITHUB_ENV"
       - name: Check reduced-root startup and failures
         run: |
           ruby ember/image/test-cix-p1-ssh.rb
