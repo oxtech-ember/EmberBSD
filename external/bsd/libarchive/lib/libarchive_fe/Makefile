@@ -3,6 +3,7 @@
 .include <bsd.init.mk>
 
 .PATH:		${LIBARCHIVEDIR}/libarchive_fe
+CPPFLAGS+=	-I${LIBARCHIVEDIR}/libarchive
 
 LIBISPRIVATE=	yes
 

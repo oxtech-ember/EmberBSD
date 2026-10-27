@@ -31,6 +31,11 @@ for value in ('', 'relative/path', '/nonexistent/ember-libarchive-source',
 result = subprocess.run([*make, 'EMBER_LIBARCHIVE_SOURCE=' + str(args.source)],
                         capture_output=True, text=True, check=True)
 assert result.stdout.strip() == str(args.source)
+frontend = [str(args.bmake), '-m', str(osroot / 'share/mk'), '-C', str(lib / 'lib/libarchive_fe'),
+            'NETBSDSRCDIR=' + str(osroot), 'EMBER_LIBARCHIVE_SOURCE=' + str(args.source),
+            '-V', '${CPPFLAGS}']
+result = subprocess.run(frontend, capture_output=True, text=True, check=True)
+assert '-I' + str(args.source / 'libarchive') in result.stdout.split(), 'frontend misses libarchive headers'
 configure = (args.source / 'configure.ac').read_text()
 strings = re.findall(r'^m4_define\(\[LIBARCHIVE_VERSION_S\],\[([0-9]+\.[0-9]+\.[0-9]+)\]\)$', configure, re.M)
 numbers = re.findall(r'^m4_define\(\[LIBARCHIVE_VERSION_N\],\[([0-9]+)\]\)$', configure, re.M)
