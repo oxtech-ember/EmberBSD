@@ -108,7 +108,7 @@ static unsigned writes, isr_reads, halts, media_calls, ticks, starts, queued;
 static unsigned dma_calls, frees, deferred, delivered;
 static bool rx_enabled, tx_enabled, in_handler;
 static bool halt_stuck, disable_stuck;
-static unsigned halt_delays, map_attempts, map_failures;
+static unsigned map_attempts, map_failures;
 static uint32_t last_clock;
 static int clock_error;
 static unsigned alloc_failure, alloc_attempts;
@@ -406,7 +406,6 @@ static void
 delay(unsigned us)
 {
 	CHECK(us == 10 && !intr_lock.held);
-	halt_delays++;
 	if (!halt_stuck)
 		registers[ETH_TSR / 4] &= ~GEM_TSR_TXGO;
 }
@@ -442,7 +441,7 @@ reset(bool clear)
 	dma_calls = frees = deferred = delivered = 0;
 	rx_enabled = tx_enabled = in_handler = false;
 	halt_stuck = disable_stuck = false;
-	halt_delays = map_attempts = map_failures = 0;
+	map_attempts = map_failures = 0;
 	last_clock = 0;
 	clock_error = 0;
 	alloc_failure = alloc_attempts = 0;

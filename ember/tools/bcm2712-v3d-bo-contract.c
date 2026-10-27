@@ -117,9 +117,12 @@ struct drm_mode_create_dumb {
 #define TEST_BO_CHUNK ((size_t)16 * 1024 * 1024)
 
 static unsigned checks, fail, allocated, mapped, maps, loaded, ranges, gems;
-static unsigned bad_geometry, fragment_pages, fragmented_allocations;
+static unsigned bad_geometry, fragment_pages;
+/* Contracts that include this file read the counters marked unused. */
+static unsigned __attribute__((unused)) fragmented_allocations;
 static size_t contiguous_limit;
-static unsigned kmem_blocks, kmem_calls;
+static unsigned kmem_blocks;
+static unsigned __attribute__((unused)) kmem_calls;
 static int dma_counts[16];
 static bus_dma_segment_t *dma_lists[16];
 static size_t va_sizes[16];
@@ -307,7 +310,8 @@ static int drm_gem_create_mmap_offset(struct drm_gem_object *o)
 { if(fail==7)return -ENOMEM; o->vma_node=UINT64_C(0x100000000); return 0; }
 static void drm_gem_free_mmap_offset(struct drm_gem_object *o) { o->vma_node=0; }
 static uint64_t drm_vma_node_offset_addr(const uint64_t *node) { return *node; }
-static unsigned pager_maps, pager_updates, pager_unlocks, pager_fail;
+static unsigned pager_maps, pager_fail;
+static unsigned __attribute__((unused)) pager_updates, pager_unlocks;
 static paddr_t pager_addresses[16];
 static void drm_gem_pager_reference(struct uvm_object *u)
 { drm_gem_object_get(container_of(u, struct drm_gem_object, gemo_uvmobj)); }

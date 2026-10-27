@@ -48,7 +48,8 @@
 #define membar_producer() ((void)0)
 #define membar_consumer() ((void)0)
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
-static unsigned int hz = 100;
+/* The milliseconds-as-ticks mutant does not read it. */
+static unsigned int __attribute__((unused)) hz = 100;
 #define mstohz(ms) (((ms) * hz) / 1000)
 
 #define PAGE_SIZE 4096
@@ -111,7 +112,6 @@ struct fake_allocation {
 static void fake_aprint(device_t, const char *, ...);
 static void delay(unsigned int);
 static void _wakeup(void *);
-static unsigned int wake_count;
 #define wakeup(chan) _wakeup((void *)(uintptr_t)(chan))
 static int _tsleep(void *, int, const char *, int);
 #define tsleep(chan, pri, msg, timo) _tsleep((void *)(uintptr_t)(chan), pri, msg, timo)
@@ -305,7 +305,6 @@ enum {
 };
 static uint32_t hub_ctl_shadow, hub_pt_base, hub_illegal, fake_tfu_count;
 static unsigned int mmuc_flush_writes;
-static bool publication_seen;
 static struct {
 	uint32_t int_sts, mask;
 } hub_bank;
@@ -459,7 +458,6 @@ fake_hub_poke(bus_size_t offset, uint32_t value)
 	}
 	case 0x1204:
 		hub_pt_base = value;
-		publication_seen = true;
 		break;
 	case 0x1230:
 		hub_illegal = value;
@@ -922,7 +920,6 @@ static void
 _wakeup(void *chan)
 {
 	(void)chan;
-	wake_count++;
 }
 
 static int
@@ -1003,13 +1000,11 @@ reset_fixture(void)
 	hub_entries = 0;
 	hub_latches = 0;
 	disestablish_count = 0;
-	wake_count = 0;
 	establish_should_fail[0] = establish_should_fail[1] = false;
 	unmasked_without_handler = false;
 	hub_ctl_shadow = hub_pt_base = hub_illegal = 0;
 	mmuc_flush_writes = 0;
 	fake_tfu_count = 0;
-	publication_seen = false;
 	allocs = maps = creates = loads = 0;
 	frees = unmaps = destroys = unloads = 0;
 	inside_driver = false;

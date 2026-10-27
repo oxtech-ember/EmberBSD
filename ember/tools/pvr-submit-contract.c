@@ -271,7 +271,7 @@ pvr_context_transfer(struct pvr_context *c,
 	return transfer_error;
 }
 static unsigned render_error_at;
-static uint32_t last_geom_hwrt, last_frag_hwrt, last_cleanup, last_frag_type;
+static uint32_t last_geom_hwrt, last_cleanup, last_frag_type;
 int pvr_context_render_pair(struct pvr_context *c,const struct rogue_fwif_cmd_geom *g,
     const struct rogue_fwif_cmd_frag *f,uint32_t ftype,uint32_t cleanup,
     uint32_t gid,uint32_t fid)
@@ -282,7 +282,6 @@ int pvr_context_render_pair(struct pvr_context *c,const struct rogue_fwif_cmd_ge
 	CHECK(g->cmd_shared.hwrt_data_fw_addr==f->cmd_shared.hwrt_data_fw_addr);
 	CHECK(ftype==ROGUE_FWIF_CCB_CMD_TYPE_FRAG||ftype==ROGUE_FWIF_CCB_CMD_TYPE_FRAG_PR);
 	last_geom_hwrt=g->cmd_shared.hwrt_data_fw_addr;
-	last_frag_hwrt=f->cmd_shared.hwrt_data_fw_addr;
 	last_cleanup=cleanup; last_frag_type=ftype;
 	rendered++;
 	if (triple_model) {
@@ -335,8 +334,6 @@ static void drm_syncobj_add_point(struct drm_syncobj *s,struct dma_fence_chain *
 #include "pvr-exec-hwrt-body.h"
 #include "pvr-hwrt-body.h"
 static unsigned hwrt_gets, hwrt_puts, hwrt_targets;
-static void *last_hwrt_file;
-static uint32_t last_hwrt_handle;
 struct pvr_exec_hwrt { unsigned refs; };
 static struct pvr_exec_hwrt hwrt_model[4];
 static struct pvr_file_vm *hwrt_model_vm;
@@ -345,8 +342,6 @@ struct pvr_exec_hwrt *
 pvr_exec_hwrt_get(struct drm_file *file, uint32_t handle)
 {
 	hwrt_gets++;
-	last_hwrt_file = file;
-	last_hwrt_handle = handle;
 	if (handle == 0 || handle > 4)
 		return NULL;
 	CHECK(gated && platform);

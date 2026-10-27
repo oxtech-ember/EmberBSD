@@ -51,7 +51,8 @@ typedef void *ACPI_HANDLE;
 #define IPL_VM 0
 #define MUTEX_DEFAULT 0
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
-static unsigned int fake_hz = 100;
+/* The milliseconds-as-ticks mutant does not read it. */
+static unsigned int __attribute__((unused)) fake_hz = 100;
 #define mstohz(ms) ((ms) * fake_hz / 1000)
 typedef struct { bool initialized, held; } kmutex_t;
 static void
@@ -303,7 +304,6 @@ enum {
 	R_INT_STS = 0x50, R_INT_CLR = 0x58, R_MSK_SET = 0x60, R_MSK_CLR = 0x64
 };
 static uint32_t hub_ctl_shadow, hub_pt_base, hub_illegal, fake_tfu_count;
-static bool publication_seen;
 static struct {
 	uint32_t int_sts, mask;
 } hub_bank, core_bank;
@@ -487,7 +487,6 @@ fake_hub_poke(bus_size_t offset, uint32_t value)
 		break;
 	case 0x1204:
 		hub_pt_base = value;
-		publication_seen = true;
 		break;
 	case 0x1230:
 		hub_illegal = value;
@@ -1071,7 +1070,6 @@ reset_fixture(void)
 	unmasked_without_handler = false;
 	hub_ctl_shadow = hub_pt_base = hub_illegal = 0;
 	fake_tfu_count = 0;
-	publication_seen = false;
 	allocs = maps = creates = loads = 0;
 	frees = unmaps = destroys = unloads = 0;
 	inside_driver = false;

@@ -49,8 +49,8 @@ struct dma_buf {
 		CHECK(((s)->value & 1) == 1);                                  \
 		++(s)->value;                                                  \
 	} while (0)
-static unsigned vector_calls, fail_vector, fd_calls, file_count, aborts;
-static unsigned sync_allocs, sync_frees, lock_calls, get_calls, put_calls;
+static unsigned vector_calls, fail_vector, fd_calls, file_count;
+static unsigned sync_allocs, sync_frees, put_calls;
 static bool fail_fd, fail_sync;
 static int lock_error, reserve_error, curlwp, curproc, sync_file_ops;
 static struct file fd_table[32];
@@ -158,7 +158,6 @@ static int
 dma_resv_lock_interruptible(struct dma_resv *r, void *ctx)
 {
 	(void)ctx;
-	lock_calls++;
 	if (lock_error)
 		return -lock_error;
 	spin_lock(&r->lock.lock);
@@ -217,7 +216,6 @@ fd_abort(int p, const struct file *fp, int fd)
 	CHECK(!fp->f_data);
 	fd_used[fd] = false;
 	file_count--;
-	aborts++;
 }
 static void
 fd_set_exclose(int p, int fd, bool value)
@@ -229,7 +227,6 @@ fd_set_exclose(int p, int fd, bool value)
 static struct file *
 fd_getfile(int fd)
 {
-	get_calls++;
 	if (fd < 0 || fd >= 32 || !fd_visible[fd])
 		return NULL;
 	fd_refs[fd]++;

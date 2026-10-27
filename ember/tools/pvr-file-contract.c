@@ -59,7 +59,7 @@ static pthread_mutex_t rendezvous = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t changed = PTHREAD_COND_INITIALIZER;
 static bool pause_map, map_entered, destroy_waiting, map_released;
 static int create_error, idr_error, mapping_error, map_error, unmap_error;
-static unsigned int core_maps, core_unmaps, core_destroys, bo_queries;
+static unsigned int core_maps, core_unmaps;
 
 static void mutex_init(kmutex_t *m, int type, int level)
 { CHECK(type == MUTEX_DEFAULT && level == IPL_NONE); CHECK(pthread_mutex_init(&m->lock, NULL) == 0); initialized_lock = m; }
@@ -146,7 +146,7 @@ static const struct drm_pvr_heap *pvr_heap_find(uint64_t va, uint64_t size)
 static int pvr_bo_mapping(struct drm_gem_object *o, uint64_t off, uint64_t size,
     uint64_t *pa, uint64_t *flags)
 {
-	bo_queries++; CHECK(o->refs >= 1);
+	CHECK(o->refs >= 1);
 	if (mapping_error != 0) return mapping_error;
 	if (off > o->size || size > o->size - off || size == 0) return EINVAL;
 	*pa = o->pa + off; *flags = o->flags; return 0;
@@ -191,7 +191,7 @@ static int pvr_vm_unmap(struct pvr_vm *vm, uint64_t va, uint64_t size)
 }
 static void pvr_vm_destroy(struct pvr_vm *vm)
 {
-	core_destroys++; CHECK(vm != NULL && vm->invalidate == NULL && !vm->failed);
+	CHECK(vm != NULL && vm->invalidate == NULL && !vm->failed);
 	for (unsigned n = 0; n < SLOTS; n++) if (all_vms[n] == vm) all_vms[n] = NULL;
 	CHECK(atomic_fetch_sub(&vms, 1) != 0); free(vm);
 }

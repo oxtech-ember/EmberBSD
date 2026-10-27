@@ -10,8 +10,7 @@
 #include <unistd.h>
 #include <sys/wait.h>
 #include "target-errno.h"
-static unsigned long checks;
-#define CHECK(v) do { checks++; if (!(v)) { \
+#define CHECK(v) do { if (!(v)) { \
 	fprintf(stderr,"CHECK %s:%d: %s\n",__FILE__,__LINE__,#v);exit(1); \
 } } while (0)
 #define KASSERT CHECK
@@ -81,7 +80,7 @@ static void (*pv_notify)(void *,const struct bcmv3d_vblank_snapshot *);
 static void *pv_arg;
 static uint32_t regs[0x1a000/4];
 static unsigned process_locks, irq_locks, io_calls, io_fail_at, begins, ends;
-static unsigned poisons, unloads, notifies, latch_notifies, barriers, allocations, waits;
+static unsigned poisons, unloads, latch_notifies, allocations, waits;
 static bool in_irq, begin_fail, begin_route_fault, stage_fail, sync_fail;
 static bool publish_fail, retire_fail, expose_fail, bind_fail, wq_fail;
 static bool reservation_locked, unmap_fail, wait_route_fault, reserve_reentry;
@@ -324,7 +323,7 @@ static void bus_space_barrier(bus_space_tag_t tag,bus_space_handle_t handle,
     uint32_t offset,uint32_t length,int flags)
 {
 	CHECK(tag==device.bst&&handle==7&&!in_irq&&irq_locks==1);
-	CHECK(offset==0&&length==0x1a000&&flags==3);barriers++;
+	CHECK(offset==0&&length==0x1a000&&flags==3);
 }
 #include "scanout-body.h"
 
@@ -422,7 +421,7 @@ static void notify(void *arg,uint64_t seq,bool latched,int error)
 {
 	struct bcmv3d_scanout *n=arg;
 	CHECK(in_irq&&irq_locks==0&&!n->lock.held);
-	CHECK(seq==snapshot.sequence);notifies++;
+	CHECK(seq==snapshot.sequence);
 	if(latched) { CHECK(error==0);latch_notifies++; }
 }
 static void life(unsigned variant)

@@ -145,10 +145,13 @@ contract_resv_engine(struct bcmv3d_job *job)
 }
 
 static uint32_t core_regs[0xa00/4];
-static unsigned csd_starts, csd_writes, cache_phase, csd_owned;
+/* Contracts that include this file read the counters marked unused. */
+static unsigned __attribute__((unused)) csd_starts;
+static unsigned csd_writes, cache_phase, csd_owned;
 static bool csd_model;
 static bool cl_model, cl_render;
-static unsigned cl_bins, cl_renders;
+static unsigned __attribute__((unused)) cl_bins;
+static unsigned cl_renders;
 static void csd_complete(void);
 static void cl_complete(void);
 static int bcmv3d_takeover_core_peek(bus_size_t r,uint32_t *v)

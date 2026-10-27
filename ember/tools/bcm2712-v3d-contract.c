@@ -92,7 +92,9 @@ enum probe_stage {
 	PROBE_RENDER, PROBE_COUNT
 };
 static unsigned int probe_calls[PROBE_COUNT], probe_order[PROBE_COUNT];
+#ifdef BCM2712_V3D_TAKEOVER
 static unsigned int probe_count;
+#endif
 static int probe_errors[PROBE_COUNT];
 
 static int bcmmbox_request(uint8_t, void *, size_t, uint32_t *);
@@ -364,7 +366,9 @@ reset(void)
 	memset(probe_calls, 0, sizeof(probe_calls));
 	memset(probe_order, 0, sizeof(probe_order));
 	memset(probe_errors, 0, sizeof(probe_errors));
+#ifdef BCM2712_V3D_TAKEOVER
 	probe_count = 0;
+#endif
 	requests = maps = unmaps = reads = gpu_reads = 0;
 	fail_map = fail_read = malformed_word = malformed_call = 0;
 	malformed_value = 0;

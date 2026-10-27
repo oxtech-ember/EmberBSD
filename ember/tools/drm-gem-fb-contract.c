@@ -30,7 +30,7 @@ typedef unsigned gfp_t;
 static void *allocation;
 static size_t allocation_size;
 static bool fail_alloc;
-static unsigned allocations, frees, cleanups, lookups;
+static unsigned allocations, frees, cleanups;
 static int fail_init;
 static int linux_gfp_to_kmem(gfp_t flags) { return flags; }
 static void *
@@ -81,7 +81,7 @@ static const struct drm_format_info *drm_get_format_info(struct drm_device *d, c
 static struct drm_gem_object *
 drm_gem_object_lookup(struct drm_file *file, unsigned handle)
 {
-	(void)file; lookups++;
+	(void)file;
 	if (handle == 0 || handle > 4) return NULL;
 	objects[handle-1].refs++; return &objects[handle-1];
 }
@@ -120,7 +120,7 @@ run(unsigned planes, int failure)
 
 	CHECK(allocation == NULL); format.num_planes=planes;
 	for (i=0;i<4;i++) { objects[i]=(struct drm_gem_object){.size=16384,.refs=1}; cmd.pitches[i]=256; cmd.handles[i]=i+1; }
-	fail_alloc=false; fail_init=0; lookups=0;
+	fail_alloc=false; fail_init=0;
 	if (failure==1) { fail_alloc=true; expected=-ENOMEM; }
 	if (failure==2) { cmd.pixel_format=0; expected=-EINVAL; }
 	if (failure>=3 && failure<=6) { cmd.handles[(unsigned)failure-3]=0; expected=-ENOENT; }
