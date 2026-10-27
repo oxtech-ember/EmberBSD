@@ -5,6 +5,7 @@
 #include "net80211-rxba-contract.c"
 #include "rtw88_net_policy.h"
 #include "rtw88_hw.h"
+#include "rtw88_chip.h"
 #ifndef __UNCONST
 #define __UNCONST(p) ((void *)(uintptr_t)(const void *)(p))
 #endif
@@ -35,6 +36,7 @@ native_rx_info(struct rtw88_rx_info *info, const struct rtw88_softc *core,
 }
 
 struct rtw88_net {
+ struct rtw88_caps caps;
  struct rtw88_softc *core;
  void *wq;int state_work,requested,state_arg,work_pending,reset_required;unsigned channel;
  struct rtw88_channel_tuple pending_channel;
@@ -155,6 +157,11 @@ static void test_native_timer(void)
  struct rtw88_net net={0};struct rtw88_softc core={0};net.core=&core;net.parent_state=native_parent;callout_init(&net.scan,0);net.ic=f.ic;net.ec.ec_if=f.ifp;net.lock=&native_lock;
  net.ic.ic_ifp=&net.ec.ec_if;net.ec.ec_if.if_softc=&net;net.ec.ec_if.model_ic=&net.ic;f.ni.ni_ic=&net.ic;
  net.ec.ec_if.if_flags|=IFF_RUNNING;net.policy.accepting=1;
+ net.caps=(struct rtw88_caps){0};
+ const struct ieee80211_rxba_ops *prior_ops=net.ic.ic_rxba_ops;
+ unit_native_attach(&net);
+ CHECK(net.ic.ic_rxba_ops==prior_ops);
+ net.caps.features=RTW88_CAP_RXBA;
  unit_native_attach(&net);
  CHECK(net.ic.ic_rxba_ops!=&unit_ops && net.ic.ic_rxba_ops!=NULL);
  if(net.ic.ic_rxba_ops==NULL || net.ic.ic_rxba_ops==&unit_ops) { f.ni.ni_ic=&f.ic;unit_close(&f);return; }
@@ -253,7 +260,12 @@ static void test_native_request_purge(void)
   callout_init(&net.scan,0);net.ic=f.ic;net.ec.ec_if=f.ifp;net.lock=&native_lock;net.wq=&net;
   net.ic.ic_ifp=&net.ec.ec_if;net.ec.ec_if.if_softc=&net;net.ec.ec_if.model_ic=&net.ic;f.ni.ni_ic=&net.ic;
   net.ec.ec_if.if_flags|=IFF_RUNNING;net.policy.accepting=1;core.sc_linked=core.sc_ra.active=core.sc_ra.configured=1;
-  unit_native_attach(&net);
+  net.caps=(struct rtw88_caps){0};
+ const struct ieee80211_rxba_ops *prior_ops=net.ic.ic_rxba_ops;
+ unit_native_attach(&net);
+ CHECK(net.ic.ic_rxba_ops==prior_ops);
+ net.caps.features=RTW88_CAP_RXBA;
+ unit_native_attach(&net);
   CHECK(net.ic.ic_rxba_ops!=&unit_ops && net.ic.ic_rxba_ops!=NULL);
   if(net.ic.ic_rxba_ops==&unit_ops || net.ic.ic_rxba_ops==NULL) {
    f.ni.ni_ic=&f.ic;unit_close(&f);callout_destroy(&net.scan);continue;

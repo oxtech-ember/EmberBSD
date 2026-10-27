@@ -49,7 +49,31 @@ for name,init in [('initialized','={0x31}'),('uninitialized','')]:
     (out/('copy-'+name+'.c')).write_text('#include <stddef.h>\nstruct lwp { int unused; };\nstatic int copy_error;\n'+copy+'\nint main(void) { unsigned char src[1]'+init+', dst[1]={0}; int e=sysctl_copyout(NULL,src,dst,1); return e?e:dst[0]!=0x31; }\n')
 
 PY
-${CC:-cc} -std=c11 -Wall -Wextra -Werror -fno-inline -fstack-usage -Wstack-usage=3584 \
+# Keep the frame ceiling with the selected compiler family.
+stack_warning=-Wstack-usage=3584
+if ! printf 'void valid(void) {}\n' | ${CC:-cc} -std=c11 -Werror "$stack_warning" \
+    -x c -c -o "$work/stack-probe.o" - > "$work/stack-probe.log" 2>&1; then
+    stack_warning=-Wframe-larger-than=3584
+    printf 'void valid(void) {}\n' | ${CC:-cc} -std=c11 -Werror "$stack_warning" \
+        -x c -c -o "$work/stack-probe.o" -
+fi
+cat > "$work/oversized.c" <<'STACKCONTROL'
+extern void consume(void *);
+void oversized(void) { char bytes[8192]; consume(bytes); }
+STACKCONTROL
+if ${CC:-cc} -std=c11 -Wall -Wextra -Werror "$stack_warning" \
+    -c "$work/oversized.c" -o "$work/oversized.o" > "$work/stack-control.log" 2>&1; then
+    echo 'Stack budget control unexpectedly compiled' >&2
+    exit 1
+fi
+python3 - "$work/stack-control.log" <<'STACKCHECK'
+from pathlib import Path
+import sys
+text = Path(sys.argv[1]).read_text()
+assert 'stack-usage' in text or 'frame-larger-than' in text
+print('Causal 3584-byte stack budget: oversized frame rejected')
+STACKCHECK
+${CC:-cc} -std=c11 -Wall -Wextra -Werror -fno-inline -fstack-usage "$stack_warning" \
     ${RTW88_TEST_CFLAGS:-} -I"$work" "$tools/rtw88-sysctl-contract.c" -o "$work/test"
 for usage in "$work"/*.su; do
     awk '/rtwce_sysctl_stats/ { print "Wrapper stack usage: " $0 }' "$usage"
@@ -75,7 +99,7 @@ assert '[-Werror=analyzer-use-of-uninitialized-value]' in text
 print('Actual copy-service control: initialized PASS; uninitialized O2 analyzer rejection PASS.')
 PYCONTROL
     ${CC:-cc} -std=c11 -O0 -g -Wall -Wextra -Werror -fanalyzer \
-        -fno-inline -Wstack-usage=3584 -I"$work" \
+        -fno-inline "$stack_warning" -I"$work" \
         -c "$tools/rtw88-sysctl-contract.c" -o "$work/analysis.o"
     ${CC:-cc} -std=c11 -dM -E - < /dev/null > "$work/predefines.h"
     cppcheck --enable=warning,performance,portability --error-exitcode=1 \

@@ -132,6 +132,7 @@ static unsigned checks,failures;
 #define CHECK(c) do{checks++;if(!(c)){failures++;fprintf(stderr,"line%u: %s\n",(unsigned)__LINE__,#c);}}while(0)
 static void driver_channels(struct ieee80211com *ic)
 {
+ const struct rtw88_caps caps={.bands=RTW88_BAND_2G|RTW88_BAND_5G};
 #include "media-driver.inc"
 }
 static int has_media(struct ieee80211com *ic,int rate,int mode)

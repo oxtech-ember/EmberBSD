@@ -231,8 +231,11 @@ if all(re.search(r'^'+name+r'\(',net,re.M) for name,_ in names):
  # Exact owning lifecycle callsites; no success is modeled in their place.
  for name,owner in [('attach','rtw88_net_attach')]:
   body=re.search(r'^'+owner+r'\(.*?^}',net,re.M|re.S).group()
-  line=re.findall(r'^\trtw88_net_rxba_'+name+r'\(net\);$',body,re.M)
-  parts.append('static void unit_native_'+name+'(struct rtw88_net *net) {\n'+'\n'.join(line)+'\n}\n')
+  guarded=re.search(r'^\s*if \(\(caps\.features & RTW88_CAP_RXBA\) != 0\)\n[ \t]+rtw88_net_rxba_'+name+r'\(net\);$',body,re.M)
+  if guarded is None:
+   raise ValueError('Missing capability-guarded native RXBA '+name)
+  parts.append('static void unit_native_'+name+'(struct rtw88_net *net) {\n'
+               'const struct rtw88_caps caps=net->caps;\n'+guarded.group()+'\n}\n')
  for name,result in [('rtw88_net_stop','static void'),('rtw88_net_detach','void')]:
   parts.append(result+'\n'+re.search(r'^'+name+r'\(.*?^}',net,re.M|re.S).group()+'\n')
  parts.append('static void unit_native_detach(struct rtw88_net *net) { rtw88_net_detach(net); }\n')
