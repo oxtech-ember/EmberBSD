@@ -765,17 +765,28 @@ ${_LIB.so.full}.diffsym: ${LIB_EXPSYM} ${_LIB.so.full}.actsym
 ${_LIB.so.full}.actsym: ${_LIB.so.full}
 	${_MKTARGET_CREATE}
 	# LLVM nm and supported GNU nm include symbol versions by default.
+	# LLD records version nodes in .gnu.version_d without nm-visible
+	# symbols; fold non-BASE VERDEF names into actsym for LIB_EXPSYM.
 	@set -e; \
-	trap 'rm -f ${.TARGET}.raw ${.TARGET}.names ${.TARGET}.filtered ${.TARGET}.tmp' 0; \
+	trap 'rm -f ${.TARGET}.raw ${.TARGET}.names ${.TARGET}.filtered ${.TARGET}.tmp ${.TARGET}.vers' 0; \
 	${NM} --dynamic --extern-only --defined-only ${.ALLSRC} >${.TARGET}.raw; \
 	cut -d' ' -f3 ${.TARGET}.raw >${.TARGET}.names; \
 	${_EXPSYM_FILTER}; \
+	if ${READELF} --version-info ${.ALLSRC} >${.TARGET}.vers 2>/dev/null; then \
+		awk '/Version definition section/{in_vd=1; next} \
+			/^Version / && \$$0 !~ /definition/{in_vd=0} \
+			in_vd && /Name:/ && \$$0 !~ /Flags: BASE/ { \
+				for (i = 1; i <= NF; i++) \
+					if (\$$i == "Name:") print \$$(i + 1) \
+			}' ${.TARGET}.vers >>${.TARGET}.filtered; \
+	fi; \
 	LC_ALL=C sort -u ${.TARGET}.filtered >${.TARGET}.tmp; \
 	${MV} ${.TARGET}.tmp ${.TARGET}
 CLEANFILES+=	${_LIB.so.full}.actsym
 CLEANFILES+=	${_LIB.so.full}.actsym.tmp
 CLEANFILES+=	${_LIB.so.full}.actsym.raw ${_LIB.so.full}.actsym.names
 CLEANFILES+=	${_LIB.so.full}.actsym.filtered
+CLEANFILES+=	${_LIB.so.full}.actsym.vers
 CLEANFILES+=	${_LIB.so.full}.diffsym
 CLEANFILES+=	${_LIB.so.full}.diffsym.tmp
 update-symbols: .PHONY
