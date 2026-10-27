@@ -243,9 +243,9 @@ else:
  # Causal baseline: the legacy native attach has no BA provider or lifetime owner.
  parts.append('static void unit_native_attach(struct rtw88_net *net) { (void)net; }\nstatic void unit_native_detach(struct rtw88_net *net) { (void)net; }\nstatic void rtw88_net_rxba_softintr(struct rtw88_net *net) { (void)net; }\n')
 (out/'native-rxba-native.inc').write_text('\n'.join(parts))
-var=(src/'sys/dev/ic/rtw88var.h').read_text();types=[]
+packet=(src/'sys/dev/ic/rtw88_packet.h').read_text();types=[]
 types.append(re.search(r'^#define\s+CALLOUT_MPSAFE\s+.*$',(src/'sys/sys/callout.h').read_text(),re.M).group())
-types.append(re.search(r'^#define\s+RTW88_NTXQ\s+.*$',var,re.M).group())
+types.append(re.search(r'^#define\s+RTW88_NTXQ\s+.*$',packet,re.M).group())
 types.append(re.search(r'^struct rtw88_net_rx \{.*?^};',net,re.M|re.S).group())
 types.append(re.search(r'^struct rtw88_net_stats \{.*?^};',(src/'sys/dev/ic/rtw88_net.h').read_text(),re.M|re.S).group())
 for filename,names in [('ieee80211_var.h',['IEEE80211_BINTVAL_MIN','IEEE80211_BINTVAL_MAX']),('_ieee80211.h',['IEEE80211_CHAN_ANYC'])]:
