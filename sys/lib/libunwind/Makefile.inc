@@ -14,6 +14,7 @@
 .error EMBER_LLVM_SOURCE is missing libunwind/include/${_ember_unwind_header}
 .endif
 INCS+=	${EMBER_LIBUNWIND_SOURCE}/include/${_ember_unwind_header}
+INCSNAME_${EMBER_LIBUNWIND_SOURCE:C,/,_,g}_include_${_ember_unwind_header}= ${_ember_unwind_header}
 .endfor
 
 # Header installation and object-directory creation precede runtime builds.

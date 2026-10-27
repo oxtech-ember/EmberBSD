@@ -6,6 +6,7 @@
 """Check common LLVM source routing with an explicit NetBSD make."""
 
 import argparse
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -15,6 +16,8 @@ import unittest
 SOURCE = Path(__file__).resolve().parents[2]
 MAKE = None
 PREPARED_LLVM = None
+NATIVE_TOOLS = None
+INSTALL = None
 
 
 class LLVMSourceTests(unittest.TestCase):
@@ -36,7 +39,7 @@ class LLVMSourceTests(unittest.TestCase):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("source route fixture\n")
 
-    def query(self, consumer, names, *variables, fixture_extra="", select_source=True, cwd=None):
+    def query(self, consumer, names, *variables, fixture_extra="", select_source=True, cwd=None, native=False):
         fixture = self.work / "probe.mk"
         fixture.write_text('.include <sys.mk>\n.include <bsd.own.mk>\n'
             'LIBC_MACHINE_CPU=aarch64\nLIBC_MACHINE_ARCH=aarch64\n'
@@ -49,10 +52,15 @@ class LLVMSourceTests(unittest.TestCase):
             "DESTDIR=/target/root", "NETBSDSRCDIR=" + str(SOURCE),
             "HOST_OSTYPE=Darwin-27-arm64", "EXTERNAL_TOOLCHAIN=/sdk",
             *(["EMBER_LLVM_SOURCE=" + str(self.llvm)] if select_source else []), *variables]
+        environment = None
+        if native:
+            command += ["EMBER_NATIVE_TOOLS=" + str(NATIVE_TOOLS),
+                        "HOST_SH=" + str(NATIVE_TOOLS / "sh")]
+            environment = dict(os.environ, PATH=str(NATIVE_TOOLS))
         for name in names:
             command.extend(("-V", "${" + name + "}"))
         return subprocess.run(command, cwd=cwd or self.work, text=True,
-            capture_output=True, timeout=30)
+            capture_output=True, timeout=30, env=environment)
 
     def test_base_and_kernel_select_the_same_common_compiler_rt(self):
         for consumer in ("lib/libc/compiler_rt/Makefile.inc",
@@ -182,6 +190,27 @@ class LLVMSourceTests(unittest.TestCase):
             "includes", "all")
         self.assertNotEqual(result.returncode, 0, result.stdout)
         self.assertIn("EMBER_LIBUNWIND_ARCHIVE", result.stderr)
+
+    def test_common_unwind_headers_install_by_basename(self):
+        if NATIVE_TOOLS is None or INSTALL is None:
+            self.skipTest("pass --native-tools and --install for actual header installation")
+        destination = self.work / "headers-stage"
+        include = destination / "usr/include"
+        include.mkdir(parents=True)
+        headers = ("unwind.h", "__libunwind_config.h",
+                   "unwind_itanium.h", "unwind_arm_ehabi.h")
+        # Distinct payloads detect mismatched name overrides as well as paths.
+        for name in headers:
+            (self.llvm / "libunwind/include" / name).write_text(name + "\n")
+        result = self.query("sys/lib/libunwind/Makefile.inc", (),
+            "includes", "DESTDIR=" + str(destination), "INCSDIR=/usr/include",
+            "INSTALL_FILE=" + str(INSTALL) + " -U", "MKUPDATE=yes",
+            fixture_extra='.include <bsd.inc.mk>\n', native=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual({path.name for path in include.iterdir()}, set(headers))
+        for name in headers:
+            self.assertEqual((include / name).read_bytes(),
+                             (self.llvm / "libunwind/include" / name).read_bytes())
 
     def test_common_profile_sources_keep_the_libc_gcda_abi(self):
         names = ("GENERIC_SRCS", "CPPFLAGS.GCDAProfiling.c", "CPPFLAGS")
@@ -338,8 +367,15 @@ if __name__ == "__main__":
     parser.add_argument("--make", required=True, type=Path)
     parser.add_argument("--source", type=Path, default=SOURCE)
     parser.add_argument("--prepared-llvm", type=Path)
+    parser.add_argument("--native-tools", type=Path,
+                        help="selected OS native command routing directory")
+    parser.add_argument("--install", type=Path, help="selected NetBSD install executable")
     args, remaining = parser.parse_known_args()
     MAKE = args.make.resolve()
     SOURCE = args.source.resolve()
     PREPARED_LLVM = args.prepared_llvm.resolve() if args.prepared_llvm else None
+    if bool(args.native_tools) != bool(args.install):
+        parser.error("--native-tools and --install must be selected together")
+    NATIVE_TOOLS = args.native_tools.resolve() if args.native_tools else None
+    INSTALL = args.install.resolve() if args.install else None
     unittest.main(argv=[sys.argv[0], *remaining])

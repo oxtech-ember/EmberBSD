@@ -50,6 +50,8 @@ producer artifacts; renaming a regular archive would not provide them.
 
 The native `includes` and `obj` goals can run before the unwind archive is
 available. They select the common `unwind.h` and its three companion headers.
+Their sources remain absolute, while per-file `INCSNAME` overrides install
+only the basenames under `/usr/include`, using the normal `bsd.inc.mk` rules.
 An actual library build still requires the archive. Combining a header goal
 with a build goal does not bypass this requirement.
 
@@ -133,6 +135,11 @@ python3 -B ember/tests/llvm-runtime-inputs.py \
     --make /absolute/native-prefix/bin/bmake \
     --prepared-llvm /absolute/prepared-llvm -v
 ```
+
+Pass `--native-tools /absolute/native-command-routing` and
+`--install /absolute/os-tools/bin/TRIPLET-install` together to exercise actual
+`bsd.inc.mk` installation with the selected shell, utilities and OS installer.
+That check compares all four installed header names and contents.
 
 These checks exercise libc/kernel source selection, header-before-runtime
 staging, application flags, CRT paths, C++ dependency selection, and rejected
