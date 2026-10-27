@@ -1506,6 +1506,7 @@ parseoptions()
 			esac
 			unsetmakeenv MAKEOBJDIRPREFIX
 			setmakeenv MAKEOBJDIR "\${.CURDIR:C,^$TOP,$OPTARG,}"
+			setmakeenv NETBSDOBJDIR "${TOP_objdir}"
 			;;
 
 		-o)
