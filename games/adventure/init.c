@@ -115,8 +115,6 @@ int     keys, lamp, grate, cage, rod, rod2, steps,	/* mnemonics */
         null, entrance, depression, say, lock, throw,
         find, invent;
 
-static int enter, /*stream,*/ pour;
-
 int     chloc, chloc2, dseen[7], dloc[7],	/* dwarf stuff */
         odloc[7], dflag, daltloc;
 
@@ -236,9 +234,9 @@ linkdata(void)
 	null = vocab(DECR('n', 'u', 'l', 'l', '\0'), 0, 0);
 	entrance = vocab(DECR('e', 'n', 't', 'r', 'a'), 0, 0);
 	depression = vocab(DECR('d', 'e', 'p', 'r', 'e'), 0, 0);
-	enter = vocab(DECR('e', 'n', 't', 'e', 'r'), 0, 0);
+	(void)vocab(DECR('e', 'n', 't', 'e', 'r'), 0, 0);
 
-	pour = vocab(DECR('p', 'o', 'u', 'r', '\0'), 2, 0);
+	(void)vocab(DECR('p', 'o', 'u', 'r', '\0'), 2, 0);
 	say = vocab(DECR('s', 'a', 'y', '\0', '\0'), 2, 0);
 	lock = vocab(DECR('l', 'o', 'c', 'k', '\0'), 2, 0);
 	throw = vocab(DECR('t', 'h', 'r', 'o', 'w'), 2, 0);
