@@ -147,7 +147,8 @@ its binary128 helpers and excludes `xf` helpers. NetBSD's separate SoftFloat
 does not claim Clang ABI acceptance for m68k or ia64. With
 `--prepared-llvm`, the AArch64 cases also follow the local includes of each
 selected helper. A helper that calls `__fe_getround` or `__fe_raise_inexact`
-(`addtf3.c`) requires `fp_mode.c` from `compiler-rt/lib/builtins/aarch64`.
+(`addtf3.c`) requires exactly one `fp_mode.c` entry. The file comes from
+`compiler-rt/lib/builtins/aarch64`.
 
 Pass `--native-tools /absolute/native-command-routing` and
 `--install /absolute/os-tools/bin/TRIPLET-install` together to exercise actual

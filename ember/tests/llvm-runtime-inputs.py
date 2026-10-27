@@ -168,7 +168,8 @@ class LLVMSourceTests(unittest.TestCase):
                          if self.fp_mode_users(builtins / name, set())]
                 # The binary128 arithmetic reads the rounding mode and raises INEXACT.
                 self.assertIn("addtf3.c", users)
-                self.assertIn("fp_mode.c", selected, "fp_mode users: " + " ".join(users))
+                self.assertEqual(selected.count("fp_mode.c"), 1,
+                                 "fp_mode users: " + " ".join(users))
                 self.assertTrue((builtins / cpu / "fp_mode.c").is_file())
 
     def test_prepared_source_inventory(self):
