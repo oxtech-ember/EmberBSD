@@ -24,7 +24,7 @@ SUBDIR+= lutok kyua-testers kyua-cli kyua-atf-compat
 .if (${MKLDAP} != "no")
 SUBDIR+= openldap
 .endif
-.if (${MKLIBCXX} != "no")
+.if (${MKLIBCXX} != "no") && !defined(EMBER_EXTERNAL_LLVM_RUNTIME)
 SUBDIR+= libc++
 .endif
 .if (${MKNSD} != "no")

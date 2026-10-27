@@ -494,6 +494,16 @@ class LLVMSourceTests(unittest.TestCase):
                 self.assertNotIn(str(self.work / "runtime"), result.stdout)
                 self.assertNotIn("-stdlib=libc++", result.stdout)
 
+    def test_external_runtime_skips_bundled_libcxx_headers(self):
+        for external, enabled, expected in ((True, True, False), (False, True, True),
+                                            (False, False, False)):
+            variables = ["MKCXX=yes", "MKLIBCXX=" + ("yes" if enabled else "no")]
+            if external:
+                variables.append("EMBER_EXTERNAL_LLVM_RUNTIME=" + str(self.work / "runtime"))
+            result = self.query("external/bsd/Makefile", ("SUBDIR",), *variables)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual("libc++" in result.stdout.split(), expected)
+
     def test_cxx_library_does_not_select_an_in_tree_runtime(self):
         result = self.query("share/mk/bsd.lib.mk", ("LIBCC", "LIBDPLIBS", "DPADD"),
             "LIB=probe", "LIBISCXX=yes", "SRCS=probe.cc", *self.runtime_options())
