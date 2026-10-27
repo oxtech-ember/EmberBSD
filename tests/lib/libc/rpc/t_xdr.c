@@ -149,6 +149,7 @@ sizeof_probe(XDR *x, const void *data)
 	char bytes[] = "abc";
 
 	(void)data;
+	ATF_REQUIRE(!XDR_CONTROL(x, 0, NULL));
 	ATF_REQUIRE(!XDR_GETLONG(x, &value));
 	ATF_REQUIRE_EQ(value, 123);
 	ATF_REQUIRE(!XDR_GETBYTES(x, bytes, 3));

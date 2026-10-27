@@ -157,6 +157,7 @@ xdr_sizeof(xdrproc_t func, void *data)
 	ops.x_getpostn = x_getpostn;
 	ops.x_setpostn = x_setpostn;
 	ops.x_destroy = x_destroy;
+	ops.x_control = NULL;
 
 	ops.x_getlong = x_getlong;
 	ops.x_getbytes = x_getbytes;
