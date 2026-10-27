@@ -47,8 +47,7 @@ __RCSID("$NetBSD: ftime.c,v 1.12 2003/07/26 19:24:55 salo Exp $");
 #include <errno.h>
 
 int
-ftime(tbp)
-        struct timeb *tbp;
+ftime(struct timeb *tbp)
 {
         struct timezone tz;
         struct timeval t;

@@ -63,8 +63,7 @@ static int re_goterr;
 static char *re_errstr;
 
 char *
-re_comp(s)
-	const char *s;
+re_comp(const char *s)
 {
 	if (s == NULL || *s == '\0')
 		return (NULL);
@@ -78,8 +77,7 @@ re_comp(s)
 }
 
 int
-re_exec(s)
-	const char *s;
+re_exec(const char *s)
 {
 	int rc;
 
@@ -90,8 +88,7 @@ re_exec(s)
 }
 
 void
-regerror(s)
-	const char *s;
+regerror(const char *s)
 {
 
 	_DIAGASSERT(s != NULL);

@@ -39,10 +39,7 @@ __RCSID("$NetBSD: regsub.c,v 1.9 2000/09/14 01:24:32 msaitoh Exp $");
  - regsub - perform substitutions after a regexp match
  */
 void
-__compat_regsub(prog, source, dest)
-const regexp *prog;
-const char *source;
-char *dest;
+__compat_regsub(const regexp *prog, const char *source, char *dest)
 {
 	char *src;
 	char *dst;

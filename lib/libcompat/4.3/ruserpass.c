@@ -90,9 +90,7 @@ static struct toktab {
 int ruserpass __P((const char *, char **, char **));
 
 int
-ruserpass(host, aname, apass)
-	const char *host;
-	char **aname, **apass;
+ruserpass(const char *host, char **aname, char **apass)
 {
 	char *hdir, buf[BUFSIZ], *tmp;
 	const char *ctmp;

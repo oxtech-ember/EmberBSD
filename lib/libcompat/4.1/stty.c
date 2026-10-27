@@ -49,9 +49,7 @@ __RCSID("$NetBSD: stty.c,v 1.8 2003/07/26 19:24:56 salo Exp $");
  *	#define	stty(fd, tty)	ioctl(fd, TIOCSETP, tty)
  */
 int
-stty(fd, tty)
-	int fd;
-	struct sgttyb *tty;
+stty(int fd, struct sgttyb *tty)
 {
 
 	_DIAGASSERT(fd != -1);
