@@ -59,4 +59,13 @@ with tempfile.TemporaryDirectory(prefix="ember-source-encoding-") as directory:
                    env=env, check=True)
     subprocess.run([sys.executable, str(tools / "drm-dmabuf-contract.py"), "all"],
                    env=env, check=True)
-print("PASS: actual PRIME and DMA-BUF runners preserve UTF-8 under an ASCII locale")
+    # The V3D job, CSD, CL, wait and sync contracts export drm_gem.c bodies.
+    # The actual file has a non-ASCII copyright sign.
+    export = root / "v3d-resv-export"
+    export.mkdir()
+    subprocess.run(shlex.split(os.environ.get("RUBY", "ruby")) +
+                   ["-E", "US-ASCII", str(repo / "ember/tools/bcmv3d-resv-model-export.rb"),
+                    str(repo), str(export)], env=env, check=True)
+    if not (export / "gem-lock-body.h").is_file():
+        raise RuntimeError("Missing exported GEM lock bodies")
+print("PASS: actual PRIME, DMA-BUF and V3D export runners keep UTF-8 under an ASCII locale")
