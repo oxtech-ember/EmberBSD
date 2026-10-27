@@ -86,6 +86,8 @@ enum test {
 	TEST_U_SETJMP,
 	TEST_SIGSETJMP_SAVE,
 	TEST_SIGSETJMP_NOSAVE,
+	TEST_SIGLONGJMP_ZERO_SAVE,
+	TEST_SIGLONGJMP_ZERO_NOSAVE,
 	TEST_LONGJMP_ZERO,
 	TEST_U_LONGJMP_ZERO,
 
@@ -177,6 +179,7 @@ h_check(enum test test)
 	switch (test) {
 	case TEST_SETJMP:
 	case TEST_SIGSETJMP_SAVE:
+	case TEST_SIGLONGJMP_ZERO_SAVE:
 	case TEST_LONGJMP_ZERO:
 	case TEST_COMPAT13_SETJMP:
 	case TEST_COMPAT13_SIGSETJMP_SAVE:
@@ -185,6 +188,7 @@ h_check(enum test test)
 		break;
 	case TEST_U_SETJMP:
 	case TEST_SIGSETJMP_NOSAVE:
+	case TEST_SIGLONGJMP_ZERO_NOSAVE:
 	case TEST_U_LONGJMP_ZERO:
 	case TEST_COMPAT13_SIGSETJMP_NOSAVE:
 		expectsignal = 1;
@@ -216,6 +220,8 @@ h_check(enum test test)
 		break;
 	case TEST_SIGSETJMP_SAVE:
 	case TEST_SIGSETJMP_NOSAVE:
+	case TEST_SIGLONGJMP_ZERO_SAVE:
+	case TEST_SIGLONGJMP_ZERO_NOSAVE:
 		x = sigsetjmp(sjb, !expectsignal);
 		break;
 	case TEST_COMPAT13_SIGSETJMP_SAVE:
@@ -230,6 +236,8 @@ h_check(enum test test)
 		switch (test) {
 		case TEST_LONGJMP_ZERO:
 		case TEST_U_LONGJMP_ZERO:
+		case TEST_SIGLONGJMP_ZERO_SAVE:
+		case TEST_SIGLONGJMP_ZERO_NOSAVE:
 		case TEST_COMPAT13_LONGJMP_ZERO:
 			ATF_REQUIRE_MSG(x == 1, "setjmp returned wrong value");
 			break;
@@ -269,6 +277,10 @@ h_check(enum test test)
 	case TEST_SIGSETJMP_SAVE:
 	case TEST_SIGSETJMP_NOSAVE:
 		siglongjmp(sjb, i);
+		break;
+	case TEST_SIGLONGJMP_ZERO_SAVE:
+	case TEST_SIGLONGJMP_ZERO_NOSAVE:
+		siglongjmp(sjb, 0);
 		break;
 	case TEST_COMPAT13_SIGSETJMP_SAVE:
 	case TEST_COMPAT13_SIGSETJMP_NOSAVE:
@@ -321,6 +333,28 @@ ATF_TC_HEAD(sigsetjmp_nosave, tc)
 ATF_TC_BODY(sigsetjmp_nosave, tc)
 {
 	h_check(TEST_SIGSETJMP_NOSAVE);
+}
+
+ATF_TC(siglongjmp_zero_save);
+ATF_TC_HEAD(siglongjmp_zero_save, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Checks siglongjmp(3) with zero and savemask enabled");
+}
+ATF_TC_BODY(siglongjmp_zero_save, tc)
+{
+	h_check(TEST_SIGLONGJMP_ZERO_SAVE);
+}
+
+ATF_TC(siglongjmp_zero_nosave);
+ATF_TC_HEAD(siglongjmp_zero_nosave, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Checks siglongjmp(3) with zero and savemask disabled");
+}
+ATF_TC_BODY(siglongjmp_zero_nosave, tc)
+{
+	h_check(TEST_SIGLONGJMP_ZERO_NOSAVE);
 }
 
 ATF_TC(longjmp_zero);
@@ -395,6 +429,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, _setjmp);
 	ATF_TP_ADD_TC(tp, sigsetjmp_save);
 	ATF_TP_ADD_TC(tp, sigsetjmp_nosave);
+	ATF_TP_ADD_TC(tp, siglongjmp_zero_save);
+	ATF_TP_ADD_TC(tp, siglongjmp_zero_nosave);
 	ATF_TP_ADD_TC(tp, longjmp_zero);
 	ATF_TP_ADD_TC(tp, _longjmp_zero);
 

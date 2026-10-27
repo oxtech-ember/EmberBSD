@@ -79,7 +79,8 @@ def main():
     run(make + ["NM=" + str(args.nm), "libfixture.so.1.0.diffsym"], valid)
     assert (valid / "libfixture.so.1.0.actsym").read_text() == expected
     assert (valid / "libfixture.so.1.0.diffsym").read_bytes() == b""
-    assert not (valid / "libfixture.so.1.0.actsym.nm.tmp").exists()
+    for suffix in ("raw", "names", "filtered", "tmp"):
+        assert not (valid / ("libfixture.so.1.0.actsym." + suffix)).exists()
     print("versioned exported symbols: PASS", flush=True)
 
     mismatch = case("mismatch", expected.replace("api@@VER_2\n", ""))
@@ -105,6 +106,8 @@ def main():
             assert target.read_text() == "previous_valid_list\n"
         else:
             assert not target.exists()
+        for suffix in ("raw", "names", "filtered", "tmp"):
+            assert not Path(str(target) + "." + suffix).exists()
     print("failed nm cannot publish or replace a symbol list: PASS", flush=True)
 
 
