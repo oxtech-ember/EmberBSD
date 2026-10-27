@@ -475,6 +475,8 @@ COPTS.archive_read_support_format_rar5.c+=	${CC_WNO_MAYBE_UNINITIALIZED}
 COPTS.target.c+=				${CC_WNO_STRINGOP_TRUNCATION}
 COPTS.archive_write_set_format_iso9660.c+=	${CC_WNO_STRINGOP_TRUNCATION}
 COPTS.archive_hmac.c+=	-Wno-error=deprecated-declarations
+# EmberBSD: Clang -Wformat=2 suggests format(strftime) on xstrftime; keep vendored.
+COPTS.archive_write_set_format_warc.c+=	-Wno-error=missing-format-attribute
 
 FILES+=				libarchive.pc
 FILESOWN_libarchive.pc=		${BINOWN}
