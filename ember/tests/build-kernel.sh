@@ -7,6 +7,10 @@ export EMBER_VERSION=9.9
 # Fixtures select their own build mode and toolchain, independent of the shell.
 unset EMBER_HOST_BFD_CONFIG EMBERBSD_SDK_SOURCE EMBER_HOST_PREFIX EMBER_HOST_COMPILER_FAMILY EMBER_BUILD_MODE EMBER_EXTERNAL_TOOLCHAIN EMBER_COMPILER_FAMILY EMBER_LLVM_SOURCE PVR_QUERY_FIRMWARE
 repo=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+TEST_SHELL=${EMBER_TEST_SHELL:-$(command -v sh)}
+TEST_PYTHON=${EMBER_TEST_PYTHON:-$(command -v python3)}
+test -x "$TEST_SHELL" && test -x "$TEST_PYTHON"
+export TEST_SHELL TEST_PYTHON
 work=$(mktemp -d "${TMPDIR:-/tmp}/ember-build-kernel.XXXXXX")
 work=$(CDPATH= cd -- "$work" && pwd -P)
 show_failure_logs() {
@@ -39,6 +43,13 @@ mkdir -p "$work/llvm/runtimes" "$work/llvm/compiler-rt/lib/builtins"
 export EMBER_LLVM_SOURCE="$work/llvm"
 cp "$repo/ember/build-kernel.sh" "$work/src/ember/"
 cp "$repo/ember/tools/kernel-contracts.sh" "$work/src/ember/tools/"
+cp "$repo/sys/arch/evbarm/conf/EMBER64" "$work/src/sys/arch/evbarm/conf/"
+cp "$repo/sys/arch/evbarm/conf/EMBER64_A133_AUDIO" "$work/src/sys/arch/evbarm/conf/"
+cp "$repo/sys/arch/evbarm/conf/EMBER64_A133_SDIO" "$work/src/sys/arch/evbarm/conf/"
+cp "$repo/sys/arch/evbarm/conf/EMBER64_A133_WLAN" "$work/src/sys/arch/evbarm/conf/"
+cp "$repo/sys/arch/evbarm/conf/EMBER64_RTW88_PCI" "$work/src/sys/arch/evbarm/conf/"
+mkdir -p "$work/src/sys/external/gpl2/dts/dist/arch/arm64/boot/dts/allwinner"
+: > "$work/src/sys/external/gpl2/dts/dist/arch/arm64/boot/dts/allwinner/sun50i-a133-ys-m33.dts"
 # Model only dispatcher arguments and exit status. These fixtures do not
 # execute A733, GPU, Ruby, CEMAC, or Wi-Fi production-code contracts.
 for contract in a733-accelerator-clock a733-power a733-display-observer a733-gpu-identification \
@@ -140,7 +151,6 @@ fi
 SCRIPT
 : > "$work/src/tools/Makefile"
 : > "$work/src/share/mk/bsd.own.mk"
-: > "$work/src/sys/arch/evbarm/conf/EMBER64"
 for module in if_cemac_acpi bcm2712btcom bcmexpgpio rp1wmcodec rpi5button; do
     mkdir -p "$work/src/sys/modules/$module"
 done
@@ -151,7 +161,7 @@ SH
 cat > "$work/bin/python3" <<'SH'
 #!/bin/sh
 case $1 in
-    */scripts/run-native-check.py|*/scripts/run-native-os.py) runner=$1; shift; exec sh "$runner" "$@";;
+    */scripts/run-native-check.py|*/scripts/run-native-os.py) runner=$1; shift; exec "$TEST_PYTHON" "$runner" "$@";;
 esac
 echo "contract $*" >> "$TEST_LOG"
 case $1 in
@@ -180,19 +190,22 @@ case " $* " in *" -V HOST_CC=$TEST_ROOT/bin/host-cc "*) ;; *) exit 83;; esac
 case " $* " in *" -V HOST_CFLAGS=-Dfixture_host "*) ;; *) exit 84;; esac
 for argument do case $argument in BUILDINFO=*) BUILDINFO=${argument#BUILDINFO=};; esac; done
 [ "${FAIL_AT:-}" != tools ]
-mkdir -p "$TEST_OUT/tools/bin" "$TEST_OUT/obj/kernels/EMBER64"
+config=
+for argument do case $argument in kernel=*) config=${argument#kernel=};; esac; done
+[ -n "$config" ]
+mkdir -p "$TEST_OUT/tools/bin" "$TEST_OUT/obj/kernels/$config"
 cp "$TEST_ROOT/bin/nbmake-evbarm" "$TEST_OUT/tools/bin/"
 cp "$TEST_ROOT/bin/cpp" "$TEST_OUT/tools/bin/target-cpp"
 cp "$TEST_ROOT/bin/cpp" "$TEST_OUT/tools/bin/target cpp"
 cp "$TEST_ROOT/bin/dtc" "$TEST_OUT/tools/bin/nbdtc"
 # Model make's incremental version object. BUILDINFO is not a dependency.
-version_obj="$TEST_OUT/obj/kernels/EMBER64/vers.o"
+version_obj="$TEST_OUT/obj/kernels/$config/vers.o"
 if [ ! -f "$version_obj" ]; then
-    printf '%s\n' "${BUILDINFO:-fixture-kernel}" > "$TEST_OUT/obj/kernels/EMBER64/vers.c"
-    cp "$TEST_OUT/obj/kernels/EMBER64/vers.c" "$version_obj"
+    printf '%s\n' "${BUILDINFO:-fixture-kernel}" > "$TEST_OUT/obj/kernels/$config/vers.c"
+    cp "$TEST_OUT/obj/kernels/$config/vers.c" "$version_obj"
 fi
-cp "$version_obj" "$TEST_OUT/obj/kernels/EMBER64/netbsd"
-printf image > "$TEST_OUT/obj/kernels/EMBER64/netbsd.img"
+cp "$version_obj" "$TEST_OUT/obj/kernels/$config/netbsd"
+printf image > "$TEST_OUT/obj/kernels/$config/netbsd.img"
 SH
 cat > "$work/bin/nbmake-evbarm" <<'SH'
 #!/bin/sh
@@ -276,6 +289,8 @@ echo "dtc $0 $*" >> "$TEST_LOG"
 case "$*" in
 *sun60i-a733-orangepi-zero3w-diagnostic.dtb*)
     [ "${FAIL_AT:-}" != diagnostic-dtb ];;
+*sun50i-a133-ys-m33.dtb*)
+    [ "${FAIL_AT:-}" != a133-dtb ];;
 esac
 while [ $# -gt 0 ]; do
     if [ "$1" = -o ]; then printf dtb > "$2"; exit; fi
@@ -292,111 +307,150 @@ if [ "$last" = "$(cd "$TEST_OUT" && pwd -P)/" ]; then
 fi
 SCRIPT
 mkdir -p "$work/sdk/scripts"
-cat > "$work/sdk/scripts/run-native-check.py" <<'SH'
-#!/bin/sh
-set -eu
-role= log= prefix= family= bindings= cwd= ruby=no awk_selected=no
-while [ "$#" -gt 0 ]; do
-    case $1 in
-    --host-prefix) prefix=$2;;
-    --compiler-family) family=$2;;
-    --required-role)
-        case $2 in
-        ruby) ruby=yes;;
-        awk) awk_selected=yes;;
-        *) exit 81;;
-        esac;;
-    --tool) role=$2;;
-    --cwd) cwd=$2;;
-    --bindings) bindings=$2;;
-    --log) log=$2;;
-    --) shift; break;;
-    *) exit 81;;
-    esac
-    shift 2
-done
-test "$prefix" = "$TEST_ROOT"
-test "$family" = "${EMBER_HOST_COMPILER_FAMILY:-clang}"
-test "$cwd" = "$TEST_ROOT/src"
-test "$bindings" = "$TEST_OUT/native-check-commands"
-test "$ruby" = yes
-test "$awk_selected" = yes
-echo "native-check $family $role $bindings" >> "$TEST_LOG"
-# The real SDK discards consumer interpreter overrides before selecting its tools.
-unset NETBSD2_PYTHON
-export CC="$TEST_ROOT/bin/host-cc" CXX="$TEST_ROOT/bin/host-cxx"
-export CFLAGS=-Dfixture_host CXXFLAGS=-Dfixture_cxx LDFLAGS=-Lfixture-host
-# Match process.run_logged: a fresh log is created exclusively.
-(set -C; : > "$log")
-case $role in
-python) "$TEST_ROOT/bin/python3" "$@" > "$log" 2>&1;;
-sh) sh "$@" > "$log" 2>&1;;
-*) exit 82;;
-esac
-SH
-cat > "$work/sdk/scripts/run-native-os.py" <<'SH'
-#!/bin/sh
-set -eu
-prefix= family= source= routing= cwd= log= capture=no mode=direct append=no
-while [ "$#" -gt 0 ]; do
-    case $1 in
-    --host-prefix) prefix=$2; shift;;
-    --compiler-family) family=$2; shift;;
-    --source) source=$2; shift;;
-    --routing) routing=$2; shift;;
-    --cwd) cwd=$2; shift;;
-    --log) log=$2; shift;;
-    --capture) capture=yes;;
-    --append-log) append=yes;;
-    --build-sh) mode=build;;
-    --shell) mode=shell;;
-    --) shift; break;;
-    *) exit 85;;
-    esac
-    shift
-done
-test "$prefix" = "$TEST_ROOT"
-test "$family" = "${EMBER_HOST_COMPILER_FAMILY:-clang}"
-test "$source" = "$TEST_ROOT/src"
-test "$routing" = "$TEST_OUT/native-build-tools"
-mkdir -p "$routing"
-for command in sh cp rm rmdir cat mkdir dirname basename uname grep sed awk tr sort touch printf ln pwd; do
-    selected=$(command -v "$command")
-    case $selected in /*) ;; *)
-        for directory in /usr/bin /bin; do
-            if [ -x "$directory/$command" ]; then selected="$directory/$command"; break; fi
-        done;;
-    esac
-    test -x "$selected"
-    test -e "$routing/$command" || ln -s "$selected" "$routing/$command"
-done
-export HOST_CC="$TEST_ROOT/bin/host-cc" HOST_CXX="$TEST_ROOT/bin/host-cxx"
-export HOST_CFLAGS=-Dfixture_host HOST_CXXFLAGS=-Dfixture_cxx HOST_LDFLAGS=-Lfixture-host
-export EMBER_NATIVE_TOOLS="$routing" EMBER_HOST_COMPILER_FAMILY="$family" MAKECONF=/dev/null
-unset CC CXX CPP CFLAGS CXXFLAGS CPPFLAGS LDFLAGS BUILDINFO
-cd "$cwd"
-echo "native-os $family $mode $*" >> "$TEST_LOG"
-case $mode in
-build) set -- sh "$source/build.sh" -V "HOST_CC=$HOST_CC" -V "HOST_CFLAGS=$HOST_CFLAGS" -V "EMBER_HOST_COMPILER_FAMILY=$family" "$@";;
-shell) set -- sh "$@";;
-direct) case $1 in /*) ;; *) exit 86;; esac;;
-esac
-if [ "$capture" = yes ]; then exec "$@"; fi
-if [ "$append" = yes ]; then
-    "$@" >> "$log" 2>&1
-else
-    (set -C; : > "$log")
-    "$@" > "$log" 2>&1
-fi
-SH
-ln -s python3 "$work/bin/python3.15"
+cat > "$work/sdk/scripts/run-native-check.py" <<'PY'
+import os
+import subprocess
+import sys
+
+args = sys.argv[1:]
+values = {"--host-prefix": "", "--compiler-family": "", "--cwd": "",
+          "--bindings": "", "--log": ""}
+roles = []
+role = None
+while args:
+    item = args.pop(0)
+    if item == "--":
+        command = args
+        break
+    if item == "--required-role":
+        if not args or args[0] not in ("ruby", "awk"):
+            raise SystemExit(81)
+        roles.append(args.pop(0))
+    elif item == "--tool":
+        role = args.pop(0)
+    elif item in values and args:
+        values[item] = args.pop(0)
+    else:
+        raise SystemExit(81)
+else:
+    raise SystemExit(81)
+root = os.environ["TEST_ROOT"]
+if (values["--host-prefix"] != root or
+        values["--compiler-family"] != os.environ.get("EMBER_HOST_COMPILER_FAMILY", "clang") or
+        values["--cwd"] != root + "/src" or
+        values["--bindings"] != os.environ["TEST_OUT"] + "/native-check-commands" or
+        sorted(roles) != ["awk", "ruby"]):
+    raise SystemExit(81)
+with open(os.environ["TEST_LOG"], "a") as stream:
+    stream.write("native-check {} {} {}\n".format(
+        values["--compiler-family"], role, values["--bindings"]))
+env = os.environ.copy()
+env.pop("NETBSD2_PYTHON", None)
+env.update(CC=root + "/bin/host-cc", CXX=root + "/bin/host-cxx",
+           CFLAGS="-Dfixture_host", CXXFLAGS="-Dfixture_cxx", LDFLAGS="-Lfixture-host")
+if role == "python":
+    invocation = [root + "/bin/python3", *command]
+elif role == "sh":
+    invocation = [os.environ["TEST_SHELL"], *command]
+else:
+    raise SystemExit(82)
+with open(values["--log"], "x") as log:
+    result = subprocess.run(invocation, env=env, cwd=values["--cwd"],
+                            stdout=log, stderr=subprocess.STDOUT, check=False)
+raise SystemExit(result.returncode)
+PY
+cat > "$work/sdk/scripts/run-native-os.py" <<'PY'
+import os
+import shutil
+import subprocess
+import sys
+
+args = sys.argv[1:]
+values = {"--host-prefix": "", "--compiler-family": "", "--source": "",
+          "--routing": "", "--cwd": "", "--log": ""}
+mode = "direct"
+capture = False
+append = False
+while args:
+    item = args.pop(0)
+    if item == "--":
+        command = args
+        break
+    if item in values and args:
+        values[item] = args.pop(0)
+    elif item == "--capture":
+        capture = True
+    elif item == "--append-log":
+        append = True
+    elif item in ("--build-sh", "--shell"):
+        mode = "build" if item == "--build-sh" else "shell"
+    else:
+        raise SystemExit(85)
+else:
+    raise SystemExit(85)
+root = os.environ["TEST_ROOT"]
+if (values["--host-prefix"] != root or
+        values["--compiler-family"] != os.environ.get("EMBER_HOST_COMPILER_FAMILY", "clang") or
+        values["--source"] != root + "/src" or
+        values["--routing"] != os.environ["TEST_OUT"] + "/native-build-tools"):
+    raise SystemExit(85)
+routing = values["--routing"]
+os.makedirs(routing, exist_ok=True)
+for name in "sh cp rm rmdir cat mkdir dirname basename uname grep sed awk tr sort touch printf ln pwd".split():
+    selected = shutil.which(name)
+    if not selected:
+        for directory in ("/usr/bin", "/bin", "/usr/sbin", "/sbin"):
+            candidate = os.path.join(directory, name)
+            if os.access(candidate, os.X_OK):
+                selected = candidate
+                break
+    if not selected:
+        raise SystemExit(85)
+    link = os.path.join(routing, name)
+    if not os.path.lexists(link):
+        os.symlink(selected, link)
+env = os.environ.copy()
+env.update(HOST_CC=root + "/bin/host-cc", HOST_CXX=root + "/bin/host-cxx",
+           HOST_CFLAGS="-Dfixture_host", HOST_CXXFLAGS="-Dfixture_cxx",
+           HOST_LDFLAGS="-Lfixture-host", EMBER_NATIVE_TOOLS=routing,
+           EMBER_HOST_COMPILER_FAMILY=values["--compiler-family"], MAKECONF="/dev/null")
+for name in ("CC", "CXX", "CPP", "CFLAGS", "CXXFLAGS", "CPPFLAGS", "LDFLAGS", "BUILDINFO"):
+    env.pop(name, None)
+env["PATH"] = routing + ":" + root + "/bin:" + root + "/sbin:" + root + "/gnu/bin"
+with open(os.environ["TEST_LOG"], "a") as stream:
+    stream.write("native-os {} {} {}\n".format(
+        values["--compiler-family"], mode, " ".join(command)))
+if mode == "build":
+    invocation = [os.environ["TEST_SHELL"], values["--source"] + "/build.sh",
+                  "-V", "HOST_CC=" + env["HOST_CC"], "-V", "HOST_CFLAGS=" + env["HOST_CFLAGS"],
+                  "-V", "EMBER_HOST_COMPILER_FAMILY=" + env["EMBER_HOST_COMPILER_FAMILY"], *command]
+elif mode == "shell":
+    invocation = [os.environ["TEST_SHELL"], *command]
+else:
+    if not command or not command[0].startswith("/"):
+        raise SystemExit(86)
+    invocation = command
+if capture:
+    result = subprocess.run(invocation, env=env, cwd=values["--cwd"], check=False)
+else:
+    log_mode = "a" if append else "x"
+    with open(values["--log"], log_mode) as log:
+        result = subprocess.run(invocation, env=env, cwd=values["--cwd"],
+                                stdout=log, stderr=subprocess.STDOUT, check=False)
+raise SystemExit(result.returncode)
+PY
+ln -s "$TEST_PYTHON" "$work/bin/python3.15"
+ln -s "$TEST_SHELL" "$work/bin/sh"
 : > "$work/host-bfd.mk"
 export EMBER_EXTERNAL_TOOLCHAIN=/cross/clang EMBER_HOST_BFD_CONFIG="$work/host-bfd.mk"
 export EMBERBSD_SDK_SOURCE="$work/sdk" EMBER_HOST_PREFIX="$work"
 for tool in host-cc host-cxx; do
     printf '#!/bin/sh\nexit 99\n' > "$work/bin/$tool"
 done
-chmod +x "$work/bin/"* "$work/src/build.sh"
+chmod +x "$work/bin/ruby" "$work/bin/uname" "$work/bin/python3" \
+    "$work/bin/host-cc" "$work/bin/host-cxx" "$work/bin/nbmake-evbarm" \
+    "$work/bin/config" "$work/bin/make" "$work/bin/cpp" "$work/bin/dtc" \
+    "$work/bin/cp" "$work/src/build.sh"
 export PATH="$work/bin:$PATH" NETBSD2_PYTHON="$work/bin/python3" NETBSD2_JOBS=2
 export RUBY="$work/bin/ruby"
 # Deliberately invalid target commands must not be used by host contracts.
@@ -425,6 +479,34 @@ grep -q 'cpp .*/tools/bin/target-cpp ' "$TEST_LOG"
 grep -q 'dtc .*/tools/bin/nbdtc ' "$TEST_LOG"
 ! grep -q native-make "$TEST_LOG"
 check_contract_counts 16
+# The A133 WLAN profile adds its DTB; PCI keeps its selected kernel identity.
+export TEST_OUT="$work/wlan"
+"$TEST_SHELL" "$work/src/ember/build-kernel.sh" "$TEST_OUT" EMBER64_A133_WLAN > "$work/run.log" 2>&1
+for output in netbsd-EMBER64_A133_WLAN netbsd-EMBER64_A133_WLAN.img sun50i-a133-ys-m33.dtb; do
+    if [ ! -s "$TEST_OUT/$output" ]; then
+        echo "FAIL: WLAN orchestration did not publish $output" >&2
+        exit 1
+    fi
+done
+grep -q 'kernel=EMBER64_A133_WLAN' "$TEST_LOG"
+grep -q 'sun50i-a133-ys-m33.dts' "$TEST_LOG"
+grep -q 'sun50i-a133-ys-m33.dtb' "$TEST_LOG"
+test -s "$TEST_OUT/if_cemac_acpi.kmod"
+test -s "$TEST_OUT/rpi5button.kmod"
+export TEST_OUT="$work/pci"
+"$TEST_SHELL" "$work/src/ember/build-kernel.sh" "$TEST_OUT" EMBER64_RTW88_PCI > "$work/run.log" 2>&1
+for output in netbsd-EMBER64_RTW88_PCI netbsd-EMBER64_RTW88_PCI.img; do
+    if [ ! -s "$TEST_OUT/$output" ]; then
+        echo "FAIL: PCI orchestration did not publish $output" >&2
+        exit 1
+    fi
+done
+if [ -e "$TEST_OUT/sun50i-a133-ys-m33.dtb" ]; then
+    echo 'FAIL: PCI orchestration published the A133 WLAN DTB' >&2
+    exit 1
+fi
+grep -q 'kernel=EMBER64_RTW88_PCI' "$TEST_LOG"
+export TEST_OUT="$work/cross"
 # Reuse all objects, but the selected kernel must embed the new build identity.
 printf 'old-source-id\n' > "$TEST_OUT/obj/kernels/EMBER64/vers.c"
 printf 'old-object-id\n' > "$TEST_OUT/obj/kernels/EMBER64/vers.o"
@@ -467,8 +549,23 @@ grep -q 'injected contract failure: pvr-query-contract.sh' "$work/query.log"
 ! grep -q '^gpu-contract bcm2712-display-contract.sh ' "$TEST_LOG"
 outputs='netbsd-EMBER64 netbsd-EMBER64.img bcm2837-rpi-zero-2-w.dtb
 sun60i-a733-orangepi-zero4.dtb sun60i-a733-orangepi-zero3w.dtb
-sun60i-a733-orangepi-zero3w-diagnostic.dtb
+sun60i-a733-orangepi-zero3w-diagnostic.dtb sun50i-a133-ys-m33.dtb
 if_cemac_acpi.kmod bcm2712btcom.kmod bcmexpgpio.kmod rp1wmcodec.kmod rpi5button.kmod'
+export TEST_OUT="$work/wlan-failure"
+mkdir -p "$TEST_OUT"
+for output in netbsd-EMBER64_A133_WLAN netbsd-EMBER64_A133_WLAN.img sun50i-a133-ys-m33.dtb; do
+    printf stale > "$TEST_OUT/$output"
+done
+if FAIL_AT=a133-dtb "$TEST_SHELL" "$work/src/ember/build-kernel.sh" \
+    "$TEST_OUT" EMBER64_A133_WLAN > "$work/run.log" 2>&1; then
+    echo 'accepted A133 DTB failure' >&2; exit 1
+fi
+for output in netbsd-EMBER64_A133_WLAN netbsd-EMBER64_A133_WLAN.img sun50i-a133-ys-m33.dtb; do
+    test ! -e "$TEST_OUT/$output"
+done
+test ! -e "$TEST_OUT/.build-lock"
+grep -q 'sun50i-a133-ys-m33.dtb' "$TEST_LOG"
+export TEST_OUT="$work/cross"
 root_argument_failures='linux-idr-contract.sh i915-elsq-desc-contract.sh
 i915-rps-lifetime-contract.sh drm-pci-identity-contract.sh linux-rcu-replace-contract.sh
 drm-gem-fb-contract.rb bcmv3d-resv-contract.rb bcmv3d-read-contract.rb
@@ -617,3 +714,4 @@ grep -q 'full source' "$work/run.log"
 test ! -e "$TEST_OUT/netbsd-EMBER64"
 test ! -e "$TEST_OUT/bcm2712btcom.kmod"
 echo 'PASS: cross/native routing, refreshed kernel identity, retained objects, matched module headers, external tools, base/A733/GPU/Ruby/CEMAC/Wi-Fi contract dispatch, failure cleanup'
+echo 'MODEL ONLY: SDK build and check boundaries used controlled fixtures; no production kernel, module, CPP, or DTC build ran.'

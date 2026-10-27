@@ -46,9 +46,11 @@ Host contracts use the shared SDK native-check runner and independent
 Keep historical GCC build results separate from Clang build and boot checks.
 
 Inspect the selected builder before choosing a configuration.
-`ember/build-kernel.sh` accepts AArch64 configurations but explicitly lists three DTBs and four board modules.
-It is not an automatic image builder for a new board.
-A new DTS needs build/install integration and an actual firmware or loader selection path.
+`ember/build-kernel.sh` explicitly selects DTBs and matched modules for each invocation.
+`EMBER64_A133_WLAN` also compiles and publishes the native YS-M33 A133 DTB; its WLAN node remains disabled.
+This adds a build artifact, not a firmware/loader selection or radio-enable path.
+The wrapper is not an automatic image builder for new boards.
+Each DTS needs build/install integration and an actual firmware or loader selection path.
 An ACPI target needs the corresponding tables and attachment path instead of an invented DTS.
 
 Use output directories outside the source export, specific to revision, configuration and toolchain.

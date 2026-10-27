@@ -1,0 +1,3 @@
+# Native YS-M33 WLAN bootstrap. The A133 board power profile remains disabled.
+include "arch/evbarm/conf/EMBER64_A133_AUDIO"
+rtwsdio* at sdmmc?
