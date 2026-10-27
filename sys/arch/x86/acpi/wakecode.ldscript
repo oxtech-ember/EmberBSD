@@ -1,0 +1,6 @@
+/* SPDX-License-Identifier: BSD-2-Clause */
+/* Wakecode contains one text section. Its symbols are offsets from zero. */
+SECTIONS
+{
+	.text 0 : { *(.text) }
+}
