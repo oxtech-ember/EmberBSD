@@ -144,7 +144,10 @@ m68k and ia64 (with the existing m68k `fixxfdi` exception), while AArch64 keeps
 its binary128 helpers and excludes `xf` helpers. NetBSD's separate SoftFloat
 `floatx80` helpers remain selected. The source-selection check follows
 `LIBC_MACHINE_ARCH` and `LIBC_MACHINE_CPU` as derived by the OS make rules; it
-does not claim Clang ABI acceptance for m68k or ia64.
+does not claim Clang ABI acceptance for m68k or ia64. With
+`--prepared-llvm`, the AArch64 cases also follow the local includes of each
+selected helper. A helper that calls `__fe_getround` or `__fe_raise_inexact`
+(`addtf3.c`) requires `fp_mode.c` from `compiler-rt/lib/builtins/aarch64`.
 
 Pass `--native-tools /absolute/native-command-routing` and
 `--install /absolute/os-tools/bin/TRIPLET-install` together to exercise actual

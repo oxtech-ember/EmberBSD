@@ -7,6 +7,7 @@
 
 import argparse
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -139,6 +140,36 @@ class LLVMSourceTests(unittest.TestCase):
                         "EMBER_COMPILER_FAMILY=" + family, select_source=False)
                     self.assertNotEqual(result.returncode, 0, result.stdout)
                     self.assertIn("EMBER_LLVM_SOURCE", result.stderr)
+
+    def fp_mode_users(self, path, seen):
+        # fp_mode.h only declares the hooks; fp_mode.c defines them.
+        if path in seen or path.name in ("fp_mode.h", "fp_mode.c") or not path.is_file():
+            return False
+        seen.add(path)
+        text = path.read_text(errors="replace")
+        if re.search(r"\b__fe_(?:getround|raise_inexact)\s*\(", text):
+            return True
+        return any(self.fp_mode_users(path.parent / name, seen)
+                   for name in re.findall(r'^\s*#\s*include\s+"([^"]+)"', text, re.M))
+
+    def test_selected_builtins_include_their_fp_mode_dependency(self):
+        if PREPARED_LLVM is None:
+            self.skipTest("pass --prepared-llvm for the actual builtins dependency closure")
+        builtins = PREPARED_LLVM / "compiler-rt/lib/builtins"
+        for machine, arch, cpu in (("evbarm", "aarch64", "aarch64"),
+                                   ("evbarm", "aarch64eb", "aarch64")):
+            with self.subTest(architecture=arch):
+                result = self.query("lib/libc/compiler_rt/Makefile.inc", ("GENERIC_SRCS",),
+                    "EMBER_LLVM_SOURCE=" + str(PREPARED_LLVM),
+                    machine=machine, arch=arch, cpu=cpu)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                selected = result.stdout.split()
+                users = [name for name in selected
+                         if self.fp_mode_users(builtins / name, set())]
+                # The binary128 arithmetic reads the rounding mode and raises INEXACT.
+                self.assertIn("addtf3.c", users)
+                self.assertIn("fp_mode.c", selected, "fp_mode users: " + " ".join(users))
+                self.assertTrue((builtins / cpu / "fp_mode.c").is_file())
 
     def test_prepared_source_inventory(self):
         if PREPARED_LLVM is None:

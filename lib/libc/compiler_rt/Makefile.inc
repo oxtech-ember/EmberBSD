@@ -286,8 +286,11 @@ GENERIC_SRCS+= \
 .endif
 
 .if ${LIBC_MACHINE_CPU} == "aarch64"
+# addtf3.c reads the rounding mode and raises INEXACT through the
+# __fe_getround and __fe_raise_inexact hooks in aarch64/fp_mode.c.
 GENERIC_SRCS+= \
 	clear_cache.c \
+	fp_mode.c \
 	addtf3.c \
 	fp_mode.c \
 	divtf3.c \
