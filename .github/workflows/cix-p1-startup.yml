@@ -7,6 +7,7 @@ name: CIX P1 startup contracts
       - '.github/workflows/cix-p1-startup.yml'
       - 'ember/image/cix-p1-*'
       - 'ember/image/test-cix-p1-*'
+      - 'ember/tools/cix-native-prefix-contract.py'
       - 'etc/MAKEDEV.awk'
       - 'etc/MAKEDEV.tmpl'
       - 'etc/etc.aarch64/MAKEDEV.conf'
@@ -19,6 +20,7 @@ name: CIX P1 startup contracts
       - '.github/workflows/cix-p1-startup.yml'
       - 'ember/image/cix-p1-*'
       - 'ember/image/test-cix-p1-*'
+      - 'ember/tools/cix-native-prefix-contract.py'
       - 'etc/MAKEDEV.awk'
       - 'etc/MAKEDEV.tmpl'
       - 'etc/etc.aarch64/MAKEDEV.conf'
@@ -69,6 +71,8 @@ jobs:
           "$native/bin/python3.15" -c 'import sys; assert sys.version_info[:2] == (3, 15)'
           "$native/bin/mksh" -c 'echo native prefix: $KSH_VERSION'
           echo "EMBER_TEST_NATIVE_PREFIX=$native" >> "$GITHUB_ENV"
+      - name: Check the native prefix contract
+        run: python3 ember/tools/cix-native-prefix-contract.py
       - name: Check reduced-root startup and failures
         run: |
           ruby ember/image/test-cix-p1-ssh.rb
