@@ -77,6 +77,8 @@ base-system dhcpcd profile. Host contracts check the flags at object, build and
 install stages; they do not establish a target link or live IPv6 configuration.
 
 This C-only profile does not provide C++, PAM or the complete rc system.
+It sets `MKCOMPAT=no` and builds no 32-bit compatibility libraries. The
+common LLVM runtime has no multilib stage, so the Clang route requires this.
 The receiving root profile owns startup, console access and shutdown scripts.
 Use native getty to establish the console session before its trusted wrapper.
 A direct shell wrapper in `ttys` does not establish the controlling terminal.

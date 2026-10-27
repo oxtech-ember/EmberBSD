@@ -188,7 +188,7 @@ Dir.mktmpdir('ember-cix-userland-') do |work|
   stdout, stderr, status = run.call(clang_out, 'TEST_FAMILY' => 'clang')
   abort "FAIL: Clang profile: #{stdout}#{stderr}" unless status.success?
   clang_flags = File.read(clang_out + '/build-flags')
-  %w[EMBER_COMPILER_FAMILY=clang EMBER_LLVM_RUNTIME_PHASE=bootstrap MKLIBCXX=no].each do |flag|
+  %w[EMBER_COMPILER_FAMILY=clang EMBER_LLVM_RUNTIME_PHASE=bootstrap MKLIBCXX=no MKCOMPAT=no].each do |flag|
     abort "FAIL: missing Clang flag #{flag}" unless clang_flags.include?(flag)
   end
   %w[LIBARCHIVE LIBEVENT].each do |name|

@@ -103,7 +103,7 @@ fi
     -V "EMBER_COMPILER_FAMILY=$family" -V "EMBER_HOST_BFD_CONFIG=$host_bfd" \
     -V "CPPFLAGS=$CPPFLAGS" -V "EMBER_LIBARCHIVE_SOURCE=$libarchive" \
     -V "EMBER_LIBEVENT_SOURCE=$libevent" "$@" \
-    -V MKDEBUG=no -V MKDEBUGLIB=no -V MKX11=no -V MKCXX=no \
+    -V MKDEBUG=no -V MKDEBUGLIB=no -V MKX11=no -V MKCXX=no -V MKCOMPAT=no \
     -V MKKMOD=no -V MKGCCCMDS=no -V MKGDB=no -V MKBINUTILS=no \
     -V MKATF=no -V MKKYUA=no -V MKMAN=no -V MKDOC=no -V MKINFO=no \
     -V MKHTML=no -V MKLINT=no -V MKPROFILE=no -V MKCVS=no \
