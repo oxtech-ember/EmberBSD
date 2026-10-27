@@ -17,7 +17,7 @@ LIBDPLIBS+=	bz2	${NETBSDSRCDIR}/lib/libbz2 \
 # XXX Avoid exporting symbols of statically linked deps like zstd.
 # XXX Should do this in bsd.lib.mk, perhaps.
 .for _lib _dir in ${LIBDPLIBS}
-LDADD+=		-Wl,--exclude-libs,lib${_lib}
+LDADD+=		-Wl,--exclude-libs,lib${_lib}.a
 .endfor
 
 # Avoid exporting private libarchive symbols.
