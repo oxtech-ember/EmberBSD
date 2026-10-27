@@ -3,7 +3,8 @@
 NOMAN=
 
 .include <bsd.own.mk>
-LIBARCHIVE=${NETBSDSRCDIR}/external/bsd/libarchive/dist
+.include "${NETBSDSRCDIR}/external/bsd/libarchive/source.mk"
+LIBARCHIVE=${LIBARCHIVEDIR}
 
 TESTSDIR=	${TESTSBASE}/usr.bin/cpio
 
@@ -12,7 +13,7 @@ PROGS+=	h_cpio
 TESTS_SH+=	t_cpio
 
 CPPFLAGS+=-I${LIBARCHIVE}/test_utils -I${LIBARCHIVE}/cpio -I.
-CPPFLAGS+=-I${LIBARCHIVE}/cpio/test -I${LIBARCHIVE}/../include
+CPPFLAGS+=-I${LIBARCHIVE}/cpio/test -I${NETBSDSRCDIR}/external/bsd/libarchive/include
 CPPFLAGS+=-I${LIBARCHIVE}/libarchive -I${LIBARCHIVE}/libarchive_fe
 CPPFLAGS+=-DPLATFORM_CONFIG_H='"config_netbsd.h"'
 
@@ -27,7 +28,7 @@ SRCS.h_cpio= \
 test_main.c \
 test_utils.c \
 cmdline.c \
-err.c \
+lafe_err.c \
 test_0.c \
 test_basic.c \
 test_cmdline.c \

@@ -67,7 +67,7 @@
 ./usr/libdata/debug/usr/lib/i18n/libmapper_std.so.5.0.debug	comp-i18n-debug	debug,compatfile
 ./usr/libdata/debug/usr/lib/i18n/libmapper_zone.so.5.0.debug	comp-i18n-debug	debug,compatfile
 ./usr/libdata/debug/usr/lib/libamu.so.5.0.debug			comp-amd-debug	debug,compatfile
-./usr/libdata/debug/usr/lib/libarchive.so.5.1.debug		comp-sys-debug	debug,compatfile
+./usr/libdata/debug/usr/lib/libarchive.so.5.2.debug		comp-sys-debug	debug,compatfile
 ./usr/libdata/debug/usr/lib/libasan.so.5.0.debug		comp-sys-debug	debug,compatfile,cxx,gcccmds,gcc=10
 ./usr/libdata/debug/usr/lib/libasan.so.6.0.debug		comp-sys-debug	debug,compatfile,cxx,gcccmds,gcc=12
 ./usr/libdata/debug/usr/lib/libasn1.so.10.0.debug		comp-krb5-debug	debug,compatfile,kerberos

@@ -3,7 +3,8 @@
 NOMAN=
 
 .include <bsd.own.mk>
-LIBARCHIVE=${NETBSDSRCDIR}/external/bsd/libarchive/dist
+.include "${NETBSDSRCDIR}/external/bsd/libarchive/source.mk"
+LIBARCHIVE=${LIBARCHIVEDIR}
 
 TESTSDIR=	${TESTSBASE}/lib/libarchive
 
@@ -12,7 +13,7 @@ PROGS+=	h_libarchive
 TESTS_SH+=	t_libarchive
 
 CPPFLAGS+=-I${LIBARCHIVE}/test_utils -I${LIBARCHIVE}/libarchive -I.
-CPPFLAGS+=-I${LIBARCHIVE}/libarchive/test -I${LIBARCHIVE}/../include
+CPPFLAGS+=-I${LIBARCHIVE}/libarchive/test -I${NETBSDSRCDIR}/external/bsd/libarchive/include
 
 .PATH: ${LIBARCHIVE}/libarchive/test ${LIBARCHIVE}/test_utils
 
@@ -36,33 +37,25 @@ test_archive_api_feature.c \
 test_archive_clear_error.c \
 test_archive_cmdline.c \
 test_archive_digest.c \
-test_archive_getdate.c \
+test_archive_parse_date.c \
 test_archive_match_owner.c \
 test_archive_match_path.c \
 test_archive_match_time.c \
 test_archive_pathmatch.c \
 test_archive_read_add_passphrase.c \
 test_archive_read_close_twice.c \
-test_archive_read_close_twice_open_fd.c \
-test_archive_read_close_twice_open_filename.c \
 test_archive_read_multiple_data_objects.c \
 test_archive_read_next_header_empty.c \
 test_archive_read_next_header_raw.c \
 test_archive_read_open2.c \
-test_archive_read_set_filter_option.c \
-test_archive_read_set_format_option.c \
-test_archive_read_set_option.c \
 test_archive_read_set_options.c \
 test_archive_read_support.c \
 test_archive_set_error.c \
 test_archive_string.c \
 test_archive_string_conversion.c \
 test_archive_write_add_filter_by_name.c \
-test_archive_write_set_filter_option.c \
 test_archive_write_set_format_by_name.c \
 test_archive_write_set_format_filter_by_ext.c \
-test_archive_write_set_format_option.c \
-test_archive_write_set_option.c \
 test_archive_write_set_options.c \
 test_archive_write_set_passphrase.c \
 test_bad_fd.c \
@@ -147,15 +140,15 @@ test_read_format_gtar_sparse_skip_entry.c \
 test_read_format_iso_Z.c \
 test_read_format_iso_multi_extent.c \
 test_read_format_iso_xorriso.c \
-test_read_format_isojoliet_bz2.c \
+test_read_format_isojoliet_compress.c \
 test_read_format_isojoliet_long.c \
 test_read_format_isojoliet_rr.c \
 test_read_format_isojoliet_versioned.c \
-test_read_format_isorr_bz2.c \
+test_read_format_isorr_compress.c \
 test_read_format_isorr_ce.c \
-test_read_format_isorr_new_bz2.c \
+test_read_format_isorr_new_compress.c \
 test_read_format_isorr_rr_moved.c \
-test_read_format_isozisofs_bz2.c \
+test_read_format_isozisofs_compress.c \
 test_read_format_lha.c \
 test_read_format_lha_bugfix_0.c \
 test_read_format_lha_filename.c \

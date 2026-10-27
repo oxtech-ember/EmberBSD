@@ -721,17 +721,17 @@ for importation.  Run ./configure beforehand to generate "defines.h".
 Talk to mrg before importing any new version.
 
 Package:	libarchive
-Version:	3.7.7
-Current Vers:	3.8.1
+Version:	3.8.10
+Current Vers:	3.8.10
 Maintainer:	kientzle@freebsd.org, joerg@NetBSD.org
 Archive Site:	https://github.com/libarchive/libarchive/releases
 Home Page: 	http://www.libarchive.org
-Date:		2025-07-01
+Date:		2026-10-27
 Responsible:	joerg
 License:	BSD (2-clause)
-Location:	external/bsd/libarchive/dist
+Location:	Prepared from the common EmberBSD Ports export
 Notes:
-Distribution is stripped down to the relevant part.
+Native build integration remains in external/bsd/libarchive.
 
 Package:	libdevmapper
 Version:	1.02.40

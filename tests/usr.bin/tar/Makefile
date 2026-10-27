@@ -3,7 +3,8 @@
 NOMAN=
 
 .include <bsd.own.mk>
-LIBARCHIVE=${NETBSDSRCDIR}/external/bsd/libarchive/dist
+.include "${NETBSDSRCDIR}/external/bsd/libarchive/source.mk"
+LIBARCHIVE=${LIBARCHIVEDIR}
 
 TESTSDIR=	${TESTSBASE}/usr.bin/tar
 
@@ -12,7 +13,7 @@ PROGS+=	h_tar
 TESTS_SH+=	t_tar
 
 CPPFLAGS+=-I${LIBARCHIVE}/test_utils -I${LIBARCHIVE}/tar -I.
-CPPFLAGS+=-I${LIBARCHIVE}/tar/test -I${LIBARCHIVE}/../include
+CPPFLAGS+=-I${LIBARCHIVE}/tar/test -I${NETBSDSRCDIR}/external/bsd/libarchive/include
 CPPFLAGS+=-I${LIBARCHIVE}/libarchive
 
 .PATH: ${LIBARCHIVE}/tar/test ${LIBARCHIVE}/test_utils

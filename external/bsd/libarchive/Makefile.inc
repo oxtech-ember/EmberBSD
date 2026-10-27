@@ -6,7 +6,7 @@
 
 USE_FORT?=	yes # complex string handling
 
-LIBARCHIVEDIR=	${NETBSDSRCDIR}/external/bsd/libarchive/dist
+.include "${NETBSDSRCDIR}/external/bsd/libarchive/source.mk"
 
 CPPFLAGS+=	-I${NETBSDSRCDIR}/external/bsd/libarchive/include
 CPPFLAGS+=	-DPLATFORM_CONFIG_H=\"config_netbsd.h\" ${ZSTDCPPFLAGS}

@@ -29,6 +29,7 @@ SRCS=		archive_acl.c \
 		archive_blake2s_ref.c \
 		archive_check_magic.c \
 		archive_cmdline.c \
+		archive_crc32.c \
 		archive_cryptor.c \
 		archive_digest.c \
 		archive_disk_acl_freebsd.c \
@@ -39,11 +40,11 @@ SRCS=		archive_acl.c \
 		archive_entry_stat.c \
 		archive_entry_strmode.c \
 		archive_entry_xattr.c \
-		archive_getdate.c \
 		archive_hmac.c \
 		archive_match.c \
 		archive_options.c \
 		archive_pack_dev.c \
+		archive_parse_date.c \
 		archive_pathmatch.c \
 		archive_ppmd7.c \
 		archive_ppmd8.c \
@@ -66,6 +67,7 @@ SRCS=		archive_acl.c \
 		archive_read_set_options.c \
 		archive_read_support_filter_all.c \
 		archive_read_support_filter_bzip2.c \
+		archive_read_support_filter_by_code.c \
 		archive_read_support_filter_compress.c \
 		archive_read_support_filter_grzip.c \
 		archive_read_support_filter_gzip.c \
@@ -144,6 +146,8 @@ SRCS=		archive_acl.c \
 		archive_write_set_format_zip.c \
 		archive_write_set_options.c \
 		archive_write_set_passphrase.c \
+		archive_time.c \
+		archive_umask.c \
 		filter_fork_posix.c \
 		xxhash.c
 
@@ -475,8 +479,6 @@ COPTS.archive_read_support_format_rar5.c+=	${CC_WNO_MAYBE_UNINITIALIZED}
 COPTS.target.c+=				${CC_WNO_STRINGOP_TRUNCATION}
 COPTS.archive_write_set_format_iso9660.c+=	${CC_WNO_STRINGOP_TRUNCATION}
 COPTS.archive_hmac.c+=	-Wno-error=deprecated-declarations
-# EmberBSD: Clang -Wformat=2 suggests format(strftime) on xstrftime; keep vendored.
-COPTS.archive_write_set_format_warc.c+=	-Wno-error=missing-format-attribute
 
 FILES+=				libarchive.pc
 FILESOWN_libarchive.pc=		${BINOWN}
