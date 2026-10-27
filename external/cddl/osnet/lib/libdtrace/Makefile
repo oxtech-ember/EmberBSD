@@ -96,9 +96,7 @@ COPTS.dt_pid.c		+= ${CC_WNO_STRINGOP_TRUNCATION}
 COPTS.dt_consume.c	+= -Wno-parentheses
 COPTS.dt_consume.c	+= ${CC_WNO_MAYBE_UNINITIALIZED}
 COPTS.dt_options.c	+= -Wno-parentheses
-# EmberBSD: lmid in dt_pid_get_types is set for illumos LMID lookups but unused on NetBSD;
-# Clang -Werror treats unused-but-set as fatal (GCC already demoted above).
-COPTS.dt_pid.c		+= -Wno-error=unused-but-set-variable
+COPTS.dt_pid.c		+= ${${ACTIVE_CC} == "gcc" :? -Wno-unused-but-set-variable :}
 COPTS.dt_isadep.c	+= -Wno-unused-variable
 
 EXPSYM_SRCS+=	dtrace.common.expsym
