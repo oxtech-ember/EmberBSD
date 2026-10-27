@@ -2,6 +2,9 @@
 
 .include <bsd.own.mk>
 
+# EmberBSD: OpenLDAP ac/*.h K&R () conflict with libc under Clang -Werror.
+CWARNFLAGS.clang+=	-Wno-error=deprecated-non-prototype
+
 LDAP_VERSION=	2.5.6
 
 LDAP_SRCDIR=	${NETBSDSRCDIR}/external/bsd/openldap
