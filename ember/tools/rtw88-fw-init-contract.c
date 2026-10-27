@@ -16,6 +16,11 @@ int rtw88_fw_packet(struct rtw88_softc *sc,const uint8_t *packet,size_t len)
 	return rtw88_fw_init(sc);
 }
 #endif
+#ifndef RTW88_H2C_LEGACY
+static const struct rtw88_hci_ops packet_hci = {
+	.fw_packet = rtw88_pci_fw_packet
+};
+#endif
 static unsigned assertions;
 static unsigned bd_size,bd_buf_size,bd_psb_len,bd_dma;
 static uint8_t reference_desc[48];
@@ -138,6 +143,9 @@ setup(unsigned rfe,unsigned cut,const uint8_t wanted[2][32])
 {
 	memset(&f,0,sizeof(f));
 	f.sc.sc_ops=&ops;
+#ifndef RTW88_H2C_LEGACY
+	f.sc.sc_hci=&packet_hci;
+#endif
 	f.sc.sc_bus=&f;
 	f.sc.sc_fw_dma=(struct rtw88_dma){.vaddr=f.fw,.addr=0x300000,.size=80};
 	f.sc.sc_ring[7]=(struct rtw88_dma){.vaddr=f.ring,.addr=0x100000,.size=2048};

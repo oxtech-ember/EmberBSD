@@ -41,6 +41,8 @@ for altq in 0 1; do
         "$tools/rtw88-rfk-contract.c" \
         "$src/sys/dev/ic/rtw88_net_policy.c" \
         "$src/sys/dev/ic/rtw88.c" \
+        "$src/sys/dev/pci/rtw88_pci_hci.c" \
+        "$src/sys/dev/pci/rtw88_pci_packet.c" \
         "$src/sys/dev/ic/rtw8822c_rfk.c" \
         "$src/sys/dev/ic/rtw88_hw.c" \
         "$src/sys/dev/ic/rtw88_fw_init.c" \
@@ -77,11 +79,11 @@ for altq in 0 1; do
         units=rtw88-rfk-contract.c
         # These core units have no ALTQ policy. Analyze each actual body once.
         if [ "$altq" = 0 ]; then
-            units="$units rtw8822c_rfk.c rtw88_fw_init.c rtw88.c"
+            units="$units rtw8822c_rfk.c rtw88_fw_init.c rtw88.c rtw88_pci_hci.c rtw88_pci_packet.c"
         fi
         ${CC:-cc} -std=c11 -pthread -DRTW88_RFK_EXPERIMENT -D_DEFAULT_SOURCE -D_DARWIN_C_SOURCE -dM -E $flags - < /dev/null > "$work/predefines.h"
         for relative in $units; do
-            case $relative in *-contract.c) unit="$tools/$relative" ;; *) unit="$src/sys/dev/ic/$relative" ;; esac
+            case $relative in *-contract.c) unit="$tools/$relative" ;; rtw88_pci_hci.c|rtw88_pci_packet.c) unit="$src/sys/dev/pci/$relative" ;; *) unit="$src/sys/dev/ic/$relative" ;; esac
             name=${relative%.c}
             ${CC:-cc} -std=c11 -pthread -DRTW88_RFK_EXPERIMENT -D_DEFAULT_SOURCE -D_DARWIN_C_SOURCE -O0 -g -Wall -Werror -fanalyzer $flags \
                 -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \

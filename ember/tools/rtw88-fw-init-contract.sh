@@ -15,10 +15,14 @@ ln -s "$src/sys/dev/ic" "$work/include/dev/ic"
 for header in sys/param.h sys/systm.h; do
     printf '#include <errno.h>\n#include "rtw88-test-kernel.h"\n' > "$work/include/$header"
 done
+set -- "${RTW88_FW_INIT_SOURCE:-$src/sys/dev/ic/rtw88_fw_init.c}"
+if [ -z "${RTW88_FW_INIT_SOURCE:-}" ]; then
+    set -- "$@" "$src/sys/dev/pci/rtw88_pci_packet.c"
+fi
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror ${RTW88_TEST_CFLAGS:-} \
     -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \
     "$tools/rtw88-fw-init-contract.c" \
-    "${RTW88_FW_INIT_SOURCE:-$src/sys/dev/ic/rtw88_fw_init.c}" \
+    "$@" \
     "$src/sys/dev/ic/rtw88_hw.c" -o "$work/test"
 if [ -n "${TEST_RUNNER:-}" ]; then
     "$TEST_RUNNER" "$work/test" "$tools/rtw88-fw-init-contract.vectors" \

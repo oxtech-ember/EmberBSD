@@ -674,6 +674,7 @@ reset_bus(struct rtw88_softc *sc)
 	memset(&f, 0, sizeof(f));
 	memset(sc, 0, sizeof(*sc));
 	sc->sc_ops = &ops;
+	sc->sc_hci = &rtw88_pci_hci_ops;
 	sc->sc_bus = sc;
 	sc->sc_vendor = 0x10ec;
 	sc->sc_product = 0xc822;

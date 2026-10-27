@@ -50,6 +50,16 @@ The native source includes firmware validation, PCI DMA rings, RTL8822C
 register tables and bounded frame transfer. The core exposes copied-frame
 callbacks for a native station wrapper. It rejects CRC/ICV errors and stale
 DMA tags. The RX callback excludes the FCS and expires when it returns.
+
+The core selects an explicit `rtw88_hci_ops` transport before allocating resources.
+`rtw88_pci_hci.c` owns PCI rings, DMA publication, completion and interrupt handling.
+`rtw88_pci_packet.c` owns the packet-H2C DMA producer.
+Common code retains frame policy and chip register programming.
+An uncertain TX publication retains ownership, even when submission returns an error.
+Failed transport shutdown prevents resource release.
+Transports that can sleep defer interrupts through a required scheduling callback.
+This separation does not establish RTL8723DS network or physical-device support.
+
 The core gives each consumed RX slot a monotonic `sequence` in its current
 `generation`. The first slot is 1. Invalid tags, decode failures, C2H and
 short or rejected frames also consume a sequence. Pure wire decoding leaves

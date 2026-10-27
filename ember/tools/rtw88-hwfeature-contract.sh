@@ -58,7 +58,8 @@ if [ "${RTW88_HWFEATURE_ANALYZE:-0}" = 1 ]; then
     echo 'GCC analyzer causal NULL gate: rejected'
     # Consumer executes actual startup; analyze core and byte decoder too.
     for source in "$tools/rtw88-hwfeature-contract.c" \
-        "$src/sys/dev/ic/rtw88.c" "$src/sys/dev/ic/rtw88_hw.c"; do
+        "$src/sys/dev/ic/rtw88.c" "$src/sys/dev/pci/rtw88_pci_hci.c" \
+        "$src/sys/dev/pci/rtw88_pci_packet.c" "$src/sys/dev/ic/rtw88_hw.c"; do
         ${CC:-cc} -std=c11 -O0 -g -Wall -Wextra -Werror -fanalyzer \
             -I"$work" -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \
             -c "$source" -o "$work/$(basename "$source").o"
@@ -73,6 +74,8 @@ if [ "${RTW88_HWFEATURE_ANALYZE:-0}" = 1 ]; then
         --check-level=exhaustive --include="$work/predefines.h" \
         -I"$work" -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \
         "$tools/rtw88-hwfeature-contract.c" "$src/sys/dev/ic/rtw88.c" \
+        "$src/sys/dev/pci/rtw88_pci_hci.c" \
+        "$src/sys/dev/pci/rtw88_pci_packet.c" \
         "$src/sys/dev/ic/rtw88_hw.c"
     # The numeric diagnostic consumer is compiled into the actual PCI fixture.
     # Reuse its explicit kernel-service shim, then analyze that consumer too.

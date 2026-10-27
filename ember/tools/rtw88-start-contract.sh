@@ -29,6 +29,8 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror ${RTW88_TEST_CFLAGS:-} \
     -I"$work" -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \
     "$tools/rtw88-start-contract.c" \
     "$src/sys/dev/ic/rtw88.c" \
+    "$src/sys/dev/pci/rtw88_pci_hci.c" \
+    "$src/sys/dev/pci/rtw88_pci_packet.c" \
     "$src/sys/dev/ic/rtw88_net_policy.c" \
     "$src/sys/dev/ic/rtw88_hw.c" \
     "$src/sys/dev/ic/rtw88_fw_init.c" \
@@ -57,14 +59,32 @@ if [ "${RTW88_START_ANALYZE:-0}" = 1 ]; then
     ${CC:-cc} -std=c11 -O0 -g -Wall -Wextra -Werror -fanalyzer \
         -I"$work" -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \
         -c "$tools/rtw88-start-contract.c" -o "$work/analysis.o"
+    ${CC:-cc} -std=c11 -O0 -g -Wall -Wextra -Werror -fanalyzer \
+        -I"$work" -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \
+        -c "$src/sys/dev/pci/rtw88_pci_hci.c" -o "$work/pci-hci-analysis.o"
+    ${CC:-cc} -std=c11 -O0 -g -Wall -Wextra -Werror -fanalyzer \
+        -I"$work" -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \
+        -c "$src/sys/dev/pci/rtw88_pci_packet.c" -o "$work/pci-packet-analysis.o"
     ${CC:-cc} -std=c11 -dM -E - < /dev/null > "$work/predefines.h"
     cppcheck --enable=warning,performance,portability --error-exitcode=1 \
         --check-level=exhaustive --include="$work/predefines.h" \
         -I"$work" -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \
-        "$tools/rtw88-start-contract.c" "$src/sys/dev/ic/rtw88_net_policy.c"
+        "$tools/rtw88-start-contract.c" "$src/sys/dev/ic/rtw88_net_policy.c" \
+        "$src/sys/dev/pci/rtw88_pci_hci.c" \
+        "$src/sys/dev/pci/rtw88_pci_packet.c"
     ${CLANG:-clang} ${RTW88_CLANG_FLAGS:-} --analyze -std=c11 \
         -Wall -Wextra -Werror -Xanalyzer -analyzer-output=text \
         -Xanalyzer -analyzer-werror \
         -I"$work" -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \
         "$tools/rtw88-start-contract.c" -o "$work/state.plist"
+    ${CLANG:-clang} ${RTW88_CLANG_FLAGS:-} --analyze -std=c11 \
+        -Wall -Wextra -Werror -Xanalyzer -analyzer-output=text \
+        -Xanalyzer -analyzer-werror \
+        -I"$work" -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \
+        "$src/sys/dev/pci/rtw88_pci_hci.c" -o "$work/pci-hci.plist"
+    ${CLANG:-clang} ${RTW88_CLANG_FLAGS:-} --analyze -std=c11 \
+        -Wall -Wextra -Werror -Xanalyzer -analyzer-output=text \
+        -Xanalyzer -analyzer-werror \
+        -I"$work" -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \
+        "$src/sys/dev/pci/rtw88_pci_packet.c" -o "$work/pci-packet.plist"
 fi

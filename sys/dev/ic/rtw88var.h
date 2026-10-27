@@ -18,6 +18,8 @@
 #define RTW88_DFS64 1
 #endif
 #include <dev/ic/rtw88_hw.h>
+#include <dev/ic/rtw88_hci.h>
+#include <dev/ic/rtw88_packet.h>
 
 /* TX power regulatory table index used by every channel program. */
 #define RTW88_POWER_REGD 12
@@ -242,6 +244,9 @@ struct rtw88_mailbox {
 
 struct rtw88_softc {
 	const struct rtw88_bus_ops *sc_ops;
+	const struct rtw88_hci_ops *sc_hci;
+	void (*sc_defer_irq)(struct rtw88_softc *);
+	int sc_hci_error;	/* Incomplete transport shutdown blocks restart. */
 	void *sc_bus;
 	struct rtw88_dma sc_ring[RTW88_NRING];
 	struct rtw88_dma sc_fw_dma;
@@ -433,10 +438,6 @@ int rtw88_tx_raw(struct rtw88_softc *, unsigned, const void *, size_t);
 #define RTW88_FIXED_11A 1U
 #define RTW88_FIXED_11B 2U
 #define RTW88_FIXED_11G 3U
-struct rtw88_tx_fixed {
-	uint16_t rate500, peer_mask, channel;
-	uint8_t mode, associated, use_protection;
-};
 int rtw88_tx_fixed(struct rtw88_softc *, unsigned, const void *, size_t,
     const struct rtw88_tx_fixed *);
 
@@ -454,9 +455,6 @@ int rtw88_tx_auto(struct rtw88_softc *, unsigned, const void *, size_t,
  * window and the peer's maximum A-MPDU length. Every other frame, the
  * legacy and protection-limited paths, and non-VHT builds never aggregate.
  */
-struct rtw88_tx_agg {
-	uint8_t tid, density, count;
-};
 #ifdef RTW88_VHT80
 int rtw88_tx_ampdu(struct rtw88_softc *, unsigned, const void *, size_t,
     uint64_t, const struct rtw88_tx_agg *);

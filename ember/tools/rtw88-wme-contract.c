@@ -91,6 +91,7 @@ prepare(struct rtw88_softc *sc)
 	memset(mmio, 0, sizeof(mmio));
 	writes = syncs = reads = io_calls = fail_io = fail_after = 0;
 	sc->sc_ops = &ops;
+	sc->sc_hci = &wme_hci;
 	sc->sc_resources_ready = sc->sc_running = sc->sc_started = 1;
 	sc->sc_channel = 1;
 	sc->sc_phy.channel = (struct rtw88_channel_tuple){1, 1, 20};

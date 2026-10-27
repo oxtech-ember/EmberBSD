@@ -39,6 +39,8 @@ for vht in 0 1 2; do
         -I"$work" -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \
         "$tools/rtw88-ra-contract.c" \
         "$src/sys/dev/ic/rtw88.c" \
+        "$src/sys/dev/pci/rtw88_pci_hci.c" \
+        "$src/sys/dev/pci/rtw88_pci_packet.c" \
         "$src/sys/dev/ic/rtw88_net_policy.c" \
         "$src/sys/dev/ic/rtw88_hw.c" \
         "$src/sys/dev/ic/rtw88_fw_init.c" \
@@ -111,6 +113,12 @@ if [ "${RTW88_RA_ANALYZE:-0}" = 1 ]; then
         ${CC:-cc} -std=c11 -O0 -g -Wall -Wextra -Werror -fanalyzer $vflag \
             -I"$work" -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \
             -c "$src/sys/dev/ic/rtw88.c" -o "$work/core-analysis.o"
+        ${CC:-cc} -std=c11 -O0 -g -Wall -Wextra -Werror -fanalyzer $vflag \
+            -I"$work" -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \
+            -c "$src/sys/dev/pci/rtw88_pci_hci.c" -o "$work/pci-hci-analysis.o"
+        ${CC:-cc} -std=c11 -O0 -g -Wall -Wextra -Werror -fanalyzer $vflag \
+            -I"$work" -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \
+            -c "$src/sys/dev/pci/rtw88_pci_packet.c" -o "$work/pci-packet-analysis.o"
     done
     ${CC:-cc} -std=c11 -dM -E - < /dev/null > "$work/predefines.h"
     for vflag in -URTW88_VHT_EXPERIMENT -DRTW88_VHT_EXPERIMENT \
@@ -119,6 +127,8 @@ if [ "${RTW88_RA_ANALYZE:-0}" = 1 ]; then
             --check-level=exhaustive --include="$work/predefines.h" $vflag \
             -I"$work" -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \
             "$tools/rtw88-ra-contract.c" "$src/sys/dev/ic/rtw88.c" \
+            "$src/sys/dev/pci/rtw88_pci_hci.c" \
+            "$src/sys/dev/pci/rtw88_pci_packet.c" \
             "$src/sys/dev/ic/rtw88_net_policy.c"
         ${CLANG:-clang} ${RTW88_CLANG_FLAGS:-} --analyze -std=c11 $vflag \
             -Wall -Wextra -Werror -Xanalyzer -analyzer-output=text \
@@ -130,5 +140,15 @@ if [ "${RTW88_RA_ANALYZE:-0}" = 1 ]; then
             -Xanalyzer -analyzer-werror \
             -I"$work" -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \
             "$src/sys/dev/ic/rtw88.c" -o "$work/core.plist"
+        ${CLANG:-clang} ${RTW88_CLANG_FLAGS:-} --analyze -std=c11 $vflag \
+            -Wall -Wextra -Werror -Xanalyzer -analyzer-output=text \
+            -Xanalyzer -analyzer-werror \
+            -I"$work" -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \
+            "$src/sys/dev/pci/rtw88_pci_hci.c" -o "$work/pci-hci.plist"
+        ${CLANG:-clang} ${RTW88_CLANG_FLAGS:-} --analyze -std=c11 $vflag \
+            -Wall -Wextra -Werror -Xanalyzer -analyzer-output=text \
+            -Xanalyzer -analyzer-werror \
+            -I"$work" -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \
+            "$src/sys/dev/pci/rtw88_pci_packet.c" -o "$work/pci-packet.plist"
     done
 fi
