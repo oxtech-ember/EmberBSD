@@ -213,7 +213,9 @@ openpam_static_modules.o: openpam_static.o ${STATIC_MODULE_LIBS}
 	    openpam_static.o ${STATIC_MODULE_LIBS}
 
 CWARNFLAGS.clang+=	-Wno-error=tautological-pointer-compare
-COPTS.openpam_dynamic.c+=	${CC_WNO_CAST_FUNCTION_TYPE}
+# EmberBSD: Clang -Wextra -Werror treats dlfunc_t→pam_func_t as
+# -Wcast-function-type-mismatch; CC_WNO_CAST_FUNCTION_TYPE is empty for Clang.
+COPTS.openpam_dynamic.c+=	-Wno-error=cast-function-type-mismatch
 
 .include <bsd.lib.mk>
 .PATH.h: ${DIST}/include
