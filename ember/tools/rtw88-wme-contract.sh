@@ -21,11 +21,11 @@ if [ "${RTW88_WME_ANALYZE:-0}" = 1 ]; then
         --check-level=exhaustive --include="$work/predefines.h" \
         -I"$work" -I"$tools" "$tools/rtw88-wme-contract.c" \
         "$src/sys/dev/ic/rtw88_hw.c"
-    "${CSA:?select clang using SDK --required-role clang}" ${RTW88_CLANG_FLAGS:-} --analyze -std=c11 -Wall -Wextra -Werror \
+    "${CSA:-clang}" ${RTW88_CLANG_FLAGS:-} --analyze -std=c11 -Wall -Wextra -Werror \
         -Xanalyzer -analyzer-output=text -Xanalyzer -analyzer-werror \
         -I"$work" -I"$tools" "$tools/rtw88-wme-contract.c" \
         -o "$work/core.plist"
-    "${CSA:?select clang using SDK --required-role clang}" ${RTW88_CLANG_FLAGS:-} --analyze -std=c11 -Wall -Wextra -Werror \
+    "${CSA:-clang}" ${RTW88_CLANG_FLAGS:-} --analyze -std=c11 -Wall -Wextra -Werror \
         -Xanalyzer -analyzer-output=text -Xanalyzer -analyzer-werror \
         "$src/sys/dev/ic/rtw88_hw.c" -o "$work/hw.plist"
 fi

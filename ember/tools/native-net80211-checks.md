@@ -34,5 +34,9 @@ for example `--tool env -- RXBA_ANALYZE=1 sh
 ember/tools/net80211-rxba-contract.sh`. Do not silently substitute GCC when a
 Clang run fails. For checks that invoke Clang Static Analyzer and Cppcheck,
 add `--required-role clang --required-role cppcheck`; SDK supplies the `CSA`
-adapter and selected `cppcheck`. The GCC analyzer remains selected through
-`CC` and its `-fanalyzer` flags.
+adapter and selected `cppcheck`. A direct caller may set `CSA`; otherwise the
+scripts run `clang --analyze` from `PATH` and fail if it is absent. The analyzer
+is never skipped. `net80211-csa-contract.py` checks that each workflow running
+these scripts installs clang or sets `CSA`, and that the selected analyzer rejects
+a causal NULL dereference. The GCC analyzer remains selected through `CC` and
+its `-fanalyzer` flags.

@@ -77,7 +77,7 @@ with tempfile.TemporaryDirectory(prefix='manual-scan-') as directory:
                         '-U__NetBSD__', '-UIEEE80211_IOC_STA_MGMT',
                         '-UIEEE80211_IOC_SCAN_MAX_SSID',
                         '-I' + str(work), str(Path(__file__).with_suffix('.c'))], check=True)
-        subprocess.run([os.environ['CSA'], '--analyze', '-std=gnu17',
+        subprocess.run([os.environ.get('CSA') or 'clang', '--analyze', '-std=gnu17',
                         '-Wall', '-Wextra', '-Werror', '-Xanalyzer', '-analyzer-werror',
                         '-I' + str(work), str(Path(__file__).with_suffix('.c')),
                         '-o', str(work / 'analysis.plist')], check=True)

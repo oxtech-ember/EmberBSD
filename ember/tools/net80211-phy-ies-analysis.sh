@@ -27,7 +27,7 @@ cppcheck --enable=warning,performance,portability --error-exitcode=1 \
     "$src/sys/net80211/ieee80211_phy_ies.c" \
     "$src/ember/tools/net80211-phy-ies-parser-contract.c" \
     "$src/ember/tools/net80211-phy-ies-contract.c"
-"${CSA:?select clang using SDK --required-role clang}" --analyze -std=c11 -D_DEFAULT_SOURCE -D_DARWIN_C_SOURCE \
+"${CSA:-clang}" --analyze -std=c11 -D_DEFAULT_SOURCE -D_DARWIN_C_SOURCE \
     -Xanalyzer -analyzer-output=text -Xanalyzer -analyzer-werror \
     -I"$fixture_dir" -I"$src/sys/net80211" \
     "$src/sys/net80211/ieee80211_phy_ies.c" \

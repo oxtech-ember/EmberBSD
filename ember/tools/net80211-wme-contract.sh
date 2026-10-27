@@ -24,7 +24,7 @@ if [ "${WME_ANALYZE:-0}" = 1 ]; then
     cppcheck --enable=warning,performance,portability --error-exitcode=1 \
         --check-level=exhaustive --include="$work/predefines.h" \
         -I"$work" "$tools/net80211-wme-contract.c"
-    "${CSA:?select clang using SDK --required-role clang}" ${WME_CLANG_FLAGS:-} --analyze -std=c11 \
+    "${CSA:-clang}" ${WME_CLANG_FLAGS:-} --analyze -std=c11 \
         -D_DEFAULT_SOURCE -D_DARWIN_C_SOURCE -Wall -Werror \
         -Xanalyzer -analyzer-output=text -Xanalyzer -analyzer-werror \
         -I"$work" "$tools/net80211-wme-contract.c" -o "$work/wme.plist"

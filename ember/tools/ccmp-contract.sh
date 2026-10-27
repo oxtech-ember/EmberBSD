@@ -23,7 +23,7 @@ if [ "${CCMP_ANALYZE:-0}" = 1 ]; then
     cppcheck --enable=warning,performance,portability --error-exitcode=1 \
         --check-level=exhaustive --include="$work/predefines.h" \
         -I"$work" -I"$tools" "$tools/ccmp-contract.c"
-    "${CSA:?select clang using SDK --required-role clang}" --analyze -std=c11 -D_DEFAULT_SOURCE -D_DARWIN_C_SOURCE -Wall -Werror -Xanalyzer -analyzer-output=text \
+    "${CSA:-clang}" --analyze -std=c11 -D_DEFAULT_SOURCE -D_DARWIN_C_SOURCE -Wall -Werror -Xanalyzer -analyzer-output=text \
         -Xanalyzer -analyzer-werror -I"$work" -I"$tools" \
         "$tools/ccmp-contract.c" -o "$work/analysis.plist"
 fi

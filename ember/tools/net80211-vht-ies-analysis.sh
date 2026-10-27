@@ -56,7 +56,7 @@ for spec in "codec:$src/sys/net80211/ieee80211_vht_ies.c:$codec" \
     fi
     ${CPPCHECK:-cppcheck} "$@" --enable=warning,performance,portability \
         --error-exitcode=1 --language=c --check-level=exhaustive "$work/$name.i"
-    "${CSA:?select clang using SDK --required-role clang}" --analyze -std=c11 -include stdbool.h -include stdint.h \
+    "${CSA:-clang}" --analyze -std=c11 -include stdbool.h -include stdint.h \
         -Xanalyzer -analyzer-output=text -Xanalyzer -analyzer-werror \
         -I"$includes" -I"$src/sys/dev/sdmmc" "$source" \
         -o "$work/$name.plist"

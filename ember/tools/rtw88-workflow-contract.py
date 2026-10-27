@@ -121,3 +121,17 @@ if missing or extra or repeated:
                      % (missing, extra, repeated))
 print(f"rtw88 contract shards: {len(shards)} shards cover "
       f"{len(expected)} runners once")
+
+# Clang Static Analyzer runners default CSA to clang; the workflow must
+# install clang or set CSA so the analyzer always runs.
+csa_required = [n for n in expected if "${CSA:?" in (root / n).read_text()]
+if csa_required:
+    raise SystemExit("rtw88 runners require CSA without a clang default: "
+                     + ", ".join(csa_required))
+csa_users = [n for n in expected if "${CSA:-clang}" in (root / n).read_text()]
+if csa_users and not (
+        re.search(r"^\s*apt-get install\b.*\sclang(?:\s|$)", text, re.M) or
+        re.search(r"^\s+CSA:\s*\S", text, re.M)):
+    raise SystemExit("rtw88 workflow runs CSA without clang or CSA: "
+                     + ", ".join(csa_users))
+print(f"rtw88 CSA: {len(csa_users)} analyzer runners have clang")

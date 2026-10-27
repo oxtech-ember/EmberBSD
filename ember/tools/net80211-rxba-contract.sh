@@ -34,7 +34,7 @@ if [ "${RXBA_ANALYZE:-0}" = 1 ]; then
         cppcheck --enable=warning,performance,portability --error-exitcode=1 \
             --check-level=exhaustive -UALIGNED_POINTER --include="$work/predefines.h" \
             -I"$work" -I"$tools" -I"$src/sys/dev/ic" "$tools/$consumer"
-        "${CSA:?select clang using SDK --required-role clang}" ${RTW88_CLANG_FLAGS:-} --analyze -std=c11 -D_DEFAULT_SOURCE -D_DARWIN_C_SOURCE \
+        "${CSA:-clang}" ${RTW88_CLANG_FLAGS:-} --analyze -std=c11 -D_DEFAULT_SOURCE -D_DARWIN_C_SOURCE \
             -Wall -Werror -Xanalyzer -analyzer-output=text -Xanalyzer -analyzer-werror \
             -I"$work" -I"$tools" -I"$src/sys/dev/ic" "$tools/$consumer" -o "$work/analysis.plist"
     done
