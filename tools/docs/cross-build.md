@@ -143,7 +143,9 @@ routing as other OS builds. Build the required OS host tools once with
 `tools`, or reuse compatible tools at the selected `-T` path.
 
 `bootstrap-headers` installs only the headers selected by `include`, `sys`,
-`lib/libpthread`, and `lib/libedit`, including their native header subdirectories.
+`lib/libpthread`, `lib/libedit`, and `lib/libossaudio`, including their native
+header subdirectories. The libossaudio header completes the `sys/soundcard.h`
+symlink installed by `sys`; no audio library is built.
 This supplies machine/system headers, C interfaces, pthread interfaces and
 the prepared common libedit histedit/readline interfaces. It does not install
 all base-library headers. It never enters `lib/libc` or the compiler runtime
@@ -196,7 +198,8 @@ The complete SDK runtime checks remain separate and unchanged.
 
 `tools/native-tools/test-bootstrap-base.py --make /selected/bmake` checks
 the real make flow, ordered CRT dispatch, early source/destination refusals,
-failure propagation, the amd64 header graph and CRT command expansion.
+failure propagation, the amd64 header graph and its symlink targets, and CRT
+command expansion.
 `tools/native-tools/test.py --shell /selected/sh` checks `build.sh` dispatch.
 These tests use synthetic stage commands and do not compile or install a base.
 Actual headers/CRT compilation with the native Ports prefix remains a separate

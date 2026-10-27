@@ -490,7 +490,7 @@ bootstrap-headers: .PHONY .MAKE
 	${MAKEDIRTARGET} etc/mtree obj
 .endif
 	${MAKEDIRTARGET} . do-distrib-dirs
-.for dir in include sys lib/libpthread lib/libedit
+.for dir in include sys lib/libpthread lib/libedit lib/libossaudio
 .if ${MKOBJDIRS} != "no"
 	${MAKEDIRTARGET} ${dir} obj
 .endif

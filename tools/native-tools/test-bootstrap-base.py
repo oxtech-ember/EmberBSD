@@ -11,6 +11,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import posixpath
 import shlex
 import subprocess
 import sys
@@ -19,7 +20,7 @@ import unittest
 
 SOURCE = Path(__file__).resolve().parents[2]
 MAKE = None
-HEADER_DIRS = ('include', 'sys', 'lib/libpthread', 'lib/libedit')
+HEADER_DIRS = ('include', 'sys', 'lib/libpthread', 'lib/libedit', 'lib/libossaudio')
 
 
 class BootstrapBaseTests(unittest.TestCase):
@@ -106,20 +107,51 @@ class BootstrapBaseTests(unittest.TestCase):
         self.assertFalse(any(row[0] == 'lib/csu' for row in self.calls()))
 
     def test_actual_header_graph_has_no_compiler_runtime(self):
-        pending = [SOURCE / directory for directory in HEADER_DIRS]
+        result = self.stage('bootstrap-headers')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        pending = [SOURCE / row[0] for row in self.calls() if row[1:] == ['includes']]
         visited = set()
         headers = set()
+        installed = set()
+        links = {}
+        destination = str(self.work / 'dest')
         while pending:
             directory = pending.pop().resolve()
             if directory in visited:
                 continue
             visited.add(directory)
             result = self.make(directory, '-V', '${INCS}', '-V', '${DEPINCS}',
-                               '-V', '${__REALSUBDIR}', 'includes')
+                               '-V', '${__REALSUBDIR}',
+                               '-V', '${.ALLTARGETS:M${DESTDIR}/usr/include/*}',
+                               '-V', '${INCSYMLINKS}', 'includes')
             self.assertEqual(result.returncode, 0, str(directory) + result.stderr)
-            incs, generated, children = result.stdout.splitlines()
+            incs, generated, children, targets, symlinks = result.stdout.splitlines()
             headers.update((incs + ' ' + generated).split())
+            installed.update(path.removeprefix(destination) for path in targets.split())
+            pairs = symlinks.split()
+            self.assertEqual(len(pairs) % 2, 0)
+            links.update((name, target) for target, name in zip(pairs[::2], pairs[1::2]))
             pending.extend(directory / child for child in children.split() if child != '.WAIT')
+        # Resolve native header links against the actual selected install graph.
+        # In particular sys/soundcard.h must have its libossaudio-owned target.
+        self.assertTrue(links)
+        for name in links:
+            target, seen = name, set()
+            while True:
+                parts = target.split('/')[1:]
+                prefixes = [('/' + '/'.join(parts[:i]), parts[i:])
+                            for i in range(1, len(parts) + 1)]
+                hop = next(((prefix, rest) for prefix, rest in prefixes
+                            if prefix in links), None)
+                if hop is None:
+                    break
+                self.assertNotIn(target, seen, 'header symlink cycle: ' + name)
+                seen.add(target)
+                prefix, rest = hop
+                target = posixpath.normpath(posixpath.join(
+                    posixpath.dirname(prefix), links[prefix], *rest))
+            self.assertTrue(target in installed,
+                            'missing header link target: ' + name + ' -> ' + target)
         self.assertTrue({'stdio.h', 'types.h', 'pthread.h', 'histedit.h', 'readline.h'} <= headers)
         self.assertFalse({'unwind.h', 'unwind-arm.h', '__libunwind_config.h'} & headers)
         self.assertFalse(any('compiler_rt' in str(path) or 'libunwind' in str(path)
