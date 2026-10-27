@@ -568,6 +568,7 @@ void	config_defer(device_t, void (*)(device_t));
 void	config_deferred(device_t);
 void	config_interrupts(device_t, void (*)(device_t));
 void	config_mountroot(device_t, void (*)(device_t));
+int	config_mountroot_cancel(device_t);
 void	config_pending_incr(device_t);
 void	config_pending_decr(device_t);
 void	config_create_interruptthreads(void);

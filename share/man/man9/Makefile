@@ -158,6 +158,7 @@ MLINKS+=autoconf.9 config_search.9 \
 	autoconf.9 config_defer.9 \
 	autoconf.9 config_interrupts.9 \
 	autoconf.9 config_mountroot.9 \
+	autoconf.9 config_mountroot_cancel.9 \
 	autoconf.9 config_pending_incr.9 \
 	autoconf.9 config_pending_decr.9 \
 	autoconf.9 config_probe.9 \

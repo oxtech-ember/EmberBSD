@@ -43,6 +43,7 @@
 .Nm config_defer ,
 .Nm config_interrupts ,
 .Nm config_mountroot ,
+.Nm config_mountroot_cancel ,
 .Nm config_pending_incr ,
 .Nm config_pending_decr ,
 .Nm config_finalize_register
@@ -77,6 +78,8 @@
 .Fn config_interrupts "device_t dev" "void (*func)(device_t)"
 .Ft void
 .Fn config_mountroot "device_t dev" "void (*func)(device_t)"
+.Ft int
+.Fn config_mountroot_cancel "device_t dev"
 .Ft void
 .Fn config_pending_incr
 .Ft void
@@ -457,6 +460,25 @@ is called with the argument
 .Fa dev .
 This is used for devices that need to load firmware image from
 a mounted file system.
+This registration does not acquire a
+.Va config_pending
+reference.
+.\"
+.\"
+.It Fn config_mountroot_cancel "dev"
+Remove queued mountroot callbacks for
+.Fa dev
+and wait for its running callbacks to finish.
+This includes callbacks invoked inline after the root file system is mounted.
+Callbacks for other devices can continue to run.
+The caller must prevent further registrations and must not hold locks needed
+by the callbacks.
+Use this barrier before releasing callback state during detach.
+The function returns 0 on success.
+It returns
+.Er EDEADLK
+without changing registrations when called from a running callback for
+.Fa dev .
 .\"
 .\"
 .It Fn config_pending_incr

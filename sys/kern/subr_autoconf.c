@@ -206,6 +206,7 @@ struct deferred_config {
 	TAILQ_ENTRY(deferred_config) dc_queue;
 	device_t dc_dev;
 	void (*dc_func)(device_t);
+	lwp_t *dc_lwp;	/* Set while a mountroot callback is running. */
 };
 
 TAILQ_HEAD(deferred_config_head, deferred_config);
@@ -217,6 +218,8 @@ static struct deferred_config_head interrupt_config_queue =
 static int interrupt_config_threads = 8;
 static struct deferred_config_head mountroot_config_queue =
 	TAILQ_HEAD_INITIALIZER(mountroot_config_queue);
+static struct deferred_config_head mountroot_config_running =
+	TAILQ_HEAD_INITIALIZER(mountroot_config_running);
 static int mountroot_config_threads = 2;
 static lwp_t **mountroot_config_lwpids;
 static size_t mountroot_config_lwpids_size;
@@ -513,6 +516,17 @@ config_create_interruptthreads(void)
 }
 
 static void
+config_mountroot_done(struct deferred_config *dc)
+{
+
+	mutex_enter(&config_misc_lock);
+	TAILQ_REMOVE(&mountroot_config_running, dc, dc_queue);
+	cv_broadcast(&config_misc_cv);
+	mutex_exit(&config_misc_lock);
+	kmem_free(dc, sizeof(*dc));
+}
+
+static void
 config_mountroot_thread(void *cookie)
 {
 	struct deferred_config *dc;
@@ -520,10 +534,12 @@ config_mountroot_thread(void *cookie)
 	mutex_enter(&config_misc_lock);
 	while ((dc = TAILQ_FIRST(&mountroot_config_queue)) != NULL) {
 		TAILQ_REMOVE(&mountroot_config_queue, dc, dc_queue);
+		dc->dc_lwp = curlwp;
+		TAILQ_INSERT_TAIL(&mountroot_config_running, dc, dc_queue);
 		mutex_exit(&config_misc_lock);
 
 		(*dc->dc_func)(dc->dc_dev);
-		kmem_free(dc, sizeof(*dc));
+		config_mountroot_done(dc);
 
 		mutex_enter(&config_misc_lock);
 	}
@@ -537,8 +553,9 @@ config_create_mountrootthreads(void)
 {
 	int i;
 
-	if (!root_is_mounted)
-		root_is_mounted = true;
+	mutex_enter(&config_misc_lock);
+	root_is_mounted = true;
+	mutex_exit(&config_misc_lock);
 
 	mountroot_config_lwpids_size = sizeof(mountroot_config_lwpids) *
 				       mountroot_config_threads;
@@ -2549,17 +2566,24 @@ config_mountroot(device_t dev, void (*func)(device_t))
 {
 	struct deferred_config *dc;
 
+	dc = kmem_alloc(sizeof(*dc), KM_SLEEP);
+	dc->dc_dev = dev;
+	dc->dc_func = func;
+
+	mutex_enter(&config_misc_lock);
 	/*
-	 * If root file system is mounted, callback now.
+	 * Decide under the queue lock, including after the allocation slept.
+	 * Track inline callbacks too, so cancellation can drain them.
 	 */
 	if (root_is_mounted) {
+		dc->dc_lwp = curlwp;
+		TAILQ_INSERT_TAIL(&mountroot_config_running, dc, dc_queue);
+		mutex_exit(&config_misc_lock);
 		(*func)(dev);
+		config_mountroot_done(dc);
 		return;
 	}
 
-	dc = kmem_alloc(sizeof(*dc), KM_SLEEP);
-
-	mutex_enter(&config_misc_lock);
 #ifdef DIAGNOSTIC
 	struct deferred_config *odc;
 	TAILQ_FOREACH(odc, &mountroot_config_queue, dc_queue) {
@@ -2568,10 +2592,53 @@ config_mountroot(device_t dev, void (*func)(device_t))
 	}
 #endif
 
-	dc->dc_dev = dev;
-	dc->dc_func = func;
 	TAILQ_INSERT_TAIL(&mountroot_config_queue, dc, dc_queue);
 	mutex_exit(&config_misc_lock);
+}
+
+/*
+ * Stop new registrations before calling. Do not hold a lock the callback
+ * needs: this waits for every active callback for dev, including inline ones.
+ */
+int
+config_mountroot_cancel(device_t dev)
+{
+	struct deferred_config_head retired = TAILQ_HEAD_INITIALIZER(retired);
+	struct deferred_config *dc, *next;
+	bool running;
+
+	mutex_enter(&config_misc_lock);
+	TAILQ_FOREACH(dc, &mountroot_config_running, dc_queue) {
+		if (dc->dc_dev == dev && dc->dc_lwp == curlwp) {
+			mutex_exit(&config_misc_lock);
+			return EDEADLK;
+		}
+	}
+	for (dc = TAILQ_FIRST(&mountroot_config_queue); dc != NULL; dc = next) {
+		next = TAILQ_NEXT(dc, dc_queue);
+		if (dc->dc_dev == dev) {
+			TAILQ_REMOVE(&mountroot_config_queue, dc, dc_queue);
+			TAILQ_INSERT_TAIL(&retired, dc, dc_queue);
+		}
+	}
+	do {
+		running = false;
+		TAILQ_FOREACH(dc, &mountroot_config_running, dc_queue) {
+			if (dc->dc_dev == dev) {
+				running = true;
+				break;
+			}
+		}
+		if (running)
+			cv_wait(&config_misc_cv, &config_misc_lock);
+	} while (running);
+	mutex_exit(&config_misc_lock);
+	/* kmem_free may block; do not hold the global autoconfiguration lock. */
+	while ((dc = TAILQ_FIRST(&retired)) != NULL) {
+		TAILQ_REMOVE(&retired, dc, dc_queue);
+		kmem_free(dc, sizeof(*dc));
+	}
+	return 0;
 }
 
 /*
@@ -2589,11 +2656,20 @@ config_process_deferred(struct deferred_config_head *queue, device_t parent)
 	while (dc) {
 		if (parent == NULL || dc->dc_dev->dv_parent == parent) {
 			TAILQ_REMOVE(queue, dc, dc_queue);
+			if (queue == &mountroot_config_queue) {
+				dc->dc_lwp = curlwp;
+				TAILQ_INSERT_TAIL(&mountroot_config_running, dc, dc_queue);
+			}
 			mutex_exit(&config_misc_lock);
 
 			(*dc->dc_func)(dc->dc_dev);
-			config_pending_decr(dc->dc_dev);
-			kmem_free(dc, sizeof(*dc));
+			/* Mountroot registration does not acquire a pending reference. */
+			if (queue != &mountroot_config_queue) {
+				config_pending_decr(dc->dc_dev);
+				kmem_free(dc, sizeof(*dc));
+			} else {
+				config_mountroot_done(dc);
+			}
 
 			mutex_enter(&config_misc_lock);
 			/* Restart, queue might have changed */
