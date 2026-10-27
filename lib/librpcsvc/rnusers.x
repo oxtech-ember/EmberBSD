@@ -109,9 +109,7 @@
 
 #ifdef	RPC_XDR
 %bool_t
-%xdr_utmp(xdrs, objp)
-%	XDR *xdrs;
-%	struct ru_utmp *objp;
+%xdr_utmp(XDR *xdrs, struct ru_utmp *objp)
 %{
 %	char *ptr;
 %	u_int size;
@@ -140,9 +138,7 @@
 %}
 %
 %bool_t
-%xdr_utmpptr(xdrs, objpp)
-%	XDR *xdrs;
-%	struct ru_utmp **objpp;
+%xdr_utmpptr(XDR *xdrs, struct ru_utmp **objpp)
 %{
 %
 %	if (!xdr_reference(xdrs, (char **) objpp, (u_int)sizeof(struct ru_utmp),
@@ -152,9 +148,7 @@
 %}
 %
 %bool_t
-%xdr_utmparr(xdrs, objp)
-%	XDR *xdrs;
-%	struct utmparr *objp;
+%xdr_utmparr(XDR *xdrs, struct utmparr *objp)
 %{
 %
 %	if (!xdr_array(xdrs, (char **)(void *)&objp->uta_arr,
@@ -165,9 +159,7 @@
 %}
 %
 %bool_t
-%xdr_utmpidle(xdrs, objp)
-%	XDR *xdrs;
-%	struct utmpidle *objp;
+%xdr_utmpidle(XDR *xdrs, struct utmpidle *objp)
 %{
 %
 %	if (!xdr_utmp(xdrs, &objp->ui_utmp))
@@ -178,9 +170,7 @@
 %}
 %
 %bool_t
-%xdr_utmpidleptr(xdrs, objpp)
-%	XDR *xdrs;
-%	struct utmpidle **objpp;
+%xdr_utmpidleptr(XDR *xdrs, struct utmpidle **objpp)
 %{
 %
 %	if (!xdr_reference(xdrs, (char **) objpp,
@@ -191,9 +181,7 @@
 %}
 %
 %bool_t
-%xdr_utmpidlearr(xdrs, objp)
-%	XDR *xdrs;
-%	struct utmpidlearr *objp;
+%xdr_utmpidlearr(XDR *xdrs, struct utmpidlearr *objp)
 %{
 %
 %	if (!xdr_array(xdrs, (char **)(void *)&objp->uia_arr,
