@@ -1,7 +1,7 @@
 .\"	$NetBSD: rpcgen.1,v 1.26 2024/06/17 01:28:31 uwe Exp $
 .\" from: @(#)rpcgen.new.1	1.1 90/11/09 TIRPC 1.0; from 40.10 of 10/10/89
 .\" Copyright (c) 1988,1990 Sun Microsystems, Inc. - All Rights Reserved.
-.Dd October 20, 2026
+.Dd October 27, 2026
 .Dt RPCGEN 1
 .Os
 .Sh NAME
@@ -15,6 +15,7 @@
 .Op Fl D Ar name Ns Op Li = Ns Ar value
 .Op Fl i Ar size
 .Op Fl K Ar secs
+.Op Fl X Ar argument
 .Op Fl Y Ar pathname
 .Ar infile
 .Nm
@@ -424,6 +425,15 @@ Compile into
 dispatch table.
 .It Fl v
 Display the version number.
+.It Fl X Ar argument
+Pass one argument directly to the C preprocessor.
+This option may be repeated and does not perform shell interpretation.
+For example, a compiler driver selected through
+.Ev RPCGEN_CPP
+may require
+.Fl X Li --driver-mode=cpp
+and
+.Fl X Li --target=x86_64--netbsd .
 .It Fl Y Ar pathname
 Specify the directory where
 .Nm
@@ -450,6 +460,9 @@ If the
 environment variable is set, its value is used as the pathname of the
 C preprocessor to be run on the input file.
 The value must name one executable, without command arguments.
+Use
+.Fl X
+to supply separate arguments.
 .Sh NOTES
 The
 .Tn RPC

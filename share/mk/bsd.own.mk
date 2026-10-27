@@ -429,7 +429,7 @@ SIZE=		${EXTERNAL_TOOLCHAIN}/bin/llvm-size
 STRINGS=	${EXTERNAL_TOOLCHAIN}/bin/llvm-strings
 STRIP=		${EXTERNAL_TOOLCHAIN}/bin/llvm-strip
 TOOL_CC.clang=	${EXTERNAL_TOOLCHAIN}/bin/clang --target=${MACHINE_GNU_PLATFORM}
-TOOL_CPP.clang=	${EXTERNAL_TOOLCHAIN}/bin/clang -E --target=${MACHINE_GNU_PLATFORM}
+TOOL_CPP.clang=	${EXTERNAL_TOOLCHAIN}/bin/clang --driver-mode=cpp --target=${MACHINE_GNU_PLATFORM}
 TOOL_CXX.clang=	${EXTERNAL_TOOLCHAIN}/bin/clang++ --target=${MACHINE_GNU_PLATFORM}
 TOOL_OBJC.clang=	${TOOL_CC.clang}
 LDFLAGS+=	--ld-path=${EXTERNAL_TOOLCHAIN}/bin/ld.lld
@@ -631,7 +631,9 @@ TOOL_ROFF_DVI=		${TOOL_GROFF} -Tdvi ${ROFF_PAGESIZE}
 TOOL_ROFF_HTML=		${TOOL_GROFF} -Tlatin1 -mdoc2html
 TOOL_ROFF_PS=		${TOOL_GROFF} -Tps ${ROFF_PAGESIZE}
 TOOL_ROFF_RAW=		${TOOL_GROFF} -Z
-TOOL_RPCGEN=		RPCGEN_CPP=${CPP:Q} ${TOOLDIR}/bin/${_TOOL_PREFIX}rpcgen
+_RPCGEN_CPP_ARGS=	${ ${CPP:[#]} > 1 :?${CPP:[2..-1]}:}
+TOOL_RPCGEN=		RPCGEN_CPP=${CPP:[1]:Q} ${TOOLDIR}/bin/${_TOOL_PREFIX}rpcgen \
+			${_RPCGEN_CPP_ARGS:@arg@-X ${arg:Q}@}
 TOOL_SED=		${TOOLDIR}/bin/${_TOOL_PREFIX}sed
 TOOL_SLC=		${TOOLDIR}/bin/${_TOOL_PREFIX}slc
 TOOL_SOELIM=		${TOOLDIR}/bin/${_TOOL_PREFIX}soelim

@@ -66,6 +66,8 @@ def main():
     parser.add_argument("--rpcgen", type=Path, required=True)
     parser.add_argument("--cpp", type=Path, required=True,
                         help="A single executable, with no command arguments")
+    parser.add_argument("--cpp-argument", action="append", default=[],
+                        help="One preprocessor argument, forwarded through rpcgen -X; repeat as needed")
     parser.add_argument("--work", type=Path, required=True)
     parser.add_argument("--runner", default="",
                         help="Optional command prefix, such as valgrind")
@@ -90,6 +92,8 @@ def main():
                 f"#!{sys.executable}\nCPP = {str(cpp)!r}\n" + FAKE_CPP)
             preprocessor.chmod(0o755)
         command = shlex.split(args.runner) + [str(rpcgen)]
+        for argument in args.cpp_argument:
+            command += ["-X", argument]
         command += (["proto.x"] if name.startswith("multiple-")
                     else ["-h", "proto.x", "-o", "proto.h"])
         environment = dict(os.environ, RPCGEN_CPP=str(preprocessor))

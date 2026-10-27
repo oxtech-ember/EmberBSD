@@ -48,7 +48,7 @@ class CompilerFamilyTests(unittest.TestCase):
                  "ACTIVE_CC", "ACTIVE_CXX", "LDFLAGS")
         value = self.values(names)
         self.assertEqual(value["CC"], "/sdk/bin/clang --target=aarch64--netbsd")
-        self.assertEqual(value["CPP"], "/sdk/bin/clang -E --target=aarch64--netbsd")
+        self.assertEqual(value["CPP"], "/sdk/bin/clang --driver-mode=cpp --target=aarch64--netbsd")
         self.assertEqual(value["CXX"], "/sdk/bin/clang++ --target=aarch64--netbsd")
         self.assertEqual(value["AS"], "/sdk/bin/clang --target=aarch64--netbsd -c -x assembler")
         self.assertEqual(value["LD"], "/sdk/bin/ld.lld")

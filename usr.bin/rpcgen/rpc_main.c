@@ -929,7 +929,7 @@ static void
 addarg(const char *cp)
 {
 	if (argcount >= ARGLISTLEN) {
-		errx(EXIT_FAILURE, "Internal error: too many defines");
+		errx(EXIT_FAILURE, "Internal error: too many preprocessor arguments");
 		/* NOTREACHED */
 	}
 	arglist[argcount++] = cp;
@@ -1116,6 +1116,12 @@ parseargs(int argc, char *argv[], struct commandline *cmd)
 					}
 					(void) addarg(argv[i]);
 					goto nextarg;
+				case 'X':
+					if (++i == argc)
+						return (0);
+					addarg(argv[i]);
+					goto nextarg;
+
 				case 'Y':
 					if (++i == argc) {
 						return (0);
@@ -1228,6 +1234,7 @@ options_usage(void)
 	f_print(stderr, "-T\t\tgenerate code to support RPC dispatch tables\n");
 	f_print(stderr, "-t\t\tgenerate RPC dispatch table\n");
 	f_print(stderr, "-v\t\tdisplay version number\n");
+	f_print(stderr, "-X argument\tpass one argument to the C preprocessor\n");
 	f_print(stderr, "-Y path\t\tdirectory name to find C preprocessor (cpp)\n");
 
 	exit(1);
