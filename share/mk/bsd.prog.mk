@@ -283,7 +283,10 @@ CPPFLAGS+=	-DRESCUEDIR=\"${RESCUEDIR}\"
 .endif
 
 _PROGLDOPTS=
-.if ${SHLINKDIR} != "/usr/libexec"	# XXX: change or remove if ld.so moves
+# A static program has no interpreter.  LLD writes PT_INTERP for an explicit
+# -dynamic-linker even with -static; GNU ld ignores the option there.
+# XXX: change or remove if ld.so moves
+.if ${SHLINKDIR} != "/usr/libexec" && empty(LDSTATIC:M-static)
 _PROGLDOPTS+=	-Wl,-dynamic-linker=${_SHLINKER}
 .endif
 .if ${SHLIBDIR} != "/usr/lib"
