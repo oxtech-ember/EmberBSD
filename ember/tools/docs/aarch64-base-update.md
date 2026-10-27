@@ -11,8 +11,12 @@ This is an update procedure, not a general installation image.
 Use a clean export of a recorded EmberBSD commit. Keep build files outside
 the installed system directories and record the source archive's SHA256.
 The kernel, modules and base must come from the same source revision.
-Use the common external GCC 16.2.0 for all target compilation, including
-the kernel and modules. Do not select the in-tree compiler or set `HAVE_GCC=16`.
+Clang/LLVM from Ports is the default compiler family. Build a Clang base with
+the [SDK sysroot builder](https://github.com/oxtech-ember/EmberBSD-SDK/blob/main/docs/sysroot.md)
+or the [SDK OS release builder](https://github.com/oxtech-ember/EmberBSD-SDK/blob/main/docs/os-release.md).
+The commands below are the explicit GCC alternative for a platform profile that requires GCC.
+On that route, use the common external GCC 16.2.0 for all target compilation,
+including the kernel and modules. Do not select the in-tree compiler or set `HAVE_GCC=16`.
 
 Prepare the [Ports cross compiler](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/development-toolchain/cross/README.md)
 and [runtime bootstrap](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/development-toolchain/bootstrap/README.md)
@@ -190,7 +194,7 @@ temporary build storage.
 
 ## Validation boundary
 
-These GCC16 instructions describe source configuration and prerequisites.
+These GCC alternative instructions describe source configuration and prerequisites.
 They do not establish a completed reduced base, full image or physical update.
 The runtime/set composition gate above remains separate from compiler and kernel acceptance.
 
