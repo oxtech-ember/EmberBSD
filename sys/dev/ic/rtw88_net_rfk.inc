@@ -113,9 +113,12 @@ rtw88_net_rfk_rx_deliver(struct rtw88_net *net)
 static void
 rtw88_net_rfk_publish(struct rtw88_net *net)
 {
-	struct rtw88_rfk_diag diag;
+	struct rtw88_rfk_diag diag = { 0 };
+	int error;
 
-	rtw8822c_rfk_progress(net->core, &diag);
+	error = rtw88_calibration_progress(net->core, &diag);
+	if (error != 0)
+		diag.error = error;
 	mutex_enter(net->lock);
 	net->core->sc_stats.rfk = diag;
 	mutex_exit(net->lock);
@@ -397,7 +400,7 @@ rtw88_net_rfk_listen(struct rtw88_net *net)
 static int
 rtw88_net_rfk_begin(struct rtw88_net *net)
 {
-	struct rtw8822c_rfk_services svc = {
+	struct rtw88_calibration_services svc = {
 	    .cookie = net, .enter = rtw88_net_rfk_enter,
 	    .leave = rtw88_net_rfk_leave, .wait = rtw88_net_rfk_wait,
 	    .clock_ticks = rtw88_net_rfk_ticks, .ticks_per_second = 1000000 };
@@ -407,10 +410,10 @@ rtw88_net_rfk_begin(struct rtw88_net *net)
 	error = rtw88_net_rfk_capture(net, values);
 	if (error != 0)
 		return error;
-	if (rtw8822c_rfk_active(net->core)) {
+	if (rtw88_calibration_active(net->core)) {
 		if (memcmp(values, net->rfk.values, sizeof(values)) != 0)
 			return ESTALE;
-		return rtw8822c_rfk_begin(net->core, &svc);
+		return rtw88_calibration_begin(net->core, &svc);
 	}
 	net->rfk.started_us = rtw88_net_rfk_ticks(net);
 	if (net->rfk.started_us > UINT64_MAX - 6000000)
@@ -421,7 +424,7 @@ rtw88_net_rfk_begin(struct rtw88_net *net)
 	net->rfk.generation = net->core->sc_generation;
 	net->rfk.channel = net->channel;
 	net->rfk.drained = net->rfk.ran = 0;
-	error = rtw8822c_rfk_begin(net->core, &svc);
+	error = rtw88_calibration_begin(net->core, &svc);
 	/* KM_SLEEP can release Giant. No pre-allocation borrowed value is trust. */
 	if (error == 0) {
 		error = rtw88_net_rfk_capture(net, values);
@@ -430,7 +433,7 @@ rtw88_net_rfk_begin(struct rtw88_net *net)
 		/* Allocation can also expose a global quarantine without a BSS
 		 * change. Recheck the existing lease before channel/power IO. */
 		if (error == 0)
-			error = rtw8822c_rfk_begin(net->core, &svc);
+			error = rtw88_calibration_begin(net->core, &svc);
 	}
 	return error;
 }
@@ -455,11 +458,11 @@ rtw88_net_rfk_phase(struct rtw88_net *net)
 	    net->rfk.control_generation != net->rfk.generation ||
 	    net->rfk.channel != net->core->sc_channel ||
 	    net->rfk.control_channel != net->rfk.channel ||
-	    !net->core->sc_resources_ready || !rtw8822c_rfk_active(net->core))
+	    !net->core->sc_resources_ready || !rtw88_calibration_active(net->core))
 		return ESTALE;
 	error = rtw88_net_rfk_budget(net, rtw88_net_rfk_ticks(net));
 	if (error == 0)
-		error = rtw8822c_rfk_validate(net->core);
+		error = rtw88_calibration_validate(net->core);
 	if (error == 0)
 		error = rtw88_rx_frontier(net->core, net->rfk.generation, &frontier);
 	if (error != 0)

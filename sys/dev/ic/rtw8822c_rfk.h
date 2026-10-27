@@ -8,24 +8,12 @@ struct rtw88_softc;
 struct rtw8822c_rfk;
 struct rtw88_rfk_diag;
 
-/* enter returns with PCI held on success; wait is always entered unlocked.
- * cleanup validates the old exclusive owner, not the new requested epoch.
- * Each successful wait recaptures the complete current stage-appropriate
- * peer/profile before allowing more new work. No borrowed node survives it.
- * The clock is monotonic and retains 64 bits across scheduler delays. */
-struct rtw8822c_rfk_services {
-	void *cookie;
-	int (*enter)(void *, int cleanup);
-	void (*leave)(void *);
-	int (*wait)(void *, unsigned min_us, int cleanup);
-	uint64_t (*clock_ticks)(void *);
-	unsigned ticks_per_second;
-};
+#include <dev/ic/rtw88_calibration.h>
 
 int rtw8822c_rfk_blocked(void);
 int rtw8822c_rfk_active(const struct rtw88_softc *);
 int rtw8822c_rfk_begin(struct rtw88_softc *,
-    const struct rtw8822c_rfk_services *);
+    const struct rtw88_calibration_services *);
 /* Existing active owner and tuned power receipt only. No allocation or IO.
  * The caller serializes with PCI IRQ; no token/binding/deadline is changed. */
 int rtw8822c_rfk_validate(struct rtw88_softc *);

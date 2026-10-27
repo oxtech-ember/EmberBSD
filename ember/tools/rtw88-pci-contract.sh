@@ -35,7 +35,7 @@ done
 printf '#include "rtw88-test-kernel.h"\n#define KM_SLEEP 0\n' > "$work/include/sys/kmem.h"
 ${CC:-cc} -std=c11 $rfk_flags -Wall -Wextra -Werror ${RTW88_TEST_CFLAGS:-} \
     -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \
-    "$tools/rtw88-pci-contract.c" "$src/sys/dev/ic/rtw88_hw.c" \
+    "$tools/rtw88-pci-contract.c" "$src/sys/dev/ic/rtw88_hw.c" "$src/sys/dev/ic/rtw8822c_hw.c" \
     "$src/sys/dev/ic/rtw88_fw_init.c" \
     "$src/sys/dev/ic/rtw8822c_rfk.c" \
     "$src/sys/dev/ic/rtw8822c.c" "$src/sys/dev/ic/rtw8822c_boot.c" \

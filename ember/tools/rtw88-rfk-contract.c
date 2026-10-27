@@ -1406,6 +1406,7 @@ main(void)
             CHECK(rtw88_start(&sc)==EBUSY);CHECK(rfk_io==prior);
             struct rtw88_softc other;memset(&other,0,sizeof(other));
             other.sc_ops=&rfk_bus;other.sc_bus=&f;
+            other.sc_hci=&rtw88_pci_hci_ops;other.sc_chip=&rtw8822c_chip_ops;
             int attached=rtw88_core_attach(&other);
             CHECK(attached==EBUSY);
             CHECK(rfk_io==prior);CHECK(!rtw8822c_rfk_active(&sc));

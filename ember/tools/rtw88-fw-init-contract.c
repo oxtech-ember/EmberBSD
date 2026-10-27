@@ -143,6 +143,7 @@ setup(unsigned rfe,unsigned cut,const uint8_t wanted[2][32])
 {
 	memset(&f,0,sizeof(f));
 	f.sc.sc_ops=&ops;
+	f.sc.sc_chip=&rtw8822c_chip_ops;
 #ifndef RTW88_H2C_LEGACY
 	f.sc.sc_hci=&packet_hci;
 #endif

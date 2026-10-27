@@ -223,7 +223,8 @@ rtw88_pci_post_fw_chunk(struct rtw88_softc *sc, uint32_t gen, size_t len)
 	tx.rate_id = 8;
 	tx.flags = RTW88_TX_DIS_QSELSEQ | RTW88_TX_USE_RATE |
 	    RTW88_TX_DIS_RATE_FB | RTW88_TX_HWSEQ;
-	error = rtw88_tx_encode(sc->sc_fw_dma.vaddr, sc->sc_fw_dma.size, &tx);
+	error = rtw88_chip_tx_desc(sc, sc->sc_fw_dma.vaddr,
+	    sc->sc_fw_dma.size, &tx);
 	if (error != 0)
 		return error;
 	bd = bcn->vaddr;
@@ -811,7 +812,7 @@ rtw88_pci_xmit(struct rtw88_softc *sc, unsigned q, const uint8_t *frame,
 	if (buf->cookie == NULL || buf->vaddr == NULL ||
 	    buf->size < RTW8822C_TX_PACKET_DESC_SIZE + len)
 		return ENXIO;
-	error = rtw88_tx_encode(buf->vaddr, buf->size, tx);
+	error = rtw88_chip_tx_desc(sc, buf->vaddr, buf->size, tx);
 	if (error != 0)
 		return error;
 	memcpy((uint8_t *)buf->vaddr + RTW8822C_TX_PACKET_DESC_SIZE, frame,

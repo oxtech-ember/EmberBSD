@@ -863,6 +863,7 @@ rtw88_pci_attach(device_t parent, device_t self, void *aux)
 	sc->sc_bus = psc;
 	sc->sc_ops = &rtw88_pci_ops;
 	sc->sc_hci = &rtw88_pci_hci_ops;
+	sc->sc_chip = &rtw8822c_chip_ops;
 	sc->sc_vendor = PCI_VENDOR(pa->pa_id);
 	sc->sc_product = PCI_PRODUCT(pa->pa_id);
 	aprint_normal(": Realtek RTL8822CE PCI resources\n");

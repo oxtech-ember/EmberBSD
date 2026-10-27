@@ -18,9 +18,6 @@
 #include <sys/bus.h>
 #endif
 #include <dev/ic/rtw88var.h>
-#ifdef RTW88_RFK_EXPERIMENT
-#include <dev/ic/rtw8822c_rfk.h>
-#endif
 
 int
 rtw88_fw_packet(struct rtw88_softc *sc, const uint8_t *packet, size_t len)
@@ -29,5 +26,7 @@ rtw88_fw_packet(struct rtw88_softc *sc, const uint8_t *packet, size_t len)
 		return EINVAL;
 	if (sc->sc_hci->fw_packet == NULL)
 		return EOPNOTSUPP;
+	if (sc->sc_bootstrapping)
+		return ENXIO;
 	return sc->sc_hci->fw_packet(sc, packet, len);
 }

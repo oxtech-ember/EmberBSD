@@ -195,4 +195,4 @@ arms=full[full.index('\tcase IEEE80211_S_INIT:'):full.index('\tcase IEEE80211_S_
 start=net.index('\tic->ic_sup_rates[IEEE80211_MODE_11A] =')
 end=net.index('\tifp->if_softc = net;',start)
 array=re.search(r'static const unsigned channels5\[\].*?;',net,re.S).group()
-(out/'native-band-driver.inc').write_text(array+'\nunsigned i,ch;\n'+net[start:end])
+(out/'native-band-driver.inc').write_text(array+'\nstruct rtw88_caps caps={.bands=RTW88_BAND_2G|RTW88_BAND_5G};\nunsigned i,ch;\n'+net[start:end])

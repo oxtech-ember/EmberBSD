@@ -1410,8 +1410,76 @@ static void enable_scan_probe_policy(void)
     enable_destroy(net);
 }
 
+#if defined(RTW88_VHT80) && defined(RTW88_CAPS_CONTRACT)
+/* Capability publication must not call live block-ack services. */
+int ieee80211_txba_request(struct ieee80211com *ic, struct ieee80211_node *ni,
+    unsigned mask)
+{
+    (void)ic;(void)ni;(void)mask;
+    abort();
+}
+unsigned ieee80211_txba_window(struct ieee80211com *ic, struct ieee80211_node *ni,
+    unsigned tid)
+{
+    (void)ic;(void)ni;(void)tid;
+    abort();
+}
+#endif
+
+/* Execute the actual attach body with a selected single-band chip. */
+static void enable_chip_bands(void)
+{
+    struct rtw88_softc sc;
+    kmutex_t lock={.initialized=1};
+    struct rtw88_net *net=NULL;
+    struct rtw88_chip_ops chip=rtw8822c_chip_ops;
+    const uint8_t mac[6]={2,1,2,3,4,5};
+
+    reset_bus(&sc);
+    chip.caps.bands=RTW88_BAND_2G;
+    chip.caps.widths=RTW88_WIDTH_20;
+    chip.caps.nss=1;
+    chip.caps.features&=~RTW88_CAP_VHT;
+    sc.sc_chip=&chip;
+    CHECK(rtw88_core_attach(&sc)==0);
+    CHECK(rtw88_net_attach(&sc,&sc,&lock,mac,&net)==0);
+    CHECK(net!=NULL);
+    if(net==NULL) { CHECK(rtw88_core_detach(&sc)==0);return; }
+    CHECK(net->caps.bands==RTW88_BAND_2G && net->caps.nss==1);
+    for(unsigned ch=1;ch<=13;ch++)
+        CHECK(net->ic.ic_channels[ch].ic_freq!=0 &&
+            (net->ic.ic_channels[ch].ic_flags&IEEE80211_CHAN_2GHZ)!=0);
+    for(unsigned ch=15;ch<__arraycount(net->ic.ic_channels);ch++)
+        CHECK(net->ic.ic_channels[ch].ic_freq==0 &&
+            net->ic.ic_channels[ch].ic_flags==0);
+    CHECK((net->caps.features&RTW88_CAP_VHT)==0);
+#ifdef RTW88_VHT80
+    CHECK(net->ic.ic_vht_admit==NULL);
+#endif
+    CHECK(ieee80211_setmode(&net->ic,IEEE80211_MODE_11A)==EINVAL);
+    enable_destroy(net);
+    net=NULL;
+    reset_bus(&sc);
+    CHECK(rtw88_core_attach(&sc)==0);
+    CHECK(rtw88_net_attach(&sc,&sc,&lock,mac,&net)==0);
+    CHECK(net!=NULL);
+    if(net==NULL) { CHECK(rtw88_core_detach(&sc)==0);return; }
+    CHECK(net->ic.ic_channels[1].ic_freq!=0 && net->ic.ic_channels[36].ic_freq!=0);
+    CHECK(net->caps.bands==(RTW88_BAND_2G|RTW88_BAND_5G));
+#ifdef RTW88_VHT80
+    CHECK((net->caps.features&RTW88_CAP_VHT)!=0 && net->ic.ic_vht_admit!=NULL);
+#endif
+    enable_destroy(net);
+}
+
 int RTW88_ENABLE_ENTRY(void)
 {
+    enable_chip_bands();
+    const char *caps_only=getenv("RTW88_CAPS_ONLY");
+    if(caps_only!=NULL && strcmp(caps_only,"1")==0) {
+        printf("Native chip capability publication: %u checks, %u failures\n",checks,failures);
+        return failures!=0 || core_failures!=0;
+    }
     enable_scan_probe_policy();
     enable_quiet_during_start();
     enable_sta_quiet();

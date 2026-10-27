@@ -10,6 +10,8 @@ notice = s[:s.index('#include')]
 parts = [notice]
 parts.extend(re.findall(r'^#define RTW88_[^\n]*(?:\\\n[^\n]*)*', s, re.M))
 pci = (src/'sys/dev/pci/rtw88_pci_hci.c').read_text()
+chip = (src/'sys/dev/ic/rtw88_chip.c').read_text()
+runtime = (src/'sys/dev/ic/rtw8822c_runtime.c').read_text()
 parts.extend(re.findall(r'^#define RTW88_[^\n]*(?:\\\n[^\n]*)*', pci, re.M))
 parts.append(re.search(r'static const struct \{.*?\} rtw88_txq_hw\[.*?\n\};', pci, re.S).group())
 parts.append(re.search(r'static const unsigned rtw88_queue_ring\[.*?\n\};', s, re.S).group())
@@ -29,13 +31,25 @@ for name, result in [('rtw88_channel_dfs','static int'),
                      ('rtw88_dfs_tx_permitted','static int'),
                      ('rtw88_tx_available','unsigned'),
                      ('rtw88_channel_narrow','static int'),('rtw88_tx_submit','static int'),
-                     ('rtw88_tx_raw','int'),('rtw88_tx_fixed','int'),
-                     ('rtw88_edca_apply','int')]:
+                     ('rtw88_tx_raw','int'),('rtw88_tx_fixed','int')]:
     match = re.search(r'^'+name+r'\([^;]*?\n\{', s, re.M)
     if match is None:
         raise ValueError(name)
     end = s.index('\n}', match.end()) + 2
     parts.extend([result, s[match.start():end]])
+for text, name, result in [
+        (runtime, 'rtw8822c_runtime_edca', 'static int'),
+        (runtime, 'rtw8822c_runtime_tx_desc', 'static int'),
+        (chip, 'rtw88_chip_tx_desc', 'int'),
+        (chip, 'rtw88_edca_apply', 'int')]:
+    match = re.search(r'^'+name+r'\([^;]*?\n\{', text, re.M)
+    if match is None:
+        raise ValueError(name)
+    end = text.index('\n}', match.end()) + 2
+    parts.extend([result, text[match.start():end]])
+parts.append('static const struct rtw88_chip_ops wme_chip = {'
+             '.edca = rtw8822c_runtime_edca, '
+             '.tx_desc = rtw8822c_runtime_tx_desc};')
 (out/'native-wme-core.inc').write_text('\n'.join(parts)+'\n')
 
 proto = (src/'sys/net80211/ieee80211_proto.h').read_text()

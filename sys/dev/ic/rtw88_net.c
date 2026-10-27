@@ -31,7 +31,7 @@
 #include <dev/ic/rtw88_net_policy.h>
 #include <dev/ic/rtw88_net_mbuf.h>
 #ifdef RTW88_RFK_EXPERIMENT
-#include <dev/ic/rtw8822c_rfk.h>
+#include <dev/ic/rtw88_calibration.h>
 struct rtw88_net_rfk {
 	uint64_t epoch, started_us, deadline_us;
 	uint32_t generation;
@@ -64,6 +64,7 @@ struct rtw88_net {
 	struct ethercom ec;
 	struct ieee80211com ic;
 	struct rtw88_softc *core;
+	struct rtw88_caps caps;
 	device_t dev;
 	kmutex_t *lock;
 	struct workqueue *wq;
@@ -398,7 +399,7 @@ rtw88_net_ht20_admit(struct ieee80211com *ic,
 #ifdef RTW88_RFK_EXPERIMENT
 	/* A published snapshot cannot outlive the current RFK proof. */
 	if (net->core == NULL || !net->core->sc_operating.sealed ||
-	    rtw8822c_rfk_seal(net->core) != 0)
+	    rtw88_calibration_seal(net->core) != 0)
 		return EOPNOTSUPP;
 #endif
 	word = atomic_load_acquire(&net->ht20_snapshot);
@@ -668,7 +669,7 @@ rtw88_net_ht20_profile_prepare(struct rtw88_net *net,
 	sc = net->core;
 #ifdef RTW88_RFK_EXPERIMENT
 	/* Revalidate an existing RFK proof. Admission cannot create one. */
-	if (!sc->sc_operating.sealed || rtw8822c_rfk_seal(sc) != 0)
+	if (!sc->sc_operating.sealed || rtw88_calibration_seal(sc) != 0)
 		return EOPNOTSUPP;
 #endif
 	if (ic->ic_opmode != IEEE80211_M_STA ||
@@ -1054,11 +1055,11 @@ rtw88_net_state_work(struct work *work, void *cookie)
 		rtw88_net_rfk_rx_deliver(net);
 		/* Retire the OLD numeric owner before any restart or early dying
 		 * return. Detach keeps resources and net allocated through wait. */
-		if (rtw8822c_rfk_active(net->core) &&
+		if (rtw88_calibration_active(net->core) &&
 		    (net->policy.dying || net->reset_required ||
 		     net->rfk.epoch != net->policy.epoch ||
 		     net->requested != IEEE80211_S_AUTH))
-			(void)rtw8822c_rfk_retire(net->core);
+			(void)rtw88_calibration_retire(net->core);
 		rtw88_net_rfk_publish(net);
 #endif
 		mutex_enter(net->lock);
@@ -1159,8 +1160,8 @@ rtw88_net_state_work(struct work *work, void *cookie)
 #ifdef RTW88_RFK_EXPERIMENT
 		/* A retired uncertain owner also blocks an already-started core.
 		 * Ordinary SCAN/INIT coalescing cannot bypass it without start(). */
-		if (prepare_error == 0 && rtw8822c_rfk_blocked() &&
-		    !rtw8822c_rfk_active(net->core))
+		if (prepare_error == 0 && rtw88_calibration_blocked(net->core) &&
+		    !rtw88_calibration_active(net->core))
 			prepare_error = EBUSY;
 		/* Acquire before C1. No IO is added to an unstarted INIT. */
 		if (prepare_error == 0 && state == IEEE80211_S_AUTH)
@@ -1210,7 +1211,7 @@ rtw88_net_state_work(struct work *work, void *cookie)
 				if (prepare_error == 0)
 					prepare_error = rtw88_net_rfk_listen(net);
 				if (prepare_error == 0)
-					prepare_error = rtw8822c_rfk_run(net->core);
+					prepare_error = rtw88_calibration_run(net->core);
 				rtw88_net_rfk_rx_deliver(net);
 				if (prepare_error == 0) {
 					mutex_enter(net->lock);
@@ -1232,7 +1233,7 @@ rtw88_net_state_work(struct work *work, void *cookie)
 			/* Listening yielded Giant. Recheck the existing numeric owner
 			 * before ordinary I/O, without allocation or a new budget. */
 			if (prepare_error == 0)
-				prepare_error = rtw8822c_rfk_active(net->core) ?
+				prepare_error = rtw88_calibration_active(net->core) ?
 				    rtw88_net_rfk_begin(net) : ESTALE;
 		}
 #endif
@@ -1328,7 +1329,7 @@ rtw88_net_state_work(struct work *work, void *cookie)
 				    state != IEEE80211_S_RUN) ||
 				    channel != net->core->sc_channel ||
 				    !net->core->sc_operating.sealed ||
-				    rtw8822c_rfk_seal(net->core) != 0)
+				    rtw88_calibration_seal(net->core) != 0)
 #endif
 					error = rtw88_channel_apply(net->core,
 					    &channel_tuple);
@@ -1381,8 +1382,8 @@ rtw88_net_state_work(struct work *work, void *cookie)
 #ifdef RTW88_RFK_EXPERIMENT
 		/* Completion has restored the outer originals. On any failure this
 		 * retires the old engine before the existing INIT/stop owner. */
-		if (rtw8822c_rfk_active(net->core)) {
-			int retire_error = rtw8822c_rfk_retire(net->core);
+		if (rtw88_calibration_active(net->core)) {
+			int retire_error = rtw88_calibration_retire(net->core);
 			rtw88_net_rfk_rx_deliver(net);
 			if (error == 0 && retire_error != 0)
 				error = retire_error;
@@ -1400,7 +1401,7 @@ rtw88_net_state_work(struct work *work, void *cookie)
 			    net->rfk.notice_pending ? ECANCELED :
 			    rtw88_net_rfk_beacon_check(net);
 			if (error == 0)
-				error = rtw8822c_rfk_seal(net->core);
+				error = rtw88_calibration_seal(net->core);
 			mutex_exit(net->lock);
 			if (error != 0) {
 				diag.stage = RTW88_NET_STAGE_CORE;
@@ -2643,6 +2644,7 @@ rtw88_net_attach(struct rtw88_softc *core, device_t dev, kmutex_t *lock,
 #endif
 	    149,153,157,161,165};
 	struct rtw88_net *net;
+	struct rtw88_caps caps;
 	struct ieee80211com *ic;
 	struct ifnet *ifp;
 	unsigned i, ch;
@@ -2652,8 +2654,12 @@ rtw88_net_attach(struct rtw88_softc *core, device_t dev, kmutex_t *lock,
 	    out == NULL || (mac[0] & 1) != 0 ||
 	    memcmp(mac, "\0\0\0\0\0\0", 6) == 0)
 		return EINVAL;
+	error = rtw88_get_caps(core, &caps);
+	if (error != 0)
+		return error;
 	net = kmem_zalloc(sizeof(*net), KM_SLEEP);
 	net->core = core;
+	net->caps = caps;
 	net->dev = dev;
 	net->lock = lock;
 	callout_init(&net->scan, 0);
@@ -2674,12 +2680,14 @@ rtw88_net_attach(struct rtw88_softc *core, device_t dev, kmutex_t *lock,
 	ic->ic_phytype = IEEE80211_T_OFDM;
 	ic->ic_opmode = IEEE80211_M_STA;
 	ic->ic_state = IEEE80211_S_INIT;
-	ic->ic_caps = IEEE80211_C_WPA2 | IEEE80211_C_SHSLOT;
+	ic->ic_caps = IEEE80211_C_SHSLOT;
+	if ((caps.features & RTW88_CAP_WPA2) != 0)
+		ic->ic_caps |= IEEE80211_C_WPA2;
 	memcpy(ic->ic_myaddr, mac, IEEE80211_ADDR_LEN);
 	ic->ic_sup_rates[IEEE80211_MODE_11A] = ieee80211_std_rateset_11a;
 	ic->ic_sup_rates[IEEE80211_MODE_11B] = ieee80211_std_rateset_11b;
 	ic->ic_sup_rates[IEEE80211_MODE_11G] = ieee80211_std_rateset_11g;
-	for (ch = 1; ch <= 13; ch++) {
+	for (ch = 1; (caps.bands & RTW88_BAND_2G) != 0 && ch <= 13; ch++) {
 		ic->ic_channels[ch].ic_freq = ieee80211_ieee2mhz(ch,
 		    IEEE80211_CHAN_2GHZ);
 		ic->ic_channels[ch].ic_flags = IEEE80211_CHAN_B |
@@ -2688,7 +2696,8 @@ rtw88_net_attach(struct rtw88_softc *core, device_t dev, kmutex_t *lock,
 	}
 	/* Passive discovery; DFS channels only as a slave with RTW88_DFS64.
 	 * Board regulatory limits still apply. */
-	for (i = 0; i < __arraycount(channels5); i++) {
+	for (i = 0; (caps.bands & RTW88_BAND_5G) != 0 &&
+	    i < __arraycount(channels5); i++) {
 		ch = channels5[i];
 		ic->ic_channels[ch].ic_freq = ieee80211_ieee2mhz(ch,
 		    IEEE80211_CHAN_5GHZ);
@@ -2706,19 +2715,23 @@ rtw88_net_attach(struct rtw88_softc *core, device_t dev, kmutex_t *lock,
 	IFQ_SET_READY(&ifp->if_snd);
 	if_initialize(ifp);
 	ieee80211_ifattach(ic);
-	rtw88_net_rxba_attach(net);
+	if ((caps.features & RTW88_CAP_RXBA) != 0)
+		rtw88_net_rxba_attach(net);
 	ic->ic_sta_quiet = rtw88_net_sta_quiet;
 	ic->ic_scan_probe_admit = rtw88_net_scan_probe_admit;
 	/* Register after ifattach, which initializes optional admission to NULL. */
 	rtw88_net_ht20_publish(net, NULL);
 	ic->ic_ht20_admit = rtw88_net_ht20_admit;
 #ifdef RTW88_VHT80
-	ic->ic_vht_admit = rtw88_net_vht_admit;
+	if ((caps.features & RTW88_CAP_VHT) != 0)
+		ic->ic_vht_admit = rtw88_net_vht_admit;
 #endif
 	/* Opt in only after the strict consumer owns STA parameter apply. */
-	ic->ic_wme.wme_sta_apply = rtw88_net_wme_apply;
-	ic->ic_caps |= IEEE80211_C_WME;
-	ic->ic_flags |= IEEE80211_F_WME;
+	if ((caps.features & RTW88_CAP_WME) != 0) {
+		ic->ic_wme.wme_sta_apply = rtw88_net_wme_apply;
+		ic->ic_caps |= IEEE80211_C_WME;
+		ic->ic_flags |= IEEE80211_F_WME;
+	}
 	net->parent_state = ic->ic_newstate;
 	ic->ic_newstate = rtw88_net_newstate;
 	ifp->if_percpuq = if_percpuq_create(ifp);

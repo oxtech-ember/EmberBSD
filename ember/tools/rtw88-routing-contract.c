@@ -58,6 +58,7 @@ struct rtw88_net {
     struct rtw88_softc *core;
     struct rtw88_net_policy policy;
     kmutex_t *lock;
+    struct rtw88_caps caps;
     int work_pending, reset_required;
     int tx_quiet, quiet_error;
     int scan, rxba_callout, state_arg;
@@ -68,6 +69,9 @@ struct rtw88_net {
     struct work state_work;
     struct workqueue *wq;
     unsigned tx_timer, tx_completed;
+#ifdef RTW88_VHT80
+    unsigned txba_wanted;
+#endif
     void *softint;
     uint8_t txbuf[RTW88_TX_BUF_SIZE];
 };
@@ -491,6 +495,8 @@ int main(void)
     CHECK(net.policy.rx.delivery_epoch==epoch_drops+1);
     CHECK(rtw88_stop(&sc)==0);CHECK(rtw88_core_detach(&sc)==0);
     printf("Native four-AC wrapper: %u checks, %u failures\n",checks,failures);
+    printf("Routing service counters: packets %u RSSI %u polls %u dequeues %u ticks %u\n",
+        route_packets,route_last_rssi,scheduler_polls,scheduler_dequeues,getticks());
     printf("Actual core: %u assertions, %u failures\n",assertions,core_failures);
     return failures!=0 || core_failures!=0;
 }

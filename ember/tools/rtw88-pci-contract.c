@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Origin: EmberBSD RTL8822CE actual-source resource tests, AI-assisted. */
 #include "../../sys/dev/ic/rtw88.c"
+#include "../../sys/dev/ic/rtw88_chip.c"
+#include "../../sys/dev/ic/rtw8822c_runtime.c"
 #include "../../sys/dev/pci/rtw88_pci_hci.c"
 #include "../../sys/dev/pci/rtw88_pci_packet.c"
 #include "../../sys/dev/pci/if_rtw88_pci.c"

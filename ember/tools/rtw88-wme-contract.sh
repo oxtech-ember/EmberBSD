@@ -13,19 +13,24 @@ mkdir -p "$work/dev"
 ln -s "$src/sys/dev/ic" "$work/dev/ic"
 "$CC" -std=c11 -Wall -Wextra -Werror ${RTW88_TEST_CFLAGS:-} \
     -I"$work" -I"$tools" "$tools/rtw88-wme-contract.c" \
-    "$src/sys/dev/ic/rtw88_hw.c" -o "$work/test"
+    "$src/sys/dev/ic/rtw88_hw.c" "$src/sys/dev/ic/rtw8822c_hw.c" -o "$work/test"
 if [ -n "${TEST_RUNNER:-}" ]; then "$TEST_RUNNER" "$work/test"; else "$work/test"; fi
 if [ "${RTW88_WME_ANALYZE:-0}" = 1 ]; then
     "$CC" -std=c11 -dM -E - < /dev/null > "$work/predefines.h"
     cppcheck --enable=warning,performance,portability --error-exitcode=1 \
         --check-level=exhaustive --include="$work/predefines.h" \
         -I"$work" -I"$tools" "$tools/rtw88-wme-contract.c" \
-        "$src/sys/dev/ic/rtw88_hw.c"
+        "$src/sys/dev/ic/rtw88_hw.c" "$src/sys/dev/ic/rtw8822c_hw.c"
     "${CSA:-clang}" ${RTW88_CLANG_FLAGS:-} --analyze -std=c11 -Wall -Wextra -Werror \
         -Xanalyzer -analyzer-output=text -Xanalyzer -analyzer-werror \
         -I"$work" -I"$tools" "$tools/rtw88-wme-contract.c" \
         -o "$work/core.plist"
-    "${CSA:-clang}" ${RTW88_CLANG_FLAGS:-} --analyze -std=c11 -Wall -Wextra -Werror \
-        -Xanalyzer -analyzer-output=text -Xanalyzer -analyzer-werror \
-        "$src/sys/dev/ic/rtw88_hw.c" -o "$work/hw.plist"
+    for unit in "$src/sys/dev/ic/rtw88_hw.c" \
+        "$src/sys/dev/ic/rtw8822c_hw.c"; do
+        name=${unit##*/}
+        name=${name%.c}
+        "${CSA:-clang}" ${RTW88_CLANG_FLAGS:-} --analyze -std=c11 -Wall -Wextra -Werror \
+            -Xanalyzer -analyzer-output=text -Xanalyzer -analyzer-werror \
+            "$unit" -o "$work/$name.plist"
+    done
 fi

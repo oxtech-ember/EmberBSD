@@ -11,58 +11,19 @@
 #include <string.h>
 #endif
 #include <dev/ic/rtw88var.h>
-#include <dev/ic/rtw8822c.h>
 #include <dev/ic/rtw88_io.h>
-#ifdef RTW88_RFK_EXPERIMENT
-#include <dev/ic/rtw8822c_rfk.h>
-#endif
+#include <dev/ic/rtw88_internal.h>
 
-#define RTW88_FW_DRV		"rtwce"
-#define RTW88_FW_IMG		"rtw8822c_fw.bin"
-#define RTW88_REG_MCUFW_CTRL	0x0080
-#define RTW88_MCUFWDL_EN	0x0001
-#define RTW88_FW_DW_RDY		0x4000
-#define RTW88_CHECK_SUM_OK	0x0050
-#define RTW88_FW_READY		0xc078
-#define RTW88_OCP_DMEM		UINT32_C(0x00200000)
-#define RTW88_IMEM_DW_OK	0x08
-#define RTW88_IMEM_CHKSUM_OK	0x10
-#define RTW88_DMEM_DW_OK	0x20
-#define RTW88_DMEM_CHKSUM_OK	0x40
-#define RTW88_REG_TXDMA_STATUS	0x0210
-#define RTW88_PAGE_OVF		0x04
-#define RTW88_REG_FW_DBG7	0x10fc
-#define RTW88_REG_HMETFR	0x01cc
-#define RTW88_REG_HMEBOX0	0x01d0
-#define RTW88_REG_HMEBOX0_EX	0x01f0
-#define RTW88_REG_SYS_FUNC_EN	0x0002
-#define RTW88_REG_SYS_CLK	0x0008
-#define RTW88_REG_RSV_CTRL	0x001c
 #define RTW88_REG_CR		0x0100
-#define RTW88_REG_TXDMA_PQ	0x010c
-#define RTW88_REG_RQPN_CTRL2	0x022c
-#define RTW88_REG_FIFOPAGE_1	0x0230
-#define RTW88_REG_PCI_CTRL	0x0300
-#define RTW88_REG_BCN_CTRL	0x0550
-#define RTW88_REG_CPU_DMEM	0x1080
-#define RTW88_REG_H2CQ_CSR	0x1330
-#define RTW88_REG_HIMR0		0x00b0
-#define RTW88_REG_HISR0		0x00b4
-#define RTW88_REG_HIMR3		0x10b8
-#define RTW88_REG_HISR3		0x10bc
 /* pci.c rtw_pci_init irq_mask[0], [1], [3]. */
-#define RTW88_REG_RXBD_IDX	0x03b4
 #define RTW88_MIN_FRAME		10	/* 802.11 ACK */
-#define RTW88_REG_RCR		0x0608
 /* main.c hal.rcr: APP_FCS/MIC/ICV/PHYSTS, VHT_DACK, PKTCTL_DLEN,
  * HTC_LOC, AB/AM/APM. VHT_DACK selects the pinned default ACK policy. */
-#define RTW88_RCR		UINT32_C(0xf410400e)
 #define RTW88_BEACON_IES	36	/* header 24, timestamp, interval, caps */
 #define RTW88_QSEL_MGMT		18
 #define RTW88_RATEID_G		7
 #define RTW88_RATEID_B_20M	8
 /* rtlwifi REG_LBMODE (CR + 3): normal 0, PHY 1, MAC delay 3, DMA 7. */
-#define RTW88_LBMODE_IMMEDIATE	0x0b
 
 /* The common queue numbering maps to the stack's logical WME rings. */
 static const unsigned rtw88_queue_ring[RTW88_NTXQ] = {
@@ -70,133 +31,10 @@ static const unsigned rtw88_queue_ring[RTW88_NTXQ] = {
 	RTW88_TX_RING_VI, RTW88_TX_RING_VO
 };
 
-static int
-rtw88_poll(struct rtw88_softc *sc, uint32_t gen, unsigned budget_us,
-    int (*ready)(struct rtw88_softc *, void *), void *arg)
-{
-	unsigned waited = 0;
-	int error;
-
-	while (waited <= budget_us) {
-		if (sc->sc_stop_requested || sc->sc_generation != gen)
-			return EINTR;
-		error = ready(sc, arg);
-		if (error < 0)
-			return -error;
-		if (error == 0)
-			return 0;
-		sc->sc_ops->delay_us(sc->sc_bus, RTW88_POLL_STEP_US);
-		waited += RTW88_POLL_STEP_US;
-	}
-	return ETIMEDOUT;
-}
-
-struct rtw88_poll32 {
-	uint32_t reg;
-	uint32_t mask;
-	uint32_t value;
-};
-
-static int
-rtw88_ready32(struct rtw88_softc *sc, void *arg)
-{
-	struct rtw88_poll32 *p = arg;
-	uint32_t v;
-	int error;
-
-	error = sc->sc_ops->read_4(sc->sc_bus, p->reg, &v);
-	if (error != 0)
-		return -error;
-	return ((v & p->mask) == p->value) ? 0 : 1;
-}
-
-static int
-rtw88_ready8(struct rtw88_softc *sc, void *arg)
-{
-	struct rtw88_poll32 *p = arg;
-	uint8_t v;
-	int error;
-
-	error = sc->sc_ops->read_1(sc->sc_bus, p->reg, &v);
-	if (error != 0)
-		return -error;
-	return ((v & (uint8_t)p->mask) == (uint8_t)p->value) ? 0 : 1;
-}
-
-static int
-rtw88_rmw8(struct rtw88_softc *sc, uint32_t addr, uint8_t clear, uint8_t set)
-{
-	uint8_t v;
-	int error;
-
-	error = sc->sc_ops->read_1(sc->sc_bus, addr, &v);
-	if (error != 0)
-		return error;
-	v = (uint8_t)((v & ~clear) | set);
-	return sc->sc_ops->write_1(sc->sc_bus, addr, v);
-}
-
 /*
  * The chip DDMA source is its internal TX buffer, not the host mapping.
  * A beacon-queue descriptor must copy the chunk there before DDMA runs.
  */
-
-static int
-rtw88_fw_prepare(struct rtw88_softc *sc)
-{
-	uint32_t rqpn, dmem;
-	int error;
-
-	error = rtw88_rmw8(sc, RTW88_REG_SYS_FUNC_EN + 1, 0x04, 0);
-	if (error != 0)
-		return error;
-	error = rtw88_rmw8(sc, RTW88_REG_RSV_CTRL + 1, 0x01, 0);
-	if (error != 0)
-		return error;
-	error = sc->sc_ops->write_1(sc->sc_bus, RTW88_REG_TXDMA_PQ + 1, 0xc0);
-	if (error != 0)
-		return error;
-	error = sc->sc_ops->write_1(sc->sc_bus, RTW88_REG_CR, 0x05);
-	if (error != 0)
-		return error;
-	error = sc->sc_ops->write_4(sc->sc_bus, RTW88_REG_H2CQ_CSR,
-	    UINT32_C(0x80000000));
-	if (error != 0)
-		return error;
-	error = sc->sc_ops->write_2(sc->sc_bus, RTW88_REG_FIFOPAGE_1, 0x0200);
-	if (error != 0)
-		return error;
-	error = sc->sc_ops->read_4(sc->sc_bus, RTW88_REG_RQPN_CTRL2, &rqpn);
-	if (error != 0)
-		return error;
-	error = sc->sc_ops->write_4(sc->sc_bus, RTW88_REG_RQPN_CTRL2,
-	    rqpn | UINT32_C(0x80000000));
-	if (error != 0)
-		return error;
-	error = rtw88_rmw8(sc, RTW88_REG_BCN_CTRL, 0x08, 0x10);
-	if (error != 0)
-		return error;
-	error = sc->sc_ops->read_4(sc->sc_bus, RTW88_REG_CPU_DMEM, &dmem);
-	if (error != 0)
-		return error;
-	dmem |= UINT32_C(0x00010100);
-	error = sc->sc_ops->write_4(sc->sc_bus, RTW88_REG_CPU_DMEM, dmem);
-	if (error != 0)
-		return error;
-	error = rtw88_rmw8(sc, RTW88_REG_CPU_DMEM + 2, 0x01, 0);
-	if (error != 0)
-		return error;
-	error = rtw88_rmw8(sc, RTW88_REG_SYS_CLK + 1, 0x40, 0);
-	if (error != 0)
-		return error;
-	error = rtw88_rmw8(sc, RTW88_REG_CPU_DMEM + 2, 0, 0x01);
-	if (error != 0)
-		return error;
-	error = rtw88_rmw8(sc, RTW88_REG_SYS_CLK + 1, 0, 0x40);
-	if (error != 0)
-		return error;
-	return sc->sc_hci->setup(sc);
-}
 
 /* Point every RX descriptor at its buffer, owned by the chip. */
 
@@ -210,206 +48,11 @@ rtw88_fw_prepare(struct rtw88_softc *sc)
  * DW_OK, plus CHKSUM_OK when DDMA saw a good checksum. IMEM and EMEM
  * sit below the DMEM base and share the IMEM bits.
  */
-static int
-rtw88_section_checksum(struct rtw88_softc *sc, uint32_t addr, int bad_checksum)
-{
-	uint8_t fw, dw, ok;
-	int error;
-
-	error = sc->sc_ops->read_1(sc->sc_bus, RTW88_REG_MCUFW_CTRL, &fw);
-	if (error != 0)
-		return error;
-	if (addr < RTW88_OCP_DMEM) {
-		dw = RTW88_IMEM_DW_OK;
-		ok = RTW88_IMEM_CHKSUM_OK;
-	} else {
-		dw = RTW88_DMEM_DW_OK;
-		ok = RTW88_DMEM_CHKSUM_OK;
-	}
-	if (bad_checksum) {
-		(void)sc->sc_ops->write_1(sc->sc_bus, RTW88_REG_MCUFW_CTRL,
-		    (uint8_t)((fw | dw) & ~ok));
-		printf("rtwce: firmware checksum failed at %#x\n", addr);
-		return EIO;
-	}
-	return sc->sc_ops->write_1(sc->sc_bus, RTW88_REG_MCUFW_CTRL,
-	    (uint8_t)(fw | dw | ok));
-}
-
-static int
-rtw88_download_section(struct rtw88_softc *sc, uint32_t gen,
-    const uint8_t *fw, size_t fw_len, const struct rtw88_fw_section *section)
-{
-	int error;
-
-	error = sc->sc_hci->fw_section(sc, gen, fw, fw_len, section);
-	if (error != 0 && error != EBADMSG)
-		return error;
-	return rtw88_section_checksum(sc, section->load_address,
-	    error == EBADMSG);
-}
-
-static int
-rtw88_fw_download(struct rtw88_softc *sc, uint32_t gen, const uint8_t *fw,
-    size_t fw_len, const struct rtw88_fw_info *info)
-{
-	struct rtw88_poll32 ready;
-	uint16_t ctrl;
-	int error;
-
-	error = sc->sc_ops->read_2(sc->sc_bus, RTW88_REG_MCUFW_CTRL, &ctrl);
-	if (error != 0)
-		return error;
-	ctrl = (uint16_t)((ctrl & 0x3800) | RTW88_MCUFWDL_EN);
-	error = sc->sc_ops->write_2(sc->sc_bus, RTW88_REG_MCUFW_CTRL, ctrl);
-	if (error != 0)
-		return error;
-	error = rtw88_fw_prepare(sc);
-	if (error != 0)
-		return error;
-	error = rtw88_download_section(sc, gen, fw, fw_len, &info->dmem);
-	if (error != 0)
-		return error;
-	error = rtw88_download_section(sc, gen, fw, fw_len, &info->imem);
-	if (error != 0)
-		return error;
-	if (info->emem.size != 0) {
-		error = rtw88_download_section(sc, gen, fw, fw_len, &info->emem);
-		if (error != 0)
-			return error;
-	}
-	error = sc->sc_ops->write_4(sc->sc_bus, RTW88_REG_TXDMA_STATUS,
-	    RTW88_PAGE_OVF);
-	if (error != 0)
-		return error;
-	error = sc->sc_ops->read_2(sc->sc_bus, RTW88_REG_MCUFW_CTRL, &ctrl);
-	if (error != 0)
-		return error;
-	/* Reference end flow: no FW_DW_RDY without both checksums. */
-	if ((ctrl & RTW88_CHECK_SUM_OK) != RTW88_CHECK_SUM_OK)
-		return EIO;
-	ctrl = (uint16_t)((ctrl | RTW88_FW_DW_RDY) & ~RTW88_MCUFWDL_EN);
-	error = sc->sc_ops->write_2(sc->sc_bus, RTW88_REG_MCUFW_CTRL, ctrl);
-	if (error != 0)
-		return error;
-	/* FW_INIT_RDY joins the driver-set bits once the image runs. */
-	ready.reg = RTW88_REG_MCUFW_CTRL;
-	ready.mask = RTW88_FW_READY;
-	ready.value = RTW88_FW_READY;
-	error = rtw88_rmw8(sc, RTW88_REG_RSV_CTRL + 1, 0, 0x01);
-	if (error != 0)
-		return error;
-	error = rtw88_rmw8(sc, RTW88_REG_SYS_FUNC_EN + 1, 0, 0x04);
-	if (error != 0)
-		return error;
-	error = rtw88_poll(sc, gen, RTW88_BOOTSTRAP_US, rtw88_ready32, &ready);
-	if (error != 0) {
-		uint32_t mcu = 0, dbg7 = 0;
-
-		(void)sc->sc_ops->read_4(sc->sc_bus, RTW88_REG_MCUFW_CTRL, &mcu);
-		(void)sc->sc_ops->read_4(sc->sc_bus, RTW88_REG_FW_DBG7, &dbg7);
-		printf("rtwce: firmware ready timed out mcufw %#x dbg7 %#x\n",
-		    mcu, dbg7);
-	}
-	return error;
-}
 
 /* Dedicated startup event slot, not a DMA C2H packet or an H2C command.
  * Protocol: FreeBSD d2145e9b main.c rtw_chip_efuse_enable/rtw_dump_hw_feature,
  * Realtek BSD-3-Clause option. A bounded snapshot cannot detect short firmware
  * writes: the pinned wire contract supplies exactly thirteen payload bytes. */
-#define RTW88_REG_C2HEVT 0x01a0
-
-static int
-rtw88_hw_feature_fence(struct rtw88_softc *sc, uint32_t gen)
-{
-	return sc->sc_stop_requested || sc->sc_generation != gen ? EINTR : 0;
-}
-
-static int
-rtw88_hw_feature_request(struct rtw88_softc *sc, uint32_t gen)
-{
-	int error;
-
-	if ((error = rtw88_hw_feature_fence(sc, gen)) != 0)
-		return error;
-	error = sc->sc_ops->write_1(sc->sc_bus, RTW88_REG_C2HEVT, 0xfd);
-	if (error != 0) {
-		sc->sc_stats.hw_io_errors++;
-		return error;
-	}
-	if ((error = rtw88_hw_feature_fence(sc, gen)) != 0)
-		return error;
-	sc->sc_stats.hw_requests++;
-	sc->sc_hw_feature.requested = 1;
-	sc->sc_hw_feature.requested_generation = gen;
-	return 0;
-}
-
-static int
-rtw88_hw_feature_read(struct rtw88_softc *sc, uint32_t gen)
-{
-	struct rtw88_hw_feature report;
-	uint8_t id, stable, raw[RTW88_HW_FEATURE_LEN];
-	unsigned i;
-	int error;
-
-	if ((error = rtw88_hw_feature_fence(sc, gen)) != 0)
-		return error;
-	error = sc->sc_ops->read_1(sc->sc_bus, RTW88_REG_C2HEVT, &id);
-	if (error != 0)
-		goto io_fail;
-	if ((error = rtw88_hw_feature_fence(sc, gen)) != 0)
-		return error;
-	if (id != 0x19) {
-		if (id == 0 || id == 0xfd)
-			sc->sc_stats.hw_missing++;
-		else
-			sc->sc_stats.hw_foreign++;
-		return 0; /* Do not consume an event we do not own. */
-	}
-	for (i = 0; i < sizeof(raw); i++) {
-		error = sc->sc_ops->read_1(sc->sc_bus,
-		    RTW88_REG_C2HEVT + 2 + i, &raw[i]);
-		if (error != 0)
-			goto io_fail;
-		if ((error = rtw88_hw_feature_fence(sc, gen)) != 0)
-			return error;
-	}
-	error = sc->sc_ops->read_1(sc->sc_bus, RTW88_REG_C2HEVT, &stable);
-	if (error != 0)
-		goto io_fail;
-	if ((error = rtw88_hw_feature_fence(sc, gen)) != 0)
-		return error;
-	if (stable != id) {
-		sc->sc_stats.hw_unstable++;
-		return 0; /* A replaced event belongs to its other consumer. */
-	}
-	error = rtw88_hw_feature_decode(raw, sizeof(raw), &report);
-	if (error != 0)
-		return error;
-	error = sc->sc_ops->write_1(sc->sc_bus, RTW88_REG_C2HEVT, 0);
-	if (error != 0)
-		goto io_fail;
-	if ((error = rtw88_hw_feature_fence(sc, gen)) != 0)
-		return error;
-	sc->sc_hw_feature.report = report;
-	sc->sc_hw_feature.observed_generation = gen;
-	sc->sc_hw_feature.observed = 1;
-	sc->sc_stats.hw_reports++;
-	return 0;
-io_fail:
-	sc->sc_stats.hw_io_errors++;
-	return error;
-}
-
-static void
-rtw88_release_fw(struct rtw88_softc *sc)
-{
-
-	if (sc->sc_ops->firmware_release != NULL)
-		sc->sc_ops->firmware_release(sc->sc_bus);
-}
 
 /* REG_CR.MACTXEN and REG_TXPAUSE use pinned rtw88 reg.h definitions.
  * Try both independent controls even when one fails. A failed write can have
@@ -457,6 +100,8 @@ rtw88_stop(struct rtw88_softc *sc)
 {
 	int error;
 
+	if (!rtw88_chip_valid(sc))
+		return EINVAL;
 #ifdef RTW88_RFK_EXPERIMENT
 	sc->sc_power_program.valid = 0;
 	sc->sc_operating.prepared = sc->sc_operating.sealed = 0;
@@ -480,7 +125,7 @@ rtw88_stop(struct rtw88_softc *sc)
 	sc->sc_rf_enabled = 0;
 	sc->sc_bootstrapping = 0;
 	if (sc->sc_power_dirty || sc->sc_powered) {
-		error = rtw8822c_power(sc, 0);
+		error = sc->sc_chip->stop(sc);
 		sc->sc_power_error = error;
 		if (error == 0) {
 			sc->sc_powered = 0;
@@ -522,13 +167,13 @@ rtw88_channel_admit20(unsigned ch)
  * Blocks never straddle the DFS boundary, so a wide tuple is DFS exactly
  * when its primary is.
  */
-static int
+int
 rtw88_channel_admit(const struct rtw88_channel_tuple *tuple)
 {
 #ifdef RTW88_VHT80
 	static const uint8_t center40[] = { 38, 46, 54, 62, 102, 110, 118,
 	    126, 134, 142, 151, 159 };
-	struct rtw8822c_channel_geometry geometry;
+	int delta;
 	unsigned i, span;
 	int aligned = 0;
 #endif
@@ -538,12 +183,20 @@ rtw88_channel_admit(const struct rtw88_channel_tuple *tuple)
 		    rtw88_channel_admit20(tuple->primary) ? 0 : EOPNOTSUPP;
 #ifdef RTW88_VHT80
 	if ((tuple->width_mhz != 40 && tuple->width_mhz != 80) ||
-	    tuple->primary <= 14 ||
-	    rtw8822c_channel_geometry(tuple, &geometry) != 0)
+	    tuple->primary <= 14)
 		return EOPNOTSUPP;
-	/* The geometry already restricts 80 MHz to its six block centers. */
-	if (tuple->width_mhz == 80)
+	/* IEEE channel block geometry, independent of RF register encoding. */
+	delta = (int)tuple->primary - (int)tuple->center;
+	if (tuple->width_mhz == 40 && delta != -2 && delta != 2)
+		return EOPNOTSUPP;
+	if (tuple->width_mhz == 80) {
+		if ((delta != -6 && delta != -2 && delta != 2 && delta != 6) ||
+		    (tuple->center != 42 && tuple->center != 58 &&
+		     tuple->center != 106 && tuple->center != 122 &&
+		     tuple->center != 138 && tuple->center != 155))
+			return EOPNOTSUPP;
 		aligned = 1;
+	}
 	for (i = 0; i < __arraycount(center40); i++)
 		if (tuple->width_mhz == 40 && tuple->center == center40[i])
 			aligned = 1;
@@ -569,329 +222,8 @@ rtw88_start(struct rtw88_softc *sc)
 	return rtw88_start_tuple(sc, &default_channel);
 }
 
-int
-rtw88_start_tuple(struct rtw88_softc *sc,
-    const struct rtw88_channel_tuple *target)
-{
-	struct rtw88_channel_tuple admitted;
-	const struct rtw88_channel_tuple *tuple = &admitted;
-	const uint8_t *fw = NULL;
-	const char *stage = "identity";
-	size_t fw_len = 0;
-	struct rtw88_fw_info info;
-	struct rtw8822c_efuse efuse;
-	uint32_t gen;
-	int error;
-
-	if (target == NULL)
-		return EINVAL;
-	/* Program exactly the admitted copy; firmware loading may sleep. */
-	admitted = *target;
-	if (rtw88_channel_admit(&admitted) != 0)
-		return EOPNOTSUPP;
-#ifdef RTW88_RFK_EXPERIMENT
-	if (rtw8822c_rfk_blocked())
-		return EBUSY;
-#endif
-	if (!sc->sc_resources_ready)
-		return ENXIO;
-	if (sc->sc_started)
-		return EBUSY;
-	if (sc->sc_power_dirty || sc->sc_power_error || sc->sc_dma_master ||
-	    sc->sc_dma_error || sc->sc_hci_error) {
-		printf("rtwce: startup blocked by incomplete shutdown: power %d DMA %d HCI %d\n",
-		    sc->sc_power_error, sc->sc_dma_error, sc->sc_hci_error);
-		return EBUSY;
-	}
-	if (sc->sc_ops->firmware_load == NULL)
-		return ENODEV;
-#ifdef RTW88_RFK_EXPERIMENT
-	sc->sc_power_program.valid = 0;
-	sc->sc_operating.prepared = sc->sc_operating.sealed = 0;
-#endif
-	sc->sc_phy.channel_valid = 0;
-	gen = sc->sc_generation;
-	error = sc->sc_ops->firmware_load(sc->sc_bus, RTW88_FW_DRV,
-	    RTW88_FW_IMG, &fw, &fw_len);
-	if (error != 0)
-		return error;
-	if (gen != sc->sc_generation) {
-		rtw88_release_fw(sc);
-		return EINTR;
-	}
-	error = rtw88_fw_parse(fw, fw_len, &info);
-	if (error != 0) {
-		rtw88_release_fw(sc);
-		return error;
-	}
-	sc->sc_generation++;
-	gen = sc->sc_generation;
-	memset(&sc->sc_hw_feature, 0, sizeof(sc->sc_hw_feature));
-	sc->sc_stop_requested = 0;
-	sc->sc_bootstrapping = 1;
-	error = rtw8822c_identify(sc);
-	if (error != 0)
-		goto fail;
-	stage = "HCI prepare";
-	error = sc->sc_hci->prepare(sc);
-	if (error != 0)
-		goto fail;
-	stage = "MAC power preinit";
-	/* Partial pre/table/post writes also require a complete off attempt. */
-	sc->sc_power_dirty = 1;
-	error = rtw8822c_power_pre(sc);
-	if (error != 0)
-		goto fail;
-	stage = "MAC power";
-	error = rtw8822c_power(sc, 1);
-	if (error != 0) {
-		printf("rtwce: power on failed: %d\n", error);
-		goto fail;
-	}
-	sc->sc_powered = 1;
-	stage = "MAC power postinit";
-	error = rtw8822c_power_post(sc);
-	if (error != 0)
-		goto fail;
-	stage = "HW feature request";
-	error = rtw88_hw_feature_request(sc, gen);
-	if (error != 0)
-		goto fail;
-	stage = "firmware download";
-	error = rtw88_fw_download(sc, gen, fw, fw_len, &info);
-	if (error != 0)
-		goto fail;
-	stage = "HW feature report";
-	error = rtw88_hw_feature_read(sc, gen);
-	if (error != 0)
-		goto fail;
-	sc->sc_h2c_box = 0;
-	/* Only a confirmed new firmware image starts a new packet sequence. */
-	memset(&sc->sc_packet_h2c, 0, sizeof(sc->sc_packet_h2c));
-	sc->sc_packet_h2c.active = 1;
-	sc->sc_packet_h2c.generation = gen;
-	/* Reference rtw_power_on: reset rings, MAC, PHY, then HCI start. */
-	stage = "HCI setup";
-	error = sc->sc_hci->setup(sc);
-	if (error != 0)
-		goto fail;
-	stage = "MAC setup";
-	error = rtw8822c_mac_init(sc);
-	if (error != 0) {
-		printf("rtwce: MAC init failed: %d\n", error);
-		goto fail;
-	}
-	/* rtw8822c_phy_set_param: BB/RF on, tables, paths, EDCCA, BF. */
-	stage = "PHY preinit";
-	error = rtw8822c_phy_pre(sc);
-	if (error != 0)
-		goto fail;
-	stage = "PHY tables";
-	error = rtw8822c_load_tables(sc);
-	if (error != 0)
-		goto fail;
-	stage = "PHY postinit";
-	error = rtw8822c_phy_post(sc);
-	if (error != 0)
-		goto fail;
-	/* Optional metadata: a failed read remains visible and disables CCK RSSI.
-	 * Correct DATA and OFDM observations do not require this CCK context. */
-	(void)rtw8822c_signal_cache(sc);
-	/* rtw_core_start: RCR = hal.rcr, accepting any BSSID's beacons. */
-	error = sc->sc_ops->write_4(sc->sc_bus, RTW88_REG_RCR, RTW88_RCR);
-	if (error != 0)
-		goto fail;
-	stage = "channel setup";
-	error = rtw8822c_set_channel_tuple(sc, tuple);
-	if (error != 0)
-		goto fail;
-	if (sc->sc_stop_requested || sc->sc_generation != gen) {
-		error = EINTR;
-		goto fail;
-	}
-	stage = "TX power";
-	error = rtw8822c_efuse_decode(sc->sc_efuse_phys,
-	    sizeof(sc->sc_efuse_phys), &efuse);
-	if (error == 0)
-		error = rtw8822c_set_tx_power_tuple(sc, &efuse, tuple, RTW88_POWER_REGD);
-	if (error != 0)
-		goto fail;
-	sc->sc_channel = tuple->primary;
-	sc->sc_phy.channel = *tuple;
-	if (sc->sc_stop_requested || sc->sc_generation != gen) {
-		error = EINTR;
-		goto fail;
-	}
-#ifndef RTW88_RFK_EXPERIMENT
-	sc->sc_phy.channel_valid = 1;
-#endif
-	stage = "HCI start";
-	error = sc->sc_hci->start(sc);
-	if (error != 0)
-		goto fail;
-	stage = "packet H2C";
-	error = rtw88_fw_init(sc);
-	if (error != 0)
-		goto fail;
-	stage = "coex power-on";
-	error = rtw8822c_coex_power_on(sc);
-	if (error != 0)
-		goto fail;
-	stage = "coex init";
-	error = rtw8822c_coex_init(sc);
-	if (error != 0)
-		goto fail;
-	if (sc->sc_stop_requested || sc->sc_generation != gen) {
-		error = EINTR;
-		goto fail;
-	}
-	sc->sc_rf_enabled = 1;
-	sc->sc_edca_error = 0;
-	sc->sc_ra.error = 0;
-	sc->sc_stats.ra_report_valid = 0;
-	sc->sc_started = 1;
-	sc->sc_bootstrapping = 0;
-	rtw88_release_fw(sc);
-	return 0;
-fail:
-	printf("rtwce: startup %s failed: %d\n", stage, error);
-	rtw88_stop(sc);
-	rtw88_release_fw(sc);
-	return error;
-}
-
 /* Snapshot all needed boxes before mutation. Busy is not an IO error.
  * Caller owns the managed worker and serializes with PCI IRQ/stop. */
-int
-rtw88_fw_mailbox_begin(struct rtw88_softc *sc, unsigned count, int *ready)
-{
-	uint8_t occupied;
-	uint32_t gen;
-	unsigned mask = 0, i, box;
-	int error;
-
-	if (ready == NULL || count > 3)
-		return EINVAL;
-	*ready = 0;
-	if (count == 0) {
-		*ready = 1;
-		return 0;
-	}
-	if (sc->sc_mailbox.active)
-		return EBUSY;
-	if (!sc->sc_started || !sc->sc_rf_enabled || sc->sc_stop_requested)
-		return ENXIO;
-	gen = sc->sc_generation;
-	box = sc->sc_h2c_box & 3;
-	for (i = 0; i < count; i++)
-		mask |= 1U << ((box + i) & 3);
-	error = sc->sc_ops->read_1(sc->sc_bus, RTW88_REG_HMETFR, &occupied);
-	if (error != 0)
-		return error;
-	if (sc->sc_stop_requested || gen != sc->sc_generation ||
-	    box != (sc->sc_h2c_box & 3))
-		return ESTALE;
-	if ((occupied & mask) != 0)
-		return 0;
-	sc->sc_mailbox.generation = gen;
-	sc->sc_mailbox.box = (uint8_t)box;
-	sc->sc_mailbox.total = (uint8_t)count;
-	sc->sc_mailbox.sent = 0;
-	sc->sc_mailbox.active = 1;
-	*ready = 1;
-	return 0;
-}
-
-int
-rtw88_fw_mailbox_end(struct rtw88_softc *sc, int error)
-{
-
-	if (sc->sc_mailbox.active && error == 0 &&
-	    (sc->sc_mailbox.generation != sc->sc_generation ||
-	    sc->sc_mailbox.sent != sc->sc_mailbox.total))
-		error = EPROTO;
-	memset(&sc->sc_mailbox, 0, sizeof(sc->sc_mailbox));
-	return error;
-}
-
-int
-rtw88_fw_command(struct rtw88_softc *sc, uint8_t id, const void *payload,
-    size_t size)
-{
-	struct rtw88_poll32 box;
-	const uint8_t *p = payload;
-	uint32_t gen, w0, w1, ex_reg, box_reg;
-	int error;
-
-	if (!sc->sc_started || !sc->sc_rf_enabled || sc->sc_stop_requested)
-		return ENXIO;
-	if (size > 0 && payload == NULL)
-		return EINVAL;
-	if (size > RTW88_FW_CMD_MAX)
-		return EMSGSIZE;
-	gen = sc->sc_generation;
-	box.reg = RTW88_REG_HMETFR;
-	box.mask = (uint32_t)1 << (sc->sc_h2c_box & 3);
-	box.value = 0;
-	if (sc->sc_mailbox.active) {
-		if (sc->sc_mailbox.generation != gen ||
-		    sc->sc_mailbox.sent >= sc->sc_mailbox.total ||
-		    ((sc->sc_mailbox.box + sc->sc_mailbox.sent) & 3) !=
-		    (sc->sc_h2c_box & 3))
-			return ESTALE;
-		error = rtw88_ready8(sc, &box);
-		error = error < 0 ? -error : error != 0 ? EBUSY : 0;
-	} else {
-		error = rtw88_poll(sc, gen, RTW88_COMMAND_US, rtw88_ready8, &box);
-	}
-	if (error == ETIMEDOUT) {
-		uint32_t mcu = 0, imr = 0, isr = 0, boxes = 0;
-
-		(void)sc->sc_ops->read_4(sc->sc_bus, RTW88_REG_MCUFW_CTRL, &mcu);
-		(void)sc->sc_ops->read_4(sc->sc_bus, 0x0130, &imr);
-		(void)sc->sc_ops->read_4(sc->sc_bus, 0x0134, &isr);
-		(void)sc->sc_ops->read_4(sc->sc_bus, RTW88_REG_HMETFR, &boxes);
-		printf("rtwce: mailbox %u command %#x timed out "
-		    "mcufw %#x fwimr %#x fwisr %#x boxes %#x\n",
-		    (unsigned)(sc->sc_h2c_box & 3), id, mcu, imr, isr, boxes);
-	}
-	if (error != 0)
-		return error;
-	w0 = id;
-	w1 = 0;
-	if (size > 0)
-		w0 |= (uint32_t)p[0] << 8;
-	if (size > 1)
-		w0 |= (uint32_t)p[1] << 16;
-	if (size > 2)
-		w0 |= (uint32_t)p[2] << 24;
-	if (size > 3)
-		w1 |= p[3];
-	if (size > 4)
-		w1 |= (uint32_t)p[4] << 8;
-	if (size > 5)
-		w1 |= (uint32_t)p[5] << 16;
-	if (size > 6)
-		w1 |= (uint32_t)p[6] << 24;
-	box_reg = RTW88_REG_HMEBOX0 + 4 * (sc->sc_h2c_box & 3);
-	ex_reg = RTW88_REG_HMEBOX0_EX + 4 * (sc->sc_h2c_box & 3);
-	if (sc->sc_mailbox.active && gen != sc->sc_generation)
-		return ESTALE;
-	error = sc->sc_ops->write_4(sc->sc_bus, ex_reg, w1);
-	if (error != 0)
-		return error;
-	if (sc->sc_mailbox.active && gen != sc->sc_generation)
-		return ESTALE;
-	error = sc->sc_ops->write_4(sc->sc_bus, box_reg, w0);
-	if (error != 0)
-		return error;
-	sc->sc_h2c_box = (sc->sc_h2c_box + 1) & 3;
-	if (sc->sc_mailbox.active)
-		sc->sc_mailbox.sent++;
-	if (sc->sc_generation != gen)
-		return EINTR;
-	return 0;
-}
 
 /* pci.c rtw_pci_start: unmask the reference interrupt causes. */
 
@@ -964,7 +296,7 @@ rtw88_rx_deliver(struct rtw88_softc *sc, const uint8_t *data, size_t len,
 	struct rtw88_rx_info rx;
 	const uint8_t *p;
 
-	if (rtw88_rx_decode(data, len, &rx) != 0) {
+	if (rtw88_chip_rx_desc(sc, data, len, &rx) != 0) {
 		sc->sc_stats.rx_errors++;
 		return;
 	}
@@ -987,9 +319,6 @@ rtw88_rx_deliver(struct rtw88_softc *sc, const uint8_t *data, size_t len,
 		sc->sc_stats.rx_errors++;
 		return;
 	}
-	(void)rtw88_rx_signal_decode_tuple(data +
-	    rx.driver_info_offset, rx.driver_info_size, &rx, &sc->sc_phy,
-	    sc->sc_generation, &sc->sc_phy.channel, &rx.signal);
 	sc->sc_stats.signal = rx.signal;
 	sc->sc_stats.signal_reasons[rx.signal.reason]++;
 	if (rx.packet_size < RTW88_MIN_FRAME) {
@@ -1031,116 +360,8 @@ rtw88_tx_available(struct rtw88_softc *sc, unsigned q)
  * fw.c/fw.h, sec.c and reg.h. This host-managed legacy station does
  * not enable hardware crypto or LPS; RA is configured separately.
  */
-int
-rtw88_station_config(struct rtw88_softc *sc, const uint8_t *bssid,
-    unsigned aid, unsigned basic_rates, unsigned slot, int linked)
-{
-	struct rtw88_io io;
-	uint8_t media[3] = { 0 }, port[3] = { 0 }, any = 0;
-	unsigned i;
-
-	if (linked != 0 && linked != 1)
-		return EINVAL;
-	if (basic_rates == 0 || (basic_rates & ~0xfffU) != 0 ||
-	    (slot != 9 && slot != 20))
-		return EINVAL;
-	if (linked) {
-		if (bssid == NULL || (bssid[0] & 1) != 0 ||
-		    aid == 0 || aid > 2007)
-			return EINVAL;
-		for (i = 0; i < 6; i++)
-			any |= bssid[i];
-		if (any == 0)
-			return EINVAL;
-	} else if (aid != 0 || bssid != NULL) {
-		return EINVAL;
-	}
-	if (sc->sc_edca_error != 0)
-		return sc->sc_edca_error;
-	if (sc->sc_ra.error != 0)
-		return sc->sc_ra.error;
-	if (!sc->sc_running || !sc->sc_started || sc->sc_stop_requested)
-		return ENXIO;
-	if (sc->sc_channel > 14 && (basic_rates & 0xf) != 0)
-		return EINVAL;
-	rtw88_io_init(&io, sc->sc_ops, sc->sc_bus);
-	if (io.error != 0)
-		return io.error;
-	rtw88_ra_invalidate(sc);
-	sc->sc_linked = 0;
-	/* Keep data paused and port unlinked until all setup writes succeed. */
-	rtw88_io_wr_mask(&io, 0x0100, 0x30000, 0);
-	rtw88_io_set(&io, 0x0522, 1, 0x0f);
-	rtw88_io_wr(&io, 0x06a4, 2, 0);
-	for (i = 0; i < 6; i++) {
-		rtw88_io_wr(&io, 0x0610 + i, 1, sc->sc_mac[i]);
-		rtw88_io_wr(&io, 0x0618 + i, 1, linked ? bssid[i] : 0);
-	}
-	/* SECCFG.TXDEC/RXDEC are off: the stack owns CCMP/PN/MIC. */
-	rtw88_io_clr(&io, 0x0680, 1, 0x0c);
-	rtw88_io_wr_mask(&io, 0x06a8, 0x7ff, aid);
-	rtw88_io_wr_mask(&io, 0x0440, 0xfff, basic_rates);
-	rtw88_io_wr(&io, 0x051b, 1, slot);
-	rtw88_io_set(&io, 0x0550, 1, 0x18);
-	rtw88_io_clr(&io, 0x0608, 4, 0xc0);
-	if (io.error != 0)
-		return io.error;
-	media[0] = linked ? 1 : 0;
-	io.error = rtw88_fw_command(sc, 0x01, media, sizeof(media));
-	if (linked && io.error == 0)
-		io.error = rtw88_fw_command(sc, 0x2c, port, sizeof(port));
-	if (linked) {
-		rtw88_io_set(&io, 0x0608, 4, 0xc0);
-		rtw88_io_clr(&io, 0x0550, 1, 0x10);
-		rtw88_io_wr(&io, 0x06a4, 2, 0xffff);
-		rtw88_io_wr_mask(&io, 0x0100, 0x30000, 2);
-		rtw88_io_clr(&io, 0x0522, 1, 0x0f);
-	}
-	if (io.error == 0) {
-		sc->sc_basic_rates = basic_rates;
-		sc->sc_linked = linked;
-	}
-	return io.error;
-}
 
 /* EDCA register layout follows pinned BSD-licensed rtw88 mac80211.c. */
-int
-rtw88_edca_apply(struct rtw88_softc *sc,
-    const struct rtw88_edca_params params[RTW88_WME_NAC], unsigned slot)
-{
-	static const uint32_t regs[RTW88_WME_NAC] = {
-		0x0508, 0x050c, 0x0504, 0x0500
-	};
-	uint32_t words[RTW88_WME_NAC];
-	uint8_t pause;
-	unsigned i;
-	int error;
-
-	if (sc->sc_edca_error != 0)
-		return sc->sc_edca_error;
-	if (sc->sc_ra.error != 0)
-		return sc->sc_ra.error;
-	if (!sc->sc_resources_ready || !sc->sc_running || !sc->sc_started ||
-	    sc->sc_stop_requested)
-		return ENXIO;
-	if (sc->sc_channel == 0 || (sc->sc_channel > 14 && slot != 9))
-		return EINVAL;
-	error = rtw88_edca_encode(params, slot,
-	    sc->sc_channel > 14 ? 16 : 10, words);
-	if (error != 0)
-		return error;
-	error = sc->sc_ops->read_1(sc->sc_bus, 0x0522, &pause);
-	if (error == 0)
-		error = sc->sc_ops->write_1(sc->sc_bus, 0x0522, 0xff);
-	for (i = 0; error == 0 && i < RTW88_WME_NAC; i++)
-		error = sc->sc_ops->write_4(sc->sc_bus, regs[i], words[i]);
-	/* Never unpause a partial configuration or retry uncertain writes. */
-	if (error == 0)
-		error = sc->sc_ops->write_1(sc->sc_bus, 0x0522, pause);
-	if (error != 0)
-		sc->sc_edca_error = error;
-	return error;
-}
 
 /* Pinned fw.c/fw.h RA_INFO register command; legacy, HT20/1SS or VHT/1SS
  * at 40 or 80 MHz. */
@@ -1151,7 +372,7 @@ rtw88_ra_invalidate(struct rtw88_softc *sc)
 	sc->sc_ra.configured = 0;
 }
 
-static int
+int
 rtw88_ht20_policy_check(const struct rtw88_ht20_policy *p, unsigned operation)
 {
 
@@ -1172,7 +393,7 @@ rtw88_ht20_policy_check(const struct rtw88_ht20_policy *p, unsigned operation)
 }
 
 /* Legacy, HT20 and every current descriptor path use the 20 MHz tuple. */
-static int
+int
 rtw88_channel_narrow(const struct rtw88_softc *sc)
 {
 	return sc->sc_phy.channel.width_mhz == 20 &&
@@ -1181,10 +402,6 @@ rtw88_channel_narrow(const struct rtw88_softc *sc)
 }
 
 #ifdef RTW88_VHT80
-struct rtw88_vht_rate_set {
-	unsigned mask;
-	uint8_t rate_id, seed;
-};
 
 unsigned
 rtw88_vht_nss(const struct rtw88_softc *sc)
@@ -1203,7 +420,7 @@ rtw88_vht_nss(const struct rtw88_softc *sc)
  * NSS1 bits 12..21 and NSS2 bits 22..31 of the RA mask. The descriptor
  * seed is the highest MCS of the highest stream.
  */
-static int
+int
 rtw88_vht_rates(const struct rtw88_softc *sc, unsigned map,
     struct rtw88_vht_rate_set *out)
 {
@@ -1242,29 +459,11 @@ rtw88_vht_committed(const struct rtw88_softc *sc)
  * channel policy, PHY geometry and every TX power validation, with no
  * I/O and no state change. Callers under Giant or the bus lock.
  */
-int
-rtw88_tuple_check(const struct rtw88_softc *sc,
-    const struct rtw88_channel_tuple *tuple)
-{
-	struct rtw8822c_efuse efuse;
-	int error;
 
-	if (sc == NULL || tuple == NULL)
-		return EINVAL;
-	if (rtw88_channel_admit(tuple) != 0)
-		return EOPNOTSUPP;
-	if (!sc->sc_resources_ready)
-		return ENXIO;
-	error = rtw8822c_efuse_decode(sc->sc_efuse_phys,
-	    sizeof(sc->sc_efuse_phys), &efuse);
-	if (error != 0)
-		return error;
-	return rtw8822c_tx_power_check(sc, &efuse, tuple, RTW88_POWER_REGD);
-}
 #endif
 
 /* 5 GHz channels whose master must perform radar detection. */
-static int
+int
 rtw88_channel_dfs(unsigned ch)
 {
 	return (ch >= 52 && ch <= 64) || (ch >= 100 && ch <= 144);
@@ -1311,148 +510,6 @@ rtw88_dfs_close(struct rtw88_softc *sc)
 	memset(&sc->sc_dfs, 0, sizeof(sc->sc_dfs));
 }
 
-int
-rtw88_ra_configure(struct rtw88_softc *sc, const struct rtw88_ra_config *cfg)
-{
-	struct rtw88_ra_state ra = { 0 };
-	uint8_t payload[7] = { 0 };
-	unsigned mask;
-	int error, tuple_ok;
-
-	if (cfg == NULL || cfg->epoch == 0 || cfg->use_protection > 1 ||
-	    cfg->channel == 0 || cfg->channel != sc->sc_channel ||
-	    cfg->common_rates == 0 || (cfg->common_rates & ~0xfffU) != 0 ||
-	    cfg->sgi > 1 || (cfg->sgi && cfg->phy == RTW88_RA_LEGACY) ||
-	    cfg->ldpc > 1 || (cfg->ldpc && cfg->phy == RTW88_RA_LEGACY))
-		return EINVAL;
-#ifndef RTW88_VHT80
-	if (cfg->sgi || cfg->ldpc)
-		return EOPNOTSUPP;
-#endif
-	if (cfg->phy == RTW88_RA_HT20_1SS) {
-		if (cfg->mode != RTW88_FIXED_11A || cfg->channel <= 14 ||
-		    cfg->use_protection != 0 || cfg->vht_tx_map != 0 ||
-		    rtw88_ht20_policy_check(&cfg->ht, cfg->ht_operation) != 0 ||
-		    cfg->profile_generation == 0 || cfg->ht_mcs == 0 ||
-		    (cfg->ht_mcs & ~0xffU) != 0)
-			return EOPNOTSUPP;
-#ifdef RTW88_VHT80
-	} else if (cfg->phy == RTW88_RA_VHT_1SS) {
-		/* No HT-mixed entry; keep the mandatory 6 Mbps fallback. */
-		if (cfg->mode != RTW88_FIXED_11A || cfg->channel <= 14 ||
-		    cfg->use_protection != 0 ||
-		    rtw88_ht20_policy_check(&cfg->ht, cfg->ht_operation) != 0 ||
-		    cfg->profile_generation == 0 || cfg->ht_mcs != 0 ||
-		    rtw88_vht_rates(sc, cfg->vht_tx_map, NULL) != 0 ||
-		    (cfg->common_rates & 0x10) == 0)
-			return EOPNOTSUPP;
-#endif
-	} else if (cfg->phy != RTW88_RA_LEGACY || cfg->ht_mcs != 0 ||
-	    cfg->ht_operation != 0 || cfg->profile_generation != 0 ||
-	    cfg->ht.peer_cap != 0 || cfg->ht.mtu != 0 || cfg->ht.max_mpdu != 0 ||
-	    cfg->ht.rts_threshold != 0 || cfg->ht.secondary != 0 ||
-	    cfg->ht.qualification != 0 || cfg->vht_tx_map != 0) {
-		return EINVAL;
-	}
-	mask = cfg->common_rates;
-	switch (cfg->mode) {
-	case RTW88_FIXED_11A:
-		if (cfg->channel <= 14 || (mask & 0xf) != 0)
-			return EINVAL;
-		break;
-	case RTW88_FIXED_11B:
-		if (cfg->channel > 14 || (mask & ~0xfU) != 0)
-			return EINVAL;
-		break;
-	case RTW88_FIXED_11G:
-		if (cfg->channel > 14)
-			return EINVAL;
-		break;
-	default:
-		return EINVAL;
-	}
-	if (sc->sc_edca_error != 0)
-		return sc->sc_edca_error;
-	if (sc->sc_ra.error != 0)
-		return sc->sc_ra.error;
-	if (!sc->sc_running || !sc->sc_started || !sc->sc_linked ||
-	    sc->sc_stop_requested)
-		return ENXIO;
-	/* Each RA entry is qualified only for its committed channel tuple. */
-	tuple_ok = rtw88_channel_narrow(sc);
-#ifdef RTW88_VHT80
-	if (cfg->phy == RTW88_RA_VHT_1SS)
-		tuple_ok = rtw88_vht_committed(sc);
-#endif
-	if (!tuple_ok)
-		return EOPNOTSUPP;
-	ra.epoch = cfg->epoch;
-	ra.generation = sc->sc_generation;
-	ra.channel = cfg->channel;
-	ra.common_rates = mask;
-	ra.configured = 1;
-	ra.phy = cfg->phy;
-	ra.ht_mcs = cfg->ht_mcs;
-	ra.ht_operation = cfg->ht_operation;
-	ra.profile_generation = cfg->profile_generation;
-	ra.ht = cfg->ht;
-	ra.vht_tx_map = cfg->vht_tx_map;
-	ra.sgi = cfg->sgi;
-	ra.ldpc = cfg->ldpc;
-	ra.tuple = sc->sc_phy.channel;
-	if (cfg->phy == RTW88_RA_HT20_1SS) {
-		ra.rate_id = 5; /* Pinned RTW_RATEID_GN_N1SS, 5 GHz only. */
-		mask = (unsigned)cfg->ht_mcs << 12 | (mask & 0x30);
-#ifdef RTW88_VHT80
-	} else if (cfg->phy == RTW88_RA_VHT_1SS) {
-		struct rtw88_vht_rate_set rates;
-
-		(void)rtw88_vht_rates(sc, cfg->vht_tx_map, &rates);
-		ra.rate_id = rates.rate_id;
-		ra.vht_seed = rates.seed;
-		mask = rates.mask | (mask & 0x10);
-#endif
-	} else if ((mask & ~0xfU) == 0)
-		ra.rate_id = RTW88_RATEID_B_20M;
-	else if ((mask & 0xf) == 0)
-		ra.rate_id = RTW88_RATEID_G;
-	else {
-		ra.rate_id = 6; /* Pinned RTW_RATEID_BG. */
-		mask &= 0xff5;
-	}
-	ra.mask = mask;
-	if (cfg->use_protection) {
-		/* No qualified RTS policy: keep a visible legacy CCK path. */
-		if ((sc->sc_basic_rates & cfg->common_rates & 0xf) == 0)
-			return EOPNOTSUPP;
-		ra.protection_limited = 1;
-		sc->sc_ra = ra;
-		return 0;
-	}
-	/* Initial RA level1; bit7 SGI_EN lets firmware RA choose short GI. */
-	payload[1] = ra.rate_id | (1U << 5) | (unsigned)ra.sgi << 7;
-	/* DIS_PT, BW20, NO_UPDATE0, VHT0; bit2 LDPC. */
-	payload[2] = 0x40 | (unsigned)ra.ldpc << 2;
-	if (ra.phy == RTW88_RA_VHT_1SS)
-		/* VHT1 and the committed width: BW40 1, BW80 2. */
-		payload[2] |= 0x10 | (ra.tuple.width_mhz == 80 ? 2 : 1);
-	payload[3] = (uint8_t)mask;
-	payload[4] = (uint8_t)(mask >> 8);
-	payload[5] = (uint8_t)(mask >> 16);
-	payload[6] = (uint8_t)(mask >> 24);
-	error = rtw88_fw_command(sc, 0x40, payload, sizeof(payload));
-	if (error != 0) {
-		rtw88_ra_invalidate(sc);
-		sc->sc_ra.error = error;
-		sc->sc_stats.ra_command_errors++;
-		return error;
-	}
-	ra.active = 1;
-	sc->sc_ra = ra;
-	sc->sc_stats.ra_commands++;
-	return 0;
-}
-
 static int
 rtw88_tx_submit(struct rtw88_softc *sc, unsigned q, const void *frame,
     size_t len, int fixed_rate, unsigned ra_mode,
@@ -1465,7 +522,7 @@ rtw88_tx_submit(struct rtw88_softc *sc, unsigned q, const void *frame,
 	const uint8_t *bytes = frame;
 	int error;
 #ifdef RTW88_VHT80
-	struct rtw8822c_channel_geometry geometry = { 0 };
+	uint8_t primary_sc = 0;
 	int vht = 0;
 #endif
 
@@ -1498,8 +555,9 @@ rtw88_tx_submit(struct rtw88_softc *sc, unsigned q, const void *frame,
 		     sc->sc_ra.tuple.center != sc->sc_phy.channel.center ||
 		     sc->sc_ra.tuple.width_mhz !=
 		     sc->sc_phy.channel.width_mhz)) ||
-		    rtw8822c_channel_geometry(&sc->sc_phy.channel,
-		    &geometry) != 0)
+		    sc->sc_chip->tx_primary_sc == NULL ||
+		    sc->sc_chip->tx_primary_sc(sc, &sc->sc_phy.channel,
+		    &primary_sc) != 0)
 			return EOPNOTSUPP;
 		vht = ra_mode == 1;
 #else
@@ -1508,7 +566,7 @@ rtw88_tx_submit(struct rtw88_softc *sc, unsigned q, const void *frame,
 #endif
 	}
 	if (frame == NULL || len < 24 ||
-	    len > RTW88_TX_BUF_SIZE - RTW8822C_TX_PACKET_DESC_SIZE)
+	    len > RTW88_TX_BUF_SIZE - sc->sc_chip->caps.tx_desc_size)
 		return EMSGSIZE;
 	qsel = q == RTW88_TXQ_MGMT ? RTW88_QSEL_MGMT : 0;
 	if ((bytes[0] & 0x8c) == 0x88) {
@@ -1568,7 +626,7 @@ rtw88_tx_submit(struct rtw88_softc *sc, unsigned q, const void *frame,
 	} else if (!rtw88_channel_narrow(sc)) {
 		/* Primary20 within the block: upper 1, lower 2, upmost 3 and
 		 * lowest 4, as the PHY geometry programs it. */
-		tx.data_sc = (uint8_t)geometry.channel_index;
+		tx.data_sc = primary_sc;
 	}
 #endif
 	if (q == RTW88_TXQ_MGMT)
@@ -1746,126 +804,11 @@ rtw88_tx_ampdu(struct rtw88_softc *sc, unsigned q, const void *frame,
  * ownership only: never infer RF idle, air ACK or calibration readiness. */
 
 int
-rtw88_loopback(struct rtw88_softc *sc, int mode)
-{
-
-	if (!sc->sc_running || sc->sc_stop_requested)
-		return ENXIO;
-	switch (mode) {
-	case 0x00: case 0x01: case 0x03: case 0x07: case RTW88_LBMODE_IMMEDIATE:
-		break;
-	default:
-		return EINVAL;
-	}
-	return sc->sc_ops->write_1(sc->sc_bus, RTW88_REG_CR + 3, (uint8_t)mode);
-}
-
-int
-rtw88_channel_apply(struct rtw88_softc *sc,
-    const struct rtw88_channel_tuple *tuple)
-{
-	struct rtw8822c_efuse efuse;
-	struct rtw8822c_channel_geometry geometry;
-	uint32_t gen;
-	uint8_t pause;
-	unsigned ch;
-	int error;
-
-	if (!sc->sc_running || sc->sc_stop_requested)
-		return ENXIO;
-	if (tuple == NULL)
-		return EINVAL;
-	/* A warm call never changes RF width; rtw88_start_tuple owns that. */
-	if (sc->sc_phy.channel.width_mhz != tuple->width_mhz)
-		return EOPNOTSUPP;
-	if ((error = rtw8822c_channel_geometry(tuple, &geometry)) != 0)
-		return error;
-	ch = tuple->primary;
-	if (rtw88_channel_admit(tuple) != 0)
-		return EOPNOTSUPP;
-	/*
-	 * Keep host-ring frames off a DFS channel. This covers host ring
-	 * ownership only; frames held in the MAC need rtw88_tx_quiet().
-	 */
-	if (rtw88_channel_dfs(ch)) {
-		for (unsigned q = 0; q < RTW88_NTXQ; q++)
-			if (sc->sc_txq[q].queued != 0)
-				return EBUSY;
-	}
-	error = rtw8822c_efuse_decode(sc->sc_efuse_phys,
-	    sizeof(sc->sc_efuse_phys), &efuse);
-	if (error != 0)
-		return error;
-	sc->sc_phy.channel_valid = 0;
-	rtw88_dfs_close(sc);
-	rtw88_ra_invalidate(sc);
-#ifdef RTW88_RFK_EXPERIMENT
-	sc->sc_operating.prepared = sc->sc_operating.sealed = 0;
-	sc->sc_power_program.valid = 0;
-#endif
-	gen = sc->sc_generation;
-	error = sc->sc_ops->read_1(sc->sc_bus, 0x0522, &pause);
-	if (error != 0)
-		return error; /* No write was attempted. A warm retry is safe. */
-	/* An attempted write can mutate hardware even when it returns an error. */
-	error = sc->sc_ops->write_1(sc->sc_bus, 0x0522, 0xff);
-	if (error == 0 && (sc->sc_stop_requested || sc->sc_generation != gen))
-		error = EINTR;
-	if (error == 0)
-		error = rtw8822c_set_channel_tuple(sc, tuple);
-	if (error == 0 && (sc->sc_stop_requested || sc->sc_generation != gen))
-		error = EINTR;
-	if (error == 0)
-		error = rtw8822c_set_tx_power_tuple(sc, &efuse, tuple, RTW88_POWER_REGD);
-	if (error == 0 && (sc->sc_stop_requested || sc->sc_generation != gen))
-		error = EINTR;
-	if (error == 0)
-		error = sc->sc_ops->write_1(sc->sc_bus, 0x0522, pause);
-	if (error == 0 && (sc->sc_stop_requested || sc->sc_generation != gen))
-		error = EINTR;
-	if (error != 0) {
-		/*
-		 * The lifecycle owner must stop outside the interrupt lock.
-		 * Keep host TX closed even if TXPAUSE was not accepted.
-		 */
-		sc->sc_stop_requested = 1;
-		return error;
-	}
-	sc->sc_channel = ch;
-	sc->sc_phy.channel = *tuple;
-#ifndef RTW88_RFK_EXPERIMENT
-	sc->sc_phy.channel_valid = 1;
-#endif
-	return 0;
-}
-
-int
 rtw88_channel(struct rtw88_softc *sc, unsigned ch)
 {
 	const struct rtw88_channel_tuple tuple = { ch, ch, 20 };
 
 	return rtw88_channel_apply(sc, &tuple);
-}
-
-int
-rtw88_diag(struct rtw88_softc *sc, uint32_t *r)
-{
-	static const uint32_t regs[RTW88_DIAG_REGS] = {
-		RTW88_REG_HISR0, RTW88_REG_HIMR0, RTW88_REG_HISR3,
-		RTW88_REG_HIMR3, RTW88_REG_RXBD_IDX, RTW88_REG_PCI_CTRL,
-		0x3c60, 0x4c60	/* Direct RF18 A/B windows; no RF command writes. */
-	};
-	unsigned i;
-	int error;
-
-	if (!sc->sc_resources_ready || !sc->sc_powered)
-		return ENXIO;
-	for (i = 0; i < RTW88_DIAG_REGS; i++) {
-		error = sc->sc_ops->read_4(sc->sc_bus, regs[i], &r[i]);
-		if (error != 0)
-			return error;
-	}
-	return 0;
 }
 
 static int
@@ -1885,12 +828,15 @@ rtw88_hci_valid(const struct rtw88_softc *sc)
 int
 rtw88_core_attach(struct rtw88_softc *sc)
 {
-#ifdef RTW88_RFK_EXPERIMENT
-	if (rtw8822c_rfk_blocked())
-		return EBUSY;
-#endif
-	if (!rtw88_hci_valid(sc))
+	int error;
+
+	if (!rtw88_hci_valid(sc) || !rtw88_chip_valid(sc))
 		return EINVAL;
+	if (sc->sc_chip->attach_check != NULL) {
+		error = sc->sc_chip->attach_check(sc);
+		if (error != 0)
+			return error;
+	}
 	return sc->sc_hci->attach(sc);
 }
 
@@ -1899,20 +845,21 @@ rtw88_core_detach(struct rtw88_softc *sc)
 {
 	int error;
 
-	if (!rtw88_hci_valid(sc))
+	if (!rtw88_hci_valid(sc) || !rtw88_chip_valid(sc))
 		return EINVAL;
-#ifdef RTW88_RFK_EXPERIMENT
-	if (rtw8822c_rfk_active(sc))
-		return EBUSY;
-#endif
+	if (sc->sc_chip->detach_check != NULL) {
+		error = sc->sc_chip->detach_check(sc);
+		if (error != 0)
+			return error;
+	}
 	error = rtw88_stop(sc);
 	if (error != 0)
 		return error;
-#ifdef RTW88_RFK_EXPERIMENT
-	error = rtw8822c_rfk_free(sc);
-	if (error != 0)
-		return error;
-#endif
+	if (sc->sc_chip->detach != NULL) {
+		error = sc->sc_chip->detach(sc);
+		if (error != 0)
+			return error;
+	}
 	return sc->sc_hci->detach(sc);
 }
 

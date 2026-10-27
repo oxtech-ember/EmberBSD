@@ -51,14 +51,25 @@ register tables and bounded frame transfer. The core exposes copied-frame
 callbacks for a native station wrapper. It rejects CRC/ICV errors and stale
 DMA tags. The RX callback excludes the FCS and expires when it returns.
 
-The core selects an explicit `rtw88_hci_ops` transport before allocating resources.
+The core selects explicit HCI and chip providers before allocating resources.
 `rtw88_pci_hci.c` owns PCI rings, DMA publication, completion and interrupt handling.
 `rtw88_pci_packet.c` owns the packet-H2C DMA producer.
-Common code retains frame policy and chip register programming.
+`rtw8822c_runtime.c` owns chip startup, register programming and calibration callbacks.
+`rtw8822c_hw.c` owns firmware parsing, descriptors and PHY signal decoding.
+Common code retains frame policy, lifecycle fences and capability publication.
+`rtw88_get_caps` describes the selected chip without register access.
+The native station publishes only the bands and features in that description.
+Absent calibration operations return `EOPNOTSUPP` without reporting calibration success.
 An uncertain TX publication retains ownership, even when submission returns an error.
 Failed transport shutdown prevents resource release.
 Transports that can sleep defer interrupts through a required scheduling callback.
 This separation does not establish RTL8723DS network or physical-device support.
+
+The focused host capability check uses `ember/tools/rtw88-enable-contract.sh` with selected SDK tools.
+Set `RTW88_CAPS_ONLY=1` and
+`RTW88_TEST_CFLAGS='-DRTW88_VHT_EXPERIMENT -DRTW88_CAPS_CONTRACT'` for this check.
+It tests both single-band and dual-band publication with VHT compiled in.
+Live block-ack services abort if called during this publication check.
 
 The core gives each consumed RX slot a monotonic `sequence` in its current
 `generation`. The first slot is 1. Invalid tags, decode failures, C2H and

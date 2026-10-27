@@ -114,12 +114,16 @@ parts=[net[:net.index('#include')], bsd[:bsd.index('#include')],
        '#define ifqueue queue\n', function(bsd,'ieee80211_drain_ifq','static void'),
        '#undef ifqueue\n']
 for name,result in [('rtw88_net_scan_probe_admit','static int'),('rtw88_net_sta_quiet','static void'),('rtw88_net_rxba_now','static uint64_t'),('rtw88_net_rxba_ticks','static int'),('rtw88_net_rxba_timeout','static void'),('rtw88_net_rxba_schedule','static int'),('rtw88_net_rxba_cancel','static void'),('rtw88_net_rxba_quiesce','static void'),('rtw88_net_rxba_attach','static void'),('rtw88_net_rxba_detach','static void'),('rtw88_net_basic_rates','static unsigned'),('rtw88_net_wme_apply','static int'),('rtw88_net_edca_prepare','static int'),('rtw88_net_ra_prepare','static int'),('rtw88_net_restart_peer','static int'),('rtw88_net_drain_wait','static int'),('rtw88_net_mailbox_wait','static int'),('rtw88_net_state_work','static void'),('rtw88_net_ht20_publish','static void'),
-('rtw88_net_ht20_local_policy','static int'),('rtw88_net_ht20_profile_prepare','static int'),('rtw88_net_ht20_admit','static int'),('rtw88_net_attach','int')]:
+('rtw88_net_ht20_local_policy','static int'),('rtw88_net_ht20_profile_prepare','static int'),('rtw88_net_ht20_admit','static int'),('rtw88_net_vht_admit','static int'),('rtw88_net_attach','int')]:
  # A source baseline may predate the checkpoint; no replacement body is supplied.
  if name in ('rtw88_net_drain_wait','rtw88_net_mailbox_wait') and not re.search(r'^'+name+r'\(',net,re.M):continue
  if name=='rtw88_net_rxba_attach':
   parts.append(re.search(r'^static const struct ieee80211_rxba_ops rtw88_net_rxba_ops = \{.*?^};',net,re.M|re.S).group()+'\n')
- parts.append(function(net,name,result))
+ body=function(net,name,result)
+ if name=='rtw88_net_vht_admit':
+  parts.append('#ifdef RTW88_VHT80\n'+body+'#endif\n')
+ else:
+  parts.append(body)
 (out/'enable-native.inc').write_text('\n'.join(parts))
 with (out/'enable-native.inc').open('a') as stream:
  stream.write(function(net,'rtw88_net_init','static int'))

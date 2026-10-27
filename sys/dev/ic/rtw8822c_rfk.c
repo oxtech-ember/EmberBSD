@@ -99,7 +99,7 @@ struct rtw_backup_info { u8 len; u32 reg, val; };
 
 struct rtw8822c_rfk {
 	struct rtw88_softc *sc;
-	struct rtw8822c_rfk_services svc;
+	struct rtw88_calibration_services svc;
 	struct rtw8822c_efuse efuse;
 	struct { unsigned rf_path_num; } hal;
 	struct { struct rtw_gapk_info gapk; struct rtw_dpk_info dpk_info; } dm_info;
@@ -740,7 +740,7 @@ rtw8822c_rfk_validate(struct rtw88_softc *sc)
 
 int
 rtw8822c_rfk_begin(struct rtw88_softc *sc,
-    const struct rtw8822c_rfk_services *svc)
+    const struct rtw88_calibration_services *svc)
 {
 	struct rtw8822c_rfk *k;
 	unsigned previous;

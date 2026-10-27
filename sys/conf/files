@@ -744,26 +744,31 @@ file	dev/ic/rtw8723d_boot.c		rtw8723d_boot
 
 # Realtek RTL8822CE native station core.
 # Config base cannot be rtw88: names must not end in a digit. rtw is RTL8180.
-device	rtwce: arp, wlan, ifnet, firmload
+define	rtw88_core: arp, wlan, ifnet, firmload
+define	rtw8822c_chip: rtw88_core
+device	rtwce: rtw8822c_chip
 defflag	opt_rtw88_rfk.h	RTW88_RFK_EXPERIMENT
 defflag	opt_rtw88_vht.h	RTW88_VHT_EXPERIMENT
 defflag	opt_rtw88_dfs.h	RTW88_DFS64_EXPERIMENT
-file	dev/ic/rtw88.c			rtwce
-file	dev/ic/rtw88_fw_init.c		rtwce
-file	dev/ic/rtw88_hw.c		rtwce
-file	dev/ic/rtw8822c.c		rtwce
-file	dev/ic/rtw8822c_boot.c		rtwce
-file	dev/ic/rtw8822c_power.c		rtwce
-file	dev/ic/rtw8822c_mac.c		rtwce
-file	dev/ic/rtw8822c_phy.c		rtwce
-file	dev/ic/rtw8822c_dack.c		rtwce
-file	dev/ic/rtw8822c_rfk.c		rtwce
-file	dev/ic/rtw8822c_table.c		rtwce
-file	dev/ic/rtw8822c_coex.c		rtwce
-file	dev/ic/rtw8822c_txpwr.c		rtwce
-file	dev/ic/rtw88_net.c		rtwce
-file	dev/ic/rtw88_net_policy.c		rtwce
-file	dev/ic/rtw88_net_mbuf.c		rtwce
+file	dev/ic/rtw88.c			rtw88_core
+file	dev/ic/rtw88_chip.c		rtw88_core
+file	dev/ic/rtw8822c_runtime.c		rtw8822c_chip
+file	dev/ic/rtw8822c_hw.c		rtw8822c_chip
+file	dev/ic/rtw88_fw_init.c		rtw88_core
+file	dev/ic/rtw88_hw.c		rtw88_core
+file	dev/ic/rtw8822c.c		rtw8822c_chip
+file	dev/ic/rtw8822c_boot.c		rtw8822c_chip
+file	dev/ic/rtw8822c_power.c		rtw8822c_chip
+file	dev/ic/rtw8822c_mac.c		rtw8822c_chip
+file	dev/ic/rtw8822c_phy.c		rtw8822c_chip
+file	dev/ic/rtw8822c_dack.c		rtw8822c_chip
+file	dev/ic/rtw8822c_rfk.c		rtw8822c_chip
+file	dev/ic/rtw8822c_table.c		rtw8822c_chip
+file	dev/ic/rtw8822c_coex.c		rtw8822c_chip
+file	dev/ic/rtw8822c_txpwr.c		rtw8822c_chip
+file	dev/ic/rtw88_net.c		rtw88_core
+file	dev/ic/rtw88_net_policy.c		rtw88_core
+file	dev/ic/rtw88_net_mbuf.c		rtw88_core
 
 # Realtek RTL8180 802.11
 #

@@ -36,6 +36,10 @@ helper = re.search(r'^rtw88_net_ht20_local_policy\(.*?^}', net, re.M|re.S)
 if helper is None:
     raise ValueError('HT20 local-policy helper')
 parts.append('static int\n' + helper.group() + '\n')
+vht_tuple = re.search(r'^rtw88_net_vht_tuple\(.*?^}', net, re.M|re.S)
+if vht_tuple is not None:
+    parts.append('#ifdef RTW88_VHT80\nstatic int\n' +
+                 vht_tuple.group() + '\n#endif\n')
 ht20_stub = '''struct ieee80211_ht20_profile;
 static void
 rtw88_net_ht20_publish(struct rtw88_net *net,

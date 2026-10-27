@@ -24,7 +24,7 @@ trap 'rm -rf "$work"' EXIT HUP INT TERM
 
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror ${RTW88_TEST_CFLAGS:-} \
     -I"$src/sys/dev/ic" "$tools/rtw88-contract.c" \
-    "$src/sys/dev/ic/rtw88_hw.c" "$src/sys/dev/ic/rtw8822c.c" -o "$work/rtw88-contract"
+    "$src/sys/dev/ic/rtw88_hw.c" "$src/sys/dev/ic/rtw8822c_hw.c" "$src/sys/dev/ic/rtw8822c.c" -o "$work/rtw88-contract"
 run_test "$work/rtw88-contract"
 
 # Optional offline real fixtures. Always verify both before reading them.

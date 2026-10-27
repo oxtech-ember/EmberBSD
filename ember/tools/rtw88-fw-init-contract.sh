@@ -22,8 +22,22 @@ fi
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror ${RTW88_TEST_CFLAGS:-} \
     -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \
     "$tools/rtw88-fw-init-contract.c" \
+    "$src/sys/dev/ic/rtw88.c" \
+    "$src/sys/dev/ic/rtw88_chip.c" \
+    "$src/sys/dev/ic/rtw8822c_runtime.c" \
+    "$src/sys/dev/pci/rtw88_pci_hci.c" \
+    "$src/sys/dev/ic/rtw88_net_policy.c" \
     "$@" \
-    "$src/sys/dev/ic/rtw88_hw.c" -o "$work/test"
+    "$src/sys/dev/ic/rtw88_hw.c" "$src/sys/dev/ic/rtw8822c_hw.c" \
+    "$src/sys/dev/ic/rtw8822c.c" \
+    "$src/sys/dev/ic/rtw8822c_boot.c" \
+    "$src/sys/dev/ic/rtw8822c_power.c" \
+    "$src/sys/dev/ic/rtw8822c_mac.c" \
+    "$src/sys/dev/ic/rtw8822c_phy.c" \
+    "$src/sys/dev/ic/rtw8822c_dack.c" \
+    "$src/sys/dev/ic/rtw8822c_table.c" \
+    "$src/sys/dev/ic/rtw8822c_coex.c" \
+    "$src/sys/dev/ic/rtw8822c_txpwr.c" -o "$work/test"
 if [ -n "${TEST_RUNNER:-}" ]; then
     "$TEST_RUNNER" "$work/test" "$tools/rtw88-fw-init-contract.vectors" \
         "$tools/rtw88-fw-packet-runtime.vectors"

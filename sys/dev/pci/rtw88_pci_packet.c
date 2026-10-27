@@ -344,48 +344,17 @@ rtw88_pci_fw_packet(struct rtw88_softc *sc, const uint8_t *packet, size_t len)
 	total = packet[4] | (unsigned)packet[5] << 8;
 	if (packet[0] != 1 || packet[1] != 0xff || total < 8 || total > 32)
 		return EINVAL;
-	if (!sc->sc_started || sc->sc_bootstrapping ||
-	    !sc->sc_packet_h2c.initialized)
+	if (sc->sc_bootstrapping) {
+		if (sc->sc_started || sc->sc_packet_h2c.initialized)
+			return ENXIO;
+		waited = sc->sc_packet_h2c.boot_waited;
+	} else if (!sc->sc_started || !sc->sc_packet_h2c.initialized) {
 		return ENXIO;
-	sc->sc_packet_h2c.busy = 1;
-	error = rtw88_pci_packet_send_packet(sc, packet, &waited);
-	sc->sc_packet_h2c.busy = 0;
-	return error;
-}
-
-int
-rtw88_fw_init(struct rtw88_softc *sc)
-{
-	uint8_t packet[32] = { 1, 0xff, 0x0d, 0, 12, 0, 0, 0, [10] = 56 };
-	unsigned waited = 0;
-	int error;
-
-	error = rtw88_pci_packet_validate(sc);
-	if (error != 0)
-		return error;
-	if (sc->sc_started || sc->sc_packet_h2c.attempted ||
-	    sc->sc_packet_h2c.initialized)
-		return EBUSY;
-	if (!sc->sc_bootstrapping)
-		return ENXIO;
-	if (sc->sc_rfe > 6 || sc->sc_cut > 6)
-		return ENOTSUP;
-	sc->sc_packet_h2c.busy = 1;
-	error = rtw88_pci_packet_send_packet(sc, packet, &waited);
-	if (error == 0) {
-		memset(packet, 0, sizeof(packet));
-		packet[0] = 1;
-		packet[1] = 0xff;
-		packet[2] = 0x11;
-		packet[4] = 16;
-		packet[8] = sc->sc_rfe;
-		packet[9] = 2;
-		packet[10] = sc->sc_cut;
-		packet[11] = 0x33;
-		error = rtw88_pci_packet_send_packet(sc, packet, &waited);
 	}
-	if (error == 0)
-		sc->sc_packet_h2c.initialized = 1;
+	sc->sc_packet_h2c.busy = 1;
+	error = rtw88_pci_packet_send_packet(sc, packet, &waited);
+	if (sc->sc_bootstrapping)
+		sc->sc_packet_h2c.boot_waited = waited;
 	sc->sc_packet_h2c.busy = 0;
 	return error;
 }

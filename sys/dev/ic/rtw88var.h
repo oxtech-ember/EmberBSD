@@ -20,6 +20,7 @@
 #include <dev/ic/rtw88_hw.h>
 #include <dev/ic/rtw88_hci.h>
 #include <dev/ic/rtw88_packet.h>
+#include <dev/ic/rtw88_chip.h>
 
 /* TX power regulatory table index used by every channel program. */
 #define RTW88_POWER_REGD 12
@@ -227,6 +228,7 @@ struct rtw88_packet_h2c {
 	uint16_t managed_old, managed_next;
 	uint8_t managed;
 #endif
+	unsigned boot_waited;
 };
 
 /* Boot generation, never a peer/association identity. */
@@ -245,6 +247,8 @@ struct rtw88_mailbox {
 struct rtw88_softc {
 	const struct rtw88_bus_ops *sc_ops;
 	const struct rtw88_hci_ops *sc_hci;
+	const struct rtw88_chip_ops *sc_chip;
+	void *sc_chip_private;	/* Owned only by the selected chip. */
 	void (*sc_defer_irq)(struct rtw88_softc *);
 	int sc_hci_error;	/* Incomplete transport shutdown blocks restart. */
 	void *sc_bus;
