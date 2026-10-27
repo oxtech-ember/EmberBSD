@@ -43,6 +43,25 @@
 			ranges;
 		};
 
+		mmc1: mmc@4021000 {
+			compatible = "allwinner,sun50i-a100-mmc";
+			reg = <0x04021000 0x1000>;
+			clocks = <&ccu CLK_BUS_MMC1>, <&ccu CLK_MMC1>;
+			clock-names = "ahb", "mmc";
+			resets = <&ccu RST_BUS_MMC1>;
+			reset-names = "ahb";
+			interrupts = <GIC_SPI 40 IRQ_TYPE_LEVEL_HIGH>;
+			pinctrl-names = "default";
+			pinctrl-0 = <&mmc1_pins>;
+			bus-width = <4>;
+			non-removable;
+			max-frequency = <25000000>;
+			/* Enable only with a verified board power profile. */
+			status = "disabled";
+			#address-cells = <1>;
+			#size-cells = <0>;
+		};
+
 		mmc2: mmc@4022000 {
 			compatible = "allwinner,sun50i-a100-emmc";
 			reg = <0x04022000 0x1000>;
@@ -95,6 +114,11 @@
 };
 
 &pio {
+	mmc1_pins: mmc1-pins {
+		pins = "PG0", "PG1", "PG2", "PG3", "PG4", "PG5";
+		function = "mmc1";
+	};
+
 	mmc2_pins: mmc2-pins {
 		pins = "PC0", "PC1", "PC5", "PC6", "PC8", "PC9", "PC10",
 		       "PC11", "PC13", "PC14", "PC15", "PC16";

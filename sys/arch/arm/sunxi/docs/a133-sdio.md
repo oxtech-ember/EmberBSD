@@ -34,6 +34,31 @@ failure. Compilation and fixtures do not establish radio or physical recovery.
 The separate [RTL8723DS diagnostic](../../../../dev/sdmmc/docs/rtl8723ds-probe.md)
 owns CMD52 access and the optional function lifecycle.
 
+## Native WLAN resource gate
+
+The native `sun50i-a133-ys-m33.dts` describes MMC1 at `/soc/mmc@4021000`.
+It uses PG0..PG5, A100 clock IDs 67/63, reset 16 and SPI40 level-high.
+The bus is four-bit and limited to 25 MHz. The controller stays disabled.
+
+PL5/PL6 resource names do not establish GPIO polarity or power timing.
+No power sequence, regulator, signal voltage or pin drive strength is guessed.
+Enabling this controller requires a separate verified board power profile.
+That profile must use standard `mmc-pwrseq` and define GPIO and regulator ownership.
+Revision-specific schematics and matching vendor source must establish polarity and delays.
+The diagnostic root opt-in does not enable the native controller.
+
+From the OS root, run `python3.15 ember/tools/a133-wlan-fdt-test.py SOURCE OUTPUT`
+with the SDK Python. The script compiles the actual board DTB. Select `HOST_CC`
+and `HOST_DTC` explicitly from the native SDK prefix.
+Use `HOST_CFLAGS` and `HOST_LDFLAGS` for that prefix's libfdt inputs.
+The test calls the production FDT adapter and checks the disabled resource gate.
+It also checks that diagnostic opt-in and a foreign power reference cannot activate MMC1.
+The adapter must preserve the complete native tree, including its existing MMC2 resources.
+The separate synthetic test above retains coverage for legacy touch and MCU resources.
+
+These checks prove a resource model, not radio I/O or a cold boot.
+This native DTS has no complete touch or MCU description and is not a deployment replacement.
+
 ## Provenance
 
 Contracts consolidated from these documents at OS revision `4a4c98bb99999836103d3fe63fd6f4c98013f0c5`.
