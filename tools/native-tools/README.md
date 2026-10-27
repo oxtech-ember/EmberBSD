@@ -37,6 +37,9 @@ from the common native Ports recipes before publishing the routing directory.
 `cut` supplies Flex version fields. `uniq` preserves the definitions emitted by
 Autoconf when generating configuration headers. `nm` keeps native symbol probes
 on the selected LLVM or GNU implementation instead of an absolute system fallback.
+`hostname` supplies the host identity used for the `BUILDER` metadata when
+reproducible-build metadata is disabled. Route it explicitly because `build.sh`
+limits `PATH` to this contract.
 
 The SDK must publish a routing directory with these entries:
 

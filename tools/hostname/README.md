@@ -30,6 +30,8 @@ Build and install the normal `tools/hostname` target. Then run with SDK Python:
 
 The check invokes only empty argv, `-s` and invalid option `-z`. It compares
 the read results with the host's read-only `gethostname` value. It never
-passes a hostname operand. It also runs the actual kernel identity script
-under the routed tools and checks that the selected hostname and build
-identity appear in the generated source. No target code executes.
+passes a hostname operand. It also invokes the selected host-prefix `hostname`
+through the contract routing directory with no ambient `PATH`. The check then
+runs the actual kernel identity script under the routed tools and checks that
+the selected hostname and build identity appear in the generated source. No
+target code executes.

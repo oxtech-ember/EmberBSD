@@ -21,6 +21,7 @@ expr expr -
 find find -
 grep grep -
 head head -
+hostname hostname -
 id id -
 ld ld HOST_LD
 ln ln HOST_LN

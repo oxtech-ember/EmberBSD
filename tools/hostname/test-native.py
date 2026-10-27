@@ -43,6 +43,13 @@ routing = work / 'commands'
 contract = source / 'tools/native-tools/contract'
 ensure_native_os_routing(native, contract_path=str(contract),
     contract_sha256=sha256_file(str(contract)), destination=str(routing))
+selected_hostname = native.tool('hostname')
+if (routing / 'hostname').resolve(strict=True) != Path(selected_hostname).resolve(strict=True):
+    raise SystemExit('native routing does not select the host-prefix hostname')
+routed = subprocess.run(['hostname'], cwd=work, env={'PATH': str(routing), 'LC_ALL': 'C'},
+                        text=True, capture_output=True)
+if routed.returncode or routed.stdout != full + '\n' or routed.stderr:
+    raise SystemExit('routed hostname did not use the selected host-prefix executable')
 env = dict(PATH=str(routing), TOOL_AWK=native.tool('awk'), TOOL_DATE=native.tool('date'),
            TOOL_HOSTNAME=hostname, LC_ALL='C', USER='fixture', BUILDINFO='native-hostname-regression')
 result = subprocess.run([native.tool('sh'), str(source / 'sys/conf/newvers.sh'), '-i', 'FIXTURE'],
