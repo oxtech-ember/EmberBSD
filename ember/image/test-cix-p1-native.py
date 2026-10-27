@@ -78,13 +78,16 @@ with tempfile.TemporaryDirectory() as tmp:
     os.environ.update(EMBERBSD_SDK_SOURCE='/sdk', EMBER_HOST_PREFIX='/native',
                       EMBER_LIBEDIT_SOURCE=str(libedit_source), EMBER_HOST_BFD_CONFIG=str(bfd),
                       EMBER_SDK_SYSROOT='/sysroot', EMBER_LLVM_SOURCE=str(llvm_source),
-                      EMBER_PORTS_SOURCE='/ports', EMBER_GIT='/usr/bin/git')
+                      EMBER_PORTS_SOURCE='/ports', EMBER_GIT='/usr/bin/git',
+                      EMBER_LIBARCHIVE_SOURCE='/libarchive', EMBER_LIBEVENT_SOURCE='/libevent')
     sys.argv = [str(path), str(source), tmp + '/clang', str(tools), '/compiler']
     subject.main()
     run = next(row[1] for row in calls if row[0] == 'run')
     assert run['shell'] and run['source'] == str(source)
     assert ('runtime', '/sysroot', 'aarch64') in calls
     assert any(row[0] == 'verify-source' and 'verify-source' in row[1] for row in calls)
+    assert any(row[0] == 'verify-source' and '/ports/scripts/libarchive-source.py' in row[1] for row in calls)
+    assert any(row[0] == 'verify-source' and '/ports/scripts/source-inputs/libevent/source.py' in row[1] for row in calls)
     assert ('libedit', str(libedit_source), '/ports', '/usr/bin/git') in calls
     assert ('clang', '/compiler', 'aarch64--netbsd') in calls
     assert run['arguments'][1:10] == ['--selected', str(source), tmp + '/clang', str(tools),
@@ -105,6 +108,22 @@ with tempfile.TemporaryDirectory() as tmp:
         raise AssertionError('mismatched LLVM source accepted')
     assert not Path(sys.argv[2]).exists()
     jsonio.loads_json = original
+    calls.clear()
+    original_capture = process.capture
+    def fail_libevent(argv, env):
+        if '/ports/scripts/source-inputs/libevent/source.py' in argv:
+            raise SDKError('libevent verification failed')
+        return original_capture(argv, env)
+    process.capture = fail_libevent
+    sys.argv[2] = tmp + '/failed-source'
+    try:
+        subject.main()
+    except SystemExit as exc:
+        assert 'libevent verification failed' in str(exc)
+    else:
+        raise AssertionError('failed source verification accepted')
+    assert not Path(sys.argv[2]).exists()
+    process.capture = original_capture
     calls.clear()
     os.environ.update(EMBER_TARGET_COMPILER_FAMILY='gcc', EMBER_HOST_COMPILER_FAMILY='gcc')
     del os.environ['EMBER_SDK_SYSROOT']

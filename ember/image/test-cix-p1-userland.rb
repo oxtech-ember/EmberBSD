@@ -47,6 +47,10 @@ Dir.mktmpdir('ember-cix-userland-') do |work|
   SH
   File.write(compiler + '/bin/clang', "#!/bin/sh\nexit 0\n")
   FileUtils.cp(compiler + '/bin/aarch64--netbsd-readelf', compiler + '/bin/llvm-readelf')
+  %w[libarchive-source libevent-source].each do |name|
+    FileUtils.mkdir_p(work + '/' + name)
+    File.write(work + '/' + name + '/emberbsd-prepared-source.json', name)
+  end
   FileUtils.mkdir_p(work + '/llvm-source')
   File.write(work + '/llvm-source/llvm-source.json', 'prepared LLVM source')
   FileUtils.mkdir_p(work + '/llvm-resource/lib/netbsd')
@@ -166,7 +170,8 @@ Dir.mktmpdir('ember-cix-userland-') do |work|
       'clang', extra.fetch('TEST_FAMILY', 'gcc'), extra.fetch('EMBER_LIBEDIT_SOURCE', libedit),
       work + '/llvm-source', work + '/host-bfd.mk', '2',
       extra.fetch('TEST_GIT', '/usr/bin/git'), extra.fetch('TEST_RUBY', native_prefix + '/bin/ruby'),
-      extra.fetch('TEST_SHASUM', native_prefix + '/bin/shasum'), work + '/llvm-runtime',
+      extra.fetch('TEST_SHASUM', native_prefix + '/bin/shasum'),
+      work + '/libarchive-source', work + '/libevent-source', work + '/llvm-runtime',
       work + '/llvm-resource', compiler + '/libgcc_eh.a', compiler + '/resource',
       '23.1.4', 'aarch64-unknown-netbsd', work + '/llvm-resource/lib/netbsd/builtins.a')
   end
@@ -184,6 +189,9 @@ Dir.mktmpdir('ember-cix-userland-') do |work|
   clang_flags = File.read(clang_out + '/build-flags')
   %w[EMBER_COMPILER_FAMILY=clang EMBER_LLVM_RUNTIME_PHASE=bootstrap MKLIBCXX=no].each do |flag|
     abort "FAIL: missing Clang flag #{flag}" unless clang_flags.include?(flag)
+  end
+  %w[LIBARCHIVE LIBEVENT].each do |name|
+    abort "FAIL: #{name} source not forwarded" unless clang_flags.include?("EMBER_#{name}_SOURCE=#{work}/#{name.downcase}-source")
   end
   abort 'FAIL: selected resource not forwarded' unless
     clang_flags.include?("EMBER_LLVM_RESOURCE_DIR=#{work}/llvm-resource")

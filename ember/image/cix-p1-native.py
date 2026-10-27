@@ -14,7 +14,8 @@ def main():
         raise SystemExit('usage: cix-p1-native.py SOURCE NEW_OUTPUT TOOLDIR TARGET_PREFIX')
     source, output, tools, compiler = map(Path, sys.argv[1:])
     required = ('EMBERBSD_SDK_SOURCE', 'EMBER_HOST_PREFIX', 'EMBER_LIBEDIT_SOURCE',
-                'EMBER_HOST_BFD_CONFIG', 'EMBER_LLVM_SOURCE', 'EMBER_PORTS_SOURCE')
+                'EMBER_HOST_BFD_CONFIG', 'EMBER_LLVM_SOURCE', 'EMBER_PORTS_SOURCE',
+                'EMBER_LIBARCHIVE_SOURCE', 'EMBER_LIBEVENT_SOURCE')
     missing = [key for key in required if not os.environ.get(key)]
     family = os.environ.get('EMBER_TARGET_COMPILER_FAMILY', 'clang')
     host_family = os.environ.get('EMBER_HOST_COMPILER_FAMILY', 'clang')
@@ -36,7 +37,8 @@ def main():
             raise SDKError('selected SDK has an incompatible native OS or application API')
         inputs = (source, output, tools, compiler, sdk, Path(os.environ['EMBER_HOST_PREFIX']),
                   Path(os.environ['EMBER_LIBEDIT_SOURCE']), Path(os.environ['EMBER_HOST_BFD_CONFIG']),
-                  Path(os.environ['EMBER_LLVM_SOURCE']), Path(os.environ['EMBER_PORTS_SOURCE']))
+                  Path(os.environ['EMBER_LLVM_SOURCE']), Path(os.environ['EMBER_PORTS_SOURCE']),
+                  Path(os.environ['EMBER_LIBARCHIVE_SOURCE']), Path(os.environ['EMBER_LIBEVENT_SOURCE']))
         if family == 'clang':
             inputs += (Path(os.environ['EMBER_SDK_SYSROOT']),)
         if any(not p.is_absolute() or any(c not in 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_./-' for c in str(p)) for p in inputs):
@@ -63,8 +65,20 @@ def main():
         if not git or not os.path.isabs(git):
             raise SDKError('select a Git executable for source inspection with EMBER_GIT')
         libedit.validate_source(os.environ['EMBER_LIBEDIT_SOURCE'], ports=ports, git=git)
-        verifier = str(Path(ports) / 'pkgsrc/lang/compiler-rt/files/runtime.py')
         env = native_os.native_os_environment(native, output / 'routing')
+        for package, entry, operation in (
+            ('EMBER_LIBARCHIVE_SOURCE', 'scripts/libarchive-source.py', 'libarchive'),
+            ('EMBER_LIBEVENT_SOURCE', 'scripts/source-inputs/libevent/source.py', 'libevent'),
+        ):
+            script = str(Path(ports) / entry)
+            if operation == 'libarchive':
+                command = [native.tool('python'), '-B', script, 'verify', os.environ[package],
+                           '--sdk-source', str(sdk), '--git', git]
+            else:
+                command = [native.tool('python'), '-B', script, '--sdk-source', str(sdk),
+                           '--git', git, 'verify-source', '--source', os.environ[package]]
+            process.capture(command, env=env)
+        verifier = str(Path(ports) / 'pkgsrc/lang/compiler-rt/files/runtime.py')
         source_record = jsonio.loads_json(process.capture(
             [native.tool('python'), '-B', verifier, '--sdk-source', str(sdk), 'verify-source',
              '--source', os.environ['EMBER_LLVM_SOURCE'], '--git', git], env=env).stdout)
@@ -94,7 +108,8 @@ def main():
         script = str(Path(__file__).with_name('cix-p1-build-userland.sh').resolve())
         arguments = [script, '--selected', str(source), str(output), str(tools), str(compiler),
                      str(sdk), native.bundle_root, host_family, family, libedit,
-                     llvm_source, host_bfd, jobs, git, extra.tool('ruby'), extra.tool('shasum'), *llvm]
+                     llvm_source, host_bfd, jobs, git, extra.tool('ruby'), extra.tool('shasum'),
+                     os.environ['EMBER_LIBARCHIVE_SOURCE'], os.environ['EMBER_LIBEVENT_SOURCE'], *llvm]
         native_os.run_native_os(native, source=str(source), routing=str(output / 'routing'),
                                 cwd=str(source), arguments=arguments, shell=True,
                                 log=str(output / 'logs/orchestrator.log'))
