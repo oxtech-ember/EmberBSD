@@ -149,6 +149,7 @@
     "acpitz-hysteresis.diff",
     "aicwf.diff",
     "bcm2712btcom.diff",
+    "bcm2835-expgpio.diff",
     "bcm2838rng-bcm2711.diff",
     "bcmmbox-timeout.diff",
     "bcmpmwdog-acpi.diff",

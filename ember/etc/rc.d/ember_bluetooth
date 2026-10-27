@@ -2,7 +2,7 @@
 # PROVIDE: ember_bluetooth
 # REQUIRE: DAEMON
 # BEFORE: LOGIN
-# Bootstrap the Bluetooth UART of the observed boards: Pi 5 C1, Orange Pi
+# Bootstrap the Bluetooth UART of the observed boards: Pi 5 C1, Pi 3 B, Orange Pi
 # Zero 4 and Orange Pi Zero 3W. Restart preserves an attached controller.
 
 . /etc/rc.subr
@@ -18,6 +18,15 @@ ember_bluetooth_attach()
 		modstat | awk '{print $1}' | grep -qx bcm2712btcom || \
 		    modload bcm2712btcom || return 1
 		btattach -f -i 115200 bcm43xx /dev/dty00 115200 ;;
+	raspberrypi,3-model-b)
+		# The controller is off until BT_ON, a line of the firmware's GPIO
+		# expander, is raised. The devicetree's pin setup for its PL011 is not
+		# applied, and the devicetree gives the pins no flow control.
+		modstat | awk '{print $1}' | grep -qx bcmexpgpio || \
+		    modload bcmexpgpio || return 1
+		gpioctl gpio0 32 set alt3 && gpioctl gpio0 33 set alt3 || return 1
+		sleep 1
+		btattach -i 115200 bcm43xx /dev/dplcom0 921600 ;;
 	xunlong,orangepi-zero4|xunlong,orangepi-zero3w)
 		# aicwf(4) uploaded the controller's patches with the baud rate.
 		btattach -f btuart /dev/dty01 1500000 ;;
@@ -29,7 +38,7 @@ ember_bluetooth_start()
 	board=$(sysctl -n machdep.dmi.system-product 2>/dev/null)
 	[ -n "$board" ] || board=$(sysctl -n hw.model 2>/dev/null)
 	case "$board" in
-	'Raspberry Pi 5 Model B'|xunlong,orangepi-zero4|xunlong,orangepi-zero3w) ;;
+	'Raspberry Pi 5 Model B'|raspberrypi,3-model-b|xunlong,orangepi-zero4|xunlong,orangepi-zero3w) ;;
 	*) return 0 ;;
 	esac
 	bluetooth_name='Asenta NetBSD'
@@ -44,7 +53,7 @@ ember_bluetooth_start()
 	btconfig btuart0 | grep -q '<UP,RUNNING>' || \
 	    btconfig btuart0 enable || return 1
 	# The Broadcom controller needs its address set; the AIC8800 has one.
-	if [ "$board" = 'Raspberry Pi 5 Model B' ]; then
+	if [ "$board" = 'Raspberry Pi 5 Model B' ] || [ "$board" = raspberrypi,3-model-b ]; then
 		if [ -n "$bluetooth_address" ]; then
 			result=$("$control" btuart0 address "$bluetooth_address") || return 1
 		else
@@ -67,7 +76,7 @@ ember_bluetooth_start()
 	"$control" btuart0 init "$bluetooth_name" || return 1
 	# The AIC8800 no longer has the legacy encryption mode command.
 	encrypt=-encrypt
-	[ "$board" = 'Raspberry Pi 5 Model B' ] || encrypt=
+	case "$board" in xunlong,*) encrypt= ;; esac
 	btconfig btuart0 name "$bluetooth_name" class "$bluetooth_class" \
 	    pscan iscan -auth $encrypt switch sniff -master || return 1
 	[ -n "$(check_pidfile /var/run/bthcid.pid /usr/sbin/bthcid)" ] || \

@@ -15,11 +15,11 @@ with tempfile.TemporaryDirectory(prefix="bluetooth-rc-") as directory:
     stub.write_text('''#!/bin/sh
 echo "$(basename "$0") $*" >> "$TEST_LOG"
 case "$(basename "$0") $*" in
-"sysctl -n hw.model") [ "$TEST_CASE" != orangepi ] || echo xunlong,orangepi-zero4 ;;
+"sysctl -n hw.model") case "$TEST_CASE" in orangepi) echo xunlong,orangepi-zero4 ;; pi3) echo raspberrypi,3-model-b ;; esac ;;
 "sysctl "*) case "$TEST_CASE" in
-    foreign) echo QEMU ;; orangepi) : ;; *) echo 'Raspberry Pi 5 Model B' ;; esac ;;
-"btconfig -l") case "$TEST_CASE" in cold|orangepi) : ;; *) echo btuart0 ;; esac ;;
-"btconfig btuart0") case "$TEST_CASE" in cold|orangepi) : ;; *) echo '<UP,RUNNING>' ;; esac ;;
+    foreign) echo QEMU ;; orangepi|pi3) : ;; *) echo 'Raspberry Pi 5 Model B' ;; esac ;;
+"btconfig -l") case "$TEST_CASE" in cold|orangepi|pi3) : ;; *) echo btuart0 ;; esac ;;
+"btconfig btuart0") case "$TEST_CASE" in cold|orangepi|pi3) : ;; *) echo '<UP,RUNNING>' ;; esac ;;
 "modstat "*) : ;;
 "bluetooth-control btuart0 address")
     [ "$TEST_CASE" = cold ] && echo ADDRESS_CHANGED || echo ADDRESS_UNCHANGED ;;
@@ -30,14 +30,14 @@ case "$(basename "$0") $*" in
 esac
 ''')
     stub.chmod(0o755)
-    for name in ("sysctl", "btconfig", "modstat", "modload", "btattach", "bthcid", "sdpd", "bluetooth-control"):
+    for name in ("sysctl", "btconfig", "modstat", "modload", "btattach", "bthcid", "sdpd", "bluetooth-control", "gpioctl", "sleep"):
         (base / name).symlink_to(stub)
     script = base / "rc"
     script.write_text(source.read_text().replace('/etc/rc.subr', str(subr))
                       .replace('/etc/ember/bluetooth.conf', str(base / 'absent.conf'))
                       .replace('/opt/ember/bin/bluetooth-control', str(base / 'bluetooth-control')))
     failed = False
-    for case in ("live", "cold", "orangepi", "foreign", "rejected"):
+    for case in ("live", "cold", "orangepi", "pi3", "foreign", "rejected"):
         log = base / "commands"
         log.write_text("")
         result = subprocess.run(["sh", str(script), "start"], capture_output=True, text=True,
@@ -55,6 +55,11 @@ esac
             good &= "btconfig btuart0 -pscan -iscan" in lines
             configure = "btconfig btuart0 name Asenta NetBSD class 0x000104 pscan iscan -auth -encrypt switch sniff -master"
             good &= lines.index("bluetooth-control btuart0 init Asenta NetBSD") < lines.index(configure)
+        elif case == "pi3":
+            good &= "modload bcmexpgpio" in lines
+            good &= "gpioctl gpio0 32 set alt3" in lines and "gpioctl gpio0 33 set alt3" in lines
+            good &= "btattach -i 115200 bcm43xx /dev/dplcom0 921600" in lines
+            good &= resets == ["btconfig btuart0 enable"]
         elif case == "orangepi":
             good &= "btattach -f btuart /dev/dty01 1500000" in lines
             good &= not any(line.startswith("modload ") for line in lines)
