@@ -658,6 +658,10 @@ LIBCC:=	${CC}
 .if !empty(VERSION_MAP)
 DPADD+=			${VERSION_MAP}
 LDFLAGS+=		-Wl,--version-script=${${VERSION_MAP}:P}
+# LLD defaults to --no-undefined-version; GNU ld ignored unused map entries.
+.if ${HAVE_LLVM:Uno} == "yes"
+LDFLAGS+=		-Wl,--undefined-version
+.endif
 .endif
 
 _LDADD.${_LIB}=	${LDADD} ${LDADD.${_LIB}}
