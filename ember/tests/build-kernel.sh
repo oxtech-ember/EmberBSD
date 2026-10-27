@@ -295,12 +295,17 @@ mkdir -p "$work/sdk/scripts"
 cat > "$work/sdk/scripts/run-native-check.py" <<'SH'
 #!/bin/sh
 set -eu
-role= log= prefix= family= bindings= cwd= ruby=no
+role= log= prefix= family= bindings= cwd= ruby=no awk_selected=no
 while [ "$#" -gt 0 ]; do
     case $1 in
     --host-prefix) prefix=$2;;
     --compiler-family) family=$2;;
-    --required-role) test "$2" = ruby; ruby=yes;;
+    --required-role)
+        case $2 in
+        ruby) ruby=yes;;
+        awk) awk_selected=yes;;
+        *) exit 81;;
+        esac;;
     --tool) role=$2;;
     --cwd) cwd=$2;;
     --bindings) bindings=$2;;
@@ -315,6 +320,7 @@ test "$family" = "${EMBER_HOST_COMPILER_FAMILY:-clang}"
 test "$cwd" = "$TEST_ROOT/src"
 test "$bindings" = "$TEST_OUT/native-check-commands"
 test "$ruby" = yes
+test "$awk_selected" = yes
 echo "native-check $family $role $bindings" >> "$TEST_LOG"
 # The real SDK discards consumer interpreter overrides before selecting its tools.
 unset NETBSD2_PYTHON

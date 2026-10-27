@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 """Execute the AMD GPIO attach tail with optional event resources.
 
-Set HOST_CC to an explicit host GCC 16 executable. This is an AI-assisted
+Use the SDK-bound CC or set HOST_CC to one absolute compiler path. This is an AI-assisted
 control-flow model, not a firmware, interrupt, or GPIO hardware test.
 """
 from pathlib import Path
@@ -34,11 +34,9 @@ def main():
     fixture = template.replace("@SOURCE_COMMENTS@", "\n".join(comments))
     fixture = fixture.replace("@ATTACH_TAIL@", tail)
     require(not re.search(r"@[A-Z_]+@", fixture), "unexpanded fixture marker")
-    cc = os.environ.get("HOST_CC", "")
+    cc = os.environ.get("HOST_CC", os.environ.get("CC", ""))
     require(cc and Path(cc).is_absolute() and Path(cc).is_file(),
-            "set HOST_CC to one explicit host GCC 16 executable")
-    version = subprocess.check_output([cc, "-dumpfullversion"], text=True).strip()
-    require(version.split(".")[0] == "16", "the contract requires host GCC 16")
+            "set HOST_CC or CC to one explicit host C compiler executable")
     flags = ["-O1", "-g", "-std=c11", "-Wall", "-Wextra", "-Werror"]
     flags += shlex.split(os.environ.get("HOST_CFLAGS", ""))
     with tempfile.TemporaryDirectory(prefix="ember-amdgpio-aei-") as directory:
@@ -65,7 +63,7 @@ def main():
                 "FAIL: absent _AEI must retain the GPIO provider")
         execute("ignored-errors-control", fixture.replace(condition, "((void)rv, 0)", 1), 1,
                 "FAIL: event errors must abort before interrupt and GPIO registration")
-    print("AMD GPIO optional _AEI contract: PASS (GCC " + version + "; 2 controls)")
+    print("AMD GPIO optional _AEI contract: PASS (selected host compiler; 2 controls)")
 
 
 if __name__ == "__main__":

@@ -108,7 +108,7 @@ run_native_check() {
     # current check log exclusively. Only our two named output logs reach here.
     rm -f "$log"
     "$python" "$native_check" --host-prefix "$host_prefix" \
-        --compiler-family "$host_family" --required-role ruby \
+        --compiler-family "$host_family" --required-role ruby --required-role awk \
         --tool "$role" --cwd "$src" --bindings "$out/native-check-commands" \
         --log "$log" -- "$@"
 }

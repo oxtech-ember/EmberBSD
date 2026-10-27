@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
-"""Check the EFI foreign-memory copy boundary with explicit host GCC 16.
+"""Check the EFI foreign-memory copy boundary with a selected host C compiler.
 
-Run HOST_CC=/absolute/gcc16 python3 efi-runtime-copy-contract.py [SOURCE_ROOT].
+Use the SDK-bound CC or set HOST_CC to one absolute host compiler path.
 The fixture models dispatch and ordering. It does not execute EFI or KASAN.
 Provenance: NetBSD c8b00f7c39ae397b5be1bbe67e2500d042d3bdda, PR kern/60391.
 The regression and fixture are AI-assisted EmberBSD additions.
@@ -55,11 +55,9 @@ def main():
     fixture = fixture.replace("@RUNTIME_COPY@", block[0])
     require(not re.search(r"@[A-Z_]+@", fixture), "unexpanded fixture marker")
 
-    cc = os.environ.get("HOST_CC", "")
+    cc = os.environ.get("HOST_CC", os.environ.get("CC", ""))
     require(cc and Path(cc).is_absolute() and Path(cc).is_file(),
-            "set HOST_CC to one explicit host GCC 16 executable")
-    version = subprocess.check_output([cc, "-dumpfullversion"], text=True).strip()
-    require(version.split(".")[0] == "16", "the contract requires host GCC 16")
+            "set HOST_CC or CC to one explicit host C compiler executable")
     flags = ["-O1", "-g", "-std=c11", "-Wall", "-Wextra", "-Werror",
              "-fno-builtin-memcpy"] + shlex.split(os.environ.get("HOST_CFLAGS", ""))
     with tempfile.TemporaryDirectory(prefix="ember-efi-runtime-copy-") as directory:
@@ -89,7 +87,7 @@ def main():
         raw_macro = fixture.replace(wrapper, "#define memcpy(d, s, l) (memcpy)(d, s, l)", 1)
         execute("global-wrapper-control", raw_macro, True, 1,
                 "FAIL: ordinary copy lost the KASAN wrapper")
-    print("EFI runtime copy contract: PASS (GCC " + version + "; 4 cases)")
+    print("EFI runtime copy contract: PASS (selected host compiler; 4 cases)")
 
 
 if __name__ == "__main__":
