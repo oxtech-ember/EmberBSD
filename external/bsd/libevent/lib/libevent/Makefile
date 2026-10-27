@@ -32,8 +32,5 @@ signal.c
 COPTS.bufferevent_filter.c +=	${CC_WNO_IMPLICIT_FALLTHROUGH}
 COPTS.evdns.c +=		${CC_WNO_IMPLICIT_FALLTHROUGH}
 COPTS.event.c +=		${CC_WNO_IMPLICIT_FALLTHROUGH}
-# EmberBSD: Clang -Werror on K&R empty () and pointer overflow check.
-COPTS.evthread.c +=		-Wno-error=strict-prototypes
-COPTS.http.c +=			-Wno-error=tautological-compare
 
 .include <bsd.lib.mk>

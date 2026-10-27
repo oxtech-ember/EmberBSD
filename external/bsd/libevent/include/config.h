@@ -403,7 +403,7 @@
 #define LT_OBJDIR ".libs/"
 
 /* Numeric representation of the version */
-#define NUMERIC_VERSION 0x02010800
+#define NUMERIC_VERSION 0x02010d00
 
 /* Name of package */
 #define PACKAGE "libevent"
@@ -415,7 +415,7 @@
 #define PACKAGE_NAME "libevent"
 
 /* Define to the full name and version of this package. */
-#define PACKAGE_STRING "libevent 2.1.8-stable"
+#define PACKAGE_STRING "libevent 2.1.13-stable"
 
 /* Define to the one symbol short name of this package. */
 #define PACKAGE_TARNAME "libevent"
@@ -424,7 +424,7 @@
 #define PACKAGE_URL ""
 
 /* Define to the version of this package. */
-#define PACKAGE_VERSION "2.1.8-stable"
+#define PACKAGE_VERSION "2.1.13-stable"
 
 /* Define to necessary symbol if this constant uses a non-standard name on
    your system. */
@@ -499,7 +499,7 @@
 
 
 /* Version number of package */
-#define VERSION "2.1.8-stable"
+#define VERSION "2.1.13-stable"
 
 /* Enable large inode numbers on Mac OS X 10.5.  */
 #ifndef _DARWIN_USE_64_BIT_INODE
