@@ -33,7 +33,7 @@ src = a.source.read_text()
 rule = src.split('${_LIB.so.full}.actsym: ${_LIB.so.full}\n', 1)[1].split('CLEANFILES+=', 1)[0]
 filters = [line for line in src.splitlines() if line.startswith('_EXPSYM_FILTER=')]
 assert len(filters) == 2
-makefile = '.SHELL: name=sh path=' + str(a.shell) + '\n_MKTARGET_CREATE=\nRM=rm -f\nMV=mv -f\n' + filters[0] + '\nfixture.actsym: fixture.so\n' + rule
+makefile = '.SHELL: name=sh path=' + str(a.shell) + '\n_MKTARGET_CREATE=\nMV=mv -f\n' + filters[0] + '\nfixture.actsym: fixture.so\n' + rule
 (a.work/'Makefile').write_text(makefile)
 run([a.bmake, '-f', 'Makefile', 'NM='+str(a.nm), 'fixture.actsym'])
 output = (a.work/'fixture.actsym').read_text().splitlines()
