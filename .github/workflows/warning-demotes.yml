@@ -1,0 +1,44 @@
+name: Fixed-source warning demote contract
+
+'on':
+  pull_request:
+    paths:
+      - '.github/workflows/warning-demotes.yml'
+      - 'ember/tests/clang-warning-demotes.py'
+      - 'external/cddl/osnet/lib/libdtrace/Makefile'
+      - 'lib/libpam/libpam/Makefile'
+      - 'share/mk/bsd.own.mk'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/warning-demotes.yml'
+      - 'ember/tests/clang-warning-demotes.py'
+      - 'external/cddl/osnet/lib/libdtrace/Makefile'
+      - 'lib/libpam/libpam/Makefile'
+      - 'share/mk/bsd.own.mk'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /ember/tests/clang-warning-demotes.py
+            /external/cddl/osnet/lib/libdtrace/Makefile
+            /lib/libpam/libpam/Makefile
+            /share/mk/bsd.own.mk
+      - name: Install bmake
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3 bmake
+      - name: Check per-file COPTS for warning demotes
+        run: python3 -B ember/tests/clang-warning-demotes.py --make /usr/bin/bmake -v
