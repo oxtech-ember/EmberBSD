@@ -48,7 +48,7 @@
 ./lib/libedit.so.3.2				base-sys-shlib		dynamicroot
 ./lib/libevent.so				base-sys-shlib		dynamicroot
 ./lib/libevent.so.5				base-sys-shlib		dynamicroot
-./lib/libevent.so.5.0				base-sys-shlib		dynamicroot
+./lib/libevent.so.5.1				base-sys-shlib		dynamicroot
 ./lib/libgcc_s.so				base-sys-shlib		dynamicroot,gcc
 ./lib/libgcc_s.so.1				base-sys-shlib		dynamicroot,gcc
 ./lib/libgcc_s.so.1.0				base-sys-shlib		dynamicroot,gcc
@@ -324,13 +324,13 @@
 ./usr/lib/libelf.so.2.0				base-sys-shlib		compatfile
 ./usr/lib/libevent.so				base-sys-shlib		compatfile
 ./usr/lib/libevent.so.5				base-sys-shlib		compatfile
-./usr/lib/libevent.so.5.0			base-sys-shlib		compatfile
+./usr/lib/libevent.so.5.1			base-sys-shlib		compatfile
 ./usr/lib/libevent_openssl.so			base-sys-shlib		compatfile
 ./usr/lib/libevent_openssl.so.5			base-sys-shlib		compatfile
-./usr/lib/libevent_openssl.so.5.0		base-sys-shlib		compatfile
+./usr/lib/libevent_openssl.so.5.1		base-sys-shlib		compatfile
 ./usr/lib/libevent_pthreads.so			base-sys-shlib		compatfile
 ./usr/lib/libevent_pthreads.so.5		base-sys-shlib		compatfile
-./usr/lib/libevent_pthreads.so.5.0		base-sys-shlib		compatfile
+./usr/lib/libevent_pthreads.so.5.1		base-sys-shlib		compatfile
 ./usr/lib/libexecinfo.so			base-sys-shlib		compatfile
 ./usr/lib/libexecinfo.so.0			base-sys-shlib		compatfile
 ./usr/lib/libexecinfo.so.0.0			base-sys-shlib		compatfile
