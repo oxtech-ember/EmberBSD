@@ -12,7 +12,7 @@
 #endif
 #include <dev/ic/rtw88var.h>
 #include <dev/ic/rtw8822c.h>
-#include <dev/ic/rtw8822c_io.h>
+#include <dev/ic/rtw88_io.h>
 #ifdef RTW88_RFK_EXPERIMENT
 #include <dev/ic/rtw8822c_rfk.h>
 #endif
@@ -1495,7 +1495,7 @@ int
 rtw88_station_config(struct rtw88_softc *sc, const uint8_t *bssid,
     unsigned aid, unsigned basic_rates, unsigned slot, int linked)
 {
-	struct rtw8822c_io io = { sc, 0 };
+	struct rtw88_io io;
 	uint8_t media[3] = { 0 }, port[3] = { 0 }, any = 0;
 	unsigned i;
 
@@ -1523,23 +1523,26 @@ rtw88_station_config(struct rtw88_softc *sc, const uint8_t *bssid,
 		return ENXIO;
 	if (sc->sc_channel > 14 && (basic_rates & 0xf) != 0)
 		return EINVAL;
+	rtw88_io_init(&io, sc->sc_ops, sc->sc_bus);
+	if (io.error != 0)
+		return io.error;
 	rtw88_ra_invalidate(sc);
 	sc->sc_linked = 0;
 	/* Keep data paused and port unlinked until all setup writes succeed. */
-	rtw8822c_io_wr_mask(&io, 0x0100, 0x30000, 0);
-	rtw8822c_io_set(&io, 0x0522, 1, 0x0f);
-	rtw8822c_io_wr(&io, 0x06a4, 2, 0);
+	rtw88_io_wr_mask(&io, 0x0100, 0x30000, 0);
+	rtw88_io_set(&io, 0x0522, 1, 0x0f);
+	rtw88_io_wr(&io, 0x06a4, 2, 0);
 	for (i = 0; i < 6; i++) {
-		rtw8822c_io_wr(&io, 0x0610 + i, 1, sc->sc_mac[i]);
-		rtw8822c_io_wr(&io, 0x0618 + i, 1, linked ? bssid[i] : 0);
+		rtw88_io_wr(&io, 0x0610 + i, 1, sc->sc_mac[i]);
+		rtw88_io_wr(&io, 0x0618 + i, 1, linked ? bssid[i] : 0);
 	}
 	/* SECCFG.TXDEC/RXDEC are off: the stack owns CCMP/PN/MIC. */
-	rtw8822c_io_clr(&io, 0x0680, 1, 0x0c);
-	rtw8822c_io_wr_mask(&io, 0x06a8, 0x7ff, aid);
-	rtw8822c_io_wr_mask(&io, 0x0440, 0xfff, basic_rates);
-	rtw8822c_io_wr(&io, 0x051b, 1, slot);
-	rtw8822c_io_set(&io, 0x0550, 1, 0x18);
-	rtw8822c_io_clr(&io, 0x0608, 4, 0xc0);
+	rtw88_io_clr(&io, 0x0680, 1, 0x0c);
+	rtw88_io_wr_mask(&io, 0x06a8, 0x7ff, aid);
+	rtw88_io_wr_mask(&io, 0x0440, 0xfff, basic_rates);
+	rtw88_io_wr(&io, 0x051b, 1, slot);
+	rtw88_io_set(&io, 0x0550, 1, 0x18);
+	rtw88_io_clr(&io, 0x0608, 4, 0xc0);
 	if (io.error != 0)
 		return io.error;
 	media[0] = linked ? 1 : 0;
@@ -1547,11 +1550,11 @@ rtw88_station_config(struct rtw88_softc *sc, const uint8_t *bssid,
 	if (linked && io.error == 0)
 		io.error = rtw88_fw_command(sc, 0x2c, port, sizeof(port));
 	if (linked) {
-		rtw8822c_io_set(&io, 0x0608, 4, 0xc0);
-		rtw8822c_io_clr(&io, 0x0550, 1, 0x10);
-		rtw8822c_io_wr(&io, 0x06a4, 2, 0xffff);
-		rtw8822c_io_wr_mask(&io, 0x0100, 0x30000, 2);
-		rtw8822c_io_clr(&io, 0x0522, 1, 0x0f);
+		rtw88_io_set(&io, 0x0608, 4, 0xc0);
+		rtw88_io_clr(&io, 0x0550, 1, 0x10);
+		rtw88_io_wr(&io, 0x06a4, 2, 0xffff);
+		rtw88_io_wr_mask(&io, 0x0100, 0x30000, 2);
+		rtw88_io_clr(&io, 0x0522, 1, 0x0f);
 	}
 	if (io.error == 0) {
 		sc->sc_basic_rates = basic_rates;

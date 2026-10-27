@@ -16,15 +16,15 @@
 #include <sys/errno.h>
 #include <dev/ic/rtw88var.h>
 #include <dev/ic/rtw8822c.h>
-#include <dev/ic/rtw8822c_io.h>
+#include <dev/ic/rtw88_io.h>
 
-#define rd(io, a, n)		rtw8822c_io_rd(io, a, n)
-#define w8(io, a, v)		rtw8822c_io_wr(io, a, 1, v)
-#define w16(io, a, v)		rtw8822c_io_wr(io, a, 2, v)
-#define w32(io, a, v)		rtw8822c_io_wr(io, a, 4, v)
-#define set32(io, a, b)		rtw8822c_io_set(io, a, 4, b)
-#define clr32(io, a, b)		rtw8822c_io_clr(io, a, 4, b)
-#define mask32(io, a, m, v)	rtw8822c_io_wr_mask(io, a, m, v)
+#define rd(io, a, n)		rtw88_io_rd(io, a, n)
+#define w8(io, a, v)		rtw88_io_wr(io, a, 1, v)
+#define w16(io, a, v)		rtw88_io_wr(io, a, 2, v)
+#define w32(io, a, v)		rtw88_io_wr(io, a, 4, v)
+#define set32(io, a, b)		rtw88_io_set(io, a, 4, b)
+#define clr32(io, a, b)		rtw88_io_clr(io, a, 4, b)
+#define mask32(io, a, m, v)	rtw88_io_wr_mask(io, a, m, v)
 
 #define RFREG_MASK		0xfffffU
 #define RF_CFGCH		0x18
@@ -39,16 +39,16 @@ static const uint32_t rf_sipi[2] = { 0x1808, 0x4108 };
 
 /* rtw_phy_read_rf: direct map. */
 static uint32_t
-read_rf(struct rtw8822c_io *io, unsigned path, uint32_t addr, uint32_t mask)
+read_rf(struct rtw88_io *io, unsigned path, uint32_t addr, uint32_t mask)
 {
 
-	return rtw8822c_io_rd_mask(io, rf_base[path] + ((addr & 0xff) << 2),
+	return rtw88_io_rd_mask(io, rf_base[path] + ((addr & 0xff) << 2),
 	    mask & RFREG_MASK);
 }
 
 /* rtw_phy_write_rf_reg_mix: register 0x00 through SIPI, others direct. */
 static void
-write_rf(struct rtw8822c_io *io, unsigned path, uint32_t addr, uint32_t mask,
+write_rf(struct rtw88_io *io, unsigned path, uint32_t addr, uint32_t mask,
     uint32_t data)
 {
 
@@ -56,18 +56,18 @@ write_rf(struct rtw8822c_io *io, unsigned path, uint32_t addr, uint32_t mask,
 	mask &= RFREG_MASK;
 	if (addr != 0) {
 		mask32(io, rf_base[path] + (addr << 2), mask, data);
-		rtw8822c_io_delay(io, 1);
+		rtw88_io_delay(io, 1);
 		return;
 	}
 	if (mask != RFREG_MASK)
 		data = (read_rf(io, path, 0, RFREG_MASK) & ~mask) |
 		    (data << __builtin_ctz(mask));
 	w32(io, rf_sipi[path], (data & RFREG_MASK) & UINT32_C(0x0fffffff));
-	rtw8822c_io_delay(io, 13);
+	rtw88_io_delay(io, 13);
 }
 
 static void
-header_file_init(struct rtw8822c_io *io, int pre)
+header_file_init(struct rtw88_io *io, int pre)
 {
 
 	set32(io, 0x180c, 0x3);			/* 3WIRE: TX_EN, RX_EN */
@@ -81,18 +81,18 @@ header_file_init(struct rtw8822c_io *io, int pre)
 }
 
 static void
-bb_reset(struct rtw8822c_io *io)
+bb_reset(struct rtw88_io *io)
 {
 
-	rtw8822c_io_set(io, 0x0002, 2, 0x1);	/* SYS_FUNC_EN: FEN_BB_RSTB */
-	rtw8822c_io_clr(io, 0x0002, 2, 0x1);
-	rtw8822c_io_set(io, 0x0002, 2, 0x1);
+	rtw88_io_set(io, 0x0002, 2, 0x1);	/* SYS_FUNC_EN: FEN_BB_RSTB */
+	rtw88_io_clr(io, 0x0002, 2, 0x1);
+	rtw88_io_set(io, 0x0002, 2, 0x1);
 }
 
 static void
-toggle_igi(struct rtw8822c_io *io)
+toggle_igi(struct rtw88_io *io)
 {
-	uint32_t igi = rtw8822c_io_rd_mask(io, 0x1d70, 0x7f);	/* RXIGI */
+	uint32_t igi = rtw88_io_rd_mask(io, 0x1d70, 0x7f);	/* RXIGI */
 
 	mask32(io, 0x1d70, 0x7f, igi - 2);
 	mask32(io, 0x1d70, 0x7f00, igi - 2);
@@ -102,7 +102,7 @@ toggle_igi(struct rtw8822c_io *io)
 
 /* rtw8822c_config_trx_mode(BB_PATH_AB, BB_PATH_AB, false). */
 static void
-config_trx_ab(struct rtw8822c_io *io)
+config_trx_ab(struct rtw88_io *io)
 {
 
 	mask32(io, 0x1800, 0xfffff, 0x33312);	/* ORITXCODE */
@@ -132,11 +132,12 @@ config_trx_ab(struct rtw8822c_io *io)
 int
 rtw8822c_phy_pre(struct rtw88_softc *sc)
 {
-	struct rtw8822c_io io = { sc, 0 };
+	struct rtw88_io io;
 
+	rtw88_io_init(&io, sc->sc_ops, sc->sc_bus);
 	/* Power on the BB and RF domains. */
-	rtw8822c_io_set(&io, 0x0002, 1, 0x3);	/* SYS_FUNC_EN: BB_GLB_RST, RSTB */
-	rtw8822c_io_set(&io, 0x001f, 1, 0x7);	/* RF_CTRL: EN, RSTB, SDM_RSTB */
+	rtw88_io_set(&io, 0x0002, 1, 0x3);	/* SYS_FUNC_EN: BB_GLB_RST, RSTB */
+	rtw88_io_set(&io, 0x001f, 1, 0x7);	/* RF_CTRL: EN, RSTB, SDM_RSTB */
 	set32(&io, 0x00ec, UINT32_C(0x07000000));	/* WLRF1: BBRF_EN */
 	mask32(&io, 0x0a70, 0x3ff, 0x3ff);	/* DIS_DPD: all rates */
 	header_file_init(&io, 1);
@@ -145,21 +146,21 @@ rtw8822c_phy_pre(struct rtw88_softc *sc)
 
 /* rtw8822c_rf_x2_check: restart the X2 clock if the RF reports busy. */
 static void
-rf_x2_check(struct rtw8822c_io *io)
+rf_x2_check(struct rtw88_io *io)
 {
 
-	rtw8822c_io_delay(io, 1000);
+	rtw88_io_delay(io, 1000);
 	if (read_rf(io, 0, 0xb8, 1U << 15) == 1) {
 		write_rf(io, 0, 0xb8, RFREG_MASK, 0xc4440);
 		write_rf(io, 0, 0xba, RFREG_MASK, 0x6840d);
 		write_rf(io, 0, 0xb8, RFREG_MASK, 0x80440);
-		rtw8822c_io_delay(io, 1000);
+		rtw88_io_delay(io, 1000);
 	}
 }
 
 /* rtw8822c_thermal_trim: EFUSE bit 0 moves to bit 3, bits 3:1 shift down. */
 static void
-thermal_trim(struct rtw8822c_io *io, const uint8_t *efuse)
+thermal_trim(struct rtw88_io *io, const uint8_t *efuse)
 {
 	static const uint16_t addr[2] = { 0x1ef, 0x1b0 };	/* PPG_THERMAL */
 	unsigned path;
@@ -176,7 +177,7 @@ thermal_trim(struct rtw8822c_io *io, const uint8_t *efuse)
 
 /* rtw8822c_power_trim and rtw8822c_set_power_trim. */
 static void
-power_trim(struct rtw8822c_io *io, const uint8_t *efuse)
+power_trim(struct rtw88_io *io, const uint8_t *efuse)
 {
 	static const uint16_t ppg_2g[3] = { 0x1d4, 0x1ee, 0x1d2 };
 	static const uint16_t ppg_5g[2][5] = {
@@ -226,7 +227,7 @@ power_trim(struct rtw8822c_io *io, const uint8_t *efuse)
 
 /* rtw8822c_pa_bias: 2.4 GHz stops at the first blank byte, 5 GHz not. */
 static void
-pa_bias(struct rtw8822c_io *io, const uint8_t *efuse)
+pa_bias(struct rtw88_io *io, const uint8_t *efuse)
 {
 	static const uint16_t ppg_2g[2] = { 0x1d6, 0x1d5 };
 	static const uint16_t ppg_5g[2] = { 0x1d8, 0x1d7 };
@@ -247,11 +248,12 @@ pa_bias(struct rtw8822c_io *io, const uint8_t *efuse)
 int
 rtw8822c_phy_post(struct rtw88_softc *sc)
 {
-	struct rtw8822c_io io = { sc, 0 };
+	struct rtw88_io io;
 	struct rtw8822c_dack_result dack;
 	uint32_t v, cap = sc->sc_xtal & 0x7f;
 	int error;
 
+	rtw88_io_init(&io, sc->sc_ops, sc->sc_bus);
 	mask32(&io, 0x1040, 0xfffc00, cap | (cap << 7));	/* ANAPAR_XTAL_0 */
 	header_file_init(&io, 0);
 	config_trx_ab(&io);
@@ -426,7 +428,7 @@ rtw8822c_channel_geometry(const struct rtw88_channel_tuple *tuple,
 }
 
 static void
-channel_bb(struct rtw8822c_io *io, const struct rtw88_channel_tuple *tuple,
+channel_bb(struct rtw88_io *io, const struct rtw88_channel_tuple *tuple,
     const struct rtw8822c_channel_geometry *g)
 {
 	unsigned ch = tuple->center;
@@ -527,7 +529,7 @@ channel_bb(struct rtw8822c_io *io, const struct rtw88_channel_tuple *tuple,
 
 /* rtw_set_channel_mac, 20 MHz, primary channel index 0. */
 static void
-channel_mac(struct rtw8822c_io *io, const struct rtw88_channel_tuple *tuple,
+channel_mac(struct rtw88_io *io, const struct rtw88_channel_tuple *tuple,
     const struct rtw8822c_channel_geometry *g)
 {
 	uint32_t v;
@@ -554,7 +556,7 @@ channel_mac(struct rtw8822c_io *io, const struct rtw88_channel_tuple *tuple,
 }
 
 static void
-rstb_3wire(struct rtw8822c_io *io, int enable)
+rstb_3wire(struct rtw88_io *io, int enable)
 {
 
 	mask32(io, 0x1c90, 0x100, enable ? 1 : 0);	/* RSTB: 3WIRE */
@@ -565,7 +567,7 @@ rstb_3wire(struct rtw8822c_io *io, int enable)
 }
 
 static void
-channel_rf(struct rtw8822c_io *io, const struct rtw88_channel_tuple *tuple)
+channel_rf(struct rtw88_io *io, const struct rtw88_channel_tuple *tuple)
 {
 	uint32_t rf18;
 	unsigned path;
@@ -604,7 +606,7 @@ int
 rtw8822c_set_channel_tuple(struct rtw88_softc *sc,
     const struct rtw88_channel_tuple *tuple)
 {
-	struct rtw8822c_io io = { sc, 0 };
+	struct rtw88_io io;
 	struct rtw8822c_channel_geometry g;
 	uint32_t gen = sc->sc_generation;
 	int error;
@@ -614,6 +616,7 @@ rtw8822c_set_channel_tuple(struct rtw88_softc *sc,
 	sc->sc_phy.channel_valid = 0;
 	if (sc->sc_stop_requested)
 		return EINTR;
+	rtw88_io_init(&io, sc->sc_ops, sc->sc_bus);
 	channel_bb(&io, tuple, &g);
 	if (io.error == 0 && (sc->sc_stop_requested || sc->sc_generation != gen))
 		io.error = EINTR;

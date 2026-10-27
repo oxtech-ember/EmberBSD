@@ -23,7 +23,7 @@
 #include <sys/errno.h>
 #include <dev/ic/rtw88var.h>
 #include <dev/ic/rtw8822c.h>
-#include <dev/ic/rtw8822c_io.h>
+#include <dev/ic/rtw88_io.h>
 
 #define LTE_CTRL 0x1700U
 #define LTE_WDATA 0x1704U
@@ -35,42 +35,42 @@
 
 /* util.c check_hw_ready: 1000 polls, 10 us after each failed poll. */
 static void
-lte_wait(struct rtw8822c_io *io)
+lte_wait(struct rtw88_io *io)
 {
 	unsigned int i;
 
 	for (i = 0; i < 1000; i++) {
-		uint32_t value = rtw8822c_io_rd(io, LTE_CTRL, 4);
+		uint32_t value = rtw88_io_rd(io, LTE_CTRL, 4);
 
 		if (io->error != 0 || (value & LTE_READY) != 0)
 			return;
-		rtw8822c_io_delay(io, 10);
+		rtw88_io_delay(io, 10);
 	}
 	io->error = ETIMEDOUT;
 }
 
 /* coex.c write_indirect_reg, with util.c's ordered read/write transport. */
 static void
-lte_mask(struct rtw8822c_io *io, uint16_t addr, uint32_t mask, uint32_t value)
+lte_mask(struct rtw88_io *io, uint16_t addr, uint32_t mask, uint32_t value)
 {
 	uint32_t old;
 
 	if (io->error != 0)
 		return;
 	lte_wait(io);
-	rtw8822c_io_wr(io, LTE_CTRL, 4, UINT32_C(0x800f0000) | addr);
-	old = rtw8822c_io_rd(io, LTE_RDATA, 4);
+	rtw88_io_wr(io, LTE_CTRL, 4, UINT32_C(0x800f0000) | addr);
+	old = rtw88_io_rd(io, LTE_RDATA, 4);
 	if (io->error != 0)
 		return;
 	lte_wait(io);
-	rtw8822c_io_wr(io, LTE_WDATA, 4,
+	rtw88_io_wr(io, LTE_WDATA, 4,
 	    (old & ~mask) | ((value << __builtin_ctz(mask)) & mask));
-	rtw8822c_io_wr(io, LTE_CTRL, 4, UINT32_C(0xc00f0000) | addr);
+	rtw88_io_wr(io, LTE_CTRL, 4, UINT32_C(0xc00f0000) | addr);
 }
 
 /* rtw8822c_coex_cfg_rfe_type: RFE0..6 use the same LTE operations. */
 static void
-rfe_init(struct rtw8822c_io *io)
+rfe_init(struct rtw88_io *io)
 {
 
 	lte_mask(io, LTE_COEX_CTRL, 0x80, 0);
@@ -80,43 +80,43 @@ rfe_init(struct rtw8822c_io *io)
 
 /* rtw_coex_coex_ctrl_owner(true); RTL8822C has no additional btg_reg. */
 static void
-wl_owner(struct rtw8822c_io *io)
+wl_owner(struct rtw88_io *io)
 {
 
-	rtw8822c_io_set(io, 0x0073, 1, 0x04);
+	rtw88_io_set(io, 0x0073, 1, 0x04);
 }
 
 /* rtw8822c_coex_cfg_gnt_debug: disable the debug GPIO functions. */
 static void
-gnt_debug(struct rtw8822c_io *io)
+gnt_debug(struct rtw88_io *io)
 {
 
-	rtw8822c_io_clr(io, 0x0066, 1, 0x10);
-	rtw8822c_io_clr(io, 0x0067, 1, 0x01);
-	rtw8822c_io_clr(io, 0x0042, 1, 0x08);
-	rtw8822c_io_clr(io, 0x0065, 1, 0x80);
-	rtw8822c_io_clr(io, 0x0073, 1, 0x08);
+	rtw88_io_clr(io, 0x0066, 1, 0x10);
+	rtw88_io_clr(io, 0x0067, 1, 0x01);
+	rtw88_io_clr(io, 0x0042, 1, 0x08);
+	rtw88_io_clr(io, 0x0065, 1, 0x80);
+	rtw88_io_clr(io, 0x0073, 1, 0x08);
 }
 
 /* rtw8822c_coex_cfg_init. */
 static void
-hw_init(struct rtw8822c_io *io)
+hw_init(struct rtw88_io *io)
 {
 	uint32_t value;
 
-	rtw8822c_io_set(io, 0x0550, 1, 0x08);
-	value = rtw8822c_io_rd(io, 0x0790, 1);
-	rtw8822c_io_wr(io, 0x0790, 1, (value & ~0x3fU) | 0x05);
-	rtw8822c_io_wr(io, 0x0778, 1, 0x01);
-	rtw8822c_io_set(io, 0x0040, 4, 0x20);
-	rtw8822c_io_set(io, 0x0040, 4, 0x200);
-	rtw8822c_io_set(io, 0x04c6, 1, 0x10);
-	rtw8822c_io_clr(io, 0x04c6, 1, 0x20);
-	rtw8822c_io_set(io, 0x0762, 2, 0x1000);
-	rtw8822c_io_clr(io, 0x04fc, 1, 0x03);
+	rtw88_io_set(io, 0x0550, 1, 0x08);
+	value = rtw88_io_rd(io, 0x0790, 1);
+	rtw88_io_wr(io, 0x0790, 1, (value & ~0x3fU) | 0x05);
+	rtw88_io_wr(io, 0x0778, 1, 0x01);
+	rtw88_io_set(io, 0x0040, 4, 0x20);
+	rtw88_io_set(io, 0x0040, 4, 0x200);
+	rtw88_io_set(io, 0x04c6, 1, 0x10);
+	rtw88_io_clr(io, 0x04c6, 1, 0x20);
+	rtw88_io_set(io, 0x0762, 2, 0x1000);
+	rtw88_io_clr(io, 0x04fc, 1, 0x03);
 	/* RF path B, RF_MODOPT=1: direct map, preserve non-RF bits. */
-	rtw8822c_io_wr_mask(io, 0x4c04, 0xfffff, 0x40000);
-	rtw8822c_io_delay(io, 1);
+	rtw88_io_wr_mask(io, 0x4c04, 0xfffff, 0x40000);
+	rtw88_io_delay(io, 1);
 }
 
 static int
@@ -137,16 +137,17 @@ validate(const struct rtw88_softc *sc)
 int
 rtw8822c_coex_power_on(struct rtw88_softc *sc)
 {
-	struct rtw8822c_io io = { sc, 0 };
+	struct rtw88_io io;
 	int error;
 
 	if ((error = validate(sc)) != 0)
 		return error;
+	rtw88_io_init(&io, sc->sc_ops, sc->sc_bus);
 	/* Selected power_on_setting register slice, BT disabled by policy. */
-	rtw8822c_io_set(&io, 0x0002, 1, 0x03);
+	rtw88_io_set(&io, 0x0002, 1, 0x03);
 	rfe_init(&io);
 	wl_owner(&io);
-	rtw8822c_io_wr(&io, 0xff1a, 1, 0);
+	rtw88_io_wr(&io, 0xff1a, 1, 0);
 	gnt_debug(&io);
 	return io.error;
 }
@@ -154,19 +155,20 @@ rtw8822c_coex_power_on(struct rtw88_softc *sc)
 int
 rtw8822c_coex_init(struct rtw88_softc *sc)
 {
-	struct rtw8822c_io io = { sc, 0 };
+	struct rtw88_io io;
 	int error;
 
 	if ((error = validate(sc)) != 0)
 		return error;
+	rtw88_io_init(&io, sc->sc_ops, sc->sc_bus);
 	/* Selected init_hw_config register slice and WONLY antenna phase. */
-	rtw8822c_io_set(&io, 0x0550, 1, 0x08);
+	rtw88_io_set(&io, 0x0550, 1, 0x08);
 	rfe_init(&io);
 	hw_init(&io);
 	/* TX responses, beacons and the beacon queue get high priority. */
-	rtw8822c_io_set(&io, 0x06cc, 1, 0x08);
-	rtw8822c_io_set(&io, 0x06cc, 1, 0x10);
-	rtw8822c_io_set(&io, 0x06cf, 1, 0x08);
+	rtw88_io_set(&io, 0x06cc, 1, 0x08);
+	rtw88_io_set(&io, 0x06cc, 1, 0x10);
+	rtw88_io_set(&io, 0x06cf, 1, 0x08);
 	/* rtw_coex_set_ant_path(COEX_SET_ANT_WONLY). */
 	lte_mask(&io, LTE_COEX_CTRL, 0xc000, 1);
 	lte_mask(&io, LTE_COEX_CTRL, 0x0c00, 1);
