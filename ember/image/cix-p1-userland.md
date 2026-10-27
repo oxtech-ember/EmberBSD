@@ -6,26 +6,38 @@ The builder does not partition, mount or write storage devices.
 Boot configuration, root filesystem assembly and physical acceptance are
 separate steps.
 
-Use the same GCC16 target compiler and complete host tools as the kernel
-build. The selected libraries are rebuilt with the current headers and SSP
-policy. An older static libc archive is not reused. The compiler's existing
-libgcc runtime is recorded by hash.
+Use the selected Clang target toolchain and installed native SDK tools. The
+complete or imported AArch64 SDK sysroot supplies the common LLVM runtime;
+no bootstrap stage is required. The selected libraries are rebuilt with the
+current headers and SSP policy. An older static libc archive is not reused.
 
 ```sh
-BUILD_JOBS=2 HOST_CC=gcc-16 HOST_CXX=g++-16 \
-    EMBER_LIBEDIT_SOURCE=/absolute/prepared-libedit \
-    sh ember/image/cix-p1-build-userland.sh \
+export EMBERBSD_SDK_SOURCE=/absolute/sdk-source
+export EMBER_PORTS_SOURCE=/absolute/ports-source
+export EMBER_HOST_PREFIX=/absolute/native-prefix
+export EMBER_HOST_BFD_CONFIG=/absolute/host-bfd/host-bfd.mk
+export EMBER_LIBEDIT_SOURCE=/absolute/prepared-libedit
+export EMBER_LLVM_SOURCE=/absolute/prepared-llvm
+export EMBER_SDK_SYSROOT=/absolute/completed-aarch64-sysroot
+BUILD_JOBS=2 "$EMBER_HOST_PREFIX/bin/python3.15" -B ember/image/cix-p1-native.py \
     /absolute/clean-source /absolute/new-output \
-    /absolute/host-tools /absolute/gcc16-prefix
+    /absolute/host-tools /absolute/target-clang-prefix
 ```
+
+The SDK's `run-native-os` selects the native compiler and tools, independently
+of the target family. `EMBER_HOST_COMPILER_FAMILY=gcc` explicitly selects the
+native GCC alternative. `EMBER_TARGET_COMPILER_FAMILY=gcc` selects the GCC16
+target alternative; that route does not require `EMBER_SDK_SYSROOT`. The
+common LLVM source is still needed for libc and libm. No compiler fallback is automatic.
 
 `EMBER_LIBEDIT_SOURCE` names the libedit source prepared by EmberBSD-SDK
 `scripts/prepare-libedit.py` from the Ports recipe ([base libedit](../../lib/libedit/README.md)).
-The builder rejects an absent or incomplete tree and records its receipt hash.
-The output path must not exist. Source and build paths must be absolute,
-without whitespace or shell metacharacters. The compiler must report GCC16
-and an AArch64 NetBSD ABI target. A dirty tracked source tree is rejected.
-The source commit must remain unchanged until the build completes.
+`EMBER_LLVM_SOURCE` names the matching LLVM source prepared by Ports. The
+selected Ports checkout verifies both prepared source trees against its recipes. The
+host BFD configuration supplies the OS native tool contract. The output path
+must not exist. Source and build paths must be absolute, without whitespace or
+shell metacharacters. A dirty source tree is rejected and its commit must remain
+unchanged until the build completes.
 
 The builder installs current headers, CSU, libc, the selected C libraries,
 OpenSSL and libpcap. It relinks the console and network tools, WPA programs,

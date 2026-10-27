@@ -3,21 +3,22 @@
 This document specifies root assembly and startup contracts.
 Hardware applicability and physical evidence belong to [DevBoards](https://github.com/oxtech-ember/EmberBSD-DevBoards/blob/main/boards/cix-p1-orangepi6plus/boot.md).
 This profile targets the observed CIX P1 CD8180 board and RTL8822CE adapter.
-It builds a reduced static C userland from EmberBSD sources with GCC16.
+It builds a reduced static C userland from EmberBSD sources using the selected SDK.
 It does not produce a complete base release or an unattended disk installer.
 
 ## Inputs and build
 
 Use a clean source commit, complete EmberBSD host tools, and the common
-AArch64 GCC16 toolchain. The build uses separate object and destination trees.
+AArch64 Clang toolchain and completed SDK sysroot. The build uses separate object and destination trees.
 It rebuilds the selected libraries before linking the selected commands.
 It fences target headers against old compiler `sys-include` symlinks.
 The receipt records source, compiler and runtime hashes.
 Every selected target executable must be little-endian static AArch64 ELF.
 
 ```sh
-sh ember/image/cix-p1-build-userland.sh \
-    /absolute/source /absolute/new-userland /absolute/tools /absolute/gcc16
+# Set the SDK and prepared source inputs shown in cix-p1-userland.md.
+"$EMBER_HOST_PREFIX/bin/python3.15" -B ember/image/cix-p1-native.py \
+    /absolute/source /absolute/new-userland /absolute/tools /absolute/target-clang
 sh ember/image/cix-p1-root.sh \
     /absolute/new-userland /absolute/source /absolute/tools \
     /absolute/rtw8822c_fw.bin /absolute/new-root

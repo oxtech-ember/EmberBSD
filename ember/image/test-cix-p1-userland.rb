@@ -45,6 +45,12 @@ Dir.mktmpdir('ember-cix-userland-') do |work|
     echo 'Type: EXEC (Executable file)'
     if [ "$TEST_ELF_KIND" = dynamic ] && [ "$1" = -l ]; then echo INTERP; fi
   SH
+  File.write(compiler + '/bin/clang', "#!/bin/sh\nexit 0\n")
+  FileUtils.cp(compiler + '/bin/aarch64--netbsd-readelf', compiler + '/bin/llvm-readelf')
+  FileUtils.mkdir_p(work + '/llvm-source')
+  File.write(work + '/llvm-source/llvm-source.json', 'prepared LLVM source')
+  FileUtils.mkdir_p(work + '/llvm-resource/lib/netbsd')
+  File.write(work + '/llvm-resource/lib/netbsd/builtins.a', 'retained LLVM builtins')
   %w[nbmake nbmkesdb nbmkcsmapper].each { |tool| File.write(tools + '/bin/' + tool, "#!/bin/sh\nexit 0\n") }
   File.write(src + '/build.sh', <<~'SH')
     #!/bin/sh
@@ -129,17 +135,59 @@ Dir.mktmpdir('ember-cix-userland-') do |work|
     else ['-c', 'user.name=Contract', '-c', 'user.email=contract@example.invalid',
           'commit', '-qm', 'fixture']
     end
-    system('git', '-C', src, *args, exception: true)
+    system('/usr/bin/git', '-C', src, *args, exception: true)
+  end
+  native_prefix = ENV.fetch('EMBER_TEST_NATIVE_PREFIX')
+  native_sh = native_prefix + '/bin/mksh'
+  routing = work + '/routing'
+  FileUtils.mkdir_p(routing)
+  File.symlink(native_prefix + '/bin/nawk', routing + '/awk')
+  role_log = work + '/role-calls'
+  routes = {}
+  {'git' => '/usr/bin/git', 'ruby' => native_prefix + '/bin/ruby',
+   'shasum' => native_prefix + '/bin/shasum'}.each do |role, real|
+    route = work + '/selected-' + role
+    File.write(route, "#!#{native_sh}\nprintf '#{role}\n' >> '#{role_log}'\nexec '#{real}' \"$@\"\n")
+    File.chmod(0o755, route)
+    routes['TEST_' + role.upcase] = route
+  end
+  sdk = work + '/sdk'
+  FileUtils.mkdir_p(sdk + '/scripts')
+  File.write(sdk + '/scripts/run-native-os.py', <<~'PYTHON')
+    import os, subprocess, sys
+    args = sys.argv[1:]
+    source = args[args.index('--source') + 1]
+    build_args = args[args.index('--') + 1:]
+    sys.exit(subprocess.call([os.environ['HOST_SH'], source + '/build.sh', *build_args]))
+  PYTHON
+  selected_runner = lambda do |script, out, extra|
+    Open3.capture3({'HOST_SH' => native_sh, 'PATH' => routing + ':' + native_prefix + '/bin:' + native_prefix + '/gnu/bin'}.merge(extra),
+      native_sh, script, '--selected', src, out, tools, compiler, sdk, native_prefix,
+      'clang', extra.fetch('TEST_FAMILY', 'gcc'), extra.fetch('EMBER_LIBEDIT_SOURCE', libedit),
+      work + '/llvm-source', work + '/host-bfd.mk', '2',
+      extra.fetch('TEST_GIT', '/usr/bin/git'), extra.fetch('TEST_RUBY', native_prefix + '/bin/ruby'),
+      extra.fetch('TEST_SHASUM', native_prefix + '/bin/shasum'), work + '/llvm-runtime',
+      work + '/llvm-resource', compiler + '/libgcc_eh.a', compiler + '/resource',
+      '23.1.4', 'aarch64-unknown-netbsd', work + '/llvm-resource/lib/netbsd/builtins.a')
   end
   run = lambda do |out, env = {}|
-    Open3.capture3({'EMBER_LIBEDIT_SOURCE' => libedit, 'TEST_FAIL_COMPONENT' => '', 'TEST_OMIT_BINARY' => '',
+    selected_runner.call(builder, out, {'EMBER_LIBEDIT_SOURCE' => libedit, 'TEST_FAIL_COMPONENT' => '', 'TEST_OMIT_BINARY' => '',
       'TEST_ELF_KIND' => '', 'TEST_FAIL_MKNOD_STAGE' => '', 'TEST_OMIT_DATA' => '',
-      'TEST_BAD_DATA' => '', 'TEST_LATE_PROFILE_FILE' => '', 'TEST_LATE_DATA_FILE' => ''}.merge(env),
-      'sh', builder, src, out, tools, compiler)
+      'TEST_BAD_DATA' => '', 'TEST_LATE_PROFILE_FILE' => '', 'TEST_LATE_DATA_FILE' => ''}.merge(routes).merge(env))
   end
   out = work + '/accepted'
   stdout, stderr, status = run.call(out)
   abort "FAIL: valid profile: #{stdout}#{stderr}" unless status.success?
+  clang_out = work + '/clang-accepted'
+  stdout, stderr, status = run.call(clang_out, 'TEST_FAMILY' => 'clang')
+  abort "FAIL: Clang profile: #{stdout}#{stderr}" unless status.success?
+  clang_flags = File.read(clang_out + '/build-flags')
+  %w[EMBER_COMPILER_FAMILY=clang EMBER_LLVM_RUNTIME_PHASE=bootstrap MKLIBCXX=no].each do |flag|
+    abort "FAIL: missing Clang flag #{flag}" unless clang_flags.include?(flag)
+  end
+  abort 'FAIL: selected resource not forwarded' unless
+    clang_flags.include?("EMBER_LLVM_RESOURCE_DIR=#{work}/llvm-resource")
+  checks += 1
   events = File.readlines(out + '/events')
   dhcpcd = events.select { |line| line.include?('/external/bsd/dhcpcd/sbin/dhcpcd ') }
   abort 'FAIL: reduced DHCP must retain IPv4 and enable IPv6 in every build stage' unless
@@ -232,6 +280,14 @@ checks += 1
   checks += 1
   abort 'FAIL: no compiler unwinder hash' unless receipt.include?(Digest::SHA256.file(compiler + '/libgcc_eh.a').hexdigest)
   checks += 1
+  abort 'FAIL: no LLVM source hash' unless receipt.include?(Digest::SHA256.file(work + '/llvm-source/llvm-source.json').hexdigest)
+  checks += 1
+  abort 'FAIL: selected native role was bypassed' unless %w[git ruby shasum].all? { |role| File.readlines(role_log).any? { |line| line.strip == role } }
+  checks += 1
+  if ENV['EMBER_TEST_SMOKE'] == 'yes'
+    puts "CIX reduced userland smoke: #{checks} assertions, 0 failures"
+    exit 0
+  end
   _, _, status = run.call(out)
   abort 'FAIL: replaced existing output' if status.success?
   checks += 1
@@ -343,10 +399,10 @@ end
   checks += 1
   profile = work + '/profile'
   FileUtils.mkdir_p(profile)
-  %w[cix-p1-build-userland.sh cix-p1-i18n.rb].each { |p| FileUtils.cp(File.join(__dir__, p), profile + '/' + p) }
+  %w[cix-p1-build-userland.sh cix-p1-native.py cix-p1-i18n.rb].each { |p| FileUtils.cp(File.join(__dir__, p), profile + '/' + p) }
   profile_output = work + '/late-profile'
-  _, _, status = Open3.capture3({ 'TEST_LATE_PROFILE_FILE' => profile + '/cix-p1-i18n.rb' },
-    'sh', profile + '/cix-p1-build-userland.sh', src, profile_output, tools, compiler)
+  _, _, status = selected_runner.call(profile + '/cix-p1-build-userland.sh', profile_output,
+    { 'TEST_LATE_PROFILE_FILE' => profile + '/cix-p1-i18n.rb' })
   abort 'FAIL: accepted helper changed during build' if status.success? || File.exist?(profile_output + '/BUILD-INPUTS.txt')
   checks += 1
   File.write(src + '/untracked.h', 'unrecorded source input')
