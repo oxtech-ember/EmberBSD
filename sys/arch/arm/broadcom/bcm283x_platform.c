@@ -708,8 +708,6 @@ bcm2711_uartinit(void)
 
 #define	BCM283x_MINIMUM_SPLIT	(128U * 1024 * 1024)
 
-static size_t bcm283x_memorysize;
-
 static void
 bcm283x_bootparams(bus_space_tag_t iot, bus_space_handle_t ioh)
 {
@@ -758,7 +756,6 @@ bcm283x_bootparams(bus_space_tag_t iot, bus_space_handle_t ioh)
 		size_t n = vcprop_tag_resplen(&vptp_mem->tag) /
 		    sizeof(struct vcprop_memory);
 
-		bcm283x_memorysize = 0;
 		bootconfig.dramblocks = 0;
 
 		for (int i = 0; i < n && i < DRAM_BLOCKS; i++) {
@@ -767,8 +764,6 @@ bcm283x_bootparams(bus_space_tag_t iot, bus_space_handle_t ioh)
 			bootconfig.dram[i].pages =
 			    atop(le32toh(vptp_mem->mem[i].size));
 			bootconfig.dramblocks++;
-
-			bcm283x_memorysize += le32toh(vptp_mem->mem[i].size);
 		}
 	}
 
@@ -777,9 +772,13 @@ bcm283x_bootparams(bus_space_tag_t iot, bus_space_handle_t ioh)
 		    le32toh(vb.vbt_armclockrate.rate);
 
 #ifdef VERBOSE_INIT_ARM
-	if (vcprop_tag_success_p(&vb.vbt_memory.tag))
-		printf("%s: memory size  %zu\n", __func__,
-		    bcm283x_memorysize);
+	if (vcprop_tag_success_p(&vb.vbt_memory.tag)) {
+		size_t memorysize = 0;
+
+		for (u_int i = 0; i < bootconfig.dramblocks; i++)
+			memorysize += le32toh(vb.vbt_memory.mem[i].size);
+		printf("%s: memory size  %zu\n", __func__, memorysize);
+	}
 	if (vcprop_tag_success_p(&vb.vbt_armclockrate.tag))
 		printf("%s: arm clock    %d\n", __func__,
 		    le32toh(vb.vbt_armclockrate.rate));
