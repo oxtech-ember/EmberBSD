@@ -37,6 +37,7 @@ __KERNEL_RCSID(0, "$NetBSD: sdmmc_io.c,v 1.21.28.2 2025/12/18 18:26:52 martin Ex
 #include <dev/sdmmc/sdmmcchip.h>
 #include <dev/sdmmc/sdmmcreg.h>
 #include <dev/sdmmc/sdmmcvar.h>
+#include <dev/pcmcia/pcmciareg.h>
 
 #ifdef SDMMC_DEBUG
 #define DPRINTF(s)	do { printf s; } while (0)
@@ -383,6 +384,137 @@ sdmmc_io_rw_direct(struct sdmmc_softc *sc, struct sdmmc_function *sf,
 	}
 
 	return error;
+}
+
+/*
+ * Read a function's maximum block length from its checked SDIO CIS.
+ * The caller must serialize this operation with other card I/O as needed.
+ */
+int
+sdmmc_io_maxblklen_checked(struct sdmmc_function *sf, u_int *maxp)
+{
+	struct sdmmc_softc *sc;
+	struct sdmmc_function *sf0;
+	uint32_t cis, cis_end;
+	u_int consumed, tuples;
+	u_int i;
+	unsigned revision;
+	uint8_t byte, funce_type;
+	u_int max_blk_size;
+	bool found;
+	int error;
+
+	if (sf == NULL || maxp == NULL || sf->sc == NULL ||
+	    sf->number < 1 || sf->number > 7)
+		return EINVAL;
+
+	sc = sf->sc;
+	sf0 = sc->sc_fn0;
+	if (sf0 == NULL || sf0->sc != sc || sf0->number != 0)
+		return EINVAL;
+
+	/* Use only the checked CMD52 path on function 0. */
+	byte = 0;
+	error = sdmmc_io_rw_direct(sc, sf0, SD_IO_CCCR_CCCR_SDIO_REV,
+	    &byte, 0, false);
+	if (error)
+		return error;
+	revision = SD_IO_CCCR_SDIO_REV(byte);
+
+	cis = 0;
+	for (i = 0; i < 3; i++) {
+		byte = 0;
+		error = sdmmc_io_rw_direct(sc, sf0,
+		    SD_IO_FBR(sf->number) + SD_IO_FBR_CIS + i, &byte,
+		    0, false);
+		if (error)
+			return error;
+		cis |= (uint32_t)byte << (i * 8);
+	}
+	cis_end = SD_IO_CIS_START + SD_IO_CIS_SIZE;
+	if (cis < SD_IO_CIS_START || cis >= cis_end)
+		return EINVAL;
+
+	consumed = 0;
+	tuples = 0;
+	found = false;
+	max_blk_size = 0;
+	while (cis < cis_end) {
+		uint8_t code, length;
+		uint32_t payload;
+
+		if (tuples >= 256 || consumed >= 4096)
+			return EFBIG;
+		byte = 0;
+		error = sdmmc_io_rw_direct(sc, sf0, cis++, &byte,
+		    0, false);
+		if (error)
+			return error;
+		consumed++;
+		tuples++;
+		code = byte;
+		if (code == PCMCIA_CISTPL_NULL)
+			continue;
+		if (code == PCMCIA_CISTPL_END) {
+			if (!found || max_blk_size == 0)
+				return ENOTSUP;
+			*maxp = max_blk_size;
+			return 0;
+		}
+		if (cis >= cis_end)
+			return EINVAL;
+		if (consumed >= 4096)
+			return EFBIG;
+		byte = 0;
+		error = sdmmc_io_rw_direct(sc, sf0, cis++, &byte,
+		    0, false);
+		if (error)
+			return error;
+		consumed++;
+		length = byte;
+		if (length == 0)
+			return EINVAL;
+		payload = cis;
+		if ((uint32_t)length > cis_end - payload)
+			return EINVAL;
+		if ((u_int)length > 4096 - consumed)
+			return EFBIG;
+
+		if (code == PCMCIA_CISTPL_FUNCE) {
+			byte = 0;
+			error = sdmmc_io_rw_direct(sc, sf0, payload, &byte,
+			    0, false);
+			if (error)
+				return error;
+			funce_type = byte;
+			if (funce_type == 1) { /* SDIO function extension */
+				u_int minimum = revision == CCCR_SDIO_REV_1_00 ?
+				    0x1c : 0x2a;
+
+				if (length < minimum)
+					return EINVAL;
+				if (found)
+					return EINVAL;
+				byte = 0;
+				error = sdmmc_io_rw_direct(sc, sf0,
+				    payload + 12, &byte, 0, false);
+				if (error)
+					return error;
+				max_blk_size = byte;
+				byte = 0;
+				error = sdmmc_io_rw_direct(sc, sf0,
+				    payload + 13, &byte, 0, false);
+				if (error)
+					return error;
+				max_blk_size |= (u_int)byte << 8;
+				found = true;
+			}
+		}
+		cis += length;
+		consumed += length;
+	}
+
+	return EINVAL;
 }
 
 /*

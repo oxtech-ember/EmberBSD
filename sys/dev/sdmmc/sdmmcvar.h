@@ -385,6 +385,8 @@ int	sdmmc_io_enable(struct sdmmc_softc *);
 void	sdmmc_io_scan(struct sdmmc_softc *);
 int	sdmmc_io_init(struct sdmmc_softc *, struct sdmmc_function *);
 int	sdmmc_io_set_blocklen(struct sdmmc_function *, int);
+/* Checked, read-only query; maxp is unchanged on error. */
+int	sdmmc_io_maxblklen_checked(struct sdmmc_function *, u_int *);
 uint8_t sdmmc_io_read_1(struct sdmmc_function *, int);
 uint16_t sdmmc_io_read_2(struct sdmmc_function *, int);
 uint32_t sdmmc_io_read_4(struct sdmmc_function *, int);
