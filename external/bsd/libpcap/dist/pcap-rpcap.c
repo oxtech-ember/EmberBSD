@@ -108,7 +108,9 @@ static struct activehosts *activeHosts;
  * pcap_remoteact_cleanup() for more details.
  */
 static PCAP_SOCKET sockmain;
+#ifdef HAVE_OPENSSL
 static SSL *ssl_main;
+#endif
 
 /*
  * Private data for capturing remotely using the rpcap protocol.
@@ -2502,8 +2504,10 @@ pcap_t *pcap_open_rpcap(const char *source, int snaplen, int flags, int read_tim
 		return NULL;
 	}
 
+#ifdef HAVE_OPENSSL
 	/* All good so far, save the ssl handler */
 	ssl_main = ssl;
+#endif
 
 	/*
 	 * Now it's time to start playing with the RPCAP protocol
