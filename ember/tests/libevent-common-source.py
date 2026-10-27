@@ -78,7 +78,8 @@ with tempfile.TemporaryDirectory(dir=args.work_dir) as temporary:
         expsym = lib / 'lib' / group / (group.removeprefix('lib') + '.expsym')
         expected = {line.split()[0] for line in expsym.read_text().splitlines()
                     if line.strip() and not line.lstrip().startswith('#')}
-        absent = sorted(expected - actual)
-        if absent:
-            raise AssertionError(f'{group} missing exports: {absent}')
+        # The OS build compares the exports with the list exactly.
+        absent, extra = sorted(expected - actual), sorted(actual - expected)
+        if absent or extra:
+            raise AssertionError(f'{group} missing exports: {absent}; extra exports: {extra}')
 print('libevent prepared source target object and export checks: PASS')
