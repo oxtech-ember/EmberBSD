@@ -17,6 +17,8 @@ os_source=$4
 root_device=$5
 image=$6
 host_sh=$7
+case $host_sh in /*) ;; *) echo "HOST_SH must be an absolute selected tool" >&2; exit 2;; esac
+[ -x "$host_sh" ] || { echo "selected host shell is not executable" >&2; exit 2; }
 
 case $root_device in
 	ld*[a-p])
@@ -35,6 +37,8 @@ case $image in /*) ;; *) echo "image path must be absolute" >&2; exit 2;; esac
 	{ echo "same-build nbmtree/nbmakefs are required" >&2; exit 1; }
 [ -f "$destination/etc/MAKEDEV" ] && [ -x "$destination/etc/MAKEDEV" ] ||
 	{ echo "same-build MAKEDEV is missing" >&2; exit 1; }
+[ -f "$root/etc/rc" ] && [ -x "$root/etc/rc" ] ||
+	{ echo "diagnostic root /etc/rc is missing" >&2; exit 1; }
 [ ! -e "$image" ] || { echo "image output already exists" >&2; exit 1; }
 
 work=${image}.spec.$$
@@ -53,7 +57,7 @@ MACHINE_ARCH=aarch64
 NETBSDSRCDIR=$os_source
 export MACHINE MACHINE_ARCH NETBSDSRCDIR
 "$host_sh" "$destination/etc/MAKEDEV" \
-	-s "ld${unit}" > "${work}.devices"
+	-s std "ld${unit}" > "${work}.devices"
 sed -e '/^\. type=dir/d' -e 's,^[.]/,./dev/,' \
 	"${work}.devices" > "${work}.devspec"
 device_path="./dev/ld${unit}${partition}"
@@ -61,6 +65,12 @@ grep -q "^${device_path} type=block" "${work}.devspec" || {
 	echo "MAKEDEV did not describe selected root device $root_device" >&2
 	exit 1
 }
+for device in console null tty zero; do
+	grep -q "^./dev/${device} type=char" "${work}.devspec" || {
+		echo "MAKEDEV did not describe standard boot device $device" >&2
+		exit 1
+	}
+done
 {
 	echo '/set uid=0 gid=0'
 	awk '
@@ -77,7 +87,7 @@ grep -q "^${device_path} type=block" "${work}.devspec" || {
 } > "${work}.new"
 mv "${work}.new" "$work"
 
-	"$tooldir/bin/nbmakefs" -t ffs -B little \
+"$tooldir/bin/nbmakefs" -t ffs -B little \
 	-o version=2,bsize=16384,fsize=2048 \
 	-F "$work" -N "$os_source/etc" "$image" "$root"
 cleanup

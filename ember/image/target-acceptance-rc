@@ -9,7 +9,7 @@ fail()
 		echo "EMBERBSD-ACCEPTANCE $nonce FAIL $1"
 	fi
 	echo "target acceptance: $1" >&2
-	/sbin/shutdown -p now
+	/sbin/halt -p -q
 	exit 1
 }
 
@@ -33,7 +33,7 @@ cp -R /tests/. /tmp/emberbsd-target-tests/ || fail tests-copy
 cd /tmp/emberbsd-target-tests || fail tests-directory
 if ./run-target.sh --target aarch64 .; then
 	echo "EMBERBSD-ACCEPTANCE $nonce COMPLETE"
-	/sbin/shutdown -p now
+	/sbin/halt -p -q
 	exit 0
 fi
 fail guest-tests
