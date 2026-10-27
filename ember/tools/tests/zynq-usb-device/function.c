@@ -58,10 +58,11 @@ main(int argc, char **argv)
 {
 	struct usbperiph_config config = { .version = USBPERIPH_ABI };
 	struct usbperiph_event event;
+	struct usbperiph_snapshot connected;
 	uint8_t buffer[USBPERIPH_MAX_XFER];
-	uint64_t bytes, total = 0;
+	uint64_t bytes, total = 0, generation = 0;
 	unsigned vid, pid, diagnostic_waits = 0;
-	bool loopback;
+	bool loopback, configured = false;
 	int fd;
 	const uint8_t device[18] = {18, 1, 0, 2, 0, 0, 0, 64,
 	    0, 0, 0, 0, 0, 1, 0, 0, 0, 1};
@@ -108,22 +109,39 @@ main(int argc, char **argv)
 	if (ioctl(fd, USBPERIPH_IOC_CONNECT) < 0)
 		err(1, "connect");
 	diagnostic(fd, "after-connect");
+	if (ioctl(fd, USBPERIPH_IOC_SNAPSHOT, &connected) < 0)
+		err(1, "connected snapshot");
 	for (;;) {
 		if (ioctl(fd, USBPERIPH_IOC_GET_EVENT, &event) < 0) {
 			if (errno == EWOULDBLOCK) {
+				/* Drain repeated host configuration before any bulk submit. */
+				if (configured)
+					break;
 				if (diagnostic_waits++ < 4)
 					diagnostic(fd, "enumeration-wait");
 				continue;
 			}
 			err(1, "enumeration event");
 		}
-		if (event.type == USBPERIPH_EVENT_CONFIGURE && event.configured == 1)
-			break;
+		/* A previous function can leave an event before this CONNECT. */
+		if (event.generation < connected.generation)
+			continue;
+		if (event.type == USBPERIPH_EVENT_CONFIGURE) {
+			configured = event.configured == 1;
+			generation = event.generation;
+		} else if (event.type == USBPERIPH_EVENT_RESET) {
+			configured = false;
+		} else if (event.type == USBPERIPH_EVENT_DISCONNECT ||
+		    (configured && event.type == USBPERIPH_EVENT_SUSPEND)) {
+			diagnostic(fd, "configuration-lost");
+			errx(1, "USB configuration lost before bulk transfer");
+		}
 	}
 	diagnostic(fd, "configured");
 	while (total < bytes) {
 		struct usbperiph_xfer x = {
 			.buffer = (uintptr_t)buffer, .timeout_ms = 10000,
+			.generation = generation,
 			.length = bytes - total < sizeof(buffer) ?
 			    bytes - total : sizeof(buffer)
 		};
