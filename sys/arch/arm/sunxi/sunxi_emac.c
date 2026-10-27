@@ -680,6 +680,7 @@ sunxi_emac_init_locked(struct sunxi_emac_softc *sc)
 	struct ifnet *ifp = &sc->ec.ec_if;
 	struct mii_data *mii = &sc->mii;
 	uint32_t val;
+	int error;
 
 	EMAC_ASSERT_LOCKED(sc);
 
@@ -687,7 +688,9 @@ sunxi_emac_init_locked(struct sunxi_emac_softc *sc)
 		return 0;
 
 	/* Soft reset EMAC core */
-	sunxi_emac_reset(sc);
+	error = sunxi_emac_reset(sc);
+	if (error != 0)
+		return error;
 
 	/* Write transmit and receive descriptor base address registers */
 	WR4(sc, EMAC_TX_DMA_LIST, sc->tx.desc_ring_paddr);
