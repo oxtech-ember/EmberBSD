@@ -4,10 +4,9 @@
 set -eu
 root=$(CDPATH= cd -- "$(dirname "$0")/../.." && pwd)
 out=${1:?usage: cix-p1-boot.sh OUTPUT_DIRECTORY}
+# The SDK runner binds the selected native compiler and host ABI.
+: "${CC:?Run this check with the SDK run-native-check.py selector}"
 mkdir -p "$out"
-if [ "$(uname -s)" = Darwin ] && [ -z "${SDKROOT:-}" ]; then
-    SDKROOT=$(xcrun --show-sdk-path); export SDKROOT
-fi
 # Retain each source's notices, then extract complete unchanged bodies.
 extract() {
     file=$1
@@ -45,7 +44,7 @@ extract "$root/sys/stand/efiboot/bootmenu.c" getchoicefrominput 'static int' > "
 extract "$root/sys/stand/efiboot/bootmenu.c" docommandchoice 'static void' >> "$out/menu-native.inc"
 sed '/^#include "efiboot.h"/d; /^#include <sys\/queue.h>/d' \
     "$root/sys/stand/efiboot/userconf.c" > "$out/userconf-native.inc"
-${CC:-cc} -std=c11 -Wall -Wextra -Werror ${TEST_CFLAGS:-} \
+"$CC" -std=c11 -Wall -Wextra -Werror ${TEST_CFLAGS:-} \
     -I"$out" "$root/ember/tests/cix-p1-boot.c" -o "$out/cix-p1-boot"
 cfg=${CIX_BOOT_CONFIG:-"$root/ember/boot/cix-p1-persistent.cfg"}
 if [ -n "${TEST_RUNNER:-}" ]; then

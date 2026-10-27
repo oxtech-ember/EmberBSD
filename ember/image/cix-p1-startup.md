@@ -69,14 +69,23 @@ service participates in this development-console path.
 
 ## Checks
 
+For the boot check, select `HOST_PREFIX` and `SDK_SOURCE`, set `OS_SOURCE` to
+the source checkout, and create `CHECK_WORK` inside the build workspace. The
+SDK command uses Clang by default; select `--compiler-family gcc` explicitly
+for the supported GCC alternative.
+
 ```sh
 ruby ember/image/test-cix-p1-userland.rb
 ruby ember/image/test-cix-p1-startup.rb
 ruby ember/image/test-cix-p1-power.rb
 ruby ember/image/test-cix-p1-root.rb
 ruby ember/image/test-cix-p1-root-image.rb
-CC=gcc-16 TEST_CFLAGS=-O2 \
-    sh ember/tests/cix-p1-boot.sh /absolute/new-boot-check
+"$HOST_PREFIX/bin/python3.15" -B "$SDK_SOURCE/scripts/run-native-check.py" \
+    --host-prefix "$HOST_PREFIX" --compiler-family clang \
+    --required-role awk --tool sh --cwd "$OS_SOURCE" \
+    --bindings "$CHECK_WORK/native-commands" --log "$CHECK_WORK/boot.log" \
+    --cflag=-O2 -- "$OS_SOURCE/ember/tests/cix-p1-boot.sh" \
+    "$CHECK_WORK/boot-output"
 ```
 
 The startup contracts execute the actual shell functions with command-boundary
