@@ -118,12 +118,13 @@ __dead static void disaster(int);
 static void badsys(int);
 
 /*
- * We really need a recursive typedef...
- * The following at least guarantees that the return type of (*state_t)()
- * is sufficiently wide to hold a function pointer.
+ * A state function returns the next state.  A function type cannot name
+ * itself, so the next state function travels in a structure.  This needs
+ * no casts between incompatible function types.
  */
-typedef long (*state_func_t)(void);
-typedef state_func_t (*state_t)(void);
+typedef struct state {
+	struct state (*func)(void);
+} state_t;
 
 #define	DEATH		'd'
 #define	SINGLE_USER	's'
@@ -133,17 +134,17 @@ typedef state_func_t (*state_t)(void);
 #define	CLEAN_TTYS	'T'
 #define	CATATONIA	'c'
 
-static state_func_t single_user(void);
+static state_t single_user(void);
 #ifndef LETS_GET_SMALL
-static state_func_t runcom(void);
-static state_func_t read_ttys(void);
-static state_func_t multi_user(void);
-static state_func_t clean_ttys(void);
-static state_func_t catatonia(void);
-static state_func_t death(void);
-#endif
+static state_t runcom(void);
+static state_t read_ttys(void);
+static state_t multi_user(void);
+static state_t clean_ttys(void);
+static state_t catatonia(void);
+static state_t death(void);
 
 static enum { AUTOBOOT, FASTBOOT } runcom_mode = AUTOBOOT;
+#endif
 
 static void transition(state_t);
 static void setctty(const char *);
@@ -166,7 +167,9 @@ typedef struct init_session {
 } session_t;
 
 static void collect_child(pid_t, int);
+#ifndef LETS_GET_SMALL
 static int clang;
+#endif
 static void transition_handler(int);
 static void alrm_handler(int);
 static int has_securelevel(void);
@@ -188,13 +191,13 @@ static void add_session(session_t *);
 static void del_session(session_t *);
 static session_t *find_session(pid_t);
 static DB *session_db;
-static state_t requested_transition = runcom;
+static state_t requested_transition = { runcom };
 
 static void clear_session_logs(session_t *, int);
-static state_func_t runetcrc(int);
+static state_t runetcrc(int);
 #ifdef SUPPORT_UTMPX
 static struct timeval boot_time;
-static state_t current_state = death;
+static state_t current_state = { death };
 static void session_utmpx(const session_t *, int);
 static void make_utmpx(const char *, const char *, int, pid_t,
     const struct timeval *, int);
@@ -210,7 +213,7 @@ static int createsysctlnode(void);
 #endif /* CHROOT */
 
 #else /* LETS_GET_SMALL */
-static state_t requested_transition = single_user;
+static state_t requested_transition = { single_user };
 #endif /* !LETS_GET_SMALL */
 
 #ifdef MFS_DEV_IF_NO_CONSOLE
@@ -261,7 +264,7 @@ main(int argc, char **argv)
 
 #ifdef MFS_DEV_IF_NO_CONSOLE
 	if (mfs_dev() == -1)
-		requested_transition = single_user;
+		requested_transition.func = single_user;
 #endif
 
 #ifndef LETS_GET_SMALL
@@ -281,7 +284,7 @@ main(int argc, char **argv)
 	while ((c = getopt(argc, argv, "sf")) != -1)
 		switch (c) {
 		case 's':
-			requested_transition = single_user;
+			requested_transition.func = single_user;
 			break;
 		case 'f':
 			runcom_mode = FASTBOOT;
@@ -294,7 +297,7 @@ main(int argc, char **argv)
 	if (optind != argc)
 		warning("ignoring excess arguments");
 #else /* LETS_GET_SMALL */
-	requested_transition = single_user;
+	requested_transition.func = single_user;
 #endif /* LETS_GET_SMALL */
 
 	/*
@@ -578,7 +581,7 @@ static void
 transition(state_t s)
 {
 
-	if (s == NULL)
+	if (s.func == NULL)
 		return;
 	for (;;) {
 #ifdef SUPPORT_UTMPX
@@ -588,7 +591,7 @@ transition(state_t s)
 		current_state = s;
 #endif
 #endif
-		s = (state_t)(*s)();
+		s = (*s.func)();
 	}
 }
 
@@ -639,7 +642,7 @@ setctty(const char *name)
 /*
  * Bring the system up single user.
  */
-static state_func_t
+static state_t
 single_user(void)
 {
 	pid_t pid, wpid;
@@ -767,10 +770,10 @@ single_user(void)
 			continue;
 		(void)sigaction(SIGTSTP, &satstp, NULL);
 		(void)sigaction(SIGHUP, &sahup, NULL);
-		return (state_func_t)single_user;
+		return (state_t){ single_user };
 	}
 
-	requested_transition = 0;
+	requested_transition.func = NULL;
 	do {
 		if ((wpid = waitpid(-1, &status, WUNTRACED)) != -1)
 			collect_child(wpid, status);
@@ -779,19 +782,19 @@ single_user(void)
 				continue;
 			warning("wait for single-user shell failed: %m; "
 			    "restarting");
-			return (state_func_t)single_user;
+			return (state_t){ single_user };
 		}
 		if (wpid == pid && WIFSTOPPED(status)) {
 			warning("shell stopped, restarting");
 			(void)kill(pid, SIGCONT);
 			wpid = -1;
 		}
-	} while (wpid != pid && !requested_transition);
+	} while (wpid != pid && requested_transition.func == NULL);
 
-	if (requested_transition) {
+	if (requested_transition.func != NULL) {
 		(void)sigaction(SIGTSTP, &satstp, NULL);
 		(void)sigaction(SIGHUP, &sahup, NULL);
-		return (state_func_t)requested_transition;
+		return requested_transition;
 	}
 
 	if (WIFSIGNALED(status)) {
@@ -807,24 +810,24 @@ single_user(void)
 				status);
 			(void)sigaction(SIGTSTP, &satstp, NULL);
 			(void)sigaction(SIGHUP, &sahup, NULL);
-			return (state_func_t)single_user;
+			return (state_t){ single_user };
 		}
 	}
 
-	runcom_mode = FASTBOOT;
 	(void)sigaction(SIGTSTP, &satstp, NULL);
 	(void)sigaction(SIGHUP, &sahup, NULL);
 #ifndef LETS_GET_SMALL
-	return (state_func_t)runcom;
+	runcom_mode = FASTBOOT;
+	return (state_t){ runcom };
 #else /* LETS_GET_SMALL */
-	return (state_func_t)single_user;
+	return (state_t){ single_user };
 #endif /* LETS_GET_SMALL */
 }
 
 #ifndef LETS_GET_SMALL
 
 /* ARGSUSED */
-static state_func_t
+static state_t
 runetcrc(int trychroot)
 {
 	pid_t pid, wpid;
@@ -868,7 +871,7 @@ runetcrc(int trychroot)
 		while (waitpid(-1, NULL, WNOHANG) > 0)
 			continue;
 		(void)sleep(STALL_TIMEOUT);
-		return (state_func_t)single_user;
+		return (state_t){ single_user };
 	default:
 		break;
 	}
@@ -884,7 +887,7 @@ runetcrc(int trychroot)
 				continue;
 			warning("wait for `%s' on `%s' failed: %m; going to "
 			    "single user mode", INIT_BSHELL, _PATH_RUNCOM);
-			return (state_func_t)single_user;
+			return (state_t){ single_user };
 		}
 		if (wpid == pid && WIFSTOPPED(status)) {
 			warning("`%s' on `%s' stopped, restarting",
@@ -895,7 +898,7 @@ runetcrc(int trychroot)
 	} while (wpid != pid);
 
 	if (WIFSIGNALED(status) && WTERMSIG(status) == SIGTERM &&
-	    requested_transition == catatonia) {
+	    requested_transition.func == catatonia) {
 		/* /etc/rc executed /sbin/reboot; wait for the end quietly */
 		sigset_t s;
 
@@ -907,27 +910,27 @@ runetcrc(int trychroot)
 	if (!WIFEXITED(status)) {
 		warning("`%s' on `%s' terminated abnormally, going to "
 		    "single user mode", INIT_BSHELL, _PATH_RUNCOM);
-		return (state_func_t)single_user;
+		return (state_t){ single_user };
 	}
 
 	if (WEXITSTATUS(status))
-		return (state_func_t)single_user;
+		return (state_t){ single_user };
 
-	return (state_func_t)read_ttys;
+	return (state_t){ read_ttys };
 }
 
 /*
  * Run the system startup script.
  */
-static state_func_t
+static state_t
 runcom(void)
 {
-	state_func_t next_step;
+	state_t next_step;
 
 	/* Run /etc/rc and choose next state depending on the result. */
 	next_step = runetcrc(0);
-	if (next_step != (state_func_t)read_ttys)
-		return (state_func_t)next_step;
+	if (next_step.func != read_ttys)
+		return next_step;
 
 #ifdef CHROOT
 	/*
@@ -937,8 +940,8 @@ runcom(void)
 	 */
 	if (shouldchroot()) {
 		next_step = runetcrc(1);
-		if (next_step != (state_func_t)read_ttys)
-			return (state_func_t)next_step;
+		if (next_step.func != read_ttys)
+			return next_step;
 
 		did_multiuser_chroot = 1;
 	} else {
@@ -958,7 +961,7 @@ runcom(void)
 #ifdef SUPPORT_UTMP
 	logwtmp("~", "reboot", "");
 #endif
-	return (state_func_t)read_ttys;
+	return (state_t){ read_ttys };
 }
 
 /*
@@ -1167,7 +1170,7 @@ setupargv(session_t *sp, struct ttyent *typ)
 /*
  * Walk the list of ttys and create sessions for each active line.
  */
-static state_func_t
+static state_t
 read_ttys(void)
 {
 	int session_index = 0;
@@ -1212,10 +1215,10 @@ read_ttys(void)
 #ifdef CHROOT
 		/* If /etc/rc ran in chroot, we want to kill any survivors. */
 		if (did_multiuser_chroot)
-			return (state_func_t)death;
+			return (state_t){ death };
 		else
 #endif /* CHROOT */
-			return (state_func_t)single_user;
+			return (state_t){ single_user };
 	}
 
 	(void)do_setttyent();
@@ -1229,7 +1232,7 @@ read_ttys(void)
 			sp = snext;
 	(void)endttyent();
 
-	return (state_func_t)multi_user;
+	return (state_t){ multi_user };
 }
 
 /*
@@ -1369,17 +1372,17 @@ make_utmpx(const char *name, const char *line, int type, pid_t pid,
 static char
 get_runlevel(const state_t s)
 {
-	if (s == (state_t)single_user)
+	if (s.func == single_user)
 		return SINGLE_USER;
-	if (s == (state_t)runcom)
+	if (s.func == runcom)
 		return RUNCOM;
-	if (s == (state_t)read_ttys)
+	if (s.func == read_ttys)
 		return READ_TTYS;
-	if (s == (state_t)multi_user)
+	if (s.func == multi_user)
 		return MULTI_USER;
-	if (s == (state_t)clean_ttys)
+	if (s.func == clean_ttys)
 		return CLEAN_TTYS;
-	if (s == (state_t)catatonia)
+	if (s.func == catatonia)
 		return CATATONIA;
 	return DEATH;
 }
@@ -1444,7 +1447,7 @@ collect_child(pid_t pid, int status)
 
 	if ((pid = start_getty(sp)) == -1) {
 		/* serious trouble */
-		requested_transition = clean_ttys;
+		requested_transition.func = clean_ttys;
 		return;
 	}
 
@@ -1464,17 +1467,17 @@ transition_handler(int sig)
 	switch (sig) {
 #ifndef LETS_GET_SMALL
 	case SIGHUP:
-		requested_transition = clean_ttys;
+		requested_transition.func = clean_ttys;
 		break;
 	case SIGTERM:
-		requested_transition = death;
+		requested_transition.func = death;
 		break;
 	case SIGTSTP:
-		requested_transition = catatonia;
+		requested_transition.func = catatonia;
 		break;
 #endif /* LETS_GET_SMALL */
 	default:
-		requested_transition = 0;
+		requested_transition.func = NULL;
 		break;
 	}
 }
@@ -1483,14 +1486,14 @@ transition_handler(int sig)
 /*
  * Take the system multiuser.
  */
-static state_func_t
+static state_t
 multi_user(void)
 {
 	pid_t pid;
 	int status;
 	session_t *sp;
 
-	requested_transition = 0;
+	requested_transition.func = NULL;
 
 	/*
 	 * If the administrator has not set the security level to -1
@@ -1506,7 +1509,7 @@ multi_user(void)
 			continue;
 		if ((pid = start_getty(sp)) == -1) {
 			/* serious trouble */
-			requested_transition = clean_ttys;
+			requested_transition.func = clean_ttys;
 			break;
 		}
 		sp->se_process = pid;
@@ -1514,17 +1517,17 @@ multi_user(void)
 		add_session(sp);
 	}
 
-	while (!requested_transition)
+	while (requested_transition.func == NULL)
 		if ((pid = waitpid(-1, &status, 0)) != -1)
 			collect_child(pid, status);
 
-	return (state_func_t)requested_transition;
+	return requested_transition;
 }
 
 /*
  * This is an n-squared algorithm.  We hope it isn't run often...
  */
-static state_func_t
+static state_t
 clean_ttys(void)
 {
 	session_t *sp, *sprev;
@@ -1585,13 +1588,13 @@ clean_ttys(void)
 				(void)kill(sp->se_process, SIGHUP);
 		}
 
-	return (state_func_t)multi_user;
+	return (state_t){ multi_user };
 }
 
 /*
  * Block further logins.
  */
-static state_func_t
+static state_t
 catatonia(void)
 {
 	session_t *sp;
@@ -1599,7 +1602,7 @@ catatonia(void)
 	for (sp = sessions; sp; sp = sp->se_next)
 		sp->se_flags |= SE_SHUTDOWN;
 
-	return (state_func_t)multi_user;
+	return (state_t){ multi_user };
 }
 #endif /* LETS_GET_SMALL */
 
@@ -1611,14 +1614,16 @@ static void
 alrm_handler(int sig)
 {
 
+#ifndef LETS_GET_SMALL
 	clang = 1;
+#endif
 }
 
 #ifndef LETS_GET_SMALL
 /*
  * Bring the system down to single user.
  */
-static state_func_t
+static state_t
 death(void)
 {
 	session_t *sp;
@@ -1639,7 +1644,7 @@ death(void)
 
 	for (i = 0; i < 3; ++i) {
 		if (kill(-1, death_sigs[i]) == -1 && errno == ESRCH)
-			return (state_func_t)single_user;
+			return (state_t){ single_user };
 
 		clang = 0;
 		(void)alarm(DEATH_WATCH);
@@ -1649,12 +1654,12 @@ death(void)
 		while (clang == 0 && errno != ECHILD);
 
 		if (errno == ECHILD)
-			return (state_func_t)single_user;
+			return (state_t){ single_user };
 	}
 
 	warning("some processes would not die; ps axl advised");
 
-	return (state_func_t)single_user;
+	return (state_t){ single_user };
 }
 #endif /* LETS_GET_SMALL */
 
