@@ -43,6 +43,7 @@ sort sort -
 tee tee -
 touch touch -
 tr tr -
+true true -
 uname uname -
 uniq uniq -
 xargs xargs -
