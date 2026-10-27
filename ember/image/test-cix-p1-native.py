@@ -67,7 +67,8 @@ with tempfile.TemporaryDirectory() as tmp:
     (libedit_source / 'ports.distinfo').touch()
     tools = Path(tmp) / 'tools'
     (tools / 'bin').mkdir(parents=True)
-    for name in ('nbmake', 'nbmkesdb', 'nbmkcsmapper'):
+    # A native-mode TOOLDIR need not contain nbmake; make comes from the routing.
+    for name in ('nbmkesdb', 'nbmkcsmapper'):
         p = tools / 'bin' / name
         p.touch(mode=0o755)
     bfd = Path(tmp) / 'host-bfd.mk'
@@ -142,4 +143,14 @@ with tempfile.TemporaryDirectory() as tmp:
     else:
         raise AssertionError('missing LLVM inputs accepted')
     assert not Path(sys.argv[2]).exists()
-print('PASS: selected clang, explicit GCC, missing inputs')
+    os.environ['EMBER_SDK_SYSROOT'] = '/sysroot'
+    (tools / 'bin' / 'nbmkesdb').unlink()
+    sys.argv[2] = tmp + '/no-esdb'
+    try:
+        subject.main()
+    except SystemExit as exc:
+        assert 'missing selected OS host tool: nbmkesdb' in str(exc)
+    else:
+        raise AssertionError('missing nbmkesdb accepted')
+    assert not Path(sys.argv[2]).exists()
+print('PASS: selected clang, explicit GCC, missing inputs, native-mode TOOLDIR')

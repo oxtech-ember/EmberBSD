@@ -26,6 +26,10 @@ BUILD_JOBS=2 "$EMBER_HOST_PREFIX/bin/python3.15" -B ember/image/cix-p1-native.py
     /absolute/host-tools /absolute/target-clang-prefix
 ```
 
+`/absolute/host-tools` is the `TOOLDIR` of a native-mode OS build, such as the
+SDK sysroot build. It does not need `nbmake`. Native-mode `build.sh` uses the
+make from the SDK native-tool routing.
+
 The SDK's `run-native-os` selects the native compiler and tools, independently
 of the target family. `EMBER_HOST_COMPILER_FAMILY=gcc` explicitly selects the
 native GCC alternative. `EMBER_TARGET_COMPILER_FAMILY=gcc` selects the GCC16

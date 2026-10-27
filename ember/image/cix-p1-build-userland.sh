@@ -32,7 +32,6 @@ case "$libedit" in *[!A-Za-z0-9_./-]*) echo 'Unsafe build path.' >&2; exit 2;; e
 [ -f "$libedit/libedit-source.json" ] && [ -f "$libedit/ports.distinfo" ] || {
     echo 'Prepared libedit source is incomplete.' >&2; exit 2
 }
-[ -x "$tools/bin/nbmake" ]
 for tool in nbmkesdb nbmkcsmapper; do [ -x "$tools/bin/$tool" ]; done
 if [ "$family" = clang ]; then
     cc=$compiler/bin/clang

@@ -55,7 +55,8 @@ Dir.mktmpdir('ember-cix-userland-') do |work|
   File.write(work + '/llvm-source/llvm-source.json', 'prepared LLVM source')
   FileUtils.mkdir_p(work + '/llvm-resource/lib/netbsd')
   File.write(work + '/llvm-resource/lib/netbsd/builtins.a', 'retained LLVM builtins')
-  %w[nbmake nbmkesdb nbmkcsmapper].each { |tool| File.write(tools + '/bin/' + tool, "#!/bin/sh\nexit 0\n") }
+  # A native-mode TOOLDIR need not contain nbmake; make comes from the routing.
+  %w[nbmkesdb nbmkcsmapper].each { |tool| File.write(tools + '/bin/' + tool, "#!/bin/sh\nexit 0\n") }
   File.write(src + '/build.sh', <<~'SH')
     #!/bin/sh
     TEST_BUILD_ARGS="$*"

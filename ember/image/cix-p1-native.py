@@ -51,7 +51,8 @@ def main():
             raise SDKError('EMBER_HOST_BFD_CONFIG must name the selected host BFD configuration')
         if not (Path(os.environ['EMBER_LLVM_SOURCE']) / 'runtimes/CMakeLists.txt').is_file():
             raise SDKError('EMBER_LLVM_SOURCE must name the prepared LLVM source')
-        for name in ('nbmake', 'nbmkesdb', 'nbmkcsmapper'):
+        # Native-mode build.sh uses the routed make; TOOLDIR need not contain nbmake.
+        for name in ('nbmkesdb', 'nbmkcsmapper'):
             if not os.access(tools / 'bin' / name, os.X_OK):
                 raise SDKError('missing selected OS host tool: ' + name)
         if output.exists() or output.is_symlink():
