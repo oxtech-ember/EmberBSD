@@ -168,7 +168,7 @@ am_set_mypid(void)
 
 
 long
-get_server_pid()
+get_server_pid(void)
 {
   return (long) (foreground ? am_mypid : getppid());
 }
