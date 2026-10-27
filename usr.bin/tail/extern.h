@@ -32,7 +32,7 @@
  */
 
 #define	WR(p, size) \
-	if (write(STDOUT_FILENO, p, size) != size) \
+	if (write(STDOUT_FILENO, p, size) != (ssize_t)(size)) \
 		oerr();
 
 enum STYLE { NOTSET = 0, FBYTES, FLINES, RBYTES, RLINES, REVERSE };

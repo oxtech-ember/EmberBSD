@@ -133,12 +133,8 @@ int debug_flag = 0;
 /* Flag indicating that the daemon is being started from inetd. */
 static int inetd_flag = 0;
 
-/* Saved arguments to main(). */
-static char **saved_argv;
-
 /* Daemon's agent connection */
 int auth_sock = -1;
-static int have_agent = 0;
 
 u_int		num_hostkeys;
 struct sshkey	**host_pubkeys;		/* all public host keys */
@@ -473,9 +469,6 @@ main(int ac, char **av)
 	sigemptyset(&sigmask);
 	sigprocmask(SIG_SETMASK, &sigmask, NULL);
 
-	/* Save argv. */
-	saved_argv = av;
-
 	/* Ensure that fds 0, 1 and 2 are open or directed to /dev/null */
 	sanitise_stdfd();
 
@@ -665,9 +658,7 @@ main(int ac, char **av)
 		if (strcmp(options.host_key_agent, SSH_AUTHSOCKET_ENV_NAME))
 			setenv(SSH_AUTHSOCKET_ENV_NAME,
 			    options.host_key_agent, 1);
-		if ((r = ssh_get_authentication_socket(NULL)) == 0)
-			have_agent = 1;
-		else
+		if ((r = ssh_get_authentication_socket(NULL)) != 0)
 			error_r(r, "Could not connect to agent \"%s\"",
 			    options.host_key_agent);
 	}

@@ -16,7 +16,7 @@ static struct blocklist *blstate;
 __RCSID("$NetBSD: pfilter.c,v 1.9 2024/08/02 17:13:02 christos Exp $");
 
 void
-pfilter_init()
+pfilter_init(void)
 {
 #ifndef SMALL
 	blstate = blocklist_open2(vsyslog_ss);

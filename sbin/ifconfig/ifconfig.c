@@ -104,7 +104,7 @@ __RCSID("$NetBSD: ifconfig.c,v 1.251 2024/08/20 08:18:24 ozaki-r Exp $");
 
 #define WAIT_DAD	10000000 /* nanoseconds between each poll, 10ms */
 
-static bool bflag, dflag, hflag, sflag, uflag, Wflag, wflag;
+static bool bflag, dflag, hflag, sflag, uflag, wflag;
 bool lflag, Nflag, vflag, zflag;
 static long wflag_secs, Wflag_secs;
 
@@ -697,7 +697,6 @@ main(int argc, char **argv)
 			break;
 
 		case 'W':
-			Wflag = true;
 			Wflag_secs = strtoi(optarg, NULL, 10, 0, INT32_MAX, &e);
 			if (e)
 				errx(EXIT_FAILURE, "%s: not a number", optarg);
