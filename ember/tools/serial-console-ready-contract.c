@@ -180,6 +180,7 @@ static void pwrite_model(struct plcom_instance *p, unsigned int offset, uint32_t
 	(void)p; (void)offset; (void)value; writes++;
 }
 #define PREAD1(p,o) pread_model(p,o)
+#define PREAD4(p,o) pread_model(p,o)
 #define PWRITE1(p,o,v) pwrite_model(p,o,v)
 #define PWRITE2(p,o,v) pwrite_model(p,o,v)
 #define PWRITE4(p,o,v) pwrite_model(p,o,v)
