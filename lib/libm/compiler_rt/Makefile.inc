@@ -22,6 +22,10 @@ COMPILER_RT_ARCH_DIR=	${COMPILER_RT_SRCDIR}/lib/builtins/${MACHINE_ARCH}
 .PATH: ${COMPILER_RT_ARCH_DIR}
 .PATH: ${COMPILER_RT_SRCDIR}/lib/builtins
 
+# Preserve the historic long-double complex ABI on non-80-bit targets.
+CPPFLAGS.divxc3.c+= -DEMBERBSD_LEGACY_LDBL_COMPLEX_ABI
+CPPFLAGS.mulxc3.c+= -DEMBERBSD_LEGACY_LDBL_COMPLEX_ABI
+
 # Needs scaling support
 GENERIC_SRCS+= \
 	muldc3.c \

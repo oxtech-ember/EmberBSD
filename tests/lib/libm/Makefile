@@ -22,6 +22,10 @@ TESTS_C+=	t_bit
 TESTS_C+=	t_casinh
 TESTS_C+=	t_cbrt
 TESTS_C+=	t_ceil
+# PowerPC does not export the historic xc helpers.
+.if ${MACHINE_CPU} != "powerpc"
+TESTS_C+=	t_complex_helpers
+.endif
 TESTS_C+=	t_cos
 TESTS_C+=	t_cosh
 TESTS_C+=	t_erf
