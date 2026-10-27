@@ -1028,6 +1028,7 @@ run_case(const char *name, int expected)
 	inside_driver = false;
 	CHECK(error == expected);
 	CHECK(!fx.incomplete_payload);
+	CHECK(!unmasked_without_handler);
 	return error;
 }
 
