@@ -726,9 +726,9 @@ LIB_EXPSYM?=	${LIB}.expsym
 # down anywhere and I'm not sure there's any way to ask the linker to
 # simply not export the symbols.
 .if !empty(VERSION_MAP)
-_EXPSYM_PIPE_GREP=	# empty
+_EXPSYM_FILTER=	cat ${.TARGET}.names >${.TARGET}.filtered || exit 1
 .else
-_EXPSYM_PIPE_GREP=	| grep -Fvx ${_EXPSYM_IGNORE:@_s_@-e ${_s_:Q}@}
+_EXPSYM_FILTER=	if grep -Fvx ${_EXPSYM_IGNORE:@_s_@-e ${_s_:Q}@} ${.TARGET}.names >${.TARGET}.filtered; then :; else [ $$? -eq 1 ] || exit 1; fi
 _EXPSYM_IGNORE+=		_end
 _EXPSYM_IGNORE+=		_fini
 _EXPSYM_IGNORE+=		_init
@@ -764,12 +764,18 @@ ${_LIB.so.full}.diffsym: ${LIB_EXPSYM} ${_LIB.so.full}.actsym
 	fi
 ${_LIB.so.full}.actsym: ${_LIB.so.full}
 	${_MKTARGET_CREATE}
-	${NM} --dynamic --extern-only --defined-only --with-symbol-versions \
-		${.ALLSRC} \
-	| cut -d' ' -f3	${_EXPSYM_PIPE_GREP} | LC_ALL=C sort -u >${.TARGET}.tmp
+	# LLVM nm and supported GNU nm include symbol versions by default.
+	@set -e; \
+	trap '${RM} ${.TARGET}.raw ${.TARGET}.names ${.TARGET}.filtered ${.TARGET}.tmp' 0; \
+	${NM} --dynamic --extern-only --defined-only ${.ALLSRC} >${.TARGET}.raw; \
+	cut -d' ' -f3 ${.TARGET}.raw >${.TARGET}.names; \
+	${_EXPSYM_FILTER}; \
+	LC_ALL=C sort -u ${.TARGET}.filtered >${.TARGET}.tmp; \
 	${MV} ${.TARGET}.tmp ${.TARGET}
 CLEANFILES+=	${_LIB.so.full}.actsym
 CLEANFILES+=	${_LIB.so.full}.actsym.tmp
+CLEANFILES+=	${_LIB.so.full}.actsym.raw ${_LIB.so.full}.actsym.names
+CLEANFILES+=	${_LIB.so.full}.actsym.filtered
 CLEANFILES+=	${_LIB.so.full}.diffsym
 CLEANFILES+=	${_LIB.so.full}.diffsym.tmp
 update-symbols: .PHONY
