@@ -55,7 +55,7 @@ def main():
     output.mkdir(parents=True, exist_ok=False)
     tools = Path(__file__).resolve().parent
     root = tools.parent.parent
-    compiler = shlex.split(os.environ.get("CC", "gcc-16"))
+    compiler = [os.environ["CC"]]
     # Container checkout ownership can differ. Trust only this source root.
     git = ["git", "-c", "safe.directory=" + str(root), "-C", str(root)]
     (output / "source-head.txt").write_bytes(subprocess.check_output(
@@ -69,7 +69,7 @@ def main():
     results = []
     with tempfile.TemporaryDirectory(prefix="amsdu-diagnostic-") as temp:
         wrapper = Path(temp) / "cc"
-        wrapper.write_text("#!/bin/sh\nexec " + shlex.quote(sys.executable) + " "
+        wrapper.write_text("#!" + os.environ["SHELL"] + "\nexec " + shlex.quote(sys.executable) + " "
                            + shlex.quote(str(Path(__file__).resolve()))
                            + ' --capture "$@"\n')
         wrapper.chmod(0o755)

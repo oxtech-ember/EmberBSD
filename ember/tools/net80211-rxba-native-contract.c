@@ -62,7 +62,7 @@ static inline void mutex_enter(int *p) { assert(!*p);*p=1; }
 static inline void mutex_exit(int *p) { assert(*p);*p=0; }
 static inline int mutex_owned(int *p) { return *p; }
 static inline void getnanouptime(struct timespec *ts) { ts->tv_sec=unit_now/1000;ts->tv_nsec=native_clock_overflow?999000000:(unit_now%1000)*1000000; }
-static inline int mstohz(unsigned ms) { return (int)ms; }
+#define mstohz(ms) ((int)(ms))
 static inline void softint_schedule(void *p) { (void)p;assert(native_lock);native_schedules++; }
 static inline void callout_init(callout_t *c,int flags) { assert(flags==CALLOUT_MPSAFE || flags==0);memset(c,0,sizeof(*c));c->initialized=1; }
 static inline void callout_setfunc(callout_t *c,void (*fn)(void *),void *arg) { assert(c->initialized);c->fn=fn;c->arg=arg; }

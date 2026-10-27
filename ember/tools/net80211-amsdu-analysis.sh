@@ -2,13 +2,11 @@
 # SPDX-License-Identifier: BSD-2-Clause
 # Analyze the same parser and extracted native consumer as the runtime contracts.
 set -eu
+: "${CC:?select CC using the SDK run-native-check command}"
 tools=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 src=$(CDPATH= cd -- "$tools/../.." && pwd)
 work=$(mktemp -d "${TMPDIR:-/tmp}/net80211-amsdu-analysis.XXXXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
-if [ "$(uname -s)" = Darwin ] && [ -z "${SDKROOT:-}" ]; then
-    SDKROOT=$(xcrun --show-sdk-path); export SDKROOT
-fi
 mkdir -p "$work/sys" "$work/net80211"
 printf '#include <string.h>\n#include <stdint.h>\n' > "$work/sys/systm.h"
 ln -s "$src/sys/net80211/ieee80211_amsdu.h" "$work/net80211/ieee80211_amsdu.h"
@@ -20,14 +18,14 @@ ${CPPCHECK:-cppcheck} --enable=warning,style,performance,portability \
     "$src/sys/net80211/ieee80211_amsdu.c" \
     "$tools/net80211-amsdu-parser-contract.c" \
     "$tools/net80211-amsdu-contract.c"
-${CLANG:-clang} --analyze -Xanalyzer -analyzer-output=text \
+"${CSA:?select clang using SDK --required-role clang}" --analyze -Xanalyzer -analyzer-output=text \
     -Xanalyzer -analyzer-werror -std=c11 \
     -D_DEFAULT_SOURCE -D_DARWIN_C_SOURCE -I"$work" -I"$src/sys/net80211" \
     "$src/sys/net80211/ieee80211_amsdu.c" \
     "$tools/net80211-amsdu-parser-contract.c" \
     "$tools/net80211-amsdu-contract.c"
-CC=${CC:-gcc-16} AMSDU_TEST_CFLAGS='-O0 -g -gdwarf-4 -fanalyzer' \
+CC="$CC" AMSDU_TEST_CFLAGS='-O0 -g -gdwarf-4 -fanalyzer' \
     sh "$tools/net80211-amsdu-parser-contract.sh"
-CC=${CC:-gcc-16} AMSDU_TEST_CFLAGS='-O0 -g -gdwarf-4 -fanalyzer --param=analyzer-max-constraints=100' \
+CC="$CC" AMSDU_TEST_CFLAGS='-O0 -g -gdwarf-4 -fanalyzer --param=analyzer-max-constraints=100' \
     sh "$tools/net80211-amsdu-contract.sh"
-CC=${CC:-gcc-16} python3 "$tools/net80211-amsdu-analyzer-negative.py"
+CC="$CC" python3 "$tools/net80211-amsdu-analyzer-negative.py"

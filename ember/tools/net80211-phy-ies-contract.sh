@@ -2,6 +2,7 @@
 # Execute actual scan storage, cleanup and bounded copyout consumers.
 # SPDX-License-Identifier: BSD-2-Clause
 set -eu
+: "${CC:?select CC using the SDK run-native-check command}"
 [ "$#" -eq 0 ] || exit 2
 src=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 work=$(mktemp -d "${TEST_OBJDIR:-${TMPDIR:-/tmp}}/net80211-phy-ies.XXXXXXXX")
@@ -32,9 +33,6 @@ awk '/^ieee80211_ioctl_getscanresults\(/ {copy=1}
     }
     copy {print} copy && /^}/ {exit}' \
     "$src/sys/net80211/ieee80211_ioctl.c" >> "$work/getscanresults.h"
-if [ "$(uname -s)" = Darwin ] && [ -z "${SDKROOT:-}" ]; then
-    SDKROOT=$(xcrun --show-sdk-path); export SDKROOT
-fi
 extra=
 if [ -f "$src/sys/net80211/ieee80211_phy_ies.c" ]; then
     mkdir -p "$work/sys" "$work/net80211"
@@ -44,7 +42,7 @@ if [ -f "$src/sys/net80211/ieee80211_phy_ies.c" ]; then
     extra="$src/sys/net80211/ieee80211_phy_ies.c $src/sys/net80211/ieee80211_beacon_ies.c"
 fi
 python3 "$src/ember/tools/net80211-phy-ies-extract.py" "$src" "$work"
-${CC:-gcc-16} -std=c11 -D_DEFAULT_SOURCE -D_DARWIN_C_SOURCE -Wall -Werror ${PHY_IES_TEST_CFLAGS:-} \
+"$CC" -std=c11 -D_DEFAULT_SOURCE -D_DARWIN_C_SOURCE -Wall -Werror ${PHY_IES_TEST_CFLAGS:-} \
     -DBEACON_IES_TEST -I"$work" -I"$src/sys/net80211" "$src/ember/tools/net80211-phy-ies-contract.c" $extra -o "$work/check"
 if [ -n "${TEST_RUNNER:-}" ]; then
     "$TEST_RUNNER" "$work/check"

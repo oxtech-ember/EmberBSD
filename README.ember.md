@@ -30,6 +30,7 @@ The [amd64 VM walkthrough](doc/guide/amd64-vm-install.md) describes a full local
 [DevBoards](https://github.com/oxtech-ember/EmberBSD-DevBoards) owns the hardware catalog,
 loader requirements, media layout and installation applicability.
 Use [adding a board](ember/development/adding-a-board.md) for OS integration and executable checks.
+Run [native net80211 and CCMP contracts](ember/tools/native-net80211-checks.md) with the selected SDK host tools.
 Document software mechanisms beside their subsystem. See [ownership](doc/emberbsd-ownership.md).
 
 ## Building

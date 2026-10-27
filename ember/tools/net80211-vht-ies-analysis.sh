@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 # Origin: EmberBSD actual VHT codec and AICWF consumer analysis.
 set -eu
+: "${CC:?select CC using the SDK run-native-check command}"
 src=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 work=$(mktemp -d "${TEST_OBJDIR:-${TMPDIR:-/tmp}}/net80211-vht-analysis.XXXXXXXX")
 if [ "${VHT_IES_ANALYSIS_KEEP:-0}" = 1 ]; then
@@ -10,7 +11,7 @@ else
     trap 'rm -rf "$work"' EXIT HUP INT TERM
 fi
 export TEST_OBJDIR="$work"
-cc=${CC:-gcc-16}
+cc="$CC"
 flags='-O0 -g -gdwarf-4 -fanalyzer'
 TMPDIR="$work" VHT_IES_TEST_KEEP=1 VHT_IES_TEST_CFLAGS="$flags" \
     sh "$src/ember/tools/net80211-vht-ies-contract.sh"
@@ -55,7 +56,7 @@ for spec in "codec:$src/sys/net80211/ieee80211_vht_ies.c:$codec" \
     fi
     ${CPPCHECK:-cppcheck} "$@" --enable=warning,performance,portability \
         --error-exitcode=1 --language=c --check-level=exhaustive "$work/$name.i"
-    ${CLANG:-clang} --analyze -std=c11 -include stdbool.h -include stdint.h \
+    "${CSA:?select clang using SDK --required-role clang}" --analyze -std=c11 -include stdbool.h -include stdint.h \
         -Xanalyzer -analyzer-output=text -Xanalyzer -analyzer-werror \
         -I"$includes" -I"$src/sys/dev/sdmmc" "$source" \
         -o "$work/$name.plist"

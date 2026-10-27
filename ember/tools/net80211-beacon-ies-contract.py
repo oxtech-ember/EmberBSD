@@ -41,14 +41,12 @@ def main():
     parser.add_argument('--work-dir', type=Path, required=True,
                         help='existing shared object directory; a private child is removed on exit')
     parser.add_argument('--baseline-revision', help='run the bwfm regression on this Git revision')
-    parser.add_argument('--cc', default=os.environ.get('CC', 'gcc-16'))
+    parser.add_argument('--cc', default=os.environ.get('CC'), required=not os.environ.get('CC'))
     parser.add_argument('--cflags', default='', help='additional host diagnostic flags')
     parser.add_argument('--analyze', action='store_true')
     args = parser.parse_args()
     src = Path(__file__).resolve().parents[2]
     env = os.environ.copy()
-    if sys.platform == 'darwin' and 'SDKROOT' not in env:
-        env['SDKROOT'] = subprocess.check_output(['xcrun', '--show-sdk-path'], text=True).strip()
     work = Path(tempfile.mkdtemp(prefix='net80211-beacon-', dir=args.work_dir))
     try:
         (work / 'sys').mkdir()

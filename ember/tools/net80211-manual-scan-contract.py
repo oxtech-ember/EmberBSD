@@ -53,7 +53,7 @@ with tempfile.TemporaryDirectory(prefix='manual-scan-') as directory:
                  'bsd_set_if_media', 'bsd_set_mediaopt', 'wpa_driver_bsd_scan'):
         generated += ['static int ' + function(bsd, name)]
     (work / 'actual.inc').write_text('\n\n'.join(generated) + '\n')
-    compiler = shlex.split(os.environ.get('CC', 'gcc-16'))
+    compiler = [os.environ['CC']]
     flags = shlex.split(os.environ.get('MANUAL_SCAN_CFLAGS', ''))
     command = compiler + ['-std=gnu17', '-O1', '-g', '-Wall', '-Wextra', '-Werror'] + flags + [
         '-I' + str(work), str(Path(__file__).with_suffix('.c')), '-o', str(work / 'test')]
@@ -77,7 +77,7 @@ with tempfile.TemporaryDirectory(prefix='manual-scan-') as directory:
                         '-U__NetBSD__', '-UIEEE80211_IOC_STA_MGMT',
                         '-UIEEE80211_IOC_SCAN_MAX_SSID',
                         '-I' + str(work), str(Path(__file__).with_suffix('.c'))], check=True)
-        subprocess.run([os.environ.get('CLANG', 'clang'), '--analyze', '-std=gnu17',
+        subprocess.run([os.environ['CSA'], '--analyze', '-std=gnu17',
                         '-Wall', '-Wextra', '-Werror', '-Xanalyzer', '-analyzer-werror',
                         '-I' + str(work), str(Path(__file__).with_suffix('.c')),
                         '-o', str(work / 'analysis.plist')], check=True)

@@ -5,7 +5,6 @@
 import os
 from pathlib import Path
 import re
-import shlex
 import subprocess
 import tempfile
 
@@ -13,9 +12,7 @@ import tempfile
 tools = Path(__file__).resolve().parent
 root = tools.parent.parent
 env = dict(os.environ)
-if os.uname().sysname == "Darwin" and not env.get("SDKROOT"):
-    env["SDKROOT"] = subprocess.check_output(["xcrun", "--show-sdk-path"], text=True).strip()
-cc = shlex.split(env.get("CC", "gcc-16"))
+cc = [env["CC"]]
 fixture = (tools / "net80211-amsdu-contract.c").read_text()
 main = fixture.index("int\nmain(void)")
 helpers = {

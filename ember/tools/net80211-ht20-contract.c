@@ -50,7 +50,6 @@ struct rtw88_edca_params { int unused; };
 struct rtw88_ra_config { unsigned use_protection; };
 static unsigned worker_hw_calls, worker_parent_run, worker_parent_init, worker_restarts;
 static int worker_parent_error, worker_parent_newer, worker_init_error;
-static unsigned worker_diag_stage;
 static uint64_t worker_newer_epoch;
 static int rtw88_net_restart_peer(struct rtw88_net *net)
 {
@@ -82,7 +81,7 @@ static int rtw88_ra_configure(struct rtw88_softc *sc,struct rtw88_ra_config *p)
 static int rtw88_stop(struct rtw88_softc *sc)
 { assert(!native_lock);sc->sc_started=sc->sc_running=sc->sc_linked=0;return 0; }
 int rtw88_net_state_format(char *buf,size_t len,const struct rtw88_net_state_diag *diag)
-{ worker_diag_stage=diag->stage;return snprintf(buf,len,"stage%u",diag->stage); }
+{ return snprintf(buf,len,"stage%u",diag->stage); }
 static void aprint_error_dev(void *dev,const char *fmt,...)
 { (void)dev;(void)fmt;assert(!native_lock); }
 static void callout_schedule(int *c,unsigned when) { (void)c;(void)when; }
@@ -597,7 +596,7 @@ test_delayed_worker_profile(void)
   native_net.ec.ec_if.if_flags=IFF_UP|IFF_RUNNING;
   native_core.sc_started=native_core.sc_running=1;
   worker_hw_calls=worker_parent_run=worker_parent_init=worker_restarts=0;
-  worker_parent_error=worker_parent_newer=worker_init_error=0;worker_diag_stage=0;worker_newer_epoch=0;
+  worker_parent_error=worker_parent_newer=worker_init_error=0;worker_newer_epoch=0;
   if (variant==0) admitted.generation++;
   if (variant==1) admitted.ampdu=20;
   if (variant==2 || variant==3) worker_parent_error=EINVAL;
