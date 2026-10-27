@@ -13,19 +13,23 @@ def main(variant="hci"):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("source", type=Path)
     parser.add_argument("output", type=Path)
-    parser.add_argument("--mode", choices=("normal", "asan", "sa", "cppcheck"),
+    parser.add_argument("--mode", choices=(("normal", "asan", "tsan", "sa", "cppcheck")
+                                 if variant == "async" else
+                                 ("normal", "asan", "sa", "cppcheck")),
                         default="normal")
     args = parser.parse_args()
     root, out = args.source.resolve(), args.output.resolve()
     if not (root / "sys/dev/ic" / f"rtw88_{variant}.h").is_file():
-        raise SystemExit(f"Missing production API: rtw88_{variant}_ops")
+        symbol = "rtw88_async_reserve" if variant == "async" else f"rtw88_{variant}_ops"
+        raise SystemExit(f"Missing production API: {symbol}")
     cc = shlex.split(os.environ.get("CC", ""))
     if not cc:
         raise SystemExit("Select the SDK compiler through CC")
     out.mkdir(parents=True, exist_ok=False)
     tools = root / "ember/tools"
-    subprocess.run([os.sys.executable, str(tools / "rtw88-state-contract.py"),
-                    str(root), str(out)], check=True)
+    if variant != "async":
+        subprocess.run([os.sys.executable, str(tools / "rtw88-state-contract.py"),
+                        str(root), str(out)], check=True)
     include = out / "include"
     (include / "sys").mkdir(parents=True)
     (include / "dev").mkdir()
@@ -33,18 +37,25 @@ def main(variant="hci"):
     for header in ("param.h", "systm.h"):
         (include / "sys" / header).write_text(
             '#include <errno.h>\n#include "rtw88-test-kernel.h"\n', encoding="utf-8")
-    units = [tools / f"rtw88-{variant}-contract.c", root / "sys/dev/ic/rtw88.c",
-             root / "sys/dev/pci/rtw88_pci_hci.c",
-             root / "sys/dev/pci/rtw88_pci_packet.c"]
-    units += [root / "sys/dev/ic/rtw88_chip.c",
-              root / "sys/dev/ic/rtw8822c_runtime.c"]
-    units += [root / "sys/dev/ic" / (name + ".c") for name in (
-        "rtw88_net_policy", "rtw88_hw", "rtw8822c_hw", "rtw88_fw_init", "rtw8822c",
-        "rtw8822c_boot", "rtw8822c_power", "rtw8822c_mac", "rtw8822c_phy",
-        "rtw8822c_dack", "rtw8822c_table", "rtw8822c_coex", "rtw8822c_txpwr")]
+    if variant == "async":
+        units = [tools / "rtw88-async-contract.c", root / "sys/dev/ic/rtw88_async.c"]
+    else:
+        units = [tools / f"rtw88-{variant}-contract.c", root / "sys/dev/ic/rtw88.c",
+                 root / "sys/dev/pci/rtw88_pci_hci.c",
+                 root / "sys/dev/pci/rtw88_pci_packet.c"]
+        units += [root / "sys/dev/ic/rtw88_chip.c",
+                  root / "sys/dev/ic/rtw8822c_runtime.c"]
+        units += [root / "sys/dev/ic" / (name + ".c") for name in (
+            "rtw88_net_policy", "rtw88_hw", "rtw8822c_hw", "rtw88_fw_init", "rtw8822c",
+            "rtw8822c_boot", "rtw8822c_power", "rtw8822c_mac", "rtw8822c_phy",
+            "rtw8822c_dack", "rtw8822c_table", "rtw8822c_coex", "rtw8822c_txpwr")]
     flags = ["-std=c11", "-g", "-O1", "-Wall", "-Wextra", "-Werror",
              "-DRTW88_START_CORE_ONLY", "-I" + str(out), "-I" + str(include),
              "-I" + str(tools), "-I" + str(root / "sys/dev/ic")]
+    if variant == "async":
+        flags += ["-pthread"]
+    if args.mode == "tsan":
+        flags += ["-fsanitize=thread", "-fno-sanitize-recover=all"]
     if args.mode == "asan":
         flags += ["-fsanitize=address,undefined", "-fno-sanitize-recover=all"]
     commands = []

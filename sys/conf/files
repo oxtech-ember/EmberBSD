@@ -752,6 +752,7 @@ defflag	opt_rtw88_vht.h	RTW88_VHT_EXPERIMENT
 defflag	opt_rtw88_dfs.h	RTW88_DFS64_EXPERIMENT
 file	dev/ic/rtw88.c			rtw88_core
 file	dev/ic/rtw88_chip.c		rtw88_core
+file	dev/ic/rtw88_async.c		rtw88_core
 file	dev/ic/rtw8822c_runtime.c		rtw8822c_chip
 file	dev/ic/rtw8822c_hw.c		rtw8822c_chip
 file	dev/ic/rtw88_fw_init.c		rtw88_core

@@ -78,12 +78,6 @@ struct rtw88_bus_ops {
 #define RTW88_TX_SLOTS		32U
 #define RTW88_TX_BUF_SIZE	4096U
 #define RTW88_LEGACY_RATES	12U
-#define RTW88_TXQ_MGMT		0U
-#define RTW88_TXQ_BE		1U
-#define RTW88_TXQ_BK		2U
-#define RTW88_TXQ_VI		3U
-#define RTW88_TXQ_VO		4U
-#define RTW88_NTXQ		5U
 
 /* TX descriptor ring indices shared by the core and source contracts. */
 enum rtw88_tx_ring_index {

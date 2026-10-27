@@ -71,6 +71,17 @@ Set `RTW88_CAPS_ONLY=1` and
 It tests both single-band and dual-band publication with VHT compiled in.
 Live block-ack services abort if called during this publication check.
 
+`rtw88_async.c` provides copied-packet ownership for a process-context executor.
+It holds at most 64 jobs, 16 per queue, with at most 56 data jobs.
+The remaining capacity admits control traffic.
+One external interlock protects reservations, publication, completion and wake masks.
+An active executor may read immutable packet bytes after dropping that interlock.
+Withdraw releases unsent jobs and retains reserved or active storage until its owner returns.
+Only `NOT_STARTED` with `EBUSY` permits retry within 1000 ms of the first commit.
+Uncertain publication never permits replay.
+Serial exhaustion closes new admission while previously committed owners can drain or expire.
+The standalone queue contract includes real-thread TSan coverage; native adapter integration follows separately.
+
 The core gives each consumed RX slot a monotonic `sequence` in its current
 `generation`. The first slot is 1. Invalid tags, decode failures, C2H and
 short or rejected frames also consume a sequence. Pure wire decoding leaves
