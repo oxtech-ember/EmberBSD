@@ -37,6 +37,7 @@ SRCS+= \
 opt.c
 
 COPTS.opt.c+=		-Wno-missing-field-initializers
+COPTS.opt.c+=		-Wno-error=unused-but-set-variable
 COPTS.options.c+=	-Wno-format-nonliteral
 COPTS.test_options.c+=	-Wno-missing-field-initializers
 

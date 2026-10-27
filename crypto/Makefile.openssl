@@ -24,6 +24,7 @@ CWARNFLAGS.clang+= -Wno-empty-body -Wno-unused-value -Wno-parentheses
 CWARNFLAGS.clang+= -Wno-implicit-int-float-conversion
 # XXX: This warning seems to trigger incorrectly
 CWARNFLAGS.clang+=	-Wno-atomic-alignment
+CWARNFLAGS.clang+=	-Wno-error=unused-but-set-variable
 
 LINTFLAGS+=	-X 117	# bitwise '>>' on signed value possibly nonportable
 LINTFLAGS+=	-X 129	# expression has null effect
