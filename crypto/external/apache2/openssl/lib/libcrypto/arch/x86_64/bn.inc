@@ -11,14 +11,16 @@ rsaz-4k-avxifma.S \
 rsaz-avx2.S \
 rsaz-x86_64.S \
 
-# Needs newer clang/llvm
+# These files once needed external gas on older clang; current LLVM
+# integrated as assembles them. Keep -fintegrated-as so Darwin hosts do
+# not invoke Apple as via -fno-integrated-as.
 .if ${HAVE_LLVM:U} == "yes"
-COPTS.rsaz-2k-avx512.S  += -fno-integrated-as
-COPTS.rsaz-2k-avxifma.S += -fno-integrated-as
-COPTS.rsaz-3k-avx512.S  += -fno-integrated-as
-COPTS.rsaz-3k-avxifma.S += -fno-integrated-as
-COPTS.rsaz-4k-avx512.S  += -fno-integrated-as
-COPTS.rsaz-4k-avxifma.S += -fno-integrated-as
+COPTS.rsaz-2k-avx512.S  += -fintegrated-as
+COPTS.rsaz-2k-avxifma.S += -fintegrated-as
+COPTS.rsaz-3k-avx512.S  += -fintegrated-as
+COPTS.rsaz-3k-avxifma.S += -fintegrated-as
+COPTS.rsaz-4k-avx512.S  += -fintegrated-as
+COPTS.rsaz-4k-avxifma.S += -fintegrated-as
 .endif
 
 CPPFLAGS += -DOPENSSL_BN_ASM_MONT -DOPENSSL_BN_ASM_MONT5 -DOPENSSL_BN_ASM_GF2m
