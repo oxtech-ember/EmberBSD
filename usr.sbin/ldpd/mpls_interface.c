@@ -175,7 +175,7 @@ mpls_delete_ldp_peer(const struct ldp_peer * p)
 }
 
 int 
-mpls_start_ldp()
+mpls_start_ldp(void)
 {
 	ldp_peer_init();
 	label_init();

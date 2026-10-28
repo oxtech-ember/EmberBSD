@@ -92,7 +92,7 @@ static int is_hello_socket(int);
 static int is_passive_if(const char *if_name);
 
 int 
-create_hello_sockets()
+create_hello_sockets(void)
 {
 	struct ip_mreq  mcast_addr;
 	int s, joined_groups;
@@ -990,7 +990,7 @@ the_big_loop(void)
 }
 
 void 
-new_peer_connection()
+new_peer_connection(void)
 {
 	union sockunion peer_address, my_address;
 	struct in_addr *peer_ldp_id = NULL;

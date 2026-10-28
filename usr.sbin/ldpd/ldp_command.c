@@ -128,7 +128,7 @@ verify_root_pwd(char *pw)
 
 
 void
-init_command_sockets()
+init_command_sockets(void)
 {
 	int i;
 

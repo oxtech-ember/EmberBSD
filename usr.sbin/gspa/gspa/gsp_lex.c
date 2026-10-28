@@ -80,7 +80,7 @@ lex_init(char *lline)
 }
 
 int
-yylex()
+yylex(void)
 {
 	int c, tok, x, len;
 	char *lp, *ip;

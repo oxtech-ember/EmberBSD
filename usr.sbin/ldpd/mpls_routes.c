@@ -820,7 +820,7 @@ check_if_addr_updown(struct rt_msg * rg, uint rlen)
 }
 
 int 
-bind_current_routes()
+bind_current_routes(void)
 {
 	size_t          needed, size_cp;
 	int             mib[6];
@@ -932,7 +932,7 @@ bind_current_routes()
 }
 
 int 
-flush_mpls_routes()
+flush_mpls_routes(void)
 {
 	size_t needed, size_cp;
 	int mib[6];

@@ -208,7 +208,7 @@ build_address_list_tlv(void)
  * Get also mpls pseudo-interface address
  */
 int 
-set_my_ldp_id()
+set_my_ldp_id(void)
 {
 	struct ifaddrs *ifa, *ifb;
 	struct in_addr  a;

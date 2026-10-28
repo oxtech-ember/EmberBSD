@@ -122,14 +122,14 @@ put1code(u_int16_t v)
 }
 
 void
-c_checkbuf() 
+c_checkbuf(void)
 {
 	if (c_bufptr > (sizeof(c_buf)/sizeof(*c_buf)))
 		c_dumpbuf();
 }
 
 void
-c_dumpbuf()
+c_dumpbuf(void)
 {
 	uint32_t i;
 
@@ -161,7 +161,7 @@ start_at(u_int32_t val)
 }
 
 void
-do_list_pc()
+do_list_pc(void)
 {
 	if( pass2 )
 		show_pc = TRUE;
@@ -197,7 +197,7 @@ list_error(char *string)
 }
 
 void
-show_errors()
+show_errors(void)
 {
 	struct error *p, *q;
 
@@ -211,7 +211,7 @@ show_errors()
 }
 
 void
-listing()
+listing(void)
 {
 	if( objfile != NULL && ncode % 8 != 0 && !c_name)
 		fprintf(objfile, "\n");
@@ -222,7 +222,7 @@ listing()
 }
 
 void
-listing_line()
+listing_line(void)
 {
 	unsigned i;
 

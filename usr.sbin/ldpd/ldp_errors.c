@@ -101,7 +101,7 @@ do_syslog(int prio, const char *fmt, va_list va)
 }
 
 void 
-printtime()
+printtime(void)
 {
 	time_t          t;
 	char            buf[26];

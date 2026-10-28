@@ -55,7 +55,7 @@ static const rb_tree_ops_t tree_ops = {
 };
 
 void 
-label_init()
+label_init(void)
 {
 
 	rb_tree_init(&labels_tree, &tree_ops);
@@ -269,7 +269,7 @@ label_get_by_prefix(const struct sockaddr *a, int prefixlen)
  * Get a free binding
  */
 uint32_t
-get_free_local_label()
+get_free_local_label(void)
 {
 	struct label *l;
 	int lbl;

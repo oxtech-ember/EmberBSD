@@ -182,7 +182,7 @@ set_numeric_label(int lnum)
    Backward references become undefined, forward references are defined
    by the first instance of the label. */
 void
-reset_numeric_labels()
+reset_numeric_labels(void)
 {
 	symbol p;
 	struct numlab *nl;

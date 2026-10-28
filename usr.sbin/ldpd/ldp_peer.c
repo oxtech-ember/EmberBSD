@@ -228,7 +228,7 @@ ldp_peer_holddown(struct ldp_peer * p)
 }
 
 void
-ldp_peer_holddown_all()
+ldp_peer_holddown_all(void)
 {
 	struct ldp_peer *p;
 

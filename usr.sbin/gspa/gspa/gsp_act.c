@@ -177,7 +177,7 @@ num_expr(int val)
 }
 
 expr
-here_expr()
+here_expr(void)
 {
 	expr x;
 
