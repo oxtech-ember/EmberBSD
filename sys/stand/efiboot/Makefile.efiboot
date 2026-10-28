@@ -162,7 +162,7 @@ VERSIONMACHINE=${MACHINE}
 CLEANFILES+=	${PROG}.so ${PROG}.tmp
 
 ${PROG}: ${PROG}.so
-	${OBJCOPY} -j .text -j .sdata -j .data -j .dynamic -j .dynsym \
+	${OBJCOPY} -j .text -j .sdata -j .data -j .dynamic -j .dynsym -j .dynstr \
 	    -j .rela -j .rel.* -j .rela.* -j .rel* -j .rela* \
 	    -j .reloc ${OBJCOPY_FORMAT} ${PROG}.so ${.TARGET}
 

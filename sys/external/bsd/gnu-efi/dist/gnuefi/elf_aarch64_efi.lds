@@ -53,7 +53,8 @@ SECTIONS
   .rela.plt : { *(.rela.plt) } :text
   .rela.got : { *(.rela.got) } :text
   .rela.data : { *(.rela.data) *(.rela.data*) } :text
-  . = ALIGN(512);
+  /* PE SizeOfImage must be aligned to SectionAlignment (0x1000). */
+  . = ALIGN(4096);
   _edata = .;
   _data_size = . - _data;
 

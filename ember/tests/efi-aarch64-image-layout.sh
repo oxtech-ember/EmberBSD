@@ -17,7 +17,7 @@ base=$(printf '%s\n' "$symbols" | awk '$3 == "ImageBase" { print $1 }')
 }
 entry=$(printf '%s\n' "$symbols" | awk '$3 == "_start" { print $1 }')
 pe=$("${prefix}objdump" -p "$image")
-printf '%s\n' "$pe" | grep -q 'file format pei-aarch64-little'
+printf '%s\n' "$pe" | grep -Eq 'file format (pei-aarch64-little|coff-arm64)'
 pe_entry=$(printf '%s\n' "$pe" | awk '$1 == "AddressOfEntryPoint" { print $2 }')
 [ -n "$entry" ] && [ -n "$pe_entry" ] && \
     [ "$((0x$entry))" -eq "$((0x$pe_entry))" ] || {
