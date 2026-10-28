@@ -395,6 +395,25 @@ static const struct psp_funcs psp_v10_0_funcs = {
 	.ring_set_wptr = psp_v10_0_ring_set_wptr,
 };
 
+#ifdef __NetBSD__
+static bool
+psp_v10_bar_page(uint64_t base, uint64_t size, uint64_t offset,
+    uint64_t addr_max, uint64_t *page, uint64_t *within)
+{
+	const uint64_t lowmask = (uint64_t)PAGE_SIZE - 1;
+	uint64_t page_offset = offset & ~lowmask;
+
+	if (base == 0 || (base & lowmask) || size < PAGE_SIZE ||
+	    page_offset > size - PAGE_SIZE ||
+	    page_offset > addr_max - PAGE_SIZE ||
+	    base > addr_max - page_offset - PAGE_SIZE)
+		return false;
+	*page = base + page_offset;
+	*within = offset & lowmask;
+	return true;
+}
+#endif
+
 void
 psp_v10_0_ring_timeout(struct psp_context *psp, uint32_t expected,
     uint64_t fence_mc_addr)
@@ -408,15 +427,15 @@ psp_v10_0_ring_timeout(struct psp_context *psp, uint32_t expected,
 #ifdef __NetBSD__
 	struct ttm_bo_kmap_obj *kmap;
 	struct ttm_mem_reg *mem;
-	bus_addr_t bar_base, bar_page;
+	bus_addr_t bar_base;
 	bus_size_t bar_size;
 	bus_space_handle_t bar_handle;
 	paddr_t fence_pa = 0;
-	uint64_t bus_base, bus_offset, page_offset;
+	uint64_t bus_base, bus_offset, bar_page, bar_within;
 	uint32_t bar_value = 0, mapped_after_bar;
-	int bar_error = EINVAL, kmap_type;
+	int bar_error = 0, kmap_type;
 	pcireg_t pci_command;
-	bool pa_valid;
+	bool pa_valid, bar_attempted = false;
 #endif
 
 	/* These mailbox meanings apply to the Raven PSP v10 interface. */
@@ -450,7 +469,6 @@ psp_v10_0_ring_timeout(struct psp_context *psp, uint32_t expected,
 	    &fence_pa);
 	bar_base = pci_resource_start(adev->pdev, 0);
 	bar_size = pci_resource_len(adev->pdev, 0);
-	page_offset = offset & ~(uint64_t)PAGE_MASK;
 	pci_command = pci_conf_read(adev->pdev->pd_pa.pa_pc,
 	    adev->pdev->pd_pa.pa_tag, PCI_COMMAND_STATUS_REG);
 	if (indexed_valid && fence_mc_addr == psp->fence_buf_mc_addr &&
@@ -458,16 +476,14 @@ psp_v10_0_ring_timeout(struct psp_context *psp, uint32_t expected,
 	    PCI_MAPREG_TYPE(adev->pdev->pd_resources[0].type) == PCI_MAPREG_TYPE_MEM &&
 	    (pci_resource_flags(adev->pdev, 0) & BUS_SPACE_MAP_PREFETCHABLE) &&
 	    (pci_command & PCI_COMMAND_MEM_ENABLE) &&
-	    bar_base != 0 && !(bar_base & PAGE_MASK) && bar_size >= PAGE_SIZE &&
-	    page_offset <= bar_size - PAGE_SIZE &&
-	    page_offset <= (bus_addr_t)~(bus_addr_t)0 - PAGE_SIZE &&
-	    bar_base <= (bus_addr_t)~(bus_addr_t)0 - page_offset - PAGE_SIZE) {
-		bar_page = bar_base + page_offset;
+	    psp_v10_bar_page(bar_base, bar_size, offset,
+	    (bus_addr_t)~(bus_addr_t)0, &bar_page, &bar_within)) {
+		bar_attempted = true;
 		bar_error = bus_space_map(adev->gmc.aper_tag, bar_page, PAGE_SIZE,
 		    BUS_SPACE_MAP_LINEAR | BUS_SPACE_MAP_PREFETCHABLE, &bar_handle);
 		if (bar_error == 0) {
 			bar_value = bus_space_read_4(adev->gmc.aper_tag, bar_handle,
-			    offset & PAGE_MASK);
+			    bar_within);
 			bus_space_unmap(adev->gmc.aper_tag, bar_handle, PAGE_SIZE);
 		}
 	}
@@ -519,10 +535,12 @@ psp_v10_0_ring_timeout(struct psp_context *psp, uint32_t expected,
 		DRM_ERROR("PSP indexed unavailable\n");
 	DRM_ERROR("PSP sample delta ns %"PRIu64"\n", end - start);
 #ifdef __NetBSD__
-	if (bar_error == 0)
+	if (!bar_attempted)
+		DRM_ERROR("PSP BAR skipped\n");
+	else if (bar_error == 0)
 		DRM_ERROR("PSP BAR value %08x\n", bar_value);
 	else
-		DRM_ERROR("PSP BAR unavailable %d\n", bar_error);
+		DRM_ERROR("PSP BAR map error %d\n", bar_error);
 	DRM_ERROR("PSP mapped after BAR %08x\n", mapped_after_bar);
 	if (pa_valid)
 		DRM_ERROR("PSP fence PA %#"PRIx64"\n", (uint64_t)fence_pa);
