@@ -144,7 +144,7 @@ tc1.o:	${.CURDIR}/TEST/tc1.c
 
 tc1:	libedit.a tc1.o
 	${_MKTARGET_LINK}
-	${CC} ${LDFLAGS} tc1.o -o ${.TARGET} libedit.a ${LDADD} -lterminfo
+	${CC} ${LD_DRIVER_FLAGS} ${LDFLAGS} tc1.o -o ${.TARGET} libedit.a ${LDADD} -lterminfo
 
 .include <bsd.lib.mk>
 .include <bsd.subdir.mk>

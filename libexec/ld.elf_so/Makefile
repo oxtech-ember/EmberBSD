@@ -176,7 +176,7 @@ STRIPFLAG=
 
 ${PROG}: ${OBJS} ${DPADD}
 	${_MKMSG_LINK} ${PROG}
-	${CC} ${LDFLAGS} -o ${PROG} ${OBJS} ${LDADD}
+	${CC} ${LD_DRIVER_FLAGS} ${LDFLAGS} -o ${PROG} ${OBJS} ${LDADD}
 .if ${MKDEBUG} != "no"
 	(  ${OBJCOPY} --only-keep-debug ${.TARGET} ${.TARGET}.debug \
 	   && ${OBJCOPY} --strip-debug -p -R .gnu_debuglink \

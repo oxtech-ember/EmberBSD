@@ -45,7 +45,7 @@ CLEANFILES+=	${PROG}.tmp
 
 ${PROG}: ${OBJS}
 	${_MKTARGET_LINK}
-	${CC} -o ${PROG}.tmp ${LDFLAGS} -Wl,-Ttext,${PRIMARY_LOAD_ADDRESS} \
+	${CC} ${LD_DRIVER_FLAGS} -o ${PROG}.tmp ${LDFLAGS} -Wl,-Ttext,${PRIMARY_LOAD_ADDRESS} \
 	    ${OBJS}
 	@ set -- $$( ${NM} -t d ${PROG}.tmp | grep '\<free_space\>' \
 		| ${TOOL_SED} 's/^0*//'  ); \

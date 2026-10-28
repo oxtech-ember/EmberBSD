@@ -48,7 +48,7 @@ HOST_CPPFLAGS+=	-I${.CURDIR}
 # PLOTDEVICE is used for plotting the map.  Change as appropriate.
 
 map: map.c
-	${CC} -O ${.CURDIR}/map.c -lplot -o ${.TARGET}
+	${CC} ${LD_DRIVER_FLAGS} -O ${.CURDIR}/map.c -lplot -o ${.TARGET}
 	./map | plot > /dev/tty
 
 .include <bsd.prog.mk>

@@ -209,7 +209,7 @@ STATIC_MODULE_LIBS:= ${STATIC_MODULE_LIBS} ${MODOBJDIR}/${MOD}.a
 # XXX Using ${.ALLSRC} in the ld command causes openpam_static.c to be
 # XXX used.  Why??!!  --thorpej
 openpam_static_modules.o: openpam_static.o ${STATIC_MODULE_LIBS}
-	${CC} ${LDFLAGS} -nostdlib -o ${.TARGET} -r -Wl,--whole-archive \
+	${CC} ${LD_DRIVER_FLAGS} ${LDFLAGS} -nostdlib -o ${.TARGET} -r -Wl,--whole-archive \
 	    openpam_static.o ${STATIC_MODULE_LIBS}
 
 COPTS.openpam_dynamic.c+=	${CC_WNO_CAST_FUNCTION_TYPE}

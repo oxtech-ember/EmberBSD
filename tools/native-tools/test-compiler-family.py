@@ -45,7 +45,7 @@ class CompilerFamilyTests(unittest.TestCase):
     def test_default_uses_llvm_and_an_explicit_target(self):
         names = ("CC", "CPP", "CXX", "AS", "LD", "AR", "RANLIB", "NM",
                  "OBJCOPY", "OBJDUMP", "READELF", "SIZE", "STRINGS", "STRIP",
-                 "ACTIVE_CC", "ACTIVE_CXX", "LDFLAGS")
+                 "ACTIVE_CC", "ACTIVE_CXX", "LDFLAGS", "LD_DRIVER_FLAGS")
         value = self.values(names)
         self.assertEqual(value["CC"], "/sdk/bin/clang --target=aarch64--netbsd")
         self.assertEqual(value["CPP"], "/sdk/bin/clang --driver-mode=cpp --target=aarch64--netbsd")
@@ -56,7 +56,22 @@ class CompilerFamilyTests(unittest.TestCase):
             self.assertEqual(value[name], "/sdk/bin/llvm-" + name.lower())
         self.assertEqual(value["ACTIVE_CC"].strip(), "clang")
         self.assertEqual(value["ACTIVE_CXX"].strip(), "clang")
-        self.assertIn("--ld-path=/sdk/bin/ld.lld", value["LDFLAGS"].split())
+        self.assertNotIn("--ld-path=/sdk/bin/ld.lld", value["LDFLAGS"].split())
+        self.assertIn("--ld-path=/sdk/bin/ld.lld", value["LD_DRIVER_FLAGS"].split())
+
+    def test_linker_selection_is_only_in_driver_link_rules(self):
+        compile_rules = ("COMPILE.c", "COMPILE.cc", "COMPILE.m", "COMPILE.s", "COMPILE.S")
+        link_rules = ("LINK.c", "LINK.cc", "LINK.m", "LINK.s", "LINK.S")
+        values = self.values((*compile_rules, *link_rules, "LDFLAGS", "LD"))
+        flag = "--ld-path=/sdk/bin/ld.lld"
+        for name in compile_rules:
+            with self.subTest(rule=name):
+                self.assertNotIn(flag, values[name].split())
+        for name in link_rules:
+            with self.subTest(rule=name):
+                self.assertIn(flag, values[name].split())
+        self.assertNotIn(flag, values["LDFLAGS"].split())
+        self.assertEqual(values["LD"], "/sdk/bin/ld.lld")
 
     def test_dependency_compilers_keep_target_arguments_outside_cc(self):
         names = ('MKDEP', 'MKDEPCXX', 'MKDEPOBJC', '_MKDEP_TARGET_FLAGS')
@@ -77,13 +92,14 @@ class CompilerFamilyTests(unittest.TestCase):
             self.assertEqual(value['MKDEPFLAGS'], '-Dcaller_owned')
 
     def test_explicit_gcc_retains_its_prefixed_tools(self):
-        names = ("CC", "CPP", "CXX", "AS", "LD", "AR", "ACTIVE_CC", "LDFLAGS")
+        names = ("CC", "CPP", "CXX", "AS", "LD", "AR", "ACTIVE_CC", "LD_DRIVER_FLAGS", "LDFLAGS")
         value = self.values(names, "EMBER_COMPILER_FAMILY=gcc")
         for name, suffix in (("CC", "gcc"), ("CPP", "cpp"), ("CXX", "c++"),
                              ("AS", "as"), ("LD", "ld"), ("AR", "ar")):
             self.assertEqual(value[name], "/sdk/bin/aarch64--netbsd-" + suffix)
         self.assertEqual(value["ACTIVE_CC"].strip(), "gcc")
         self.assertNotIn("--ld-path=", value["LDFLAGS"])
+        self.assertEqual(value["LD_DRIVER_FLAGS"].strip(), "")
 
     def test_unknown_family_and_unsafe_prefix_fail(self):
         for setting in ("EMBER_COMPILER_FAMILY=unknown",

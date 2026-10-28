@@ -45,7 +45,7 @@ CLEANFILES+=	${PROG}.tmp
 
 ${PROG}: ${OBJS}
 	${_MKTARGET_LINK}
-	${CC} -o ${PROG}.tmp ${LDFLAGS} -Wl,-Ttext,0x7c00 ${OBJS}
+	${CC} ${LD_DRIVER_FLAGS} -o ${PROG}.tmp ${LDFLAGS} -Wl,-Ttext,0x7c00 ${OBJS}
 	@ set -- $$( ${NM} -t d ${PROG}.tmp | grep '\<pbr_space\>' \
 		    | ${TOOL_SED} 's/^0*//'  ); \
 		echo "#### There are $$1 free bytes in ${PROG}"

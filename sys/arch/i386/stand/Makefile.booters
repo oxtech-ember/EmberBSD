@@ -77,20 +77,20 @@ VERSIONMACHINE=x86
 CLEANFILES+= ${BASE}.sym
 ${BASE}.sym: ${STARTFILE} ${OBJS} ${LIBSA} ${LIBZ} ${LIBKERN} ${LIBI386}
 	${_MKTARGET_LINK}
-	${CC} -o ${BASE}.sym ${LDFLAGS} -Wl,-Ttext,${RELOC} \
+	${CC} ${LD_DRIVER_FLAGS} -o ${BASE}.sym ${LDFLAGS} -Wl,-Ttext,${RELOC} \
 	    ${STARTFILE} ${OBJS} ${LIBLIST} >${BASE}.list
 
 CLEANFILES+= ${BASE}.com
 ${BASE}.com: ${STARTFILE} ${OBJS} ${LIBSA} ${LIBZ} ${LIBKERN} ${LIBI386}
 	${_MKTARGET_LINK}
-	${CC} -o ${BASE}.sym ${LDFLAGS} -Wl,-Ttext,${RELOC} \
+	${CC} ${LD_DRIVER_FLAGS} -o ${BASE}.sym ${LDFLAGS} -Wl,-Ttext,${RELOC} \
 	    ${STARTFILE} ${OBJS} ${LIBLIST} >${BASE}.list
 	${OBJCOPY} -O binary ${BASE}.sym ${BASE}.com
 
 CLEANFILES+= ${BASE}.bin
 ${BASE}.bin: ${STARTFILE} ${OBJS} ${LIBSA} ${LIBZ} ${LIBKERN} ${LIBI386}
 	${_MKTARGET_LINK}
-	${CC} -o ${BASE}.sym ${LDFLAGS} -Wl,-Ttext,${RELOC} \
+	${CC} ${LD_DRIVER_FLAGS} -o ${BASE}.sym ${LDFLAGS} -Wl,-Ttext,${RELOC} \
 	    ${STARTFILE} ${OBJS} ${LIBLIST} > ${BASE}.list
 	${OBJCOPY} -O binary ${BASE}.sym ${BASE}.bin
 
