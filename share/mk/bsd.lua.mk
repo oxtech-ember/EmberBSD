@@ -144,7 +144,7 @@ lua-all:		${LUA_TARG.${_M}}
 ${LUA_TARG.${_M}}:	${LUA_OBJS.${_M}} ${DPADD} ${DPADD.${_M}}
 	${_MKTARGET_BUILD}
 	rm -f ${.TARGET}
-	${CC} ${LUA_LDOPTS} -shared ${LUA_OBJS.${_M}} \
+	${CC} ${LD_DRIVER_FLAGS} ${LUA_LDOPTS} -shared ${LUA_OBJS.${_M}} \
 	    -Wl,-soname,${LUA_NAME.${_M}} -o ${.TARGET} \
 	    ${LDADD} ${LDADD.${_M}} ${LDFLAGS} ${LDFLAGS.${_M}}
 

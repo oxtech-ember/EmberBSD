@@ -44,7 +44,7 @@ COPTS.crypt.c+=	${CC_WNO_STRINGOP_OVERFLOW}
 .if make(*.test)
 .SUFFIXES: .test
 .c.test:
-	${CC} -o $@ -DUNIT_TEST -DMAIN ${LDSTATIC} ${.IMPSRC} ${LDADD}
+	${CC} ${LD_DRIVER_FLAGS} -o $@ -DUNIT_TEST -DMAIN ${LDSTATIC} ${.IMPSRC} ${LDADD}
 LDADD+= -L${.OBJDIR} -l${LIB} -L${.OBJDIR}/../../libc
 DPADD+= lib${LIB}.a
 LDSTATIC?= -static

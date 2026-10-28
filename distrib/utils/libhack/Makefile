@@ -27,6 +27,6 @@ CLEANFILES+=	libhack.o
 
 tpwent: getpwent.c
 	${CC} -g -o $@.o -DTEST_MAIN -c getpwent.c
-	${CC} -o $@ $@.o
+	${CC} ${LD_DRIVER_FLAGS} -o $@ $@.o
 
 .include <bsd.lib.mk>

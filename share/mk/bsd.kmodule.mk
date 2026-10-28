@@ -181,7 +181,7 @@ ${PROG}: ${KMOD}_tmp.o ${KMOD}_tramp.o
 .else
 ${PROG}: ${OBJS} ${DPADD} ${KMODSCRIPT}
 	${_MKTARGET_LINK}
-	${CC} ${LDFLAGS} -nostdlib -r -Wl,-T,${KMODSCRIPT},-d \
+	${CC} ${LD_DRIVER_FLAGS} ${LDFLAGS} -nostdlib -r -Wl,-T,${KMODSCRIPT},-d \
 		-Wl,-Map=${.TARGET}.map \
 		-o ${.TARGET} ${OBJS}
 .endif

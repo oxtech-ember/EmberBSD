@@ -134,7 +134,7 @@ VERSIONMACHINE=x86
 # explicitly pull in the required objects before any other library code.
 ${PROG}: ${OBJS} ${LIBLIST} ${LDSCRIPT} ${.CURDIR}/../Makefile.boot
 	${_MKTARGET_LINK}
-	bb="$$( ${CC} -o ${PROG}.sym ${LDFLAGS} -Wl,-Ttext,0 -Wl,-cref \
+	bb="$$( ${CC} ${LD_DRIVER_FLAGS} -o ${PROG}.sym ${LDFLAGS} -Wl,-Ttext,0 -Wl,-cref \
 	    ${OBJS} ${LIBLIST} | ( \
 		while read symbol file; do \
 			[ -z "$$file" ] && continue; \
@@ -150,7 +150,7 @@ ${PROG}: ${OBJS} ${LIBLIST} ${LDSCRIPT} ${.CURDIR}/../Makefile.boot
 		do :; \
 		done; \
 	) )"; \
-	${CC} -o ${PROG}.sym ${LDFLAGS} -Wl,-Ttext,0 -T ${LDSCRIPT} \
+	${CC} ${LD_DRIVER_FLAGS} -o ${PROG}.sym ${LDFLAGS} -Wl,-Ttext,0 -T ${LDSCRIPT} \
 		-Wl,-Map,${PROG}.map -Wl,-cref ${OBJS} $$bb ${LIBLIST}
 	${OBJCOPY} -O binary ${PROG}.sym ${PROG}
 

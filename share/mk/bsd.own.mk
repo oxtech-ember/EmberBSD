@@ -432,7 +432,7 @@ TOOL_CC.clang=	${EXTERNAL_TOOLCHAIN}/bin/clang --target=${MACHINE_GNU_PLATFORM}
 TOOL_CPP.clang=	${EXTERNAL_TOOLCHAIN}/bin/clang --driver-mode=cpp --target=${MACHINE_GNU_PLATFORM}
 TOOL_CXX.clang=	${EXTERNAL_TOOLCHAIN}/bin/clang++ --target=${MACHINE_GNU_PLATFORM}
 TOOL_OBJC.clang=	${TOOL_CC.clang}
-LDFLAGS+=	--ld-path=${EXTERNAL_TOOLCHAIN}/bin/ld.lld
+LD_DRIVER_FLAGS+=	--ld-path=${EXTERNAL_TOOLCHAIN}/bin/ld.lld
 .else
 AR=		${EXTERNAL_TOOLCHAIN}/bin/${MACHINE_GNU_PLATFORM}-ar
 AS=		${EXTERNAL_TOOLCHAIN}/bin/${MACHINE_GNU_PLATFORM}-as

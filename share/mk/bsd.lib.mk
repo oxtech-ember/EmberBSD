@@ -634,7 +634,7 @@ LDADD+= -lgcc
 .endif
 
 .if ${LIBISCXX} != "no"
-LIBCC:=	${CXX} ${CXXLDFLAGS}
+LIBCC:=	${CXX} ${LD_DRIVER_FLAGS} ${CXXLDFLAGS}
 . if ${_EMBER_LLVM_RUNTIME:Uno} == "yes"
 DPADD+=	${LIBCXX}
 . elif ${MKLIBCXX} == "yes"
@@ -643,7 +643,7 @@ LIBDPLIBS+=     c++	${.CURDIR}/../../../../../external/bsd/libc++/lib
 LIBDPLIBS+=     stdc++	${.CURDIR}/../../../../../external/gpl3/${EXTERNAL_GCC_SUBDIR}/lib/libstdc++-v3
 . endif
 .else
-LIBCC:=	${CC}
+LIBCC:=	${CC} ${LD_DRIVER_FLAGS}
 .endif
 
 # VERSION_MAP

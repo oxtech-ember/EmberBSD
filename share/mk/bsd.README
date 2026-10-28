@@ -1746,6 +1746,12 @@ LD		Linker.  [ld]
 
 LDFLAGS		Options to ${CC} during the link process.  []
 
+LD_DRIVER_FLAGS	Options for the compiler driver during linking, including
+		explicit linker selection.  Used by C, C++, Objective-C and
+		assembly driver link rules, not compilation or direct ${LD}
+		invocations.  Kept separate so standalone linker rules can
+		share target LDFLAGS without receiving driver-only options.  []
+
 LINT		C program verifier.  [lint]
 
 LINTFLAGS	Options to ${LINT}.  [-chapbrxzgFS]

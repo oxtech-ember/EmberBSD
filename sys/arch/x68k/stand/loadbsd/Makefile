@@ -43,7 +43,7 @@ ${PROG}: ${BASE}1 ${BASE}2
 .for i in 1 2
 ${BASE}${i}:	${OBJS} ${LIBDOS}/libdos.a ${LIBIOCS}/libiocs.a
 	${_MKTARGET_LINK}
-	${CC} -o ${.TARGET} ${LDFLAGS} -Wl,-Ttext,${i}${i}000 ${OBJS} ${LDLIBS}
+	${CC} ${LD_DRIVER_FLAGS} -o ${.TARGET} ${LDFLAGS} -Wl,-Ttext,${i}${i}000 ${OBJS} ${LDLIBS}
 .endfor
 
 release: check_RELEASEDIR

@@ -501,6 +501,7 @@ class LLVMSourceTests(unittest.TestCase):
                 self.assertNotIn("-stdlib=libc++", values["CXXFLAGS"].split())
                 self.assertIn("-nostdinc++", values["CXXFLAGS"].split())
                 for name in names[2:]:
+                    self.assertIn("--ld-path=/sdk/bin/ld.lld", values[name].split())
                     if name == "_CCLINK.cprog":
                         self.assertNotIn("-stdlib=libc++", values[name].split())
                     else:
@@ -513,6 +514,7 @@ class LLVMSourceTests(unittest.TestCase):
         self.assertNotIn("-stdlib=libc++", flags.split())
         self.assertIn("-nostdinc++", flags.split())
         self.assertIn("-stdlib=libc++", linker.split())
+        self.assertIn("--ld-path=/sdk/bin/ld.lld", linker.split())
 
     def test_runtime_does_not_pollute_host_or_freestanding_rules(self):
         options = self.runtime_options()
