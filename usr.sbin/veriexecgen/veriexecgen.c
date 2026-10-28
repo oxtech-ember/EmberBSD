@@ -105,7 +105,9 @@ static hash_t	 hashes[] = {
 	{ NULL, NULL },
 };
 
+#ifdef notyet
 static int Fflag;
+#endif
 
 static int	make_immutable;	/* set immutable flag on signatures file */
 
@@ -441,7 +443,9 @@ main(int argc, char **argv)
 
 	(void) memset(&v, 0x0, sizeof(v));
 	make_immutable = 0;
+#ifdef notyet
 	Fflag = 0;
+#endif
 
 	/* error out if we have a dangling symlink or other fs problem */
 	v.exit_on_error = 1;

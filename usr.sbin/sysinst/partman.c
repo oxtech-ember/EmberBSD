@@ -201,7 +201,6 @@ struct {
 } *mnts;
 
 static int pm_cursel; /* Number of selected entry in main menu */
-static int pm_changed; /* flag indicating that we have unsaved changes */
 static int pm_raid_curspare; /* XXX: replace by true way */
 static int pm_retvalue;
 
@@ -2654,7 +2653,6 @@ pm_needsave(void)
 	SLIST_FOREACH(pm_i, &pm_head, l)
 		if (pm_i->unsaved) {
 			/* Oops, we have unsaved changes */
-			pm_changed = 1;
 			msg_display(MSG_saveprompt);
 			return ask_yesno(NULL);
 		}
@@ -2943,7 +2941,6 @@ pm_upddevlist_adv(menudesc *m, void *arg, int *i,
 				d->s->parent_size * d->sub_num) != 0)
 			continue;
 		/* We have a entry for displaying */
-		pm_changed = 1;
 		m->opts[*i] = (struct menu_ent) {
 			.opt_name = NULL,
 			.opt_action = pm_submenu,
@@ -2974,7 +2971,6 @@ pm_upddevlist(menudesc *m, void *arg, struct install_partition_desc *install)
 	if (arg != NULL)
 		pm_retvalue = m->cursel + 1;
 
-	pm_changed = 0;
 	/* Mark all devices as not found */
 	SLIST_FOREACH(pm_i, &pm_head, l) {
 		if (pm_i->parts != NULL && !pm_i->unsaved) {
@@ -3196,7 +3192,6 @@ partman(struct install_partition_desc *install)
 		};
 
 		pm_cursel = 0;
-		pm_changed = 0;
 		firstrun = 0;
 	}
 
