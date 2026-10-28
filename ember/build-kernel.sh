@@ -58,6 +58,14 @@ esac
     [ -f "$llvm_source/compiler-rt/lib/builtins/int_lib.h" ] ||
     fail 'EMBER_LLVM_SOURCE does not contain the prepared compiler-rt sources'
 export EMBER_LLVM_SOURCE
+# The host yacc in tools builds from the byacc source prepared by Ports.
+byacc_source=${EMBER_BYACC_SOURCE:-}
+case "$byacc_source" in
+/*) case "$byacc_source" in *[!A-Za-z0-9_./+@%=-]*) fail 'invalid EMBER_BYACC_SOURCE path';; esac;;
+*) fail 'set EMBER_BYACC_SOURCE to the absolute Ports-prepared byacc source';;
+esac
+[ -f "$byacc_source/emberbsd-prepared-source.json" ] && [ -f "$byacc_source/main.c" ] ||
+    fail 'EMBER_BYACC_SOURCE does not contain the prepared byacc source'
 mode=${EMBER_BUILD_MODE:-cross}
 compiler_family=${EMBER_COMPILER_FAMILY:-clang}
 case "$compiler_family" in
@@ -127,7 +135,7 @@ rm -f "$kernel_obj/vers.c" "$kernel_obj/vers.o"
 set -- -U -u -j"$jobs" -c "$compiler_family" -m evbarm -a aarch64 \
     -O "$out/obj" -T "$out/tools" -D "$out/dest" \
     -V "KERNOBJDIR=$out/obj/kernels" -V MKCROSSGDB=no \
-    -V "EMBER_LLVM_SOURCE=$llvm_source" \
+    -V "EMBER_LLVM_SOURCE=$llvm_source" -V "EMBER_BYACC_SOURCE=$byacc_source" \
     -V "EXTERNAL_TOOLCHAIN=$EMBER_EXTERNAL_TOOLCHAIN" -V TOOLCHAIN_MISSING=yes
 case ${EMBER_HOST_BFD_CONFIG:-} in
 /*) [ -f "$EMBER_HOST_BFD_CONFIG" ] || fail 'common host BFD configuration missing';;
