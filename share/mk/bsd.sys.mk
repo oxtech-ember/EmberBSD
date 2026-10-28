@@ -80,6 +80,7 @@ REPROFLAGS+=	-fdebug-regex-map='/usr/src/(.*)/obj\..*/(.*)=/usr/obj/\1/\2'
 .for _var _path in EMBER_LIBEDIT_SOURCE /usr/src/external/libedit \
     EMBER_LIBEVENT_SOURCE /usr/src/external/libevent \
     EMBER_LIBARCHIVE_SOURCE /usr/src/external/libarchive \
+    EMBER_BYACC_SOURCE /usr/src/external/byacc \
     EMBER_LLVM_SOURCE /usr/src/external/llvm \
     EMBER_EXTERNAL_LLVM_RUNTIME /usr/pkg/llvm \
     EMBER_EXTERNAL_GCC_RUNTIME /usr/pkg/gcc16

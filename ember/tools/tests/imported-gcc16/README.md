@@ -52,7 +52,7 @@ command. No test requires a particular signal number.
 
 ## Parser generators
 
-Build the tree's byacc twice with GCC 16 and its `configure` script:
+Build the prepared common Ports byacc source twice with GCC 16 and its `configure` script:
 `--disable-btyacc` selects the classic skeleton; `--enable-btyacc` selects the
 backtracking skeleton. For an out-of-source build, copy `yaccpar.skel` and
 `btyaccpar.skel` into each build directory before running `make`; the upstream
@@ -106,7 +106,7 @@ in `btyaccpar.c`. Run each site with and without location tracking:
 
 ```sh
 CC=/absolute/gcc-16 python3 ember/tools/tests/imported-gcc16/btyacc-queue.py \
-    /absolute/source-tree --work /absolute/new-queue-work
+    /absolute/prepared-byacc-source --work /absolute/new-queue-work
 ```
 
 The queue already exists. The realloc hook moves each successful block. Failing

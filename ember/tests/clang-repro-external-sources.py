@@ -18,6 +18,7 @@ import tempfile
 ROOTS = (('EMBER_LIBEDIT_SOURCE', 'libedit', '/usr/src/external/libedit'),
          ('EMBER_LIBEVENT_SOURCE', 'libevent', '/usr/src/external/libevent'),
          ('EMBER_LIBARCHIVE_SOURCE', 'libarchive', '/usr/src/external/libarchive'),
+         ('EMBER_BYACC_SOURCE', 'byacc', '/usr/src/external/byacc'),
          ('EMBER_LLVM_SOURCE', 'llvm', '/usr/src/external/llvm'),
          ('EMBER_EXTERNAL_LLVM_RUNTIME', 'runtime', '/usr/pkg/llvm'))
 
@@ -97,7 +98,7 @@ def main():
             outputs.append((objects, mapped_tags))
         if outputs[0] != outputs[1]:
             raise SystemExit('objects or tags differ between two host roots')
-    print('PASS: Clang MKREPRO maps libedit, libevent, libarchive, LLVM and runtime roots; '
+    print('PASS: Clang MKREPRO maps libedit, libevent, libarchive, byacc, LLVM and runtime roots; '
           'identical objects and libc tags from two host roots')
 
 

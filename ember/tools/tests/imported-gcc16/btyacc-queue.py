@@ -67,7 +67,7 @@ def wrap(name, body):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("source_tree", type=Path)
+    parser.add_argument("source_tree", type=Path, help="prepared common Ports byacc source")
     parser.add_argument("--work", required=True, type=Path)
     parser.add_argument("--mode", choices=("plain", "sanitize", "analyze"), default="sanitize")
     args = parser.parse_args()
@@ -81,8 +81,8 @@ def main():
         parser.error("Output directory already exists")
     work = args.work.resolve()
     work.mkdir(parents=True)
-    skel = (root / "external/bsd/byacc/dist/btyaccpar.skel").read_text()
-    embedded = (root / "external/bsd/byacc/dist/btyaccpar.c").read_text()
+    skel = (root / "btyaccpar.skel").read_text()
+    embedded = (root / "btyaccpar.c").read_text()
     growth = re.search(r"#ifndef YYLVQUEUEGROWTH\n#define YYLVQUEUEGROWTH (\d+)\n#endif\n", skel)
     if growth is None:
         raise RuntimeError("YYLVQUEUEGROWTH is not defined by the skeleton")

@@ -15,7 +15,7 @@ def main():
     source, output, tools, compiler = map(Path, sys.argv[1:])
     required = ('EMBERBSD_SDK_SOURCE', 'EMBER_HOST_PREFIX', 'EMBER_LIBEDIT_SOURCE',
                 'EMBER_HOST_BFD_CONFIG', 'EMBER_LLVM_SOURCE', 'EMBER_PORTS_SOURCE',
-                'EMBER_LIBARCHIVE_SOURCE', 'EMBER_LIBEVENT_SOURCE')
+                'EMBER_LIBARCHIVE_SOURCE', 'EMBER_LIBEVENT_SOURCE', 'EMBER_BYACC_SOURCE')
     missing = [key for key in required if not os.environ.get(key)]
     family = os.environ.get('EMBER_TARGET_COMPILER_FAMILY', 'clang')
     host_family = os.environ.get('EMBER_HOST_COMPILER_FAMILY', 'clang')
@@ -38,7 +38,8 @@ def main():
         inputs = (source, output, tools, compiler, sdk, Path(os.environ['EMBER_HOST_PREFIX']),
                   Path(os.environ['EMBER_LIBEDIT_SOURCE']), Path(os.environ['EMBER_HOST_BFD_CONFIG']),
                   Path(os.environ['EMBER_LLVM_SOURCE']), Path(os.environ['EMBER_PORTS_SOURCE']),
-                  Path(os.environ['EMBER_LIBARCHIVE_SOURCE']), Path(os.environ['EMBER_LIBEVENT_SOURCE']))
+                  Path(os.environ['EMBER_LIBARCHIVE_SOURCE']), Path(os.environ['EMBER_LIBEVENT_SOURCE']),
+                  Path(os.environ['EMBER_BYACC_SOURCE']))
         if family == 'clang':
             inputs += (Path(os.environ['EMBER_SDK_SYSROOT']),)
         if any(not p.is_absolute() or any(c not in 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_./-' for c in str(p)) for p in inputs):
@@ -70,6 +71,7 @@ def main():
         for package, entry, operation in (
             ('EMBER_LIBARCHIVE_SOURCE', 'scripts/libarchive-source.py', 'libarchive'),
             ('EMBER_LIBEVENT_SOURCE', 'scripts/source-inputs/libevent/source.py', 'libevent'),
+            ('EMBER_BYACC_SOURCE', 'scripts/source-inputs/byacc/source.py', 'byacc'),
         ):
             script = str(Path(ports) / entry)
             if operation == 'libarchive':
@@ -110,7 +112,8 @@ def main():
         arguments = [script, '--selected', str(source), str(output), str(tools), str(compiler),
                      str(sdk), native.bundle_root, host_family, family, libedit,
                      llvm_source, host_bfd, jobs, git, extra.tool('ruby'), extra.tool('shasum'),
-                     os.environ['EMBER_LIBARCHIVE_SOURCE'], os.environ['EMBER_LIBEVENT_SOURCE'], *llvm]
+                     os.environ['EMBER_LIBARCHIVE_SOURCE'], os.environ['EMBER_LIBEVENT_SOURCE'],
+                     os.environ['EMBER_BYACC_SOURCE'], *llvm]
         native_os.run_native_os(native, source=str(source), routing=str(output / 'routing'),
                                 cwd=str(source), arguments=arguments, shell=True,
                                 log=str(output / 'logs/orchestrator.log'))

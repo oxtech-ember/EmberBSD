@@ -239,18 +239,18 @@ is a FreeBSD committer who has been helpful with incorporating changes
 in the past.
 
 Package:	byacc
-Version:	20240109
-Current Vers:	20240109
+Version:	20260126
+Current Vers:	20260126
 Maintainer:	Thomas Dickey <dickey@invisible-island.net>
 Archive Site:	http://www.invisible-island.net/byacc/byacc.html
 Home Page:	http://www.invisible-island.net/byacc/byacc.html
-Date:		2024-09-14
+Date:		2026-01-26
 Mailing List:
 Responsible:	christos
 License:	Public Domain
-Location:	external/bsd/byacc/dist
+Location:	Common Ports devel/byacc prepared source
 Notes:
-See /usr/src/external/bsd/byacc/byacc2netbsd for update instructions.
+Native integration is in external/bsd/byacc; source and patches are owned by Ports.
 
 Package:	bzip2
 Version:	1.0.8
