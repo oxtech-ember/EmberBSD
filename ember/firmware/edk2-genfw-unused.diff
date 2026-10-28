@@ -1,0 +1,38 @@
+# Remove unused program header pointers; section processing is unchanged.
+# Origin: EmberBSD (AI-assisted); upstream status: not submitted.
+--- a/BaseTools/Source/C/GenFw/Elf32Convert.c
++++ b/BaseTools/Source/C/GenFw/Elf32Convert.c
+@@ -86,7 +86,6 @@
+ //
+ STATIC Elf_Ehdr *mEhdr;
+ STATIC Elf_Shdr *mShdrBase;
+-STATIC Elf_Phdr *mPhdrBase;
+ 
+ //
+ // Coff information
+@@ -154,7 +153,6 @@
+   // Update section header pointers
+   //
+   mShdrBase  = (Elf_Shdr *)((UINT8 *)mEhdr + mEhdr->e_shoff);
+-  mPhdrBase = (Elf_Phdr *)((UINT8 *)mEhdr + mEhdr->e_phoff);
+ 
+   //
+   // Create COFF Section offset buffer and zero.
+--- a/BaseTools/Source/C/GenFw/Elf64Convert.c
++++ b/BaseTools/Source/C/GenFw/Elf64Convert.c
+@@ -94,7 +94,6 @@
+ //
+ STATIC Elf_Ehdr *mEhdr;
+ STATIC Elf_Shdr *mShdrBase;
+-STATIC Elf_Phdr *mPhdrBase;
+ 
+ //
+ // GOT information
+@@ -200,7 +199,6 @@
+   //
+   VerboseMsg ("Update Header Pointers");
+   mShdrBase  = (Elf_Shdr *)((UINT8 *)mEhdr + mEhdr->e_shoff);
+-  mPhdrBase = (Elf_Phdr *)((UINT8 *)mEhdr + mEhdr->e_phoff);
+ 
+   //
+   // Create COFF Section offset buffer and zero.
