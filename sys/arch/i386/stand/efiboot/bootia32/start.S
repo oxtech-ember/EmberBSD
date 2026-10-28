@@ -48,6 +48,7 @@ ENTRY(_start)
 
 	pushl	12(%ebp)	/* image_handle */
 	pushl	8(%ebp)		/* system_table */
+#ifndef EFIBOOT_PE_RELOCATED
 	call	0f
 0:	popl	%eax
 	movl	%eax, %ebx
@@ -58,6 +59,7 @@ ENTRY(_start)
 	call	_C_LABEL(self_reloc)
 	popl	%ebx		/* remove ImageBase from the stack */
 	popl	%ebx		/* remove dynamic from the stack */
+#endif
 	call	_C_LABEL(efi_main)
 1:	leave
 	ret
@@ -68,11 +70,13 @@ END(_start)
 	 * executable:
 	 */
 
+#ifndef EFIBOOT_PE_RELOCATED
 	.data
 	.section .reloc, "a"
 	.long   0
 	.long   10
 	.word   0
+#endif
 
 	/* boot parameters */
 	.text

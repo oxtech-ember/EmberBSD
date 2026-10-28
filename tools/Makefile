@@ -205,6 +205,10 @@ SUBDIR+=	arm-elf2aout
 SUBDIR+=	m68k-elf2aout
 .endif
 
+.if ${MACHINE} == "amd64" || ${MACHINE} == "i386"
+SUBDIR+=	x86-elf2efi
+.endif
+
 .if !empty(MACHINE_ARCH:Mmips*)
 SUBDIR+=	mips-elf2ecoff
 .endif

@@ -45,6 +45,15 @@
 	.align 16
 	.globl _start
 _start:
+#ifdef EFIBOOT_PE_RELOCATED
+	/* The firmware applied the PE base relocations. */
+	subq	$8, %rsp
+	movq	%rcx, %rdi
+	movq	%rdx, %rsi
+	call	_C_LABEL(efi_main)
+	addq	$8, %rsp
+	ret
+#else
 	subq	$8, %rsp
 	pushq	%rcx
 	pushq	%rdx
@@ -78,6 +87,7 @@ _start:
 	.long   0
 	.long   10
 	.word   0
+#endif
 
 	/* boot parameters */
 	.text

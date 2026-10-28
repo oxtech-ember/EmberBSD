@@ -10,6 +10,7 @@ NORELRO=	# defined
 PROG?=		boot.efi
 NEWVERSWHAT?=	"EFI Boot"
 
+
 SOURCES= start.S boot.c conf.c devopen.c dev_net.c self_reloc.c panic.c
 SOURCES+= efiboot.c efichar.c eficons.c efidelay.c efidev.c
 SOURCES+= eficpufunc.c
@@ -38,9 +39,22 @@ BINMODE=444
 .PATH:	${.CURDIR}/../../lib
 .PATH:	${.CURDIR}/../../libsa
 
+.if !empty(LD_DRIVER_FLAGS:M--ld-path=*/ld.lld)
+# ld.lld cannot use the GNU ld script, and llvm-objcopy cannot write PE
+# images. Link a position independent executable whose only dynamic
+# relocations are R_*_RELATIVE and let x86-elf2efi turn it into a PE image
+# with base relocations, which the firmware applies; self_reloc is unused.
+EFIBOOT_ELF2EFI=	yes
+LDSCRIPT?= ${.CURDIR}/../ldscript.lld
+LDFLAGS+= --no-dynamic-linker -pie -z text -z norelro --hash-style=sysv
+LDFLAGS+= -nostdlib -T${LDSCRIPT}
+CPPFLAGS+= -DEFIBOOT_PE_RELOCATED
+SRCS:=	${SRCS:Nself_reloc.c}
+.else
 LDSCRIPT?= ${.CURDIR}/ldscript
 LDFLAGS+= --no-dynamic-linker --noinhibit-exec -z nocombreloc
 LDFLAGS+= -nostdlib -T${LDSCRIPT} -Bsymbolic -shared
+.endif
 CPPFLAGS+= -I$S -I${.CURDIR} -I${.CURDIR}/.. -I$S/lib/libsa
 CPPFLAGS+= -I${.OBJDIR}
 CPPFLAGS+= -I${.CURDIR}/../../lib
@@ -129,9 +143,13 @@ VERSIONMACHINE=x86
 CLEANFILES+=	${PROG}.so ${PROG}.tmp
 
 ${PROG}: ${PROG}.so
+.if defined(EFIBOOT_ELF2EFI)
+	${TOOL_X86ELF2EFI} ${PROG}.so ${.TARGET}
+.else
 	${OBJCOPY} -j .text -j .sdata -j .data -j .dynamic -j .dynsym	\
 	    -j .rel -j .rel.* -j .rela -j .rela.* -j .reloc		\
 	    --subsystem efi-app	--target=${OBJFMT} ${PROG}.so ${.TARGET}
+.endif
 
 .include <bsd.prog.mk>
 

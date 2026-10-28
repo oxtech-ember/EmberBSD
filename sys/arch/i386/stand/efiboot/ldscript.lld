@@ -1,0 +1,37 @@
+/*
+ * ld.lld script for bootx64.efi and bootia32.efi. The output is a position
+ * independent executable linked at 0 that x86-elf2efi converts to a PE
+ * image: .text and .data become PE sections at the same addresses, and the
+ * R_*_RELATIVE dynamic relocations become PE base relocations. Each PE
+ * section must start on a 4 KiB boundary right after the previous one.
+ */
+ENTRY(_start)
+
+SECTIONS
+{
+	. = 0x1000;		/* leave room for the PE headers */
+	.text : {
+		*(.text .text.* .gnu.linkonce.t.*)
+	}
+	. = ALIGN(0x1000);
+	/* EFI loaders do not reliably zero a .bss section, so keep it here. */
+	.data : {
+		*(.rodata .rodata.* .gnu.linkonce.r.*)
+		*(.got.plt) *(.got)
+		*(.data .data.* .gnu.linkonce.d.*) *(.sdata .sdata.*)
+		*(.sbss .sbss.*) *(.scommon) *(.dynbss)
+		*(.bss .bss.* .gnu.linkonce.b.*) *(COMMON)
+	}
+	. = ALIGN(0x1000);
+	/* Read by x86-elf2efi only; not part of the PE image. */
+	.dynamic : { *(.dynamic) }
+	.rela.dyn : { *(.rela.dyn) }
+	.rel.dyn : { *(.rel.dyn) }
+	.dynsym : { *(.dynsym) }
+	.dynstr : { *(.dynstr) }
+	.hash : { *(.hash) }
+	.gnu.hash : { *(.gnu.hash) }
+	/DISCARD/ : {
+		*(.eh_frame) *(.eh_frame_hdr) *(.note.*) *(.interp)
+	}
+}
