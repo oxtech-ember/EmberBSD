@@ -94,7 +94,11 @@ SRCS+=		pixman-arm-neon.c			\
 		pixman-arma64-neon-asm.S		\
 		pixman-arma64-neon-asm-bilinear.S
 
-AFLAGS+=	${${ACTIVE_CC} == "clang" :? -fno-integrated-as :}
+# Clang's integrated assembler builds the AArch64 NEON sources but has no
+# .func directive; the xsrc configuration header assumes GNU as.
+.if ${ACTIVE_CC} == "clang"
+CPPFLAGS+=	-I${.CURDIR}/clang
+.endif
 .endif
 
 .if !empty(MACHINE_ARCH:Mmips*64el) && empty(COPTS:M-march=*)

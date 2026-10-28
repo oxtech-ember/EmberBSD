@@ -1,0 +1,10 @@
+#!/bin/sh
+# SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 The EmberBSD Project contributors.
+# Developed with AI assistance.
+#
+# The Clang profile has no GNU assembler. bsd.own.mk passes this directory
+# to Clang with -B, so a -fno-integrated-as compile stops here instead of
+# running whatever "as" the host has in PATH (for example Apple as).
+echo "EmberBSD: external assembler disabled in the Clang profile; use the integrated assembler (as $*)" >&2
+exit 1

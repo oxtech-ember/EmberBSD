@@ -415,8 +415,12 @@ _TOOL_PREFIX?=	nb
 .error EXTERNAL_TOOLCHAIN must be an absolute path without whitespace or shell metacharacters
 .endif
 .if ${EMBER_COMPILER_FAMILY} == "clang"
+# The Clang profile has no GNU assembler. With -fno-integrated-as Clang would
+# run the first "as" in PATH, on Darwin the host's Mach-O assembler. -B makes
+# the driver find a stub that fails instead.
+EMBER_CLANG_NO_EXTERNAL_AS=	-B${NETBSDSRCDIR}/ember/tools/no-external-as/
 AR=		${EXTERNAL_TOOLCHAIN}/bin/llvm-ar
-AS=		${EXTERNAL_TOOLCHAIN}/bin/clang --target=${MACHINE_GNU_PLATFORM} -c -x assembler
+AS=		${EXTERNAL_TOOLCHAIN}/bin/clang --target=${MACHINE_GNU_PLATFORM} ${EMBER_CLANG_NO_EXTERNAL_AS} -c -x assembler
 # LLVM has no elfedit command. The OS still builds the BFD host helpers.
 ELFEDIT=	${TOOLDIR}/bin/${MACHINE_GNU_PLATFORM}-elfedit
 LD=		${EXTERNAL_TOOLCHAIN}/bin/ld.lld
@@ -428,9 +432,9 @@ READELF=	${EXTERNAL_TOOLCHAIN}/bin/llvm-readelf
 SIZE=		${EXTERNAL_TOOLCHAIN}/bin/llvm-size
 STRINGS=	${EXTERNAL_TOOLCHAIN}/bin/llvm-strings
 STRIP=		${EXTERNAL_TOOLCHAIN}/bin/llvm-strip
-TOOL_CC.clang=	${EXTERNAL_TOOLCHAIN}/bin/clang --target=${MACHINE_GNU_PLATFORM}
+TOOL_CC.clang=	${EXTERNAL_TOOLCHAIN}/bin/clang --target=${MACHINE_GNU_PLATFORM} ${EMBER_CLANG_NO_EXTERNAL_AS}
 TOOL_CPP.clang=	${EXTERNAL_TOOLCHAIN}/bin/clang --driver-mode=cpp --target=${MACHINE_GNU_PLATFORM}
-TOOL_CXX.clang=	${EXTERNAL_TOOLCHAIN}/bin/clang++ --target=${MACHINE_GNU_PLATFORM}
+TOOL_CXX.clang=	${EXTERNAL_TOOLCHAIN}/bin/clang++ --target=${MACHINE_GNU_PLATFORM} ${EMBER_CLANG_NO_EXTERNAL_AS}
 TOOL_OBJC.clang=	${TOOL_CC.clang}
 LD_DRIVER_FLAGS+=	--ld-path=${EXTERNAL_TOOLCHAIN}/bin/ld.lld
 .else
