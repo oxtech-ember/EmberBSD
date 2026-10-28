@@ -1,20 +1,27 @@
-# GCC16 firmware profile
+# Raspberry Pi firmware build
 
-`../build-firmware.sh` builds the pinned RPi5 TF-A and EDK2 sources with
-native host tools and the common AArch64 GCC major 16 toolchain.
-Set `CROSS_COMPILE` to the compiler prefix. Clang is not a target compiler.
-The compiler triplet and architecture macros remain unchanged.
-
-The host needs Git, Ruby and patch for source preparation, GNU Make, iASL, DTC, Python 3,
-and a current pyelftools module. These are existing upstream dependencies.
-A compiler identity check and the smoke tests below do not establish a
-complete firmware build or acceptance on a physical board.
+`../build-firmware.sh` builds the pinned RPi5 TF-A and EDK2 sources.
+The default selects Clang from an explicit target prefix and native tools from
+an independently selected host prefix through EmberBSD-SDK. The freestanding
+target is `aarch64-unknown-none-elf`, without an application sysroot. Install
+the native tools, including iASL, DTC and pyelftools, from the common Ports
+recipes. Git is a separate source-inspection tool. Missing selected tools stop
+the build; the builder does not search Homebrew or select another compiler.
 
 ```sh
 bash ember/build-firmware.sh /absolute/cache --prepare
-CROSS_COMPILE=/absolute/gcc16/bin/aarch64--netbsd- \
-    bash ember/build-firmware.sh /absolute/cache --rp1-console
+EMBERBSD_SDK_SOURCE=/absolute/sdk-source \
+EMBER_HOST_PREFIX=/absolute/native-prefix \
+EMBER_TARGET_PREFIX=/absolute/target-prefix \
+    /absolute/native-prefix/bin/bash ember/build-firmware.sh /absolute/cache --rp1-console
 ```
+
+`--prepare` needs no compiler. For a platform with an explicit GCC exception,
+set `EMBER_TARGET_COMPILER_FAMILY=gcc` and `CROSS_COMPILE` to the compiler
+prefix inside `EMBER_TARGET_PREFIX`; this is never selected automatically.
+`EMBER_HOST_COMPILER_FAMILY=gcc` independently selects a native GCC exception.
+The GCC profile below remains specific to that explicit selection. A build and
+its checks do not establish firmware boot or acceptance on a physical board.
 
 The optional console and trace variants keep their platform defines.
 Use `--rp1-trace` for the trace variant. Both serial variants retain ACPI
@@ -53,7 +60,7 @@ raw results. A complete firmware build must also check the real compiler
 define and table retention on the target. Callback checks do not establish
 a native tty, kernel handoff or HDMI scanout.
 
-## Header and linker contract
+## GCC header and linker contract
 
 The profile applies only inside the firmware invocation. It does not change
 the compiler installation or application builds. `gcc-profile.sh` verifies
@@ -78,8 +85,8 @@ by tool lookup is checked after the selected rebuild is invalidated.
 
 The bounded invocation clears inherited compiler header/library search
 variables, ordinary compiler and linker flags, tool overrides, and GNU Make
-overrides. Host tools use their native defaults. The selected
-`CROSS_COMPILE` and the upstream platform/module options remain active.
+overrides. SDK bindings select native tools; the selected target compiler
+and upstream platform/module options remain active.
 TF-A receives explicit `CC` and `LD` tokens for the validated GCC driver,
 plus separate `CFLAGS+=` and `LDFLAGS+=` tokens. The EDK2 DSC patch
 uses single `=` assignments to append the profile. It does not use `==`.

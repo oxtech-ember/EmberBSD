@@ -150,7 +150,44 @@ class FirmwareSource
   end
 
   # This compares saved build options. It is not a hermetic toolchain proof.
-  def option_profile(receipt)
+  def clang_option_profile(receipt, template_root=nil)
+    compiler=receipt.fetch('compiler').slice('family','path','sha256','version','machine')
+    raise 'Incomplete Clang compiler identity' unless compiler.length == 5 &&
+      compiler['family']=='clang' && compiler['machine']=='aarch64-unknown-none-elf'
+    fs=receipt.fetch('freestanding')
+    empty=fs.fetch('empty_root')
+    tfa=fs.fetch('tfa_flags').split
+    edk=fs.fetch('edk2_flags').split
+    roles={"CFLAGS+=--sysroot=#{empty}"=>'CFLAGS+=--sysroot=@EMPTY',
+      "LDFLAGS+=--sysroot=#{empty}"=>'LDFLAGS+=--sysroot=@EMPTY'}
+    roles.each_key { |token| raise 'Missing or duplicate typed TF-A role' unless tfa.count(token)==1 }
+    edk_roles={"EMBER_CLANG_FIRMWARE_ROOT=#{empty}"=>'EMBER_CLANG_FIRMWARE_ROOT=@EMPTY'}
+    edk_roles.each_key { |token| raise 'Missing or duplicate typed EDK2 role' unless edk.count(token)==1 }
+    {'version'=>2,'variant'=>(receipt.fetch('variant').empty? ? 'standard' : receipt.fetch('variant')),
+      'revision'=>receipt.fetch('revision'),'compiler'=>compiler,'include'=>fs.fetch('include'),
+      'profile_sha256'=>fs.fetch('profile_sha256'),
+      'tfa_flags'=>tfa.map { |token| roles.fetch(token,token) },
+      'edk2_flags'=>edk.map { |token| edk_roles.fetch(token,token) },'conf_templates'=>conf_templates(template_root)}
+  end
+
+  def conf_templates(template_root=nil)
+    %w[build_rule tools_def target].to_h do |name|
+      template=template_root && template_root+'/edk2/BaseTools/Conf/'+name+'.template'
+      bytes=if template && File.file?(template) && !File.symlink?(template)
+        File.binread(template)
+      else
+        git('edk2','show','HEAD:BaseTools/Conf/'+name+'.template')
+      end
+      file=target('Conf/'+name+'.txt')
+      if File.exist?(file) || File.symlink?(file)
+        raise "Unknown Conf input: #{name}" unless File.file?(file) && !File.symlink?(file) && File.binread(file)==bytes
+      end
+      [name,Digest::SHA256.hexdigest(bytes)]
+    end
+  end
+
+  def option_profile(receipt, template_root=nil)
+    return clang_option_profile(receipt, template_root) if receipt.fetch('compiler')['family']=='clang'
     compiler=receipt.fetch('compiler').slice('cross_compile','path','sha256','version','machine')
     raise 'Incomplete compiler identity' unless compiler.length == 5
     fs=receipt.fetch('freestanding')
@@ -167,14 +204,7 @@ class FirmwareSource
     edk_roles={"EMBER_FIRMWARE_ROOT=#{empty}"=>'EMBER_FIRMWARE_ROOT=@EMPTY',
       "EMBER_FIRMWARE_SPECS=#{spec_path}"=>'EMBER_FIRMWARE_SPECS=@SPECS'}
     edk_roles.each_key { |token| raise 'Missing or duplicate typed EDK2 role' unless edk.count(token)==1 }
-    conf=%w[build_rule tools_def target].to_h do |name|
-      bytes=git('edk2','show','HEAD:BaseTools/Conf/'+name+'.template')
-      file=source+'/edk2/Conf/'+name+'.txt'
-      if File.exist?(file) || File.symlink?(file)
-        raise "Unknown Conf input: #{name}" unless File.file?(file) && !File.symlink?(file) && File.binread(file)==bytes
-      end
-      [name,Digest::SHA256.hexdigest(bytes)]
-    end
+    conf=conf_templates(template_root)
     {'version'=>1,'variant'=>(receipt.fetch('variant').empty? ? 'standard' : receipt.fetch('variant')),'revision'=>receipt.fetch('revision'),
       'compiler'=>compiler,'include'=>fs.fetch('include'),
       'profile_sha256'=>fs.fetch('profile_sha256'),'specs_sha256'=>fs.fetch('specs_sha256'),
@@ -215,11 +245,11 @@ class FirmwareSource
     option_profile(full)
   end
 
-  def check_options(previous, raw)
+  def check_options(previous, raw, template_root=nil)
     empty=raw.fetch('freestanding').fetch('empty_root')
     raise 'Current search root must be a real empty directory' unless
       File.directory?(empty) && !File.symlink?(empty) && Dir.empty?(empty)
-    profile=option_profile(raw)
+    profile=option_profile(raw,template_root)
     if previous['option_profile']
       raise 'Build option profile changed; objects were preserved' unless previous['option_profile']==profile
     else
@@ -268,8 +298,9 @@ class FirmwareSource
         bytes = File.binread(export+'/export/'+path)
       else
         owner = desired.fetch('pins').keys.reject { |p| p=='.' }.find { |p| path.start_with?(p+'/') }
-        raise 'Unknown patch owner' unless owner
-        bytes = git(owner, 'show', desired.fetch('pins').fetch(owner)+':'+path.delete_prefix(owner+'/'))
+        owner ||= '.'
+        relative = owner == '.' ? path : path.delete_prefix(owner+'/')
+        bytes = git(owner, 'show', desired.fetch('pins').fetch(owner)+':'+relative)
       end
       raise "Desired source hash changed: #{path}" unless Digest::SHA256.hexdigest(bytes) == wanted.fetch('sha256')
       changes << {'path'=>path, 'before'=>before, 'after'=>wanted, 'bytes'=>bytes}
@@ -376,7 +407,7 @@ end
         previous['option_profile']=tool.legacy_profile(tool.read_json(options[:receipt]),
           tool.read_json(options[:invocation]),options[:previous],previous)
       end
-      tool.check_options(previous,tool.read_json(options[:profile])) if options[:profile]
+      tool.check_options(previous,tool.read_json(options[:profile]),work+'/desired/export') if options[:profile]
       plan=tool.update(previous,desired,work+'/desired',work,apply:options[:apply])
       puts "PASS: #{plan.fetch('changes').length} verified source replacements#{options[:apply] ? ' applied' : ' planned'}"
     end

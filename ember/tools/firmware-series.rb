@@ -51,7 +51,8 @@ files = {}
 syntax = []
 hunks = 0
 series.each do |name|
-  owner = if name.start_with?('tfa-') then 'arm-trusted-firmware'
+  owner = if name.start_with?('top-') then '.'
+          elsif name.start_with?('tfa-') then 'arm-trusted-firmware'
           elsif name.start_with?('edk2-') then 'edk2' else 'edk2-platforms' end
   lines = patches.fetch(name).lines
   path = nil
@@ -106,19 +107,20 @@ files.each do |(owner,path),first_old_count|
   FileUtils.mkdir_p(File.dirname(target))
   if entry.empty?
     abort "Missing original file: #{owner}/#{path}" unless first_old_count==0
-    inputs[owner+'/'+path]={new_file:true}
+    inputs[owner == '.' ? path : owner+'/'+path]={new_file:true}
   else
     abort "Expected a regular source blob: #{owner}/#{path}" unless entry.match?(/\A100(?:644|755) blob [a-f0-9]{40}\t/)
     bytes=run.call('export-'+owner+'/'+path,git.call(owner,'show',revision+':'+path))
     File.binwrite(target,bytes)
     File.chmod(entry.start_with?('100755 ') ? 0o755 : 0o644,target)
-    inputs[owner+'/'+path]={mode:entry.split.first,sha256:Digest::SHA256.hexdigest(bytes),bytes:bytes.bytesize}
+    inputs[owner == '.' ? path : owner+'/'+path]={mode:entry.split.first,sha256:Digest::SHA256.hexdigest(bytes),bytes:bytes.bytesize}
   end
 end
 # Record count errors as well as the actual patch program's diagnostic.
 File.write(output+'/hunk-count-errors.json',JSON.pretty_generate(syntax)+"\n")
 series.each do |name|
-  owner=if name.start_with?('tfa-') then 'arm-trusted-firmware'
+  owner=if name.start_with?('top-') then '.'
+        elsif name.start_with?('tfa-') then 'arm-trusted-firmware'
         elsif name.start_with?('edk2-') then 'edk2' else 'edk2-platforms' end
   run.call('apply-'+name,['patch','-s','-t','-N','-p1','-F0','-d',output+'/export/'+owner],patches.fetch(name))
   puts 'PASS: '+name
@@ -127,7 +129,7 @@ abort 'Invalid hunk counts: '+syntax.join('; ') unless syntax.empty?
 results=files.keys.to_h do |owner,path|
   target=output+'/export/'+owner+'/'+path
   abort "Missing output: #{owner}/#{path}" unless File.file?(target) && !File.symlink?(target)
-  [owner+'/'+path,Digest::SHA256.file(target).hexdigest]
+  [owner == '.' ? path : owner+'/'+path,Digest::SHA256.file(target).hexdigest]
 end
 # Keep the current UEFI handoff policy across the complete ordered series.
 config=File.read(output+'/export/edk2-platforms/Platform/RaspberryPi/RPi5/Drivers/RpiPlatformDxe/ConfigTable.c')

@@ -1,0 +1,12 @@
+# Keep firmware target freestanding.
+--- a/BaseTools/Conf/tools_def.template
++++ b/BaseTools/Conf/tools_def.template
+@@ -1149,7 +1149,7 @@
+ 
+ DEFINE CLANGDWARF_IA32_TARGET         = -target i686-pc-linux-gnu
+ DEFINE CLANGDWARF_X64_TARGET          = -target x86_64-pc-linux-gnu
+-DEFINE CLANGDWARF_AARCH64_TARGET      = -target aarch64-linux-gnu
++DEFINE CLANGDWARF_AARCH64_TARGET      = -target aarch64-unknown-none-elf
+ DEFINE CLANGDWARF_RISCV64_TARGET      = -target riscv64-linux-gnu
+ DEFINE CLANGDWARF_LOONGARCH64_TARGET  = -target loongarch64-linux-gnu
+ 

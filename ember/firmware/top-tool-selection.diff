@@ -1,0 +1,63 @@
+# Select explicitly routed toolchains and workspace configuration.
+--- a/build.sh
++++ b/build.sh
+@@ -71,12 +71,6 @@
+     RPI_BUILD_MAKE="gmake"
+ fi
+ 
+-if [[ "${HOST_SYSTEM}" == "Darwin" ]] && command -v brew >/dev/null 2>&1; then
+-    GNU_SED_BIN_DIR="$(brew --prefix gnu-sed 2>/dev/null)/libexec/gnubin"
+-    if [[ -x "${GNU_SED_BIN_DIR}/sed" ]]; then
+-        export PATH="${GNU_SED_BIN_DIR}:${PATH}"
+-    fi
+-fi
+ 
+ # Fix-up possible differences in reported arch
+ if [[ "${MACHINE_TYPE}" == "arm64" ]]; then
+@@ -85,19 +79,16 @@
+     MACHINE_TYPE='x86_64'
+ fi
+ 
+-if [[ "${HOST_SYSTEM}" == "Darwin" ]]; then
+-    export CROSS_COMPILE="${CROSS_COMPILE:-aarch64-elf-}"
+-elif [[ "${MACHINE_TYPE}" != "aarch64" ]]; then
+-    export CROSS_COMPILE="${CROSS_COMPILE:-aarch64-linux-gnu-}"
+-fi
+-
++: "${RPI_TFA_AR:?select the TF-A archiver}"
++: "${RPI_TOOLCHAIN_TAG:?select the EDK2 toolchain tag}"
++case "${RPI_TOOLCHAIN_TAG}" in GCC|CLANGDWARF) ;; *) echo "unsupported EDK2 toolchain tag" >&2; exit 1 ;; esac
+ #
+ # Build TF-A
+ #
+ pushd arm-trusted-firmware || exit
+ 
+ "${RPI_BUILD_MAKE}" \
+-    AR="${CROSS_COMPILE}gcc-ar" \
++    AR="${RPI_TFA_AR}" \
+     PLAT="rpi${MODEL}" \
+     PRELOADED_BL33_BASE=0x20000 \
+     RPI3_PRELOADED_DTB_BASE=0x3E0000 \
+@@ -127,6 +118,7 @@
+ 
+ export GCC_AARCH64_PREFIX="${CROSS_COMPILE}"
+ export WORKSPACE=${PWD}
++export CONF_PATH="${WORKSPACE}/Conf"
+ export PACKAGES_PATH=${WORKSPACE}/edk2:${WORKSPACE}/edk2-platforms:${WORKSPACE}/edk2-non-osi
+ 
+ EDK2_SD_PATCH="${WORKSPACE}/temporary-patches/edk2/0001-MdeModulePkg-SdMmcPciHcDxe-Add-platform-signaling-vo.patch"
+@@ -159,7 +151,7 @@
+ 
+ build \
+     -a AARCH64 \
+-    -t GCC \
++    -t "${RPI_TOOLCHAIN_TAG}" \
+     -b ${RELEASE_TYPE} \
+     -p "edk2-platforms/Platform/RaspberryPi/RPi${MODEL}/RPi${MODEL}.dsc" \
+     -D "TFA_BUILD_ARTIFACTS=${ATF_BUILD_DIR}" \
+@@ -167,4 +159,4 @@
+     ${EDK2_FLAGS} \
+     || exit
+ 
+-cp "${WORKSPACE}/Build/RPi${MODEL}/${RELEASE_TYPE}_GCC/FV/RPI_EFI.fd" "${PWD}"
++cp "${WORKSPACE}/Build/RPi${MODEL}/${RELEASE_TYPE}_${RPI_TOOLCHAIN_TAG}/FV/RPI_EFI.fd" "${PWD}"

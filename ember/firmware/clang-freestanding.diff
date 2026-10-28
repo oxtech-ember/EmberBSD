@@ -1,0 +1,21 @@
+# Clang uses its own firmware search root and resource headers.
+--- a/Platform/RaspberryPi/RPi5/RPi5.dsc
++++ b/Platform/RaspberryPi/RPi5/RPi5.dsc
+@@ -266,6 +266,17 @@
+   GCC:*_*_AARCH64_DLINK_FLAGS   = --sysroot=$(EMBER_FIRMWARE_ROOT) -specs=$(EMBER_FIRMWARE_SPECS) -nostdlib -static -Wl,-nostdlib
+   GCC:*_*_AARCH64_ASLDLINK_FLAGS = --sysroot=$(EMBER_FIRMWARE_ROOT) -specs=$(EMBER_FIRMWARE_SPECS) -nostdlib -static -Wl,-nostdlib
+ !endif
++!ifdef EMBER_CLANG_FIRMWARE_ROOT
++  GCC:*_CLANGDWARF_AARCH64_CC_FLAGS = --sysroot=$(EMBER_CLANG_FIRMWARE_ROOT) -ffreestanding -nostdinc -isystem$(EMBER_CLANG_INCLUDE)
++  GCC:*_CLANGDWARF_AARCH64_PP_FLAGS = --sysroot=$(EMBER_CLANG_FIRMWARE_ROOT) -ffreestanding -nostdinc -isystem$(EMBER_CLANG_INCLUDE)
++  GCC:*_CLANGDWARF_AARCH64_ASM_FLAGS = --sysroot=$(EMBER_CLANG_FIRMWARE_ROOT) -ffreestanding -nostdinc -isystem$(EMBER_CLANG_INCLUDE)
++  GCC:*_CLANGDWARF_AARCH64_VFRPP_FLAGS = --sysroot=$(EMBER_CLANG_FIRMWARE_ROOT) -ffreestanding -nostdinc -isystem$(EMBER_CLANG_INCLUDE)
++  GCC:*_CLANGDWARF_AARCH64_ASLPP_FLAGS = --sysroot=$(EMBER_CLANG_FIRMWARE_ROOT) -ffreestanding -nostdinc -isystem$(EMBER_CLANG_INCLUDE)
++  GCC:*_CLANGDWARF_AARCH64_ASLCC_FLAGS = --sysroot=$(EMBER_CLANG_FIRMWARE_ROOT) -ffreestanding -nostdinc -isystem$(EMBER_CLANG_INCLUDE)
++  GCC:*_CLANGDWARF_AARCH64_DTCPP_FLAGS = --sysroot=$(EMBER_CLANG_FIRMWARE_ROOT) -ffreestanding -nostdinc -isystem$(EMBER_CLANG_INCLUDE)
++  GCC:*_CLANGDWARF_AARCH64_DLINK_FLAGS = --sysroot=$(EMBER_CLANG_FIRMWARE_ROOT) --ld-path=$(EMBER_FIRMWARE_LLD) -nostdlib -Wl,-nostdlib
++  GCC:*_CLANGDWARF_AARCH64_ASLDLINK_FLAGS = --sysroot=$(EMBER_CLANG_FIRMWARE_ROOT) --ld-path=$(EMBER_FIRMWARE_LLD) -nostdlib -Wl,-nostdlib
++!endif
+ !if $(RP1_UART_CONSOLE) == TRUE
+ !if $(CM5_BOOT_TRACE) == TRUE
+   GCC:*_*_*_CC_FLAGS          = -DRPI_MODEL=5 -DRP1_UART_CONSOLE -DCM5_BOOT_TRACE

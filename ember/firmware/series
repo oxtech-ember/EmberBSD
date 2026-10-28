@@ -25,7 +25,10 @@ fan-state-fix.diff
 power-button.diff
 bcm2712-display-resources.diff
 gcc-freestanding.diff
+clang-freestanding.diff
 tfa-shell-slice.diff
 edk2-shell-wrapper.diff
 bcm2712-iommuc-resources.diff
 edk2-rp1-console-retain.diff
+top-tool-selection.diff
+edk2-clang-target.diff

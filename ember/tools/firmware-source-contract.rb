@@ -33,6 +33,7 @@ run.call(base+'/edk2','add','.')
 run.call(base+'/edk2','commit','-qm','fixture original')
 File.write(base+'/.gitmodules',"[submodule \"edk2\"]\n path = edk2\n url = https://example.invalid/fixture\n")
 File.write(base+'/.gitignore',"/ignored-output\n")
+File.write(base+'/build.sh','original top')
 run.call(base,'add','.')
 run.call(base,'commit','-qm','fixture top')
 run.call(base,'config','submodule.edk2.url','https://example.invalid/fixture')
@@ -86,6 +87,17 @@ test=lambda do |name,&body|
 end
 
 apply=lambda { |tool,old_state,new_state,work| tool.update(old_state,new_state,work+'/export',work,apply:true) }
+test.call('top-level-patch-restoration') do |tool,previous,_,work,assert,_,source|
+  desired=Marshal.load(Marshal.dump(previous))
+  original={'sha256'=>sha.call('original top'),'mode'=>0o644}
+  desired['targets']['build.sh']={'sha256'=>sha.call('patched top'),'mode'=>0o644,'original'=>original}
+  File.write(work+'/export/export/build.sh','patched top')
+  FirmwareSource.with_lock(source) { tool.update(previous,desired,work+'/export',work,apply:true) }
+  assert.call(File.read(source+'/build.sh')=='patched top','top source not patched')
+  restored=tool.verify
+  FirmwareSource.with_lock(source) { tool.update(restored,previous,work+'/export',work,apply:true) }
+  assert.call(File.read(source+'/build.sh')=='original top','top source not restored')
+end
 test.call('apply-idempotent') do |tool,previous,desired,work,assert,_,source|
   FirmwareSource.with_lock(source) { apply.call(tool,previous,desired,work) }
   assert.call(File.read(source+'/edk2/changed')=='new source','wrong published source')
@@ -226,6 +238,32 @@ test.call('ordered-recipe') do |tool,previous,_,work,assert,_,_|
   assert.call(first!=second,'commuting reorder lost committed recipe order')
 end
 
+test.call('clang-option-profile') do |tool,previous,_,work,assert,reject,source|
+  empty=work+'/empty'; Dir.mkdir(empty)
+  raw={'variant'=>'','revision'=>'a'*40,
+    'compiler'=>{'family'=>'clang','path'=>'/prefix/bin/clang','version'=>'23.1.4',
+      'machine'=>'aarch64-unknown-none-elf','sha256'=>'b'*64},
+    'freestanding'=>{'include'=>'/prefix/lib/clang/23/include','empty_root'=>empty,
+      'profile_sha256'=>'c'*64,
+      'tfa_flags'=>"CFLAGS+=--sysroot=#{empty} LDFLAGS+=--sysroot=#{empty} CC=/prefix/bin/clang",
+      'edk2_flags'=>"-D EMBER_CLANG_FIRMWARE_ROOT=#{empty}"}}
+  template=work+'/export/export/edk2/BaseTools/Conf/tools_def.template'
+  FileUtils.mkdir_p(File.dirname(template))
+  File.write(template, 'patched template')
+  FileUtils.mkdir_p(source+'/Conf')
+  File.write(source+'/Conf/tools_def.txt', 'patched template')
+  previous['option_profile']=tool.option_profile(raw,work+'/export/export')
+  same=Marshal.load(Marshal.dump(raw)); other=work+'/other'; Dir.mkdir(other)
+  same['freestanding']['empty_root']=other
+  %w[tfa_flags edk2_flags].each { |k| same['freestanding'][k]=same['freestanding'][k].gsub(empty,other) }
+  tool.check_options(previous,same,work+'/export/export')
+  assert.call(true,'equivalent Clang search root refused')
+  bad=Marshal.load(Marshal.dump(same)); bad['compiler']['machine']='aarch64-unknown-linux-gnu'
+  reject.call { tool.check_options(previous,bad,work+'/export/export') }
+  File.write(source+'/Conf/tools_def.txt', 'unknown config')
+  reject.call { tool.check_options(previous,same,work+'/export/export') }
+end
+
 test.call('option-profile') do |tool,previous,_,work,assert,reject,source|
   empty=work+'/empty';Dir.mkdir(empty)
   raw={'variant'=>'','revision'=>'pinned','compiler'=>{'path'=>'/compiler','version'=>'16.2.0','machine'=>'aarch64--netbsd','sha256'=>'a'*64,'cross_compile'=>'/prefix-'},
@@ -272,8 +310,8 @@ test.call('option-profile') do |tool,previous,_,work,assert,reject,source|
   reject.call { tool.legacy_profile(legacy,wrong,revision,previous) }
   FileUtils.mkdir_p(source+'/Build')
   reject.call { tool.check_options(previous.reject { |key,_| key=='option_profile' },raw) }
-  FileUtils.mkdir_p(source+'/edk2/Conf')
-  File.write(source+'/edk2/Conf/target.txt','unique user configuration')
+  FileUtils.mkdir_p(source+'/Conf')
+  File.write(source+'/Conf/target.txt','unique user configuration')
   reject.call { tool.check_options(previous,raw) }
 end
 File.write(output+'/receipt.json',JSON.pretty_generate({checks:checks,cases:records,
