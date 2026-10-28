@@ -27,7 +27,7 @@ On macOS, set `CFLAGS` to `-isysroot` followed by the SDK path printed by
 
 ```sh
 CC=/absolute/gcc-16 python3 ember/tools/tests/imported-gcc16/run.py \
-    /absolute/source-tree --work /absolute/new-work
+    /absolute/source-tree --nvi-source /absolute/prepared-nvi --work /absolute/new-work
 ```
 
 The default mode uses ASan/UBSan. `--mode analyze` adds GCC `-fanalyzer` and
@@ -38,7 +38,9 @@ on supported hosts. It is not a macOS ARM64 mode. `--mode plain` omits those
 tools. All modes retain input hashes, commands, exits and logs in the work
 directory. Existing work directories are rejected.
 
-For causal comparison, use `--revision <commit>` to extract the same functions
+For nvi cases, select the common Ports prepared source with `--nvi-source`
+or `EMBER_NVI_SOURCE`; no nvi source is needed for IPFilter-only cases.
+For causal comparison with the historical embedded copy, use `--revision <commit>` to extract the same functions
 from a Git commit. Run `--case pcap`, `--case pcap-open`, `--case icmp`,
 `--case nvi`, and `--case nvi-space` separately
 so one expected failure does not hide the others. The old PCAP fixture fails

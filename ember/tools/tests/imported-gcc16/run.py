@@ -19,11 +19,23 @@ def extract(pattern, source):
     return matches[0].group(0) + "\n"
 
 
+def read_nvi_source(root, selected, revision, path):
+    """Read historical OS source or the explicitly selected common source."""
+    if revision:
+        return subprocess.check_output(["git", "-C", str(root), "show",
+                                        revision + ":external/bsd/nvi/dist/" + path])
+    if not selected:
+        raise ValueError("--nvi-source or EMBER_NVI_SOURCE is required for nvi cases")
+    return (Path(selected).resolve(strict=True) / path).read_bytes()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("source_tree", type=Path)
     parser.add_argument("--work", required=True, type=Path,
                         help="New output directory; existing directories are rejected")
+    parser.add_argument("--nvi-source", type=Path, default=os.environ.get("EMBER_NVI_SOURCE"),
+                        help="Prepared common Ports nvi source (or EMBER_NVI_SOURCE)")
     parser.add_argument("--revision", help="Read this Git revision for a causal comparison")
     parser.add_argument("--case", choices=("all", "pcap", "pcap-open", "icmp", "nvi", "nvi-space"),
                         default="all")
@@ -46,6 +58,14 @@ def main():
         data = (subprocess.check_output(["git", "-C", str(root), "show", args.revision + ":" + path])
                 if args.revision else (root / path).read_bytes())
         receipt["inputs"][path] = hashlib.sha256(data).hexdigest()
+        return data.decode("latin1")
+
+    def nvi_source(path):
+        try:
+            data = read_nvi_source(root, args.nvi_source, args.revision, path)
+        except ValueError as exc:
+            parser.error(str(exc))
+        receipt["inputs"]["nvi/" + path] = hashlib.sha256(data).hexdigest()
         return data.decode("latin1")
 
     def run(label, cmd):
@@ -79,13 +99,13 @@ def main():
         cases.append(("ipf", fixture / "ipf.c", [],
                       [args.case] if args.case != "all" else ["pcap", "pcap-open", "icmp"]))
     if args.case in ("all", "nvi"):
-        nvi = source("external/bsd/nvi/dist/common/delete.c")
+        nvi = nvi_source("common/delete.c")
         (work / "nvi-function.inc").write_text(nvi[:nvi.index('#include "config.h"')] +
                                              extract(r"^int\ndel\(.*?^\}", nvi))
         cases += [("nvi-byte", fixture / "nvi.c", ["-DCHAR_T=unsigned char"], [None]),
                   ("nvi-wide", fixture / "nvi.c", [], [None])]
     if args.case in ("all", "nvi-space"):
-        mem = source("external/bsd/nvi/dist/common/mem.h")
+        mem = nvi_source("common/mem.h")
         start = mem.index("#if defined(HAVE_GCC)")
         end = mem.index("ADD_SPACE_RETW(")
         end = mem.index("\n", end) + 1
