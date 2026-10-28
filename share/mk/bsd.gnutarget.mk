@@ -22,7 +22,11 @@ GNU_CONFIGURE_ARGS?=
 GNU_CONFIGURE_ENV?=
 GNU_MAKE_ENV?=
 GNU_CONFIGURE_CFLAGS?= ${CFLAGS}
-_GNU_TARGET_ENV= CC=${CC:Q} CXX=${CXX:Q} CPP=${CPP:Q} AR=${AR:Q} \
+# Libtool queries compiler search paths without CPPFLAGS/LDFLAGS. Keep its
+# driver in the same target sysroot used by normal compile and link commands.
+_GNU_DRIVER_SYSROOT= ${CPPFLAGS:M--sysroot=*}
+_GNU_TARGET_ENV= CC=${CC:Q}\ ${_GNU_DRIVER_SYSROOT:Q} \
+	CXX=${CXX:Q}\ ${_GNU_DRIVER_SYSROOT:Q} CPP=${CPP:Q} AR=${AR:Q} \
 	AS=${AS:Q} LD=${LD:Q} NM=${NM:Q} RANLIB=${RANLIB:Q} STRIP=${STRIP:Q} \
 	CPPFLAGS=${CPPFLAGS:Q} \
 	CFLAGS=${GNU_CONFIGURE_CFLAGS:Q} CXXFLAGS=${CXXFLAGS:Q} \

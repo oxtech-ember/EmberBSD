@@ -4,6 +4,7 @@
 """Check selected tools and incremental GNU target builds without execution."""
 import argparse
 import os
+import shlex
 from pathlib import Path
 import subprocess
 import tempfile
@@ -76,6 +77,14 @@ all: gnu-target-build
     selected = (build / 'selected.env').read_text()
     if str(host / 'bin/clang') not in selected or '--sysroot=' + str(a.sysroot) not in selected:
         raise SystemExit('configure did not receive the selected target compiler and sysroot')
+    if '--sysroot=' + str(a.sysroot) not in selected.splitlines()[0]:
+        raise SystemExit('target compiler driver did not receive the sysroot')
+    search = subprocess.check_output(shlex.split(selected.splitlines()[0]) + ['-print-search-dirs'],
+                                     env=env, text=True)
+    if str(a.sysroot / 'usr/lib') not in search:
+        raise SystemExit('target compiler search does not use the target sysroot')
+    if 'MacOSX' in search:
+        raise SystemExit('target compiler search includes the Darwin host SDK')
     if '-Werror' in selected:
         raise SystemExit('configure probes received fatal warning policy')
     result = subprocess.run([str(host / 'bin/llvm-readelf'), '-h', str(build / 'fixture.o')],
