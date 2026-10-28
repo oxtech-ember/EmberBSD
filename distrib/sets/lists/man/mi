@@ -14,6 +14,7 @@
 ./usr/share/info/cvsclient.info			man-cvs-info		cvs,info
 ./usr/share/info/dc.info			man-obsolete		obsolete
 ./usr/share/info/diff.info			man-util-info		info
+./usr/share/info/diffutils.info		man-util-info		info
 ./usr/share/info/dir				man-info-share		info
 ./usr/share/info/flex.info			man-computil-info	info
 ./usr/share/info/g++FAQ.info			man-obsolete		obsolete

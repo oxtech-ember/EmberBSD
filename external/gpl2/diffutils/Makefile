@@ -2,6 +2,6 @@
 
 # We don't use GNU cmp and GNU sdiff, but have our own
 
-SUBDIR=	lib .WAIT bin
+SUBDIR=	gnu
 
 .include <bsd.subdir.mk>
