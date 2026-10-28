@@ -367,9 +367,7 @@ fatal(int f, const char *msg)
 }
 
 void
-fatalperror(f, msg)
-	int f;
-	const char *msg;
+fatalperror(int f, const char *msg)
 {
 	char buf[BUFSIZ];
 
