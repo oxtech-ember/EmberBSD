@@ -33,6 +33,10 @@ __KERNEL_RCSID(0, "$NetBSD: amdgpu_psp_v10_0.c,v 1.3 2021/12/19 12:21:29 riastra
 #include <linux/module.h>
 #include <linux/pci.h>
 
+#ifdef __NetBSD__
+#include <machine/pmap.h>
+#endif
+
 #include "amdgpu.h"
 #include "amdgpu_psp.h"
 #include "amdgpu_ucode.h"
@@ -401,6 +405,19 @@ psp_v10_0_ring_timeout(struct psp_context *psp, uint32_t expected,
 	uint64_t offset = 0, start, end, bo_start, vram_start, ring_mc;
 	uint64_t cmd_mc, mapped_mc, aper_base, aper_size;
 	bool indexed_valid = false;
+#ifdef __NetBSD__
+	struct ttm_bo_kmap_obj *kmap;
+	struct ttm_mem_reg *mem;
+	bus_addr_t bar_base, bar_page;
+	bus_size_t bar_size;
+	bus_space_handle_t bar_handle;
+	paddr_t fence_pa = 0;
+	uint64_t bus_base, bus_offset, page_offset;
+	uint32_t bar_value = 0, mapped_after_bar;
+	int bar_error = EINVAL, kmap_type;
+	pcireg_t pci_command;
+	bool pa_valid;
+#endif
 
 	/* These mailbox meanings apply to the Raven PSP v10 interface. */
 	if (adev->asic_type != CHIP_RAVEN ||
@@ -422,6 +439,40 @@ psp_v10_0_ring_timeout(struct psp_context *psp, uint32_t expected,
 	}
 	mapped1 = READ_ONCE(*(uint32_t *)psp->fence_buf);
 	end = ktime_get_ns();
+#ifdef __NetBSD__
+	/* Keep the original fence sample independent of the BAR probe. */
+	kmap = &psp->fence_buf_bo->kmap;
+	mem = &psp->fence_buf_bo->tbo.mem;
+	kmap_type = kmap->bo_kmap_type;
+	bus_base = mem->bus.base;
+	bus_offset = mem->bus.offset;
+	pa_valid = pmap_extract(pmap_kernel(), (vaddr_t)psp->fence_buf,
+	    &fence_pa);
+	bar_base = pci_resource_start(adev->pdev, 0);
+	bar_size = pci_resource_len(adev->pdev, 0);
+	page_offset = offset & ~(uint64_t)PAGE_MASK;
+	pci_command = pci_conf_read(adev->pdev->pd_pa.pa_pc,
+	    adev->pdev->pd_pa.pa_tag, PCI_COMMAND_STATUS_REG);
+	if (indexed_valid && fence_mc_addr == psp->fence_buf_mc_addr &&
+	    mem->mem_type == TTM_PL_VRAM && bus_offset == offset &&
+	    PCI_MAPREG_TYPE(adev->pdev->pd_resources[0].type) == PCI_MAPREG_TYPE_MEM &&
+	    (pci_resource_flags(adev->pdev, 0) & BUS_SPACE_MAP_PREFETCHABLE) &&
+	    (pci_command & PCI_COMMAND_MEM_ENABLE) &&
+	    bar_base != 0 && !(bar_base & PAGE_MASK) && bar_size >= PAGE_SIZE &&
+	    page_offset <= bar_size - PAGE_SIZE &&
+	    page_offset <= (bus_addr_t)~(bus_addr_t)0 - PAGE_SIZE &&
+	    bar_base <= (bus_addr_t)~(bus_addr_t)0 - page_offset - PAGE_SIZE) {
+		bar_page = bar_base + page_offset;
+		bar_error = bus_space_map(adev->gmc.aper_tag, bar_page, PAGE_SIZE,
+		    BUS_SPACE_MAP_LINEAR | BUS_SPACE_MAP_PREFETCHABLE, &bar_handle);
+		if (bar_error == 0) {
+			bar_value = bus_space_read_4(adev->gmc.aper_tag, bar_handle,
+			    offset & PAGE_MASK);
+			bus_space_unmap(adev->gmc.aper_tag, bar_handle, PAGE_SIZE);
+		}
+	}
+	mapped_after_bar = READ_ONCE(*(uint32_t *)psp->fence_buf);
+#endif
 	control = RREG32_SOC15(MP0, 0, mmMP0_SMN_C2PMSG_64);
 	wptr = RREG32_SOC15(MP0, 0, mmMP0_SMN_C2PMSG_67);
 	rptr = RREG32_SOC15(MP0, 0, mmMP0_SMN_C2PMSG_68);
@@ -452,6 +503,13 @@ psp_v10_0_ring_timeout(struct psp_context *psp, uint32_t expected,
 	DRM_ERROR("PSP BO page %#"PRIx64" type %u\n", bo_start, mem_type);
 	DRM_ERROR("PSP CPU aperture %#"PRIx64"\n", aper_base);
 	DRM_ERROR("PSP aperture size %#"PRIx64"\n", aper_size);
+#ifdef __NetBSD__
+	DRM_ERROR("PSP BAR base %#"PRIx64"\n", (uint64_t)bar_base);
+	DRM_ERROR("PSP BAR size %#"PRIx64"\n", (uint64_t)bar_size);
+	DRM_ERROR("PSP kmap type %d\n", kmap_type);
+	DRM_ERROR("PSP bus base %#"PRIx64"\n", bus_base);
+	DRM_ERROR("PSP bus offset %#"PRIx64"\n", bus_offset);
+#endif
 	DRM_ERROR("PSP expected %08x cmd %08x\n", expected, cmd);
 	DRM_ERROR("PSP status %08x\n", status);
 	DRM_ERROR("PSP mapped0 %08x mapped1 %08x\n", mapped0, mapped1);
@@ -460,6 +518,17 @@ psp_v10_0_ring_timeout(struct psp_context *psp, uint32_t expected,
 	else
 		DRM_ERROR("PSP indexed unavailable\n");
 	DRM_ERROR("PSP sample delta ns %"PRIu64"\n", end - start);
+#ifdef __NetBSD__
+	if (bar_error == 0)
+		DRM_ERROR("PSP BAR value %08x\n", bar_value);
+	else
+		DRM_ERROR("PSP BAR unavailable %d\n", bar_error);
+	DRM_ERROR("PSP mapped after BAR %08x\n", mapped_after_bar);
+	if (pa_valid)
+		DRM_ERROR("PSP fence PA %#"PRIx64"\n", (uint64_t)fence_pa);
+	else
+		DRM_ERROR("PSP fence PA unavailable\n");
+#endif
 }
 
 void psp_v10_0_set_psp_funcs(struct psp_context *psp)
