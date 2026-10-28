@@ -1,0 +1,13 @@
+# TDB 1.4.15 Waf runtime checks for EmberBSD/NetBSD 11 aarch64.
+# These describe the target OS and its regular-file interfaces; they do not
+# identify a particular kernel build or machine. Unknown targets may supply
+# their own upstream Waf answers or cross executor.
+Checking uname sysname type: "NetBSD"
+rpath library support: OK
+Checking getconf LFS_CFLAGS: NO
+Checking correct behavior of strtoll: NO
+Checking for working strptime: OK
+Checking for C99 vsnprintf: "1"
+Checking for HAVE_SHARED_MMAP: OK
+Checking for HAVE_INCOHERENT_MMAP: NO
+Checking for HAVE_SECURE_MKSTEMP: OK

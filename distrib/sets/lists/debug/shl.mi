@@ -302,6 +302,7 @@
 ./usr/libdata/debug/usr/lib/libssl.so.16.0.debug		comp-crypto-debug	debug,compatfile,openssl=35
 ./usr/libdata/debug/usr/lib/libstdc++.so.9.0.debug		comp-sys-debug	debug,compatfile,gcc=10,cxx,libstdcxx
 ./usr/libdata/debug/usr/lib/libstdc++.so.9.1.debug		comp-sys-debug	debug,compatfile,gcc=12,cxx,libstdcxx
+./usr/libdata/debug/usr/lib/libtdb.so.1.4.15.debug		comp-sys-debug	debug,compatfile
 ./usr/libdata/debug/usr/lib/libterminfo.so.2.0.debug		comp-sys-debug	debug,compatfile
 ./usr/libdata/debug/usr/lib/libtpm_unseal.so.2.0.debug		comp-tpm-debug	debug,compatfile,tpm
 ./usr/libdata/debug/usr/lib/libtre.so.0.8.debug			comp-sys-debug	debug,compatfile

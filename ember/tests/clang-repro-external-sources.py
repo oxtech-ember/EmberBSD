@@ -23,6 +23,7 @@ ROOTS = (('EMBER_LIBEDIT_SOURCE', 'libedit', '/usr/src/external/libedit'),
          ('EMBER_RCS_SOURCE', 'rcs', '/usr/src/external/rcs'),
          ('EMBER_DIFFUTILS_SOURCE', 'diffutils', '/usr/src/external/diffutils'),
          ('EMBER_GREP_SOURCE', 'grep', '/usr/src/external/grep'),
+         ('EMBER_TDB_SOURCE', 'tdb', '/usr/src/external/tdb'),
          ('EMBER_LLVM_SOURCE', 'llvm', '/usr/src/external/llvm'),
          ('EMBER_EXTERNAL_LLVM_RUNTIME', 'runtime', '/usr/pkg/llvm'))
 

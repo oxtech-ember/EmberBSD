@@ -3676,6 +3676,7 @@
 ./usr/include/sysexits.h			comp-c-include
 ./usr/include/syslog.h				comp-c-include
 ./usr/include/tar.h				comp-c-include
+./usr/include/tdb.h				comp-c-include
 ./usr/include/tcpd.h				comp-c-include
 ./usr/include/term.h				comp-c-include
 ./usr/include/termcap.h				comp-c-include
@@ -4384,6 +4385,7 @@
 ./usr/lib/libsupc++.a				comp-cxx-lib		compatfile,cxx,libstdcxx,gcc
 ./usr/lib/libtddl.a				comp-c-lib		compatfile,tpm
 ./usr/lib/libtddl_p.a				comp-c-proflib		compatfile,tpm,profile
+./usr/lib/libtdb.a				comp-c-lib		compatfile
 ./usr/lib/libtelnet.a				comp-obsolete		obsolete,compatfile
 ./usr/lib/libtelnet_p.a				comp-obsolete		obsolete,compatfile
 ./usr/lib/libtermcap.a				comp-c-lib		compatfile

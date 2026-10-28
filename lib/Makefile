@@ -325,6 +325,9 @@ SUBDIR+=	../sys/rump/net/lib
 .endif
 .endif
 
+# TDB configure and links require the target libc and pthread above.
+SUBDIR+= .WAIT ../external/bsd/tdb/lib
+
 # Lua bindings come last, they might depend on anything
 SUBDIR+=	lua
 

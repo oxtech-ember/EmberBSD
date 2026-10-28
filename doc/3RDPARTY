@@ -1421,6 +1421,20 @@ Notes:
 See src/external/bsd/tmux/README for instructions on how to import a
 new tmux release.
 
+Package:	tdb
+Version:	1.4.15
+Current Vers:	1.4.15
+Maintainer:	Samba Team
+Archive Site:	https://www.samba.org/ftp/tdb/
+Home Page:	https://tdb.samba.org/
+Date:		2026-10-29
+Responsible:	EmberBSD Ports
+License:	LGPL-3.0-or-later (library); GPL-3.0-or-later (utilities)
+Location:	Common Ports-prepared databases/tdb source
+Notes:
+The OS producer installs the library and header from the complete common
+source and patch set; the upstream utility programs are not installed.
+
 Package:	top
 Version:	3.8beta1
 Current Vers:	3.8beta1

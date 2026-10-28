@@ -898,6 +898,9 @@
 ./usr/lib/libstdc++.so.9			base-sys-shlib		compatfile,gcc,cxx,libstdcxx
 ./usr/lib/libstdc++.so.9.0			base-sys-shlib		compatfile,gcc,cxx,libstdcxx,gcc=10
 ./usr/lib/libstdc++.so.9.1			base-sys-shlib		compatfile,gcc,cxx,libstdcxx,gcc=12
+./usr/lib/libtdb.so				base-sys-shlib		compatfile
+./usr/lib/libtdb.so.1				base-sys-shlib		compatfile
+./usr/lib/libtdb.so.1.4.15			base-sys-shlib		compatfile
 ./usr/lib/libtelnet.so				base-obsolete		obsolete
 ./usr/lib/libtermcap.so				base-sys-shlib		compatfile
 ./usr/lib/libtermcap.so.0			base-sys-shlib		compatfile
