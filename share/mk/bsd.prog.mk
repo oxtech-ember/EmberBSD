@@ -429,6 +429,16 @@ DPADD+=${DPADD_AFTER}
 # Per-program definitions and targets.
 #
 
+.if !target(__progdebug)
+__progdebug: .USE
+	${_MKTARGET_CREATE}
+	( ${OBJCOPY} --only-keep-debug --compress-debug-sections \
+	    ${.ALLSRC:[1]} ${.TARGET} && \
+	  ${OBJCOPY} --strip-debug -p -R .gnu_debuglink \
+		--add-gnu-debuglink=${.TARGET} ${.ALLSRC:[1]} \
+	) || (rm -f ${.TARGET}; false)
+.endif
+
 _CCLINK.CDEFAULT= ${CC} ${_CCLINKFLAGS}
 # Definitions specific to C programs.
 .for _P in ${PROGS}
@@ -522,13 +532,7 @@ ${_P}.ro: ${OBJS.${_P}} ${_DPADD.${_P}}
 	${CC} ${LDFLAGS:N-pie} ${LD_DRIVER_FLAGS} -nostdlib -r -Wl,-dc -o ${.TARGET} ${OBJS.${_P}}
 
 .if defined(_PROGDEBUG.${_P})
-${_PROGDEBUG.${_P}}: ${_P}
-	${_MKTARGET_CREATE}
-	( ${OBJCOPY} --only-keep-debug --compress-debug-sections \
-	    ${_P} ${_PROGDEBUG.${_P}} && \
-	  ${OBJCOPY} --strip-debug -p -R .gnu_debuglink \
-		--add-gnu-debuglink=${_PROGDEBUG.${_P}} ${_P} \
-	) || (rm -f ${_PROGDEBUG.${_P}}; false)
+${_PROGDEBUG.${_P}}: ${_P} __progdebug
 .endif
 
 .endif	# defined(OBJS.${_P}) && !empty(OBJS.${_P})			# }

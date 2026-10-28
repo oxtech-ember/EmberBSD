@@ -512,12 +512,12 @@
 ./usr/libdata/debug/usr/bin/checknr.debug	comp-groff-debug	debug
 ./usr/libdata/debug/usr/bin/chflags.debug	comp-util-debug		debug
 ./usr/libdata/debug/usr/bin/chpass.debug	comp-util-debug		debug
-./usr/libdata/debug/usr/bin/ci.debug		comp-rcs-debug		debug
+./usr/libdata/debug/usr/bin/ci.debug		comp-obsolete		debug,obsolete
 ./usr/libdata/debug/usr/bin/cksum.debug		comp-util-debug		debug
 ./usr/libdata/debug/usr/bin/clang-tblgen.debug	comp-c-debug		llvm,debug
 ./usr/libdata/debug/usr/bin/clang.debug		comp-c-debug		llvm,debug
 ./usr/libdata/debug/usr/bin/cmp.debug		comp-util-debug		debug
-./usr/libdata/debug/usr/bin/co.debug		comp-rcs-debug		debug
+./usr/libdata/debug/usr/bin/co.debug		comp-obsolete		debug,obsolete
 ./usr/libdata/debug/usr/bin/col.debug		comp-util-debug		debug
 ./usr/libdata/debug/usr/bin/colcrt.debug	comp-util-debug		debug
 ./usr/libdata/debug/usr/bin/colrm.debug		comp-util-debug		debug
@@ -767,9 +767,9 @@
 ./usr/libdata/debug/usr/bin/radioctl.debug	comp-audio-debug	debug
 ./usr/libdata/debug/usr/bin/ranlib.debug	comp-util-debug		binutils,debug
 ./usr/libdata/debug/usr/bin/rcs.debug		comp-rcs-debug		debug
-./usr/libdata/debug/usr/bin/rcsclean.debug	comp-rcs-debug		debug
-./usr/libdata/debug/usr/bin/rcsdiff.debug	comp-rcs-debug		debug
-./usr/libdata/debug/usr/bin/rcsmerge.debug	comp-rcs-debug		debug
+./usr/libdata/debug/usr/bin/rcsclean.debug	comp-obsolete		debug,obsolete
+./usr/libdata/debug/usr/bin/rcsdiff.debug	comp-obsolete		debug,obsolete
+./usr/libdata/debug/usr/bin/rcsmerge.debug	comp-obsolete		debug,obsolete
 ./usr/libdata/debug/usr/bin/rdist.debug		comp-netutil-debug	debug
 ./usr/libdata/debug/usr/bin/readelf.debug	comp-util-debug		binutils,debug
 ./usr/libdata/debug/usr/bin/realpath.debug	comp-util-debug		debug
@@ -779,7 +779,7 @@
 ./usr/libdata/debug/usr/bin/rev.debug		comp-util-debug		debug
 ./usr/libdata/debug/usr/bin/revoke.debug	comp-util-debug		debug
 ./usr/libdata/debug/usr/bin/rfcomm_sppd.debug	comp-util-debug		debug
-./usr/libdata/debug/usr/bin/rlog.debug		comp-rcs-debug		debug
+./usr/libdata/debug/usr/bin/rlog.debug		comp-obsolete		debug,obsolete
 ./usr/libdata/debug/usr/bin/rlogin.debug	comp-netutil-debug	debug
 ./usr/libdata/debug/usr/bin/rpcgen.debug	comp-c-debug		debug
 ./usr/libdata/debug/usr/bin/rpcinfo.debug	comp-rpcutil-debug	debug

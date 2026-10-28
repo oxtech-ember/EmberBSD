@@ -4,9 +4,8 @@
 
 BINDIR=/usr/bin
 DIST=${NETBSDSRCDIR}/external/gpl2/rcs
-IDIST=${DIST}/dist
+.if defined(EMBER_RCS_SOURCE)
+IDIST=${EMBER_RCS_SOURCE}
 
-PROGDPLIBS+=	rcs ${DIST}/lib
-CPPFLAGS+=	-I${DIST}/include
-
-.PATH: ${IDIST}/src ${IDIST}/man
+.PATH: ${IDIST}/src ${IDIST}/man ${DIST}/man
+.endif
