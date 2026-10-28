@@ -129,6 +129,21 @@ No executable host contract exists for the driver yet, so no Valgrind
 or sanitizer run applies. The physical checks above are the only runtime
 evidence.
 
+## Link recovery regression
+
+Run the extracted-source regression with the selected native Python and GCC16:
+
+```sh
+"$SDK_PYTHON" ember/tools/rtw89-link-loss-contract.py \
+    --source-root "$PWD" --work-dir "$TEST_WORK" --cc "$SDK_CC"
+```
+
+`TEST_WORK` must name an existing temporary directory. The runner executes the
+actual watchdog, beacon validator and state worker against bounded kernel and
+hardware shims. It covers idle supervision, malformed and foreign beacons,
+timer wraparound, CSA cleanup ordering, automatic rescan and interface stop.
+It does not replace kernel or physical-device testing.
+
 ## Limits
 
 - Station mode only. No access point, monitor or IBSS mode.
@@ -137,7 +152,14 @@ evidence.
 - Software crypto only. WPA3/SAE and protected management frames are not
   supported.
 - No power save. ASPM, CLKREQ and L1 substates are disabled.
-- No beacon-loss detection. net80211 inactivity timers end a lost
-  association.
+- Link supervision uses a software watchdog independent of firmware beacon
+  reports. Only a complete, structurally valid beacon from the associated AP
+  on the selected channel refreshes the deadline; expiry calls
+  `ieee80211_beacon_miss()` so net80211 probes and then scans.
+- On a matching channel-switch or Quiet announcement, `rtwx` pauses the MAC
+  TX scheduler synchronously. Its state worker completes the required INIT,
+  resets the rtw89 PCI rings, and starts a fresh scan. An explicit pending
+  reconnect state is retained; interface shutdown cancels automatic recovery.
+- These software paths do not establish physical RF or long-run acceptance.
 - amd64 only. The DMA emulation assumes cache-coherent DMA below 4 GB.
 - RTL8852BE only. Other rtw89 chips are not built.

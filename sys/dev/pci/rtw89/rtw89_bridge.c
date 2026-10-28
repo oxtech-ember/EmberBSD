@@ -61,8 +61,10 @@ struct rtw89_nb {
 	enum ieee80211_sta_state sta_state;
 	struct ieee80211_channel chan;
 	unsigned int		 filter;
+	uint32_t		 quiet_tx_en;
 	bool			 started;
 	bool			 vif_added;
+	bool			 tx_quiet;
 };
 
 static struct rtw89_nb *rtw89_nb_attaching;
@@ -659,6 +661,8 @@ rtw89_nb_stop(struct rtw89_nb *nb)
 	}
 	hw->ops->stop(hw);
 	nb->started = false;
+	nb->tx_quiet = false;
+	nb->quiet_tx_en = 0;
 }
 
 int
@@ -818,6 +822,33 @@ rtw89_nb_bss_leave(struct rtw89_nb *nb)
 	hw->ops->bss_info_changed(hw, nb->vif, &nb->vif->bss_conf,
 	    BSS_CHANGED_BSSID);
 	nb->vif->bss_conf.bssid = NULL;
+}
+
+/* Synchronously gate the MAC scheduler around a station channel change. */
+int
+rtw89_nb_tx_quiet(struct rtw89_nb *nb, bool quiet)
+{
+	struct rtw89_dev *rtwdev = nb_to_rtwdev(nb);
+	int error;
+
+	if (!nb->started)
+		return ENXIO;
+	if (quiet == nb->tx_quiet)
+		return 0;
+	if (quiet) {
+		error = rtw89_chip_stop_sch_tx(rtwdev, RTW89_MAC_0,
+		    &nb->quiet_tx_en, RTW89_SCH_TX_SEL_ALL);
+		if (error)
+			return error;
+		nb->tx_quiet = true;
+	} else {
+		error = rtw89_chip_resume_sch_tx(rtwdev, RTW89_MAC_0,
+		    nb->quiet_tx_en);
+		if (error)
+			return error;
+		nb->tx_quiet = false;
+	}
+	return 0;
 }
 
 /* Fill in the protocol and header offsets used by the BT-coex hints. */

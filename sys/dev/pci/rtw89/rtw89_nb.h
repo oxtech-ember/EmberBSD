@@ -83,6 +83,7 @@ void	rtw89_nb_scan_end(struct rtw89_nb *);
 int	rtw89_nb_bss_join(struct rtw89_nb *, const struct rtw89_nb_bss *);
 int	rtw89_nb_bss_assoc(struct rtw89_nb *, const struct rtw89_nb_bss *);
 void	rtw89_nb_bss_leave(struct rtw89_nb *);
+int	rtw89_nb_tx_quiet(struct rtw89_nb *, bool);
 int	rtw89_nb_tx(struct rtw89_nb *, const void *, size_t, unsigned int);
 void	rtw89_nb_set_debug(unsigned int);
 extern unsigned int rtw89_debug_mask;

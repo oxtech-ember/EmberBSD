@@ -42,6 +42,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/param.h>
 #include <sys/types.h>
 #include <sys/bus.h>
+#include <sys/atomic.h>
 #include <sys/callout.h>
 #include <sys/cpu.h>
 #include <sys/device.h>
@@ -64,6 +65,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <net/if_ether.h>
 #include <net/if_media.h>
 
+#include <net80211/ieee80211_beacon_ies.h>
 #include <net80211/ieee80211_var.h>
 
 #include <dev/pci/pcireg.h>
@@ -102,6 +104,16 @@ struct rtw89_softc {
 	struct rtw89_nb		*sc_nb;
 	bool			 sc_running;
 	volatile bool		 sc_txstopped;
+	volatile bool		 sc_txqueue_stopped;
+	bool			 sc_csa_quiet;
+	bool			 sc_csa_reset_done;
+	volatile unsigned	 sc_csa_init_pending;
+	bool			 sc_csa_deferred;
+	enum ieee80211_state	 sc_csa_deferred_state;
+	int			 sc_csa_deferred_arg;
+	bool			 sc_stopping;
+	bool			 sc_beacon_active;
+	uint32_t		 sc_beacon_tick;
 	uint8_t			*sc_txbuf;
 	void			*sc_tx_sih;
 	void			*sc_linklost_sih;
@@ -126,6 +138,17 @@ static void	rtw89_stop(struct ifnet *, int);
 static void	rtw89_start(struct ifnet *);
 static int	rtw89_ioctl(struct ifnet *, u_long, void *);
 static void	rtw89_watchdog(struct ifnet *);
+static void	rtw89_sta_quiet(struct ieee80211com *);
+static void	rtw89_beacon_observe(struct rtw89_softc *, const void *, size_t,
+		    unsigned int);
+static void	rtw89_beacon_state(struct rtw89_softc *, enum ieee80211_state);
+static void	rtw89_csa_scan_resume(struct rtw89_softc *,
+		    enum ieee80211_state);
+static int	rtw89_csa_restart(struct rtw89_softc *);
+static void	rtw89_csa_finish_init(struct rtw89_softc *,
+		    enum ieee80211_state);
+static enum ieee80211_state	rtw89_csa_defer_state(struct rtw89_softc *,
+		    enum ieee80211_state, int *);
 static int	rtw89_newstate(struct ieee80211com *, enum ieee80211_state,
 		    int);
 static void	rtw89_newstate_task(struct work *, void *);
@@ -316,6 +339,7 @@ rtw89_attach_hook(device_t self)
 
 	sc->sc_newstate = ic->ic_newstate;
 	ic->ic_newstate = rtw89_newstate;
+	ic->ic_sta_quiet = rtw89_sta_quiet;
 	ieee80211_media_init(ic, ieee80211_media_change,
 	    ieee80211_media_status);
 	ieee80211_announce(ic);
@@ -535,6 +559,7 @@ rtw89_nb_rx(void *arg, const void *frame, size_t len, int rssi,
 		if_statinc(ifp, if_ierrors);
 		return;
 	}
+	rtw89_beacon_observe(sc, frame, len, freq);
 	MGETHDR(m, M_DONTWAIT, MT_DATA);
 	if (m != NULL && len > MHLEN) {
 		MCLGET(m, M_DONTWAIT);
@@ -557,6 +582,42 @@ rtw89_nb_rx(void *arg, const void *frame, size_t len, int rssi,
 	splx(s);
 }
 
+/* Only a complete beacon from the associated AP on the current channel
+ * counts as evidence that the station is still receiving its BSS. */
+static void
+rtw89_beacon_observe(struct rtw89_softc *sc, const void *vframe, size_t len,
+    unsigned int freq)
+{
+	struct ieee80211com *ic = &sc->sc_ic;
+	struct ieee80211_node *ni = ic->ic_bss;
+	const struct ieee80211_frame *wh = vframe;
+	const uint8_t *frame = vframe;
+	unsigned channel, i;
+	uint16_t interval;
+
+	if (!sc->sc_beacon_active || sc->sc_csa_quiet ||
+	    ic->ic_opmode != IEEE80211_M_STA || ic->ic_state != IEEE80211_S_RUN ||
+	    ni == NULL || ni->ni_associd == 0 || ni->ni_chan == NULL ||
+	    ic->ic_curchan == NULL || ic->ic_curchan == IEEE80211_CHAN_ANYC ||
+	    ni->ni_chan != ic->ic_curchan || freq != ni->ni_chan->ic_freq ||
+	    len < sizeof(*wh) + 12 || wh->i_fc[0] != IEEE80211_FC0_SUBTYPE_BEACON ||
+	    (wh->i_fc[1] & 0xc7) != 0 ||
+	    (wh->i_seq[0] & IEEE80211_SEQ_FRAG_MASK) != 0 ||
+	    !IEEE80211_ADDR_EQ(wh->i_addr2, ni->ni_macaddr) ||
+	    !IEEE80211_ADDR_EQ(wh->i_addr3, ni->ni_bssid))
+		return;
+	for (i = 0; i < IEEE80211_ADDR_LEN; i++)
+		if (wh->i_addr1[i] != 0xff)
+			return;
+	channel = ieee80211_chan2ieee(ic, ni->ni_chan);
+	interval = ieee80211_sta_beacon_interval(frame + sizeof(*wh),
+	    len - sizeof(*wh), channel);
+	if (interval < IEEE80211_BINTVAL_MIN ||
+	    interval > IEEE80211_BINTVAL_MAX)
+		return;
+	sc->sc_beacon_tick = getticks();
+}
+
 /* May be called with a spin mutex held: only counters and softints. */
 void
 rtw89_nb_tx_done(void *arg, bool acked)
@@ -575,9 +636,30 @@ rtw89_nb_queues(void *arg, bool wake)
 {
 	struct rtw89_softc *sc = arg;
 
-	sc->sc_txstopped = !wake;
+	sc->sc_txqueue_stopped = !wake;
+	sc->sc_txstopped = sc->sc_txqueue_stopped || sc->sc_csa_quiet;
 	if (wake && sc->sc_running)
 		softint_schedule(sc->sc_tx_sih);
+}
+
+/* Called synchronously by net80211 before its CSA-driven INIT transition. */
+static void
+rtw89_sta_quiet(struct ieee80211com *ic)
+{
+	struct rtw89_softc *sc = ic->ic_ifp->if_softc;
+	int error;
+
+	if (sc->sc_csa_quiet)
+		return;
+	sc->sc_csa_quiet = true;
+	sc->sc_csa_reset_done = false;
+	atomic_swap_uint(&sc->sc_csa_init_pending, 1);
+	sc->sc_txstopped = true;
+	sc->sc_beacon_active = false;
+	error = rtw89_nb_tx_quiet(sc->sc_nb, true);
+	if (error)
+		aprint_error_dev(sc->sc_dev,
+		    "can't pause TX for channel switch (%d)\n", error);
 }
 
 void
@@ -654,6 +736,7 @@ rtw89_newstate(struct ieee80211com *ic, enum ieee80211_state nstate, int arg)
 
 	callout_stop(&sc->sc_scan_to);
 	mutex_enter(&sc->sc_nslock);
+	nstate = rtw89_csa_defer_state(sc, nstate, &arg);
 	sc->sc_nsstate = nstate;
 	sc->sc_nsarg = arg;
 	enqueue = !sc->sc_nspending;
@@ -664,11 +747,126 @@ rtw89_newstate(struct ieee80211com *ic, enum ieee80211_state nstate, int arg)
 	return 0;
 }
 
+static enum ieee80211_state
+rtw89_csa_defer_state(struct rtw89_softc *sc, enum ieee80211_state nstate,
+    int *arg)
+{
+	if (sc->sc_stopping) {
+		sc->sc_csa_deferred = false;
+		atomic_swap_uint(&sc->sc_csa_init_pending, 0);
+		*arg = -1;
+		return IEEE80211_S_INIT;
+	}
+	if (nstate != IEEE80211_S_INIT &&
+	    atomic_cas_uint(&sc->sc_csa_init_pending, 1, 1) != 0) {
+		/* Do not coalesce CSA's required INIT into a reconnect state. */
+		sc->sc_csa_deferred = true;
+		sc->sc_csa_deferred_state = nstate;
+		sc->sc_csa_deferred_arg = *arg;
+		*arg = -1;
+		return IEEE80211_S_INIT;
+	}
+	return nstate;
+}
+
+static void
+rtw89_csa_finish_init(struct rtw89_softc *sc, enum ieee80211_state nstate)
+{
+	bool enqueue = false, have_next = false;
+
+	if (nstate != IEEE80211_S_INIT)
+		return;
+	mutex_enter(&sc->sc_nslock);
+	if (sc->sc_stopping) {
+		sc->sc_csa_deferred = false;
+		atomic_swap_uint(&sc->sc_csa_init_pending, 0);
+	} else if (atomic_swap_uint(&sc->sc_csa_init_pending, 0) != 0) {
+		/* INIT has now actually run; honor a reconnect request if present. */
+		if (sc->sc_csa_deferred) {
+			sc->sc_nsstate = sc->sc_csa_deferred_state;
+			sc->sc_nsarg = sc->sc_csa_deferred_arg;
+			sc->sc_csa_deferred = false;
+			have_next = true;
+		} else if (sc->sc_running && sc->sc_csa_quiet) {
+			/* CSA does not request SCAN itself; recover after mandatory INIT. */
+			sc->sc_nsstate = IEEE80211_S_SCAN;
+			sc->sc_nsarg = -1;
+			have_next = true;
+		}
+		if (have_next && !sc->sc_nspending) {
+			sc->sc_nspending = true;
+			enqueue = true;
+		}
+	}
+	mutex_exit(&sc->sc_nslock);
+	if (enqueue)
+		workqueue_enqueue(sc->sc_nswq, &sc->sc_nswk, NULL);
+}
+
+static void
+rtw89_beacon_state(struct rtw89_softc *sc, enum ieee80211_state nstate)
+{
+	struct ieee80211com *ic = &sc->sc_ic;
+
+	if (nstate == IEEE80211_S_RUN && sc->sc_running &&
+	    ic->ic_opmode == IEEE80211_M_STA) {
+		sc->sc_beacon_tick = getticks();
+		sc->sc_beacon_active = true;
+		ic->ic_ifp->if_timer = 1;
+	} else {
+		sc->sc_beacon_active = false;
+		ic->ic_ifp->if_timer = 0;
+	}
+}
+
+static void
+rtw89_csa_scan_resume(struct rtw89_softc *sc, enum ieee80211_state nstate)
+{
+	int error;
+
+	if ((nstate != IEEE80211_S_SCAN && nstate != IEEE80211_S_AUTH) ||
+	    !sc->sc_csa_quiet)
+		return;
+	if (!sc->sc_csa_reset_done)
+		return;
+	error = rtw89_nb_tx_quiet(sc->sc_nb, false);
+	if (error) {
+		aprint_error_dev(sc->sc_dev,
+		    "can't resume TX for scan (%d)\n", error);
+		return;
+	}
+	sc->sc_csa_quiet = false;
+	sc->sc_csa_reset_done = false;
+	sc->sc_txstopped = sc->sc_txqueue_stopped;
+}
+
+/* Stop/start resets the PCI descriptor rings before the scheduler reopens. */
+static int
+rtw89_csa_restart(struct rtw89_softc *sc)
+{
+	int error;
+
+	if (!sc->sc_running || sc->sc_nb == NULL)
+		return ENXIO;
+	if (sc->sc_csa_reset_done)
+		return 0;
+	rtw89_nb_stop(sc->sc_nb);
+	error = rtw89_nb_start(sc->sc_nb, sc->sc_ic.ic_myaddr);
+	if (error)
+		return error;
+	error = rtw89_nb_tx_quiet(sc->sc_nb, true);
+	if (error)
+		return error;
+	sc->sc_csa_reset_done = true;
+	return 0;
+}
+
 static void
 rtw89_newstate_task(struct work *wk, void *arg)
 {
 	struct rtw89_softc *sc = arg;
 	struct ieee80211com *ic = &sc->sc_ic;
+	struct ifnet *ifp = &sc->sc_ec.ec_if;
 	struct rtw89_nb_bss bss;
 	enum ieee80211_state ostate, nstate;
 	int nsarg, s, error;
@@ -676,6 +874,10 @@ rtw89_newstate_task(struct work *wk, void *arg)
 	mutex_enter(&sc->sc_nslock);
 	nstate = sc->sc_nsstate;
 	nsarg = sc->sc_nsarg;
+	if (sc->sc_stopping) {
+		nstate = IEEE80211_S_INIT;
+		nsarg = -1;
+	}
 	sc->sc_nspending = false;
 	mutex_exit(&sc->sc_nslock);
 
@@ -691,6 +893,16 @@ rtw89_newstate_task(struct work *wk, void *arg)
 			rtw89_nb_scan_end(sc->sc_nb);
 			sc->sc_scanning = false;
 		}
+		if (sc->sc_csa_quiet &&
+		    (nstate == IEEE80211_S_SCAN || nstate == IEEE80211_S_AUTH)) {
+			error = rtw89_csa_restart(sc);
+			if (error) {
+				aprint_error_dev(sc->sc_dev,
+				    "can't reset TX rings for channel switch (%d)\n",
+				    error);
+				goto csa_fail;
+			}
+		}
 		switch (nstate) {
 		case IEEE80211_S_SCAN:
 			if (!sc->sc_scanning) {
@@ -701,6 +913,9 @@ rtw89_newstate_task(struct work *wk, void *arg)
 			break;
 		case IEEE80211_S_AUTH:
 			rtw89_set_curchan(sc, ic->ic_bss->ni_chan);
+			rtw89_csa_scan_resume(sc, nstate);
+			if (sc->sc_csa_quiet)
+				goto csa_fail;
 			rtw89_fill_bss(sc, &bss);
 			error = rtw89_nb_bss_join(sc->sc_nb, &bss);
 			if (error)
@@ -722,10 +937,34 @@ rtw89_newstate_task(struct work *wk, void *arg)
 	}
 
 	s = splnet();
+	/* INIT has drained the old management queue and BSS leave has completed.
+	 * Reopen the scheduler only when a fresh scan is about to begin. */
+	if (nstate == IEEE80211_S_SCAN) {
+		rtw89_csa_scan_resume(sc, nstate);
+		if (sc->sc_csa_quiet) {
+			splx(s);
+			goto csa_fail;
+		}
+	}
 	(void)(*sc->sc_newstate)(ic, nstate, nsarg);
+	rtw89_beacon_state(sc, nstate);
+	rtw89_csa_finish_init(sc, nstate);
 	if (ic->ic_state == IEEE80211_S_SCAN && sc->sc_running)
 		callout_schedule(&sc->sc_scan_to, mstohz(RTW89_SCAN_DWELL_MS));
 	splx(s);
+	return;
+
+csa_fail:
+	mutex_enter(&sc->sc_nslock);
+	sc->sc_stopping = true;
+	sc->sc_csa_deferred = false;
+	atomic_swap_uint(&sc->sc_csa_init_pending, 0);
+	mutex_exit(&sc->sc_nslock);
+	rtw89_nb_stop(sc->sc_nb);
+	sc->sc_running = false;
+	sc->sc_beacon_active = false;
+	ifp->if_timer = 0;
+	ifp->if_flags &= ~(IFF_RUNNING | IFF_OACTIVE);
 }
 
 static void
@@ -869,6 +1108,10 @@ rtw89_init(struct ifnet *ifp)
 	}
 	sc->sc_running = true;
 	sc->sc_txstopped = false;
+	sc->sc_txqueue_stopped = false;
+	sc->sc_csa_quiet = false;
+	sc->sc_csa_reset_done = false;
+	sc->sc_beacon_active = false;
 	ifp->if_flags &= ~IFF_OACTIVE;
 	ifp->if_flags |= IFF_RUNNING;
 
@@ -889,6 +1132,11 @@ rtw89_stop(struct ifnet *ifp, int disable)
 
 	if (sc->sc_nb == NULL)
 		return;
+	mutex_enter(&sc->sc_nslock);
+	sc->sc_stopping = true;
+	sc->sc_csa_deferred = false;
+	atomic_swap_uint(&sc->sc_csa_init_pending, 0);
+	mutex_exit(&sc->sc_nslock);
 	callout_halt(&sc->sc_scan_to, NULL);
 	s = splnet();
 	ieee80211_new_state(ic, IEEE80211_S_INIT, -1);
@@ -898,18 +1146,46 @@ rtw89_stop(struct ifnet *ifp, int disable)
 
 	sc->sc_running = false;
 	sc->sc_scanning = false;
+	sc->sc_beacon_active = false;
+	sc->sc_csa_quiet = false;
+	sc->sc_csa_reset_done = false;
+	sc->sc_txstopped = true;
+	sc->sc_txqueue_stopped = true;
 	ifp->if_flags &= ~(IFF_RUNNING | IFF_OACTIVE);
 	ifp->if_timer = 0;
 	rtw89_nb_stop(sc->sc_nb);
+	mutex_enter(&sc->sc_nslock);
+	sc->sc_stopping = false;
+	mutex_exit(&sc->sc_nslock);
 }
 
 static void
 rtw89_watchdog(struct ifnet *ifp)
 {
 	struct rtw89_softc *sc = ifp->if_softc;
+	struct ieee80211com *ic = &sc->sc_ic;
+	uint32_t now, timeout;
 
 	ifp->if_timer = 0;
-	ieee80211_watchdog(&sc->sc_ic);
+	ieee80211_watchdog(ic);
+	if (!sc->sc_running || ic->ic_state != IEEE80211_S_RUN ||
+	    ic->ic_opmode != IEEE80211_M_STA || !sc->sc_beacon_active ||
+	    sc->sc_csa_quiet || ic->ic_bss == NULL ||
+	    ic->ic_bss->ni_associd == 0)
+		return;
+	if (ic->ic_bmisstimeout == 0)
+		timeout = MAX(hz, mstohz((uint32_t)7 *
+		    ic->ic_bss->ni_intval * 1024 / 1000));
+	else
+		timeout = MAX(hz, mstohz((uint32_t)ic->ic_bmisstimeout *
+		    1024 / 1000));
+	now = getticks();
+	if ((uint32_t)(now - sc->sc_beacon_tick) >= timeout) {
+		sc->sc_beacon_tick = now;
+		ieee80211_beacon_miss(ic);
+	}
+	if (ic->ic_state == IEEE80211_S_RUN)
+		ifp->if_timer = 1;
 }
 
 static int
