@@ -76,7 +76,7 @@ gnu-target-config-inputs:
 	    fi
 
 ${GNU_OBJDIR}/.configure-inputs: gnu-target-config-inputs
-	@test -f ${.TARGET:Q}
+	@${HOST_SH:Q} -c 'test -f "$$1"' sh ${.TARGET:Q}
 
 ${GNU_OBJDIR}/Makefile: ${GNU_SOURCE}/configure ${GNU_OBJDIR}/.configure-inputs
 	(cd ${GNU_OBJDIR:Q} && \
