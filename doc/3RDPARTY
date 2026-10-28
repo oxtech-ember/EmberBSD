@@ -1026,9 +1026,9 @@ Date:		2020-06-13
 Mailing List:
 Responsible:	christos
 License:	BSD (3/4-clause)
-Location:	external/bsd/nvi/dist
+Location:	Ports editors/nvi prepared source; external/bsd/nvi native integration
 Notes:
-We have lots of local fixes.
+Common Ports patches preserve the native editor fixes; the base uses DB1.
 
 Package:	OpenLDAP
 Version:	2.5.6

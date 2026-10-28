@@ -17,6 +17,7 @@ HOSTPROG=	dump
 SRCS=		dump.c
 
 CLEANFILES+=	${CATALOG} english.base *.check __ck1 __ck2
+.NOPATH: ${CATALOG} english.base
 
 realall: ${CATALOG}
 

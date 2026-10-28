@@ -15,8 +15,10 @@ WARNS=	5
 
 # EmberBSD: GCC16 range propagation infers an impossible memcpy bound
 # from the workspace allocation; the copy is clamped in del().
+.if ${ACTIVE_CC} == "gcc"
 COPTS.delete.c+=	-Wno-stringop-overflow -Wno-array-bounds \
 			-Wno-restrict
+.endif
 COPTS.exf.c+=		-Wno-format-nonliteral
 COPTS.msg.c+=		-Wno-format-nonliteral
 .if ${USE_WIDECHAR} != "yes"
@@ -24,7 +26,6 @@ COPTS.v_increment.c+=	-Wno-format-nonliteral
 CWARNFLAGS.gcc+=	-Wno-unused
 CWARNFLAGS.clang+=	-Wno-unsequenced
 .endif
-CWARNFLAGS.clang+=	-Wno-error=string-compare
 
 CPPFLAGS+=-I${DIST}/include -I${.CURDIR} -I.
 CPPFLAGS+=-DGTAGS -DIMCTRL
@@ -89,17 +90,16 @@ CLEANFILES+=options_def.h ipc_def.h ex_def.h # ipc_gen.c
 
 options_def.h: options.awk options.c
 	${_MKTARGET_CREATE}
-	${TOOL_AWK} -f ${.ALLSRC} >${.TARGET}
+	${HOST_SH} ${DIST}/dist/ember-gen-headers.sh ${.TARGET} ${DIST} ${TOOL_AWK} ${TOOL_SED} >${.TARGET}
 
 ex_def.h: ex.awk ex_cmd.c
 	${_MKTARGET_CREATE}
-	${TOOL_AWK} -f ${.ALLSRC} >${.TARGET}
+	${HOST_SH} ${DIST}/dist/ember-gen-headers.sh ${.TARGET} ${DIST} ${TOOL_AWK} ${TOOL_SED} >${.TARGET}
 
 ipc_def.h: ipc.awk vipc.awk ipc_cmd.c ip_read.c
 	${_MKTARGET_CREATE}
-	(${TOOL_AWK} -f ${.ALLSRC:M*/ipc.awk} ${.ALLSRC:M*/ipc_cmd.c} && \
-	    ${TOOL_AWK} -f ${.ALLSRC:M*/vipc.awk} ${.ALLSRC:M*/ip_read.c}) > \
-	    ${.TARGET}
+	${HOST_SH} ${DIST}/dist/ember-gen-headers.sh ${.TARGET} ${DIST} \
+	    ${TOOL_AWK} ${TOOL_SED} >${.TARGET}
 
 .for i in cl common ex ip ipc vi
 DPSRCS+=${i}_extern.h
@@ -108,7 +108,8 @@ CLEANFILES+=${i}_extern.h
 #_${i}_SRCS != echo ${DIST}/${i}/*.c ${DIST}/${i}/*.xs
 ${i}_extern.h: ${SRCS} ${NOTUSED}
 	${_MKTARGET_CREATE}
-	@${TOOL_SED} -n "s/^ \* PUBLIC: \(.*\)/\1/p" ${.ALLSRC:M${DIST}/$i/*} > ${.TARGET}.tmp
+	@${HOST_SH} ${DIST}/dist/ember-gen-headers.sh ${.TARGET} ${DIST} \
+	    ${TOOL_AWK} ${TOOL_SED} ${.ALLSRC:M${DIST}/$i/*} > ${.TARGET}.tmp
 	@if cmp -s ${.TARGET}.tmp ${.TARGET}; then \
 		rm -f ${.TARGET}.tmp; \
 	else \
@@ -118,6 +119,7 @@ ${i}_extern.h: ${SRCS} ${NOTUSED}
 
 DPSRCS+=version.h
 CLEANFILES+=version.h
+.NOPATH: ${DPSRCS}
 version.h:	../../Makefile.inc
 	${_MKTARGET_CREATE}
 	echo '#define VI_VERSION "(${VERSION})"' > ${.TARGET}
