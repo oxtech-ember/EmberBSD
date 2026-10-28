@@ -234,7 +234,7 @@ _rtld_error(const char *fmt, ...)
 }
 
 char *
-dlerror()
+dlerror(void)
 {
 	char *msg = error_message;
 	error_message = NULL;

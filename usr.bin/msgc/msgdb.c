@@ -92,7 +92,7 @@ static void write_str (FILE *f, char *str)
 
 /* Write out the msg files. */
 void
-write_msg_file ()
+write_msg_file (void)
 {
 	FILE *out_file;
 	FILE *sys_file;

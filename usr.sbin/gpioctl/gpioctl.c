@@ -349,7 +349,7 @@ gpiounset(int pin, char *name)
 }
 
 static void
-gpiolist()
+gpiolist(void)
 {
 	struct gpio_info info;
 	struct gpio_req req;

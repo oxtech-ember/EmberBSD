@@ -467,7 +467,7 @@ strtoint(const char *desc, const char *arg, int min, int max)
 }
 
 void
-usage()
+usage(void)
 {
 	fprintf(stderr, "usage: newfs_lfs [ -fsoptions ] special-device\n");
 	fprintf(stderr, "where fsoptions are:\n");
