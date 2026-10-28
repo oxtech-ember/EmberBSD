@@ -41,5 +41,6 @@ makeoptions	rtwx	"CWARNFLAGS.rtwx"+="-Wno-unused-but-set-variable -Wno-strict-pr
 makeoptions	rtwx	"CWARNFLAGS.rtwx"+="-Wno-pointer-arith -Wno-sign-compare"
 makeoptions	rtwx	"CWARNFLAGS.rtwx"+="-Wno-implicit-fallthrough -Wno-address-of-packed-member"
 makeoptions	rtwx	"CWARNFLAGS.rtwx"+="-Wno-type-limits -Wno-array-bounds"
-makeoptions	rtwx	"CWARNFLAGS.rtwx"+="-Wno-old-style-declaration -Wno-int-in-bool-context -Wno-discarded-qualifiers"
+makeoptions	rtwx	"CWARNFLAGS.rtwx"+="-Wno-int-in-bool-context"
+makeoptions	rtwx	"CWARNFLAGS.rtwx"+="${${ACTIVE_CC} == gcc:? -Wno-old-style-declaration -Wno-discarded-qualifiers :}"
 makeoptions	rtwx	"CWARNFLAGS.rtwx"+="-Wno-format-zero-length"

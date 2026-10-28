@@ -50,16 +50,16 @@ struct ser_msg {
 
 struct state_ent {
 	u8 state;
-	char *name;
+	const char *name;
 	void (*st_func)(struct rtw89_ser *ser, u8 event);
 };
 
 struct event_ent {
 	u8 event;
-	char *name;
+	const char *name;
 };
 
-static char *ser_ev_name(struct rtw89_ser *ser, u8 event)
+static const char *ser_ev_name(struct rtw89_ser *ser, u8 event)
 {
 	if (event < SER_EV_MAXX)
 		return ser->ev_tbl[event].name;
@@ -67,7 +67,7 @@ static char *ser_ev_name(struct rtw89_ser *ser, u8 event)
 	return "err_ev_name";
 }
 
-static char *ser_st_name(struct rtw89_ser *ser)
+static const char *ser_st_name(struct rtw89_ser *ser)
 {
 	if (ser->state < SER_ST_MAX_ST)
 		return ser->st_tbl[ser->state].name;

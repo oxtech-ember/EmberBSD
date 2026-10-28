@@ -390,7 +390,7 @@ int __rtw89_fw_recognize(struct rtw89_dev *rtwdev, enum rtw89_fw_type type,
 static
 int __rtw89_fw_recognize_from_elm(struct rtw89_dev *rtwdev,
 				  const struct rtw89_fw_element_hdr *elm,
-				  const void *data)
+				  unsigned int data)
 {
 	enum rtw89_fw_type type = (enum rtw89_fw_type)data;
 	struct rtw89_fw_suit *fw_suit;
@@ -548,7 +548,7 @@ normal_done:
 static
 int rtw89_build_phy_tbl_from_elm(struct rtw89_dev *rtwdev,
 				 const struct rtw89_fw_element_hdr *elm,
-				 const void *data)
+				 unsigned int data)
 {
 	struct rtw89_fw_elm_info *elm_info = &rtwdev->fw.elm_info;
 	struct rtw89_phy_table *tbl;
@@ -609,27 +609,27 @@ out:
 
 struct rtw89_fw_element_handler {
 	int (*fn)(struct rtw89_dev *rtwdev,
-		  const struct rtw89_fw_element_hdr *elm, const void *data);
-	const void *data;
+		  const struct rtw89_fw_element_hdr *elm, unsigned int data);
+	unsigned int data;
 	const char *name;
 };
 
 static const struct rtw89_fw_element_handler __fw_element_handlers[] = {
 	[RTW89_FW_ELEMENT_ID_BBMCU0] = {__rtw89_fw_recognize_from_elm,
-					(const void *)RTW89_FW_BBMCU0, NULL},
+					RTW89_FW_BBMCU0, NULL},
 	[RTW89_FW_ELEMENT_ID_BBMCU1] = {__rtw89_fw_recognize_from_elm,
-					(const void *)RTW89_FW_BBMCU1, NULL},
-	[RTW89_FW_ELEMENT_ID_BB_REG] = {rtw89_build_phy_tbl_from_elm, NULL, "BB"},
-	[RTW89_FW_ELEMENT_ID_BB_GAIN] = {rtw89_build_phy_tbl_from_elm, NULL, NULL},
+					RTW89_FW_BBMCU1, NULL},
+	[RTW89_FW_ELEMENT_ID_BB_REG] = {rtw89_build_phy_tbl_from_elm, 0, "BB"},
+	[RTW89_FW_ELEMENT_ID_BB_GAIN] = {rtw89_build_phy_tbl_from_elm, 0, NULL},
 	[RTW89_FW_ELEMENT_ID_RADIO_A] = {rtw89_build_phy_tbl_from_elm,
-					 (const void *)RF_PATH_A, "radio A"},
+					 RF_PATH_A, "radio A"},
 	[RTW89_FW_ELEMENT_ID_RADIO_B] = {rtw89_build_phy_tbl_from_elm,
-					 (const void *)RF_PATH_B, NULL},
+					 RF_PATH_B, NULL},
 	[RTW89_FW_ELEMENT_ID_RADIO_C] = {rtw89_build_phy_tbl_from_elm,
-					 (const void *)RF_PATH_C, NULL},
+					 RF_PATH_C, NULL},
 	[RTW89_FW_ELEMENT_ID_RADIO_D] = {rtw89_build_phy_tbl_from_elm,
-					 (const void *)RF_PATH_D, NULL},
-	[RTW89_FW_ELEMENT_ID_RF_NCTL] = {rtw89_build_phy_tbl_from_elm, NULL, "NCTL"},
+					 RF_PATH_D, NULL},
+	[RTW89_FW_ELEMENT_ID_RF_NCTL] = {rtw89_build_phy_tbl_from_elm, 0, "NCTL"},
 };
 
 int rtw89_fw_recognize_elements(struct rtw89_dev *rtwdev)

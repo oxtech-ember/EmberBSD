@@ -80,7 +80,8 @@
 #define barrier()		__insn_barrier()
 #define BUILD_BUG_ON(c)		do { } while (0)
 #define BUILD_BUG_ON_ZERO(e)	(0)
-#define static_assert(...)	_Static_assert(__VA_ARGS__)
+#define static_assert(expr, ...)	__rtw89_static_assert(expr, ##__VA_ARGS__, #expr)
+#define __rtw89_static_assert(expr, msg, ...)	_Static_assert(expr, msg)
 #define __stringify_1(x)	#x
 #define __stringify(x)		__stringify_1(x)
 #define sizeof_field(t, m)	sizeof(((t *)0)->m)
