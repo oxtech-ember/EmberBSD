@@ -76,12 +76,11 @@ elifdef aarch64
 makeoptions	amdgpu	"COPTS.amdgpu_float"+="-march=armv8-a"
 endif
 
-makeoptions	amdgpu	"COPTS.amdgpu_dcn10_resource.c"+="${COPTS.amdgpu_float}"
 makeoptions	amdgpu	"COPTS.amdgpu_dcn20_resource.c"+="${COPTS.amdgpu_float}"
 makeoptions	amdgpu	"COPTS.amdgpu_dcn21_resource.c"+="${COPTS.amdgpu_float}"
 makeoptions	amdgpu	"COPTS.amdgpu_dcn_calc_auto.c"+="${COPTS.amdgpu_float}"
 makeoptions	amdgpu	"COPTS.amdgpu_dcn_calc_math.c"+="${COPTS.amdgpu_float}"
-makeoptions	amdgpu	"COPTS.amdgpu_dcn_calcs.c"+="${COPTS.amdgpu_float}"
+makeoptions	amdgpu	"COPTS.amdgpu_dcn_calcs_fp.c"+="${COPTS.amdgpu_float}"
 makeoptions	amdgpu	"COPTS.amdgpu_display_mode_vba.c"+="${COPTS.amdgpu_float}"
 makeoptions	amdgpu	"COPTS.amdgpu_display_mode_vba_20.c"+="${COPTS.amdgpu_float}"
 makeoptions	amdgpu	"COPTS.amdgpu_display_mode_vba_20v2.c"+="${COPTS.amdgpu_float}"
@@ -137,6 +136,7 @@ file	external/bsd/drm2/dist/drm/amd/amdgpu/../display/dc/calcs/amdgpu_dce_calcs.
 file	external/bsd/drm2/dist/drm/amd/amdgpu/../display/dc/calcs/amdgpu_dcn_calc_auto.c	amdgpu
 file	external/bsd/drm2/dist/drm/amd/amdgpu/../display/dc/calcs/amdgpu_dcn_calc_math.c	amdgpu
 file	external/bsd/drm2/dist/drm/amd/amdgpu/../display/dc/calcs/amdgpu_dcn_calcs.c	amdgpu
+file	external/bsd/drm2/dist/drm/amd/amdgpu/../display/dc/calcs/amdgpu_dcn_calcs_fp.c	amdgpu
 file	external/bsd/drm2/dist/drm/amd/amdgpu/../display/dc/clk_mgr/amdgpu_clk_mgr.c	amdgpu
 file	external/bsd/drm2/dist/drm/amd/amdgpu/../display/dc/clk_mgr/dce100/amdgpu_dce_clk_mgr.c	amdgpu
 file	external/bsd/drm2/dist/drm/amd/amdgpu/../display/dc/clk_mgr/dce110/amdgpu_dce110_clk_mgr.c	amdgpu
