@@ -14,6 +14,7 @@ SOURCES?= biosboot.S boot2.c conf.c devopen.c exec.c \
 SRCS= ${SOURCES}
 
 .include <bsd.init.mk>
+.include "${.PARSEDIR}/../Makefile.ld"
 
 STRIPFLAG=	# nothing
 
@@ -132,7 +133,7 @@ VERSIONMACHINE=x86
 # explicitly pull in the required objects before any other library code.
 ${PROG}: ${OBJS} ${LIBLIST} ${LDSCRIPT} ${.CURDIR}/../Makefile.boot
 	${_MKTARGET_LINK}
-	bb="$$( ${CC} ${LD_DRIVER_FLAGS} -o ${PROG}.sym ${LDFLAGS} -Wl,-Ttext,0 -Wl,-cref \
+	bb="$$( ${CC} ${LD_DRIVER_FLAGS} -o ${PROG}.sym ${LDFLAGS} -Wl,-Ttext,0 ${STAND_LD_CREF} \
 	    ${OBJS} ${LIBLIST} | ( \
 		while read symbol file; do \
 			[ -z "$$file" ] && continue; \
@@ -149,7 +150,7 @@ ${PROG}: ${OBJS} ${LIBLIST} ${LDSCRIPT} ${.CURDIR}/../Makefile.boot
 		done; \
 	) )"; \
 	${CC} ${LD_DRIVER_FLAGS} -o ${PROG}.sym ${LDFLAGS} -Wl,-Ttext,0 -T ${LDSCRIPT} \
-		-Wl,-Map,${PROG}.map -Wl,-cref ${OBJS} $$bb ${LIBLIST}
+		-Wl,-Map,${PROG}.map ${STAND_LD_CREF} ${OBJS} $$bb ${LIBLIST}
 	${OBJCOPY} -O binary ${PROG}.sym ${PROG}
 
 CWARNFLAGS.gcc+=	${CC_WNO_ADDRESS_OF_PACKED_MEMBER}

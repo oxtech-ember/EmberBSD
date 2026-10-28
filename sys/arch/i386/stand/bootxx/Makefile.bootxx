@@ -120,7 +120,7 @@ CLEANFILES+= ${PROG}.sym ${PROG}.map
 ${PROG}: ${OBJS} ${LIBLIST} ${LDSCRIPT}
 	${_MKTARGET_LINK}
 	${CC} ${LD_DRIVER_FLAGS} -o ${PROG}.sym ${LDFLAGS} -Wl,-Ttext,${PRIMARY_LOAD_ADDRESS} \
-		-T ${LDSCRIPT} -Wl,-Map,${PROG}.map -Wl,-cref ${OBJS} ${LIBLIST}
+		-T ${LDSCRIPT} -Wl,-Map,${PROG}.map ${STAND_LD_CREF} ${OBJS} ${LIBLIST}
 	${OBJCOPY} -O binary ${PROG}.sym ${PROG}
 	@ sz=$$(${TOOL_STAT} -f '%z' ${PROG}); \
 	if [ "$$sz" -gt "${BOOTXX_MAXSIZE}" ]; then \

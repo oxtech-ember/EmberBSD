@@ -17,6 +17,7 @@ PIE_LDFLAGS=
 PIE_AFLAGS=
 
 .include <bsd.own.mk>
+.include "${.PARSEDIR}/../Makefile.ld"
 
 STRIPFLAG=	# override
 

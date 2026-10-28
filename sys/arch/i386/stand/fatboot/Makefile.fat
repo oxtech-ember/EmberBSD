@@ -15,6 +15,7 @@ LIBCRTEND=	# nothing
 LIBC=		# nothing
 
 .include <bsd.init.mk>
+.include "${.PARSEDIR}/../Makefile.ld"
 
 STRIPFLAG=	# override
 

@@ -13,3 +13,5 @@ OPT_SIZE.gcc=	-Os -ffreestanding -fomit-frame-pointer -fno-unwind-tables \
 		-fno-asynchronous-unwind-tables -fno-exceptions -mno-sse \
 		-fno-stack-protector
 OPT_SIZE.clang=	${OPT_SIZE.gcc} -mstack-alignment=4  -DNDEBUG
+
+.include "${.PARSEDIR}/Makefile.ld"
