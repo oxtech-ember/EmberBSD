@@ -121,7 +121,6 @@ static int     opt;		   /* optimization preference (space or time) */
 static int     density;	   /* number of bytes per inode */
 static int     maxcontig;	   /* max contiguous blocks to allocate */
 static int     maxbpg;	   /* maximum blocks per file in a cyl group */
-static int     bbsize;	   /* boot block size */
 static int     sbsize;	   /* superblock size */
 static int     avgfilesize;	   /* expected average file size */
 static int     avgfpdir;	   /* expected number of files per directory */
@@ -164,7 +163,6 @@ ffs_mkfs(const char *fsys, const fsinfo_t *fsopts, time_t tstamp)
 	maxbpg =        ffs_opts->maxbpg;
 	avgfilesize =   ffs_opts->avgfilesize;
 	avgfpdir =      ffs_opts->avgfpdir;
-	bbsize =        BBSIZE;
 	sbsize =        SBLOCKSIZE;
 
 	strlcpy((char *)sblock.fs_volname, ffs_opts->label,

@@ -58,7 +58,7 @@ __RCSID("$NetBSD: record.c,v 1.59 2024/03/20 20:19:31 mrg Exp $");
 static audio_info_t info, oinfo;
 static const char *device;
 static int	audiofd;
-static int	aflag, fflag;
+static int	aflag;
 int	verbose;
 static int	monitor_gain, omonitor_gain;
 static int	gain;
@@ -134,7 +134,6 @@ main(int argc, char *argv[])
 			encoding_str = optarg;
 			break;
 		case 'f':
-			fflag++;
 			break;
 		case 'i':
 			ti.header_info = optarg;

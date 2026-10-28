@@ -216,7 +216,7 @@ static long nrepeats;			/* number of duplicates */
 static long ntransmitted;		/* sequence # for outbound packets = #sent */
 static struct timespec interval = {1, 0}; /* interval between packets */
 
-static struct timespec now, last_tx, next_tx, first_tx;
+static struct timespec now, last_tx, next_tx;
 static int lastrcvd = 1;			/* last ping sent has been received */
 
 /* timing */
@@ -1181,7 +1181,6 @@ pinger(void)
 
 	last_tx = now;
 	if (next_tx.tv_sec == 0) {
-		first_tx = now;
 		next_tx = now;
 	}
 

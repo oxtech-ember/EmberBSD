@@ -188,7 +188,6 @@ static time_t	nextalarm = 0;
 
 static FILE	*rtlog = NULL;
 
-static int logopened = 0;
 
 static int	seq = 0;
 
@@ -340,7 +339,6 @@ main(int argc, char **argv)
 	}
 
 	openlog(progname, LOG_NDELAY|LOG_PID, LOG_DAEMON);
-	logopened++;
 
 	if ((ripbuf = malloc(RIP6_MAXMTU)) == NULL)
 		fatal("malloc");

@@ -63,7 +63,7 @@ static unsigned	*filt_chans = NULL;
 static unsigned num_filt_devnos, num_filt_chans;
 static char	*raw_output;
 static int	midifd;
-static int	aflag, qflag, oflag;
+static int	aflag, oflag;
 static bool debug = false;
 int	verbose;
 static int	outfd, rawfd = -1;
@@ -139,7 +139,6 @@ main(int argc, char *argv[])
 			oflag++;	/* time stamp starts at proc start */
 			break;
 		case 'q':
-			qflag++;
 			break;
 		case 'r':
 			raw_output = optarg;

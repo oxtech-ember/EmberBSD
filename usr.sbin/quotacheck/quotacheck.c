@@ -99,7 +99,6 @@ static union {
 } un;
 #define	sblock	un.sblk
 static long dev_bsize;
-static long maxino;
 
 struct quotaname {
 	long	flags;
@@ -415,7 +414,6 @@ chkquota(const char *type, const char *fsname, const char *mntpt, void *v,
 	}
 
 	dev_bsize = sblock.fs_fsize / FFS_FSBTODB(&sblock, 1);
-	maxino = sblock.fs_ncg * sblock.fs_ipg;
 	for (cg = 0; cg < sblock.fs_ncg; cg++) {
 		ino = cg * sblock.fs_ipg;
 		setinodebuf(ino);
