@@ -173,6 +173,8 @@ It preserves the previous powered-off disk and UEFI variables for complete recov
 The [headless AArch64 base update](../../ember/tools/docs/aarch64-base-update.md) has a physical Pi 5 receipt.
 Its recorded in-tree GCC12 bootstrap does not validate the current SDK compiler/runtime selection.
 Do not treat that receipt as acceptance on another board or of a complete general release.
+For an installed Orange Pi Zero 3W, use the [DevBoards update recipe](https://github.com/oxtech-ember/EmberBSD-DevBoards/blob/main/boards/a733-zero3w/update.md).
+It adds the board's loader, diagnostic-entry, FAT space and rollback checks. It has no physical update receipt yet.
 
 1. Read the selected recipe, release/build notes and [UPDATING](../../UPDATING).
 2. Record the installed source ID, modules, firmware, configuration and application inventory.
