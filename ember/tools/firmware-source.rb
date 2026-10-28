@@ -165,7 +165,7 @@ class FirmwareSource
     edk_roles.each_key { |token| raise 'Missing or duplicate typed EDK2 role' unless edk.count(token)==1 }
     {'version'=>2,'variant'=>(receipt.fetch('variant').empty? ? 'standard' : receipt.fetch('variant')),
       'revision'=>receipt.fetch('revision'),'compiler'=>compiler,'include'=>fs.fetch('include'),
-      'profile_sha256'=>fs.fetch('profile_sha256'),
+      'profile_sha256'=>fs.fetch('profile_sha256'),'codecs'=>fs['codecs'],
       'tfa_flags'=>tfa.map { |token| roles.fetch(token,token) },
       'edk2_flags'=>edk.map { |token| edk_roles.fetch(token,token) },'conf_templates'=>conf_templates(template_root)}
   end
@@ -207,7 +207,7 @@ class FirmwareSource
     conf=conf_templates(template_root)
     {'version'=>1,'variant'=>(receipt.fetch('variant').empty? ? 'standard' : receipt.fetch('variant')),'revision'=>receipt.fetch('revision'),
       'compiler'=>compiler,'include'=>fs.fetch('include'),
-      'profile_sha256'=>fs.fetch('profile_sha256'),'specs_sha256'=>fs.fetch('specs_sha256'),
+      'profile_sha256'=>fs.fetch('profile_sha256'),'specs_sha256'=>fs.fetch('specs_sha256'),'codecs'=>fs['codecs'],
       'tfa_flags'=>tfa.map { |token| roles.fetch(token,token) },
       'edk2_flags'=>edk.map { |token| edk_roles.fetch(token,token) },'conf_templates'=>conf}
   end

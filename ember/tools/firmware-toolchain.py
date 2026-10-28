@@ -5,6 +5,7 @@
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -57,7 +58,7 @@ def main():
         roles = {'cc', 'cxx', 'cpp', 'sh', 'python', *args.host_role}
         if args.run:
             roles |= {'bash', 'gmake', 'ruby', 'patch', 'iasl', 'dtc', 'shasum', 'awk',
-                      'ar', 'objcopy', 'objdump'}
+                      'ar', 'objcopy', 'objdump', 'gpatch'}
         native = host_prefix.load_host_prefix(args.host_prefix, compiler_family=args.host_family,
                                              required_roles=roles)
         target = (target_toolchain.clang_compiler(args.target_prefix, 'aarch64-unknown-none-elf',
@@ -79,6 +80,30 @@ def main():
                            env={'PATH': native.path}, check=True, capture_output=True)
         except subprocess.CalledProcessError as exc:
             raise SDKError('selected native Python is missing pyelftools') from exc
+        codec_env = {}
+        for name in ('EMBER_PORTS_SOURCE', 'EMBER_7ZIP_SOURCE', 'EMBER_BROTLI_SOURCE'):
+            value = os.environ.get(name, '')
+            if not os.path.isabs(value) or not os.path.isdir(value):
+                raise SDKError('select an absolute directory for ' + name)
+            codec_env[name] = value
+        verify_env = {'PATH': native.path}
+        if os.environ.get('TMPDIR'):
+            verify_env['TMPDIR'] = os.environ['TMPDIR']
+        for package, key in (('7zip', 'EMBER_7ZIP_SOURCE'), ('brotli', 'EMBER_BROTLI_SOURCE')):
+            owner = os.path.join(codec_env['EMBER_PORTS_SOURCE'], 'scripts/source-inputs', package, 'source.py')
+            verify_command = [native.tool('python'), '-B', owner, '--sdk-source', str(sdk),
+                       '--git', git, 'verify-source', '--source', codec_env[key],
+                       '--patch', native.tool('gpatch')]
+            archive = os.environ.get('EMBER_' + package.upper() + '_ARCHIVE')
+            if archive:
+                if not os.path.isabs(archive):
+                    raise SDKError('codec archive path must be absolute')
+                verify_command += ['--archive', archive]
+            record = json.loads(process.capture(verify_command, env=verify_env).stdout)
+            tree = record.get('tree_sha256')
+            if not isinstance(tree, str) or not re.fullmatch(r'[0-9a-f]{64}', tree):
+                raise SDKError('invalid prepared codec identity')
+            codec_env['EMBER_' + package.upper() + '_TREE'] = tree
         tmp = tempfile.mkdtemp(prefix='firmware-tools-', dir=os.environ.get('TMPDIR'))
         keep = False
         try:
@@ -86,6 +111,7 @@ def main():
             env = native_checks.check_environment(native, bindings=bindings)
             os.symlink(git, os.path.join(bindings, 'git'))
             os.symlink(native.tool('gmake'), os.path.join(bindings, 'make'))
+            env.update(codec_env)
             env.update(HOSTCC=env['CC'], HOSTCPP=env['CPP'], HOSTAS=env['CC'],
                        HOSTLD=env['CC'], HOSTAR=native.tool('ar'),
                        HOSTOC=native.tool('objcopy'), HOSTOD=native.tool('objdump'),

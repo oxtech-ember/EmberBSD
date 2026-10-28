@@ -179,6 +179,36 @@ class FirmwareToolchain(unittest.TestCase):
         self.assertEqual(exit_status.exception.code, 1)
         self.assertIn('selected native Python is missing pyelftools', errors.getvalue())
 
+    def test_verified_codecs_preserve_builder_command(self):
+        sys.path.insert(0, str(Path(os.environ["EMBERBSD_SDK_SOURCE"]) / "src"))
+        from emberbsd_sdk import host_prefix, native_checks, process, stream
+        spec = importlib.util.spec_from_file_location("firmware_selector", root / "ember/tools/firmware-toolchain.py")
+        selector = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(selector)
+        native = mock.Mock()
+        native.path, native.host = str(Path(sys.executable).parent), {}
+        native.tool.side_effect = lambda role: sys.executable if role == "python" else "/selected/" + role
+        argv = ["firmware-toolchain.py", "--sdk-source", os.environ["EMBERBSD_SDK_SOURCE"],
+                "--host-prefix", os.environ["EMBER_HOST_PREFIX"], "--target-prefix", os.environ["EMBER_TARGET_PREFIX"],
+                "--target-family", "gcc", "--run", "--", "/selected/builder", "argument"]
+        def check_environment(_native, *, bindings):
+            Path(bindings).mkdir()
+            return {"CC": "cc", "CPP": "cpp", "PATH": bindings}
+        with tempfile.TemporaryDirectory() as directory:
+            values = {name: directory for name in ("EMBER_PORTS_SOURCE", "EMBER_7ZIP_SOURCE", "EMBER_BROTLI_SOURCE")}
+            values["EMBER_GIT"] = "/usr/bin/git"
+            with mock.patch.dict(os.environ, values), mock.patch.object(sys, "argv", argv), \
+                 mock.patch.object(host_prefix, "load_host_prefix", return_value=native), \
+                 mock.patch.object(selector, "validate_gcc_tools"), \
+                 mock.patch.object(process, "capture") as verify, \
+                 mock.patch.object(native_checks, "check_environment", side_effect=check_environment), \
+                 mock.patch.object(stream, "run_streamed") as run:
+                run.return_value.stderr = b""
+                verify.return_value.stdout = json.dumps({"tree_sha256": "a" * 64}).encode()
+                self.assertEqual(selector.main(), 0)
+                self.assertEqual(verify.call_count, 2)
+                self.assertEqual(run.call_args.args[0], ["/selected/bash", "/selected/builder", "argument"])
+
     def test_missing_selected_host_tool_refuses_ambient_path(self):
         command = [sys.executable, '-B', str(root / 'ember/tools/firmware-toolchain.py'),
                    '--sdk-source', os.environ['EMBERBSD_SDK_SOURCE'],

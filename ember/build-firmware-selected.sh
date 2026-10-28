@@ -30,7 +30,7 @@ for input_path in "$CACHE" "$ROOT"; do
     }
 done
 if [[ $prepare_only -eq 0 ]]; then
-    for input_path in "${CROSS_COMPILE:-}" "${EMBERBSD_SDK_SOURCE:-}" "${EMBER_HOST_PREFIX:-}" "${EMBER_TARGET_PREFIX:-}" "${TMPDIR:-}"; do
+    for input_path in "${CROSS_COMPILE:-}" "${EMBERBSD_SDK_SOURCE:-}" "${EMBER_HOST_PREFIX:-}" "${EMBER_TARGET_PREFIX:-}" "${EMBER_7ZIP_SOURCE:-}" "${EMBER_BROTLI_SOURCE:-}" "${TMPDIR:-}"; do
         [[ "$input_path" != *[[:space:]]* ]] || {
             echo 'explicit firmware toolchain paths must not contain whitespace' >&2; exit 1;
         }
@@ -267,6 +267,8 @@ if [[ $prepare_only -eq 0 ]]; then
         inputs={"include"=>include_dir,"empty_root"=>empty,
           "profile_sha256"=>Digest::SHA256.file(profile).hexdigest,"tfa_flags"=>tfa,"edk2_flags"=>edk}
         inputs["specs_sha256"]=Digest::SHA256.file(specs).hexdigest unless family=="clang"
+        inputs["codecs"]={"7zip_tree"=>ENV.fetch("EMBER_7ZIP_TREE"),
+          "brotli_tree"=>ENV.fetch("EMBER_BROTLI_TREE")}
         File.write(path,JSON.pretty_generate({"variant"=>variant,"revision"=>revision,
           "compiler"=>identity,"freestanding"=>inputs})+"\n")
     ' "$firmware_source_work/build-options.json" "${variant#-}" "$revision" "$target_family" \
@@ -289,6 +291,10 @@ if [[ $prepare_only -eq 1 ]]; then
     exit 0
 fi
 firmware_source_sha256=$(shasum -a 256 "$CACHE/.ember-firmware-source.json" | awk '{print $1}')
+export EMBER_EDK2_OVERLAY="$firmware_source_work/codec-overlay"
+python3 -B "$ROOT/ember/tools/firmware-codec-overlay.py" \
+    --edk2 "$src/edk2" --7zip "$EMBER_7ZIP_SOURCE" --brotli "$EMBER_BROTLI_SOURCE" \
+    --output "$EMBER_EDK2_OVERLAY" > "$out/codec-overlay.log"
 
 # Use host defaults and the selected CROSS_COMPILE, not implicit caller flags.
 ( cd "$src" && ./build.sh "${variant_flags[@]}" ) > "$out/build.log" 2>&1
@@ -335,6 +341,10 @@ receipt = {
                      'tfa_flags': tfa_flags, 'edk2_flags': edk2_flags},
     'series': {d: sha(os.path.join(root, 'ember/firmware', d)) for d in series},
     'files': {'RPI_EFI.fd': sha(os.path.join(out, 'RPI_EFI.fd.incoming'))},
+}
+receipt['freestanding']['codecs'] = {
+    '7zip_tree': os.environ['EMBER_7ZIP_TREE'],
+    'brotli_tree': os.environ['EMBER_BROTLI_TREE'],
 }
 if family == 'gcc':
     receipt['freestanding']['specs_sha256'] = sha(specs)

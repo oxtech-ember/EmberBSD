@@ -33,3 +33,7 @@ edk2-rp1-console-retain.diff
 top-tool-selection.diff
 edk2-clang-target.diff
 edk2-genfw-unused.diff
+edk2-lzma-common.diff
+edk2-brotli-common.diff
+edk2-lzma-target.diff
+top-codec-overlay.diff

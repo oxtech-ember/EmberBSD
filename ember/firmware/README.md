@@ -13,8 +13,19 @@ bash ember/build-firmware.sh /absolute/cache --prepare
 EMBERBSD_SDK_SOURCE=/absolute/sdk-source \
 EMBER_HOST_PREFIX=/absolute/native-prefix \
 EMBER_TARGET_PREFIX=/absolute/target-prefix \
+EMBER_PORTS_SOURCE=/absolute/ports-source \
+EMBER_7ZIP_SOURCE=/absolute/prepared-7zip \
+EMBER_BROTLI_SOURCE=/absolute/prepared-brotli \
     /absolute/native-prefix/bin/bash ember/build-firmware.sh /absolute/cache --rp1-console
 ```
+
+Prepare 7-Zip and Brotli from their shared Ports source owners before a build.
+The builder verifies the prepared sources and builds the host Brotli generator
+from the same shared source. It uses a private EDK2 overlay for the decoder and
+package metadata, with the shared source trees selected explicitly. When source inputs
+have changed, set `EMBER_7ZIP_ARCHIVE` or `EMBER_BROTLI_ARCHIVE` to the current
+archive for the owner’s comparison. The overlay is a build artifact; it does
+not replace the pinned EDK2 checkout.
 
 `--prepare` needs no compiler. For a platform with an explicit GCC exception,
 set `EMBER_TARGET_COMPILER_FAMILY=gcc` and `CROSS_COMPILE` to the compiler

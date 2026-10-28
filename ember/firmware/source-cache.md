@@ -62,7 +62,8 @@ not supported. It causes a refusal with no source change.
 TF-A does not track build-option changes. The option-profile check is
 separate from the source manifest. It compares the saved variant/options,
 compiler family, path, version and target, selected freestanding flags,
-compiler headers and pinned Conf templates. The explicit GCC profile also
+compiler headers and prepared codec tree identities
+and pinned Conf templates. The explicit GCC profile also
 checks its specs and prefix. Only typed empty-search-root and
 specs-path roles are normalized. Their current directories and hashes must
 pass the normal compiler profile checks. Existing custom Conf inputs need

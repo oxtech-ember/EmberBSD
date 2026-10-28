@@ -82,7 +82,7 @@ Dir.mktmpdir('firmware-contract-', ENV['TMPDIR']) do |temporary|
       tfa=input.include?('--- a/make_helpers/utilities.mk')
       directory=ARGV.fetch(ARGV.index('-d')+1)
       File.open(ENV.fetch('FIXTURE_TRACE'),'a') { |f| f.puts JSON.generate(['fake-patch',ARGV,tfa]) }
-      edk2=input.include?('--- a/BaseTools/BinWrappers/') || input.include?('--- a/BaseTools/Conf/') || input.include?('--- a/MdeModulePkg/') || input.include?('--- a/EmbeddedPkg/')
+      edk2=input.include?('--- a/BaseTools/') || input.include?('--- a/MdeModulePkg/') || input.include?('--- a/EmbeddedPkg/')
       top=input.include?('--- a/build.sh')
       expected=tfa ? '/arm-trusted-firmware' : (edk2 ? '/edk2' : (top ? '/rpi5-uefi-src' : '/edk2-platforms'))
       unless directory.end_with?(expected)
@@ -126,6 +126,11 @@ Dir.mktmpdir('firmware-contract-', ENV['TMPDIR']) do |temporary|
       #!#{RbConfig.ruby}
       require 'json'
       File.open(ENV.fetch('FIXTURE_TRACE'), 'a') { |f| f.puts JSON.generate(['python3', ARGV]) }
+      if ARGV.first == '-B' && ARGV[1].end_with?('/firmware-codec-overlay.py')
+        require 'fileutils'
+        FileUtils.mkdir_p(ARGV.fetch(ARGV.index('--output')+1))
+        exit 0
+      end
       if ARGV.first == '-c' && ARGV[1].include?('os.path.realpath')
         exec ENV.fetch('FIXTURE_REAL_PYTHON'), *ARGV
       end
@@ -230,6 +235,8 @@ Dir.mktmpdir('firmware-contract-', ENV['TMPDIR']) do |temporary|
            'PYTHONDONTWRITEBYTECODE'=>'1', 'CROSS_COMPILE'=>"#{tools}/aarch64-none-elf-",
            'EMBERBSD_SDK_SOURCE'=>directory, 'EMBER_HOST_PREFIX'=>directory,
            'EMBER_TARGET_PREFIX'=>directory,
+           'EMBER_7ZIP_SOURCE'=>directory, 'EMBER_BROTLI_SOURCE'=>directory,
+           'EMBER_7ZIP_TREE'=>'a'*64, 'EMBER_BROTLI_TREE'=>'b'*64,
            'EMBER_TARGET_COMPILER_FAMILY'=>'gcc', 'RPI_BUILD_MAKE'=>tools+'/gmake',
            'EMBER_AARCH64_ELF_TOOLCHAIN'=>''}.merge(values)
     env['CROSS_COMPILE'] = "#{tools}/explicit-" if env['CROSS_COMPILE'] == 'EXPLICIT'

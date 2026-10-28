@@ -252,12 +252,17 @@ test.call('clang-option-profile') do |tool,previous,_,work,assert,reject,source|
   File.write(template, 'patched template')
   FileUtils.mkdir_p(source+'/Conf')
   File.write(source+'/Conf/tools_def.txt', 'patched template')
+  raw['freestanding']['codecs']={'7zip_tree'=>'d'*64,'brotli_tree'=>'e'*64}
   previous['option_profile']=tool.option_profile(raw,work+'/export/export')
   same=Marshal.load(Marshal.dump(raw)); other=work+'/other'; Dir.mkdir(other)
   same['freestanding']['empty_root']=other
   %w[tfa_flags edk2_flags].each { |k| same['freestanding'][k]=same['freestanding'][k].gsub(empty,other) }
   tool.check_options(previous,same,work+'/export/export')
   assert.call(true,'equivalent Clang search root refused')
+  %w[7zip_tree brotli_tree].each do |key|
+    changed=Marshal.load(Marshal.dump(same)); changed['freestanding']['codecs'][key]='9'*64
+    reject.call { tool.check_options(previous,changed,work+'/export/export') }
+  end
   bad=Marshal.load(Marshal.dump(same)); bad['compiler']['machine']='aarch64-unknown-linux-gnu'
   reject.call { tool.check_options(previous,bad,work+'/export/export') }
   File.write(source+'/Conf/tools_def.txt', 'unknown config')
@@ -270,6 +275,7 @@ test.call('option-profile') do |tool,previous,_,work,assert,reject,source|
     'freestanding'=>{'include'=>'/same/include','empty_root'=>empty,'specs_sha256'=>'b'*64,'profile_sha256'=>'c'*64,
       'tfa_flags'=>"CFLAGS+=--sysroot=#{empty} LDFLAGS+=--sysroot=#{empty} LDFLAGS+=-specs=/specs",
       'edk2_flags'=>"-D EMBER_FIRMWARE_ROOT=#{empty} -D EMBER_FIRMWARE_SPECS=/specs"}}
+  raw['freestanding']['codecs']={'7zip_tree'=>'d'*64,'brotli_tree'=>'e'*64}
   previous['option_profile']=tool.option_profile(raw)
   tool.check_options(previous,raw)
   same=Marshal.load(Marshal.dump(raw));other=work+'/other-empty';Dir.mkdir(other)
@@ -278,6 +284,10 @@ test.call('option-profile') do |tool,previous,_,work,assert,reject,source|
   same['freestanding']['edk2_flags']=same['freestanding']['edk2_flags'].gsub(empty,other).sub('/specs','/other-specs')
   tool.check_options(previous,same)
   assert.call(true,'typed role change refused')
+  %w[7zip_tree brotli_tree].each do |key|
+    changed=Marshal.load(Marshal.dump(same)); changed['freestanding']['codecs'][key]='9'*64
+    reject.call { tool.check_options(previous,changed) }
+  end
   %w[variant prefix sha version include tfa edk specs profile].each do |field|
     bad=Marshal.load(Marshal.dump(raw))
     case field

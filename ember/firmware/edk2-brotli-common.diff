@@ -1,0 +1,107 @@
+# Build from the common prepared Brotli source and full patchset.
+# Origin: EmberBSD (AI-assisted); upstream status: not submitted.
+--- a/BaseTools/Source/C/BrotliCompress/GNUmakefile
++++ b/BaseTools/Source/C/BrotliCompress/GNUmakefile
+@@ -8,45 +8,53 @@
+ 
+ APPNAME = BrotliCompress
+ 
++ifeq ($(strip $(EMBER_BROTLI_SOURCE)),)
++$(error EMBER_BROTLI_SOURCE is required)
++endif
++
+ OBJECTS = \
+   BrotliCompress.o \
+-  brotli/c/common/platform.o \
+-  brotli/c/common/shared_dictionary.o \
+-  brotli/c/common/constants.o \
+-  brotli/c/common/context.o \
+-  brotli/c/enc/command.o \
+-  brotli/c/enc/compound_dictionary.o \
+-  brotli/c/enc/fast_log.o \
+-  brotli/c/common/dictionary.o \
+-  brotli/c/common/transform.o \
+-  brotli/c/dec/bit_reader.o \
+-  brotli/c/dec/decode.o \
+-  brotli/c/dec/huffman.o \
+-  brotli/c/dec/prefix.o \
+-  brotli/c/dec/state.o \
+-  brotli/c/dec/static_init.o \
+-  brotli/c/enc/backward_references.o \
+-  brotli/c/enc/backward_references_hq.o \
+-  brotli/c/enc/bit_cost.o \
+-  brotli/c/enc/block_splitter.o \
+-  brotli/c/enc/brotli_bit_stream.o \
+-  brotli/c/enc/cluster.o \
+-  brotli/c/enc/compress_fragment.o \
+-  brotli/c/enc/compress_fragment_two_pass.o \
+-  brotli/c/enc/dictionary_hash.o \
+-  brotli/c/enc/encode.o \
+-  brotli/c/enc/encoder_dict.o \
+-  brotli/c/enc/entropy_encode.o \
+-  brotli/c/enc/histogram.o \
+-  brotli/c/enc/literal_cost.o \
+-  brotli/c/enc/memory.o \
+-  brotli/c/enc/metablock.o \
+-  brotli/c/enc/static_dict.o \
+-  brotli/c/enc/static_dict_lut.o \
+-  brotli/c/enc/static_init.o \
+-  brotli/c/enc/utf8_util.o
++  ember-brotli/c/common/platform.o \
++  ember-brotli/c/common/shared_dictionary.o \
++  ember-brotli/c/common/constants.o \
++  ember-brotli/c/common/context.o \
++  ember-brotli/c/enc/command.o \
++  ember-brotli/c/enc/compound_dictionary.o \
++  ember-brotli/c/enc/fast_log.o \
++  ember-brotli/c/common/dictionary.o \
++  ember-brotli/c/common/transform.o \
++  ember-brotli/c/dec/bit_reader.o \
++  ember-brotli/c/dec/decode.o \
++  ember-brotli/c/dec/huffman.o \
++  ember-brotli/c/dec/prefix.o \
++  ember-brotli/c/dec/state.o \
++  ember-brotli/c/dec/static_init.o \
++  ember-brotli/c/enc/backward_references.o \
++  ember-brotli/c/enc/backward_references_hq.o \
++  ember-brotli/c/enc/bit_cost.o \
++  ember-brotli/c/enc/block_splitter.o \
++  ember-brotli/c/enc/brotli_bit_stream.o \
++  ember-brotli/c/enc/cluster.o \
++  ember-brotli/c/enc/compress_fragment.o \
++  ember-brotli/c/enc/compress_fragment_two_pass.o \
++  ember-brotli/c/enc/dictionary_hash.o \
++  ember-brotli/c/enc/encode.o \
++  ember-brotli/c/enc/encoder_dict.o \
++  ember-brotli/c/enc/entropy_encode.o \
++  ember-brotli/c/enc/histogram.o \
++  ember-brotli/c/enc/literal_cost.o \
++  ember-brotli/c/enc/memory.o \
++  ember-brotli/c/enc/metablock.o \
++  ember-brotli/c/enc/static_dict.o \
++  ember-brotli/c/enc/static_dict_lut.o \
++  ember-brotli/c/enc/static_init.o \
++  ember-brotli/c/enc/utf8_util.o
+ 
+ include $(MAKEROOT)/Makefiles/app.makefile
+ 
+-TOOL_INCLUDE = -I ./brotli/c/include
++TOOL_INCLUDE = -I$(EMBER_BROTLI_SOURCE)/c/include -I$(EMBER_BROTLI_SOURCE)/c/common
++
++ember-brotli/%.o: $(EMBER_BROTLI_SOURCE)/%.c
++	$(MD) $(dir $@)
++	$(CC) -c $(CPPFLAGS) $(CFLAGS) $< -o $@
+ LIBS += -lm
+--- a/BaseTools/Source/C/BrotliCompress/BrotliCompress.c
++++ b/BaseTools/Source/C/BrotliCompress/BrotliCompress.c
+@@ -18,8 +18,8 @@
+ #include <sys/types.h>
+ #include <time.h>
+ 
+-#include "./brotli/c/common/constants.h"
+-#include "./brotli/c/common/version.h"
++#include "constants.h"
++#include "version.h"
+ #include <brotli/decode.h>
+ #include <brotli/encode.h>
+ 

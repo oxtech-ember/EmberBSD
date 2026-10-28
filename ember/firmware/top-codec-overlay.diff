@@ -1,0 +1,13 @@
+# Route codec integration through a generated workspace overlay.
+# Origin: EmberBSD (AI-assisted); upstream status: not submitted.
+--- a/build.sh
++++ b/build.sh
+@@ -119,7 +119,7 @@
+ export GCC_AARCH64_PREFIX="${CROSS_COMPILE}"
+ export WORKSPACE=${PWD}
+ export CONF_PATH="${WORKSPACE}/Conf"
+-export PACKAGES_PATH=${WORKSPACE}/edk2:${WORKSPACE}/edk2-platforms:${WORKSPACE}/edk2-non-osi
++export PACKAGES_PATH=${EMBER_EDK2_OVERLAY:?}:${WORKSPACE}/edk2:${WORKSPACE}/edk2-platforms:${WORKSPACE}/edk2-non-osi
+ 
+ EDK2_SD_PATCH="${WORKSPACE}/temporary-patches/edk2/0001-MdeModulePkg-SdMmcPciHcDxe-Add-platform-signaling-vo.patch"
+ EDK2_SD_PATCH_APPLIED=0

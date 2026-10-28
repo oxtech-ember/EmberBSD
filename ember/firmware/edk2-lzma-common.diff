@@ -1,0 +1,115 @@
+# Use shared 7-Zip sources and adapt the 26.05 API.
+# Origin: EmberBSD (AI-assisted); upstream status: not submitted.
+--- a/BaseTools/Source/C/LzmaCompress/GNUmakefile
++++ b/BaseTools/Source/C/LzmaCompress/GNUmakefile
+@@ -10,18 +10,14 @@
+ 
+ LIBS = -lCommon
+ 
+-SDK_C = Sdk/C
+-
+-OBJECTS = \
+-  LzmaCompress.o \
+-  $(SDK_C)/Alloc.o \
+-  $(SDK_C)/LzFind.o \
+-  $(SDK_C)/LzmaDec.o \
+-  $(SDK_C)/LzmaEnc.o \
+-  $(SDK_C)/7zFile.o \
+-  $(SDK_C)/7zStream.o \
+-  $(SDK_C)/Bra86.o
++SDK_C = $(EMBER_7ZIP_SOURCE)/C
++ifeq ($(strip $(EMBER_7ZIP_SOURCE)),)
++$(error EMBER_7ZIP_SOURCE is required)
++endif
++vpath %.c $(SDK_C)
++OBJECTS = LzmaCompress.o Alloc.o LzFind.o LzFindOpt.o CpuArch.o LzmaDec.o LzmaEnc.o 7zFile.o 7zStream.o Bra86.o
+ 
+ include $(MAKEROOT)/Makefiles/app.makefile
+ 
+-CFLAGS += -D_7ZIP_ST
++TOOL_INCLUDE = -I$(SDK_C)
++CFLAGS += -DZ7_ST
+--- a/BaseTools/Source/C/LzmaCompress/LzmaCompress.c
++++ b/BaseTools/Source/C/LzmaCompress/LzmaCompress.c
+@@ -16,12 +16,12 @@
+ #include <stdlib.h>
+ #include <string.h>
+ 
+-#include "Sdk/C/Alloc.h"
+-#include "Sdk/C/7zFile.h"
+-#include "Sdk/C/7zVersion.h"
+-#include "Sdk/C/LzmaDec.h"
+-#include "Sdk/C/LzmaEnc.h"
+-#include "Sdk/C/Bra.h"
++#include <Alloc.h>
++#include <7zFile.h>
++#include <7zVersion.h>
++#include <LzmaDec.h>
++#include <LzmaEnc.h>
++#include <Bra.h>
+ #include "CommonLib.h"
+ #include "ParseInf.h"
+ 
+@@ -94,6 +94,13 @@
+   sprintf (buffer, "%s Version %d.%d %s ", UTILITY_NAME, UTILITY_MAJOR_VERSION, UTILITY_MINOR_VERSION, __BUILD_VERSION);
+ }
+ 
++static SRes ReadExact(ISeqInStream *stream, void *buffer, size_t size)
++{
++  size_t processed = size;
++  SRes result = SeqInStream_ReadMax(stream, buffer, &processed);
++  return result != SZ_OK ? result : processed == size ? SZ_OK : SZ_ERROR_INPUT_EOF;
++}
++
+ static SRes Encode(ISeqOutStream *outStream, ISeqInStream *inStream, UInt64 fileSize, CLzmaEncProps *props)
+ {
+   SRes res;
+@@ -111,7 +118,7 @@
+     return SZ_ERROR_INPUT_EOF;
+   }
+ 
+-  if (SeqInStream_Read(inStream, inBuffer, inSize) != SZ_OK) {
++  if (ReadExact(inStream, inBuffer, inSize) != SZ_OK) {
+     res = SZ_ERROR_READ;
+     goto Done;
+   }
+@@ -142,8 +149,8 @@
+     if (mConType == X86Converter) {
+       {
+         UInt32 x86State;
+-        x86_Convert_Init(x86State);
+-        x86_Convert(filteredStream, (SizeT) inSize, 0, &x86State, 1);
++        x86State = Z7_BRANCH_CONV_ST_X86_STATE_INIT_VAL;
++        Z7_BRANCH_CONV_ST_ENC(X86)(filteredStream, (SizeT) inSize, 0, &x86State);
+       }
+     }
+   }
+@@ -194,7 +201,7 @@
+   if (inBuffer == 0)
+     return SZ_ERROR_MEM;
+ 
+-  if (SeqInStream_Read(inStream, inBuffer, inSize) != SZ_OK) {
++  if (ReadExact(inStream, inBuffer, inSize) != SZ_OK) {
+     res = SZ_ERROR_READ;
+     goto Done;
+   }
+@@ -224,8 +231,8 @@
+   if (mConType == X86Converter)
+   {
+     UInt32 x86State;
+-    x86_Convert_Init(x86State);
+-    x86_Convert(outBuffer, (SizeT) outSize, 0, &x86State, 0);
++    x86State = Z7_BRANCH_CONV_ST_X86_STATE_INIT_VAL;
++    Z7_BRANCH_CONV_ST_DEC(X86)(outBuffer, (SizeT) outSize, 0, &x86State);
+   }
+ 
+   if (outStream->Write(outStream, outBuffer, outSize) != outSize)
+@@ -392,7 +399,7 @@
+   return 0;
+ }
+ 
+-int MY_CDECL main(int numArgs, const char *args[])
++int Z7_CDECL main(int numArgs, const char *args[])
+ {
+   char rs[2000] = { 0 };
+   int res = main2(numArgs, args, rs);

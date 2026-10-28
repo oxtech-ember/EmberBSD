@@ -1,0 +1,33 @@
+# Build the decoder against prepared shared 7-Zip source.
+# Origin: EmberBSD (AI-assisted); upstream status: not submitted.
+--- a/MdeModulePkg/Library/LzmaCustomDecompressLib/LzmaCustomDecompressLib.inf
++++ b/MdeModulePkg/Library/LzmaCustomDecompressLib/LzmaCustomDecompressLib.inf
+@@ -24,12 +24,8 @@
+ 
+ [Sources]
+   LzmaDecompress.c
+-  Sdk/C/LzFind.c
+   Sdk/C/LzmaDec.c
+   Sdk/C/7zVersion.h
+-  Sdk/C/CpuArch.h
+-  Sdk/C/LzFind.h
+-  Sdk/C/LzHash.h
+   Sdk/C/LzmaDec.h
+   Sdk/C/7zTypes.h
+   Sdk/C/Precomp.h
+@@ -51,3 +47,6 @@
+   BaseMemoryLib
+   ExtractGuidedSectionLib
+ 
++
++[BuildOptions]
++  GCC:*_*_*_CC_FLAGS = -DZ7_FREESTANDING -DZ7_LZMA_SIZE_OPT -include $(MODULE_DIR)/EmberLzmaGlue.h
+--- a/MdeModulePkg/Library/LzmaCustomDecompressLib/EmberLzmaGlue.h
++++ b/MdeModulePkg/Library/LzmaCustomDecompressLib/EmberLzmaGlue.h
+@@ -0,0 +1,6 @@
++/* SPDX-License-Identifier: BSD-2-Clause */
++/* Origin: EmberBSD (AI-assisted). */
++#pragma once
++#include <Uefi.h>
++#include <Library/BaseMemoryLib.h>
++#define memcpy CopyMem
