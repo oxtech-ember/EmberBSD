@@ -464,13 +464,14 @@ class LLVMSourceTests(unittest.TestCase):
         self.assertIn("--unwindlib=libunwind", flags)
 
     def test_application_runtime_keeps_os_crt_and_explicit_driver_ordering(self):
-        names = ("CXX", "CXXFLAGS", "MKDEPCXXFLAGS", "LDFLAGS",
+        names = ("CXX", "CXXLDFLAGS", "CXXFLAGS", "MKDEPCXXFLAGS", "LDFLAGS",
                  "_GCC_CRTBEGIN", "_GCC_CRTEND", "LIBCXX")
         result = self.query("share/mk/bsd.prog.mk", names,
             "PROG_CXX=probe", *self.runtime_options())
         self.assertEqual(result.returncode, 0, result.stderr)
         value = dict(zip(names, result.stdout.splitlines()))
-        self.assertIn("-stdlib=libc++", value["CXX"].split())
+        self.assertNotIn("-stdlib=libc++", value["CXX"].split())
+        self.assertIn("-stdlib=libc++", value["CXXLDFLAGS"].split())
         for name in ("CXXFLAGS", "MKDEPCXXFLAGS"):
             self.assertIn("-nostdinc++", value[name].split())
             self.assertIn(str(self.work / "runtime/include/c++/v1"), value[name])
@@ -482,6 +483,36 @@ class LLVMSourceTests(unittest.TestCase):
         self.assertEqual(value["_GCC_CRTBEGIN"], "/target/root/usr/lib/crtbegin.o")
         self.assertEqual(value["_GCC_CRTEND"], "/target/root/usr/lib/crtend.o")
         self.assertEqual(value["LIBCXX"], str(self.work / "runtime/lib/libc++.a"))
+
+    def test_cxx_compile_and_link_routing(self):
+        options = self.runtime_options()
+        cases = (
+            ("single C++ program", ("PROG_CXX=probe",),
+             ("CXX", "CXXFLAGS", "_CCLINK", "LINK.cc")),
+            ("mixed programs", ("PROGS=cprog", "PROGS_CXX=cxxprog"),
+             ("CXX", "CXXFLAGS", "_CCLINK.cprog", "_CCLINK.cxxprog")),
+        )
+        for label, settings, names in cases:
+            with self.subTest(case=label):
+                result = self.query("share/mk/bsd.prog.mk", names, *settings, *options)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                values = dict(zip(names, result.stdout.splitlines()))
+                self.assertNotIn("-stdlib=libc++", values["CXX"].split())
+                self.assertNotIn("-stdlib=libc++", values["CXXFLAGS"].split())
+                self.assertIn("-nostdinc++", values["CXXFLAGS"].split())
+                for name in names[2:]:
+                    if name == "_CCLINK.cprog":
+                        self.assertNotIn("-stdlib=libc++", values[name].split())
+                    else:
+                        self.assertIn("-stdlib=libc++", values[name].split())
+        result = self.query("share/mk/bsd.lib.mk", ("CXX", "CXXFLAGS", "LIBCC"),
+            "LIB=probe", "LIBISCXX=yes", "SRCS=probe.cc", *options)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        compiler, flags, linker = result.stdout.splitlines()
+        self.assertNotIn("-stdlib=libc++", compiler.split())
+        self.assertNotIn("-stdlib=libc++", flags.split())
+        self.assertIn("-nostdinc++", flags.split())
+        self.assertIn("-stdlib=libc++", linker.split())
 
     def test_runtime_does_not_pollute_host_or_freestanding_rules(self):
         options = self.runtime_options()

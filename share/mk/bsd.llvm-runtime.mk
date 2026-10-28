@@ -55,7 +55,9 @@ _EMBER_LLVM_RUNTIME=yes
 .if ${_EMBER_LLVM_RUNTIME_PHASE} == "full"
 LIBCXX?=	${EMBER_EXTERNAL_LLVM_RUNTIME}/lib/libc++.a
 _EMBER_LLVM_CXX_CPPFLAGS= -nostdinc++ -isystem ${EMBER_EXTERNAL_LLVM_RUNTIME}/include/c++/v1
-CXX+=		-stdlib=libc++
+# Header searches are explicit above.  Select the driver runtime only when
+# linking: Clang does not consume -stdlib with -nostdinc++ on compile-only jobs.
+CXXLDFLAGS+=	-stdlib=libc++
 CXXFLAGS+=	${_EMBER_LLVM_CXX_CPPFLAGS}
 MKDEPCXXFLAGS+=	${_EMBER_LLVM_CXX_CPPFLAGS}
 .endif

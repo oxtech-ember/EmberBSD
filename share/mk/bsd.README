@@ -1720,6 +1720,9 @@ CXX		C++ compiler.  [c++]
 
 CXXFLAGS	Options to ${CXX}.  [${CFLAGS}]
 
+CXXLDFLAGS	Additional options to ${CXX} during the link process, in
+		addition to LDFLAGS.  Not used for C links or compilation.  []
+
 M68K_ELF2AOUT	Convert ELF-format executable to a.out.  [elf2aout]
 
 MIPS_ELF2ECOFF	Convert ELF-format executable to ECOFF.  [elf2ecoff]

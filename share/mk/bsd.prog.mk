@@ -335,7 +335,7 @@ _CCLINKFLAGS=
 
 .if defined(PROG_CXX)
 PROG=		${PROG_CXX}
-_CCLINK=	${CXX} ${_CCLINKFLAGS}
+_CCLINK=	${CXX} ${_CCLINKFLAGS} ${CXXLDFLAGS}
 .endif
 
 .if defined(RUMPPRG)
@@ -439,11 +439,11 @@ _CPPFLAGS.${_P}=	${CPPFLAGS}
 _COPTS.${_P}=	${COPTS}
 .endfor
 
-_CCLINK.CXXDEFAULT= ${CXX} ${_CCLINKFLAGS}
+_CCLINK.CXXDEFAULT= ${CXX} ${_CCLINKFLAGS} ${CXXLDFLAGS}
 # Definitions specific to C++ programs.
 .for _P in ${PROGS_CXX}
 SRCS.${_P}?=	${_P}.cc
-_CCLINK.${_P}=	${CXX} ${_CCLINKFLAGS}
+_CCLINK.${_P}=	${CXX} ${_CCLINKFLAGS} ${CXXLDFLAGS}
 .endfor
 
 # Language-independent definitions.

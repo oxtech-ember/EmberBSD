@@ -634,7 +634,7 @@ LDADD+= -lgcc
 .endif
 
 .if ${LIBISCXX} != "no"
-LIBCC:=	${CXX}
+LIBCC:=	${CXX} ${CXXLDFLAGS}
 . if ${_EMBER_LLVM_RUNTIME:Uno} == "yes"
 DPADD+=	${LIBCXX}
 . elif ${MKLIBCXX} == "yes"
