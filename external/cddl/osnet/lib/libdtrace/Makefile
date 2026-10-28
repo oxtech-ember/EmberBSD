@@ -149,7 +149,8 @@ beforedepend:	dt_errtags.c dt_names.c
 	    ${TOOL_SED} -e 's/\&/\\\&/g' | grep '^s/' > ${.TARGET}
 
 
-LIBDPLIBS=	proc	${NETBSDSRCDIR}/external/bsd/libproc/lib
+LIBDPLIBS=	proc	${NETBSDSRCDIR}/external/bsd/libproc/lib \
+		rtld_db	${NETBSDSRCDIR}/external/bsd/librtld_db/lib
 
 COPTS.dt_link.c+=	${${ACTIVE_CC} == "gcc" && ${HAVE_GCC:U0} >= 10:? -Wno-restrict :}
 
