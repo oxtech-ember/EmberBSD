@@ -2,7 +2,7 @@
 
 The SDK target acceptance runner assembles a disposable root from the selected
 OS build's `base.tar.xz`. `target-acceptance-root.sh` requires the same build's
-`DESTDIR/etc/MAKEDEV`, `TOOLDIR/bin/nbmtree` and `TOOLDIR/bin/nbmakefs`. It
+`DESTDIR/dev/MAKEDEV`, `TOOLDIR/bin/nbmtree` and `TOOLDIR/bin/nbmakefs`. It
 adds the standard console/null/tty devices and the explicitly selected `ld`
 device emitted by MAKEDEV, then creates a new FFS image. It does not create
 host device nodes or modify an existing image.
@@ -33,7 +33,7 @@ only when it generates a MAKEDEV script from source.
 
 After an OS build has produced its tools, the same test script can also
 exercise the real `nbmtree` and `nbmakefs` in a temporary directory. If
-`EMBER_OS_DESTDIR` is supplied, its `etc/MAKEDEV` is used; otherwise the fixture
+`EMBER_OS_DESTDIR` is supplied, its `dev/MAKEDEV` is used; otherwise the fixture
 generates `MAKEDEV` from the selected source tree. This creates only a small
 disposable FFS image and does not assert guest boot acceptance:
 

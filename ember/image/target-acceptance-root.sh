@@ -35,7 +35,7 @@ case $image in /*) ;; *) echo "image path must be absolute" >&2; exit 2;; esac
 	[ -d "$os_source/etc" ] || { echo "incomplete selected OS build inputs" >&2; exit 1; }
 [ -x "$tooldir/bin/nbmtree" ] && [ -x "$tooldir/bin/nbmakefs" ] ||
 	{ echo "same-build nbmtree/nbmakefs are required" >&2; exit 1; }
-[ -f "$destination/etc/MAKEDEV" ] && [ -x "$destination/etc/MAKEDEV" ] ||
+[ -f "$destination/dev/MAKEDEV" ] && [ -x "$destination/dev/MAKEDEV" ] ||
 	{ echo "same-build MAKEDEV is missing" >&2; exit 1; }
 [ -f "$root/etc/rc" ] && [ -x "$root/etc/rc" ] ||
 	{ echo "diagnostic root /etc/rc is missing" >&2; exit 1; }
@@ -56,7 +56,7 @@ MACHINE=aarch64
 MACHINE_ARCH=aarch64
 NETBSDSRCDIR=$os_source
 export MACHINE MACHINE_ARCH NETBSDSRCDIR
-"$host_sh" "$destination/etc/MAKEDEV" \
+"$host_sh" "$destination/dev/MAKEDEV" \
 	-s std "ld${unit}" > "${work}.devices"
 sed -e '/^\. type=dir/d' -e 's,^[.]/,./dev/,' \
 	"${work}.devices" > "${work}.devspec"

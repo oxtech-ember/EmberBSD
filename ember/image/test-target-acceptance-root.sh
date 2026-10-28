@@ -20,7 +20,7 @@ helper=$here/target-acceptance-root.sh
 work=$(mktemp -d "${TMPDIR:-/tmp}/target-acceptance-root.XXXXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 mkdir -p "$work/root/etc" "$work/root/dev" "$work/root/tests" \
-	"$work/dest/etc" "$work/os/etc" "$work/tools/bin"
+	"$work/dest/etc" "$work/dest/dev" "$work/os/etc" "$work/tools/bin"
 cp "$here/target-acceptance-rc" "$work/root/etc/rc"
 chmod 755 "$work/root/etc/rc"
 cmp "$here/target-acceptance-rc" "$work/root/etc/rc"
@@ -35,7 +35,7 @@ fi
 printf 'nonce-test\n' > "$work/root/etc/emberbsd-target-acceptance.nonce"
 printf 'ld0a\n' > "$work/root/etc/emberbsd-target-acceptance-root-device"
 printf '#!/bin/sh\nexit 0\n' > "$work/root/tests/run-target.sh"
-cat > "$work/dest/etc/MAKEDEV" <<'EOF'
+cat > "$work/dest/dev/MAKEDEV" <<'EOF'
 #!/bin/sh
 while [ "$#" -gt 0 ]; do
 	case $1 in
@@ -114,7 +114,7 @@ image=$previous
 [ ! -e "$image" ]
 printf 'fixture only\n' > "$image"
 EOF
-chmod 755 "$work/tools/bin/nbmtree" "$work/tools/bin/nbmakefs" "$work/dest/etc/MAKEDEV"
+chmod 755 "$work/tools/bin/nbmtree" "$work/tools/bin/nbmakefs" "$work/dest/dev/MAKEDEV"
 
 "$host_sh" "$helper" "$work/root" "$work/dest" "$work/tools" "$work/os" \
 	ld0a "$work/root.ffs" "$host_sh"
@@ -158,14 +158,14 @@ if [ -n "${EMBER_OS_TOOLDIR:-}" ] || [ -n "${EMBER_OS_DESTDIR:-}" ] || \
 	: "${EMBER_ROOT_DEVICE:?set an explicit ld partition, e.g. ld0a}"
 	actual_dest=${EMBER_OS_DESTDIR:-$work/actual-dest}
 	if [ -z "${EMBER_OS_DESTDIR:-}" ]; then
-		mkdir -p "$actual_dest/etc"
+		mkdir -p "$actual_dest/etc" "$actual_dest/dev"
 		MACHINE=aarch64
 		MACHINE_ARCH=aarch64
 		NETBSDSRCDIR=$EMBER_OS_SOURCE
 		export MACHINE MACHINE_ARCH NETBSDSRCDIR
 		"$host_awk" -f "$EMBER_OS_SOURCE/etc/MAKEDEV.awk" \
-			"$EMBER_OS_SOURCE/etc/MAKEDEV.tmpl" > "$actual_dest/etc/MAKEDEV"
-		chmod 755 "$actual_dest/etc/MAKEDEV"
+			"$EMBER_OS_SOURCE/etc/MAKEDEV.tmpl" > "$actual_dest/dev/MAKEDEV"
+		chmod 755 "$actual_dest/dev/MAKEDEV"
 	fi
 	actual_root=$work/actual-root
 	mkdir -p "$actual_root/etc" "$actual_root/dev" "$actual_root/tests"
