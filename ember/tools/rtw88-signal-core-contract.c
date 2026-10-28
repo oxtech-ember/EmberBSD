@@ -305,6 +305,105 @@ static void context_matrix(void) {
     CHECK(rtw88_channel(&sc,36)==EIO && context_accesses==2);
     sc.sc_ops=&ops;CHECK(rtw88_stop(&sc)==0 && rtw88_core_detach(&sc)==0);
 }
+/* Exercise the actual descriptor, core callback and format policy together.
+ * The fake DMA ring does not establish the subtype of a physical packet. */
+#include <dev/ic/rtw88_net_policy.h>
+struct format_capture {
+    struct rtw88_net_policy policy;
+    unsigned calls;
+    size_t length;
+    int error;
+};
+
+static void
+format_capture_rx(void *cookie, const uint8_t *frame, size_t len,
+    const struct rtw88_rx_info *info)
+{
+    struct format_capture *capture = cookie;
+
+    capture->calls++;
+    capture->length = len;
+    CHECK(info->packet_size == len);
+    capture->error = rtw88_net_rx_admit(&capture->policy, 1, frame, len,
+        info->flags, info->security);
+}
+
+static void
+format_packet(struct rtw88_softc *sc, unsigned slot, const uint8_t *frame,
+    size_t len, unsigned shift, unsigned driver)
+{
+    uint8_t *p;
+    uint32_t word;
+
+    rx_put(sc, slot, len, 0, NULL, (uint16_t)slot);
+    p = sc->sc_rxbuf[slot].vaddr;
+    word = (uint32_t)len | (driver / 8) << 16 | shift << 24;
+    for (unsigned i = 0; i < 4; i++)
+        p[i] = (uint8_t)(word >> (8 * i));
+    memset(p + 24, 0xa5, shift + driver);
+    memcpy(p + 24 + shift + driver, frame, len);
+    f.rx_hw_idx = (uint16_t)(slot + 1);
+    set_hisr0(1);
+    CHECK(rtw88_intr(sc) == 1);
+}
+
+static void
+test_rx_format_pipeline(void)
+{
+    static const unsigned drivers[] = {0, 8, 32, 120};
+    struct format_capture capture = {.policy = {.epoch = 1, .accepting = 1}};
+    struct rtw88_softc sc;
+    uint8_t ba[32] = {0x94}, bar[24] = {0x84}, ack[14] = {0xd4};
+    unsigned slot = 0;
+
+    if (!start_ok(&sc))
+        return;
+    sc.sc_net_cookie = &capture;
+    sc.sc_rx_frame = format_capture_rx;
+    ba[4] = 2; ba[10] = 4; ba[16] = 4;
+    memset(ba + 20, 0xff, 8);
+    memset(ba + 28, 0x5a, 4); /* FCS must not become part of the MPDU. */
+    for (unsigned d = 0; d < sizeof(drivers) / sizeof(drivers[0]); d++) {
+        for (unsigned shift = 0; shift < 4; shift++) {
+            format_packet(&sc, slot++, ba, sizeof(ba), shift, drivers[d]);
+            CHECK(capture.calls == slot && capture.length == 28);
+            CHECK(capture.error == EPROTONOSUPPORT);
+            CHECK(capture.policy.rx.format == slot);
+            CHECK(capture.policy.rx.format_control[9] == slot);
+            CHECK(capture.policy.rx.format_reason[RTW88_NET_RX_FORMAT_CONTROL] == slot);
+            CHECK(capture.policy.queued == 0 && capture.policy.rx.accepted == 0);
+        }
+    }
+    /* A normal short ACK reaches the core counters, not MPDU admission. */
+    format_packet(&sc, slot++, ack, sizeof(ack), 3, 32);
+    CHECK(capture.calls == 16 && capture.policy.rx.format == 16);
+    CHECK(sc.sc_stats.rx_frames == 17);
+    /* The short BAR exception must preserve the authorized session path. */
+    bar[4] = 2; bar[10] = 4; bar[16] = 4;
+    memset(bar + 20, 0x5a, 4);
+    capture.policy.rxba_mask = 1;
+    capture.policy.rxba_ra[0] = 2;
+    capture.policy.rxba_ta[0] = 4;
+    format_packet(&sc, slot++, bar, sizeof(bar), 1, 8);
+    CHECK(capture.calls == 17 && capture.length == 20 && capture.error == 0);
+    CHECK(capture.policy.rx.accepted == 1 && capture.policy.queued == 1);
+    CHECK(capture.policy.rx.format == 16 && capture.policy.rx.format_control[8] == 0);
+    rtw88_net_rx_release(&capture.policy);
+    CHECK(capture.policy.queued == 0);
+    /* Integrity failures stay below the callback and format counters. */
+    for (unsigned bit = 14; bit <= 15; bit++) {
+        rx_put(&sc, slot, sizeof(ba), 0, ba, (uint16_t)slot);
+        ((uint8_t *)sc.sc_rxbuf[slot].vaddr)[1] |= (uint8_t)(1U << (bit - 8));
+        f.rx_hw_idx = (uint16_t)(++slot);
+        set_hisr0(1);
+        CHECK(rtw88_intr(&sc) == 1);
+        CHECK(capture.calls == 17 && capture.policy.rx.format == 16);
+    }
+    CHECK(sc.sc_stats.rx_errors == 2 && sc.sc_stats.rx_tag_errors == 0);
+    CHECK(rtw88_stop(&sc) == 0);
+    CHECK(rtw88_core_detach(&sc) == 0);
+}
+
 int main(void) {
     struct rtw88_softc sc;
     const char *only=getenv("RTW88_CONTEXT_ONLY");
@@ -315,6 +414,7 @@ int main(void) {
         printf("rtw88 context: %u checks, %u failures\n",assertions,failures);
         return failures!=0;
     }
+    test_rx_format_pipeline();
     context_success();context_failure();context_power_validation();context_start_failure();context_matrix();
     if(!start_ok(&sc))return 1;
     test_signal_cache(&sc);sc.sc_rx_frame=signal_capture;signal_count=0;
