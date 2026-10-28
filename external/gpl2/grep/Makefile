@@ -1,5 +1,3 @@
-#	$NetBSD: Makefile,v 1.1 2016/01/10 22:16:40 christos Exp $
-
-SUBDIR=	lib .WAIT bin
-
+# Origin: EmberBSD (AI-assisted); GNU grep uses the shared Ports source.
+SUBDIR= bin
 .include <bsd.subdir.mk>

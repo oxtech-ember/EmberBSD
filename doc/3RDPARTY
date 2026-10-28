@@ -2153,7 +2153,7 @@ we use BSD-licensed implementation from Citrus project (see entry for
 "Citrus XPG4DL").  We hope to replace userland tools with BSD-licensed one.
 
 Package:	grep
-Version:	2.5.1a (last GPLv2+ version)
+Version:	3.12 (common Ports source); historical 2.5.1a retained
 Current Vers:	3.12
 Maintainer:	FSF
 Archive Site:	https://ftp.gnu.org/gnu/grep/
@@ -2164,8 +2164,9 @@ Responsible:	simonb
 License:	GPLv2+ (2.5.1a), GPLv3+ (2.5.3 and later)
 Location:	external/gpl2/grep
 Notes:
-Use external/gpl2/grep/grep2netbsd for preparing the source tree
-for the import.
+The GNU base producer selects the prepared common Ports textproc/grep source.
+The former 2.5.1a dist is retained temporarily for provenance, not built.
+The independently maintained BSD grep remains selectable via MKBSDGREP.
 On 2 Jan 2004, a non-GNU grep (FreeGrep, https://github.com/howardjp/freegrep;
 see also http://www.monkey.org/openbsd/archive/tech/0306/msg00129.html)
 was imported into src/usr.bin/grep;
