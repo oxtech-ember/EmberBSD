@@ -110,8 +110,6 @@ static void	vmbus_process_devq(void *);
 static void	vmbus_devq_thread(void *);
 static void	vmbus_subchannel_devq_thread(void *);
 
-static struct vmbus_softc *vmbus_sc;
-
 static const struct {
 	int	hmd_response;
 	int	hmd_request;
@@ -265,8 +263,6 @@ vmbus_attach(struct vmbus_softc *sc)
 
 	aprint_naive("\n");
 	aprint_normal(": Hyper-V VMBus\n");
-
-	vmbus_sc = sc;
 
 	sc->sc_msgpool = pool_cache_init(sizeof(struct vmbus_msg), 8, 0, 0,
 	    "hvmsg", NULL, IPL_NET, NULL, NULL, NULL);

@@ -126,8 +126,6 @@ struct bootinfo bootinfo;
 
 bool bootmethod_efi;
 
-static kauth_listener_t x86_listener;
-
 extern paddr_t lowmem_rsvd, avail_start, avail_end;
 
 vaddr_t msgbuf_vaddr;
@@ -1293,7 +1291,7 @@ void
 machdep_init(void)
 {
 
-	x86_listener = kauth_listen_scope(KAUTH_SCOPE_MACHDEP,
+	(void)kauth_listen_scope(KAUTH_SCOPE_MACHDEP,
 	    x86_listener_cb, NULL);
 }
 

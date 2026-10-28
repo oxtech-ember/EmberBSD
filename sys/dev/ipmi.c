@@ -144,7 +144,6 @@ struct ipmi_sensor {
 static	int ipmi_nintr;
 #endif
 static	int ipmi_dbg = 0;
-static	int ipmi_enabled = 0;
 
 #define SENSOR_REFRESH_RATE (hz / 2)
 
@@ -2121,9 +2120,6 @@ ipmi_thread(void *cookie)
 			(id.fwrev1 & 0x7f), id.fwrev2);
 	}
 
-	/* setup flag to exclude iic */
-	ipmi_enabled = 1;
-
 	mutex_enter(&sc->sc_poll_mtx);
 	sc->sc_thread_ready = true;
 	cv_broadcast(&sc->sc_mode_cv);
@@ -2198,8 +2194,6 @@ ipmi_detach(device_t self, int flags)
 
 	if ((rc = ipmi_watchdog_setmode(&sc->sc_wdog)) != 0)
 		return rc;
-
-	ipmi_enabled = 0;
 
 	if (sc->sc_envsys != NULL) {
 		/* _unregister also destroys */

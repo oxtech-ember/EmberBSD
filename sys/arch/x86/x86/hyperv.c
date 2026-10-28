@@ -110,7 +110,6 @@ hyperv_hypercall_page(void)
 static u_int	hyperv_get_timecount(struct timecounter *);
 
 static u_int hyperv_features;		/* CPUID_HV_MSR_ */
-static u_int hyperv_recommends;
 
 static u_int hyperv_pm_features;
 static u_int hyperv_features3;
@@ -461,7 +460,6 @@ hyperv_identify(void)
 	aprint_verbose("  Features3=%s\n", hyperv_features3_str);
 
 	x86_cpuid(CPUID_LEAF_HV_RECOMMENDS, regs);
-	hyperv_recommends = regs[0];
 	aprint_verbose("  Recommends: %08x %08x\n", regs[0], regs[1]);
 
 	x86_cpuid(CPUID_LEAF_HV_LIMITS, regs);

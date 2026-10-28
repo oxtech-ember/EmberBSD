@@ -138,7 +138,6 @@ int mpacpi_nintsrc;			/* number of non-device interrupts */
 #if NPCI > 0
 static int mpacpi_npci;
 static int mpacpi_maxpci;
-static int mpacpi_npciroots;
 #endif
 
 static int mpacpi_intr_index;
@@ -511,7 +510,6 @@ mpacpi_pci_foundbus(struct acpi_devnode *ad)
 		if (mp_verbose)
 			printf("mpacpi: found root PCI bus %d\n",
 			    mpr->mpr_bus);
-		mpacpi_npciroots++;
 	} else {
 		if (mp_verbose)
 			printf("mpacpi: found subordinate bus %d\n",
