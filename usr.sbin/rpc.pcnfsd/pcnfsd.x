@@ -631,7 +631,7 @@ program PCNFSDPROG {
 */
 %#if RPC_SVC
 % static void _msgout(const char *);
-% void msg_out(msg) const char *msg; {_msgout(msg);}
+% void msg_out(const char *msg) {_msgout(msg);}
 %#endif
 %#if RPC_HDR
 % extern void msg_out(const char *);

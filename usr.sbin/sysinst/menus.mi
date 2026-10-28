@@ -163,7 +163,7 @@ remove_menu_option(int menuID, const char *option)
 #endif
 
 void
-remove_color_options()
+remove_color_options(void)
 {
 	/*
 	 * Current terminal type does not support colors, so remove all
@@ -175,7 +175,7 @@ remove_color_options()
 
 #ifndef NO_PARTMAN
 void
-remove_raid_options()
+remove_raid_options(void)
 {
 	/*
 	 * No raidframe available, remove the following menu entries:
@@ -185,7 +185,7 @@ remove_raid_options()
 }
 
 void
-remove_lvm_options()
+remove_lvm_options(void)
 {
 	/*
 	 * No LVM available, remove the following menu entries:
@@ -195,7 +195,7 @@ remove_lvm_options()
 }
 
 void
-remove_cgd_options()
+remove_cgd_options(void)
 {
 	/*
 	 * No CGD available, remove the following menu entries:
