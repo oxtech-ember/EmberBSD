@@ -66,8 +66,6 @@ int			debug = 0;
 static char		*output = NULL;
 static void		*table = NULL;
 static size_t		table_size;
-static char		*map_name;
-static int		map_type;
 static u_int32_t	dst_invalid, dst_ilseq, oob_mode, dst_unit_bits;
 static void		(*putfunc)(void *, size_t, u_int32_t) = 0;
 
@@ -424,7 +422,7 @@ set_type(int type)
 		return;
 	}
 
-	map_type = type;
+	(void)type;
 
 	done_flag |= DF_TYPE;
 }
@@ -438,7 +436,7 @@ set_name(char *str)
 		return;
 	}
 
-	map_name = str;
+	(void)str;
 
 	done_flag |= DF_NAME;
 }

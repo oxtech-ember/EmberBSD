@@ -102,7 +102,6 @@ __RCSID("$NetBSD: sliplogin.c,v 1.24 2013/10/19 17:16:38 christos Exp $");
 
 static int	unit;
 static int	speed;
-static int	uid;
 static char	loginargs[BUFSIZ];
 static char	loginfile[MAXPATHLEN];
 static char	loginname[BUFSIZ];
@@ -226,7 +225,7 @@ main(int argc, char *argv[])
 	for (fd = 3 ; fd < s ; fd++)
 		(void)close(fd);
 	openlog(name, LOG_PID, LOG_DAEMON);
-	uid = getuid();
+	(void)getuid();
 	if (argc > 1) {
 		findid(argv[1]);
 

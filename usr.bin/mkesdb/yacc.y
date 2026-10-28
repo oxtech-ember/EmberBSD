@@ -57,7 +57,7 @@ __RCSID("$NetBSD: yacc.y,v 1.11 2016/06/28 09:24:46 wiz Exp $");
 
 #include "ldef.h"
 
-static int			debug = 0, num_csids = 0;
+static int			num_csids = 0;
 static char			*output = NULL;
 static char			*name, *encoding, *variable;
 static u_int32_t		invalid;
@@ -307,7 +307,6 @@ main(int argc, char **argv)
 	while ((ch=getopt(argc, argv, "do:m")) != EOF) {
 		switch (ch) {
 		case 'd':
-			debug = 1;
 			break;
 		case 'o':
 			output = strdup(optarg);
