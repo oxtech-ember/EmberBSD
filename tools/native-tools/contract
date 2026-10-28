@@ -46,5 +46,6 @@ tr tr -
 true true -
 uname uname -
 uniq uniq -
+wc wc -
 xargs xargs -
 yacc yacc HOST_YACC

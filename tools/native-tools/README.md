@@ -40,6 +40,7 @@ on the selected LLVM or GNU implementation instead of an absolute system fallbac
 `hostname` supplies the host identity used for the `BUILDER` metadata when
 reproducible-build metadata is disabled. Route it explicitly because `build.sh`
 limits `PATH` to this contract.
+`wc` counts the generated ktruss errno and signal tables.
 
 The SDK must publish a routing directory with these entries:
 

@@ -11,6 +11,7 @@ ERRNOH=$1
 SIGNALH=$2
 CFILE=$3.c
 HFILE=$3.h
+rm -f "$HFILE" || exit 1
 
 : ${AWK:=awk}
 : ${CPP:=cpp}
@@ -38,8 +39,8 @@ END {
 ' | sort -n -k 3 >> $CFILE
 echo "	{ 0L, 0},
 };" >> $CFILE
-lines=`wc -l $CFILE | ${AWK} ' { print $1; } ' -`
-lines=`expr $lines - 4`
+lines=$(wc -l < "$CFILE") || exit 1
+lines=$(expr "$lines" - 4) || exit 1
 
 cat <<__EOF__ >> $CFILE
 
@@ -74,8 +75,8 @@ END {
 ' | sort -n -k 3 >> $CFILE
 echo "	{ 0L, 0},
 };" >> $CFILE
-elines=`grep '{ "SIG' $CFILE | wc -l`
-elines=`expr $elines + 1`
+elines=$(grep '{ "SIG' "$CFILE" | wc -l) || exit 1
+elines=$(expr "$elines" + 1) || exit 1
 
 cat <<__EOF__ >$HFILE
 struct	systab	{
