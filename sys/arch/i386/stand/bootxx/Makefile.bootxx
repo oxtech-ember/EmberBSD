@@ -2,9 +2,6 @@
 
 S=	${.CURDIR}/../../../../..
 
-AFLAGS.bootxx.S= ${${ACTIVE_CC} == "clang":?-no-integrated-as:}
-AFLAGS.pbr.S= ${${ACTIVE_CC} == "clang":?-no-integrated-as:}
-
 NOPIE=
 NOMAN=
 NOLIBCSANITIZER=

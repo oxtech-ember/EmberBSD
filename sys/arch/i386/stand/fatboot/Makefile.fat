@@ -14,8 +14,6 @@ LIBCRTBEGIN=	# nothing
 LIBCRTEND=	# nothing
 LIBC=		# nothing
 
-AFLAGS.fatboot.S= ${${ACTIVE_CC} == "clang":?-no-integrated-as:}
-
 .include <bsd.init.mk>
 
 STRIPFLAG=	# override

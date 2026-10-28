@@ -2,8 +2,6 @@
 
 S=		${.CURDIR}/../../../..
 
-AFLAGS.cdboot.S= ${${ACTIVE_CC} == "clang":?-no-integrated-as:}
-
 .include <bsd.init.mk>
 
 STRIPFLAG=	# nothing

@@ -10,8 +10,6 @@ NORELRO=	# defined
 PROG?=		boot.efi
 NEWVERSWHAT?=	"EFI Boot"
 
-AFLAGS.start.S= ${${ACTIVE_CC} == "clang":?-no-integrated-as:}
-
 SOURCES= start.S boot.c conf.c devopen.c dev_net.c self_reloc.c panic.c
 SOURCES+= efiboot.c efichar.c eficons.c efidelay.c efidev.c
 SOURCES+= eficpufunc.c

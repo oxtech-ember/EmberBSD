@@ -44,8 +44,6 @@ CLEANFILES+=	${PROG}.tmp
 
 LOADADDR=	0x8800
 
-AFLAGS.mbr.S= ${${ACTIVE_CC} == "clang":?-no-integrated-as:}
-
 ${PROG}: ${OBJS}
 	${_MKTARGET_LINK}
 	${CC} ${LD_DRIVER_FLAGS} -o ${PROG}.tmp ${LDFLAGS} -Wl,-Ttext,${LOADADDR} ${OBJS}

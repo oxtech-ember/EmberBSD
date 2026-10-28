@@ -9,8 +9,6 @@ NOPROFILE=# defined
 I386_INCLUDE_DISK?= yes
 I386_INCLUDE_PS2?= yes
 
-AFLAGS.realprot.S= ${${ACTIVE_CC} == "clang":?-no-integrated-as:}
-
 CPPFLAGS= -I$S/lib/libsa ${I386CPPFLAGS} ${I386MISCCPPFLAGS}
 #CPPFLAGS+= -DDISK_DEBUG
 #CPPFLAGS+= -DNO_DISKLABEL

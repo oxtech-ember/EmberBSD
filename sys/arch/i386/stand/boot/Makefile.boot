@@ -9,8 +9,6 @@ NOPIE=
 PROG?= boot
 NEWVERSWHAT?= "BIOS Boot"
 
-AFLAGS.biosboot.S= ${${ACTIVE_CC} == "clang":?-no-integrated-as:}
-
 SOURCES?= biosboot.S boot2.c conf.c devopen.c exec.c \
 	  exec_multiboot1.c exec_multiboot2.c
 SRCS= ${SOURCES}
