@@ -71,7 +71,7 @@ makeoptions	amdgpu	"CWARNFLAGS.amdgpu_vega10_reg_init.c"+="-Wno-cast-qual"
 makeoptions	amdgpu	"CWARNFLAGS.amdgpu_vega20_reg_init.c"+="-Wno-cast-qual"
 
 ifdef amd64
-makeoptions	amdgpu	"COPTS.amdgpu_float"+="-mhard-float -msse -msse2"
+makeoptions	amdgpu	"COPTS.amdgpu_float"+="${${ACTIVE_CC} == clang:? -mno-soft-float : -mhard-float } -msse -msse2"
 elifdef aarch64
 makeoptions	amdgpu	"COPTS.amdgpu_float"+="-march=armv8-a"
 endif
