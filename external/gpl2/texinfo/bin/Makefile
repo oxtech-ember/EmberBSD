@@ -51,3 +51,11 @@ ${_PROGDEBUG.${_P}}: ${_P} __progdebug
 .endif
 .include <bsd.prog.mk>
 .endif # EMBER_TEXINFO_SOURCE
+
+# Preserve the old install-info METALOG entry independently of its legacy source.
+# Derived from NetBSD external/gpl2/texinfo/bin/install-info/Makefile.
+infodir-meta:
+.if (${MKUNPRIVED} != "no" && ${MKINFO} != "no")
+	echo "./usr/share/info/dir type=file mode=0644 uname=${BINOWN} gname=${BINGRP}" \
+	    | ${METALOG.add}
+.endif

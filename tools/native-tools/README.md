@@ -152,8 +152,9 @@ Use `--build-sh /path/to/older/build.sh` with
 `RoutingTests.test_tools_dispatch_and_wrapper_replay` as a causal negative control.
 
 Run `test-configure.py --source "$OS_SOURCE" --sdk-source "$SDK_SOURCE"`
-`--host-prefix "$HOST_PREFIX" --work "$NEW_OUTPUT"` with SDK Python to exercise
-the real Texinfo configure script under the same restricted command mapping.
+`--host-prefix "$HOST_PREFIX" --texinfo-source "$PREPARED_TEXINFO"`
+`--work "$NEW_OUTPUT"` with SDK Python to exercise
+the prepared common Texinfo configure script in C-only mode under the same restricted command mapping.
 It requires the resulting standard-header definitions. The old mapping can
 exit zero while silently losing them; `--expect-broken-header` reproduces that
 failure without treating an unrelated configure failure as the expected result.

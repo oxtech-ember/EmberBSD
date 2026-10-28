@@ -2229,18 +2229,18 @@ Notes:
 Source and patches are prepared by the common EmberBSD Ports recipe.
 
 Package:	texinfo
-Version:	4.8a (Last GPLv2+ version)
-Current Vers:	7.0
+Version:	7.3 (active common Ports source)
 Maintainer:	FSF
-Archive Site:	ftp://ftp.gnu.org/gnu/texinfo/
-Home Page:	http://www.gnu.org/software/texinfo/
+Archive Site:	https://ftp.gnu.org/gnu/texinfo/
+Home Page:	https://www.gnu.org/software/texinfo/
 Mailing List:	bug-texinfo@gnu.org
-Responsible:
-License:	GPLv2+ (4.8a), GPLv3+ (4.9 and later)
-Location:	external/gpl2/texinfo
+Responsible:	EmberBSD Ports and OS
+License:	GPLv3+; manuals retain their applicable GFDL terms
+Location:	external/gpl2/texinfo (OS integration)
 Notes:
-Use src/external/gpl2/texinfo/texinfo2netbsd for preparing the source tree
-for the import.
+Source and patches are prepared by the common EmberBSD Ports recipe.
+The inactive historical 4.8a source and its GPLv2+ license remain temporarily
+in external/gpl2/texinfo/dist until the full converter migration is verified.
 
 Package:	indent
 Version:	FreeBSD-2018-11-04 r340138

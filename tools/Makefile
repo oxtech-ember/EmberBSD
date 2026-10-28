@@ -123,8 +123,9 @@ SUBDIR+= cat gzip rpcgen join lorder m4 mkdep tsort what \
 .if ${TOOLS_BUILDRUMP} == "no"
 SUBDIR+= xz-include .WAIT grep xz-lib pax .WAIT libprop
 
-.if !defined(EMBER_NATIVE_TOOLS)
-SUBDIR+= .WAIT texinfo
+.if !defined(EMBER_NATIVE_TOOLS) && empty(.MAKEFLAGS:M-V*) && \
+    (make(all) || make(realall) || make(dependall) || make(install))
+.error Set EMBER_NATIVE_TOOLS to the selected native Ports tool routing
 .endif
 SUBDIR += .WAIT tic \
 	.WAIT ${TOOLCHAIN_BITS} \

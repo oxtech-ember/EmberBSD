@@ -13,6 +13,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source', type=Path, required=True)
     parser.add_argument('--sdk-source', type=Path, required=True)
+    parser.add_argument('--texinfo-source', type=Path, required=True)
     parser.add_argument('--host-prefix', type=Path, required=True)
     parser.add_argument('--work', type=Path, required=True)
     parser.add_argument('--expect-broken-header', action='store_true')
@@ -35,10 +36,10 @@ def main():
     # build.sh intentionally restricts PATH to this complete command mapping.
     env = dict(PATH=str(routing), LC_ALL='C', CONFIG_SHELL=native.tool('sh'),
                SHELL=native.tool('sh'), CC=native.tool('cc'), CXX=native.tool('cxx'))
-    configure = source / 'external/gpl2/texinfo/dist/configure'
+    configure = args.texinfo_source.resolve(strict=True) / 'configure'
     with (work / 'configure.log').open('wb') as log:
         result = subprocess.run([native.tool('sh'), str(configure),
-                                 '--disable-nls', '--program-prefix=nb'], cwd=build,
+                                 '--disable-perl-tools', '--disable-nls', '--program-prefix=nb'], cwd=build,
                                 env=env, stdout=log, stderr=subprocess.STDOUT)
     result.check_returncode()
     text = (build / 'config.h').read_text()
