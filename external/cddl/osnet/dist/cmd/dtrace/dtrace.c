@@ -676,13 +676,17 @@ exec_prog(const dtrace_cmd_t *dcp)
 static void
 anon_prog(const dtrace_cmd_t *dcp, dof_hdr_t *dof, int n)
 {
+#if defined(__FreeBSD__) || defined(illumos)
 	const uchar_t *p, *q;
+#endif
 
 	if (dof == NULL)
 		dfatal("failed to create DOF image for '%s'", dcp->dc_name);
 
+#if defined(__FreeBSD__) || defined(illumos)
 	p = (uchar_t *)dof;
 	q = p + dof->dofh_loadsz;
+#endif
 
 #ifdef __FreeBSD__
 	/*
