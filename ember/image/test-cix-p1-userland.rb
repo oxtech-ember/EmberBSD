@@ -47,7 +47,7 @@ Dir.mktmpdir('ember-cix-userland-') do |work|
   SH
   File.write(compiler + '/bin/clang', "#!/bin/sh\nexit 0\n")
   FileUtils.cp(compiler + '/bin/aarch64--netbsd-readelf', compiler + '/bin/llvm-readelf')
-  %w[libarchive-source libevent-source].each do |name|
+  %w[libarchive-source libevent-source byacc-source].each do |name|
     FileUtils.mkdir_p(work + '/' + name)
     File.write(work + '/' + name + '/emberbsd-prepared-source.json', name)
   end
@@ -172,7 +172,7 @@ Dir.mktmpdir('ember-cix-userland-') do |work|
       work + '/llvm-source', work + '/host-bfd.mk', '2',
       extra.fetch('TEST_GIT', '/usr/bin/git'), extra.fetch('TEST_RUBY', native_prefix + '/bin/ruby'),
       extra.fetch('TEST_SHASUM', native_prefix + '/bin/shasum'),
-      work + '/libarchive-source', work + '/libevent-source', work + '/llvm-runtime',
+      work + '/libarchive-source', work + '/libevent-source', work + '/byacc-source', work + '/llvm-runtime',
       work + '/llvm-resource', compiler + '/libgcc_eh.a', compiler + '/resource',
       '23.1.4', 'aarch64-unknown-netbsd', work + '/llvm-resource/lib/netbsd/builtins.a')
   end
@@ -191,7 +191,7 @@ Dir.mktmpdir('ember-cix-userland-') do |work|
   %w[EMBER_COMPILER_FAMILY=clang EMBER_LLVM_RUNTIME_PHASE=bootstrap MKLIBCXX=no MKCOMPAT=no].each do |flag|
     abort "FAIL: missing Clang flag #{flag}" unless clang_flags.include?(flag)
   end
-  %w[LIBARCHIVE LIBEVENT].each do |name|
+  %w[LIBARCHIVE LIBEVENT BYACC].each do |name|
     abort "FAIL: #{name} source not forwarded" unless clang_flags.include?("EMBER_#{name}_SOURCE=#{work}/#{name.downcase}-source")
   end
   abort 'FAIL: selected resource not forwarded' unless
@@ -227,6 +227,10 @@ abort 'FAIL: prepared libedit source not passed to the build' unless
 checks += 1
 abort 'FAIL: prepared libedit receipt not recorded' unless
   File.read(out + '/BUILD-INPUTS.txt').include?("#{libedit}/libedit-source.json")
+checks += 1
+abort 'FAIL: prepared byacc source or receipt missing' unless
+  File.read(out + '/build-flags').include?("EMBER_BYACC_SOURCE=#{work}/byacc-source") &&
+  File.read(out + '/BUILD-INPUTS.txt').include?("#{work}/byacc-source/emberbsd-prepared-source.json")
 checks += 1
 %w[PAM KERBEROS LDAP YP SKEY HESIOD].each do |feature|
   flags = File.read(out + '/build-flags')

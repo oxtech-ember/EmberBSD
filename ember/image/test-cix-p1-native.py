@@ -80,7 +80,8 @@ with tempfile.TemporaryDirectory() as tmp:
                       EMBER_LIBEDIT_SOURCE=str(libedit_source), EMBER_HOST_BFD_CONFIG=str(bfd),
                       EMBER_SDK_SYSROOT='/sysroot', EMBER_LLVM_SOURCE=str(llvm_source),
                       EMBER_PORTS_SOURCE='/ports', EMBER_GIT='/usr/bin/git',
-                      EMBER_LIBARCHIVE_SOURCE='/libarchive', EMBER_LIBEVENT_SOURCE='/libevent')
+                      EMBER_LIBARCHIVE_SOURCE='/libarchive', EMBER_LIBEVENT_SOURCE='/libevent',
+                      EMBER_BYACC_SOURCE='/byacc')
     sys.argv = [str(path), str(source), tmp + '/clang', str(tools), '/compiler']
     subject.main()
     run = next(row[1] for row in calls if row[0] == 'run')
@@ -95,7 +96,22 @@ with tempfile.TemporaryDirectory() as tmp:
                                        '/compiler', '/sdk', '/native', 'clang', 'clang']
     assert '/sysroot/usr/pkg/llvm/builtins.a' in run['arguments']
     assert ['/usr/bin/git', '/selected/ruby', '/selected/shasum'] == run['arguments'][14:17]
+    assert run['arguments'][17:20] == ['/libarchive', '/libevent', '/byacc']
+    assert any(row[0] == 'verify-source' and
+               '/ports/scripts/source-inputs/byacc/source.py' in row[1] and
+               row[1][-2:] == ['--source', '/byacc'] for row in calls)
     assert ('host-extra', {'required_roles': {'ruby', 'shasum'}, 'compiler_family': 'clang'}) in calls
+    calls.clear()
+    del os.environ['EMBER_BYACC_SOURCE']
+    sys.argv[2] = tmp + '/missing-byacc'
+    try:
+        subject.main()
+    except SystemExit as exc:
+        assert 'EMBER_BYACC_SOURCE' in str(exc)
+    else:
+        raise AssertionError('missing byacc source accepted')
+    assert not Path(sys.argv[2]).exists()
+    os.environ['EMBER_BYACC_SOURCE'] = '/byacc'
     calls.clear()
     original = jsonio.loads_json
     jsonio.loads_json = lambda data: {'format': 'emberbsd-llvm-source', 'version': 1,
@@ -123,6 +139,21 @@ with tempfile.TemporaryDirectory() as tmp:
         assert 'libevent verification failed' in str(exc)
     else:
         raise AssertionError('failed source verification accepted')
+    assert not Path(sys.argv[2]).exists()
+    process.capture = original_capture
+    calls.clear()
+    def fail_byacc(argv, env):
+        if '/ports/scripts/source-inputs/byacc/source.py' in argv:
+            raise SDKError('byacc verification failed')
+        return original_capture(argv, env)
+    process.capture = fail_byacc
+    sys.argv[2] = tmp + '/failed-byacc'
+    try:
+        subject.main()
+    except SystemExit as exc:
+        assert 'byacc verification failed' in str(exc)
+    else:
+        raise AssertionError('failed byacc verification accepted')
     assert not Path(sys.argv[2]).exists()
     process.capture = original_capture
     calls.clear()
