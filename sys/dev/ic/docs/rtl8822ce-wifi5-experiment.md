@@ -68,9 +68,10 @@ counter of corrupt data packets. `nfmt` splits it, in order, into nonzero
 802.11 version, generic control frame, reserved frame type, four-address
 frame and BAR authorization refusal. These five counts sum to `nformat`.
 `nctl0` through `nctl15` split generic control refusals by FC0 subtype.
-`nctl9` names Block Ack; `nctl2` names Trigger. These names identify the
-subtype, not a validated control body or sender. See the
-[802.11 control subtype definitions](https://github.com/torvalds/linux/blob/master/include/linux/ieee80211.h).
+`nctl9` names Block Ack; `nctl2` names Trigger; `nctl5` names VHT/HE NDP
+Announcement. These names identify the subtype, not a validated control body
+or sender. See the
+[802.11 control subtype definitions](https://github.com/freebsd/freebsd-src/blob/main/sys/net80211/ieee80211.h).
 
 Only frames that reach admission enter these counts. The core forwards
 MPDUs of at least 24 bytes after FCS removal. Its short-frame exception
