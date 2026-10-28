@@ -67,13 +67,21 @@ reports.
 counter of corrupt data packets. `nfmt` splits it, in order, into nonzero
 802.11 version, generic control frame, reserved frame type, four-address
 frame and BAR authorization refusal. These five counts sum to `nformat`.
-`nctl0` through `nctl15` split generic control refusals by FC0 subtype;
-`nctl9` is Block Ack and `nctl8` is a BAR of at least 24 bytes, outside
-the supported 20-byte compressed BAR shape. A shaped BAR with TID 8-15, no active RX BA session, a mismatched receiver
-or transmitter address, or a nonzero security descriptor increments the fifth
-`nfmt` count instead. A valid authorized
-BAR still enters the shared sequence validator. Short or corrupt frames
-are counted by the earlier size or integrity checks.
+`nctl0` through `nctl15` split generic control refusals by FC0 subtype.
+`nctl9` names Block Ack; `nctl2` names Trigger. These names identify the
+subtype, not a validated control body or sender. See the
+[802.11 control subtype definitions](https://github.com/torvalds/linux/blob/master/include/linux/ieee80211.h).
+
+Only frames that reach admission enter these counts. The core forwards
+MPDUs of at least 24 bytes after FCS removal. Its short-frame exception
+forwards exactly shaped 20-byte compressed BARs for TIDs 0-7. Normal short
+ACK/CTS frames and other unsupported short control shapes stop before admission.
+`nctl8` counts a BAR of at least 24 bytes, outside the supported short shape.
+A forwarded short BAR requires an active RX BA session and matching receiver
+and transmitter addresses. A session or address refusal increments the fifth
+`nfmt` count. A nonzero security descriptor has the same result.
+A valid authorized BAR still enters the shared sequence validator. Core integrity failures stop before the MPDU callback. At policy
+entry, size and integrity checks take priority over the format classifier.
 
 During TX A-MPDU, Block Ack responses can raise `nctl9` without a failed
 association or payload loss. The driver does not consume these frames as
