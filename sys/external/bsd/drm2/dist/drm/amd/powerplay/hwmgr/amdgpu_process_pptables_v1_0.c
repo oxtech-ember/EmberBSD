@@ -165,7 +165,7 @@ static int get_vddc_lookup_table(
 	uint32_t table_size, i;
 	phm_ppt_v1_voltage_lookup_table *table;
 	phm_ppt_v1_voltage_lookup_record *record;
-	ATOM_Tonga_Voltage_Lookup_Record *atom_record;
+	const ATOM_Tonga_Voltage_Lookup_Record *atom_record;
 
 	PP_ASSERT_WITH_CODE((0 != vddc_lookup_pp_tables->ucNumEntries),
 		"Invalid CAC Leakage PowerPlay Table!", return 1);
@@ -184,7 +184,7 @@ static int get_vddc_lookup_table(
 		record = GET_FLEXIBLE_ARRAY_MEMBER_ADDR(
 					phm_ppt_v1_voltage_lookup_record,
 					entries, table, i);
-		atom_record = GET_FLEXIBLE_ARRAY_MEMBER_ADDR(
+		atom_record = GET_CONST_FLEXIBLE_ARRAY_MEMBER_ADDR(
 					ATOM_Tonga_Voltage_Lookup_Record,
 					entries, vddc_lookup_pp_tables, i);
 		record->us_calculated = 0;
@@ -325,7 +325,7 @@ static int get_valid_clk(
 {
 	uint32_t table_size, i;
 	struct phm_clock_array *table;
-	phm_ppt_v1_clock_voltage_dependency_record *dep_record;
+	const phm_ppt_v1_clock_voltage_dependency_record *dep_record;
 
 	PP_ASSERT_WITH_CODE((0 != clk_volt_pp_table->count),
 		"Invalid PowerPlay Table!", return -1);
@@ -341,7 +341,7 @@ static int get_valid_clk(
 	table->count = (uint32_t)clk_volt_pp_table->count;
 
 	for (i = 0; i < table->count; i++) {
-		dep_record = GET_FLEXIBLE_ARRAY_MEMBER_ADDR(
+		dep_record = GET_CONST_FLEXIBLE_ARRAY_MEMBER_ADDR(
 				phm_ppt_v1_clock_voltage_dependency_record,
 				entries, clk_volt_pp_table, i);
 		table->values[i] = (uint32_t)dep_record->clk;
@@ -378,7 +378,7 @@ static int get_mclk_voltage_dependency_table(
 	uint32_t table_size, i;
 	phm_ppt_v1_clock_voltage_dependency_table *mclk_table;
 	phm_ppt_v1_clock_voltage_dependency_record *mclk_table_record;
-	ATOM_Tonga_MCLK_Dependency_Record *mclk_dep_record;
+	const ATOM_Tonga_MCLK_Dependency_Record *mclk_dep_record;
 
 	PP_ASSERT_WITH_CODE((0 != mclk_dep_table->ucNumEntries),
 		"Invalid PowerPlay Table!", return -1);
@@ -397,7 +397,7 @@ static int get_mclk_voltage_dependency_table(
 		mclk_table_record = GET_FLEXIBLE_ARRAY_MEMBER_ADDR(
 					phm_ppt_v1_clock_voltage_dependency_record,
 						entries, mclk_table, i);
-		mclk_dep_record = GET_FLEXIBLE_ARRAY_MEMBER_ADDR(
+		mclk_dep_record = GET_CONST_FLEXIBLE_ARRAY_MEMBER_ADDR(
 					ATOM_Tonga_MCLK_Dependency_Record,
 						entries, mclk_dep_table, i);
 		mclk_table_record->vddInd = mclk_dep_record->ucVddcInd;
@@ -425,7 +425,7 @@ static int get_sclk_voltage_dependency_table(
 	if (sclk_dep_table->ucRevId < 1) {
 		const ATOM_Tonga_SCLK_Dependency_Table *tonga_table =
 			    (const ATOM_Tonga_SCLK_Dependency_Table *)sclk_dep_table;
-		ATOM_Tonga_SCLK_Dependency_Record *sclk_dep_record;
+		const ATOM_Tonga_SCLK_Dependency_Record *sclk_dep_record;
 
 		PP_ASSERT_WITH_CODE((0 != tonga_table->ucNumEntries),
 			"Invalid PowerPlay Table!", return -1);
@@ -441,7 +441,7 @@ static int get_sclk_voltage_dependency_table(
 		sclk_table->count = (uint32_t)tonga_table->ucNumEntries;
 
 		for (i = 0; i < tonga_table->ucNumEntries; i++) {
-			sclk_dep_record = GET_FLEXIBLE_ARRAY_MEMBER_ADDR(
+			sclk_dep_record = GET_CONST_FLEXIBLE_ARRAY_MEMBER_ADDR(
 						ATOM_Tonga_SCLK_Dependency_Record,
 						entries, tonga_table, i);
 			sclk_table_record = GET_FLEXIBLE_ARRAY_MEMBER_ADDR(
@@ -457,7 +457,7 @@ static int get_sclk_voltage_dependency_table(
 	} else {
 		const ATOM_Polaris_SCLK_Dependency_Table *polaris_table =
 			    (const ATOM_Polaris_SCLK_Dependency_Table *)sclk_dep_table;
-		ATOM_Polaris_SCLK_Dependency_Record *sclk_dep_record;
+		const ATOM_Polaris_SCLK_Dependency_Record *sclk_dep_record;
 
 		PP_ASSERT_WITH_CODE((0 != polaris_table->ucNumEntries),
 			"Invalid PowerPlay Table!", return -1);
@@ -473,7 +473,7 @@ static int get_sclk_voltage_dependency_table(
 		sclk_table->count = (uint32_t)polaris_table->ucNumEntries;
 
 		for (i = 0; i < polaris_table->ucNumEntries; i++) {
-			sclk_dep_record = GET_FLEXIBLE_ARRAY_MEMBER_ADDR(
+			sclk_dep_record = GET_CONST_FLEXIBLE_ARRAY_MEMBER_ADDR(
 						ATOM_Polaris_SCLK_Dependency_Record,
 						entries, polaris_table, i);
 			sclk_table_record = GET_FLEXIBLE_ARRAY_MEMBER_ADDR(
@@ -507,7 +507,7 @@ static int get_pcie_table(
 
 	if (ptable->ucRevId < 1) {
 		const ATOM_Tonga_PCIE_Table *atom_pcie_table = (const ATOM_Tonga_PCIE_Table *)ptable;
-		ATOM_Tonga_PCIE_Record *atom_pcie_record;
+		const ATOM_Tonga_PCIE_Record *atom_pcie_record;
 
 		PP_ASSERT_WITH_CODE((atom_pcie_table->ucNumEntries != 0),
 			"Invalid PowerPlay Table!", return -1);
@@ -535,7 +535,7 @@ static int get_pcie_table(
 			pcie_record = GET_FLEXIBLE_ARRAY_MEMBER_ADDR(
 						phm_ppt_v1_pcie_record,
 						entries, pcie_table, i);
-			atom_pcie_record = GET_FLEXIBLE_ARRAY_MEMBER_ADDR(
+			atom_pcie_record = GET_CONST_FLEXIBLE_ARRAY_MEMBER_ADDR(
 						ATOM_Tonga_PCIE_Record,
 						entries, atom_pcie_table, i);
 			pcie_record->gen_speed = atom_pcie_record->ucPCIEGenSpeed;
@@ -546,7 +546,7 @@ static int get_pcie_table(
 	} else {
 		/* Polaris10/Polaris11 and newer. */
 		const ATOM_Polaris10_PCIE_Table *atom_pcie_table = (const ATOM_Polaris10_PCIE_Table *)ptable;
-		ATOM_Polaris10_PCIE_Record *atom_pcie_record;
+		const ATOM_Polaris10_PCIE_Record *atom_pcie_record;
 
 		PP_ASSERT_WITH_CODE((atom_pcie_table->ucNumEntries != 0),
 			"Invalid PowerPlay Table!", return -1);
@@ -575,7 +575,7 @@ static int get_pcie_table(
 			pcie_record = GET_FLEXIBLE_ARRAY_MEMBER_ADDR(
 						phm_ppt_v1_pcie_record,
 						entries, pcie_table, i);
-			atom_pcie_record = GET_FLEXIBLE_ARRAY_MEMBER_ADDR(
+			atom_pcie_record = GET_CONST_FLEXIBLE_ARRAY_MEMBER_ADDR(
 						ATOM_Polaris10_PCIE_Record,
 						entries, atom_pcie_table, i);
 			pcie_record->gen_speed = atom_pcie_record->ucPCIEGenSpeed;
@@ -713,7 +713,7 @@ static int get_mm_clock_voltage_table(
 	mm_table->count = mm_dependency_table->ucNumEntries;
 
 	for (i = 0; i < mm_dependency_table->ucNumEntries; i++) {
-		mm_dependency_record = GET_FLEXIBLE_ARRAY_MEMBER_ADDR(
+		mm_dependency_record = GET_CONST_FLEXIBLE_ARRAY_MEMBER_ADDR(
 						ATOM_Tonga_MM_Dependency_Record,
 						entries, mm_dependency_table, i);
 		mm_table_record = GET_FLEXIBLE_ARRAY_MEMBER_ADDR(
@@ -1231,9 +1231,9 @@ static int ppt_get_vce_state_table_entry_v1_0(struct pp_hwmgr *hwmgr, uint32_t i
 		struct amd_vce_state *vce_state, void **clock_info, uint32_t *flag)
 {
 	const ATOM_Tonga_VCE_State_Record *vce_state_record;
-	ATOM_Tonga_SCLK_Dependency_Record *sclk_dep_record;
-	ATOM_Tonga_MCLK_Dependency_Record *mclk_dep_record;
-	ATOM_Tonga_MM_Dependency_Record *mm_dep_record;
+	const ATOM_Tonga_SCLK_Dependency_Record *sclk_dep_record;
+	const ATOM_Tonga_MCLK_Dependency_Record *mclk_dep_record;
+	const ATOM_Tonga_MM_Dependency_Record *mm_dep_record;
 	const ATOM_Tonga_POWERPLAYTABLE *pptable = get_powerplay_table(hwmgr);
 	const ATOM_Tonga_VCE_State_Table *vce_state_table = (ATOM_Tonga_VCE_State_Table *)(((unsigned long)pptable)
 							  + le16_to_cpu(pptable->usVCEStateTableOffset));
@@ -1248,14 +1248,14 @@ static int ppt_get_vce_state_table_entry_v1_0(struct pp_hwmgr *hwmgr, uint32_t i
 			 "Requested state entry ID is out of range!",
 			 return -EINVAL);
 
-	vce_state_record = GET_FLEXIBLE_ARRAY_MEMBER_ADDR(
+	vce_state_record = GET_CONST_FLEXIBLE_ARRAY_MEMBER_ADDR(
 					ATOM_Tonga_VCE_State_Record,
 					entries, vce_state_table, i);
-	sclk_dep_record = GET_FLEXIBLE_ARRAY_MEMBER_ADDR(
+	sclk_dep_record = GET_CONST_FLEXIBLE_ARRAY_MEMBER_ADDR(
 					ATOM_Tonga_SCLK_Dependency_Record,
 					entries, sclk_dep_table,
 					vce_state_record->ucSCLKIndex);
-	mm_dep_record = GET_FLEXIBLE_ARRAY_MEMBER_ADDR(
+	mm_dep_record = GET_CONST_FLEXIBLE_ARRAY_MEMBER_ADDR(
 					ATOM_Tonga_MM_Dependency_Record,
 					entries, mm_dep_table,
 					vce_state_record->ucVCEClockIndex);
@@ -1266,12 +1266,12 @@ static int ppt_get_vce_state_table_entry_v1_0(struct pp_hwmgr *hwmgr, uint32_t i
 	vce_state->sclk = le32_to_cpu(sclk_dep_record->ulSclk);
 
 	if (vce_state_record->ucMCLKIndex >= mclk_dep_table->ucNumEntries)
-		mclk_dep_record = GET_FLEXIBLE_ARRAY_MEMBER_ADDR(
+		mclk_dep_record = GET_CONST_FLEXIBLE_ARRAY_MEMBER_ADDR(
 					ATOM_Tonga_MCLK_Dependency_Record,
 					entries, mclk_dep_table,
 					mclk_dep_table->ucNumEntries - 1);
 	else
-		mclk_dep_record = GET_FLEXIBLE_ARRAY_MEMBER_ADDR(
+		mclk_dep_record = GET_CONST_FLEXIBLE_ARRAY_MEMBER_ADDR(
 					ATOM_Tonga_MCLK_Dependency_Record,
 					entries, mclk_dep_table,
 					vce_state_record->ucMCLKIndex);
@@ -1315,7 +1315,7 @@ int get_powerplay_table_entry_v1_0(struct pp_hwmgr *hwmgr,
 		PP_ASSERT_WITH_CODE((entry_index <= state_arrays->ucNumEntries),
 				"Invalid PowerPlay Table State Array Entry.", return -1);
 
-		state_entry = GET_FLEXIBLE_ARRAY_MEMBER_ADDR(
+		state_entry = GET_CONST_FLEXIBLE_ARRAY_MEMBER_ADDR(
 						ATOM_Tonga_State, entries,
 						state_arrays, entry_index);
 

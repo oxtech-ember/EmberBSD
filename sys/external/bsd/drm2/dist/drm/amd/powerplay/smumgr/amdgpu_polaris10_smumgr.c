@@ -151,7 +151,7 @@ static int polaris10_setup_graphics_level_structure(struct pp_hwmgr *hwmgr)
 	graphics_level_address = dpm_table_start + offsetof(SMU74_Discrete_DpmTable, GraphicsLevel);
 
 	PP_ASSERT_WITH_CODE(0 == smu7_copy_bytes_to_smc(hwmgr, graphics_level_address,
-				(uint8_t *)(&avfs_graphics_level_polaris10),
+				(const uint8_t *)(&avfs_graphics_level_polaris10),
 				graphics_level_size, 0x40000),
 			"[AVFS][Polaris10_SetupGfxLvlStruct] Copying of SCLK DPM table failed!",
 			return -1);

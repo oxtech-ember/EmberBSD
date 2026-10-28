@@ -256,7 +256,7 @@ static int fiji_setup_graphics_level_structure(struct pp_hwmgr *hwmgr)
 	level_addr = table_start + offsetof(SMU73_Discrete_DpmTable, GraphicsLevel);
 
 	PP_ASSERT_WITH_CODE(0 == smu7_copy_bytes_to_smc(hwmgr, level_addr,
-			(uint8_t *)(&avfs_graphics_level), level_size, 0x40000),
+			(const uint8_t *)(&avfs_graphics_level), level_size, 0x40000),
 			"[AVFS][Fiji_SetupGfxLvlStruct] Copying of DPM table failed!",
 			return -1;);
 

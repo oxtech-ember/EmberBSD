@@ -60,5 +60,8 @@
 #define GET_FLEXIBLE_ARRAY_MEMBER_ADDR(type, member, ptr, n)	\
 	(type *)((char *)&(ptr)->member + (sizeof(type) * (n)))
 
+#define GET_CONST_FLEXIBLE_ARRAY_MEMBER_ADDR(type, member, ptr, n)	\
+	(const type *)((const char *)&(ptr)->member + (sizeof(type) * (n)))
+
 #endif /* PP_DEBUG_H */
 
