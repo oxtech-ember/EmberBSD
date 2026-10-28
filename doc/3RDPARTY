@@ -403,17 +403,17 @@ Past vendor release tags:
 - linux-drm-v5-6-rc3
 
 Package:	ekermit
-Version:	1.7
-Current Vers:	1.7
+Version:	1.8
+Current Vers:	1.8
 Maintainer:	Kermit Project
 Archive Site:	ftp://ftp.kermitproject.org/kermit/ekermit/
-Home Page:	http://www.kermitproject.org/ek.html
-Date:		2020-06-13
+Home Page:	https://www.kermitproject.org/ek.html
+Date:		2026-10-28
 Mailing List:
 Responsible:	apb
 License:	BSD (3 clause)
-Location:	external/bsd/ekermit
-Notes:
+Location:	Ports comms/ekermit (prepared source), external/bsd/ekermit (native integration)
+Notes:		The older dist tree is inactive and retained pending target runtime checks.
 
 Package:	expat
 Version:	2.8.2

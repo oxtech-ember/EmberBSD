@@ -8,8 +8,8 @@ SRCS=	main.c kermit.c unixio.c
 
 MAN=	ekermit.1
 
+.if defined(EKERMITDIST)
 .PATH: ${EKERMITDIST}
-
-CWARNFLAGS+=	-Wno-error=pointer-sign
+.endif
 
 .include <bsd.prog.mk>
