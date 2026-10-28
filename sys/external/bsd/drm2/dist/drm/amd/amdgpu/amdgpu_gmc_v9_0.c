@@ -978,7 +978,21 @@ static int gmc_v9_0_mc_init(struct amdgpu_device *adev)
 #endif
 
 #ifdef CONFIG_X86_64
-	if (adev->flags & AMD_IS_APU) {
+#ifdef __NetBSD__
+	/*
+	 * Raven's direct UMA view may not observe PSP writes; use its PCI
+	 * aperture when available.
+	 */
+#endif
+	if ((adev->flags & AMD_IS_APU)
+#ifdef __NetBSD__
+	    && !(adev->asic_type == CHIP_RAVEN &&
+		PCI_MAPREG_TYPE(adev->pdev->pd_resources[0].type) ==
+		    PCI_MAPREG_TYPE_MEM &&
+		adev->gmc.aper_base != 0 &&
+		adev->gmc.aper_size >= PAGE_SIZE)
+#endif
+	    ) {
 		adev->gmc.aper_base = gfxhub_v1_0_get_mc_fb_offset(adev);
 		adev->gmc.aper_size = adev->gmc.real_vram_size;
 	}
