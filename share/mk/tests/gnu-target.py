@@ -120,6 +120,13 @@ all: gnu-target-build
     result = subprocess.run(command, cwd=work, env=env, capture_output=True, text=True)
     if result.returncode or (build / 'fixture.o').stat().st_ino == before_inode:
         raise SystemExit('reverted inputs reused an object after partial clean')
+    # Changed configure content must invalidate objects even in the same second.
+    before_inode = (build / 'fixture.o').stat().st_ino
+    configure = source / 'configure'
+    configure.write_text(configure.read_text() + '\n# changed configure input\n')
+    result = subprocess.run(command, cwd=work, env=env, capture_output=True, text=True)
+    if result.returncode or (build / 'fixture.o').stat().st_ino == before_inode:
+        raise SystemExit('changed configure left a stale target object')
     # A changed configure argument must take effect even on the next invocation.
     makefile.write_text(makefile.read_text().replace('GNU_MAKE_ENV=',
         'GNU_CONFIGURE_ARGS= --prefix=/changed\nGNU_MAKE_ENV='))

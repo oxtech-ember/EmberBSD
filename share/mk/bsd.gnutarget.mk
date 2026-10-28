@@ -17,7 +17,6 @@ GNU_MAKE_DIRS?= .
 GNU_CONFIGURE_ARGS?=
 GNU_CONFIGURE_ENV?=
 GNU_MAKE_ENV?=
-GNU_CONFIGURE_INPUTS?=
 GNU_CONFIGURE_CFLAGS?= ${CFLAGS}
 _GNU_TARGET_ENV= CC=${CC:Q} CXX=${CXX:Q} CPP=${CPP:Q} AR=${AR:Q} \
 	AS=${AS:Q} LD=${LD:Q} NM=${NM:Q} RANLIB=${RANLIB:Q} STRIP=${STRIP:Q} \
@@ -32,14 +31,16 @@ _GNU_TARGET_ENV= CC=${CC:Q} CXX=${CXX:Q} CPP=${CPP:Q} AR=${AR:Q} \
 gnu-target-config-inputs:
 	mkdir -p ${GNU_OBJDIR:Q}
 	@tmp=${GNU_OBJDIR:Q}/.configure-inputs.tmp.$$$$; \
+	    cp ${GNU_SOURCE:Q}/configure "$$tmp.source" || exit 1; \
 	    printf '%s\n' ${GNU_SOURCE:Q} ${GNU_BUILD_TRIPLE:Q} ${GNU_HOST_TRIPLE:Q} \
 	    ${HOST_SH:Q} ${HOST_GMAKE:Q} ${_GNU_TARGET_ENV:Q} \
 	    ${CFLAGS:Q} ${CXXFLAGS:Q} ${GNU_MAKE_ENV:Q} \
 	    ${GNU_CONFIGURE_ARGS:Q} ${GNU_CONFIGURE_ENV:Q} > "$$tmp" || exit 1; \
 	    if test ! -f ${GNU_OBJDIR:Q}/.cleanup-makefile && \
 	       test -f ${GNU_OBJDIR:Q}/.configure-inputs && \
-	       cmp -s "$$tmp" ${GNU_OBJDIR:Q}/.configure-inputs; then \
-	        rm "$$tmp"; \
+	       cmp -s "$$tmp" ${GNU_OBJDIR:Q}/.configure-inputs && \
+	       cmp -s "$$tmp.source" ${GNU_OBJDIR:Q}/.configure-source; then \
+	        rm "$$tmp" "$$tmp.source"; \
 	    else \
 	        if test -f ${GNU_OBJDIR:Q}/.cleanup-makefile; then \
 	            cp ${GNU_OBJDIR:Q}/.cleanup-makefile ${GNU_OBJDIR:Q}/.restore-makefile.tmp.$$$$ && \
@@ -54,6 +55,7 @@ gnu-target-config-inputs:
 	                ${HOST_GMAKE:Q} -j1 SHELL=${HOST_SH:Q} distclean) || exit 1; \
 	            test ! -f ${GNU_OBJDIR:Q}/Makefile || rm ${GNU_OBJDIR:Q}/Makefile || exit 1; \
 	        fi; \
+	        mv "$$tmp.source" ${GNU_OBJDIR:Q}/.configure-source || exit 1; \
 	        mv "$$tmp" ${GNU_OBJDIR:Q}/.configure-inputs || exit 1; \
 	        if test -f ${GNU_OBJDIR:Q}/.cleanup-makefile; then \
 	            rm ${GNU_OBJDIR:Q}/.cleanup-makefile || exit 1; \
@@ -63,7 +65,7 @@ gnu-target-config-inputs:
 ${GNU_OBJDIR}/.configure-inputs: gnu-target-config-inputs
 	@test -f ${.TARGET:Q}
 
-${GNU_OBJDIR}/Makefile: ${GNU_SOURCE}/configure ${GNU_CONFIGURE_INPUTS} ${GNU_OBJDIR}/.configure-inputs
+${GNU_OBJDIR}/Makefile: ${GNU_SOURCE}/configure ${GNU_OBJDIR}/.configure-inputs
 	(cd ${GNU_OBJDIR:Q} && \
 	    env CONFIG_SHELL=${HOST_SH:Q} SHELL=${HOST_SH:Q} \
 	    ${_GNU_TARGET_ENV} ${GNU_CONFIGURE_ENV} \
