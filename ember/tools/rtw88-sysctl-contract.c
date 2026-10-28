@@ -26,7 +26,7 @@ static int copy_error,auth_error,cli_grow,cli_alloc_fail;
 static unsigned cli_reads,cli_displays,cli_errors,cli_allocations,cli_releases;
 static size_t cli_display_size;
 static void *live[2];
-static char output[4096], inner_output[4096];
+static char output[8192], inner_output[8192];
 #define CHECK(x) do { checks++; if (!(x)) { failures++; \
     fprintf(stderr,"%d: %s\n",__LINE__,#x); } } while(0)
 void *kmem_alloc(size_t, int);
@@ -83,7 +83,7 @@ static int slot(void *p)
 { for(unsigned i=0;i<2;i++)if(live[i]==p)return (int)i;return -1; }
 void *kmem_alloc(size_t len,int flags)
 {
-    CHECK(!driver_lock && len==4096 && flags==KM_SLEEP);
+    CHECK(!driver_lock && len==8192 && flags==KM_SLEEP);
     void *p=malloc(len);assert(p);
     unsigned i=0;while(i<2 && live[i])i++;
     assert(i<2);live[i]=p;allocations++;
@@ -92,13 +92,13 @@ void *kmem_alloc(size_t len,int flags)
 void kmem_free(void *p,size_t len)
 {
     int i=slot(p);
-    CHECK(!driver_lock && p!=NULL && i>=0 && len==4096);
+    CHECK(!driver_lock && p!=NULL && i>=0 && len==8192);
     if(i<0)return;
     live[i]=NULL;releases++;memset(p,0xdd,len);free(p);
 }
 static int rtwce_stats(char *buf,size_t len)
 {
-    CHECK(!driver_lock && slot(buf)>=0 && len==4096);
+    CHECK(!driver_lock && slot(buf)>=0 && len==8192);
     driver_lock=1;driver_calls++;
     if(cli_grow && cli_reads==2)text_size++;
     if(!driver_error) {
@@ -148,8 +148,8 @@ static void test_actual_cli_growth(void)
  cli_reads=cli_displays=cli_errors=cli_allocations=cli_releases=0;
  native_cli_string();CHECK(cli_reads==2 && cli_displays==1 && cli_errors==0 && cli_display_size==2002);
  CHECK(cli_allocations==1 && cli_releases==1 && !live[0] && !live[1]);
- const size_t stable[]={0,2000,4095};
- for(unsigned i=0;i<3;i++) {
+ const size_t stable[]={0,2000,4095,4096,8191};
+ for(unsigned i=0;i<5;i++) {
   cli_grow=0;text_size=stable[i];cli_reads=cli_displays=cli_errors=cli_allocations=cli_releases=0;
   native_cli_string();CHECK(cli_reads==(text_size<1024?1U:2U) && cli_displays==1 && cli_errors==0);
   CHECK(cli_allocations==(text_size<1024?0U:1U) && cli_allocations==cli_releases);
@@ -161,14 +161,14 @@ static void test_read_and_generic_errors(void)
 {
  struct sysctlnode root={.sysctl_size=17,.marker=0x12345678,.sysctl_flags=SYSCTL_VERSION|CTLTYPE_STRING};
  char generic_text[24];memset(generic_text,'g',23);generic_text[23]=0;
- root.sysctl_data=generic_text;root.sysctl_size=4096;size_t generic_size=sizeof(output);
+ root.sysctl_data=generic_text;root.sysctl_size=8192;size_t generic_size=sizeof(output);
  CHECK(native_sysctl_lookup(NULL,0,output,&generic_size,NULL,0,NULL,NULL,&root)==0 && generic_size==24);
  root.sysctl_data=NULL;root.sysctl_size=17;
- text_size=4095;driver_error=lookup_error=0;nested=0;
- size_t size=4095;unsigned a=allocations,f=releases;
- CHECK(rtwce_sysctl_stats(NULL,0,output,&size,NULL,0,NULL,NULL,&root)==ENOMEM && size==4096);
+ text_size=8191;driver_error=lookup_error=0;nested=0;
+ size_t size=8191;unsigned a=allocations,f=releases;
+ CHECK(rtwce_sysctl_stats(NULL,0,output,&size,NULL,0,NULL,NULL,&root)==ENOMEM && size==8192);
  CHECK(allocations==a+1 && releases==f+1 && !live[0] && !live[1]);
- size=0;CHECK(rtwce_sysctl_stats(NULL,0,NULL,&size,NULL,0,NULL,NULL,&root)==0 && size==4096);
+ size=0;CHECK(rtwce_sysctl_stats(NULL,0,NULL,&size,NULL,0,NULL,NULL,&root)==0 && size==8192);
  text_size=23;size=24;
  CHECK(rtwce_sysctl_stats(NULL,0,output,&size,NULL,0,NULL,NULL,&root)==0 && size==24 && output[23]==0);
  for(unsigned shortbuf=0;shortbuf<2;shortbuf++) {
@@ -203,9 +203,9 @@ int main(void)
 {
     const int driver_errors[]={0,EBUSY,EIO,ENOSPC};
     const int lookup_errors[]={0,EFAULT,ENOMEM,EPERM};
-    const size_t sizes[]={0,23,4095};
+    const size_t sizes[]={0,23,4095,8191};
     for(unsigned d=0;d<4;d++)for(unsigned q=0;q<4;q++)
-    for(unsigned n=0;n<3;n++)for(unsigned query=0;query<2;query++) {
+    for(unsigned n=0;n<4;n++)for(unsigned query=0;query<2;query++) {
         struct sysctlnode root={.sysctl_size=17,.marker=0x12345678,.sysctl_flags=SYSCTL_VERSION|CTLTYPE_STRING};
         unsigned a=allocations,f=releases,reads=lookups,calls=driver_calls;
         size_t size=sizeof(output);text_size=sizes[n];
@@ -216,14 +216,14 @@ int main(void)
         CHECK(lookups==reads+!driver_error);
         CHECK(!live[0] && !live[1] && !driver_lock);
         CHECK(root.sysctl_data==NULL && root.sysctl_size==17 && root.marker==0x12345678);
-        if(!error) { CHECK(size==(query?4096:text_size+1));if(!query)CHECK(output[text_size]==0); }
+        if(!error) { CHECK(size==(query?8192:text_size+1));if(!query)CHECK(output[text_size]==0); }
     }
-    driver_error=lookup_error=0;text_size=4095;nested=1;
+    driver_error=lookup_error=0;text_size=8191;nested=1;
     struct sysctlnode root={.sysctl_size=17,.marker=0x12345678,.sysctl_flags=SYSCTL_VERSION|CTLTYPE_STRING};size_t size=sizeof(output);
     unsigned a=allocations,f=releases;
     CHECK(rtwce_sysctl_stats(NULL,0,output,&size,NULL,0,NULL,NULL,&root)==0);
     CHECK(allocations==a+2 && releases==f+2 && !live[0] && !live[1]);
-    CHECK(size==4096 && memcmp(output,inner_output,4096)==0);
+    CHECK(size==8192 && memcmp(output,inner_output,8192)==0);
     test_actual_cli_growth();test_read_and_generic_errors();test_copyout_service();
     printf("Actual stats sysctl: %u checks, %u failures\n",checks,failures);
     return failures!=0;

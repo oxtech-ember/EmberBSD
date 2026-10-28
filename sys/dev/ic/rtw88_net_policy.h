@@ -121,9 +121,19 @@ struct rtw88_net_neg {
 	memcpy((n)->ht20_reset_mcs, (d)->reset_mcs,			\
 	    sizeof((n)->ht20_reset_mcs));				\
 } while (0)
+/* The first matching format refusal owns exactly one reason counter. */
+#define RTW88_NET_RX_FORMAT_VERSION 0U
+#define RTW88_NET_RX_FORMAT_CONTROL 1U
+#define RTW88_NET_RX_FORMAT_RESERVED 2U
+#define RTW88_NET_RX_FORMAT_ADDR4 3U
+#define RTW88_NET_RX_FORMAT_BAR_PEER 4U
+#define RTW88_NET_RX_FORMAT_REASONS 5U
 struct rtw88_net_rx_counts {
 	uint64_t accepted, inactive, epoch, invalid, size;
 	uint64_t corrupt, format, crypto, full;
+	uint64_t format_reason[RTW88_NET_RX_FORMAT_REASONS];
+	/* FC0 control subtype, indexed by bits 7:4. No addresses or payload. */
+	uint64_t format_control[16];
 	uint64_t delivered, delivery_inactive, delivery_epoch;
 };
 struct rtw88_net_policy {

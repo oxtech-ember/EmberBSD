@@ -143,9 +143,74 @@ ht20_snapshot_checks(void)
 	CHECK(race.reads != 0);
 }
 
+/* A Block Ack response is expected during TX A-MPDU. Its refusal must
+ * not look like a malformed data header or an unauthorized BAR request. */
+static void
+test_rx_format_reasons(void)
+{
+	struct rtw88_net_policy p = {.epoch = 1, .accepting = 1};
+	uint8_t frame[32] = {0x94};
+	unsigned i;
+
+	/* Compressed BA: 16-byte control header, control/sequence and bitmap.
+	 * The core removes the four FCS bytes before this 28-byte MPDU. */
+	frame[4] = 2; frame[10] = 4; frame[16] = 4;
+	memset(frame + 20, 0xff, 8);
+	CHECK(rtw88_net_rx_admit(&p, 1, frame, 28, 0, 0) ==
+	    EPROTONOSUPPORT);
+	CHECK(p.rx.format == 1 && p.rx.accepted == 0 && p.queued == 0);
+	CHECK(p.rx.format_reason[RTW88_NET_RX_FORMAT_CONTROL] == 1);
+	CHECK(p.rx.format_control[9] == 1);
+	/* Every other control subtype remains refused and distinguishable. */
+	for (i = 0; i < 16; i++) {
+		frame[0] = (uint8_t)((i << 4) | 4);
+		CHECK(rtw88_net_rx_admit(&p, 1, frame, sizeof(frame), 0, 0) ==
+		    EPROTONOSUPPORT);
+		CHECK(p.rx.format_control[i] == (i == 9 ? 2 : 1));
+	}
+	CHECK(p.rx.format_reason[RTW88_NET_RX_FORMAT_CONTROL] == 17);
+	frame[0] = 0x95; /* Version takes precedence over control subtype. */
+	CHECK(rtw88_net_rx_admit(&p, 1, frame, sizeof(frame), 0, 0) ==
+	    EPROTONOSUPPORT);
+	CHECK(p.rx.format_reason[RTW88_NET_RX_FORMAT_VERSION] == 1);
+	CHECK(p.rx.format_control[9] == 2);
+	frame[0] = 0x0c;
+	CHECK(rtw88_net_rx_admit(&p, 1, frame, sizeof(frame), 0, 0) ==
+	    EPROTONOSUPPORT);
+	CHECK(p.rx.format_reason[RTW88_NET_RX_FORMAT_RESERVED] == 1);
+	frame[0] = 0x08; frame[1] = 3;
+	CHECK(rtw88_net_rx_admit(&p, 1, frame, sizeof(frame), 0, 0) ==
+	    EPROTONOSUPPORT);
+	CHECK(p.rx.format_reason[RTW88_NET_RX_FORMAT_ADDR4] == 1);
+	memset(frame, 0, sizeof(frame)); frame[0] = 0x84; frame[16] = 4;
+	CHECK(rtw88_net_rx_admit(&p, 1, frame, 20, 0, 0) ==
+	    EPROTONOSUPPORT);
+	CHECK(p.rx.format_reason[RTW88_NET_RX_FORMAT_BAR_PEER] == 1);
+	CHECK(p.rx.format_control[8] == 1); /* The refused BAR is not generic. */
+	CHECK(p.rx.format == 21 && p.rx.accepted == 0 && p.queued == 0);
+	uint64_t total = 0;
+	for (i = 0; i < RTW88_NET_RX_FORMAT_REASONS; i++)
+		total += p.rx.format_reason[i];
+	CHECK(total == p.rx.format);
+	/* Publishing a matching BAR peer does not convert admission into a drop. */
+	p.rxba_mask = 1; p.rxba_ra[0] = 2; p.rxba_ta[0] = 4;
+	frame[4] = 2; frame[10] = 4;
+	CHECK(rtw88_net_rx_admit(&p, 1, frame, 20, 0, 0) == 0);
+	rtw88_net_rx_release(&p);
+	CHECK(p.rx.format == 21 && p.rx.format_control[8] == 1);
+	/* Bounds, integrity and epochs win before the format classifier. */
+	frame[0] = 0x94;
+	CHECK(rtw88_net_rx_admit(&p, 1, NULL, 32, 0, 0) == EINVAL);
+	CHECK(rtw88_net_rx_admit(&p, 1, frame, 1, 0, 0) == EMSGSIZE);
+	CHECK(rtw88_net_rx_admit(&p, 1, frame, 32, 1, 0) == EBADMSG);
+	CHECK(rtw88_net_rx_admit(&p, 2, frame, 32, 0, 0) == ECANCELED);
+	CHECK(p.rx.format == 21 && p.rx.format_control[9] == 2);
+}
+
 int
 main(void)
 {
+	test_rx_format_reasons();
 	struct rtw88_net_policy p = {0};
 	unsigned char frame[64] = {0x08, 0x02};
 	const uint8_t bssid[6] = {2, 1, 2, 3, 4, 5};

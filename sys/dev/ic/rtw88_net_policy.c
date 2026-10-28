@@ -62,7 +62,7 @@ int
 rtw88_net_rx_admit(struct rtw88_net_policy *p, uint64_t epoch,
     const uint8_t *frame, size_t len, unsigned flags, unsigned security)
 {
-	unsigned tid;
+	unsigned tid, reason;
 	int bar;
 
 	if (p->dying || !p->accepting) {
@@ -96,13 +96,25 @@ rtw88_net_rx_admit(struct rtw88_net_policy *p, uint64_t epoch,
 		    memcmp(frame + 4, p->rxba_ra, 6) != 0 ||
 		    memcmp(frame + 10, p->rxba_ta, 6) != 0) {
 			p->rx.format++;
+			p->rx.format_reason[RTW88_NET_RX_FORMAT_BAR_PEER]++;
 			return EPROTONOSUPPORT;
 		}
 	}
 	/* Only version-zero, three-address management and data frames. */
-	if ((frame[0] & 3) != 0 || ((frame[0] & 0x0c) == 4 && !bar) ||
-	    (frame[0] & 0x0c) == 12 || (frame[1] & 3) == 3) {
+	reason = RTW88_NET_RX_FORMAT_REASONS;
+	if ((frame[0] & 3) != 0)
+		reason = RTW88_NET_RX_FORMAT_VERSION;
+	else if ((frame[0] & 0x0c) == 4 && !bar)
+		reason = RTW88_NET_RX_FORMAT_CONTROL;
+	else if ((frame[0] & 0x0c) == 12)
+		reason = RTW88_NET_RX_FORMAT_RESERVED;
+	else if ((frame[1] & 3) == 3)
+		reason = RTW88_NET_RX_FORMAT_ADDR4;
+	if (reason != RTW88_NET_RX_FORMAT_REASONS) {
 		p->rx.format++;
+		p->rx.format_reason[reason]++;
+		if (reason == RTW88_NET_RX_FORMAT_CONTROL)
+			p->rx.format_control[frame[0] >> 4]++;
 		return EPROTONOSUPPORT;
 	}
 	/* Encrypted input must retain its software-decrypt descriptor flag. */

@@ -552,6 +552,14 @@ rtw88_net_get_stats(struct rtw88_net *net, struct rtw88_net_stats *stats)
 	stats->rx.accepted = 7;
 	stats->rx.delivery_epoch = 3;
 	stats->rx.inactive = 2;
+	stats->rx.format = 445;
+	stats->rx.format_reason[0] = 11;
+	stats->rx.format_reason[1] = 392;
+	stats->rx.format_reason[2] = 13;
+	stats->rx.format_reason[3] = 14;
+	stats->rx.format_reason[4] = 15;
+	for (unsigned i = 0; i < 16; i++)
+		stats->rx.format_control[i] = i + 17;
 	stats->chanmismatch = 11;
 	stats->badchan = 13;
 	stats->elem_missing = 17;
@@ -693,7 +701,7 @@ int main(void)
 	CHECK(rtwce_bootstrap(0) == EBUSY);
 	int old_io = f.io;
 	int ch = 36;
-	char stats[4096] = { 0 };
+	char stats[8192] = { 0 };
 	CHECK(rtwce_h2c(0x1234) == EBUSY);
 	CHECK(rtwce_lbmode(1) == EBUSY);
 	CHECK(rtwce_loopback(1) == EBUSY);
@@ -703,6 +711,11 @@ int main(void)
 	CHECK(rtwce_stats(stats, sizeof(stats)) == 0);
 	CHECK(strstr(stats, "nrx 7") != NULL && strstr(stats, "ndepoch 3") != NULL);
 	CHECK(strstr(stats, "ninactive 2") != NULL);
+	CHECK(strstr(stats, "nformat 445") != NULL);
+	CHECK(strstr(stats, " nfmt 11/392/13/14/15") != NULL);
+	CHECK(strstr(stats, " nctl0 17") != NULL);
+	CHECK(strstr(stats, " nctl9 26") != NULL);
+	CHECK(strstr(stats, " nctl15 32") != NULL);
 	CHECK(strstr(stats, "chanmismatch 11 badchan 13") != NULL);
 	CHECK(strstr(stats, "elem_missing 17 elem_toobig 19 elem_toosmall 23") != NULL);
 	CHECK(strstr(stats, "ssid") == NULL && strstr(stats, "private-fixture") == NULL);
@@ -760,7 +773,7 @@ int main(void)
 	{
 		struct rtw88_stats saved = p.sc_core.sc_stats;
 		struct rtw88_hw_feature_state saved_hw = p.sc_core.sc_hw_feature;
-		char probe[4098];
+		char probe[8194];
 		size_t required;
 
 		memset(&p.sc_core.sc_stats, 0xff, sizeof(p.sc_core.sc_stats));

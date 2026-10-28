@@ -28,7 +28,7 @@ static int
 rtwce_sysctl_stats(SYSCTLFN_ARGS)
 {
 	struct sysctlnode node;
-	const size_t buflen = 4096;
+	const size_t buflen = 8192;
 	size_t oldlen;
 	char *buf;
 	int error;

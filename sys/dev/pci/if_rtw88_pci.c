@@ -296,6 +296,17 @@ rtwce_stats(char *buf, size_t len)
 		    ns.beacon, ns.chanmismatch, ns.badchan, ns.elem_missing,
 		    ns.elem_toobig, ns.elem_toosmall, ns.nodealloc, ns.mgtdiscard,
 		    (unsigned long long)ns.fw_stale);
+		if (n > 0 && (size_t)n < len)
+			n += snprintf(buf + n, len - (size_t)n,
+			    " nfmt %llu/%llu/%llu/%llu/%llu",
+			    (unsigned long long)ns.rx.format_reason[0],
+			    (unsigned long long)ns.rx.format_reason[1],
+			    (unsigned long long)ns.rx.format_reason[2],
+			    (unsigned long long)ns.rx.format_reason[3],
+			    (unsigned long long)ns.rx.format_reason[4]);
+		for (unsigned i = 0; i < 16 && n > 0 && (size_t)n < len; i++)
+			n += snprintf(buf + n, len - (size_t)n, " nctl%u %llu", i,
+			    (unsigned long long)ns.rx.format_control[i]);
 	}
 	if (n > 0 && (size_t)n < len && psc->sc_net != NULL) {
 		/* HT/VHT negotiation: offer, provider, response, beacon, RUN, RA. */

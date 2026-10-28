@@ -63,6 +63,26 @@ responses, last status, active TID mask) with `ampdu` (descriptors with
 AGG_EN). These are encoding and protocol observations, not air-rate or ACK
 reports.
 
+`nformat` counts MPDUs refused by the ingress format policy. It is not a
+counter of corrupt data packets. `nfmt` splits it, in order, into nonzero
+802.11 version, generic control frame, reserved frame type, four-address
+frame and BAR authorization refusal. These five counts sum to `nformat`.
+`nctl0` through `nctl15` split generic control refusals by FC0 subtype;
+`nctl9` is Block Ack and `nctl8` is a BAR of at least 24 bytes, outside
+the supported 20-byte compressed BAR shape. A shaped BAR with TID 8-15, no active RX BA session, a mismatched receiver
+or transmitter address, or a nonzero security descriptor increments the fifth
+`nfmt` count instead. A valid authorized
+BAR still enters the shared sequence validator. Short or corrupt frames
+are counted by the earlier size or integrity checks.
+
+During TX A-MPDU, Block Ack responses can raise `nctl9` without a failed
+association or payload loss. The driver does not consume these frames as
+per-MPDU TX status. A total `nformat` from an older kernel cannot establish
+which subtype or peer caused it. The counters contain no addresses, keys
+or frame payload. They do not change the admission policy. The stats sysctl
+uses an 8 KiB process-context heap buffer, including full-width RFK counts;
+short reads retain the existing required-size and retry contract.
+
 ## Source checks
 
 The RTL8822CE contracts run the default build, the VHT build and the VHT
