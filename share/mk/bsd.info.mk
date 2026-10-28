@@ -55,10 +55,10 @@ __infoinstall: .USE
 		do sleep 1; done;					\
 	! [ -s ${INFODIRFILE} ] && rm -f ${INFODIRFILE} ||		\
 	${TOOL_INSTALL_INFO} -d ${INFODIRFILE} -r ${.TARGET} 2> /dev/null; \
-	${TOOL_INSTALL_INFO} -d ${INFODIRFILE} ${.TARGET};		\
-	${TOOL_SORTINFO} < ${INFODIRFILE} > ${INFODIRFILE}.tmp;		\
-	${MV} ${INFODIRFILE}.tmp ${INFODIRFILE};			\
-	rm -f ${INFODIRFILE}.lock
+	${TOOL_INSTALL_INFO} -d ${INFODIRFILE} ${.TARGET} && \
+	${TOOL_SORTINFO} < ${INFODIRFILE} > ${INFODIRFILE}.tmp && \
+	${MV} ${INFODIRFILE}.tmp ${INFODIRFILE}; \
+	status=$$?; rm -f ${INFODIRFILE}.lock; exit $$status
 
 
 .for F in ${INFOFILES:O:u}

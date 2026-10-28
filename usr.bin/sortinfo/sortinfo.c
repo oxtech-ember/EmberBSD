@@ -82,6 +82,22 @@ addline(struct section *s, char *line)
 	s->lines[s->nlines++] = line;
 }
 
+static void
+appendline(struct section *s, const char *line)
+{
+	char *entry;
+	size_t len, extra;
+
+	if (s == NULL || s->nlines == 0)
+		errx(EXIT_FAILURE, "No current menu entry");
+	entry = s->lines[s->nlines - 1];
+	len = strlen(entry);
+	extra = strlen(line);
+	entry = erealloc(entry, len + extra + 1);
+	memcpy(entry + len, line, extra + 1);
+	s->lines[s->nlines - 1] = entry;
+}
+
 static int
 compsection(const void *a, const void *b)
 {
@@ -109,7 +125,7 @@ printsection(const struct section *s)
 }
 	
 int
-main(int argc, char *argv[])
+main(void)
 {
 	size_t i;
 	ssize_t ll;
@@ -142,6 +158,12 @@ main(int argc, char *argv[])
 			addline(s, line);
 			line = NULL;
 			i = 0;
+			continue;
+		case ' ':
+		case '\t':
+			if (needsection)
+				errx(EXIT_FAILURE, "No current menu entry");
+			appendline(s, line);
 			continue;
 		default:
 			if (needsection == 0)
