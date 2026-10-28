@@ -26,6 +26,7 @@
  */
 
 #include <sys/cdefs.h>
+#include <linux/stddef.h>
 __KERNEL_RCSID(0, "$NetBSD: amdgpu_command_table2.c,v 1.2 2021/12/18 23:45:00 riastradh Exp $");
 
 #include "dm_services.h"
@@ -49,9 +50,8 @@ __KERNEL_RCSID(0, "$NetBSD: amdgpu_command_table2.c,v 1.2 2021/12/18 23:45:00 ri
 	bp->base.ctx->logger
 
 #define GET_INDEX_INTO_MASTER_TABLE(MasterOrData, FieldName)\
-	(((char *)(&((\
-		struct atom_master_list_of_##MasterOrData##_functions_v2_1 *)0)\
-		->FieldName)-(char *)0)/sizeof(uint16_t))
+	(offsetof(struct atom_master_list_of_##MasterOrData##_functions_v2_1, \
+		FieldName) / sizeof(uint16_t))
 
 #define EXEC_BIOS_CMD_TABLE(fname, params)\
 	(amdgpu_atom_execute_table(((struct amdgpu_device *)bp->base.ctx->driver_context)->mode_info.atom_context, \
