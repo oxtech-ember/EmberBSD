@@ -29,7 +29,7 @@
 ./usr/share/info/gzip.info			man-obsolete		obsolete
 ./usr/share/info/heimdal.info			man-krb5-info		kerberos,info
 ./usr/share/info/info-stnd.info			man-texinfo-info	info
-./usr/share/info/info.info			man-texinfo-info	info
+./usr/share/info/info.info		man-obsolete		obsolete
 ./usr/share/info/iostream.info			man-obsolete		obsolete
 ./usr/share/info/kth-krb.info			man-obsolete		obsolete
 ./usr/share/info/ld.info			man-computil-info	binutils,info
@@ -236,7 +236,7 @@
 ./usr/share/man/cat1/indent.0			man-c-catman		.cat
 ./usr/share/man/cat1/info.0			man-texinfo-catman	.cat
 ./usr/share/man/cat1/infocmp.0			man-util-catman		.cat
-./usr/share/man/cat1/infokey.0			man-texinfo-catman	.cat
+./usr/share/man/cat1/infokey.0		man-obsolete		obsolete
 ./usr/share/man/cat1/innetgr.0			man-nis-catman		.cat
 ./usr/share/man/cat1/install-info.0		man-texinfo-catman	.cat
 ./usr/share/man/cat1/install.0			man-util-catman		.cat
@@ -329,7 +329,7 @@
 ./usr/share/man/cat1/mailq.0			man-postfix-catman	postfix,.cat
 ./usr/share/man/cat1/mailx.0			man-mail-catman		.cat
 ./usr/share/man/cat1/make.0			man-util-catman		.cat
-./usr/share/man/cat1/makeinfo.0			man-texinfo-catman	.cat
+./usr/share/man/cat1/makeinfo.0		man-obsolete		obsolete
 ./usr/share/man/cat1/man.0			man-man-catman		.cat
 ./usr/share/man/cat1/mandoc.0			man-mdocml-catman	.cat
 ./usr/share/man/cat1/md2.0			man-util-catman		.cat
@@ -628,7 +628,7 @@
 ./usr/share/man/cat1/sntp.0			man-ntp-catman		.cat
 ./usr/share/man/cat1/sockstat.0			man-util-catman		.cat
 ./usr/share/man/cat1/sort.0			man-util-catman		.cat
-./usr/share/man/cat1/sortinfo.0			man-texinfo-catman	.cat
+./usr/share/man/cat1/sortinfo.0		man-obsolete		obsolete
 ./usr/share/man/cat1/source.0			man-util-catman		.cat
 ./usr/share/man/cat1/spell.0			man-util-catman		.cat
 ./usr/share/man/cat1/split.0			man-util-catman		.cat
@@ -660,8 +660,8 @@
 ./usr/share/man/cat1/tee.0			man-util-catman		.cat
 ./usr/share/man/cat1/telnet.0			man-netutil-catman	.cat
 ./usr/share/man/cat1/test.0			man-util-catman		.cat
-./usr/share/man/cat1/texi2dvi.0			man-texinfo-catman	.cat
-./usr/share/man/cat1/texindex.0			man-texinfo-catman	.cat
+./usr/share/man/cat1/texi2dvi.0		man-obsolete		obsolete
+./usr/share/man/cat1/texindex.0		man-obsolete		obsolete
 ./usr/share/man/cat1/tftp.0			man-netutil-catman	.cat
 ./usr/share/man/cat1/tic.0			man-util-catman		.cat
 ./usr/share/man/cat1/time.0			man-util-catman		.cat
@@ -3838,7 +3838,7 @@
 ./usr/share/man/man1/indent.1			man-c-man		.man
 ./usr/share/man/man1/info.1			man-texinfo-man		.man
 ./usr/share/man/man1/infocmp.1			man-util-man		.man
-./usr/share/man/man1/infokey.1			man-texinfo-man		.man
+./usr/share/man/man1/infokey.1		man-obsolete		obsolete
 ./usr/share/man/man1/innetgr.1			man-nis-man		.man
 ./usr/share/man/man1/install-info.1		man-texinfo-man		.man
 ./usr/share/man/man1/install.1			man-util-man		.man
@@ -3931,7 +3931,7 @@
 ./usr/share/man/man1/mailq.1			man-postfix-man		postfix,.man
 ./usr/share/man/man1/mailx.1			man-mail-man		.man
 ./usr/share/man/man1/make.1			man-util-man		.man
-./usr/share/man/man1/makeinfo.1			man-texinfo-man		.man
+./usr/share/man/man1/makeinfo.1		man-obsolete		obsolete
 ./usr/share/man/man1/man.1			man-man-man		.man
 ./usr/share/man/man1/mandoc.1			man-mdocml-man		.man
 ./usr/share/man/man1/md2.1			man-util-man		.man
@@ -4231,7 +4231,7 @@
 ./usr/share/man/man1/sntp.1			man-ntp-man		.man
 ./usr/share/man/man1/sockstat.1			man-util-man		.man
 ./usr/share/man/man1/sort.1			man-util-man		.man
-./usr/share/man/man1/sortinfo.1			man-texinfo-man		.man
+./usr/share/man/man1/sortinfo.1		man-obsolete		obsolete
 ./usr/share/man/man1/source.1			man-util-man		.man
 ./usr/share/man/man1/spell.1			man-util-man		.man
 ./usr/share/man/man1/split.1			man-util-man		.man
@@ -4263,8 +4263,8 @@
 ./usr/share/man/man1/tee.1			man-util-man		.man
 ./usr/share/man/man1/telnet.1			man-netutil-man		.man
 ./usr/share/man/man1/test.1			man-util-man		.man
-./usr/share/man/man1/texi2dvi.1			man-texinfo-man		.man
-./usr/share/man/man1/texindex.1			man-texinfo-man		.man
+./usr/share/man/man1/texi2dvi.1		man-obsolete		obsolete
+./usr/share/man/man1/texindex.1		man-obsolete		obsolete
 ./usr/share/man/man1/tftp.1			man-netutil-man		.man
 ./usr/share/man/man1/tic.1			man-util-man		.man
 ./usr/share/man/man1/time.1			man-util-man		.man

@@ -618,7 +618,7 @@
 ./usr/libdata/debug/usr/bin/indxbib.debug	comp-groff-debug	groff,debug
 ./usr/libdata/debug/usr/bin/info.debug		comp-texinfo-debug	debug
 ./usr/libdata/debug/usr/bin/infocmp.debug	comp-util-debug		debug
-./usr/libdata/debug/usr/bin/infokey.debug	comp-texinfo-debug	debug
+./usr/libdata/debug/usr/bin/infokey.debug		comp-obsolete		debug,obsolete
 ./usr/libdata/debug/usr/bin/innetgr.debug	comp-nis-debug		debug
 ./usr/libdata/debug/usr/bin/install-info.debug	comp-texinfo-debug	debug
 ./usr/libdata/debug/usr/bin/install.debug	comp-util-debug		debug
@@ -679,7 +679,7 @@
 ./usr/libdata/debug/usr/bin/m4.debug		comp-util-debug		debug
 ./usr/libdata/debug/usr/bin/mail.debug		comp-mail-debug		debug
 ./usr/libdata/debug/usr/bin/make.debug		comp-util-debug		debug
-./usr/libdata/debug/usr/bin/makeinfo.debug	comp-texinfo-debug	debug
+./usr/libdata/debug/usr/bin/makeinfo.debug		comp-obsolete		debug,obsolete
 ./usr/libdata/debug/usr/bin/man.debug		comp-man-debug		debug
 ./usr/libdata/debug/usr/bin/mandoc.debug	comp-mdocml-debug	debug
 ./usr/libdata/debug/usr/bin/mdig.debug		comp-bind-debug		debug
@@ -817,7 +817,7 @@
 ./usr/libdata/debug/usr/bin/sockstat.debug	comp-util-debug		debug
 ./usr/libdata/debug/usr/bin/soelim.debug	comp-groff-debug	debug
 ./usr/libdata/debug/usr/bin/sort.debug		comp-util-debug		debug
-./usr/libdata/debug/usr/bin/sortinfo.debug	comp-texinfo-debug	debug
+./usr/libdata/debug/usr/bin/sortinfo.debug		comp-obsolete		debug,obsolete
 ./usr/libdata/debug/usr/bin/split.debug		comp-util-debug		debug
 ./usr/libdata/debug/usr/bin/sqlite3.debug	comp-util-debug		debug
 ./usr/libdata/debug/usr/bin/ssh-add.debug	comp-secsh-debug	debug
@@ -838,7 +838,7 @@
 ./usr/libdata/debug/usr/bin/tcopy.debug		comp-util-debug		debug
 ./usr/libdata/debug/usr/bin/tee.debug		comp-util-debug		debug
 ./usr/libdata/debug/usr/bin/telnet.debug	comp-netutil-debug	debug
-./usr/libdata/debug/usr/bin/texindex.debug	comp-texinfo-debug	debug
+./usr/libdata/debug/usr/bin/texindex.debug		comp-obsolete		debug,obsolete
 ./usr/libdata/debug/usr/bin/tfmtodit.debug	comp-groff-debug	groff,debug
 ./usr/libdata/debug/usr/bin/tftp.debug		comp-netutil-debug	debug
 ./usr/libdata/debug/usr/bin/tic.debug		comp-util-debug		debug

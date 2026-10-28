@@ -18,10 +18,10 @@
 ./usr/bin/grotty				text-groff-bin		groff
 ./usr/bin/hpftodit				text-groff-bin		groff
 ./usr/bin/indxbib				text-groff-bin		groff
-./usr/bin/infokey				text-texinfo-bin
+./usr/bin/infokey		text-obsolete		obsolete
 ./usr/bin/lkbib					text-groff-bin		groff
 ./usr/bin/lookbib				text-groff-bin		groff
-./usr/bin/makeinfo				text-texinfo-bin
+./usr/bin/makeinfo		text-obsolete		obsolete
 ./usr/bin/neqn					text-groff-bin		groff
 ./usr/bin/nroff					text-groff-bin		groff
 ./usr/bin/pfbtops				text-groff-bin		groff
@@ -32,10 +32,10 @@
 ./usr/bin/psroff				text-obsolete		obsolete
 ./usr/bin/refer					text-groff-bin		groff
 ./usr/bin/soelim				text-groff-bin
-./usr/bin/sortinfo				text-texinfo-bin
+./usr/bin/sortinfo		text-obsolete		obsolete
 ./usr/bin/tbl					text-groff-bin		groff
-./usr/bin/texi2dvi				text-texinfo-bin
-./usr/bin/texindex				text-texinfo-bin
+./usr/bin/texi2dvi		text-obsolete		obsolete
+./usr/bin/texindex		text-obsolete		obsolete
 ./usr/bin/tfmtodit				text-groff-bin		groff
 ./usr/bin/troff					text-groff-bin		groff
 ./usr/bin/vgrind				text-groff-bin
@@ -642,10 +642,10 @@
 ./usr/share/misc/eqnchar			text-groff-share	share
 ./usr/share/misc/man.template			text-groff-share	share
 ./usr/share/misc/mdoc.template			text-groff-share	share
-./usr/share/misc/texinfo.cat			text-texinfo-share	share
+./usr/share/misc/texinfo.cat		text-obsolete		obsolete
 ./usr/share/misc/texinfo.dtd			text-texinfo-share	share
 ./usr/share/misc/texinfo.tex			text-texinfo-share	share
-./usr/share/misc/texinfo.xsl			text-texinfo-share	share
+./usr/share/misc/texinfo.xsl		text-obsolete		obsolete
 ./usr/share/misc/vgrindefs			text-groff-share	share
 ./usr/share/tmac/X.tmac				text-groff-share	share,groff
 ./usr/share/tmac/Xps.tmac			text-groff-share	share,groff
