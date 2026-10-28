@@ -416,14 +416,13 @@ warn(const char *fmt, ...)
 }
 
 static void
-yyerror(s)
-const char *s;
+yyerror(const char *s)
 {
 	logit(LOG_ERR, 0, "%s: %s near line %d", configfilename, s, lineno);
 }
 
 static char *
-next_word()
+next_word(void)
 {
 	static char buf[1024];
 	static char *p=NULL;
@@ -467,7 +466,7 @@ next_word()
 }
 
 static int
-yylex()
+yylex(void)
 {
 	int n;
 	u_int32_t addr;
@@ -553,7 +552,7 @@ yylex()
 }
 
 void
-config_vifs_from_file()
+config_vifs_from_file(void)
 {
 	extern FILE *f;
 
@@ -573,8 +572,7 @@ config_vifs_from_file()
 }
 
 static u_int32_t
-valid_if(s)
-char *s;
+valid_if(char *s)
 {
 	vifi_t vifi;
 	struct uvif *uv;
@@ -587,8 +585,7 @@ char *s;
 }
 
 static const char *
-ifconfaddr(a)
-    u_int32_t a;
+ifconfaddr(u_int32_t a)
 {
     static char ifname[IFNAMSIZ];
     struct ifaddrs *ifap, *ifa;
