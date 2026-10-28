@@ -196,7 +196,8 @@ main(int argc, char *argv[])
 
 	do {
 		int	save_errno, otherpid = -1;
-		char	otherluser[MAXLOGNAME];
+		/* The pidfile conversion below reads at most 31 bytes plus NUL. */
+		char	otherluser[32];
 
 		if ((pidfd = open(pidfile, O_RDWR|O_CREAT, 0644)) == -1 ||
 		    (pidfp = fdopen(pidfd, "r+")) == NULL) {
@@ -214,7 +215,6 @@ main(int argc, char *argv[])
 		/* Mark our pid, and username to our file. */
 
 		rewind(pidfp);
-		/* 31 == MAXLOGNAME - 1 */
 		if (fscanf(pidfp, "%d\n%31s\n", &otherpid, otherluser) != 2)
 			otherpid = -1;
 		syslog(LOG_DEBUG, "tried to lock %s, in use by pid %d: %s",
