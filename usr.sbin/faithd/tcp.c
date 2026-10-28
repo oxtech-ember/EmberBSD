@@ -102,7 +102,7 @@ sig_child(int sig)
 }
 
 static void
-notify_inactive()
+notify_inactive(void)
 {
 	time_t t;
 
@@ -130,7 +130,7 @@ notify_inactive()
 }
 
 static void
-notify_active()
+notify_active(void)
 {
 	if (ppid) {
 		/* child side: notify parent of active traffic */

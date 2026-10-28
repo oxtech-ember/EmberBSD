@@ -154,7 +154,7 @@ qcmd_disable(const char *ifname)
 }
 
 int
-qcmd_enableall()
+qcmd_enableall(void)
 {
 	struct ifinfo	*ifinfo;
 	int error;
@@ -169,7 +169,7 @@ qcmd_enableall()
 }
 
 int
-qcmd_disableall()
+qcmd_disableall(void)
 {
 	struct ifinfo	*ifinfo;
 	int	lerr, error = 0;

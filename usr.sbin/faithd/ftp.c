@@ -231,7 +231,7 @@ ftp_relay(int ctl6, int ctl4)
 }
 
 static int
-ftp_activeconn()
+ftp_activeconn(void)
 {
 	socklen_t n;
 	int error;
@@ -277,7 +277,7 @@ ftp_activeconn()
 }
 
 static int
-ftp_passiveconn()
+ftp_passiveconn(void)
 {
 	socklen_t len;
 	int error;

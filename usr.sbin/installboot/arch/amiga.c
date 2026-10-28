@@ -157,9 +157,7 @@ amiga_setboot(ib_params *params)
 }
 
 u_int32_t
-chksum(block, size)
-	u_int32_t *block;
-	int size;
+chksum(u_int32_t *block, int size)
 {
 	u_int32_t sum, lastsum;
 	int i;

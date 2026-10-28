@@ -1768,7 +1768,7 @@ usage(void)
 
 
 void
-frag_err()
+frag_err(void)
 {
         int i;
 

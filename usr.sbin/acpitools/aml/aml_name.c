@@ -67,7 +67,7 @@ struct	aml_name_group *name_group_list = &root_group;
 struct	aml_local_stack *stack_top = NULL;
 
 struct aml_name *
-aml_get_rootname()
+aml_get_rootname(void)
 {
 
 	return (&rootname);
@@ -412,7 +412,7 @@ aml_nameman(struct aml_environ *env, const u_int8_t *dp, int flag)
 #undef CREATECHECK
 
 struct aml_local_stack *
-aml_local_stack_create()
+aml_local_stack_create(void)
 {
 	struct aml_local_stack *result;
 
@@ -430,7 +430,7 @@ aml_local_stack_push(struct aml_local_stack *stack)
 }
 
 struct aml_local_stack *
-aml_local_stack_pop()
+aml_local_stack_pop(void)
 {
 	struct aml_local_stack *result;
 
@@ -474,7 +474,7 @@ aml_local_stack_getArgX(struct aml_local_stack *stack, int idx)
 }
 
 struct aml_name *
-aml_create_local_object()
+aml_create_local_object(void)
 {
 	struct aml_name *result;
 

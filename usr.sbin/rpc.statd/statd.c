@@ -206,7 +206,7 @@ notify_handler(int sig)
  * Returns:	Nothing.  Errors to syslog.
  */
 void 
-sync_file()
+sync_file(void)
 {
 	DBT data;
 
@@ -529,7 +529,7 @@ init_file(const char *filename)
  * Notes:	If this is not called on reset, it will leak memory.
  */
 void
-reset_database()
+reset_database(void)
 {
 	time_t now = time(NULL);
 	walk_db(reset_host, &now);
@@ -548,7 +548,7 @@ reset_database()
  * Notes:
  */
 void
-unmon_hosts()
+unmon_hosts(void)
 {
 	time_t now = time(NULL);
 	walk_db(unmon_host, &now);

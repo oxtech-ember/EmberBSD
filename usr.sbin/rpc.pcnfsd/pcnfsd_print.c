@@ -389,7 +389,7 @@ pr_start2(char *sys, char *pr, char *user, char *fname, char *opts, char **id)
  * possibility:
  */
 int
-build_pr_list()
+build_pr_list(void)
 {
 	pr_list last = NULL;
 	pr_list curr = NULL;
@@ -524,7 +524,7 @@ build_pr_list()
  * BSD way: lpc stat
  */
 int
-build_pr_list()
+build_pr_list(void)
 {
 	pr_list last = NULL;
 	pr_list curr = NULL;
@@ -1223,7 +1223,7 @@ add_printer_alias(char *printer, char *alias_for, char *command)
 }
 
 pr_list 
-list_virtual_printers()
+list_virtual_printers(void)
 {
 	pr_list first = NULL;
 	pr_list last = NULL;

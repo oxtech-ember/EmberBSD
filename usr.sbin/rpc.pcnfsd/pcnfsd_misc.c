@@ -384,7 +384,7 @@ start_watchdog(int n)
 }
 
 void
-stop_watchdog()
+stop_watchdog(void)
 {
 /*
  * Cancel timer
