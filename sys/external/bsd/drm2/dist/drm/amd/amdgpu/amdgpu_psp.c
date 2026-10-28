@@ -1750,6 +1750,8 @@ int psp_ring_cmd_submit(struct psp_context *psp,
 	write_frame->fence_addr_hi = upper_32_bits(fence_mc_addr);
 	write_frame->fence_addr_lo = lower_32_bits(fence_mc_addr);
 	write_frame->fence_value = index;
+	/* Order CPU writes to the ring before the HDP flush and write pointer. */
+	wmb();
 	amdgpu_asic_flush_hdp(adev, NULL);
 
 	/* Update the write Pointer in DWORDs */
