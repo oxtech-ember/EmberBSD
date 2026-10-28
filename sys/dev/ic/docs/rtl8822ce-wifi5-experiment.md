@@ -126,6 +126,15 @@ direction; the peer-to-board figures are already at the pair's limit:
 | e89e8b965, A-MPDU | 89.2 and 84.4 Mbit/s | 93.1 and 95.5 Mbit/s |
 | 702a3f9c5, A-MPDU and SGI | 100.9 and 93.9 Mbit/s | 95.0 and 96.1 Mbit/s |
 
-Not established: association on 52-60 or 100-144, other APs, two spatial
-streams on the air, long-duration stability and the default boot
-selection.
+A 2026-10-28 check with kernel `598860848` used primary 60, center 58 and
+80 MHz. All 16 snapshots retained that tuple. During 440 seconds,
+`nformat` rose by 44,190: 44,177 Block Ack, 9 Trigger and 4 NDP Announcement
+subtypes. All other format reasons stayed zero. The counters establish
+subtypes, not control bodies or senders. Six 128 MiB TCP transfers completed,
+and ping received 20 of 20 replies. Interface errors and HT reset counts
+stayed zero. The existing default kernel was restored after the manual trial.
+The cold ADCK/DACK warning remained; RF quality is still unqualified.
+
+Not established: association on 52, 56 or 100-144, other APs, two spatial
+streams on the air, general long-duration stability, and automatic default
+selection of this opt-in profile.
