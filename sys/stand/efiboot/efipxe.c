@@ -36,7 +36,6 @@ struct efipxeinfo {
 };
 TAILQ_HEAD(efipxeinfo_lh, efipxeinfo);
 static struct efipxeinfo_lh efi_pxelist;
-static int nefipxes;
 
 void
 efi_pxe_probe(void)
@@ -109,7 +108,6 @@ efi_pxe_probe(void)
 		memcpy(epi->mac.Addr, net->Mode->CurrentAddress.Addr, epi->addrsz);
 
 		TAILQ_INSERT_TAIL(&efi_pxelist, epi, list);
-		nefipxes++;
 	}
 }
 

@@ -143,14 +143,22 @@ struct fl {
 } *freelist;
 
 #ifdef HEAP_VARIABLE
-static char *top, *heapstart, *heaplimit;
+static char *top, *heaplimit;
+#ifdef DEBUG
+static char *heapstart;
+#endif
 void
 setheap(void *start, void *limit)
 {
-	heapstart = top = start;
+	top = start;
+#ifdef DEBUG
+	heapstart = start;
+#endif
 	heaplimit = limit;
 }
+#ifdef DEBUG
 #define HEAP_START heapstart
+#endif
 #define HEAP_LIMIT heaplimit
 #else /* !HEAP_VARIABLE */
 #ifndef HEAP_START
