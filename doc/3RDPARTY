@@ -2203,31 +2203,30 @@ Location:	external/gpl2/gmake
 Notes:
 
 Package:	diffutils
-Version:	2.8.1 (Last GPLv2+ version)
-Current Vers:	3.6
+Version:	3.12
+Current Vers:	3.12
 Maintainer:	FSF
-Archive Site:	ftp://ftp.gnu.org/gnu/diffutils/
-Home Page:	http://www.gnu.org/software/diffutils/
+Archive Site:	https://ftp.gnu.org/gnu/diffutils/
+Home Page:	https://www.gnu.org/software/diffutils/
 Mailing List:	bug-diffutils@gnu.org
 Responsible:
-License:	GPLv2+ (2.8.1), GPLv3+ (2.9 and later)
-Location:	external/gpl2/diffutils
+License:	GPLv3+
+Location:	external/gpl2/diffutils (OS integration)
 Notes:
-Use external/gpl2/diffutils/diffutils2netbsd for preparing the source tree
-for the import.
+Source and patches are prepared by the common EmberBSD Ports recipe.
 
 Package:	rcs
-Version:	5.7 (Last GPLv2+ version)
-Current Vers:	5.9.4
+Version:	5.10.1
+Current Vers:	5.10.1
 Maintainer:	FSF
-Archive Site:	ftp://ftp.gnu.org/gnu/rcs/
+Archive Site:	https://ftp.gnu.org/gnu/rcs/
 Mailing List:	bug-gnu-utils@gnu.org
-Home Page:	http://www.gnu.org/software/rcs/
+Home Page:	https://www.gnu.org/software/rcs/
 Responsible:	agc
-License:	GPLv2+ (5.7), GPLv3+ (5.8 and later)
-Location:	external/gpl2/rcs
+License:	GPLv3+; retained rcsintro manual keeps its original GPLv2 COPYING
+Location:	external/gpl2/rcs (OS integration and retained manual)
 Notes:
-Old versions are available from Purdue (ftp.cs.purdue.edu:/pub/RCS).
+Source and patches are prepared by the common EmberBSD Ports recipe.
 
 Package:	texinfo
 Version:	4.8a (Last GPLv2+ version)
