@@ -120,7 +120,6 @@ static char *fsi_filename;
 static char *optr;
 static char ostr[1024];
 static int find_resword(char *);
-static int quoted;
 
 struct r {
   char *rw;
@@ -177,7 +176,7 @@ struct r {
 <F>"\n"			{ ayylineno++; }
 <F>[={}]		{ return *yytext; }
 
-<F>\"			{ BEGIN Q; optr = ostr; quoted = 1; }
+<F>\"			{ BEGIN Q; optr = ostr; }
 <Q>\n			{ ayylineno++; fsi_error("\" expected"); BEGIN F; }
 <Q>\\b			{ *optr++ = '\b'; /* escape */ }
 <Q>\\t			{ *optr++ = '\t'; /* escape */ }
@@ -190,7 +189,7 @@ struct r {
 <Q>"\\ "		{ *optr++ = ' '; /* force space */ }
 <Q>\\.			{ fsi_error("Unknown \\ sequence"); }
 <Q>([ \t]|"\\\n"){2,}	{ char *p = (char *) yytext-1; while ((p = strchr(p+1, '\n'))) ayylineno++; }
-<Q>\"			{ BEGIN F; quoted = 0;
+<Q>\"			{ BEGIN F;
 				*optr = '\0';
 				yylval.s = xstrdup(ostr);
 				return tSTR;
