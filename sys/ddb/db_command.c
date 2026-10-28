@@ -77,6 +77,7 @@ __KERNEL_RCSID(0, "$NetBSD: db_command.c,v 1.190 2023/11/02 10:31:55 martin Exp 
 
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/stdarg.h>
 #include <sys/reboot.h>
 #include <sys/device.h>
 #include <sys/eventvar.h>
@@ -219,6 +220,9 @@ static void	db_reboot_cmd(db_expr_t, bool, db_expr_t, const char *);
 static void	db_sifting_cmd(db_expr_t, bool, db_expr_t, const char *);
 static void	db_socket_print_cmd(db_expr_t, bool, db_expr_t, const char *);
 static void	db_stack_trace_cmd(db_expr_t, bool, db_expr_t, const char *);
+#ifndef _KERNEL
+static void	db_stack_trace_log(const char *, ...) __printflike(1, 2);
+#endif
 static void	db_sync_cmd(db_expr_t, bool, db_expr_t, const char *);
 static void	db_whatis_cmd(db_expr_t, bool, db_expr_t, const char *);
 static void	db_uvmexp_print_cmd(db_expr_t, bool, db_expr_t, const char *);
@@ -1618,6 +1622,19 @@ db_sifting_cmd(db_expr_t addr, bool have_addr,
 	}
 }
 
+#ifndef _KERNEL
+/* printf returns int in crash(8), but the stack printer callback returns void. */
+static void
+db_stack_trace_log(const char *fmt, ...)
+{
+	va_list ap;
+
+	va_start(ap, fmt);
+	(void)vprintf(fmt, ap);
+	va_end(ap);
+}
+#endif
+
 static void
 db_stack_trace_cmd(db_expr_t addr, bool have_addr, db_expr_t count, const char *modif)
 {
@@ -1627,8 +1644,13 @@ db_stack_trace_cmd(db_expr_t addr, bool have_addr, db_expr_t count, const char *
 
 	pr = db_printf;
 	while ((c = *cp++) != 0)
-		if (c == 'l')
-			pr = (void (*)(const char *, ...))printf;
+		if (c == 'l') {
+#ifdef _KERNEL
+			pr = printf;
+#else
+			pr = db_stack_trace_log;
+#endif
+		}
 
 	if (count == -1)
 		count = 65535;

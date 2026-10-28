@@ -62,6 +62,7 @@ __RCSID("$NetBSD: sys_bsd.c,v 1.40 2018/12/14 06:28:49 maya Exp $");
 
 void susp(int);
 void ayt(int);
+static void ayt_status_signal(int);
 
 void intr(int);
 void intr2(int);
@@ -408,7 +409,7 @@ TerminalNewMode(int f)
 # endif
 	}
     } else {
-	(void) signal(SIGINFO, (void (*)(int)) ayt_status);
+	(void) signal(SIGINFO, ayt_status_signal);
 	(void) signal(SIGTSTP, SIG_DFL);
 	(void) sigsetmask(sigblock(0) & ~(1<<(SIGTSTP-1)));
 	tmp_tc = old_tc;
@@ -503,6 +504,13 @@ sendwin(int sig)
     if (connected) {
 	sendnaws();
     }
+}
+
+static void
+ayt_status_signal(int sig)
+{
+    (void)sig;
+    (void)ayt_status();
 }
 
 /* ARGSUSED */
