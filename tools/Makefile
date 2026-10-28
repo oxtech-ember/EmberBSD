@@ -123,8 +123,10 @@ SUBDIR+= cat gzip rpcgen join lorder m4 mkdep tsort what \
 .if ${TOOLS_BUILDRUMP} == "no"
 SUBDIR+= xz-include .WAIT grep xz-lib pax .WAIT libprop
 
-SUBDIR += .WAIT texinfo \
-	.WAIT tic \
+.if !defined(EMBER_NATIVE_TOOLS)
+SUBDIR+= .WAIT texinfo
+.endif
+SUBDIR += .WAIT tic \
 	.WAIT ${TOOLCHAIN_BITS} \
 	${DTRACE_BITS} \
 		asn1_compile cksum compile_et db \

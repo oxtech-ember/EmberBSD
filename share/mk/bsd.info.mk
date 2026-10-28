@@ -21,9 +21,15 @@ realall:	${INFOFILES}
 
 .SUFFIXES: .txi .texi .texinfo .info
 
+.if defined(EMBER_NATIVE_TOOLS)
+INFO_VERSION_FLAGS= -c PROGRAM=
+.else
+INFO_VERSION_FLAGS= --no-version-header
+.endif
+
 .txi.info .texi.info .texinfo.info:
 	${_MKTARGET_CREATE}
-	${TOOL_MAKEINFO} ${INFOFLAGS} --no-split --no-version-header -o ${.TARGET} ${.IMPSRC}
+	${TOOL_MAKEINFO} ${INFOFLAGS} --no-split ${INFO_VERSION_FLAGS} -o ${.TARGET} ${.IMPSRC}
 .endif # defined(TEXINFO)
 
 .endif # ${MKINFO} != "no"

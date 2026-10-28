@@ -28,6 +28,8 @@ The generated make wrapper preserves both selected paths.
 `echo` is required by make's direct execution of simple recipes, including
 the initial build-variable query. A shell builtin does not supply that path.
 `-` makes the command available through the selected `PATH` only.
+The contract selects host Texinfo `makeinfo` and `install-info` and its Perl
+interpreter from the native prefix; these replace the old bundled host tools.
 The contract file contains the complete initial list of required roles.
 It includes utilities needed before the OS versions are built: `grep` for
 Clang detection, and `basename`, `diff`, `egrep`, `expr`, `ls`, `mv`, and
