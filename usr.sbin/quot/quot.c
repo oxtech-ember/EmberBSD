@@ -57,7 +57,6 @@ static char count;
 static char unused;
 static void (*func)(int, struct fs *, const char *);
 static long blocksize;
-static char *header;
 
 /*
  * Original BSD quot doesn't round to number of frags/blocks,
@@ -176,9 +175,7 @@ virtualblocks(struct fs *super, union dinode *dp)
 }
 
 static int
-isfree(fs, dp)
-	struct fs *fs;
-	union dinode *dp;
+isfree(struct fs *fs, union dinode *dp)
 {
 #ifdef	COMPAT
 	return (DIP(fs, dp, mode) & IFMT) == 0;
@@ -279,8 +276,7 @@ user(uid_t uid)
 }
 
 static int
-cmpusers(u1, u2)
-	const void *u1, *u2;
+cmpusers(const void *u1, const void *u2)
 {
 	return ((const struct user *)u2)->space - ((const struct user *)u1)->space;
 }
@@ -289,10 +285,7 @@ cmpusers(u1, u2)
 				       cmpusers))
 
 static void
-uses(uid, blks, act)
-	uid_t uid;
-	daddr_t blks;
-	time_t act;
+uses(uid_t uid, daddr_t blks, time_t act)
 {
 	static time_t today;
 	struct user *usr;
@@ -325,7 +318,7 @@ struct fsizes {
 } *fsizes;
 
 static void
-initfsizes()
+initfsizes(void)
 {
 	struct fsizes *fp;
 	int i;
@@ -611,7 +604,7 @@ main(int argc, char **argv)
 	
 	func = douser;
 #ifndef	COMPAT
-	header = getbsize(NULL, &blocksize);
+	(void)getbsize(NULL, &blocksize);
 #endif
 	while (--argc > 0 && **++argv == '-') {
 		while (*++*argv) {
