@@ -344,8 +344,9 @@ static const struct device_compatible_entry compat_data[] = {
 	  .data = &sun50i_h6_mmc_config },
 	{ .compat = "allwinner,sun50i-h6-emmc",
 	  .data = &sun50i_h6_emmc_config },
+	/* A100 MMC shares the D1 word-addressed, 13-bit IDMA format. */
 	{ .compat = "allwinner,sun50i-a100-mmc",
-	  .data = &sun50i_h6_mmc_config },
+	  .data = &sun20i_d1_mmc_config },
 	{ .compat = "allwinner,sun50i-a100-emmc",
 	  .data = &sun50i_a100_emmc_config },
 

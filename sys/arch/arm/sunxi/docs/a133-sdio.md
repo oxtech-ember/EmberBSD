@@ -61,6 +61,25 @@ The separate synthetic test above retains coverage for legacy touch and MCU reso
 These checks prove a resource model, not radio I/O or a cold boot.
 This native DTS has no complete touch or MCU description and is not a deployment replacement.
 
+## DMA configuration regression
+
+The canonical `allwinner,sun50i-a100-mmc` compatible uses the existing D1
+configuration: 8 KiB descriptor payloads and word-addressed buffer, link and
+list-base addresses. H6 remains byte-addressed; the separate A100 eMMC
+configuration is unchanged. This follows the [pinned controller reference](https://github.com/torvalds/linux/blob/adc218676eef25575469234709c2d87185ca223a/drivers/mmc/host/sunxi-mmc.c#L1145).
+
+Run the focused actual-source regression with the selected native compiler:
+
+```sh
+python3 sys/arch/arm/sunxi/tests/sunxi-mmc-dma.py \
+    --cc /absolute/native-prefix/bin/clang --build-dir /absolute/fresh-output
+```
+
+It executes the production config table and complete DMA preparation function
+with modeled DMA/MMIO services. It checks 16 KiB descriptor splitting, encoded
+addresses, and unchanged H6/eMMC behavior. It does not perform physical DMA,
+translate the live vendor DT, establish radio power sequencing or enable WLAN.
+
 ## Provenance
 
 Contracts consolidated from these documents at OS revision `4a4c98bb99999836103d3fe63fd6f4c98013f0c5`.
