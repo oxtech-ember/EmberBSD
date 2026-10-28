@@ -193,6 +193,9 @@ psp_cmd_submit_buf(struct psp_context *psp,
 	 * return -EINVAL.
 	 */
 	if (psp->cmd_buf_mem->resp.status || !timeout) {
+		if (!timeout && psp->adev->asic_type == CHIP_RAVEN)
+			psp_v10_0_ring_timeout(psp, (uint32_t)index,
+			    fence_mc_addr);
 		if (ucode)
 			DRM_WARN("failed to load ucode id (%d) ",
 				  ucode->ucode_id);
@@ -200,9 +203,6 @@ psp_cmd_submit_buf(struct psp_context *psp,
 			 psp->cmd_buf_mem->cmd_id,
 			 psp->cmd_buf_mem->resp.status);
 		if (!timeout) {
-			if (psp->adev->asic_type == CHIP_RAVEN)
-				psp_v10_0_ring_timeout(psp, (uint32_t)index,
-				    fence_mc_addr);
 			mutex_unlock(&psp->mutex);
 			return -EINVAL;
 		}

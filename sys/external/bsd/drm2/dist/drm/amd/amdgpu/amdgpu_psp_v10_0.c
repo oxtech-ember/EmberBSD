@@ -29,6 +29,7 @@
 __KERNEL_RCSID(0, "$NetBSD: amdgpu_psp_v10_0.c,v 1.3 2021/12/19 12:21:29 riastradh Exp $");
 
 #include <linux/firmware.h>
+#include <linux/ktime.h>
 #include <linux/module.h>
 #include <linux/pci.h>
 
@@ -395,48 +396,70 @@ psp_v10_0_ring_timeout(struct psp_context *psp, uint32_t expected,
     uint64_t fence_mc_addr)
 {
 	struct amdgpu_device *adev = psp->adev;
-	uint32_t fence, control, wptr, rptr, addr_lo, addr_hi, size;
-	uint32_t vram_fence;
-	uint64_t offset;
+	uint32_t mapped0, mapped1, control, wptr, rptr, addr_lo, addr_hi, size;
+	uint32_t indexed = 0, cmd, status, mem_type;
+	uint64_t offset = 0, start, end, bo_start, vram_start, ring_mc;
+	uint64_t cmd_mc, mapped_mc, aper_base, aper_size;
+	bool indexed_valid = false;
 
 	/* These mailbox meanings apply to the Raven PSP v10 interface. */
 	if (adev->asic_type != CHIP_RAVEN ||
 	    psp->funcs != &psp_v10_0_funcs)
 		return;
 
-	fence = READ_ONCE(*(uint32_t *)psp->fence_buf);
+	start = ktime_get_ns();
+	mapped0 = READ_ONCE(*(uint32_t *)psp->fence_buf);
+	if (fence_mc_addr >= adev->gmc.vram_start) {
+		offset = fence_mc_addr - adev->gmc.vram_start;
+		if (!(fence_mc_addr & 3) &&
+		    adev->gmc.real_vram_size >= sizeof(indexed) &&
+		    offset <= adev->gmc.real_vram_size - sizeof(indexed) &&
+		    offset <= INT64_MAX - sizeof(indexed)) {
+			amdgpu_device_vram_access(adev, (loff_t)offset, &indexed,
+			    sizeof(indexed), false);
+			indexed_valid = true;
+		}
+	}
+	mapped1 = READ_ONCE(*(uint32_t *)psp->fence_buf);
+	end = ktime_get_ns();
 	control = RREG32_SOC15(MP0, 0, mmMP0_SMN_C2PMSG_64);
 	wptr = RREG32_SOC15(MP0, 0, mmMP0_SMN_C2PMSG_67);
 	rptr = RREG32_SOC15(MP0, 0, mmMP0_SMN_C2PMSG_68);
 	addr_lo = RREG32_SOC15(MP0, 0, mmMP0_SMN_C2PMSG_69);
 	addr_hi = RREG32_SOC15(MP0, 0, mmMP0_SMN_C2PMSG_70);
 	size = RREG32_SOC15(MP0, 0, mmMP0_SMN_C2PMSG_71);
+	cmd = READ_ONCE(psp->cmd_buf_mem->cmd_id);
+	status = READ_ONCE(psp->cmd_buf_mem->resp.status);
+	bo_start = psp->fence_buf_bo->tbo.mem.start;
+	mem_type = psp->fence_buf_bo->tbo.mem.mem_type;
+	vram_start = adev->gmc.vram_start;
+	ring_mc = psp->km_ring.ring_mem_mc_addr;
+	cmd_mc = psp->cmd_buf_mc_addr;
+	mapped_mc = psp->fence_buf_mc_addr;
+	aper_base = adev->gmc.aper_base;
+	aper_size = adev->gmc.aper_size;
 
-	DRM_ERROR("PSP v10 timeout: fence expected=%08x observed=%08x "
-	    "cmd=%08x status=%08x\n",
-	    expected, fence, READ_ONCE(psp->cmd_buf_mem->cmd_id),
-	    READ_ONCE(psp->cmd_buf_mem->resp.status));
-	DRM_ERROR("PSP v10 C2PMSG: 64=%08x 67/wptr=%08x "
-	    "68/rptr=%08x 69=%08x 70=%08x 71=%08x\n",
-	    control, wptr, rptr, addr_lo, addr_hi, size);
-	DRM_ERROR("PSP v10 MC: ring=%#"PRIx64" size=%#x "
-	    "cmd=%#"PRIx64" fence=%#"PRIx64" mapped_fence=%#"PRIx64"\n",
-	    psp->km_ring.ring_mem_mc_addr, psp->km_ring.ring_size,
-	    psp->cmd_buf_mc_addr, fence_mc_addr, psp->fence_buf_mc_addr);
-
-	/* Compare the CPU mapping with one bounded indexed VRAM read. */
-	if (fence_mc_addr < adev->gmc.vram_start || (fence_mc_addr & 3))
-		return;
-	offset = fence_mc_addr - adev->gmc.vram_start;
-	if (adev->gmc.real_vram_size < sizeof(vram_fence) ||
-	    offset > adev->gmc.real_vram_size - sizeof(vram_fence) ||
-	    offset > INT64_MAX - sizeof(vram_fence))
-		return;
-	vram_fence = 0;
-	amdgpu_device_vram_access(adev, (loff_t)offset, &vram_fence,
-	    sizeof(vram_fence), false);
-	DRM_ERROR("PSP v10 fence: indexed=%08x mapped_now=%08x\n",
-	    vram_fence, READ_ONCE(*(uint32_t *)psp->fence_buf));
+	DRM_ERROR("PSP C2P64 %08x 67 %08x\n", control, wptr);
+	DRM_ERROR("PSP C2P68 %08x 69 %08x\n", rptr, addr_lo);
+	DRM_ERROR("PSP C2P70 %08x 71 %08x\n", addr_hi, size);
+	DRM_ERROR("PSP ring MC %#"PRIx64"\n", ring_mc);
+	DRM_ERROR("PSP cmd MC %#"PRIx64"\n", cmd_mc);
+	DRM_ERROR("PSP fence MC %#"PRIx64"\n", fence_mc_addr);
+	DRM_ERROR("PSP mapped MC %#"PRIx64"\n", mapped_mc);
+	DRM_ERROR("PSP VRAM start %#"PRIx64"\n", vram_start);
+	if (fence_mc_addr >= vram_start)
+		DRM_ERROR("PSP VRAM offset %#"PRIx64"\n", offset);
+	DRM_ERROR("PSP BO page %#"PRIx64" type %u\n", bo_start, mem_type);
+	DRM_ERROR("PSP CPU aperture %#"PRIx64"\n", aper_base);
+	DRM_ERROR("PSP aperture size %#"PRIx64"\n", aper_size);
+	DRM_ERROR("PSP expected %08x cmd %08x\n", expected, cmd);
+	DRM_ERROR("PSP status %08x\n", status);
+	DRM_ERROR("PSP mapped0 %08x mapped1 %08x\n", mapped0, mapped1);
+	if (indexed_valid)
+		DRM_ERROR("PSP indexed %08x\n", indexed);
+	else
+		DRM_ERROR("PSP indexed unavailable\n");
+	DRM_ERROR("PSP sample delta ns %"PRIu64"\n", end - start);
 }
 
 void psp_v10_0_set_psp_funcs(struct psp_context *psp)
