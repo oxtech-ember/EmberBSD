@@ -14,6 +14,10 @@ case $host_awk in
 	*) echo "HOST_AWK must be the explicitly selected SDK awk" >&2; exit 2;;
 esac
 export HOST_AWK
+case ${PYTHON:-} in
+	/*) [ -x "$PYTHON" ] || { echo "selected PYTHON is not executable" >&2; exit 2; } ;;
+	*) echo "PYTHON must be the explicitly selected SDK Python" >&2; exit 2;;
+esac
 
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
 helper=$here/target-acceptance-root.sh
@@ -169,6 +173,10 @@ if [ -n "${EMBER_OS_TOOLDIR:-}" ] || [ -n "${EMBER_OS_DESTDIR:-}" ] || \
 	fi
 	actual_root=$work/actual-root
 	mkdir -p "$actual_root/etc" "$actual_root/dev" "$actual_root/tests"
+	mkdir -p "$actual_root/restricted dir"
+	printf 'private fixture\n' > "$actual_root/restricted dir/private"
+	chmod 000 "$actual_root/restricted dir/private"
+	chmod 111 "$actual_root/restricted dir"
 	cp "$here/target-acceptance-rc" "$actual_root/etc/rc"
 	chmod 755 "$actual_root/etc/rc"
 	printf 'same-build FFS fixture\n' > "$actual_root/etc/fixture"
@@ -177,6 +185,13 @@ if [ -n "${EMBER_OS_TOOLDIR:-}" ] || [ -n "${EMBER_OS_DESTDIR:-}" ] || \
 	"$host_sh" "$helper" "$actual_root" "$actual_dest" "$EMBER_OS_TOOLDIR" \
 	"$EMBER_OS_SOURCE" "$EMBER_ROOT_DEVICE" "$actual_image" "$host_sh"
 	[ -s "$actual_image" ] || { echo 'same-build nbmakefs produced no FFS image' >&2; exit 1; }
+	"$PYTHON" - "$actual_root" <<'PY'
+import os, stat, sys
+root = sys.argv[1]
+assert stat.S_IMODE(os.stat(root + '/restricted dir').st_mode) == 0o111
+assert stat.S_IMODE(os.stat(root + '/restricted dir/private').st_mode) == 0o000
+PY
+	chmod 700 "$actual_root/restricted dir"
 	echo 'PASS: same-build nbmtree/nbmakefs created an FFS fixture'
 fi
 echo 'PASS: target root assembly validates device input and routes through OS tools'

@@ -6,6 +6,9 @@ OS build's `base.tar.xz`. `target-acceptance-root.sh` requires the same build's
 adds the standard console/null/tty devices and the explicitly selected `ld`
 device emitted by MAKEDEV, then creates a new FFS image. It does not create
 host device nodes or modify an existing image.
+The selected native `PYTHON` temporarily makes otherwise unreadable entries
+accessible to the image tools, records their original modes in the image spec,
+and restores the disposable tree's modes afterward.
 
 The base set omits `/etc/rc` and the ordinary rc configuration in the separate
 etc set. The SDK places `target-acceptance-rc` directly at `/etc/rc` in this
@@ -22,7 +25,8 @@ Run the fixture without creating an FFS image:
 ```sh
 HOST_SH=/absolute/native-ports-prefix/bin/mksh
 HOST_AWK=/absolute/native-ports-prefix/bin/nawk
-export HOST_SH HOST_AWK
+PYTHON=/absolute/native-ports-prefix/bin/python3
+export HOST_SH HOST_AWK PYTHON
 "$HOST_SH" ember/image/test-target-acceptance-root.sh
 ```
 
@@ -40,11 +44,12 @@ disposable FFS image and does not assert guest boot acceptance:
 ```sh
 HOST_SH=/absolute/native-ports-prefix/bin/mksh
 HOST_AWK=/absolute/native-ports-prefix/bin/nawk
+PYTHON=/absolute/native-ports-prefix/bin/python3
 EMBER_OS_TOOLDIR=/absolute/os-build
 # Optional when using the source-generated fixture MAKEDEV:
 # export EMBER_OS_DESTDIR=/absolute/os-build/dest
 EMBER_OS_SOURCE=/absolute/EmberBSD
 EMBER_ROOT_DEVICE=ld0a
-export HOST_SH HOST_AWK EMBER_OS_TOOLDIR EMBER_OS_SOURCE EMBER_ROOT_DEVICE
+export HOST_SH HOST_AWK PYTHON EMBER_OS_TOOLDIR EMBER_OS_SOURCE EMBER_ROOT_DEVICE
 "$HOST_SH" ember/image/test-target-acceptance-root.sh
 ```

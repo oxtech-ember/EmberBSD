@@ -19,6 +19,10 @@ image=$6
 host_sh=$7
 case $host_sh in /*) ;; *) echo "HOST_SH must be an absolute selected tool" >&2; exit 2;; esac
 [ -x "$host_sh" ] || { echo "selected host shell is not executable" >&2; exit 2; }
+case ${PYTHON:-} in /*) ;; *) echo "PYTHON must be an absolute selected tool" >&2; exit 2;; esac
+[ -x "$PYTHON" ] || { echo "selected Python is not executable" >&2; exit 2; }
+mode_helper=${0%/*}/target-acceptance-modes.py
+[ -f "$mode_helper" ] || { echo "mode helper is missing" >&2; exit 1; }
 
 case $root_device in
 	ld*[a-p])
@@ -42,11 +46,21 @@ case $image in /*) ;; *) echo "image path must be absolute" >&2; exit 2;; esac
 [ ! -e "$image" ] || { echo "image output already exists" >&2; exit 1; }
 
 work=${image}.spec.$$
+modes=${image}.modes.$$
+modes_owned=no
 cleanup()
 {
+	if [ "$modes_owned" = yes ]; then
+		"$PYTHON" "$mode_helper" restore "$root" "$modes" || return 1
+		rm -f "$modes"
+		modes_owned=no
+	fi
 	rm -f "$work" "${work}.new" "${work}.devices" "${work}.devspec"
 }
 trap cleanup EXIT HUP INT TERM
+( set -C; : > "$modes" ) || { echo "mode state already exists" >&2; exit 1; }
+modes_owned=yes
+"$PYTHON" "$mode_helper" relax "$root" "$modes"
 
 # nbmtree emits paths relative to the root. MAKEDEV -s emits device metadata;
 # translate it into the dev/ subtree expected by makefs. The FFS spec always
@@ -86,6 +100,7 @@ done
 	cat "${work}.devspec"
 } > "${work}.new"
 mv "${work}.new" "$work"
+"$PYTHON" "$mode_helper" append "$modes" "$work"
 
 "$tooldir/bin/nbmakefs" -t ffs -B little \
 	-o version=2,bsize=16384,fsize=2048 \
