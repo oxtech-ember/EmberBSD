@@ -34,7 +34,8 @@ _GNU_LIBTOOL_MAKE_ARG= LIBTOOL=${GNU_TARGET_LIBTOOL:Q:Q}
 # Libtool queries compiler search paths without CPPFLAGS/LDFLAGS. Keep its
 # driver in the same target sysroot used by normal compile and link commands.
 _GNU_DRIVER_SYSROOT= ${CPPFLAGS:M--sysroot=*}
-_GNU_TARGET_ENV= CC=${CC:Q}\ ${_GNU_DRIVER_SYSROOT:Q} \
+# Configure and config.status may invoke make before the explicit build phase.
+_GNU_TARGET_ENV= MAKE=${HOST_GMAKE:Q} CC=${CC:Q}\ ${_GNU_DRIVER_SYSROOT:Q} \
 	CXX=${CXX:Q}\ ${_GNU_DRIVER_SYSROOT:Q} CPP=${CPP:Q} AR=${AR:Q} \
 	AS=${AS:Q} LD=${LD:Q} NM=${NM:Q} RANLIB=${RANLIB:Q} STRIP=${STRIP:Q} \
 	CPPFLAGS=${CPPFLAGS:Q} \

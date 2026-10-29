@@ -19,7 +19,8 @@ with tempfile.TemporaryDirectory(dir=a.work_dir) as tmp:
     work = Path(tmp)
     source = work / 'source'
     source.mkdir()
-    (source / 'configure').write_text('''mkdir -p host/sub nested header
+    (source / 'configure').write_text('''"$MAKE" --version > configure-make
+mkdir -p host/sub nested header
 cat > header/Makefile <<'HEADER'
 all:
 \tprintf unexpected > unexpected
@@ -79,6 +80,8 @@ all: gnu-target-build
     if result.returncode:
         raise SystemExit(result.stdout + result.stderr)
     build = work / 'build'
+    if not (build / 'configure-make').read_text().startswith('GNU Make'):
+        raise SystemExit('configure did not receive selected GNU make')
     if (build / 'header/generated').read_text() != 'generated' or (build / 'header/unexpected').exists():
         raise SystemExit('per-directory target selection failed')
     if (build / 'nested/selected').read_text().splitlines() != ['--tag=CC', '--mode=link']:
