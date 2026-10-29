@@ -941,9 +941,7 @@ ipf_lookup_sync(ipf_main_softc_t *softc, void *ifp)
 
 #ifndef _KERNEL
 void
-ipf_lookup_dump(softc, arg)
-	ipf_main_softc_t *softc;
-	void *arg;
+ipf_lookup_dump(ipf_main_softc_t  *softc, void  *arg)
 {
 	ipf_lookup_softc_t *softl = softc->ipf_lookup_soft;
 	ipf_lookup_t **l;

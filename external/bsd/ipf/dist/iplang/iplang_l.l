@@ -180,8 +180,7 @@ white	[ \t\r]+
 [^ \{\}\n\t;:{}]*	{ return next_item(IL_TOKEN); }
 \"[^\"]*\"	{ return next_item(IL_TOKEN); }
 %%
-void    yyerror(msg)
-char    *msg;
+void    yyerror(char     *msg)
 {
 	fprintf(stderr, "%s error at \"%s\", line %d\n", msg, yytext,
 		lineNum + 1);
@@ -189,7 +188,7 @@ char    *msg;
 }
 
 
-void push_proto()
+void push_proto(void)
 {
 	numpr++;
 	if (!prstack)
@@ -200,7 +199,7 @@ void push_proto()
 }
 
 
-void pop_proto()
+void pop_proto(void)
 {
 	numpr--;
 	ipproto = prstack[numpr];
@@ -213,7 +212,7 @@ void pop_proto()
 }
 
 
-int save_token()
+int save_token(void)
 {
 
 	yylval.str = strdup((char *)yytext);
@@ -221,8 +220,7 @@ int save_token()
 }
 
 
-int next_item(nstate)
-int nstate;
+int next_item(int  nstate)
 {
 	struct	lwordtab	*wt;
 
@@ -247,8 +245,7 @@ int nstate;
 }
 
 
-int next_state(nstate, fornext)
-int nstate, fornext;
+int next_state(int  nstate, int fornext)
 {
 	next = fornext;
 
@@ -307,7 +304,7 @@ int nstate, fornext;
 }
 
 
-void swallow()
+void swallow(void)
 {
 	int c;
 

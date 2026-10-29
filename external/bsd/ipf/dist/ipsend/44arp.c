@@ -40,8 +40,7 @@
  * its IP address in address
  * (4 bytes)
  */
-int	resolve(host, address)
-	char	*host, *address;
+int	resolve(char	 *host, char	 *address)
 {
         struct	hostent	*hp;
         u_long	add;
@@ -62,8 +61,7 @@ int	resolve(host, address)
 }
 
 
-int	arp(addr, eaddr)
-	char	*addr, *eaddr;
+int	arp(char	 *addr, char	 *eaddr)
 {
 	int	mib[6];
 	size_t	needed;

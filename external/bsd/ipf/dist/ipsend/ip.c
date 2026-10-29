@@ -36,9 +36,7 @@ static __attribute__((__used__)) const char rcsid[] = "@(#)Id: ip.c,v 1.1.1.2 20
 static	char	*ipbuf = NULL, *ethbuf = NULL;
 
 
-u_short	chksum(buf,len)
-	u_short	*buf;
-	int	len;
+u_short	chksum(u_short	 *buf, int 	len)
 {
 	u_long	sum = 0;
 	int	nwords = len >> 1;
@@ -51,10 +49,7 @@ u_short	chksum(buf,len)
 }
 
 
-int	send_ether(nfd, buf, len, gwip)
-	int	nfd, len;
-	char	*buf;
-	struct	in_addr	gwip;
+int	send_ether(int 	nfd, char	 *buf, int len, struct	in_addr 	gwip)
 {
 	static	struct	in_addr	last_gw;
 	static	char	last_arp[6] = { 0, 0, 0, 0, 0, 0};
@@ -86,11 +81,7 @@ int	send_ether(nfd, buf, len, gwip)
 
 /*
  */
-int	send_ip(nfd, mtu, ip, gwip, frag)
-	int	nfd, mtu;
-	ip_t	*ip;
-	struct	in_addr	gwip;
-	int	frag;
+int	send_ip(int 	nfd, int mtu, ip_t	 *ip, struct	in_addr 	gwip, int 	frag)
 {
 	static	struct	in_addr	last_gw, local_ip;
 	static	char	local_arp[6] = { 0, 0, 0, 0, 0, 0};
@@ -247,10 +238,7 @@ int	send_ip(nfd, mtu, ip, gwip, frag)
 /*
  * send a tcp packet.
  */
-int	send_tcp(nfd, mtu, ip, gwip)
-	int	nfd, mtu;
-	ip_t	*ip;
-	struct	in_addr	gwip;
+int	send_tcp(int 	nfd, int mtu, ip_t	 *ip, struct	in_addr 	gwip)
 {
 	tcphdr_t *t, *t2;
 	int	thlen, i, iplen, hlen;
@@ -298,10 +286,7 @@ int	send_tcp(nfd, mtu, ip, gwip)
 /*
  * send a udp packet.
  */
-int	send_udp(nfd, mtu, ip, gwip)
-	int	nfd, mtu;
-	ip_t	*ip;
-	struct	in_addr	gwip;
+int	send_udp(int 	nfd, int mtu, ip_t	 *ip, struct	in_addr 	gwip)
 {
 	struct	tcpiphdr *ti;
 	int	thlen;
@@ -330,10 +315,7 @@ int	send_udp(nfd, mtu, ip, gwip)
 /*
  * send an icmp packet.
  */
-int	send_icmp(nfd, mtu, ip, gwip)
-	int	nfd, mtu;
-	ip_t	*ip;
-	struct	in_addr	gwip;
+int	send_icmp(int 	nfd, int mtu, ip_t	 *ip, struct	in_addr 	gwip)
 {
 	struct	icmp	*ic;
 
@@ -346,10 +328,7 @@ int	send_icmp(nfd, mtu, ip, gwip)
 }
 
 
-int	send_packet(nfd, mtu, ip, gwip)
-	int	nfd, mtu;
-	ip_t	*ip;
-	struct	in_addr	gwip;
+int	send_packet(int 	nfd, int mtu, ip_t	 *ip, struct	in_addr 	gwip)
 {
         switch (ip->ip_p)
         {

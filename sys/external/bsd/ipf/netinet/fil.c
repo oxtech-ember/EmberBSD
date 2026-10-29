@@ -5362,10 +5362,7 @@ ipf_resolvefunc(ipf_main_softc_t *softc, void *data)
  * ppsratecheck(): packets (or events) per second limitation.
  */
 int
-ppsratecheck(lasttime, curpps, maxpps)
-	struct timeval *lasttime;
-	int *curpps;
-	int maxpps;	/* maximum pps allowed */
+ppsratecheck(struct timeval *lasttime, int *curpps, int maxpps)
 {
 	struct timeval tv, delta;
 	int rv;

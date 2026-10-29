@@ -56,13 +56,10 @@ static __attribute__((__used__)) const char rcsid[] = "@(#)Id: sbpf.c,v 1.1.1.2 
 /*
  * the code herein is dervied from libpcap.
  */
-static	u_char	*buf = NULL;
-static	int	bufsize = 0, timeout = 1;
+static	int	bufsize = 0;
 
 
-int	initdevice(device, tout)
-	char	*device;
-	int	tout;
+int	initdevice(char	 *device, int 	tout)
 {
 	struct	bpf_version bv;
 	struct	timeval to;
@@ -123,11 +120,10 @@ int	initdevice(device, tout)
 		perror("BIOCSBLEN");
 		exit(-1);
 	    }
-	buf = (u_char*)malloc(bufsize);
 	/*
 	 * set the timeout
 	 */
-	timeout = tout;
+	(void)tout;
 	to.tv_sec = 1;
 	to.tv_usec = 0;
 	if (ioctl(fd, BIOCSRTIMEOUT, (caddr_t)&to) == -1)
@@ -144,9 +140,7 @@ int	initdevice(device, tout)
 /*
  * output an IP packet onto a fd opened for /dev/bpf
  */
-int	sendip(fd, pkt, len)
-	int	fd, len;
-	char	*pkt;
+int	sendip(int 	fd, char	 *pkt, int len)
 {
 	if (write(fd, pkt, len) == -1)
 	    {

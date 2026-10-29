@@ -156,9 +156,7 @@ ipf_lookup_t ipf_pool_backend = {
 void treeprint(ip_pool_t *);
 
 int
-main(argc, argv)
-	int argc;
-	char *argv[];
+main(int  argc, char  *argv[])
 {
 	ip_pool_node_t node;
 	addrfamily_t a, b;
@@ -258,8 +256,7 @@ main(argc, argv)
 
 
 void
-treeprint(ipo)
-	ip_pool_t *ipo;
+treeprint(ip_pool_t  *ipo)
 {
 	ip_pool_node_t *c;
 
@@ -1410,9 +1407,7 @@ ipf_pool_expire(ipf_main_softc_t *softc, void *arg)
 
 #ifndef _KERNEL
 void
-ipf_pool_dump(softc, arg)
-	ipf_main_softc_t *softc;
-	void *arg;
+ipf_pool_dump(ipf_main_softc_t  *softc, void  *arg)
 {
 	ipf_pool_softc_t *softp = arg;
 	ip_pool_t *ipl;

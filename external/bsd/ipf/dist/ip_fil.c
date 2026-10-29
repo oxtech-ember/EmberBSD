@@ -53,16 +53,14 @@ static int	write_output __P((struct ifnet *, struct mbuf *,
 
 
 int
-ipfattach(softc)
-	ipf_main_softc_t *softc;
+ipfattach(ipf_main_softc_t  *softc)
 {
 	return 0;
 }
 
 
 int
-ipfdetach(softc)
-	ipf_main_softc_t *softc;
+ipfdetach(ipf_main_softc_t  *softc)
 {
 	return 0;
 }
@@ -72,12 +70,7 @@ ipfdetach(softc)
  * Filter ioctl interface.
  */
 int
-ipfioctl(softc, dev, cmd, data, mode)
-	ipf_main_softc_t *softc;
-	int dev;
-	ioctlcmd_t cmd;
-	void *data;
-	int mode;
+ipfioctl(ipf_main_softc_t  *softc, int  dev, ioctlcmd_t  cmd, void  *data, int  mode)
 {
 	int error = 0, unit = 0, uid;
 
@@ -97,9 +90,7 @@ ipfioctl(softc, dev, cmd, data, mode)
 
 
 void
-ipf_forgetifp(softc, ifp)
-	ipf_main_softc_t *softc;
-	void *ifp;
+ipf_forgetifp(ipf_main_softc_t  *softc, void  *ifp)
 {
 	register frentry_t *f;
 
@@ -128,19 +119,16 @@ ipf_forgetifp(softc, ifp)
 
 static int
 #if defined(__sgi) && (IRIX < 60500)
-no_output(ifp, m, s)
+no_output(struct ifnet *ifp, struct mbuf *m, const struct sockaddr *s)
 #else
 # if TRU64 >= 1885
-no_output (ifp, m, s, rt, cp)
-	char *cp;
+no_output(struct ifnet *ifp, struct mbuf *m, const struct sockaddr *s,
+    struct rtentry *rt, char *cp)
 # else
-no_output(ifp, m, s, rt)
+no_output(struct ifnet *ifp, struct mbuf *m, const struct sockaddr *s,
+    struct rtentry *rt)
 # endif
-	struct rtentry *rt;
 #endif
-	struct ifnet *ifp;
-	struct mbuf *m;
-	const struct sockaddr *s;
 {
 	return 0;
 }
@@ -148,19 +136,16 @@ no_output(ifp, m, s, rt)
 
 static int
 #if defined(__sgi) && (IRIX < 60500)
-write_output(ifp, m, s)
+write_output(struct ifnet *ifp, struct mbuf *m, const struct sockaddr *s)
 #else
 # if TRU64 >= 1885
-write_output (ifp, m, s, rt, cp)
-	char *cp;
+write_output(struct ifnet *ifp, struct mbuf *m, const struct sockaddr *s,
+    struct rtentry *rt, char *cp)
 # else
-write_output(ifp, m, s, rt)
+write_output(struct ifnet *ifp, struct mbuf *m, const struct sockaddr *s,
+    struct rtentry *rt)
 # endif
-	struct rtentry *rt;
 #endif
-	struct ifnet *ifp;
-	struct mbuf *m;
-	const struct sockaddr *s;
 {
 	char fname[32];
 	mb_t *mb;
@@ -189,9 +174,7 @@ write_output(ifp, m, s, rt)
 
 
 static void
-ipf_setifpaddr(ifp, addr)
-	struct ifnet *ifp;
-	char *addr;
+ipf_setifpaddr(struct ifnet  *ifp, char  *addr)
 {
 #ifdef __sgi
 	struct in_ifaddr *ifa;
@@ -248,9 +231,7 @@ ipf_setifpaddr(ifp, addr)
 }
 
 struct ifnet *
-get_unit(name, family)
-	char *name;
-	int family;
+get_unit(char  *name, int  family)
 {
 	struct ifnet *ifp, **ifpp, **old_ifneta;
 	char *addr;
@@ -362,8 +343,7 @@ get_unit(name, family)
 
 
 char *
-get_ifname(ifp)
-	struct ifnet *ifp;
+get_ifname(struct ifnet  *ifp)
 {
 	static char ifname[LIFNAMSIZ];
 
@@ -382,7 +362,7 @@ get_ifname(ifp)
 
 
 void
-init_ifp()
+init_ifp(void)
 {
 	struct ifnet *ifp, **ifpp;
 	char fname[32];
@@ -416,10 +396,7 @@ init_ifp()
 
 
 int
-ipf_fastroute(m, mpp, fin, fdp)
-	mb_t *m, **mpp;
-	fr_info_t *fin;
-	frdest_t *fdp;
+ipf_fastroute(mb_t  *m, mb_t  **mpp, fr_info_t  *fin, frdest_t  *fdp)
 {
 	struct ifnet *ifp;
 	ip_t *ip = fin->fin_ip;
@@ -490,8 +467,7 @@ done:
 
 
 int
-ipf_send_reset(fin)
-	fr_info_t *fin;
+ipf_send_reset(fr_info_t  *fin)
 {
 	ipfkverbose("- TCP RST sent\n");
 	return 0;
@@ -499,10 +475,7 @@ ipf_send_reset(fin)
 
 
 int
-ipf_send_icmp_err(type, fin, dst)
-	int type;
-	fr_info_t *fin;
-	int dst;
+ipf_send_icmp_err(int  type, fr_info_t  *fin, int  dst)
 {
 	ipfkverbose("- ICMP unreachable sent\n");
 	return 0;
@@ -510,28 +483,21 @@ ipf_send_icmp_err(type, fin, dst)
 
 
 void
-m_freem(m)
-	mb_t *m;
+m_freem(mb_t  *m)
 {
 	return;
 }
 
 
 void
-m_copydata(m, off, len, cp)
-	mb_t *m;
-	int off, len;
-	void * cp;
+m_copydata(mb_t  *m, int  off, int len, void  * cp)
 {
 	bcopy((char *)m + off, cp, len);
 }
 
 
 int
-ipfuiomove(buf, len, rwflag, uio)
-	void *buf;
-	int len, rwflag;
-	struct uio *uio;
+ipfuiomove(void  *buf, int  len, int rwflag, struct uio  *uio)
 {
 	int left, ioc, num, offset;
 	struct iovec *io;
@@ -569,8 +535,7 @@ ipfuiomove(buf, len, rwflag, uio)
 
 
 u_32_t
-ipf_newisn(fin)
-	fr_info_t *fin;
+ipf_newisn(fr_info_t  *fin)
 {
 	static int iss_seq_off = 0;
 	u_char hash[16];
@@ -616,8 +581,7 @@ ipf_newisn(fin)
 /* Returns the next IPv4 ID to use for this packet.                         */
 /* ------------------------------------------------------------------------ */
 EXTERN_INLINE u_short
-ipf_nextipid(fin)
-	fr_info_t *fin;
+ipf_nextipid(fr_info_t  *fin)
 {
 	static u_short ipid = 0;
 	ipf_main_softc_t *softc = fin->fin_main_soft;
@@ -639,8 +603,7 @@ ipf_nextipid(fin)
 
 
 EXTERN_INLINE int
-ipf_checkv4sum(fin)
-	fr_info_t *fin;
+ipf_checkv4sum(fr_info_t  *fin)
 {
 
 	if (fin->fin_flx & FI_SHORT)
@@ -656,8 +619,7 @@ ipf_checkv4sum(fin)
 
 #ifdef	USE_INET6
 EXTERN_INLINE int
-ipf_checkv6sum(fin)
-	fr_info_t *fin;
+ipf_checkv6sum(fr_info_t  *fin)
 {
 	if (fin->fin_flx & FI_SHORT)
 		return 1;
@@ -692,9 +654,7 @@ copyoutptr(softc, src, dst, size)
  * See above for description, except that all addressing is in user space.
  */
 int
-copyinptr(src, dst, size)
-	void *src, *dst;
-	size_t size;
+copyinptr(void  *src, void  *dst, size_t  size)
 {
 	caddr_t ca;
 
@@ -709,11 +669,7 @@ copyinptr(src, dst, size)
  * return the first IP Address associated with an interface
  */
 int
-ipf_ifpaddr(softc, v, atype, ifptr, inp, inpmask)
-	ipf_main_softc_t *softc;
-	int v, atype;
-	void *ifptr;
-	i6addr_t *inp, *inpmask;
+ipf_ifpaddr(ipf_main_softc_t  *softc, int  v, int atype, void  *ifptr, i6addr_t  *inp, i6addr_t  *inpmask)
 {
 	struct ifnet *ifp = ifptr;
 #ifdef __sgi
@@ -769,7 +725,7 @@ ipf_ifpaddr(softc, v, atype, ifptr, inp, inpmask)
  * sequence of numbers that isn't linear to show "randomness".
  */
 u_32_t
-ipf_random()
+ipf_random(void)
 {
 	static unsigned int last = 0xa5a5a5a5;
 	static int calls = 0;
@@ -813,17 +769,14 @@ ipf_random()
 
 
 int
-ipf_verifysrc(fin)
-	fr_info_t *fin;
+ipf_verifysrc(fr_info_t  *fin)
 {
 	return 1;
 }
 
 
 int
-ipf_inject(fin, m)
-	fr_info_t *fin;
-	mb_t *m;
+ipf_inject(fr_info_t  *fin, mb_t  *m)
 {
 	FREE_MB_T(m);
 
@@ -832,10 +785,7 @@ ipf_inject(fin, m)
 
 
 u_int
-ipf_pcksum(fin, hlen, sum)
-	fr_info_t *fin;
-	int hlen;
-	u_int sum;
+ipf_pcksum(fr_info_t  *fin, int  hlen, u_int  sum)
 {
 	u_short *sp;
 	u_int sum2;
@@ -857,10 +807,7 @@ ipf_pcksum(fin, hlen, sum)
 
 
 void *
-ipf_pullup(m, fin, plen)
-	mb_t *m;
-	fr_info_t *fin;
-	int plen;
+ipf_pullup(mb_t  *m, fr_info_t  *fin, int  plen)
 {
 	if (M_LEN(m) >= plen)
 		return fin->fin_ip;

@@ -67,8 +67,7 @@ static	void	usage __P((char *));
 int	main __P((int, char **));
 
 
-static void usage(prog)
-	char	*prog;
+static void usage(char	 *prog)
 {
 	fprintf(stderr, "Usage: %s [options] <-r filename|-R filename>\n\
 \t\t-r filename\tsnoop data file to resend\n\
@@ -82,9 +81,7 @@ static void usage(prog)
 }
 
 
-int main(argc, argv)
-	int	argc;
-	char	**argv;
+int main(int 	argc, char	 **argv)
 {
 	struct	in_addr	gwip;
 	struct	ipread	*ipr = NULL;

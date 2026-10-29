@@ -62,8 +62,7 @@ static	void	usage __P((char *));
 int	main __P((int, char **));
 
 
-static void usage(prog)
-	char *prog;
+static void usage(char  *prog)
 {
 	fprintf(stderr, "Usage: %s [options] dest\n\
 \toptions:\n\
@@ -84,9 +83,7 @@ static void usage(prog)
 }
 
 
-int main(argc, argv)
-	int argc;
-	char **argv;
+int main(int  argc, char  **argv)
 {
 	struct	tcpiphdr *ti;
 	struct	in_addr	gwip;

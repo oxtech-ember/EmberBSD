@@ -1378,9 +1378,7 @@ ipf_htable_expire(ipf_main_softc_t *softc, void *arg)
 /*                                                                          */
 /* ------------------------------------------------------------------------ */
 void
-ipf_htable_dump(softc, arg)
-	ipf_main_softc_t *softc;
-	void *arg;
+ipf_htable_dump(ipf_main_softc_t  *softc, void  *arg)
 {
 	ipf_htable_softc_t *softh = arg;
 	iphtable_t *iph;
