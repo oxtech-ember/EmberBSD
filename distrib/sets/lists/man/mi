@@ -364,6 +364,7 @@
 ./usr/share/man/cat1/msgconv.0			man-locale-catman	.cat
 ./usr/share/man/cat1/msgen.0			man-locale-catman	.cat
 ./usr/share/man/cat1/msgexec.0			man-locale-catman	.cat
+./usr/share/man/cat1/msgfilter.0			man-locale-catman	.cat
 ./usr/share/man/cat1/msgfmt.0			man-locale-catman	.cat
 ./usr/share/man/cat1/msginit.0			man-locale-catman	.cat
 ./usr/share/man/cat1/msgmerge.0			man-locale-catman	.cat
@@ -3966,6 +3967,7 @@
 ./usr/share/man/man1/msgconv.1			man-locale-man		.man
 ./usr/share/man/man1/msgen.1			man-locale-man		.man
 ./usr/share/man/man1/msgexec.1			man-locale-man		.man
+./usr/share/man/man1/msgfilter.1			man-locale-man		.man
 ./usr/share/man/man1/msgfmt.1			man-locale-man		.man
 ./usr/share/man/man1/msginit.1			man-locale-man		.man
 ./usr/share/man/man1/msgmerge.1			man-locale-man		.man

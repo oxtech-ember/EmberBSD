@@ -310,6 +310,7 @@
 ./usr/share/man/html1/msgconv.html		man-locale-htmlman	html
 ./usr/share/man/html1/msgen.html		man-locale-htmlman	html
 ./usr/share/man/html1/msgexec.html		man-locale-htmlman	html
+./usr/share/man/html1/msgfilter.html		man-locale-htmlman	html
 ./usr/share/man/html1/msgfmt.html		man-locale-htmlman	html
 ./usr/share/man/html1/msginit.html		man-locale-htmlman	html
 ./usr/share/man/html1/msgmerge.html		man-locale-htmlman	html

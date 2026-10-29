@@ -12,7 +12,7 @@ includes:
 .if empty(.MAKEFLAGS:M-V*) && !defined(HOST_OD) && (make(all) || make(dependall) || make(install) || make(gnu-target-build))
 .error Set HOST_OD to the selected native od
 .endif
-PROGS= msgattrib msgcat msgcmp msgcomm msgconv msgen msgfilter msgfmt \
+PROGS= msgattrib msgcat msgcmp msgcomm msgconv msgen msgexec msgfilter msgfmt \
     msginit msgmerge msgunfmt msguniq xgettext
 .NOPATH: ${PROGS}
 .for _P in ${PROGS}

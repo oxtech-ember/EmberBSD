@@ -708,6 +708,7 @@
 ./usr/libdata/debug/usr/bin/msgconv.debug	comp-c-debug		debug
 ./usr/libdata/debug/usr/bin/msgen.debug		comp-c-debug		debug
 ./usr/libdata/debug/usr/bin/msgexec.debug	comp-c-debug		debug
+./usr/libdata/debug/usr/bin/msgfilter.debug	comp-c-debug		debug
 ./usr/libdata/debug/usr/bin/msgfmt.debug	comp-c-debug		debug
 ./usr/libdata/debug/usr/bin/msginit.debug	comp-c-debug		debug
 ./usr/libdata/debug/usr/bin/msgmerge.debug	comp-c-debug		debug

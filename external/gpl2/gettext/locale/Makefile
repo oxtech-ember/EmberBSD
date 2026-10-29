@@ -16,6 +16,10 @@ FILESNAME_${F}=	gettext-tools.mo
 # The current common catalog calls Norwegian Bokmal "nb"; retain the
 # historical base locale path as an alias with identical compiled messages.
 .if defined(EMBER_GETTEXT_SOURCE)
+FILESBUILD_no.gmo= yes
+FILESBUILD_en@quot.gmo= yes
+FILESBUILD_en@boldquot.gmo= yes
+
 no.gmo: ${EMBER_GETTEXT_SOURCE}/gettext-tools/po/nb.gmo
 	cp -p ${.ALLSRC:[1]:Q} ${.TARGET:Q}
 
