@@ -26,8 +26,10 @@ printdstlistnode(ipf_dstnode_t *inp, copyfunc_t copyfunc, int opts,
 	np = calloc(1, node.ipfd_size);
 	if (np == NULL)
 		return node.ipfd_next;
-	if ((*copyfunc)(inp, np, node.ipfd_size))
+	if ((*copyfunc)(inp, np, node.ipfd_size)) {
+		free(np);
 		return NULL;
+	}
 
 	if (fields != NULL) {
 		for (i = 0; fields[i].w_value != 0; i++) {
