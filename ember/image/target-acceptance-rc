@@ -17,12 +17,24 @@ nonce=$(cat /etc/emberbsd-target-acceptance.nonce 2>/dev/null || true)
 case $nonce in ''|*[!A-Za-z0-9_-]*) fail invalid-nonce;; esac
 root_device=$(cat /etc/emberbsd-target-acceptance-root-device 2>/dev/null || true)
 case $root_device in ld*[a-p]) ;; *) fail invalid-root-device;; esac
+root_unit=${root_device%?}
+partition=${root_device#"$root_unit"}
+unit_number=${root_unit#ld}
+case $unit_number in ''|*[!0-9]*) fail invalid-root-device;; esac
+partition_letters=abcdefghijklmnop
+remaining=${partition_letters#*"$partition"}
+expected_partition=$((15 - ${#remaining}))
+actual_unit=$(LC_ALL=C /sbin/sysctl -n kern.root_device) || fail root-device-query
+actual_partition=$(LC_ALL=C /sbin/sysctl -n kern.root_partition) || fail root-partition-query
+[ "$actual_unit" = "$root_unit" ] && [ "$actual_partition" = "$expected_partition" ] ||
+	fail unexpected-root-device
 
 mount_output=$(LC_ALL=C /sbin/mount) || fail root-mount-query
 mounted=$(printf '%s\n' "$mount_output" | LC_ALL=C awk '
 	$2 == "on" && $3 == "/" {
 		count++
-		if ($4 != "type" || $5 != "ffs" || $1 !~ /^\/dev\/ld[0-9]+[a-p]$/)
+		if ($4 != "type" || $5 != "ffs" ||
+		    ($1 != "root_device" && $1 !~ /^\/dev\/ld[0-9]+[a-p]$/))
 			exit 1
 		line = $0
 		if (line !~ / \([^()]+\)$/) exit 1
@@ -38,9 +50,10 @@ mounted=$(printf '%s\n' "$mount_output" | LC_ALL=C awk '
 ') ||
 	fail root-mount-query
 set -- $mounted
-[ "$1" = "/dev/$root_device" ] && [ "$2" = ffs ] || fail unexpected-root-device
+{ [ "$1" = root_device ] || [ "$1" = "/dev/$root_device" ]; } &&
+	[ "$2" = ffs ] || fail unexpected-root-device
 case ,$3, in *,ro,*) ;; *) fail root-is-not-read-only;; esac
-echo "EMBERBSD-ACCEPTANCE $nonce ROOT $1 $2 $3"
+echo "EMBERBSD-ACCEPTANCE $nonce ROOT /dev/$root_device $2 $3"
 EMBERBSD_ACCEPTANCE_NONCE=$nonce
 export EMBERBSD_ACCEPTANCE_NONCE
 
