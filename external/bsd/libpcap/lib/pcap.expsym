@@ -1,3 +1,6 @@
+__pcap_atodn
+__pcap_atoin
+__pcap_nametodnaddr
 bpf_dump
 bpf_filter
 bpf_image
@@ -19,7 +22,7 @@ gen_ecode
 gen_geneve
 gen_greater
 gen_ifindex
-gen_inbound_outbound
+gen_inbound
 gen_less
 gen_llc
 gen_llc_i
@@ -48,13 +51,13 @@ gen_pf_reason
 gen_pf_rnr
 gen_pf_ruleset
 gen_pf_srnr
+gen_portop6
 gen_pppoed
 gen_pppoes
 gen_proto_abbrev
 gen_relation
 gen_scode
 gen_vlan
-gen_vxlan
 icode_to_fcode
 linktype_to_dlt
 max_snaplen_for_dlt
@@ -66,6 +69,7 @@ pcap__scan_bytes
 pcap__scan_string
 pcap__switch_to_buffer
 pcap_activate
+pcap_add_any_dev
 pcap_alloc
 pcap_breakloop
 pcap_bufsize
@@ -200,14 +204,10 @@ pcap_tstamp_type_val_to_name
 pcap_version
 pcapint_add_addr_to_dev
 pcapint_add_addr_to_if
-pcapint_add_any_dev
 pcapint_add_dev
 pcapint_add_to_pcaps_to_close
 pcapint_adjust_snapshot
 pcapint_atoan
-pcapint_atodn
-pcapint_atoin
-pcapint_atomac48
 pcapint_breakloop_common
 pcapint_check_activated
 pcapint_cleanup_live_common
@@ -222,14 +222,11 @@ pcapint_find_or_add_if
 pcapint_findalldevs_interfaces
 pcapint_fmt_errmsg_for_errno
 pcapint_fmt_set_encoding
-pcapint_get_decuint
 pcapint_getnonblock_fd
 pcapint_install_bpf_program
-pcapint_mmap_32bit
 pcapint_new_api
 pcapint_offline_read
 pcapint_oneshot
-pcapint_opcode_without_k
 pcapint_open_offline_common
 pcapint_parsesrcstr_ex
 pcapint_platform_finddevs
@@ -241,7 +238,6 @@ pcapint_strcasecmp
 pcapint_utf_8_mode
 pcapint_validate_filter
 pcapint_vfmt_errmsg_for_errno
-pcapint_xdtoi
 rpcap_createhdr
 rpcap_msg_type_string
 rpcap_senderror

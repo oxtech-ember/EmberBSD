@@ -1689,7 +1689,7 @@
  *
  * Requested by Edem Khadiev <edem.khadiev@dsr-corporation.com>
  */
-#define DLT_DECT_NR_TAP		304
+#define DLT_DECT_NR_TAP		304	/* reserved; not in the stable matching range */
 
 /*
  * In case the code that includes this file (directly or indirectly)
@@ -1701,7 +1701,7 @@
 #ifdef DLT_HIGH_MATCHING_MAX
 #undef DLT_HIGH_MATCHING_MAX
 #endif
-#define DLT_HIGH_MATCHING_MAX	304	/* highest value in the "matching" range */
+#define DLT_HIGH_MATCHING_MAX	303	/* highest value in the stable matching range */
 
 /*
  * DLT and savefile link type values are split into a class and

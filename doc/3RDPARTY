@@ -794,8 +794,8 @@ libdevmapper ioctl protocol code, therefore we should test it before
 import. Talk to haad before importing new version.
 
 Package:	libpcap
-Version:	1.11.0
-Current Vers:	1.11.0
+Version:	1.10.7
+Current Vers:	1.10.7
 Maintainer:	tcpdump-workers@tcpdump.org
 Archive Site:	https://www.tcpdump.org/release/
 Home Page:	https://www.tcpdump.org/
@@ -805,7 +805,7 @@ License:	BSD (3/4-clause)
 Location:	Common Ports net/libpcap
 Notes:
 Native integration keeps OS-owned BPF headers. DLT constants track upstream.
-The native SONAME changed to 11; binary consumers linked to 10 require rebuild.
+The native SONAME is 12; binary consumers linked to 10 or 11 require rebuild.
 
 Package:	tcpdump
 Version:	4.99.5
