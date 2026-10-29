@@ -8,7 +8,7 @@ LIB=opts
 
 .include "${.CURDIR}/../Makefile.inc"
 
-DIST=	${IDIST}/sntp/libopts
+DIST=	${NTP_LIBOPTS_SOURCE}
 
 CPPFLAGS+=-I${DIST}
 

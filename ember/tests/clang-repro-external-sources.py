@@ -26,6 +26,8 @@ ROOTS = (('EMBER_LIBEDIT_SOURCE', 'libedit', '/usr/src/external/libedit'),
          ('EMBER_TDB_SOURCE', 'tdb', '/usr/src/external/tdb'),
          ('EMBER_TOP_SOURCE', 'top', '/usr/src/external/top'),
          ('EMBER_ISCSI_SOURCE', 'iscsi', '/usr/src/external/iscsi'),
+         ('EMBER_NTP_SOURCE', 'ntp', '/usr/src/external/ntp'),
+         ('EMBER_LIBOPTS_SOURCE', 'libopts', '/usr/src/external/libopts'),
          ('EMBER_LLVM_SOURCE', 'llvm', '/usr/src/external/llvm'),
          ('EMBER_EXTERNAL_LLVM_RUNTIME', 'runtime', '/usr/pkg/llvm'))
 
@@ -46,7 +48,8 @@ def make_variables(make, os_root, fixture, work, root, names):
     variables += [f'{var}={root / name}' for var, name, _ in ROOTS]
     query = [part for name in names for part in ('-V', '${' + name + '}')]
     result = subprocess.run([make, '-r', '-m', str(os_root / 'share/mk'), '-f', str(fixture), *variables, *query],
-                            cwd=work, capture_output=True, text=True, env={'PATH': '/usr/bin:/bin'})
+                            cwd=work, capture_output=True, text=True,
+                            env={'PATH': str(Path(make).parent) + ':' + str(Path(make).parent.parent / 'gnu/bin')})
     if result.returncode != 0:
         raise SystemExit('make variable query failed:\n' + result.stderr)
     return result.stdout.splitlines()

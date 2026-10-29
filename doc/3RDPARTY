@@ -1012,9 +1012,10 @@ Date:		2024-08-18
 Mailing List:
 Responsible:	simonb, jonathan, kardel
 License:	BSD-like
-Location:	external/bsd/ntp/dist
+Location:	Common Ports net/ntp4 prepared source
 Notes:
-See /usr/src/dist/ntp/ntp2netbsd for update instructions.
+Native integration is in external/bsd/ntp. The inactive legacy dist is
+retained temporarily; libopts comes from the common AutoGen tearoff.
 
 Package:	nvi
 Version:	1.81.6, HEAD as of 2013-11-20

@@ -83,7 +83,7 @@ work_thread.c \
 xsbprintf.c \
 ymd2yd.c
 
-CPPFLAGS+= -I${IDIST}/sntp/libopts
+CPPFLAGS+= -I${NTP_LIBOPTS_SOURCE}
 
 # For MKREPRO, avoid using __DATE__ and __TIME__.
 .if ${MKREPRO:Uno} == "yes"

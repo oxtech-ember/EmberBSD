@@ -18,7 +18,7 @@ DPADD+=		${LIBISC}/libiscntp.a ${LIBNTP}/libntp.a ${LIBM} ${LIBUTIL} ${LIBEDIT} 
 
 DIST=${IDIST}/ntpdc
 
-CPPFLAGS+=-I${IDIST}/include -I${IDIST}/sntp/libopts
+CPPFLAGS+=-I${IDIST}/include -I${NTP_LIBOPTS_SOURCE}
 
 .PATH: ${DIST}
 

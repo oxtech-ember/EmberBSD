@@ -22,7 +22,7 @@ BINDIR=	/usr/sbin
 
 DIST=${IDIST}/sntp
 
-CPPFLAGS+=-I${DIST} -I${DIST}/libopts
+CPPFLAGS+=-I${DIST} -I${NTP_LIBOPTS_SOURCE}
 
 .PATH: ${DIST}
 

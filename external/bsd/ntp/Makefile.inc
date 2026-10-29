@@ -12,7 +12,28 @@ CWARNFLAGS.clang+=	-Wno-unneeded-internal-declaration \
 
 WARNS?=	4
 
-IDIST=		${NETBSDSRCDIR}/external/bsd/ntp/dist
+.if defined(EMBER_NTP_SOURCE)
+.if empty(EMBER_NTP_SOURCE:tW:M/*) || \
+    "${EMBER_NTP_SOURCE:tW:C,[A-Za-z0-9_./+@%=-],,g}" != "" || \
+    !exists(${EMBER_NTP_SOURCE}/ntpd/ntpd.c)
+.error EMBER_NTP_SOURCE must name the prepared common Ports NTP source
+.endif
+IDIST= ${EMBER_NTP_SOURCE}
+.elif empty(.MAKEFLAGS:M-V*) && (make(all) || make(dependall) || make(install))
+.error Set EMBER_NTP_SOURCE to the prepared common Ports NTP source
+.endif
+
+.if defined(EMBER_LIBOPTS_SOURCE)
+.if empty(EMBER_LIBOPTS_SOURCE:tW:M/*) || \
+    "${EMBER_LIBOPTS_SOURCE:tW:C,[A-Za-z0-9_./+@%=-],,g}" != "" || \
+    !exists(${EMBER_LIBOPTS_SOURCE}/libopts.c) || \
+    !exists(${EMBER_LIBOPTS_SOURCE}/autoopts/options.h)
+.error EMBER_LIBOPTS_SOURCE must name the prepared common AutoGen libopts source
+.endif
+NTP_LIBOPTS_SOURCE= ${EMBER_LIBOPTS_SOURCE}
+.elif empty(.MAKEFLAGS:M-V*) && (make(all) || make(dependall) || make(install))
+.error Set EMBER_LIBOPTS_SOURCE to the prepared common AutoGen libopts source
+.endif
 NTP_SRCDIR=	${NETBSDSRCDIR}/external/bsd/ntp
 NTP_HTMLDIR=	/usr/share/doc/reference/ref8
 

@@ -84,10 +84,21 @@ COPTS.ntp_refclock.c+=	-Wno-format-nonliteral
 
 DIST=${IDIST}/ntpd
 
-CPPFLAGS+=-I${IDIST}/include -I${IDIST}/sntp/libopts -I${IDIST}/ntpd -I.
+CPPFLAGS+=-I. -I${IDIST}/include -I${NTP_LIBOPTS_SOURCE} -I${IDIST}/ntpd
 
 .PATH: ${DIST}
 YHEADER=1
+
+# Generate the scanner table from the parser header selected by this build.
+.include <bsd.host.mk>
+.NOPATH: ntp_keyword.h ntp-keyword-gen
+ntp-keyword-gen: ${DIST}/keyword-gen.c ${DIST}/ntp_scanner_types.h ntp_parser.h
+	${HOST_CC} ${HOST_CPPFLAGS} ${HOST_CFLAGS} -I${.OBJDIR:Q} -I${DIST:Q} \
+	    ${HOST_LDFLAGS} -o ${.TARGET:Q} ${DIST:Q}/keyword-gen.c
+ntp_keyword.h: ntp-keyword-gen ntp_parser.h
+	${.OBJDIR:Q}/ntp-keyword-gen ${.OBJDIR:Q}/ntp_parser.h > ${.TARGET:Q}.tmp && \
+	    mv ${.TARGET:Q}.tmp ${.TARGET:Q}
+ntp_scanner.o: ntp_keyword.h
 
 COPTS.ntp_control.c+=		${CC_WNO_MAYBE_UNINITIALIZED}
 COPTS.ntp_loopfilter.c+=	${${ACTIVE_CC} == "gcc" && ${HAVE_GCC:U0} >= 8:? -Wno-error=restrict :}

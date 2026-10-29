@@ -88,6 +88,8 @@ REPROFLAGS+=	-fdebug-regex-map='/usr/src/(.*)/obj\..*/(.*)=/usr/obj/\1/\2'
     EMBER_NVI_SOURCE /usr/src/external/nvi \
     EMBER_TOP_SOURCE /usr/src/external/top \
     EMBER_ISCSI_SOURCE /usr/src/external/iscsi \
+    EMBER_NTP_SOURCE /usr/src/external/ntp \
+    EMBER_LIBOPTS_SOURCE /usr/src/external/libopts \
     EMBER_TDB_SOURCE /usr/src/external/tdb \
     EMBER_LLVM_SOURCE /usr/src/external/llvm \
     EMBER_EXTERNAL_LLVM_RUNTIME /usr/pkg/llvm \
