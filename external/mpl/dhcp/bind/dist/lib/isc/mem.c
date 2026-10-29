@@ -131,7 +131,9 @@ static isc_mutex_t contextslock;
  * Total size of lost memory due to a bug of external library.
  * Locked by the global lock.
  */
+#if defined(HAVE_LIBXML2) || defined(HAVE_JSON_C)
 static uint64_t totallost;
+#endif
 
 /*%
  * Memory allocation and free function definitions.
@@ -751,7 +753,9 @@ static void
 mem_initialize(void) {
 	isc_mutex_init(&contextslock);
 	ISC_LIST_INIT(contexts);
+#if defined(HAVE_LIBXML2) || defined(HAVE_JSON_C)
 	totallost = 0;
+#endif
 }
 
 void
@@ -873,7 +877,9 @@ destroy(isc__mem_t *ctx) {
 
 	LOCK(&contextslock);
 	ISC_LIST_UNLINK(contexts, ctx, link);
+#if defined(HAVE_LIBXML2) || defined(HAVE_JSON_C)
 	totallost += ctx->inuse;
+#endif
 	UNLOCK(&contextslock);
 
 	ctx->common.impmagic = 0;
