@@ -577,7 +577,7 @@ Location:	games/hunt
 Notes:
 
 Package:	ipf
-Version:	5.1.1
+Version:	5.1.2
 Current Vers:	5.1.2
 Maintainer:	Darren Reed
 Archive Site:	rsync -a a.cvs.sourceforge.net::cvsroot/ipfilter/

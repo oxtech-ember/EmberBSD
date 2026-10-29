@@ -10,8 +10,7 @@
 
 
 void
-printdstlistpolicy(policy)
-	ippool_policy_t policy;
+printdstlistpolicy(ippool_policy_t policy)
 {
 	switch (policy)
 	{
