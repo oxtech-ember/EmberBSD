@@ -50,8 +50,7 @@ __RCSID("$NetBSD: raw.c,v 1.4 2022/04/03 01:10:58 christos Exp $");
 #include <sys/uio.h>
 
 /* Generic interface registration routine... */
-void if_register_send (info)
-	struct interface_info *info;
+void if_register_send (struct interface_info *info)
 {
 	struct sockaddr_in name;
 	int sock;
@@ -91,8 +90,7 @@ void if_register_send (info)
 		       info -> shared_network -> name : ""));
 }
 
-void if_deregister_send (info)
-	struct interface_info *info;
+void if_deregister_send (struct interface_info *info)
 {
 	close (info -> wfdesc);
 	info -> wfdesc = -1;
@@ -105,14 +103,9 @@ void if_deregister_send (info)
 		       info -> shared_network -> name : ""));
 }
 
-size_t send_packet (interface, packet, raw, len, from, to, hto)
-	struct interface_info *interface;
-	struct packet *packet;
-	struct dhcp_packet *raw;
-	size_t len;
-	struct in_addr from;
-	struct sockaddr_in *to;
-	struct hardware *hto;
+size_t send_packet (struct interface_info *interface, struct packet *packet,
+	struct dhcp_packet *raw, size_t len, struct in_addr from,
+	struct sockaddr_in *to, struct hardware *hto)
 {
 	unsigned char buf [256];
 	int bufp = 0;

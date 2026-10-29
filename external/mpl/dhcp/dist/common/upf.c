@@ -46,15 +46,13 @@ __RCSID("$NetBSD: upf.c,v 1.3 2022/04/03 01:10:58 christos Exp $");
    is not required for packet-filter APIs. */
 
 #ifdef USE_UPF_SEND
-void if_reinitialize_send (info)
-	struct interface_info *info;
+void if_reinitialize_send (struct interface_info *info)
 {
 }
 #endif
 
 #ifdef USE_UPF_RECEIVE
-void if_reinitialize_receive (info)
-	struct interface_info *info;
+void if_reinitialize_receive (struct interface_info *info)
 {
 }
 #endif
@@ -63,8 +61,7 @@ void if_reinitialize_receive (info)
    Opens a packet filter for each interface and adds it to the select
    mask. */
 
-int if_register_upf (info)
-	struct interface_info *info;
+int if_register_upf (struct interface_info *info)
 {
 	int sock;
 	char filename[50];
@@ -116,8 +113,7 @@ int if_register_upf (info)
 #endif /* USE_UPF_SEND || USE_UPF_RECEIVE */
 
 #ifdef USE_UPF_SEND
-void if_register_send (info)
-	struct interface_info *info;
+void if_register_send (struct interface_info *info)
 {
 	/* If we're using the upf API for sending and receiving,
 	   we don't need to register this interface twice. */
@@ -137,8 +133,7 @@ void if_register_send (info)
 		       info -> shared_network -> name : ""));
 }
 
-void if_deregister_send (info)
-	struct interface_info *info;
+void if_deregister_send (struct interface_info *info)
 {
 #ifndef USE_UPF_RECEIVE
 	close (info -> wfdesc);
@@ -165,8 +160,7 @@ void if_deregister_send (info)
 #error "Relay port is not yet supported for UPF"
 #endif
 
-void if_register_receive (info)
-	struct interface_info *info;
+void if_register_receive (struct interface_info *info)
 {
 	int flag = 1;
 	u_int32_t addr;
@@ -224,8 +218,7 @@ void if_register_receive (info)
 		       info -> shared_network -> name : ""));
 }
 
-void if_deregister_receive (info)
-	struct interface_info *info;
+void if_deregister_receive (struct interface_info *info)
 {
 	close (info -> rfdesc);
 	info -> rfdesc = -1;
@@ -242,14 +235,9 @@ void if_deregister_receive (info)
 #endif /* USE_UPF_RECEIVE */
 
 #ifdef USE_UPF_SEND
-ssize_t send_packet (interface, packet, raw, len, from, to, hto)
-	struct interface_info *interface;
-	struct packet *packet;
-	struct dhcp_packet *raw;
-	size_t len;
-	struct in_addr from;
-	struct sockaddr_in *to;
-	struct hardware *hto;
+ssize_t send_packet (struct interface_info *interface, struct packet *packet,
+	struct dhcp_packet *raw, size_t len, struct in_addr from,
+	struct sockaddr_in *to, struct hardware *hto)
 {
 	unsigned hbufp = 0, ibufp = 0;
 	double hw [4];
@@ -288,12 +276,8 @@ ssize_t send_packet (interface, packet, raw, len, from, to, hto)
 #endif /* USE_UPF_SEND */
 
 #ifdef USE_UPF_RECEIVE
-ssize_t receive_packet (interface, buf, len, from, hfrom)
-	struct interface_info *interface;
-	unsigned char *buf;
-	size_t len;
-	struct sockaddr_in *from;
-	struct hardware *hfrom;
+ssize_t receive_packet (struct interface_info *interface, unsigned char *buf,
+	size_t len, struct sockaddr_in *from, struct hardware *hfrom)
 {
 	int nread;
 	int length = 0;
@@ -339,20 +323,17 @@ ssize_t receive_packet (interface, buf, len, from, hfrom)
 	return paylen;
 }
 
-int can_unicast_without_arp (ip)
-	struct interface_info *ip;
+int can_unicast_without_arp (struct interface_info *ip)
 {
 	return 1;
 }
 
-int can_receive_unicast_unconfigured (ip)
-	struct interface_info *ip;
+int can_receive_unicast_unconfigured (struct interface_info *ip)
 {
 	return 1;
 }
 
-int supports_multiple_interfaces (ip)
-	struct interface_info *ip;
+int supports_multiple_interfaces (struct interface_info *ip)
 {
 	return 1;
 }

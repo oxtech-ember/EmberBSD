@@ -57,15 +57,13 @@ __RCSID("$NetBSD: lpf.c,v 1.4 2022/04/03 01:10:58 christos Exp $");
    is not required for packet-filter APIs. */
 
 #ifdef USE_LPF_SEND
-void if_reinitialize_send (info)
-	struct interface_info *info;
+void if_reinitialize_send (struct interface_info *info)
 {
 }
 #endif
 
 #ifdef USE_LPF_RECEIVE
-void if_reinitialize_receive (info)
-	struct interface_info *info;
+void if_reinitialize_receive (struct interface_info *info)
 {
 }
 #endif
@@ -74,8 +72,7 @@ void if_reinitialize_receive (info)
    Opens a packet filter for each interface and adds it to the select
    mask. */
 
-int if_register_lpf (info)
-	struct interface_info *info;
+int if_register_lpf (struct interface_info *info)
 {
 	int sock;
 	union {
@@ -132,8 +129,7 @@ int if_register_lpf (info)
 #endif /* USE_LPF_SEND || USE_LPF_RECEIVE */
 
 #ifdef USE_LPF_SEND
-void if_register_send (info)
-	struct interface_info *info;
+void if_register_send (struct interface_info *info)
 {
 	/* If we're using the lpf API for sending and receiving,
 	   we don't need to register this interface twice. */
@@ -153,8 +149,7 @@ void if_register_send (info)
 		       info -> shared_network -> name : ""));
 }
 
-void if_deregister_send (info)
-	struct interface_info *info;
+void if_deregister_send (struct interface_info *info)
 {
 	/* don't need to close twice if we are using lpf for sending and
 	   receiving */
@@ -195,8 +190,7 @@ static void lpf_tr_filter_setup (struct interface_info *);
 
 static void lpf_gen_filter_setup (struct interface_info *);
 
-void if_register_receive (info)
-	struct interface_info *info;
+void if_register_receive (struct interface_info *info)
 {
 	/* Open a LPF device and hang it on this interface... */
 	info -> rfdesc = if_register_lpf (info);
@@ -233,8 +227,7 @@ void if_register_receive (info)
 			   info -> shared_network -> name : ""));
 }
 
-void if_deregister_receive (info)
-	struct interface_info *info;
+void if_deregister_receive (struct interface_info *info)
 {
 	/* for LPF this is simple, packet filters are removed when sockets
 	   are closed */
@@ -251,8 +244,7 @@ void if_deregister_receive (info)
 			   info -> shared_network -> name : ""));
 }
 
-static void lpf_gen_filter_setup (info)
-	struct interface_info *info;
+static void lpf_gen_filter_setup (struct interface_info *info)
 {
 	struct sock_fprog p;
 
@@ -297,8 +289,7 @@ static void lpf_gen_filter_setup (info)
 }
 
 #if defined (HAVE_TR_SUPPORT)
-static void lpf_tr_filter_setup (info)
-	struct interface_info *info;
+static void lpf_tr_filter_setup (struct interface_info *info)
 {
 	struct sock_fprog p;
 
@@ -335,14 +326,9 @@ static void lpf_tr_filter_setup (info)
 #endif /* USE_LPF_RECEIVE */
 
 #ifdef USE_LPF_SEND
-ssize_t send_packet (interface, packet, raw, len, from, to, hto)
-	struct interface_info *interface;
-	struct packet *packet;
-	struct dhcp_packet *raw;
-	size_t len;
-	struct in_addr from;
-	struct sockaddr_in *to;
-	struct hardware *hto;
+ssize_t send_packet (struct interface_info *interface, struct packet *packet,
+	struct dhcp_packet *raw, size_t len, struct in_addr from,
+	struct sockaddr_in *to, struct hardware *hto)
 {
 	unsigned hbufp = 0, ibufp = 0;
 	double hh [16];
@@ -375,12 +361,8 @@ ssize_t send_packet (interface, packet, raw, len, from, to, hto)
 #endif /* USE_LPF_SEND */
 
 #ifdef USE_LPF_RECEIVE
-ssize_t receive_packet (interface, buf, len, from, hfrom)
-	struct interface_info *interface;
-	unsigned char *buf;
-	size_t len;
-	struct sockaddr_in *from;
-	struct hardware *hfrom;
+ssize_t receive_packet (struct interface_info *interface, unsigned char *buf,
+	size_t len, struct sockaddr_in *from, struct hardware *hfrom)
 {
 	int length = 0;
 	int offset = 0;
@@ -490,20 +472,17 @@ ssize_t receive_packet (interface, buf, len, from, hfrom)
 	return paylen;
 }
 
-int can_unicast_without_arp (ip)
-	struct interface_info *ip;
+int can_unicast_without_arp (struct interface_info *ip)
 {
 	return 1;
 }
 
-int can_receive_unicast_unconfigured (ip)
-	struct interface_info *ip;
+int can_receive_unicast_unconfigured (struct interface_info *ip)
 {
 	return 1;
 }
 
-int supports_multiple_interfaces (ip)
-	struct interface_info *ip;
+int supports_multiple_interfaces (struct interface_info *ip)
 {
 	return 1;
 }

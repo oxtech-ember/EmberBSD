@@ -39,7 +39,7 @@ int have_billing_classes;
 
 /* Build the default classification rule tree. */
 
-void classification_setup ()
+void classification_setup (void)
 {
 	/* eval ... */
 	default_classification_rules = (struct executable_statement *)0;
@@ -57,17 +57,14 @@ void classification_setup ()
 		&default_collection;
 }
 
-void classify_client (packet)
-	struct packet *packet;
+void classify_client (struct packet *packet)
 {
 	execute_statements (NULL, packet, NULL, NULL, packet->options, NULL,
 			    &global_scope, default_classification_rules, NULL);
 }
 
-int check_collection (packet, lease, collection)
-	struct packet *packet;
-	struct lease *lease;
-	struct collection *collection;
+int check_collection (struct packet *packet, struct lease *lease,
+	struct collection *collection)
 {
 	struct class *class, *nc;
 	struct data_string data;
@@ -197,9 +194,7 @@ int check_collection (packet, lease, collection)
 	return matched;
 }
 
-void classify (packet, class)
-	struct packet *packet;
-	struct class *class;
+void classify (struct packet *packet, struct class *class)
 {
 	if (packet -> class_count < PACKET_MAX_CLASSES)
 		class_reference (&packet -> classes [packet -> class_count++],
@@ -259,8 +254,7 @@ isc_result_t find_class (struct class **class, const char *name,
  * the last reference to the lease (unlikely), we create a guard reference to
  * the lease, then remove it at the end.
  */
-void unbill_class (lease)
-	struct lease *lease;
+void unbill_class (struct lease *lease)
 {
 	int i;
 	struct class* class = lease->billing_class;
@@ -298,9 +292,7 @@ void unbill_class (lease)
 	lease_dereference(&refholder, MDL);
 }
 
-int bill_class (lease, class)
-	struct lease *lease;
-	struct class *class;
+int bill_class (struct lease *lease, struct class *class)
 {
 	int i;
 

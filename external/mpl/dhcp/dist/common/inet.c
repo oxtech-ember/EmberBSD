@@ -36,9 +36,7 @@ __RCSID("$NetBSD: inet.c,v 1.3 2022/04/03 01:10:58 christos Exp $");
 
 /* Return just the network number of an internet address... */
 
-struct iaddr subnet_number (addr, mask)
-	struct iaddr addr;
-	struct iaddr mask;
+struct iaddr subnet_number (struct iaddr addr, struct iaddr mask)
 {
 	int i;
 	struct iaddr rv;
@@ -65,10 +63,8 @@ struct iaddr subnet_number (addr, mask)
    This won't work for subnets with more than 32 bits of host address, but
    maybe this isn't a problem. */
 
-struct iaddr ip_addr (subnet, mask, host_address)
-	struct iaddr subnet;
-	struct iaddr mask;
-	u_int32_t host_address;
+struct iaddr ip_addr (struct iaddr subnet, struct iaddr mask,
+	u_int32_t host_address)
 {
 	int i, j, k;
 	u_int32_t swaddr;
@@ -114,9 +110,7 @@ struct iaddr ip_addr (subnet, mask, host_address)
    for which the host portion of the address is all ones (the standard
    broadcast address). */
 
-struct iaddr broadcast_addr (subnet, mask)
-	struct iaddr subnet;
-	struct iaddr mask;
+struct iaddr broadcast_addr (struct iaddr subnet, struct iaddr mask)
 {
 	int i;
 	struct iaddr rv;
@@ -140,9 +134,7 @@ struct iaddr broadcast_addr (subnet, mask)
 	return rv;
 }
 
-u_int32_t host_addr (addr, mask)
-	struct iaddr addr;
-	struct iaddr mask;
+u_int32_t host_addr (struct iaddr addr, struct iaddr mask)
 {
 	int i;
 	u_int32_t swaddr;
@@ -168,8 +160,7 @@ u_int32_t host_addr (addr, mask)
 	return ntohl (swaddr);
 }
 
-int addr_eq (addr1, addr2)
-	struct iaddr addr1, addr2;
+int addr_eq (struct iaddr addr1, struct iaddr addr2)
 {
 	if (addr1.len > sizeof(addr1.iabuf))
 		log_fatal("addr_eq():%s:%d: Invalid addr length.", MDL);
@@ -186,9 +177,7 @@ int addr_eq (addr1, addr2)
  * matches the masked network value.
  */
 int
-addr_match(addr, match)
-	struct iaddr *addr;
-	struct iaddrmatch *match;
+addr_match(struct iaddr *addr, struct iaddrmatch *match)
 {
         int i;
 

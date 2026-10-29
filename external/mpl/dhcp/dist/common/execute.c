@@ -37,18 +37,11 @@ __RCSID("$NetBSD: execute.c,v 1.4 2022/04/03 01:10:58 christos Exp $");
 #include <sys/types.h>
 #include <sys/wait.h>
 
-int execute_statements (result, packet, lease, client_state,
-			in_options, out_options, scope, statements,
-			on_star)
-	struct binding_value **result;
-	struct packet *packet;
-	struct lease *lease;
-	struct client_state *client_state;
-	struct option_state *in_options;
-	struct option_state *out_options;
-	struct binding_scope **scope;
-	struct executable_statement *statements;
-	struct on_star *on_star;
+int execute_statements (struct binding_value **result, struct packet *packet,
+	struct lease *lease, struct client_state *client_state,
+	struct option_state *in_options, struct option_state *out_options,
+	struct binding_scope **scope, struct executable_statement *statements,
+	struct on_star *on_star)
 {
 	struct executable_statement *r, *e, *next;
 	int rc;
@@ -572,19 +565,11 @@ int execute_statements (result, packet, lease, client_state,
    specific scopes, so we recursively traverse the scope list, executing
    the most outer scope first. */
 
-void execute_statements_in_scope (result, packet,
-				  lease, client_state, in_options, out_options,
-				  scope, group, limiting_group, on_star)
-	struct binding_value **result;
-	struct packet *packet;
-	struct lease *lease;
-	struct client_state *client_state;
-	struct option_state *in_options;
-	struct option_state *out_options;
-	struct binding_scope **scope;
-	struct group *group;
-	struct group *limiting_group;
-	struct on_star *on_star;
+void execute_statements_in_scope (struct binding_value **result,
+	struct packet *packet, struct lease *lease, struct client_state *client_state,
+	struct option_state *in_options, struct option_state *out_options,
+	struct binding_scope **scope, struct group *group,
+	struct group *limiting_group, struct on_star *on_star)
 {
 	struct group *limit;
 
@@ -632,10 +617,8 @@ void execute_statements_in_scope (result, packet,
 
 /* Dereference or free any subexpressions of a statement being freed. */
 
-int executable_statement_dereference (ptr, file, line)
-	struct executable_statement **ptr;
-	const char *file;
-	int line;
+int executable_statement_dereference (struct executable_statement **ptr,
+	const char *file, int line)
 {
 	if (!ptr || !*ptr) {
 		log_error ("%s(%d): null pointer", file, line);
@@ -761,10 +744,8 @@ int executable_statement_dereference (ptr, file, line)
 	return 1;
 }
 
-void write_statements (file, statements, indent)
-	FILE *file;
-	struct executable_statement *statements;
-	int indent;
+void write_statements (FILE *file, struct executable_statement *statements,
+	int indent)
 {
 #if defined ENABLE_EXECUTE
 	struct expression *expr;

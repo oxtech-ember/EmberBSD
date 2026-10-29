@@ -46,10 +46,7 @@ __RCSID("$NetBSD: packet.c,v 1.4 2022/04/03 01:10:58 christos Exp $");
 
 /* Compute the easy part of the checksum on a range of bytes. */
 
-u_int32_t checksum (buf, nbytes, sum)
-	unsigned char *buf;
-	unsigned nbytes;
-	u_int32_t sum;
+u_int32_t checksum (unsigned char *buf, unsigned nbytes, u_int32_t sum)
 {
 	unsigned i;
 
@@ -85,8 +82,7 @@ u_int32_t checksum (buf, nbytes, sum)
 
 /* Finish computing the checksum, and then put it into network byte order. */
 
-u_int32_t wrapsum (sum)
-	u_int32_t sum;
+u_int32_t wrapsum (u_int32_t sum)
 {
 #ifdef DEBUG_CHECKSUM
 	log_debug ("wrapsum (%x)", sum);
@@ -104,11 +100,8 @@ u_int32_t wrapsum (sum)
 }
 
 #ifdef PACKET_ASSEMBLY
-void assemble_hw_header (interface, buf, bufix, to)
-	struct interface_info *interface;
-	unsigned char *buf;
-	unsigned *bufix;
-	struct hardware *to;
+void assemble_hw_header (struct interface_info *interface, unsigned char *buf,
+	unsigned *bufix, struct hardware *to)
 {
 	switch (interface->hw_address.hbuf[0]) {
 #if defined(HAVE_TR_SUPPORT)
@@ -133,16 +126,9 @@ void assemble_hw_header (interface, buf, bufix, to)
 
 /* UDP header and IP header assembled together for convenience. */
 
-void assemble_udp_ip_header (interface, buf, bufix,
-			     from, to, port, data, len)
-	struct interface_info *interface;
-	unsigned char *buf;
-	unsigned *bufix;
-	u_int32_t from;
-	u_int32_t to;
-	u_int32_t port;
-	unsigned char *data;
-	unsigned len;
+void assemble_udp_ip_header (struct interface_info *interface,
+	unsigned char *buf, unsigned *bufix, u_int32_t from, u_int32_t to,
+	u_int32_t port, unsigned char *data, unsigned len)
 {
 	struct ip ip;
 	struct udphdr udp;
@@ -206,11 +192,8 @@ void assemble_udp_ip_header (interface, buf, bufix,
  * Doesn't support infiniband yet as the supported oses shouldn't get here
  */
 
-ssize_t decode_hw_header (interface, buf, bufix, from)
-     struct interface_info *interface;
-     unsigned char *buf;
-     unsigned bufix;
-     struct hardware *from;
+ssize_t decode_hw_header (struct interface_info *interface, unsigned char *buf,
+	unsigned bufix, struct hardware *from)
 {
 	switch(interface->hw_address.hbuf[0]) {
 #if defined (HAVE_TR_SUPPORT)

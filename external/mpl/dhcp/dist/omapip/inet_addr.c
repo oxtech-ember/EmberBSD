@@ -48,9 +48,7 @@ __RCSID("$NetBSD: inet_addr.c,v 1.2 2018/04/07 22:37:30 christos Exp $");
  * cannot distinguish between failure and a local broadcast address.
  */
 int
-inet_aton(cp, addr)
-	const char *cp;
-	struct in_addr *addr;
+inet_aton(const char *cp, struct in_addr *addr)
 {
 	register u_long val;
 	register int base, n;

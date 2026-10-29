@@ -83,8 +83,7 @@ struct enumeration_value *find_enumeration_value (const char *name,
 /* Skip to the semicolon ending the current statement.   If we encounter
    braces, the matching closing brace terminates the statement.
 */
-void skip_to_semi (cfile)
-	struct parse *cfile;
+void skip_to_semi (struct parse *cfile)
 {
 	skip_to_rbrace(cfile, 0);
 }
@@ -100,9 +99,7 @@ void skip_to_semi (cfile)
 	statement}
 
 	...et cetera. */
-void skip_to_rbrace (cfile, brace_count)
-	struct parse *cfile;
-	int brace_count;
+void skip_to_rbrace (struct parse *cfile, int brace_count)
 {
 	enum dhcp_token token;
 	const char *val;
@@ -141,8 +138,7 @@ void skip_to_rbrace (cfile, brace_count)
 	} while (token != END_OF_FILE);
 }
 
-int parse_semi (cfile)
-	struct parse *cfile;
+int parse_semi (struct parse *cfile)
 {
 	enum dhcp_token token;
 	const char *val;
@@ -158,10 +154,7 @@ int parse_semi (cfile)
 
 /* string-parameter :== STRING SEMI */
 
-int parse_string (cfile, sptr, lptr)
-	struct parse *cfile;
-	char **sptr;
-	unsigned *lptr;
+int parse_string (struct parse *cfile, char **sptr, unsigned *lptr)
 {
 	const char *val;
 	enum dhcp_token token;
@@ -198,8 +191,7 @@ int parse_string (cfile, sptr, lptr)
  *		| hostname DOT IDENTIFIER
  */
 
-char *parse_host_name (cfile)
-	struct parse *cfile;
+char *parse_host_name (struct parse *cfile)
 {
 	const char *val;
 	enum dhcp_token token;
@@ -270,10 +262,8 @@ char *parse_host_name (cfile)
    making it difficult to quickly disambiguate them from ip addresses.
 */
 
-int parse_ip_addr_or_hostname (expr, cfile, uniform)
-	struct expression **expr;
-	struct parse *cfile;
-	int uniform;
+int parse_ip_addr_or_hostname (struct expression **expr, struct parse *cfile,
+	int uniform)
 {
 	const char *val;
 	enum dhcp_token token;
@@ -338,9 +328,7 @@ int parse_ip_addr_or_hostname (expr, cfile, uniform)
  * ip-address :== NUMBER DOT NUMBER DOT NUMBER DOT NUMBER
  */
 
-int parse_ip_addr (cfile, addr)
-	struct parse *cfile;
-	struct iaddr *addr;
+int parse_ip_addr (struct parse *cfile, struct iaddr *addr)
 {
 	addr -> len = 4;
 	if (parse_numeric_aggregate (cfile, addr -> iabuf,
@@ -491,9 +479,7 @@ parse_ip6_prefix(struct parse *cfile, struct iaddr *addr, u_int8_t *plen) {
  */
 
 int
-parse_ip_addr_with_subnet(cfile, match)
-	struct parse *cfile;
-	struct iaddrmatch *match;
+parse_ip_addr_with_subnet(struct parse *cfile, struct iaddrmatch *match)
 {
 	const char *val, *orig;
 	enum dhcp_token token;
@@ -584,9 +570,7 @@ parse_ip_addr_with_subnet(cfile, match)
  * as the hardware address won't always be available.
  */
 
-void parse_hardware_param (cfile, hardware)
-	struct parse *cfile;
-	struct hardware *hardware;
+void parse_hardware_param (struct parse *cfile, struct hardware *hardware)
 {
 	const char *val;
 	enum dhcp_token token;
@@ -659,9 +643,7 @@ void parse_hardware_param (cfile, hardware)
 
 /* lease-time :== NUMBER SEMI */
 
-void parse_lease_time (cfile, timep)
-	struct parse *cfile;
-	TIME *timep;
+void parse_lease_time (struct parse *cfile, TIME *timep)
 {
 	const char *val;
 	enum dhcp_token token;
@@ -703,14 +685,8 @@ void parse_lease_time (cfile, timep)
  */
 
 
-unsigned char *parse_numeric_aggregate (cfile, buf,
-					max, separator, base, size)
-	struct parse *cfile;
-	unsigned char *buf;
-	unsigned *max;
-	int separator;
-	int base;
-	unsigned size;
+unsigned char *parse_numeric_aggregate (struct parse *cfile,
+	unsigned char *buf, unsigned *max, int separator, int base, unsigned size)
 {
 	const char *val;
 	enum dhcp_token token;
@@ -807,12 +783,8 @@ unsigned char *parse_numeric_aggregate (cfile, buf,
 	return bufp;
 }
 
-void convert_num (cfile, buf, str, base, size)
-	struct parse *cfile;
-	unsigned char *buf;
-	const char *str;
-	int base;
-	unsigned size;
+void convert_num (struct parse *cfile, unsigned char *buf, const char *str,
+	int base, unsigned size)
 {
 	const unsigned char *ptr = (const unsigned char *)str;
 	int negative = 0;
@@ -945,8 +917,7 @@ void convert_num (cfile, buf, str, base, size)
  * any trailing semi must be consumed by the caller of this routine
  */
 TIME
-parse_date_core(cfile)
-	struct parse *cfile;
+parse_date_core(struct parse *cfile)
 {
 	int guess;
 	int tzoff, year, mon, mday, hour, min, sec;
@@ -1155,8 +1126,7 @@ parse_date_core(cfile)
  */
 
 TIME
-parse_date(cfile)
-       struct parse *cfile;
+parse_date(struct parse *cfile)
 {
        TIME guess;
        guess = parse_date_core(cfile);
@@ -1175,11 +1145,8 @@ parse_date(cfile)
  */
 
 isc_result_t
-parse_option_name (cfile, allocate, known, opt)
-	struct parse *cfile;
-	int allocate;
-	int *known;
-	struct option **opt;
+parse_option_name (struct parse *cfile, int allocate, int *known,
+	struct option **opt)
 {
 	const char *val;
 	enum dhcp_token token;
@@ -1316,8 +1283,7 @@ parse_option_name (cfile, allocate, known, opt)
  *             CODE WIDTH NUMBER
  */
 
-void parse_option_space_decl (cfile)
-	struct parse *cfile;
+void parse_option_space_decl (struct parse *cfile)
 {
 	int token;
 	const char *val;
@@ -1539,9 +1505,7 @@ void parse_option_space_decl (cfile)
 			STRING |
 			ENCAPSULATE identifier */
 
-int parse_option_code_definition (cfile, option)
-	struct parse *cfile;
-	struct option *option;
+int parse_option_code_definition (struct parse *cfile, struct option *option)
 {
 	const char *val;
 	enum dhcp_token token;
@@ -1863,9 +1827,7 @@ int parse_option_code_definition (cfile, option)
  * base64 :== NUMBER_OR_STRING
  */
 
-int parse_base64 (data, cfile)
-	struct data_string *data;
-	struct parse *cfile;
+int parse_base64 (struct data_string *data, struct parse *cfile)
 {
 	const char *val;
 	int i, j, k;
@@ -2004,9 +1966,7 @@ int parse_base64 (data, cfile)
  *				NUMBER COLON colon-separated-hex-list
  */
 
-int parse_cshl (data, cfile)
-	struct data_string *data;
-	struct parse *cfile;
+int parse_cshl (struct data_string *data, struct parse *cfile)
 {
 	u_int8_t ibuf [128];
 	unsigned ilen = 0;
@@ -2081,11 +2041,8 @@ int parse_cshl (data, cfile)
  *	APPEND option-parameter SEMI
  */
 
-int parse_executable_statements (statements, cfile, lose, case_context)
-	struct executable_statement **statements;
-	struct parse *cfile;
-	int *lose;
-	enum expression_context case_context;
+int parse_executable_statements (struct executable_statement **statements,
+	struct parse *cfile, int *lose, enum expression_context case_context)
 {
 	struct executable_statement **next;
 
@@ -2097,11 +2054,8 @@ int parse_executable_statements (statements, cfile, lose, case_context)
 	return 0;
 }
 
-int parse_executable_statement (result, cfile, lose, case_context)
-	struct executable_statement **result;
-	struct parse *cfile;
-	int *lose;
-	enum expression_context case_context;
+int parse_executable_statement (struct executable_statement **result,
+	struct parse *cfile, int *lose, enum expression_context case_context)
 {
 #if defined(ENABLE_EXECUTE)
 	unsigned len;
@@ -3108,10 +3062,8 @@ int parse_key (struct parse *cfile)
  * event-type :== EXPIRY | COMMIT | RELEASE
  */
 
-int parse_on_statement (result, cfile, lose)
-	struct executable_statement **result;
-	struct parse *cfile;
-	int *lose;
+int parse_on_statement (struct executable_statement **result,
+	struct parse *cfile, int *lose)
 {
 	enum dhcp_token token;
 	const char *val;
@@ -3188,10 +3140,8 @@ int parse_on_statement (result, cfile, lose)
  *
  */
 
-int parse_switch_statement (result, cfile, lose)
-	struct executable_statement **result;
-	struct parse *cfile;
-	int *lose;
+int parse_switch_statement (struct executable_statement **result,
+	struct parse *cfile, int *lose)
 {
 	enum dhcp_token token;
 	const char *val;
@@ -3256,11 +3206,8 @@ int parse_switch_statement (result, cfile, lose)
  *
  */
 
-int parse_case_statement (result, cfile, lose, case_context)
-	struct executable_statement **result;
-	struct parse *cfile;
-	int *lose;
-	enum expression_context case_context;
+int parse_case_statement (struct executable_statement **result,
+	struct parse *cfile, int *lose, enum expression_context case_context)
 {
 	enum dhcp_token token;
 	const char *val;
@@ -3303,10 +3250,8 @@ int parse_case_statement (result, cfile, lose, case_context)
  *		      ELSIF if-statement
  */
 
-int parse_if_statement (result, cfile, lose)
-	struct executable_statement **result;
-	struct parse *cfile;
-	int *lose;
+int parse_if_statement (struct executable_statement **result,
+	struct parse *cfile, int *lose)
 {
 	enum dhcp_token token;
 	const char *val;
@@ -3439,10 +3384,8 @@ int parse_if_statement (result, cfile, lose)
  *			  EXISTS OPTION-NAME
  */
 
-int parse_boolean_expression (expr, cfile, lose)
-	struct expression **expr;
-	struct parse *cfile;
-	int *lose;
+int parse_boolean_expression (struct expression **expr, struct parse *cfile,
+	int *lose)
 {
 	/* Parse an expression... */
 	if (!parse_expression (expr, cfile, lose, context_boolean,
@@ -3462,8 +3405,7 @@ int parse_boolean_expression (expr, cfile, lose)
 
 /* boolean :== ON SEMI | OFF SEMI | TRUE SEMI | FALSE SEMI */
 
-int parse_boolean (cfile)
-	struct parse *cfile;
+int parse_boolean (struct parse *cfile)
 {
 	const char *val;
 	int rv;
@@ -3506,10 +3448,8 @@ int parse_boolean (cfile)
  *		       colon_separated_hex_list
  */
 
-int parse_data_expression (expr, cfile, lose)
-	struct expression **expr;
-	struct parse *cfile;
-	int *lose;
+int parse_data_expression (struct expression **expr, struct parse *cfile,
+	int *lose)
 {
 	/* Parse an expression... */
 	if (!parse_expression (expr, cfile, lose, context_data,
@@ -3533,10 +3473,8 @@ int parse_data_expression (expr, cfile, lose)
  *			  NUMBER
  */
 
-int parse_numeric_expression (expr, cfile, lose)
-	struct expression **expr;
-	struct parse *cfile;
-	int *lose;
+int parse_numeric_expression (struct expression **expr, struct parse *cfile,
+	int *lose)
 {
 	/* Parse an expression... */
 	if (!parse_expression (expr, cfile, lose, context_numeric,
@@ -3556,11 +3494,8 @@ int parse_numeric_expression (expr, cfile, lose)
 
 /* Parse a subexpression that does not contain a binary operator. */
 
-int parse_non_binary (expr, cfile, lose, context)
-	struct expression **expr;
-	struct parse *cfile;
-	int *lose;
-	enum expression_context context;
+int parse_non_binary (struct expression **expr, struct parse *cfile, int *lose,
+	enum expression_context context)
 {
 	enum dhcp_token token;
 	const char *val;
@@ -4465,13 +4400,8 @@ int parse_non_binary (expr, cfile, lose, context)
 
 /* Parse an expression. */
 
-int parse_expression (expr, cfile, lose, context, plhs, binop)
-	struct expression **expr;
-	struct parse *cfile;
-	int *lose;
-	enum expression_context context;
-	struct expression **plhs;
-	enum expr_op binop;
+int parse_expression (struct expression **expr, struct parse *cfile, int *lose,
+	enum expression_context context, struct expression **plhs, enum expr_op binop)
 {
 	enum dhcp_token token;
 	const char *val;
@@ -4776,11 +4706,8 @@ int parse_expression (expr, cfile, lose, context, plhs, binop)
 }
 
 
-int parse_option_data (expr, cfile, lookups, option)
-struct expression **expr;
-struct parse *cfile;
-int lookups;
-struct option *option;
+int parse_option_data (struct expression **expr, struct parse *cfile,
+	int lookups, struct option *option)
 {
 	const char *val;
 	const char *fmt = NULL;
@@ -4883,12 +4810,8 @@ struct option *option;
    would be painful to come up with BNF for it.   However, it always
    starts as above and ends in a SEMI. */
 
-int parse_option_statement (result, cfile, lookups, option, op)
-	struct executable_statement **result;
-	struct parse *cfile;
-	int lookups;
-	struct option *option;
-	enum statement_op op;
+int parse_option_statement (struct executable_statement **result,
+	struct parse *cfile, int lookups, struct option *option, enum statement_op op)
 {
 	const char *val;
 	enum dhcp_token token;
@@ -4942,13 +4865,8 @@ int parse_option_statement (result, cfile, lookups, option, op)
 	return 1;
 }
 
-int parse_option_token (rv, cfile, fmt, expr, uniform, lookups)
-	struct expression **rv;
-	struct parse *cfile;
-	const char **fmt;
-	struct expression *expr;
-	int uniform;
-	int lookups;
+int parse_option_token (struct expression **rv, struct parse *cfile,
+	const char **fmt, struct expression *expr, int uniform, int lookups)
 {
 	const char *val;
 	enum dhcp_token token;
@@ -5245,9 +5163,7 @@ int parse_option_token (rv, cfile, fmt, expr, uniform, lookups)
 	return 1;
 }
 
-int parse_option_decl (oc, cfile)
-	struct option_cache **oc;
-	struct parse *cfile;
+int parse_option_decl (struct option_cache **oc, struct parse *cfile)
 {
 	const char *val;
 	int token;
@@ -5541,10 +5457,7 @@ exit:
 
 /* Consider merging parse_cshl into this. */
 
-int parse_X (cfile, buf, max)
-	struct parse *cfile;
-	u_int8_t *buf;
-	unsigned max;
+int parse_X (struct parse *cfile, u_int8_t *buf, unsigned max)
 {
 	int token;
 	const char *val;

@@ -101,8 +101,7 @@ static int once = 0;
    is not required for packet-filter APIs. */
 
 #if defined (USE_SOCKET_SEND) || defined (USE_SOCKET_FALLBACK)
-void if_reinitialize_send (info)
-	struct interface_info *info;
+void if_reinitialize_send (struct interface_info *info)
 {
 #if 0
 #ifndef USE_SOCKET_RECEIVE
@@ -115,8 +114,7 @@ void if_reinitialize_send (info)
 #endif
 
 #ifdef USE_SOCKET_RECEIVE
-void if_reinitialize_receive (info)
-	struct interface_info *info;
+void if_reinitialize_receive (struct interface_info *info)
 {
 #if 0
 	once = 0;
@@ -356,8 +354,7 @@ void set_multicast_hop_limit(struct interface_info* info, int hop_limit) {
 #endif /* USE_SOCKET_SEND || USE_SOCKET_RECEIVE || USE_SOCKET_FALLBACK */
 
 #if defined (USE_SOCKET_SEND) || defined (USE_SOCKET_FALLBACK)
-void if_register_send (info)
-	struct interface_info *info;
+void if_register_send (struct interface_info *info)
 {
 #ifndef USE_SOCKET_RECEIVE
 	info->wfdesc = if_register_socket(info, AF_INET, 0, NULL);
@@ -381,8 +378,7 @@ void if_register_send (info)
 }
 
 #if defined (USE_SOCKET_SEND)
-void if_deregister_send (info)
-	struct interface_info *info;
+void if_deregister_send (struct interface_info *info)
 {
 #ifndef USE_SOCKET_RECEIVE
 	close (info -> wfdesc);
@@ -400,8 +396,7 @@ void if_deregister_send (info)
 #endif /* USE_SOCKET_SEND || USE_SOCKET_FALLBACK */
 
 #ifdef USE_SOCKET_RECEIVE
-void if_register_receive (info)
-	struct interface_info *info;
+void if_register_receive (struct interface_info *info)
 {
 
 #if defined(IP_PKTINFO) && defined(IP_RECVPKTINFO) && defined(USE_V4_PKTINFO)
@@ -436,8 +431,7 @@ void if_register_receive (info)
 		       info->shared_network->name : ""));
 }
 
-void if_deregister_receive (info)
-	struct interface_info *info;
+void if_deregister_receive (struct interface_info *info)
 {
 #if defined(IP_PKTINFO) && defined(IP_RECVPKTINFO) && defined(USE_V4_PKTINFO)
 	/* Dereference the global v4 socket. */
@@ -717,14 +711,9 @@ if_deregister6(struct interface_info *info) {
 #endif /* DHCPv6 */
 
 #if defined (USE_SOCKET_SEND) || defined (USE_SOCKET_FALLBACK)
-ssize_t send_packet (interface, packet, raw, len, from, to, hto)
-	struct interface_info *interface;
-	struct packet *packet;
-	struct dhcp_packet *raw;
-	size_t len;
-	struct in_addr from;
-	struct sockaddr_in *to;
-	struct hardware *hto;
+ssize_t send_packet (struct interface_info *interface, struct packet *packet,
+	struct dhcp_packet *raw, size_t len, struct in_addr from,
+	struct sockaddr_in *to, struct hardware *hto)
 {
 	int result;
 #ifdef IGNORE_HOSTUNREACH
@@ -941,12 +930,8 @@ ssize_t send_packet6(struct interface_info *interface,
 #endif /* DHCPv6 */
 
 #ifdef USE_SOCKET_RECEIVE
-ssize_t receive_packet (interface, buf, len, from, hfrom)
-	struct interface_info *interface;
-	unsigned char *buf;
-	size_t len;
-	struct sockaddr_in *from;
-	struct hardware *hfrom;
+ssize_t receive_packet (struct interface_info *interface, unsigned char *buf,
+	size_t len, struct sockaddr_in *from, struct hardware *hfrom)
 {
 #if !(defined(IP_PKTINFO) && defined(IP_RECVPKTINFO) && defined(USE_V4_PKTINFO))
 	SOCKLEN_T flen = sizeof *from;
@@ -1161,8 +1146,7 @@ receive_packet6(struct interface_info *interface,
 #if defined (USE_SOCKET_FALLBACK)
 /* This just reads in a packet and silently discards it. */
 
-isc_result_t fallback_discard (object)
-	omapi_object_t *object;
+isc_result_t fallback_discard (omapi_object_t *object)
 {
 	char buf [1540];
 	struct sockaddr_in from;
@@ -1191,14 +1175,12 @@ isc_result_t fallback_discard (object)
 #endif /* USE_SOCKET_FALLBACK */
 
 #if defined (USE_SOCKET_SEND)
-int can_unicast_without_arp (ip)
-	struct interface_info *ip;
+int can_unicast_without_arp (struct interface_info *ip)
 {
 	return 0;
 }
 
-int can_receive_unicast_unconfigured (ip)
-	struct interface_info *ip;
+int can_receive_unicast_unconfigured (struct interface_info *ip)
 {
 #if defined (SOCKET_CAN_RECEIVE_UNICAST_UNCONFIGURED)
 	return 1;
@@ -1207,8 +1189,7 @@ int can_receive_unicast_unconfigured (ip)
 #endif
 }
 
-int supports_multiple_interfaces (ip)
-	struct interface_info *ip;
+int supports_multiple_interfaces (struct interface_info *ip)
 {
 #if defined(SO_BINDTODEVICE) || \
 	(defined(IP_PKTINFO) && defined(IP_RECVPKTINFO) && \

@@ -69,11 +69,8 @@ static struct routing_entry *routing_info = NULL;
 static int routing_timeout = 10;
 static struct timeval routing_timer;
 
-void assemble_tr_header (interface, buf, bufix, to)
-	struct interface_info *interface;
-	unsigned char *buf;
-	unsigned *bufix;
-	struct hardware *to;
+void assemble_tr_header (struct interface_info *interface, unsigned char *buf,
+	unsigned *bufix, struct hardware *to)
 {
         struct trh_hdr *trh;
         int hdr_len;
@@ -122,11 +119,8 @@ static unsigned char tr_broadcast[6] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
  * information (see comment below) even though we've asked for the raw
  * packets.
  */
-ssize_t decode_tr_header (interface, buf, bufix, from)
-        struct interface_info *interface;
-        unsigned char *buf;
-        unsigned bufix;
-        struct hardware *from;
+ssize_t decode_tr_header (struct interface_info *interface, unsigned char *buf,
+	unsigned bufix, struct hardware *from)
 {
         struct trh_hdr *trh = (struct trh_hdr *) buf + bufix;
         struct trllc *llc;
@@ -191,9 +185,8 @@ ssize_t decode_tr_header (interface, buf, bufix, from)
 /* insert_source_routing inserts source route information into the token ring
  * header
  */
-static int insert_source_routing (trh, interface)
-        struct trh_hdr *trh;
-        struct interface_info* interface;
+static int insert_source_routing (struct trh_hdr *trh,
+	struct interface_info *interface)
 {
 	struct routing_entry *rover;
         struct timeval now;
@@ -247,9 +240,8 @@ static int insert_source_routing (trh, interface)
 /*
  * save any source routing information
  */
-static void save_source_routing(trh, interface)
-        struct trh_hdr *trh;
-        struct interface_info *interface;
+static void save_source_routing(struct trh_hdr *trh,
+	struct interface_info *interface)
 {
         struct routing_entry *rover;
         struct timeval now;

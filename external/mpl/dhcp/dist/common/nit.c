@@ -54,15 +54,13 @@ __RCSID("$NetBSD: nit.c,v 1.3 2022/04/03 01:10:58 christos Exp $");
    is not required for packet-filter APIs. */
 
 #ifdef USE_NIT_SEND
-void if_reinitialize_send (info)
-	struct interface_info *info;
+void if_reinitialize_send (struct interface_info *info)
 {
 }
 #endif
 
 #ifdef USE_NIT_RECEIVE
-void if_reinitialize_receive (info)
-	struct interface_info *info;
+void if_reinitialize_receive (struct interface_info *info)
 {
 }
 #endif
@@ -71,8 +69,7 @@ void if_reinitialize_receive (info)
    Opens a packet filter for each interface and adds it to the select
    mask. */
 
-int if_register_nit (info)
-	struct interface_info *info;
+int if_register_nit (struct interface_info *info)
 {
 	int sock;
 	char filename[50];
@@ -117,8 +114,7 @@ int if_register_nit (info)
 #endif /* USE_NIT_SEND || USE_NIT_RECEIVE */
 
 #ifdef USE_NIT_SEND
-void if_register_send (info)
-	struct interface_info *info;
+void if_register_send (struct interface_info *info)
 {
 	/* If we're using the nit API for sending and receiving,
 	   we don't need to register this interface twice. */
@@ -152,8 +148,7 @@ void if_register_send (info)
 		       info -> shared_network -> name : ""));
 }
 
-void if_deregister_send (info)
-	struct interface_info *info;
+void if_deregister_send (struct interface_info *info)
 {
 	/* If we're using the nit API for sending and receiving,
 	   we don't need to register this interface twice. */
@@ -181,8 +176,7 @@ void if_deregister_send (info)
 #error "Relay port is not yet supported for NIT"
 #endif
 
-void if_register_receive (info)
-	struct interface_info *info;
+void if_register_receive (struct interface_info *info)
 {
 	int flag = 1;
 	u_int32_t x;
@@ -259,8 +253,7 @@ void if_register_receive (info)
 		       info -> shared_network -> name : ""));
 }
 
-void if_deregister_receive (info)
-	struct interface_info *info;
+void if_deregister_receive (struct interface_info *info)
 {
 	/* If we're using the nit API for sending and receiving,
 	   we don't need to register this interface twice. */
@@ -279,14 +272,9 @@ void if_deregister_receive (info)
 #endif /* USE_NIT_RECEIVE */
 
 #ifdef USE_NIT_SEND
-ssize_t send_packet (interface, packet, raw, len, from, to, hto)
-	struct interface_info *interface;
-	struct packet *packet;
-	struct dhcp_packet *raw;
-	size_t len;
-	struct in_addr from;
-	struct sockaddr_in *to;
-	struct hardware *hto;
+ssize_t send_packet (struct interface_info *interface, struct packet *packet,
+	struct dhcp_packet *raw, size_t len, struct in_addr from,
+	struct sockaddr_in *to, struct hardware *hto)
 {
 	unsigned hbufp, ibufp;
 	double hh [16];
@@ -339,12 +327,8 @@ ssize_t send_packet (interface, packet, raw, len, from, to, hto)
 #endif /* USE_NIT_SEND */
 
 #ifdef USE_NIT_RECEIVE
-ssize_t receive_packet (interface, buf, len, from, hfrom)
-	struct interface_info *interface;
-	unsigned char *buf;
-	size_t len;
-	struct sockaddr_in *from;
-	struct hardware *hfrom;
+ssize_t receive_packet (struct interface_info *interface, unsigned char *buf,
+	size_t len, struct sockaddr_in *from, struct hardware *hfrom)
 {
 	int nread;
 	int length = 0;
@@ -389,20 +373,17 @@ ssize_t receive_packet (interface, buf, len, from, hfrom)
 	return paylen;
 }
 
-int can_unicast_without_arp (ip)
-	struct interface_info *ip;
+int can_unicast_without_arp (struct interface_info *ip)
 {
 	return 1;
 }
 
-int can_receive_unicast_unconfigured (ip)
-	struct interface_info *ip;
+int can_receive_unicast_unconfigured (struct interface_info *ip)
 {
 	return 1;
 }
 
-int supports_multiple_interfaces (ip)
-	struct interface_info *ip;
+int supports_multiple_interfaces (struct interface_info *ip)
 {
 	return 1;
 }

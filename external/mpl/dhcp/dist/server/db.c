@@ -100,8 +100,7 @@ write_binding_scope(FILE *db_file, struct binding *bnd, char *prepend) {
 
 /* Write the specified lease to the current lease database file. */
 
-int write_lease (lease)
-	struct lease *lease;
+int write_lease (struct lease *lease)
 {
 	int errors = 0;
 	struct binding *b;
@@ -300,8 +299,7 @@ int write_lease (lease)
 	return !errors;
 }
 
-int write_host (host)
-	struct host_decl *host;
+int write_host (struct host_decl *host)
 {
 	int errors = 0;
 	int i;
@@ -451,8 +449,7 @@ int write_host (host)
 	return !errors;
 }
 
-int write_group (group)
-	struct group_object *group;
+int write_group (struct group_object *group)
 {
 	int errors = 0;
 
@@ -823,8 +820,7 @@ int write_failover_state (dhcp_failover_state_t *state)
 }
 #endif
 
-int db_printable (s)
-	const unsigned char *s;
+int db_printable (const unsigned char *s)
 {
 	int i;
 	for (i = 0; s [i]; i++)
@@ -834,9 +830,7 @@ int db_printable (s)
 	return 1;
 }
 
-int db_printable_len (s, len)
-	const unsigned char *s;
-	unsigned len;
+int db_printable_len (const unsigned char *s, unsigned len)
 {
 	int i;
 
@@ -977,7 +971,7 @@ write_named_billing_class(const void *key, unsigned len, void *object)
 	return ISC_R_SUCCESS;
 }
 
-void write_billing_classes ()
+void write_billing_classes (void)
 {
 	struct collection *lp;
 	struct class *cp;
@@ -993,8 +987,7 @@ void write_billing_classes ()
 
 /* Write a spawned class to the database file. */
 
-int write_billing_class (class)
-	struct class *class;
+int write_billing_class (struct class *class)
 {
 	int errors = 0;
 
@@ -1033,7 +1026,7 @@ void commit_leases_timeout (void *foo)
 
 /* Commit any leases that have been written out... */
 
-int commit_leases ()
+int commit_leases (void)
 {
 	/* Commit any outstanding writes to the lease database file.
 	   We need to do this even if we're rewriting the file below,
@@ -1066,7 +1059,7 @@ int commit_leases ()
  * calls.  In the future wes should revisit this area and add
  * something similar to the delayed ack code for v4.
  */
-int commit_leases_timed()
+int commit_leases_timed(void)
 {
 	if ((count != 0) && (cur_time - write_time > LEASE_REWRITE_PERIOD)) {
 		return (commit_leases());

@@ -181,10 +181,7 @@ int log_debug (const char *fmt, ...)
 
 /* Find %m in the input string and substitute an error message string. */
 
-void do_percentm (obuf, obufsize, ibuf)
-     char *obuf;
-     size_t obufsize;
-     const char *ibuf;
+void do_percentm (char *obuf, size_t obufsize, const char *ibuf)
 {
 	const char *s = ibuf;
 	char *p = obuf;
@@ -227,8 +224,7 @@ void do_percentm (obuf, obufsize, ibuf)
 }
 
 #ifdef NO_STRERROR
-char *strerror (err)
-	int err;
+char *strerror (int err)
 {
 	extern char *sys_errlist [];
 	extern int sys_nerr;

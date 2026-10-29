@@ -74,10 +74,7 @@ int numclasseswritten;
 
 extern omapi_object_type_t *dhcp_type_host;
 
-isc_result_t enter_class(cd, dynamicp, commit)
-	struct class *cd;
-	int dynamicp;
-	int commit;
+isc_result_t enter_class(struct class *cd, int dynamicp, int commit)
 {
 	if (!collections -> classes) {
 		/* A subclass with no parent is invalid. */
@@ -222,10 +219,7 @@ change_host_uid(struct host_decl *host, const char *uid, int len) {
 		      host->client_identifier.len, host, MDL);
 }
 
-isc_result_t enter_host (hd, dynamicp, commit)
-	struct host_decl *hd;
-	int dynamicp;
-	int commit;
+isc_result_t enter_host (struct host_decl *hd, int dynamicp, int commit)
 {
 	struct host_decl *hp = (struct host_decl *)0;
 	struct host_decl *np = (struct host_decl *)0;
@@ -459,9 +453,7 @@ isc_result_t enter_host (hd, dynamicp, commit)
 }
 
 
-isc_result_t delete_class (cp, commit)
-	struct class *cp;
-	int commit;
+isc_result_t delete_class (struct class *cp, int commit)
 {
 	cp->flags |= CLASS_DECL_DELETED;
 
@@ -491,9 +483,7 @@ isc_result_t delete_class (cp, commit)
 }
 
 
-isc_result_t delete_host (hd, commit)
-	struct host_decl *hd;
-	int commit;
+isc_result_t delete_host (struct host_decl *hd, int commit)
 {
 	struct host_decl *hp = (struct host_decl *)0;
 	struct host_decl *np = (struct host_decl *)0;
@@ -783,12 +773,9 @@ int find_host_for_network (struct subnet **sp, struct host_decl **host,
 	return 0;
 }
 
-void new_address_range (cfile, low, high, subnet, pool, lpchain)
-	struct parse *cfile;
-	struct iaddr low, high;
-	struct subnet *subnet;
-	struct pool *pool;
-	struct lease **lpchain;
+void new_address_range (struct parse *cfile, struct iaddr low,
+	struct iaddr high, struct subnet *subnet, struct pool *pool,
+	struct lease **lpchain)
 {
 #if defined(COMPACT_LEASES)
 	struct lease *address_range;
@@ -1009,8 +996,7 @@ subnet_inner_than(const struct subnet *subnet,
 }
 
 /* Enter a new subnet into the subnet list. */
-void enter_subnet (subnet)
-	struct subnet *subnet;
+void enter_subnet (struct subnet *subnet)
 {
 	struct subnet *scan = (struct subnet *)0;
 	struct subnet *next = (struct subnet *)0;
@@ -1056,8 +1042,7 @@ void enter_subnet (subnet)
 
 /* Enter a new shared network into the shared network list. */
 
-void enter_shared_network (share)
-	struct shared_network *share;
+void enter_shared_network (struct shared_network *share)
 {
 	if (shared_networks) {
 		shared_network_reference (&share -> next,
@@ -1067,10 +1052,8 @@ void enter_shared_network (share)
 	shared_network_reference (&shared_networks, share, MDL);
 }
 
-void new_shared_network_interface (cfile, share, name)
-	struct parse *cfile;
-	struct shared_network *share;
-	const char *name;
+void new_shared_network_interface (struct parse *cfile,
+	struct shared_network *share, const char *name)
 {
 	struct interface_info *ip;
 	isc_result_t status;
@@ -1113,8 +1096,7 @@ void new_shared_network_interface (cfile, share, name)
    otherwise, allocate temporary storage for the lease and keep it around
    until we're done reading in the config file. */
 
-void enter_lease (lease)
-	struct lease *lease;
+void enter_lease (struct lease *lease)
 {
 	struct lease *comp = (struct lease *)0;
 
@@ -1156,12 +1138,8 @@ void enter_lease (lease)
    list of leases by expiry time so that we can always find the oldest
    lease. */
 
-int supersede_lease (comp, lease, commit, propogate, pimmediate, from_pool)
-	struct lease *comp, *lease;
-	int commit;
-	int propogate;
-	int pimmediate;
-	int from_pool;
+int supersede_lease (struct lease *comp, struct lease *lease, int commit,
+	int propogate, int pimmediate, int from_pool)
 {
 	LEASE_STRUCT_PTR lq;
 	struct timeval tv;
@@ -1756,9 +1734,7 @@ int lease_copy (struct lease **lp,
 }
 
 /* Release the specified lease and re-hash it as appropriate. */
-void release_lease (lease, packet)
-	struct lease *lease;
-	struct packet *packet;
+void release_lease (struct lease *lease, struct packet *packet)
 {
 	/* If there are statements to execute when the lease is
 	   released, execute them. */
@@ -1831,9 +1807,7 @@ void release_lease (lease, packet)
 /* Abandon the specified lease (set its timeout to infinity and its
    particulars to zero, and re-hash it as appropriate. */
 
-void abandon_lease (lease, message)
-	struct lease *lease;
-	const char *message;
+void abandon_lease (struct lease *lease, const char *message)
 {
 	struct lease *lt = NULL;
 #if defined (NSUPDATE)
@@ -1882,8 +1856,7 @@ void abandon_lease (lease, message)
 /* Abandon the specified lease (set its timeout to infinity and its
    particulars to zero, and re-hash it as appropriate. */
 
-void dissociate_lease (lease)
-	struct lease *lease;
+void dissociate_lease (struct lease *lease)
 {
 	struct lease *lt = (struct lease *)0;
 #if defined (NSUPDATE)
@@ -1915,8 +1888,7 @@ void dissociate_lease (lease)
 #endif
 
 /* Timer called when a lease in a particular pool expires. */
-void pool_timer (vpool)
-	void *vpool;
+void pool_timer (void *vpool)
 {
 	struct pool *pool;
 	struct lease *next = NULL;
@@ -2202,8 +2174,7 @@ uid_hash_add(struct lease *lease)
 
 /* Delete the specified lease from the uid hash. */
 
-void uid_hash_delete (lease)
-	struct lease *lease;
+void uid_hash_delete (struct lease *lease)
 {
 	struct lease *head = (struct lease *)0;
 	struct lease *scan;
@@ -2332,8 +2303,7 @@ hw_hash_add(struct lease *lease)
 
 /* Delete the specified lease from the hardware address hash. */
 
-void hw_hash_delete (lease)
-	struct lease *lease;
+void hw_hash_delete (struct lease *lease)
 {
 	struct lease *head = (struct lease *)0;
 	struct lease *next = (struct lease *)0;
@@ -2435,7 +2405,7 @@ static int write_leases4(void) {
 
 /* Write all interesting leases to permanent storage. */
 
-int write_leases ()
+int write_leases (void)
 {
 	struct host_decl *hp;
 	struct group_object *gp;
@@ -2836,7 +2806,7 @@ lease_instantiate(const void *key, unsigned len, void *object)
    was restarted can be run.   At the same time, if failover support is
    compiled in, we compute the balance of leases for the pool. */
 
-void expire_all_pools ()
+void expire_all_pools (void)
 {
 	struct shared_network *s;
 	struct pool *p;
@@ -2934,7 +2904,7 @@ void expire_all_pools ()
 	server_starting = 0;
 }
 
-void dump_subnets ()
+void dump_subnets (void)
 {
 	struct lease *l;
 	struct shared_network *s;

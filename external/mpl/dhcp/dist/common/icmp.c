@@ -49,9 +49,7 @@ trace_type_t *trace_icmp_output;
 
 /* Initialize the ICMP protocol. */
 
-void icmp_startup (routep, handler)
-	int routep;
-	void (*handler) (struct iaddr, u_int8_t *, int);
+void icmp_startup (int routep, void (*handler)(struct iaddr, u_int8_t *, int))
 {
 	struct protoent *proto;
 	int protocol = 1;
@@ -121,8 +119,7 @@ void icmp_startup (routep, handler)
 #endif
 }
 
-int icmp_readsocket (h)
-	omapi_object_t *h;
+int icmp_readsocket (omapi_object_t *h)
 {
 	struct icmp_state *state;
 
@@ -130,8 +127,7 @@ int icmp_readsocket (h)
 	return state -> socket;
 }
 
-int icmp_echorequest (addr)
-	struct iaddr *addr;
+int icmp_echorequest (struct iaddr *addr)
 {
 	struct sockaddr_in to;
 	struct icmp icmp;
@@ -206,8 +202,7 @@ int icmp_echorequest (addr)
 	return 1;
 }
 
-isc_result_t icmp_echoreply (h)
-	omapi_object_t *h;
+isc_result_t icmp_echoreply (omapi_object_t *h)
 {
 	struct icmp *icfrom;
 	struct ip *ip;

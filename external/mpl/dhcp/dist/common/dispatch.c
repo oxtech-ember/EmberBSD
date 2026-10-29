@@ -202,12 +202,8 @@ isclib_timer_callback(isc_task_t  *taskp,
 /* maximum value for usec */
 #define USEC_MAX 1000000
 
-void add_timeout (when, where, what, ref, unref)
-	struct timeval *when;
-	void (*where) (void *);
-	void *what;
-	tvref_t ref;
-	tvunref_t unref;
+void add_timeout (struct timeval *when, void (*where)(void *), void *what,
+	tvref_t ref, tvunref_t unref)
 {
 	struct timeout *t, *q;
 	int usereset = 0;
@@ -382,9 +378,7 @@ void add_timeout (when, where, what, ref, unref)
 	return;
 }
 
-void cancel_timeout (where, what)
-	void (*where) (void *);
-	void *what;
+void cancel_timeout (void (*where)(void *), void *what)
 {
 	struct timeout *t, *q;
 
@@ -446,8 +440,7 @@ void relinquish_timeouts ()
 }
 #endif
 
-void libdhcp_callbacks_register(cb)
-	libdhcp_callbacks_t *cb;
+void libdhcp_callbacks_register(libdhcp_callbacks_t *cb)
 {
 	memcpy(&libdhcp_callbacks, cb, sizeof(libdhcp_callbacks));
 	return;

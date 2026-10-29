@@ -40,11 +40,8 @@ __RCSID("$NetBSD: ethernet.c,v 1.3 2022/04/03 01:10:58 christos Exp $");
 #if defined (PACKET_ASSEMBLY)
 /* Assemble an hardware header... */
 
-void assemble_ethernet_header (interface, buf, bufix, to)
-	struct interface_info *interface;
-	unsigned char *buf;
-	unsigned *bufix;
-	struct hardware *to;
+void assemble_ethernet_header (struct interface_info *interface,
+	unsigned char *buf, unsigned *bufix, struct hardware *to)
 {
 	struct isc_ether_header eh;
 
@@ -69,11 +66,8 @@ void assemble_ethernet_header (interface, buf, bufix, to)
 #ifdef PACKET_DECODING
 /* Decode a hardware header... */
 
-ssize_t decode_ethernet_header (interface, buf, bufix, from)
-     struct interface_info *interface;
-     unsigned char *buf;
-     unsigned bufix;
-     struct hardware *from;
+ssize_t decode_ethernet_header (struct interface_info *interface,
+	unsigned char *buf, unsigned bufix, struct hardware *from)
 {
   struct isc_ether_header eh;
 

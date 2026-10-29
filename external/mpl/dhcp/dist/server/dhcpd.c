@@ -1541,10 +1541,7 @@ void postdb_startup (void)
 	schedule_all_ipv6_lease_timeouts();
 }
 
-void lease_pinged (from, packet, length)
-	struct iaddr from;
-	u_int8_t *packet;
-	int length;
+void lease_pinged (struct iaddr from, u_int8_t *packet, int length)
 {
 	struct lease *lp;
 
@@ -1590,8 +1587,7 @@ void lease_pinged (from, packet, length)
 	lease_dereference (&lp, MDL);
 }
 
-void lease_ping_timeout (vlp)
-	void *vlp;
+void lease_ping_timeout (void *vlp)
 {
 	struct lease *lp = vlp;
 

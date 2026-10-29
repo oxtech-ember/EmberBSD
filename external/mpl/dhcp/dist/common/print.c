@@ -173,10 +173,8 @@ char *print_base64 (const unsigned char *buf, unsigned len,
 	return b;
 }
 
-char *print_hw_addr (htype, hlen, data)
-	const int htype;
-	const int hlen;
-	const unsigned char *data;
+char *print_hw_addr (const int htype, const int hlen,
+	const unsigned char *data)
 {
 	static char habuf [49];
 	char *s;
@@ -196,8 +194,7 @@ char *print_hw_addr (htype, hlen, data)
 	return habuf;
 }
 
-void print_lease (lease)
-	struct lease *lease;
+void print_lease (struct lease *lease)
 {
 	struct tm *t;
 	char tbuf [32];
@@ -253,8 +250,7 @@ void dump_packet_option (struct option_cache *oc,
 	}
 }
 
-void dump_packet (tp)
-	struct packet *tp;
+void dump_packet (struct packet *tp)
 {
 	struct dhcp_packet *tdp = tp -> raw;
 
@@ -295,9 +291,7 @@ void dump_packet (tp)
 }
 #endif
 
-void dump_raw (buf, len)
-	const unsigned char *buf;
-	unsigned len;
+void dump_raw (const unsigned char *buf, unsigned len)
 {
 	int i;
 	char lbuf [80];
@@ -346,8 +340,7 @@ void dump_raw (buf, len)
 	log_info ("%s", lbuf);
 }
 
-void hash_dump (table)
-	struct hash_table *table;
+void hash_dump (struct hash_table *table)
 {
 	int i;
 	struct hash_bucket *bp;
@@ -382,11 +375,8 @@ void hash_dump (table)
  * limit - length of buf to use
  * buf - output buffer
  */
-void print_hex_only (len, data, limit, buf)
-	unsigned len;
-	const u_int8_t *data;
-	unsigned limit;
-	char *buf;
+void print_hex_only (unsigned len, const u_int8_t *data, unsigned limit,
+	char *buf)
 {
 	char *bufptr = buf;
 	int byte = 0;
@@ -421,11 +411,8 @@ void print_hex_only (len, data, limit, buf)
  * limit - length of buf to use
  * buf - output buffer
  */
-void print_hex_or_string (len, data, limit, buf)
-	unsigned len;
-	const u_int8_t *data;
-	unsigned limit;
-	char *buf;
+void print_hex_or_string (unsigned len, const u_int8_t *data, unsigned limit,
+	char *buf)
 {
 	unsigned i;
 	if ((buf == NULL) || (limit < 3))
@@ -458,11 +445,8 @@ void print_hex_or_string (len, data, limit, buf)
  * buf_num - the output buffer to use
  */
 #define HBLEN 1024
-char *print_hex(len, data, limit, buf_num)
-	unsigned len;
-	const u_int8_t *data;
-	unsigned limit;
-	unsigned buf_num;
+char *print_hex(unsigned len, const u_int8_t *data, unsigned limit,
+	unsigned buf_num)
 {
 	static char hex_buf_1[HBLEN + 1];
 	static char hex_buf_2[HBLEN + 1];
@@ -495,9 +479,7 @@ char *print_hex(len, data, limit, buf_num)
 
 #define DQLEN	80
 
-char *print_dotted_quads (len, data)
-	unsigned len;
-	const u_int8_t *data;
+char *print_dotted_quads (unsigned len, const u_int8_t *data)
 {
 	static char dq_buf [DQLEN + 1];
 	int i;
@@ -526,16 +508,14 @@ char *print_dotted_quads (len, data)
 	return dq_buf;
 }
 
-char *print_dec_1 (val)
-	unsigned long val;
+char *print_dec_1 (unsigned long val)
 {
 	static char vbuf [32];
 	sprintf (vbuf, "%lu", val);
 	return vbuf;
 }
 
-char *print_dec_2 (val)
-	unsigned long val;
+char *print_dec_2 (unsigned long val)
 {
 	static char vbuf [32];
 	sprintf (vbuf, "%lu", val);
@@ -544,10 +524,8 @@ char *print_dec_2 (val)
 
 static unsigned print_subexpression (struct expression *, char *, unsigned);
 
-static unsigned print_subexpression (expr, buf, len)
-	struct expression *expr;
-	char *buf;
-	unsigned len;
+static unsigned print_subexpression (struct expression *expr, char *buf,
+	unsigned len)
 {
 	unsigned rv, left;
 	const char *s;
@@ -1173,9 +1151,7 @@ static unsigned print_subexpression (expr, buf, len)
 	return 0;
 }
 
-void print_expression (name, expr)
-	const char *name;
-	struct expression *expr;
+void print_expression (const char *name, struct expression *expr)
 {
 	char buf [1024];
 

@@ -71,15 +71,13 @@ __RCSID("$NetBSD: bpf.c,v 1.5 2022/04/03 01:10:58 christos Exp $");
    is not required for packet-filter APIs. */
 
 #ifdef USE_BPF_SEND
-void if_reinitialize_send (info)
-	struct interface_info *info;
+void if_reinitialize_send (struct interface_info *info)
 {
 }
 #endif
 
 #ifdef USE_BPF_RECEIVE
-void if_reinitialize_receive (info)
-	struct interface_info *info;
+void if_reinitialize_receive (struct interface_info *info)
 {
 }
 #endif
@@ -89,8 +87,7 @@ void if_reinitialize_receive (info)
    mask. */
 
 #if defined (USE_BPF_SEND) || defined (USE_BPF_RECEIVE)
-int if_register_bpf (info)
-	struct interface_info *info;
+int if_register_bpf (struct interface_info *info)
 {
 	int sock;
 	char filename[50];
@@ -129,8 +126,7 @@ int if_register_bpf (info)
 #endif /* USE_BPF_SEND || USE_BPF_RECEIVE */
 
 #ifdef USE_BPF_SEND
-void if_register_send (info)
-	struct interface_info *info;
+void if_register_send (struct interface_info *info)
 {
 	/* If we're using the bpf API for sending and receiving,
 	   we don't need to register this interface twice. */
@@ -150,8 +146,7 @@ void if_register_send (info)
 		       info -> shared_network -> name : ""));
 }
 
-void if_deregister_send (info)
-	struct interface_info *info;
+void if_deregister_send (struct interface_info *info)
 {
 	/* If we're using the bpf API for sending and receiving,
 	   we don't need to register this interface twice. */
@@ -266,8 +261,7 @@ int dhcp_bpf_tr_filter_len = (sizeof dhcp_bpf_tr_filter /
 #endif /* USE_LPF_RECEIVE || USE_BPF_RECEIVE */
 
 #if defined (USE_BPF_RECEIVE)
-void if_register_receive (info)
-	struct interface_info *info;
+void if_register_receive (struct interface_info *info)
 {
 	int flag = 1;
 	struct bpf_version v;
@@ -381,8 +375,7 @@ void if_register_receive (info)
 		       info -> shared_network -> name : ""));
 }
 
-void if_deregister_receive (info)
-	struct interface_info *info;
+void if_deregister_receive (struct interface_info *info)
 {
 	close (info -> rfdesc);
 	info -> rfdesc = -1;
@@ -400,14 +393,9 @@ void if_deregister_receive (info)
 #endif /* USE_BPF_RECEIVE */
 
 #ifdef USE_BPF_SEND
-ssize_t send_packet (interface, packet, raw, len, from, to, hto)
-	struct interface_info *interface;
-	struct packet *packet;
-	struct dhcp_packet *raw;
-	size_t len;
-	struct in_addr from;
-	struct sockaddr_in *to;
-	struct hardware *hto;
+ssize_t send_packet (struct interface_info *interface, struct packet *packet,
+	struct dhcp_packet *raw, size_t len, struct in_addr from,
+	struct sockaddr_in *to, struct hardware *hto)
 {
 	unsigned hbufp = 0, ibufp = 0;
 	double hw [4];
@@ -445,12 +433,8 @@ ssize_t send_packet (interface, packet, raw, len, from, to, hto)
 #endif /* USE_BPF_SEND */
 
 #ifdef USE_BPF_RECEIVE
-ssize_t receive_packet (interface, buf, len, from, hfrom)
-	struct interface_info *interface;
-	unsigned char *buf;
-	size_t len;
-	struct sockaddr_in *from;
-	struct hardware *hfrom;
+ssize_t receive_packet (struct interface_info *interface, unsigned char *buf,
+	size_t len, struct sockaddr_in *from, struct hardware *hfrom)
 {
 	int length = 0;
 	int offset = 0;
@@ -569,25 +553,22 @@ ssize_t receive_packet (interface, buf, len, from, hfrom)
 	return (0);
 }
 
-int can_unicast_without_arp (ip)
-	struct interface_info *ip;
+int can_unicast_without_arp (struct interface_info *ip)
 {
 	return 1;
 }
 
-int can_receive_unicast_unconfigured (ip)
-	struct interface_info *ip;
+int can_receive_unicast_unconfigured (struct interface_info *ip)
 {
 	return 1;
 }
 
-int supports_multiple_interfaces (ip)
-	struct interface_info *ip;
+int supports_multiple_interfaces (struct interface_info *ip)
 {
 	return 1;
 }
 
-void maybe_setup_fallback ()
+void maybe_setup_fallback (void)
 {
 	isc_result_t status;
 	struct interface_info *fbi = (struct interface_info *)0;

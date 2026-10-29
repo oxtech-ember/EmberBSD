@@ -43,13 +43,8 @@ static enum dhcp_token read_number (int, struct parse *);
 static enum dhcp_token read_num_or_name (int, struct parse *);
 static enum dhcp_token intern (char *, enum dhcp_token);
 
-isc_result_t new_parse (cfile, file, inbuf, buflen, name, eolp)
-	struct parse **cfile;
-	int file;
-	char *inbuf;
-	unsigned buflen;
-	const char *name;
-	int eolp;
+isc_result_t new_parse (struct parse **cfile, int file, char *inbuf,
+	unsigned buflen, const char *name, int eolp)
 {
 	isc_result_t status = ISC_R_SUCCESS;
 	struct parse *tmp;
@@ -105,8 +100,7 @@ cleanup:
 	return (status);
 }
 
-isc_result_t end_parse (cfile)
-	struct parse **cfile;
+isc_result_t end_parse (struct parse **cfile)
 {
 	/* "Memory" config files have no file. */
 	if ((*cfile)->file != -1) {
@@ -184,8 +178,7 @@ restore_parse_state(struct parse *cfile) {
 	return ISC_R_SUCCESS;
 }
 
-static int get_char (cfile)
-	struct parse *cfile;
+static int get_char (struct parse *cfile)
 {
 	/* My kingdom for WITH... */
 	int c;
@@ -460,8 +453,7 @@ peek_raw_token(const char **rval, unsigned *rlen, struct parse *cfile) {
 	return do_peek_token(rval, rlen, cfile, ISC_TRUE);
 }
 
-static void skip_to_eol (cfile)
-	struct parse *cfile;
+static void skip_to_eol (struct parse *cfile)
 {
 	int c;
 	do {
@@ -514,8 +506,7 @@ read_whitespace(int c, struct parse *cfile) {
 	return WHITESPACE;
 }
 
-static enum dhcp_token read_string (cfile)
-	struct parse *cfile;
+static enum dhcp_token read_string (struct parse *cfile)
 {
 	int i;
 	int bs = 0;
@@ -622,9 +613,7 @@ static enum dhcp_token read_string (cfile)
 	return STRING;
 }
 
-static enum dhcp_token read_number (c, cfile)
-	int c;
-	struct parse *cfile;
+static enum dhcp_token read_number (int c, struct parse *cfile)
 {
 	int i = 0;
 	int token = NUMBER;
@@ -697,9 +686,7 @@ static enum dhcp_token read_number (c, cfile)
 		return token;
 }
 
-static enum dhcp_token read_num_or_name (c, cfile)
-	int c;
-	struct parse *cfile;
+static enum dhcp_token read_num_or_name (int c, struct parse *cfile)
 {
 	int i = 0;
 	enum dhcp_token rv = NUMBER_OR_NAME;

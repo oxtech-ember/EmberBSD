@@ -186,15 +186,13 @@ static int strgetmsg (int fd, struct strbuf *ctlp, struct strbuf *datap,
    is not required for packet-filter APIs. */
 
 #ifdef USE_DLPI_SEND
-void if_reinitialize_send (info)
-	struct interface_info *info;
+void if_reinitialize_send (struct interface_info *info)
 {
 }
 #endif
 
 #ifdef USE_DLPI_RECEIVE
-void if_reinitialize_receive (info)
-	struct interface_info *info;
+void if_reinitialize_receive (struct interface_info *info)
 {
 }
 #endif
@@ -203,8 +201,7 @@ void if_reinitialize_receive (info)
    Opens a packet filter for each interface and adds it to the select
    mask. */
 
-int if_register_dlpi (info)
-	struct interface_info *info;
+int if_register_dlpi (struct interface_info *info)
 {
 	int sock;
 	int unit;
@@ -334,8 +331,7 @@ char *dp;
 #endif /* USE_DPI_PFMOD || USE_DLPI_RAW */
 
 #ifdef USE_DLPI_SEND
-void if_register_send (info)
-	struct interface_info *info;
+void if_register_send (struct interface_info *info)
 {
 	/* If we're using the DLPI API for sending and receiving,
 	   we don't need to register this interface twice. */
@@ -387,8 +383,7 @@ void if_register_send (info)
 #endif
 }
 
-void if_deregister_send (info)
-	struct interface_info *info;
+void if_deregister_send (struct interface_info *info)
 {
 	/* If we're using the DLPI API for sending and receiving,
 	   we don't need to register this interface twice. */
@@ -418,8 +413,7 @@ void if_deregister_send (info)
 #error "Relay port is not yet supported for DLPI"
 #endif
 
-void if_register_receive (info)
-	struct interface_info *info;
+void if_register_receive (struct interface_info *info)
 {
 #ifdef USE_DLPI_PFMOD
 	struct packetfilt pf;
@@ -506,8 +500,7 @@ void if_register_receive (info)
 #endif
 }
 
-void if_deregister_receive (info)
-	struct interface_info *info;
+void if_deregister_receive (struct interface_info *info)
 {
 	/* If we're using the DLPI API for sending and receiving,
 	   we don't need to register this interface twice. */
@@ -529,14 +522,9 @@ void if_deregister_receive (info)
 #endif /* USE_DLPI_RECEIVE */
 
 #ifdef USE_DLPI_SEND
-ssize_t send_packet (interface, packet, raw, len, from, to, hto)
-	struct interface_info *interface;
-	struct packet *packet;
-	struct dhcp_packet *raw;
-	size_t len;
-	struct in_addr from;
-	struct sockaddr_in *to;
-	struct hardware *hto;
+ssize_t send_packet (struct interface_info *interface, struct packet *packet,
+	struct dhcp_packet *raw, size_t len, struct in_addr from,
+	struct sockaddr_in *to, struct hardware *hto)
 {
 #ifdef USE_DLPI_RAW
 	double hh [32];
@@ -631,12 +619,8 @@ ssize_t send_packet (interface, packet, raw, len, from, to, hto)
 #endif /* USE_DLPI_SEND */
 
 #ifdef USE_DLPI_RECEIVE
-ssize_t receive_packet (interface, buf, len, from, hfrom)
-	struct interface_info *interface;
-	unsigned char *buf;
-	size_t len;
-	struct sockaddr_in *from;
-	struct hardware *hfrom;
+ssize_t receive_packet (struct interface_info *interface, unsigned char *buf,
+	size_t len, struct sockaddr_in *from, struct hardware *hfrom)
 {
 	unsigned char dbuf [1536];
 	unsigned char srcaddr [DLPI_MAXDLADDR];
@@ -756,8 +740,7 @@ ssize_t receive_packet (interface, buf, len, from, hfrom)
  * Parse an interface name and extract the unit number
  */
 
-static int dlpiunit (ifname)
-	char *ifname;
+static int dlpiunit (char *ifname)
 {
 	char *cp;
 	int unit;
@@ -829,8 +812,7 @@ dlpiopen(const char *ifname) {
  * dlpiinforeq - request information about the data link provider.
  */
 
-static int dlpiinforeq (fd)
-	int fd;
+static int dlpiinforeq (int fd)
 {
 	dl_info_req_t info_req;
 	struct strbuf ctl;
@@ -850,9 +832,7 @@ static int dlpiinforeq (fd)
 /*
  * dlpiphysaddrreq - request the current physical address.
  */
-static int dlpiphysaddrreq (fd, addrtype)
-	int fd;
-	unsigned long addrtype;
+static int dlpiphysaddrreq (int fd, unsigned long addrtype)
 {
 	dl_phys_addr_req_t physaddr_req;
 	struct strbuf ctl;
@@ -873,9 +853,7 @@ static int dlpiphysaddrreq (fd, addrtype)
 /*
  * dlpiattachreq - send a request to attach to a specific unit.
  */
-static int dlpiattachreq (fd, ppa)
-	unsigned long ppa;
-	int fd;
+static int dlpiattachreq (int fd, unsigned long ppa)
 {
 	dl_attach_req_t	attach_req;
 	struct strbuf ctl;
@@ -896,13 +874,8 @@ static int dlpiattachreq (fd, ppa)
 /*
  * dlpibindreq - send a request to bind to a specific SAP address.
  */
-static int dlpibindreq (fd, sap, max_conind, service_mode, conn_mgmt, xidtest)
-	unsigned long sap;
-	unsigned long max_conind;
-	unsigned long service_mode;
-	unsigned long conn_mgmt;
-	unsigned long xidtest;
-	int fd;
+static int dlpibindreq (int fd, unsigned long sap, unsigned long max_conind,
+	unsigned long service_mode, unsigned long conn_mgmt, unsigned long xidtest)
 {
 	dl_bind_req_t bind_req;
 	struct strbuf ctl;
@@ -930,8 +903,7 @@ static int dlpibindreq (fd, sap, max_conind, service_mode, conn_mgmt, xidtest)
  *	used by ISC DHCP, but is included for completeness in case it is
  *	ever required for new work.
  */
-static int dlpiunbindreq (fd)
-	int fd;
+static int dlpiunbindreq (int fd)
 {
 	dl_unbind_req_t	unbind_req;
 	struct strbuf ctl;
@@ -954,8 +926,7 @@ static int dlpiunbindreq (fd)
  *	used by ISC DHCP, but is included for completeness in case it is
  *	ever required for new work.
  */
-static int dlpidetachreq (fd)
-	int fd;
+static int dlpidetachreq (int fd)
 {
 	dl_detach_req_t	detach_req;
 	struct strbuf ctl;
@@ -977,9 +948,7 @@ static int dlpidetachreq (fd)
 /*
  * dlpibindack - receive an ack to a dlbindreq.
  */
-static int dlpibindack (fd, bufp)
-	char *bufp;
-	int fd;
+static int dlpibindack (int fd, char *bufp)
 {
 	union DL_primitives *dlp;
 	struct strbuf ctl;
@@ -1011,9 +980,7 @@ static int dlpibindack (fd, bufp)
 /*
  * dlpiokack - general acknowledgement reception.
  */
-static int dlpiokack (fd, bufp)
-	char *bufp;
-	int fd;
+static int dlpiokack (int fd, char *bufp)
 {
 	union DL_primitives *dlp;
 	struct strbuf ctl;
@@ -1045,9 +1012,7 @@ static int dlpiokack (fd, bufp)
 /*
  * dlpiinfoack - receive an ack to a dlinforeq.
  */
-static int dlpiinfoack (fd, bufp)
-	char *bufp;
-	int fd;
+static int dlpiinfoack (int fd, char *bufp)
 {
 	union DL_primitives *dlp;
 	struct strbuf ctl;
@@ -1079,9 +1044,7 @@ static int dlpiinfoack (fd, bufp)
 /*
  * dlpiphysaddrack - receive an ack to a dlpiphysaddrreq.
  */
-int dlpiphysaddrack (fd, bufp)
-	char *bufp;
-	int fd;
+int dlpiphysaddrack (int fd, char *bufp)
 {
 	union DL_primitives *dlp;
 	struct strbuf ctl;
@@ -1111,14 +1074,8 @@ int dlpiphysaddrack (fd, bufp)
 }
 
 #if defined(USE_DLPI_SEND) || defined(USE_DLPI_RECEIVE)
-int dlpiunitdatareq (fd, addr, addrlen, minpri, maxpri, dbuf, dbuflen)
-	int fd;
-	unsigned char *addr;
-	int addrlen;
-	unsigned long minpri;
-	unsigned long maxpri;
-	unsigned char *dbuf;
-	int dbuflen;
+int dlpiunitdatareq (int fd, unsigned char *addr, int addrlen,
+	unsigned long minpri, unsigned long maxpri, unsigned char *dbuf, int dbuflen)
 {
 	long buf [DLPI_MAXDLBUF];
 	union DL_primitives *dlp;
@@ -1148,16 +1105,9 @@ int dlpiunitdatareq (fd, addr, addrlen, minpri, maxpri, dbuf, dbuflen)
 	return putmsg (fd, &ctl, &data, 0);
 }
 
-static int dlpiunitdataind (fd, daddr, daddrlen,
-			    saddr, saddrlen, grpaddr, dbuf, dlen)
-	int fd;
-	unsigned char *daddr;
-	unsigned long *daddrlen;
-	unsigned char *saddr;
-	unsigned long *saddrlen;
-	unsigned long *grpaddr;
-	unsigned char *dbuf;
-	int dlen;
+static int dlpiunitdataind (int fd, unsigned char *daddr,
+	unsigned long *daddrlen, unsigned char *saddr, unsigned long *saddrlen,
+	unsigned long *grpaddr, unsigned char *dbuf, int dlen)
 {
 	long buf [DLPI_MAXDLBUF];
 	union DL_primitives *dlp;
@@ -1224,10 +1174,8 @@ static int dlpiunitdataind (fd, daddr, daddrlen,
 /*
  * expected - see if we got what we wanted.
  */
-static int expected (prim, dlp, msgflags)
-	unsigned long prim;
-	union DL_primitives *dlp;
-	int msgflags;
+static int expected (unsigned long prim, union DL_primitives *dlp,
+	int msgflags)
 {
 	if (msgflags != RS_HIPRI) {
 		/* Message was not M_PCPROTO */
@@ -1245,11 +1193,8 @@ static int expected (prim, dlp, msgflags)
 /*
  * strgetmsg - get a message from a stream, with timeout.
  */
-static int strgetmsg (fd, ctlp, datap, flagsp, caller)
-	struct strbuf *ctlp, *datap;
-	char *caller;
-	int *flagsp;
-	int fd;
+static int strgetmsg (int fd, struct strbuf *ctlp, struct strbuf *datap,
+	int *flagsp, char *caller)
 {
 	int result;
 	struct pollfd pfd;
@@ -1312,20 +1257,17 @@ static int strgetmsg (fd, ctlp, datap, flagsp, caller)
 }
 
 #if defined(USE_DLPI_SEND)
-int can_unicast_without_arp (ip)
-	struct interface_info *ip;
+int can_unicast_without_arp (struct interface_info *ip)
 {
 	return 1;
 }
 
-int can_receive_unicast_unconfigured (ip)
-	struct interface_info *ip;
+int can_receive_unicast_unconfigured (struct interface_info *ip)
 {
 	return 1;
 }
 
-int supports_multiple_interfaces (ip)
-	struct interface_info *ip;
+int supports_multiple_interfaces (struct interface_info *ip)
 {
 	return 1;
 }

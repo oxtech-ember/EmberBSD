@@ -86,10 +86,7 @@ void relinquish_lease_hunks ()
 
 #endif
 
-struct lease *new_leases (n, file, line)
-	unsigned n;
-	const char *file;
-	int line;
+struct lease *new_leases (unsigned n, const char *file, int line)
 {
 	struct lease *rval;
 #if defined (DEBUG_MEMORY_LEAKAGE_ON_EXIT)
@@ -176,9 +173,7 @@ isc_result_t host_dereference (struct host_decl **ptr,
 
 struct lease_state *free_lease_states;
 
-struct lease_state *new_lease_state (file, line)
-	const char *file;
-	int line;
+struct lease_state *new_lease_state (const char *file, int line)
 {
 	struct lease_state *rval;
 
@@ -200,10 +195,7 @@ struct lease_state *new_lease_state (file, line)
 	return rval;
 }
 
-void free_lease_state (ptr, file, line)
-	struct lease_state *ptr;
-	const char *file;
-	int line;
+void free_lease_state (struct lease_state *ptr, const char *file, int line)
 {
 	if (ptr -> options)
 		option_state_dereference (&ptr -> options, file, line);
@@ -235,9 +227,7 @@ void relinquish_free_lease_states ()
 }
 #endif
 
-struct permit *new_permit (file, line)
-	const char *file;
-	int line;
+struct permit *new_permit (const char *file, int line)
 {
 	struct permit *permit = ((struct permit *)
 				 dmalloc (sizeof (struct permit), file, line));
@@ -247,10 +237,7 @@ struct permit *new_permit (file, line)
 	return permit;
 }
 
-void free_permit (permit, file, line)
-	struct permit *permit;
-	const char *file;
-	int line;
+void free_permit (struct permit *permit, const char *file, int line)
 {
 	if (permit -> type == permit_class)
 		class_dereference (&permit -> class, MDL);

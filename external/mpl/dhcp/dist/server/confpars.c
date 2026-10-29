@@ -51,7 +51,7 @@ static int parse_iaid_duid(struct parse *cfile, struct ia_xx** ia,
 trace_type_t *trace_readconf_type;
 trace_type_t *trace_readleases_type;
 
-void parse_trace_setup ()
+void parse_trace_setup (void)
 {
 	trace_readconf_type = trace_type_register ("readconf", (void *)0,
 						   trace_conf_input,
@@ -66,7 +66,7 @@ void parse_trace_setup ()
    parameters :== <nil> | parameter | parameters parameter
    declarations :== <nil> | declaration | declarations declaration */
 
-isc_result_t readconf ()
+isc_result_t readconf (void)
 {
 	isc_result_t res;
 
@@ -358,12 +358,8 @@ isc_result_t lease_file_subparse (struct parse *cfile)
 		 | USER_CLASS class-declaration
 		 | RANGE address-range-declaration */
 
-int parse_statement (cfile, group, type, host_decl, declaration)
-	struct parse *cfile;
-	struct group *group;
-	int type;
-	struct host_decl *host_decl;
-	int declaration;
+int parse_statement (struct parse *cfile, struct group *group, int type,
+	struct host_decl *host_decl, int declaration)
 {
 	enum dhcp_token token;
 	const char *val;
@@ -890,10 +886,7 @@ int parse_statement (cfile, group, type, host_decl, declaration)
 }
 
 #if defined (FAILOVER_PROTOCOL)
-void parse_failover_peer (cfile, group, type)
-	struct parse *cfile;
-	struct group *group;
-	int type;
+void parse_failover_peer (struct parse *cfile, struct group *group, int type)
 {
 	enum dhcp_token token;
 	const char *val;
@@ -1317,10 +1310,8 @@ void parse_failover_state_declaration (struct parse *cfile,
 	dhcp_failover_state_dereference (&state, MDL);
 }
 
-void parse_failover_state (cfile, state, stos)
-	struct parse *cfile;
-	enum failover_state *state;
-	TIME *stos;
+void parse_failover_state (struct parse *cfile, enum failover_state *state,
+	TIME *stos)
 {
 	enum dhcp_token token;
 	const char *val;
@@ -1723,10 +1714,7 @@ int permit_list_match (struct permit *lhs, struct permit *rhs)
  *        or it generates an error message and possible halts the program if
  *        it encounters a problem.
  */
-void parse_pool_statement (cfile, group, type)
-	struct parse *cfile;
-	struct group *group;
-	int type;
+void parse_pool_statement (struct parse *cfile, struct group *group, int type)
 {
 	enum dhcp_token token;
 	const char *val;
@@ -1932,8 +1920,7 @@ cleanup:
 /* Expect a left brace; if there isn't one, skip over the rest of the
    statement and return zero; otherwise, return 1. */
 
-int parse_lbrace (cfile)
-	struct parse *cfile;
+int parse_lbrace (struct parse *cfile)
 {
 	enum dhcp_token token;
 	const char *val;
@@ -1950,9 +1937,7 @@ int parse_lbrace (cfile)
 
 /* host-declaration :== hostname RBRACE parameters declarations LBRACE */
 
-void parse_host_declaration (cfile, group)
-	struct parse *cfile;
-	struct group *group;
+void parse_host_declaration (struct parse *cfile, struct group *group)
 {
 	const char *val;
 	enum dhcp_token token;
@@ -2217,11 +2202,8 @@ void parse_host_declaration (cfile, group)
 /* class-declaration :== STRING LBRACE parameters declarations RBRACE
 */
 
-int parse_class_declaration (cp, cfile, group, type)
-	struct class **cp;
-	struct parse *cfile;
-	struct group *group;
-	int type;
+int parse_class_declaration (struct class **cp, struct parse *cfile,
+	struct group *group, int type)
 {
 	const char *val;
 	enum dhcp_token token;
@@ -2597,9 +2579,7 @@ int parse_class_declaration (cp, cfile, group, type)
 /* shared-network-declaration :==
 			hostname LBRACE declarations parameters RBRACE */
 
-void parse_shared_net_declaration (cfile, group)
-	struct parse *cfile;
-	struct group *group;
+void parse_shared_net_declaration (struct parse *cfile, struct group *group)
 {
 	const char *val;
 	enum dhcp_token token;
@@ -2754,9 +2734,8 @@ common_subnet_parsing(struct parse *cfile,
 /* subnet-declaration :==
 	net NETMASK netmask RBRACE parameters declarations LBRACE */
 
-void parse_subnet_declaration (cfile, share)
-	struct parse *cfile;
-	struct shared_network *share;
+void parse_subnet_declaration (struct parse *cfile,
+	struct shared_network *share)
 {
 	const char *val;
 	enum dhcp_token token;
@@ -2968,9 +2947,7 @@ parse_subnet6_declaration(struct parse *cfile, struct shared_network *share) {
 
 /* group-declaration :== RBRACE parameters declarations LBRACE */
 
-void parse_group_declaration (cfile, group)
-	struct parse *cfile;
-	struct group *group;
+void parse_group_declaration (struct parse *cfile, struct group *group)
 {
 	const char *val;
 	enum dhcp_token token;
@@ -3778,12 +3755,8 @@ parse_binding_value(struct parse *cfile, struct binding_value *value)
 /* address-range-declaration :== ip-address ip-address SEMI
 			       | DYNAMIC_BOOTP ip-address ip-address SEMI */
 
-void parse_address_range (cfile, group, type, inpool, lpchain)
-	struct parse *cfile;
-	struct group *group;
-	int type;
-	struct pool *inpool;
-	struct lease **lpchain;
+void parse_address_range (struct parse *cfile, struct group *group, int type,
+	struct pool *inpool, struct lease **lpchain)
 {
 	struct iaddr low, high, net;
 	unsigned char addr [4];
@@ -4552,10 +4525,7 @@ parse_fixed_prefix6(struct parse *cfile, struct host_decl *host_decl) {
  *        or it generates an error message and possible halts the program if
  *        it encounters a problem.
  */
-void parse_pool6_statement (cfile, group, type)
-	struct parse *cfile;
-	struct group *group;
-	int type;
+void parse_pool6_statement (struct parse *cfile, struct group *group, int type)
 {
 	enum dhcp_token token;
 	const char *val;
@@ -4675,10 +4645,7 @@ cleanup:
 			| DYNAMIC_BOOTP
 			| UNKNOWN_CLIENTS */
 
-int parse_allow_deny (oc, cfile, flag)
-	struct option_cache **oc;
-	struct parse *cfile;
-	int flag;
+int parse_allow_deny (struct option_cache **oc, struct parse *cfile, int flag)
 {
 	enum dhcp_token token;
 	const char *val;

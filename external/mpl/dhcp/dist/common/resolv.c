@@ -37,8 +37,7 @@ struct name_server *name_servers;
 struct domain_search_list *domains;
 char path_resolv_conf [] = _PATH_RESOLV_CONF;
 
-void read_resolv_conf (parse_time)
-	TIME parse_time;
+void read_resolv_conf (TIME parse_time)
 {
 	int file;
 	struct parse *cfile;
@@ -171,7 +170,7 @@ void read_resolv_conf (parse_time)
 
 /* Pick a name server from the /etc/resolv.conf file. */
 
-struct name_server *first_name_server ()
+struct name_server *first_name_server (void)
 {
 	static TIME rcdate;
 	struct stat st;

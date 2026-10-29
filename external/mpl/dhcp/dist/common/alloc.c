@@ -37,10 +37,8 @@ __RCSID("$NetBSD: alloc.c,v 1.3 2022/04/03 01:10:58 christos Exp $");
 struct dhcp_packet *dhcp_free_list;
 struct packet *packet_free_list;
 
-int option_chain_head_allocate (ptr, file, line)
-	struct option_chain_head **ptr;
-	const char *file;
-	int line;
+int option_chain_head_allocate (struct option_chain_head **ptr,
+	const char *file, int line)
 {
 	struct option_chain_head *h;
 
@@ -69,11 +67,8 @@ int option_chain_head_allocate (ptr, file, line)
 	return 0;
 }
 
-int option_chain_head_reference (ptr, bp, file, line)
-	struct option_chain_head **ptr;
-	struct option_chain_head *bp;
-	const char *file;
-	int line;
+int option_chain_head_reference (struct option_chain_head **ptr,
+	struct option_chain_head *bp, const char *file, int line)
 {
 	if (!ptr) {
 		log_error ("%s(%d): null pointer", file, line);
@@ -97,10 +92,8 @@ int option_chain_head_reference (ptr, bp, file, line)
 	return 1;
 }
 
-int option_chain_head_dereference (ptr, file, line)
-	struct option_chain_head **ptr;
-	const char *file;
-	int line;
+int option_chain_head_dereference (struct option_chain_head **ptr,
+	const char *file, int line)
 {
 	struct option_chain_head *option_chain_head;
 	pair car, cdr;
@@ -147,10 +140,7 @@ int option_chain_head_dereference (ptr, file, line)
 	return 1;
 }
 
-int group_allocate (ptr, file, line)
-	struct group **ptr;
-	const char *file;
-	int line;
+int group_allocate (struct group **ptr, const char *file, int line)
 {
 	struct group *g;
 
@@ -179,11 +169,8 @@ int group_allocate (ptr, file, line)
 	return 0;
 }
 
-int group_reference (ptr, bp, file, line)
-	struct group **ptr;
-	struct group *bp;
-	const char *file;
-	int line;
+int group_reference (struct group **ptr, struct group *bp, const char *file,
+	int line)
 {
 	if (!ptr) {
 		log_error ("%s(%d): null pointer", file, line);
@@ -207,10 +194,7 @@ int group_reference (ptr, bp, file, line)
 	return 1;
 }
 
-int group_dereference (ptr, file, line)
-	struct group **ptr;
-	const char *file;
-	int line;
+int group_dereference (struct group **ptr, const char *file, int line)
 {
 	struct group *group;
 
@@ -258,9 +242,7 @@ int group_dereference (ptr, file, line)
 	return 1;
 }
 
-struct dhcp_packet *new_dhcp_packet (file, line)
-	const char *file;
-	int line;
+struct dhcp_packet *new_dhcp_packet (const char *file, int line)
 {
 	struct dhcp_packet *rval;
 	rval = (struct dhcp_packet *)dmalloc (sizeof (struct dhcp_packet),
@@ -268,44 +250,32 @@ struct dhcp_packet *new_dhcp_packet (file, line)
 	return rval;
 }
 
-struct protocol *new_protocol (file, line)
-	const char *file;
-	int line;
+struct protocol *new_protocol (const char *file, int line)
 {
 	struct protocol *rval = dmalloc (sizeof (struct protocol), file, line);
 	return rval;
 }
 
-struct domain_search_list *new_domain_search_list (file, line)
-	const char *file;
-	int line;
+struct domain_search_list *new_domain_search_list (const char *file, int line)
 {
 	struct domain_search_list *rval =
 		dmalloc (sizeof (struct domain_search_list), file, line);
 	return rval;
 }
 
-struct name_server *new_name_server (file, line)
-	const char *file;
-	int line;
+struct name_server *new_name_server (const char *file, int line)
 {
 	struct name_server *rval =
 		dmalloc (sizeof (struct name_server), file, line);
 	return rval;
 }
 
-void free_name_server (ptr, file, line)
-	struct name_server *ptr;
-	const char *file;
-	int line;
+void free_name_server (struct name_server *ptr, const char *file, int line)
 {
 	dfree ((void *)ptr, file, line);
 }
 
-struct option *new_option (name, file, line)
-	const char *name;
-	const char *file;
-	int line;
+struct option *new_option (const char *name, const char *file, int line)
 {
 	struct option *rval;
 	int len;
@@ -322,68 +292,48 @@ struct option *new_option (name, file, line)
 	return rval;
 }
 
-struct universe *new_universe (file, line)
-	const char *file;
-	int line;
+struct universe *new_universe (const char *file, int line)
 {
 	struct universe *rval =
 		dmalloc (sizeof (struct universe), file, line);
 	return rval;
 }
 
-void free_universe (ptr, file, line)
-	struct universe *ptr;
-	const char *file;
-	int line;
+void free_universe (struct universe *ptr, const char *file, int line)
 {
 	dfree ((void *)ptr, file, line);
 }
 
-void free_domain_search_list (ptr, file, line)
-	struct domain_search_list *ptr;
-	const char *file;
-	int line;
+void free_domain_search_list (struct domain_search_list *ptr, const char *file,
+	int line)
 {
 	dfree ((void *)ptr, file, line);
 }
 
-void free_protocol (ptr, file, line)
-	struct protocol *ptr;
-	const char *file;
-	int line;
+void free_protocol (struct protocol *ptr, const char *file, int line)
 {
 	dfree ((void *)ptr, file, line);
 }
 
-void free_dhcp_packet (ptr, file, line)
-	struct dhcp_packet *ptr;
-	const char *file;
-	int line;
+void free_dhcp_packet (struct dhcp_packet *ptr, const char *file, int line)
 {
 	dfree ((void *)ptr, file, line);
 }
 
-struct client_lease *new_client_lease (file, line)
-	const char *file;
-	int line;
+struct client_lease *new_client_lease (const char *file, int line)
 {
 	return (struct client_lease *)dmalloc (sizeof (struct client_lease),
 					       file, line);
 }
 
-void free_client_lease (lease, file, line)
-	struct client_lease *lease;
-	const char *file;
-	int line;
+void free_client_lease (struct client_lease *lease, const char *file, int line)
 {
 	dfree (lease, file, line);
 }
 
 pair free_pairs;
 
-pair new_pair (file, line)
-	const char *file;
-	int line;
+pair new_pair (const char *file, int line)
 {
 	pair foo;
 
@@ -402,10 +352,7 @@ pair new_pair (file, line)
 	return foo;
 }
 
-void free_pair (foo, file, line)
-	pair foo;
-	const char *file;
-	int line;
+void free_pair (pair foo, const char *file, int line)
 {
 	foo -> cdr = free_pairs;
 	free_pairs = foo;
@@ -428,10 +375,7 @@ void relinquish_free_pairs ()
 
 struct expression *free_expressions;
 
-int expression_allocate (cptr, file, line)
-	struct expression **cptr;
-	const char *file;
-	int line;
+int expression_allocate (struct expression **cptr, const char *file, int line)
 {
 	struct expression *rval;
 
@@ -448,11 +392,8 @@ int expression_allocate (cptr, file, line)
 	return expression_reference (cptr, rval, file, line);
 }
 
-int expression_reference (ptr, src, file, line)
-	struct expression **ptr;
-	struct expression *src;
-	const char *file;
-	int line;
+int expression_reference (struct expression **ptr, struct expression *src,
+	const char *file, int line)
 {
 	if (!ptr) {
 		log_error ("%s(%d): null pointer", file, line);
@@ -476,10 +417,7 @@ int expression_reference (ptr, src, file, line)
 	return 1;
 }
 
-void free_expression (expr, file, line)
-	struct expression *expr;
-	const char *file;
-	int line;
+void free_expression (struct expression *expr, const char *file, int line)
 {
 	expr -> data.not = free_expressions;
 	free_expressions = expr;
@@ -502,10 +440,8 @@ void relinquish_free_expressions ()
 
 struct binding_value *free_binding_values;
 
-int binding_value_allocate (cptr, file, line)
-	struct binding_value **cptr;
-	const char *file;
-	int line;
+int binding_value_allocate (struct binding_value **cptr, const char *file,
+	int line)
 {
 	struct binding_value *rval;
 
@@ -522,11 +458,8 @@ int binding_value_allocate (cptr, file, line)
 	return binding_value_reference (cptr, rval, file, line);
 }
 
-int binding_value_reference (ptr, src, file, line)
-	struct binding_value **ptr;
-	struct binding_value *src;
-	const char *file;
-	int line;
+int binding_value_reference (struct binding_value **ptr,
+	struct binding_value *src, const char *file, int line)
 {
 	if (!ptr) {
 		log_error ("%s(%d): null pointer", file, line);
@@ -550,10 +483,7 @@ int binding_value_reference (ptr, src, file, line)
 	return 1;
 }
 
-void free_binding_value (bv, file, line)
-	struct binding_value *bv;
-	const char *file;
-	int line;
+void free_binding_value (struct binding_value *bv, const char *file, int line)
 {
 	bv -> value.bv = free_binding_values;
 	free_binding_values = bv;
@@ -574,10 +504,7 @@ void relinquish_free_binding_values ()
 }
 #endif
 
-int fundef_allocate (cptr, file, line)
-	struct fundef **cptr;
-	const char *file;
-	int line;
+int fundef_allocate (struct fundef **cptr, const char *file, int line)
 {
 	struct fundef *rval;
 
@@ -588,11 +515,8 @@ int fundef_allocate (cptr, file, line)
 	return fundef_reference (cptr, rval, file, line);
 }
 
-int fundef_reference (ptr, src, file, line)
-	struct fundef **ptr;
-	struct fundef *src;
-	const char *file;
-	int line;
+int fundef_reference (struct fundef **ptr, struct fundef *src,
+	const char *file, int line)
 {
 	if (!ptr) {
 		log_error ("%s(%d): null pointer", file, line);
@@ -632,10 +556,8 @@ void relinquish_free_option_caches ()
 }
 #endif
 
-int option_cache_allocate (cptr, file, line)
-	struct option_cache **cptr;
-	const char *file;
-	int line;
+int option_cache_allocate (struct option_cache **cptr, const char *file,
+	int line)
 {
 	struct option_cache *rval;
 
@@ -653,11 +575,8 @@ int option_cache_allocate (cptr, file, line)
 	return option_cache_reference (cptr, rval, file, line);
 }
 
-int option_cache_reference (ptr, src, file, line)
-	struct option_cache **ptr;
-	struct option_cache *src;
-	const char *file;
-	int line;
+int option_cache_reference (struct option_cache **ptr,
+	struct option_cache *src, const char *file, int line)
 {
 	if (!ptr) {
 		log_error ("%s(%d): null pointer", file, line);
@@ -681,11 +600,8 @@ int option_cache_reference (ptr, src, file, line)
 	return 1;
 }
 
-int buffer_allocate (ptr, len, file, line)
-	struct buffer **ptr;
-	unsigned len;
-	const char *file;
-	int line;
+int buffer_allocate (struct buffer **ptr, unsigned len, const char *file,
+	int line)
 {
 	struct buffer *bp;
 
@@ -700,11 +616,8 @@ int buffer_allocate (ptr, len, file, line)
 	return buffer_reference (ptr, bp, file, line);
 }
 
-int buffer_reference (ptr, bp, file, line)
-	struct buffer **ptr;
-	struct buffer *bp;
-	const char *file;
-	int line;
+int buffer_reference (struct buffer **ptr, struct buffer *bp, const char *file,
+	int line)
 {
 	if (!ptr) {
 		log_error ("%s(%d): null pointer", file, line);
@@ -728,10 +641,7 @@ int buffer_reference (ptr, bp, file, line)
 	return 1;
 }
 
-int buffer_dereference (ptr, file, line)
-	struct buffer **ptr;
-	const char *file;
-	int line;
+int buffer_dereference (struct buffer **ptr, const char *file, int line)
 {
 	if (!ptr) {
 		log_error ("%s(%d): null pointer", file, line);
@@ -770,11 +680,8 @@ int buffer_dereference (ptr, file, line)
 	return 1;
 }
 
-int dns_host_entry_allocate (ptr, hostname, file, line)
-	struct dns_host_entry **ptr;
-	const char *hostname;
-	const char *file;
-	int line;
+int dns_host_entry_allocate (struct dns_host_entry **ptr, const char *hostname,
+	const char *file, int line)
 {
 	struct dns_host_entry *bp;
 
@@ -787,11 +694,8 @@ int dns_host_entry_allocate (ptr, hostname, file, line)
 	return dns_host_entry_reference (ptr, bp, file, line);
 }
 
-int dns_host_entry_reference (ptr, bp, file, line)
-	struct dns_host_entry **ptr;
-	struct dns_host_entry *bp;
-	const char *file;
-	int line;
+int dns_host_entry_reference (struct dns_host_entry **ptr,
+	struct dns_host_entry *bp, const char *file, int line)
 {
 	if (!ptr) {
 		log_error ("%s(%d): null pointer", file, line);
@@ -815,10 +719,8 @@ int dns_host_entry_reference (ptr, bp, file, line)
 	return 1;
 }
 
-int dns_host_entry_dereference (ptr, file, line)
-	struct dns_host_entry **ptr;
-	const char *file;
-	int line;
+int dns_host_entry_dereference (struct dns_host_entry **ptr, const char *file,
+	int line)
 {
 	if (!ptr || !*ptr) {
 		log_error ("%s(%d): null pointer", file, line);
@@ -848,10 +750,8 @@ int dns_host_entry_dereference (ptr, file, line)
 	return 1;
 }
 
-int option_state_allocate (ptr, file, line)
-	struct option_state **ptr;
-	const char *file;
-	int line;
+int option_state_allocate (struct option_state **ptr, const char *file,
+	int line)
 {
 	unsigned size;
 
@@ -885,11 +785,8 @@ int option_state_allocate (ptr, file, line)
 	return 0;
 }
 
-int option_state_reference (ptr, bp, file, line)
-	struct option_state **ptr;
-	struct option_state *bp;
-	const char *file;
-	int line;
+int option_state_reference (struct option_state **ptr, struct option_state *bp,
+	const char *file, int line)
 {
 	if (!ptr) {
 		log_error ("%s(%d): null pointer", file, line);
@@ -913,10 +810,8 @@ int option_state_reference (ptr, bp, file, line)
 	return 1;
 }
 
-int option_state_dereference (ptr, file, line)
-	struct option_state **ptr;
-	const char *file;
-	int line;
+int option_state_dereference (struct option_state **ptr, const char *file,
+	int line)
 {
 	int i;
 	struct option_state *options;
@@ -960,10 +855,8 @@ int option_state_dereference (ptr, file, line)
 	return 1;
 }
 
-int executable_statement_allocate (ptr, file, line)
-	struct executable_statement **ptr;
-	const char *file;
-	int line;
+int executable_statement_allocate (struct executable_statement **ptr,
+	const char *file, int line)
 {
 	struct executable_statement *bp;
 
@@ -974,11 +867,8 @@ int executable_statement_allocate (ptr, file, line)
 	return executable_statement_reference (ptr, bp, file, line);
 }
 
-int executable_statement_reference (ptr, bp, file, line)
-	struct executable_statement **ptr;
-	struct executable_statement *bp;
-	const char *file;
-	int line;
+int executable_statement_reference (struct executable_statement **ptr,
+	struct executable_statement *bp, const char *file, int line)
 {
 	if (!ptr) {
 		log_error ("%s(%d): null pointer", file, line);
@@ -1017,10 +907,7 @@ void relinquish_free_packets ()
 }
 #endif
 
-int packet_allocate (ptr, file, line)
-	struct packet **ptr;
-	const char *file;
-	int line;
+int packet_allocate (struct packet **ptr, const char *file, int line)
 {
 	struct packet *p;
 
@@ -1055,11 +942,8 @@ int packet_allocate (ptr, file, line)
 	return 0;
 }
 
-int packet_reference (ptr, bp, file, line)
-	struct packet **ptr;
-	struct packet *bp;
-	const char *file;
-	int line;
+int packet_reference (struct packet **ptr, struct packet *bp, const char *file,
+	int line)
 {
 	if (!ptr) {
 		log_error ("%s(%d): null pointer", file, line);
@@ -1083,10 +967,7 @@ int packet_reference (ptr, bp, file, line)
 	return 1;
 }
 
-int packet_dereference (ptr, file, line)
-	struct packet **ptr;
-	const char *file;
-	int line;
+int packet_dereference (struct packet **ptr, const char *file, int line)
 {
 	int i;
 	struct packet *packet;
@@ -1136,10 +1017,7 @@ int packet_dereference (ptr, file, line)
 	return 1;
 }
 
-int dns_zone_allocate (ptr, file, line)
-	struct dns_zone **ptr;
-	const char *file;
-	int line;
+int dns_zone_allocate (struct dns_zone **ptr, const char *file, int line)
 {
 	struct dns_zone *d;
 
@@ -1168,11 +1046,8 @@ int dns_zone_allocate (ptr, file, line)
 	return 0;
 }
 
-int dns_zone_reference (ptr, bp, file, line)
-	struct dns_zone **ptr;
-	struct dns_zone *bp;
-	const char *file;
-	int line;
+int dns_zone_reference (struct dns_zone **ptr, struct dns_zone *bp,
+	const char *file, int line)
 {
 	if (!ptr) {
 		log_error ("%s(%d): null pointer", file, line);
@@ -1196,10 +1071,8 @@ int dns_zone_reference (ptr, bp, file, line)
 	return 1;
 }
 
-int binding_scope_allocate (ptr, file, line)
-	struct binding_scope **ptr;
-	const char *file;
-	int line;
+int binding_scope_allocate (struct binding_scope **ptr, const char *file,
+	int line)
 {
 	struct binding_scope *bp;
 
@@ -1229,11 +1102,8 @@ int binding_scope_allocate (ptr, file, line)
 	return 1;
 }
 
-int binding_scope_reference (ptr, bp, file, line)
-	struct binding_scope **ptr;
-	struct binding_scope *bp;
-	const char *file;
-	int line;
+int binding_scope_reference (struct binding_scope **ptr,
+	struct binding_scope *bp, const char *file, int line)
 {
 	if (!ptr) {
 		log_error ("%s(%d): null pointer", file, line);
@@ -1341,10 +1211,7 @@ data_string_copy(struct data_string *dest, const struct data_string *src,
 /* Release the reference count to a data string's buffer (if any) and
    zero out the other information, yielding the null data string. */
 
-void data_string_forget (data, file, line)
-	struct data_string *data;
-	const char *file;
-	int line;
+void data_string_forget (struct data_string *data, const char *file, int line)
 {
 	if (data -> buffer)
 		buffer_dereference (&data -> buffer, file, line);
@@ -1354,9 +1221,7 @@ void data_string_forget (data, file, line)
 /* If the data_string is larger than the specified length, reduce
    the data_string to the specified size. */
 
-void data_string_truncate (dp, len)
-	struct data_string *dp;
-	int len;
+void data_string_truncate (struct data_string *dp, int len)
 {
 	/* XXX: do we need to consider the "terminated" flag in the check? */
 	if (len < dp -> len) {
@@ -1384,10 +1249,7 @@ void data_string_truncate (dp, len)
  * string could not be allocated.  If the conversion fails, the original
  * string's content is lost.
  */
-int data_string_terminate(str, file, line)
-	struct data_string* str;
-	const char *file;
-	int line;
+int data_string_terminate(struct data_string *str, const char *file, int line)
 {
 	int ret_val = 1;
 

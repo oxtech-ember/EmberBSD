@@ -70,7 +70,7 @@ int check_secs_byte_order = 0; /* enables byte order check of secs field if 1 */
  * On failure, a fatal error is logged.
  *
  */
-void dhcp_failover_sanity_check() {
+void dhcp_failover_sanity_check(void) {
 	dhcp_failover_state_t *state;
 	int fail_count = 0;
 
@@ -97,7 +97,7 @@ void dhcp_failover_sanity_check() {
 
 }
 
-void dhcp_failover_startup ()
+void dhcp_failover_startup (void)
 {
 	dhcp_failover_state_t *state;
 	isc_result_t status;
@@ -142,7 +142,7 @@ void dhcp_failover_startup ()
 	}
 }
 
-int dhcp_failover_write_all_states ()
+int dhcp_failover_write_all_states (void)
 {
 	dhcp_failover_state_t *state;
 
@@ -153,8 +153,7 @@ int dhcp_failover_write_all_states ()
 	return 1;
 }
 
-isc_result_t enter_failover_peer (peer)
-	dhcp_failover_state_t *peer;
+isc_result_t enter_failover_peer (dhcp_failover_state_t *peer)
 {
 	dhcp_failover_state_t *dup = (dhcp_failover_state_t *)0;
 	isc_result_t status;
@@ -176,11 +175,8 @@ isc_result_t enter_failover_peer (peer)
 	return status;
 }
 
-isc_result_t find_failover_peer (peer, name, file, line)
-	dhcp_failover_state_t **peer;
-	const char *name;
-	const char *file;
-	int line;
+isc_result_t find_failover_peer (dhcp_failover_state_t **peer,
+	const char *name, const char *file, int line)
 {
 	dhcp_failover_state_t *p;
 
@@ -647,9 +643,8 @@ isc_result_t dhcp_failover_link_signal (omapi_object_t *h,
 	return ISC_R_SUCCESS;
 }
 
-static isc_result_t do_a_failover_option (c, link)
-	omapi_object_t *c;
-	dhcp_failover_link_t *link;
+static isc_result_t do_a_failover_option (omapi_object_t *c,
+	dhcp_failover_link_t *link)
 {
 	u_int16_t option_code;
 	u_int16_t option_len;
@@ -3695,9 +3690,8 @@ int dhcp_failover_state_match (dhcp_failover_state_t *state,
 }
 
 int
-dhcp_failover_state_match_by_name(state, name)
-	dhcp_failover_state_t *state;
-	failover_option_t *name;
+dhcp_failover_state_match_by_name(dhcp_failover_state_t *state,
+	failover_option_t *name)
 {
 	if ((strlen(state->name) == name->count) &&
 	    (memcmp(state->name, name->data, name->count) == 0))

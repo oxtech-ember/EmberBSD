@@ -97,7 +97,7 @@ int interface_max;
 
 OMAPI_OBJECT_ALLOC (interface, struct interface_info, dhcp_type_interface)
 
-isc_result_t interface_setup ()
+isc_result_t interface_setup (void)
 {
 	isc_result_t status;
 	status = omapi_object_type_register (&dhcp_type_interface,
@@ -121,7 +121,7 @@ isc_result_t interface_setup ()
 }
 
 #if defined (TRACING)
-void interface_trace_setup ()
+void interface_trace_setup (void)
 {
 	interface_trace = trace_type_register ("interface", (void *)0,
 					       trace_interface_input,
@@ -1048,8 +1048,7 @@ discover_interfaces(int state) {
 #endif /* F_SETFD */
 }
 
-int if_readsocket (h)
-	omapi_object_t *h;
+int if_readsocket (omapi_object_t *h)
 {
 	struct interface_info *ip;
 
@@ -1078,7 +1077,7 @@ int setup_fallback (struct interface_info **fp, const char *file, int line)
 	return status == ISC_R_SUCCESS;
 }
 
-void reinitialize_interfaces ()
+void reinitialize_interfaces (void)
 {
 	struct interface_info *ip;
 
@@ -1093,8 +1092,7 @@ void reinitialize_interfaces ()
 	interfaces_invalidated = 1;
 }
 
-isc_result_t got_one (h)
-	omapi_object_t *h;
+isc_result_t got_one (omapi_object_t *h)
 {
 	struct sockaddr_in from;
 	struct hardware hfrom;

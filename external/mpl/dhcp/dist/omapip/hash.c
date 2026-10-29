@@ -57,11 +57,8 @@ find_length(const void *key,
 	return 0;
 }
 
-int new_hash_table (tp, count, file, line)
-	struct hash_table **tp;
-	unsigned count;
-	const char *file;
-	int line;
+int new_hash_table (struct hash_table **tp, unsigned count, const char *file,
+	int line)
 {
 	struct hash_table *rval;
 	unsigned extra;
@@ -100,10 +97,7 @@ int new_hash_table (tp, count, file, line)
 	return 1;
 }
 
-void free_hash_table (tp, file, line)
-	struct hash_table **tp;
-	const char *file;
-	int line;
+void free_hash_table (struct hash_table **tp, const char *file, int line)
 {
 	struct hash_table *ptr = *tp;
 
@@ -166,9 +160,7 @@ void relinquish_hash_bucket_hunks ()
 }
 #endif
 
-struct hash_bucket *new_hash_bucket (file, line)
-	const char *file;
-	int line;
+struct hash_bucket *new_hash_bucket (const char *file, int line)
 {
 	struct hash_bucket *rval;
 	int i = 0;
@@ -195,10 +187,7 @@ struct hash_bucket *new_hash_bucket (file, line)
 	return rval;
 }
 
-void free_hash_bucket (ptr, file, line)
-	struct hash_bucket *ptr;
-	const char *file;
-	int line;
+void free_hash_bucket (struct hash_bucket *ptr, const char *file, int line)
 {
 #if defined (DEBUG_MALLOC_POOL)
 	struct hash_bucket *hp;
@@ -398,13 +387,8 @@ hash_report(struct hash_table *table)
 	return retbuf;
 }
 
-void add_hash (table, key, len, pointer, file, line)
-	struct hash_table *table;
-	unsigned len;
-	const void *key;
-	hashed_object_t *pointer;
-	const char *file;
-	int line;
+void add_hash (struct hash_table *table, const void *key, unsigned len,
+	hashed_object_t *pointer, const char *file, int line)
 {
 	int hashno;
 	struct hash_bucket *bp;
@@ -434,12 +418,8 @@ void add_hash (table, key, len, pointer, file, line)
 	table -> buckets [hashno] = bp;
 }
 
-void delete_hash_entry (table, key, len, file, line)
-	struct hash_table *table;
-	unsigned len;
-	const void *key;
-	const char *file;
-	int line;
+void delete_hash_entry (struct hash_table *table, const void *key,
+	unsigned len, const char *file, int line)
 {
 	int hashno;
 	struct hash_bucket *bp, *pbp = (struct hash_bucket *)0;
@@ -476,13 +456,8 @@ void delete_hash_entry (table, key, len, file, line)
 	}
 }
 
-int hash_lookup (vp, table, key, len, file, line)
-	hashed_object_t **vp;
-	struct hash_table *table;
-	const void *key;
-	unsigned len;
-	const char *file;
-	int line;
+int hash_lookup (hashed_object_t **vp, struct hash_table *table,
+	const void *key, unsigned len, const char *file, int line)
 {
 	int hashno;
 	struct hash_bucket *bp;

@@ -294,9 +294,7 @@ dhcp (struct packet *packet) {
 		lease_dereference (&lease, MDL);
 }
 
-void dhcpdiscover (packet, ms_nulltp)
-	struct packet *packet;
-	int ms_nulltp;
+void dhcpdiscover (struct packet *packet, int ms_nulltp)
 {
 	struct lease *lease = (struct lease *)0;
 	char msgbuf [1024]; /* XXX */
@@ -454,10 +452,7 @@ void dhcpdiscover (packet, ms_nulltp)
 		lease_dereference (&lease, MDL);
 }
 
-void dhcprequest (packet, ms_nulltp, ip_lease)
-	struct packet *packet;
-	int ms_nulltp;
-	struct lease *ip_lease;
+void dhcprequest (struct packet *packet, int ms_nulltp, struct lease *ip_lease)
 {
 	struct lease *lease;
 	struct iaddr cip;
@@ -778,9 +773,7 @@ void dhcprequest (packet, ms_nulltp, ip_lease)
 	return;
 }
 
-void dhcprelease (packet, ms_nulltp)
-	struct packet *packet;
-	int ms_nulltp;
+void dhcprelease (struct packet *packet, int ms_nulltp)
 {
 	struct lease *lease = (struct lease *)0, *next = (struct lease *)0;
 	struct iaddr cip;
@@ -933,9 +926,7 @@ void dhcprelease (packet, ms_nulltp)
 		lease_dereference (&lease, MDL);
 }
 
-void dhcpdecline (packet, ms_nulltp)
-	struct packet *packet;
-	int ms_nulltp;
+void dhcpdecline (struct packet *packet, int ms_nulltp)
 {
 	struct lease *lease = (struct lease *)0;
 	struct option_state *options = (struct option_state *)0;
@@ -1075,8 +1066,7 @@ void dhcpdecline (packet, ms_nulltp)
 }
 
 #if defined(RELAY_PORT)
-u_int16_t dhcp_check_relayport(packet)
-	struct packet *packet;
+u_int16_t dhcp_check_relayport(struct packet *packet)
 {
 	if (lookup_option(&agent_universe,
 			  packet->options,
@@ -1088,9 +1078,7 @@ u_int16_t dhcp_check_relayport(packet)
 }
 #endif
 
-void dhcpinform (packet, ms_nulltp)
-	struct packet *packet;
-	int ms_nulltp;
+void dhcpinform (struct packet *packet, int ms_nulltp)
 {
 	char msgbuf[1024], *addr_type;
 	struct data_string d1, prl, fixed_addr;
@@ -1779,10 +1767,8 @@ void dhcpinform (packet, ms_nulltp)
  * \param cip address requested by the client
  * \param network_group optional scope for use in setting up options
  */
-void nak_lease (packet, cip, network_group)
-	struct packet *packet;
-	struct iaddr *cip;
-	struct group *network_group; /* scope to use for options */
+void nak_lease (struct packet *packet, struct iaddr *cip,
+	struct group *network_group /* scope to use for options */)
 {
 	struct sockaddr_in to;
 	struct in_addr from;
@@ -2029,11 +2015,8 @@ void nak_lease (packet, cip, network_group)
  * \param in_options options in which to search for echo-client-id
  * \param out_options options to which to save the client-id
  */
-void echo_client_id(packet, lease, in_options, out_options)
-	struct packet *packet;
-	struct lease *lease;
-	struct option_state *in_options;
-	struct option_state *out_options;
+void echo_client_id(struct packet *packet, struct lease *lease,
+	struct option_state *in_options, struct option_state *out_options)
 {
 	struct option_cache *oc;
 	int ignorep;
@@ -2170,14 +2153,8 @@ static void check_pool_threshold (struct packet *packet, struct lease *lease,
 	}
 }
 
-void ack_lease (packet, lease, offer, when, msg, ms_nulltp, hp)
-	struct packet *packet;
-	struct lease *lease;
-	unsigned int offer;
-	TIME when;
-	char *msg;
-	int ms_nulltp;
-	struct host_decl *hp;
+void ack_lease (struct packet *packet, struct lease *lease, unsigned int offer,
+	TIME when, char *msg, int ms_nulltp, struct host_decl *hp)
 {
 	struct lease *lt;
 	struct lease_state *state;
@@ -3887,8 +3864,7 @@ relinquish_ackqueue(void)
 
 #endif /* defined(DELAYED_ACK) */
 
-void dhcp_reply (lease)
-	struct lease *lease;
+void dhcp_reply (struct lease *lease)
 {
 	int bufs = 0;
 	unsigned packet_length;
@@ -5143,9 +5119,7 @@ int allocate_lease (struct lease **lp, struct packet *packet,
    that matches the specified packet, returning nonzero if so, zero if
    not. */
 
-int permitted (packet, permit_list)
-	struct packet *packet;
-	struct permit *permit_list;
+int permitted (struct packet *packet, struct permit *permit_list)
 {
 	struct permit *p;
 	int i;
@@ -5203,8 +5177,7 @@ int permitted (packet, permit_list)
 }
 
 #if defined(DHCPv6) && defined(DHCP4o6)
-static int locate_network6 (packet)
-	struct packet *packet;
+static int locate_network6 (struct packet *packet)
 {
 	const struct packet *chk_packet;
 	const struct in6_addr *link_addr, *first_link_addr;
@@ -5328,8 +5301,7 @@ static int locate_network6 (packet)
 }
 #endif
 
-int locate_network (packet)
-	struct packet *packet;
+int locate_network (struct packet *packet)
 {
 	struct iaddr ia;
 	struct data_string data;

@@ -51,8 +51,7 @@ static int prepare_option_buffer(struct universe *universe, struct buffer *bp,
 
 /* Parse all available options out of the specified packet. */
 /* Note, the caller is responsible for allocating packet->options. */
-int parse_options (packet)
-	struct packet *packet;
+int parse_options (struct packet *packet)
 {
 	struct option_cache *op = NULL;
 
@@ -121,11 +120,8 @@ int parse_options (packet)
 /* Parse options out of the specified buffer, storing addresses of option
  * values in packet->options.
  */
-int parse_option_buffer (options, buffer, length, universe)
-	struct option_state *options;
-	const unsigned char *buffer;
-	unsigned length;
-	struct universe *universe;
+int parse_option_buffer (struct option_state *options,
+	const unsigned char *buffer, unsigned length, struct universe *universe)
 {
 	unsigned len, offset;
 	unsigned code;
@@ -1636,8 +1632,7 @@ store_options(int *ocount,
  */
 
 int
-format_has_text(format)
-	const char *format;
+format_has_text(const char *format)
 {
 	const char *p;
 
@@ -1699,9 +1694,7 @@ format_has_text(format)
  */
 
 int
-format_min_length(format, oc)
-	const char *format;
-	struct option_cache *oc;
+format_min_length(const char *format, struct option_cache *oc)
 {
 	const char *p, *name;
 	int min_len = 0;
@@ -1800,12 +1793,8 @@ format_min_length(format, oc)
 /* Format the specified option so that a human can easily read it. */
 /* Maximum pretty printed size */
 #define MAX_OUTPUT_SIZE 32*1024
-const char *pretty_print_option (option, data, len, emit_commas, emit_quotes)
-	struct option *option;
-	const unsigned char *data;
-	unsigned len;
-	int emit_commas;
-	int emit_quotes;
+const char *pretty_print_option (struct option *option,
+	const unsigned char *data, unsigned len, int emit_commas, int emit_quotes)
 {
 	/* We add 128 byte pad so we don't have to add checks everywhere. */
 	static char optbuf [MAX_OUTPUT_SIZE + 128]; /* XXX */
@@ -2287,20 +2276,11 @@ const char *pretty_print_option (option, data, len, emit_commas, emit_quotes)
 	return optbuf;
 }
 
-int get_option (result, universe, packet, lease, client_state,
-		in_options, cfg_options, options, scope, code, file, line)
-	struct data_string *result;
-	struct universe *universe;
-	struct packet *packet;
-	struct lease *lease;
-	struct client_state *client_state;
-	struct option_state *in_options;
-	struct option_state *cfg_options;
-	struct option_state *options;
-	struct binding_scope **scope;
-	unsigned code;
-	const char *file;
-	int line;
+int get_option (struct data_string *result, struct universe *universe,
+	struct packet *packet, struct lease *lease, struct client_state *client_state,
+	struct option_state *in_options, struct option_state *cfg_options,
+	struct option_state *options, struct binding_scope **scope, unsigned code,
+	const char *file, int line)
 {
 	struct option_cache *oc;
 
@@ -2322,20 +2302,11 @@ int get_option (result, universe, packet, lease, client_state,
  * in the future to handle other integers at which point it will
  * need a size argument.
  */
-int get_option_int (result, universe, packet, lease, client_state,
-		    in_options, cfg_options, options, scope, code, file, line)
-	int *result;
-	struct universe *universe;
-	struct packet *packet;
-	struct lease *lease;
-	struct client_state *client_state;
-	struct option_state *in_options;
-	struct option_state *cfg_options;
-	struct option_state *options;
-	struct binding_scope **scope;
-	unsigned code;
-	const char *file;
-	int line;
+int get_option_int (int *result, struct universe *universe,
+	struct packet *packet, struct lease *lease, struct client_state *client_state,
+	struct option_state *in_options, struct option_state *cfg_options,
+	struct option_state *options, struct binding_scope **scope, unsigned code,
+	const char *file, int line)
 {
 	struct option_cache *oc;
 	struct data_string d1;
@@ -2367,11 +2338,8 @@ int get_option_int (result, universe, packet, lease, client_state,
 	return (rcode);
 }
 
-void set_option (universe, options, option, op)
-	struct universe *universe;
-	struct option_state *options;
-	struct option_cache *option;
-	enum statement_op op;
+void set_option (struct universe *universe, struct option_state *options,
+	struct option_cache *option, enum statement_op op)
 {
 	struct option_cache *oc, *noc;
 
@@ -2467,10 +2435,8 @@ void set_option (universe, options, option, op)
 	}
 }
 
-struct option_cache *lookup_option (universe, options, code)
-	struct universe *universe;
-	struct option_state *options;
-	unsigned code;
+struct option_cache *lookup_option (struct universe *universe,
+	struct option_state *options, unsigned code)
 {
 	if (!options)
 		return (struct option_cache *)0;
@@ -2482,10 +2448,8 @@ struct option_cache *lookup_option (universe, options, code)
 	return (struct option_cache *)0;
 }
 
-struct option_cache *lookup_hashed_option (universe, options, code)
-	struct universe *universe;
-	struct option_state *options;
-	unsigned code;
+struct option_cache *lookup_hashed_option (struct universe *universe,
+	struct option_state *options, unsigned code)
 {
 	int hashix;
 	pair bptr;
@@ -2870,10 +2834,8 @@ save_hashed_option(struct universe *universe, struct option_state *options,
 	hash [hashix] = bptr;
 }
 
-void delete_option (universe, options, code)
-	struct universe *universe;
-	struct option_state *options;
-	int code;
+void delete_option (struct universe *universe, struct option_state *options,
+	int code)
 {
 	if (universe -> delete_func)
 		(*universe -> delete_func) (universe, options, code);
@@ -2882,10 +2844,8 @@ void delete_option (universe, options, code)
 			   universe -> name);
 }
 
-void delete_hashed_option (universe, options, code)
-	struct universe *universe;
-	struct option_state *options;
-	int code;
+void delete_hashed_option (struct universe *universe,
+	struct option_state *options, int code)
 {
 	int hashix;
 	pair bptr, prev = (pair)0;
@@ -2917,10 +2877,8 @@ void delete_hashed_option (universe, options, code)
 
 extern struct option_cache *free_option_caches; /* XXX */
 
-int option_cache_dereference (ptr, file, line)
-	struct option_cache **ptr;
-	const char *file;
-	int line;
+int option_cache_dereference (struct option_cache **ptr, const char *file,
+	int line)
 {
 	if (!ptr || !*ptr) {
 		log_error ("Null pointer in option_cache_dereference: %s(%d)",
@@ -2967,11 +2925,8 @@ int option_cache_dereference (ptr, file, line)
 
 }
 
-int hashed_option_state_dereference (universe, state, file, line)
-	struct universe *universe;
-	struct option_state *state;
-	const char *file;
-	int line;
+int hashed_option_state_dereference (struct universe *universe,
+	struct option_state *state, const char *file, int line)
 {
 	pair *heads;
 	pair cp, next;
@@ -3125,16 +3080,10 @@ store_option(struct data_string *result, struct universe *universe,
 	return 0;
 }
 
-int option_space_encapsulate (result, packet, lease, client_state,
-			      in_options, cfg_options, scope, name)
-	struct data_string *result;
-	struct packet *packet;
-	struct lease *lease;
-	struct client_state *client_state;
-	struct option_state *in_options;
-	struct option_state *cfg_options;
-	struct binding_scope **scope;
-	struct data_string *name;
+int option_space_encapsulate (struct data_string *result,
+	struct packet *packet, struct lease *lease, struct client_state *client_state,
+	struct option_state *in_options, struct option_state *cfg_options,
+	struct binding_scope **scope, struct data_string *name)
 {
 	struct universe *u = NULL;
 	int status = 0;
@@ -3213,16 +3162,10 @@ search_subencapsulation(struct data_string *result, struct packet *packet,
 	return status;
 }
 
-int hashed_option_space_encapsulate (result, packet, lease, client_state,
-				     in_options, cfg_options, scope, universe)
-	struct data_string *result;
-	struct packet *packet;
-	struct lease *lease;
-	struct client_state *client_state;
-	struct option_state *in_options;
-	struct option_state *cfg_options;
-	struct binding_scope **scope;
-	struct universe *universe;
+int hashed_option_space_encapsulate (struct data_string *result,
+	struct packet *packet, struct lease *lease, struct client_state *client_state,
+	struct option_state *in_options, struct option_state *cfg_options,
+	struct binding_scope **scope, struct universe *universe)
 {
 	pair p, *hash;
 	int status;
@@ -3256,16 +3199,10 @@ int hashed_option_space_encapsulate (result, packet, lease, client_state,
 	return status;
 }
 
-int nwip_option_space_encapsulate (result, packet, lease, client_state,
-				   in_options, cfg_options, scope, universe)
-	struct data_string *result;
-	struct packet *packet;
-	struct lease *lease;
-	struct client_state *client_state;
-	struct option_state *in_options;
-	struct option_state *cfg_options;
-	struct binding_scope **scope;
-	struct universe *universe;
+int nwip_option_space_encapsulate (struct data_string *result,
+	struct packet *packet, struct lease *lease, struct client_state *client_state,
+	struct option_state *in_options, struct option_state *cfg_options,
+	struct binding_scope **scope, struct universe *universe)
 {
 	pair ocp;
 	int status;
@@ -3381,16 +3318,10 @@ fqdn_encode(unsigned char *dst, int dstlen, const unsigned char *src,
 	return outlen;
 }
 
-int fqdn_option_space_encapsulate (result, packet, lease, client_state,
-				   in_options, cfg_options, scope, universe)
-	struct data_string *result;
-	struct packet *packet;
-	struct lease *lease;
-	struct client_state *client_state;
-	struct option_state *in_options;
-	struct option_state *cfg_options;
-	struct binding_scope **scope;
-	struct universe *universe;
+int fqdn_option_space_encapsulate (struct data_string *result,
+	struct packet *packet, struct lease *lease, struct client_state *client_state,
+	struct option_state *in_options, struct option_state *cfg_options,
+	struct binding_scope **scope, struct universe *universe)
 {
 	pair ocp;
 	struct data_string results [FQDN_SUBOPTION_COUNT + 1];
@@ -3877,16 +3808,10 @@ save_linked_option(struct universe *universe, struct option_state *options,
 	}
 }
 
-int linked_option_space_encapsulate (result, packet, lease, client_state,
-				    in_options, cfg_options, scope, universe)
-	struct data_string *result;
-	struct packet *packet;
-	struct lease *lease;
-	struct client_state *client_state;
-	struct option_state *in_options;
-	struct option_state *cfg_options;
-	struct binding_scope **scope;
-	struct universe *universe;
+int linked_option_space_encapsulate (struct data_string *result,
+	struct packet *packet, struct lease *lease, struct client_state *client_state,
+	struct option_state *in_options, struct option_state *cfg_options,
+	struct binding_scope **scope, struct universe *universe)
 {
 	int status = 0;
 	pair oc;
@@ -3913,10 +3838,8 @@ int linked_option_space_encapsulate (result, packet, lease, client_state,
 	return status;
 }
 
-void delete_linked_option (universe, options, code)
-	struct universe *universe;
-	struct option_state *options;
-	int code;
+void delete_linked_option (struct universe *universe,
+	struct option_state *options, int code)
 {
 	pair *tail, tmp = (pair)0;
 	struct option_chain_head *head;
@@ -3942,10 +3865,8 @@ void delete_linked_option (universe, options, code)
 	}
 }
 
-struct option_cache *lookup_linked_option (universe, options, code)
-	struct universe *universe;
-	struct option_state *options;
-	unsigned code;
+struct option_cache *lookup_linked_option (struct universe *universe,
+	struct option_state *options, unsigned code)
 {
 	pair oc;
 	struct option_chain_head *head;
@@ -3967,11 +3888,8 @@ struct option_cache *lookup_linked_option (universe, options, code)
 	return (struct option_cache *)0;
 }
 
-int linked_option_state_dereference (universe, state, file, line)
-	struct universe *universe;
-	struct option_state *state;
-	const char *file;
-	int line;
+int linked_option_state_dereference (struct universe *universe,
+	struct option_state *state, const char *file, int line)
 {
 	return (option_chain_head_dereference
 		((struct option_chain_head **)
@@ -4009,13 +3927,9 @@ void linked_option_space_foreach (struct packet *packet, struct lease *lease,
 	}
 }
 
-void do_packet (interface, packet, len, from_port, from, hfrom)
-	struct interface_info *interface;
-	struct dhcp_packet *packet;
-	unsigned len;
-	unsigned int from_port;
-	struct iaddr from;
-	struct hardware *hfrom;
+void do_packet (struct interface_info *interface, struct dhcp_packet *packet,
+	unsigned len, unsigned int from_port, struct iaddr from,
+	struct hardware *hfrom)
 {
 	struct option_cache *op;
 	struct packet *decoded_packet;
@@ -4569,14 +4483,9 @@ int validate_packet(struct packet *packet)
  *
  * \return - void as there isn't much we can do about failures.
  */
-void parse_vendor_option(packet, lease, client_state, in_options,
-			 out_options, scope)
-	struct packet *packet;
-	struct lease *lease;
-	struct client_state *client_state;
-	struct option_state *in_options;
-	struct option_state *out_options;
-	struct binding_scope **scope;
+void parse_vendor_option(struct packet *packet, struct lease *lease,
+	struct client_state *client_state, struct option_state *in_options,
+	struct option_state *out_options, struct binding_scope **scope)
 {
 	struct option_cache *oc = NULL;
 	struct data_string name;

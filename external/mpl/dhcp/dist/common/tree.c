@@ -139,9 +139,7 @@ data_string_sprintfa(struct data_string *ds, const char *fmt, ...) {
 	return 1;
 }
 
-pair cons (car, cdr)
-	caddr_t car;
-	pair cdr;
+pair cons (caddr_t car, pair cdr)
 {
 	pair foo = (pair)dmalloc (sizeof *foo, MDL);
 	if (!foo)
@@ -151,14 +149,9 @@ pair cons (car, cdr)
 	return foo;
 }
 
-int make_const_option_cache (oc, buffer, data, len, option, file, line)
-	struct option_cache **oc;
-	struct buffer **buffer;
-	u_int8_t *data;
-	unsigned len;
-	struct option *option;
-	const char *file;
-	int line;
+int make_const_option_cache (struct option_cache **oc, struct buffer **buffer,
+	u_int8_t *data, unsigned len, struct option *option, const char *file,
+	int line)
 {
 	struct buffer *bp;
 
@@ -190,9 +183,7 @@ int make_const_option_cache (oc, buffer, data, len, option, file, line)
 	return 1;
 }
 
-int make_host_lookup (expr, name)
-	struct expression **expr;
-	const char *name;
+int make_host_lookup (struct expression **expr, const char *name)
 {
 	if (!expression_allocate (expr, MDL)) {
 		log_error ("No memory for host lookup tree node.");
@@ -206,9 +197,7 @@ int make_host_lookup (expr, name)
 	return 1;
 }
 
-int enter_dns_host (dh, name)
-	struct dns_host_entry **dh;
-	const char *name;
+int enter_dns_host (struct dns_host_entry **dh, const char *name)
 {
 	/* XXX This should really keep a hash table of hostnames
 	   XXX and just add a new reference to a hostname that
@@ -256,9 +245,7 @@ int make_const_data (struct expression **expr, const unsigned char *data,
 	return 1;
 }
 
-int make_const_int (expr, val)
-	struct expression **expr;
-	unsigned long val;
+int make_const_int (struct expression **expr, unsigned long val)
 {
 	if (!expression_allocate (expr, MDL)) {
 		log_error ("No memory for make_const_int tree node.");
@@ -270,9 +257,8 @@ int make_const_int (expr, val)
 	return 1;
 }
 
-int make_concat (expr, left, right)
-	struct expression **expr;
-	struct expression *left, *right;
+int make_concat (struct expression **expr, struct expression *left,
+	struct expression *right)
 {
 	/* If we're concatenating a null tree to a non-null tree, just
 	   return the non-null tree; if both trees are null, return
@@ -300,9 +286,7 @@ int make_concat (expr, left, right)
 	return 1;
 }
 
-int make_encapsulation (expr, name)
-	struct expression **expr;
-	struct data_string *name;
+int make_encapsulation (struct expression **expr, struct data_string *name)
 {
 	/* Allocate a new node to store the encapsulation. */
 	if (!expression_allocate (expr, MDL)) {
@@ -315,11 +299,8 @@ int make_encapsulation (expr, name)
 	return 1;
 }
 
-int make_substring (new, expr, offset, length)
-	struct expression **new;
-	struct expression *expr;
-	struct expression *offset;
-	struct expression *length;
+int make_substring (struct expression **new, struct expression *expr,
+	struct expression *offset, struct expression *length)
 {
 	/* Allocate an expression node to compute the substring. */
 	if (!expression_allocate (new, MDL)) {
@@ -333,10 +314,7 @@ int make_substring (new, expr, offset, length)
 	return 1;
 }
 
-int make_limit (new, expr, limit)
-	struct expression **new;
-	struct expression *expr;
-	int limit;
+int make_limit (struct expression **new, struct expression *expr, int limit)
 {
 	/* Allocate a node to enforce a limit on evaluation. */
 	if (!expression_allocate (new, MDL))
@@ -379,9 +357,7 @@ int option_cache (struct option_cache **oc, struct data_string *dp,
 	return 1;
 }
 
-int make_let (result, name)
-	struct executable_statement **result;
-	const char *name;
+int make_let (struct executable_statement **result, const char *name)
 {
 	if (!(executable_statement_allocate (result, MDL)))
 		return 0;
@@ -396,9 +372,8 @@ int make_let (result, name)
 	return 1;
 }
 
-static int do_host_lookup (result, dns)
-	struct data_string *result;
-	struct dns_host_entry *dns;
+static int do_host_lookup (struct data_string *result,
+	struct dns_host_entry *dns)
 {
 	struct hostent *h;
 	unsigned i, count;
@@ -502,18 +477,11 @@ static int do_host_lookup (result, dns)
 	return 1;
 }
 
-int evaluate_expression (result, packet, lease, client_state,
-			 in_options, cfg_options, scope, expr, file, line)
-	struct binding_value **result;
-	struct packet *packet;
-	struct lease *lease;
-	struct client_state *client_state;
-	struct option_state *in_options;
-	struct option_state *cfg_options;
-	struct binding_scope **scope;
-	struct expression *expr;
-	const char *file;
-	int line;
+int evaluate_expression (struct binding_value **result, struct packet *packet,
+	struct lease *lease, struct client_state *client_state,
+	struct option_state *in_options, struct option_state *cfg_options,
+	struct binding_scope **scope, struct expression *expr, const char *file,
+	int line)
 {
 	struct binding_value *bv;
 	int status;
@@ -696,16 +664,10 @@ int binding_value_dereference (struct binding_value **v,
 	return 1;
 }
 
-int evaluate_boolean_expression (result, packet, lease, client_state,
-				 in_options, cfg_options, scope, expr)
-	int *result;
-	struct packet *packet;
-	struct lease *lease;
-	struct client_state *client_state;
-	struct option_state *in_options;
-	struct option_state *cfg_options;
-	struct binding_scope **scope;
-	struct expression *expr;
+int evaluate_boolean_expression (int *result, struct packet *packet,
+	struct lease *lease, struct client_state *client_state,
+	struct option_state *in_options, struct option_state *cfg_options,
+	struct binding_scope **scope, struct expression *expr)
 {
 	struct data_string left, right;
 	int bleft, bright;
@@ -1128,18 +1090,11 @@ int evaluate_boolean_expression (result, packet, lease, client_state,
 	return 0;
 }
 
-int evaluate_data_expression (result, packet, lease, client_state,
-			      in_options, cfg_options, scope, expr, file, line)
-	struct data_string *result;
-	struct packet *packet;
-	struct lease *lease;
-	struct client_state *client_state;
-	struct option_state *in_options;
-	struct option_state *cfg_options;
-	struct binding_scope **scope;
-	struct expression *expr;
-	const char *file;
-	int line;
+int evaluate_data_expression (struct data_string *result,
+	struct packet *packet, struct lease *lease, struct client_state *client_state,
+	struct option_state *in_options, struct option_state *cfg_options,
+	struct binding_scope **scope, struct expression *expr, const char *file,
+	int line)
 {
 	struct data_string data, other;
 	unsigned long offset, len, i;
@@ -2231,16 +2186,10 @@ int evaluate_data_expression (result, packet, lease, client_state,
 	return 0;
 }
 
-int evaluate_numeric_expression (result, packet, lease, client_state,
-				 in_options, cfg_options, scope, expr)
-	unsigned long *result;
-	struct packet *packet;
-	struct lease *lease;
-	struct client_state *client_state;
-	struct option_state *in_options;
-	struct option_state *cfg_options;
-	struct binding_scope **scope;
-	struct expression *expr;
+int evaluate_numeric_expression (unsigned long *result, struct packet *packet,
+	struct lease *lease, struct client_state *client_state,
+	struct option_state *in_options, struct option_state *cfg_options,
+	struct binding_scope **scope, struct expression *expr)
 {
 	struct data_string data;
 	int status, sleft, sright;
@@ -2701,18 +2650,11 @@ int evaluate_numeric_expression (result, packet, lease, client_state,
  * be modified
  */
 
-int evaluate_option_cache (result, packet, lease, client_state,
-			   in_options, cfg_options, scope, oc, file, line)
-	struct data_string *result;
-	struct packet *packet;
-	struct lease *lease;
-	struct client_state *client_state;
-	struct option_state *in_options;
-	struct option_state *cfg_options;
-	struct binding_scope **scope;
-	struct option_cache *oc;
-	const char *file;
-	int line;
+int evaluate_option_cache (struct data_string *result, struct packet *packet,
+	struct lease *lease, struct client_state *client_state,
+	struct option_state *in_options, struct option_state *cfg_options,
+	struct binding_scope **scope, struct option_cache *oc, const char *file,
+	int line)
 {
 	if (oc->data.data != NULL) {
 		data_string_copy (result, &oc -> data, file, line);
@@ -2735,19 +2677,11 @@ int evaluate_option_cache (result, packet, lease, client_state,
  * This supports both classic boolean flags on/off as well as the
  * allow/deny/ignore keywords
 */
-int evaluate_boolean_option_cache (ignorep, packet,
-				   lease, client_state, in_options,
-				   cfg_options, scope, oc, file, line)
-	int *ignorep;
-	struct packet *packet;
-	struct lease *lease;
-	struct client_state *client_state;
-	struct option_state *in_options;
-	struct option_state *cfg_options;
-	struct binding_scope **scope;
-	struct option_cache *oc;
-	const char *file;
-	int line;
+int evaluate_boolean_option_cache (int *ignorep, struct packet *packet,
+	struct lease *lease, struct client_state *client_state,
+	struct option_state *in_options, struct option_state *cfg_options,
+	struct binding_scope **scope, struct option_cache *oc, const char *file,
+	int line)
 {
 	int result = 0;
 	if (ignorep)
@@ -2782,16 +2716,10 @@ int evaluate_boolean_option_cache (ignorep, packet,
 /* Evaluate a boolean expression and return the result of the evaluation,
    or FALSE if it failed. */
 
-int evaluate_boolean_expression_result (ignorep, packet, lease, client_state,
-					in_options, cfg_options, scope, expr)
-	int *ignorep;
-	struct packet *packet;
-	struct lease *lease;
-	struct client_state *client_state;
-	struct option_state *in_options;
-	struct option_state *cfg_options;
-	struct binding_scope **scope;
-	struct expression *expr;
+int evaluate_boolean_expression_result (int *ignorep, struct packet *packet,
+	struct lease *lease, struct client_state *client_state,
+	struct option_state *in_options, struct option_state *cfg_options,
+	struct binding_scope **scope, struct expression *expr)
 {
 	int result;
 
@@ -2815,10 +2743,8 @@ int evaluate_boolean_expression_result (ignorep, packet, lease, client_state,
 
 /* Dereference an expression node, and if the reference count goes to zero,
    dereference any data it refers to, and then free it. */
-void expression_dereference (eptr, file, line)
-	struct expression **eptr;
-	const char *file;
-	int line;
+void expression_dereference (struct expression **eptr, const char *file,
+	int line)
 {
 	struct expression *expr = *eptr;
 
@@ -3033,8 +2959,7 @@ void expression_dereference (eptr, file, line)
 	free_expression (expr, MDL);
 }
 
-int is_boolean_expression (expr)
-	struct expression *expr;
+int is_boolean_expression (struct expression *expr)
 {
 	return (expr -> op == expr_check ||
 		expr -> op == expr_exists ||
@@ -3050,8 +2975,7 @@ int is_boolean_expression (expr)
 		expr -> op == expr_static);
 }
 
-int is_data_expression (expr)
-	struct expression *expr;
+int is_data_expression (struct expression *expr)
 {
 	return (expr->op == expr_substring ||
 		expr->op == expr_suffix ||
@@ -3080,8 +3004,7 @@ int is_data_expression (expr)
 	        expr->op == expr_v6relay);
 }
 
-int is_numeric_expression (expr)
-	struct expression *expr;
+int is_numeric_expression (struct expression *expr)
 {
 	return (expr -> op == expr_extract_int8 ||
 		expr -> op == expr_extract_int16 ||
@@ -3099,8 +3022,7 @@ int is_numeric_expression (expr)
 		expr -> op == expr_client_state);
 }
 
-int is_compound_expression (expr)
-	struct expression *expr;
+int is_compound_expression (struct expression *expr)
 {
 	return (expr -> op == expr_substring ||
 		expr -> op == expr_suffix ||
@@ -3121,8 +3043,7 @@ int is_compound_expression (expr)
 
 static int op_val (enum expr_op);
 
-static int op_val (op)
-	enum expr_op op;
+static int op_val (enum expr_op op)
 {
 	switch (op) {
 	      case expr_none:
@@ -3202,8 +3123,7 @@ static int op_val (op)
 	return 100;
 }
 
-int op_precedence (op1, op2)
-	enum expr_op op1, op2;
+int op_precedence (enum expr_op op1, enum expr_op op2)
 {
 	return op_val (op1) - op_val (op2);
 }
@@ -3219,8 +3139,7 @@ enum expression_context expression_context (struct expression *expr)
 	return context_any;
 }
 
-enum expression_context op_context (op)
-	enum expr_op op;
+enum expression_context op_context (enum expr_op op)
 {
 	switch (op) {
 /* XXX Why aren't these specific? */
@@ -3300,12 +3219,8 @@ enum expression_context op_context (op)
 	return context_any;
 }
 
-int write_expression (file, expr, col, indent, firstp)
-	FILE *file;
-	struct expression *expr;
-	int col;
-	int indent;
-	int firstp;
+int write_expression (FILE *file, struct expression *expr, int col, int indent,
+	int firstp)
 {
 	struct expression *e;
 	const char *s;
@@ -3788,10 +3703,8 @@ int free_bindings (struct binding_scope *scope, const char *file, int line)
 	return 1;
 }
 
-int binding_scope_dereference (ptr, file, line)
-	struct binding_scope **ptr;
-	const char *file;
-	int line;
+int binding_scope_dereference (struct binding_scope **ptr, const char *file,
+	int line)
 {
 	struct binding_scope *binding_scope;
 
@@ -3831,10 +3744,7 @@ int binding_scope_dereference (ptr, file, line)
 	return 1;
 }
 
-int fundef_dereference (ptr, file, line)
-	struct fundef **ptr;
-	const char *file;
-	int line;
+int fundef_dereference (struct fundef **ptr, const char *file, int line)
 {
 	struct fundef *bp;
 	struct string_list *sp, *next;

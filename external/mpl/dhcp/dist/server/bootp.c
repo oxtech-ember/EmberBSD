@@ -38,8 +38,7 @@ __RCSID("$NetBSD: bootp.c,v 1.3 2022/04/03 01:10:59 christos Exp $");
 # define send_packet trace_packet_send
 #endif
 
-void bootp (packet)
-	struct packet *packet;
+void bootp (struct packet *packet)
 {
 	int result;
 	struct host_decl *hp = (struct host_decl *)0;

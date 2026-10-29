@@ -36,8 +36,7 @@ __RCSID("$NetBSD: convert.c,v 1.3 2022/04/03 01:10:59 christos Exp $");
 
 #include <omapip/omapip_p.h>
 
-u_int32_t getULong (buf)
-	const unsigned char *buf;
+u_int32_t getULong (const unsigned char *buf)
 {
 	u_int32_t ibuf;
 
@@ -45,8 +44,7 @@ u_int32_t getULong (buf)
 	return ntohl (ibuf);
 }
 
-int32_t getLong (buf)
-	const unsigned char *buf;
+int32_t getLong (const unsigned char *buf)
 {
 	int32_t ibuf;
 
@@ -54,8 +52,7 @@ int32_t getLong (buf)
 	return ntohl (ibuf);
 }
 
-u_int32_t getUShort (buf)
-	const unsigned char *buf;
+u_int32_t getUShort (const unsigned char *buf)
 {
 	unsigned short ibuf;
 
@@ -63,8 +60,7 @@ u_int32_t getUShort (buf)
 	return ntohs (ibuf);
 }
 
-int32_t getShort (buf)
-	const unsigned char *buf;
+int32_t getShort (const unsigned char *buf)
 {
 	short ibuf;
 
@@ -72,55 +68,42 @@ int32_t getShort (buf)
 	return ntohs (ibuf);
 }
 
-void putULong (obuf, val)
-	unsigned char *obuf;
-	u_int32_t val;
+void putULong (unsigned char *obuf, u_int32_t val)
 {
 	u_int32_t tmp = htonl (val);
 	memcpy (obuf, &tmp, sizeof tmp);
 }
 
-void putLong (obuf, val)
-	unsigned char *obuf;
-	int32_t val;
+void putLong (unsigned char *obuf, int32_t val)
 {
 	int32_t tmp = htonl (val);
 	memcpy (obuf, &tmp, sizeof tmp);
 }
 
-void putUShort (obuf, val)
-	unsigned char *obuf;
-	u_int32_t val;
+void putUShort (unsigned char *obuf, u_int32_t val)
 {
 	u_int16_t tmp = htons (val);
 	memcpy (obuf, &tmp, sizeof tmp);
 }
 
-void putShort (obuf, val)
-	unsigned char *obuf;
-	int32_t val;
+void putShort (unsigned char *obuf, int32_t val)
 {
 	int16_t tmp = htons (val);
 	memcpy (obuf, &tmp, sizeof tmp);
 }
 
-void putUChar (obuf, val)
-	unsigned char *obuf;
-	u_int32_t val;
+void putUChar (unsigned char *obuf, u_int32_t val)
 {
 	*obuf = val;
 }
 
-u_int32_t getUChar (obuf)
-	const unsigned char *obuf;
+u_int32_t getUChar (const unsigned char *obuf)
 {
 	return obuf [0];
 }
 
-int converted_length (buf, base, width)
-	const unsigned char *buf;
-	unsigned int base;
-	unsigned int width;
+int converted_length (const unsigned char *buf, unsigned int base,
+	unsigned int width)
 {
 	u_int32_t number;
 	u_int32_t column;
@@ -152,11 +135,8 @@ int converted_length (buf, base, width)
 	return power;
 }
 
-int binary_to_ascii (outbuf, inbuf, base, width)
-	unsigned char *outbuf;
-	const unsigned char *inbuf;
-	unsigned int base;
-	unsigned int width;
+int binary_to_ascii (unsigned char *outbuf, const unsigned char *inbuf,
+	unsigned int base, unsigned int width)
 {
 	u_int32_t number;
 	static char h2a [] = "0123456789abcdef";
