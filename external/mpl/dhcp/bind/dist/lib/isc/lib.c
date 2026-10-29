@@ -82,6 +82,6 @@ isc__shutdown(void) {
  * called at least once from different compilation unit (mem.c in this case).
  */
 void
-isc_enable_constructors() {
+isc_enable_constructors(void) {
 	/* do nothing */
 }

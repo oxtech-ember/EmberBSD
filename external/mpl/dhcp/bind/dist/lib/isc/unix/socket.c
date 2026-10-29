@@ -5385,7 +5385,7 @@ init_hasreuseport(void) {
 }
 
 bool
-isc_socket_hasreuseport() {
+isc_socket_hasreuseport(void) {
 	RUNTIME_CHECK(isc_once_do(&hasreuseport_once, init_hasreuseport) ==
 		      ISC_R_SUCCESS);
 	return (hasreuseport);
