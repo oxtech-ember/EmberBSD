@@ -59,7 +59,7 @@ omapi_object_type_t *dhcp_type_failover_link;
 omapi_object_type_t *dhcp_type_failover_listener;
 #endif
 
-void dhcp_db_objects_setup ()
+void dhcp_db_objects_setup (void)
 {
 	isc_result_t status;
 

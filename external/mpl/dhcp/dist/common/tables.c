@@ -1060,7 +1060,7 @@ option_dereference(struct option **dest, const char *file, int line)
 	return ISC_R_SUCCESS;
 }
 
-void initialize_common_option_spaces()
+void initialize_common_option_spaces(void)
 {
 	unsigned code;
 	int i;

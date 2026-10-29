@@ -456,7 +456,7 @@ struct enumeration syslog_enum = {
 	syslog_values
 };
 
-void initialize_server_option_spaces()
+void initialize_server_option_spaces(void)
 {
 	int i;
 	unsigned code;

@@ -45,7 +45,7 @@ omapi_object_type_t *dhcpctl_remote_type;
 
    Must be called before any other dhcpctl function. */
 
-dhcpctl_status dhcpctl_initialize ()
+dhcpctl_status dhcpctl_initialize (void)
 {
 	isc_result_t status;
 

@@ -90,12 +90,12 @@ void trace_free_all ()
 static isc_result_t trace_type_record (trace_type_t *,
 				       unsigned, const char *, int);
 
-int trace_playback ()
+int trace_playback (void)
 {
 	return trace_playback_flag;
 }
 
-int trace_record ()
+int trace_record (void)
 {
 	if (traceoutfile && !tracing_stopped)
 		return 1;

@@ -42,21 +42,19 @@ static void trace_connection_input_stop (trace_type_t *);
 static void trace_connection_output_input (trace_type_t *, unsigned, char *);
 static void trace_connection_output_stop (trace_type_t *);
 static trace_type_t *trace_connection_input;
-static trace_type_t *trace_connection_output;
 static isc_result_t omapi_connection_reader_trace (omapi_object_t *,
 						   unsigned, char *,
 						   unsigned *);
 extern omapi_array_t *omapi_connections;
 
-void omapi_buffer_trace_setup ()
+void omapi_buffer_trace_setup (void)
 {
 	trace_connection_input =
 		trace_type_register ("connection-input",
 				     (void *)0,
 				     trace_connection_input_input,
 				     trace_connection_input_stop, MDL);
-	trace_connection_output =
-		trace_type_register ("connection-output",
+	(void)trace_type_register ("connection-output",
 				     (void *)0,
 				     trace_connection_output_input,
 				     trace_connection_output_stop, MDL);

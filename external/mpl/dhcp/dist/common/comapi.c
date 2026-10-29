@@ -53,7 +53,7 @@ omapi_object_type_t *dhcp_type_subnet;
 omapi_object_type_t *dhcp_type_control;
 dhcp_control_object_t *dhcp_control_object;
 
-void dhcp_common_objects_setup ()
+void dhcp_common_objects_setup (void)
 {
 	isc_result_t status;
 

@@ -390,7 +390,7 @@ void dhcp_signal_handler(int signal) {
 }
 
 #if defined (NSUPDATE)
-isc_result_t dns_client_init() {
+isc_result_t dns_client_init(void) {
 	isc_result_t result;
 	if (dhcp_gbl_ctx.dnsclient == NULL) {
 		result = dns_client_create(dhcp_gbl_ctx.mctx,
