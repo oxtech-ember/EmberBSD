@@ -189,7 +189,6 @@ BEGIN {
 	print "ioctlname(u_long val)"
 	print "{"
 	print ""
-	print "\tswitch (val) {\n"
 }
 
 /^#[ 	]*define[ 	]*[A-Z0-9_]*[ 	]*[D]*[R]*[M]*_IO[W]*[R]*[ 	]*\(/ {
@@ -208,7 +207,7 @@ BEGIN {
 		next;
 	keep[name] = 1;
 	printf("\t#ifdef %s\n", name);
-	printf("\tcase %s:\n\t\treturn \"%s\";\n", name, name);
+	printf("\tif (val == %s)\n\t\treturn \"%s\";\n", name, name);
 	printf("\t#endif /* %s */\n", $i);
 	name = name;
 	names[name] = name;
@@ -221,8 +220,7 @@ BEGIN {
 	exprs[name] = substr(exprs[name], 2);
 }
 END {
-	print "\tdefault:\n\t\treturn NULL;\n"
-	print "\t}\n"
+	print "\treturn NULL;"
 	print "}"
 	print "const struct ioctlinfo ioctlinfo[] = {\n";
 	for (name in names) {
