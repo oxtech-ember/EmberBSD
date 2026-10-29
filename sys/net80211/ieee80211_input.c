@@ -2248,9 +2248,13 @@ ieee80211_sta_csa_current(struct ieee80211com *ic, struct ieee80211_node *ni,
 
 /* Close TX before removing queued ciphertext and its timer ownership. */
 static int
-ieee80211_sta_csa_exit(struct ieee80211com *ic, struct ieee80211_node *ni)
+ieee80211_sta_csa_exit(struct ieee80211com *ic, struct ieee80211_node *ni,
+    int recoverable)
 {
-	ic->ic_sta_quiet(ic);
+	if (recoverable && ic->ic_sta_csa != NULL)
+		ic->ic_sta_csa(ic);
+	else
+		ic->ic_sta_quiet(ic);
 	ieee80211_ht20_reset(ni);
 	(void)ieee80211_new_state(ic, IEEE80211_S_INIT, -1);
 	return 1;
@@ -2262,8 +2266,10 @@ ieee80211_sta_csa_exit(struct ieee80211com *ic, struct ieee80211_node *ni)
  */
 static int
 ieee80211_sta_csa_action(struct ieee80211com *ic, struct ieee80211_node *ni,
-    const struct ieee80211_frame *wh, const uint8_t prefix[2])
+    const struct ieee80211_frame *wh, const uint8_t *prefix, size_t len)
 {
+	int recoverable;
+
 	if (!ieee80211_sta_csa_current(ic, ni, wh) ||
 	    (wh->i_fc[1] & (IEEE80211_FC1_WEP | IEEE80211_FC1_MORE_FRAG |
 	    IEEE80211_FC1_ORDER | IEEE80211_FC1_DIR_MASK)) != 0 ||
@@ -2272,7 +2278,12 @@ ieee80211_sta_csa_action(struct ieee80211com *ic, struct ieee80211_node *ni,
 	     !IEEE80211_ADDR_EQ(wh->i_addr1, ic->ic_myaddr)) ||
 	    !ieee80211_sta_action_announcement(prefix, 2))
 		return 0;
-	return ieee80211_sta_csa_exit(ic, ni);
+	/* Only complete standard bodies may request automatic recovery. A
+	 * recognized but malformed prefix retains the old permanent fence. */
+	recoverable = (len == 7 && prefix[0] == 0 && prefix[2] == 37 &&
+	    prefix[3] == 3 && prefix[4] <= 1 && prefix[5] != 0) ||
+	    (len == 6 && prefix[0] == 4 && prefix[2] <= 1 && prefix[4] != 0);
+	return ieee80211_sta_csa_exit(ic, ni, recoverable);
 }
 
 /* A driver can opt into a conservative STA exit policy. Any matching CSA
@@ -2284,11 +2295,17 @@ static int
 ieee80211_sta_csa_beacon(struct ieee80211com *ic, struct ieee80211_node *ni,
     const struct ieee80211_frame *wh, const uint8_t *body, size_t len)
 {
+	struct ieee80211_beacon_ies ies;
+	int recoverable;
+
 	if (!ieee80211_sta_csa_current(ic, ni, wh))
 		return 0;
 	if (!ieee80211_sta_beacon_announcement(body, len))
 		return 0;
-	return ieee80211_sta_csa_exit(ic, ni);
+	recoverable = len >= 12 && body != NULL &&
+	    ieee80211_beacon_ies_parse(&ies, body + 12, len - 12) == 0 &&
+	    ies.quiet == NULL && (ies.csa != NULL || ies.xcsa != NULL);
+	return ieee80211_sta_csa_exit(ic, ni, recoverable);
 }
 
 static void
@@ -3371,8 +3388,8 @@ ieee80211_recv_mgmt(struct ieee80211com *ic, struct mbuf *m0,
 		uint8_t body[9];
 		int len = m0->m_pkthdr.len - (int)sizeof(*wh);
 		if (m0->m_len >= (int)sizeof(*wh) && len >= 2) {
-			m_copydata(m0, sizeof(*wh), 2, body);
-			if (ieee80211_sta_csa_action(ic, ni, wh, body))
+			m_copydata(m0, sizeof(*wh), MIN((size_t)len, sizeof(body)), body);
+			if (ieee80211_sta_csa_action(ic, ni, wh, body, (size_t)len))
 				return;
 		}
 		if (m0->m_len < (int)sizeof(*wh) || (len != 9 && len != 6) ||

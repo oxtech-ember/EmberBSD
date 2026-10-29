@@ -36,8 +36,18 @@ It withdraws the HT snapshot, closes the policy epoch and clears RUNNING
 before it invokes the core fence. Shared net80211 then purges RX BA and
 requests INIT. The existing worker retires RFK and stops the core.
 The wrapper's quiet latch survives INIT, SCAN, AUTH, RUN and interface init.
-Only detach removes the latch. There is no channel-switch retune or automatic
-recovery. The original fence error stays in the interface-owned record.
+Only detach removes a generic Quiet or malformed-announcement latch.
+The original fence error stays in the interface-owned record.
+
+A separate `ic_sta_csa` provider permits recovery from a validated CSA/ECSA.
+The worker completes parent INIT before a full stop and verified DMA release.
+It then starts a fresh core while host admission remains closed. It rechecks
+interface-up, detach, cancellation and request identity before reopening SCAN.
+It does not follow the advertised successor or reuse an old AUTH/RUN contract.
+A later Quiet, an ambiguous announcement, or a failed fence, stop or start
+keeps transmission closed. A synchronous interface stop cancels recovery.
+The RFK experiment does not enable this automatic recovery path.
+Existing fresh-beacon checks alone can grant a new DFS slave permit.
 
 An active RFK transaction also observes the host fence. Its restoration writes
 cannot reopen TX after this fence. An incomplete transaction can retain RFK
@@ -55,3 +65,6 @@ and explicit full stop/start recovery. This is software contract evidence.
 `ember/tools/rtw88-enable-contract.sh` also executes the actual shared beacon,
 native provider and state worker. It covers control faults, repeated requests,
 mailbox and drain sleep cancellation, and quiet during firmware loading.
+It also checks CSA recovery order, stop/start failures, repeated Quiet,
+interface-down, detach and successor requests. These are modeled software
+checks; they do not qualify a physical AP channel switch.

@@ -1354,13 +1354,24 @@ static void enable_sta_quiet(void)
         CHECK(f.delays==delays && f.syncs==syncs && sc.sc_dma_master);
         for(unsigned q=0;q<RTW88_NTXQ;q++)CHECK(rtw88_tx_available(&sc,q)==0);
         unsigned writes=f.writes;
-        ic->ic_sta_quiet(ic);
+        ic->ic_sta_csa(ic);
         CHECK(f.writes==writes);
         quiet_fault=0;sc.sc_ops=&ops;
-        CHECK(rtw88_net_newstate(ic,IEEE80211_S_INIT,-1)==0);
+        /* The actual shared beacon has already requested mandatory INIT. */
         /* A coalesced SCAN must not reopen admission or start firmware. */
         CHECK(rtw88_net_newstate(ic,IEEE80211_S_SCAN,0)==EBUSY);
         rtw88_net_state_work(&net->state_work,net);
+        if (fault == 0) {
+            /* A valid CSA must retire the old peer, then resume scanning.
+             * No payload or DFS transmission lease survives this transition. */
+            CHECK(!net->tx_quiet);
+            CHECK(ic->ic_state == IEEE80211_S_SCAN);
+            CHECK(sc.sc_started && sc.sc_running && sc.sc_dma_master);
+            CHECK((net->ec.ec_if.if_flags & IFF_RUNNING) != 0);
+            CHECK(!sc.sc_linked && !sc.sc_ra.active && !sc.sc_dfs.valid);
+            enable_destroy(net);
+            continue;
+        }
         CHECK(ic->ic_state==IEEE80211_S_INIT && !net->policy.accepting);
         CHECK(!sc.sc_started && !sc.sc_dma_master);
         unsigned loads=f.firmware_loads;
@@ -1370,6 +1381,99 @@ static void enable_sta_quiet(void)
         rtw88_net_state_work(&net->state_work,net);
         CHECK(f.firmware_loads==loads && !sc.sc_started);
         enable_destroy(net);
+    }
+}
+
+/* Keep the scheduler and fault hooks explicit; all fence, INIT ownership,
+ * stop, DMA release, start and SCAN consumers below are production bodies. */
+#ifndef RTW88_RFK_EXPERIMENT
+static void workqueue_wait(struct workqueue *queue,struct work *work)
+{
+    struct rtw88_net *net=(void *)((char *)work-
+        offsetof(struct rtw88_net,state_work));
+    CHECK(queue==net->wq && !mutex_owned(net->lock));
+    if(net->work_pending)rtw88_net_state_work(work,net);
+    CHECK(!net->work_pending);
+}
+#endif
+static struct rtw88_net *csa_net;
+static unsigned csa_kind,csa_inits,csa_stops,csa_loads,csa_scans,csa_injected;
+static int csa_parent(struct ieee80211com *ic,enum ieee80211_state state,int arg)
+{
+    if(state==IEEE80211_S_INIT) {
+        CHECK(csa_net->tx_quiet && !csa_net->policy.accepting);
+        CHECK((csa_net->ec.ec_if.if_flags&IFF_RUNNING)==0);
+        csa_inits++;
+        if(csa_kind==5)ic->ic_sta_quiet(ic);
+        if(csa_kind==6)return EIO;
+        if(csa_kind==7 && !csa_injected++)
+            CHECK(rtw88_net_newstate(ic,IEEE80211_S_SCAN,0)==EBUSY);
+        if(csa_kind==16 && !csa_injected++)
+            CHECK(rtw88_net_newstate(ic,IEEE80211_S_INIT,-1)==0);
+    }
+    if(state==IEEE80211_S_SCAN) {
+        CHECK(csa_inits && csa_stops && csa_loads);
+        CHECK(!csa_net->tx_quiet && !csa_net->core->sc_dfs.valid);
+        csa_scans++;
+    }
+    return enable_parent_state(ic,state,arg);
+}
+static int csa_master(void *cookie,int enable)
+{
+    CHECK(csa_inits!=0);
+    if(!enable)csa_stops++;
+    else CHECK(csa_stops && !f.master);
+    return bus_master(cookie,enable);
+}
+static int csa_firmware(void *cookie,const char *driver,const char *name,
+    const uint8_t **data,size_t *len)
+{
+    CHECK(csa_inits && csa_stops && csa_net->tx_quiet);
+    CHECK(!csa_net->policy.accepting);
+    csa_loads++;
+    if(!csa_injected++) {
+        if(csa_kind==8)csa_net->ec.ec_if.if_flags&=~IFF_UP;
+        if(csa_kind==9)csa_net->ic.ic_sta_quiet(&csa_net->ic);
+        if(csa_kind==10)CHECK(rtw88_net_newstate(&csa_net->ic,IEEE80211_S_SCAN,0)==EBUSY);
+        if(csa_kind==11)csa_net->policy.dying=1;
+        if(csa_kind==15)CHECK(rtw88_net_newstate(&csa_net->ic,IEEE80211_S_INIT,-1)==0);
+    }
+    if(csa_kind==12)return EIO;
+    return firmware_load(cookie,driver,name,data,len);
+}
+static void enable_csa_recovery(void)
+{
+    for(unsigned kind=0;kind<17;kind++) {
+        struct rtw88_softc sc;kmutex_t lock={.initialized=1};
+        struct rtw88_net *net=enable_attach(&sc,&lock);if(!net)return;
+        csa_net=net;csa_kind=kind;
+        csa_inits=csa_stops=csa_loads=csa_scans=csa_injected=0;
+        net->ic.ic_state=IEEE80211_S_RUN;
+        net->parent_state=csa_parent;
+        net->ic.ic_sta_csa(&net->ic);
+        CHECK(net->tx_quiet && net->csa_pending);
+        CHECK(rtw88_net_newstate(&net->ic,IEEE80211_S_INIT,-1)==0);
+        if(kind==1)f.disable_error=1;
+        if(kind==2)net->ic.ic_sta_quiet(&net->ic);
+        if(kind==3)net->ec.ec_if.if_flags&=~IFF_UP;
+        if(kind==4)net->policy.dying=1;
+        if(kind==13)enable_native_stop(&net->ec.ec_if,1);
+        if(kind==14)CHECK(rtw88_net_newstate(&net->ic,IEEE80211_S_INIT,-1)==0);
+        struct rtw88_bus_ops spy=ops;
+        spy.bus_master=csa_master;spy.firmware_load=csa_firmware;
+        sc.sc_ops=&spy;
+        rtw88_net_state_work(&net->state_work,net);
+        if(kind==0 || kind==7 || kind==10) {
+            CHECK(csa_scans==1 && !net->tx_quiet && !net->csa_pending);
+            CHECK(net->ic.ic_state==IEEE80211_S_SCAN && sc.sc_started);
+        } else {
+            CHECK(csa_scans==0 && net->tx_quiet && !net->csa_pending);
+            if(kind!=8 && kind!=9 && kind!=11 && kind!=12 && kind!=15)CHECK(csa_loads==0);
+        }
+        /* Destruction has separate service ownership from this order probe. */
+        f.disable_error=0;sc.sc_ops=&ops;net->parent_state=enable_parent_state;
+        net->policy.dying=0;
+        enable_destroy(net);csa_net=NULL;
     }
 }
 
@@ -1483,6 +1587,7 @@ int RTW88_ENABLE_ENTRY(void)
     enable_scan_probe_policy();
     enable_quiet_during_start();
     enable_sta_quiet();
+    enable_csa_recovery();
     enable_drain_case();
     enable_drain_core();
     enable_drain_edges();

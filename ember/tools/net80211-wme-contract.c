@@ -145,6 +145,7 @@ struct ieee80211_node_table {
 struct ieee80211_vht_channel;
 struct ieee80211com {
 	void (*ic_sta_quiet)(struct ieee80211com *);
+	void (*ic_sta_csa)(struct ieee80211com *);
 	int (*ic_scan_probe_admit)(struct ieee80211com *);
 	struct ieee80211_key ic_nw_keys[4];
 	unsigned ic_def_txkey;
@@ -1803,6 +1804,38 @@ test_quiet(struct ieee80211com *ic)
 	CHECK(ic->ic_state == quiet_state);
 	quiet_calls++;
 }
+static unsigned csa_calls;
+static void
+test_csa(struct ieee80211com *ic)
+{
+    CHECK(ic->ic_state == quiet_state);
+    csa_calls++;
+}
+static void
+test_csa_callback_split(void)
+{
+    static const struct { size_t len; uint8_t data[16]; int recover; } cases[] = {
+        {5,{37,3,0,64,1},1}, {5,{37,3,1,64,0},1},
+        {6,{60,4,1,118,64,1},1}, {8,{40,6,0,1,10,0,20,0},0},
+        {13,{37,3,1,64,0,40,6,0,1,10,0,20,0},0},
+        {4,{37,3,1,64},0}, {1,{127},0}
+    };
+    for (unsigned i=0;i<sizeof(cases)/sizeof(cases[0]);i++) {
+        setup();
+        test_ic.ic_state=quiet_state=IEEE80211_S_RUN;
+        test_ic.ic_sta_quiet=test_quiet;
+        test_ic.ic_sta_csa=test_csa;
+        quiet_calls=csa_calls=0;
+        struct mbuf *m=beacon(0);
+        size_t off=sizeof(struct ieee80211_frame)+12+5;
+        memcpy(m->m_data+off,cases[i].data,cases[i].len);
+        m->m_len=m->m_pkthdr.len=off+cases[i].len;
+        deliver_beacon(m);
+        CHECK(csa_calls==(unsigned)cases[i].recover);
+        CHECK(quiet_calls==(unsigned)!cases[i].recover);
+        CHECK(test_ic.ic_state==IEEE80211_S_INIT);
+    }
+}
 static void
 test_csa_beacon_stop(void)
 {
@@ -2572,6 +2605,7 @@ main(void)
 	test_pending_lifetime();
 	test_scan_probe_policy();
 	test_csa_beacon_stop();
+	test_csa_callback_split();
 	test_strict_complete_views();
 	test_strict_ioctl_reject();
 	test_strict_reject_legacy_void_update();

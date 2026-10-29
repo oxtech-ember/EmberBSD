@@ -23,7 +23,7 @@ struct rtw88_net {
 	struct rtw88_net_policy policy;
 	int *lock;
 	int scan, work_pending, reset_required, state_arg, state_work;
-	int tx_quiet, quiet_error;
+	int tx_quiet, quiet_error, csa_pending;
 	unsigned channel;
 	struct rtw88_channel_tuple pending_channel;
 	enum ieee80211_state requested;
@@ -51,6 +51,13 @@ struct rtw88_ra_config { unsigned use_protection; };
 static unsigned worker_hw_calls, worker_parent_run, worker_parent_init, worker_restarts;
 static int worker_parent_error, worker_parent_newer, worker_init_error;
 static uint64_t worker_newer_epoch;
+/* CSA recovery needs the real core/DMA fixture. Reject that undeclared
+ * domain here; this exchange checks only ordinary HT ownership. */
+static int rtw88_net_csa_recover(struct rtw88_net *net)
+{
+ assert(net->csa_pending==0);
+ return 0;
+}
 static int rtw88_net_restart_peer(struct rtw88_net *net)
 {
  assert(!native_lock);

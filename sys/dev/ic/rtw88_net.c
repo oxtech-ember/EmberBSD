@@ -80,7 +80,8 @@ struct rtw88_net {
 	unsigned rx_head, rx_tail;
 	int work_pending;
 	int reset_required;	/* Linked/width stop survives request coalescing. */
-	int tx_quiet, quiet_error; /* Sticky until detach; state requests cannot clear it. */
+	int tx_quiet, quiet_error; /* State requests alone cannot clear the fence. */
+	int csa_pending; /* 1: fence awaits INIT; 2: INIT owned. Quiet/stop cancels. */
 	enum ieee80211_state requested;
 	unsigned channel;
 	struct rtw88_channel_tuple pending_channel;
@@ -136,6 +137,8 @@ rtw88_net_sta_quiet(struct ieee80211com *ic)
 	struct rtw88_net *net = ic->ic_ifp->if_softc;
 	struct ifnet *ifp = &net->ec.ec_if;
 
+	/* A later Quiet or malformed announcement makes a CSA fence permanent. */
+	net->csa_pending = 0;
 	if (net->tx_quiet)
 		return;
 	rtw88_net_ht20_publish(net, NULL);
@@ -148,6 +151,23 @@ rtw88_net_sta_quiet(struct ieee80211com *ic)
 	net->tx_timer = 0;
 	net->quiet_error = rtw88_tx_quiet(net->core);
 	mutex_exit(net->lock);
+}
+
+/* A valid switch can recover through the sleepable worker. An earlier
+ * ambiguous/Quiet fence must not be upgraded by a later switch. RFK trials
+ * retain their explicit cold-reset and single-association lifetime. */
+static void
+rtw88_net_sta_csa(struct ieee80211com *ic)
+{
+	struct rtw88_net *net = ic->ic_ifp->if_softc;
+
+	if (net->tx_quiet)
+		return;
+	rtw88_net_sta_quiet(ic);
+#ifndef RTW88_RFK_EXPERIMENT
+	if (net->quiet_error == 0)
+		net->csa_pending = 1;
+#endif
 }
 
 /* A beacon does not authorize active probes on the driver's DFS channels.
@@ -1024,6 +1044,80 @@ rtw88_net_mailbox_wait(struct rtw88_net *net, uint64_t epoch, uint32_t gen,
 	return error;
 }
 
+/* Return nonzero when the worker must resnapshot its current request.
+ * Admission stays closed through parent INIT and a verified full DMA stop.
+ * Never clear the RFK lifetime, a failed fence, or a generic Quiet event. */
+static int
+rtw88_net_csa_recover(struct rtw88_net *net)
+{
+	struct ieee80211com *ic = &net->ic;
+	struct ifnet *ifp = &net->ec.ec_if;
+	uint64_t epoch;
+	int error, stop_error, resume;
+
+	mutex_enter(net->lock);
+	if (!net->csa_pending) {
+		mutex_exit(net->lock);
+		return 0;
+	}
+	epoch = net->policy.epoch;
+	mutex_exit(net->lock);
+	/* The immediate fence has already removed RUNNING and closed TX. */
+	error = net->parent_state(ic, IEEE80211_S_INIT, -1);
+	stop_error = rtw88_stop(net->core);
+	if (error == 0)
+		error = stop_error;
+	mutex_enter(net->lock);
+	resume = error == 0 && net->quiet_error == 0 && net->csa_pending &&
+	    !net->policy.dying && (ifp->if_flags & IFF_UP) != 0;
+	if (!resume) {
+		net->csa_pending = 0;
+		mutex_exit(net->lock);
+		if (error != 0)
+			aprint_error_dev(net->dev, "CSA stop failed (%d); TX quiet\n",
+			    error);
+		return 1;
+	}
+	if (epoch != net->policy.epoch) {
+		mutex_exit(net->lock);
+		return 1;
+	}
+	net->reset_required = 0;
+	mutex_exit(net->lock);
+	/* Keep the host fence while firmware loading can yield. A successor
+	 * request, Quiet, stop or detach must not inherit this start. */
+	error = rtw88_start(net->core);
+	mutex_enter(net->lock);
+	resume = error == 0 && net->csa_pending && !net->policy.dying &&
+	    epoch == net->policy.epoch && (ifp->if_flags & IFF_UP) != 0;
+	if (resume) {
+		net->csa_pending = 0;
+		net->tx_quiet = 0;
+		ifp->if_flags |= IFF_RUNNING;
+	}
+	mutex_exit(net->lock);
+	if (resume) {
+		/* Fresh scanning selects the AP; no advertised successor tuple or
+		 * old AUTH/RUN request grants a DFS lease or a peer contract. */
+		error = rtw88_net_newstate(ic, IEEE80211_S_SCAN, -1);
+		if (error != 0) {
+			rtw88_net_sta_quiet(ic);
+			(void)rtw88_stop(net->core);
+		}
+	} else {
+		stop_error = rtw88_stop(net->core);
+		mutex_enter(net->lock);
+		if (error != 0 || stop_error != 0)
+			net->csa_pending = 0;
+		mutex_exit(net->lock);
+		if (error != 0 || stop_error != 0)
+			aprint_error_dev(net->dev,
+			    "CSA restart failed (%d/%d); TX quiet\n",
+			    error, stop_error);
+	}
+	return 1;
+}
+
 /* The workqueue has the kernel lock. Do not hold the PCI lock in net80211. */
 static void
 rtw88_net_state_work(struct work *work, void *cookie)
@@ -1062,6 +1156,8 @@ rtw88_net_state_work(struct work *work, void *cookie)
 			(void)rtw88_calibration_retire(net->core);
 		rtw88_net_rfk_publish(net);
 #endif
+		if (rtw88_net_csa_recover(net))
+			continue;
 		mutex_enter(net->lock);
 		if (net->policy.dying) {
 			net->work_pending = 0;
@@ -1540,6 +1636,7 @@ rtw88_net_newstate(struct ieee80211com *ic, enum ieee80211_state state,
 	struct rtw88_net *net = ic->ic_ifp->if_softc;
 	int enqueue = 0, ht20_error;
 	int run_asked = state == IEEE80211_S_RUN;
+	int init_asked = state == IEEE80211_S_INIT;
 	int quiet_error = net->tx_quiet && state != IEEE80211_S_INIT ? EBUSY : 0;
 
 	if (quiet_error != 0) {
@@ -1579,6 +1676,10 @@ lock_request:
 		(void)ieee80211_ht20_state_request(ic, IEEE80211_S_INIT);
 		return ENXIO;
 	}
+	/* Shared CSA supplies the first mandatory INIT. A later explicit INIT
+	 * cancels recovery; a coerced stale AUTH/RUN/SCAN is not a stop owner. */
+	if (init_asked && net->csa_pending)
+		net->csa_pending = net->csa_pending == 1 ? 2 : 0;
 #ifdef RTW88_RFK_EXPERIMENT
 	if (net->rfk.notice_pending) {
 		mutex_exit(net->lock);
@@ -2446,6 +2547,8 @@ rtw88_net_stop(struct ifnet *ifp, int disable)
 {
 	struct rtw88_net *net = ifp->if_softc;
 
+	/* A synchronous stop owner cancels pending automatic CSA recovery. */
+	net->csa_pending = 0;
 	rtw88_net_ht20_publish(net, NULL);
 	rtw88_net_rxba_quiesce(net);
 	if (net->ic.ic_bss != NULL)
@@ -2718,6 +2821,7 @@ rtw88_net_attach(struct rtw88_softc *core, device_t dev, kmutex_t *lock,
 	if ((caps.features & RTW88_CAP_RXBA) != 0)
 		rtw88_net_rxba_attach(net);
 	ic->ic_sta_quiet = rtw88_net_sta_quiet;
+	ic->ic_sta_csa = rtw88_net_sta_csa;
 	ic->ic_scan_probe_admit = rtw88_net_scan_probe_admit;
 	/* Register after ifattach, which initializes optional admission to NULL. */
 	rtw88_net_ht20_publish(net, NULL);

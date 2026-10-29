@@ -30,6 +30,7 @@ static unsigned enable_allocations,enable_releases,enable_registrations,enable_s
 static kmutex_t enable_queue_lock={.initialized=1};
 static int enable_parent_state(struct ieee80211com *,enum ieee80211_state,int);
 static void rtw88_net_state_work(struct work *,void *);
+static void workqueue_wait(struct workqueue *,struct work *);
 static int rtw88_net_init(struct ifnet *);
 static void rtw88_net_stop(struct ifnet *p,int disable) { (void)p;(void)disable; }
 static int rtw88_net_ioctl(struct ifnet *p,u_long cmd,void *data)

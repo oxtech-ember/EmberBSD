@@ -60,7 +60,7 @@ struct rtw88_net {
     kmutex_t *lock;
     struct rtw88_caps caps;
     int work_pending, reset_required;
-    int tx_quiet, quiet_error;
+    int tx_quiet, quiet_error, csa_pending;
     int scan, rxba_callout, state_arg;
     uint64_t rxba_token,rxba_deadline,rxba_due;
     enum ieee80211_state requested;

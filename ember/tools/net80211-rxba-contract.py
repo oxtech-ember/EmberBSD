@@ -28,6 +28,7 @@ struct ieee80211_node {
  int authorized;''')
 s=s.replace('struct ieee80211com {','''struct ieee80211com {
  void (*ic_sta_quiet)(struct ieee80211com *);
+ void (*ic_sta_csa)(struct ieee80211com *);
  const struct ieee80211_rxba_ops *ic_rxba_ops;
  uint64_t ic_rxba_serial;
  int ic_state;

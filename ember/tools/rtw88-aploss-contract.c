@@ -78,7 +78,7 @@ struct rtw88_net {
     struct rtw88_channel_tuple pending_channel;
     int *lock;
     int scan, dev, work_pending, reset_required, state_arg;
-    int tx_quiet, quiet_error;
+    int tx_quiet, quiet_error, csa_pending;
     unsigned channel, tx_timer;
     enum ieee80211_state requested;
     struct work state_work;

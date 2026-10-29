@@ -122,6 +122,7 @@ ieee80211_proto_attach(struct ieee80211com *ic)
 
 	/* A qualified driver may register a provider after protocol attach. */
 	ic->ic_sta_quiet = NULL;
+	ic->ic_sta_csa = NULL;
 	ic->ic_ht20_admit = NULL;
 	ic->ic_vht_admit = NULL;
 	ic->ic_rxba_ops = NULL;

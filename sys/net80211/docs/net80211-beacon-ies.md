@@ -92,12 +92,21 @@ other channels and interfaces without a provider retain their existing path.
 
 This interface does not tune a successor channel or establish a DFS lease.
 The Action receiver recognizes Spectrum Management CSA (category 0, action 4)
-and Public Extended CSA (category 4, action 4). It copies only the two-byte
-prefix across mbuf segments. The same peer/channel/lifecycle checks apply.
+and Public Extended CSA (category 4, action 4). It copies at most nine body
+bytes across mbuf segments. The same peer/channel/lifecycle checks apply.
 The destination must be local or multicast; encrypted, fragmented, ordered and
 DS-directed headers do not invoke the provider. A recognized prefix exits even
 when the remaining payload is malformed. No successor is decoded or followed.
 The existing Block Ack Action validation remains in force for other frames.
+
+`ic_sta_csa` is a separate optional provider, initialized to NULL at protocol
+attach. It has the same synchronous fence contract. A valid parsed CSA/ECSA
+beacon without Quiet may select it. The exact standard seven-byte CSA or
+six-byte ECSA Action body may also select it, after mode/channel validation.
+Malformed or ambiguous input, Quiet, and combined CSA+Quiet use `ic_sta_quiet`.
+A quiet-only driver retains the conservative fallback. The driver owns any
+later recovery after INIT and a verified DMA stop; this hook grants no new
+channel, association contract, or DFS transmission permit.
 
 No radio provider is registered by this change. Beacon-loss policy,
 transmit-power constraints and driver hardware quiescence remain separate

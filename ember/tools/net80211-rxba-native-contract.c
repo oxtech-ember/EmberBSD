@@ -40,7 +40,7 @@ struct rtw88_net {
  struct rtw88_softc *core;
  void *wq;int state_work,requested,state_arg,work_pending,reset_required;unsigned channel;
  struct rtw88_channel_tuple pending_channel;
- int tx_quiet,quiet_error;
+ int tx_quiet,quiet_error,csa_pending;
  int (*parent_state)(struct ieee80211com *,int,int);
  struct rtw88_net_rx rx[RTW88_NET_RX_LIMIT];
  unsigned rx_head,rx_tail,tx_completed,tx_timer;uint64_t rx_dropped;

@@ -65,6 +65,8 @@ for name, result in [('rtw88_net_basic_rates','static unsigned'),
                      ('rtw88_net_tx_ht20_policy','static int'),
                      ('rtw88_net_tx_ra_validate','static int __attribute__((unused))'),
                      ('rtw88_net_ra_prepare','static int'),
+                     ('rtw88_net_sta_quiet','static void'),
+                     ('rtw88_net_csa_recover','static int'),
                      ('rtw88_net_restart_peer','static int'),
                      ('rtw88_net_drain_wait','static int'),('rtw88_net_mailbox_wait','static int'),
                      ('rtw88_net_state_work','static void'),
@@ -135,7 +137,6 @@ if '\nrtw88_net_dfs_beacon(' in net:
     parts.append('#ifdef RTW88_DFS64\n' + limits + '\n' + proto + '\n' +
                  function('rtw88_net_dfs_beacon', 'static void') +
                  function('rtw88_net_dfs_expire', 'static int') + '#endif\n')
-parts.append(function('rtw88_net_sta_quiet', 'static void __attribute__((unused))'))
 # The VHT80 provider exists only in the experiment build.
 if '\nrtw88_net_vht_admit(' in net:
     parts.append('#ifdef RTW88_VHT80\n' + function('rtw88_net_vht_admit', 'static int') + '#endif\n')

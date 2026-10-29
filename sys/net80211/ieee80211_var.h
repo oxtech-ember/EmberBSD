@@ -102,6 +102,10 @@ struct ieee80211com {
 	/* Optional STA stop: close all TX synchronously under Giant, without a
 	 * driver lock. Must not sleep. Called before the shared INIT request. */
 	void (*ic_sta_quiet)(struct ieee80211com *);
+	/* Optional verified CSA/ECSA fence. Quiet and malformed announcements
+	 * still use ic_sta_quiet. A provider may recover only after peer INIT
+	 * and a successful DMA stop; this callback itself must not sleep. */
+	void (*ic_sta_csa)(struct ieee80211com *);
 	/* Optional pure probe policy under Giant. Return zero to permit a probe.
 	 * Checked before allocation for both direct and forced scan callers. */
 	int (*ic_scan_probe_admit)(struct ieee80211com *);

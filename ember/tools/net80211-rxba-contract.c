@@ -269,6 +269,12 @@ static void unit_quiet(struct ieee80211com *ic)
  CHECK(ic->ic_state==IEEE80211_S_RUN && ic->ic_bss->ni_ht20.valid);
  unit_quiet_calls++;
 }
+static unsigned unit_csa_calls;
+static void unit_csa(struct ieee80211com *ic)
+{
+ CHECK(ic->ic_state==IEEE80211_S_RUN && ic->ic_bss->ni_ht20.valid);
+ unit_csa_calls++;
+}
 /* Exercise actual common input, Action dispatch and shared RX teardown. */
 static void test_csa_action_exit(void)
 {
@@ -279,10 +285,11 @@ static void test_csa_action_exit(void)
  absent.m_data[0]=0xd0;absent.m_data[24]=3;
  unit_recv_action(&empty,&absent,NULL);
  CHECK(empty.ic_stats.is_rx_mgtdiscard==1);
- for(unsigned kind=0;kind<12;kind++) {
+ for(unsigned kind=0;kind<16;kind++) {
   struct unit_fixture f;if(!unit_setup(&f,10,64,0))return;
   unit_input(&f,11,11);CHECK(unit_token!=0 && f.ni.ni_rxba.bytes!=0);
-  f.ic.ic_sta_quiet=unit_quiet;unit_quiet_calls=0;
+  f.ic.ic_sta_quiet=unit_quiet;f.ic.ic_sta_csa=unit_csa;
+  unit_quiet_calls=unit_csa_calls=0;
   struct mbuf action={0};action.m_data=action.storage;
   action.m_len=action.m_pkthdr.len=31;
   uint8_t *p=action.m_data;p[0]=0xd0;
@@ -299,7 +306,7 @@ static void test_csa_action_exit(void)
   if(kind==8)f.ic.ic_sta_quiet=NULL;
   if(kind==9)p[25]=2; /* A TPC request is not CSA. */
   struct mbuf *received=duplicate(&action);
-  if(kind>=10) {
+  if(kind==10 || kind==11) {
    /* Split the two-byte Action prefix at both possible mbuf boundaries. */
    unsigned split=kind==10?24:25;
    struct mbuf *tail=calloc(1,sizeof(*tail));assert(tail);
@@ -307,9 +314,15 @@ static void test_csa_action_exit(void)
    memcpy(tail->m_data,received->m_data+split,tail->m_len);
    received->m_len=split;received->m_next=tail;
   }
+  if(kind==12)received->m_data[28]=2;
+  if(kind==13)received->m_data[29]=0;
+  if(kind==14)received->m_data[27]=2;
+  if(kind==15)received->m_len=received->m_pkthdr.len=32;
   ieee80211_input(&f.ic,received,&f.ni,0,0);
   unsigned want=kind<4 || kind>=10;
-  CHECK(unit_quiet_calls==want);
+  unsigned recover=kind<3 || kind==10 || kind==11;
+  CHECK(unit_csa_calls==recover);
+  CHECK(unit_quiet_calls==want-recover);
   if(want) {
    CHECK(f.ic.ic_state==IEEE80211_S_INIT && !f.ni.ni_ht20.valid);
    CHECK(f.ni.ni_rxba.bytes==0 && unit_token==0 && rxba_output_count==0);

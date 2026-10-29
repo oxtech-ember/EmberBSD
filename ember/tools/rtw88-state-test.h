@@ -92,7 +92,7 @@ struct rtw88_net {
 	int run_pending;
 	unsigned txba_wanted;
 	int work_pending, reset_required;
-	int tx_quiet, quiet_error;
+	int tx_quiet, quiet_error, csa_pending;
 	unsigned tx_timer, tx_completed;
 	uint64_t dfs_frontier;
 	uint32_t dfs_frontier_generation;
