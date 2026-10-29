@@ -3,6 +3,9 @@
 # Origin: EmberBSD (AI-assisted).
 .include <bsd.init.mk>
 
+# This producer builds a library; Waf selects PIC for its shared objects.
+NOPIE=
+
 .if defined(EMBER_TDB_SOURCE)
 WAF_SOURCE= ${EMBER_TDB_SOURCE}
 WAF_OBJDIR= ${.OBJDIR}/waf-build
