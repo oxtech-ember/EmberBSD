@@ -8,6 +8,7 @@ cat cat -
 cc cc HOST_CC
 chmod chmod -
 cmp cmp -
+comm comm -
 cp cp HOST_MV_CP
 cpp cpp HOST_CPP
 cut cut -

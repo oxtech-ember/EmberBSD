@@ -34,8 +34,12 @@ SETS_DESTDIR_EXTRA="${DESTDIR}/SETS.destdir.extra"
 SETS_DESTDIR_MISSING="${DESTDIR}/SETS.destdir.missing"
 
 es=0
+checktmp=
 cleanup()
 {
+	if [ -n "${checktmp}" ]; then
+		rm -r "${checktmp}" || es=1
+	fi
 	if [ ${es} -gt 255 ]; then
 		es=255
 	fi
@@ -127,24 +131,35 @@ IGNORE_REGEXP_MTREE="^\./etc/mtree/set\.[a-z]*\$"
 generate_dlist()
 {
 ( cd "${DESTDIR}" && ${FIND} ${origin} \
-	\( -type d -o -type f -o -type l \) -print ) \
-	| ${SORT} -u | ignore_exceptions >"${SETS_DLIST}"
+	\( -type d -o -type f -o -type l \) -print ) >"${checktmp}/input" || return 1
+filter_list "${SETS_DLIST}"
 }
 
 generate_flist()
 {
 ${HOST_SH} "${rundir}/makeflist" ${xargs} -s "${setsdir}" \
-	| ${SORT} -u | ignore_exceptions >"${SETS_FLIST}"
+	>"${checktmp}/input" || return 1
+filter_list "${SETS_FLIST}"
 }
 
 generate_mlist()
 {
 if [ -n "${metalog}" ]; then
-	${AWK} '{print $1}' <"${metalog}" \
-	| ${SORT} -u | ignore_exceptions >"${SETS_MLIST}"
+	${AWK} '{print $1}' <"${metalog}" >"${checktmp}/input" || return 1
+	filter_list "${SETS_MLIST}"
 else
 	SETS_MLIST=/dev/null
 fi
+}
+
+filter_list()
+{
+	${SORT} -u "${checktmp}/input" >"${checktmp}/sorted" || return 1
+	ignore_exceptions <"${checktmp}/sorted" >"$1"
+	case $? in
+	0|1) return 0 ;; # grep returns 1 for a valid empty result
+	*) return 1 ;;
+	esac
 }
 
 generate_mlist_missing()
@@ -277,15 +292,20 @@ if [ -s "${SETS_DESTDIR_MISSING}" ]; then
 fi
 }
 
-generate_dlist
-generate_flist
-generate_mlist
+checktmp=$(${MKTEMP} -d "${TMPDIR:-/tmp}/checkflist.XXXXXXXX") || {
+	checktmp=
+	es=1
+	exit 1
+}
+generate_dlist || { es=1; exit 1; }
+generate_flist || { es=1; exit 1; }
+generate_mlist || { es=1; exit 1; }
 
-generate_mlist_missing
-generate_mlist_extra
+generate_mlist_missing || { es=1; exit 1; }
+generate_mlist_extra || { es=1; exit 1; }
 
-generate_dlist_missing
-generate_dlist_extra
+generate_dlist_missing || { es=1; exit 1; }
+generate_dlist_extra || { es=1; exit 1; }
 
 if false && [ -n "${metalog}" ]; then
 	# XXX: Temporarily disabled due to problems with obsolete files in metalog
