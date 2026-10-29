@@ -70,9 +70,7 @@ __RCSID("$NetBSD: old_getcwd.c,v 1.3 2003/08/07 09:51:08 agc Exp $");
 #endif
 
 char *
-old_getcwd(pt, size)
-	char *pt;
-	size_t size;
+old_getcwd(char *pt, size_t size)
 {
 	struct dirent *dp;
 	DIR *dir;

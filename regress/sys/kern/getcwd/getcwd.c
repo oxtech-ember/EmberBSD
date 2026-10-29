@@ -115,11 +115,8 @@ static int sleepflag = 0;
 static uid_t altid = -1;
 
 static void
-check1 (dir, buf, calltext, actual, expected, experr)
-	char *dir;
-	char *buf;
-	char *calltext;
-	int actual, expected, experr;
+check1 (char *dir, char *buf, char *calltext, int actual, int expected,
+    int experr)
 {
 	int ntest = test++;			
 	if (actual != expected) {
@@ -168,7 +165,7 @@ check1 (dir, buf, calltext, actual, expected, experr)
 int nloops = 100;
 
 void
-time_old_getcwd()
+time_old_getcwd(void)
 {
 	char result_buf[1024];
 	if (old_getcwd(result_buf, 1024) == NULL) {
@@ -180,7 +177,7 @@ time_old_getcwd()
 }
 
 void
-time_kern_getcwd()
+time_kern_getcwd(void)
 {
 	char result_buf[1024];
 	if (__getcwd(result_buf, sizeof(result_buf)) < 0) {
@@ -191,9 +188,7 @@ time_kern_getcwd()
 }
 
 static void
-time_func(name, func)
-	char *name;
-	void (*func)(void);
+time_func(char *name, void (*func)(void))
 {
 	struct timeval before, after;
 	double delta_t;
@@ -216,7 +211,7 @@ time_func(name, func)
 }
 
 void
-test_speed()
+test_speed(void)
 {
 	int i;
 	for (i=0; i<5; i++)
@@ -231,7 +226,7 @@ test_speed()
 
 
 void
-test___getcwd_perms()
+test___getcwd_perms(void)
 {
 	char kbuf[1024];
 	
@@ -269,7 +264,7 @@ test___getcwd_perms()
 }
 
 void
-test___getcwd_chroot()
+test___getcwd_chroot(void)
 {
 	int pid, status;
 	char kbuf[1024];
@@ -331,7 +326,7 @@ test___getcwd_chroot()
 
 
 void
-test___getcwd()
+test___getcwd(void)
 {
 	int i;
 	static char kbuf[1024];
@@ -429,7 +424,7 @@ test___getcwd()
 
 
 void
-stress_test_getcwd()
+stress_test_getcwd(void)
 {
 	char buf[MAXPATHLEN];
 	char ubuf[MAXPATHLEN];
@@ -468,8 +463,7 @@ stress_test_getcwd()
  */
 
 void
-usage(progname)
-	char *progname;
+usage(char *progname)
 {
 	fprintf(stderr, "usage: %s [-srpvw] [-l nloops]\n", progname);
 	exit(1);
@@ -480,9 +474,7 @@ int run_regression = 0;
 int run_performance = 0;
 
 int
-main(argc, argv)
-	int argc;
-	char **argv;
+main(int argc, char **argv)
 {
 	int ch;
 	char *progname = argv[0];
