@@ -802,7 +802,7 @@ Home Page:	https://www.tcpdump.org/
 Date:		2026-10-29
 Responsible:	EmberBSD
 License:	BSD (3/4-clause)
-Location:	Common Ports net/libpcap; external/bsd/libpcap/dist is inactive
+Location:	Common Ports net/libpcap
 Notes:
 Native integration keeps OS-owned BPF headers. DLT constants track upstream.
 The native SONAME changed to 11; binary consumers linked to 10 require rebuild.

@@ -16,6 +16,8 @@ import subprocess
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--cc', required=True, type=Path)
+    parser.add_argument('--source', required=True, type=Path,
+                        help='prepared common Ports libpcap source directory')
     parser.add_argument('--cflags-json', required=True, type=Path)
     parser.add_argument('--work', required=True, type=Path)
     parser.add_argument('--baseline', type=Path)
@@ -23,6 +25,9 @@ def main():
     args = parser.parse_args()
     if not args.cc.is_absolute() or not args.cc.is_file():
         parser.error('--cc must be an existing absolute compiler')
+    source = args.source / 'pcap-rpcap.c'
+    if not args.source.is_absolute() or not source.is_file():
+        parser.error('--source must be a prepared libpcap source directory')
     if args.baseline and (not args.baseline.is_file() or not args.objcopy or
                           not args.objcopy.is_absolute() or not args.objcopy.is_file()):
         parser.error('--baseline requires an existing source and absolute --objcopy')
@@ -31,7 +36,6 @@ def main():
         parser.error('--cflags-json must be an argv array')
     args.work.mkdir(parents=True, exist_ok=False)
     work = args.work.resolve()
-    source = Path(__file__).resolve().parents[2] / 'external/bsd/libpcap/dist/pcap-rpcap.c'
     commands = []
 
     def run(argv, diagnostic=None):
