@@ -1,4 +1,4 @@
-name: NVMe temperature sensor actual source contract
+name: NVMe temperature sensor and polled admin path actual source contracts
 
 'on':
   push:
@@ -9,6 +9,8 @@ name: NVMe temperature sensor actual source contract
       - 'sys/dev/ic/nvmereg.h'
       - 'ember/tests/nvme-temperature.sh'
       - 'ember/tools/nvme-temperature-contract.c'
+      - 'ember/tests/nvme-poll.sh'
+      - 'ember/tools/nvme-poll-contract.c'
   pull_request:
     paths:
       - '.github/workflows/nvme-temperature.yml'
@@ -16,6 +18,8 @@ name: NVMe temperature sensor actual source contract
       - 'sys/dev/ic/nvmereg.h'
       - 'ember/tests/nvme-temperature.sh'
       - 'ember/tools/nvme-temperature-contract.c'
+      - 'ember/tests/nvme-poll.sh'
+      - 'ember/tools/nvme-poll-contract.c'
 
 permissions:
   contents: read
@@ -38,6 +42,8 @@ jobs:
             /sys/dev/ic/nvmereg.h
             /ember/tests/nvme-temperature.sh
             /ember/tools/nvme-temperature-contract.c
+            /ember/tests/nvme-poll.sh
+            /ember/tools/nvme-poll-contract.c
       - name: Check compiler and prepare analysis tools
         run: |
           test "$(gcc -dumpfullversion)" = 16.2.0
@@ -51,6 +57,7 @@ jobs:
           CFLAGS: -O2 -g -gdwarf-4 -fanalyzer
         run: |
           sh ember/tests/nvme-temperature.sh
+          sh ember/tests/nvme-poll.sh
       - name: Run native ASan and UBSan
         env:
           CC: gcc
@@ -58,6 +65,7 @@ jobs:
           UBSAN_OPTIONS: halt_on_error=1
         run: |
           sh ember/tests/nvme-temperature.sh
+          sh ember/tests/nvme-poll.sh
       - name: Run actual source contracts under Memcheck
         env:
           CC: gcc
@@ -72,3 +80,4 @@ jobs:
           chmod 755 "$RUNNER_TEMP/nvme-temperature-memcheck"
           export TEST_RUNNER="$RUNNER_TEMP/nvme-temperature-memcheck"
           sh ember/tests/nvme-temperature.sh
+          sh ember/tests/nvme-poll.sh

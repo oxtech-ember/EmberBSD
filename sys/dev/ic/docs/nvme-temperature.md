@@ -32,6 +32,18 @@ from `nvme.c` with a fake admin queue, DMA buffer and sysmon: command
 encoding, decoding, invalid readings, limits, attach and detach failures.
 including suspend and a timed-out command. It also applies thirteen
 deliberate faults to the extracted functions and requires the contract to
-catch each one. The fake admin queue cannot model a command completing
-after its timeout; the polled path's own completion race predates the
-sensor.
+catch each one.
+
+The refresh polls the admin queue while its completion interrupt is live,
+so another CPU may complete the command. `nvme_poll_done()` therefore runs
+the callback first and publishes the phase bit to the spinning
+`nvme_poll()` last; `nvme_q_complete()` claims a polled completion under
+the queue lock, and a timeout waits for a claimed one instead of
+abandoning it. Before that, the interrupt read the callback from the
+poller's state after publishing, from a stack the poller had already
+reused: the CIX P1 board panicked on 29 October 2026 with an instruction
+abort at a stack address from `nvme_q_complete()`.
+`ember/tests/nvme-poll.sh` runs `nvme_poll`, `nvme_poll_done` and
+`nvme_q_complete` against a fake controller, poisons the poller's state at
+publication and catches fifteen deliberate faults; on one thread it cannot
+model the callback being read after the lock is dropped.

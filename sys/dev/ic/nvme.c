@@ -1399,6 +1399,7 @@ struct nvme_poll_state {
 	struct nvme_cqe c;
 	void *cookie;
 	void (*done)(struct nvme_queue *, struct nvme_ccb *, struct nvme_cqe *);
+	bool claimed;	/* nvme_q_complete() took the completion; q_cq_mtx */
 };
 
 static int
@@ -1418,10 +1419,16 @@ nvme_poll(struct nvme_softc *sc, struct nvme_queue *q, struct nvme_ccb *ccb,
 	state.cookie = ccb->ccb_cookie;
 
 	ccb->ccb_done = nvme_poll_done;
+	/*
+	 * The state is on this stack: nvme_poll_done() and the timeout path
+	 * below restore the caller's cookie before this function returns.
+	 */
+	/* cppcheck-suppress autoVariables */
 	ccb->ccb_cookie = &state;
 
 	nvme_q_submit(sc, q, ccb, nvme_poll_fill);
-	while (!ISSET(state.c.flags, htole16(NVME_CQE_PHASE))) {
+	while (!ISSET(atomic_load_relaxed(&state.c.flags),
+	    htole16(NVME_CQE_PHASE))) {
 		if (nvme_q_complete(sc, q) == 0)
 			delay(step);
 
@@ -1431,7 +1438,30 @@ nvme_poll(struct nvme_softc *sc, struct nvme_queue *q, struct nvme_ccb *ccb,
 		}
 	}
 
+	if (error != 0) {
+		/*
+		 * A completion claimed by nvme_q_complete() is being handled
+		 * on another CPU and will reach this state: wait for it.
+		 * Otherwise point a late one at a no-op under the same lock,
+		 * since this stack frame is gone once we return.
+		 */
+		mutex_enter(&q->q_cq_mtx);
+		if (state.claimed) {
+			mutex_exit(&q->q_cq_mtx);
+			while (!ISSET(atomic_load_relaxed(&state.c.flags),
+			    htole16(NVME_CQE_PHASE)))
+				delay(step);
+			error = 0;
+		} else {
+			ccb->ccb_done = nvme_empty_done;
+			ccb->ccb_cookie = state.cookie;
+			mutex_exit(&q->q_cq_mtx);
+		}
+	}
+
 	if (error == 0) {
+		/* Pairs with membar_release() in nvme_poll_done(). */
+		membar_acquire();
 		flags = lemtoh16(&state.c.flags);
 		return flags & ~NVME_CQE_PHASE;
 	} else {
@@ -1445,7 +1475,7 @@ nvme_poll(struct nvme_softc *sc, struct nvme_queue *q, struct nvme_ccb *ccb,
 		/* Invoke the callback to clean state anyway */
 		struct nvme_cqe cqe;
 		memset(&cqe, 0, sizeof(cqe));
-		ccb->ccb_done(q, ccb, &cqe);
+		(*state.done)(q, ccb, &cqe);
 
 		return 1;
 	}
@@ -1465,12 +1495,25 @@ nvme_poll_done(struct nvme_queue *q, struct nvme_ccb *ccb,
     struct nvme_cqe *cqe)
 {
 	struct nvme_poll_state *state = ccb->ccb_cookie;
+	void (*done)(struct nvme_queue *, struct nvme_ccb *,
+	    struct nvme_cqe *) = state->done;
+	struct nvme_cqe c = *cqe;
 
-	state->c = *cqe;
-	SET(state->c.flags, htole16(NVME_CQE_PHASE));
-
+	/*
+	 * The state lives on the stack of nvme_poll(), which may be
+	 * spinning on another CPU when the completion interrupt handles
+	 * the command.  As soon as it sees the phase bit it returns and
+	 * its stack is reused, so finish with the state first, run the
+	 * callback on a copy and publish the phase bit last.
+	 */
+	SET(c.flags, htole16(NVME_CQE_PHASE));
 	ccb->ccb_cookie = state->cookie;
-	state->done(q, ccb, &state->c);
+	(*done)(q, ccb, &c);
+
+	/* nvme_poll() reads only the flags. */
+	membar_release();
+	atomic_store_relaxed(&state->c.flags, c.flags);
+	/* state may be gone now */
 }
 
 static void
@@ -1500,6 +1543,7 @@ nvme_q_complete(struct nvme_softc *sc, struct nvme_queue *q)
 {
 	struct nvme_ccb *ccb;
 	struct nvme_cqe *ring = NVME_DMA_KVA(q->q_cq_dmamem), *cqe;
+	void (*done)(struct nvme_queue *, struct nvme_ccb *, struct nvme_cqe *);
 	uint16_t flags;
 	int rv = 0;
 
@@ -1548,10 +1592,16 @@ nvme_q_complete(struct nvme_softc *sc, struct nvme_queue *q)
 		 * Unlock the mutex before calling the ccb_done callback
 		 * and re-lock afterwards. The callback triggers lddone()
 		 * which schedules another i/o, and also calls nvme_ccb_put().
-		 * Unlock/relock avoids possibility of deadlock.
+		 * Unlock/relock avoids possibility of deadlock.  Take the
+		 * callback under the lock, though: a polled command that
+		 * timed out swaps it under the same lock, and one claimed
+		 * here is waited for instead (nvme_poll()).
 		 */
+		done = ccb->ccb_done;
+		if (done == nvme_poll_done)
+			((struct nvme_poll_state *)ccb->ccb_cookie)->claimed = true;
 		mutex_exit(&q->q_cq_mtx);
-		ccb->ccb_done(q, ccb, cqe);
+		(*done)(q, ccb, cqe);
 		mutex_enter(&q->q_cq_mtx);
 	}
 	nvme_dmamem_sync(sc, q->q_cq_dmamem, BUS_DMASYNC_PREREAD);
