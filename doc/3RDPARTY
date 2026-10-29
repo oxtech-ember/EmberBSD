@@ -1278,7 +1278,7 @@ Date:		2026-10-29
 GIT root:	https://github.com/ppp-project/ppp
 Responsible:	EmberBSD
 License:	Mixed BSD and CMU notices; see common Ports source.
-Location:	Common Ports net/pppd; external/bsd/ppp/dist is inactive.
+Location:	Common Ports net/pppd.
 Notes:
 The common Ports source carries the NetBSD BSD backend and uses shared TDB.
 The old status plugin is not built; its obsolete LCP hooks require a port.
