@@ -1,22 +1,23 @@
 /* config.h.  Generated automatically by configure.  */
 /* config_h.in.  Generated automatically from configure.in by autoheader.  */
 
+/* Compiler attributes must also work for non-NetBSD build hosts. */
 /* Define to noreturn-attribute for gcc */
-#define GCC_NORETURN __dead
+#define GCC_NORETURN __attribute__((__noreturn__))
 
 /* #undef GCC_PRINTF */
 
 /* Define to printf-attribute for gcc */
-#define GCC_PRINTFLIKE(a, b) __printflike(a, b)
+#define GCC_PRINTFLIKE(a, b) __attribute__((__format__(__printf__, a, b)))
 
 /* Define to 1 if the compiler supports gcc-like scanf attribute. */
 /* #undef GCC_SCANF */
 
 /* Define to sscanf-attribute for gcc */
-#define GCC_SCANFLIKE(a, b) __scanflike(a, b)
+#define GCC_SCANFLIKE(a, b) __attribute__((__format__(__scanf__, a, b)))
 
 /* Define to unused-attribute for gcc */
-#define GCC_UNUSED __unused
+#define GCC_UNUSED __attribute__((__unused__))
 
 /* Define if you have the <fcntl.h> header file. */
 #define HAVE_FCNTL_H 1
