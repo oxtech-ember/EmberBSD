@@ -539,7 +539,7 @@ trace_ddns_output_stop(trace_type_t *ttype)
 }
 
 void
-trace_ddns_init()
+trace_ddns_init(void)
 {
 	trace_ddns_output = trace_type_register("ddns-output", NULL,
 						trace_ddns_output_read,
@@ -699,10 +699,7 @@ isc_result_t dns_zone_lookup (struct dns_zone **zone, const char *name)
 	return status;
 }
 
-int dns_zone_dereference (ptr, file, line)
-	struct dns_zone **ptr;
-	const char *file;
-	int line;
+int dns_zone_dereference (struct dns_zone **ptr, const char *file, int line)
 {
 	struct dns_zone *dns_zone;
 

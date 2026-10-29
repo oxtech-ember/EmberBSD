@@ -2705,7 +2705,7 @@ set_eui_64(struct ipv6_pond *pond) {
  * of the addresses ranges of the pools in the pond affected.
  */
 void
-report_jumbo_ranges() {
+report_jumbo_ranges(void) {
 	struct shared_network* s;
 	char log_buf[1084];
 #ifdef EUI_64
