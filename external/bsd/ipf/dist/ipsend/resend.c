@@ -69,7 +69,8 @@ void dumppacket(ip_t	 *ip)
 
 int	ip_resend(char	 *dev, int 	mtu, struct	ipread	 *r, struct	in_addr 	gwip, char	 *datain)
 {
-	ether_header_t	*eh;
+	ether_header_t	*eh, *new_eh;
+	char	*packet;
 	char	dhost[6];
 	ip_t	*ip;
 	int	fd, wfd = initdevice(dev, 5), len, i;
@@ -106,7 +107,12 @@ int	ip_resend(char	 *dev, int 	mtu, struct	ipread	 *r, struct	in_addr 	gwip, cha
 	    {
 		if (!(opts & OPT_RAW)) {
 			len = ntohs(ip->ip_len);
-			eh = (ether_header_t *)realloc((char *)eh, sizeof(*eh) + len);
+			new_eh = realloc(eh, sizeof(*eh) + len);
+			if (new_eh == NULL) {
+				perror("realloc");
+				break;
+			}
+			eh = new_eh;
 			eh->ether_type = htons((u_short)ETHERTYPE_IP);
 			if (!gwip.s_addr) {
 				if (arp((char *)&gwip,
@@ -123,12 +129,13 @@ int	ip_resend(char	 *dev, int 	mtu, struct	ipread	 *r, struct	in_addr 	gwip, cha
 			bcopy(ip, (char *)(eh + 1), len);
 			len += sizeof(*eh);
 			dumppacket(ip);
+			packet = (char *)eh;
 		} else {
-			eh = (ether_header_t *)mb.mb_buf;
+			packet = (char *)mb.mb_buf;
 			len = i;
 		}
 
-		if (sendip(wfd, (char *)eh, len) == -1)
+		if (sendip(wfd, packet, len) == -1)
 		    {
 			perror("send_packet");
 			break;
