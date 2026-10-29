@@ -18,7 +18,24 @@ case $nonce in ''|*[!A-Za-z0-9_-]*) fail invalid-nonce;; esac
 root_device=$(cat /etc/emberbsd-target-acceptance-root-device 2>/dev/null || true)
 case $root_device in ld*[a-p]) ;; *) fail invalid-root-device;; esac
 
-mounted=$(/sbin/mount -p | awk '$2 == "/" { print $1 " " $3 " " $4; count++ } END { if (count != 1) exit 1 }') ||
+mount_output=$(LC_ALL=C /sbin/mount) || fail root-mount-query
+mounted=$(printf '%s\n' "$mount_output" | LC_ALL=C awk '
+	$2 == "on" && $3 == "/" {
+		count++
+		if ($4 != "type" || $5 != "ffs" || $1 !~ /^\/dev\/ld[0-9]+[a-p]$/)
+			exit 1
+		line = $0
+		if (line !~ / \([^()]+\)$/) exit 1
+		sub(/^.* \(/, "", line)
+		sub(/\)$/, "", line)
+		n = split(line, options, /, */)
+		for (i = 1; i <= n; i++)
+			if (options[i] == "read-only") ro = 1
+		if (!ro) exit 1
+		device = $1
+	}
+	END { if (count != 1 || !ro) exit 1; print device " ffs ro" }
+') ||
 	fail root-mount-query
 set -- $mounted
 [ "$1" = "/dev/$root_device" ] && [ "$2" = ffs ] || fail unexpected-root-device
