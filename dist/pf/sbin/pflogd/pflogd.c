@@ -41,14 +41,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-/*
- * If we're going to include parts of the libpcap internals we MUST
- * set the feature-test macros they expect, or they may misbehave.
- */
-#define HAVE_STRLCPY
-#define HAVE_SNPRINTF
-#define HAVE_VSNPRINTF
-#include <pcap-int.h>
 #include <pcap.h>
 #include <syslog.h>
 #include <signal.h>
@@ -200,18 +192,30 @@ sig_alrm(int sig)
 	gotsig_alrm = 1;
 }
 
-void
-set_pcap_filter(void)
+int
+set_pcap_filter(uint32_t length)
 {
 	struct bpf_program bprog;
+	pcap_t *dead;
+	int result;
 
-	if (pcap_compile(hpcap, &bprog, filter, PCAP_OPT_FIL, 0) < 0)
-		logmsg(LOG_WARNING, "%s", pcap_geterr(hpcap));
-	else {
-		if (pcap_setfilter(hpcap, &bprog) < 0)
-			logmsg(LOG_WARNING, "%s", pcap_geterr(hpcap));
-		pcap_freecode(&bprog);
+	dead = pcap_open_dead(pcap_datalink(hpcap), (int)length);
+	if (dead == NULL) {
+		logmsg(LOG_WARNING, "pcap_open_dead failed");
+		return (-1);
 	}
+	if (pcap_compile(dead, &bprog, filter, PCAP_OPT_FIL, 0) < 0) {
+		logmsg(LOG_WARNING, "%s", pcap_geterr(dead));
+		pcap_close(dead);
+		return (-1);
+	}
+	/* The live handle is shared across fork, but libpcap state is not. */
+	result = ioctl(pcap_fileno(hpcap), BIOCSETF, &bprog);
+	if (result < 0)
+		logmsg(LOG_WARNING, "BIOCSETF: %s", strerror(errno));
+	pcap_freecode(&bprog);
+	pcap_close(dead);
+	return (result);
 }
 
 int
@@ -259,9 +263,12 @@ init_pcap(void)
 		return (-1);
 	}
 
-	set_pcap_filter();
-
 	cur_snaplen = snaplen = pcap_snapshot(hpcap);
+	if (set_pcap_filter(cur_snaplen) < 0) {
+		pcap_close(hpcap);
+		hpcap = NULL;
+		return (-1);
+	}
 
 	/* lock */
 #ifdef __OpenBSD__
@@ -365,14 +372,21 @@ try_reset_dump(int nomove)
 		hdr.version_minor = PCAP_VERSION_MINOR;
 		hdr.thiszone = 0;
 		hdr.sigfigs = 0;
-		hdr.snaplen = hpcap->snapshot;
-		hdr.linktype = hpcap->linktype;
+		hdr.snaplen = cur_snaplen;
+		hdr.linktype = pcap_datalink(hpcap);
 
 		if (fwrite((char *)&hdr, sizeof(hdr), 1, fp) != 1) {
 			fclose(fp);
 			return (-1);
 		}
-	} else if (scan_dump(fp, st.st_size)) {
+	} else {
+		int scan_result = scan_dump(fp, st.st_size);
+		if (scan_result < 0) {
+			fclose(fp);
+			return (-1);
+		}
+		if (scan_result == 0)
+			goto opened;
 		fclose(fp);
 		if (nomove || priv_move_log()) {
 			logmsg(LOG_ERR,
@@ -382,6 +396,7 @@ try_reset_dump(int nomove)
 		return (1);
 	}
 
+opened:
 	dpcap = fp;
 
 	set_suspended(0);
@@ -419,7 +434,7 @@ scan_dump(FILE *fp, off_t size)
 	if (hdr.magic != TCPDUMP_MAGIC ||
 	    hdr.version_major != PCAP_VERSION_MAJOR ||
 	    hdr.version_minor != PCAP_VERSION_MINOR ||
-	    hdr.linktype != (uint32_t)hpcap->linktype ||
+	    hdr.linktype != (uint32_t)pcap_datalink(hpcap) ||
 	    hdr.snaplen > PFLOGD_MAXSNAPLEN) {
 		return (1);
 	}
@@ -450,8 +465,8 @@ scan_dump(FILE *fp, off_t size)
 		       hdr.snaplen);
 		if (set_snaplen(hdr.snaplen)) {
 			logmsg(LOG_WARNING,
-			       "Failed, using old settings, offset %llu",
-			       (unsigned long long) size);
+			       "Failed to select existing log snapshot length");
+			return (-1);
 		}
 	}
 
@@ -470,7 +485,11 @@ dump_packet_nobuf(u_char *user, const struct pcap_pkthdr *h, const u_char *sp)
 	struct pcap_sf_pkthdr sf_hdr;
 #endif
 	FILE *f = (FILE *)user;
+	struct pcap_pkthdr bounded = *h;
 
+	if (bounded.caplen > cur_snaplen)
+		bounded.caplen = cur_snaplen;
+	h = &bounded;
 	if (suspended) {
 		packets_dropped++;
 		return;
@@ -505,7 +524,7 @@ dump_packet_nobuf(u_char *user, const struct pcap_pkthdr *h, const u_char *sp)
 		goto error;
 	}
 
-	if (fwrite(sp, h->caplen, 1, f) != 1)
+	if (h->caplen != 0 && fwrite(sp, h->caplen, 1, f) != 1)
 		goto error;
 
 	return;
@@ -565,14 +584,20 @@ void
 dump_packet(u_char *user, const struct pcap_pkthdr *h, const u_char *sp)
 {
 	FILE *f = (FILE *)user;
+	struct pcap_pkthdr bounded = *h;
 #ifdef __OpenBSD__
-	size_t len = sizeof(*h) + h->caplen;
+	size_t header_size = sizeof(*h);
 #else
 	struct pcap_sf_pkthdr sf_hdr;
-	size_t len = sizeof(sf_hdr) + h->caplen;
+	size_t header_size = sizeof(sf_hdr);
 #endif
+	size_t len;
 
-	if (len < sizeof(*h) || h->caplen > (size_t)cur_snaplen) {
+	if (bounded.caplen > cur_snaplen)
+		bounded.caplen = cur_snaplen;
+	h = &bounded;
+	len = header_size + h->caplen;
+	if (len < header_size) {
 		logmsg(LOG_NOTICE, "invalid size %zu (%u/%u), packet dropped",
 		       len, cur_snaplen, snaplen);
 		packets_dropped++;

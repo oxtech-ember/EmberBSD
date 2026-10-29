@@ -45,7 +45,7 @@ int	priv_open_log(void);
 int	priv_move_log(void);
 pcap_t *pcap_open_live_fd(int fd, int snaplen, char *ebuf);
 
-void set_pcap_filter(void);
+int set_pcap_filter(uint32_t);
 /* File descriptor send/recv */
 void send_fd(int, int);
 int  receive_fd(int);

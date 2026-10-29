@@ -32,14 +32,6 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <pcap.h>
-/*
- * If we're going to include parts of the libpcap internals we MUST
- * set the feature-test macros they expect, or they may misbehave.
- */
-#define HAVE_STRLCPY
-#define HAVE_SNPRINTF
-#define HAVE_VSNPRINTF
-#include <pcap-int.h>
 #include <pwd.h>
 #include <signal.h>
 #include <stdio.h>
@@ -197,10 +189,7 @@ set_snaplen(uint32_t snap)
 	if (hpcap == NULL)
 		return (1);
 
-	hpcap->snapshot = snap;
-	set_pcap_filter();
-
-	return 0;
+	return (set_pcap_filter(snap) < 0);
 }
 
 static int
@@ -262,10 +251,6 @@ priv_set_snaplen(int snaplen)
 	must_write(priv_fd, &snaplen, sizeof(int));
 
 	must_read(priv_fd, &ret, sizeof(int));
-
-	/* also set hpcap->snapshot in child */
-	if (ret == 0)
-		hpcap->snapshot = snaplen;
 
 	return (ret);
 }
