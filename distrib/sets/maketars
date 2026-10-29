@@ -240,7 +240,7 @@ for setname in ${lists:-${nlists}}; do
 		msg "Creating ${out}"
 		rm -f "${tars}/${out}"
 		TMPFILES="${TMPFILES} ${tars}/${out}.tmp"
-		runpax "${setname}" -z --use-compress-program \
+		runpax "${setname}" --gnu -z --use-compress-program \
 		    ${COMPRESS_PROGRAM} > "${tars}/${out}.tmp" &&
 		mv "${tars}/${out}.tmp" "${tars}/${out}"
 	fi
