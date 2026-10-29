@@ -98,36 +98,38 @@ ARCH64=no
 
 #####
 
+MKVARS_FD?= 1
+
 mkvars: mkvarsyesno mkextravars mksolaris .PHONY
 
-mkvarsyesno: .PHONY
+mkvarsyesno: .PHONY .MAKE
 .for i in ${_MKVARS.yes}
-	@echo $i="${$i}"
+	@echo $i="${$i}" >&${MKVARS_FD}
 .endfor
 .for i in ${_MKVARS.no}
-	@echo $i="${$i}"
+	@echo $i="${$i}" >&${MKVARS_FD}
 .endfor
 
-mkextravars: .PHONY
+mkextravars: .PHONY .MAKE
 .for i in ${MKEXTRAVARS}
-	@echo $i="${$i}"
+	@echo $i="${$i}" >&${MKVARS_FD}
 .endfor
 .if ${MKCOMPAT} != "no"
-	@echo COMPATARCHDIRS=${COMPATARCHDIRS:S/ /,/gW}
+	@echo COMPATARCHDIRS=${COMPATARCHDIRS:S/ /,/gW} >&${MKVARS_FD}
 .else
-	@echo COMPATARCHDIRS=
+	@echo COMPATARCHDIRS= >&${MKVARS_FD}
 .endif
 .if ${MKKMOD} != "no" && ${MKCOMPATMODULES} != "no"
-	@echo KMODARCHDIRS=${KMODARCHDIRS:S/ /,/gW}
+	@echo KMODARCHDIRS=${KMODARCHDIRS:S/ /,/gW} >&${MKVARS_FD}
 .else
-	@echo KMODARCHDIRS=
+	@echo KMODARCHDIRS= >&${MKVARS_FD}
 .endif
 
-mksolaris: .PHONY
+mksolaris: .PHONY .MAKE
 .if (${MKDTRACE} != "no" || ${MKZFS} != "no" || ${MKCTF} != "no")
-	@echo MKSOLARIS="yes"
+	@echo MKSOLARIS="yes" >&${MKVARS_FD}
 .else
-	@echo MKSOLARIS="no"
+	@echo MKSOLARIS="no" >&${MKVARS_FD}
 .endif
 
 .include <bsd.files.mk>

@@ -126,7 +126,11 @@ IFS="
 
 mkvars_output=$( MAKEVERBOSE= ${MAKE} -B \
 	-m "${NETBSDSRCDIR:-${rundir}/../..}/share/mk" \
-	-f "${rundir}/mkvars.mk" mkvars ) || exit 1
+	-f "${rundir}/mkvars.mk" MKVARS_FD=9 mkvars 9>&1 1>&2 ) || exit 1
+if [ -z "${mkvars_output}" ]; then
+	echo "mkvars produced no values" >&2
+	exit 1
+fi
 for x in ${mkvars_output}; do
 	eval export $x
 done

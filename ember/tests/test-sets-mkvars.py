@@ -30,13 +30,15 @@ with tempfile.TemporaryDirectory(prefix='sets-mkvars-') as name:
         '"$MACHINE" "$MACHINE_ARCH" "$MKCXX" "$MKLIBCXX" '
         '"$MKX11" "$EMBER_COMPILER_FAMILY" "$HAVE_COMMON_LIBCXX"\n')
     mk = tmp / 'parent.mk'
-    mk.write_text('.include <bsd.own.mk>\nall: .PHONY\n'
+    mk.write_text('.include <bsd.own.mk>\nall: .PHONY .MAKE\n'
         '\t@printf "PARENT=%s,%s,%s,%s,%s,%s\\n" '
         '${MACHINE:Q} ${MACHINE_ARCH:Q} ${MKCXX:Q} ${MKLIBCXX:Q} '
         '${MKX11:Q} ${EMBER_COMPILER_FAMILY:Q}\n'
         '\t@MAKE=${MAKE:Q} ${HOST_SH:Q} ' + shlex.quote(str(shellscript)) + ' ' + shlex.quote(str(sets)) + '\n')
-    for cxx, x11 in (('no', 'yes'), ('yes', 'no')):
-        args = [str(make), '-C', str(sets), '-m', str(root / 'share/mk'),
+    for cxx, x11, options in (('no', 'yes', ()),
+                              ('yes', 'no', ('-w', '-j2')),
+                              ('no', 'yes', ('-n',))):
+        args = [str(make), *options, '-C', str(sets), '-m', str(root / 'share/mk'),
                 '-f', str(mk), 'MACHINE=evbarm', 'MACHINE_ARCH=aarch64',
                 'MKCXX='+cxx, 'MKLIBCXX='+cxx, 'MKX11='+x11,
                 'EMBER_COMPILER_FAMILY=clang',
@@ -46,7 +48,8 @@ with tempfile.TemporaryDirectory(prefix='sets-mkvars-') as name:
         expected = 'evbarm,aarch64,'+cxx+','+cxx+','+x11+',clang'
         assert 'PARENT='+expected in r.stdout, r.stdout
         assert 'CHILD='+expected+','+cxx in r.stdout, r.stdout
-        assert not r.stderr, r.stderr
+        if '-w' not in options:
+            assert not r.stderr, r.stderr
     target = tmp / 'out'; target.mkdir()
     bad = env | {'MAKE':str(tmp / 'missing-make')}
     r = subprocess.run([str(shell), str(sets / 'makeobsolete'), '-t', str(target), 'base'],
@@ -54,4 +57,14 @@ with tempfile.TemporaryDirectory(prefix='sets-mkvars-') as name:
     assert r.returncode != 0, (r.stdout, r.stderr)
     assert not list(target.iterdir()), 'failed make created set lists'
     assert 'not an identifier' not in r.stderr, r.stderr
+    fake = tmp / 'partial-make'
+    fake.write_text('#!' + str(shell) + '\necho partial-make-invoked >&2\n'
+                    'printf "MKCXX=yes\\n" >&9\nexit 3\n')
+    fake.chmod(0o755)
+    bad['MAKE'] = str(fake)
+    r = subprocess.run([str(shell), str(sets / 'makeobsolete'), '-t', str(target), 'base'],
+                       cwd=sets, env=bad, text=True, capture_output=True)
+    assert r.returncode != 0, (r.stdout, r.stderr)
+    assert 'partial-make-invoked' in r.stderr, r.stderr
+    assert not list(target.iterdir()), 'partial make output created set lists'
 print('sets mkvars overrides and failure: PASS')
