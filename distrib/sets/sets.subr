@@ -124,13 +124,16 @@ oIFS=$IFS
 IFS="
 "
 
-for x in $( MAKEFLAGS= MAKEVERBOSE= ${MAKE} -B -f ${rundir}/mkvars.mk mkvars ); do
+mkvars_output=$( MAKEVERBOSE= ${MAKE} -B \
+	-m "${NETBSDSRCDIR:-${rundir}/../..}/share/mk" \
+	-f "${rundir}/mkvars.mk" mkvars ) || exit 1
+for x in ${mkvars_output}; do
 	eval export $x
 done
 
 IFS=$oIFS
 
-MKVARS="$( MAKEFLAGS= MAKEVERBOSE= ${MAKE} -B -f ${rundir}/mkvars.mk mkvars | ${SED} -e 's,=.*,,' | ${XARGS} )"
+MKVARS="$( printf '%s\n' "${mkvars_output}" | ${SED} -e 's,=.*,,' | ${XARGS} )"
 
 #####
 
