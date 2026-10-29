@@ -13,7 +13,27 @@ FILESDIR_${F}=	/usr/share/locale/${F:.gmo=}/LC_MESSAGES
 FILESNAME_${F}=	gettext-tools.mo
 .endfor
 
+# The current common catalog calls Norwegian Bokmal "nb"; retain the
+# historical base locale path as an alias with identical compiled messages.
+.if defined(EMBER_GETTEXT_SOURCE)
+no.gmo: ${EMBER_GETTEXT_SOURCE}/gettext-tools/po/nb.gmo
+	cp -p ${.ALLSRC:[1]:Q} ${.TARGET:Q}
+
+# Use the upstream quotation rule out of tree, with selected native tools.
+.for _Q in en@quot en@boldquot
+${_Q}.gmo: ${EMBER_GETTEXT_SOURCE}/gettext-tools/po/gettext-tools.pot \
+    ${EMBER_GETTEXT_SOURCE}/gettext-tools/po/Rules-quot
+	cd ${.OBJDIR:Q} && env -u MAKEOVERRIDES MAKEFLAGS= ${HOST_GMAKE:Q} -f ${EMBER_GETTEXT_SOURCE:Q}/gettext-tools/po/Rules-quot \
+	    srcdir=${EMBER_GETTEXT_SOURCE:Q}/gettext-tools/po VPATH=${EMBER_GETTEXT_SOURCE:Q}/gettext-tools/po \
+	    PACKAGE=ember-base CROSS_COMPILING=yes DOMAIN=gettext-tools \
+	    MSGINIT=${HOST_MSGINIT:Q} MSGCONV=${HOST_MSGCONV:Q} \
+	    MSGFILTER=${HOST_MSGFILTER:Q} SED=${HOST_SED:Q} SHELL=${HOST_SH:Q} \
+	    ${_Q}.po-update-en
+	${HOST_MSGFMT:Q} -o ${.TARGET:Q} ${.OBJDIR:Q}/${_Q}.po
+.endfor
+.endif
+
 .include <bsd.files.mk>
 .include <bsd.inc.mk>
 
-.PATH: ${DIST}/gettext-tools/po
+.PATH: ${EMBER_GETTEXT_SOURCE}/gettext-tools/po

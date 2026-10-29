@@ -2,6 +2,9 @@
 
 .include <bsd.own.mk>
 
+.if defined(EMBER_GETTEXT_SOURCE)
+DIST=		${EMBER_GETTEXT_SOURCE}
+.else
 DIST=		${NETBSDSRCDIR}/external/gpl2/gettext/dist
 
 CPPFLAGS+=	-DHAVE_CONFIG_H -I${.CURDIR} -I${.CURDIR}/../../include \
@@ -10,6 +13,7 @@ CPPFLAGS+=	-DHAVE_CONFIG_H -I${.CURDIR} -I${.CURDIR}/../../include \
 		-DBISON_LOCALEDIR=\"\" \
 		-DPKGDATADIR=\"\"
 
-BINDIR?=	/usr/bin
-
 CWARNFLAGS.clang+=	-Wno-format-security
+.endif
+
+BINDIR?=	/usr/bin

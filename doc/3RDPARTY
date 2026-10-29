@@ -2151,20 +2151,31 @@ Copied from FreeBSD:
 /usr/src/share/man/man9/{d,c,}nv.9
 
 Package:	gettext
-Version:	0.16.1 (Last GPLv2+ version)
-Current Vers:	0.22.5
-Maintainer:	FSF
-Archive Site:	ftp://ftp.gnu.org/gnu/gettext/
-Home Page:	http://www.gnu.org/software/gettext/
-Date:		2024-02-25
+Version:	1.0 (common Ports source); historical 0.16.1 retained
+Current Vers:	1.0
+Maintainer:	Free Software Foundation
+Archive Site:	https://ftp.gnu.org/gnu/gettext/
+Home Page:	https://www.gnu.org/software/gettext/
+Date:		2026-10-29
 Mailing List:	bug-gnu-utils@gnu.org
-Responsible:	christos
-License:	GPLv2+ (0.16.1), GPLv3+ (0.17 and later)
-Location:	external/gpl2/gettext
+Responsible:	EmberBSD
+License:	GPLv3+ (tools); see common Ports source
+Location:	external/gpl2/gettext; common Ports devel/gettext
 Notes:
-GNU gettext is used for userland tools like msgfmt(1) only.  For libintl,
-we use BSD-licensed implementation from Citrus project (see entry for
-"Citrus XPG4DL").  We hope to replace userland tools with BSD-licensed one.
+The base tools use plain output and the BSD Citrus libintl implementation.
+The older source remains for migration, but is no longer in the build graph.
+
+Package:	libxml2
+Version:	2.15.4 (common Ports source)
+Current Vers:	2.15.4
+Maintainer:	GNOME project
+Home Page:	https://gitlab.gnome.org/GNOME/libxml2/
+Date:		2026-10-29
+Responsible:	EmberBSD
+License:	MIT; see common Ports source
+Location:	external/bsd/libxml2; common Ports textproc/libxml2
+Notes:
+A static, position-independent library is built privately for base consumers.
 
 Package:	grep
 Version:	3.12 (common Ports source); historical 2.5.1a retained

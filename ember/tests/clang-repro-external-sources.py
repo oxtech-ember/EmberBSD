@@ -29,6 +29,8 @@ ROOTS = (('EMBER_LIBEDIT_SOURCE', 'libedit', '/usr/src/external/libedit'),
          ('EMBER_LIBPCAP_SOURCE', 'libpcap', '/usr/src/external/libpcap'),
          ('EMBER_NTP_SOURCE', 'ntp', '/usr/src/external/ntp'),
          ('EMBER_LIBOPTS_SOURCE', 'libopts', '/usr/src/external/libopts'),
+         ('EMBER_GETTEXT_SOURCE', 'gettext', '/usr/src/external/gettext'),
+         ('EMBER_LIBXML2_SOURCE', 'libxml2', '/usr/src/external/libxml2'),
          ('EMBER_LLVM_SOURCE', 'llvm', '/usr/src/external/llvm'),
          ('EMBER_EXTERNAL_LLVM_RUNTIME', 'runtime', '/usr/pkg/llvm'))
 
