@@ -1815,7 +1815,7 @@ Home Page:	https://www.netbsd.org/
 Date:		2026-10-29
 Responsible:	EmberBSD
 License:	BSD-family notices; see common Ports source
-Location:	Common Ports devel/netbsd-iscsi-lib; external/bsd/iscsi/dist is inactive
+Location:	Common Ports devel/netbsd-iscsi-lib
 Notes:
 The common source carries the maintained NetBSD delta and pkgsrc patches.
 
