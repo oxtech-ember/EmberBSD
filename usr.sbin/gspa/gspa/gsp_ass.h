@@ -174,7 +174,7 @@ extern char line[], *lineptr;
 #if defined(sparc) && !defined(__NetBSD__)
 #include <alloca.h>
 #else
-#ifdef __GNUC__
+#if defined(__GNUC__) && !defined(alloca)
 #define alloca __builtin_alloca
 #endif
 #endif
