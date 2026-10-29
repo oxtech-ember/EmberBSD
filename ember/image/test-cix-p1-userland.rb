@@ -47,7 +47,7 @@ Dir.mktmpdir('ember-cix-userland-') do |work|
   SH
   File.write(compiler + '/bin/clang', "#!/bin/sh\nexit 0\n")
   FileUtils.cp(compiler + '/bin/aarch64--netbsd-readelf', compiler + '/bin/llvm-readelf')
-  %w[libarchive-source libevent-source byacc-source iscsi-source].each do |name|
+  %w[libarchive-source libevent-source byacc-source iscsi-source libpcap-source].each do |name|
     FileUtils.mkdir_p(work + '/' + name)
     File.write(work + '/' + name + '/emberbsd-prepared-source.json', name)
   end
@@ -172,7 +172,7 @@ Dir.mktmpdir('ember-cix-userland-') do |work|
       work + '/llvm-source', work + '/host-bfd.mk', '2',
       extra.fetch('TEST_GIT', '/usr/bin/git'), extra.fetch('TEST_RUBY', native_prefix + '/bin/ruby'),
       extra.fetch('TEST_SHASUM', native_prefix + '/bin/shasum'),
-      work + '/libarchive-source', work + '/libevent-source', work + '/byacc-source', work + '/iscsi-source', work + '/llvm-runtime',
+      work + '/libarchive-source', work + '/libevent-source', work + '/byacc-source', work + '/iscsi-source', work + '/libpcap-source', work + '/llvm-runtime',
       work + '/llvm-resource', compiler + '/libgcc_eh.a', compiler + '/resource',
       '23.1.4', 'aarch64-unknown-netbsd', work + '/llvm-resource/lib/netbsd/builtins.a')
   end
@@ -235,6 +235,10 @@ checks += 1
 abort 'FAIL: prepared iSCSI source or receipt missing' unless
   File.read(out + '/build-flags').include?("EMBER_ISCSI_SOURCE=#{work}/iscsi-source") &&
   File.read(out + '/BUILD-INPUTS.txt').include?("#{work}/iscsi-source/emberbsd-prepared-source.json")
+checks += 1
+abort 'FAIL: prepared libpcap source or receipt missing' unless
+  File.read(out + '/build-flags').include?("EMBER_LIBPCAP_SOURCE=#{work}/libpcap-source") &&
+  File.read(out + '/BUILD-INPUTS.txt').include?("#{work}/libpcap-source/emberbsd-prepared-source.json")
 checks += 1
 %w[PAM KERBEROS LDAP YP SKEY HESIOD].each do |feature|
   flags = File.read(out + '/build-flags')

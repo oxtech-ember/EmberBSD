@@ -953,6 +953,7 @@
  * IPMB with a Linux-specific pseudo-header; as requested by Alexey Neyman
  * <avn@pigeonpoint.com>.
  */
+#define DLT_I2C_LINUX		209
 #define DLT_IPMB_LINUX		209
 
 /*
@@ -1580,6 +1581,116 @@
  */
 #define DLT_ATSC_ALP		289
 
+/* New DLT assignments from upstream libpcap 1.11.0. */
+/*
+ * Event Tracing for Windows messages.
+ */
+#define DLT_ETW			290
+
+/*
+ * Hilscher Gesellschaft fuer Systemautomation mbH
+ * netANALYZER NG hardware and software.
+ *
+ * The specification for this footer can be found at:
+ * https://kb.hilscher.com/x/brDJBw
+ *
+ * Requested by Jan Adam <jadam@hilscher.com>
+ */
+#define DLT_NETANALYZER_NG	291
+
+/*
+ * Serial NCP (Network Co-Processor) protocol for Zigbee stack ZBOSS
+ * by DSR.
+ * ZBOSS NCP protocol description: https://cloud.dsr-corporation.com/index.php/s/3isHzaNTTgtJebn
+ * Header in pcap file: https://cloud.dsr-corporation.com/index.php/s/fiqSDorAAAZrsYB
+ *
+ * Requested by Eugene Exarevsky <eugene.exarevsky@dsr-corporation.com>
+ */
+#define DLT_ZBOSS_NCP		292
+
+/*
+ * USB 2.0, 1.1, and 1.0 packets as transmitted over the cable.
+ */
+#define DLT_USB_2_0_LOW_SPEED	293
+#define DLT_USB_2_0_FULL_SPEED	294
+#define DLT_USB_2_0_HIGH_SPEED	295
+
+/*
+ * Auerswald Logger Protocol
+ * description is provided on
+ * https://github.com/Auerswald-GmbH/auerlog/blob/master/auerlog.txt
+ */
+#define DLT_AUERSWALD_LOG	296
+
+/*
+ * Z-Wave packets with a TAP meta-data header
+ * https://gitlab.com/exegin/zwave-g9959-tap
+ * requested on tcpdump-workers@
+ */
+#define DLT_ZWAVE_TAP		297
+
+/*
+ * Silicon Labs debug channel protocol:
+ */
+#define DLT_SILABS_DEBUG_CHANNEL 298
+
+/*
+ * Ultra-wideband (UWB) controller interface protocol (UCI).
+ * requested by Henri Chataing <henrichataing@google.com>
+ */
+#define DLT_FIRA_UCI		299
+
+/*
+ * MDB (Multi-Drop Bus) protocol between a vending machine controller and
+ * peripherals inside the vending machine. See
+ *
+ *	https://www.kaiser.cx/pcap-mdb.html
+ *
+ * for the specification.
+ *
+ * Requested by Martin Kaiser <martin@kaiser.cx>.
+ */
+#define DLT_MDB			300
+
+/*
+ * DECT-2020 New Radio (NR) - ETSI TS 103 636.
+ * Requested by Stig Bjorlykke <stig@bjorlykke.org>.
+ */
+#define DLT_DECT_NR		301
+
+/*
+ * Request serialization protocol used by edk2 firmware to communicate between
+ * normal mode and management mode ('MM' for short).
+ *
+ * The qemu uefi variable store implementation reuses the request serialization
+ * protocol for firmware <-> qemu communication.
+ */
+#define DLT_EDK2_MM		302
+
+/*
+ * Unstructured data for manual debugging only.  In other words, this DLT is
+ * suitable for expert interpretation of hex dumps, and that's it.  Do not use
+ * this DLT for any other purpose.  For any automated (identification, saving,
+ * loading, filtering, decoding) processing please either use another existing
+ * DLT that fits the use case or document, assign and implement a new, properly
+ * structured DLT.
+ *
+ * In this DLT do not assume any specification, any structure, any format, any
+ * version, any header, any payload, any byte order, any implementation, any
+ * software/firmware/hardware particulars, any source, any destination, any
+ * direction, any protocol or any data integrity/consistency whatsoever.
+ */
+#define DLT_DEBUG_ONLY		303
+
+/*
+ * DECT-2020 New Radio (NR) TAP with custom metadata header prepended to
+ * standard DLT_DECT_NR MAC-layer frame.
+ * Specification at https://github.com/DSRCorporation/dect-nr-tap
+ *
+ * Requested by Edem Khadiev <edem.khadiev@dsr-corporation.com>
+ */
+#define DLT_DECT_NR_TAP		304
+
 /*
  * In case the code that includes this file (directly or indirectly)
  * has also included OS files that happen to define DLT_HIGH_MATCHING_MAX,
@@ -1590,7 +1701,7 @@
 #ifdef DLT_HIGH_MATCHING_MAX
 #undef DLT_HIGH_MATCHING_MAX
 #endif
-#define DLT_HIGH_MATCHING_MAX	289	/* highest value in the "matching" range */
+#define DLT_HIGH_MATCHING_MAX	304	/* highest value in the "matching" range */
 
 /*
  * DLT and savefile link type values are split into a class and

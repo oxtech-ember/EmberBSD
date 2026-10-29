@@ -29,9 +29,11 @@ FILESDIR=	/usr/share/examples/rpcapd
 
 CPPFLAGS+=	-pthread
 LDFLAGS+=	-pthread
-CPPFLAGS+=	-I${SRCDIR} -I${.CURDIR}/../../include
+DPSRCS+=	config.h
+CLEANFILES+=	config.h
+CPPFLAGS+=	-I${.OBJDIR} -I${SRCDIR} -I${.CURDIR}/../../include
 CPPFLAGS+=	-DHAVE_CONFIG_H
-CPPFLAGS+=	-DPCAP_DONT_INCLUDE_PCAP_BPF_H
+CPPFLAGS+=	-DPCAP_DONT_INCLUDE_PCAP_BPF_H -include net/bpf.h
 
 PROGDPLIBS+=	pcap ${.CURDIR}/../../lib \
 		crypt ${NETBSDSRCDIR}/lib/libcrypt

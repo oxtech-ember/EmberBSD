@@ -4,7 +4,7 @@ USE_SHLIBDIR=yes
 .include <bsd.init.mk>
 USE_FORT?= yes	# network protocol library
 
-CPPFLAGS+= -DPCAP_DONT_INCLUDE_PCAP_BPF_H -DHAVE_CONFIG_H -DENABLE_REMOTE
+CPPFLAGS+= -DPCAP_DONT_INCLUDE_PCAP_BPF_H -include net/bpf.h -DHAVE_CONFIG_H -DENABLE_REMOTE
 CPPFLAGS+= -DPCAP_SUPPORT_RPCAP
 CPPFLAGS+= -I${.OBJDIR}
 
@@ -96,6 +96,8 @@ CLEANFILES+= ${MAN}
 
 MAN=	${MAN3:S/3pcap/3/g} ${MAN3IN:S/3pcap.in/3/g} \
 	${MANMISCIN:S/manmisc.in/7/g} ${MANFILEIN:S/manfile.in/5/g}
+MLINKS+=	pcap_datalink_val_to_name.3 pcap_datalink_val_to_description.3 \
+		pcap_datalink_val_to_name.3 pcap_datalink_val_to_description_or_dlt.3
 WARNS?=		4
 
 .for i in ${MAN3IN}
@@ -139,7 +141,6 @@ pcap-bpf.c \
 pcap-common.c \
 pcap-new.c \
 pcap-rpcap.c \
-pcap-rpcap-unix.c \
 pcap-usb-linux.c \
 pcap-util.c \
 pcap.c \
@@ -150,6 +151,13 @@ sf-pcap.c \
 sf-pcapng.c \
 sockutils.c
 
+
+.if !defined(EMBER_LIBPCAP_SOURCE) && empty(.MAKEFLAGS:M-V*) && make(includes)
+.error Set EMBER_LIBPCAP_SOURCE to the prepared common Ports libpcap source
+.endif
+
+DPSRCS+=	config.h
+CLEANFILES+=	config.h
 
 INCS=		pcap/pcap.h pcap/namedb.h pcap/funcattrs.h \
 	pcap/pcap-inttypes.h pcap/compiler-tests.h pcap/socket.h

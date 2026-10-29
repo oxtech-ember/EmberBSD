@@ -9818,6 +9818,8 @@
 ./usr/share/man/cat3/pcap_create.0		comp-c-catman		.cat
 ./usr/share/man/cat3/pcap_datalink.0		comp-c-catman		.cat
 ./usr/share/man/cat3/pcap_datalink_name_to_val.0 comp-c-catman		.cat
+./usr/share/man/cat3/pcap_datalink_val_to_description.0 comp-c-catman		.cat
+./usr/share/man/cat3/pcap_datalink_val_to_description_or_dlt.0 comp-c-catman		.cat
 ./usr/share/man/cat3/pcap_datalink_val_to_name.0 comp-c-catman		.cat
 ./usr/share/man/cat3/pcap_dump.0		comp-c-catman		.cat
 ./usr/share/man/cat3/pcap_dump_close.0		comp-c-catman		.cat
@@ -18782,6 +18784,8 @@
 ./usr/share/man/html3/pcap_create.html		comp-c-htmlman		html
 ./usr/share/man/html3/pcap_datalink.html	comp-c-htmlman		html
 ./usr/share/man/html3/pcap_datalink_name_to_val.html comp-c-htmlman	html
+./usr/share/man/html3/pcap_datalink_val_to_description.html comp-c-htmlman		html
+./usr/share/man/html3/pcap_datalink_val_to_description_or_dlt.html comp-c-htmlman		html
 ./usr/share/man/html3/pcap_datalink_val_to_name.html comp-c-htmlman	html
 ./usr/share/man/html3/pcap_dump.html		comp-c-htmlman		html
 ./usr/share/man/html3/pcap_dump_close.html	comp-c-htmlman		html
@@ -27738,6 +27742,8 @@
 ./usr/share/man/man3/pcap_create.3		comp-c-man		.man
 ./usr/share/man/man3/pcap_datalink.3		comp-c-man		.man
 ./usr/share/man/man3/pcap_datalink_name_to_val.3 comp-c-man		.man
+./usr/share/man/man3/pcap_datalink_val_to_description.3 comp-c-man		.man
+./usr/share/man/man3/pcap_datalink_val_to_description_or_dlt.3 comp-c-man		.man
 ./usr/share/man/man3/pcap_datalink_val_to_name.3 comp-c-man		.man
 ./usr/share/man/man3/pcap_dump.3		comp-c-man		.man
 ./usr/share/man/man3/pcap_dump_close.3		comp-c-man		.man

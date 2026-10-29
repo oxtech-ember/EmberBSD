@@ -21,6 +21,7 @@ export EMBER_LIBARCHIVE_SOURCE=/absolute/prepared-libarchive
 export EMBER_LIBEVENT_SOURCE=/absolute/prepared-libevent
 export EMBER_BYACC_SOURCE=/absolute/prepared-byacc
 export EMBER_ISCSI_SOURCE=/absolute/prepared-iscsi
+export EMBER_LIBPCAP_SOURCE=/absolute/prepared-libpcap
 export EMBER_LLVM_SOURCE=/absolute/prepared-llvm
 export EMBER_SDK_SYSROOT=/absolute/completed-aarch64-sysroot
 BUILD_JOBS=2 "$EMBER_HOST_PREFIX/bin/python3.15" -B ember/image/cix-p1-native.py \
@@ -41,9 +42,9 @@ common LLVM source is still needed for libc and libm. No compiler fallback is au
 `EMBER_LIBEDIT_SOURCE` names the libedit source prepared by EmberBSD-SDK
 `scripts/prepare-libedit.py` from the Ports recipe ([base libedit](../../lib/libedit/README.md)).
 `EMBER_LLVM_SOURCE` names the matching LLVM source prepared by Ports. The
-selected Ports checkout verifies the prepared libedit, libarchive, libevent, byacc, iSCSI and LLVM
+selected Ports checkout verifies the prepared libedit, libarchive, libevent, byacc, iSCSI, libpcap and LLVM
 sources against their recipes. Root `obj` and `includes` phases consume the
-libarchive, libevent, byacc and iSCSI source trees even in this reduced profile. The
+libarchive, libevent, byacc, iSCSI and libpcap source trees even in this reduced profile. The
 host BFD configuration supplies the OS native tool contract. The output path
 must not exist. Source and build paths must be absolute, without whitespace or
 shell metacharacters. A dirty source tree is rejected and its commit must remain
