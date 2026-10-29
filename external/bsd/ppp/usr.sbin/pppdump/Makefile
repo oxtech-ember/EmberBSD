@@ -2,13 +2,11 @@
 
 .include "../Makefile.inc"
 
-.PATH: ${DIST}/pppdump ${NETBSDSRCDIR}/sys/net
+.PATH: ${DIST}/pppdump
 
 PROG=	pppdump
-SRCS=	pppdump.c zlib.c
+SRCS=	pppdump.c
 MAN=	pppdump.8
 
-CPPFLAGS+=	-I${NETBSDSRCDIR}/sys/net -I${.CURDIR}
-CPPFLAGS+=	-DDO_BSD_COMPRESS -DDO_DEFLATE
 
 .include <bsd.prog.mk>

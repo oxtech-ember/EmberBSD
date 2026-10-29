@@ -15,6 +15,7 @@ crypto_ms.c \
 demand.c \
 eap.c \
 eap-tls.c \
+event-handler.c \
 ecp.c \
 fsm.c \
 ipcp.c \
@@ -31,7 +32,6 @@ ppp-md5.c \
 ppp-sha1.c \
 session.c \
 sys-bsd.c \
-tdb.c \
 tls.c \
 tty.c \
 upap.c \
@@ -45,7 +45,7 @@ BINMODE=4555
 BINOWN=	root
 
 CPPFLAGS+= -I${.CURDIR} -DHAVE_CONFIG_H -DSUPPORT_UTMP -DSUPPORT_UTMPX
-CPPFLAGS+= -I${PPPDDIR} -I${DIST}/../include -DSYSCONFDIR=\"/etc\"
+CPPFLAGS+= -I${PPPDDIR} -I${NETBSDSRCDIR}/external/bsd/ppp/include -DSYSCONFDIR=\"/etc\"
 CPPFLAGS+= -DPPPD_PLUGIN_DIR=\"/usr/libexec/ppp\"
 CPPFLAGS+= -Wno-error=deprecated-declarations
 CPPFLAGS+= -Wno-deprecated-declarations
@@ -62,12 +62,8 @@ LDADD+=-lpam ${PAM_STATIC_LDADD}
 DPADD+=${LIBPAM} ${PAM_STATIC_DPADD}
 .endif
 
-LDADD+= -lpcap -lcrypt -lssl -lcrypto -lutil -Wl,--export-dynamic
-DPADD+= ${LIBPCAP} ${LIBCRYPT} ${LIBSSL} ${LIBCRYPTO} ${LIBUTIL}
-
-.for f in chap-md5 chap_ms eap
-COPTS.${f}.c+=	-Wno-pointer-sign
-.endfor
+LDADD+= -lpcap -ltdb -lcrypt -lssl -lcrypto -lutil -Wl,--export-dynamic
+DPADD+= ${LIBPCAP} ${DESTDIR}${LIBDIR}/libtdb.a ${LIBCRYPT} ${LIBSSL} ${LIBCRYPTO} ${LIBUTIL}
 
 CWARNFLAGS.clang+=	-Wno-tautological-compare
 

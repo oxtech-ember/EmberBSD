@@ -81,6 +81,6 @@
 #define PPP_WITH_PEAP 1
 
 /* The pppd version */
-#define PPPD_VERSION "2.5.2"
+#define PPPD_VERSION "2.5.4"
 
 #endif

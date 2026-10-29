@@ -1269,27 +1269,19 @@ Location:	external/ibm-public/postfix/dist
 Notes:
 
 Package:	ppp
-Version:	2.5.2
-Current Vers:	2.5.2
+Version:	2.5.4
+Current Vers:	2.5.4
 Maintainer:	Paul Mackerras <paulus@samba.org>
-Archive Site:
-Home Page:
-Date: 		2025-01-08
+Archive Site:	https://www.samba.org/ftp/ppp/
+Home Page:	https://ppp.samba.org/
+Date:		2026-10-29
 GIT root:	https://github.com/ppp-project/ppp
-Mailing List:
-Responsible:	christos, cube
-License:	BSD (3-clause)
-Location:	external/bsd/ppp/dist
+Responsible:	EmberBSD
+License:	Mixed BSD and CMU notices; see common Ports source.
+Location:	Common Ports net/pppd; external/bsd/ppp/dist is inactive.
 Notes:
-BSD support was removed from 2.4.0; I added it back and removed
-some GPL pieces. Multilink support is missing. Repeated pings to
-Paulus have not yielded results. I've retrofitted pppdump to use
-net/zlib, and <net/ppp-comp.h> and I now maintain sys-bsd.c. This
-is clearly a pain. I have not tested the modules code, neither our
-makefiles make it easy to construct a module, but I left one there
-as an example.
-TDB code as found in 2.4.x, x>1 is under the GPL.  Therefore, we're
-using the version found in 2.4.1.
+The common Ports source carries the NetBSD BSD backend and uses shared TDB.
+The old status plugin is not built; its obsolete LCP hooks require a port.
 
 Package:	root.cache
 Version:	2023112702 (November 27, 2023)

@@ -132,6 +132,7 @@
 
 /* OpenSSL engine support */
 /* #undef OPENSSL_NO_ENGINE */
+#define OPENSSL_ENGINE 1
 
 /* Name of package */
 #define PACKAGE "ppp"
@@ -143,7 +144,7 @@
 #define PACKAGE_NAME "ppp"
 
 /* Define to the full name and version of this package. */
-#define PACKAGE_STRING "ppp 2.5.2"
+#define PACKAGE_STRING "ppp 2.5.4"
 
 /* Define to the one symbol short name of this package. */
 #define PACKAGE_TARNAME "ppp"
@@ -152,10 +153,10 @@
 #define PACKAGE_URL ""
 
 /* Define to the version of this package. */
-#define PACKAGE_VERSION "2.5.2"
+#define PACKAGE_VERSION "2.5.4"
 
 /* Version of pppd */
-#define PPPD_VERSION "2.5.2"
+#define PPPD_VERSION "2.5.4"
 
 /* Have Callback Protocol support */
 #define PPP_WITH_CBCP 1
@@ -228,4 +229,4 @@
 /* #undef SYSTEMD */
 
 /* Version number of package */
-#define VERSION "2.5.2"
+#define VERSION "2.5.4"
