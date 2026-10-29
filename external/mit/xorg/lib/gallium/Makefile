@@ -1318,7 +1318,29 @@ LLVMRT_LIBS+=	\
 
 .endif  # ${BUILD_LLVM_PIPE} == 1 || ${BUILD_RADEON} == 1
 
-LDFLAGS+=	-Wl,--version-script=${X11SRCDIR.Mesa}/src/gallium/targets/dri/dri.sym
+# The xsrc targets/dri/dri.sym exports the winsys entry points of every
+# Mesa gallium driver (nouveau, radeon, amdgpu, freedreno, the shared AMD
+# LLVM init).  ld.lld refuses a version script global that the link does
+# not define (--no-undefined-version), so export only what is built here.
+DRI_SYMBOLS=	__driDriverExtensions __driDriverGetExtensions*
+.if ${BUILD_NOUVEAU} == 1
+DRI_SYMBOLS+=	nouveau_drm_screen_create
+.endif
+.if ${BUILD_RADEON} == 1
+DRI_SYMBOLS+=	radeon_drm_winsys_create amdgpu_winsys_create \
+		ac_init_shared_llvm_once
+.endif
+
+gallium_dri.sym: ${.CURDIR}/Makefile
+	${_MKTARGET_CREATE}
+	( echo '{'; echo '	global:'; \
+	  ${DRI_SYMBOLS:@_s@echo '		${_s};';@} \
+	  echo '	local:'; echo '		*;'; echo '};' ) > ${.TARGET}.tmp && \
+	mv ${.TARGET}.tmp ${.TARGET}
+
+CLEANFILES+=	gallium_dri.sym gallium_dri.sym.tmp
+DPADD+=		gallium_dri.sym
+LDFLAGS+=	-Wl,--version-script=${.OBJDIR}/gallium_dri.sym
 .if ${MACHINE_ARCH} == "i386" || ${MACHINE_ARCH} == "x86_64" || ${MACHINE_CPU} == "aarch64"
 LDFLAGS+=	-Wl,-z,defs
 .endif
