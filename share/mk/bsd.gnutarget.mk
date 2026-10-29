@@ -11,6 +11,8 @@
 .error GNU target build requires source, objdir, build/host triples and selected host shell/gmake
 .endif
 
+# Override GNU_MAKE_TARGETS.<directory> when a target directory needs a
+# narrower prerequisite than the default all target.
 GNU_MAKE_TARGETS?= all
 GNU_MAKE_DIRS?= .
 # Optional native generators run in these directories before target builds.
@@ -127,5 +129,5 @@ gnu-target-build: ${GNU_OBJDIR}/Makefile
 	cd ${GNU_OBJDIR:Q}/${_GNU_DIR:Q} && env -u MAKEOVERRIDES MAKEFLAGS= SHELL=${HOST_SH:Q} \
 	    ${_GNU_TARGET_ENV} ${GNU_MAKE_ENV} ${HOST_GMAKE:Q} \
 	    -j1 SHELL=${HOST_SH:Q} CFLAGS=${CFLAGS:Q} CXXFLAGS=${CXXFLAGS:Q} \
-	    ${_GNU_LIBTOOL_MAKE_ARG} ${GNU_MAKE_TARGETS}
+	    ${_GNU_LIBTOOL_MAKE_ARG} ${GNU_MAKE_TARGETS.${_GNU_DIR}:U${GNU_MAKE_TARGETS}}
 .endfor

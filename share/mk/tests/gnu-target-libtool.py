@@ -19,7 +19,13 @@ with tempfile.TemporaryDirectory(dir=a.work_dir) as tmp:
     work = Path(tmp)
     source = work / 'source'
     source.mkdir()
-    (source / 'configure').write_text('''mkdir -p host/sub nested
+    (source / 'configure').write_text('''mkdir -p host/sub nested header
+cat > header/Makefile <<'HEADER'
+all:
+\tprintf unexpected > unexpected
+header-only:
+\tprintf generated > generated
+HEADER
 cat > host/sub/Makefile <<'HOSTSUB'
 LIBTOOL=host-libtool
 all:
@@ -60,6 +66,8 @@ CFLAGS= -DSELECTED=1
 HOST_CFLAGS= -DHOST_ONLY=1
 GNU_CONFIGURE_CFLAGS= -DPROBE=1
 GNU_HOST_MAKE_DIRS= host
+GNU_MAKE_DIRS= header .
+GNU_MAKE_TARGETS.header= header-only
 .include "%s"
 all: gnu-target-build
 ''' % (source, work / 'build', host / 'bin/mksh', host / 'bin/gmake',
@@ -71,6 +79,8 @@ all: gnu-target-build
     if result.returncode:
         raise SystemExit(result.stdout + result.stderr)
     build = work / 'build'
+    if (build / 'header/generated').read_text() != 'generated' or (build / 'header/unexpected').exists():
+        raise SystemExit('per-directory target selection failed')
     if (build / 'nested/selected').read_text().splitlines() != ['--tag=CC', '--mode=link']:
         raise SystemExit('selected libtool was not executed with its arguments')
     if (build / 'host/host-selected').read_text().strip() != 'host-libtool':
