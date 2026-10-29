@@ -15,8 +15,8 @@ src=$1 out=$2 tools=$3 compiler=$4 sdk=$5 host_prefix=$6 host_family=$7 family=$
 shift 8
 libedit=$1 llvm_source=$2 host_bfd=$3 jobs=$4 git=$5 ruby=$6 shasum=$7
 shift 7
-libarchive=$1 libevent=$2 byacc=$3 iscsi=$4 libpcap=$5
-shift 5
+libarchive=$1 libevent=$2 byacc=$3 iscsi=$4 libpcap=$5 tcpwrappers=$6
+shift 6
 runtime_prefix=$1 resource=$2 unwinder=$3 compiler_resource=$4 version=$5 machine=$6 selected_builtins=$7
 nativepython=$host_prefix/bin/python3.15
 runner=$sdk/scripts/run-native-os.py
@@ -71,7 +71,8 @@ for input in "$src/build.sh" "$0" "$here/cix-p1-native.py" "$here/cix-p1-i18n.rb
     "$tools/bin/nbmkesdb" "$tools/bin/nbmkcsmapper" "$libedit/libedit-source.json" \
     "$llvm_source/llvm-source.json" "$libarchive/emberbsd-prepared-source.json" \
     "$libevent/emberbsd-prepared-source.json" "$byacc/emberbsd-prepared-source.json" \
-    "$iscsi/emberbsd-prepared-source.json" "$libpcap/emberbsd-prepared-source.json"; do
+    "$iscsi/emberbsd-prepared-source.json" "$libpcap/emberbsd-prepared-source.json" \
+    "$tcpwrappers/emberbsd-prepared-source.json"; do
     "$shasum" -a 256 "$input" >> "$out/BUILD-INPUTS.pending"
 done
 "$shasum" -a 256 "$0" "$here/cix-p1-native.py" "$here/cix-p1-i18n.rb" > "$out/PROFILE-SHA256.txt"
@@ -104,7 +105,8 @@ fi
     -V "EMBER_COMPILER_FAMILY=$family" -V "EMBER_HOST_BFD_CONFIG=$host_bfd" \
     -V "CPPFLAGS=$CPPFLAGS" -V "EMBER_LIBARCHIVE_SOURCE=$libarchive" \
     -V "EMBER_LIBEVENT_SOURCE=$libevent" -V "EMBER_BYACC_SOURCE=$byacc" \
-    -V "EMBER_ISCSI_SOURCE=$iscsi" -V "EMBER_LIBPCAP_SOURCE=$libpcap" "$@" \
+    -V "EMBER_ISCSI_SOURCE=$iscsi" -V "EMBER_LIBPCAP_SOURCE=$libpcap" \
+    -V "EMBER_TCP_WRAPPERS_SOURCE=$tcpwrappers" "$@" \
     -V MKDEBUG=no -V MKDEBUGLIB=no -V MKX11=no -V MKCXX=no -V MKCOMPAT=no \
     -V MKKMOD=no -V MKGCCCMDS=no -V MKGDB=no -V MKBINUTILS=no \
     -V MKATF=no -V MKKYUA=no -V MKMAN=no -V MKDOC=no -V MKINFO=no \

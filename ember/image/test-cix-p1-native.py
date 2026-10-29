@@ -81,7 +81,8 @@ with tempfile.TemporaryDirectory() as tmp:
                       EMBER_SDK_SYSROOT='/sysroot', EMBER_LLVM_SOURCE=str(llvm_source),
                       EMBER_PORTS_SOURCE='/ports', EMBER_GIT='/usr/bin/git',
                       EMBER_LIBARCHIVE_SOURCE='/libarchive', EMBER_LIBEVENT_SOURCE='/libevent',
-                      EMBER_BYACC_SOURCE='/byacc', EMBER_ISCSI_SOURCE='/iscsi', EMBER_LIBPCAP_SOURCE='/libpcap')
+                      EMBER_BYACC_SOURCE='/byacc', EMBER_ISCSI_SOURCE='/iscsi', EMBER_LIBPCAP_SOURCE='/libpcap',
+                      EMBER_TCP_WRAPPERS_SOURCE='/tcpwrappers')
     sys.argv = [str(path), str(source), tmp + '/clang', str(tools), '/compiler']
     subject.main()
     run = next(row[1] for row in calls if row[0] == 'run')
@@ -96,7 +97,7 @@ with tempfile.TemporaryDirectory() as tmp:
                                        '/compiler', '/sdk', '/native', 'clang', 'clang']
     assert '/sysroot/usr/pkg/llvm/builtins.a' in run['arguments']
     assert ['/usr/bin/git', '/selected/ruby', '/selected/shasum'] == run['arguments'][14:17]
-    assert run['arguments'][17:22] == ['/libarchive', '/libevent', '/byacc', '/iscsi', '/libpcap']
+    assert run['arguments'][17:23] == ['/libarchive', '/libevent', '/byacc', '/iscsi', '/libpcap', '/tcpwrappers']
     assert any(row[0] == 'verify-source' and
                '/ports/scripts/source-inputs/byacc/source.py' in row[1] and
                row[1][-2:] == ['--source', '/byacc'] for row in calls)
@@ -106,6 +107,9 @@ with tempfile.TemporaryDirectory() as tmp:
     assert any(row[0] == 'verify-source' and
                '/ports/scripts/source-inputs/libpcap/source.py' in row[1] and
                row[1][-2:] == ['--source', '/libpcap'] for row in calls)
+    assert any(row[0] == 'verify-source' and
+               '/ports/scripts/source-inputs/tcp_wrappers/source.py' in row[1] and
+               row[1][-2:] == ['--source', '/tcpwrappers'] for row in calls)
     assert ('host-extra', {'required_roles': {'ruby', 'shasum'}, 'compiler_family': 'clang'}) in calls
     calls.clear()
     del os.environ['EMBER_BYACC_SOURCE']
@@ -138,6 +142,16 @@ with tempfile.TemporaryDirectory() as tmp:
         raise AssertionError('missing libpcap source accepted')
     assert not Path(sys.argv[2]).exists()
     os.environ['EMBER_LIBPCAP_SOURCE'] = '/libpcap'
+    del os.environ['EMBER_TCP_WRAPPERS_SOURCE']
+    sys.argv[2] = tmp + '/missing-tcpwrappers'
+    try:
+        subject.main()
+    except SystemExit as exc:
+        assert 'EMBER_TCP_WRAPPERS_SOURCE' in str(exc)
+    else:
+        raise AssertionError('missing TCP wrappers source accepted')
+    assert not Path(sys.argv[2]).exists()
+    os.environ['EMBER_TCP_WRAPPERS_SOURCE'] = '/tcpwrappers'
     calls.clear()
     original = jsonio.loads_json
     jsonio.loads_json = lambda data: {'format': 'emberbsd-llvm-source', 'version': 1,
@@ -210,6 +224,21 @@ with tempfile.TemporaryDirectory() as tmp:
         assert 'libpcap verification failed' in str(exc)
     else:
         raise AssertionError('failed libpcap verification accepted')
+    assert not Path(sys.argv[2]).exists()
+    process.capture = original_capture
+    calls.clear()
+    def fail_tcpwrappers(argv, env):
+        if '/ports/scripts/source-inputs/tcp_wrappers/source.py' in argv:
+            raise SDKError('TCP wrappers verification failed')
+        return original_capture(argv, env)
+    process.capture = fail_tcpwrappers
+    sys.argv[2] = tmp + '/failed-tcpwrappers'
+    try:
+        subject.main()
+    except SystemExit as exc:
+        assert 'TCP wrappers verification failed' in str(exc)
+    else:
+        raise AssertionError('failed TCP wrappers verification accepted')
     assert not Path(sys.argv[2]).exists()
     process.capture = original_capture
     calls.clear()

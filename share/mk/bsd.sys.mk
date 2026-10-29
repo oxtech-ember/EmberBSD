@@ -89,6 +89,7 @@ REPROFLAGS+=	-fdebug-regex-map='/usr/src/(.*)/obj\..*/(.*)=/usr/obj/\1/\2'
     EMBER_TOP_SOURCE /usr/src/external/top \
     EMBER_ISCSI_SOURCE /usr/src/external/iscsi \
     EMBER_LIBPCAP_SOURCE /usr/src/external/libpcap \
+    EMBER_TCP_WRAPPERS_SOURCE /usr/src/external/tcp-wrappers \
     EMBER_PPP_SOURCE /usr/src/external/ppp \
     EMBER_NTP_SOURCE /usr/src/external/ntp \
     EMBER_LIBOPTS_SOURCE /usr/src/external/libopts \

@@ -2,6 +2,11 @@
 
 USE_FORT?= yes	# network server
 
+.include "Makefile.source"
+.if !defined(EMBER_TCP_WRAPPERS_SOURCE) && empty(.MAKEFLAGS:M-V*) && make(includes)
+.error Set EMBER_TCP_WRAPPERS_SOURCE to the prepared common Ports TCP wrappers source
+.endif
+
 LIB=	wrap
 
 SRCS=	hosts_access.c options.c shell_cmd.c rfc931.c eval.c hosts_ctl.c \
@@ -19,6 +24,9 @@ DPADD+=${LIBBLOCKLIST}
 
 INCS= tcpd.h
 INCSDIR=/usr/include
+# A prepared archive can carry older mtimes than the installed header.
+# bsd.inc.mk compares the contents before copying.
+.PHONY: ${DESTDIR}${INCSDIR}/tcpd.h
 
 .include "Makefile.cflags"
 

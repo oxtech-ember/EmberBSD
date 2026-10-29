@@ -3,6 +3,7 @@
 WARNS?=	4
 
 .include <bsd.own.mk>
+.include "${NETBSDSRCDIR}/lib/libwrap/Makefile.source"
 
 USE_FORT?=	yes	# network server
 
@@ -14,10 +15,7 @@ CPPFLAGS+=	-DINET6
 LDADD+=		-lutil
 DPADD+=		${LIBUTIL}
 
-LIBWRAP=	${NETBSDSRCDIR}/lib/libwrap
 SRCS+=		expandm.c
-.PATH.c:	${LIBWRAP}
-CPPFLAGS+=	-I${LIBWRAP}
 
 
 .if ${MKSHARE} != "no"

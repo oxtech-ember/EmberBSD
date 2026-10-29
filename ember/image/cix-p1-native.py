@@ -16,7 +16,7 @@ def main():
     required = ('EMBERBSD_SDK_SOURCE', 'EMBER_HOST_PREFIX', 'EMBER_LIBEDIT_SOURCE',
                 'EMBER_HOST_BFD_CONFIG', 'EMBER_LLVM_SOURCE', 'EMBER_PORTS_SOURCE',
                 'EMBER_LIBARCHIVE_SOURCE', 'EMBER_LIBEVENT_SOURCE', 'EMBER_BYACC_SOURCE',
-                'EMBER_ISCSI_SOURCE', 'EMBER_LIBPCAP_SOURCE')
+                'EMBER_ISCSI_SOURCE', 'EMBER_LIBPCAP_SOURCE', 'EMBER_TCP_WRAPPERS_SOURCE')
     missing = [key for key in required if not os.environ.get(key)]
     family = os.environ.get('EMBER_TARGET_COMPILER_FAMILY', 'clang')
     host_family = os.environ.get('EMBER_HOST_COMPILER_FAMILY', 'clang')
@@ -40,7 +40,8 @@ def main():
                   Path(os.environ['EMBER_LIBEDIT_SOURCE']), Path(os.environ['EMBER_HOST_BFD_CONFIG']),
                   Path(os.environ['EMBER_LLVM_SOURCE']), Path(os.environ['EMBER_PORTS_SOURCE']),
                   Path(os.environ['EMBER_LIBARCHIVE_SOURCE']), Path(os.environ['EMBER_LIBEVENT_SOURCE']),
-                  Path(os.environ['EMBER_BYACC_SOURCE']), Path(os.environ['EMBER_ISCSI_SOURCE']), Path(os.environ['EMBER_LIBPCAP_SOURCE']))
+                  Path(os.environ['EMBER_BYACC_SOURCE']), Path(os.environ['EMBER_ISCSI_SOURCE']),
+                  Path(os.environ['EMBER_LIBPCAP_SOURCE']), Path(os.environ['EMBER_TCP_WRAPPERS_SOURCE']))
         if family == 'clang':
             inputs += (Path(os.environ['EMBER_SDK_SYSROOT']),)
         if any(not p.is_absolute() or any(c not in 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_./-' for c in str(p)) for p in inputs):
@@ -75,6 +76,7 @@ def main():
             ('EMBER_BYACC_SOURCE', 'scripts/source-inputs/byacc/source.py', 'byacc'),
             ('EMBER_ISCSI_SOURCE', 'scripts/source-inputs/iscsi/source.py', 'iscsi'),
             ('EMBER_LIBPCAP_SOURCE', 'scripts/source-inputs/libpcap/source.py', 'libpcap'),
+            ('EMBER_TCP_WRAPPERS_SOURCE', 'scripts/source-inputs/tcp_wrappers/source.py', 'tcp_wrappers'),
         ):
             script = str(Path(ports) / entry)
             if operation == 'libarchive':
@@ -117,7 +119,7 @@ def main():
                      llvm_source, host_bfd, jobs, git, extra.tool('ruby'), extra.tool('shasum'),
                      os.environ['EMBER_LIBARCHIVE_SOURCE'], os.environ['EMBER_LIBEVENT_SOURCE'],
                      os.environ['EMBER_BYACC_SOURCE'], os.environ['EMBER_ISCSI_SOURCE'],
-                     os.environ['EMBER_LIBPCAP_SOURCE'], *llvm]
+                     os.environ['EMBER_LIBPCAP_SOURCE'], os.environ['EMBER_TCP_WRAPPERS_SOURCE'], *llvm]
         native_os.run_native_os(native, source=str(source), routing=str(output / 'routing'),
                                 cwd=str(source), arguments=arguments, shell=True,
                                 log=str(output / 'logs/orchestrator.log'))

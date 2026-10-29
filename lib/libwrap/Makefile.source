@@ -1,0 +1,21 @@
+# Common TCP wrappers source, prepared by EmberBSD Ports.
+.if defined(EMBER_TCP_WRAPPERS_SOURCE)
+.if empty(EMBER_TCP_WRAPPERS_SOURCE:tW:M/*) || \
+    "${EMBER_TCP_WRAPPERS_SOURCE:tW:C,[A-Za-z0-9_./+@%=-],,g}" != "" || \
+    !exists(${EMBER_TCP_WRAPPERS_SOURCE}/tcpd.h) || \
+    !exists(${EMBER_TCP_WRAPPERS_SOURCE}/hosts_access.c) || \
+    !exists(${EMBER_TCP_WRAPPERS_SOURCE}/expandm.c) || \
+    !exists(${EMBER_TCP_WRAPPERS_SOURCE}/tcpdchk.c) || \
+    !exists(${EMBER_TCP_WRAPPERS_SOURCE}/tcpdmatch.c)
+.error EMBER_TCP_WRAPPERS_SOURCE must name the prepared common Ports TCP wrappers source
+.endif
+TCPWRAPPERS_SRCDIR := ${EMBER_TCP_WRAPPERS_SOURCE}
+.elif empty(.MAKEFLAGS:M-V*) && (make(all) || make(depend) || \
+    make(dependall) || make(install))
+.error Set EMBER_TCP_WRAPPERS_SOURCE to the prepared common Ports TCP wrappers source
+.else
+TCPWRAPPERS_SRCDIR := ${.CURDIR}
+.endif
+
+.PATH: ${TCPWRAPPERS_SRCDIR}
+CPPFLAGS+= -I${TCPWRAPPERS_SRCDIR}
