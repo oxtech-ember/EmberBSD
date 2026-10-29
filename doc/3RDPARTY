@@ -1443,7 +1443,7 @@ Archive Site:	https://sourceforge.net/projects/unixtop/files/unixtop/top-3.8beta
 Home Page:	https://unixtop.sourceforge.net/
 Responsible:	EmberBSD
 License:	BSD (3-clause)
-Location:	Common Ports sysutils/top; external/bsd/top/dist is inactive
+Location:	Common Ports sysutils/top
 Notes:
 The common source carries the maintained NetBSD delta and pkgsrc backends.
 
