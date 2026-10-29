@@ -808,19 +808,19 @@ Native integration keeps OS-owned BPF headers. DLT constants track upstream.
 The native SONAME is 12; binary consumers linked to 10 or 11 require rebuild.
 
 Package:	tcpdump
-Version:	4.99.5
-Current Vers:	4.99.5
+Version:	4.99.7
+Current Vers:	4.99.7
 Maintainer:	tcpdump-workers@lists.tcpdump.org
-Archive Site:	http://www.tcpdump.org/release/
-Home Page:	http://www.tcpdump.org/
-Date:		2023-09-01
+Archive Site:	https://www.tcpdump.org/release/
+Home Page:	https://www.tcpdump.org/
+Date:		2026-09-21
 Mailing List:	tcpdump-workers@lists.tcpdump.org
 Responsible:
 License:	BSD (3-clause)
-Location:	external/bsd/tcpdump/dist
+Location:	Common Ports net/tcpdump
 Notes:
-Use the src/external/bsd/tcpdump/tcpdump2netbsd script to prepare source
-tree.
+Native integration uses the prepared common Ports source. Upstream removed
+OTV decoding in 4.99.6 after the associated Internet-Draft became inactive.
 
 Package:	libwrap
 Version:	tcp_wrappers 7.6-ipv6.4 with NetBSD changes

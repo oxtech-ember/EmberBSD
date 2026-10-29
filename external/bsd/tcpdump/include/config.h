@@ -1,6 +1,9 @@
 /* config.h.  Generated from config.h.in by configure.  */
 /* config.h.in.  Generated from configure.ac by autoheader.  */
 
+/* Identify the tcpdump configuration to the 4.99.7 sources. */
+#define TCPDUMP_CONFIG_H_ 1
+
 /* Define to 1 if arpa/inet.h declares `ether_ntohost' */
 /* #undef ARPA_INET_H_DECLARES_ETHER_NTOHOST */
 

@@ -9,7 +9,19 @@ CWARNFLAGS.clang+=	-Wno-constant-logical-operand -Wno-error=unused-function
 USE_FORT?= yes	# network client
 
 BINDIR=/usr/sbin
-SRCDIR=	${.CURDIR}/../dist
+.if defined(EMBER_TCPDUMP_SOURCE)
+.if empty(EMBER_TCPDUMP_SOURCE:tW:M/*) || \
+    "${EMBER_TCPDUMP_SOURCE:tW:C,[A-Za-z0-9_./+@%=-],,g}" != "" || \
+    !exists(${EMBER_TCPDUMP_SOURCE}/VERSION) || \
+    !exists(${EMBER_TCPDUMP_SOURCE}/tcpdump.c) || \
+    !exists(${EMBER_TCPDUMP_SOURCE}/print-pfsync.c)
+.error EMBER_TCPDUMP_SOURCE must name the prepared common Ports tcpdump source
+.endif
+SRCDIR=	${EMBER_TCPDUMP_SOURCE}
+.elif empty(.MAKEFLAGS:M-V*) && (make(all) || make(dependall) || make(install) || \
+    make(maninstall) || make(tcpdump.8) || make(config.h) || make(version.c))
+.error Set EMBER_TCPDUMP_SOURCE to the prepared common Ports tcpdump source
+.endif
 .PATH:	${SRCDIR}
 
 PROG=	tcpdump
@@ -118,7 +130,6 @@ print-openflow-1.0.c \
 print-openflow-1.3.c \
 print-openflow.c \
 print-ospf.c \
-print-otv.c \
 print-pflog.c \
 print-pfsync.c \
 print-pgm.c \
@@ -185,7 +196,9 @@ version.c: VERSION
 LDADD+=	-lpcap -ll
 DPADD+=	${LIBPCAP} ${LIBL}
 
-CPPFLAGS+=	-I${.CURDIR}/../include -I${.CURDIR} -I${SRCDIR} -DHAVE_CONFIG_H
+CPPFLAGS+=	-I${.OBJDIR} -I${.CURDIR} -I${SRCDIR} -DHAVE_CONFIG_H
+CPPFLAGS+=	-DEMBER_TCPDUMP_PFSYNC
+CPPFLAGS+=	-DTCPDUMP_NETBSD_POLICY
 CPPFLAGS+=  -I${NETBSDSRCDIR}/dist/pf/sbin/pfctl \
 	-I${NETBSDSRCDIR}/sys/dist/pf
 
@@ -214,11 +227,20 @@ CPPFLAGS+=-DHAVE_LIBCRYPTO=1 -DHAVE_OPENSSL_EVP_H
 LDADD+=	-lcrypto -lcrypt
 DPADD+=	${LIBCRYPTO} ${LIBCRYPT}
 
-CLEANFILES+=	version.c tcpdump.8
+CLEANFILES+=	version.c tcpdump.8 config.h
+DPSRCS+=	config.h
+
+config.h: ${.CURDIR}/../include/config.h ${SRCDIR}/VERSION
+	${_MKTARGET_CREATE}
+	@v=`${TOOL_CAT} ${SRCDIR}/VERSION`; \
+	${TOOL_SED} -e "s/^#define PACKAGE_STRING .*/#define PACKAGE_STRING \"tcpdump $$v\"/" \
+	    -e "s/^#define PACKAGE_VERSION .*/#define PACKAGE_VERSION \"$$v\"/" \
+	    < ${.CURDIR}/../include/config.h > ${.TARGET}.tmp && mv ${.TARGET}.tmp ${.TARGET}
 
 tcpdump.8: tcpdump.1.in
-	@rm -f ${.TARGET}
-	cp ${.ALLSRC} ${.TARGET}
+	${TOOL_SED} -e 's/^\.TH TCPDUMP 1 /.TH TCPDUMP 8 /' \
+	    -e 's,@MAN_FILE_FORMATS@,5,g' -e 's,@MAN_MISC_INFO@,7,g' \
+	    < ${.ALLSRC} > ${.TARGET}
 
 CWARNFLAGS+=		${CC_WNO_ADDRESS_OF_PACKED_MEMBER}
 COPTS.print-bgp.c+=	${CC_WNO_FORMAT_TRUNCATION}
