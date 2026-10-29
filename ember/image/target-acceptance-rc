@@ -61,7 +61,7 @@ export EMBERBSD_ACCEPTANCE_NONCE
 mkdir -p /tmp/emberbsd-target-tests || fail scratch-create
 cp -R /tests/. /tmp/emberbsd-target-tests/ || fail tests-copy
 cd /tmp/emberbsd-target-tests || fail tests-directory
-if ./run-target.sh --target aarch64 .; then
+if /bin/sh ./run-target.sh --target aarch64 .; then
 	echo "EMBERBSD-ACCEPTANCE $nonce COMPLETE"
 	/sbin/halt -p -q
 	exit 0
