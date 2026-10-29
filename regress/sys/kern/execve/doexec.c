@@ -41,9 +41,7 @@
 #include <unistd.h>
 
 int
-main(argc, argv)
-	int argc;
-	char *argv[];
+main(int argc, char *argv[])
 {
 	if (argc != 2) {
 		fprintf(stderr, "usage: %s <progname>\n", argv[0]);

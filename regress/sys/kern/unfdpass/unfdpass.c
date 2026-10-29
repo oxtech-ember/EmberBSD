@@ -78,9 +78,7 @@ int make_pretzel = 0;
 
 /* ARGSUSED */
 int
-main(argc, argv)
-	int argc;
-	char *argv[];
+main(int argc, char *argv[])
 {
 #if MSG_SIZE >= 0
 	struct iovec iov;
@@ -323,16 +321,14 @@ main(argc, argv)
 }
 
 void
-usage(progname)
-	char *progname;
+usage(char *progname)
 {
 	fprintf(stderr, "usage: %s [-derDES]\n", progname);
 	exit(1);
 }
 
 void
-catch_sigchld(sig)
-	int sig;
+catch_sigchld(int sig)
 {
 	int status;
 
@@ -340,7 +336,7 @@ catch_sigchld(sig)
 }
 
 void
-child()
+child(void)
 {
 #if MSG_SIZE >= 0
 	struct iovec iov;
