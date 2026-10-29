@@ -6,7 +6,6 @@
 
 USE_FORT?=yes	# network client/local server
 
-ISCSIDIST=	${.CURDIR}/../dist
 .PATH:	${ISCSIDIST}/src/initiator
 
 PROG=iscsi-initiator

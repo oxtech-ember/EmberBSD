@@ -6,7 +6,6 @@
 
 USE_FORT?=yes	# network server
 
-ISCSIDIST=	${.CURDIR}/../dist
 .PATH:	${ISCSIDIST}/src/target
 
 PROG= iscsi-target
