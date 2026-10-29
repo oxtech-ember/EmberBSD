@@ -179,13 +179,13 @@ dump_x509(X509 *cert)
 
 
 int
-oakley_get_defaultlifetime()
+oakley_get_defaultlifetime(void)
 {
 	return OAKLEY_ATTR_SA_LD_SEC_DEFAULT;
 }
 
 int
-oakley_dhinit()
+oakley_dhinit(void)
 {
 	/* set DH MODP */
 	INITDHVAL(dh_modp768, OAKLEY_PRIME_MODP768,

@@ -334,7 +334,7 @@ session(void)
 
 /* clear all status and exit program. */
 static void
-close_session()
+close_session(void)
 {
 	evt_generic(EVT_RACOON_QUIT, NULL);
 	pfkey_send_flush(lcconf->sock_pfkey, SADB_SATYPE_UNSPEC);
@@ -433,7 +433,7 @@ static void reload_conf(void)
 }
 
 static void
-check_sigreq()
+check_sigreq(void)
 {
 	int sig, s;
 
@@ -485,7 +485,7 @@ check_sigreq()
 }
 
 static void
-init_signal()
+init_signal(void)
 {
 	int i;
 

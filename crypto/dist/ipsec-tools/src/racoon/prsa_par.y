@@ -131,7 +131,7 @@ prsawarning(const char *s, ...)
 }
 
 int
-prsawrap()
+prsawrap(void)
 {
 	return 1;
 } 

@@ -301,7 +301,7 @@ void migrate_dying_ph12(struct ph1handle *iph1)
  * dump isakmp-sa
  */
 vchar_t *
-dumpph1()
+dumpph1(void)
 {
 	struct ph1handle *iph1;
 	struct ph1dump *pd;
@@ -340,7 +340,7 @@ dumpph1()
  * create new isakmp Phase 1 status record to handle isakmp in Phase1
  */
 struct ph1handle *
-newph1()
+newph1(void)
 {
 	struct ph1handle *iph1;
 
@@ -479,7 +479,7 @@ remph1(struct ph1handle *iph1)
  * flush isakmp-sa
  */
 void
-flushph1()
+flushph1(void)
 {
 	struct ph1handle *p, *next;
 
@@ -496,7 +496,7 @@ flushph1()
 }
 
 void
-initph1tree()
+initph1tree(void)
 {
 	LIST_INIT(&ph1tree);
 }
@@ -671,7 +671,7 @@ getph2bysaidx(struct sockaddr *src __unused, struct sockaddr *dst __unused,
  * create new isakmp Phase 2 status record to handle isakmp in Phase2
  */
 struct ph2handle *
-newph2()
+newph2(void)
 {
 	struct ph2handle *iph2 = NULL;
 
@@ -824,7 +824,7 @@ initph2tree(void)
 }
 
 void
-flushph2()
+flushph2(void)
 {
 	struct ph2handle *p, *next;
 
@@ -969,7 +969,7 @@ remcontacted(struct sockaddr *remote)
 }
 
 void
-initctdtree()
+initctdtree(void)
 {
 	LIST_INIT(&ctdtree);
 }
@@ -1162,7 +1162,7 @@ sweep_recvdpkt(struct sched *dummy __unused)
 }
 
 void
-init_recvdpkt()
+init_recvdpkt(void)
 {
 	time_t lt = lcconf->retry_counter * lcconf->retry_interval;
 

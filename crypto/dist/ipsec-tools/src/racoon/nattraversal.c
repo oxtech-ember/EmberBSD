@@ -485,7 +485,7 @@ natt_enabled_in_rmconf_stub (struct remoteconf *rmconf, void *data __unused)
 }
 
 int
-natt_enabled_in_rmconf ()
+natt_enabled_in_rmconf (void)
 {
   return enumrmconf(NULL, natt_enabled_in_rmconf_stub, NULL) != 0;
 }

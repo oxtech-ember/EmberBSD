@@ -68,7 +68,7 @@ struct localconf *lcconf = NULL;
 static void setdefault(void);
 
 void
-initlcconf()
+initlcconf(void)
 {
 	if (lcconf == NULL) {
 		lcconf = racoon_calloc(1, sizeof(*lcconf));
@@ -108,7 +108,7 @@ lcconf_setpath(char* path, unsigned int path_type)
 }
 
 void
-flushlcconf()
+flushlcconf(void)
 {
 	int i;
 
@@ -124,7 +124,7 @@ flushlcconf()
 }
 
 static void
-setdefault()
+setdefault(void)
 {
 	lcconf->uid = 0;
 	lcconf->gid = 0;
@@ -380,13 +380,13 @@ saverestore_params(int f)
 }
 
 void
-restore_params()
+restore_params(void)
 {
 	saverestore_params(1);
 }
 
 void
-save_params()
+save_params(void)
 {
 	saverestore_params(0);
 }

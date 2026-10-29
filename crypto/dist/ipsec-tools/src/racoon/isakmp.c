@@ -1511,7 +1511,7 @@ isakmp_parse(vchar_t *buf)
 
 /* %%% */
 int
-isakmp_init()
+isakmp_init(void)
 {
 	/* initialize a isakmp status table */
 	initph1tree();

@@ -421,7 +421,7 @@ const int pfkey_nsatypes =
  * PF_KEY initialization
  */
 int
-pfkey_init()
+pfkey_init(void)
 {
 	int i, reg_fail;
 	int bufsiz;
@@ -489,7 +489,7 @@ pfkey_init()
 }
 
 int
-pfkey_reload()
+pfkey_reload(void)
 {
 	flushsp();
 

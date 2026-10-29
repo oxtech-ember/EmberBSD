@@ -77,7 +77,7 @@ static uint g_nextreqid = 1;
  * modules for ipsec sa spec
  */
 struct saprop *
-newsaprop()
+newsaprop(void)
 {
 	struct saprop *new;
 
@@ -89,7 +89,7 @@ newsaprop()
 }
 
 struct saproto *
-newsaproto()
+newsaproto(void)
 {
 	struct saproto *new;
 

@@ -100,7 +100,7 @@ sched_monotonic_to_time_t(struct timeval *tv, struct timeval *now __unused)
  *	if no entry, NULL returned.
  */
 struct timeval *
-schedular()
+schedular(void)
 {
 	static struct timeval timeout;
 	struct timeval now;

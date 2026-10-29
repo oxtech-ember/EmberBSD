@@ -229,7 +229,7 @@ myaddr_listen(struct sockaddr *addr, int udp_encap)
 }
 
 void
-myaddr_sync()
+myaddr_sync(void)
 {
 	struct myaddr *my, *next;
 
@@ -284,14 +284,14 @@ myaddr_getsport(struct sockaddr *addr)
 }
 
 void
-myaddr_init_lists()
+myaddr_init_lists(void)
 {
 	LIST_INIT(&configured);
 	LIST_INIT(&opened);
 }
 
 int
-myaddr_init()
+myaddr_init(void)
 {
         if (!lcconf->strict_address) {
 		lcconf->rtsock = kernel_open_socket();
@@ -307,7 +307,7 @@ myaddr_init()
 }
 
 void
-myaddr_close()
+myaddr_close(void)
 {
 	myaddr_flush_list(&configured);
 	myaddr_flush_list(&opened);
@@ -807,7 +807,7 @@ kernel_receive(void *ctx __unused, int fd)
 }
 
 static int
-kernel_open_socket()
+kernel_open_socket(void)
 {
 	int fd;
 #ifdef RO_MSGFILTER
@@ -837,7 +837,7 @@ kernel_open_socket()
 }
 
 static void
-kernel_sync()
+kernel_sync(void)
 {
 	caddr_t ref, buf, end;
 	size_t bufsiz;

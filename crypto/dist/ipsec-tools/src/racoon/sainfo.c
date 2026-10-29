@@ -185,7 +185,7 @@ getsainfo(const vchar_t *loc, const vchar_t *rmt, const vchar_t *peer,
 }
 
 struct sainfo *
-newsainfo()
+newsainfo(void)
 {
 	struct sainfo *new;
 
@@ -301,7 +301,7 @@ remsainfo(struct sainfo *si)
 }
 
 void
-flushsainfo()
+flushsainfo(void)
 {
 	struct sainfo *s, *next;
 
@@ -313,13 +313,13 @@ flushsainfo()
 }
 
 void
-initsainfo()
+initsainfo(void)
 {
 	LIST_INIT(&sitree);
 }
 
 struct sainfoalg *
-newsainfoalg()
+newsainfoalg(void)
 {
 	struct sainfoalg *new;
 
