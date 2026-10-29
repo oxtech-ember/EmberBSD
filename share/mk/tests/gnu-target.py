@@ -34,6 +34,8 @@ fixture.o:
 \t$(CC) $(CPPFLAGS) $(CFLAGS) -c $(SOURCE)/fixture.c -o $@
 END
 ''')
+    dependency = work / 'dependency.a'
+    dependency.write_bytes(b'first archive')
     makefile = work / 'Makefile'
     makefile.write_text('''GNU_SOURCE= %s
 GNU_OBJDIR= %s
@@ -48,10 +50,11 @@ GNU_CONFIGURE_CFLAGS= ${CFLAGS:N-Werror}
 LDFLAGS= --sysroot=%s
 LD_DRIVER_FLAGS= --ld-path=%s
 GNU_MAKE_ENV= SOURCE=%s
+GNU_CONFIGURE_DEPENDENCY= %s
 .include "%s"
 all: gnu-target-build
 ''' % (source, work / 'build', host / 'bin/mksh', host / 'bin/gmake',
-       host / 'bin/clang', a.sysroot, a.sysroot, host / 'bin/ld.lld', source,
+       host / 'bin/clang', a.sysroot, a.sysroot, host / 'bin/ld.lld', source, dependency,
        root / 'share/mk/bsd.gnutarget.mk'))
     env = dict(os.environ, PATH=str(host / 'bin') + ':' + str(host / 'gnu/bin'),
                TMPDIR=str(a.work_dir))
@@ -71,6 +74,8 @@ all: gnu-target-build
             raise SystemExit('unchanged GNU build did not reuse its configured objects')
         previous = current
     build = work / 'build'
+    if ('configure-dependency=' + str(dependency)) not in (build / '.configure-inputs').read_text().splitlines():
+        raise SystemExit('dependency snapshot lacks its role marker')
     args = (build / 'configured.args').read_text().splitlines()
     if '--build=aarch64-apple-darwin27.0.0' not in args or '--host=aarch64--netbsd' not in args:
         raise SystemExit('configure did not receive the explicit host and target triples')
@@ -129,6 +134,12 @@ all: gnu-target-build
     result = subprocess.run(command, cwd=work, env=env, capture_output=True, text=True)
     if result.returncode or (build / 'fixture.o').stat().st_ino == before_inode:
         raise SystemExit('reverted inputs reused an object after partial clean')
+    # External static dependency content changes invalidate the target graph.
+    before_inode = (build / 'fixture.o').stat().st_ino
+    dependency.write_bytes(b'second archive')
+    result = subprocess.run(command, cwd=work, env=env, capture_output=True, text=True)
+    if result.returncode or (build / 'fixture.o').stat().st_ino == before_inode:
+        raise SystemExit('changed external dependency left a stale target object')
     # Changed configure content must invalidate objects even in the same second.
     before_inode = (build / 'fixture.o').stat().st_ino
     configure = source / 'configure'

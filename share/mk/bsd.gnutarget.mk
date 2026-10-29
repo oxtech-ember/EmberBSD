@@ -24,6 +24,9 @@ GNU_CONFIGURE_ARGS?=
 GNU_CONFIGURE_ENV?=
 GNU_MAKE_ENV?=
 GNU_CONFIGURE_CFLAGS?= ${CFLAGS}
+# Optional file consumed by configure or target link (for example a static
+# library). Its contents participate in incremental build invalidation.
+_GNU_DEPENDENCY_VALUE= ${GNU_CONFIGURE_DEPENDENCY:Unone}
 # Optional selected target libtool overrides generated scripts only for target
 # make. Separate GNU_HOST_MAKE_DIRS use their own host tools; recursive
 # submakes inside a target graph inherit this make variable.
@@ -61,6 +64,9 @@ gnu-target-config-inputs:
 	    if test ${_GNU_LIBTOOL_VALUE:Q} != none; then \
 	        cp ${GNU_TARGET_LIBTOOL:U:Q} "$$tmp.libtool" || exit 1; \
 	    fi; \
+	    if test ${_GNU_DEPENDENCY_VALUE:Q} != none; then \
+	        cp ${GNU_CONFIGURE_DEPENDENCY:U:Q} "$$tmp.dependency" || exit 1; \
+	    fi; \
 	    printf '%s\n' ${GNU_SOURCE:Q} ${GNU_BUILD_TRIPLE:Q} ${GNU_HOST_TRIPLE:Q} \
 	    ${HOST_SH:Q} ${HOST_GMAKE:Q} ${_GNU_TARGET_ENV:Q} \
 	    ${CFLAGS:Q} ${CXXFLAGS:Q} ${GNU_MAKE_ENV:Q} \
@@ -70,15 +76,22 @@ gnu-target-config-inputs:
 	    if test ${_GNU_LIBTOOL_VALUE:Q} != none; then \
 	        printf '%s\n' ${GNU_TARGET_LIBTOOL:U:Q} >> "$$tmp" || exit 1; \
 	    fi; \
+	    if test ${_GNU_DEPENDENCY_VALUE:Q} != none; then \
+	        printf '%s\n' configure-dependency=${GNU_CONFIGURE_DEPENDENCY:U:Q} >> "$$tmp" || exit 1; \
+	    fi; \
 	    if test ! -f ${GNU_OBJDIR:Q}/.cleanup-makefile && \
 	       test -f ${GNU_OBJDIR:Q}/.configure-inputs && \
 	       cmp -s "$$tmp" ${GNU_OBJDIR:Q}/.configure-inputs && \
 	       cmp -s "$$tmp.source" ${GNU_OBJDIR:Q}/.configure-source && \
 	       { test ${_GNU_LIBTOOL_VALUE:Q} = none || \
 	         { test -f ${GNU_OBJDIR:Q}/.configure-libtool && \
-	           cmp -s "$$tmp.libtool" ${GNU_OBJDIR:Q}/.configure-libtool; }; }; then \
+	           cmp -s "$$tmp.libtool" ${GNU_OBJDIR:Q}/.configure-libtool; }; } && \
+	       { test ${_GNU_DEPENDENCY_VALUE:Q} = none || \
+	         { test -f ${GNU_OBJDIR:Q}/.configure-dependency && \
+	           cmp -s "$$tmp.dependency" ${GNU_OBJDIR:Q}/.configure-dependency; }; }; then \
 	        rm "$$tmp" "$$tmp.source"; \
 	        if test -f "$$tmp.libtool"; then rm "$$tmp.libtool"; fi; \
+	        if test -f "$$tmp.dependency"; then rm "$$tmp.dependency"; fi; \
 	    else \
 	        if test -f ${GNU_OBJDIR:Q}/.cleanup-makefile; then \
 	            cp ${GNU_OBJDIR:Q}/.cleanup-makefile ${GNU_OBJDIR:Q}/.restore-makefile.tmp.$$$$ && \
@@ -96,6 +109,9 @@ gnu-target-config-inputs:
 	        mv "$$tmp.source" ${GNU_OBJDIR:Q}/.configure-source || exit 1; \
 	        if test ${_GNU_LIBTOOL_VALUE:Q} != none; then \
 	            mv "$$tmp.libtool" ${GNU_OBJDIR:Q}/.configure-libtool || exit 1; \
+	        fi; \
+	        if test ${_GNU_DEPENDENCY_VALUE:Q} != none; then \
+	            mv "$$tmp.dependency" ${GNU_OBJDIR:Q}/.configure-dependency || exit 1; \
 	        fi; \
 	        mv "$$tmp" ${GNU_OBJDIR:Q}/.configure-inputs || exit 1; \
 	        if test -f ${GNU_OBJDIR:Q}/.cleanup-makefile; then \
