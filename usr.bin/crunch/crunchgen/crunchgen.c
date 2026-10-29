@@ -1088,7 +1088,6 @@ prog_makefile_rules(FILE *outmk, prog_t *p, const char *linevars)
     /* Use one awk command.... */
     fprintf(outmk, "\t${NM} -ng %s/%s.ro | ${AWK} '/^ *U / { next };",
 	    p->ident, p->name);
-    fprintf(outmk, " /^[0-9a-fA-F]+ C/ { next };");
     for (lst = p->keepsymbols; lst != NULL; lst = lst->next)
 	fprintf(outmk, " / %s$$/ { next };", lst->str);
     fprintf(outmk, " / main$$/ { print \"main _crunched_%s_stub\"; next };",

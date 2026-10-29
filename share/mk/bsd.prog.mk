@@ -529,7 +529,7 @@ ${_P}: .gdbinit ${LIBCRT0} ${LIBCRTI} ${OBJS.${_P}} ${LIBC} ${LIBCRTBEGIN} \
 
 ${_P}.ro: ${OBJS.${_P}} ${_DPADD.${_P}}
 	${_MKTARGET_LINK}
-	${CC} ${LDFLAGS:N-pie} ${LD_DRIVER_FLAGS} -nostdlib -r -Wl,-dc -o ${.TARGET} ${OBJS.${_P}}
+	${CC} ${LDFLAGS:N-pie} ${LD_DRIVER_FLAGS} -nostdlib -r -o ${.TARGET} ${OBJS.${_P}}
 
 .if defined(_PROGDEBUG.${_P})
 ${_PROGDEBUG.${_P}}: ${_P} __progdebug
