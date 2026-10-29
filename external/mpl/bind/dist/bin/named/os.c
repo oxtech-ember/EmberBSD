@@ -63,7 +63,9 @@ static int devnullfd = -1;
 static struct passwd *runas_pw = NULL;
 static bool done_setuid = false;
 static int dfd[2] = { -1, -1 };
+#ifdef __linux__
 static int notify_fd = -1;
+#endif
 
 static uid_t saved_uid = (uid_t)-1;
 static gid_t saved_gid = (gid_t)-1;
@@ -440,7 +442,9 @@ named_os_daemonize(void) {
 	 * Will be closed from SOCK_CLOEXEC but should be set to -1 again before
 	 * reconnecting to the notification socket.
 	 */
+#ifdef __linux__
 	notify_fd = -1;
+#endif
 	setup_systemd_notify();
 }
 
