@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Compile actual mkioctls output with numerically equal synthetic ioctls."""
+"""Check generated ioctl lookup and aliases with ordinary synthetic values."""
 import argparse
 import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 
@@ -45,3 +46,30 @@ with tempfile.TemporaryDirectory(prefix='kdump-generator-') as t:
             print(label + ' compile FAIL: ' + r.stderr[-2500:])
             raise SystemExit(1)
         print(label + ' compile PASS; both equal names and distinct name retained')
+
+    equal_order = re.findall(r'if \(val == (TEST_EQUAL_[AB])\)', code)
+    if len(equal_order) != 2 or set(equal_order) != {'TEST_EQUAL_A', 'TEST_EQUAL_B'}:
+        raise SystemExit('unexpected equal-value lookup order')
+    unit.write_text(unit.read_text() + '''
+#include <string.h>
+int main(void) {
+    unsigned found_a = 0, found_b = 0, found_d = 0;
+    const struct ioctlinfo *p;
+    const char *first = ioctlname(TEST_EQUAL_A);
+    const char *distinct = ioctlname(TEST_DIFFERENT);
+    if (!first || strcmp(first, FIRST_NAME) != 0) return 1;
+    if (!distinct || strcmp(distinct, "TEST_DIFFERENT") != 0) return 2;
+    if (ioctlname(_IO('P', 3)) != NULL) return 3;
+    for (p = ioctlinfo; p->name; ++p) {
+        if (!strcmp(p->name, "TEST_EQUAL_A") && p->value == TEST_EQUAL_A) found_a++;
+        if (!strcmp(p->name, "TEST_EQUAL_B") && p->value == TEST_EQUAL_B) found_b++;
+        if (!strcmp(p->name, "TEST_DIFFERENT") && p->value == TEST_DIFFERENT) found_d++;
+    }
+    return found_a != 1 || found_b != 1 || found_d != 1;
+}
+'''.replace('FIRST_NAME', '"' + equal_order[0] + '"'))
+    exe = root / 'lookup-test'
+    subprocess.run([a.host_cc, '-std=c11', '-Werror', '-I' + str(inc), str(unit),
+                    '-o', str(exe)], check=True)
+    subprocess.run([str(exe)], check=True)
+    print('host lookup PASS: first equal name, distinct, unknown, and both aliases')
