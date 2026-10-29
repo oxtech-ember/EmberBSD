@@ -211,7 +211,12 @@ _rtld_relocate_nonplt_self(Elf_Dyn *dynp, Elf_Addr relocbase)
 	relalim = (const Elf_Rela *)((const uint8_t *)rela + relasz);
 	for (; rela < relalim; rela++) {
 		where = (Elf_Addr *)(relocbase + rela->r_offset);
-		*where += (Elf_Addr)relocbase;
+		/*
+		 * Use the RELA addend.  ld.lld does not also store it in
+		 * the relocated word, so "*where += relocbase" gives
+		 * relocbase + 0.
+		 */
+		*where = (Elf_Addr)(relocbase + rela->r_addend);
 	}
 }
 

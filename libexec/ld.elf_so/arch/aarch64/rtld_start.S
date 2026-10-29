@@ -75,13 +75,20 @@ RCSID("$NetBSD: rtld_start.S,v 1.7 2024/07/23 18:11:53 riastradh Exp $")
 ENTRY_NP(_rtld_start)
 	mov	x24, x2			/* save ps_strings */
 
-	adrp	x1, :got:_DYNAMIC	/* load _DYNAMIC offset from GOT */
-	ldr	x1, [x1, #:got_lo12:_DYNAMIC]
+	/*
+	 * ld.elf_so is linked at address 0, so relocbase is the run-time
+	 * address of its ELF header.  Do not read the link-time _DYNAMIC
+	 * from the GOT.  ld.lld relaxes that GOT load to a PC-relative ADR,
+	 * which gives the run-time _DYNAMIC and relocbase 0.  Without the
+	 * relaxation the GOT slot holds 0, because ld.lld does not store
+	 * RELATIVE addends in the GOT.
+	 */
+	adrp	x25, __ehdr_start	/* relocbase = &__ehdr_start */
+	add	x25, x25, #:lo12:__ehdr_start
 
 	adrp	x0, _DYNAMIC		/* get &_DYNAMIC */
 	add	x0, x0, #:lo12:_DYNAMIC
 
-	sub	x25, x0, x1		/* relocbase = &_DYNAMIC - GOT:_DYNAMIC */
 	mov	x1, x25			/* pass as 2nd argument */
 	bl	_C_LABEL(_rtld_relocate_nonplt_self)
 
