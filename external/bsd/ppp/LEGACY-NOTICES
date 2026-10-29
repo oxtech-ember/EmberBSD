@@ -1,0 +1,9 @@
+The former imported PPP source included m4/ax_check_srp.m4, which is not
+present in the current common PPP source. Its notice was:
+
+Copyright (c) 2021 Eivind Naess <eivnaes@yahoo.com>
+
+Copying and distribution of this file, with or without modification, are
+permitted in any medium without royalty provided the copyright notice
+and this notice are preserved. This file is offered as-is, without any
+warranty.

@@ -2,13 +2,13 @@
 
 NOLINT=	# defined
 
-.include <bsd.own.mk>
+.include "../Makefile.inc"
 
 .PATH: ${PPPD}/plugins
 
 LIB=passwordfd
 SRCS=passwordfd.c
-CPPFLAGS+=-I${PPPD}
+CPPFLAGS+=-I${DIST} -I${NETBSDSRCDIR}/external/bsd/ppp/include
 
 LIBPREFIX=
 SHLIB_FULLVERSION=
