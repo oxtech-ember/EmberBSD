@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Verify the base libc linker aliases resolve to the same bytes. */
 #define _POSIX_C_SOURCE 200809L
+#define _XOPEN_SOURCE 700
 
 #include <sys/types.h>
 #include <sys/stat.h>
