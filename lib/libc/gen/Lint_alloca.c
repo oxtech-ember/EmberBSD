@@ -7,6 +7,8 @@
 
 #include <stdlib.h>
 
+#undef alloca
+
 /*ARGSUSED*/
 void *
 alloca(size_t size)

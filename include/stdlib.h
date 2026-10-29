@@ -266,11 +266,11 @@ int	 getsubopt(char **, char * const *, char **);
  * Implementation-defined extensions
  */
 #if defined(_NETBSD_SOURCE)
-#if defined(__PCC__) && !defined(__GNUC__)
-#define alloca(size) __builtin_alloca(size)
-#else
 void	*alloca(size_t);
-#endif /* __GNUC__ */
+#if defined(__clang__) || defined(__GNUC__) || defined(__PCC__)
+/* The compiler must account for alloca changing the caller's stack. */
+#define alloca(size) __builtin_alloca(size)
+#endif
 
 uint32_t arc4random(void);
 void	 arc4random_stir(void);
