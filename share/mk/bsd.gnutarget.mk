@@ -22,6 +22,13 @@ GNU_CONFIGURE_ARGS?=
 GNU_CONFIGURE_ENV?=
 GNU_MAKE_ENV?=
 GNU_CONFIGURE_CFLAGS?= ${CFLAGS}
+# Optional selected target libtool overrides generated scripts only for target
+# make. Separate GNU_HOST_MAKE_DIRS use their own host tools; recursive
+# submakes inside a target graph inherit this make variable.
+_GNU_LIBTOOL_VALUE= ${GNU_TARGET_LIBTOOL:Unone}
+.if defined(GNU_TARGET_LIBTOOL)
+_GNU_LIBTOOL_MAKE_ARG= LIBTOOL=${GNU_TARGET_LIBTOOL:Q:Q}
+.endif
 # Libtool queries compiler search paths without CPPFLAGS/LDFLAGS. Keep its
 # driver in the same target sysroot used by normal compile and link commands.
 _GNU_DRIVER_SYSROOT= ${CPPFLAGS:M--sysroot=*}
@@ -48,16 +55,27 @@ gnu-target-config-inputs:
 	mkdir -p ${GNU_OBJDIR:Q}
 	@tmp=${GNU_OBJDIR:Q}/.configure-inputs.tmp.$$$$; \
 	    cp ${GNU_SOURCE:Q}/configure "$$tmp.source" || exit 1; \
+	    if test ${_GNU_LIBTOOL_VALUE:Q} != none; then \
+	        cp ${GNU_TARGET_LIBTOOL:U:Q} "$$tmp.libtool" || exit 1; \
+	    fi; \
 	    printf '%s\n' ${GNU_SOURCE:Q} ${GNU_BUILD_TRIPLE:Q} ${GNU_HOST_TRIPLE:Q} \
 	    ${HOST_SH:Q} ${HOST_GMAKE:Q} ${_GNU_TARGET_ENV:Q} \
 	    ${CFLAGS:Q} ${CXXFLAGS:Q} ${GNU_MAKE_ENV:Q} \
 	    ${_GNU_HOST_CONTEXT} \
-	    ${GNU_CONFIGURE_ARGS:Q} ${GNU_CONFIGURE_ENV:Q} > "$$tmp" || exit 1; \
+	    ${GNU_CONFIGURE_ARGS:Q} ${GNU_CONFIGURE_ENV:Q} \
+	    target-make-overrides=recursive host-make-overrides=recursive > "$$tmp" || exit 1; \
+	    if test ${_GNU_LIBTOOL_VALUE:Q} != none; then \
+	        printf '%s\n' ${GNU_TARGET_LIBTOOL:U:Q} >> "$$tmp" || exit 1; \
+	    fi; \
 	    if test ! -f ${GNU_OBJDIR:Q}/.cleanup-makefile && \
 	       test -f ${GNU_OBJDIR:Q}/.configure-inputs && \
 	       cmp -s "$$tmp" ${GNU_OBJDIR:Q}/.configure-inputs && \
-	       cmp -s "$$tmp.source" ${GNU_OBJDIR:Q}/.configure-source; then \
+	       cmp -s "$$tmp.source" ${GNU_OBJDIR:Q}/.configure-source && \
+	       { test ${_GNU_LIBTOOL_VALUE:Q} = none || \
+	         { test -f ${GNU_OBJDIR:Q}/.configure-libtool && \
+	           cmp -s "$$tmp.libtool" ${GNU_OBJDIR:Q}/.configure-libtool; }; }; then \
 	        rm "$$tmp" "$$tmp.source"; \
+	        if test -f "$$tmp.libtool"; then rm "$$tmp.libtool"; fi; \
 	    else \
 	        if test -f ${GNU_OBJDIR:Q}/.cleanup-makefile; then \
 	            cp ${GNU_OBJDIR:Q}/.cleanup-makefile ${GNU_OBJDIR:Q}/.restore-makefile.tmp.$$$$ && \
@@ -73,6 +91,9 @@ gnu-target-config-inputs:
 	            test ! -f ${GNU_OBJDIR:Q}/Makefile || rm ${GNU_OBJDIR:Q}/Makefile || exit 1; \
 	        fi; \
 	        mv "$$tmp.source" ${GNU_OBJDIR:Q}/.configure-source || exit 1; \
+	        if test ${_GNU_LIBTOOL_VALUE:Q} != none; then \
+	            mv "$$tmp.libtool" ${GNU_OBJDIR:Q}/.configure-libtool || exit 1; \
+	        fi; \
 	        mv "$$tmp" ${GNU_OBJDIR:Q}/.configure-inputs || exit 1; \
 	        if test -f ${GNU_OBJDIR:Q}/.cleanup-makefile; then \
 	            rm ${GNU_OBJDIR:Q}/.cleanup-makefile || exit 1; \
@@ -94,7 +115,7 @@ ${GNU_OBJDIR}/Makefile: ${GNU_SOURCE}/configure ${GNU_OBJDIR}/.configure-inputs
 .PHONY: gnu-target-build
 gnu-target-build: ${GNU_OBJDIR}/Makefile
 .for _GNU_DIR in ${GNU_HOST_MAKE_DIRS}
-	cd ${GNU_OBJDIR:Q}/${_GNU_DIR:Q} && env MAKEFLAGS= MAKEOVERRIDES= \
+	cd ${GNU_OBJDIR:Q}/${_GNU_DIR:Q} && env -u MAKEOVERRIDES MAKEFLAGS= \
 	    SHELL=${HOST_SH:Q} ${GNU_HOST_MAKE_ENV} ${HOST_GMAKE:Q} -j1 \
 	    SHELL=${HOST_SH:Q} CC=${HOST_CC:Q} CXX=${HOST_CXX:Q} \
 	    AR=${HOST_AR:Q} RANLIB=${HOST_RANLIB:Q} LD=${HOST_LD:Q} \
@@ -103,7 +124,8 @@ gnu-target-build: ${GNU_OBJDIR}/Makefile
 	    ${GNU_HOST_MAKE_TARGETS.${_GNU_DIR}:Uall}
 .endfor
 .for _GNU_DIR in ${GNU_MAKE_DIRS}
-	cd ${GNU_OBJDIR:Q}/${_GNU_DIR:Q} && env MAKEFLAGS= MAKEOVERRIDES= SHELL=${HOST_SH:Q} \
+	cd ${GNU_OBJDIR:Q}/${_GNU_DIR:Q} && env -u MAKEOVERRIDES MAKEFLAGS= SHELL=${HOST_SH:Q} \
 	    ${_GNU_TARGET_ENV} ${GNU_MAKE_ENV} ${HOST_GMAKE:Q} \
-	    -j1 SHELL=${HOST_SH:Q} CFLAGS=${CFLAGS:Q} CXXFLAGS=${CXXFLAGS:Q} ${GNU_MAKE_TARGETS}
+	    -j1 SHELL=${HOST_SH:Q} CFLAGS=${CFLAGS:Q} CXXFLAGS=${CXXFLAGS:Q} \
+	    ${_GNU_LIBTOOL_MAKE_ARG} ${GNU_MAKE_TARGETS}
 .endfor
