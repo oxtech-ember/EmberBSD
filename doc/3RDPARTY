@@ -1438,14 +1438,14 @@ source and patch set; the upstream utility programs are not installed.
 Package:	top
 Version:	3.8beta1
 Current Vers:	3.8beta1
-Maintainer:	William LeFebvre <wnl@groupsys.com>
-Archive Site:	http://www.unixtop.org/dist/top-3.8beta1.tar.gz
-Home Page:	http://www.unixtop.org/
-Mailing List:	top-spinners@ocee.groupsys.com
-Responsible:	simonb, christos
-License:	BSD (2-clause)
-Location:	external/bsd/top/dist
+Maintainer:	NetBSD top maintainers; originally William LeFebvre
+Archive Site:	https://sourceforge.net/projects/unixtop/files/unixtop/top-3.8beta1/
+Home Page:	https://unixtop.sourceforge.net/
+Responsible:	EmberBSD
+License:	BSD (3-clause)
+Location:	Common Ports sysutils/top; external/bsd/top/dist is inactive
 Notes:
+The common source carries the maintained NetBSD delta and pkgsrc backends.
 
 Package:	traceroute
 Version:	1.4a12

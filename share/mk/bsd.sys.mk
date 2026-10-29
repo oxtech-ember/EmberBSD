@@ -86,6 +86,7 @@ REPROFLAGS+=	-fdebug-regex-map='/usr/src/(.*)/obj\..*/(.*)=/usr/obj/\1/\2'
     EMBER_DIFFUTILS_SOURCE /usr/src/external/diffutils \
     EMBER_GREP_SOURCE /usr/src/external/grep \
     EMBER_NVI_SOURCE /usr/src/external/nvi \
+    EMBER_TOP_SOURCE /usr/src/external/top \
     EMBER_TDB_SOURCE /usr/src/external/tdb \
     EMBER_LLVM_SOURCE /usr/src/external/llvm \
     EMBER_EXTERNAL_LLVM_RUNTIME /usr/pkg/llvm \
