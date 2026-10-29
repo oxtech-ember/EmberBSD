@@ -17,8 +17,7 @@
  * string which is the interface name.
  */
 #if 0
-char *getifname(ptr)
-	struct ifnet *ptr;
+char *getifname(struct ifnet *ptr)
 {
 #if SOLARIS || defined(__hpux)
 # if SOLARIS
@@ -84,8 +83,7 @@ char *getifname(ptr)
 #endif
 }
 #else
-char *getifname(ptr)
-	struct ifnet *ptr;
+char *getifname(struct ifnet *ptr)
 {
 	ptr = ptr;
 	return "X";

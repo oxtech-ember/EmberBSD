@@ -12,8 +12,7 @@
 
 
 void
-printtqtable(table)
-	ipftq_t *table;
+printtqtable(ipftq_t *table)
 {
 	int i;
 

@@ -18,9 +18,7 @@ static __attribute__((__used__)) const char rcsid[] = "@(#)Id: printaps.c,v 1.1.
 
 
 void
-printaps(aps, opts, proto)
-	ap_session_t *aps;
-	int opts, proto;
+printaps(ap_session_t  *aps, int  opts, int proto)
 {
 	ipsec_pxy_t ipsec;
 	ap_session_t ap;

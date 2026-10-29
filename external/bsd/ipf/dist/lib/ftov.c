@@ -3,8 +3,7 @@
 #include "ipf.h"
 
 int
-ftov(version)
-	int version;
+ftov(int version)
 {
 #ifdef USE_INET6
 	if (version == AF_INET6)

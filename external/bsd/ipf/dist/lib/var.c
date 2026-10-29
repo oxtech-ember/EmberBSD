@@ -24,8 +24,7 @@ static variable_t *find_var __P((char *));
 static char *expand_string __P((char *, int));
 
 
-static variable_t *find_var(name)
-	char *name;
+static variable_t *find_var(char *name)
 {
 	variable_t *v;
 
@@ -36,9 +35,7 @@ static variable_t *find_var(name)
 }
 
 
-char *get_variable(string, after, line)
-	char *string, **after;
-	int line;
+char *get_variable(char  *string, char  **after, int  line)
 {
 	char c, *s, *t, *value;
 	variable_t *v;
@@ -83,9 +80,7 @@ char *get_variable(string, after, line)
 }
 
 
-static char *expand_string(oldstring, line)
-	char *oldstring;
-	int line;
+static char *expand_string(char *oldstring, int line)
 {
 	char c, *s, *p1, *p2, *p3, *newstring, *value;
 	int len;
@@ -143,9 +138,7 @@ static char *expand_string(oldstring, line)
 }
 
 
-void set_variable(name, value)
-	char *name;
-	char *value;
+void set_variable(char *name, char *value)
 {
 	variable_t *v;
 	int len;

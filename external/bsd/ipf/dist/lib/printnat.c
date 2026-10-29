@@ -21,9 +21,7 @@ static __attribute__((__used__)) const char rcsid[] = "@(#)Id: printnat.c,v 1.1.
  * Print out a NAT rule
  */
 void
-printnat(np, opts)
-	ipnat_t *np;
-	int opts;
+printnat(ipnat_t *np, int opts)
 {
 	struct protoent *pr;
 	char *base;

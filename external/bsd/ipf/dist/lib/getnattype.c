@@ -19,8 +19,7 @@ static __attribute__((__used__)) const char rcsid[] = "@(#)Id: getnattype.c,v 1.
  * Get a nat filter type given its kernel address.
  */
 char *
-getnattype(nat)
-	nat_t *nat;
+getnattype(nat_t *nat)
 {
 	static char unknownbuf[20];
 	char *which;

@@ -4,8 +4,7 @@
 
 
 void
-printtcpflags(tcpf, tcpfm)
-	u_32_t tcpf, tcpfm;
+printtcpflags(u_32_t  tcpf, u_32_t tcpfm)
 {
 	u_char *t;
 	char *s;

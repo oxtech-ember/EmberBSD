@@ -11,9 +11,7 @@
 #include "ipf.h"
 
 
-void binprint(ptr, size)
-	void *ptr;
-	size_t size;
+void binprint(void *ptr, size_t size)
 {
 	u_char *s;
 	int i, j;

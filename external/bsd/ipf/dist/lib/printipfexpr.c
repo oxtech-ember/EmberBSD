@@ -10,8 +10,7 @@ static void printhostsv6 __P((int *));
 #endif
 
 void
-printipfexpr(array)
-	int *array;
+printipfexpr(int *array)
 {
 	int i, nelems, j, not;
 	ipfexp_t *ipfe;
@@ -134,8 +133,7 @@ printipfexpr(array)
 
 
 static void
-printsingle(array)
-	int *array;
+printsingle(int *array)
 {
 	ipfexp_t *ipfe = (ipfexp_t *)array;
 	int i;
@@ -150,8 +148,7 @@ printsingle(array)
 
 
 static void
-printport(array)
-	int *array;
+printport(int *array)
 {
 	ipfexp_t *ipfe = (ipfexp_t *)array;
 	int i;
@@ -166,8 +163,7 @@ printport(array)
 
 
 static void
-printhosts(array)
-	int *array;
+printhosts(int *array)
 {
 	ipfexp_t *ipfe = (ipfexp_t *)array;
 	int i, j;
@@ -184,8 +180,7 @@ printhosts(array)
 
 #ifdef USE_INET6
 static void
-printhostsv6(array)
-	int *array;
+printhostsv6(int *array)
 {
 	ipfexp_t *ipfe = (ipfexp_t *)array;
 	int i, j;

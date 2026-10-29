@@ -10,8 +10,7 @@
 
 #include "ipf.h"
 
-void freembt(m)
-	mb_t *m;
+void freembt(mb_t *m)
 {
 
 	free(m);

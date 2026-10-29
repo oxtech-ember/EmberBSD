@@ -18,11 +18,7 @@ static __attribute__((__used__)) const char rcsid[] = "@(#)Id: printnataddr.c,v 
 
 
 void
-printnataddr(v, base, addr, ifidx)
-	int v;
-	char *base;
-	nat_addr_t *addr;
-	int ifidx;
+printnataddr(int v, char *base, nat_addr_t *addr, int ifidx)
 {
 	switch (v)
 	{

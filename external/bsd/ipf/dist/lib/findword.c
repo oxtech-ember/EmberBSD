@@ -11,9 +11,7 @@
 #include "ipf.h"
 
 
-wordtab_t *findword(words, name)
-	wordtab_t *words;
-	char *name;
+wordtab_t *findword(wordtab_t *words, char *name)
 {
 	wordtab_t *w;
 

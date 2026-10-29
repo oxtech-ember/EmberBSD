@@ -10,8 +10,7 @@
 
 #include "ipf.h"
 
-mb_t *dupmbt(orig)
-	mb_t *orig;
+mb_t *dupmbt(mb_t *orig)
 {
 	mb_t *m;
 

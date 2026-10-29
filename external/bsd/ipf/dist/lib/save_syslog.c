@@ -88,8 +88,7 @@ syslog_parse(char **strings)
 
 
 static void
-syslog_print(ctx)
-	void *ctx;
+syslog_print(void *ctx)
 {
 	syslog_opts_t *sys = ctx;
 
@@ -108,17 +107,14 @@ syslog_print(ctx)
 
 
 static void
-syslog_destroy(ctx)
-	void *ctx;
+syslog_destroy(void *ctx)
 {
 	free(ctx);
 }
 
 
 static int
-syslog_send(ctx, msg)
-	void *ctx;
-	ipmon_msg_t *msg;
+syslog_send(void *ctx, ipmon_msg_t *msg)
 {
 	syslog_opts_t *sys = ctx;
 	int facpri;

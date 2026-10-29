@@ -11,9 +11,7 @@
 #include "ipf.h"
 #include "kmem.h"
 
-int kmemcpywrap(from, to, size)
-	void *from, *to;
-	size_t size;
+int kmemcpywrap(void  *from, void  *to, size_t  size)
 {
 	int ret;
 

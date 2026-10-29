@@ -15,10 +15,7 @@ static __attribute__((__used__)) const char rcsid[] = "@(#)Id: printproto.c,v 1.
 
 
 void
-printproto(pr, p, np)
-	struct protoent *pr;
-	int p;
-	ipnat_t *np;
+printproto(struct protoent *pr, int p, ipnat_t *np)
 {
 	if (np != NULL) {
 		if ((np->in_flags & IPN_TCPUDP) == IPN_TCPUDP)

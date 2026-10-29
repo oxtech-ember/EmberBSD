@@ -11,10 +11,7 @@
 #include "ipf.h"
 
 
-int genmask(family, msk, mskp)
-	int family;
-	char *msk;
-	i6addr_t *mskp;
+int genmask(int family, char *msk, i6addr_t *mskp)
 {
 	char *endptr = 0L;
 	u_32_t addr;

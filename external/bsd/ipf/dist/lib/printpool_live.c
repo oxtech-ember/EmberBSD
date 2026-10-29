@@ -12,12 +12,7 @@
 
 
 ip_pool_t *
-printpool_live(pool, fd, name, opts, fields)
-	ip_pool_t *pool;
-	int fd;
-	char *name;
-	int opts;
-	wordtab_t *fields;
+printpool_live(ip_pool_t *pool, int fd, char *name, int opts, wordtab_t *fields)
 {
 	ip_pool_node_t entry;
 	ipflookupiter_t iter;

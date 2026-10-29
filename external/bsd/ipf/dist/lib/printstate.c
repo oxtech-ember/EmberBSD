@@ -11,10 +11,7 @@
 
 
 ipstate_t *
-printstate(sp, opts, now)
-	ipstate_t *sp;
-	int opts;
-	u_long now;
+printstate(ipstate_t *sp, int opts, u_long now)
 {
 	struct protoent *pr;
 	synclist_t ipsync;

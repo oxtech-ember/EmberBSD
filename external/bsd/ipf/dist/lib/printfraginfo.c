@@ -12,9 +12,7 @@
 
 
 void
-printfraginfo(prefix, ifr)
-	char *prefix;
-	struct ipfr *ifr;
+printfraginfo(char *prefix, struct ipfr *ifr)
 {
 	int family;
 

@@ -18,7 +18,7 @@ static int poolfd = -1;
 
 
 int
-pool_open()
+pool_open(void)
 {
 
 	if ((opts & OPT_DONTOPEN) != 0)
@@ -30,17 +30,14 @@ pool_open()
 }
 
 int
-pool_ioctl(iocfunc, cmd, ptr)
-	ioctlfunc_t iocfunc;
-	ioctlcmd_t cmd;
-	void *ptr;
+pool_ioctl(ioctlfunc_t iocfunc, ioctlcmd_t cmd, void *ptr)
 {
 	return (*iocfunc)(poolfd, cmd, ptr);
 }
 
 
 void
-pool_close()
+pool_close(void)
 {
 	if (poolfd != -1) {
 		close(poolfd);
@@ -49,7 +46,7 @@ pool_close()
 }
 
 int
-pool_fd()
+pool_fd(void)
 {
 	return poolfd;
 }

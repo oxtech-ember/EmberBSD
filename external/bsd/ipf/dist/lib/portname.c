@@ -10,8 +10,7 @@
 #include "ipf.h"
 
 
-char *portname(pr, port)
-	int pr, port;
+char *portname(int  pr, int port)
 {
 	static char buf[32];
 	struct protoent *p = NULL;
