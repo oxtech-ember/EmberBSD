@@ -662,6 +662,7 @@
 ./usr/include/dev/ic/wi_ieee.h			comp-c-include
 ./usr/include/dev/ic/z8530reg.h			comp-obsolete		obsolete
 ./usr/include/dev/ic/z8530sc.h			comp-obsolete		obsolete
+./usr/include/dev/fdt				comp-c-include
 ./usr/include/dev/fdt/adi_axi_adc.h		comp-c-include
 ./usr/include/dev/fdt/adi_axi_adc_stream.h	comp-c-include
 ./usr/include/dev/ieee1394/fwiso_ioctl.h	comp-obsolete		obsolete
@@ -878,6 +879,7 @@
 ./usr/include/dev/usb/usbcdc.h			comp-obsolete		obsolete
 ./usr/include/dev/usb/usbdevs.h			comp-obsolete		obsolete
 ./usr/include/dev/usb/usbhid.h			comp-c-include
+./usr/include/dev/usb/usbperiph.h		comp-c-include
 ./usr/include/dev/usb/utoppy.h			comp-c-include
 ./usr/include/dev/usb/vhci.h			comp-c-include
 ./usr/include/dev/vinum/request.h		comp-obsolete		obsolete
@@ -2767,6 +2769,7 @@
 ./usr/include/net80211/ieee80211_rxba.h	comp-c-include
 ./usr/include/net80211/ieee80211_sysctl.h	comp-c-include
 ./usr/include/net80211/ieee80211_var.h		comp-c-include
+./usr/include/net80211/ieee80211_vht_ies.h	comp-c-include
 ./usr/include/netatalk/aarp.h			comp-c-include
 ./usr/include/netatalk/at.h			comp-c-include
 ./usr/include/netatalk/at_extern.h		comp-c-include
