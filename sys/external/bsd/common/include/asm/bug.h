@@ -38,7 +38,15 @@
 #include <linux/build_bug.h>	/* XXX */
 
 #define	BUG()			panic("%s:%d: BUG!", __FILE__, __LINE__)
-#define	BUG_ON(CONDITION)	KASSERT(!(CONDITION))
+/*
+ * KASSERT does not evaluate conditions in non-DIAGNOSTIC kernels.
+ * Linux BUG_ON must evaluate even conditions with side effects.
+ */
+#define	BUG_ON(CONDITION)						\
+	do {								\
+		if (__predict_false(!!(CONDITION)))			\
+			BUG();						\
+	} while (0)
 
 /* XXX Rate limit?  */
 #define WARN(CONDITION, FMT, ...)					\
