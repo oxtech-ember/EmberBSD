@@ -100,7 +100,7 @@ run_cc(int argc, char **argv, const char **fname)
 	char * volatile pathname;
 	static char tmpfilename[MAXPATHLEN];
 	char **args;
-	int i, n, tmpfd;
+	int tmpfd;
 	pid_t pid, cpid;
 	int status;
 
@@ -116,22 +116,7 @@ run_cc(int argc, char **argv, const char **fname)
 
 	args[0] = __UNCONST(CC);
 	args[1] = __UNCONST("-M");
-	/* mkdep owns the dependency mode and output file.  Keep all other
-	 * compiler flags and their arguments in their original order. */
-	for (i = 0, n = 2; i < argc; i++) {
-		if (strcmp(argv[i], "-M") == 0 || strcmp(argv[i], "-MM") == 0 ||
-		    strcmp(argv[i], "-MD") == 0 || strcmp(argv[i], "-MMD") == 0)
-			continue;
-		if (strcmp(argv[i], "-MF") == 0) {
-			if (++i == argc)
-				errx(EXIT_FAILURE, "-MF requires an argument");
-			continue;
-		}
-		if (strncmp(argv[i], "-MF", 3) == 0)
-			continue;
-		args[n++] = argv[i];
-	}
-	args[n] = NULL;
+	(void)memcpy(&args[2], argv, (argc + 1) * sizeof(char *));
 
 	if ((tmpdir = getenv("TMPDIR")) == NULL)
 		tmpdir = _PATH_TMP;
@@ -509,15 +494,13 @@ save_for_optional(const char *start, const char *limit)
 			end++;
 		if (name >= limit)
 			break;
-		if (end - name >= 2 && end[-1] == 'c' && end[-2] == '.' && name == start)
+		if (end[-1] == 'c' && end[-2] == '.' && name == start)
 			/* ignore dependency on the files own .c */
 			continue;
 		for (l = &opt;;) {
 			n = *l;
 			if (n == NULL) {
 				n = malloc(sizeof *n + (end - name));
-				if (n == NULL)
-					err(EXIT_FAILURE, "malloc");
 				n->left = n->right = 0;
 				n->len = end - name;
 				n->count = 1;
