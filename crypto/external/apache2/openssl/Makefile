@@ -18,9 +18,11 @@ openssl-generated:
 		    --perl ${HOST_PERL:Q} --gmake ${HOST_GMAKE:Q} --shell ${HOST_SH:Q} \
 		    --ar ${AR:[1]:Q} --ranlib ${RANLIB:[1]:Q} \
 		    --tmpdir ${TMPDIR:U${.OBJDIR}:Q} --path ${PATH:Q} --jobs ${MAKE_JOBS:U1:Q}
+.if ${EMBER_OPENSSL_GENERATION_READY:Uno} != "yes"
 .for target in all depend dependall includes install
 ${target}-lib: openssl-generated
 .endfor
+.endif
 .endif
 
 .include <bsd.subdir.mk>
