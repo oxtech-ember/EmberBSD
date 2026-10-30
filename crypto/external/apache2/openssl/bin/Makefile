@@ -93,7 +93,9 @@ DPADD+= ${LIBCRYPT}
 CRYPTODIST=	${NETBSDSRCDIR}/crypto
 .include "${NETBSDSRCDIR}/crypto/Makefile.openssl"
 .if defined(EMBER_OPENSSL_SOURCE)
+.if !defined(OPENSSL_OBJECT_ONLY)
 .include "${EMBER_OPENSSL_GENERATED}/cli.mk"
+.endif
 .endif
 .PATH:	${OPENSSLSRC}/apps
 

@@ -44,8 +44,12 @@ OPENSSLINC=	${OPENSSLSRC}/include/openssl
 .PATH: ${OPENSSLGENINC}/openssl
 
 .if defined(EMBER_OPENSSL_SOURCE)
+.if !defined(OPENSSL_OBJECT_ONLY)
 .include "${EMBER_OPENSSL_GENERATED}/legacy.mk"
+.endif
+.if !defined(OPENSSL_OBJECT_ONLY)
 .include "${EMBER_OPENSSL_GENERATED}/legacy-module.mk"
+.endif
 .else
 .include "srcs.inc"
 .endif
@@ -80,7 +84,7 @@ LIBDPLIBS+= common_pic ${.CURDIR}/../libcommon
 .else
 LIBDPLIBS+= common ${.CURDIR}/../libcommon
 .endif
-.if defined(EMBER_OPENSSL_SOURCE) && ${MKPIC} != "no" && ${MKSHLIB} != "no"
+.if defined(EMBER_OPENSSL_SOURCE) && ${MKPIC} != "no" && ${MKSHLIB:Uyes} != "no"
 LIBDO.crypto!= cd ${.CURDIR}/../libcrypto && ${PRINTOBJDIR}
 DPADD+= ${LIBDO.crypto}/libcrypto.so.17
 LDADD+= ${LIBDO.crypto}/libcrypto.so.17

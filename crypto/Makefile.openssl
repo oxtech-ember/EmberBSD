@@ -49,9 +49,13 @@ OSSL_MODULESDIR=${OSSL_LIBDIR}/modules
 .endif
 
 .if defined(EMBER_OPENSSL_SOURCE) && ${HAVE_OPENSSL} == 41
-.if !defined(EMBER_OPENSSL_GENERATED)
+.if make(obj) && empty(.TARGETS:Nobj)
+OPENSSL_OBJECT_ONLY= yes
+.endif
+.if !defined(EMBER_OPENSSL_GENERATED) && !defined(OPENSSL_OBJECT_ONLY)
 .error EMBER_OPENSSL_GENERATED must name the prepared target object directory
 .endif
+EMBER_OPENSSL_GENERATED?= ${.OBJDIR}/openssl-not-generated
 OPENSSLSRC=	${EMBER_OPENSSL_SOURCE}
 OPENSSLGENINC=	${EMBER_OPENSSL_GENERATED}/include
 .else

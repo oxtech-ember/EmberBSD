@@ -43,7 +43,9 @@ OPENSSLINC=	${OPENSSLSRC}/include/openssl
 .PATH: ${OPENSSLSRC}/providers/implementations/macs
 
 .if defined(EMBER_OPENSSL_SOURCE)
+.if !defined(OPENSSL_OBJECT_ONLY)
 .include "${EMBER_OPENSSL_GENERATED}/apps.mk"
+.endif
 .else
 .include "srcs.inc"
 .endif
