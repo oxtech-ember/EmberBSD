@@ -1311,6 +1311,33 @@ axpreg_release(device_t dev)
 }
 
 static int
+axpreg_is_enabled(device_t dev, bool *enabled)
+{
+	struct axpreg_softc *sc = device_private(dev);
+	const struct axppmic_ctrl *c = sc->sc_ctrl;
+	const int flags = 0;
+	uint8_t val;
+	int error;
+
+	if (enabled == NULL)
+		return EINVAL;
+	if (c->c_enable_mask == 0)
+		return EOPNOTSUPP;
+
+	error = iic_acquire_bus(sc->sc_i2c, flags);
+	if (error)
+		return error;
+	error = axppmic_read(sc->sc_i2c, sc->sc_addr, c->c_enable_reg,
+	    &val, flags);
+	iic_release_bus(sc->sc_i2c, flags);
+	if (error)
+		return error;
+
+	*enabled = (val & c->c_enable_mask) == c->c_enable_val;
+	return 0;
+}
+
+static int
 axpreg_enable(device_t dev, bool enable)
 {
 	struct axpreg_softc *sc = device_private(dev);
@@ -1365,6 +1392,7 @@ axpreg_get_voltage(device_t dev, u_int *puvol)
 static struct fdtbus_regulator_controller_func axpreg_funcs = {
 	.acquire = axpreg_acquire,
 	.release = axpreg_release,
+	.is_enabled = axpreg_is_enabled,
 	.enable = axpreg_enable,
 	.set_voltage = axpreg_set_voltage,
 	.get_voltage = axpreg_get_voltage,

@@ -1,4 +1,4 @@
-/* Origin: EmberBSD; production FDT and AXP8191 regulator state contracts. */
+/* Origin: EmberBSD; production FDT and AXP regulator state contracts. */
 /* SPDX-License-Identifier: BSD-2-Clause */
 #include <assert.h>
 #include <errno.h>
@@ -16,6 +16,9 @@ struct sysmon_pswitch { int unused; };
 #define NBBY 8
 #ifndef __BIT
 #define __BIT(n) (UINT32_C(1) << (n))
+#endif
+#ifndef __BITS
+#define __BITS(h, l) ((UINT32_MAX >> (31 - ((h) - (l)))) << (l))
 #endif
 #ifndef __arraycount
 #define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
@@ -36,6 +39,7 @@ struct fdtbus_regulator_controller {
 #define REGULATOR_TO_RC(r) ((r)->reg_rc)
 
 static uint8_t registers[256], last_register;
+static int fake_i2c;
 static unsigned acquisitions, reads, writes, releases, delays, checks;
 static int acquire_error, read_error, query_error;
 static unsigned query_calls, enable_calls;
@@ -106,6 +110,39 @@ of_hasprop(int phandle, const char *name)
 
 #include "fdt-functions.h"
 #include "axp-functions.h"
+#include "axppmic.h"
+
+/* The query contract needs only the provider table's existing callbacks. */
+static int
+axpreg_acquire(device_t dev)
+{
+	return 0;
+}
+
+static void
+axpreg_release(device_t dev)
+{
+}
+
+static int
+axpreg_enable(device_t dev, bool enable)
+{
+	return EOPNOTSUPP;
+}
+
+static int
+axpreg_set_voltage(device_t dev, u_int min_uvol, u_int max_uvol)
+{
+	return EOPNOTSUPP;
+}
+
+static int
+axpreg_get_voltage(device_t dev, u_int *puvol)
+{
+	return EOPNOTSUPP;
+}
+
+#include "axppmic-functions.h"
 
 static int
 legacy_enable(device_t dev, bool enable)
@@ -249,11 +286,122 @@ test_axp8191(void)
 	}
 }
 
+static const struct axppmic_ctrl *
+find_axppmic_ctrl(const struct axppmic_ctrl *controls, u_int ncontrols,
+    const char *name)
+{
+	u_int i;
+
+	for (i = 0; i < ncontrols; i++) {
+		if (strcmp(controls[i].c_name, name) == 0)
+			return &controls[i];
+	}
+	return NULL;
+}
+
+static void
+test_axppmic(void)
+{
+	struct axpreg_softc sc = {
+		.sc_i2c = &fake_i2c,
+		.sc_addr = 0x34,
+	};
+	struct fdtbus_regulator_controller rc = {
+		.rc_dev = &sc, .rc_funcs = &axpreg_funcs,
+	};
+	struct fdtbus_regulator reg = { .reg_rc = &rc };
+	const struct axppmic_ctrl *dcdc4, *ldo_io0;
+	const struct {
+		uint8_t raw;
+		bool enabled;
+	} io_values[] = {
+		{ 0x03, true }, { 0x07, false }, { 0x13, true },
+		{ 0x17, false }, { 0x01, false }, { 0xf3, true },
+	};
+	const int errors[] = { EBUSY, ENXIO, EIO, ETIMEDOUT };
+	struct axppmic_ctrl unsupported = { .c_enable_reg = 0x10 };
+	bool enabled;
+	u_int i, j;
+
+	check(axpreg_funcs.is_enabled == axpreg_is_enabled,
+	    "AXP provider publishes the production state callback");
+	dcdc4 = find_axppmic_ctrl(axp803_ctrls, __arraycount(axp803_ctrls),
+	    "dcdc4");
+	check(dcdc4 != NULL && dcdc4->c_enable_reg == 0x10 &&
+	    dcdc4->c_enable_mask == __BIT(3), "AXP803 DCDC4 enable mapping");
+	sc.sc_ctrl = dcdc4;
+	for (j = 0; j <= UINT8_MAX; j++) {
+		clear_io();
+		registers[dcdc4->c_enable_reg] = j;
+		enabled = (j & 1) == 0;
+		check(fdtbus_regulator_is_enabled(&reg, &enabled) == 0,
+		    "AXP803 DCDC4 query succeeds");
+		check(enabled == ((j & __BIT(3)) != 0),
+		    "AXP803 DCDC4 observes its enable bit only");
+		check(acquisitions == 1 && reads == 1 && releases == 1 &&
+		    writes == 0 && delays == 0 && last_register == 0x10,
+		    "AXP803 DCDC4 query performs one read and no writes");
+	}
+
+	ldo_io0 = find_axppmic_ctrl(axp809_ctrls, __arraycount(axp809_ctrls),
+	    "ldo_io0");
+	check(ldo_io0 != NULL && ldo_io0->c_enable_reg == 0x90 &&
+	    ldo_io0->c_enable_mask == 0x0f && ldo_io0->c_enable_val == 0x03 &&
+	    ldo_io0->c_disable_val == 0x07,
+	    "AXP809 IO regulator uses multi-bit enable codes");
+	sc.sc_ctrl = ldo_io0;
+	for (i = 0; i < __arraycount(io_values); i++) {
+		clear_io();
+		registers[ldo_io0->c_enable_reg] = io_values[i].raw;
+		enabled = !io_values[i].enabled;
+		check(fdtbus_regulator_is_enabled(&reg, &enabled) == 0 &&
+		    enabled == io_values[i].enabled,
+		    "AXP IO regulator compares masked enable code");
+		check(acquisitions == 1 && reads == 1 && releases == 1 &&
+		    writes == 0 && delays == 0,
+		    "AXP IO state query is read-only");
+	}
+
+	for (i = 0; i < __arraycount(errors); i++) {
+		for (j = 0; j < 2; j++) {
+			clear_io();
+			acquire_error = errors[i];
+			enabled = j != 0;
+			check(axpreg_is_enabled(&sc, &enabled) == errors[i] &&
+			    enabled == (j != 0),
+			    "AXP I2C acquire error propagates and preserves output");
+			check(acquisitions == 1 && reads == 0 && releases == 0 &&
+			    writes == 0, "AXP acquire failure performs no transfer");
+
+			clear_io();
+			read_error = errors[i];
+			registers[ldo_io0->c_enable_reg] = 0x03;
+			enabled = j != 0;
+			check(axpreg_is_enabled(&sc, &enabled) == errors[i] &&
+			    enabled == (j != 0),
+			    "AXP I2C read error propagates and preserves output");
+			check(acquisitions == 1 && reads == 1 && releases == 1 &&
+			    writes == 0, "AXP read failure releases bus without writes");
+		}
+	}
+
+	sc.sc_ctrl = &unsupported;
+	clear_io();
+	enabled = true;
+	check(axpreg_is_enabled(&sc, &enabled) == EOPNOTSUPP && enabled,
+	    "AXP control without enable bits reports unsupported and preserves output");
+	check(acquisitions == 0 && reads == 0 && releases == 0 && writes == 0,
+	    "unsupported AXP control performs no I2C operation");
+	check(axpreg_is_enabled(&sc, NULL) == EINVAL && acquisitions == 0,
+	    "AXP callback rejects null output before I2C");
+}
+
 int
 main(void)
 {
 	test_interface();
 	test_axp8191();
+	test_axppmic();
 	printf("PASS: %u regulator state checks\n", checks);
 	return 0;
 }

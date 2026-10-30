@@ -2,12 +2,14 @@
 # Origin: EmberBSD; production regulator state query regression checks.
 # SPDX-License-Identifier: BSD-2-Clause
 set -eu
+: "${CC:?CC must name the selected SDK host compiler}"
 tools=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 src=${REGULATOR_SOURCE_ROOT:-$(CDPATH= cd -- "$tools/../.." && pwd)}
 work=$(mktemp -d "${TMPDIR:-/tmp}/regulator-state.XXXXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 fdt="$src/sys/dev/fdt/fdt_regulator.c"
 axp="$src/sys/dev/i2c/axp8191.c"
+pmic="$src/sys/dev/i2c/axppmic.c"
 # Retain upstream notices while compiling the actual functions and tables.
 sed -n '1,/^#include /p' "$fdt" | sed '/^#include /d' > "$work/fdt.h"
 sed -n '/^struct fdtbus_regulator_controller_func {/,/^};/p' \
@@ -30,7 +32,21 @@ printf 'static void\n' >> "$work/axp-functions.h"
 sed -n '/^axp8191reg_release(/,/^}/p' "$axp" >> "$work/axp-functions.h"
 sed -n '/^static const struct fdtbus_regulator_controller_func axp8191reg_funcs = {/,/^};/p' \
     "$axp" >> "$work/axp-functions.h"
-${CC:-cc} -std=c11 -Wall -Wextra -Werror -Wno-unused-parameter \
+if ! grep -q '^axpreg_is_enabled(' "$pmic"; then
+	printf '%s\n' 'FAIL: axpreg_is_enabled production callback is missing' >&2
+	exit 1
+fi
+sed -n '1,/^#include /p' "$pmic" | sed '/^#include /d' > "$work/axppmic.h"
+sed -n '/^struct axppmic_ctrl {/,/^static const struct axppmic_ctrl axp813_ctrls\[\] = {/p' \
+    "$pmic" | sed '$d' >> "$work/axppmic.h"
+sed -n '/^struct axpreg_softc {/,/^};/p' "$pmic" >> "$work/axppmic.h"
+for name in axppmic_read axpreg_is_enabled; do
+	printf 'static int\n' >> "$work/axppmic-functions.h"
+	sed -n "/^$name(/,/^}/p" "$pmic" >> "$work/axppmic-functions.h"
+done
+sed -n '/^static struct fdtbus_regulator_controller_func axpreg_funcs = {/,/^};/p' \
+    "$pmic" >> "$work/axppmic-functions.h"
+"$CC" -std=c11 -Wall -Wextra -Werror -Wno-unused-parameter \
     ${REGULATOR_TEST_CFLAGS:-} -I"$work" \
     "$tools/regulator-state-contract.c" -o "$work/test"
 "$work/test"
