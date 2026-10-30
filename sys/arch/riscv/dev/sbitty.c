@@ -54,6 +54,7 @@ struct sbitty_softc {
 };
 
 static const struct device_compatible_entry compat_data[] = {
+	{ .compat = "esp,uart0" },
 	{ .compat = "esp,esp32s3-uart" },
 	{ .compat = "ns16550a" },	/* QEMU virt, when com is left out */
 	DEVICE_COMPAT_EOL

@@ -1,0 +1,17 @@
+// SPDX-License-Identifier: GPL-2.0+
+/dts-v1/;
+
+#include "esp32s31.dtsi"
+
+/ {
+	model = "Espressif ESP-Mosaico";
+	compatible = "espressif,esp-mosaico", "espressif,esp32s31",
+	    "esp,esp32s31";
+	aliases { serial0 = &uart0; };
+	chosen { stdout-path = "serial0:115200n8"; };
+
+	memory@50000000 {
+		device_type = "memory";
+		reg = <0x50000000 0x01000000>;
+	};
+};

@@ -1,0 +1,4 @@
+# ESP-Mosaico: the shared ESP32-S31 kernel and its board device tree.
+include "arch/riscv/conf/ESP32S31"
+
+makeoptions DTS="esp-mosaico.dts"

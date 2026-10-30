@@ -1,0 +1,83 @@
+// SPDX-License-Identifier: GPL-2.0+
+// Based on Espressif U-Boot esp32s31.dts, commit
+// 333c7a31f49d0ecc796edc7b6f7d44c4fcd1e9f8.
+// Timer and interrupt matrix addresses: Espressif ESP-IDF commit
+// d445e947156f276dfe0db5804e4edf6ae90fe6fb, ESP32-S31 register headers.
+// S-mode CLIC: annoyedmilk/esp32-s31-linux commit 086e52a6b9ae43a3bb07beb2557ea7595df8165b,
+// docs/internals.md, measurements on chip revision 0.0.
+
+/ {
+	#address-cells = <1>;
+	#size-cells = <1>;
+
+	cpus {
+		#address-cells = <1>;
+		#size-cells = <0>;
+		timebase-frequency = <320000000>;
+
+		cpu0: cpu@0 {
+			compatible = "riscv";
+			device_type = "cpu";
+			reg = <0>;
+			mmu-type = "riscv,sv32";
+			riscv,isa = "rv32imac_zicsr_zifencei";
+			cpu0_intc: interrupt-controller {
+				compatible = "riscv,cpu-intc";
+				interrupt-controller;
+				#interrupt-cells = <1>;
+			};
+		};
+		cpu1: cpu@1 {
+			compatible = "riscv";
+			device_type = "cpu";
+			reg = <1>;
+			mmu-type = "riscv,sv32";
+			riscv,isa = "rv32imac_zicsr_zifencei";
+			cpu1_intc: interrupt-controller {
+				compatible = "riscv,cpu-intc";
+				interrupt-controller;
+				#interrupt-cells = <1>;
+			};
+		};
+	};
+
+	xtal_40m: clock-40000000 {
+		compatible = "fixed-clock";
+		clock-frequency = <40000000>;
+		#clock-cells = <0>;
+	};
+
+	soc {
+		compatible = "simple-bus";
+		#address-cells = <1>;
+		#size-cells = <1>;
+		ranges;
+
+		clic: interrupt-controller@10a00000 {
+			compatible = "esp,esp32s31-clic";
+			reg = <0x10a00000 0x2000>;
+			interrupt-controller;
+			#interrupt-cells = <2>;
+		};
+		intmtx: interrupt-controller@20585000 {
+			compatible = "esp,esp32s31-intmtx";
+			reg = <0x20585000 0x800>;
+			interrupt-controller;
+			#interrupt-cells = <2>;
+		};
+		timer@20399000 {
+			compatible = "esp,esp32s31-systimer";
+			reg = <0x20399000 0x1000>;
+			interrupt-parent = <&intmtx>;
+			interrupts = <33 4>;
+			clock-frequency = <16000000>;
+		};
+		uart0: serial@2038a000 {
+			compatible = "esp,uart0";
+			reg = <0x2038a000 0x1000>;
+			reg-io-width = <4>;
+			reg-shift = <2>;
+			clocks = <&xtal_40m>;
+		};
+	};
+};
