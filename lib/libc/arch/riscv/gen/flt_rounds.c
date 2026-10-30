@@ -35,10 +35,25 @@ __RCSID("$NetBSD: flt_rounds.c,v 1.2 2015/03/19 21:22:59 joerg Exp $");
 #endif /* LIBC_SCCS and not lint */
 
 #include "namespace.h"
+
+int __flt_rounds(void);
+
+#if defined(_SOFT_FLOAT) || \
+    (defined(__riscv_float_abi_soft) && !defined(__riscv_flen))
+/* The software floating-point runtime rounds to nearest. */
+int
+__flt_rounds(void)
+{
+	return 1;
+}
+#else
 #include <ieeefp.h>
 #include <float.h>
 #include <stdint.h>
 #include <machine/ieeefp.h>
+#if defined(__riscv_float_abi_soft)
+#include <riscv/sysreg.h>
+#endif
 
 static const int rounding_map =
 	  (1 << (FP_RN * 2))	/* round to nearest */
@@ -49,5 +64,11 @@ static const int rounding_map =
 int
 __flt_rounds(void)
 {
+#if defined(__riscv_float_abi_soft)
+	/* The integer calling ABI may still use hardware floating point. */
+	return (rounding_map >> (fcsr_frm_read() * 2)) & 3;
+#else
 	return (rounding_map >> (fpgetround() * 2)) & 3;
+#endif
 }
+#endif
