@@ -250,6 +250,7 @@ _LIBC_COMPILER_RT.aarch64eb=	yes
 _LIBC_COMPILER_RT.i386=		yes
 _LIBC_COMPILER_RT.powerpc=	yes
 _LIBC_COMPILER_RT.powerpc64=	yes
+_LIBC_COMPILER_RT.riscv32=	yes
 _LIBC_COMPILER_RT.sparc=	yes
 _LIBC_COMPILER_RT.sparc64=	yes
 _LIBC_COMPILER_RT.x86_64=	yes

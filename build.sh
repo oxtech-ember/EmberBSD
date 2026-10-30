@@ -1267,6 +1267,7 @@ help()
     libs                Build and install target headers and libraries.
     bootstrap-headers   Install limited base headers for runtime bootstrap.
     bootstrap-crt       Install bootstrap headers and build OS CRT objects.
+    bootstrap-c         Build bootstrap headers, OS CRT and libc.
     install=IDIR        Run "make installworld" to IDIR to install all sets
                         except 'etc'.  Useful after "distribution" or "release".
     kernel=CONF         Build kernel with config file CONF.
@@ -1685,6 +1686,7 @@ parseoptions()
 		build|\
 		bootstrap-headers|\
 		bootstrap-crt|\
+		bootstrap-c|\
 		cleandir|\
 		distribution|\
 		dtb|\
@@ -2159,7 +2161,7 @@ validatemakeparams()
 			tools)
 				_tools_requested=true
 				;;
-			build|bootstrap-crt|distribution|release|libs|kernel=*|kernel.gdb=*|\
+			build|bootstrap-crt|bootstrap-c|distribution|release|libs|kernel=*|kernel.gdb=*|\
 			kernels|modules|installmodules=*|pkg=*|rump|rumptest)
 				_target_toolchain_required=true
 				;;
@@ -3122,7 +3124,7 @@ main()
 			statusmsg "Successful make ${op}"
 			;;
 
-		bootstrap-headers|bootstrap-crt|\
+		bootstrap-headers|bootstrap-crt|bootstrap-c|\
 		cleandir|obj|sourcesets|syspkgs|params|show-params)
 			${runcmd} "${makewrapper}" ${parallel} ${op} ||
 			    bomb "Failed to make ${op}"

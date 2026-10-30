@@ -39,6 +39,8 @@
 #	Install the base headers needed by the common LLVM runtime producer.
 #   bootstrap-crt:
 #	Install bootstrap headers and build only the native OS CRT objects.
+#   bootstrap-c:
+#	Build bootstrap headers, OS CRT and libc for a C runtime foundation.
 #   build:
 #	Builds a full release of NetBSD in DESTDIR, except for the
 #	/etc configuration files.
@@ -475,9 +477,7 @@ do-lib: .PHONY .MAKE
 	${MAKEDIRTARGET} lib build_install
 
 # These are preliminary runtime inputs, not the complete base includes/libs.
-# In particular, do not enter libc: its old runtime headers and implementations
-# are not inputs to the common Ports LLVM producer.
-.if make(bootstrap-headers) || make(bootstrap-crt)
+.if make(bootstrap-headers) || make(bootstrap-crt) || make(bootstrap-c)
 .if empty(DESTDIR) || ${DESTDIR} == "/"
 .error Bootstrap headers and CRT require a separate DESTDIR
 .endif
@@ -507,6 +507,16 @@ bootstrap-crt: .PHONY .MAKE bootstrap-headers
 .endif
 	${MAKEDIRTARGET} lib/csu dependall
 	${MAKEDIRTARGET} lib/csu install
+
+bootstrap-c: .PHONY .MAKE bootstrap-crt
+.if ${MKOBJDIRS} != "no"
+	${MAKEDIRTARGET} lib/libc obj
+.endif
+.if ${MKUPDATE} == "no"
+	${MAKEDIRTARGET} lib/libc cleandir
+.endif
+	${MAKEDIRTARGET} lib/libc dependall
+	${MAKEDIRTARGET} lib/libc install
 
 do-compat-lib: .PHONY .MAKE
 	${MAKEDIRTARGET} compat build_install BOOTSTRAP_SUBDIRS="../../../lib"

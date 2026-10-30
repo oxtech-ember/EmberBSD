@@ -98,6 +98,17 @@ The make engine does not select its recipe shell from those variables alone.
 
 ## Compiler families
 
+`build.sh ... bootstrap-c` prepares the limited bootstrap headers, OS CRT
+objects and libc in `DESTDIR`. It builds libc through its normal `dependall`
+and `install` targets, including generated dependencies. This is a C runtime
+foundation, not a complete SDK or base system. The caller supplies the selected
+target toolchain and common runtime inputs required by libc. The preceding
+`bootstrap-headers` and `bootstrap-crt` stages remain available independently.
+
+`test-bootstrap-base.py --make "$NETBSD_MAKE"` checks stage routing and
+`test-riscv-setjmp.py --clang "$CLANG"` checks the real RISC-V assembly with
+the OS headers for 32- and 64-bit soft and double ABIs.
+
 `EMBER_COMPILER_FAMILY=clang|gcc` selects target tools; the default is Clang.
 `build.sh -c clang|gcc` sets this value and preserves it in its make wrapper.
 `EMBER_HOST_COMPILER_FAMILY=clang|gcc` selects native compiler options

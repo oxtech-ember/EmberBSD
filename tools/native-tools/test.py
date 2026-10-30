@@ -223,7 +223,7 @@ class RoutingTests(unittest.TestCase):
                             for row in fixture.records() if row["command"] == "make"))
 
     def test_tools_compiler_exception_does_not_cover_other_operations(self):
-        for operation in ("libs", "kernel=GENERIC", "bootstrap-crt"):
+        for operation in ("libs", "kernel=GENERIC", "bootstrap-crt", "bootstrap-c"):
             with self.subTest(operation=operation):
                 fixture = Fixture(self)
                 fixture.env["FIXTURE_TOOLCHAIN_MISSING"] = "yes"
@@ -263,12 +263,12 @@ class RoutingTests(unittest.TestCase):
                              and row["cwd"] == str(fixture.source / "tools")
                              for row in fixture.records() if row["command"] == "make"))
 
-    def test_bootstrap_headers_and_crt_dispatch(self):
-        for goal in ("bootstrap-headers", "bootstrap-crt"):
+    def test_bootstrap_headers_crt_and_c_dispatch(self):
+        for goal in ("bootstrap-headers", "bootstrap-crt", "bootstrap-c"):
             with self.subTest(goal=goal):
                 fixture = Fixture(self)
                 args = ("-V", "EXTERNAL_TOOLCHAIN=/selected/target", goal) \
-                    if goal == "bootstrap-crt" else (goal,)
+                    if goal in ("bootstrap-crt", "bootstrap-c") else (goal,)
                 result = fixture.run(*args)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 calls = [row for row in fixture.records() if row["command"] == "make"]

@@ -36,7 +36,7 @@ ENTRY(__setjmp14)
 	REG_S	s9, JB_S9(a0)		/* save callee saved register */
 	REG_S	s10, JB_S10(a0)		/* save callee saved register */
 	REG_S	s11, JB_S11(a0)		/* save callee saved register */
-#ifndef _SOFT_FLOAT
+#if !defined(_SOFT_FLOAT) && !defined(__riscv_float_abi_soft)
 	frcsr	t2			/* get FSCR */
 	REG_S	t2, JB_FCSR(a0)		/* save it */
 	fsd	fs0, JB_FS0(a0)		/* save callee saved register */
@@ -78,7 +78,7 @@ ENTRY(__longjmp14)
 	REG_L	s9, JB_S9(a0)		/* restore callee saved register */
 	REG_L	s10, JB_S10(a0)		/* restore callee saved register */
 	REG_L	s11, JB_S11(a0)		/* restore callee saved register */
-#ifndef _SOFT_FLOAT
+#if !defined(_SOFT_FLOAT) && !defined(__riscv_float_abi_soft)
 	REG_L	t2, JB_FCSR(a0)		/* get it */
 	fscsr	t2			/* restore FSCR */
 	fld	fs0, JB_FS0(a0)		/* restore callee saved register */

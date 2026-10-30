@@ -63,10 +63,12 @@ class BootstrapBaseTests(unittest.TestCase):
     def stage(self, *args):
         return self.make(self.work, '-f', str(SOURCE / 'Makefile'), self.recorder, *args)
 
-    def test_headers_then_only_crt_and_source_marker(self):
+    def test_bootstrap_stages_and_source_marker(self):
         for goal, objects, update in (('bootstrap-headers', 'yes', 'yes'),
                                       ('bootstrap-crt', 'yes', 'no'),
-                                      ('bootstrap-crt', 'no', 'yes')):
+                                      ('bootstrap-crt', 'no', 'yes'),
+                                      ('bootstrap-c', 'yes', 'no'),
+                                      ('bootstrap-c', 'no', 'yes')):
             with self.subTest(goal=goal, objects=objects, update=update):
                 self.log.unlink(missing_ok=True)
                 result = self.stage('-j4', 'MKOBJDIRS=' + objects, 'MKUPDATE=' + update, goal)
@@ -79,12 +81,18 @@ class BootstrapBaseTests(unittest.TestCase):
                         expected.append([directory, 'obj'])
                     expected.append([directory, 'includes'])
                 expected.append(['lib/libedit', str(self.work / 'dest/usr/share/emberbsd/ports/editline.distinfo')])
-                if goal == 'bootstrap-crt':
+                if goal in ('bootstrap-crt', 'bootstrap-c'):
                     if objects == 'yes':
                         expected.append(['lib/csu', 'obj'])
                     if update == 'no':
                         expected.append(['lib/csu', 'cleandir'])
                     expected += [['lib/csu', 'dependall'], ['lib/csu', 'install']]
+                if goal == 'bootstrap-c':
+                    if objects == 'yes':
+                        expected.append(['lib/libc', 'obj'])
+                    if update == 'no':
+                        expected.append(['lib/libc', 'cleandir'])
+                    expected += [['lib/libc', 'dependall'], ['lib/libc', 'install']]
                 self.assertEqual(self.calls(), expected)
 
     def test_refuses_missing_prepared_libedit_and_root_destination(self):
@@ -105,6 +113,58 @@ class BootstrapBaseTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(self.calls()[-1], ['sys', 'includes'])
         self.assertFalse(any(row[0] == 'lib/csu' for row in self.calls()))
+
+    def test_c_failure_does_not_install_libc(self):
+        self.env['FAIL_CALL'] = 'lib/libc dependall'
+        result = self.stage('bootstrap-c')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.calls()[-1], ['lib/libc', 'dependall'])
+        self.assertNotIn(['lib/libc', 'install'], self.calls())
+
+    def test_riscv32_clang_selects_compiler_rt_without_changing_gcc(self):
+        for arch, family, expected in (('riscv32', 'clang', 'no'),
+                                       ('riscv32', 'gcc', 'yes'),
+                                       ('riscv64', 'clang', 'yes'),
+                                       ('x86_64', 'clang', 'no')):
+            with self.subTest(arch=arch, family=family):
+                machine = 'amd64' if arch == 'x86_64' else 'riscv'
+                result = self.make(self.work, '-f', str(SOURCE / 'Makefile'),
+                                   'MACHINE=' + machine, 'MACHINE_ARCH=' + arch,
+                                   'EMBER_COMPILER_FAMILY=' + family, '-V', '${HAVE_LIBGCC}')
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(result.stdout.strip(), expected)
+
+    def test_libc_uses_generated_dependencies_and_common_runtime_source(self):
+        llvm = self.work / 'llvm'
+        for name in ('runtimes/CMakeLists.txt', 'compiler-rt/lib/builtins/int_lib.h',
+                     'compiler-rt/lib/builtins/comparetf2.c',
+                     'compiler-rt/include/profile/InstrProfData.inc',
+                     'libunwind/include/unwind.h', 'libunwind/include/__libunwind_config.h',
+                     'libunwind/include/unwind_itanium.h', 'libunwind/include/unwind_arm_ehabi.h'):
+            path = llvm / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text('fixture\n')
+        archive = self.work / 'libunwind.a'
+        archive.touch()
+        result = self.make(SOURCE / 'lib/libc', 'MACHINE=riscv', 'MACHINE_ARCH=riscv32',
+                           'EMBER_LLVM_SOURCE=' + str(llvm),
+                           'EMBER_LIBUNWIND_ARCHIVE=' + str(archive),
+                           'MKPROFILE=no', 'MKDEBUGLIB=no', 'MKSOFTFLOAT=yes',
+                           '-V', '${DPSRCS}', '-V', '${SRCS}', '-V', '${COMPILER_RT_SRCDIR}')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        deps, sources, runtime = result.stdout.splitlines()
+        self.assertIn('assym.h', deps.split())
+        self.assertIn('__setjmp14.S', sources.split())
+        self.assertIn('_setjmp.S', sources.split())
+        self.assertEqual(runtime, str(llvm / 'compiler-rt'))
+
+    def test_riscv32_softfloat_make_flags_select_integer_abi(self):
+        result = self.make(self.work, '-f', str(SOURCE / 'Makefile'),
+                           'MACHINE=riscv', 'MACHINE_ARCH=riscv32', 'MKSOFTFLOAT=yes',
+                           '-V', '${CPUFLAGS}')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('-march=rv32imac_zicsr', result.stdout.split())
+        self.assertIn('-mabi=ilp32', result.stdout.split())
 
     def test_actual_header_graph_has_no_compiler_runtime(self):
         result = self.stage('bootstrap-headers')
