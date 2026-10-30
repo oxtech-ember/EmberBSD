@@ -890,6 +890,12 @@ RanlibOODate(const GNode *gn MAKE_ATTR_UNUSED)
 	if (DEBUG(ARCH) || DEBUG(MAKE))
 		debug_printf("%s modified %s...",
 		    RANLIBMAG, Targ_FmtTime(tocModTime));
+	/*
+	 * Deterministic archives record zero for the table of contents.  The
+	 * archive file itself is compared with its children in Arch_LibOODate.
+	 */
+	if (tocModTime == 0 && gn->youngestChild != NULL)
+		return false;
 	return gn->youngestChild == NULL ||
 	       gn->youngestChild->mtime > tocModTime;
 #else
