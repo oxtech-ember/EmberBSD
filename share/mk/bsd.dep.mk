@@ -65,7 +65,7 @@ _MKDEP_FILEFLAGS=
 
 .c.d:
 	${_MKTARGET_CREATE}
-	${MKDEP} -f ${.TARGET}.tmp ${_MKDEP_FILEFLAGS} -- ${_MKDEP_TARGET_FLAGS} ${MKDEPFLAGS} \
+	${MKDEP} -f ${.TARGET}.tmp ${_MKDEP_FILEFLAGS} -- ${_MKDEP_TARGET_FLAGS} ${MKDEPFLAGS} ${CPUFLAGS} \
 	    ${CFLAGS:M-std=*} ${CFLAGS:C/-([IDUW])[  ]*/-\1/Wg:M-[IDUW]*} \
 	    ${CPPFLAGS:N-Wp,-iremap,*} ${COPTS.${.IMPSRC:T}} ${CPUFLAGS.${.IMPSRC:T}} \
 	    ${CPPFLAGS.${.IMPSRC:T}} ${.IMPSRC} && \
@@ -73,7 +73,7 @@ _MKDEP_FILEFLAGS=
 
 .m.d:
 	${_MKTARGET_CREATE}
-	${MKDEPOBJC} -f ${.TARGET}.tmp ${_MKDEP_FILEFLAGS} -- ${_MKDEP_TARGET_FLAGS} ${MKDEPFLAGS} \
+	${MKDEPOBJC} -f ${.TARGET}.tmp ${_MKDEP_FILEFLAGS} -- ${_MKDEP_TARGET_FLAGS} ${MKDEPFLAGS} ${CPUFLAGS} \
 	    ${OBJCFLAGS:C/-([IDUW])[  ]*/-\1/Wg:M-[IDUW]*} \
 	    ${CPPFLAGS:N-Wp,-iremap,*} ${COPTS.${.IMPSRC:T}} ${CPUFLAGS.${.IMPSRC:T}} \
 	    ${CPPFLAGS.${.IMPSRC:T}} ${.IMPSRC} && \
@@ -81,15 +81,15 @@ _MKDEP_FILEFLAGS=
 
 .s.d .S.d:
 	${_MKTARGET_CREATE}
-	${MKDEP} -f ${.TARGET}.tmp ${_MKDEP_FILEFLAGS} -- ${_MKDEP_TARGET_FLAGS} ${MKDEPFLAGS} \
+	${MKDEP} -f ${.TARGET}.tmp ${_MKDEP_FILEFLAGS} -- ${_MKDEP_TARGET_FLAGS} ${MKDEPFLAGS} ${CPUFLAGS} \
 	    ${AFLAGS:C/-([IDUW])[  ]*/-\1/Wg:M-[IDUW]*} \
-	    ${CPPFLAGS:N-Wp,-iremap,*} ${AFLAGS.${.IMPSRC:T}} ${CPPFLAGS.${.IMPSRC:T}} \
+	    ${CPPFLAGS:N-Wp,-iremap,*} ${AFLAGS.${.IMPSRC:T}} ${CPUFLAGS.${.IMPSRC:T}} ${CPPFLAGS.${.IMPSRC:T}} \
 	    ${__acpp_flags} ${.IMPSRC} && \
 	    ${MV} ${.TARGET}.tmp ${.TARGET}
 
 .C.d .cc.d .cpp.d .cxx.d:
 	${_MKTARGET_CREATE}
-	${MKDEPCXX} -f ${.TARGET}.tmp ${_MKDEP_FILEFLAGS} -- ${_MKDEP_TARGET_FLAGS} ${MKDEPFLAGS} ${MKDEPCXXFLAGS} \
+	${MKDEPCXX} -f ${.TARGET}.tmp ${_MKDEP_FILEFLAGS} -- ${_MKDEP_TARGET_FLAGS} ${MKDEPFLAGS} ${CPUFLAGS} ${MKDEPCXXFLAGS} \
 	    ${CXXFLAGS:M-std=*} ${CXXFLAGS:C/-([IDUW])[  ]*/-\1/Wg:M-[IDUW]*} \
 	    ${CPPFLAGS:N-Wp,-iremap,*} ${COPTS.${.IMPSRC:T}} ${CPUFLAGS.${.IMPSRC:T}} \
 	    ${CPPFLAGS.${.IMPSRC:T}} ${.IMPSRC} && \

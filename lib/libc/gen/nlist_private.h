@@ -59,7 +59,7 @@
 #  define	NLIST_ELF32
 #elif defined(__hppa__)
 #  define	NLIST_ELF32
-#elif defined(__riscv__)
+#elif defined(__riscv) || defined(__riscv__)
 #  define	NLIST_ELF32
 #  ifdef _LP64
 #    define	NLIST_ELF64

@@ -166,6 +166,25 @@ class BootstrapBaseTests(unittest.TestCase):
         self.assertIn('-march=rv32imac_zicsr', result.stdout.split())
         self.assertIn('-mabi=ilp32', result.stdout.split())
 
+    def test_dependency_recipes_keep_selected_abi_for_all_languages(self):
+        fixture = self.work / 'dependencies.mk'
+        fixture.write_text('SRCS= cprobe.c aprobe.S cxxprobe.cc objcprobe.m\n'
+                           '.include <bsd.own.mk>\n.include <bsd.sys.mk>\n.include <bsd.dep.mk>\n')
+        for name in ('cprobe.c', 'aprobe.S', 'cxxprobe.cc', 'objcprobe.m'):
+            (self.work / name).touch()
+        result = self.make(self.work, '-f', str(fixture), '-n',
+                           'MACHINE=riscv', 'MACHINE_ARCH=riscv32', 'MKSOFTFLOAT=yes',
+                           'MKDEP=selected-mkdep', 'MKDEPCXX=selected-mkdep',
+                           'MKDEPOBJC=selected-mkdep', 'cprobe.d', 'aprobe.d',
+                           'cxxprobe.d', 'objcprobe.d')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        commands = [shlex.split(line) for line in result.stdout.splitlines()
+                    if line.startswith('selected-mkdep ')]
+        self.assertEqual(len(commands), 4, result.stdout)
+        for command in commands:
+            self.assertIn('-march=rv32imac_zicsr', command)
+            self.assertIn('-mabi=ilp32', command)
+
     def test_actual_header_graph_has_no_compiler_runtime(self):
         result = self.stage('bootstrap-headers')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
