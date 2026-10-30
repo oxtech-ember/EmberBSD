@@ -63,12 +63,14 @@ fdtbus_bus_tag_create(int phandle, uint32_t flags)
 	return &riscv_generic_bs_tag;
 }
 
+#ifdef CONSADDR
 static inline bool
 cpu_earlydevice_va_p(void)
 {
 
 	return __SHIFTOUT(csr_satp_read(), SATP_MODE);
 }
+#endif
 
 void com_platform_early_putchar(char);
 

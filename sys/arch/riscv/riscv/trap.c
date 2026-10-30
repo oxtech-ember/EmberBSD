@@ -387,7 +387,8 @@ trap_pagefault_fixup(struct trapframe *tf, struct pmap *pmap, register_t cause,
 			break;
 		default:
 			panic("%s: Unhandled cause (%#" PRIxREGISTER
-			    ") for addr %lx", __func__, cause, addr);
+			    ") for addr %" PRIxPTR, __func__, cause,
+			    (uintptr_t)addr);
 		}
 		if (attr == 0)
 			return false;
