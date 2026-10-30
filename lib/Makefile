@@ -331,5 +331,20 @@ SUBDIR+= .WAIT ../external/bsd/tdb/lib
 # Lua bindings come last, they might depend on anything
 SUBDIR+=	lua
 
+# This tree also reaches OpenSSL directly, including via build_install submakes.
+.if defined(EMBER_OPENSSL_SOURCE) && ${EMBER_OPENSSL_GENERATION_READY:Uno} != "yes" && !(make(obj) && empty(.TARGETS:Nobj))
+OPENSSL_PARENT_OBJ!= cd ${NETBSDSRCDIR}/crypto/external/apache2/openssl && ${PRINTOBJDIR}
+EMBER_OPENSSL_GENERATED?= ${OPENSSL_PARENT_OBJ}/generated
+.MAKEFLAGS: EMBER_OPENSSL_GENERATED=${EMBER_OPENSSL_GENERATED:Q} EMBER_OPENSSL_GENERATION_READY=yes
+.PHONY: openssl-generated
+openssl-generated:
+	${MAKEDIRTARGET} ../crypto/external/apache2/openssl openssl-generated
+.for target in includes depend dependall all install
+.for dir in ${SUBDIR:M../crypto/external/apache2/openssl/lib/*}
+${target}-${dir}: openssl-generated
+.endfor
+.endfor
+.endif
+
 .include <bsd.buildinstall.mk>
 .include <bsd.subdir.mk>

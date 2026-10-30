@@ -265,6 +265,23 @@ BUILDTARGETS+=	do-obsolete
 .ORDER:		${BUILDTARGETS}
 includes-lib:	.PHONY includes-include includes-sys
 
+# The lib and crypto trees both recurse into OpenSSL during includes.
+# Create its one object-tree generation before either becomes a reader.
+.if defined(EMBER_OPENSSL_SOURCE) && (make(includes) || make(depend) || make(dependall) || make(all) || make(install) || !empty(.TARGETS:Mincludes-*) || !empty(.TARGETS:Mdepend-*) || !empty(.TARGETS:Mdependall-*) || !empty(.TARGETS:Mall-*) || !empty(.TARGETS:Minstall-*))
+OPENSSL_PARENT_OBJ!= cd ${NETBSDSRCDIR}/crypto/external/apache2/openssl && ${PRINTOBJDIR}
+EMBER_OPENSSL_GENERATED?= ${OPENSSL_PARENT_OBJ}/generated
+.MAKEFLAGS: EMBER_OPENSSL_GENERATED=${EMBER_OPENSSL_GENERATED:Q} EMBER_OPENSSL_GENERATION_READY=yes
+.PHONY: openssl-generated
+.if make(includes) || !empty(.TARGETS:Mincludes-*)
+openssl-generated: includes-include includes-sys
+.endif
+openssl-generated:
+	${MAKEDIRTARGET} crypto/external/apache2/openssl openssl-generated
+.for target in includes depend dependall all install
+${target}-lib ${target}-crypto/external: openssl-generated
+.endfor
+.endif
+
 #
 # Record the values of variables that might affect the build.
 # If no values have changed, avoid updating the timestamp
