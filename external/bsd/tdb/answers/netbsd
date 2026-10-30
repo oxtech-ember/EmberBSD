@@ -1,4 +1,4 @@
-# TDB 1.4.15 Waf runtime checks for EmberBSD/NetBSD 11 aarch64.
+# TDB 1.4.15 Waf runtime checks for EmberBSD/NetBSD 11 aarch64 and amd64.
 # These describe the target OS and its regular-file interfaces; they do not
 # identify a particular kernel build or machine. Unknown targets may supply
 # their own upstream Waf answers or cross executor.

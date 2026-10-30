@@ -19,8 +19,10 @@ WAF_CONFIGURE_ARGS+= --enable-static-archive
 .endif
 .if defined(EMBER_TDB_CROSS_ANSWERS)
 WAF_ANSWERS_SOURCE= ${EMBER_TDB_CROSS_ANSWERS}
-.elif ${MACHINE} == "evbarm" && ${MACHINE_ARCH} == "aarch64"
-WAF_ANSWERS_SOURCE= ${.CURDIR}/../answers/evbarm-aarch64
+.elif (${MACHINE} == "evbarm" && ${MACHINE_ARCH} == "aarch64") || \
+    ${MACHINE} == "amd64"
+# The answers describe NetBSD libc and file interfaces, not the CPU.
+WAF_ANSWERS_SOURCE= ${.CURDIR}/../answers/netbsd
 .endif
 .if defined(WAF_ANSWERS_SOURCE)
 WAF_CONFIGURE_ARGS+= --cross-answers=${WAF_OBJDIR}/answers
