@@ -75,6 +75,8 @@ REPROFLAGS+=	-fdebug-regex-map='/usr/src/(.*)/obj\..*/(.*)=/usr/obj/\1/\2'
 .endif
 
 # EmberBSD external sources and staged runtimes are outside NETBSDSRCDIR.
+# The external toolchain root holds compiler headers (Clang's resource
+# directory, GCC's include directories) that debug info names.
 # Map each selected root to a canonical path. The SDK is then the same on
 # every build host. REPRO_EXTERNAL_ROOTS also feeds lib/libc tags.
 .for _var _path in EMBER_LIBEDIT_SOURCE /usr/src/external/libedit \
@@ -99,6 +101,7 @@ REPROFLAGS+=	-fdebug-regex-map='/usr/src/(.*)/obj\..*/(.*)=/usr/obj/\1/\2'
     EMBER_TDB_SOURCE /usr/src/external/tdb \
     EMBER_LLVM_SOURCE /usr/src/external/llvm \
     EMBER_EXTERNAL_LLVM_RUNTIME /usr/pkg/llvm \
+    EXTERNAL_TOOLCHAIN /usr/toolchain \
     EMBER_EXTERNAL_GCC_RUNTIME /usr/pkg/gcc16
 .if !empty(${_var}:U)
 .if empty(${_var}:M/*) || !empty(${_var}:C,[A-Za-z0-9_./+-],,g)

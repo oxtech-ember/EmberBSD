@@ -5,8 +5,9 @@
 
 The test uses the real share/mk files, the lib/libc tags rules, bmake and
 Clang. It compiles __FILE__ probes below two different host roots from the
-object directory, as a build does. The objects must not contain a host root
-and must be byte-identical.
+object directory, as a build does. Each probe also includes a header from the
+external toolchain's Clang resource directory, as <stddef.h> does. The objects,
+debug info included, must not contain a host root and must be byte-identical.
 """
 import argparse
 from pathlib import Path
@@ -35,6 +36,7 @@ ROOTS = (('EMBER_LIBEDIT_SOURCE', 'libedit', '/usr/src/external/libedit'),
          ('EMBER_GETTEXT_SOURCE', 'gettext', '/usr/src/external/gettext'),
          ('EMBER_LIBXML2_SOURCE', 'libxml2', '/usr/src/external/libxml2'),
          ('EMBER_LLVM_SOURCE', 'llvm', '/usr/src/external/llvm'),
+         ('EXTERNAL_TOOLCHAIN', 'toolchain', '/usr/toolchain'),
          ('EMBER_EXTERNAL_LLVM_RUNTIME', 'runtime', '/usr/pkg/llvm'))
 
 
@@ -48,7 +50,7 @@ def libc_tags_rules(os_root):
 
 def make_variables(make, os_root, fixture, work, root, names):
     variables = ['MKREPRO=yes', 'EMBER_COMPILER_FAMILY=clang', 'MAKECONF=/dev/null',
-                 'MACHINE=evbarm', 'MACHINE_ARCH=aarch64', 'EXTERNAL_TOOLCHAIN=' + str(root / 'toolchain'),
+                 'MACHINE=evbarm', 'MACHINE_ARCH=aarch64',
                  'NETBSDSRCDIR=' + str(root / 'src'), 'NETBSDOBJDIR=' + str(root / 'obj'),
                  'DESTDIR=' + str(root / 'dest')]
     variables += [f'{var}={root / name}' for var, name, _ in ROOTS]
@@ -79,7 +81,7 @@ def main():
             root = work / f'host-{index}' / ('deep' * (index + 1))
             for _, name, _ in ROOTS:
                 (root / name / 'include').mkdir(parents=True)
-            for directory in ('src', 'obj', 'dest', 'toolchain'):
+            for directory in ('src', 'obj', 'dest'):
                 (root / directory).mkdir()
             reproflags, external, sed = make_variables(args.make, os_root, fixture, work, root,
                                                        ('REPROFLAGS', 'REPRO_EXTERNAL_ROOTS', 'MKREPRO_SED'))
@@ -88,21 +90,27 @@ def main():
                 if mapped.get(str(root / name)) != canonical:
                     raise SystemExit(f'{var} has no canonical {canonical} map')
             (root / 'runtime/include/runtime.h').write_text('static const char runtime_name[] = __FILE__;\n')
+            resource = root / 'toolchain/lib/clang/23/include'
+            resource.mkdir(parents=True)
+            (resource / 'resource.h').write_text('static const char resource_name[] = __FILE__;\n'
+                                                 'typedef int resource_t;\n')
             objects = []
             for var, name, canonical in ROOTS[:-1]:
                 source = root / name / 'probe.c'
-                source.write_text('#include <runtime.h>\n'
+                source.write_text('#include <runtime.h>\n#include <resource.h>\n'
                                   'const char *probe(void) { return __FILE__; }\n'
-                                  'const char *header(void) { return runtime_name; }\n')
+                                  'const char *header(void) { return runtime_name; }\n'
+                                  'const char *compiler(resource_t *unused) { return resource_name; }\n')
                 output = work / f'{name}-{index}.o'
                 subprocess.run([args.clang, '--target=aarch64--netbsd', '-ffreestanding', '-nostdinc',
-                                '-isystem', str(root / 'runtime/include'), '-O1', '-g', *shlex.split(reproflags),
+                                '-isystem', str(root / 'runtime/include'), '-isystem', str(resource), '-O1', '-g', *shlex.split(reproflags),
                                 '-c', str(source), '-o', str(output)], check=True, cwd=root / 'obj')
                 data = output.read_bytes()
                 if str(work).encode() in data:
                     leaked = [s for s in data.split(b'\0') if str(work).encode() in s]
                     raise SystemExit(f'{var}: a host build root leaked into {output.name}: {leaked[:2]!r}')
-                for expected in (canonical + '/probe.c', '/usr/pkg/llvm/include/runtime.h'):
+                for expected in (canonical + '/probe.c', '/usr/pkg/llvm/include/runtime.h',
+                                 '/usr/toolchain/lib/clang/23/include/resource.h'):
                     if expected.encode() + b'\0' not in data:
                         raise SystemExit(f'{var}: {expected} is not the __FILE__ value')
                 objects.append(data)
@@ -114,7 +122,7 @@ def main():
             outputs.append((objects, mapped_tags))
         if outputs[0] != outputs[1]:
             raise SystemExit('objects or tags differ between two host roots')
-    print('PASS: Clang MKREPRO maps common source and runtime roots; '
+    print('PASS: Clang MKREPRO maps common source, runtime and toolchain roots; '
           'identical objects and libc tags from two host roots')
 
 
