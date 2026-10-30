@@ -13,6 +13,7 @@ MKEXTRAVARS= \
 	HAVE_COMMON_LIBCXX \
 	HAVE_EFI_RT \
 	HAVE_GCC \
+	HAVE_GCC16_RUNTIME \
 	HAVE_GDB \
 	HAVE_LIBGCC_EH \
 	HAVE_LLVM_UNWIND \
@@ -57,6 +58,13 @@ HAVE_COMMON_LIBCXX=no
     ${MKLIBCXX} == "yes" && defined(EMBER_EXTERNAL_LLVM_RUNTIME) && \
     ${EMBER_LLVM_RUNTIME_PHASE:Ufull} == "full"
 HAVE_COMMON_LIBCXX=yes
+.endif
+
+# The GCC 16 base runtime and its installer helper belong to the GCC profile.
+.if defined(EMBER_EXTERNAL_GCC_RUNTIME)
+HAVE_GCC16_RUNTIME=yes
+.else
+HAVE_GCC16_RUNTIME=no
 .endif
 
 .if (${MKMAN} == "no" || empty(MANINSTALL:Mmaninstall))

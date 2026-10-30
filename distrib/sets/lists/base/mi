@@ -1321,7 +1321,7 @@
 ./usr/libexec/ftpd				base-netutil-bin
 ./usr/libexec/getNAME				base-man-bin		!makemandb
 ./usr/libexec/ember-desktop-install		base-sysutil-bin
-./usr/libexec/ember-runtime-install		base-sysutil-bin
+./usr/libexec/ember-runtime-install		base-sysutil-bin	gcc16_runtime
 ./usr/bin/ember-desktop				base-sysutil-bin
 ./usr/libexec/getty				base-sysutil-bin
 ./usr/libexec/hprop				base-obsolete		obsolete
