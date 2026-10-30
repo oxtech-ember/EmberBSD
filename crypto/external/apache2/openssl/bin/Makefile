@@ -9,6 +9,7 @@ USE_FORT?= yes	# cryptographic software
 
 PROG=	openssl
 
+.if !defined(EMBER_OPENSSL_SOURCE)
 SRCS+= \
 asn1parse.c \
 ca.c \
@@ -65,23 +66,41 @@ verify.c \
 version.c \
 x509.c \
 
+.endif
+
+.if defined(EMBER_OPENSSL_SOURCE)
+CPPFLAGS+= -I${EMBER_OPENSSL_GENERATED}/apps -I${OPENSSLSRC}
+.else
 CPPFLAGS+= -I${OPENSSLSRC} -I${.CURDIR}/../include
+.endif
 CPPFLAGS+= -I${OPENSSLSRC}/include -I${OPENSSLSRC}/apps/include
 
 PROGDPLIBSSTATIC=yes
-PROGDPLIBS+=    apps ${OPENSSLSRC}/../lib/libapps
-PROGDPLIBS+=    ssl ${OPENSSLSRC}/../lib/libssl
-PROGDPLIBS+=    crypto ${OPENSSLSRC}/../lib/libcrypto
-
-LDADD+=	-lcrypt
-DPADD+=	${LIBCRYPT}
+.if defined(EMBER_OPENSSL_SOURCE)
+PROGDPLIBS+= apps ${.CURDIR}/../lib/libapps
+PROGDPLIBS+= ssl ${.CURDIR}/../lib/libssl
+PROGDPLIBS+= crypto ${.CURDIR}/../lib/libcrypto
+LDADD+= -lpthread
+DPADD+= ${LIBPTHREAD}
+.else
+PROGDPLIBS+= apps ${OPENSSLSRC}/../lib/libapps
+PROGDPLIBS+= ssl ${OPENSSLSRC}/../lib/libssl
+PROGDPLIBS+= crypto ${OPENSSLSRC}/../lib/libcrypto
+.endif
+LDADD+= -lcrypt
+DPADD+= ${LIBCRYPT}
 
 CRYPTODIST=	${NETBSDSRCDIR}/crypto
 .include "${NETBSDSRCDIR}/crypto/Makefile.openssl"
+.if defined(EMBER_OPENSSL_SOURCE)
+.include "${EMBER_OPENSSL_GENERATED}/cli.mk"
+.endif
 .PATH:	${OPENSSLSRC}/apps
 
+.if !defined(EMBER_OPENSSL_SOURCE)
 .PATH:	${OPENSSLSRC}/engines
 SRCS+=	e_padlock.c
+.endif
 
 #LINKS=	openssl verify \
 #	openssl asn1pars \

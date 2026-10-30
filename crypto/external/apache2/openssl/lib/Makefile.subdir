@@ -5,4 +5,6 @@ SUBDIR+= ${OSSL}libapps ${OSSL}libcommon ${OSSL}libcrypto
 SUBDIR+= ${OSSL}libcryptotest ${OSSL}libdes
 
 SUBDIR+= .WAIT	${OSSL}libssl ${OSSL}liblegacy	# depends on libcrypto, libcommon
+.if !defined(EMBER_OPENSSL_SOURCE)
 SUBDIR+= ${OSSL}engines
+.endif

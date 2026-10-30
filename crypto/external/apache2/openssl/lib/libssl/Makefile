@@ -31,11 +31,31 @@ CPPFLAGS+= -I${OPENSSLSRC}/include
 CRYPTODIST=	${NETBSDSRCDIR}/crypto
 
 .include "${NETBSDSRCDIR}/crypto/Makefile.openssl"
+.if defined(EMBER_OPENSSL_SOURCE)
+CPPFLAGS+= -I${OPENSSLGENINC}
+.PATH: ${OPENSSLGENINC}/openssl
+.endif
 .PATH: ${OPENSSLSRC} ${OPENSSLSRC}/crypto/pqueue ${OPENSSLSRC}/include/openssl
 
+.if defined(EMBER_OPENSSL_SOURCE)
+.include "${EMBER_OPENSSL_GENERATED}/ssl.mk"
+.include "${EMBER_OPENSSL_GENERATED}/ssl-shared.mk"
+.else
 .include "srcs.inc"
+.endif
 
+.if defined(EMBER_OPENSSL_SOURCE) && ${MKPIC} != "no" && ${MKSHLIB:Uyes} != "no"
+# Select this build's crypto explicitly: the destination may still contain
+# an older libcrypto that precedes object directories in the linker search.
+LIBDO.crypto!= cd ${.CURDIR}/../libcrypto && ${PRINTOBJDIR}
+DPADD+= ${LIBDO.crypto}/libcrypto.so.17
+LDADD+= ${LIBDO.crypto}/libcrypto.so.17
+LIBDPLIBS+=pthread ${NETBSDSRCDIR}/lib/libpthread
+.elif defined(EMBER_OPENSSL_SOURCE)
+LIBDPLIBS+=crypto ${.CURDIR}/../libcrypto pthread ${NETBSDSRCDIR}/lib/libpthread
+.else
 LIBDPLIBS+=crypto ${.CURDIR}/../libcrypto
+.endif
 
 AFLAGS+=-DELF
 
@@ -43,11 +63,18 @@ AFLAGS+=-DELF
 INCS=	dtls1.h ssl.h ssl2.h ssl3.h tls1.h srtp.h async.h
 INCSDIR=/usr/include/openssl
 
+.if defined(EMBER_OPENSSL_SOURCE)
+SHLIB_MAJOR= 17
+SHLIB_MINOR= 0
+VERSION_MAP= ${EMBER_OPENSSL_GENERATED}/libssl.ld
+.else
 VERSION_MAP=	ssl.map
+.endif
 
 PKGCONFIG=libssl openssl
 .include "${.CURDIR}/../../pkgconfig.mk"
 
+.if !defined(EMBER_OPENSSL_SOURCE)
 GENH = \
 ssl.h
 
@@ -56,5 +83,7 @@ $i: $i.in
 	${_MKTARGET_CREATE}
 	${HOST_SH} ${.CURDIR}/../libcrypto/gen ${.ALLSRC} > ${.TARGET}
 .endfor
+
+.endif # !EMBER_OPENSSL_SOURCE
 
 .include <bsd.lib.mk>

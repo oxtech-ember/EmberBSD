@@ -5,6 +5,10 @@
 USE_FORT?= yes	# cryptographic software
 
 LIB=	des
+.if defined(EMBER_OPENSSL_SOURCE)
+SHLIB_MAJOR= 17
+SHLIB_MINOR= 0
+.endif
 SRCS=	ocbc_cksm.c ocbc_enc.c ocfb64ede.c ocfb64enc.c ocfb_enc.c \
 	odes_enc.c oecb3_enc.c oecb_enc.c oede_cbcm_enc.c oenc_read.c \
 	oenc_writ.c ofcrypt.c ofcrypt_b.c oofb64ede.c oofb64enc.c \

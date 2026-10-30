@@ -184,9 +184,13 @@ MKGDBSERVER?=	no
 #
 # What OpenSSL is used?
 #
+.if defined(EMBER_OPENSSL_SOURCE)
+HAVE_OPENSSL?=	41
+.else
 HAVE_OPENSSL?=	35
+.endif
 
-.if ${HAVE_OPENSSL} == 35
+.if ${HAVE_OPENSSL} == 35 || ${HAVE_OPENSSL} == 41
 EXTERNAL_OPENSSL_SUBDIR=apache2/openssl
 .elif ${HAVE_OPENSSL} == 30
 EXTERNAL_OPENSSL_SUBDIR=bsd/openssl

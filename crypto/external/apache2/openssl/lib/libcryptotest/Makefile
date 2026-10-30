@@ -14,6 +14,9 @@ CPPFLAGS+= -I${OPENSSLSRC}
 CPPFLAGS+= -I${OPENSSLSRC}/include
 CPPFLAGS+= -I${OPENSSLSRC}/apps/include
 
+.if defined(EMBER_OPENSSL_SOURCE)
+.include "${EMBER_OPENSSL_GENERATED}/test.mk"
+.else
 SRCS+=\
 apps_shims.c \
 basic_output.c \
@@ -40,5 +43,7 @@ COPTS.opt.c+=		-Wno-missing-field-initializers
 COPTS.opt.c+=		-Wno-error=unused-but-set-variable
 COPTS.options.c+=	-Wno-format-nonliteral
 COPTS.test_options.c+=	-Wno-missing-field-initializers
+
+.endif
 
 .include <bsd.lib.mk>
