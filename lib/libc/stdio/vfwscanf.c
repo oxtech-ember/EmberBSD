@@ -768,8 +768,8 @@ parsefloat(FILE *fp, wchar_t *buf, wchar_t *end, locale_t loc)
 		S_START, S_GOTSIGN, S_INF, S_NAN, S_MAYBEHEX,
 		S_DIGITS, S_FRAC, S_EXP, S_EXPDIGITS
 	} state = S_START;
-	wchar_t c;
-	wchar_t decpt = (wchar_t)(unsigned char)*localeconv_l(loc)->decimal_point;
+	wint_t c;
+	wint_t decpt = (wint_t)(unsigned char)*localeconv_l(loc)->decimal_point;
 	int gotmantdig = 0, ishex = 0;
 
 	/*
