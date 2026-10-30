@@ -339,6 +339,7 @@ EMBER_OPENSSL_GENERATED?= ${OPENSSL_PARENT_OBJ}/generated
 .PHONY: openssl-generated
 openssl-generated:
 	${MAKEDIRTARGET} ../crypto/external/apache2/openssl openssl-generated
+build_install: openssl-generated
 .for target in includes depend dependall all install
 .for dir in ${SUBDIR:M../crypto/external/apache2/openssl/lib/*}
 ${target}-${dir}: openssl-generated
