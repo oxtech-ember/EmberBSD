@@ -17,7 +17,9 @@ SRCS=		miarc.c mibitblt.c micopy.c \
 		mizerclip.c mizerline.c
 
 # XXX the order is important since there are headers with the same
-#     name but differ depending on location
+#     name but differ depending on location; hw/xnest (for xnest-config.h)
+#     stays after the xorg headers so that its Events.h never replaces
+#     events.h on a case-insensitive file system
 CPPFLAGS+=	-I${X11SRCDIR.xorg-server}/../include \
 		-I${X11SRCDIR.xorg-server}/render \
 		-I${DESTDIR}${X11INCDIR}/X11 \
@@ -27,9 +29,9 @@ CPPFLAGS+=	-I${X11SRCDIR.xorg-server}/../include \
 		-I${X11SRCDIR.xorg-server}/composite \
 		-I${X11SRCDIR.xorg-server}/damageext \
 		-I${X11SRCDIR.xorg-server}/xfixes \
-		-I${X11SRCDIR.xorg-server}/hw/xnest \
 		-I${DESTDIR}${X11INCDIR}/pixman-1 \
 		-I${DESTDIR}${X11INCDIR}/xorg \
+		-I${X11SRCDIR.xorg-server}/hw/xnest \
 		${X11FLAGS.DIX} \
 		-DHAVE_XNEST_CONFIG_H
 

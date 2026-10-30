@@ -18,8 +18,9 @@ SRCS=		Args.c Color.c Cursor.c Display.c Events.c Font.c \
 		Pixmap.c Pointer.c Screen.c Visual.c Window.c \
 		stubs.c miinitext.c
 
-CPPFLAGS+=	-I${X11SRCDIR.xorg-server}/hw/xnest \
-		-I${DESTDIR}${X11INCDIR}/X11 \
+# hw/xnest comes after the server headers (below) so that its Events.h
+# never replaces include/events.h on a case-insensitive file system.
+CPPFLAGS+=	-I${DESTDIR}${X11INCDIR}/X11 \
 		-I${X11SRCDIR.xorg-server}/mi \
 		-I${X11SRCDIR.xorg-server}/Xext \
 		-I${X11SRCDIR.xorg-server}/include \
