@@ -143,7 +143,7 @@ test_ra_c2h_bounds_and_telemetry(void)
 		CHECK(rtw88_stop(&sc) == 0);
 		CHECK(rtw88_core_detach(&sc) == 0);
 	}
-	for (unsigned variant = 0; variant < 4; variant++) {
+	for (unsigned variant = 0; variant < 6; variant++) {
 		struct rtw88_softc sc;
 		uint8_t p[9] = { 0x0c, 0x22, 11, 0, 0, 0, 0, 0, 0 };
 		if (!start_ok(&sc))
@@ -151,19 +151,83 @@ test_ra_c2h_bounds_and_telemetry(void)
 		if (variant == 0) p[3] = 1; /* Foreign MACID. */
 		if (variant == 1) p[2] = 20; /* MCS8 is outside the bounded 1SS parser. */
 		if (variant == 2) p[2] |= 0x80; /* SGI is not configured. */
-		if (variant == 3) p[8] = 1; /* BW40 is not configured. */
+		if (variant == 3) p[8] = 3; /* BW160 is outside this hardware contract. */
+		if (variant == 4) p[2] = 0x93; /* SGI HT20 MCS7 observation. */
+		if (variant == 5) { p[2] = 19; p[8] = 1; } /* HT40 observation. */
+		unsigned valid;
+#ifdef RTW88_VHT80
+		valid = variant >= 4;
+#else
+		valid = 0;
+#endif
 		rx_put(&sc, 0, sizeof(p), 1, p, 0);
 		f.rx_hw_idx = 1;
 		set_hisr0(1);
 		CHECK(rtw88_intr(&sc) == 1);
-		CHECK(sc.sc_stats.ra_reports == 0 &&
-		    sc.sc_stats.ra_report_valid == 0);
+		CHECK(sc.sc_stats.ra_reports == valid &&
+		    sc.sc_stats.ra_report_valid == valid);
 		CHECK(sc.sc_stats.ra_foreign == (variant == 0));
-		CHECK(sc.sc_stats.ra_unsupported == (variant != 0));
+		CHECK(sc.sc_stats.ra_unsupported == (!valid && variant != 0));
 		CHECK(rtw88_stop(&sc) == 0);
 		CHECK(rtw88_core_detach(&sc) == 0);
 	}
 }
+
+#ifdef RTW88_VHT80
+/* VHT reports must remain observations, including stale/out-of-mask rates. */
+static void
+test_ra_vht_report_telemetry(void)
+{
+	static const struct {
+		uint8_t wire, bw, valid, outside;
+		uint32_t mask;
+	} cases[] = {
+		{ 0x2c, 2, 1, 0, 0x00001010 }, /* VHT1SS MCS0 -> mask bit12. */
+		{ 0x35, 2, 1, 0, 0x00200010 }, /* VHT1SS MCS9 -> bit21. */
+		{ 0x36, 1, 1, 0, 0x00400010 }, /* VHT2SS MCS0 -> bit22. */
+		{ 0xbf, 2, 1, 0, 0x80000010 }, /* SGI VHT2SS MCS9 -> bit31. */
+		{ 0x3f, 2, 1, 1, 0x00001010 }, /* Valid report outside entry. */
+		{ 0x13, 0, 1, 1, 0x00080010 }, /* HT MCS7 is not VHT MCS7. */
+		{ 0x04, 2, 1, 0, 0x00001010 }, /* Legacy duplicate fallback. */
+		{ 0x3f, 3, 0, 0, 0x80000010 }, /* No 160 MHz report support. */
+		{ 0x40, 2, 0, 0, 0x80000010 }, /* Third stream is unsupported. */
+		{ 0x2b, 2, 0, 0, 0x80000010 }, /* Not a supported HT/VHT rate. */
+		{ 0x84, 0, 0, 0, 0x00001010 }  /* SGI cannot describe OFDM. */
+	};
+	for (unsigned i = 0; i < __arraycount(cases); i++) {
+		struct rtw88_softc sc;
+		struct rtw88_ra_state saved;
+		uint8_t p[9] = { 0x0c, 0x22, cases[i].wire, 0,
+		    0, 0, 0, 0, cases[i].bw };
+
+		if (!start_ok(&sc))
+			continue;
+		sc.sc_ra.configured = sc.sc_ra.active = 1;
+		sc.sc_ra.phy = RTW88_RA_VHT_1SS;
+		sc.sc_ra.mask = cases[i].mask;
+		saved = sc.sc_ra;
+		rx_put(&sc, 0, sizeof(p), 1, p, 0);
+		f.rx_hw_idx = 1;
+		set_hisr0(1);
+		CHECK(rtw88_intr(&sc) == 1);
+		CHECK(sc.sc_stats.ra_reports == cases[i].valid);
+		CHECK(sc.sc_stats.ra_unsupported == !cases[i].valid);
+		CHECK(sc.sc_stats.ra_unattributed == cases[i].valid);
+		CHECK(sc.sc_stats.ra_outside_mask == cases[i].outside);
+		CHECK(sc.sc_stats.ra_report_valid == cases[i].valid);
+		if (cases[i].valid) {
+			CHECK(sc.sc_stats.ra_report_rate == (cases[i].wire & 0x7f));
+			CHECK(sc.sc_stats.ra_report_bw == cases[i].bw);
+			CHECK(sc.sc_stats.ra_report_sgi == (cases[i].wire >> 7));
+			CHECK(sc.sc_stats.ra_observed_generation == sc.sc_generation);
+		}
+		CHECK(memcmp(&saved, &sc.sc_ra, sizeof(saved)) == 0);
+		CHECK(sc.sc_stats.tx_ra_encoded == 0 && sc.sc_stats.tx_done == 0);
+		CHECK(rtw88_stop(&sc) == 0);
+		CHECK(rtw88_core_detach(&sc) == 0);
+	}
+}
+#endif
 
 static void
 test_ra_masks_and_quarantine(void)
@@ -2727,6 +2791,9 @@ RTW88_RA_MAIN(void)
 	test_ra_ht20_protection_bounds();
 	test_ra_run_to_first_data();
 	test_ra_c2h_bounds_and_telemetry();
+#ifdef RTW88_VHT80
+	test_ra_vht_report_telemetry();
+#endif
 	test_ra_masks_and_quarantine();
 	test_ra_erp_gate();
 	test_ra_worker_failures();

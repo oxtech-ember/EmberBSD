@@ -293,7 +293,12 @@ or per-packet mailbox mutation is introduced.
 
 C2H `0x0c` accepts at least seven payload bytes, counts trailing bytes and parses
 the known prefix. MACID must be zero, with legacy rate codes0..11 or bounded
-MCS0..7 codes12..19, BW20 and SGI0.
+MCS0..7 codes12..19, BW20 and SGI0 in the default build.
+The VHT experiment also records VHT1SS/2SS codes44..63, SGI for
+HT/VHT, and BW20/40/80. `ra_last` keeps valid/rate/MACID/BW;
+`ra_sgi` records the report's GI bit, separate from configured `sgi`.
+VHT codes44..63 map to mask bits12..31 for `outside_mask`.
+An HT code cannot match the overlapping bits of a VHT entry.
 Malformed, foreign and unsupported reports have separate counters. Every valid
 report is explicitly association-unattributed telemetry: the wire has no BSSID
 or association token, and MACID0 is reused. `ra_observed_gen` is the host firmware

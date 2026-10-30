@@ -720,11 +720,13 @@ int main(void)
 	CHECK(strstr(stats, "elem_missing 17 elem_toobig 19 elem_toosmall 23") != NULL);
 	CHECK(strstr(stats, "ssid") == NULL && strstr(stats, "private-fixture") == NULL);
 	p.sc_core.sc_basic_rates = 0x0f;
+	p.sc_core.sc_stats.ra_report_sgi = 1;
 	CHECK(rtwce_stats(stats, sizeof(stats)) == 0);
 	CHECK(strstr(stats, " basic 0xf") != NULL);
 	CHECK(strstr(stats, " txdata 0 txrate 0 txbasic 0") != NULL);
 	CHECK(strstr(stats, " fwra_tx 0 protection_tx 0") != NULL);
 	CHECK(strstr(stats, " ra_reports 0 unattributed 0") != NULL);
+	CHECK(strstr(stats, " ra_sgi 1") != NULL);
 	CHECK(strstr(stats, " hw_requested 0/0 hw_observed 0/0 hw_known 0") != NULL);
 	p.sc_core.sc_hw_feature.requested = 1;
 	p.sc_core.sc_hw_feature.requested_generation = 17;

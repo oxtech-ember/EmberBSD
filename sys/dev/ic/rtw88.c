@@ -257,7 +257,7 @@ static void
 rtw88_ra_report(struct rtw88_softc *sc, const uint8_t *p, size_t len)
 {
 	struct rtw88_stats *st = &sc->sc_stats;
-	unsigned rate;
+	unsigned rate, bit, supported;
 
 	if (len < 9) {
 		st->ra_malformed++;
@@ -270,8 +270,17 @@ rtw88_ra_report(struct rtw88_softc *sc, const uint8_t *p, size_t len)
 		return;
 	}
 	rate = p[2] & 0x7f;
-	/* Pinned DESC_RATEMCS0..7 are 12..19; no SGI or wider BW here. */
-	if (rate >= 20 || (p[2] & 0x80) != 0 || p[8] != 0) {
+	/* fw.h rate_sgi and bw describe a firmware observation, not admission.
+	 * Default builds retain their bounded legacy/HT20 report parser. */
+#ifdef RTW88_VHT80
+	/* main.h: VHT1SS MCS0..9 = 0x2c..0x35; VHT2SS = 0x36..0x3f.
+	 * Legacy fallback may use non-HT duplicate in a wide entry. */
+	supported = (rate < 20 || (rate >= 0x2c && rate <= 0x3f)) &&
+	    p[8] <= 2 && ((p[2] & 0x80) == 0 || rate >= 12);
+#else
+	supported = rate < 20 && (p[2] & 0x80) == 0 && p[8] == 0;
+#endif
+	if (!supported) {
 		st->ra_unsupported++;
 		return;
 	}
@@ -279,11 +288,23 @@ rtw88_ra_report(struct rtw88_softc *sc, const uint8_t *p, size_t len)
 	st->ra_unattributed++;
 	if (!sc->sc_ra.active)
 		st->ra_inactive++;
-	if (sc->sc_ra.configured && (sc->sc_ra.mask & (1U << rate)) == 0)
+	bit = rate;
+#ifdef RTW88_VHT80
+	if (rate >= 0x2c)
+		bit = rate - 0x2c + 12;
+#endif
+	/* VHT and HT use overlapping mask bits but distinct descriptor codes.
+	 * Never shift by a VHT descriptor rate or treat HT as a VHT mask hit. */
+	if (sc->sc_ra.configured &&
+	    ((sc->sc_ra.mask & (UINT32_C(1) << bit)) == 0 ||
+	     (rate >= 12 && rate < 20 &&
+	      sc->sc_ra.phy != RTW88_RA_HT20_1SS) ||
+	     (rate >= 0x2c && sc->sc_ra.phy != RTW88_RA_VHT_1SS)))
 		st->ra_outside_mask++;
 	st->ra_report_rate = (uint8_t)rate;
 	st->ra_report_macid = p[3];
 	st->ra_report_bw = p[8];
+	st->ra_report_sgi = (p[2] >> 7) & 1;
 	st->ra_observed_generation = sc->sc_generation;
 	st->ra_report_valid = 1;
 }

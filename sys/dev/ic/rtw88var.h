@@ -204,6 +204,7 @@ struct rtw88_stats {
 	uint64_t ra_unsupported, ra_inactive, ra_trailing, ra_outside_mask;
 	uint32_t ra_observed_generation;
 	uint8_t ra_report_rate, ra_report_macid, ra_report_bw, ra_report_valid;
+	uint8_t ra_report_sgi;
 	uint64_t rx_beacons;
 	uint8_t last_bssid[6];
 	char last_ssid[33];	/* NUL-terminated; empty if malformed. */

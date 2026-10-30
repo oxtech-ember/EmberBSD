@@ -210,7 +210,7 @@ rtwce_stats(char *buf, size_t len)
 		    " ra_reports %llu unattributed %llu malformed %llu foreign %llu"
 		    " unsupported %llu inactive %llu trailing %llu outside_mask %llu"
 		    " ra_observed_gen %u ra_last %u/%u/%u/%u"
-		    " ra_config %d/%d/%d ra_error %d",
+		    " ra_config %d/%d/%d ra_error %d ra_sgi %u",
 		    (unsigned long long)st->tx_ra_encoded,
 		    (unsigned long long)st->tx_ra_protection_limited,
 		    (unsigned long long)st->ra_commands,
@@ -226,7 +226,8 @@ rtwce_stats(char *buf, size_t len)
 		    st->ra_observed_generation, st->ra_report_valid,
 		    st->ra_report_rate, st->ra_report_macid, st->ra_report_bw,
 		    sc->sc_ra.configured, sc->sc_ra.active,
-		    sc->sc_ra.protection_limited, sc->sc_ra.error);
+		    sc->sc_ra.protection_limited, sc->sc_ra.error,
+		    (unsigned)st->ra_report_sgi);
 	/* Firmware boot claim, not negotiated PHY or measured radio capacity. */
 	if (n > 0 && (size_t)n < len)
 		n += snprintf(buf + n, len - (size_t)n,
