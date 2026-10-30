@@ -204,6 +204,50 @@ class BootstrapBaseTests(unittest.TestCase):
                        if ' -c ' in line and 'objcprobe.m' in line)
         self.assertGreater(command.index('-mabi=ilp32d'), command.index('-mabi=ilp32'))
 
+        # Explicit language flags replace the defaults; mkdep must match the
+        # compiler rather than silently restoring the global soft ABI.
+        for name, flags in (('cprobe', 'CFLAGS'), ('aprobe', 'AFLAGS'),
+                            ('cxxprobe', 'CXXFLAGS'), ('objcprobe', 'OBJCFLAGS')):
+            with self.subTest(language=flags):
+                result = self.make(self.work, '-f', str(fixture), '-n',
+                                   'MACHINE=riscv', 'MACHINE_ARCH=riscv32', 'MKSOFTFLOAT=yes',
+                                   'MKDEP=selected-mkdep', 'MKDEPCXX=selected-mkdep',
+                                   'MKDEPOBJC=selected-mkdep', flags + '=-mabi=ilp32d',
+                                   name + '.d', name + '.o')
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                lines = [shlex.split(line) for line in result.stdout.splitlines()]
+                dep = next(line for line in lines if line and line[0] == 'selected-mkdep')
+                compile_cmd = next(line for line in lines if '-c' in line and
+                                   any(arg.startswith(name + '.') for arg in line))
+                self.assertEqual([arg for arg in dep if arg.startswith('-mabi=')][-1],
+                                 [arg for arg in compile_cmd if arg.startswith('-mabi=')][-1])
+
+        # Assembly's per-file COPTS affects compilation even without a
+        # per-file CPUFLAGS override.
+        result = self.make(self.work, '-f', str(fixture), '-n',
+                           'MACHINE=riscv', 'MACHINE_ARCH=riscv32', 'MKSOFTFLOAT=yes',
+                           'MKDEP=selected-mkdep', 'COPTS.aprobe.S=-mabi=ilp32d',
+                           'aprobe.d', 'aprobe.o')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        lines = [shlex.split(line) for line in result.stdout.splitlines()]
+        dep = next(line for line in lines if line and line[0] == 'selected-mkdep')
+        compile_cmd = next(line for line in lines if '-c' in line and 'aprobe.S' in line)
+        self.assertEqual([arg for arg in dep if arg.startswith('-mabi=')][-1],
+                         [arg for arg in compile_cmd if arg.startswith('-mabi=')][-1])
+
+        result = self.make(self.work, '-f', str(fixture), '-n',
+                           'MACHINE=riscv', 'MACHINE_ARCH=riscv32', 'MKSOFTFLOAT=yes',
+                           'MKDEP=selected-mkdep',
+                           'CFLAGS=-mabi=ilp32 -mllvm -inline-threshold=0 '
+                           '-mmlir option -module-dependency-dir cache', 'cprobe.d')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        dep = next(shlex.split(line) for line in result.stdout.splitlines()
+                   if line.startswith('selected-mkdep '))
+        self.assertIn('-mabi=ilp32', dep)
+        self.assertEqual(dep[dep.index('-mllvm') + 1], '-inline-threshold=0')
+        self.assertEqual(dep[dep.index('-mmlir') + 1], 'option')
+        self.assertEqual(dep[dep.index('-module-dependency-dir') + 1], 'cache')
+
     def test_host_dependency_recipe_does_not_receive_target_abi(self):
         result = self.make(SOURCE / 'tools/hostname', '-n',
                            'MACHINE=riscv', 'MACHINE_ARCH=riscv32', 'MKSOFTFLOAT=yes',

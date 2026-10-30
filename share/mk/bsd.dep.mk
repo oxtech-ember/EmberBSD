@@ -14,7 +14,12 @@ MKDEPCXX?=		mkdep
 MKDEPOBJC?=		${MKDEP}
 # C++ preprocessing options that the CXXFLAGS filter cannot preserve.
 MKDEPCXXFLAGS?=
-_MKDEP_CPUFLAGS?=	${CPUFLAGS}
+# Target mkdep receives the same compiler flag groups as compilation.
+# Host makefiles select the smaller interface of their native mkdep tool.
+_MKDEP_CFLAGS?=		${CFLAGS}
+_MKDEP_CXXFLAGS?=	${CXXFLAGS}
+_MKDEP_OBJCFLAGS?=	${OBJCFLAGS}
+_MKDEP_AFLAGS?=		${AFLAGS}
 _MKDEP_FILE_CPUFLAGS?=	${CPUFLAGS.${.IMPSRC:T}}
 MKDEP_SUFFIXES?=	.o .d
 
@@ -67,33 +72,31 @@ _MKDEP_FILEFLAGS=
 
 .c.d:
 	${_MKTARGET_CREATE}
-	${MKDEP} -f ${.TARGET}.tmp ${_MKDEP_FILEFLAGS} -- ${_MKDEP_TARGET_FLAGS} ${MKDEPFLAGS} ${_MKDEP_CPUFLAGS} \
-	    ${CFLAGS:M-std=*} ${CFLAGS:C/-([IDUW])[  ]*/-\1/Wg:M-[IDUW]*} \
-	    ${CPPFLAGS:N-Wp,-iremap,*} ${COPTS.${.IMPSRC:T}} ${_MKDEP_FILE_CPUFLAGS} \
-	    ${CPPFLAGS.${.IMPSRC:T}} ${.IMPSRC} && \
+	${MKDEP} -f ${.TARGET}.tmp ${_MKDEP_FILEFLAGS} -- ${_MKDEP_TARGET_FLAGS} ${MKDEPFLAGS} \
+	    ${_MKDEP_CFLAGS} ${CPPFLAGS:N-Wp,-iremap,*} ${COPTS.${.IMPSRC:T}} \
+	    ${_MKDEP_FILE_CPUFLAGS} ${CPPFLAGS.${.IMPSRC:T}} ${.IMPSRC} && \
 	    ${MV} ${.TARGET}.tmp ${.TARGET}
 
 .m.d:
 	${_MKTARGET_CREATE}
-	${MKDEPOBJC} -f ${.TARGET}.tmp ${_MKDEP_FILEFLAGS} -- ${_MKDEP_TARGET_FLAGS} ${MKDEPFLAGS} ${_MKDEP_CPUFLAGS} \
-	    ${OBJCFLAGS:C/-([IDUW])[  ]*/-\1/Wg:M-[IDUW]*} \
-	    ${CPPFLAGS:N-Wp,-iremap,*} ${OBJCOPTS} ${OBJCOPTS.${.IMPSRC:T}} ${.IMPSRC} && \
+	${MKDEPOBJC} -f ${.TARGET}.tmp ${_MKDEP_FILEFLAGS} -- ${_MKDEP_TARGET_FLAGS} ${MKDEPFLAGS} \
+	    ${_MKDEP_OBJCFLAGS} ${CPPFLAGS:N-Wp,-iremap,*} ${OBJCOPTS} \
+	    ${OBJCOPTS.${.IMPSRC:T}} ${.IMPSRC} && \
 	    ${MV} ${.TARGET}.tmp ${.TARGET}
 
 .s.d .S.d:
 	${_MKTARGET_CREATE}
-	${MKDEP} -f ${.TARGET}.tmp ${_MKDEP_FILEFLAGS} -- ${_MKDEP_TARGET_FLAGS} ${MKDEPFLAGS} ${_MKDEP_CPUFLAGS} \
-	    ${AFLAGS:C/-([IDUW])[  ]*/-\1/Wg:M-[IDUW]*} \
-	    ${CPPFLAGS:N-Wp,-iremap,*} ${AFLAGS.${.IMPSRC:T}} ${_MKDEP_FILE_CPUFLAGS} ${CPPFLAGS.${.IMPSRC:T}} \
-	    ${__acpp_flags} ${.IMPSRC} && \
+	${MKDEP} -f ${.TARGET}.tmp ${_MKDEP_FILEFLAGS} -- ${_MKDEP_TARGET_FLAGS} ${MKDEPFLAGS} \
+	    ${_MKDEP_AFLAGS} ${AFLAGS.${.IMPSRC:T}} ${CPPFLAGS:N-Wp,-iremap,*} \
+	    ${__acpp_flags} ${COPTS.${.IMPSRC:T}} ${_MKDEP_FILE_CPUFLAGS} \
+	    ${CPPFLAGS.${.IMPSRC:T}} ${.IMPSRC} && \
 	    ${MV} ${.TARGET}.tmp ${.TARGET}
 
 .C.d .cc.d .cpp.d .cxx.d:
 	${_MKTARGET_CREATE}
-	${MKDEPCXX} -f ${.TARGET}.tmp ${_MKDEP_FILEFLAGS} -- ${_MKDEP_TARGET_FLAGS} ${MKDEPFLAGS} ${_MKDEP_CPUFLAGS} ${MKDEPCXXFLAGS} \
-	    ${CXXFLAGS:M-std=*} ${CXXFLAGS:C/-([IDUW])[  ]*/-\1/Wg:M-[IDUW]*} \
-	    ${CPPFLAGS:N-Wp,-iremap,*} ${COPTS.${.IMPSRC:T}} ${_MKDEP_FILE_CPUFLAGS} \
-	    ${CPPFLAGS.${.IMPSRC:T}} ${.IMPSRC} && \
+	${MKDEPCXX} -f ${.TARGET}.tmp ${_MKDEP_FILEFLAGS} -- ${_MKDEP_TARGET_FLAGS} ${MKDEPFLAGS} ${MKDEPCXXFLAGS} \
+	    ${_MKDEP_CXXFLAGS} ${CPPFLAGS:N-Wp,-iremap,*} ${COPTS.${.IMPSRC:T}} \
+	    ${_MKDEP_FILE_CPUFLAGS} ${CPPFLAGS.${.IMPSRC:T}} ${.IMPSRC} && \
 	    ${MV} ${.TARGET}.tmp ${.TARGET}
 
 .endif # defined(SRCS) && !empty(SRCS)					# }

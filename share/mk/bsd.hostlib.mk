@@ -11,7 +11,11 @@ MKDEP_SUFFIXES?=	.o .lo .d
 
 # Override these:
 _MKDEP_TARGET_FLAGS=	# Native dependencies must not inherit target flags.
-_MKDEP_CPUFLAGS=		# Native dependencies use the host compiler ABI.
+# nbhost-mkdep accepts only its documented preprocessor option subset.
+_MKDEP_CFLAGS=		${HOST_CFLAGS:M-std=*} ${HOST_CFLAGS:C/-([IDUW])[ 	]*/-\1/Wg:M-[IDUW]*}
+_MKDEP_CXXFLAGS=	${CXXFLAGS:M-std=*} ${CXXFLAGS:C/-([IDUW])[ 	]*/-\1/Wg:M-[IDUW]*}
+_MKDEP_OBJCFLAGS=	${OBJCFLAGS:C/-([IDUW])[ 	]*/-\1/Wg:M-[IDUW]*}
+_MKDEP_AFLAGS=		${AFLAGS:C/-([IDUW])[ 	]*/-\1/Wg:M-[IDUW]*}
 _MKDEP_FILE_CPUFLAGS=	# No target per-file ABI flags for native tools.
 MKDEP:=		${HOST_MKDEP}
 MKDEPCXX:=	${HOST_MKDEPCXX}
