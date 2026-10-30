@@ -501,6 +501,8 @@ save_for_optional(const char *start, const char *limit)
 			n = *l;
 			if (n == NULL) {
 				n = malloc(sizeof *n + (end - name));
+				if (n == NULL)
+					err(EXIT_FAILURE, "malloc");
 				n->left = n->right = 0;
 				n->len = end - name;
 				n->count = 1;
