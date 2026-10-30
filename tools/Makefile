@@ -249,8 +249,10 @@ SUBDIR+=	elftosb
     ${MACHINE} == "sandpoint" || \
     ${MACHINE_CPU} == "riscv"
 SUBDIR+=	mkubootimage
+.if !defined(EMBER_NATIVE_TOOLS)
 SUBDIR+=	libfdt .WAIT
 SUBDIR+=	dtc
+.endif
 .endif
 
 .if ${MACHINE} == "mvme68k"

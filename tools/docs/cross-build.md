@@ -41,7 +41,8 @@ do not establish the selected SDK cross-build workflow.
 Cross builds keep host tools under `out/tools`, object files under `out/obj`
 and the kernel configuration's generated headers under `out/obj/kernels`.
 The four board modules use the same make wrapper, target settings and kernel
-headers. DTBs use the target preprocessor and the source-built host `nbdtc`.
+headers. DTBs use the target preprocessor and the native Ports `dtc` selected
+by the OS routing contract.
 `build.sh -u` reuses tools and object files for repeated builds. Before each
 cross build, the wrapper removes only the selected configuration's generated
 `vers.c` and `vers.o`. The version make rule does not track `BUILDINFO` changes

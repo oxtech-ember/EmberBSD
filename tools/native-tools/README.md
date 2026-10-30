@@ -43,6 +43,10 @@ on the selected LLVM or GNU implementation instead of an absolute system fallbac
 reproducible-build metadata is disabled. Route it explicitly because `build.sh`
 limits `PATH` to this contract.
 `wc` counts the generated ktruss errno and signal tables.
+`dtc` compiles device trees with the common native Ports package. The native
+tools graph does not build the bundled `dtc` or its `libfdt` dependency.
+Without native routing, the existing tool-directory selection remains.
+`EMBER_NATIVE_TOOLS` is the routing directory, not the package prefix.
 
 The SDK must publish a routing directory with these entries:
 
@@ -110,11 +114,13 @@ Run the real make selection regression with an explicit host NetBSD make:
 
 ```sh
 "$PYTHON" tools/native-tools/test-compiler-family.py --make "$NETBSD_MAKE" -v
+"$PYTHON" tools/native-tools/test-dtc-route.py --prefix "$HOST_PREFIX"
 ```
 
-It checks LLVM command arguments, explicit GCC routing, independent host and
-target DTrace flags, reproducible path maps, and invalid input rejection.
-These are make metadata checks, not compiler, runtime, kernel or device tests.
+The compiler-family test checks LLVM and GCC routing, DTrace flags, path maps,
+and invalid input rejection. The DTC test checks native and legacy make
+metadata and compiles a small device tree with the selected DTC. These tests
+do not establish target runtime, kernel or device behavior.
 
 ## Current validation boundary
 

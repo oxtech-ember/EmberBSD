@@ -15,6 +15,7 @@ cut cut -
 date date -
 diff diff -
 dirname dirname -
+dtc dtc -
 echo echo -
 egrep egrep -
 env env -
