@@ -324,6 +324,66 @@ test.call('option-profile') do |tool,previous,_,work,assert,reject,source|
   File.write(source+'/Conf/target.txt','unique user configuration')
   reject.call { tool.check_options(previous,raw) }
 end
+# Exercise the CLI with a bounded exporter boundary: recipe application belongs
+# to firmware-series.rb, while expected(), source audits and leases stay real.
+%w[same-manifest different-manifest same-previous-ref different-previous-ref
+   working-recipe-mismatch manifest-mismatch changed-source committed-export-failure].each do |name|
+  test.call(name) do |tool,previous,_,work,assert,_,source|
+    previous['series']=['fixture.diff']
+    current=Marshal.load(Marshal.dump(previous))
+    current['recipe_revision']='b'*40 if name.start_with?('different-')
+    fixture=work+'/cli'
+    FileUtils.mkdir_p(fixture)
+    FileUtils.cp(helper,fixture+'/firmware-source.rb')
+    File.write(fixture+'/states.json',JSON.generate({'current'=>current,'previous'=>previous}))
+    File.write(fixture+'/case',name)
+    File.write(fixture+'/firmware-series.rb',<<~'RUBY')
+      require 'json'
+      require 'fileutils'
+      states=JSON.parse(File.read(__dir__+'/states.json'))
+      name=File.read(__dir__+'/case')
+      revision=ARGV[3]
+      File.open(__dir__+'/calls','a') { |file| file.puts(revision || 'working') }
+      abort 'fixture committed export failure' if revision && name=='committed-export-failure'
+      state=revision==states.fetch('previous').fetch('recipe_revision') ? states.fetch('previous') : states.fetch('current')
+      state['patch_sha256']={} if !revision && name=='working-recipe-mismatch'
+      receipt=state.slice('recipe_revision','pins','series','patch_sha256').merge('inputs'=>{},'outputs'=>{})
+      state.fetch('targets').each do |path,entry|
+        bytes=path=='edk2/wrapper' ? 'fixture executable source' : 'accepted old'
+        file=ARGV[1]+'/export/'+path
+        FileUtils.mkdir_p(File.dirname(file))
+        File.binwrite(file,bytes)
+        File.chmod(entry.fetch('mode'),file)
+        receipt['inputs'][path]=entry.fetch('original').merge('mode'=>entry['mode']==0o755 ? '100755' : '100644')
+        receipt['outputs'][path]=entry.fetch('sha256')
+      end
+      File.write(ARGV[1]+'/receipt.json',JSON.generate(receipt))
+    RUBY
+    args=[]
+    if name.end_with?('-previous-ref')
+      args=['--previous-ref',previous.fetch('recipe_revision')]
+    else
+      saved=Marshal.load(Marshal.dump(previous))
+      saved['patch_sha256']={} if name=='manifest-mismatch'
+      File.write(tool.state_path,JSON.generate(saved))
+    end
+    File.write(source+'/edk2/changed','unexpected edit') if name=='changed-source'
+    saved_state=File.binread(tool.state_path) if File.exist?(tool.state_path)
+    out,err,status=Open3.capture3(RbConfig.ruby,fixture+'/firmware-source.rb',source,work+'/cli-output',*args)
+    failure={'working-recipe-mismatch'=>'Current series must match its committed recipe',
+      'manifest-mismatch'=>'Source manifest does not match its immutable recipe',
+      'changed-source'=>'Unexpected source state',
+      'committed-export-failure'=>'Series export failed'}[name]
+    assert.call(failure ? !status.success? && err.include?(failure) : status.success?,"CLI #{name}: #{out}#{err}")
+    calls=File.readlines(fixture+'/calls',chomp:true)
+    expected=['working',current.fetch('recipe_revision')]
+    expected<<previous.fetch('recipe_revision') if name.start_with?('different-')
+    assert.call(calls==expected,"redundant or missing immutable export: #{calls.inspect}")
+    assert.call(File.read(source+'/edk2/changed')==(name=='changed-source' ? 'unexpected edit' : 'accepted old'),'CLI changed source during dry run/refusal')
+    assert.call(File.binread(tool.state_path)==saved_state,'CLI changed saved manifest') if saved_state
+    assert.call(!File.exist?(tool.pending_path) && !File.exist?(FirmwareSource.lock_path(source)),'CLI left pending state or lease')
+  end
+end
 File.write(output+'/receipt.json',JSON.pretty_generate({checks:checks,cases:records,
   helper_sha256:Digest::SHA256.file(helper).hexdigest,
   scope:'Actual Ruby helper, real bounded Git fixtures, no network, common objects, firmware build or devices.'})+"\n")

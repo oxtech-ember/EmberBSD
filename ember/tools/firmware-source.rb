@@ -387,11 +387,13 @@ if $PROGRAM_NAME == __FILE__
       if File.exist?(tool.state_path) || File.symlink?(tool.state_path)
         raise 'Previous ref conflicts with source manifest' if options[:previous]
         previous=tool.read_json(tool.state_path)
-        proved=export.call(work+'/previous', previous.fetch('recipe_revision'))
+        revision=previous.fetch('recipe_revision')
+        # Reuse only the immutable export just verified against the working recipe.
+        proved=revision==committed.fetch('recipe_revision') ? committed : export.call(work+'/previous',revision)
         raise 'Source manifest does not match its immutable recipe' unless
           previous.reject { |key,_| %w[graph option_profile].include?(key) } == proved
       elsif options[:previous]
-        previous=export.call(work+'/previous',options[:previous])
+        previous=options[:previous]==committed.fetch('recipe_revision') ? committed : export.call(work+'/previous',options[:previous])
       else
         # First preparation accepts only pristine pinned source bytes.
         previous=desired.merge('targets'=>desired.fetch('targets').map do |path,entry|
