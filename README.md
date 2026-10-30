@@ -15,6 +15,7 @@ The OS does not require an AI agent, a model provider or a particular graphical 
 
 ## Purpose and getting started
 
+- Visit the [EmberBSD official website](https://oxtech-ember.github.io/EmberBSD-Website/) for an introduction to the OS and project.
 - Select hardware and check its limits in [DevBoards](https://github.com/oxtech-ember/EmberBSD-DevBoards).
 - Install and configure the OS with [Quick Start](doc/guide/quick-start.md) and the [User Guide](doc/guide/user-guide.md).
 - Build components with the [build guide](README.ember.md). Use [SDK](https://github.com/oxtech-ember/EmberBSD-SDK) for shared workspaces and release tooling.

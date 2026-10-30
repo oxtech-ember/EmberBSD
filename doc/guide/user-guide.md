@@ -1,5 +1,7 @@
 # User Guide
 
+Visit the [EmberBSD official website](https://oxtech-ember.github.io/EmberBSD-Website/) for an introduction to the operating system.
+
 Follow [Quick Start](quick-start.md) through target selection, image verification and installation.
 This guide continues from the installed system's console.
 Commands in this guide run **inside EmberBSD**, except where a host is named.
