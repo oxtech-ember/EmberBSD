@@ -23,7 +23,7 @@ ln -s "$src/sys/dev/ic" "$work/include/dev/ic"
 for header in sys/param.h sys/systm.h; do
     printf '#include <errno.h>\n#include "rtw88-test-kernel.h"\n' > "$work/include/$header"
 done
-${CC:-cc} -std=c11 -Wall -Wextra -Werror ${RTW88_TEST_CFLAGS:-} \
+${CC:-cc} -std=c11 -Wall -Wextra -Werror -Dprintf=rtw8822c_test_printf ${RTW88_TEST_CFLAGS:-} \
     -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \
     "$tools/rtw8822c-phy-contract.c" \
     "$src/sys/dev/ic/rtw8822c_phy.c" \

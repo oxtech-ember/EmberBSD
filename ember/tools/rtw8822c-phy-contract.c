@@ -5,6 +5,7 @@
  * The native PHY setup and channel switch must reproduce the reference
  * register trace in rtw8822c-phy.trace exactly, and fail closed.
  */
+#include <stdarg.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,6 +16,36 @@
 
 static unsigned checks, failures;
 
+static int capture_log, log_overflow, report_fixture, report_error;
+static size_t log_used;
+static unsigned dack_entry_writes;
+static char calibration_log[4096];
+static struct rtw8822c_dack_result fixture_report;
+
+/* The runner redirects printf in the actual PHY source and this fixture. */
+int
+rtw8822c_test_printf(const char *format, ...)
+{
+	va_list ap;
+	int n;
+
+	va_start(ap, format);
+	if (capture_log) {
+		n = vsnprintf(calibration_log + log_used,
+		    sizeof(calibration_log) - log_used, format, ap);
+		if (n < 0 || (size_t)n >= sizeof(calibration_log) - log_used) {
+			log_overflow = 1;
+			log_used = sizeof(calibration_log) - 1;
+		} else {
+			log_used += (size_t)n;
+		}
+	} else {
+		n = vprintf(format, ap);
+	}
+	va_end(ap);
+	return n;
+}
+
 /* Isolate the historical PHY trace from measured calibration here only.
  * rtw88-start-contract links the real core, PHY and calibrator together. */
 int
@@ -22,6 +53,11 @@ rtw8822c_dack(struct rtw88_softc *sc, struct rtw8822c_dack_result *out)
 {
 
 	(void)sc;
+	dack_entry_writes = model_ntrace;
+	if (report_fixture) {
+		*out = fixture_report;
+		return report_error;
+	}
 	memset(out, 0, sizeof(*out));
 	out->adc_measured = out->dac_measured = 3;
 	out->adc_converged = out->dac_converged = 3;
@@ -146,6 +182,7 @@ efuse_fill(struct rtw88_softc *sc, int blank)
 static void
 setup(struct rtw88_softc *sc)
 {
+	report_fixture = report_error = 0;
 	memset(&f, 0, sizeof(f));
 	memset(sc, 0, sizeof(*sc));
 	sc->sc_ops = &ops;
@@ -312,6 +349,67 @@ test_tuple_geometry(void)
 }
 
 static void
+test_calibration_reporting(void)
+{
+	static char success_trace[MODEL_TRACE_MAX][32];
+	struct rtw88_softc sc;
+	unsigned i, success_writes = 0;
+	int result, details;
+
+	/* Clean, ADC-only, DAC-only and hard calibration failure. */
+	for (i = 0; i < 4; i++) {
+		setup(&sc);
+		report_fixture = 1;
+		report_error = i == 3 ? EIO : 0;
+		memset(&fixture_report, 0, sizeof(fixture_report));
+		fixture_report.adc_nonconverged = i == 1 ? 1 : 0;
+		fixture_report.dac_nonconverged = i == 2 ? 2 : 0;
+		fixture_report.adc_measured = fixture_report.dac_measured = 3;
+		fixture_report.completed_paths = 3;
+		fixture_report.restored = i != 3;
+		fixture_report.adc_converged = 3 & ~fixture_report.adc_nonconverged;
+		fixture_report.dac_converged = 3 & ~fixture_report.dac_nonconverged;
+		fixture_report.adc_before[0][0] = -9;
+		fixture_report.adc_before[0][1] = 2;
+		fixture_report.adc[0][0] = 9;
+		fixture_report.adc[0][1] = 1022;
+		fixture_report.adc_attempts[0] = 10;
+		fixture_report.adc_snapshot_valid = 1;
+		fixture_report.adc_snapshot_path = 0;
+		fixture_report.adc_snapshot[0] = 0xff809;
+		log_used = 0;
+		log_overflow = 0;
+		calibration_log[0] = '\0';
+		capture_log = 1;
+		result = rtw8822c_phy_post(&sc);
+		capture_log = 0;
+		CHECK(result == report_error);
+		CHECK(!log_overflow);
+		details = i != 0;
+		CHECK((strstr(calibration_log, "DACK identity") != NULL) == details);
+		CHECK((strstr(calibration_log, "DACK stage") != NULL) == details);
+		CHECK((strstr(calibration_log,
+		    "DACK ADC before A -9/2") != NULL) == details);
+		CHECK((strstr(calibration_log,
+		    "DACK ADC snapshot path 0 valid 1") != NULL) == details);
+		CHECK((strstr(calibration_log, "cold calibration degraded") != NULL) ==
+		    (i == 1 || i == 2));
+		if (i == 0) {
+			success_writes = model_ntrace;
+			memcpy(success_trace, model_trace,
+			    success_writes * sizeof(success_trace[0]));
+		} else if (i != 3) {
+			CHECK(model_ntrace == success_writes);
+			CHECK(memcmp(success_trace, model_trace,
+			    success_writes * sizeof(success_trace[0])) == 0);
+		} else {
+			CHECK(model_ntrace == dack_entry_writes);
+		}
+	}
+	report_fixture = report_error = 0;
+}
+
+static void
 test_read_failure(void)
 {
 	struct rtw88_softc sc;
@@ -339,6 +437,7 @@ main(int argc, char **argv)
 	test_bad_channels();
 	test_tuple_geometry();
 	test_read_failure();
+	test_calibration_reporting();
 	printf("rtw8822c PHY contract: %u assertions, %u failures\n", checks,
 	    failures);
 	return failures != 0;

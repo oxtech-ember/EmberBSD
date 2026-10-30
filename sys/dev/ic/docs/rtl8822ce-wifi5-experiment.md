@@ -138,3 +138,11 @@ The cold ADCK/DACK warning remained; RF quality is still unqualified.
 Not established: association on 52, 56 or 100-144, other APs, two spatial
 streams on the air, general long-duration stability, and automatic default
 selection of this opt-in profile.
+
+Cold ADCK/DACK nonconvergence remains advisory and does not qualify RF
+quality. Both advisory masks and hard errors print the captured measurement
+attempts, pre-compensation values, programmed compensation and last ADC
+snapshot with its path and validity flag. This uses existing results and
+adds no register reads or calibration attempts. A clean calibration keeps
+the short report. Inspect these boot-time records before changing the
+calibration sequence; do not rerun calibration on an occupied station.

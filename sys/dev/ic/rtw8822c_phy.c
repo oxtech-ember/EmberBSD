@@ -284,7 +284,8 @@ rtw8822c_phy_post(struct rtw88_softc *sc)
 		    "ADC nonconverged %#x DAC nonconverged %#x; "
 		    "RF quality is unqualified\n", (unsigned)dack.adc_nonconverged,
 		    (unsigned)dack.dac_nonconverged);
-	if (error != 0) {
+	if (error != 0 || dack.adc_nonconverged != 0 ||
+	    dack.dac_nonconverged != 0) {
 		printf("rtwce: DACK identity syscfg %#x cut %u RFE %u XTAL %u\n",
 		    sc->sc_sys_cfg1, (unsigned)sc->sc_cut, (unsigned)sc->sc_rfe,
 		    (unsigned)sc->sc_xtal);
@@ -312,7 +313,8 @@ rtw8822c_phy_post(struct rtw88_softc *sc)
 		    dack.adc_snapshot[0], dack.adc_snapshot[1],
 		    dack.adc_snapshot[2], dack.adc_snapshot[3],
 		    dack.adc_snapshot[4]);
-		return error;
+		if (error != 0)
+			return error;
 	}
 	rf_x2_check(&io);
 	thermal_trim(&io, sc->sc_efuse_phys);
