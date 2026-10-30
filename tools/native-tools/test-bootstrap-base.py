@@ -179,7 +179,7 @@ class BootstrapBaseTests(unittest.TestCase):
                            'COPTS.cprobe.c=-mabi=ilp32d', 'CPUFLAGS.cprobe.c=-mabi=ilp32',
                            'AFLAGS.aprobe.S=-mabi=ilp32d', 'CPUFLAGS.aprobe.S=-mabi=ilp32',
                            'COPTS.cxxprobe.cc=-mabi=ilp32d', 'CPUFLAGS.cxxprobe.cc=-mabi=ilp32',
-                           'COPTS.objcprobe.m=-mabi=ilp32d', 'CPUFLAGS.objcprobe.m=-mabi=ilp32',
+                           'OBJCOPTS.objcprobe.m=-mabi=ilp32d', 'CPUFLAGS.objcprobe.m=-mabi=ilp32',
                            'cprobe.d', 'aprobe.d',
                            'cxxprobe.d', 'objcprobe.d')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -190,8 +190,19 @@ class BootstrapBaseTests(unittest.TestCase):
             self.assertIn('-march=rv32imac_zicsr', command)
             self.assertIn('-mabi=ilp32', command)
             self.assertIn('-mabi=ilp32d', command)
-            self.assertGreater(len(command) - 1 - command[::-1].index('-mabi=ilp32'),
-                               command.index('-mabi=ilp32d'))
+            if 'objcprobe.m' in command:
+                self.assertGreater(command.index('-mabi=ilp32d'), command.index('-mabi=ilp32'))
+            else:
+                self.assertGreater(len(command) - 1 - command[::-1].index('-mabi=ilp32'),
+                                   command.index('-mabi=ilp32d'))
+        result = self.make(self.work, '-f', str(fixture), '-n',
+                           'MACHINE=riscv', 'MACHINE_ARCH=riscv32', 'MKSOFTFLOAT=yes',
+                           'OBJCOPTS.objcprobe.m=-mabi=ilp32d', 'CPUFLAGS.objcprobe.m=-mabi=ilp32',
+                           'objcprobe.o')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        command = next(shlex.split(line) for line in result.stdout.splitlines()
+                       if ' -c ' in line and 'objcprobe.m' in line)
+        self.assertGreater(command.index('-mabi=ilp32d'), command.index('-mabi=ilp32'))
 
     def test_host_dependency_recipe_does_not_receive_target_abi(self):
         result = self.make(SOURCE / 'tools/hostname', '-n',

@@ -77,8 +77,7 @@ _MKDEP_FILEFLAGS=
 	${_MKTARGET_CREATE}
 	${MKDEPOBJC} -f ${.TARGET}.tmp ${_MKDEP_FILEFLAGS} -- ${_MKDEP_TARGET_FLAGS} ${MKDEPFLAGS} ${_MKDEP_CPUFLAGS} \
 	    ${OBJCFLAGS:C/-([IDUW])[  ]*/-\1/Wg:M-[IDUW]*} \
-	    ${CPPFLAGS:N-Wp,-iremap,*} ${COPTS.${.IMPSRC:T}} ${_MKDEP_FILE_CPUFLAGS} \
-	    ${CPPFLAGS.${.IMPSRC:T}} ${.IMPSRC} && \
+	    ${CPPFLAGS:N-Wp,-iremap,*} ${OBJCOPTS} ${OBJCOPTS.${.IMPSRC:T}} ${.IMPSRC} && \
 	    ${MV} ${.TARGET}.tmp ${.TARGET}
 
 .s.d .S.d:
