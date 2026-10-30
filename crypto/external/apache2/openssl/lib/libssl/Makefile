@@ -38,8 +38,12 @@ CPPFLAGS+= -I${OPENSSLGENINC}
 .PATH: ${OPENSSLSRC} ${OPENSSLSRC}/crypto/pqueue ${OPENSSLSRC}/include/openssl
 
 .if defined(EMBER_OPENSSL_SOURCE)
+.if !defined(OPENSSL_OBJECT_ONLY)
 .include "${EMBER_OPENSSL_GENERATED}/ssl.mk"
+.endif
+.if !defined(OPENSSL_OBJECT_ONLY)
 .include "${EMBER_OPENSSL_GENERATED}/ssl-shared.mk"
+.endif
 .else
 .include "srcs.inc"
 .endif

@@ -43,10 +43,18 @@ CPPFLAGS+= -I${OPENSSLGENINC}
 .PATH: ${OPENSSLGENINC}/openssl
 
 .if defined(EMBER_OPENSSL_SOURCE)
+.if !defined(OPENSSL_OBJECT_ONLY)
 .include "${EMBER_OPENSSL_GENERATED}/crypto.mk"
+.endif
+.if !defined(OPENSSL_OBJECT_ONLY)
 .include "${EMBER_OPENSSL_GENERATED}/crypto-shared.mk"
+.endif
+.if !defined(OPENSSL_OBJECT_ONLY)
 .include "${EMBER_OPENSSL_GENERATED}/default.mk"
+.endif
+.if !defined(OPENSSL_OBJECT_ONLY)
 .include "${EMBER_OPENSSL_GENERATED}/common.mk"
+.endif
 .else
 .include "srcs.inc"
 .include "${.CURDIR}/../libdefault/srcs.inc"

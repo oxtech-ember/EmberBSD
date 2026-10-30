@@ -15,7 +15,9 @@ CPPFLAGS+= -I${OPENSSLSRC}/include
 CPPFLAGS+= -I${OPENSSLSRC}/apps/include
 
 .if defined(EMBER_OPENSSL_SOURCE)
+.if !defined(OPENSSL_OBJECT_ONLY)
 .include "${EMBER_OPENSSL_GENERATED}/test.mk"
+.endif
 .else
 SRCS+=\
 apps_shims.c \
