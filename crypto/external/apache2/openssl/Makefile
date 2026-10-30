@@ -2,7 +2,7 @@
 
 SUBDIR=		lib .WAIT bin
 
-.if defined(EMBER_OPENSSL_SOURCE)
+.if defined(EMBER_OPENSSL_SOURCE) && !(make(obj) && empty(.TARGETS:Nobj))
 # Generate once at this parent before any recursive header or library target.
 # The build's selected tools and target object directory remain authoritative.
 EMBER_OPENSSL_GENERATED?= ${.OBJDIR}/generated
