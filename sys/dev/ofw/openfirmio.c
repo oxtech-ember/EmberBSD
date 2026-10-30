@@ -213,7 +213,7 @@ openfirmioctl(dev_t dev, u_long cmd, void *data, int flags, struct lwp *l)
 		break;
 
 	case OFIOCNEXTPROP: {
-		char newname[32];
+		char newname[33];
 		if ((flags & FREAD) == 0)
 			return (EBADF);
 		if (node == 0)
@@ -225,7 +225,7 @@ openfirmioctl(dev_t dev, u_long cmd, void *data, int flags, struct lwp *l)
 				break;
 		}
 		s = splhigh();
-		ok = OF_nextprop(node, name, newname);
+		ok = OF_nextprop(node, name != NULL ? name : "", newname);
 		splx(s);
 		if (ok == 0) {
 			error = ENOENT;
