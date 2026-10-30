@@ -125,9 +125,7 @@ inline
 #endif
 #endif
 static unsigned int
-hash (str, len)
-     register const char *str;
-     register unsigned int len;
+hash (register const char *str, register unsigned int len)
 {
   static const unsigned char asso_values[] =
     {
@@ -330,9 +328,7 @@ __attribute__ ((__gnu_inline__))
 #endif
 #endif
 const struct atom_map *
-in_word_set (str, len)
-     register const char *str;
-     register unsigned int len;
+in_word_set (register const char *str, register unsigned int len)
 {
   enum
     {
