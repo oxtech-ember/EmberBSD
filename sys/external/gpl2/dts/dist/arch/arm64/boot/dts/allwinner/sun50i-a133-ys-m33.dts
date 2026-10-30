@@ -14,6 +14,11 @@
 
 #include <dt-bindings/gpio/gpio.h>
 
+/* Local EmberBSD binding selects the A133 3-bit GPU divider explicitly. */
+&ccu {
+	compatible = "allwinner,sun50i-a133-ccu", "allwinner,sun50i-a100-ccu";
+};
+
 / {
 	model = "YS-M33 A133 panel";
 	compatible = "ys,m33", "allwinner,sun50i-a133",
