@@ -70,6 +70,11 @@ if [ "${1:-}" = --console-selected ]; then
     "$tools/bin/nbmtree" -c -p "$out/root" -k type,mode,link | \
         sed -E 's/(\/set[[:space:]].*)/\1 uid=0 gid=0/' > "$out/root.spec"
     awk '/^\.\/(console|null|zero|tty) type=/ {sub(/^\./,"./dev"); print}' "$out/devices-all.spec" >> "$out/root.spec"
+    for node in console null zero tty; do
+        [ "$(grep -c "^\./dev/$node type=char " "$out/root.spec")" -eq 1 ] || {
+            echo "Missing or duplicate device: $node" >&2; exit 1
+        }
+    done
     "$tools/bin/nbmakefs" -t ffs -B little -s 4m -o version=2,bsize=16384,fsize=2048 \
         -F "$out/root.spec" -N "$src/etc" "$out/root.fs" "$out/root"
     exit 0

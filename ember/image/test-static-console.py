@@ -24,15 +24,16 @@ class ConsoleProfile(unittest.TestCase):
         record = {'format': 'emberbsd-llvm-os-stage', 'phase': 'base',
                   'qualification': 'built-and-inspected',
                   'signature': {'target': {'arch': 'riscv32', 'triplet': 'riscv32--netbsd'},
-                                'flags': ['MKSOFTFLOAT=yes', 'MKPIC=no', 'MKPIE=no', 'LDSTATIC=-static'],
+                                'flags': ['MKSOFTFLOAT=yes', 'MKPIC=no', 'MKPICINSTALL=no', 'MKCOMPAT=no', 'MKCXX=no', 'MKPIE=no', 'LDSTATIC=-static'],
                                 'runtime': {'manifest': {'identity': 'selected'}}}}
         profile.check_foundation(record, 'riscv32', {'identity': 'selected'})
-        for change in ('runtime', 'abi', 'flags'):
+        for change in ('runtime', 'abi', 'flags', 'conflict'):
             import copy
             invalid = copy.deepcopy(record)
             if change == 'runtime': invalid['signature']['runtime']['manifest'] = {'identity': 'other'}
             if change == 'abi': invalid['signature']['target']['arch'] = 'riscv64'
             if change == 'flags': invalid['signature']['flags'].remove('MKSOFTFLOAT=yes')
+            if change == 'conflict': invalid['signature']['flags'].append('MKSOFTFLOAT=no')
             with self.assertRaises(ValueError):
                 profile.check_foundation(invalid, 'riscv32', {'identity': 'selected'})
 

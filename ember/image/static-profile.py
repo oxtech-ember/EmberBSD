@@ -29,7 +29,9 @@ def check_foundation(record, target, runtime):
                  signature['target']['arch'] == selected['arch'] and
                  signature['target']['triplet'] == selected['triplet'] and
                  signature['runtime']['manifest'] == runtime and
-                 all(flag in flags for flag in ('MKPIC=no', 'MKPIE=no', 'LDSTATIC=-static', *selected['flags'])))
+                 all([flag for flag in flags if flag.split('=', 1)[0] == required.split('=', 1)[0]] == [required]
+                     for required in ('MKPIC=no', 'MKPICINSTALL=no', 'MKCOMPAT=no', 'MKCXX=no',
+                                      'MKPIE=no', 'LDSTATIC=-static', *selected['flags'])))
     except (KeyError, TypeError):
         valid = False
     if not valid:
@@ -38,6 +40,7 @@ def check_foundation(record, target, runtime):
 
 def run_console(arguments):
     """Extend a verified C foundation with the shared native console targets."""
+    import hashlib
     import os
     import re
     import shutil
@@ -59,7 +62,7 @@ def run_console(arguments):
     settings = console(target)
     sdk = Path(os.environ['EMBERBSD_SDK_SOURCE']).resolve(strict=True)
     sys.path.insert(0, str(sdk / 'src'))
-    from emberbsd_sdk import elf, inventory, jsonio, libedit, llvm_runtime, native_os, paths, process, target_toolchain
+    from emberbsd_sdk import elf, inventory, jsonio, libedit, llvm_runtime, native_os, paths, process, sourceprep, target_toolchain
     from emberbsd_sdk.errors import SDKError
     try:
         source = Path(paths.canonical_existing(source))
@@ -68,7 +71,10 @@ def run_console(arguments):
         tools = Path(paths.canonical_existing(tools))
         compiler = Path(paths.canonical_existing(compiler))
         output = Path(paths.canonical_new(output))
-        for item in (source, foundation, stage, tools, compiler, output, sdk):
+        extra_paths = [Path(paths.canonical_existing(os.environ[name])) for name in
+                       ('EMBER_HOST_PREFIX', 'EMBER_LIBEDIT_SOURCE', 'EMBER_HOST_BFD_CONFIG',
+                        'EMBER_LLVM_SOURCE', 'EMBER_PORTS_SOURCE', 'EMBER_BYACC_SOURCE')]
+        for item in (source, foundation, stage, tools, compiler, output, sdk, *extra_paths):
             if not re.fullmatch(r'/[A-Za-z0-9_./-]+', str(item)):
                 raise SDKError('paths must be absolute and contain plain path characters')
         for root in (source, foundation, stage, tools, compiler, sdk):
@@ -108,7 +114,19 @@ def run_console(arguments):
         if libedit.validate_source(os.environ['EMBER_LIBEDIT_SOURCE'],
                                    ports=os.environ['EMBER_PORTS_SOURCE'], git=git) != receipt['signature']['libedit']:
             raise SDKError('libedit differs from C foundation')
+        byacc = sourceprep.read_prepared_tree_receipt(os.environ['EMBER_BYACC_SOURCE'], package='devel/byacc')
+        if byacc != receipt['signature']['common_sources']['byacc']:
+            raise SDKError('byacc differs from C foundation')
+        current = str(Path(os.environ['EMBER_PORTS_SOURCE']) / 'scripts/prepared-source-current.py')
+        process.capture([native.tool('python'), '-B', current, '--sdk-source', str(sdk), '--git', git,
+                         '--source', 'byacc=' + os.environ['EMBER_BYACC_SOURCE']], env=env)
         verifier = str(Path(os.environ['EMBER_PORTS_SOURCE']) / 'pkgsrc/lang/compiler-rt/files/runtime.py')
+        source_record = jsonio.loads_json(process.capture([native.tool('python'), '-B', verifier,
+            '--sdk-source', str(sdk), 'verify-source', '--source', os.environ['EMBER_LLVM_SOURCE'],
+            '--git', git], env=env).stdout)
+        if (source_record['llvm_version'] != identity['version'] or
+                record['source'] != {key: source_record['source'][key] for key in ('archive', 'sha512')}):
+            raise SDKError('LLVM source differs from the selected runtime')
         command = [native.tool('python'), '-B', verifier, '--sdk-source', str(sdk), 'verify',
                    '--stage', str(stage), '--target', target, '--phase', 'bootstrap', '--base', str(foundation),
                    '--source', os.environ['EMBER_LLVM_SOURCE'], '--git', git]
@@ -148,6 +166,9 @@ def run_console(arguments):
         if inventory.snapshot_tree(foundation, exclude=('.prebuild-sdk-build.json',
                 '.prebuild-sdk-build-incomplete', '.prebuild-sdk-build.log')) != receipt['outputs']:
             raise SDKError('C foundation changed during build')
+        image = output / 'root.fs'
+        digest = hashlib.sha256(image.read_bytes()).hexdigest()
+        (output / 'ROOT-SHA256.txt').write_text(digest + '  root.fs\n')
         (output / 'BUILD-INPUTS.txt').write_text('source=' + revision + '\ntarget=' + target +
             '\nprofile=static-console\nfoundation=' + original + '\n')
         print('Built static console and 4 MiB FFS image; target execution not checked.')
