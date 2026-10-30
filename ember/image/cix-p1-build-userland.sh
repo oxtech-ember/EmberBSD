@@ -5,6 +5,75 @@
 set -eu
 export LC_ALL=C
 here=$(CDPATH= cd -- "${0%/*}" && pwd)
+run()
+{
+    name=$1; shift
+    if [ "$1" = "$wrapper" ]; then shift; set -- "$HOST_SH" "$wrapper" "$@"; fi
+    if ! "$@" > "$out/logs/$name.log" 2>&1; then
+        echo "Build failed: $out/logs/$name.log" >&2
+        return 1
+    fi
+}
+component()
+{
+    part=$1; shift
+    label=$(printf '%s' "$part" | tr / _)
+    run "$label-obj" "$wrapper" -C "$src/$part" "$@" obj
+    run "$label-build" "$wrapper" -C "$src/$part" -j"$jobs" "$@" dependall
+    run "$label-install" "$wrapper" -C "$src/$part" "$@" install
+}
+# The same component runner also builds a target-independent console subset.
+if [ "${1:-}" = --console-selected ]; then
+    shift
+    src=$1 out=$2 tools=$3 compiler=$4 sdk=$5 host_prefix=$6 host_family=$7
+    shift 7
+    machine=$1 arch=$2 libedit=$3 llvm_source=$4 host_bfd=$5 byacc=$6
+    shift 6
+    runtime_prefix=$1 resource=$2 unwinder=$3 compiler_resource=$4 jobs=$5 timestamp=$6 revision=$7
+    shift 7
+    headers=$1 libraries=$2 programs=$3
+    wrapper=$out/nbmake-$machine
+    CPPFLAGS="-nostdinc -isystem $out/dest/usr/include -isystem $compiler_resource/include"
+    export CPPFLAGS
+    set -- -V "EMBER_LLVM_SOURCE=$llvm_source" -V "EMBER_LIBUNWIND_ARCHIVE=$unwinder" \
+        -V EMBER_LLVM_RUNTIME_PHASE=bootstrap -V "EMBER_EXTERNAL_LLVM_RUNTIME=$runtime_prefix" \
+        -V "EMBER_LLVM_RESOURCE_DIR=$resource" -V MKLIBCXX=no
+    if [ "$arch" = riscv32 ]; then set -- "$@" -V MKSOFTFLOAT=yes; fi
+    "$host_prefix/bin/python3.15" -B "$sdk/scripts/run-native-os.py" \
+        --host-prefix "$host_prefix" --compiler-family "$host_family" --source "$src" \
+        --routing "$out/routing" --cwd "$src" --log "$out/logs/wrapper.log" --build-sh -- \
+        -U -u -j"$jobs" -m "$machine" -a "$arch" -O "$out/obj" -D "$out/dest" -T "$tools" -w "$wrapper" \
+        -V TOOLCHAIN_MISSING=yes -V "EXTERNAL_TOOLCHAIN=$compiler" -V EMBER_COMPILER_FAMILY=clang \
+        -V "EMBER_HOST_BFD_CONFIG=$host_bfd" -V "EMBER_LIBEDIT_SOURCE=$libedit" -V "EMBER_BYACC_SOURCE=$byacc" \
+        -V "CPPFLAGS=$CPPFLAGS" "$@" -V MKCXX=no -V MKCOMPAT=no -V MKPROFILE=no \
+        -V MKDEBUG=no -V MKDEBUGLIB=no -V MKMAN=no -V MKPIC=no -V MKPICINSTALL=no \
+        -V MKPIE=no -V LDSTATIC=-static -V MKREPRO=yes -V "MKREPRO_TIMESTAMP=$timestamp" \
+        -V MAKECONF=/dev/null -V "BUILDINFO=EmberBSD:$revision" makewrapper
+    set -f
+    for part in $headers; do
+        run "$(printf '%s' "$part" | tr / _)-obj" "$wrapper" -C "$src/$part" obj
+        run "$(printf '%s' "$part" | tr / _)-includes" "$wrapper" -C "$src/$part" includes
+    done
+    for part in $libraries; do
+        run "$(printf '%s' "$part" | tr / _)-obj" "$wrapper" -C "$src/$part" obj
+        run "$(printf '%s' "$part" | tr / _)-includes" "$wrapper" -C "$src/$part" includes
+        component "$part"
+    done
+    for part in $programs; do component "$part" SMALLPROG=1; done
+    run etc-obj "$wrapper" -C "$src/etc" obj
+    run makedev "$wrapper" -C "$src/etc" MAKEDEV
+    mkdir -p "$out/root/bin" "$out/root/sbin" "$out/root/dev" "$out/root/etc" "$out/root/tmp"
+    cp "$out/dest/bin/sh" "$out/root/bin/sh"
+    cp "$out/dest/sbin/init" "$out/root/sbin/init"
+    chmod 1777 "$out/root/tmp"
+    MACHINE="$machine" MACHINE_ARCH="$arch" "$HOST_SH" "$out/obj/etc/MAKEDEV" -s std > "$out/devices-all.spec"
+    "$tools/bin/nbmtree" -c -p "$out/root" -k type,mode,link | \
+        sed -E 's/(\/set[[:space:]].*)/\1 uid=0 gid=0/' > "$out/root.spec"
+    awk '/^\.\/(console|null|zero|tty) type=/ {sub(/^\./,"./dev"); print}' "$out/devices-all.spec" >> "$out/root.spec"
+    "$tools/bin/nbmakefs" -t ffs -B little -s 4m -o version=2,bsize=16384,fsize=2048 \
+        -F "$out/root.spec" -N "$src/etc" "$out/root.fs" "$out/root"
+    exit 0
+fi
 if [ "${1:-}" != --selected ]; then
     [ "$#" -eq 4 ] || { echo "usage: $0 SOURCE NEW_OUTPUT TOOLDIR TARGET_PREFIX" >&2; exit 2; }
     : "${EMBER_HOST_PREFIX:?Set EMBER_HOST_PREFIX to the selected native SDK prefix}"
@@ -81,15 +150,6 @@ if [ -n "$unwinder" ]; then
 else
     echo 'compiler-unwinder=not-provided' >> "$out/BUILD-INPUTS.pending"
 fi
-run()
-{
-    name=$1; shift
-    if [ "$1" = "$wrapper" ]; then shift; set -- "$HOST_SH" "$wrapper" "$@"; fi
-    if ! "$@" > "$out/logs/$name.log" 2>&1; then
-        echo "Build failed: $out/logs/$name.log" >&2
-        return 1
-    fi
-}
 wrapper=$out/nbmake-evbarm
 set -- -V "EMBER_LLVM_SOURCE=$llvm_source"
 if [ "$family" = clang ]; then
@@ -121,14 +181,6 @@ run obj "$wrapper" -C "$src" obj
 run directories "$wrapper" -C "$src" do-distrib-dirs
 run includes "$wrapper" -C "$src" -j"$jobs" includes
 "$shasum" -a 256 "$wrapper" >> "$out/BUILD-INPUTS.pending"
-component()
-{
-    part=$1; shift
-    label=$(printf '%s' "$part" | tr / _)
-    run "$label-obj" "$wrapper" -C "$src/$part" "$@" obj
-    run "$label-build" "$wrapper" -C "$src/$part" -j"$jobs" "$@" dependall
-    run "$label-install" "$wrapper" -C "$src/$part" "$@" install
-}
 # Rebuild the selected libraries. Old archives used another SSP/header profile.
 for part in lib/csu lib/libc lib/libterminfo lib/libedit lib/libutil \
     lib/libcrypt lib/libprop lib/libkvm lib/libm lib/libz lib/libbz2 lib/libipsec \

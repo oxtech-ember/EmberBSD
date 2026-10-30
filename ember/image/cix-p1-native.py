@@ -10,6 +10,13 @@ import sys
 
 
 def main():
+    if os.environ.get('EMBER_USERLAND_PROFILE') == 'console':
+        import importlib.util
+        path = Path(__file__).with_name('static-profile.py')
+        spec = importlib.util.spec_from_file_location('static_profile', path)
+        profile = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(profile)
+        return profile.run_console(sys.argv[1:])
     if len(sys.argv) != 5:
         raise SystemExit('usage: cix-p1-native.py SOURCE NEW_OUTPUT TOOLDIR TARGET_PREFIX')
     source, output, tools, compiler = map(Path, sys.argv[1:])

@@ -147,3 +147,36 @@ options that skip synchronization or process termination. Rebuild both native
 programs before enabling a root profile that requests this mode. Source contracts
 model process and time services; they do not run host shutdown or establish a
 physical shutdown duration.
+
+## Minimal static console
+
+The same builder can select a small C-only console profile for `aarch64` or
+`riscv32`. This is a single-user recovery console: `init` starts a root shell on
+`/dev/console` without a login prompt. It is intended only for a controlled
+local console. It does not enable network services or provide a multi-user
+login. It produces a 4 MiB FFS2 image without writing a device.
+
+Set the common source, native prefix, host BFD and libedit inputs above, plus
+`EMBER_BYACC_SOURCE`. Select a completed SDK `--c-foundation` stage and its
+matching bootstrap runtime; a complete C++ SDK is not required:
+
+```sh
+export EMBER_USERLAND_PROFILE=console
+export EMBER_CONSOLE_TARGET=riscv32
+export EMBER_C_FOUNDATION=/absolute/sdk/stages/llvm-c-foundation-riscv32/base
+export EMBER_LLVM_RUNTIME_STAGE=/absolute/sdk/obj/llvm-runtime/bootstrap-stage
+# If the runtime was built from an equivalent earlier prepared LLVM tree:
+export EMBER_LLVM_RUNTIME_ORIGINAL_SOURCE=/absolute/earlier-prepared-llvm
+"$EMBER_HOST_PREFIX/bin/python3.15" -B ember/image/cix-p1-native.py \
+    /absolute/source /absolute/new-output /absolute/os-host-tools /absolute/target-clang-prefix
+```
+
+The profile extends the verified foundation in a separate destination; it
+installs the native `libterminfo`, `libedit` and `libutil` build inputs and
+links `sh` and `init` with `SMALLPROG=1`. The root contains those programs and
+`console`, `tty`, `null` and `zero` nodes from the target `MAKEDEV`. This is
+not a full base set. It does not include terminal capability data, utilities,
+networking, credentials or writable storage setup. Image generation and
+static ELF checks do not establish root mounting, UART or target execution.
+The receiving board owner must supply a compatible boot path and verify the
+complete memory and storage layout.
