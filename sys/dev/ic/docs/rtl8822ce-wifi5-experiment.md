@@ -146,3 +146,8 @@ snapshot with its path and validity flag. This uses existing results and
 adds no register reads or calibration attempts. A clean calibration keeps
 the short report. Inspect these boot-time records before changing the
 calibration sequence; do not rerun calibration on an occupied station.
+When path B reaches its tenth ADC attempt, the report also retains up to
+100 accepted raw I/Q report words on each side of compensation. They are the
+initial pools before filtering. The final means, filter counts and validity
+are reported separately. Partial measurements remain invalid. This capture
+adds no bus operation, calibration attempt or RF readiness claim.

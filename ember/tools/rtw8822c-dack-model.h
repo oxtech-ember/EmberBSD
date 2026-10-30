@@ -16,6 +16,7 @@ static struct {
 	unsigned sample_reads[2][4];
 	int invalid,unstable,not_ready,bad_vector,adc_fail,dac_fail;
 	int replacement_invalid,transient_replacement,vector_overflow;
+	int stationary_adc;
 } model;
 static const int measured[2][2][4][2]={
 	{ {{0,0},{0,0},{0,0},{16,16}}, {{0,0},{0,0},{0,0},{16,16}} },
@@ -67,6 +68,7 @@ model_read(unsigned a,unsigned n)
 		if(model.replacement_invalid) iv=model.samples<100 ? ((model.samples%2)?10:-10) : 101;
 		if(model.vector_overflow && k==DAC_PRE) iv=model.vector_overflow;
 		if(k==ADC_POST && model.adc_fail) iv=8;
+		if(model.stationary_adc && p==1 && (k==ADC_PRE || k==ADC_POST)) { iv=-23; qv=-6; }
 		if(k==DAC_POST && model.dac_fail) iv=32;
 		if(model.profile==2 || model.profile==3) {
 			unsigned attempt=model.profile==3 ? 10 : 2;

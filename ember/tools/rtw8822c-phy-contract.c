@@ -378,6 +378,19 @@ test_calibration_reporting(void)
 		fixture_report.adc_snapshot_valid = 1;
 		fixture_report.adc_snapshot_path = 0;
 		fixture_report.adc_snapshot[0] = 0xff809;
+		for (unsigned phase = 0; phase < 2; phase++) {
+			struct rtw8822c_dack_adc_trace *trace =
+			    &fixture_report.adc_trace[phase];
+
+			trace->count = i == 3 && phase == 1 ? 42 : 100;
+			trace->reads = i == 3 && phase == 1 ? 43 : 103;
+			trace->valid = !(i == 3 && phase == 1);
+			trace->error = i == 3 && phase == 1 ? EIO : 0;
+			trace->mean[0] = -23;
+			trace->mean[1] = -6;
+			for (unsigned j = 0; j < trace->count; j++)
+				trace->samples[j] = 0x3e93fa;
+		}
 		log_used = 0;
 		log_overflow = 0;
 		calibration_log[0] = '\0';
@@ -393,6 +406,13 @@ test_calibration_reporting(void)
 		    "DACK ADC before A -9/2") != NULL) == details);
 		CHECK((strstr(calibration_log,
 		    "DACK ADC snapshot path 0 valid 1") != NULL) == details);
+		CHECK((strstr(calibration_log,
+		    "DACK ADC raw B pre initial 100 reads 103") != NULL) == details);
+		CHECK((strstr(calibration_log,
+		    "DACK ADC raw B pre 0: 3e93fa") != NULL) == details);
+		if (i == 3)
+			CHECK(strstr(calibration_log,
+			    "DACK ADC raw B post initial 42 reads 43") != NULL);
 		CHECK((strstr(calibration_log, "cold calibration degraded") != NULL) ==
 		    (i == 1 || i == 2));
 		if (i == 0) {

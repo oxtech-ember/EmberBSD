@@ -138,6 +138,17 @@ enum rtw8822c_dack_stage {
 	RTW8822C_DACK_DONE
 };
 
+#define RTW8822C_DACK_ADC_TRACE_SAMPLES 100
+struct rtw8822c_dack_adc_trace {
+	/* Initial accepted raw 0x2dbc words, before sorting or replacement. */
+	uint32_t samples[RTW8822C_DACK_ADC_TRACE_SAMPLES];
+	/* reads counts sample requests, including failed/canceled requests. */
+	uint16_t count, reads, filter_passes, spread[2];
+	int16_t mean[2];
+	int error;
+	uint8_t valid;	/* This measurement completed, not RF qualification. */
+};
+
 struct rtw8822c_dack_result {
 	uint32_t operations;
 	uint32_t delay_us;
@@ -162,6 +173,8 @@ struct rtw8822c_dack_result {
 	uint32_t adc_snapshot[5];
 	int adc_snapshot_error;
 	uint8_t adc_snapshot_valid, adc_snapshot_path;
+	/* Last path-B ADC attempt only: pre/post; no extra device reads. */
+	struct rtw8822c_dack_adc_trace adc_trace[2];
 	/* Per-path observations and residual quality, not radio qualification. */
 	uint8_t adc_measured, dac_measured;
 	uint8_t adc_converged, dac_converged;

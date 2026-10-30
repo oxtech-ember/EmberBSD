@@ -152,6 +152,16 @@ The failure output includes the already-read silicon identity and RFE fields.
 The tenth ADC attempt also reads back five ordinary BB control registers
 after measurement and before the convergence decision. These native diagnostics
 add at most ten reads across both paths. A read failure stops all later I/O.
+The last path-B ADC attempt retains the first 100 accepted raw report words
+before compensation and after it. These are the initial pools before sorting
+or filter replacement, not the final filtered pools. Separate counts, filter
+passes, means, validity and errors describe both measurements. Rejected and
+failed reads do not enter a pool; a partial pool cannot claim a valid mean.
+The read count is a request count, including a request canceled before bus
+access. It is not proof that every requested read reached the device.
+This bounded diagnostic uses existing reads and changes no register sequence.
+It is absent when path B finishes before its tenth ADC attempt. The detailed
+failure report prints the retained pools after calibration has returned.
 State failures now retain numeric call stages and station inputs before stop.
 Stage 1 is channel setup, 2 is station setup, and 3 is an inactive core.
 The output includes both channels, rate mask, slot, AID and rate count.

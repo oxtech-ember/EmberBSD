@@ -12,6 +12,7 @@ static unsigned calls,fail_at,cancel_at,after_error,delays,cancel_delay,canceled
 static int failed;
 static int fail_measure_kind;
 static unsigned first_b_call, snapshot_call;
+static unsigned trace_fault;
 static int
 operation(void)
 {
@@ -24,6 +25,9 @@ operation(void)
 static int read4(void*c,uint32_t a,uint32_t*v) {
  int e=operation(); (void)c;
  if(!e && fail_measure_kind>=0 && a==0x2dbc && model.kind==(unsigned)fail_measure_kind && !model.samples) { failed=1; e=EIO; }
+ if(!e && trace_fault && a==0x2dbc && model.path==1 && model.kind==ADC_POST && model.visits[1][ADC_POST]==10 && model.samples==42) {
+  if(trace_fault==1) { failed=1; e=EIO; } else sc.sc_generation++;
+ }
  if(a==0x4130 && model.visits[0][DAC_POST] && !first_b_call) first_b_call=calls;
  if(a==0x4168 && model.kind==ADC_POST && model.visits[1][ADC_POST]==10) snapshot_call=calls;
  if(!e) *v=model_read(a,4);
@@ -45,6 +49,7 @@ setup(unsigned fixture)
 	calls=fail_at=cancel_at=after_error=0; failed=0;
 	fail_measure_kind=-1;
 	delays=cancel_delay=canceled_calls=first_b_call=snapshot_call=0;
+	trace_fault=0;
 }
 static void
 check_failure(int error)
@@ -53,6 +58,64 @@ check_failure(int error)
 	CHECK(!result.restored && result.reset_required==1);
 	CHECK(result.operations<=1000000 && result.delay_us<=2000000);
 	CHECK(after_error==0);
+}
+static void
+test_adc_raw_trace(void)
+{
+	const char *dump = getenv("RTW8822C_DACK_CONTROL_TRACE");
+	unsigned i;
+
+	/* A correctly written coefficient may leave this observed bias unchanged.
+	 * Preserve the measured raw words, not a reconstruction from the mean. */
+	setup(1); model.adc_fail=1; model.stationary_adc=1;
+	CHECK(rtw8822c_dack(&sc,&result)==0);
+	CHECK(result.adc_residual[1][0]==-23 && result.adc_residual[1][1]==-6);
+	CHECK(result.adc_snapshot[0]==0x1817);
+	if(dump!=NULL) {
+		FILE *fp=fopen(dump,"w");
+		CHECK(fp!=NULL);
+		for(i=0;i<model.count;i++)
+			CHECK(fprintf(fp,"%u %x %x\n",model.events[i].kind,
+			    model.events[i].address,model.events[i].value)>0);
+		CHECK(fclose(fp)==0);
+	}
+	for(i=0;i<2;i++) {
+		CHECK(result.adc_trace[i].count==100 && result.adc_trace[i].valid);
+		CHECK(result.adc_trace[i].reads==100 && result.adc_trace[i].filter_passes==0);
+		CHECK(result.adc_trace[i].mean[0]==-23 && result.adc_trace[i].mean[1]==-6);
+		CHECK(result.adc_trace[i].error==0);
+		for(unsigned j=0;j<100;j++) CHECK(result.adc_trace[i].samples[j]==0x3e93fa);
+	}
+	/* Rejected initial reads do not consume an accepted-sample slot. */
+	setup(1); model.adc_fail=1; model.stationary_adc=1; model.skip=3; model.recording=0;
+	CHECK(rtw8822c_dack(&sc,&result)==0);
+	for(i=0;i<2;i++) {
+		CHECK(result.adc_trace[i].count==100 && result.adc_trace[i].reads==103);
+		CHECK(result.adc_trace[i].valid && result.adc_trace[i].error==0);
+		for(unsigned j=0;j<100;j++) CHECK(result.adc_trace[i].samples[j]==0x3e93fa);
+	}
+	/* Filter replacements cannot extend or overwrite the initial pool. */
+	setup(10); model.adc_fail=1; model.stationary_adc=1; model.recording=0;
+	CHECK(rtw8822c_dack(&sc,&result)==0);
+	for(i=0;i<2;i++) {
+		CHECK(result.adc_trace[i].count==100 && result.adc_trace[i].reads==302);
+		CHECK(result.adc_trace[i].filter_passes==101 && result.adc_trace[i].valid);
+		CHECK(result.adc_trace[i].mean[0]==-23 && result.adc_trace[i].mean[1]==-6);
+		for(unsigned j=0;j<100;j++)
+			CHECK(result.adc_trace[i].samples[j]==(j%2?0x3f33f0U:0x3df004U));
+	}
+	/* An incomplete post trace stays partial and cannot claim a valid mean. */
+	for(i=1;i<=2;i++) {
+		setup(1); model.adc_fail=1; model.stationary_adc=1; model.recording=0; trace_fault=i;
+		check_failure(i==1?EIO:EINTR);
+		CHECK(result.adc_trace[0].valid && result.adc_trace[0].count==100);
+		CHECK(!result.adc_trace[1].valid && result.adc_trace[1].count==42);
+		CHECK(result.adc_trace[1].reads==43 && result.adc_trace[1].error==(i==1?EIO:EINTR));
+		CHECK(result.sample_count==42 && result.sample_reads==43);
+	}
+	setup(0); CHECK(rtw8822c_dack(&sc,&result)==0);
+	CHECK(!result.adc_trace[0].valid && !result.adc_trace[1].valid);
+	CHECK(result.adc_trace[0].count==0 && result.adc_trace[1].count==0);
 }
 int main(int argc,char **argv)
 {
@@ -64,6 +127,7 @@ int main(int argc,char **argv)
 	char line[256];
 	unsigned total,cold,i,j,kind,addr,value,n,scenario;
 	unsigned complete_calls=0,complete_delays=0,snapshot_calls,warning_b_call,advisory_calls;
+	test_adc_raw_trace();
 	CHECK(argc==2); fp=fopen(argv[1],"r"); CHECK(fp!=NULL);
 	CHECK(fgets(line,sizeof(line),fp)!=NULL);
 	for(scenario=0;scenario<sizeof(fixtures)/sizeof(fixtures[0]);scenario++) {

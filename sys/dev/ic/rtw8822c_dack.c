@@ -30,6 +30,7 @@
 struct dack_context {
 	struct rtw88_softc *sc;
 	struct rtw8822c_dack_result *out;
+	struct rtw8822c_dack_adc_trace *trace;
 	uint32_t generation, adck[2];
 	int error, mutated;
 };
@@ -203,6 +204,7 @@ static int
 pair(struct dack_context *c, int *iv, int *qv)
 {
 	uint32_t raw;
+	int accepted;
 
 	if (c->error == 0)
 		c->out->sample_reads++;
@@ -210,8 +212,11 @@ pair(struct dack_context *c, int *iv, int *qv)
 
 	*iv = signed10(raw >> 12);
 	*qv = signed10(raw);
-	return c->error == 0 && *iv >= -100 && *iv <= 100 &&
-	    *qv >= -100 && *qv <= 100;
+	accepted = *iv >= -100 && *iv <= 100 && *qv >= -100 && *qv <= 100;
+	if (accepted && c->error == 0 && c->trace != NULL &&
+	    c->trace->count < RTW8822C_DACK_ADC_TRACE_SAMPLES)
+		c->trace->samples[c->trace->count++] = raw;
+	return c->error == 0 && accepted;
 }
 
 static void
@@ -227,7 +232,7 @@ valid_pair(struct dack_context *c, int *iv, int *qv)
 }
 
 static void
-measure(struct dack_context *c, int *iv, int *qv)
+measure_impl(struct dack_context *c, int *iv, int *qv)
 {
 	int samples[2][SAMPLE_COUNT], si, sq;
 	int32_t isum = 0, qsum = 0;
@@ -294,6 +299,33 @@ measure(struct dack_context *c, int *iv, int *qv)
 	c->out->mean[0] = (int16_t)*iv;
 	c->out->mean[1] = (int16_t)*qv;
 	c->out->mean_valid = 1;
+}
+
+static void
+measure(struct dack_context *c, int *iv, int *qv)
+{
+	struct rtw8822c_dack_adc_trace *trace = NULL;
+
+	if (c->error != 0)
+		return;
+	if (c->out->path == 1 && c->out->adc_attempts[1] == 10) {
+		if (c->out->stage == RTW8822C_DACK_ADC_PRE)
+			trace = &c->out->adc_trace[0];
+		else if (c->out->stage == RTW8822C_DACK_ADC_POST)
+			trace = &c->out->adc_trace[1];
+	}
+	/* Retain the first accepted pool. Filtering never appends beyond it. */
+	c->trace = trace;
+	measure_impl(c, iv, qv);
+	c->trace = NULL;
+	if (trace != NULL) {
+		trace->reads = c->out->sample_reads;
+		trace->filter_passes = c->out->filter_passes;
+		memcpy(trace->spread, c->out->spread, sizeof(trace->spread));
+		memcpy(trace->mean, c->out->mean, sizeof(trace->mean));
+		trace->valid = c->error == 0 && c->out->mean_valid;
+		trace->error = c->error;
+	}
 }
 
 static unsigned

@@ -245,6 +245,37 @@ pa_bias(struct rtw88_io *io, const uint8_t *efuse)
 		    efuse[ppg_5g[path]] & 0x0f);		/* RF_PA 5G */
 }
 
+static void
+dack_raw_trace(const struct rtw8822c_dack_result *dack)
+{
+	unsigned phase, i, count;
+
+	for (phase = 0; phase < 2; phase++) {
+		const struct rtw8822c_dack_adc_trace *trace =
+		    &dack->adc_trace[phase];
+		const char *name = phase == 0 ? "pre" : "post";
+
+		if (trace->count == 0 && trace->error == 0)
+			continue;
+		printf("rtwce: DACK ADC raw B %s initial %u reads %u "
+		    "filter %u spread %u/%u mean %d/%d valid %u error %d\n",
+		    name, (unsigned)trace->count, (unsigned)trace->reads,
+		    (unsigned)trace->filter_passes, (unsigned)trace->spread[0],
+		    (unsigned)trace->spread[1], trace->mean[0], trace->mean[1],
+		    (unsigned)trace->valid, trace->error);
+		count = trace->count;
+		if (count > RTW8822C_DACK_ADC_TRACE_SAMPLES)
+			count = RTW8822C_DACK_ADC_TRACE_SAMPLES;
+		for (i = 0; i < count; i++) {
+			if (i % 10 == 0)
+				printf("rtwce: DACK ADC raw B %s %u:", name, i);
+			printf(" %06x", trace->samples[i]);
+			if (i % 10 == 9 || i + 1 == count)
+				printf("\n");
+		}
+	}
+}
+
 int
 rtw8822c_phy_post(struct rtw88_softc *sc)
 {
@@ -313,6 +344,7 @@ rtw8822c_phy_post(struct rtw88_softc *sc)
 		    dack.adc_snapshot[0], dack.adc_snapshot[1],
 		    dack.adc_snapshot[2], dack.adc_snapshot[3],
 		    dack.adc_snapshot[4]);
+		dack_raw_trace(&dack);
 		if (error != 0)
 			return error;
 	}
