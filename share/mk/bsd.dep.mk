@@ -14,7 +14,8 @@ MKDEPCXX?=		mkdep
 MKDEPOBJC?=		${MKDEP}
 # C++ preprocessing options that the CXXFLAGS filter cannot preserve.
 MKDEPCXXFLAGS?=
-_MKDEP_CPUFLAGS?=	${CPUFLAGS} ${CPUFLAGS.${.IMPSRC:T}}
+_MKDEP_CPUFLAGS?=	${CPUFLAGS}
+_MKDEP_FILE_CPUFLAGS?=	${CPUFLAGS.${.IMPSRC:T}}
 MKDEP_SUFFIXES?=	.o .d
 
 ##### Build rules
@@ -68,7 +69,7 @@ _MKDEP_FILEFLAGS=
 	${_MKTARGET_CREATE}
 	${MKDEP} -f ${.TARGET}.tmp ${_MKDEP_FILEFLAGS} -- ${_MKDEP_TARGET_FLAGS} ${MKDEPFLAGS} ${_MKDEP_CPUFLAGS} \
 	    ${CFLAGS:M-std=*} ${CFLAGS:C/-([IDUW])[  ]*/-\1/Wg:M-[IDUW]*} \
-	    ${CPPFLAGS:N-Wp,-iremap,*} ${COPTS.${.IMPSRC:T}} \
+	    ${CPPFLAGS:N-Wp,-iremap,*} ${COPTS.${.IMPSRC:T}} ${_MKDEP_FILE_CPUFLAGS} \
 	    ${CPPFLAGS.${.IMPSRC:T}} ${.IMPSRC} && \
 	    ${MV} ${.TARGET}.tmp ${.TARGET}
 
@@ -76,7 +77,7 @@ _MKDEP_FILEFLAGS=
 	${_MKTARGET_CREATE}
 	${MKDEPOBJC} -f ${.TARGET}.tmp ${_MKDEP_FILEFLAGS} -- ${_MKDEP_TARGET_FLAGS} ${MKDEPFLAGS} ${_MKDEP_CPUFLAGS} \
 	    ${OBJCFLAGS:C/-([IDUW])[  ]*/-\1/Wg:M-[IDUW]*} \
-	    ${CPPFLAGS:N-Wp,-iremap,*} ${COPTS.${.IMPSRC:T}} \
+	    ${CPPFLAGS:N-Wp,-iremap,*} ${COPTS.${.IMPSRC:T}} ${_MKDEP_FILE_CPUFLAGS} \
 	    ${CPPFLAGS.${.IMPSRC:T}} ${.IMPSRC} && \
 	    ${MV} ${.TARGET}.tmp ${.TARGET}
 
@@ -84,7 +85,7 @@ _MKDEP_FILEFLAGS=
 	${_MKTARGET_CREATE}
 	${MKDEP} -f ${.TARGET}.tmp ${_MKDEP_FILEFLAGS} -- ${_MKDEP_TARGET_FLAGS} ${MKDEPFLAGS} ${_MKDEP_CPUFLAGS} \
 	    ${AFLAGS:C/-([IDUW])[  ]*/-\1/Wg:M-[IDUW]*} \
-	    ${CPPFLAGS:N-Wp,-iremap,*} ${AFLAGS.${.IMPSRC:T}} ${CPPFLAGS.${.IMPSRC:T}} \
+	    ${CPPFLAGS:N-Wp,-iremap,*} ${AFLAGS.${.IMPSRC:T}} ${_MKDEP_FILE_CPUFLAGS} ${CPPFLAGS.${.IMPSRC:T}} \
 	    ${__acpp_flags} ${.IMPSRC} && \
 	    ${MV} ${.TARGET}.tmp ${.TARGET}
 
@@ -92,7 +93,7 @@ _MKDEP_FILEFLAGS=
 	${_MKTARGET_CREATE}
 	${MKDEPCXX} -f ${.TARGET}.tmp ${_MKDEP_FILEFLAGS} -- ${_MKDEP_TARGET_FLAGS} ${MKDEPFLAGS} ${_MKDEP_CPUFLAGS} ${MKDEPCXXFLAGS} \
 	    ${CXXFLAGS:M-std=*} ${CXXFLAGS:C/-([IDUW])[  ]*/-\1/Wg:M-[IDUW]*} \
-	    ${CPPFLAGS:N-Wp,-iremap,*} ${COPTS.${.IMPSRC:T}} \
+	    ${CPPFLAGS:N-Wp,-iremap,*} ${COPTS.${.IMPSRC:T}} ${_MKDEP_FILE_CPUFLAGS} \
 	    ${CPPFLAGS.${.IMPSRC:T}} ${.IMPSRC} && \
 	    ${MV} ${.TARGET}.tmp ${.TARGET}
 

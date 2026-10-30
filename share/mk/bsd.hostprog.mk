@@ -92,6 +92,7 @@ MKDEP_SUFFIXES?=	.lo .ln .d
 # Override these:
 _MKDEP_TARGET_FLAGS=	# Native dependencies must not inherit target flags.
 _MKDEP_CPUFLAGS=		# Native dependencies use the host compiler ABI.
+_MKDEP_FILE_CPUFLAGS=	# No target per-file ABI flags for native tools.
 INSTALL:=	${INSTALL:NSTRIP=*}
 MKDEP:=		${HOST_MKDEP}
 MKDEPCXX:=	${HOST_MKDEPCXX}

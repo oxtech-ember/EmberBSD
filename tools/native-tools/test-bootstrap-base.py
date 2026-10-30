@@ -175,7 +175,12 @@ class BootstrapBaseTests(unittest.TestCase):
         result = self.make(self.work, '-f', str(fixture), '-n',
                            'MACHINE=riscv', 'MACHINE_ARCH=riscv32', 'MKSOFTFLOAT=yes',
                            'MKDEP=selected-mkdep', 'MKDEPCXX=selected-mkdep',
-                           'MKDEPOBJC=selected-mkdep', 'cprobe.d', 'aprobe.d',
+                           'MKDEPOBJC=selected-mkdep',
+                           'COPTS.cprobe.c=-mabi=ilp32d', 'CPUFLAGS.cprobe.c=-mabi=ilp32',
+                           'AFLAGS.aprobe.S=-mabi=ilp32d', 'CPUFLAGS.aprobe.S=-mabi=ilp32',
+                           'COPTS.cxxprobe.cc=-mabi=ilp32d', 'CPUFLAGS.cxxprobe.cc=-mabi=ilp32',
+                           'COPTS.objcprobe.m=-mabi=ilp32d', 'CPUFLAGS.objcprobe.m=-mabi=ilp32',
+                           'cprobe.d', 'aprobe.d',
                            'cxxprobe.d', 'objcprobe.d')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         commands = [shlex.split(line) for line in result.stdout.splitlines()
@@ -184,11 +189,15 @@ class BootstrapBaseTests(unittest.TestCase):
         for command in commands:
             self.assertIn('-march=rv32imac_zicsr', command)
             self.assertIn('-mabi=ilp32', command)
+            self.assertIn('-mabi=ilp32d', command)
+            self.assertGreater(len(command) - 1 - command[::-1].index('-mabi=ilp32'),
+                               command.index('-mabi=ilp32d'))
 
     def test_host_dependency_recipe_does_not_receive_target_abi(self):
         result = self.make(SOURCE / 'tools/hostname', '-n',
                            'MACHINE=riscv', 'MACHINE_ARCH=riscv32', 'MKSOFTFLOAT=yes',
-                           'HOST_MKDEP=selected-host-mkdep', 'hostname.d')
+                           'HOST_MKDEP=selected-host-mkdep',
+                           'CPUFLAGS.hostname.c=-mabi=ilp32', 'hostname.d')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         commands = [shlex.split(line) for line in result.stdout.splitlines()
                     if line.startswith('selected-host-mkdep ')]
@@ -200,7 +209,8 @@ class BootstrapBaseTests(unittest.TestCase):
         (self.work / 'hprobe.c').touch()
         result = self.make(self.work, '-f', str(fixture), '-n',
                            'MACHINE=riscv', 'MACHINE_ARCH=riscv32', 'MKSOFTFLOAT=yes',
-                           'HOST_MKDEP=selected-host-mkdep', 'hprobe.d')
+                           'HOST_MKDEP=selected-host-mkdep',
+                           'CPUFLAGS.hprobe.c=-mabi=ilp32', 'hprobe.d')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         commands = [shlex.split(line) for line in result.stdout.splitlines()
                     if line.startswith('selected-host-mkdep ')]
