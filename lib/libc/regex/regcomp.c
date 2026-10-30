@@ -1136,7 +1136,7 @@ p_bracket(struct parse *p)
 	if (cs->invert && p->g->cflags&REG_NEWLINE)
 		cs->bmp['\n' >> 3] |= 1 << ('\n' & 7);
 
-	if ((ch = singleton(cs)) != OUT) {	/* optimize singleton sets */
+	if ((ch = singleton(cs)) != (wint_t)OUT) {	/* optimize singleton sets */
 		ordinary(p, ch);
 		freeset(p, cs);
 	} else
