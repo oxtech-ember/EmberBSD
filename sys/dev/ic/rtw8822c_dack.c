@@ -210,7 +210,8 @@ pair(struct dack_context *c, int *iv, int *qv)
 
 	*iv = signed10(raw >> 12);
 	*qv = signed10(raw);
-	return *iv >= -100 && *iv <= 100 && *qv >= -100 && *qv <= 100;
+	return c->error == 0 && *iv >= -100 && *iv <= 100 &&
+	    *qv >= -100 && *qv <= 100;
 }
 
 static void

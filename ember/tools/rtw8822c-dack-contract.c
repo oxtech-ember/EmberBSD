@@ -213,6 +213,10 @@ int main(int argc,char **argv)
 	CHECK(model.visits[0][DAC_PRE]==1 && result.dac[0][0]==0);
 	setup(0); model.vector_overflow=-100; model.recording=0; check_failure(ERANGE);
 	CHECK(model.visits[0][DAC_PRE]==1 && result.dac[0][0]==0);
+	/* A failed read must not count its zero-filled fallback as a sample. */
+	setup(0); fail_measure_kind=ADC_PRE; check_failure(EIO);
+	CHECK(result.stage==RTW8822C_DACK_ADC_PRE && result.path==0);
+	CHECK(result.sample_reads==1 && result.sample_count==0 && !result.mean_valid);
 	/* A later hard fault must not erase an earlier path's quality warning. */
 	setup(0); fail_measure_kind=ADC_POST; check_failure(EIO);
 	CHECK(!result.adc_measured && !result.dac_measured && !result.adc_converged && !result.dac_converged);
