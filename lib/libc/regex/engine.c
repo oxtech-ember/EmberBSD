@@ -116,15 +116,16 @@ static const char *backref(struct match *m, const char *start, const char *stop,
 static const char *walk(struct match *m, const char *start, const char *stop, sopno startst, sopno stopst, bool fast);
 static states step(struct re_guts *g, sopno start, sopno stop, states bef, wint_t ch, states aft, int sflags);
 #define MAX_RECURSION	100
-#define	BOL	(OUT-1)
-#define	EOL	(BOL-1)
-#define	BOLEOL	(BOL-2)
-#define	NOTHING	(BOL-3)
-#define	BOW	(BOL-4)
-#define	EOW	(BOL-5)
-#define	BADCHAR	(BOL-6)
-#define	NWBND	(BOL-7)
-#define	NONCHAR(c)	((c) <= OUT)
+#define	WOUT	((wint_t)OUT)
+#define	BOL	((wint_t)(OUT-1))
+#define	EOL	((wint_t)(OUT-2))
+#define	BOLEOL	((wint_t)(OUT-3))
+#define	NOTHING	((wint_t)(OUT-4))
+#define	BOW	((wint_t)(OUT-5))
+#define	EOW	((wint_t)(OUT-6))
+#define	BADCHAR	((wint_t)(OUT-7))
+#define	NWBND	((wint_t)(OUT-8))
+#define	NONCHAR(c)	((c) >= NWBND && (c) <= WOUT)
 /* sflags */
 #define	SBOS	0x0001
 #define	SEOS	0x0002
@@ -904,7 +905,7 @@ walk(struct match *m, const char *start, const char *stop, sopno startst,
 		ASSIGN(fresh, st);
 	matchp = NULL;
 	if (start == m->offp || (start == m->beginp && !(m->eflags&REG_NOTBOL)))
-		c = OUT;
+		c = WOUT;
 	else {
 		/*
 		 * XXX Wrong if the previous character was multi-byte.
@@ -918,7 +919,7 @@ walk(struct match *m, const char *start, const char *stop, sopno startst,
 		lastc = c;
 		sflags = 0;
 		if (p == m->endp) {
-			c = OUT;
+			c = WOUT;
 			clen = 0;
 		} else
 			clen = XMBRTOWC(&c, p, (size_t)(m->endp - p),
@@ -931,21 +932,21 @@ walk(struct match *m, const char *start, const char *stop, sopno startst,
 		flagch = '\0';
 		i = 0;
 		if ( (lastc == '\n' && m->g->cflags&REG_NEWLINE) ||
-				(lastc == OUT && !(m->eflags&REG_NOTBOL)) ) {
+				(lastc == WOUT && !(m->eflags&REG_NOTBOL)) ) {
 			flagch = BOL;
 			i = m->g->nbol;
 		}
 		if ( (c == '\n' && m->g->cflags&REG_NEWLINE) ||
-				(c == OUT && !(m->eflags&REG_NOTEOL)) ) {
+				(c == WOUT && !(m->eflags&REG_NOTEOL)) ) {
 			flagch = (flagch == BOL) ? BOLEOL : EOL;
 			i += m->g->neol;
 		}
-		if (lastc == OUT && (m->eflags & REG_NOTBOL) == 0) {
+		if (lastc == WOUT && (m->eflags & REG_NOTBOL) == 0) {
 			sflags |= SBOS;
 			/* Step one more for BOS. */
 			i++;
 		}
-		if (c == OUT && (m->eflags & REG_NOTEOL) == 0) {
+		if (c == WOUT && (m->eflags & REG_NOTEOL) == 0) {
 			sflags |= SEOS;
 			/* Step one more for EOS. */
 			i++;
@@ -958,23 +959,23 @@ walk(struct match *m, const char *start, const char *stop, sopno startst,
 		}
 
 		/* how about a word boundary? */
-		if ( (flagch == BOL || (lastc != OUT && !ISWORD(lastc))) &&
-					(c != OUT && ISWORD(c)) ) {
+		if ( (flagch == BOL || (lastc != WOUT && !ISWORD(lastc))) &&
+					(c != WOUT && ISWORD(c)) ) {
 			flagch = BOW;
 		}
-		if ( (lastc != OUT && ISWORD(lastc)) &&
-				(flagch == EOL || (c != OUT && !ISWORD(c))) ) {
+		if ( (lastc != WOUT && ISWORD(lastc)) &&
+				(flagch == EOL || (c != WOUT && !ISWORD(c))) ) {
 			flagch = EOW;
 		}
 		if (flagch == BOW || flagch == EOW) {
 			st = step(m->g, startst, stopst, st, flagch, st, sflags);
 			SP("sboweow", st, c);
 		}
-		if (lastc != OUT && c != OUT &&
+		if (lastc != WOUT && c != WOUT &&
 		    ISWORD(lastc) == ISWORD(c)) {
 			flagch = NWBND;
-		} else if ((lastc == OUT && !ISWORD(c)) ||
-		    (c == OUT && !ISWORD(lastc))) {
+		} else if ((lastc == WOUT && !ISWORD(c)) ||
+		    (c == WOUT && !ISWORD(lastc))) {
 			flagch = NWBND;
 		}
 		if (flagch == NWBND) {
@@ -998,7 +999,7 @@ walk(struct match *m, const char *start, const char *stop, sopno startst,
 			ASSIGN(st, fresh);
 		else
 			ASSIGN(st, empty);
-		assert(c != OUT);
+		assert(c != WOUT);
 		st = step(m->g, startst, stopst, tmp, c, st, sflags);
 		SP("saft", st, c);
 		assert(EQ(step(m->g, startst, stopst, st, NOTHING, st, sflags),
@@ -1022,14 +1023,7 @@ walk(struct match *m, const char *start, const char *stop, sopno startst,
  - step - map set of states reachable before char to set reachable after
  == static states step(struct re_guts *g, sopno start, sopno stop, \
  ==	states bef, int ch, states aft);
- == #define	BOL	(OUT-1)
- == #define	EOL	(BOL-1)
- == #define	BOLEOL	(BOL-2)
- == #define	NOTHING	(BOL-3)
- == #define	BOW	(BOL-4)
- == #define	EOW	(BOL-5)
- == #define	BADCHAR	(BOL-6)
- == #define	NONCHAR(c)	((c) <= OUT)
+ == Sentinel definitions are shared above.
  */
 static states
 step(struct re_guts *g,
