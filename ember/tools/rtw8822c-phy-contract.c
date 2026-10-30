@@ -367,6 +367,7 @@ test_calibration_reporting(void)
 		fixture_report.adc_measured = fixture_report.dac_measured = 3;
 		fixture_report.completed_paths = 3;
 		fixture_report.restored = i != 3;
+		fixture_report.reset_required = i == 3;
 		fixture_report.adc_converged = 3 & ~fixture_report.adc_nonconverged;
 		fixture_report.dac_converged = 3 & ~fixture_report.dac_nonconverged;
 		fixture_report.adc_before[0][0] = -9;
