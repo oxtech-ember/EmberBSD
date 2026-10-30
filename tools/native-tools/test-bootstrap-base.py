@@ -185,6 +185,28 @@ class BootstrapBaseTests(unittest.TestCase):
             self.assertIn('-march=rv32imac_zicsr', command)
             self.assertIn('-mabi=ilp32', command)
 
+    def test_host_dependency_recipe_does_not_receive_target_abi(self):
+        result = self.make(SOURCE / 'tools/hostname', '-n',
+                           'MACHINE=riscv', 'MACHINE_ARCH=riscv32', 'MKSOFTFLOAT=yes',
+                           'HOST_MKDEP=selected-host-mkdep', 'hostname.d')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        commands = [shlex.split(line) for line in result.stdout.splitlines()
+                    if line.startswith('selected-host-mkdep ')]
+        self.assertEqual(len(commands), 1, result.stdout)
+        self.assertFalse(any(arg.startswith(('-march=', '-mabi=')) for arg in commands[0]))
+
+        fixture = self.work / 'hostlib.mk'
+        fixture.write_text('HOSTLIB=fixture\nSRCS=hprobe.c\n.include <bsd.hostlib.mk>\n')
+        (self.work / 'hprobe.c').touch()
+        result = self.make(self.work, '-f', str(fixture), '-n',
+                           'MACHINE=riscv', 'MACHINE_ARCH=riscv32', 'MKSOFTFLOAT=yes',
+                           'HOST_MKDEP=selected-host-mkdep', 'hprobe.d')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        commands = [shlex.split(line) for line in result.stdout.splitlines()
+                    if line.startswith('selected-host-mkdep ')]
+        self.assertEqual(len(commands), 1, result.stdout)
+        self.assertFalse(any(arg.startswith(('-march=', '-mabi=')) for arg in commands[0]))
+
     def test_actual_header_graph_has_no_compiler_runtime(self):
         result = self.stage('bootstrap-headers')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
