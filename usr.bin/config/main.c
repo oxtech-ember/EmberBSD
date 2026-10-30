@@ -1631,13 +1631,20 @@ logconfig_start(void)
 {
 	extern FILE *yyin;
 	char line[1024];
-	const char *tmpdir;
+	const char *name, *tmpdir;
 	struct stat st;
 	int fd;
 
 	if (yyin == NULL || fstat(fileno(yyin), &st) == -1)
 		return;
 	cfgtime = st.st_mtime;
+
+	/*
+	 * Name the configuration by its file name only: the directory is a
+	 * path on the build host and would differ between build hosts.
+	 */
+	name = strrchr(conffile, '/');
+	name = (name != NULL) ? name + 1 : conffile;
 
 	tmpdir = getenv("TMPDIR");
 	if (tmpdir == NULL)
@@ -1683,14 +1690,14 @@ logconfig_start(void)
 
 	(void)fprintf(cfg, "#ifdef %s\n\n", LOGCONFIG_LARGE);
 	(void)fprintf(cfg, "\"_CFG_### START CONFIG FILE \\\"%s\\\"\\n\"\n\n",
-	    conffile);
+	    name);
 	(void)fprintf(cfg, "#endif /* %s */\n\n", LOGCONFIG_LARGE);
 
 	logconfig_include(yyin, NULL);
 
 	(void)fprintf(cfg, "#ifdef %s\n\n", LOGCONFIG_LARGE);
 	(void)fprintf(cfg, "\"_CFG_### END CONFIG FILE \\\"%s\\\"\\n\"\n",
-	    conffile);
+	    name);
 
 	rewind(yyin);
 }
