@@ -61,6 +61,19 @@
 #include <stdlib.h>
 #include <unistd.h>
 
+/*
+ * The tools compatibility header defines __dead and __printflike as empty
+ * for every host compiler. Restore them for GNU-compatible host compilers,
+ * so the bootstrap build keeps the noreturn and printf format contracts
+ * that the target build checks.
+ */
+#if defined(MAKE_BOOTSTRAP) && defined(__GNUC__)
+#undef __dead
+#define __dead __attribute__((__noreturn__))
+#undef __printflike
+#define __printflike(a, b) __attribute__((__format__(__printf__, a, b)))
+#endif
+
 /* These are really for MAKE_BOOTSTRAP but harmless. */
 #ifndef __dead
 #define __dead
@@ -92,7 +105,10 @@
 #define makedev(x,y)    ((dev_t)((((dev_t)(x) <<  8) & 0x000fff00U) | \
                                  (((dev_t)(y) << 12) & 0xfff00000U) | \
                                  (((dev_t)(y) <<  0) & 0x000000ffU)))
+/* Only host compilers without GNU attributes lose them. */
+#ifndef __GNUC__
 #define __attribute__(x)
+#endif
 #endif	/* MAKE_BOOTSTRAP */
 
 #undef setprogname

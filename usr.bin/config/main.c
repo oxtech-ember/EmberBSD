@@ -49,10 +49,12 @@ __RCSID("$NetBSD: main.c,v 1.102 2025/01/07 14:21:11 joe Exp $");
 
 #ifndef MAKE_BOOTSTRAP
 #include <sys/cdefs.h>
-#define	COPYRIGHT(x)	__COPYRIGHT(x)
-#else
-#define	COPYRIGHT(x)	static const char copyright[] = x
 #endif
+/*
+ * In bootstrap builds the tools compatibility header defines __COPYRIGHT
+ * without an unused static string, so one definition serves both builds.
+ */
+#define	COPYRIGHT(x)	__COPYRIGHT(x)
 
 #ifndef lint
 COPYRIGHT("@(#) Copyright (c) 1992, 1993\

@@ -4,13 +4,16 @@
 """Check that config(1) embeds no build-host path with INCLUDE_CONFIG_FILE.
 
 build.sh passes the kernel configuration to config(1) by absolute path. The
-test builds config(1) from usr.bin/config as tools/config does, runs it on a
-fixture configuration named by an absolute path, and checks config_file.h:
+test builds config(1) from usr.bin/config as tools/config does, with the
+CFLAGS and per-file COPTS that usr.bin/config/Makefile selects (WARNS=6 with
+-Werror), runs it on a fixture configuration named by an absolute path, and
+checks config_file.h:
 the START and END banners must name the file only, and no host directory may
 appear in the text that is compiled into the kernel.
 """
 import argparse
 from pathlib import Path
+import shlex
 import subprocess
 import tempfile
 
@@ -18,15 +21,32 @@ SOURCES = ('files.c', 'hash.c', 'lint.c', 'main.c', 'mkdevsw.c', 'mkheaders.c', 
            'mkmakefile.c', 'mkswap.c', 'pack.c', 'sem.c', 'util.c')
 
 
+def make_value(args, os_root, expression):
+    env = {'PATH': str(Path(args.make).parent) + ':/usr/bin:/bin', 'MAKECONF': '/dev/null',
+           'MACHINE': 'evbarm', 'MACHINE_ARCH': 'aarch64', 'EMBER_COMPILER_FAMILY': 'clang'}
+    result = subprocess.run([args.make, '-m', str(os_root / 'share/mk'), '-V', expression],
+                            cwd=os_root / 'usr.bin/config', env=env, check=True, capture_output=True, text=True)
+    return shlex.split(result.stdout)
+
+
 def build_config(args, os_root, work):
     source = os_root / 'usr.bin/config'
     subprocess.run([args.yacc, '-d', '-o', 'gram.c', str(source / 'gram.y')], cwd=work, check=True)
     subprocess.run([args.lex, '-o', 'scan.c', str(source / 'scan.l')], cwd=work, check=True)
+    cflags = make_value(args, os_root, '${CFLAGS}')
+    if '-Werror' not in cflags or '-Wall' not in cflags or '-Wextra' not in cflags:
+        raise SystemExit('usr.bin/config no longer selects -Wall -Wextra -Werror: ' + ' '.join(cflags))
     flags = ['-DMAKE_BOOTSTRAP', '-I' + str(args.tooldir / 'include/compat'), '-I' + str(os_root / 'tools/compat'),
              '-DHAVE_NBTOOL_CONFIG_H=1', '-D_FILE_OFFSET_BITS=64', '-I' + str(source), '-I.',
-             '-I' + str(os_root / 'usr.bin/cksum'), '-w']
-    files = [str(source / name) for name in SOURCES] + ['gram.c', 'scan.c', str(os_root / 'usr.bin/cksum/crc.c')]
-    subprocess.run([args.cc, *flags, *files, '-L' + str(args.tooldir / 'lib'), '-lnbcompat', '-o', 'config'],
+             '-I' + str(os_root / 'usr.bin/cksum')]
+    files = [source / name for name in SOURCES] + [work / 'gram.c', work / 'scan.c', os_root / 'usr.bin/cksum/crc.c']
+    objects = []
+    for path in files:
+        target = work / (path.stem + '.o')
+        subprocess.run([args.cc, *cflags, *make_value(args, os_root, '${COPTS.' + path.name + '}'), *flags,
+                        '-c', str(path), '-o', str(target)], cwd=work, check=True)
+        objects.append(str(target))
+    subprocess.run([args.cc, *objects, '-L' + str(args.tooldir / 'lib'), '-lnbcompat', '-o', 'config'],
                    cwd=work, check=True)
     return work / 'config'
 
@@ -34,6 +54,7 @@ def build_config(args, os_root, work):
 def main():
     cli = argparse.ArgumentParser(description=__doc__)
     cli.add_argument('--cc', required=True, help='host C compiler')
+    cli.add_argument('--make', required=True, help='bmake from the selected host prefix')
     cli.add_argument('--yacc', required=True, help='nbyacc from the tool directory')
     cli.add_argument('--lex', required=True, help='nblex from the tool directory')
     cli.add_argument('--tooldir', type=Path, required=True, help='tool directory with libnbcompat')
