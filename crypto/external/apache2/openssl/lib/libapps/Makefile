@@ -29,7 +29,7 @@ CPPFLAGS+= -Dlib${LIB} -I. -I${OPENSSLSRC}/crypto -I${OPENSSLSRC} -I${.CURDIR}
 CPPFLAGS+= -I${OPENSSLSRC}/include -I${OPENSSLSRC}/crypto/include
 CPPFLAGS+= -I${OPENSSLSRC}/crypto/asn1 -I${OPENSSLSRC}/crypto/evp
 CPPFLAGS+= -I${OPENSSLSRC}/crypto/modes
-CPPFLAGS+= -I${OPENSSLSRC}/../include
+CPPFLAGS+= -I${OPENSSLGENINC}
 CPPFLAGS+= -I${OPENSSLSRC}/apps/lib
 CPPFLAGS+= -I${OPENSSLSRC}/apps/include
 
@@ -38,11 +38,15 @@ OPENSSLINC=	${OPENSSLSRC}/include/openssl
 
 .include "${NETBSDSRCDIR}/crypto/Makefile.openssl"
 .PATH: ${OPENSSLSRC} ${OPENSSLINC}
-.PATH: ${OPENSSLSRC}/../include/openssl
+.PATH: ${OPENSSLGENINC}/openssl
 .PATH: ${OPENSSLSRC}/providers/implementations/digests
 .PATH: ${OPENSSLSRC}/providers/implementations/macs
 
+.if defined(EMBER_OPENSSL_SOURCE)
+.include "${EMBER_OPENSSL_GENERATED}/apps.mk"
+.else
 .include "srcs.inc"
+.endif
 
 AFLAGS+=-DELF
 

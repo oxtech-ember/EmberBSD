@@ -29,7 +29,7 @@ CPPFLAGS+= -Dlib${LIB} -I. -I${OPENSSLSRC}/crypto -I${OPENSSLSRC} -I${.CURDIR}
 CPPFLAGS+= -I${OPENSSLSRC}/include -I${OPENSSLSRC}/crypto/include
 CPPFLAGS+= -I${OPENSSLSRC}/crypto/asn1 -I${OPENSSLSRC}/crypto/evp
 CPPFLAGS+= -I${OPENSSLSRC}/crypto/modes
-CPPFLAGS+= -I${OPENSSLSRC}/../include
+CPPFLAGS+= -I${OPENSSLGENINC}
 CPPFLAGS+= -I${OPENSSLSRC}/providers/common/include
 CPPFLAGS+= -I${OPENSSLSRC}/providers/fips/include
 CPPFLAGS+= -I${OPENSSLSRC}/providers/implementations/include
@@ -41,9 +41,14 @@ OPENSSLINC=	${OPENSSLSRC}/include/openssl
 
 .include "${NETBSDSRCDIR}/crypto/Makefile.openssl"
 .PATH: ${OPENSSLSRC} ${OPENSSLINC}
-.PATH: ${OPENSSLSRC}/../include/openssl
+.PATH: ${OPENSSLGENINC}/openssl
 
+.if defined(EMBER_OPENSSL_SOURCE)
+.include "${EMBER_OPENSSL_GENERATED}/legacy.mk"
+.include "${EMBER_OPENSSL_GENERATED}/legacy-module.mk"
+.else
 .include "srcs.inc"
+.endif
 
 #SRCS+=legacyprov.c
 
@@ -64,14 +69,24 @@ libinstall:: ${DESTDIR}${LIBDIR}/${LIB}.so
 libinstall::
 .endif
 
+.if defined(EMBER_OPENSSL_SOURCE)
+VERSION_MAP= ${EMBER_OPENSSL_GENERATED}/providers/legacy.ld
+.else
 VERSION_MAP=	${LIB}.map
+.endif
 
 .if ${MKPICLIB} == "yes"
 LIBDPLIBS+= common_pic ${.CURDIR}/../libcommon
 .else
 LIBDPLIBS+= common ${.CURDIR}/../libcommon
 .endif
+.if defined(EMBER_OPENSSL_SOURCE) && ${MKPIC} != "no" && ${MKSHLIB} != "no"
+LIBDO.crypto!= cd ${.CURDIR}/../libcrypto && ${PRINTOBJDIR}
+DPADD+= ${LIBDO.crypto}/libcrypto.so.17
+LDADD+= ${LIBDO.crypto}/libcrypto.so.17
+.else
 LIBDPLIBS+= crypto ${.CURDIR}/../libcrypto
+.endif
 
 .include <bsd.lib.mk>
 

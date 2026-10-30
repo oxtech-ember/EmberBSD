@@ -34,7 +34,9 @@
 ./lib/libcrypto.so.15				base-crypto-shlib       dynamicroot,openssl=30
 ./lib/libcrypto.so.15.0				base-crypto-shlib       dynamicroot,openssl=30
 ./lib/libcrypto.so.16				base-crypto-shlib       dynamicroot,openssl=35
+./lib/libcrypto.so.17				base-crypto-shlib       dynamicroot,openssl=41
 ./lib/libcrypto.so.16.0				base-crypto-shlib       dynamicroot,openssl=35
+./lib/libcrypto.so.17.0				base-crypto-shlib       dynamicroot,openssl=41
 
 
 ./lib/libdevmapper.so				base-lvm-shlib		dynamicroot,lvm
@@ -283,7 +285,9 @@
 ./usr/lib/libcrypto.so.15			base-crypto-shlib	compatfile,openssl=30
 ./usr/lib/libcrypto.so.15.0			base-crypto-shlib	compatfile,openssl=30
 ./usr/lib/libcrypto.so.16			base-crypto-shlib	compatfile,openssl=35
+./usr/lib/libcrypto.so.17			base-crypto-shlib	compatfile,openssl=41
 ./usr/lib/libcrypto.so.16.0			base-crypto-shlib	compatfile,openssl=35
+./usr/lib/libcrypto.so.17.0			base-crypto-shlib	compatfile,openssl=41
 ./usr/lib/libcrypto_idea.so			base-obsolete		compatfile,obsolete
 ./usr/lib/libcrypto_mdc2.so			base-obsolete		compatfile,obsolete
 ./usr/lib/libcrypto_rc5.so			base-obsolete		compatfile,obsolete
@@ -301,7 +305,9 @@
 ./usr/lib/libdes.so.15				base-crypto-shlib	compatfile,openssl=30
 ./usr/lib/libdes.so.15.0			base-crypto-shlib	compatfile,openssl=30
 ./usr/lib/libdes.so.16				base-crypto-shlib	compatfile,openssl=35
+./usr/lib/libdes.so.17				base-crypto-shlib	compatfile,openssl=41
 ./usr/lib/libdes.so.16.0			base-crypto-shlib	compatfile,openssl=35
+./usr/lib/libdes.so.17.0			base-crypto-shlib	compatfile,openssl=41
 ./usr/lib/libdevmapper.so			base-lvm-shlib		compatfile,lvm
 ./usr/lib/libdevmapper.so.1			base-lvm-shlib		compatfile,lvm
 ./usr/lib/libdevmapper.so.1.0			base-lvm-shlib		compatfile,lvm
@@ -901,7 +907,9 @@
 ./usr/lib/libssl.so.15				base-crypto-shlib	compatfile,openssl=30
 ./usr/lib/libssl.so.15.0			base-crypto-shlib	compatfile,openssl=30
 ./usr/lib/libssl.so.16				base-crypto-shlib	compatfile,openssl=35
+./usr/lib/libssl.so.17				base-crypto-shlib	compatfile,openssl=41
 ./usr/lib/libssl.so.16.0			base-crypto-shlib	compatfile,openssl=35
+./usr/lib/libssl.so.17.0			base-crypto-shlib	compatfile,openssl=41
 ./usr/lib/libstdc++.so				base-sys-shlib		compatfile,gcc,cxx,libstdcxx
 ./usr/lib/libstdc++.so.9			base-sys-shlib		compatfile,gcc,cxx,libstdcxx
 ./usr/lib/libstdc++.so.9.0			base-sys-shlib		compatfile,gcc,cxx,libstdcxx,gcc=10

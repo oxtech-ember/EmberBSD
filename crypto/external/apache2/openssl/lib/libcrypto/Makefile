@@ -29,15 +29,25 @@ CPPFLAGS+= -Dlib${LIB} -I. -I${OPENSSLSRC}/crypto -I${OPENSSLSRC}
 CPPFLAGS+= -I${OPENSSLSRC}/include -I${OPENSSLSRC}/crypto/include
 CPPFLAGS+= -I${OPENSSLSRC}/crypto/asn1 -I${OPENSSLSRC}/crypto/evp
 CPPFLAGS+= -I${OPENSSLSRC}/crypto/modes
-CPPFLAGS+= -I${OPENSSLSRC}/../include
+CPPFLAGS+= -I${OPENSSLGENINC}
 
 CRYPTODIST=	${NETBSDSRCDIR}/crypto
 OPENSSLINC=	${OPENSSLSRC}/include/openssl
 
 .include "${NETBSDSRCDIR}/crypto/Makefile.openssl"
+.if defined(EMBER_OPENSSL_SOURCE)
+CPPFLAGS+= -I${OPENSSLGENINC}
+.PATH: ${OPENSSLGENINC}/openssl
+.endif
 .PATH: ${OPENSSLSRC} ${OPENSSLINC}
-.PATH: ${OPENSSLSRC}/../include/openssl
+.PATH: ${OPENSSLGENINC}/openssl
 
+.if defined(EMBER_OPENSSL_SOURCE)
+.include "${EMBER_OPENSSL_GENERATED}/crypto.mk"
+.include "${EMBER_OPENSSL_GENERATED}/crypto-shared.mk"
+.include "${EMBER_OPENSSL_GENERATED}/default.mk"
+.include "${EMBER_OPENSSL_GENERATED}/common.mk"
+.else
 .include "srcs.inc"
 .include "${.CURDIR}/../libdefault/srcs.inc"
 CPPFLAGS+= -I${.CURDIR}/../libdefault
@@ -47,6 +57,8 @@ CPPFLAGS+= -I${OPENSSLSRC}/providers/implementations/include
 .PATH: ${.CURDIR}/../libdefault
 .include "${.CURDIR}/../libcommon/srcs.inc"
 .PATH: ${.CURDIR}/../libcommon
+
+.endif
 
 AFLAGS+=-DELF
 LIBDPLIBS+= crypt ${NETBSDSRCDIR}/lib/libcrypt
@@ -213,6 +225,11 @@ x509v3.h \
 x509v3err.h \
 # end of INCS
 
+.if defined(EMBER_OPENSSL_SOURCE)
+INCS+= ech.h posix_time.h
+.endif
+
+
 .if (${USE_FIPS} != "no")
 # FIPS
 # This part is always included, because OpenSSL does not protect
@@ -250,13 +267,20 @@ COPTS.bn_exp.c = -Wno-error=stack-protector
 
 INCSDIR=/usr/include/openssl
 
+.if defined(EMBER_OPENSSL_SOURCE)
+SHLIB_MAJOR= 17
+SHLIB_MINOR= 0
+VERSION_MAP= ${EMBER_OPENSSL_GENERATED}/libcrypto.ld
+.else
 VERSION_MAP=	crypto.map
+.endif
 
 PKGCONFIG=libcrypto
 .include "${.CURDIR}/../../pkgconfig.mk"
 
 # too much of a pain to generate opensslv.h / configuration.h / fipskey.h
 # core_names.h
+.if !defined(EMBER_OPENSSL_SOURCE)
 GENH = \
 asn1.h \
 asn1t.h \
@@ -288,5 +312,7 @@ $i: $i.in
 	${_MKTARGET_CREATE}
 	${HOST_SH} ${.CURDIR}/gen ${.ALLSRC} > ${.TARGET}
 .endfor
+
+.endif # !EMBER_OPENSSL_SOURCE
 
 .include <bsd.lib.mk>
