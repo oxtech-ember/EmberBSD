@@ -99,7 +99,7 @@ INT_FUNCNAME(_int_, _FUNCNAME, _l)(const wchar_t *nptr, wchar_t **endptr,
 	cutlim = (int)(__UINT_MAX % (__UINT)base);
 	for (acc = 0, any = 0;; wc = (wchar_t) *s++) {
 		i = __wctoint(wc);
-		if (i == (wint_t)-1)
+		if (i == -1)
 			break;
 		if (i >= base)
 			break;
