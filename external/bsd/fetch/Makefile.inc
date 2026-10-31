@@ -2,7 +2,14 @@
 
 .include <bsd.own.mk>
 
-LIBFETCHDIR=	${NETBSDSRCDIR}/external/bsd/fetch/dist/libfetch
+.if !defined(EMBER_LIBFETCH_SOURCE) && !(make(obj) && empty(.TARGETS:Nobj))
+.error Set EMBER_LIBFETCH_SOURCE to the prepared common Ports source
+.endif
+.if defined(EMBER_LIBFETCH_SOURCE)
+LIBFETCHDIR=	${EMBER_LIBFETCH_SOURCE}
+.else
+LIBFETCHDIR=	${.CURDIR}/../dist/libfetch
+.endif
 
 USE_FORT?=	yes # complex string handling
 

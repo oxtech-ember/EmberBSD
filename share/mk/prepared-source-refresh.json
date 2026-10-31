@@ -43,6 +43,28 @@
         "libfido2.so",
         "libfido2.a"
       ]
+    },
+    "EMBER_LIBFETCH_SOURCE": {
+      "producer_dirs": [
+        "external/bsd/fetch/lib"
+      ],
+      "header_prefixes": [
+        "usr/include/fetch.h"
+      ],
+      "consumer_dirs": [
+        "external/bsd/pkg_install/lib",
+        "external/bsd/pkg_install/sbin/pkg_admin",
+        "external/bsd/pkg_install/sbin/pkg_add",
+        "external/bsd/pkg_install/sbin/pkg_info",
+        "external/bsd/pkg_install/sbin/pkg_create",
+        "external/bsd/pkg_install/sbin/pkg_delete",
+        "external/bsd/openldap/lib/libldap",
+        "external/bsd/openldap/lib/libldap_r"
+      ],
+      "linked_names": [
+        "libfetch.so",
+        "libfetch.a"
+      ]
     }
   },
   "header_independent_object_patterns": [
