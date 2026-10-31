@@ -86,10 +86,16 @@ with tempfile.TemporaryDirectory() as tmp:
                       EMBER_PORTS_SOURCE='/ports', EMBER_GIT='/usr/bin/git',
                       EMBER_LIBARCHIVE_SOURCE='/libarchive', EMBER_LIBEVENT_SOURCE='/libevent',
                       EMBER_BYACC_SOURCE='/byacc', EMBER_ISCSI_SOURCE='/iscsi', EMBER_LIBPCAP_SOURCE='/libpcap',
-                      EMBER_TCP_WRAPPERS_SOURCE='/tcpwrappers')
+                      EMBER_TCP_WRAPPERS_SOURCE='/tcpwrappers',
+                      EMBER_LIBCBOR_SOURCE='/libcbor', EMBER_LIBFIDO2_SOURCE='/libfido2')
     sys.argv = [str(path), str(source), tmp + '/clang', str(tools), '/compiler']
     subject.main()
     run = next(row[1] for row in calls if row[0] == 'run')
+    for name in ('libcbor', 'libfido2'):
+        assert any(row[0] == 'verify-source' and
+                   f'/ports/scripts/source-inputs/{name}/source.py' in row[1] and
+                   '/' + name in row[1] for row in calls)
+        assert '/' + name in run['arguments']
     assert run['shell'] and run['source'] == str(source)
     assert ('runtime', '/sysroot', 'aarch64') in calls
     assert any(row[0] == 'verify-source' and 'verify-source' in row[1] for row in calls)
@@ -156,6 +162,18 @@ with tempfile.TemporaryDirectory() as tmp:
         raise AssertionError('missing TCP wrappers source accepted')
     assert not Path(sys.argv[2]).exists()
     os.environ['EMBER_TCP_WRAPPERS_SOURCE'] = '/tcpwrappers'
+    for package in ('LIBCBOR', 'LIBFIDO2'):
+        key = 'EMBER_' + package + '_SOURCE'
+        saved = os.environ.pop(key)
+        sys.argv[2] = tmp + '/missing-' + package.lower()
+        try:
+            subject.main()
+        except SystemExit as exc:
+            assert key in str(exc)
+        else:
+            raise AssertionError('missing ' + key + ' accepted')
+        assert not Path(sys.argv[2]).exists()
+        os.environ[key] = saved
     calls.clear()
     original = jsonio.loads_json
     jsonio.loads_json = lambda data: {'format': 'emberbsd-llvm-source', 'version': 1,
@@ -246,6 +264,22 @@ with tempfile.TemporaryDirectory() as tmp:
     assert not Path(sys.argv[2]).exists()
     process.capture = original_capture
     calls.clear()
+    for package in ('libcbor', 'libfido2'):
+        def fail_common(argv, env):
+            if f'/ports/scripts/source-inputs/{package}/source.py' in argv:
+                raise SDKError(package + ' verification failed')
+            return original_capture(argv, env)
+        process.capture = fail_common
+        sys.argv[2] = tmp + '/failed-' + package
+        try:
+            subject.main()
+        except SystemExit as exc:
+            assert package + ' verification failed' in str(exc)
+        else:
+            raise AssertionError('failed ' + package + ' verification accepted')
+        assert not Path(sys.argv[2]).exists()
+        process.capture = original_capture
+        calls.clear()
     os.environ.update(EMBER_TARGET_COMPILER_FAMILY='gcc', EMBER_HOST_COMPILER_FAMILY='gcc')
     del os.environ['EMBER_SDK_SYSROOT']
     sys.argv[2] = tmp + '/gcc'

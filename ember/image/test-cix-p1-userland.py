@@ -73,7 +73,7 @@ if [ "$TEST_ELF_KIND" = dynamic ] && [ "$1" = -l ]; then echo INTERP; fi
     for tool in ('aarch64--netbsd-readelf', 'llvm-readelf'):
         write(compiler / 'bin' / tool, readelf, 0o755)
     write(compiler / 'bin/clang', f'#!{shell}\nexit 0\n', 0o755)
-    for package in ('libarchive', 'libevent', 'byacc', 'iscsi', 'libpcap', 'tcpwrappers'):
+    for package in ('libarchive', 'libevent', 'byacc', 'iscsi', 'libpcap', 'tcpwrappers', 'libcbor', 'libfido2'):
         write(work / f'{package}-source/emberbsd-prepared-source.json', f'{package}-source')
     write(work / 'llvm-source/llvm-source.json', 'prepared LLVM source')
     write(work / 'llvm-resource/lib/netbsd/builtins.a', 'retained LLVM builtins')
@@ -111,7 +111,7 @@ sys.exit(subprocess.call([os.environ['HOST_SH'], source + '/build.sh', *build_ar
                 extra.get('EMBER_LIBEDIT_SOURCE', str(libedit)), str(work / 'llvm-source'),
                 str(work / 'host-bfd.mk'), '2', extra.get('TEST_GIT', git),
                 extra.get('TEST_PYTHON', str(python)), extra.get('TEST_SHASUM', str(prefix / 'bin/shasum')),
-                *(str(work / f'{p}-source') for p in ('libarchive', 'libevent', 'byacc', 'iscsi', 'libpcap', 'tcpwrappers')),
+                *(str(work / f'{p}-source') for p in ('libarchive', 'libevent', 'byacc', 'iscsi', 'libpcap', 'tcpwrappers', 'libcbor', 'libfido2')),
                 str(work / 'llvm-runtime'), str(work / 'llvm-resource'), str(compiler / 'libgcc_eh.a'),
                 str(compiler / 'resource'), '23.1.4', 'aarch64-unknown-netbsd',
                 str(work / 'llvm-resource/lib/netbsd/builtins.a')]
@@ -156,7 +156,7 @@ sys.exit(subprocess.call([os.environ['HOST_SH'], source + '/build.sh', *build_ar
         check([e.split()[-1] for e in selected] == wanted, f'incomplete native SSH dependency {part}')
     flags, receipt = (out / 'build-flags').read_text(), (out / 'BUILD-INPUTS.txt').read_text()
     check(f'EMBER_LIBEDIT_SOURCE={libedit} ' in flags and f'{libedit}/libedit-source.json' in receipt, 'prepared libedit')
-    for envname, path in (('BYACC', 'byacc'), ('ISCSI', 'iscsi'), ('LIBPCAP', 'libpcap'), ('TCP_WRAPPERS', 'tcpwrappers')):
+    for envname, path in (('BYACC', 'byacc'), ('ISCSI', 'iscsi'), ('LIBPCAP', 'libpcap'), ('TCP_WRAPPERS', 'tcpwrappers'), ('LIBCBOR', 'libcbor'), ('LIBFIDO2', 'libfido2')):
         check(f'EMBER_{envname}_SOURCE={work}/{path}-source' in flags and
               f'{work}/{path}-source/emberbsd-prepared-source.json' in receipt, f'prepared {path}')
     for feature in ('PAM', 'KERBEROS', 'LDAP', 'YP', 'SKEY', 'HESIOD'):

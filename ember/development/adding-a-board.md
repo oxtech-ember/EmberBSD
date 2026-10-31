@@ -19,7 +19,7 @@ For reusable hardware references, read
 [DevBoards](https://github.com/oxtech-ember/EmberBSD-DevBoards).
 Start with its [reader guide](https://github.com/oxtech-ember/EmberBSD-DevBoards/blob/main/docs/reader-guide.md) and [catalog](https://github.com/oxtech-ember/EmberBSD-DevBoards/blob/main/catalog.json), then read the exact board and carrier records.
 Follow the selected bootloader contract and design transfer notes.
-Check source revisions and configuration applicability before reuse.
+Reuse a hardware record for the same board revision, carrier and configuration.
 Keep board, carrier, SoC, and bootloader knowledge at their respective layers.
 Drivers and executable checks remain here or in Ports.
 
@@ -54,7 +54,7 @@ selection paths and their checks. Existing native contracts use upstream Python;
 new project-owned utilities and tests follow the repository's language rules.
 
 Use the [documented build commands](../../README.ember.md#building) appropriate
-to the architecture. Record exact inputs and output hashes. Deploy a coherent
+to the architecture. Record the [input key](https://github.com/oxtech-ember/EmberBSD-SDK/blob/main/docs/input-keys.md) and output hashes. Deploy a coherent
 kernel, modules, device tree, firmware and userland; do not silently reuse outputs
 left by a failed build. Board-specific flash layout and recovery instructions
 belong in the DevBoards profile once verified.

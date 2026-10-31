@@ -91,6 +91,8 @@ libedit=$1 llvm_source=$2 host_bfd=$3 jobs=$4 git=$5 python=$6 shasum=$7
 shift 7
 libarchive=$1 libevent=$2 byacc=$3 iscsi=$4 libpcap=$5 tcpwrappers=$6
 shift 6
+libcbor=$1 libfido2=$2
+shift 2
 runtime_prefix=$1 resource=$2 unwinder=$3 compiler_resource=$4 version=$5 machine=$6 selected_builtins=$7
 nativepython=$host_prefix/bin/python3.15
 runner=$sdk/scripts/run-native-os.py
@@ -146,7 +148,8 @@ for input in "$src/build.sh" "$0" "$here/cix-p1-native.py" "$here/cix-p1-i18n.py
     "$llvm_source/llvm-source.json" "$libarchive/emberbsd-prepared-source.json" \
     "$libevent/emberbsd-prepared-source.json" "$byacc/emberbsd-prepared-source.json" \
     "$iscsi/emberbsd-prepared-source.json" "$libpcap/emberbsd-prepared-source.json" \
-    "$tcpwrappers/emberbsd-prepared-source.json"; do
+    "$tcpwrappers/emberbsd-prepared-source.json" "$libcbor/emberbsd-prepared-source.json" \
+    "$libfido2/emberbsd-prepared-source.json"; do
     "$shasum" -a 256 "$input" >> "$out/BUILD-INPUTS.pending"
 done
 "$shasum" -a 256 "$0" "$here/cix-p1-native.py" "$here/cix-p1-i18n.py" > "$out/PROFILE-SHA256.txt"
@@ -171,7 +174,8 @@ fi
     -V "CPPFLAGS=$CPPFLAGS" -V "EMBER_LIBARCHIVE_SOURCE=$libarchive" \
     -V "EMBER_LIBEVENT_SOURCE=$libevent" -V "EMBER_BYACC_SOURCE=$byacc" \
     -V "EMBER_ISCSI_SOURCE=$iscsi" -V "EMBER_LIBPCAP_SOURCE=$libpcap" \
-    -V "EMBER_TCP_WRAPPERS_SOURCE=$tcpwrappers" "$@" \
+    -V "EMBER_TCP_WRAPPERS_SOURCE=$tcpwrappers" -V "EMBER_LIBCBOR_SOURCE=$libcbor" \
+    -V "EMBER_LIBFIDO2_SOURCE=$libfido2" "$@" \
     -V MKDEBUG=no -V MKDEBUGLIB=no -V MKX11=no -V MKCXX=no -V MKCOMPAT=no \
     -V MKKMOD=no -V MKGCCCMDS=no -V MKGDB=no -V MKBINUTILS=no \
     -V MKATF=no -V MKKYUA=no -V MKMAN=no -V MKDOC=no -V MKINFO=no \
