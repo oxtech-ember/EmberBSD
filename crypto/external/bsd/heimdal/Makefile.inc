@@ -2,9 +2,10 @@
 
 HEIMBASE?=	${NETBSDSRCDIR}/crypto/external/bsd/heimdal
 # The common Ports source is shared with packages; keep native integration here.
-.if !defined(EMBER_HEIMDAL_SOURCE) && empty(.MAKEFLAGS:M-V*) && !(make(obj) && empty(.TARGETS:Nobj)) && \
-    !(make(clean) && empty(.TARGETS:Nclean)) && \
-    !(make(cleandir) && empty(.TARGETS:Ncleandir))
+.if (!defined(EMBER_HEIMDAL_SOURCE) || empty(EMBER_HEIMDAL_SOURCE)) && \
+    empty(.MAKEFLAGS:M-V*) && \
+    !((make(obj) || make(clean) || make(cleandir)) && \
+    empty(.TARGETS:Nobj:Nclean:Ncleandir))
 .error Set EMBER_HEIMDAL_SOURCE to the prepared common Ports source
 .endif
 .if defined(EMBER_HEIMDAL_SOURCE) && !empty(EMBER_HEIMDAL_SOURCE)

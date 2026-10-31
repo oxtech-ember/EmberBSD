@@ -24,6 +24,17 @@ result = run(lib, '-n', 'all')
 assert result.returncode != 0 and 'Set EMBER_HEIMDAL_SOURCE' in result.stdout, result.stdout
 result = run(lib, '-n', 'obj')
 assert result.returncode == 0, result.stdout
+for goals in (('obj', 'clean'), ('clean', 'cleandir'), ('obj', 'clean', 'cleandir')):
+    result = run(lib, '-n', *goals)
+    assert result.returncode == 0, result.stdout
+for goals in (('obj', 'all'), ('clean', 'install')):
+    result = run(lib, '-n', *goals)
+    assert result.returncode != 0 and 'Set EMBER_HEIMDAL_SOURCE' in result.stdout, result.stdout
+result = run(lib, 'EMBER_HEIMDAL_SOURCE=', '-n', 'all')
+assert result.returncode != 0 and 'Set EMBER_HEIMDAL_SOURCE' in result.stdout, result.stdout
+for flag in ('-v', '-V'):
+    result = run(lib, flag, 'HEIMDIST')
+    assert result.returncode == 0, result.stdout
 result = run(tool, 'EMBER_HEIMDAL_SOURCE=' + source, '-V', '${HOST_CPPFLAGS}', '-V', '${DESTDIR}')
 assert result.returncode == 0, result.stdout
 flags, dest = result.stdout.splitlines()[-2:]
