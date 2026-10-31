@@ -14,20 +14,25 @@ cat > "$work/test.c" <<'EOF'
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#define __BIT(n) (1U << (n))
 #define SPI_F_DONE 1
 #define SPI_F_ERROR 2
 #define SPIC_BUSY 1
 #define IPL_VM 1
 #define MUTEX_DEFAULT 0
+#ifndef __unused
 #define __unused __attribute__((unused))
+#endif
 typedef void *device_t;
 typedef int kmutex_t;
 typedef int kcondvar_t;
+typedef unsigned int u_int;
 struct spi_chunk {
 	struct spi_chunk *chunk_next;
 	int chunk_count, chunk_rresid, chunk_wresid;
 	uint8_t *chunk_read, *chunk_rptr;
 	const uint8_t *chunk_write, *chunk_wptr;
+	u_int chunk_bus_width;
 };
 struct spi_transfer {
 	struct spi_chunk *st_chunks;
@@ -41,6 +46,7 @@ struct spi_controller {
 	void *sct_cookie;
 	int (*sct_configure)(void *, int, int, int);
 	int (*sct_transfer)(void *, struct spi_transfer *);
+	u_int sct_caps;
 };
 struct spi_softc {
 	int sc_flags, sc_mode, sc_speed, sc_slave;
@@ -82,6 +88,9 @@ static int transfer(void *p, struct spi_transfer *st)
 	return reject_transfer ? EIO : 0;
 }
 EOF
+# Use capability definitions from the real public header.
+awk '/^#define[[:space:]]+SPI_CAP_/ { print }' \
+    "$(dirname -- "$source")/spivar.h" >> "$work/test.c"
 extract()
 {
 	awk -v name="$1" -v type="$2" '
@@ -101,6 +110,33 @@ extract spi_wait void
 extract spi_done void
 extract spi_send_recv int
 cat >> "$work/test.c" <<'EOF'
+static void
+check_width(struct spi_handle *handle, unsigned int width, unsigned int caps,
+    bool write, bool read, int expected)
+{
+	struct spi_transfer st;
+	struct spi_chunk header, data;
+	uint8_t command = 0x32, value = 0;
+	unsigned int before = transfers;
+	unsigned int configured = configurations;
+
+	handle->sh_controller->sct_caps = caps;
+	/* Force reconfiguration if validation incorrectly lets this through. */
+	handle->sh_sc->sc_slave = -1;
+	spi_transfer_init(&st);
+	spi_chunk_init(&header, 1, &command, NULL);
+	spi_chunk_init(&data, 1, write ? &value : NULL, read ? &value : NULL);
+	data.chunk_bus_width = width;
+	spi_transfer_add(&st, &header);
+	spi_transfer_add(&st, &data);
+	assert(spi_transfer(handle, &st) == 0);
+	spi_wait(&st);
+	assert(st.st_errno == expected);
+	assert(transfers == before + (expected == 0));
+	assert(configurations == configured + (expected == 0));
+	assert(handle->sh_sc->sc_flags == 0);
+}
+
 int main(void)
 {
 	struct spi_softc bus = { .sc_slave = -1 };
@@ -129,10 +165,26 @@ int main(void)
 	error = spi_send_recv(&handle, 2, command, 1, &answer);
 	assert(error == EIO && bus.sc_flags == 0);
 	assert(configurations == 2 && transfers == 2 && broadcasts == 6);
+	reject_transfer = false;
+	check_width(&handle, 0, 0, true, true, 0);
+	check_width(&handle, 1, 0, true, true, 0);
+	check_width(&handle, 2, 0, true, false, EOPNOTSUPP);
+	check_width(&handle, 2, SPI_CAP_DUAL_TX, true, false, 0);
+	check_width(&handle, 2, SPI_CAP_DUAL_TX, false, true, EOPNOTSUPP);
+	check_width(&handle, 2, SPI_CAP_DUAL_RX, false, true, 0);
+	check_width(&handle, 4, 0, true, false, EOPNOTSUPP);
+	check_width(&handle, 4, SPI_CAP_QUAD_TX, true, false, 0);
+	check_width(&handle, 4, SPI_CAP_QUAD_TX, false, true, EOPNOTSUPP);
+	check_width(&handle, 4, SPI_CAP_QUAD_RX, false, true, 0);
+	check_width(&handle, 3, ~0U, true, false, EINVAL);
+	check_width(&handle, 4, ~0U, true, true, EINVAL);
+	check_width(&handle, 4, ~0U, false, false, EINVAL);
+	check_width(&handle, 1, 0, true, false, 0);
 	assert(waits == 0);
-	puts("PASS SPI configure failure completes once, releases bus, retries; backend error completes once.");
+	puts("PASS SPI completion, retry, legacy transfers and directional dual/quad phases.");
 	return 0;
 }
 EOF
-"${CC:-cc}" -std=c11 -Wall -Wextra -Werror "$work/test.c" -o "$work/test"
+# CFLAGS follows the usual shell-separated compiler flag convention.
+"${CC:-cc}" ${CFLAGS:-} -std=c11 -Wall -Wextra -Werror "$work/test.c" -o "$work/test"
 "$work/test"

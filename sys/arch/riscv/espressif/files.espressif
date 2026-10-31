@@ -24,6 +24,11 @@ device	espsystimer
 attach	espsystimer at fdt
 file	arch/riscv/espressif/esp_systimer.c	espsystimer
 
+# ESP32-S31 general-purpose SPI, including half-duplex dual/quad writes.
+device	espspi: spibus
+attach	espspi at fdt
+file	arch/riscv/espressif/esp_spi.c		espspi
+
 # ESP32-S31 Ethernet: DesignWare GMAC
 attach	awge at fdt with esp_gmac
 file	arch/riscv/espressif/esp_gmac.c		esp_gmac

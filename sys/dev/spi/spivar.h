@@ -73,11 +73,18 @@ struct spi_transfer;
 #define	SPI_FREQ_kHz(x)	((x) * 1000)
 #define	SPI_FREQ_MHz(x)	((x) * 1000000)
 
+/* Optional half-duplex multi-line data phases; single-line is always valid. */
+#define	SPI_CAP_DUAL_TX	__BIT(0)
+#define	SPI_CAP_DUAL_RX	__BIT(1)
+#define	SPI_CAP_QUAD_TX	__BIT(2)
+#define	SPI_CAP_QUAD_RX	__BIT(3)
+
 struct spi_controller {
 	void	*sct_cookie;	/* controller private data */
 	int	sct_nslaves;
 	int	(*sct_configure)(void *, int, int, int);
 	int	(*sct_transfer)(void *, struct spi_transfer *);
+	u_int	sct_caps;
 };
 
 int spibus_print(void *, const char *);
@@ -109,6 +116,13 @@ struct spi_chunk {
 	int		chunk_count;
 	uint8_t		*chunk_read;
 	const uint8_t	*chunk_write;
+	/*
+	 * 0 or 1: ordinary SPI; 2 or 4: half-duplex dual/quad data.
+	 * Width may change between chunks without releasing chip select.
+	 * Multi-line chunks require exactly one of chunk_read/chunk_write.
+	 * Controllers must explicitly advertise each supported direction.
+	 */
+	u_int		chunk_bus_width;
 	/* for private use by framework and bus driver */
 	uint8_t		*chunk_rptr;
 	const uint8_t	*chunk_wptr;

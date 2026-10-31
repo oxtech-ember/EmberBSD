@@ -53,6 +53,8 @@ sbitty* 	at fdt?			# firmware console
 options 	RISCV_CLIC
 espintmtx* 	at fdt? pass 2
 espsystimer* 	at fdt?
+espspi* 	at fdt? pass 3
+spi* 		at espspi?
 awge* 		at fdt?			# ESP32-S31 Ethernet
 # Each receive slot holds a 2 KiB cluster: 256 of them would take 512 KiB.
 # One descriptor per 64-byte cache line: the controller writes memory

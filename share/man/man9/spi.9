@@ -26,7 +26,7 @@
 .\" ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 .\" POSSIBILITY OF SUCH DAMAGE.
 .\"
-.Dd February 23, 2019
+.Dd October 31, 2026
 .Dt SPI 9
 .Os
 .Sh NAME
@@ -126,6 +126,29 @@ Initialize a transfer structure.
 Initialize a chunk structure, each chunk corresponds to
 a possibly bi-directional transfer where the same amount
 of bytes is shifted in and out.
+The initializer sets
+.Va chunk_bus_width
+to 1.
+Drivers may then set it to 2 or 4 for a half-duplex data phase using
+two or four signal lines, with exactly one of
+.Va chunk_write
+and
+.Va chunk_read
+non-NULL.
+Widths 0 and 1 select the original single-line behavior.
+The controller must advertise the corresponding
+.Dv SPI_CAP_DUAL_TX , SPI_CAP_DUAL_RX , SPI_CAP_QUAD_TX ,
+or
+.Dv SPI_CAP_QUAD_RX
+bit in
+.Va sct_caps .
+An invalid width or duplex combination completes with
+.Er EINVAL ;
+a valid but unsupported direction completes with
+.Er EOPNOTSUPP .
+Both are rejected before configuring the controller or clocking data.
+Chunks in one transfer may use different widths without releasing
+the slave select between them.
 .It Fn spi_transfer_add "st" "chunk"
 Append a chunk to transfer structure.
 .It Fn spi_wait "st"

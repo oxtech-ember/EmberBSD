@@ -505,6 +505,7 @@ spi_chunk_init(struct spi_chunk *chunk, int cnt, const uint8_t *wptr,
 	chunk->chunk_read = chunk->chunk_rptr = rptr;
 	chunk->chunk_rresid = chunk->chunk_wresid = chunk->chunk_count = cnt;
 	chunk->chunk_next = NULL;
+	chunk->chunk_bus_width = 1;
 }
 
 void
@@ -546,6 +547,31 @@ spi_transfer(struct spi_handle *sh, struct spi_transfer *st)
 	spi_acquire(sh);
 
 	st->st_spiprivate = (void *)sh;
+
+	/* Reject unsupported phases before configuring or touching the bus. */
+	for (chunk = st->st_chunks; chunk; chunk = chunk->chunk_next) {
+		u_int capability;
+
+		if (chunk->chunk_bus_width <= 1)
+			continue;
+		if ((chunk->chunk_bus_width != 2 &&
+		     chunk->chunk_bus_width != 4) ||
+		    ((chunk->chunk_read == NULL) ==
+		     (chunk->chunk_write == NULL))) {
+			spi_done(st, EINVAL);
+			return 0;
+		}
+		if (chunk->chunk_bus_width == 2)
+			capability = chunk->chunk_write != NULL ?
+			    SPI_CAP_DUAL_TX : SPI_CAP_DUAL_RX;
+		else
+			capability = chunk->chunk_write != NULL ?
+			    SPI_CAP_QUAD_TX : SPI_CAP_QUAD_RX;
+		if ((tag->sct_caps & capability) == 0) {
+			spi_done(st, EOPNOTSUPP);
+			return 0;
+		}
+	}
 
 	/*
 	 * Reconfigure controller
