@@ -144,6 +144,7 @@ struct ieee80211_node_table {
 };
 struct ieee80211_vht_channel;
 struct ieee80211com {
+	int (*ic_sta_set_port)(struct ieee80211com *, bool);
 	void (*ic_sta_quiet)(struct ieee80211com *);
 	void (*ic_sta_csa)(struct ieee80211com *);
 	int (*ic_scan_probe_admit)(struct ieee80211com *);

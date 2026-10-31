@@ -4,6 +4,7 @@
 #include <sys/types.h>
 #include <assert.h>
 #include <errno.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -50,6 +51,7 @@ typedef void (*ifm_stat_cb_t)(struct ifnet *,struct ifmediareq *);
 typedef int ieee80211_media_lock_t;
 struct ieee80211_node { struct ieee80211_rateset ni_rates; };
 struct ieee80211com {
+ int (*ic_sta_set_port)(struct ieee80211com *, bool);
  struct ifnet *ic_ifp;
  struct ieee80211_node *ic_bss;
  uint8_t ic_myaddr[6]; void *ic_rawbpf;
@@ -93,6 +95,8 @@ void ieee80211_set_shortslottime(struct ieee80211com *, int);
 #define ieee80211_wme_initparams(ic) ((void)(ic))
 static int ieee80211_default_reset(struct ifnet *p)
 { (void)p; return ENETRESET; }
+static int sta_port_hook(struct ieee80211com *ic, bool authorized)
+{ (void)ic; (void)authorized; return 0; }
 static struct ieee80211com *ieee80211_find_instance(struct ifnet *p)
 { return instance && instance->ic_ifp==p ? instance : NULL; }
 static void ifmedia_init_with_lock(struct ifmedia *m,int mask,
@@ -226,7 +230,9 @@ int main(void)
  ic.ic_ifp=&ifp;ic.ic_opmode=IEEE80211_M_STA;ic.ic_phytype=IEEE80211_T_OFDM;
  ic.ic_fixed_rate=IEEE80211_FIXED_RATE_NONE;instance=&ic;
  driver_channels(&ic);
+ ic.ic_sta_set_port=sta_port_hook;
  ieee80211_ifattach(&ic);
+ CHECK(ic.ic_sta_set_port==NULL);
  CHECK((ic.ic_modecaps&(1U<<IEEE80211_MODE_11G))!=0);
  CHECK((ic.ic_modecaps&(1U<<IEEE80211_MODE_11A))!=0);
  CHECK((ic.ic_modecaps&(1U<<IEEE80211_MODE_11B))!=0);

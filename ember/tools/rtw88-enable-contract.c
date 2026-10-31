@@ -151,6 +151,7 @@ static struct rtw88_net *enable_attach(struct rtw88_softc *sc,kmutex_t *lock)
     int rc=rtw88_net_attach(sc,sc,lock,mac,&net);
     CHECK(rc==0 && net!=NULL);
     if(!net)return NULL;
+    CHECK(net->ic.ic_sta_set_port==NULL);
     /* Model the ordinary Ethernet and net80211 defaults only for the focused
      * positive-readiness fixture; the shared baseline keeps HT disabled. */
     if(enable_ht20_ready_fixture) {
