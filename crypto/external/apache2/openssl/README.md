@@ -10,8 +10,13 @@ The parent target prepares these files before recursive `includes`, `depend`,
 `all` and `install`. The build selects `HOST_PYTHON`, `HOST_PERL`, `HOST_GMAKE`
 and `HOST_SH` from the native tool prefix, and selects the target compiler and
 sysroot separately. The caller keeps the ordinary object-tree writer lease for
-the entire recursive build. Generated outputs are reused when their effective
-inputs are unchanged; unchanged generated file timestamps survive regeneration.
+the entire recursive build. The generator reads the prepared-source receipt and
+the existing SDK object context in its ancestor object tree. That context
+identifies the OS generator code, compiler, native tools, target ABI and sysroot
+configuration. Matching [input keys](https://github.com/oxtech-ember/EmberBSD-SDK/blob/main/docs/input-keys.md)
+reuse the generated output without reading source trees, headers, executables
+or generated files again. Direct invocations without these identities generate
+afresh. Unchanged generated file timestamps survive regeneration for a new key.
 
 The OpenSSL 4 libraries use base ABI major 17. Their symbol version is supplied
 by upstream OpenSSL, independently of the base shared-library major. AArch64 library and program cross-builds have been exercised; target runtime

@@ -36,6 +36,33 @@ def compiler_command(cc, family, triplet, sysroot, flags=()):
     return shlex.join(args)
 
 
+def input_identity(source, object_root):
+    """Use the identities already selected by the SDK, without reading payloads."""
+    receipt = source / 'emberbsd-prepared-source.json'
+    if not receipt.is_file():
+        return None
+    prepared = json.loads(receipt.read_text())
+    if (not isinstance(prepared, dict) or prepared.get('format') != 'emberbsd-prepared-source' or
+            prepared.get('version') != 1 or prepared.get('package') != 'security/openssl'):
+        raise ValueError('invalid prepared OpenSSL source identity')
+    for parent in (object_root, *object_root.parents):
+        context = parent / '.prebuild-sdk-context.json'
+        if not context.is_file():
+            continue
+        record = json.loads(context.read_text())
+        signature = record.get('signature') if isinstance(record, dict) else None
+        if (not isinstance(record, dict) or record.get('format') != 'emberbsd-sysroot-object-context' or record.get('version') != 1 or
+                not isinstance(signature, dict) or signature.get('objects') != str(parent) or
+                not all(name in signature for name in ('compiler', 'native_toolset', 'runtime',
+                                                       'target', 'flags', 'common_sources')) or
+                not isinstance(record.get('sources'), dict)):
+            raise ValueError('invalid SDK object input context: ' + str(context))
+        return dict(source=prepared, context=record)
+    # Direct make users can still generate files without an SDK context, but
+    # paths alone do not identify their compiler and sysroot for reuse.
+    return None
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('source', 'output', 'arch', 'cc', 'sysroot', 'perl', 'gmake', 'ar', 'ranlib', 'tmpdir', 'path', 'shell', 'object-root', 'family', 'triplet', 'cpu'):
@@ -86,52 +113,16 @@ def main():
         parser.error('generation lock is not a regular file')
     fcntl.flock(lock_fd, fcntl.LOCK_EX)
     # The descriptor remains open until all output is complete.
-    # This is a rebuild key, not a qualification or a requirement for a receipt.
-    # The SDK checks prepared-source integrity before invoking the OS build.
-    digest = hashlib.sha256()
-    for path in sorted(source.rglob('*')):
-        if path.is_file() and (path.name in ('Configure', 'build.info', 'VERSION.dat') or
-                               path.suffix in ('.in', '.pm', '.pl', '.conf')):
-            digest.update(str(path.relative_to(source)).encode() + b'\0')
-            digest.update(path.read_bytes())
-    # Configure can probe BSD KTLS headers if upstream enables that option.
-    # If KTLS exists, include its transitive header environment in the key.
-    include_root = Path(args.sysroot) / 'usr/include'
-    ktls = include_root / 'sys/ktls.h'
-    header_paths = sorted(include_root.rglob('*')) if ktls.is_file() else [include_root / 'sys/types.h', ktls]
-    for path in header_paths:
-        if path.is_file() and (include_root / 'openssl') not in path.parents:
-            digest.update(str(path.relative_to(include_root)).encode() + b'\0')
-            digest.update(path.read_bytes())
-        elif path in (ktls, include_root / 'sys/types.h'):
-            digest.update(str(path.relative_to(include_root)).encode() + b'\0missing')
-    for name in ('cc', 'perl', 'gmake', 'ar', 'ranlib', 'shell'):
-        with open(getattr(args, name), 'rb') as stream:
-            for chunk in iter(lambda: stream.read(1024 * 1024), b''):
-                digest.update(chunk)
-    for path in (TOOLS / 'prepare-generated.py', TOOLS / 'generated-sources.pl', TOOLS / 'config-sources.pl', TOOLS / 'map-exports.py'):
-        digest.update(path.read_bytes())
-    key = {'source': str(source), 'inputs': digest.hexdigest(), 'arch': args.arch, 'cpu': args.cpu,
+    # Source revisions, generator code, toolchain, native tools and sysroot
+    # configuration are already identified by the SDK object context.
+    identity = input_identity(source, object_root)
+    inputs = (hashlib.sha256(json.dumps(identity, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+              if identity is not None else None)
+    key = {'source': str(source), 'inputs': inputs, 'arch': args.arch, 'cpu': args.cpu,
            'cc': args.cc, 'cc_args': cc_args, 'family': args.family, 'triplet': triplet, 'sysroot': args.sysroot, 'perl': args.perl, 'gmake': args.gmake,
            'ar': args.ar, 'ranlib': args.ranlib, 'shell': args.shell, 'path': args.path}
     marker = output / '.complete'
     owned = {'format': 'emberbsd-openssl-generated', 'object_root': str(object_root)}
-    def payload_hash():
-        result = hashlib.sha256()
-        for path in sorted(output.rglob('*')):
-            if path.name in ('.owned', '.complete'):
-                continue
-            relative = str(path.relative_to(output)).encode()
-            if path.is_symlink():
-                result.update(b'L' + relative + b'\0' + os.readlink(path).encode())
-            elif path.is_file():
-                result.update(b'F' + relative + b'\0')
-                with path.open('rb') as stream:
-                    for chunk in iter(lambda: stream.read(1024 * 1024), b''):
-                        result.update(chunk)
-        return result.hexdigest()
-    required = ('crypto.mk', 'crypto-shared.mk', 'default.mk', 'common.mk', 'ssl.mk',
-                'ssl-shared.mk', 'apps.mk', 'legacy.mk', 'legacy-module.mk', 'test.mk', 'cli.mk', 'libcrypto.ld', 'libssl.ld', 'crypto.expsym', 'ssl.expsym', 'providers/legacy.ld', 'include/openssl/configuration.h')
     preserved = {}
     if output.exists():
         try:
@@ -145,9 +136,7 @@ def main():
                 previous = json.loads(marker.read_text())
             except (OSError, ValueError):
                 previous = None
-            if (isinstance(previous, dict) and previous.get('key') == key and
-                    all((output / item).is_file() for item in required) and
-                    previous.get('payload') == payload_hash()):
+            if identity is not None and isinstance(previous, dict) and previous.get('key') == key:
                 os.close(lock_fd)
                 return
         # A changed configuration may reproduce identical generated files.
@@ -186,7 +175,7 @@ def main():
         if path.is_file() and not path.is_symlink() and hashlib.sha256(path.read_bytes()).digest() == contents:
             os.utime(path, ns=(atime, mtime))
     temporary = output / '.complete.tmp'
-    temporary.write_text(json.dumps({'key': key, 'payload': payload_hash()}, sort_keys=True) + '\n')
+    temporary.write_text(json.dumps({'key': key}, sort_keys=True) + '\n')
     os.replace(temporary, marker)
     os.close(lock_fd)
 
@@ -194,6 +183,6 @@ def main():
 if __name__ == '__main__':
     try:
         main()
-    except (OSError, subprocess.CalledProcessError) as exc:
+    except (OSError, ValueError, subprocess.CalledProcessError) as exc:
         print('OpenSSL generation:', exc, file=sys.stderr)
         sys.exit(1)
