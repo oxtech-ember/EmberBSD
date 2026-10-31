@@ -40,9 +40,11 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <uvm/uvm.h>
 
 #include <riscv/espressif/esp_rom.h>
+#include <riscv/espressif/esp_trng.h>
 #include <riscv/espressif/esp_wifi_var.h>
 
 #include "opt_espwifi.h"
+#include "opt_esptrng.h"
 
 #ifdef RISCV_LOW_IDMAP
 
@@ -69,6 +71,10 @@ esp_rom_init(void)
 	    *(volatile uint32_t *)S31_ROM_ECO_VERSION,
 	    *(volatile uint32_t *)S31_ROM_OPS_TABLE_PTR, crc,
 	    crc == 0xcbf43926 ? "" : " (wrong)");
+#ifdef ESPTRNG
+	if (!esp_trng_seed())
+		return;
+#endif
 #ifdef ESPWIFI
 	espwifi_attach();
 #endif

@@ -7,6 +7,10 @@
 file	arch/riscv/espressif/esp32s31_platform.c	espintmtx
 file	arch/riscv/espressif/esp_rom.c			espintmtx
 
+# SoC boot entropy, before the radio takes ownership of the noise source.
+defflag opt_esptrng.h			ESPTRNG
+file	arch/riscv/espressif/esp_trng.c		esptrng & espintmtx
+
 # Radio of the ESP32-S31.  The vendor's libraries come in one object built
 # by arch/riscv/espressif/wifi/mkblob; the kernel configuration names it.
 defflag	opt_espwifi.h			ESPWIFI
