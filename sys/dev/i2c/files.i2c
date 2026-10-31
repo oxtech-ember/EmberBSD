@@ -483,3 +483,8 @@ file dev/i2c/emcfan.c				emcfan
 device rp1wmcodec: audiobus
 attach rp1wmcodec at iic
 file dev/i2c/rp1wmcodec.c rp1wmcodec
+
+# Hynitron CST9220 I2C touch panel
+device cst92xx: wsmousedev
+attach cst92xx at iic
+file dev/i2c/cst9220.c cst92xx

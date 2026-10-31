@@ -1,0 +1,31 @@
+ESP32-S31 GPIO and pinctrl
+
+The controller node uses compatible = "espressif,esp32s31-gpio", with
+reg entries for the GPIO and IO_MUX register blocks, in that order, and
+espressif,syscon referencing the shared HP_SYS_CLKRST syscon. It is a GPIO
+controller with #gpio-cells = <2>; cells are SoC pin number and standard GPIO
+flags. GPIOs 29, 41 and numbers beyond 61 are unavailable.
+
+Each child is a pinctrl state; its children are groups with one or more
+pinmux cells. See arch/riscv/dts/include/dt-bindings/pinctrl/esp32s31-pinctrl.h.
+The cell layout follows the ESP32 Zephyr binding: GPIO[5:0], input matrix
+signal[14:6], output matrix signal[23:15]; 0x1ff means no signal. Input
+indices 0..255 and output indices 0..256 are supported; 256 selects GPIO
+output. Groups support input-enable/disable, output-enable/disable,
+bias-disable/pull-up/pull-down, drive-open-drain/push-pull and GPIO
+output-high/output-low. Peripheral outputs use peripheral output enable;
+GPIO outputs use the GPIO enable register. Initial output-high/low is only
+valid for GPIO output, not peripheral-controlled signals.
+
+GPIO acquisitions are exclusive and released by their consumers. Pinctrl
+claims are retained for the life of the controller because the current FDT
+pinctrl framework exposes no state-release callback. A conflicting state or
+GPIO acquisition fails rather than silently changing another consumer's pins.
+Runtime transitions between different states sharing a pin are not supported
+by this first provider. Exact hardware functionality is not established by a
+successful device-tree parse or build.
+
+Source facts: ESP-IDF v6.1 fff9895c82d744c7237be8847347bdd1b07c6643,
+components/soc/esp32s31/register/soc/{gpio,io_mux,hp_sys_clkrst}_reg.h and
+soc_caps.h; register descriptions Apache-2.0 OR MIT. Encoding reference:
+Zephyr 0534e997eacb94bae1df6c9a7dd4a9a6cbf1cecf, esp-pinctrl-common.h.

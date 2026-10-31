@@ -1,0 +1,8 @@
+i2c-gpio FDT attachment
+
+The generic compatible "i2c-gpio" consumes sda-gpios and scl-gpios from FDT
+GPIO providers. Both pins must support input and open-drain output. The
+attachment uses the common i2c_bitbang engine at its standard-mode timing; it
+does not implement the optional i2c-gpio delay property or target-specific
+bus speeds. It registers an FDT I2C controller and attaches standard I2C
+children. Hardware behavior requires separate target verification.

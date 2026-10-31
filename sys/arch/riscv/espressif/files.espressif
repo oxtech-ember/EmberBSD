@@ -32,3 +32,8 @@ file	arch/riscv/espressif/esp_spi.c		espspi
 # ESP32-S31 Ethernet: DesignWare GMAC
 attach	awge at fdt with esp_gmac
 file	arch/riscv/espressif/esp_gmac.c		esp_gmac
+
+# ESP32-S31 GPIO matrix and IO_MUX
+device esp32s31_gpio
+attach esp32s31_gpio at fdt
+file arch/riscv/espressif/esp32s31_gpio.c esp32s31_gpio

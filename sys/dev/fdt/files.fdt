@@ -231,3 +231,8 @@ attach adiaxidmac at fdt
 device adiaxiadc: adiaxiconverter, adiaxidma
 attach adiaxiadc at fdt
 file dev/fdt/adi_axi_adc.c adiaxiadc
+
+# Open-drain GPIO I2C using the common I2C bitbang engine.
+device gpioiic_fdt: i2cbus, i2c_bitbang
+attach gpioiic_fdt at fdt
+file dev/fdt/gpioiic_fdt.c gpioiic_fdt
