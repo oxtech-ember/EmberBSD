@@ -138,11 +138,26 @@ CPPFLAGS+=-DCONFIG_WNM
 DPADD+=	${LIBPCAP}
 LDADD+=	-lpcap
 
+EMBER_WPA_PROFILE?= full
+.if ${EMBER_WPA_PROFILE} != "full" && ${EMBER_WPA_PROFILE} != "personal"
+.error Unsupported EMBER_WPA_PROFILE: ${EMBER_WPA_PROFILE}
+.endif
+.if ${EMBER_WPA_PROFILE} == "personal" && (defined(NO_CRYPT) || defined(NO_OPENSSL) || defined(RELEASE_CRUNCH) || defined(NO_ENABLE_WPA_SUPPLICANT_EAPOL))
+.error EMBER_WPA_PROFILE=personal requires the OpenSSL WPA build
+.endif
+.if ${EMBER_WPA_PROFILE} == "personal"
+# IEEE 802.1X EAP is optional; WPA's four-way handshake remains in wpa.c.
+SRCS:= ${SRCS:Neapol_supp_sm.c:Neap_methods.c}
+.endif
+
 .if !defined(NO_ENABLE_WPA_SUPPLICANT_EAPOL)
+.if ${EMBER_WPA_PROFILE} == "full"
 SRCS+=	eap.c
 CPPFLAGS+= -DIEEE8021X_EAPOL -DPKCS12_FUNCS
+.endif
 
 .if !defined(NO_CRYPT) && !defined(NO_OPENSSL) && !defined(RELEASE_CRUNCH)
+.if ${EMBER_WPA_PROFILE} == "full"
 CPPFLAGS+=-DEAP_TLS
 CPPFLAGS+=-DEAP_PEAP
 CPPFLAGS+=-DEAP_TTLS
@@ -153,6 +168,7 @@ CPPFLAGS+=-DEAP_OTP
 CPPFLAGS+=-DEAP_LEAP
 CPPFLAGS+=-DEAP_PSK
 CPPFLAGS+=-DEAP_TLS_OPENSSL
+.endif
 
 # SAE runs in the upstream SME; full-MAC drivers forward external auth frames.
 CPPFLAGS+=-DCONFIG_SAE -DCONFIG_SME -DCONFIG_ECC -DCONFIG_SHA256
@@ -160,9 +176,10 @@ CPPFLAGS+=-DCONFIG_HMAC_SHA256_KDF
 SRCS+=sae.c dragonfly.c sme.c dh_groups.c sha256-kdf.c
 # CONFIG_SHA256 uses OpenSSL HMAC, avoiding duplicate internal symbols.
 SRCS:= ${SRCS:Nsha256.c}
+SRCS+= crypto_openssl.c
+.if ${EMBER_WPA_PROFILE} == "full"
 SRCS+= \
 chap.c \
-crypto_openssl.c \
 eap_gtc.c \
 eap_leap.c \
 eap_md5.c \
@@ -179,6 +196,9 @@ ms_funcs.c \
 mschapv2.c \
 sha1-tlsprf.c \
 tls_openssl.c
+.else
+SRCS+= tls_none.c
+.endif
 
 SRCS+=aes-ctr.c \
 aes-eax.c \
@@ -191,8 +211,13 @@ aes-omac1.c \
 #CPPFLAGS+= -DEAP_FAST
 #SRCS+=	eap_fast.c
 
+.if ${EMBER_WPA_PROFILE} == "full"
 DPADD+= ${LIBSSL} ${LIBCRYPTO} ${LIBDES}
 LDADD+= -lssl -lcrypto -ldes
+.else
+DPADD+= ${LIBCRYPTO}
+LDADD+= -lcrypto
+.endif
 .else
 CPPFLAGS+= -DINTERNAL_AES -DINTERNAL_MD5 -DINTERNAL_SHA1 -DCONFIG_NO_PBKDF2
 SRCS+= tls_none.c sha1-internal.c md5-internal.c aes-xinternal.c rc4.c
