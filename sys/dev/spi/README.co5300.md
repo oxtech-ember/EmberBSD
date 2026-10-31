@@ -18,7 +18,8 @@ and must configure native RGB565.
 
 The driver creates a wired, zeroed native-endian RGB565 framebuffer exposed
 through genfb/wsdisplay, including its normal mmap and framebuffer information
-ioctls. Executable mappings are rejected. UART remains the console. A worker compares row snapshots to a separate shadow buffer at up to
+ioctls. Mappings use the cacheable bus-space attribute to match the wired
+kernel RAM mapping. Executable mappings are rejected. UART remains the console. A worker compares row snapshots to a separate shadow buffer at up to
 20 scans per second. It converts changed rows to big-endian wire pixels,
 sends the CO5300 address windows and four-line pixel data, and updates the
 shadow only after successful transmission. The initial scan sends all rows.

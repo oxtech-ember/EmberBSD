@@ -207,7 +207,7 @@ co5300_mmap(void *v, void *vs, off_t offset, int prot)
 	    !pmap_extract(pmap_kernel(), sc->sc_fb + (vaddr_t)offset, &pa))
 		return (paddr_t)-1;
 	return bus_space_mmap(sc->sc_bst, pa, 0, prot,
-	    BUS_SPACE_MAP_LINEAR | BUS_SPACE_MAP_PREFETCHABLE);
+	    BUS_SPACE_MAP_LINEAR | BUS_SPACE_MAP_CACHEABLE);
 }
 
 static int

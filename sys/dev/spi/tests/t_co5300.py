@@ -38,7 +38,7 @@ prefix = r'''
 #define PAGE_MASK 4095
 #define PROT_EXEC 4
 #define BUS_SPACE_MAP_LINEAR 1
-#define BUS_SPACE_MAP_PREFETCHABLE 2
+#define BUS_SPACE_MAP_CACHEABLE 2
 typedef uintptr_t vaddr_t;
 typedef uint64_t paddr_t;
 #define MAX(a,b) ((a) > (b) ? (a) : (b))
@@ -82,7 +82,7 @@ static bool pmap_extract(void *p, vaddr_t va, paddr_t *pa) {
 }
 static paddr_t bus_space_mmap(void *tag, paddr_t pa, off_t off, int prot, int flags) {
     assert(tag == (void *)0x5678 && off == 0 && prot == 3);
-    assert(flags == (BUS_SPACE_MAP_LINEAR | BUS_SPACE_MAP_PREFETCHABLE));
+    assert(flags == (BUS_SPACE_MAP_LINEAR | BUS_SPACE_MAP_CACHEABLE));
     maps++; return (pa >> 12) | 0x40000000;
 }
 static int hz = 1000;
