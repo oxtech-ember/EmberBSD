@@ -192,3 +192,21 @@ A trial may use a modified OS checkout. The result records the source commit,
 whether the checkout was modified, and a digest of the tracked changes and
 untracked inputs; the builder checks that state again before accepting the
 result. A modified-source trial is not a release built from published source.
+
+Set `EMBER_USERLAND_PROFILE=console-tools` to select the opt-in compact
+console. The native OS `nbcrunchgen` builds one static multicall executable
+with `sh`, `init`, `hostname`, `sysctl`, `dmesg`, `ifconfig`, `cat`, `ls`,
+`chmod`, `cp`, `mkdir`, and `sleep`; their normal paths are symbolic links.
+This profile adds `klog`, `iic0`, `ttyE0` and `wsmouse0` using the target's `MAKEDEV`, and
+requires the selected host prefix's LLVM `nm`/`objcopy` and `nawk`. It is a
+bring-up image, not a full base set.
+
+Optional `EMBER_CONSOLE_PROGRAM` names a prebuilt static target ELF to add to
+`/bin` using its basename. Optional `EMBER_CONSOLE_OVERLAY` names a directory
+whose regular files and directories are added to the image; it cannot replace
+base paths or contain symbolic links. The image and its optional inputs may
+contain private data and must not be published inadvertently. The builder
+checks the target program's ELF ABI and static linkage and records its SHA256;
+it checks both inputs for changes during the build. The caller supplies any
+application-specific license files in the overlay. Neither this check nor image
+creation proves that an application or its device drivers run on the target.

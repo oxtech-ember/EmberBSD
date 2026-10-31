@@ -3,8 +3,39 @@
 # Origin: EmberBSD (AI-assisted).
 """Shared target-independent component selection for a static console."""
 
+from pathlib import Path
 
-def console(target):
+
+def stage_overlay(overlay, root):
+    """Add regular files without replacing base paths or following symlinks."""
+    import os
+    import shutil
+    import stat
+
+    overlay, root = Path(overlay), Path(root)
+    if overlay.is_symlink() or root.is_symlink() or not overlay.is_dir() or not root.is_dir():
+        raise ValueError('overlay and root must be existing directories')
+    entries = []
+    for directory, dirs, files in os.walk(overlay, followlinks=False):
+        for name in sorted(dirs + files):
+            source = Path(directory) / name
+            dest = root / source.relative_to(overlay)
+            if source.is_symlink() or not (source.is_dir() or source.is_file()):
+                raise ValueError('overlay must contain only regular files and directories')
+            if dest.is_symlink() or (dest.exists() and not (source.is_dir() and dest.is_dir())):
+                raise ValueError('overlay conflicts with a base path')
+            entries.append((source, dest, dest.exists()))
+    for source, dest, existed in entries:
+        if source.is_dir():
+            dest.mkdir(exist_ok=True)
+        else:
+            shutil.copy2(source, dest)
+    for source, dest, existed in reversed(entries):
+        if source.is_dir() and not existed:
+            dest.chmod(stat.S_IMODE(source.stat().st_mode))
+
+
+def console(target, compact=False):
     targets = {
         'aarch64': ('evbarm', 'aarch64', 'aarch64--netbsd', 'ELF64', 'AArch64', ()),
         'riscv32': ('riscv', 'riscv32', 'riscv32--netbsd', 'ELF32', 'RISC-V', ('MKSOFTFLOAT=yes',)),
@@ -12,10 +43,16 @@ def console(target):
     if target not in targets:
         raise ValueError('unsupported static console target')
     machine, arch, triplet, elf_class, elf_machine, flags = targets[target]
+    libraries = ('lib/libterminfo', 'lib/libedit', 'lib/libutil')
+    programs = ('bin/sh', 'sbin/init')
+    if compact:
+        libraries += ('lib/libm', 'lib/libprop', 'lib/libkvm')
+        programs += ('bin/hostname', 'sbin/sysctl', 'sbin/dmesg',
+                     'sbin/ifconfig', 'bin/cat', 'bin/ls', 'bin/chmod',
+                     'bin/cp', 'bin/mkdir', 'bin/sleep')
     return dict(machine=machine, arch=arch, triplet=triplet, elf_class=elf_class,
                 elf_machine=elf_machine, flags=flags, headers=('lib/libcurses',),
-                libraries=('lib/libterminfo', 'lib/libedit', 'lib/libutil'),
-                programs=('bin/sh', 'sbin/init'))
+                libraries=libraries, programs=programs, compact=compact)
 
 
 def check_foundation(record, target, runtime):
@@ -43,10 +80,17 @@ def check_compiler_family(family):
         raise ValueError('static console supports only the LLVM C foundation (clang)')
 
 
-def check_os_tools(tools, native, search_path, validate):
-    for name in ('nbmkdep', 'nbmtree', 'nbmakefs'):
+def check_os_tools(tools, native, search_path, validate, compact=False):
+    names = ('nbmkdep', 'nbmtree', 'nbmakefs')
+    if compact:
+        names += ('nbcrunchgen',)
+    for name in names:
         validate(str(tools), str(tools / 'bin' / name), dict(native.host),
                  search_path=search_path)
+    if compact:
+        for name in ('llvm-nm', 'llvm-objcopy'):
+            validate(native.bundle_root, str(Path(native.bundle_root) / 'bin' / name),
+                     dict(native.host), search_path=search_path)
 
 
 def check_compiler_identity(actual, recorded):
@@ -102,6 +146,7 @@ def source_worktree_state(git, source):
 def run_console(arguments):
     """Extend a verified C foundation with the shared native console targets."""
     import hashlib
+    import json
     import os
     import re
     import shutil
@@ -124,7 +169,7 @@ def run_console(arguments):
         raise SystemExit('missing required inputs: ' + ', '.join(missing))
     source, output, tools, compiler = (Path(value).absolute() for value in arguments)
     target = os.environ['EMBER_CONSOLE_TARGET']
-    settings = console(target)
+    settings = console(target, os.environ.get('EMBER_USERLAND_PROFILE') == 'console-tools')
     sdk = Path(os.environ['EMBERBSD_SDK_SOURCE']).resolve(strict=True)
     sys.path.insert(0, str(sdk / 'src'))
     from emberbsd_sdk import elf, host_prefix, inventory, jsonio, libedit, llvm_runtime, native_os, paths, process, sourceprep, target_toolchain
@@ -166,10 +211,33 @@ def run_console(arguments):
             required_components=('builtins', 'libunwind-static'), base=foundation)
         check_foundation(receipt, target, record)
         env = native_os.native_os_environment(native, output / 'routing')
-        check_os_tools(tools, native, env['PATH'], host_prefix.validate_host_executable)
+        check_os_tools(tools, native, env['PATH'], host_prefix.validate_host_executable,
+                       compact=settings['compact'])
         identity = target_toolchain.clang_compiler(str(compiler), settings['triplet'],
                                                     host=dict(native.host), env=env)
         check_compiler_identity(identity, receipt['signature']['compiler'])
+        overlay = os.environ.get('EMBER_CONSOLE_OVERLAY', '') if settings['compact'] else ''
+        extra = os.environ.get('EMBER_CONSOLE_PROGRAM', '') if settings['compact'] else ''
+        overlay_state = None
+        extra_digest = None
+        if overlay:
+            overlay = paths.canonical_existing(overlay)
+            paths.reject_overlap(str(output), overlay)
+            if not Path(overlay).is_dir() or not re.fullmatch(r'/[A-Za-z0-9_./-]+', overlay):
+                raise SDKError('console overlay must be an absolute plain-path directory')
+            overlay_state = inventory.snapshot_tree(overlay)
+        if extra:
+            extra = paths.canonical_existing(extra)
+            paths.reject_overlap(str(output), extra)
+            if not Path(extra).is_file() or not re.fullmatch(r'/[A-Za-z0-9_./-]+', extra):
+                raise SDKError('console program must be an absolute plain-path file')
+            if elf.read_elf_header(extra, receipt['signature']['target']['elf'], 2,
+                                   riscv32_soft_float=target == 'riscv32') is None:
+                raise SDKError('console program has incompatible target ABI')
+            segments = process.capture([str(compiler / 'bin/llvm-readelf'), '-l', extra], env=env).stdout.decode()
+            if re.search(r'^\s*(?:INTERP|DYNAMIC)\s', segments, re.M):
+                raise SDKError('console program must be statically linked')
+            extra_digest = hashlib.sha256(Path(extra).read_bytes()).hexdigest()
         libedit.validate_source(os.environ['EMBER_LIBEDIT_SOURCE'],
                                 ports=os.environ['EMBER_PORTS_SOURCE'], git=git)
         sourceprep.read_prepared_tree_receipt(os.environ['EMBER_BYACC_SOURCE'], package='devel/byacc')
@@ -205,12 +273,13 @@ def run_console(arguments):
                    selected['runtime-prefix'], selected['llvm-resource'], selected['llvm-unwind'],
                    identity['resource_dir'], jobs, timestamp, revision,
                    ' '.join(settings['headers']), ' '.join(settings['libraries']), ' '.join(settings['programs']),
-                   native.tool('python')]
+                   native.tool('python'), 'console-tools' if settings['compact'] else 'console', overlay, extra,
+                   native.tool('awk')]
         native_os.run_native_os(native, source=str(source), routing=str(output / 'routing'), cwd=str(source),
                                 arguments=command, shell=True, log=str(output / 'logs/orchestrator.log'))
         readelf = str(compiler / 'bin/llvm-readelf')
-        for name in settings['programs']:
-            binary = output / 'dest' / name
+        for name in (('bin/console-tools',) if settings['compact'] else settings['programs']):
+            binary = output / ('root' if settings['compact'] else 'dest') / name
             header = elf.read_elf_header(binary, receipt['signature']['target']['elf'], 2,
                                          riscv32_soft_float=target == 'riscv32')
             if header is None or header['class'] != (32 if target == 'riscv32' else 64):
@@ -220,6 +289,10 @@ def run_console(arguments):
                 raise SDKError('console executable is not static: ' + name)
         if git_output('rev-parse', 'HEAD') != revision or source_worktree_state(git, source) != worktree:
             raise SDKError('OS source changed during build')
+        if overlay and inventory.snapshot_tree(overlay) != overlay_state:
+            raise SDKError('console overlay changed during build')
+        if extra and hashlib.sha256(Path(extra).read_bytes()).hexdigest() != extra_digest:
+            raise SDKError('console program changed during build')
         if inventory.snapshot_tree(foundation, exclude=('.prebuild-sdk-build.json',
                 '.prebuild-sdk-build-incomplete', '.prebuild-sdk-build.log')) != receipt['outputs']:
             raise SDKError('C foundation changed during build')
@@ -228,7 +301,18 @@ def run_console(arguments):
         (output / 'ROOT-SHA256.txt').write_text(digest + '  root.fs\n')
         (output / 'BUILD-INPUTS.txt').write_text('source=' + revision + '\ntarget=' + target +
             '\nsource-state=' + worktree['state'] + '\nsource-worktree-sha256=' + worktree['sha256'] +
-            '\nprofile=static-console-bring-up\nfoundation=' + original + '\n')
+            '\nprofile=static-' + ('console-tools' if settings['compact'] else 'console') +
+            '-bring-up\nfoundation=' + original + '\n' +
+            ('overlay-sha256=' + hashlib.sha256(json.dumps(overlay_state, sort_keys=True).encode()).hexdigest() + '\n'
+             if overlay_state is not None else '') +
+            ('program-sha256=' + extra_digest + '\n' if extra_digest else ''))
         print('Built static bring-up console and 4 MiB FFS image; target execution not checked.')
     except (SDKError, OSError, ValueError, KeyError, TypeError, subprocess.CalledProcessError) as exc:
         raise SystemExit('static-console: ' + str(exc)) from exc
+
+
+if __name__ == '__main__':
+    import sys
+    if len(sys.argv) != 4 or sys.argv[1] != 'stage-overlay':
+        raise SystemExit('usage: static-profile.py stage-overlay DIRECTORY ROOT')
+    stage_overlay(sys.argv[2], sys.argv[3])

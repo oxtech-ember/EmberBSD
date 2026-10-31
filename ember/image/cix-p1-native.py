@@ -11,9 +11,9 @@ import sys
 
 def main():
     selected_profile = os.environ.get('EMBER_USERLAND_PROFILE') or 'cix'
-    if selected_profile not in ('cix', 'console'):
+    if selected_profile not in ('cix', 'console', 'console-tools'):
         raise SystemExit('unsupported userland profile: ' + selected_profile)
-    if selected_profile == 'console':
+    if selected_profile in ('console', 'console-tools'):
         import importlib.util
         path = Path(__file__).with_name('static-profile.py')
         spec = importlib.util.spec_from_file_location('static_profile', path)

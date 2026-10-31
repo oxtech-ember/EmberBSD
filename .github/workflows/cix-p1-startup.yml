@@ -87,6 +87,7 @@ jobs:
         run: |
           export PATH="$EMBER_TEST_NATIVE_PREFIX/bin:$EMBER_TEST_NATIVE_PREFIX/gnu/bin"
           export TEST_SH="$EMBER_TEST_NATIVE_PREFIX/bin/bash"
+          export TEST_AWK="$EMBER_TEST_NATIVE_PREFIX/bin/nawk"
           "$EMBER_TEST_NATIVE_PREFIX/bin/python3.15" -B ember/image/test-cix-p1-native.py
           "$EMBER_TEST_NATIVE_PREFIX/bin/python3.15" -B ember/image/test-static-console.py
           "$EMBER_TEST_NATIVE_PREFIX/bin/python3.15" -B ember/image/test-cix-p1-i18n.py

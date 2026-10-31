@@ -31,7 +31,7 @@ if [ "${1:-}" = --console-selected ]; then
     shift 6
     runtime_prefix=$1 resource=$2 unwinder=$3 compiler_resource=$4 jobs=$5 timestamp=$6 revision=$7
     shift 7
-    headers=$1 libraries=$2 programs=$3 python=$4
+    headers=$1 libraries=$2 programs=$3 python=$4 profile=${5:-console} overlay=${6:-} extra=${7:-} selected_awk=${8:-$host_prefix/bin/nawk}
     wrapper=$out/nbmake-$machine
     CPPFLAGS="-nostdinc -isystem $out/dest/usr/include -isystem $compiler_resource/include"
     export CPPFLAGS
@@ -59,18 +59,66 @@ if [ "${1:-}" = --console-selected ]; then
         run "$(printf '%s' "$part" | tr / _)-includes" "$wrapper" -C "$src/$part" includes
         component "$part"
     done
-    for part in $programs; do component "$part" SMALLPROG=1; done
+    if [ "$profile" = console-tools ]; then
+        mkdir -p "$out/crunch"
+        {
+            printf 'srcdirs bin sbin\nprogs'
+            for part in $programs; do printf ' %s' "${part##*/}"; done
+            printf '\nlibs -ledit -lterminfo -lutil -lkvm -lprop -lm\n'
+        } > "$out/crunch/console-tools.conf"
+        (
+            cd "$out/crunch"
+            export MAKE="$HOST_SH $wrapper"
+            run crunchgen "$tools/bin/nbcrunchgen" -f -D "$src" \
+                -L "$out/dest/usr/lib" -V SMALLPROG=1 -V MKRUMP=no console-tools.conf
+            run crunch-build "$wrapper" -j"$jobs" -f console-tools.mk \
+                "MAKE=$HOST_SH $wrapper" "NM=$host_prefix/bin/llvm-nm" \
+                "OBJCOPY=$host_prefix/bin/llvm-objcopy" "AWK=$selected_awk" \
+                console-tools.crunched
+        )
+    else
+        for part in $programs; do component "$part" SMALLPROG=1; done
+    fi
     run etc-obj "$wrapper" -C "$src/etc" obj
     run makedev "$wrapper" -C "$src/etc" MAKEDEV
     mkdir -p "$out/root/bin" "$out/root/sbin" "$out/root/dev" "$out/root/etc" "$out/root/tmp"
-    cp "$out/dest/bin/sh" "$out/root/bin/sh"
-    cp "$out/dest/sbin/init" "$out/root/sbin/init"
+    if [ "$profile" = console-tools ]; then
+        cp "$out/crunch/console-tools" "$out/root/bin/console-tools"
+        for part in $programs; do
+            case "$part" in
+                bin/*) ln -s console-tools "$out/root/$part" ;;
+                sbin/*) ln -s ../bin/console-tools "$out/root/$part" ;;
+                *) echo 'Invalid console program path.' >&2; exit 1 ;;
+            esac
+        done
+    else
+        cp "$out/dest/bin/sh" "$out/root/bin/sh"
+        cp "$out/dest/sbin/init" "$out/root/sbin/init"
+    fi
+    if [ -n "$extra" ]; then
+        extra_name=${extra##*/}
+        [ ! -e "$out/root/bin/$extra_name" ] && [ ! -L "$out/root/bin/$extra_name" ] || {
+            echo 'Console program conflicts with a base path.' >&2; exit 1
+        }
+        cp "$extra" "$out/root/bin/$extra_name"
+        chmod 0555 "$out/root/bin/$extra_name"
+    fi
+    if [ -n "$overlay" ]; then
+        run overlay "$python" -B "$here/static-profile.py" stage-overlay "$overlay" "$out/root"
+    fi
     chmod 1777 "$out/root/tmp"
-    MACHINE="$machine" MACHINE_ARCH="$arch" "$HOST_SH" "$out/obj/etc/MAKEDEV" -s std > "$out/devices-all.spec"
+    if [ "$profile" = console-tools ]; then
+        MACHINE="$machine" MACHINE_ARCH="$arch" "$HOST_SH" "$out/obj/etc/MAKEDEV" -s std wscons iic0 > "$out/devices-all.spec"
+        devices='console null zero tty klog ttyE0 wsmouse0 iic0'
+    else
+        MACHINE="$machine" MACHINE_ARCH="$arch" "$HOST_SH" "$out/obj/etc/MAKEDEV" -s std > "$out/devices-all.spec"
+        devices='console null zero tty'
+    fi
     "$tools/bin/nbmtree" -c -p "$out/root" -k type,mode,link | \
         sed -E 's/(\/set[[:space:]].*)/\1 uid=0 gid=0/' > "$out/root.spec"
-    awk '/^\.\/(console|null|zero|tty) type=/ {sub(/^\./,"./dev"); print}' "$out/devices-all.spec" >> "$out/root.spec"
-    for node in console null zero tty; do
+    for node in $devices; do
+        awk -v n="$node" '$1 == "./" n && $2 == "type=char" {sub(/^\./,"./dev"); print}' \
+            "$out/devices-all.spec" >> "$out/root.spec"
         [ "$(grep -c "^\./dev/$node type=char " "$out/root.spec")" -eq 1 ] || {
             echo "Missing or duplicate device: $node" >&2; exit 1
         }
