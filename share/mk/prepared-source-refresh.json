@@ -56,5 +56,8 @@
     "kernels/*/splash_image.o",
     "kernels/*/vers.o",
     "kernels/*/lib/kern/libkern.o"
+  ],
+  "header_independent_archive_patterns": [
+    "tools/file/build/src/.libs/libmagic.a"
   ]
 }
