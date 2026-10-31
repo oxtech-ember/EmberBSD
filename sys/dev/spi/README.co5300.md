@@ -38,3 +38,11 @@ refresh rate remain to be checked on actual hardware.
 
 The protocol opcodes follow Espressif's Apache-2.0
 [CO5300 SPI implementation](https://github.com/espressif/esp-iot-solution/blob/8eee17c20da66048faa20c683ffeb80bfa85d723/components/display/lcd/esp_lcd_co5300/esp_lcd_co5300_spi.c).
+
+`sysctl -n hw.cofb0.status` reports a consistent snapshot of refresh activity.
+`rows_changed` counts dirty-row attempts, including retries; `rows_sent` counts
+successful sends and `errors` counts failed attempts. `last_error` is the last
+nonzero transfer error and remains set after recovery. The 32-bit counters wrap.
+One attempt may be in flight between the changed and sent/error increments, so
+the snapshot does not always satisfy `rows_changed = rows_sent + errors`.
+Successful transfers do not prove that the panel displayed the pixels.

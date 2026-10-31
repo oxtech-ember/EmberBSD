@@ -45,7 +45,16 @@ typedef uint64_t paddr_t;
 struct co5300_softc { void *sc_spi, *sc_bst, *sc_dev; unsigned int sc_width, sc_height;
     uintptr_t sc_fb; size_t sc_rowbytes, sc_alloc;
     uint8_t *sc_shadow, *sc_snapshot, *sc_wire, *sc_dirty;
-    int sc_lock, sc_cv; bool sc_ready, sc_stop; };
+    int sc_lock, sc_cv; uint32_t sc_rows_changed, sc_rows_sent, sc_row_errors;
+    int sc_last_error; bool sc_ready, sc_stop; };
+struct sysctlnode { void *sysctl_data; size_t sysctl_size; };
+#define SYSCTLFN_ARGS struct sysctlnode *rnode
+#define SYSCTLFN_CALL(node) node
+static char status_text[128];
+static int sysctl_lookup(struct sysctlnode *n) {
+    assert(n->sysctl_size <= sizeof(status_text));
+    memcpy(status_text, n->sysctl_data, n->sysctl_size); return 0;
+}
 struct call { uint8_t op,cmd; size_t len; unsigned int width; uint8_t data[8]; };
 static struct call calls[8]; static int ncalls, fail_call, delays, last_ms;
 static uint16_t *mutate_fb;
@@ -142,6 +151,13 @@ int main(void) {
     assert(calls[2].data[0]==0xab && calls[2].data[1]==0xcd && fb[0]==0xffff);
     ncalls=0; assert(co5300_row(&sc,0)==0 && ncalls==3);
     assert(calls[2].data[0]==0xff && calls[2].data[1]==0xff);
+    assert(sc.sc_rows_changed==5 && sc.sc_rows_sent==3 && sc.sc_row_errors==2 && sc.sc_last_error==EIO);
+    struct sysctlnode status_node={ .sysctl_data=&sc };
+    assert(co5300_sysctl_status(&status_node)==0);
+    char expected_status[128];
+    snprintf(expected_status,sizeof(expected_status),
+        "rows_changed=5 rows_sent=3 errors=2 last_error=%d",EIO);
+    assert(!strcmp(status_text,expected_status));
     assert(co5300_mmap_valid(0,8192) && co5300_mmap_valid(4096,8192));
     assert(!co5300_mmap_valid(-1,8192) && !co5300_mmap_valid(1,8192));
     assert(!co5300_mmap_valid(8192,8192));
@@ -166,7 +182,7 @@ int main(void) {
 a.work.mkdir(parents=True, exist_ok=True)
 cfile = a.work / 'co5300-test.c'
 exe = a.work / 'co5300-test'
-names = ('co5300_send', 'co5300_ticks', 'co5300_init_valid', 'co5300_init_sequence', 'co5300_to_wire', 'co5300_row', 'co5300_mmap_valid', 'co5300_mmap', 'co5300_worker')
+names = ('co5300_send', 'co5300_ticks', 'co5300_init_valid', 'co5300_init_sequence', 'co5300_to_wire', 'co5300_row', 'co5300_sysctl_status', 'co5300_mmap_valid', 'co5300_mmap', 'co5300_worker')
 cfile.write_text(prefix + ''.join(extract(n) for n in names) + suffix)
 subprocess.run([str(cc), '-fuse-ld=lld', '-std=c11', '-Wall', '-Wextra', '-Werror',
                 '-fsanitize=address,undefined', '-fno-sanitize-recover=all',

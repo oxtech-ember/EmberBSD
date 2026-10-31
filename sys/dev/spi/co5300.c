@@ -24,6 +24,7 @@ __KERNEL_RCSID(0, "$EmberBSD$");
 #include <sys/proc.h>
 #include <sys/intr.h>
 #include <sys/bus.h>
+#include <sys/sysctl.h>
 #include <uvm/uvm_extern.h>
 #include <dev/fdt/fdtvar.h>
 #include <dev/spi/spivar.h>
@@ -48,6 +49,9 @@ struct co5300_softc {
 	uint8_t *sc_shadow, *sc_snapshot, *sc_wire, *sc_dirty;
 	kmutex_t sc_lock;
 	kcondvar_t sc_cv;
+	struct sysctllog *sc_sysctllog;
+	uint32_t sc_rows_changed, sc_rows_sent, sc_row_errors;
+	int sc_last_error;
 	lwp_t *sc_thread;
 	bool sc_ready, sc_stop;
 };
@@ -174,6 +178,9 @@ co5300_row(struct co5300_softc *sc, unsigned int y)
 	if (!sc->sc_dirty[y] && memcmp(shadow, sc->sc_snapshot,
 	    sc->sc_rowbytes) == 0)
 		return 0;
+	mutex_enter(&sc->sc_lock);
+	sc->sc_rows_changed++;
+	mutex_exit(&sc->sc_lock);
 	co5300_to_wire(sc->sc_snapshot, sc->sc_wire, sc->sc_width);
 	error = co5300_send(sc, 0x02, 0x2a, xwin, sizeof(xwin), 1);
 	if (error == 0)
@@ -185,7 +192,60 @@ co5300_row(struct co5300_softc *sc, unsigned int y)
 		memcpy(shadow, sc->sc_snapshot, sc->sc_rowbytes);
 		sc->sc_dirty[y] = 0;
 	}
+	mutex_enter(&sc->sc_lock);
+	if (error == 0)
+		sc->sc_rows_sent++;
+	else {
+		sc->sc_row_errors++;
+		sc->sc_last_error = error;
+	}
+	mutex_exit(&sc->sc_lock);
 	return error;
+}
+
+static int
+co5300_sysctl_status(SYSCTLFN_ARGS)
+{
+	struct co5300_softc *sc = rnode->sysctl_data;
+	struct sysctlnode node = *rnode;
+	char status[128];
+	uint32_t changed, sent, errors;
+	int last_error;
+
+	mutex_enter(&sc->sc_lock);
+	changed = sc->sc_rows_changed;
+	sent = sc->sc_rows_sent;
+	errors = sc->sc_row_errors;
+	last_error = sc->sc_last_error;
+	mutex_exit(&sc->sc_lock);
+	(void)snprintf(status, sizeof(status),
+	    "rows_changed=%u rows_sent=%u errors=%u last_error=%d",
+	    changed, sent, errors, last_error);
+	node.sysctl_data = status;
+	node.sysctl_size = strlen(status) + 1;
+	return sysctl_lookup(SYSCTLFN_CALL(&node));
+}
+
+static void
+co5300_sysctl_init(struct co5300_softc *sc)
+{
+	const struct sysctlnode *node;
+	int error;
+
+	error = sysctl_createv(&sc->sc_sysctllog, 0, NULL, &node,
+	    CTLFLAG_READONLY, CTLTYPE_NODE, device_xname(sc->sc_dev),
+	    SYSCTL_DESCR("CO5300 display"), NULL, 0, NULL, 0,
+	    CTL_HW, CTL_CREATE, CTL_EOL);
+	if (error == 0)
+		error = sysctl_createv(&sc->sc_sysctllog, 0, NULL, NULL,
+		    CTLFLAG_READONLY, CTLTYPE_STRING, "status",
+		    SYSCTL_DESCR("Framebuffer refresh counters"),
+		    co5300_sysctl_status, 0, (char *)sc, 0,
+		    CTL_HW, node->sysctl_num, CTL_CREATE, CTL_EOL);
+	if (error != 0) {
+		sysctl_teardown(&sc->sc_sysctllog);
+		aprint_error_dev(sc->sc_dev, "cannot publish status: %d\n", error);
+	}
 }
 
 static bool
@@ -365,6 +425,7 @@ co5300_deferred(device_t self)
 		aprint_error_dev(self, "genfb attachment failed: %d\n", error);
 		return;
 	}
+	co5300_sysctl_init(sc);
 	mutex_enter(&sc->sc_lock);
 	sc->sc_ready = true;
 	cv_signal(&sc->sc_cv);
