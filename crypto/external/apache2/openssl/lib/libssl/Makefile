@@ -71,6 +71,7 @@ INCSDIR=/usr/include/openssl
 SHLIB_MAJOR= 17
 SHLIB_MINOR= 0
 VERSION_MAP= ${EMBER_OPENSSL_GENERATED}/libssl.ld
+LIB_EXPSYM= ${EMBER_OPENSSL_GENERATED}/ssl.expsym
 .else
 VERSION_MAP=	ssl.map
 .endif

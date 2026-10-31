@@ -89,7 +89,7 @@ def main():
         with open(getattr(args, name), 'rb') as stream:
             for chunk in iter(lambda: stream.read(1024 * 1024), b''):
                 digest.update(chunk)
-    for path in (TOOLS / 'prepare-generated.py', TOOLS / 'generated-sources.pl', TOOLS / 'config-sources.pl'):
+    for path in (TOOLS / 'prepare-generated.py', TOOLS / 'generated-sources.pl', TOOLS / 'config-sources.pl', TOOLS / 'map-exports.py'):
         digest.update(path.read_bytes())
     key = {'source': str(source), 'inputs': digest.hexdigest(), 'arch': args.arch, 'cpu': args.cpu,
            'cc': args.cc, 'family': args.family, 'triplet': triplet, 'sysroot': args.sysroot, 'perl': args.perl, 'gmake': args.gmake,
@@ -111,7 +111,7 @@ def main():
                         result.update(chunk)
         return result.hexdigest()
     required = ('crypto.mk', 'crypto-shared.mk', 'default.mk', 'common.mk', 'ssl.mk',
-                'ssl-shared.mk', 'apps.mk', 'legacy.mk', 'legacy-module.mk', 'test.mk', 'cli.mk', 'libcrypto.ld', 'libssl.ld', 'providers/legacy.ld', 'include/openssl/configuration.h')
+                'ssl-shared.mk', 'apps.mk', 'legacy.mk', 'legacy-module.mk', 'test.mk', 'cli.mk', 'libcrypto.ld', 'libssl.ld', 'crypto.expsym', 'ssl.expsym', 'providers/legacy.ld', 'include/openssl/configuration.h')
     preserved = {}
     if output.exists():
         try:
@@ -154,6 +154,8 @@ def main():
     if listed:
         run([args.gmake, 'SHELL=' + args.shell, '-j' + str(args.jobs), *listed])
     run([args.gmake, 'SHELL=' + args.shell, 'libcrypto.ld', 'libssl.ld', 'providers/legacy.ld'])
+    for library in ('crypto', 'ssl'):
+        run([sys.executable, '-B', str(TOOLS / 'map-exports.py'), 'lib' + library + '.ld', library + '.expsym'])
     for group in ('crypto', 'crypto-shared', 'default', 'common', 'ssl', 'ssl-shared', 'apps', 'legacy', 'legacy-module', 'test', 'cli'):
         with (output / (group + '.mk')).open('w') as stream:
             run([args.perl, '-I.', str(TOOLS / 'config-sources.pl'), group], stdout=stream)
