@@ -38,6 +38,15 @@
 		};
 	};
 
+	/* Shared expansion-slot bus; does not claim slot-control pins. */
+	i2c1: i2c-slots {
+		compatible = "i2c-gpio";
+		#address-cells = <1>;
+		#size-cells = <0>;
+		sda-gpios = <&gpio 0 GPIO_OPEN_DRAIN>;
+		scl-gpios = <&gpio 1 GPIO_OPEN_DRAIN>;
+	};
+
 	memory@50000000 {
 		device_type = "memory";
 		reg = <0x50000000 0x01000000>;
