@@ -12,6 +12,7 @@ import re
 import select
 import shlex
 import signal
+import subprocess
 import tempfile
 import time
 
@@ -20,6 +21,13 @@ if not shell or not os.path.isabs(shell):
     raise SystemExit('Set TEST_SH to the selected native shell')
 wrapper = Path(__file__).with_name('cix-p1-console').read_text()
 checks = 0
+probe_env = dict(os.environ, ENV='', BASH_ENV='')
+probe_env.pop('BASH_VERSION', None)
+shell_probe = subprocess.run(
+    [shell, '-c', 'printf "%s" "${BASH_VERSION-}"'],
+    env=probe_env,
+    check=True, capture_output=True, text=True)
+bash_startup_options = ' --noprofile --norc' if shell_probe.stdout else ''
 
 
 def check(condition, message):
@@ -29,6 +37,12 @@ def check(condition, message):
 
 
 with tempfile.TemporaryDirectory(prefix='cix-console-') as tmp:
+    startup_marker = Path(tmp) / 'startup-ran'
+    for startup in ('.bashrc', '.bash_profile', '.profile', 'bash-env'):
+        (Path(tmp) / startup).write_text(
+            "PS1='unexpected-host-prompt$ '\n"
+            'printf startup > ' + shlex.quote(str(startup_marker)) + '\n')
+    os.environ['BASH_ENV'] = os.environ['ENV'] = str(Path(tmp) / 'bash-env')
     for boundary in ('HOME=/root', 'cd /root', 'PATH=/sbin:/bin:/usr/sbin:/usr/bin', '/bin/sh -i'):
         if wrapper.count(boundary) != 1:
             raise SystemExit('console fixture cannot isolate boundary: ' + boundary)
@@ -36,14 +50,15 @@ with tempfile.TemporaryDirectory(prefix='cix-console-') as tmp:
     candidate = candidate.replace('cd /root', 'cd ' + shlex.quote(tmp), 1)
     candidate = candidate.replace('PATH=/sbin:/bin:/usr/sbin:/usr/bin',
                                   'PATH=' + shlex.quote(os.environ['PATH']), 1)
-    candidate = candidate.replace('/bin/sh -i', shlex.quote(shell) + ' -i')
+    interactive_shell = shlex.quote(shell) + bash_startup_options + ' -i'
+    candidate = candidate.replace('/bin/sh -i', interactive_shell)
     candidate_path = Path(tmp) / 'console'
     candidate_path.write_text(candidate)
 
     def run(path, scenario):
         pid, fd = pty.fork()
         if pid == 0:
-            env = dict(os.environ, ENV='', TERM='dumb')
+            env = dict(os.environ, ENV='', BASH_ENV='', TERM='dumb')
             os.execve(shell, [shell, str(path)], env)
         child = command = None
         output = bytearray()
@@ -152,10 +167,11 @@ with tempfile.TemporaryDirectory(prefix='cix-console-') as tmp:
 
     run(candidate_path, 'term')
     run(candidate_path, 'normal')
-    baseline = re.sub(r'^(' + re.escape(shlex.quote(shell)) + r' -i)\n.*\Z', r'exec \1\n', candidate,
+    baseline = re.sub(r'^(' + re.escape(interactive_shell) + r')\n.*\Z', r'exec \1\n', candidate,
                       flags=re.MULTILINE | re.DOTALL)
     baseline_path = Path(tmp) / 'console-exec'
     baseline_path.write_text(baseline)
     run(baseline_path, 'baseline')
+    check(not startup_marker.exists(), 'host shell startup files were not executed')
 
 print(f'CIX console PTY lifecycle: {checks} checks, 0 failures')
