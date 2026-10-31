@@ -8,8 +8,8 @@ INCS=	lber.h lber_types.h \
 	ldap.h ldap_cdefs.h \
 	ldap_schema.h ldap_utf8.h openldap.h
 .if defined(EMBER_OPENLDAP_SOURCE)
-INCS+=	${.OBJDIR}/ldap_features.h
-INCSNAME_${.OBJDIR:C,/,_,g}_ldap_features.h= ldap_features.h
+INCS+=	${LDAP_GENERATED_DIR}/ldap_features.h
+INCSNAME_${LDAP_GENERATED_DIR:C,/,_,g}_ldap_features.h= ldap_features.h
 .else
 INCS+=	ldap_features.h
 .endif

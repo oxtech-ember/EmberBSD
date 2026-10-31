@@ -24,14 +24,20 @@ LDAP_API_INC=	${LDAP_VERSION_INFO:MOL_API_INC=*:S/OL_API_INC=//}
 .error Cannot determine version of the prepared common OpenLDAP source
 .endif
 .endif
-CPPFLAGS+=	-I${.OBJDIR}
-DPSRCS+=	libldap-config.h liblber-config.h ${.OBJDIR}/ldap_features.h
-CLEANFILES+=	libldap-config.h liblber-config.h ldap_features.h
-libldap-config.h: ${LDAP_DISTDIR}/include/libldap-config.hin
+LDAP_GENERATED_DIR= ${.OBJDIR}/openldap-generated
+CPPFLAGS+=	-I${LDAP_GENERATED_DIR}
+DPSRCS+=	${LDAP_GENERATED_DIR}/libldap-config.h ${LDAP_GENERATED_DIR}/liblber-config.h \
+		${LDAP_GENERATED_DIR}/ldap_features.h
+CLEANFILES+=	${LDAP_GENERATED_DIR}/libldap-config.h ${LDAP_GENERATED_DIR}/liblber-config.h \
+		${LDAP_GENERATED_DIR}/ldap_features.h
+${LDAP_GENERATED_DIR}/libldap-config.h: ${LDAP_DISTDIR}/include/libldap-config.hin
+	mkdir -p ${LDAP_GENERATED_DIR}
 	cp ${.ALLSRC} ${.TARGET}
-liblber-config.h: ${LDAP_DISTDIR}/include/liblber-config.hin
+${LDAP_GENERATED_DIR}/liblber-config.h: ${LDAP_DISTDIR}/include/liblber-config.hin
+	mkdir -p ${LDAP_GENERATED_DIR}
 	cp ${.ALLSRC} ${.TARGET}
-${.OBJDIR}/ldap_features.h: ${LDAP_DISTDIR}/include/ldap_features.hin ${LDAP_DISTDIR}/build/version.var
+${LDAP_GENERATED_DIR}/ldap_features.h: ${LDAP_DISTDIR}/include/ldap_features.hin ${LDAP_DISTDIR}/build/version.var
+	mkdir -p ${LDAP_GENERATED_DIR}
 	sed -e 's/^#undef LDAP_VENDOR_VERSION$$/#define LDAP_VENDOR_VERSION ${LDAP_API_INC}/' \
 	    -e 's/^#undef LDAP_VENDOR_VERSION_MAJOR$$/#define LDAP_VENDOR_VERSION_MAJOR ${LDAP_MAJOR}/' \
 	    -e 's/^#undef LDAP_VENDOR_VERSION_MINOR$$/#define LDAP_VENDOR_VERSION_MINOR ${LDAP_MINOR}/' \
