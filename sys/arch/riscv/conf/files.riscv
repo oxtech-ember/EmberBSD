@@ -10,6 +10,7 @@ defparam opt_console.h		CONSADDR
 # RISC-V specific debug options
 defflag  opt_riscv_debug.h	VERBOSE_INIT_RISCV
 defflag	opt_riscv_clic.h	RISCV_CLIC
+defflag	opt_riscv_fpu.h		RISCV_FPU_SINGLE
 
 defflag	opt_ddb.h		DDB_TRACE
 

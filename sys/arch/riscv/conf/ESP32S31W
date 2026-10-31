@@ -4,4 +4,6 @@
 include "arch/riscv/conf/ESP32S31"
 
 options 	ESPWIFI
+options 	FPE
+options 	RISCV_FPU_SINGLE
 makeoptions 	EXTRA_OBJ="$S/arch/riscv/espressif/wifi/espwifi.o"

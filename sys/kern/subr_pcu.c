@@ -126,6 +126,12 @@ pcu_switchpoint(lwp_t *l)
 		pcu->pcu_state_release(l);
 	}
 	splx(s);
+#ifdef __HAVE_PCU_KTHREAD_EAGER
+	/* Some architectures cannot lazily restore a kernel thread's FP state. */
+	if ((l->l_flag & (LW_SYSTEM | LW_SYSTEM_FPU)) ==
+	    (LW_SYSTEM | LW_SYSTEM_FPU))
+		pcu_load(pcu_ops_md_defs[PCU_FPU]);
+#endif
 }
 
 /*

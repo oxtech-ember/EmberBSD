@@ -33,6 +33,9 @@
 __KERNEL_RCSID(0, "$NetBSD: fpu.c,v 1.3 2023/05/07 12:41:49 skrll Exp $");
 
 #include "opt_multiprocessor.h"
+#include "opt_riscv_fpu.h"
+
+#include "rv32-fpu.h"
 
 #include <sys/param.h>
 #include <sys/mutex.h>
@@ -40,6 +43,7 @@ __KERNEL_RCSID(0, "$NetBSD: fpu.c,v 1.3 2023/05/07 12:41:49 skrll Exp $");
 #include <sys/cpu.h>
 #include <sys/proc.h>
 #include <sys/lwp.h>
+#include <sys/kthread.h>
 #include <sys/pcu.h>
 
 #include <riscv/locore.h>
@@ -48,6 +52,22 @@ __KERNEL_RCSID(0, "$NetBSD: fpu.c,v 1.3 2023/05/07 12:41:49 skrll Exp $");
 static void fpu_state_save(lwp_t *);
 static void fpu_state_load(lwp_t *, u_int);
 static void fpu_state_release(lwp_t *);
+
+static uint32_t
+fpu_csr_read(void)
+{
+	uint32_t value;
+	__asm volatile(".option push\n\t.option arch,+f\n\tfrcsr %0\n\t"
+	    ".option pop" : "=r"(value) :: "memory");
+	return value;
+}
+
+static void
+fpu_csr_write(uint32_t value)
+{
+	__asm volatile(".option push\n\t.option arch,+f\n\tfscsr %0\n\t"
+	    ".option pop" :: "r"(value) : "memory");
+}
 
 const pcu_ops_t pcu_fpu_ops = {
 	.pcu_id = PCU_FPU,
@@ -84,43 +104,18 @@ fpu_state_save(lwp_t *l)
 	fpu_enable();
 
 	// Save FCSR
-	fp->r_fcsr = fcsr_read();
+	fp->r_fcsr = fpu_csr_read();
 
-	// Save FP register values.
-	__asm(	"fsd	f0, (0*%1)(%0)"
-	"\n\t"	"fsd	f1, (1*%1)(%0)"
-	"\n\t"	"fsd	f2, (2*%1)(%0)"
-	"\n\t"	"fsd	f3, (3*%1)(%0)"
-	"\n\t"	"fsd	f4, (4*%1)(%0)"
-	"\n\t"	"fsd	f5, (5*%1)(%0)"
-	"\n\t"	"fsd	f6, (6*%1)(%0)"
-	"\n\t"	"fsd	f7, (7*%1)(%0)"
-	"\n\t"	"fsd	f8, (8*%1)(%0)"
-	"\n\t"	"fsd	f9, (9*%1)(%0)"
-	"\n\t"	"fsd	f10, (10*%1)(%0)"
-	"\n\t"	"fsd	f11, (11*%1)(%0)"
-	"\n\t"	"fsd	f12, (12*%1)(%0)"
-	"\n\t"	"fsd	f13, (13*%1)(%0)"
-	"\n\t"	"fsd	f14, (14*%1)(%0)"
-	"\n\t"	"fsd	f15, (15*%1)(%0)"
-	"\n\t"	"fsd	f16, (16*%1)(%0)"
-	"\n\t"	"fsd	f17, (17*%1)(%0)"
-	"\n\t"	"fsd	f18, (18*%1)(%0)"
-	"\n\t"	"fsd	f19, (19*%1)(%0)"
-	"\n\t"	"fsd	f20, (20*%1)(%0)"
-	"\n\t"	"fsd	f21, (21*%1)(%0)"
-	"\n\t"	"fsd	f22, (22*%1)(%0)"
-	"\n\t"	"fsd	f23, (23*%1)(%0)"
-	"\n\t"	"fsd	f24, (24*%1)(%0)"
-	"\n\t"	"fsd	f25, (25*%1)(%0)"
-	"\n\t"	"fsd	f26, (26*%1)(%0)"
-	"\n\t"	"fsd	f27, (27*%1)(%0)"
-	"\n\t"	"fsd	f28, (28*%1)(%0)"
-	"\n\t"	"fsd	f29, (29*%1)(%0)"
-	"\n\t"	"fsd	f30, (30*%1)(%0)"
-	"\n\t"	"fsd	f31, (31*%1)(%0)"
-	   ::	"r"(fp->r_fpreg),
-		"i"(sizeof(fp->r_fpreg[0])) : "memory");
+	/* The public register slots remain 64 bits on an F-only CPU. */
+#ifdef RISCV_FPU_SINGLE
+	for (u_int i = 0; i < 32; i++)
+		fp->r_fpreg[i].u_u64 = UINT64_C(0xffffffff00000000);
+	__asm volatile(RISCV_FPU32_STORE :: "r"(fp->r_fpreg),
+	    "i"(sizeof(fp->r_fpreg[0])) : "memory");
+#else
+	__asm volatile(RISCV_FPU64_STORE :: "r"(fp->r_fpreg),
+	    "i"(sizeof(fp->r_fpreg[0])) : "memory");
+#endif
 
 	// Disable the FPU
 	fpu_disable();
@@ -141,13 +136,17 @@ fpu_state_load(lwp_t *l, u_int flags)
 		memset(fp, 0, sizeof(*fp));
 	}
 
-	// Enable the FP when this lwp return to userspace.
-	tf->tf_sr &= ~SR_FS;
-	tf->tf_sr |= __SHIFTIN(SR_FS_CLEAN, SR_FS);
+	/* Kernel threads have no user trapframe. */
+	if ((l->l_flag & LW_SYSTEM) == 0) {
+		tf->tf_sr &= ~SR_FS;
+		tf->tf_sr |= __SHIFTIN(SR_FS_CLEAN, SR_FS);
+	}
 
 	// If this is a simple reenable, set the FPU enable flag and return
 	if (flags & PCU_REENABLE) {
 		curcpu()->ci_ev_fpu_reenables.ev_count++;
+		if (l->l_flag & LW_SYSTEM_FPU)
+			fpu_enable();
 		return;
 	}
 
@@ -157,51 +156,61 @@ fpu_state_load(lwp_t *l, u_int flags)
 	// Enabling to load FP state.  Interrupts will remain on.
 	fpu_enable();
 
-	// load FP registers and establish processes' FP context.
-	__asm(	"fld	f0, (0*%1)(%0)"
-	"\n\t"	"fld	f1, (1*%1)(%0)"
-	"\n\t"	"fld	f2, (2*%1)(%0)"
-	"\n\t"	"fld	f3, (3*%1)(%0)"
-	"\n\t"	"fld	f4, (4*%1)(%0)"
-	"\n\t"	"fld	f5, (5*%1)(%0)"
-	"\n\t"	"fld	f6, (6*%1)(%0)"
-	"\n\t"	"fld	f7, (7*%1)(%0)"
-	"\n\t"	"fld	f8, (8*%1)(%0)"
-	"\n\t"	"fld	f9, (9*%1)(%0)"
-	"\n\t"	"fld	f10, (10*%1)(%0)"
-	"\n\t"	"fld	f11, (11*%1)(%0)"
-	"\n\t"	"fld	f12, (12*%1)(%0)"
-	"\n\t"	"fld	f13, (13*%1)(%0)"
-	"\n\t"	"fld	f14, (14*%1)(%0)"
-	"\n\t"	"fld	f15, (15*%1)(%0)"
-	"\n\t"	"fld	f16, (16*%1)(%0)"
-	"\n\t"	"fld	f17, (17*%1)(%0)"
-	"\n\t"	"fld	f18, (18*%1)(%0)"
-	"\n\t"	"fld	f19, (19*%1)(%0)"
-	"\n\t"	"fld	f20, (20*%1)(%0)"
-	"\n\t"	"fld	f21, (21*%1)(%0)"
-	"\n\t"	"fld	f22, (22*%1)(%0)"
-	"\n\t"	"fld	f23, (23*%1)(%0)"
-	"\n\t"	"fld	f24, (24*%1)(%0)"
-	"\n\t"	"fld	f25, (25*%1)(%0)"
-	"\n\t"	"fld	f26, (26*%1)(%0)"
-	"\n\t"	"fld	f27, (27*%1)(%0)"
-	"\n\t"	"fld	f28, (28*%1)(%0)"
-	"\n\t"	"fld	f29, (29*%1)(%0)"
-	"\n\t"	"fld	f30, (30*%1)(%0)"
-	"\n\t"	"fld	f31, (31*%1)(%0)"
-	   ::	"r"(fp->r_fpreg),
-		"i"(sizeof(fp->r_fpreg[0])): "memory");
+	/* Restore the register width selected for this CPU family. */
+#ifdef RISCV_FPU_SINGLE
+	__asm volatile(RISCV_FPU32_LOAD :: "r"(fp->r_fpreg),
+	    "i"(sizeof(fp->r_fpreg[0])) : "memory");
+#else
+	__asm volatile(RISCV_FPU64_LOAD :: "r"(fp->r_fpreg),
+	    "i"(sizeof(fp->r_fpreg[0])) : "memory");
+#endif
 
 	// load FPCSR and disable FPU again
-	fcsr_write(fp->r_fcsr);
+	fpu_csr_write(fp->r_fcsr);
 
-	fpu_disable();
+	if (l->l_flag & LW_SYSTEM_FPU)
+		fpu_enable();
+	else
+		fpu_disable();
 }
 
 void
 fpu_state_release(lwp_t *l)
 {
-	l->l_md.md_utf->tf_sr &= ~SR_FS;
+	if ((l->l_flag & LW_SYSTEM) == 0)
+		l->l_md.md_utf->tf_sr &= ~SR_FS;
 	fpu_disable();
+}
+
+void
+kthread_fpu_enter_md(void)
+{
+	pcu_load(&pcu_fpu_ops);
+}
+
+void
+kthread_fpu_exit_md(void)
+{
+	static const struct fpreg zero;
+	struct cpu_info *ci;
+	int s;
+
+	/* The MI exit has dropped LW_SYSTEM_FPU and may have been preempted. */
+	s = splhigh();
+	ci = curcpu();
+	if (curlwp->l_pcu_cpu[PCU_FPU] == ci &&
+	    ci->ci_pcu_curlwp[PCU_FPU] == curlwp) {
+		fpu_enable();
+#ifdef RISCV_FPU_SINGLE
+		__asm volatile(RISCV_FPU32_LOAD :: "r"(zero.r_fpreg),
+		    "i"(sizeof(zero.r_fpreg[0])) : "memory");
+#else
+		__asm volatile(RISCV_FPU64_LOAD :: "r"(zero.r_fpreg),
+		    "i"(sizeof(zero.r_fpreg[0])) : "memory");
+#endif
+		fpu_csr_write(0);
+		fpu_disable();
+	}
+	splx(s);
+	pcu_discard(&pcu_fpu_ops, curlwp, false);
 }

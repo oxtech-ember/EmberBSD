@@ -137,18 +137,6 @@ ENTRY(espwifi_fp_restore)
 END(espwifi_fp_restore)
 
 /*
- * void espwifi_fp_on(void)
- *
- * Enable floating point for a thread that lives in the radio code.
- */
-ENTRY(espwifi_fp_on)
-	li	t1, SR_FS_MASK
-	csrs	sstatus, t1
-	fscsr	zero
-	ret
-END(espwifi_fp_on)
-
-/*
  * void espwifi_call_on_stack(void (*func)(void *), void *arg, void *top)
  *
  * Call func(arg) on another stack.  The radio code wants more stack than

@@ -118,6 +118,9 @@ typedef __int32_t	__register_t;
 #if defined(_KERNEL) || defined(_KMEMUSER)
 #define	PCU_FPU		0
 #define	PCU_UNIT_COUNT	1
+#ifdef FPE
+#define	__HAVE_PCU_KTHREAD_EAGER
+#endif
 #endif
 
 #endif	/* _RISCV_TYPES_H_ */

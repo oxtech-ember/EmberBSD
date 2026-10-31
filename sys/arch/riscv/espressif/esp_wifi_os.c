@@ -73,7 +73,6 @@ struct espwifi_fp {
 
 void	espwifi_fp_save(struct espwifi_fp *);
 void	espwifi_fp_restore(const struct espwifi_fp *);
-void	espwifi_fp_on(void);
 void	espwifi_call_on_stack(void (*)(void *), void *, void *);
 
 struct espwifi_hdr {
@@ -597,10 +596,12 @@ static void
 espwifi_task_main(void *v)
 {
 	struct espwifi_task *t = v;
+	int fpu_cookie;
 
-	espwifi_fp_on();
+	fpu_cookie = kthread_fpu_enter();
 	espwifi_call_on_stack(t->t_func, t->t_arg,
 	    (char *)t->t_stack + ESPWIFI_STACK_SIZE);
+	kthread_fpu_exit(fpu_cookie);
 	kthread_exit(0);
 }
 

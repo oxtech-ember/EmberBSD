@@ -88,6 +88,12 @@ ENTRY_NP(cpu_switchto)
 
 	REG_L	sp, L_MD_KTF(tp)	// # load its kernel stack pointer
 
+#ifdef FPE
+	/* A switched-in LWP must acquire its own floating-point state. */
+	li	t2, SR_FS
+	not	t2, t2
+	and	t0, t0, t2
+#endif
 	csrw	sstatus, t0		// enable interrupts
 	REG_L	s0, TF_S0(sp)		// restore callee saved
 	REG_L	s1, TF_S1(sp)		// restore callee saved
