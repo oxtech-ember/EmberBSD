@@ -64,7 +64,7 @@ if [ "${1:-}" = --console-selected ]; then
         {
             printf 'srcdirs bin sbin\nprogs'
             for part in $programs; do printf ' %s' "${part##*/}"; done
-            printf '\nlibs -ledit -lterminfo -lutil -lkvm -lprop -lm\n'
+            printf '\nln sh -sh\nlibs -ledit -lterminfo -lutil -lkvm -lprop -lm\n'
         } > "$out/crunch/console-tools.conf"
         (
             cd "$out/crunch"

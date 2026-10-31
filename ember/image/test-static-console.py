@@ -11,6 +11,25 @@ profile = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(profile)
 
 class ConsoleProfile(unittest.TestCase):
+    def test_compact_config_registers_login_shell_alias(self):
+        import os
+        import subprocess
+        import tempfile
+        shell = os.environ.get('TEST_SH')
+        if not shell:
+            self.fail('Set TEST_SH to the selected native shell')
+        source = path.with_name('cix-p1-build-userland.sh').read_text()
+        start = source.index("        {\n            printf 'srcdirs bin sbin")
+        end = source.index('        } > "$out/crunch/console-tools.conf"', start)
+        block = source[start:end] + '        } > "$out/crunch/console-tools.conf"\n'
+        with tempfile.TemporaryDirectory() as name:
+            out = Path(name)
+            (out / 'crunch').mkdir()
+            subprocess.run([shell, '-c', 'set -eu\n' + block], check=True,
+                           env=dict(os.environ, out=str(out), programs='bin/sh sbin/init'))
+            config = (out / 'crunch/console-tools.conf').read_text().splitlines()
+            self.assertIn('ln sh -sh', config)
+
     def test_compact_nodes_come_from_makedev_and_reject_duplicates(self):
         import os
         import subprocess
