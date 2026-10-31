@@ -67,6 +67,10 @@ Account for kernel/userland interfaces and each dependent consumer when an ABI c
 5. Review the entire diff and the evidence limits before integration.
 
 The portable kernel suite has one owner: `ember/tools/kernel-contracts.sh`.
+Run it explicitly when broad source-contract coverage is needed. The kernel
+builder produces the kernel, matched modules and DTBs, and checks the generated
+DTB modes; it does not rerun the whole source-contract suite after each build.
+Run the affected subsystem contracts separately for a repair.
 Native-only contracts remain separate when the host cannot execute them.
 The source-encoding regression is `python3 ember/tests/contract-source-encoding.py`;
 it exercises the owning PRIME and DMA-BUF runners with UTF-8 source comments
