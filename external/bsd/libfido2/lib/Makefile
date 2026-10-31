@@ -8,8 +8,16 @@ NOLINT=
 
 CPPFLAGS+= -D_FIDO_INTERNAL -I${DIST}/src
 
-LDADD+=-lusbhid -lcbor -lz
-DPADD+=${LIBUSBHID} ${LIBCBOR} ${LIBZ}
+LDADD+=-lusbhid -lcbor -lz -lcrypto
+.if ${MKPIC} != "no" && ${MKSHLIB:Uyes} != "no"
+_FIDO_DEP_EXT= so
+.else
+_FIDO_DEP_EXT= a
+.endif
+DPADD+= ${DESTDIR}/usr/lib/libusbhid.${_FIDO_DEP_EXT} \
+    ${DESTDIR}/usr/lib/libcbor.${_FIDO_DEP_EXT} \
+    ${DESTDIR}/usr/lib/libz.${_FIDO_DEP_EXT} \
+    ${DESTDIR}/usr/lib/libcrypto.${_FIDO_DEP_EXT}
 
 VERSION_MAP=	export.gnu
 
@@ -51,6 +59,11 @@ tpm.c \
 touch.c \
 types.c \
 u2f.c
+
+.if defined(EMBER_LIBFIDO2_SOURCE)
+SRCS+= util.c
+LIB_EXPSYM= ${.CURDIR}/fido2-1.17.expsym
+.endif
 
 SRCS+= \
 explicit_bzero.c \
@@ -105,7 +118,11 @@ fido_strerr.3 \
 rs256_pk_new.3
 
 SHLIB_MAJOR=5
+.if defined(EMBER_LIBFIDO2_SOURCE)
+SHLIB_MINOR=2
+.else
 SHLIB_MINOR=1
+.endif
 
 .SUFFIXES: .in
 .in:

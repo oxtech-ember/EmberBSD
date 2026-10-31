@@ -266,8 +266,8 @@
 ./usr/lib/libc.so.12				base-sys-shlib		compatfile
 ./usr/lib/libc.so.12.224			base-sys-shlib		compatfile
 ./usr/lib/libcbor.so				base-sys-shlib		compatfile
-./usr/lib/libcbor.so.0				base-sys-shlib		compatfile
-./usr/lib/libcbor.so.0.5			base-sys-shlib		compatfile
+./usr/lib/libcbor.so.1				base-sys-shlib		compatfile
+./usr/lib/libcbor.so.1.0			base-sys-shlib		compatfile
 ./usr/lib/libcdk.so				base-obsolete		compatfile,obsolete
 ./usr/lib/libcom_err.so				base-krb5-shlib		compatfile,kerberos
 ./usr/lib/libcom_err.so.8			base-krb5-shlib		compatfile,kerberos
@@ -346,7 +346,7 @@
 ./usr/lib/libfetch.so.4.0			base-sys-shlib		compatfile
 ./usr/lib/libfido2.so				base-sys-shlib		compatfile
 ./usr/lib/libfido2.so.5				base-sys-shlib		compatfile
-./usr/lib/libfido2.so.5.1			base-sys-shlib		compatfile
+./usr/lib/libfido2.so.5.2			base-sys-shlib		compatfile
 ./usr/lib/libform.so				base-sys-shlib		compatfile
 ./usr/lib/libform.so.8				base-sys-shlib		compatfile
 ./usr/lib/libform.so.8.0			base-sys-shlib		compatfile

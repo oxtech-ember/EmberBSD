@@ -428,6 +428,7 @@
 ./usr/include/cbor/arrays.h			comp-c-include
 ./usr/include/cbor/bytestrings.h		comp-c-include
 ./usr/include/cbor/callbacks.h			comp-c-include
+./usr/include/cbor/cbor_export.h			comp-c-include
 ./usr/include/cbor/common.h			comp-c-include
 ./usr/include/cbor/configuration.h		comp-c-include
 ./usr/include/cbor/data.h			comp-c-include
