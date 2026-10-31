@@ -66,3 +66,8 @@ file	external/bsd/ad9361/dist/ad9361_native_fdt.c	ad9361phy
 file	external/bsd/ad9361/dist/ad9361_noos.c	ad9361phy
 file	external/bsd/ad9361/dist/ad9361_rx_tune.c	ad9361phy
 file	external/bsd/ad9361/dist/ad9361_util.c	ad9361phy
+
+# Chipone CO5300 QSPI framebuffer; panel setup comes from FDT.
+device	cofb: fdt, genfb, wsemuldisplaydev
+attach	cofb at spi
+file	dev/spi/co5300.c			cofb
