@@ -93,7 +93,8 @@
 #define	PMAP_TLB_BITMAP_LENGTH		PMAP_TLB_NUM_PIDS
 #define	PMAP_TLB_FLUSH_ASID_ON_RESET	true
 
-#define	pmap_phys_address(x)		(x)
+/* Character-device mmap cookies contain physical page numbers. */
+#define	pmap_phys_address(x)		ptoa(x)
 
 #ifndef __BSD_PTENTRY_T__
 #define	__BSD_PTENTRY_T__
