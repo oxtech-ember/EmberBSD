@@ -60,7 +60,8 @@ Account for kernel/userland interfaces and each dependent consumer when an ABI c
 
 ## Validate the change
 
-1. Check the reproducer against the old code and the fix.
+1. For a logic or behavior repair, check the reproducer against the old code and the fix.
+   A trivial fix needs no reproducer or regression test.
 2. Run the affected subsystem contracts and shared-path regressions.
 3. Build the selected configuration and affected modules from the clean commit.
 4. Run applicable native checks and the stated VM or physical scenario.

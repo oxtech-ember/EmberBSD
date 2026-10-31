@@ -95,8 +95,10 @@ Preserve copyright, licenses, upstream identifiers, and imported revisions.
 Disclose AI assistance and the origin of adaptations.
 Do not copy GPL implementation into BSD source without a compatible license.
 
-For a repair, reproduce the failure before the fix.
-Add a regression that checks the actual cause and passes after the fix.
+For a logic or behavior repair, reproduce the failure before the fix.
+Add a causal regression test that checks the actual cause and passes after the fix.
+A trivial fix needs no regression test: step order, typos, paths, and similar mechanical corrections.
+Such tests cost time and add no value.
 For a new feature, test its success, failure, and cleanup paths.
 For a port, test the build, boot integration, and the claimed device scenario.
 For documentation, check links and commands; do not require a kernel build for prose changes.
