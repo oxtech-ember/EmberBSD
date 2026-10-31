@@ -42,6 +42,7 @@
     "lib/csu/*.o",
     "lib/libpthread/libpthread*.a.o",
     "lib/libc/llvm_unwind.o",
+    "lib/libc/llvm_unwind.pico",
     "kernels/*/kern_ksyms_buf_real.o",
     "kernels/*/kern_ksyms_buf.o",
     "kernels/*/splash_image.o",
