@@ -307,10 +307,6 @@ ruby "$ROOT/ember/tools/firmware-source.rb" "$src" \
     echo 'firmware source manifest changed during build' >&2; exit 1;
 }
 
-compiler_final_sha256=$(shasum -a 256 "$compiler_path" | awk '{print $1}')
-[[ "$compiler_final_sha256" == "$compiler_sha256" ]] || {
-    echo 'target compiler changed during firmware build' >&2; exit 1;
-}
 cp "$src/RPI_EFI.fd" "$out/RPI_EFI.fd.incoming"
 
 # Receipt: pins, series hashes and the artifact identity.

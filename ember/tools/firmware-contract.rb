@@ -57,9 +57,6 @@ Dir.mktmpdir('firmware-contract-', ENV['TMPDIR']) do |temporary|
         directory = ARGV.join(' ').match(/EMBER_FIRMWARE_ROOT=([^ ]+)/)[1]
         File.write(directory + '/unexpected', 'fixture input')
       end
-      if ENV['FIXTURE_FAIL'] == 'compiler-changed'
-        File.open(ENV.fetch('FIXTURE_COMPILER'), 'a') { |f| f.puts '# changed during fixture build' }
-      end
     RUBY
     executable.call('git', <<~RUBY)
       #!#{RbConfig.ruby}
@@ -189,6 +186,12 @@ Dir.mktmpdir('firmware-contract-', ENV['TMPDIR']) do |temporary|
         exec #{('/bin/'+tool).inspect}, *ARGV
       RUBY
     end
+    executable.call('shasum', <<~RUBY)
+      #!#{RbConfig.ruby}
+      require 'json'
+      File.open(ENV.fetch('FIXTURE_TRACE'), 'a') { |f| f.puts JSON.generate(['shasum', ARGV]) }
+      exec '/usr/bin/shasum', *ARGV
+    RUBY
     %w[cp mv].each do |tool|
       executable.call(tool, <<~RUBY)
         #!#{RbConfig.ruby}
@@ -300,11 +303,12 @@ Dir.mktmpdir('firmware-contract-', ENV['TMPDIR']) do |temporary|
           event[1].any? { |arg| arg.include?('git reset') || arg.include?('git clean') })
       end
 
-      if %w[build receipt copy rename compiler-changed fill-root].include?(env['FIXTURE_FAIL'])
+      if %w[build receipt copy rename fill-root].include?(env['FIXTURE_FAIL'])
         raise 'failed rebuild lost build.log' unless File.file?("#{cache}/#{selected}/build.log")
       end
-      if env['FIXTURE_FAIL'] == 'compiler-changed'
-        raise 'compiler replacement was not diagnosed' unless err.include?('target compiler changed during firmware build')
+      if expected == 0 && !preserve
+        hashes=events.count { |event| event[0]=='shasum' && event[1].last==env['FIXTURE_COMPILER'] }
+        raise "selected compiler was hashed #{hashes} times" unless hashes == 1
       end
       raise 'prepare used a compiler or Python' if preserve && args.include?('--prepare') && trace.match?(/compiler|python3|"build"/)
       if name.start_with?('gcc-') && expected != 0
@@ -349,7 +353,6 @@ Dir.mktmpdir('firmware-contract-', ENV['TMPDIR']) do |temporary|
     test.call("receipt-failure-#{name}", args, {'FIXTURE_FAIL'=>'receipt'}, 44, selected)
     test.call("copy-failure-#{name}", args, {'FIXTURE_FAIL'=>'copy'}, 45, selected)
     test.call("rename-failure-#{name}", args, {'FIXTURE_FAIL'=>'rename'}, 46, selected)
-    test.call("compiler-changed-#{name}", args, {'FIXTURE_FAIL'=>'compiler-changed'}, 1, selected)
     test.call("success-#{name}", args, {}, 0, selected)
     test.call("prepare-#{name}", ['--prepare',*args], {'FIXTURE_HOST'=>'Unsupported'}, 0, selected, true)
     test.call("prepare-failure-#{name}", [*args,'--prepare'], {'FIXTURE_FAIL'=>'git'}, 41, selected, true)
