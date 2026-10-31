@@ -15,7 +15,27 @@ __CTASSERT(offsetof(ACPI_TABLE_FADT, XDsdt) == 140);
 
 #define CIX_UART2_HEADER 36
 #define CIX_UART2_ENTRIES 256
-#define CIX_UART2_DSDT_SIZE 81063
+/*
+ * Exact stock DSDT images of observed Orange Pi 6 Plus firmware. A profile
+ * selects the gated UART2 console only when the size and SHA256 both match.
+ */
+static const struct cix_uart2_dsdt {
+	uint32_t size;
+	uint8_t digest[SHA256_DIGEST_LENGTH];
+} cix_uart2_dsdt_profiles[] = {
+	/* BiosV1.5-W20260706-e321056a */
+	{ 81063, {
+		0x9e, 0x7b, 0xf3, 0x0c, 0xb2, 0x94, 0x84, 0x91,
+		0x0c, 0xce, 0xec, 0x20, 0x8a, 0xdf, 0x6f, 0xa9,
+		0xf1, 0xfa, 0xb4, 0xed, 0x54, 0xc9, 0x32, 0x36,
+		0xd5, 0x3b, 0xb4, 0x11, 0x9b, 0x04, 0x26, 0x0a } },
+	/* BiosV1.4-W20260130-97268c4c */
+	{ 77645, {
+		0xf2, 0xf6, 0xdd, 0x34, 0xf1, 0x6e, 0x3b, 0x5f,
+		0x04, 0xdd, 0xbf, 0xee, 0xa1, 0x9b, 0x45, 0x66,
+		0x05, 0x84, 0x0b, 0xbf, 0x2e, 0xf9, 0x9f, 0x8c,
+		0x95, 0x59, 0x3b, 0x38, 0x87, 0x7e, 0x42, 0x39 } },
+};
 
 /* Mapping is a trusted native service, not hostile-firmware containment. */
 static int
@@ -94,17 +114,12 @@ cix_uart2_table(uint64_t pa, const char *signature, uint32_t min,
 int
 cix_uart2_console_probe(void)
 {
-	static const uint8_t expected[SHA256_DIGEST_LENGTH] = {
-		0x9e, 0x7b, 0xf3, 0x0c, 0xb2, 0x94, 0x84, 0x91,
-		0x0c, 0xce, 0xec, 0x20, 0x8a, 0xdf, 0x6f, 0xa9,
-		0xf1, 0xfa, 0xb4, 0xed, 0x54, 0xc9, 0x32, 0x36,
-		0xd5, 0x3b, 0xb4, 0x11, 0x9b, 0x04, 0x26, 0x0a
-	};
 	uint8_t prefix[20], header[CIX_UART2_HEADER];
 	uint8_t digest[SHA256_DIGEST_LENGTH];
 	const uint8_t *table;
 	uint64_t address, fadt = 0, dsdt, legacy;
 	uint32_t length, entries;
+	const struct cix_uart2_dsdt *profile;
 	SHA256_CTX hash;
 	int error;
 	bool present = false;
@@ -180,14 +195,28 @@ root_done:
 		return EPROTO;
 	if (dsdt == 0)
 		dsdt = legacy;
-	/* A separate exact nested DSDT bound; no generic table limit changes. */
-	error = cix_uart2_table(dsdt, "DSDT", CIX_UART2_DSDT_SIZE,
-	    CIX_UART2_DSDT_SIZE, &table, &length);
+	/*
+	 * A separate exact nested DSDT bound; no generic table limit changes.
+	 * Select the profile from the header before mapping the whole table.
+	 */
+	error = cix_uart2_header(dsdt, header);
+	if (error != 0)
+		return error;
+	length = (uint32_t)cix_uart2_le(header + 4, 4);
+	profile = NULL;
+	for (size_t i = 0; i < __arraycount(cix_uart2_dsdt_profiles); i++)
+		if (cix_uart2_dsdt_profiles[i].size == length)
+			profile = &cix_uart2_dsdt_profiles[i];
+	if (profile == NULL)
+		return EPROTO;
+	error = cix_uart2_table(dsdt, "DSDT", profile->size, profile->size,
+	    &table, &length);
 	if (error != 0)
 		return error;
 	SHA256_Init(&hash);
 	SHA256_Update(&hash, table, length);
 	SHA256_Final(digest, &hash);
 	acpi_md_OsUnmapMemory(__UNCONST(table), length);
-	return memcmp(digest, expected, sizeof(digest)) == 0 ? 0 : ENOTSUP;
+	return memcmp(digest, profile->digest, sizeof(digest)) == 0 ?
+	    0 : ENOTSUP;
 }
