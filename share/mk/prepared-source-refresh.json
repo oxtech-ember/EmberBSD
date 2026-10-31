@@ -17,6 +17,10 @@
         "external/bsd/pam-u2f/lib/security/pam-u2f",
         "external/bsd/pam-u2f/bin/pamu2fcfg",
         "crypto/external/bsd/openssh/libexec/ssh-sk-helper"
+      ],
+      "linked_names": [
+        "libcbor.so",
+        "libcbor.a"
       ]
     },
     "EMBER_LIBFIDO2_SOURCE": {
@@ -34,6 +38,10 @@
         "external/bsd/pam-u2f/lib/security/pam-u2f",
         "external/bsd/pam-u2f/bin/pamu2fcfg",
         "crypto/external/bsd/openssh/libexec/ssh-sk-helper"
+      ],
+      "linked_names": [
+        "libfido2.so",
+        "libfido2.a"
       ]
     }
   },
