@@ -692,6 +692,12 @@
 /* Define to 1 if you have the `SSL_set1_host' function. */
 #define HAVE_SSL_SET1_HOST 1
 
+/* OpenSSL 4 provides separate DNS-name and IP-address verification APIs. */
+#include <openssl/opensslv.h>
+#if defined(OPENSSL_VERSION_MAJOR) && OPENSSL_VERSION_MAJOR >= 4
+#define HAVE_SSL_SET1_DNSNAME 1
+#endif
+
 /* Define to 1 if you have the <stdarg.h> header file. */
 #define HAVE_STDARG_H 1
 

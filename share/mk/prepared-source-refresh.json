@@ -102,6 +102,22 @@
         "liblber.so",
         "liblber.a"
       ]
+    },
+    "EMBER_UNBOUND_SOURCE": {
+      "producer_dirs": [
+        "external/bsd/unbound/lib/libunbound"
+      ],
+      "header_prefixes": [
+        "usr/include/unbound.h"
+      ],
+      "consumer_dirs": [
+        "external/bsd/unbound/bin",
+        "external/bsd/unbound/sbin"
+      ],
+      "linked_names": [
+        "libunbound.so",
+        "libunbound.a"
+      ]
     }
   },
   "header_independent_object_patterns": [

@@ -16,7 +16,7 @@ ${UNBOUND}/util/data \
 ${UNBOUND}/util/storage \
 ${UNBOUND}/validator
 
-CPPFLAGS+=-I${UNBOUND} -I${UNBOUND}/../include
+CPPFLAGS+=${UNBOUND_CPPFLAGS}
 
 LIB=unbound
 SRCS=\
@@ -103,7 +103,8 @@ wire2str.c
 
 LIBDPLIBS+= ${DPLIBS}
 
-INCS=unbound.h
+INCS=${UNBOUND_GENERATED_DIR}/libunbound/unbound.h
+INCSNAME_${UNBOUND_GENERATED_DIR:C,/,_,g}_libunbound_unbound.h= unbound.h
 INCSDIR=/usr/include
 
 MAN=libunbound.3

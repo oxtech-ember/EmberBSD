@@ -4,9 +4,9 @@
 
 BINDIR=/usr/bin
 
-CPPFLAGS+=-I${UNBOUND} -I${UNBOUND}/../include
+CPPFLAGS+=${UNBOUND_CPPFLAGS}
 
-PROGDPLIBS+= unbound ${UNBOUND}/../lib/libunbound
+PROGDPLIBS+= unbound ${UNBOUND_OSDIR}/lib/libunbound
 PROGDPLIBS+= ${DPLIBS}
 
 .if defined(PROG)
