@@ -43,6 +43,6 @@ Description: ${DESCRIPTION}
 Version: ${VERSION}
 Requires: 
 Libs: ${LIBS}
-Libs.private:
+Libs.private: ${OPENSSL_PRIVATE_LIBS}
 Cflags:
 EOF

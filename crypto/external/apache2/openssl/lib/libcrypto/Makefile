@@ -70,6 +70,9 @@ CPPFLAGS+= -I${OPENSSLSRC}/providers/implementations/include
 
 AFLAGS+=-DELF
 LIBDPLIBS+= crypt ${NETBSDSRCDIR}/lib/libcrypt
+.if defined(EMBER_OPENSSL_SOURCE)
+LIBDPLIBS+= pthread ${NETBSDSRCDIR}/lib/libpthread
+.endif
 
 OS_VERSION!= ${HOST_SH} ${NETBSDSRCDIR}/sys/conf/osrelease.sh
 
@@ -325,3 +328,11 @@ $i: $i.in
 .endif # !EMBER_OPENSSL_SOURCE
 
 .include <bsd.lib.mk>
+
+# Changes to the shared library's dependency list require a relink even when
+# all previously compiled crypto objects are still reusable.
+.if defined(EMBER_OPENSSL_SOURCE) && defined(_LIB.so.link)
+${_LIB.so.link}: ${.CURDIR}/Makefile
+.elif defined(EMBER_OPENSSL_SOURCE) && defined(_LIB.so.full)
+${_LIB.so.full}: ${.CURDIR}/Makefile
+.endif

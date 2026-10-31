@@ -489,6 +489,14 @@ _LDFLAGS.${_P}=		${LDFLAGS}  ${LDFLAGS.${_P}}
 _LDSTATIC.${_P}=	${LDSTATIC} ${LDSTATIC.${_P}}
 .endif
 
+# The common OpenSSL 4 build uses pthreads. Keep the dependency after crypto
+# for programs that mix static and shared libraries as well as static builds.
+.if defined(EMBER_OPENSSL_SOURCE) && \
+    (!empty(_LDADD.${_P}:M-lcrypto) || !empty(_LDADD.${_P}:M*/libcrypto.a))
+_LDADD.${_P}+=	-lpthread
+_DPADD.${_P}+=	${LIBPTHREAD}
+.endif
+
 ##### Build and install rules
 .if !empty(_APPEND_SRCS:M[Yy][Ee][Ss])
 SRCS+=		${SRCS.${_P}}	# For bsd.dep.mk
