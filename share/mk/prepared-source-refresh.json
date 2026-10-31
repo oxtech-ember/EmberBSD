@@ -146,5 +146,8 @@
   ],
   "header_independent_archive_patterns": [
     "tools/file/build/src/.libs/libmagic.a"
-  ]
+  ],
+  "nested_object_owners": {
+    "external/bsd/tdb/lib/waf-build": "external/bsd/tdb/lib"
+  }
 }

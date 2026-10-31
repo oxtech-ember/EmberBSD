@@ -71,3 +71,16 @@ waf-target-build: waf-target-configure
 	(cd ${WAF_SOURCE:Q} && env ${_WAF_HOST_ENV} ${_WAF_TARGET_ENV} ${WAF_CONFIGURE_ENV} \
 	    ${HOST_PYTHON:Q} -B -S ${WAF_SOURCE:Q}/buildtools/bin/waf build \
 	    --top=${WAF_SOURCE:Q} --out=${WAF_OBJDIR:Q} --targets=${WAF_TARGETS:Q} -j1)
+
+# Waf owns only its output subtree, including objects not represented by .d.
+# The helper validates containment and refuses symlink paths before removal.
+.if make(cleandir)
+.if !defined(HOST_PYTHON)
+.error Waf cleanup requires selected host Python
+.endif
+.PHONY: waf-target-cleandir
+cleandir: waf-target-cleandir
+waf-target-cleandir:
+	${HOST_PYTHON:Q} -B -S ${NETBSDSRCDIR:Q}/share/mk/waf-clean.py \
+	    --objdir ${.OBJDIR:Q} --output ${WAF_OBJDIR:Q}
+.endif
