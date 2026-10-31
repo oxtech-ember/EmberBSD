@@ -141,6 +141,8 @@ abort(void)
 		continue;
 }
 
+void __assert_func(const char *, int, const char *, const char *) __dead;
+
 void
 __assert_func(const char *file, int line, const char *func, const char *expr)
 {

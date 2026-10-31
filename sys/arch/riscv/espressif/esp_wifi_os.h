@@ -7,11 +7,13 @@
  * vendor's headers (wifi/glue.c).  It sees the kernel only through the
  * espwifi_os_* services below, and the kernel sees it only through the
  * espwifi_* entry points.  Both sides include this file; it uses nothing
- * but the C integer types.
+ * but the C integer types and the system declaration attributes.
  */
 
 #ifndef _RISCV_ESPRESSIF_ESP_WIFI_OS_H_
 #define _RISCV_ESPRESSIF_ESP_WIFI_OS_H_
+
+#include <sys/cdefs.h>
 
 #define	ESPWIFI_WAIT_FOREVER	0xffffffffU
 #define	ESPWIFI_TICK_MS		10
@@ -72,7 +74,7 @@ void	espwifi_os_delay_us(unsigned int);
 unsigned int espwifi_os_random(void);
 void	espwifi_os_vlog(const char *, __builtin_va_list);
 void	espwifi_os_log(const char *, ...) __attribute__((format(printf, 1, 2)));
-void	espwifi_os_panic(const char *);
+void	espwifi_os_panic(const char *) __dead;
 
 /* Frames and state changes from the radio. */
 void	espwifi_os_rx(const void *, unsigned int);
