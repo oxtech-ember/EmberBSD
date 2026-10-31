@@ -50,6 +50,7 @@ __RCSID("$NetBSD: pidfile.c,v 1.16 2021/08/01 15:29:29 andvar Exp $");
 static pid_t pidfile_pid;
 static char pidfile_path[PATH_MAX];
 static int pidfile_fd = -1;
+static bool pidfile_removeable = true;
 
 /* Closes pidfile resources.
  *
@@ -64,6 +65,26 @@ pidfile_close(void)
 	pidfile_fd = -1;
 	pidfile_path[0] = '\0';
 	return error;
+}
+
+/* Release the descriptor without truncating or unlinking the file. */
+int
+pidfile_unlock(void)
+{
+
+	if (pidfile_fd == -1) {
+		errno = EBADF;
+		return -1;
+	}
+	return pidfile_close();
+}
+
+/* Keep the pidfile when cleanup is performed, e.g. after dropping rights. */
+void
+pidfile_unremoveable(void)
+{
+
+	pidfile_removeable = false;
 }
 
 /* Truncate, close and unlink an existent pidfile,
@@ -87,7 +108,8 @@ pidfile_clean(void)
 	else if (ftruncate(pidfile_fd, 0) == -1)
 		error = errno;
 	else {
-		(void) unlink(pidfile_path);
+		if (pidfile_removeable)
+			(void) unlink(pidfile_path);
 		error = 0;
 	}
 

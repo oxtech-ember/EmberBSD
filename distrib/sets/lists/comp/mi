@@ -9930,6 +9930,8 @@
 ./usr/share/man/cat3/pidfile_clean.0		comp-c-catman		.cat
 ./usr/share/man/cat3/pidfile_lock.0		comp-c-catman		.cat
 ./usr/share/man/cat3/pidfile_read.0		comp-c-catman		.cat
+./usr/share/man/cat3/pidfile_unlock.0		comp-c-catman		.cat
+./usr/share/man/cat3/pidfile_unremoveable.0	comp-c-catman		.cat
 ./usr/share/man/cat3/pidlock.0			comp-c-catman		.cat
 ./usr/share/man/cat3/pmap_getmaps.0		comp-c-catman		.cat
 ./usr/share/man/cat3/pmap_getport.0		comp-c-catman		.cat
@@ -18896,6 +18898,8 @@
 ./usr/share/man/html3/pidfile_clean.html	comp-c-htmlman		html
 ./usr/share/man/html3/pidfile_lock.html		comp-c-htmlman		html
 ./usr/share/man/html3/pidfile_read.html		comp-c-htmlman		html
+./usr/share/man/html3/pidfile_unlock.html	comp-c-htmlman		html
+./usr/share/man/html3/pidfile_unremoveable.html	comp-c-htmlman		html
 ./usr/share/man/html3/pidlock.html		comp-c-htmlman		html
 ./usr/share/man/html3/pmap_getmaps.html		comp-c-htmlman		html
 ./usr/share/man/html3/pmap_getport.html		comp-c-htmlman		html
@@ -27854,6 +27858,8 @@
 ./usr/share/man/man3/pidfile_clean.3		comp-c-man		.man
 ./usr/share/man/man3/pidfile_lock.3		comp-c-man		.man
 ./usr/share/man/man3/pidfile_read.3		comp-c-man		.man
+./usr/share/man/man3/pidfile_unlock.3		comp-c-man		.man
+./usr/share/man/man3/pidfile_unremoveable.3	comp-c-man		.man
 ./usr/share/man/man3/pidlock.3			comp-c-man		.man
 ./usr/share/man/man3/pmap_getmaps.3		comp-c-man		.man
 ./usr/share/man/man3/pmap_getport.3		comp-c-man		.man

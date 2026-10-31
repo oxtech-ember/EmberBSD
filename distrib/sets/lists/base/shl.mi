@@ -117,7 +117,7 @@
 ./lib/libumem.so.0.0				base-zfs-shlib		dynamicroot,zfs
 ./lib/libutil.so				base-sys-shlib		dynamicroot
 ./lib/libutil.so.7				base-sys-shlib		dynamicroot
-./lib/libutil.so.7.25				base-sys-shlib		dynamicroot
+./lib/libutil.so.7.26				base-sys-shlib		dynamicroot
 ./lib/libuutil.so				base-zfs-shlib		dynamicroot,zfs
 ./lib/libuutil.so.0				base-zfs-shlib		dynamicroot,zfs
 ./lib/libuutil.so.0.0				base-zfs-shlib		dynamicroot,zfs
@@ -953,7 +953,7 @@
 ./usr/lib/libusbhid.so.1.0			base-sys-shlib		compatfile
 ./usr/lib/libutil.so				base-sys-shlib		compatfile
 ./usr/lib/libutil.so.7				base-sys-shlib		compatfile
-./usr/lib/libutil.so.7.25			base-sys-shlib		compatfile
+./usr/lib/libutil.so.7.26			base-sys-shlib		compatfile
 ./usr/lib/libuutil.so				base-zfs-shlib		compatfile,zfs
 ./usr/lib/libuutil.so.0				base-zfs-shlib		compatfile,zfs
 ./usr/lib/libuutil.so.0.0			base-zfs-shlib		compatfile,zfs

@@ -34,7 +34,9 @@
 .Nm pidfile ,
 .Nm pidfile_lock ,
 .Nm pidfile_read ,
-.Nm pidfile_clean
+.Nm pidfile_clean ,
+.Nm pidfile_unlock ,
+.Nm pidfile_unremoveable
 .Nd write a daemon pid file
 .Sh LIBRARY
 .Lb libutil
@@ -48,6 +50,10 @@
 .Fn pidfile_read "const char *path"
 .Ft int
 .Fn pidfile_clean "void"
+.Ft int
+.Fn pidfile_unlock "void"
+.Ft void
+.Fn pidfile_unremoveable "void"
 .Sh DESCRIPTION
 .Fn pidfile
 and
@@ -105,13 +111,24 @@ will
 and
 .Xr unlink 2
 the last opening pid file if, and only if, the current process wrote it.
+The unlink step is omitted after
+.Fn pidfile_unremoveable .
 This function should be called if the program needs to call
 .Xr _exit 2
 (such as from a signal handler) and needs to clean up the pid file.
+.Pp
+.Fn pidfile_unlock
+closes the current pid file descriptor without truncating or unlinking the
+file.  This is useful in a child that should not retain its parent's lock.
+.Fn pidfile_unremoveable
+prevents subsequent cleanup by the current process from unlinking the file;
+cleanup still truncates it when the current process wrote it.
 .Sh RETURN VALUES
 .Fn pidfile
 and
 .Fn pidfile_clean
+and
+.Fn pidfile_unlock
 returns 0 on success and \-1 on failure.
 .Pp
 .Fn pidfile_lock

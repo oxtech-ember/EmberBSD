@@ -116,6 +116,8 @@ int		pidfile(const char *);
 pid_t		pidfile_lock(const char *);
 pid_t		pidfile_read(const char *);
 int		pidfile_clean(void);
+int		pidfile_unlock(void);
+void		pidfile_unremoveable(void);
 int		pidlock(const char *, int, pid_t *, const char *);
 int		pw_abort(void);
 #ifndef __LIBC12_SOURCE__
