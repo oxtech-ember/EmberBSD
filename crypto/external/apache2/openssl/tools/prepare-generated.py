@@ -123,6 +123,10 @@ def main():
            'ar': args.ar, 'ranlib': args.ranlib, 'shell': args.shell, 'path': args.path}
     marker = output / '.complete'
     owned = {'format': 'emberbsd-openssl-generated', 'object_root': str(object_root)}
+    required = ('crypto.mk', 'crypto-shared.mk', 'default.mk', 'common.mk', 'ssl.mk',
+                'ssl-shared.mk', 'apps.mk', 'legacy.mk', 'legacy-module.mk', 'test.mk', 'cli.mk',
+                'libcrypto.ld', 'libssl.ld', 'crypto.expsym', 'ssl.expsym', 'providers/legacy.ld',
+                'include/openssl/configuration.h', 'include/openssl/opensslv.h', 'configdata.pm')
     preserved = {}
     if output.exists():
         try:
@@ -136,7 +140,8 @@ def main():
                 previous = json.loads(marker.read_text())
             except (OSError, ValueError):
                 previous = None
-            if identity is not None and isinstance(previous, dict) and previous.get('key') == key:
+            if (identity is not None and isinstance(previous, dict) and previous.get('key') == key and
+                    all((output / item).is_file() for item in required)):
                 os.close(lock_fd)
                 return
         # A changed configuration may reproduce identical generated files.
