@@ -682,7 +682,10 @@ vcons_redraw_screen(struct vcons_screen *scr)
 	struct rasops_info *ri = &scr->scr_ri;
 	struct vcons_data *vd = scr->scr_vd;
 	struct vcons_data_private *vdp = vd->private;
-	int i, j, offset, boffset = 0, start = -1;
+	int i, j, offset, start = -1;
+#ifdef VCONS_DRAW_INTR
+	int boffset = 0;
+#endif
 
 	mask = 0x00ff00ff;	/* background and flags */
 	cmp = 0xffffffff;	/* never match anything */
@@ -758,9 +761,9 @@ next:
 #ifdef VCONS_DRAW_INTR
 				vdp->chars[boffset] = charptr[offset];
 				vdp->attrs[boffset] = attrptr[offset];
+				boffset++;
 #endif
 				offset++;
-				boffset++;
 			}
 			/* end of the line - draw all deferred blanks, if any */
 			if (start != -1) {
