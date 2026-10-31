@@ -2,6 +2,8 @@
 /dts-v1/;
 
 #include "esp32s31.dtsi"
+#include <dt-bindings/gpio/gpio.h>
+#include "include/dt-bindings/pinctrl/esp32s31-pinctrl.h"
 
 / {
 	model = "Espressif ESP-Mosaico";
@@ -10,8 +12,102 @@
 	aliases { serial0 = &uart0; };
 	chosen { stdout-path = "serial0:115200n8"; };
 
+	vcc_3v3: regulator-vcc-3v3 {
+		compatible = "regulator-fixed";
+		regulator-name = "VCC_3V3";
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+		gpio = <&gpio 60 GPIO_ACTIVE_LOW>;
+		regulator-always-on;
+		regulator-boot-on;
+		startup-delay-us = <10000>;
+	};
+
+	/* Shared sensor bus; standard-mode GPIO I2C during bring-up. */
+	i2c0: i2c {
+		compatible = "i2c-gpio";
+		#address-cells = <1>;
+		#size-cells = <0>;
+		sda-gpios = <&gpio 56 GPIO_OPEN_DRAIN>;
+		scl-gpios = <&gpio 3 GPIO_OPEN_DRAIN>;
+
+		touchscreen@5a {
+			compatible = "hynitron,cst9220";
+			reg = <0x5a>;
+			power-supply = <&vcc_3v3>;
+		};
+	};
+
 	memory@50000000 {
 		device_type = "memory";
 		reg = <0x50000000 0x01000000>;
+	};
+};
+
+&gpio {
+	status = "okay";
+
+	lcd_pins: lcd-pins {
+		control {
+			pinmux = <ESP32S31_PINMUX(42, ESP32S31_SIG_NONE,
+			    ESP32S31_SPI2_CLK)>,
+			    <ESP32S31_PINMUX(50, ESP32S31_SIG_NONE,
+			    ESP32S31_SPI2_CS)>;
+			output-enable;
+			bias-disable;
+		};
+		data {
+			pinmux = <ESP32S31_PINMUX(36, ESP32S31_SPI2_D,
+			    ESP32S31_SPI2_D)>,
+			    <ESP32S31_PINMUX(51, ESP32S31_SPI2_Q,
+			    ESP32S31_SPI2_Q)>,
+			    <ESP32S31_PINMUX(35, ESP32S31_SPI2_WP,
+			    ESP32S31_SPI2_WP)>,
+			    <ESP32S31_PINMUX(9, ESP32S31_SPI2_HD,
+			    ESP32S31_SPI2_HD)>;
+			input-enable;
+			output-enable;
+			bias-disable;
+		};
+	};
+};
+
+&spi2 {
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&lcd_pins>;
+
+	display@0 {
+		compatible = "chipone,co5300";
+		reg = <0>;
+		spi-max-frequency = <40000000>;
+		spi-tx-bus-width = <4>;
+		width = <480>;
+		height = <480>;
+		reset-gpios = <&gpio 44 GPIO_ACTIVE_LOW>;
+		power-supply = <&vcc_3v3>;
+		/*
+		 * Panel setup from esp-mosaico-bsp display.c, Apache-2.0,
+		 * commit 7cbfb390638dcb93522fc3cde094b2d43cf907c2.
+		 * Records: command, count, delay-ms (BE16), parameters.
+		 * MADCTL=0, RGB565; TE is unused by the polling renderer.
+		 */
+		chipone,init-sequence = [
+			36 01 00 00 00
+			3a 01 00 00 55
+			11 00 02 58
+			fe 01 00 00 20
+			19 01 00 00 10
+			1c 01 00 00 a0
+			fe 01 00 00 00
+			c4 01 00 00 80
+			3a 01 00 00 55
+			53 01 00 00 20
+			51 01 00 00 ff
+			63 01 00 00 ff
+			2a 04 00 00 00 00 01 df
+			2b 04 00 00 00 00 01 df
+			29 00 02 58
+		];
 	};
 };
