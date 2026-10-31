@@ -36,6 +36,12 @@
 #include <sys/cdefs.h>
 __KERNEL_RCSID(0, "$NetBSD$");
 
+#include "opt_multiprocessor.h"
+
+#ifdef MULTIPROCESSOR
+#error "ESPWIFI critical sections currently require a single CPU"
+#endif
+
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/callout.h>
@@ -113,6 +119,8 @@ struct espwifi_task {
 	void		*t_arg;
 	void		*t_stack;
 	struct espwifi_sem *t_sem;
+	int		t_fpu_cookie;
+	label_t		t_return;
 };
 
 struct espwifi_timer {
@@ -596,12 +604,25 @@ static void
 espwifi_task_main(void *v)
 {
 	struct espwifi_task *t = v;
-	int fpu_cookie;
 
-	fpu_cookie = kthread_fpu_enter();
-	espwifi_call_on_stack(t->t_func, t->t_arg,
-	    (char *)t->t_stack + ESPWIFI_STACK_SIZE);
-	kthread_fpu_exit(fpu_cookie);
+	mutex_spin_enter(&espwifi_mtx);
+	t->t_lwp = curlwp;
+	mutex_spin_exit(&espwifi_mtx);
+	t->t_fpu_cookie = kthread_fpu_enter();
+	if (setjmp(&t->t_return) == 0)
+		espwifi_call_on_stack(t->t_func, t->t_arg,
+		    (char *)t->t_stack + ESPWIFI_STACK_SIZE);
+	mutex_spin_enter(&espwifi_mtx);
+	for (u_int i = 0; i < ESPWIFI_NTHREADS; i++)
+		if (espwifi_tasks[i] == t) {
+			espwifi_tasks[i] = NULL;
+			break;
+		}
+	mutex_spin_exit(&espwifi_mtx);
+	kthread_fpu_exit(t->t_fpu_cookie);
+	espwifi_os_sem_delete(t->t_sem);
+	free(t->t_stack, M_DEVBUF);
+	free(t, M_DEVBUF);
 	kthread_exit(0);
 }
 
@@ -610,15 +631,19 @@ espwifi_os_task_create(void (*func)(void *), const char *name,
     unsigned int stack, void *arg, void **handle)
 {
 	struct espwifi_task *t;
+	lwp_t *thread;
 	u_int slot;
 
+	/* ESP-IDF specifies stack depth in bytes. */
+	if (stack > ESPWIFI_STACK_SIZE)
+		return 0;
 	t = malloc(sizeof(*t), M_DEVBUF, M_NOWAIT | M_ZERO);
 	if (t == NULL)
 		return 0;
 	t->t_stack = malloc(ESPWIFI_STACK_SIZE, M_DEVBUF, M_NOWAIT);
 	t->t_sem = espwifi_os_sem_create(1, 0);
 	if (t->t_stack == NULL || t->t_sem == NULL)
-		return 0;
+		goto fail;
 	t->t_func = func;
 	t->t_arg = arg;
 
@@ -632,44 +657,64 @@ espwifi_os_task_create(void (*func)(void *), const char *name,
 	mutex_spin_exit(&espwifi_mtx);
 	if (slot == ESPWIFI_NTHREADS) {
 		printf("espwifi: too many tasks\n");
-		return 0;
+		goto fail;
 	}
 	if (kthread_create(PRI_SOFTNET, KTHREAD_MPSAFE, NULL, espwifi_task_main,
-	    t, &t->t_lwp, "espwifi/%s", name) != 0) {
+	    t, &thread, "espwifi/%s", name) != 0) {
+		mutex_spin_enter(&espwifi_mtx);
 		espwifi_tasks[slot] = NULL;
-		return 0;
+		mutex_spin_exit(&espwifi_mtx);
+		goto fail;
 	}
 	if (handle != NULL)
-		*handle = t->t_lwp;
+		*handle = thread;
 	return 1;
+
+fail:
+	if (t->t_sem != NULL)
+		espwifi_os_sem_delete(t->t_sem);
+	if (t->t_stack != NULL)
+		free(t->t_stack, M_DEVBUF);
+	free(t, M_DEVBUF);
+	return 0;
 }
 
 static struct espwifi_task *
 espwifi_task_self(void)
 {
+	struct espwifi_task *found = NULL;
+
+	mutex_spin_enter(&espwifi_mtx);
 	for (u_int i = 0; i < ESPWIFI_NTHREADS; i++) {
 		struct espwifi_task * const t = espwifi_tasks[i];
 
-		if (t != NULL && t->t_lwp == curlwp)
-			return t;
+		if (t != NULL && t->t_lwp == curlwp) {
+			found = t;
+			break;
+		}
 	}
-	return NULL;
+	mutex_spin_exit(&espwifi_mtx);
+	return found;
 }
 
 void
 espwifi_os_task_delete(void *handle)
 {
+	struct espwifi_task *task = NULL;
+
+	if (cpu_intr_p() || cpu_softintr_p() ||
+	    curcpu()->ci_cpl != IPL_NONE || espwifi_crit_depth != 0) {
+		printf("espwifi: task deletion outside thread context ignored\n");
+		return;
+	}
 	if (handle != NULL && handle != curlwp) {
 		printf("espwifi: a task deletes another one: ignored\n");
 		return;
 	}
-	for (u_int i = 0; i < ESPWIFI_NTHREADS; i++) {
-		if (espwifi_tasks[i] != NULL &&
-		    espwifi_tasks[i]->t_lwp == curlwp)
-			espwifi_tasks[i] = NULL;
-	}
-	/* The stack in use cannot be freed from here; tasks end rarely. */
-	kthread_exit(0);
+	task = espwifi_task_self();
+	if (task != NULL)
+		longjmp(&task->t_return);
+	printf("espwifi: task deletion outside a radio thread ignored\n");
 }
 
 void
@@ -871,6 +916,7 @@ espwifi_os_random(void)
 	return cprng_fast32();
 }
 
+
 void
 espwifi_os_vlog(const char *fmt, va_list ap)
 {
@@ -960,7 +1006,7 @@ static void
 espwifi_main(void *v)
 {
 	if (espwifi_start() != 0)
-		kthread_exit(0);
+		return;
 	/*
 	 * Join, and join again whenever the link is lost.  The pause grows
 	 * with every failure: access points stop answering a station that
