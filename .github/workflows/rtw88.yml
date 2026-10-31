@@ -210,8 +210,10 @@ jobs:
         run: |
           test "$(gcc -dumpfullversion)" = 16.2.0
           apt-get update
-          apt-get install -y --no-install-recommends valgrind libc6-dbg ruby clang cppcheck
+          apt-get install -y --no-install-recommends valgrind libc6-dbg ruby clang cppcheck python3
           valgrind --version
+          echo "PYTHON=$(command -v python3)" >> "$GITHUB_ENV"
+          echo "TEST_SH=$(command -v sh)" >> "$GITHUB_ENV"
       - name: Verify native Wi-Fi sparse checkout inputs
         run: python3 ember/tools/rtw88-workflow-contract.py
       - name: Execute source contracts under ASan and UBSan

@@ -63,13 +63,15 @@ jobs:
           mkdir -p "$native/bin" "$native/gnu/bin"
           ln -s /usr/bin/mksh "$native/bin/mksh"
           ln -s /usr/bin/mksh "$native/bin/sh"
-          ln -s /usr/bin/bash "$native/bin/bash"
+          # Keep the host's interactive bashrc from changing the PTY fixture.
+          printf '%s\n' '#!/bin/sh' 'exec /usr/bin/bash --noprofile --norc "$@"' > "$native/bin/bash"
+          chmod 755 "$native/bin/bash"
           ln -s /usr/bin/original-awk "$native/bin/nawk"
           ln -s /usr/bin/original-awk "$native/bin/awk"
           ln -s /usr/bin/shasum "$native/bin/shasum"
           ln -s "$PYTHON" "$native/bin/python3.15"
           for tool in '[' basename cat chmod cksum cmp comm cp cut date dd diff \
-              dirname du echo env expr false find grep head id install ln ls \
+              dirname du echo env expr false find git grep head id install ln ls \
               m4 make mkdir mktemp mv od paste patch printf pwd readlink \
               realpath rm rmdir sed seq sha256sum sleep sort stat tail tee \
               test touch tr true uname uniq wc xargs; do
