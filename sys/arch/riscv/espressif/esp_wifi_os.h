@@ -72,6 +72,8 @@ void	espwifi_os_intr_enable(unsigned int, int);
 long long espwifi_os_time_us(void);
 void	espwifi_os_delay_us(unsigned int);
 unsigned int espwifi_os_random(void);
+int	espwifi_os_secret_random(void *, unsigned long);
+int	espwifi_os_ct_equal(const void *, const void *, unsigned long);
 void	espwifi_os_vlog(const char *, __builtin_va_list);
 void	espwifi_os_log(const char *, ...) __attribute__((format(printf, 1, 2)));
 void	espwifi_os_panic(const char *) __dead;

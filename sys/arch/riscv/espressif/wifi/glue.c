@@ -880,9 +880,7 @@ os_random(void)
 int
 os_get_random(unsigned char *buf, size_t len)
 {
-	for (size_t i = 0; i < len; i++)
-		buf[i] = (unsigned char)espwifi_os_random();
-	return 0;
+	return espwifi_os_secret_random(buf, len);
 }
 
 void
@@ -892,6 +890,7 @@ os_sleep(uint64_t sec, uint64_t usec)
 	    ESPWIFI_TICK_MS);
 }
 
+#ifndef ESPWIFI_COMMON_CRYPTO
 void
 forced_memzero(void *p, size_t len)
 {
@@ -900,6 +899,13 @@ forced_memzero(void *p, size_t len)
 	while (len-- > 0)
 		*v++ = 0;
 }
+#else
+int
+os_memcmp_const(const void *a, const void *b, size_t len)
+{
+	return espwifi_os_ct_equal(a, b, len) ? 0 : 1;
+}
+#endif
 
 /*
  * Storage: none.  The libraries are told so at start and fall back to
@@ -933,9 +939,7 @@ random_wrapper(void)
 static int
 get_random_wrapper(uint8_t *buf, size_t len)
 {
-	for (size_t i = 0; i < len; i++)
-		buf[i] = (uint8_t)espwifi_os_random();
-	return 0;
+	return espwifi_os_secret_random(buf, len);
 }
 
 uint32_t

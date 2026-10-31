@@ -48,6 +48,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/condvar.h>
 #include <sys/cprng.h>
 #include <sys/cpu.h>
+#include <sys/entropy.h>
 #include <sys/intr.h>
 #include <sys/kernel.h>
 #include <sys/kthread.h>
@@ -56,6 +57,8 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/queue.h>
 #include <sys/time.h>
 #include <sys/vmem.h>
+
+#include <lib/libkern/libkern.h>
 
 #include <dev/ofw/openfirm.h>
 #include <dev/fdt/fdtvar.h>
@@ -916,6 +919,36 @@ espwifi_os_random(void)
 	return cprng_fast32();
 }
 
+int
+espwifi_os_secret_random(void *buffer, unsigned long len)
+{
+	uint8_t *p = buffer;
+	const unsigned long total = len;
+
+	if (len == 0)
+		return 0;
+	/* Strong CPRNG may reseed, which requires a sleepable context. */
+	if (cpu_intr_p() || curcpu()->ci_cpl != IPL_NONE ||
+	    espwifi_crit_depth != 0 || !entropy_ready())
+		return -1;
+	while (len != 0) {
+		const size_t n = MIN(len, 32);
+
+		if (cprng_strong(kern_cprng, p, n, 0) != n) {
+			explicit_memset(buffer, 0, total);
+			return -1;
+		}
+		p += n;
+		len -= n;
+	}
+	return 0;
+}
+
+int
+espwifi_os_ct_equal(const void *a, const void *b, unsigned long len)
+{
+	return consttime_memequal(a, b, len);
+}
 
 void
 espwifi_os_vlog(const char *fmt, va_list ap)
@@ -1005,6 +1038,13 @@ espwifi_join(void)
 static void
 espwifi_main(void *v)
 {
+	/* OSI random callbacks can run in interrupt context and cannot fail. */
+	if (cprng_fast_reseed_sync() != 0) {
+		printf("espwifi: waiting for entropy\n");
+		do {
+			espwifi_os_task_delay(1000 / ESPWIFI_TICK_MS);
+		} while (cprng_fast_reseed_sync() != 0);
+	}
 	if (espwifi_start() != 0)
 		return;
 	/*

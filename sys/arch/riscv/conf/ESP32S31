@@ -13,8 +13,8 @@ maxusers 	2
 options 	FDT
 options		ESPTRNG
 
-# The chip has F but no D; the kernel keeps no FPU state and is built
-# without floating-point instructions.  User programs are soft-float.
+# The chip has F but no D.  The kernel and user programs are soft-float;
+# configurations enabling FPE preserve F state for explicit kernel users.
 makeoptions 	COPTS="-Os -fno-unwind-tables -fno-asynchronous-unwind-tables -march=rv32imac_zicsr_zifencei -mabi=ilp32"
 makeoptions 	AOPTS="-march=rv32imac_zicsr_zifencei -mabi=ilp32"
 
