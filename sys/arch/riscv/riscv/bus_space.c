@@ -63,7 +63,7 @@ bs_protos(bs_notimpl);
 #endif
 
 struct bus_space riscv_generic_bs_tag = {
-//	.bs_cookie = &riscv_generic_bs_tag,
+	.bs_cookie = &riscv_generic_bs_tag,
 
 	.bs_stride = 0,
 //	.bs_flags = 0,
@@ -185,7 +185,7 @@ struct bus_space riscv_generic_bs_tag = {
 };
 
 struct bus_space riscv_generic_a4x_bs_tag = {
-//	.bs_cookie = &riscv_generic_a4x_bs_tag,
+	.bs_cookie = &riscv_generic_a4x_bs_tag,
 
 	.bs_stride = 2,
 //	.bs_flags = 0,
