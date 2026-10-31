@@ -1568,6 +1568,21 @@ out:
 	return error;
 }
 
+static int
+ieee80211_ioctl_sta_port(struct ieee80211com *ic, struct ieee80211req *ireq,
+    bool set)
+{
+	if (ic->ic_opmode != IEEE80211_M_STA || ic->ic_sta_set_port == NULL)
+		return EOPNOTSUPP;
+	if (!set) {
+		ireq->i_val = 1;
+		return 0;
+	}
+	if (ireq->i_val != 0 && ireq->i_val != 1)
+		return EINVAL;
+	return ic->ic_sta_set_port(ic, ireq->i_val != 0);
+}
+
 /*
  * When building the kernel with -O2 on the i386 architecture, gcc
  * seems to want to inline this function into ieee80211_ioctl()
@@ -1596,6 +1611,8 @@ ieee80211_ioctl_get80211(struct ieee80211com *ic, u_long cmd,
 	u_int m;
 
 	switch (ireq->i_type) {
+	case IEEE80211_IOC_STA_PORT:
+		return ieee80211_ioctl_sta_port(ic, ireq, false);
 	case IEEE80211_IOC_STA_MGMT:
 		return ieee80211_ioctl_sta_mgmt(ic, ireq, false);
 	case IEEE80211_IOC_AUTHMODE:
@@ -2232,6 +2249,8 @@ ieee80211_ioctl_set80211(struct ieee80211com *ic, u_long cmd,
 
 	error = 0;
 	switch (ireq->i_type) {
+	case IEEE80211_IOC_STA_PORT:
+		return ieee80211_ioctl_sta_port(ic, ireq, true);
 	case IEEE80211_IOC_STA_MGMT:
 		return ieee80211_ioctl_sta_mgmt(ic, ireq, true);
 #if defined(__FreeBSD__) || defined(COMPAT_FREEBSD_NET80211)

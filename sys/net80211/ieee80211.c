@@ -181,6 +181,8 @@ ieee80211_ifattach(struct ieee80211com *ic)
 	struct ieee80211_channel *c;
 	int i;
 
+	ic->ic_sta_set_port = NULL;
+
 #ifdef __NetBSD__
 	ieee80211_init();
 #endif /* __NetBSD__ */

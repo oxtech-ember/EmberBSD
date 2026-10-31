@@ -566,6 +566,12 @@ struct ieee80211req_sae {
  * SCAN data contains uint16_t frequencies (MHz); an empty list means all channels.
  */
 #define IEEE80211_IOC_STA_MGMT           75
+/*
+ * Optional STA controlled port: SIOCG80211 reports capability as i_val=1,
+ * not current authorization.  Privileged SIOCS80211 sets i_val 0 or 1;
+ * unsupported drivers return EOPNOTSUPP.
+ */
+#define IEEE80211_IOC_STA_PORT           76
 #define IEEE80211_STA_VERSION           2
 #define IEEE80211_STA_MAX_BODY          1024
 #define IEEE80211_STA_MAX_CHANNELS      32

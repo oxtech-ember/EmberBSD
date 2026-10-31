@@ -236,6 +236,8 @@ struct ieee80211com {
 	 */
 	const struct ieee80211_aclator *ic_acl;
 	void			*ic_as;
+	/* Optional STA controlled port; installed by the driver after attach. */
+	int (*ic_sta_set_port)(struct ieee80211com *, bool);
 };
 
 LIST_HEAD(ieee80211com_head, ieee80211com);
