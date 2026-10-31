@@ -101,7 +101,10 @@ For a new feature, test its success, failure, and cleanup paths.
 For a port, test the build, boot integration, and the claimed device scenario.
 For documentation, check links and commands; do not require a kernel build for prose changes.
 
-Build from a clean commit. Record source, configuration, tools, commands, and artifact hashes.
+Build from a clean commit. Record the [input key](https://github.com/oxtech-ember/EmberBSD-SDK/blob/main/docs/input-keys.md), commands, and artifact hashes.
+The key contains the Git tree hash, compiler key, configuration, ABI, and target.
+Reuse an output when its key matches; a different key or a dirty worktree means a new build.
+Do not add checks that reread or rehash inputs that a git hash or input key already identifies.
 Run relevant shared-path regressions on an existing configuration.
 Keep kernel, modules, firmware and userland compatible.
 Never accept leftover artifacts after a failed build.
