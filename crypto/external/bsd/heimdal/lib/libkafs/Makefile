@@ -13,7 +13,8 @@ LIB=		kafs
 
 LIBDPLIBS+=	krb5	${.CURDIR}/../libkrb5 \
 		asn1	${.CURDIR}/../libasn1 \
-		roken	${.CURDIR}/../libroken
+		roken	${.CURDIR}/../libroken \
+		crypto	${SSLBASE}/lib/libcrypto
 
 SRCS=		afssys.c afskrb5.c common.c rxkad_kdf.c
 
