@@ -186,6 +186,9 @@ MKGDBSERVER?=	no
 #
 .if defined(EMBER_OPENSSL_SOURCE)
 HAVE_OPENSSL?=	41
+.if ${HAVE_OPENSSL} != 41
+.error EMBER_OPENSSL_SOURCE requires HAVE_OPENSSL=41
+.endif
 .else
 HAVE_OPENSSL?=	35
 .endif

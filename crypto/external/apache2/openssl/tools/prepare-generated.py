@@ -12,6 +12,7 @@ from pathlib import Path
 import subprocess
 import shutil
 import sys
+import shlex
 
 TOOLS = Path(__file__).resolve().parent
 TARGETS = {'aarch64': 'BSD-aarch64', 'x86_64': 'BSD-x86_64',
@@ -21,17 +22,36 @@ TARGETS = {'aarch64': 'BSD-aarch64', 'x86_64': 'BSD-x86_64',
            'hppa': 'BSD-generic32', 'sh3': 'BSD-generic32'}
 
 
-def compiler_command(cc, family, triplet, sysroot):
-    return cc + (' --target=' + triplet if family == 'clang' else '') + ' --sysroot=' + sysroot
+def configured_target(arch, cpu):
+    by_arch = {'riscv32': 'BSD-riscv32', 'riscv64': 'BSD-riscv64',
+               'powerpc64': 'BSD-ppc64', 'powerpc64le': 'BSD-ppc64le'}
+    return by_arch.get(arch) or TARGETS.get(cpu)
+
+
+def compiler_command(cc, family, triplet, sysroot, flags=()):
+    args = [cc, *flags]
+    if family == 'clang':
+        args.append('--target=' + triplet)
+    args.append('--sysroot=' + sysroot)
+    return shlex.join(args)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('source', 'output', 'arch', 'cc', 'sysroot', 'perl', 'gmake', 'ar', 'ranlib', 'tmpdir', 'path', 'shell', 'object-root', 'family', 'triplet', 'cpu'):
         parser.add_argument('--' + name, required=True)
+    for name in ('cc-command', 'cc-flags', 'cc-options'):
+        parser.add_argument('--' + name, default='')
     parser.add_argument('--jobs', type=int, default=1)
     args = parser.parse_args()
-    if args.cpu not in TARGETS or args.family not in ('clang', 'gcc') or not 1 <= args.jobs <= 256:
+    try:
+        cc_words = shlex.split(args.cc_command) if args.cc_command else [args.cc]
+        if not cc_words or cc_words[0] != args.cc:
+            parser.error('selected CC does not match compiler executable')
+        cc_args = cc_words[1:] + shlex.split(args.cc_flags) + shlex.split(args.cc_options)
+    except ValueError as exc:
+        parser.error('invalid compiler flags: ' + str(exc))
+    if configured_target(args.arch, args.cpu) is None or args.family not in ('clang', 'gcc') or not 1 <= args.jobs <= 256:
         parser.error('unsupported architecture, compiler family or invalid job count')
     for name in ('source', 'output', 'cc', 'sysroot', 'perl', 'gmake', 'ar', 'ranlib', 'tmpdir', 'shell', 'object_root'):
         value = getattr(args, name)
@@ -56,7 +76,7 @@ def main():
     for name in ('cc', 'perl', 'gmake', 'ar', 'ranlib', 'shell'):
         if not os.access(getattr(args, name), os.X_OK):
             parser.error(name + ' is not executable')
-    target = 'BSD-ppc64le' if args.arch == 'powerpc64le' else TARGETS[args.cpu]
+    target = configured_target(args.arch, args.cpu)
     triplet = args.triplet
     if not triplet or any(ch not in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.+-' for ch in triplet):
         parser.error('invalid target triplet')
@@ -92,7 +112,7 @@ def main():
     for path in (TOOLS / 'prepare-generated.py', TOOLS / 'generated-sources.pl', TOOLS / 'config-sources.pl', TOOLS / 'map-exports.py'):
         digest.update(path.read_bytes())
     key = {'source': str(source), 'inputs': digest.hexdigest(), 'arch': args.arch, 'cpu': args.cpu,
-           'cc': args.cc, 'family': args.family, 'triplet': triplet, 'sysroot': args.sysroot, 'perl': args.perl, 'gmake': args.gmake,
+           'cc': args.cc, 'cc_args': cc_args, 'family': args.family, 'triplet': triplet, 'sysroot': args.sysroot, 'perl': args.perl, 'gmake': args.gmake,
            'ar': args.ar, 'ranlib': args.ranlib, 'shell': args.shell, 'path': args.path}
     marker = output / '.complete'
     owned = {'format': 'emberbsd-openssl-generated', 'object_root': str(object_root)}
@@ -140,12 +160,14 @@ def main():
         shutil.rmtree(output)
     output.mkdir()
     (output / '.owned').write_text(json.dumps(owned, sort_keys=True) + '\n')
-    compiler = compiler_command(args.cc, args.family, triplet, args.sysroot)
+    compiler = compiler_command(args.cc, args.family, triplet, args.sysroot, cc_args)
     env = {'PATH': args.path,
-           'HOME': str(output), 'TMPDIR': args.tmpdir,
+           'TMPDIR': args.tmpdir,
            'CC': compiler,
            'AR': args.ar, 'RANLIB': args.ranlib,
            'LDFLAGS': ('--target=' + triplet + ' ' if args.family == 'clang' else '') + '--sysroot=' + args.sysroot}
+    if 'HOME' in os.environ:
+        env['HOME'] = os.environ['HOME']
     def run(cmd, **kw):
         return subprocess.run(cmd, cwd=output, env=env, check=True, **kw)
     run([args.perl, str(source / 'Configure'), target, '--prefix=/usr', '--openssldir=/etc/openssl'])

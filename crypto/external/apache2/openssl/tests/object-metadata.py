@@ -25,6 +25,10 @@ for goals in (['all'], ['obj', 'all']):
     result = subprocess.run([*command, '-n', *goals], env=env, text=True, capture_output=True)
     if not result.returncode or 'EMBER_OPENSSL_GENERATED must name' not in result.stderr:
         raise SystemExit('generated path missing was not rejected for ' + str(goals))
+result = subprocess.run([*command, 'HAVE_OPENSSL=35', '-V', 'SUBDIR', 'obj'],
+                        env=env, text=True, capture_output=True)
+if not result.returncode or 'requires HAVE_OPENSSL=41' not in result.stderr:
+    raise SystemExit('conflicting OpenSSL source selector was not rejected')
 parent = source.parents[1]
 parent_command = [str(a.bmake.resolve(strict=True)), '-C', str(parent)]
 result = subprocess.run([*parent_command, '-V', 'SUBDIR', '-V', '.MAKE.MAKEFILES', 'obj'],
