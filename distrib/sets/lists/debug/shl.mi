@@ -149,8 +149,7 @@
 ./usr/libdata/debug/usr/lib/libkrb5.so.28.0.debug		comp-krb5-debug	debug,compatfile,kerberos
 ./usr/libdata/debug/usr/lib/libkvm.so.6.0.debug			comp-sys-debug	debug,compatfile
 ./usr/libdata/debug/usr/lib/liblber.so.5.0.debug		comp-ldap-debug	debug,compatfile,ldap
-./usr/libdata/debug/usr/lib/libldap.so.6.0.debug		comp-ldap-debug	debug,compatfile,ldap
-./usr/libdata/debug/usr/lib/libldap_r.so.6.0.debug		comp-ldap-debug	debug,compatfile,ldap
+./usr/libdata/debug/usr/lib/libldap.so.7.0.debug		comp-ldap-debug	debug,compatfile,ldap
 ./usr/libdata/debug/usr/lib/liblsan.so.2.0.debug		comp-sys-debug	debug,compatfile,cxx,gcccmds,gcc=10
 ./usr/libdata/debug/usr/lib/liblsan.so.3.0.debug		comp-sys-debug	debug,compatfile,cxx,gcccmds,gcc=12
 ./usr/libdata/debug/usr/lib/liblua.so.7.0.debug			comp-sys-debug	debug,compatfile

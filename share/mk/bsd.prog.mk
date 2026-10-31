@@ -215,9 +215,9 @@ LIBGSSAPI_DPADD+= ${LIBGSSAPI} ${LIBHEIMNTLM} ${LIBKRB5_DPADD}
 .endif
 
 .if (${MKLDAP} != "no")
-LIBLDAP_LDADD+= -lldap -llber ${LIBGSSAPI_LDADD} -lssl -lcrypto
-LIBLDAP_DPADD+= ${LIBLDAP} ${LIBLBER} ${LIBGSSAPI_DPADD} ${LIBSSL} \
-    ${LIBCRYPTO}
+LIBLDAP_LDADD+= -lldap -llber -lssl -lcrypto -lpthread
+LIBLDAP_DPADD+= ${LIBLDAP} ${LIBLBER} ${LIBSSL} \
+    ${LIBCRYPTO} ${LIBPTHREAD}
 .endif
 
 # PAM applications, if linked statically, need more libraries

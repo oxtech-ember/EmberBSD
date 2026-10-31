@@ -16,7 +16,12 @@ SRCS+=		bind.c open.c result.c error.c compare.c search.c \
 		charray.c os-local.c dnssrv.c utf-8.c utf-8-conv.c \
 		turn.c ppolicy.c dds.c txn.c ldap_sync.c stctrl.c \
 		assertion.c deref.c fetch.c ldif.c tavl.c \
-		account_usability.c avl.c psearchctrl.c ldifutil.c gssapi.c
+		account_usability.c avl.c psearchctrl.c ldifutil.c
+
+SRCS+=		threads.c rdwr.c rq.c thr_posix.c thr_thr.c thr_nt.c \
+		thr_pth.c thr_debug.c tpool.c
+COPTS+=		-pthread
+LIBDPLIBS+=	pthread	${NETBSDSRCDIR}/lib/libpthread
 
 SRCS+=		tls2.c tls_o.c tls_g.c
 
@@ -25,11 +30,6 @@ CPPFLAGS+=	-DLDAP_LIBRARY
 COPTS.tls_o.c+=-Wno-error=deprecated-declarations
 
 LIBDPLIBS+=	lber	${.CURDIR}/../liblber
-
-.if ${USE_KERBEROS} != "no"
-CPPFLAGS+=	-DHAVE_GSSAPI
-LIBDPLIBS+=	gssapi	${NETBSDSRCDIR}/crypto/external/bsd/heimdal/lib/libgssapi
-.endif
 
 LIBDPLIBS+=	crypto	${NETBSDSRCDIR}/crypto/external/${EXTERNAL_OPENSSL_SUBDIR}/lib/libcrypto
 LIBDPLIBS+=	ssl	${NETBSDSRCDIR}/crypto/external/${EXTERNAL_OPENSSL_SUBDIR}/lib/libssl

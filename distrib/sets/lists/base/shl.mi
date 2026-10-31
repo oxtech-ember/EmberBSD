@@ -438,11 +438,9 @@
 ./usr/lib/liblber.so.5				base-ldap-shlib		ldap,compatfile
 ./usr/lib/liblber.so.5.0			base-ldap-shlib		ldap,compatfile
 ./usr/lib/libldap.so				base-ldap-shlib		ldap,compatfile
-./usr/lib/libldap.so.6				base-ldap-shlib		ldap,compatfile
-./usr/lib/libldap.so.6.0			base-ldap-shlib		ldap,compatfile
+./usr/lib/libldap.so.7				base-ldap-shlib		ldap,compatfile
+./usr/lib/libldap.so.7.0			base-ldap-shlib		ldap,compatfile
 ./usr/lib/libldap_r.so				base-ldap-shlib		ldap,compatfile
-./usr/lib/libldap_r.so.6			base-ldap-shlib		ldap,compatfile
-./usr/lib/libldap_r.so.6.0			base-ldap-shlib		ldap,compatfile
 ./usr/lib/liblsan.so				base-sys-shlib		compatfile,cxx,gcccmds,gcc
 ./usr/lib/liblsan.so.2				base-sys-shlib		compatfile,cxx,gcccmds,gcc=10
 ./usr/lib/liblsan.so.2.0			base-sys-shlib		compatfile,cxx,gcccmds,gcc=10

@@ -11,5 +11,5 @@ DPADD+=	${LDAPLIB.lunicode}
 LDADD+=	-L${LDAPOBJDIR.lutil} -llutil
 DPADD+=	${LDAPLIB.lutil}
 
-LDADD+= -lldap_r ${LIBLDAP_LDADD}
+LDADD+= ${LIBLDAP_LDADD}
 DPADD+= ${LIBLDAP_DPADD}

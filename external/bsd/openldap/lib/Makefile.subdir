@@ -3,6 +3,5 @@
 SUBDIR+=	${OPENLDAPLIB}liblber
 SUBDIR+=	.WAIT
 SUBDIR+=	${OPENLDAPLIB}libldap
-SUBDIR+=	${OPENLDAPLIB}libldap_r
 SUBDIR+=	${OPENLDAPLIB}liblutil
 SUBDIR+=	# librewrite liblunicode slapd

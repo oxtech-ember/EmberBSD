@@ -3,11 +3,28 @@
 USE_FORT?=	yes
 
 CWARNFLAGS.clang=	-Wno-format-extra-args
-CPPFLAGS += -DNO_THREADS
 
 .include "../libldap/Makefile.libldap"
 
 LIB=		ldap
+
+# OpenLDAP 2.7 has one thread-capable library. Preserve only the unversioned
+# development link names; no old SONAME is claimed by the new ABI.
+.if ${MAKELINKLIB:U${MKLINKLIB}} != "no" && ${MAKESTATICLIB:U${MKSTATICLIB}} != "no" && ${LINKINSTALL:U${MAKELINKLIB:U${MKLINKLIB}}} != "no"
+SYMLINKS+=	libldap.a ${LIBDIR}/libldap_r.a
+.endif
+.if ${MKPROFILE} != "no" && ${MAKELINKLIB:U${MKLINKLIB}} != "no"
+SYMLINKS+=	libldap_p.a ${LIBDIR}/libldap_r_p.a
+.endif
+.if ${MKPIC} != "no" && ${MAKELINKLIB:U${MKLINKLIB}} != "no" && ${LINKINSTALL:U${MAKELINKLIB:U${MKLINKLIB}}} != "no"
+SYMLINKS+=	libldap.so ${LIBDIR}/libldap_r.so
+.endif
+.if ${MKPIC} != "no" && ${MKPICINSTALL} != "no"
+SYMLINKS+=	libldap_pic.a ${LIBDIR}/libldap_r_pic.a
+.endif
+.if ${MKDEBUGLIB} != "no" && ${MAKELINKLIB:U${MKLINKLIB}} != "no"
+SYMLINKS+=	libldap_g.a ${LIBDIR}/libldap_r_g.a
+.endif
 
 .PATH:		${LDAP_SRCDIR}/man
 

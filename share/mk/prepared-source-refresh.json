@@ -65,6 +65,43 @@
         "libfetch.so",
         "libfetch.a"
       ]
+    },
+    "EMBER_OPENLDAP_SOURCE": {
+      "producer_dirs": [
+        "external/bsd/openldap/include",
+        "external/bsd/openldap/lib/liblber",
+        "external/bsd/openldap/lib/libldap",
+        "external/bsd/openldap/lib/libldap_r",
+        "external/bsd/openldap/lib/liblutil",
+        "external/bsd/openldap/lib/liblunicode"
+      ],
+      "header_prefixes": [
+        "usr/include/lber.h",
+        "usr/include/lber_types.h",
+        "usr/include/ldap.h",
+        "usr/include/ldap_cdefs.h",
+        "usr/include/ldap_features.h",
+        "usr/include/ldap_schema.h",
+        "usr/include/ldap_utf8.h",
+        "usr/include/openldap.h"
+      ],
+      "consumer_dirs": [
+        "external/bsd/openldap/bin",
+        "external/bsd/openldap/sbin/slapd",
+        "usr.sbin/racoon",
+        "external/ibm-public/postfix",
+        "external/bsd/am-utils/bin/amd",
+        "crypto/external/bsd/openssh/libexec/sshd-auth",
+        "crypto/external/bsd/openssh/libexec/sshd-session"
+      ],
+      "linked_names": [
+        "libldap.so",
+        "libldap.a",
+        "libldap_r.so",
+        "libldap_r.a",
+        "liblber.so",
+        "liblber.a"
+      ]
     }
   },
   "header_independent_object_patterns": [
