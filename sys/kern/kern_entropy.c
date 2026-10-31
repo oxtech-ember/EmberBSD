@@ -1478,12 +1478,15 @@ sysctl_entropy_gather(SYSCTLFN_ARGS)
  *
  *		ENTROPY_WAIT	Wait for entropy if not available yet.
  *		ENTROPY_SIG	Allow interruption by a signal during wait.
+ *		ENTROPY_REQUIRE_FULL  Reject partial entropy under the pool
+ *				lock before extracting or depleting it.
  *		ENTROPY_HARDFAIL Either fill the buffer with full entropy,
  *				or fail without filling it at all.
  *
  *	Return zero on success, or error on failure:
  *
  *		EWOULDBLOCK	No entropy and ENTROPY_WAIT not set.
+ *		EAGAIN		Full entropy required but unavailable.
  *		EINTR/ERESTART	No entropy, ENTROPY_SIG set, and interrupted.
  *
  *	If ENTROPY_WAIT is set, allowed only in thread context.  If
@@ -1572,6 +1575,11 @@ entropy_extract(void *buf, size_t len, int flags)
 		if (ISSET(flags, ENTROPY_HARDFAIL))
 			goto out;
 		entropy_extract_fail_evcnt.ev_count++;
+	}
+	/* A caller requiring full entropy cannot accept the best-effort path. */
+	if (ISSET(flags, ENTROPY_REQUIRE_FULL) && E->bitsneeded != 0) {
+		error = EAGAIN;
+		goto out;
 	}
 
 	/*

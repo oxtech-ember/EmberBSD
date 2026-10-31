@@ -129,6 +129,42 @@ cprng_fast_schedule_reseed(struct cprng_fast *cprng __unused)
 	softint_schedule(cprng_fast_softint);
 }
 
+/*
+ * Seed the current CPU before enabling an interrupt consumer that cannot
+ * wait for the ordinary asynchronous reseed.  The caller must be in a
+ * sleepable thread and must arrange CPU affinity if it relies on this for
+ * later calls; entropy extraction may sleep and the thread may migrate.
+ */
+int
+cprng_fast_reseed_sync(void)
+{
+	struct cprng_fast *cprng;
+	uint8_t seed[CPRNG_FAST_SEED_BYTES];
+	unsigned epoch;
+	int error, s;
+
+	KASSERT(!cpu_intr_p());
+	KASSERT(!cpu_softintr_p());
+	if (!entropy_ready())
+		return EAGAIN;
+	epoch = entropy_epoch();
+	error = entropy_extract(seed, sizeof(seed),
+	    ENTROPY_HARDFAIL | ENTROPY_REQUIRE_FULL);
+	if (error) {
+		explicit_memset(seed, 0, sizeof(seed));
+		return error;
+	}
+	cprng = percpu_getref(cprng_fast_percpu);
+	s = splvm();
+	cprng_fast_seed(cprng, seed);
+	cprng->epoch = epoch;
+	cprng->reseed_evcnt->ev_count++;
+	splx(s);
+	percpu_putref(cprng_fast_percpu);
+	explicit_memset(seed, 0, sizeof(seed));
+	return 0;
+}
+
 static void
 cprng_fast_intr(void *cookie __unused)
 {

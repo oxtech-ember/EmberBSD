@@ -47,6 +47,8 @@ struct knote;
 #define	ENTROPY_WAIT		0x01
 #define	ENTROPY_SIG		0x02
 #define	ENTROPY_HARDFAIL	0x04
+/* Fail without extraction unless the pool has full credited entropy. */
+#define	ENTROPY_REQUIRE_FULL	0x08
 
 void	entropy_bootrequest(void);
 void	entropy_reset(void);

@@ -27,7 +27,7 @@
 .\" ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 .\" POSSIBILITY OF SUCH DAMAGE.
 .\"
-.Dd August 16, 2020
+.Dd October 31, 2026
 .Dt CPRNG 9
 .Os
 .Sh NAME
@@ -39,7 +39,8 @@
 .Nm cprng_strong64 ,
 .Nm cprng_fast ,
 .Nm cprng_fast32 ,
-.Nm cprng_fast64
+.Nm cprng_fast64 ,
+.Nm cprng_fast_reseed_sync
 .Nd cryptographic pseudorandom number generators
 .Sh SYNOPSIS
 .In sys/cprng.h
@@ -59,6 +60,8 @@
 .Fn cprng_fast32 "void"
 .Ft uint64_t
 .Fn cprng_fast64 "void"
+.Ft int
+.Fn cprng_fast_reseed_sync "void"
 .Bd -literal
 #define CPRNG_MAX_LEN   524288
 .Ed
@@ -196,6 +199,17 @@ Generate 64 bits using the fast generator.
 .Pp
 .Fn cprng_fast64
 does not sleep.
+.It Fn cprng_fast_reseed_sync
+Synchronously seed the fast generator for the current CPU from the kernel
+entropy pool.
+Return zero on success or an error if entropy cannot be obtained;
+.Er EAGAIN
+indicates that the pool does not have full credited entropy.
+This may sleep and must be called from a sleepable thread.
+The kernel fast generator must already be initialized.
+The caller must arrange CPU affinity if a subsequent operation must use the
+same CPU; this call does not initialize the generators on other CPUs.
+The security properties of the fast generator are unchanged.
 .El
 .Sh SECURITY MODEL
 The
