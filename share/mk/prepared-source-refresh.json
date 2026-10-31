@@ -36,5 +36,16 @@
         "crypto/external/bsd/openssh/libexec/ssh-sk-helper"
       ]
     }
-  }
+  },
+  "header_independent_object_patterns": [
+    "tools/file/build/src/*.o",
+    "lib/csu/*.o",
+    "lib/libpthread/libpthread*.a.o",
+    "lib/libc/llvm_unwind.o",
+    "kernels/*/kern_ksyms_buf_real.o",
+    "kernels/*/kern_ksyms_buf.o",
+    "kernels/*/splash_image.o",
+    "kernels/*/vers.o",
+    "kernels/*/lib/kern/libkern.o"
+  ]
 }
