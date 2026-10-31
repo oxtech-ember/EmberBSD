@@ -39,7 +39,7 @@ name: Native RTL8822CE source contracts
       - 'sbin/sysctl/sysctl.c'
       - 'sys/sys/mbuf.h'
       - 'ember/image/cix-p1-network.subr'
-      - 'ember/image/test-cix-p1-startup.rb'
+      - 'ember/image/test-cix-p1-startup.py'
       - 'ember/tools/rtw*'
       - 'ember/tools/net80211-wme-contract.*'
       - 'ember/tools/net80211-ht20-contract.*'
@@ -95,7 +95,7 @@ name: Native RTL8822CE source contracts
       - 'sbin/sysctl/sysctl.c'
       - 'sys/sys/mbuf.h'
       - 'ember/image/cix-p1-network.subr'
-      - 'ember/image/test-cix-p1-startup.rb'
+      - 'ember/image/test-cix-p1-startup.py'
       - 'ember/tools/rtw*'
       - 'ember/tools/net80211-wme-contract.*'
       - 'ember/tools/net80211-ht20-contract.*'
@@ -201,7 +201,7 @@ jobs:
             /sys/net80211/ieee80211_netbsd.h
             /sys/net80211/ieee80211_crypto.h
             /ember/image/cix-p1-network.subr
-            /ember/image/test-cix-p1-startup.rb
+            /ember/image/test-cix-p1-startup.py
             /sbin/ifconfig/ieee80211.c
             /sbin/ifconfig/parse.c
             /sbin/ifconfig/parse.h

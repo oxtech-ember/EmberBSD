@@ -67,6 +67,11 @@ require the full native grace period. No service or filesystem deadline changes.
 The `ember-cix` entry selects the local wrapper explicitly; no login or PAM
 service participates in this development-console path.
 
+The host PTY lifecycle contract below uses the selected native `bash` and
+does not establish the behavior of `mksh` or the target shell. In a Darwin
+host test with the selected native `mksh`, TERM did not close the idle
+console under this contract. Target shell behavior remains unverified.
+
 ## Checks
 
 For the boot check, select `HOST_PREFIX` and `SDK_SOURCE`, set `OS_SOURCE` to
@@ -75,11 +80,14 @@ SDK command uses Clang by default; select `--compiler-family gcc` explicitly
 for the supported GCC alternative.
 
 ```sh
-ruby ember/image/test-cix-p1-userland.rb
-ruby ember/image/test-cix-p1-startup.rb
-ruby ember/image/test-cix-p1-power.rb
-ruby ember/image/test-cix-p1-root.rb
-ruby ember/image/test-cix-p1-root-image.rb
+export EMBER_TEST_NATIVE_PREFIX="$HOST_PREFIX"
+export TEST_SH="$HOST_PREFIX/bin/bash"
+# PATH must use the SDK native routing and selected prefix tools.
+"$HOST_PREFIX/bin/python3.15" -B ember/image/test-cix-p1-userland.py
+"$HOST_PREFIX/bin/python3.15" -B ember/image/test-cix-p1-startup.py
+"$HOST_PREFIX/bin/python3.15" -B ember/image/test-cix-p1-power.py
+"$HOST_PREFIX/bin/python3.15" -B ember/image/test-cix-p1-root.py
+"$HOST_PREFIX/bin/python3.15" -B ember/image/test-cix-p1-root-image.py
 "$HOST_PREFIX/bin/python3.15" -B "$SDK_SOURCE/scripts/run-native-check.py" \
     --host-prefix "$HOST_PREFIX" --compiler-family clang \
     --required-role awk --tool sh --cwd "$OS_SOURCE" \

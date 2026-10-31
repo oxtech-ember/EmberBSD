@@ -35,4 +35,6 @@ if [ "${RTW88_STOP_ANALYZE:-0}" = 1 ]; then
         -Xanalyzer -analyzer-output=text -Xanalyzer -analyzer-werror \
         -I"$work" "$tools/rtw88-net-stop-contract.c" -o "$work/analysis.plist"
 fi
-CIX_STOP_PROBE="$work/test" "${RUBY:-ruby}" "$src/ember/image/test-cix-p1-startup.rb"
+: "${PYTHON:=${EMBER_HOST_PREFIX:?Set EMBER_HOST_PREFIX or PYTHON to the selected native Python}/bin/python3.15}"
+: "${TEST_SH:?Set TEST_SH to the selected native shell}"
+CIX_STOP_PROBE="$work/test" "$PYTHON" -B "$src/ember/image/test-cix-p1-startup.py"

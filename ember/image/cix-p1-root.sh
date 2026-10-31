@@ -8,6 +8,8 @@ export LC_ALL=C
 	exit 2
 }
 cohort=$1 src=$2 tools=$3 firmware=$4 out=$5
+: "${EMBER_HOST_PREFIX:?Set EMBER_HOST_PREFIX to the selected native SDK prefix}"
+python=$EMBER_HOST_PREFIX/bin/python3.15
 here=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 profile_src=$(CDPATH= cd -- "$here/../.." && pwd)
 for path in "$cohort" "$src" "$tools" "$firmware" "$out"; do
@@ -61,7 +63,7 @@ awk 'NR == FNR {wanted[$0] = 1; next}
     }; exit missing}' "$checkdir/relative-files" "$cohort/dest/METALOG" \
     > "$checkdir/runtime-metadata-raw"
 sort "$checkdir/runtime-metadata-raw" > "$checkdir/runtime.spec"
-ruby "$here/cix-p1-i18n.rb" verify "$cohort" "$revision" "$cohort/BUILD-INPUTS.txt" > "$checkdir/i18n.spec"
+"$python" -B "$here/cix-p1-i18n.py" verify "$cohort" "$revision" "$cohort/BUILD-INPUTS.txt" > "$checkdir/i18n.spec"
 expected=36b483e37640359a6c686be4661b5f2d94928f93e126a2de09e67c5e04c01b26
 [ "$(shasum -a 256 "$firmware" | awk '{print $1}')" = "$expected" ]
 for tool in nbmakefs nbmtree nbpwd_mkdb; do [ -x "$tools/bin/$tool" ]; done
@@ -83,7 +85,7 @@ for dir in bin sbin usr/bin usr/sbin usr/libexec; do
 	mkdir -p "$root/$dir"
 	cp -pR "$cohort/dest/$dir/." "$root/$dir/"
 done
-ruby "$here/cix-p1-i18n.rb" copy "$cohort" "$revision" "$cohort/BUILD-INPUTS.txt" "$root"
+"$python" -B "$here/cix-p1-i18n.py" copy "$cohort" "$revision" "$cohort/BUILD-INPUTS.txt" "$root"
 mkdir -p "$root/etc" "$root/dev" "$root/root" "$root/tmp" "$root/mnt" \
     "$root/etc/ssh" "$root/var/chroot/sshd" "$root/var/run" "$root/var/db/dhcpcd" "$root/var/log" \
     "$root/var/spool/lock" "$root/libexec/dhcpcd-hooks" \
@@ -144,9 +146,9 @@ git -C "$src" diff --cached --quiet
 git -C "$profile_src" diff --quiet
 git -C "$profile_src" diff --cached --quiet
 [ "$(git -C "$profile_src" rev-parse HEAD)" = "$profile_revision" ]
-ruby "$here/cix-p1-i18n.rb" verify "$cohort" "$revision" "$cohort/BUILD-INPUTS.txt" > "$checkdir/i18n-final.spec"
+"$python" -B "$here/cix-p1-i18n.py" verify "$cohort" "$revision" "$cohort/BUILD-INPUTS.txt" > "$checkdir/i18n-final.spec"
 cmp "$checkdir/i18n.spec" "$checkdir/i18n-final.spec"
-ruby "$here/cix-p1-i18n.rb" check-copy "$cohort" "$revision" "$cohort/BUILD-INPUTS.txt" "$root"
+"$python" -B "$here/cix-p1-i18n.py" check-copy "$cohort" "$revision" "$cohort/BUILD-INPUTS.txt" "$root"
 printf 'userland=%s\nprofile=%s\n' "$revision" "$profile_revision" > "$out/ROOT-INPUTS.txt"
 shasum -a 256 "$out/root.fs" > "$out/ROOT-SHA256.txt"
 echo 'Created a new 2 GiB FFS image. Provision the private Wi-Fi profile on the target.'

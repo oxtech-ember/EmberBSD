@@ -21,11 +21,11 @@ import sys
 root = Path(__file__).resolve().parents[2]
 image = root / "ember/image"
 VAR = "EMBER_TEST_NATIVE_PREFIX"
-PREFIX_TOOL = re.compile(r"native_prefix \+ '/bin/([\w.+-]+)'")
-GNU_PATH = re.compile(r"native_prefix \+ '/gnu/bin'")
+PREFIX_TOOL = re.compile(r"prefix\s*/\s*['\"]bin/([\w.+-]+)['\"]")
+GNU_PATH = re.compile(r"\{prefix\}/gnu/bin")
 BUILDER = re.compile(r"['\"](cix-p1-[\w.+-]+\.sh)['\"]")
 HOST_TOOL = re.compile(r"\$\{?host_prefix\}?/bin/([\w.+-]+)")
-RUN = re.compile(r"\bruby\s+(ember/image/test-[\w.+-]+\.rb)")
+RUN = re.compile(r"(?m)^\s*[^#\n]*\s(ember/image/test-[\w.+-]+\.py)\s*$")
 EXPORT = re.compile(rf"^\s*echo \"{VAR}=\S+\" >> \"\$GITHUB_ENV\"$|^\s+{VAR}:\s*\S",
                     re.M)
 # The tool must be the destination of a link, copy or install line.
@@ -42,7 +42,7 @@ def requirements(test):
     return sorted(tools), bool(GNU_PATH.search(text))
 
 
-tests = sorted(p for p in image.glob("test-*.rb") if VAR in p.read_text())
+tests = sorted(p for p in image.glob("test-*.py") if VAR in p.read_text())
 if not tests:
     errors.append(f"no CIX test reads {VAR}; update this contract")
 workflows = [Path(a) for a in sys.argv[1:]] or \
@@ -74,7 +74,7 @@ for workflow in workflows:
 
 for test in tests:
     env = {k: v for k, v in os.environ.items() if k != VAR}
-    run = subprocess.run(["ruby", str(test)], env=env, capture_output=True,
+    run = subprocess.run([sys.executable, "-B", str(test)], env=env, capture_output=True,
                          text=True, timeout=300)
     if run.returncode == 0 or VAR not in run.stdout + run.stderr:
         errors.append(f"{test.relative_to(root)}: does not fail loudly "

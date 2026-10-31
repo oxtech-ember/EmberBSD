@@ -3,6 +3,9 @@
 # Copyright (c) 2026 EmberBSD contributors.
 # Origin: EmberBSD (AI-assisted).
 """Check SDK selection and refusal without starting a target build."""
+if not __debug__:
+    raise SystemExit('CIX contract tests require Python assertions')
+
 import importlib.util
 import os
 from pathlib import Path
@@ -77,6 +80,7 @@ with tempfile.TemporaryDirectory() as tmp:
     (llvm_source / 'runtimes').mkdir(parents=True)
     (llvm_source / 'runtimes/CMakeLists.txt').touch()
     os.environ.update(EMBERBSD_SDK_SOURCE='/sdk', EMBER_HOST_PREFIX='/native',
+                      EMBER_USERLAND_PROFILE='cix',
                       EMBER_LIBEDIT_SOURCE=str(libedit_source), EMBER_HOST_BFD_CONFIG=str(bfd),
                       EMBER_SDK_SYSROOT='/sysroot', EMBER_LLVM_SOURCE=str(llvm_source),
                       EMBER_PORTS_SOURCE='/ports', EMBER_GIT='/usr/bin/git',
@@ -96,7 +100,7 @@ with tempfile.TemporaryDirectory() as tmp:
     assert run['arguments'][1:10] == ['--selected', str(source), tmp + '/clang', str(tools),
                                        '/compiler', '/sdk', '/native', 'clang', 'clang']
     assert '/sysroot/usr/pkg/llvm/builtins.a' in run['arguments']
-    assert ['/usr/bin/git', '/selected/ruby', '/selected/shasum'] == run['arguments'][14:17]
+    assert ['/usr/bin/git', '/native/bin/python3.15', '/selected/shasum'] == run['arguments'][14:17]
     assert run['arguments'][17:23] == ['/libarchive', '/libevent', '/byacc', '/iscsi', '/libpcap', '/tcpwrappers']
     assert any(row[0] == 'verify-source' and
                '/ports/scripts/source-inputs/byacc/source.py' in row[1] and
@@ -110,7 +114,7 @@ with tempfile.TemporaryDirectory() as tmp:
     assert any(row[0] == 'verify-source' and
                '/ports/scripts/source-inputs/tcp_wrappers/source.py' in row[1] and
                row[1][-2:] == ['--source', '/tcpwrappers'] for row in calls)
-    assert ('host-extra', {'required_roles': {'ruby', 'shasum'}, 'compiler_family': 'clang'}) in calls
+    assert ('host-extra', {'required_roles': {'shasum'}, 'compiler_family': 'clang'}) in calls
     calls.clear()
     del os.environ['EMBER_BYACC_SOURCE']
     sys.argv[2] = tmp + '/missing-byacc'
@@ -247,7 +251,7 @@ with tempfile.TemporaryDirectory() as tmp:
     sys.argv[2] = tmp + '/gcc'
     subject.main()
     assert ('native', '/native', 'gcc') in calls
-    assert ('host-extra', {'required_roles': {'ruby', 'shasum'}, 'compiler_family': 'gcc'}) in calls
+    assert ('host-extra', {'required_roles': {'shasum'}, 'compiler_family': 'gcc'}) in calls
     assert not any(row[0] in ('runtime', 'clang') for row in calls)
     assert next(row[1] for row in calls if row[0] == 'run')['arguments'][9] == 'gcc'
     os.environ['EMBER_TARGET_COMPILER_FAMILY'] = 'clang'

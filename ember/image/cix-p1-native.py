@@ -10,7 +10,10 @@ import sys
 
 
 def main():
-    if os.environ.get('EMBER_USERLAND_PROFILE') == 'console':
+    selected_profile = os.environ.get('EMBER_USERLAND_PROFILE') or 'cix'
+    if selected_profile not in ('cix', 'console'):
+        raise SystemExit('unsupported userland profile: ' + selected_profile)
+    if selected_profile == 'console':
         import importlib.util
         path = Path(__file__).with_name('static-profile.py')
         spec = importlib.util.spec_from_file_location('static_profile', path)
@@ -70,7 +73,7 @@ def main():
         native = native_os.select_native_os_tools(os.environ['EMBER_HOST_PREFIX'], str(source),
                                                   compiler_family=host_family)
         extra = host_prefix.load_host_prefix(os.environ['EMBER_HOST_PREFIX'],
-            required_roles={'ruby', 'shasum'}, compiler_family=host_family)
+            required_roles={'shasum'}, compiler_family=host_family)
         ports = os.environ['EMBER_PORTS_SOURCE']
         git = os.environ.get('EMBER_GIT') or shutil.which('git')
         if not git or not os.path.isabs(git):
@@ -123,7 +126,7 @@ def main():
         script = str(Path(__file__).with_name('cix-p1-build-userland.sh').resolve())
         arguments = [script, '--selected', str(source), str(output), str(tools), str(compiler),
                      str(sdk), native.bundle_root, host_family, family, libedit,
-                     llvm_source, host_bfd, jobs, git, extra.tool('ruby'), extra.tool('shasum'),
+                     llvm_source, host_bfd, jobs, git, native.tool('python'), extra.tool('shasum'),
                      os.environ['EMBER_LIBARCHIVE_SOURCE'], os.environ['EMBER_LIBEVENT_SOURCE'],
                      os.environ['EMBER_BYACC_SOURCE'], os.environ['EMBER_ISCSI_SOURCE'],
                      os.environ['EMBER_LIBPCAP_SOURCE'], os.environ['EMBER_TCP_WRAPPERS_SOURCE'], *llvm]

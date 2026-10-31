@@ -87,9 +87,12 @@ They do not establish a complete cohort build or authenticated target login.
 See DevBoards for bounded physical evidence.
 
 ```sh
-ruby ember/image/test-cix-p1-userland.rb
-ruby ember/image/test-cix-p1-ssh.rb
-ruby ember/image/test-cix-p1-root-image.rb
+export EMBER_TEST_NATIVE_PREFIX="$EMBER_HOST_PREFIX"
+export TEST_SH="$EMBER_HOST_PREFIX/bin/bash"
+# PATH must use the SDK native routing and selected prefix tools.
+"$EMBER_HOST_PREFIX/bin/python3.15" -B ember/image/test-cix-p1-userland.py
+"$EMBER_HOST_PREFIX/bin/python3.15" -B ember/image/test-cix-p1-ssh.py
+"$EMBER_HOST_PREFIX/bin/python3.15" -B ember/image/test-cix-p1-root-image.py
 ```
 
 ## Startup and checks

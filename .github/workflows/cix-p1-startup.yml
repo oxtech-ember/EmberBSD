@@ -7,6 +7,9 @@ name: CIX P1 startup contracts
       - '.github/workflows/cix-p1-startup.yml'
       - 'ember/image/cix-p1-*'
       - 'ember/image/test-cix-p1-*'
+      - 'ember/image/static-profile.py'
+      - 'ember/image/test-static-console.py'
+      - 'ember/image/fixtures/cix-*'
       - 'ember/tools/cix-native-prefix-contract.py'
       - 'etc/MAKEDEV.awk'
       - 'etc/MAKEDEV.tmpl'
@@ -20,6 +23,9 @@ name: CIX P1 startup contracts
       - '.github/workflows/cix-p1-startup.yml'
       - 'ember/image/cix-p1-*'
       - 'ember/image/test-cix-p1-*'
+      - 'ember/image/static-profile.py'
+      - 'ember/image/test-static-console.py'
+      - 'ember/image/fixtures/cix-*'
       - 'ember/tools/cix-native-prefix-contract.py'
       - 'etc/MAKEDEV.awk'
       - 'etc/MAKEDEV.tmpl'
@@ -36,7 +42,7 @@ permissions:
 jobs:
   startup:
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -56,8 +62,10 @@ jobs:
           native=$RUNNER_TEMP/native-prefix
           mkdir -p "$native/bin" "$native/gnu/bin"
           ln -s /usr/bin/mksh "$native/bin/mksh"
+          ln -s /usr/bin/mksh "$native/bin/sh"
+          ln -s /usr/bin/bash "$native/bin/bash"
           ln -s /usr/bin/original-awk "$native/bin/nawk"
-          ln -s /usr/bin/ruby "$native/bin/ruby"
+          ln -s /usr/bin/original-awk "$native/bin/awk"
           ln -s /usr/bin/shasum "$native/bin/shasum"
           ln -s "$PYTHON" "$native/bin/python3.15"
           for tool in '[' basename cat chmod cksum cmp comm cp cut date dd diff \
@@ -75,16 +83,21 @@ jobs:
         run: python3 ember/tools/cix-native-prefix-contract.py
       - name: Check reduced-root startup and failures
         run: |
-          ruby ember/image/test-cix-p1-ssh.rb
-          ruby ember/image/test-cix-p1-userland.rb
-          ruby ember/image/test-cix-p1-startup.rb
-          ruby ember/image/test-cix-p1-console.rb
-          ruby ember/image/test-cix-p1-power.rb
-          ruby ember/image/test-cix-p1-root.rb
-          ruby ember/image/test-cix-p1-root-image.rb
+          export PATH="$EMBER_TEST_NATIVE_PREFIX/bin:$EMBER_TEST_NATIVE_PREFIX/gnu/bin"
+          export TEST_SH="$EMBER_TEST_NATIVE_PREFIX/bin/bash"
+          "$EMBER_TEST_NATIVE_PREFIX/bin/python3.15" -B ember/image/test-cix-p1-native.py
+          "$EMBER_TEST_NATIVE_PREFIX/bin/python3.15" -B ember/image/test-static-console.py
+          "$EMBER_TEST_NATIVE_PREFIX/bin/python3.15" -B ember/image/test-cix-p1-i18n.py
+          "$EMBER_TEST_NATIVE_PREFIX/bin/python3.15" -B ember/image/test-cix-p1-ssh.py
+          "$EMBER_TEST_NATIVE_PREFIX/bin/python3.15" -B ember/image/test-cix-p1-userland.py
+          "$EMBER_TEST_NATIVE_PREFIX/bin/python3.15" -B ember/image/test-cix-p1-startup.py
+          "$EMBER_TEST_NATIVE_PREFIX/bin/python3.15" -B ember/image/test-cix-p1-console.py
+          "$EMBER_TEST_NATIVE_PREFIX/bin/python3.15" -B ember/image/test-cix-p1-power.py
+          "$EMBER_TEST_NATIVE_PREFIX/bin/python3.15" -B ember/image/test-cix-p1-root.py
+          "$EMBER_TEST_NATIVE_PREFIX/bin/python3.15" -B ember/image/test-cix-p1-root-image.py
           for file in ember/image/cix-p1-*.sh ember/image/cix-p1-*.subr \
               ember/image/cix-p1-rc ember/image/cix-p1-rc.shutdown \
               ember/image/cix-p1-console \
               ember/image/cix-p1-power-button; do
-            sh -n "$file"
+            "$EMBER_TEST_NATIVE_PREFIX/bin/mksh" -n "$file"
           done

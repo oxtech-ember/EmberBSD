@@ -31,7 +31,7 @@ if [ "${1:-}" = --console-selected ]; then
     shift 6
     runtime_prefix=$1 resource=$2 unwinder=$3 compiler_resource=$4 jobs=$5 timestamp=$6 revision=$7
     shift 7
-    headers=$1 libraries=$2 programs=$3
+    headers=$1 libraries=$2 programs=$3 python=$4
     wrapper=$out/nbmake-$machine
     CPPFLAGS="-nostdinc -isystem $out/dest/usr/include -isystem $compiler_resource/include"
     export CPPFLAGS
@@ -39,7 +39,7 @@ if [ "${1:-}" = --console-selected ]; then
         -V EMBER_LLVM_RUNTIME_PHASE=bootstrap -V "EMBER_EXTERNAL_LLVM_RUNTIME=$runtime_prefix" \
         -V "EMBER_LLVM_RESOURCE_DIR=$resource" -V MKLIBCXX=no
     if [ "$arch" = riscv32 ]; then set -- "$@" -V MKSOFTFLOAT=yes; fi
-    "$host_prefix/bin/python3.15" -B "$sdk/scripts/run-native-os.py" \
+    "$python" -B "$sdk/scripts/run-native-os.py" \
         --host-prefix "$host_prefix" --compiler-family "$host_family" --source "$src" \
         --routing "$out/routing" --cwd "$src" --log "$out/logs/wrapper.log" --build-sh -- \
         -U -u -j"$jobs" -m "$machine" -a "$arch" -O "$out/obj" -D "$out/dest" -T "$tools" -w "$wrapper" \
@@ -87,7 +87,7 @@ fi
 shift
 src=$1 out=$2 tools=$3 compiler=$4 sdk=$5 host_prefix=$6 host_family=$7 family=$8
 shift 8
-libedit=$1 llvm_source=$2 host_bfd=$3 jobs=$4 git=$5 ruby=$6 shasum=$7
+libedit=$1 llvm_source=$2 host_bfd=$3 jobs=$4 git=$5 python=$6 shasum=$7
 shift 7
 libarchive=$1 libevent=$2 byacc=$3 iscsi=$4 libpcap=$5 tcpwrappers=$6
 shift 6
@@ -141,7 +141,7 @@ mkdir -p "$out/logs" "$out/dest"
 printf '%s\n' "source=$revision" "compiler-family=$family" "compiler-version=$version" "target=$machine" \
     "profile=reduced-static-c-development" > "$out/BUILD-INPUTS.pending"
 printf 'target-cppflags=%s\n' "$CPPFLAGS" >> "$out/BUILD-INPUTS.pending"
-for input in "$src/build.sh" "$0" "$here/cix-p1-native.py" "$here/cix-p1-i18n.rb" "$cc" "$runtime" \
+for input in "$src/build.sh" "$0" "$here/cix-p1-native.py" "$here/cix-p1-i18n.py" "$cc" "$runtime" \
     "$tools/bin/nbmkesdb" "$tools/bin/nbmkcsmapper" "$libedit/libedit-source.json" \
     "$llvm_source/llvm-source.json" "$libarchive/emberbsd-prepared-source.json" \
     "$libevent/emberbsd-prepared-source.json" "$byacc/emberbsd-prepared-source.json" \
@@ -149,7 +149,7 @@ for input in "$src/build.sh" "$0" "$here/cix-p1-native.py" "$here/cix-p1-i18n.rb
     "$tcpwrappers/emberbsd-prepared-source.json"; do
     "$shasum" -a 256 "$input" >> "$out/BUILD-INPUTS.pending"
 done
-"$shasum" -a 256 "$0" "$here/cix-p1-native.py" "$here/cix-p1-i18n.rb" > "$out/PROFILE-SHA256.txt"
+"$shasum" -a 256 "$0" "$here/cix-p1-native.py" "$here/cix-p1-i18n.py" > "$out/PROFILE-SHA256.txt"
 if [ -n "$unwinder" ]; then
     "$shasum" -a 256 "$unwinder" >> "$out/BUILD-INPUTS.pending"
 else
@@ -221,7 +221,7 @@ component share/i18n/iconv
 component share/i18n/esdb 'SUBDIR=ISO646 UTF' ISO646_PART=US UTF_PART=8
 component share/i18n/csmapper SUBDIR=ISO646 PART_ISO646=US
 printf '%s\n' 'i18n-recipes=iconv;esdb:ISO646-US,UTF-8;csmapper:ISO646-US' >> "$out/BUILD-INPUTS.pending"
-"$ruby" "$here/cix-p1-i18n.rb" record "$out" "$revision"
+"$python" -B "$here/cix-p1-i18n.py" record "$out" "$revision"
 printf 'i18n-inventory-sha256=%s\n' "$("$shasum" -a 256 "$out/I18N-INVENTORY.json" | awk '{print $1}')" \
     >> "$out/BUILD-INPUTS.pending"
 run makedev "$wrapper" -C "$src/etc" MAKEDEV
@@ -254,7 +254,7 @@ while IFS= read -r file; do
 done < "$out/programs.list"
 [ -s "$out/BINARIES-SHA256.txt" ]
 "$shasum" -a 256 -c "$out/PROFILE-SHA256.txt" >/dev/null
-"$ruby" "$here/cix-p1-i18n.rb" verify "$out" "$revision" "$out/BUILD-INPUTS.pending" >/dev/null
+"$python" -B "$here/cix-p1-i18n.py" verify "$out" "$revision" "$out/BUILD-INPUTS.pending" >/dev/null
 "$git" -C "$src" diff --quiet
 "$git" -C "$src" diff --cached --quiet
 [ -z "$("$git" -C "$src" ls-files --others --exclude-standard)" ] || exit 1

@@ -129,7 +129,8 @@ It tests input rejection, component ordering, missing programs and failure
 propagation. It does not establish a successful target build or boot.
 
 ```sh
-ruby ember/image/test-cix-p1-userland.rb
+EMBER_TEST_NATIVE_PREFIX="$EMBER_HOST_PREFIX" \
+    "$EMBER_HOST_PREFIX/bin/python3.15" -B ember/image/test-cix-p1-userland.py
 ```
 
 Keep generated binaries, local paths and personal configuration outside Git.
@@ -148,13 +149,16 @@ programs before enabling a root profile that requests this mode. Source contract
 model process and time services; they do not run host shutdown or establish a
 physical shutdown duration.
 
-## Minimal static console
+## Minimal static bring-up console
 
 The same builder can select a small C-only console profile for `aarch64` or
-`riscv32`. This is a single-user recovery console: `init` starts a root shell on
+`riscv32`. This bring-up profile is a single-user recovery console: `init` starts a root shell on
 `/dev/console` without a login prompt. It is intended only for a controlled
 local console. It does not enable network services or provide a multi-user
-login. It produces a 4 MiB FFS2 image without writing a device.
+login. It produces a 4 MiB FFS2 image without writing a device. The profile
+supports the LLVM C foundation with Clang; explicit GCC is rejected.
+`EMBER_USERLAND_PROFILE=cix` (or an unset variable) selects the original CIX
+profile; unknown profile names are rejected.
 
 Set the common source, native prefix, host BFD and libedit inputs above, plus
 `EMBER_BYACC_SOURCE`. Select a completed SDK `--c-foundation` stage and its
@@ -180,3 +184,8 @@ networking, credentials or writable storage setup. Image generation and
 static ELF checks do not establish root mounting, UART or target execution.
 The receiving board owner must supply a compatible boot path and verify the
 complete memory and storage layout.
+
+A trial may use a modified OS checkout. The result records the source commit,
+whether the checkout was modified, and a digest of the tracked changes and
+untracked inputs; the builder checks that state again before accepting the
+result. A modified-source trial is not a release built from published source.
