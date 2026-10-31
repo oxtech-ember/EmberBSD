@@ -99,7 +99,8 @@ variants use separate output directories. Radio firmware assets are fetched
 according to `ember/boot/image-assets.tsv`, with hash verification and
 license preservation; their binaries are not included in the repository.
 The firmware receipt records the compiler path, version, machine, identity and
-SHA256. The builder checks the compiler hash again before publication.
+SHA256. That hash is taken once and is the compiler part of the input key;
+the builder does not hash the compiler again before publication.
 Real GCC16 smoke controls check the bounded freestanding header, ELF, LTO,
 and search contract. Neither these controls nor an accepted NetBSD target
 identity prove a complete TF-A/EDK2 build or physical firmware acceptance. `--prepare` needs only Git and preserves accepted outputs.

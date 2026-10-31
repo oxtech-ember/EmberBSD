@@ -103,8 +103,9 @@ plus separate `CFLAGS+=` and `LDFLAGS+=` tokens. The EDK2 DSC patch
 uses single `=` assignments to append the profile. It does not use `==`.
 
 The receipt records the compiler identity and SHA256, profile and specs
-hashes, and the injected TF-A/EDK2 flags. The builder checks the compiler
-hash again before publication. It hashes the incoming image, writes the
+hashes, and the injected TF-A/EDK2 flags. The compiler is hashed once, before
+the build; that hash is its input key and is not checked again before
+publication. The builder hashes the incoming image, writes the
 receipt, then publishes the final image. A late failure removes the image
 and receipt and retains the build log.
 
