@@ -559,5 +559,14 @@ COPTS.salt-des3.c+= -Wno-error=deprecated-declarations
 COPTS.sp800-108-kdf.c+= -Wno-error=deprecated-declarations
 
 .include <${HEIMBASE}/Makefile.rules.inc>
+
+# The native source list includes the IPC server, unlike portable libkrb5.
+.if defined(EMBER_HEIMDAL_SOURCE)
+VERSION_MAP= heimdal-native-version.map
+heimdal-native-version.map: ${HEIMDIST}/lib/krb5/version-script.map ${.CURDIR}/native-version-map.awk
+	${TOOL_AWK} -f ${.CURDIR:Q}/native-version-map.awk ${.ALLSRC:[1]:Q} > ${.TARGET:Q}.tmp
+	${MV} ${.TARGET:Q}.tmp ${.TARGET:Q}
+CLEANFILES+= ${.OBJDIR}/heimdal-native-version.map ${.OBJDIR}/heimdal-native-version.map.tmp
+.endif
 .include <bsd.lib.mk>
 .include <bsd.info.mk>

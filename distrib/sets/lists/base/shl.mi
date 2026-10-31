@@ -380,8 +380,8 @@
 ./usr/lib/libheimbase.so.2			base-krb5-shlib		compatfile,kerberos
 ./usr/lib/libheimbase.so.2.0			base-krb5-shlib		compatfile,kerberos
 ./usr/lib/libheimntlm.so			base-krb5-shlib		compatfile,kerberos
-./usr/lib/libheimntlm.so.6			base-krb5-shlib		compatfile,kerberos
-./usr/lib/libheimntlm.so.6.0			base-krb5-shlib		compatfile,kerberos
+./usr/lib/libheimntlm.so.7			base-krb5-shlib		compatfile,kerberos
+./usr/lib/libheimntlm.so.7.0			base-krb5-shlib		compatfile,kerberos
 ./usr/lib/libhx509.so				base-krb5-shlib		compatfile,kerberos
 ./usr/lib/libhx509.so.7				base-krb5-shlib		compatfile,kerberos
 ./usr/lib/libhx509.so.7.0			base-krb5-shlib		compatfile,kerberos

@@ -76,10 +76,10 @@ beforedepend:
 	ln -sf ${HEIMBASE}/include/der-protos.h
 	ln -sf ${HEIMBASE}/include/roken.h
 	ln -sf ${HEIMBASE}/include/krb5-types.h
-	ln -sf ${HEIMBASE}/dist/lib/asn1/der.h
-	ln -sf ${HEIMBASE}/dist/lib/roken/roken-common.h
-	ln -sf ${HEIMBASE}/dist/lib/roken/getarg.h
-	ln -sf ${HEIMBASE}/dist/lib/asn1/asn1-common.h
+	ln -sf ${HEIMDIST}/lib/asn1/der.h
+	ln -sf ${HEIMDIST}/lib/roken/roken-common.h
+	ln -sf ${HEIMDIST}/lib/roken/getarg.h
+	ln -sf ${HEIMDIST}/lib/asn1/asn1-common.h
 
 CLEANFILES+=    krb5 der-protos.h roken.h krb5-types.h der.h	\
 		roken-common.h getarg.h asn1-common.h

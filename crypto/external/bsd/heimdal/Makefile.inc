@@ -1,7 +1,22 @@
 # $NetBSD: Makefile.inc,v 1.13.2.1 2025/11/20 18:46:44 martin Exp $
 
 HEIMBASE?=	${NETBSDSRCDIR}/crypto/external/bsd/heimdal
+# The common Ports source is shared with packages; keep native integration here.
+.if !defined(EMBER_HEIMDAL_SOURCE) && empty(.MAKEFLAGS:M-V*) && !(make(obj) && empty(.TARGETS:Nobj)) && \
+    !(make(clean) && empty(.TARGETS:Nclean)) && \
+    !(make(cleandir) && empty(.TARGETS:Ncleandir))
+.error Set EMBER_HEIMDAL_SOURCE to the prepared common Ports source
+.endif
+.if defined(EMBER_HEIMDAL_SOURCE) && !empty(EMBER_HEIMDAL_SOURCE)
+HEIMDIST?=	${EMBER_HEIMDAL_SOURCE}
+.if "${HEIMDIST}" != "${EMBER_HEIMDAL_SOURCE}"
+.error HEIMDIST must match the prepared common Heimdal source
+.endif
+CPPFLAGS+=	-DEMBERBSD_BASE_HEIMDAL
+HOST_CPPFLAGS+=	-DEMBERBSD_BASE_HEIMDAL
+.else
 HEIMDIST=	${HEIMBASE}/dist
+.endif
 
 SSLBASE?=	${NETBSDSRCDIR}/crypto/external/${EXTERNAL_OPENSSL_SUBDIR}
 
@@ -57,3 +72,7 @@ CPPFLAGS+= ${.PATH:S/^/-I/}
 CPPFLAGS+= -I${HEIMBASE}/include
 CPPFLAGS+= -I${HEIMDIST}/include
 CWARNFLAGS.clang+=	-Wno-error=absolute-value
+
+.if defined(EMBER_HEIMDAL_SOURCE) && !empty(EMBER_HEIMDAL_SOURCE) && !defined(HOSTPROGNAME)
+CPPFLAGS+=	-I${DESTDIR}/usr/include/krb5 -I${DESTDIR}/usr/include/gssapi
+.endif

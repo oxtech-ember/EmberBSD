@@ -131,7 +131,7 @@
 ./usr/libdata/debug/usr/lib/libgssapi.so.12.0.debug		comp-krb5-debug	debug,compatfile,kerberos
 ./usr/libdata/debug/usr/lib/libhdb.so.16.0.debug		comp-krb5-debug	debug,compatfile,kerberos
 ./usr/libdata/debug/usr/lib/libheimbase.so.2.0.debug		comp-krb5-debug	debug,compatfile,kerberos
-./usr/libdata/debug/usr/lib/libheimntlm.so.6.0.debug		comp-krb5-debug	debug,compatfile,kerberos
+./usr/libdata/debug/usr/lib/libheimntlm.so.7.0.debug		comp-krb5-debug	debug,compatfile,kerberos
 ./usr/libdata/debug/usr/lib/libhx509.so.7.0.debug		comp-krb5-debug	debug,compatfile,kerberos
 ./usr/libdata/debug/usr/lib/libintl.so.1.1.debug		comp-sys-debug	debug,compatfile
 ./usr/libdata/debug/usr/lib/libipsec.so.3.0.debug		comp-net-debug	debug,compatfile

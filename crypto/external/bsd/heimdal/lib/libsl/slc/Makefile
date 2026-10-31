@@ -36,8 +36,8 @@ beforedepend:
 	[ -h krb5 ] || ln -sf . krb5
 	ln -sf ${HEIMBASE}/include/roken.h
 	ln -sf ${HEIMBASE}/include/krb5-types.h
-	ln -sf ${HEIMBASE}/dist/lib/roken/roken-common.h
-	ln -sf ${HEIMBASE}/dist/lib/roken/getarg.h
+	ln -sf ${HEIMDIST}/lib/roken/roken-common.h
+	ln -sf ${HEIMDIST}/lib/roken/getarg.h
 
 CLEANFILES+=	krb5 roken.h krb5-types.h roken-common.h	\
 		getarg.h print_version.h make-print-version	\
