@@ -99,6 +99,9 @@ static struct spi_chunk chunk(int count, const uint8_t *tx, uint8_t *rx, unsigne
 static void clear_events(void) { clocks=done_count=0; memset(events,0,sizeof(events)); }
 int main(void) {
     struct esp_spi_softc sc = { .sc_source_hz=40000000, .sc_spi.sct_nslaves=1 };
+    esp_spi_reset(&sc);
+    /* S31 SPI_CLK_GATE bits 0/1 enable clocks; bit 2 selects PLL. */
+    assert(regs[ESPSPI_CLK_GATE/4] == 3);
     uint8_t bytes[70]; for (unsigned int i=0;i<sizeof(bytes);i++) bytes[i]=(uint8_t)i;
     uint32_t c; u_int hz; assert(esp_spi_clock(0,1,&c,&hz)==EINVAL);
     assert(esp_spi_clock(40000000,40000000,&c,&hz)==0 && c==ESPSPI_CLOCK_DIRECT && hz==40000000);

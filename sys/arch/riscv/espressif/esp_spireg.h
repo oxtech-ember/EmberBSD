@@ -39,7 +39,8 @@
 #define ESPSPI_W0		0x98
 #define ESPSPI_SLAVE		0xe0
 #define ESPSPI_CLK_GATE		0xe8
-#define ESPSPI_CLK_ENABLE	__BITS(2, 0)
+/* Bit 2 selects PLL rather than XTAL; it is not a clock enable. */
+#define ESPSPI_CLK_ENABLE	(__BIT(0) | __BIT(1))
 #define ESPSPI_REG_SIZE		0xec
 #define ESPSPI_FIFO_SIZE		64
 
