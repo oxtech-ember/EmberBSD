@@ -14,9 +14,9 @@ the entire recursive build. The generator reads the prepared-source receipt and
 the existing SDK object context in its ancestor object tree. That context
 identifies the OS generator code, compiler, native tools, target ABI and sysroot
 configuration. Matching [input keys](https://github.com/oxtech-ember/EmberBSD-SDK/blob/main/docs/input-keys.md)
-reuse the generated output without reading source trees, headers, executables
-or generated files again. Direct invocations without these identities generate
-afresh. Unchanged generated file timestamps survive regeneration for a new key.
+reuse the generated output after checking that required output files exist,
+without reading source trees, headers, executables or generated contents again.
+Direct invocations without these identities generate afresh. Unchanged generated file timestamps survive regeneration for a new key.
 
 The OpenSSL 4 libraries use base ABI major 17. Their symbol version is supplied
 by upstream OpenSSL, independently of the base shared-library major. AArch64 library and program cross-builds have been exercised; target runtime

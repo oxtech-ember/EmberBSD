@@ -70,6 +70,13 @@ runpy.run_path(sys.argv[0], run_name='__main__')
     header = output / 'include/openssl/opensslv.h'
     old_bytes, old_mtime = header.read_bytes(), header.stat().st_mtime_ns
     assert not run(reuse=True).stdout
+    header.unlink()
+    (output / 'crypto.mk').unlink()
+    assert 'Configuring OpenSSL' in run().stdout
+    assert header.read_bytes() == old_bytes and (output / 'crypto.mk').is_file()
+    assert json.loads((output / '.complete').read_text())['key'] == first['key']
+    old_mtime = header.stat().st_mtime_ns
+    assert not run(reuse=True).stdout
     (sysroot / 'usr/include/sys').mkdir(parents=True)
     (sysroot / 'usr/include/sys/types.h').write_text('/* changed target header */\n')
     context['sources']['os']['commit'] = '2' * 40
