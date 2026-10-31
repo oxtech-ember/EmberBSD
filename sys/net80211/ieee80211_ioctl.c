@@ -2227,7 +2227,8 @@ ieee80211_ioctl_set80211(struct ieee80211com *ic, u_long cmd,
 	struct ieee80211_rsnparms *rsn = &ic->ic_bss->ni_rsn;
 	int error;
 	const struct ieee80211_authenticator *auth;
-	int j, caps;
+	int j;
+	u_int caps;
 
 	error = 0;
 	switch (ireq->i_type) {
@@ -2542,10 +2543,10 @@ ieee80211_ioctl_set80211(struct ieee80211com *ic, u_long cmd,
 		 */
 		caps = 0;
 		for (j = 1; j < 32; j++)	/* NB: skip WEP */
-			if ((ireq->i_val & (1<<j)) &&
+			if ((ireq->i_val & (1U << j)) &&
 			    ((ic->ic_caps & cipher2cap(j)) ||
 			     ieee80211_crypto_available(j)))
-				caps |= 1<<j;
+				caps |= 1U << j;
 		if (caps == 0)			/* nothing available */
 			return EINVAL;
 		/* XXX verify ciphers ok for unicast use? */
