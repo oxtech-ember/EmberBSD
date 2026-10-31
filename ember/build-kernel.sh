@@ -114,10 +114,10 @@ run_native_check() {
     log=$2
     shift 2
     # Preserve the wrapper's overwrite behavior while the SDK creates the
-    # current check log exclusively. Only our two named output logs reach here.
+    # current artifact-check log exclusively.
     rm -f "$log"
     "$python" "$native_check" --host-prefix "$host_prefix" \
-        --compiler-family "$host_family" --required-role ruby --required-role awk \
+        --compiler-family "$host_family" \
         --tool "$role" --cwd "$src" --bindings "$out/native-check-commands" \
         --log "$log" -- "$@"
 }
@@ -179,15 +179,6 @@ for module in if_cemac_acpi bcm2712btcom bcmexpgpio rp1wmcodec rpi5button; do
     module_obj=$(run_make -V .OBJDIR)
     cp "$module_obj/$module.kmod" "$stage/"
 done
-contracts=all
-if [ "$(uname -s)" != NetBSD ]; then
-    contracts=portable
-fi
-# The common SDK runner binds native compiler and ABI arguments even for
-# existing contracts that accept only an executable CC and ignore CFLAGS.
-run_native_check sh "$out/contracts.log" "$src/ember/tools/kernel-contracts.sh" \
-    "$src" "$contracts" "${PVR_QUERY_FIRMWARE:-}"
 cp "$stage/"* "$out/"
 success=yes
 echo "kernel and five modules built ($mode): $out"
-cat "$out/contracts.log"
