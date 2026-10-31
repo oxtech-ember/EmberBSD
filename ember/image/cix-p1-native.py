@@ -27,7 +27,7 @@ def main():
                 'EMBER_HOST_BFD_CONFIG', 'EMBER_LLVM_SOURCE', 'EMBER_PORTS_SOURCE',
                 'EMBER_LIBARCHIVE_SOURCE', 'EMBER_LIBEVENT_SOURCE', 'EMBER_BYACC_SOURCE',
                 'EMBER_ISCSI_SOURCE', 'EMBER_LIBPCAP_SOURCE', 'EMBER_TCP_WRAPPERS_SOURCE',
-                'EMBER_LIBCBOR_SOURCE', 'EMBER_LIBFIDO2_SOURCE')
+                'EMBER_LIBCBOR_SOURCE', 'EMBER_LIBFIDO2_SOURCE', 'EMBER_LIBFETCH_SOURCE')
     missing = [key for key in required if not os.environ.get(key)]
     family = os.environ.get('EMBER_TARGET_COMPILER_FAMILY', 'clang')
     host_family = os.environ.get('EMBER_HOST_COMPILER_FAMILY', 'clang')
@@ -53,7 +53,8 @@ def main():
                   Path(os.environ['EMBER_LIBARCHIVE_SOURCE']), Path(os.environ['EMBER_LIBEVENT_SOURCE']),
                   Path(os.environ['EMBER_BYACC_SOURCE']), Path(os.environ['EMBER_ISCSI_SOURCE']),
                   Path(os.environ['EMBER_LIBPCAP_SOURCE']), Path(os.environ['EMBER_TCP_WRAPPERS_SOURCE']),
-                  Path(os.environ['EMBER_LIBCBOR_SOURCE']), Path(os.environ['EMBER_LIBFIDO2_SOURCE']))
+                  Path(os.environ['EMBER_LIBCBOR_SOURCE']), Path(os.environ['EMBER_LIBFIDO2_SOURCE']),
+                  Path(os.environ['EMBER_LIBFETCH_SOURCE']))
         if family == 'clang':
             inputs += (Path(os.environ['EMBER_SDK_SYSROOT']),)
         if any(not p.is_absolute() or any(c not in 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_./-' for c in str(p)) for p in inputs):
@@ -91,6 +92,7 @@ def main():
             ('EMBER_TCP_WRAPPERS_SOURCE', 'scripts/source-inputs/tcp_wrappers/source.py', 'tcp_wrappers'),
             ('EMBER_LIBCBOR_SOURCE', 'scripts/source-inputs/libcbor/source.py', 'libcbor'),
             ('EMBER_LIBFIDO2_SOURCE', 'scripts/source-inputs/libfido2/source.py', 'libfido2'),
+            ('EMBER_LIBFETCH_SOURCE', 'scripts/source-inputs/libfetch/source.py', 'libfetch'),
         ):
             script = str(Path(ports) / entry)
             if operation == 'libarchive':
@@ -134,7 +136,8 @@ def main():
                      os.environ['EMBER_LIBARCHIVE_SOURCE'], os.environ['EMBER_LIBEVENT_SOURCE'],
                      os.environ['EMBER_BYACC_SOURCE'], os.environ['EMBER_ISCSI_SOURCE'],
                      os.environ['EMBER_LIBPCAP_SOURCE'], os.environ['EMBER_TCP_WRAPPERS_SOURCE'],
-                     os.environ['EMBER_LIBCBOR_SOURCE'], os.environ['EMBER_LIBFIDO2_SOURCE'], *llvm]
+                     os.environ['EMBER_LIBCBOR_SOURCE'], os.environ['EMBER_LIBFIDO2_SOURCE'],
+                     os.environ['EMBER_LIBFETCH_SOURCE'], *llvm]
         native_os.run_native_os(native, source=str(source), routing=str(output / 'routing'),
                                 cwd=str(source), arguments=arguments, shell=True,
                                 log=str(output / 'logs/orchestrator.log'))
