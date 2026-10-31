@@ -63,7 +63,9 @@ jobs:
           mkdir -p "$native/bin" "$native/gnu/bin"
           ln -s /usr/bin/mksh "$native/bin/mksh"
           ln -s /usr/bin/mksh "$native/bin/sh"
-          ln -s /usr/bin/bash "$native/bin/bash"
+          # Keep the host's interactive bashrc from changing the PTY fixture.
+          printf '%s\n' '#!/bin/sh' 'exec /usr/bin/bash --noprofile --norc "$@"' > "$native/bin/bash"
+          chmod 755 "$native/bin/bash"
           ln -s /usr/bin/original-awk "$native/bin/nawk"
           ln -s /usr/bin/original-awk "$native/bin/awk"
           ln -s /usr/bin/shasum "$native/bin/shasum"
