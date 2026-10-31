@@ -15,7 +15,7 @@ Firmware / board revision, if applicable:
 
 | Check and command | Result | Evidence level and limits |
 | --- | --- | --- |
-| Failure before / success after, for a repair | | |
+| Failure before / success after, for a logic or behavior repair (none for a trivial fix) | | |
 | Build and artifact hashes, when relevant | | |
 | Shared-path regressions | | |
 | Source and memory analysis, for C/C++ | | |
