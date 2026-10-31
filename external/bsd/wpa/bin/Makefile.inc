@@ -4,9 +4,23 @@ BINDIR?=	/usr/sbin
 
 USE_FORT?= yes	# network client/server
 
+.if defined(EMBER_WPA_SOURCE)
+WPA_DISTDIR?=			${EMBER_WPA_SOURCE}
+.if "${WPA_DISTDIR}" != "${EMBER_WPA_SOURCE}"
+.error WPA_DISTDIR must match the prepared common WPA source
+.endif
+.elif make(obj) && empty(.TARGETS:Nobj)
 WPA_DISTDIR?=			${.CURDIR}/../../dist
+.else
+.error Set EMBER_WPA_SOURCE to the prepared common Ports source
+.endif
 WPA_SUPPLICANT_DISTDIR?=	${WPA_DISTDIR}/wpa_supplicant
 HOSTAPD_DISTDIR?=		${WPA_DISTDIR}/hostapd
+.if defined(EMBER_WPA_SOURCE) && \
+    ("${WPA_SUPPLICANT_DISTDIR}" != "${WPA_DISTDIR}/wpa_supplicant" || \
+     "${HOSTAPD_DISTDIR}" != "${WPA_DISTDIR}/hostapd")
+.error WPA component directories must match the prepared common WPA source
+.endif
 
 COMMON_PATH= \
 	${WPA_DISTDIR}/src/ap \

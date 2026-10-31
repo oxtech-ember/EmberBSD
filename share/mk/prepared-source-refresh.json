@@ -118,6 +118,18 @@
         "libunbound.so",
         "libunbound.a"
       ]
+    },
+    "EMBER_WPA_SOURCE": {
+      "producer_dirs": [
+        "external/bsd/wpa/bin/hostapd",
+        "external/bsd/wpa/bin/hostapd_cli",
+        "external/bsd/wpa/bin/wpa_cli",
+        "external/bsd/wpa/bin/wpa_passphrase",
+        "external/bsd/wpa/bin/wpa_supplicant"
+      ],
+      "header_prefixes": [],
+      "consumer_dirs": [],
+      "linked_names": []
     }
   },
   "header_independent_object_patterns": [

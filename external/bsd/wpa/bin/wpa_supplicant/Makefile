@@ -75,6 +75,7 @@ SRCS+= \
 base64.c \
 bitfield.c \
 common.c \
+crc32.c \
 config_line.c \
 eloop.c \
 os_unix.c \
