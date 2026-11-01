@@ -1,0 +1,17 @@
+# Shared ESP-Mosaico configuration.
+include "arch/riscv/conf/ESP32S31"
+
+# Firmware UART remains the system console.
+esp32s31_gpio* at fdt? pass 2
+fregulator* at fdt? pass 3
+gpioiic_fdt* at fdt? pass 4
+iic* at gpioiic_fdt?
+cst92xx* at iic? addr 0x5a
+ov3640s* at iic? addr 0x3c
+wsmouse* at cst92xx?
+
+cofb* at spi? slave 0
+wsdisplay* at wsemuldisplaydev?
+options WSEMUL_VT100
+options FONT_BOLD8x16
+options WSDISPLAY_DEFAULTSCREENS=1

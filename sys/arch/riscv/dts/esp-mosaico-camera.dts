@@ -1,0 +1,12 @@
+// SPDX-License-Identifier: GPL-2.0+
+/dts-v1/;
+
+#include "esp-mosaico-common.dtsi"
+
+&camera_xclk {
+	status = "okay";
+};
+
+&camera {
+	status = "okay";
+};

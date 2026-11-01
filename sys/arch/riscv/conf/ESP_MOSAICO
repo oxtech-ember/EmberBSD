@@ -1,18 +1,4 @@
-# ESP-Mosaico: the shared ESP32-S31 kernel and its board device tree.
-include "arch/riscv/conf/ESP32S31"
+# ESP-Mosaico: the board tree leaves optional camera hardware disabled.
+include "arch/riscv/conf/ESP_MOSAICO_COMMON"
 
 makeoptions DTS="esp-mosaico.dts"
-
-# Onboard peripherals. The firmware UART remains the system console.
-esp32s31_gpio* at fdt? pass 2
-fregulator* at fdt? pass 3
-gpioiic_fdt* at fdt? pass 4
-iic* at gpioiic_fdt?
-cst92xx* at iic? addr 0x5a
-wsmouse* at cst92xx?
-
-cofb* at spi? slave 0
-wsdisplay* at wsemuldisplaydev?
-options WSEMUL_VT100
-options FONT_BOLD8x16
-options WSDISPLAY_DEFAULTSCREENS=1

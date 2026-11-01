@@ -1,0 +1,39 @@
+.\" SPDX-License-Identifier: BSD-2-Clause AND Apache-2.0
+.Dd November 1, 2026
+.Dt OV3640S 4
+.Os
+.Sh NAME
+.Nm ov3640s
+.Nd OV3640 sensor power sequencing and identification
+.Sh SYNOPSIS
+.Cd "ov3640s* at iic? addr 0x3c"
+.Sh DESCRIPTION
+The
+.Nm
+driver controls an OmniVision OV3640 sensor connected over I2C/SCCB.
+It enables the shared sensor supply, sequences the reset and power-down GPIOs,
+and reads the sensor identifier over SCCB.
+The driver reports the identifier during attachment and leaves the sensor in
+reset and power-down after probing.
+.Pp
+The device-tree node uses the compatible string
+.Dq ovti,ov3640
+and supplies
+.Va reg , reset-gpios , powerdown-gpios , power-supply , clocks
+and
+.Va clock-names
+properties.
+The clock describes the module's fixed 24 MHz oscillator.
+The shared 3.3 V rail is never disabled by this driver.
+.Pp
+The OV3640 module in the left camera slot is supported by the
+.Pa ESP_MOSAICO_CAMERA
+configuration.
+The camera node is disabled in the base
+.Pa ESP_MOSAICO
+device tree.
+.Sh LIMITATIONS
+This driver only identifies the OV3640 sensor.
+It does not configure image formats, attach a video device, or capture frames.
+.Sh SEE ALSO
+.Xr iic 4

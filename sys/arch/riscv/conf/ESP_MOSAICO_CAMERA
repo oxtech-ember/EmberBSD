@@ -1,0 +1,4 @@
+# ESP-Mosaico assembled kit with the optional left-slot OV3640 module.
+include "arch/riscv/conf/ESP_MOSAICO_COMMON"
+
+makeoptions DTS="esp-mosaico-camera.dts"

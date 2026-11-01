@@ -49,7 +49,7 @@ MAN=	aac.4 ac97.4 acardide.4 aceride.4 acphy.4 \
 	nadb.4 ne.4 neo.4 netintro.4 nfe.4 nfsmb.4 njata.4 njs.4 npflog.4 \
 	nsclpcsio.4 nside.4 nsphy.4 nsphyter.4 ntwoc.4 null.4 \
 	nvme.4 nvmm.4 nxp75a.4 \
-	oak.4 oosiop.4 opl.4 options.4 optiide.4 osiop.4 otus.4 \
+	oak.4 oosiop.4 opl.4 options.4 optiide.4 osiop.4 otus.4 ov3640s.4 \
 	pad.4 pas.4 pcagpio.4 pcdisplay.4 pcf8563rtc.4 pcf8574io.4 \
 	pciide.4 pckbc.4 pckbd.4 pcn.4 pcppi.4 pcscp.4 pcweasel.4 \
 	pdcide.4 pdcsata.4 piixide.4 piixpcib.4 \
