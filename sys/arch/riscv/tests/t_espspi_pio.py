@@ -36,6 +36,8 @@ prefix = r'''
 #include <errno.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
 typedef unsigned int u_int;
 typedef unsigned int bus_size_t;
 #define __BIT(n) (UINT32_C(1) << (n))
@@ -49,16 +51,43 @@ typedef unsigned int bus_size_t;
 #define SPI_MODE_CPOL 2
 #define SPI_F_3WIRE 0x0004
 #define ESPSPI_SIO __BIT(17)
+#define ESPSPI_TRACE_COMMANDS 24
+#define ESPSPI_TRACE_SAMPLE 8
+#define ESPSPI_TRACE_TEXT_SIZE 16384
+typedef int kmutex_t;
+struct esp_spi_trace_block { u_int block,count,width; uint32_t ctrl,user,misc,dlen;
+    uint32_t dma_before_reset,dma_asserted,dma_released;
+    uint32_t raw_before_clear,raw_after_clear,raw_done;
+    uint32_t cmd_before_update,cmd_after_update,cmd_after_usr; int error;
+    uint8_t first[4],last[4]; };
+struct esp_spi_trace_chunk { bool valid,hash_valid,time_valid; u_int sequence,index,len,width;
+    uint32_t hash,csr_start,csr_end; uint64_t mono_start_us,mono_end_us;
+    uint8_t first[ESPSPI_TRACE_SAMPLE],last[ESPSPI_TRACE_SAMPLE];
+    struct esp_spi_trace_block first_block,last_block; };
+struct esp_spi_trace_snapshot { u_int sequence,command_count;
+    struct esp_spi_trace_chunk commands[ESPSPI_TRACE_COMMANDS];
+    struct esp_spi_trace_chunk pixel,latest; struct esp_spi_trace_block error_block;
+    bool error_block_valid; int last_error; };
 struct spi_chunk { struct spi_chunk *chunk_next; int chunk_count, chunk_wresid, chunk_rresid; const uint8_t *chunk_write,*chunk_wptr; uint8_t *chunk_read,*chunk_rptr; unsigned int chunk_bus_width; };
 struct spi_transfer { struct spi_chunk *st_chunks; int error, completions, st_flags; };
 struct spi_controller { int sct_nslaves; };
-struct esp_spi_softc { void *sc_syscon; struct spi_controller sc_spi; unsigned int sc_clkrst,sc_source_hz,sc_speed; uint32_t sc_clock,sc_user,sc_misc; };
+struct sysctlnode { void *sysctl_data; size_t sysctl_size; };
+#define SYSCTLFN_ARGS struct sysctlnode *rnode
+#define SYSCTLFN_CALL(node) node
+#define KM_SLEEP 0
+struct esp_spi_softc { void *sc_syscon; struct spi_controller sc_spi; unsigned int sc_clkrst,sc_source_hz,sc_speed; uint32_t sc_clock,sc_user,sc_misc; kmutex_t sc_trace_lock; u_int sc_trace_sequence,sc_trace_command_count; struct esp_spi_trace_chunk sc_trace_commands[ESPSPI_TRACE_COMMANDS],sc_trace_pixel,sc_trace_latest; struct esp_spi_trace_block sc_trace_error_block; bool sc_trace_error_block_valid; int sc_trace_last_error; };
 static uint32_t regs[64], sysreg;
 static unsigned int clocks, done_count, reset_count, writes, ctrl_writes, lockdepth;
 static uint32_t last_ctrl;
-static bool fail_update, fail_done;
+static bool fail_update, fail_done; static int fail_done_at;
 struct event { uint32_t ctrl,user,misc,dlen; uint8_t bytes[64]; };
 static struct event events[8];
+static int trace_mutex_depth; static char trace_text[20000];
+static uint32_t fake_csr_time; static uint64_t fake_uptime_us;
+static uint32_t csr_time_read(void) { fake_csr_time+=100; return fake_csr_time; }
+static void getnanouptime(struct timespec *ts) { fake_uptime_us+=100;
+    ts->tv_sec=(time_t)(fake_uptime_us/1000000);
+    ts->tv_nsec=(long)(fake_uptime_us%1000000)*1000; }
 static uint32_t rd(struct esp_spi_softc *sc, unsigned int reg);
 static void wr(struct esp_spi_softc *sc, unsigned int reg, uint32_t value);
 #define ESPSPI_READ(sc,reg) rd(sc,reg)
@@ -69,13 +98,22 @@ static void syscon_unlock(void *s) { (void)s; assert(--lockdepth == 0); }
 static uint32_t syscon_read_4(void *s,unsigned int r) { (void)s; (void)r; return sysreg; }
 static void syscon_write_4(void *s,unsigned int r,uint32_t v) { (void)s;(void)r;sysreg=v; }
 static void spi_done(struct spi_transfer *st,int error) { st->error=error; st->completions++; }
+static void mutex_enter(kmutex_t *m) { assert(*m==0); *m=1; trace_mutex_depth++; }
+static void mutex_exit(kmutex_t *m) { assert(*m==1); *m=0; trace_mutex_depth--; }
+static int sysctl_lookup(struct sysctlnode *n) { assert(n->sysctl_size<=sizeof(trace_text)); memcpy(trace_text,n->sysctl_data,n->sysctl_size); return 0; }
+static void *kmem_alloc(size_t n,int flags) { (void)flags; return malloc(n); }
+static void kmem_free(void *p,size_t n) { (void)n; free(p); }
 '''
 model = r'''
 static uint32_t rd(struct esp_spi_softc *sc, unsigned int reg) {
     (void)sc;
     if (reg == ESPSPI_CMD && (regs[reg/4] & ESPSPI_UPDATE) && !fail_update)
         regs[reg/4] &= ~ESPSPI_UPDATE;
-    if (reg == ESPSPI_INT_RAW && fail_done)
+    if (reg == ESPSPI_CMD && (regs[reg/4] & ESPSPI_USR) &&
+        (regs[ESPSPI_INT_RAW/4] & ESPSPI_TRANS_DONE))
+        regs[reg/4] &= ~ESPSPI_USR;
+    if (reg == ESPSPI_INT_RAW && (fail_done ||
+        (fail_done_at != 0 && done_count == fail_done_at)))
         return 0;
     return regs[reg/4];
 }
@@ -93,7 +131,9 @@ static void wr(struct esp_spi_softc *sc, unsigned int reg, uint32_t v) {
         e->dlen=regs[ESPSPI_DLEN/4];
         memcpy(e->bytes, &regs[ESPSPI_W0/4], sizeof(e->bytes));
         if (e->user & ESPSPI_USR_MISO) regs[ESPSPI_W0/4] = 0x44332211;
-        regs[ESPSPI_INT_RAW/4] = fail_done ? 0 : ESPSPI_TRANS_DONE; done_count++;
+        done_count++;
+        regs[ESPSPI_INT_RAW/4] = fail_done ||
+            (fail_done_at != 0 && done_count == fail_done_at) ? 0 : ESPSPI_TRANS_DONE;
     }
 }
 '''
@@ -160,6 +200,88 @@ int main(void) {
     assert(esp_spi_transfer(&sc,&st)==0 && st.error==0 && st.completions==1 && clocks==1);
     assert((events[0].ctrl & fread_mask)==fread_dual);
     assert(events[0].user & ESPSPI_FWRITE_DUAL);
+    struct esp_spi_softc diag_sc={ .sc_source_hz=40000000,.sc_spi.sct_nslaves=1 };
+    assert(esp_spi_configure(&diag_sc,0,SPI_MODE_0,10000000)==0);
+    uint8_t cmd_a[]={0x02,0,0x11,0}, cmd_b[]={0x02,0,0x29,0};
+    a=chunk(4,cmd_a,NULL,1); st=(struct spi_transfer){.st_chunks=&a}; clear_events();
+    assert(esp_spi_transfer(&diag_sc,&st)==0 && st.error==0);
+    a=chunk(4,cmd_b,NULL,1); st=(struct spi_transfer){.st_chunks=&a}; clear_events();
+    assert(esp_spi_transfer(&diag_sc,&st)==0 && st.error==0);
+    assert(diag_sc.sc_trace_command_count==2 &&
+        diag_sc.sc_trace_commands[0].hash_valid &&
+        diag_sc.sc_trace_commands[0].hash==esp_spi_trace_hash(cmd_a,4) &&
+        diag_sc.sc_trace_commands[0].time_valid &&
+        diag_sc.sc_trace_commands[0].csr_end>diag_sc.sc_trace_commands[0].csr_start &&
+        diag_sc.sc_trace_commands[0].mono_end_us>diag_sc.sc_trace_commands[0].mono_start_us &&
+        diag_sc.sc_trace_commands[1].first[2]==0x29);
+    uint8_t black[70]={0};
+    a=chunk(sizeof(black),black,NULL,4); st=(struct spi_transfer){.st_chunks=&a}; clear_events();
+    assert(esp_spi_transfer(&diag_sc,&st)==0 && st.error==0 &&
+        !diag_sc.sc_trace_pixel.valid);
+    a=chunk(sizeof(bytes),bytes,NULL,4); st=(struct spi_transfer){.st_chunks=&a}; clear_events();
+    assert(esp_spi_transfer(&diag_sc,&st)==0 && st.error==0 &&
+        diag_sc.sc_trace_pixel.valid && diag_sc.sc_trace_pixel.len==sizeof(bytes) &&
+        diag_sc.sc_trace_pixel.hash_valid &&
+        diag_sc.sc_trace_pixel.hash==esp_spi_trace_hash(bytes,sizeof(bytes)) &&
+        diag_sc.sc_trace_pixel.first_block.count==64 &&
+        diag_sc.sc_trace_pixel.last_block.block==1 &&
+        diag_sc.sc_trace_pixel.last_block.count==6 &&
+        diag_sc.sc_trace_pixel.first_block.dma_asserted ==
+            (ESPSPI_DMA_BASE|ESPSPI_TX_FIFO_RESET|ESPSPI_RX_FIFO_RESET) &&
+        diag_sc.sc_trace_pixel.first_block.dma_released==ESPSPI_DMA_BASE &&
+        diag_sc.sc_trace_pixel.time_valid &&
+        diag_sc.sc_trace_pixel.first_block.ctrl & ESPSPI_FREAD_QUAD &&
+        diag_sc.sc_trace_pixel.first_block.raw_before_clear==ESPSPI_TRANS_DONE &&
+        diag_sc.sc_trace_pixel.first_block.raw_after_clear==0 &&
+        diag_sc.sc_trace_pixel.first_block.raw_done==ESPSPI_TRANS_DONE &&
+        diag_sc.sc_trace_pixel.first_block.cmd_after_update==0 &&
+        diag_sc.sc_trace_pixel.first_block.cmd_after_usr==0);
+    struct sysctlnode trace_node={ .sysctl_data=&diag_sc };
+    assert(esp_spi_sysctl_trace(&trace_node)==0 &&
+        strstr(trace_text,"cmd0=") != NULL &&
+        strstr(trace_text,"pixel=") != NULL &&
+        strstr(trace_text,"irq00001000>00000000/00001000") != NULL);
+    diag_sc.sc_trace_pixel.valid=false;
+    fail_done=true; a=chunk(3,bytes,NULL,4); st=(struct spi_transfer){.st_chunks=&a}; clear_events();
+    assert(esp_spi_transfer(&diag_sc,&st)==0 && st.error==ETIMEDOUT &&
+        diag_sc.sc_trace_pixel.valid &&
+        diag_sc.sc_trace_pixel.first_block.error==ETIMEDOUT &&
+        diag_sc.sc_trace_last_error==ETIMEDOUT);
+    fail_done=false;
+
+    struct esp_spi_softc full_sc={ .sc_source_hz=40000000,.sc_spi.sct_nslaves=1 };
+    assert(esp_spi_configure(&full_sc,0,SPI_MODE_0,10000000)==0);
+    uint8_t init_cmd[4];
+    for (unsigned int i=0;i<ESPSPI_TRACE_COMMANDS;i++) {
+        init_cmd[0]=0x02; init_cmd[1]=0; init_cmd[2]=(uint8_t)i;
+        init_cmd[3]=(uint8_t)(0x80+i);
+        a=chunk(sizeof(init_cmd),init_cmd,NULL,1);
+        st=(struct spi_transfer){.st_chunks=&a}; clear_events();
+        assert(esp_spi_transfer(&full_sc,&st)==0 && st.error==0);
+    }
+    assert(full_sc.sc_trace_command_count==ESPSPI_TRACE_COMMANDS);
+    uint8_t full_pixels[150];
+    for (unsigned int i=0;i<sizeof(full_pixels);i++) full_pixels[i]=(uint8_t)(i+1);
+    a=chunk(sizeof(full_pixels),full_pixels,NULL,4);
+    st=(struct spi_transfer){.st_chunks=&a}; clear_events();
+    assert(esp_spi_transfer(&full_sc,&st)==0 && st.error==0 &&
+        full_sc.sc_trace_pixel.valid && full_sc.sc_trace_latest.valid);
+    fail_done_at=2; a=chunk(sizeof(full_pixels),full_pixels,NULL,4);
+    st=(struct spi_transfer){.st_chunks=&a}; clear_events();
+    assert(esp_spi_transfer(&full_sc,&st)==0 && st.error==ETIMEDOUT &&
+        full_sc.sc_trace_error_block_valid &&
+        full_sc.sc_trace_error_block.block==1 &&
+        full_sc.sc_trace_error_block.error==ETIMEDOUT &&
+        (full_sc.sc_trace_error_block.misc & ESPSPI_CS_KEEP_ACTIVE));
+    fail_done_at=0;
+    trace_node.sysctl_data=&full_sc;
+    assert(esp_spi_sysctl_trace(&trace_node)==0 &&
+        strstr(trace_text,"cmd23=") != NULL &&
+        strstr(trace_text,"pixel=") != NULL &&
+        strstr(trace_text,"latest=") != NULL &&
+        strstr(trace_text,"fail=1+64/") != NULL &&
+        strstr(trace_text,"e60") != NULL);
+    assert(trace_mutex_depth==0);
     clear_events(); fail_update=true; a=chunk(1,bytes,NULL,1); st=(struct spi_transfer){.st_chunks=&a};
     unsigned int before=reset_count; assert(esp_spi_transfer(&sc,&st)==0 && st.error==ETIMEDOUT && st.completions==1);
     assert(a.chunk_wresid==1 && reset_count==before+1 && clocks==0);
@@ -204,6 +326,6 @@ int main(void) {
 a.work.mkdir(parents=True, exist_ok=True)
 cfile = a.work / 'esp-spi-fixture.c'
 exe = a.work / 'esp-spi-fixture'
-cfile.write_text(prefix + '\n' + reg + '\n' + model + '\n' + '\n'.join(extract(x) for x in ('esp_spi_reset', 'esp_spi_clock', 'esp_spi_configure', 'esp_spi_wait', 'esp_spi_block', 'esp_spi_transfer')) + suffix)
+cfile.write_text(prefix + '\n' + reg + '\n' + model + '\n' + '\n'.join(extract(x) for x in ('esp_spi_trace_hash', 'esp_spi_uptime_us', 'esp_spi_trace_time_start', 'esp_spi_trace_time_end', 'esp_spi_sysctl_trace', 'esp_spi_reset', 'esp_spi_clock', 'esp_spi_configure', 'esp_spi_wait', 'esp_spi_trace_init', 'esp_spi_block', 'esp_spi_transfer')) + suffix)
 subprocess.run([str(cc), '-fuse-ld=lld', '-std=c11', '-Wall', '-Werror', '-O1', '-g', '-fsanitize=address,undefined', '-fno-sanitize-recover=all', str(cfile), '-o', str(exe)], env=env, check=True)
 subprocess.run([str(exe)], env=env, check=True)

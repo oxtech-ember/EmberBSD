@@ -34,6 +34,31 @@ __KERNEL_RCSID(0, "$EmberBSD$");
 #define CO5300_MAX_HEIGHT 480
 #define CO5300_RATE 20
 #define CO5300_INLINE_BYTES 64
+#define CO5300_DIAG_DELAYS 4
+
+struct co5300_row_diag {
+	bool valid, fingerprinted;
+	unsigned int y;
+	uint32_t nonzero;
+	bool dirty, different;
+	bool sample_valid;
+	unsigned int sample_x;
+	uint16_t sample_raw;
+	uint8_t sample_wire[2];
+	uint64_t raw_hash, wire_hash;
+	uint16_t raw_first[4], raw_last[4];
+	uint8_t wire_first[8], wire_last[8];
+	int result;
+};
+
+struct co5300_delay_diag {
+	char phase;
+	unsigned int command;
+	unsigned int requested_ms;
+	int ticks;
+	uint64_t elapsed_us;
+	bool cold;
+};
 
 struct co5300_softc {
 	/* genfb passes its own softc to the bus callbacks. */
@@ -54,6 +79,10 @@ struct co5300_softc {
 	struct sysctllog *sc_sysctllog;
 	uint32_t sc_rows_changed, sc_rows_sent, sc_row_errors;
 	int sc_last_error;
+	struct co5300_row_diag sc_first_row, sc_first_nonzero_row;
+	struct co5300_row_diag sc_latest_row;
+	struct co5300_delay_diag sc_delays[CO5300_DIAG_DELAYS];
+	unsigned int sc_delay_count;
 	lwp_t *sc_thread;
 	bool sc_ready, sc_stop;
 };
@@ -203,6 +232,46 @@ co5300_ticks(unsigned int ms)
 	return ticks >= INT_MAX ? INT_MAX : (int)ticks + 1;
 }
 
+static uint64_t
+co5300_fingerprint(const uint8_t *data, size_t len)
+{
+	uint64_t hash = UINT64_C(14695981039346656037);
+
+	for (size_t i = 0; i < len; i++) {
+		hash ^= data[i];
+		hash *= UINT64_C(1099511628211);
+	}
+	return hash;
+}
+
+/* Keep the requested scheduler wait and its observed monotonic duration. */
+static void
+co5300_pause(struct co5300_softc *sc, unsigned int ms, char phase,
+	unsigned int command)
+{
+	struct timespec start, end;
+	struct co5300_delay_diag *diag;
+	uint64_t start_us, end_us;
+	bool was_cold = cold != 0;
+	int ticks;
+
+	ticks = co5300_ticks(ms);
+	getnanouptime(&start);
+	(void)kpause("corst", false, ticks, NULL);
+	getnanouptime(&end);
+	if (sc->sc_delay_count >= CO5300_DIAG_DELAYS)
+		return;
+	start_us = (uint64_t)start.tv_sec * 1000000 + start.tv_nsec / 1000;
+	end_us = (uint64_t)end.tv_sec * 1000000 + end.tv_nsec / 1000;
+	diag = &sc->sc_delays[sc->sc_delay_count++];
+	diag->phase = phase;
+	diag->command = command;
+	diag->requested_ms = ms;
+	diag->ticks = ticks;
+	diag->elapsed_us = end_us >= start_us ? end_us - start_us : 0;
+	diag->cold = was_cold;
+}
+
 /* Validate all records before sending any command. */
 static bool
 co5300_init_valid(const uint8_t *data, size_t len)
@@ -239,7 +308,7 @@ co5300_init_sequence(struct co5300_softc *sc, const uint8_t *data, size_t len)
 		if (error != 0)
 			return error;
 		if (ms != 0)
-			(void)kpause("coinit", false, co5300_ticks(ms), NULL);
+			co5300_pause(sc, ms, 'i', data[pos]);
 		pos += 4 + count;
 	}
 	return 0;
@@ -264,17 +333,59 @@ co5300_row(struct co5300_softc *sc, unsigned int y)
 	    sc->sc_width - 1 };
 	uint8_t ywin[4] = { y >> 8, y, y >> 8, y };
 	uint8_t *shadow = sc->sc_shadow + y * sc->sc_rowbytes;
+	struct co5300_row_diag diag;
+	bool dirty, different, capture_first, capture_nonzero;
 	int error;
 
 	memcpy(sc->sc_snapshot, (void *)(sc->sc_fb + y * sc->sc_rowbytes),
 	    sc->sc_rowbytes);
-	if (!sc->sc_dirty[y] && memcmp(shadow, sc->sc_snapshot,
-	    sc->sc_rowbytes) == 0)
+	dirty = sc->sc_dirty[y] != 0;
+	different = memcmp(shadow, sc->sc_snapshot, sc->sc_rowbytes) != 0;
+	if (!dirty && !different)
 		return 0;
+	memset(&diag, 0, sizeof(diag));
+	diag.valid = true;
+	diag.y = y;
+	diag.dirty = dirty;
+	diag.different = different;
+	for (u_int x = 0; x < sc->sc_width; x++) {
+		uint16_t pixel;
+		memcpy(&pixel, sc->sc_snapshot + x * 2, sizeof(pixel));
+		if (pixel != 0) {
+			diag.nonzero++;
+			if (!diag.sample_valid) {
+				diag.sample_valid = true;
+				diag.sample_x = x;
+				diag.sample_raw = pixel;
+			}
+		}
+		if (x < __arraycount(diag.raw_first))
+			diag.raw_first[x] = pixel;
+		if (x >= sc->sc_width - __arraycount(diag.raw_last))
+			diag.raw_last[x - (sc->sc_width -
+			    __arraycount(diag.raw_last))] = pixel;
+	}
 	mutex_enter(&sc->sc_lock);
+	capture_first = !sc->sc_first_row.valid;
+	capture_nonzero = diag.nonzero != 0 &&
+	    !sc->sc_first_nonzero_row.valid;
 	sc->sc_rows_changed++;
 	mutex_exit(&sc->sc_lock);
+	diag.fingerprinted = capture_first || capture_nonzero;
+	if (diag.fingerprinted)
+		diag.raw_hash = co5300_fingerprint(sc->sc_snapshot,
+		    sc->sc_rowbytes);
 	co5300_to_wire(sc->sc_snapshot, sc->sc_wire, sc->sc_width);
+	if (diag.sample_valid) {
+		diag.sample_wire[0] = sc->sc_wire[diag.sample_x * 2];
+		diag.sample_wire[1] = sc->sc_wire[diag.sample_x * 2 + 1];
+	}
+	memcpy(diag.wire_first, sc->sc_wire, sizeof(diag.wire_first));
+	memcpy(diag.wire_last, sc->sc_wire + sc->sc_rowbytes -
+	    sizeof(diag.wire_last), sizeof(diag.wire_last));
+	if (diag.fingerprinted)
+		diag.wire_hash = co5300_fingerprint(sc->sc_wire,
+		    sc->sc_rowbytes);
 	error = co5300_send(sc, 0x02, 0x2a, xwin, sizeof(xwin), 1);
 	if (error == 0)
 		error = co5300_send(sc, 0x02, 0x2b, ywin, sizeof(ywin), 1);
@@ -285,7 +396,13 @@ co5300_row(struct co5300_softc *sc, unsigned int y)
 		memcpy(shadow, sc->sc_snapshot, sc->sc_rowbytes);
 		sc->sc_dirty[y] = 0;
 	}
+	diag.result = error;
 	mutex_enter(&sc->sc_lock);
+	if (capture_first)
+		sc->sc_first_row = diag;
+	if (capture_nonzero)
+		sc->sc_first_nonzero_row = diag;
+	sc->sc_latest_row = diag;
 	if (error == 0)
 		sc->sc_rows_sent++;
 	else {
@@ -319,6 +436,105 @@ co5300_sysctl_status(SYSCTLFN_ARGS)
 	return sysctl_lookup(SYSCTLFN_CALL(&node));
 }
 
+static int
+co5300_format_row(char *buf, size_t len, const char *name,
+    const struct co5300_row_diag *diag)
+{
+	int n;
+
+	if (!diag->valid) {
+		n = snprintf(buf, len, "%s=none", name);
+	} else {
+		n = snprintf(buf, len,
+		    "%s=y%u:nz%u:d%u/x%u:h%u:r%016llx:w%016llx:"
+		    "p%u@%u=%04x/%02x%02x:"
+		    "rf%04x,%04x,%04x,%04x:rl%04x,%04x,%04x,%04x:"
+		    "wf%02x%02x%02x%02x%02x%02x%02x%02x:"
+		    "wl%02x%02x%02x%02x%02x%02x%02x%02x:e%d",
+		    name, diag->y, diag->nonzero, diag->dirty, diag->different,
+		    diag->fingerprinted,
+		    (unsigned long long)diag->raw_hash,
+		    (unsigned long long)diag->wire_hash,
+		    diag->sample_valid, diag->sample_x, diag->sample_raw,
+		    diag->sample_wire[0], diag->sample_wire[1],
+		    diag->raw_first[0], diag->raw_first[1], diag->raw_first[2],
+		    diag->raw_first[3], diag->raw_last[0], diag->raw_last[1],
+		    diag->raw_last[2], diag->raw_last[3],
+		    diag->wire_first[0], diag->wire_first[1], diag->wire_first[2],
+		    diag->wire_first[3], diag->wire_first[4], diag->wire_first[5],
+		    diag->wire_first[6], diag->wire_first[7],
+		    diag->wire_last[0], diag->wire_last[1], diag->wire_last[2],
+		    diag->wire_last[3], diag->wire_last[4], diag->wire_last[5],
+		    diag->wire_last[6], diag->wire_last[7], diag->result);
+	}
+	return n < 0 || (size_t)n >= len ? EOVERFLOW : 0;
+}
+
+static int
+co5300_sysctl_diagnostic(SYSCTLFN_ARGS)
+{
+	struct co5300_softc *sc = rnode->sysctl_data;
+	struct sysctlnode node = *rnode;
+	struct co5300_row_diag first, nonzero, latest;
+	struct co5300_delay_diag delays[CO5300_DIAG_DELAYS];
+	unsigned int delay_count;
+	uint32_t changed, sent, errors;
+	int last_error;
+	char *status, row[384];
+	size_t off = 0;
+	int error;
+
+	status = kmem_alloc(2048, KM_SLEEP);
+	mutex_enter(&sc->sc_lock);
+	first = sc->sc_first_row;
+	nonzero = sc->sc_first_nonzero_row;
+	latest = sc->sc_latest_row;
+	delay_count = sc->sc_delay_count;
+	memcpy(delays, sc->sc_delays, sizeof(delays));
+	changed = sc->sc_rows_changed;
+	sent = sc->sc_rows_sent;
+	errors = sc->sc_row_errors;
+	last_error = sc->sc_last_error;
+	mutex_exit(&sc->sc_lock);
+
+	#define CO_APPEND(...) do { \
+		if (off >= 2048) { error = EOVERFLOW; goto out; } \
+		int n = snprintf(status + off, 2048 - off, __VA_ARGS__); \
+		if (n < 0 || (size_t)n >= 2048 - off) { \
+			error = EOVERFLOW; goto out; \
+		} \
+		off += (size_t)n; \
+	} while (0)
+	CO_APPEND("rows=%u/%u errors=%u last=%d ", sent, changed, errors,
+	    last_error);
+	if (co5300_format_row(row, sizeof(row), "first", &first) != 0) {
+		error = EOVERFLOW; goto out;
+	}
+	CO_APPEND("%s ", row);
+	if (co5300_format_row(row, sizeof(row), "nonzero", &nonzero) != 0) {
+		error = EOVERFLOW; goto out;
+	}
+	CO_APPEND("%s ", row);
+	if (co5300_format_row(row, sizeof(row), "latest", &latest) != 0) {
+		error = EOVERFLOW; goto out;
+	}
+	CO_APPEND("%s", row);
+	for (unsigned int i = 0; i < delay_count; i++) {
+		const struct co5300_delay_diag *d = &delays[i];
+		CO_APPEND(
+			" d%u=%c%02x:%ums/%dt/%lluus/c%u", i, d->phase,
+			d->command, d->requested_ms, d->ticks,
+			(unsigned long long)d->elapsed_us, d->cold);
+	}
+	node.sysctl_data = status;
+	node.sysctl_size = strlen(status) + 1;
+	error = sysctl_lookup(SYSCTLFN_CALL(&node));
+	out:
+	#undef CO_APPEND
+	kmem_free(status, 2048);
+	return error;
+}
+
 static void
 co5300_sysctl_init(struct co5300_softc *sc)
 {
@@ -334,6 +550,12 @@ co5300_sysctl_init(struct co5300_softc *sc)
 		    CTLFLAG_READONLY, CTLTYPE_STRING, "status",
 		    SYSCTL_DESCR("Framebuffer refresh counters"),
 		    co5300_sysctl_status, 0, (char *)sc, 0,
+		    CTL_HW, node->sysctl_num, CTL_CREATE, CTL_EOL);
+	if (error == 0)
+		error = sysctl_createv(&sc->sc_sysctllog, 0, NULL, NULL,
+		    CTLFLAG_READONLY | CTLFLAG_PRIVATE, CTLTYPE_STRING, "diagnostic",
+		    SYSCTL_DESCR("Bounded framebuffer samples and init delays"),
+		    co5300_sysctl_diagnostic, 0, (char *)sc, 0,
 		    CTL_HW, node->sysctl_num, CTL_CREATE, CTL_EOL);
 	if (error != 0) {
 		sysctl_teardown(&sc->sc_sysctllog);
@@ -464,9 +686,9 @@ co5300_deferred(device_t self)
 			goto out_power;
 		}
 		fdtbus_gpio_write(sc->sc_reset, 1);
-		(void)kpause("corst", false, co5300_ticks(10), NULL);
+			co5300_pause(sc, 10, 'a', 0);
 		fdtbus_gpio_write(sc->sc_reset, 0);
-		(void)kpause("corst", false, co5300_ticks(150), NULL);
+			co5300_pause(sc, 150, 'r', 0);
 	}
 	if ((error = spi_configure(self, sc->sc_spi, SPI_MODE_0, speed)) != 0)
 		goto out_reset;
@@ -474,7 +696,7 @@ co5300_deferred(device_t self)
 		error = co5300_send(sc, 0x02, 0x01, NULL, 0, 1);
 		if (error != 0)
 			goto out_reset;
-		(void)kpause("corst", false, co5300_ticks(80), NULL);
+		co5300_pause(sc, 80, 's', 0x01);
 	}
 	if ((error = co5300_init_sequence(sc, init, initlen)) != 0)
 		goto out_reset;

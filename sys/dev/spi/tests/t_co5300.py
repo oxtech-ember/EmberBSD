@@ -37,11 +37,20 @@ prefix = r'''
 #include <setjmp.h>
 #include <stdarg.h>
 #include <sys/types.h>
+#include <time.h>
 #define PAGE_MASK 4095
 #define PROT_EXEC 4
 #define BUS_SPACE_MAP_LINEAR 1
 #define BUS_SPACE_MAP_CACHEABLE 2
 #define CO5300_INLINE_BYTES 64
+#define CO5300_DIAG_DELAYS 4
+#define KM_SLEEP 0
+struct co5300_row_diag { bool valid, fingerprinted; unsigned int y; uint32_t nonzero;
+    bool dirty, different, sample_valid; unsigned int sample_x; uint16_t sample_raw;
+    uint8_t sample_wire[2]; uint64_t raw_hash, wire_hash;
+    uint16_t raw_first[4], raw_last[4]; uint8_t wire_first[8], wire_last[8]; int result; };
+struct co5300_delay_diag { char phase; unsigned int command, requested_ms; int ticks;
+    uint64_t elapsed_us; bool cold; };
 typedef uintptr_t vaddr_t;
 typedef uint64_t paddr_t;
 #define MAX(a,b) ((a) > (b) ? (a) : (b))
@@ -51,11 +60,15 @@ struct co5300_softc { void *sc_spi, *sc_bst, *sc_dev; unsigned int sc_width, sc_
     uintptr_t sc_fb; size_t sc_rowbytes, sc_alloc;
     uint8_t *sc_shadow, *sc_snapshot, *sc_wire, *sc_dirty;
     int sc_lock, sc_cv; uint32_t sc_rows_changed, sc_rows_sent, sc_row_errors;
-    int sc_last_error; bool sc_ready, sc_stop; };
+    int sc_last_error; struct co5300_row_diag sc_first_row, sc_first_nonzero_row,
+        sc_latest_row; struct co5300_delay_diag sc_delays[CO5300_DIAG_DELAYS];
+    unsigned int sc_delay_count; bool sc_ready, sc_stop; };
 struct sysctlnode { void *sysctl_data; size_t sysctl_size; };
 #define SYSCTLFN_ARGS struct sysctlnode *rnode
 #define SYSCTLFN_CALL(node) node
-static char status_text[128];
+static char status_text[4096];
+static void *kmem_alloc(size_t n, int flags) { (void)flags; return malloc(n); }
+static void kmem_free(void *p, size_t n) { (void)n; free(p); }
 static int dt_width_present, dt_width_error;
 static uint32_t dt_width_value;
 static bool of_hasprop(int phandle, const char *name) {
@@ -163,6 +176,12 @@ static paddr_t bus_space_mmap(void *tag, paddr_t pa, off_t off, int prot, int fl
     maps++; return (pa >> 12) | 0x40000000;
 }
 static int hz = 1000;
+static int cold = 1;
+static uint64_t fake_elapsed_us;
+static void getnanouptime(struct timespec *ts) {
+    ts->tv_sec=(time_t)(fake_elapsed_us/1000000);
+    ts->tv_nsec=(long)(fake_elapsed_us%1000000)*1000;
+}
 #define CO5300_RATE 20
 static struct co5300_softc *worker_sc;
 static jmp_buf worker_return;
@@ -182,7 +201,8 @@ static void aprint_normal_dev(void *dev, const char *fmt, ...) {
 static _Noreturn void kthread_exit(int e) { assert(e==0); longjmp(worker_return,1); }
 
 static int kpause(const char *name, bool intr, int ticks, void *lock) {
-    (void)name;(void)intr;(void)lock;delays++;last_ms=ticks;return 0;
+    (void)name;(void)intr;(void)lock;delays++;last_ms=ticks;
+    fake_elapsed_us += (uint64_t)ticks * 1000000 / hz; return 0;
 }
 '''
 suffix = r'''
@@ -216,6 +236,9 @@ int main(void) {
     assert(!co5300_init_valid(init,3)); assert(!co5300_init_valid(init,sizeof(init)-1));
     assert(co5300_init_sequence(&sc,init,sizeof(init)-1)==EINVAL && ncalls==0);
     assert(co5300_init_sequence(&sc,init,sizeof(init))==0 && ncalls==2);
+    assert(sc.sc_delay_count==2 && sc.sc_delays[0].requested_ms==80 &&
+        sc.sc_delays[0].ticks==81 && sc.sc_delays[0].elapsed_us==81000 &&
+        sc.sc_delays[0].cold);
     const uint8_t reset_wire[]={0x02,0,0x11,0};
     assert(calls[0].op==2 && calls[0].cmd==0x11 && calls[0].chunks==1 &&
         calls[0].wire_len==4 &&
@@ -296,6 +319,21 @@ int main(void) {
     assert(calls[1].cmd==0x2b && calls[1].width==1);
     assert(calls[2].op==0x32 && calls[2].cmd==0x2c && calls[2].width==4);
     assert(!memcmp(calls[2].data,expected,8));
+    assert(sc.sc_first_row.valid && sc.sc_first_row.y==0 &&
+        sc.sc_first_row.nonzero==4 && sc.sc_first_row.dirty &&
+        sc.sc_first_row.different && sc.sc_first_row.result==EIO &&
+        sc.sc_first_row.raw_first[0]==0xf800 &&
+        sc.sc_first_row.raw_last[3]==0x1234 &&
+        sc.sc_first_row.wire_first[0]==0xf8 &&
+        sc.sc_first_row.wire_last[7]==0x34);
+    assert(sc.sc_first_nonzero_row.valid &&
+        sc.sc_first_nonzero_row.sample_valid &&
+        sc.sc_first_nonzero_row.sample_x==0 &&
+        sc.sc_first_nonzero_row.sample_raw==0xf800 &&
+        sc.sc_first_nonzero_row.sample_wire[0]==0xf8 &&
+        sc.sc_first_nonzero_row.sample_wire[1]==0 &&
+        sc.sc_first_nonzero_row.raw_hash==co5300_fingerprint((const uint8_t *)fb,8) &&
+        sc.sc_first_nonzero_row.wire_hash==co5300_fingerprint(expected,8));
     ncalls=0; fail_call=0; assert(co5300_row(&sc,0)==0 && ncalls==3 && !dirty[0]);
     sc.sc_tx_width=1; dirty[0]=1; ncalls=0;
     assert(co5300_row(&sc,0)==0 && ncalls==3 && !dirty[0]);
@@ -323,6 +361,43 @@ int main(void) {
     snprintf(expected_status,sizeof(expected_status),
         "rows_changed=7 rows_sent=5 errors=2 last_error=%d",EIO);
     assert(!strcmp(status_text,expected_status));
+    assert(co5300_sysctl_diagnostic(&status_node)==0 &&
+        strstr(status_text,"first=y0:nz4:d1/x1:h1:") != NULL &&
+        strstr(status_text,"nonzero=y0:nz4:") != NULL &&
+        strstr(status_text,"p1@0=f800/f800") != NULL &&
+        strstr(status_text,"latest=y0:nz4:") != NULL &&
+        strstr(status_text,"d0=i11:80ms/81t/81000us/c1") != NULL);
+    sc.sc_delay_count=CO5300_DIAG_DELAYS;
+    sc.sc_delays[2]=(struct co5300_delay_diag){.phase='s',.command=0x11,
+        .requested_ms=120,.ticks=121,.elapsed_us=121000,.cold=false};
+    sc.sc_delays[3]=(struct co5300_delay_diag){.phase='i',.command=0x29,
+        .requested_ms=10,.ticks=11,.elapsed_us=11000,.cold=false};
+    assert(co5300_sysctl_diagnostic(&status_node)==0 &&
+        strstr(status_text,"first=y0:") != NULL &&
+        strstr(status_text,"nonzero=y0:") != NULL &&
+        strstr(status_text,"latest=y0:") != NULL &&
+        strstr(status_text,"p1@0=f800/f800") != NULL &&
+        strstr(status_text,"d3=i29:10ms/11t/11000us/c0") != NULL);
+    assert(strlen(status_text)<2048);
+    char short_row[8];
+    assert(co5300_format_row(short_row,sizeof(short_row),"nonzero",
+        &sc.sc_first_nonzero_row)==EOVERFLOW);
+    struct co5300_softc black_sc={0};
+    uint16_t black_fb[8]={0}; uint8_t black_shadow[16]={0}, black_snap[8],
+        black_wire[8], black_dirty[2]={1,1};
+    black_sc.sc_width=4; black_sc.sc_tx_width=4;
+    black_sc.sc_fb=(uintptr_t)black_fb; black_sc.sc_rowbytes=8;
+    black_sc.sc_shadow=black_shadow; black_sc.sc_snapshot=black_snap;
+    black_sc.sc_wire=black_wire; black_sc.sc_dirty=black_dirty;
+    ncalls=0; assert(co5300_row(&black_sc,0)==0 && ncalls==3);
+    assert(black_sc.sc_first_row.valid && black_sc.sc_first_row.nonzero==0 &&
+        !black_sc.sc_first_nonzero_row.valid);
+    black_fb[4]=0x1234; ncalls=0;
+    assert(co5300_row(&black_sc,1)==0 && ncalls==3);
+    assert(black_sc.sc_first_nonzero_row.valid &&
+        black_sc.sc_first_nonzero_row.y==1 &&
+        black_sc.sc_first_nonzero_row.nonzero==1 &&
+        black_sc.sc_latest_row.y==1);
     assert(co5300_mmap_valid(0,8192) && co5300_mmap_valid(4096,8192));
     assert(!co5300_mmap_valid(-1,8192) && !co5300_mmap_valid(1,8192));
     assert(!co5300_mmap_valid(8192,8192));
@@ -348,7 +423,7 @@ int main(void) {
 a.work.mkdir(parents=True, exist_ok=True)
 cfile = a.work / 'co5300-test.c'
 exe = a.work / 'co5300-test'
-names = ('co5300_get_tx_width', 'co5300_send', 'co5300_read_reg', 'co5300_read_status', 'co5300_ticks', 'co5300_init_valid', 'co5300_init_sequence', 'co5300_to_wire', 'co5300_row', 'co5300_sysctl_status', 'co5300_mmap_valid', 'co5300_mmap', 'co5300_worker')
+names = ('co5300_get_tx_width', 'co5300_send', 'co5300_read_reg', 'co5300_read_status', 'co5300_ticks', 'co5300_fingerprint', 'co5300_pause', 'co5300_init_valid', 'co5300_init_sequence', 'co5300_to_wire', 'co5300_row', 'co5300_sysctl_status', 'co5300_format_row', 'co5300_sysctl_diagnostic', 'co5300_mmap_valid', 'co5300_mmap', 'co5300_worker')
 cfile.write_text(prefix + ''.join(extract(n) for n in names) + suffix)
 subprocess.run([str(cc), '-fuse-ld=lld', '-std=c11', '-Wall', '-Wextra', '-Werror',
                 '-fsanitize=address,undefined', '-fno-sanitize-recover=all',
