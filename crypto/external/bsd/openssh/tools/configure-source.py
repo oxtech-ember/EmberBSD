@@ -16,6 +16,7 @@ def main():
     parser.add_argument('--clean', action='store_true')
     parser.add_argument('--source', type=Path)
     parser.add_argument('--target-lib', type=Path, action='append', default=[])
+    parser.add_argument('--role', choices=('os', 'private-libssh'), default='os')
     parser.add_argument('--object', type=Path, required=True)
     parser.add_argument('--objdir', type=Path)
     parser.add_argument('--clean-helper', type=Path)
@@ -118,6 +119,9 @@ def main():
             'config.guess', 'config.sub', 'ssh.c', 'ssh.1',
         )
         configured = hashlib.sha256()
+        role = os.fsencode('OPENSSH_CONFIG_ROLE=' + args.role)
+        configured.update(len(role).to_bytes(8, 'big'))
+        configured.update(role)
         for name in config_inputs:
             for value in (os.fsencode(name), (source / name).read_bytes()):
                 configured.update(len(value).to_bytes(8, 'big'))
@@ -154,7 +158,8 @@ def main():
         flags = re.sub(r'(?<!\S)-j(?:[ \t]+[0-9]+|[0-9]+)(?=\s|$)', '', flags)
         env['MAKEFLAGS'] = flags
         subprocess.run([str(make), '-j1', '-C', str(args.makefile_dir),
-                        'OPENSSH_CONFIG_OBJECT=' + str(obj), 'openssh-target-config'],
+                        'OPENSSH_CONFIG_OBJECT=' + str(obj),
+                        'OPENSSH_CONFIG_ROLE=' + args.role, 'openssh-target-config'],
                        env=env, check=True)
 
 

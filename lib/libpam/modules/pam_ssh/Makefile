@@ -21,6 +21,9 @@ SRCS=	pam_ssh.c
 
 CPPFLAGS+= -I${SSHSRC}
 
+.if defined(EMBER_OPENSSH_SOURCE) && !empty(EMBER_OPENSSH_SOURCE)
+OPENSSH_CONFIG_ROLE=private-libssh
+.endif
 .include "${NETBSDSRCDIR}/crypto/external/bsd/openssh/config.mk"
 .if defined(EMBER_OPENSSH_SOURCE) && !empty(EMBER_OPENSSH_SOURCE)
 CPPFLAGS+= -include ${OPENSSH_CONFIG_HEADER}

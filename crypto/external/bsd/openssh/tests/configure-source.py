@@ -50,6 +50,9 @@ pathlib.Path(sys.argv[-1]).write_text('generated configure\\n')
     make.write_text(f'''#!{sys.executable}
 import os, pathlib, sys, time
 obj = pathlib.Path(next(a.split('=',1)[1] for a in sys.argv if a.startswith('OPENSSH_CONFIG_OBJECT=')))
+role = next(a.split('=',1)[1] for a in sys.argv if a.startswith('OPENSSH_CONFIG_ROLE='))
+assert role in ('os', 'private-libssh')
+with pathlib.Path(os.environ['TEST_ROLE_LOG']).open('a') as f: f.write(role + '\\n')
 build = obj / 'build'
 build.mkdir(exist_ok=True)
 flags = os.environ.get('MAKEFLAGS', '')
@@ -72,12 +75,23 @@ finally:
     command = [sys.executable, '-B', str(helper), '--source', str(source),
                '--os-source', str(os_source), '--object', str(obj),
                '--autoconf', str(autoconf), '--make', str(make), '--makefile-dir', str(root)]
-    env = dict(os.environ, TEST_LOG=str(log), MAKEFLAGS='-j 10 -J 15,16 TEST_OVERRIDE=yes',
+    role_log = root / 'roles'
+    env = dict(os.environ, TEST_LOG=str(log), TEST_ROLE_LOG=str(role_log), MAKEFLAGS='-j 10 -J 15,16 TEST_OVERRIDE=yes',
                AUTOM4TE='/external/autom4te', M4='/external/m4', PERL5LIB='/external/lib')
     first = subprocess.Popen(command, env=env)
     second = subprocess.Popen(command, env=env)
     assert first.wait() == 0 and second.wait() == 0
     assert log.read_text().splitlines() == ['autoconf', 'make-cold', 'make-warm']
+    assert role_log.read_text().splitlines() == ['os', 'os']
+    os_role_inputs = (obj / '.configure-source-inputs').read_text()
+    private_role = command + ['--role', 'private-libssh']
+    subprocess.run(private_role, env=env, check=True)
+    private_role_inputs = (obj / '.configure-source-inputs').read_text()
+    assert private_role_inputs != os_role_inputs
+    assert role_log.read_text().splitlines()[-1] == 'private-libssh'
+    subprocess.run(command, env=env, check=True)
+    assert (obj / '.configure-source-inputs').read_text() == os_role_inputs
+    assert role_log.read_text().splitlines()[-1] == 'os'
     assert not (obj / 'source-view' / 'configure.new').is_symlink()
     assert not (obj / 'source-view' / 'autom4te.cache').is_symlink()
     (source / 'new-source.c').write_text('new\n')

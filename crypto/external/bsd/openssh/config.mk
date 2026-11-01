@@ -7,7 +7,14 @@ _EMBER_OPENSSH_CONFIG_MK_= 1
     (!defined(HOST_AUTOCONF) || empty(HOST_AUTOCONF))
 .error OpenSSH target config requires selected HOST_AUTOCONF
 .endif
-OPENSSH_CONFIG_OBJECT?= ${_SRC_TOP_OBJ_}/crypto/external/bsd/openssh/config/generated
+OPENSSH_CONFIG_ROLE?= os
+OPENSSH_OS_CONFIG_OBJECT?= ${_SRC_TOP_OBJ_}/crypto/external/bsd/openssh/config/generated
+OPENSSH_PRIVATE_LIBSSH_CONFIG_OBJECT?= ${_SRC_TOP_OBJ_}/crypto/external/bsd/openssh/config/private-libssh
+.if ${OPENSSH_CONFIG_ROLE} == "private-libssh"
+OPENSSH_CONFIG_OBJECT?= ${OPENSSH_PRIVATE_LIBSSH_CONFIG_OBJECT}
+.else
+OPENSSH_CONFIG_OBJECT?= ${OPENSSH_OS_CONFIG_OBJECT}
+.endif
 OPENSSH_CONFIG_HEADER= ${OPENSSH_CONFIG_OBJECT}/build/config.h
 CPPFLAGS+= -I${OPENSSH_CONFIG_OBJECT}/build
 CPPFLAGS+= -I${OPENSSH_CONFIG_OBJECT}/build/openbsd-compat/include
@@ -30,6 +37,7 @@ ${OPENSSH_CONFIG_HEADER}: openssh-config-check
 	${HOST_PYTHON:Q} -B ${NETBSDSRCDIR:Q}/crypto/external/bsd/openssh/tools/configure-source.py \
 	    --source ${EMBER_OPENSSH_SOURCE:Q} --os-source ${NETBSDSRCDIR:Q} \
 	    --object ${OPENSSH_CONFIG_OBJECT:Q} --autoconf ${HOST_AUTOCONF:Q} \
+	    --role ${OPENSSH_CONFIG_ROLE:Q} \
 	    ${_OPENSSH_KRB5_CONFIG_LIBS} \
 	    --make ${MAKE:Q} --makefile-dir ${NETBSDSRCDIR:Q}/crypto/external/bsd/openssh/config
 .endif

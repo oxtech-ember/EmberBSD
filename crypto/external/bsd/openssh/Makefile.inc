@@ -53,7 +53,9 @@ CPPFLAGS+= -I${SSHDIST}/openbsd-compat
 .endif
 
 .if (${USE_PAM} != "no")
+.if ${OPENSSH_CONFIG_ROLE:Uos} != "private-libssh"
 CPPFLAGS+=-DUSE_PAM
+.endif
 .else	# USE_PAM == no
 .if (${USE_SKEY} != "no")
 CPPFLAGS+=-DSKEY

@@ -17,6 +17,10 @@ NOLINKLIB=		# defined
 
 .include <bsd.own.mk>
 
+.if defined(EMBER_OPENSSH_SOURCE) && !empty(EMBER_OPENSSH_SOURCE)
+OPENSSH_CONFIG_ROLE=private-libssh
+.endif
+
 .include "../Makefile.inc"
 
 CWARNFLAGS.clang+=	-Wno-error=sizeof-array-div
