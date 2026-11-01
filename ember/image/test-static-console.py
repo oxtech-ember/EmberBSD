@@ -11,6 +11,23 @@ profile = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(profile)
 
 class ConsoleProfile(unittest.TestCase):
+    def test_userland_shell_accepts_large_jobs_and_rejects_invalid_values(self):
+        import os
+        import subprocess
+        source = path.with_name('cix-p1-build-userland.sh').read_text()
+        start = source.index('case "$jobs" in')
+        end = source.index('# Target headers come from this output;', start)
+        block = source[start:end]
+        shell = os.environ.get('TEST_SH')
+        if not shell:
+            self.fail('Set TEST_SH to the selected native shell')
+        result = subprocess.run([shell, '-c', 'set -eu\njobs=64\n' + block], capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        for value in ('', 'x', '-1', '0'):
+            result = subprocess.run([shell, '-c', 'set -eu\njobs="$1"\n' + block,
+                                     'test', value], capture_output=True)
+            self.assertNotEqual(result.returncode, 0, value)
+
     def test_compact_config_registers_login_shell_alias(self):
         import os
         import subprocess

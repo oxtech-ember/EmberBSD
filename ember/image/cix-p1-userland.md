@@ -30,10 +30,14 @@ export EMBER_MDNS_SOURCE=/absolute/prepared-mdns
 export EMBER_DHCPCD_SOURCE=/absolute/prepared-dhcpcd
 export EMBER_LLVM_SOURCE=/absolute/prepared-llvm
 export EMBER_SDK_SYSROOT=/absolute/completed-aarch64-sysroot
-BUILD_JOBS=2 "$EMBER_HOST_PREFIX/bin/python3.15" -B ember/image/cix-p1-native.py \
+"$EMBER_HOST_PREFIX/bin/python3.15" -B ember/image/cix-p1-native.py \
     /absolute/clean-source /absolute/new-output \
     /absolute/host-tools /absolute/target-clang-prefix
 ```
+
+Build parallelism defaults to the CPU capacity reported by the selected SDK.
+Set `BUILD_JOBS` to a positive integer to override it. If the SDK cannot
+determine CPU capacity, the producer asks for an explicit `BUILD_JOBS` value.
 
 `/absolute/host-tools` is the `TOOLDIR` of a native-mode OS build, such as the
 SDK sysroot build. It does not need `nbmake`. Native-mode `build.sh` uses the

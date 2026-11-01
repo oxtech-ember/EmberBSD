@@ -121,9 +121,16 @@ run_native_check() {
         --tool "$role" --cwd "$src" --bindings "$out/native-check-commands" \
         --log "$log" -- "$@"
 }
-jobs=${NETBSD2_JOBS:-$("$python" -c 'import os; print(os.cpu_count() or 1)')}
-case "$jobs" in ''|*[!0-9]*) jobs=0 ;; esac
-[ "$jobs" -gt 0 ] 2>/dev/null || fail 'NETBSD2_JOBS must be a positive integer'
+jobs=$(PYTHONPATH="$sdk_source/src" "$python" -B -c '
+import os, sys
+from emberbsd_sdk.cpu_capacity import resolve_jobs
+from emberbsd_sdk.errors import SDKError
+try:
+    print(resolve_jobs(os.environ.get("NETBSD2_JOBS"), option="NETBSD2_JOBS"))
+except SDKError as exc:
+    print(exc, file=sys.stderr)
+    sys.exit(2)
+') || fail 'cannot select build parallelism; set NETBSD2_JOBS if CPU capacity is unavailable'
 stage=$(mktemp -d "$out/.artifacts.XXXXXX")
 : > "$out/build.log"
 kernel_obj="$out/obj/kernels/$config"

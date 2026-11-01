@@ -34,6 +34,14 @@ First build the host tools and kernel with the fork's `build.sh`:
 ```sh
 export PATH=/sbin:/usr/sbin:/bin:/usr/bin
 export MAKECONF=/dev/null
+export EMBERBSD_SDK_SOURCE=/absolute/sdk-source
+export EMBER_HOST_PREFIX=/absolute/native-prefix
+jobs=$(PYTHONPATH="$EMBERBSD_SDK_SOURCE/src" \
+    "$EMBER_HOST_PREFIX/bin/python3.15" -B -c '
+import os
+from emberbsd_sdk.cpu_capacity import resolve_jobs
+print(resolve_jobs(os.environ.get("BUILD_JOBS"), option="BUILD_JOBS"))
+') || { echo 'cannot select build parallelism; check BUILD_JOBS and SDK CPU capacity' >&2; exit 2; }
 src=/absolute/source
 out=/absolute/output
 revision=FULL_COMMIT_ID
@@ -43,7 +51,7 @@ test "$("$compiler/bin/aarch64--netbsd-gcc" -dumpfullversion)" = 16.2.0
 test "$("$compiler/bin/aarch64--netbsd-gcc" -dumpmachine)" = aarch64--netbsd
 mkdir "$out"
 cd "$src"
-sh ./build.sh -U -u -j4 -m evbarm -a aarch64 \
+sh ./build.sh -U -u -j"$jobs" -m evbarm -a aarch64 \
     -O "$out/obj" -T "$out/tools" -D "$out/dest" -R "$out/release" \
     -V "EXTERNAL_TOOLCHAIN=$compiler" -V TOOLCHAIN_MISSING=yes \
     -V MKGCCCMDS=no -V MKCOMPAT=no -V MKCXX=yes \
@@ -61,7 +69,7 @@ headers, after the kernel finishes:
 mkdir "$out/board-modules"
 for module in if_cemac_acpi bcm2712btcom rp1wmcodec rpi5button; do
     "$out/tools/bin/nbmake-evbarm" -C "$src/sys/modules/$module" obj
-    "$out/tools/bin/nbmake-evbarm" -C "$src/sys/modules/$module" -j4 all
+    "$out/tools/bin/nbmake-evbarm" -C "$src/sys/modules/$module" -j"$jobs" all
     module_obj=$("$out/tools/bin/nbmake-evbarm" \
         -C "$src/sys/modules/$module" -V .OBJDIR)
     cp "$module_obj/$module.kmod" "$out/board-modules/"
@@ -85,7 +93,7 @@ exist; this does not compile the omitted components.
 
 ```sh
 "$out/tools/bin/nbmake-evbarm" -C "$src" obj
-sh ./build.sh -U -u -j4 -m evbarm -a aarch64 \
+sh ./build.sh -U -u -j"$jobs" -m evbarm -a aarch64 \
     -O "$out/obj" -T "$out/tools" -D "$out/minimal-dest" -R "$out/minimal-release" \
     -V "EXTERNAL_TOOLCHAIN=$compiler" -V TOOLCHAIN_MISSING=yes \
     -V MKCOMPAT=no -V MKCXX=yes -V "EMBER_EXTERNAL_GCC_RUNTIME=$runtime" \
@@ -98,7 +106,7 @@ sh ./build.sh -U -u -j4 -m evbarm -a aarch64 \
     -V "BUILDINFO=EmberBSD:$revision" \
     -V "KERNOBJDIR=$src/sys/arch/evbarm/compile" \
     makewrapper
-"$out/tools/bin/nbmake-evbarm" -C "$src" -j4 \
+"$out/tools/bin/nbmake-evbarm" -C "$src" -j"$jobs" \
     'BUILDTARGETS=check-tools params clean_METALOG do-distrib-dirs includes do-lib do-compat-lib do-build do-obsolete' \
     distribution
 ```
@@ -130,7 +138,7 @@ Do not copy a compiler SDK to silence missing-file errors or relax `checkflist`.
 Only after that audit succeeds, run the unchanged strict set checks:
 
 ```sh
-"$out/tools/bin/nbmake-evbarm" -C "$src" -j4 sets
+"$out/tools/bin/nbmake-evbarm" -C "$src" -j"$jobs" sets
 ```
 
 A partial destination tree or a successful kernel build is not a completed base.

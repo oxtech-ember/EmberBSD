@@ -172,7 +172,7 @@ def run_console(arguments):
     settings = console(target, os.environ.get('EMBER_USERLAND_PROFILE') == 'console-tools')
     sdk = Path(os.environ['EMBERBSD_SDK_SOURCE']).resolve(strict=True)
     sys.path.insert(0, str(sdk / 'src'))
-    from emberbsd_sdk import elf, host_prefix, inventory, jsonio, libedit, llvm_runtime, native_os, paths, process, sourceprep, target_toolchain
+    from emberbsd_sdk import cpu_capacity, elf, host_prefix, inventory, jsonio, libedit, llvm_runtime, native_os, paths, process, sourceprep, target_toolchain
     from emberbsd_sdk.errors import SDKError
     try:
         source = Path(paths.canonical_existing(source))
@@ -258,9 +258,7 @@ def run_console(arguments):
             command += ['--original-source', os.environ['EMBER_LLVM_RUNTIME_ORIGINAL_SOURCE']]
         process.capture(command, env=env)
         selected = llvm_runtime.runtime_paths(stage, record)
-        jobs = os.environ.get('BUILD_JOBS', '2')
-        if not jobs.isdecimal() or not 1 <= int(jobs) <= 32:
-            raise SDKError('BUILD_JOBS must be between 1 and 32')
+        jobs = str(cpu_capacity.resolve_jobs(os.environ.get('BUILD_JOBS'), option='BUILD_JOBS'))
         output.mkdir()
         (output / 'logs').mkdir()
         shutil.copytree(foundation, output / 'dest', symlinks=True,

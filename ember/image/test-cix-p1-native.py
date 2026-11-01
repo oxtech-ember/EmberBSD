@@ -51,9 +51,16 @@ jsonio = types.SimpleNamespace(loads_json=lambda data: {'format': 'emberbsd-llvm
 libedit = types.SimpleNamespace(validate_source=lambda source, ports, git: calls.append(('libedit', source, ports, git)))
 process = types.SimpleNamespace(capture=lambda argv, env: (calls.append(('verify-source', argv)) or
     types.SimpleNamespace(stdout=b'{}')))
+capacity = {'value': 10}
+job_calls = []
+def resolve_jobs(override=None, *, option='--jobs'):
+    job_calls.append((override, option))
+    return int(override) if override is not None else capacity['value']
+cpu_capacity = types.SimpleNamespace(resolve_jobs=resolve_jobs)
 pkg = types.ModuleType('emberbsd_sdk')
 for name, obj in [('native_os', native), ('application_toolchain', app), ('llvm_runtime', llvm),
-                  ('target_toolchain', target), ('host_prefix', host), ('jsonio', jsonio), ('libedit', libedit), ('process', process)]:
+                  ('target_toolchain', target), ('host_prefix', host), ('jsonio', jsonio), ('libedit', libedit),
+                  ('process', process), ('cpu_capacity', cpu_capacity)]:
     setattr(pkg, name, obj)
 sys.modules['emberbsd_sdk'] = pkg
 errors = types.ModuleType('emberbsd_sdk.errors')
@@ -90,9 +97,12 @@ with tempfile.TemporaryDirectory() as tmp:
                       EMBER_LIBCBOR_SOURCE='/libcbor', EMBER_LIBFIDO2_SOURCE='/libfido2',
                       EMBER_LIBFETCH_SOURCE='/libfetch', EMBER_MDNS_SOURCE='/mdns',
                       EMBER_DHCPCD_SOURCE='/dhcpcd')
+    os.environ.pop('BUILD_JOBS', None)
     sys.argv = [str(path), str(source), tmp + '/clang', str(tools), '/compiler']
     subject.main()
     run = next(row[1] for row in calls if row[0] == 'run')
+    assert run['arguments'][13] == '10'
+    assert job_calls[-1] == (None, 'BUILD_JOBS')
     for name in ('libcbor', 'libfido2', 'libfetch', 'mdns', 'dhcpcd'):
         assert any(row[0] == 'verify-source' and
                    f'/ports/scripts/source-inputs/{name}/source.py' in row[1] and
@@ -123,6 +133,20 @@ with tempfile.TemporaryDirectory() as tmp:
                '/ports/scripts/source-inputs/tcp_wrappers/source.py' in row[1] and
                row[1][-2:] == ['--source', '/tcpwrappers'] for row in calls)
     assert ('host-extra', {'required_roles': {'shasum'}, 'compiler_family': 'clang'}) in calls
+    capacity['value'] = 64
+    calls.clear()
+    sys.argv[2] = tmp + '/capacity64'
+    subject.main()
+    capacity_run = next(row[1] for row in calls if row[0] == 'run')
+    assert capacity_run['arguments'][13] == '64'
+    os.environ['BUILD_JOBS'] = '72'
+    calls.clear()
+    sys.argv[2] = tmp + '/override'
+    subject.main()
+    override_run = next(row[1] for row in calls if row[0] == 'run')
+    assert override_run['arguments'][13] == '72'
+    assert job_calls[-1] == ('72', 'BUILD_JOBS')
+    os.environ.pop('BUILD_JOBS')
     calls.clear()
     del os.environ['EMBER_BYACC_SOURCE']
     sys.argv[2] = tmp + '/missing-byacc'

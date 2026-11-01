@@ -310,7 +310,31 @@ if [ "$last" = "$(cd "$TEST_OUT" && pwd -P)/" ]; then
     [ "${FAIL_AT:-}" != publish ] || exit 1
 fi
 SCRIPT
-mkdir -p "$work/sdk/scripts"
+mkdir -p "$work/sdk/scripts" "$work/sdk/src/emberbsd_sdk"
+cat > "$work/sdk/src/emberbsd_sdk/__init__.py" <<'PY'
+PY
+cat > "$work/sdk/src/emberbsd_sdk/errors.py" <<'PY'
+class SDKError(Exception):
+    pass
+PY
+cat > "$work/sdk/src/emberbsd_sdk/cpu_capacity.py" <<'PY'
+import os
+from .errors import SDKError
+
+def resolve_jobs(override=None, *, option='--jobs'):
+    if override is not None:
+        if (not isinstance(override, str) or not override.isascii() or
+                not override.isdecimal() or int(override) <= 0):
+            raise SDKError(option + ' must be a positive integer')
+        return int(override)
+    try:
+        count = int(os.environ.get('TEST_CPU_CAPACITY', '10'))
+    except ValueError:
+        count = 0
+    if count <= 0:
+        raise SDKError('CPU count is unavailable; select ' + option + ' explicitly')
+    return count
+PY
 cat > "$work/sdk/scripts/run-native-check.py" <<'PY'
 import os
 import subprocess
@@ -455,7 +479,7 @@ chmod +x "$work/bin/ruby" "$work/bin/uname" "$work/bin/python3" \
     "$work/bin/host-cc" "$work/bin/host-cxx" "$work/bin/nbmake-evbarm" \
     "$work/bin/config" "$work/bin/make" "$work/bin/cpp" "$work/bin/dtc" \
     "$work/bin/cp" "$work/src/build.sh"
-export PATH="$work/bin:$PATH" NETBSD2_PYTHON="$work/bin/python3" NETBSD2_JOBS=2
+export PATH="$work/bin:$PATH" NETBSD2_PYTHON="$work/bin/python3" TEST_CPU_CAPACITY=10
 export RUBY="$work/bin/ruby"
 # Deliberately invalid target commands must not be used by host contracts.
 export CC=/target/compiler CXX=/target/compiler-cxx CFLAGS=-Dwrong_target CXXFLAGS=-Dwrong_target LDFLAGS=-Lwrong-target
@@ -468,6 +492,7 @@ check_contract_counts() {
 }
 export TEST_OUT="$work/cross"
 sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1
+grep -q '^build.sh .* -j10 ' "$TEST_LOG"
 test -s "$TEST_OUT/netbsd-EMBER64"
 test -s "$TEST_OUT/rpi5button.kmod"
 test -s "$TEST_OUT/bcmexpgpio.kmod"
@@ -711,15 +736,22 @@ done
 export TEST_OUT="$work/host-gcc"
 : > "$TEST_LOG"
 NETBSD2_PYTHON=/outside/bin/python3 PVR_QUERY_FIRMWARE="$work/pinned firmware" EMBER_HOST_COMPILER_FAMILY=gcc \
-    sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1
+    NETBSD2_JOBS=72 sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1
+grep -q '^build.sh .* -j72 ' "$TEST_LOG"
 grep -q '^native-check gcc sh ' "$TEST_LOG"
 grep -q ' -c clang ' "$TEST_LOG"
 grep -q '^pvr-query-contract ' "$TEST_LOG"
 check_contract_counts 16
-if NETBSD2_JOBS=00 sh "$work/src/ember/build-kernel.sh" "$work/zero-jobs" > "$work/run.log" 2>&1; then
-    echo 'accepted zero jobs' >&2; exit 1
+for invalid in '' 00 -1 x; do
+    if NETBSD2_JOBS=$invalid sh "$work/src/ember/build-kernel.sh" "$work/invalid-jobs" > "$work/run.log" 2>&1; then
+        echo "accepted invalid NETBSD2_JOBS: $invalid" >&2; exit 1
+    fi
+    grep -q 'positive integer' "$work/run.log"
+done
+if TEST_CPU_CAPACITY=unknown sh "$work/src/ember/build-kernel.sh" "$work/unknown-cpu" > "$work/run.log" 2>&1; then
+    echo 'accepted unavailable CPU capacity without override' >&2; exit 1
 fi
-grep -q 'positive integer' "$work/run.log"
+grep -q 'CPU count is unavailable; select NETBSD2_JOBS explicitly' "$work/run.log"
 rm "$work/src/tools/Makefile"
 if sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1; then
     echo 'accepted incomplete cross source' >&2; exit 1

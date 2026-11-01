@@ -41,7 +41,7 @@ def main():
     sdk = Path(os.environ['EMBERBSD_SDK_SOURCE'])
     sys.path.insert(0, str(sdk / 'src'))
     try:
-        from emberbsd_sdk import application_toolchain, host_prefix, jsonio, libedit, llvm_runtime, native_os, process, target_toolchain
+        from emberbsd_sdk import application_toolchain, cpu_capacity, host_prefix, jsonio, libedit, llvm_runtime, native_os, process, target_toolchain
         from emberbsd_sdk.errors import SDKError
     except ImportError as exc:
         raise SystemExit('selected SDK source lacks required APIs: ' + str(exc)) from exc
@@ -130,7 +130,7 @@ def main():
         libedit = os.environ['EMBER_LIBEDIT_SOURCE']
         llvm_source = os.environ.get('EMBER_LLVM_SOURCE', '-')
         host_bfd = os.environ['EMBER_HOST_BFD_CONFIG']
-        jobs = os.environ.get('BUILD_JOBS', '2')
+        jobs = str(cpu_capacity.resolve_jobs(os.environ.get('BUILD_JOBS'), option='BUILD_JOBS'))
         output.mkdir()
         (output / 'logs').mkdir()
         script = str(Path(__file__).with_name('cix-p1-build-userland.sh').resolve())

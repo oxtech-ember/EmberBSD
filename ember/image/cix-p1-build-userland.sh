@@ -185,7 +185,7 @@ revision=$("$git" -C "$src" rev-parse HEAD)
     echo 'Untracked source inputs are not accepted.' >&2; exit 2
 }
 case "$jobs" in ''|*[!0-9]*) exit 2;; esac
-[ "$jobs" -ge 1 ] && [ "$jobs" -le 32 ] || exit 2
+[ "$jobs" -ge 1 ] || exit 2
 # Target headers come from this output; compiler headers come from its selected prefix.
 CPPFLAGS="-nostdinc -isystem $out/dest/usr/include -isystem $gcc_include"
 export CPPFLAGS
