@@ -333,6 +333,7 @@
     "tools/file/build/src/.libs/libmagic.a"
   ],
   "nested_object_owners": {
-    "external/bsd/tdb/lib/waf-build": "external/bsd/tdb/lib"
+    "external/bsd/tdb/lib/waf-build": "external/bsd/tdb/lib",
+    "crypto/external/bsd/openssh/config/generated": "crypto/external/bsd/openssh/config"
   }
 }
