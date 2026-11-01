@@ -13,6 +13,17 @@ request 3-wire, dual-line, or quad-line operation are rejected. The controller
 validates every chunk before asserting CS and keeps CS asserted across all
 chunks in one transfer.
 
+Select both the optional controller attachment and its SPI bus in the kernel
+configuration:
+
+```conf
+spigpio* at fdt? pass 4
+spi* at spigpio?
+```
+
+Do not add a standalone `device spigpio` declaration; `files.fdt` declares the
+driver, and the attachment lines select it for the kernel.
+
 Clients configure a speed from 1 through 100,000 Hz. The GPIO edge delay is
 rounded up so the bit-banged clock does not exceed the requested rate; GPIO
 call overhead makes the actual rate lower. This controller is intended for
