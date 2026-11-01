@@ -152,7 +152,9 @@ def main():
             if Path(d).is_dir():
                 flags += ['-idirafter', d]
     units = [(HERE/'glue.c', []), (HERE/'wpa_log.c', []),
-             (HERE/'fullmac_wpa2.c', ['-I'+str(idf/'wpa_supplicant/esp_supplicant/src')])]
+             (HERE/'fullmac_wpa2.c', ['-I'+str(idf/'wpa_supplicant/esp_supplicant/src'),
+                '-I'+str(a.wpa_source/'src'),
+                '-I'+str(a.wpa_source/'src/rsn_supp')])]
     units += [(idf/s, ['-DCONFIG_ESP_WIFI_FTM_ENABLE=1'] if s.endswith('ftm_load_calibration.c') else []) for s in CORE]
     common = a.wpa_source / 'src'
     common_flags = ['-I'+str(common), '-I'+str(common/'utils'), '-I'+str(common/'crypto'),
@@ -165,6 +167,9 @@ def main():
         '-idirafter', str(idf/'wpa_supplicant/esp_supplicant/src'),
         '-idirafter', str(idf/'wpa_supplicant/esp_supplicant/src/crypto')]
     units += [(common/'crypto'/s, common_flags) for s in CRYPTO]
+    units += [(common/'rsn_supp/wpa_ie.c', common_flags),
+              (common/'common/wpa_common.c', common_flags)]
+    units += [(HERE/'wpa_ie_bridge.c', common_flags + ['-I'+str(HERE)])]
     units += [(common/'utils/common.c', common_flags)]
     units += [(idf/'wpa_supplicant/src/crypto/ccmp.c', common_flags)]
     units += [(idf/'wpa_supplicant/src/crypto/crypto_ops.c', common_flags +
@@ -209,6 +214,8 @@ def main():
         defined = globals_for(output)
         if not set(ENTRIES) <= defined:
             raise ValueError('radio object is missing required entry points')
+        if 'wpa_parse_wpa_ie' not in defined:
+            raise ValueError('selected common WPA parser was not linked')
         localize = td/'localize.txt'
         localize.write_text(''.join(name+'\n' for name in sorted(defined - set(ENTRIES))))
         localized = td/'localized.o'

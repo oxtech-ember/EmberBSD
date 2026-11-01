@@ -80,6 +80,18 @@ include that object through `EXTRA_OBJ`; this does not enable
 `ESPWIFI_NET80211_WPA2` by itself. Keep build inputs and outputs outside the
 source tree and use the tool prefixes selected by the SDK.
 
-The host regression scripts under `sys/arch/riscv/tests/t_espwifi_*.py`
-exercise actual adapter functions with modeled OS and vendor callbacks. They
-do not establish kernel integration or radio behavior on hardware.
+The management adapter regression checks callback-table field offsets against
+the selected `esp_wifi_driver.h`, then exercises the adapter with modeled OS
+callbacks. It also compiles the selected shared WPA/RSN parser sources and
+tests valid WPA, valid RSN, and malformed IEs under ASan/UBSan:
+
+```sh
+"$HOST_PREFIX/bin/python3.15" -B sys/arch/riscv/tests/t_espwifi_mgmt.py \
+    --cc "$HOST_PREFIX/bin/clang" \
+    --idf-driver-header "$IDF_SOURCE/components/wpa_supplicant/esp_supplicant/src/esp_wifi_driver.h" \
+    --wpa-source "$WPA_SOURCE/src"
+```
+
+The current adapter only forwards association responses and rejects AUTH and
+ACTION management frames; those callbacks are not advertised as supported.
+Host tests do not establish kernel integration or radio behavior on hardware.

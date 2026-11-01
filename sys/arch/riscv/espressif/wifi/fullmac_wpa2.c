@@ -10,10 +10,79 @@ typedef uint16_t u16;
 typedef uint32_t u32;
 typedef uint64_t u64;
 #include "esp_wifi_driver.h"
+#include "wpa_ie_bridge.h"
 
 #include "../esp_wifi_os.h"
 
+#define WLAN_FC_STYPE_ASSOC_RESP 1
+#define WLAN_FC_STYPE_REASSOC_RESP 3
+#define WLAN_FC_STYPE_AUTH 11
+#define WLAN_FC_STYPE_ACTION 13
+
 void forced_memzero(void *, size_t);
+
+/*
+ * Adapted from Espressif ESP-IDF 6.1 components/wpa_supplicant/src/rsn_supp/wpa.c
+ * cipher_type_map_supp_to_public(), Copyright (c) 2021 Espressif Systems
+ * (Shanghai) Co., Ltd., Apache-2.0. Keep the vendor enum conversion at this
+ * ABI boundary; WPA parsing remains in the selected common supplicant source.
+ */
+static wifi_cipher_type_t
+espwifi_cipher_type(unsigned cipher)
+{
+	switch (cipher) {
+	case ESPWIFI_WPA_CIPHER_NONE:
+		return WIFI_CIPHER_TYPE_NONE;
+	case ESPWIFI_WPA_CIPHER_WEP40:
+		return WIFI_CIPHER_TYPE_WEP40;
+	case ESPWIFI_WPA_CIPHER_WEP104:
+		return WIFI_CIPHER_TYPE_WEP104;
+	case ESPWIFI_WPA_CIPHER_TKIP:
+		return WIFI_CIPHER_TYPE_TKIP;
+	case ESPWIFI_WPA_CIPHER_CCMP:
+		return WIFI_CIPHER_TYPE_CCMP;
+	case ESPWIFI_WPA_CIPHER_TKIP_CCMP:
+		return WIFI_CIPHER_TYPE_TKIP_CCMP;
+	case ESPWIFI_WPA_CIPHER_AES_CMAC128:
+		return WIFI_CIPHER_TYPE_AES_CMAC128;
+	case ESPWIFI_WPA_CIPHER_AES_GMAC128:
+		return WIFI_CIPHER_TYPE_AES_GMAC128;
+	case ESPWIFI_WPA_CIPHER_AES_GMAC256:
+		return WIFI_CIPHER_TYPE_AES_GMAC256;
+	case ESPWIFI_WPA_CIPHER_SMS4:
+		return WIFI_CIPHER_TYPE_SMS4;
+	case ESPWIFI_WPA_CIPHER_GCMP:
+		return WIFI_CIPHER_TYPE_GCMP;
+	case ESPWIFI_WPA_CIPHER_GCMP256:
+		return WIFI_CIPHER_TYPE_GCMP256;
+	default:
+		return WIFI_CIPHER_TYPE_UNKNOWN;
+	}
+}
+
+static int
+espwifi_wpa2_parse_ie(const u8 *ie, size_t len, wifi_wpa_ie_t *data)
+{
+	struct espwifi_wpa_ie parsed;
+	int error;
+
+	if (ie == NULL || data == NULL)
+		return -1;
+	memset(data, 0, sizeof(*data));
+	error = espwifi_parse_wpa_ie(ie, len, &parsed);
+	if (error != 0)
+		return error;
+	data->proto = parsed.proto;
+	data->pairwise_cipher = espwifi_cipher_type(parsed.pairwise_cipher);
+	data->group_cipher = espwifi_cipher_type(parsed.group_cipher);
+	data->key_mgmt = parsed.key_mgmt;
+	data->capabilities = parsed.capabilities;
+	data->num_pmkid = parsed.num_pmkid;
+	data->pmkid = parsed.pmkid;
+	data->mgmt_group_cipher = espwifi_cipher_type(parsed.mgmt_group_cipher);
+	/* The shared WPA parser has no RSNXE result in this version. */
+	return 0;
+}
 
 static int
 espwifi_wpa2_sta_connect(uint8_t *bssid)
@@ -68,8 +137,17 @@ espwifi_wpa2_sta_rx_mgmt(u8 subtype, u8 *body, size_t len, u8 *sender,
 	(void)rssi;
 	(void)channel;
 	(void)current_tsf;
-	return espwifi_os_assoc_response(subtype, body, (unsigned int)len, sender)
-	    ? 0 : -1;
+	switch (subtype) {
+	case WLAN_FC_STYPE_ASSOC_RESP:
+	case WLAN_FC_STYPE_REASSOC_RESP:
+		return espwifi_os_assoc_response(subtype, body,
+		    (unsigned int)len, sender) ? 0 : -1;
+	case WLAN_FC_STYPE_AUTH:
+	case WLAN_FC_STYPE_ACTION:
+		return -1;
+	default:
+		return -1;
+	}
 }
 
 /* IDF unregister owns/frees the registered table through the OS allocator. */
@@ -91,9 +169,11 @@ espwifi_wpa2_register(void)
 	callbacks->wpa_sta_rx_eapol = espwifi_wpa2_sta_rx_eapol;
 	callbacks->wpa_sta_in_4way_handshake = espwifi_wpa2_sta_in_4way;
 	callbacks->wpa_sta_rx_mgmt = espwifi_wpa2_sta_rx_mgmt;
+	callbacks->wpa_parse_wpa_ie = espwifi_wpa2_parse_ie;
 	/* Match esp_supplicant_init ordering: install filter before callback table. */
-	error = esp_wifi_register_mgmt_frame_internal(0,
-	    (1U << 1) | (1U << 3));
+	error = esp_wifi_register_mgmt_frame_internal(
+	    (1U << WLAN_FC_STYPE_ASSOC_RESP) |
+	    (1U << WLAN_FC_STYPE_REASSOC_RESP), 0);
 	if (error != ESP_OK) {
 		espwifi_os_free(callbacks);
 		return -1;
