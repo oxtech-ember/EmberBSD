@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* ESP32-S31 GPIO matrix and IO_MUX. Register layout: ESP-IDF v6.1,
- * components/soc/esp32s31/register/soc/{gpio,io_mux,hp_sys_clkrst}_reg.h
+ * components/soc/esp32s31/register/soc/{gpio,io_mux,hp_sys_clkrst,lp_system}_reg.h
  * (Apache-2.0 OR MIT); GPIO validity from soc_caps.h. */
 #include <sys/cdefs.h>
 __KERNEL_RCSID(0, "$NetBSD$");
@@ -47,6 +47,9 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define IOMUX_GPIO __SHIFTIN(1, IOMUX_FUNC)
 #define IOMUX_APB_CLK 0x15c
 #define IOMUX_APB_EN __BIT(0)
+#define LP_PADCTRL_REG 0x1c4
+#define LP_HP_GPIO_O_HOLD_CTRL1_REG 0x270
+#define LP_HP_GPIO_O_HOLD_CTRL0_REG 0x274
 #define ROUTE_NONE 511
 #define PIN_MAX 62
 
@@ -54,6 +57,7 @@ struct esp_gpio_softc {
 	device_t dev;
 	bus_space_tag_t bst;
 	bus_space_handle_t gpio, iomux;
+	struct syscon *lp_syscon;
 	kmutex_t lock;
 	uint64_t gpio_used;
 	int pin_owner[PIN_MAX];
@@ -93,7 +97,8 @@ static const struct fdtbus_pinctrl_controller_func pinctrl_funcs = {
 static const struct device_compatible_entry compat[] = {
     {.compat = "espressif,esp32s31-gpio"}, DEVICE_COMPAT_EOL};
 
-/* Register values describe programmed state, not measured pad voltages. */
+/* OUT/EN/mux fields describe programming. IN samples can be disabled by
+ * IO_MUX FUN_IE and none of these fields directly measures pad voltage. */
 static int
 esp_gpio_sysctl_registers(SYSCTLFN_ARGS)
 {
@@ -101,6 +106,7 @@ esp_gpio_sysctl_registers(SYSCTLFN_ARGS)
 	struct sysctlnode node = *rnode;
 	uint32_t iomux[PIN_MAX], outsel[PIN_MAX], pinreg[PIN_MAX];
 	uint32_t out, out1, en, en1, in, in1;
+	uint32_t hold0, hold1, padctrl;
 	const size_t capacity = 4096;
 	char *buf;
 	size_t used;
@@ -122,9 +128,25 @@ esp_gpio_sysctl_registers(SYSCTLFN_ARGS)
 		pinreg[pin] = bus_space_read_4(sc->bst, sc->gpio, GPIO_PIN(pin));
 	}
 	mutex_exit(&sc->lock);
-	used = snprintf(buf, capacity,
-	    "out=%08x,%08x en=%08x,%08x in=%08x,%08x\n",
-	    out, out1, en, en1, in, in1);
+	if (sc->lp_syscon != NULL) {
+		/* Snapshot LP_SYS hold state; this path does not alter registers. */
+		syscon_lock(sc->lp_syscon);
+		padctrl = syscon_read_4(sc->lp_syscon, LP_PADCTRL_REG);
+		hold1 = syscon_read_4(sc->lp_syscon,
+		    LP_HP_GPIO_O_HOLD_CTRL1_REG);
+		hold0 = syscon_read_4(sc->lp_syscon,
+		    LP_HP_GPIO_O_HOLD_CTRL0_REG);
+		syscon_unlock(sc->lp_syscon);
+		used = snprintf(buf, capacity,
+		    "out=%08x,%08x en=%08x,%08x in=%08x,%08x "
+		    "hp_hold1=%08x hp_hold0=%08x lp_padctrl=%08x\n",
+		    out, out1, en, en1, in, in1, hold1, hold0, padctrl);
+	} else {
+		used = snprintf(buf, capacity,
+		    "out=%08x,%08x en=%08x,%08x in=%08x,%08x "
+		    "lp_syscon=unavailable\n",
+		    out, out1, en, en1, in, in1);
+	}
 	for (unsigned int pin = 0; pin < PIN_MAX; pin++) {
 		if (!esp32s31_pin_valid(pin))
 			continue;
@@ -157,7 +179,7 @@ esp_gpio_sysctl_init(struct esp_gpio_softc *sc)
 	if (error == 0)
 		error = sysctl_createv(&sc->sysctllog, 0, NULL, NULL,
 		    CTLFLAG_READONLY, CTLTYPE_STRING, "registers",
-		    SYSCTL_DESCR("GPIO and IO_MUX register snapshot"),
+		    SYSCTL_DESCR("GPIO, IO_MUX and LP_SYS hold register snapshot"),
 		    esp_gpio_sysctl_registers, 0, (char *)sc, 0,
 		    CTL_HW, node->sysctl_num, CTL_CREATE, CTL_EOL);
 	if (error != 0) {
@@ -428,6 +450,8 @@ esp_gpio_attach(device_t parent, device_t self, void *aux)
 
 	sc->dev = self;
 	sc->bst = faa->faa_bst;
+	sc->lp_syscon = fdtbus_syscon_acquire(phandle,
+	    "espressif,lp-syscon");
 	syscon = fdtbus_syscon_acquire(phandle, "espressif,syscon");
 	if (syscon == NULL) {
 		aprint_error(": missing clock syscon\n");

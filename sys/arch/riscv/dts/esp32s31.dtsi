@@ -58,11 +58,17 @@
 			reg = <0x20587000 0x1000>;
 		};
 
+		lp_sys: syscon@20700000 {
+			compatible = "espressif,esp32s31-lp-sys", "syscon";
+			reg = <0x20700000 0x1000>;
+		};
+
 		gpio: gpio@20583000 {
 			compatible = "espressif,esp32s31-gpio";
 			reg = <0x20583000 0x1000>, <0x20582000 0x1000>;
 			reg-names = "gpio", "iomux";
 			espressif,syscon = <&hp_clkrst>;
+			espressif,lp-syscon = <&lp_sys>;
 			gpio-controller;
 			#gpio-cells = <2>;
 			status = "disabled";
