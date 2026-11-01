@@ -236,3 +236,8 @@ file dev/fdt/adi_axi_adc.c adiaxiadc
 device gpioiic_fdt: i2cbus, i2c_bitbang
 attach gpioiic_fdt at fdt
 file dev/fdt/gpioiic_fdt.c gpioiic_fdt
+
+# Low-speed SPI controller implemented with FDT GPIO pins.
+device spigpio: spibus
+attach spigpio at fdt
+file dev/spi/spi_gpio.c spigpio
