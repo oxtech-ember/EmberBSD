@@ -2,7 +2,7 @@
 
 .include <bsd.own.mk>
 
-SSHDIST?= ${NETBSDSRCDIR}/crypto/external/bsd/openssh/dist
+.include "${NETBSDSRCDIR}/crypto/external/bsd/openssh/source.mk"
 
 SUBDIR=	ssh sshd ssh-add ssh-copy-id ssh-keygen ssh-agent scp \
 	sftp-server ssh-keysign ssh-keyscan sftp ssh-pkcs11-helper

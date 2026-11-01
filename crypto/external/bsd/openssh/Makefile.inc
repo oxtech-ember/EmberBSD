@@ -12,21 +12,33 @@ USE_FORT?= yes	# network client/server
 WITH_OPENSSL=1
 .endif
 
-SSHDIST?= ${NETBSDSRCDIR}/crypto/external/bsd/openssh/dist
+.include "${NETBSDSRCDIR}/crypto/external/bsd/openssh/source.mk"
+
+.if defined(EMBER_OPENSSH_SOURCE) && !empty(EMBER_OPENSSH_SOURCE)
+CPPFLAGS+= -DEMBERBSD_BASE_OPENSSH -DWITH_HPN
+CPPFLAGS+= -I${NETBSDSRCDIR}/crypto/external/bsd/openssh/include
+.endif
 
 CPPFLAGS+=-I${SSHDIST}
+
+.include "${NETBSDSRCDIR}/crypto/external/bsd/openssh/config.mk"
 
 CPPFLAGS+=-D_OPENBSD_SOURCE 
 CPPFLAGS+=-DHAVE_DLOPEN
 CPPFLAGS+=-DHAVE_HEADER_AD
+.if !defined(EMBER_OPENSSH_SOURCE) || empty(EMBER_OPENSSH_SOURCE)
 CPPFLAGS+=-DHAVE_LOGIN_CAP
+.endif
 CPPFLAGS+=-DHAVE_STDLIB_H
 .if ${HAVE_OPENSSL} < 11
 CPPFLAGS+=-DOPENSSL_API_COMPAT=0x10100000L
 .endif
 
 .ifdef WITH_OPENSSL
-CPPFLAGS+=-DWITH_OPENSSL -DENABLE_PKCS11
+CPPFLAGS+=-DWITH_OPENSSL
+.if !defined(EMBER_OPENSSH_SOURCE) || empty(EMBER_OPENSSH_SOURCE)
+CPPFLAGS+=-DENABLE_PKCS11
+.endif
 .endif
 
 CPPFLAGS+=-DWITH_ZLIB
@@ -35,6 +47,10 @@ CPPFLAGS+=-DWITH_ZLIB
 CPPFLAGS+=-DHAVE_DLOPEN
 .endif
 .PATH: ${SSHDIST}
+.if defined(EMBER_OPENSSH_SOURCE) && !empty(EMBER_OPENSSH_SOURCE)
+.PATH: ${SSHDIST}/openbsd-compat
+CPPFLAGS+= -I${SSHDIST}/openbsd-compat
+.endif
 
 .if (${USE_PAM} != "no")
 CPPFLAGS+=-DUSE_PAM
@@ -47,16 +63,25 @@ CPPFLAGS+=-DSKEY
 .if (${USE_KERBEROS} != "no")
 CPPFLAGS+=-DGSSAPI
 CPPFLAGS+=-DKRB5 -DHEIMDAL
+.if defined(EMBER_OPENSSH_SOURCE) && !empty(EMBER_OPENSSH_SOURCE)
+CPPFLAGS+= ${OPENSSH_KRB5_CPPFLAGS}
+.endif
 .endif
 
 .if (${USE_LDAP} != "no")
+.if defined(EMBER_OPENSSH_SOURCE) && !empty(EMBER_OPENSSH_SOURCE)
+CPPFLAGS+=-DWITH_NETBSD_LPK
+.else
 CPPFLAGS+=-DWITH_LDAP_PUBKEY
+.endif
 .endif
 
 CPPFLAGS+=-DX11BASE=\"/usr/X11R7\"
 
 CPPFLAGS+=-DSUPPORT_UTMP -DSUPPORT_UTMPX
+.if ${WITH_NETBSD_LIBWRAP:Uyes} != "no"
 CPPFLAGS+=-DLIBWRAP
+.endif
 
 LINTFLAGS+=	-X 117	# nonportable '>>' on signed integer type
 LINTFLAGS+=	-X 231	# parameter unused

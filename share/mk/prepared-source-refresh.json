@@ -282,6 +282,39 @@
       "header_prefixes": [],
       "consumer_dirs": [],
       "linked_names": []
+    },
+    "EMBER_OPENSSH_SOURCE": {
+      "producer_dirs": [
+        "crypto/external/bsd/openssh/bin/scp",
+        "crypto/external/bsd/openssh/bin/sftp",
+        "crypto/external/bsd/openssh/bin/sftp-server",
+        "crypto/external/bsd/openssh/bin/ssh",
+        "crypto/external/bsd/openssh/bin/ssh-add",
+        "crypto/external/bsd/openssh/bin/ssh-agent",
+        "crypto/external/bsd/openssh/bin/ssh-copy-id",
+        "crypto/external/bsd/openssh/bin/ssh-keygen",
+        "crypto/external/bsd/openssh/bin/ssh-keyscan",
+        "crypto/external/bsd/openssh/bin/ssh-keysign",
+        "crypto/external/bsd/openssh/bin/ssh-pkcs11-helper",
+        "crypto/external/bsd/openssh/bin/sshd",
+        "crypto/external/bsd/openssh/config",
+        "crypto/external/bsd/openssh/lib",
+        "crypto/external/bsd/openssh/libexec/ssh-sk-helper",
+        "crypto/external/bsd/openssh/libexec/sshd-auth",
+        "crypto/external/bsd/openssh/libexec/sshd-session"
+      ],
+      "header_prefixes": [],
+      "consumer_dirs": [
+        "lib/libpam/modules/pam_ssh",
+        "usr.sbin/wg-keygen",
+        "rescue",
+        "distrib/evbarm/instkernel/sshramdisk"
+      ],
+      "linked_names": [
+        "libssh.a",
+        "libssh.so",
+        "libssh_pic.a"
+      ]
     }
   },
   "header_independent_object_patterns": [

@@ -5,6 +5,10 @@ NOMAN=	yes
 
 PROG=	sshd-auth
 
+.if defined(EMBER_OPENSSH_SOURCE) && !empty(EMBER_OPENSSH_SOURCE)
+CPPFLAGS+=	-DWITH_NETBSD_BLOCKLIST
+.endif
+
 BINDIR=	/usr/libexec
 
 SRCS+= \
@@ -43,6 +47,12 @@ sshlogin.c \
 sshpty.c \
 uidswap.c \
 utf8.c \
+
+.if defined(EMBER_OPENSSH_SOURCE) && !empty(EMBER_OPENSSH_SOURCE)
+SRCS+= loginrec.c platform.c xcrypt.c \
+	sandbox-capsicum.c sandbox-darwin.c sandbox-null.c sandbox-rlimit.c \
+	sandbox-seccomp-filter.c sandbox-solaris.c
+.endif
 
 COPTS.auth-options.c+=	-Wno-pointer-sign
 COPTS.ldapauth.c+=	-Wno-format-nonliteral	# XXX: should fix
@@ -88,8 +98,10 @@ DPADD+=	${LIBLDAP_DPADD}
 LDADD+=	-lcrypt -lutil
 DPADD+=	${LIBCRYPT} ${LIBUTIL}
 
+.if ${WITH_NETBSD_LIBWRAP:Uyes} != "no"
 LDADD+=	-lwrap
 DPADD+=	${LIBWRAP}
+.endif
 
 .ifdef CRUNCHEDPROG
 CPPFLAGS+=-DSMALL

@@ -96,8 +96,28 @@ ssh-ecdsa.c \
 ssh-ecdsa-sk.c \
 ssh-rsa.c
 
+# Portable 10.6 selects these implementations through generated config.h.
+.if defined(EMBER_OPENSSH_SOURCE) && !empty(EMBER_OPENSSH_SOURCE)
+# The prepared release intentionally changes this private library ABI.
+SHLIB_MAJOR=	51
+SHLIB_MINOR=	0
+LIB_EXPSYM=	${.CURDIR}/ssh-selected.expsym
+SRCS+=	bsd-getpeereid.c bsd-malloc.c bsd-misc.c bsd-setres_id.c \
+	glob.c \
+	cipher-chachapoly-libcrypto.c ed25519-openssl.c entropy.c \
+	explicit_bzero.c kexmlkem768ecdh.c libcrux-mlkem-mldsa.c mktemp.c \
+	openssl-compat.c platform-misc.c platform-pledge.c platform-tracing.c \
+	port-net.c ssh-mldsa-eddsa.c timingsafe_bcmp.c
+.ifdef WITH_OPENSSL
+OPENSSL_SRCS+=	cipher-aes.c
+.endif
+.endif
+
 SRCS+=	fmt_scaled.c
-SRCS+=	readpassphrase.c getpeereid.c getrrsetbyname.c
+SRCS+=	readpassphrase.c getrrsetbyname.c
+.if !defined(EMBER_OPENSSH_SOURCE) || empty(EMBER_OPENSSH_SOURCE)
+SRCS+=	getpeereid.c
+.endif
 COPTS.monitor_fdpass.c+=-Wno-stack-protector
 COPTS.sntrup761.c+=	-Wno-stack-protector
 
@@ -142,6 +162,10 @@ COPTS.umac.c+=		-Wno-error=deprecated-declarations
 COPTS.umac128.c+=	-Wno-error=deprecated-declarations
 COPTS.ssherr-libcrypto.c+=	-Wno-error=deprecated-declarations
 COPTS.kexmlkem768x25519.c+=${${ACTIVE_CC} == "clang":? -Wno-error=missing-noreturn:}
+
+# The hybrid ECDH path uses the same legacy EC_KEY/ECDH API as kexecdh.c.
+# Keep the deprecation diagnostics visible without promoting them to errors.
+COPTS.kexmlkem768ecdh.c+= -Wno-error=deprecated-declarations
 
 
 

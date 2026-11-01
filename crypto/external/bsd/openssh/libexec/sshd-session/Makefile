@@ -5,6 +5,10 @@ NOMAN=	yes
 
 PROG=	sshd-session
 
+.if defined(EMBER_OPENSSH_SOURCE) && !empty(EMBER_OPENSSH_SOURCE)
+CPPFLAGS+=	-DWITH_NETBSD_BLOCKLIST
+.endif
+
 BINDIR=	/usr/libexec
 
 SRCS=	auth-rhosts.c auth-passwd.c auth2-pubkeyfile.c \
@@ -16,6 +20,10 @@ SRCS=	auth-rhosts.c auth-passwd.c auth2-pubkeyfile.c \
 	misc-agent.c monitor.c monitor_wrap.c srclimit.c \
 	sftp-server.c sftp-common.c \
 	sftp-realpath.c sshd-session.c pfilter.c
+
+.if defined(EMBER_OPENSSH_SOURCE) && !empty(EMBER_OPENSSH_SOURCE)
+SRCS+= loginrec.c platform.c platform-listen.c xcrypt.c
+.endif
 
 COPTS.auth-options.c+=	-Wno-pointer-sign
 COPTS.ldapauth.c+=	-Wno-format-nonliteral	# XXX: should fix
@@ -61,8 +69,10 @@ DPADD+=	${LIBLDAP_DPADD}
 LDADD+=	-lcrypt -lutil
 DPADD+=	${LIBCRYPT} ${LIBUTIL}
 
+.if ${WITH_NETBSD_LIBWRAP:Uyes} != "no"
 LDADD+=	-lwrap
 DPADD+=	${LIBWRAP}
+.endif
 
 .ifdef CRUNCHEDPROG
 CPPFLAGS+=-DSMALL

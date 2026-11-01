@@ -8,7 +8,11 @@ NOPICINSTALL=	# don't install _pic.a library
 
 .include <bsd.own.mk>
 
-SSHSRC=	${NETBSDSRCDIR}/crypto/external/bsd/openssh/dist
+.include "${NETBSDSRCDIR}/crypto/external/bsd/openssh/source.mk"
+SSHSRC=	${SSHDIST}
+.if "${SSHSRC}" != "${SSHDIST}"
+.error SSHSRC must match the prepared common OpenSSH source
+.endif
 
 .PATH: ${SSHSRC}
 LIB=	pam_ssh
@@ -16,6 +20,11 @@ MAN=	pam_ssh.8
 SRCS=	pam_ssh.c
 
 CPPFLAGS+= -I${SSHSRC}
+
+.include "${NETBSDSRCDIR}/crypto/external/bsd/openssh/config.mk"
+.if defined(EMBER_OPENSSH_SOURCE) && !empty(EMBER_OPENSSH_SOURCE)
+CPPFLAGS+= -include ${OPENSSH_CONFIG_HEADER}
+.endif
 
 LIBDPLIBS+=	ssh	${NETBSDSRCDIR}/crypto/external/bsd/openssh/lib \
 		crypt	${.CURDIR}/../../../libcrypt \
