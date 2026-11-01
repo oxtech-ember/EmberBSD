@@ -84,6 +84,7 @@ static void wr(struct esp_spi_softc *sc, unsigned int reg, uint32_t v) {
     if (reg == ESPSPI_CMD && v == ESPSPI_USR) {
         assert(clocks < 8); struct event *e = &events[clocks++];
         e->user=regs[ESPSPI_USER/4]; e->misc=regs[ESPSPI_MISC/4];
+        assert(e->user & UINT32_C(0x00000040));
         e->dlen=regs[ESPSPI_DLEN/4];
         memcpy(e->bytes, &regs[ESPSPI_W0/4], sizeof(e->bytes));
         if (e->user & ESPSPI_USR_MISO) regs[ESPSPI_W0/4] = 0x44332211;
@@ -102,6 +103,8 @@ int main(void) {
     esp_spi_reset(&sc);
     /* S31 SPI_CLK_GATE bits 0/1 enable clocks; bit 2 selects PLL. */
     assert(regs[ESPSPI_CLK_GATE/4] == 3);
+    assert((regs[ESPSPI_USER1/4] & UINT32_C(0x07c00000)) ==
+        UINT32_C(0x00400000));
     uint8_t bytes[70]; for (unsigned int i=0;i<sizeof(bytes);i++) bytes[i]=(uint8_t)i;
     uint32_t c; u_int hz; assert(esp_spi_clock(0,1,&c,&hz)==EINVAL);
     assert(esp_spi_clock(40000000,40000000,&c,&hz)==0 && c==ESPSPI_CLOCK_DIRECT && hz==40000000);
@@ -111,10 +114,12 @@ int main(void) {
     assert(esp_spi_clock(40000000,39062,&c,&hz)==EINVAL);
     assert(esp_spi_clock(40000000,39063,&c,&hz)==0);
     assert(esp_spi_configure(&sc,0,SPI_MODE_0,10000000)==0);
+    assert(sc.sc_user & UINT32_C(0x00000040));
     const int sizes[]={1,3,63,64,65};
     for(unsigned int k=0;k<sizeof(sizes)/sizeof(sizes[0]);k++) {
         int n=sizes[k]; struct spi_chunk c1=chunk(n,bytes,NULL,1); struct spi_transfer st={.st_chunks=&c1};
         clear_events(); assert(esp_spi_transfer(&sc,&st)==0); assert(st.completions==1 && st.error==0);
+        assert(events[0].user & UINT32_C(0x00000040));
         assert(c1.chunk_wresid==0 && c1.chunk_rresid==0); assert(clocks==(n>64?2U:1U));
         unsigned int first=n>64?64U:(unsigned int)n;
         assert(events[0].dlen==first*8-1 && memcmp(events[0].bytes,bytes,first)==0);
@@ -148,6 +153,7 @@ int main(void) {
     a=chunk(3,NULL,rx,1); st=(struct spi_transfer){.st_chunks=&a}; before=writes; clear_events();
     assert(esp_spi_transfer(&sc,&st)==0 && st.error==EINVAL && st.completions==1 && writes==before && clocks==0);
     puts("PASS actual ESP SPI clock, tails, CS, width, timeout and retry with mocked MMIO");
+    return 0;
 }
 '''
 a.work.mkdir(parents=True, exist_ok=True)

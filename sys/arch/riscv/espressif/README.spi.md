@@ -26,6 +26,8 @@ FIFO blocks and chunks, including changes from a single-line command
 to a quad data phase. UPDATE and completion waits are bounded. Timeout
 resets only the affected controller, restores its configuration and
 completes the transfer once with its unconsumed residuals preserved.
+Each transaction holds CS for one SPI clock after its final edge, matching
+ESP-IDF master's default `cs_hold=1`.
 
 For diagnostics, read `hw.<gpio-instance>.registers` and
 `hw.<spi-instance>.registers` with `sysctl`. For example, when the

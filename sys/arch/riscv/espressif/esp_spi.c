@@ -143,7 +143,8 @@ esp_spi_reset(struct esp_spi_softc *sc)
 	ESPSPI_WRITE(sc, ESPSPI_CLK_GATE, ESPSPI_CLK_ENABLE);
 	ESPSPI_WRITE(sc, ESPSPI_SLAVE, 0);
 	ESPSPI_WRITE(sc, ESPSPI_CTRL, 0);
-	ESPSPI_WRITE(sc, ESPSPI_USER1, 0);
+	/* Keep CS active for at least one SPI clock after the final edge. */
+	ESPSPI_WRITE(sc, ESPSPI_USER1, ESPSPI_CS_HOLD_TIME(1));
 	ESPSPI_WRITE(sc, ESPSPI_USER2, 0);
 	ESPSPI_WRITE(sc, ESPSPI_DMA_CONF, ESPSPI_DMA_BASE);
 	ESPSPI_WRITE(sc, ESPSPI_INT_ENA, 0);
@@ -248,7 +249,8 @@ esp_spi_configure(void *cookie, int slave, int mode, int speed)
 	sc->sc_misc = ESPSPI_CS_DISABLE & ~__BIT(slave);
 	if (mode & SPI_MODE_CPOL)
 		sc->sc_misc |= ESPSPI_CK_IDLE_EDGE;
-	sc->sc_user = ((mode == SPI_MODE_1 || mode == SPI_MODE_2) ?
+	sc->sc_user = ESPSPI_CS_HOLD |
+	    ((mode == SPI_MODE_1 || mode == SPI_MODE_2) ?
 	    ESPSPI_CK_OUT_EDGE : 0);
 	ESPSPI_WRITE(sc, ESPSPI_CLOCK, sc->sc_clock);
 	ESPSPI_WRITE(sc, ESPSPI_MISC, sc->sc_misc);
