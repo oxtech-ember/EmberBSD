@@ -110,7 +110,8 @@ fdtbus_attach_i2cbus(device_t dev, int phandle, i2c_tag_t tag, cfprint_t print)
 	if (of_getprop_uint32(phandle, "#address-cells", &address_cells))
 		address_cells = 1;
 
-	of_enter_i2c_devs(devs, phandle, address_cells * 4, 0);
+	of_enter_i2c_devs_filtered(devs, phandle, address_cells * 4, 0,
+	    fdtbus_status_okay);
 
 	memset(&iba, 0, sizeof(iba));
 	iba.iba_tag = tag;

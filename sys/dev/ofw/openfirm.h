@@ -130,6 +130,9 @@ int	*of_network_decode_media(int, int *, int *);
 char	*of_get_mode_string(char *, int);
 
 void	of_enter_i2c_devs(prop_dictionary_t, int, size_t, int);
+/* A NULL filter preserves the legacy unfiltered OF enumeration. */
+void	of_enter_i2c_devs_filtered(prop_dictionary_t, int, size_t, int,
+	    bool (*)(int));
 void	of_enter_spi_devs(prop_dictionary_t, int, size_t);
 #endif /* _KERNEL */
 

@@ -53,6 +53,14 @@ void
 of_enter_i2c_devs(prop_dictionary_t props, int ofnode, size_t cell_size,
     int addr_shift)
 {
+
+	of_enter_i2c_devs_filtered(props, ofnode, cell_size, addr_shift, NULL);
+}
+
+void
+of_enter_i2c_devs_filtered(prop_dictionary_t props, int ofnode,
+    size_t cell_size, int addr_shift, bool (*filter)(int))
+{
 	int node, len;
 	char name[32];
 	uint64_t reg64;
@@ -62,10 +70,11 @@ of_enter_i2c_devs(prop_dictionary_t props, int ofnode, size_t cell_size,
 	prop_dictionary_t dev;
 
 	for (node = OF_child(ofnode); node; node = OF_peer(node)) {
+		if (filter != NULL && !filter(node))
+			continue;
 		if (OF_getprop(node, "name", name, sizeof(name)) <= 0)
 			continue;
 		len = OF_getproplen(node, "reg");
-		addr = 0;
 		if (cell_size == 8 && len >= sizeof(reg64)) {
 			if (OF_getprop(node, "reg", &reg64, sizeof(reg64))
 			    < sizeof(reg64))
