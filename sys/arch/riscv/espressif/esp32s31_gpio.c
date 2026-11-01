@@ -11,17 +11,22 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/intr.h>
 #include <sys/kmem.h>
 #include <sys/mutex.h>
+#include <sys/sysctl.h>
 #include <sys/systm.h>
 #include <dev/fdt/fdtvar.h>
 #include <dev/fdt/syscon.h>
 #include "esp32s31_gpio_logic.h"
 
+#define GPIO_OUT 0x004
 #define GPIO_OUT_SET 0x008
 #define GPIO_OUT_CLR 0x00c
+#define GPIO_OUT1 0x010
 #define GPIO_OUT1_SET 0x014
 #define GPIO_OUT1_CLR 0x018
+#define GPIO_EN 0x034
 #define GPIO_EN_SET 0x038
 #define GPIO_EN_CLR 0x03c
+#define GPIO_EN1 0x040
 #define GPIO_EN1_SET 0x044
 #define GPIO_EN1_CLR 0x048
 #define GPIO_IN 0x064
@@ -53,6 +58,7 @@ struct esp_gpio_softc {
 	uint64_t gpio_used;
 	int pin_owner[PIN_MAX];
 	int input_owner[256];
+	struct sysctllog *sysctllog;
 };
 struct esp_gpio_pin {
 	unsigned int pin;
@@ -86,6 +92,79 @@ static const struct fdtbus_pinctrl_controller_func pinctrl_funcs = {
 };
 static const struct device_compatible_entry compat[] = {
     {.compat = "espressif,esp32s31-gpio"}, DEVICE_COMPAT_EOL};
+
+/* Register values describe programmed state, not measured pad voltages. */
+static int
+esp_gpio_sysctl_registers(SYSCTLFN_ARGS)
+{
+	struct esp_gpio_softc *sc = rnode->sysctl_data;
+	struct sysctlnode node = *rnode;
+	uint32_t iomux[PIN_MAX], outsel[PIN_MAX], pinreg[PIN_MAX];
+	uint32_t out, out1, en, en1, in, in1;
+	const size_t capacity = 4096;
+	char *buf;
+	size_t used;
+	int error, n;
+
+	buf = kmem_alloc(capacity, KM_SLEEP);
+	mutex_enter(&sc->lock);
+	out = bus_space_read_4(sc->bst, sc->gpio, GPIO_OUT);
+	out1 = bus_space_read_4(sc->bst, sc->gpio, GPIO_OUT1);
+	en = bus_space_read_4(sc->bst, sc->gpio, GPIO_EN);
+	en1 = bus_space_read_4(sc->bst, sc->gpio, GPIO_EN1);
+	in = bus_space_read_4(sc->bst, sc->gpio, GPIO_IN);
+	in1 = bus_space_read_4(sc->bst, sc->gpio, GPIO_IN1);
+	for (unsigned int pin = 0; pin < PIN_MAX; pin++) {
+		if (!esp32s31_pin_valid(pin))
+			continue;
+		iomux[pin] = bus_space_read_4(sc->bst, sc->iomux, pin * 4);
+		outsel[pin] = bus_space_read_4(sc->bst, sc->gpio, GPIO_OUTSEL(pin));
+		pinreg[pin] = bus_space_read_4(sc->bst, sc->gpio, GPIO_PIN(pin));
+	}
+	mutex_exit(&sc->lock);
+	used = snprintf(buf, capacity,
+	    "out=%08x,%08x en=%08x,%08x in=%08x,%08x\n",
+	    out, out1, en, en1, in, in1);
+	for (unsigned int pin = 0; pin < PIN_MAX; pin++) {
+		if (!esp32s31_pin_valid(pin))
+			continue;
+		n = snprintf(buf + used, capacity - used,
+		    "%u: mux=%08x outsel=%08x pin=%08x\n", pin,
+		    iomux[pin], outsel[pin], pinreg[pin]);
+		if (n < 0 || (size_t)n >= capacity - used) {
+			kmem_free(buf, capacity);
+			return EOVERFLOW;
+		}
+		used += (size_t)n;
+	}
+	node.sysctl_data = buf;
+	node.sysctl_size = used + 1;
+	error = sysctl_lookup(SYSCTLFN_CALL(&node));
+	kmem_free(buf, capacity);
+	return error;
+}
+
+static void
+esp_gpio_sysctl_init(struct esp_gpio_softc *sc)
+{
+	const struct sysctlnode *node;
+	int error;
+
+	error = sysctl_createv(&sc->sysctllog, 0, NULL, &node,
+	    CTLFLAG_READONLY, CTLTYPE_NODE, device_xname(sc->dev),
+	    SYSCTL_DESCR("ESP32-S31 GPIO controller"), NULL, 0, NULL, 0,
+	    CTL_HW, CTL_CREATE, CTL_EOL);
+	if (error == 0)
+		error = sysctl_createv(&sc->sysctllog, 0, NULL, NULL,
+		    CTLFLAG_READONLY, CTLTYPE_STRING, "registers",
+		    SYSCTL_DESCR("GPIO and IO_MUX register snapshot"),
+		    esp_gpio_sysctl_registers, 0, (char *)sc, 0,
+		    CTL_HW, node->sysctl_num, CTL_CREATE, CTL_EOL);
+	if (error != 0) {
+		sysctl_teardown(&sc->sysctllog);
+		aprint_error_dev(sc->dev, "cannot publish registers: %d\n", error);
+	}
+}
 
 static void
 esp_gpio_level(struct esp_gpio_softc *sc, unsigned int pin, bool high)
@@ -371,6 +450,7 @@ esp_gpio_attach(device_t parent, device_t self, void *aux)
 	syscon_write_4(syscon, IOMUX_APB_CLK, v | IOMUX_APB_EN);
 	syscon_unlock(syscon);
 	mutex_init(&sc->lock, MUTEX_DEFAULT, IPL_VM);
+	esp_gpio_sysctl_init(sc);
 	aprint_naive("\n");
 	aprint_normal(": GPIO and pin controller\n");
 	fdtbus_register_gpio_controller(self, phandle, &gpio_funcs);

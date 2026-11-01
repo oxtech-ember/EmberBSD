@@ -27,6 +27,24 @@ to a quad data phase. UPDATE and completion waits are bounded. Timeout
 resets only the affected controller, restores its configuration and
 completes the transfer once with its unconsumed residuals preserved.
 
+For diagnostics, read `hw.<gpio-instance>.registers` and
+`hw.<spi-instance>.registers` with `sysctl`. For example, when the
+instances are `esp32s31_gpio0` and `espspi0`:
+
+```sh
+sysctl hw.esp32s31_gpio0.registers
+sysctl hw.espspi0.registers
+```
+
+The GPIO snapshot contains the output latch (`out`), output enable (`en`)
+and input (`in`) register pairs, followed by each valid pin's IO_MUX
+(`mux`), output matrix selection (`outsel`) and GPIO pin (`pin`) registers.
+The SPI snapshot contains the shared clock/reset register (`clkrst`),
+controller clock gate (`gate`), command, control, clock, user, user1,
+user2, miscellaneous and raw DMA interrupt registers. Values are hexadecimal.
+These are best-effort snapshots: hardware can change between reads, and
+register values are not measurements of pad voltage.
+
 Host regression (actual driver functions with modeled registers):
 
 ```sh

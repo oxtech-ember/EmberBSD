@@ -13,6 +13,7 @@ __KERNEL_RCSID(0, "$EmberBSD$");
 #include <sys/param.h>
 #include <sys/bus.h>
 #include <sys/device.h>
+#include <sys/sysctl.h>
 #include <sys/systm.h>
 #include <dev/clk/clk_backend.h>
 #include <dev/fdt/fdtvar.h>
@@ -32,6 +33,7 @@ struct esp_spi_softc {
 	uint32_t sc_clock;
 	uint32_t sc_user;
 	uint32_t sc_misc;
+	struct sysctllog *sc_sysctllog;
 };
 
 #define ESPSPI_READ(sc, reg) \
@@ -57,6 +59,53 @@ static const struct device_compatible_entry compat_data[] = {
 static const struct fdtbus_spi_controller_func esp_spi_funcs = {
 	.get_controller = esp_spi_get_controller,
 };
+
+/* This is a best-effort snapshot; a transfer may change registers between reads. */
+static int
+esp_spi_sysctl_registers(SYSCTLFN_ARGS)
+{
+	struct esp_spi_softc *sc = rnode->sysctl_data;
+	struct sysctlnode node = *rnode;
+	uint32_t clkrst;
+	char status[256];
+
+	syscon_lock(sc->sc_syscon);
+	clkrst = syscon_read_4(sc->sc_syscon, sc->sc_clkrst);
+	syscon_unlock(sc->sc_syscon);
+	(void)snprintf(status, sizeof(status),
+	    "clkrst=%08x gate=%08x cmd=%08x ctrl=%08x clock=%08x "
+	    "user=%08x user1=%08x user2=%08x misc=%08x int_raw=%08x",
+	    clkrst, ESPSPI_READ(sc, ESPSPI_CLK_GATE),
+	    ESPSPI_READ(sc, ESPSPI_CMD), ESPSPI_READ(sc, ESPSPI_CTRL),
+	    ESPSPI_READ(sc, ESPSPI_CLOCK), ESPSPI_READ(sc, ESPSPI_USER),
+	    ESPSPI_READ(sc, ESPSPI_USER1), ESPSPI_READ(sc, ESPSPI_USER2),
+	    ESPSPI_READ(sc, ESPSPI_MISC), ESPSPI_READ(sc, ESPSPI_INT_RAW));
+	node.sysctl_data = status;
+	node.sysctl_size = strlen(status) + 1;
+	return sysctl_lookup(SYSCTLFN_CALL(&node));
+}
+
+static void
+esp_spi_sysctl_init(struct esp_spi_softc *sc)
+{
+	const struct sysctlnode *node;
+	int error;
+
+	error = sysctl_createv(&sc->sc_sysctllog, 0, NULL, &node,
+	    CTLFLAG_READONLY, CTLTYPE_NODE, device_xname(sc->sc_dev),
+	    SYSCTL_DESCR("ESP32-S31 SPI controller"), NULL, 0, NULL, 0,
+	    CTL_HW, CTL_CREATE, CTL_EOL);
+	if (error == 0)
+		error = sysctl_createv(&sc->sc_sysctllog, 0, NULL, NULL,
+		    CTLFLAG_READONLY, CTLTYPE_STRING, "registers",
+		    SYSCTL_DESCR("SPI register snapshot"),
+		    esp_spi_sysctl_registers, 0, (char *)sc, 0,
+		    CTL_HW, node->sysctl_num, CTL_CREATE, CTL_EOL);
+	if (error != 0) {
+		sysctl_teardown(&sc->sc_sysctllog);
+		aprint_error_dev(sc->sc_dev, "cannot publish registers: %d\n", error);
+	}
+}
 
 static struct spi_controller *
 esp_spi_get_controller(device_t dev)
@@ -146,6 +195,7 @@ esp_spi_attach(device_t parent, device_t self, void *aux)
 	sc->sc_spi.sct_transfer = esp_spi_transfer;
 	sc->sc_spi.sct_caps = SPI_CAP_DUAL_TX | SPI_CAP_QUAD_TX;
 	aprint_normal(": GPSPI PIO, XTAL %u Hz\n", sc->sc_source_hz);
+	esp_spi_sysctl_init(sc);
 	fdtbus_register_spi_controller(self, phandle, &esp_spi_funcs);
 	fdtbus_attach_spibus(self, phandle, spibus_print);
 }
