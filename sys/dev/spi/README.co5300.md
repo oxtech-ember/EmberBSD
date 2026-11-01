@@ -16,6 +16,10 @@ orientation, pixel format, and sleep/display transitions belong in the device
 tree, not in this driver. The sequence is at most 1024 bytes, with cumulative delays at most 5000 ms,
 and must configure native RGB565.
 
+For ordinary single-line writes, the four-byte command header and parameters
+are coalesced into one chunk when the combined packet is at most 64 bytes;
+larger writes and multi-line data remain separate chunks.
+
 After the configured init sequence, the driver makes a best-effort status
 read at 1 MHz when the SPI controller supports `SPI_CAP_3WIRE`. It sends
 the CO5300 read header `03 00 <register> 00` and begins the response

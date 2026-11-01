@@ -33,6 +33,7 @@ __KERNEL_RCSID(0, "$EmberBSD$");
 #define CO5300_MAX_WIDTH 480
 #define CO5300_MAX_HEIGHT 480
 #define CO5300_RATE 20
+#define CO5300_INLINE_BYTES 64
 
 struct co5300_softc {
 	/* genfb passes its own softc to the bus callbacks. */
@@ -85,13 +86,23 @@ co5300_send(struct co5300_softc *sc, uint8_t opcode, uint8_t command,
 	struct spi_transfer transfer;
 	struct spi_chunk header_chunk, data_chunk;
 	uint8_t header[4] = { opcode, 0, command, 0 };
+	uint8_t packet[CO5300_INLINE_BYTES];
 
-	if (len > INT_MAX)
+	if (len > INT_MAX || (len != 0 && data == NULL))
 		return EINVAL;
 	spi_transfer_init(&transfer);
-	spi_chunk_init(&header_chunk, sizeof(header), header, NULL);
-	spi_transfer_add(&transfer, &header_chunk);
-	if (len != 0) {
+	if (width <= 1 && len <= sizeof(packet) - sizeof(header)) {
+		memcpy(packet, header, sizeof(header));
+		if (len != 0)
+			memcpy(packet + sizeof(header), data, len);
+		spi_chunk_init(&header_chunk, (int)(sizeof(header) + len),
+		    packet, NULL);
+		spi_transfer_add(&transfer, &header_chunk);
+	} else {
+		spi_chunk_init(&header_chunk, sizeof(header), header, NULL);
+		spi_transfer_add(&transfer, &header_chunk);
+	}
+	if (len != 0 && (width > 1 || len > sizeof(packet) - sizeof(header))) {
 		spi_chunk_init(&data_chunk, (int)len, data, NULL);
 		data_chunk.chunk_bus_width = width;
 		spi_transfer_add(&transfer, &data_chunk);

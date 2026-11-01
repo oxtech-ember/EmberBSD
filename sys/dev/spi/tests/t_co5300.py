@@ -30,6 +30,7 @@ prefix = r'''
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <errno.h>
 #include <limits.h>
@@ -40,6 +41,7 @@ prefix = r'''
 #define PROT_EXEC 4
 #define BUS_SPACE_MAP_LINEAR 1
 #define BUS_SPACE_MAP_CACHEABLE 2
+#define CO5300_INLINE_BYTES 64
 typedef uintptr_t vaddr_t;
 typedef uint64_t paddr_t;
 #define MAX(a,b) ((a) > (b) ? (a) : (b))
@@ -57,40 +59,78 @@ static int sysctl_lookup(struct sysctlnode *n) {
     assert(n->sysctl_size <= sizeof(status_text));
     memcpy(status_text, n->sysctl_data, n->sysctl_size); return 0;
 }
-struct call { uint8_t op,cmd; size_t len; unsigned int width; int flags; uint8_t data[8]; };
+struct call { uint8_t op,cmd; size_t len, wire_len; unsigned int width;
+    int flags, chunks; uint8_t data[8], wire[128]; };
 static struct call calls[8]; static int ncalls, fail_call, fail_errno, delays, last_ms;
 static uint16_t *mutate_fb;
 #define SPI_F_ERROR 1
 #define SPI_F_3WIRE 4
 #define SPI_MODE_0 0
-struct spi_chunk { struct spi_chunk *next; const uint8_t *data; uint8_t *rx; int count; unsigned int chunk_bus_width; };
+struct spi_chunk { struct spi_chunk *chunk_next; const uint8_t *chunk_write;
+    uint8_t *chunk_read; int chunk_count; unsigned int chunk_bus_width; };
 struct spi_transfer { struct spi_chunk *first; int st_flags, st_errno; };
 static void spi_transfer_init(struct spi_transfer *st) { memset(st,0,sizeof(*st)); }
 static void spi_chunk_init(struct spi_chunk *c, int n, const uint8_t *data, void *rx) {
-    memset(c,0,sizeof(*c)); c->data=data;c->rx=rx;c->count=n;c->chunk_bus_width=1;
+    memset(c,0,sizeof(*c)); c->chunk_write=data;c->chunk_read=rx;
+    c->chunk_count=n;c->chunk_bus_width=1;
 }
 static void spi_transfer_add(struct spi_transfer *st, struct spi_chunk *c) {
-    if (!st->first) st->first=c; else st->first->next=c;
+    if (!st->first) st->first=c;
+    else { struct spi_chunk *last=st->first;
+        while (last->chunk_next) last=last->chunk_next;
+        last->chunk_next=c; }
 }
 static int spi_transfer(void *bus, struct spi_transfer *st) {
     (void)bus; assert(ncalls < 8); struct call *c=&calls[ncalls++];
-    struct spi_chunk *head=st->first, *data=head->next;
-    assert(head->count==4 && head->chunk_bus_width==1);
-    assert(head->data[1]==0 && head->data[3]==0);
-    c->op=head->data[0]; c->cmd=head->data[2]; c->flags=st->st_flags;
-    if(data) { assert(data->count<=8);c->len=data->count;c->width=data->chunk_bus_width;
-        if (data->rx) {
+    memset(c,0,sizeof(*c));
+    struct spi_chunk *head=st->first;
+    assert(head != NULL && head->chunk_write != NULL &&
+        head->chunk_count >= 4 && head->chunk_bus_width == 1);
+    c->op=head->chunk_write[0]; c->cmd=head->chunk_write[2];
+    c->flags=st->st_flags;
+    for (struct spi_chunk *chunk=head; chunk != NULL;
+        chunk=chunk->chunk_next) {
+        assert(c->chunks < 2 && chunk->chunk_count > 0);
+        c->chunks++;
+        c->width=chunk->chunk_bus_width;
+        if (chunk->chunk_write != NULL) {
+            assert(c->wire_len + (size_t)chunk->chunk_count <= sizeof(c->wire));
+            memcpy(c->wire + c->wire_len, chunk->chunk_write,
+                (size_t)chunk->chunk_count);
+            c->wire_len += (size_t)chunk->chunk_count;
+            if (c->chunks == 1 && chunk->chunk_count > 4)
+                c->len=(size_t)chunk->chunk_count - 4;
+            else if (c->chunks == 2)
+                c->len=(size_t)chunk->chunk_count;
+            if (c->len <= sizeof(c->data) && c->len != 0)
+                memcpy(c->data, chunk->chunk_write +
+                    (c->chunks == 1 ? 4 : 0), c->len);
+        }
+        if (chunk->chunk_read != NULL) {
             const uint8_t id[]={0x9a,0xbc,0xde};
-            for (int i=0;i<data->count;i++)
-                data->rx[i] = c->cmd==0x04 ? id[i] :
+            c->len=(size_t)chunk->chunk_count;
+            for (int i=0;i<chunk->chunk_count;i++)
+                chunk->chunk_read[i] = c->cmd==0x04 ? id[i] :
                     c->cmd==0x0a ? 0x11 : c->cmd==0x0c ? 0x22 : 0x33;
-        } else if (data->data) memcpy(c->data,data->data,data->count);
-    } else { c->len=0; c->width=1; }
+        }
+    }
+    assert(head->chunk_write[1]==0 && head->chunk_write[3]==0);
     if (mutate_fb && ncalls == 3) { mutate_fb[0]=0xffff; mutate_fb=NULL; }
     if (fail_call==ncalls) { st->st_flags|=SPI_F_ERROR;st->st_errno=fail_errno ? fail_errno : EIO; }
     return 0;
 }
-static void spi_wait(struct spi_transfer *st) { (void)st; }
+static void spi_wait(struct spi_transfer *st) {
+    struct call *c=&calls[ncalls-1]; size_t off=0;
+    for (struct spi_chunk *chunk=st->first; chunk != NULL;
+        chunk=chunk->chunk_next) {
+        if (chunk->chunk_write != NULL) {
+            assert(memcmp(c->wire + off, chunk->chunk_write,
+                (size_t)chunk->chunk_count)==0);
+            off += (size_t)chunk->chunk_count;
+        }
+    }
+    assert(off==c->wire_len);
+}
 static int config_calls, config_speeds[4], fail_config_call;
 static int spi_configure(void *dev, void *spi, int mode, int speed) {
     (void)dev; (void)spi; assert(mode==SPI_MODE_0 && config_calls<4);
@@ -149,8 +189,39 @@ int main(void) {
     assert(!co5300_init_valid(init,3)); assert(!co5300_init_valid(init,sizeof(init)-1));
     assert(co5300_init_sequence(&sc,init,sizeof(init)-1)==EINVAL && ncalls==0);
     assert(co5300_init_sequence(&sc,init,sizeof(init))==0 && ncalls==2);
-    assert(calls[0].op==2 && calls[0].cmd==0x11 && calls[0].len==0);
-    assert(calls[1].cmd==0x36 && calls[1].len==2 && calls[1].data[1]==0x34);
+    const uint8_t reset_wire[]={0x02,0,0x11,0};
+    assert(calls[0].op==2 && calls[0].cmd==0x11 && calls[0].chunks==1 &&
+        calls[0].wire_len==4 &&
+        !memcmp(calls[0].wire,reset_wire,sizeof(reset_wire)));
+    assert(calls[1].cmd==0x36 && calls[1].len==2 && calls[1].chunks==1 &&
+        calls[1].wire_len==6 && calls[1].wire[4]==0x12 &&
+        calls[1].wire[5]==0x34);
+    uint8_t one=0x5a, boundary[60], over_boundary[61], quad[1]={0xa5};
+    const uint8_t one_wire[]={0x02,0,0x52,0,0x5a};
+    const uint8_t boundary_header[]={0x02,0,0x31,0};
+    const uint8_t over_header[]={0x02,0,0x32,0};
+    for (size_t i=0;i<sizeof(boundary);i++) boundary[i]=(uint8_t)i;
+    for (size_t i=0;i<sizeof(over_boundary);i++) over_boundary[i]=(uint8_t)(i+1);
+    ncalls=0;
+    assert(co5300_send(&sc,0x02,0x52,NULL,1,1)==EINVAL && ncalls==0);
+    assert(co5300_send(&sc,0x02,0x52,&one,1,1)==0 && ncalls==1);
+    assert(calls[0].chunks==1 && calls[0].wire_len==5 &&
+        !memcmp(calls[0].wire,one_wire,sizeof(one_wire)));
+    assert(co5300_send(&sc,0x02,0x31,boundary,sizeof(boundary),1)==0 &&
+        ncalls==2);
+    assert(calls[1].chunks==1 && calls[1].wire_len==64 &&
+        !memcmp(calls[1].wire,boundary_header,sizeof(boundary_header)) &&
+        !memcmp(calls[1].wire+4,boundary,sizeof(boundary)));
+    assert(co5300_send(&sc,0x02,0x32,over_boundary,
+        sizeof(over_boundary),1)==0 && ncalls==3);
+    assert(calls[2].chunks==2 && calls[2].wire_len==65 &&
+        calls[2].len==sizeof(over_boundary) && calls[2].width==1 &&
+        !memcmp(calls[2].wire,over_header,sizeof(over_header)) &&
+        !memcmp(calls[2].wire+4,over_boundary,sizeof(over_boundary)));
+    assert(co5300_send(&sc,0x32,0x2c,quad,sizeof(quad),4)==0 && ncalls==4);
+    assert(calls[3].chunks==2 && calls[3].wire_len==5 &&
+        calls[3].width==4 && calls[3].len==1 && calls[3].data[0]==0xa5);
+    ncalls=0;
     assert(delays==2 && last_ms==6);
     ncalls=0; fail_call=0; fail_errno=0; config_calls=0; fail_config_call=0;
     assert(co5300_init_sequence(&sc,init,sizeof(init))==0 && ncalls==2);
