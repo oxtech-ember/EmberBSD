@@ -169,9 +169,10 @@ INCS=	krb5.h			\
 	krb5_ccapi.h		\
 	kcm.h			\
 	kcm-protos.h		\
+	krb5-wrapper.h		\
 	${COMPILE_ET_INCS}
 
-INCSYMLINKS= krb5/krb5.h /usr/include/krb5.h
+INCSYMLINKS= krb5/krb5-wrapper.h /usr/include/krb5.h
 
 MAN=						\
 	kerberos.8				\
