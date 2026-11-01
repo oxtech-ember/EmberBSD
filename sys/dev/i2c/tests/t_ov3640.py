@@ -4,6 +4,7 @@
 
 import argparse
 import pathlib
+import re
 import subprocess
 
 parser = argparse.ArgumentParser()
@@ -18,6 +19,26 @@ out_dir = pathlib.Path(args.out_dir).resolve()
 out_dir.mkdir(parents=True, exist_ok=True)
 binary = out_dir / "t_ov3640"
 fixture = out_dir / "t_ov3640_driver.c"
+
+def body(name):
+    match = re.search(
+        r"\n(?:static )?(?:int|void)\n" + name + r"\([^)]*\)\n\{",
+        driver_source,
+    )
+    assert match, f"missing {name}"
+    depth = 1
+    end = match.end()
+    while depth:
+        if driver_source[end] == "{":
+            depth += 1
+        elif driver_source[end] == "}":
+            depth -= 1
+        end += 1
+    return driver_source[match.start():end]
+
+
+init_body = body("ov3640_init")
+assert init_body.count("camera_sensor_power_release_flash(&sc->sc_power)") == 3
 
 
 def extract(name):

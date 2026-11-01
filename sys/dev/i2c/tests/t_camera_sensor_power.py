@@ -4,6 +4,7 @@
 
 import argparse
 import pathlib
+import re
 import subprocess
 
 parser = argparse.ArgumentParser()
@@ -19,12 +20,27 @@ out_dir.mkdir(parents=True, exist_ok=True)
 binary = out_dir / "t_camera_sensor_power"
 fixture = out_dir / "t_camera_sensor_power_driver.c"
 
-position = driver_source.index("\ncamera_sensor_power_acquire(")
-start = driver_source.rfind("\nint", 0, position)
-end = driver_source.index("\n}", position) + 2
-if start < 0:
-    raise ValueError("missing actual resource acquisition helper")
-fixture.write_text(f'#include "{test_source}"\n' + driver_source[start + 1 : end] + "\n")
+
+def extract(name):
+    match = re.search(r"\n(?:int|void)\n" + name + r"\([^)]*\)\n\{", driver_source)
+    if match is None:
+        raise ValueError(f"missing actual helper: {name}")
+    depth = 1
+    end = match.end()
+    while depth:
+        if driver_source[end] == "{":
+            depth += 1
+        elif driver_source[end] == "}":
+            depth -= 1
+        end += 1
+    return driver_source[match.start() + 1 : end] + "\n"
+
+
+fixture.write_text(
+    f'#include "{test_source}"\n'
+    + extract("camera_sensor_power_acquire")
+    + extract("camera_sensor_power_release_flash")
+)
 
 subprocess.run(
     [

@@ -15,6 +15,11 @@ typedef unsigned int i2c_op_t;
 #define I2C_OP_WRITE_WITH_STOP 1
 #define I2C_OP_READ_WITH_STOP 2
 
+typedef struct sc101iot_softc *device_t;
+#define device_private(dev) (dev)
+#define aprint_error_dev test_log
+#define aprint_normal_dev test_log
+
 struct fixture;
 
 struct fake_gpio {
@@ -22,6 +27,8 @@ struct fake_gpio {
 	int active_low;
 	int physical_level;
 	unsigned int event;
+	int released;
+	int output_enabled;
 };
 
 struct fdtbus_gpio_pin {
@@ -29,6 +36,7 @@ struct fdtbus_gpio_pin {
 };
 
 struct camera_sensor_power {
+	struct fdtbus_gpio_pin *flash;
 	struct fdtbus_gpio_pin *reset;
 	struct fdtbus_gpio_pin *powerdown;
 };
@@ -36,13 +44,17 @@ struct camera_sensor_power {
 struct sc101iot_softc {
 	i2c_tag_t sc_tag;
 	i2c_addr_t sc_addr;
+	int sc_phandle;
 	struct camera_sensor_power sc_power;
 	struct fixture *test_fixture;
+	uint16_t sc_pid;
+	bool sc_identified;
 };
 
 enum event_type {
 	EVENT_RESET,
 	EVENT_POWERDOWN,
+	EVENT_FLASH,
 	EVENT_DELAY,
 	EVENT_PAGE_WRITE,
 	EVENT_REG_READ,
@@ -57,8 +69,10 @@ struct fixture {
 	struct sc101iot_softc sc;
 	struct fake_gpio reset;
 	struct fake_gpio powerdown;
+	struct fake_gpio flash;
 	struct fdtbus_gpio_pin reset_pin;
 	struct fdtbus_gpio_pin powerdown_pin;
+	struct fdtbus_gpio_pin flash_pin;
 	struct event events[48];
 	size_t nevents;
 	uint8_t selected_page;
@@ -67,18 +81,28 @@ struct fixture {
 	int fail_page;
 	int fail_reg;
 	int fail_acquire;
+	int release_count;
 	int bus_acquired;
 	unsigned int acquires;
 	unsigned int releases;
 };
 
+static struct fixture *active_fixture;
+
 static int sc101iot_set_reset(void *, int);
 static int sc101iot_set_powerdown(void *, int);
+static void sc101iot_delay_us(void *, unsigned int);
 static int sc101iot_read_reg(struct sc101iot_softc *, uint16_t, uint8_t *);
 static int sc101iot_read_reg_cb(void *, uint16_t, uint8_t *);
+static void sc101iot_init(device_t);
+int camera_sensor_power_acquire(int, struct camera_sensor_power *);
+void camera_sensor_power_release_flash(struct camera_sensor_power *);
+static void test_log(device_t, const char *, ...);
+static void delay(unsigned int);
 
 static void record(struct fixture *, enum event_type, unsigned int);
 static void fdtbus_gpio_write(struct fdtbus_gpio_pin *, int);
+static void fdtbus_gpio_release(struct fdtbus_gpio_pin *);
 static int iic_acquire_bus(i2c_tag_t, int);
 static void iic_release_bus(i2c_tag_t, int);
 static int iic_exec(i2c_tag_t, i2c_op_t, i2c_addr_t, const void *, size_t,
@@ -104,6 +128,45 @@ fdtbus_gpio_write(struct fdtbus_gpio_pin *pin, int logical_value)
 	if (gpio == &f->powerdown && gpio->physical_level == 0)
 		assert(f->reset.physical_level == 0);
 	record(f, gpio->event, gpio->physical_level);
+}
+
+static void
+fdtbus_gpio_release(struct fdtbus_gpio_pin *pin)
+{
+	struct fixture *f = active_fixture;
+
+	assert(pin == &f->flash_pin);
+	assert(f->flash.physical_level == 1);
+	f->flash.output_enabled = 0;
+	f->flash.released = 1;
+	f->release_count++;
+}
+
+int
+camera_sensor_power_acquire(int phandle, struct camera_sensor_power *power)
+{
+	struct fixture *f = active_fixture;
+
+	(void)phandle;
+	power->flash = &f->flash_pin;
+	power->reset = &f->reset_pin;
+	power->powerdown = &f->powerdown_pin;
+	f->flash.output_enabled = 1;
+	fdtbus_gpio_write(power->flash, 0);
+	return 0;
+}
+
+static void
+test_log(device_t dev, const char *fmt, ...)
+{
+	(void)dev;
+	(void)fmt;
+}
+
+static void
+delay(unsigned int usec)
+{
+	(void)usec;
 }
 
 static int
@@ -173,15 +236,19 @@ static void
 fixture_init(struct fixture *f, uint8_t pidh, uint8_t pidl)
 {
 	memset(f, 0, sizeof(*f));
+	active_fixture = f;
 	f->sc.sc_tag = f;
 	f->sc.sc_addr = 0x68;
+	f->sc.sc_phandle = 1;
 	f->sc.sc_power.reset = &f->reset_pin;
 	f->sc.sc_power.powerdown = &f->powerdown_pin;
 	f->sc.test_fixture = f;
-	f->reset = (struct fake_gpio){f, 1, 0, EVENT_RESET};
-	f->powerdown = (struct fake_gpio){f, 0, 1, EVENT_POWERDOWN};
+	f->reset = (struct fake_gpio){f, 1, 0, EVENT_RESET, 0, 1};
+	f->powerdown = (struct fake_gpio){f, 0, 1, EVENT_POWERDOWN, 0, 1};
+	f->flash = (struct fake_gpio){f, 1, 1, EVENT_FLASH, 0, 0};
 	f->reset_pin.fake = &f->reset;
 	f->powerdown_pin.fake = &f->powerdown;
+	f->flash_pin.fake = &f->flash;
 	f->pid_hi = pidh;
 	f->pid_lo = pidl;
 }
@@ -275,5 +342,24 @@ main(void)
 	assert(sc101iot_identify(&test_ops, &pid) == ENODEV);
 	assert(pid == 0x1234);
 	assert(f.reset.physical_level == 0 && f.powerdown.physical_level == 1);
+
+	fixture_init(&f, 0x12, 0x34);
+	sc101iot_init(&f.sc);
+	assert(!f.sc.sc_identified && f.sc.sc_pid == 0x1234);
+	assert(f.sc.sc_power.flash == NULL && f.flash.released &&
+	    !f.flash.output_enabled && f.release_count == 1);
+	assert(f.flash.physical_level == 1);
+
+	fixture_init(&f, 0xda, 0x4a);
+	f.fail_page = 1;
+	sc101iot_init(&f.sc);
+	assert(!f.sc.sc_identified && f.sc.sc_power.flash == NULL);
+	assert(f.flash.released && f.release_count == 1 &&
+	    f.flash.physical_level == 1);
+
+	fixture_init(&f, 0xda, 0x4a);
+	sc101iot_init(&f.sc);
+	assert(f.sc.sc_identified && f.sc.sc_pid == 0xda4a);
+	assert(f.sc.sc_power.flash == &f.flash_pin && !f.flash.released);
 	return 0;
 }

@@ -143,6 +143,7 @@ ov3640_init(device_t self)
 	xclk = fdtbus_clock_get(sc->sc_phandle, "xclk");
 	if (xclk == NULL) {
 		aprint_error_dev(self, "cannot acquire module XCLK description\n");
+		camera_sensor_power_release_flash(&sc->sc_power);
 		return;
 	}
 	xclk_rate = clk_get_rate(xclk);
@@ -150,6 +151,7 @@ ov3640_init(device_t self)
 	if (xclk_rate != 24000000) {
 		aprint_error_dev(self, "unexpected module XCLK rate %u Hz\n",
 		    xclk_rate);
+		camera_sensor_power_release_flash(&sc->sc_power);
 		return;
 	}
 
@@ -162,6 +164,7 @@ ov3640_init(device_t self)
 			aprint_error_dev(self, "sensor identification failed (%d); "
 			    "reset asserted and sensor in power-down\n", error);
 		}
+		camera_sensor_power_release_flash(&sc->sc_power);
 		return;
 	}
 	sc->sc_identified = true;

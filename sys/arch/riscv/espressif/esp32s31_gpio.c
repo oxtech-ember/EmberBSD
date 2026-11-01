@@ -1,7 +1,9 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* ESP32-S31 GPIO matrix and IO_MUX. Register layout: ESP-IDF v6.1,
- * components/soc/esp32s31/register/soc/{gpio,io_mux,hp_sys_clkrst,lp_system}_reg.h
- * (Apache-2.0 OR MIT); GPIO validity from soc_caps.h. */
+ * components/soc/esp32s31/register/soc/{gpio,io_mux,hp_sys_clkrst,
+ * lp_system,usb_serial_jtag}_reg.h (Apache-2.0 OR MIT); GPIO validity
+ * from soc_caps.h. USB pad handoff mirrors esp_hal_gpio/esp32s31/include/
+ * hal/gpio_ll.h gpio_ll_func_sel() (Apache-2.0). */
 #include <sys/cdefs.h>
 __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/param.h>
@@ -31,6 +33,8 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define GPIO_EN1_CLR 0x048
 #define GPIO_IN 0x064
 #define GPIO_IN1 0x068
+#define USB_SERIAL_JTAG_CONF0 0x018
+#define USB_SERIAL_JTAG_USB_PAD_ENABLE __BIT(14)
 #define GPIO_PIN(n) (0x0f4 + 4 * (n))
 #define GPIO_INSEL(n) (0x2f4 + 4 * (n))
 #define GPIO_OUTSEL(n) (0xaf4 + 4 * (n))
@@ -56,7 +60,8 @@ __KERNEL_RCSID(0, "$NetBSD$");
 struct esp_gpio_softc {
 	device_t dev;
 	bus_space_tag_t bst;
-	bus_space_handle_t gpio, iomux;
+	bus_space_handle_t gpio, iomux, usb_serial_jtag;
+	bool sc_usb_serial_jtag_mapped;
 	struct syscon *lp_syscon;
 	kmutex_t lock;
 	uint64_t gpio_used;
@@ -202,10 +207,30 @@ esp_gpio_enable(struct esp_gpio_softc *sc, unsigned int pin, bool enable)
 	                          : (enable ? GPIO_EN1_SET : GPIO_EN1_CLR);
 	bus_space_write_4(sc->bst, sc->gpio, reg, __BIT(pin % 32));
 }
-static void
+static bool
+esp_gpio_usb_pad_available(const struct esp_gpio_softc *sc, unsigned int pin)
+{
+	return (pin != 33 && pin != 34) || sc->sc_usb_serial_jtag_mapped;
+}
+
+static int
 esp_gpio_pad(struct esp_gpio_softc *sc, unsigned int pin, unsigned int conf)
 {
-	uint32_t v = bus_space_read_4(sc->bst, sc->iomux, pin * 4);
+	uint32_t v;
+
+	/* IDF gpio_ll_func_sel() first hands these pads from USB Serial/JTAG
+	 * back to GPIO. Keep that handoff in the common pin-selection path so
+	 * both GPIO consumers and pinctrl users get the same ownership rule. */
+	if (!esp_gpio_usb_pad_available(sc, pin))
+		return ENXIO;
+	if (pin == 33 || pin == 34) {
+		v = bus_space_read_4(sc->bst, sc->usb_serial_jtag,
+		    USB_SERIAL_JTAG_CONF0);
+		bus_space_write_4(sc->bst, sc->usb_serial_jtag,
+		    USB_SERIAL_JTAG_CONF0, v & ~USB_SERIAL_JTAG_USB_PAD_ENABLE);
+	}
+
+	v = bus_space_read_4(sc->bst, sc->iomux, pin * 4);
 	v &= ~(IOMUX_PULLDOWN | IOMUX_PULLUP | IOMUX_INPUT | IOMUX_FUNC);
 	v |= IOMUX_GPIO;
 	if (conf & PC_INPUT)
@@ -218,6 +243,7 @@ esp_gpio_pad(struct esp_gpio_softc *sc, unsigned int pin, unsigned int conf)
 	v = bus_space_read_4(sc->bst, sc->gpio, GPIO_PIN(pin));
 	v = conf & PC_OD ? v | GPIO_PAD_OD : v & ~GPIO_PAD_OD;
 	bus_space_write_4(sc->bst, sc->gpio, GPIO_PIN(pin), v);
+	return 0;
 }
 
 static void
@@ -274,6 +300,10 @@ esp_gpio_acquire(device_t dev, const void *data, size_t len, int flags)
 		kmem_free(p, sizeof(*p));
 		return NULL;
 	}
+	if (!esp_gpio_usb_pad_available(sc, pin)) {
+		kmem_free(p, sizeof(*p));
+		return NULL;
+	}
 	mutex_enter(&sc->lock);
 	if ((sc->gpio_used & (UINT64_C(1) << pin)) || sc->pin_owner[pin]) {
 		mutex_exit(&sc->lock);
@@ -282,7 +312,12 @@ esp_gpio_acquire(device_t dev, const void *data, size_t len, int flags)
 	}
 	sc->gpio_used |= UINT64_C(1) << pin;
 	esp_gpio_enable(sc, pin, false);
-	esp_gpio_pad(sc, pin, conf);
+	if (esp_gpio_pad(sc, pin, conf) != 0) {
+		sc->gpio_used &= ~(UINT64_C(1) << pin);
+		mutex_exit(&sc->lock);
+		kmem_free(p, sizeof(*p));
+		return NULL;
+	}
 	esp_gpio_route_output(sc, pin, GPIO_OUT_GPIO);
 	if (flags & GPIO_PIN_OUTPUT) {
 		esp_gpio_level(sc, pin, (conf & PC_OD) != 0 || p->active_low);
@@ -394,6 +429,13 @@ esp_gpio_set_config(device_t dev, const void *data, size_t len)
 	}
 	if (n == 0)
 		return EINVAL;
+	/* Reject the whole pinctrl group before changing any pin if USB pad
+	 * ownership cannot be handed off. */
+	for (unsigned int i = 0; i < n; i++) {
+		unsigned int pin = entries[i].route.pin;
+		if (!esp_gpio_usb_pad_available(sc, pin))
+			return ENXIO;
+	}
 	mutex_enter(&sc->lock);
 	for (unsigned int i = 0; i < n; i++) {
 		unsigned int pin = entries[i].route.pin;
@@ -412,7 +454,10 @@ esp_gpio_set_config(device_t dev, const void *data, size_t len)
 		esp_gpio_enable(sc, pin, false);
 		if (p->conf & (PC_HIGH | PC_LOW))
 			esp_gpio_level(sc, pin, p->conf & PC_HIGH);
-		esp_gpio_pad(sc, pin, p->conf);
+		if (esp_gpio_pad(sc, pin, p->conf) != 0) {
+			mutex_exit(&sc->lock);
+			return ENXIO;
+		}
 		if (p->route.input != ROUTE_NONE) {
 			esp_gpio_route_input(sc, p->route.input, pin);
 			sc->input_owner[p->route.input] = phandle;
@@ -469,6 +514,11 @@ esp_gpio_attach(device_t parent, device_t self, void *aux)
 		bus_space_unmap(sc->bst, sc->gpio, gpio_size);
 		return;
 	}
+	if (fdtbus_get_reg_byname(phandle, "usb-serial-jtag", &addr,
+	    &size) == 0 &&
+	    size >= USB_SERIAL_JTAG_CONF0 + sizeof(uint32_t) &&
+	    bus_space_map(sc->bst, addr, size, 0, &sc->usb_serial_jtag) == 0)
+		sc->sc_usb_serial_jtag_mapped = true;
 	syscon_lock(syscon);
 	v = syscon_read_4(syscon, IOMUX_APB_CLK);
 	syscon_write_4(syscon, IOMUX_APB_CLK, v | IOMUX_APB_EN);

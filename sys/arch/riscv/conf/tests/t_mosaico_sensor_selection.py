@@ -44,4 +44,13 @@ for config, selected in expected.items():
             f"{config}: expected sensor attachments {sorted(selected)}, got {sorted(actual)}"
         )
 
+common_dts = (CONF_DIR.parent / "dts/esp-mosaico-common.dtsi").read_text()
+sc101_overlay = (CONF_DIR.parent / "dts/esp-mosaico-sc101iot.dts").read_text()
+if not re.search(r"camera_sc101iot: camera@68\s*\{[^}]*status = \"disabled\";", common_dts, re.S):
+    raise SystemExit("base Mosaico DT must leave SC101IOT camera disabled")
+if not re.search(r"flash-gpios = <&gpio 34 \(GPIO_ACTIVE_LOW \| GPIO_OPEN_DRAIN\)>;", sc101_overlay):
+    raise SystemExit("SC101IOT variant must provide inactive active-low open-drain flash GPIO")
+if "flash-gpios" in common_dts:
+    raise SystemExit("base Mosaico DT must not claim the optional flash GPIO")
+
 print("Mosaico sensor attachment selection passed")

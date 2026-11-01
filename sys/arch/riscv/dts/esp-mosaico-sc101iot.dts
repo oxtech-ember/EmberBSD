@@ -5,4 +5,5 @@
 
 &camera_sc101iot {
 	status = "okay";
+	flash-gpios = <&gpio 34 (GPIO_ACTIVE_LOW | GPIO_OPEN_DRAIN)>;
 };

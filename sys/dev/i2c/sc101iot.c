@@ -93,6 +93,7 @@ sc101iot_set_powerdown(void *cookie, int asserted)
 static void
 sc101iot_delay_us(void *cookie, unsigned int usec)
 {
+	(void)cookie;
 	delay(usec);
 }
 
@@ -152,6 +153,7 @@ sc101iot_init(device_t self)
 			aprint_error_dev(self, "sensor identification failed (%d); "
 			    "reset asserted and sensor in power-down\n", error);
 		}
+		camera_sensor_power_release_flash(&sc->sc_power);
 		return;
 	}
 	sc->sc_identified = true;

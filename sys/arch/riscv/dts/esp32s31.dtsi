@@ -65,8 +65,9 @@
 
 		gpio: gpio@20583000 {
 			compatible = "espressif,esp32s31-gpio";
-			reg = <0x20583000 0x1000>, <0x20582000 0x1000>;
-			reg-names = "gpio", "iomux";
+			reg = <0x20583000 0x1000>, <0x20582000 0x1000>,
+			      <0x20391000 0x1000>;
+			reg-names = "gpio", "iomux", "usb-serial-jtag";
 			espressif,syscon = <&hp_clkrst>;
 			espressif,lp-syscon = <&lp_sys>;
 			gpio-controller;
