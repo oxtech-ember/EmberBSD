@@ -3,7 +3,8 @@
 `cofb` attaches to the `chipone,co5300` SPI child of an FDT SPI bus. The
 controller must support the selected transmit width, retain chip select
 throughout a multi-chunk transfer, and support the configured SPI mode 0
-frequency. The panel node supplies `width` and `height` (both 1–480, width divisible by 4),
+frequency. The panel node supplies `width` and `height` (width 1–480 divisible
+by 4; height 2–480 and even),
 `spi-max-frequency`, a `power-supply` regulator, and a nonempty
 `chipone,init-sequence`. A `reset-gpios` GPIO is optional: its logical active
 level is asserted for 10 ms and released for 150 ms; without it the driver
@@ -45,14 +46,23 @@ electrical reads on a physical panel.
 The driver creates a wired, zeroed native-endian RGB565 framebuffer exposed
 through genfb/wsdisplay, including its normal mmap and framebuffer information
 ioctls. Mappings use the cacheable bus-space attribute to match the wired
-kernel RAM mapping. Executable mappings are rejected. UART remains the console. A worker compares row snapshots to a separate shadow buffer at up to
-20 scans per second. It converts changed rows to big-endian wire pixels,
-sends the CO5300 address windows and four-line pixel data, and updates the
-shadow only after successful transmission. The initial scan sends all rows.
+kernel RAM mapping. Executable mappings are rejected. UART remains the console.
+A worker compares adjacent two-row snapshots to a separate shadow buffer at up
+to 20 scans per second. It converts changed row pairs to big-endian wire pixels,
+sends a two-row CO5300 address window and four-line pixel data in one RAMWR,
+and updates both shadow rows only after successful transmission. If either row
+is dirty or differs from the shadow, both rows are sent; a failed pair remains
+dirty for retry. Even panel heights are required so no unpaired final row is
+sent. This follows the CO5300 address-window requirement that the selected
+column and row extents each contain an even number of pixels (datasheet pp. 159,
+161). The initial scan sends all rows.
 There is no atomic frame presentation: concurrent writes can tear and are
 observed again on a later scan. On a transfer error the scan stops, logs once, and retries next interval.
-The framebuffer, shadow and row staging use at least 2 * width * height * 2
-bytes plus two rows and bookkeeping; the wired framebuffer is page-rounded.
+The framebuffer and shadow use 2 * width * height * 2 bytes. Pair snapshot and
+wire staging add four rows plus bookkeeping; the wired framebuffer is
+page-rounded. Diagnostic row records report the pair's starting `y`, row count,
+combined nonzero count and hashes; the first nonzero sample includes its actual
+row and column.
 
 This driver has no detach or panel power-off operation; its worker and shared
 regulator remain active for the device lifetime. A shared supply is never

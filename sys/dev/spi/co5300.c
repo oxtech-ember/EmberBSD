@@ -38,11 +38,11 @@ __KERNEL_RCSID(0, "$EmberBSD$");
 
 struct co5300_row_diag {
 	bool valid, fingerprinted;
-	unsigned int y;
+	unsigned int y, rows;
 	uint32_t nonzero;
 	bool dirty, different;
 	bool sample_valid;
-	unsigned int sample_x;
+	unsigned int sample_x, sample_y;
 	uint16_t sample_raw;
 	uint8_t sample_wire[2];
 	uint64_t raw_hash, wire_hash;
@@ -124,6 +124,13 @@ co5300_get_tx_width(int phandle, uint32_t *tx_width)
 		return EINVAL;
 	*tx_width = width;
 	return 0;
+}
+
+static bool
+co5300_height_valid(uint32_t height)
+{
+	return height >= 2 && height <= CO5300_MAX_HEIGHT &&
+	    (height & 1) == 0;
 }
 
 /* A complete transaction holds CS from the opcode through its data. */
@@ -331,70 +338,83 @@ co5300_row(struct co5300_softc *sc, unsigned int y)
 {
 	uint8_t xwin[4] = { 0, 0, (sc->sc_width - 1) >> 8,
 	    sc->sc_width - 1 };
-	uint8_t ywin[4] = { y >> 8, y, y >> 8, y };
-	uint8_t *shadow = sc->sc_shadow + y * sc->sc_rowbytes;
+	uint8_t ywin[4] = { y >> 8, y, (y + 1) >> 8, y + 1 };
+	const size_t pair_bytes = 2 * sc->sc_rowbytes;
+	const unsigned int pair_pixels = 2 * sc->sc_width;
+	uint8_t *shadow;
 	struct co5300_row_diag diag;
 	bool dirty, different, capture_first, capture_nonzero;
 	int error;
 
+	if ((y & 1) != 0 || y + 1 >= sc->sc_height)
+		return EINVAL;
+	shadow = sc->sc_shadow + y * sc->sc_rowbytes;
 	memcpy(sc->sc_snapshot, (void *)(sc->sc_fb + y * sc->sc_rowbytes),
-	    sc->sc_rowbytes);
-	dirty = sc->sc_dirty[y] != 0;
-	different = memcmp(shadow, sc->sc_snapshot, sc->sc_rowbytes) != 0;
+	    pair_bytes);
+	dirty = sc->sc_dirty[y] != 0 || sc->sc_dirty[y + 1] != 0;
+	different = memcmp(shadow, sc->sc_snapshot, pair_bytes) != 0;
 	if (!dirty && !different)
 		return 0;
 	memset(&diag, 0, sizeof(diag));
 	diag.valid = true;
 	diag.y = y;
+	diag.rows = 2;
 	diag.dirty = dirty;
 	diag.different = different;
-	for (u_int x = 0; x < sc->sc_width; x++) {
+	for (u_int i = 0; i < pair_pixels; i++) {
 		uint16_t pixel;
-		memcpy(&pixel, sc->sc_snapshot + x * 2, sizeof(pixel));
+		u_int row = i / sc->sc_width;
+		u_int x = i % sc->sc_width;
+		memcpy(&pixel, sc->sc_snapshot + i * 2, sizeof(pixel));
 		if (pixel != 0) {
 			diag.nonzero++;
 			if (!diag.sample_valid) {
 				diag.sample_valid = true;
 				diag.sample_x = x;
+				diag.sample_y = y + row;
 				diag.sample_raw = pixel;
 			}
 		}
-		if (x < __arraycount(diag.raw_first))
-			diag.raw_first[x] = pixel;
-		if (x >= sc->sc_width - __arraycount(diag.raw_last))
-			diag.raw_last[x - (sc->sc_width -
+		if (i < __arraycount(diag.raw_first))
+			diag.raw_first[i] = pixel;
+		if (i >= pair_pixels - __arraycount(diag.raw_last))
+			diag.raw_last[i - (pair_pixels -
 			    __arraycount(diag.raw_last))] = pixel;
 	}
 	mutex_enter(&sc->sc_lock);
 	capture_first = !sc->sc_first_row.valid;
 	capture_nonzero = diag.nonzero != 0 &&
 	    !sc->sc_first_nonzero_row.valid;
-	sc->sc_rows_changed++;
+	sc->sc_rows_changed += diag.rows;
 	mutex_exit(&sc->sc_lock);
 	diag.fingerprinted = capture_first || capture_nonzero;
 	if (diag.fingerprinted)
 		diag.raw_hash = co5300_fingerprint(sc->sc_snapshot,
-		    sc->sc_rowbytes);
-	co5300_to_wire(sc->sc_snapshot, sc->sc_wire, sc->sc_width);
+		    pair_bytes);
+	co5300_to_wire(sc->sc_snapshot, sc->sc_wire, pair_pixels);
 	if (diag.sample_valid) {
-		diag.sample_wire[0] = sc->sc_wire[diag.sample_x * 2];
-		diag.sample_wire[1] = sc->sc_wire[diag.sample_x * 2 + 1];
+		u_int sample = (diag.sample_y - y) * sc->sc_width +
+		    diag.sample_x;
+		diag.sample_wire[0] = sc->sc_wire[sample * 2];
+		diag.sample_wire[1] = sc->sc_wire[sample * 2 + 1];
 	}
 	memcpy(diag.wire_first, sc->sc_wire, sizeof(diag.wire_first));
-	memcpy(diag.wire_last, sc->sc_wire + sc->sc_rowbytes -
+	memcpy(diag.wire_last, sc->sc_wire + pair_bytes -
 	    sizeof(diag.wire_last), sizeof(diag.wire_last));
 	if (diag.fingerprinted)
 		diag.wire_hash = co5300_fingerprint(sc->sc_wire,
-		    sc->sc_rowbytes);
+		    pair_bytes);
 	error = co5300_send(sc, 0x02, 0x2a, xwin, sizeof(xwin), 1);
 	if (error == 0)
 		error = co5300_send(sc, 0x02, 0x2b, ywin, sizeof(ywin), 1);
 	if (error == 0)
 		error = co5300_send(sc, sc->sc_tx_width == 1 ? 0x02 : 0x32,
-		    0x2c, sc->sc_wire, sc->sc_rowbytes, sc->sc_tx_width);
+		    0x2c, sc->sc_wire, pair_bytes, sc->sc_tx_width);
 	if (error == 0) {
-		memcpy(shadow, sc->sc_snapshot, sc->sc_rowbytes);
-		sc->sc_dirty[y] = 0;
+		memcpy(shadow, sc->sc_snapshot, pair_bytes);
+		sc->sc_dirty[y] = sc->sc_dirty[y + 1] = 0;
+	} else {
+		sc->sc_dirty[y] = sc->sc_dirty[y + 1] = 1;
 	}
 	diag.result = error;
 	mutex_enter(&sc->sc_lock);
@@ -404,9 +424,9 @@ co5300_row(struct co5300_softc *sc, unsigned int y)
 		sc->sc_first_nonzero_row = diag;
 	sc->sc_latest_row = diag;
 	if (error == 0)
-		sc->sc_rows_sent++;
+		sc->sc_rows_sent += diag.rows;
 	else {
-		sc->sc_row_errors++;
+		sc->sc_row_errors += diag.rows;
 		sc->sc_last_error = error;
 	}
 	mutex_exit(&sc->sc_lock);
@@ -447,7 +467,7 @@ co5300_format_row(char *buf, size_t len, const char *name,
 	} else {
 		n = snprintf(buf, len,
 		    "%s=y%u:nz%u:d%u/x%u:h%u:r%016llx:w%016llx:"
-		    "p%u@%u=%04x/%02x%02x:"
+		    "rows%u:p%u@y%u,x%u=%04x/%02x%02x:"
 		    "rf%04x,%04x,%04x,%04x:rl%04x,%04x,%04x,%04x:"
 		    "wf%02x%02x%02x%02x%02x%02x%02x%02x:"
 		    "wl%02x%02x%02x%02x%02x%02x%02x%02x:e%d",
@@ -455,7 +475,8 @@ co5300_format_row(char *buf, size_t len, const char *name,
 		    diag->fingerprinted,
 		    (unsigned long long)diag->raw_hash,
 		    (unsigned long long)diag->wire_hash,
-		    diag->sample_valid, diag->sample_x, diag->sample_raw,
+		    diag->rows, diag->sample_valid, diag->sample_y, diag->sample_x,
+		    diag->sample_raw,
 		    diag->sample_wire[0], diag->sample_wire[1],
 		    diag->raw_first[0], diag->raw_first[1], diag->raw_first[2],
 		    diag->raw_first[3], diag->raw_last[0], diag->raw_last[1],
@@ -603,7 +624,7 @@ co5300_worker(void *arg)
 	while (!sc->sc_stop) {
 		mutex_exit(&sc->sc_lock);
 		bool failed = false;
-		for (u_int y = 0; y < sc->sc_height; y++) {
+		for (u_int y = 0; y < sc->sc_height; y += 2) {
 			int error = co5300_row(sc, y);
 			if (error != 0) {
 				failed = true;
@@ -663,7 +684,7 @@ co5300_deferred(device_t self)
 	    of_getprop_uint32(sc->sc_phandle, "spi-max-frequency", &speed) != 0 ||
 	    sc->sc_width == 0 || sc->sc_width > CO5300_MAX_WIDTH ||
 	    (sc->sc_width & 3) != 0 || sc->sc_height == 0 ||
-	    sc->sc_height > CO5300_MAX_HEIGHT || speed == 0 || speed > INT_MAX ||
+	    !co5300_height_valid(sc->sc_height) || speed == 0 || speed > INT_MAX ||
 	    init == NULL || initlen <= 0 || !co5300_init_valid(init, initlen)) {
 		aprint_error_dev(self, "invalid geometry, speed or init sequence\n");
 		return;
@@ -713,8 +734,8 @@ co5300_deferred(device_t self)
 		goto out_reset;
 	}
 	sc->sc_shadow = kmem_zalloc(sc->sc_size, KM_SLEEP);
-	sc->sc_snapshot = kmem_alloc(sc->sc_rowbytes, KM_SLEEP);
-	sc->sc_wire = kmem_alloc(sc->sc_rowbytes, KM_SLEEP);
+	sc->sc_snapshot = kmem_alloc(2 * sc->sc_rowbytes, KM_SLEEP);
+	sc->sc_wire = kmem_alloc(2 * sc->sc_rowbytes, KM_SLEEP);
 	sc->sc_dirty = kmem_alloc(sc->sc_height, KM_SLEEP);
 	memset(sc->sc_dirty, 1, sc->sc_height);
 	if (!prop_dictionary_set_uint32(props, "width", sc->sc_width) ||
@@ -761,8 +782,8 @@ out_lock:
 out_mem:
 	prop_dictionary_remove(props, "virtual_address");
 	kmem_free(sc->sc_dirty, sc->sc_height);
-	kmem_free(sc->sc_wire, sc->sc_rowbytes);
-	kmem_free(sc->sc_snapshot, sc->sc_rowbytes);
+	kmem_free(sc->sc_wire, 2 * sc->sc_rowbytes);
+	kmem_free(sc->sc_snapshot, 2 * sc->sc_rowbytes);
 	kmem_free(sc->sc_shadow, sc->sc_size);
 	uvm_km_free(kernel_map, sc->sc_fb, sc->sc_alloc, UVM_KMF_WIRED);
 out_reset:

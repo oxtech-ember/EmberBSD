@@ -44,9 +44,11 @@ prefix = r'''
 #define BUS_SPACE_MAP_CACHEABLE 2
 #define CO5300_INLINE_BYTES 64
 #define CO5300_DIAG_DELAYS 4
+#define CO5300_MAX_HEIGHT 480
 #define KM_SLEEP 0
-struct co5300_row_diag { bool valid, fingerprinted; unsigned int y; uint32_t nonzero;
+struct co5300_row_diag { bool valid, fingerprinted; unsigned int y, rows; uint32_t nonzero;
     bool dirty, different, sample_valid; unsigned int sample_x; uint16_t sample_raw;
+    unsigned int sample_y;
     uint8_t sample_wire[2]; uint64_t raw_hash, wire_hash;
     uint16_t raw_first[4], raw_last[4]; uint8_t wire_first[8], wire_last[8]; int result; };
 struct co5300_delay_diag { char phase; unsigned int command, requested_ms; int ticks;
@@ -85,7 +87,7 @@ static int sysctl_lookup(struct sysctlnode *n) {
     memcpy(status_text, n->sysctl_data, n->sysctl_size); return 0;
 }
 struct call { uint8_t op,cmd; size_t len, wire_len; unsigned int width;
-    int flags, chunks; uint8_t data[8], wire[128]; };
+    int flags, chunks; uint8_t data[8], wire[4096]; };
 static struct call calls[8]; static int ncalls, fail_call, fail_errno, delays, last_ms;
 static uint16_t *mutate_fb;
 #define SPI_F_ERROR 1
@@ -308,64 +310,89 @@ int main(void) {
     fail_config_call=0;
     fail_call=0; fail_errno=0;
     hz=128; assert(co5300_ticks(10)==3 && co5300_ticks(50)==8);
-    uint16_t fb[4] = {0xf800,0x07e0,0x001f,0x1234};
-    uint8_t shadow[8]={0}, snapshot[8], wire[8], dirty[1]={1};
-    uint8_t expected[]={0xf8,0,0x07,0xe0,0,0x1f,0x12,0x34};
-    sc.sc_width=4; sc.sc_tx_width=4; sc.sc_fb=(uintptr_t)fb; sc.sc_rowbytes=8;
-    sc.sc_shadow=shadow;sc.sc_snapshot=snapshot;sc.sc_wire=wire;sc.sc_dirty=dirty;
-    ncalls=0; fail_call=3; assert(co5300_row(&sc,0)==EIO && ncalls==3);
-    assert(dirty[0] && !memcmp(shadow,"\0\0\0\0\0\0\0\0",8));
-    assert(calls[0].cmd==0x2a && calls[0].data[3]==3 && calls[0].width==1);
-    assert(calls[1].cmd==0x2b && calls[1].width==1);
-    assert(calls[2].op==0x32 && calls[2].cmd==0x2c && calls[2].width==4);
-    assert(!memcmp(calls[2].data,expected,8));
+    assert(co5300_height_valid(480) && co5300_height_valid(2) &&
+        !co5300_height_valid(0) && !co5300_height_valid(1) &&
+        !co5300_height_valid(479) && !co5300_height_valid(481));
+    static uint16_t fb[480*480];
+    static uint8_t shadow[480*480*2], snapshot[1920], wire[1920],
+        dirty[480];
+    uint8_t expected[1920];
+    for (size_t i=0;i<960;i++) {
+        fb[i]=(uint16_t)(i+1);
+        expected[i*2]=(uint8_t)(fb[i]>>8);
+        expected[i*2+1]=(uint8_t)fb[i];
+    }
+    sc.sc_width=480; sc.sc_height=480; sc.sc_tx_width=4;
+    sc.sc_fb=(uintptr_t)fb; sc.sc_rowbytes=960;
+    sc.sc_shadow=shadow;sc.sc_snapshot=snapshot;sc.sc_wire=wire;
+    sc.sc_dirty=dirty; memset(dirty,1,sizeof(dirty));
+    ncalls=0; fail_call=3;
+    assert(co5300_row(&sc,0)==EIO && ncalls==3);
+    assert(calls[0].cmd==0x2a && calls[0].data[3]==0xdf && calls[0].width==1);
+    assert(calls[1].cmd==0x2b && calls[1].wire_len==8 &&
+        calls[1].wire[4]==0 && calls[1].wire[5]==0 &&
+        calls[1].wire[6]==0 && calls[1].wire[7]==1);
+    assert(calls[2].op==0x32 && calls[2].cmd==0x2c &&
+        calls[2].width==4 && calls[2].chunks==2 && calls[2].len==1920 &&
+        calls[2].wire_len==1924 &&
+        !memcmp(calls[2].wire+4,expected,sizeof(expected)));
+    assert(dirty[0] && dirty[1] &&
+        memcmp(shadow,fb,1920)!=0);
     assert(sc.sc_first_row.valid && sc.sc_first_row.y==0 &&
-        sc.sc_first_row.nonzero==4 && sc.sc_first_row.dirty &&
-        sc.sc_first_row.different && sc.sc_first_row.result==EIO &&
-        sc.sc_first_row.raw_first[0]==0xf800 &&
-        sc.sc_first_row.raw_last[3]==0x1234 &&
-        sc.sc_first_row.wire_first[0]==0xf8 &&
-        sc.sc_first_row.wire_last[7]==0x34);
+        sc.sc_first_row.rows==2 && sc.sc_first_row.nonzero==960 &&
+        sc.sc_first_row.dirty && sc.sc_first_row.different &&
+        sc.sc_first_row.result==EIO && sc.sc_first_row.raw_first[0]==1 &&
+        sc.sc_first_row.raw_last[3]==960 &&
+        sc.sc_first_row.wire_first[0]==0 &&
+        sc.sc_first_row.wire_last[7]==(uint8_t)960);
     assert(sc.sc_first_nonzero_row.valid &&
         sc.sc_first_nonzero_row.sample_valid &&
+        sc.sc_first_nonzero_row.sample_y==0 &&
         sc.sc_first_nonzero_row.sample_x==0 &&
-        sc.sc_first_nonzero_row.sample_raw==0xf800 &&
-        sc.sc_first_nonzero_row.sample_wire[0]==0xf8 &&
-        sc.sc_first_nonzero_row.sample_wire[1]==0 &&
-        sc.sc_first_nonzero_row.raw_hash==co5300_fingerprint((const uint8_t *)fb,8) &&
-        sc.sc_first_nonzero_row.wire_hash==co5300_fingerprint(expected,8));
-    ncalls=0; fail_call=0; assert(co5300_row(&sc,0)==0 && ncalls==3 && !dirty[0]);
-    sc.sc_tx_width=1; dirty[0]=1; ncalls=0;
-    assert(co5300_row(&sc,0)==0 && ncalls==3 && !dirty[0]);
-    assert(calls[2].op==0x02 && calls[2].cmd==0x2c &&
-        calls[2].width==1 && calls[2].chunks==1 && calls[2].wire_len==12 &&
-        !memcmp(calls[2].wire,(const uint8_t[]){0x02,0,0x2c,0,
-        0xf8,0,0x07,0xe0,0,0x1f,0x12,0x34},12));
-    sc.sc_tx_width=4; dirty[0]=1; ncalls=0;
-    assert(co5300_row(&sc,0)==0 && ncalls==3 && !dirty[0]);
-    assert(calls[2].op==0x32 && calls[2].cmd==0x2c &&
-        calls[2].width==4 && calls[2].chunks==2 && calls[2].wire_len==12 &&
-        !memcmp(calls[2].data,expected,8));
+        sc.sc_first_nonzero_row.sample_raw==1 &&
+        sc.sc_first_nonzero_row.sample_wire[0]==0 &&
+        sc.sc_first_nonzero_row.sample_wire[1]==1 &&
+        sc.sc_first_nonzero_row.raw_hash==co5300_fingerprint((const uint8_t *)fb,1920) &&
+        sc.sc_first_nonzero_row.wire_hash==co5300_fingerprint(expected,1920));
+    ncalls=0; fail_call=0;
+    assert(co5300_row(&sc,0)==0 && ncalls==3 && !dirty[0] && !dirty[1]);
+    assert(!memcmp(shadow,fb,1920));
+    fb[480+5]=0x1234; dirty[1]=1; ncalls=0;
+    for (size_t i=0;i<960;i++) {
+        expected[i*2]=(uint8_t)(fb[i]>>8);
+        expected[i*2+1]=(uint8_t)fb[i];
+    }
+    assert(co5300_row(&sc,0)==0 && ncalls==3 && !dirty[0] && !dirty[1]);
+    assert(calls[1].wire[7]==1 && calls[2].len==1920 &&
+        !memcmp(calls[2].wire+4,expected,sizeof(expected)) &&
+        !memcmp(shadow,fb,1920));
+    fb[480+6]=0xabcd; dirty[1]=1; fail_call=3; ncalls=0;
+    assert(co5300_row(&sc,0)==EIO && ncalls==3 && dirty[0] && dirty[1]);
+    assert(memcmp(shadow,fb,1920)!=0);
+    fail_call=0; ncalls=0;
+    assert(co5300_row(&sc,0)==0 && ncalls==3 && !dirty[0] && !dirty[1]);
+    fb[478*480]=0x1111; fb[479*480+479]=0x2222;
+    dirty[478]=dirty[479]=1; ncalls=0;
+    assert(co5300_row(&sc,478)==0 && ncalls==3);
+    assert(calls[1].wire[4]==1 && calls[1].wire[5]==0xde &&
+        calls[1].wire[6]==1 && calls[1].wire[7]==0xdf);
+    assert(calls[2].len==1920 && !dirty[478] && !dirty[479]);
     ncalls=0;
-    assert(!memcmp(shadow,fb,8));ncalls=0;assert(co5300_row(&sc,0)==0 && ncalls==0);
-    fb[0]=0xabcd;fail_call=1;assert(co5300_row(&sc,0)==EIO && ncalls==1);
-    ncalls=0; fail_call=0; mutate_fb=fb;
-    assert(co5300_row(&sc,0)==0 && ncalls==3);
-    assert(calls[2].data[0]==0xab && calls[2].data[1]==0xcd && fb[0]==0xffff);
-    ncalls=0; assert(co5300_row(&sc,0)==0 && ncalls==3);
-    assert(calls[2].data[0]==0xff && calls[2].data[1]==0xff);
-    assert(sc.sc_rows_changed==7 && sc.sc_rows_sent==5 && sc.sc_row_errors==2 && sc.sc_last_error==EIO);
+    assert(co5300_row(&sc,479)==EINVAL && ncalls==0);
+    assert(co5300_row(&sc,480)==EINVAL && ncalls==0);
+    assert(sc.sc_rows_changed==12 && sc.sc_rows_sent==8 &&
+        sc.sc_row_errors==4 && sc.sc_last_error==EIO);
     struct sysctlnode status_node={ .sysctl_data=&sc };
     assert(co5300_sysctl_status(&status_node)==0);
     char expected_status[128];
     snprintf(expected_status,sizeof(expected_status),
-        "rows_changed=7 rows_sent=5 errors=2 last_error=%d",EIO);
+        "rows_changed=12 rows_sent=8 errors=4 last_error=%d",EIO);
     assert(!strcmp(status_text,expected_status));
     assert(co5300_sysctl_diagnostic(&status_node)==0 &&
-        strstr(status_text,"first=y0:nz4:d1/x1:h1:") != NULL &&
-        strstr(status_text,"nonzero=y0:nz4:") != NULL &&
-        strstr(status_text,"p1@0=f800/f800") != NULL &&
-        strstr(status_text,"latest=y0:nz4:") != NULL &&
+        strstr(status_text,"first=y0:nz960:d1/x1:h1:") != NULL &&
+        strstr(status_text,"rows2:p1@y0,x0=0001/0001") != NULL &&
+        strstr(status_text,"nonzero=y0:nz960:") != NULL &&
+        strstr(status_text,"latest=y478:nz2:") != NULL &&
         strstr(status_text,"d0=i11:80ms/81t/81000us/c1") != NULL);
     sc.sc_delay_count=CO5300_DIAG_DELAYS;
     sc.sc_delays[2]=(struct co5300_delay_diag){.phase='s',.command=0x11,
@@ -375,29 +402,30 @@ int main(void) {
     assert(co5300_sysctl_diagnostic(&status_node)==0 &&
         strstr(status_text,"first=y0:") != NULL &&
         strstr(status_text,"nonzero=y0:") != NULL &&
-        strstr(status_text,"latest=y0:") != NULL &&
-        strstr(status_text,"p1@0=f800/f800") != NULL &&
+        strstr(status_text,"latest=y478:") != NULL &&
+        strstr(status_text,"rows2:p1@y0,x0=0001/0001") != NULL &&
         strstr(status_text,"d3=i29:10ms/11t/11000us/c0") != NULL);
     assert(strlen(status_text)<2048);
     char short_row[8];
     assert(co5300_format_row(short_row,sizeof(short_row),"nonzero",
         &sc.sc_first_nonzero_row)==EOVERFLOW);
     struct co5300_softc black_sc={0};
-    uint16_t black_fb[8]={0}; uint8_t black_shadow[16]={0}, black_snap[8],
-        black_wire[8], black_dirty[2]={1,1};
-    black_sc.sc_width=4; black_sc.sc_tx_width=4;
+    uint16_t black_fb[16]={0}; uint8_t black_shadow[32]={0}, black_snap[16],
+        black_wire[16], black_dirty[4]={1,1,1,1};
+    black_sc.sc_width=4; black_sc.sc_height=4; black_sc.sc_tx_width=4;
     black_sc.sc_fb=(uintptr_t)black_fb; black_sc.sc_rowbytes=8;
     black_sc.sc_shadow=black_shadow; black_sc.sc_snapshot=black_snap;
     black_sc.sc_wire=black_wire; black_sc.sc_dirty=black_dirty;
     ncalls=0; assert(co5300_row(&black_sc,0)==0 && ncalls==3);
     assert(black_sc.sc_first_row.valid && black_sc.sc_first_row.nonzero==0 &&
         !black_sc.sc_first_nonzero_row.valid);
-    black_fb[4]=0x1234; ncalls=0;
-    assert(co5300_row(&black_sc,1)==0 && ncalls==3);
+    black_fb[8]=0x1234; ncalls=0;
+    assert(co5300_row(&black_sc,2)==0 && ncalls==3);
     assert(black_sc.sc_first_nonzero_row.valid &&
-        black_sc.sc_first_nonzero_row.y==1 &&
+        black_sc.sc_first_nonzero_row.y==2 &&
+        black_sc.sc_first_nonzero_row.sample_y==2 &&
         black_sc.sc_first_nonzero_row.nonzero==1 &&
-        black_sc.sc_latest_row.y==1);
+        black_sc.sc_latest_row.y==2);
     assert(co5300_mmap_valid(0,8192) && co5300_mmap_valid(4096,8192));
     assert(!co5300_mmap_valid(-1,8192) && !co5300_mmap_valid(1,8192));
     assert(!co5300_mmap_valid(8192,8192));
@@ -411,8 +439,11 @@ int main(void) {
     assert(extracts==1 && maps==1);
     extract_ok=false; assert(co5300_mmap(&sc,NULL,0,3)==(paddr_t)-1);
     assert(extracts==2 && maps==1);
-    uint16_t fb3[12]={0}; uint8_t sh3[24]={0}, dirty3[3]={1,1,1};
-    sc.sc_fb=(uintptr_t)fb3; sc.sc_height=3; sc.sc_shadow=sh3;sc.sc_dirty=dirty3;
+    uint16_t fb3[16]={0}; uint8_t sh3[32]={0}, snap3[16], wire3[16],
+        dirty3[4]={1,1,1,1};
+    sc.sc_width=4; sc.sc_height=4; sc.sc_rowbytes=8; sc.sc_tx_width=4;
+    sc.sc_fb=(uintptr_t)fb3; sc.sc_shadow=sh3; sc.sc_snapshot=snap3;
+    sc.sc_wire=wire3;sc.sc_dirty=dirty3;
     sc.sc_ready=true;sc.sc_stop=false;worker_sc=&sc;ncalls=0;fail_call=1;hz=1000;
     reports=0; waits=0;
     if (setjmp(worker_return)==0) co5300_worker(&sc);
@@ -423,7 +454,7 @@ int main(void) {
 a.work.mkdir(parents=True, exist_ok=True)
 cfile = a.work / 'co5300-test.c'
 exe = a.work / 'co5300-test'
-names = ('co5300_get_tx_width', 'co5300_send', 'co5300_read_reg', 'co5300_read_status', 'co5300_ticks', 'co5300_fingerprint', 'co5300_pause', 'co5300_init_valid', 'co5300_init_sequence', 'co5300_to_wire', 'co5300_row', 'co5300_sysctl_status', 'co5300_format_row', 'co5300_sysctl_diagnostic', 'co5300_mmap_valid', 'co5300_mmap', 'co5300_worker')
+names = ('co5300_get_tx_width', 'co5300_height_valid', 'co5300_send', 'co5300_read_reg', 'co5300_read_status', 'co5300_ticks', 'co5300_fingerprint', 'co5300_pause', 'co5300_init_valid', 'co5300_init_sequence', 'co5300_to_wire', 'co5300_row', 'co5300_sysctl_status', 'co5300_format_row', 'co5300_sysctl_diagnostic', 'co5300_mmap_valid', 'co5300_mmap', 'co5300_worker')
 cfile.write_text(prefix + ''.join(extract(n) for n in names) + suffix)
 subprocess.run([str(cc), '-fuse-ld=lld', '-std=c11', '-Wall', '-Wextra', '-Werror',
                 '-fsanitize=address,undefined', '-fno-sanitize-recover=all',
