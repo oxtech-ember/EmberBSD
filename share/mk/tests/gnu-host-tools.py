@@ -22,7 +22,7 @@ with tempfile.TemporaryDirectory(prefix='gnu-host-tools-', dir=a.work_dir) as te
     work = Path(temporary)
     source = work / 'source'
     source.mkdir()
-    (source / 'host.c').write_text('#ifndef HOST_SELECTED\n#error missing host flags\n#endif\n#ifdef TARGET_SELECTED\n#error target flags reached host\n#endif\nint main(void) { return 0; }\n')
+    (source / 'host.c').write_text('#ifndef HOST_SELECTED\n#error missing host flags\n#endif\n#ifndef HOST_LOCAL_APPEND\n#error local host += flags were lost\n#endif\n#ifndef HOST_CFLAGS_LOCAL\n#error local host C flags were lost\n#endif\n#ifndef ABI_HOST_SELECTED\n#error selected native ABI flags were lost\n#endif\n#ifndef ABI_C_SELECTED\n#error selected native ABI C flags were lost\n#endif\n#ifdef TARGET_SELECTED\n#error target flags reached host\n#endif\nint main(void) { return 0; }\n')
     (source / 'target.c').write_text('#ifndef TARGET_SELECTED\n#error missing target flags\n#endif\n#ifdef HOST_SELECTED\n#error host flags reached target\n#endif\nint target(void) { return 1; }\n')
     (source / 'configure').write_text('''set -eu
 mkdir -p tools/gnulib/lib tools/info target
@@ -37,7 +37,9 @@ native.o:
 END
 cat > tools/info/Makefile <<'END'
 makedoc:
-\t$(CC) $(CPPFLAGS) $(CFLAGS) $(LDFLAGS) $(SOURCE)/host.c -o $@
+\tcase '$(LDFLAGS)' in *-Wl,-dead_strip*) ;; *) exit 1;; esac
+\tprintf '#!/bin/sh\\nexit 0\\n' > $@
+\tchmod +x $@
 END
 cat > target/Makefile <<'END'
 all: target.o
@@ -57,8 +59,11 @@ HOST_CC= %s
 HOST_AR= %s
 HOST_RANLIB= %s
 HOST_LD= %s
+HOST_CPPFLAGS+= -DHOST_LOCAL_BEFORE
 HOST_CPPFLAGS= -isysroot %s -DHOST_SELECTED
+HOST_CPPFLAGS+= -DHOST_LOCAL_APPEND
 HOST_CFLAGS= -O1
+HOST_CFLAGS+= -DHOST_CFLAGS_LOCAL
 HOST_LDFLAGS= -isysroot %s --ld-path=%s
 CC= %s --target=aarch64--netbsd
 CPPFLAGS= -DTARGET_SELECTED
@@ -68,6 +73,7 @@ GNU_HOST_MAKE_TARGETS.tools/info= makedoc
 GNU_HOST_MAKE_ENV= SOURCE=%s
 GNU_MAKE_DIRS= target
 GNU_MAKE_ENV= SOURCE=%s
+.include <bsd.own.mk>
 .include "%s"
 all: gnu-target-build
 ''' % (source, work / 'build', host / 'bin/mksh', host / 'bin/gmake',
@@ -75,12 +81,18 @@ all: gnu-target-build
        host / 'bin/ld64.lld', a.host_sysroot, a.host_sysroot, host / 'bin/ld64.lld',
        host / 'bin/clang', source, source, root / 'share/mk/bsd.gnutarget.mk'))
     env = dict(os.environ, PATH=str(host / 'bin') + ':' + str(host / 'gnu/bin'), TMPDIR=str(a.work_dir))
-    command = [str(host / 'bin/bmake'), '-r', '-f', str(makefile), 'all']
+    abi_args = ['EMBER_HOST_ABI_CPPFLAGS=-DABI_HOST_SELECTED',
+        'EMBER_HOST_ABI_CFLAGS=-DABI_C_SELECTED',
+        'EMBER_HOST_ABI_CXXFLAGS=-DABI_CXX_SELECTED',
+        'EMBER_HOST_ABI_LDFLAGS=-Wl,-dead_strip']
+    command = [str(host / 'bin/bmake'), '-r', '-m', str(root / 'share/mk'),
+               '-f', str(makefile),
+               'MAKECONF=/dev/null', *abi_args, 'all']
     env['MAKEOVERRIDES'] = 'CC=/unselected/compiler'
     dry = subprocess.run([command[0], '-n', *command[1:]], cwd=work, env=env,
                          capture_output=True, text=True)
     if dry.returncode or (work / 'build').exists():
-        raise SystemExit('dry run executed host GNU producer')
+        raise SystemExit('dry run executed host GNU producer: ' + dry.stdout + dry.stderr)
     result = subprocess.run(command, cwd=work, env=env, capture_output=True, text=True)
     if result.returncode:
         raise SystemExit(result.stdout + result.stderr)
@@ -91,8 +103,8 @@ all: gnu-target-build
         raise SystemExit('native GNU build tool failed to run')
     info = subprocess.run([str(host / 'bin/llvm-readelf'), '-h', str(target)],
                           env=env, check=True, capture_output=True, text=True)
-    if 'AArch64' not in info.stdout:
-        raise SystemExit('target GNU build used the wrong compiler')
+    if 'aarch64' not in info.stdout.lower():
+        raise SystemExit('target GNU build used the wrong compiler: ' + info.stdout + info.stderr)
     first = (native.stat().st_ino, target.stat().st_ino)
     subprocess.run(command, cwd=work, env=env, check=True, capture_output=True, text=True)
     if (native.stat().st_ino, target.stat().st_ino) != first:

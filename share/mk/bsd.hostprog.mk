@@ -142,8 +142,8 @@ realall: ${HOSTPROG}
 CLEANFILES+= a.out [Ee]rrs mklog core *.core ${HOSTPROG} ${OBJS} ${LOBJS}
 
 beforedepend:
-CFLAGS:=	${HOST_CFLAGS}
-CPPFLAGS:=	${HOST_CPPFLAGS:N-Wp,-iremap,*}
+CFLAGS:=	${_HOST_SELECTED_CFLAGS}
+CPPFLAGS:=	${_HOST_SELECTED_CPPFLAGS}
 
 lint: ${LOBJS}
 .if defined(LOBJS) && !empty(LOBJS)

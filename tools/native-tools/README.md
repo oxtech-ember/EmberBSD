@@ -5,10 +5,10 @@ Set `EMBER_NATIVE_TOOLS` to an absolute routing directory.
 Invoke `build.sh` with the selected absolute shell path.
 Do not use its `env sh` shebang for this mode.
 
-The interface version is 1.
+The interface version is 2.
 The static `contract` file belongs to this OS source tree.
 It is data, not a shell program or a toolset qualification descriptor.
-The first line is `EmberBSD-native-tools 1`.
+The first line is `EmberBSD-native-tools 2`.
 Each later line has three fields separated by one space:
 
 ```text
@@ -18,6 +18,10 @@ command native-role binding
 `command` is the fixed executable name in the routing directory.
 `native-role` names the selected SDK tool role.
 `binding` names a `HOST_*` variable, `MAKE`, `SED`, or `-`.
+Version 2 supports separate `EMBER_HOST_ABI_CPPFLAGS`,
+`EMBER_HOST_ABI_CFLAGS`, `EMBER_HOST_ABI_CXXFLAGS`, and
+`EMBER_HOST_ABI_LDFLAGS` make variables. These carry selected native ABI flags
+without overriding source-local `HOST_*FLAGS` assignments.
 `MAKE` selects the NetBSD make implementation.
 `SED` selects the quoting utility used by `build.sh`.
 `HOST_YACC` selects Byacc before the compatibility library is built.

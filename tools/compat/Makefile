@@ -117,8 +117,8 @@ config.cache: compat_acl_features.h compat_native_features.h compat_native_acl.h
 compat_acl.o: compat_acl_features.h compat_native_features.h compat_native_acl.h
 config.cache: probes/func-mktime_z.c probes/func-timegm.c compat_parsedate_features.h
 	rm -f ${.TARGET}.tmp ${.TARGET}
-	CC=${HOST_CC:Q} CFLAGS=${HOST_CFLAGS:Q} CPPFLAGS=${HOST_CPPFLAGS:Q} \
-		LDFLAGS=${HOST_LDFLAGS:Q} \
+	CC=${HOST_CC:Q} CFLAGS=${_HOST_SELECTED_CFLAGS:Q} CPPFLAGS=${_HOST_SELECTED_CPPFLAGS:Q} \
+		LDFLAGS=${_HOST_SELECTED_LDFLAGS:Q} \
 		${HOST_SH} ${.CURDIR}/configure \
 		--cache-file=${.TARGET}.tmp \
 		${CONFIGURE_ARGS}

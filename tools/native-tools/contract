@@ -1,4 +1,4 @@
-EmberBSD-native-tools 1
+EmberBSD-native-tools 2
 ar ar HOST_AR
 as as -
 awk awk -

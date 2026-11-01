@@ -49,8 +49,8 @@ realall: lib${HOSTLIB}.a
 CLEANFILES+= a.out [Ee]rrs mklog core *.core lib${HOSTLIB}.a ${OBJS}
 
 beforedepend:
-CFLAGS:=	${HOST_CFLAGS}
-CPPFLAGS:=	${HOST_CPPFLAGS:N-Wp,-iremap,*}
+CFLAGS:=	${_HOST_SELECTED_CFLAGS}
+CPPFLAGS:=	${_HOST_SELECTED_CPPFLAGS}
 
 ##### Pull in related .mk logic
 .include <bsd.obj.mk>
