@@ -22,7 +22,7 @@
 		startup-delay-us = <10000>;
 	};
 
-	/* On-module 24 MHz oscillator; present only in the camera variant. */
+	/* 24 MHz XCLK for OV3640; SC101IOT modules provide their own XCLK. */
 	camera_xclk: camera-xclk {
 		compatible = "fixed-clock";
 		#clock-cells = <0>;
@@ -62,6 +62,16 @@
 			power-supply = <&vcc_3v3>;
 			clocks = <&camera_xclk>;
 			clock-names = "xclk";
+			status = "disabled";
+		};
+
+		/* The SC101IOT module carries its own XCLK; its rate is unverified. */
+		camera_sc101iot: camera@68 {
+			compatible = "smartsens,sc101iot";
+			reg = <0x68>;
+			reset-gpios = <&gpio 53 GPIO_ACTIVE_LOW>;
+			powerdown-gpios = <&gpio 48 GPIO_ACTIVE_HIGH>;
+			power-supply = <&vcc_3v3>;
 			status = "disabled";
 		};
 	};

@@ -19,6 +19,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <dev/fdt/fdtvar.h>
 #include <dev/i2c/i2cvar.h>
 
+#include "camera_sensor_power.h"
 #include "ov3640_logic.h"
 
 struct ov3640_softc {
@@ -26,9 +27,7 @@ struct ov3640_softc {
 	i2c_tag_t sc_tag;
 	i2c_addr_t sc_addr;
 	int sc_phandle;
-	struct fdtbus_regulator *sc_supply;
-	struct fdtbus_gpio_pin *sc_reset;
-	struct fdtbus_gpio_pin *sc_powerdown;
+	struct camera_sensor_power sc_power;
 	uint16_t sc_pid;
 	bool sc_identified;
 };
@@ -78,7 +77,7 @@ ov3640_set_reset(void *cookie, int asserted)
 	struct ov3640_softc *sc = cookie;
 
 	/* FDT GPIO writes are logical; the GPIO provider applies ACTIVE_LOW. */
-	fdtbus_gpio_write(sc->sc_reset, asserted);
+	fdtbus_gpio_write(sc->sc_power.reset, asserted);
 	return 0;
 }
 
@@ -87,7 +86,7 @@ ov3640_set_powerdown(void *cookie, int asserted)
 {
 	struct ov3640_softc *sc = cookie;
 
-	fdtbus_gpio_write(sc->sc_powerdown, asserted);
+	fdtbus_gpio_write(sc->sc_power.powerdown, asserted);
 	return 0;
 }
 
@@ -133,36 +132,11 @@ ov3640_init(device_t self)
 	u_int xclk_rate;
 	int error;
 
-	/* Claim reset first and hold it while acquiring the remaining controls. */
-	sc->sc_reset = fdtbus_gpio_acquire(sc->sc_phandle, "reset-gpios",
-	    GPIO_PIN_OUTPUT);
-	if (sc->sc_reset == NULL) {
-		aprint_error_dev(self, "cannot acquire reset GPIO\n");
-		return;
-	}
-	(void)ov3640_set_reset(sc, 1);
-	sc->sc_powerdown = fdtbus_gpio_acquire(sc->sc_phandle,
-	    "powerdown-gpios", GPIO_PIN_OUTPUT);
-	if (sc->sc_powerdown == NULL) {
-		aprint_error_dev(self, "cannot acquire power-down GPIO; reset held\n");
-		return;
-	}
-	(void)ov3640_set_powerdown(sc, 1);
-
-	if (!of_hasprop(sc->sc_phandle, "power-supply")) {
-		aprint_error_dev(self, "missing shared sensor supply reference\n");
-		return;
-	}
-	sc->sc_supply = fdtbus_regulator_acquire(sc->sc_phandle,
-	    "power-supply");
-	if (sc->sc_supply == NULL) {
-		aprint_error_dev(self, "cannot acquire sensor supply\n");
-		return;
-	}
-	error = fdtbus_regulator_enable(sc->sc_supply);
+	/* Acquire shared controls and enable, but never cycle, the shared rail. */
+	error = camera_sensor_power_acquire(sc->sc_phandle, &sc->sc_power);
 	if (error != 0) {
-		aprint_error_dev(self, "cannot enable shared sensor supply (%d)\n",
-		    error);
+		aprint_error_dev(self, "cannot acquire sensor controls/supply (%d); "
+		    "any acquired reset/power-down outputs remain asserted\n", error);
 		return;
 	}
 	/* This is an on-module always-on oscillator; the OS does not gate it. */

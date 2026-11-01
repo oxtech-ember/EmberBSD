@@ -1,0 +1,48 @@
+.\" SPDX-License-Identifier: BSD-2-Clause AND Apache-2.0
+.Dd November 1, 2026
+.Dt SC101IOTS 4
+.Os
+.Sh NAME
+.Nm sc101iots
+.Nd SC101IOT sensor identification
+.Sh SYNOPSIS
+.Cd "sc101iots* at iic? addr 0x68"
+.Sh DESCRIPTION
+The
+.Nm
+driver identifies a SmartSens SC101IOT image sensor over SCCB/I2C.
+It asserts reset and power-down while acquiring the controls, enables the
+referenced shared supply, waits for the module-provided external oscillator,
+then releases power-down and reset before reading the sensor ID.
+The driver leaves the sensor in reset and power-down after probing.
+It never disables the shared supply.
+.Pp
+The device-tree node uses compatible string
+.Dq smartsens,sc101iot
+and supplies
+.Va reg , reset-gpios , powerdown-gpios , power-supply
+properties.
+Its 7-bit I2C address is 0x68.
+The sensor uses paged 8-bit register access: the driver writes the page
+number to register 0xf0, then reads the low register byte.
+It reads registers 0x31f7 and 0x31f8 and expects ID 0xda4a.
+.Pp
+The module provides its own XCLK.
+The operating system does not control or declare a fixed frequency for that
+oscillator.
+It waits 20 ms before SCCB access; this delay does not assert a measured
+frequency.
+The optional module node is enabled by the
+.Pa ESP_MOSAICO_SC101IOT
+configuration.
+The base
+.Pa ESP_MOSAICO
+tree leaves it disabled.
+The OV3640 camera variant remains separate.
+.Sh LIMITATIONS
+This driver only identifies the SC101IOT sensor.
+It does not configure image formats, attach a video device, or capture
+frames.
+.Sh SEE ALSO
+.Xr iic 4 ,
+.Xr ov3640s 4

@@ -89,11 +89,20 @@ device	pcf8563rtc
 attach	pcf8563rtc at iic
 file	dev/i2c/pcf8563.c			pcf8563rtc
 
+# Shared FDT power resources for optional camera sensors.
+file	dev/i2c/camera_sensor_power.c	ov3640s | sc101iots
+
 # OmniVision OV3640 DVP sensor identification and power sequencing.
 device	ov3640s: i2cexec
 attach	ov3640s at iic
 file	dev/i2c/ov3640.c			ov3640s
 file	dev/i2c/ov3640_logic.c		ov3640s
+
+# SmartSens SC101IOT DVP sensor identification; capture is not implemented.
+device	sc101iots: i2cexec
+attach	sc101iots at iic
+file	dev/i2c/sc101iot.c			sc101iots
+file	dev/i2c/sc101iot_logic.c		sc101iots
 
 # Philips PCF8583 Real Time Clock
 device	pcfrtc

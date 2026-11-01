@@ -1,0 +1,6 @@
+# ESP-Mosaico assembled kit with the optional left-slot SC101IOT module.
+include "arch/riscv/conf/ESP_MOSAICO_COMMON"
+
+sc101iots* at iic? addr 0x68
+
+makeoptions DTS="esp-mosaico-sc101iot.dts"

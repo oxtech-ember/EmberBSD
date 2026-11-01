@@ -32,8 +32,11 @@ def extract(name):
 fixture.write_text(
     r'''#include <stdbool.h>
 struct fdtbus_gpio_pin;
+struct camera_sensor_power {
+    struct fdtbus_gpio_pin *reset, *powerdown;
+};
 struct ov3640_softc {
-    struct fdtbus_gpio_pin *sc_reset, *sc_powerdown;
+    struct camera_sensor_power sc_power;
     void *test_cookie;
     int test_reset_level, test_powerdown_level;
 };

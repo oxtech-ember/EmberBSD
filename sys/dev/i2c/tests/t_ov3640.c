@@ -59,7 +59,7 @@ fdtbus_gpio_write(struct fdtbus_gpio_pin *pin, int logical_value)
 	struct fixture *f = gpio->fixture;
 
 	/* Match the ESP FDT provider's logical-to-physical active-low mapping. */
-	gpio->physical_level = !!logical_value ^ gpio->active_low;
+	gpio->physical_level = (logical_value != 0) != (gpio->active_low != 0);
 	if (gpio == &f->reset)
 		f->sc.test_reset_level = gpio->physical_level;
 	else
@@ -70,9 +70,9 @@ fdtbus_gpio_write(struct fdtbus_gpio_pin *pin, int logical_value)
 }
 
 static struct fixture *
-fixture_from_cookie(void *cookie)
+fixture_from_cookie(const void *cookie)
 {
-	struct ov3640_softc *sc = cookie;
+	const struct ov3640_softc *sc = cookie;
 	return sc->test_cookie;
 }
 
@@ -80,8 +80,8 @@ static void
 fixture_init(struct fixture *f, uint8_t pidh, uint8_t pidl)
 {
 	memset(f, 0, sizeof(*f));
-	f->sc.sc_reset = &f->reset_pin;
-	f->sc.sc_powerdown = &f->powerdown_pin;
+	f->sc.sc_power.reset = &f->reset_pin;
+	f->sc.sc_power.powerdown = &f->powerdown_pin;
 	f->sc.test_cookie = f;
 	f->reset = (struct fake_gpio){f, EVENT_RESET, 1, 1};
 	f->powerdown = (struct fake_gpio){f, EVENT_POWERDOWN, 0, 0};
