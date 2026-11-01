@@ -16,9 +16,17 @@ s=(arch/'espressif/wifi/fullmac_wpa2.c').read_text()
 files=(arch/'espressif/files.espressif').read_text()
 assert re.search(r'^defflag\s+opt_espwifi_wpa2\.h\s+ESPWIFI_NET80211_WPA2:\s+ESPWIFI_NET80211\s*$',
                  files,re.M)
-assert not re.search(r'\bESPWIFI_NET80211_WPA2\b',
-                     ''.join(p.read_text(errors='ignore') for p in
-                             (arch/'conf').glob('*')))
+configs = {p.name: p.read_text(errors='ignore') for p in (arch/'conf').glob('*') if p.is_file()}
+wpa2_profiles = {name for name, text in configs.items()
+                  if re.search(r'\bESPWIFI_NET80211_WPA2\b', text)}
+assert wpa2_profiles == {'ESP_MOSAICO_SC101IOT_WIFI'}
+profile = configs['ESP_MOSAICO_SC101IOT_WIFI']
+assert re.search(r'^include "arch/riscv/conf/ESP_MOSAICO_SC101IOT"$', profile, re.M)
+for option in ('ESPWIFI', 'ESPWIFI_NET80211', 'ESPWIFI_NET80211_WPA2',
+               'FPE', 'RISCV_FPU_SINGLE'):
+    assert re.search(r'^options\s+' + option + r'\s*$', profile, re.M), option
+assert re.search(r'^makeoptions\s+EXTRA_OBJ="\$\{ESPWIFI_OBJECT\}"$',
+                 profile, re.M)
 adapter=(arch/'espressif/esp_wifi_if.c').read_text()
 assert re.search(r'#ifdef ESPWIFI_NET80211_WPA2\s+sc->sc_ic\.ic_caps\s*=\s*IEEE80211_C_AES_CCM\s*\|\s*IEEE80211_C_WPA2;',adapter)
 def fn(name,result):

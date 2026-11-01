@@ -36,6 +36,7 @@ expected = {
     "ESP_MOSAICO": set(),
     "ESP_MOSAICO_CAMERA": {("ov3640s", 0x3C)},
     "ESP_MOSAICO_SC101IOT": {("sc101iots", 0x68)},
+    "ESP_MOSAICO_SC101IOT_WIFI": {("sc101iots", 0x68)},
 }
 for config, selected in expected.items():
     actual = configured_sensors(config)

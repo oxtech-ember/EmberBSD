@@ -1,0 +1,11 @@
+# ESP-Mosaico SC101IOT assembled kit with experimental station Wi-Fi/WPA2.
+include "arch/riscv/conf/ESP_MOSAICO_SC101IOT"
+
+options ESPWIFI
+options ESPWIFI_NET80211
+options ESPWIFI_NET80211_WPA2
+options FPE
+options RISCV_FPU_SINGLE
+
+# Supply the external object produced by wifi/mkblob.py --external-wpa2.
+makeoptions EXTRA_OBJ="${ESPWIFI_OBJECT}"

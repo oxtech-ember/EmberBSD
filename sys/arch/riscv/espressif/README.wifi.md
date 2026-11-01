@@ -7,11 +7,13 @@ association frames. The OS path is intended to use the normal BSD
 
 ## Experimental WPA2 path
 
-`ESPWIFI_NET80211_WPA2` is an explicit kernel option and is off in the
-provided ESP32-S31 configurations. It must stay disabled until the vendor
-association path can be shown to leave EAPOL and key ownership with the BSD
-supplicant, the producer completes its ABI checks, and the target passes a
-separate hardware trial.
+`ESPWIFI_NET80211_WPA2` is an explicit experimental kernel option and remains
+off in the default ESP32-S31 configurations. The optional
+`ESP_MOSAICO_SC101IOT_WIFI` profile enables it only for the assembled Mosaico
+SC101IOT kit; its `EXTRA_OBJ` must be supplied through `ESPWIFI_OBJECT` from
+the output of `wifi/mkblob.py --external-wpa2`. Keep this profile out of other
+board configurations. The association path remains experimental until its
+ABI checks and a separate target WPA2 hardware trial are complete.
 
 The adapter currently accepts one WPA2-PSK/CCMP RSN profile for an initial
 join after `WIFI_EVENT_STA_START`. It does not send software management
