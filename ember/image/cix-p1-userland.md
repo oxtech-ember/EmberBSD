@@ -198,8 +198,10 @@ result. A modified-source trial is not a release built from published source.
 Set `EMBER_USERLAND_PROFILE=console-tools` to select the opt-in compact
 console. The native OS `nbcrunchgen` builds one static multicall executable
 with `sh`, `init`, `hostname`, `sysctl`, `dmesg`, `ifconfig`, `cat`, `ls`,
-`chmod`, `cp`, `mkdir`, and `sleep`; their normal paths are symbolic links.
-The `-sh` crunch alias preserves the login-shell argument supplied by `init`.
+`chmod`, `cp`, `mkdir`, `sleep`, and `reboot`; their normal paths are symbolic
+links. The `-sh` crunch alias preserves the login-shell argument supplied by
+`init`, and `halt` dispatches to the normal `reboot(8)` implementation with
+its halt mode.
 This profile adds `klog`, `iic0`, `ttyE0` and `wsmouse0` using the target's `MAKEDEV`, and
 requires the selected host prefix's LLVM `nm`/`objcopy` and `nawk`. It is a
 bring-up image, not a full base set.

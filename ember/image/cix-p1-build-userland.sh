@@ -64,7 +64,8 @@ if [ "${1:-}" = --console-selected ]; then
         {
             printf 'srcdirs bin sbin\nprogs'
             for part in $programs; do printf ' %s' "${part##*/}"; done
-            printf '\nln sh -sh\nlibs -ledit -lterminfo -lutil -lkvm -lprop -lm\n'
+            printf '\nln sh -sh\nln reboot halt\n'
+            printf 'libs -ledit -lterminfo -lutil -lkvm -lprop -lm\n'
         } > "$out/crunch/console-tools.conf"
         (
             cd "$out/crunch"
@@ -91,6 +92,7 @@ if [ "${1:-}" = --console-selected ]; then
                 *) echo 'Invalid console program path.' >&2; exit 1 ;;
             esac
         done
+        ln -s ../bin/console-tools "$out/root/sbin/halt"
     else
         cp "$out/dest/bin/sh" "$out/root/bin/sh"
         cp "$out/dest/sbin/init" "$out/root/sbin/init"

@@ -156,12 +156,49 @@ class ConsoleProfile(unittest.TestCase):
     def test_compact_console_uses_native_crunch_components(self):
         selected = profile.console('riscv32', compact=True)
         self.assertIn('sbin/ifconfig', selected['programs'])
+        self.assertIn('sbin/reboot', selected['programs'])
         self.assertIn('bin/sh', selected['programs'])
         self.assertIn('sbin/init', selected['programs'])
         self.assertIn('lib/libprop', selected['libraries'])
         self.assertIn('lib/libkvm', selected['libraries'])
         self.assertIn('lib/libm', selected['libraries'])
         self.assertTrue(selected['compact'])
+
+    def test_compact_reboot_dispatch_and_halt_path(self):
+        import os
+        import subprocess
+        import tempfile
+        shell = os.environ.get('TEST_SH')
+        if not shell:
+            self.fail('Set TEST_SH to the selected native shell')
+        source = path.with_name('cix-p1-build-userland.sh').read_text()
+        start = source.index("        {\n            printf 'srcdirs bin sbin")
+        end = source.index('        } > "$out/crunch/console-tools.conf"', start)
+        block = source[start:end] + '        } > "$out/crunch/console-tools.conf"\n'
+        with tempfile.TemporaryDirectory() as name:
+            out = Path(name)
+            (out / 'crunch').mkdir()
+            subprocess.run([shell, '-c', 'set -eu\n' + block], check=True,
+                           env=dict(os.environ, out=str(out),
+                                    programs='bin/sh sbin/reboot'))
+            config = (out / 'crunch/console-tools.conf').read_text()
+            self.assertIn('progs sh reboot', config)
+            self.assertIn('ln reboot halt', config)
+
+            start = source.index('    if [ "$profile" = console-tools ]; then\n'
+                                 '        cp "$out/crunch/console-tools"')
+            end = source.index('    if [ -n "$extra" ]; then', start)
+            stage = source[start:end]
+            (out / 'root/bin').mkdir(parents=True)
+            (out / 'root/sbin').mkdir()
+            (out / 'crunch/console-tools').write_bytes(b'crunch fixture')
+            subprocess.run([shell, '-c', 'set -eu\n' + stage], check=True,
+                           env=dict(os.environ, out=str(out), profile='console-tools',
+                                    programs='bin/sh sbin/reboot'))
+            self.assertEqual(os.readlink(out / 'root/sbin/reboot'),
+                             '../bin/console-tools')
+            self.assertEqual(os.readlink(out / 'root/sbin/halt'),
+                             '../bin/console-tools')
 
     def test_compact_console_validates_crunch_and_llvm_tools(self):
         from types import SimpleNamespace

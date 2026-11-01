@@ -49,7 +49,7 @@ def console(target, compact=False):
         libraries += ('lib/libm', 'lib/libprop', 'lib/libkvm')
         programs += ('bin/hostname', 'sbin/sysctl', 'sbin/dmesg',
                      'sbin/ifconfig', 'bin/cat', 'bin/ls', 'bin/chmod',
-                     'bin/cp', 'bin/mkdir', 'bin/sleep')
+                     'bin/cp', 'bin/mkdir', 'bin/sleep', 'sbin/reboot')
     return dict(machine=machine, arch=arch, triplet=triplet, elf_class=elf_class,
                 elf_machine=elf_machine, flags=flags, headers=('lib/libcurses',),
                 libraries=libraries, programs=programs, compact=compact)

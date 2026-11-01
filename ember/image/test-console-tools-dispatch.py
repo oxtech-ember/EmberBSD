@@ -24,23 +24,25 @@ env = dict(os.environ, PATH=str(prefix / 'bin') + os.pathsep + str(prefix / 'gnu
 with tempfile.TemporaryDirectory() as td:
     out = Path(td)
     (out / 'crunch').mkdir()
-    env.update(out=str(out), programs='bin/sh')
+    env.update(out=str(out), programs='bin/sh sbin/reboot')
     subprocess.run([str(shell), '-c', 'set -eu\n' + block], env=env, check=True)
     wd = out / 'crunch'
     # This dispatcher-only test supplies an object name without invoking make.
     with (wd / 'console-tools.conf').open('a') as config:
-        config.write('special sh objs sh.ro\n')
+        config.write('special sh objs sh.ro\nspecial reboot objs reboot.ro\n')
     subprocess.run([str(crunchgen), '-o', '-D', str(source), 'console-tools.conf'],
                    cwd=wd, env=env, check=True, stdout=subprocess.DEVNULL)
     (wd / 'stub.c').write_text('#include <stdio.h>\n'
         'int _crunched_sh_stub(int argc,char **argv,char **envp) '
+        '{ (void)argc; (void)envp; puts(argv[0]); return 0; }\n'
+        'int _crunched_reboot_stub(int argc,char **argv,char **envp) '
         '{ (void)argc; (void)envp; puts(argv[0]); return 0; }\n')
     exe = wd / 'dispatch'
     subprocess.run([str(clang), '-D__RCSID(x)=', str(wd / 'console-tools.c'),
                     str(wd / 'stub.c'), '-o', str(exe)], env=env, check=True)
-    for argv0 in ('sh', '-sh'):
+    for argv0 in ('sh', '-sh', 'reboot', 'halt'):
         r = subprocess.run([argv0], executable=str(exe), env=env,
                            text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         if r.returncode != 0 or r.stdout != argv0 + '\n':
             raise SystemExit(f'dispatch failed for {argv0}: exit {r.returncode}, {r.stderr}')
-print('native crunchgen dispatch preserves sh and -sh argv[0]')
+print('native crunchgen dispatch preserves sh/-sh and reboot/halt argv[0]')
