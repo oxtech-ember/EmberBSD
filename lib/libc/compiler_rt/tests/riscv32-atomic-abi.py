@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
 # Origin: EmberBSD (AI-assisted).
-"""Compile and link the selected RV32 libc atomic ABI provider."""
+"""Check RV32 libc atomic ABI symbols and link consumer calls to the archive."""
 import argparse
 from pathlib import Path
 import re
@@ -39,69 +39,135 @@ def main():
     makefile = (args.os_source / 'lib/libc/compiler_rt/Makefile.inc').read_text()
     selection = re.search(r'(?ms)^\.if \$\{LIBC_MACHINE_ARCH\} == "riscv32"\n(.*?)^\.endif', makefile)
     if selection is None or 'GENERIC_SRCS+= atomic.c' not in selection.group(1) or \
-            'COMPILER_RT_ATOMIC_BUILTIN_EXCLUDE_1_2_4' not in selection.group(1):
-        raise AssertionError('RV32 libc does not select the compiler-rt 8-byte/generic provider')
+            'COMPILER_RT_ATOMIC_BUILTIN_RISCV32_LIBC' not in selection.group(1):
+        raise AssertionError('RV32 libc does not select its compiler-rt atomic ABI provider')
+    if 'COMPILER_RT_ATOMIC_BUILTIN_RISCV32_LIBC' not in args.atomic_source.read_text():
+        raise AssertionError('prepared compiler-rt source lacks the RV32 libc selector')
 
     target = ['--target=riscv32--netbsd', '-march=rv32imac_zicsr_zifencei',
               '-mabi=ilp32', '--sysroot=' + str(args.sysroot)]
-    provider = args.out_dir / 'compiler_rt_atomic.o'
-    subprocess.run([args.cc, *target, '-std=c11', '-O2', '-Wno-unused-parameter',
-                    '-Wno-deprecated-declarations',
-                    '-DCOMPILER_RT_ATOMIC_BUILTIN_EXCLUDE_1_2_4',
-                    '-I', str(args.atomic_source.parent), '-c', str(args.atomic_source),
-                    '-o', str(provider)], check=True)
-    provider_symbols = symbols(args.nm, provider)
-    expected = {'__atomic_is_lock_free', '__atomic_load', '__atomic_store',
-                '__atomic_compare_exchange', '__atomic_fetch_add_8',
-                '__atomic_fetch_and_8', '__atomic_fetch_or_8',
-                '__atomic_fetch_sub_8', '__atomic_load_8', '__atomic_store_8'}
-    missing = expected - provider_symbols
-    duplicate_small = {name for name in provider_symbols if name.startswith('__atomic_') and
-                       name.rsplit('_', 1)[-1] in {'1', '2', '4'}}
-    if missing or duplicate_small:
-        raise AssertionError('RV32 provider ABI mismatch: missing=' + repr(sorted(missing)) +
-                             ' duplicate-small=' + repr(sorted(duplicate_small)))
-
     consumer = args.out_dir / 'wpa-atomic-consumer.c'
     consumer.write_text(textwrap.dedent('''\
+        #include <stdbool.h>
+        #include <stddef.h>
         #include <stdint.h>
-        static volatile uint64_t shared;
+        #define ABI(name) __asm__("__atomic_" #name)
+        extern uint8_t load1(const volatile void *, int) ABI(load_1);
+        extern uint16_t load2(const volatile void *, int) ABI(load_2);
+        extern uint32_t load4(const volatile void *, int) ABI(load_4);
+        extern void store1(volatile void *, uint8_t, int) ABI(store_1);
+        extern void store2(volatile void *, uint16_t, int) ABI(store_2);
+        extern void store4(volatile void *, uint32_t, int) ABI(store_4);
+        extern uint8_t fetch_add1(volatile void *, uint8_t, int) ABI(fetch_add_1);
+        extern uint16_t fetch_add2(volatile void *, uint16_t, int) ABI(fetch_add_2);
+        extern uint32_t fetch_add4(volatile void *, uint32_t, int) ABI(fetch_add_4);
+        extern bool compare_exchange1(volatile void *, void *, uint8_t, int,
+            int) ABI(compare_exchange_1);
+        extern bool compare_exchange2(volatile void *, void *, uint16_t, int,
+            int) ABI(compare_exchange_2);
+        extern bool compare_exchange4(uint32_t *, uint32_t *, uint32_t, int,
+            int) ABI(compare_exchange_4);
+        extern uint64_t fetch_add8(volatile void *, uint64_t, int) ABI(fetch_add_8);
+        extern uint64_t fetch_and8(volatile void *, uint64_t, int) ABI(fetch_and_8);
+        extern uint64_t fetch_or8(volatile void *, uint64_t, int) ABI(fetch_or_8);
+        extern uint64_t fetch_sub8(volatile void *, uint64_t, int) ABI(fetch_sub_8);
+        extern uint64_t fetch_nand8(volatile void *, uint64_t, int)
+            ABI(fetch_nand_8);
+        extern uint64_t fetch_xor8(volatile void *, uint64_t, int)
+            ABI(fetch_xor_8);
+        extern uint64_t exchange8(volatile void *, uint64_t, int)
+            ABI(exchange_8);
+        extern bool compare_exchange8(uint64_t *, uint64_t *, uint64_t, int, int)
+            ABI(compare_exchange_8);
+        extern uint64_t load8(const volatile void *, int) ABI(load_8);
+        extern void store8(volatile void *, uint64_t, int) ABI(store_8);
+        extern int generic_compare_exchange(size_t, void *, void *, void *, int,
+            int) __asm__("__atomic_compare_exchange");
+        extern void generic_load(size_t, void *, void *, int)
+            __asm__("__atomic_load");
+        extern void generic_store(size_t, void *, void *, int)
+            __asm__("__atomic_store");
+        extern bool is_lock_free(size_t, void *) ABI(is_lock_free);
         void wpa_atomic_consumer(void) {
-            uint64_t value;
-            (void)__atomic_fetch_add(&shared, 1, __ATOMIC_SEQ_CST);
-            (void)__atomic_fetch_and(&shared, UINT64_MAX, __ATOMIC_SEQ_CST);
-            (void)__atomic_fetch_or(&shared, 1, __ATOMIC_SEQ_CST);
-            (void)__atomic_fetch_sub(&shared, 1, __ATOMIC_SEQ_CST);
-            __atomic_load(&shared, &value, __ATOMIC_SEQ_CST);
-            __atomic_store(&shared, &value, __ATOMIC_SEQ_CST);
-            (void)__atomic_is_lock_free(sizeof(shared), (const void *)&shared);
+            uint8_t v8 = 0; uint16_t v16 = 0; uint32_t v32 = 0;
+            uint64_t v64 = 0, expected = 0;
+            (void)load1(&v8, __ATOMIC_ACQUIRE);
+            (void)load2(&v16, __ATOMIC_ACQUIRE);
+            (void)load4(&v32, __ATOMIC_ACQUIRE);
+            store1(&v8, 1, __ATOMIC_RELEASE);
+            store2(&v16, 1, __ATOMIC_RELEASE);
+            store4(&v32, 1, __ATOMIC_RELEASE);
+            (void)fetch_add1(&v8, 1, __ATOMIC_SEQ_CST);
+            (void)fetch_add2(&v16, 1, __ATOMIC_SEQ_CST);
+            (void)fetch_add4(&v32, 1, __ATOMIC_SEQ_CST);
+            (void)compare_exchange1(&v8, &v8, 2,
+                __ATOMIC_SEQ_CST, __ATOMIC_ACQUIRE);
+            (void)compare_exchange2(&v16, &v16, 2,
+                __ATOMIC_SEQ_CST, __ATOMIC_ACQUIRE);
+            (void)compare_exchange4(&v32, &v32, 2,
+                __ATOMIC_SEQ_CST, __ATOMIC_ACQUIRE);
+            (void)fetch_add8(&v64, 1, __ATOMIC_SEQ_CST);
+            (void)fetch_and8(&v64, UINT64_MAX, __ATOMIC_SEQ_CST);
+            (void)fetch_or8(&v64, 1, __ATOMIC_SEQ_CST);
+            (void)fetch_sub8(&v64, 1, __ATOMIC_SEQ_CST);
+            (void)fetch_nand8(&v64, UINT64_MAX, __ATOMIC_SEQ_CST);
+            (void)fetch_xor8(&v64, 1, __ATOMIC_SEQ_CST);
+            (void)exchange8(&v64, 3, __ATOMIC_SEQ_CST);
+            (void)compare_exchange8(&v64, &expected, 4,
+                __ATOMIC_SEQ_CST, __ATOMIC_ACQUIRE);
+            (void)load8(&v64, __ATOMIC_SEQ_CST);
+            store8(&v64, 2, __ATOMIC_SEQ_CST);
+            (void)generic_compare_exchange(sizeof(v64), &v64, &expected, &v64,
+                __ATOMIC_SEQ_CST, __ATOMIC_ACQUIRE);
+            generic_load(sizeof(v64), &v64, &expected, __ATOMIC_ACQUIRE);
+            generic_store(sizeof(v64), &v64, &expected, __ATOMIC_SEQ_CST);
+            (void)is_lock_free(sizeof(v64), &v64);
         }
     '''))
     consumer_object = args.out_dir / 'wpa-atomic-consumer.o'
     subprocess.run([args.cc, *target, '-std=c11', '-O0', '-c', str(consumer),
                     '-o', str(consumer_object)], check=True)
     unresolved = symbols(args.nm, consumer_object, undefined=True)
-    expected_undefined = {'__atomic_fetch_add_8', '__atomic_fetch_and_8',
-                          '__atomic_fetch_or_8', '__atomic_fetch_sub_8',
-                          '__atomic_load_8', '__atomic_store_8', '__atomic_is_lock_free'}
+    expected_undefined = {'__atomic_load_' + width for width in ('1', '2', '4', '8')}
+    expected_undefined |= {'__atomic_store_' + width for width in ('1', '2', '4', '8')}
+    expected_undefined |= {'__atomic_fetch_add_' + width for width in ('1', '2', '4', '8')}
+    expected_undefined |= {'__atomic_compare_exchange_1', '__atomic_compare_exchange_2',
+                           '__atomic_compare_exchange_4', '__atomic_fetch_and_8',
+                           '__atomic_fetch_or_8', '__atomic_fetch_sub_8',
+                           '__atomic_fetch_nand_8', '__atomic_fetch_xor_8',
+                           '__atomic_exchange_8', '__atomic_compare_exchange_8',
+                           '__atomic_compare_exchange', '__atomic_load',
+                           '__atomic_store', '__atomic_is_lock_free'}
     if not expected_undefined <= unresolved:
         raise AssertionError('consumer did not exercise expected ABI calls: ' +
                              repr(sorted(expected_undefined - unresolved)))
 
     libc = args.sysroot / 'usr/lib/libc.a'
-    small_abi = {name for name in symbols(args.nm, libc)
-                 if name.startswith('__atomic_') and name.rsplit('_', 1)[-1] in {'1', '2', '4'}}
-    if len(small_abi) < 23:
-        raise AssertionError('existing libc small atomic ABI inventory unexpectedly shrank')
+    libc_symbols = symbols(args.nm, libc)
+    small_abi = {'__atomic_' + op + '_' + width
+                 for op in ('compare_exchange', 'exchange', 'fetch_add', 'fetch_and',
+                            'fetch_nand', 'fetch_or', 'fetch_sub', 'fetch_xor', 'load', 'store')
+                 for width in ('1', '2', '4')}
+    missing_libc = small_abi - libc_symbols
+    if missing_libc:
+        raise AssertionError('libc lacks fixed-width atomic ABI symbols: ' + repr(sorted(missing_libc)))
+    required_provider = {'__atomic_compare_exchange', '__atomic_is_lock_free', '__atomic_load',
+                         '__atomic_store', '__atomic_fetch_add_8', '__atomic_fetch_and_8',
+                         '__atomic_fetch_nand_8', '__atomic_fetch_or_8',
+                         '__atomic_fetch_sub_8', '__atomic_fetch_xor_8',
+                         '__atomic_exchange_8', '__atomic_compare_exchange_8',
+                         '__atomic_load_8', '__atomic_store_8'}
+    if not required_provider <= libc_symbols:
+        raise AssertionError('libc lacks generic or 8-byte atomic ABI symbols: ' +
+                             repr(sorted(required_provider - libc_symbols)))
     linked = args.out_dir / 'wpa-atomic-consumer-linked.o'
     subprocess.run([args.cc, *target, '-nostdlib', '-fuse-ld=lld', '-Wl,-r',
-                    str(provider), str(consumer_object), str(libc), '-o', str(linked)], check=True)
+                    str(consumer_object), str(libc), '-o', str(linked)], check=True)
     remaining = symbols(args.nm, linked, undefined=True)
-    missing_after_link = expected_undefined - remaining
-    if missing_after_link != expected_undefined:
-        still_unresolved = expected_undefined & remaining
+    still_unresolved = expected_undefined & remaining
+    if still_unresolved:
         raise AssertionError('consumer still has atomic ABI references: ' + repr(sorted(still_unresolved)))
-    print('PASS: RV32 libc provider ABI, existing small symbols, and consumer relocatable link')
+    print('PASS: RV32 atomic symbols/call sites resolve from installed libc.a alone')
 
 
 if __name__ == '__main__':

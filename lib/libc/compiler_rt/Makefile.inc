@@ -40,13 +40,12 @@ COMPILER_RT_ARCH_DIR=	${COMPILER_RT_SRCDIR}/lib/builtins/${LIBC_MACHINE_ARCH}
 #GENERIC_SRCS+= atomic.c
 
 .if ${LIBC_MACHINE_ARCH} == "riscv32"
-# RV32 uses compiler-rt's process-local hashed spin locks for generic and
-# 8-byte ABI operations. This supports threads in one process, but is not
-# process-shared or signal-handler safe and only applies to regular memory.
-# Keep libc's existing strong 1/2/4-byte ABI as the sole provider for those
-# widths; generic and wider calls share this one atomic.c lock table.
+# RV32 keeps libc's existing strong 1/2/4-byte RMW ABI. The selected
+# compiler-rt source supplies fixed-width load/store and CAS4 plus generic
+# and 8-byte ABI operations. Generic and 8-byte fallback calls use one
+# process-local hashed lock table; it is not process-shared or signal-safe.
 GENERIC_SRCS+= atomic.c
-COPTS.atomic.c+= -DCOMPILER_RT_ATOMIC_BUILTIN_EXCLUDE_1_2_4
+COPTS.atomic.c+= -DCOMPILER_RT_ATOMIC_BUILTIN_RISCV32_LIBC
 .endif
 
 .if ${HAVE_LIBGCC_EH} == "no"
