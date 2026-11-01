@@ -7,7 +7,6 @@ fregulator* at fdt? pass 3
 gpioiic_fdt* at fdt? pass 4
 iic* at gpioiic_fdt?
 cst92xx* at iic? addr 0x5a
-ov3640s* at iic? addr 0x3c
 wsmouse* at cst92xx?
 
 cofb* at spi? slave 0
