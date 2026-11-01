@@ -549,6 +549,25 @@ spi_transfer(struct spi_handle *sh, struct spi_transfer *st)
 	st->st_spiprivate = (void *)sh;
 
 	/* Reject unsupported phases before configuring or touching the bus. */
+	if (st->st_flags & SPI_F_3WIRE) {
+		if ((tag->sct_caps & SPI_CAP_3WIRE) == 0) {
+			spi_done(st, EOPNOTSUPP);
+			return 0;
+		}
+		if (st->st_chunks == NULL) {
+			spi_done(st, EINVAL);
+			return 0;
+		}
+		for (chunk = st->st_chunks; chunk; chunk = chunk->chunk_next) {
+			if (chunk->chunk_count <= 0 ||
+			    chunk->chunk_bus_width > 1 ||
+			    ((chunk->chunk_read == NULL) ==
+			     (chunk->chunk_write == NULL))) {
+				spi_done(st, EINVAL);
+				return 0;
+			}
+		}
+	}
 	for (chunk = st->st_chunks; chunk; chunk = chunk->chunk_next) {
 		u_int capability;
 

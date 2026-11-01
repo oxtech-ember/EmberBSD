@@ -78,6 +78,7 @@ struct spi_transfer;
 #define	SPI_CAP_DUAL_RX	__BIT(1)
 #define	SPI_CAP_QUAD_TX	__BIT(2)
 #define	SPI_CAP_QUAD_RX	__BIT(3)
+#define	SPI_CAP_3WIRE	__BIT(4)
 
 struct spi_controller {
 	void	*sct_cookie;	/* controller private data */
@@ -161,6 +162,7 @@ SIMPLEQ_HEAD(spi_transq, spi_transfer);
 
 #define	SPI_F_DONE		0x0001
 #define	SPI_F_ERROR		0x0002
+#define	SPI_F_3WIRE		0x0004	/* shared MOSI/MISO; half duplex */
 
 int spi_compatible_match(const struct spi_attach_args *, const cfdata_t,
 			  const struct device_compatible_entry *);

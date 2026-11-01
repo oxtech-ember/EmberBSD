@@ -21,6 +21,15 @@ has six hardware chip selects; GPSPI3 has three. Receive is limited to
 10 MHz until GPIO input timing compensation is implemented and checked.
 Multi-line receive, DMA and interrupts are not implemented.
 
+The controller also advertises `SPI_CAP_3WIRE`: a transfer marked
+`SPI_F_3WIRE` uses the S31 `USER.SIO` bit to share MOSI and MISO on the
+MOSI pin. The generic SPI core accepts this flag only from a controller
+that advertises the capability, and requires nonempty, single-line,
+half-duplex data chunks. A transmit chunk followed by a receive chunk keeps
+chip select asserted between phases. The GPIO matrix must route the MOSI
+signal as both output and input; the CO5300 board pinctrl does so. SIO
+transfers do not permit full-duplex or dual/quad chunks.
+
 Transfers use the 64-byte PIO FIFO. Chip select remains asserted across
 FIFO blocks and chunks, including changes from a single-line command
 to a quad data phase. UPDATE and completion waits are bounded. Timeout

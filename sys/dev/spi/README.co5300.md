@@ -16,6 +16,18 @@ orientation, pixel format, and sleep/display transitions belong in the device
 tree, not in this driver. The sequence is at most 1024 bytes, with cumulative delays at most 5000 ms,
 and must configure native RGB565.
 
+After the configured init sequence, the driver makes a best-effort status
+read at 1 MHz when the SPI controller supports `SPI_CAP_3WIRE`. It sends
+the CO5300 read header `03 00 <register> 00` and begins the response
+immediately (without a dummy byte) while retaining chip select. It logs raw
+values and per-register errors for ID `04` (three bytes), power `0a`, format
+`0c` and brightness
+`52`. Values such as all-zero or all-`ff` are not treated as validated
+identity. A controller without 3-wire support or a failed read does not
+prevent write-only panel initialization; the configured panel write speed
+is restored after the diagnostic attempt. This does not establish successful
+electrical reads on a physical panel.
+
 The driver creates a wired, zeroed native-endian RGB565 framebuffer exposed
 through genfb/wsdisplay, including its normal mmap and framebuffer information
 ioctls. Mappings use the cacheable bus-space attribute to match the wired
@@ -38,6 +50,7 @@ refresh rate remain to be checked on actual hardware.
 
 The protocol opcodes follow Espressif's Apache-2.0
 [CO5300 SPI implementation](https://github.com/espressif/esp-iot-solution/blob/8eee17c20da66048faa20c683ffeb80bfa85d723/components/display/lcd/esp_lcd_co5300/esp_lcd_co5300_spi.c).
+Read framing follows section 4.3, page 28 of the [CO5300 datasheet](https://dl.espressif.com/AE/esp-iot-solution/CO5300_Datasheet_V0.00.pdf).
 
 `sysctl -n hw.cofb0.status` reports a consistent snapshot of refresh activity.
 `rows_changed` counts dirty-row attempts, including retries; `rows_sent` counts

@@ -47,8 +47,10 @@ typedef unsigned int bus_size_t;
 #define SPI_MODE_2 2
 #define SPI_MODE_3 3
 #define SPI_MODE_CPOL 2
+#define SPI_F_3WIRE 0x0004
+#define ESPSPI_SIO __BIT(17)
 struct spi_chunk { struct spi_chunk *chunk_next; int chunk_count, chunk_wresid, chunk_rresid; const uint8_t *chunk_write,*chunk_wptr; uint8_t *chunk_read,*chunk_rptr; unsigned int chunk_bus_width; };
-struct spi_transfer { struct spi_chunk *st_chunks; int error, completions; };
+struct spi_transfer { struct spi_chunk *st_chunks; int error, completions, st_flags; };
 struct spi_controller { int sct_nslaves; };
 struct esp_spi_softc { void *sc_syscon; struct spi_controller sc_spi; unsigned int sc_clkrst,sc_source_hz,sc_speed; uint32_t sc_clock,sc_user,sc_misc; };
 static uint32_t regs[64], sysreg;
@@ -149,6 +151,22 @@ int main(void) {
     assert(esp_spi_transfer(&sc,&st)==0 && st.error==0 && st.completions==1);
     assert((events[0].user & ESPSPI_USR_MISO) && !(events[0].user & ESPSPI_USR_MOSI));
     assert(rx[0]==0x11 && rx[1]==0x22 && rx[2]==0x33 && a.chunk_rresid==0);
+    uint8_t command[]={0x03,0x00,0x04,0x00}, result[3]={0};
+    struct spi_chunk command_chunk=chunk(4,command,NULL,1);
+    struct spi_chunk result_chunk=chunk(3,NULL,result,1);
+    command_chunk.chunk_next=&result_chunk;
+    st=(struct spi_transfer){.st_chunks=&command_chunk,.st_flags=SPI_F_3WIRE};
+    clear_events(); assert(esp_spi_transfer(&sc,&st)==0 && st.error==0 &&
+        st.completions==1 && clocks==2);
+    assert((events[0].user & ESPSPI_SIO) &&
+        (events[0].user & ESPSPI_USR_MOSI) &&
+        !(events[0].user & ESPSPI_USR_MISO));
+    assert((events[1].user & ESPSPI_SIO) &&
+        !(events[1].user & ESPSPI_USR_MOSI) &&
+        (events[1].user & ESPSPI_USR_MISO));
+    assert((events[0].misc & ESPSPI_CS_KEEP_ACTIVE) &&
+        !(events[1].misc & ESPSPI_CS_KEEP_ACTIVE));
+    assert(result[0]==0x11 && result[1]==0x22 && result[2]==0x33);
     assert(esp_spi_configure(&sc,0,SPI_MODE_0,20000000)==0);
     a=chunk(3,NULL,rx,1); st=(struct spi_transfer){.st_chunks=&a}; before=writes; clear_events();
     assert(esp_spi_transfer(&sc,&st)==0 && st.error==EINVAL && st.completions==1 && writes==before && clocks==0);

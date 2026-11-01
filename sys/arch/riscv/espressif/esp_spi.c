@@ -194,7 +194,8 @@ esp_spi_attach(device_t parent, device_t self, void *aux)
 	sc->sc_spi.sct_nslaves = sc->sc_clkrst == ESPSPI2_CLKRST ? 6 : 3;
 	sc->sc_spi.sct_configure = esp_spi_configure;
 	sc->sc_spi.sct_transfer = esp_spi_transfer;
-	sc->sc_spi.sct_caps = SPI_CAP_DUAL_TX | SPI_CAP_QUAD_TX;
+	sc->sc_spi.sct_caps = SPI_CAP_DUAL_TX | SPI_CAP_QUAD_TX |
+	    SPI_CAP_3WIRE;
 	aprint_normal(": GPSPI PIO, XTAL %u Hz\n", sc->sc_source_hz);
 	esp_spi_sysctl_init(sc);
 	fdtbus_register_spi_controller(self, phandle, &esp_spi_funcs);
@@ -271,7 +272,7 @@ esp_spi_wait(struct esp_spi_softc *sc, bus_size_t reg, uint32_t mask,
 
 static int
 esp_spi_block(struct esp_spi_softc *sc, const uint8_t *tx, uint8_t *rx,
-    u_int count, u_int width, bool more)
+    u_int count, u_int width, bool more, bool sio)
 {
 	uint32_t user = sc->sc_user, word;
 	int error;
@@ -283,6 +284,8 @@ esp_spi_block(struct esp_spi_softc *sc, const uint8_t *tx, uint8_t *rx,
 		user |= ESPSPI_USR_MISO;
 	if (tx != NULL && rx != NULL)
 		user |= ESPSPI_DOUTDIN;
+	if (sio)
+		user |= ESPSPI_SIO;
 	if (width == 2)
 		user |= ESPSPI_FWRITE_DUAL;
 	if (width == 4)
@@ -341,7 +344,8 @@ esp_spi_transfer(void *cookie, struct spi_transfer *st)
 			u_int count = MIN(chunk->chunk_wresid, ESPSPI_FIFO_SIZE);
 			bool more = chunk != last || chunk->chunk_wresid > count;
 			error = esp_spi_block(sc, chunk->chunk_wptr,
-			    chunk->chunk_rptr, count, chunk->chunk_bus_width, more);
+			    chunk->chunk_rptr, count, chunk->chunk_bus_width, more,
+			    (st->st_flags & SPI_F_3WIRE) != 0);
 			if (error != 0)
 				break;
 			chunk->chunk_wresid -= count;

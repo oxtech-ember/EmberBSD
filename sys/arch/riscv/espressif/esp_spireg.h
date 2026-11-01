@@ -20,6 +20,7 @@
 #define ESPSPI_CK_OUT_EDGE	__BIT(9)
 #define ESPSPI_FWRITE_DUAL	__BIT(12)
 #define ESPSPI_FWRITE_QUAD	__BIT(13)
+#define ESPSPI_SIO		__BIT(17)
 #define ESPSPI_USR_MOSI		__BIT(27)
 #define ESPSPI_USR_MISO		__BIT(28)
 #define ESPSPI_USER1		0x14

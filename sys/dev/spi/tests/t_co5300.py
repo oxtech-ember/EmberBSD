@@ -34,6 +34,7 @@ prefix = r'''
 #include <errno.h>
 #include <limits.h>
 #include <setjmp.h>
+#include <stdarg.h>
 #include <sys/types.h>
 #define PAGE_MASK 4095
 #define PROT_EXEC 4
@@ -42,6 +43,7 @@ prefix = r'''
 typedef uintptr_t vaddr_t;
 typedef uint64_t paddr_t;
 #define MAX(a,b) ((a) > (b) ? (a) : (b))
+#define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
 struct co5300_softc { void *sc_spi, *sc_bst, *sc_dev; unsigned int sc_width, sc_height;
     uintptr_t sc_fb; size_t sc_rowbytes, sc_alloc;
     uint8_t *sc_shadow, *sc_snapshot, *sc_wire, *sc_dirty;
@@ -55,15 +57,17 @@ static int sysctl_lookup(struct sysctlnode *n) {
     assert(n->sysctl_size <= sizeof(status_text));
     memcpy(status_text, n->sysctl_data, n->sysctl_size); return 0;
 }
-struct call { uint8_t op,cmd; size_t len; unsigned int width; uint8_t data[8]; };
-static struct call calls[8]; static int ncalls, fail_call, delays, last_ms;
+struct call { uint8_t op,cmd; size_t len; unsigned int width; int flags; uint8_t data[8]; };
+static struct call calls[8]; static int ncalls, fail_call, fail_errno, delays, last_ms;
 static uint16_t *mutate_fb;
 #define SPI_F_ERROR 1
-struct spi_chunk { struct spi_chunk *next; const uint8_t *data; int count; unsigned int chunk_bus_width; };
+#define SPI_F_3WIRE 4
+#define SPI_MODE_0 0
+struct spi_chunk { struct spi_chunk *next; const uint8_t *data; uint8_t *rx; int count; unsigned int chunk_bus_width; };
 struct spi_transfer { struct spi_chunk *first; int st_flags, st_errno; };
 static void spi_transfer_init(struct spi_transfer *st) { memset(st,0,sizeof(*st)); }
 static void spi_chunk_init(struct spi_chunk *c, int n, const uint8_t *data, void *rx) {
-    (void)rx; memset(c,0,sizeof(*c)); c->data=data;c->count=n;c->chunk_bus_width=1;
+    memset(c,0,sizeof(*c)); c->data=data;c->rx=rx;c->count=n;c->chunk_bus_width=1;
 }
 static void spi_transfer_add(struct spi_transfer *st, struct spi_chunk *c) {
     if (!st->first) st->first=c; else st->first->next=c;
@@ -73,14 +77,26 @@ static int spi_transfer(void *bus, struct spi_transfer *st) {
     struct spi_chunk *head=st->first, *data=head->next;
     assert(head->count==4 && head->chunk_bus_width==1);
     assert(head->data[1]==0 && head->data[3]==0);
-    c->op=head->data[0]; c->cmd=head->data[2];
+    c->op=head->data[0]; c->cmd=head->data[2]; c->flags=st->st_flags;
     if(data) { assert(data->count<=8);c->len=data->count;c->width=data->chunk_bus_width;
-        memcpy(c->data,data->data,data->count); } else { c->len=0; c->width=1; }
+        if (data->rx) {
+            const uint8_t id[]={0x9a,0xbc,0xde};
+            for (int i=0;i<data->count;i++)
+                data->rx[i] = c->cmd==0x04 ? id[i] :
+                    c->cmd==0x0a ? 0x11 : c->cmd==0x0c ? 0x22 : 0x33;
+        } else if (data->data) memcpy(c->data,data->data,data->count);
+    } else { c->len=0; c->width=1; }
     if (mutate_fb && ncalls == 3) { mutate_fb[0]=0xffff; mutate_fb=NULL; }
-    if (fail_call==ncalls) { st->st_flags=SPI_F_ERROR;st->st_errno=EIO; }
+    if (fail_call==ncalls) { st->st_flags|=SPI_F_ERROR;st->st_errno=fail_errno ? fail_errno : EIO; }
     return 0;
 }
 static void spi_wait(struct spi_transfer *st) { (void)st; }
+static int config_calls, config_speeds[4], fail_config_call;
+static int spi_configure(void *dev, void *spi, int mode, int speed) {
+    (void)dev; (void)spi; assert(mode==SPI_MODE_0 && config_calls<4);
+    config_speeds[config_calls++]=speed;
+    return config_calls==fail_config_call ? EIO : 0;
+}
 static unsigned int extracts, maps;
 static bool extract_ok = true;
 static void *pmap_kernel(void) { return (void *)0x1234; }
@@ -106,6 +122,11 @@ static int cv_timedwait(int *c, int *m, int ticks) {
     (void)c; (void)m; assert(ticks==51); waits++; worker_sc->sc_stop=true; return 0;
 }
 #define aprint_error_dev(dev, ...) ((void)(dev), reports++)
+static char status_log[256];
+static void aprint_normal_dev(void *dev, const char *fmt, ...) {
+    (void)dev; va_list ap; va_start(ap,fmt);
+    vsnprintf(status_log,sizeof(status_log),fmt,ap); va_end(ap);
+}
 static _Noreturn void kthread_exit(int e) { assert(e==0); longjmp(worker_return,1); }
 
 static int kpause(const char *name, bool intr, int ticks, void *lock) {
@@ -131,6 +152,40 @@ int main(void) {
     assert(calls[0].op==2 && calls[0].cmd==0x11 && calls[0].len==0);
     assert(calls[1].cmd==0x36 && calls[1].len==2 && calls[1].data[1]==0x34);
     assert(delays==2 && last_ms==6);
+    ncalls=0; fail_call=0; fail_errno=0; config_calls=0; fail_config_call=0;
+    assert(co5300_init_sequence(&sc,init,sizeof(init))==0 && ncalls==2);
+    assert(co5300_read_status(&sc,12000000)==0);
+    assert(config_calls==2 && config_speeds[0]==1000000 &&
+        config_speeds[1]==12000000 && ncalls==6);
+    assert(calls[0].op==2 && calls[0].cmd==0x11 && calls[1].cmd==0x36);
+    const uint8_t regs[]={0x04,0x0a,0x0c,0x52};
+    const size_t lengths[]={3,1,1,1};
+    for (int i=0;i<4;i++) {
+        assert(calls[i+2].op==0x03 && calls[i+2].cmd==regs[i] &&
+            calls[i+2].flags==SPI_F_3WIRE &&
+            calls[i+2].len==lengths[i]);
+    }
+    assert(strstr(status_log,"post-init status"));
+    assert(strstr(status_log,"id=9a:bc:de") && strstr(status_log,"power=11") &&
+        strstr(status_log,"format=22") && strstr(status_log,"brightness=33"));
+    ncalls=0; config_calls=0; fail_call=2; fail_errno=EIO; status_log[0]=0;
+    assert(co5300_read_status(&sc,12000000)==0);
+    assert(config_calls==2 && config_speeds[1]==12000000 && ncalls==4);
+    assert(strstr(status_log,"power=11/error=5"));
+    ncalls=0; config_calls=0; fail_call=1; fail_errno=EOPNOTSUPP;
+    assert(co5300_read_status(&sc,12000000)==0);
+    assert(config_calls==2 && config_speeds[1]==12000000 && ncalls==1);
+    ncalls=0; config_calls=0; fail_call=0; fail_errno=0;
+    fail_config_call=1; status_log[0]=0;
+    assert(co5300_read_status(&sc,12000000)==0);
+    assert(config_calls==2 && config_speeds[0]==1000000 &&
+        config_speeds[1]==12000000 && ncalls==0);
+    assert(strstr(status_log,"id=00:00:00/error=5"));
+    config_calls=0; fail_config_call=2;
+    assert(co5300_read_status(&sc,12000000)==EIO);
+    assert(config_calls==2 && config_speeds[1]==12000000 && ncalls==4);
+    fail_config_call=0;
+    fail_call=0; fail_errno=0;
     hz=128; assert(co5300_ticks(10)==3 && co5300_ticks(50)==8);
     uint16_t fb[4] = {0xf800,0x07e0,0x001f,0x1234};
     uint8_t shadow[8]={0}, snapshot[8], wire[8], dirty[1]={1};
@@ -174,6 +229,7 @@ int main(void) {
     uint16_t fb3[12]={0}; uint8_t sh3[24]={0}, dirty3[3]={1,1,1};
     sc.sc_fb=(uintptr_t)fb3; sc.sc_height=3; sc.sc_shadow=sh3;sc.sc_dirty=dirty3;
     sc.sc_ready=true;sc.sc_stop=false;worker_sc=&sc;ncalls=0;fail_call=1;hz=1000;
+    reports=0; waits=0;
     if (setjmp(worker_return)==0) co5300_worker(&sc);
     assert(ncalls==1 && reports==1 && waits==1 && sc.sc_stop);
     puts("PASS CO5300 init, RGB565 wire order, dirty-row retry and mmap bounds");
@@ -182,7 +238,7 @@ int main(void) {
 a.work.mkdir(parents=True, exist_ok=True)
 cfile = a.work / 'co5300-test.c'
 exe = a.work / 'co5300-test'
-names = ('co5300_send', 'co5300_ticks', 'co5300_init_valid', 'co5300_init_sequence', 'co5300_to_wire', 'co5300_row', 'co5300_sysctl_status', 'co5300_mmap_valid', 'co5300_mmap', 'co5300_worker')
+names = ('co5300_send', 'co5300_read_reg', 'co5300_read_status', 'co5300_ticks', 'co5300_init_valid', 'co5300_init_sequence', 'co5300_to_wire', 'co5300_row', 'co5300_sysctl_status', 'co5300_mmap_valid', 'co5300_mmap', 'co5300_worker')
 cfile.write_text(prefix + ''.join(extract(n) for n in names) + suffix)
 subprocess.run([str(cc), '-fuse-ld=lld', '-std=c11', '-Wall', '-Wextra', '-Werror',
                 '-fsanitize=address,undefined', '-fno-sanitize-recover=all',

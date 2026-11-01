@@ -101,6 +101,69 @@ co5300_send(struct co5300_softc *sc, uint8_t opcode, uint8_t command,
 	return (transfer.st_flags & SPI_F_ERROR) ? transfer.st_errno : 0;
 }
 
+/* CO5300 reads turn the shared SIO wire around without releasing chip select. */
+static int
+co5300_read_reg(struct co5300_softc *sc, uint8_t command, uint8_t *data,
+    size_t len)
+{
+	struct spi_transfer transfer;
+	struct spi_chunk header_chunk, data_chunk;
+	uint8_t header[4] = { 0x03, 0, command, 0 };
+
+	if (data == NULL || len == 0 || len > INT_MAX)
+		return EINVAL;
+	spi_transfer_init(&transfer);
+	transfer.st_flags |= SPI_F_3WIRE;
+	spi_chunk_init(&header_chunk, sizeof(header), header, NULL);
+	spi_transfer_add(&transfer, &header_chunk);
+	spi_chunk_init(&data_chunk, (int)len, NULL, data);
+	spi_transfer_add(&transfer, &data_chunk);
+	(void)spi_transfer(sc->sc_spi, &transfer);
+	spi_wait(&transfer);
+	return (transfer.st_flags & SPI_F_ERROR) ? transfer.st_errno : 0;
+}
+
+/* Status is diagnostic only: an unsupported read never blocks panel writes. */
+static int
+co5300_read_status(struct co5300_softc *sc, unsigned int write_speed)
+{
+	uint8_t id[3] = { 0 }, power = 0, format = 0, brightness = 0;
+	int errors[4], error, restore_error;
+
+	error = spi_configure(sc->sc_dev, sc->sc_spi, SPI_MODE_0, 1000000);
+	if (error != 0) {
+		for (size_t i = 0; i < __arraycount(errors); i++)
+			errors[i] = error;
+	} else {
+		errors[0] = co5300_read_reg(sc, 0x04, id, sizeof(id));
+		if (errors[0] == EOPNOTSUPP) {
+			for (size_t i = 1; i < __arraycount(errors); i++)
+				errors[i] = errors[0];
+		} else {
+			errors[1] = co5300_read_reg(sc, 0x0a, &power,
+			    sizeof(power));
+			errors[2] = co5300_read_reg(sc, 0x0c, &format,
+			    sizeof(format));
+			errors[3] = co5300_read_reg(sc, 0x52, &brightness,
+			    sizeof(brightness));
+		}
+	}
+
+	/* Restore the panel's configured write rate even when reads fail. */
+	restore_error = spi_configure(sc->sc_dev, sc->sc_spi, SPI_MODE_0,
+	    write_speed);
+	aprint_normal_dev(sc->sc_dev,
+	    "post-init status: id=%02x:%02x:%02x/error=%d power=%02x/error=%d "
+	    "format=%02x/error=%d brightness=%02x/error=%d\n",
+	    id[0], id[1], id[2], errors[0], power, errors[1], format,
+	    errors[2], brightness, errors[3]);
+	if (restore_error != 0)
+		aprint_error_dev(sc->sc_dev,
+		    "cannot restore write speed after status read: %d\n",
+		    restore_error);
+	return restore_error;
+}
+
 /* Round up and include one tick for the current partial clock interval. */
 static int
 co5300_ticks(unsigned int ms)
@@ -378,6 +441,8 @@ co5300_deferred(device_t self)
 		(void)kpause("corst", false, co5300_ticks(80), NULL);
 	}
 	if ((error = co5300_init_sequence(sc, init, initlen)) != 0)
+		goto out_reset;
+	if ((error = co5300_read_status(sc, speed)) != 0)
 		goto out_reset;
 
 	sc->sc_rowbytes = sc->sc_width * 2;
