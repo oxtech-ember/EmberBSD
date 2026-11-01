@@ -72,6 +72,7 @@ __KERNEL_RCSID(1, "$NetBSD$");
 #define	USB1_CLK_REG		0xa74
 #define	USB_BGR_REG		0xa8c
 #define	GPU_PLL_CTRL_REG	0x030
+#define	G2D_BGR_REG		0x63c
 #define	GPU_CLK_REG		0x670
 #define	GPU_BGR_REG		0x67c
 
@@ -94,6 +95,7 @@ CFATTACH_DECL_NEW(sunxi_a100_ccu, sizeof(struct sunxi_ccu_softc),
 
 static struct sunxi_ccu_reset sun50i_a100_ccu_resets[] = {
 	SUNXI_CCU_RESET(A100_RST_MBUS, MBUS_CFG_REG, 30),
+	SUNXI_CCU_RESET(A100_RST_BUS_G2D, G2D_BGR_REG, 16),
 	SUNXI_CCU_RESET(A100_RST_BUS_GPU, GPU_BGR_REG, 16),
 	SUNXI_CCU_RESET(A100_RST_BUS_DMA, DMA_BGR_REG, 16),
 	SUNXI_CCU_RESET(A100_RST_BUS_HSTIMER, HSTIMER_BGR_REG, 16),
@@ -200,6 +202,7 @@ static struct sunxi_ccu_clk sun50i_a100_ccu_clks[] = {
 	A100_BUS(A100_CLK_APB1, "apb1", bus_parents, APB1_CFG_REG),
 	A100_BUS(A100_CLK_APB2, "apb2", bus_parents, APB2_CFG_REG),
 	A100_GPU_CORE(__BITS(1,0)),
+	SUNXI_CCU_GATE(A100_CLK_BUS_G2D, "bus-g2d", "psi", G2D_BGR_REG, 0),
 	SUNXI_CCU_GATE(A100_CLK_BUS_GPU, "bus-gpu", "psi", GPU_BGR_REG, 0),
 
 	SUNXI_CCU_GATE(A100_CLK_BUS_DMA, "bus-dma", "psi", DMA_BGR_REG, 0),

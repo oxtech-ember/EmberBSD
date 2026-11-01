@@ -33,6 +33,7 @@
  */
 
 #define	A100_RST_MBUS		0
+#define	A100_RST_BUS_G2D	2
 #define	A100_RST_BUS_GPU	3
 #define	A100_RST_BUS_DMA	6
 #define	A100_RST_BUS_HSTIMER	9
@@ -72,6 +73,7 @@
 #define	A100_CLK_AHB3		28
 #define	A100_CLK_APB1		29
 #define	A100_CLK_APB2		30
+#define	A100_CLK_BUS_G2D	35
 #define	A100_CLK_GPU		36
 #define	A100_CLK_BUS_GPU	37
 #define	A100_CLK_BUS_DMA	42

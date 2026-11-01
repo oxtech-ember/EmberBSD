@@ -22,7 +22,17 @@ sed '/^#include /d; /^__KERNEL_RCSID(/d' \
 	"$src/sys/arch/arm/sunxi/sunxi_ccu_div.c" > "$work/ccu-div.h"
 sed '/^#include /d; /^__KERNEL_RCSID(/d' \
     "$src/sys/arch/arm/sunxi/sunxi_ccu_gate.c" > "$work/ccu-gate.h"
+awk '/^#define[[:space:]]+SUNXI_CCU_RESET\(/ {copy=1} \
+    copy {print; if ($0 !~ /\\$/) exit}' \
+    "$src/sys/arch/arm/sunxi/sunxi_ccu.h" > "$work/ccu-g2d-provider.h"
+awk '/^#define[[:space:]]+SUNXI_CCU_GATE\(/ {copy=1} \
+    copy {print; if ($0 !~ /\\$/) exit}' \
+    "$src/sys/arch/arm/sunxi/sunxi_ccu.h" >> "$work/ccu-g2d-provider.h"
+sed '/^#include /d; /^__KERNEL_RCSID(/d' \
+    "$src/sys/arch/arm/sunxi/sun50i_a100_ccu.c" > \
+    "$work/sun50i_a100_ccu.c"
 "$CC" -std=c11 -Wall -Wextra -Werror -Wno-unused-parameter \
+	-Wno-unused-const-variable \
     ${GPU_CLOCK_TEST_CFLAGS:-} -I"$src/sys/arch" \
     -I"$src/sys/external/gpl2/dts/dist/include" \
     -I"$work" \
