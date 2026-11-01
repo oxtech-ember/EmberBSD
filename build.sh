@@ -64,7 +64,7 @@ then
     {
         read -r _ember_native_magic _ember_native_version _ember_native_extra
         case "${_ember_native_magic} ${_ember_native_version}" in
-        'EmberBSD-native-tools 1'|'EmberBSD-native-tools 2') ;;
+        'EmberBSD-native-tools 2') ;;
         *) echo >&2 "$0: unsupported native-tool contract"; exit 1 ;;
         esac
         if test -n "${_ember_native_extra}"

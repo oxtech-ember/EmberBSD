@@ -373,6 +373,17 @@ class RoutingTests(unittest.TestCase):
             stream.write("unexpected\n")
         self.assert_refused(fixture, "native-tool contract does not match")
 
+    def test_v1_contract_is_refused(self):
+        fixture = Fixture(self)
+        for contract in (fixture.source / "tools/native-tools/contract",
+                         fixture.routing / "contract"):
+            text = contract.read_text()
+            self.assertTrue(text.startswith("EmberBSD-native-tools 2\n"))
+            contract.write_text(text.replace(
+                "EmberBSD-native-tools 2\n",
+                "EmberBSD-native-tools 1\n", 1))
+        self.assert_refused(fixture, "unsupported native-tool contract")
+
     def test_symlink_contract_is_refused(self):
         fixture = Fixture(self)
         (fixture.routing / "contract").unlink()
