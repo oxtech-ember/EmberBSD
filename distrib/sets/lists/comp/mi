@@ -2534,6 +2534,7 @@
 ./usr/include/kerberosIV/kstream.h		comp-obsolete		obsolete
 ./usr/include/kerberosIV/ktypes.h		comp-obsolete		obsolete
 ./usr/include/kerberosIV/prot.h			comp-obsolete		obsolete
+./usr/include/krb5-types.h			comp-krb5-include	kerberos
 ./usr/include/krb5.h				comp-krb5-include	kerberos
 ./usr/include/krb5/asn1-common.h		comp-krb5-include	kerberos
 ./usr/include/krb5/asn1.h			comp-obsolete		obsolete
