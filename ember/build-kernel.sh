@@ -134,9 +134,20 @@ except SDKError as exc:
 stage=$(mktemp -d "$out/.artifacts.XXXXXX")
 : > "$out/build.log"
 kernel_obj="$out/obj/kernels/$config"
-# newvers.mk does not track BUILDINFO as a dependency under -u.
-# Refresh only this kernel's identity and retain other objects.
-rm -f "$kernel_obj/vers.c" "$kernel_obj/vers.o"
+# newvers.mk does not track BUILDINFO as a dependency under -u. Remember the
+# value accepted by the previous successful kernel build and invalidate only
+# the version object when that input changes (or its outputs are missing).
+buildinfo=${BUILDINFO:-}
+buildinfo_record="$kernel_obj/.ember-buildinfo"
+previous_buildinfo=
+if [ -f "$buildinfo_record" ]; then
+    previous_buildinfo=$(cat "$buildinfo_record"; printf 'x')
+fi
+current_buildinfo=$(printf '%s' "$buildinfo"; printf 'x')
+if [ ! -f "$buildinfo_record" ] || [ "$previous_buildinfo" != "$current_buildinfo" ] ||
+    [ ! -f "$kernel_obj/vers.c" ] || [ ! -f "$kernel_obj/vers.o" ]; then
+    rm -f "$kernel_obj/vers.c" "$kernel_obj/vers.o"
+fi
 # build.sh handles both a native build host and cross compilation. Its generated
 # wrapper retains target settings and the shared runner's native HOST_* flags.
 set -- -U -u -j"$jobs" -c "$compiler_family" -m evbarm -a aarch64 \
@@ -151,6 +162,8 @@ esac
 set -- "$@" -V "EMBER_HOST_BFD_CONFIG=$EMBER_HOST_BFD_CONFIG"
 if [ -n "${BUILDINFO:-}" ]; then set -- "$@" -V "BUILDINFO=$BUILDINFO"; fi
 (cd "$src"; run_native_os --log "$out/build.log" --append-log --build-sh -- "$@" tools "kernel=$config")
+printf '%s' "$buildinfo" > "$buildinfo_record.new"
+mv -f "$buildinfo_record.new" "$buildinfo_record"
 # Use the same selected command mapping for subsequent orchestration utilities.
 PATH="$out/native-build-tools:$host_prefix/bin:$host_prefix/sbin:$host_prefix/gnu/bin"
 export PATH

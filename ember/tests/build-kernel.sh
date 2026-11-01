@@ -498,6 +498,7 @@ test -s "$TEST_OUT/rpi5button.kmod"
 test -s "$TEST_OUT/bcmexpgpio.kmod"
 test -s "$TEST_OUT/sun60i-a733-orangepi-zero3w.dtb"
 test -s "$TEST_OUT/sun60i-a733-orangepi-zero3w-diagnostic.dtb"
+test -f "$TEST_OUT/obj/kernels/EMBER64/.ember-buildinfo"
 grep -q 'build.sh .* -m evbarm -a aarch64 ' "$TEST_LOG"
 grep -q ' -u ' "$TEST_LOG"
 grep -q ' -c clang ' "$TEST_LOG"
@@ -509,6 +510,13 @@ grep -q 'cpp .*/tools/bin/target-cpp ' "$TEST_LOG"
 grep -q 'dtc .*/tools/bin/nbdtc ' "$TEST_LOG"
 ! grep -q native-make "$TEST_LOG"
 check_contract_counts 16
+# An unchanged BUILDINFO must retain the incremental version object.
+printf 'same-buildinfo-source\n' > "$TEST_OUT/obj/kernels/EMBER64/vers.c"
+printf 'same-buildinfo-object\n' > "$TEST_OUT/obj/kernels/EMBER64/vers.o"
+: > "$TEST_LOG"
+sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1
+test "$(cat "$TEST_OUT/obj/kernels/EMBER64/vers.c")" = same-buildinfo-source
+test "$(cat "$TEST_OUT/obj/kernels/EMBER64/vers.o")" = same-buildinfo-object
 # The A133 WLAN profile adds its DTB; PCI keeps its selected kernel identity.
 export TEST_OUT="$work/wlan"
 "$TEST_SHELL" "$work/src/ember/build-kernel.sh" "$TEST_OUT" EMBER64_A133_WLAN > "$work/run.log" 2>&1
