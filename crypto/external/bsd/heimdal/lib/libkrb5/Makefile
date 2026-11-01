@@ -173,6 +173,7 @@ INCS=	krb5.h			\
 	${COMPILE_ET_INCS}
 
 INCSYMLINKS= krb5/krb5-wrapper.h /usr/include/krb5.h
+INCSYMLINKS+= krb5/krb5-types.h /usr/include/krb5-types.h
 
 MAN=						\
 	kerberos.8				\
