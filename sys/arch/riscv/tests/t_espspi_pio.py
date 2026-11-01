@@ -57,7 +57,7 @@ static uint32_t regs[64], sysreg;
 static unsigned int clocks, done_count, reset_count, writes, ctrl_writes, lockdepth;
 static uint32_t last_ctrl;
 static bool fail_update, fail_done;
-struct event { uint32_t user,misc,dlen; uint8_t bytes[64]; };
+struct event { uint32_t ctrl,user,misc,dlen; uint8_t bytes[64]; };
 static struct event events[8];
 static uint32_t rd(struct esp_spi_softc *sc, unsigned int reg);
 static void wr(struct esp_spi_softc *sc, unsigned int reg, uint32_t value);
@@ -87,7 +87,8 @@ static void wr(struct esp_spi_softc *sc, unsigned int reg, uint32_t v) {
     regs[reg/4] = v;
     if (reg == ESPSPI_CMD && v == ESPSPI_USR) {
         assert(clocks < 8); struct event *e = &events[clocks++];
-        e->user=regs[ESPSPI_USER/4]; e->misc=regs[ESPSPI_MISC/4];
+        e->ctrl=regs[ESPSPI_CTRL/4]; e->user=regs[ESPSPI_USER/4];
+        e->misc=regs[ESPSPI_MISC/4];
         assert(e->user & UINT32_C(0x00000040));
         e->dlen=regs[ESPSPI_DLEN/4];
         memcpy(e->bytes, &regs[ESPSPI_W0/4], sizeof(e->bytes));
@@ -135,11 +136,30 @@ int main(void) {
             assert(!(events[1].misc & ESPSPI_CS_KEEP_ACTIVE));
         } else assert(!(events[0].misc & ESPSPI_CS_KEEP_ACTIVE));
     }
+    /* IDF S31 CTRL.FREAD_DUAL/QUAD: bits 14/15; USER.FWRITE remains 12/13. */
+    const uint32_t fread_dual=UINT32_C(1)<<14, fread_quad=UINT32_C(1)<<15;
+    const uint32_t fread_mask=fread_dual|fread_quad;
     struct spi_chunk a=chunk(1,bytes,NULL,1), b=chunk(3,bytes+1,NULL,4);
-    struct spi_transfer st={.st_chunks=&a}; a.chunk_next=&b; clear_events();
-    assert(esp_spi_transfer(&sc,&st)==0 && st.error==0 && st.completions==1 && clocks==2);
-    assert(events[0].misc & ESPSPI_CS_KEEP_ACTIVE); assert(!(events[1].misc & ESPSPI_CS_KEEP_ACTIVE));
-    assert(!(events[0].user & ESPSPI_FWRITE_QUAD)); assert(events[1].user & ESPSPI_FWRITE_QUAD);
+    struct spi_chunk cchunk=chunk(1,bytes+4,NULL,1);
+    struct spi_transfer st={.st_chunks=&a};
+    a.chunk_next=&b; b.chunk_next=&cchunk; clear_events();
+    assert(esp_spi_transfer(&sc,&st)==0 && st.error==0 && st.completions==1 && clocks==3);
+    assert((events[0].ctrl & ESPSPI_CTRL_IDLE_HIGH)==ESPSPI_CTRL_IDLE_HIGH);
+    assert((events[1].ctrl & ESPSPI_CTRL_IDLE_HIGH)==ESPSPI_CTRL_IDLE_HIGH);
+    assert((events[2].ctrl & ESPSPI_CTRL_IDLE_HIGH)==ESPSPI_CTRL_IDLE_HIGH);
+    assert((events[0].ctrl & fread_mask)==0);
+    assert((events[1].ctrl & fread_mask)==fread_quad);
+    assert((events[2].ctrl & fread_mask)==0);
+    assert(events[0].misc & ESPSPI_CS_KEEP_ACTIVE);
+    assert(events[1].misc & ESPSPI_CS_KEEP_ACTIVE);
+    assert(!(events[2].misc & ESPSPI_CS_KEEP_ACTIVE));
+    assert(!(events[0].user & ESPSPI_FWRITE_QUAD));
+    assert(events[1].user & ESPSPI_FWRITE_QUAD);
+    assert(!(events[2].user & ESPSPI_FWRITE_QUAD));
+    a=chunk(3,bytes,NULL,2); st=(struct spi_transfer){.st_chunks=&a}; clear_events();
+    assert(esp_spi_transfer(&sc,&st)==0 && st.error==0 && st.completions==1 && clocks==1);
+    assert((events[0].ctrl & fread_mask)==fread_dual);
+    assert(events[0].user & ESPSPI_FWRITE_DUAL);
     clear_events(); fail_update=true; a=chunk(1,bytes,NULL,1); st=(struct spi_transfer){.st_chunks=&a};
     unsigned int before=reset_count; assert(esp_spi_transfer(&sc,&st)==0 && st.error==ETIMEDOUT && st.completions==1);
     assert(a.chunk_wresid==1 && reset_count==before+1 && clocks==0);
@@ -155,6 +175,8 @@ int main(void) {
     uint8_t rx[3]={0}; a=chunk(3,NULL,rx,1); st=(struct spi_transfer){.st_chunks=&a}; clear_events();
     assert(esp_spi_transfer(&sc,&st)==0 && st.error==0 && st.completions==1);
     assert((events[0].user & ESPSPI_USR_MISO) && !(events[0].user & ESPSPI_USR_MOSI));
+    assert((events[0].ctrl & fread_mask)==0);
+    assert(!(events[0].user & (ESPSPI_FWRITE_DUAL | ESPSPI_FWRITE_QUAD)));
     assert(rx[0]==0x11 && rx[1]==0x22 && rx[2]==0x33 && a.chunk_rresid==0);
     uint8_t command[]={0x03,0x00,0x04,0x00}, result[3]={0};
     struct spi_chunk command_chunk=chunk(4,command,NULL,1);

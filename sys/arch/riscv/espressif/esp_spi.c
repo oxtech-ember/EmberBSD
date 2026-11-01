@@ -275,6 +275,8 @@ esp_spi_block(struct esp_spi_softc *sc, const uint8_t *tx, uint8_t *rx,
     u_int count, u_int width, bool more, bool sio)
 {
 	uint32_t user = sc->sc_user, word;
+	uint32_t ctrl = ESPSPI_READ(sc, ESPSPI_CTRL) &
+	    ~ESPSPI_CTRL_DATA_MODE_MASK;
 	int error;
 
 	KASSERT(count > 0 && count <= ESPSPI_FIFO_SIZE);
@@ -286,10 +288,14 @@ esp_spi_block(struct esp_spi_softc *sc, const uint8_t *tx, uint8_t *rx,
 		user |= ESPSPI_DOUTDIN;
 	if (sio)
 		user |= ESPSPI_SIO;
-	if (width == 2)
+	if (width == 2) {
 		user |= ESPSPI_FWRITE_DUAL;
-	if (width == 4)
+		ctrl |= ESPSPI_FREAD_DUAL;
+	}
+	if (width == 4) {
 		user |= ESPSPI_FWRITE_QUAD;
+		ctrl |= ESPSPI_FREAD_QUAD;
+	}
 
 	ESPSPI_WRITE(sc, ESPSPI_DMA_CONF, ESPSPI_DMA_BASE |
 	    ESPSPI_TX_FIFO_RESET | ESPSPI_RX_FIFO_RESET);
@@ -300,6 +306,7 @@ esp_spi_block(struct esp_spi_softc *sc, const uint8_t *tx, uint8_t *rx,
 			memcpy(&word, tx + n, MIN(4, count - n));
 		ESPSPI_WRITE(sc, ESPSPI_W0 + n, word);
 	}
+	ESPSPI_WRITE(sc, ESPSPI_CTRL, ctrl);
 	ESPSPI_WRITE(sc, ESPSPI_USER, user);
 	ESPSPI_WRITE(sc, ESPSPI_DLEN, count * 8 - 1);
 	ESPSPI_WRITE(sc, ESPSPI_MISC, sc->sc_misc |
