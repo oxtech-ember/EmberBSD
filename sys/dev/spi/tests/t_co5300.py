@@ -47,6 +47,7 @@ typedef uint64_t paddr_t;
 #define MAX(a,b) ((a) > (b) ? (a) : (b))
 #define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
 struct co5300_softc { void *sc_spi, *sc_bst, *sc_dev; unsigned int sc_width, sc_height;
+    uint32_t sc_tx_width;
     uintptr_t sc_fb; size_t sc_rowbytes, sc_alloc;
     uint8_t *sc_shadow, *sc_snapshot, *sc_wire, *sc_dirty;
     int sc_lock, sc_cv; uint32_t sc_rows_changed, sc_rows_sent, sc_row_errors;
@@ -55,6 +56,17 @@ struct sysctlnode { void *sysctl_data; size_t sysctl_size; };
 #define SYSCTLFN_ARGS struct sysctlnode *rnode
 #define SYSCTLFN_CALL(node) node
 static char status_text[128];
+static int dt_width_present, dt_width_error;
+static uint32_t dt_width_value;
+static bool of_hasprop(int phandle, const char *name) {
+    assert(phandle==42 && !strcmp(name,"spi-tx-bus-width"));
+    return dt_width_present;
+}
+static int of_getprop_uint32(int phandle, const char *name, uint32_t *value) {
+    assert(phandle==42 && !strcmp(name,"spi-tx-bus-width"));
+    if (dt_width_error) return dt_width_error;
+    *value=dt_width_value; return 0;
+}
 static int sysctl_lookup(struct sysctlnode *n) {
     assert(n->sysctl_size <= sizeof(status_text));
     memcpy(status_text, n->sysctl_data, n->sysctl_size); return 0;
@@ -177,6 +189,21 @@ suffix = r'''
 int main(void) {
     uint8_t init[] = {0x11,0,0,80, 0x36,2,0,5,0x12,0x34};
     struct co5300_softc sc = {0};
+    uint32_t selected_width;
+    assert(co5300_get_tx_width(42,&selected_width)==0 && selected_width==4);
+    dt_width_present=1; dt_width_value=1;
+    assert(co5300_get_tx_width(42,&selected_width)==0 && selected_width==1);
+    dt_width_value=4;
+    assert(co5300_get_tx_width(42,&selected_width)==0 && selected_width==4);
+    dt_width_value=2;
+    assert(co5300_get_tx_width(42,&selected_width)==EINVAL);
+    dt_width_value=0;
+    assert(co5300_get_tx_width(42,&selected_width)==EINVAL);
+    dt_width_error=EIO;
+    assert(co5300_get_tx_width(42,&selected_width)==EINVAL);
+    dt_width_error=0;
+    assert(co5300_get_tx_width(42,NULL)==EINVAL);
+    dt_width_present=0;
     uint8_t maxinit[1028]={0};
     assert(co5300_init_valid(maxinit,1024));
     assert(!co5300_init_valid(maxinit,0) && !co5300_init_valid(maxinit,1028));
@@ -261,7 +288,7 @@ int main(void) {
     uint16_t fb[4] = {0xf800,0x07e0,0x001f,0x1234};
     uint8_t shadow[8]={0}, snapshot[8], wire[8], dirty[1]={1};
     uint8_t expected[]={0xf8,0,0x07,0xe0,0,0x1f,0x12,0x34};
-    sc.sc_width=4; sc.sc_fb=(uintptr_t)fb; sc.sc_rowbytes=8;
+    sc.sc_width=4; sc.sc_tx_width=4; sc.sc_fb=(uintptr_t)fb; sc.sc_rowbytes=8;
     sc.sc_shadow=shadow;sc.sc_snapshot=snapshot;sc.sc_wire=wire;sc.sc_dirty=dirty;
     ncalls=0; fail_call=3; assert(co5300_row(&sc,0)==EIO && ncalls==3);
     assert(dirty[0] && !memcmp(shadow,"\0\0\0\0\0\0\0\0",8));
@@ -270,6 +297,18 @@ int main(void) {
     assert(calls[2].op==0x32 && calls[2].cmd==0x2c && calls[2].width==4);
     assert(!memcmp(calls[2].data,expected,8));
     ncalls=0; fail_call=0; assert(co5300_row(&sc,0)==0 && ncalls==3 && !dirty[0]);
+    sc.sc_tx_width=1; dirty[0]=1; ncalls=0;
+    assert(co5300_row(&sc,0)==0 && ncalls==3 && !dirty[0]);
+    assert(calls[2].op==0x02 && calls[2].cmd==0x2c &&
+        calls[2].width==1 && calls[2].chunks==1 && calls[2].wire_len==12 &&
+        !memcmp(calls[2].wire,(const uint8_t[]){0x02,0,0x2c,0,
+        0xf8,0,0x07,0xe0,0,0x1f,0x12,0x34},12));
+    sc.sc_tx_width=4; dirty[0]=1; ncalls=0;
+    assert(co5300_row(&sc,0)==0 && ncalls==3 && !dirty[0]);
+    assert(calls[2].op==0x32 && calls[2].cmd==0x2c &&
+        calls[2].width==4 && calls[2].chunks==2 && calls[2].wire_len==12 &&
+        !memcmp(calls[2].data,expected,8));
+    ncalls=0;
     assert(!memcmp(shadow,fb,8));ncalls=0;assert(co5300_row(&sc,0)==0 && ncalls==0);
     fb[0]=0xabcd;fail_call=1;assert(co5300_row(&sc,0)==EIO && ncalls==1);
     ncalls=0; fail_call=0; mutate_fb=fb;
@@ -277,12 +316,12 @@ int main(void) {
     assert(calls[2].data[0]==0xab && calls[2].data[1]==0xcd && fb[0]==0xffff);
     ncalls=0; assert(co5300_row(&sc,0)==0 && ncalls==3);
     assert(calls[2].data[0]==0xff && calls[2].data[1]==0xff);
-    assert(sc.sc_rows_changed==5 && sc.sc_rows_sent==3 && sc.sc_row_errors==2 && sc.sc_last_error==EIO);
+    assert(sc.sc_rows_changed==7 && sc.sc_rows_sent==5 && sc.sc_row_errors==2 && sc.sc_last_error==EIO);
     struct sysctlnode status_node={ .sysctl_data=&sc };
     assert(co5300_sysctl_status(&status_node)==0);
     char expected_status[128];
     snprintf(expected_status,sizeof(expected_status),
-        "rows_changed=5 rows_sent=3 errors=2 last_error=%d",EIO);
+        "rows_changed=7 rows_sent=5 errors=2 last_error=%d",EIO);
     assert(!strcmp(status_text,expected_status));
     assert(co5300_mmap_valid(0,8192) && co5300_mmap_valid(4096,8192));
     assert(!co5300_mmap_valid(-1,8192) && !co5300_mmap_valid(1,8192));
@@ -303,13 +342,13 @@ int main(void) {
     reports=0; waits=0;
     if (setjmp(worker_return)==0) co5300_worker(&sc);
     assert(ncalls==1 && reports==1 && waits==1 && sc.sc_stop);
-    puts("PASS CO5300 init, RGB565 wire order, dirty-row retry and mmap bounds");
+    puts("PASS CO5300 width selection, pixel wire format, init and mmap bounds");
 }
 '''
 a.work.mkdir(parents=True, exist_ok=True)
 cfile = a.work / 'co5300-test.c'
 exe = a.work / 'co5300-test'
-names = ('co5300_send', 'co5300_read_reg', 'co5300_read_status', 'co5300_ticks', 'co5300_init_valid', 'co5300_init_sequence', 'co5300_to_wire', 'co5300_row', 'co5300_sysctl_status', 'co5300_mmap_valid', 'co5300_mmap', 'co5300_worker')
+names = ('co5300_get_tx_width', 'co5300_send', 'co5300_read_reg', 'co5300_read_status', 'co5300_ticks', 'co5300_init_valid', 'co5300_init_sequence', 'co5300_to_wire', 'co5300_row', 'co5300_sysctl_status', 'co5300_mmap_valid', 'co5300_mmap', 'co5300_worker')
 cfile.write_text(prefix + ''.join(extract(n) for n in names) + suffix)
 subprocess.run([str(cc), '-fuse-ld=lld', '-std=c11', '-Wall', '-Wextra', '-Werror',
                 '-fsanitize=address,undefined', '-fno-sanitize-recover=all',

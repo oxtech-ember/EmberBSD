@@ -45,6 +45,7 @@ struct co5300_softc {
 	struct fdtbus_regulator *sc_power;
 	int sc_phandle;
 	uint32_t sc_width, sc_height;
+	uint32_t sc_tx_width;
 	vaddr_t sc_fb;
 	size_t sc_size, sc_alloc, sc_rowbytes;
 	uint8_t *sc_shadow, *sc_snapshot, *sc_wire, *sc_dirty;
@@ -76,6 +77,24 @@ static int
 co5300_match(device_t parent, cfdata_t match, void *aux)
 {
 	return spi_compatible_match(aux, match, co5300_compat);
+}
+
+static int
+co5300_get_tx_width(int phandle, uint32_t *tx_width)
+{
+	uint32_t width;
+
+	if (tx_width == NULL)
+		return EINVAL;
+	if (!of_hasprop(phandle, "spi-tx-bus-width")) {
+		*tx_width = 4;
+		return 0;
+	}
+	if (of_getprop_uint32(phandle, "spi-tx-bus-width", &width) != 0 ||
+	    (width != 1 && width != 4))
+		return EINVAL;
+	*tx_width = width;
+	return 0;
 }
 
 /* A complete transaction holds CS from the opcode through its data. */
@@ -260,8 +279,8 @@ co5300_row(struct co5300_softc *sc, unsigned int y)
 	if (error == 0)
 		error = co5300_send(sc, 0x02, 0x2b, ywin, sizeof(ywin), 1);
 	if (error == 0)
-		error = co5300_send(sc, 0x32, 0x2c, sc->sc_wire,
-		    sc->sc_rowbytes, 4);
+		error = co5300_send(sc, sc->sc_tx_width == 1 ? 0x02 : 0x32,
+		    0x2c, sc->sc_wire, sc->sc_rowbytes, sc->sc_tx_width);
 	if (error == 0) {
 		memcpy(shadow, sc->sc_snapshot, sc->sc_rowbytes);
 		sc->sc_dirty[y] = 0;
@@ -409,6 +428,12 @@ co5300_deferred(device_t self)
 	prop_dictionary_t props = device_properties(self);
 	struct genfb_ops ops = { .genfb_ioctl = co5300_ioctl,
 	    .genfb_mmap = co5300_mmap };
+
+	error = co5300_get_tx_width(sc->sc_phandle, &sc->sc_tx_width);
+	if (error != 0) {
+		aprint_error_dev(self, "invalid spi-tx-bus-width\n");
+		return;
+	}
 
 	init = fdtbus_get_prop(sc->sc_phandle, "chipone,init-sequence", &initlen);
 	if (of_getprop_uint32(sc->sc_phandle, "width", &sc->sc_width) != 0 ||

@@ -1,9 +1,9 @@
 # CO5300 SPI framebuffer
 
 `cofb` attaches to the `chipone,co5300` SPI child of an FDT SPI bus. The
-controller must support four-line transmit, retain chip select throughout a
-multi-chunk transfer, and support the configured SPI mode 0 frequency. The
-panel node supplies `width` and `height` (both 1–480, width divisible by 4),
+controller must support the selected transmit width, retain chip select
+throughout a multi-chunk transfer, and support the configured SPI mode 0
+frequency. The panel node supplies `width` and `height` (both 1–480, width divisible by 4),
 `spi-max-frequency`, a `power-supply` regulator, and a nonempty
 `chipone,init-sequence`. A `reset-gpios` GPIO is optional: its logical active
 level is asserted for 10 ms and released for 150 ms; without it the driver
@@ -19,6 +19,16 @@ and must configure native RGB565.
 For ordinary single-line writes, the four-byte command header and parameters
 are coalesced into one chunk when the combined packet is at most 64 bytes;
 larger writes and multi-line data remain separate chunks.
+
+The optional `spi-tx-bus-width` property selects pixel writes: `1` uses the
+CO5300 single-line command/pixel-write opcode `0x02`; `4` uses the existing
+four-line pixel-write opcode `0x32` and is the default when the property is
+absent. Other values are rejected. Initialization commands always use the
+single-line opcode. The single-line pixel path is intended for low-speed
+controllers such as GPIO SPI, capped at 100 kHz; a full 480 × 480 RGB565 image
+requires at least 37 seconds on the wire at that rate, before command and GPIO
+overhead. The opcode assignments follow the CO5300 datasheet, page 20. This
+mode is selected by configuration and does not fall back after transfer errors.
 
 After the configured init sequence, the driver makes a best-effort status
 read at 1 MHz when the SPI controller supports `SPI_CAP_3WIRE`. It sends
