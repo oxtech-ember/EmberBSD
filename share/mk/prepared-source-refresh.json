@@ -254,6 +254,34 @@
         "libarchive.a",
         "libarchive_fe.a"
       ]
+    },
+    "EMBER_MDNS_SOURCE": {
+      "producer_dirs": [
+        "external/apache2/mDNSResponder/lib",
+        "external/apache2/mDNSResponder/nss",
+        "external/apache2/mDNSResponder/usr.bin/dns-sd",
+        "external/apache2/mDNSResponder/usr.sbin/mdnsd"
+      ],
+      "header_prefixes": [
+        "usr/include/dns_sd.h"
+      ],
+      "consumer_dirs": [],
+      "linked_names": [
+        "libdns_sd.a",
+        "libdns_sd.so"
+      ]
+    },
+    "EMBER_DHCPCD_SOURCE": {
+      "producer_dirs": [
+        "external/bsd/dhcpcd/sbin/dhcpcd",
+        "external/bsd/dhcpcd/libexec/dhcpcd-run-hooks",
+        "external/bsd/dhcpcd/libexec/dhcpcd-hooks",
+        "external/bsd/dhcpcd/examples/hooks",
+        "external/bsd/dhcpcd/examples/conf"
+      ],
+      "header_prefixes": [],
+      "consumer_dirs": [],
+      "linked_names": []
     }
   },
   "header_independent_object_patterns": [

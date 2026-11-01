@@ -139,8 +139,8 @@ libedit=$1 llvm_source=$2 host_bfd=$3 jobs=$4 git=$5 python=$6 shasum=$7
 shift 7
 libarchive=$1 libevent=$2 byacc=$3 iscsi=$4 libpcap=$5 tcpwrappers=$6
 shift 6
-libcbor=$1 libfido2=$2 libfetch=$3
-shift 3
+libcbor=$1 libfido2=$2 libfetch=$3 mdns=$4 dhcpcd=$5
+shift 5
 runtime_prefix=$1 resource=$2 unwinder=$3 compiler_resource=$4 version=$5 machine=$6 selected_builtins=$7
 nativepython=$host_prefix/bin/python3.15
 runner=$sdk/scripts/run-native-os.py
@@ -197,9 +197,16 @@ for input in "$src/build.sh" "$0" "$here/cix-p1-native.py" "$here/cix-p1-i18n.py
     "$libevent/emberbsd-prepared-source.json" "$byacc/emberbsd-prepared-source.json" \
     "$iscsi/emberbsd-prepared-source.json" "$libpcap/emberbsd-prepared-source.json" \
     "$tcpwrappers/emberbsd-prepared-source.json" "$libcbor/emberbsd-prepared-source.json" \
-    "$libfido2/emberbsd-prepared-source.json" "$libfetch/emberbsd-prepared-source.json"; do
+    "$libfido2/emberbsd-prepared-source.json" "$libfetch/emberbsd-prepared-source.json" \
+    "$mdns/emberbsd-prepared-source.json" "$dhcpcd/emberbsd-prepared-source.json" \
+    "$dhcpcd/hooks/dhcpcd-run-hooks" "$dhcpcd/hooks/20-resolv.conf"; do
     "$shasum" -a 256 "$input" >> "$out/BUILD-INPUTS.pending"
 done
+mkdir -p "$out/dhcpcd-hooks"
+cp "$dhcpcd/hooks/dhcpcd-run-hooks" "$out/dhcpcd-hooks/dhcpcd-run-hooks"
+cp "$dhcpcd/hooks/20-resolv.conf" "$out/dhcpcd-hooks/20-resolv.conf"
+(cd "$out" && "$shasum" -a 256 dhcpcd-hooks/dhcpcd-run-hooks \
+    dhcpcd-hooks/20-resolv.conf > DHCPCD-HOOKS-SHA256.txt)
 "$shasum" -a 256 "$0" "$here/cix-p1-native.py" "$here/cix-p1-i18n.py" > "$out/PROFILE-SHA256.txt"
 if [ -n "$unwinder" ]; then
     "$shasum" -a 256 "$unwinder" >> "$out/BUILD-INPUTS.pending"
@@ -223,7 +230,8 @@ fi
     -V "EMBER_LIBEVENT_SOURCE=$libevent" -V "EMBER_BYACC_SOURCE=$byacc" \
     -V "EMBER_ISCSI_SOURCE=$iscsi" -V "EMBER_LIBPCAP_SOURCE=$libpcap" \
     -V "EMBER_TCP_WRAPPERS_SOURCE=$tcpwrappers" -V "EMBER_LIBCBOR_SOURCE=$libcbor" \
-    -V "EMBER_LIBFIDO2_SOURCE=$libfido2" -V "EMBER_LIBFETCH_SOURCE=$libfetch" "$@" \
+    -V "EMBER_LIBFIDO2_SOURCE=$libfido2" -V "EMBER_LIBFETCH_SOURCE=$libfetch" \
+    -V "EMBER_MDNS_SOURCE=$mdns" -V "EMBER_DHCPCD_SOURCE=$dhcpcd" "$@" \
     -V MKDEBUG=no -V MKDEBUGLIB=no -V MKX11=no -V MKCXX=no -V MKCOMPAT=no \
     -V MKKMOD=no -V MKGCCCMDS=no -V MKGDB=no -V MKBINUTILS=no \
     -V MKATF=no -V MKKYUA=no -V MKMAN=no -V MKDOC=no -V MKINFO=no \

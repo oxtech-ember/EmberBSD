@@ -1211,9 +1211,13 @@ do_dhcpcd()
 	local op="$1"
 	local failed=0
 
-	find_file_in_dirlist dhcpcd.conf "dhcpcd.conf" \
-	    "${SRC_DIR}/external/bsd/dhcpcd/dist/src" \
-	    "${SRC_DIR}/etc" || return 1
+	if [ -n "${EMBER_DHCPCD_SOURCE:-}" ]; then
+		find_file_in_dirlist dhcpcd.conf "dhcpcd.conf" \
+		    "${EMBER_DHCPCD_SOURCE}/src" "${SRC_DIR}/etc" || return 1
+	else
+		find_file_in_dirlist dhcpcd.conf "dhcpcd.conf" \
+		    "${SRC_DIR}/etc" || return 1
+	fi
 			# ${dir} is set by find_file_in_dirlist()
 	populate_dir "$op" true "${dir}" "${DEST_DIR}/etc" 644 dhcpcd.conf
 	failed=$(( ${failed} + $? ))

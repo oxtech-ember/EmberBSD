@@ -23,32 +23,48 @@ an active fallback, including when the DHCP reply arrives after DAD.
 Failed address application does not discard fallback connectivity.
 Static, INFORM and explicit last-lease behavior retain separate paths.
 
-This changes `external/bsd/dhcpcd/dist/src/dhcp.c`. A kernel-only update does
-not replace `/sbin/dhcpcd`. Build the client from the corrected OS revision
-with an identified, compatible EmberBSD sysroot. Preserve its existing
-configuration, hooks and previous executable during installation.
+The corrected source and shared patch are maintained by the common Ports
+`net/dhcpcd-source` recipe. The shared behavioral fixture is maintained beside
+that recipe in Ports; OS tests consume the selected prepared source tree.
+The DHCP state fix itself is tracked in
+[commit 4cbeb4ea](https://github.com/oxtech-ember/EmberBSD-Ports/commit/4cbeb4eaf5378a3f01d8d740590dc974ccf88ca3).
+The OS build selects that prepared tree through `EMBER_DHCPCD_SOURCE`; it
+does not use a second vendored copy. A kernel-only update does not replace
+`/sbin/dhcpcd`. Build the client with an identified, compatible EmberBSD
+sysroot. Preserve its existing configuration, hooks and previous executable
+during installation.
 
 ## Regression
 
-The fixture extracts complete production functions from the selected source.
-It replaces OS I/O and timers. It does not parse DHCP packets or emulate a
-physical radio. Run it on the host with a new output directory:
+The canonical fixture extracts complete production functions and headers from
+the selected prepared source in the Ports checkout. It replaces OS I/O and
+timers; it does not parse DHCP packets or emulate a physical radio. Select the
+host-prefix compiler and tools, then run it with a new output directory:
 
 ```sh
-sh ember/tests/dhcpcd-dad.sh "$PWD" /absolute/new-check-directory
+CC=/absolute/host-prefix/bin/clang \
+TEST_AWK=/absolute/host-prefix/bin/nawk \
+TEST_SHASUM=/absolute/host-prefix/bin/shasum \
+/absolute/host-prefix/bin/mksh /absolute/EmberBSD-Ports/pkgsrc/net/dhcpcd/tests/dhcpcd-dad.sh \
+  /absolute/prepared-dhcpcd /absolute/new-check-directory
 ```
 
-To test an older source file, pass its absolute path as the third argument.
-The original source must fail the unconfirmed-lease cases. The revision with
-only the DAD guard must fail the active-fallback case.
+The selected path is the prepared source root; its `src/` directory supplies
+`dhcp.c`, `dhcp.h` and the other headers. To test an older `dhcp.c` against
+those selected headers, pass its absolute path as the third argument. The
+original source must fail the unconfirmed-lease cases. The revision with only
+the DAD guard must fail the active-fallback case.
 
 For target execution, use the same test with the cross compiler:
 
 ```sh
 CC=/absolute/toolchain/bin/aarch64--netbsd-gcc \
+TEST_AWK=/absolute/host-prefix/bin/nawk \
+TEST_SHASUM=/absolute/host-prefix/bin/shasum \
 CFLAGS='--sysroot=/absolute/emberbsd-sysroot -O2 -g -std=c11 -Wall -Wextra -Werror' \
 DHCPCD_DAD_RUN=0 \
-sh ember/tests/dhcpcd-dad.sh "$PWD" /absolute/new-target-check-directory
+/absolute/host-prefix/bin/mksh /absolute/EmberBSD-Ports/pkgsrc/net/dhcpcd/tests/dhcpcd-dad.sh \
+  /absolute/prepared-dhcpcd /absolute/new-target-check-directory
 ```
 
 Copy the resulting `check` executable to the selected device and run it there.
@@ -56,7 +72,8 @@ Use the existing `build.sh` make wrapper to build the client:
 
 ```sh
 /absolute/tools/bin/nbmake-evbarm \
-    -C external/bsd/dhcpcd/sbin/dhcpcd dhcpcd
+    -C external/bsd/dhcpcd/sbin/dhcpcd \
+    EMBER_DHCPCD_SOURCE=/absolute/prepared-dhcpcd dhcpcd
 ```
 
 Record the wrapper configuration, OS revision, sysroot origin and output hash.
@@ -86,8 +103,8 @@ The installed client SHA256 was
 `090fd24c8cc00eed07d0c49c832ba81ddd161f9de3f7c42eaed8b39a101316d7`.
 Its normal INET, ARP, IPv4LL, INET6, DHCPv6, AUTH and PRIVSEP features remained enabled.
 
-All 77 production-function checks passed under host ASan/UBSan and on a physical
-AArch64 Pi 5. Negative controls failed on the affected earlier revisions.
+The shared Ports fixture reported 77 production-function checks under host ASan/UBSan
+and on a physical AArch64 Pi 5. Negative controls failed on the affected earlier revisions.
 Valgrind and LeakSanitizer were not run on this platform.
 The fixture replaces I/O; hardware checks below test the real network path.
 
@@ -97,7 +114,7 @@ GCC 16.2.0 `-fanalyzer` retained one context-owned descriptor warning.
 Apple Clang 21 Static Analyzer retained one option-parser dead-store warning.
 No new diagnostics appeared. These findings are outside the changed state transitions;
 they do not constitute a clean analysis of the imported module.
-The fixture retained four Cppcheck findings: three const suggestions and one
+The earlier duplicate OS fixture retained four Cppcheck findings: three const suggestions and one
 condition fixed by its I/O stub. Its Clang analysis produced no findings.
 
 On a Pi 5 Model B with 8 GiB RAM, all six controlled WPA2 reconnects recovered

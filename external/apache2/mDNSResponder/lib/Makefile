@@ -5,7 +5,7 @@
 LIB=	dns_sd
 
 SRCS=	dnssd_clientlib.c dnssd_clientstub.c dnssd_ipc.c  
-CPPFLAGS+=-I${DIST}/mDNSShared -I${DIST}/mDNSCore -DmDNSResponderVersion=2559
+CPPFLAGS+=-I${DIST}/mDNSShared -I${DIST}/mDNSCore
 
 COPTS.dnssd_clientstub.c += -Wno-stack-protector
 

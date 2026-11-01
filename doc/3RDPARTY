@@ -355,18 +355,20 @@ Notes:
 Use the dhcp2netbsd script.
 
 Package:	dhcpcd
-Version:	10.2.3
-Current Vers:	10.2.3
+Version:	10.5.2 (active common Ports source)
+Current Vers:	10.5.2
 Maintainer:	roy
 Archive Site:	https://github.com/NetworkConfiguration/dhcpcd/releases
 Home Page:	https://roy.marples.name/projects/dhcpcd/
 Home Page:	https://github.com/NetworkConfiguration/dhcpcd
-Date:		2025-02-12
 License:	BSD (2-clause)
-Location:	external/bsd/dhcpcd/dist
+Location:	external/bsd/dhcpcd (OS integration); common Ports net/dhcpcd-source
 Notes:
-Please submit all changes upstream.
-Import using the import-src make target.
+The OS selects the prepared common source through EMBER_DHCPCD_SOURCE.
+The recipe is in EmberBSD-Ports commit 99dfa0970d5f0c524d0ccedc19ce1d4f05c70cff;
+the DHCP state fix is in commit 4cbeb4eaf5378a3f01d8d740590dc974ccf88ca3.
+The former 10.2.3 vendor snapshot was removed after migrating the OS build
+and regression fixture.
 
 Package:	drm
 Version:	Linux 5.6-rc3, upstream tag v5.6-rc3
@@ -883,20 +885,23 @@ Notes:
 Uses libc's ohash
 
 Package:	mDNSResponder
-Version:	2559.1.1
-Current Vers:	2559.1.1
+Version:	2881.120.11 (active common Ports source)
+Current Vers:	2881.120.11
 Maintainer:	Apple
-Archive Site:	https://www.opensource.apple.com/tarballs/mDNSResponder/
+Archive Site:	https://github.com/apple-oss-distributions/mDNSResponder
 Home Page:	https://developer.apple.com/bonjour/
-Date:		2024-10-26
 Mailing List:	bonjour-dev@lists.apple.com
+Responsible:	EmberBSD Ports and OS
 License:	Apache2 (mdnsd), BSD 3-clause (libdns_sd),
-		BSD 3-clause like (dns-sd)
-Responsible:	tsarna, christos
-Location:	external/apache2/mDNSResponder/dist
+	BSD 3-clause like (dns-sd)
+Location:	external/apache2/mDNSResponder (OS integration); common Ports net/mDNSResponder-source
 Vendor tag:	APPLE
-Release tag:	mdnsresponder-X-Y-Z for mDNSResponder X.Y.Z
+Release tag:	mDNSResponder-2881.120.11
 Notes:
+The OS selects the prepared common source through EMBER_MDNS_SOURCE.
+The recipe and source provenance are in EmberBSD-Ports commit
+99dfa0970d5f0c524d0ccedc19ce1d4f05c70cff. The former 2559.1.1 vendor
+snapshot was removed after migrating the OS build producers.
 
 Package:	mandoc
 Version:	1.14.6

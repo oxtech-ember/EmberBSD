@@ -119,9 +119,12 @@ def fixture(base, name):
     directory.mkdir()
     f = {key: directory / value for key, value in [('dir', '.'), ('cohort', 'cohort'), ('src', 'source'),
          ('tools', 'tools'), ('firmware', 'firmware.bin'), ('out', 'output'), ('log', 'calls.log')]}
-    hooks = f['src'] / 'external/bsd/dhcpcd/dist/hooks'
+    hooks = f['cohort'] / 'dhcpcd-hooks'
     write(hooks / 'dhcpcd-run-hooks', f'#!{shell}\nexit 0\n', 0o755)
     write(hooks / '20-resolv.conf', '# synthetic DNS hook\n')
+    write(f['cohort'] / 'DHCPCD-HOOKS-SHA256.txt', ''.join(
+        hashlib.sha256(path.read_bytes()).hexdigest() + '  dhcpcd-hooks/' + path.name + '\n'
+        for path in (hooks / 'dhcpcd-run-hooks', hooks / '20-resolv.conf')))
     write(f['src'] / 'sys/dev/ic/rtw88-firmware.LICENSE', 'Synthetic firmware licence\n')
     write(f['src'] / 'external/realtek/rtw89/dist/LICENCE.rtlwifi_firmware.txt', 'Synthetic firmware licence\n')
     write(f['src'] / 'etc/group', 'wheel:*:0:root\noperator:*:5:root\ntty:*:4:\nkmem:*:2:\n')
@@ -197,6 +200,25 @@ def reject(f, label):
 
 with tempfile.TemporaryDirectory(prefix='ember-cix-root-image-') as name:
     base = Path(name)
+    if os.environ.get('CIX_TEST_NETWORK_INPUTS_ONLY') == '1':
+        f = fixture(base, 'hooks-good')
+        ok, output, calls = run_stager(f)
+        check(ok, 'verified DHCP hooks: ' + output)
+        check((f['out'] / 'root/libexec/dhcpcd-hooks/20-resolv.conf').read_text() ==
+              '# synthetic DNS hook\n', 'selected DHCP hook installed')
+        f = fixture(base, 'hooks-changed')
+        write(f['cohort'] / 'dhcpcd-hooks/20-resolv.conf', '# modified hook\n')
+        reject(f, 'changed DHCP hook')
+        f = fixture(base, 'hooks-malformed')
+        with (f['cohort'] / 'DHCPCD-HOOKS-SHA256.txt').open('a') as output:
+            output.write('malformed trailing record\n')
+        reject(f, 'malformed DHCP hook inventory')
+        f = fixture(base, 'binaries-malformed')
+        with (f['cohort'] / 'BINARIES-SHA256.txt').open('a') as output:
+            output.write('malformed trailing record\n')
+        reject(f, 'malformed binary inventory')
+        print('PASS: CIX root DHCP hook selection and integrity')
+        raise SystemExit(0)
     f = fixture(base, 'forbidden-device')
     result = subprocess.run([python, '-O', str(f['tools'] / 'bin/nbmakefs'), '/dev/not-a-real-device'],
                             env=f['env'], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -217,10 +239,18 @@ with tempfile.TemporaryDirectory(prefix='ember-cix-root-image-') as name:
     check(not success and f['out'].is_symlink(), 'dangling output symlink rejected unchanged')
     check(not calls, 'output symlink rejected before input tools')
     for name, path in (('unverified-cohort', 'BUILD-INPUTS.txt'), ('missing-binary-receipt', 'BINARIES-SHA256.txt'),
-                       ('missing-data-receipt', 'I18N-INVENTORY.json')):
+                       ('missing-data-receipt', 'I18N-INVENTORY.json'),
+                       ('missing-hooks-receipt', 'DHCPCD-HOOKS-SHA256.txt')):
         f = fixture(base, name)
         (f['cohort'] / path).unlink()
         reject(f, name)
+    f = fixture(base, 'changed-dhcp-hook')
+    write(f['cohort'] / 'dhcpcd-hooks/20-resolv.conf', '# modified hook\n')
+    reject(f, 'changed DHCP hook')
+    f = fixture(base, 'malformed-dhcp-hook-inventory')
+    with (f['cohort'] / 'DHCPCD-HOOKS-SHA256.txt').open('a') as output:
+        output.write('malformed trailing record\n')
+    reject(f, 'malformed DHCP hook inventory')
     for index, path in enumerate(i18n_required):
         f = fixture(base, f'missing-data-{index}')
         (f['cohort'] / 'dest/usr/share/i18n' / path).unlink()

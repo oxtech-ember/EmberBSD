@@ -9,7 +9,12 @@ printf '%s\n' "$TEST_BUILD_ARGS" > "$dest/../build-flags"
 printf '%s\n' "$dest" > "$wrapper.dest"
 cat > "$wrapper" <<'WRAPPER'
 #!@SHELL@
+set -e
 dest=$(cat "$0.dest")
+parent()
+{
+  case "$1" in */*) printf '%s\n' "${1%/*}";; *) printf '.\n';; esac
+}
 printf '%s\n' "$*" >> "$dest/../events"
 printf '%s\n' "$CPPFLAGS" > "$dest/../header-flags"
 case "$*" in *"/sbin/mknod "*"$TEST_FAIL_MKNOD_STAGE")
@@ -31,11 +36,11 @@ case "$*" in *'/share/i18n/'*' install')
   for file in $files; do
     test "$file" != "$TEST_OMIT_DATA" || continue
     rel=usr/share/i18n/$file
-    mkdir -p "$dest/$(dirname "$rel")"
-    dir=$(dirname "$rel")
+    mkdir -p "$dest/$(parent "$rel")"
+    dir=$(parent "$rel")
     while [ "$dir" != . ]; do
       printf './%s type=dir uname=root gname=wheel mode=0755\n' "$dir" >> "$dest/METALOG"
-      dir=$(dirname "$dir")
+      dir=$(parent "$dir")
     done
     printf 'synthetic native recipe output\n' > "$dest/$rel"
     printf './%s type=file uname=root gname=wheel mode=0444 size=%s\n' \
@@ -65,7 +70,7 @@ case "$*" in
       usr/bin/passwd usr/sbin/pwd_mkdb usr/sbin/envstat sbin/nvmectl sbin/wdogctl \
       usr/sbin/acpidump; do
       test "$file" = "$TEST_OMIT_BINARY" && continue
-      mkdir -p "$dest/$(dirname "$file")"
+      mkdir -p "$dest/$(parent "$file")"
       printf 'candidate\n' > "$dest/$file"
     done;;
 esac

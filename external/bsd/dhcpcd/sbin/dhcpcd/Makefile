@@ -34,7 +34,7 @@ SRCS+=		auth.c
 
 .if (${USE_INET} != "no")
 CPPFLAGS+=	-DINET
-SRCS+=		bpf.c dhcp.c ipv4.c
+SRCS+=		bpf.c bpf-bsd.c dhcp.c ipv4.c
 .if !defined(SMALLPROG)
 SRCS+=		privsep-bpf.c
 .endif
@@ -63,7 +63,19 @@ CPPFLAGS+=	-DDHCP6
 SRCS+=		dhcp6.c
 .endif
 
-CPPFLAGS+=	-I${SRCDIR}/include -I${DIST}/src
+CPPFLAGS+=	-I. -I${SRCDIR}/include -I${DIST}/src
+
+# The common release ships generators and definition files, not generated C.
+DHCPCD_DEFS=	${DIST}/src/dhcpcd-definitions.conf \
+		${DIST}/src/dhcpcd-definitions-small.conf
+DPSRCS+=	dhcpcd-embedded.h
+CLEANFILES+=	dhcpcd-embedded.h dhcpcd-embedded.c
+
+dhcpcd-embedded.h: ${DIST}/src/genembedh ${DHCPCD_DEFS} ${DIST}/src/dhcpcd-embedded.h.in
+	${HOST_SH} ${.ALLSRC} > ${.TARGET}
+
+dhcpcd-embedded.c: ${DIST}/src/genembedc ${DHCPCD_DEFS} ${DIST}/src/dhcpcd-embedded.c.in
+	${HOST_SH} ${.ALLSRC} > ${.TARGET}
 
 DPADD+=		${LIBUTIL}
 LDADD+=		-lutil

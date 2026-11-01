@@ -52,6 +52,16 @@ find "$cohort/dest/bin" "$cohort/dest/sbin" "$cohort/dest/usr/bin" \
 	echo 'Runtime symlinks have no verified cohort receipt.' >&2; exit 2
 }
 shasum -a 256 -c "$cohort/BINARIES-SHA256.txt" >/dev/null
+[ -s "$cohort/DHCPCD-HOOKS-SHA256.txt" ]
+printf '%s\n' dhcpcd-hooks/dhcpcd-run-hooks dhcpcd-hooks/20-resolv.conf |
+    sort > "$checkdir/expected-hooks"
+awk -F '  ' 'NF != 2 || length($1) != 64 || $1 ~ /[^0-9a-f]/ {exit 1}
+    {print $2}' "$cohort/DHCPCD-HOOKS-SHA256.txt" > "$checkdir/recorded-hooks-raw"
+sort "$checkdir/recorded-hooks-raw" > "$checkdir/recorded-hooks"
+cmp "$checkdir/expected-hooks" "$checkdir/recorded-hooks" || {
+	echo 'DHCP hook inventory differs from the verified cohort.' >&2; exit 2
+}
+(cd "$cohort" && shasum -a 256 -c DHCPCD-HOOKS-SHA256.txt >/dev/null)
 [ -s "$cohort/dest/METALOG" ]
 awk -v prefix="$cohort/dest/" '{print "./" substr($0, length(prefix) + 1)}' \
     "$checkdir/files" > "$checkdir/relative-files"
@@ -96,8 +106,8 @@ chmod 700 "$root/root" "$root/var/db/dhcpcd"
 cp "$firmware" "$root/libdata/firmware/rtwce/rtw8822c_fw.bin"
 cp "$src/sys/dev/ic/rtw88-firmware.LICENSE" \
     "$root/libdata/firmware/rtwce/LICENCE.rtlwifi_firmware.txt"
-cp "$src/external/bsd/dhcpcd/dist/hooks/dhcpcd-run-hooks" "$root/libexec/"
-cp "$src/external/bsd/dhcpcd/dist/hooks/20-resolv.conf" "$root/libexec/dhcpcd-hooks/"
+cp "$cohort/dhcpcd-hooks/dhcpcd-run-hooks" "$root/libexec/"
+cp "$cohort/dhcpcd-hooks/20-resolv.conf" "$root/libexec/dhcpcd-hooks/"
 chmod 755 "$root/libexec/dhcpcd-run-hooks"
 cp "$cohort/obj/etc/MAKEDEV" "$root/dev/MAKEDEV"
 cp "$here/cix-p1-root.subr" "$root/etc/cix-root.subr"

@@ -2,7 +2,16 @@
 
 .include <bsd.own.mk>
 
-DIST:=	${.PARSEDIR}/dist
+.if defined(EMBER_MDNS_SOURCE)
+DIST?=	${EMBER_MDNS_SOURCE}
+.if "${DIST}" != "${EMBER_MDNS_SOURCE}"
+.error DIST must match the prepared common mDNSResponder source
+.endif
+.elif make(obj) && empty(.TARGETS:Nobj)
+DIST?=	${.PARSEDIR}/dist
+.else
+.error Set EMBER_MDNS_SOURCE to the prepared common Ports source
+.endif
 
 # IPv6 support.
 .if ${MKINET6} == "no"

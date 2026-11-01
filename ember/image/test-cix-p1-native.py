@@ -88,11 +88,12 @@ with tempfile.TemporaryDirectory() as tmp:
                       EMBER_BYACC_SOURCE='/byacc', EMBER_ISCSI_SOURCE='/iscsi', EMBER_LIBPCAP_SOURCE='/libpcap',
                       EMBER_TCP_WRAPPERS_SOURCE='/tcpwrappers',
                       EMBER_LIBCBOR_SOURCE='/libcbor', EMBER_LIBFIDO2_SOURCE='/libfido2',
-                      EMBER_LIBFETCH_SOURCE='/libfetch')
+                      EMBER_LIBFETCH_SOURCE='/libfetch', EMBER_MDNS_SOURCE='/mdns',
+                      EMBER_DHCPCD_SOURCE='/dhcpcd')
     sys.argv = [str(path), str(source), tmp + '/clang', str(tools), '/compiler']
     subject.main()
     run = next(row[1] for row in calls if row[0] == 'run')
-    for name in ('libcbor', 'libfido2', 'libfetch'):
+    for name in ('libcbor', 'libfido2', 'libfetch', 'mdns', 'dhcpcd'):
         assert any(row[0] == 'verify-source' and
                    f'/ports/scripts/source-inputs/{name}/source.py' in row[1] and
                    '/' + name in row[1] for row in calls)
@@ -163,7 +164,7 @@ with tempfile.TemporaryDirectory() as tmp:
         raise AssertionError('missing TCP wrappers source accepted')
     assert not Path(sys.argv[2]).exists()
     os.environ['EMBER_TCP_WRAPPERS_SOURCE'] = '/tcpwrappers'
-    for package in ('LIBCBOR', 'LIBFIDO2', 'LIBFETCH'):
+    for package in ('LIBCBOR', 'LIBFIDO2', 'LIBFETCH', 'MDNS', 'DHCPCD'):
         key = 'EMBER_' + package + '_SOURCE'
         saved = os.environ.pop(key)
         sys.argv[2] = tmp + '/missing-' + package.lower()
@@ -265,7 +266,7 @@ with tempfile.TemporaryDirectory() as tmp:
     assert not Path(sys.argv[2]).exists()
     process.capture = original_capture
     calls.clear()
-    for package in ('libcbor', 'libfido2', 'libfetch'):
+    for package in ('libcbor', 'libfido2', 'libfetch', 'mdns', 'dhcpcd'):
         def fail_common(argv, env):
             if f'/ports/scripts/source-inputs/{package}/source.py' in argv:
                 raise SDKError(package + ' verification failed')

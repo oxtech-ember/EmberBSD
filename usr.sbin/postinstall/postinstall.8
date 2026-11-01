@@ -172,6 +172,17 @@ showing if they are enabled or disabled by default.
 .It Cm usage
 Display help to stdout, and exit.
 .El
+.Sh ENVIRONMENT
+.Bl -tag -width EMBER_DHCPCD_SOURCE
+.It Ev EMBER_DHCPCD_SOURCE
+Path to the prepared common dhcpcd source tree.  When checking or fixing the
+.Cm dhcpcd
+item, its
+.Pa src/dhcpcd.conf
+is preferred.  An extracted release's
+.Pa etc/dhcpcd.conf
+is used when the source is not selected or does not contain the file.
+.El
 .Sh EXIT STATUS
 The
 .Nm
