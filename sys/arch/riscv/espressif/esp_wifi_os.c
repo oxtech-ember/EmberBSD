@@ -37,6 +37,8 @@
 __KERNEL_RCSID(0, "$NetBSD$");
 
 #include "opt_multiprocessor.h"
+#include "opt_espwifi_net80211.h"
+#include "opt_espwifi_wpa2.h"
 
 #ifdef MULTIPROCESSOR
 #error "ESPWIFI critical sections currently require a single CPU"
@@ -987,12 +989,81 @@ espwifi_os_rx(const void *buf, unsigned int len)
 }
 
 void
-espwifi_os_link(int up)
+espwifi_os_scan_frame(const void *buf, unsigned int len,
+    unsigned int channel, int rssi, unsigned int timestamp)
 {
 	struct espwifi_fp fp;
 
 	espwifi_fp_save(&fp);
-	espwifi_if_link(up);
+	espwifi_if_scan_frame(buf, len, channel, rssi, timestamp);
+	espwifi_fp_restore(&fp);
+}
+
+int
+espwifi_os_rx_eapol(const unsigned char *source, const void *buf,
+    unsigned int len)
+{
+	struct espwifi_fp fp;
+	int error;
+
+	espwifi_fp_save(&fp);
+	error = espwifi_if_rx_eapol(source, buf, len);
+	espwifi_fp_restore(&fp);
+	return error;
+}
+
+void
+espwifi_os_link(int up, const unsigned char *bssid)
+{
+	struct espwifi_fp fp;
+
+	espwifi_fp_save(&fp);
+	espwifi_if_link(up, bssid);
+	espwifi_fp_restore(&fp);
+}
+
+int
+espwifi_os_assoc_response(unsigned int subtype, const void *body,
+    unsigned int len, const unsigned char *sender)
+{
+	struct espwifi_fp fp;
+	int accepted;
+
+	espwifi_fp_save(&fp);
+	accepted = espwifi_if_assoc_response(subtype, body, len, sender);
+	espwifi_fp_restore(&fp);
+	return accepted;
+}
+
+int
+espwifi_os_wpa_in_4way(void)
+{
+	struct espwifi_fp fp;
+	int active;
+
+	espwifi_fp_save(&fp);
+	active = espwifi_if_wpa_in_4way() ? 1 : 0;
+	espwifi_fp_restore(&fp);
+	return active;
+}
+
+void
+espwifi_os_radio_started(void)
+{
+	struct espwifi_fp fp;
+
+	espwifi_fp_save(&fp);
+	espwifi_if_radio_started();
+	espwifi_fp_restore(&fp);
+}
+
+void
+espwifi_os_radio_stopped(void)
+{
+	struct espwifi_fp fp;
+
+	espwifi_fp_save(&fp);
+	espwifi_if_radio_stopped();
 	espwifi_fp_restore(&fp);
 }
 
@@ -1005,6 +1076,7 @@ espwifi_os_link(int up)
  * Join the first network of the list in /chosen that is on the air.  The
  * list holds name and key in turn, best network first.
  */
+#ifndef ESPWIFI_NET80211
 static bool
 espwifi_join(void)
 {
@@ -1034,6 +1106,7 @@ espwifi_join(void)
 	}
 	return false;
 }
+#endif
 
 static void
 espwifi_main(void *v)
@@ -1045,8 +1118,16 @@ espwifi_main(void *v)
 			espwifi_os_task_delay(1000 / ESPWIFI_TICK_MS);
 		} while (cprng_fast_reseed_sync() != 0);
 	}
+#ifdef ESPWIFI_NET80211_WPA2
+	if (espwifi_start_wpa2() != 0)
+#else
 	if (espwifi_start() != 0)
+#endif
 		return;
+	espwifi_if_radio_ready();
+#ifdef ESPWIFI_NET80211
+	return;
+#else
 	/*
 	 * Join, and join again whenever the link is lost.  The pause grows
 	 * with every failure: access points stop answering a station that
@@ -1060,6 +1141,7 @@ espwifi_main(void *v)
 		}
 		espwifi_os_task_delay(pause * 1000 / ESPWIFI_TICK_MS);
 	}
+#endif
 }
 
 void
@@ -1073,7 +1155,10 @@ espwifi_attach(void)
 	    ESPWIFI_POOL_SIZE, 16, NULL, NULL, NULL, 0, VM_NOSLEEP, IPL_HIGH);
 	espwifi_pool_free = ESPWIFI_POOL_SIZE;
 
-	espwifi_if_attach();
+	if (!espwifi_if_attach()) {
+		printf("espwifi: interface initialization failed\n");
+		return;
+	}
 	if (!espwifi_os_task_create(espwifi_timer_thread, "timer", 0, NULL,
 	    &handle) ||
 	    !espwifi_os_task_create(espwifi_main, "main", 0, NULL, &handle))

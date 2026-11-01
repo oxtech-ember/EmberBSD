@@ -14,6 +14,9 @@ file	arch/riscv/espressif/esp_trng.c		esptrng & espintmtx
 # Radio of the ESP32-S31.  The vendor's libraries come in one object built
 # by arch/riscv/espressif/wifi/mkblob; the kernel configuration names it.
 defflag	opt_espwifi.h			ESPWIFI
+defflag	opt_espwifi_net80211.h		ESPWIFI_NET80211: ESPWIFI, wlan
+# Explicit opt-in for the unaccepted FullMAC WPA2 station association path.
+defflag	opt_espwifi_wpa2.h		ESPWIFI_NET80211_WPA2: ESPWIFI_NET80211
 file	arch/riscv/espressif/esp_wifi_os.c		espwifi
 file	arch/riscv/espressif/esp_wifi_if.c		espwifi
 file	arch/riscv/espressif/esp_wifi_subr.S		espwifi

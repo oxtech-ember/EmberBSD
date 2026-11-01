@@ -80,14 +80,28 @@ void	espwifi_os_panic(const char *) __dead;
 
 /* Frames and state changes from the radio. */
 void	espwifi_os_rx(const void *, unsigned int);
-void	espwifi_os_link(int);
+void	espwifi_os_scan_frame(const void *, unsigned int, unsigned int, int, unsigned int);
+int	espwifi_os_rx_eapol(const unsigned char *, const void *, unsigned int);
+void	espwifi_os_link(int, const unsigned char *);
+int	espwifi_os_assoc_response(unsigned int, const void *, unsigned int,
+	    const unsigned char *);
+int	espwifi_os_wpa_in_4way(void);
+void	espwifi_os_radio_started(void);
+void	espwifi_os_radio_stopped(void);
 
 /* Entry points of the radio code; the caller is a thread made for it. */
 int	espwifi_start(void);
+int	espwifi_start_wpa2(void);
 int	espwifi_scan(void);
+int	espwifi_scan_capture(int);
 int	espwifi_seen(const char *);
 int	espwifi_linked(void);
+int	espwifi_disconnect(void);
 int	espwifi_connect(const char *, const char *);
+int	espwifi_ext_connect(const unsigned char *, unsigned int,
+	    const unsigned char *, const unsigned char *, unsigned int);
+int	espwifi_ext_set_key(const unsigned char *, unsigned int, int, int, int,
+	    const unsigned char *, unsigned int, const unsigned char *, unsigned int);
 int	espwifi_tx(const void *, unsigned int);
 void	espwifi_get_mac(unsigned char *);
 

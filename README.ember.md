@@ -107,6 +107,9 @@ identity prove a complete TF-A/EDK2 build or physical firmware acceptance. `--pr
 
 The `ESP32S31` and `ESP32S31W` configurations belong to `sys/arch/riscv/conf`.
 The radio configuration requires the matching vendor object.
+The optional net80211 WPA2 station path is experimental and has not been
+validated on ESP32-S31 hardware; see the
+[Wi-Fi driver guide](sys/arch/riscv/espressif/README.wifi.md).
 Use the [DevBoards profile](https://github.com/oxtech-ember/EmberBSD-DevBoards/blob/main/boards/esp32-s31/README.md)
 for bootloader, flash layout and current hardware limits.
 

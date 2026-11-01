@@ -17,6 +17,7 @@ typedef unsigned int u_int;
 static int ready, seeded, started;
 static int cprng_fast_reseed_sync(void) { seeded++; return !ready; }
 static int espwifi_start(void) { assert(seeded && ready); started++; return 1; }
+static void espwifi_if_radio_ready(void) { assert(started); }
 static int espwifi_linked(void) { return 0; }
 static int espwifi_join(void) { return 0; }
 static void espwifi_os_task_delay(unsigned n) { (void)n; assert(!started); ready=1; }

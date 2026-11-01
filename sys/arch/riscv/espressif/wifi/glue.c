@@ -1266,9 +1266,18 @@ sleep_retention_find_link_by_id_wrapper(int id)
 
 ESP_EVENT_DEFINE_BASE(WIFI_EVENT);
 
-static void *scan_done;
+/* IDF's WPA callback returns 1 for a consumed EAPOL-Key, 0 for other
+ * 802.1X packets, and -1 on failure. */
+int espwifi_wpa_rx_eapol(uint8_t *, uint8_t *, uint32_t);
+int
+espwifi_wpa_rx_eapol(uint8_t *source, uint8_t *buffer, uint32_t len)
+{
+	return espwifi_os_rx_eapol(source, buffer, len);
+}
+
 static void *link_change;
 static int link_up;
+static uint32_t stop_events;
 
 static int32_t
 event_post_wrapper(const char *base, int32_t id, void *data, size_t size,
@@ -1276,12 +1285,28 @@ event_post_wrapper(const char *base, int32_t id, void *data, size_t size,
 {
 	switch (id) {
 	case WIFI_EVENT_SCAN_DONE:
-		espwifi_os_sem_give(scan_done);
 		break;
+	case WIFI_EVENT_STA_START:
+		link_up = 0;
+		espwifi_os_radio_started();
+		break;
+	case WIFI_EVENT_STA_STOP: {
+		unsigned critical;
+
+		link_up = 0;
+		critical = espwifi_os_critical_enter();
+		stop_events++;
+		espwifi_os_critical_exit(critical);
+		espwifi_os_sem_give(link_change);
+		espwifi_os_radio_stopped();
+		break;
+	}
 	case WIFI_EVENT_STA_CONNECTED:
+		if (data == NULL)
+			break;
 		link_up = 1;
 		espwifi_os_sem_give(link_change);
-		espwifi_os_link(1);
+		espwifi_os_link(1, ((const wifi_event_sta_connected_t *)data)->bssid);
 		break;
 	case WIFI_EVENT_STA_DISCONNECTED: {
 		const wifi_event_sta_disconnected_t *d = data;
@@ -1290,7 +1315,7 @@ event_post_wrapper(const char *base, int32_t id, void *data, size_t size,
 		    d != NULL ? d->reason : -1);
 		link_up = 0;
 		espwifi_os_sem_give(link_change);
-		espwifi_os_link(0);
+		espwifi_os_link(0, d != NULL ? d->bssid : NULL);
 		break;
 	}
 	default:
@@ -1436,9 +1461,11 @@ wifi_osi_funcs_t g_wifi_osi_funcs = {
 	._magic = ESP_WIFI_OS_ADAPTER_MAGIC,
 };
 
+#ifndef ESPWIFI_EXTERNAL_WPA2
 /* The table of ciphers and hashes comes with the vendor's WPA code. */
 extern const wpa_crypto_funcs_t g_wifi_default_wpa_crypto_funcs;
 int esp_supplicant_init(void);
+#endif
 
 /* Names the libraries want and this configuration leaves empty. */
 uint8_t g_espnow_user_oui[3];
@@ -1465,8 +1492,8 @@ espwifi_trace(const char *name)
 	espwifi_os_log("espwifi: -> %s\n", name);
 }
 
-int
-espwifi_start(void)
+static int
+espwifi_start_impl(void)
 {
 	wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
 	esp_err_t error;
@@ -1517,7 +1544,6 @@ espwifi_start(void)
 	 * The modem clocks are left to their gates.  Forcing them all on
 	 * spoils the transmitter: the access point stops answering.
 	 */
-	scan_done = espwifi_os_sem_create(1, 0);
 	link_change = espwifi_os_sem_create(1, 0);
 
 	modem_clock_select_lp_clock_source(PERIPH_WIFI_MODULE,
@@ -1529,11 +1555,21 @@ espwifi_start(void)
 		espwifi_os_log("espwifi: init: error %#x\n", error);
 		return error;
 	}
+#ifdef ESPWIFI_EXTERNAL_WPA2
+	{
+		extern int espwifi_wpa2_register(void);
+		if (espwifi_wpa2_register() != 0) {
+			espwifi_os_log("espwifi: external WPA2 callback setup failed\n");
+			return ESP_FAIL;
+		}
+	}
+#else
 	error = esp_supplicant_init();
 	if (error != ESP_OK) {
 		espwifi_os_log("espwifi: supplicant: error %#x\n", error);
 		return error;
 	}
+#endif
 	error = esp_wifi_set_mode(WIFI_MODE_STA);
 	if (error != ESP_OK) {
 		espwifi_os_log("espwifi: station mode: error %#x\n", error);
@@ -1551,6 +1587,26 @@ espwifi_start(void)
 	esp_wifi_set_ps(WIFI_PS_NONE);
 	esp_wifi_internal_reg_rxcb(WIFI_IF_STA, rx_frame);
 	return 0;
+}
+
+int
+espwifi_start(void)
+{
+#ifdef ESPWIFI_EXTERNAL_WPA2
+	return ESP_FAIL;
+#else
+	return espwifi_start_impl();
+#endif
+}
+
+int
+espwifi_start_wpa2(void)
+{
+#ifdef ESPWIFI_EXTERNAL_WPA2
+	return espwifi_start_impl();
+#else
+	return ESP_FAIL;
+#endif
 }
 
 static wifi_ap_record_t aps[16];
@@ -1581,19 +1637,22 @@ espwifi_scan(void)
 
 	naps = 0;
 
-	error = esp_wifi_scan_start(NULL, false);
+	/* The vendor's blocking API has its own timeout and result status. */
+	error = esp_wifi_scan_start(NULL, true);
 	if (error != ESP_OK) {
 		espwifi_os_log("espwifi: scan: error %#x\n", error);
-		return error;
-	}
-	if (!espwifi_os_sem_take(scan_done, 1500)) {
-		espwifi_os_log("espwifi: scan: no answer\n");
+		(void)esp_wifi_clear_ap_list();
 		return -1;
 	}
 	error = esp_wifi_scan_get_ap_records(&n, aps);
 	if (error != ESP_OK) {
 		espwifi_os_log("espwifi: scan results: error %#x\n", error);
-		return error;
+		(void)esp_wifi_clear_ap_list();
+		return -1;
+	}
+	if (n > sizeof(aps) / sizeof(aps[0])) {
+		espwifi_os_log("espwifi: scan returned too many records\n");
+		return -1;
 	}
 	naps = n;
 	espwifi_os_log("espwifi: %u networks, %lu bytes of internal RAM free\n",
@@ -1606,6 +1665,49 @@ espwifi_scan(void)
 	return n;
 }
 
+static void
+espwifi_scan_capture_rx(void *buffer, wifi_promiscuous_pkt_type_t type)
+{
+	const wifi_promiscuous_pkt_t * const packet = buffer;
+	const uint8_t *frame;
+	unsigned len, subtype;
+
+	if (type != WIFI_PKT_MGMT || packet == NULL)
+		return;
+	len = packet->rx_ctrl.sig_len;
+	/* ESP-IDF reports the 802.11 FCS as part of sig_len. */
+	if (len < 28)
+		return;
+	len -= 4;
+	frame = packet->payload;
+	if ((frame[0] & 0x0c) != 0)
+		return;
+	subtype = frame[0] & 0xf0;
+	if (subtype != 0x80 && subtype != 0x50)
+		return;
+	espwifi_os_scan_frame(frame, len, packet->rx_ctrl.channel,
+	    packet->rx_ctrl.rssi, packet->rx_ctrl.timestamp);
+}
+
+int
+espwifi_scan_capture(int enable)
+{
+	wifi_promiscuous_filter_t filter = {
+		.filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT
+	};
+	esp_err_t error;
+
+	if (!enable)
+		return esp_wifi_set_promiscuous(false);
+	error = esp_wifi_set_promiscuous_rx_cb(espwifi_scan_capture_rx);
+	if (error != ESP_OK)
+		return error;
+	error = esp_wifi_set_promiscuous_filter(&filter);
+	if (error != ESP_OK)
+		return error;
+	return esp_wifi_set_promiscuous(true);
+}
+
 esp_err_t
 esp_wifi_connect(void)
 {
@@ -1616,6 +1718,35 @@ esp_err_t
 esp_wifi_disconnect(void)
 {
 	return esp_wifi_disconnect_internal();
+}
+
+int
+espwifi_disconnect(void)
+{
+	uint32_t target;
+	unsigned critical;
+	esp_err_t error;
+
+	critical = espwifi_os_critical_enter();
+	target = stop_events + 1;
+	espwifi_os_critical_exit(critical);
+	error = esp_wifi_stop();
+	if (error != ESP_OK)
+		return error;
+	/* Require STA_STOP before restart. The public API does not promise an event
+	 * queue drain, so the station adapter permanently fences joins after STOP. */
+	for (;;) {
+		bool stopped;
+
+		critical = espwifi_os_critical_enter();
+		stopped = stop_events == target;
+		espwifi_os_critical_exit(critical);
+		if (stopped)
+			break;
+		if (!espwifi_os_sem_take(link_change, 100))
+			return -1;
+	}
+	return esp_wifi_start();
 }
 
 int
