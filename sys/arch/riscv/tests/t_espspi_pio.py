@@ -11,6 +11,8 @@ p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('--source', required=True, type=Path, help='OS source tree')
 p.add_argument('--host-prefix', required=True, type=Path)
 p.add_argument('--work', required=True, type=Path)
+p.add_argument('--timeout-errno', type=int,
+               help='override the host ETIMEDOUT value for portability checks')
 a = p.parse_args()
 host = a.host_prefix.resolve(strict=True)
 cc = (host / 'bin/clang').resolve(strict=True)
@@ -38,6 +40,10 @@ prefix = r'''
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#ifdef ESPSPI_TEST_ETIMEDOUT
+#undef ETIMEDOUT
+#define ETIMEDOUT ESPSPI_TEST_ETIMEDOUT
+#endif
 typedef unsigned int u_int;
 typedef unsigned int bus_size_t;
 #define __BIT(n) (UINT32_C(1) << (n))
@@ -279,8 +285,11 @@ int main(void) {
         strstr(trace_text,"cmd23=") != NULL &&
         strstr(trace_text,"pixel=") != NULL &&
         strstr(trace_text,"latest=") != NULL &&
-        strstr(trace_text,"fail=1+64/") != NULL &&
-        strstr(trace_text,"e60") != NULL);
+        strstr(trace_text," fail=1+64/w4:") != NULL);
+    char timeout_field[32];
+    snprintf(timeout_field,sizeof(timeout_field),"-e%d latest=",ETIMEDOUT);
+    const char *failure=strstr(trace_text," fail=1+64/w4:");
+    assert(failure != NULL && strstr(failure,timeout_field) != NULL);
     assert(trace_mutex_depth==0);
     clear_events(); fail_update=true; a=chunk(1,bytes,NULL,1); st=(struct spi_transfer){.st_chunks=&a};
     unsigned int before=reset_count; assert(esp_spi_transfer(&sc,&st)==0 && st.error==ETIMEDOUT && st.completions==1);
@@ -327,5 +336,9 @@ a.work.mkdir(parents=True, exist_ok=True)
 cfile = a.work / 'esp-spi-fixture.c'
 exe = a.work / 'esp-spi-fixture'
 cfile.write_text(prefix + '\n' + reg + '\n' + model + '\n' + '\n'.join(extract(x) for x in ('esp_spi_trace_hash', 'esp_spi_uptime_us', 'esp_spi_trace_time_start', 'esp_spi_trace_time_end', 'esp_spi_sysctl_trace', 'esp_spi_reset', 'esp_spi_clock', 'esp_spi_configure', 'esp_spi_wait', 'esp_spi_trace_init', 'esp_spi_block', 'esp_spi_transfer')) + suffix)
-subprocess.run([str(cc), '-fuse-ld=lld', '-std=c11', '-Wall', '-Werror', '-O1', '-g', '-fsanitize=address,undefined', '-fno-sanitize-recover=all', str(cfile), '-o', str(exe)], env=env, check=True)
+compile = [str(cc), '-fuse-ld=lld', '-std=c11', '-Wall', '-Werror', '-O1', '-g', '-fsanitize=address,undefined', '-fno-sanitize-recover=all']
+if a.timeout_errno is not None:
+    compile.append(f'-DESPSPI_TEST_ETIMEDOUT={a.timeout_errno}')
+compile.extend([str(cfile), '-o', str(exe)])
+subprocess.run(compile, env=env, check=True)
 subprocess.run([str(exe)], env=env, check=True)
