@@ -228,6 +228,32 @@
         "tools/compile_et",
         "tools/slc"
       ]
+    },
+    "EMBER_LIBARCHIVE_SOURCE": {
+      "producer_dirs": [
+        "external/bsd/libarchive/lib/libarchive",
+        "external/bsd/libarchive/lib/libarchive_fe"
+      ],
+      "header_prefixes": [
+        "usr/include/archive.h",
+        "usr/include/archive_entry.h"
+      ],
+      "consumer_dirs": [
+        "external/bsd/libarchive/bin/cpio",
+        "external/bsd/libarchive/bin/tar",
+        "external/bsd/pkg_install/sbin/pkg_add",
+        "external/bsd/pkg_install/sbin/pkg_admin",
+        "external/bsd/pkg_install/sbin/pkg_create",
+        "external/bsd/pkg_install/sbin/pkg_delete",
+        "external/bsd/pkg_install/sbin/pkg_info",
+        "usr.bin/unzip",
+        "usr.sbin/makemandb"
+      ],
+      "linked_names": [
+        "libarchive.so",
+        "libarchive.a",
+        "libarchive_fe.a"
+      ]
     }
   },
   "header_independent_object_patterns": [
