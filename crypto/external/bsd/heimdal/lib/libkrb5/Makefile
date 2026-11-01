@@ -558,6 +558,9 @@ COPTS.salt-des.c+= -Wno-error=deprecated-declarations
 COPTS.salt-des3.c+= -Wno-error=deprecated-declarations
 COPTS.sp800-108-kdf.c+= -Wno-error=deprecated-declarations
 
+DPSRCS+= version.h
+.include <${HEIMBASE}/share/mk/heimdal-version.mk>
+
 .include <${HEIMBASE}/Makefile.rules.inc>
 
 # The native source list includes the IPC server, unlike portable libkrb5.

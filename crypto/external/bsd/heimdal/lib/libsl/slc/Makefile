@@ -20,17 +20,8 @@ HOST_CPPFLAGS+= -I.			\
 	-I${HEIMDIST}/lib/vers		\
 	-DHAVE_CONFIG_H
 
-DPSRCS=		print_version.h
-
-make-print-version.lo: ${HEIMBASE}/include/version.h
-
-make-print-version: make-print-version.lo
-	${HOST_CC} ${HOST_LDFLAGS} -o ${.TARGET} ${.ALLSRC}
-
-print_version.h: make-print-version
-	./make-print-version print_version.h
-
-.NOPATH: print_version.h make-print-version
+HEIMDAL_PRINT_VERSION= yes
+.include <${HEIMBASE}/share/mk/heimdal-version.mk>
 
 beforedepend:
 	[ -h krb5 ] || ln -sf . krb5
@@ -39,9 +30,7 @@ beforedepend:
 	ln -sf ${HEIMDIST}/lib/roken/roken-common.h
 	ln -sf ${HEIMDIST}/lib/roken/getarg.h
 
-CLEANFILES+=	krb5 roken.h krb5-types.h roken-common.h	\
-		getarg.h print_version.h make-print-version	\
-		make-print-version.lo
+CLEANFILES+=	krb5 roken.h krb5-types.h roken-common.h getarg.h
 
 # HOSTPROG will be set already if this is a src/tools build.
 .ifndef HOSTPROG

@@ -15,22 +15,11 @@ LIB=		vers
 includes: print_version.h
 
 SRCS=		print_version.c
-DPSRCS=		print_version.h
  
 HOST_CPPFLAGS+=	-I${HEIMBASE}/include -DHAVE_CONFIG_H
 
-make-print-version.lo: ${HEIMBASE}/include/version.h
-
-make-print-version: make-print-version.lo
-	${HOST_CC} ${HOST_LDFLAGS} -o ${.TARGET} ${.ALLSRC}
-
-print_version.h: make-print-version
-	${_MKTARGET_CREATE}
-	./make-print-version print_version.h
-
-print_version.o print_version.ln: print_version.h
-
-CLEANFILES+=	print_version.h make-print-version make-print-version.lo
+HEIMDAL_PRINT_VERSION= yes
+.include <${HEIMBASE}/share/mk/heimdal-version.mk>
  
 .include <${HEIMBASE}/Makefile.rules.inc>
 .include <bsd.lib.mk>

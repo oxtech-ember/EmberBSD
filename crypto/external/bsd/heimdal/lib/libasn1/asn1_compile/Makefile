@@ -57,19 +57,8 @@ HOST_CPPFLAGS+= -I.			\
 	 -DKRB5=1			\
 	 -DHAVE_CONFIG_H
 
-DPSRCS=		print_version.h
-
-make-print-version.lo: ${HEIMBASE}/include/version.h
-
-make-print-version: make-print-version.lo
-	${HOST_CC} ${HOST_LDFLAGS} -o ${.TARGET} ${.ALLSRC}
-
-print_version.h: make-print-version
-	./make-print-version print_version.h
-
-.NOPATH: print_version.h make-print-version
-
-CLEANFILES+=	print_version.h make-print-version make-print-version.lo
+HEIMDAL_PRINT_VERSION= yes
+.include <${HEIMBASE}/share/mk/heimdal-version.mk>
 
 beforedepend:
 	[ -h krb5 ] || ln -sf . krb5
