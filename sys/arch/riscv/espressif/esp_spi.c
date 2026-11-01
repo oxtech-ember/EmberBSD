@@ -142,7 +142,7 @@ esp_spi_reset(struct esp_spi_softc *sc)
 	/* XTAL source, both upstream dividers one, no DMA or interrupts. */
 	ESPSPI_WRITE(sc, ESPSPI_CLK_GATE, ESPSPI_CLK_ENABLE);
 	ESPSPI_WRITE(sc, ESPSPI_SLAVE, 0);
-	ESPSPI_WRITE(sc, ESPSPI_CTRL, 0);
+	ESPSPI_WRITE(sc, ESPSPI_CTRL, ESPSPI_CTRL_IDLE_HIGH);
 	/* Keep CS active for at least one SPI clock after the final edge. */
 	ESPSPI_WRITE(sc, ESPSPI_USER1, ESPSPI_CS_HOLD_TIME(1));
 	ESPSPI_WRITE(sc, ESPSPI_USER2, 0);

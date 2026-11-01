@@ -21,6 +21,10 @@ has six hardware chip selects; GPSPI3 has three. Receive is limited to
 10 MHz until GPIO input timing compensation is implemented and checked.
 Multi-line receive, DMA and interrupts are not implemented.
 
+Reset configures the S31 data-line idle levels to high for MISO, MOSI,
+HOLD and WP, matching ESP-IDF's `SPI_LL_MOSI_FREE_LEVEL` initialization.
+This is controller-wide idle-level setup, not panel-specific behavior.
+
 The controller also advertises `SPI_CAP_3WIRE`: a transfer marked
 `SPI_F_3WIRE` uses the S31 `USER.SIO` bit to share MOSI and MISO on the
 MOSI pin. The generic SPI core accepts this flag only from a controller

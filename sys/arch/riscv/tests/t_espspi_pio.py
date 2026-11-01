@@ -54,7 +54,8 @@ struct spi_transfer { struct spi_chunk *st_chunks; int error, completions, st_fl
 struct spi_controller { int sct_nslaves; };
 struct esp_spi_softc { void *sc_syscon; struct spi_controller sc_spi; unsigned int sc_clkrst,sc_source_hz,sc_speed; uint32_t sc_clock,sc_user,sc_misc; };
 static uint32_t regs[64], sysreg;
-static unsigned int clocks, done_count, reset_count, writes, lockdepth;
+static unsigned int clocks, done_count, reset_count, writes, ctrl_writes, lockdepth;
+static uint32_t last_ctrl;
 static bool fail_update, fail_done;
 struct event { uint32_t user,misc,dlen; uint8_t bytes[64]; };
 static struct event events[8];
@@ -81,6 +82,7 @@ static uint32_t rd(struct esp_spi_softc *sc, unsigned int reg) {
 static void wr(struct esp_spi_softc *sc, unsigned int reg, uint32_t v) {
     (void)sc; assert(reg < sizeof(regs)); writes++;
     if (reg == ESPSPI_CLK_GATE) reset_count++;
+    if (reg == ESPSPI_CTRL) { ctrl_writes++; last_ctrl=v; }
     if (reg == ESPSPI_INT_CLR) regs[ESPSPI_INT_RAW/4] = 0;
     regs[reg/4] = v;
     if (reg == ESPSPI_CMD && v == ESPSPI_USR) {
@@ -105,6 +107,8 @@ int main(void) {
     esp_spi_reset(&sc);
     /* S31 SPI_CLK_GATE bits 0/1 enable clocks; bit 2 selects PLL. */
     assert(regs[ESPSPI_CLK_GATE/4] == 3);
+    assert(regs[ESPSPI_CTRL/4] == ESPSPI_CTRL_IDLE_HIGH);
+    assert(ctrl_writes == 1 && last_ctrl == ESPSPI_CTRL_IDLE_HIGH);
     assert((regs[ESPSPI_USER1/4] & UINT32_C(0x07c00000)) ==
         UINT32_C(0x00400000));
     uint8_t bytes[70]; for (unsigned int i=0;i<sizeof(bytes);i++) bytes[i]=(uint8_t)i;
@@ -139,6 +143,7 @@ int main(void) {
     clear_events(); fail_update=true; a=chunk(1,bytes,NULL,1); st=(struct spi_transfer){.st_chunks=&a};
     unsigned int before=reset_count; assert(esp_spi_transfer(&sc,&st)==0 && st.error==ETIMEDOUT && st.completions==1);
     assert(a.chunk_wresid==1 && reset_count==before+1 && clocks==0);
+    assert(regs[ESPSPI_CTRL/4] == ESPSPI_CTRL_IDLE_HIGH);
     fail_update=false; clear_events(); st=(struct spi_transfer){.st_chunks=&a};
     assert(esp_spi_transfer(&sc,&st)==0 && st.error==0 && st.completions==1 && a.chunk_wresid==0);
     unsigned int resets_before=reset_count;

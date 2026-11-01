@@ -12,6 +12,13 @@
 #define ESPSPI_UPDATE		__BIT(23)
 #define ESPSPI_USR		__BIT(24)
 #define ESPSPI_CTRL		0x08
+/* S31 idle levels: MISO, MOSI, HOLD and WP are high after bus init. */
+#define ESPSPI_Q_POL		__BIT(18)
+#define ESPSPI_D_POL		__BIT(19)
+#define ESPSPI_HOLD_POL		__BIT(20)
+#define ESPSPI_WP_POL		__BIT(21)
+#define ESPSPI_CTRL_IDLE_HIGH	(ESPSPI_Q_POL | ESPSPI_D_POL | \
+				 ESPSPI_HOLD_POL | ESPSPI_WP_POL)
 #define ESPSPI_CLOCK		0x0c
 #define ESPSPI_CLOCK_DIRECT	__BIT(31)
 #define ESPSPI_USER		0x10
