@@ -14,13 +14,46 @@ run()
         return 1
     fi
 }
+link_if_same()
+{
+    target=$1 link=$2
+    run "link-$(printf '%s' "$link" | tr / _)" "$python" -B "$here/static-profile.py" \
+        link-if-same "$target" "$link"
+}
+component_make()
+{
+    log_name=$1; part=$2; shift 2
+    if [ "${profile:-}" = network ]; then
+        set -- "$@" "EMBER_MDNS_SOURCE=$mdns_source" "EMBER_DHCPCD_SOURCE=$dhcpcd_source" \
+            "EMBER_LIBPCAP_SOURCE=$libpcap_source" "EMBER_WPA_SOURCE=$wpa_source" \
+            $network_auth_flags
+        case "$part" in
+            external/bsd/wpa/bin/wpa_supplicant|external/bsd/wpa/bin/wpa_cli)
+                set -- "$@" EMBER_WPA_PROFILE=personal
+                if [ -n "$wpa_backend" ]; then
+                    set -- "$@" "EMBER_WPA_CRYPTO_BACKEND=$wpa_backend"
+                fi
+                if [ -n "$wolfssl_prefix" ]; then
+                    set -- "$@" "EMBER_WOLFSSL_PREFIX=$wolfssl_prefix"
+                fi ;;
+        esac
+    fi
+    run "$log_name" "$wrapper" -C "$src/$part" "$@"
+}
 component()
 {
     part=$1; shift
     label=$(printf '%s' "$part" | tr / _)
-    run "$label-obj" "$wrapper" -C "$src/$part" "$@" obj
-    run "$label-build" "$wrapper" -C "$src/$part" -j"$jobs" "$@" dependall
-    run "$label-install" "$wrapper" -C "$src/$part" "$@" install
+    if [ "${profile:-}" = network ]; then
+        link_gc="LDFLAGS.${part##*/}=-Wl,--gc-sections"
+        component_make "$label-obj" "$part" "$link_gc" "$@" obj
+        component_make "$label-build" "$part" -j"$jobs" "$link_gc" "$@" dependall
+        component_make "$label-install" "$part" "$link_gc" "$@" install
+    else
+        component_make "$label-obj" "$part" "$@" obj
+        component_make "$label-build" "$part" -j"$jobs" "$@" dependall
+        component_make "$label-install" "$part" "$@" install
+    fi
 }
 # The same component runner also builds a target-independent console subset.
 if [ "${1:-}" = --console-selected ]; then
@@ -32,16 +65,34 @@ if [ "${1:-}" = --console-selected ]; then
     runtime_prefix=$1 resource=$2 unwinder=$3 compiler_resource=$4 jobs=$5 timestamp=$6 revision=$7
     shift 7
     headers=$1 libraries=$2 programs=$3 python=$4 profile=${5:-console} overlay=${6:-} extra=${7:-} selected_awk=${8:-$host_prefix/bin/nawk}
+    wolfssl_prefix=${9:-} network_interface=${10:-} mdns_source=${11:-} dhcpcd_source=${12:-} install_map=${13:-} wpa_backend=${14:-} crunch_programs=${15:-} device_nodes=${16:-} device_links=${17:-} libpcap_source=${18:-} device_make=${19:-} wpa_source=${20:-} device_block_nodes=${21:-} network_root_device=${22:-} network_root_partition=${23:-a} network_root_stage=${24:-} data_components=${25:-}
+    if [ "$profile" = network ]; then
+        COPTS="${COPTS:+$COPTS }-Oz -ffunction-sections -fdata-sections"
+        network_auth_flags='MKPAM=no USE_PAM=no MKKERBEROS=no USE_KERBEROS=no MKLDAP=no USE_LDAP=no MKYP=no USE_YP=no MKSKEY=no USE_SKEY=no MKHESIOD=no USE_HESIOD=no'
+        export COPTS
+    fi
     wrapper=$out/nbmake-$machine
+    wrapper_log=$out/logs/wrapper.log
+    if [ "$profile" = network ]; then
+        wrapper_log=$out/logs/wrapper-network-$$.log
+        wrapper_suffix=0
+        while [ -e "$wrapper_log" ]; do
+            wrapper_suffix=$((wrapper_suffix + 1))
+            wrapper_log=$out/logs/wrapper-network-$$-$wrapper_suffix.log
+        done
+    fi
     CPPFLAGS="-nostdinc -isystem $out/dest/usr/include -isystem $compiler_resource/include"
     export CPPFLAGS
     set -- -V "EMBER_LLVM_SOURCE=$llvm_source" -V "EMBER_LIBUNWIND_ARCHIVE=$unwinder" \
         -V EMBER_LLVM_RUNTIME_PHASE=bootstrap -V "EMBER_EXTERNAL_LLVM_RUNTIME=$runtime_prefix" \
         -V "EMBER_LLVM_RESOURCE_DIR=$resource" -V MKLIBCXX=no
     if [ "$arch" = riscv32 ]; then set -- "$@" -V MKSOFTFLOAT=yes; fi
+    if [ "$profile" = network ]; then
+        set -- "$@" -V "COPTS=$COPTS"
+    fi
     "$python" -B "$sdk/scripts/run-native-os.py" \
         --host-prefix "$host_prefix" --compiler-family "$host_family" --source "$src" \
-        --routing "$out/routing" --cwd "$src" --log "$out/logs/wrapper.log" --build-sh -- \
+        --routing "$out/routing" --cwd "$src" --log "$wrapper_log" --build-sh -- \
         -U -u -j"$jobs" -m "$machine" -a "$arch" -O "$out/obj" -D "$out/dest" -T "$tools" -w "$wrapper" \
         -V TOOLCHAIN_MISSING=yes -V "EXTERNAL_TOOLCHAIN=$compiler" -V EMBER_COMPILER_FAMILY=clang \
         -V "EMBER_HOST_BFD_CONFIG=$host_bfd" -V "EMBER_LIBEDIT_SOURCE=$libedit" -V "EMBER_BYACC_SOURCE=$byacc" \
@@ -51,12 +102,14 @@ if [ "${1:-}" = --console-selected ]; then
         -V MAKECONF=/dev/null -V "BUILDINFO=EmberBSD:$revision" makewrapper
     set -f
     for part in $headers; do
-        run "$(printf '%s' "$part" | tr / _)-obj" "$wrapper" -C "$src/$part" obj
-        run "$(printf '%s' "$part" | tr / _)-includes" "$wrapper" -C "$src/$part" includes
+        label=$(printf '%s' "$part" | tr / _)
+        component_make "$label-obj" "$part" obj
+        component_make "$label-includes" "$part" includes
     done
     for part in $libraries; do
-        run "$(printf '%s' "$part" | tr / _)-obj" "$wrapper" -C "$src/$part" obj
-        run "$(printf '%s' "$part" | tr / _)-includes" "$wrapper" -C "$src/$part" includes
+        label=$(printf '%s' "$part" | tr / _)
+        component_make "$label-obj" "$part" obj
+        component_make "$label-includes" "$part" includes
         component "$part"
     done
     if [ "$profile" = console-tools ]; then
@@ -77,38 +130,181 @@ if [ "${1:-}" = --console-selected ]; then
                 "OBJCOPY=$host_prefix/bin/llvm-objcopy" "AWK=$selected_awk" \
                 console-tools.crunched
         )
+    elif [ "$profile" = network ]; then
+        mkdir -p "$out/crunch"
+        {
+            printf 'srcdirs bin sbin usr.bin libexec external/bsd/dhcpcd/sbin external/bsd/wpa/bin external/apache2/mDNSResponder/usr.sbin\nprogs'
+            for part in $crunch_programs; do printf ' %s' "${part##*/}"; done
+            printf '\nln sh -sh\nln reboot halt\n'
+            printf 'libs -ledit -lterminfo -lutil -lkvm -lprop -lcrypt -lpcap -lipsec -lm'
+            case "$wpa_backend" in
+                wolfssl) printf ' -lwolfssl' ;;
+                openssl|'') printf ' -lcrypto' ;;
+                *) echo "Unsupported WPA backend for network crunch: $wpa_backend" >&2; exit 2 ;;
+            esac
+            printf '\n'
+        } > "$out/crunch/console-tools.conf"
+        (
+            cd "$out/crunch"
+            export MAKE="$HOST_SH $wrapper $network_auth_flags"
+            set -- -f -V EMBER_GREP_UNCOMPRESSED_ONLY=yes \
+                -V 'LDFLAGS.console-tools=-Wl,--gc-sections' -D "$src" \
+                -V MKPAM=no -V USE_PAM=no -V MKKERBEROS=no -V USE_KERBEROS=no \
+                -V MKLDAP=no -V USE_LDAP=no -V MKYP=no -V USE_YP=no \
+                -V MKSKEY=no -V USE_SKEY=no -V MKHESIOD=no -V USE_HESIOD=no \
+                -V MKRUMP=no
+            for assignment in \
+                "EMBER_DHCPCD_SOURCE=$dhcpcd_source" \
+                "EMBER_MDNS_SOURCE=$mdns_source" \
+                "EMBER_WPA_SOURCE=$wpa_source" \
+                "EMBER_WPA_PROFILE=personal" \
+                "EMBER_LIBPCAP_SOURCE=$libpcap_source"; do
+                set -- "$@" -v "$assignment" -V "$assignment"
+            done
+            if [ -n "$wpa_backend" ]; then
+                set -- "$@" -v "EMBER_WPA_CRYPTO_BACKEND=$wpa_backend" \
+                    -V "EMBER_WPA_CRYPTO_BACKEND=$wpa_backend"
+            fi
+            if [ -n "$wolfssl_prefix" ]; then
+                set -- "$@" -v "EMBER_WOLFSSL_PREFIX=$wolfssl_prefix" \
+                    -V "EMBER_WOLFSSL_PREFIX=$wolfssl_prefix"
+            fi
+            set -- "$@" -L "$out/dest/usr/lib"
+            if [ "$wpa_backend" = wolfssl ]; then
+                [ -n "$wolfssl_prefix" ] || { echo 'Missing WolfSSL prefix.' >&2; exit 2; }
+                set -- "$@" -L "$wolfssl_prefix/lib"
+            fi
+            run crunchgen "$tools/bin/nbcrunchgen" "$@" console-tools.conf
+            run crunch-build "$wrapper" -j"$jobs" -f console-tools.mk \
+                "MAKE=$HOST_SH $wrapper" "NM=$host_prefix/bin/llvm-nm" \
+                "OBJCOPY=$host_prefix/bin/llvm-objcopy" "AWK=$selected_awk" \
+                console-tools.crunched
+        )
+        for part in $programs; do component "$part"; done
+        mkdir -p "$out/dest/libexec/dhcpcd-hooks"
+        for part in $data_components; do component "$part"; done
+        for file in libexec/dhcpcd-run-hooks libexec/dhcpcd-hooks/01-test \
+                    libexec/dhcpcd-hooks/20-resolv.conf libexec/dhcpcd-hooks/30-hostname \
+                    libexec/dhcpcd-hooks/50-ntp.conf; do
+            [ -f "$out/dest/$file" ] || {
+                echo "Missing native dhcpcd install output: $file" >&2; exit 1
+            }
+        done
     else
         for part in $programs; do component "$part" SMALLPROG=1; done
     fi
     run etc-obj "$wrapper" -C "$src/etc" obj
+    root=$out/root
+    root_spec=$out/root.spec
+    if [ "$profile" = network ]; then
+        case "$network_root_stage" in "$out"/.network-root-stage-*) ;; *)
+            echo 'Network root staging path is missing or outside its output.' >&2; exit 2;;
+        esac
+        [ -d "$network_root_stage" ] && [ ! -L "$network_root_stage" ] || {
+            echo 'Network root staging path is not a real directory.' >&2; exit 2
+        }
+        root=$network_root_stage
+        root_spec=$network_root_stage.spec
+    fi
     run makedev "$wrapper" -C "$src/etc" MAKEDEV
-    mkdir -p "$out/root/bin" "$out/root/sbin" "$out/root/dev" "$out/root/etc" "$out/root/tmp"
+    mkdir -p "$root/bin" "$root/sbin" "$root/dev" "$root/etc" "$root/tmp"
     if [ "$profile" = console-tools ]; then
-        cp "$out/crunch/console-tools" "$out/root/bin/console-tools"
+        cp "$out/crunch/console-tools" "$root/bin/console-tools"
         for part in $programs; do
             case "$part" in
-                bin/*) ln -s console-tools "$out/root/$part" ;;
-                sbin/*) ln -s ../bin/console-tools "$out/root/$part" ;;
+                bin/*) link_if_same console-tools "$root/$part" ;;
+                sbin/*) link_if_same ../bin/console-tools "$root/$part" ;;
                 *) echo 'Invalid console program path.' >&2; exit 1 ;;
             esac
         done
-        ln -s ../bin/console-tools "$out/root/sbin/halt"
+        link_if_same ../bin/console-tools "$root/sbin/halt"
+    elif [ "$profile" = network ]; then
+        cp "$out/crunch/console-tools" "$root/bin/console-tools"
+        for part in $crunch_programs; do
+            case "$part" in
+                bin/*) link_if_same console-tools "$root/$part" ;;
+                sbin/*) link_if_same ../bin/console-tools "$root/$part" ;;
+                usr.bin/*) mkdir -p "$root/usr/bin"; link_if_same ../../bin/console-tools "$root/usr/bin/${part##*/}" ;;
+                libexec/*) mkdir -p "$root/usr/libexec"; link_if_same ../../bin/console-tools "$root/usr/libexec/${part##*/}" ;;
+                external/bsd/dhcpcd/sbin/*) mkdir -p "$root/sbin"; link_if_same ../bin/console-tools "$root/sbin/${part##*/}" ;;
+                external/bsd/wpa/bin/*|external/apache2/mDNSResponder/usr.sbin/*) mkdir -p "$root/usr/sbin"; link_if_same ../../bin/console-tools "$root/usr/sbin/${part##*/}" ;;
+                *) echo 'Invalid network utility path.' >&2; exit 1 ;;
+            esac
+        done
+        link_if_same ../bin/console-tools "$root/sbin/halt"
     else
-        cp "$out/dest/bin/sh" "$out/root/bin/sh"
-        cp "$out/dest/sbin/init" "$out/root/sbin/init"
+        cp "$out/dest/bin/sh" "$root/bin/sh"
+        cp "$out/dest/sbin/init" "$root/sbin/init"
     fi
     if [ -n "$extra" ]; then
         extra_name=${extra##*/}
-        [ ! -e "$out/root/bin/$extra_name" ] && [ ! -L "$out/root/bin/$extra_name" ] || {
-            echo 'Console program conflicts with a base path.' >&2; exit 1
-        }
-        cp "$extra" "$out/root/bin/$extra_name"
-        chmod 0555 "$out/root/bin/$extra_name"
+        if [ "$profile" = network ]; then
+            [ ! -e "$root/bin/$extra_name" ] && [ ! -L "$root/bin/$extra_name" ] || {
+                echo 'Console program conflicts with a base path.' >&2; exit 1
+            }
+            cp "$extra" "$root/bin/$extra_name"
+            chmod 0555 "$root/bin/$extra_name"
+        else
+            [ ! -e "$root/bin/$extra_name" ] && [ ! -L "$root/bin/$extra_name" ] || {
+                echo 'Console program conflicts with a base path.' >&2; exit 1
+            }
+            cp "$extra" "$root/bin/$extra_name"
+            chmod 0555 "$root/bin/$extra_name"
+        fi
     fi
     if [ -n "$overlay" ]; then
-        run overlay "$python" -B "$here/static-profile.py" stage-overlay "$overlay" "$out/root"
+        if [ "$profile" != network ]; then
+            run overlay "$python" -B "$here/static-profile.py" stage-overlay "$overlay" "$root"
+        fi
     fi
-    chmod 1777 "$out/root/tmp"
+    chmod 1777 "$root/tmp"
+    if [ "$profile" = network ]; then
+        [ -n "$overlay" ] && [ -n "$network_interface" ] && [ -n "$mdns_source" ] && [ -n "$dhcpcd_source" ] && [ -n "$wpa_source" ] || {
+            echo 'Network profile inputs are incomplete.' >&2; exit 1
+        }
+        for entry in $install_map; do
+            install_path=${entry#*=}
+            [ -f "$out/dest/$install_path" ] || {
+                echo "Missing network program: $install_path" >&2; exit 1
+            }
+            mkdir -p "$root/${install_path%/*}"
+            cp -p "$out/dest/$install_path" "$root/$install_path"
+        done
+        [ -x "$root/bin/console-tools" ] || { echo 'Missing network console-tools.' >&2; exit 1; }
+        run network-config "$python" -B "$here/static-profile.py" stage-network \
+            "$root" "$src" "$overlay" "$network_interface" \
+            "$tools/bin/nbpwd_mkdb" "$out/dest" "$network_root_device" "$network_root_partition"
+        MACHINE="$machine" MACHINE_ARCH="$arch" "$HOST_SH" "$out/obj/etc/MAKEDEV" -s std $device_make > "$out/devices-all.spec"
+        devices=$device_nodes
+        device_link_nodes=$device_links
+        "$tools/bin/nbmtree" -c -p "$root" -k type,mode,link | \
+            sed -E 's/(\/set[[:space:]].*)/\1 uid=0 gid=0/' > "$root_spec"
+        run network-target-modes "$python" -B "$here/static-profile.py" \
+            apply-metalog-modes "$root_spec" "$root" "$out/dest" "$out/dest/METALOG" "$install_map"
+        for node in $devices; do
+            awk -v n="$node" '$1 == "./" n && $2 == "type=char" {sub(/^\./,"./dev"); print}' \
+                "$out/devices-all.spec" >> "$root_spec"
+            [ "$(grep -c "^\./dev/$node type=char " "$root_spec")" -eq 1 ] || {
+                echo "Missing or duplicate device: $node" >&2; exit 1
+            }
+        done
+        for node in $device_link_nodes; do
+            awk -v n="$node" '$1 == "./" n && $2 == "type=link" {sub(/^\./,"./dev"); print}' \
+                "$out/devices-all.spec" >> "$root_spec"
+            [ "$(grep -c "^\./dev/$node type=link " "$root_spec")" -eq 1 ] || {
+                echo "Missing or duplicate device link: $node" >&2; exit 1
+            }
+        done
+        for node in $device_block_nodes; do
+            awk -v n="$node" '$1 == "./" n && $2 == "type=block" {sub(/^\./,"./dev"); print}' \
+                "$out/devices-all.spec" >> "$root_spec"
+            [ "$(grep -c "^\./dev/$node type=block " "$root_spec")" -eq 1 ] || {
+                echo "Missing or duplicate block device: $node" >&2; exit 1
+            }
+        done
+        rm -f "$out/devices-all.spec"
+        exit 0
+    fi
     if [ "$profile" = console-tools ]; then
         MACHINE="$machine" MACHINE_ARCH="$arch" "$HOST_SH" "$out/obj/etc/MAKEDEV" -s std wscons iic0 > "$out/devices-all.spec"
         devices='console null zero tty klog ttyE0 wsmouse0 iic0'

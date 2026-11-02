@@ -11,9 +11,9 @@ import sys
 
 def main():
     selected_profile = os.environ.get('EMBER_USERLAND_PROFILE') or 'cix'
-    if selected_profile not in ('cix', 'console', 'console-tools'):
+    if selected_profile not in ('cix', 'console', 'console-tools', 'network'):
         raise SystemExit('unsupported userland profile: ' + selected_profile)
-    if selected_profile in ('console', 'console-tools'):
+    if selected_profile in ('console', 'console-tools', 'network'):
         import importlib.util
         path = Path(__file__).with_name('static-profile.py')
         spec = importlib.util.spec_from_file_location('static_profile', path)
@@ -21,7 +21,7 @@ def main():
         spec.loader.exec_module(profile)
         return profile.run_console(sys.argv[1:])
     if len(sys.argv) != 5:
-        raise SystemExit('usage: cix-p1-native.py SOURCE NEW_OUTPUT TOOLDIR TARGET_PREFIX')
+        raise SystemExit('usage: cix-p1-native.py SOURCE OUTPUT TOOLDIR TARGET_PREFIX')
     source, output, tools, compiler = map(Path, sys.argv[1:])
     required = ('EMBERBSD_SDK_SOURCE', 'EMBER_HOST_PREFIX', 'EMBER_LIBEDIT_SOURCE',
                 'EMBER_HOST_BFD_CONFIG', 'EMBER_LLVM_SOURCE', 'EMBER_PORTS_SOURCE',
