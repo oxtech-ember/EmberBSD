@@ -1,0 +1,9 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Origin: EmberBSD contributors (AI-assisted).
+# Generic amd64 kernel with AMD GPU and GPIO support.
+
+include "arch/amd64/conf/GENERIC"
+
+amdgpu* at pci? dev ? function ?
+amdgpufb* at amdgpufbbus?
+amdgpio* at acpi?
