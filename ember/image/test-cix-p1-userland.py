@@ -75,8 +75,8 @@ if [ "$TEST_ELF_KIND" = dynamic ] && [ "$1" = -l ]; then echo INTERP; fi
     write(compiler / 'bin/clang', f'#!{shell}\nexit 0\n', 0o755)
     for package in ('libarchive', 'libevent', 'byacc', 'iscsi', 'libpcap', 'tcpwrappers', 'libcbor', 'libfido2', 'libfetch', 'mdns', 'dhcpcd'):
         write(work / f'{package}-source/emberbsd-prepared-source.json', f'{package}-source')
-    write(work / 'dhcpcd-source/hooks/dhcpcd-run-hooks', '# synthetic hook runner\n')
-    write(work / 'dhcpcd-source/hooks/20-resolv.conf', '# synthetic DNS hook\n')
+    write(work / 'dhcpcd-source/hooks/dhcpcd-run-hooks.in', '# synthetic hook runner template\n')
+    write(work / 'dhcpcd-source/hooks/20-resolv.conf', '# synthetic DNS hook source\n')
     write(work / 'llvm-source/llvm-source.json', 'prepared LLVM source')
     write(work / 'llvm-resource/lib/netbsd/builtins.a', 'retained LLVM builtins')
     for tool in ('nbmkesdb', 'nbmkcsmapper'):
@@ -143,6 +143,17 @@ sys.exit(subprocess.call([os.environ['HOST_SH'], source + '/build.sh', *build_ar
     dhcpcd = [e for e in events if '/external/bsd/dhcpcd/sbin/dhcpcd ' in e]
     check(len(dhcpcd) == 3 and [e.split()[-1] for e in dhcpcd] == ['obj', 'dependall', 'install'] and
           all(' SMALLPROG=1 SMALLPROG_INET6=1 ' in e for e in dhcpcd), 'reduced DHCP retains IPv4 and IPv6')
+    hook_parts = ('external/bsd/dhcpcd/libexec/dhcpcd-run-hooks',
+                  'external/bsd/dhcpcd/libexec/dhcpcd-hooks')
+    for part in hook_parts:
+        selected = [e for e in events if f'/{part} ' in e]
+        check([e.split()[-1] for e in selected] == ['obj', 'dependall', 'install'],
+              f'native dhcpcd data target {part}')
+    install_positions = [next(i for i, e in enumerate(events)
+                              if f'/{part} ' in e and e.endswith(' install\n'))
+                         for part in ('external/bsd/dhcpcd/sbin/dhcpcd', *hook_parts)]
+    check(install_positions == sorted(install_positions),
+          'native dhcpcd hook targets follow configured client')
     for part, selection in (('iconv', ''), ('esdb', 'SUBDIR=ISO646 UTF ISO646_PART=US UTF_PART=8 '),
                             ('csmapper', 'SUBDIR=ISO646 PART_ISO646=US ')):
         selected = [e for e in events if f'/share/i18n/{part} ' in e]
@@ -161,11 +172,24 @@ sys.exit(subprocess.call([os.environ['HOST_SH'], source + '/build.sh', *build_ar
     for envname, path in (('BYACC', 'byacc'), ('ISCSI', 'iscsi'), ('LIBPCAP', 'libpcap'), ('TCP_WRAPPERS', 'tcpwrappers'), ('LIBCBOR', 'libcbor'), ('LIBFIDO2', 'libfido2'), ('LIBFETCH', 'libfetch'), ('MDNS', 'mdns'), ('DHCPCD', 'dhcpcd')):
         check(f'EMBER_{envname}_SOURCE={work}/{path}-source' in flags and
               f'{work}/{path}-source/emberbsd-prepared-source.json' in receipt, f'prepared {path}')
-    for hook in ('dhcpcd-run-hooks', '20-resolv.conf'):
-        check((out / 'dhcpcd-hooks' / hook).read_bytes() ==
-              (work / 'dhcpcd-source/hooks' / hook).read_bytes(), 'selected DHCP hook copied')
-        check('dhcpcd-hooks/' + hook in
-              (out / 'DHCPCD-HOOKS-SHA256.txt').read_text(), 'DHCP hook recorded')
+    generated_hooks = (('dhcpcd-run-hooks', 'libexec/dhcpcd-run-hooks',
+                        'hooks/dhcpcd-run-hooks.in'),
+                       ('20-resolv.conf', 'libexec/dhcpcd-hooks/20-resolv.conf',
+                        'hooks/20-resolv.conf'))
+    hooks_receipt = (out / 'DHCPCD-HOOKS-SHA256.txt').read_text()
+    for hook, generated, source_input in generated_hooks:
+        output = out / 'dhcpcd-hooks' / hook
+        target = out / 'dest' / generated
+        check(output.read_bytes() == target.read_bytes() and
+              output.read_bytes() != (work / 'dhcpcd-source' / source_input).read_bytes(),
+              'selected generated DHCP hook copied from native DESTDIR')
+        check(f'{digest(output)}  dhcpcd-hooks/{hook}' in hooks_receipt,
+              'generated DHCP hook recorded')
+    receipt = (out / 'BUILD-INPUTS.txt').read_text()
+    check(str(work / 'dhcpcd-source/hooks/dhcpcd-run-hooks.in') in receipt and
+          str(out / 'dest/libexec/dhcpcd-run-hooks') in receipt and
+          str(out / 'dest/libexec/dhcpcd-hooks/20-resolv.conf') in receipt,
+          'DHCP hook templates and generated outputs are pinned')
     if os.environ.get('CIX_TEST_NETWORK_INPUTS_ONLY') == '1':
         print('PASS: CIX network source and DHCP hook routing')
         raise SystemExit(0)

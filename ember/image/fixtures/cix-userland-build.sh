@@ -55,6 +55,14 @@ case "$*" in *'/share/i18n/csmapper '*' install')
   esac;;
 esac
 case "$*" in
+  *'/external/bsd/dhcpcd/libexec/dhcpcd-run-hooks install')
+    mkdir -p "$dest/libexec"
+    printf '# generated runner from native target\n' > "$dest/libexec/dhcpcd-run-hooks";;
+  *'/external/bsd/dhcpcd/libexec/dhcpcd-hooks install')
+    mkdir -p "$dest/libexec/dhcpcd-hooks"
+    printf '# generated resolv hook from native target\n' > "$dest/libexec/dhcpcd-hooks/20-resolv.conf";;
+esac
+case "$*" in
   *do-distrib-dirs*) mkdir -p "$dest/bin" "$dest/sbin" "$dest/usr/bin" \
     "$dest/usr/sbin" "$dest/usr/libexec";;
   *"/sbin/mknod install")

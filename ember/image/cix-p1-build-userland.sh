@@ -397,14 +397,9 @@ for input in "$src/build.sh" "$0" "$here/cix-p1-native.py" "$here/cix-p1-i18n.py
     "$tcpwrappers/emberbsd-prepared-source.json" "$libcbor/emberbsd-prepared-source.json" \
     "$libfido2/emberbsd-prepared-source.json" "$libfetch/emberbsd-prepared-source.json" \
     "$mdns/emberbsd-prepared-source.json" "$dhcpcd/emberbsd-prepared-source.json" \
-    "$dhcpcd/hooks/dhcpcd-run-hooks" "$dhcpcd/hooks/20-resolv.conf"; do
+    "$dhcpcd/hooks/dhcpcd-run-hooks.in" "$dhcpcd/hooks/20-resolv.conf"; do
     "$shasum" -a 256 "$input" >> "$out/BUILD-INPUTS.pending"
 done
-mkdir -p "$out/dhcpcd-hooks"
-cp "$dhcpcd/hooks/dhcpcd-run-hooks" "$out/dhcpcd-hooks/dhcpcd-run-hooks"
-cp "$dhcpcd/hooks/20-resolv.conf" "$out/dhcpcd-hooks/20-resolv.conf"
-(cd "$out" && "$shasum" -a 256 dhcpcd-hooks/dhcpcd-run-hooks \
-    dhcpcd-hooks/20-resolv.conf > DHCPCD-HOOKS-SHA256.txt)
 "$shasum" -a 256 "$0" "$here/cix-p1-native.py" "$here/cix-p1-i18n.py" > "$out/PROFILE-SHA256.txt"
 if [ -n "$unwinder" ]; then
     "$shasum" -a 256 "$unwinder" >> "$out/BUILD-INPUTS.pending"
@@ -475,6 +470,20 @@ for part in bin/sh bin/cat bin/ls bin/cp bin/mv bin/rm bin/mkdir bin/chmod \
 done
 # Keep the reduced non-privsep profile, with both IPv4 and IPv6 clients.
 component external/bsd/dhcpcd/sbin/dhcpcd SMALLPROG=1 SMALLPROG_INET6=1
+component external/bsd/dhcpcd/libexec/dhcpcd-run-hooks
+component external/bsd/dhcpcd/libexec/dhcpcd-hooks
+for file in libexec/dhcpcd-run-hooks libexec/dhcpcd-hooks/20-resolv.conf; do
+    [ -f "$out/dest/$file" ] || {
+        echo "Missing generated DHCP hook: $file" >&2; exit 1
+    }
+done
+mkdir -p "$out/dhcpcd-hooks"
+cp "$out/dest/libexec/dhcpcd-run-hooks" "$out/dhcpcd-hooks/dhcpcd-run-hooks"
+cp "$out/dest/libexec/dhcpcd-hooks/20-resolv.conf" "$out/dhcpcd-hooks/20-resolv.conf"
+(cd "$out" && "$shasum" -a 256 dhcpcd-hooks/dhcpcd-run-hooks \
+    dhcpcd-hooks/20-resolv.conf > DHCPCD-HOOKS-SHA256.txt)
+"$shasum" -a 256 "$out/dest/libexec/dhcpcd-run-hooks" \
+    "$out/dest/libexec/dhcpcd-hooks/20-resolv.conf" >> "$out/BUILD-INPUTS.pending"
 component share/i18n/iconv
 component share/i18n/esdb 'SUBDIR=ISO646 UTF' ISO646_PART=US UTF_PART=8
 component share/i18n/csmapper SUBDIR=ISO646 PART_ISO646=US
