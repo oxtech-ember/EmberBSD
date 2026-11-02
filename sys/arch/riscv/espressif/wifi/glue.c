@@ -76,6 +76,12 @@
 
 #include "../esp_wifi_os.h"
 
+/* Match the prebuilt ESP32-S31 MAC v3 promiscuous RX descriptor ABI. */
+_Static_assert(sizeof(wifi_pkt_rx_ctrl_t) == 64,
+    "ESP32-S31 MAC v3 RX control layout mismatch");
+_Static_assert(offsetof(wifi_promiscuous_pkt_t, payload) == 64,
+    "ESP32-S31 promiscuous payload offset mismatch");
+
 #define	TICKS(t)	((t) == OSI_FUNCS_TIME_BLOCKING ? ESPWIFI_WAIT_FOREVER : (t))
 
 /*
