@@ -159,6 +159,26 @@ fdtbus_dma_transfer(struct fdtbus_dma *dma, struct fdtbus_dma_req *req)
 	return dc->dma_funcs->transfer(dc->dma_dev, dma->dma_priv, req);
 }
 
+int
+fdtbus_dma_result(struct fdtbus_dma *dma, struct fdtbus_dma_result *result)
+{
+	struct fdtbus_dma_controller *dc = dma->dma_dc;
+
+	if (dc->dma_funcs->result == NULL)
+		return ENOTSUP;
+	return dc->dma_funcs->result(dc->dma_dev, dma->dma_priv, result);
+}
+
+int
+fdtbus_dma_halt_checked(struct fdtbus_dma *dma)
+{
+	struct fdtbus_dma_controller *dc = dma->dma_dc;
+
+	if (dc->dma_funcs->halt_checked == NULL)
+		return ENOTSUP;
+	return dc->dma_funcs->halt_checked(dc->dma_dev, dma->dma_priv);
+}
+
 void
 fdtbus_dma_halt(struct fdtbus_dma *dma)
 {

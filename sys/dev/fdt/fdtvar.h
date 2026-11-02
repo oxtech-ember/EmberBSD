@@ -107,12 +107,21 @@ struct fdtbus_dma_req {
 	struct fdtbus_dma_opt dreq_dev_opt;	/* Device options */
 };
 
+/* Optional result: available after completion until the next transfer/halt. */
+struct fdtbus_dma_result {
+	int dres_error;		/* Transfer errno, or zero on success */
+	size_t dres_bytes;	/* Valid bytes; zero when unknown on error */
+};
+
 struct fdtbus_dma_controller_func {
 	void *	(*acquire)(device_t, const void *, size_t,
 			   void (*)(void *), void *);
 	void	(*release)(device_t, void *);
 	int	(*transfer)(device_t, void *, struct fdtbus_dma_req *);
 	void	(*halt)(device_t, void *);
+	int	(*result)(device_t, void *, struct fdtbus_dma_result *);
+	/* Nonzero leaves the caller responsible for retaining DMA memory. */
+	int	(*halt_checked)(device_t, void *);
 };
 
 
@@ -435,6 +444,9 @@ struct fdtbus_dma *
 void		fdtbus_dma_put(struct fdtbus_dma *);
 int		fdtbus_dma_transfer(struct fdtbus_dma *,
 		    struct fdtbus_dma_req *);
+int		fdtbus_dma_result(struct fdtbus_dma *,
+		    struct fdtbus_dma_result *);
+int		fdtbus_dma_halt_checked(struct fdtbus_dma *);
 void		fdtbus_dma_halt(struct fdtbus_dma *);
 
 int		fdtbus_gpio_count(int, const char *);

@@ -36,6 +36,12 @@ device	espspi: spibus
 attach	espspi at fdt
 file	arch/riscv/espressif/esp_spi.c		espspi
 
+# ESP32-S31 AXI peripheral DMA receive channels.
+device	espaxigdma
+attach	espaxigdma at fdt
+file	arch/riscv/espressif/esp_axi_gdma.c		espaxigdma
+file	arch/riscv/espressif/esp_axi_gdma_desc.c	espaxigdma
+
 # ESP32-S31 Ethernet: DesignWare GMAC
 attach	awge at fdt with esp_gmac
 file	arch/riscv/espressif/esp_gmac.c		esp_gmac
