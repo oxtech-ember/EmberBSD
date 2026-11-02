@@ -69,10 +69,14 @@ GNU_CONFIGURE_CFLAGS= -DPROBE=1
 GNU_HOST_MAKE_DIRS= host
 GNU_MAKE_DIRS= header .
 GNU_MAKE_TARGETS.header= header-only
+# A real build has bsd.host.mk from bsd.own.mk: it selects the host flags.
+NEED_OWN_INSTALL_TARGET= no
+USETOOLS= no
+.include "%s"
 .include "%s"
 all: gnu-target-build
 ''' % (source, work / 'build', host / 'bin/mksh', host / 'bin/gmake',
-       tool, root / 'share/mk/bsd.gnutarget.mk'))
+       tool, root / 'share/mk/bsd.host.mk', root / 'share/mk/bsd.gnutarget.mk'))
     env = dict(os.environ, PATH=str(host / 'bin') + ':' + str(host / 'gnu/bin'),
                TMPDIR=str(a.work_dir), MAKEOVERRIDES='HOSTILE=1')
     cmd = [str(host / 'bin/bmake'), '-r', '-f', str(makefile), 'all']
@@ -121,4 +125,44 @@ all: gnu-target-build
     failed = subprocess.run(cmd, cwd=work, env=env, capture_output=True, text=True)
     if failed.returncode == 0 or (build / '.configure-libtool').read_text() != expected:
         raise SystemExit('missing libtool did not fail without changing snapshot')
+
+    # A producer without libtool ignores a libtool selected for the whole
+    # build, even before that libtool exists (for example OpenSSH).
+    plain = work / 'plain-source'
+    plain.mkdir()
+    (plain / 'configure').write_text('''cat > Makefile <<'END'
+LIBTOOL=own-libtool
+all:
+\tprintf '%s\\n' '$(LIBTOOL)' > selected
+
+distclean:
+\trm -f Makefile selected
+END
+''')
+    missing = work / 'not yet built libtool'
+    for use, expect_ok in (('no', True), ('yes', False)):
+        plain_build = work / ('plain-build-' + use)
+        plain_makefile = work / ('Makefile.plain-' + use)
+        plain_makefile.write_text('''GNU_SOURCE= %s
+GNU_OBJDIR= %s
+GNU_BUILD_TRIPLE= host
+GNU_HOST_TRIPLE= target
+HOST_SH= %s
+HOST_GMAKE= %s
+GNU_USE_TARGET_LIBTOOL= %s
+.include "%s"
+all: gnu-target-build
+''' % (plain, plain_build, host / 'bin/mksh', host / 'bin/gmake', use,
+           root / 'share/mk/bsd.gnutarget.mk'))
+        plain_env = dict(env, GNU_TARGET_LIBTOOL=str(missing))
+        result = subprocess.run([str(host / 'bin/bmake'), '-r', '-f', str(plain_makefile), 'all'],
+                                cwd=work, env=plain_env, capture_output=True, text=True)
+        if expect_ok != (result.returncode == 0):
+            raise SystemExit('GNU_USE_TARGET_LIBTOOL=%s: unexpected status %d\n%s%s' %
+                             (use, result.returncode, result.stdout, result.stderr))
+    plain_build = work / 'plain-build-no'
+    if (plain_build / 'selected').read_text().strip() != 'own-libtool':
+        raise SystemExit('a producer without libtool received the selected libtool')
+    if (plain_build / '.configure-libtool').exists():
+        raise SystemExit('a producer without libtool recorded the selected libtool')
 print('GNU target libtool selection and invalidation: PASS')
