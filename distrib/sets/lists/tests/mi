@@ -6838,6 +6838,7 @@
 ./usr/tests/usr.bin/xlint/lint1/d_cvt_in_ternary.c		tests-obsolete		obsolete,atf
 ./usr/tests/usr.bin/xlint/lint1/d_decl_old_style_arguments.c	tests-usr.bin-tests	compattestfile,atf
 ./usr/tests/usr.bin/xlint/lint1/d_decl_old_style_arguments.exp	tests-obsolete		obsolete,atf
+./usr/tests/usr.bin/xlint/lint1/d_decl_parameter_recovery.c	tests-usr.bin-tests	compattestfile,atf
 ./usr/tests/usr.bin/xlint/lint1/d_ellipsis_in_switch.c		tests-obsolete		obsolete,atf
 ./usr/tests/usr.bin/xlint/lint1/d_fold_test.c			tests-usr.bin-tests	compattestfile,atf
 ./usr/tests/usr.bin/xlint/lint1/d_fold_test.exp			tests-obsolete		obsolete,atf

@@ -532,7 +532,12 @@ M68K_ELF2AOUT=	${TOOLDIR}/bin/${_TOOL_PREFIX}m68k-elf2aout
 MIPS_ELF2ECOFF=	${TOOLDIR}/bin/${_TOOL_PREFIX}mips-elf2ecoff
 INSTALL=	${TOOLDIR}/bin/${MACHINE_GNU_PLATFORM}-install
 LEX=		${TOOLDIR}/bin/${_TOOL_PREFIX}lex
+# Like mkdep, xlint executes the CC pathname without its arguments.
+.if defined(EXTERNAL_TOOLCHAIN) && ${EMBER_COMPILER_FAMILY} == "clang"
+LINT=		CC=${EXTERNAL_TOOLCHAIN}/bin/clang ${TOOLDIR}/bin/${MACHINE_GNU_PLATFORM}-lint -Z --target=${MACHINE_GNU_PLATFORM}
+.else
 LINT=		CC=${CC:Q} ${TOOLDIR}/bin/${MACHINE_GNU_PLATFORM}-lint
+.endif
 LORDER=		NM=${NM:Q} MKTEMP=${TOOL_MKTEMP:Q} ${TOOLDIR}/bin/${_TOOL_PREFIX}lorder
 .if defined(EXTERNAL_TOOLCHAIN) && ${EMBER_COMPILER_FAMILY} == "clang"
 # mkdep executes one CC pathname and does not forward arguments from CC.

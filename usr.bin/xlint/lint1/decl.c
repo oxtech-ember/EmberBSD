@@ -2933,6 +2933,9 @@ static void
 check_parameter_usage(bool novar, const sym_t *arg)
 {
 
+	/* Parser recovery may leave a parameter declarator incomplete. */
+	if (seen_error && !arg->s_set)
+		return;
 	lint_assert(arg->s_set);
 
 	if (novar)

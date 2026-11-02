@@ -47,10 +47,10 @@ class CompilerFamilyTests(unittest.TestCase):
                  "OBJCOPY", "OBJDUMP", "READELF", "SIZE", "STRINGS", "STRIP",
                  "ACTIVE_CC", "ACTIVE_CXX", "LDFLAGS", "LD_DRIVER_FLAGS")
         value = self.values(names)
-        self.assertEqual(value["CC"], "/sdk/bin/clang --target=aarch64--netbsd")
+        self.assertEqual(value["CC"], "/sdk/bin/clang --target=aarch64--netbsd -B/usr/src/ember/tools/no-external-as/")
         self.assertEqual(value["CPP"], "/sdk/bin/clang --driver-mode=cpp --target=aarch64--netbsd")
-        self.assertEqual(value["CXX"], "/sdk/bin/clang++ --target=aarch64--netbsd")
-        self.assertEqual(value["AS"], "/sdk/bin/clang --target=aarch64--netbsd -c -x assembler")
+        self.assertEqual(value["CXX"], "/sdk/bin/clang++ --target=aarch64--netbsd -B/usr/src/ember/tools/no-external-as/")
+        self.assertEqual(value["AS"], "/sdk/bin/clang --target=aarch64--netbsd -B/usr/src/ember/tools/no-external-as/ -c -x assembler")
         self.assertEqual(value["LD"], "/sdk/bin/ld.lld")
         for name in ("AR", "RANLIB", "NM", "OBJCOPY", "OBJDUMP", "READELF", "SIZE", "STRINGS", "STRIP"):
             self.assertEqual(value[name], "/sdk/bin/llvm-" + name.lower())
@@ -83,6 +83,12 @@ class CompilerFamilyTests(unittest.TestCase):
         value = self.values(names, 'EMBER_COMPILER_FAMILY=gcc')
         self.assertEqual(value['MKDEP'], 'CC=/sdk/bin/aarch64--netbsd-gcc /build/tools/bin/nbmkdep')
         self.assertNotIn('--target=', value['_MKDEP_TARGET_FLAGS'])
+
+    def test_lint_receives_target_separately_from_compiler(self):
+        value = self.values(('LINT',))['LINT']
+        self.assertEqual(value, 'CC=/sdk/bin/clang /build/tools/bin/aarch64--netbsd-lint -Z --target=aarch64--netbsd')
+        gcc = self.values(('LINT',), 'EMBER_COMPILER_FAMILY=gcc')['LINT']
+        self.assertEqual(gcc, 'CC=/sdk/bin/aarch64--netbsd-gcc /build/tools/bin/aarch64--netbsd-lint')
 
     def test_host_dependencies_do_not_inherit_target_flags(self):
         for include in ('bsd.hostprog.mk', 'bsd.hostlib.mk'):

@@ -709,6 +709,9 @@ main(int argc, char *argv[])
 			dflag = true;
 			list_add(&cpp.flags, "--sysroot");
 			list_add(&cpp.flags, optarg);
+			list_add(&cpp.flags, "-nostdinc");
+			list_add(&cpp.flags, "-isystem");
+			list_add_ref(&cpp.flags, xasprintf("%s/usr/include", optarg));
 			break;
 
 		case 'D':

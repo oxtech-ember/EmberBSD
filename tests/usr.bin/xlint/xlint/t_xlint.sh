@@ -115,9 +115,30 @@ run_lint2_body()
 }
 
 
+atf_test_case 'sysroot_headers'
+sysroot_headers_body()
+{
+	mkdir -p 'root with space/usr/include' override || atf_fail 'create includes'
+	printf '#define EMBER_HEADER 1\n' > 'root with space/usr/include/stddef.h'
+	printf '#define EMBER_HEADER 2\n' > override/stddef.h
+	cat <<-EOF > input.c
+		#include <stddef.h>
+		#if EMBER_HEADER != EXPECT_HEADER
+		#error incorrect header selected
+		#endif
+		int sysroot_header_test;
+	EOF
+	atf_check -s exit:0 -o ignore -e ignore "$lint" \
+	    -d "$(pwd)/root with space" -DEXPECT_HEADER=1 -i input.c
+	atf_check -s exit:0 -o ignore -e ignore "$lint" \
+	    -d "$(pwd)/root with space" -I "$(pwd)/override" \
+	    -DEXPECT_HEADER=2 -i input.c
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case 'run_lint1_error'
 	atf_add_test_case 'run_lint1_warning'
 	atf_add_test_case 'run_lint2'
+	atf_add_test_case 'sysroot_headers'
 }
