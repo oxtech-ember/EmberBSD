@@ -44,6 +44,11 @@
 			reg = <0x5a>;
 			power-supply = <&vcc_3v3>;
 		};
+
+		fuel-gauge@55 {
+			compatible = "ti,bq27220";
+			reg = <0x55>;
+		};
 	};
 
 	/* Shared expansion-slot bus; does not claim slot-control pins. */

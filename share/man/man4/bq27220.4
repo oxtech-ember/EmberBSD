@@ -1,0 +1,55 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\" Copyright (c) 2026 EmberBSD contributors
+.Dd November 3, 2026
+.Dt BQ27220 4
+.Os
+.Sh NAME
+.Nm bq27220
+.Nd TI BQ27220 battery fuel gauge
+.Sh SYNOPSIS
+.Cd "bq27220* at iic?"
+.Sh DESCRIPTION
+The
+.Nm
+driver attaches to a device-tree node compatible with
+.Qq ti,bq27220
+and exposes read-only measurements through
+.Xr sysmon_envsys 9 .
+The driver does not configure gauge data memory, chemistry parameters, or
+one-time-programmable storage.
+.Pp
+The following sensors are available through
+.Xr envstat 8 :
+.Bl -tag -width "battery charge"
+.It battery voltage
+Cell-pack voltage, in volts.
+.It battery current
+Signed current, in amperes; positive values indicate current into the battery.
+.It gauge temperature
+The gauge's
+.Sy Temperature()
+reading, in degrees Celsius as presented by envsys.
+The chip's configuration determines whether this reading comes from an
+external thermistor, its internal sensor, or a host-written value.
+.It battery charge
+State of charge, as a percentage.
+.El
+.Pp
+Read errors and out-of-range readings mark the affected sensor invalid.
+.Sh DEVICE TREE
+.Bl -tag -width "compatible"
+.It compatible
+.Qq ti,bq27220
+.It reg
+I2C address.
+.El
+.Sh SEE ALSO
+.Xr envsys 4 ,
+.Xr envstat 8 ,
+.Xr sysmon_envsys 9
+.Sh HISTORY
+The
+.Nm
+driver first appeared in EmberBSD 11.
+.Sh AUTHORS
+The driver was written for EmberBSD.
