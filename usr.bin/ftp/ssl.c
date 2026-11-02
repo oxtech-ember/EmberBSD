@@ -713,7 +713,7 @@ fetch_start_ssl(int sock, const char *servername)
 
 	if (ftp_debug && verbose) {
 		X509 *cert;
-		X509_NAME *name;
+		const X509_NAME *name;
 		char *str;
 
 		fprintf(ttyout, "SSL connection established using %s\n",

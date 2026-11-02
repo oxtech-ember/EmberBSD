@@ -307,18 +307,20 @@ eay_cmp_asn1dn(vchar_t *n1, vchar_t *n2)
 
 	/* handle wildcard: do not compare entry content but only entry object type */
 	for(idx = 0; idx < X509_NAME_entry_count(a); idx++) {
-		X509_NAME_ENTRY *ea = X509_NAME_get_entry(a, idx);
-		X509_NAME_ENTRY *eb = X509_NAME_get_entry(b, idx);
-		ASN1_STRING *eda, *edb;
+		const X509_NAME_ENTRY *ea = X509_NAME_get_entry(a, idx);
+		const X509_NAME_ENTRY *eb = X509_NAME_get_entry(b, idx);
+		const ASN1_STRING *eda, *edb;
 		if (!eb) {	/* reached end of eb while still entries in ea, can not be equal... */
 			i = idx+1;
 			goto end;
 		}
 		eda = X509_NAME_ENTRY_get_data(ea);
 		edb = X509_NAME_ENTRY_get_data(eb);
-		if ((eda->length == 1 && eda->data[0] == '*') ||
-		    (edb->length == 1 && edb->data[0] == '*')) {
-			ASN1_OBJECT *eoa, *eob;
+		if ((ASN1_STRING_length(eda) == 1 &&
+		     ASN1_STRING_get0_data(eda)[0] == '*') ||
+		    (ASN1_STRING_length(edb) == 1 &&
+		     ASN1_STRING_get0_data(edb)[0] == '*')) {
+			const ASN1_OBJECT *eoa, *eob;
 			eoa = X509_NAME_ENTRY_get_object(ea);
 			eob = X509_NAME_ENTRY_get_object(eb);
 	    		if (OBJ_cmp(eoa, eob)) {
@@ -326,10 +328,8 @@ eay_cmp_asn1dn(vchar_t *n1, vchar_t *n2)
 				goto end;
 	    		}
 			/* OK: object type equals, we don't care for this entry anymore, so let's forget it... */
-			X509_NAME_delete_entry(a, idx);
-			X509_NAME_delete_entry(b, idx);
-			X509_NAME_ENTRY_free(ea);
-			X509_NAME_ENTRY_free(eb);
+			X509_NAME_ENTRY_free(X509_NAME_delete_entry(a, idx));
+			X509_NAME_ENTRY_free(X509_NAME_delete_entry(b, idx));
 			idx--;
 		}
 	}
@@ -497,7 +497,7 @@ vchar_t *
 eay_get_x509asn1subjectname(vchar_t *cert)
 {
 	X509 *x509 = NULL;
-	X509_NAME *xname;
+	const X509_NAME *xname;
 	u_char *bp;
 	vchar_t *name = NULL;
 	int len;
@@ -567,38 +567,43 @@ eay_get_x509subjectaltname(vchar_t *cert, char **altname, int *type, int pos)
 		gen->type == GEN_EMAIL	||
 		gen->type == GEN_URI )
 	{
+		const unsigned char *data = ASN1_STRING_get0_data(gen->d.ia5);
+		int dlen = ASN1_STRING_length(gen->d.ia5);
+
 		/* make sure if the data is terminated by '\0'. */
-		if (gen->d.ia5->data[gen->d.ia5->length] != '\0')
+		if (data[dlen] != '\0')
 		{
 			plog(LLV_ERROR, LOCATION, NULL,
 				 "data is not terminated by NUL.");
-			racoon_hexdump(gen->d.ia5->data, gen->d.ia5->length + 1);
+			racoon_hexdump(__UNCONST(data), dlen + 1);
 			goto end;
 		}
 		
-		len = gen->d.ia5->length + 1;
+		len = dlen + 1;
 		*altname = racoon_malloc(len);
 		if (!*altname)
 			goto end;
 		
-		strlcpy(*altname, (char *) gen->d.ia5->data, len);
+		strlcpy(*altname, (const char *) data, len);
 		*type = gen->type;
 		error = 0;
 	}
 	/* read IP address */
 	else if (gen->type == GEN_IPADD)
 	{
-		switch (gen->d.iPAddress->length) {
+		const unsigned char *ip = ASN1_STRING_get0_data(gen->d.iPAddress);
+
+		switch (ASN1_STRING_length(gen->d.iPAddress)) {
 		case 4: /* IPv4 */
 			*altname = racoon_malloc(4*3 + 3 + 1); /* digits + decimals + null */
 			if (!*altname)
 				goto end;
 
 			snprintf(*altname, 12+3+1, "%u.%u.%u.%u",
-			         (unsigned)gen->d.iPAddress->data[0],
-			         (unsigned)gen->d.iPAddress->data[1],
-			         (unsigned)gen->d.iPAddress->data[2],
-			         (unsigned)gen->d.iPAddress->data[3]);
+			         (unsigned)ip[0],
+			         (unsigned)ip[1],
+			         (unsigned)ip[2],
+			         (unsigned)ip[3]);
 			break;
 		case 16: { /* IPv6 */
 			int i;
@@ -615,7 +620,7 @@ eay_get_x509subjectaltname(vchar_t *cert, char **altname, int *type, int pos)
 					(*altname)[xpos-1] = ':';
 
 				snprintf(*altname + xpos, 3, "%02x",
-				         (unsigned)gen->d.iPAddress->data[i]);
+				         (unsigned)ip[i]);
 
 			}
 			plog(LLV_INFO, LOCATION, NULL,
@@ -625,7 +630,7 @@ eay_get_x509subjectaltname(vchar_t *cert, char **altname, int *type, int pos)
 		default:
 			plog(LLV_ERROR, LOCATION, NULL,
 			     "Unknown IP address length: %u octects.",
-			     gen->d.iPAddress->length);
+			     ASN1_STRING_length(gen->d.iPAddress));
 			goto end;
 		}
 
@@ -660,7 +665,7 @@ vchar_t *
 eay_get_x509asn1issuername(vchar_t *cert)
 {
 	X509 *x509 = NULL;
-	X509_NAME *xissuer;
+	const X509_NAME *xissuer;
 	u_char *bp;
 	vchar_t *name = NULL;
 	int len;
@@ -2343,7 +2348,7 @@ eay_init(void)
 {
 	OpenSSL_add_all_algorithms();
 	ERR_load_crypto_strings();
-#ifdef HAVE_OPENSSL_ENGINE_H
+#if defined(HAVE_OPENSSL_ENGINE_H) && !defined(OPENSSL_NO_ENGINE)
 	ENGINE_load_builtin_engines();
 	ENGINE_register_all_complete();
 #endif
