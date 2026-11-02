@@ -74,7 +74,7 @@ struct ieee80211com { struct ifnet *ic_ifp; struct ieee80211_node *ic_bss;
  const uint8_t *ic_opt_ie; unsigned ic_opt_ie_len; unsigned ic_flags;
  enum ieee80211_state ic_state; };
 struct espwifi_softc { struct { struct ifnet ec_if; } sc_ec; struct ieee80211com sc_ic;
- int sc_scan_lock; void *sc_scan_ctl_sem; unsigned sc_port_authorized;
+ int sc_scan_lock,sc_sae_lock,sc_sae_cv; void *sc_scan_ctl_sem; unsigned sc_port_authorized;
  bool sc_ptk_installed,sc_link,sc_radio_ready,sc_join_pending,sc_joined,
  sc_join_disconnect_pending,sc_join_rescan_pending,sc_scan_enabled,sc_attached,
  sc_scan_pending,sc_scan_busy,sc_join_barrier_busy,sc_sta_started,sc_join_stopped;
@@ -83,7 +83,7 @@ struct espwifi_softc { struct { struct ifnet ec_if; } sc_ec; struct ieee80211com
  unsigned sc_join_ssid_len,sc_join_rsn_len;
  int (*sc_newstate)(struct ieee80211com *,enum ieee80211_state,int); };
 static struct espwifi_softc espwifi_sc;
-static int locked,signals,link_changes,disconnects,connects,fail_disconnect,fail_connect;
+static int locked,sae_locked,signals,link_changes,disconnects,connects,fail_disconnect,fail_connect;
 static uint32_t stop_events,start_events;
 static bool pending_stop,pending_start,defer_stop,defer_start,stale_signal;
 static bool drop_start;
@@ -97,6 +97,9 @@ static bool stop_during_newstate;
 int espwifi_if_assoc_response(unsigned int,const void *,unsigned,
  const unsigned char *);
 static int splnet(void) { return 0; } static void splx(int s) { (void)s; }
+static void mutex_enter(int *p) { (void)p;assert(!sae_locked && !locked);sae_locked=1; }
+static void mutex_exit(int *p) { (void)p;assert(sae_locked);sae_locked=0; }
+static void cv_broadcast(void *p) { (void)p;assert(sae_locked); }
 static void mutex_spin_enter(int *p) { (void)p;assert(!locked);locked=1;
  if (++lock_count==barrier_on_lock) espwifi_sc.sc_join_barrier_busy=true; }
 static void mutex_spin_exit(int *p) { (void)p;assert(locked);locked=0;
@@ -163,7 +166,7 @@ static void ieee80211_begin_scan(struct ieee80211com *,int);
 static void explicit_memset(void *,int,size_t);
 static int printf(const char *,...);
 static int ieee80211_new_state(struct ieee80211com *ic,enum ieee80211_state state,int arg);
-''' + function('espwifi_if_radio_started','void') + function('espwifi_if_radio_stopped','void') + glue_function('espwifi_disconnect','int') + function('espwifi_if_newstate','int') + function('espwifi_if_join_control','void') + function('espwifi_if_link_event','void') + function('espwifi_if_link','void') + function('espwifi_if_assoc_response','int') + function('espwifi_if_wpa_in_4way','bool') + bridge_function('espwifi_wpa2_sta_rx_mgmt','int') + r'''
+''' + function('espwifi_if_radio_started','void') + function('espwifi_if_radio_stopped','void') + function('espwifi_if_sae_teardown_complete','void') + glue_function('espwifi_disconnect','int') + function('espwifi_if_newstate','int') + function('espwifi_if_join_control','void') + function('espwifi_if_link_event','void') + function('espwifi_if_link','void') + function('espwifi_if_assoc_response','int') + function('espwifi_if_wpa_in_4way','bool') + bridge_function('espwifi_wpa2_sta_rx_mgmt','int') + r'''
 ''' + function('espwifi_if_set_port','int') + r'''
 static void ieee80211_begin_scan(struct ieee80211com *ic,int reset) { (void)reset;ic->ic_flags|=IEEE80211_F_SCAN; }
 static void ieee80211_sta_leave(struct ieee80211com *ic,struct ieee80211_node *ni) { (void)ic;(void)ni; }
@@ -333,12 +336,17 @@ int main(void) {
  espwifi_if_join_control(sc);
  assert(sc->sc_join_active==0 && sc->sc_join_disconnect_pending && connects==1);
  espwifi_if_join_control(sc);
- assert(disconnects==1 && !sc->sc_join_barrier_busy && !sc->sc_radio_ready &&
+	assert(disconnects==1 && sc->sc_join_barrier_busy && !sc->sc_radio_ready &&
   sc->sc_join_stopped);
  espwifi_if_link(1,bss.ni_bssid); /* never accept a late connect after failed stop */
  assert(!sc->sc_joined && !sc->sc_link);
- assert(espwifi_if_newstate(&sc->sc_ic,IEEE80211_S_AUTH,0)==EOPNOTSUPP);
- assert(connects==1);return 0;
+ assert(espwifi_if_newstate(&sc->sc_ic,IEEE80211_S_AUTH,0)==EBUSY);
+	assert(connects==1);
+	int signals_before_retry=signals;
+	assert(espwifi_if_newstate(&sc->sc_ic,IEEE80211_S_INIT,0)==0);
+	assert(sc->sc_join_barrier_busy && sc->sc_join_disconnect_pending &&
+	    signals>signals_before_retry);
+	return 0;
 }
 '''
 with tempfile.TemporaryDirectory() as td:
@@ -346,7 +354,7 @@ with tempfile.TemporaryDirectory() as td:
     subprocess.run([a.cc,'-Werror','-fsanitize=address,undefined',
                     '-fno-sanitize-recover=all',str(c),'-o',str(out)],check=True)
     subprocess.run([str(out)],check=True)
-print('connect and STOP failures leave the WPA2 join path fenced closed')
+print('connect and STOP failures leave the WPA2 join path and SAE config fenced closed')
 
 # The non-net80211 Ethernet-only configuration retains its old link behavior.
 off = r'''

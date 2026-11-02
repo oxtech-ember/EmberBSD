@@ -182,6 +182,25 @@ espwifi_if_sae_current(struct espwifi_softc *sc, uint32_t generation,
 	    memcmp(bssid, sc->sc_sae_bssid, ETHER_ADDR_LEN) == 0;
 }
 
+static bool
+espwifi_if_sae_teardown_pending(struct espwifi_softc *sc)
+{
+	bool pending;
+
+	mutex_spin_enter(&sc->sc_scan_lock);
+	pending = sc->sc_join_disconnect_pending || sc->sc_join_barrier_busy;
+	mutex_spin_exit(&sc->sc_scan_lock);
+	return pending;
+}
+
+static void
+espwifi_if_sae_teardown_complete(struct espwifi_softc *sc)
+{
+	mutex_enter(&sc->sc_sae_lock);
+	cv_broadcast(&sc->sc_sae_cv);
+	mutex_exit(&sc->sc_sae_lock);
+}
+
 static int
 espwifi_if_sae_wait(struct espwifi_softc *sc, uint32_t generation,
 	    unsigned reply, unsigned int type, uint8_t *body, unsigned int capacity,
@@ -309,7 +328,8 @@ static int
 espwifi_if_sae_configure(struct espwifi_softc *sc,
 	    const struct ieee80211req_sae *req)
 {
-	int error;
+	int error = 0, remain;
+	u_int deadline = getticks() + MAX(1, hz * ESPWIFI_SAE_WAIT_SECONDS);
 
 	if (req->len != 1)
 		return EINVAL;
@@ -318,6 +338,27 @@ espwifi_if_sae_configure(struct espwifi_softc *sc,
 	if (error != 0)
 		return error;
 	mutex_enter(&sc->sc_sae_lock);
+	while (espwifi_if_sae_teardown_pending(sc)) {
+		remain = (int)(deadline - getticks());
+		if (remain <= 0) {
+			error = ETIMEDOUT;
+			break;
+		}
+		error = cv_timedwait(&sc->sc_sae_cv, &sc->sc_sae_lock,
+		    (u_int)remain);
+		if (error == EWOULDBLOCK) {
+			if (!espwifi_if_sae_teardown_pending(sc))
+				error = 0;
+			else
+				error = ETIMEDOUT;
+		}
+		if (error != 0)
+			break;
+	}
+	if (error != 0) {
+		mutex_exit(&sc->sc_sae_lock);
+		return error;
+	}
 	sc->sc_sae_enabled = req->data[0] != 0;
 	sc->sc_sae_start_sent = false;
 	sc->sc_sae_waiting = ESPWIFI_SAE_WAIT_NONE;
@@ -327,6 +368,12 @@ espwifi_if_sae_configure(struct espwifi_softc *sc,
 	memcpy(sc->sc_sae_bssid, req->bssid, sizeof(sc->sc_sae_bssid));
 	explicit_memset(sc->sc_sae_reply_frame,
 	    0, sizeof(sc->sc_sae_reply_frame));
+	/* Do not accept a config raced by a newly queued old-session teardown. */
+	if (espwifi_if_sae_teardown_pending(sc)) {
+		espwifi_if_sae_clear_locked(sc);
+		mutex_exit(&sc->sc_sae_lock);
+		return EBUSY;
+	}
 	cv_broadcast(&sc->sc_sae_cv);
 	mutex_exit(&sc->sc_sae_lock);
 	return 0;
@@ -646,7 +693,7 @@ espwifi_if_newstate(struct ieee80211com *ic, enum ieee80211_state state, int arg
 {
 	struct espwifi_softc * const sc = ic->ic_ifp->if_softc;
 	enum ieee80211_state oldstate = ic->ic_state;
-	bool ready, was_link = false;
+	bool ready, was_link = false, radio_ready, queue_teardown = false;
 
 	if (state == IEEE80211_S_AUTH) {
 #ifndef ESPWIFI_NET80211_WPA2
@@ -715,9 +762,6 @@ espwifi_if_newstate(struct ieee80211com *ic, enum ieee80211_state state, int arg
 		return EOPNOTSUPP;
 	if (state == IEEE80211_S_INIT) {
 		bool teardown;
-#ifdef ESPWIFI_NET80211_WPA2
-		espwifi_if_sae_cancel(sc);
-#endif
 
 		mutex_spin_enter(&sc->sc_scan_lock);
 		teardown = sc->sc_join_active != 0 || sc->sc_joined || sc->sc_link;
@@ -727,7 +771,11 @@ espwifi_if_newstate(struct ieee80211com *ic, enum ieee80211_state state, int arg
 			sc->sc_join_generation++;
 		sc->sc_join_active = 0;
 		sc->sc_join_pending = false;
-		sc->sc_join_disconnect_pending = sc->sc_radio_ready && teardown;
+		if ((sc->sc_radio_ready && teardown) || sc->sc_join_barrier_busy)
+			sc->sc_join_disconnect_pending = true;
+		if (sc->sc_join_barrier_busy)
+			sc->sc_join_rescan_pending = true;
+		queue_teardown = sc->sc_join_disconnect_pending;
 		sc->sc_joined = false;
 		sc->sc_ptk_installed = false;
 		sc->sc_key_slots = 0;
@@ -735,6 +783,9 @@ espwifi_if_newstate(struct ieee80211com *ic, enum ieee80211_state state, int arg
 		sc->sc_key_generation = 0;
 		atomic_store_release(&sc->sc_port_authorized, 0);
 		mutex_spin_exit(&sc->sc_scan_lock);
+#ifdef ESPWIFI_NET80211_WPA2
+		espwifi_if_sae_cancel(sc);
+#endif
 		if (was_link && sc->sc_attached)
 			if_link_state_change(&sc->sc_ec.ec_if, LINK_STATE_DOWN);
 		if (oldstate == IEEE80211_S_RUN && ic->ic_bss != NULL) {
@@ -760,10 +811,11 @@ espwifi_if_newstate(struct ieee80211com *ic, enum ieee80211_state state, int arg
 		sc->sc_scan_generation++;
 	sc->sc_scan_pending = (state == IEEE80211_S_SCAN);
 	ready = sc->sc_scan_pending && sc->sc_radio_ready && sc->sc_scan_enabled;
+	radio_ready = sc->sc_radio_ready;
 	mutex_spin_exit(&sc->sc_scan_lock);
 	if (ready)
 		espwifi_os_sem_give(sc->sc_scan_ctl_sem);
-	if (state == IEEE80211_S_INIT && sc->sc_radio_ready)
+	if (queue_teardown || (state == IEEE80211_S_INIT && radio_ready))
 		espwifi_os_sem_give(sc->sc_scan_ctl_sem);
 	return 0;
 }
@@ -1089,14 +1141,18 @@ espwifi_if_join_control(struct espwifi_softc *sc)
 	if (disconnect) {
 		error = espwifi_disconnect();
 		mutex_spin_enter(&sc->sc_scan_lock);
-		sc->sc_join_barrier_busy = false;
-		if (error != 0)
+		if (error == 0)
+			sc->sc_join_barrier_busy = false;
+		else
 			sc->sc_radio_ready = false;
 		mutex_spin_exit(&sc->sc_scan_lock);
 		if (error != 0) {
 			printf("espwifi0: radio teardown barrier failed\n");
 			return;
 		}
+#ifdef ESPWIFI_NET80211_WPA2
+		espwifi_if_sae_teardown_complete(sc);
+#endif
 		if (rescan && (sc->sc_ec.ec_if.if_flags & IFF_RUNNING) != 0) {
 			int s = splnet();
 			(void)ieee80211_new_state(&sc->sc_ic,

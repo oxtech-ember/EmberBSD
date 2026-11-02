@@ -41,6 +41,8 @@ def main():
     names = [
         ('int', 'espwifi_if_sae_notify'),
         ('bool', 'espwifi_if_sae_current'),
+        ('bool', 'espwifi_if_sae_teardown_pending'),
+        ('void', 'espwifi_if_sae_teardown_complete'),
         ('int', 'espwifi_if_sae_wait'),
         ('void', 'espwifi_if_sae_clear_locked'),
         ('void', 'espwifi_if_sae_cancel_generation'),
@@ -111,7 +113,7 @@ typedef int esp_err_t;
 #define MAX(a,b) ((a) > (b) ? (a) : (b))
 static const int hz = 100;
 static u_int now_ticks;
-static int net_ipl, mutex_depth, cv_mode, status_to_send;
+static int net_ipl, mutex_depth, spin_depth, cv_mode, status_to_send;
 static unsigned event_log[16], event_count;
 static uint8_t peer[6] = {2,1,2,3,4,5};
 static uint8_t local[6] = {2,6,7,8,9,10};
@@ -127,6 +129,8 @@ static int splnet(void) { int s=net_ipl; net_ipl=1; return s; }
 static void splx(int s) { net_ipl=s; }
 static void mutex_enter(void *m) { (void)m; assert(mutex_depth==0); mutex_depth=1; }
 static void mutex_exit(void *m) { (void)m; assert(mutex_depth==1); mutex_depth=0; }
+static void mutex_spin_enter(void *m) { (void)m; assert(spin_depth==0); spin_depth=1; }
+static void mutex_spin_exit(void *m) { (void)m; assert(spin_depth==1); spin_depth=0; }
 static void cv_broadcast(void *c) { (void)c; }
 static void *kmem_zalloc(size_t n, int flags) { (void)flags; return calloc(1,n); }
 static void kmem_free(void *p, size_t n) { (void)n; free(p); }
@@ -145,7 +149,8 @@ struct ieee80211com { struct ifnet *ic_ifp; struct ieee80211_node *ic_bss;
 struct espwifi_softc {
  struct { struct ifnet ec_if; } sc_ec;
  struct ieee80211com sc_ic;
- int sc_sae_lock, sc_sae_cv;
+ int sc_sae_lock, sc_sae_cv, sc_scan_lock;
+ bool sc_join_disconnect_pending, sc_join_barrier_busy;
  bool sc_sae_enabled, sc_sae_start_sent;
  unsigned sc_sae_waiting, sc_sae_reply;
  int sc_sae_reply_status; unsigned sc_sae_reply_len;
@@ -171,7 +176,7 @@ int espwifi_if_sae_parse(const unsigned char *, unsigned, unsigned,
 int espwifi_os_sae_build(const unsigned char *, unsigned, unsigned char *,
     unsigned, unsigned *);
 int espwifi_os_sae_parse(const unsigned char *, unsigned, unsigned,
-    unsigned short);
+    unsigned);
 int ieee80211_sae_auth_frame_validate(const uint8_t *, size_t,
     const uint8_t *, const uint8_t *, const uint8_t *, uint16_t);
 static void make_tx(struct ieee80211req_sae *, unsigned type, uint32_t);
@@ -201,6 +206,16 @@ static int cv_timedwait(void *cv, void *mutex, u_int ticks)
   make_tx(&reply,IEEE80211_SAE_COMMIT,61);
   error=espwifi_if_sae_request(&espwifi_sc.sc_ic,&reply);
   assert(error==0);
+  mutex_depth=1; return 0;
+ }
+ if (cv_mode==4) {
+  assert(espwifi_if_sae_teardown_pending(&espwifi_sc));
+  espwifi_sc.sc_join_disconnect_pending=false;
+  espwifi_sc.sc_join_barrier_busy=true;
+  /* The old STOP callback cancels its mailbox before the barrier completes. */
+  espwifi_if_sae_cancel(&espwifi_sc);
+  espwifi_sc.sc_join_barrier_busy=false;
+  espwifi_if_sae_teardown_complete(&espwifi_sc);
   mutex_depth=1; return 0;
  }
  assert(0 && "unexpected wait without modeled response");
@@ -322,6 +337,30 @@ int main(void)
 	assert(error==0 && bodylen==sizeof(body_data) &&
 	    memcmp(outbody,body_data,bodylen)==0 &&
 	    sc->sc_sae_reply==ESPWIFI_SAE_REPLY_NONE);
+
+	/* A fresh CONFIGURE waits until the old STOP/start barrier completes. */
+	struct ieee80211req_sae configure;
+	memset(&configure, 0, sizeof(configure));
+	configure.version=IEEE80211_SAE_VERSION;
+	configure.generation=70; configure.op=IEEE80211_SAE_CONFIGURE;
+	configure.len=1; configure.data[0]=1; memcpy(configure.bssid,peer,6);
+	sc->sc_sae_enabled=true; sc->sc_sae_generation=69;
+	memcpy(sc->sc_sae_bssid,peer,6);
+	sc->sc_join_disconnect_pending=true; sc->sc_join_barrier_busy=false;
+	cv_mode=4;
+	error=espwifi_if_sae_configure(sc,&configure);
+	assert(error==0 && sc->sc_sae_generation==70 && sc->sc_sae_enabled &&
+	    !sc->sc_join_disconnect_pending && !sc->sc_join_barrier_busy);
+	cv_mode=0;
+	out=espwifi_wpa3_build_sae_msg(peer,IEEE80211_SAE_COMMIT,&outlen);
+	assert(out && outlen==sizeof(body_data) &&
+	    sc->sc_sae_generation==70 && sc->sc_sae_reply==ESPWIFI_SAE_REPLY_NONE);
+	configure.generation=71;
+	sc->sc_join_disconnect_pending=true;
+	cv_mode=2;
+	error=espwifi_if_sae_configure(sc,&configure);
+	assert(error==ETIMEDOUT && sc->sc_sae_generation==70 &&
+	    sc->sc_sae_enabled);
  return 0;
 }
 '''
@@ -338,7 +377,7 @@ int main(void)
                     '-fsanitize=address,undefined', '-fno-sanitize-recover=all',
                     str(source), '-o', str(binary)], check=True)
     subprocess.run([str(binary)], check=True)
-    print('PASS: actual IDF SAE callbacks and kernel mailbox START/RX/TX/status, cancel, timeout, stale generation')
+    print('PASS: actual IDF SAE callbacks and kernel mailbox START/RX/TX/status, cancel, timeout, stale generation, configure behind STOP barrier')
 
 
 if __name__ == '__main__':
