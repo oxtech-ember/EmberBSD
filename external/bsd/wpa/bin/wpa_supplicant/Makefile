@@ -142,8 +142,18 @@ EMBER_WPA_PROFILE?= full
 .if ${EMBER_WPA_PROFILE} != "full" && ${EMBER_WPA_PROFILE} != "personal"
 .error Unsupported EMBER_WPA_PROFILE: ${EMBER_WPA_PROFILE}
 .endif
-.if ${EMBER_WPA_PROFILE} == "personal" && (defined(NO_CRYPT) || defined(NO_OPENSSL) || defined(RELEASE_CRUNCH) || defined(NO_ENABLE_WPA_SUPPLICANT_EAPOL))
-.error EMBER_WPA_PROFILE=personal requires the OpenSSL WPA build
+EMBER_WPA_CRYPTO_BACKEND?= openssl
+.if ${EMBER_WPA_CRYPTO_BACKEND} != "openssl" && ${EMBER_WPA_CRYPTO_BACKEND} != "wolfssl"
+.error Unsupported EMBER_WPA_CRYPTO_BACKEND: ${EMBER_WPA_CRYPTO_BACKEND}
+.endif
+.if ${EMBER_WPA_PROFILE} == "full" && ${EMBER_WPA_CRYPTO_BACKEND} != "openssl"
+.error EMBER_WPA_PROFILE=full currently requires EMBER_WPA_CRYPTO_BACKEND=openssl
+.endif
+.if ${EMBER_WPA_PROFILE} == "personal" && (defined(NO_CRYPT) || defined(RELEASE_CRUNCH) || defined(NO_ENABLE_WPA_SUPPLICANT_EAPOL))
+.error EMBER_WPA_PROFILE=personal requires an external WPA crypto backend and EAPOL
+.endif
+.if ${EMBER_WPA_PROFILE} == "personal" && ${EMBER_WPA_CRYPTO_BACKEND} == "openssl" && defined(NO_OPENSSL)
+.error EMBER_WPA_CRYPTO_BACKEND=openssl conflicts with NO_OPENSSL
 .endif
 .if ${EMBER_WPA_PROFILE} == "personal"
 # IEEE 802.1X EAP is optional; WPA's four-way handshake remains in wpa.c.
@@ -156,7 +166,8 @@ SRCS+=	eap.c
 CPPFLAGS+= -DIEEE8021X_EAPOL -DPKCS12_FUNCS
 .endif
 
-.if !defined(NO_CRYPT) && !defined(NO_OPENSSL) && !defined(RELEASE_CRUNCH)
+.if !defined(NO_CRYPT) && !defined(RELEASE_CRUNCH) && \
+    (${EMBER_WPA_CRYPTO_BACKEND} == "wolfssl" || !defined(NO_OPENSSL))
 .if ${EMBER_WPA_PROFILE} == "full"
 CPPFLAGS+=-DEAP_TLS
 CPPFLAGS+=-DEAP_PEAP
@@ -174,9 +185,16 @@ CPPFLAGS+=-DEAP_TLS_OPENSSL
 CPPFLAGS+=-DCONFIG_SAE -DCONFIG_SME -DCONFIG_ECC -DCONFIG_SHA256
 CPPFLAGS+=-DCONFIG_HMAC_SHA256_KDF
 SRCS+=sae.c dragonfly.c sme.c dh_groups.c sha256-kdf.c
-# CONFIG_SHA256 uses OpenSSL HMAC, avoiding duplicate internal symbols.
+# CONFIG_SHA256 uses the selected backend HMAC, avoiding duplicate internal symbols.
 SRCS:= ${SRCS:Nsha256.c}
+.if ${EMBER_WPA_CRYPTO_BACKEND} == "openssl"
 SRCS+= crypto_openssl.c
+.else
+SRCS+= crypto_wolfssl.c
+CPPFLAGS+= -DCRYPTO_RSA_OAEP_SHA256
+EMBER_WOLFSSL_PREFIX?= ${DESTDIR}/usr/pkg
+CPPFLAGS+= -I${EMBER_WOLFSSL_PREFIX}/include
+.endif
 .if ${EMBER_WPA_PROFILE} == "full"
 SRCS+= \
 chap.c \
@@ -214,6 +232,9 @@ aes-omac1.c \
 .if ${EMBER_WPA_PROFILE} == "full"
 DPADD+= ${LIBSSL} ${LIBCRYPTO} ${LIBDES}
 LDADD+= -lssl -lcrypto -ldes
+.elif ${EMBER_WPA_CRYPTO_BACKEND} == "wolfssl"
+DPADD+= ${EMBER_WOLFSSL_PREFIX}/lib/libwolfssl.a
+LDADD+= -L${EMBER_WOLFSSL_PREFIX}/lib -lwolfssl -lm
 .else
 DPADD+= ${LIBCRYPTO}
 LDADD+= -lcrypto

@@ -14,7 +14,7 @@ directory = Path(__file__).resolve().parents[1] / 'bin/wpa_supplicant'
 command = [str(args.bmake.resolve(strict=True)), '-C', str(directory),
            'EMBER_WPA_SOURCE=' + str(args.source.resolve(strict=True))]
 env = os.environ.copy()
-for key in ('EMBER_WPA_PROFILE', 'NO_CRYPT', 'NO_OPENSSL', 'RELEASE_CRUNCH',
+for key in ('EMBER_WPA_PROFILE', 'EMBER_WPA_CRYPTO_BACKEND', 'NO_CRYPT', 'NO_OPENSSL', 'RELEASE_CRUNCH',
             'NO_ENABLE_WPA_SUPPLICANT_EAPOL'):
     env.pop(key, None)
 
@@ -51,7 +51,23 @@ require({'-DCONFIG_SAE', '-DCONFIG_SME', '-DCONFIG_ECC', '-DCONFIG_SHA256'} <= s
 require(not {'-DIEEE8021X_EAPOL', '-DEAP_TLS'} & set(cpp), 'enterprise EAP enabled')
 require('-lcrypto' in libs and '-lssl' not in libs and '-ldes' not in libs,
         'unexpected personal profile libraries')
-for conflict in ('EMBER_WPA_PROFILE=invalid', 'EMBER_WPA_PROFILE=personal NO_OPENSSL=1',
+wolf = query('EMBER_WPA_PROFILE=personal', 'EMBER_WPA_CRYPTO_BACKEND=wolfssl',
+             'EMBER_WOLFSSL_PREFIX=/wolfssl-stage/usr/pkg')
+require(wolf.returncode == 0, wolf.stderr)
+wolf_src, wolf_cpp, wolf_libs = map(str.split, wolf.stdout.splitlines())
+require({'sae.c', 'dragonfly.c', 'sme.c', 'wpa.c', 'wpa_ie.c', 'crypto_wolfssl.c'} <= set(wolf_src),
+        'WolfSSL personal profile lost SAE, WPA or WolfSSL crypto')
+require('crypto_openssl.c' not in wolf_src, 'WolfSSL profile includes OpenSSL crypto')
+require({'-DCONFIG_SAE', '-DCONFIG_SME', '-DCONFIG_ECC', '-DCONFIG_SHA256',
+         '-I/wolfssl-stage/usr/pkg/include'} <= set(wolf_cpp),
+        'WolfSSL personal profile lost required features or include path')
+require({'-L/wolfssl-stage/usr/pkg/lib', '-lwolfssl', '-lm'} <= set(wolf_libs),
+        'WolfSSL personal profile lost target library inputs')
+require('-lcrypto' not in wolf_libs and '-lssl' not in wolf_libs,
+        'WolfSSL personal profile links OpenSSL')
+for conflict in ('EMBER_WPA_PROFILE=invalid', 'EMBER_WPA_CRYPTO_BACKEND=invalid',
+                 'EMBER_WPA_PROFILE=personal NO_OPENSSL=1',
+                 'EMBER_WPA_PROFILE=full EMBER_WPA_CRYPTO_BACKEND=wolfssl',
                  'EMBER_WPA_PROFILE=personal NO_ENABLE_WPA_SUPPLICANT_EAPOL=1'):
     result = query(*conflict.split())
     require(result.returncode != 0, 'accepted unsupported profile: ' + conflict)
