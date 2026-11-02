@@ -883,6 +883,8 @@ espwifi_if_newstate(struct ieee80211com *ic, enum ieee80211_state state, int arg
 		sc->sc_join_ssid_len = ni->ni_esslen;
 		memcpy(sc->sc_join_rsn, rsn, rsn_len);
 		sc->sc_join_rsn_len = rsn_len;
+		/* FullMAC owns AUTH and ASSOC frame transmission. */
+		ic->ic_state = IEEE80211_S_AUTH;
 		mutex_spin_exit(&sc->sc_scan_lock);
 		espwifi_os_sem_give(sc->sc_scan_ctl_sem);
 		return 0;
@@ -1821,7 +1823,12 @@ espwifi_if_link_event(int up, const unsigned char *bssid, bool association)
 		if (!current || sc->sc_ic.ic_bss == NULL ||
 		    memcmp(sc->sc_ic.ic_bss->ni_bssid, bssid, ETHER_ADDR_LEN) != 0) {
 			accepted = false;
-		} else if (sc->sc_ic.ic_state == IEEE80211_S_SCAN) {
+		} else if (sc->sc_ic.ic_state == IEEE80211_S_AUTH) {
+			/* Firmware completed association; do not send a software request. */
+			sc->sc_ic.ic_state = IEEE80211_S_ASSOC;
+		}
+		if (accepted && (sc->sc_ic.ic_state == IEEE80211_S_SCAN ||
+		    sc->sc_ic.ic_state == IEEE80211_S_ASSOC)) {
 			if (sc->sc_newstate(&sc->sc_ic, IEEE80211_S_RUN,
 			    IEEE80211_FC0_SUBTYPE_ASSOC_RESP) != 0) {
 				mutex_spin_enter(&sc->sc_scan_lock);
@@ -1842,7 +1849,7 @@ espwifi_if_link_event(int up, const unsigned char *bssid, bool association)
 				queue_barrier = true;
 				accepted = false;
 			}
-		} else if (sc->sc_ic.ic_state != IEEE80211_S_RUN)
+		} else if (accepted && sc->sc_ic.ic_state != IEEE80211_S_RUN)
 			accepted = false;
 		splx(s);
 	}

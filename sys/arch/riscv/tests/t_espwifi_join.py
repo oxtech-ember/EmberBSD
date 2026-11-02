@@ -72,7 +72,8 @@ struct ieee80211_node { uint8_t ni_bssid[6],ni_essid[32]; unsigned ni_esslen; };
 struct ifnet { void *if_softc; int if_flags; };
 struct ieee80211com { struct ifnet *ic_ifp; struct ieee80211_node *ic_bss;
  const uint8_t *ic_opt_ie; unsigned ic_opt_ie_len; unsigned ic_flags;
- enum ieee80211_state ic_state; };
+ enum ieee80211_state ic_state;
+ int (*ic_newstate)(struct ieee80211com *,enum ieee80211_state,int); };
 struct espwifi_softc { struct { struct ifnet ec_if; } sc_ec; struct ieee80211com sc_ic;
  int sc_scan_lock,sc_sae_lock,sc_sae_cv; void *sc_scan_ctl_sem; unsigned sc_port_authorized;
  bool sc_ptk_installed,sc_link,sc_radio_ready,sc_join_pending,sc_joined,
@@ -98,6 +99,7 @@ static unsigned lock_count,barrier_on_lock;
 static bool invalidate_link_generation;
 static bool stop_during_newstate;
 static int expected_sae,pmf_configured,fail_closed_calls;
+static int run_calls,run_old_state,softmac_auth_assoc_calls;
 int espwifi_if_assoc_response(unsigned int,const void *,unsigned,
  const unsigned char *);
 static int splnet(void) { return 0; } static void splx(int s) { (void)s; }
@@ -112,7 +114,10 @@ static void mutex_spin_exit(int *p) { (void)p;assert(locked);locked=0;
   if (++espwifi_sc.sc_join_generation==0) espwifi_sc.sc_join_generation++;
   invalidate_link_generation=false;
  } }
-static void espwifi_os_sem_give(void *p) { (void)p;assert(!locked);signals++; }
+static void espwifi_os_sem_give(void *p) { (void)p;assert(!locked);
+ if (espwifi_sc.sc_join_pending)
+  assert(espwifi_sc.sc_ic.ic_state==IEEE80211_S_AUTH);
+ signals++; }
 static void atomic_store_release(unsigned *p,unsigned v) { *p=v; }
 static unsigned atomic_load_acquire(unsigned *p) { return *p; }
 static void if_link_state_change(struct ifnet *p,int state) { (void)p;link_changes+=state?1:-1; }
@@ -165,6 +170,7 @@ static long long espwifi_os_time_us(void) { return (long long)fake_time_us; }
 static int espwifi_ext_sta_pmf_configured(void) { return pmf_configured; }
 static int espwifi_ext_connect(const unsigned char *ssid,unsigned slen,
  const unsigned char *bssid,const unsigned char *rsn,unsigned rlen,int sae) {
+ assert(espwifi_sc.sc_ic.ic_state==IEEE80211_S_AUTH);
  assert(slen==4 && memcmp(ssid,"test",4)==0 && bssid[0]==2 && rlen==22 && rsn[0]==48);
  assert(sae==expected_sae);
  connects++;return fail_connect; }
@@ -172,6 +178,12 @@ static int espwifi_os_assoc_response(unsigned int subtype,const void *body,
  unsigned int len,const unsigned char *sender) {
  return espwifi_if_assoc_response(subtype,body,len,sender); }
 static int parent_state(struct ieee80211com *ic,enum ieee80211_state state,int arg) {
+ if (state==IEEE80211_S_RUN) {
+  run_calls++;run_old_state=ic->ic_state;
+  assert(run_old_state==IEEE80211_S_ASSOC || run_old_state==IEEE80211_S_SCAN);
+ }
+ if (state==IEEE80211_S_AUTH || state==IEEE80211_S_ASSOC)
+  softmac_auth_assoc_calls++;
  (void)arg;ic->ic_state=state;
  if (stop_during_newstate) { stop_during_newstate=false;espwifi_if_radio_stopped(); }
  return 0; }
@@ -185,7 +197,8 @@ static int ieee80211_new_state(struct ieee80211com *ic,enum ieee80211_state stat
 static void ieee80211_begin_scan(struct ieee80211com *ic,int reset) { (void)reset;ic->ic_flags|=IEEE80211_F_SCAN; }
 static void ieee80211_sta_leave(struct ieee80211com *ic,struct ieee80211_node *ni) { (void)ic;(void)ni; }
 static int ieee80211_new_state(struct ieee80211com *ic,enum ieee80211_state state,int arg) {
- return espwifi_if_newstate(ic,state,arg); }
+ assert(ic->ic_newstate!=NULL);
+ return ic->ic_newstate(ic,state,arg); }
 static void explicit_memset(void *p,int c,size_t n) { memset(p,c,n); }
 static int printf(const char *fmt,...) { (void)fmt;return 0; }
 int main(void) {
@@ -195,28 +208,28 @@ int main(void) {
  uint8_t other[6]={2,8,8,8,8,8};
 	sc->sc_ec.ec_if.if_softc=sc;sc->sc_ec.ec_if.if_flags=IFF_RUNNING;
 	sc->sc_ic=(struct ieee80211com){.ic_ifp=&sc->sc_ec.ec_if,.ic_bss=&bss,.ic_opt_ie=rsn,
-     .ic_opt_ie_len=sizeof(rsn),.ic_flags=IEEE80211_F_WPA,.ic_state=IEEE80211_S_SCAN};
- sc->sc_newstate=parent_state;sc->sc_scan_ctl_sem=(void *)1;sc->sc_radio_ready=true;
+     .ic_opt_ie_len=sizeof(rsn),.ic_flags=IEEE80211_F_WPA,.ic_state=IEEE80211_S_SCAN,.ic_newstate=espwifi_if_newstate};
+ sc->sc_newstate=parent_state;sc->sc_ic.ic_newstate=espwifi_if_newstate;sc->sc_scan_ctl_sem=(void *)1;sc->sc_radio_ready=true;
  sc->sc_scan_enabled=true;sc->sc_attached=true;
-	assert(espwifi_if_newstate(&sc->sc_ic,IEEE80211_S_AUTH,0)==EOPNOTSUPP);
+	assert(ieee80211_new_state(&sc->sc_ic,IEEE80211_S_AUTH,0)==EOPNOTSUPP);
 	espwifi_if_radio_started();
 
 	/* A barrier can start between AUTH's optimistic check and commit. */
 	lock_count=0;barrier_on_lock=2;
-	assert(espwifi_if_newstate(&sc->sc_ic,IEEE80211_S_AUTH,0)==EBUSY);
+	assert(ieee80211_new_state(&sc->sc_ic,IEEE80211_S_AUTH,0)==EBUSY);
 	barrier_on_lock=0;sc->sc_join_barrier_busy=false;sc->sc_ic.ic_state=IEEE80211_S_SCAN;
 
  /* Association is queued with copied inputs and a nonzero operation id. */
- assert(espwifi_if_newstate(&sc->sc_ic,IEEE80211_S_AUTH,0)==0);
+ assert(ieee80211_new_state(&sc->sc_ic,IEEE80211_S_AUTH,0)==0);
  uint64_t first=sc->sc_join_active;
- assert(first!=0 && sc->sc_join_pending && sc->sc_join_ssid_len==4 &&
+ assert(first!=0 && sc->sc_join_pending && sc->sc_ic.ic_state==IEEE80211_S_AUTH && sc->sc_join_ssid_len==4 &&
      memcmp(sc->sc_join_ssid,"test",4)==0 && sc->sc_join_rsn_len==22);
  espwifi_if_join_control(sc);
  assert(connects==1 && sc->sc_join_active==first && !sc->sc_join_pending);
 
  /* Public fully-connected event follows EAPOL and is not the assoc boundary. */
  espwifi_if_link(1,bss.ni_bssid);
- assert(!sc->sc_joined && !sc->sc_link && sc->sc_ic.ic_state==IEEE80211_S_SCAN);
+ assert(!sc->sc_joined && !sc->sc_link && sc->sc_ic.ic_state==IEEE80211_S_AUTH);
  uint8_t assoc[6]={0,0,0,0,1,0};
  uint8_t bad_status[6]={0,0,1,0,1,0};
  assert(espwifi_wpa2_sta_rx_mgmt(1,assoc,5,bss.ni_bssid,0,1,0)==-1);
@@ -227,7 +240,8 @@ int main(void) {
  /* Matching success body is IDF's pre-EAPOL management callback boundary. */
  assert(espwifi_wpa2_sta_rx_mgmt(1,assoc,sizeof(assoc),bss.ni_bssid,0,1,0)==0);
  assert(sc->sc_joined && sc->sc_link && sc->sc_ic.ic_state==IEEE80211_S_RUN &&
-     !sc->sc_port_authorized);
+     run_calls==1 && run_old_state==IEEE80211_S_ASSOC &&
+     softmac_auth_assoc_calls==0 && !sc->sc_port_authorized);
  assert(espwifi_if_wpa_in_4way());
  sc->sc_ptk_installed=true;
  sc->sc_key_generation=first;
@@ -245,7 +259,7 @@ int main(void) {
      sc->sc_join_rescan_pending && sc->sc_join_active==0);
  espwifi_if_link(1,bss.ni_bssid); /* stale same-BSSID event before STOP */
  assert(!sc->sc_joined && !sc->sc_link && sc->sc_join_disconnect_pending);
- assert(espwifi_if_newstate(&sc->sc_ic,IEEE80211_S_AUTH,0)==EBUSY);
+ assert(ieee80211_new_state(&sc->sc_ic,IEEE80211_S_AUTH,0)==EBUSY);
 	defer_stop=true;defer_start=true;stale_signal=true;
  espwifi_if_join_control(sc);
 	assert(disconnects==1);
@@ -262,7 +276,7 @@ int main(void) {
 	sc->sc_sae_selection=true;sc->sc_sae_selection_generation=77;
 	memcpy(sc->sc_sae_selection_bssid,bss.ni_bssid,ETHER_ADDR_LEN);
 	expected_sae=1;
- assert(espwifi_if_newstate(&sc->sc_ic,IEEE80211_S_AUTH,0)==0);
+ assert(ieee80211_new_state(&sc->sc_ic,IEEE80211_S_AUTH,0)==0);
  uint64_t second=sc->sc_join_active;
  assert(second!=0 && second!=first && sc->sc_join_sae);
  espwifi_if_join_control(sc);
@@ -273,7 +287,7 @@ int main(void) {
 	    !sc->sc_joined && !sc->sc_link && !sc->sc_port_authorized);
 	/* SAE remains closed until an IGTK is installed. */
 	sc->sc_ic.ic_state=IEEE80211_S_SCAN;pmf_configured=1;
-	assert(espwifi_if_newstate(&sc->sc_ic,IEEE80211_S_AUTH,0)==0);
+	assert(ieee80211_new_state(&sc->sc_ic,IEEE80211_S_AUTH,0)==0);
 	uint64_t third=sc->sc_join_active;
 	assert(third!=0 && sc->sc_join_sae);
 	espwifi_if_join_control(sc);
@@ -298,6 +312,23 @@ int main(void) {
 	espwifi_if_link(1,bss.ni_bssid);
 	assert(sc->sc_join_active==0 && !sc->sc_joined && !sc->sc_link &&
 	    sc->sc_ic.ic_state==IEEE80211_S_SCAN);
+	/* Invalid generations and BSS identities must never publish generic RUN. */
+	struct ieee80211_node wrong_bss={.ni_bssid={2,8,8,8,8,8}};
+	int runs_before_reject=run_calls;
+	for (int state=IEEE80211_S_SCAN; state<=IEEE80211_S_ASSOC; state++) {
+		for (int bad_bss=0; bad_bss<=1; bad_bss++) {
+			sc->sc_join_stopped=false;sc->sc_sta_started=true;
+			sc->sc_radio_ready=true;sc->sc_join_active=99;
+			sc->sc_joined=true;sc->sc_link=false;
+			sc->sc_ic.ic_state=state;
+			memcpy(sc->sc_join_bssid,bss.ni_bssid,ETHER_ADDR_LEN);
+			sc->sc_ic.ic_bss=bad_bss ? &wrong_bss : &bss;
+			invalidate_link_generation=!bad_bss;
+			espwifi_if_link_event(1,bss.ni_bssid,true);
+			assert(run_calls==runs_before_reject);
+		}
+	}
+	sc->sc_ic.ic_bss=&bss;
 	sc->sc_join_stopped=false;sc->sc_sta_started=true;sc->sc_radio_ready=true;
 	sc->sc_join_active=99;sc->sc_joined=true;sc->sc_link=true;
 	espwifi_if_link(0,NULL);
@@ -341,9 +372,9 @@ int main(void) {
  sc->sc_ec.ec_if.if_softc=sc;
  sc->sc_ic=(struct ieee80211com){.ic_ifp=&sc->sc_ec.ec_if,.ic_bss=&bss,
   .ic_opt_ie=rsn,.ic_opt_ie_len=sizeof(rsn),.ic_flags=IEEE80211_F_WPA,
-  .ic_state=IEEE80211_S_SCAN};
+  .ic_state=IEEE80211_S_SCAN,.ic_newstate=espwifi_if_newstate};
  sc->sc_radio_ready=true;sc->sc_sta_started=true;
- assert(espwifi_if_newstate(&sc->sc_ic,IEEE80211_S_AUTH,0)==EOPNOTSUPP);
+ assert(ieee80211_new_state(&sc->sc_ic,IEEE80211_S_AUTH,0)==EOPNOTSUPP);
  assert(sc->sc_join_active==0 && !sc->sc_join_pending);
  return 0;
 }
@@ -363,11 +394,11 @@ int main(void) {
  sc->sc_ec.ec_if.if_softc=sc;sc->sc_ec.ec_if.if_flags=IFF_RUNNING;
  sc->sc_ic=(struct ieee80211com){.ic_ifp=&sc->sc_ec.ec_if,.ic_bss=&bss,
   .ic_opt_ie=rsn,.ic_opt_ie_len=sizeof(rsn),.ic_flags=IEEE80211_F_WPA,
-  .ic_state=IEEE80211_S_SCAN};
- sc->sc_newstate=parent_state;sc->sc_scan_ctl_sem=(void *)1;
+  .ic_state=IEEE80211_S_SCAN,.ic_newstate=espwifi_if_newstate};
+ sc->sc_newstate=parent_state;sc->sc_ic.ic_newstate=espwifi_if_newstate;sc->sc_scan_ctl_sem=(void *)1;
  sc->sc_radio_ready=true;sc->sc_sta_started=true;sc->sc_scan_enabled=true;
  sc->sc_attached=true;fail_connect=1;fail_disconnect=1;
- assert(espwifi_if_newstate(&sc->sc_ic,IEEE80211_S_AUTH,0)==0);
+ assert(ieee80211_new_state(&sc->sc_ic,IEEE80211_S_AUTH,0)==0);
  espwifi_if_join_control(sc);
  assert(sc->sc_join_active==0 && sc->sc_join_disconnect_pending && connects==1);
  espwifi_if_join_control(sc);
@@ -375,10 +406,10 @@ int main(void) {
   sc->sc_join_stopped);
  espwifi_if_link(1,bss.ni_bssid); /* never accept a late connect after failed stop */
  assert(!sc->sc_joined && !sc->sc_link);
- assert(espwifi_if_newstate(&sc->sc_ic,IEEE80211_S_AUTH,0)==EBUSY);
+ assert(ieee80211_new_state(&sc->sc_ic,IEEE80211_S_AUTH,0)==EBUSY);
 	assert(connects==1);
 	int signals_before_retry=signals;
-	assert(espwifi_if_newstate(&sc->sc_ic,IEEE80211_S_INIT,0)==0);
+	assert(ieee80211_new_state(&sc->sc_ic,IEEE80211_S_INIT,0)==0);
 	assert(sc->sc_join_barrier_busy && sc->sc_join_disconnect_pending &&
 	    signals>signals_before_retry);
 	return 0;

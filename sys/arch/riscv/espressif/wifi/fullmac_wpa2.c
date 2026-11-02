@@ -262,8 +262,10 @@ espwifi_ext_connect(const unsigned char *ssid, unsigned int ssid_len,
 	    (sae != 0 && sae != 1) ||
 	    (sae ? (rsn_len < 22 || rsn[0] != 48 ||
 	    (unsigned)rsn[1] + 2 != rsn_len) :
-	    !espwifi_wpa2_rsn(rsn, rsn_len)))
+	    !espwifi_wpa2_rsn(rsn, rsn_len))) {
+		espwifi_os_log("espwifi: fullmac connect validation failed\n");
 		return -1;
+	}
 	memset(&config, 0, sizeof(config));
 	memcpy(config.sta.ssid, ssid, ssid_len);
 	memcpy(config.sta.bssid, bssid, sizeof(config.sta.bssid));
@@ -273,15 +275,20 @@ espwifi_ext_connect(const unsigned char *ssid, unsigned int ssid_len,
 	config.sta.pmf_cfg.capable = sae != 0;
 	config.sta.pmf_cfg.required = sae != 0;
 	error = esp_wifi_set_config(WIFI_IF_STA, &config);
-	if (error != ESP_OK)
+	if (error != ESP_OK) {
+		espwifi_os_log("espwifi: fullmac set_config error %#x\n", error);
 		return -1;
+	}
 	memcpy(assoc_ie, rsn, rsn_len);
 	error = esp_wifi_set_appie_internal(WIFI_APPIE_ASSOC_REQ,
 	    assoc_ie, (uint16_t)rsn_len, 0);
-	if (error != ESP_OK)
+	if (error != ESP_OK) {
+		espwifi_os_log("espwifi: fullmac set_appie error %#x\n", error);
 		return -1;
+	}
 	error = esp_wifi_connect();
 	if (error != ESP_OK) {
+		espwifi_os_log("espwifi: fullmac connect error %#x\n", error);
 		(void)esp_wifi_unset_appie_internal(WIFI_APPIE_ASSOC_REQ);
 		return -1;
 	}
