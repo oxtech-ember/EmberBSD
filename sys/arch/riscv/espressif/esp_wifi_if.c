@@ -816,8 +816,10 @@ espwifi_if_newstate(struct ieee80211com *ic, enum ieee80211_state state, int arg
 		return EOPNOTSUPP;
 #else
 		struct ieee80211_node *ni = ic->ic_bss;
-		const uint8_t *rsn = ic->ic_opt_ie;
-		unsigned rsn_len = ic->ic_opt_ie_len;
+		const uint8_t *ies = ic->ic_opt_ie;
+		size_t ies_len = ic->ic_opt_ie_len;
+		const uint8_t *rsn = NULL;
+		size_t rsn_len = 0, rsn_offset = 0;
 		bool busy, started, stopped, sae;
 
 		mutex_spin_enter(&sc->sc_scan_lock);
