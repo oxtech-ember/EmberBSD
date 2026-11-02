@@ -75,6 +75,26 @@
 			status = "disabled";
 		};
 
+		axi_gdma: dma-controller@20348000 {
+			compatible = "espressif,esp32s31-axi-gdma";
+			reg = <0x20348000 0x1000>;
+			espressif,syscon = <&hp_clkrst>;
+			interrupt-parent = <&intmtx>;
+			interrupts = <48 4>, <49 4>, <50 4>;
+			#dma-cells = <1>;
+			dma-controller;
+			status = "disabled";
+		};
+
+		camera_dvp: camera@20396000 {
+			compatible = "espressif,esp32s31-dvp";
+			reg = <0x20396000 0x1000>;
+			espressif,syscon = <&hp_clkrst>;
+			dmas = <&axi_gdma 0>;
+			dma-names = "rx";
+			status = "disabled";
+		};
+
 		spi2: spi@2038f000 {
 			compatible = "espressif,esp32s31-spi2";
 			reg = <0x2038f000 0x1000>;

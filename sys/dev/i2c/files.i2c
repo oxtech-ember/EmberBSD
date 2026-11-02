@@ -99,7 +99,7 @@ file	dev/i2c/ov3640.c			ov3640s
 file	dev/i2c/ov3640_logic.c		ov3640s
 
 # SmartSens SC101IOT DVP sensor identification; capture is not implemented.
-device	sc101iots: i2cexec
+device	sc101iots: i2cexec, fdt_port
 attach	sc101iots at iic
 file	dev/i2c/sc101iot.c			sc101iots
 file	dev/i2c/sc101iot_logic.c		sc101iots

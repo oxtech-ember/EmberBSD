@@ -6,6 +6,7 @@
 #ifdef _KERNEL
 #include <sys/types.h>
 #else
+#include <stddef.h>
 #include <stdint.h>
 #endif
 
@@ -18,5 +19,7 @@ struct sc101iot_sequence_ops {
 };
 
 int sc101iot_identify(const struct sc101iot_sequence_ops *, uint16_t *);
+int sc101iot_power_on(const struct sc101iot_sequence_ops *);
+int sc101iot_mode_layout(uint32_t, uint32_t, size_t *, size_t *);
 
 #endif /* _DEV_I2C_SC101IOT_LOGIC_H_ */

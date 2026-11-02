@@ -7,13 +7,23 @@
 #include <string.h>
 
 #include "../sc101iot_logic.h"
+#include "../sc101iot_mode.h"
 
 typedef void *i2c_tag_t;
 typedef uint16_t i2c_addr_t;
 typedef unsigned int i2c_op_t;
+typedef int kmutex_t;
+
+enum video_pixel_format { VIDEO_FORMAT_UYVY = 1 };
+struct video_format {
+	enum video_pixel_format pixel_format;
+	uint32_t width, height;
+	uint32_t stride, sample_size, priv;
+};
 
 #define I2C_OP_WRITE_WITH_STOP 1
 #define I2C_OP_READ_WITH_STOP 2
+#define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
 
 typedef struct sc101iot_softc *device_t;
 #define device_private(dev) (dev)
@@ -46,9 +56,11 @@ struct sc101iot_softc {
 	i2c_addr_t sc_addr;
 	int sc_phandle;
 	struct camera_sensor_power sc_power;
+	struct video_format sc_format;
+	kmutex_t sc_lock;
 	struct fixture *test_fixture;
 	uint16_t sc_pid;
-	bool sc_identified;
+	bool sc_identified, sc_configured, sc_streaming;
 };
 
 enum event_type {
@@ -57,6 +69,7 @@ enum event_type {
 	EVENT_FLASH,
 	EVENT_DELAY,
 	EVENT_PAGE_WRITE,
+	EVENT_REG_WRITE,
 	EVENT_REG_READ,
 };
 
@@ -73,13 +86,16 @@ struct fixture {
 	struct fdtbus_gpio_pin reset_pin;
 	struct fdtbus_gpio_pin powerdown_pin;
 	struct fdtbus_gpio_pin flash_pin;
-	struct event events[48];
+	struct event events[1024];
 	size_t nevents;
 	uint8_t selected_page;
 	uint8_t pid_hi;
 	uint8_t pid_lo;
 	int fail_page;
 	int fail_reg;
+	int fail_write;
+	unsigned int writes;
+	unsigned int page_writes;
 	int fail_acquire;
 	int release_count;
 	int bus_acquired;
@@ -95,10 +111,19 @@ static void sc101iot_delay_us(void *, unsigned int);
 static int sc101iot_read_reg(struct sc101iot_softc *, uint16_t, uint8_t *);
 static int sc101iot_read_reg_cb(void *, uint16_t, uint8_t *);
 static void sc101iot_init(device_t);
+static int sc101iot_get_format(void *, struct video_format *);
+static int sc101iot_try_format(void *, struct video_format *);
+static int sc101iot_default_format(struct video_format *);
+static int sc101iot_set_format(void *, const struct video_format *);
+static void mutex_init(kmutex_t *, int, int);
+static void mutex_enter(kmutex_t *);
+static void mutex_exit(kmutex_t *);
 int camera_sensor_power_acquire(int, struct camera_sensor_power *);
 void camera_sensor_power_release_flash(struct camera_sensor_power *);
 static void test_log(device_t, const char *, ...);
 static void delay(unsigned int);
+
+#define MUTEX_DEFAULT 0
 
 static void record(struct fixture *, enum event_type, unsigned int);
 static void fdtbus_gpio_write(struct fdtbus_gpio_pin *, int);
@@ -169,6 +194,26 @@ delay(unsigned int usec)
 	(void)usec;
 }
 
+static void
+mutex_init(kmutex_t *lock, int type, int ipl)
+{
+	(void)type;
+	(void)ipl;
+	*lock = 0;
+}
+
+static void
+mutex_enter(kmutex_t *lock)
+{
+	(void)lock;
+}
+
+static void
+mutex_exit(kmutex_t *lock)
+{
+	(void)lock;
+}
+
 static int
 iic_acquire_bus(i2c_tag_t tag, int flags)
 {
@@ -208,11 +253,21 @@ iic_exec(i2c_tag_t tag, i2c_op_t op, i2c_addr_t addr, const void *cmd,
 	memcpy(bytes, cmd, cmdlen);
 	if (op == I2C_OP_WRITE_WITH_STOP) {
 		assert(cmdlen == 2 && datalen == 0 && data == NULL);
-		assert(bytes[0] == 0xf0);
-		record(f, EVENT_PAGE_WRITE, bytes[1]);
-		if (f->fail_page)
+		if (bytes[0] == 0xf0 && f->fail_page && f->page_writes == 0) {
+			record(f, EVENT_PAGE_WRITE, bytes[1]);
 			return EIO;
-		f->selected_page = bytes[1];
+		}
+		if (bytes[0] == 0xf0 && f->page_writes < 2) {
+			record(f, EVENT_PAGE_WRITE, bytes[1]);
+			f->page_writes++;
+		} else
+			record(f, EVENT_REG_WRITE, ((unsigned int)bytes[0] << 8) |
+			    bytes[1]);
+		f->writes++;
+		if (f->fail_write != 0 && f->writes == (unsigned int)f->fail_write)
+			return EIO;
+		if (bytes[0] == 0xf0)
+			f->selected_page = bytes[1];
 		return 0;
 	}
 	assert(op == I2C_OP_READ_WITH_STOP);
@@ -306,6 +361,12 @@ main(void)
 	struct fixture f;
 	struct sc101iot_sequence_ops test_ops = ops;
 	uint16_t pid;
+	size_t stride, frame_size;
+
+	assert(sc101iot_mode_layout(640, 480, &stride, &frame_size) == 0);
+	assert(stride == 1280 && frame_size == 614400);
+	assert(sc101iot_mode_layout(1280, 720, &stride, &frame_size) == ENOTSUP);
+	assert(sc101iot_mode_layout(640, 480, NULL, &frame_size) == EINVAL);
 
 	check_success();
 	fixture_init(&f, 0xda, 0x4a);
@@ -344,6 +405,18 @@ main(void)
 	assert(f.reset.physical_level == 0 && f.powerdown.physical_level == 1);
 
 	fixture_init(&f, 0x12, 0x34);
+	mutex_init(&f.sc.sc_lock, MUTEX_DEFAULT, 0);
+	{
+		struct video_format format;
+
+		assert(sc101iot_default_format(&f.sc.sc_format) == 0);
+		assert(sc101iot_get_format(&f.sc, &format) == 0);
+		assert(format.pixel_format == VIDEO_FORMAT_UYVY);
+		assert(format.width == 640 && format.height == 480);
+		assert(!f.sc.sc_identified);
+		format.width = 320;
+		assert(sc101iot_try_format(&f.sc, &format) == ENOTSUP);
+	}
 	sc101iot_init(&f.sc);
 	assert(!f.sc.sc_identified && f.sc.sc_pid == 0x1234);
 	assert(f.sc.sc_power.flash == NULL && f.flash.released &&
@@ -351,6 +424,7 @@ main(void)
 	assert(f.flash.physical_level == 1);
 
 	fixture_init(&f, 0xda, 0x4a);
+	mutex_init(&f.sc.sc_lock, MUTEX_DEFAULT, 0);
 	f.fail_page = 1;
 	sc101iot_init(&f.sc);
 	assert(!f.sc.sc_identified && f.sc.sc_power.flash == NULL);
@@ -358,8 +432,34 @@ main(void)
 	    f.flash.physical_level == 1);
 
 	fixture_init(&f, 0xda, 0x4a);
+	mutex_init(&f.sc.sc_lock, MUTEX_DEFAULT, 0);
+	assert(sc101iot_default_format(&f.sc.sc_format) == 0);
 	sc101iot_init(&f.sc);
 	assert(f.sc.sc_identified && f.sc.sc_pid == 0xda4a);
+	{
+		struct video_format format = { 0 };
+
+		/* The discovered mode is available before set_format programs it. */
+		assert(!f.sc.sc_configured);
+		assert(sc101iot_get_format(&f.sc, &format) == 0);
+		assert(format.pixel_format == VIDEO_FORMAT_UYVY);
+		assert(format.width == 640 && format.height == 480);
+		assert(format.stride == 1280 && format.sample_size == 614400);
+	}
 	assert(f.sc.sc_power.flash == &f.flash_pin && !f.flash.released);
+	{
+		struct video_format format = {
+			.pixel_format = VIDEO_FORMAT_UYVY,
+			.width = 640,
+			.height = 480,
+		};
+
+		assert(sc101iot_set_format(&f.sc, &format) == 0);
+		assert(f.sc.sc_configured);
+		f.fail_write = (int)f.writes + 3;
+		assert(sc101iot_set_format(&f.sc, &format) == EIO);
+		assert(!f.sc.sc_configured);
+		assert(f.reset.physical_level == 0 && f.powerdown.physical_level == 1);
+	}
 	return 0;
 }

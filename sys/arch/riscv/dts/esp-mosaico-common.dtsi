@@ -73,12 +73,28 @@
 			powerdown-gpios = <&gpio 48 GPIO_ACTIVE_HIGH>;
 			power-supply = <&vcc_3v3>;
 			status = "disabled";
+			port {
+				sensor_out: endpoint {
+					remote-endpoint = <&dvp_in>;
+				};
+			};
 		};
 	};
 
 	memory@50000000 {
 		device_type = "memory";
 		reg = <0x50000000 0x01000000>;
+	};
+};
+
+&camera_dvp {
+	status = "disabled";
+	pinctrl-names = "default";
+	pinctrl-0 = <&camera_dvp_pins>;
+	port {
+		dvp_in: endpoint {
+			remote-endpoint = <&sensor_out>;
+		};
 	};
 };
 
@@ -105,6 +121,35 @@
 			    ESP32S31_SPI2_HD)>;
 			input-enable;
 			output-enable;
+			bias-disable;
+		};
+	};
+
+	camera_dvp_pins: camera-dvp-pins {
+		camera-inputs {
+			pinmux = <ESP32S31_PINMUX(17, ESP32S31_CAM_PCLK,
+			    ESP32S31_SIG_NONE)>,
+			    <ESP32S31_PINMUX(19, ESP32S31_CAM_DE,
+			    ESP32S31_SIG_NONE)>,
+			    <ESP32S31_PINMUX(55, ESP32S31_CAM_VSYNC,
+			    ESP32S31_SIG_NONE)>,
+			    <ESP32S31_PINMUX(16, ESP32S31_CAM_DATA0,
+			    ESP32S31_SIG_NONE)>,
+			    <ESP32S31_PINMUX(15, ESP32S31_CAM_DATA1,
+			    ESP32S31_SIG_NONE)>,
+			    <ESP32S31_PINMUX(33, ESP32S31_CAM_DATA2,
+			    ESP32S31_SIG_NONE)>,
+			    <ESP32S31_PINMUX(4, ESP32S31_CAM_DATA3,
+			    ESP32S31_SIG_NONE)>,
+			    <ESP32S31_PINMUX(14, ESP32S31_CAM_DATA4,
+			    ESP32S31_SIG_NONE)>,
+			    <ESP32S31_PINMUX(12, ESP32S31_CAM_DATA5,
+			    ESP32S31_SIG_NONE)>,
+			    <ESP32S31_PINMUX(18, ESP32S31_CAM_DATA6,
+			    ESP32S31_SIG_NONE)>,
+			    <ESP32S31_PINMUX(13, ESP32S31_CAM_DATA7,
+			    ESP32S31_SIG_NONE)>;
+			input-enable;
 			bias-disable;
 		};
 	};

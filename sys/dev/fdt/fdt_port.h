@@ -71,6 +71,7 @@ enum endpoint_type {
 	EP_DRM_CRTC,		/* struct drm_crtc */
 	EP_DRM_ENCODER,		/* struct drm_encoder */
 	EP_DRM_PANEL,		/* struct drm_panel */
+	EP_VIDEO_SENSOR,	/* struct video_sensor from video_sensor_if.h */
 };
 
 
