@@ -1543,14 +1543,15 @@ nvme_q_complete(struct nvme_softc *sc, struct nvme_queue *q)
 {
 	struct nvme_ccb *ccb;
 	struct nvme_cqe *ring = NVME_DMA_KVA(q->q_cq_dmamem), *cqe;
+	struct nvme_cqe entry;
 	void (*done)(struct nvme_queue *, struct nvme_ccb *, struct nvme_cqe *);
 	uint16_t flags;
 	int rv = 0;
 
 	mutex_enter(&q->q_cq_mtx);
 
-	nvme_dmamem_sync(sc, q->q_cq_dmamem, BUS_DMASYNC_POSTREAD);
 	for (;;) {
+		nvme_dmamem_sync(sc, q->q_cq_dmamem, BUS_DMASYNC_POSTREAD);
 		cqe = &ring[q->q_cq_head];
 		flags = lemtoh16(&cqe->flags);
 		if ((flags & NVME_CQE_PHASE) != q->q_cq_phase)
@@ -1565,6 +1566,8 @@ nvme_q_complete(struct nvme_softc *sc, struct nvme_queue *q)
 		nvme_dmamem_sync(sc, q->q_cq_dmamem, BUS_DMASYNC_POSTREAD);
 
 		ccb = &q->q_ccbs[lemtoh16(&cqe->cid)];
+		/* The slot belongs to the controller once released below. */
+		entry = *cqe;
 
 		if (++q->q_cq_head >= q->q_entries) {
 			q->q_cq_head = 0;
@@ -1600,14 +1603,21 @@ nvme_q_complete(struct nvme_softc *sc, struct nvme_queue *q)
 		done = ccb->ccb_done;
 		if (done == nvme_poll_done)
 			((struct nvme_poll_state *)ccb->ccb_cookie)->claimed = true;
+		/*
+		 * Release the entry before the callback.  INTx is level
+		 * triggered: the controller asserts it until the head
+		 * doorbell covers every consumed entry.  A callback
+		 * preempted on this CPU by that interrupt would otherwise
+		 * keep it asserted, and the interrupt and its softint, which
+		 * unmasks it, would run on this CPU forever.
+		 */
+		nvme_dmamem_sync(sc, q->q_cq_dmamem, BUS_DMASYNC_PREREAD);
+		nvme_write4(sc, q->q_cqhdbl, q->q_cq_head);
 		mutex_exit(&q->q_cq_mtx);
-		(*done)(q, ccb, cqe);
+		(*done)(q, ccb, &entry);
 		mutex_enter(&q->q_cq_mtx);
 	}
 	nvme_dmamem_sync(sc, q->q_cq_dmamem, BUS_DMASYNC_PREREAD);
-
-	if (rv)
-		nvme_write4(sc, q->q_cqhdbl, q->q_cq_head);
 
 	mutex_exit(&q->q_cq_mtx);
 
