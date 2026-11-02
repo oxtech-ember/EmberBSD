@@ -15,6 +15,9 @@
 
 #include <sys/cdefs.h>
 
+/* IDF 6.1 WPA SAE callbacks use the common COMMIT/CONFIRM transaction IDs. */
+#define	ESPWIFI_SAE_COMMIT	1
+#define	ESPWIFI_SAE_CONFIRM	2
 #define	ESPWIFI_WAIT_FOREVER	0xffffffffU
 #define	ESPWIFI_TICK_MS		10
 
@@ -86,6 +89,10 @@ void	espwifi_os_link(int, const unsigned char *);
 int	espwifi_os_assoc_response(unsigned int, const void *, unsigned int,
 	    const unsigned char *);
 int	espwifi_os_wpa_in_4way(void);
+int	espwifi_os_sae_build(const unsigned char *, unsigned int, unsigned char *,
+	    unsigned int, unsigned int *);
+int	espwifi_os_sae_parse(const unsigned char *, unsigned int, unsigned int,
+	    unsigned int);
 void	espwifi_os_radio_started(void);
 void	espwifi_os_radio_stopped(void);
 

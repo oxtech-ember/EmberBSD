@@ -41,8 +41,10 @@ __KERNEL_RCSID(0, "$NetBSD$");
 
 #include <sys/param.h>
 #include <sys/atomic.h>
+#include <sys/condvar.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
+#include <sys/kmem.h>
 #include <sys/malloc.h>
 #include <sys/mbuf.h>
 #include <sys/mutex.h>
@@ -52,6 +54,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <net/if_ether.h>
 #include <net/if_media.h>
 #include <net/bpf.h>
+#include <net/route.h>
 
 #ifdef ESPWIFI_NET80211
 #include <net80211/ieee80211_var.h>
@@ -59,6 +62,17 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <net80211/ieee80211_proto.h>
 #define ESPWIFI_SCAN_RING 8
 #define ESPWIFI_SCAN_FRAME_MAX 2304
+#define ESPWIFI_SAE_WAIT_SECONDS 5
+#define ESPWIFI_SAE_HEADER_LEN 30
+#define ESPWIFI_SAE_BODY_MAX (IEEE80211_SAE_DATA_MAX - ESPWIFI_SAE_HEADER_LEN)
+#define ESPWIFI_SAE_WAIT_NONE 0
+#define ESPWIFI_SAE_WAIT_TX 1
+#define ESPWIFI_SAE_WAIT_STATUS 2
+#define ESPWIFI_SAE_WAIT_RX 3
+#define ESPWIFI_SAE_REPLY_NONE 0
+#define ESPWIFI_SAE_REPLY_TX 1
+#define ESPWIFI_SAE_REPLY_STATUS 2
+#define ESPWIFI_SAE_REPLY_ANY 3
 struct espwifi_scan_frame {
 	unsigned len;
 	unsigned channel;
@@ -82,6 +96,15 @@ struct espwifi_softc {
 	kmutex_t	sc_scan_lock;
 	kmutex_t	sc_key_lock;
 	kcondvar_t	sc_key_cv;
+	kmutex_t	sc_sae_lock;
+	kcondvar_t	sc_sae_cv;
+	bool		sc_sae_enabled, sc_sae_start_sent;
+	unsigned	 sc_sae_waiting, sc_sae_reply;
+	int		sc_sae_reply_status;
+	unsigned	 sc_sae_reply_len;
+	uint32_t	sc_sae_generation;
+	uint8_t	sc_sae_bssid[ETHER_ADDR_LEN];
+	uint8_t	sc_sae_reply_frame[IEEE80211_SAE_DATA_MAX];
 	bool		sc_key_pending, sc_key_running, sc_key_done;
 	bool		sc_key_abandoned;
 	int		sc_key_error;
@@ -125,6 +148,401 @@ struct espwifi_softc {
 static struct espwifi_softc espwifi_sc;
 
 #ifdef ESPWIFI_NET80211
+#ifdef ESPWIFI_NET80211_WPA2
+static int
+espwifi_if_sae_notify(struct espwifi_softc *sc, uint16_t op,
+    uint32_t generation, const uint8_t *bssid, const void *data, unsigned len)
+{
+	struct ieee80211req_sae *req;
+
+	if (len > IEEE80211_SAE_DATA_MAX || (len != 0 && data == NULL))
+		return EINVAL;
+	req = kmem_zalloc(sizeof(*req), KM_NOSLEEP);
+	if (req == NULL)
+		return ENOMEM;
+	req->version = IEEE80211_SAE_VERSION;
+	req->generation = generation;
+	req->op = op;
+	req->len = len;
+	memcpy(req->bssid, bssid, ETHER_ADDR_LEN);
+	if (len != 0)
+		memcpy(req->data, data, len);
+	rt_ieee80211msg(&sc->sc_ec.ec_if, RTM_IEEE80211_SAE, req,
+	    offsetof(struct ieee80211req_sae, data) + len);
+	explicit_memset(req, 0, sizeof(*req));
+	kmem_free(req, sizeof(*req));
+	return 0;
+}
+
+static bool
+espwifi_if_sae_current(struct espwifi_softc *sc, uint32_t generation,
+    const uint8_t *bssid)
+{
+	return sc->sc_sae_enabled && generation == sc->sc_sae_generation &&
+	    memcmp(bssid, sc->sc_sae_bssid, ETHER_ADDR_LEN) == 0;
+}
+
+static int
+espwifi_if_sae_wait(struct espwifi_softc *sc, uint32_t generation,
+	    unsigned reply, unsigned int type, uint8_t *body, unsigned int capacity,
+	    unsigned int *len)
+{
+	int error = 0, remain;
+	u_int deadline = getticks() + MAX(1, hz * ESPWIFI_SAE_WAIT_SECONDS);
+
+	mutex_enter(&sc->sc_sae_lock);
+	if (generation != sc->sc_sae_generation) {
+		mutex_exit(&sc->sc_sae_lock);
+		return ESTALE;
+	}
+	while (espwifi_if_sae_current(sc, generation, sc->sc_sae_bssid) &&
+	    (reply == ESPWIFI_SAE_REPLY_ANY ?
+	    sc->sc_sae_reply == ESPWIFI_SAE_REPLY_NONE :
+	    sc->sc_sae_reply != reply)) {
+		remain = (int)(deadline - getticks());
+		if (remain <= 0) {
+			error = ETIMEDOUT;
+			break;
+		}
+		error = cv_timedwait(&sc->sc_sae_cv, &sc->sc_sae_lock,
+		    (u_int)remain);
+		if (error == EWOULDBLOCK) {
+			if (generation != sc->sc_sae_generation) {
+				error = ESTALE;
+				break;
+			}
+			if (espwifi_if_sae_current(sc, generation, sc->sc_sae_bssid) &&
+			    (reply == ESPWIFI_SAE_REPLY_ANY ?
+			    sc->sc_sae_reply != ESPWIFI_SAE_REPLY_NONE :
+			    sc->sc_sae_reply == reply)) {
+				error = 0;
+				break;
+			}
+			error = ETIMEDOUT;
+			break;
+		}
+		if (error != 0)
+			break;
+	}
+	if (error == 0 && !espwifi_if_sae_current(sc, generation,
+	    sc->sc_sae_bssid))
+		error = ESTALE;
+	/* A replaced session owns every mailbox field after this point. */
+	if (generation != sc->sc_sae_generation) {
+		mutex_exit(&sc->sc_sae_lock);
+		return ESTALE;
+	}
+	if (error == 0 && (reply == ESPWIFI_SAE_REPLY_ANY ?
+	    sc->sc_sae_reply == ESPWIFI_SAE_REPLY_NONE :
+	    sc->sc_sae_reply != reply))
+		error = ECANCELED;
+	if (error == 0 && reply == ESPWIFI_SAE_REPLY_TX) {
+		if (sc->sc_sae_reply_len < ESPWIFI_SAE_HEADER_LEN ||
+		    le16dec(sc->sc_sae_reply_frame + 26) != type ||
+		    sc->sc_sae_reply_len - ESPWIFI_SAE_HEADER_LEN > capacity) {
+			error = EPROTO;
+		} else {
+			*len = sc->sc_sae_reply_len - ESPWIFI_SAE_HEADER_LEN;
+			memcpy(body, sc->sc_sae_reply_frame + ESPWIFI_SAE_HEADER_LEN,
+			    *len);
+		}
+	} else if (error == 0 && (reply == ESPWIFI_SAE_REPLY_STATUS ||
+	    (reply == ESPWIFI_SAE_REPLY_ANY &&
+	    sc->sc_sae_reply == ESPWIFI_SAE_REPLY_STATUS))) {
+		error = sc->sc_sae_reply_status == 0 ? 0 : EACCES;
+	}
+	if (!(error == 0 && reply == ESPWIFI_SAE_REPLY_ANY &&
+	    sc->sc_sae_reply == ESPWIFI_SAE_REPLY_TX)) {
+		sc->sc_sae_reply = ESPWIFI_SAE_REPLY_NONE;
+		sc->sc_sae_reply_len = 0;
+		explicit_memset(sc->sc_sae_reply_frame,
+		    0, sizeof(sc->sc_sae_reply_frame));
+	}
+	sc->sc_sae_waiting = ESPWIFI_SAE_WAIT_NONE;
+	if (error == ETIMEDOUT) {
+		sc->sc_sae_enabled = false;
+		sc->sc_sae_start_sent = false;
+		explicit_memset(sc->sc_sae_bssid, 0, sizeof(sc->sc_sae_bssid));
+		if (++sc->sc_sae_generation == 0)
+			sc->sc_sae_generation++;
+	}
+	cv_broadcast(&sc->sc_sae_cv);
+	mutex_exit(&sc->sc_sae_lock);
+	return error;
+}
+
+static void
+espwifi_if_sae_clear_locked(struct espwifi_softc *sc)
+{
+	sc->sc_sae_enabled = false;
+	sc->sc_sae_start_sent = false;
+	sc->sc_sae_waiting = ESPWIFI_SAE_WAIT_NONE;
+	sc->sc_sae_reply = ESPWIFI_SAE_REPLY_NONE;
+	sc->sc_sae_reply_len = 0;
+	explicit_memset(sc->sc_sae_bssid, 0, sizeof(sc->sc_sae_bssid));
+	explicit_memset(sc->sc_sae_reply_frame,
+	    0, sizeof(sc->sc_sae_reply_frame));
+	if (++sc->sc_sae_generation == 0)
+		sc->sc_sae_generation++;
+	cv_broadcast(&sc->sc_sae_cv);
+}
+
+static void
+espwifi_if_sae_cancel_generation(struct espwifi_softc *sc,
+	    uint32_t generation)
+{
+	mutex_enter(&sc->sc_sae_lock);
+	if (sc->sc_sae_generation == generation)
+		espwifi_if_sae_clear_locked(sc);
+	mutex_exit(&sc->sc_sae_lock);
+}
+
+static void
+espwifi_if_sae_cancel(struct espwifi_softc *sc)
+{
+	mutex_enter(&sc->sc_sae_lock);
+	espwifi_if_sae_clear_locked(sc);
+	mutex_exit(&sc->sc_sae_lock);
+}
+
+static int
+espwifi_if_sae_configure(struct espwifi_softc *sc,
+	    const struct ieee80211req_sae *req)
+{
+	int error;
+
+	if (req->len != 1)
+		return EINVAL;
+	error = ieee80211_sae_configure_check(&sc->sc_ic, 0,
+	    req->data[0] != 0);
+	if (error != 0)
+		return error;
+	mutex_enter(&sc->sc_sae_lock);
+	sc->sc_sae_enabled = req->data[0] != 0;
+	sc->sc_sae_start_sent = false;
+	sc->sc_sae_waiting = ESPWIFI_SAE_WAIT_NONE;
+	sc->sc_sae_reply = ESPWIFI_SAE_REPLY_NONE;
+	sc->sc_sae_reply_len = 0;
+	sc->sc_sae_generation = req->generation;
+	memcpy(sc->sc_sae_bssid, req->bssid, sizeof(sc->sc_sae_bssid));
+	explicit_memset(sc->sc_sae_reply_frame,
+	    0, sizeof(sc->sc_sae_reply_frame));
+	cv_broadcast(&sc->sc_sae_cv);
+	mutex_exit(&sc->sc_sae_lock);
+	return 0;
+}
+
+static bool
+espwifi_if_sae_frame_valid(struct espwifi_softc *sc,
+	    const struct ieee80211req_sae *req)
+{
+	return ieee80211_sae_auth_frame_validate(req->data, req->len,
+	    req->bssid, sc->sc_ic.ic_myaddr, req->bssid, 0) == 0;
+}
+
+static int
+espwifi_if_sae_request(struct ieee80211com *ic,
+	    const struct ieee80211req_sae *req)
+{
+	struct espwifi_softc * const sc = ic->ic_ifp->if_softc;
+	int error = EINVAL, s;
+
+	if (req->op == IEEE80211_SAE_CONFIGURE)
+		return espwifi_if_sae_configure(sc, req);
+	s = splnet();
+	mutex_enter(&sc->sc_sae_lock);
+	if (!espwifi_if_sae_current(sc, req->generation, req->bssid) ||
+	    ic->ic_bss == NULL || ic->ic_state != IEEE80211_S_AUTH ||
+	    memcmp(req->bssid, ic->ic_bss->ni_bssid, ETHER_ADDR_LEN) != 0) {
+		error = ESTALE;
+		goto out;
+	}
+	switch (req->op) {
+	case IEEE80211_SAE_TX_FRAME:
+		if ((sc->sc_sae_waiting != ESPWIFI_SAE_WAIT_NONE &&
+		    sc->sc_sae_waiting != ESPWIFI_SAE_WAIT_TX &&
+		    sc->sc_sae_waiting != ESPWIFI_SAE_WAIT_RX) ||
+		    !espwifi_if_sae_frame_valid(sc, req) ||
+		    sc->sc_sae_reply != ESPWIFI_SAE_REPLY_NONE)
+			break;
+		memcpy(sc->sc_sae_reply_frame, req->data, req->len);
+		sc->sc_sae_reply_len = req->len;
+		sc->sc_sae_reply = ESPWIFI_SAE_REPLY_TX;
+		error = 0;
+		cv_broadcast(&sc->sc_sae_cv);
+		break;
+	case IEEE80211_SAE_AUTH_STATUS:
+		if (req->len != 2 || (sc->sc_sae_waiting !=
+		    ESPWIFI_SAE_WAIT_STATUS && sc->sc_sae_waiting !=
+		    ESPWIFI_SAE_WAIT_RX) ||
+		    sc->sc_sae_reply != ESPWIFI_SAE_REPLY_NONE)
+			break;
+		sc->sc_sae_reply_status = le16dec(req->data);
+		sc->sc_sae_reply = ESPWIFI_SAE_REPLY_STATUS;
+		error = 0;
+		cv_broadcast(&sc->sc_sae_cv);
+		break;
+	default:
+		error = EOPNOTSUPP;
+		break;
+	}
+out:
+	mutex_exit(&sc->sc_sae_lock);
+	splx(s);
+	return error;
+}
+
+int
+espwifi_if_sae_build(const unsigned char *bssid, unsigned int type,
+	    unsigned char *body, unsigned int capacity, unsigned int *len)
+{
+	struct espwifi_softc * const sc = &espwifi_sc;
+	struct ieee80211_node *ni;
+	uint8_t ssid[IEEE80211_NWID_LEN];
+	unsigned int ssid_len = 0;
+	uint32_t generation;
+	bool send_start = false;
+	int error, s;
+
+	if (bssid == NULL || body == NULL || len == NULL || capacity == 0 ||
+	    (type != ESPWIFI_SAE_COMMIT && type != ESPWIFI_SAE_CONFIRM))
+		return EINVAL;
+	*len = 0;
+	s = splnet();
+	ni = sc->sc_ic.ic_bss;
+	if (sc->sc_ic.ic_state != IEEE80211_S_AUTH || ni == NULL ||
+	    memcmp(ni->ni_bssid, bssid, ETHER_ADDR_LEN) != 0) {
+		splx(s);
+		return ESTALE;
+	}
+	mutex_enter(&sc->sc_sae_lock);
+	if (!espwifi_if_sae_current(sc, sc->sc_sae_generation, bssid)) {
+		mutex_exit(&sc->sc_sae_lock);
+		splx(s);
+		return ESTALE;
+	}
+	generation = sc->sc_sae_generation;
+	if (sc->sc_sae_waiting != ESPWIFI_SAE_WAIT_NONE) {
+		mutex_exit(&sc->sc_sae_lock);
+		splx(s);
+		return EBUSY;
+	}
+	if (type == ESPWIFI_SAE_COMMIT && !sc->sc_sae_start_sent) {
+		if (ni->ni_esslen > sizeof(ssid)) {
+			mutex_exit(&sc->sc_sae_lock);
+			splx(s);
+			return ESTALE;
+		}
+		ssid_len = ni->ni_esslen;
+		memcpy(ssid, ni->ni_essid, ssid_len);
+		sc->sc_sae_start_sent = true;
+		send_start = true;
+	}
+	sc->sc_sae_waiting = ESPWIFI_SAE_WAIT_TX;
+	mutex_exit(&sc->sc_sae_lock);
+	splx(s);
+	if (send_start) {
+		error = espwifi_if_sae_notify(sc, IEEE80211_SAE_START,
+		    generation, bssid, ssid, ssid_len);
+		explicit_memset(ssid, 0, sizeof(ssid));
+		if (error != 0) {
+			espwifi_if_sae_cancel_generation(sc, generation);
+			return error;
+		}
+	}
+	error = espwifi_if_sae_wait(sc, generation, ESPWIFI_SAE_REPLY_TX,
+	    type, body, capacity, len);
+	if (error != 0)
+		*len = 0;
+	return error;
+}
+
+int
+espwifi_if_sae_parse(const unsigned char *body, unsigned int len,
+	    unsigned int type, unsigned int status)
+{
+	struct espwifi_softc * const sc = &espwifi_sc;
+	struct ieee80211req_sae *req;
+	uint32_t generation;
+	uint8_t bssid[ETHER_ADDR_LEN], local[ETHER_ADDR_LEN];
+	unsigned int frame_len;
+	int error, s;
+
+	if (body == NULL || len == 0 || len > ESPWIFI_SAE_BODY_MAX ||
+	    (type != ESPWIFI_SAE_COMMIT && type != ESPWIFI_SAE_CONFIRM))
+		return EINVAL;
+	s = splnet();
+	mutex_enter(&sc->sc_sae_lock);
+	if (!sc->sc_sae_enabled || sc->sc_ic.ic_bss == NULL ||
+	    sc->sc_ic.ic_state != IEEE80211_S_AUTH ||
+	    !espwifi_if_sae_current(sc, sc->sc_sae_generation,
+	    sc->sc_sae_bssid)) {
+		mutex_exit(&sc->sc_sae_lock);
+		splx(s);
+		return ESTALE;
+	}
+	generation = sc->sc_sae_generation;
+	memcpy(bssid, sc->sc_sae_bssid, sizeof(bssid));
+	memcpy(local, sc->sc_ic.ic_myaddr, sizeof(local));
+	if (sc->sc_sae_waiting != ESPWIFI_SAE_WAIT_NONE) {
+		mutex_exit(&sc->sc_sae_lock);
+		splx(s);
+		return EBUSY;
+	}
+	sc->sc_sae_waiting = type == ESPWIFI_SAE_CONFIRM ?
+	    ESPWIFI_SAE_WAIT_STATUS : ESPWIFI_SAE_WAIT_RX;
+	mutex_exit(&sc->sc_sae_lock);
+	splx(s);
+
+	frame_len = ESPWIFI_SAE_HEADER_LEN + len;
+	req = kmem_zalloc(sizeof(*req), KM_NOSLEEP);
+	if (req == NULL) {
+		error = ENOMEM;
+		goto fail;
+	}
+	req->version = IEEE80211_SAE_VERSION;
+	req->generation = generation;
+	req->op = IEEE80211_SAE_RX_FRAME;
+	req->len = frame_len;
+	memcpy(req->bssid, bssid, sizeof(req->bssid));
+	req->data[0] = 0xb0;
+	memcpy(req->data + 4, local, ETHER_ADDR_LEN);
+	memcpy(req->data + 10, bssid, ETHER_ADDR_LEN);
+	memcpy(req->data + 16, bssid, ETHER_ADDR_LEN);
+	le16enc(req->data + 24, 3);
+	le16enc(req->data + 26, type);
+	if (status > 0xffffU) {
+		explicit_memset(req, 0, sizeof(*req));
+		kmem_free(req, sizeof(*req));
+		error = EINVAL;
+		goto fail;
+	}
+	le16enc(req->data + 28, (uint16_t)status);
+	memcpy(req->data + ESPWIFI_SAE_HEADER_LEN, body, len);
+	if (ieee80211_sae_auth_frame_validate(req->data, frame_len,
+	    local, bssid, bssid, type) != 0) {
+		explicit_memset(req, 0, sizeof(*req));
+		kmem_free(req, sizeof(*req));
+		error = EINVAL;
+		goto fail;
+	}
+	rt_ieee80211msg(&sc->sc_ec.ec_if, RTM_IEEE80211_SAE, req,
+	    offsetof(struct ieee80211req_sae, data) + frame_len);
+	explicit_memset(req, 0, sizeof(*req));
+	kmem_free(req, sizeof(*req));
+	error = espwifi_if_sae_wait(sc, generation,
+	    type == ESPWIFI_SAE_CONFIRM ? ESPWIFI_SAE_REPLY_STATUS :
+	    ESPWIFI_SAE_REPLY_ANY, type, NULL, 0, NULL);
+	return error;
+	fail:
+	mutex_enter(&sc->sc_sae_lock);
+	if (sc->sc_sae_generation == generation)
+		sc->sc_sae_waiting = ESPWIFI_SAE_WAIT_NONE;
+	mutex_exit(&sc->sc_sae_lock);
+	return error;
+}
+#endif /* ESPWIFI_NET80211_WPA2 */
+
 static bool
 espwifi_if_is_eapol(const uint8_t *data, unsigned len)
 {
@@ -297,6 +715,9 @@ espwifi_if_newstate(struct ieee80211com *ic, enum ieee80211_state state, int arg
 		return EOPNOTSUPP;
 	if (state == IEEE80211_S_INIT) {
 		bool teardown;
+#ifdef ESPWIFI_NET80211_WPA2
+		espwifi_if_sae_cancel(sc);
+#endif
 
 		mutex_spin_enter(&sc->sc_scan_lock);
 		teardown = sc->sc_join_active != 0 || sc->sc_joined || sc->sc_link;
@@ -398,6 +819,9 @@ espwifi_if_fail_closed_generation(struct espwifi_softc *sc,
 		sc->sc_join_rescan_pending = true;
 	}
 	mutex_spin_exit(&sc->sc_scan_lock);
+#ifdef ESPWIFI_NET80211_WPA2
+	espwifi_if_sae_cancel(sc);
+#endif
 	if (was_link && sc->sc_attached)
 		if_link_state_change(&sc->sc_ec.ec_if, LINK_STATE_DOWN);
 	if (disconnect)
@@ -748,6 +1172,9 @@ espwifi_if_radio_stopped(void)
 	sc->sc_group_key_slots = 0;
 	sc->sc_key_generation = 0;
 	mutex_spin_exit(&sc->sc_scan_lock);
+#ifdef ESPWIFI_NET80211_WPA2
+	espwifi_if_sae_cancel(sc);
+#endif
 	/* Wake the control worker to reject any queued key from the stopped epoch. */
 	espwifi_os_sem_give(sc->sc_scan_ctl_sem);
 	if (was_link && sc->sc_attached)
@@ -1079,6 +1506,7 @@ espwifi_if_link_event(int up, const unsigned char *bssid, bool association)
 		mutex_spin_exit(&sc->sc_scan_lock);
 	}
 	if (!up) {
+		espwifi_if_sae_cancel(sc);
 		mutex_spin_enter(&sc->sc_scan_lock);
 		atomic_store_release(&sc->sc_port_authorized, 0);
 		sc->sc_ptk_installed = false;
@@ -1257,11 +1685,20 @@ espwifi_if_stop(struct ifnet *ifp, int disable)
 static int
 espwifi_if_ioctl(struct ifnet *ifp, u_long cmd, void *data)
 {
-	const int s = splnet();
 #ifdef ESPWIFI_NET80211
 	struct espwifi_softc * const sc = ifp->if_softc;
-	int error = ieee80211_ioctl(&sc->sc_ic, cmd, data);
+	int s, error;
+
+#ifdef ESPWIFI_NET80211_WPA2
+	if ((cmd == SIOCG80211 || cmd == SIOCS80211) &&
+	    ((struct ieee80211req *)data)->i_type == IEEE80211_IOC_SAE)
+		return ieee80211_ioctl_sae(&sc->sc_ic, cmd, data, 0,
+		    espwifi_if_sae_request);
+#endif
+	s = splnet();
+	error = ieee80211_ioctl(&sc->sc_ic, cmd, data);
 #else
+	int s = splnet();
 	int error = ether_ioctl(ifp, cmd, data);
 #endif
 
@@ -1317,6 +1754,11 @@ espwifi_if_attach(void)
 	mutex_init(&sc->sc_scan_lock, MUTEX_DEFAULT, IPL_HIGH);
 	mutex_init(&sc->sc_key_lock, MUTEX_DEFAULT, IPL_NONE);
 	cv_init(&sc->sc_key_cv, "espwkey");
+#ifdef ESPWIFI_NET80211_WPA2
+	/* splnet() aliases splvm(); this state lock must not sleep there. */
+	mutex_init(&sc->sc_sae_lock, MUTEX_DEFAULT, IPL_VM);
+	cv_init(&sc->sc_sae_cv, "espwsae");
+#endif
 	sc->sc_scan_sem = espwifi_os_sem_create(1, 0);
 	sc->sc_scan_ctl_sem = espwifi_os_sem_create(1, 0);
 	if (sc->sc_scan_sem == NULL || sc->sc_scan_ctl_sem == NULL) {
@@ -1327,6 +1769,10 @@ espwifi_if_attach(void)
 		mutex_destroy(&sc->sc_scan_lock);
 		cv_destroy(&sc->sc_key_cv);
 		mutex_destroy(&sc->sc_key_lock);
+#ifdef ESPWIFI_NET80211_WPA2
+		cv_destroy(&sc->sc_sae_cv);
+		mutex_destroy(&sc->sc_sae_lock);
+#endif
 		espwifi_os_sem_delete(sc->sc_txsem);
 		free(sc->sc_txbuf, M_DEVBUF);
 		printf("espwifi0: cannot allocate scan semaphore\n");

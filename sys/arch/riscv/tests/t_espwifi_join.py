@@ -111,6 +111,7 @@ static unsigned atomic_load_acquire(unsigned *p) { return *p; }
 static void if_link_state_change(struct ifnet *p,int state) { (void)p;link_changes+=state?1:-1; }
 void espwifi_if_radio_started(void);
 void espwifi_if_radio_stopped(void);
+static void espwifi_if_sae_cancel(struct espwifi_softc *sc) { (void)sc; }
 static int espwifi_os_critical_enter(void) { return 0; }
 static void espwifi_os_critical_exit(int s) { (void)s; }
 static int espwifi_os_sem_take(void *p,unsigned ticks);

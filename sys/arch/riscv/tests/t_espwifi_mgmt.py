@@ -20,6 +20,8 @@ source = (arch / 'espressif/wifi/fullmac_wpa2.c').read_text()
 parser_source = (arch / 'espressif/wifi/wpa_ie_bridge.c').read_text()
 idf_header = Path(a.idf_driver_header).read_text()
 wpa_source = Path(a.wpa_source).resolve(strict=True)
+sys.path.insert(0, str(arch / 'espressif/wifi'))
+import mkblob
 
 idf_funcs = re.search(r'struct wpa_funcs\s*\{(.*?)\n\};', idf_header, re.S)
 assert idf_funcs, 'selected IDF wpa_funcs declaration missing'
@@ -47,6 +49,10 @@ typedef uint32_t u32;
 typedef uint64_t u64;
 typedef int esp_err_t;
 #define ESP_OK 0
+#define ESP_FAIL -1
+#define ESPWIFI_SAE_COMMIT 1
+#define ESPWIFI_SAE_CONFIRM 2
+#define ESPWIFI_SAE_BODY_MAX 1506
 #define BIT(n) (1U << (n))
 #define WPA_CIPHER_NONE BIT(0)
 #define WPA_CIPHER_WEP40 BIT(1)
@@ -107,6 +113,7 @@ _Static_assert(offsetof(struct wpa_funcs, wpa_sta_rx_mgmt) ==
 static unsigned filter_type, filter_subtype;
 static int filter_calls, callback_calls;
 static struct wpa_funcs *registered;
+static uint8_t espwifi_sae_body[ESPWIFI_SAE_BODY_MAX];
 static unsigned assoc_calls;
 static int parser_result, parser_calls;
 struct wpa_ie_data { int proto, pairwise_cipher, has_pairwise, group_cipher,
@@ -133,6 +140,15 @@ static void *espwifi_os_malloc_internal(unsigned long n) { return calloc(1,n); }
 static void espwifi_os_free(void *p) { free(p); }
 static int espwifi_os_rx_eapol(u8 *src,u8 *buf,u32 len) { return src&&buf?(int)len:-1; }
 static bool espwifi_os_wpa_in_4way(void) { return true; }
+static void forced_memzero(void *p,size_t n) { volatile u8 *b=p;while(n--)*b++=0; }
+static int espwifi_os_sae_build(const u8 *bssid,unsigned type,u8 *body,
+ unsigned capacity,unsigned *len) {
+ (void)bssid;(void)type;(void)body;(void)capacity;*len=0;return -1;
+}
+static int espwifi_os_sae_parse(const u8 *body,unsigned len,unsigned type,
+ unsigned status) {
+ (void)body;(void)len;(void)type;(void)status;return -1;
+}
 static void espwifi_os_link(int up,const unsigned char *bssid) { (void)up;(void)bssid; }
 static int espwifi_os_assoc_response(unsigned int subtype,const void *body,
  unsigned int len,const unsigned char *sender) {
@@ -152,6 +168,8 @@ static int espwifi_os_assoc_response(unsigned int subtype,const void *body,
     function('espwifi_wpa2_sta_rx_mgmt', 'int') + \
     function('espwifi_cipher_type', 'wifi_cipher_type_t') + \
     function('espwifi_wpa2_parse_ie', 'int') + \
+    function('espwifi_wpa3_build_sae_msg', r'uint8_t \*') + \
+    function('espwifi_wpa3_parse_sae_msg', 'int') + \
     function('espwifi_wpa2_register', 'int') + r'''
 int main(void) {
  uint8_t body[6]={1,2,3,4,5,6}, sender[6]={2};
@@ -208,6 +226,10 @@ void wpa_hexdump(int level, const char *title, const void *data, size_t len) {
 int main(void) {
     const u8 rsn[] = {48,20,1,0,0,15,172,4,1,0,0,15,172,4,
         1,0,0,15,172,2,0,0};
+    const u8 rsn_sae_mfpc_mfpr[] = {48,20,1,0,0,15,172,4,
+        1,0,0,15,172,4,1,0,0,15,172,8,0xc0,0};
+    const u8 rsn_psk_sae_mfpc_mfpr[] = {48,24,1,0,0,15,172,4,
+        1,0,0,15,172,4,2,0,0,15,172,2,0,15,172,8,0xc0,0};
     const u8 wpa[] = {221,24,0,80,242,1,1,0,0,80,242,4,
         1,0,0,80,242,4,1,0,0,80,242,2,0,0};
     struct espwifi_wpa_ie data;
@@ -221,6 +243,16 @@ int main(void) {
     assert(data.group_cipher == ESPWIFI_WPA_CIPHER_CCMP);
     assert(data.pairwise_cipher == ESPWIFI_WPA_CIPHER_CCMP);
     assert(data.key_mgmt == WPA_KEY_MGMT_PSK);
+    assert(espwifi_parse_wpa_ie(rsn_sae_mfpc_mfpr,
+        sizeof(rsn_sae_mfpc_mfpr), &data) == 0);
+    assert(data.proto == WPA_PROTO_RSN &&
+        data.key_mgmt == WPA_KEY_MGMT_SAE &&
+        data.capabilities == (WPA_CAPABILITY_MFPC | WPA_CAPABILITY_MFPR));
+    assert(espwifi_parse_wpa_ie(rsn_psk_sae_mfpc_mfpr,
+        sizeof(rsn_psk_sae_mfpc_mfpr), &data) == 0);
+    assert(data.proto == WPA_PROTO_RSN &&
+        data.key_mgmt == (WPA_KEY_MGMT_PSK | WPA_KEY_MGMT_SAE) &&
+        data.capabilities == (WPA_CAPABILITY_MFPC | WPA_CAPABILITY_MFPR));
     memset(&data, 0xa5, sizeof(data));
     assert(espwifi_parse_wpa_ie(rsn, sizeof(rsn) - 1, &data) != 0);
     assert(data.proto == 0 && data.pairwise_cipher == 0 && data.pmkid == NULL);
@@ -232,14 +264,10 @@ with tempfile.TemporaryDirectory() as td:
     c = td / 'parser.c'
     out = td / 'parser'
     c.write_text(parser_test)
-    common_flags = [
-        '-I' + str(wpa_source), '-I' + str(wpa_source / 'utils'),
-        '-I' + str(wpa_source / 'crypto'), '-I' + str(Path(__file__).resolve().parents[1] / 'espressif/wifi'),
-        '-D__ets__', '-DESP_PLATFORM', '-DESP_SUPPLICANT',
-        '-DIEEE8021X_EAPOL', '-DESPRESSIF_USE', '-DCONFIG_IEEE80211W',
-        '-DCONFIG_SHA256', '-DCONFIG_NO_RADIUS', '-DCONFIG_INTERNAL_SHA256',
-        '-DCONFIG_CRYPTO_INTERNAL', '-DCONFIG_GMAC=1',
-        '-DWLAN_FC_ISWEP=WLAN_FC_PROTECTED', '-DWLAN_FC_ORDER=WLAN_FC_HTC',
+    common_flags = mkblob.common_wpa_flags(
+        wpa_source, Path(a.idf_driver_header).resolve().parents[4] / 'components')
+    assert '-DCONFIG_SAE' in common_flags
+    common_flags += ['-I' + str(arch / 'espressif/wifi'),
         '-ffunction-sections', '-fdata-sections', '-fsanitize=address,undefined',
         '-fno-sanitize-recover=all']
     linker_gc = '-Wl,-dead_strip' if sys.platform == 'darwin' else '-Wl,--gc-sections'

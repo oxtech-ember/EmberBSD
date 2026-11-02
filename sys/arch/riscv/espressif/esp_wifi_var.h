@@ -15,5 +15,9 @@ void	espwifi_if_radio_ready(void);
 void	espwifi_if_radio_started(void);
 void	espwifi_if_radio_stopped(void);
 int	espwifi_if_rx_eapol(const unsigned char *, const void *, unsigned);
+int	espwifi_if_sae_build(const unsigned char *, unsigned int,
+	    unsigned char *, unsigned int, unsigned int *);
+int	espwifi_if_sae_parse(const unsigned char *, unsigned int, unsigned int,
+	    unsigned int);
 
 #endif

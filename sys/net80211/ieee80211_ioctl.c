@@ -1472,6 +1472,28 @@ ieee80211_sae_request_valid(const struct ieee80211req_sae *req)
 	}
 	return 0;
 }
+
+/* Validate the common full AUTH-frame envelope used by external SAE radios. */
+int
+ieee80211_sae_auth_frame_validate(const uint8_t *frame, size_t len,
+	    const uint8_t *dst, const uint8_t *src, const uint8_t *bssid,
+	    uint16_t transaction)
+{
+	if (frame == NULL || dst == NULL || src == NULL || bssid == NULL ||
+	    len < 30 || len > IEEE80211_SAE_DATA_MAX ||
+	    le16dec(frame) != 0x00b0 ||
+	    memcmp(frame + 4, dst, IEEE80211_ADDR_LEN) != 0 ||
+	    memcmp(frame + 10, src, IEEE80211_ADDR_LEN) != 0 ||
+	    memcmp(frame + 16, bssid, IEEE80211_ADDR_LEN) != 0 ||
+	    le16dec(frame + 24) != 3)
+		return EINVAL;
+	if (transaction != 0 && le16dec(frame + 26) != transaction)
+		return EINVAL;
+	if (le16dec(frame + 26) != 1 && le16dec(frame + 26) != 2)
+		return EINVAL;
+	return 0;
+}
+
 /* The chip callback calls this under its state ownership, after copyin. */
 int
 ieee80211_sae_configure_check(const struct ieee80211com *ic, uint32_t caps,

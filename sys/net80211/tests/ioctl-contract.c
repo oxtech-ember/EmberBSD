@@ -23,6 +23,7 @@ typedef unsigned long u_long;
 #define M_ZERO 2
 #define KAUTH_NETWORK_INTERFACE 0
 #define KAUTH_REQ_NETWORK_INTERFACE_SETPRIV 0
+static uint16_t le16dec(const void *);
 /* PRODUCTION_ABI */
 struct ieee80211req { int i_len, i_val; void *i_data; };
 struct ifnet { void *if_softc; };
@@ -277,7 +278,42 @@ main(void)
 	struct ieee80211req_sae req = configure();
 	struct ieee80211req ireq = { .i_len = 0, .i_data = &req };
 	struct ieee80211req_sta_mgmt sta;
+	uint8_t frame[IEEE80211_SAE_DATA_MAX] = {0};
+	const uint8_t dst[6] = {2, 0, 0, 0, 0, 1};
+	const uint8_t src[6] = {2, 0, 0, 0, 0, 2};
+	const uint8_t bssid[6] = {2, 0, 0, 0, 0, 3};
 	unsigned before;
+
+	frame[0] = 0xb0;
+	memcpy(frame + 4, dst, 6);
+	memcpy(frame + 10, src, 6);
+	memcpy(frame + 16, bssid, 6);
+	frame[24] = 3;
+	frame[26] = 1;
+	CHECK(ieee80211_sae_auth_frame_validate(frame, 30, dst, src,
+	    bssid, 1) == 0);
+	CHECK(ieee80211_sae_auth_frame_validate(frame, sizeof(frame), dst, src,
+	    bssid, 1) == 0);
+	CHECK(ieee80211_sae_auth_frame_validate(frame, 29, dst, src,
+	    bssid, 1) == EINVAL);
+	CHECK(ieee80211_sae_auth_frame_validate(frame, sizeof(frame) + 1, dst,
+	    src, bssid, 1) == EINVAL);
+	CHECK(ieee80211_sae_auth_frame_validate(frame, 30, src, dst,
+	    bssid, 1) == EINVAL);
+	CHECK(ieee80211_sae_auth_frame_validate(frame, 30, dst, src,
+	    bssid, 2) == EINVAL);
+	frame[0] = 0xc0;
+	CHECK(ieee80211_sae_auth_frame_validate(frame, 30, dst, src,
+	    bssid, 1) == EINVAL);
+	frame[0] = 0xb0;
+	frame[24] = 2;
+	CHECK(ieee80211_sae_auth_frame_validate(frame, 30, dst, src,
+	    bssid, 1) == EINVAL);
+	frame[24] = 3;
+	frame[26] = 3;
+	CHECK(ieee80211_sae_auth_frame_validate(frame, 30, dst, src,
+	    bssid, 1) == EINVAL);
+	frame[26] = 1;
 
 	CHECK(ieee80211_ioctl_sae(&ic, SIOCG80211, &ireq, 7, NULL) == EOPNOTSUPP);
 	CHECK(allocations == 0 && authorizations == 0);

@@ -1047,6 +1047,53 @@ espwifi_os_wpa_in_4way(void)
 	return active;
 }
 
+int
+espwifi_os_sae_build(const unsigned char *bssid, unsigned int type,
+	    unsigned char *body, unsigned int capacity, unsigned int *len)
+{
+#ifdef ESPWIFI_NET80211_WPA2
+	struct espwifi_fp fp;
+	int error;
+
+	if (espwifi_os_in_isr())
+		return EWOULDBLOCK;
+	espwifi_fp_save(&fp);
+	error = espwifi_if_sae_build(bssid, type, body, capacity, len);
+	espwifi_fp_restore(&fp);
+	return error;
+#else
+	(void)bssid;
+	(void)type;
+	(void)body;
+	(void)capacity;
+	(void)len;
+	return EOPNOTSUPP;
+#endif
+}
+
+int
+espwifi_os_sae_parse(const unsigned char *body, unsigned int len,
+	    unsigned int type, unsigned int status)
+{
+#ifdef ESPWIFI_NET80211_WPA2
+	struct espwifi_fp fp;
+	int error;
+
+	if (espwifi_os_in_isr())
+		return EWOULDBLOCK;
+	espwifi_fp_save(&fp);
+	error = espwifi_if_sae_parse(body, len, type, status);
+	espwifi_fp_restore(&fp);
+	return error;
+#else
+	(void)body;
+	(void)len;
+	(void)type;
+	(void)status;
+	return EOPNOTSUPP;
+#endif
+}
+
 void
 espwifi_os_radio_started(void)
 {

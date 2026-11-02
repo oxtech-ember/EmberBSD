@@ -18,6 +18,7 @@ typedef uint64_t u64;
 #define WLAN_FC_STYPE_REASSOC_RESP 3
 #define WLAN_FC_STYPE_AUTH 11
 #define WLAN_FC_STYPE_ACTION 13
+#define ESPWIFI_SAE_BODY_MAX (1536 - 30)
 
 void forced_memzero(void *, size_t);
 
@@ -150,6 +151,42 @@ espwifi_wpa2_sta_rx_mgmt(u8 subtype, u8 *body, size_t len, u8 *sender,
 	}
 }
 
+/* IDF consumes the returned body synchronously after this callback returns. */
+static uint8_t espwifi_sae_body[ESPWIFI_SAE_BODY_MAX];
+
+static uint8_t *
+espwifi_wpa3_build_sae_msg(uint8_t *bssid, uint32_t type, size_t *len)
+{
+	unsigned int body_len = 0;
+	int error;
+
+	if (len == NULL)
+		return NULL;
+	*len = 0;
+	forced_memzero(espwifi_sae_body, sizeof(espwifi_sae_body));
+	if (bssid == NULL || (type != ESPWIFI_SAE_COMMIT &&
+	    type != ESPWIFI_SAE_CONFIRM))
+		return NULL;
+	error = espwifi_os_sae_build(bssid, type, espwifi_sae_body,
+	    sizeof(espwifi_sae_body), &body_len);
+	if (error != 0 || body_len == 0 || body_len > sizeof(espwifi_sae_body)) {
+		forced_memzero(espwifi_sae_body, sizeof(espwifi_sae_body));
+		return NULL;
+	}
+	*len = body_len;
+	return espwifi_sae_body;
+}
+
+static int
+espwifi_wpa3_parse_sae_msg(uint8_t *buf, size_t len, uint32_t type,
+	    uint16_t status)
+{
+	if (buf == NULL || len == 0 || len > ESPWIFI_SAE_BODY_MAX ||
+	    (type != ESPWIFI_SAE_COMMIT && type != ESPWIFI_SAE_CONFIRM))
+		return ESP_FAIL;
+	return espwifi_os_sae_parse(buf, len, type, status) == 0 ? ESP_OK : ESP_FAIL;
+}
+
 /* IDF unregister owns/frees the registered table through the OS allocator. */
 int
 espwifi_wpa2_register(void)
@@ -170,6 +207,8 @@ espwifi_wpa2_register(void)
 	callbacks->wpa_sta_in_4way_handshake = espwifi_wpa2_sta_in_4way;
 	callbacks->wpa_sta_rx_mgmt = espwifi_wpa2_sta_rx_mgmt;
 	callbacks->wpa_parse_wpa_ie = espwifi_wpa2_parse_ie;
+	callbacks->wpa3_build_sae_msg = espwifi_wpa3_build_sae_msg;
+	callbacks->wpa3_parse_sae_msg = espwifi_wpa3_parse_sae_msg;
 	/* Match esp_supplicant_init ordering: install filter before callback table. */
 	error = esp_wifi_register_mgmt_frame_internal(
 	    (1U << WLAN_FC_STYPE_ASSOC_RESP) |

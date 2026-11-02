@@ -541,6 +541,8 @@ struct ieee80211req_sae {
 	uint8_t reserved[2];
 	uint8_t data[IEEE80211_SAE_DATA_MAX];
 };
+int ieee80211_sae_auth_frame_validate(const uint8_t *, size_t,
+	    const uint8_t *, const uint8_t *, const uint8_t *, uint16_t);
 /* CONFIGURE data: one byte, 0=disabled, 1=SAE/CCMP with required PMF.
  * AUTH_STATUS data: two-byte little-endian IEEE 802.11 status.
  * TX_FRAME/RX_FRAME data: complete authentication frame, including MAC header.

@@ -108,6 +108,19 @@ def check_f_only(disassembly):
                 raise ValueError('double-precision instruction in F-only radio: ' + op)
 
 
+def common_wpa_flags(common, idf):
+    return ['-I'+str(common), '-I'+str(common/'utils'), '-I'+str(common/'crypto'),
+        '-D__ets__', '-DESP_PLATFORM', '-DESP_SUPPLICANT', '-DIEEE8021X_EAPOL',
+        '-DESPRESSIF_USE', '-DCONFIG_IEEE80211W', '-DCONFIG_SAE',
+        '-DCONFIG_SHA256', '-DCONFIG_NO_RADIUS', '-DCONFIG_INTERNAL_SHA256',
+        '-DCONFIG_CRYPTO_INTERNAL', '-DCONFIG_GMAC=1',
+        '-DWLAN_FC_ISWEP=WLAN_FC_PROTECTED', '-DWLAN_FC_ORDER=WLAN_FC_HTC',
+        '-idirafter', str(idf/'wpa_supplicant/port/include'),
+        '-idirafter', str(idf/'wpa_supplicant/esp_supplicant/include'),
+        '-idirafter', str(idf/'wpa_supplicant/esp_supplicant/src'),
+        '-idirafter', str(idf/'wpa_supplicant/esp_supplicant/src/crypto')]
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--external-wpa2', action='store_true', required=True,
@@ -157,15 +170,7 @@ def main():
                 '-I'+str(a.wpa_source/'src/rsn_supp')])]
     units += [(idf/s, ['-DCONFIG_ESP_WIFI_FTM_ENABLE=1'] if s.endswith('ftm_load_calibration.c') else []) for s in CORE]
     common = a.wpa_source / 'src'
-    common_flags = ['-I'+str(common), '-I'+str(common/'utils'), '-I'+str(common/'crypto'),
-        '-D__ets__', '-DESP_PLATFORM', '-DESP_SUPPLICANT', '-DIEEE8021X_EAPOL',
-        '-DESPRESSIF_USE', '-DCONFIG_IEEE80211W', '-DCONFIG_SHA256', '-DCONFIG_NO_RADIUS',
-        '-DCONFIG_INTERNAL_SHA256', '-DCONFIG_CRYPTO_INTERNAL', '-DCONFIG_GMAC=1',
-        '-DWLAN_FC_ISWEP=WLAN_FC_PROTECTED', '-DWLAN_FC_ORDER=WLAN_FC_HTC',
-        '-idirafter', str(idf/'wpa_supplicant/port/include'),
-        '-idirafter', str(idf/'wpa_supplicant/esp_supplicant/include'),
-        '-idirafter', str(idf/'wpa_supplicant/esp_supplicant/src'),
-        '-idirafter', str(idf/'wpa_supplicant/esp_supplicant/src/crypto')]
+    common_flags = common_wpa_flags(common, idf)
     units += [(common/'crypto'/s, common_flags) for s in CRYPTO]
     units += [(common/'rsn_supp/wpa_ie.c', common_flags),
               (common/'common/wpa_common.c', common_flags)]
