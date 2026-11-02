@@ -632,7 +632,7 @@ lputs(char *s, size_t len)
 			fputc('$', outfile);
 			fputc('\n', outfile);
 			col = 0;
-		} else if (iswprint(wc)) {
+		} else if (iswprint((wint_t)wc)) {
 #ifdef HAVE_NBTOOL_CONFIG_H
 			width = 1;	/* wcwidth is an XSI function */
 #else
@@ -644,7 +644,7 @@ lputs(char *s, size_t len)
 			}
 			fwrite(s, 1, clen, outfile);
 			col += width;
-		} else if (wc != L'\0' && (c = wctob(wc)) != EOF &&
+		} else if (wc != L'\0' && (c = wctob((wint_t)wc)) != EOF &&
 		    (p = strchr(escapes, c)) != NULL) {
 			if (col + 2 >= termwidth) {
 				fprintf(outfile, "\\\n");
