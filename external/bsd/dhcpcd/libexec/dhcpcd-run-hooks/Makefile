@@ -6,9 +6,14 @@
 .include "../../Makefile.inc"
 HOOKSRC=	${DIST}/hooks
 .PATH:		${HOOKSRC}
+.include "../hook-subst.mk"
 
 SCRIPTS=	dhcpcd-run-hooks
 SCRIPTSDIR=	/libexec
+
+dhcpcd-run-hooks: ${HOOKSRC}/dhcpcd-run-hooks.in ${DHCPCD_CONFIG}
+	${TOOL_SED} ${DHCPCD_HOOK_SUBST} ${HOOKSRC}/dhcpcd-run-hooks.in > ${.TARGET}.tmp
+	mv ${.TARGET}.tmp ${.TARGET}
 
 MAN=		dhcpcd-run-hooks.8
 
