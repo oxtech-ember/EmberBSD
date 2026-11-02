@@ -213,6 +213,50 @@ drain(struct idr *idr)
 	CHECK(idr_is_empty(idr));
 }
 
+static int
+clear_data(int id, void *data, void *cookie)
+{
+	struct idr *idr = cookie;
+
+	CHECK(idr_replace(idr, NULL, id) == data);
+	kmem_free(data, sizeof(int));
+	return 0;
+}
+
+static void
+destroy_populated(void)
+{
+	struct idr idr;
+	int a = 17, b = 29;
+	int *owned_a, *owned_b;
+	long before = live_allocs;
+
+	/* Destroy releases IDR metadata, not the caller-owned objects. */
+	idr_init_base(&idr, 1);
+	CHECK(alloc1(&idr, &a, 0, 0) == 1);
+	CHECK(alloc1(&idr, NULL, 0, 0) == 2);
+	CHECK(alloc1(&idr, &b, 0, 0) == 3);
+	CHECK(live_allocs == before + 3);
+	idr_destroy(&idr);
+	CHECK(live_allocs == before);
+	CHECK(a == 17 && b == 29);
+
+	/* Services cleanup clears payloads before destroying the handle base. */
+	idr_init(&idr);
+	owned_a = kmem_alloc(sizeof(*owned_a), KM_SLEEP);
+	owned_b = kmem_alloc(sizeof(*owned_b), KM_SLEEP);
+	CHECK(owned_a != NULL && owned_b != NULL);
+	CHECK(alloc1(&idr, owned_a, 0, 0) == 0);
+	CHECK(alloc1(&idr, owned_b, 0, 0) == 1);
+	CHECK(live_allocs == before + 4);
+	CHECK(idr_for_each(&idr, clear_data, &idr) == 0);
+	CHECK(live_allocs == before + 2);
+	CHECK(!idr_is_empty(&idr));
+	idr_destroy(&idr);
+	CHECK(live_allocs == before);
+	CHECK(a == 17 && b == 29);
+}
+
 int
 main(void)
 {
@@ -253,6 +297,8 @@ main(void)
 	CHECK(alloc1(&base5, &c, 0, 7) == -ENOSPC);
 	drain(&base5);
 	idr_destroy(&base5);
+
+	destroy_populated();
 
 	linux_idr_module_fini();
 	CHECK(live_allocs == 0);

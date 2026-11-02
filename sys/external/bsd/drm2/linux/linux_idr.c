@@ -190,11 +190,12 @@ idr_init_base(struct idr *idr, int base)
 void
 idr_destroy(struct idr *idr)
 {
+	const struct idr_node *node;
 
 	SDT_PROBE1(sdt, linux, idr, destroy,  idr);
-#if 0				/* XXX No rb_tree_destroy?  */
-	rb_tree_destroy(&idr->idr_tree);
-#endif
+	/* The caller excludes further use; payloads remain caller-owned. */
+	while ((node = RB_TREE_MIN(&idr->idr_tree)) != NULL)
+		(void)idr_remove(idr, node->in_index);
 	mutex_destroy(&idr->idr_lock);
 }
 
