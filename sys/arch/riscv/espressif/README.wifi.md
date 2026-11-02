@@ -5,23 +5,32 @@ net80211 station interface. The radio firmware owns 802.11 management and
 association frames. The OS path is intended to use the normal BSD
 `wpa_supplicant`/net80211 EAPOL, key, and controlled-port interfaces.
 
-## Experimental WPA2 path
+## Experimental WPA2 and SAE/PMF path
 
 `ESPWIFI_NET80211_WPA2` is an explicit experimental kernel option and remains
 off in the default ESP32-S31 configurations. The optional
 `ESP_MOSAICO_SC101IOT_WIFI` profile enables it only for the assembled Mosaico
 SC101IOT kit; its `EXTRA_OBJ` must be supplied through `ESPWIFI_OBJECT` from
 the output of `wifi/mkblob.py --external-wpa2`. Keep this profile out of other
-board configurations. The association path remains experimental until its
-ABI checks and a separate target WPA2 hardware trial are complete.
+board configurations. The historical option name is retained, but the
+published source bridges WPA2-PSK and external SAE/PMF through the ordinary
+BSD supplicant and net80211 APIs. This is source support; association,
+protected-management behavior, and key lifecycle have not passed a hardware
+trial.
 
-The adapter currently accepts one WPA2-PSK/CCMP RSN profile for an initial
-join after `WIFI_EVENT_STA_START`. It does not send software management
-frames. A version-pinned IDF `wpa_sta_rx_mgmt` callback receives successful
-association/reassociation response bodies before EAPOL; the adapter checks
-the status and selected BSSID before publishing net80211 RUN. The later
-`WIFI_EVENT_STA_CONNECTED` is not treated as the association boundary. RX
-and TX allow only EAPOL until the supplicant authorizes the controlled port.
+The adapter accepts a WPA2-PSK/CCMP profile or SAE with PMF required. SAE
+commit/confirm construction and parsing are bridged through the version-pinned
+IDF callback table to the BSD external-SAE interface; the supplicant retains
+authentication policy and cryptography. IGTK operations use the BSD key
+interface. Since IDF 6.1 has no per-slot delete contract, deleting an installed
+IGTK closes the data path and tears down the station context. This invalidates
+the join/key generation; it does not claim physical zeroization of vendor
+memory. A version-pinned IDF
+`wpa_sta_rx_mgmt` callback receives successful association/reassociation
+responses before EAPOL; the adapter checks status and selected BSSID before
+publishing net80211 RUN. The later `WIFI_EVENT_STA_CONNECTED` is not treated
+as the association boundary. RX and TX allow only EAPOL until the supplicant
+authorizes the controlled port.
 A vendor `STA_STOP` invalidates the active join and installed-key generation.
 The adapter waits for that event, calls `esp_wifi_start()`, and keeps joins
 fenced until the next `STA_START` event arrives. Old key requests are
@@ -40,21 +49,21 @@ cleanup when it returns. A vendor call that never returns can still wedge the
 radio control kthread, while the closed data port and ioctl timeout keep the
 failure contained.
 
-SAE, WPA3, PMF, automatic roaming, and vendor key deletion are unsupported.
-Deleting an uninstalled key slot is a no-op; requesting
-deletion of a tracked installed key fails closed, closes the data port, and
-initiates teardown because the selected IDF version has no confirmed key
-deletion contract. Do not lower a profile's security requirements to make it
-match this path.
+General software AUTH and ACTION management-frame forwarding is not supported;
+SAE uses the dedicated vendor callback path. The adapter does not advertise
+RRM/BTM roaming support. Ordinary reconnect remains the responsibility of
+the common BSD supplicant path; 802.11k/v roaming is not integrated or tested.
+Do not lower a profile's security requirements to make it match this path.
 
 The selected producer uses a version-pinned `wpa_funcs` table without
 `esp_supplicant_init()`, `wpa_sm`, or `eloop`. The table hands association to
 IDF's `esp_wifi_sta_connect_internal()` and delivers EAPOL to the ordinary
 BSD supplicant path. Its callback-table layout and internal API signatures
 are tied to the selected ESP-IDF source package; update and re-audit them
-together. This is still experimental: host checks do not establish the
-firmware's full callback timing on the board or successful WPA2 operation.
-The ESP32-S31 hardware WPA2 trial has not yet been performed.
+together. This remains experimental: host checks do not establish the
+firmware callback timing, negotiated PMF, protected-management behavior, or
+WPA2/SAE association on ESP32-S31 hardware. Roaming and reconnect behavior
+also remain unverified on hardware.
 
 ## Radio object producer
 
@@ -96,6 +105,6 @@ tests valid WPA, valid RSN, and malformed IEs under ASan/UBSan:
     --wpa-source "$WPA_SOURCE/src"
 ```
 
-The current adapter only forwards association responses and rejects AUTH and
-ACTION management frames; those callbacks are not advertised as supported.
-Host tests do not establish kernel integration or radio behavior on hardware.
+The adapter forwards association responses and rejects general AUTH and ACTION
+management-frame callbacks; its dedicated SAE callbacks are separate. Host
+tests do not establish kernel integration or radio behavior on hardware.
