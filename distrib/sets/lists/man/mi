@@ -1088,8 +1088,8 @@
 ./usr/share/man/cat4/bwi.0			man-sys-catman		.cat
 ./usr/share/man/cat4/ca.0			man-obsolete		obsolete
 ./usr/share/man/cat4/cac.0			man-sys-catman		.cat
-./usr/share/man/cat4/can.0			man-sys-catman		.cat
-./usr/share/man/cat4/canloop.0			man-sys-catman		.cat
+./usr/share/man/cat4/can.0			man-sys-catman		.cat,can
+./usr/share/man/cat4/canloop.0			man-sys-catman		.cat,can
 ./usr/share/man/cat4/cardbus.0			man-sys-catman		.cat
 ./usr/share/man/cat4/cardslot.0			man-sys-catman		.cat
 ./usr/share/man/cat4/carp.0			man-sys-catman		.cat
@@ -2766,7 +2766,7 @@
 ./usr/share/man/cat8/bthcid.0			man-sysutil-catman	.cat
 ./usr/share/man/cat8/btpand.0			man-sysutil-catman	.cat
 ./usr/share/man/cat8/btuartd.0			man-obsolete		obsolete
-./usr/share/man/cat8/canconfig.0		man-netutil-catman	.cat
+./usr/share/man/cat8/canconfig.0		man-netutil-catman	.cat,can
 ./usr/share/man/cat8/catman.0			man-man-catman		.cat
 ./usr/share/man/cat8/cats/MAKEDEV.0		man-obsolete		obsolete
 ./usr/share/man/cat8/cats/makedev.0		man-obsolete		obsolete
@@ -4692,8 +4692,8 @@
 ./usr/share/man/man4/bwi.4			man-sys-man		.man
 ./usr/share/man/man4/ca.4			man-obsolete		obsolete
 ./usr/share/man/man4/cac.4			man-sys-man		.man
-./usr/share/man/man4/can.4			man-sys-man		.man
-./usr/share/man/man4/canloop.4			man-sys-man		.man
+./usr/share/man/man4/can.4			man-sys-man		.man,can
+./usr/share/man/man4/canloop.4			man-sys-man		.man,can
 ./usr/share/man/man4/cardbus.4			man-sys-man		.man
 ./usr/share/man/man4/cardslot.4			man-sys-man		.man
 ./usr/share/man/man4/carp.4			man-sys-man		.man
@@ -6369,7 +6369,7 @@
 ./usr/share/man/man8/bthcid.8			man-sysutil-man		.man
 ./usr/share/man/man8/btpand.8			man-sysutil-man		.man
 ./usr/share/man/man8/btuartd.8			man-obsolete		obsolete
-./usr/share/man/man8/canconfig.8		man-netutil-man		.man
+./usr/share/man/man8/canconfig.8		man-netutil-man		.man,can
 ./usr/share/man/man8/catman.8			man-man-man		.man
 ./usr/share/man/man8/cats/MAKEDEV.8		man-obsolete		obsolete
 ./usr/share/man/man8/cats/makedev.8		man-obsolete		obsolete

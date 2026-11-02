@@ -231,7 +231,7 @@
 ./usr/lib/librumpnet_net80211_g.a		comp-c-debuglib		debuglib,rump
 ./usr/lib/librumpnet_net_g.a			comp-c-debuglib		debuglib,rump
 ./usr/lib/librumpnet_netbt_g.a			comp-c-debuglib		debuglib,rump
-./usr/lib/librumpnet_netcan_g.a			comp-c-debuglib		debuglib,rump
+./usr/lib/librumpnet_netcan_g.a			comp-c-debuglib		debuglib,rump,can
 ./usr/lib/librumpnet_netinet6_g.a		comp-c-debuglib		debuglib,rump
 ./usr/lib/librumpnet_netinet_g.a		comp-c-debuglib		debuglib,rump
 ./usr/lib/librumpnet_netipsec_g.a		comp-c-debuglib		debuglib,rump
@@ -339,7 +339,7 @@
 ./usr/libdata/debug/sbin/blocklistctl.debug	comp-sysutil-debug	debug
 ./usr/libdata/debug/sbin/blocklistd.debug	comp-sysutil-debug	debug
 ./usr/libdata/debug/sbin/brconfig.debug		comp-netutil-debug	debug
-./usr/libdata/debug/sbin/canconfig.debug	comp-netutil-debug	debug
+./usr/libdata/debug/sbin/canconfig.debug	comp-netutil-debug	debug,can
 ./usr/libdata/debug/sbin/ccdconfig.debug	comp-sysutil-debug	debug
 ./usr/libdata/debug/sbin/cgdconfig.debug	comp-sysutil-debug	debug
 ./usr/libdata/debug/sbin/chown.debug		comp-sysutil-debug	debug
@@ -2500,9 +2500,9 @@
 ./usr/libdata/debug/usr/tests/net/bpfjit/t_cop.debug		tests-net-debug		debug,atf,sljit,rump
 ./usr/libdata/debug/usr/tests/net/bpfjit/t_extmem.debug		tests-net-debug		debug,atf,sljit,rump
 ./usr/libdata/debug/usr/tests/net/bpfjit/t_mbuf.debug		tests-net-debug		debug,atf,sljit,rump
-./usr/libdata/debug/usr/tests/net/can/t_can.debug		tests-net-debug		debug,atf,rump
-./usr/libdata/debug/usr/tests/net/can/t_canfd.debug		tests-net-debug		debug,atf,rump
-./usr/libdata/debug/usr/tests/net/can/t_canfilter.debug		tests-net-debug		debug,atf,rump
+./usr/libdata/debug/usr/tests/net/can/t_can.debug		tests-net-debug		debug,atf,rump,can
+./usr/libdata/debug/usr/tests/net/can/t_canfd.debug		tests-net-debug		debug,atf,rump,can
+./usr/libdata/debug/usr/tests/net/can/t_canfilter.debug		tests-net-debug		debug,atf,rump,can
 ./usr/libdata/debug/usr/tests/net/carp/t_basic.debug		tests-net-debug		debug,atf,rump,obsolete
 ./usr/libdata/debug/usr/tests/net/fdpass/fdpass32.debug		tests-net-debug		debug,atf,compattestfile
 ./usr/libdata/debug/usr/tests/net/fdpass/fdpass64.debug		tests-net-debug		debug,atf,compattestfile

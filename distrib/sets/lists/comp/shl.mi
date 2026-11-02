@@ -239,7 +239,7 @@
 ./usr/lib/librumpnet_net80211_pic.a		comp-c-piclib		picinstall,rump
 ./usr/lib/librumpnet_net_pic.a			comp-c-piclib		picinstall,rump
 ./usr/lib/librumpnet_netbt_pic.a		comp-c-piclib		picinstall,rump
-./usr/lib/librumpnet_netcan_pic.a		comp-c-piclib		picinstall,rump
+./usr/lib/librumpnet_netcan_pic.a		comp-c-piclib		picinstall,rump,can
 ./usr/lib/librumpnet_netinet6_pic.a		comp-c-piclib		picinstall,rump
 ./usr/lib/librumpnet_netinet_pic.a		comp-c-piclib		picinstall,rump
 ./usr/lib/librumpnet_netipsec_pic.a		comp-c-piclib		picinstall,rump
