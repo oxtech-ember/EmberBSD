@@ -1246,7 +1246,12 @@ ustar_wr(ARCHD *arcn)
 		gnu_hack_len = 0;
 		if (res < 0)
 			return -1;
-		if (wr_skip((off_t)(BLKMULT - (pad % BLKMULT))) < 0)
+		/*
+		 * Pad as the header and the reader do: a name that fills
+		 * its last block gets no pad, as a zero block ends the
+		 * archive for readers.
+		 */
+		if (wr_skip((off_t)TAR_PAD(pad)) < 0)
 			return -1;
 	}
 	if ((arcn->type == PAX_CTG) || (arcn->type == PAX_REG))

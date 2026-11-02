@@ -48,6 +48,36 @@ append_body() {
 	atf_check -s exit:0 -o empty -e empty cmp file1.tar file2.tar
 }
 
+atf_test_case gnu_long_name_block
+gnu_long_name_block_head()
+{
+	atf_set "descr" "Ensure that a GNU long name that fills whole" \
+	                "blocks is followed directly by its file header"
+}
+gnu_long_name_block_body()
+{
+	component=$(printf '%0200d' 0)
+	for len in 511 1023; do
+		# Directory components of 200 bytes, then a file name.
+		name=
+		while [ $((len - ${#name})) -gt 256 ]; do
+			name=$name$component/
+		done
+		name=$name$(printf "%0$((len - ${#name}))d" 0)
+		mkdir -p "${name%/*}"
+		echo data > "$name"
+
+		atf_check -s exit:0 -o empty -e empty \
+		    pax -w -b 512 -x ustar --gnu -f long.tar "$name"
+		atf_check -s exit:0 -o "inline:$name\n" -e empty \
+		    pax --gnu -f long.tar
+		# LongLink header, name blocks, header, data, two trailer blocks
+		atf_check -s exit:0 -o "inline:$(( (5 + (len + 1) / 512) * 512 ))\n" \
+		    stat -f %z long.tar
+		rm -rf long.tar "$component"
+	done
+}
+
 atf_test_case pr41736
 pr41736_head()
 {
@@ -139,6 +169,7 @@ pr44498_write_body()
 atf_init_test_cases()
 {
 	atf_add_test_case append
+	atf_add_test_case gnu_long_name_block
 	atf_add_test_case pr41736
 	atf_add_test_case pr44498
 	atf_add_test_case pr44498_copy
