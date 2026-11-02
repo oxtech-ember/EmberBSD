@@ -30,9 +30,17 @@ _GNU_DEPENDENCY_VALUE= ${GNU_CONFIGURE_DEPENDENCY:Unone}
 # Optional selected target libtool overrides generated scripts only for target
 # make. Separate GNU_HOST_MAKE_DIRS use their own host tools; recursive
 # submakes inside a target graph inherit this make variable.
+# A producer without libtool sets GNU_USE_TARGET_LIBTOOL=no.  A libtool
+# selected for the whole build is then neither a configure input nor a
+# make override, so the producer can be built before that libtool exists.
+GNU_USE_TARGET_LIBTOOL?= yes
+.if ${GNU_USE_TARGET_LIBTOOL} == "no"
+_GNU_LIBTOOL_VALUE= none
+.else
 _GNU_LIBTOOL_VALUE= ${GNU_TARGET_LIBTOOL:Unone}
 .if defined(GNU_TARGET_LIBTOOL)
 _GNU_LIBTOOL_MAKE_ARG= LIBTOOL=${GNU_TARGET_LIBTOOL:Q:Q}
+.endif
 .endif
 # Libtool queries compiler search paths without CPPFLAGS/LDFLAGS. Keep its
 # driver in the same target sysroot used by normal compile and link commands.

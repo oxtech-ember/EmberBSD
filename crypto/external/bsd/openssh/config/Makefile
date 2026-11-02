@@ -19,6 +19,9 @@ GNU_HOST_TRIPLE= ${MACHINE_GNU_PLATFORM}
 # symbols; their warnings must not turn present libc functions into negatives.
 # Production compilation retains the OS warning policy, including -Werror.
 GNU_CONFIGURE_CFLAGS= ${CFLAGS:N-Werror}
+# OpenSSH does not use libtool.  The private libssh is configured in the
+# library stage, before the build's selected target libtool exists.
+GNU_USE_TARGET_LIBTOOL= no
 .if ${USE_KERBEROS} != "no"
 CPPFLAGS+= ${OPENSSH_KRB5_CPPFLAGS}
 .endif
