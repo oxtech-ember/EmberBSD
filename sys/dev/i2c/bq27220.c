@@ -83,7 +83,7 @@ static void	bq27220_attach(device_t, device_t, void *);
 static void	bq27220_refresh(struct sysmon_envsys *, envsys_data_t *);
 static int	bq27220_read_word(struct bq27220_softc *, uint8_t, uint16_t *);
 
-CFATTACH_DECL_NEW(bq27220, sizeof(struct bq27220_softc),
+CFATTACH_DECL_NEW(bq27220g, sizeof(struct bq27220_softc),
 	bq27220_match, bq27220_attach, NULL, NULL);
 
 static int

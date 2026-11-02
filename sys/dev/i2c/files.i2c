@@ -70,10 +70,10 @@ file	dev/i2c/gttwsi_core.c			mvi2c
 #
 
 # TI BQ27220 single-cell battery fuel gauge
-device	bq27220: sysmon_envsys
-attach	bq27220 at iic
-file	dev/i2c/bq27220.c		bq27220
-file	dev/i2c/bq27220_logic.c	bq27220
+device	bq27220g: sysmon_envsys
+attach	bq27220g at iic
+file	dev/i2c/bq27220.c		bq27220g
+file	dev/i2c/bq27220_logic.c	bq27220g
 
 # M41T00 Real Time Clock
 device	m41trtc

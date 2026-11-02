@@ -15,7 +15,7 @@ gpioiic_fdt* at fdt? pass 4
 iic* at gpioiic_fdt?
 cst92xx* at iic? addr 0x5a
 wsmouse* at cst92xx?
-bq27220* at iic?
+bq27220g* at iic?
 
 cofb* at spi? slave 0
 wsdisplay* at wsemuldisplaydev?
