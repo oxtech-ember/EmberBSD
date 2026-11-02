@@ -1,6 +1,8 @@
 #	$NetBSD: Makefile,v 1.747.2.4 2026/09/22 10:36:39 martin Exp $
 #	@(#)Makefile	8.1 (Berkeley) 6/18/93
 
+.include <bsd.own.mk>
+
 MAN=	aac.4 ac97.4 acardide.4 aceride.4 acphy.4 \
 	adbbt.4 adbkbd.4 adbms.4 \
 	adc.4 adiadc.4 adm1026hm.4 admtemp.4 adt7462sm.4 \
@@ -16,7 +18,7 @@ MAN=	aac.4 ac97.4 acardide.4 aceride.4 acphy.4 \
 	bq4802rtc.4 brgphy.4 bridge.4 bthidev.4 bthub.4 btkbd.4 \
 	btmagic.4 btms.4 btsco.4 btuart.4 \
 	bwfm.4 bwi.4 \
-	cac.4 can.4 canloop.4 cardbus.4 carp.4 cas.4 ccd.4 cd.4 \
+	cac.4 cardbus.4 carp.4 cas.4 ccd.4 cd.4 \
 	cec.4 cgd.4 cfb.4 ch.4 chipsfb.4 ciphy.4 ciss.4 clcs.4 clct.4 \
 	clockctl.4 cmdide.4 cmpci.4 cms.4 cnw.4 \
 	com.4 coram.4 crypto.4 cs80bus.4 cuda.4 cypide.4 cxdtv.4 \
@@ -267,6 +269,10 @@ SUBDIR= man4.acorn32 man4.alpha man4.amiga man4.arc man4.atari \
 	man4.luna68k man4.mac68k man4.macppc man4.mvme68k man4.pmax man4.prep \
 	man4.sandpoint man4.sgimips man4.sparc man4.sparc64 man4.sun2 \
 	man4.sun3 man4.vax man4.x68k man4.x86
+
+.if ${MKCAN} != "no"
+MAN+=	can.4 canloop.4
+.endif
 
 .include <bsd.man.mk>
 .include <bsd.subdir.mk>

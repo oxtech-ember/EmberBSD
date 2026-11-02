@@ -358,7 +358,7 @@
 ./sbin/blocklistctl				base-sysutil-root
 ./sbin/blocklistd				base-sysutil-root
 ./sbin/brconfig					base-netutil-root
-./sbin/canconfig				base-netutil-root
+./sbin/canconfig				base-netutil-root		can
 ./sbin/ccdconfig				base-sysutil-root
 ./sbin/cgdconfig				base-sysutil-root
 ./sbin/chown					base-sysutil-root

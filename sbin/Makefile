@@ -7,7 +7,7 @@
 .include <bsd.own.mk>
 
 SUBDIR=	amrctl apmlabel atactl badsect bioctl blkdiscard brconfig \
-	canconfig ccdconfig cgdconfig chown \
+	ccdconfig cgdconfig chown \
 	devpubd disklabel dkctl dkscan_bsdlabel dmesg dmctl drvctl \
 	fastboot fdisk fsck fsirand gpt ifconfig init ldconfig luactl \
 	mbrlabel mknod modload modstat modunload mount \
@@ -15,6 +15,10 @@ SUBDIR=	amrctl apmlabel atactl badsect bioctl blkdiscard brconfig \
 	ping pppoectl raidctl reboot rcorder rndctl route routed \
 	savecore scan_ffs scsictl shutdown slattach svhlabel swapctl sysctl \
 	ttyflags umbctl umount veriexecctl wdogctl wsconsctl
+
+.if ${MKCAN} != "no"
+SUBDIR+= canconfig
+.endif
 
 .if ${HAVE_EFI_RT} == "yes"
 SUBDIR+= efi

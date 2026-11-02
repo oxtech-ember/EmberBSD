@@ -4361,8 +4361,8 @@
 ./usr/lib/librumpnet_net_p.a			comp-c-proflib		rump,profile
 ./usr/lib/librumpnet_netbt.a			comp-c-lib		rump
 ./usr/lib/librumpnet_netbt_p.a			comp-c-proflib		rump,profile
-./usr/lib/librumpnet_netcan.a			comp-c-lib		rump
-./usr/lib/librumpnet_netcan_p.a			comp-c-proflib		rump,profile
+./usr/lib/librumpnet_netcan.a			comp-c-lib		rump,can
+./usr/lib/librumpnet_netcan_p.a			comp-c-proflib		rump,profile,can
 ./usr/lib/librumpnet_netinet.a			comp-c-lib		rump
 ./usr/lib/librumpnet_netinet6.a			comp-c-lib		rump
 ./usr/lib/librumpnet_netinet6_p.a		comp-c-proflib		rump,profile

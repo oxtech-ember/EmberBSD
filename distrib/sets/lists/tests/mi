@@ -4418,11 +4418,11 @@
 ./usr/tests/net/bpfjit/t_extmem				tests-net-tests		atf,rump,sljit
 ./usr/tests/net/bpfjit/t_mbuf				tests-net-tests		atf,rump,sljit
 ./usr/tests/net/can					tests-net-tests		compattestfile,atf
-./usr/tests/net/can/Atffile				tests-net-tests		atf,rump
-./usr/tests/net/can/Kyuafile				tests-net-tests		atf,rump,kyua
-./usr/tests/net/can/t_can				tests-net-tests		atf,rump
-./usr/tests/net/can/t_canfd				tests-net-tests		atf,rump
-./usr/tests/net/can/t_canfilter				tests-net-tests		atf,rump
+./usr/tests/net/can/Atffile				tests-net-tests		atf,rump,can
+./usr/tests/net/can/Kyuafile				tests-net-tests		atf,rump,kyua,can
+./usr/tests/net/can/t_can				tests-net-tests		atf,rump,can
+./usr/tests/net/can/t_canfd				tests-net-tests		atf,rump,can
+./usr/tests/net/can/t_canfilter				tests-net-tests		atf,rump,can
 ./usr/tests/net/carp					tests-net-tests		compattestfile,atf
 ./usr/tests/net/carp/Atffile				tests-net-tests		atf,rump
 ./usr/tests/net/carp/Kyuafile				tests-net-tests		atf,rump,kyua
