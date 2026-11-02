@@ -36,6 +36,9 @@
 .Fl a
 .Nm
 .Op Fl d Ar device
+.Fl c Ar frames
+.Nm
+.Op Fl d Ar device
 .Ar name ...
 .Nm
 .Op Fl d Ar device
@@ -51,6 +54,17 @@ prints the current value of those variables for the specified device.
 If the
 .Fl a
 flag is specified, all variables for the device are printed.
+If the
+.Fl c
+flag is specified,
+.Nm
+starts video streaming, dequeues the requested number of memory-mapped frames,
+and prints each frame's byte count and FNV-1a checksum. It then stops streaming
+and unmaps the buffers. Closing the device releases the driver's buffers. This
+mode checks frame delivery and reports changes in frame contents; it does not
+save or decode images. The device must support single-planar video capture with
+streaming I/O. Each frame has a five-second delivery deadline; a timeout stops
+the stream and unmaps its buffers.
 If the
 .Fl w
 flag is specified

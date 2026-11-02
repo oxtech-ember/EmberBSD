@@ -49,6 +49,8 @@ __RCSID("$NetBSD: videoctl.c,v 1.4 2025/04/12 07:54:39 mlelstv Exp $");
 #include <util.h>
 #include <vis.h>
 
+#include "video_capture.h"
+
 __dead static void	usage(void);
 static void		video_print(const char *);
 static void		video_print_all(void);
@@ -60,6 +62,7 @@ static bool		video_print_standards(const char *);
 static bool		video_print_tuners(const char *);
 static bool		video_print_ctrl(uint32_t);
 static void		video_set(const char *);
+static void		video_capture_frames(unsigned int);
 static bool		video_set_ctrl(uint32_t, int32_t);
 static const char *	video_cid2name(uint32_t);
 static uint32_t		video_name2cid(const char *);
@@ -68,6 +71,7 @@ static const char *video_dev = NULL;
 static int video_fd = -1;
 static bool aflag = false;
 static bool wflag = false;
+static bool cflag = false;
 
 static const struct {
 	uint32_t	id;
@@ -108,13 +112,23 @@ int
 main(int argc, char *argv[])
 {
 	int ch;
+	char *end;
+	long capture_count = 0;
 
 	setprogname(argv[0]);
 
-	while ((ch = getopt(argc, argv, "ad:w")) != -1) {
+	while ((ch = getopt(argc, argv, "ac:d:w")) != -1) {
 		switch (ch) {
 		case 'a':
 			aflag = true;
+			break;
+		case 'c':
+			errno = 0;
+			capture_count = strtol(optarg, &end, 10);
+			if (errno != 0 || optarg[0] == '\0' || *end != '\0' ||
+			    capture_count < 1 || capture_count > INT_MAX)
+				errx(EXIT_FAILURE, "invalid frame count: %s", optarg);
+			cflag = true;
 			break;
 		case 'd':
 			video_dev = strdup(optarg);
@@ -130,7 +144,7 @@ main(int argc, char *argv[])
 	argc -= optind;
 	argv += optind;
 
-	if (wflag && aflag)
+	if ((wflag && aflag) || (cflag && (wflag || aflag || argc != 0)))
 		usage();
 		/* NOTREACHED */
 	if (wflag && argc == 0)
@@ -139,19 +153,22 @@ main(int argc, char *argv[])
 	if (aflag && argc > 0)
 		usage();
 		/* NOTREACHED */
-	if (!wflag && !aflag && argc == 0)
+	if (!wflag && !aflag && !cflag && argc == 0)
 		usage();
 		/* NOTREACHED */
 
 	if (video_dev == NULL)
 		video_dev = _PATH_VIDEO0;
 
-	video_fd = open(video_dev, wflag ? O_RDWR : O_RDONLY);
+	video_fd = open(video_dev, (wflag ? O_RDWR : O_RDONLY) |
+	    (cflag ? O_NONBLOCK : 0));
 	if (video_fd == -1)
 		err(EXIT_FAILURE, "couldn't open '%s'", video_dev);
 
 	if (aflag) {
 		video_print_all();
+	} else if (cflag) {
+		video_capture_frames((unsigned int)capture_count);
 	} else if (wflag) {
 		while (argc > 0) {
 			video_set(argv[0]);
@@ -178,7 +195,22 @@ usage(void)
 	fprintf(stderr, "usage: %s [-d file] -w name=value ...\n",
 	    getprogname());
 	fprintf(stderr, "usage: %s [-d file] -a\n", getprogname());
+	fprintf(stderr, "usage: %s [-d file] -c frames\n", getprogname());
 	exit(EXIT_FAILURE);
+}
+
+static void
+video_capture_frames(unsigned int count)
+{
+	const char *stage = NULL;
+	int error;
+
+	error = video_capture_run(video_fd, count, &stage);
+	if (error != 0) {
+		errno = error;
+		err(EXIT_FAILURE, "video capture%s%s", stage ? " at " : "",
+		    stage ? stage : "");
+	}
 }
 
 static void
