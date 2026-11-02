@@ -144,8 +144,8 @@ struct espwifi_softc {
 	bool		sc_join_rescan_pending;
 	uint8_t	sc_join_ssid[IEEE80211_NWID_LEN];
 	unsigned	sc_join_ssid_len;
-	uint8_t	sc_join_rsn[IEEE80211_MAX_OPT_IE];
-	unsigned	sc_join_rsn_len;
+	uint8_t	sc_join_ies[IEEE80211_MAX_OPT_IE];
+	unsigned	sc_join_ies_len;
 	int		(*sc_newstate)(struct ieee80211com *, enum ieee80211_state, int);
 	struct espwifi_scan_frame sc_scan_ring[ESPWIFI_SCAN_RING];
 #endif
@@ -842,11 +842,13 @@ espwifi_if_newstate(struct ieee80211com *ic, enum ieee80211_state state, int arg
 		/* FullMAC owns 802.11 authentication and association frames. */
 		if (!ready || !started || oldstate != IEEE80211_S_SCAN || ni == NULL ||
 		    ni->ni_esslen == 0 || ni->ni_esslen > sizeof(sc->sc_join_ssid) ||
-		    rsn == NULL || rsn_len == 0 || rsn_len > sizeof(sc->sc_join_rsn) ||
-		    rsn[0] != IEEE80211_ELEMID_RSN ||
+		    ies == NULL || ies_len == 0 ||
+		    ies_len > sizeof(sc->sc_join_ies) ||
 		    (ic->ic_flags & IEEE80211_F_WPA) == 0)
 			return EOPNOTSUPP;
-		if (sae && !ieee80211_sae_rsn_valid(rsn, rsn_len))
+		if (!ieee80211_assoc_rsn_parse(ies, ies_len, &rsn,
+		    &rsn_len, &rsn_offset) ||
+		    (sae && !ieee80211_sae_rsn_valid(rsn, rsn_len)))
 			return EOPNOTSUPP;
 		mutex_spin_enter(&sc->sc_scan_lock);
 		if (sc->sc_join_active != 0 || sc->sc_join_disconnect_pending ||
@@ -881,9 +883,9 @@ espwifi_if_newstate(struct ieee80211com *ic, enum ieee80211_state state, int arg
 		memcpy(sc->sc_join_bssid, ni->ni_bssid, ETHER_ADDR_LEN);
 		memcpy(sc->sc_join_ssid, ni->ni_essid, ni->ni_esslen);
 		sc->sc_join_ssid_len = ni->ni_esslen;
-		memcpy(sc->sc_join_rsn, rsn, rsn_len);
-		sc->sc_join_rsn_len = rsn_len;
-		/* FullMAC owns AUTH and ASSOC frame transmission. */
+		memcpy(sc->sc_join_ies, ies, ies_len);
+		sc->sc_join_ies_len = ies_len;
+		/* FullMAC owns 802.11 authentication and association frames. */
 		ic->ic_state = IEEE80211_S_AUTH;
 		mutex_spin_exit(&sc->sc_scan_lock);
 		espwifi_os_sem_give(sc->sc_scan_ctl_sem);
@@ -1342,8 +1344,8 @@ static void
 espwifi_if_join_control(struct espwifi_softc *sc)
 {
 	uint8_t ssid[IEEE80211_NWID_LEN], bssid[ETHER_ADDR_LEN];
-	uint8_t rsn[IEEE80211_MAX_OPT_IE];
-	unsigned ssid_len = 0, rsn_len = 0;
+	uint8_t ies[IEEE80211_MAX_OPT_IE];
+	unsigned ssid_len = 0, ies_len = 0;
 	uint64_t generation = 0;
 	bool disconnect, join, sae = false, rescan = false, current;
 	int error;
@@ -1364,8 +1366,8 @@ espwifi_if_join_control(struct espwifi_softc *sc)
 		memcpy(bssid, sc->sc_join_bssid, sizeof(bssid));
 		memcpy(ssid, sc->sc_join_ssid, sc->sc_join_ssid_len);
 		ssid_len = sc->sc_join_ssid_len;
-		memcpy(rsn, sc->sc_join_rsn, sc->sc_join_rsn_len);
-		rsn_len = sc->sc_join_rsn_len;
+		memcpy(ies, sc->sc_join_ies, sc->sc_join_ies_len);
+		ies_len = sc->sc_join_ies_len;
 		sae = sc->sc_join_sae;
 		sc->sc_join_pending = false;
 	}
@@ -1397,8 +1399,8 @@ espwifi_if_join_control(struct espwifi_softc *sc)
 		return;
 	}
 
-	error = espwifi_ext_connect(ssid, ssid_len, bssid, rsn, rsn_len, sae);
-	explicit_memset(rsn, 0, sizeof(rsn));
+	error = espwifi_ext_connect(ssid, ssid_len, bssid, ies, ies_len, sae);
+	explicit_memset(ies, 0, sizeof(ies));
 	explicit_memset(ssid, 0, sizeof(ssid));
 	mutex_spin_enter(&sc->sc_scan_lock);
 	current = generation != 0 && sc->sc_join_active == generation;

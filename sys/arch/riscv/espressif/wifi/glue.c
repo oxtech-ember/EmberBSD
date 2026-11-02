@@ -1741,6 +1741,8 @@ espwifi_disconnect(void)
 	long long deadline;
 	esp_err_t error;
 
+	/* The private IDF app-IE slots are not cleared by the stop/start cycle. */
+	espwifi_ext_clear_assoc_appies();
 	critical = espwifi_os_critical_enter();
 	stop_target = stop_events + 1;
 	espwifi_os_critical_exit(critical);

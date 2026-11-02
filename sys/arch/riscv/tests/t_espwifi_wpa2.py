@@ -12,7 +12,9 @@ if not __debug__:
 
 p=argparse.ArgumentParser();p.add_argument('--cc',required=True);a=p.parse_args()
 arch=Path(__file__).resolve().parents[1]
+sysroot=arch.parents[1]
 s=(arch/'espressif/wifi/fullmac_wpa2.c').read_text()
+glue=(arch/'espressif/wifi/glue.c').read_text()
 files=(arch/'espressif/files.espressif').read_text()
 assert re.search(r'^defflag\s+opt_espwifi_wpa2\.h\s+ESPWIFI_NET80211_WPA2:\s+ESPWIFI_NET80211\s*$',
                  files,re.M)
@@ -29,6 +31,10 @@ assert re.search(r'^makeoptions\s+EXTRA_OBJ="\$\{ESPWIFI_OBJECT\}"$',
                  profile, re.M)
 adapter=(arch/'espressif/esp_wifi_if.c').read_text()
 assert re.search(r'#ifdef ESPWIFI_NET80211_WPA2\s+sc->sc_ic\.ic_caps\s*=\s*IEEE80211_C_AES_CCM\s*\|\s*IEEE80211_C_WPA2;',adapter)
+disconnect=re.search(r'\nespwifi_disconnect\(void\)\n\{(.*?)\n\}',glue,re.S)
+assert disconnect is not None
+assert re.search(r'espwifi_ext_clear_assoc_appies\(\).*?'
+                 r'esp_wifi_stop\(\)',disconnect.group(1),re.S)
 def fn(name,result):
  m=re.search(r'\n(?:static )?'+result+r'\n'+name+r'\(.*?\)\n\{.*?\n\}',s,re.S)
  assert m,name
@@ -39,6 +45,7 @@ code=r'''
 #include <stdint.h>
 #include <string.h>
 #include <stddef.h>
+#include <net80211/ieee80211_rsn.h>
 typedef int esp_err_t;
 typedef struct { struct { uint8_t ssid[32],bssid[6]; bool bssid_set;
  struct {int authmode;} threshold; struct {bool capable,required;} pmf_cfg; } sta; } wifi_config_t;
@@ -46,9 +53,13 @@ typedef struct { struct { uint8_t ssid[32],bssid[6]; bool bssid_set;
 #define WIFI_AUTH_WPA2_PSK 3
 #define WIFI_AUTH_WPA3_PSK 6
 #define WIFI_APPIE_ASSOC_REQ 2
+#define WIFI_APPIE_RSN 4
 #define ESP_OK 0
-static int cfgcalls,iecalls,connects,fail,unsets,pmf_configured;
-static uint8_t copied_ie[64];static unsigned copied_len;
+static int cfgcalls,rsncalls,assoc_calls,connects,fail,unset_rsn;
+static int unset_assoc,pmf_configured;
+static uint8_t copied_rsn[64],copied_assoc[64];
+static unsigned copied_rsn_len,copied_assoc_len;
+static void espwifi_os_log(const char *fmt, ...) { (void)fmt; }
 static int esp_wifi_set_config(int ifx,wifi_config_t *c) {
  assert(ifx==0 && c->sta.bssid_set);
  assert(c->sta.threshold.authmode==3 || c->sta.threshold.authmode==6);
@@ -58,18 +69,29 @@ static int esp_wifi_set_config(int ifx,wifi_config_t *c) {
   assert(c->sta.pmf_cfg.capable && c->sta.pmf_cfg.required);
  assert(!memcmp(c->sta.ssid,"test",4));cfgcalls++;return fail==1?9:0; }
 static int esp_wifi_set_appie_internal(int type,uint8_t *p,uint16_t n,int flag) {
- assert(type==2 && flag==0 && n<=sizeof(copied_ie));memcpy(copied_ie,p,n);
- copied_len=n;iecalls++;return fail==2?9:0; }
-static int esp_wifi_connect(void) { connects++;return fail==3?9:0; }
-static int esp_wifi_unset_appie_internal(int type) { assert(type==2);unsets++;return 0; }
+ assert(n<=sizeof(copied_rsn));
+ if (type==WIFI_APPIE_RSN) {
+  assert(flag==1);memcpy(copied_rsn,p,n);copied_rsn_len=n;rsncalls++;
+  return fail==2?9:0;
+ }
+ assert(type==WIFI_APPIE_ASSOC_REQ && flag==0);
+ memcpy(copied_assoc,p,n);copied_assoc_len=n;assoc_calls++;
+ return fail==3?9:0; }
+static int esp_wifi_connect(void) { connects++;return fail==4?9:0; }
+static int esp_wifi_unset_appie_internal(int type) {
+ if (type==WIFI_APPIE_RSN) unset_rsn++;
+ else { assert(type==WIFI_APPIE_ASSOC_REQ);unset_assoc++; }
+ return 0; }
 static int esp_wifi_sta_pmf_enabled(void) { return pmf_configured; }
-''' + fn('espwifi_wpa2_rsn','bool') + fn('espwifi_ext_connect','int') + fn('espwifi_ext_sta_pmf_configured','int') + r'''
+''' + fn('espwifi_wpa2_rsn','bool') + fn('espwifi_ext_clear_assoc_appies','void') + fn('espwifi_ext_connect','int') + fn('espwifi_ext_sta_pmf_configured','int') + r'''
 int main(void) {
  uint8_t ssid[4]={'t','e','s','t'},bssid[6]={2,3,4,5,6,7};
  uint8_t rsn[22]={48,20,1,0,0,15,172,4,1,0,0,15,172,4,1,0,0,15,172,2,0,0};
  assert(!espwifi_ext_connect(ssid,4,bssid,rsn,sizeof(rsn),0));
- assert(cfgcalls==1 && iecalls==1 && connects==1 && copied_len==sizeof(rsn));
- assert(!memcmp(copied_ie,rsn,sizeof(rsn)));
+ assert(cfgcalls==1 && rsncalls==1 && assoc_calls==0 && connects==1);
+ assert(copied_rsn_len==sizeof(rsn) && !memcmp(copied_rsn,rsn,sizeof(rsn)));
+ assert(unset_rsn==1 && unset_assoc==2);
+ /* Both stale slots are cleared on entry; empty supplemental IEs are unset. */
  uint8_t zero_bssid[6]={0};
  assert(espwifi_ext_connect(ssid,4,zero_bssid,rsn,sizeof(rsn),0)==-1);
  rsn[19]=8;assert(espwifi_ext_connect(ssid,4,bssid,rsn,sizeof(rsn),0)==-1);rsn[19]=2;
@@ -79,23 +101,47 @@ int main(void) {
  bssid[0]=1;assert(espwifi_ext_connect(ssid,4,bssid,rsn,sizeof(rsn),0)==-1);bssid[0]=2;
  ssid[1]=0;assert(espwifi_ext_connect(ssid,4,bssid,rsn,sizeof(rsn),0)==-1);ssid[1]='e';
  rsn[19]=8;rsn[20]=0xc0;
- assert(espwifi_ext_connect(ssid,4,bssid,rsn,sizeof(rsn),0)==-1);
- assert(!espwifi_ext_connect(ssid,4,bssid,rsn,sizeof(rsn),1));
- assert(cfgcalls==2 && iecalls==2 && connects==2 && copied_len==sizeof(rsn));
- assert(!memcmp(copied_ie,rsn,sizeof(rsn)));
+ uint8_t ies[48],dup[64];
+ memcpy(ies,rsn,sizeof(rsn));
+ ies[22]=244;ies[23]=1;ies[24]=0x20; /* RSNXE: SAE H2E */
+ ies[25]=221;ies[26]=2;ies[27]=0xaa;ies[28]=0xbb;
+ assert(!espwifi_ext_connect(ssid,4,bssid,ies,29,1));
+ assert(copied_rsn_len==sizeof(rsn) && !memcmp(copied_rsn,rsn,sizeof(rsn)));
+ assert(copied_assoc_len==7 && !memcmp(copied_assoc,ies+22,7));
+ int before_unset_rsn=unset_rsn, before_unset_assoc=unset_assoc;
+ fail=1; /* set_config failure after a prior attempt must still clear both */
+ assert(espwifi_ext_connect(ssid,4,bssid,ies,29,1)==-1);
+ assert(unset_rsn==before_unset_rsn+2 &&
+     unset_assoc==before_unset_assoc+2);
+ fail=0;
+ uint8_t reordered[48];
+ reordered[0]=221;reordered[1]=1;reordered[2]=0x55;
+ memcpy(reordered+3,rsn,sizeof(rsn));memcpy(reordered+25,ies+22,7);
+ assert(!espwifi_ext_connect(ssid,4,bssid,reordered,32,1));
+ assert(copied_rsn_len==sizeof(rsn) && !memcmp(copied_rsn,rsn,sizeof(rsn)));
+ assert(copied_assoc_len==10 && !memcmp(copied_assoc,reordered,3) &&
+     !memcmp(copied_assoc+3,reordered+25,7));
+ memcpy(dup,ies,29);memcpy(dup+29,rsn,sizeof(rsn));
+ assert(espwifi_ext_connect(ssid,4,bssid,dup,51,1)==-1);
+ memcpy(dup,ies,29);dup[29]=244;dup[30]=1;dup[31]=0x20;
+ assert(espwifi_ext_connect(ssid,4,bssid,dup,32,1)==-1);
+ memcpy(dup,ies,29);dup[24]=0x21;
+ assert(espwifi_ext_connect(ssid,4,bssid,dup,29,1)==-1);
+ memcpy(dup,ies,29);dup[26]=20;
+ assert(espwifi_ext_connect(ssid,4,bssid,dup,29,1)==-1);
  pmf_configured=1;assert(espwifi_ext_sta_pmf_configured()==1);
  pmf_configured=0;assert(espwifi_ext_sta_pmf_configured()==0);
- for (int i=1;i<=3;i++) { fail=i;assert(espwifi_ext_connect(ssid,4,bssid,rsn,sizeof(rsn),1)==-1); }
- assert(unsets==1);
+ for (int i=1;i<=4;i++) { fail=i;assert(espwifi_ext_connect(ssid,4,bssid,ies,29,1)==-1); }
+ assert(rsncalls>=4 && assoc_calls>=2 && connects>=2);
  return 0;
 }
 '''
 with tempfile.TemporaryDirectory() as td:
  c=Path(td)/'wpa2.c';out=Path(td)/'wpa2';c.write_text(code)
- subprocess.run([a.cc,'-Werror','-fsanitize=address,undefined',
+ subprocess.run([a.cc,'-idirafter',str(sysroot),'-Werror','-fsanitize=address,undefined',
                  '-fno-sanitize-recover=all',str(c),'-o',str(out)],check=True)
  subprocess.run([str(out)],check=True)
-print('actual WPA2 and SAE/PMF vendor connect modes preserve their RSN input')
+print('actual WPA2/SAE parser, RSN/RSNXE appie split, validation and cleanup passed')
 
 code=r'''
 #include <assert.h>

@@ -12,6 +12,8 @@ typedef uint64_t u64;
 #include "esp_wifi_driver.h"
 #include "wpa_ie_bridge.h"
 
+#include <net80211/ieee80211_rsn.h>
+
 #include "../esp_wifi_os.h"
 
 #define WLAN_FC_STYPE_ASSOC_RESP 1
@@ -245,27 +247,51 @@ espwifi_wpa2_rsn(const uint8_t *ie, unsigned len)
 	    (len == 24 && ie[22] == 0 && ie[23] == 0);
 }
 
+void
+espwifi_ext_clear_assoc_appies(void)
+{
+	/* Internal app-IE slots survive a failed or completed station attempt. */
+	(void)esp_wifi_unset_appie_internal(WIFI_APPIE_RSN);
+	(void)esp_wifi_unset_appie_internal(WIFI_APPIE_ASSOC_REQ);
+}
+
 int
 espwifi_ext_connect(const unsigned char *ssid, unsigned int ssid_len,
-	    const unsigned char *bssid, const unsigned char *rsn, unsigned int rsn_len,
+	    const unsigned char *bssid, const unsigned char *ies,
+	    unsigned int ies_len,
 	    int sae)
 {
 	static const uint8_t zero_bssid[6];
 	wifi_config_t config;
+	uint8_t rsn_ie[257];
 	uint8_t assoc_ie[257];
+	const uint8_t *rsn;
+	size_t rsn_len, rsn_offset, assoc_len;
 	esp_err_t error;
 
-	if (ssid == NULL || bssid == NULL || rsn == NULL || ssid_len == 0 ||
-	    ssid_len > sizeof(config.sta.ssid) || rsn_len > sizeof(assoc_ie) ||
+	if (ssid == NULL || bssid == NULL || ies == NULL || ssid_len == 0 ||
+	    ssid_len > sizeof(config.sta.ssid) || ies_len > sizeof(assoc_ie) ||
 	    memchr(ssid, 0, ssid_len) != NULL || (bssid[0] & 1) != 0 ||
 	    memcmp(bssid, zero_bssid, sizeof(zero_bssid)) == 0 ||
 	    (sae != 0 && sae != 1) ||
-	    (sae ? (rsn_len < 22 || rsn[0] != 48 ||
-	    (unsigned)rsn[1] + 2 != rsn_len) :
-	    !espwifi_wpa2_rsn(rsn, rsn_len))) {
+	    !ieee80211_assoc_rsn_parse(ies, ies_len, &rsn, &rsn_len,
+	    &rsn_offset) ||
+	    (sae ? !ieee80211_sae_rsn_valid(rsn, rsn_len) :
+	    !espwifi_wpa2_rsn(rsn, (unsigned)rsn_len))) {
 		espwifi_os_log("espwifi: fullmac connect validation failed\n");
 		return -1;
 	}
+	/* Do not let an earlier attempt's RSN or supplemental IEs leak into this
+	 * association, including when set_config below fails.
+	 */
+	espwifi_ext_clear_assoc_appies();
+	assoc_len = ies_len - rsn_len;
+	memcpy(rsn_ie, rsn, rsn_len);
+	if (rsn_offset != 0)
+		memcpy(assoc_ie, ies, rsn_offset);
+	if (ies_len - (rsn_offset + rsn_len) != 0)
+		memcpy(assoc_ie + rsn_offset, ies + rsn_offset + rsn_len,
+		    ies_len - (rsn_offset + rsn_len));
 	memset(&config, 0, sizeof(config));
 	memcpy(config.sta.ssid, ssid, ssid_len);
 	memcpy(config.sta.bssid, bssid, sizeof(config.sta.bssid));
@@ -277,18 +303,35 @@ espwifi_ext_connect(const unsigned char *ssid, unsigned int ssid_len,
 	error = esp_wifi_set_config(WIFI_IF_STA, &config);
 	if (error != ESP_OK) {
 		espwifi_os_log("espwifi: fullmac set_config error %#x\n", error);
+		espwifi_ext_clear_assoc_appies();
 		return -1;
 	}
-	memcpy(assoc_ie, rsn, rsn_len);
-	error = esp_wifi_set_appie_internal(WIFI_APPIE_ASSOC_REQ,
-	    assoc_ie, (uint16_t)rsn_len, 0);
+	/* Match ESP-IDF's supplicant split: RSNE in RSN, remaining IEs in ASSOC_REQ. */
+	error = esp_wifi_set_appie_internal(WIFI_APPIE_RSN,
+	    rsn_ie, (uint16_t)rsn_len, 1);
 	if (error != ESP_OK) {
-		espwifi_os_log("espwifi: fullmac set_appie error %#x\n", error);
+		espwifi_os_log("espwifi: fullmac set_rsn_appie error %#x\n", error);
+		(void)esp_wifi_unset_appie_internal(WIFI_APPIE_RSN);
+		(void)esp_wifi_unset_appie_internal(WIFI_APPIE_ASSOC_REQ);
+		return -1;
+	}
+	if (assoc_len != 0)
+		error = esp_wifi_set_appie_internal(WIFI_APPIE_ASSOC_REQ,
+		    assoc_ie, (uint16_t)assoc_len, 0);
+	else {
+		(void)esp_wifi_unset_appie_internal(WIFI_APPIE_ASSOC_REQ);
+		error = ESP_OK;
+	}
+	if (error != ESP_OK) {
+		espwifi_os_log("espwifi: fullmac set_assoc_appie error %#x\n", error);
+		(void)esp_wifi_unset_appie_internal(WIFI_APPIE_RSN);
+		(void)esp_wifi_unset_appie_internal(WIFI_APPIE_ASSOC_REQ);
 		return -1;
 	}
 	error = esp_wifi_connect();
 	if (error != ESP_OK) {
 		espwifi_os_log("espwifi: fullmac connect error %#x\n", error);
+		(void)esp_wifi_unset_appie_internal(WIFI_APPIE_RSN);
 		(void)esp_wifi_unset_appie_internal(WIFI_APPIE_ASSOC_REQ);
 		return -1;
 	}

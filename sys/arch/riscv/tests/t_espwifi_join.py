@@ -52,6 +52,8 @@ typedef uint64_t u64;
 #define IEEE80211_NWID_LEN 32
 #define IEEE80211_MAX_OPT_IE 256
 #define IEEE80211_ELEMID_RSN 48
+#define WIFI_APPIE_RSN 4
+#define WIFI_APPIE_ASSOC_REQ 2
 #define IEEE80211_F_WPA 1
 #define IEEE80211_F_SCAN 2
 enum ieee80211_state { IEEE80211_S_INIT, IEEE80211_S_SCAN, IEEE80211_S_AUTH,
@@ -83,8 +85,8 @@ struct espwifi_softc { struct { struct ifnet ec_if; } sc_ec; struct ieee80211com
  uint32_t sc_sae_selection_generation;uint8_t sc_sae_selection_bssid[6];
  uint8_t sc_key_slots,sc_group_key_slots,sc_igtk_slots;
  uint64_t sc_key_generation,sc_scan_generation,sc_scan_active;
- uint64_t sc_join_generation,sc_join_active; uint8_t sc_join_bssid[6],sc_join_ssid[32],sc_join_rsn[256];
- unsigned sc_join_ssid_len,sc_join_rsn_len;
+ uint64_t sc_join_generation,sc_join_active; uint8_t sc_join_bssid[6],sc_join_ssid[32],sc_join_ies[256];
+ unsigned sc_join_ssid_len,sc_join_ies_len;
  int (*sc_newstate)(struct ieee80211com *,enum ieee80211_state,int); };
 static struct espwifi_softc espwifi_sc;
 static int locked,sae_locked,signals,link_changes,disconnects,connects,fail_disconnect,fail_connect;
@@ -132,10 +134,20 @@ static bool espwifi_if_fail_closed_generation(struct espwifi_softc *sc,
  sc->sc_join_sae=false;sc->sc_port_authorized=0;return true; }
 static bool ieee80211_sae_rsn_valid(const uint8_t *rsn,unsigned len) {
  return rsn != NULL && len >= 22 && rsn[0] == 48; }
+static bool ieee80211_assoc_rsn_parse(const uint8_t *p,size_t len,
+ const uint8_t **rsn,size_t *rsn_len,size_t *rsn_offset) {
+ if (!p || len<2 || p[0]!=48 || (size_t)p[1]+2>len) return false;
+ *rsn=p;*rsn_len=(size_t)p[1]+2;*rsn_offset=0;return true; }
 static int espwifi_os_critical_enter(void) { return 0; }
 static void espwifi_os_critical_exit(int s) { (void)s; }
 static int espwifi_os_sem_take(void *p,unsigned ticks);
+static unsigned unset_rsn,unset_assoc;
+static int esp_wifi_unset_appie_internal(int type) {
+ if (type==WIFI_APPIE_RSN) unset_rsn++;
+ else { assert(type==WIFI_APPIE_ASSOC_REQ);unset_assoc++; }
+ return 0; }
 static int esp_wifi_stop(void) {
+ assert(unset_rsn==stop_calls+1 && unset_assoc==stop_calls+1);
  stop_calls++;disconnects++;
  if (fail_disconnect) return fail_disconnect;
  if (defer_stop) pending_stop=true;
@@ -192,7 +204,7 @@ static void ieee80211_begin_scan(struct ieee80211com *,int);
 static void explicit_memset(void *,int,size_t);
 static int printf(const char *,...);
 static int ieee80211_new_state(struct ieee80211com *ic,enum ieee80211_state state,int arg);
-''' + function('espwifi_if_radio_started','void') + function('espwifi_if_radio_stopped','void') + function('espwifi_if_sae_teardown_complete','void') + glue_function('espwifi_disconnect','int') + function('espwifi_if_newstate','int') + function('espwifi_if_join_control','void') + function('espwifi_if_link_event','void') + function('espwifi_if_link','void') + function('espwifi_if_assoc_response','int') + function('espwifi_if_wpa_in_4way','bool') + bridge_function('espwifi_wpa2_sta_rx_mgmt','int') + r'''
+''' + function('espwifi_if_radio_started','void') + function('espwifi_if_radio_stopped','void') + function('espwifi_if_sae_teardown_complete','void') + bridge_function('espwifi_ext_clear_assoc_appies','void') + glue_function('espwifi_disconnect','int') + function('espwifi_if_newstate','int') + function('espwifi_if_join_control','void') + function('espwifi_if_link_event','void') + function('espwifi_if_link','void') + function('espwifi_if_assoc_response','int') + function('espwifi_if_wpa_in_4way','bool') + bridge_function('espwifi_wpa2_sta_rx_mgmt','int') + r'''
 ''' + function('espwifi_if_set_port','int') + r'''
 static void ieee80211_begin_scan(struct ieee80211com *ic,int reset) { (void)reset;ic->ic_flags|=IEEE80211_F_SCAN; }
 static void ieee80211_sta_leave(struct ieee80211com *ic,struct ieee80211_node *ni) { (void)ic;(void)ni; }
@@ -222,8 +234,8 @@ int main(void) {
  /* Association is queued with copied inputs and a nonzero operation id. */
  assert(ieee80211_new_state(&sc->sc_ic,IEEE80211_S_AUTH,0)==0);
  uint64_t first=sc->sc_join_active;
- assert(first!=0 && sc->sc_join_pending && sc->sc_ic.ic_state==IEEE80211_S_AUTH && sc->sc_join_ssid_len==4 &&
-     memcmp(sc->sc_join_ssid,"test",4)==0 && sc->sc_join_rsn_len==22);
+	assert(first!=0 && sc->sc_join_pending && sc->sc_ic.ic_state==IEEE80211_S_AUTH && sc->sc_join_ssid_len==4 &&
+     memcmp(sc->sc_join_ssid,"test",4)==0 && sc->sc_join_ies_len==22);
  espwifi_if_join_control(sc);
  assert(connects==1 && sc->sc_join_active==first && !sc->sc_join_pending);
 

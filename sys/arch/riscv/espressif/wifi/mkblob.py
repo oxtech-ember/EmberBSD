@@ -37,7 +37,8 @@ esp32s31.rom.libc.ld'''.split()
 ENTRIES = '''espwifi_start_wpa2 espwifi_scan espwifi_seen espwifi_linked
 espwifi_connect espwifi_tx espwifi_get_mac espwifi_scan_capture
 espwifi_disconnect espwifi_ext_connect espwifi_ext_set_key
-espwifi_ext_set_igtk espwifi_ext_sta_pmf_configured'''.split()
+espwifi_ext_clear_assoc_appies espwifi_ext_set_igtk
+espwifi_ext_sta_pmf_configured'''.split()
 
 
 def check_consumer_boundary(entries, header, consumers):
@@ -160,6 +161,7 @@ def main():
              '-mabi=ilp32f', '-D__ESP_IDF_NETBSD__', '-DESPWIFI_COMMON_CRYPTO',
              '-DESPWIFI_EXTERNAL_WPA2',
              '-Werror', '-I'+str(HERE/'shim'),
+             '-I'+str(HERE.parents[3]),
              '-isystem', str(a.sysroot/'usr/include'), '-isystem', str(resource/'include')]
     for pattern in INCLUDES:
         for d in sorted(glob.glob(str(idf/pattern))):

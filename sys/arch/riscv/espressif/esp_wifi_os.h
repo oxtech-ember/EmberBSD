@@ -107,6 +107,7 @@ int	espwifi_disconnect(void);
 int	espwifi_connect(const char *, const char *);
 int	espwifi_ext_connect(const unsigned char *, unsigned int,
 	    const unsigned char *, const unsigned char *, unsigned int, int);
+void	espwifi_ext_clear_assoc_appies(void);
 int	espwifi_ext_sta_pmf_configured(void);
 int	espwifi_ext_set_key(const unsigned char *, unsigned int, int, int, int,
 	    const unsigned char *, unsigned int, const unsigned char *, unsigned int);
