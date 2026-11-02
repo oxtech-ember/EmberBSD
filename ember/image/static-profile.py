@@ -239,6 +239,14 @@ def copy_if_different(source, destination):
             os.unlink(temporary)
 
 
+def stage_rc_script(source, destination):
+    """Stage an rc.d script with the target's authoritative BINMODE."""
+    import os
+
+    copy_if_different(source, destination)
+    os.chmod(destination, 0o555)
+
+
 def apply_metalog_modes(spec, root, destdir, metalog, install_map):
     """Apply target install modes to staged file records without changing host modes."""
     import re
@@ -539,7 +547,7 @@ def stage_network(root, source, overlay, interface, pwd_mkdb, dhcpcd_dest,
                'ipfilter', 'ipsec', 'network', 'staticroute', 'wpa_supplicant',
                'dhcpcd', 'mdnsd', 'NETWORKING', 'DAEMON', 'LOGIN')
     for name in scripts:
-        copy_if_different(source / 'etc/rc.d' / name, root / 'etc/rc.network.d' / name)
+        stage_rc_script(source / 'etc/rc.d' / name, root / 'etc/rc.network.d' / name)
     runtime_dirs = root / 'etc/rc.network.d/network_tmpdirs'
     runtime_dirs_text = (
         '#!/bin/sh\n'

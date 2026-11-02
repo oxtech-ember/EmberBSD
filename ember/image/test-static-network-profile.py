@@ -55,6 +55,17 @@ with tempfile.TemporaryDirectory(prefix='network-modes-') as temporary:
           root_login.stat().st_mode & 0o7777 == 0o555 and
           dest_login.stat().st_mode & 0o7777 == 0o555,
           'root spec restores target setuid mode from METALOG without changing host copies')
+
+with tempfile.TemporaryDirectory(prefix='network-rc-mode-') as temporary:
+    temporary = Path(temporary)
+    source_script = temporary / 'wpa_supplicant'
+    staged_script = temporary / 'root/etc/rc.network.d/wpa_supplicant'
+    source_script.write_text('#!/bin/sh\n')
+    source_script.chmod(0o644)
+    profile.stage_rc_script(source_script, staged_script)
+    check(source_script.stat().st_mode & 0o777 == 0o644 and
+          staged_script.stat().st_mode & 0o777 == 0o555,
+          'rc staging applies target BINMODE when a host source script is non-executable')
 recorded_foundation = {'usr/lib/libc.a': {'kind': 'file', 'sha256': 'a' * 64},
                        'usr/include/sys/types.h': {'kind': 'file', 'sha256': 'b' * 64}}
 current_foundation = dict(recorded_foundation)
@@ -413,6 +424,7 @@ with tempfile.TemporaryDirectory(prefix='static-network-') as temporary:
           "len(sys.argv) == 10 and sys.argv[1] == 'stage-network'") >= 0,
           'standard staged network command accepts selected root device and partition')
     check((out / 'etc/rc.network.d/wpa_supplicant').is_file() and
+          (out / 'etc/rc.network.d/wpa_supplicant').stat().st_mode & 0o777 == 0o555 and
           (out / 'etc/rc.network.d/mdnsd').is_file() and
           bool((out / 'etc/rc.network.d/network_tmpdirs').stat().st_mode & 0o111) and
           'BEFORE: wpa_supplicant dhcpcd mdnsd' in
