@@ -106,9 +106,12 @@ int	espwifi_linked(void);
 int	espwifi_disconnect(void);
 int	espwifi_connect(const char *, const char *);
 int	espwifi_ext_connect(const unsigned char *, unsigned int,
-	    const unsigned char *, const unsigned char *, unsigned int);
+	    const unsigned char *, const unsigned char *, unsigned int, int);
+int	espwifi_ext_sta_pmf_configured(void);
 int	espwifi_ext_set_key(const unsigned char *, unsigned int, int, int, int,
 	    const unsigned char *, unsigned int, const unsigned char *, unsigned int);
+int	espwifi_ext_set_igtk(unsigned int, const unsigned char *,
+	    const unsigned char *);
 int	espwifi_tx(const void *, unsigned int);
 void	espwifi_get_mac(unsigned char *);
 

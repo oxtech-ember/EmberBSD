@@ -86,6 +86,8 @@ typedef int esp_err_t;
 #define IEEE80211_SAE_CONFIGURE 1
 #define IEEE80211_SAE_AUTH_STATUS 2
 #define IEEE80211_SAE_TX_FRAME 3
+#define IEEE80211_SAE_SET_IGTK 4
+#define IEEE80211_SAE_DELETE_IGTK 5
 #define IEEE80211_SAE_START 0x100
 #define IEEE80211_SAE_RX_FRAME 0x101
 #define IEEE80211_SAE_COMMIT 1
@@ -104,6 +106,9 @@ typedef int esp_err_t;
 #define ESPWIFI_SAE_REPLY_TX 1
 #define ESPWIFI_SAE_REPLY_STATUS 2
 #define ESPWIFI_SAE_REPLY_ANY 3
+#define IEEE80211_SAE_CAP_EXTERNAL 1
+#define IEEE80211_SAE_CAP_PMF 2
+#define ESPWIFI_SAE_CAPS (IEEE80211_SAE_CAP_EXTERNAL | IEEE80211_SAE_CAP_PMF)
 #define IEEE80211_S_AUTH 2
 #define RTM_IEEE80211_SAE 109
 #define SAE_MSG_COMMIT 1
@@ -115,6 +120,8 @@ static const int hz = 100;
 static u_int now_ticks;
 static int net_ipl, mutex_depth, spin_depth, cv_mode, status_to_send;
 static unsigned event_log[16], event_count;
+static unsigned igtk_install_calls, igtk_delete_calls;
+static bool configure_during_igtk;
 static uint8_t peer[6] = {2,1,2,3,4,5};
 static uint8_t local[6] = {2,6,7,8,9,10};
 static uint8_t body_data[] = {0x19,0x28,0x37,0x46};
@@ -151,11 +158,18 @@ struct espwifi_softc {
  struct ieee80211com sc_ic;
  int sc_sae_lock, sc_sae_cv, sc_scan_lock;
  bool sc_join_disconnect_pending, sc_join_barrier_busy;
- bool sc_sae_enabled, sc_sae_start_sent;
+ bool sc_sae_enabled, sc_sae_start_sent, sc_sae_igtk_busy;
  unsigned sc_sae_waiting, sc_sae_reply;
  int sc_sae_reply_status; unsigned sc_sae_reply_len;
  uint32_t sc_sae_generation; uint8_t sc_sae_bssid[6];
  uint8_t sc_sae_reply_frame[IEEE80211_SAE_DATA_MAX];
+ bool sc_sae_selection; uint32_t sc_sae_selection_generation;
+ uint8_t sc_sae_selection_bssid[6];
+ bool sc_join_sae, sc_joined, sc_link, sc_radio_ready, sc_sta_started;
+ bool sc_join_stopped;
+ uint64_t sc_join_active, sc_join_generation;
+ uint8_t sc_join_bssid[6];
+ uint32_t sc_igtk_delete_generation; uint8_t sc_igtk_delete_bssid[6];
 };
 static struct espwifi_softc espwifi_sc;
 void rt_ieee80211msg(struct ifnet *, int, const void *, size_t);
@@ -164,7 +178,7 @@ struct espwifi_fp { int dummy; };
 static void espwifi_fp_save(struct espwifi_fp *p) { (void)p; }
 static void espwifi_fp_restore(struct espwifi_fp *p) { (void)p; }
 static int ieee80211_sae_configure_check(struct ieee80211com *ic, int caps,
-    bool enable) { (void)ic;(void)caps;(void)enable; return 0; }
+    bool enable) { (void)ic;(void)enable;assert(caps==ESPWIFI_SAE_CAPS);return 0; }
 void forced_memzero(void *, size_t);
 void forced_memzero(void *p, size_t n) {
  volatile uint8_t *v=p; while (n--) *v++=0;
@@ -186,6 +200,34 @@ static void espwifi_if_sae_cancel(struct espwifi_softc *);
 static void espwifi_if_sae_cancel_generation(struct espwifi_softc *, uint32_t);
 static int espwifi_if_sae_configure(struct espwifi_softc *,
     const struct ieee80211req_sae *);
+static int espwifi_if_igtk_install(struct espwifi_softc *,
+    const struct ieee80211req_sae *, uint64_t);
+static int espwifi_if_igtk_delete(struct espwifi_softc *,
+    const struct ieee80211req_sae *, uint64_t);
+static int espwifi_if_igtk_install(struct espwifi_softc *sc,
+    const struct ieee80211req_sae *req, uint64_t join_generation) {
+ struct ieee80211req_sae configure;
+ int error;
+ assert(sc==&espwifi_sc && req->len==24 && le16dec(req->data)==4);
+ assert(join_generation==77);
+ if (configure_during_igtk) {
+  memset(&configure,0,sizeof(configure)); configure.version=1;
+  configure.generation=req->generation+1; configure.op=IEEE80211_SAE_CONFIGURE;
+  configure.len=1; configure.data[0]=1; memcpy(configure.bssid,req->bssid,6);
+  cv_mode=2;
+  error=espwifi_if_sae_configure(sc,&configure);
+  assert(error==ETIMEDOUT && sc->sc_sae_generation==req->generation &&
+      sc->sc_sae_igtk_busy);
+  cv_mode=0;
+ }
+ igtk_install_calls++;return 0; }
+static int espwifi_if_igtk_delete(struct espwifi_softc *sc,
+    const struct ieee80211req_sae *req, uint64_t join_generation) {
+ assert(sc==&espwifi_sc && req->len==2 && le16dec(req->data)==4);
+ assert(join_generation==77);
+ igtk_delete_calls++;
+ sc->sc_igtk_delete_generation=req->generation;
+ memcpy(sc->sc_igtk_delete_bssid,req->bssid,6);return 0; }
 static int cv_timedwait(void *, void *, u_int);
 ''' + common_function + '\n\n' + kernel_functions + '\n\n' + os_functions + '\n\n' + \
     'static uint8_t espwifi_sae_body[ESPWIFI_SAE_BODY_MAX];\n\n' + callbacks + r'''
@@ -216,6 +258,11 @@ static int cv_timedwait(void *cv, void *mutex, u_int ticks)
   espwifi_if_sae_cancel(&espwifi_sc);
   espwifi_sc.sc_join_barrier_busy=false;
   espwifi_if_sae_teardown_complete(&espwifi_sc);
+  mutex_depth=1; return 0;
+ }
+ if (cv_mode==5) {
+  assert(espwifi_sc.sc_sae_igtk_busy);
+  espwifi_sc.sc_sae_igtk_busy=false;
   mutex_depth=1; return 0;
  }
  assert(0 && "unexpected wait without modeled response");
@@ -306,12 +353,15 @@ int main(void)
 
  /* A finite wait expires once, invalidates the generation, and scrubs data. */
  sc->sc_sae_enabled=true; sc->sc_sae_generation=50;
+ sc->sc_sae_selection=true;sc->sc_sae_selection_generation=50;
+ memcpy(sc->sc_sae_selection_bssid,peer,6);
  memcpy(sc->sc_sae_bssid,peer,6); sc->sc_sae_waiting=ESPWIFI_SAE_WAIT_TX;
  cv_mode=2;
  error=espwifi_if_sae_wait(sc,50,ESPWIFI_SAE_REPLY_TX,1,
      (uint8_t *)&out,sizeof(out),NULL);
  assert(error==ETIMEDOUT && !sc->sc_sae_enabled &&
-     sc->sc_sae_generation==51 && sc->sc_sae_reply==0);
+     sc->sc_sae_generation==51 && sc->sc_sae_reply==0 &&
+     !sc->sc_sae_selection && sc->sc_sae_selection_generation==0);
  make_tx(&stale,1,50); assert(espwifi_if_sae_request(&sc->sc_ic,&stale)==ESTALE);
  /* A later connection generation can exchange messages after timeout. */
  sc->sc_sae_enabled=true; sc->sc_sae_generation=52;
@@ -351,15 +401,48 @@ int main(void)
 	error=espwifi_if_sae_configure(sc,&configure);
 	assert(error==0 && sc->sc_sae_generation==70 && sc->sc_sae_enabled &&
 	    !sc->sc_join_disconnect_pending && !sc->sc_join_barrier_busy);
+	struct ieee80211req_sae keyreq;
+	memset(&keyreq,0,sizeof(keyreq));keyreq.version=IEEE80211_SAE_VERSION;
+	keyreq.generation=70;memcpy(keyreq.bssid,peer,6);
+	sc->sc_join_sae=true;sc->sc_joined=true;sc->sc_link=true;
+	sc->sc_radio_ready=true;sc->sc_sta_started=true;
+	sc->sc_join_active=77;sc->sc_join_generation=77;
+	memcpy(sc->sc_join_bssid,peer,6);
+	keyreq.op=IEEE80211_SAE_SET_IGTK;keyreq.len=24;le16enc(keyreq.data,4);
+	keyreq.generation=70;cv_mode=0;
+	sc->sc_sae_selection_generation=69;
+	assert(espwifi_if_sae_request(&sc->sc_ic,&keyreq)==ESTALE &&
+	    igtk_install_calls==0);
+	sc->sc_sae_selection_generation=70;
+	configure_during_igtk=true;
+	assert(espwifi_if_sae_request(&sc->sc_ic,&keyreq)==0 &&
+	    igtk_install_calls==1);
+	configure_during_igtk=false;
+	/* CONFIGURE cannot replace selection while an IGTK operation is active. */
+	configure.generation=71;sc->sc_sae_igtk_busy=true;cv_mode=5;
+	assert(espwifi_if_sae_configure(sc,&configure)==0 &&
+	    sc->sc_sae_generation==71 && !sc->sc_sae_igtk_busy);
+	keyreq.generation=70;
+	assert(espwifi_if_sae_request(&sc->sc_ic,&keyreq)==ESTALE &&
+	    igtk_install_calls==1);
+	keyreq.generation=71;
+	keyreq.op=IEEE80211_SAE_DELETE_IGTK;keyreq.len=2;
+	assert(espwifi_if_sae_request(&sc->sc_ic,&keyreq)==0 &&
+	    igtk_delete_calls==1);
+	assert(espwifi_if_sae_request(&sc->sc_ic,&keyreq)==0 &&
+	    igtk_delete_calls==1);
+	keyreq.generation=69;
+	assert(espwifi_if_sae_request(&sc->sc_ic,&keyreq)==ESTALE &&
+	    igtk_delete_calls==1);
 	cv_mode=0;
 	out=espwifi_wpa3_build_sae_msg(peer,IEEE80211_SAE_COMMIT,&outlen);
 	assert(out && outlen==sizeof(body_data) &&
-	    sc->sc_sae_generation==70 && sc->sc_sae_reply==ESPWIFI_SAE_REPLY_NONE);
-	configure.generation=71;
+	    sc->sc_sae_generation==71 && sc->sc_sae_reply==ESPWIFI_SAE_REPLY_NONE);
+	configure.generation=72;
 	sc->sc_join_disconnect_pending=true;
 	cv_mode=2;
 	error=espwifi_if_sae_configure(sc,&configure);
-	assert(error==ETIMEDOUT && sc->sc_sae_generation==70 &&
+	assert(error==ETIMEDOUT && sc->sc_sae_generation==71 &&
 	    sc->sc_sae_enabled);
  return 0;
 }
@@ -377,7 +460,7 @@ int main(void)
                     '-fsanitize=address,undefined', '-fno-sanitize-recover=all',
                     str(source), '-o', str(binary)], check=True)
     subprocess.run([str(binary)], check=True)
-    print('PASS: actual IDF SAE callbacks and kernel mailbox START/RX/TX/status, cancel, timeout, stale generation, configure behind STOP barrier')
+    print('PASS: IDF SAE mailbox, generation barriers, PMF IGTK dispatch and stale requests')
 
 
 if __name__ == '__main__':

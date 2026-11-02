@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Test the actual WPA2-only vendor configuration boundary."""
+"""Test the actual WPA2 and SAE/PMF vendor configuration boundary."""
 import argparse
 from pathlib import Path
 import re
@@ -41,36 +41,51 @@ code=r'''
 #include <stddef.h>
 typedef int esp_err_t;
 typedef struct { struct { uint8_t ssid[32],bssid[6]; bool bssid_set;
- struct {int authmode;} threshold; } sta; } wifi_config_t;
+ struct {int authmode;} threshold; struct {bool capable,required;} pmf_cfg; } sta; } wifi_config_t;
 #define WIFI_IF_STA 0
-#define WIFI_AUTH_WPA2_PSK 4
+#define WIFI_AUTH_WPA2_PSK 3
+#define WIFI_AUTH_WPA3_PSK 6
 #define WIFI_APPIE_ASSOC_REQ 2
 #define ESP_OK 0
-static int cfgcalls,iecalls,connects,fail,unsets;static uint8_t copied_ie[64];static unsigned copied_len;
+static int cfgcalls,iecalls,connects,fail,unsets,pmf_configured;
+static uint8_t copied_ie[64];static unsigned copied_len;
 static int esp_wifi_set_config(int ifx,wifi_config_t *c) {
- assert(ifx==0 && c->sta.bssid_set && c->sta.threshold.authmode==4);
+ assert(ifx==0 && c->sta.bssid_set);
+ assert(c->sta.threshold.authmode==3 || c->sta.threshold.authmode==6);
+ if (c->sta.threshold.authmode==3)
+  assert(!c->sta.pmf_cfg.capable && !c->sta.pmf_cfg.required);
+ else
+  assert(c->sta.pmf_cfg.capable && c->sta.pmf_cfg.required);
  assert(!memcmp(c->sta.ssid,"test",4));cfgcalls++;return fail==1?9:0; }
 static int esp_wifi_set_appie_internal(int type,uint8_t *p,uint16_t n,int flag) {
  assert(type==2 && flag==0 && n<=sizeof(copied_ie));memcpy(copied_ie,p,n);
  copied_len=n;iecalls++;return fail==2?9:0; }
 static int esp_wifi_connect(void) { connects++;return fail==3?9:0; }
 static int esp_wifi_unset_appie_internal(int type) { assert(type==2);unsets++;return 0; }
-''' + fn('espwifi_wpa2_rsn','bool') + fn('espwifi_ext_connect','int') + r'''
+static int esp_wifi_sta_pmf_enabled(void) { return pmf_configured; }
+''' + fn('espwifi_wpa2_rsn','bool') + fn('espwifi_ext_connect','int') + fn('espwifi_ext_sta_pmf_configured','int') + r'''
 int main(void) {
  uint8_t ssid[4]={'t','e','s','t'},bssid[6]={2,3,4,5,6,7};
  uint8_t rsn[22]={48,20,1,0,0,15,172,4,1,0,0,15,172,4,1,0,0,15,172,2,0,0};
- assert(!espwifi_ext_connect(ssid,4,bssid,rsn,sizeof(rsn)));
+ assert(!espwifi_ext_connect(ssid,4,bssid,rsn,sizeof(rsn),0));
  assert(cfgcalls==1 && iecalls==1 && connects==1 && copied_len==sizeof(rsn));
  assert(!memcmp(copied_ie,rsn,sizeof(rsn)));
  uint8_t zero_bssid[6]={0};
- assert(espwifi_ext_connect(ssid,4,zero_bssid,rsn,sizeof(rsn))==-1);
- rsn[19]=8;assert(espwifi_ext_connect(ssid,4,bssid,rsn,sizeof(rsn))==-1);rsn[19]=2;
- rsn[20]=0xc0;assert(espwifi_ext_connect(ssid,4,bssid,rsn,sizeof(rsn))==-1);rsn[20]=0;
- rsn[8]=2;assert(espwifi_ext_connect(ssid,4,bssid,rsn,sizeof(rsn))==-1);rsn[8]=1;
- assert(espwifi_ext_connect(ssid,4,bssid,rsn,21)==-1);
- bssid[0]=1;assert(espwifi_ext_connect(ssid,4,bssid,rsn,sizeof(rsn))==-1);bssid[0]=2;
- ssid[1]=0;assert(espwifi_ext_connect(ssid,4,bssid,rsn,sizeof(rsn))==-1);ssid[1]='e';
- for (int i=1;i<=3;i++) { fail=i;assert(espwifi_ext_connect(ssid,4,bssid,rsn,sizeof(rsn))==-1); }
+ assert(espwifi_ext_connect(ssid,4,zero_bssid,rsn,sizeof(rsn),0)==-1);
+ rsn[19]=8;assert(espwifi_ext_connect(ssid,4,bssid,rsn,sizeof(rsn),0)==-1);rsn[19]=2;
+ rsn[20]=0xc0;assert(espwifi_ext_connect(ssid,4,bssid,rsn,sizeof(rsn),0)==-1);rsn[20]=0;
+ rsn[8]=2;assert(espwifi_ext_connect(ssid,4,bssid,rsn,sizeof(rsn),0)==-1);rsn[8]=1;
+ assert(espwifi_ext_connect(ssid,4,bssid,rsn,21,0)==-1);
+ bssid[0]=1;assert(espwifi_ext_connect(ssid,4,bssid,rsn,sizeof(rsn),0)==-1);bssid[0]=2;
+ ssid[1]=0;assert(espwifi_ext_connect(ssid,4,bssid,rsn,sizeof(rsn),0)==-1);ssid[1]='e';
+ rsn[19]=8;rsn[20]=0xc0;
+ assert(espwifi_ext_connect(ssid,4,bssid,rsn,sizeof(rsn),0)==-1);
+ assert(!espwifi_ext_connect(ssid,4,bssid,rsn,sizeof(rsn),1));
+ assert(cfgcalls==2 && iecalls==2 && connects==2 && copied_len==sizeof(rsn));
+ assert(!memcmp(copied_ie,rsn,sizeof(rsn)));
+ pmf_configured=1;assert(espwifi_ext_sta_pmf_configured()==1);
+ pmf_configured=0;assert(espwifi_ext_sta_pmf_configured()==0);
+ for (int i=1;i<=3;i++) { fail=i;assert(espwifi_ext_connect(ssid,4,bssid,rsn,sizeof(rsn),1)==-1); }
  assert(unsets==1);
  return 0;
 }
@@ -80,7 +95,7 @@ with tempfile.TemporaryDirectory() as td:
  subprocess.run([a.cc,'-Werror','-fsanitize=address,undefined',
                  '-fno-sanitize-recover=all',str(c),'-o',str(out)],check=True)
  subprocess.run([str(out)],check=True)
-print('actual WPA2/CCMP vendor boundary rejects SAE, PMF and malformed input')
+print('actual WPA2 and SAE/PMF vendor connect modes preserve their RSN input')
 
 code=r'''
 #include <assert.h>
@@ -119,3 +134,39 @@ with tempfile.TemporaryDirectory() as td:
                  '-fno-sanitize-recover=all',str(c),'-o',str(out)],check=True)
  subprocess.run([str(out)],check=True)
 print('actual vendor CCMP key boundary, flags, errors and key wipe passed')
+
+code=r'''
+#include <assert.h>
+#include <stdint.h>
+#include <stddef.h>
+#include <string.h>
+#define ESP_OK 0
+#define WIFI_IF_STA 0
+typedef int esp_err_t;
+typedef struct { uint8_t keyid[2],pn[6],igtk[32]; } wifi_wpa_igtk_t;
+static int calls,wipes,fail,pmf_configured;
+static int esp_wifi_sta_pmf_enabled(void) { return pmf_configured; }
+static int esp_wifi_set_igtk_internal(uint8_t ifx,const wifi_wpa_igtk_t *p) {
+ assert(ifx==WIFI_IF_STA && p->keyid[0]==4 && p->keyid[1]==0);
+ assert(p->pn[0]==8 && p->igtk[0]==9 && p->igtk[15]==9);
+ for (unsigned i=16;i<sizeof(p->igtk);i++) assert(p->igtk[i]==0);
+ calls++;return fail?7:0;
+}
+static void forced_memzero(void *p,size_t n) { memset(p,0,n);wipes++; }
+''' + fn('espwifi_ext_set_igtk','int') + r'''
+int main(void) {
+ uint8_t seq[6]={8},key[16];memset(key,9,sizeof(key));
+ assert(espwifi_ext_set_igtk(4,seq,key)==0 && calls==1 && wipes==1);
+ fail=1;assert(espwifi_ext_set_igtk(4,seq,key)==-1 && calls==2 && wipes==2);
+ assert(espwifi_ext_set_igtk(3,seq,key)==-1 && calls==2 && wipes==2);
+ assert(espwifi_ext_set_igtk(5,NULL,key)==-1 && calls==2 && wipes==2);
+ assert(espwifi_ext_set_igtk(5,seq,NULL)==-1 && calls==2 && wipes==2);
+ return 0;
+}
+'''
+with tempfile.TemporaryDirectory() as td:
+ c=Path(td)/'igtk.c';out=Path(td)/'igtk';c.write_text(code)
+ subprocess.run([a.cc,'-Werror','-fsanitize=address,undefined',
+                 '-fno-sanitize-recover=all',str(c),'-o',str(out)],check=True)
+ subprocess.run([str(out)],check=True)
+print('actual vendor IGTK conversion, bounds, errors and key wipe passed')

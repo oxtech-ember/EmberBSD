@@ -77,8 +77,11 @@ struct espwifi_softc { struct { struct ifnet ec_if; } sc_ec; struct ieee80211com
  int sc_scan_lock,sc_sae_lock,sc_sae_cv; void *sc_scan_ctl_sem; unsigned sc_port_authorized;
  bool sc_ptk_installed,sc_link,sc_radio_ready,sc_join_pending,sc_joined,
  sc_join_disconnect_pending,sc_join_rescan_pending,sc_scan_enabled,sc_attached,
- sc_scan_pending,sc_scan_busy,sc_join_barrier_busy,sc_sta_started,sc_join_stopped;
- uint8_t sc_key_slots,sc_group_key_slots;uint64_t sc_key_generation,sc_scan_generation,sc_scan_active;
+ sc_scan_pending,sc_scan_busy,sc_join_barrier_busy,sc_sta_started,sc_join_stopped,
+ sc_sae_selection,sc_join_sae;
+ uint32_t sc_sae_selection_generation;uint8_t sc_sae_selection_bssid[6];
+ uint8_t sc_key_slots,sc_group_key_slots,sc_igtk_slots;
+ uint64_t sc_key_generation,sc_scan_generation,sc_scan_active;
  uint64_t sc_join_generation,sc_join_active; uint8_t sc_join_bssid[6],sc_join_ssid[32],sc_join_rsn[256];
  unsigned sc_join_ssid_len,sc_join_rsn_len;
  int (*sc_newstate)(struct ieee80211com *,enum ieee80211_state,int); };
@@ -94,6 +97,7 @@ static void *link_change=(void *)1;
 static unsigned lock_count,barrier_on_lock;
 static bool invalidate_link_generation;
 static bool stop_during_newstate;
+static int expected_sae,pmf_configured,fail_closed_calls;
 int espwifi_if_assoc_response(unsigned int,const void *,unsigned,
  const unsigned char *);
 static int splnet(void) { return 0; } static void splx(int s) { (void)s; }
@@ -115,6 +119,14 @@ static void if_link_state_change(struct ifnet *p,int state) { (void)p;link_chang
 void espwifi_if_radio_started(void);
 void espwifi_if_radio_stopped(void);
 static void espwifi_if_sae_cancel(struct espwifi_softc *sc) { (void)sc; }
+static bool espwifi_if_fail_closed_generation(struct espwifi_softc *sc,
+    uint64_t generation) {
+ fail_closed_calls++;
+ if (sc->sc_join_active != generation) return false;
+ sc->sc_join_active=0;sc->sc_joined=false;sc->sc_link=false;
+ sc->sc_join_sae=false;sc->sc_port_authorized=0;return true; }
+static bool ieee80211_sae_rsn_valid(const uint8_t *rsn,unsigned len) {
+ return rsn != NULL && len >= 22 && rsn[0] == 48; }
 static int espwifi_os_critical_enter(void) { return 0; }
 static void espwifi_os_critical_exit(int s) { (void)s; }
 static int espwifi_os_sem_take(void *p,unsigned ticks);
@@ -150,9 +162,11 @@ static int espwifi_os_sem_take(void *p,unsigned ticks) {
  return 0;
 }
 static long long espwifi_os_time_us(void) { return (long long)fake_time_us; }
+static int espwifi_ext_sta_pmf_configured(void) { return pmf_configured; }
 static int espwifi_ext_connect(const unsigned char *ssid,unsigned slen,
- const unsigned char *bssid,const unsigned char *rsn,unsigned rlen) {
+ const unsigned char *bssid,const unsigned char *rsn,unsigned rlen,int sae) {
  assert(slen==4 && memcmp(ssid,"test",4)==0 && bssid[0]==2 && rlen==22 && rsn[0]==48);
+ assert(sae==expected_sae);
  connects++;return fail_connect; }
 static int espwifi_os_assoc_response(unsigned int subtype,const void *body,
  unsigned int len,const unsigned char *sender) {
@@ -245,11 +259,32 @@ int main(void) {
  /* Only the new START event releases the fence; stale wakeups do not. */
  assert(!sc->sc_join_stopped && sc->sc_sta_started && sc->sc_radio_ready);
  assert(stop_events==1 && start_events==1);
+	sc->sc_sae_selection=true;sc->sc_sae_selection_generation=77;
+	memcpy(sc->sc_sae_selection_bssid,bss.ni_bssid,ETHER_ADDR_LEN);
+	expected_sae=1;
  assert(espwifi_if_newstate(&sc->sc_ic,IEEE80211_S_AUTH,0)==0);
  uint64_t second=sc->sc_join_active;
- assert(second!=0 && second!=first);
+ assert(second!=0 && second!=first && sc->sc_join_sae);
  espwifi_if_join_control(sc);
  assert(connects==2 && sc->sc_join_active==second && !sc->sc_join_pending);
+	pmf_configured=0;
+	assert(espwifi_wpa2_sta_rx_mgmt(1,assoc,sizeof(assoc),bss.ni_bssid,0,1,0)==-1);
+	assert(fail_closed_calls==1 && sc->sc_join_active==0 &&
+	    !sc->sc_joined && !sc->sc_link && !sc->sc_port_authorized);
+	/* SAE remains closed until an IGTK is installed. */
+	sc->sc_ic.ic_state=IEEE80211_S_SCAN;pmf_configured=1;
+	assert(espwifi_if_newstate(&sc->sc_ic,IEEE80211_S_AUTH,0)==0);
+	uint64_t third=sc->sc_join_active;
+	assert(third!=0 && sc->sc_join_sae);
+	espwifi_if_join_control(sc);
+	assert(connects==3 && sc->sc_join_active==third);
+	assert(espwifi_wpa2_sta_rx_mgmt(1,assoc,sizeof(assoc),bss.ni_bssid,0,1,0)==0);
+	assert(sc->sc_joined && sc->sc_link && sc->sc_join_sae);
+	sc->sc_ptk_installed=true;sc->sc_key_generation=third;
+	assert(espwifi_if_set_port(&sc->sc_ic,true)==EACCES);
+	sc->sc_igtk_slots=(uint8_t)(1U << 4);
+	assert(espwifi_if_set_port(&sc->sc_ic,true)==0 && sc->sc_port_authorized);
+	expected_sae=0;sc->sc_sae_selection=false;
 	/* A stop and start arriving after multiple wait timeouts still complete. */
 	defer_stop=true;defer_start=true;delay_stop=12;delay_start=12;
 	sem_waits=0;
@@ -295,7 +330,7 @@ with tempfile.TemporaryDirectory() as td:
                     '-fno-sanitize-recover=all', str(c), '-o', str(out)], check=True)
     subprocess.run([str(out)], check=True)
 
-print('actual FullMAC join generation, STOP fence and PTK port gate passed')
+print('FullMAC join, PMF configuration check, IGTK-controlled port and STOP fence passed')
 
 disabled = code.replace('#define ESPWIFI_NET80211_WPA2 1\n', '')
 disabled = disabled[:disabled.index('int main(void) {')] + r'''

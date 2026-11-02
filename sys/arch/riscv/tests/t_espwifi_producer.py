@@ -43,6 +43,15 @@ except ValueError as e:
     assert 'espwifi_disconnect' in str(e)
 else:
     raise AssertionError('kernel disconnect caller was not required by producer')
+for required in ('espwifi_ext_set_igtk', 'espwifi_ext_sta_pmf_configured'):
+    try:
+        m.check_consumer_boundary([e for e in m.ENTRIES if e != required],
+            script.parent.parent/'esp_wifi_os.h',
+            [script.parent.parent/'esp_wifi_if.c', script.parent.parent/'esp_wifi_os.c'])
+    except ValueError as e:
+        assert required in str(e)
+    else:
+        raise AssertionError('kernel PMF caller was not required: '+required)
 print('kernel consumer boundary guard passed')
 m.check_mac_leaf('  0: 000005b7 lui a1, 0\n  4: 8082 ret\n')
 for text in ('  0: 000005b7 lui a1, 0\n  4: 00f call 0\n  8: 8082 ret\n',

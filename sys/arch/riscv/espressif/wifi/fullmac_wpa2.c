@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
-/* ESP-IDF ABI bridge for an externally managed WPA2 station. */
+/* ESP-IDF ABI bridge for an externally managed WPA2/SAE station. */
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -247,24 +247,31 @@ espwifi_wpa2_rsn(const uint8_t *ie, unsigned len)
 
 int
 espwifi_ext_connect(const unsigned char *ssid, unsigned int ssid_len,
-    const unsigned char *bssid, const unsigned char *rsn, unsigned int rsn_len)
+	    const unsigned char *bssid, const unsigned char *rsn, unsigned int rsn_len,
+	    int sae)
 {
 	static const uint8_t zero_bssid[6];
 	wifi_config_t config;
-	uint8_t assoc_ie[24];
+	uint8_t assoc_ie[257];
 	esp_err_t error;
 
 	if (ssid == NULL || bssid == NULL || rsn == NULL || ssid_len == 0 ||
 	    ssid_len > sizeof(config.sta.ssid) || rsn_len > sizeof(assoc_ie) ||
 	    memchr(ssid, 0, ssid_len) != NULL || (bssid[0] & 1) != 0 ||
 	    memcmp(bssid, zero_bssid, sizeof(zero_bssid)) == 0 ||
-	    !espwifi_wpa2_rsn(rsn, rsn_len))
+	    (sae != 0 && sae != 1) ||
+	    (sae ? (rsn_len < 22 || rsn[0] != 48 ||
+	    (unsigned)rsn[1] + 2 != rsn_len) :
+	    !espwifi_wpa2_rsn(rsn, rsn_len)))
 		return -1;
 	memset(&config, 0, sizeof(config));
 	memcpy(config.sta.ssid, ssid, ssid_len);
 	memcpy(config.sta.bssid, bssid, sizeof(config.sta.bssid));
 	config.sta.bssid_set = true;
-	config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+	config.sta.threshold.authmode = sae ? WIFI_AUTH_WPA3_PSK :
+	    WIFI_AUTH_WPA2_PSK;
+	config.sta.pmf_cfg.capable = sae != 0;
+	config.sta.pmf_cfg.required = sae != 0;
 	error = esp_wifi_set_config(WIFI_IF_STA, &config);
 	if (error != ESP_OK)
 		return -1;
@@ -279,6 +286,12 @@ espwifi_ext_connect(const unsigned char *ssid, unsigned int ssid_len,
 		return -1;
 	}
 	return 0;
+}
+
+int
+espwifi_ext_sta_pmf_configured(void)
+{
+	return esp_wifi_sta_pmf_enabled() != 0;
 }
 
 int
@@ -310,5 +323,25 @@ espwifi_ext_set_key(const unsigned char *bssid, unsigned int index,
 	    index, transmit, seq, sequence_len, secret, sizeof(secret), flags);
 	forced_memzero(secret, sizeof(secret));
 	forced_memzero(seq, sizeof(seq));
+	return error == ESP_OK ? 0 : -1;
+}
+
+/* Match IDF's WPA install path: keyid, six-byte IPN, then a 16-byte IGTK. */
+int
+espwifi_ext_set_igtk(unsigned int index, const unsigned char *sequence,
+	    const unsigned char *key)
+{
+	wifi_wpa_igtk_t igtk;
+	esp_err_t error;
+
+	if ((index != 4 && index != 5) || sequence == NULL || key == NULL)
+		return -1;
+	memset(&igtk, 0, sizeof(igtk));
+	igtk.keyid[0] = (uint8_t)index;
+	igtk.keyid[1] = 0;
+	memcpy(igtk.pn, sequence, sizeof(igtk.pn));
+	memcpy(igtk.igtk, key, 16);
+	error = esp_wifi_set_igtk_internal(WIFI_IF_STA, &igtk);
+	forced_memzero(&igtk, sizeof(igtk));
 	return error == ESP_OK ? 0 : -1;
 }

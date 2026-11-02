@@ -36,7 +36,8 @@ esp32s31.rom.net80211.ld esp32s31.rom.phy.ld esp32s31.rom.coexist.ld
 esp32s31.rom.libc.ld'''.split()
 ENTRIES = '''espwifi_start_wpa2 espwifi_scan espwifi_seen espwifi_linked
 espwifi_connect espwifi_tx espwifi_get_mac espwifi_scan_capture
-espwifi_disconnect espwifi_ext_connect espwifi_ext_set_key'''.split()
+espwifi_disconnect espwifi_ext_connect espwifi_ext_set_key
+espwifi_ext_set_igtk espwifi_ext_sta_pmf_configured'''.split()
 
 
 def check_consumer_boundary(entries, header, consumers):
