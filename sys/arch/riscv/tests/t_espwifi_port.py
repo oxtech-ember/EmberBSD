@@ -216,11 +216,11 @@ struct espwifi_softc { struct ieee80211com sc_ic; struct espwifi_ec sc_ec; unsig
  int sc_key_request_group,sc_key_request_xmit;
  uint64_t sc_join_generation,sc_join_active,sc_key_generation;
  uint8_t sc_key_slots,sc_group_key_slots; };
-static struct espwifi_softc sc;static int calls,result,held,signals;static unsigned seq_seen;
+static struct espwifi_softc sc,espwifi_sc;static int calls,result,held,signals;static unsigned seq_seen;
 static bool mutate_generation;
 static bool teardown_on_unlock;
 static bool stale_before_worker, force_timeout, delay_success, timeout_completion;
-static bool wait_only;
+static bool wait_only,reconnect_during_wait,reconnect_on_timeout;
 static int key_held,worker_context;
 static u_int tick_clock, wake_elapsed;
 static void espwifi_if_key_control(struct espwifi_softc *);
@@ -231,7 +231,21 @@ static u_int getticks(void) { return tick_clock++; }
 static int mstohz(int ms) { return ms; }
 #define MAX(a,b) ((a)>(b)?(a):(b))
 static int cv_timedwait(int *cv,int *p,int ticks) { (void)cv;(void)p;
- assert(key_held);if (force_timeout && !timeout_completion) return EWOULDBLOCK;
+ assert(key_held);
+ if (reconnect_on_timeout) {
+  reconnect_on_timeout=false;sc.sc_key_done=false;
+  sc.sc_join_active=22;sc.sc_join_generation=22;sc.sc_joined=true;
+  sc.sc_link=true;sc.sc_radio_ready=true;sc.sc_sta_started=true;
+  sc.sc_join_stopped=false;sc.sc_join_disconnect_pending=false;
+  sc.sc_join_rescan_pending=false;return EWOULDBLOCK;
+ }
+ if (force_timeout && !timeout_completion) return EWOULDBLOCK;
+ if (reconnect_during_wait) {
+  reconnect_during_wait=false;sc.sc_key_done=false;
+  sc.sc_join_active=20;sc.sc_join_generation=20;sc.sc_joined=true;
+  sc.sc_link=true;sc.sc_radio_ready=true;sc.sc_sta_started=true;
+  sc.sc_join_stopped=false;return 0;
+ }
  if (wait_only) { tick_clock+=wake_elapsed;return 0; }
  key_held=0;worker_context=1;espwifi_if_key_control(&sc);worker_context=0;
  key_held=1;if (delay_success) tick_clock+=ticks;
@@ -242,16 +256,33 @@ static void mutex_spin_exit(int *p) { (void)p;assert(held);held=0;
  if (teardown_on_unlock) { sc.sc_link=false;sc.sc_ptk_installed=false;
   atomic_store_release(&sc.sc_port_authorized,0);teardown_on_unlock=false; } }
 static void espwifi_os_sem_give(void *p) { (void)p;assert(!held);signals++;
- if (stale_before_worker) { sc.sc_join_active++;stale_before_worker=false; } }
+ if (stale_before_worker) {
+  sc.sc_join_active++;sc.sc_join_generation++;
+  sc.sc_joined=true;sc.sc_link=true;sc.sc_radio_ready=true;
+  sc.sc_sta_started=true;sc.sc_join_stopped=false;
+  sc.sc_join_disconnect_pending=false;sc.sc_join_rescan_pending=false;
+  sc.sc_ptk_installed=false;sc.sc_key_slots=0;sc.sc_group_key_slots=0;
+  sc.sc_key_generation=0;
+  atomic_store_release(&sc.sc_port_authorized,0);
+  stale_before_worker=false;
+ } }
 static void if_link_state_change(struct ifnet *p,int s) { (void)p;(void)s; }
 static int espwifi_ext_set_key(const unsigned char *mac,unsigned index,int group,
  int tx,int modify,const unsigned char *seq,unsigned nseq,const unsigned char *key,unsigned nkey) {
 	assert(worker_context && mac[0]==2 && index==0 && group<=1 && tx<=1 && modify==0);
 	assert(nseq==6 && nkey==16 && key[0]==9);calls++;seq_seen=seq[0];
-	if (mutate_generation) sc.sc_join_active++;
+	if (mutate_generation) {
+		sc.sc_join_active++;sc.sc_join_generation++;
+		sc.sc_joined=true;sc.sc_link=true;sc.sc_radio_ready=true;
+		sc.sc_sta_started=true;sc.sc_join_stopped=false;
+  sc.sc_join_disconnect_pending=false;sc.sc_join_rescan_pending=false;
+  sc.sc_ptk_installed=false;sc.sc_key_slots=0;sc.sc_group_key_slots=0;
+  sc.sc_key_generation=0;
+		atomic_store_release(&sc.sc_port_authorized,0);
+	}
 	return result; }
 static void explicit_memset(void *p,int c,size_t n) { memset(p,c,n); }
-''' + fn('espwifi_if_set_port','int') + fn('espwifi_if_fail_closed','void') + fn('espwifi_if_key_request_clear','void') + fn('espwifi_if_key_wait','bool') + fn('espwifi_if_key_control','void') + fn('espwifi_if_key_set','int') + fn('espwifi_if_key_delete','int') + r'''
+''' + fn('espwifi_if_set_port','int') + fn('espwifi_if_fail_closed_generation','bool') + fn('espwifi_if_fail_closed','void') + fn('espwifi_if_key_request_clear','void') + fn('espwifi_if_key_wait','bool') + fn('espwifi_if_key_control','void') + fn('espwifi_if_key_set','int') + fn('espwifi_if_key_delete','int') + fn('espwifi_if_radio_stopped','void') + r'''
 int main(void) {
  struct ifnet ifp={&sc};struct ieee80211com ic={&ifp};struct cipher c={3};
  struct ieee80211_key key={.wk_cipher=&c,.wk_keylen=16,.wk_keyix=0,.wk_flags=1,
@@ -291,12 +322,14 @@ int main(void) {
 	assert(!sc.sc_link && !sc.sc_ptk_installed && !sc.sc_port_authorized);
 	sc.sc_link=true;sc.sc_ptk_installed=true;
  assert(espwifi_if_set_port(&ic,true)==0 && sc.sc_port_authorized);
+	sc.sc_ptk_installed=false;
 	sc.sc_join_active=7;sc.sc_joined=true;sc.sc_join_generation=7;
 	mutate_generation=true;
 	assert(espwifi_if_key_set(&ic,&key,mac)==0);
 	mutate_generation=false;
 	assert(!sc.sc_ptk_installed && !sc.sc_port_authorized &&
-	    sc.sc_join_disconnect_pending);
+	    sc.sc_join_active==8 && sc.sc_join_generation==8 && sc.sc_joined &&
+	    sc.sc_link && !sc.sc_join_disconnect_pending);
 	sc.sc_join_active=8;sc.sc_joined=true;sc.sc_link=true;
 	key.wk_flags=IEEE80211_KEY_GROUP;assert(espwifi_if_key_set(&ic,&key,mac)==1);
 	assert(!sc.sc_ptk_installed && !sc.sc_port_authorized);
@@ -330,7 +363,8 @@ int main(void) {
 	stale_before_worker=true;
 	assert(espwifi_if_key_set(&ic,&key,mac)==0);
 	assert((unsigned)calls==previous_calls && !sc.sc_ptk_installed &&
-	    !sc.sc_port_authorized && sc.sc_join_disconnect_pending);
+	    !sc.sc_port_authorized && sc.sc_join_active==12 && sc.sc_joined &&
+	    sc.sc_link && !sc.sc_join_disconnect_pending);
 	sc.sc_join_active=12;sc.sc_join_generation=12;sc.sc_joined=true;
 	key.wk_keyix=0;force_timeout=true;previous_calls=(unsigned)calls;
 	assert(espwifi_if_key_set(&ic,&key,mac)==0);
@@ -338,6 +372,44 @@ int main(void) {
 	assert((unsigned)calls==previous_calls && !sc.sc_key_pending &&
 	    !sc.sc_key_request_data[0] && !sc.sc_port_authorized &&
 	    sc.sc_join_disconnect_pending);
+	/* A new join must survive completion of a waiter from an old epoch. */
+	sc.sc_join_active=19;sc.sc_join_generation=19;sc.sc_joined=true;
+	sc.sc_link=true;sc.sc_radio_ready=true;sc.sc_sta_started=true;
+	sc.sc_join_stopped=false;sc.sc_key_done=true;
+	reconnect_during_wait=true;previous_calls=(unsigned)calls;
+	assert(espwifi_if_key_set(&ic,&key,mac)==0);
+	assert((unsigned)calls==previous_calls && sc.sc_join_active==20 &&
+	    sc.sc_joined && sc.sc_link && sc.sc_radio_ready &&
+	    !sc.sc_key_pending && !sc.sc_key_request_data[0]);
+	/* A timeout from an old key wait cannot close a replacement generation. */
+	sc.sc_join_active=21;sc.sc_join_generation=21;sc.sc_joined=true;
+	sc.sc_link=true;sc.sc_radio_ready=true;sc.sc_sta_started=true;
+	sc.sc_join_stopped=false;sc.sc_key_done=true;
+	force_timeout=true;reconnect_on_timeout=true;
+	assert(espwifi_if_key_set(&ic,&key,mac)==0);
+	force_timeout=false;
+	assert(sc.sc_join_active==22 && sc.sc_join_generation==22 &&
+	    sc.sc_joined && sc.sc_link && sc.sc_radio_ready &&
+	    !sc.sc_join_disconnect_pending);
+	/* STOP invalidates an already queued key; its worker drains without install. */
+	sc.sc_attached=true;sc.sc_join_active=23;sc.sc_join_generation=23;
+	sc.sc_joined=true;sc.sc_link=true;sc.sc_radio_ready=true;
+	sc.sc_sta_started=true;sc.sc_join_stopped=false;
+	sc.sc_key_request_generation=23;sc.sc_key_request_index=0;
+	sc.sc_key_request_mac[0]=2;sc.sc_key_request_seq[0]=8;
+	sc.sc_key_request_data[0]=9;sc.sc_key_pending=true;
+	previous_calls=(unsigned)calls;
+	espwifi_sc=sc;
+	espwifi_if_radio_stopped();
+	sc=espwifi_sc;
+	assert(sc.sc_join_stopped && sc.sc_join_active==0 &&
+	    !sc.sc_radio_ready && !sc.sc_key_slots && !sc.sc_ptk_installed);
+	worker_context=1;espwifi_if_key_control(&sc);worker_context=0;
+	assert((unsigned)calls==previous_calls && !sc.sc_key_pending &&
+	    sc.sc_key_done && sc.sc_key_error==ECANCELED);
+	espwifi_if_key_request_clear(&sc);sc.sc_key_done=false;
+	assert(!sc.sc_key_request_data[0] && !sc.sc_key_request_seq[0] &&
+	    !sc.sc_key_request_mac[0]);
 	sc.sc_join_active=13;sc.sc_join_generation=13;sc.sc_joined=true;
 	sc.sc_key_request_generation=13;sc.sc_key_request_index=0;
 	sc.sc_key_request_mac[0]=2;sc.sc_key_request_seq[0]=8;

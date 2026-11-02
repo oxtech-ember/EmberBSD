@@ -368,12 +368,17 @@ espwifi_if_set_port(struct ieee80211com *ic, bool authorized)
 	return 0;
 }
 
-static void
-espwifi_if_fail_closed(struct espwifi_softc *sc)
+static bool
+espwifi_if_fail_closed_generation(struct espwifi_softc *sc,
+	uint64_t generation)
 {
 	bool disconnect, was_link;
 
 	mutex_spin_enter(&sc->sc_scan_lock);
+	if (generation != 0 && sc->sc_join_active != generation) {
+		mutex_spin_exit(&sc->sc_scan_lock);
+		return false;
+	}
 	atomic_store_release(&sc->sc_port_authorized, 0);
 	was_link = sc->sc_link;
 	disconnect = sc->sc_radio_ready && (sc->sc_link ||
@@ -397,6 +402,13 @@ espwifi_if_fail_closed(struct espwifi_softc *sc)
 		if_link_state_change(&sc->sc_ec.ec_if, LINK_STATE_DOWN);
 	if (disconnect)
 		espwifi_os_sem_give(sc->sc_scan_ctl_sem);
+	return true;
+}
+
+static void
+espwifi_if_fail_closed(struct espwifi_softc *sc)
+{
+	(void)espwifi_if_fail_closed_generation(sc, 0);
 }
 
 static void
@@ -517,9 +529,19 @@ espwifi_if_key_set(struct ieee80211com *ic, const struct ieee80211_key *key,
 	while (sc->sc_key_pending || sc->sc_key_running || sc->sc_key_done) {
 		if (!espwifi_if_key_wait(sc, &left, &start)) {
 			mutex_exit(&sc->sc_key_lock);
-			espwifi_if_fail_closed(sc);
+			(void)espwifi_if_fail_closed_generation(sc, generation);
 			return 0;
 		}
+	}
+	/* A previous request may have completed while this caller slept. Do not
+	 * queue a key from an epoch that STOP invalidated in the meantime. */
+	mutex_spin_enter(&sc->sc_scan_lock);
+	current = sc->sc_join_active == generation && sc->sc_joined &&
+	    sc->sc_radio_ready && sc->sc_sta_started && !sc->sc_join_stopped;
+	mutex_spin_exit(&sc->sc_scan_lock);
+	if (!current) {
+		mutex_exit(&sc->sc_key_lock);
+		return 0;
 	}
 	memcpy(sc->sc_key_request_mac, mac, ETHER_ADDR_LEN);
 	memset(sc->sc_key_request_seq, 0, sizeof(sc->sc_key_request_seq));
@@ -550,7 +572,7 @@ espwifi_if_key_set(struct ieee80211com *ic, const struct ieee80211_key *key,
 			}
 			cv_broadcast(&sc->sc_key_cv);
 			mutex_exit(&sc->sc_key_lock);
-			espwifi_if_fail_closed(sc);
+			(void)espwifi_if_fail_closed_generation(sc, generation);
 			return 0;
 		}
 	}
@@ -575,8 +597,8 @@ espwifi_if_key_set(struct ieee80211com *ic, const struct ieee80211_key *key,
 		}
 	}
 	mutex_spin_exit(&sc->sc_scan_lock);
-	if (error != 0 || !current)
-		espwifi_if_fail_closed(sc);
+	if (error != 0 && current)
+		(void)espwifi_if_fail_closed_generation(sc, generation);
 	return error == 0 && current;
 }
 
@@ -689,12 +711,11 @@ espwifi_if_radio_started(void)
 	if (!sc->sc_attached)
 		return;
 	mutex_spin_enter(&sc->sc_scan_lock);
-	if (!sc->sc_join_stopped) {
-		sc->sc_sta_started = true;
-		sc->sc_radio_ready = sc->sc_attached;
-		pending = sc->sc_scan_pending && sc->sc_scan_enabled &&
-		    sc->sc_radio_ready;
-	}
+	sc->sc_join_stopped = false;
+	sc->sc_sta_started = true;
+	sc->sc_radio_ready = sc->sc_attached;
+	pending = sc->sc_scan_pending && sc->sc_scan_enabled &&
+	    sc->sc_radio_ready;
 	mutex_spin_exit(&sc->sc_scan_lock);
 	if (pending)
 		espwifi_os_sem_give(sc->sc_scan_ctl_sem);
@@ -727,6 +748,8 @@ espwifi_if_radio_stopped(void)
 	sc->sc_group_key_slots = 0;
 	sc->sc_key_generation = 0;
 	mutex_spin_exit(&sc->sc_scan_lock);
+	/* Wake the control worker to reject any queued key from the stopped epoch. */
+	espwifi_os_sem_give(sc->sc_scan_ctl_sem);
 	if (was_link && sc->sc_attached)
 		if_link_state_change(&sc->sc_ec.ec_if, LINK_STATE_DOWN);
 }

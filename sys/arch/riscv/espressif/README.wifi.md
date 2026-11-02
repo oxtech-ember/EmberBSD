@@ -22,8 +22,12 @@ association/reassociation response bodies before EAPOL; the adapter checks
 the status and selected BSSID before publishing net80211 RUN. The later
 `WIFI_EVENT_STA_CONNECTED` is not treated as the association boundary. RX
 and TX allow only EAPOL until the supplicant authorizes the controlled port.
-A vendor `STA_STOP` permanently fences further joins for the running adapter
-instance; no event-queue drain guarantee is assumed.
+A vendor `STA_STOP` invalidates the active join and installed-key generation.
+The adapter waits for that event, calls `esp_wifi_start()`, and keeps joins
+fenced until the next `STA_START` event arrives. Old key requests are
+drained by the control worker and rejected by their generation before a new
+join can install keys. Each event wait is bounded at two seconds; failure leaves
+the radio fenced without an automatic retry.
 
 The BSD `cs_key_set` callback runs in ioctl process context. It copies the
 key material into a serialized request and waits for the existing radio
@@ -36,8 +40,8 @@ cleanup when it returns. A vendor call that never returns can still wedge the
 radio control kthread, while the closed data port and ioctl timeout keep the
 failure contained.
 
-SAE, WPA3, PMF, roaming/reconnect after `STA_STOP`, and vendor key deletion
-are unsupported. Deleting an uninstalled key slot is a no-op; requesting
+SAE, WPA3, PMF, automatic roaming, and vendor key deletion are unsupported.
+Deleting an uninstalled key slot is a no-op; requesting
 deletion of a tracked installed key fails closed, closes the data port, and
 initiates teardown because the selected IDF version has no confirmed key
 deletion contract. Do not lower a profile's security requirements to make it

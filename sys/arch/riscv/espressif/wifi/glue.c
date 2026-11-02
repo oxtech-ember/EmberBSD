@@ -1277,7 +1277,7 @@ espwifi_wpa_rx_eapol(uint8_t *source, uint8_t *buffer, uint32_t len)
 
 static void *link_change;
 static int link_up;
-static uint32_t stop_events;
+static uint32_t stop_events, start_events;
 
 static int32_t
 event_post_wrapper(const char *base, int32_t id, void *data, size_t size,
@@ -1286,19 +1286,26 @@ event_post_wrapper(const char *base, int32_t id, void *data, size_t size,
 	switch (id) {
 	case WIFI_EVENT_SCAN_DONE:
 		break;
-	case WIFI_EVENT_STA_START:
+	case WIFI_EVENT_STA_START: {
 		link_up = 0;
+		unsigned critical;
+
 		espwifi_os_radio_started();
+		critical = espwifi_os_critical_enter();
+		start_events++;
+		espwifi_os_critical_exit(critical);
+		espwifi_os_sem_give(link_change);
 		break;
+	}
 	case WIFI_EVENT_STA_STOP: {
 		unsigned critical;
 
 		link_up = 0;
+		espwifi_os_radio_stopped();
 		critical = espwifi_os_critical_enter();
 		stop_events++;
 		espwifi_os_critical_exit(critical);
 		espwifi_os_sem_give(link_change);
-		espwifi_os_radio_stopped();
 		break;
 	}
 	case WIFI_EVENT_STA_CONNECTED:
@@ -1723,13 +1730,15 @@ esp_wifi_disconnect(void)
 int
 espwifi_disconnect(void)
 {
-	uint32_t target;
+	uint32_t stop_target, start_target;
 	unsigned critical;
+	long long deadline;
 	esp_err_t error;
 
 	critical = espwifi_os_critical_enter();
-	target = stop_events + 1;
+	stop_target = stop_events + 1;
 	espwifi_os_critical_exit(critical);
+	deadline = espwifi_os_time_us() + 2000000;
 	error = esp_wifi_stop();
 	if (error != ESP_OK)
 		return error;
@@ -1739,14 +1748,35 @@ espwifi_disconnect(void)
 		bool stopped;
 
 		critical = espwifi_os_critical_enter();
-		stopped = stop_events == target;
+		stopped = stop_events == stop_target;
 		espwifi_os_critical_exit(critical);
 		if (stopped)
 			break;
-		if (!espwifi_os_sem_take(link_change, 100))
+		if (espwifi_os_time_us() >= deadline)
 			return -1;
+		(void)espwifi_os_sem_take(link_change, 10);
 	}
-	return esp_wifi_start();
+	critical = espwifi_os_critical_enter();
+	start_target = start_events + 1;
+	espwifi_os_critical_exit(critical);
+	error = esp_wifi_start();
+	if (error != ESP_OK)
+		return error;
+	deadline = espwifi_os_time_us() + 2000000;
+	/* A STOP tears down the vendor STA control block. Do not release the
+	 * adapter's join fence until STA_START arrives after this call. */
+	for (;;) {
+		bool started;
+
+		critical = espwifi_os_critical_enter();
+		started = start_events == start_target;
+		espwifi_os_critical_exit(critical);
+		if (started)
+			return 0;
+		if (espwifi_os_time_us() >= deadline)
+			return -1;
+		(void)espwifi_os_sem_take(link_change, 10);
+	}
 }
 
 int

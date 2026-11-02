@@ -16,6 +16,7 @@ a = p.parse_args()
 root = Path(__file__).resolve().parents[1]
 source = (root / 'espressif/esp_wifi_if.c').read_text()
 bridge_source = (root / 'espressif/wifi/fullmac_wpa2.c').read_text()
+glue_source = (root / 'espressif/wifi/glue.c').read_text()
 
 def function(name, result):
     match = re.search(r'\n(?:static )?' + result + r'\n' + name +
@@ -26,6 +27,12 @@ def function(name, result):
 def bridge_function(name, result):
     match = re.search(r'\n(?:static )?' + result + r'\n' + name +
                       r'\(.*?\)\n\{.*?\n\}', bridge_source, re.S)
+    assert match, name
+    return match.group()
+
+def glue_function(name, result):
+    match = re.search(r'\n(?:static )?' + result + r'\n' + name +
+                      r'\(.*?\)\n\{.*?\n\}', glue_source, re.S)
     assert match, name
     return match.group()
 
@@ -55,6 +62,12 @@ enum ieee80211_state { IEEE80211_S_INIT, IEEE80211_S_SCAN, IEEE80211_S_AUTH,
 #define LINK_STATE_DOWN 0
 #define ETHER_ADDR_LEN 6
 #define ESPWIFI_WAIT_FOREVER 0
+#define WLAN_FC_STYPE_ASSOC_RESP 1
+#define WLAN_FC_STYPE_REASSOC_RESP 3
+#define WLAN_FC_STYPE_AUTH 11
+#define WLAN_FC_STYPE_ACTION 13
+typedef int esp_err_t;
+#define ESP_OK 0
 struct ieee80211_node { uint8_t ni_bssid[6],ni_essid[32]; unsigned ni_esslen; };
 struct ifnet { void *if_softc; int if_flags; };
 struct ieee80211com { struct ifnet *ic_ifp; struct ieee80211_node *ic_bss;
@@ -71,6 +84,13 @@ struct espwifi_softc { struct { struct ifnet ec_if; } sc_ec; struct ieee80211com
  int (*sc_newstate)(struct ieee80211com *,enum ieee80211_state,int); };
 static struct espwifi_softc espwifi_sc;
 static int locked,signals,link_changes,disconnects,connects,fail_disconnect,fail_connect;
+static uint32_t stop_events,start_events;
+static bool pending_stop,pending_start,defer_stop,defer_start,stale_signal;
+static bool drop_start;
+static unsigned noise_wakes,delay_stop,delay_start;
+static uint64_t fake_time_us;
+static int stop_calls,start_calls,sem_waits;
+static void *link_change=(void *)1;
 static unsigned lock_count,barrier_on_lock;
 static bool invalidate_link_generation;
 static bool stop_during_newstate;
@@ -91,10 +111,41 @@ static unsigned atomic_load_acquire(unsigned *p) { return *p; }
 static void if_link_state_change(struct ifnet *p,int state) { (void)p;link_changes+=state?1:-1; }
 void espwifi_if_radio_started(void);
 void espwifi_if_radio_stopped(void);
-static int espwifi_disconnect(void) { disconnects++;
+static int espwifi_os_critical_enter(void) { return 0; }
+static void espwifi_os_critical_exit(int s) { (void)s; }
+static int espwifi_os_sem_take(void *p,unsigned ticks);
+static int esp_wifi_stop(void) {
+ stop_calls++;disconnects++;
  if (fail_disconnect) return fail_disconnect;
- espwifi_if_radio_stopped();
- espwifi_if_radio_started();return 0; }
+ if (defer_stop) pending_stop=true;
+ else { espwifi_if_radio_stopped();stop_events++; }
+ return 0;
+}
+static int esp_wifi_start(void) {
+ start_calls++;
+ assert(espwifi_sc.sc_join_stopped && !espwifi_sc.sc_join_active &&
+     !espwifi_sc.sc_joined && !espwifi_sc.sc_radio_ready);
+ if (fail_connect) return fail_connect;
+	if (defer_start) {
+		if (!drop_start) pending_start=true;
+	} else { espwifi_if_radio_started();start_events++; }
+ return 0;
+}
+static int espwifi_os_sem_take(void *p,unsigned ticks) {
+ (void)p;(void)ticks;sem_waits++;fake_time_us+=100000;
+ if (noise_wakes != 0) { noise_wakes--;return 1; }
+ if (stale_signal) { stale_signal=false;return 1; }
+	if (pending_stop) {
+		if (delay_stop != 0) { delay_stop--;return 0; }
+		pending_stop=false;espwifi_if_radio_stopped();stop_events++;return 1;
+	}
+	if (pending_start) {
+		if (delay_start != 0) { delay_start--;return 0; }
+		pending_start=false;espwifi_if_radio_started();start_events++;return 1;
+	}
+ return 0;
+}
+static long long espwifi_os_time_us(void) { return (long long)fake_time_us; }
 static int espwifi_ext_connect(const unsigned char *ssid,unsigned slen,
  const unsigned char *bssid,const unsigned char *rsn,unsigned rlen) {
  assert(slen==4 && memcmp(ssid,"test",4)==0 && bssid[0]==2 && rlen==22 && rsn[0]==48);
@@ -111,7 +162,7 @@ static void ieee80211_begin_scan(struct ieee80211com *,int);
 static void explicit_memset(void *,int,size_t);
 static int printf(const char *,...);
 static int ieee80211_new_state(struct ieee80211com *ic,enum ieee80211_state state,int arg);
-''' + function('espwifi_if_radio_started','void') + function('espwifi_if_radio_stopped','void') + function('espwifi_if_newstate','int') + function('espwifi_if_join_control','void') + function('espwifi_if_link_event','void') + function('espwifi_if_link','void') + function('espwifi_if_assoc_response','int') + function('espwifi_if_wpa_in_4way','bool') + bridge_function('espwifi_wpa2_sta_rx_mgmt','int') + r'''
+''' + function('espwifi_if_radio_started','void') + function('espwifi_if_radio_stopped','void') + glue_function('espwifi_disconnect','int') + function('espwifi_if_newstate','int') + function('espwifi_if_join_control','void') + function('espwifi_if_link_event','void') + function('espwifi_if_link','void') + function('espwifi_if_assoc_response','int') + function('espwifi_if_wpa_in_4way','bool') + bridge_function('espwifi_wpa2_sta_rx_mgmt','int') + r'''
 ''' + function('espwifi_if_set_port','int') + r'''
 static void ieee80211_begin_scan(struct ieee80211com *ic,int reset) { (void)reset;ic->ic_flags|=IEEE80211_F_SCAN; }
 static void ieee80211_sta_leave(struct ieee80211com *ic,struct ieee80211_node *ni) { (void)ic;(void)ni; }
@@ -177,20 +228,29 @@ int main(void) {
  espwifi_if_link(1,bss.ni_bssid); /* stale same-BSSID event before STOP */
  assert(!sc->sc_joined && !sc->sc_link && sc->sc_join_disconnect_pending);
  assert(espwifi_if_newstate(&sc->sc_ic,IEEE80211_S_AUTH,0)==EBUSY);
+	defer_stop=true;defer_start=true;stale_signal=true;
  espwifi_if_join_control(sc);
 	assert(disconnects==1);
+	assert(stop_calls==1 && start_calls==1 && sem_waits>=3);
 	assert(!sc->sc_join_disconnect_pending);
 	assert(sc->sc_ic.ic_state==IEEE80211_S_SCAN);
  assert(espwifi_wpa2_sta_rx_mgmt(1,assoc,sizeof(assoc),bss.ni_bssid,0,1,0)==-1);
  espwifi_if_link(1,bss.ni_bssid); /* late same-BSSID callback after STOP */
 	assert(!sc->sc_joined && !sc->sc_link && !sc->sc_port_authorized);
 
- /* STOP fences reconnect even after a later START callback. */
- assert(sc->sc_join_stopped && !sc->sc_sta_started && !sc->sc_radio_ready);
- espwifi_if_radio_started();
- assert(!sc->sc_sta_started);
- assert(espwifi_if_newstate(&sc->sc_ic,IEEE80211_S_AUTH,0)==EOPNOTSUPP);
- assert(sc->sc_join_active==0 && connects==1);
+ /* Only the new START event releases the fence; stale wakeups do not. */
+ assert(!sc->sc_join_stopped && sc->sc_sta_started && sc->sc_radio_ready);
+ assert(stop_events==1 && start_events==1);
+ assert(espwifi_if_newstate(&sc->sc_ic,IEEE80211_S_AUTH,0)==0);
+ uint64_t second=sc->sc_join_active;
+ assert(second!=0 && second!=first);
+ espwifi_if_join_control(sc);
+ assert(connects==2 && sc->sc_join_active==second && !sc->sc_join_pending);
+	/* A stop and start arriving after multiple wait timeouts still complete. */
+	defer_stop=true;defer_start=true;delay_stop=12;delay_start=12;
+	sem_waits=0;
+	assert(espwifi_disconnect()==0 && stop_events==2 && start_events==2 &&
+	    sem_waits>=24 && !sc->sc_join_stopped && sc->sc_radio_ready);
 
 	/* An uncorrelated disconnect must fence the live operation too. */
 	sc->sc_join_stopped=false;sc->sc_sta_started=true;sc->sc_radio_ready=true;
@@ -215,6 +275,10 @@ int main(void) {
 	assert(!stop_during_newstate && sc->sc_join_stopped &&
 	    !sc->sc_join_active && !sc->sc_joined && !sc->sc_link &&
 	    !sc->sc_port_authorized);
+	/* Repeated unrelated semaphore wakes cannot extend either event deadline. */
+	defer_stop=false;defer_start=true;drop_start=true;noise_wakes=30;
+	sem_waits=0;
+	assert(espwifi_disconnect()==-1 && start_calls==3 && sem_waits<=20);
  return 0;
 }
 '''
