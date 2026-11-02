@@ -17,6 +17,11 @@ MLINKS=	grep.1 egrep.1	\
 	grep.1 zegrep.1	\
 	grep.1 zfgrep.1
 
+.if ${EMBER_GREP_UNCOMPRESSED_ONLY:Uno} == "yes"
+CPPFLAGS+=	-DWITHOUT_GZIP -DWITHOUT_BZ2
+HOST_CPPFLAGS+=	-DWITHOUT_GZIP -DWITHOUT_BZ2
+.endif
+
 .if empty(HOST_CPPFLAGS:M*-DWITHOUT_GZIP*)
 LDADD+=	-lz
 DPADD+=	${LIBZ}
