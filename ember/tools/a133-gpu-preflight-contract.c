@@ -60,7 +60,7 @@ static struct fdtbus_regulator regulator;
 static const char *bad_prop;
 static int bad_node, bad_stage, resources, mapped, opened, frees, hardware;
 static int sequence[5], fail_step;
-static int reads, allocations, boot_calls, reserve_form;
+static int reads, allocations, boot_calls, reserve_form, voltage_sets;
 static uint64_t bvnc_value;
 static uint32_t dfs_value;
 static struct pvr_fwmem memory;
@@ -100,7 +100,11 @@ static void fdtbus_reset_put(struct fdtbus_reset *r) { (void)r;resources--; }
 static struct fdtbus_regulator *fdtbus_regulator_acquire(int n, const char *s) { (void)n;(void)s;resources++;return &regulator; }
 static void fdtbus_regulator_release(struct fdtbus_regulator *r) { (void)r;resources--; }
 static int fdtbus_regulator_is_enabled(struct fdtbus_regulator *r, bool *b) { (void)r;if (bad_stage == 12) return EIO; *b = bad_stage != 4;return 0; }
-static int fdtbus_regulator_get_voltage(struct fdtbus_regulator *r, u_int *u) { (void)r;if (bad_stage == 13) return EIO; *u = bad_stage == 5 ? 900000 : 950000;return 0; }
+static int fdtbus_regulator_get_voltage(struct fdtbus_regulator *r, u_int *u) { (void)r;if (bad_stage == 13) return EIO; *u = bad_stage == 5 ? 900000 : (bad_stage == 14 && voltage_sets == 0) ? 940000 : 950000;return 0; }
+static int __attribute__((unused)) fdtbus_regulator_set_voltage(struct fdtbus_regulator *r, u_int lo, u_int hi) {
+    (void)r; CHECK(lo == 950000 && hi == 950000 && hardware == 0); voltage_sets++;
+    return bad_stage == 15 ? EIO : bad_stage == 16 ? ETIMEDOUT : bad_stage == 17 ? EOPNOTSUPP : 0;
+}
 static int bus_space_map(void *t, bus_addr_t a, bus_size_t z, int flags, bus_space_handle_t *h) {
     (void)t;(void)a;(void)z;(void)flags;
     if (bad_stage == 6 && mapped == 1) return EIO;
@@ -227,6 +231,18 @@ int main(void) {
     CHECK(a133_gpu_preflight(&sc) == 0);
     a133_gpu_preflight_release(&sc);
     CHECK(resources==0 && mapped==0 && opened==0);
+    for (bad_stage=15;bad_stage<=17;bad_stage++) {
+        int expected = bad_stage == 15 ? EIO : bad_stage == 16 ? ETIMEDOUT : EOPNOTSUPP;
+        voltage_sets=0; memset(&sc,0,sizeof(sc)); sc.phandle=3; sc.dmat=&sc;
+        CHECK(a133_gpu_preflight(&sc) == 0);
+        CHECK(a133_gpu_activate(&sc) == expected && voltage_sets == 1 && hardware == 0);
+        CHECK(sc.diag.stage == A133_GPU_STAGE_SET_VOLTAGE && resources == 5 && mapped == 2);
+        a133_gpu_preflight_release(&sc); voltage_sets=0;
+    }
+    bad_stage=14; voltage_sets=0; memset(&sc,0,sizeof(sc)); sc.phandle=3; sc.dmat=&sc;
+    CHECK(a133_gpu_preflight(&sc) == 0 && sc.diag.microvolts == 940000);
+    CHECK(a133_gpu_activate(&sc) == 0 && voltage_sets == 1 && hardware == 5);
+    hardware=0; a133_gpu_preflight_release(&sc); bad_stage=0; voltage_sets=0;
     reserve_form=0;memset(&sc,0,sizeof(sc));sc.phandle=3;sc.dmat=&sc;
     CHECK(a133_gpu_preflight(&sc) == 0);
     CHECK(resources==5 && mapped==2 && opened==0 && sc.firmware != NULL);

@@ -639,6 +639,8 @@ sun50i_a133_gpu_fdt_fixup(void *fdt)
 	static const char rccu[] = SOC "/clock-controller@07010000";
 	static const char marker[] = "ember,a133-vendor-ppu";
 	static const char vgpu[] = SOC "/s_twi@0x07081400/pmu@34/virtual-dcdc4";
+	static const char pmu[] = SOC "/s_twi@0x07081400/pmu@34";
+	static const char rail[] = SOC "/s_twi@0x07081400/pmu@34/regulators/dcdc4";
 	fdt32_t cells[8], cell;
 	uint32_t domain, gic, ccu, hosc, losc, iosc, syscon, rclock, legacy;
 	uint32_t pll_gpu, clk_gpu, supply;
@@ -699,8 +701,11 @@ sun50i_a133_gpu_fdt_fixup(void *fdt)
 		return -FDT_ERR_BADVALUE;
 	supply = fdt32_to_cpu(*(const fdt32_t *)value);
 	node = fdt_node_offset_by_phandle(fdt, supply);
-	if (node < 0 || a133_phandle_node(fdt, node) != supply ||
+	if (node < 0 || node != fdt_path_offset(fdt, rail) ||
+	    a133_phandle_node(fdt, node) != supply ||
 	    !a133_gpu_node_active(fdt, node) ||
+	    !a133_value(fdt, pmu, "compatible", "x-powers,axp803",
+	    sizeof("x-powers,axp803")) || !a133_cell(fdt, pmu, "reg", 0x34) ||
 	    (value = fdt_getprop(fdt, node, "regulator-name", &len)) == NULL ||
 	    len != sizeof("axp803-dcdc4") ||
 	    memcmp(value, "axp803-dcdc4", sizeof("axp803-dcdc4")) != 0 ||

@@ -19,9 +19,15 @@ Other forms fail before allocation. `bus_dmamem` owns the admitted RAM; the
 common owner verifies direct, non-bouncing 36-bit DMA and excludes both MMIO
 resources and the MIPS wrapper window.
 
-The existing rail must already be enabled at 950000 microvolts; this driver
-never changes its voltage. Regulator, clock and power-domain APIs do not supply
-an exclusive lease. This controlled trial requires one native GPU owner, an
+The AXP803 DCDC4 rail must already be enabled with an initial programmed
+setpoint of 940000 or 950000 microvolts. After preflight and before any GPU
+clock or power transition, the explicit request asks the native regulator
+provider to prepare exactly 950000 microvolts. The provider verifies the AXP803
+chip ID and enabled DVM before writing, then requires DVM completion and the
+exact selector readback with a bounded timeout. A failed or uncertain change
+retains resources and prevents GPU activation. This is a fixed initial OPP,
+not dynamic voltage scaling; a programmed selector is not an ADC measurement.
+Regulator, clock and power-domain APIs do not supply an exclusive lease. This controlled trial requires one native GPU owner, an
 FDT inventory excluding other active consumers of these resources and the GPU
 rail, and no parallel direct MMIO or I2C agent. Fresh reads do not replace that
 ownership condition. The explicit adapter disables only the exact vendor
@@ -61,6 +67,7 @@ the request. `detail_error` preserves the error from a failed power or regulator
 query when the public result is EBUSY. The stage identifies the operation
 entered, not necessarily one that completed. Numeric stage values are defined
 in `sun50i_a133_gpu_owner.h`; 3 is preflight regulator enabled, 4 is preflight
-voltage, 18 is PPU enable, 19 is its readback, and 35 is complete. Failed
+voltage, 36 is fixed-voltage preparation, 37 is its readback, 18 is PPU enable,
+19 is its readback, and 35 is complete. Failed
 preflight may be requested again; once activation is attempted the owner keeps
 its one-shot state and resources. Reading diagnostics never retries the boot.

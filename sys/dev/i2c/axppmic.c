@@ -1,4 +1,5 @@
 /* $NetBSD: axppmic.c,v 1.41 2025/01/05 19:24:04 skrll Exp $ */
+/* Origin: NetBSD axppmic; EmberBSD bounded AXP803 DCDC4 preparation. */
 
 /*-
  * Copyright (c) 2014-2018 Jared McNeill <jmcneill@invisible.ca>
@@ -37,6 +38,7 @@ __KERNEL_RCSID(0, "$NetBSD: axppmic.c,v 1.41 2025/01/05 19:24:04 skrll Exp $");
 #include <sys/bus.h>
 #include <sys/kmem.h>
 #include <sys/workqueue.h>
+#include <sys/time.h>
 
 #include <dev/i2c/i2cvar.h>
 
@@ -588,6 +590,62 @@ static int
 axppmic_write(i2c_tag_t tag, i2c_addr_t addr, uint8_t reg, uint8_t val, int flags)
 {
 	return iic_smbus_write_byte(tag, addr, reg, val, flags);
+}
+
+/* Fixed AXP803 GPU rail: qualify DVM before writing and bound completion. */
+static int
+axppmic_axp803_dcdc4_950(i2c_tag_t tag, i2c_addr_t addr)
+{
+	struct timespec deadline, now;
+	uint8_t id, dvm, value;
+	int error;
+
+	error = iic_acquire_bus(tag, 0);
+	if (error != 0)
+		return error;
+	error = axppmic_read(tag, addr, 0x03, &id, 0);
+	if (error == 0 && (id & 0xcf) != 0x41)
+		error = EOPNOTSUPP;
+	if (error == 0)
+		error = axppmic_read(tag, addr, 0x27, &dvm, 0);
+	if (error == 0 && (dvm & 0x10) == 0)
+		error = EOPNOTSUPP;
+	if (error == 0)
+		error = axppmic_read(tag, addr, 0x23, &value, 0);
+	if (error == 0)
+		error = axppmic_write(tag, addr, 0x23, (value & 0x80) | 45, 0);
+	iic_release_bus(tag, 0);
+	if (error != 0)
+		return error;
+
+	getnanouptime(&deadline);
+	deadline.tv_nsec += 100000000;
+	if (deadline.tv_nsec >= 1000000000) {
+		deadline.tv_sec++;
+		deadline.tv_nsec -= 1000000000;
+	}
+	delay(100);
+	for (unsigned i = 0; i < 1000; i++) {
+		getnanouptime(&now);
+		if (now.tv_sec > deadline.tv_sec || (now.tv_sec == deadline.tv_sec &&
+		    now.tv_nsec >= deadline.tv_nsec))
+			return ETIMEDOUT;
+		error = iic_acquire_bus(tag, 0);
+		if (error != 0)
+			return error;
+		error = axppmic_read(tag, addr, 0x23, &value, 0);
+		iic_release_bus(tag, 0);
+		if (error != 0)
+			return error;
+		getnanouptime(&now);
+		if (now.tv_sec > deadline.tv_sec || (now.tv_sec == deadline.tv_sec &&
+		    now.tv_nsec >= deadline.tv_nsec))
+			return ETIMEDOUT;
+		if ((value & 0x80) != 0)
+			return (value & 0x7f) == 45 ? 0 : EIO;
+		delay(100);
+	}
+	return ETIMEDOUT;
 }
 
 static int
@@ -1368,7 +1426,11 @@ axpreg_set_voltage(device_t dev, u_int min_uvol, u_int max_uvol)
 {
 	struct axpreg_softc *sc = device_private(dev);
 	const struct axppmic_ctrl *c = sc->sc_ctrl;
+	const struct axppmic_softc *parent = device_private(device_parent(dev));
 
+	if (parent->sc_conf == &axp803_config && strcmp(c->c_name, "dcdc4") == 0 &&
+	    min_uvol == 950000 && max_uvol == 950000)
+		return axppmic_axp803_dcdc4_950(sc->sc_i2c, sc->sc_addr);
 	return axppmic_set_voltage(sc->sc_i2c, sc->sc_addr, c,
 	    min_uvol / 1000, max_uvol / 1000);
 }

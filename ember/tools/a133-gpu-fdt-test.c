@@ -70,16 +70,21 @@ gpu_fixture(void *fdt)
 	assert(fdt_setprop(fdt, node, "interrupts", cells, 12) == 0);
 	assert(fdt_setprop_u32(fdt, node, "clocks", 266) == 0);
 	assert(fdt_setprop_string(fdt, node, "clock-names", "ppu") == 0);
-	node = fdt_add_subnode(fdt, 0, "gpu-regulator");
+	node = fdt_add_subnode(fdt, fdt_path_offset(fdt,
+	    "/soc@03000000/s_twi@0x07081400"), "pmu@34");
+	assert(node >= 0);
+	assert(fdt_setprop_string(fdt, node, "compatible", "x-powers,axp803") == 0);
+	assert(fdt_setprop_u32(fdt, node, "reg", 0x34) == 0);
+	node = fdt_add_subnode(fdt, node, "regulators");
+	assert(node >= 0);
+	node = fdt_add_subnode(fdt, node, "dcdc4");
 	assert(node >= 0);
 	assert(fdt_setprop_u32(fdt, node, "phandle", 275) == 0);
 	assert(fdt_setprop_string(fdt, node, "regulator-name", "axp803-dcdc4") == 0);
 	assert(fdt_setprop(fdt, node, "regulator-always-on", NULL, 0) == 0);
 	assert(fdt_setprop(fdt, node, "regulator-boot-on", NULL, 0) == 0);
 	node = fdt_add_subnode(fdt, fdt_path_offset(fdt,
-	    "/soc@03000000/s_twi@0x07081400"), "pmu@34");
-	assert(node >= 0);
-	node = fdt_add_subnode(fdt, node, "virtual-dcdc4");
+	    "/soc@03000000/s_twi@0x07081400/pmu@34"), "virtual-dcdc4");
 	assert(node >= 0);
 	assert(fdt_setprop_string(fdt, node, "compatible", "xpower-vregulator,dcdc4") == 0);
 	assert(fdt_setprop_u32(fdt, node, "dcdc4-supply", 275) == 0);
@@ -252,6 +257,18 @@ main(void)
 		else
 			assert(fdt_setprop_u32(fdt, fdt_path_offset(fdt, "/clocks/gpu"),
 			    "#clock-cells", 1) == 0);
+		memcpy(before, fdt, sizeof(fdt));
+		assert(sun50i_a133_gpu_fdt_fixup(fdt) == -FDT_ERR_BADVALUE);
+		assert(memcmp(before, fdt, sizeof(fdt)) == 0);
+	}
+	/* A forged supply parent must not reach an unguarded regulator setter. */
+	for (unsigned i = 0; i < 2; i++) {
+		gpu_fixture(fdt);
+		node = fdt_path_offset(fdt, "/soc@03000000/s_twi@0x07081400/pmu@34");
+		if (i == 0)
+			assert(fdt_setprop_string(fdt, node, "compatible", "unknown,pmic") == 0);
+		else
+			assert(fdt_setprop_u32(fdt, node, "reg", 0x35) == 0);
 		memcpy(before, fdt, sizeof(fdt));
 		assert(sun50i_a133_gpu_fdt_fixup(fdt) == -FDT_ERR_BADVALUE);
 		assert(memcmp(before, fdt, sizeof(fdt)) == 0);

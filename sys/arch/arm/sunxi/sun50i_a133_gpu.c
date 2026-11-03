@@ -214,7 +214,7 @@ a133_gpu_preflight(void *cookie)
 		goto fail;
 	}
 	sc->diag.microvolts = microvolts;
-	if (microvolts != 950000) {
+	if (microvolts != 940000 && microvolts != 950000) {
 		error = EBUSY;
 		goto fail;
 	}
@@ -281,6 +281,21 @@ a133_gpu_activate(void *cookie)
 	bool enabled;
 	u_int uv;
 	int error;
+
+	/* A failed rail write can be uncertain; the owner already retains resources. */
+	sc->diag.stage = A133_GPU_STAGE_SET_VOLTAGE;
+	sc->diag.detail_error = 0;
+	error = fdtbus_regulator_set_voltage(sc->supply, 950000, 950000);
+	if (error != 0)
+		return error;
+	sc->diag.stage = A133_GPU_STAGE_VOLTAGE_READBACK;
+	error = fdtbus_regulator_get_voltage(sc->supply, &uv);
+	sc->diag.detail_error = error;
+	if (error != 0)
+		return error;
+	sc->diag.microvolts = uv;
+	if (uv != 950000)
+		return EIO;
 
 	/* All acquired resources remain retained even on an uncertain failure. */
 	sc->diag.stage = A133_GPU_STAGE_PLL_ENABLE;
