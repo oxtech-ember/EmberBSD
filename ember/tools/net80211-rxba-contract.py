@@ -237,9 +237,9 @@ if all(re.search(r'^'+name+r'\(',net,re.M) for name,_ in names):
    raise ValueError('Missing capability-guarded native RXBA '+name)
   parts.append('static void unit_native_'+name+'(struct rtw88_net *net) {\n'
                'const struct rtw88_caps caps=net->caps;\n'+guarded.group()+'\n}\n')
- for name,result in [('rtw88_net_stop','static void'),('rtw88_net_detach','void')]:
+ for name,result in [('rtw88_net_stop','static void'),('rtw88_net_detach','int')]:
   parts.append(result+'\n'+re.search(r'^'+name+r'\(.*?^}',net,re.M|re.S).group()+'\n')
- parts.append('static void unit_native_detach(struct rtw88_net *net) { rtw88_net_detach(net); }\n')
+ parts.append('static void unit_native_detach(struct rtw88_net *net) { CHECK(rtw88_net_detach(net) == 0); }\n')
 else:
  # Causal baseline: the legacy native attach has no BA provider or lifetime owner.
  parts.append('static void unit_native_attach(struct rtw88_net *net) { (void)net; }\nstatic void unit_native_detach(struct rtw88_net *net) { (void)net; }\nstatic void rtw88_net_rxba_softintr(struct rtw88_net *net) { (void)net; }\n')

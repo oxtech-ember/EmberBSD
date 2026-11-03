@@ -23,7 +23,7 @@ const struct ieee80211_channel ieee80211_channel_anyc={0};
 #define IFF_OACTIVE 0x400
 struct callout_model { void (*fn)(void *);void *arg;int pending,initialized;unsigned ticks; };
 typedef struct callout_model callout_t;
-struct rtw88_softc { int sc_linked;struct { int active,configured; } sc_ra;struct rtw88_phy_state sc_phy;void *sc_rx_frame,*sc_tx_complete,*sc_net_cookie;uint32_t sc_generation;struct { unsigned queued; } sc_txq[RTW88_NTXQ]; };
+struct rtw88_softc { void *sc_executor;int sc_linked;struct { int active,configured; } sc_ra;struct rtw88_phy_state sc_phy;void *sc_rx_frame,*sc_tx_complete,*sc_net_cookie;uint32_t sc_generation;struct { unsigned queued; } sc_txq[RTW88_NTXQ]; };
 static uint64_t native_rx_sequence;
 static void
 native_rx_info(struct rtw88_rx_info *info, const struct rtw88_softc *core,
@@ -53,6 +53,9 @@ struct rtw88_net {
  volatile uint64_t ht20_snapshot;
  volatile uint32_t ht20_generation;
  struct rtw88_net_policy policy;
+ struct { struct { uint32_t generation; uint64_t epoch,key_epoch; } id; int closed; } async;
+ struct { uint32_t generation; unsigned outstanding; } hw;
+ unsigned key_depth; int key_error;
  callout_t rxba_callout;
  uint64_t rxba_token,rxba_deadline,rxba_due;
  int *lock;void *softint;
@@ -94,6 +97,17 @@ static void kmem_free(void *p,size_t n)
  CHECK(net->ic.ic_bss->ni_rxba.bytes==0 && net->ic.ic_bss->ni_ucastkey.wk_cipher==&ieee80211_cipher_none);
  native_released++;
 }
+/* This fixture executes only the synchronous PCI path. Async contracts run
+ * the real executor/admission/detach code independently; crossing this seam
+ * is a test failure, never a modeled successful executor operation. */
+static int rtw88_net_newstate_async(struct ieee80211com *ic,enum ieee80211_state state,int arg)
+{ (void)ic;(void)state;(void)arg;abort(); }
+static void rtw88_net_stop_async(struct ifnet *ifp,int disable)
+{ (void)ifp;(void)disable;abort(); }
+static int rtw88_net_detach_async(struct rtw88_net *net)
+{ (void)net;abort(); }
+#define KERNEL_LOCK(n,p) abort()
+#define KERNEL_UNLOCK_ONE(p) abort()
 static void rtw88_net_stop(struct ifnet *,int);
 static unsigned getticks(void) { return unit_now; }
 static void rtw88_net_start(struct ifnet *ifp) { (void)ifp;assert(!native_lock); }

@@ -150,3 +150,6 @@ if csa_users and not (
     raise SystemExit("rtw88 workflow runs CSA without clang or CSA: "
                      + ", ".join(csa_users))
 print(f"rtw88 CSA: {len(csa_users)} analyzer runners have clang")
+
+# Execute both supported interfaces with a recording compiler and runner.
+subprocess.run([sys.executable, str(tools / "rtw88-runner-interface-contract.py")], check=True)

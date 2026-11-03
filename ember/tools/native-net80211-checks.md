@@ -26,6 +26,13 @@ passing their documented arguments after `--`. Bindings and log paths must be
 new for each run. Tests execute host fixtures; they do not establish target or
 hardware behavior.
 
+The RXBA native fixture exercises the real legacy PCI soft interrupt and
+detach paths with `sc_executor == NULL`; entering its async-only linkage seams
+is a test failure. Async RX admission and key-epoch delivery, executor drain,
+and asynchronous detach use their separate signal-queue, key-epoch and
+executor contracts. These deterministic host models do not prove hardware or
+concurrent scheduler behavior.
+
 GCC analyzer checks are separate diagnostics. Select an installed native GCC
 prefix explicitly with `--compiler-family gcc`; the `*-analysis.sh` entry
 points retain their `-fanalyzer` checks. For a diagnostic selected by an

@@ -290,6 +290,7 @@ int main(void)
  txsc.sc_net=&detach;txsc.sc_executor=(void *)&txsc;fake_owner=0;
  rtw88_async_init(&detach.async,&tid);detach.key_epoch=2;detach.policy.epoch=6;
  assert(rtw88_net_detach_async(&detach)==EIO);
+ assert(detach.policy.dying && !detach.policy.accepting);
  assert(txsc.sc_net==&detach && !detach.stack_detached && !destroyed && !freed);
  drain_error=0;assert(rtw88_net_detach_async(&detach)==0);
  assert(txsc.sc_net==NULL && detach.stack_detached && destroyed==1 && freed==1);

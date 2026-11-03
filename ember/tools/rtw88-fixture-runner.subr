@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Shared selection for native Wi-Fi source contract runners.
+# Source after set -eu; accepts either no arguments or ROOT OUT.
+case $# in
+0)
+    root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+    out=$(mktemp -d "${TMPDIR:-/tmp}/rtw88-fixture.XXXXXXXX")
+    trap 'rm -rf "$out"' EXIT HUP INT TERM
+    ;;
+2) root=$1; out=$2 ;;
+*) echo "usage: $0 [ROOT OUT]" >&2; exit 2 ;;
+esac
+HOST_CC=${HOST_CC:-${CC:-}}
+: "${HOST_CC:?select the host compiler with HOST_CC or CC}"
+HOST_PYTHON=${HOST_PYTHON:-${PYTHON:-}}
+run_test() {
+    if [ -n "${TEST_RUNNER:-}" ]; then
+        "$TEST_RUNNER" "$@"
+    else
+        "$@"
+    fi
+}
