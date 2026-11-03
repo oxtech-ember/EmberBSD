@@ -36,6 +36,7 @@ struct clk { int id; };
 struct fdtbus_reset { int unused; };
 struct fdtbus_regulator { int unused; };
 struct a133_gpu_softc {
+	struct a133_gpu_diagnostics diag;
     int phandle; void *dmat, *bst;
     bus_space_handle_t bsh, dfs_bsh;
     bus_addr_t address, dfs_address;
@@ -98,8 +99,8 @@ static struct fdtbus_reset *fdtbus_reset_get(int n, const char *s) { (void)n;(vo
 static void fdtbus_reset_put(struct fdtbus_reset *r) { (void)r;resources--; }
 static struct fdtbus_regulator *fdtbus_regulator_acquire(int n, const char *s) { (void)n;(void)s;resources++;return &regulator; }
 static void fdtbus_regulator_release(struct fdtbus_regulator *r) { (void)r;resources--; }
-static int fdtbus_regulator_is_enabled(struct fdtbus_regulator *r, bool *b) { (void)r;*b = bad_stage != 4;return 0; }
-static int fdtbus_regulator_get_voltage(struct fdtbus_regulator *r, u_int *u) { (void)r;*u = bad_stage == 5 ? 900000 : 950000;return 0; }
+static int fdtbus_regulator_is_enabled(struct fdtbus_regulator *r, bool *b) { (void)r;if (bad_stage == 12) return EIO; *b = bad_stage != 4;return 0; }
+static int fdtbus_regulator_get_voltage(struct fdtbus_regulator *r, u_int *u) { (void)r;if (bad_stage == 13) return EIO; *u = bad_stage == 5 ? 900000 : 950000;return 0; }
 static int bus_space_map(void *t, bus_addr_t a, bus_size_t z, int flags, bus_space_handle_t *h) {
     (void)t;(void)a;(void)z;(void)flags;
     if (bad_stage == 6 && mapped == 1) return EIO;
@@ -196,6 +197,25 @@ int main(void) {
         CHECK(a133_gpu_preflight(&sc) != 0);
         CHECK(resources==0 && mapped==0 && opened==0 && hardware==0);
     }
+    bad_stage=5; memset(&sc,0,sizeof(sc)); sc.phandle=3; sc.dmat=&sc;
+    CHECK(a133_gpu_preflight(&sc) == EBUSY);
+    CHECK(sc.diag.stage == A133_GPU_STAGE_PREFLIGHT_VOLTAGE);
+    CHECK(sc.diag.regulator_enabled == 1 && sc.diag.microvolts == 900000);
+    CHECK(resources==0 && mapped==0 && hardware==0);
+    for (bad_stage=12;bad_stage<=13;bad_stage++) {
+        memset(&sc,0,sizeof(sc)); sc.phandle=3; sc.dmat=&sc;
+        CHECK(a133_gpu_preflight(&sc) == EBUSY);
+        CHECK(sc.diag.stage == (bad_stage == 12 ? A133_GPU_STAGE_PREFLIGHT_ENABLED :
+            A133_GPU_STAGE_PREFLIGHT_VOLTAGE));
+        CHECK(sc.diag.detail_error == EIO);
+        CHECK(resources==0 && mapped==0 && hardware==0);
+    }
+    sc.diag.microvolts = 900000; sc.diag.regulator_enabled = 1;
+    sc.diag.stage = A133_GPU_STAGE_PREFLIGHT_VOLTAGE;
+    a133_gpu_diag_reset(&sc);
+    CHECK(sc.diag.stage == A133_GPU_STAGE_IDLE && sc.diag.microvolts == -1 &&
+        sc.diag.regulator_enabled == -1 && sc.diag.ppu_enabled == -1 &&
+        sc.diag.core_hz == -1 && sc.diag.pll_hz == -1 && sc.diag.bvnc == -1);
     bad_stage=0;
     for (reserve_form=1;reserve_form<=5;reserve_form++) {
         if (reserve_form == 2) continue;

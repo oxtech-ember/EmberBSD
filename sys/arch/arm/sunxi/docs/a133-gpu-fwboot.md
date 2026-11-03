@@ -50,3 +50,17 @@ resources. Once device exposure is possible, the shared DMA owner also refuses
 destruction. An error can mean the hardware changed state even when a write
 reported failure; no reset/reclaim path is claimed here. Physical testing must
 be coordinated separately with a known rollback path.
+
+The read-only `hw.sun50ia133gpu0` diagnostic sysctls expose the last explicit
+request without reading hardware: `stage`, `last_error`, `detail_error`,
+`attempted`, `retained`, `regulator_enabled`, `microvolts`, `ppu_enabled`,
+`core_hz`, `pll_hz`, `effective_hz`, `dfs`, and `bvnc`. A value of -1 means
+that observation was not made; `pll_hz` is currently always -1 because the
+boot path does not read it. Values are the last successful observations during
+the request. `detail_error` preserves the error from a failed power or regulator
+query when the public result is EBUSY. The stage identifies the operation
+entered, not necessarily one that completed. Numeric stage values are defined
+in `sun50i_a133_gpu_owner.h`; 3 is preflight regulator enabled, 4 is preflight
+voltage, 18 is PPU enable, 19 is its readback, and 35 is complete. Failed
+preflight may be requested again; once activation is attempted the owner keeps
+its one-shot state and resources. Reading diagnostics never retries the boot.

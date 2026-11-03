@@ -27,6 +27,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define A133_GPU_FW_SIZE 118784
 
 struct a133_gpu_softc {
+	struct a133_gpu_diagnostics diag;
 	device_t dev;
 	int phandle;
 	bus_space_tag_t bst;
@@ -46,13 +47,13 @@ struct a133_gpu_softc {
 	struct sysctllog *sysctllog;
 	uint32_t core_hz;
 	uint64_t effective_hz;
-	int last_error;
 	bool mapped, dfs_mapped;
 };
 static struct a133_gpu_softc *a133_gpu_instance;
 static int a133_gpu_match(device_t, cfdata_t, void *);
 static void a133_gpu_attach(device_t, device_t, void *);
 static int a133_gpu_control(SYSCTLFN_ARGS);
+static int a133_gpu_status(SYSCTLFN_ARGS);
 static int a133_gpu_reserved_supported(void);
 static const struct device_compatible_entry a133_gpu_compat[] = {
 	{ .compat = "allwinner,sun50i-a133-powervr" },
@@ -60,6 +61,16 @@ static const struct device_compatible_entry a133_gpu_compat[] = {
 };
 CFATTACH_DECL_NEW(sun50i_a133_gpu, sizeof(struct a133_gpu_softc),
     a133_gpu_match, a133_gpu_attach, NULL, NULL);
+
+static void
+a133_gpu_diag_reset(struct a133_gpu_softc *sc)
+{
+	memset(&sc->diag, 0, sizeof(sc->diag));
+	sc->diag.regulator_enabled = sc->diag.microvolts = -1;
+	sc->diag.ppu_enabled = sc->diag.core_hz = sc->diag.pll_hz = -1;
+	sc->diag.effective_hz = sc->diag.dfs = -1;
+	sc->diag.bvnc = -1;
+}
 
 /* This is only used before activation, while no hardware owner exists. */
 static void
@@ -154,6 +165,8 @@ a133_gpu_preflight(void *cookie)
 	u_int microvolts;
 	off_t length;
 
+	sc->diag.stage = A133_GPU_STAGE_BINDING;
+	sc->diag.detail_error = 0;
 	if (sc->dmat == NULL || OF_getproplen(sc->phandle,
 	    "ember,a133-gpu-exclusive") != 0 || OF_getproplen(sc->phandle,
 	    "netbsd,consumer-managed-power") != 0 ||
@@ -166,6 +179,8 @@ a133_gpu_preflight(void *cookie)
 	    sc->size != A133_GPU_SIZE || sc->dfs_address != A133_GPU_DFS_REG ||
 	    sc->dfs_size != A133_GPU_DFS_SIZE)
 		return EOPNOTSUPP;
+	sc->diag.stage = A133_GPU_STAGE_ACQUIRE;
+	sc->diag.detail_error = 0;
 	sc->core = fdtbus_clock_get(sc->phandle, "core");
 	sc->bus = fdtbus_clock_get(sc->phandle, "bus");
 	sc->reset = fdtbus_reset_get(sc->phandle, "bus");
@@ -177,43 +192,81 @@ a133_gpu_preflight(void *cookie)
 		error = ENXIO;
 		goto fail;
 	}
-	if (fdtbus_regulator_is_enabled(sc->supply, &enabled) != 0 || !enabled ||
-	    fdtbus_regulator_get_voltage(sc->supply, &microvolts) != 0 ||
-	    microvolts != 950000) {
+	sc->diag.stage = A133_GPU_STAGE_PREFLIGHT_ENABLED;
+	sc->diag.detail_error = 0;
+	error = fdtbus_regulator_is_enabled(sc->supply, &enabled);
+	sc->diag.detail_error = error;
+	if (error != 0) {
 		error = EBUSY;
 		goto fail;
 	}
+	sc->diag.regulator_enabled = enabled;
+	if (!enabled) {
+		error = EBUSY;
+		goto fail;
+	}
+	sc->diag.stage = A133_GPU_STAGE_PREFLIGHT_VOLTAGE;
+	sc->diag.detail_error = 0;
+	error = fdtbus_regulator_get_voltage(sc->supply, &microvolts);
+	sc->diag.detail_error = error;
+	if (error != 0) {
+		error = EBUSY;
+		goto fail;
+	}
+	sc->diag.microvolts = microvolts;
+	if (microvolts != 950000) {
+		error = EBUSY;
+		goto fail;
+	}
+	sc->diag.stage = A133_GPU_STAGE_MAP_GPU;
+	sc->diag.detail_error = 0;
 	error = bus_space_map(sc->bst, sc->address, sc->size, 0, &sc->bsh);
 	if (error != 0)
 		goto fail;
 	sc->mapped = true;
+	sc->diag.stage = A133_GPU_STAGE_MAP_DFS;
+	sc->diag.detail_error = 0;
 	error = bus_space_map(sc->bst, sc->dfs_address, sc->dfs_size, 0,
 	    &sc->dfs_bsh);
 	if (error != 0)
 		goto fail;
 	sc->dfs_mapped = true;
+	sc->diag.stage = A133_GPU_STAGE_FW_OPEN;
+	sc->diag.detail_error = 0;
 	error = firmware_open("powervr", "rogue_22.102.54.38_v1.fw", &fh);
 	if (error != 0)
 		goto fail;
+	sc->diag.stage = A133_GPU_STAGE_FW_SIZE;
+	sc->diag.detail_error = 0;
 	length = firmware_get_size(fh);
 	if (length != A133_GPU_FW_SIZE) {
 		error = EINVAL;
 		goto close;
 	}
 	sc->firmware_size = (size_t)length;
+	sc->diag.stage = A133_GPU_STAGE_FW_ALLOC;
+	sc->diag.detail_error = 0;
 	sc->firmware = firmware_malloc(sc->firmware_size);
 	if (sc->firmware == NULL) {
 		error = ENOMEM;
 		goto close;
 	}
+	sc->diag.stage = A133_GPU_STAGE_FW_READ;
+	sc->diag.detail_error = 0;
 	error = firmware_read(fh, 0, sc->firmware, sc->firmware_size);
-	if (error == 0)
+	if (error == 0) {
+		sc->diag.stage = A133_GPU_STAGE_FW_PARSE;
+		sc->diag.detail_error = 0;
 		error = pvr_ge8300_fwinfo_parse(sc->firmware, sc->firmware_size,
 		    PVR_GE8300_BVNC, &info);
+	}
 close:
 	close_error = firmware_close(fh);
-	if (error == 0)
+	if (error == 0) {
+		sc->diag.stage = A133_GPU_STAGE_FW_CLOSE;
+		sc->diag.detail_error = 0;
 		error = close_error;
+	}
 	if (error == 0)
 		return 0;
 fail:
@@ -230,27 +283,68 @@ a133_gpu_activate(void *cookie)
 	int error;
 
 	/* All acquired resources remain retained even on an uncertain failure. */
+	sc->diag.stage = A133_GPU_STAGE_PLL_ENABLE;
+	sc->diag.detail_error = 0;
 	error = clk_enable(sc->pll);
 	if (error != 0)
 		return error;
-	/* Reject an unqualified programmed parent/divider before enabling gates. */
+	sc->diag.stage = A133_GPU_STAGE_CORE_RATE;
+	sc->diag.detail_error = 0;
 	sc->core_hz = clk_get_rate(sc->core);
+	sc->diag.core_hz = sc->core_hz;
 	if (sc->core_hz != 504000000 && sc->core_hz != 252000000)
 		return EOPNOTSUPP;
+	sc->diag.stage = A133_GPU_STAGE_RESET;
+	sc->diag.detail_error = 0;
 	error = fdtbus_reset_deassert(sc->reset);
-	if (error == 0)
-		error = clk_enable(sc->bus);
-	if (error == 0)
-		error = clk_enable(sc->core);
-	if (error == 0)
-		error = fdtbus_powerdomain_enable(sc->phandle);
 	if (error != 0)
 		return error;
-	if (fdtbus_powerdomain_is_enabled_index(sc->phandle, 0, &enabled) != 0 ||
-	    !enabled || fdtbus_regulator_is_enabled(sc->supply, &enabled) != 0 ||
-	    !enabled || fdtbus_regulator_get_voltage(sc->supply, &uv) != 0)
+	sc->diag.stage = A133_GPU_STAGE_BUS_ENABLE;
+	sc->diag.detail_error = 0;
+	error = clk_enable(sc->bus);
+	if (error != 0)
+		return error;
+	sc->diag.stage = A133_GPU_STAGE_CORE_ENABLE;
+	sc->diag.detail_error = 0;
+	error = clk_enable(sc->core);
+	if (error != 0)
+		return error;
+	sc->diag.stage = A133_GPU_STAGE_PPU_ENABLE;
+	sc->diag.detail_error = 0;
+	error = fdtbus_powerdomain_enable(sc->phandle);
+	if (error != 0)
+		return error;
+	sc->diag.stage = A133_GPU_STAGE_PPU_STATE;
+	sc->diag.detail_error = 0;
+	error = fdtbus_powerdomain_is_enabled_index(sc->phandle, 0, &enabled);
+	sc->diag.detail_error = error;
+	if (error != 0)
 		return EBUSY;
-	if (uv != 950000 || clk_get_rate(sc->core) != sc->core_hz)
+	sc->diag.ppu_enabled = enabled;
+	if (!enabled)
+		return EBUSY;
+	sc->diag.stage = A133_GPU_STAGE_POWER_ENABLED;
+	sc->diag.detail_error = 0;
+	error = fdtbus_regulator_is_enabled(sc->supply, &enabled);
+	sc->diag.detail_error = error;
+	if (error != 0)
+		return EBUSY;
+	sc->diag.regulator_enabled = enabled;
+	if (!enabled)
+		return EBUSY;
+	sc->diag.stage = A133_GPU_STAGE_POWER_VOLTAGE;
+	sc->diag.detail_error = 0;
+	error = fdtbus_regulator_get_voltage(sc->supply, &uv);
+	sc->diag.detail_error = error;
+	if (error != 0)
+		return EBUSY;
+	sc->diag.microvolts = uv;
+	if (uv != 950000)
+		return EOPNOTSUPP;
+	sc->diag.stage = A133_GPU_STAGE_POWER_CLOCK;
+	sc->diag.detail_error = 0;
+	sc->diag.core_hz = clk_get_rate(sc->core);
+	if ((uint32_t)sc->diag.core_hz != sc->core_hz)
 		return EOPNOTSUPP;
 	return 0;
 }
@@ -265,21 +359,57 @@ a133_gpu_live(struct a133_gpu_softc *sc, uint64_t *effective)
 	bool enabled;
 	int error;
 
-	if (fdtbus_powerdomain_is_enabled_index(sc->phandle, 0, &enabled) != 0 ||
-	    !enabled || fdtbus_regulator_is_enabled(sc->supply, &enabled) != 0 ||
-	    !enabled || fdtbus_regulator_get_voltage(sc->supply, &uv) != 0 ||
-	    uv != 950000 || clk_get_rate(sc->core) != sc->core_hz)
+	sc->diag.stage = A133_GPU_STAGE_LIVE_PPU;
+	sc->diag.detail_error = 0;
+	error = fdtbus_powerdomain_is_enabled_index(sc->phandle, 0, &enabled);
+	sc->diag.detail_error = error;
+	if (error != 0)
 		return EBUSY;
+	sc->diag.ppu_enabled = enabled;
+	if (!enabled)
+		return EBUSY;
+	sc->diag.stage = A133_GPU_STAGE_LIVE_ENABLED;
+	sc->diag.detail_error = 0;
+	error = fdtbus_regulator_is_enabled(sc->supply, &enabled);
+	sc->diag.detail_error = error;
+	if (error != 0)
+		return EBUSY;
+	sc->diag.regulator_enabled = enabled;
+	if (!enabled)
+		return EBUSY;
+	sc->diag.stage = A133_GPU_STAGE_LIVE_VOLTAGE;
+	sc->diag.detail_error = 0;
+	error = fdtbus_regulator_get_voltage(sc->supply, &uv);
+	sc->diag.detail_error = error;
+	if (error != 0)
+		return EBUSY;
+	sc->diag.microvolts = uv;
+	if (uv != 950000)
+		return EBUSY;
+	sc->diag.stage = A133_GPU_STAGE_LIVE_CLOCK;
+	sc->diag.detail_error = 0;
+	sc->diag.core_hz = clk_get_rate(sc->core);
+	if ((uint32_t)sc->diag.core_hz != sc->core_hz)
+		return EBUSY;
+	sc->diag.stage = A133_GPU_STAGE_BVNC;
+	sc->diag.detail_error = 0;
 	if (bus_space_peek_8(sc->bst, sc->bsh, A133_GPU_BVNC_REG, &bvnc) != 0)
 		return EIO;
+	sc->diag.bvnc = bvnc;
 	if (bvnc != PVR_GE8300_BVNC)
 		return ENODEV;
 	/* The separate DFS word is read only after the PPU reports 3D. */
+	sc->diag.stage = A133_GPU_STAGE_DFS;
+	sc->diag.detail_error = 0;
 	if (bus_space_peek_4(sc->bst, sc->dfs_bsh, 0, &dfs) != 0)
 		return EIO;
+	sc->diag.dfs = dfs;
+	sc->diag.stage = A133_GPU_STAGE_OPP;
+	sc->diag.detail_error = 0;
 	error = a133_gpu_effective_hz(sc->core_hz, dfs, &rate);
 	if (error != 0 || !a133_gpu_opp_valid(rate, uv))
 		return EOPNOTSUPP;
+	sc->diag.effective_hz = rate;
 	*effective = rate;
 	return 0;
 }
@@ -294,6 +424,8 @@ a133_gpu_prepare(void *cookie)
 	error = a133_gpu_live(sc, &sc->effective_hz);
 	if (error != 0)
 		return error;
+	sc->diag.stage = A133_GPU_STAGE_DMA;
+	sc->diag.detail_error = 0;
 	error = pvr_fwmem_prepare(sc->dmat, sc->firmware, sc->firmware_size,
 	    PVR_GE8300_BVNC, PVR_FW_PROFILE_GE8300, sc->address, sc->size,
 	    sc->dfs_address, sc->dfs_size, &sc->memory);
@@ -303,6 +435,8 @@ a133_gpu_prepare(void *cookie)
 	sc->firmware_size = 0;
 	if (error != 0)
 		return error;
+	sc->diag.stage = A133_GPU_STAGE_FEATURES;
+	sc->diag.detail_error = 0;
 	error = pvr_fwinfo_feature(&sc->memory->image.info,
 	    PVR_FW_FEATURE_NUM_CLUSTERS, &clusters);
 	if (error == 0)
@@ -310,6 +444,8 @@ a133_gpu_prepare(void *cookie)
 		    PVR_FW_FEATURE_SLC_SIZE_IN_KILOBYTES, &slc);
 	if (error != 0 || clusters != 1 || slc != 64)
 		return EOPNOTSUPP;
+	sc->diag.stage = A133_GPU_STAGE_INTERFACE;
+	sc->diag.detail_error = 0;
 	return pvr_fwmem_interface(sc->memory, sc->effective_hz, clusters, slc);
 }
 
@@ -359,8 +495,12 @@ a133_gpu_start(void *cookie)
 	error = a133_gpu_live(sc, &effective);
 	if (error != 0)
 		return error;
+	sc->diag.stage = A133_GPU_STAGE_EFFECTIVE_RECHECK;
+	sc->diag.detail_error = 0;
 	if (effective != sc->effective_hz)
 		return EBUSY;
+	sc->diag.stage = A133_GPU_STAGE_FW_BOOT;
+	sc->diag.detail_error = 0;
 	return pvr_fwboot(PVR_FW_PROFILE_GE8300, sc->bst, sc->bsh,
 	    sc->memory, &sc->boot_result);
 }
@@ -385,10 +525,44 @@ a133_gpu_control(SYSCTLFN_ARGS)
 		return EINVAL;
 	sysctl_unlock();
 	mutex_enter(&sc->lock);
+	if (!sc->owner.attempted && !sc->owner.retain_resources)
+		a133_gpu_diag_reset(sc);
 	error = a133_gpu_owner_boot(&sc->owner, &ops, sc);
-	sc->last_error = error;
+	sc->diag.last_error = error;
+	sc->diag.attempted = sc->owner.attempted;
+	sc->diag.retained = sc->owner.retain_resources;
+	if (error == 0)
+		sc->diag.stage = A133_GPU_STAGE_COMPLETE;
+	else
+		aprint_error_dev(sc->dev, "firmware stage %d failed: %d (detail %d)\n",
+		    sc->diag.stage, error, sc->diag.detail_error);
 	mutex_exit(&sc->lock);
 	sysctl_relock();
+	return error;
+}
+
+/* Copy the cached observation under the owner lock; never access hardware. */
+static int
+a133_gpu_status(SYSCTLFN_ARGS)
+{
+	struct a133_gpu_softc *sc = a133_gpu_instance;
+	struct sysctlnode node = *rnode;
+	union { int i; int64_t q; } value;
+	int error;
+
+	if (sc == NULL)
+		return ENXIO;
+	if (newp != NULL)
+		return EPERM;
+	if (node.sysctl_size != sizeof(value.i) && node.sysctl_size != sizeof(value.q))
+		return EINVAL;
+	sysctl_unlock();
+	mutex_enter(&sc->lock);
+	memcpy(&value, node.sysctl_data, node.sysctl_size);
+	mutex_exit(&sc->lock);
+	sysctl_relock();
+	node.sysctl_data = &value;
+	error = sysctl_lookup(SYSCTLFN_CALL(&node));
 	return error;
 }
 
@@ -413,6 +587,7 @@ a133_gpu_attach(device_t parent __unused, device_t self, void *aux)
 	sc->bst = faa->faa_bst;
 	sc->dmat = faa->faa_dmat;
 	mutex_init(&sc->lock, MUTEX_DEFAULT, IPL_NONE);
+	a133_gpu_diag_reset(sc);
 	if (sysctl_createv(&sc->sysctllog, 0, NULL, &node, 0,
 	    CTLTYPE_NODE, device_xname(self), NULL, NULL, 0, NULL, 0,
 	    CTL_HW, CTL_CREATE, CTL_EOL) != 0 ||
@@ -423,6 +598,42 @@ a133_gpu_attach(device_t parent __unused, device_t self, void *aux)
 		sysctl_teardown(&sc->sysctllog);
 		mutex_destroy(&sc->lock);
 		return;
+	}
+	{
+		const struct { const char *name; int type; void *data; } status[] = {
+			{ "stage", CTLTYPE_INT, &sc->diag.stage },
+			{ "last_error", CTLTYPE_INT, &sc->diag.last_error },
+			{ "detail_error", CTLTYPE_INT, &sc->diag.detail_error },
+			{ "attempted", CTLTYPE_INT, &sc->diag.attempted },
+			{ "retained", CTLTYPE_INT, &sc->diag.retained },
+			{ "regulator_enabled", CTLTYPE_INT, &sc->diag.regulator_enabled },
+			{ "microvolts", CTLTYPE_INT, &sc->diag.microvolts },
+			{ "ppu_enabled", CTLTYPE_INT, &sc->diag.ppu_enabled },
+			{ "core_hz", CTLTYPE_INT, &sc->diag.core_hz },
+			{ "pll_hz", CTLTYPE_INT, &sc->diag.pll_hz },
+			{ "effective_hz", CTLTYPE_INT, &sc->diag.effective_hz },
+			{ "dfs", CTLTYPE_INT, &sc->diag.dfs },
+			{ "bvnc", CTLTYPE_QUAD, &sc->diag.bvnc },
+		};
+
+		for (size_t i = 0; i < __arraycount(status); i++) {
+			int error;
+
+			if (status[i].type == CTLTYPE_QUAD)
+				error = sysctl_createv(NULL, 0, &node, NULL, CTLFLAG_READONLY,
+				    CTLTYPE_QUAD, status[i].name, NULL, a133_gpu_status,
+				    0, (int64_t *)status[i].data, 0, CTL_CREATE, CTL_EOL);
+			else
+				error = sysctl_createv(NULL, 0, &node, NULL, CTLFLAG_READONLY,
+				    CTLTYPE_INT, status[i].name, NULL, a133_gpu_status,
+				    0, (int *)status[i].data, 0, CTL_CREATE, CTL_EOL);
+			if (error != 0) {
+				aprint_error_dev(self, "cannot create firmware status\n");
+				sysctl_teardown(&sc->sysctllog);
+				mutex_destroy(&sc->lock);
+				return;
+			}
+		}
 	}
 	a133_gpu_instance = sc;
 	aprint_normal_dev(self, "experimental GE8300 firmware owner; idle\n");
