@@ -16,6 +16,8 @@ WITH_OPENSSL=1
 
 .if defined(EMBER_OPENSSH_SOURCE) && !empty(EMBER_OPENSSH_SOURCE)
 CPPFLAGS+= -DEMBERBSD_BASE_OPENSSH -DWITH_HPN
+# The native layout keeps the privilege separation chroot under /var/chroot.
+CPPFLAGS+= -D_PATH_PRIVSEP_CHROOT_DIR=\"/var/chroot/sshd\"
 CPPFLAGS+= -I${NETBSDSRCDIR}/crypto/external/bsd/openssh/include
 .endif
 
@@ -49,7 +51,9 @@ CPPFLAGS+=-DHAVE_DLOPEN
 .PATH: ${SSHDIST}
 .if defined(EMBER_OPENSSH_SOURCE) && !empty(EMBER_OPENSSH_SOURCE)
 .PATH: ${SSHDIST}/openbsd-compat
-CPPFLAGS+= -I${SSHDIST}/openbsd-compat
+# After the system headers: a compat header such as fnmatch.h is empty
+# when the system has one, and must not hide it.
+CPPFLAGS+= -idirafter ${SSHDIST}/openbsd-compat
 .endif
 
 .if (${USE_PAM} != "no")

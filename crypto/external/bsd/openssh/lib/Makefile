@@ -111,7 +111,7 @@ SRCS+=	bsd-getpeereid.c bsd-malloc.c bsd-misc.c bsd-setres_id.c \
 	cipher-chachapoly-libcrypto.c ed25519-openssl.c entropy.c \
 	explicit_bzero.c kexmlkem768ecdh.c libcrux-mlkem-mldsa.c mktemp.c \
 	openssl-compat.c platform-misc.c platform-pledge.c platform-tracing.c \
-	port-net.c ssh-mldsa-eddsa.c timingsafe_bcmp.c
+	port-net.c ssh-mldsa-eddsa.c timingsafe_bcmp.c vis.c
 .ifdef WITH_OPENSSL
 OPENSSL_SRCS+=	cipher-aes.c
 .endif

@@ -7,7 +7,10 @@
  * its stack, where the state lives, is reused.  The fake publishes that
  * moment, poisons the state as the reused stack would and checks that
  * nothing touches it any more; it also times a command out while another
- * CPU has claimed its completion.  The shell driver ember/tests/nvme-poll.sh
+ * CPU has claimed its completion.  Each entry is released to the controller
+ * by the head doorbell before its callback runs: with level-triggered INTx
+ * an entry consumed but not released keeps the interrupt asserted.  The
+ * shell driver ember/tests/nvme-poll.sh
  * extracts the functions.  AI-assisted (Claude Code, Claude Opus 5.5).
  */
 #include <errno.h>
@@ -102,6 +105,7 @@ static struct {
 	int		finish_at;	/* ...and finishes it */
 	bool		claimed_seen;
 	int		doorbells;
+	uint32_t	doorbell_head;	/* last head written to the doorbell */
 	struct nvme_cqe	cqe;
 	struct nvme_cqe	ring[QENTRIES];
 	struct nvme_dmamem cqmem;
@@ -115,6 +119,7 @@ caller_done(struct nvme_queue *q, struct nvme_ccb *ccb, struct nvme_cqe *cqe)
 	CHECK(ccb->ccb_cookie == f.cookie, "caller's cookie not restored for the callback");
 	CHECK(f.published == 0, "callback after the poller saw the phase bit");
 	CHECK(q->q_cq_mtx == 0, "callback under the completion lock");
+	CHECK(f.doorbell_head == q->q_cq_head, "callback before its entry was released");
 	f.done_calls++;
 	f.done_cqe = *cqe;
 }
@@ -205,8 +210,11 @@ nvme_dmamem_sync(struct nvme_softc *sc_, struct nvme_dmamem *m, int op)
 static void
 nvme_write4(struct nvme_softc *sc_, uint32_t reg, uint32_t v)
 {
-	(void)sc_; (void)reg; (void)v;
+	(void)sc_; (void)reg;
 	f.doorbells++;
+	f.doorbell_head = v;
+	/* The released slot is the controller's again: it may reuse it. */
+	memset(&f.ring[(v + QENTRIES - 1) % QENTRIES], 0xee, sizeof(f.ring[0]));
 }
 
 static void

@@ -43,7 +43,9 @@ for m in 's/membar_release();/(void)0;/' \
     's/(\*state.done)(q, ccb, &cqe);/(void)0;/' \
     's/->claimed = true;/->claimed = false;/' \
     's/if (state.claimed) {/if (0) {/' \
-    's/mutex_enter(&q->q_cq_mtx);/(void)0;/'; do
+    's/mutex_enter(&q->q_cq_mtx);/(void)0;/' \
+    's/nvme_write4(sc, q->q_cqhdbl, q->q_cq_head);/(void)0;/' \
+    's/(\*done)(q, ccb, &entry);/(void)entry; (*done)(q, ccb, cqe);/'; do
 	sed "$m" "$work/orig.h" > "$work/nvme-poll.h"
 	if cmp -s "$work/orig.h" "$work/nvme-poll.h"; then
 		echo "mutation did not apply: $m" >&2

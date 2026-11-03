@@ -80,6 +80,21 @@
 #define	snmprintf		ssh_snmprintf
 #define	stdfd_devnull		ssh_stdfd_devnull
 #define	strdelim		ssh_strdelim
+/*
+ * The configuration marks the native vis(3) as BROKEN_STRNVIS: its strnvis
+ * takes the size before the source.  Use the OpenBSD compat vis(3) in
+ * libssh and keep it out of the libc namespace.
+ */
+#if defined(BROKEN_STRNVIS)
+#define	stravis			ssh_stravis
+#define	strnunvis		ssh_strnunvis
+#define	strnvis			ssh_strnvis
+#define	strunvis		ssh_strunvis
+#define	strvis			ssh_strvis
+#define	strvisx			ssh_strvisx
+#define	unvis			ssh_unvis
+#define	vis			ssh_vis
+#endif
 #define	tilde_expand		ssh_tilde_expand
 #define	tilde_expand_filename	ssh_tilde_expand_filename
 #define	tohex			ssh_tohex

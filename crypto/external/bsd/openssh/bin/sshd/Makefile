@@ -20,12 +20,6 @@ SRCS+=	platform-listen.c
 LDADD+=	-lutil
 DPADD+=	${LIBUTIL}
 
-.if defined(EMBER_OPENSSH_SOURCE) && !empty(EMBER_OPENSSH_SOURCE) && \
-    ${WITH_NETBSD_LIBWRAP:Uyes} != "no"
-LDADD+=	-lwrap
-DPADD+=	${LIBWRAP}
-.endif
-
 .if defined(EMBER_OPENSSH_SOURCE) && !empty(EMBER_OPENSSH_SOURCE) && (${USE_LDAP} != "no")
 SRCS+=	ldapauth.c
 LDADD+=	${LIBLDAP_LDADD}

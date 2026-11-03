@@ -2574,6 +2574,7 @@
 ./usr/include/krb5/krb5-protos.h		comp-krb5-include	kerberos
 ./usr/include/krb5/krb5-types.h			comp-krb5-include	kerberos
 ./usr/include/krb5/krb5-v4compat.h		comp-krb5-include	kerberos
+./usr/include/krb5/krb5-wrapper.h		comp-krb5-include	kerberos
 ./usr/include/krb5/krb5.h			comp-krb5-include	kerberos
 ./usr/include/krb5/krb5_asn1.h			comp-krb5-include	kerberos
 ./usr/include/krb5/krb5_ccapi.h			comp-krb5-include	kerberos

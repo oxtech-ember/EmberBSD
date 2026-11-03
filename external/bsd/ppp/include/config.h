@@ -130,9 +130,9 @@
 /* Use SHA included with openssl */
 #define OPENSSL_HAVE_SHA 1
 
-/* OpenSSL engine support */
+/* OpenSSL engine support: the base OpenSSL 4 has no engines */
 /* #undef OPENSSL_NO_ENGINE */
-#define OPENSSL_ENGINE 1
+/* #undef OPENSSL_ENGINE */
 
 /* Name of package */
 #define PACKAGE "ppp"

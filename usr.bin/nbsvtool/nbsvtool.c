@@ -112,7 +112,7 @@ verify_file(STACK_OF(X509) *cert_chain, const char *anchor,
 	BIO *sig, *in;
 	PKCS7 *p7;
 	int ret, i;
-	X509_NAME *name;
+	const X509_NAME *name;
 	char *subject;
 
 	store = X509_STORE_new();

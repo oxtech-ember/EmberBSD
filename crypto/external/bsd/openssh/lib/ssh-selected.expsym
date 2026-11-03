@@ -571,6 +571,8 @@ ssh_snmprintf
 ssh_stdfd_devnull
 ssh_strdelim
 ssh_strdup
+ssh_strnvis
+ssh_strvis
 ssh_tilde_expand
 ssh_tilde_expand_filename
 ssh_tohex
@@ -579,6 +581,7 @@ ssh_tty_parse_modes
 ssh_update_card
 ssh_vasnmprintf
 ssh_vfmprintf
+ssh_vis
 ssh_waitrfd
 ssh_xextendf
 ssh_xreallocarray

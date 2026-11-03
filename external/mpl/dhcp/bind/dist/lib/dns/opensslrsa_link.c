@@ -985,6 +985,7 @@ opensslrsa_parse(dst_key_t *key, isc_lex_t *lexer, dst_key_t *pub) {
 		isc_safe_memwipe(&priv, sizeof(priv));
 		return (ISC_R_SUCCESS);
 #else  /* if !defined(OPENSSL_NO_ENGINE) */
+		UNUSED(engine);
 		DST_RET(DST_R_NOENGINE);
 #endif /* if !defined(OPENSSL_NO_ENGINE) */
 	}

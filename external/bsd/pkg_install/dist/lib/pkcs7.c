@@ -116,7 +116,7 @@ easy_pkcs7_verify(const char *content, size_t len,
 	BIO *sig, *in;
 	PKCS7 *p7;
 	int i, status;
-	X509_NAME *name;
+	const X509_NAME *name;
 	char *subject;
 
 	OpenSSL_add_all_algorithms();

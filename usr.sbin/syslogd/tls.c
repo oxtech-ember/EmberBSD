@@ -406,8 +406,8 @@ get_fingerprint(const X509 *cert, char **returnstring, const char *alg_name)
 bool
 get_commonname(X509 *cert, char **returnstring)
 {
-	X509_NAME *x509name;
-	X509_NAME_ENTRY *entry;
+	const X509_NAME *x509name;
+	const X509_NAME_ENTRY *entry;
 	unsigned char *ubuf;
 	int len, i;
 
@@ -444,8 +444,8 @@ match_hostnames(X509 *cert, const char *hostname, const char *subject)
 	unsigned char *ubuf;
 	GENERAL_NAMES *gennames;
 	GENERAL_NAME *gn;
-	X509_NAME *x509name;
-	X509_NAME_ENTRY *entry;
+	const X509_NAME *x509name;
+	const X509_NAME_ENTRY *entry;
 	ASN1_OCTET_STRING *asn1_ip = NULL, *asn1_cn_ip = NULL;
 	int crit, idx;
 	bool match = false;
@@ -2160,7 +2160,15 @@ mk_x509_cert(X509 **x509p, EVP_PKEY **pkeyp, int bits, int serial, int days)
 	 * string type and performing checks on its length. Normally we'd check
 	 * the return value for errors...
 	 */
-	name = X509_get_subject_name(cert);
+	/*
+	 * The name of a certificate is read-only (OpenSSL 4): build it
+	 * apart, then set it as subject and issuer.
+	 */
+	name = X509_NAME_new();
+	if (name == NULL) {
+		DPRINTF(D_TLS, "X509_NAME_new() failed\n");
+		return false;
+	}
 	/*
 	X509_NAME_add_entry_by_txt(name, "O", MBSTRING_ASC,
 	    (unsigned char *)"The NetBSD Project", -1, -1, 0);
@@ -2169,7 +2177,13 @@ mk_x509_cert(X509 **x509p, EVP_PKEY **pkeyp, int bits, int serial, int days)
 	*/
 	X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
 	    (unsigned char *) LocalFQDN, -1, -1, 0);
-	X509_set_issuer_name(cert, name);
+	if (!X509_set_subject_name(cert, name) ||
+	    !X509_set_issuer_name(cert, name)) {
+		X509_NAME_free(name);
+		DPRINTF(D_TLS, "X509_set_subject_name() failed\n");
+		return false;
+	}
+	X509_NAME_free(name);
 
 	/*
 	 * Add extension using V3 code: we can set the config file as NULL
