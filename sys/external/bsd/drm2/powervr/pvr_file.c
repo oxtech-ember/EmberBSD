@@ -139,7 +139,9 @@ pvr_create_vm_context_locked(struct drm_device *dev, void *data, struct drm_file
 	vm = kmem_zalloc(sizeof(*vm), KM_SLEEP);
 	vm->dev = dev;
 	vm->refs = 1;
-	error = pvr_vm_create(dev->dmat, &vm->tables);
+	error = pvr_device_bvnc(dev) == UINT64_C(0x0016006600360026) ?
+	    pvr_vm_create_direct(dev->dmat, &vm->tables) :
+	    pvr_vm_create(dev->dmat, &vm->tables);
 	if (error != 0) {
 		kmem_free(vm, sizeof(*vm));
 		return -error;

@@ -25,6 +25,8 @@ struct pvr_vm;
  * Leaf flags are the A733_GPU_MMU_PTE_* options in the native MMU encoder.
  */
 int pvr_vm_create(bus_dma_tag_t, struct pvr_vm **);
+/* Reject translated DMA addresses for a platform with direct DMA only. */
+int pvr_vm_create_direct(bus_dma_tag_t, struct pvr_vm **);
 int pvr_vm_map(struct pvr_vm *, uint64_t, uint64_t, uint64_t, uint64_t);
 int pvr_vm_unmap(struct pvr_vm *, uint64_t, uint64_t);
 void pvr_vm_destroy(struct pvr_vm *);

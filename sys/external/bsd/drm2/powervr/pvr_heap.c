@@ -46,7 +46,7 @@ static const struct drm_pvr_heap pvr_heaps[DRM_PVR_HEAP_COUNT] = {
 		.base = UINT64_C(0xe000000000), .size = UINT64_C(0x100000000),
 		.page_size_log2 = PAGE_SHIFT,
 	},
-	/* Mesa 26.2.4 bxm-4-64.h: this BVNC does not have BRN63142. */
+	/* Pinned Mesa BXM and GE8300 profiles do not have BRN63142. */
 	[DRM_PVR_HEAP_RGNHDR] = {
 		.base = UINT64_C(0xdbf0000000), .size = 0,
 		.page_size_log2 = PAGE_SHIFT,
@@ -191,6 +191,16 @@ pvr_heap_query(uint32_t type, struct drm_pvr_ioctl_dev_query_args *args)
 		return error;
 	args->size = sizeof(query);
 	return 0;
+}
+
+int
+pvr_heap_query_profile(uint64_t bvnc, uint32_t type,
+    struct drm_pvr_ioctl_dev_query_args *args)
+{
+	if (bvnc != UINT64_C(0x00240038006800b7) &&
+	    bvnc != UINT64_C(0x0016006600360026))
+		return -EOPNOTSUPP;
+	return pvr_heap_query(type, args);
 }
 
 const struct drm_pvr_heap *

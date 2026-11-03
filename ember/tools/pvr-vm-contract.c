@@ -199,6 +199,7 @@ bus_dmamap_load(bus_dma_tag_t t, bus_dmamap_t map, void *cpu,
 	if (fault(9)) map->dm_segs[0].ds_addr++;
 	if (fault(10)) map->dm_segs[0].ds_addr = UINT64_C(1) << 36;
 	if (fault(11)) map->dm_mapsize--;
+	if (fault(12)) map->dm_segs[0].ds_addr += 4096;
 	return 0;
 }
 
@@ -441,6 +442,12 @@ main(void)
 	uint64_t va, flags, pa;
 	unsigned int stage, nth, n, before;
 	int wanted;
+
+	fault_at = allocations + 1; fault_stage = 12;
+	CHECK(pvr_vm_create_direct(&vm, &vm) == EOPNOTSUPP && vm == NULL);
+	empty(); fault_at = 0;
+	CHECK(pvr_vm_create_direct(&vm, &vm) == 0);
+	pvr_vm_destroy(vm); vm = NULL; empty();
 
 	CHECK(pvr_vm_create(NULL, &vm) == EINVAL && vm == NULL);
 	CHECK(pvr_vm_create(&vm, NULL) == EINVAL);

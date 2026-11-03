@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Copyright (c) 2026 EmberBSD contributors. */
 /* Origin: EmberBSD A133 PowerVR FDT owner, AI-assisted. */
+#include "opt_pvr_fw.h"
 #include <sys/cdefs.h>
 __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/param.h>
@@ -26,6 +27,11 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <dev/powervr/pvr_fwheap.h>
 #include <dev/powervr/pvr_mips_irq.h>
 #include <arm/sunxi/sun50i_a133_gpu_owner.h>
+#ifdef PVR_GE8300_DRM
+#include <external/bsd/drm2/powervr/pvr_drv.h>
+#include <external/bsd/drm2/powervr/pvr_fwbridge.h>
+#include <external/bsd/drm2/powervr/pvr_query.h>
+#endif
 
 #define A133_GPU_BASE UINT64_C(0x01800000)
 #define A133_GPU_SIZE UINT64_C(0x80000)
@@ -35,6 +41,11 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define A133_GPU_FW_SIZE 118784
 
 struct a133_gpu_softc {
+#ifdef PVR_GE8300_DRM
+	struct pvr_fwbridge bridge;
+	struct drm_device *render_device;
+	bool drm_pending;
+#endif
 	struct a133_gpu_diagnostics diag;
 	device_t dev;
 	int phandle;
@@ -844,6 +855,10 @@ a133_gpu_compute_run(struct a133_gpu_softc *sc)
 	size_t size = 0, i, j;
 	int error, irq_error;
 
+#ifdef PVR_GE8300_DRM
+	if (sc->drm_pending || sc->bridge.attempted)
+		return EBUSY;
+#endif
 	if (sc->compute_attempted)
 		return EBUSY;
 	if (sc->queue_stage != 5 || sc->queue_error != 0 ||
@@ -1127,6 +1142,116 @@ a133_gpu_status(SYSCTLFN_ARGS)
 	return error;
 }
 
+#ifdef PVR_GE8300_DRM
+/* Cached IRQ failure only; hard IRQ never enters the firmware service. */
+static int
+a133_gpu_drm_health(void *cookie)
+{
+	struct a133_gpu_softc *sc = cookie;
+	int error;
+
+	mutex_enter(&sc->irq_lock);
+	error = sc->irq_fault;
+	mutex_exit(&sc->irq_lock);
+	return error;
+}
+
+/* The caller does not hold either the sysctl tree or the platform lock. */
+static int
+a133_gpu_drm_attach(struct a133_gpu_softc *sc)
+{
+	struct pvr_query_input input;
+	struct drm_device *dev = NULL;
+	int error;
+
+	mutex_enter(&sc->lock);
+	if (sc->drm_pending || sc->bridge.attempted ||
+	    sc->compute_attempted || sc->compute_heap != NULL ||
+	    sc->compute_vm != NULL || sc->render_device != NULL) {
+		error = EBUSY;
+		goto out;
+	}
+	if (sc->memory == NULL || !sc->owner.retain_resources ||
+	    sc->boot_result.error != 0 ||
+	    sc->diag.stage != A133_GPU_STAGE_COMPLETE ||
+	    sc->memory->image.info.bvnc != PVR_GE8300_BVNC) {
+		error = ENXIO;
+		goto out;
+	}
+	error = a133_gpu_drm_health(sc);
+	if (error != 0)
+		goto out;
+	/* Adopt a successful queue or perform its bounded first check here. */
+	if (sc->queue_stage != 5 || sc->queue_error != 0) {
+		error = a133_gpu_queue_run(sc);
+		if (error != 0)
+			goto out;
+	}
+	error = pvr_query_input_from_fwinfo(&sc->memory->image.info, &input);
+	if (error != 0)
+		goto out;
+	sc->drm_pending = true;
+	mutex_exit(&sc->lock);
+
+	error = pvr_render_attach(sc->dev, sc->dmat, PVR_GE8300_BVNC,
+	    &input, &dev);
+	mutex_enter(&sc->lock);
+	if (error == 0) {
+		sc->render_device = dev;
+		error = pvr_fwbridge_prepare(&sc->bridge, &sc->lock, sc->bst,
+		    sc->bsh, sc->memory, &sc->boot_result, &sc->queue_cache,
+		    PVR_FW_PROFILE_GE8300, a133_gpu_drm_health, sc);
+	}
+	mutex_exit(&sc->lock);
+	if (error == 0)
+		error = pvr_fwbridge_publish(&sc->bridge, dev);
+	mutex_enter(&sc->lock);
+	sc->drm_pending = false;
+out:
+	mutex_exit(&sc->lock);
+	return error;
+}
+
+static int
+a133_gpu_drm_failed_status(SYSCTLFN_ARGS)
+{
+	struct sysctlnode node = *rnode;
+	struct a133_gpu_softc *sc = a133_gpu_instance;
+	int value;
+
+	if (sc == NULL)
+		return ENXIO;
+	sysctl_unlock();
+	mutex_enter(&sc->lock);
+	value = sc->bridge.service.queue.failed;
+	mutex_exit(&sc->lock);
+	sysctl_relock();
+	node.sysctl_data = &value;
+	return sysctl_lookup(SYSCTLFN_CALL(&node));
+}
+
+static int
+a133_gpu_drm_control(SYSCTLFN_ARGS)
+{
+	struct sysctlnode node = *rnode;
+	struct a133_gpu_softc *sc = a133_gpu_instance;
+	int value = 0, error;
+
+	if (sc == NULL)
+		return ENXIO;
+	node.sysctl_data = &value;
+	error = sysctl_lookup(SYSCTLFN_CALL(&node));
+	if (error != 0 || newp == NULL)
+		return error;
+	if (value != 1)
+		return EINVAL;
+	sysctl_unlock();
+	error = a133_gpu_drm_attach(sc);
+	sysctl_relock();
+	return error;
+}
+#endif
+
 static int
 a133_gpu_match(device_t parent __unused, cfdata_t cf __unused, void *aux)
 {
@@ -1179,8 +1304,32 @@ a133_gpu_attach(device_t parent __unused, device_t self, void *aux)
 		mutex_destroy(&sc->lock);
 		return;
 	}
+#ifdef PVR_GE8300_DRM
+	if (sysctl_createv(NULL, 0, &node, NULL, CTLFLAG_READWRITE,
+	    CTLTYPE_INT, "drm_attach", SYSCTL_DESCR("explicit GE8300 DRM compute"),
+	    a133_gpu_drm_control, 0, NULL, 0, CTL_CREATE, CTL_EOL) != 0 ||
+	    sysctl_createv(NULL, 0, &node, NULL, CTLFLAG_READONLY,
+	    CTLTYPE_INT, "drm_failed", SYSCTL_DESCR("cached DRM backend failure"),
+	    a133_gpu_drm_failed_status, 0, NULL, 0, CTL_CREATE, CTL_EOL) != 0) {
+		aprint_error_dev(self, "cannot create DRM control\n");
+		sysctl_teardown(&sc->sysctllog);
+		mutex_destroy(&sc->irq_lock);
+		mutex_destroy(&sc->lock);
+		return;
+	}
+#endif
 	{
 		const struct { const char *name; int type; void *data; } status[] = {
+#ifdef PVR_GE8300_DRM
+			{ "drm_queue_read", CTLTYPE_INT,
+			    &sc->bridge.service.queue.last.after.read_offset },
+			{ "drm_queue_write", CTLTYPE_INT,
+			    &sc->bridge.service.queue.last.after.write_offset },
+			{ "drm_queue_error", CTLTYPE_INT,
+			    &sc->bridge.service.queue.last.error },
+			{ "drm_queue_command", CTLTYPE_INT,
+			    &sc->bridge.service.queue.last.command },
+#endif
 			{ "stage", CTLTYPE_INT, &sc->diag.stage },
 			{ "last_error", CTLTYPE_INT, &sc->diag.last_error },
 			{ "detail_error", CTLTYPE_INT, &sc->diag.detail_error },

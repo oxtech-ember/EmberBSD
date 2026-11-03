@@ -1888,36 +1888,7 @@ static int
 sun60i_gpu_query_input(const struct sun60i_a733_gpu_fwinfo *info,
     struct pvr_query_input *out)
 {
-	static const enum sun60i_a733_gpu_fw_feature fields[] = {
-		[PVR_QUERY_COMMON_STORE] = A733_GPU_FW_FEATURE_COMMON_STORE_SIZE_IN_DWORDS,
-		[PVR_QUERY_MAX_PARTITIONS] = A733_GPU_FW_FEATURE_MAX_PARTITIONS,
-		[PVR_QUERY_TILE_X] = A733_GPU_FW_FEATURE_TILE_SIZE_X,
-		[PVR_QUERY_TILE_Y] = A733_GPU_FW_FEATURE_TILE_SIZE_Y,
-		[PVR_QUERY_MIN_OUTPUT_REGS] = A733_GPU_FW_FEATURE_USC_MIN_OUTPUT_REGISTERS_PER_PIX,
-		[PVR_QUERY_NUM_CLUSTERS] = A733_GPU_FW_FEATURE_NUM_CLUSTERS,
-		[PVR_QUERY_TILES_IN_FLIGHT] = A733_GPU_FW_FEATURE_ISP_MAX_TILES_IN_FLIGHT,
-		[PVR_QUERY_ROGUEXE] = A733_GPU_FW_FEATURE_ROGUEXE,
-		[PVR_QUERY_COMPUTE_OVERLAP] = A733_GPU_FW_FEATURE_COMPUTE_OVERLAP,
-	};
-	struct pvr_query_input input = { 0 };
-	size_t i;
-	int error;
-
-	input.bvnc = info->bvnc;
-	input.fw_major = info->version_major;
-	input.fw_minor = info->version_minor;
-	input.fw_build = info->version_build;
-	input.brn_mask = info->brn_mask;
-	input.ern_mask = info->ern_mask;
-	for (i = 0; i < __arraycount(fields); i++) {
-		error = sun60i_a733_gpu_fwinfo_feature(info, fields[i], &input.feature[i]);
-		if (error == ENOENT && i >= PVR_QUERY_ROGUEXE)
-			continue;
-		if (error != 0)
-			return error;
-	}
-	*out = input;
-	return 0;
+	return pvr_query_input_from_fwinfo(info, out);
 }
 
 /* Reserve registration without holding either lock during DRM publication. */

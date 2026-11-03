@@ -7,12 +7,8 @@
 #include <arm/sunxi/sun60i_a733_gpu_fwservice.h>
 #include <external/bsd/drm2/powervr/pvr_backend.h>
 
-struct sun60i_a733_gpu_fwbridge {
-	struct sun60i_a733_gpu_fwservice service;
-	struct pvr_backend backend;
-	kmutex_t *lock;
-	bool attempted, publishing, registered;
-};
+#include <external/bsd/drm2/powervr/pvr_fwbridge.h>
+#define sun60i_a733_gpu_fwbridge pvr_fwbridge
 
 /*
  * Initialize zeroed storage once under the platform's adaptive mutex.

@@ -34,7 +34,7 @@ Run [native net80211 and CCMP contracts](ember/tools/native-net80211-checks.md) 
 Document software mechanisms beside their subsystem. See [ownership](doc/emberbsd-ownership.md).
 
 The experimental [A133 GE8300 native firmware and compute path](sys/arch/arm/sunxi/docs/a133-gpu-fwboot.md)
-completed a bounded GPU memory-write check on one preserved-power warm RAM trial.
+completed a bounded DRM userspace compute check on one preserved-power warm RAM trial.
 Cold boot, rendering, Vulkan and Qt acceleration remain unvalidated.
 
 ## Building

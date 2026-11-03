@@ -80,6 +80,8 @@ struct pvr_exec_context {
 	struct pvr_context firmware;
 };
 static struct drm_device device;
+static uint64_t selected_bvnc = PVR_STREAM_BVNC;
+uint64_t pvr_device_bvnc(struct drm_device *dev) { (void)dev; return selected_bvnc; }
 static struct drm_file file;
 static struct pvr_exec_context contexts[4];
 
@@ -255,6 +257,8 @@ int pvr_context_compute(struct pvr_context *c,const struct rogue_fwif_cmd_comput
 {
 	CHECK(gated && platform && c->type==DRM_PVR_CTX_TYPE_COMPUTE && id!=0);
 	CHECK(cmd->regs.cdm_ctrl_stream_base==UINT64_C(0x8000001000));
+	if (selected_bvnc == PVR_STREAM_GE8300_BVNC)
+		CHECK(cmd->regs.tpu == 0x20 && cmd->regs.tpu_tag_cdm_ctrl == 0);
 	computed++;
 	if(computed==compute_error_at) return EIO;
 	return 0;
@@ -1047,8 +1051,25 @@ static void concurrency_case(void)
 	CHECK(contexts[1].destroyed && contexts[1].refs==0 && syncobjs[1].refs==0);
 	finish();
 }
+static void
+ge_submit_profile(void)
+{
+	initialize(1);
+	selected_bvnc = PVR_STREAM_GE8300_BVNC;
+	put32(streams[0], 36); put32(streams[0] + 36, 1);
+	put32(streams[0] + 40, 0x20);
+	CHECK(submit() == 0 && computed == 1);
+	finish();
+	initialize(1);
+	selected_bvnc = PVR_STREAM_GE8300_BVNC;
+	set_transfer(0);
+	CHECK(submit() == -EOPNOTSUPP && computed == 0 && transferred == 0);
+	finish();
+	selected_bvnc = PVR_STREAM_BVNC;
+}
+
 int main(void)
 {
-	triple_cases(); success_cases(); transfer_cases(); preflight_cases(); error_cases(); backend_lifetime_case(); paired_dependencies(); forward_dependencies(); producer_search_bounds(); concurrency_case();
+	ge_submit_profile(); triple_cases(); success_cases(); transfer_cases(); preflight_cases(); error_cases(); backend_lifetime_case(); paired_dependencies(); forward_dependencies(); producer_search_bounds(); concurrency_case();
 	printf("pvr submit: %u checks passed\n",atomic_load(&checks)); return 0;
 }

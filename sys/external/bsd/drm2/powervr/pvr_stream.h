@@ -12,6 +12,7 @@
 #endif
 
 #define PVR_STREAM_BVNC UINT64_C(0x00240038006800b7)
+#define PVR_STREAM_GE8300_BVNC UINT64_C(0x0016006600360026)
 #define PVR_STREAM_COMPUTE_SIZE 44U
 #define PVR_STREAM_GEOMETRY_SIZE 40U
 #define PVR_STREAM_FRAGMENT_SIZE 384U
@@ -27,7 +28,8 @@ struct rogue_fwif_cdm_registers_cswitch;
 struct rogue_fwif_static_rendercontext_state;
 
 /*
- * Decode already copied kernel buffers for the accepted A733 BVNC, MC1 profile.
+ * Decode copied kernel buffers for the selected supported BVNC and job profile.
+ * GE8300 supports compute only; graphics streams remain A733-only.
  * Return positive errno. A rejected input leaves the entire output unchanged.
  * No allocation, copyin, firmware publication, or GPU address ownership occurs.
  * The caller must hold the VM, mapped BOs, and runtime context until retirement.

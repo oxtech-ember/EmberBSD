@@ -123,7 +123,7 @@ static int bus_space_map(bus_space_tag_t tag, bus_addr_t addr, bus_size_t size,
 #include "platform-driver.h"
 
 int
-sun60i_a733_gpu_fwservice_attach(struct sun60i_a733_gpu_fwservice *s,
+pvr_fwservice_attach(struct sun60i_a733_gpu_fwservice *s,
     bus_space_tag_t bst, bus_space_handle_t bsh, struct sun60i_a733_gpu_fwmem *m,
     const struct sun60i_a733_gpu_fwboot_result *b,
     const struct sun60i_a733_gpu_fwprobe_result *previous)
@@ -136,7 +136,7 @@ sun60i_a733_gpu_fwservice_attach(struct sun60i_a733_gpu_fwservice *s,
 	return 0;
 }
 int
-sun60i_a733_gpu_fwservice_alloc(struct sun60i_a733_gpu_fwservice *s,
+pvr_fwservice_alloc(struct sun60i_a733_gpu_fwservice *s,
     size_t size, struct sun60i_a733_gpu_fwobject **out)
 {
 	struct sun60i_a733_gpu_fwobject *o;
@@ -149,7 +149,7 @@ sun60i_a733_gpu_fwservice_alloc(struct sun60i_a733_gpu_fwservice *s,
 	return 0;
 }
 int
-sun60i_a733_gpu_fwservice_free(struct sun60i_a733_gpu_fwservice *s,
+pvr_fwservice_free(struct sun60i_a733_gpu_fwservice *s,
     struct sun60i_a733_gpu_fwobject **slot)
 {
 	struct sun60i_a733_gpu_fwobject **p;
@@ -160,11 +160,11 @@ sun60i_a733_gpu_fwservice_free(struct sun60i_a733_gpu_fwservice *s,
 	return 0;
 }
 void
-sun60i_a733_gpu_fwservice_sync(struct sun60i_a733_gpu_fwservice *s,
+pvr_fwservice_sync(struct sun60i_a733_gpu_fwservice *s,
     struct sun60i_a733_gpu_fwobject *o, int ops)
 { CHECK(s == &sc.sc_fwbridge.service && o->mapped && ops != 0); sync_calls++; }
 int
-sun60i_a733_gpu_fwservice_command(struct sun60i_a733_gpu_fwservice *s,
+pvr_fwservice_command(struct sun60i_a733_gpu_fwservice *s,
     const struct rogue_fwif_kccb_cmd *cmd, struct sun60i_a733_gpu_fwprobe_result *r)
 {
 	CHECK(cmd != NULL && r->after.rtn == 0); command_calls++;
@@ -173,13 +173,13 @@ sun60i_a733_gpu_fwservice_command(struct sun60i_a733_gpu_fwservice *s,
 		s->queue.failed = true;
 	return operation_error;
 }
-int sun60i_a733_gpu_fwservice_flush(struct sun60i_a733_gpu_fwservice *s)
+int pvr_fwservice_flush(struct sun60i_a733_gpu_fwservice *s)
 { flush_calls++; if (operation_error != 0) s->queue.failed = true; return operation_error; }
-int sun60i_a733_gpu_fwservice_observe(struct sun60i_a733_gpu_fwservice *s,
+int pvr_fwservice_observe(struct sun60i_a733_gpu_fwservice *s,
     struct sun60i_a733_gpu_fwprobe_observation *r)
 { CHECK(s == &sc.sc_fwbridge.service && !r->valid); check_calls++; return operation_error; }
 int
-sun60i_a733_gpu_fwservice_set_events(struct sun60i_a733_gpu_fwservice *s,
+pvr_fwservice_set_events(struct sun60i_a733_gpu_fwservice *s,
     void *cookie, int (*prepare)(void *, uint32_t, struct rogue_fwif_freelist_gs_data *),
     int (*complete)(void *, uint32_t, int))
 {
@@ -351,8 +351,41 @@ static void event_tests(void)
 	CHECK(b->set_events(b->cookie, &events) == EIO);
 	b->leave(b->cookie);
 }
+static int
+ge_irq_health(void *cookie)
+{
+	return *(int *)cookie;
+}
+
+static void
+ge_health_test(void)
+{
+	int irq_error = 0;
+	struct pvr_backend *be;
+
+	reset();
+	memory.profile = PVR_FW_PROFILE_GE8300;
+	mutex_enter(&sc.sc_run_lock);
+	CHECK(pvr_fwbridge_prepare(&sc.sc_fwbridge, &sc.sc_run_lock, &sc,
+	    0x1234, &memory, &sc.sc_boot_result, &sc.sc_cache_result,
+	    PVR_FW_PROFILE_GE8300, ge_irq_health, &irq_error) == 0);
+	be = &sc.sc_fwbridge.backend;
+	CHECK(be->check(be->cookie) == 0);
+	irq_error = EIO;
+	{
+		struct pvr_fw_object obj = { 0 };
+		CHECK(be->alloc(be->cookie, 64, &obj) == EIO);
+		CHECK(alloc_calls == 0 && obj.owner == NULL);
+	}
+	CHECK(be->check(be->cookie) == EIO);
+	CHECK(sc.sc_fwbridge.service.queue.failed);
+	mutex_exit(&sc.sc_run_lock);
+	memory.profile = PVR_FW_PROFILE_A733;
+}
+
 int main(void)
 {
+	ge_health_test();
 	lifecycle(); objects(); commands();
 	event_tests();
 	printf("a733-gpu-fwbridge contract: %u checks passed\n", checks);

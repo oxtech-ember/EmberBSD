@@ -5,6 +5,7 @@
 
 #include <sys/types.h>
 struct drm_pvr_ioctl_dev_query_args;
+struct pvr_fwinfo;
 
 /* Values come from the parsed metadata of the prepared firmware image. */
 enum pvr_query_feature {
@@ -25,6 +26,9 @@ struct pvr_query_input {
 	uint32_t fw_major, fw_minor, fw_build;
 	uint64_t feature[PVR_QUERY_FEATURE_COUNT];
 };
+
+/* Convert validated firmware metadata to the common query input. */
+int pvr_query_input_from_fwinfo(const struct pvr_fwinfo *, struct pvr_query_input *);
 
 /* Native data. pvr_query.c owns UAPI serialization. */
 struct pvr_query_runtime {

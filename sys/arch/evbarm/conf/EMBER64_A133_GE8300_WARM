@@ -2,4 +2,5 @@
 # Explicit firmware boot only; no cold WLAN or graphics acceptance.
 include "arch/evbarm/conf/EMBER64_A133_GPU_WARM"
 options PVR_GE8300_EXPERIMENTAL
+options PVR_GE8300_DRM
 sun50ia133gpu* at fdt?

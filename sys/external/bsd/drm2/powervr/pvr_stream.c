@@ -61,21 +61,30 @@ pvr_stream_u64(const uint8_t *p)
 }
 
 static int
-pvr_stream_header(uint64_t bvnc, const void *data, size_t size,
-    size_t expected, const void *out)
+pvr_stream_header_bytes(const void *data, size_t size, size_t expected,
+    uint32_t main_size, const void *out)
 {
 	const uint8_t *p = data;
 
 	if (data == NULL || out == NULL)
 		return EINVAL;
-	if (bvnc != PVR_STREAM_BVNC)
-		return EOPNOTSUPP;
-	if (size < expected || pvr_stream_u32(p) != expected ||
+	if (size < expected || pvr_stream_u32(p) != main_size ||
 	    pvr_stream_u32(p + 4) != 0)
 		return EINVAL;
 	if (size != expected)
 		return EOPNOTSUPP;
 	return 0;
+}
+
+static int
+pvr_stream_header(uint64_t bvnc, const void *data, size_t size,
+    size_t expected, const void *out)
+{
+	if (data == NULL || out == NULL)
+		return EINVAL;
+	if (bvnc != PVR_STREAM_BVNC)
+		return EOPNOTSUPP;
+	return pvr_stream_header_bytes(data, size, expected, expected, out);
 }
 
 int
@@ -86,18 +95,31 @@ pvr_stream_compute(uint64_t bvnc, const void *data, size_t size,
 	const uint8_t *p = data;
 	int error;
 
-	error = pvr_stream_header(bvnc, data, size, PVR_STREAM_COMPUTE_SIZE, out);
-	if (error != 0)
-		return error;
-	/* UAPI PREVENT_ALL_OVERLAP and SINGLE_CORE, not firmware flag numbers. */
-	if ((flags & ~3U) != 0 || pvr_stream_u32(p + 40) != 0)
-		return EOPNOTSUPP;
+	if (bvnc == PVR_STREAM_GE8300_BVNC) {
+		error = pvr_stream_header_bytes(data, size,
+		    PVR_STREAM_COMPUTE_SIZE, 36, out);
+		if (error != 0)
+			return error;
+		if ((flags & ~1U) != 0 || pvr_stream_u32(p + 36) != 1 ||
+		    pvr_stream_u32(p + 40) != 0x20)
+			return EOPNOTSUPP;
+	} else {
+		error = pvr_stream_header(bvnc, data, size,
+		    PVR_STREAM_COMPUTE_SIZE, out);
+		if (error != 0)
+			return error;
+		if ((flags & ~3U) != 0 || pvr_stream_u32(p + 40) != 0)
+			return EOPNOTSUPP;
+	}
 	memset(&cmd, 0, sizeof(cmd));
 	cmd.regs.tpu_border_colour_table = pvr_stream_u64(p + 8);
 	cmd.regs.cdm_ctrl_stream_base = pvr_stream_u64(p + 16);
 	cmd.regs.cdm_context_state_base_addr = pvr_stream_u64(p + 24);
 	cmd.regs.cdm_resume_pds1 = pvr_stream_u32(p + 32);
-	cmd.regs.tpu_tag_cdm_ctrl = pvr_stream_u32(p + 36);
+	if (bvnc == PVR_STREAM_GE8300_BVNC)
+		cmd.regs.tpu = pvr_stream_u32(p + 40);
+	else
+		cmd.regs.tpu_tag_cdm_ctrl = pvr_stream_u32(p + 36);
 	if ((flags & 1U) != 0)
 		cmd.flags |= ROGUE_COMPUTE_FLAG_PREVENT_ALL_OVERLAP;
 	if ((flags & 2U) != 0)
@@ -259,8 +281,13 @@ pvr_stream_static_compute(uint64_t bvnc, const void *data, size_t size,
 	const uint8_t *p = data;
 	int error;
 
-	error = pvr_stream_header(bvnc, data, size, PVR_STREAM_STATIC_COMPUTE_SIZE,
-	    out);
+	if (bvnc == PVR_STREAM_GE8300_BVNC)
+		error = pvr_stream_header_bytes(data, size,
+		    PVR_STREAM_STATIC_COMPUTE_SIZE, PVR_STREAM_STATIC_COMPUTE_SIZE,
+		    out);
+	else
+		error = pvr_stream_header(bvnc, data, size,
+		    PVR_STREAM_STATIC_COMPUTE_SIZE, out);
 	if (error != 0)
 		return error;
 	memset(&state, 0, sizeof(state));

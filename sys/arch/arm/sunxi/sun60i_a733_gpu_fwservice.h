@@ -5,26 +5,9 @@
 
 #include <arm/sunxi/sun60i_a733_gpu_fwprobe.h>
 
-struct sun60i_a733_gpu_fwobject {
-	struct sun60i_a733_gpu_fwobject *next;
-	struct sun60i_a733_gpu_dma dma;
-	uint32_t fw_addr;
-	size_t size;
-	bool mapped;
-};
-
-struct sun60i_a733_gpu_fwservice {
-	struct sun60i_a733_gpu_fwmem *memory;
-	const struct sun60i_a733_gpu_fwboot_result *boot;
-	struct sun60i_a733_gpu_fwqueue queue;
-	struct sun60i_a733_gpu_fwobject *objects;
-	bus_space_tag_t bst;
-	bus_space_handle_t bsh;
-	void *event_cookie;
-	int (*grow_prepare)(void *, uint32_t, struct rogue_fwif_freelist_gs_data *);
-	int (*grow_complete)(void *, uint32_t, int);
-	bool events_set, dispatching;
-};
+#include <dev/powervr/pvr_fwservice.h>
+#define sun60i_a733_gpu_fwobject pvr_fwobject
+#define sun60i_a733_gpu_fwservice pvr_fwservice
 
 /*
  * The platform owner serializes all calls with one adaptive mutex at IPL_NONE.

@@ -2,8 +2,8 @@
 /* Copyright (c) 2026 EmberBSD contributors. */
 /*
  * Native ownership for Rogue translation tables and deferred retirement.
- * Hardware entries use the existing MIT-licensed A733 MMU encoders.
- * Their Linux PowerVR source pin is recorded in sun60i_a733_gpu_mmu.h.
+ * Hardware entries use the common MIT-licensed PowerVR MMU encoders.
+ * Their Linux PowerVR source pin is recorded in pvr_mmu.h.
  */
 #include <sys/param.h>
 #include <sys/bus.h>
@@ -12,12 +12,12 @@
 #include <sys/kmem.h>
 #include <sys/systm.h>
 
-#include <arm/sunxi/sun60i_a733_gpu_mmu.h>
+#include <dev/powervr/pvr_mmu.h>
 #include "pvr_vm.h"
 
-#define PVR_VM_PAGE	A733_GPU_MMU_PAGE_SIZE
-#define PVR_VM_VA_END	(UINT64_C(1) << A733_GPU_MMU_VA_BITS)
-#define PVR_VM_PA_END	(UINT64_C(1) << A733_GPU_MMU_PA_BITS)
+#define PVR_VM_PAGE	PVR_MMU_PAGE_SIZE
+#define PVR_VM_VA_END	(UINT64_C(1) << PVR_MMU_VA_BITS)
+#define PVR_VM_PA_END	(UINT64_C(1) << PVR_MMU_PA_BITS)
 
 struct pvr_vm_dma {
 	bus_dma_segment_t segment;
@@ -37,7 +37,7 @@ struct pvr_vm_pt {
 struct pvr_vm_pd {
 	struct pvr_vm_pd *retired_next;
 	struct pvr_vm_dma dma;
-	struct pvr_vm_pt *tables[A733_GPU_MMU_PD_ENTRIES];
+	struct pvr_vm_pt *tables[PVR_MMU_PD_ENTRIES];
 	unsigned int used;
 };
 
@@ -49,13 +49,13 @@ struct pvr_vm_range {
 struct pvr_vm {
 	bus_dma_tag_t dmat;
 	struct pvr_vm_dma catalogue;
-	struct pvr_vm_pd *dirs[A733_GPU_MMU_PC_ENTRIES];
+	struct pvr_vm_pd *dirs[PVR_MMU_PC_ENTRIES];
 	struct pvr_vm_range *ranges;
 	struct pvr_vm_pd *retired_dirs;
 	struct pvr_vm_pt *retired_tables;
 	int (*invalidate)(void *);
 	void *invalidate_cookie;
-	bool failed;
+	bool failed, direct;
 };
 
 static void
@@ -128,6 +128,10 @@ pvr_vm_dma_alloc(struct pvr_vm *vm, struct pvr_vm_dma *dma)
 		goto fail;
 	}
 	dma->pa = dma->map->dm_segs[0].ds_addr;
+	if (vm->direct && dma->pa != dma->segment.ds_addr) {
+		error = EOPNOTSUPP;
+		goto fail;
+	}
 	if ((dma->pa & (PVR_VM_PAGE - 1)) != 0 ||
 	    dma->pa > PVR_VM_PA_END - PVR_VM_PAGE) {
 		error = EINVAL;
@@ -149,8 +153,8 @@ pvr_vm_range_valid(uint64_t va, uint64_t size)
 	    va < PVR_VM_VA_END && size <= PVR_VM_VA_END - va;
 }
 
-int
-pvr_vm_create(bus_dma_tag_t dmat, struct pvr_vm **out)
+static int
+pvr_vm_create_internal(bus_dma_tag_t dmat, bool direct, struct pvr_vm **out)
 {
 	struct pvr_vm *vm;
 	int error;
@@ -159,6 +163,7 @@ pvr_vm_create(bus_dma_tag_t dmat, struct pvr_vm **out)
 		return EINVAL;
 	vm = kmem_zalloc(sizeof(*vm), KM_SLEEP);
 	vm->dmat = dmat;
+	vm->direct = direct;
 	error = pvr_vm_dma_alloc(vm, &vm->catalogue);
 	if (error != 0) {
 		kmem_free(vm, sizeof(*vm));
@@ -166,6 +171,18 @@ pvr_vm_create(bus_dma_tag_t dmat, struct pvr_vm **out)
 	}
 	*out = vm;
 	return 0;
+}
+
+int
+pvr_vm_create(bus_dma_tag_t dmat, struct pvr_vm **out)
+{
+	return pvr_vm_create_internal(dmat, false, out);
+}
+
+int
+pvr_vm_create_direct(bus_dma_tag_t dmat, struct pvr_vm **out)
+{
+	return pvr_vm_create_internal(dmat, true, out);
 }
 
 uint64_t
@@ -248,15 +265,15 @@ pvr_vm_rollback(struct pvr_vm *vm, uint64_t va, uint64_t size)
 {
 	struct pvr_vm_pd *pd;
 	struct pvr_vm_pt *pt;
-	struct sun60i_a733_gpu_mmu_indices idx;
+	struct pvr_mmu_indices idx;
 	uint64_t at, step;
 	int error;
 
 	for (at = va; at < va + size; at += step) {
-		error = sun60i_a733_gpu_mmu_indices(at, &idx);
+		error = pvr_mmu_indices(at, &idx);
 		KASSERT(error == 0);
 		step = MIN(va + size - at,
-		    (uint64_t)(A733_GPU_MMU_PT_ENTRIES - idx.pt) * PVR_VM_PAGE);
+		    (uint64_t)(PVR_MMU_PT_ENTRIES - idx.pt) * PVR_VM_PAGE);
 		pd = vm->dirs[idx.pc];
 		if (pd == NULL)
 			continue;
@@ -282,7 +299,7 @@ pvr_vm_map(struct pvr_vm *vm, uint64_t va, uint64_t pa, uint64_t size,
 	struct pvr_vm_range **slot, *range;
 	struct pvr_vm_pd *pd;
 	struct pvr_vm_pt *pt;
-	struct sun60i_a733_gpu_mmu_indices idx;
+	struct pvr_mmu_indices idx;
 	uint64_t at, step, value, *entries;
 	uint32_t pce;
 	unsigned int n, count, pc;
@@ -292,7 +309,7 @@ pvr_vm_map(struct pvr_vm *vm, uint64_t va, uint64_t pa, uint64_t size,
 		return EIO;
 	if (vm == NULL || !pvr_vm_range_valid(va, size) ||
 	    pa >= PVR_VM_PA_END || size > PVR_VM_PA_END - pa ||
-	    sun60i_a733_gpu_mmu_pte(pa, flags, &value) != 0)
+	    pvr_mmu_pte(pa, flags, &value) != 0)
 		return EINVAL;
 	for (slot = &vm->ranges; *slot != NULL; slot = &(*slot)->next) {
 		if (va < (*slot)->va + (*slot)->size && (*slot)->va < va + size)
@@ -305,10 +322,10 @@ pvr_vm_map(struct pvr_vm *vm, uint64_t va, uint64_t pa, uint64_t size,
 	range->size = size;
 	/* Reserve every missing table before modifying any existing DMA bytes. */
 	for (at = va; at < va + size; at += step) {
-		error = sun60i_a733_gpu_mmu_indices(at, &idx);
+		error = pvr_mmu_indices(at, &idx);
 		KASSERT(error == 0);
 		step = MIN(va + size - at,
-		    (uint64_t)(A733_GPU_MMU_PT_ENTRIES - idx.pt) * PVR_VM_PAGE);
+		    (uint64_t)(PVR_MMU_PT_ENTRIES - idx.pt) * PVR_VM_PAGE);
 		pd = vm->dirs[idx.pc];
 		if (pd == NULL) {
 			pd = kmem_zalloc(sizeof(*pd), KM_SLEEP);
@@ -332,31 +349,31 @@ pvr_vm_map(struct pvr_vm *vm, uint64_t va, uint64_t pa, uint64_t size,
 	}
 	/* Every encoder input is validated. This phase has no fallible operation. */
 	for (at = va; at < va + size; at += step) {
-		error = sun60i_a733_gpu_mmu_indices(at, &idx);
+		error = pvr_mmu_indices(at, &idx);
 		KASSERT(error == 0);
 		step = MIN(va + size - at,
-		    (uint64_t)(A733_GPU_MMU_PT_ENTRIES - idx.pt) * PVR_VM_PAGE);
+		    (uint64_t)(PVR_MMU_PT_ENTRIES - idx.pt) * PVR_VM_PAGE);
 		count = step / PVR_VM_PAGE;
 		pd = vm->dirs[idx.pc];
 		pt = pd->tables[idx.pd];
 		entries = pt->dma.cpu;
 		for (n = 0; n < count; n++) {
 			KASSERT(entries[idx.pt + n] == 0);
-			error = sun60i_a733_gpu_mmu_pte(pa + at - va +
+			error = pvr_mmu_pte(pa + at - va +
 			    (uint64_t)n * PVR_VM_PAGE, flags, &value);
 			KASSERT(error == 0);
 			entries[idx.pt + n] = htole64(value);
 		}
 		pt->used += count;
 		pvr_vm_dma_sync(vm, &pt->dma);
-		error = sun60i_a733_gpu_mmu_pde(pt->dma.pa, &value);
+		error = pvr_mmu_pde(pt->dma.pa, &value);
 		KASSERT(error == 0);
 		((uint64_t *)pd->dma.cpu)[idx.pd] = htole64(value);
 	}
 	for (pc = va >> 30; pc <= (va + size - 1) >> 30; pc++) {
 		pd = vm->dirs[pc];
 		pvr_vm_dma_sync(vm, &pd->dma);
-		error = sun60i_a733_gpu_mmu_pce(pd->dma.pa, &pce);
+		error = pvr_mmu_pce(pd->dma.pa, &pce);
 		KASSERT(error == 0);
 		((uint32_t *)vm->catalogue.cpu)[pc] = htole32(pce);
 	}
@@ -376,7 +393,7 @@ pvr_vm_unmap(struct pvr_vm *vm, uint64_t va, uint64_t size)
 	struct pvr_vm_range **slot, *range;
 	struct pvr_vm_pd *pd;
 	struct pvr_vm_pt *pt;
-	struct sun60i_a733_gpu_mmu_indices idx;
+	struct pvr_mmu_indices idx;
 	uint64_t at, step, *entries;
 	unsigned int n, count;
 	int error;
@@ -392,10 +409,10 @@ pvr_vm_unmap(struct pvr_vm *vm, uint64_t va, uint64_t size)
 		return ENOENT;
 	range = *slot;
 	for (at = va; at < va + size; at += step) {
-		error = sun60i_a733_gpu_mmu_indices(at, &idx);
+		error = pvr_mmu_indices(at, &idx);
 		KASSERT(error == 0);
 		step = MIN(va + size - at,
-		    (uint64_t)(A733_GPU_MMU_PT_ENTRIES - idx.pt) * PVR_VM_PAGE);
+		    (uint64_t)(PVR_MMU_PT_ENTRIES - idx.pt) * PVR_VM_PAGE);
 		count = step / PVR_VM_PAGE;
 		pd = vm->dirs[idx.pc];
 		pt = pd->tables[idx.pd];

@@ -118,6 +118,50 @@ compute(void)
 }
 
 static void
+ge_compute(void)
+{
+	const uint64_t ge = UINT64_C(0x0016006600360026);
+	uint8_t p[64];
+	struct rogue_fwif_cmd_compute cmd, saved;
+	struct rogue_fwif_cdm_registers_cswitch state;
+	struct rogue_fwif_cmd_geom geom, geom_saved;
+	size_t n;
+
+	header(p, 44);
+	put32(p, 36);
+	put64(p + 8, UINT64_C(0x1000));
+	put64(p + 16, UINT64_C(0x2000));
+	put64(p + 24, UINT64_C(0x3000));
+	put32(p + 32, UINT32_C(0x123456));
+	put32(p + 36, 1);
+	put32(p + 40, 0x20);
+	CHECK(pvr_stream_compute(ge, p, 44, 1, &cmd) == 0);
+	CHECK(cmd.regs.tpu == 0x20 && cmd.regs.tpu_tag_cdm_ctrl == 0);
+	CHECK(cmd.regs.cdm_ctrl_stream_base == 0x2000);
+	CHECK(cmd.flags == ROGUE_COMPUTE_FLAG_PREVENT_ALL_OVERLAP);
+	memset(&cmd, 0xa5, sizeof(cmd));
+	memcpy(&saved, &cmd, sizeof(cmd));
+	for (n = 0; n < 44; n++)
+		CHECK(pvr_stream_compute(ge, p, n, 0, &cmd) == EINVAL);
+	CHECK(pvr_stream_compute(ge, p, 48, 0, &cmd) == EOPNOTSUPP);
+	CHECK(pvr_stream_compute(ge, NULL, 44, 0, &cmd) == EINVAL);
+	CHECK(pvr_stream_compute(ge, p, 44, 0, NULL) == EINVAL);
+	CHECK(pvr_stream_compute(ge, p, 44, 2, &cmd) == EOPNOTSUPP);
+	put32(p + 36, 0);
+	CHECK(pvr_stream_compute(ge, p, 44, 0, &cmd) == EOPNOTSUPP);
+	put32(p + 36, 1); put32(p + 40, 0);
+	CHECK(pvr_stream_compute(ge, p, 44, 0, &cmd) == EOPNOTSUPP);
+	CHECK(memcmp(&cmd, &saved, sizeof(cmd)) == 0);
+	header(p, 64);
+	CHECK(pvr_stream_static_compute(ge, p, 64, &state) == 0);
+	memset(&geom, 0xa5, sizeof(geom));
+	memcpy(&geom_saved, &geom, sizeof(geom));
+	header(p, 40);
+	CHECK(pvr_stream_geometry(ge, p, 40, 0, &geom) == EOPNOTSUPP);
+	CHECK(memcmp(&geom, &geom_saved, sizeof(geom)) == 0);
+}
+
+static void
 static_contexts(void)
 {
 	struct rogue_fwif_cdm_registers_cswitch compute_out, compute_saved;
@@ -379,6 +423,7 @@ int
 main(void)
 {
 	compute();
+	ge_compute();
 	graphics();
 	static_contexts();
 	CHECK(pvr_stream_static_transfer(PVR_STREAM_BVNC, NULL, 0) == 0);

@@ -26,6 +26,7 @@
 
 /* Mesa 26.2.4 BXM-4-64 profile: one cluster, one phantom. */
 #define PVR_A733_BVNC	UINT64_C(0x00240038006800b7)
+#define PVR_GE8300_BVNC UINT64_C(0x0016006600360026)
 
 struct pvr_orphan {
 	struct pvr_orphan *next;
@@ -171,7 +172,7 @@ pvr_dev_query(struct drm_device *dev, void *data, struct drm_file *file)
 		return pvr_query(&sc->profile, args->type, args);
 	if (args->type == DRM_PVR_DEV_QUERY_HEAP_INFO_GET ||
 	    args->type == DRM_PVR_DEV_QUERY_STATIC_DATA_AREAS_GET)
-		return pvr_heap_query(args->type, args);
+		return pvr_heap_query_profile(sc->bvnc, args->type, args);
 	if (args->type != DRM_PVR_DEV_QUERY_GPU_INFO_GET)
 		return -EOPNOTSUPP;
 	if (args->pointer == 0) {
@@ -217,6 +218,14 @@ pvr_release(struct drm_device *dev)
 	}
 	drm_dev_fini(dev);
 	kfree(dev);
+}
+
+uint64_t
+pvr_device_bvnc(struct drm_device *dev)
+{
+	const struct pvr_device *sc = dev->dev_private;
+
+	return sc->bvnc;
 }
 
 int
@@ -298,7 +307,8 @@ pvr_render_attach(device_t self, bus_dma_tag_t dmat, uint64_t bvnc,
 		return EINVAL;
 	if (*owner != NULL)
 		return EALREADY;
-	if (bvnc != PVR_A733_BVNC || input->bvnc != bvnc)
+	if ((bvnc != PVR_A733_BVNC && bvnc != PVR_GE8300_BVNC) ||
+	    input->bvnc != bvnc)
 		return ENODEV;
 	error = pvr_query_profile_init(input, &profile);
 	if (error != 0)
@@ -321,7 +331,9 @@ pvr_render_attach(device_t self, bus_dma_tag_t dmat, uint64_t bvnc,
 	dev->native_platform.bus_type = DRM_NATIVE_BUS_PLATFORM;
 	strlcpy(dev->native_platform.fullname, device_xname(self),
 	    sizeof(dev->native_platform.fullname));
-	strlcpy(dev->native_platform.compatible, "allwinner,sun60i-a733-gpu",
+	strlcpy(dev->native_platform.compatible,
+	    bvnc == PVR_A733_BVNC ? "allwinner,sun60i-a733-gpu" :
+	    "allwinner,sun50i-a133-powervr",
 	    sizeof(dev->native_platform.compatible));
 	error = -drm_dev_register(dev, 0);
 	if (error != 0) {

@@ -29,12 +29,51 @@
 #include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <dev/powervr/pvr_fwinfo.h>
 #include "pvr_drm.h"
 #include "pvr_query.h"
 
 /* Firmware metadata bit numbers, not the decimal BRN or ERN identifiers. */
 #define PVR_BRN(n) (UINT64_C(1) << (n))
 #define PVR_ERN(n) (UINT64_C(1) << (n))
+
+int
+pvr_query_input_from_fwinfo(const struct pvr_fwinfo *info,
+    struct pvr_query_input *out)
+{
+	static const enum pvr_fw_feature fields[] = {
+		[PVR_QUERY_COMMON_STORE] = PVR_FW_FEATURE_COMMON_STORE_SIZE_IN_DWORDS,
+		[PVR_QUERY_MAX_PARTITIONS] = PVR_FW_FEATURE_MAX_PARTITIONS,
+		[PVR_QUERY_TILE_X] = PVR_FW_FEATURE_TILE_SIZE_X,
+		[PVR_QUERY_TILE_Y] = PVR_FW_FEATURE_TILE_SIZE_Y,
+		[PVR_QUERY_MIN_OUTPUT_REGS] = PVR_FW_FEATURE_USC_MIN_OUTPUT_REGISTERS_PER_PIX,
+		[PVR_QUERY_NUM_CLUSTERS] = PVR_FW_FEATURE_NUM_CLUSTERS,
+		[PVR_QUERY_TILES_IN_FLIGHT] = PVR_FW_FEATURE_ISP_MAX_TILES_IN_FLIGHT,
+		[PVR_QUERY_ROGUEXE] = PVR_FW_FEATURE_ROGUEXE,
+		[PVR_QUERY_COMPUTE_OVERLAP] = PVR_FW_FEATURE_COMPUTE_OVERLAP,
+	};
+	struct pvr_query_input input = { 0 };
+	size_t i;
+	int error;
+
+	if (info == NULL || out == NULL)
+		return EINVAL;
+	input.bvnc = info->bvnc;
+	input.fw_major = info->version_major;
+	input.fw_minor = info->version_minor;
+	input.fw_build = info->version_build;
+	input.brn_mask = info->brn_mask;
+	input.ern_mask = info->ern_mask;
+	for (i = 0; i < __arraycount(fields); i++) {
+		error = pvr_fwinfo_feature(info, fields[i], &input.feature[i]);
+		if (error == ENOENT && i >= PVR_QUERY_ROGUEXE)
+			continue;
+		if (error != 0)
+			return error;
+	}
+	*out = input;
+	return 0;
+}
 
 int
 pvr_query_profile_init(const struct pvr_query_input *in,
@@ -54,11 +93,20 @@ pvr_query_profile_init(const struct pvr_query_input *in,
 
 	if (in == NULL || out == NULL)
 		return EINVAL;
-	/* This native execution profile has one validated firmware ABI. */
-	if (in->bvnc != UINT64_C(0x00240038006800b7) ||
-	    in->fw_major != 1 || in->fw_minor != 1 || in->fw_build != 6976702 ||
-	    (in->brn_mask & ~UINT64_C(0xfff)) != 0 ||
-	    (in->ern_mask & ~UINT64_C(0xff)) != 0)
+	/* GE accepts only the exact pinned image masks, including unknown tails.
+	 * Unknown bits are preserved by the parser, not advertised as quirks.
+	 */
+	if (in->fw_major != 1 || in->fw_minor != 1 || in->fw_build != 6976702)
+		return EOPNOTSUPP;
+	if (in->bvnc == UINT64_C(0x00240038006800b7)) {
+		if ((in->brn_mask & ~UINT64_C(0xfff)) != 0 ||
+		    (in->ern_mask & ~UINT64_C(0xff)) != 0)
+			return EOPNOTSUPP;
+	} else if (in->bvnc == UINT64_C(0x0016006600360026)) {
+		if (in->brn_mask != UINT64_C(0x54000610) ||
+		    in->ern_mask != UINT64_C(0x1a5))
+			return EOPNOTSUPP;
+	} else
 		return EOPNOTSUPP;
 	f = in->feature;
 	for (i = 0; i < PVR_QUERY_ROGUEXE; i++) {

@@ -48,6 +48,8 @@ static unsigned checks, allocations;
 } } while (0)
 #define KASSERT(e) CHECK(e)
 static struct drm_device device;
+static uint64_t selected_bvnc = PVR_STREAM_BVNC;
+uint64_t pvr_device_bvnc(struct drm_device *dev) { (void)dev; return selected_bvnc; }
 static struct drm_file first, second;
 static struct pvr_file_vm vms[2];
 static const struct pvr_backend backend = { .cookie = &device };
@@ -371,6 +373,26 @@ static void context_inputs(void)
 	CHECK(pvr_create_context(&device, &a, &first) == -EOPNOTSUPP);
 	CHECK(memcmp(&a, &saved, sizeof(a)) == 0 && copies == 0); close_files();
 }
+static void ge_context_admission(void)
+{
+	struct drm_pvr_ioctl_create_context_args args;
+
+	reset();
+	selected_bvnc = PVR_STREAM_GE8300_BVNC;
+	args = context_args(DRM_PVR_CTX_TYPE_RENDER);
+	CHECK(pvr_create_context(&device, &args, &first) == -EOPNOTSUPP);
+	CHECK(publishes == 0 && context_creates == 0);
+	{
+		struct drm_pvr_ioctl_create_free_list_args fl = freelist_args();
+		CHECK(pvr_create_free_list(&device, &fl, &first) == -EOPNOTSUPP);
+		CHECK(freelist_creates == 0 && publishes == 0);
+	}
+	args = context_args(DRM_PVR_CTX_TYPE_COMPUTE);
+	CHECK(pvr_create_context(&device, &args, &first) == 0);
+	CHECK(observed_config.bvnc == PVR_STREAM_GE8300_BVNC);
+	close_files();
+	selected_bvnc = PVR_STREAM_BVNC;
+}
 static void context_ownership(void)
 {
 	struct drm_pvr_ioctl_create_context_args a, saved;
@@ -547,7 +569,7 @@ static void unknown_handles(void)
 }
 int main(void)
 {
-	context_inputs(); context_ownership(); freelist_ownership(); close_order(); unknown_handles(); registry_lifetime();
+	ge_context_admission(); context_inputs(); context_ownership(); freelist_ownership(); close_order(); unknown_handles(); registry_lifetime();
 	CHECK(allocations == 0 && retained_count == 0 && !gated && !preloaded);
 	printf("pvr exec contract: %u checks passed\n", checks); return 0;
 }

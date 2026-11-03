@@ -16,8 +16,13 @@ for kind in mem start boot probe service bridge; do
     esac
     sed '/^#include /d' "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fw${kind}.h" >> "$work/$kind.h"
 done
+sed '/^#include /d' "$src/sys/dev/powervr/pvr_fwservice.h" > "$work/service.h"
+sed '/^#include /d' "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwservice.h" >> "$work/service.h"
 sed '/^#include /d' "$src/sys/external/bsd/drm2/powervr/pvr_backend.h" > "$work/backend.h"
-sed '/^#include /d' "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwbridge.c" > "$work/bridge-driver.h"
+sed '/^#include /d' "$src/sys/external/bsd/drm2/powervr/pvr_fwbridge.h" > "$work/bridge.h"
+sed '/^#include /d' "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwbridge.h" >> "$work/bridge.h"
+sed '/^#include /d' "$src/sys/external/bsd/drm2/powervr/pvr_fwbridge.c" > "$work/bridge-driver.h"
+sed '/^#include /d' "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwbridge.c" >> "$work/bridge-driver.h"
 # Include the complete production lifecycle functions, without sysctl boilerplate.
 awk '/^sun60i_gpu_run_stage\(/ { active=1; print "static void" }
     /^sun60i_gpu_exec_attach\(/ { active=1; print "static int" }

@@ -20,6 +20,7 @@ typedef uint64_t __u64;
 #define DRM_IOCTL_NR(n) ((n) & 0xff)
 #include "pvr-uapi-body.h"
 #include "pvr_backend.h"
+#include "pvr_fwinfo.h"
 #include "rbtree.h"
 #include "powervr/pvr_rogue_fwif.h"
 #ifndef PVR_REGISTRY_TEST
@@ -285,8 +286,10 @@ static int pvr_destroy_hwrt_dataset(struct drm_device *d, void *a, struct drm_fi
 static int pvr_submit_jobs(struct drm_device *d, void *a, struct drm_file *f)
 { abort(); }
 /* The separate heap contract tests the actual query and user-copy behavior. */
-static int pvr_heap_query(uint32_t type, struct drm_pvr_ioctl_dev_query_args *a)
+static int pvr_heap_query_profile(uint64_t bvnc, uint32_t type, struct drm_pvr_ioctl_dev_query_args *a)
 {
+	CHECK(bvnc == UINT64_C(0x00240038006800b7) ||
+	    bvnc == UINT64_C(0x0016006600360026));
 	CHECK(type == 4 || type == 5);
 	CHECK(a->type == type);
 	return -EINTR; /* Distinguish routing from a generic unsupported return. */
@@ -715,6 +718,20 @@ main(void)
 #if PVR_REGISTRY_TEST
 	registry_tests(owner);
 #endif
+	/* Independent GE device profile is selected without a BXM identity. */
+	{
+		struct drm_device *ge = NULL;
+		struct pvr_query_input ge_input = input;
+		ge_input.bvnc = UINT64_C(0x0016006600360026);
+		ge_input.brn_mask = UINT64_C(0x54000610);
+		ge_input.ern_mask = UINT64_C(0x1a5);
+		CHECK(pvr_render_attach(parent, dmat, ge_input.bvnc,
+		    &ge_input, &ge) == 0);
+		CHECK(pvr_device_bvnc(ge) == ge_input.bvnc);
+		CHECK(strcmp(ge->native_platform.compatible,
+		    "allwinner,sun50i-a133-powervr") == 0);
+		drm_dev_put(ge);
+	}
 	/* The test resets the backend before releasing its device cookie. */
 	memset(&installed_events, 0, sizeof(installed_events));
 	drm_dev_put(owner);

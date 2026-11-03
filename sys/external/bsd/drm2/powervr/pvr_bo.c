@@ -20,7 +20,8 @@
 #include <drm/drm_gem_cma_helper.h>
 #include <drm/drm_prime.h>
 #include <drm/drm_vma_manager.h>
-#include <arm/sunxi/sun60i_a733_gpu_mmu.h>
+#include <dev/powervr/pvr_mmu.h>
+#include "pvr_backend.h"
 #include "pvr_drm.h"
 #include "pvr_drv.h"
 
@@ -82,7 +83,7 @@ pvr_bo_mapping(struct drm_gem_object *obj, uint64_t offset, uint64_t size,
 	struct pvr_bo *bo;
 	bus_dmamap_t map;
 	uint64_t pa, options = 0;
-	const uint64_t limit = UINT64_C(1) << A733_GPU_MMU_PA_BITS;
+	const uint64_t limit = UINT64_C(1) << PVR_MMU_PA_BITS;
 
 	if (obj == NULL || obj->funcs != &pvr_bo_funcs ||
 	    address == NULL || flags == NULL || size == 0 ||
@@ -97,14 +98,18 @@ pvr_bo_mapping(struct drm_gem_object *obj, uint64_t offset, uint64_t size,
 	    map->dm_segs[0].ds_len < obj->size)
 		return EOPNOTSUPP;
 	pa = map->dm_segs[0].ds_addr;
-	if ((pa & (A733_GPU_MMU_PAGE_SIZE - 1)) != 0 ||
+	if (pvr_device_bvnc(obj->dev) == UINT64_C(0x0016006600360026) &&
+	    (bo->cma.dmasegs[0].ds_len < obj->size ||
+	    pa != bo->cma.dmasegs[0].ds_addr))
+		return EOPNOTSUPP;
+	if ((pa & (PVR_MMU_PAGE_SIZE - 1)) != 0 ||
 	    pa >= limit || offset >= limit - pa ||
 	    size > limit - pa - offset)
 		return EINVAL;
 	if ((bo->flags & DRM_PVR_BO_BYPASS_DEVICE_CACHE) != 0)
-		options |= A733_GPU_MMU_PTE_SLC_BYPASS;
+		options |= PVR_MMU_PTE_SLC_BYPASS;
 	if ((bo->flags & DRM_PVR_BO_PM_FW_PROTECT) != 0)
-		options |= A733_GPU_MMU_PTE_PM_FW_PROTECT;
+		options |= PVR_MMU_PTE_PM_FW_PROTECT;
 	*address = pa + offset;
 	*flags = options;
 	return 0;
