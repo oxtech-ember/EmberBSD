@@ -59,7 +59,9 @@ static audio_info_t info, oinfo;
 static const char *device;
 static int	audiofd;
 static int	aflag;
+#ifndef CRUNCHEDPROG
 int	verbose;
+#endif
 static int	monitor_gain, omonitor_gain;
 static int	gain;
 static int	balance;

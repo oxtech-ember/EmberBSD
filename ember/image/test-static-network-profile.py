@@ -26,6 +26,33 @@ def check(condition, message):
 
 
 selected = profile.network('riscv32')
+peripheral = profile.network('riscv32', ('system', 'audio', 'video', 'envsys', 'spi'),
+                             ('1',))
+spi_toolset = profile.network('riscv32', ('spi',))
+try:
+    profile.network('riscv32', ('audio', 'audio'))
+except ValueError:
+    duplicate_toolset_rejected = True
+else:
+    duplicate_toolset_rejected = False
+check(duplicate_toolset_rejected,
+      'network toolset selector rejects duplicate selections')
+try:
+    profile.network('riscv32', ('spi',), ('1', '1'))
+except ValueError:
+    duplicate_spi_unit_rejected = True
+else:
+    duplicate_spi_unit_rejected = False
+try:
+    profile.network('riscv32', ('spi',), ('01',))
+except ValueError:
+    noncanonical_spi_unit_rejected = True
+else:
+    noncanonical_spi_unit_rejected = False
+check(duplicate_spi_unit_rejected and noncanonical_spi_unit_rejected and
+      not any(node.startswith('spi') for node in spi_toolset['device_nodes']) and
+      not spi_toolset['device_make_groups'],
+      'SPI node units require an explicit unique unit selection')
 runtime_source = '/prepared/llvm-runtime-source'
 check(profile.runtime_original_source({'paths': {'llvm-source': runtime_source}}) ==
       runtime_source and
@@ -109,9 +136,20 @@ check(set(selected['data_components']) == {
       'dhcpcd hooks are selected through native non-ELF install targets')
 check(not any('SMALLPROG' in flag for flag in selected['flags']),
       'network target does not inherit compact-init flags')
-check(all((source / program / 'Makefile').is_file() for program in
+def native_program_makefile(program):
+    directory = source / program
+    if not (directory / 'Makefile').is_file():
+        directory = directory.parent
+    return (directory / 'Makefile').is_file()
+
+
+check(all(native_program_makefile(program) for program in
           (*selected['programs'], *selected['crunch_programs'])),
       'every selected native component has an OS make target')
+check(all(native_program_makefile(program) for program in peripheral['crunch_programs']) and
+      all((source / library / 'Makefile').is_file()
+          for library in peripheral['libraries']),
+      'selected peripheral toolsets have native program and library targets')
 check('BINMODE=4555' in (source / 'sbin/ping/Makefile').read_text() and
       'LDADD+= -lipsec' in (source / 'sbin/ping/Makefile').read_text() and
       'lib/libipsec' in selected['libraries'] and
@@ -124,9 +162,13 @@ check('lib/libz' not in selected['libraries'] and 'lib/libbz2' not in selected['
       'compact network profile omits optional grep compression libraries')
 crunch_source = (Path(__file__).with_name('cix-p1-build-userland.sh')).read_text()
 check("printf 'libs -ledit -lterminfo -lutil -lkvm -lprop -lcrypt -lpcap -lipsec -lm'" in crunch_source and
+      "*\" usr.bin/audio/ctl/audioctl \"*) printf ' -laudio'" in crunch_source and
+      "*\" usr.sbin/envstat/envstat \"*) printf ' -lmj'" in crunch_source and
       '-V EMBER_GREP_UNCOMPRESSED_ONLY=yes' in crunch_source,
       'network crunch includes service dependencies and compact grep option')
-check("printf 'srcdirs bin sbin usr.bin libexec external/bsd/dhcpcd/sbin external/bsd/wpa/bin external/apache2/mDNSResponder/usr.sbin\\nprogs'" in crunch_source and
+check("usr.sbin usr.bin/videoctl" in crunch_source and
+      'special %s srcdir %s' in crunch_source and
+      'obj/usr.bin/audio/common' in crunch_source and
       all(flag in crunch_source for flag in
           ('-V MKPAM=no', '-V USE_PAM=no', '-V MKKERBEROS=no',
            '-V USE_KERBEROS=no', '-V MKLDAP=no', '-V MKYP=no')) and
@@ -291,20 +333,48 @@ check(destinations == {'usr.bin/login': 'usr/bin/login'} and
       'non-setuid services and root-only ping crunch while setuid login stays standalone')
 check(not any(name in selected['programs'] for name in
               ('usr.bin/grep', 'usr.bin/sed', 'usr.bin/tee', 'usr.bin/tail')) and
-      {'sbin/route', 'usr.bin/grep', 'usr.bin/sed', 'usr.bin/fmt'} <=
+      {'sbin/route', 'sbin/sysctl', 'usr.bin/grep', 'usr.bin/sed',
+       'usr.bin/fmt'} <=
       set(selected['crunch_programs']),
-      'rc and service utilities use the compact crunch binary')
+      'rc, service and self-test utilities use the compact crunch binary')
+check(not {'usr.bin/audio/ctl/audioctl', 'usr.bin/audio/play/audioplay',
+           'usr.bin/audio/record/audiorecord', 'usr.bin/mixerctl/mixerctl',
+           'usr.bin/timeout', 'usr.bin/wc', 'usr.bin/videoctl/videoctl',
+           'usr.sbin/envstat/envstat', 'usr.sbin/spinandctl/spinandctl'} &
+      set(selected['crunch_programs']) and
+      {'usr.bin/audio/ctl/audioctl', 'usr.bin/audio/play/audioplay',
+       'usr.bin/audio/record/audiorecord', 'usr.bin/mixerctl/mixerctl',
+       'usr.bin/timeout', 'usr.bin/wc', 'usr.bin/videoctl/videoctl',
+       'usr.sbin/envstat/envstat', 'usr.sbin/spinandctl/spinandctl'} <=
+      set(peripheral['crunch_programs']) and
+      {'usr.bin/audio/common', 'crypto/external/bsd/netpgp/libmj'} <=
+      set(peripheral['libraries']),
+      'optional audio/video/envsys/SPI tools share the compact network executable')
+check(not {'bin/df', 'usr.bin/env', 'usr.bin/uname'} &
+      set(selected['crunch_programs']) and
+      {'bin/df', 'usr.bin/env', 'usr.bin/uname'} <=
+      set(peripheral['crunch_programs']),
+      'generic system diagnostics are opt-in and omitted from the minimal network profile')
 check({'random', 'urandom', 'bpf'} <= set(selected['device_nodes']) and
-      'bpf0' in selected['device_links'],
-      'network root includes entropy and BPF device nodes from MAKEDEV')
+      {'audio0', 'audioctl0', 'mixer0', 'video0', 'sysmon'} <=
+      set(peripheral['device_nodes']) and {'spi1'} <= set(peripheral['device_nodes']) and
+      {'bpf0'} <= set(selected['device_links']) and
+      {'audio', 'audioctl', 'mixer'} <= set(peripheral['device_links']),
+      'optional peripheral device nodes and links come from MAKEDEV')
 network_devices = profile.network_device_selection(selected, 'md0')
+peripheral_devices = profile.network_device_selection(peripheral, 'md0')
 gui_network_devices = profile.network_device_selection(selected, 'md0', application=True)
 check(network_devices[2] == ('bpf', 'md0') and
+      peripheral_devices[2] == ('bpf', 'md0', 'audio', 'video', 'sysmon', 'spi1') and
       set(gui_network_devices[0]) >= {'ttyE0', 'wsmouse0', 'iic0'} and
       gui_network_devices[2] ==
       ('bpf', 'md0', 'wscons', 'iic0') and
       network_devices[0][-1] == 'rmd0a' and network_devices[3] == ('md0a',),
       'network root and optional GUI nodes come from selected MAKEDEV groups')
+check('spi[0-9]*)' in (source / 'etc/MAKEDEV.tmpl').read_text() and
+      'mkdev spi$unit c %spi_chr% $unit 600' in (source / 'etc/MAKEDEV.tmpl').read_text() and
+      'device-major spi       char' in (source / 'sys/conf/majors').read_text(),
+      'the optional SPI node uses the target native MAKEDEV and major definition')
 try:
     profile.network_device_selection(selected, 'md0a')
 except ValueError:
