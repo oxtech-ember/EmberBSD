@@ -747,6 +747,14 @@ define rtw8723d_desc
 file	dev/ic/rtw8723d_rx.c		rtw8723d_desc
 file	dev/ic/rtw8723d_tx.c		rtw8723d_desc
 
+# RTL8723D PHY receive-signal metadata; no calibration or TX admission.
+define rtw8723d_signal
+file	dev/ic/rtw8723d_rx_signal.c	rtw8723d_signal
+
+# RTL8723D EDCA programming; common WME encoder comes from rtw88_core.
+define rtw8723d_edca: rtw88_core
+file	dev/ic/rtw8723d_edca.c		rtw8723d_edca
+
 # Realtek RTL8723D legacy bootstrap, independent of the PCI/network core.
 define rtw8723d_boot
 file	dev/ic/rtw8723d_boot.c		rtw8723d_boot
