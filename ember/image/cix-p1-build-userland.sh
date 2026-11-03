@@ -133,10 +133,22 @@ if [ "${1:-}" = --console-selected ]; then
     elif [ "$profile" = network ]; then
         mkdir -p "$out/crunch"
         {
-            printf 'srcdirs bin sbin usr.bin libexec external/bsd/dhcpcd/sbin external/bsd/wpa/bin external/apache2/mDNSResponder/usr.sbin\nprogs'
+            printf 'srcdirs bin sbin usr.bin usr.sbin usr.bin/videoctl libexec external/bsd/dhcpcd/sbin external/bsd/wpa/bin external/apache2/mDNSResponder/usr.sbin\nprogs'
             for part in $crunch_programs; do printf ' %s' "${part##*/}"; done
             printf '\nln sh -sh\nln reboot halt\n'
+            for part in $crunch_programs; do
+                case "$part" in
+                    usr.bin/audio/ctl/*|usr.bin/audio/play/*|usr.bin/audio/record/*|usr.bin/mixerctl/*)
+                        printf 'special %s srcdir %s\n' "${part##*/}" "${part%/*}" ;;
+                esac
+            done
             printf 'libs -ledit -lterminfo -lutil -lkvm -lprop -lcrypt -lpcap -lipsec -lm'
+            case " $crunch_programs " in
+                *" usr.bin/audio/ctl/audioctl "*) printf ' -laudio' ;;
+            esac
+            case " $crunch_programs " in
+                *" usr.sbin/envstat/envstat "*) printf ' -lmj' ;;
+            esac
             case "$wpa_backend" in
                 wolfssl) printf ' -lwolfssl' ;;
                 openssl|'') printf ' -lcrypto' ;;
@@ -170,6 +182,10 @@ if [ "${1:-}" = --console-selected ]; then
                     -V "EMBER_WOLFSSL_PREFIX=$wolfssl_prefix"
             fi
             set -- "$@" -L "$out/dest/usr/lib"
+            case " $crunch_programs " in
+                *" usr.bin/audio/ctl/audioctl "*)
+                    set -- "$@" -L "$out/obj/usr.bin/audio/common" ;;
+            esac
             if [ "$wpa_backend" = wolfssl ]; then
                 [ -n "$wolfssl_prefix" ] || { echo 'Missing WolfSSL prefix.' >&2; exit 2; }
                 set -- "$@" -L "$wolfssl_prefix/lib"
@@ -225,6 +241,7 @@ if [ "${1:-}" = --console-selected ]; then
                 bin/*) link_if_same console-tools "$root/$part" ;;
                 sbin/*) link_if_same ../bin/console-tools "$root/$part" ;;
                 usr.bin/*) mkdir -p "$root/usr/bin"; link_if_same ../../bin/console-tools "$root/usr/bin/${part##*/}" ;;
+                usr.sbin/*) mkdir -p "$root/usr/sbin"; link_if_same ../../bin/console-tools "$root/usr/sbin/${part##*/}" ;;
                 libexec/*) mkdir -p "$root/usr/libexec"; link_if_same ../../bin/console-tools "$root/usr/libexec/${part##*/}" ;;
                 external/bsd/dhcpcd/sbin/*) mkdir -p "$root/sbin"; link_if_same ../bin/console-tools "$root/sbin/${part##*/}" ;;
                 external/bsd/wpa/bin/*|external/apache2/mDNSResponder/usr.sbin/*) mkdir -p "$root/usr/sbin"; link_if_same ../../bin/console-tools "$root/usr/sbin/${part##*/}" ;;
@@ -243,6 +260,7 @@ if [ "${1:-}" = --console-selected ]; then
                 echo 'Console program conflicts with a base path.' >&2; exit 1
             }
             cp "$extra" "$root/bin/$extra_name"
+            run strip-extra "$host_prefix/bin/llvm-objcopy" -S "$root/bin/$extra_name"
             chmod 0555 "$root/bin/$extra_name"
         else
             [ ! -e "$root/bin/$extra_name" ] && [ ! -L "$root/bin/$extra_name" ] || {
@@ -269,6 +287,8 @@ if [ "${1:-}" = --console-selected ]; then
             }
             mkdir -p "$root/${install_path%/*}"
             cp -p "$out/dest/$install_path" "$root/$install_path"
+            run "strip-${install_path##*/}" "$host_prefix/bin/llvm-objcopy" -S "$root/$install_path"
+            chmod 0555 "$root/$install_path"
         done
         [ -x "$root/bin/console-tools" ] || { echo 'Missing network console-tools.' >&2; exit 1; }
         run network-config "$python" -B "$here/static-profile.py" stage-network \

@@ -418,8 +418,20 @@ def console(target, compact=False):
                 libraries=libraries, programs=programs, compact=compact)
 
 
-def network(target):
+def network(target, toolsets=(), spi_units=()):
     """Select the ordinary-init network userland from the same C foundation."""
+    import re
+
+    allowed_toolsets = {'system', 'audio', 'video', 'envsys', 'spi'}
+    if (len(set(toolsets)) != len(toolsets) or
+            any(not re.fullmatch(r'[a-z]+', item) or item not in allowed_toolsets
+                for item in toolsets)):
+        raise ValueError('unsupported or repeated network toolset')
+    if (len(set(spi_units)) != len(spi_units) or
+            any(not re.fullmatch(r'(0|[1-9][0-9]*)', unit) for unit in spi_units)):
+        raise ValueError('SPI units must be unique nonnegative unit numbers')
+    if spi_units and 'spi' not in toolsets:
+        raise ValueError('SPI units require the spi toolset')
     selected = console(target)
     selected.update(profile='network', compact=False)
     selected['headers'] = ('lib/libcurses',)
@@ -443,11 +455,36 @@ def network(target):
     selected['data_components'] = (
         'external/bsd/dhcpcd/libexec/dhcpcd-run-hooks',
         'external/bsd/dhcpcd/libexec/dhcpcd-hooks')
-    install_map = [('usr.bin/login', 'usr/bin/login')]
-    selected['install_map'] = tuple(install_map)
+    selected['device_make_groups'] = ()
     selected['device_nodes'] = ('console', 'constty', 'null', 'zero', 'tty', 'klog',
                                 'random', 'urandom', 'bpf')
     selected['device_links'] = ('bpf0',)
+    if 'system' in toolsets:
+        selected['crunch_programs'] += ('bin/df', 'usr.bin/env', 'usr.bin/uname')
+    if 'audio' in toolsets:
+        selected['libraries'] += ('usr.bin/audio/common',)
+        selected['crunch_programs'] += (
+            'usr.bin/audio/ctl/audioctl', 'usr.bin/audio/play/audioplay',
+            'usr.bin/audio/record/audiorecord', 'usr.bin/mixerctl/mixerctl',
+            'usr.bin/timeout', 'usr.bin/wc')
+        selected['device_nodes'] += ('audio0', 'audioctl0', 'mixer0')
+        selected['device_links'] += ('audio', 'audioctl', 'mixer')
+        selected['device_make_groups'] += ('audio',)
+    if 'video' in toolsets:
+        selected['crunch_programs'] += ('usr.bin/videoctl/videoctl',)
+        selected['device_nodes'] += ('video0',)
+        selected['device_make_groups'] += ('video',)
+    if 'envsys' in toolsets:
+        selected['libraries'] += ('crypto/external/bsd/netpgp/libmj',)
+        selected['crunch_programs'] += ('usr.sbin/envstat/envstat',)
+        selected['device_nodes'] += ('sysmon',)
+        selected['device_make_groups'] += ('sysmon',)
+    if 'spi' in toolsets:
+        selected['crunch_programs'] += ('usr.sbin/spinandctl/spinandctl',)
+        selected['device_nodes'] += tuple('spi' + unit for unit in spi_units)
+        selected['device_make_groups'] += tuple('spi' + unit for unit in spi_units)
+    install_map = [('usr.bin/login', 'usr/bin/login')]
+    selected['install_map'] = tuple(install_map)
     return selected
 
 
@@ -472,7 +509,7 @@ def network_device_selection(settings, root_device, root_partition='a', applicat
     nodes = settings['device_nodes']
     root_partitioned = root_device + root_partition
     nodes += ('r' + root_partitioned,)
-    make_devices = ('bpf', root_device)
+    make_devices = ('bpf', root_device, *settings.get('device_make_groups', ()))
     block_nodes = (root_partitioned,)
     if application:
         nodes += ('ttyE0', 'wsmouse0', 'iic0')
@@ -740,7 +777,17 @@ def run_console(arguments):
     target = os.environ['EMBER_CONSOLE_TARGET']
     profile = os.environ.get('EMBER_USERLAND_PROFILE', 'console')
     is_network = profile == 'network'
-    settings = network(target) if is_network else console(target, profile == 'console-tools')
+    if is_network:
+        selected_toolsets = tuple(filter(None,
+            os.environ.get('EMBER_NETWORK_TOOLSETS', '').split(',')))
+        selected_spi_units = tuple(filter(None,
+            os.environ.get('EMBER_NETWORK_SPI_UNITS', '').split(',')))
+        try:
+            settings = network(target, selected_toolsets, selected_spi_units)
+        except ValueError as exc:
+            raise SystemExit('static-console: ' + str(exc)) from exc
+    else:
+        settings = console(target, profile == 'console-tools')
     sdk = Path(os.environ['EMBERBSD_SDK_SOURCE']).resolve(strict=True)
     sys.path.insert(0, str(sdk / 'src'))
     from emberbsd_sdk import cpu_capacity, elf, host_prefix, inventory, jsonio, libedit, llvm_runtime, native_os, paths, process, sourceprep, target_toolchain
@@ -820,9 +867,7 @@ def run_console(arguments):
         libpcap_archive_hash = ''
         if is_network:
             pkgsrc_export = os.environ['EMBER_PKGSRC_EXPORT']
-            export_receipt = jsonio.read_json(
-                Path(pkgsrc_export) / 'pkgsrc-export.json')
-            patch_tool = export_receipt['identity']['patch']['path']
+            patch_tool = str(Path(native.bundle_root) / 'bin/gpatch')
             patch_tool = host_prefix.validate_host_executable(
                 host, patch_tool, dict(native.host), search_path=env['PATH'])
             if not network_interface:
@@ -1027,6 +1072,7 @@ def run_console(arguments):
              if overlay_state is not None else '') +
             ('program-sha256=' + extra_digest + '\n' if extra_digest else '') +
             (f'network-interface={network_interface}\nwpa-crypto-backend={wpa_backend or "default"}\n' +
+             'network-toolsets=' + ' '.join(selected_toolsets) + '\n' +
              (f'wolfssl-sha256={wolfssl_hash}\n' if wolfssl_hash else '') +
              (f'libpcap-archive-sha256={libpcap_archive_hash}\n' if libpcap_archive_hash else '') +
              ''.join(f'{name}-source-record-sha256={digest}\n' for name, digest in sorted(network_sources.items()))

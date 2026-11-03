@@ -251,6 +251,9 @@ export EMBER_NETWORK_INTERFACE=wifi0
 export EMBER_NETWORK_ROOT_DEVICE=md0
 export EMBER_NETWORK_ROOT_PARTITION=a
 export EMBER_NETWORK_OVERLAY=/absolute/private/network-overlay
+# Optional target diagnostics:
+export EMBER_NETWORK_TOOLSETS=system,audio,video,envsys,spi
+export EMBER_NETWORK_SPI_UNITS=1
 # Optional: export EMBER_CONSOLE_PROGRAM=/absolute/target/lvgl-wscons
 "$EMBER_HOST_PREFIX/bin/python3.15" -B ember/image/cix-p1-native.py \
     /absolute/source /absolute/network-output /absolute/os-host-tools /absolute/target-clang-prefix
@@ -261,6 +264,22 @@ producer. It deliberately does not invoke `nbmakefs` or write a filesystem
 image. `MAKEDEV` supplies the standard entropy devices and BPF node used by
 the selected WPA/DHCP paths; the staged resolver, DHCP state and runtime
 directories remain writable on the root filesystem or under `/var/run`.
+Optional `EMBER_NETWORK_TOOLSETS` is a comma-separated selection of `system`,
+`audio`, `video`, `envsys`, and `spi`. These choices add the corresponding standard
+tools to the shared `console-tools` executable and ask target `MAKEDEV` for
+their device nodes. `system` includes `env`, `uname`, and `df`; `audio` includes `audioctl`, `audioplay`, `audiorecord`,
+`mixerctl`, `timeout`, and `wc`; `video` includes `videoctl`; `envsys` includes
+`envstat`; `spi` includes read-only `spinandctl`. Device nodes require an
+explicit `EMBER_NETWORK_SPI_UNITS` comma-separated unit list so the tool cannot
+default to a controller assigned to another peripheral. See the
+[ESP-Mosaico hardware profile](https://github.com/oxtech-ember/EmberBSD-DevBoards/blob/main/boards/esp-mosaico/interfaces.md)
+for canonical controller mapping; the current diagnostic example selects unit
+`1` for the NAND controller. The default network profile leaves these optional
+tools out.
+When the producer strips an optional program or standalone install-map
+executable, it strips only the staged root copy. The original installed file
+under `dest/` remains available for incremental builds and debugging; target
+ownership and mode (including setuid bits) continue to come from `METALOG`.
 Repeated runs reuse the same compatible `obj/` and `dest/` trees, including a
 completed output. A small compatibility record protects target, ABI, runtime
 and compile configuration; source and overlay edits flow through the normal
