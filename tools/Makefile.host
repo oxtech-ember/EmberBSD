@@ -37,6 +37,9 @@ ${var}:=	${${var}}
 .CURDIR:=	${_CURDIR}
 .undef		_CURDIR
 
+# Host tools have no installed manual pages, even when the release builds them.
+MAN=
+
 # Set up the environment for <bsd.hostprog.mk>.
 .if ${USETOOLS} != "yes"
 .undef HOSTPROG
