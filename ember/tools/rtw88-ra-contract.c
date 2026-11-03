@@ -2807,11 +2807,14 @@ test_async_worker_dispatch(void)
 }
 
 #define RTW88_RA_MAIN main
+#define RTW88_RA_TEST_ASYNC
 #endif
 int
 RTW88_RA_MAIN(void)
 {
+#ifdef RTW88_RA_TEST_ASYNC
 	test_async_worker_dispatch();
+#endif
 	if (native_start_main() != 0)
 		return 1;
 	test_ra_ht20_numeric();
