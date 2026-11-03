@@ -46,7 +46,8 @@ def main(variant="hci"):
         units += [root / "sys/dev/ic/rtw88_chip.c",
                   root / "sys/dev/ic/rtw8822c_runtime.c"]
         units += [root / "sys/dev/ic" / (name + ".c") for name in (
-            "rtw88_net_policy", "rtw88_hw", "rtw8822c_hw", "rtw88_fw_init", "rtw8822c",
+            "rtw88_net_policy", "rtw88_hw", "rtw8822c_hw", "rtw88_fw_init",
+            "rtw88_phy_table", "rtw8822c",
             "rtw8822c_boot", "rtw8822c_power", "rtw8822c_mac", "rtw8822c_phy",
             "rtw8822c_dack", "rtw8822c_table", "rtw8822c_coex", "rtw8822c_txpwr")]
     flags = ["-std=c11", "-g", "-O1", "-Wall", "-Wextra", "-Werror",
