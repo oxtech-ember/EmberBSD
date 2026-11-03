@@ -137,10 +137,19 @@ pvr_stream_geometry(uint64_t bvnc, const void *data, size_t size,
 	const uint8_t *p = data;
 	int error;
 
-	error = pvr_stream_header(bvnc, data, size, PVR_STREAM_GEOMETRY_SIZE, out);
+	if (bvnc == PVR_STREAM_GE8300_BVNC) {
+		error = pvr_stream_header_bytes(data, size,
+		    PVR_STREAM_GE8300_GEOMETRY_SIZE, PVR_STREAM_GEOMETRY_SIZE, out);
+		if (error == 0 && (pvr_stream_u32(p + 40) != 1 ||
+		    pvr_stream_u32(p + 44) != 0x20))
+			return EOPNOTSUPP;
+	} else {
+		error = pvr_stream_header(bvnc, data, size,
+		    PVR_STREAM_GEOMETRY_SIZE, out);
+	}
 	if (error != 0)
 		return error;
-	if ((flags & ~7U) != 0)
+	if ((flags & ~(bvnc == PVR_STREAM_GE8300_BVNC ? 3U : 7U)) != 0)
 		return EOPNOTSUPP;
 	memset(&cmd, 0, sizeof(cmd));
 	cmd.regs.vdm_ctrl_stream_base = pvr_stream_u64(p + 8);
@@ -149,6 +158,8 @@ pvr_stream_geometry(uint64_t bvnc, const void *data, size_t size,
 	cmd.regs.te_psg = pvr_stream_u32(p + 28);
 	cmd.regs.vdm_context_resume_task0_size = pvr_stream_u32(p + 32);
 	cmd.regs.view_idx = pvr_stream_u32(p + 36);
+	if (bvnc == PVR_STREAM_GE8300_BVNC)
+		cmd.regs.tpu = pvr_stream_u32(p + 44);
 	if ((flags & 1U) != 0)
 		cmd.flags |= ROGUE_GEOM_FLAGS_FIRSTKICK;
 	if ((flags & 2U) != 0)
@@ -171,12 +182,22 @@ pvr_stream_fragment(uint64_t bvnc, const void *data, size_t size,
 
 	if (command_type == NULL)
 		return EINVAL;
-	error = pvr_stream_header(bvnc, data, size, PVR_STREAM_FRAGMENT_SIZE, out);
+	if (bvnc == PVR_STREAM_GE8300_BVNC) {
+		error = pvr_stream_header_bytes(data, size,
+		    PVR_STREAM_FRAGMENT_SIZE, 376, out);
+		if (error == 0 && (pvr_stream_u32(p + 376) != 1 ||
+		    pvr_stream_u32(p + 380) != 0x20))
+			return EOPNOTSUPP;
+	} else {
+		error = pvr_stream_header(bvnc, data, size,
+		    PVR_STREAM_FRAGMENT_SIZE, out);
+		if (error == 0 && (pvr_stream_u32(p + 368) != 0 ||
+		    pvr_stream_u32(p + 380) != 0))
+			return EOPNOTSUPP;
+	}
 	if (error != 0)
 		return error;
-	/* Both multicore-only values are zero in the Mesa MC1 profile. */
-	if ((flags & ~255U) != 0 || pvr_stream_u32(p + 368) != 0 ||
-	    pvr_stream_u32(p + 380) != 0)
+	if ((flags & ~(bvnc == PVR_STREAM_GE8300_BVNC ? 254U : 255U)) != 0)
 		return EOPNOTSUPP;
 	memset(&cmd, 0, sizeof(cmd));
 	cmd.regs.isp_scissor_base = pvr_stream_u64(p + 8);
@@ -205,8 +226,14 @@ pvr_stream_fragment(uint64_t bvnc, const void *data, size_t size,
 	cmd.regs.event_pixel_pds_info = pvr_stream_u32(p + 356);
 	cmd.regs.view_idx = pvr_stream_u32(p + 360);
 	cmd.regs.event_pixel_pds_data = pvr_stream_u32(p + 364);
-	cmd.zls_stride = pvr_stream_u32(p + 372);
-	cmd.sls_stride = pvr_stream_u32(p + 376);
+	if (bvnc == PVR_STREAM_GE8300_BVNC) {
+		cmd.zls_stride = pvr_stream_u32(p + 368);
+		cmd.sls_stride = pvr_stream_u32(p + 372);
+		cmd.regs.tpu = pvr_stream_u32(p + 380);
+	} else {
+		cmd.zls_stride = pvr_stream_u32(p + 372);
+		cmd.sls_stride = pvr_stream_u32(p + 376);
+	}
 	if ((flags & 1U) != 0)
 		cmd.flags |= ROGUE_FRAG_FLAGS_SINGLE_CORE;
 	if ((flags & 2U) != 0)
@@ -238,10 +265,16 @@ pvr_stream_transfer(uint64_t bvnc, const void *data, size_t size,
 	size_t i;
 	int error;
 
-	error = pvr_stream_header(bvnc, data, size, PVR_STREAM_TRANSFER_SIZE, out);
+	if (bvnc == PVR_STREAM_GE8300_BVNC)
+		error = pvr_stream_header_bytes(data, size,
+		    PVR_STREAM_GE8300_TRANSFER_SIZE,
+		    PVR_STREAM_GE8300_TRANSFER_SIZE, out);
+	else
+		error = pvr_stream_header(bvnc, data, size,
+		    PVR_STREAM_TRANSFER_SIZE, out);
 	if (error != 0)
 		return error;
-	if ((flags & ~1U) != 0)
+	if ((flags & ~(bvnc == PVR_STREAM_GE8300_BVNC ? 0U : 1U)) != 0)
 		return EOPNOTSUPP;
 	memset(&cmd, 0, sizeof(cmd));
 	cmd.regs.pds_bgnd0_base = pvr_stream_u64(p + 8);
@@ -266,7 +299,8 @@ pvr_stream_transfer(uint64_t bvnc, const void *data, size_t size,
 	cmd.regs.isp_render = pvr_stream_u32(p + 164);
 	cmd.regs.isp_rgn = pvr_stream_u32(p + 168);
 	/* This holds surface dimensions even when the runtime has only one core. */
-	cmd.regs.frag_screen = pvr_stream_u32(p + 172);
+	if (bvnc != PVR_STREAM_GE8300_BVNC)
+		cmd.regs.frag_screen = pvr_stream_u32(p + 172);
 	if ((flags & 1U) != 0)
 		cmd.flags |= ROGUE_TRANSFER_FLAGS_SINGLE_CORE;
 	memcpy(out, &cmd, sizeof(cmd));
@@ -312,8 +346,12 @@ pvr_stream_static_render(uint64_t bvnc, const void *data, size_t size,
 	size_t i, offset;
 	int error;
 
-	error = pvr_stream_header(bvnc, data, size, PVR_STREAM_STATIC_RENDER_SIZE,
-	    out);
+	if (bvnc == PVR_STREAM_GE8300_BVNC)
+		error = pvr_stream_header_bytes(data, size,
+		    PVR_STREAM_STATIC_RENDER_SIZE, PVR_STREAM_STATIC_RENDER_SIZE, out);
+	else
+		error = pvr_stream_header(bvnc, data, size,
+		    PVR_STREAM_STATIC_RENDER_SIZE, out);
 	if (error != 0)
 		return error;
 	memset(&state, 0, sizeof(state));
@@ -354,7 +392,7 @@ pvr_stream_static_transfer(uint64_t bvnc, const void *data, size_t size)
 {
 	/* Linux init_transfer_fw_objs ignores the pointer for an empty stream. */
 	(void)data;
-	if (bvnc != PVR_STREAM_BVNC)
+	if (bvnc != PVR_STREAM_BVNC && bvnc != PVR_STREAM_GE8300_BVNC)
 		return EOPNOTSUPP;
 	return size == 0 ? 0 : EINVAL;
 }

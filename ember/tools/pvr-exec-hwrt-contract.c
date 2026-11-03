@@ -33,6 +33,47 @@ static int checks;
 
 #include "pvr-exec-hwrt-fixture.h"
 
+struct drm_pvr_ioctl_create_hwrt_dataset_args {
+	uint32_t width, height, samples, layers, region_header_size;
+	struct { uint32_t tpc_size, tpc_stride; } geom_data_args;
+};
+struct pvr_hwrt_config {
+	uint32_t region_header_size, tpc_size, tpc_stride;
+};
+#define hwrt_tiles production_hwrt_tiles
+#define hwrt_next_pow2 production_hwrt_next_pow2
+#include "hwrt-production.inc"
+#undef hwrt_tiles
+#undef hwrt_next_pow2
+
+static void
+hwrt_region_units(void)
+{
+	struct drm_pvr_ioctl_create_hwrt_dataset_args args = {
+		.width = 16, .height = 16, .samples = 1, .layers = 1,
+		.region_header_size = 16, .geom_data_args = { .tpc_size = 128 }
+	};
+	struct pvr_hwrt_config config = { 0 };
+	uint64_t span[5] = { 0 };
+
+	CHECK(hwrt_spans(&args, &config, span) == 0);
+	CHECK(config.region_header_size == 16);
+	CHECK(span[0] == 128);
+	args.region_header_size = 128;
+	CHECK(hwrt_spans(&args, &config, span) == EINVAL);
+	args.width = 128;
+	args.height = 128;
+	args.samples = 2;
+	args.layers = 2;
+	args.region_header_size = 32;
+	args.geom_data_args.tpc_size = 512;
+	args.geom_data_args.tpc_stride = 1;
+	CHECK(hwrt_spans(&args, &config, span) == 0);
+	CHECK(config.region_header_size == 32 && span[0] == 8192);
+	args.region_header_size = 192;
+	CHECK(hwrt_spans(&args, &config, span) == EINVAL);
+}
+
 static uint32_t
 next_pow2(uint32_t v)
 {
@@ -151,6 +192,7 @@ main(void)
 	    expect_mlist(524288, 524288));
 	CHECK(hwrt_mlist_fixture(1048576, 0) == expect_mlist(1048576, 0));
 	hwrt_profile_admission();
+	hwrt_region_units();
 	printf("PASS: %d HWRT geometry and admission checks\n", checks);
 	return 0;
 }

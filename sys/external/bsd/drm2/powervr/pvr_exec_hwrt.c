@@ -86,18 +86,23 @@ hwrt_spans(const struct drm_pvr_ioctl_create_hwrt_dataset_args *args,
     struct pvr_hwrt_config *config, uint64_t *span)
 {
 	uint32_t tiles_x, tiles_y, mtiles, tpc;
+	uint64_t headers;
 
 	hwrt_tiles(args->width, args->height, args->samples, &tiles_x,
 	    &tiles_y);
 	if (tiles_x == 0 || tiles_y == 0)
 		return EINVAL;
-	/* Region headers: one per 2x2 tile group, pinned byte size. */
-	span[0] = ((uint64_t)(tiles_x / HWRT_GROUP) *
-	    (tiles_y / HWRT_GROUP) * HWRT_REGION_HEADER_BYTES +
-	    HWRT_REGION_ALIGN - 1) & ~(uint64_t)(HWRT_REGION_ALIGN - 1);
-	if (span[0] == 0 || span[0] > UINT32_MAX)
+	/* Firmware takes a header count; the mapping hold takes bytes. */
+	headers = (uint64_t)(tiles_x / HWRT_GROUP) *
+	    (tiles_y / HWRT_GROUP);
+	if (headers == 0 || headers > UINT32_MAX ||
+	    args->region_header_size != headers)
 		return EINVAL;
-	config->region_header_size = (uint32_t)span[0];
+	config->region_header_size = (uint32_t)headers;
+	span[0] = (headers * HWRT_REGION_HEADER_BYTES +
+	    HWRT_REGION_ALIGN - 1) & ~(uint64_t)(HWRT_REGION_ALIGN - 1);
+	if (span[0] > UINT32_MAX)
+		return EINVAL;
 	if (args->layers > 1) {
 		span[0] = ((span[0] + HWRT_REGION_STRIDE_UNIT - 1) &
 		    ~(uint64_t)(HWRT_REGION_STRIDE_UNIT - 1)) * args->layers;
