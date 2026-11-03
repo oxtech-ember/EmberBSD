@@ -39,8 +39,7 @@ masked.
 A failed or uncertain FIFO transfer blocks further CMD53 transfers.
 Detach retains resources until the transport can be safely released.
 .Sh RADIO PROFILE
-A profile must be supplied as properties of the SDIO child device.
-The driver does not inherit properties from its parent.
+A profile may be supplied as properties of the SDIO child device.
 The
 .Sq rtw88-regulatory
 dictionary requires the
@@ -55,6 +54,13 @@ A platform
 .Sq mac-address
 may replace the address read from EFUSE.
 An incomplete profile is rejected.
+If no child profile is present, an FDT host may instead supply the explicit
+.Sq ember,rtw88-regdomain ,
+.Sq ember,rtw88-channels-2ghz
+and
+.Sq ember,rtw8723d-phy-package
+properties.
+No radio policy is inferred from an absent or partial profile.
 The board provider remains responsible for supplying a valid policy.
 .Sh FILES
 .Bl -tag -width Ds -compact

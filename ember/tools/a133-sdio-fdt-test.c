@@ -46,6 +46,12 @@ sdio_fixture(void *fdt, const char *root)
 	cells[2] = 0; cells[3] = cpu_to_fdt32(0x400);
 	assert(fdt_setprop(fdt, node, "reg", cells, 16) == 0);
 	assert(fdt_setprop(fdt, 0, OPT, NULL, 0) == 0);
+	node = fdt_add_subnode(fdt, 0, "wifi-regulator");
+	assert(node >= 0);
+	assert(fdt_setprop_u32(fdt, node, "phandle", 199) == 0);
+	assert(fdt_setprop_string(fdt, node, "regulator-name", "axp803-dldo1") == 0);
+	assert(fdt_setprop(fdt, node, "regulator-always-on", NULL, 0) == 0);
+	assert(fdt_setprop(fdt, node, "regulator-boot-on", NULL, 0) == 0);
 	node = fdt_path_offset(fdt, RPIO);
 	assert(fdt_setprop_u32(fdt, node, "#gpio-cells", 6) == 0);
 	parent = fdt_path_offset(fdt, "/soc@03000000/pinctrl@0300b000");
@@ -78,6 +84,8 @@ sdio_fixture(void *fdt, const char *root)
 	assert(fdt_setprop_string(fdt, node, "compatible", "allwinner,sunxi-wlan") == 0);
 	assert(fdt_setprop_string(fdt, node, "status", "okay") == 0);
 	assert(fdt_setprop_u32(fdt, node, "wlan_busnum", 1) == 0);
+	assert(fdt_setprop_string(fdt, node, "wlan_power", "axp803-dldo1") == 0);
+	assert(fdt_setprop(fdt, node, "wlan_io_regulator", NULL, 0) == 0);
 	cells[0] = cpu_to_fdt32(104); cells[1] = cpu_to_fdt32(11);
 	cells[2] = cpu_to_fdt32(5); cells[3] = cpu_to_fdt32(1);
 	cells[4] = cells[5] = cpu_to_fdt32(UINT32_MAX); cells[6] = 0;
@@ -125,9 +133,207 @@ check_host(void *fdt)
 	assert(cells != NULL && len == 4 && fdt32_to_cpu(*cells) == 6);
 }
 
-int
-main(void)
+static void
+warm_inputs(void *fdt)
 {
+	assert(fdt_delprop(fdt, 0, OPT) == 0);
+	assert(fdt_setprop(fdt, 0, "ember,ys-m33-wlan-warm", NULL, 0) == 0);
+	assert(fdt_setprop(fdt, 0, "ember,ys-m33-wlan-preserved-power", NULL, 0) == 0);
+	assert(fdt_setprop_string(fdt, 0, "ember,rtw88-regdomain", "world-min") == 0);
+	assert(fdt_setprop_u32(fdt, 0, "ember,rtw88-channels-2ghz", 0x7ff) == 0);
+	assert(fdt_setprop_u32(fdt, 0, "ember,rtw8723d-phy-package", 0) == 0);
+}
+
+/* Explicit warm admission must never imply cold power sequencing. */
+static void
+warm_profile_contract(void)
+{
+	unsigned char fdt[16384];
+	const fdt32_t *p;
+	fdt32_t gpio[7];
+	int node, provider, len;
+
+	sdio_fixture(fdt, "allwinner,a133");
+	warm_inputs(fdt);
+	assert(sun50i_a133_fdt_fixup(fdt) == 0);
+	node = fdt_path_offset(fdt, HOST);
+	assert(strcmp(fdt_getprop(fdt, node, "status", NULL), "okay") == 0);
+	assert(fdt_getprop(fdt, node, "ember,ys-m33-wlan-warm-host", &len) != NULL && len == 0);
+	assert(fdt_getprop(fdt, node, MARK, NULL) == NULL);
+	p = fdt_getprop(fdt, node, "mmc-pwrseq", &len);
+	assert(p != NULL && len == 4);
+	provider = fdt_node_offset_by_phandle(fdt, fdt32_to_cpu(*p));
+	assert(provider >= 0 && !strcmp(fdt_getprop(fdt, provider, "compatible", NULL), "mmc-pwrseq-simple"));
+	assert(fdt_getprop(fdt, provider, "reset-gpios", NULL) == NULL);
+	assert(fdt_getprop(fdt, provider, "clocks", NULL) == NULL);
+	assert(!strcmp(fdt_getprop(fdt, node, "ember,rtw88-regdomain", NULL), "world-min"));
+	p = fdt_getprop(fdt, node, "ember,rtw88-channels-2ghz", &len);
+	assert(p != NULL && len == 4 && fdt32_to_cpu(*p) == 0x7ff);
+	p = fdt_getprop(fdt, node, "ember,rtw8723d-phy-package", &len);
+	assert(p != NULL && len == 4 && fdt32_to_cpu(*p) == 0);
+	assert(sun50i_a133_fdt_fixup(fdt) == 0);
+	node = fdt_path_offset(fdt, HOST);
+	assert(strcmp(fdt_getprop(fdt, node, "status", NULL), "okay") == 0);
+	assert(fdt_delprop(fdt, 0, "ember,ys-m33-wlan-preserved-power") == 0);
+	assert(sun50i_a133_fdt_fixup(fdt) == 0);
+	node = fdt_path_offset(fdt, HOST);
+	assert(strcmp(fdt_getprop(fdt, node, "status", NULL), "disabled") == 0);
+	assert(fdt_getprop(fdt, node, "ember,ys-m33-wlan-warm-host", NULL) == NULL);
+
+	/* A different supply is not evidence for this warm-only board route. */
+	sdio_fixture(fdt, "allwinner,a133");
+	warm_inputs(fdt);
+	node = fdt_path_offset(fdt, WLAN);
+	assert(fdt_setprop_string(fdt, node, "wlan_power", "other-supply") == 0);
+	assert(sun50i_a133_fdt_fixup(fdt) == 0);
+	node = fdt_path_offset(fdt, HOST);
+	assert(fdt_getprop(fdt, node, "ember,ys-m33-wlan-warm-host", NULL) == NULL);
+	assert(fdt_getprop(fdt, node, "mmc-pwrseq", NULL) == NULL);
+	for (int which = 0; which < 19; which++) {
+		sdio_fixture(fdt, "allwinner,a133");
+		warm_inputs(fdt);
+		if (which == 0) assert(fdt_delprop(fdt, 0, "ember,ys-m33-wlan-preserved-power") == 0);
+		if (which == 1) assert(fdt_delprop(fdt, 0, "ember,rtw88-regdomain") == 0);
+		if (which == 2) assert(fdt_setprop_string(fdt, 0, "ember,rtw88-regdomain", "unknown") == 0);
+		if (which == 3) assert(fdt_setprop_u32(fdt, 0, "ember,rtw88-channels-2ghz", 0) == 0);
+		if (which == 4) assert(fdt_setprop_u32(fdt, 0, "ember,rtw88-channels-2ghz", 0x2000) == 0);
+		if (which == 5) assert(fdt_setprop_u32(fdt, 0, "ember,rtw8723d-phy-package", 1) == 0);
+		if (which == 6) assert(fdt_setprop(fdt, 0, OPT, NULL, 0) == 0);
+		if (which == 7) {
+			node=fdt_path_offset(fdt, "/wifi-regulator");
+			assert(fdt_delprop(fdt,node,"regulator-always-on")==0);
+		}
+		if (which == 8) {
+			node=fdt_path_offset(fdt, HOST);
+			assert(fdt_setprop_u32(fdt,node,"vqmmc-supply",0x7ffffffe)==0);
+		}
+		if (which == 9) {
+			node=fdt_path_offset(fdt, WLAN);
+			assert(fdt_delprop(fdt,node,"wlan_io_regulator")==0);
+		}
+		if (which == 10) assert(fdt_setprop_u32(fdt,0,"ember,ys-m33-wlan-warm",1)==0);
+		if (which == 11) {
+			node=fdt_path_offset(fdt,"/wifi-regulator");
+			assert(fdt_delprop(fdt,node,"regulator-boot-on")==0);
+		}
+		if (which == 12) {
+			node=fdt_path_offset(fdt,WLAN);
+			p=fdt_getprop(fdt,node,"wlan_regon",&len);assert(p && len==28);
+			memcpy(gpio,p,sizeof(gpio));gpio[2]=cpu_to_fdt32(4);
+			assert(fdt_setprop(fdt,node,"wlan_regon",gpio,sizeof(gpio))==0);
+		}
+		if (which == 13) {
+			node=fdt_add_subnode(fdt,0,"ember-wlan-preserved-power");
+			assert(node>=0);
+		}
+		if (which == 14) {
+			node=fdt_path_offset(fdt,HOST);
+			assert(fdt_setprop_u32(fdt,node,"ember,ys-m33-wlan-original-vqmmc",199)==0);
+		}
+		if (which == 15) assert(fdt_delprop(fdt,0,"ember,rtw8723d-phy-package")==0);
+		if (which == 16) {
+			node=fdt_path_offset(fdt,"/wifi-regulator");
+			assert(fdt_setprop_string(fdt,node,"regulator-name","foreign") == 0);
+		}
+		if (which == 17) assert(fdt_delprop(fdt,0,"ember,ys-m33-wlan-warm")==0);
+		if (which == 18) {
+			node=fdt_path_offset(fdt,WLAN);
+			assert(fdt_setprop_u32(fdt,node,"phandle",199)==0);
+		}
+		assert(sun50i_a133_fdt_fixup(fdt)==0);
+		node=fdt_path_offset(fdt, HOST);
+		assert(fdt_getprop(fdt,node,"ember,ys-m33-wlan-warm-host",NULL)==NULL);
+		assert(fdt_getprop(fdt,node,"mmc-pwrseq",NULL)==NULL);
+	}
+	/* Do not keep an old diagnostic owner when a warm profile competes. */
+	sdio_fixture(fdt,"allwinner,a133");
+	assert(sun50i_a133_fdt_fixup(fdt)==0);
+	node=fdt_path_offset(fdt,HOST);
+	assert(fdt_getprop(fdt,node,MARK,NULL)!=NULL);
+	warm_inputs(fdt);
+	assert(sun50i_a133_fdt_fixup(fdt)==0);
+	node=fdt_path_offset(fdt,HOST);
+	assert(!strcmp(fdt_getprop(fdt,node,"status",NULL),"disabled"));
+	assert(fdt_getprop(fdt,node,MARK,NULL)==NULL);
+	assert(fdt_getprop(fdt,node,"ember,ys-m33-wlan-warm-host",NULL)==NULL);
+	/* A later change to the warm provider revokes the enabled host. */
+	sdio_fixture(fdt,"allwinner,a133");
+	warm_inputs(fdt);
+	assert(sun50i_a133_fdt_fixup(fdt)==0);
+	provider=fdt_path_offset(fdt,"/ember-wlan-preserved-power");
+	assert(provider>=0);
+	assert(fdt_setprop_u32(fdt,provider,"reset-gpios",1)==0);
+	assert(sun50i_a133_fdt_fixup(fdt)==0);
+	node=fdt_path_offset(fdt,HOST);
+	assert(!strcmp(fdt_getprop(fdt,node,"status",NULL),"disabled"));
+	assert(fdt_getprop(fdt,node,"ember,ys-m33-wlan-warm-host",NULL)==NULL);
+}
+
+#ifdef A133_YS_M33_WLAN_WARM
+static void
+warm_selected_config_contract(void)
+{
+	unsigned char fdt[16384];int node,len;const fdt32_t *p;
+	sdio_fixture(fdt,"allwinner,a133");
+	assert(fdt_delprop(fdt,0,OPT)==0);
+	assert(sun50i_a133_fdt_fixup(fdt)==0);
+	node=fdt_path_offset(fdt,HOST);
+	assert(fdt_getprop(fdt,node,"ember,ys-m33-wlan-warm-host",&len)!=NULL && len==0);
+	p=fdt_getprop(fdt,node,"ember,rtw88-channels-2ghz",&len);
+	assert(p!=NULL && len==4 && fdt32_to_cpu(*p)==0x7ff);
+}
+static void
+warm_factory_contract(const char *path)
+{
+	const size_t capacity = 1024 * 1024;
+	unsigned char *blob = malloc(capacity), *fdt = malloc(capacity);
+	fdt32_t gpio[7];
+	const fdt32_t *cells;
+	FILE *stream;
+	size_t n;
+	uint32_t supply;
+	int node, len;
+
+	assert(blob != NULL && fdt != NULL);
+	stream = fopen(path, "rb");assert(stream != NULL);
+	n = fread(blob, 1, capacity, stream);
+	assert(!ferror(stream) && fclose(stream) == 0);
+	assert(n > 0 && n < capacity && fdt_check_header(blob) == 0);
+	assert((size_t)fdt_totalsize(blob) == n);
+	assert(fdt_open_into(blob, fdt, capacity) == 0);
+	node = fdt_path_offset(fdt, WLAN);
+	cells = fdt_getprop(fdt, node, "wlan_regon", &len);
+	assert(cells != NULL && len == sizeof(gpio));
+	memcpy(gpio, cells, sizeof(gpio));
+	node = fdt_path_offset(fdt, HOST);
+	cells = fdt_getprop(fdt, node, "vqmmc-supply", &len);
+	assert(cells != NULL && len == 4);supply = fdt32_to_cpu(*cells);
+	assert(sun50i_a133_fdt_fixup(fdt) == 0);
+	node = fdt_path_offset(fdt, HOST);
+	assert(fdt_getprop(fdt, node, "ember,ys-m33-wlan-warm-host", &len) != NULL && len == 0);
+	cells = fdt_getprop(fdt, node, "ember,ys-m33-wlan-original-vqmmc", &len);
+	assert(cells != NULL && len == 4 && fdt32_to_cpu(*cells) == supply);
+	node = fdt_path_offset(fdt, WLAN);
+	cells = fdt_getprop(fdt, node, "wlan_regon", &len);
+	assert(cells != NULL && len == sizeof(gpio) && memcmp(cells, gpio, sizeof(gpio)) == 0);
+	free(fdt);free(blob);
+}
+#endif
+
+int
+main(int argc, char **argv)
+{
+#ifdef A133_YS_M33_WLAN_WARM
+	warm_selected_config_contract();
+	if (argc == 2) {
+		warm_factory_contract(argv[1]);
+		puts("A133 warm reference FDT contract passed");
+	} else
+		assert(argc == 1);
+	return 0;
+#endif
+	(void)argc;(void)argv;
+	warm_profile_contract();
 	unsigned char fdt[16384], before[16384];
 	fdt32_t cells[7];
 	const void *p;

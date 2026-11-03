@@ -29,6 +29,9 @@ typedef pthread_mutex_t kmutex_t;
 typedef struct device *device_t;
 typedef void *cfdata_t;
 typedef device_t prop_dictionary_t;
+typedef void *prop_object_t;
+typedef void *prop_data_t;
+#define PROP_TYPE_DATA 1
 #define MUTEX_DEFAULT 0
 #define IPL_NONE 0
 #define FDT 1
@@ -280,6 +283,13 @@ static void callout_stop(callout_t *c) { (void)c; }
 static void callout_reset(callout_t *c,int t,void (*f)(void *),void *p)
 { (void)c;(void)t;(void)f;(void)p; }
 static void callout_destroy(callout_t *c) { (void)c; }
+static int OF_getprop(int node,const char *key,void *buf,int len)
+{ (void)node;(void)key;(void)buf;(void)len;return -1; }
+static int prop_object_type(prop_object_t obj) { (void)obj;return PROP_TYPE_DATA; }
+static size_t prop_data_size(prop_data_t obj) { (void)obj;return 0; }
+static const void *prop_data_value(prop_data_t obj) { (void)obj;return NULL; }
+static uint32_t be32dec(const void *p)
+{ const uint8_t *b=p;return ((uint32_t)b[0]<<24)|((uint32_t)b[1]<<16)|((uint32_t)b[2]<<8)|b[3]; }
 static void *prop_dictionary_get(prop_dictionary_t p,const char *key)
 { (void)p;(void)key;return NULL; }
 static bool prop_dictionary_get_uint32(prop_dictionary_t p,const char *key,uint32_t *v)

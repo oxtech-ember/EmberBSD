@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Copyright (c) 2026 EmberBSD contributors. */
-/* Origin: EmberBSD native RTL8723D integration, AI-assisted. */
+/* Origin: EmberBSD RTL8723D; FDT policy adapted from ef145f701, AI-assisted. */
 /* Native RTL8723DS frontend. Board power remains with the admitted host;
  * one executor owns identity, chip/HCI lifecycle, control and FIFO I/O. */
 #ifdef _KERNEL_OPT
@@ -790,15 +790,85 @@ static bool
 rtwsdio_has_radio_profile(struct rtwsdio_softc *sc)
 {
 	prop_dictionary_t p = device_properties(sc->sc_dev);
+#ifdef FDT
+	int node;
+#endif
 
-	return p != NULL && (prop_dictionary_get(p, "rtw88-regulatory") != NULL ||
-	    prop_dictionary_get(p, "rtw8723d-phy-package") != NULL);
+	if (p != NULL && (prop_dictionary_get(p, "rtw88-regulatory") != NULL ||
+	    prop_dictionary_get(p, "rtw8723d-phy-package") != NULL))
+		return true;
+#ifdef FDT
+	node = rtwsdio_host_node(device_parent(sc->sc_dev));
+
+	return node > 0 &&
+	    (OF_getproplen(node, "ember,rtw88-regdomain") >= 0 ||
+	     OF_getproplen(node, "ember,rtw88-channels-2ghz") >= 0 ||
+	     OF_getproplen(node, "ember,rtw8723d-phy-package") >= 0);
+#else
+	return false;
+#endif
 }
 
-/* Translate only explicit selected-board policy. An SDIO child does not
- * inherit its host's FDT properties. Keep the shared child property contract
- * available for other standard-powered boards; malformed explicit child
- * policy never falls back to a second source. No device property is mutated. */
+#ifdef FDT
+/* Read only explicit host policy. A partial or malformed policy never falls
+ * back to a default. Commit output only after the shared admission succeeds. */
+static int
+rtwsdio_fdt_profile(struct rtwsdio_softc *sc, struct rtw88_profile *profile,
+    uint32_t *package)
+{
+	struct rtw88_softc *core = &sc->sc_core;
+	struct rtw88_profile_input input;
+	struct rtw88_profile value;
+	prop_dictionary_t properties = device_properties(sc->sc_dev);
+	prop_object_t mac;
+	const void *bytes;
+	char domain[sizeof("world-min")];
+	uint8_t cells[4];
+	uint32_t channels, selector;
+	int error, node = rtwsdio_host_node(device_parent(sc->sc_dev));
+
+	if (node <= 0 ||
+	    OF_getproplen(node, "ember,rtw88-regdomain") != sizeof(domain) ||
+	    OF_getprop(node, "ember,rtw88-regdomain", domain,
+	    sizeof(domain)) != sizeof(domain) ||
+	    memcmp(domain, "world-min", sizeof(domain)) != 0 ||
+	    OF_getproplen(node, "ember,rtw88-channels-2ghz") != 4 ||
+	    OF_getprop(node, "ember,rtw88-channels-2ghz", cells, 4) != 4)
+		return EACCES;
+	channels = be32dec(cells);
+	if (channels == 0 || (channels & ~0x1fffU) != 0 ||
+	    OF_getproplen(node, "ember,rtw8723d-phy-package") != 4 ||
+	    OF_getprop(node, "ember,rtw8723d-phy-package", cells, 4) != 4)
+		return EINVAL;
+	selector = be32dec(cells);
+	if (selector > 15)
+		return EINVAL;
+	memset(&input, 0, sizeof(input));
+	memcpy(input.efuse_mac, core->sc_mac, sizeof(input.efuse_mac));
+	input.has_regulatory = true;
+	input.domain = RTW88_REG_WORLD_MIN;
+	input.channels_2g = channels;
+	mac = properties == NULL ? NULL :
+	    prop_dictionary_get(properties, "mac-address");
+	if (mac != NULL) {
+		if (prop_object_type(mac) != PROP_TYPE_DATA ||
+		    prop_data_size((prop_data_t)mac) != sizeof(input.platform_mac) ||
+		    (bytes = prop_data_value((prop_data_t)mac)) == NULL)
+			return EINVAL;
+		memcpy(input.platform_mac, bytes, sizeof(input.platform_mac));
+		input.has_platform_mac = true;
+	}
+	error = rtw88_profile_decode(&input, &core->sc_chip->caps, &value);
+	if (error != 0)
+		return error;
+	*profile = value;
+	*package = selector;
+	return 0;
+}
+#endif
+
+/* Explicit child properties take precedence over host FDT policy. A malformed
+ * child policy never falls back to the host. Neither source is mutated. */
 static int
 rtwsdio_profile(struct rtwsdio_softc *sc, struct rtw88_profile *profile,
     uint32_t *package)
@@ -806,23 +876,25 @@ rtwsdio_profile(struct rtwsdio_softc *sc, struct rtw88_profile *profile,
 	prop_dictionary_t properties = device_properties(sc->sc_dev);
 	struct rtw88_softc *core = &sc->sc_core;
 
-	if (properties == NULL)
-		return EACCES;
-	if (prop_dictionary_get(properties, "rtw88-regulatory") != NULL ||
-	    prop_dictionary_get(properties, "rtw8723d-phy-package") != NULL) {
+	if (properties != NULL &&
+	    (prop_dictionary_get(properties, "rtw88-regulatory") != NULL ||
+	     prop_dictionary_get(properties, "rtw8723d-phy-package") != NULL)) {
 		if (!prop_dictionary_get_uint32(properties,
 		    "rtw8723d-phy-package", package) || *package > 15)
 			return EACCES;
 		return rtw88_profile_from_properties(sc->sc_dev, core->sc_mac,
 		    &core->sc_chip->caps, profile);
 	}
+#ifdef FDT
+	return rtwsdio_fdt_profile(sc, profile, package);
+#else
 	return EACCES;
+#endif
 }
 
-/* Identity and profile setup runs once, before publishing a netif. A board
- * must explicitly supply both the shared regulatory dictionary and its
- * explicit package selector; neither is inferred from vendor GPIO bytes,
- * EFUSE regulatory hints, nor a parent FDT property that was never copied. */
+/* Identity and profile setup runs once, before publishing a netif. The board
+ * must supply explicit regulatory and package inputs. Neither is inferred from
+ * vendor GPIO bytes, EFUSE regulatory hints or missing FDT properties. */
 static int
 rtwsdio_network_attach(struct rtwsdio_softc *sc)
 {

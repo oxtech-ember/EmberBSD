@@ -1,0 +1,4 @@
+# Origin: EmberBSD A133 WLAN warm trial, AI-assisted.
+# Requires bootloader-established power; not a cold-boot or release profile.
+include "arch/evbarm/conf/EMBER64_A133_WLAN"
+options A133_YS_M33_WLAN_WARM

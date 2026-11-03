@@ -1,4 +1,4 @@
-/* Origin: EmberBSD - adapt verified A133 vendor boot resources. */
+/* Origin: EmberBSD A133 FDT; warm path adapted from ef145f701, AI-assisted. */
 /*-
  * Copyright (c) 2026 Anton and EmberBSD contributors
  * All rights reserved.
@@ -23,6 +23,7 @@
 #include <sys/types.h>
 #include <libfdt.h>
 #ifdef _KERNEL
+#include "opt_a133_wlan_warm.h"
 #include <sys/systm.h>
 #else
 #include <stdio.h>
@@ -48,6 +49,10 @@
 #define RPIO SOC "/pinctrl@07022000"
 #define SDIO_GIC "/interrupt-controller@03020000"
 #define SDIO_MARK "ember,ys-m33-sdio-host"
+#define SDIO_NATIVE_OPT "ember,ys-m33-wlan-warm"
+#define SDIO_NATIVE_MARK "ember,ys-m33-wlan-warm-host"
+#define SDIO_PRESERVE_OPT "ember,ys-m33-wlan-preserved-power"
+#define SDIO_PRESERVE "/ember-wlan-preserved-power"
 
 int sun50i_a133_fdt_fixup(void *);
 int sun50i_a133_gpu_fdt_fixup(void *);
@@ -439,12 +444,11 @@ a133_usb1(void *fdt, uint32_t ccu)
 }
 
 static uint32_t
-a133_phandle(const void *fdt, const char *path)
+a133_phandle_node(const void *fdt, int node)
 {
 	uint32_t phandle;
-	int node, other;
+	int other;
 
-	node = fdt_path_offset(fdt, path);
 	if (node < 0)
 		return 0;
 	phandle = fdt_get_phandle(fdt, node);
@@ -456,6 +460,13 @@ a133_phandle(const void *fdt, const char *path)
 		if (other != node && fdt_get_phandle(fdt, other) == phandle)
 			return 0;
 	return phandle;
+}
+
+static uint32_t
+a133_phandle(const void *fdt, const char *path)
+{
+
+	return a133_phandle_node(fdt, fdt_path_offset(fdt, path));
 }
 
 static bool
@@ -654,7 +665,7 @@ sun50i_a133_gpu_fdt_fixup(void *fdt)
 
 /* Host discovery only: preserve radio power and all legacy GPIO providers. */
 static int
-a133_sdio(void *fdt, uint32_t ccu)
+a133_sdio(void *fdt, uint32_t ccu, bool native)
 {
 	static const char pins[] = "PG0\0PG1\0PG2\0PG3\0PG4\0PG5";
 	static const char *remove[] = {
@@ -671,28 +682,99 @@ a133_sdio(void *fdt, uint32_t ccu)
 		"mmc-pwrseq", "interrupts-extended", "cd-gpios", "wp-gpios"
 	};
 	fdt32_t cells[16], cell;
-	uint32_t rpio, legacy, pinhandle, gic;
+	uint32_t rpio, legacy, pinhandle, gic, pwrseq = 0, channels = 0, supply = 0;
+	const char *marker = native ? SDIO_NATIVE_MARK : SDIO_MARK;
+	const fdt32_t *policy;
+	const char *rail;
 	bool owned, valid_marker, okay;
-	int node, len, error;
+	int node, len, error, supply_node, pn;
 
 	node = fdt_path_offset(fdt, SDIO);
 	if (node < 0)
 		return 0;
-	owned = fdt_getprop(fdt, node, SDIO_MARK, &len) != NULL;
+	if (native && fdt_getprop(fdt, node, SDIO_MARK, NULL) != NULL) {
+		/* Withdraw the old diagnostic owner before a different policy. */
+		A133_STRING(SDIO, "status", "disabled");
+		node = fdt_path_offset(fdt, SDIO);
+		error = fdt_delprop(fdt, node, SDIO_MARK);
+		return error == -FDT_ERR_NOTFOUND ? 0 : error;
+	}
+	owned = fdt_getprop(fdt, node, marker, &len) != NULL;
 	valid_marker = owned && len == 0;
 	okay = a133_audio_okay(fdt, SDIO);
 	if (owned) {
 		/* Withdraw attachment before checking opt-in or altered resources. */
 		A133_STRING(SDIO, "status", "disabled");
 		node = fdt_path_offset(fdt, SDIO);
-		error = fdt_delprop(fdt, node, SDIO_MARK);
+		error = fdt_delprop(fdt, node, marker);
 		if (error != 0)
 			return error;
 	}
-	if (fdt_getprop(fdt, 0, "ember,ys-m33-sdio-probe", &len) == NULL ||
-	    len != 0 || !okay || (owned && !valid_marker) ||
-	    !a133_audio_okay(fdt, WLAN))
+	if (!okay || (owned && !valid_marker) || !a133_audio_okay(fdt, WLAN))
 		return 0;
+	if (native) {
+		if (fdt_getprop(fdt, 0, SDIO_NATIVE_OPT, &len) == NULL || len != 0 ||
+		    fdt_getprop(fdt, 0, SDIO_PRESERVE_OPT, &len) == NULL || len != 0 ||
+		    fdt_getprop(fdt, 0, "ember,ys-m33-sdio-probe", NULL) != NULL ||
+		    fdt_getprop(fdt, 0, "ember,ys-m33-rtl8723ds-read-probe", NULL) != NULL ||
+		    fdt_getprop(fdt, node, SDIO_MARK, NULL) != NULL ||
+		    !a133_value(fdt, "/", "ember,rtw88-regdomain",
+		    "world-min", sizeof("world-min")) ||
+		    !a133_cell(fdt, "/", "ember,rtw8723d-phy-package", 0))
+			return 0;
+		policy = fdt_getprop(fdt, 0, "ember,rtw88-channels-2ghz", &len);
+		if (policy == NULL || len != 4 ||
+		    (channels = fdt32_to_cpu(*policy)) == 0 || (channels & ~0x1fffU) != 0)
+			return 0;
+		/* The factory tree names the always-on DLDO1 rail for WLAN and
+		 * MMC1 I/O. Preserve its identity without taking regulator ownership. */
+		if (!a133_value(fdt, WLAN, "wlan_power", "axp803-dldo1",
+		    sizeof("axp803-dldo1")) ||
+		    !a133_value(fdt, WLAN, "wlan_io_regulator", "", 0))
+			return 0;
+		node = fdt_path_offset(fdt, SDIO);
+		if (!owned && fdt_getprop(fdt, node,
+		    "ember,ys-m33-wlan-original-vqmmc", NULL) != NULL)
+			return 0;
+		policy = fdt_getprop(fdt, node, owned ?
+		    "ember,ys-m33-wlan-original-vqmmc" : "vqmmc-supply", &len);
+		if (policy == NULL || len != 4 ||
+		    (supply = fdt32_to_cpu(*policy)) == 0 || supply == UINT32_MAX)
+			return 0;
+		supply_node = fdt_node_offset_by_phandle(fdt, supply);
+		if (supply_node < 0 || a133_phandle_node(fdt, supply_node) != supply)
+			return 0;
+		rail = fdt_getprop(fdt, supply_node, "regulator-name", &len);
+		if (rail == NULL || len != sizeof("axp803-dldo1") ||
+		    memcmp(rail, "axp803-dldo1", sizeof("axp803-dldo1")) != 0)
+			return 0;
+		if (fdt_getprop(fdt, supply_node, "regulator-always-on", &len) == NULL ||
+		    len != 0 || fdt_getprop(fdt, supply_node,
+		    "regulator-boot-on", &len) == NULL || len != 0)
+			return 0;
+		if (owned) {
+			pwrseq = a133_phandle(fdt, SDIO_PRESERVE);
+			if (pwrseq == 0 ||
+			    !a133_cell(fdt, SDIO, "mmc-pwrseq", pwrseq) ||
+			    !a133_value(fdt, SDIO_PRESERVE, "compatible",
+			    "mmc-pwrseq-simple", sizeof("mmc-pwrseq-simple")) ||
+			    !a133_value(fdt, SDIO_PRESERVE,
+			    "ember,bootloader-power-preserved", "", 0))
+				return 0;
+			pn = fdt_path_offset(fdt, SDIO_PRESERVE);
+			if (fdt_getprop(fdt, pn, "reset-gpios", NULL) != NULL ||
+			    fdt_getprop(fdt, pn, "clocks", NULL) != NULL ||
+			    fdt_getprop(fdt, pn, "post-power-on-delay-ms", NULL) != NULL ||
+			    fdt_getprop(fdt, pn, "power-off-delay-us", NULL) != NULL)
+				return 0;
+		} else if (fdt_path_offset(fdt, SDIO_PRESERVE) >= 0) {
+			return 0; /* Never overwrite an unrelated provider. */
+		}
+	} else if (fdt_getprop(fdt, 0, "ember,ys-m33-sdio-probe", &len) == NULL ||
+	    len != 0 || fdt_getprop(fdt, 0, SDIO_NATIVE_OPT, NULL) != NULL ||
+	    fdt_getprop(fdt, node, SDIO_NATIVE_MARK, NULL) != NULL) {
+		return 0;
+	}
 	if (fdt_stringlist_count(fdt, 0, "compatible") < 1 ||
 	    !a133_cell(fdt, "/", "#address-cells", 2) ||
 	    !a133_cell(fdt, "/", "#size-cells", 2) ||
@@ -707,7 +789,8 @@ a133_sdio(void *fdt, uint32_t ccu)
 		return 0;
 	node = fdt_path_offset(fdt, SDIO);
 	for (unsigned int i = 0; i < sizeof(reject) / sizeof(reject[0]); i++)
-		if (fdt_getprop(fdt, node, reject[i], &len) != NULL)
+		if (fdt_getprop(fdt, node, reject[i], &len) != NULL &&
+		    !(native && owned && i == 0))
 			return 0;
 	node = fdt_path_offset(fdt, PIO);
 	if (fdt_getprop(fdt, node, "vcc-pg-supply", &len) != NULL)
@@ -802,11 +885,54 @@ a133_sdio(void *fdt, uint32_t ccu)
 		if (error != 0 && error != -FDT_ERR_NOTFOUND)
 			return error;
 	}
-	A133_SET(SDIO, SDIO_MARK, NULL, 0);
+	if (native) {
+		node = a133_node(fdt, "/", "ember-wlan-preserved-power", &pwrseq);
+		if (node < 0)
+			return node;
+		A133_STRING(SDIO_PRESERVE, "compatible", "mmc-pwrseq-simple");
+		A133_SET(SDIO_PRESERVE, "ember,bootloader-power-preserved", NULL, 0);
+		A133_CELL(SDIO, "mmc-pwrseq", pwrseq);
+		A133_CELL(SDIO, "ember,ys-m33-wlan-original-vqmmc", supply);
+		A133_STRING(SDIO, "ember,rtw88-regdomain", "world-min");
+		A133_CELL(SDIO, "ember,rtw88-channels-2ghz", channels);
+		/* Package-neutral selector for the selected 8723D table image,
+		 * not a measured physical package. No package-dependent rows. */
+		A133_CELL(SDIO, "ember,rtw8723d-phy-package", 0);
+	}
+	A133_SET(SDIO, marker, NULL, 0);
 	A133_STRING(SDIO, "compatible", "allwinner,sun50i-a100-mmc");
 	A133_STRING(SDIO, "status", "okay");
 	return 0;
 }
+
+#ifdef A133_YS_M33_WLAN_WARM
+/* This explicitly selected trial preserves bootloader-established power.
+ * It does not establish a cold power sequence or a country qualification. */
+static int
+a133_sdio_warm_policy(void *fdt)
+{
+	static const char *const policy[] = {
+		SDIO_NATIVE_OPT, SDIO_PRESERVE_OPT, "ember,rtw88-regdomain",
+		"ember,rtw88-channels-2ghz", "ember,rtw8723d-phy-package"
+	};
+	fdt32_t cell;
+	int error;
+
+	if (fdt_getprop(fdt, 0, "ember,ys-m33-sdio-probe", NULL) != NULL ||
+	    fdt_getprop(fdt, 0, "ember,ys-m33-rtl8723ds-read-probe", NULL) != NULL)
+		return 0;
+	for (size_t i = 0; i < sizeof(policy) / sizeof(policy[0]); i++) {
+		if (fdt_getprop(fdt, 0, policy[i], NULL) != NULL)
+			return 0;
+	}
+	A133_SET("/", SDIO_NATIVE_OPT, "", 0);
+	A133_SET("/", SDIO_PRESERVE_OPT, "", 0);
+	A133_STRING("/", "ember,rtw88-regdomain", "world-min");
+	A133_CELL("/", "ember,rtw88-channels-2ghz", 0x07ff);
+	A133_CELL("/", "ember,rtw8723d-phy-package", 0);
+	return 0;
+}
+#endif
 
 int
 sun50i_a133_fdt_fixup(void *fdt)
@@ -938,7 +1064,15 @@ sun50i_a133_fdt_fixup(void *fdt)
 	error = a133_usb1(fdt, ccu);
 	if (error != 0)
 		return error;
-	error = a133_sdio(fdt, ccu);
+#ifdef A133_YS_M33_WLAN_WARM
+	error = a133_sdio_warm_policy(fdt);
+	if (error != 0)
+		return error;
+#endif
+	node = fdt_path_offset(fdt, SDIO);
+	error = a133_sdio(fdt, ccu,
+	    fdt_getprop(fdt, 0, SDIO_NATIVE_OPT, NULL) != NULL ||
+	    (node >= 0 && fdt_getprop(fdt, node, SDIO_NATIVE_MARK, NULL) != NULL));
 	if (error != 0)
 		return error;
 	error = a133_audio(fdt);

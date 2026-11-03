@@ -1,0 +1,5 @@
+# Origin: EmberBSD A133 combined GPU and WLAN warm trial, AI-assisted.
+# Preserves bootloader WLAN power; PPU attachment is not GPU rendering.
+include "arch/evbarm/conf/EMBER64_A133_WLAN_WARM"
+options SUNXI_A133_GPU_FDT
+sun50ippu* at fdt?

@@ -41,7 +41,8 @@ command = shlex.split(os.environ["HOST_CC"]) + [
     "-std=c11", "-O1", "-g", "-Wall", "-Wextra", "-Werror", "-pthread",
     "-fwrapv", "-I" + str(out), "-I" + str(out / "include"),
 ] + shlex.split(os.environ.get("HOST_CFLAGS", "")) + ["-UNDEBUG"]
-subprocess.run(command + [str(root / "sys/dev/sdmmc/rtw88_sdio_io.c"),
+subprocess.run(command + [str(root / "sys/dev/ic/rtw88_profile.c"),
+                          str(root / "sys/dev/sdmmc/rtw88_sdio_io.c"),
                           str(Path(__file__).with_suffix(".c")),
                           "-o", str(out / "test")], check=True)
 subprocess.run([str(out / "test")], check=True, timeout=60)
