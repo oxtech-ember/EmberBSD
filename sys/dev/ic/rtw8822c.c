@@ -13,14 +13,16 @@
 #endif
 
 #include "rtw8822c.h"
+#include "rtw88_efuse.h"
 
 int
 rtw8822c_efuse_decode(const uint8_t *data, size_t size,
     struct rtw8822c_efuse *out)
 {
 	struct rtw8822c_efuse decoded = { 0 };
-	size_t cursor = 0, limit, offset;
-	unsigned int block, words, word, i;
+	size_t limit;
+	unsigned int i;
+	int error;
 	uint8_t nonzero = 0;
 
 	if (data == NULL || out == NULL || size == 0 ||
@@ -30,41 +32,10 @@ rtw8822c_efuse_decode(const uint8_t *data, size_t size,
 	    RTW8822C_EFUSE_PROTECTED_SIZE;
 	if (size < limit)
 		limit = size;
-	memset(decoded.logical, 0xff, sizeof(decoded.logical));
-	while (cursor < limit) {
-		uint8_t header;
-
-		header = data[cursor++];
-		if (header == 0xff)
-			break;
-		if ((header & 0x1f) == 0x0f) {
-			uint8_t extended;
-
-			if (cursor == limit)
-				return EINVAL;
-			extended = data[cursor++];
-			if (extended == 0xff)
-				break;
-			block = ((extended & 0xf0) >> 1) |
-			    ((header >> 5) & 0x07);
-			words = extended & 0x0f;
-		} else {
-			block = header >> 4;
-			words = header & 0x0f;
-		}
-		for (word = 0; word < 4; word++) {
-			if (words & (1U << word))
-				continue;
-			/* Block is at most 127; this multiplication cannot wrap. */
-			offset = block * 8 + word * 2;
-			if (offset > sizeof(decoded.logical) - 2)
-				return EOVERFLOW;
-			if (limit - cursor < 2)
-				return EINVAL;
-			decoded.logical[offset] = data[cursor++];
-			decoded.logical[offset + 1] = data[cursor++];
-		}
-	}
+	error = rtw88_efuse_expand(data, limit, decoded.logical,
+	    sizeof(decoded.logical));
+	if (error != 0)
+		return error;
 
 	/* PCIe identity is at 0x120; USB and SDIO have different layouts. */
 	memcpy(decoded.mac, decoded.logical + 0x120, sizeof(decoded.mac));
