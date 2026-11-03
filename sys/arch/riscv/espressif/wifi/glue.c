@@ -76,6 +76,11 @@
 
 #include "../esp_wifi_os.h"
 
+#if defined(ESPWIFI_EXTERNAL_WPA2)
+_Static_assert((WIFI_FEATURE_CAPS & CONFIG_FEATURE_WPA3_SAE_BIT) != 0,
+    "external WPA SAE callbacks require the IDF SAE feature capability");
+#endif
+
 /* Match the prebuilt ESP32-S31 MAC v3 promiscuous RX descriptor ABI. */
 _Static_assert(sizeof(wifi_pkt_rx_ctrl_t) == 64,
     "ESP32-S31 MAC v3 RX control layout mismatch");
@@ -1562,6 +1567,9 @@ espwifi_start_impl(void)
 	modem_clock_select_lp_clock_source(PERIPH_WIFI_MODULE,
 	    MODEM_CLOCK_LPCLK_SRC_RC_SLOW, 0);
 
+	espwifi_os_log("espwifi: init feature_caps=%#llx sae_cap=%u\n",
+	    (unsigned long long)cfg.feature_caps,
+	    (unsigned)((cfg.feature_caps & CONFIG_FEATURE_WPA3_SAE_BIT) != 0));
 	esp_wifi_internal_set_log_level(WIFI_LOG_WARNING);
 	error = esp_wifi_init_internal(&cfg);
 	if (error != ESP_OK) {
