@@ -56,4 +56,5 @@ The GPL implementation is not incorporated into this driver.
 ownership, pending and unknown requests, protected revisions, readback failures
 and faults at each ON/OFF/request write. Host fixtures do not establish
 electrical timing, interrupt delivery, GPU identity or rendering on a tablet.
-Kernel compilation and physical power/request tests remain separate checks.
+Clang 23.1.4 on Linux/amd64 built the experimental AArch64 kernel and its
+selected DTB. Physical power/request tests and GPU rendering have not run.
