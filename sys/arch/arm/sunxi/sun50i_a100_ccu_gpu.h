@@ -143,6 +143,55 @@ sun50i_a100_ccu_gpu_pll_set_rate(struct sunxi_ccu_softc *sc,
 	return EOPNOTSUPP;
 }
 
+/* A133 fixed 432-to-504 MHz PLL transition, with power/output preserved. */
+static int
+sun50i_a133_ccu_gpu_pll_set_rate(struct sunxi_ccu_softc *sc,
+    struct sunxi_ccu_clk *clk, u_int rate)
+{
+	const struct sunxi_ccu_nkmp *nkmp = &clk->u.nkmp;
+	const uint32_t detector = __BIT(29), lock = __BIT(28);
+	const uint32_t factors = __BITS(15,8) | __BIT(1) | __BIT(0);
+	struct clk *parent = clk_get_parent(&clk->base);
+	uint32_t original, value, target;
+
+	if (rate != 504000000 || parent == NULL || clk_get_rate(parent) != 24000000)
+		return EOPNOTSUPP;
+	original = CCU_READ(sc, nkmp->reg);
+	if (!sun50i_a100_ccu_gpu_pll_ready(original))
+		return EOPNOTSUPP;
+	if ((original & factors) == ((41U << 8) | 1U))
+		return 0;
+	if ((original & factors) != ((35U << 8) | 1U))
+		return EOPNOTSUPP;
+	/* Do not change PLL power/output; no rollback after an uncertain write. */
+	CCU_WRITE(sc, nkmp->reg, original & ~detector);
+	value = CCU_READ(sc, nkmp->reg);
+	if (((value ^ original) & ~(detector | lock)) != 0 ||
+	    (value & detector) != 0)
+		return EIO;
+	target = (value & ~__BITS(15,8)) | (41U << 8);
+	CCU_WRITE(sc, nkmp->reg, target);
+	value = CCU_READ(sc, nkmp->reg);
+	if (((value ^ target) & ~lock) != 0)
+		return EIO;
+	CCU_WRITE(sc, nkmp->reg, value | detector);
+	for (unsigned i = 0; i < 5000; i++) {
+		value = CCU_READ(sc, nkmp->reg);
+		if (((value ^ (target | detector)) & ~lock) != 0)
+			return EIO;
+		if ((value & lock) != 0) {
+			delay(20);
+			value = CCU_READ(sc, nkmp->reg);
+			if (((value ^ (target | detector)) & ~lock) != 0 ||
+			    (value & lock) == 0)
+				return EIO;
+			return 0;
+		}
+		delay(1);
+	}
+	return ETIMEDOUT;
+}
+
 static const char *
 sun50i_a100_ccu_gpu_pll_get_parent(struct sunxi_ccu_softc *sc,
     struct sunxi_ccu_clk *clk)

@@ -183,8 +183,9 @@ fdtbus_powerdomain_disable(int node)
 	return fdtbus_powerdomain_disable_index(node, -1);
 }
 
-int
-fdtbus_powerdomain_is_enabled_index(int phandle, int index, bool *enabled)
+static int
+fdtbus_powerdomain_query_index(int phandle, int index, bool prepare,
+    bool enable, bool *enabled)
 {
 	const uint32_t *pds, *pd;
 	int len;
@@ -215,10 +216,17 @@ fdtbus_powerdomain_is_enabled_index(int phandle, int index, bool *enabled)
 		if (index == 0) {
 			if (pdc == NULL)
 				return ENXIO;
-			if (pdc->pdc_funcs->pdc_get == NULL)
-				return EOPNOTSUPP;
-			error = pdc->pdc_funcs->pdc_get(pdc->pdc_dev, pd,
-			    &state);
+			if (prepare) {
+				if (pdc->pdc_funcs->pdc_prepare == NULL)
+					return EOPNOTSUPP;
+				error = pdc->pdc_funcs->pdc_prepare(pdc->pdc_dev,
+				    pd, enable, &state);
+			} else {
+				if (pdc->pdc_funcs->pdc_get == NULL)
+					return EOPNOTSUPP;
+				error = pdc->pdc_funcs->pdc_get(pdc->pdc_dev, pd,
+				    &state);
+			}
 			if (error != 0)
 				return error;
 			*enabled = state;
@@ -228,4 +236,16 @@ fdtbus_powerdomain_is_enabled_index(int phandle, int index, bool *enabled)
 	}
 
 	return ENOENT;
+}
+
+int
+fdtbus_powerdomain_is_enabled_index(int phandle, int index, bool *enabled)
+{
+	return fdtbus_powerdomain_query_index(phandle, index, false, false, enabled);
+}
+
+int
+fdtbus_powerdomain_prepare_index(int phandle, int index, bool enable, bool *change)
+{
+	return fdtbus_powerdomain_query_index(phandle, index, true, enable, change);
 }

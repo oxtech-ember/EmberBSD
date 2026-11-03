@@ -295,6 +295,8 @@ sun50i_a100_ccu_attach(device_t parent, device_t self, void *aux)
 		sc->sc_clks[A100_CLK_PLL_GPU].enable = sun50i_a133_ccu_gpu_pll_enable;
 	sc->sc_clks[A100_CLK_PLL_GPU].get_rate = sun50i_a100_ccu_gpu_pll_get_rate;
 	sc->sc_clks[A100_CLK_PLL_GPU].set_rate = sun50i_a100_ccu_gpu_pll_set_rate;
+	if (clks != NULL)
+		sc->sc_clks[A100_CLK_PLL_GPU].set_rate = sun50i_a133_ccu_gpu_pll_set_rate;
 	sc->sc_clks[A100_CLK_PLL_GPU].get_parent =
 	    sun50i_a100_ccu_gpu_pll_get_parent;
 	sc->sc_clks[A100_CLK_GPU].enable = sun50i_a133_ccu_gpu_core_enable;

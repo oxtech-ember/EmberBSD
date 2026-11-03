@@ -61,6 +61,9 @@ static const char *bad_prop;
 static int bad_node, bad_stage, resources, mapped, opened, frees, hardware;
 static int sequence[5], fail_step;
 static int reads, allocations, boot_calls, reserve_form, voltage_sets;
+static int prepare_failure, clock_sets, set_failure;
+static bool prepare_change = true;
+static unsigned pll_rate = 504000000, core_rate = 504000000;
 static uint64_t bvnc_value;
 static uint32_t dfs_value;
 static struct pvr_fwmem memory;
@@ -128,7 +131,17 @@ static int activation_step(int value) {
 static int clk_enable(struct clk *c) {
     return activation_step(c == &pll ? 1 : c == &bus ? 3 : 4);
 }
-static unsigned clk_get_rate(struct clk *c) { (void)c; return 504000000; }
+static unsigned clk_get_rate(struct clk *c) { return c == &pll ? pll_rate : core_rate; }
+static int __attribute__((unused)) clk_set_rate(struct clk *c, unsigned rate) {
+    CHECK(rate == 504000000 && hardware == 1); clock_sets++;
+    if (set_failure) return EIO;
+    if (c == &pll) pll_rate = rate; else core_rate = rate;
+    return 0;
+}
+static int __attribute__((unused)) fdtbus_powerdomain_prepare_index(int n,int i,bool e,bool *change) {
+    (void)n; CHECK(i == 0 && e); if (prepare_failure) return prepare_failure;
+    *change = prepare_change; return 0;
+}
 static int fdtbus_reset_deassert(struct fdtbus_reset *r) { (void)r;return activation_step(2); }
 static int fdtbus_powerdomain_enable(int n) { (void)n;return activation_step(5); }
 static int fdtbus_powerdomain_is_enabled_index(int n,int i,bool *b) { (void)n;(void)i;*b=true;return 0; }
@@ -253,6 +266,17 @@ int main(void) {
         for (int i=0;i<failure;i++) CHECK(sequence[i] == i+1);
         CHECK(resources==5 && mapped==2 && sc.firmware != NULL);
     }
+    hardware=0;fail_step=0;prepare_failure=EBUSY;clock_sets=0;
+    CHECK(a133_gpu_activate(&sc) == EBUSY && hardware == 0 && clock_sets == 0);
+    prepare_failure=0;prepare_change=false;
+    CHECK(a133_gpu_activate(&sc) == EBUSY && hardware == 0 && clock_sets == 0);
+    prepare_change=true;pll_rate=432000000;core_rate=432000000;set_failure=1;
+    CHECK(a133_gpu_activate(&sc) == EIO && hardware == 1 && clock_sets == 1);
+    CHECK(resources==5 && mapped==2 && sc.firmware != NULL);
+    hardware=0;clock_sets=0;set_failure=0;
+    CHECK(a133_gpu_activate(&sc) == 0 && hardware == 5 && clock_sets == 2);
+    CHECK(sc.diag.pll_hz == 504000000 && sc.diag.core_hz == 504000000);
+    hardware=0;clock_sets=0;
     hardware=0;fail_step=0;
     CHECK(a133_gpu_activate(&sc) == 0 && hardware == 5);
     for (int i=0;i<5;i++) CHECK(sequence[i] == i+1);

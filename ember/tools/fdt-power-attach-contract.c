@@ -120,6 +120,16 @@ checked(device_t dev, const uint32_t *pd, bool enable)
 	record('P');
 	return checked_error;
 }
+static int prepare_error;
+static bool prepare_change;
+static int
+prepare(device_t dev, const uint32_t *pd, bool enable, bool *change)
+{
+	if (prepare_error != 0)
+		return prepare_error;
+	*change = prepare_change;
+	return 0;
+}
 static void
 legacy(device_t dev, const uint32_t *pd, bool enable)
 {
@@ -310,6 +320,7 @@ add_provider(int phandle, bool old)
 {
 	static const struct fdtbus_powerdomain_controller_func checked_funcs = {
 		.pdc_set = checked,
+		.pdc_prepare = prepare,
 	};
 	static const struct fdtbus_powerdomain_controller_func legacy_funcs = {
 		.pdc_enable = legacy,
@@ -336,6 +347,23 @@ main(void)
 	const int bad_lengths[] = { 0, 3, 4, 7 };
 	const int rk3399_domains[] = { RK3399_PD_SD, RK3399_PD_EMMC };
 
+	{
+		bool change = true;
+		reset(3);
+		add_provider(2, true);
+		CHECK(fdtbus_powerdomain_prepare_index(1, 0, true, &change) == EOPNOTSUPP);
+		CHECK(change && checked_calls == 0 && legacy_calls == 0);
+	}
+	{
+		bool change = false;
+		reset(3); add_provider(2, false);
+		prepare_error = 0; prepare_change = true;
+		CHECK(fdtbus_powerdomain_prepare_index(1, 0, true, &change) == 0 && change);
+		prepare_error = EBUSY; change = true;
+		CHECK(fdtbus_powerdomain_prepare_index(1, 0, true, &change) == EBUSY && change);
+		CHECK(checked_calls == 0 && legacy_calls == 0);
+		prepare_error = 0;
+	}
 	for (int mode = 0; mode < 2; mode++) {
 		const int pass = mode ? FDTCF_PASS_DEFAULT : 3;
 

@@ -118,19 +118,29 @@ main(void)
 
 		assert(a133_ppu_power_observe(&power, &state) == 0);
 		assert(state == A133_PPU_OFF && hw.reads == reads + 5);
+		change = false;
+		assert(a133_ppu_power_prepare(&power, true, &change) == 0 && change);
+		assert(hw.writes == 0);
 		hw.reg[A133_PPU_RSTN / 4] = 1;
 		hw.reg[A133_PPU_CLOCK / 4] = 1;
 		hw.reg[A133_PPU_ISOLATION / 4] = 2;
 		hw.reg[A133_PPU_STATE / 4] = A133_PPU_HOST;
 		assert(a133_ppu_power_observe(&power, &state) == 0);
 		assert(state == A133_PPU_HOST);
+		change = true;
+		assert(a133_ppu_power_prepare(&power, true, &change) == EOPNOTSUPP);
+		assert(change && hw.writes == 0);
 		hw.reg[A133_PPU_ISOLATION / 4] = 0;
 		hw.reg[A133_PPU_STATE / 4] = A133_PPU_3D;
 		assert(a133_ppu_power_observe(&power, &state) == 0);
 		assert(state == A133_PPU_3D);
+		change = true;
+		assert(a133_ppu_power_prepare(&power, true, &change) == 0 && !change);
 		hw.reg[A133_PPU_REQUEST / 4] = 1;
 		state = 99;
 		assert(a133_ppu_power_observe(&power, &state) == EBUSY);
+		change = true;
+		assert(a133_ppu_power_prepare(&power, true, &change) == EBUSY && change);
 		assert(state == 99 && hw.writes == 0);
 	}
 	off(&hw);

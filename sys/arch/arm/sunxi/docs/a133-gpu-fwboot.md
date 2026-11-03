@@ -30,7 +30,13 @@ not dynamic voltage scaling; a programmed selector is not an ADC measurement.
 Regulator, clock and power-domain APIs do not supply an exclusive lease. This controlled trial requires one native GPU owner, an
 FDT inventory excluding other active consumers of these resources and the GPU
 rail, and no parallel direct MMIO or I2C agent. Fresh reads do not replace that
-ownership condition. The explicit adapter disables only the exact vendor
+ownership condition. Before changing the GPU PLL the consumer asks the native
+PPU provider for a read-only transition preflight and requires OFF. This is a
+snapshot, not a lease; the single-owner condition above must remain true through
+clock preparation. The A133 CCU permits only the fixed 432-to-504 MHz retune
+with validated parent and factors, preserves PLL power and output, and requires
+lock and factor readback. A100 retains its existing observation-only behavior.
+The explicit adapter disables only the exact vendor
 `virtual-dcdc4` test consumer when it points to that GPU rail. The AXP803
 provider and the rail remain unchanged. This follows the consumer role in
 CrealityTech/sonic_pad_os commit `7f37a7fbf4ad59907034715e3d967b9177de1cd4`,
@@ -61,13 +67,13 @@ The read-only `hw.sun50ia133gpu0` diagnostic sysctls expose the last explicit
 request without reading hardware: `stage`, `last_error`, `detail_error`,
 `attempted`, `retained`, `regulator_enabled`, `microvolts`, `ppu_enabled`,
 `core_hz`, `pll_hz`, `effective_hz`, `dfs`, and `bvnc`. A value of -1 means
-that observation was not made; `pll_hz` is currently always -1 because the
-boot path does not read it. Values are the last successful observations during
+that observation was not made. Values are the last successful observations during
 the request. `detail_error` preserves the error from a failed power or regulator
 query when the public result is EBUSY. The stage identifies the operation
 entered, not necessarily one that completed. Numeric stage values are defined
 in `sun50i_a133_gpu_owner.h`; 3 is preflight regulator enabled, 4 is preflight
 voltage, 36 is fixed-voltage preparation, 37 is its readback, 18 is PPU enable,
-19 is its readback, and 35 is complete. Failed
+19 is its readback, 38 is the PPU OFF preflight, 39 is PLL set-rate,
+40 is core set-rate, and 35 is complete. Failed
 preflight may be requested again; once activation is attempted the owner keeps
 its one-shot state and resources. Reading diagnostics never retries the boot.

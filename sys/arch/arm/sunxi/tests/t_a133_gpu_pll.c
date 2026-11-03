@@ -34,7 +34,7 @@ struct sunxi_ccu_clk {
 };
 struct sunxi_ccu_softc {
 	uint32_t value;
-	unsigned reads, writes, lock_after, drift_at;
+	unsigned reads, writes, lock_after, drift_at; bool retune;
 };
 static unsigned elapsed_us;
 
@@ -58,7 +58,10 @@ write_control(struct sunxi_ccu_softc *sc, unsigned reg, uint32_t value)
 
 	assert(reg == 0x30);
 	/* The detector is the only writable field owned by this operation. */
-	assert(((value ^ sc->value) & ~(__BIT(29) | __BIT(28))) == 0);
+	assert(((value ^ sc->value) & ~(__BIT(29) | __BIT(28) |
+	    (sc->retune ? __BITS(15,8) : 0))) == 0);
+	if (((value ^ sc->value) & __BITS(15,8)) != 0)
+		sc->value &= ~__BIT(28);
 	sc->value = (value & ~__BIT(28)) | (sc->value & __BIT(28));
 	sc->writes++;
 }
@@ -128,6 +131,36 @@ main(void)
 		assert(sun50i_a133_ccu_gpu_pll_enable(&sc, &pll, 1) == EOPNOTSUPP);
 		assert(sc.writes == 0);
 	}
+	/* A133 admits only the exact initial 432-to-504 retune. */
+	sc = (struct sunxi_ccu_softc) { .value = initial | __BIT(29) | __BIT(28),
+	    .lock_after = 4, .retune = true };
+	assert(sun50i_a133_ccu_gpu_pll_set_rate(&sc, &pll, 504000000) == 0);
+	assert(sun50i_a100_ccu_gpu_pll_get_rate(&sc, &pll) == 504000000);
+	assert((sc.value & (__BIT(31) | __BIT(27))) == (__BIT(31) | __BIT(27)));
+	assert(sc.writes == 3);
+	assert(sun50i_a133_ccu_gpu_pll_set_rate(&sc, &pll, 504000000) == 0 &&
+	    sc.writes == 3);
+	/* Invalid rates, factors or parent do not touch the PLL. */
+	sc = (struct sunxi_ccu_softc) { .value = initial | __BIT(29) | __BIT(28), .retune = true };
+	assert(sun50i_a133_ccu_gpu_pll_set_rate(&sc, &pll, 432000000) == EOPNOTSUPP);
+	assert(sc.writes == 0);
+	hosc.rate = 26000000;
+	assert(sun50i_a133_ccu_gpu_pll_set_rate(&sc, &pll, 504000000) == EOPNOTSUPP);
+	assert(sc.writes == 0);
+	hosc.rate = 24000000;
+	sc.value ^= __BIT(0);
+	assert(sun50i_a133_ccu_gpu_pll_set_rate(&sc, &pll, 504000000) == EOPNOTSUPP);
+	assert(sc.writes == 0);
+	/* Timeout or an unexpected factor change never rolls back a write. */
+	sc = (struct sunxi_ccu_softc) { .value = initial | __BIT(29) | __BIT(28), .retune = true };
+	elapsed_us = 0;
+	assert(sun50i_a133_ccu_gpu_pll_set_rate(&sc, &pll, 504000000) == ETIMEDOUT);
+	assert(sc.writes == 3 && elapsed_us == 5000 &&
+	    (sc.value & __BITS(15,8)) == (41U << 8));
+	sc = (struct sunxi_ccu_softc) { .value = initial | __BIT(29) | __BIT(28),
+	    .drift_at = 4, .retune = true };
+	assert(sun50i_a133_ccu_gpu_pll_set_rate(&sc, &pll, 504000000) == EIO);
+	assert(sc.writes == 3);
 	/* A100 retains the earlier observation-only callback. */
 	sc = (struct sunxi_ccu_softc) { .value = initial };
 	assert(sun50i_a100_ccu_gpu_pll_enable(&sc, &pll, 1) == EOPNOTSUPP);

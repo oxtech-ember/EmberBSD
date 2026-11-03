@@ -278,7 +278,7 @@ static int
 a133_gpu_activate(void *cookie)
 {
 	struct a133_gpu_softc *sc = cookie;
-	bool enabled;
+	bool enabled, change;
 	u_int uv;
 	int error;
 
@@ -297,18 +297,45 @@ a133_gpu_activate(void *cookie)
 	if (uv != 950000)
 		return EIO;
 
+	/* The exclusive board owner requires an OFF transition snapshot. */
+	sc->diag.stage = A133_GPU_STAGE_PPU_PREPARE;
+	sc->diag.detail_error = 0;
+	error = fdtbus_powerdomain_prepare_index(sc->phandle, 0, true, &change);
+	if (error != 0)
+		return error;
+	if (!change)
+		return EBUSY;
+
 	/* All acquired resources remain retained even on an uncertain failure. */
 	sc->diag.stage = A133_GPU_STAGE_PLL_ENABLE;
 	sc->diag.detail_error = 0;
 	error = clk_enable(sc->pll);
 	if (error != 0)
 		return error;
+	sc->diag.pll_hz = clk_get_rate(sc->pll);
+	if (sc->diag.pll_hz != 504000000) {
+		sc->diag.stage = A133_GPU_STAGE_PLL_SET;
+		error = clk_set_rate(sc->pll, 504000000);
+		if (error != 0)
+			return error;
+		sc->diag.pll_hz = clk_get_rate(sc->pll);
+		if (sc->diag.pll_hz != 504000000)
+			return EIO;
+	}
 	sc->diag.stage = A133_GPU_STAGE_CORE_RATE;
 	sc->diag.detail_error = 0;
 	sc->core_hz = clk_get_rate(sc->core);
 	sc->diag.core_hz = sc->core_hz;
-	if (sc->core_hz != 504000000 && sc->core_hz != 252000000)
-		return EOPNOTSUPP;
+	if (sc->core_hz != 504000000) {
+		sc->diag.stage = A133_GPU_STAGE_CORE_SET;
+		error = clk_set_rate(sc->core, 504000000);
+		if (error != 0)
+			return error;
+		sc->core_hz = clk_get_rate(sc->core);
+		sc->diag.core_hz = sc->core_hz;
+		if (sc->core_hz != 504000000)
+			return EIO;
+	}
 	sc->diag.stage = A133_GPU_STAGE_RESET;
 	sc->diag.detail_error = 0;
 	error = fdtbus_reset_deassert(sc->reset);

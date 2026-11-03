@@ -167,9 +167,24 @@ out:
 	return error;
 }
 
+static int
+a133_ppu_prepare(device_t dev, const uint32_t *specifier __unused, bool enable,
+    bool *change)
+{
+	struct a133_ppu_softc *sc = device_private(dev);
+	int error;
+
+	mutex_enter(&sc->sc_lock);
+	error = sc->sc_preparing ? EBUSY :
+	    a133_ppu_power_prepare(&sc->sc_power, enable, change);
+	mutex_exit(&sc->sc_lock);
+	return error;
+}
+
 static const struct fdtbus_powerdomain_controller_func a133_ppu_funcs = {
 	.pdc_set = a133_ppu_set,
 	.pdc_get = a133_ppu_get,
+	.pdc_prepare = a133_ppu_prepare,
 };
 
 static int

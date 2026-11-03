@@ -232,6 +232,8 @@ struct fdtbus_powerdomain_controller_func {
 	int	(*pdc_set)(device_t, const uint32_t *, bool);
 	/* Optional observation; output is valid only on success. */
 	int	(*pdc_get)(device_t, const uint32_t *, bool *);
+	/* Read-only transition preflight; no state or ownership change. */
+	int	(*pdc_prepare)(device_t, const uint32_t *, bool, bool *);
 };
 
 
@@ -553,6 +555,7 @@ int		fdtbus_powerdomain_disable(int);
 int		fdtbus_powerdomain_disable_index(int, int);
 /* Strict query: missing providers are errors; output survives errors. */
 int		fdtbus_powerdomain_is_enabled_index(int, int, bool *);
+int		fdtbus_powerdomain_prepare_index(int, int, bool, bool *);
 /* Origin: EmberBSD; checked power and regulator state interfaces. */
 int		fdtbus_powerdomain_enable_on_attach(int);
 
