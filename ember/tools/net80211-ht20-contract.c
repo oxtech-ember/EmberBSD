@@ -8,7 +8,7 @@
 
 /* Actual native callback and complete worker use explicit kernel/core services.
  * RF programming and full core I/O are not claimed by this exchange. */
-struct rtw88_softc { int sc_started, sc_running, sc_stop_requested; unsigned sc_channel, sc_generation, sc_h2c_box, modeled_tx_pending; int sc_linked; struct { int active, configured; } sc_ra; struct rtw88_phy_state sc_phy; };
+struct rtw88_softc { void *sc_executor; int sc_started, sc_running, sc_stop_requested; unsigned sc_channel, sc_generation, sc_h2c_box, modeled_tx_pending; int sc_linked; struct { int active, configured; } sc_ra; struct rtw88_phy_state sc_phy; };
 struct rtw88_net {
 	struct { struct ifnet ec_if; } ec;
 	struct ieee80211com ic;
@@ -36,6 +36,11 @@ static void mutex_enter(int *p) { assert(!*p); *p=1; }
 static void mutex_exit(int *p) { assert(*p); *p=0; }
 static void workqueue_enqueue(void *q, int *w, void *arg)
 { (void)q; (void)w; (void)arg; assert(!native_lock); native_queues++; }
+/* PCI exchange fixture: the SDIO executor owns its separate async suite. */
+static int rtw88_net_newstate_async(struct ieee80211com *ic, enum ieee80211_state state, int arg)
+{ (void)ic; (void)state; (void)arg; abort(); }
+static void rtw88_net_state_async(struct rtw88_net *net)
+{ (void)net; abort(); }
 #include "native-ht20-callback.inc"
 /* Complete worker, with bounded core/clock/restart services modeled here.
  * Real core/restart I/O remains independently executed by RA/reconnect suites. */
