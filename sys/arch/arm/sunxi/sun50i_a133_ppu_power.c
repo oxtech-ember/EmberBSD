@@ -129,13 +129,13 @@ a133_ppu_full_off(struct a133_ppu_power *power)
 }
 
 int
-a133_ppu_power_get(struct a133_ppu_power *power, bool *enabled)
+a133_ppu_power_observe(struct a133_ppu_power *power, unsigned *observed)
 {
 	uint32_t request;
 	unsigned state;
 	int error;
 
-	if (enabled == NULL)
+	if (observed == NULL)
 		return EINVAL;
 	if ((error = a133_ppu_valid(power)) != 0 ||
 	    (error = a133_ppu_state(power, &state)) != 0 ||
@@ -144,8 +144,22 @@ a133_ppu_power_get(struct a133_ppu_power *power, bool *enabled)
 		return error;
 	if ((request & 1) != 0)
 		return EBUSY;
-	*enabled = state == A133_PPU_3D;
+	*observed = state;
 	return 0;
+}
+
+int
+a133_ppu_power_get(struct a133_ppu_power *power, bool *enabled)
+{
+	unsigned state;
+	int error;
+
+	if (enabled == NULL)
+		return EINVAL;
+	error = a133_ppu_power_observe(power, &state);
+	if (error == 0)
+		*enabled = state == A133_PPU_3D;
+	return error;
 }
 
 int

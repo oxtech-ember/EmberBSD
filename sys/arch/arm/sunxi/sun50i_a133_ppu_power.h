@@ -46,6 +46,7 @@ struct a133_ppu_power {
  * can service domain-B requests. Other revisions have read-only access.
  * A failed mutation latches uncertainty; there is no implicit rollback.
  * Output arguments change only on success. No function accesses GPU MMIO. */
+int a133_ppu_power_observe(struct a133_ppu_power *, unsigned *);
 int a133_ppu_power_get(struct a133_ppu_power *, bool *);
 /* Read-only preflight before acquiring clocks, reset or control mode.
  * change=false is a no-op; errors leave change unchanged. */

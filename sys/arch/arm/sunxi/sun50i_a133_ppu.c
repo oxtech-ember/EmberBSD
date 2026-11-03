@@ -189,7 +189,7 @@ a133_ppu_attach(device_t parent __unused, device_t self, void *aux)
 	bus_addr_t address;
 	bus_size_t size;
 	uint32_t cells, mask;
-	bool enabled;
+	unsigned state;
 	int error;
 
 	sc->sc_dev = self;
@@ -222,7 +222,7 @@ a133_ppu_attach(device_t parent __unused, device_t self, void *aux)
 	sc->sc_power.io = (struct a133_ppu_io) {
 		sc, a133_ppu_read, a133_ppu_write, a133_ppu_delay
 	};
-	error = a133_ppu_power_get(&sc->sc_power, &enabled);
+	error = a133_ppu_power_observe(&sc->sc_power, &state);
 	if (error == 0)
 		error = a133_ppu_read(sc, A133_PPU_IRQ_MASK, &mask);
 	if (error != 0 || mask != 0) {
@@ -244,7 +244,8 @@ a133_ppu_attach(device_t parent __unused, device_t self, void *aux)
 		goto destroy;
 	}
 	aprint_normal_dev(self, "A133 PPU revision %u, %s\n",
-	    sc->sc_power.revision, enabled ? "3D" : "off/host");
+	    sc->sc_power.revision, state == A133_PPU_3D ? "3D" :
+	    state == A133_PPU_HOST ? "HOST" : "OFF");
 	return;
 destroy:
 	mutex_destroy(&sc->sc_lock);

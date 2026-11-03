@@ -113,6 +113,28 @@ main(void)
 
 	off(&hw);
 	power = controller(&hw, 6);
+	{
+		unsigned state = 99, reads = hw.reads;
+
+		assert(a133_ppu_power_observe(&power, &state) == 0);
+		assert(state == A133_PPU_OFF && hw.reads == reads + 5);
+		hw.reg[A133_PPU_RSTN / 4] = 1;
+		hw.reg[A133_PPU_CLOCK / 4] = 1;
+		hw.reg[A133_PPU_ISOLATION / 4] = 2;
+		hw.reg[A133_PPU_STATE / 4] = A133_PPU_HOST;
+		assert(a133_ppu_power_observe(&power, &state) == 0);
+		assert(state == A133_PPU_HOST);
+		hw.reg[A133_PPU_ISOLATION / 4] = 0;
+		hw.reg[A133_PPU_STATE / 4] = A133_PPU_3D;
+		assert(a133_ppu_power_observe(&power, &state) == 0);
+		assert(state == A133_PPU_3D);
+		hw.reg[A133_PPU_REQUEST / 4] = 1;
+		state = 99;
+		assert(a133_ppu_power_observe(&power, &state) == EBUSY);
+		assert(state == 99 && hw.writes == 0);
+	}
+	off(&hw);
+	power = controller(&hw, 6);
 	assert(a133_ppu_power_get(&power, &enabled) == 0 && !enabled);
 	assert(a133_ppu_power_set(&power, true) == 0);
 	assert(power.owned && !power.uncertain);
