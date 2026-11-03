@@ -142,6 +142,7 @@ static int esp_wifi_register_wpa_cb_internal(struct wpa_funcs *p) {
 static int esp_wifi_sta_connect_internal(uint8_t *bssid) { return bssid!=NULL?ESP_OK:1; }
 static void *espwifi_os_malloc_internal(unsigned long n) { return calloc(1,n); }
 static void espwifi_os_free(void *p) { free(p); }
+static void espwifi_os_log(const char *format, ...) { (void)format; }
 static int espwifi_os_rx_eapol(u8 *src,u8 *buf,u32 len) { return src&&buf?(int)len:-1; }
 static bool espwifi_os_wpa_in_4way(void) { return true; }
 static void forced_memzero(void *p,size_t n) { volatile u8 *b=p;while(n--)*b++=0; }

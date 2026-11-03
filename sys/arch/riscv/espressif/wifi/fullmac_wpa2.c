@@ -90,9 +90,15 @@ espwifi_wpa2_parse_ie(const u8 *ie, size_t len, wifi_wpa_ie_t *data)
 static int
 espwifi_wpa2_sta_connect(uint8_t *bssid)
 {
+	esp_err_t error;
+
 	if (bssid == NULL)
 		return -1;
-	return esp_wifi_sta_connect_internal(bssid) == ESP_OK ? 0 : -1;
+	espwifi_os_log("espwifi: wpa_sta_connect callback enter\n");
+	error = esp_wifi_sta_connect_internal(bssid);
+	espwifi_os_log("espwifi: wpa_sta_connect callback result=%#x\n",
+	    error);
+	return error == ESP_OK ? 0 : -1;
 }
 
 static bool
@@ -176,20 +182,30 @@ espwifi_wpa3_build_sae_msg(uint8_t *bssid, uint32_t type, size_t *len)
 	unsigned int body_len = 0;
 	int error;
 
-	if (len == NULL)
+	espwifi_os_log("espwifi: wpa3_build_sae_msg enter type=%u\n",
+	    (unsigned)type);
+	if (len == NULL) {
+		espwifi_os_log("espwifi: wpa3_build_sae_msg rejected args\n");
 		return NULL;
+	}
 	*len = 0;
 	forced_memzero(espwifi_sae_body, sizeof(espwifi_sae_body));
-	if (bssid == NULL || (type != ESPWIFI_SAE_COMMIT &&
-	    type != ESPWIFI_SAE_CONFIRM))
+	if (bssid == NULL ||
+	    (type != ESPWIFI_SAE_COMMIT && type != ESPWIFI_SAE_CONFIRM)) {
+		espwifi_os_log("espwifi: wpa3_build_sae_msg rejected args\n");
 		return NULL;
+	}
 	error = espwifi_os_sae_build(bssid, type, espwifi_sae_body,
 	    sizeof(espwifi_sae_body), &body_len);
 	if (error != 0 || body_len == 0 || body_len > sizeof(espwifi_sae_body)) {
+		espwifi_os_log("espwifi: wpa3_build_sae_msg result=%d len=%u\n",
+		    error, body_len);
 		forced_memzero(espwifi_sae_body, sizeof(espwifi_sae_body));
 		return NULL;
 	}
 	*len = body_len;
+	espwifi_os_log("espwifi: wpa3_build_sae_msg result=0 len=%u\n",
+	    body_len);
 	return espwifi_sae_body;
 }
 
@@ -197,10 +213,19 @@ static int
 espwifi_wpa3_parse_sae_msg(uint8_t *buf, size_t len, uint32_t type,
 	    uint16_t status)
 {
+	int error;
+
+	espwifi_os_log("espwifi: wpa3_parse_sae_msg enter type=%u status=%u "
+	    "len=%lu\n",
+	    (unsigned)type, (unsigned)status, (unsigned long)len);
 	if (buf == NULL || len == 0 || len > ESPWIFI_SAE_BODY_MAX ||
-	    (type != ESPWIFI_SAE_COMMIT && type != ESPWIFI_SAE_CONFIRM))
+	    (type != ESPWIFI_SAE_COMMIT && type != ESPWIFI_SAE_CONFIRM)) {
+		espwifi_os_log("espwifi: wpa3_parse_sae_msg rejected args\n");
 		return ESP_FAIL;
-	return espwifi_os_sae_parse(buf, len, type, status) == 0 ? ESP_OK : ESP_FAIL;
+	}
+	error = espwifi_os_sae_parse(buf, len, type, status);
+	espwifi_os_log("espwifi: wpa3_parse_sae_msg result=%d\n", error);
+	return error == 0 ? ESP_OK : ESP_FAIL;
 }
 
 /* IDF unregister owns/frees the registered table through the OS allocator. */
@@ -315,12 +340,21 @@ espwifi_ext_connect(const unsigned char *ssid, unsigned int ssid_len,
 	    WIFI_AUTH_WPA2_PSK;
 	config.sta.pmf_cfg.capable = sae != 0;
 	config.sta.pmf_cfg.required = sae != 0;
+	espwifi_os_log("espwifi: fullmac config auth=%u pmf=%u/%u pwe_cfg=%u\n",
+	    (unsigned)config.sta.threshold.authmode,
+	    (unsigned)config.sta.pmf_cfg.capable,
+	    (unsigned)config.sta.pmf_cfg.required,
+	    (unsigned)config.sta.sae_pwe_h2e);
 	error = esp_wifi_set_config(WIFI_IF_STA, &config);
 	if (error != ESP_OK) {
 		espwifi_os_log("espwifi: fullmac set_config error %#x\n", error);
 		espwifi_ext_clear_assoc_appies();
 		return -1;
 	}
+	if (sae)
+		espwifi_os_log("espwifi: fullmac config pwe_internal=%u\n",
+		    (unsigned)esp_wifi_get_config_sae_pwe_h2e_internal(
+		    WIFI_IF_STA));
 	/* Match ESP-IDF's supplicant split: RSNE in RSN, remaining IEs in ASSOC_REQ. */
 	error = esp_wifi_set_appie_internal(WIFI_APPIE_RSN,
 	    rsn_ie, (uint16_t)rsn_len, 1);
