@@ -2780,11 +2780,37 @@ test_ra_vht_nss(void)
 #endif
 
 #ifndef RTW88_RA_MAIN
+static void
+test_async_worker_dispatch(void)
+{
+ struct state_fixture fixture;
+ if (!state_fixture_start(&fixture,1,20)) return;
+ fixture.sc.sc_executor=(void *)&fixture;
+ fixture.net.policy.dying=1;
+ state_async_dispatches=0;
+ rtw88_net_state_work(&fixture.net.state_work,&fixture.net);
+ CHECK(state_async_dispatches==1);
+ fixture.net.policy.dying=0; state_async_newstates=0;
+ CHECK(rtw88_net_newstate(&fixture.net.ic,IEEE80211_S_AUTH,1)==EAGAIN);
+ CHECK(state_async_newstates==1);
+ state_async_inits=0;
+ CHECK(rtw88_net_init(&fixture.net.ec.ec_if)==EAGAIN);
+ CHECK(state_async_inits==1);
+ fixture.net.tx_quiet=1;
+ CHECK(rtw88_net_init(&fixture.net.ec.ec_if)==EAGAIN);
+ CHECK(state_async_inits==2);fixture.net.tx_quiet=0;
+ state_async_quiets=0;rtw88_net_sta_quiet(&fixture.net.ic);
+ CHECK(state_async_quiets==1);
+ fixture.sc.sc_executor=NULL;
+ state_fixture_finish(&fixture);
+}
+
 #define RTW88_RA_MAIN main
 #endif
 int
 RTW88_RA_MAIN(void)
 {
+	test_async_worker_dispatch();
 	if (native_start_main() != 0)
 		return 1;
 	test_ra_ht20_numeric();

@@ -23,6 +23,7 @@
 #undef ieee80211_new_state
 #include "routing-bpf.inc"
 #include <dev/ic/rtw88_net_policy.h>
+#include <dev/ic/rtw88_async.h>
 #ifndef MIN
 #define MIN(a,b) ((a)<(b)?(a):(b))
 #endif
@@ -40,6 +41,8 @@ struct rtw88_net_rx {
     struct mbuf *m;
     uint64_t epoch, arrived;
     uint64_t sequence;
+    uint64_t key_epoch;
+    uint8_t host_epoch_valid;
     uint32_t tsf, generation, tick;
     uint8_t quality;
 };
@@ -57,6 +60,16 @@ struct rtw88_net {
     struct ieee80211com ic;
     struct rtw88_softc *core;
     struct rtw88_net_policy policy;
+    struct rtw88_async async;
+    unsigned key_depth;
+    int key_error;
+    uint64_t key_epoch, async_failed;
+    int async_fault, stop_pending;
+    struct { uint32_t generation; unsigned outstanding; struct { int configured,active,phy; } ra; } hw;
+    struct mbuf *tx_pending_m;
+    struct ieee80211_node *tx_pending_ni;
+    struct rtw88_async_epoch tx_pending_id;
+    unsigned tx_producers;
     kmutex_t *lock;
     struct rtw88_caps caps;
     int work_pending, reset_required;
@@ -140,6 +153,14 @@ static void workqueue_enqueue(struct workqueue *q,struct work *w,void *cookie)
 static int route_new_state(struct ieee80211com *ic,int state,int arg)
 { return rtw88_net_newstate(ic,(enum ieee80211_state)state,arg); }
 #include "routing-rxba-native.inc"
+/* This fixture exercises the legacy PCI route; async has its own model. */
+static int __attribute__((unused))
+rtw88_net_newstate_async(struct ieee80211com *ic, enum ieee80211_state state, int arg)
+{ (void)ic; (void)state; (void)arg; return EOPNOTSUPP; }
+static unsigned routing_async_dispatch_calls;
+static void __attribute__((unused))
+rtw88_net_start_async(struct ifnet *ifp)
+{ (void)ifp; routing_async_dispatch_calls++; }
 static unsigned routing_ht20_withdrawals, routing_ht20_rejections;
 #include "routing-ht20-stub.inc"
 #define ieee80211_new_state route_new_state

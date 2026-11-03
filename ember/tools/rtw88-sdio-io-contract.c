@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Origin: EmberBSD RTL8723D contract tests, AI-assisted. */
 /* Exercise production SDIO helpers; model only the command boundary. */
 #include <assert.h>
 #include <errno.h>
@@ -6,6 +7,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <dev/sdmmc/rtw88_sdio_io.h>
+#include <dev/sdmmc/rtw88_sdio_fifo.h>
 
 static struct card {
 	uint8_t bytes[2][0x20000];
@@ -57,7 +59,7 @@ command53(void *cookie, uint32_t arg, void *data, size_t len, uint32_t *response
 	bool write = (arg & 0x80000000U) != 0;
 
 	assert(fn == 1 && (arg & 0x04000000U) != 0);
-	assert(len <= 512 && address + len <= 0x20000);
+	assert(len <= 4096 && address + len <= 0x20000);
 	assert(len == (block ? count * c->block_size : (count ? count : 512)));
 	assert(!block || count != 0);
 	assert(c->calls < 5000);
@@ -283,12 +285,59 @@ function_contract(void)
 	assert(error == 0 && card.bytes[0][2] == 0x10);
 }
 
+static void
+fifo_failure_contract(void)
+{
+	struct rtw88_sdio_bus bus = fresh_bus();
+	enum rtw88_tx_progress progress;
+	uint8_t data[4] = {1, 2, 3, 4}, value = 0;
+	unsigned calls;
+
+	bus.function_claimed = bus.function_ready = bus.cmd53_enabled = true;
+	assert(rtw88_sdio_fifo_write(&bus, 0x8001, data, sizeof(data),
+	    512, &progress) == 0);
+	assert(progress == RTW88_TX_ACCEPTED && card.calls == 1 &&
+	    !bus.fifo_failed && bus.cmd53_enabled);
+	assert(memcmp(card.scratch, data, sizeof(data)) == 0);
+	for (size_t i = sizeof(data); i < 512; i++)
+		assert(card.scratch[i] == 0);
+	bus = fresh_bus();
+	bus.function_claimed = bus.function_ready = bus.cmd53_enabled = true;
+	card.fail_at = 1;
+	assert(rtw88_sdio_fifo_write(&bus, 0x8001, data, sizeof(data),
+	    512, &progress) == ETIMEDOUT);
+	assert(progress == RTW88_TX_MAY_HAVE_WRITTEN && bus.fifo_failed &&
+	    !bus.cmd53_enabled);
+	calls = card.calls;
+	assert(rtw88_sdio_set_cmd53(&bus, true) == EIO);
+	assert(rtw88_sdio_fifo_write(&bus, 0x8001, data, sizeof(data),
+	    512, &progress) == EIO && card.calls == calls);
+	assert(rtw88_sdio_cmd52(bus.ops, 0, 2, false, &value) == 0);
+
+	uint8_t out[5000], scratch[5120], counter = 0;
+	bus = fresh_bus();
+	bus.function_claimed = bus.function_ready = bus.cmd53_enabled = true;
+	memset(out, 0x5a, sizeof(out));
+	card.fail_at = 1;
+	assert(rtw88_sdio_fifo_read(&bus, &counter, out, sizeof(out),
+	    scratch, sizeof(scratch)) == ETIMEDOUT);
+	assert(card.calls == 1 && counter == 1 && bus.fifo_failed &&
+	    !bus.cmd53_enabled);
+	assert(rtw88_sdio_fifo_read(&bus, &counter, out, sizeof(out),
+	    scratch, sizeof(scratch)) == EIO && card.calls == 1 && counter == 1);
+	assert(rtw88_sdio_cmd52(bus.ops, 0, 2, false, &value) == 0);
+	for (size_t i = 0; i < sizeof(out); i++)
+		assert(out[i] == 0x5a);
+}
+
+
 int
 main(void)
 {
 	cmd52_contract();
 	transfer_contract();
 	function_contract();
+	fifo_failure_contract();
 	puts("rtw88 SDIO I/O and function contract: PASS");
 	return 0;
 }

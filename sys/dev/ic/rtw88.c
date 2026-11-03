@@ -11,6 +11,7 @@
 #include <string.h>
 #endif
 #include <dev/ic/rtw88var.h>
+#include <dev/ic/rtw88_async.h>
 #include <dev/ic/rtw88_io.h>
 #include <dev/ic/rtw88_internal.h>
 
@@ -59,21 +60,13 @@ static const unsigned rtw88_queue_ring[RTW88_NTXQ] = {
  * taken effect; report the first error and never restore either TX control.
  */
 int
-rtw88_tx_quiet(struct rtw88_softc *sc)
+rtw88_tx_pause(struct rtw88_softc *sc)
 {
 	uint8_t cr, check;
 	int error, e;
 
-	sc->sc_stop_requested = 1;
-	sc->sc_phy.channel_valid = 0;
-	rtw88_dfs_close(sc);
-	/* Also cancel a start that yielded inside the firmware loader. */
-	sc->sc_generation++;
-	rtw88_ra_invalidate(sc);
-#ifdef RTW88_RFK_EXPERIMENT
-	sc->sc_power_program.valid = 0;
-	sc->sc_operating.prepared = sc->sc_operating.sealed = 0;
-#endif
+	if (sc == NULL)
+		return EINVAL;
 	if (!sc->sc_resources_ready || !sc->sc_running || !sc->sc_started)
 		return ENXIO;
 	error = sc->sc_ops->write_1(sc->sc_bus, 0x0522, 0xff);
@@ -93,6 +86,22 @@ rtw88_tx_quiet(struct rtw88_softc *sc)
 	if (error == 0)
 		error = e;
 	return error;
+}
+
+int
+rtw88_tx_quiet(struct rtw88_softc *sc)
+{
+	sc->sc_stop_requested = 1;
+	sc->sc_phy.channel_valid = 0;
+	rtw88_dfs_close(sc);
+	/* Also cancel a start that yielded inside the firmware loader. */
+	sc->sc_generation++;
+	rtw88_ra_invalidate(sc);
+#ifdef RTW88_RFK_EXPERIMENT
+	sc->sc_power_program.valid = 0;
+	sc->sc_operating.prepared = sc->sc_operating.sealed = 0;
+#endif
+	return rtw88_tx_pause(sc);
 }
 
 int
@@ -265,7 +274,7 @@ rtw88_ra_report(struct rtw88_softc *sc, const uint8_t *p, size_t len)
 	}
 	if (len > 9)
 		st->ra_trailing++;
-	if (p[3] != 0) {
+	if (p[3] != (sc->sc_chip != NULL ? sc->sc_chip->station_macid : 0)) {
 		st->ra_foreign++;
 		return;
 	}
@@ -311,8 +320,8 @@ rtw88_ra_report(struct rtw88_softc *sc, const uint8_t *p, size_t len)
 
 /* One received buffer: classify, count, and keep every error visible. */
 void
-rtw88_rx_deliver(struct rtw88_softc *sc, const uint8_t *data, size_t len,
-    uint64_t sequence)
+rtw88_rx_deliver_host(struct rtw88_softc *sc, const uint8_t *data, size_t len,
+    uint64_t sequence, const struct rtw88_async_epoch *id)
 {
 	struct rtw88_rx_info rx;
 	const uint8_t *p;
@@ -322,7 +331,10 @@ rtw88_rx_deliver(struct rtw88_softc *sc, const uint8_t *data, size_t len,
 		return;
 	}
 	rx.sequence = sequence;
-	rx.generation = sc->sc_generation;
+	rx.generation = id != NULL ? id->generation : sc->sc_generation;
+	rx.host_epoch_valid = id != NULL;
+	rx.epoch = id != NULL ? id->epoch : 0;
+	rx.key_epoch = id != NULL ? id->key_epoch : 0;
 	p = data + rx.payload_offset;
 	if ((rx.flags & RTW88_RX_C2H) != 0) {
 		if (rx.packet_size < 2) {
@@ -357,6 +369,13 @@ rtw88_rx_deliver(struct rtw88_softc *sc, const uint8_t *data, size_t len,
 		rx.packet_size -= 4;
 		sc->sc_rx_frame(sc->sc_net_cookie, p, rx.packet_size, &rx);
 	}
+}
+
+void
+rtw88_rx_deliver(struct rtw88_softc *sc, const uint8_t *data, size_t len,
+    uint64_t sequence)
+{
+	rtw88_rx_deliver_host(sc, data, len, sequence, NULL);
 }
 
 /* pci.c rtw_pci_rx_napi, bounded by RTW88_RX_LIMIT per interrupt. */
@@ -534,11 +553,10 @@ rtw88_dfs_close(struct rtw88_softc *sc)
 static int
 rtw88_tx_submit(struct rtw88_softc *sc, unsigned q, const void *frame,
     size_t len, int fixed_rate, unsigned ra_mode,
-    const struct rtw88_tx_agg *agg)
+    const struct rtw88_tx_agg *agg, enum rtw88_tx_progress *progress)
 {
 	struct rtw88_tx_info tx;
 	struct rtw88_wme_map map;
-	enum rtw88_tx_progress progress;
 	unsigned rates, qsel, hdrlen;
 	const uint8_t *bytes = frame;
 	int error;
@@ -547,6 +565,9 @@ rtw88_tx_submit(struct rtw88_softc *sc, unsigned q, const void *frame,
 	int vht = 0;
 #endif
 
+	if (progress == NULL)
+		return EINVAL;
+	*progress = RTW88_TX_NOT_STARTED;
 	if (q >= RTW88_NTXQ || (agg != NULL && ra_mode != 1))
 		return EINVAL;
 	if (sc->sc_edca_error != 0)
@@ -622,8 +643,11 @@ rtw88_tx_submit(struct rtw88_softc *sc, unsigned q, const void *frame,
 	tx.rate_id = tx.rate >= 4 ? RTW88_RATEID_G : RTW88_RATEID_B_20M;
 	tx.flags = RTW88_TX_DIS_QSELSEQ | RTW88_TX_USE_RATE |
 	    RTW88_TX_DIS_RATE_FB;
+	/* Station unicast DATA uses the selected chip peer entry. */
+	if (q != RTW88_TXQ_MGMT && (bytes[0] & 0x0c) == 0x08 &&
+	    (bytes[1] & 3) == 1 && (bytes[4] & 1) == 0)
+		tx.mac_id = sc->sc_chip->station_macid;
 	if (ra_mode == 1) {
-		tx.mac_id = 0;
 		tx.rate_id = sc->sc_ra.rate_id;
 		tx.rate = (uint8_t)__builtin_ctz(sc->sc_ra.mask);
 		tx.flags &= ~(RTW88_TX_USE_RATE | RTW88_TX_DIS_RATE_FB);
@@ -657,8 +681,13 @@ rtw88_tx_submit(struct rtw88_softc *sc, unsigned q, const void *frame,
 		    ((const uint8_t *)frame)[23] << 8) >> 4);
 	if (((const uint8_t *)frame)[4] & 0x01)		/* group DA */
 		tx.flags |= RTW88_TX_BMC;
-	error = sc->sc_hci->xmit(sc, q, bytes, len, &tx, &progress);
-	if (progress == RTW88_TX_NOT_STARTED)
+	error = sc->sc_hci->xmit(sc, q, bytes, len, &tx, progress);
+	if ((unsigned)*progress > RTW88_TX_ACCEPTED ||
+	    (error == 0 && *progress != RTW88_TX_ACCEPTED)) {
+		*progress = RTW88_TX_MAY_HAVE_WRITTEN;
+		return EPROTO;
+	}
+	if (*progress == RTW88_TX_NOT_STARTED)
 		return error;
 	/* Record the encoded descriptor under the caller's bus interrupt lock.
 	 * This is an encoding sample, not an ACK or a hardware rate report. */
@@ -686,12 +715,15 @@ int
 rtw88_tx_raw(struct rtw88_softc *sc, unsigned q, const void *frame,
     size_t len)
 {
-	return rtw88_tx_submit(sc, q, frame, len, -1, 0, NULL);
+	enum rtw88_tx_progress progress;
+
+	return rtw88_tx_submit(sc, q, frame, len, -1, 0, NULL, &progress);
 }
 
-int
-rtw88_tx_fixed(struct rtw88_softc *sc, unsigned q, const void *frame,
-    size_t len, const struct rtw88_tx_fixed *fixed)
+static int
+rtw88_tx_fixed_progress(struct rtw88_softc *sc, unsigned q, const void *frame,
+    size_t len, const struct rtw88_tx_fixed *fixed,
+    enum rtw88_tx_progress *progress)
 {
 	static const uint8_t rates[] = { 2, 4, 11, 22, 12, 18, 24, 36,
 	    48, 72, 96, 108 };
@@ -733,13 +765,21 @@ rtw88_tx_fixed(struct rtw88_softc *sc, unsigned q, const void *frame,
 	/* The current descriptor API has no qualified RTS/CTS protection policy. */
 	if (rate >= 4 && fixed->use_protection)
 		return EOPNOTSUPP;
-	return rtw88_tx_submit(sc, q, frame, len, (int)rate, 0, NULL);
+	return rtw88_tx_submit(sc, q, frame, len, (int)rate, 0, NULL, progress);
+}
+
+int
+rtw88_tx_fixed(struct rtw88_softc *sc, unsigned q, const void *frame,
+    size_t len, const struct rtw88_tx_fixed *fixed)
+{
+	enum rtw88_tx_progress progress;
+	return rtw88_tx_fixed_progress(sc, q, frame, len, fixed, &progress);
 }
 
 static int
 rtw88_tx_ra(struct rtw88_softc *sc, unsigned q, const void *frame,
     size_t len, uint64_t epoch, unsigned use_protection,
-    const struct rtw88_tx_agg *agg)
+    const struct rtw88_tx_agg *agg, enum rtw88_tx_progress *progress)
 {
 	const uint8_t *bytes = frame;
 	unsigned basic, rate;
@@ -786,24 +826,27 @@ rtw88_tx_ra(struct rtw88_softc *sc, unsigned q, const void *frame,
 		rate = (unsigned)__builtin_ctz(basic);
 		if (rate >= 4 || (sc->sc_ra.common_rates & (1U << rate)) == 0)
 			return EOPNOTSUPP;
-		return rtw88_tx_submit(sc, q, frame, len, -1, 2, NULL);
+		return rtw88_tx_submit(sc, q, frame, len, -1, 2, NULL, progress);
 	}
 	if (!sc->sc_ra.active)
 		return EBUSY;
-	return rtw88_tx_submit(sc, q, frame, len, -1, 1, agg);
+	return rtw88_tx_submit(sc, q, frame, len, -1, 1, agg, progress);
 }
 
 int
 rtw88_tx_auto(struct rtw88_softc *sc, unsigned q, const void *frame,
     size_t len, uint64_t epoch, unsigned use_protection)
 {
-	return rtw88_tx_ra(sc, q, frame, len, epoch, use_protection, NULL);
+	enum rtw88_tx_progress progress;
+
+	return rtw88_tx_ra(sc, q, frame, len, epoch, use_protection, NULL, &progress);
 }
 
 #ifdef RTW88_VHT80
-int
-rtw88_tx_ampdu(struct rtw88_softc *sc, unsigned q, const void *frame,
-    size_t len, uint64_t epoch, const struct rtw88_tx_agg *agg)
+static int
+rtw88_tx_ampdu_progress(struct rtw88_softc *sc, unsigned q, const void *frame,
+    size_t len, uint64_t epoch, const struct rtw88_tx_agg *agg,
+    enum rtw88_tx_progress *progress)
 {
 	const uint8_t *bytes = frame;
 
@@ -815,7 +858,15 @@ rtw88_tx_ampdu(struct rtw88_softc *sc, unsigned q, const void *frame,
 		return EMSGSIZE;
 	if (bytes[0] != 0x88 || (bytes[24] & 15) != agg->tid)
 		return EOPNOTSUPP;
-	return rtw88_tx_ra(sc, q, frame, len, epoch, 0, agg);
+	return rtw88_tx_ra(sc, q, frame, len, epoch, 0, agg, progress);
+}
+
+int
+rtw88_tx_ampdu(struct rtw88_softc *sc, unsigned q, const void *frame,
+    size_t len, uint64_t epoch, const struct rtw88_tx_agg *agg)
+{
+	enum rtw88_tx_progress progress;
+	return rtw88_tx_ampdu_progress(sc, q, frame, len, epoch, agg, &progress);
 }
 #endif
 
@@ -825,6 +876,53 @@ rtw88_tx_ampdu(struct rtw88_softc *sc, unsigned q, const void *frame,
  * ownership only: never infer RF idle, air ACK or calibration readiness. */
 
 int
+rtw88_tx_execute(struct rtw88_softc *sc, const struct rtw88_tx_job *job,
+    enum rtw88_tx_progress *progress)
+{
+	int error;
+
+	if (progress == NULL)
+		return EINVAL;
+	*progress = RTW88_TX_NOT_STARTED;
+	if (sc == NULL || job == NULL || job->q >= RTW88_NTXQ ||
+	    job->length == 0 || job->length > sizeof(job->bytes) ||
+	    (unsigned)job->mode > RTW88_TX_MODE_AMPDU ||
+	    (job->mode == RTW88_TX_MODE_AUTO ? job->operation > 1 :
+	     job->operation != 0))
+		return EINVAL;
+	if (job->id.generation != sc->sc_generation)
+		return ESTALE;
+	switch (job->mode) {
+	case RTW88_TX_MODE_RAW:
+		error = rtw88_tx_submit(sc, job->q, job->bytes, job->length,
+		    -1, 0, NULL, progress);
+		break;
+	case RTW88_TX_MODE_FIXED:
+		error = rtw88_tx_fixed_progress(sc, job->q, job->bytes,
+		    job->length, &job->fixed, progress);
+		break;
+	case RTW88_TX_MODE_AUTO:
+		error = rtw88_tx_ra(sc, job->q, job->bytes, job->length,
+		    job->id.epoch, job->operation, NULL, progress);
+		break;
+	case RTW88_TX_MODE_AMPDU:
+#ifdef RTW88_VHT80
+		error = rtw88_tx_ampdu_progress(sc, job->q, job->bytes,
+		    job->length, job->id.epoch, &job->agg, progress);
+		break;
+#else
+		return EOPNOTSUPP;
+#endif
+	default:
+		return EINVAL;
+	}
+	/* Preserve legacy wrappers' ENOBUFS, but give the bounded executor one
+	 * backpressure result. Publication uncertainty must never become retry. */
+	return error == ENOBUFS && *progress == RTW88_TX_NOT_STARTED ?
+	    EBUSY : error;
+}
+
+int
 rtw88_channel(struct rtw88_softc *sc, unsigned ch)
 {
 	const struct rtw88_channel_tuple tuple = { ch, ch, 20 };
@@ -832,7 +930,7 @@ rtw88_channel(struct rtw88_softc *sc, unsigned ch)
 	return rtw88_channel_apply(sc, &tuple);
 }
 
-static int
+int
 rtw88_hci_valid(const struct rtw88_softc *sc)
 {
 	const struct rtw88_hci_ops *h;

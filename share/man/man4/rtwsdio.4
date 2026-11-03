@@ -1,11 +1,12 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\" Copyright (c) 2026 EmberBSD contributors.
-.Dd October 27, 2026
+.\" Origin: EmberBSD rtwsdio manual, AI-assisted.
+.Dd November 3, 2026
 .Dt RTWSDIO 4
 .Os
 .Sh NAME
 .Nm rtwsdio
-.Nd Realtek RTL8723DS SDIO firmware bootstrap
+.Nd Realtek RTL8723DS SDIO wireless driver
 .Sh SYNOPSIS
 .Cd "rtwsdio* at sdmmc?"
 .Sh DESCRIPTION
@@ -15,8 +16,12 @@ driver matches function 1 of SDIO devices with vendor 0x024c
 and product 0xd723.
 It loads and validates RTL8723D firmware through
 .Xr firmload 9 .
-This stage provides a firmware bootstrap without a network interface.
-It does not provide scanning, association, packet transfer or WPA.
+Without an explicit radio profile, the driver only bootstraps firmware.
+It does not attach a network interface in that mode.
+With a valid profile, it attaches a station interface for legacy 2.4 GHz
+802.11b/g and WPA2.
+The initial profile does not enable HT or WME.
+Radio operation requires device and board validation.
 .Pp
 The native host must be enabled in the device tree,
 marked non-removable and connected to a registered standard MMC power sequence.
@@ -28,8 +33,29 @@ A disabled board profile remains disabled.
 Both the host and card must support a 512-byte block size.
 The driver checks the card CIS and verifies block-size writes by readback.
 It preserves other functions' enable bits.
-Bus operations run on the SD/MMC host task queue.
-Operational receive and transmit interrupts remain masked.
+A per-device executor serializes sleepable bus operations.
+In bootstrap-only mode, operational receive and transmit interrupts remain
+masked.
+A failed or uncertain FIFO transfer blocks further CMD53 transfers.
+Detach retains resources until the transport can be safely released.
+.Sh RADIO PROFILE
+A profile must be supplied as properties of the SDIO child device.
+The driver does not inherit properties from its parent.
+The
+.Sq rtw88-regulatory
+dictionary requires the
+.Sq world-min
+domain and a nonzero
+.Sq channels-2ghz
+bit mask for channels 1 through 13.
+The
+.Sq rtw8723d-phy-package
+property supplies the package selector.
+A platform
+.Sq mac-address
+may replace the address read from EFUSE.
+An incomplete profile is rejected.
+The board provider remains responsible for supplying a valid policy.
 .Sh FILES
 .Bl -tag -width Ds -compact
 .It Pa /libdata/firmware/rtw88/rtw8723d_fw.bin
@@ -43,15 +69,12 @@ search roots are also supported.
 .It firmware ready (bootstrap only)
 The chip reported completion of the firmware bootstrap.
 This message does not establish radio or network readiness.
-.It no configured native power profile
-The host does not satisfy native board admission.
-No bootstrap is scheduled.
-.It bootstrap/IRQ failed: errno
-Firmware, transport or interrupt setup failed.
-The driver attempts to release its acquired resources.
-.It cleanup failed: errno
-A card operation failed during resource release.
-The first cleanup error is reported.
+.It native attach unavailable: errno
+The host does not satisfy admission or core attachment failed.
+.It bootstrap or netif attach failed: errno
+Firmware, transport, profile or network attachment failed.
+.It attach cleanup retained ownership: errno
+Cleanup could not confirm resource release.
 .El
 .Sh SEE ALSO
 .Xr sdmmc 4 ,

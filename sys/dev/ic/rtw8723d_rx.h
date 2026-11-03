@@ -11,6 +11,11 @@
  * Host sequence/generation are left zero. Output unchanged on error. */
 int rtw8723d_rx_decode(const uint8_t *, size_t, struct rtw88_rx_info *);
 
+struct rtw88_softc;
+/* Decode using a consistent current-generation channel snapshot. */
+int rtw8723d_rx_desc(struct rtw88_softc *, const uint8_t *, size_t,
+    struct rtw88_rx_info *);
+
 
 /* Decode the 8723D page0/page1 path-A power report. Unlike the 8822C
  * report, no wire channel or 8822C gain correction is assumed. The caller

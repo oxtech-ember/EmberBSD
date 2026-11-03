@@ -70,6 +70,8 @@ rtw88_sdio_set_cmd53(struct rtw88_sdio_bus *bus, bool enabled)
 		bus->cmd53_enabled = false;
 		return 0;
 	}
+	if (bus->fifo_failed)
+		return EIO;
 	if (!bus->function_claimed || !bus->function_ready ||
 	    bus->block_size == 0 || bus->block_size > RTW88_SDIO_MAX_TRANSFER ||
 	    bus->ops == NULL || bus->ops->command53 == NULL)
@@ -118,7 +120,7 @@ rtw88_sdio_transfer(struct rtw88_sdio_bus *bus, enum rtw88_sdio_domain domain,
 	    rtw88_sdio_overlap(data, bus->read_scratch, len)))
 		return EINVAL;
 	buffer = write ? data : bus->read_scratch;
-	if (!bus->cmd53_enabled) {
+	if (!bus->cmd53_enabled || bus->fifo_failed) {
 		for (done = 0; done < len; done++) {
 			error = rtw88_sdio_cmd52(bus->ops, 1, address + done,
 			    write, &buffer[done]);

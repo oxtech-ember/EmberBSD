@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Origin: EmberBSD RTL8723D contract tests, AI-assisted.
 """Exercise the native SDIO attachment with host services and card I/O models."""
 import argparse
 import os
@@ -18,20 +19,9 @@ if not source.is_file():
     raise SystemExit("Missing native RTL8723DS attachment")
 out.mkdir(parents=True, exist_ok=False)
 include = out / "include/dev"
-(include / "ic").mkdir(parents=True)
-(include / "sdmmc").mkdir()
-header = (root / "sys/dev/ic/rtw88var.h").read_text()
-shim = "#include <stdbool.h>\n#include <stddef.h>\n#include <stdint.h>\n"
-for name in ("rtw88_dma", "rtw88_bus_ops"):
-    match = re.search(r"(?ms)^struct " + name + r" \{.*?^\};", header)
-    if match is None:
-        raise SystemExit("Missing production declaration: " + name)
-    shim += match.group(0) + "\n"
-(include / "ic/rtw88var.h").write_text(shim)
-for path in ("ic/rtw88_io.h", "ic/rtw8723d_boot.h",
-             "sdmmc/rtw88_sdio_io.h", "sdmmc/sdmmc_io_status.h",
-             "sdmmc/sdmmc_ioreg.h", "sdmmc/sdmmcreg.h"):
-    (include / path).write_bytes((root / "sys/dev" / path).read_bytes())
+include.mkdir(parents=True)
+for name in ("ic", "sdmmc"):
+    (include / name).symlink_to(root / "sys/dev" / name, target_is_directory=True)
 native = source.read_text()
 (out / "native.inc").write_text(native[native.index("#define RTWSDIO_"):])
 boot = (root / "sys/dev/ic/rtw8723d_boot.c").read_text()

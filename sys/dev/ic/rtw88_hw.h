@@ -155,6 +155,9 @@ struct rtw88_rx_info {
 	uint8_t ppdu_count;
 	uint8_t rate;
 	uint8_t bandwidth;
+	/* Host-only deferred admission identity; never wire data. */
+	uint8_t host_epoch_valid;
+	uint64_t epoch, key_epoch;
 };
 
 /*

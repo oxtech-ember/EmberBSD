@@ -25,6 +25,8 @@
 
 /* All calibration bytes retain erased values. Decode does not establish
  * valid calibration, a regulatory domain, or permission to transmit. */
+struct rtw88_io;
+
 struct rtw8723d_efuse {
 	uint8_t logical[RTW8723D_EFUSE_LOGICAL_SIZE];
 	uint8_t mac[6], rfe, xtal, channel_plan;
@@ -40,6 +42,9 @@ struct rtw8723d_efuse {
  * words, logical overflow and invalid unicast MAC. Leave the
  * complete output unchanged on error. No device I/O occurs here. */
 int rtw8723d_efuse_decode(const uint8_t *, size_t, struct rtw8723d_efuse *);
+
+/* Serialized owner reads the physical Wi-Fi bank; output is atomic. */
+int rtw8723d_efuse_read(struct rtw88_io *, uint8_t[RTW8723D_EFUSE_PHYSICAL_SIZE]);
 
 
 #endif /* _DEV_IC_RTW8723D_H_ */

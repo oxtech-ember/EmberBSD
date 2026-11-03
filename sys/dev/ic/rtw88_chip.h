@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Copyright (c) 2026 EmberBSD contributors. */
+/* Origin: EmberBSD native RTL8723D integration, AI-assisted. */
 #ifndef _DEV_IC_RTW88_CHIP_H_
 #define _DEV_IC_RTW88_CHIP_H_
 
@@ -62,10 +63,14 @@ struct rtw88_chip_ops {
 	    const struct rtw88_tx_info *);
 	int (*rx_desc)(struct rtw88_softc *, const uint8_t *, size_t,
 	    struct rtw88_rx_info *);
+	/* Zero keeps the 8822C two-command, peer-zero behavior. */
+	uint8_t station_run_commands;
+	uint8_t station_macid;
 };
 
 extern const struct rtw88_chip_ops rtw8822c_chip_ops;
 int rtw88_chip_valid(const struct rtw88_softc *);
+unsigned rtw88_station_commands(const struct rtw88_softc *, int);
 int rtw88_get_caps(const struct rtw88_softc *, struct rtw88_caps *);
 int rtw88_chip_tx_desc(struct rtw88_softc *, uint8_t *, size_t,
     const struct rtw88_tx_info *);

@@ -42,6 +42,8 @@ rtw88_chip_valid(const struct rtw88_softc *sc)
 	if (rtw88_get_caps(sc, &caps) != 0)
 		return 0;
 	c = sc->sc_chip;
+	if (c->station_run_commands > 2 || c->station_macid > 127)
+		return 0;
 	if (c->calibration != NULL &&
 	    (c->calibration->blocked == NULL || c->calibration->active == NULL ||
 	     c->calibration->begin == NULL || c->calibration->validate == NULL ||
@@ -53,6 +55,18 @@ rtw88_chip_valid(const struct rtw88_softc *sc)
 	    c->edca != NULL && c->ra != NULL && c->mailbox_begin != NULL &&
 	    c->mailbox_end != NULL && c->command != NULL && c->diag != NULL &&
 	    c->loopback != NULL && c->tx_desc != NULL && c->rx_desc != NULL;
+}
+
+unsigned
+rtw88_station_commands(const struct rtw88_softc *sc, int linked)
+{
+	if (sc == NULL || sc->sc_chip == NULL ||
+	    sc->sc_chip->station_run_commands > 2)
+		return 0;
+	if (!linked)
+		return 1;
+	return sc->sc_chip->station_run_commands != 0 ?
+	    sc->sc_chip->station_run_commands : 2;
 }
 
 int

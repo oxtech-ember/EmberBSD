@@ -23,6 +23,48 @@ signal_rx_stamp(struct rtw88_rx_info *info, const struct rtw88_softc *sc)
     info->sequence = ++signal_rx_sequence;
 }
 
+static void
+host_identity_fence(void)
+{
+    struct rtw88_softc sc={.sc_generation=7}; kmutex_t lock={0};
+    struct rtw88_net net={.core=&sc,.lock=&lock};
+    struct rtw88_rx_info info={.packet_size=24,.generation=7,.host_epoch_valid=1,.epoch=4,.key_epoch=2};
+    uint8_t frame[24]={0x08};
+    net.policy.epoch=4; net.policy.accepting=1;
+    net.async.id=(struct rtw88_async_epoch){.generation=7,.epoch=4,.key_epoch=3};
+    mutex_enter(&lock);rtw88_net_rx_frame(&net,frame,sizeof(frame),&info);mutex_exit(&lock);
+    CHECK(net.policy.queued==0 && net.rx_dropped==1);
+    info.key_epoch=3;net.key_depth=1;
+    mutex_enter(&lock);rtw88_net_rx_frame(&net,frame,sizeof(frame),&info);mutex_exit(&lock);
+    CHECK(net.policy.queued==0 && net.rx_dropped==2);
+    net.key_depth=0;info.generation=6;
+    mutex_enter(&lock);rtw88_net_rx_frame(&net,frame,sizeof(frame),&info);mutex_exit(&lock);
+    CHECK(net.policy.queued==0 && net.rx_dropped==3);
+    rtw88_net_rx_frame_async(&net,frame,sizeof(frame),&info);
+    CHECK(!lock.held && net.policy.queued==0 && net.rx_dropped==4);
+    sc.sc_executor=(void *)&sc; info.host_epoch_valid=0;
+    rtw88_net_rx_frame_async(&net,frame,sizeof(frame),&info);
+    CHECK(net.policy.queued==0 && net.rx_dropped==5);
+}
+
+static void
+queued_key_fence(void)
+{
+    struct rtw88_softc sc={.sc_generation=7}; kmutex_t lock={0};
+    struct rtw88_net net={.core=&sc,.lock=&lock};
+    struct rtw88_rx_info info={.packet_size=24,.generation=7,.host_epoch_valid=1,.epoch=4,.key_epoch=3};
+    uint8_t frame[24]={0x08}; unsigned delivered=route_rx;
+    sc.sc_executor=(void *)&sc; net.hw.generation=7;
+    net.ec.ec_if.if_softc=&net;net.ic.ic_ifp=&net.ec.ec_if;
+    net.policy.epoch=4;net.policy.accepting=1;net.key_epoch=3;
+    net.async.id=(struct rtw88_async_epoch){.generation=7,.epoch=4,.key_epoch=3};
+    rtw88_net_rx_frame_async(&net,frame,sizeof(frame),&info);
+    CHECK(net.policy.queued==1);
+    net.key_epoch=4;net.async.id.key_epoch=4;
+    rtw88_net_softintr(&net);
+    CHECK(net.policy.queued==0 && route_rx==delivered);
+}
+
 static void beacon_arrival_clock(void) {
     static const uint32_t start[]={100,100,UINT32_MAX-20,100};
     static const uint32_t delay[]={900,1,41,900};
@@ -222,6 +264,8 @@ int main(void) {
     signal_rx_stamp(&rx,&sc);mutex_enter(&lock);rtw88_net_rx_frame(&net,frame,24,&rx);
     (void)rtw88_net_request(&net.policy);mutex_exit(&lock);
     delivered=route_rx;rtw88_net_softintr(&net);CHECK(route_rx==delivered && net.policy.queued==0);
+    host_identity_fence();
+    queued_key_fence();
     beacon_arrival_clock();
     beacon_body_clock();
     printf("rtw88 signal queue: %u checks, %u failures\n",checks,failures);return failures!=0;

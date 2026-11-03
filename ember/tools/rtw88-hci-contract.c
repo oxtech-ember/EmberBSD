@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Origin: EmberBSD HCI ownership and uncertain-publication contracts. */
 #include <dev/ic/rtw88_hci.h>
+#include <dev/ic/rtw88_async.h>
 
 /* Reuse the actual startup, MMIO, DMA and firmware fixture. */
 #define main rtw88_start_contract_main
@@ -33,6 +34,46 @@ test_hci_required_operations(void)
 	CHECK(rtw88_core_attach(&sc) == EINVAL);
 	CHECK(f.alloc_calls == 0);
 	CHECK(sc.sc_nring == 0 && !sc.sc_resources_ready);
+}
+
+static void
+test_hci_sdio_extensions_default_off(void)
+{
+	struct rtw88_softc sc;
+	struct rtw88_hci_ops hci;
+
+	reset_bus(&sc);
+	hci = rtw88_pci_hci_ops;
+	CHECK(!hci.no_host_dma && hci.write_window == NULL &&
+	    hci.set_data_mode == NULL);
+	sc.sc_hci = &hci;
+	CHECK(rtw88_hci_valid(&sc));
+	hci.xmit = NULL;
+	CHECK(!rtw88_hci_valid(&sc));
+}
+
+static int injected_error;
+static enum rtw88_tx_progress injected_progress;
+static int
+injected_xmit(struct rtw88_softc *s,unsigned q,const uint8_t *p,size_t n,
+    const struct rtw88_tx_info *i,enum rtw88_tx_progress *progress)
+{ (void)s;(void)q;(void)p;(void)n;(void)i;*progress=injected_progress;return injected_error; }
+static void
+test_executor_tx_progress(void)
+{
+ struct rtw88_softc sc; struct rtw88_hci_ops hci;
+ struct rtw88_tx_job job={0}; enum rtw88_tx_progress progress;
+ if (!start_ok(&sc)) return;
+ hci=rtw88_pci_hci_ops; hci.xmit=injected_xmit;sc.sc_hci=&hci;
+ job.id.generation=sc.sc_generation;job.q=RTW88_TXQ_BE;
+ job.mode=RTW88_TX_MODE_RAW;job.length=24;job.bytes[0]=0x08;job.bytes[1]=1;
+ injected_error=ENOBUFS;injected_progress=RTW88_TX_NOT_STARTED;
+ CHECK(rtw88_tx_execute(&sc,&job,&progress)==EBUSY && progress==RTW88_TX_NOT_STARTED);
+ injected_error=EIO;injected_progress=RTW88_TX_MAY_HAVE_WRITTEN;
+ CHECK(rtw88_tx_execute(&sc,&job,&progress)==EIO && progress==RTW88_TX_MAY_HAVE_WRITTEN);
+ injected_error=0;injected_progress=RTW88_TX_NOT_STARTED;
+ CHECK(rtw88_tx_execute(&sc,&job,&progress)==EPROTO && progress==RTW88_TX_MAY_HAVE_WRITTEN);
+ sc.sc_hci=&rtw88_pci_hci_ops;CHECK(rtw88_stop(&sc)==0);CHECK(rtw88_core_detach(&sc)==0);
 }
 
 static unsigned deferred_irqs, forbidden_irq_io;
@@ -189,8 +230,10 @@ main(void)
 	if (rtw88_start_contract_main() != EXIT_SUCCESS)
 		return EXIT_FAILURE;
 	test_hci_required_operations();
+	test_hci_sdio_extensions_default_off();
 	test_hci_stop_failure_retains_resources();
 	test_hci_optional_packet_command();
+	test_executor_tx_progress();
 	test_hci_sleeping_interrupt_is_deferred();
 	test_hci_doorbell_failure_keeps_publication_uncertain();
 	printf("rtw88 HCI contract: %u assertions, %u failures\n",

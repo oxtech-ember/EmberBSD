@@ -310,6 +310,22 @@ static int state_ra_configure(struct rtw88_softc *, const struct rtw88_ra_config
 #ifndef mutex_owned
 #define mutex_owned(l) ((l)->held)
 #endif
+static unsigned state_async_newstates;
+static int __attribute__((unused))
+rtw88_net_newstate_async(struct ieee80211com *ic, enum ieee80211_state state, int arg)
+{ (void)ic; (void)state; (void)arg; state_async_newstates++; return EAGAIN; }
+static unsigned state_async_inits;
+static int __attribute__((unused))
+rtw88_net_init_async(struct rtw88_net *net, unsigned channel)
+{ (void)net; (void)channel; state_async_inits++; return EAGAIN; }
+static unsigned state_async_quiets;
+static void __attribute__((unused))
+rtw88_net_sta_quiet_async(struct ieee80211com *ic)
+{ (void)ic; state_async_quiets++; }
+static unsigned state_async_dispatches;
+static void __attribute__((unused))
+rtw88_net_state_async(struct rtw88_net *net)
+{ (void)net; state_async_dispatches++; }
 #include "native-state.inc"
 #ifdef RTW88_STATE_RA_OBSERVE
 #undef rtw88_ra_configure

@@ -1,10 +1,12 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Copyright (c) 2026 EmberBSD contributors. */
+/* Origin: EmberBSD native RTL8723D integration, AI-assisted. */
 #ifndef _DEV_IC_RTW88_ASYNC_H_
 #define _DEV_IC_RTW88_ASYNC_H_
 
 #include <dev/ic/rtw88_packet.h>
 #include <dev/ic/rtw88_hci.h>
+#include <dev/ic/rtw88_hw.h>
 
 #define RTW88_ASYNC_SLOTS 64U
 #define RTW88_ASYNC_DATA 56U
@@ -15,6 +17,41 @@
 struct rtw88_async_epoch {
 	uint32_t generation;
 	uint64_t epoch, key_epoch;
+};
+
+enum rtw88_control_kind {
+	RTW88_CTL_INIT, RTW88_CTL_STATE, RTW88_CTL_QUIET, RTW88_CTL_STOP,
+	RTW88_CTL_KEY_FENCE, RTW88_CTL_RECOVER, RTW88_CTL_DIAG
+};
+
+enum rtw88_diag_op {
+	RTW88_DIAG_OP_BOOTSTRAP, RTW88_DIAG_OP_H2C,
+	RTW88_DIAG_OP_LOOPBACK, RTW88_DIAG_OP_CHANNEL, RTW88_DIAG_OP_REGS,
+	RTW88_DIAG_OP_LBMODE
+};
+
+#define RTW88_CONTROL_BSSID 1U
+#define RTW88_CONTROL_EDCA 2U
+#define RTW88_CONTROL_RA 4U
+
+struct rtw88_control_snapshot {
+	enum rtw88_control_kind kind;
+	struct rtw88_async_epoch id;
+	int state, arg;
+	struct rtw88_channel_tuple channel;
+	uint8_t bssid[6];
+	unsigned aid, basic, slot;
+	struct rtw88_edca_params edca[4];
+	struct rtw88_ra_config ra;
+	uint32_t valid;
+	enum rtw88_diag_op diag_op;
+	uint32_t diag_value;
+};
+
+struct rtw88_control_result {
+	struct rtw88_async_epoch id;
+	int error;
+	uint32_t regs[8];
 };
 
 struct rtw88_async_ticket {

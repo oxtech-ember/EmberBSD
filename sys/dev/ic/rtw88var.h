@@ -110,25 +110,6 @@ struct rtw88_txq {
 #define RTW88_HT20_TX_OVERHEAD 50U /* QoS26 + LLC8 + software CCMP16. */
 #define RTW88_HT20_FCS_SIZE 4U
 #define RTW88_HT20_THRESHOLD_MAX 2346U
-/* Numeric protection and frame limits; no retained stack/peer pointer. */
-struct rtw88_ht20_policy {
-	uint16_t peer_cap, mtu, max_mpdu, rts_threshold;
-	uint8_t secondary, qualification;
-};
-/* Numeric rate policy; no retained stack/peer pointer. */
-struct rtw88_ra_config {
-	uint64_t epoch;
-	unsigned channel, common_rates;
-	uint8_t mode, use_protection;
-	uint8_t phy;
-	uint16_t ht_mcs, ht_operation, vht_tx_map;
-	uint32_t profile_generation;
-	struct rtw88_ht20_policy ht;
-	/* RA_INFO SGI_EN: the AP receives SGI at the committed width.
-	 * LDPC: the AP receives LDPC (RA_INFO LDPC and the descriptor).
-	 * HT20 and VHT entries of the VHT experiment only. */
-	uint8_t sgi, ldpc;
-};
 struct rtw88_ra_state {
 	uint64_t epoch;
 	uint32_t generation;
@@ -239,11 +220,20 @@ struct rtw88_mailbox {
 	uint8_t active, box, total, sent;
 };
 
+struct rtw88_executor;
+struct rtw88_tx_job;
+struct rtw88_net;
+
 struct rtw88_softc {
+	struct rtw88_executor *sc_executor;
+	struct rtw88_net *sc_net;
+	/* Optional immutable channel mask, populated before net attach. */
+	uint16_t sc_profile_channels_2g;
 	const struct rtw88_bus_ops *sc_ops;
 	const struct rtw88_hci_ops *sc_hci;
 	const struct rtw88_chip_ops *sc_chip;
 	void *sc_chip_private;	/* Owned only by the selected chip. */
+	void *sc_hci_private;	/* Pinned storage owned by the selected HCI. */
 	void (*sc_defer_irq)(struct rtw88_softc *);
 	int sc_hci_error;	/* Incomplete transport shutdown blocks restart. */
 	void *sc_bus;
@@ -383,6 +373,7 @@ int rtw88_stop(struct rtw88_softc *);
 /* PCI-serialized, non-sleeping TX fence. Close host producers first, pause all
  * queues and disable MAC TX with readback. No DMA release or automatic resume.
  * Any error means hardware quiet is unproven; retain the fence and call stop. */
+int rtw88_tx_pause(struct rtw88_softc *);
 int rtw88_tx_quiet(struct rtw88_softc *);
 int rtw88_fw_mailbox_begin(struct rtw88_softc *, unsigned, int *);
 int rtw88_fw_mailbox_end(struct rtw88_softc *, int);
@@ -427,6 +418,8 @@ int rtw88_edca_apply(struct rtw88_softc *,
  * EOPNOTSUPP; EDCA quarantine returns its I/O error.
  */
 int rtw88_tx_raw(struct rtw88_softc *, unsigned, const void *, size_t);
+int rtw88_tx_execute(struct rtw88_softc *, const struct rtw88_tx_job *,
+    enum rtw88_tx_progress *);
 /*
  * Explicit legacy media context. The stack owns association and peer proof.
  * No node pointer escapes the caller. Rates use numeric 500 kbps units.

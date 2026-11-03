@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: BSD-3-Clause */
 /* Copyright (c) 2026 Anton and EmberBSD contributors. */
+/* Origin: EmberBSD native RTL8723D integration, AI-assisted. */
 #ifndef _DEV_SDMMC_RTW88_SDIO_IO_H_
 #define _DEV_SDMMC_RTW88_SDIO_IO_H_
 
@@ -35,6 +36,8 @@ struct rtw88_sdio_bus {
 	uint8_t *read_scratch;
 	size_t read_scratch_len;
 	bool function_claimed, function_ready, cmd53_enabled;
+	/* A FIFO fault stays latched until owner resynchronizes the device. */
+	bool fifo_failed;
 };
 
 /* Keep this state until release succeeds, including after an uncertain write. */

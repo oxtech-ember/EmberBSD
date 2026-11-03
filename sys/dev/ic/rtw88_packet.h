@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Copyright (c) 2026 EmberBSD contributors. */
+/* Origin: EmberBSD native RTL8723D integration, AI-assisted. */
 #ifndef _DEV_IC_RTW88_PACKET_H_
 #define _DEV_IC_RTW88_PACKET_H_
 
@@ -16,6 +17,26 @@
 #define RTW88_NTXQ		5U
 
 #define RTW88_PACKET_SIZE 4096U
+
+/* Numeric protection and frame limits; no retained stack/peer pointer. */
+struct rtw88_ht20_policy {
+	uint16_t peer_cap, mtu, max_mpdu, rts_threshold;
+	uint8_t secondary, qualification;
+};
+/* Numeric rate policy; no retained stack/peer pointer. */
+struct rtw88_ra_config {
+	uint64_t epoch;
+	unsigned channel, common_rates;
+	uint8_t mode, use_protection;
+	uint8_t phy;
+	uint16_t ht_mcs, ht_operation, vht_tx_map;
+	uint32_t profile_generation;
+	struct rtw88_ht20_policy ht;
+	/* RA_INFO SGI_EN: the AP receives SGI at the committed width.
+	 * LDPC: the AP receives LDPC (RA_INFO LDPC and the descriptor).
+	 * HT20 and VHT entries of the VHT experiment only. */
+	uint8_t sgi, ldpc;
+};
 
 enum rtw88_tx_mode {
 	RTW88_TX_MODE_RAW,

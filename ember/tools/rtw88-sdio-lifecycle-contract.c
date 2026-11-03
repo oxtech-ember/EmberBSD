@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Origin: EmberBSD RTL8723D contract tests, AI-assisted. */
 /* Host services model: the attachment, transport and firmware parser are real. */
 #define _POSIX_C_SOURCE 200809L
 #include <assert.h>
@@ -16,6 +17,9 @@
 #include <dev/ic/rtw88_io.h>
 #include <dev/ic/rtw8723d_boot.h>
 #include <dev/sdmmc/rtw88_sdio_io.h>
+#include <dev/ic/rtw8723d_chip.h>
+#include <dev/ic/rtw88_executor.h>
+#include <dev/sdmmc/rtw88_sdio_hci.h>
 #include <dev/sdmmc/sdmmc_ioreg.h>
 #include <dev/sdmmc/sdmmcreg.h>
 #include "flags.inc"
@@ -85,8 +89,13 @@ struct model {
 static struct model *active;
 static void mutex_init(kmutex_t *m, int t __unused, int i __unused)
 { assert(pthread_mutex_init(m, NULL) == 0); }
-static void mutex_enter(kmutex_t *m) { assert(pthread_mutex_lock(m) == 0); }
-static void mutex_exit(kmutex_t *m) { assert(pthread_mutex_unlock(m) == 0); }
+static _Thread_local kmutex_t *held[8];
+static int mutex_owned(kmutex_t *m)
+{ for (unsigned i=0;i<8;i++) if (held[i]==m) return 1; return 0; }
+static void mutex_enter(kmutex_t *m)
+{ assert(pthread_mutex_lock(m)==0); for (unsigned i=0;i<8;i++) if (!held[i]) { held[i]=m; return; } abort(); }
+static void mutex_exit(kmutex_t *m)
+{ for (unsigned i=0;i<8;i++) if (held[i]==m) { held[i]=NULL; assert(pthread_mutex_unlock(m)==0); return; } abort(); }
 static void mutex_destroy(kmutex_t *m) { assert(pthread_mutex_destroy(m) == 0); }
 static void *device_private(device_t d) { return d->private; }
 static device_t device_parent(device_t d) { return d->parent; }
@@ -257,7 +266,138 @@ int rtw8723d_fw_boot(struct rtw88_io *io __unused,
 	if (error) return error;
 	return m->boot_error;
 }
+/* These host-only stand-ins model kernel services, not kernel scheduling. */
+typedef struct { int unused; } callout_t;
+#define IPL_NET 1
+#define CALLOUT_MPSAFE 1
+#define MAX(a,b) ((a)>(b)?(a):(b))
+#define KERNEL_LOCK(n,p) ((void)0)
+#define KERNEL_UNLOCK_ONE(p) ((void)0)
+static int mstohz(int n) { return n; }
+static void callout_init(callout_t *c,int flags) { (void)c;(void)flags; }
+static void callout_halt(callout_t *c,void *p) { (void)c;(void)p; }
+static void callout_stop(callout_t *c) { (void)c; }
+static void callout_reset(callout_t *c,int t,void (*f)(void *),void *p)
+{ (void)c;(void)t;(void)f;(void)p; }
+static void callout_destroy(callout_t *c) { (void)c; }
+static void *prop_dictionary_get(prop_dictionary_t p,const char *key)
+{ (void)p;(void)key;return NULL; }
+static bool prop_dictionary_get_uint32(prop_dictionary_t p,const char *key,uint32_t *v)
+{ (void)p;(void)key;(void)v;return false; }
+static int rtw88_profile_from_properties(device_t d,const uint8_t m[6],
+ const struct rtw88_caps *caps,struct rtw88_profile *p)
+{ (void)d;(void)m;(void)caps;(void)p;return EACCES; }
+static void rtw88_net_fault(struct rtw88_net *n,int e) { (void)n;(void)e; }
+static int rtw88_net_rx_epoch(struct rtw88_net *n,uint32_t g,struct rtw88_async_epoch *id)
+{ (void)n;(void)g;(void)id;return ENXIO; }
+static int rtw88_net_attach(struct rtw88_softc *s,device_t d,kmutex_t *l,
+ const uint8_t m[6],struct rtw88_net **n)
+{ (void)s;(void)d;(void)l;(void)m;(void)n;return EACCES; }
+static int rtw88_net_detach(struct rtw88_net *n) { (void)n;return 0; }
+static int rtw88_net_io_begin(struct rtw88_net *n) { (void)n;return 1; }
+static int rtw88_net_io_end(struct rtw88_net *n) { (void)n;return 1; }
+static void rtw88_net_hw_update(struct rtw88_net *n) { (void)n; }
+
 #include "native.inc"
+/* Bootstrap-only model of the new actor/HCI boundary. The production frontend,
+ * scalar I/O, FBR/IRQ functions and firmware parser above remain under test. */
+struct fake_actor { struct sdmmc_task task; struct rtw88_softc *core;
+ rtw88_executor_service_fn service; uint32_t reasons; };
+static _Thread_local struct rtw88_softc *current_actor;
+static void fake_actor_work(void *cookie)
+{
+ struct fake_actor *e=cookie;uint32_t reasons;
+ current_actor=e->core;
+ while ((reasons=e->reasons)!=0) { e->reasons=0;e->service(e->core,reasons); }
+ current_actor=NULL;
+}
+int rtw88_executor_create(struct rtw88_softc *sc,rtw88_executor_service_fn fn)
+{
+ struct fake_actor *e=calloc(1,sizeof(*e));assert(e);e->core=sc;e->service=fn;
+ sdmmc_init_task(&e->task,fake_actor_work,e);sc->sc_executor=(void *)e;return 0;
+}
+int rtw88_executor_owned(struct rtw88_softc *sc) { return current_actor==sc; }
+void rtw88_executor_schedule(struct rtw88_softc *sc,uint32_t reasons)
+{
+ struct fake_actor *e=(void *)sc->sc_executor;
+ if (!e) return; e->reasons|=reasons;
+ if (!e->task.queued && active->running!=&e->task)
+  sdmmc_add_task(&active->hostsc,&e->task);
+}
+int rtw88_executor_drain(struct rtw88_softc *sc)
+{
+ struct fake_actor *e=(void *)sc->sc_executor;struct model *m=active;
+ for (;;) {
+  mutex_enter(&m->qlock);
+  while(m->running==&e->task) pthread_cond_wait(&m->qcv,&m->qlock);
+  if (!e->task.queued) { mutex_exit(&m->qlock);break; }
+  e->task.queued=false;m->task=NULL;m->running=&e->task;mutex_exit(&m->qlock);
+  e->task.func(e->task.arg);
+  mutex_enter(&m->qlock);m->running=NULL;pthread_cond_broadcast(&m->qcv);
+  bool more=e->reasons!=0;mutex_exit(&m->qlock);
+  if (more) sdmmc_add_task(&m->hostsc,&e->task);
+ }
+ return 0;
+}
+int rtw88_executor_destroy(struct rtw88_softc *sc)
+{
+ struct fake_actor *e=(void *)sc->sc_executor;
+ (void)sdmmc_del_task(&active->hostsc,&e->task,NULL);free(e);sc->sc_executor=NULL;return 0;
+}
+static int fake_prepare(struct rtw88_softc *sc)
+{
+ struct rtw88_sdio_hci *h=sc->sc_hci_private;h->acquired=true;
+ int error=h->parent.acquire(h->parent.cookie);
+ if (!error) sc->sc_resources_ready=1;return error;
+}
+static const struct rtw88_hci_ops fake_hci={.prepare=fake_prepare};
+int rtw88_sdio_hci_bind(struct rtw88_sdio_hci *h,struct rtw88_softc *sc,
+ struct rtw88_sdio_bus *bus,struct rtw88_sdio_tx_context *tx,
+ struct rtw88_sdio_rx_context *rx,const struct rtw88_sdio_hci_parent *parent)
+{ h->core=sc;h->bus=bus;h->tx=tx;h->rx=rx;h->parent=*parent;
+ sc->sc_hci_private=h;sc->sc_hci=&fake_hci;return 0; }
+static int fake_window(void *cookie,uint32_t addr,const uint8_t *p,size_t n)
+{ struct rtwsdio_softc *s=cookie;return rtw88_sdio_transfer(&s->sc_bus,RTW88_SDIO_MAC,addr,__UNCONST(p),n,true); }
+static bool fake_cancelled(void *cookie) { return rtwsdio_cancelled(cookie); }
+int rtw8723d_chip_bind(struct rtw88_softc *sc,struct rtw8723d_runtime *c,
+ const struct rtw8723d_core_hooks *h)
+{
+ c->boot.core=sc;c->boot.hooks=*h;c->boot.ops.write_window=fake_window;
+ c->boot.ops.cancelled=fake_cancelled;c->boot.ops.cookie=h->cookie;
+ sc->sc_chip_private=c;return 0;
+}
+int rtw88_core_attach(struct rtw88_softc *s) { (void)s;return 0; }
+int rtw8723d_core_power_on(struct rtw8723d_core_boot *b)
+{
+ struct rtw88_io io;rtw88_io_init(&io,b->core->sc_ops,b->core->sc_bus);
+ rtw88_io_wr(&io,RTWSDIO_HIMR,4,0);if(io.error)return io.error;
+ b->owned=true;int error=rtw8723d_power_on(&io,&b->ops);
+ if (!error) { b->core->sc_powered=1;error=rtw88_sdio_set_cmd53(&((struct rtwsdio_softc *)b->hooks.cookie)->sc_bus,true); }
+ return error;
+}
+int rtw8723d_core_firmware(struct rtw8723d_core_boot *b,const uint8_t *p,size_t n)
+{
+ struct rtw88_io io;struct rtw8723d_fw fw;int error=rtw8723d_fw_parse(p,n,&fw);
+ rtw88_io_init(&io,b->core->sc_ops,b->core->sc_bus);
+ return error ? error : rtw8723d_fw_boot(&io,&fw,&b->ops);
+}
+int rtw88_stop(struct rtw88_softc *sc)
+{
+ struct rtw88_sdio_hci *h=sc->sc_hci_private;struct rtw8723d_runtime *c=sc->sc_chip_private;
+ struct rtw88_io io;int error=0;if (!h || !h->acquired)return 0;
+ if (c->boot.owned) { rtw88_io_init(&io,sc->sc_ops,sc->sc_bus);
+  error=rtw8723d_power_off(&io,&c->boot.ops);if(error)return error;
+  c->boot.owned=false;sc->sc_powered=0; }
+ if (h->bus->fifo_failed)return EIO;
+ error=h->parent.release(h->parent.cookie);
+ if (!error) { h->acquired=false;sc->sc_resources_ready=0; } return error;
+}
+int rtw88_core_detach(struct rtw88_softc *sc) { return rtw88_stop(sc); }
+int rtw88_sdio_irq_mask(struct rtw88_sdio_bus *b) { (void)b;return 0; }
+int rtw88_sdio_hci_poll(struct rtw88_softc *s) { (void)s;return 0; }
+int rtw88_sdio_hci_reopen(struct rtw88_softc *s,bool v) { (void)s;(void)v;return 0; }
+void rtw88_async_service(struct rtw88_softc *s,uint32_t r) { (void)s;(void)r; }
+
 
 static void init(struct model *m, struct rtwsdio_softc *sc)
 {
@@ -331,7 +471,7 @@ static void success_and_irq(void)
 	struct model m; struct rtwsdio_softc sc;
 	unsigned before;
 	init(&m, &sc); attach(&m); run_task(&m);
-	assert(sc.sc_state == RTWSDIO_FW_READY && sc.sc_error == 0);
+	assert(sc.sc_state == RTWSDIO_BOOT_READY && sc.sc_error == 0);
 	assert(m.windows == 1 && m.fn1.blklen == 512);
 	assert(le32dec(m.local + 0x14) == 0);
 	before = m.io; assert(m.handler != NULL);
@@ -356,9 +496,31 @@ static void scalars_and_repeated_stop(void)
 	m.fail_io = m.io + 1;
 	assert(rtwsdio_read_4(&sc, 0x20, &value) == EIO && value == 0x11223344);
 	m.fail_io = 0;
+	assert(rtwsdio_stop(&sc) != 0);
+	assert(sc.sc_core.sc_executor != NULL && sc.sc_core_attached);
+	/* Host model only: external parent recovery cleared its host latch. */
+	mutex_enter(&m.hostsc.sc_mtx); sc.sc_host_error = 0; mutex_exit(&m.hostsc.sc_mtx);
 	assert(rtwsdio_stop(&sc) == 0); before = m.io;
 	assert(rtwsdio_stop(&sc) == 0 && m.io == before);
 	finish(&m);
+}
+/* End only the isolated host fixture after proving retained ownership.
+ * This does not model or claim a parent/card resynchronisation. */
+static void discard_retained_model(struct model *m, struct rtwsdio_softc *sc)
+{
+ assert(sc->sc_core.sc_executor != NULL);
+ free(sc->sc_core.sc_executor);
+ mutex_destroy(&sc->sc_lock);mutex_destroy(&m->hostsc.sc_mtx);
+ mutex_destroy(&m->qlock);assert(pthread_cond_destroy(&m->qcv)==0);
+ active=NULL;
+}
+static void finish_or_retained(struct model *m, struct rtwsdio_softc *sc)
+{
+ if (sc->sc_host_error || sc->sc_intr_release_error || sc->sc_bus.fifo_failed) {
+  assert(rtwsdio_detach(&m->child,0)!=0);
+  assert(sc->sc_core_attached && sc->sc_core.sc_executor);
+  discard_retained_model(m,sc);
+ } else finish(m);
 }
 static void failures(void)
 {
@@ -368,7 +530,7 @@ static void failures(void)
 	/* Every native command can fail, including uncertain FBR/IRQ writes. */
 	for (i = 1; i <= total; i++) {
 		init(&m, &sc); m.fail_io = i; attach(&m); run_task(&m);
-		assert(sc.sc_error != 0); finish(&m);
+		assert(sc.sc_error != 0); finish_or_retained(&m, &sc);
 	}
 	for (i = 0; i < 12; i++) {
 		init(&m, &sc);
@@ -386,7 +548,7 @@ static void failures(void)
 		case 10: m.irq_error = EIO; break;
 		case 11: m.cccr[8] = 0; break;
 		}
-		attach(&m); run_task(&m); assert(sc.sc_error != 0); finish(&m);
+		attach(&m); run_task(&m); assert(sc.sc_error != 0); finish_or_retained(&m, &sc);
 	}
 }
 static void deferred_detach(void)
@@ -396,35 +558,22 @@ static void deferred_detach(void)
 	assert(m.root_hook != NULL && m.task == NULL && m.io == 0); finish(&m);
 	init(&m, &sc); attach(&m); assert(m.task != NULL); finish(&m);
 }
-static void *detach_thread(void *arg)
-{ struct model *m = arg; assert(rtwsdio_detach(&m->child, 0) == 0); return NULL; }
 static void running_detach(void)
 {
 	struct model m; struct rtwsdio_softc sc;
-	pthread_t worker, detacher;
-	bool stopped = false;
-	struct timespec limit, now;
+	pthread_t worker;
 	init(&m, &sc); m.block_boot = true; attach(&m);
 	assert(pthread_create(&worker, NULL, run_task, &m) == 0);
 	mutex_enter(&m.qlock);
 	while (!m.boot_entered) pthread_cond_wait(&m.qcv, &m.qlock);
 	mutex_exit(&m.qlock);
-	assert(pthread_create(&detacher, NULL, detach_thread, &m) == 0);
-	assert(clock_gettime(CLOCK_MONOTONIC, &limit) == 0); limit.tv_sec += 5;
-	while (!stopped) {
-		mutex_enter(&sc.sc_lock); stopped = sc.sc_stopping; mutex_exit(&sc.sc_lock);
-		assert(clock_gettime(CLOCK_MONOTONIC, &now) == 0);
-		assert(now.tv_sec < limit.tv_sec); sched_yield();
-	}
+	assert(rtwsdio_detach(&m.child, 0) == EBUSY);
+	assert(!sc.sc_stopping && sc.sc_state == RTWSDIO_LOADING);
 	mutex_enter(&m.qlock); m.release_boot = true;
 	pthread_cond_broadcast(&m.qcv); mutex_exit(&m.qlock);
-	assert(pthread_join(worker, NULL) == 0 && pthread_join(detacher, NULL) == 0);
-	assert(m.windows == 0 && sc.sc_state == RTWSDIO_DETACHED);
-	assert(m.handler == NULL && m.task == NULL);
-	assert(m.alloc_count == m.free_count && m.open_count == m.close_count);
-	mutex_destroy(&m.hostsc.sc_mtx); mutex_destroy(&m.qlock);
-	assert(pthread_cond_destroy(&m.qcv) == 0);
-	active = NULL;
+	assert(pthread_join(worker, NULL) == 0);
+	assert(m.windows == 1 && sc.sc_state == RTWSDIO_BOOT_READY);
+	finish(&m);
 }
 int main(void)
 {

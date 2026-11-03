@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Origin: EmberBSD RTL8723D contract tests, AI-assisted.
 import pathlib,re,subprocess,sys
 src,out=map(pathlib.Path,sys.argv[1:])
 def read(p):return (src/p).read_text()
@@ -31,5 +32,5 @@ parts=['#define IEEE80211_CAPINFO_PRIVACY 0x10\n#define IEEE80211_RATE_VAL 0x7f\
 for n,r in [('node_getrssi','static uint8_t'),('maxrate','static uint8_t'),('ieee80211_node_compare','static int')]:parts.append(body('sys/net80211/ieee80211_node.c',n,r))
 (out/'signal-node-compare.inc').write_text(''.join(parts))
 
-(out/'signal-native-rx.inc').write_text(body('sys/dev/ic/rtw88_net.c','rtw88_net_rx_frame','static void'))
+(out/'signal-native-rx.inc').write_text(body('sys/dev/ic/rtw88_net.c','rtw88_net_rx_frame','static void') + body('sys/dev/ic/rtw88_net.c','rtw88_net_rx_frame_async','static void'))
 (out/'signal-routing-model.inc').write_text(read('ember/tools/rtw88-routing-contract.c').replace('int main(void)', 'int signal_existing_routing_main(void)'))

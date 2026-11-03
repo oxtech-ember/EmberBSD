@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: BSD-2-Clause
+# Origin: EmberBSD RTL8723D contract tests, AI-assisted.
 """Compile the native SDIO helpers with an error-injecting card model."""
 import argparse
 import os
@@ -21,12 +22,19 @@ source = root / "sys/dev/sdmmc/rtw88_sdio_io.c"
 if not header.exists() or not source.exists():
     raise SystemExit("Missing native rtw88 SDIO transport implementation")
 (include / header.name).write_bytes(header.read_bytes())
+(include / "rtw88_sdio_fifo.h").write_bytes(
+    (root / "sys/dev/sdmmc/rtw88_sdio_fifo.h").read_bytes())
+ic = out / "include/dev/ic"
+ic.mkdir(parents=True)
+(ic / "rtw88_hci.h").write_bytes((root / "sys/dev/ic/rtw88_hci.h").read_bytes())
 (include / "sdmmc_io_status.h").write_bytes(
     (root / "sys/dev/sdmmc/sdmmc_io_status.h").read_bytes())
 cc = shlex.split(os.environ["HOST_CC"])
 flags = ["-std=c11", "-O1", "-g", "-Wall", "-Wextra", "-Werror",
          "-I" + str(out / "include")]
 flags += shlex.split(os.environ.get("HOST_CFLAGS", ""))
-subprocess.run(cc + flags + [str(source), str(Path(__file__).with_suffix(".c")),
+flags += ["-UNDEBUG"]
+subprocess.run(cc + flags + [str(source), str(root / "sys/dev/sdmmc/rtw88_sdio_fifo.c"),
+                            str(Path(__file__).with_suffix(".c")),
                             "-o", str(out / "test")], check=True)
 subprocess.run([str(out / "test")], check=True)

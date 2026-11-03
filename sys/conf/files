@@ -763,9 +763,43 @@ file	dev/ic/rtw8723d_tables.c	rtw8723d_phy_tables
 define rtw8723d_boot
 file	dev/ic/rtw8723d_boot.c		rtw8723d_boot
 
+# Origin: EmberBSD RTL8723D integration, AI-assisted.
+# RTL8723D legacy 2.4 GHz chip stages share the native core and bootstrap.
+define rtw8723d_chip: rtw88_core, rtw8723d_boot, rtw8723d_phy_tables, rtw8723d_efuse, rtw8723d_desc, rtw8723d_signal, rtw8723d_edca
+file	dev/ic/rtw8723d_efuse.c	rtw8723d_chip
+file	dev/ic/rtw8723d_core_boot.c	rtw8723d_chip
+file	dev/ic/rtw8723d_core_identity.c	rtw8723d_chip
+file	dev/ic/rtw8723d_core_phy.c	rtw8723d_chip
+file	dev/ic/rtw8723d_mac.c		rtw8723d_chip
+file	dev/ic/rtw8723d_trx.c		rtw8723d_chip
+file	dev/ic/rtw8723d_phy.c		rtw8723d_chip
+file	dev/ic/rtw8723d_rf.c		rtw8723d_chip
+file	dev/ic/rtw8723d_startup.c	rtw8723d_chip
+file	dev/ic/rtw8723d_lck.c		rtw8723d_chip
+file	dev/ic/rtw8723d_iqk_cal.c	rtw8723d_chip
+file	dev/ic/rtw8723d_iqk_path.c	rtw8723d_chip
+file	dev/ic/rtw8723d_iqk_guard.c	rtw8723d_chip
+file	dev/ic/rtw8723d_iqk_result.c	rtw8723d_chip
+file	dev/ic/rtw8723d_iqk_matrix.c	rtw8723d_chip
+file	dev/ic/rtw8723d_channel.c	rtw8723d_chip
+file	dev/ic/rtw8723d_power.c		rtw8723d_chip
+file	dev/ic/rtw8723d_runtime.c	rtw8723d_chip
+file	dev/ic/rtw8723d_ra.c		rtw8723d_chip
+file	dev/ic/rtw8723d_station.c	rtw8723d_chip
+file	dev/ic/rtw8723d_mailbox.c	rtw8723d_chip
+file	dev/ic/rtw8723d_chip.c		rtw8723d_chip
+file	dev/ic/rtw8723d_fw_runtime.c	rtw8723d_chip
+file	dev/ic/rtw8723d_coex.c		rtw8723d_chip
+file	dev/ic/rtw8723d_rx_runtime.c	rtw8723d_chip
+file	dev/ic/rtw88_profile.c		rtw8723d_chip
+file	dev/ic/rtw88_rx_epoch.c		rtw8723d_chip
+
+define rtw88_executor
+file	dev/ic/rtw88_executor.c	rtw88_executor
+
 # Realtek RTL8822CE native station core.
 # Config base cannot be rtw88: names must not end in a digit. rtw is RTL8180.
-define	rtw88_core: arp, wlan, ifnet, firmload
+define	rtw88_core: arp, wlan, ifnet, firmload, rtw88_executor
 define	rtw8822c_chip: rtw88_core
 device	rtwce: rtw8822c_chip
 defflag	opt_rtw88_rfk.h	RTW88_RFK_EXPERIMENT

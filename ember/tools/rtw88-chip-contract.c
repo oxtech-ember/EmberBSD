@@ -47,6 +47,91 @@ count_tx(struct rtw88_softc *sc, uint8_t *out, size_t size,
 }
 
 static void
+test_chip_station_commands(void)
+{
+	struct rtw88_softc sc;
+	struct rtw88_chip_ops chip;
+	reset_bus(&sc);
+	chip = rtw8822c_chip_ops;
+	sc.sc_chip = &chip;
+	CHECK(chip.station_run_commands == 0 && chip.station_macid == 0);
+	CHECK(rtw88_station_commands(&sc, 1) == 2);
+	CHECK(rtw88_station_commands(&sc, 0) == 1);
+	chip.station_run_commands = 1;
+	chip.station_macid = 1;
+	CHECK(rtw88_chip_valid(&sc));
+	CHECK(rtw88_station_commands(&sc, 1) == 1);
+	chip.station_run_commands = 3;
+	CHECK(!rtw88_chip_valid(&sc));
+	CHECK(rtw88_station_commands(&sc, 1) == 0);
+	chip.station_run_commands = 1;
+	chip.station_macid = 128;
+	CHECK(!rtw88_chip_valid(&sc));
+}
+
+static void
+test_chip_peer_rate_report(void)
+{
+	struct rtw88_softc sc;
+	struct rtw88_chip_ops chip;
+	uint8_t report[9] = {0x0c, 0x22, 11, 1, 0, 0, 0, 0, 0};
+	if (!start_ok(&sc))
+		return;
+	chip = rtw8822c_chip_ops;
+	chip.station_macid = 1;
+	sc.sc_chip = &chip;
+	rx_put(&sc, 0, sizeof(report), 1, report, 0);
+	f.rx_hw_idx = 1;
+	set_hisr0(1);
+	CHECK(rtw88_intr(&sc) == 1);
+	CHECK(sc.sc_stats.ra_reports == 1 && sc.sc_stats.ra_foreign == 0);
+	CHECK(sc.sc_stats.ra_report_macid == 1);
+	CHECK(rtw88_stop(&sc) == 0);
+	CHECK(rtw88_core_detach(&sc) == 0);
+}
+
+static void
+test_chip_peer_tx_descriptor(void)
+{
+	struct rtw88_softc sc;
+	struct rtw88_chip_ops chip;
+	uint8_t frame[24] = {0x08, 0x01};
+	unsigned slot;
+	uint8_t *desc;
+	if (!start_ok(&sc))
+		return;
+	chip = rtw8822c_chip_ops;
+	chip.station_macid = 1;
+	sc.sc_chip = &chip;
+	slot = sc.sc_txq[RTW88_TXQ_BE].wp;
+	CHECK(rtw88_tx_raw(&sc, RTW88_TXQ_BE, frame, sizeof(frame)) == 0);
+	desc = sc.sc_txq[RTW88_TXQ_BE].buf[slot].vaddr;
+	CHECK((desc[4] & 0x7f) == 1);
+	frame[4] = 1; /* Group traffic does not use the peer entry. */
+	slot = sc.sc_txq[RTW88_TXQ_BE].wp;
+	CHECK(rtw88_tx_raw(&sc, RTW88_TXQ_BE, frame, sizeof(frame)) == 0);
+	desc = sc.sc_txq[RTW88_TXQ_BE].buf[slot].vaddr;
+	CHECK((desc[4] & 0x7f) == 0);
+	CHECK(rtw88_stop(&sc) == 0);
+	CHECK(rtw88_core_detach(&sc) == 0);
+}
+
+static void
+test_owner_pause_preserves_identity(void)
+{
+	struct rtw88_softc sc;
+	uint32_t generation;
+	if (!start_ok(&sc))
+		return;
+	generation = sc.sc_generation;
+	CHECK(rtw88_tx_pause(&sc) == 0);
+	CHECK(sc.sc_generation == generation && !sc.sc_stop_requested);
+	CHECK(f.mmio[0x522] == 0xff);
+	CHECK(rtw88_stop(&sc) == 0);
+	CHECK(rtw88_core_detach(&sc) == 0);
+}
+
+static void
 test_chip_dispatch(void)
 {
 	struct rtw88_softc sc;
@@ -155,6 +240,10 @@ main(void)
 		return EXIT_FAILURE;
 	test_chip_required_operations();
 	test_chip_absent_calibration();
+	test_chip_station_commands();
+	test_chip_peer_rate_report();
+	test_chip_peer_tx_descriptor();
+	test_owner_pause_preserves_identity();
 	test_chip_dispatch();
 	test_chip_capabilities();
 	printf("rtw88 chip contract: %u assertions, %u failures\n", assertions, failures);
