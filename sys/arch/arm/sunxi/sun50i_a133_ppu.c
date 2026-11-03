@@ -117,7 +117,7 @@ a133_ppu_set(device_t dev, const uint32_t *specifier __unused, bool enable)
 	int error;
 
 	/* Infrastructure clock/reset operations can sleep. */
-	ASSERT_SLEEPABLE;
+	ASSERT_SLEEPABLE();
 	mutex_enter(&sc->sc_gate);
 	mutex_enter(&sc->sc_lock);
 	error = a133_ppu_power_prepare(&sc->sc_power, enable, &change);
