@@ -13,7 +13,7 @@ p.add_argument('--host-prefix', required=True, type=Path)
 a = p.parse_args()
 source = Path(__file__).resolve().parents[2]
 script = (source / 'ember/image/cix-p1-build-userland.sh').read_text()
-start = script.index("        {\n            printf 'srcdirs bin sbin")
+start = script.index("        {\n            printf 'srcdirs bin sbin usr.bin")
 end = script.index('        } > "$out/crunch/console-tools.conf"', start)
 block = script[start:end] + '        } > "$out/crunch/console-tools.conf"\n'
 prefix = a.host_prefix.resolve(strict=True)

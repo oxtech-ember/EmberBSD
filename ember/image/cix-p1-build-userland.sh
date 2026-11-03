@@ -65,7 +65,7 @@ if [ "${1:-}" = --console-selected ]; then
     runtime_prefix=$1 resource=$2 unwinder=$3 compiler_resource=$4 jobs=$5 timestamp=$6 revision=$7
     shift 7
     headers=$1 libraries=$2 programs=$3 python=$4 profile=${5:-console} overlay=${6:-} extra=${7:-} selected_awk=${8:-$host_prefix/bin/nawk}
-    wolfssl_prefix=${9:-} network_interface=${10:-} mdns_source=${11:-} dhcpcd_source=${12:-} install_map=${13:-} wpa_backend=${14:-} crunch_programs=${15:-} device_nodes=${16:-} device_links=${17:-} libpcap_source=${18:-} device_make=${19:-} wpa_source=${20:-} device_block_nodes=${21:-} network_root_device=${22:-} network_root_partition=${23:-a} network_root_stage=${24:-} data_components=${25:-}
+    wolfssl_prefix=${9:-} network_interface=${10:-} mdns_source=${11:-} dhcpcd_source=${12:-} install_map=${13:-} wpa_backend=${14:-} crunch_programs=${15:-} device_nodes=${16:-} device_links=${17:-} libpcap_source=${18:-} device_make=${19:-} wpa_source=${20:-} device_block_nodes=${21:-} network_root_device=${22:-} network_root_partition=${23:-a} network_root_stage=${24:-} data_components=${25:-} console_root_size=${26:-4194304}
     if [ "$profile" = network ]; then
         COPTS="${COPTS:+$COPTS }-Oz -ffunction-sections -fdata-sections"
         network_auth_flags='MKPAM=no USE_PAM=no MKKERBEROS=no USE_KERBEROS=no MKLDAP=no USE_LDAP=no MKYP=no USE_YP=no MKSKEY=no USE_SKEY=no MKHESIOD=no USE_HESIOD=no'
@@ -115,7 +115,7 @@ if [ "${1:-}" = --console-selected ]; then
     if [ "$profile" = console-tools ]; then
         mkdir -p "$out/crunch"
         {
-            printf 'srcdirs bin sbin\nprogs'
+            printf 'srcdirs bin sbin usr.bin\nprogs'
             for part in $programs; do printf ' %s' "${part##*/}"; done
             printf '\nln sh -sh\nln reboot halt\n'
             printf 'libs -ledit -lterminfo -lutil -lkvm -lprop -lm\n'
@@ -230,6 +230,7 @@ if [ "${1:-}" = --console-selected ]; then
             case "$part" in
                 bin/*) link_if_same console-tools "$root/$part" ;;
                 sbin/*) link_if_same ../bin/console-tools "$root/$part" ;;
+                usr.bin/*) mkdir -p "$root/usr/bin"; link_if_same ../../bin/console-tools "$root/usr/bin/${part##*/}" ;;
                 *) echo 'Invalid console program path.' >&2; exit 1 ;;
             esac
         done
@@ -341,7 +342,7 @@ if [ "${1:-}" = --console-selected ]; then
             echo "Missing or duplicate device: $node" >&2; exit 1
         }
     done
-    "$tools/bin/nbmakefs" -t ffs -B little -s 4m -o version=2,bsize=16384,fsize=2048 \
+    "$tools/bin/nbmakefs" -t ffs -B little -s "$console_root_size" -o version=2,bsize=16384,fsize=2048 \
         -F "$out/root.spec" -N "$src/etc" "$out/root.fs" "$out/root"
     exit 0
 fi

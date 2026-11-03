@@ -398,13 +398,35 @@ def stage_overlay(overlay, root, allow_identical=False, allow_suffixes=None,
             dest.chmod(stat.S_IMODE(source.stat().st_mode))
 
 
-def console(target, compact=False):
+SYSTEM_TOOLSET_PROGRAMS = ('bin/df', 'usr.bin/env', 'usr.bin/uname')
+
+
+def console_root_size(value, compact):
+    """Validate the selected makefs size while retaining the compact default."""
+    import re
+
+    match = re.fullmatch(r'(0[xX][0-9a-fA-F]+|[1-9][0-9]*)([kKmMgG]?)', value)
+    if match is None or (not compact and value != '4m'):
+        raise ValueError('root size must be positive and requires console-tools')
+    number = int(match.group(1), 0)
+    multiplier = {'': 1, 'k': 1024, 'm': 1024 ** 2, 'g': 1024 ** 3}
+    size = number * multiplier[match.group(2).lower()]
+    if size <= 0 or size > (1 << 63) - 1:
+        raise ValueError('root size is outside the supported range')
+    return str(size)
+
+
+def console(target, compact=False, toolsets=()):
     targets = {
         'aarch64': ('evbarm', 'aarch64', 'aarch64--netbsd', 'ELF64', 'AArch64', ()),
         'riscv32': ('riscv', 'riscv32', 'riscv32--netbsd', 'ELF32', 'RISC-V', ('MKSOFTFLOAT=yes',)),
     }
     if target not in targets:
         raise ValueError('unsupported static console target')
+    if (len(set(toolsets)) != len(toolsets) or
+            any(item != 'system' for item in toolsets) or
+            (toolsets and not compact)):
+        raise ValueError('unsupported or repeated console toolset')
     machine, arch, triplet, elf_class, elf_machine, flags = targets[target]
     libraries = ('lib/libterminfo', 'lib/libedit', 'lib/libutil')
     programs = ('bin/sh', 'sbin/init')
@@ -413,6 +435,8 @@ def console(target, compact=False):
         programs += ('bin/hostname', 'sbin/sysctl', 'sbin/dmesg',
                      'sbin/ifconfig', 'bin/cat', 'bin/ls', 'bin/chmod',
                      'bin/cp', 'bin/mkdir', 'bin/sleep', 'sbin/reboot')
+        if 'system' in toolsets:
+            programs += SYSTEM_TOOLSET_PROGRAMS
     return dict(machine=machine, arch=arch, triplet=triplet, elf_class=elf_class,
                 elf_machine=elf_machine, flags=flags, headers=('lib/libcurses',),
                 libraries=libraries, programs=programs, compact=compact)
@@ -460,7 +484,7 @@ def network(target, toolsets=(), spi_units=()):
                                 'random', 'urandom', 'bpf')
     selected['device_links'] = ('bpf0',)
     if 'system' in toolsets:
-        selected['crunch_programs'] += ('bin/df', 'usr.bin/env', 'usr.bin/uname')
+        selected['crunch_programs'] += SYSTEM_TOOLSET_PROGRAMS
     if 'audio' in toolsets:
         selected['libraries'] += ('usr.bin/audio/common',)
         selected['crunch_programs'] += (
@@ -777,6 +801,7 @@ def run_console(arguments):
     target = os.environ['EMBER_CONSOLE_TARGET']
     profile = os.environ.get('EMBER_USERLAND_PROFILE', 'console')
     is_network = profile == 'network'
+    selected_toolsets = ()
     if is_network:
         selected_toolsets = tuple(filter(None,
             os.environ.get('EMBER_NETWORK_TOOLSETS', '').split(',')))
@@ -787,7 +812,19 @@ def run_console(arguments):
         except ValueError as exc:
             raise SystemExit('static-console: ' + str(exc)) from exc
     else:
-        settings = console(target, profile == 'console-tools')
+        selected_toolsets = tuple(filter(None,
+            os.environ.get('EMBER_CONSOLE_TOOLSETS', '').split(',')))
+        if profile != 'console-tools' and selected_toolsets:
+            raise SystemExit('EMBER_CONSOLE_TOOLSETS requires the console-tools profile')
+        try:
+            settings = console(target, profile == 'console-tools', selected_toolsets)
+        except ValueError as exc:
+            raise SystemExit('static-console: ' + str(exc)) from exc
+    try:
+        selected_root_size = console_root_size(
+            os.environ.get('EMBER_CONSOLE_ROOT_SIZE', '4m'), settings['compact'])
+    except ValueError as exc:
+        raise SystemExit('static-console: ' + str(exc)) from exc
     sdk = Path(os.environ['EMBERBSD_SDK_SOURCE']).resolve(strict=True)
     sys.path.insert(0, str(sdk / 'src'))
     from emberbsd_sdk import cpu_capacity, elf, host_prefix, inventory, jsonio, libedit, llvm_runtime, native_os, paths, process, sourceprep, target_toolchain
@@ -1033,7 +1070,8 @@ def run_console(arguments):
                    network_root_device if is_network else '',
                    network_root_partition if is_network else '',
                    str(network_root_stage) if network_root_stage is not None else '',
-                   ' '.join(settings.get('data_components', ())) if is_network else '']
+                   ' '.join(settings.get('data_components', ())) if is_network else '',
+                   selected_root_size]
         orchestrator_log = network_orchestrator_log(output) if is_network else output / 'logs/orchestrator.log'
         native_os.run_native_os(native, source=str(source), routing=str(output / 'routing'), cwd=str(source),
                                 arguments=command, shell=True, log=str(orchestrator_log))
@@ -1071,6 +1109,8 @@ def run_console(arguments):
             ('overlay-sha256=' + hashlib.sha256(json.dumps(overlay_state, sort_keys=True).encode()).hexdigest() + '\n'
              if overlay_state is not None else '') +
             ('program-sha256=' + extra_digest + '\n' if extra_digest else '') +
+            ('console-toolsets=' + ' '.join(selected_toolsets) + '\n' +
+             'console-root-size=' + selected_root_size + '\n' if settings['compact'] else '') +
             (f'network-interface={network_interface}\nwpa-crypto-backend={wpa_backend or "default"}\n' +
              'network-toolsets=' + ' '.join(selected_toolsets) + '\n' +
              (f'wolfssl-sha256={wolfssl_hash}\n' if wolfssl_hash else '') +
@@ -1097,7 +1137,8 @@ def run_console(arguments):
             image = output / 'root.fs'
             digest = hashlib.sha256(image.read_bytes()).hexdigest()
             (output / 'ROOT-SHA256.txt').write_text(digest + '  root.fs\n')
-            print('Built static bring-up console and 4 MiB FFS image; target execution not checked.')
+            print('Built static bring-up console and FFS image of size {}; target execution not checked.'
+                  .format(selected_root_size))
     except (SDKError, OSError, ValueError, KeyError, TypeError, subprocess.CalledProcessError) as exc:
         if network_root_stage is not None:
             staged = Path(network_root_stage)

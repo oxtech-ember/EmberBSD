@@ -36,7 +36,7 @@ class ConsoleProfile(unittest.TestCase):
         if not shell:
             self.fail('Set TEST_SH to the selected native shell')
         source = path.with_name('cix-p1-build-userland.sh').read_text()
-        start = source.index("        {\n            printf 'srcdirs bin sbin")
+        start = source.index("        {\n            printf 'srcdirs bin sbin usr.bin")
         end = source.index('        } > "$out/crunch/console-tools.conf"', start)
         block = source[start:end] + '        } > "$out/crunch/console-tools.conf"\n'
         with tempfile.TemporaryDirectory() as name:
@@ -115,7 +115,8 @@ class ConsoleProfile(unittest.TestCase):
             extra.write_bytes(b'ELF fixture')
             extra.chmod(0o644)
             subprocess.run([shell, '-c', 'set -eu\n' + block],
-                           env=dict(os.environ, out=str(out), extra=str(extra)), check=True)
+                           env=dict(os.environ, out=str(out), root=str(out / 'root'),
+                                    profile='console-tools', extra=str(extra)), check=True)
             installed = out / 'root/bin/test-app'
             self.assertEqual(installed.read_bytes(), extra.read_bytes())
             self.assertEqual(stat.S_IMODE(installed.stat().st_mode), 0o555)
@@ -181,15 +182,36 @@ class ConsoleProfile(unittest.TestCase):
         self.assertIn('lib/libm', selected['libraries'])
         self.assertTrue(selected['compact'])
 
+    def test_compact_system_toolset_shares_network_program_selection(self):
+        selected = profile.console('riscv32', compact=True, toolsets=('system',))
+        self.assertEqual(selected['programs'][-3:], profile.SYSTEM_TOOLSET_PROGRAMS)
+        network = profile.network('riscv32', toolsets=('system',))
+        self.assertEqual(network['crunch_programs'][-3:], profile.SYSTEM_TOOLSET_PROGRAMS)
+        self.assertNotIn('usr.bin/env', profile.console('riscv32', compact=True)['programs'])
+        for invalid in (('other',), ('system', 'system')):
+            with self.assertRaises(ValueError):
+                profile.console('riscv32', compact=True, toolsets=invalid)
+
+    def test_console_root_size_is_bounded_input(self):
+        self.assertEqual(profile.console_root_size('4m', True), '4194304')
+        self.assertEqual(profile.console_root_size('6160384', True), '6160384')
+        self.assertEqual(profile.console_root_size('0x5e0000', True), '6160384')
+        for invalid in ('', '0', '0x0', '-1', '4m;touch-x', '4m/../x'):
+            with self.assertRaises(ValueError):
+                profile.console_root_size(invalid, True)
+        with self.assertRaises(ValueError):
+            profile.console_root_size('6160384', False)
+
     def test_compact_reboot_dispatch_and_halt_path(self):
         import os
         import subprocess
+        import sys
         import tempfile
         shell = os.environ.get('TEST_SH')
         if not shell:
             self.fail('Set TEST_SH to the selected native shell')
         source = path.with_name('cix-p1-build-userland.sh').read_text()
-        start = source.index("        {\n            printf 'srcdirs bin sbin")
+        start = source.index("        {\n            printf 'srcdirs bin sbin usr.bin")
         end = source.index('        } > "$out/crunch/console-tools.conf"', start)
         block = source[start:end] + '        } > "$out/crunch/console-tools.conf"\n'
         with tempfile.TemporaryDirectory() as name:
@@ -197,25 +219,32 @@ class ConsoleProfile(unittest.TestCase):
             (out / 'crunch').mkdir()
             subprocess.run([shell, '-c', 'set -eu\n' + block], check=True,
                            env=dict(os.environ, out=str(out),
-                                    programs='bin/sh sbin/reboot'))
+                                    programs='bin/sh sbin/reboot bin/df usr.bin/env usr.bin/uname'))
             config = (out / 'crunch/console-tools.conf').read_text()
-            self.assertIn('progs sh reboot', config)
+            self.assertIn('srcdirs bin sbin usr.bin', config)
+            self.assertIn('progs sh reboot df env uname', config)
             self.assertIn('ln reboot halt', config)
 
             start = source.index('    if [ "$profile" = console-tools ]; then\n'
                                  '        cp "$out/crunch/console-tools"')
             end = source.index('    if [ -n "$extra" ]; then', start)
-            stage = source[start:end]
+            stage = ('link_if_same() { "$PYTHON" -B "$STATIC_PROFILE" link-if-same "$1" "$2"; }\n' +
+                     source[start:end])
             (out / 'root/bin').mkdir(parents=True)
             (out / 'root/sbin').mkdir()
             (out / 'crunch/console-tools').write_bytes(b'crunch fixture')
             subprocess.run([shell, '-c', 'set -eu\n' + stage], check=True,
-                           env=dict(os.environ, out=str(out), profile='console-tools',
-                                    programs='bin/sh sbin/reboot'))
+                           env=dict(os.environ, out=str(out), root=str(out / 'root'), profile='console-tools',
+                                    programs='bin/sh sbin/reboot bin/df usr.bin/env usr.bin/uname',
+                                    PYTHON=sys.executable,
+                                    STATIC_PROFILE=str(path)))
             self.assertEqual(os.readlink(out / 'root/sbin/reboot'),
                              '../bin/console-tools')
             self.assertEqual(os.readlink(out / 'root/sbin/halt'),
                              '../bin/console-tools')
+            self.assertEqual(os.readlink(out / 'root/bin/df'), 'console-tools')
+            self.assertEqual(os.readlink(out / 'root/usr/bin/env'), '../../bin/console-tools')
+            self.assertEqual(os.readlink(out / 'root/usr/bin/uname'), '../../bin/console-tools')
 
     def test_compact_console_validates_crunch_and_llvm_tools(self):
         from types import SimpleNamespace

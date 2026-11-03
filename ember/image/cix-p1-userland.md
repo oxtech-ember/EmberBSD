@@ -210,6 +210,14 @@ This profile adds `klog`, `iic0`, `ttyE0` and `wsmouse0` using the target's `MAK
 requires the selected host prefix's LLVM `nm`/`objcopy` and `nawk`. It is a
 bring-up image, not a full base set.
 
+For offline board checks, select `EMBER_CONSOLE_TOOLSETS=system` to add the
+same `df`, `env` and `uname` programs used by the network profile. Their usual
+`/bin` and `/usr/bin` paths dispatch through `console-tools`. The
+optional `EMBER_CONSOLE_ROOT_SIZE` sets the FFS image size passed to `nbmakefs`;
+it defaults to `4m`. The program and overlay inputs below can supply an
+application, its Lua bundle, and license notices without changing the common
+multicall producer.
+
 ## Static network userland staging
 
 `EMBER_USERLAND_PROFILE=network` extends the same verified C foundation through
