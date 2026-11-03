@@ -5,8 +5,10 @@
 from pathlib import Path
 import fnmatch
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 
 root = Path(__file__).resolve().parents[2]
 workflow = root / ".github/workflows/rtw88.yml"
@@ -34,12 +36,56 @@ pci_inputs = subprocess.check_output(
 if not pci_inputs:
     raise SystemExit("rtw88 workflow has no tracked PCI transport inputs")
 
+# The interface regression executes the real runners and the RX batch's
+# extraction scripts even when its compiler is a recording stub. Include their
+# source, headers, and generator inputs in both sparse and trigger coverage.
+interface_ic = subprocess.check_output(
+    ["git", "-c", f"safe.directory={root}", "-C", str(root),
+     "ls-files", "--", "sys/dev/ic/rtw*", "sys/dev/sdmmc/rtw88*"],
+    text=True,
+).splitlines()
+if not interface_ic:
+    raise SystemExit("rtw88 interface regression has no tracked device inputs")
+interface_inputs = (
+    *interface_ic,
+    "sys/dev/sdmmc/sdmmc_io_status.h",
+    "ember/tools/rtw88-runner-interface-contract.py",
+    "ember/tools/rtw88-fixture-runner.subr",
+    "ember/tools/rtw88-state-contract.py",
+    "ember/tools/net80211-rxba-lifecycle-extract.py",
+    "ember/tools/rtw88-test-kernel.h",
+    "ember/tools/rtw8723d-core-phy-order-contract.sh",
+    "ember/tools/rtw8723d-core-phy-order-contract.c",
+    "ember/tools/rtw8723d-core-phy-order-fixture.h",
+    "ember/tools/rtw8723d-rx-batch-contract.sh",
+    "ember/tools/rtw8723d-rx-batch-contract.c",
+    "ember/tools/rtw8723d-legacy-ra-contract.c",
+    "ember/tools/rtw88-executor-contract.sh",
+    "ember/tools/rtw88-executor-contract.c",
+    "ember/tools/rtw88-executor-fixture.h",
+    "ember/tools/rtw88-sdio-rx-fault-contract.sh",
+    "ember/tools/rtw88-sdio-rx-fault-contract.c",
+    "ember/tools/rtw88-sdio-rx-fault-fixture.h",
+    "sys/net/if_media.c", "sys/net/if_media.h",
+    "sys/net80211/_ieee80211.h", "sys/net80211/ieee80211.h",
+    "sys/net80211/ieee80211.c", "sys/net80211/ieee80211_beacon_ies.h",
+    "sys/net80211/ieee80211_ht20.c", "sys/net80211/ieee80211_ht20.h",
+    "sys/net80211/ieee80211_ioctl.c", "sys/net80211/ieee80211_ioctl.h",
+    "sys/net80211/ieee80211_netbsd.c", "sys/net80211/ieee80211_node.c",
+    "sys/net80211/ieee80211_node.h", "sys/net80211/ieee80211_phy_ies.h",
+    "sys/net80211/ieee80211_proto.c", "sys/net80211/ieee80211_proto.h",
+    "sys/net80211/ieee80211_rxba.c", "sys/net80211/ieee80211_rxba.h",
+    "sys/net80211/ieee80211_var.h", "sys/net80211/ieee80211_vht_ies.c",
+    "sys/net80211/ieee80211_vht_ies.h",
+)
+
 required = (
     ".github/workflows/rtw88.yml",
     "ember/tools/rtw88-workflow-contract.py",
     "ember/tools/rtw88-ci-shard.sh",
     "sys/dev/pci/if_rtw88_pci.c",
     *pci_inputs,
+    *interface_inputs,
     "sys/net80211/ieee80211_beacon_ies.c",
     "sys/net80211/ieee80211_beacon_ies.h",
     "sys/net80211/ieee80211_vht_ies.c",
@@ -151,5 +197,20 @@ if csa_users and not (
                      + ", ".join(csa_users))
 print(f"rtw88 CSA: {len(csa_users)} analyzer runners have clang")
 
-# Execute both supported interfaces with a recording compiler and runner.
-subprocess.run([sys.executable, str(tools / "rtw88-runner-interface-contract.py")], check=True)
+# Exercise only the declared sparse input set, even in a full checkout.
+# This catches missing generator/copy inputs before the six CI shards start.
+with tempfile.TemporaryDirectory(prefix="rtw88-sparse-contract-") as directory:
+    sparse = Path(directory)
+    for name in set(interface_inputs):
+        target = sparse / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(root / name, target)
+    command = [sys.executable, str(sparse / "ember/tools/rtw88-runner-interface-contract.py")]
+    for name in ("sys/dev/sdmmc/sdmmc_io_status.h", "sys/dev/ic/rtw8723d_rx.c"):
+        target = sparse / name
+        target.unlink()
+        result = subprocess.run(command, capture_output=True, text=True)
+        if result.returncode == 0 or target.name not in result.stderr:
+            raise SystemExit("sparse interface regression missed " + name)
+        shutil.copyfile(root / name, target)
+    subprocess.run(command, check=True)
