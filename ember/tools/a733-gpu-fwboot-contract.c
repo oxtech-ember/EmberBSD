@@ -11,6 +11,7 @@
 #include <time.h>
 
 #include "sun60i_a733_gpu_fwimage.h"
+#include "../../sys/dev/powervr/pvr_fw_handshake.h"
 #include "sun60i_a733_gpu_fwinit.h"
 #include "powervr/pvr_rogue_fwif.h"
 
@@ -19,6 +20,7 @@
 #define BUS_DMASYNC_POSTREAD 2
 #define BUS_DMASYNC_PREWRITE 4
 #define BUS_DMASYNC_POSTWRITE 8
+#define _BUS_DMAMAP_IS_BOUNCING 0x20000
 
 typedef uint64_t bus_addr_t;
 typedef size_t bus_size_t;
@@ -26,6 +28,7 @@ typedef struct { bus_addr_t ds_addr; bus_size_t ds_len; } bus_dma_segment_t;
 typedef struct fake_map {
 	bus_size_t dm_mapsize;
 	int dm_nsegs;
+	int _dm_flags;
 	bus_dma_segment_t dm_segs[1];
 	unsigned int id;
 	bool write_open, read_open;
@@ -60,7 +63,9 @@ static uint64_t clock_ns, delay_total_us, jump_after_read;
 static unsigned int last_delay;
 static bool freeze_clock, touched, released;
 static int start_error;
-static uint8_t completion_value;
+static uint8_t completion_value, compchecks_value;
+static uint32_t fixture_hw_layout, fixture_fw_layout;
+static uint64_t fixture_hw_bvnc, fixture_fw_bvnc;
 static struct { unsigned int id; int op; } events[11000];
 static size_t event_count;
 
@@ -109,17 +114,17 @@ publish_device(void)
 	p[8192 + 352] = completion_value;
 	put32(p + 8192 + 360, 0xa1b2c3d4);
 	p += 4096 + 40;
-	put32(p, 3);
-	put32(p + 16, 4);
-	put64(p + 8, UINT64_C(0x00240038006800b7));
-	put64(p + 24, UINT64_C(0x1122334455667788));
+	put32(p, fixture_hw_layout);
+	put32(p + 16, fixture_fw_layout);
+	put64(p + 8, fixture_hw_bvnc);
+	put64(p + 24, fixture_fw_bvnc);
 	put32(p + 32, 0x12345678);
 	put32(p + 36, 0x23456789);
 	put32(p + 40, 0x3456789a);
 	put32(p + 44, 0x456789ab);
 	p[48] = 2;
 	/* This diagnostic byte must not be read through a C bool lvalue. */
-	p[56] = 0xfe;
+	p[56] = compchecks_value;
 }
 
 static void
@@ -168,12 +173,13 @@ bus_dmamap_sync(bus_dma_tag_t tag, bus_dmamap_t map, bus_addr_t offset,
 }
 
 int
-sun60i_a733_gpu_fwstart(bus_space_tag_t tag, bus_space_handle_t handle,
+pvr_fwstart(enum pvr_fw_profile profile, bus_space_tag_t tag, bus_space_handle_t handle,
     const struct sun60i_a733_gpu_fwinfo *info, uint64_t boot_code,
     uint64_t boot_data, uint64_t exception_code,
     struct sun60i_a733_gpu_fwstart_result *out)
 {
 	CHECK(result.attempted && result.device_owned);
+	CHECK(profile == mem.profile);
 	CHECK(tag == &mem && handle == 0x12340000);
 	CHECK(info == &mem.image.info);
 	CHECK(boot_code == mem.boot_code && boot_data == mem.boot_data &&
@@ -220,6 +226,8 @@ reset(void)
 	memset(&result, 0, sizeof(result));
 	memset(maps, 0, sizeof(maps));
 	mem.dmat = &mem;
+	mem.register_pa = 0x01800000;
+	mem.register_size = 0x10000;
 	for (unsigned int i = 0; i < 5; i++) {
 		struct sun60i_a733_gpu_dma *r = regions[i];
 
@@ -258,6 +266,10 @@ reset(void)
 	start_error = 0;
 	completion_poll = 1;
 	completion_value = 1;
+	compchecks_value = 0xfe;
+	fixture_hw_layout = 3; fixture_fw_layout = 4;
+	fixture_hw_bvnc = UINT64_C(0x00240038006800b7);
+	fixture_fw_bvnc = UINT64_C(0x1122334455667788);
 }
 
 static void
@@ -297,6 +309,11 @@ assert_retained(void)
 	}
 	CHECK(run() == EBUSY);
 	CHECK(memcmp(&old, &result, sizeof(old)) == 0);
+	CHECK(old_syncs == syncs && old_starts == start_calls);
+	/* A fresh result cannot revoke ownership held by the memory owner. */
+	struct sun60i_a733_gpu_fwboot_result fresh = { 0 };
+	CHECK(sun60i_a733_gpu_fwboot(&mem, 0x12340000, &mem, &fresh) == EBUSY);
+	CHECK(!fresh.attempted && !fresh.device_owned);
 	CHECK(old_syncs == syncs && old_starts == start_calls);
 }
 
@@ -482,6 +499,59 @@ main(void)
 		allocations++;
 	}
 	boot_tests();
+	/* GE must not accept firmware_started without valid compchecks. */
+	reset();
+	mem.profile = PVR_FW_PROFILE_GE8300;
+	mem.auxiliary_pa = 0x01880020; mem.auxiliary_size = 4;
+	CHECK(pvr_fwboot(PVR_FW_PROFILE_GE8300, &mem, 0x12340000,
+	    &mem, &result) == EPROTO);
+	CHECK(result.device_owned && mem.device_exposed);
+	reset();
+	mem.profile = PVR_FW_PROFILE_GE8300;
+	mem.auxiliary_pa = 0x01880020; mem.auxiliary_size = 4;
+	compchecks_value = 1; fixture_fw_layout = 3;
+	fixture_hw_bvnc = fixture_fw_bvnc = UINT64_C(0x0016006600360026);
+	CHECK(pvr_fwboot(PVR_FW_PROFILE_GE8300, &mem, 0x12340000,
+	    &mem, &result) == 0);
+	CHECK(result.device_owned && mem.device_exposed && result.snapshot_valid);
+	reset();
+	mem.profile = PVR_FW_PROFILE_GE8300;
+	mem.auxiliary_pa = 0x01880020; mem.auxiliary_size = 4;
+	compchecks_value = 0; fixture_fw_layout = 3;
+	fixture_hw_bvnc = fixture_fw_bvnc = UINT64_C(0x0016006600360026);
+	CHECK(pvr_fwboot(PVR_FW_PROFILE_GE8300, &mem, 0x12340000,
+	    &mem, &result) == ETIMEDOUT);
+	CHECK(result.device_owned && mem.device_exposed && result.snapshot_valid);
+	/* GE preflight must not sync a bounced or translated address. */
+	for (unsigned bad = 0; bad < 3; bad++) {
+		reset();
+		mem.profile = PVR_FW_PROFILE_GE8300;
+	mem.auxiliary_pa = 0x01880020; mem.auxiliary_size = 4;
+		if (bad == 0) maps[0]._dm_flags |= _BUS_DMAMAP_IS_BOUNCING;
+		if (bad == 1) mem.code.segment.ds_addr += 4096;
+		if (bad == 2) {
+			mem.code.address = 0x01800000;
+			mem.code.segment.ds_addr = 0x01800000;
+			maps[0].dm_segs[0].ds_addr = 0x01800000;
+		}
+		CHECK(pvr_fwboot(PVR_FW_PROFILE_GE8300, &mem, 0x12340000,
+		    &mem, &result) == EINVAL);
+		CHECK(!mem.device_exposed && !result.attempted && syncs == 0);
+	}
+	for (unsigned bad = 0; bad < 4; bad++) {
+		reset();
+		mem.profile = PVR_FW_PROFILE_GE8300;
+	mem.auxiliary_pa = 0x01880020; mem.auxiliary_size = 4;
+		compchecks_value = 1; fixture_fw_layout = 3;
+		fixture_hw_bvnc = fixture_fw_bvnc = UINT64_C(0x0016006600360026);
+		if (bad == 0) fixture_hw_layout = 4;
+		if (bad == 1) fixture_fw_layout = 4;
+		if (bad == 2) fixture_hw_bvnc++;
+		if (bad == 3) fixture_fw_bvnc++;
+		CHECK(pvr_fwboot(PVR_FW_PROFILE_GE8300, &mem, 0x12340000,
+		    &mem, &result) == (bad < 2 ? EOPNOTSUPP : ENODEV));
+		CHECK(result.device_owned && mem.device_exposed && result.snapshot_valid);
+	}
 	preflight_tests();
 	/* The mocked device is stopped here. Only the test owns deallocation. */
 	for (unsigned int i = 0; i < 5; i++) {

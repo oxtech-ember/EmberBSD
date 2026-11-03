@@ -1,5 +1,7 @@
 # A733 PowerVR firmware bootstrap
 
+The A733 interface forwards to the [common PowerVR owner](../../../../dev/powervr/pvr_fwboot.c).
+
 The [bootstrap helper](../sun60i_a733_gpu_fwboot.c)
 hands prepared native DMA buffers to the GPU. It then observes the firmware
 boot flag for a bounded interval. The helper does not submit GPU commands.

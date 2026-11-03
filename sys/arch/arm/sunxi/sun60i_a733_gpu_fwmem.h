@@ -1,39 +1,22 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Origin: EmberBSD PowerVR DMA owner, AI-assisted. */
 /* Copyright (c) 2026 EmberBSD contributors. */
 /* Native CPU-owned PowerVR firmware memory. See a733-gpu-fwmem.md. */
 #ifndef _SUN60I_A733_GPU_FWMEM_H
 #define _SUN60I_A733_GPU_FWMEM_H
 
-#include <sys/types.h>
-#include <sys/bus.h>
-#include <arm/sunxi/sun60i_a733_gpu_fwimage.h>
-#include <arm/sunxi/sun60i_a733_gpu_fwinit.h>
+#include "sun60i_a733_gpu_fwimage.h"
+#include "sun60i_a733_gpu_fwinit.h"
+#include "sun60i_a733_gpu_fwstart.h"
+#include "../../../dev/powervr/pvr_fwmem.h"
 
-struct sun60i_a733_gpu_dma {
-	bus_dma_segment_t segment;
-	bus_dmamap_t map;
-	void *cpu;
-	size_t size;
-	bus_addr_t address;
-	int nsegments;
-	bool loaded;
-	/* Requested and verified coherent mapping, with no bounce buffer. */
-	bool coherent;
-};
+#define sun60i_a733_gpu_dma pvr_dma
+#define sun60i_a733_gpu_fwmem pvr_fwmem
 
-/* CPU-owned DMA allocation. Never free while firmware can reference it. */
 int sun60i_a733_gpu_dma_alloc_coherent(bus_dma_tag_t, size_t,
     struct sun60i_a733_gpu_dma *);
 void sun60i_a733_gpu_dma_free(bus_dma_tag_t, struct sun60i_a733_gpu_dma *);
 
-struct sun60i_a733_gpu_fwmem {
-	bus_dma_tag_t dmat;
-	struct sun60i_a733_gpu_dma code, data, table, work, config;
-	struct sun60i_a733_gpu_fwimage image;
-	bus_addr_t boot_code, boot_data, exception_code, stack;
-	struct sun60i_a733_gpu_fwinit_layout interface_layout;
-	bool interface_prepared;
-};
 
 /*
  * Allocate, validate and prepare CPU-owned firmware memory. No device
@@ -66,4 +49,5 @@ int sun60i_a733_gpu_fwmem_interface(struct sun60i_a733_gpu_fwmem *,
 
 void sun60i_a733_gpu_fwmem_destroy(struct sun60i_a733_gpu_fwmem *);
 
-#endif
+
+#endif /* _SUN60I_A733_GPU_FWMEM_H */

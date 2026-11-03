@@ -106,6 +106,12 @@ attach	sun50ippu at fdt with sun50i_a133_ppu
 file	arch/arm/sunxi/sun50i_a133_ppu.c		sun50i_a133_ppu
 file	arch/arm/sunxi/sun50i_a133_ppu_power.c	sun50i_a133_ppu
 
+# Explicit A133 GE8300 firmware owner. Attach never starts firmware.
+device	sun50ia133gpu
+attach	sun50ia133gpu at fdt with sun50i_a133_gpu
+file	arch/arm/sunxi/sun50i_a133_gpu.c		sun50i_a133_gpu
+file	arch/arm/sunxi/sun50i_a133_gpu_owner.c	sun50i_a133_gpu
+
 # Allwinner A733 PCK-600 power domains
 device	sun60ipck
 attach	sun60ipck at fdt with sun60i_a733_pck
@@ -156,16 +162,21 @@ device	sun60igpuid: firmload, sun60ipvr
 attach	sun60igpuid at fdt with sun60i_a733_gpu
 file	arch/arm/sunxi/sun60i_a733_gpu.c	sun60i_a733_gpu
 file	arch/arm/sunxi/sun60i_a733_gpu_fwinfo.c	sun60i_a733_gpu
-file	dev/powervr/pvr_fwinfo.c			sun60i_a733_gpu | pvr_ge8300_experimental
+file	dev/powervr/pvr_fwinfo.c			sun60i_a733_gpu | pvr_ge8300_experimental | sun50i_a133_gpu
 file	arch/arm/sunxi/sun60i_a733_gpu_fwimage.c	sun60i_a733_gpu
-file	dev/powervr/pvr_fwimage.c			sun60i_a733_gpu | pvr_ge8300_experimental
+file	dev/powervr/pvr_fwimage.c			sun60i_a733_gpu | pvr_ge8300_experimental | sun50i_a133_gpu
 file	arch/arm/sunxi/sun60i_a733_gpu_mips.c	sun60i_a733_gpu
-file	dev/powervr/pvr_mips.c			sun60i_a733_gpu | pvr_ge8300_experimental
-file	dev/powervr/pvr_ge8300.c		pvr_ge8300_experimental
+file	dev/powervr/pvr_mips.c			sun60i_a733_gpu | pvr_ge8300_experimental | sun50i_a133_gpu
+file	dev/powervr/pvr_ge8300.c		sun60i_a733_gpu | pvr_ge8300_experimental | sun50i_a133_gpu
 file	arch/arm/sunxi/sun60i_a733_gpu_fwmem.c	sun60i_a733_gpu
+file	dev/powervr/pvr_fwmem.c			sun60i_a733_gpu | pvr_ge8300_experimental | sun50i_a133_gpu
 file	arch/arm/sunxi/sun60i_a733_gpu_fwinit.c	sun60i_a733_gpu
+file	dev/powervr/pvr_fwinit.c			sun60i_a733_gpu | pvr_ge8300_experimental | sun50i_a133_gpu
 file	arch/arm/sunxi/sun60i_a733_gpu_fwstart.c	sun60i_a733_gpu
+file	dev/powervr/pvr_fwstart.c			sun60i_a733_gpu | pvr_ge8300_experimental | sun50i_a133_gpu
 file	arch/arm/sunxi/sun60i_a733_gpu_fwboot.c	sun60i_a733_gpu
+file	dev/powervr/pvr_fwboot.c			sun60i_a733_gpu | pvr_ge8300_experimental | sun50i_a133_gpu
+file	dev/powervr/pvr_fw_handshake.c		sun60i_a733_gpu | pvr_ge8300_experimental | sun50i_a133_gpu
 file	arch/arm/sunxi/sun60i_a733_gpu_fwprobe.c	sun60i_a733_gpu
 file	arch/arm/sunxi/sun60i_a733_gpu_fwservice.c	sun60i_a733_gpu
 file	arch/arm/sunxi/sun60i_a733_gpu_fwbridge.c	sun60i_a733_gpu

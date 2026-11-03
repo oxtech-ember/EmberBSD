@@ -12,6 +12,6 @@ work=$(mktemp -d "${TMPDIR:-/tmp}/a733-fwinit.XXXXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror ${FWINIT_TEST_CFLAGS:-} \
     -I"$src/sys/arch/arm/sunxi" \
-    "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwinit.c" \
+    "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwinit.c" "$src/sys/dev/powervr/pvr_fwinit.c" \
     "$tools/a733-gpu-fwinit-contract.c" -o "$work/contract"
 "$work/contract"

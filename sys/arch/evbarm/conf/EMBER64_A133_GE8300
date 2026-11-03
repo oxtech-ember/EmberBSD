@@ -1,0 +1,5 @@
+# Origin: EmberBSD A133 experimental GE8300 firmware owner, AI-assisted.
+# Explicit firmware boot only; no graphics stack or hardware acceptance.
+include "arch/evbarm/conf/EMBER64_A133_GPU"
+options PVR_GE8300_EXPERIMENTAL
+sun50ia133gpu* at fdt?

@@ -1,5 +1,7 @@
 # A733 PowerVR CPU-owned firmware memory
 
+The A733 interface forwards to the [common PowerVR owner](../../../../dev/powervr/pvr_fwmem.c).
+
 [The native memory owner](../sun60i_a733_gpu_fwmem.c)
 prepares firmware buffers with EmberBSD `bus_dma`.
 It combines the [ELF image helper](a733-gpu-fwimage.md) and
@@ -58,7 +60,7 @@ On failure, the output pointer stays unchanged.
 Every successful DMA map load is unloaded before map destruction.
 CPU mappings are unmapped before their backing memory is freed.
 All earlier allocations are released when a later operation fails.
-`sun60i_a733_gpu_fwmem_destroy()` accepts `NULL`.
+`sun60i_a733_gpu_fwmem_destroy()` accepts `NULL` and retains an exposed owner. The common destroy API returns `EBUSY` in that case.
 Destroying a prepared object is legal only while the CPU still owns every buffer.
 
 ## CPU-owned FWIF extension

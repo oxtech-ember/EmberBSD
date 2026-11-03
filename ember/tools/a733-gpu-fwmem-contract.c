@@ -10,6 +10,7 @@
 #include "sun60i_a733_gpu_fwinit.h"
 #include "powervr/pvr_rogue_fwif.h"
 #include "sun60i_a733_gpu_mips.h"
+#include "pvr_ge8300.h"
 
 #define CHECK(c) do { \
 	checks++; \
@@ -46,7 +47,7 @@ typedef struct {
 
 enum fault {
 	FAULT_NONE, FAULT_NSEGS, FAULT_LENGTH, FAULT_ALIGNMENT, FAULT_WIDTH,
-	FAULT_REMAP_WINDOW, FAULT_CODE_DATA_ALIAS, FAULT_CODE_TABLE_ALIAS,
+	FAULT_REMAP_WINDOW, FAULT_MMIO_RANGE, FAULT_CODE_DATA_ALIAS, FAULT_CODE_TABLE_ALIAS,
 	FAULT_DATA_TABLE_ALIAS, FAULT_PARTIAL_ALIAS, FAULT_INTERFACE_ADDRESS,
 	FAULT_INTERFACE_NOT_COHERENT, FAULT_INTERFACE_BOUNCING
 };
@@ -211,6 +212,10 @@ bus_dmamap_load(bus_dma_tag_t tag, bus_dmamap_t map, void *cpu,
 	case FAULT_REMAP_WINDOW:
 		if (loaded == 0)
 			map->dm_segs[0].ds_addr = UINT64_C(0x1fc00000);
+		break;
+	case FAULT_MMIO_RANGE:
+		if (loaded == 0)
+			map->dm_segs[0].ds_addr = UINT64_C(0x01800000);
 		break;
 	case FAULT_CODE_DATA_ALIAS:
 		if (loaded == 1)
@@ -431,6 +436,12 @@ run(const void *input, size_t size, int wanted)
 		CHECK(getle((uint8_t *)mem->data.cpu + off + 48, 4) == 12);
 		CHECK(getle((uint8_t *)mem->data.cpu + off + 52, 4) == 4);
 		CHECK(getle((uint8_t *)mem->data.cpu + off + 56, 8) == 0);
+		mem->device_exposed = true;
+		sun60i_a733_gpu_fwmem_destroy(mem);
+		CHECK(live_allocs == 3 && live_maps == 3 && loaded == 3);
+		CHECK(live_kmem == 1);
+		/* Test teardown models an independently proven hardware stop. */
+		mem->device_exposed = false;
 		sun60i_a733_gpu_fwmem_destroy(mem);
 	}
 	CHECK(live_allocs == 0 && live_maps == 0 && live_kmem == 0);
@@ -767,10 +778,67 @@ pinned_blob_test(const char *path)
 	free(bytes);
 }
 
+static void
+ge_blob_test(const char *path)
+{
+	struct pvr_fwmem *mem = NULL;
+	FILE *f;
+	long length;
+	void *bytes;
+
+	CHECK((f = fopen(path, "rb")) != NULL);
+	CHECK(fseek(f, 0, SEEK_END) == 0 && (length = ftell(f)) > 0);
+	CHECK(fseek(f, 0, SEEK_SET) == 0);
+	CHECK((bytes = malloc((size_t)length)) != NULL);
+	CHECK(fread(bytes, 1, (size_t)length, f) == (size_t)length);
+	CHECK(fclose(f) == 0);
+	reset(0, FAULT_NONE);
+	((uint8_t *)bytes)[0] ^= 1;
+	CHECK(pvr_fwmem_prepare(&test_dmat, bytes, (size_t)length,
+	    PVR_GE8300_BVNC, PVR_FW_PROFILE_GE8300,
+	    0x01800000, 0x80000, 0x01880020, 4, &mem) == EOPNOTSUPP);
+	CHECK(mem == NULL && operations == 0);
+	((uint8_t *)bytes)[0] ^= 1;
+	reset(0, FAULT_MMIO_RANGE);
+	CHECK(pvr_fwmem_prepare(&test_dmat, bytes, (size_t)length,
+	    PVR_GE8300_BVNC, PVR_FW_PROFILE_GE8300,
+	    0x01800000, 0x80000, 0x01880020, 4, &mem) == EEXIST);
+	CHECK(mem == NULL && live_allocs == 0 && live_maps == 0 && loaded == 0);
+	reset(0, FAULT_INTERFACE_BOUNCING);
+	interface_load = 0;
+	CHECK(pvr_fwmem_prepare(&test_dmat, bytes, (size_t)length,
+	    PVR_GE8300_BVNC, PVR_FW_PROFILE_GE8300,
+	    0x01800000, 0x80000, 0x01880020, 4, &mem) == EOPNOTSUPP);
+	CHECK(mem == NULL && live_allocs == 0 && live_maps == 0 && loaded == 0);
+	reset(0, FAULT_NONE);
+	CHECK(pvr_fwmem_prepare(&test_dmat, bytes, (size_t)length,
+	    PVR_GE8300_BVNC, PVR_FW_PROFILE_GE8300,
+	    0x01800000, 0x80000, 0x01880020, 4, &mem) == 0);
+	CHECK(mem->profile == PVR_FW_PROFILE_GE8300);
+	CHECK(getle((uint8_t *)mem->data.cpu +
+	    (size_t)(mem->boot_data - mem->data.address) + 8, 8) == 0x01800000);
+	fault_kind = FAULT_INTERFACE_ADDRESS;
+	interface_load = 4; interface_address = UINT64_C(0x0187f000);
+	interface_error(mem, 600000000, 1, 64, EEXIST);
+	/* The separate four-byte DFS register is outside the GPU interval. */
+	interface_address = UINT64_C(0x01880000);
+	interface_error(mem, 600000000, 1, 64, EEXIST);
+	fault_kind = FAULT_NONE;
+	CHECK(pvr_fwmem_interface(mem, 600000000, 1, 64) == 0);
+	mem->device_exposed = true;
+	CHECK(pvr_fwmem_destroy(mem) == EBUSY);
+	CHECK(live_allocs == 5 && live_maps == 5 && loaded == 5);
+	/* Fixture-only teardown after simulated proof of a stopped device. */
+	mem->device_exposed = false;
+	CHECK(pvr_fwmem_destroy(mem) == 0);
+	CHECK(live_allocs == 0 && live_maps == 0 && loaded == 0 && live_kmem == 0);
+	free(bytes);
+}
+
 int
 main(int argc, char **argv)
 {
-	CHECK(argc <= 2);
+	CHECK(argc <= 3);
 	fixture();
 	reset(0, FAULT_NONE);
 	run(blob, sizeof(blob), 0);
@@ -785,6 +853,8 @@ main(int argc, char **argv)
 	}
 	reset(0, FAULT_REMAP_WINDOW);
 	run(blob, sizeof(blob), EOPNOTSUPP);
+	reset(0, FAULT_MMIO_RANGE);
+	run(blob, sizeof(blob), EEXIST);
 	remap_tests();
 	alias_tests();
 	argument_tests();
@@ -808,8 +878,10 @@ main(int argc, char **argv)
 	CHECK(operations == 0);
 	fixture();
 	interface_tests();
-	if (argc == 2)
+	if (argc >= 2)
 		pinned_blob_test(argv[1]);
+	if (argc == 3)
+		ge_blob_test(argv[2]);
 	printf("PASS: %u native firmware DMA owner checks\n", checks);
 	return 0;
 }

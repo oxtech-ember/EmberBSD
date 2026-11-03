@@ -2,10 +2,12 @@
 
 <!-- Origin: EmberBSD PowerVR firmware preparation, AI-assisted. -->
 
-This CPU-only layer parses bounded firmware metadata, prepares ELF image
-buffers, and encodes MIPS page tables and boot data. It does not access
-hardware, map DMA, start firmware, or provide graphics. The A733 platform
-wrappers retain their existing strict feature policy and register address.
+The metadata, image and MIPS helpers parse bounded firmware input, prepare
+ELF buffers and encode page tables and boot data without hardware access. The
+shared firmware memory, initialization, start and boot owners additionally
+prepare native DMA and perform an explicitly requested bounded MIPS handoff.
+They do not provide graphics. The A733 platform wrappers retain their existing
+strict feature policy and register address.
 The platform supplies and validates the register physical address before
 calling the common boot-data encoder. Before adding a hardware consumer,
 the platform must establish the live register resource and verify owned RAM

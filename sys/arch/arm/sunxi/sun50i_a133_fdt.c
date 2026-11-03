@@ -503,6 +503,132 @@ a133_gpu_unique(const void *fdt, const char *compat, int expected)
 	    fdt_node_offset_by_compatible(fdt, node, compat) == -FDT_ERR_NOTFOUND);
 }
 
+/* Resource checks precede every mutation, including an owned re-entry. */
+static bool
+a133_gpu_node_active(const void *fdt, int node)
+{
+	const char *status;
+	int len;
+
+	for (; node >= 0; node = fdt_parent_offset(fdt, node)) {
+		status = fdt_getprop(fdt, node, "status", &len);
+		if (status != NULL && !((len == 5 && memcmp(status, "okay", 5) == 0) ||
+		    (len == 3 && memcmp(status, "ok", 3) == 0)))
+			return false;
+		if (status == NULL && len != -FDT_ERR_NOTFOUND)
+			return false;
+	}
+	return true;
+}
+
+static bool
+a133_gpu_refs(const void *fdt, const fdt32_t *v, int len,
+    const char *cells_name, uint32_t target, uint32_t id1, uint32_t id2,
+    uint32_t id3)
+{
+	int i, p, n, plen;
+	const fdt32_t *pc;
+	uint32_t ph, count, id;
+	bool relevant = false;
+
+	if (len < 0 || len % 4 != 0)
+		return false;
+	n = len / 4;
+	for (i = 0; i < n; i++)
+		if (fdt32_to_cpu(v[i]) == target)
+			relevant = true;
+	if (!relevant)
+		return true;
+	for (i = 0; i < n;) {
+		ph = fdt32_to_cpu(v[i++]);
+		p = fdt_node_offset_by_phandle(fdt, ph);
+		if (p < 0 || a133_phandle_node(fdt, p) != ph)
+			return false;
+		pc = fdt_getprop(fdt, p, cells_name, &plen);
+		if (pc == NULL || plen != 4 || (count = fdt32_to_cpu(*pc)) > 8 ||
+		    count > (uint32_t)(n - i))
+			return false;
+		if (ph == target) {
+			if (count == 0)
+				return false;
+			id = fdt32_to_cpu(v[i]);
+			if (id == id1 || id == id2 || id == id3)
+				return false;
+		}
+		i += count;
+	}
+	return true;
+}
+
+static bool
+a133_gpu_inventory(const void *fdt, int gpu, uint32_t ccu, uint32_t domain,
+    uint32_t supply, uint32_t pll, uint32_t legacy_gpu, int virtual_gpu)
+{
+	const struct fdt_property *prop;
+	const fdt32_t *v;
+	const char *name;
+	uint64_t base, size, end;
+	int node = -1, parent, soc, off, len, n, i;
+	size_t namelen;
+
+	soc = fdt_path_offset(fdt, SOC);
+	while ((node = fdt_next_node(fdt, node, NULL)) >= 0) {
+		if (node == gpu || !a133_gpu_node_active(fdt, node))
+			continue;
+		parent = fdt_parent_offset(fdt, node);
+		if (parent == 0 || parent == soc) {
+			v = fdt_getprop(fdt, node, "reg", &len);
+			if (v != NULL) {
+				if (len <= 0 || len % 16 != 0)
+					return false;
+				for (i = 0; i < len / 4; i += 4) {
+					base = ((uint64_t)fdt32_to_cpu(v[i]) << 32) |
+					    fdt32_to_cpu(v[i + 1]);
+					size = ((uint64_t)fdt32_to_cpu(v[i + 2]) << 32) |
+					    fdt32_to_cpu(v[i + 3]);
+					if (size == 0 || base > UINT64_MAX - size)
+						return false;
+					end = base + size;
+					if ((base < 0x01880000 && end > 0x01800000) ||
+					    (base < 0x01880024 && end > 0x01880020))
+						return false;
+				}
+			}
+		}
+		fdt_for_each_property_offset(off, fdt, node) {
+			prop = fdt_get_property_by_offset(fdt, off, &len);
+			if (prop == NULL || (name = fdt_string(fdt,
+			    fdt32_to_cpu(prop->nameoff))) == NULL)
+				return false;
+			v = (const fdt32_t *)prop->data;
+			n = fdt32_to_cpu(prop->len);
+			namelen = strlen(name);
+			if (namelen >= 7 && strcmp(name + namelen - 7, "-supply") == 0) {
+				if (n >= 4 && fdt32_to_cpu(*v) == supply &&
+				    !(node == virtual_gpu && strcmp(name, "dcdc4-supply") == 0))
+					return false;
+			} else if (strcmp(name, "clocks") == 0 ||
+			    strcmp(name, "assigned-clocks") == 0 ||
+			    strcmp(name, "assigned-clock-parents") == 0) {
+				if (!a133_gpu_refs(fdt, v, n, "#clock-cells", ccu,
+				    A100_CLK_GPU, A100_CLK_BUS_GPU, A100_CLK_PLL_GPU) ||
+				    !a133_gpu_refs(fdt, v, n, "#clock-cells", pll, 0, 0, 0) ||
+				    !a133_gpu_refs(fdt, v, n, "#clock-cells", legacy_gpu, 0, 0, 0))
+					return false;
+			} else if (strcmp(name, "resets") == 0) {
+				if (!a133_gpu_refs(fdt, v, n, "#reset-cells", ccu,
+				    A100_RST_BUS_GPU, UINT32_MAX, UINT32_MAX))
+					return false;
+			} else if (strcmp(name, "power-domains") == 0) {
+				if (!a133_gpu_refs(fdt, v, n, "#power-domain-cells", domain,
+				    0, 0, 0))
+					return false;
+			}
+		}
+	}
+	return node == -FDT_ERR_NOTFOUND;
+}
+
 /* Translate only the measured vendor binding in an explicit GPU kernel. */
 int
 sun50i_a133_gpu_fdt_fixup(void *fdt)
@@ -512,12 +638,14 @@ sun50i_a133_gpu_fdt_fixup(void *fdt)
 	static const char sram[] = "/sram_ctrl";
 	static const char rccu[] = SOC "/clock-controller@07010000";
 	static const char marker[] = "ember,a133-vendor-ppu";
-	fdt32_t cells[5], cell;
+	static const char vgpu[] = SOC "/s_twi@0x07081400/pmu@34/virtual-dcdc4";
+	fdt32_t cells[8], cell;
 	uint32_t domain, gic, ccu, hosc, losc, iosc, syscon, rclock, legacy;
+	uint32_t pll_gpu, clk_gpu, supply;
 	uint32_t total, strings, size;
 	const void *value;
 	bool owned;
-	int node, gpu_node, len, error;
+	int node, gpu_node, virtual_gpu, len, error;
 
 	error = fdt_check_header(fdt);
 	if (error != 0)
@@ -538,7 +666,8 @@ sun50i_a133_gpu_fdt_fixup(void *fdt)
 	    "allwinner,sun50i-a133-ppu", -FDT_ERR_NOTFOUND))
 		return -FDT_ERR_BADVALUE;
 	gpu_node = fdt_path_offset(fdt, gpu);
-	if (gpu_node < 0 || !a133_gpu_unique(fdt, "img,gpu", gpu_node) ||
+	if (gpu_node < 0 || !a133_gpu_unique(fdt, owned ? "allwinner,sun50i-a133-powervr" : "img,gpu", gpu_node) ||
+	    !a133_gpu_unique(fdt, owned ? "img,gpu" : "allwinner,sun50i-a133-powervr", -FDT_ERR_NOTFOUND) ||
 	    !a133_gpu_active(fdt, ppu) || !a133_gpu_active(fdt, gpu) ||
 	    !a133_cell(fdt, "/", "#address-cells", 2) ||
 	    !a133_cell(fdt, "/", "#size-cells", 2) ||
@@ -546,7 +675,7 @@ sun50i_a133_gpu_fdt_fixup(void *fdt)
 	    !a133_cell(fdt, SOC, "#size-cells", 2) ||
 	    !a133_value(fdt, SOC, "ranges", "", 0) ||
 	    !a133_gpu_reg(fdt, ppu, 0x07001000, 0x40) ||
-	    !a133_gpu_reg(fdt, gpu, 0x01800000, 0x80000) ||
+	    (!owned && !a133_gpu_reg(fdt, gpu, 0x01800000, 0x80000)) ||
 	    !a133_gpu_reg(fdt, sram, 0x03000000, 0x100) ||
 	    (domain = a133_phandle(fdt, ppu)) == 0 ||
 	    !a133_cell(fdt, ppu, "#power-domain-cells", 0) ||
@@ -563,6 +692,69 @@ sun50i_a133_gpu_fdt_fixup(void *fdt)
 	    (losc = a133_phandle(fdt, "/ember-osc32k")) == 0 ||
 	    (iosc = a133_phandle(fdt, "/ember-iosc")) == 0)
 		return -FDT_ERR_BADVALUE;
+	pll_gpu = a133_phandle(fdt, "/clocks/pll_gpu");
+	clk_gpu = a133_phandle(fdt, "/clocks/gpu");
+	value = fdt_getprop(fdt, gpu_node, "gpu-supply", &len);
+	if (pll_gpu == 0 || clk_gpu == 0 || value == NULL || len != 4)
+		return -FDT_ERR_BADVALUE;
+	supply = fdt32_to_cpu(*(const fdt32_t *)value);
+	node = fdt_node_offset_by_phandle(fdt, supply);
+	if (node < 0 || a133_phandle_node(fdt, node) != supply ||
+	    !a133_gpu_node_active(fdt, node) ||
+	    (value = fdt_getprop(fdt, node, "regulator-name", &len)) == NULL ||
+	    len != sizeof("axp803-dcdc4") ||
+	    memcmp(value, "axp803-dcdc4", sizeof("axp803-dcdc4")) != 0 ||
+	    fdt_getprop(fdt, node, "regulator-always-on", &len) == NULL || len != 0 ||
+	    fdt_getprop(fdt, node, "regulator-boot-on", &len) == NULL || len != 0 ||
+	    !a133_value(fdt, "/clocks/pll_gpu", "compatible", "allwinner,pll-clock", sizeof("allwinner,pll-clock")) ||
+	    !a133_value(fdt, "/clocks/pll_gpu", "clock-output-names", "pll_gpu", sizeof("pll_gpu")) ||
+	    !a133_cell(fdt, "/clocks/pll_gpu", "#clock-cells", 0) ||
+	    !a133_value(fdt, "/clocks/gpu", "compatible", "allwinner,periph-clock", sizeof("allwinner,periph-clock")) ||
+	    !a133_value(fdt, "/clocks/gpu", "clock-output-names", "gpu", sizeof("gpu")) ||
+	    !a133_cell(fdt, "/clocks/gpu", "#clock-cells", 0))
+		return -FDT_ERR_BADVALUE;
+	virtual_gpu = fdt_path_offset(fdt, vgpu);
+	if (virtual_gpu >= 0) {
+		if (!a133_value(fdt, vgpu, "compatible", "xpower-vregulator,dcdc4",
+		    sizeof("xpower-vregulator,dcdc4")) ||
+		    !a133_cell(fdt, vgpu, "dcdc4-supply", supply) ||
+		    fdt_first_subnode(fdt, virtual_gpu) != -FDT_ERR_NOTFOUND ||
+		    (owned && !a133_value(fdt, vgpu, "status", "disabled", sizeof("disabled"))) ||
+		    (!owned && !a133_gpu_node_active(fdt, virtual_gpu)))
+			return -FDT_ERR_BADVALUE;
+	} else if (virtual_gpu != -FDT_ERR_NOTFOUND)
+		return -FDT_ERR_BADVALUE;
+	if (!a133_gpu_inventory(fdt, gpu_node, ccu, domain, supply, pll_gpu,
+	    clk_gpu, virtual_gpu))
+		return -FDT_ERR_BADVALUE;
+	node = fdt_path_offset(fdt, ppu);
+	if (!owned) {
+		cells[0] = cpu_to_fdt32(pll_gpu); cells[1] = cpu_to_fdt32(clk_gpu);
+		if (!a133_value(fdt, gpu, "clocks", cells, 8) ||
+		    !a133_value(fdt, gpu, "clock-names", "clk_parent\0clk_mali", sizeof("clk_parent\0clk_mali")) ||
+		    fdt_getprop(fdt, gpu_node, "resets", &len) != NULL ||
+		    fdt_getprop(fdt, gpu_node, "ember,a133-gpu-exclusive", &len) != NULL)
+			return -FDT_ERR_BADVALUE;
+	} else {
+		cells[0] = 0; cells[1] = cpu_to_fdt32(0x01800000);
+		cells[2] = 0; cells[3] = cpu_to_fdt32(0x80000);
+		cells[4] = 0; cells[5] = cpu_to_fdt32(0x01880020);
+		cells[6] = 0; cells[7] = cpu_to_fdt32(4);
+		if (!a133_value(fdt, gpu, "reg", cells, 32) ||
+		    !a133_value(fdt, gpu, "reg-names", "gpu\0dfs", sizeof("gpu\0dfs")) ||
+		    !a133_value(fdt, gpu, "ember,a133-gpu-exclusive", "", 0) ||
+		    !a133_cell(fdt, gpu, "interrupt-parent", gic))
+			return -FDT_ERR_BADVALUE;
+		cells[0] = cpu_to_fdt32(ccu); cells[1] = cpu_to_fdt32(A100_CLK_GPU);
+		cells[2] = cpu_to_fdt32(ccu); cells[3] = cpu_to_fdt32(A100_CLK_BUS_GPU);
+		if (!a133_value(fdt, gpu, "clocks", cells, 16) ||
+		    !a133_value(fdt, gpu, "clock-names", "core\0bus", sizeof("core\0bus")))
+			return -FDT_ERR_BADVALUE;
+		cells[1] = cpu_to_fdt32(A100_RST_BUS_GPU);
+		if (!a133_value(fdt, gpu, "resets", cells, 8) ||
+		    !a133_value(fdt, gpu, "reset-names", "bus", sizeof("bus")))
+			return -FDT_ERR_BADVALUE;
+	}
 	cells[0] = 0; cells[1] = cpu_to_fdt32(119); cells[2] = cpu_to_fdt32(4);
 	if (!a133_value(fdt, ppu, "interrupts", cells, 12))
 		return -FDT_ERR_BADVALUE;
@@ -604,7 +796,7 @@ sun50i_a133_gpu_fdt_fixup(void *fdt)
 		cells[0] = cpu_to_fdt32(hosc); cells[1] = cpu_to_fdt32(losc);
 		cells[2] = cpu_to_fdt32(iosc); cells[3] = cpu_to_fdt32(ccu);
 		cells[4] = cpu_to_fdt32(A100_CLK_PLL_PERIPH0);
-		if (!a133_value(fdt, rccu, "clocks", cells, sizeof(cells)) ||
+		if (!a133_value(fdt, rccu, "clocks", cells, 5 * sizeof(cells[0])) ||
 		    !a133_value(fdt, rccu, "clock-names", "hosc\0losc\0iosc\0pll-periph",
 		    sizeof("hosc\0losc\0iosc\0pll-periph")))
 			return -FDT_ERR_BADVALUE;
@@ -631,6 +823,9 @@ sun50i_a133_gpu_fdt_fixup(void *fdt)
 	    total - strings - size < 2048)
 		return -FDT_ERR_NOSPACE;
 
+	/* Vendor virtual regulator is a test-only consumer; keep the rail. */
+	if (virtual_gpu >= 0)
+		A133_STRING(vgpu, "status", "disabled");
 	node = a133_node(fdt, SOC, "clock-controller@07010000", &rclock);
 	if (node < 0)
 		return node;
@@ -641,7 +836,7 @@ sun50i_a133_gpu_fdt_fixup(void *fdt)
 	cells[0] = cpu_to_fdt32(hosc); cells[1] = cpu_to_fdt32(losc);
 	cells[2] = cpu_to_fdt32(iosc); cells[3] = cpu_to_fdt32(ccu);
 	cells[4] = cpu_to_fdt32(A100_CLK_PLL_PERIPH0);
-	A133_SET(rccu, "clocks", cells, sizeof(cells));
+	A133_SET(rccu, "clocks", cells, 5 * sizeof(cells[0]));
 	A133_STRING(rccu, "clock-names", "hosc\0losc\0iosc\0pll-periph");
 	A133_CELL(rccu, "#clock-cells", 1);
 	A133_CELL(rccu, "#reset-cells", 1);
@@ -658,6 +853,22 @@ sun50i_a133_gpu_fdt_fixup(void *fdt)
 	A133_STRING(ppu, "reset-names", "ppu");
 	A133_CELL(ppu, "syscon", syscon);
 	A133_CELL(ppu, "interrupt-parent", gic);
+	cells[0] = 0; cells[1] = cpu_to_fdt32(0x01800000);
+	cells[2] = 0; cells[3] = cpu_to_fdt32(0x80000);
+	cells[4] = 0; cells[5] = cpu_to_fdt32(0x01880020);
+	cells[6] = 0; cells[7] = cpu_to_fdt32(4);
+	A133_SET(gpu, "reg", cells, 32);
+	A133_STRING(gpu, "reg-names", "gpu\0dfs");
+	cells[0] = cpu_to_fdt32(ccu); cells[1] = cpu_to_fdt32(A100_CLK_GPU);
+	cells[2] = cpu_to_fdt32(ccu); cells[3] = cpu_to_fdt32(A100_CLK_BUS_GPU);
+	A133_SET(gpu, "clocks", cells, 16);
+	A133_STRING(gpu, "clock-names", "core\0bus");
+	cells[1] = cpu_to_fdt32(A100_RST_BUS_GPU);
+	A133_SET(gpu, "resets", cells, 8);
+	A133_STRING(gpu, "reset-names", "bus");
+	A133_CELL(gpu, "interrupt-parent", gic);
+	A133_SET(gpu, "ember,a133-gpu-exclusive", NULL, 0);
+	A133_STRING(gpu, "compatible", "allwinner,sun50i-a133-powervr");
 	A133_SET(gpu, "netbsd,consumer-managed-power", NULL, 0);
 	A133_STRING(ppu, "compatible", "allwinner,sun50i-a133-ppu");
 	return a133_prop(fdt, ppu, marker, NULL, 0);

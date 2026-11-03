@@ -36,6 +36,8 @@
 #include <stdint.h>
 #endif
 
+enum pvr_fw_profile { PVR_FW_PROFILE_A733, PVR_FW_PROFILE_GE8300 };
+
 #define PVR_FW_BLOCK_SIZE	4096
 #define PVR_FW_MAX_LAYOUTS	8
 #define PVR_FW_ARRAYS	4

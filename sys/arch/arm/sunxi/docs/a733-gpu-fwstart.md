@@ -1,5 +1,7 @@
 # A733 PowerVR MIPS reset-release contract
 
+The A733 interface forwards to the [common PowerVR owner](../../../../dev/powervr/pvr_fwstart.c).
+
 The native [startup function](../sun60i_a733_gpu_fwstart.c)
 implements the PowerVR MIPS register sequence for BVNC **36.56.104.183**.
 It uses fault-aware `bus_space_peek` and `bus_space_poke` accesses.

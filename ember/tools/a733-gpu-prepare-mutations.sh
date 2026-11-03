@@ -22,6 +22,7 @@ for path in sys/arch/arm/sunxi/sunxi_rtcvar.h \
     sys/arch/arm/sunxi/sun60i_a733_gpu*.h \
     sys/arch/arm/sunxi/sun60i_a733_gpu*.c \
     sys/arch/arm/sunxi/powervr/*.h \
+    sys/dev/powervr/*.h sys/dev/powervr/*.c sys/dev/powervr/fwif/*.h \
     sys/external/bsd/drm2/powervr/pvr_drm.h \
     sys/external/bsd/drm2/powervr/pvr_query.h \
     sys/external/bsd/drm2/powervr/pvr_backend.h \

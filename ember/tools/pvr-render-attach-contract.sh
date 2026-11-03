@@ -11,8 +11,9 @@ for name in sun60i_gpu_query_input sun60i_gpu_render_attach \
     printf 'static int\n' >> "$work/pvr-attach-body.h"
     sed -n "/^$name(/,/^}/p" "$driver" >> "$work/pvr-attach-body.h"
 done
+sed '/^#include /d' "$src/sys/dev/powervr/pvr_fwmem.h" > "$work/fwmem-body.h"
 sed '/^#include /d' "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwmem.h" \
-    > "$work/fwmem-body.h"
+    >> "$work/fwmem-body.h"
 # shellcheck disable=SC2086
 "${CC:-cc}" -std=c11 -Wall -Wextra -Werror ${CFLAGS:-} -I"$work" \
     -I"$src/sys/arch/arm/sunxi" -I"$src/sys/external/bsd/drm2/powervr" \

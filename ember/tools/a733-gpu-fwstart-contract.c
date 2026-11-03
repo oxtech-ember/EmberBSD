@@ -8,6 +8,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "sun60i_a733_gpu_fwinfo.h"
+#include "pvr_ge8300.h"
 
 #define CHECK(c) do { \
 	checks++; \
@@ -418,12 +419,66 @@ test_firmware(const char *path)
 	puts("PASS: pinned firmware profile matches the default fixture and upstream trace");
 }
 
+/* Independent GE8300 branch trace; no hardware access. */
+static void
+test_ge8300(const char *path)
+{
+	struct sun60i_a733_gpu_fwinfo info;
+	struct operation golden[64];
+	unsigned count = prepare(&info, golden, 1);
+
+	info.bvnc = UINT64_C(0x0016006600360026);
+	info.version_major = 1; info.version_minor = 1;
+	info.version_build = 6976702; info.layout_count = 6;
+	info.array[0].count = 1; info.array[1].count = 1;
+	info.array[2].count = 2; info.array[3].count = 22;
+	info.brn_mask = UINT64_C(0x54000610);
+	info.ern_mask = UINT64_C(0x1a5);
+	info.feature_mask[0] = UINT64_C(0x9219dd57fdb6005b);
+	info.feature_mask[1] = UINT64_C(0x4000000004);
+	if (path != NULL) {
+		FILE *f = fopen(path, "rb");
+		uint8_t *bytes;
+		long size;
+
+		CHECK(f != NULL && fseek(f, 0, SEEK_END) == 0);
+		CHECK((size = ftell(f)) > 0 && fseek(f, 0, SEEK_SET) == 0);
+		CHECK((bytes = malloc((size_t)size)) != NULL);
+		CHECK(fread(bytes, 1, (size_t)size, f) == (size_t)size);
+		CHECK(fclose(f) == 0);
+		CHECK(pvr_ge8300_fwinfo_parse(bytes, (size_t)size,
+		    PVR_GE8300_BVNC, &info) == 0);
+		free(bytes);
+	}
+	struct sun60i_a733_gpu_fwinfo verified = info;
+	CHECK(count == 24);
+	CHECK(run(&info) == EOPNOTSUPP);
+	CHECK(pvr_fwstart(PVR_FW_PROFILE_GE8300, &trace, 0, &info,
+	    0x40018000, 0x4001c000, 0x40017000, &observed) == 0);
+	CHECK(observed.writes == 18 && observed.released);
+	check_trace(golden, count);
+	for (unsigned after = 0; after < 2; after++) {
+		for (unsigned failure = 1; failure <= count; failure++) {
+			prepare(&info, golden, 1);
+			info = verified;
+			fail_at = failure;
+			fail_after_write = after != 0;
+			CHECK(pvr_fwstart(PVR_FW_PROFILE_GE8300, &trace, 0, &info,
+			    0x40018000, 0x4001c000, 0x40017000, &observed) == EFAULT);
+			check_trace(golden, failure);
+			CHECK(observed.touched && observed.writes == nwrite);
+			CHECK(observed.released == (failure == count));
+		}
+	}
+}
+
 int
 main(int argc, char **argv)
 {
-	CHECK(argc == 1 || argc == 2);
-	if (argc == 2)
+	CHECK(argc >= 1 && argc <= 3);
+	if (argc >= 2)
 		test_firmware(argv[1]);
+	test_ge8300(argc == 3 ? argv[2] : NULL);
 	test_sequence();
 	test_preflight();
 	printf("PASS: %u firmware startup order/fault checks\n", checks);

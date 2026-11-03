@@ -11,7 +11,10 @@ fi
 work=$(mktemp -d "${TMPDIR:-/tmp}/a733-fwservice.XXXXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 for kind in mem start boot probe service; do
-    sed '/^#include /d' "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fw${kind}.h" > "$work/$kind.h"
+    case "$kind" in mem|start|boot)
+        sed '/^#include /d' "$src/sys/dev/powervr/pvr_fw${kind}.h" > "$work/$kind.h" ;;
+    esac
+    sed '/^#include /d' "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fw${kind}.h" >> "$work/$kind.h"
 done
 sed '/^#include /d' "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwservice.c" > "$work/service-driver.h"
 # Use the two complete native DMA functions, before the first heap helper.

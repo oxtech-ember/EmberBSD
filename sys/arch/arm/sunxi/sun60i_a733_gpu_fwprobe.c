@@ -33,6 +33,7 @@
 #include <sys/time.h>
 
 #include <arm/sunxi/sun60i_a733_gpu_fwprobe.h>
+#include <dev/powervr/pvr_fw_handshake.h>
 #include <arm/sunxi/powervr/pvr_rogue_fwif.h>
 
 /* Exact pinned upstream MTS register. DM_GP is zero. */
@@ -327,15 +328,13 @@ static int
 fwprobe_runtime_valid(const struct sun60i_a733_gpu_fwprobe_snapshot *s,
     uint32_t expected_log_type, bool events)
 {
-	if (s->firmware_started != 1 || s->compchecks_updated > 1)
-		return EPROTO;
-	if (s->compchecks_updated == 0)
-		return EAGAIN;
-	if (s->hw_layout_version != ROGUE_FWIF_COMPCHECKS_LAYOUT_VERSION ||
-	    s->fw_layout_version != ROGUE_FWIF_COMPCHECKS_LAYOUT_VERSION)
-		return EOPNOTSUPP;
-	if (s->hw_bvnc != A733_EXPECTED_BVNC || s->fw_bvnc != A733_EXPECTED_BVNC)
-		return ENODEV;
+	int error;
+
+	error = pvr_fw_handshake_check(s->firmware_started, s->compchecks_updated,
+	    s->hw_layout_version, s->fw_layout_version, s->hw_bvnc,
+	    s->fw_bvnc, A733_EXPECTED_BVNC);
+	if (error != 0)
+		return error;
 	if (s->wrap_mask != A733_GPU_FWINIT_KCCB_COUNT - 1 ||
 	    s->cmd_size != sizeof(struct rogue_fwif_kccb_cmd) ||
 	    s->fw_wrap_mask != A733_GPU_FWINIT_FWCCB_COUNT - 1 ||

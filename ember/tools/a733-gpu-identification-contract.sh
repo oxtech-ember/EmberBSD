@@ -22,11 +22,14 @@ for name in drm.h query.h backend.h; do
         > "$work/pvr-$name-body.h"
 done
 mkdir "$work/powervr"
-cp "$src/sys/arch/arm/sunxi/powervr/"*.h "$work/powervr/"
+cp "$src/sys/dev/powervr/fwif/"*.h "$work/powervr/"
 # Keep the production memory interface. Only native bus-DMA types are stubbed.
 for header in fwmem fwstart fwboot fwprobe fwservice fwbridge; do
+    case "$header" in fwmem|fwstart|fwboot)
+        sed '/^#include /d' "$src/sys/dev/powervr/pvr_$header.h" > "$work/sun60i_a733_gpu_$header.h" ;;
+    esac
     sed '/^#include /d' "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_$header.h" \
-        > "$work/sun60i_a733_gpu_$header.h"
+        >> "$work/sun60i_a733_gpu_$header.h"
 done
 sed '/^#include /d' "$src/sys/external/bsd/drm2/powervr/pvr_backend.h" \
     > "$work/pvr-backend.h-body.h"

@@ -13,11 +13,15 @@ trap 'rm -rf "$work"' EXIT HUP INT TERM
 sed '/^#include /d' "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwprobe.c" \
     > "$work/driver.h"
 for kind in probe boot mem start; do
+    if [ "$kind" != probe ]; then
+        sed '/^#include /d' "$src/sys/dev/powervr/pvr_fw${kind}.h" > "$work/$kind.h"
+    fi
     sed '/^#include /d' "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fw${kind}.h" \
-        > "$work/$kind.h"
+        >> "$work/$kind.h"
 done
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror ${FWPROBE_TEST_CFLAGS:-} \
     -I"$work" -I"$src/sys/arch/arm/sunxi" \
     "$tools/a733-gpu-fwprobe-contract.c" \
-    "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwinit.c" -o "$work/contract"
+    "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwinit.c" "$src/sys/dev/powervr/pvr_fwinit.c" \
+    "$src/sys/dev/powervr/pvr_fw_handshake.c" -o "$work/contract"
 "$work/contract"

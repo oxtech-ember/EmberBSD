@@ -1,5 +1,7 @@
 # A733 PowerVR initial firmware structures
 
+The A733 interface forwards to the [common PowerVR owner](../../../../dev/powervr/pvr_fwinit.c).
+
 The native [initializer](../sun60i_a733_gpu_fwinit.c)
 prepares CPU-owned work and configuration buffers for the first MIPS boot.
 It uses the [exact native FWIF declarations](../powervr/README.md).
