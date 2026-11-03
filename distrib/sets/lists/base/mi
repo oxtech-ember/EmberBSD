@@ -1797,6 +1797,7 @@
 ./usr/sbin/sntp					base-ntp-bin
 ./usr/sbin/spamdb				base-obsolete		obsolete
 ./usr/sbin/spawn				base-obsolete		obsolete
+./usr/sbin/spinandctl				base-sysutil-bin
 ./usr/sbin/spray				base-rpcutil-bin
 ./usr/sbin/srtconfig				base-netutil-bin
 ./usr/sbin/sshd					base-secsh-bin
