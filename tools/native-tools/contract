@@ -1,6 +1,7 @@
 EmberBSD-native-tools 2
 ar ar HOST_AR
 as as -
+autoconf autoconf HOST_AUTOCONF
 awk awk -
 basename basename -
 c++ cxx HOST_CXX

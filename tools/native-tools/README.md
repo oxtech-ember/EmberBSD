@@ -24,7 +24,7 @@ Version 2 supports separate `EMBER_HOST_ABI_CPPFLAGS`,
 without overriding source-local `HOST_*FLAGS` assignments.
 `MAKE` selects the NetBSD make implementation.
 `SED` selects the quoting utility used by `build.sh`.
-`HOST_PYTHON`, `HOST_PERL`, and `HOST_GMAKE` select the native generators
+`HOST_PYTHON`, `HOST_PERL`, `HOST_GMAKE`, and `HOST_AUTOCONF` select native generators
 used to prepare common upstream sources.
 `HOST_YACC` selects Byacc before the compatibility library is built.
 That library generates the complete OS date parser before `tools/yacc` exists.

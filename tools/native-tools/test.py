@@ -30,7 +30,7 @@ args = sys.argv[1:]
 with open(os.environ["FIXTURE_LOG"], "a") as stream:
     stream.write(json.dumps({"command": name, "argv": args,
         "cwd": os.getcwd(), "env": {key: os.environ.get(key) for key in
-        ("PATH", "HOST_CC", "HOST_CXX", "HOST_SH", "HOST_PYTHON", "HOST_PERL", "HOST_GMAKE", "HOST_YACC", "HOST_MV_CP", "HOST_MV_RM", "CONFIG_SHELL", "BSHELL",
+        ("PATH", "HOST_CC", "HOST_CXX", "HOST_SH", "HOST_PYTHON", "HOST_PERL", "HOST_GMAKE", "HOST_AUTOCONF", "HOST_YACC", "HOST_MV_CP", "HOST_MV_RM", "CONFIG_SHELL", "BSHELL",
          "SHELL", "HOST_CFLAGS", "HOST_LDFLAGS", "EMBER_COMPILER_FAMILY",
          "EMBER_HOST_COMPILER_FAMILY", "EXTERNAL_TOOLCHAIN")}}) + "\n")
 if name == "make":
@@ -328,13 +328,13 @@ class RoutingTests(unittest.TestCase):
         calls = [row for row in fixture.records() if row["command"] == "make"]
         self.assertTrue(calls)
         for row in calls:
-            for name, command in (("HOST_PYTHON", "python"), ("HOST_PERL", "perl"), ("HOST_GMAKE", "gmake")):
+            for name, command in (("HOST_PYTHON", "python"), ("HOST_PERL", "perl"), ("HOST_GMAKE", "gmake"), ("HOST_AUTOCONF", "autoconf")):
                 self.assertEqual(row["env"][name], str(fixture.selected / command))
         wrapper = fixture.tooldir / "bin/nbmake-amd64"
         result = subprocess.run([str(SHELL), str(wrapper), "fixture-replay"], cwd=fixture.source,
             env=fixture.env, text=True, capture_output=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        for name, command in (("HOST_PYTHON", "python"), ("HOST_PERL", "perl"), ("HOST_GMAKE", "gmake")):
+        for name, command in (("HOST_PYTHON", "python"), ("HOST_PERL", "perl"), ("HOST_GMAKE", "gmake"), ("HOST_AUTOCONF", "autoconf")):
             self.assertEqual(fixture.records()[-1]["env"][name], str(fixture.selected / command))
 
     def test_target_compiler_family_reaches_make_and_wrapper(self):
@@ -439,6 +439,21 @@ class RoutingTests(unittest.TestCase):
         (fixture.selected / "sh").chmod(0o755)
         self.assert_refused(fixture, "failed functionality tests")
 
+    def test_identical_selected_generator_flags_are_accepted(self):
+        fixture = Fixture(self)
+        args = []
+        for name, command in (("HOST_PYTHON", "python"), ("HOST_PERL", "perl"),
+                              ("HOST_GMAKE", "gmake"), ("HOST_AUTOCONF", "autoconf")):
+            args += ["-V", name + "=" + str(fixture.selected / command)]
+        result = fixture.run(*args, "-V", "EXTERNAL_TOOLCHAIN=/selected/target", "tools")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        calls = [row for row in fixture.records() if row["command"] == "make"]
+        self.assertTrue(calls)
+        for row in calls:
+            for name, command in (("HOST_PYTHON", "python"), ("HOST_PERL", "perl"),
+                                  ("HOST_GMAKE", "gmake"), ("HOST_AUTOCONF", "autoconf")):
+                self.assertEqual(row["env"][name], str(fixture.selected / command))
+
     def test_routing_overrides_are_refused(self):
         for option, variable in (("-V", "PATH=/bin"), ("-Z", "HOST_SH"),
                 ("-V", "_ember_native_make=/bin/false"),
@@ -446,7 +461,8 @@ class RoutingTests(unittest.TestCase):
                 ("-Z", "HOST_YACC"), ("-V", "HOST_MV_CP=/bin/false"),
                 ("-V", "HOST_MV_RM=/bin/false"), ("-Z", "HOST_MV_CP"),
                 ("-Z", "HOST_MV_RM"), ("-V", "HOST_PYTHON=/bin/false"),
-                ("-V", "HOST_PERL=/bin/false"), ("-Z", "HOST_GMAKE")):
+                ("-V", "HOST_PERL=/bin/false"), ("-Z", "HOST_GMAKE"),
+                ("-V", "HOST_AUTOCONF=/bin/false")):
             with self.subTest(variable=variable):
                 fixture = Fixture(self)
                 self.assert_refused(fixture, "Cannot change selected native tool",
