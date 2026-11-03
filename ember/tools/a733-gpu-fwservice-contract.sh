@@ -19,5 +19,5 @@ sed '/^static bool/,$d; /^#include /d' "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror ${FWSERVICE_TEST_CFLAGS:-} \
     -I"$work" -I"$src/sys/arch/arm/sunxi" \
     "$tools/a733-gpu-fwservice-contract.c" \
-    "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_mips.c" -o "$work/contract"
+    "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_mips.c" "$src/sys/dev/powervr/pvr_mips.c" -o "$work/contract"
 "$work/contract"

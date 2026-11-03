@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: MIT */
+/* Origin: EmberBSD PowerVR shared mechanism, from A733; AI-assisted. */
 /*
  * Copyright (c) 2024 Imagination Technologies Ltd.
  * Copyright (c) 2026 EmberBSD contributors.
@@ -31,37 +32,17 @@
 #define _SUN60I_A733_GPU_FWIMAGE_H
 
 #include "sun60i_a733_gpu_fwinfo.h"
+#include "../../../dev/powervr/pvr_fwimage.h"
 
-#define A733_GPU_FWIMAGE_MAX_PHDRS	16
-#define A733_GPU_FWIMAGE_SECTIONS	6
+#define A733_GPU_FWIMAGE_MAX_PHDRS PVR_FWIMAGE_MAX_PHDRS
+#define A733_GPU_FWIMAGE_SECTIONS PVR_FWIMAGE_SECTIONS
+#define A733_GPU_FW_MIPS_CODE PVR_FW_MIPS_CODE
+#define sun60i_a733_gpu_fw_layout pvr_fw_layout
+#define sun60i_a733_gpu_fwimage pvr_fwimage
+#define sun60i_a733_gpu_fwinfo pvr_fwinfo
 
-struct sun60i_a733_gpu_fwimage {
-	struct sun60i_a733_gpu_fwinfo info;
-	/* Canonical order: section[id - A733_GPU_FW_MIPS_CODE]. */
-	struct sun60i_a733_gpu_fw_layout section[A733_GPU_FWIMAGE_SECTIONS];
-	uint32_t entry, entry_addr, entry_offset;
-	uint32_t load_count;
-};
-
-/*
- * Prepare CPU buffers only. This does not authenticate or execute firmware.
- * No allocation, MMIO, DMA, boot-data patching, or address-space setup.
- * Supply stable input, the expected live BVNC, and disjoint writable outputs.
- * code/data capacities must cover the metadata allocation sizes. Extra space
- * is untouched. All declared input/output spans must be disjoint and must
- * not wrap uintptr_t. The result owns no pointers; metadata spans refer to
- * the input. entry keeps the microMIPS bit; entry_addr clears it. entry_offset
- * is the normalized entry's offset in the CODE buffer.
- *
- * Accept ELF32 LE ET_EXEC/EM_MIPS v1, up to 16 PT_LOAD/PT_NULL headers, all
- * six MIPS metadata sections, equal physical/virtual load addresses, and
- * CODE=R|X / DATA=R|W permissions. Other variants return EOPNOTSUPP.
- * Return positive errno. EINVAL: malformed input or arguments; ENOSPC:
- * insufficient buffer capacity. Metadata errors are propagated unchanged.
- * On every validation error, leave out, code, data, and input unchanged.
- * The caller must supply valid memory for every declared span.
- */
 int sun60i_a733_gpu_fwimage_prepare(const void *, size_t, uint64_t,
     void *, size_t, void *, size_t, struct sun60i_a733_gpu_fwimage *);
+
 
 #endif /* _SUN60I_A733_GPU_FWIMAGE_H */

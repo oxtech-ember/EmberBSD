@@ -17,5 +17,5 @@ sed '/^#include /d' "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwmem.h" \
 "${CC:-cc}" -std=c11 -Wall -Wextra -Werror ${CFLAGS:-} -I"$work" \
     -I"$src/sys/arch/arm/sunxi" -I"$src/sys/external/bsd/drm2/powervr" \
     "$src/ember/tools/pvr-render-attach-contract.c" \
-    "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwinfo.c" -o "$work/contract"
+    "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwinfo.c" "$src/sys/dev/powervr/pvr_fwinfo.c" -o "$work/contract"
 "$work/contract"

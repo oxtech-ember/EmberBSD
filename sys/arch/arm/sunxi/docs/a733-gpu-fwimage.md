@@ -1,6 +1,6 @@
 # A733 PowerVR MIPS CPU image preparation
 
-[The native helper](../sun60i_a733_gpu_fwimage.c)
+[The native helper](../sun60i_a733_gpu_fwimage.c) wraps the [common mechanism](../../../../dev/powervr/pvr_fwimage.c) and
 prepares code and data in caller-owned CPU buffers.
 It validates metadata through the [production parser](a733-gpu-fwinfo.md).
 It then checks the ELF32 program headers before it writes any output.

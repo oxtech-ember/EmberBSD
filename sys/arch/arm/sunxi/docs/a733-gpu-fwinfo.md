@@ -1,6 +1,6 @@
 # A733 PowerVR firmware metadata validation
 
-The native [parser](../sun60i_a733_gpu_fwinfo.c)
+The native [parser](../sun60i_a733_gpu_fwinfo.c) wraps the [common mechanism](../../../../dev/powervr/pvr_fwinfo.c) and
 checks PowerVR firmware metadata before a future MIPS loader uses it.
 It performs no allocation, file access, MMIO, DMA, or firmware execution.
 It does not validate ELF contents, executable instructions, signatures, or

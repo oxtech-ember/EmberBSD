@@ -25,7 +25,7 @@ work=$(mktemp -d "${TMPDIR:-/tmp}/a733-fwimage.XXXXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror ${FWIMAGE_TEST_CFLAGS:-} \
     -I"$src/sys/arch/arm/sunxi" \
-    "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwinfo.c" \
-    "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwimage.c" \
+    "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwinfo.c" "$src/sys/dev/powervr/pvr_fwinfo.c" \
+    "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwimage.c" "$src/sys/dev/powervr/pvr_fwimage.c" \
     "$tools/a733-gpu-fwimage-contract.c" -o "$work/contract"
 "$work/contract" "$@"

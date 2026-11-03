@@ -30,5 +30,5 @@ sed '/^#include /d' "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwstart.h" \
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror ${FWSTART_TEST_CFLAGS:-} \
     -I"$work" -I"$src/sys/arch/arm/sunxi" \
     "$tools/a733-gpu-fwstart-contract.c" \
-    "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwinfo.c" -o "$work/test"
+    "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwinfo.c" "$src/sys/dev/powervr/pvr_fwinfo.c" -o "$work/test"
 "$work/test" "$@"

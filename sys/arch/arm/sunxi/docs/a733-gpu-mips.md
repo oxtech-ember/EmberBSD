@@ -1,6 +1,6 @@
 # A733 PowerVR MIPS memory encoders
 
-The native [helpers](../sun60i_a733_gpu_mips.c)
+The native [helpers](../sun60i_a733_gpu_mips.c) wrap the [common mechanism](../../../../dev/powervr/pvr_mips.c) and
 encode the initial MIPS firmware page table and boot data.
 They perform no allocation, file access, DMA, MMIO, clock changes, or execution.
 The GPU consumer does not call these helpers yet.

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: MIT */
+/* Origin: EmberBSD PowerVR shared mechanism, from A733; AI-assisted. */
 /*
  * Copyright (c) 2023 Imagination Technologies Ltd.
  * Copyright (c) 2026 EmberBSD contributors.
@@ -29,38 +30,16 @@
 #ifndef _SUN60I_A733_GPU_MIPS_H
 #define _SUN60I_A733_GPU_MIPS_H
 
-#include <sys/types.h>
-#ifndef _KERNEL
-#include <stddef.h>
-#include <stdint.h>
-#endif
+#include "../../../dev/powervr/pvr_mips.h"
 
-#define A733_GPU_MIPS_PAGE_SIZE		4096
-#define A733_GPU_MIPS_PT_SIZE		16384
-#define A733_GPU_MIPS_PT_PAGES		4
-#define A733_GPU_MIPS_BOOT_DATA_SIZE	64
-#define A733_GPU_MIPS_HEAP_BASE		UINT64_C(0xc0000000)
-#define A733_GPU_MIPS_HEAP_END		UINT64_C(0xc1000000)
-#define A733_GPU_MIPS_REGISTER_PA	UINT64_C(0x01800000)
+#define A733_GPU_MIPS_BOOT_DATA_SIZE PVR_MIPS_BOOT_DATA_SIZE
+#define A733_GPU_MIPS_HEAP_BASE PVR_MIPS_HEAP_BASE
+#define A733_GPU_MIPS_HEAP_END PVR_MIPS_HEAP_END
+#define A733_GPU_MIPS_PAGE_SIZE PVR_MIPS_PAGE_SIZE
+#define A733_GPU_MIPS_PT_PAGES PVR_MIPS_PT_PAGES
+#define A733_GPU_MIPS_PT_SIZE PVR_MIPS_PT_SIZE
+#define A733_GPU_MIPS_REGISTER_PA UINT64_C(0x01800000)
 
-/*
- * Pure page-table and initial-boot encoders. No allocation, I/O, DMA, or cache operations.
- * The caller owns real buffers and serializes all access to them. Inputs
- * must remain stable for the entire call. Byte outputs may be unaligned;
- * native uint64_t input arrays must be aligned. Sizes must match exactly.
- * Both functions return positive errno and preserve outputs on every error.
- * EINVAL: malformed argument, range, prior PTE, or overlapping buffers.
- * EEXIST: occupied target PTE or physical page alias.
- * EOPNOTSUPP: PA in the wrapper remap window 0x1fc00000..0x1fc03fff.
- * PA aliases are an initial-boot restriction, not a limit of the MIPS ABI.
- */
-
-/*
- * Write 1..4096 little-endian PTEs for 4K pages in the 16 MiB firmware heap.
- * PAs must fit 36 bits. Prior entries must be zero or use the same encoding.
- * New pages must not alias each other or any prior mapped physical page.
- * The caller must initially zero the table. This function does not replace existing entries.
- */
 int sun60i_a733_gpu_mips_map(void *, size_t, uint64_t, const uint64_t *,
     size_t);
 
@@ -82,5 +61,6 @@ int sun60i_a733_gpu_mips_unmap(void *, size_t, uint64_t, const uint64_t *,
  */
 int sun60i_a733_gpu_mips_boot_data(void *, size_t, uint64_t, uint64_t,
     const uint64_t [A733_GPU_MIPS_PT_PAGES]);
+
 
 #endif /* _SUN60I_A733_GPU_MIPS_H */

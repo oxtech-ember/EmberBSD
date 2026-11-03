@@ -12,6 +12,6 @@ work=$(mktemp -d "${TMPDIR:-/tmp}/a733-mips.XXXXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror ${MIPS_TEST_CFLAGS:-} \
     -I"$src/sys/arch/arm/sunxi" \
-    "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_mips.c" \
+    "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_mips.c" "$src/sys/dev/powervr/pvr_mips.c" \
     "$tools/a733-gpu-mips-contract.c" -o "$work/contract"
 "$work/contract"

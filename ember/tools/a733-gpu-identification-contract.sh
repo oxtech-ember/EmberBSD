@@ -10,8 +10,6 @@ sed '/^#include /d; /^__KERNEL_RCSID(/d' \
     "$src/sys/arch/arm/sunxi/sun60i_a733_gpu.c" > "$work/driver.h"
 cp "$src/sys/arch/arm/sunxi/sun60i_a733_ccu.h" \
     "$src/sys/arch/arm/sunxi/sun60i_a733_pck600.h" \
-    "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwinfo.h" \
-    "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwimage.h" \
     "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwinit.h" "$work/"
 # Stage 18 needs the serializer ABI and the packed compute-image format;
 # stages 19-21 add the firmware-heap submission provider API.
@@ -48,9 +46,9 @@ for name in config_defer config_mountroot_done config_process_deferred config_fi
     sed -n "/^$name(/,/^}/p" "$autoconf" >> "$work/autoconf.h"
 done
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -Wno-unused-parameter \
-    ${GPU_ID_TEST_CFLAGS:-} -I"$work" \
+    ${GPU_ID_TEST_CFLAGS:-} -I"$work" -I"$src/sys/arch/arm/sunxi" \
     "$tools/a733-gpu-identification-contract.c" \
-    "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwinfo.c" \
+    "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwinfo.c" "$src/sys/dev/powervr/pvr_fwinfo.c" \
     "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwcompute_cmd.c" \
     "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwcompute_file.c" \
     "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwcompute.c" -o "$work/test"

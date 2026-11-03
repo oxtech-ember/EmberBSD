@@ -24,5 +24,5 @@ sed -n '/^\/\* Convert parsed firmware metadata/,/^\/\* Reserve registration/p' 
 "${CC:-cc}" -std=c11 -Wall -Wextra -Werror ${CFLAGS:-} \
     -I"$work" -I"$src/sys/arch/arm/sunxi" \
     "$src/ember/tools/pvr-query-contract.c" \
-    "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwinfo.c" -o "$work/contract"
+    "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwinfo.c" "$src/sys/dev/powervr/pvr_fwinfo.c" -o "$work/contract"
 "$work/contract" "$firmware"

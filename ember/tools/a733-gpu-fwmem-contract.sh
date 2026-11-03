@@ -28,8 +28,8 @@ sed '/^#include /d' "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwmem.h" \
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror ${FWMEM_TEST_CFLAGS:-} \
     -I"$work" -I"$src/sys/arch/arm/sunxi" \
     "$tools/a733-gpu-fwmem-contract.c" \
-    "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwinfo.c" \
+    "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwinfo.c" "$src/sys/dev/powervr/pvr_fwinfo.c" \
     "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwinit.c" \
-    "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwimage.c" \
-    "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_mips.c" -o "$work/test"
+    "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwimage.c" "$src/sys/dev/powervr/pvr_fwimage.c" \
+    "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_mips.c" "$src/sys/dev/powervr/pvr_mips.c" -o "$work/test"
 "$work/test" "$@"
