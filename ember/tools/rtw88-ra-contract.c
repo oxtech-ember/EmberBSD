@@ -2543,10 +2543,11 @@ static void
 test_ra_dfs_channel_list(void)
 {
 	static struct ieee80211com ic;
+	struct rtw88_softc core = {0};
 	unsigned listed = 0;
 
 	memset(&ic, 0, sizeof(ic));
-	state_driver_channels(&ic);
+	state_driver_channels(&ic, &core);
 	for (unsigned ch = 36; ch <= 165; ch++) {
 		int want = ch % 4 == 0 ? ch <= 144 && (ch < 68 || ch >= 100) :
 		    ch >= 149 && (ch - 149) % 4 == 0;

@@ -51,14 +51,15 @@ constants.append(re.search(r'^#define\s+IEEE80211_NODE_AMSDU_RX\s+.*$',read('sys
 (out/'aploss-constants.inc').write_text(''.join(constants))
 (out/'ieee80211_ht20.h').write_text(read('sys/net80211/ieee80211_ht20.h'))
 watchdog = body(net, 'rtw88_net_watchdog', 'static void')
-close = '\t\tif (missed)\n\t\t\trtw88_dfs_close(net->core);'
+close = '\t\tif (missed && net->core->sc_executor == NULL)\n\t\t\trtw88_dfs_close(net->core);'
 beacon_miss = '\t\tif (missed)\n\t\t\tieee80211_beacon_miss(&net->ic);'
 poll = '\t\tmissed = rtw88_net_beacon_poll('
 enter = '\t\tmutex_enter(net->lock);'
 leave = '\t\tmutex_exit(net->lock);'
-assert all(watchdog.count(s) == 1 for s in (enter, poll, close, leave, beacon_miss)) and \
-    watchdog.index(enter) < watchdog.index(poll) < watchdog.index(close) < \
-    watchdog.index(leave) < watchdog.index(beacon_miss), \
+run_watchdog = watchdog[watchdog.index('\tif (net->ic.ic_state == IEEE80211_S_RUN) {'):]
+assert all(run_watchdog.count(s) == 1 for s in (enter, poll, close, leave, beacon_miss)) and \
+    run_watchdog.index(enter) < run_watchdog.index(poll) < run_watchdog.index(close) < \
+    run_watchdog.index(leave) < run_watchdog.index(beacon_miss), \
     'DFS permit must close before beacon-miss handling'
 parts = [body('sys/net80211/ieee80211_ht20.c', 'ieee80211_ht20_reset', 'void'),
          body('sys/net80211/ieee80211_ht20.c', 'ieee80211_ht20_state_request', 'int'),

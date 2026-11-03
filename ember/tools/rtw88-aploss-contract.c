@@ -58,6 +58,7 @@ struct ieee80211com {
     struct ieee80211_ht20_diag ic_ht20_diag;
 };
 struct rtw88_softc {
+    void *sc_executor;
     int sc_linked;
     struct { int active,configured; } sc_ra;
     struct rtw88_phy_state sc_phy;
@@ -113,6 +114,12 @@ static unsigned mstohz(unsigned ms) { return (unsigned)(((uint64_t)ms*hz+999)/10
 #define KERNEL_UNLOCK_ONE(p) do {(void)(p);CHECK(giant);giant=0;} while(0)
 static int splnet(void) { return 0; }
 static void splx(int s) { (void)s; }
+/* This fixture models the PCI path; SDIO executor behavior has its own tests. */
+static int rtw88_net_newstate_async(struct ieee80211com *ic, enum ieee80211_state state, int arg)
+{
+    (void)ic; (void)state; (void)arg;
+    abort();
+}
 static int rtw88_net_newstate(struct ieee80211com *,enum ieee80211_state,int);
 static int ieee80211_new_state(struct ieee80211com *ic,enum ieee80211_state s,int arg) {
     assert(ic != NULL);assert(ic->ic_ifp != NULL);assert(ic->ic_ifp->if_softc != NULL);
