@@ -664,9 +664,12 @@ fwprobe_run(bus_space_tag_t bst, bus_space_handle_t bsh,
 			    out->polls == PVR_FWPROBE_MAX_POLLS)
 				break;
 			if (irq_arm != NULL) {
-				error = irq_arm(irq_cookie);
-				if (error != 0)
+				int arm_error = irq_arm(irq_cookie);
+
+				if (arm_error != 0) {
+					error = arm_error;
 					break;
+				}
 				getnanouptime(&now);
 				timespecsub(&now, &start, &elapsed);
 				if (elapsed.tv_sec >= 1) {

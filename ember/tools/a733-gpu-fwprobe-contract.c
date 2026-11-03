@@ -77,6 +77,7 @@ static unsigned int allocations, frees;
 static unsigned int last_wait;
 static uint64_t clock_ns, total_wait_us, jump_ns;
 static bool freeze_clock, poke_fault, fault_after_execution;
+static bool jump_after_published;
 static bool read_only_progress, response_without_read, foreign_updates;
 static bool delayed_payload;
 static uint32_t response;
@@ -222,6 +223,8 @@ firmware_tick(void)
 	}
 	foreign_activity();
 	clock_ns += jump_ns;
+	if (result.published && jump_after_published)
+		clock_ns += UINT64_C(1000000000);
 }
 
 static void
@@ -1638,6 +1641,34 @@ main(void)
 		CHECK(irq_arm_calls == (mode == 2 ? 0 : 1) && result.attempted &&
 		    !result.published && writes == 0);
 	}
+	/* Successful arm does not turn published timeouts into success. */
+	for (unsigned mode = 0; mode < 2; mode++) {
+		reset(); owner.profile = PVR_FW_PROFILE_GE8300; owner.device_exposed = true;
+		owner.image.info.bvnc = UINT64_C(0x0016006600360026);
+		booted.compchecks_updated = 1; booted.os_count_support = 8;
+		booted.hw_layout_version = booted.fw_layout_version = 3;
+		booted.hw_bvnc = booted.fw_bvnc = owner.image.info.bvnc;
+		booted.fw_processor_version = 0x81234567; booted.ddk_version = 0x23456789;
+		booted.ddk_build = 0x3456789a; booted.build_options = 0x456789ab;
+		put64(cpu[4] + COMPCHECKS + 8, owner.image.info.bvnc);
+		put64(cpu[4] + COMPCHECKS + 24, owner.image.info.bvnc);
+		memcpy(expected[4], cpu[4], sizes[4]);
+		CHECK(pvr_fwprobe(&owner, 0x12340000, &owner, &booted, &result) == 0);
+		previous = previous_saved = result; memset(&result, 0, sizeof(result)); test_slot = 1;
+		syncs = writes = barriers = waits = observations = completions = 0;
+		phase = read_phase = 0; clock_ns = total_wait_us = jump_ns = 0;
+		irq_arm_calls = irq_arm_error = 0; irq_arm_expire = false;
+		complete_at = 0; freeze_clock = mode == 1;
+		jump_after_published = mode == 0;
+		CHECK(pvr_fwprobe_mmucache_irq(&owner, 0x12340000, &owner, &booted,
+		    &previous, fake_irq_arm, &owner, &result) == ETIMEDOUT);
+		CHECK(irq_arm_calls == 1 && result.published && result.kicked &&
+		    result.error == ETIMEDOUT && result.after.read_offset == 1 &&
+		    result.after.write_offset == 2 && result.after.rtn == 0);
+		CHECK(mode == 0 ? clock_ns >= UINT64_C(1000000000) :
+		    result.polls == PVR_FWPROBE_MAX_POLLS);
+	}
+	freeze_clock = false; jump_after_published = false;
 	irq_arm_error = 0; irq_arm_expire = false;
 	if (getenv("FWQUEUE_ONLY") == NULL) {
 		runtime_tests();
