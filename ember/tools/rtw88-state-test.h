@@ -408,7 +408,7 @@ static unsigned state_scan_end,state_scan_free;
 static void ieee80211_free_allnodes(void *table) { (void)table;state_scan_free++; }
 static void ieee80211_end_scan(struct ieee80211com *ic) { (void)ic;state_scan_end++; }
 #include "native-band-shared.inc"
-static void state_driver_channels(struct ieee80211com *ic)
+static void state_driver_channels(struct ieee80211com *ic, struct rtw88_softc *core)
 {
 #include "native-band-driver.inc"
 }
@@ -868,7 +868,7 @@ test_native_band_media(void)
   if(!state_fixture_start(&s,cases[c].old,cases[c].old>14?9:20))return;
   rtw88_net_state_work(&s.net.state_work,&s.net);
   struct ieee80211com *ic=&s.net.ic;
-  state_driver_channels(ic);
+  state_driver_channels(ic, s.net.core);
   memset(ic->ic_chan_active,0,sizeof(ic->ic_chan_active));
   for(unsigned i=1;i<=IEEE80211_CHAN_MAX;i++)if(ic->ic_channels[i].ic_flags)setbit(ic->ic_chan_active,i);
   ic->ic_modecaps=(1U<<IEEE80211_MODE_AUTO)|(1U<<IEEE80211_MODE_11A)|(1U<<IEEE80211_MODE_11B)|(1U<<IEEE80211_MODE_11G);
@@ -921,7 +921,7 @@ test_native_band_invalid_and_fault(void)
   if(!state_fixture_start(&s,8,20))return;
   rtw88_net_state_work(&s.net.state_work,&s.net);
   struct ieee80211com *ic=&s.net.ic;
-  state_driver_channels(ic);
+  state_driver_channels(ic, s.net.core);
   memset(ic->ic_chan_active,0,sizeof(ic->ic_chan_active));
   if(kind==1)setbit(ic->ic_chan_active,200); /* Undeclared active channel. */
   if(kind>=2)setbit(ic->ic_chan_active,36);

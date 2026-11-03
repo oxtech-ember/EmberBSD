@@ -48,7 +48,8 @@ code=r'''
 #include <net80211/ieee80211_rsn.h>
 typedef int esp_err_t;
 typedef struct { struct { uint8_t ssid[32],bssid[6]; bool bssid_set;
- struct {int authmode;} threshold; struct {bool capable,required;} pmf_cfg; } sta; } wifi_config_t;
+ struct {int authmode;} threshold; struct {bool capable,required;} pmf_cfg;
+ uint8_t sae_pwe_h2e; } sta; } wifi_config_t;
 #define WIFI_IF_STA 0
 #define WIFI_AUTH_WPA2_PSK 3
 #define WIFI_AUTH_WPA3_PSK 6
@@ -83,6 +84,8 @@ static int esp_wifi_unset_appie_internal(int type) {
  else { assert(type==WIFI_APPIE_ASSOC_REQ);unset_assoc++; }
  return 0; }
 static int esp_wifi_sta_pmf_enabled(void) { return pmf_configured; }
+static unsigned esp_wifi_get_config_sae_pwe_h2e_internal(int ifx) {
+ assert(ifx==WIFI_IF_STA);return 0; }
 ''' + fn('espwifi_wpa2_rsn','bool') + fn('espwifi_ext_clear_assoc_appies','void') + fn('espwifi_ext_connect','int') + fn('espwifi_ext_sta_pmf_configured','int') + r'''
 int main(void) {
  uint8_t ssid[4]={'t','e','s','t'},bssid[6]={2,3,4,5,6,7};

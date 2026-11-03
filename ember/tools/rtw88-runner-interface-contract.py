@@ -16,6 +16,9 @@ with tempfile.TemporaryDirectory(prefix='rtw-runner-interface-') as temporary:
     cc = work / 'cc'
     cc.write_text('#!' + sys.executable + '''\nimport os, pathlib, sys
 with open(os.environ['CC_LOG'], 'a') as f: f.write(' '.join(sys.argv[1:]) + '\\n')
+for arg in sys.argv[1:]:
+    if arg.endswith('.c') and not pathlib.Path(arg).is_file():
+        raise SystemExit('missing source input: ' + arg)
 out = pathlib.Path(sys.argv[sys.argv.index('-o') + 1])
 out.write_text('#!/bin/sh\\nexit 0\\n')
 out.chmod(0o755)

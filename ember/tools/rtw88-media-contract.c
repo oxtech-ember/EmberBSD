@@ -134,8 +134,10 @@ static int ieee80211_new_state(struct ieee80211com *ic, enum ieee80211_state sta
 #include "media-wrapper.inc"
 static unsigned checks,failures;
 #define CHECK(c) do{checks++;if(!(c)){failures++;fprintf(stderr,"line%u: %s\n",(unsigned)__LINE__,#c);}}while(0)
-static void driver_channels(struct ieee80211com *ic)
+static void driver_channels(struct ieee80211com *ic, unsigned profile)
 {
+ struct { void *sc_executor; unsigned sc_profile_channels_2g; } model = {0}, *core = &model;
+ if (profile != 0) { core->sc_executor = core; core->sc_profile_channels_2g = profile; }
  const struct rtw88_caps caps={.bands=RTW88_BAND_2G|RTW88_BAND_5G};
 #include "media-driver.inc"
 }
@@ -180,7 +182,7 @@ check_driver_media_refresh(void)
   net.ic.ic_opmode=IEEE80211_M_STA; net.ic.ic_phytype=IEEE80211_T_OFDM;
   net.ic.ic_fixed_rate=IEEE80211_FIXED_RATE_NONE;
   ifp.if_softc=&net; ifp.if_flags=IFF_UP|IFF_RUNNING; instance=&net.ic;
-  driver_channels(&net.ic); ieee80211_ifattach(&net.ic);
+  driver_channels(&net.ic, 0); ieee80211_ifattach(&net.ic);
   ieee80211_media_init(&net.ic,rtw88_net_media_change,ieee80211_media_status);
   net.configured_media=net.ic.ic_media.ifm_cur->ifm_media;
   /* Model sta_join's runtime-mode result; AUTO active channels are unchanged. */
@@ -229,7 +231,13 @@ int main(void)
  ic.ic_bss=&bss;
  ic.ic_ifp=&ifp;ic.ic_opmode=IEEE80211_M_STA;ic.ic_phytype=IEEE80211_T_OFDM;
  ic.ic_fixed_rate=IEEE80211_FIXED_RATE_NONE;instance=&ic;
- driver_channels(&ic);
+ {
+  struct ieee80211com selected = {0};
+  driver_channels(&selected, (1U << 0) | (1U << 5));
+  for (unsigned ch = 1; ch <= 13; ch++)
+   CHECK((selected.ic_channels[ch].ic_flags != 0) == (ch == 1 || ch == 6));
+ }
+ driver_channels(&ic, 0);
  ic.ic_sta_set_port=sta_port_hook;
  ieee80211_ifattach(&ic);
  CHECK(ic.ic_sta_set_port==NULL);
