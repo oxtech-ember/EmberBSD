@@ -112,6 +112,10 @@ then
             esac
             case "${_ember_native_binding}" in
             HOST_SH) HOST_SH=${_ember_native_target} ;;
+            HOST_AUTOCONF) HOST_AUTOCONF=${_ember_native_target} ;;
+            HOST_PYTHON) HOST_PYTHON=${_ember_native_target} ;;
+            HOST_PERL) HOST_PERL=${_ember_native_target} ;;
+            HOST_GMAKE) HOST_GMAKE=${_ember_native_target} ;;
             HOST_CC) HOST_CC=${_ember_native_target} ;;
             HOST_CXX) HOST_CXX=${_ember_native_target} ;;
             HOST_CPP) HOST_CPP=${_ember_native_target} ;;
@@ -671,7 +675,8 @@ initdefaults()
 		setmakeenv SHELL "${HOST_SH}"
 		setmakeenv SED "${SED}"
 		for _ember_native_var in HOST_CC HOST_CXX HOST_CPP HOST_AR \
-		    HOST_LD HOST_RANLIB HOST_LN HOST_YACC HOST_MV_CP HOST_MV_RM
+		    HOST_LD HOST_RANLIB HOST_LN HOST_YACC HOST_MV_CP HOST_MV_RM \
+		    HOST_PYTHON HOST_PERL HOST_GMAKE HOST_AUTOCONF
 		do
 			eval _ember_native_value=\"\${${_ember_native_var}}\"
 			setmakeenv "${_ember_native_var}" "${_ember_native_value}"
@@ -1133,7 +1138,7 @@ setmakeenv()
 
 safe_setmakeenv()
 {
-	check_native_override "$1" -V
+	check_native_override "$1" -V "$2"
 	case "$1" in
 
 	#	Look for any vars we want to prohibit here, like:
@@ -1169,8 +1174,20 @@ check_native_override()
 {
 	${_ember_native_mode} || return 0
 	case "$1" in
+	HOST_PYTHON) _ember_selected_generator=${HOST_PYTHON} ;;
+	HOST_PERL) _ember_selected_generator=${HOST_PERL} ;;
+	HOST_GMAKE) _ember_selected_generator=${HOST_GMAKE} ;;
+	HOST_AUTOCONF) _ember_selected_generator=${HOST_AUTOCONF} ;;
+	*) _ember_selected_generator= ;;
+	esac
+	if [ -n "${_ember_selected_generator}" ]; then
+		[ "$2" = -V ] && [ "${3-}" = "${_ember_selected_generator}" ] && return 0
+		usage "Cannot change selected native tool variable $1 with $2"
+	fi
+	case "$1" in
 	EMBER_NATIVE_*|_ember_native_*|PATH|HOST_SH|HOST_CC|HOST_CXX|HOST_CPP|\
 	HOST_AR|HOST_LD|HOST_RANLIB|HOST_LN|HOST_YACC|HOST_MV_CP|HOST_MV_RM|\
+	HOST_PYTHON|HOST_PERL|HOST_GMAKE|HOST_AUTOCONF|\
 	BSHELL|CONFIG_SHELL|SHELL|SED)
 		usage "Cannot change selected native tool variable $1 with $2" ;;
 	esac

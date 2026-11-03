@@ -1,6 +1,7 @@
 EmberBSD-native-tools 2
 ar ar HOST_AR
 as as -
+autoconf autoconf HOST_AUTOCONF
 awk awk -
 basename basename -
 c++ cxx HOST_CXX
@@ -21,6 +22,7 @@ egrep egrep -
 env env -
 expr expr -
 find find -
+gmake gmake HOST_GMAKE
 grep grep -
 head head -
 hostname hostname -
@@ -35,9 +37,10 @@ mkdir mkdir -
 mktemp mktemp -
 mv mv -
 nm nm -
-perl perl -
+perl perl HOST_PERL
 printf printf -
 pwd pwd -
+python python HOST_PYTHON
 ranlib ranlib HOST_RANLIB
 readlink readlink -
 rm rm HOST_MV_RM
