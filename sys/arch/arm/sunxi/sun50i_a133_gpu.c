@@ -9,6 +9,8 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/endian.h>
 #include <sys/mutex.h>
 #include <sys/intr.h>
+#include <sys/kmem.h>
+#include <sys/sha2.h>
 #include <sys/proc.h>
 #include <sys/time.h>
 #include <sys/sysctl.h>
@@ -21,6 +23,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <dev/powervr/pvr_ge8300.h>
 #include <dev/powervr/pvr_fwboot.h>
 #include <dev/powervr/pvr_fwprobe.h>
+#include <dev/powervr/pvr_fwheap.h>
 #include <dev/powervr/pvr_mips_irq.h>
 #include <arm/sunxi/sun50i_a133_gpu_owner.h>
 
@@ -49,6 +52,14 @@ struct a133_gpu_softc {
 	struct pvr_fwboot_result boot_result;
 	struct pvr_fwprobe_result queue_log, queue_cache;
 	struct pvr_fwprobe_observation queue_fresh;
+	struct pvr_fwheap *compute_heap;
+	struct pvr_fwvm *compute_vm;
+	struct pvr_fwprobe_result compute_sync, compute_kick;
+	int compute_stage, compute_error, compute_attempted, compute_polls;
+	int compute_sync_read, compute_sync_write, compute_sync_return;
+	int compute_kick_read, compute_kick_write, compute_kick_return;
+	int compute_ccb_read, compute_ccb_write, compute_ufo, compute_canary;
+	int compute_faults, compute_hwr;
 	struct a133_gpu_owner owner;
 	kmutex_t irq_lock;
 	void *irq_cookie, *irq_soft;
@@ -71,6 +82,7 @@ static int a133_gpu_match(device_t, cfdata_t, void *);
 static void a133_gpu_attach(device_t, device_t, void *);
 static int a133_gpu_control(SYSCTLFN_ARGS);
 static int a133_gpu_queue_control(SYSCTLFN_ARGS);
+static int a133_gpu_compute_control(SYSCTLFN_ARGS);
 static int a133_gpu_interrupt(void *);
 static void a133_gpu_irq_soft(void *);
 static int a133_gpu_irq_arm(void *);
@@ -802,6 +814,294 @@ a133_gpu_queue_control(SYSCTLFN_ARGS)
 	return error;
 }
 
+/* One fixed, CPU-produced canary image; no arbitrary shader interface. */
+static int
+a133_gpu_compute_run(struct a133_gpu_softc *sc)
+{
+	static const uint8_t pinned[SHA256_DIGEST_LENGTH] = {
+		0xb7, 0x02, 0x6d, 0xf9, 0x48, 0x75, 0x09, 0x73,
+		0x38, 0x24, 0x3e, 0x6b, 0xc1, 0x53, 0x2b, 0xe7,
+		0x0c, 0x46, 0x1f, 0x73, 0x99, 0x5f, 0x78, 0xc2,
+		0x9c, 0xb1, 0x72, 0xb0, 0x4b, 0x98, 0x9d, 0xc6
+	};
+	static const uint16_t roles[PVR_FWCOMPUTE_PROGRAMS] = {
+		PVR_FWCOMPUTE_USC_PROGRAMS, PVR_FWCOMPUTE_PDS_PROGRAMS,
+		PVR_FWCOMPUTE_CDM_STREAM
+	};
+	struct pvr_fwcompute_file file;
+	struct pvr_fwcompute_inputs inputs;
+	struct pvr_fwcompute_image *image = NULL;
+	struct pvr_fwprobe_observation fresh = { 0 };
+	struct a133_gpu_diagnostics saved_diag;
+	struct pvr_dma *scratch = NULL;
+	firmware_handle_t fh = NULL;
+	SHA256_CTX hash;
+	uint8_t digest[SHA256_DIGEST_LENGTH], *bytes = NULL;
+	uint64_t rate;
+	uint32_t read_offset = 0, write_offset = 0, ufo = 0, canary;
+	struct timespec start, now, elapsed;
+	off_t length;
+	size_t size = 0, i, j;
+	int error, irq_error;
+
+	if (sc->compute_attempted)
+		return EBUSY;
+	if (sc->queue_stage != 5 || sc->queue_error != 0 ||
+	    sc->memory == NULL || sc->compute_heap != NULL ||
+	    sc->compute_vm != NULL)
+		return ENXIO;
+	sc->compute_attempted = 1;
+	sc->compute_stage = 1;
+	mutex_enter(&sc->irq_lock);
+	irq_error = sc->irq_fault;
+	mutex_exit(&sc->irq_lock);
+	if (irq_error != 0) {
+		error = irq_error;
+		goto out;
+	}
+	/* Keep the boot diagnostics unchanged when rechecking the live OPP. */
+	saved_diag = sc->diag;
+	error = a133_gpu_live(sc, &rate);
+	sc->diag = saved_diag;
+	if (error != 0 || rate != sc->effective_hz) {
+		if (error == 0)
+			error = EBUSY;
+		goto out;
+	}
+	error = pvr_fwprobe_observe(sc->memory, &sc->boot_result, 1,
+	    PVR_FWPROBE_MMUCACHE, 0, &fresh);
+	if (error != 0)
+		goto out;
+	sc->compute_stage = 2;
+	error = firmware_open("powervr", "ge8300-compute.bin", &fh);
+	if (error != 0)
+		goto out;
+	length = firmware_get_size(fh);
+	if (length != 322452) {
+		error = EINVAL;
+		goto out;
+	}
+	size = (size_t)length;
+	bytes = kmem_alloc(size, KM_SLEEP);
+	error = firmware_read(fh, 0, bytes, size);
+	if (error != 0)
+		goto out;
+	error = firmware_close(fh);
+	fh = NULL;
+	if (error != 0)
+		goto out;
+	SHA256_Init(&hash);
+	SHA256_Update(&hash, bytes, size);
+	SHA256_Final(digest, &hash);
+	if (memcmp(digest, pinned, sizeof(pinned)) != 0) {
+		error = EAUTH;
+		goto out;
+	}
+	error = pvr_fwcompute_file_parse(bytes, size, PVR_FWCOMPUTE_GE8300_BVNC,
+	    &file);
+	if (error != 0)
+		goto out;
+	SHA256_Init(&hash);
+	SHA256_Update(&hash, bytes + file.header_bytes, file.payload_bytes);
+	SHA256_Final(digest, &hash);
+	if (memcmp(digest, file.payload_digest, sizeof(digest)) != 0) {
+		error = EAUTH;
+		goto out;
+	}
+	memset(&inputs, 0, sizeof(inputs));
+	pvr_fwcompute_file_fwspans(inputs.fw);
+	for (i = 0; i < PVR_FWCOMPUTE_PROGRAMS; i++) {
+		for (j = 0; j < PVR_FWCOMPUTE_RESOURCES; j++)
+			if (file.resource[j].role == roles[i])
+				break;
+		if (j == PVR_FWCOMPUTE_RESOURCES) {
+			error = EINVAL;
+			goto out;
+		}
+		inputs.program[i].bytes = bytes + file.header_bytes +
+		    file.resource[j].offset;
+		inputs.program[i].size = file.resource[j].bytes;
+		inputs.program[i].gpu_va = file.resource[j].va;
+	}
+	memcpy(&inputs.static_state, bytes + file.header_bytes +
+	    file.static_offset, PVR_FWCOMPUTE_STATE_BYTES);
+	inputs.command = file.command;
+	inputs.priority = file.priority;
+	inputs.pid = file.pid;
+	inputs.context_id = file.context_id;
+	inputs.job_id = file.job_id;
+	image = kmem_alloc(sizeof(*image), KM_SLEEP);
+	error = pvr_fwcompute_prepare(PVR_FW_PROFILE_GE8300, &inputs,
+	    image, sizeof(*image));
+	if (error != 0)
+		goto out;
+	sc->compute_stage = 3;
+	error = pvr_fwheap_prepare(sc->dmat, sc->memory, image,
+	    &sc->compute_heap);
+	if (error != 0)
+		goto out;
+	error = pvr_fwheap_map(sc->compute_heap, sc->memory);
+	if (error != 0)
+		goto out;
+	sc->compute_stage = 4;
+	error = pvr_fwprobe_ge_heap_sync(sc->bst, sc->bsh, sc->memory,
+	    &sc->boot_result, &sc->queue_cache, sc->compute_heap,
+	    &sc->compute_sync);
+	if (sc->compute_sync.polls != 0) {
+		sc->compute_sync_read = sc->compute_sync.after.read_offset;
+		sc->compute_sync_write = sc->compute_sync.after.write_offset;
+		sc->compute_sync_return = sc->compute_sync.after.rtn;
+		sc->compute_faults = sc->compute_sync.after.fw_faults;
+		sc->compute_hwr = sc->compute_sync.after.hwr_state;
+	}
+	if (error != 0)
+		goto out;
+	mutex_enter(&sc->irq_lock);
+	irq_error = sc->irq_fault;
+	mutex_exit(&sc->irq_lock);
+	if (irq_error != 0) {
+		error = irq_error;
+		goto out;
+	}
+	sc->compute_stage = 5;
+	error = pvr_fwvm_prepare(sc->dmat, &file, bytes, sc->compute_heap,
+	    &sc->compute_vm);
+	if (error != 0)
+		goto out;
+	for (i = 0; i < PVR_FWCOMPUTE_RESOURCES; i++) {
+		if (file.resource[i].role == PVR_FWCOMPUTE_SCRATCH) {
+			if (file.resource[i].va != UINT64_C(0x8000000000) ||
+			    file.resource[i].bytes != sizeof(canary)) {
+				error = EINVAL;
+				goto out;
+			}
+			scratch = &sc->compute_vm->resource[i];
+			break;
+		}
+	}
+	if (scratch == NULL || scratch->cpu == NULL || scratch->map == NULL) {
+		error = EINVAL;
+		goto out;
+	}
+	mutex_enter(&sc->irq_lock);
+	irq_error = sc->irq_fault;
+	mutex_exit(&sc->irq_lock);
+	if (irq_error != 0) {
+		error = irq_error;
+		goto out;
+	}
+	sc->compute_stage = 6;
+	error = pvr_fwprobe_ge_kick(sc->bst, sc->bsh, sc->memory,
+	    &sc->boot_result, &sc->compute_sync, sc->compute_heap,
+	    sc->compute_vm, &sc->compute_kick);
+	if (sc->compute_kick.polls != 0) {
+		sc->compute_kick_read = sc->compute_kick.after.read_offset;
+		sc->compute_kick_write = sc->compute_kick.after.write_offset;
+		sc->compute_kick_return = sc->compute_kick.after.rtn;
+		sc->compute_faults = sc->compute_kick.after.fw_faults;
+		sc->compute_hwr = sc->compute_kick.after.hwr_state;
+	}
+	if (error != 0)
+		goto out;
+	sc->compute_stage = 7;
+	getnanouptime(&start);
+	for (i = 0; i < 40001; i++) {
+		pvr_fwheap_observe(sc->compute_heap, &read_offset, &write_offset, &ufo);
+		sc->compute_polls++;
+		memset(&fresh, 0, sizeof(fresh));
+		error = pvr_fwprobe_observe(sc->memory, &sc->boot_result, 3,
+		    ROGUE_FWIF_KCCB_CMD_KICK, 0, &fresh);
+		if (fresh.valid) {
+			sc->compute_faults = fresh.state.fw_faults;
+			sc->compute_hwr = fresh.state.hwr_state;
+		}
+		if (error != 0)
+			break;
+		mutex_enter(&sc->irq_lock);
+		irq_error = sc->irq_fault;
+		mutex_exit(&sc->irq_lock);
+		if (irq_error != 0) {
+			error = irq_error;
+			break;
+		}
+		if (read_offset == PVR_FWCOMPUTE_USED_BYTES &&
+		    write_offset == PVR_FWCOMPUTE_USED_BYTES && ufo == 1)
+			break;
+		getnanouptime(&now);
+		timespecsub(&now, &start, &elapsed);
+		if (elapsed.tv_sec >= 4 || i == 40000) {
+			error = ETIMEDOUT;
+			break;
+		}
+		(void)tsleep(&sc->compute_polls, PWAIT, "pvrcomp", 1);
+	}
+	sc->compute_ccb_read = (int)read_offset;
+	sc->compute_ccb_write = (int)write_offset;
+	sc->compute_ufo = (int)ufo;
+	if (error != 0)
+		goto out;
+	sc->compute_stage = 8;
+	bus_dmamap_sync(sc->dmat, scratch->map, 0, sizeof(canary),
+	    BUS_DMASYNC_POSTREAD);
+	memcpy(&canary, scratch->cpu, sizeof(canary));
+	sc->compute_canary = (int)canary;
+	memset(&fresh, 0, sizeof(fresh));
+	error = pvr_fwprobe_observe(sc->memory, &sc->boot_result, 3,
+	    ROGUE_FWIF_KCCB_CMD_KICK, 0, &fresh);
+	if (fresh.valid) {
+		sc->compute_faults = fresh.state.fw_faults;
+		sc->compute_hwr = fresh.state.hwr_state;
+	}
+	if (error == 0 && canary != UINT32_C(0x13579bdf))
+		error = EIO;
+	mutex_enter(&sc->irq_lock);
+	irq_error = sc->irq_fault;
+	mutex_exit(&sc->irq_lock);
+	if (error == 0 && irq_error != 0)
+		error = irq_error;
+	if (error == 0)
+		sc->compute_stage = 9;
+out:
+	if (fh != NULL)
+		(void)firmware_close(fh);
+	if (image != NULL)
+		kmem_free(image, sizeof(*image));
+	if (bytes != NULL)
+		kmem_free(bytes, size);
+	if (sc->compute_vm != NULL && !sc->compute_vm->device_exposed)
+		(void)pvr_fwvm_release(&sc->compute_vm);
+	if (sc->compute_heap != NULL && !sc->compute_heap->heap.device_exposed)
+		(void)pvr_fwheap_release(&sc->compute_heap);
+	sc->compute_error = error;
+	if (error != 0)
+		aprint_error_dev(sc->dev, "compute stage %d failed: %d\n",
+		    sc->compute_stage, error);
+	return error;
+}
+
+static int
+a133_gpu_compute_control(SYSCTLFN_ARGS)
+{
+	struct sysctlnode node = *rnode;
+	struct a133_gpu_softc *sc = a133_gpu_instance;
+	int value = 0, error;
+
+	if (sc == NULL)
+		return ENXIO;
+	node.sysctl_data = &value;
+	error = sysctl_lookup(SYSCTLFN_CALL(&node));
+	if (error != 0 || newp == NULL)
+		return error;
+	if (value != 1)
+		return EINVAL;
+	sysctl_unlock();
+	mutex_enter(&sc->lock);
+	error = a133_gpu_compute_run(sc);
+	mutex_exit(&sc->lock);
+	sysctl_relock();
+	return error;
+}
+
 /* Copy the cached observation under the owner lock; never access hardware. */
 static int
 a133_gpu_status(SYSCTLFN_ARGS)
@@ -857,6 +1157,10 @@ a133_gpu_attach(device_t parent __unused, device_t self, void *aux)
 	sc->queue_log_read = sc->queue_log_write = sc->queue_log_return = -1;
 	sc->queue_cache_read = sc->queue_cache_write = sc->queue_cache_return = -1;
 	sc->queue_fw_faults = sc->queue_hwr_flags = -1;
+	sc->compute_sync_read = sc->compute_sync_write = sc->compute_sync_return = -1;
+	sc->compute_kick_read = sc->compute_kick_write = sc->compute_kick_return = -1;
+	sc->compute_ccb_read = sc->compute_ccb_write = sc->compute_ufo = -1;
+	sc->compute_canary = sc->compute_faults = sc->compute_hwr = -1;
 	if (sysctl_createv(&sc->sysctllog, 0, NULL, &node, 0,
 	    CTLTYPE_NODE, device_xname(self), NULL, NULL, 0, NULL, 0,
 	    CTL_HW, CTL_CREATE, CTL_EOL) != 0 ||
@@ -865,7 +1169,10 @@ a133_gpu_attach(device_t parent __unused, device_t self, void *aux)
 	    a133_gpu_control, 0, NULL, 0, CTL_CREATE, CTL_EOL) != 0 ||
 	    sysctl_createv(NULL, 0, &node, NULL, CTLFLAG_READWRITE,
 	    CTLTYPE_INT, "queue_probe", SYSCTL_DESCR("explicit firmware queue check"),
-	    a133_gpu_queue_control, 0, NULL, 0, CTL_CREATE, CTL_EOL) != 0) {
+	    a133_gpu_queue_control, 0, NULL, 0, CTL_CREATE, CTL_EOL) != 0 ||
+	    sysctl_createv(NULL, 0, &node, NULL, CTLFLAG_READWRITE,
+	    CTLTYPE_INT, "compute_probe", SYSCTL_DESCR("explicit GE8300 canary compute"),
+	    a133_gpu_compute_control, 0, NULL, 0, CTL_CREATE, CTL_EOL) != 0) {
 		aprint_error_dev(self, "cannot create firmware control\n");
 		sysctl_teardown(&sc->sysctllog);
 		mutex_destroy(&sc->irq_lock);
@@ -901,6 +1208,22 @@ a133_gpu_attach(device_t parent __unused, device_t self, void *aux)
 			{ "queue_cache_return", CTLTYPE_INT, &sc->queue_cache_return },
 			{ "queue_fw_faults", CTLTYPE_INT, &sc->queue_fw_faults },
 			{ "queue_hwr_flags", CTLTYPE_INT, &sc->queue_hwr_flags },
+			{ "compute_stage", CTLTYPE_INT, &sc->compute_stage },
+			{ "compute_error", CTLTYPE_INT, &sc->compute_error },
+			{ "compute_attempted", CTLTYPE_INT, &sc->compute_attempted },
+			{ "compute_polls", CTLTYPE_INT, &sc->compute_polls },
+			{ "compute_sync_read", CTLTYPE_INT, &sc->compute_sync_read },
+			{ "compute_sync_write", CTLTYPE_INT, &sc->compute_sync_write },
+			{ "compute_sync_return", CTLTYPE_INT, &sc->compute_sync_return },
+			{ "compute_kick_read", CTLTYPE_INT, &sc->compute_kick_read },
+			{ "compute_kick_write", CTLTYPE_INT, &sc->compute_kick_write },
+			{ "compute_kick_return", CTLTYPE_INT, &sc->compute_kick_return },
+			{ "compute_ccb_read", CTLTYPE_INT, &sc->compute_ccb_read },
+			{ "compute_ccb_write", CTLTYPE_INT, &sc->compute_ccb_write },
+			{ "compute_ufo", CTLTYPE_INT, &sc->compute_ufo },
+			{ "compute_canary", CTLTYPE_INT, &sc->compute_canary },
+			{ "compute_faults", CTLTYPE_INT, &sc->compute_faults },
+			{ "compute_hwr", CTLTYPE_INT, &sc->compute_hwr },
 		};
 
 		for (size_t i = 0; i < __arraycount(status); i++) {

@@ -18,7 +18,10 @@ for kind in mem start boot probe service; do
 done
 sed '/^#include /d' "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwservice.c" > "$work/service-driver.h"
 # Use the two complete native DMA functions, before the first heap helper.
-sed '/^static bool/,$d; /^#include /d' "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwheap.c" > "$work/dma-driver.h"
+sed '/^static bool/,$d; /^#include /d' "$src/sys/dev/powervr/pvr_fwheap.c" |
+    sed -e s/pvr_heap_dma_alloc_coherent/sun60i_a733_gpu_dma_alloc_coherent/g \
+        -e s/pvr_heap_dma_free/sun60i_a733_gpu_dma_free/g \
+        -e s/pvr_dma/sun60i_a733_gpu_dma/g > "$work/dma-driver.h"
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror ${FWSERVICE_TEST_CFLAGS:-} \
     -I"$work" -I"$src/sys/arch/arm/sunxi" \
     "$tools/a733-gpu-fwservice-contract.c" \

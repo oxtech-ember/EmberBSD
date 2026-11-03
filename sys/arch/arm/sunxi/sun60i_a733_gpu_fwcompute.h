@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: MIT */
+/* Origin: EmberBSD; strict A733 adapter to common compute serializer. */
 /*
  * Copyright (c) 2023 Imagination Technologies Ltd.
  * Copyright (c) 2026 EmberBSD contributors.
@@ -28,83 +29,26 @@
 
 #ifndef _SUN60I_A733_GPU_FWCOMPUTE_H
 #define _SUN60I_A733_GPU_FWCOMPUTE_H
-
-#include "powervr/pvr_rogue_fwif.h"
-#include "powervr/pvr_rogue_fwif_client.h"
-
-#define A733_GPU_FWCOMPUTE_CCCB_SIZE	32768U
-#define A733_GPU_FWCOMPUTE_USED_BYTES	184U
-
-enum sun60i_a733_gpu_fwcompute_object {
-	A733_GPU_FWCOMPUTE_CONTEXT,
-	A733_GPU_FWCOMPUTE_CTL,
-	A733_GPU_FWCOMPUTE_CCCB,
-	A733_GPU_FWCOMPUTE_STATE,
-	A733_GPU_FWCOMPUTE_TIMELINE,
-	A733_GPU_FWCOMPUTE_VM_CONTEXT,
-	A733_GPU_FWCOMPUTE_OBJECTS
-};
-
-enum sun60i_a733_gpu_fwcompute_program {
-	A733_GPU_FWCOMPUTE_USC,
-	A733_GPU_FWCOMPUTE_PDS,
-	A733_GPU_FWCOMPUTE_STREAM,
-	A733_GPU_FWCOMPUTE_PROGRAMS
-};
-
-struct sun60i_a733_gpu_fwcompute_fwspan {
-	uint32_t addr;
-	uint32_t size;
-};
-
-struct sun60i_a733_gpu_fwcompute_program_span {
-	const void *bytes;
-	size_t size;
-	uint64_t gpu_va;
-};
-
-struct sun60i_a733_gpu_fwcompute_inputs {
-	/* Exact sizes, 8-byte FW alignment, independent mappings. */
-	struct sun60i_a733_gpu_fwcompute_fwspan fw[A733_GPU_FWCOMPUTE_OBJECTS];
-	/* Caller supplies actual compiler output. */
-	struct sun60i_a733_gpu_fwcompute_program_span
-	    program[A733_GPU_FWCOMPUTE_PROGRAMS];
-	struct rogue_fwif_static_computecontext_state static_state;
-	struct rogue_fwif_cmd_compute command;
-	uint32_t priority;
-	uint32_t pid;
-	uint32_t context_id;
-	uint32_t job_id;
-};
-
-/* Allocate this 33 KiB object from caller-owned heap, never kernel stack. */
-struct sun60i_a733_gpu_fwcompute_image {
-	struct rogue_fwif_fwcomputecontext context;
-	struct rogue_fwif_cccb_ctl ctl;
-	struct rogue_fwif_compute_ctx_state state;
-	uint32_t timeline;
-	uint8_t cccb[A733_GPU_FWCOMPUTE_CCCB_SIZE] PVR_FW_ALIGNED(8);
-	struct rogue_fwif_kccb_cmd kick;
-	uint32_t used_bytes;
-};
-
-/*
- * Prepare one fresh CPU image on a 64-bit little-endian host. The caller
- * owns readable inputs and writable output and serializes their access.
- * No allocation, DMA, GPU/MIPS mapping, barrier, MMIO, or queue publication.
- * Output is unchanged on every error. image_size must equal sizeof(*image).
- * All CPU spans must be distinct; FW spans must be distinct and prevalidated
- * against the actual firmware heap by the caller. This validates numerical
- * representation, not RAM ownership, page tables, or GPU instructions.
- * Nonempty program spans and a nonzero static state are required. These are
- * not a compiler attestation: hardware use requires a real Mesa manifest.
- * The VM context is external; this helper only serializes its FW address.
- * EINVAL: invalid representation, flags, lengths, alignment, or aliases.
- * EOPNOTSUPP: optional command fields outside the initial direct-CDM scope.
- * Padding and reserved bytes in typed inputs are not read or copied.
- */
-int sun60i_a733_gpu_fwcompute_prepare(
-    const struct sun60i_a733_gpu_fwcompute_inputs *,
-    struct sun60i_a733_gpu_fwcompute_image *, size_t);
-
-#endif /* _SUN60I_A733_GPU_FWCOMPUTE_H */
+#include "../../../dev/powervr/pvr_fwcompute.h"
+#define A733_GPU_FWCOMPUTE_CCCB_SIZE PVR_FWCOMPUTE_CCCB_SIZE
+#define A733_GPU_FWCOMPUTE_USED_BYTES PVR_FWCOMPUTE_USED_BYTES
+#define A733_GPU_FWCOMPUTE_CONTEXT PVR_FWCOMPUTE_CONTEXT
+#define A733_GPU_FWCOMPUTE_CTL PVR_FWCOMPUTE_CTL
+#define A733_GPU_FWCOMPUTE_CCCB PVR_FWCOMPUTE_CCCB
+#define A733_GPU_FWCOMPUTE_STATE PVR_FWCOMPUTE_STATE
+#define A733_GPU_FWCOMPUTE_TIMELINE PVR_FWCOMPUTE_TIMELINE
+#define A733_GPU_FWCOMPUTE_VM_CONTEXT PVR_FWCOMPUTE_VM_CONTEXT
+#define A733_GPU_FWCOMPUTE_OBJECTS PVR_FWCOMPUTE_OBJECTS
+#define A733_GPU_FWCOMPUTE_USC PVR_FWCOMPUTE_USC
+#define A733_GPU_FWCOMPUTE_PDS PVR_FWCOMPUTE_PDS
+#define A733_GPU_FWCOMPUTE_STREAM PVR_FWCOMPUTE_STREAM
+#define A733_GPU_FWCOMPUTE_PROGRAMS PVR_FWCOMPUTE_PROGRAMS
+#define sun60i_a733_gpu_fwcompute_object pvr_fwcompute_object
+#define sun60i_a733_gpu_fwcompute_program pvr_fwcompute_program
+#define sun60i_a733_gpu_fwcompute_fwspan pvr_fwcompute_fwspan
+#define sun60i_a733_gpu_fwcompute_program_span pvr_fwcompute_program_span
+#define sun60i_a733_gpu_fwcompute_inputs pvr_fwcompute_inputs
+#define sun60i_a733_gpu_fwcompute_image pvr_fwcompute_image
+int sun60i_a733_gpu_fwcompute_prepare(const struct pvr_fwcompute_inputs *,
+    struct pvr_fwcompute_image *, size_t);
+#endif

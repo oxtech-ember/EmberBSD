@@ -88,6 +88,21 @@ and a fresh fault/HWR check. Queue stage, error, attempt, offsets, return words,
 IRQ counters and fresh fault state are available as cached read-only sysctls.
 The IRQ status has no command identifier: delivery during the MMUCACHE interval
 is evidence of a real firmware IRQ, not proof of its unique cause. A timeout or
-uncertain operation never retries or frees firmware DMA. This source path has
-not yet received physical queue acceptance and does not establish GPU compute,
-rendering, Vulkan or Qt acceleration.
+uncertain operation never retries or frees firmware DMA. On the same office
+YS-M33 warm RAM trial, both commands were consumed with successful return
+words, an IRQ arrived during the armed interval, and the fresh fault/HWR check
+was clean. This confirms the bounded firmware queue check on that device.
+
+A separate one-shot `hw.sun50ia133gpu0.compute_probe` requires the successful
+queue probe and an exact pinned experimental compute image. It prepares the
+common GPU heap and VM, submits a cache operation and compute kick, and checks
+the completed command buffer, UFO and GPU-written scratch value after DMA
+synchronization. Errors or uncertain device exposure retain the associated
+resources and do not permit a retry. Cached compute diagnostics report the
+stage, queue and completion observations without reading hardware.
+
+On one office YS-M33 preserved-power warm RAM trial, the command buffer drained,
+the UFO reached 1, and a GPU write produced `0x13579bdf` in the synchronized
+scratch buffer; the fresh fault/HWR check was clean. This qualifies that bounded
+compute operation on that device. It does not establish cold boot, rendering,
+Vulkan or Qt acceleration.

@@ -132,6 +132,8 @@ main(int argc, char **argv)
 	uint64_t vm_pdpa[5] = { 0x500000, 0x501000, 0x502000, 0x503000, 0x504000 };
 	uint64_t vm_ptpa[5] = { 0x510000, 0x511000, 0x512000, 0x513000, 0x514000 };
 	uint64_t bvnc, ctx_va, next_pa = UINT64_C(0x40000000);
+	enum pvr_fw_profile profile;
+	uint32_t region_count;
 	uint32_t priority = 0, pid = 1, context_id = 0, job_id = 1;
 	uint32_t area_base[4], payload_bytes, expected_leaves = 0;
 	size_t area_size[4], command_size, total, i;
@@ -156,7 +158,16 @@ main(int argc, char **argv)
 	}
 	if (priority > 2)
 		die("priority must be 0..2");
-	bvnc = strtoull(argv[2], NULL, 0);
+	errno = 0;
+	bvnc = strtoull(argv[2], &ctx_end, 0);
+	if (errno != 0 || ctx_end == argv[2] || *ctx_end != 0)
+		die("invalid GPU profile");
+	if (bvnc == PVR_FWCOMPUTE_A733_BVNC)
+		profile = PVR_FW_PROFILE_A733;
+	else if (bvnc == PVR_FWCOMPUTE_GE8300_BVNC)
+		profile = PVR_FW_PROFILE_GE8300;
+	else
+		die("unsupported GPU profile");
 	ctx_va = find_role(A733_GPU_FWCOMPUTE_RESUME)->va;
 	errno = 0;
 	if (strtoull(argv[9], &ctx_end, 0) != ctx_va || errno != 0 ||
@@ -252,7 +263,7 @@ main(int argc, char **argv)
 		    sizeof(entry));
 	}
 	memcpy(whole + header.header_bytes, payload, payload_bytes);
-	if (sun60i_a733_gpu_fwcompute_file_parse(whole,
+	if (pvr_fwcompute_file_parse(whole,
 	    header.header_bytes + payload_bytes, bvnc, &parsed) != 0)
 		die("packed file failed production validation");
 
@@ -278,15 +289,16 @@ main(int argc, char **argv)
 	}
 	memcpy(&inputs.static_state, whole + header.header_bytes +
 	    header.static_offset, A733_GPU_FWCOMPUTE_STATE_BYTES);
-	sun60i_a733_gpu_fwcompute_file_relocate(
-	    (uint8_t *)&inputs.static_state, UINT64_C(0x10000000));
+	if (profile == PVR_FW_PROFILE_A733)
+		sun60i_a733_gpu_fwcompute_file_relocate(
+		    (uint8_t *)&inputs.static_state, UINT64_C(0x10000000));
 
 	inputs.command = parsed.command;
 	inputs.priority = priority;
 	inputs.pid = pid;
 	inputs.context_id = context_id;
 	inputs.job_id = job_id;
-	if (sun60i_a733_gpu_fwcompute_prepare(&inputs, image,
+	if (pvr_fwcompute_prepare(profile, &inputs, image,
 	    sizeof(*image)) != 0)
 		die("real compiler spans failed serializer validation");
 	sha256_init(&ctx);
@@ -309,7 +321,8 @@ main(int argc, char **argv)
 		    ((table[i].flags & A733_GPU_FWCOMPUTE_FLAG_BYPASS) != 0 ?
 		    A733_GPU_FWCOMPUTE_VM_BYPASS : 0);
 	}
-	{
+	region_count = A733_GPU_FWCOMPUTE_RESOURCES;
+	if (profile == PVR_FW_PROFILE_A733) {
 		const uint16_t aliases[3] = { A733_GPU_FWCOMPUTE_PDS_PROGRAMS,
 		    A733_GPU_FWCOMPUTE_USC_PROGRAMS,
 		    A733_GPU_FWCOMPUTE_USC_PROGRAMS };
@@ -324,15 +337,17 @@ main(int argc, char **argv)
 			regions[alias].va = va[i];
 			expected_leaves += regions[alias].pages;
 		}
+		region_count += 3;
 	}
 	memset(vm_pc, 0, sizeof(vm_pc));
 	memset(vm_pd, 0, sizeof(vm_pd));
 	memset(vm_pt, 0, sizeof(vm_pt));
 	memset(vm_fwc, 0, sizeof(vm_fwc));
 	if (sun60i_a733_gpu_fwcompute_vm_encode(regions,
-	    A733_GPU_FWCOMPUTE_VM_REGIONS, vm_pc, vm_pdv,
-	    vm_ptv, vm_pdpa, vm_ptpa, 0x500000, vm_fwc, &summary) != 0 ||
-	    summary.windows != 5 || summary.leaves != expected_leaves)
+	    region_count, vm_pc, vm_pdv,
+	    vm_ptv, vm_pdpa, vm_ptpa, 0x4ff000, vm_fwc, &summary) != 0 ||
+	    summary.windows != (profile == PVR_FW_PROFILE_A733 ? 5U : 3U) ||
+	    summary.leaves != expected_leaves)
 		die("unsupported resource or alias layout for VM encoding");
 	printf("vm_check=windows=%u directories=%u leaves=%u\n",
 	    summary.windows, summary.directories, summary.leaves);

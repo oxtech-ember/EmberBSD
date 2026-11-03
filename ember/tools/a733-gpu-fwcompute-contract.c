@@ -155,6 +155,30 @@ main(void)
 	*in = *base;
 	check_image(in, out, expected);
 
+	/* GE8300 requires the BRN49927 TPU register to survive serialization. */
+	*in = *base;
+	in->command.regs.tpu = 0x20;
+	in->command.regs.tpu_tag_cdm_ctrl = 0;
+	CHECK(sun60i_a733_gpu_fwcompute_prepare(in, out, sizeof(*out)) == EOPNOTSUPP);
+	CHECK(pvr_fwcompute_prepare(PVR_FW_PROFILE_GE8300, in, out, sizeof(*out)) == 0);
+	{
+		struct rogue_fwif_cmd_compute wire;
+		memcpy(&wire, out->cccb + 40, sizeof(wire));
+		CHECK(wire.regs.tpu == 0x20);
+	}
+
+	/* GE rejects missing or foreign profile fields without touching output. */
+	for (i = 0; i < 4; i++) {
+		*in = *base; in->command.regs.tpu = 0x20; in->command.regs.tpu_tag_cdm_ctrl = 0;
+		if (i == 0) in->command.regs.tpu = 0;
+		if (i == 1) in->command.regs.tpu = 0x21;
+		if (i == 2) in->command.regs.tpu_tag_cdm_ctrl = 1;
+		if (i == 3) in->command.flags |= ROGUE_COMPUTE_FLAG_SINGLE_CORE;
+		memset(out, 0xa5, sizeof(*out)); memcpy(expected, out, sizeof(*out));
+		CHECK(pvr_fwcompute_prepare(PVR_FW_PROFILE_GE8300, in, out, sizeof(*out)) == EOPNOTSUPP);
+		CHECK(memcmp(out, expected, sizeof(*out)) == 0);
+	}
+
 	/* Large scalar values, all permitted flags, and priority endpoints. */
 	for (i = 0; i < 12; i++) {
 		*in = *base;

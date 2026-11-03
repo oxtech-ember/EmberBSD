@@ -11,5 +11,6 @@ sed '/^#include /d' "$src/sys/external/bsd/drm2/powervr/pvr_vm.c" \
 "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Wno-unused-parameter \
     ${CFLAGS:-} -I"$work" -I"$src/sys/arch/arm/sunxi" \
     "$src/ember/tools/pvr-vm-contract.c" \
-    "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_mmu.c" -o "$work/contract"
+    "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_mmu.c" \
+    "$src/sys/dev/powervr/pvr_mmu.c" -o "$work/contract"
 "$work/contract"

@@ -14,6 +14,8 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror \
     -I"$src/sys/arch/arm/sunxi" \
     "$tools/a733-gpu-fwcompute-vm-contract.c" \
     "${FWCOMPUTE_VM_SOURCE:-$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwcompute_vm.c}" \
+    "$src/sys/dev/powervr/pvr_fwcompute_vm.c" \
     "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_mmu.c" \
+    "$src/sys/dev/powervr/pvr_mmu.c" \
     -o "$work/fwcompute-vm"
 "$work/fwcompute-vm"

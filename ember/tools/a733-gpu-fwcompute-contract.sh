@@ -183,6 +183,7 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror ${FWCOMPUTE_TEST_CFLAGS:-} \
     $oracle_flag -I"$work" -I"$src/sys/arch/arm/sunxi" \
     "$tools/a733-gpu-fwcompute-contract.c" \
     "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwcompute.c" \
+    "$src/sys/dev/powervr/pvr_fwcompute.c" \
     ${oracle_source:+"$oracle_source"} -o "$work/contract"
 "$work/contract"
 if [ "${FWCOMPUTE_KEEP_WORK:-0}" = 1 ]; then echo "work=$work"; fi

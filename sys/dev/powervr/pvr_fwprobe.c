@@ -34,6 +34,7 @@
 #include <sys/time.h>
 
 #include <dev/powervr/pvr_fwprobe.h>
+#include <dev/powervr/pvr_fwheap.h>
 #include <dev/powervr/pvr_fw_handshake.h>
 #include <dev/powervr/fwif/pvr_rogue_fwif.h>
 
@@ -765,6 +766,84 @@ pvr_fwprobe_cmd(bus_space_tag_t bst, bus_space_handle_t bsh,
 		return EINVAL;
 	return fwprobe_run(bst, bsh, mem, boot, previous, cmd, slot,
 	    expected_log_type, false, 0, NULL, NULL, out);
+}
+
+/* One bounded GE chain: heap MMUCACHE followed by its prepared VM kick. */
+static bool
+fwprobe_ge_child(const struct pvr_dma *dma, const struct pvr_fwmem *mem)
+{
+	return dma->loaded && dma->device_exposed && dma->compute_owner == mem;
+}
+
+int
+pvr_fwprobe_ge_heap_sync(bus_space_tag_t bst, bus_space_handle_t bsh,
+    struct pvr_fwmem *mem, const struct pvr_fwboot_result *boot,
+    const struct pvr_fwprobe_result *previous, struct pvr_fwheap *heap,
+    struct pvr_fwprobe_result *out)
+{
+	struct rogue_fwif_kccb_cmd cmd;
+	int error;
+
+	if (mem == NULL || heap == NULL || previous == NULL ||
+	    mem->profile != PVR_FW_PROFILE_GE8300 || heap->owner != mem ||
+	    heap->profile != PVR_FW_PROFILE_GE8300 || !heap->mapped ||
+	    !fwprobe_ge_child(&heap->heap, mem) ||
+	    heap->fw_addr != PVR_FWCOMPUTE_SPAN_BASE ||
+	    previous->slot != 1 || previous->command != PVR_FWPROBE_MMUCACHE)
+		return EINVAL;
+	if (heap->sync_attempted)
+		return EBUSY;
+	heap->sync_attempted = true;
+	memset(&cmd, 0, sizeof(cmd));
+	cmd.cmd_type = PVR_FWPROBE_MMUCACHE;
+	cmd.cmd_data.mmu_cache_data.cache_flags = A733_MMUCACHE_FLAGS;
+	cmd.cmd_data.mmu_cache_data.mmu_cache_sync_fw_addr =
+	    mem->interface_layout.object[PVR_FWINIT_MMUCACHE_SYNC].fw_addr;
+	error = fwprobe_run(bst, bsh, mem, boot, previous, &cmd, 2, 0,
+	    false, 0, NULL, NULL, out);
+	if (error == 0)
+		heap->sync_complete = true;
+	return error;
+}
+
+int
+pvr_fwprobe_ge_kick(bus_space_tag_t bst, bus_space_handle_t bsh,
+    struct pvr_fwmem *mem, const struct pvr_fwboot_result *boot,
+    const struct pvr_fwprobe_result *previous, struct pvr_fwheap *heap,
+    struct pvr_fwvm *vm, struct pvr_fwprobe_result *out)
+{
+	struct rogue_fwif_kccb_cmd cmd;
+	size_t i;
+
+	if (mem == NULL || heap == NULL || vm == NULL || previous == NULL ||
+	    mem->profile != PVR_FW_PROFILE_GE8300 || heap->owner != mem ||
+	    heap->profile != PVR_FW_PROFILE_GE8300 || !heap->mapped ||
+	    !heap->sync_complete || !fwprobe_ge_child(&heap->heap, mem) ||
+	    heap->fw_addr != PVR_FWCOMPUTE_SPAN_BASE || vm->heap != heap ||
+	    !vm->prepared || !vm->device_exposed ||
+	    previous->slot != 2 || previous->command != PVR_FWPROBE_MMUCACHE ||
+	    !fwprobe_ge_child(&vm->catalog, mem))
+		return EINVAL;
+	for (i = 0; i < PVR_FWCOMPUTE_RESOURCES; i++) {
+		if (!fwprobe_ge_child(&vm->resource[i], mem))
+			return EINVAL;
+	}
+	for (i = 0; i < PVR_FWCOMPUTE_VM_WINDOWS; i++) {
+		if (!fwprobe_ge_child(&vm->directory[i], mem) ||
+		    !fwprobe_ge_child(&vm->table[i], mem))
+			return EINVAL;
+	}
+	if (heap->kick_attempted)
+		return EBUSY;
+	heap->kick_attempted = true;
+	memset(&cmd, 0, sizeof(cmd));
+	cmd.cmd_type = ROGUE_FWIF_KCCB_CMD_KICK;
+	cmd.cmd_data.cmd_kick_data.context_fw_addr = heap->fw_addr;
+	cmd.cmd_data.cmd_kick_data.client_woff_update = PVR_FWCOMPUTE_USED_BYTES;
+	cmd.cmd_data.cmd_kick_data.client_wrap_mask_update =
+	    PVR_FWCOMPUTE_CCCB_SIZE - 1;
+	return fwprobe_run(bst, bsh, mem, boot, previous, &cmd, 3, 0,
+	    false, 0, NULL, NULL, out);
 }
 
 static bool

@@ -10,6 +10,8 @@
 #include "pvr_fwimage.h"
 #include "pvr_fwinit.h"
 
+struct pvr_fwmem;
+
 struct pvr_dma {
 	bus_dma_segment_t segment;
 	bus_dmamap_t map;
@@ -20,6 +22,9 @@ struct pvr_dma {
 	bool loaded;
 	/* Requested and verified coherent mapping, with no bounce buffer. */
 	bool coherent;
+	/* Compute allocation cannot be reclaimed after device exposure. */
+	bool device_exposed;
+	struct pvr_fwmem *compute_owner;
 };
 
 
@@ -69,6 +74,14 @@ int pvr_fwmem_prepare(bus_dma_tag_t, const void *, size_t, uint64_t,
  */
 int pvr_fwmem_interface(struct pvr_fwmem *,
     uint64_t, uint32_t, uint32_t);
+
+/* Allocate direct coherent GE compute RAM under an already exposed FW owner.
+ * Memory is uninitialized: the caller checks overlap with its other children
+ * before writing. The caller owns the descriptor, marks it exposed before any device
+ * publication, and must retain it after an uncertain operation. Free refuses
+ * an exposed descriptor; neither function changes the firmware owner. */
+int pvr_fwmem_compute_alloc(struct pvr_fwmem *, size_t, struct pvr_dma *);
+int pvr_fwmem_compute_free(struct pvr_fwmem *, struct pvr_dma *);
 
 /* NULL is a no-op; an exposed owner returns EBUSY without releasing RAM. */
 int pvr_fwmem_destroy(struct pvr_fwmem *);

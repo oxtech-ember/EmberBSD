@@ -11,6 +11,9 @@
 #include "powervr/pvr_rogue_fwif.h"
 #include "sun60i_a733_gpu_mips.h"
 #include "pvr_ge8300.h"
+#include "pvr_fwcompute.h"
+#include "pvr_fwcompute_file.h"
+#include "pvr_fwcompute_vm.h"
 
 #define CHECK(c) do { \
 	checks++; \
@@ -21,6 +24,9 @@
 } while (0)
 #define KASSERT(c) CHECK(c)
 #define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
+#define BUS_DMASYNC_PREWRITE 1
+#define BUS_DMASYNC_POSTREAD 2
+#define BUS_DMASYNC_PREREAD 4
 #define BUS_DMA_WAITOK 0
 #define BUS_DMA_COHERENT 0x004
 #define _BUS_DMAMAP_COHERENT 0x10000
@@ -59,13 +65,17 @@ static enum fault fault_kind;
 static uint64_t next_address, data_address, interface_address;
 static unsigned int interface_load;
 static int test_dmat;
+static void (*sync_hook)(void);
+static void *alias_cpu;
+static unsigned int preread_writes;
+static bus_dmamap_t preread_maps[32];
 
 struct cpu_mapping {
 	void *cpu;
 	size_t size;
 	int flags;
 };
-static struct cpu_mapping cpu_mappings[5];
+static struct cpu_mapping cpu_mappings[32];
 
 
 static void *
@@ -114,7 +124,7 @@ bus_dmamem_alloc(bus_dma_tag_t tag, size_t n, size_t alignment,
 	CHECK(max == 1 && flags == BUS_DMA_WAITOK);
 	if (fail())
 		return ENOMEM;
-	seg->memory = aligned_alloc(alignment, n);
+	seg->memory = alias_cpu != NULL ? alias_cpu : aligned_alloc(alignment, n);
 	CHECK(seg->memory != NULL);
 	seg->ds_len = n;
 	seg->ds_addr = next_address;
@@ -176,7 +186,7 @@ bus_dmamap_load(bus_dma_tag_t tag, bus_dmamap_t map, void *cpu,
 
 	CHECK(tag == &test_dmat && cpu != NULL && proc == NULL);
 	CHECK(flags == BUS_DMA_WAITOK);
-	for (size_t i = 0; i < __arraycount(cpu_mappings); i++) {
+	for (size_t i = __arraycount(cpu_mappings); i-- > 0;) {
 		if (cpu_mappings[i].cpu == cpu) {
 			mapping = &cpu_mappings[i];
 			break;
@@ -280,7 +290,7 @@ bus_dmamem_unmap(bus_dma_tag_t tag, void *cpu, size_t size)
 	struct cpu_mapping *mapping = NULL;
 
 	CHECK(tag == &test_dmat && cpu != NULL && size != 0 && mapped != 0);
-	for (size_t i = 0; i < __arraycount(cpu_mappings); i++) {
+	for (size_t i = __arraycount(cpu_mappings); i-- > 0;) {
 		if (cpu_mappings[i].cpu == cpu) {
 			mapping = &cpu_mappings[i];
 			break;
@@ -299,12 +309,33 @@ bus_dmamem_free(bus_dma_tag_t tag, bus_dma_segment_t *seg, int n)
 {
 	CHECK(tag == &test_dmat && n == 1 && live_allocs != 0);
 	live_allocs--;
-	free(seg->memory);
+	if (seg->memory != alias_cpu)
+		free(seg->memory);
+}
+
+static void
+bus_dmamap_sync(bus_dma_tag_t tag, bus_dmamap_t map, size_t offset,
+    size_t size, int operation)
+{
+	CHECK(tag == &test_dmat && map != NULL && map->loaded);
+	CHECK(offset <= map->dm_segs[0].ds_len &&
+	    size <= map->dm_segs[0].ds_len - offset);
+	CHECK(operation == BUS_DMASYNC_PREWRITE ||
+	    operation == BUS_DMASYNC_POSTREAD || operation == BUS_DMASYNC_PREREAD ||
+	    operation == (BUS_DMASYNC_PREWRITE | BUS_DMASYNC_PREREAD));
+	if (operation == (BUS_DMASYNC_PREWRITE | BUS_DMASYNC_PREREAD)) {
+		CHECK(preread_writes < __arraycount(preread_maps));
+		preread_maps[preread_writes++] = map;
+	}
+	if (sync_hook != NULL)
+		sync_hook();
 }
 
 /* The shell harness removes only kernel includes and __KERNEL_RCSID. */
 #include "memory.h"
 #include "driver.h"
+#include "heap.h"
+#include "heap-driver.h"
 
 static uint8_t blob[12288];
 
@@ -835,6 +866,168 @@ ge_blob_test(const char *path)
 	free(bytes);
 }
 
+static void
+compute_child_test(void)
+{
+	struct pvr_fwmem *mem = interface_owner();
+	struct pvr_dma child = { 0 };
+	unsigned int before = live_allocs;
+
+	mem->profile = PVR_FW_PROFILE_GE8300;
+	mem->device_exposed = true;
+	mem->interface_prepared = true;
+	CHECK(pvr_fwmem_compute_alloc(mem, 4096, &child) == 0);
+	CHECK(child.loaded && child.coherent && live_allocs == before + 1);
+	CHECK(child.compute_owner == mem);
+	child.device_exposed = true;
+	CHECK(pvr_fwmem_compute_free(mem, &child) == EBUSY);
+	CHECK(child.loaded && live_allocs == before + 1);
+	/* Fixture-only release after simulated hardware quiescence. */
+	child.device_exposed = false;
+	CHECK(pvr_fwmem_compute_free(mem, &child) == 0);
+	CHECK(live_allocs == before && !child.loaded);
+	next_address = UINT64_C(0x1fc00000);
+	memset(mem->code.cpu, 0x7b, 4096);
+	alias_cpu = mem->code.cpu;
+	CHECK(pvr_fwmem_compute_alloc(mem, 4096, &child) == EOPNOTSUPP);
+	CHECK(live_allocs == before && !child.loaded);
+	for (size_t i = 0; i < 4096; i++)
+		CHECK(((const uint8_t *)mem->code.cpu)[i] == 0x7b);
+	next_address = mem->code.address;
+	CHECK(pvr_fwmem_compute_alloc(mem, 4096, &child) == EEXIST);
+	CHECK(live_allocs == before && !child.loaded);
+	for (size_t i = 0; i < 4096; i++)
+		CHECK(((const uint8_t *)mem->code.cpu)[i] == 0x7b);
+	alias_cpu = NULL;
+	next_address = UINT64_C(0x01800000);
+	mem->register_pa = UINT64_C(0x01800000);
+	mem->register_size = UINT64_C(0x80000);
+	CHECK(pvr_fwmem_compute_alloc(mem, 4096, &child) == EEXIST);
+	CHECK(live_allocs == before && !child.loaded);
+	mem->device_exposed = false;
+	CHECK(pvr_fwmem_destroy(mem) == 0);
+	CHECK(live_allocs == 0 && live_maps == 0 && loaded == 0);
+}
+
+static struct pvr_fwheap *fault_heap;
+static unsigned int fault_syncs;
+
+static void
+fail_context_after_tables(void)
+{
+	if (++fault_syncs == 21)
+		fault_heap->heap.loaded = false;
+}
+
+static void
+compute_heap_test(const char *path, bool fail_context)
+{
+	struct pvr_fwmem *mem = interface_owner();
+	struct pvr_fwcompute_file file;
+	struct pvr_fwcompute_image *image = calloc(1, sizeof(*image));
+	struct pvr_fwheap *heap = NULL;
+	struct pvr_fwvm *vm = NULL;
+	FILE *f;
+	uint8_t *bytes;
+	long length;
+	size_t i;
+
+	CHECK(image != NULL);
+	CHECK((f = fopen(path, "rb")) != NULL);
+	CHECK(fseek(f, 0, SEEK_END) == 0 && (length = ftell(f)) > 0);
+	CHECK(fseek(f, 0, SEEK_SET) == 0);
+	CHECK((bytes = malloc((size_t)length)) != NULL);
+	CHECK(fread(bytes, 1, (size_t)length, f) == (size_t)length);
+	CHECK(fclose(f) == 0);
+	CHECK(pvr_fwcompute_file_parse(bytes, (size_t)length,
+	    PVR_FWCOMPUTE_GE8300_BVNC, &file) == 0);
+	mem->profile = PVR_FW_PROFILE_GE8300;
+	mem->device_exposed = true;
+	mem->interface_prepared = true;
+	image->used_bytes = PVR_FWCOMPUTE_USED_BYTES;
+	preread_writes = 0;
+	CHECK(pvr_fwheap_prepare(&test_dmat, mem, image, &heap) == 0);
+	CHECK(preread_writes == 1);
+	CHECK(!heap->heap.device_exposed && pvr_fwheap_release(&heap) == 0);
+	CHECK(heap == NULL);
+	CHECK(pvr_fwheap_prepare(&test_dmat, mem, image, &heap) == 0);
+	/* A failed map still latches exposure and is not retryable. */
+	((uint8_t *)mem->table.cpu)[8192] = 1;
+	CHECK(pvr_fwheap_map(heap, mem) == EEXIST);
+	CHECK(heap->heap.device_exposed && !heap->mapped);
+	CHECK(pvr_fwheap_release(&heap) == EBUSY && heap != NULL);
+	/* Fixture-only teardown after simulated quiescence. */
+	heap->heap.device_exposed = false;
+	CHECK(pvr_fwheap_release(&heap) == 0);
+	((uint8_t *)mem->table.cpu)[8192] = 0;
+	CHECK(pvr_fwheap_prepare(&test_dmat, mem, image, &heap) == 0);
+	CHECK(pvr_fwheap_map(heap, mem) == 0 && heap->mapped);
+	{
+		struct pvr_fwvm trial = { .dmat = &test_dmat, .heap = heap };
+		uint8_t saved[4096];
+		uint64_t saved_next = next_address;
+
+		memset(heap->heap.cpu, 0x6c, sizeof(saved));
+		memcpy(saved, heap->heap.cpu, sizeof(saved));
+		alias_cpu = heap->heap.cpu;
+		next_address = heap->heap.address;
+		CHECK(fwvm_alloc(&trial, 4096, &trial.resource[0]) == EEXIST);
+		CHECK(memcmp(saved, heap->heap.cpu, sizeof(saved)) == 0);
+		alias_cpu = NULL;
+		next_address = saved_next;
+		CHECK(fwvm_alloc(&trial, 4096, &trial.resource[0]) == 0);
+		memset(trial.resource[0].cpu, 0x3a, sizeof(saved));
+		memcpy(saved, trial.resource[0].cpu, sizeof(saved));
+		saved_next = next_address;
+		alias_cpu = trial.resource[0].cpu;
+		next_address = trial.resource[0].address;
+		CHECK(fwvm_alloc(&trial, 4096, &trial.resource[1]) == EEXIST);
+		CHECK(memcmp(saved, trial.resource[0].cpu, sizeof(saved)) == 0);
+		alias_cpu = NULL;
+		next_address = saved_next;
+		CHECK(pvr_fwmem_compute_free(mem, &trial.resource[0]) == 0);
+	}
+	if (fail_context) {
+		fault_heap = heap;
+		fault_syncs = 0;
+		sync_hook = fail_context_after_tables;
+	}
+	CHECK(pvr_fwvm_prepare(&test_dmat, &file, bytes, heap, &vm) ==
+	    (fail_context ? EINVAL : 0));
+	sync_hook = NULL;
+	CHECK(vm != NULL && vm->device_exposed);
+	CHECK(preread_writes >= 8); /* three heaps plus five writable roles */
+	for (i = 0; i < preread_writes; i++)
+		if (preread_maps[i] == vm->resource[0].map)
+			break;
+	CHECK(i < preread_writes); /* scratch is prepared for device writes */
+	CHECK(vm->prepared == !fail_context);
+	if (fail_context) {
+		CHECK(fault_syncs == 21);
+		heap->heap.loaded = true;
+	} else
+		CHECK(vm->windows == 3 && vm->leaves == 81);
+	CHECK(pvr_fwvm_release(&vm) == EBUSY && vm != NULL);
+	CHECK(pvr_fwheap_release(&heap) == EBUSY && heap != NULL);
+	/* Fixture-only teardown after simulated quiescence. */
+	vm->device_exposed = false;
+	for (i = 0; i < PVR_FWCOMPUTE_RESOURCES; i++)
+		vm->resource[i].device_exposed = false;
+	vm->catalog.device_exposed = false;
+	for (i = 0; i < PVR_FWCOMPUTE_VM_WINDOWS; i++) {
+		vm->directory[i].device_exposed = false;
+		vm->table[i].device_exposed = false;
+	}
+	CHECK(pvr_fwvm_release(&vm) == 0);
+	heap->heap.device_exposed = false;
+	CHECK(pvr_fwheap_release(&heap) == 0);
+	mem->device_exposed = false;
+	CHECK(pvr_fwmem_destroy(mem) == 0);
+	CHECK(live_allocs == 0 && live_maps == 0 && loaded == 0);
+	free(bytes);
+	free(image);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -878,6 +1071,11 @@ main(int argc, char **argv)
 	CHECK(operations == 0);
 	fixture();
 	interface_tests();
+	compute_child_test();
+	if (getenv("GE_COMPUTE_IMAGE") != NULL) {
+		compute_heap_test(getenv("GE_COMPUTE_IMAGE"), false);
+		compute_heap_test(getenv("GE_COMPUTE_IMAGE"), true);
+	}
 	if (argc >= 2)
 		pinned_blob_test(argv[1]);
 	if (argc == 3)

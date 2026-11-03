@@ -61,7 +61,7 @@ pvr_dma_free(bus_dma_tag_t dmat, struct pvr_dma *dma)
 
 static int
 pvr_dma_alloc(struct pvr_fwmem *mem, size_t size, bool coherent,
-    struct pvr_dma *dma)
+    bool initialize, struct pvr_dma *dma)
 {
 	bus_dma_tag_t dmat = mem->dmat;
 	int error;
@@ -126,7 +126,8 @@ pvr_dma_alloc(struct pvr_fwmem *mem, size_t size, bool coherent,
 			goto fail;
 		}
 	}
-	memset(dma->cpu, 0, size);
+	if (initialize)
+		memset(dma->cpu, 0, size);
 	return 0;
 fail:
 	pvr_dma_free(dmat, dma);
@@ -161,6 +162,53 @@ pvr_dma_identity(const struct pvr_dma *dma)
 	    (dma->map->_dm_flags & _BUS_DMAMAP_IS_BOUNCING) == 0 &&
 	    dma->segment.ds_addr == dma->address &&
 	    dma->segment.ds_len == dma->size;
+}
+
+int
+pvr_fwmem_compute_alloc(struct pvr_fwmem *mem, size_t size,
+    struct pvr_dma *out)
+{
+	const struct pvr_dma *base[5];
+	size_t i;
+	int error;
+
+	if (mem == NULL || out == NULL || mem->dmat == NULL ||
+	    mem->profile != PVR_FW_PROFILE_GE8300 || !mem->device_exposed ||
+	    !mem->interface_prepared || out->loaded || out->map != NULL ||
+	    out->cpu != NULL || out->nsegments != 0 || out->device_exposed ||
+	    out->compute_owner != NULL)
+		return EINVAL;
+	error = pvr_dma_alloc(mem, size, true, false, out);
+	if (error != 0)
+		return error;
+	base[0] = &mem->code; base[1] = &mem->data; base[2] = &mem->table;
+	base[3] = &mem->work; base[4] = &mem->config;
+	for (i = 0; i < 5; i++) {
+		if (base[i]->loaded && pvr_dma_overlap(out, base[i])) {
+			pvr_dma_free(mem->dmat, out);
+			return EEXIST;
+		}
+	}
+	if (out->address < UINT64_C(0x1fc04000) &&
+	    UINT64_C(0x1fc00000) < out->address + out->size) {
+		pvr_dma_free(mem->dmat, out);
+		return EOPNOTSUPP;
+	}
+	/* The owner must reject overlaps with its other children before writing. */
+	out->compute_owner = mem;
+	return 0;
+}
+
+int
+pvr_fwmem_compute_free(struct pvr_fwmem *mem, struct pvr_dma *dma)
+{
+	if (mem == NULL || dma == NULL || mem->dmat == NULL ||
+	    mem->profile != PVR_FW_PROFILE_GE8300 || dma->compute_owner != mem)
+		return EINVAL;
+	if (dma->device_exposed)
+		return EBUSY;
+	pvr_dma_free(mem->dmat, dma);
+	return 0;
 }
 
 int
@@ -241,14 +289,14 @@ pvr_fwmem_prepare(bus_dma_tag_t dmat, const void *bytes,
 	mem->auxiliary_pa = auxiliary_pa;
 	mem->auxiliary_size = auxiliary_size;
 	error = pvr_dma_alloc(mem,
-	    info.allocation_size[PVR_FW_CODE], false, &mem->code);
+	    info.allocation_size[PVR_FW_CODE], false, true, &mem->code);
 	if (error != 0)
 		goto fail;
 	error = pvr_dma_alloc(mem,
-	    info.allocation_size[PVR_FW_DATA], false, &mem->data);
+	    info.allocation_size[PVR_FW_DATA], false, true, &mem->data);
 	if (error != 0)
 		goto fail;
-	error = pvr_dma_alloc(mem, PVR_FWMEM_TABLE, false, &mem->table);
+	error = pvr_dma_alloc(mem, PVR_FWMEM_TABLE, false, true, &mem->table);
 	if (error != 0)
 		goto fail;
 	/* Reject malformed backend results before publishing any DMA address. */
@@ -382,11 +430,11 @@ pvr_fwmem_interface(struct pvr_fwmem *mem,
 	    !pvr_dma_empty(&mem->config))
 		return EINVAL;
 	error = pvr_dma_alloc(mem,
-	    pvr_fwinit_work_size(), true, &work);
+	    pvr_fwinit_work_size(), true, true, &work);
 	if (error != 0)
 		goto fail;
 	error = pvr_dma_alloc(mem, PVR_FWINIT_CONFIG_SIZE,
-	    true, &config);
+	    true, true, &config);
 	if (error != 0)
 		goto fail;
 	areas[0] = &mem->code;

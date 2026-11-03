@@ -20,8 +20,11 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror \
     -I"$src/sys/arch/arm/sunxi" -I"$tools" \
     "$tools/a733-gpu-fwfile-contract.c" \
     "${FWFILE_SOURCE:-$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwcompute_file.c}" \
+    "$src/sys/dev/powervr/pvr_fwcompute_file.c" \
     "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwcompute_cmd.c" \
+    "$src/sys/dev/powervr/pvr_fwcompute_cmd.c" \
     "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwcompute.c" \
+    "$src/sys/dev/powervr/pvr_fwcompute.c" \
     -o "$work/fwfile"
 "$work/fwfile" self
 if [ -n "${FWFILE_REJECT_IMAGE:-}" ]; then
@@ -34,10 +37,15 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror -I"$src/sys/arch/arm/sunxi" \
     -I"$tools" \
     "$tools/a733-gpu-compute-firmware.c" \
     "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwcompute_file.c" \
+    "$src/sys/dev/powervr/pvr_fwcompute_file.c" \
     "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwcompute_cmd.c" \
+    "$src/sys/dev/powervr/pvr_fwcompute_cmd.c" \
     "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwcompute.c" \
+    "$src/sys/dev/powervr/pvr_fwcompute.c" \
     "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwcompute_vm.c" \
+    "$src/sys/dev/powervr/pvr_fwcompute_vm.c" \
     "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_mmu.c" \
+    "$src/sys/dev/powervr/pvr_mmu.c" \
     -o "$work/packer"
 if "$work/packer" "$work" >/dev/null 2>&1; then
     echo 'packer accepted wrong argument count' >&2

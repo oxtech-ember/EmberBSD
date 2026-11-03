@@ -13,10 +13,16 @@ cp "$src/sys/arch/arm/sunxi/sun60i_a733_ccu.h" \
     "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwinit.h" "$work/"
 # Stage 18 needs the serializer ABI and the packed compute-image format;
 # stages 19-21 add the firmware-heap submission provider API.
-cp "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwcompute.h" \
-    "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwcompute_cmd.h" \
-    "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwcompute_file.h" "$work/"
-sed '/^#include /d' "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwheap.h"     > "$work/sun60i_a733_gpu_fwheap.h"
+for header in fwcompute fwcompute_cmd; do
+    printf '#include "powervr/pvr_rogue_fwif_client.h"\n' > "$work/sun60i_a733_gpu_$header.h"
+    sed '/^#include /d' "$src/sys/dev/powervr/pvr_$header.h" >> "$work/sun60i_a733_gpu_$header.h"
+    sed '/^#include /d' "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_$header.h" >> "$work/sun60i_a733_gpu_$header.h"
+done
+printf %s\\n "#include \"sun60i_a733_gpu_fwcompute_cmd.h\"" > "$work/sun60i_a733_gpu_fwcompute_file.h"
+sed "/^#include /d" "$src/sys/dev/powervr/pvr_fwcompute_file.h" >> "$work/sun60i_a733_gpu_fwcompute_file.h"
+sed "/^#include /d" "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwcompute_file.h" >> "$work/sun60i_a733_gpu_fwcompute_file.h"
+sed "/^#include /d" "$src/sys/dev/powervr/pvr_fwheap.h" > "$work/sun60i_a733_gpu_fwheap.h"
+sed "/^#include /d" "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwheap.h" >> "$work/sun60i_a733_gpu_fwheap.h"
 for name in drm.h query.h backend.h; do
     sed '/^#include /d' "$src/sys/external/bsd/drm2/powervr/pvr_$name" \
         > "$work/pvr-$name-body.h"
@@ -25,7 +31,7 @@ mkdir "$work/powervr"
 cp "$src/sys/dev/powervr/fwif/"*.h "$work/powervr/"
 # Keep the production memory interface. Only native bus-DMA types are stubbed.
 for header in fwmem fwstart fwboot fwprobe fwservice fwbridge; do
-    case "$header" in fwmem|fwstart|fwboot)
+    case "$header" in fwmem|fwstart|fwboot|fwprobe)
         sed '/^#include /d' "$src/sys/dev/powervr/pvr_$header.h" > "$work/sun60i_a733_gpu_$header.h" ;;
     esac
     sed '/^#include /d' "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_$header.h" \
@@ -52,7 +58,8 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror -Wno-unused-parameter \
     ${GPU_ID_TEST_CFLAGS:-} -I"$work" -I"$src/sys/arch/arm/sunxi" \
     "$tools/a733-gpu-identification-contract.c" \
     "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwinfo.c" "$src/sys/dev/powervr/pvr_fwinfo.c" \
-    "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwcompute_cmd.c" \
+    "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwcompute_cmd.c" "$src/sys/dev/powervr/pvr_fwcompute_cmd.c" \
     "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwcompute_file.c" \
-    "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwcompute.c" -o "$work/test"
+    "$src/sys/dev/powervr/pvr_fwcompute_file.c" \
+    "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwcompute.c" "$src/sys/dev/powervr/pvr_fwcompute.c" -o "$work/test"
 "$work/test"

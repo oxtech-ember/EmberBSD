@@ -157,6 +157,20 @@ int pvr_fwprobe_cmd(bus_space_tag_t, bus_space_handle_t,
     const struct rogue_fwif_kccb_cmd *, unsigned int, uint32_t,
     struct pvr_fwprobe_result *);
 
+struct pvr_fwheap;
+struct pvr_fwvm;
+/* One-shot GE heap invalidation and compute kick, under the owner lock.
+ * A consumed kick is not compute completion; CCCB/UFO/BO and fresh fault
+ * checks remain mandatory. All exposed DMA remains retained on every result. */
+int pvr_fwprobe_ge_heap_sync(bus_space_tag_t, bus_space_handle_t,
+    struct pvr_fwmem *, const struct pvr_fwboot_result *,
+    const struct pvr_fwprobe_result *, struct pvr_fwheap *,
+    struct pvr_fwprobe_result *);
+int pvr_fwprobe_ge_kick(bus_space_tag_t, bus_space_handle_t,
+    struct pvr_fwmem *, const struct pvr_fwboot_result *,
+    const struct pvr_fwprobe_result *, struct pvr_fwheap *,
+    struct pvr_fwvm *, struct pvr_fwprobe_result *);
+
 /*
  * Reusable, synchronous KCCB service. GE8300 currently returns EOPNOTSUPP;
  * only its initial LOGTYPE/MMUCACHE diagnostics are qualified.

@@ -163,11 +163,59 @@ rejected(void)
 	}
 }
 
+static void
+ownership_rejected(void)
+{
+	struct fixture f;
+	struct a733_gpu_fwcompute_vm_region region[2];
+	int error;
+
+	prepare(&f, 0x71);
+	check(encode(&f, UINT64_C(0x40165001)) == EINVAL,
+	    "unaligned catalog PA rejected");
+	check(filled(f.context.bytes, sizeof(f.context.bytes), 0x71),
+	    "bad catalog preserves context");
+	prepare(&f, 0x71);
+	f.region.pa = f.table_pa[0];
+	check(encode(&f, UINT64_C(0x40165000)) == EINVAL,
+	    "leaf overlapping table PA rejected");
+	prepare(&f, 0x71);
+	region[0] = f.region;
+	region[1] = f.region;
+	region[1].va += 4096;
+	region[1].flags ^= A733_GPU_FWCOMPUTE_VM_BYPASS;
+	error = sun60i_a733_gpu_fwcompute_vm_encode(region, 2, f.catalog,
+	    f.directory, f.table, f.directory_pa, f.table_pa,
+	    UINT64_C(0x40165000), f.context.bytes, &f.summary);
+	check(error == EINVAL, "same backing with different cache policy rejected");
+	prepare(&f, 0x71);
+	region[0] = f.region;
+	region[1] = f.region;
+	region[1].va += 4096;
+	error = sun60i_a733_gpu_fwcompute_vm_encode(region, 2, f.catalog,
+	    f.directory, f.table, f.directory_pa, f.table_pa,
+	    UINT64_C(0x40165000), f.context.bytes, &f.summary);
+	check(error == 0, "identical policy allows whole backing alias");
+	prepare(&f, 0x71);
+	f.directory_pa[0] = f.table_pa[0];
+	check(encode(&f, UINT64_C(0x40165000)) == EINVAL,
+	    "directory/table physical overlap rejected");
+	prepare(&f, 0x71);
+	check(encode(&f, UINT64_C(0x1000000000)) == EINVAL,
+	    "catalog PA outside 36-bit space rejected");
+	prepare(&f, 0x71);
+	error = sun60i_a733_gpu_fwcompute_vm_encode(&f.region, 1, f.catalog,
+	    NULL, f.table, f.directory_pa, f.table_pa,
+	    UINT64_C(0x40165000), f.context.bytes, &f.summary);
+	check(error == EINVAL, "null directory vector rejected");
+}
+
 int
 main(void)
 {
 	success();
 	rejected();
+	ownership_rejected();
 	if (failures != 0) {
 		fprintf(stderr, "%u of %u checks failed\n", failures, checks);
 		return 1;

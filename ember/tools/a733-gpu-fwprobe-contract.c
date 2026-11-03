@@ -13,6 +13,10 @@
 #include "../../sys/dev/powervr/pvr_fw_handshake.h"
 #include "sun60i_a733_gpu_fwinit.h"
 #include "powervr/pvr_rogue_fwif.h"
+#include "powervr/pvr_rogue_fwif_client.h"
+#include "../../sys/dev/powervr/pvr_fwcompute.h"
+#include "../../sys/dev/powervr/pvr_fwcompute_file.h"
+#include "../../sys/dev/powervr/pvr_fwcompute_vm.h"
 
 #ifndef __arraycount
 #define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
@@ -47,6 +51,7 @@ typedef uintptr_t bus_space_handle_t;
 #include "start.h"
 #include "boot.h"
 #include "probe.h"
+#include "heap.h"
 
 static unsigned int assertions;
 #define CHECK(e) do { \
@@ -1617,6 +1622,63 @@ main(void)
 		    &result, &ge_cmd, 2, 0, &ge_out) == EOPNOTSUPP);
 		CHECK(pvr_fwqueue_attach(&owner, &booted, &result, &ge_queue) == EOPNOTSUPP);
 		CHECK(!ge_out.attempted && !ge_queue.attached);
+	}
+	{
+		struct pvr_fwheap heap = { 0 };
+		struct pvr_fwvm vm = { 0 };
+
+		heap.owner = &owner;
+		heap.profile = PVR_FW_PROFILE_GE8300;
+		heap.fw_addr = PVR_FWCOMPUTE_SPAN_BASE;
+		heap.mapped = heap.heap.device_exposed = heap.heap.loaded = true;
+		heap.heap.compute_owner = &owner;
+		vm.heap = &heap;
+		vm.catalog.loaded = vm.catalog.device_exposed = true;
+		vm.catalog.compute_owner = &owner;
+		for (unsigned i = 0; i < PVR_FWCOMPUTE_RESOURCES; i++) {
+			vm.resource[i].loaded = vm.resource[i].device_exposed = true;
+			vm.resource[i].compute_owner = &owner;
+		}
+		for (unsigned i = 0; i < PVR_FWCOMPUTE_VM_WINDOWS; i++) {
+			vm.directory[i].loaded = vm.directory[i].device_exposed = true;
+			vm.table[i].loaded = vm.table[i].device_exposed = true;
+			vm.directory[i].compute_owner = vm.table[i].compute_owner = &owner;
+		}
+		vm.prepared = vm.device_exposed = true;
+		next_command(PVR_FWPROBE_MMUCACHE, 0);
+		test_command.cmd_data.mmu_cache_data.cache_flags = 0x0400001f;
+		test_command.cmd_data.mmu_cache_data.mmu_cache_sync_fw_addr =
+		    owner.interface_layout.object[PVR_FWINIT_MMUCACHE_SYNC].fw_addr;
+		CHECK(pvr_fwprobe_ge_heap_sync(&owner, 0x12340000, &owner,
+		    &booted, &previous, &heap, &result) == 0);
+		CHECK(result.slot == 2 && result.after.read_offset == 3);
+		next_command(ROGUE_FWIF_KCCB_CMD_KICK, 0);
+		test_command.cmd_data.cmd_kick_data.context_fw_addr = heap.fw_addr;
+		test_command.cmd_data.cmd_kick_data.client_woff_update =
+		    PVR_FWCOMPUTE_USED_BYTES;
+		test_command.cmd_data.cmd_kick_data.client_wrap_mask_update =
+		    PVR_FWCOMPUTE_CCCB_SIZE - 1;
+		heap.sync_complete = false;
+		CHECK(pvr_fwprobe_ge_kick(&owner, 0x12340000, &owner, &booted,
+		    &previous, &heap, &vm, &result) == EINVAL);
+		CHECK(!result.attempted && writes == 0);
+		heap.sync_complete = true;
+		vm.resource[0].device_exposed = false;
+		CHECK(pvr_fwprobe_ge_kick(&owner, 0x12340000, &owner, &booted,
+		    &previous, &heap, &vm, &result) == EINVAL);
+		CHECK(!result.attempted && writes == 0);
+		vm.resource[0].device_exposed = true;
+		CHECK(pvr_fwprobe_ge_kick(&owner, 0x12340000, &owner, &booted,
+		    &previous, &heap, &vm, &result) == 0);
+		{
+			struct pvr_fwprobe_result retry = { 0 };
+			unsigned old_writes = writes;
+
+			CHECK(pvr_fwprobe_ge_kick(&owner, 0x12340000, &owner,
+			    &booted, &previous, &heap, &vm, &retry) == EBUSY);
+			CHECK(!retry.attempted && writes == old_writes);
+		}
+		CHECK(result.slot == 3 && result.after.read_offset == 4);
 	}
 	for (unsigned mode = 0; mode < 3; mode++) {
 		reset(); owner.profile = PVR_FW_PROFILE_GE8300; owner.device_exposed = true;

@@ -374,6 +374,37 @@ self(void)
 	reject(NULL, file_size());
 	CHECK(sun60i_a733_gpu_fwcompute_file_parse(file, file_size(), BVNC ^ 1,
 	    &parsed) == EINVAL);
+	/* Synthetic container checks profile selection only, not a GE workload. */
+	build(file);
+	memcpy(&h, file, sizeof(h));
+	h.bvnc = PVR_FWCOMPUTE_GE8300_BVNC;
+	memcpy(file, &h, sizeof(h));
+	{
+		uint32_t *words = (uint32_t *)(void *)(file + h.header_bytes +
+		    COMMAND_OFFSET);
+		words[0] = 36;
+		words[9] = 1;
+		words[10] = 0x20;
+		words[11] = 1;
+	}
+	{
+		struct sha256_ctx ctx;
+
+		sha256_init(&ctx);
+		sha256_update(&ctx, file + h.header_bytes, PAYLOAD_BYTES);
+		sha256_final(&ctx, h.payload_digest);
+		memcpy(file, &h, sizeof(h));
+	}
+	CHECK(pvr_fwcompute_file_parse(file, file_size(), h.bvnc, &parsed) == 0);
+	CHECK(parsed.command.regs.tpu == 0x20);
+	memset(&parsed, 0xa5, sizeof(parsed));
+	CHECK(sun60i_a733_gpu_fwcompute_file_parse(file, file_size(), h.bvnc,
+	    &parsed) == EOPNOTSUPP);
+	{
+		const unsigned char *bytes = (const unsigned char *)&parsed;
+		for (i = 0; i < sizeof(parsed); i++)
+			CHECK(bytes[i] == 0xa5);
+	}
 	printf("PASS: %d checks; version-3 parser and RESUME role contract\n",
 	    checks);
 	free(file);

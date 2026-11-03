@@ -12,6 +12,10 @@
 typedef void *bus_dma_tag_t;
 struct sun60i_a733_gpu_dma { void *cpu, *map; };
 struct sun60i_a733_gpu_fwmem;
+struct pvr_fwmem;
+struct pvr_fwcompute_image;
+struct pvr_fwcompute_file;
+#define pvr_dma sun60i_a733_gpu_dma
 #include "heap.h"
 
 #define BUS_DMASYNC_POSTREAD 2

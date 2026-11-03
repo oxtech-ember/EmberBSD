@@ -45,6 +45,8 @@ sed '/^#include /d; /^__KERNEL_RCSID(/d' \
 sed '/^#include /d' "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwmem.c" >> "$work/driver.h"
 sed '/^#include /d' "$src/sys/dev/powervr/pvr_fwmem.h" > "$work/memory.h"
 sed '/^#include /d' "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwmem.h" >> "$work/memory.h"
+sed "/^#include /d" "$src/sys/dev/powervr/pvr_fwheap.h" > "$work/heap.h"
+sed "/^#include /d" "$src/sys/dev/powervr/pvr_fwheap.c" > "$work/heap-driver.h"
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror ${FWMEM_TEST_CFLAGS:-} \
     -I"$work" -I"$src/sys/arch/arm/sunxi" -I"$src/sys/dev/powervr" ${crypto_include:+"$crypto_include"} \
     "$tools/a733-gpu-fwmem-contract.c" \
@@ -52,7 +54,9 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror ${FWMEM_TEST_CFLAGS:-} \
     "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwinit.c" "$src/sys/dev/powervr/pvr_fwinit.c" \
     "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwimage.c" "$src/sys/dev/powervr/pvr_fwimage.c" \
     "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_mips.c" "$src/sys/dev/powervr/pvr_mips.c" \
-    "$src/sys/dev/powervr/pvr_ge8300.c" ${crypto_lib:+"$crypto_lib"} \
+    "$src/sys/dev/powervr/pvr_ge8300.c" \
+    "$src/sys/dev/powervr/pvr_fwcompute_vm.c" "$src/sys/dev/powervr/pvr_mmu.c" \
+    "$src/sys/dev/powervr/pvr_fwcompute_file.c" "$src/sys/dev/powervr/pvr_fwcompute_cmd.c" ${crypto_lib:+"$crypto_lib"} \
     ${crypto_rpath:+"$crypto_rpath"} -lcrypto -o "$work/test"
 if [ -n "${TEST_RUNNER:-}" ]; then
     $TEST_RUNNER "$work/test" "$@"
