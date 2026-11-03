@@ -125,7 +125,9 @@ pvr_freelist_page_alloc(struct pvr_freelist *fl, struct pvr_freelist_page *page)
 		goto fail;
 	}
 	page->pa = page->map->dm_segs[0].ds_addr;
-	if ((page->pa & (PVR_FREELIST_PAGE - 1)) != 0 ||
+	if (page->segment.ds_len < PVR_FREELIST_PAGE ||
+	    page->pa != page->segment.ds_addr ||
+	    (page->pa & (PVR_FREELIST_PAGE - 1)) != 0 ||
 	    page->pa > PVR_FREELIST_PA_END - PVR_FREELIST_PAGE) {
 		error = EINVAL;
 		goto fail;

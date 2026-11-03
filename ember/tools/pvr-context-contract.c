@@ -1083,8 +1083,14 @@ ge_context_profile(void)
 	CHECK(pvr_context_destroy(&ctx) == 0 && m.live == 0);
 	config_init(&config, DRM_PVR_CTX_TYPE_RENDER, bytes);
 	config.bvnc = PVR_STREAM_GE8300_BVNC;
-	CHECK(pvr_context_create(&m.backend, &config, &ctx) == EOPNOTSUPP);
-	CHECK(ctx == NULL && m.live == 0);
+	CHECK(pvr_context_create(&m.backend, &config, &ctx) == 0);
+	CHECK(ctx != NULL && m.live == 9);
+	CHECK(pvr_context_destroy(&ctx) == 0 && m.live == 0);
+	config_init(&config, DRM_PVR_CTX_TYPE_TRANSFER_FRAG, bytes);
+	config.bvnc = PVR_STREAM_GE8300_BVNC;
+	CHECK(pvr_context_create(&m.backend, &config, &ctx) == 0);
+	CHECK(ctx != NULL && m.live == 5);
+	CHECK(pvr_context_destroy(&ctx) == 0 && m.live == 0);
 }
 
 int

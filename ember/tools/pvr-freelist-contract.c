@@ -62,6 +62,7 @@ typedef struct test_dmamap {
 static struct allocation *metadata, *memory;
 static unsigned meta_count, mem_count, map_count, kva_count, loaded_count;
 static unsigned allocation_count, fault_at, fault_stage, current_serial;
+static void *fault_cpu;
 static uint64_t next_pa;
 static const uint8_t zeros[4096];
 static struct {
@@ -142,6 +143,8 @@ bus_dmamem_free(bus_dma_tag_t t, bus_dma_segment_t *seg, int n)
 {
 	void *p = seg->allocation->cpu;
 	CHECK(n == 1 && mem_count != 0);
+	if (fault_stage == 12 && p == fault_cpu)
+		CHECK(((uint8_t *)p)[0] == 0xa5);
 	if (seg->allocation->published) {
 		CHECK(!fw.live || fw.reset);
 		CHECK(!fw.initialized || fw.ack || fw.reset);
@@ -202,6 +205,7 @@ bus_dmamap_load(bus_dma_tag_t t, bus_dmamap_t map, void *cpu, size_t size,
 	if (fault(9)) map->dm_segs[0].ds_len--;
 	if (fault(10)) map->dm_segs[0].ds_addr++;
 	if (fault(11)) map->dm_segs[0].ds_addr = UINT64_C(1) << 36;
+	if (fault(12)) { map->dm_segs[0].ds_addr += 4096; fault_cpu = cpu; }
 	return 0;
 }
 
@@ -337,6 +341,7 @@ reset_state(void)
 	    loaded_count == 0 && metadata == NULL && memory == NULL && !fw.live);
 	memset(&fw, 0, sizeof(fw)); fw.response = 1;
 	allocation_count = fault_at = fault_stage = current_serial = 0;
+	fault_cpu = NULL;
 	next_pa = UINT64_C(0x120000000);
 	backing.syncs = 0;
 	memset(backing.cpu, 0xa5, backing.size);
@@ -454,7 +459,7 @@ allocation_failures(void)
 	struct pvr_freelist_config c;
 	unsigned ordinal, stage;
 	for (ordinal = 1; ordinal <= 4; ordinal++) {
-		for (stage = 1; stage <= 11; stage++) {
+		for (stage = 1; stage <= 12; stage++) {
 			reset_state(); c = config(4, 8, 4, 13);
 			fault_at = ordinal; fault_stage = stage;
 			CHECK(pvr_freelist_create(&fw, &backend, &c, &fl) != 0);
@@ -621,7 +626,7 @@ growth_failures(void)
 	unsigned ordinal, stage, i;
 
 	for (ordinal = 1; ordinal <= 4; ordinal++) {
-		for (stage = 1; stage <= 11; stage++) {
+		for (stage = 1; stage <= 12; stage++) {
 			reset_state(); c = config(4, 12, 4, 100);
 			CHECK(pvr_freelist_create(&fw, &backend, &c, &fl) == 0);
 			memcpy(original, backing.visible, sizeof(original));

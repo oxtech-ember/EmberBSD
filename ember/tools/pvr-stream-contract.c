@@ -118,6 +118,46 @@ compute(void)
 }
 
 static void
+ge_graphics_streams(void)
+{
+	const uint64_t ge = PVR_STREAM_GE8300_BVNC;
+	uint8_t p[192 + 192] = { 0 };
+	struct rogue_fwif_cmd_geom geom, geom_saved;
+	struct rogue_fwif_cmd_frag frag, saved;
+	struct rogue_fwif_cmd_transfer transfer;
+	struct rogue_fwif_static_rendercontext_state state;
+	uint32_t type = 0;
+
+	header(p, 48);
+	put32(p, 40); put32(p + 40, 1); put32(p + 44, 0x20);
+	CHECK(pvr_stream_geometry(ge, p, 48, 0, &geom) == 0);
+	CHECK(geom.regs.tpu == 0x20);
+	memset(&geom, 0xa5, sizeof(geom)); geom_saved = geom;
+	CHECK(pvr_stream_geometry(ge, p, 47, 0, &geom) == EINVAL);
+	put32(p + 40, 2);
+	CHECK(pvr_stream_geometry(ge, p, 48, 0, &geom) == EOPNOTSUPP);
+	CHECK(memcmp(&geom, &geom_saved, sizeof(geom)) == 0);
+	header(p, 384);
+	put32(p, 376); put32(p + 368, 0x1234);
+	put32(p + 372, 0x5678); put32(p + 376, 1); put32(p + 380, 0x20);
+	CHECK(pvr_stream_fragment(ge, p, 384, 64, &frag, &type) == 0);
+	CHECK(frag.regs.tpu == 0x20 && frag.zls_stride == 0x1234 &&
+	    frag.sls_stride == 0x5678 && type == ROGUE_FWIF_CCB_CMD_TYPE_FRAG_PR);
+	memset(&frag, 0xa5, sizeof(frag)); saved = frag;
+	put32(p + 376, 2);
+	CHECK(pvr_stream_fragment(ge, p, 384, 0, &frag, &type) == EOPNOTSUPP);
+	CHECK(memcmp(&frag, &saved, sizeof(frag)) == 0);
+	header(p, 172);
+	CHECK(pvr_stream_transfer(ge, p, 172, 0, &transfer) == 0);
+	CHECK(transfer.regs.frag_screen == 0);
+	CHECK(pvr_stream_transfer(ge, p, 171, 0, &transfer) == EINVAL);
+	CHECK(pvr_stream_transfer(ge, p, 172, 1, &transfer) == EOPNOTSUPP);
+	header(p, 192);
+	CHECK(pvr_stream_static_render(ge, p, 192, &state) == 0);
+	CHECK(pvr_stream_static_transfer(ge, NULL, 0) == 0);
+}
+
+static void
 ge_compute(void)
 {
 	const uint64_t ge = UINT64_C(0x0016006600360026);
@@ -157,7 +197,7 @@ ge_compute(void)
 	memset(&geom, 0xa5, sizeof(geom));
 	memcpy(&geom_saved, &geom, sizeof(geom));
 	header(p, 40);
-	CHECK(pvr_stream_geometry(ge, p, 40, 0, &geom) == EOPNOTSUPP);
+	CHECK(pvr_stream_geometry(ge, p, 40, 0, &geom) == EINVAL);
 	CHECK(memcmp(&geom, &geom_saved, sizeof(geom)) == 0);
 }
 
@@ -423,6 +463,7 @@ int
 main(void)
 {
 	compute();
+	ge_graphics_streams();
 	ge_compute();
 	graphics();
 	static_contexts();

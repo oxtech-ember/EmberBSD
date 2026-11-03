@@ -130,9 +130,6 @@ pvr_context_create(const struct pvr_backend *be,
 	if (config->bvnc != PVR_STREAM_BVNC &&
 	    config->bvnc != PVR_STREAM_GE8300_BVNC)
 		return EOPNOTSUPP;
-	if (config->bvnc == PVR_STREAM_GE8300_BVNC &&
-	    config->type != DRM_PVR_CTX_TYPE_COMPUTE)
-		return EOPNOTSUPP;
 	memset(&image, 0, sizeof(image));
 	switch (config->type) {
 	case DRM_PVR_CTX_TYPE_RENDER:

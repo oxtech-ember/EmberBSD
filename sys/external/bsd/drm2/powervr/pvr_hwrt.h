@@ -39,7 +39,8 @@ struct pvr_hwrt_target {
  * GPU addresses, spans and BO flags are checked before this module is called.
  * This profile accepts BVNC 36.56.104.183, 16x16 tiles and parameter format 2.
  * Width and height are 1..8192; samples are 1, 2 or 4; layers are 1..2048.
- * region_header_size counts headers, tpc_size counts bytes, and tpc_stride
+ * region_header_size counts headers; the caller separately computes the
+ * aligned byte span for the BO hold. tpc_size counts bytes, and tpc_stride
  * counts 4096-byte PM pages. A zero macrotile array is valid for this profile.
  *
  * The output slot starts NULL. A non-NULL result on error is still owned.
