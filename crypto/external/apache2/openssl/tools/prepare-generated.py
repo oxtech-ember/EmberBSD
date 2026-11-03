@@ -36,6 +36,48 @@ def compiler_command(cc, family, triplet, sysroot, flags=()):
     return shlex.join(args)
 
 
+GENERATOR_FILES = ('prepare-generated.py', 'generated-sources.pl',
+                   'config-sources.pl', 'map-exports.py')
+
+
+def generator_identity(path):
+    """Use index blobs for clean scripts and Git-compatible blobs for dirty ones."""
+    if not isinstance(path, str) or not path or any(not os.path.isabs(part) for part in path.split(os.pathsep)):
+        return None
+    git = shutil.which('git', path=path)
+    if git is None:
+        return None
+    def run(*arguments):
+        return subprocess.run([git, '-C', str(TOOLS), *arguments, '--', *GENERATOR_FILES],
+                              check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout
+    try:
+        entries = run('ls-files', '--stage', '-z')
+        status = run('diff-files', '--name-only', '-z', '--no-renames')
+    except subprocess.CalledProcessError:
+        return None
+    blobs = {}
+    for row in entries.split(b'\0'):
+        if not row:
+            continue
+        header, name = row.split(b'\t', 1)
+        mode, blob, stage = header.decode('ascii').split()
+        name = os.path.basename(os.fsdecode(name))
+        if name not in GENERATOR_FILES or stage != '0' or mode not in ('100644', '100755'):
+            return None
+        blobs[name] = blob
+    dirty = {os.path.basename(os.fsdecode(row)) for row in status.split(b'\0') if row}
+    for name in GENERATOR_FILES:
+        try:
+            if not stat.S_ISREG((TOOLS / name).lstat().st_mode):
+                return None
+        except OSError:
+            return None
+        if name not in blobs or name in dirty:
+            data = (TOOLS / name).read_bytes()
+            blobs[name] = hashlib.sha1(b'blob ' + str(len(data)).encode() + b'\0' + data).hexdigest()
+    return blobs
+
+
 def input_identity(source, object_root):
     """Use the identities already selected by the SDK, without reading payloads."""
     receipt = source / 'emberbsd-prepared-source.json'
@@ -57,7 +99,28 @@ def input_identity(source, object_root):
                                                        'target', 'flags', 'common_sources')) or
                 not isinstance(record.get('sources'), dict)):
             raise ValueError('invalid SDK object input context: ' + str(context))
-        return dict(source=prepared, context=record)
+        environment = signature.get('environment')
+        git_path = environment.get('PATH') if isinstance(environment, dict) else None
+        generators = generator_identity(git_path)
+        if generators is None:
+            return None
+        runtime = signature['runtime']
+        manifest = runtime.get('manifest', {}) if isinstance(runtime, dict) else {}
+        # Configure currently leaves ktls and ct-validation disabled, so it
+        # does not probe target headers for these optional features.
+        source_identity = dict(prepared)
+        details = dict(source_identity.get("identity", {}))
+        effective = dict(details.get("effective", {}))
+        if effective.get("api") == 3:
+            effective.pop("legacy_api2_sha256", None)
+        details["effective"] = effective
+        source_identity["identity"] = details
+        return dict(source=source_identity, generators=generators,
+                    compiler=signature['compiler'], target=signature['target'],
+                    native_toolset=signature['native_toolset'],
+                    runtime_inventory=runtime.get('inventory') if isinstance(runtime, dict) else None,
+                    runtime={name: manifest.get(name) for name in
+                             ('compiler_family', 'llvm_version', 'components', 'target', 'triplet', 'machine_arch', 'elf_machine')})
     # Direct make users can still generate files without an SDK context, but
     # paths alone do not identify their compiler and sysroot for reuse.
     return None
@@ -113,13 +176,12 @@ def main():
         parser.error('generation lock is not a regular file')
     fcntl.flock(lock_fd, fcntl.LOCK_EX)
     # The descriptor remains open until all output is complete.
-    # Source revisions, generator code, toolchain, native tools and sysroot
-    # configuration are already identified by the SDK object context.
+    # Prepared source, generator blobs and selected toolchain context determine reuse.
     identity = input_identity(source, object_root)
     inputs = (hashlib.sha256(json.dumps(identity, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
               if identity is not None else None)
     key = {'source': str(source), 'inputs': inputs, 'arch': args.arch, 'cpu': args.cpu,
-           'cc': args.cc, 'cc_args': cc_args, 'family': args.family, 'triplet': triplet, 'sysroot': args.sysroot, 'perl': args.perl, 'gmake': args.gmake,
+           'python': sys.executable, 'cc': args.cc, 'cc_args': cc_args, 'family': args.family, 'triplet': triplet, 'sysroot': args.sysroot, 'perl': args.perl, 'gmake': args.gmake,
            'ar': args.ar, 'ranlib': args.ranlib, 'shell': args.shell, 'path': args.path}
     marker = output / '.complete'
     owned = {'format': 'emberbsd-openssl-generated', 'object_root': str(object_root)}
