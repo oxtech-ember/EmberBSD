@@ -336,7 +336,8 @@
 ./usr/libdata/debug/usr/lib/npf/libext_log.so.0.0.debug		comp-obsolete	debug,compatfile,npf,obsolete
 ./usr/libdata/debug/usr/lib/npf/libext_normalise.so.0.0.debug	comp-obsolete	debug,compatfile,npf,obsolete
 ./usr/libdata/debug/usr/lib/npf/libext_rndblock.so.0.0.debug	comp-obsolete	debug,compatfile,npf,obsolete
-./usr/libdata/debug/usr/lib/private/libssh.so.50.1.debug	comp-secsh-debug	debug,compatfile
+./usr/libdata/debug/usr/lib/private/libssh.so.50.1.debug	comp-obsolete	debug,compatfile,obsolete
+./usr/libdata/debug/usr/lib/private/libssh.so.51.0.debug	comp-secsh-debug	debug,compatfile
 ./usr/libdata/debug/usr/lib/security/pam_afslog.so.4.debug	base-sys-debug	debug,compatfile,pam
 ./usr/libdata/debug/usr/lib/security/pam_chroot.so.4.debug	base-sys-debug	debug,compatfile,pam
 ./usr/libdata/debug/usr/lib/security/pam_deny.so.4.debug	base-sys-debug	debug,compatfile,pam
