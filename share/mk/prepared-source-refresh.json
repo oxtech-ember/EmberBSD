@@ -335,6 +335,26 @@
         "libssh.so",
         "libssh_pic.a"
       ]
+    },
+    "EMBER_OPENSSL_SOURCE": {
+      "producer_dirs": [
+        "crypto/external/apache2/openssl"
+      ],
+      "header_prefixes": [
+        "usr/include/openssl/"
+      ],
+      "consumer_dirs": [],
+      "linked_names": [
+        "libcrypto.so",
+        "libcrypto.a",
+        "libssl.so",
+        "libssl.a",
+        "libcrypto_pic.a",
+        "libssl_pic.a"
+      ],
+      "recursive_producer_dirs": [
+        "crypto/external/apache2/openssl"
+      ]
     }
   },
   "header_independent_object_patterns": [
@@ -354,6 +374,7 @@
   ],
   "nested_object_owners": {
     "external/bsd/tdb/lib/waf-build": "external/bsd/tdb/lib",
-    "crypto/external/bsd/openssh/config/generated": "crypto/external/bsd/openssh/config"
+    "crypto/external/bsd/openssh/config/generated": "crypto/external/bsd/openssh/config",
+    "crypto/external/apache2/openssl/generated": "crypto/external/apache2/openssl"
   }
 }

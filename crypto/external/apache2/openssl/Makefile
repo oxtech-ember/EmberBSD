@@ -26,5 +26,18 @@ ${target}-lib: openssl-generated
 .endif
 .endif
 
+# The generated tree is private to this object directory and has an owner marker.
+.if defined(EMBER_OPENSSL_SOURCE) && (make(clean) || make(cleandir))
+.if make(cleandir)
+cleandir:
+.else
+clean:
+.endif
+	${HOST_PYTHON} -B ${.CURDIR}/tools/clean-generated.py \
+	    --source-root ${.CURDIR:Q} --object-root ${.OBJDIR:Q} \
+	    --output ${EMBER_OPENSSL_GENERATED:U${.OBJDIR}/generated:Q} \
+	    --prepared-source ${EMBER_OPENSSL_SOURCE:Q}
+.endif
+
 .include <bsd.subdir.mk>
 .include <bsd.sys.mk>
