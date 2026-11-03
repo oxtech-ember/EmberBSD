@@ -1,0 +1,45 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\" Copyright (c) 2026 The EmberBSD Project
+.Dd November 3, 2026
+.Dt BMM150 4
+.Os
+.Sh NAME
+.Nm bmm150g
+.Nd Bosch BMM150 geomagnetic sensor
+.Sh SYNOPSIS
+.Cd "bmm150g* at iic?"
+.Sh DESCRIPTION
+The
+.Nm
+driver attaches to a device-tree node compatible with
+.Qq bosch,bmm150
+and reports three magnetic-field axes through
+.Xr sysmon_envsys 9 .
+The sensor is configured for the Bosch regular preset at 10 Hz.
+Axis values are integer nanotesla (nT), preserving the API's 1/16 microtesla
+resolution because envsys has no magnetic-field unit.
+.Pp
+Factory trim compensation uses Bosch SensorAPI v2.0.0 from commit
+.Lk https://github.com/boschsensortec/BMM150_SensorAPI/commit/0dce0617873cda1f6d51f6b7b961fdc2641e0c7c .
+The prepared source package retains the Bosch copyright and BSD-3-Clause
+license notices. Ports carries the NetBSD kernel-header and I2C transport-error
+patches so all consumers use the same source revision and fixes.
+.Sh DEVICE TREE
+.Bl -tag -width "compatible"
+.It compatible
+.Qq bosch,bmm150
+.It reg
+I2C address.
+.El
+.Sh SEE ALSO
+.Xr envstat 8 ,
+.Xr sysmon_envsys 9
+.Sh HISTORY
+The
+.Nm
+driver first appeared in EmberBSD 11.
+.Sh AUTHORS
+.An Bosch Sensortec
+for the SensorAPI.
+.An The EmberBSD Project
+for the driver integration.

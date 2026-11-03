@@ -144,7 +144,7 @@ MAN+=	sc.4 si.4
 MAN+=	fwohci.4 fwip.4 sbp.4
 
 # machine-independent I2C devices
-MAN+=	bq27220.4 dbcool.4 g760a.4 lmenv.4 lmtemp.4 mcp980x.4 mpl115a.4 sdtemp.4 \
+MAN+=	bmm150.4 bmi270.4 bq27220.4 dbcool.4 g760a.4 lmenv.4 lmtemp.4 mcp980x.4 mpl115a.4 sdtemp.4 \
 	smscmon.4 spdmem.4 tps65217pmic.4
 
 # machine-independent SPI devices

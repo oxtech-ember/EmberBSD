@@ -1,0 +1,46 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\" Copyright (c) 2026 The EmberBSD Project
+.Dd November 3, 2026
+.Dt BMI270 4
+.Os
+.Sh NAME
+.Nm bmi270g
+.Nd Bosch BMI270 accelerometer and gyroscope
+.Sh SYNOPSIS
+.Cd "bmi270g* at iic?"
+.Sh DESCRIPTION
+The
+.Nm
+driver attaches to a device-tree node compatible with
+.Qq bosch,bmi270
+and reports accelerometer and gyroscope axes through
+.Xr sysmon_envsys 9 .
+The Bosch base configuration is loaded at attach, and both sensors are enabled
+at 100 Hz with a 2 g accelerometer range and a 2000 degree/s gyroscope range.
+Accelerometer values are integer micrometres per second squared (um/s^2);
+gyroscope values are integer millidegrees per second (mdps).
+.Pp
+Initialization uses the public Bosch BMI270 SensorAPI base configuration from
+the common Ports source package. It validates chip identity and propagates I2C
+and configuration errors. Espressif custom Circle/Toy firmware is not used.
+The source is Bosch BMI270 SensorAPI 2.113.0 at commit
+41129fcfe39c583ee5462d79195741945d51c1fe, under its BSD-3-Clause license.
+.Sh DEVICE TREE
+.Bl -tag -width "compatible"
+.It compatible
+.Qq bosch,bmi270
+.It reg
+I2C address, 0x69 on the ESP-Mosaico V1.2 board.
+.El
+.Sh SEE ALSO
+.Xr envstat 8 ,
+.Xr sysmon_envsys 9
+.Sh HISTORY
+The
+.Nm
+driver first appeared in EmberBSD 11.
+.Sh AUTHORS
+.An Bosch Sensortec
+for the SensorAPI.
+.An The EmberBSD Project
+for the driver integration.

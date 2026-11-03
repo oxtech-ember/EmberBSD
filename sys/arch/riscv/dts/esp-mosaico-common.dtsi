@@ -49,6 +49,21 @@
 			compatible = "ti,bq27220";
 			reg = <0x55>;
 		};
+
+		magnetometer@11 {
+			compatible = "bosch,bmm150";
+			reg = <0x11>;
+		};
+
+		magnetometer@12 {
+			compatible = "bosch,bmm150";
+			reg = <0x12>;
+		};
+
+		imu@69 {
+			compatible = "bosch,bmi270";
+			reg = <0x69>;
+		};
 	};
 
 	/* Shared expansion-slot bus; does not claim slot-control pins. */

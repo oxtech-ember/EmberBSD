@@ -75,6 +75,23 @@ attach	bq27220g at iic
 file	dev/i2c/bq27220.c		bq27220g
 file	dev/i2c/bq27220_logic.c	bq27220g
 
+# Bosch BMM150 geomagnetic sensor
+device	bmm150g: sysmon_envsys
+attach	bmm150g at iic
+file	dev/i2c/bmm150_driver.c	bmm150g
+file	dev/i2c/bmm150_api.c		bmm150g
+file	dev/i2c/bmm150_math.c	bmm150g
+makeoptions bmm150g "CPPFLAGS.bmm150g"+="-I${BMM150_SENSORAPI_SOURCE_DIR:U${EXTERNAL_TOOLCHAIN}/share/bmm150-sensorapi}"
+
+# Bosch BMI270 accelerometer and gyroscope
+device	bmi270g: sysmon_envsys
+attach	bmi270g at iic
+file	dev/i2c/bmi270_driver.c	bmi270g
+file	dev/i2c/bmi270_bmi2.c	bmi270g
+file	dev/i2c/bmi270_sensorapi.c	bmi270g
+file	dev/i2c/bmi270_math.c	bmi270g
+makeoptions bmi270g "CPPFLAGS.bmi270g"+="-I${BMI270_SENSORAPI_SOURCE_DIR:U${EXTERNAL_TOOLCHAIN}/share/bmi270-sensorapi}"
+
 # M41T00 Real Time Clock
 device	m41trtc
 attach	m41trtc at iic
