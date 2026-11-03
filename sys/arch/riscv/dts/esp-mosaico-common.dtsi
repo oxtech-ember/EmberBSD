@@ -64,6 +64,12 @@
 			compatible = "bosch,bmi270";
 			reg = <0x69>;
 		};
+
+		es8311: audio-codec@19 {
+			compatible = "everest,es8311";
+			reg = <0x19>;
+			#sound-dai-cells = <0>;
+		};
 	};
 
 	/* Shared expansion-slot bus; does not claim slot-control pins. */
@@ -105,6 +111,39 @@
 		device_type = "memory";
 		reg = <0x50000000 0x01000000>;
 	};
+	sound {
+		compatible = "simple-audio-card";
+		simple-audio-card,name = "Mosaico ES8311";
+		simple-audio-card,format = "i2s";
+		simple-audio-card,bitclock-master = <&audio_cpu>;
+		simple-audio-card,frame-master = <&audio_cpu>;
+		simple-audio-card,mclk-fs = <256>;
+		simple-audio-card,aux-devs = <&speaker_amp>;
+		audio_cpu: simple-audio-card,cpu {
+			sound-dai = <&i2s0>;
+		};
+		simple-audio-card,codec {
+			sound-dai = <&es8311>;
+		};
+	};
+
+	speaker_amp: amplifier {
+		compatible = "simple-audio-amplifier";
+		enable-gpios = <&gpio 45 GPIO_ACTIVE_HIGH>;
+	};
+
+};
+
+&ahb_gdma {
+	status = "okay";
+};
+
+&i2s0 {
+	status = "okay";
+	dmas = <&ahb_gdma 1>, <&ahb_gdma 1>;
+	dma-names = "tx", "rx";
+	pinctrl-names = "default";
+	pinctrl-0 = <&audio_pins>;
 };
 
 &camera_dvp {
@@ -173,6 +212,27 @@
 			bias-disable;
 		};
 	};
+	audio_pins: audio-pins {
+		outputs {
+			pinmux = <ESP32S31_PINMUX(54, ESP32S31_SIG_NONE,
+			    ESP32S31_I2S0_MCLK)>,
+			    <ESP32S31_PINMUX(37, ESP32S31_SIG_NONE,
+			    ESP32S31_I2S0_BCK)>,
+			    <ESP32S31_PINMUX(49, ESP32S31_SIG_NONE,
+			    ESP32S31_I2S0_WS)>,
+			    <ESP32S31_PINMUX(40, ESP32S31_SIG_NONE,
+			    ESP32S31_I2S0_SD)>;
+			output-enable;
+			bias-disable;
+		};
+		input {
+			pinmux = <ESP32S31_PINMUX(52, ESP32S31_I2S0_SD,
+			    ESP32S31_SIG_NONE)>;
+			input-enable;
+			bias-disable;
+		};
+	};
+
 };
 
 &spi2 {

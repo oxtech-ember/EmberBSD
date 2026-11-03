@@ -526,3 +526,9 @@ file dev/i2c/rp1wmcodec.c rp1wmcodec
 device cst92xx: wsmousedev
 attach cst92xx at iic
 file dev/i2c/cst9220.c cst92xx
+
+# Everest Semiconductor ES8311 audio codec
+
+device es8311ac
+attach es8311ac at iic
+file dev/i2c/es8311ac.c es8311ac

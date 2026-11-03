@@ -47,6 +47,17 @@ device	esp32s31dvp: videobus, fdt_port
 attach	esp32s31dvp at fdt
 file	arch/riscv/espressif/esp32s31_dvp.c	esp32s31dvp
 
+# ESP32-S31 AHB peripheral DMA channels (I2S and other AHB requestors).
+device	espahbgdma
+attach	espahbgdma at fdt
+file	arch/riscv/espressif/esp_ahb_gdma.c		espahbgdma
+file	arch/riscv/espressif/esp_ahb_gdma_desc.c	espahbgdma
+
+# ESP32-S31 I2S0 full-duplex audio interface.
+device	espi2s: audiobus
+attach	espi2s at fdt
+file	arch/riscv/espressif/esp_i2s.c		espi2s
+
 # ESP32-S31 Ethernet: DesignWare GMAC
 attach	awge at fdt with esp_gmac
 file	arch/riscv/espressif/esp_gmac.c		esp_gmac

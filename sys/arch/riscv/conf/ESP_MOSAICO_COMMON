@@ -19,6 +19,13 @@ bq27220g* at iic?
 bmm150g* at iic?
 bmi270g* at iic?
 
+# ESP32-S31 I2S audio and its AHB DMA provider.
+espahbgdma* at fdt? pass 3
+espi2s* at fdt? pass 4
+es8311ac* at iic?             # Everest ES8311 codec
+ausoc* at fdt?                # Simple SoC audio card
+audio* at audiobus?
+
 cofb* at spi? slave 0
 wsdisplay* at wsemuldisplaydev?
 options WSEMUL_VT100

@@ -58,6 +58,11 @@
 			reg = <0x20587000 0x1000>;
 		};
 
+		hp_alive_sys: syscon@20589000 {
+			compatible = "espressif,esp32s31-hp-alive-sys", "syscon";
+			reg = <0x20589000 0x1000>;
+		};
+
 		lp_sys: syscon@20700000 {
 			compatible = "espressif,esp32s31-lp-sys", "syscon";
 			reg = <0x20700000 0x1000>;
@@ -114,6 +119,26 @@
 			clock-names = "xtal";
 			#address-cells = <1>;
 			#size-cells = <0>;
+			status = "disabled";
+		};
+
+		i2s0: i2s@20387000 {
+			compatible = "espressif,esp32s31-i2s0";
+			reg = <0x20387000 0x100>;
+			espressif,syscon = <&hp_clkrst>;
+			espressif,alive-syscon = <&hp_alive_sys>;
+			#sound-dai-cells = <0>;
+			status = "disabled";
+		};
+
+		ahb_gdma: dma-controller@20343000 {
+			compatible = "espressif,esp32s31-ahb-gdma";
+			reg = <0x20343000 0x628>;
+			espressif,syscon = <&hp_clkrst>;
+			interrupt-parent = <&intmtx>;
+			interrupts = <36 4>, <37 4>, <38 4>, <39 4>, <40 4>,
+			    <41 4>, <42 4>, <43 4>, <44 4>, <45 4>;
+			#dma-cells = <1>;
 			status = "disabled";
 		};
 

@@ -323,6 +323,7 @@ esp_axi_gdma_transfer(device_t dev, void *priv, struct fdtbus_dma_req *req)
 	    req->dreq_nsegs > GDMA_MAX_DESC || req->dreq_segs == NULL)
 		return EINVAL;
 	if (req->dreq_dir != FDT_DMA_READ || req->dreq_block_multi ||
+	    (req->dreq_block_irq && req->dreq_nsegs > 1) ||
 	    (req->dreq_sel != 0 && req->dreq_sel != (int)ch->trigger) ||
 	    (req->dreq_mem_opt.opt_bus_width != 0 &&
 	    req->dreq_mem_opt.opt_bus_width != 8) ||
