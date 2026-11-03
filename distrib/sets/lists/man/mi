@@ -7045,6 +7045,7 @@
 ./usr/share/man/man8/sparc64/makedev.8		man-obsolete		obsolete
 ./usr/share/man/man8/sparc64/ofwboot.8		man-sys-man		.man
 ./usr/share/man/man8/spawn.8			man-postfix-man		postfix,.man
+./usr/share/man/man8/spinandctl.8		man-sysutil-man		.man
 ./usr/share/man/man8/spray.8			man-rpcutil-man		.man
 ./usr/share/man/man8/sprayd.8			man-rpcserver-man	.man
 ./usr/share/man/man8/ssh-keysign.8		man-secsh-man		.man
