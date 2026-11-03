@@ -1,0 +1,7 @@
+// SPDX-License-Identifier: (GPL-2.0-only OR MIT)
+/* Explicit A133 PPU bring-up profile. No GPU MMIO consumer is enabled. */
+#include "sun50i-a133-ys-m33.dts"
+
+&gpu_ppu {
+	status = "okay";
+};

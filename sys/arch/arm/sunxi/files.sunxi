@@ -100,6 +100,12 @@ device	sun60ia733rccu: sunxi_ccu
 attach	sun60ia733rccu at fdt with sunxi_a733_r_ccu
 file	arch/arm/sunxi/sun60i_a733_r_ccu.c	sunxi_a733_r_ccu
 
+# Allwinner A133 GPU power domains
+device	sun50ippu
+attach	sun50ippu at fdt with sun50i_a133_ppu
+file	arch/arm/sunxi/sun50i_a133_ppu.c		sun50i_a133_ppu
+file	arch/arm/sunxi/sun50i_a133_ppu_power.c	sun50i_a133_ppu
+
 # Allwinner A733 PCK-600 power domains
 device	sun60ipck
 attach	sun60ipck at fdt with sun60i_a733_pck

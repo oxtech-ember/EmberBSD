@@ -39,6 +39,19 @@
 	};
 
 	soc {
+		gpu_ppu: power-controller@7001000 {
+			compatible = "allwinner,sun50i-a133-ppu";
+			reg = <0x07001000 0x40>;
+			interrupts = <GIC_SPI 119 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&r_ccu CLK_R_APB1_PPU>;
+			clock-names = "ppu";
+			resets = <&r_ccu RST_R_APB1_PPU>;
+			reset-names = "ppu";
+			syscon = <&syscon>;
+			#power-domain-cells = <0>;
+			status = "disabled";
+		};
+
 		syscon: syscon@3000000 {
 			compatible = "allwinner,sun50i-a100-system-control",
 				     "allwinner,sun50i-a64-system-control";
