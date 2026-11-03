@@ -115,6 +115,20 @@ espwifi_wpa2_sta_connected(uint8_t *bssid)
 }
 
 static void
+espwifi_wpa2_config_done(void)
+{
+	/*
+	 * IDF's wpa_config_done() calls esp_set_scan_ie().  In this selected
+	 * station-only build WNM and MBO are disabled, so IDF's implementation is
+	 * intentionally empty.  Do not enable either feature without porting its
+	 * probe-request IE handling through the BSD/driver boundary.
+	 */
+#if defined(CONFIG_WNM) || defined(CONFIG_MBO)
+#error "ESP FullMAC external WPA must implement WNM/MBO scan IE handling"
+#endif
+}
+
+static void
 espwifi_wpa2_sta_disconnected(uint8_t reason)
 {
 	(void)reason;
@@ -204,6 +218,7 @@ espwifi_wpa2_register(void)
 	callbacks->wpa_sta_deinit = espwifi_wpa2_sta_deinit;
 	callbacks->wpa_sta_connect = espwifi_wpa2_sta_connect;
 	callbacks->wpa_sta_connected_cb = espwifi_wpa2_sta_connected;
+	callbacks->wpa_config_done = espwifi_wpa2_config_done;
 	callbacks->wpa_sta_disconnected_cb = espwifi_wpa2_sta_disconnected;
 	callbacks->wpa_sta_rx_eapol = espwifi_wpa2_sta_rx_eapol;
 	callbacks->wpa_sta_in_4way_handshake = espwifi_wpa2_sta_in_4way;

@@ -28,6 +28,7 @@ assert idf_funcs, 'selected IDF wpa_funcs declaration missing'
 idf_fields = re.findall(r'\(\s*\*\s*(\w+)\s*\)', idf_funcs.group(1))
 assert idf_fields[15] == 'wpa_parse_wpa_ie'
 assert idf_fields[21] == 'wpa_sta_rx_mgmt'
+assert idf_fields[22] == 'wpa_config_done'
 
 
 def function(name, result):
@@ -105,11 +106,14 @@ struct wpa_funcs {
 	void *wpa3_parse_sae_msg;
 	void *wpa3_hostap_handle_auth;
  int (*wpa_sta_rx_mgmt)(u8,u8 *,size_t,u8 *,int8_t,u8,u64);
+ void (*wpa_config_done)(void);
 };
 _Static_assert(offsetof(struct wpa_funcs, wpa_parse_wpa_ie) ==
     15 * sizeof(void *), "IDF parser callback offset");
 _Static_assert(offsetof(struct wpa_funcs, wpa_sta_rx_mgmt) ==
     21 * sizeof(void *), "IDF RX callback offset");
+_Static_assert(offsetof(struct wpa_funcs, wpa_config_done) ==
+    22 * sizeof(void *), "IDF config-done callback offset");
 static unsigned filter_type, filter_subtype;
 static int filter_calls, callback_calls;
 static struct wpa_funcs *registered;
@@ -166,6 +170,7 @@ static int espwifi_os_assoc_response(unsigned int subtype,const void *body,
     function('espwifi_wpa2_sta_in_4way', 'bool') + \
     function('espwifi_wpa2_sta_rx_eapol', 'int') + \
     function('espwifi_wpa2_sta_rx_mgmt', 'int') + \
+    function('espwifi_wpa2_config_done', 'void') + \
     function('espwifi_cipher_type', 'wifi_cipher_type_t') + \
     function('espwifi_wpa2_parse_ie', 'int') + \
     function('espwifi_wpa3_build_sae_msg', r'uint8_t \*') + \
@@ -177,6 +182,8 @@ int main(void) {
      (1U<<WLAN_FC_STYPE_REASSOC_RESP);
  assert(espwifi_wpa2_register()==0 && filter_calls==1 && callback_calls==1);
  assert(filter_type==expected && filter_subtype==0 && registered!=NULL);
+ assert(registered->wpa_config_done==espwifi_wpa2_config_done);
+ registered->wpa_config_done();
  assert(registered->wpa_sta_rx_mgmt(WLAN_FC_STYPE_ASSOC_RESP,body,6,sender,-35,6,99)==0);
  assert(assoc_calls==1);
  assert(registered->wpa_sta_rx_mgmt(WLAN_FC_STYPE_AUTH,body,6,sender,-35,6,99)==-1);
