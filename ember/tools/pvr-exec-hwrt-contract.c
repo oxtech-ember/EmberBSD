@@ -85,6 +85,34 @@ expect_mlist(uint32_t local, uint32_t global)
 	return (size + 4095) & ~4095ULL;
 }
 
+struct drm_device { int unused; };
+struct drm_file { int unused; };
+struct pvr_backend { int unused; };
+static struct pvr_backend fake_backend;
+static uint64_t admission_bvnc = UINT64_C(0x00240038006800b7);
+static unsigned admission_calls;
+static uint64_t pvr_device_bvnc(struct drm_device *dev)
+{ (void)dev; return admission_bvnc; }
+static const struct pvr_backend *pvr_device_enter(struct drm_device *dev)
+{ (void)dev; return &fake_backend; }
+static void pvr_device_leave(struct drm_device *dev) { (void)dev; }
+static int pvr_create_hwrt_locked(struct drm_device *dev, void *data,
+    struct drm_file *file, const struct pvr_backend *be)
+{ (void)dev; (void)data; (void)file; (void)be; admission_calls++; return 0; }
+#include "hwrt-admission.inc"
+
+static void
+hwrt_profile_admission(void)
+{
+	struct drm_device dev = {0}; struct drm_file file = {0};
+	(void)pvr_device_bvnc;
+	CHECK(pvr_create_hwrt_dataset(&dev, NULL, &file) == 0);
+	CHECK(admission_calls == 1);
+	admission_bvnc = UINT64_C(0x0016006600360026);
+	CHECK(pvr_create_hwrt_dataset(&dev, NULL, &file) == -EOPNOTSUPP);
+	CHECK(admission_calls == 1);
+}
+
 int
 main(void)
 {
@@ -122,6 +150,7 @@ main(void)
 	CHECK(hwrt_mlist_fixture(524288, 524288) ==
 	    expect_mlist(524288, 524288));
 	CHECK(hwrt_mlist_fixture(1048576, 0) == expect_mlist(1048576, 0));
-	printf("PASS: %d HWRT geometry checks\n", checks);
+	hwrt_profile_admission();
+	printf("PASS: %d HWRT geometry and admission checks\n", checks);
 	return 0;
 }

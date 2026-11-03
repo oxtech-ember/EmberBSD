@@ -127,11 +127,17 @@ pvr_context_create(const struct pvr_backend *be,
 	    config->priority > 2 || config->id == 0 ||
 	    config->vm_address == 0 || (config->vm_address & 7) != 0)
 		return EINVAL;
+	if (config->bvnc != PVR_STREAM_BVNC &&
+	    config->bvnc != PVR_STREAM_GE8300_BVNC)
+		return EOPNOTSUPP;
+	if (config->bvnc == PVR_STREAM_GE8300_BVNC &&
+	    config->type != DRM_PVR_CTX_TYPE_COMPUTE)
+		return EOPNOTSUPP;
 	memset(&image, 0, sizeof(image));
 	switch (config->type) {
 	case DRM_PVR_CTX_TYPE_RENDER:
 		size = sizeof(image.render);
-		error = pvr_stream_static_render(PVR_STREAM_BVNC,
+		error = pvr_stream_static_render(config->bvnc,
 		    config->static_state, config->static_size,
 		    &image.render.static_render_context_state);
 		break;
@@ -139,7 +145,7 @@ pvr_context_create(const struct pvr_backend *be,
 		if (config->callstack != 0)
 			return EINVAL;
 		size = sizeof(image.compute);
-		error = pvr_stream_static_compute(PVR_STREAM_BVNC,
+		error = pvr_stream_static_compute(config->bvnc,
 		    config->static_state, config->static_size,
 		    &image.compute.static_compute_context_state.ctxswitch_regs);
 		break;
@@ -147,7 +153,7 @@ pvr_context_create(const struct pvr_backend *be,
 		if (config->callstack != 0)
 			return EINVAL;
 		size = sizeof(image.transfer);
-		error = pvr_stream_static_transfer(PVR_STREAM_BVNC,
+		error = pvr_stream_static_transfer(config->bvnc,
 		    config->static_state, config->static_size);
 		break;
 	default:

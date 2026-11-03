@@ -67,6 +67,9 @@ struct drm_device {
 	unsigned int refs, features;
 	struct drm_vma_offset_manager *vma_offset_manager;
 };
+static uint64_t selected_bvnc = UINT64_C(0x00240038006800b7);
+uint64_t pvr_device_bvnc(struct drm_device *d)
+{ (void)d; return selected_bvnc; }
 struct drm_gem_object;
 struct dma_buf { struct drm_gem_object *obj; int flags; };
 struct sg_table { struct drm_gem_object *obj; };
@@ -338,6 +341,13 @@ mapping_contract(struct drm_gem_object *obj, unsigned int flags)
 	if (flags & 2) wanted |= A733_GPU_MMU_PTE_PM_FW_PROTECT;
 	CHECK(pvr_bo_mapping(obj, 0, PAGE_SIZE, &pa, &bits) == 0);
 	CHECK(pa == map->dm_segs[0].ds_addr && bits == wanted);
+	selected_bvnc = UINT64_C(0x0016006600360026);
+	pvr_to_bo(obj)->cma.dmasegs[0].ds_addr = map->dm_segs[0].ds_addr;
+	CHECK(pvr_bo_mapping(obj, 0, PAGE_SIZE, &pa, &bits) == 0);
+	map->dm_segs[0].ds_addr += PAGE_SIZE;
+	CHECK(pvr_bo_mapping(obj, 0, PAGE_SIZE, &pa, &bits) == EOPNOTSUPP);
+	map->dm_segs[0].ds_addr -= PAGE_SIZE;
+	selected_bvnc = UINT64_C(0x00240038006800b7);
 	pa = 0xdead; bits = 0xbeef;
 	CHECK(pvr_bo_mapping(NULL, 0, PAGE_SIZE, &pa, &bits) == EINVAL);
 	CHECK(pvr_bo_mapping(obj, 0, 0, &pa, &bits) == EINVAL);

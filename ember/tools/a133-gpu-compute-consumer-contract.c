@@ -18,21 +18,28 @@
 #define PVR_FWPROBE_MMUCACHE 0x2abc0066
 #define CHECK(x) do { if (!(x)) { fprintf(stderr, "%d: %s\n", __LINE__, #x); exit(1); } checks++; } while (0)
 typedef FILE *firmware_handle_t;
-struct pvr_fwmem { int unused; };
-struct pvr_fwboot_result { int unused; };
+struct pvr_fwmem { struct { struct pvr_fwinfo info; } image; };
+struct pvr_fwboot_result { int error; };
+struct pvr_query_input { uint64_t bvnc; };
+struct drm_device { int valid; };
 struct pvr_dma { void *cpu, *map; bool device_exposed; };
 struct pvr_fwheap { struct pvr_dma heap; };
 struct pvr_fwvm { bool device_exposed; struct pvr_dma resource[PVR_FWCOMPUTE_RESOURCES]; };
 struct pvr_fwprobe_result { unsigned polls; struct { int read_offset, write_offset, rtn, fw_faults, hwr_state; } after; };
 struct pvr_fwprobe_observation { bool valid; struct { int fw_faults, hwr_state; } state; };
 struct a133_gpu_diagnostics { int stage; };
+#define PVR_GE8300_DRM 1
+#define A133_GPU_STAGE_COMPLETE 35
 struct a133_gpu_softc {
  struct a133_gpu_diagnostics diag; void *dev,*dmat,*bst; uintptr_t bsh;
  struct pvr_fwmem *memory; struct pvr_fwboot_result boot_result;
+ bool drm_pending; struct { bool attempted, registered; } bridge;
+ struct drm_device *render_device; int lock;
  struct pvr_fwprobe_result queue_cache,compute_sync,compute_kick;
  struct pvr_fwheap *compute_heap; struct pvr_fwvm *compute_vm;
  uint64_t effective_hz; int irq_lock,irq_fault;
- int queue_stage,queue_error,compute_stage,compute_error,compute_attempted,compute_polls;
+ int queue_stage,queue_error,queue_attempted,compute_stage,compute_error,compute_attempted,compute_polls;
+ struct { bool retain_resources; } owner;
  int compute_sync_read,compute_sync_write,compute_sync_return;
  int compute_kick_read,compute_kick_write,compute_kick_return;
  int compute_ccb_read,compute_ccb_write,compute_ufo,compute_canary,compute_faults,compute_hwr;
@@ -94,13 +101,65 @@ static int tsleep(void *p,int pri,const char *n,int t){(void)p;(void)pri;(void)n
 static int pvr_fwvm_release(struct pvr_fwvm **v){CHECK(!(*v)->device_exposed);return 0;}
 static int pvr_fwheap_release(struct pvr_fwheap **h){CHECK(!(*h)->heap.device_exposed);return 0;}
 #define aprint_error_dev(...) ((void)0)
+#define PVR_FW_PROFILE_GE8300 1
+#define PVR_GE8300_BVNC UINT64_C(0x0016006600360026)
+static int pvr_query_input_from_fwinfo(const struct pvr_fwinfo *info,
+ struct pvr_query_input *input) { input->bvnc=info->bvnc;return 0; }
+static int a133_gpu_compute_run(struct a133_gpu_softc *);
+static struct drm_device fake_device;
+static unsigned drm_register_calls,drm_publish_calls,drm_queue_calls;static bool check_drm_race;
+static int drm_queue_error;
+static int a133_gpu_queue_run(struct a133_gpu_softc *sc){
+ if(sc->queue_attempted)return EBUSY;sc->queue_attempted=1;
+ drm_queue_calls++;if(drm_queue_error)return drm_queue_error;sc->queue_stage=5;return 0;}
+static int pvr_render_attach(void *dev,void *dmat,uint64_t bvnc,
+ const struct pvr_query_input *input,struct drm_device **out){
+ (void)dev;(void)dmat;CHECK(bvnc==PVR_GE8300_BVNC && input->bvnc==bvnc);
+ if(check_drm_race)CHECK(a133_gpu_compute_run(active_sc)==EBUSY);
+ drm_register_calls++;*out=&fake_device;return 0; }
+static int pvr_fwbridge_prepare(void *b,int *l,void *bst,uintptr_t bsh,
+ struct pvr_fwmem *m,struct pvr_fwboot_result *boot,struct pvr_fwprobe_result *prev,
+ int profile,int (*health)(void *),void *cookie) {
+ (void)b;(void)l;(void)bst;(void)bsh;(void)m;(void)boot;(void)prev;
+ CHECK(profile==PVR_FW_PROFILE_GE8300 && health(cookie)==0);
+ active_sc->bridge.attempted=true;return 0; }
+static int pvr_fwbridge_publish(void *b,struct drm_device *dev){
+ (void)b;CHECK(dev==&fake_device);drm_publish_calls++;active_sc->bridge.registered=true;return 0; }
+static int a133_gpu_drm_attach(struct a133_gpu_softc *);
 #include "consumer.inc"
 static void cleanup(struct a133_gpu_softc *s){
  if(s->compute_vm){for(unsigned i=0;i<PVR_FWCOMPUTE_RESOURCES;i++)free(s->compute_vm->resource[i].cpu);free(s->compute_vm);}
  free(s->compute_heap);
 }
 int main(int argc,char **argv){
- struct pvr_fwmem mem={0};CHECK(argc==2);input_path=argv[1];
+ struct pvr_fwmem mem={0};(void)a133_gpu_queue_run;CHECK(argc==2);input_path=argv[1];
+ {
+  struct a133_gpu_softc sc={0};sc.memory=&mem;sc.queue_stage=5;
+  sc.drm_pending=true;
+  CHECK(a133_gpu_compute_run(&sc)==EBUSY && !sc.compute_attempted);
+  sc.drm_pending=false;sc.bridge.attempted=true;
+  CHECK(a133_gpu_compute_run(&sc)==EBUSY && !sc.compute_attempted);
+ }
+ {
+  struct a133_gpu_softc sc={0};sc.memory=&mem;
+  sc.owner.retain_resources=true;sc.diag.stage=35;sc.effective_hz=504000000;
+  mem.image.info.bvnc=PVR_GE8300_BVNC;active_sc=&sc;
+  sc.compute_attempted=1;CHECK(a133_gpu_drm_attach(&sc)==EBUSY);
+  sc.compute_attempted=0;sc.irq_fault=EIO;
+  CHECK(a133_gpu_drm_attach(&sc)==EIO && drm_register_calls==0);
+  sc.irq_fault=0;drm_queue_error=ETIMEDOUT;
+  CHECK(a133_gpu_drm_attach(&sc)==ETIMEDOUT && drm_register_calls==0);
+  drm_queue_error=0;CHECK(a133_gpu_drm_attach(&sc)==EBUSY);
+  /* A new fixture instance represents a fresh boot, not an in-place reset. */
+  memset(&sc,0,sizeof(sc));sc.memory=&mem;sc.owner.retain_resources=true;
+  sc.diag.stage=35;sc.effective_hz=504000000;active_sc=&sc;check_drm_race=true;
+  CHECK(a133_gpu_drm_attach(&sc)==0);
+  CHECK(drm_queue_calls==2 && drm_register_calls==1 &&
+      drm_publish_calls==1 && sc.bridge.registered);
+  CHECK(a133_gpu_compute_run(&sc)==EBUSY);
+  CHECK(a133_gpu_drm_attach(&sc)==EBUSY);
+  check_drm_race=false;
+ }
  for(fault=0;fault<=BAD_IRQ;fault++){
   struct a133_gpu_softc sc={0}; sc.memory=&mem;sc.queue_stage=5;sc.effective_hz=504000000;sc.diag.stage=35;active_sc=&sc;
   calls=probes=sync_calls=kick_calls=vm_calls=postreads=0;ticks=0;

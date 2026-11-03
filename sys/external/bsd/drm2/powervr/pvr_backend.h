@@ -57,6 +57,8 @@ struct pvr_backend {
 };
 
 struct drm_device;
+/* Immutable after device registration; no gate is required. */
+uint64_t pvr_device_bvnc(struct drm_device *);
 int pvr_backend_attach(struct drm_device *, const struct pvr_backend *);
 /* NULL means no execution backend. CPU-only VM operations remain available. */
 const struct pvr_backend *pvr_device_enter(struct drm_device *);

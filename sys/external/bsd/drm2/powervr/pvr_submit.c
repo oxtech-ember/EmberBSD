@@ -127,7 +127,7 @@ pvr_submit_sync_valid(const struct drm_pvr_sync_op *input)
 /* All user memory is copied and decoded before any firmware work starts. */
 static int
 pvr_submit_copy(const struct drm_pvr_obj_array *array,
-    struct pvr_submit_batch *batch, uint32_t *index)
+    struct pvr_submit_batch *batch, uint32_t *index, uint64_t bvnc)
 {
 	struct drm_pvr_job input;
 	struct pvr_submit_job *job;
@@ -145,6 +145,9 @@ pvr_submit_copy(const struct drm_pvr_obj_array *array,
 		if (error != 0)
 			return error;
 		job->type = input.type;
+		if (bvnc == PVR_STREAM_GE8300_BVNC &&
+		    job->type != DRM_PVR_JOB_TYPE_COMPUTE)
+			return EOPNOTSUPP;
 		job->handle = input.context_handle;
 		job->hwrt_handle = input.hwrt.set_handle;
 		job->rt_index = input.hwrt.data_index;
@@ -160,7 +163,7 @@ pvr_submit_copy(const struct drm_pvr_obj_array *array,
 			    stream, sizeof(stream));
 			if (error != 0)
 				return error;
-			error = pvr_stream_compute(PVR_STREAM_BVNC, stream,
+			error = pvr_stream_compute(bvnc, stream,
 			    sizeof(stream), input.flags, &job->command.compute);
 			if (error != 0)
 				return error;
@@ -178,7 +181,7 @@ pvr_submit_copy(const struct drm_pvr_obj_array *array,
 			    transfer, sizeof(transfer));
 			if (error != 0)
 				return error;
-			error = pvr_stream_transfer(PVR_STREAM_BVNC, transfer,
+			error = pvr_stream_transfer(bvnc, transfer,
 			    sizeof(transfer), input.flags, &job->command.transfer);
 			if (error != 0)
 				return error;
@@ -200,11 +203,11 @@ pvr_submit_copy(const struct drm_pvr_obj_array *array,
 			if (error != 0)
 				return error;
 			if (job->type == DRM_PVR_JOB_TYPE_GEOMETRY) {
-				error = pvr_stream_geometry(PVR_STREAM_BVNC,
+				error = pvr_stream_geometry(bvnc,
 				    graphics, expect, input.flags,
 				    &job->command.geometry);
 			} else {
-				error = pvr_stream_fragment(PVR_STREAM_BVNC,
+				error = pvr_stream_fragment(bvnc,
 				    graphics, expect, input.flags,
 				    &job->command.fragment, &job->fragment_type);
 			}
@@ -573,7 +576,7 @@ pvr_submit_jobs(struct drm_device *dev, void *data, struct drm_file *file)
 		return -ENOMEM;
 	batch->bytes = bytes;
 	batch->count = input.count;
-	error = pvr_submit_copy(&input, batch, &index);
+	error = pvr_submit_copy(&input, batch, &index, pvr_device_bvnc(dev));
 	if (error != 0) {
 		pvr_submit_release(dev, batch, false);
 		args->jobs.count = index;

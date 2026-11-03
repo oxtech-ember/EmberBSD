@@ -1578,6 +1578,54 @@ combined_tests(void)
 	printf("a733-gpu-fwqueue combined KICK: PASS %u checks\n", assertions - start);
 }
 
+/* GE queue reuse remains separate from the one-shot diagnostic controls. */
+static void
+ge_service_tests(void)
+{
+	struct pvr_fwprobe_observation observed;
+	struct rogue_fwif_kccb_cmd unsupported = { 0 };
+	unsigned old_writes;
+
+	reset();
+	owner.profile = PVR_FW_PROFILE_GE8300;
+	owner.device_exposed = true;
+	owner.image.info.bvnc = UINT64_C(0x0016006600360026);
+	booted.compchecks_updated = 1; booted.os_count_support = 8;
+	booted.hw_layout_version = booted.fw_layout_version = 3;
+	booted.hw_bvnc = booted.fw_bvnc = owner.image.info.bvnc;
+	booted.fw_processor_version = 0x81234567; booted.ddk_version = 0x23456789;
+	booted.ddk_build = 0x3456789a; booted.build_options = 0x456789ab;
+	put64(cpu[4] + COMPCHECKS + 8, owner.image.info.bvnc);
+	put64(cpu[4] + COMPCHECKS + 24, owner.image.info.bvnc);
+	memcpy(expected[4], cpu[4], sizes[4]);
+	CHECK(pvr_fwprobe(&owner, 0x12340000, &owner, &booted, &result) == 0);
+	previous = previous_saved = result; memset(&result, 0, sizeof(result));
+	test_slot = 1; syncs = writes = barriers = waits = observations = completions = 0;
+	phase = read_phase = 0; clock_ns = total_wait_us = jump_ns = 0;
+	fw32(3, KRETURN + 4, 1); irq_arm_calls = irq_arm_error = 0;
+	CHECK(pvr_fwprobe_mmucache_irq(&owner, 0x12340000, &owner, &booted,
+	    &previous, fake_irq_arm, &owner, &result) == 0);
+	memset(&service, 0, sizeof(service));
+	CHECK(pvr_fwqueue_attach(&owner, &booted, &result, &service) == 0);
+	queue_mode = true;
+	for (unsigned i = 0; i < 4; i++) {
+		uint32_t type = i % 2 == 0 ? ROGUE_FWIF_KCCB_CMD_KICK :
+		    ROGUE_FWIF_KCCB_CMD_CLEANUP;
+		next_service(type);
+		response = type == ROGUE_FWIF_KCCB_CMD_KICK ? 0 : 1;
+		CHECK(pvr_fwqueue_cmd(&owner, 0x12340000, &owner, &booted,
+		    &service, &test_command, 0, &result) == 0);
+		CHECK(result.after.read_offset == i + 3 &&
+		    result.after.write_offset == i + 3);
+		CHECK(pvr_fwqueue_observe(&owner, &booted, &service, &observed) == 0);
+	}
+	unsupported.cmd_type = ROGUE_FWIF_KCCB_CMD_COMBINED_GEOM_FRAG_KICK;
+	old_writes = writes;
+	CHECK(pvr_fwqueue_cmd(&owner, 0x12340000, &owner, &booted, &service,
+	    &unsupported, 0, &result) == EOPNOTSUPP);
+	CHECK(writes == old_writes && !service.failed);
+}
+
 int
 main(void)
 {
@@ -1620,8 +1668,15 @@ main(void)
 		struct rogue_fwif_kccb_cmd ge_cmd = { .cmd_type = ROGUE_FWIF_KCCB_CMD_KICK };
 		CHECK(pvr_fwprobe_cmd(&owner, 0x12340000, &owner, &booted,
 		    &result, &ge_cmd, 2, 0, &ge_out) == EOPNOTSUPP);
-		CHECK(pvr_fwqueue_attach(&owner, &booted, &result, &ge_queue) == EOPNOTSUPP);
 		CHECK(!ge_out.attempted && !ge_queue.attached);
+		CHECK(pvr_fwqueue_attach(&owner, &booted, &result, &ge_queue) == 0);
+		CHECK(ge_queue.attached && !ge_queue.failed);
+		{
+			struct pvr_fwprobe_observation obs;
+			uint32_t id = 0;
+			CHECK(pvr_fwqueue_observe(&owner, &booted, &ge_queue, &obs) == 0);
+			CHECK(pvr_fwqueue_event(&owner, &booted, &ge_queue, &id) == ENOENT);
+		}
 	}
 	{
 		struct pvr_fwheap heap = { 0 };
@@ -1741,6 +1796,7 @@ main(void)
 		observation_tests();
 		kick_consumption_tests();
 	}
+	ge_service_tests();
 	service_tests();
 	combined_tests();
 	event_tests();

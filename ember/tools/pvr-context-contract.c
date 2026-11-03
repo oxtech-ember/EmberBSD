@@ -533,6 +533,7 @@ config_init(struct pvr_context_config *config, uint32_t type, uint8_t *bytes)
 	unsigned i;
 	memset(config, 0, sizeof(*config));
 	config->type = type;
+	config->bvnc = PVR_STREAM_BVNC;
 	config->priority = 1;
 	config->id = 101;
 	config->pid = 301;
@@ -1066,9 +1067,30 @@ graphics_admission(void)
 	CHECK(pvr_context_destroy(&ctx) == 0);
 }
 
+static void
+ge_context_profile(void)
+{
+	struct model m;
+	struct pvr_context_config config;
+	struct pvr_context *ctx = NULL;
+	uint8_t bytes[192];
+
+	init_model(&m);
+	config_init(&config, DRM_PVR_CTX_TYPE_COMPUTE, bytes);
+	config.bvnc = PVR_STREAM_GE8300_BVNC;
+	CHECK(pvr_context_create(&m.backend, &config, &ctx) == 0);
+	CHECK(ctx != NULL);
+	CHECK(pvr_context_destroy(&ctx) == 0 && m.live == 0);
+	config_init(&config, DRM_PVR_CTX_TYPE_RENDER, bytes);
+	config.bvnc = PVR_STREAM_GE8300_BVNC;
+	CHECK(pvr_context_create(&m.backend, &config, &ctx) == EOPNOTSUPP);
+	CHECK(ctx == NULL && m.live == 0);
+}
+
 int
 main(void)
 {
+	ge_context_profile();
 	normal_contexts();
 	allocation_failures();
 	jobs_and_cleanup();

@@ -238,6 +238,26 @@ profile_contract(void)
 	CHECK(memcmp(memory + ARRAY_OFFSET, areas, sizeof(areas)) == 0);
 }
 
+static void
+ge_profile_contract(void)
+{
+	struct drm_pvr_ioctl_dev_query_args a, b;
+	uint8_t saved[sizeof(memory)];
+
+	a = prepare(DRM_PVR_DEV_QUERY_HEAP_INFO_GET, 16, 24, 6,
+	    USER_BASE + ARRAY_OFFSET);
+	CHECK(pvr_heap_query(a.type, &a) == 0);
+	memcpy(saved, memory, sizeof(saved));
+	b = prepare(DRM_PVR_DEV_QUERY_HEAP_INFO_GET, 16, 24, 6,
+	    USER_BASE + ARRAY_OFFSET);
+	CHECK(pvr_heap_query_profile(UINT64_C(0x0016006600360026), b.type, &b) == 0);
+	CHECK(memcmp(memory, saved, sizeof(memory)) == 0);
+	b = prepare(DRM_PVR_DEV_QUERY_HEAP_INFO_GET, 16, 24, 6,
+	    USER_BASE + ARRAY_OFFSET);
+	CHECK(pvr_heap_query_profile(UINT64_C(0x0016006600360027), b.type, &b) ==
+	    -EOPNOTSUPP);
+}
+
 int
 main(void)
 {
@@ -252,6 +272,7 @@ main(void)
 	query_contract(DRM_PVR_DEV_QUERY_HEAP_INFO_GET, 24, 6);
 	query_contract(DRM_PVR_DEV_QUERY_STATIC_DATA_AREAS_GET, 16, 5);
 	profile_contract();
+	ge_profile_contract();
 	printf("PASS: %u production heap checks, PAGE_SHIFT=%d\n", checks, PAGE_SHIFT);
 	return 0;
 }

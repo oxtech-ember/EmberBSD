@@ -106,3 +106,32 @@ the UFO reached 1, and a GPU write produced `0x13579bdf` in the synchronized
 scratch buffer; the fresh fault/HWR check was clean. This qualifies that bounded
 compute operation on that device. It does not establish cold boot, rendering,
 Vulkan or Qt acceleration.
+
+The experimental DRM compute path is selected by `PVR_GE8300_DRM`. After a
+successful explicit firmware boot, `hw.sun50ia133gpu0.drm_attach=1` performs
+the bounded queue check if needed and adopts that queue for the DRM backend.
+Do not run the diagnostic compute probe before adoption: its exposed allocations
+are retained and the DRM path refuses to reuse them. Once adoption is attempted,
+diagnostic compute cannot mutate the firmware queue. The owner retains resources
+on uncertain failures; this path does not claim a working reset or recovery.
+The cached `drm_queue_read`, `drm_queue_write`, `drm_queue_error`,
+`drm_queue_command` and `drm_failed` values do not read hardware. A successful
+context-handle destroy alone does not prove firmware cleanup; the trial check
+also verifies backend health and a later completed MMUCACHE command.
+
+The source includes an experimental userspace check for the pinned compute
+image: `ember/tools/pvr-ge8300-drm-compute-check.c`. It checks GE identity,
+quirks, rejected foreign handles and unsupported render, maps the Mesa-generated
+resources, and submits two compute contexts with syncobj waits and canary checks.
+On one office YS-M33 preserved-power warm RAM trial, this check passed with two
+userspace compute contexts, syncobj waits and GPU canary writes. The final
+cached queue state was drained and healthy after context, VM and BO retirement.
+The negative foreign-handle and unsupported-render checks also passed. This
+qualifies only that bounded DRM userspace compute operation on that device.
+
+On NetBSD an ioctl error does not copy the modified output buffer to userspace:
+the probe checks the original job count after the rejected submit. Linux
+partial-error output semantics are not established here. Mesa and Vulkan
+submission error handling and recovery have not been qualified. This interface
+does not expose GE graphics or establish Vulkan API, Qt acceleration or
+cold-boot support.

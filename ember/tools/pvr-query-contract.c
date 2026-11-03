@@ -8,6 +8,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include "sun60i_a733_gpu_fwinfo.h"
+#ifdef PVR_GE_TEST
+#include "../../sys/dev/powervr/pvr_ge8300.h"
+#endif
 
 typedef int32_t __s32;
 typedef uint16_t __u16;
@@ -326,12 +329,50 @@ queries(const struct pvr_query_profile *p)
 	CHECK(pvr_query(p, 6, &args) == -EOPNOTSUPP && copies == 0);
 }
 
+#ifdef PVR_GE_TEST
+static void
+ge_profile(const char *path)
+{
+	struct pvr_fwinfo info;
+	struct pvr_query_input input, bad;
+	struct pvr_query_profile profile, untouched;
+	uint8_t *bytes;
+	FILE *file;
+	long size;
+
+	file = fopen(path, "rb"); CHECK(file != NULL);
+	CHECK(fseek(file, 0, SEEK_END) == 0); size = ftell(file);
+	CHECK(size == 118784 && fseek(file, 0, SEEK_SET) == 0);
+	bytes = malloc(size); CHECK(bytes != NULL);
+	CHECK(fread(bytes, 1, size, file) == (size_t)size);
+	CHECK(fclose(file) == 0);
+	CHECK(pvr_ge8300_fwinfo_parse(bytes, size,
+	    UINT64_C(0x0016006600360026), &info) == 0);
+	free(bytes);
+	CHECK(sun60i_gpu_query_input(&info, &input) == 0);
+	CHECK(pvr_query_profile_init(&input, &profile) == 0);
+	CHECK(profile.quirk_count > 0 && profile.quirks[0] == 49927);
+	memset(&untouched, 0xa5, sizeof(untouched));
+	bad = input; bad.brn_mask ^= 1; profile = untouched;
+	CHECK(pvr_query_profile_init(&bad, &profile) == EOPNOTSUPP);
+	CHECK(memcmp(&profile, &untouched, sizeof(profile)) == 0);
+	bad = input; bad.ern_mask ^= UINT64_C(1) << 8; profile = untouched;
+	CHECK(pvr_query_profile_init(&bad, &profile) == EOPNOTSUPP);
+	CHECK(memcmp(&profile, &untouched, sizeof(profile)) == 0);
+}
+#endif
+
 int
 main(int argc, char **argv)
 {
 	struct pvr_query_profile profile;
 
+#ifdef PVR_GE_TEST
+	CHECK(argc == 3);
+	ge_profile(argv[2]);
+#else
 	CHECK(argc == 2);
+#endif
 	profile = profiles(metadata(argv[1]));
 	queries(&profile);
 	printf("PASS: %u metadata-derived PowerVR query checks\n", checks);

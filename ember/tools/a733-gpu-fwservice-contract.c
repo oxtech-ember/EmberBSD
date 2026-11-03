@@ -86,6 +86,28 @@ static void bus_dmamem_free(bus_dma_tag_t, bus_dma_segment_t *, int);
 static void bus_dmamap_sync(bus_dma_tag_t, bus_dmamap_t, size_t, size_t, int);
 static uint32_t le32dec(const void *);
 #include "dma-driver.h"
+static uint64_t fake_ge_alias_pa;
+int
+pvr_fwmem_compute_alloc(struct pvr_fwmem *mem, size_t size, struct pvr_dma *dma)
+{
+	int error = fake_ge_raw_alloc(mem->dmat, size, dma);
+	if (error == 0) {
+		dma->compute_owner = mem;
+		if (fake_ge_alias_pa != 0)
+			dma->address = fake_ge_alias_pa;
+	}
+	return error;
+}
+int
+pvr_fwmem_compute_free(struct pvr_fwmem *mem, struct pvr_dma *dma)
+{
+	if (dma->compute_owner != mem)
+		return EINVAL;
+	if (dma->device_exposed)
+		return EBUSY;
+	pvr_heap_dma_free(mem->dmat, dma);
+	return 0;
+}
 #include "service-driver.h"
 
 static uint32_t
@@ -288,7 +310,7 @@ bus_dmamap_sync(bus_dma_tag_t tag, bus_dmamap_t map, size_t offset,
 }
 
 int
-sun60i_a733_gpu_fwqueue_attach(struct sun60i_a733_gpu_fwmem *mem,
+pvr_fwqueue_attach(struct sun60i_a733_gpu_fwmem *mem,
     const struct sun60i_a733_gpu_fwboot_result *b,
     const struct sun60i_a733_gpu_fwprobe_result *prev,
     struct sun60i_a733_gpu_fwqueue *q)
@@ -303,7 +325,7 @@ sun60i_a733_gpu_fwqueue_attach(struct sun60i_a733_gpu_fwmem *mem,
 }
 
 int
-sun60i_a733_gpu_fwqueue_cmd(bus_space_tag_t tag, bus_space_handle_t handle,
+pvr_fwqueue_cmd(bus_space_tag_t tag, bus_space_handle_t handle,
     struct sun60i_a733_gpu_fwmem *mem, const struct sun60i_a733_gpu_fwboot_result *b,
     struct sun60i_a733_gpu_fwqueue *q, const struct rogue_fwif_kccb_cmd *cmd,
     uint32_t log_type, struct sun60i_a733_gpu_fwprobe_result *out)
@@ -344,7 +366,7 @@ sun60i_a733_gpu_fwqueue_cmd(bus_space_tag_t tag, bus_space_handle_t handle,
 }
 
 int
-sun60i_a733_gpu_fwqueue_observe(struct sun60i_a733_gpu_fwmem *mem,
+pvr_fwqueue_observe(struct sun60i_a733_gpu_fwmem *mem,
     const struct sun60i_a733_gpu_fwboot_result *b,
     struct sun60i_a733_gpu_fwqueue *q,
     struct sun60i_a733_gpu_fwprobe_observation *out)
@@ -364,7 +386,7 @@ sun60i_a733_gpu_fwqueue_observe(struct sun60i_a733_gpu_fwmem *mem,
 }
 
 int
-sun60i_a733_gpu_fwqueue_event(struct sun60i_a733_gpu_fwmem *mem,
+pvr_fwqueue_event(struct sun60i_a733_gpu_fwmem *mem,
     const struct sun60i_a733_gpu_fwboot_result *b,
     struct sun60i_a733_gpu_fwqueue *q, uint32_t *id)
 {
@@ -386,7 +408,7 @@ finish(void)
 	while (service.objects != NULL) {
 		struct sun60i_a733_gpu_fwobject *obj = service.objects;
 		service.objects = obj->next;
-		sun60i_a733_gpu_dma_free(&memory, &obj->dma);
+		pvr_heap_dma_free(&memory, &obj->dma);
 		kmem_free(obj, sizeof(*obj));
 	}
 	CHECK(allocated == released && map_creates == map_destroys);
@@ -413,7 +435,7 @@ reset(void)
 	heap_allocs = heap_frees = syncs = publications = acknowledgements = 0;
 	commands = failure_step = allocation_step = 0;
 	next_pa = UINT64_C(0x140000000);
-	force_pa = 0;
+	force_pa = fake_ge_alias_pa = 0;
 	transport_error = attach_error = 0;
 	transport_freezes = true;
 	quiescent = table_edit = false;
@@ -678,9 +700,49 @@ event_tests(void)
 	finish();
 }
 
+static void
+ge_lifetime_tests(void)
+{
+	struct pvr_fwobject *a = NULL, *b = NULL;
+	uint8_t before[4096];
+
+	reset();
+	memory.profile = PVR_FW_PROFILE_GE8300;
+	memory.device_exposed = memory.interface_prepared = true;
+	CHECK(pvr_fwservice_attach(&service, &memory, 0x12340000,
+	    &memory, &boot, &predecessor) == 0);
+	CHECK(pvr_fwservice_alloc(&service, 4096, &a) == 0);
+	CHECK(a != NULL && a->dma.compute_owner == &memory &&
+	    a->dma.device_exposed);
+	memset(a->dma.cpu, 0x63, sizeof(before));
+	memcpy(before, a->dma.cpu, sizeof(before));
+	fake_ge_alias_pa = a->dma.address;
+	CHECK(pvr_fwservice_alloc(&service, 4096, &b) == EEXIST);
+	CHECK(b == NULL && memcmp(before, a->dma.cpu, sizeof(before)) == 0);
+	fake_ge_alias_pa = 0;
+	CHECK(pvr_fwservice_free(&service, &a) == 0);
+	CHECK(a == NULL && service.objects == NULL);
+	finish();
+
+	/* An uncertain publication keeps the child and blocks any retry. */
+	reset();
+	memory.profile = PVR_FW_PROFILE_GE8300;
+	memory.device_exposed = memory.interface_prepared = true;
+	CHECK(pvr_fwservice_attach(&service, &memory, 0x12340000,
+	    &memory, &boot, &predecessor) == 0);
+	transport_error = ETIMEDOUT;
+	CHECK(pvr_fwservice_alloc(&service, 4096, &a) == ETIMEDOUT);
+	CHECK(a == NULL && service.queue.failed && service.objects != NULL &&
+	    service.objects->dma.device_exposed && released == 0);
+	CHECK(pvr_fwmem_compute_free(&memory, &service.objects->dma) == EBUSY);
+	CHECK(pvr_fwservice_alloc(&service, 4096, &b) == EIO);
+	finish();
+}
+
 int
 main(void)
 {
+	ge_lifetime_tests();
 	basic_tests();
 	failure_tests();
 	event_tests();

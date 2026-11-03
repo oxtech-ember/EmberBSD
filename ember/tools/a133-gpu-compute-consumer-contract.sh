@@ -8,6 +8,12 @@ work=$(mktemp -d "${TMPDIR:-/tmp}/a133-compute.XXXXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 printf 'static int\n' > "$work/consumer.inc"
 sed -n '/^a133_gpu_compute_run(/,/^}/p' "$src/sys/arch/arm/sunxi/sun50i_a133_gpu.c" >> "$work/consumer.inc"
+for name in a133_gpu_drm_health a133_gpu_drm_attach; do
+    if grep -q "^$name(" "$src/sys/arch/arm/sunxi/sun50i_a133_gpu.c"; then
+        printf 'static int\n' >> "$work/consumer.inc"
+        sed -n "/^$name(/,/^}/p" "$src/sys/arch/arm/sunxi/sun50i_a133_gpu.c" >> "$work/consumer.inc"
+    fi
+done
 crypto_include= crypto_lib= crypto_rpath=
 if [ -n "${PVR_HOST_PREFIX:-}" ]; then
     crypto_include="-I$PVR_HOST_PREFIX/include"

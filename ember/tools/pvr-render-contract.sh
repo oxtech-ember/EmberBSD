@@ -16,6 +16,6 @@ done
 sed '/^#include /d' "$src/sys/sys/rbtree.h" > "$work/rbtree.h"
 # shellcheck disable=SC2086
 "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Wno-unused-parameter \
-    ${CFLAGS:-} -include "$src/ember/tools/pvr-rbtree-test.h" -I"$work" -I"$src/sys/arch/arm/sunxi" -I"$src/sys/external/bsd/drm2/powervr" "$src/ember/tools/pvr-render-contract.c" \
-    "$src/common/lib/libc/gen/rb.c" -o "$work/contract"
+    ${CFLAGS:-} -include "$src/ember/tools/pvr-rbtree-test.h" -I"$work" -I"$src/sys/arch/arm/sunxi" -I"$src/sys/dev/powervr" -I"$src/sys/external/bsd/drm2/powervr" "$src/ember/tools/pvr-render-contract.c" \
+    "$src/common/lib/libc/gen/rb.c" "$src/sys/dev/powervr/pvr_fwinfo.c" -o "$work/contract"
 "$work/contract"

@@ -304,9 +304,12 @@ int
 pvr_create_hwrt_dataset(struct drm_device *dev, void *data,
     struct drm_file *file)
 {
-	const struct pvr_backend *be = pvr_device_enter(dev);
+	const struct pvr_backend *be;
 	int error;
 
+	if (pvr_device_bvnc(dev) == UINT64_C(0x0016006600360026))
+		return -EOPNOTSUPP;
+	be = pvr_device_enter(dev);
 	error = be == NULL ? EOPNOTSUPP :
 	    pvr_create_hwrt_locked(dev, data, file, be);
 	pvr_device_leave(dev);

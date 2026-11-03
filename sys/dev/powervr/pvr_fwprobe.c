@@ -963,11 +963,6 @@ pvr_fwqueue_attach(struct pvr_fwmem *mem,
 	struct pvr_fwprobe_observation observation;
 	int error;
 
-	/* Reusable GE submission and event service await separate qualification. */
-	if (fwprobe_span(mem, sizeof(*mem), _Alignof(struct pvr_fwmem)) &&
-	    mem->profile == PVR_FW_PROFILE_GE8300)
-		return EOPNOTSUPP;
-
 	error = fwqueue_validate(mem, boot, q, previous, sizeof(*previous),
 	    _Alignof(struct pvr_fwprobe_result));
 	if (error != 0)
@@ -1022,6 +1017,15 @@ fwqueue_command(const struct pvr_fwmem *mem,
     const struct rogue_fwif_kccb_cmd *cmd, struct rogue_fwif_kccb_cmd *built)
 {
 	if (cmd->kccb_flags != 0)
+		return EOPNOTSUPP;
+	/* GE currently exposes compute only, including context retirement. */
+	if (mem->profile == PVR_FW_PROFILE_GE8300 &&
+	    cmd->cmd_type != ROGUE_FWIF_KCCB_CMD_LOGTYPE_UPDATE &&
+	    cmd->cmd_type != ROGUE_FWIF_KCCB_CMD_MMUCACHE &&
+	    cmd->cmd_type != ROGUE_FWIF_KCCB_CMD_KICK &&
+	    (cmd->cmd_type != ROGUE_FWIF_KCCB_CMD_CLEANUP ||
+	    cmd->cmd_data.cleanup_data.cleanup_type !=
+	    ROGUE_FWIF_CLEANUP_FWCOMMONCONTEXT))
 		return EOPNOTSUPP;
 	memset(built, 0, sizeof(*built));
 	built->cmd_type = cmd->cmd_type;
@@ -1097,11 +1101,6 @@ pvr_fwqueue_cmd(bus_space_tag_t bst, bus_space_handle_t bsh,
 	unsigned int slot;
 	int error;
 
-	/* Reusable GE submission and event service await separate qualification. */
-	if (fwprobe_span(mem, sizeof(*mem), _Alignof(struct pvr_fwmem)) &&
-	    mem->profile == PVR_FW_PROFILE_GE8300)
-		return EOPNOTSUPP;
-
 	error = fwqueue_validate(mem, boot, q, out, sizeof(*out), _Alignof(struct pvr_fwprobe_result));
 	if (error != 0)
 		return error;
@@ -1144,11 +1143,6 @@ pvr_fwqueue_observe(struct pvr_fwmem *mem,
 {
 	int error;
 
-	/* Reusable GE submission and event service await separate qualification. */
-	if (fwprobe_span(mem, sizeof(*mem), _Alignof(struct pvr_fwmem)) &&
-	    mem->profile == PVR_FW_PROFILE_GE8300)
-		return EOPNOTSUPP;
-
 	error = fwqueue_validate(mem, boot, q, out, sizeof(*out), _Alignof(struct pvr_fwprobe_observation));
 	if (error != 0)
 		return error;
@@ -1171,11 +1165,6 @@ pvr_fwqueue_event(struct pvr_fwmem *mem,
 	uint32_t value, next;
 	int error;
 
-	/* Reusable GE submission and event service await separate qualification. */
-	if (fwprobe_span(mem, sizeof(*mem), _Alignof(struct pvr_fwmem)) &&
-	    mem->profile == PVR_FW_PROFILE_GE8300)
-		return EOPNOTSUPP;
-
 	error = fwqueue_validate(mem, boot, q, id, sizeof(*id), _Alignof(uint32_t));
 	if (error != 0)
 		return error;
@@ -1187,6 +1176,11 @@ pvr_fwqueue_event(struct pvr_fwmem *mem,
 		return error;
 	if (observation.state.fw_read_offset == observation.state.fw_write_offset)
 		return ENOENT;
+	/* Compute-only GE has no registered grow-event consumer. */
+	if (mem->profile == PVR_FW_PROFILE_GE8300) {
+		q->failed = true;
+		return EOPNOTSUPP;
+	}
 	/* Runtime validation admits only a complete, known GROW request. */
 	value = observation.state.fw_freelist_id;
 	next = (q->fw_read_offset + 1) & (PVR_FWINIT_FWCCB_COUNT - 1);

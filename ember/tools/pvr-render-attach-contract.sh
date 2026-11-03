@@ -6,6 +6,9 @@ src=${1:-$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)}
 work=$(mktemp -d "${TMPDIR:-/tmp}/pvr-render-attach.XXXXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 driver="$src/sys/arch/arm/sunxi/sun60i_a733_gpu.c"
+sed -n '/^pvr_query_input_from_fwinfo(/,/^}/p' \
+    "$src/sys/external/bsd/drm2/powervr/pvr_query.c" > "$work/pvr-query-adapter.tmp"
+{ printf 'int\n'; cat "$work/pvr-query-adapter.tmp"; } > "$work/pvr-attach-body.h"
 for name in sun60i_gpu_query_input sun60i_gpu_render_attach \
     sun60i_gpu_sysctl_render_attach; do
     printf 'static int\n' >> "$work/pvr-attach-body.h"

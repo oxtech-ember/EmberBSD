@@ -11,7 +11,7 @@ struct rogue_fwif_cmd_frag;
 struct rogue_fwif_cmd_transfer;
 struct pvr_context_config {
 	uint32_t type, priority, id, pid, vm_address;
-	uint64_t callstack;
+	uint64_t callstack, bvnc;
 	const void *static_state;
 	size_t static_size;
 };

@@ -20,9 +20,21 @@ done
 sed -n '/^\/\* Convert parsed firmware metadata/,/^\/\* Reserve registration/p' \
     "$src/sys/arch/arm/sunxi/sun60i_a733_gpu.c" | sed '$d' \
     > "$work/adapter-body.h"
-# shellcheck disable=SC2086
-"${CC:-cc}" -std=c11 -Wall -Wextra -Werror ${CFLAGS:-} \
-    -I"$work" -I"$src/sys/arch/arm/sunxi" \
-    "$src/ember/tools/pvr-query-contract.c" \
-    "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwinfo.c" "$src/sys/dev/powervr/pvr_fwinfo.c" -o "$work/contract"
-"$work/contract" "$firmware"
+if [ -n "${PVR_GE_FIRMWARE:-}" ]; then
+    : "${PVR_HOST_PREFIX:?set selected host prefix for GE test}"
+    "${CC:-cc}" -std=c11 -Wall -Wextra -Werror ${CFLAGS:-} -DPVR_GE_TEST \
+        -I"$work" -I"$src/sys/arch/arm/sunxi" -I"$PVR_HOST_PREFIX/include" \
+        "$src/ember/tools/pvr-query-contract.c" \
+        "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwinfo.c" \
+        "$src/sys/dev/powervr/pvr_fwinfo.c" "$src/sys/dev/powervr/pvr_fwimage.c" \
+        "$src/sys/dev/powervr/pvr_mips.c" "$src/sys/dev/powervr/pvr_ge8300.c" \
+        -L"$PVR_HOST_PREFIX/lib" -Wl,-rpath,"$PVR_HOST_PREFIX/lib" -lcrypto \
+        -o "$work/contract"
+    "$work/contract" "$firmware" "$PVR_GE_FIRMWARE"
+else
+    "${CC:-cc}" -std=c11 -Wall -Wextra -Werror ${CFLAGS:-} \
+        -I"$work" -I"$src/sys/arch/arm/sunxi" \
+        "$src/ember/tools/pvr-query-contract.c" \
+        "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwinfo.c" "$src/sys/dev/powervr/pvr_fwinfo.c" -o "$work/contract"
+    "$work/contract" "$firmware"
+fi

@@ -115,6 +115,9 @@ static void idr_destroy(struct idr *i)
 { for (int n = 0; n < SLOTS; n++) CHECK(i->slots[n] == NULL); }
 
 struct drm_device { bus_dma_tag_t dmat; };
+static uint64_t selected_bvnc = UINT64_C(0x00240038006800b7);
+static unsigned direct_creates;
+uint64_t pvr_device_bvnc(struct drm_device *d) { (void)d; return selected_bvnc; }
 struct drm_gem_object { unsigned int refs; uint64_t size, pa, flags; bool pinned; unsigned holds; void *resv; };
 struct drm_file { void *driver_priv; struct drm_gem_object *handles[SLOTS]; };
 struct test_map { uint64_t va, pa, size, flags; };
@@ -160,6 +163,11 @@ static int pvr_vm_create(bus_dma_tag_t tag, struct pvr_vm **out)
 		atomic_fetch_add(&vms, 1); return 0;
 	}
 	return ENOMEM;
+}
+static int pvr_vm_create_direct(bus_dma_tag_t tag, struct pvr_vm **out)
+{
+	direct_creates++;
+	return pvr_vm_create(tag, out);
 }
 static int pvr_vm_map(struct pvr_vm *vm, uint64_t va, uint64_t pa, uint64_t size, uint64_t flags)
 {
@@ -746,6 +754,14 @@ main(void)
 	map.device_addr += PAGE_SIZE; CHECK(pvr_vm_map_ioctl(&dev, &map, &a) == 0);
 	CHECK(bo->refs == 3);
 finish:
+	if (PAGE_SHIFT == 12) {
+		uint32_t ge_vm;
+		selected_bvnc = UINT64_C(0x0016006600360026);
+		ge_vm = create_vm(&dev, &a);
+		CHECK(direct_creates == 1);
+		destroy_vm(&dev, &a, ge_vm);
+		selected_bvnc = UINT64_C(0x00240038006800b7);
+	}
 	close_file(&dev, &a); close_file(&dev, &b);
 	CHECK(atomic_load(&allocations) == 0 && atomic_load(&objects) == 0 && atomic_load(&vms) == 0);
 	if (PAGE_SHIFT == 12) { snapshot_lifetime(&dev); firmware_lifetime(&dev); pin_lifetime(&dev); hold_lifetime(&dev); }

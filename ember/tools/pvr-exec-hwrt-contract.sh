@@ -7,7 +7,10 @@ src=$(CDPATH= cd -- "$tools/../.." && pwd)
 [ "$#" -eq 0 ] || { echo "usage: $0" >&2; exit 2; }
 work=$(mktemp -d "${TMPDIR:-/tmp}/pvr-exec-hwrt.XXXXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
+printf 'int\n' > "$work/hwrt-admission.inc"
+sed -n '/^pvr_create_hwrt_dataset(/,/^}/p' \
+    "$src/sys/external/bsd/drm2/powervr/pvr_exec_hwrt.c" >> "$work/hwrt-admission.inc"
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror \
     ${PVR_EXEC_HWRT_CFLAGS:--fsanitize=address,undefined} \
-    -I"$tools" "$tools/pvr-exec-hwrt-contract.c" -o "$work/contract"
+    -I"$work" -I"$tools" "$tools/pvr-exec-hwrt-contract.c" -o "$work/contract"
 "$work/contract"
