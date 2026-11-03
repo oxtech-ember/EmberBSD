@@ -16,6 +16,7 @@
 #include <dev/ic/rtw88var.h>
 #include "rtw8822c.h"
 #include "rtw8822c_table.h"
+#include "rtw88_phy_table.h"
 
 #define RTW8822C_REG_SYS_CFG1		0x00f0
 #define RTW8822C_REG_EFUSE_CTRL		0x0030
@@ -462,69 +463,69 @@ rtw8822c_cfg_rf(struct rtw88_softc *sc, int path, uint32_t addr, uint32_t data)
 	return rtw8822c_write32_mask(sc, direct, RTW8822C_RFREG_MASK, data);
 }
 
+struct rtw8822c_table_context {
+	struct rtw88_softc *sc;
+	const struct rtw8822c_table *table;
+};
+
+static int
+rtw8822c_table_check(void *cookie)
+{
+	struct rtw8822c_table_context *ctx = cookie;
+
+	return ctx->sc->sc_stop_requested ? EINTR : 0;
+}
+
+static int
+rtw8822c_table_match(void *cookie, uint32_t condition, int *matched)
+{
+	struct rtw8822c_table_context *ctx = cookie;
+
+	*matched = rtw8822c_phy_matched(ctx->sc, condition);
+	return 0;
+}
+
+static int
+rtw8822c_table_write(void *cookie, uint32_t addr, uint32_t value)
+{
+	struct rtw8822c_table_context *ctx = cookie;
+	struct rtw88_softc *sc = ctx->sc;
+	const struct rtw8822c_table *tbl = ctx->table;
+	int error;
+
+	switch (tbl->kind) {
+	case RTW8822C_TBL_MAC:
+		error = rtw8822c_cfg_mac(sc, addr, value);
+		break;
+	case RTW8822C_TBL_AGC:
+		error = rtw8822c_cfg_agc(sc, addr, value);
+		break;
+	case RTW8822C_TBL_BB:
+		error = rtw8822c_cfg_bb(sc, addr, value);
+		break;
+	case RTW8822C_TBL_RF:
+		error = rtw8822c_cfg_rf(sc, tbl->rf_path, addr, value);
+		break;
+	default:
+		return EINVAL;
+	}
+	if (error == 0 && tbl->kind == RTW8822C_TBL_RF)
+		sc->sc_ops->delay_us(sc->sc_bus, 1);
+	return error;
+}
+
 static int
 rtw8822c_apply_phy_cond(struct rtw88_softc *sc,
     const struct rtw8822c_table *tbl)
 {
-	const uint32_t *p = tbl->data;
-	const uint32_t *end;
-	uint32_t pos = 0;
-	int matched = 1, skipped = 0, error = 0;
+	static const struct rtw88_phy_table_ops ops = {
+		.match = rtw8822c_table_match,
+		.write = rtw8822c_table_write,
+		.check = rtw8822c_table_check,
+	};
+	struct rtw8822c_table_context ctx = { .sc = sc, .table = tbl };
 
-	if (tbl->count % 2 != 0)
-		return EINVAL;
-	end = p + tbl->count;
-	for (; p + 1 < end; p += 2) {
-		uint32_t word = p[0];
-
-		if (sc->sc_stop_requested)
-			return EINTR;
-		if (word & UINT32_C(0x80000000)) {
-			unsigned branch = (word >> 28) & 3;
-
-			if (branch == 3) {
-				matched = 1;
-				skipped = 0;
-			} else if (branch == 2)
-				matched = skipped ? 0 : 1;
-			else
-				pos = word;
-		} else if (word & UINT32_C(0x40000000)) {
-			if (!skipped) {
-				if (rtw8822c_phy_matched(sc, pos)) {
-					matched = 1;
-					skipped = 1;
-				} else {
-					matched = 0;
-					skipped = 0;
-				}
-			} else
-				matched = 0;
-		} else if (matched) {
-			switch (tbl->kind) {
-			case RTW8822C_TBL_MAC:
-				error = rtw8822c_cfg_mac(sc, p[0], p[1]);
-				break;
-			case RTW8822C_TBL_AGC:
-				error = rtw8822c_cfg_agc(sc, p[0], p[1]);
-				break;
-			case RTW8822C_TBL_BB:
-				error = rtw8822c_cfg_bb(sc, p[0], p[1]);
-				break;
-			case RTW8822C_TBL_RF:
-				error = rtw8822c_cfg_rf(sc, tbl->rf_path,
-				    p[0], p[1]);
-				break;
-			default:
-				return EINVAL;
-			}
-			if (error != 0)
-				return error;
-			if (tbl->kind == RTW8822C_TBL_RF)
-				sc->sc_ops->delay_us(sc->sc_bus, 1);
-		}
-	}
-	return 0;
+	return rtw88_phy_table_apply(tbl->data, tbl->count, &ops, &ctx);
 }
 
 static int

@@ -30,7 +30,7 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror ${RTW88_TEST_CFLAGS:-} \
     "$src/sys/dev/ic/rtw88_hw.c" "$src/sys/dev/ic/rtw8822c_hw.c" \
     "$src/sys/dev/ic/rtw88_fw_init.c" \
     "$src/sys/dev/ic/rtw8822c.c" \
-    "$src/sys/dev/ic/rtw8822c_boot.c" \
+    "$src/sys/dev/ic/rtw8822c_boot.c" "$src/sys/dev/ic/rtw88_phy_table.c" \
     "$src/sys/dev/ic/rtw8822c_power.c" \
     "$src/sys/dev/ic/rtw8822c_mac.c" \
     "$src/sys/dev/ic/rtw8822c_phy.c" \
@@ -57,7 +57,7 @@ ${CC:-cc} -std=c11 -Wall -Werror ${RTW88_TEST_CFLAGS:-} \
     "$src/sys/dev/ic/rtw88_hw.c" "$src/sys/dev/ic/rtw8822c_hw.c" \
     "$src/sys/dev/ic/rtw88_fw_init.c" \
     "$src/sys/dev/ic/rtw8822c.c" \
-    "$src/sys/dev/ic/rtw8822c_boot.c" \
+    "$src/sys/dev/ic/rtw8822c_boot.c" "$src/sys/dev/ic/rtw88_phy_table.c" \
     "$src/sys/dev/ic/rtw8822c_power.c" \
     "$src/sys/dev/ic/rtw8822c_mac.c" \
     "$src/sys/dev/ic/rtw8822c_phy.c" \
