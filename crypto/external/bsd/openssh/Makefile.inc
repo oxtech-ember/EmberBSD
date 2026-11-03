@@ -49,7 +49,9 @@ CPPFLAGS+=-DHAVE_DLOPEN
 .PATH: ${SSHDIST}
 .if defined(EMBER_OPENSSH_SOURCE) && !empty(EMBER_OPENSSH_SOURCE)
 .PATH: ${SSHDIST}/openbsd-compat
-CPPFLAGS+= -I${SSHDIST}/openbsd-compat
+# After the system headers: a compat header such as fnmatch.h is empty
+# when the system has one, and must not hide it.
+CPPFLAGS+= -idirafter ${SSHDIST}/openbsd-compat
 .endif
 
 .if (${USE_PAM} != "no")
