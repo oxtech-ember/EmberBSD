@@ -45,6 +45,12 @@ host_identity_fence(void)
     sc.sc_executor=(void *)&sc; info.host_epoch_valid=0;
     rtw88_net_rx_frame_async(&net,frame,sizeof(frame),&info);
     CHECK(net.policy.queued==0 && net.rx_dropped==5);
+    info.host_epoch_valid=1; info.generation=7; info.epoch=3;
+    rtw88_net_rx_frame_async(&net,frame,sizeof(frame),&info);
+    CHECK(net.policy.queued==0 && net.rx_dropped==6);
+    info.epoch=4;net.async.closed=1;
+    rtw88_net_rx_frame_async(&net,frame,sizeof(frame),&info);
+    CHECK(net.policy.queued==0 && net.rx_dropped==7);
 }
 
 static void

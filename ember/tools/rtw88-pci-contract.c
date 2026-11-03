@@ -30,7 +30,7 @@ static struct {
 	int mask_stuck, small_bar, wrong_type, refuse_master_clear, remove_config;
 	int msi_available, selected_irq, callbacks, pending;
 	unsigned efuse_reads, efuse_writes, net_attach_calls, net_detach_calls;
-	int efuse_enabled, efuse_stuck, net_owned;
+	int efuse_enabled, efuse_stuck, net_owned, net_detach_error;
 	int shutdown_fault;
 	unsigned config_writes;
 	uint32_t command, reg[16384];
@@ -593,15 +593,18 @@ rtw88_net_attach(struct rtw88_softc *core, device_t dev, kmutex_t *lock,
 	return 0;
 }
 
-void
+int
 rtw88_net_detach(struct rtw88_net *net)
 {
 	f.net_detach_calls++;
 	CHECK(net == &fake_net && net->owned && f.net_owned == 1);
 	CHECK(f.locks == 1 && f.irq == 1 && f.bar == 1 && f.loaded != 0);
 	CHECK(rtwce_bootstrap(1) == ENXIO);
+	if (f.net_detach_error != 0)
+		return f.net_detach_error;
 	f.net_owned = 0;
 	net->owned = 0;
+	return 0;
 }
 static void clean_detach(struct rtw88_pci_softc *p)
 {
@@ -837,6 +840,23 @@ int main(void)
 	clean_detach(&p);
 	CHECK(f.net_detach_calls == 1);
 	CHECK(f.command == 0x140);
+	/* Failed net detach retains its owner and every PCI/core resource. */
+	reset(&p);
+	rtw88_pci_attach(NULL, &p, &fixture_pa);
+	struct rtw88_net *saved_net = p.sc_net;
+	int saved_loaded = f.loaded, saved_maps = f.maps, saved_mem = f.mem;
+	int saved_heap = f.heap, saved_vectors = f.vectors;
+	f.net_detach_error = EBUSY;
+	CHECK(rtw88_pci_detach(&p, 0) == EBUSY);
+	CHECK(p.sc_net == saved_net && f.net_owned && f.net_detach_calls == 1);
+	CHECK(p.sc_core.sc_resources_ready && p.sc_detaching);
+	CHECK(f.loaded == saved_loaded && f.maps == saved_maps && f.mem == saved_mem);
+	CHECK(f.heap == saved_heap && f.vectors == saved_vectors);
+	CHECK(f.bar == 1 && f.tag == 1 && f.irq == 1 && f.locks == 1);
+	CHECK(p.sc_lock.initialized && rtwce_bootstrap(1) == EBUSY);
+	f.net_detach_error = 0;
+	clean_detach(&p);
+	CHECK(p.sc_net == NULL && !f.net_owned && f.net_detach_calls == 2);
 	/* Failed disable retains the full instance and diagnostics for a retry. */
 	reset(&p);
 	rtw88_pci_attach(NULL, &p, &fixture_pa);

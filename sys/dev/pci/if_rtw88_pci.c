@@ -955,19 +955,14 @@ rtw88_pci_detach(device_t self, int flags)
 		rtwce_sc = NULL;
 	mutex_exit(&rtwce_diag_lock);
 	if (psc->sc_net != NULL) {
-		rtw88_net_detach(psc->sc_net);
+		error = rtw88_net_detach(psc->sc_net);
+		if (error != 0)
+			goto blocked;
 		psc->sc_net = NULL;
 	}
 	error = rtw88_core_detach(&psc->sc_core);
-	if (error != 0) {
-		/* Keep BAR, tags, IRQ and the instance lock alive for a retry. */
-		mutex_enter(&rtwce_diag_lock);
-		if (rtwce_sc == NULL)
-			rtwce_sc = psc;
-		mutex_exit(&rtwce_diag_lock);
-		aprint_error_dev(self, "detach blocked by incomplete shutdown: %d\n", error);
-		return error;
-	}
+	if (error != 0)
+		goto blocked;
 	if (psc->sc_lock_initialized) {
 		mutex_destroy(&psc->sc_lock);
 		psc->sc_lock_initialized = 0;
@@ -989,6 +984,15 @@ rtw88_pci_detach(device_t self, int flags)
 		psc->sc_command_saved = 0;
 	}
 	return 0;
+
+blocked:
+	/* Keep BAR, tags, IRQ and the instance lock alive for a retry. */
+	mutex_enter(&rtwce_diag_lock);
+	if (rtwce_sc == NULL)
+		rtwce_sc = psc;
+	mutex_exit(&rtwce_diag_lock);
+	aprint_error_dev(self, "detach blocked by incomplete shutdown: %d\n", error);
+	return error;
 }
 
 CFATTACH_DECL3_NEW(rtw88_pci, sizeof(struct rtw88_pci_softc),
