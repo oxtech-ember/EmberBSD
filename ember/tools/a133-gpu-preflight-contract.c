@@ -37,7 +37,8 @@ struct fdtbus_reset { int unused; };
 struct fdtbus_regulator { int unused; };
 struct a133_gpu_softc {
 	struct a133_gpu_diagnostics diag;
-    int phandle; void *dmat, *bst;
+    int phandle; void *dmat, *bst, *dev, *irq_cookie, *irq_soft;
+    int irq_lock, irq_fault;
     bus_space_handle_t bsh, dfs_bsh;
     bus_addr_t address, dfs_address;
     bus_size_t size, dfs_size;
@@ -188,6 +189,19 @@ static int pvr_fwinfo_feature(const struct pvr_fwinfo *i,int feature,uint64_t *v
 static int pvr_fwmem_interface(struct pvr_fwmem *m,uint64_t hz,uint32_t clusters,uint32_t slc) {
     CHECK(m == &memory && hz == 472500000 && clusters == 1 && slc == 64); return 0;
 }
+#define SOFTINT_CLOCK 1
+#define SOFTINT_MPSAFE 2
+#define IPL_VM 1
+#define FDT_INTR_MPSAFE 1
+static void mutex_enter(int *m) { (void)m; }
+static void mutex_exit(int *m) { (void)m; }
+static int a133_gpu_interrupt(void *v) { (void)v; return 0; }
+static void a133_gpu_irq_soft(void *v) { (void)v; }
+static void *softint_establish(int f, void (*cb)(void *), void *v) { (void)f;(void)cb;return v; }
+static void softint_disestablish(void *v) { (void)v; }
+static const char *device_xname(void *v) { (void)v;return "fake"; }
+static void *fdtbus_intr_establish_xname(int n,int i,int l,int f,int (*cb)(void *),void *v,const char *s)
+{ (void)n;(void)i;(void)l;(void)f;(void)cb;(void)s;return v; }
 static int pvr_fwboot(int profile,void *t,bus_space_handle_t h,struct pvr_fwmem *m,
     struct pvr_fwboot_result *r) {
     (void)t;(void)r;(void)reserve_form;CHECK(profile == 1 && h == 1 && m == &memory);boot_calls++;return 0;

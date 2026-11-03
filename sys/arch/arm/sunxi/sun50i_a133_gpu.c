@@ -8,6 +8,9 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/device.h>
 #include <sys/endian.h>
 #include <sys/mutex.h>
+#include <sys/intr.h>
+#include <sys/proc.h>
+#include <sys/time.h>
 #include <sys/sysctl.h>
 #include <sys/systm.h>
 #include <libfdt.h>
@@ -17,6 +20,8 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <dev/ofw/openfirm.h>
 #include <dev/powervr/pvr_ge8300.h>
 #include <dev/powervr/pvr_fwboot.h>
+#include <dev/powervr/pvr_fwprobe.h>
+#include <dev/powervr/pvr_mips_irq.h>
 #include <arm/sunxi/sun50i_a133_gpu_owner.h>
 
 #define A133_GPU_BASE UINT64_C(0x01800000)
@@ -42,7 +47,19 @@ struct a133_gpu_softc {
 	size_t firmware_size;
 	struct pvr_fwmem *memory;
 	struct pvr_fwboot_result boot_result;
+	struct pvr_fwprobe_result queue_log, queue_cache;
+	struct pvr_fwprobe_observation queue_fresh;
 	struct a133_gpu_owner owner;
+	kmutex_t irq_lock;
+	void *irq_cookie, *irq_soft;
+	unsigned irq_total, irq_window;
+	int irq_fault;
+	bool irq_armed;
+	int queue_stage, queue_error, queue_attempted;
+	int queue_irq_total, queue_irq_window, queue_irq_fault;
+	int queue_log_read, queue_log_write, queue_log_return;
+	int queue_cache_read, queue_cache_write, queue_cache_return;
+	int queue_fw_faults, queue_hwr_flags;
 	kmutex_t lock;
 	struct sysctllog *sysctllog;
 	uint32_t core_hz;
@@ -53,6 +70,10 @@ static struct a133_gpu_softc *a133_gpu_instance;
 static int a133_gpu_match(device_t, cfdata_t, void *);
 static void a133_gpu_attach(device_t, device_t, void *);
 static int a133_gpu_control(SYSCTLFN_ARGS);
+static int a133_gpu_queue_control(SYSCTLFN_ARGS);
+static int a133_gpu_interrupt(void *);
+static void a133_gpu_irq_soft(void *);
+static int a133_gpu_irq_arm(void *);
 static int a133_gpu_status(SYSCTLFN_ARGS);
 static int a133_gpu_reserved_supported(void);
 static const struct device_compatible_entry a133_gpu_compat[] = {
@@ -527,11 +548,70 @@ a133_gpu_reserved_supported(void)
 	return 0;
 }
 
+/* The hard interrupt handles only the native MIPS event and metadata. */
+static int
+a133_gpu_interrupt(void *cookie)
+{
+	struct a133_gpu_softc *sc = cookie;
+	bool pending = false;
+	int error;
+
+	mutex_enter(&sc->irq_lock);
+	error = pvr_mips_irq_pending(sc->bst, sc->bsh, &pending);
+	if (error == 0 && pending)
+		error = pvr_mips_irq_clear(sc->bst, sc->bsh);
+	if (error != 0) {
+		sc->irq_fault = error;
+	} else if (pending) {
+		if (sc->irq_total != INT_MAX)
+			sc->irq_total++;
+		if (sc->irq_armed && sc->irq_window != INT_MAX)
+			sc->irq_window++;
+	}
+	mutex_exit(&sc->irq_lock);
+	if (pending || error != 0)
+		softint_schedule(sc->irq_soft);
+	return pending || error != 0;
+}
+
+static void
+a133_gpu_irq_soft(void *cookie)
+{
+	struct a133_gpu_softc *sc = cookie;
+
+	wakeup(&sc->irq_window);
+}
+
+/* Serialize a stale-event drain against any currently executing handler. */
+static int
+a133_gpu_irq_arm(void *cookie)
+{
+	struct a133_gpu_softc *sc = cookie;
+	bool pending;
+	int error;
+
+	mutex_enter(&sc->irq_lock);
+	error = sc->irq_fault;
+	if (error == 0)
+		error = pvr_mips_irq_pending(sc->bst, sc->bsh, &pending);
+	if (error == 0 && pending)
+		error = pvr_mips_irq_clear(sc->bst, sc->bsh);
+	if (error == 0) {
+		sc->irq_window = 0;
+		sc->irq_armed = true;
+	} else {
+		sc->irq_fault = error;
+	}
+	mutex_exit(&sc->irq_lock);
+	return error;
+}
+
 static int
 a133_gpu_start(void *cookie)
 {
 	struct a133_gpu_softc *sc = cookie;
 	uint64_t effective;
+	void *irq_cookie;
 	int error;
 
 	error = a133_gpu_live(sc, &effective);
@@ -541,6 +621,27 @@ a133_gpu_start(void *cookie)
 	sc->diag.detail_error = 0;
 	if (effective != sc->effective_hz)
 		return EBUSY;
+	/* PPU is already 3D; never inspect GPU IRQ registers at ordinary attach. */
+	sc->diag.stage = A133_GPU_STAGE_IRQ_SETUP;
+	sc->diag.detail_error = 0;
+	sc->irq_soft = softint_establish(SOFTINT_CLOCK | SOFTINT_MPSAFE,
+	    a133_gpu_irq_soft, sc);
+	if (sc->irq_soft == NULL)
+		return ENOMEM;
+	irq_cookie = fdtbus_intr_establish_xname(sc->phandle, 0, IPL_VM,
+	    FDT_INTR_MPSAFE, a133_gpu_interrupt, sc, device_xname(sc->dev));
+	if (irq_cookie == NULL) {
+		softint_disestablish(sc->irq_soft);
+		sc->irq_soft = NULL;
+		return ENXIO;
+	}
+	mutex_enter(&sc->irq_lock);
+	sc->irq_cookie = irq_cookie;
+	if (sc->irq_fault != 0)
+		error = sc->irq_fault;
+	mutex_exit(&sc->irq_lock);
+	if (error != 0)
+		return error;
 	sc->diag.stage = A133_GPU_STAGE_FW_BOOT;
 	sc->diag.detail_error = 0;
 	return pvr_fwboot(PVR_FW_PROFILE_GE8300, sc->bst, sc->bsh,
@@ -578,6 +679,124 @@ a133_gpu_control(SYSCTLFN_ARGS)
 	else
 		aprint_error_dev(sc->dev, "firmware stage %d failed: %d (detail %d)\n",
 		    sc->diag.stage, error, sc->diag.detail_error);
+	mutex_exit(&sc->lock);
+	sysctl_relock();
+	return error;
+}
+
+/* Caller holds the sleepable owner lock; hard IRQ never touches the queue. */
+static int
+a133_gpu_queue_run(struct a133_gpu_softc *sc)
+{
+	struct timespec start, now, elapsed;
+	unsigned window = 0;
+	int error;
+
+	if (sc->queue_attempted) {
+		error = EBUSY;
+		goto out;
+	}
+	if (sc->memory == NULL || sc->irq_cookie == NULL ||
+	    !sc->owner.retain_resources || sc->boot_result.error != 0 ||
+	    sc->diag.stage != A133_GPU_STAGE_COMPLETE) {
+		error = ENXIO;
+		goto out;
+	}
+	sc->queue_attempted = 1;
+	sc->queue_stage = 1;
+	mutex_enter(&sc->irq_lock);
+	error = sc->irq_fault;
+	mutex_exit(&sc->irq_lock);
+	if (error != 0)
+		goto done;
+	error = pvr_fwprobe(sc->bst, sc->bsh, sc->memory, &sc->boot_result,
+	    &sc->queue_log);
+	if (sc->queue_log.polls != 0) {
+		sc->queue_log_read = sc->queue_log.after.read_offset;
+		sc->queue_log_write = sc->queue_log.after.write_offset;
+		sc->queue_log_return = sc->queue_log.after.rtn;
+		sc->queue_fw_faults = sc->queue_log.after.fw_faults;
+		sc->queue_hwr_flags = sc->queue_log.after.hwr_state;
+	}
+	if (error != 0)
+		goto done;
+	sc->queue_stage = 2;
+	error = pvr_fwprobe_mmucache_irq(sc->bst, sc->bsh, sc->memory,
+	    &sc->boot_result, &sc->queue_log, a133_gpu_irq_arm, sc,
+	    &sc->queue_cache);
+	if (sc->queue_cache.polls != 0) {
+		sc->queue_cache_read = sc->queue_cache.after.read_offset;
+		sc->queue_cache_write = sc->queue_cache.after.write_offset;
+		sc->queue_cache_return = sc->queue_cache.after.rtn;
+		sc->queue_fw_faults = sc->queue_cache.after.fw_faults;
+		sc->queue_hwr_flags = sc->queue_cache.after.hwr_state;
+	}
+	if (error != 0)
+		goto done;
+	sc->queue_stage = 3;
+	getnanouptime(&start);
+	for (unsigned i = 0; i < 1001; i++) {
+		mutex_enter(&sc->irq_lock);
+		window = sc->irq_window;
+		error = sc->irq_fault;
+		mutex_exit(&sc->irq_lock);
+		if (error != 0 || window != 0)
+			break;
+		getnanouptime(&now);
+		timespecsub(&now, &start, &elapsed);
+		if (elapsed.tv_sec >= 1 || i == 1000) {
+			error = ETIMEDOUT;
+			break;
+		}
+		(void)tsleep(&sc->irq_window, PWAIT, "pvrirq", 1);
+	}
+	if (error != 0)
+		goto done;
+	sc->queue_stage = 4;
+	error = pvr_fwprobe_observe(sc->memory, &sc->boot_result, 1,
+	    PVR_FWPROBE_MMUCACHE, 0, &sc->queue_fresh);
+	if (sc->queue_fresh.valid) {
+		sc->queue_fw_faults = sc->queue_fresh.state.fw_faults;
+		sc->queue_hwr_flags = sc->queue_fresh.state.hwr_state;
+	}
+done:
+	mutex_enter(&sc->irq_lock);
+	sc->irq_armed = false;
+	sc->queue_irq_total = sc->irq_total;
+	sc->queue_irq_window = sc->irq_window;
+	sc->queue_irq_fault = sc->irq_fault;
+	if (error == 0 && sc->irq_fault != 0)
+		error = sc->irq_fault;
+	mutex_exit(&sc->irq_lock);
+	sc->queue_error = error;
+	if (error == 0)
+		sc->queue_stage = 5;
+	if (error != 0)
+		aprint_error_dev(sc->dev, "firmware queue stage %d failed: %d\n",
+		    sc->queue_stage, error);
+out:
+	return error;
+}
+
+/* Explicit, one-shot firmware queue check, always in thread context. */
+static int
+a133_gpu_queue_control(SYSCTLFN_ARGS)
+{
+	struct sysctlnode node = *rnode;
+	struct a133_gpu_softc *sc = a133_gpu_instance;
+	int value = 0, error;
+
+	if (sc == NULL)
+		return ENXIO;
+	node.sysctl_data = &value;
+	error = sysctl_lookup(SYSCTLFN_CALL(&node));
+	if (error != 0 || newp == NULL)
+		return error;
+	if (value != 1)
+		return EINVAL;
+	sysctl_unlock();
+	mutex_enter(&sc->lock);
+	error = a133_gpu_queue_run(sc);
 	mutex_exit(&sc->lock);
 	sysctl_relock();
 	return error;
@@ -628,16 +847,28 @@ a133_gpu_attach(device_t parent __unused, device_t self, void *aux)
 	sc->phandle = faa->faa_phandle;
 	sc->bst = faa->faa_bst;
 	sc->dmat = faa->faa_dmat;
+	if (sc->bst == NULL) {
+		aprint_error_dev(self, "missing bus-space provider\n");
+		return;
+	}
 	mutex_init(&sc->lock, MUTEX_DEFAULT, IPL_NONE);
+	mutex_init(&sc->irq_lock, MUTEX_DEFAULT, IPL_VM);
 	a133_gpu_diag_reset(sc);
+	sc->queue_log_read = sc->queue_log_write = sc->queue_log_return = -1;
+	sc->queue_cache_read = sc->queue_cache_write = sc->queue_cache_return = -1;
+	sc->queue_fw_faults = sc->queue_hwr_flags = -1;
 	if (sysctl_createv(&sc->sysctllog, 0, NULL, &node, 0,
 	    CTLTYPE_NODE, device_xname(self), NULL, NULL, 0, NULL, 0,
 	    CTL_HW, CTL_CREATE, CTL_EOL) != 0 ||
 	    sysctl_createv(NULL, 0, &node, NULL, CTLFLAG_READWRITE,
 	    CTLTYPE_INT, "firmware_boot", SYSCTL_DESCR("explicit GE8300 firmware boot"),
-	    a133_gpu_control, 0, NULL, 0, CTL_CREATE, CTL_EOL) != 0) {
+	    a133_gpu_control, 0, NULL, 0, CTL_CREATE, CTL_EOL) != 0 ||
+	    sysctl_createv(NULL, 0, &node, NULL, CTLFLAG_READWRITE,
+	    CTLTYPE_INT, "queue_probe", SYSCTL_DESCR("explicit firmware queue check"),
+	    a133_gpu_queue_control, 0, NULL, 0, CTL_CREATE, CTL_EOL) != 0) {
 		aprint_error_dev(self, "cannot create firmware control\n");
 		sysctl_teardown(&sc->sysctllog);
+		mutex_destroy(&sc->irq_lock);
 		mutex_destroy(&sc->lock);
 		return;
 	}
@@ -656,6 +887,20 @@ a133_gpu_attach(device_t parent __unused, device_t self, void *aux)
 			{ "effective_hz", CTLTYPE_INT, &sc->diag.effective_hz },
 			{ "dfs", CTLTYPE_INT, &sc->diag.dfs },
 			{ "bvnc", CTLTYPE_QUAD, &sc->diag.bvnc },
+			{ "queue_stage", CTLTYPE_INT, &sc->queue_stage },
+			{ "queue_error", CTLTYPE_INT, &sc->queue_error },
+			{ "queue_attempted", CTLTYPE_INT, &sc->queue_attempted },
+			{ "queue_irq_total", CTLTYPE_INT, &sc->queue_irq_total },
+			{ "queue_irq_window", CTLTYPE_INT, &sc->queue_irq_window },
+			{ "queue_irq_fault", CTLTYPE_INT, &sc->queue_irq_fault },
+			{ "queue_log_read", CTLTYPE_INT, &sc->queue_log_read },
+			{ "queue_log_write", CTLTYPE_INT, &sc->queue_log_write },
+			{ "queue_log_return", CTLTYPE_INT, &sc->queue_log_return },
+			{ "queue_cache_read", CTLTYPE_INT, &sc->queue_cache_read },
+			{ "queue_cache_write", CTLTYPE_INT, &sc->queue_cache_write },
+			{ "queue_cache_return", CTLTYPE_INT, &sc->queue_cache_return },
+			{ "queue_fw_faults", CTLTYPE_INT, &sc->queue_fw_faults },
+			{ "queue_hwr_flags", CTLTYPE_INT, &sc->queue_hwr_flags },
 		};
 
 		for (size_t i = 0; i < __arraycount(status); i++) {
@@ -672,6 +917,7 @@ a133_gpu_attach(device_t parent __unused, device_t self, void *aux)
 			if (error != 0) {
 				aprint_error_dev(self, "cannot create firmware status\n");
 				sysctl_teardown(&sc->sysctllog);
+				mutex_destroy(&sc->irq_lock);
 				mutex_destroy(&sc->lock);
 				return;
 			}

@@ -11,7 +11,10 @@ fi
 work=$(mktemp -d "${TMPDIR:-/tmp}/a733-fwbridge.XXXXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 for kind in mem start boot probe service bridge; do
-    sed '/^#include /d' "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fw${kind}.h" > "$work/$kind.h"
+    case "$kind" in mem|start|boot|probe)
+        sed '/^#include /d' "$src/sys/dev/powervr/pvr_fw${kind}.h" > "$work/$kind.h" ;;
+    esac
+    sed '/^#include /d' "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fw${kind}.h" >> "$work/$kind.h"
 done
 sed '/^#include /d' "$src/sys/external/bsd/drm2/powervr/pvr_backend.h" > "$work/backend.h"
 sed '/^#include /d' "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwbridge.c" > "$work/bridge-driver.h"
