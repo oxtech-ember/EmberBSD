@@ -16,6 +16,8 @@ WITH_OPENSSL=1
 
 .if defined(EMBER_OPENSSH_SOURCE) && !empty(EMBER_OPENSSH_SOURCE)
 CPPFLAGS+= -DEMBERBSD_BASE_OPENSSH -DWITH_HPN
+# The native layout keeps the privilege separation chroot under /var/chroot.
+CPPFLAGS+= -D_PATH_PRIVSEP_CHROOT_DIR=\"/var/chroot/sshd\"
 CPPFLAGS+= -I${NETBSDSRCDIR}/crypto/external/bsd/openssh/include
 .endif
 
