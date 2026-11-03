@@ -23,3 +23,24 @@ or that a particular board connector is wired as expected. Confirm playback
 and microphone signal separately, then record those observations with the
 board and kernel revision.
 The ESP-Mosaico codec/pin path remains subject to physical verification.
+
+For host-side signal inspection, run the standard-library WAV analyzer with the
+selected native Python 3.15:
+
+```sh
+"$HOST_PREFIX/bin/python3.15" -B tests/dev/audio/wav_analyze.py recording.wav
+```
+
+It accepts bounded uncompressed PCM16 mono WAV files (at most 60 seconds and
+11,520,000 frames) and prints frame count, sample rate, duration, peak, DC
+offset, AC RMS, full-scale sample count/fraction, and a `silence`, `constant`,
+or `signal` classification. It rejects other encodings, over-limit files and
+truncated PCM payloads. These measurements help distinguish a silent or
+constant capture from a varying signal; they do not prove audible playback,
+correct microphone wiring, or hardware acceptance. Its host fixture covers
+silence, DC-only input, a sine wave, full-scale clipping, duration bounds and
+truncation:
+
+```sh
+"$HOST_PREFIX/bin/python3.15" -B tests/dev/audio/t_wav_analyze.py
+```
