@@ -114,10 +114,14 @@ struct espwifi_softc { struct ieee80211com sc_ic; struct espwifi_ec sc_ec; int s
 	int sc_key_lock;bool sc_key_pending;
  void *sc_scan_ctl_sem; unsigned sc_scan_count; bool sc_scan_enabled,sc_scan_pending,
  sc_scan_busy,sc_radio_ready,sc_attached,sc_sta_started,sc_join_stopped;
+ bool sc_sae_selection,sc_join_sae;
+ uint64_t sc_sae_selection_generation;uint8_t sc_sae_selection_bssid[6];
  uint64_t sc_scan_generation,sc_scan_active;
  uint64_t sc_join_generation,sc_join_active,sc_key_generation;
- uint8_t sc_key_slots,sc_group_key_slots,sc_join_bssid[6],sc_join_ssid[32],sc_join_rsn[256];
- unsigned sc_join_ssid_len,sc_join_rsn_len;bool sc_join_pending,sc_joined,sc_join_disconnect_pending,sc_join_rescan_pending,sc_join_barrier_busy;
+ uint8_t sc_key_slots,sc_group_key_slots,sc_join_bssid[6],sc_join_ssid[32];
+ uint8_t sc_join_ies[256],sc_igtk_slots;
+ unsigned sc_join_ies_len;
+ unsigned sc_join_ssid_len;bool sc_join_pending,sc_joined,sc_join_disconnect_pending,sc_join_rescan_pending,sc_join_barrier_busy;
  unsigned sc_port_authorized;bool sc_ptk_installed,sc_link;
  int (*sc_newstate)(struct ieee80211com *,enum ieee80211_state,int); };
 #define IEEE80211_F_SCAN 1
@@ -152,6 +156,13 @@ static void ieee80211_end_scan(struct ieee80211com *ic) { ends++;ic->ic_flags=au
 static void ieee80211_cancel_scan(struct ieee80211com *ic) { cancels++;ic->ic_flags=0; }
 static void espwifi_if_join_control(struct espwifi_softc *sc) { join_controls++;
  sc->sc_join_pending=false;sc->sc_join_disconnect_pending=false; }
+static void espwifi_if_sae_cancel(struct espwifi_softc *sc) { (void)sc; }
+static bool ieee80211_assoc_rsn_parse(const uint8_t *ies,size_t len,
+ const uint8_t **rsn,size_t *rsn_len,size_t *offset) {
+ *rsn=ies;*rsn_len=len;*offset=0;return true; }
+static bool ieee80211_sae_rsn_valid(const uint8_t *rsn,size_t len) {
+ (void)rsn;(void)len;return true; }
+static void espwifi_os_log(const char *fmt,...) { (void)fmt; }
 static int oldstate(struct ieee80211com *ic,enum ieee80211_state st,int arg) {
  parentcalls++;
  (void)arg;ic->ic_state=st;ic->ic_flags=(st==IEEE80211_S_SCAN)?IEEE80211_F_SCAN:0;return 0; }
@@ -194,7 +205,7 @@ int main(void) {
 	assert(joinsc.sc_join_active==1 && joinsc.sc_join_pending &&
 	    joinsc.sc_join_ssid_len==4 && !memcmp(joinsc.sc_join_ssid,"test",4) &&
 	    !memcmp(joinsc.sc_join_bssid,bss.ni_bssid,6) &&
-	    joinsc.sc_join_rsn_len==sizeof(rsn) && !joinsc.sc_port_authorized &&
+	    joinsc.sc_join_ies_len==sizeof(rsn) && !joinsc.sc_port_authorized &&
 	    !joinsc.sc_ptk_installed && signals==previous+1);
 	assert(espwifi_if_newstate(&joinsc.sc_ic,IEEE80211_S_AUTH,0)==EBUSY);
 	assert(joinsc.sc_join_active==1 && joinsc.sc_join_pending);
