@@ -260,7 +260,7 @@ export EMBER_NETWORK_ROOT_DEVICE=md0
 export EMBER_NETWORK_ROOT_PARTITION=a
 export EMBER_NETWORK_OVERLAY=/absolute/private/network-overlay
 # Optional target diagnostics:
-export EMBER_NETWORK_TOOLSETS=system,audio,video,envsys,spi
+export EMBER_NETWORK_TOOLSETS=system,audio,video,envsys,spi,transfer
 export EMBER_NETWORK_SPI_UNITS=1
 # Optional: export EMBER_CONSOLE_PROGRAM=/absolute/target/lvgl-wscons
 "$EMBER_HOST_PREFIX/bin/python3.15" -B ember/image/cix-p1-native.py \
@@ -273,7 +273,7 @@ image. `MAKEDEV` supplies the standard entropy devices and BPF node used by
 the selected WPA/DHCP paths; the staged resolver, DHCP state and runtime
 directories remain writable on the root filesystem or under `/var/run`.
 Optional `EMBER_NETWORK_TOOLSETS` is a comma-separated selection of `system`,
-`audio`, `video`, `envsys`, and `spi`. These choices add the corresponding standard
+`audio`, `video`, `envsys`, `spi`, and `transfer`. These choices add the corresponding standard
 tools to the shared `console-tools` executable and ask target `MAKEDEV` for
 their device nodes. `system` includes `env`, `uname`, and `df`; `audio` includes `audioctl`, `audioplay`, `audiorecord`,
 `mixerctl`, `timeout`, and `wc`; `video` includes `videoctl`; `envsys` includes
@@ -284,6 +284,9 @@ default to a controller assigned to another peripheral. See the
 for canonical controller mapping; the current diagnostic example selects unit
 `1` for the NAND controller. The default network profile leaves these optional
 tools out.
+`transfer` adds `cksum`, `uuencode`, and `uudecode` to the shared utility
+binary for standard text-safe transfers over a captured console. It is opt-in;
+the normal network profile remains unchanged.
 When the producer strips an optional program or standalone install-map
 executable, it strips only the staged root copy. The original installed file
 under `dest/` remains available for incremental builds and debugging; target

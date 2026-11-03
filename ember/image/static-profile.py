@@ -446,7 +446,7 @@ def network(target, toolsets=(), spi_units=()):
     """Select the ordinary-init network userland from the same C foundation."""
     import re
 
-    allowed_toolsets = {'system', 'audio', 'video', 'envsys', 'spi'}
+    allowed_toolsets = {'system', 'audio', 'video', 'envsys', 'spi', 'transfer'}
     if (len(set(toolsets)) != len(toolsets) or
             any(not re.fullmatch(r'[a-z]+', item) or item not in allowed_toolsets
                 for item in toolsets)):
@@ -507,6 +507,10 @@ def network(target, toolsets=(), spi_units=()):
         selected['crunch_programs'] += ('usr.sbin/spinandctl/spinandctl',)
         selected['device_nodes'] += tuple('spi' + unit for unit in spi_units)
         selected['device_make_groups'] += tuple('spi' + unit for unit in spi_units)
+    if 'transfer' in toolsets:
+        selected['crunch_programs'] += (
+            'usr.bin/cksum/cksum', 'usr.bin/uuencode/uuencode',
+            'usr.bin/uudecode/uudecode')
     install_map = [('usr.bin/login', 'usr/bin/login')]
     selected['install_map'] = tuple(install_map)
     return selected

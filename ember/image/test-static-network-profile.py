@@ -28,6 +28,7 @@ def check(condition, message):
 selected = profile.network('riscv32')
 peripheral = profile.network('riscv32', ('system', 'audio', 'video', 'envsys', 'spi'),
                              ('1',))
+transfer = profile.network('riscv32', ('transfer',))
 spi_toolset = profile.network('riscv32', ('spi',))
 try:
     profile.network('riscv32', ('audio', 'audio'))
@@ -158,6 +159,13 @@ check('BINMODE=4555' in (source / 'sbin/ping/Makefile').read_text() and
       'root-only ping uses normal socket ops in the 0555 crunch binary with IPsec support')
 check('external/bsd/libpcap/lib' in selected['libraries'],
       'selected WPA link dependency libpcap is built by its OS target')
+check(all(path in transfer['crunch_programs'] for path in (
+          'usr.bin/cksum/cksum', 'usr.bin/uuencode/uuencode',
+          'usr.bin/uudecode/uudecode')) and
+      not any(path in selected['crunch_programs'] for path in (
+          'usr.bin/cksum/cksum', 'usr.bin/uuencode/uuencode',
+          'usr.bin/uudecode/uudecode')),
+      'text transfer utilities are optional and absent from the default network root')
 check('lib/libz' not in selected['libraries'] and 'lib/libbz2' not in selected['libraries'],
       'compact network profile omits optional grep compression libraries')
 crunch_source = (Path(__file__).with_name('cix-p1-build-userland.sh')).read_text()
