@@ -535,6 +535,12 @@ LEX=		${TOOLDIR}/bin/${_TOOL_PREFIX}lex
 # Like mkdep, xlint executes the CC pathname without its arguments.
 .if defined(EXTERNAL_TOOLCHAIN) && ${EMBER_COMPILER_FAMILY} == "clang"
 LINT=		CC=${EXTERNAL_TOOLCHAIN}/bin/clang ${TOOLDIR}/bin/${MACHINE_GNU_PLATFORM}-lint -Z --target=${MACHINE_GNU_PLATFORM}
+.if defined(EMBER_CLANG_RESOURCE_DIR)
+.if empty(EMBER_CLANG_RESOURCE_DIR:M/*)
+.error EMBER_CLANG_RESOURCE_DIR must be an absolute selected compiler resource directory
+.endif
+LINT+=		-Z -idirafter -Z ${EMBER_CLANG_RESOURCE_DIR:Q}/include
+.endif
 .else
 LINT=		CC=${CC:Q} ${TOOLDIR}/bin/${MACHINE_GNU_PLATFORM}-lint
 .endif

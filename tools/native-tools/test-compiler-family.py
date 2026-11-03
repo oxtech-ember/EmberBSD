@@ -87,7 +87,11 @@ class CompilerFamilyTests(unittest.TestCase):
     def test_lint_receives_target_separately_from_compiler(self):
         value = self.values(('LINT',))['LINT']
         self.assertEqual(value, 'CC=/sdk/bin/clang /build/tools/bin/aarch64--netbsd-lint -Z --target=aarch64--netbsd')
-        gcc = self.values(('LINT',), 'EMBER_COMPILER_FAMILY=gcc')['LINT']
+        selected = self.values(('LINT',), 'EMBER_CLANG_RESOURCE_DIR=/sdk/lib/clang/23')['LINT']
+        self.assertIn('-Z -idirafter -Z /sdk/lib/clang/23/include', selected)
+        self.assertNotEqual(self.query(('LINT',), 'EMBER_CLANG_RESOURCE_DIR=relative').returncode, 0)
+        gcc = self.values(('LINT',), 'EMBER_COMPILER_FAMILY=gcc',
+                          'EMBER_CLANG_RESOURCE_DIR=/sdk/lib/clang/23')['LINT']
         self.assertEqual(gcc, 'CC=/sdk/bin/aarch64--netbsd-gcc /build/tools/bin/aarch64--netbsd-lint')
 
     def test_host_dependencies_do_not_inherit_target_flags(self):

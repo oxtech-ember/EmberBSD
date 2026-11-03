@@ -698,12 +698,49 @@ fallback_symbol(sym_t *sym)
  * with arbitrary arguments.  Since lint usually runs after a successful
  * compilation, it's the compiler's job to catch any errors.
  */
+typedef enum { C11_VOID, C11_BOOL, C11_VALUE } c11_result;
+typedef struct {
+	const char *name;
+	unsigned int nargs;
+	c11_result result;
+	bool object;
+	bool expected;
+} c11_atomic_builtin;
+
+static const c11_atomic_builtin c11_atomics[] = {
+	{ "__c11_atomic_init", 2, C11_VOID, true, false },
+	{ "__c11_atomic_store", 3, C11_VOID, true, false },
+	{ "__c11_atomic_thread_fence", 1, C11_VOID, false, false },
+	{ "__c11_atomic_signal_fence", 1, C11_VOID, false, false },
+	{ "__c11_atomic_is_lock_free", 1, C11_BOOL, false, false },
+	{ "__c11_atomic_compare_exchange_strong", 5, C11_BOOL, true, true },
+	{ "__c11_atomic_compare_exchange_weak", 5, C11_BOOL, true, true },
+	{ "__c11_atomic_load", 2, C11_VALUE, true, false },
+	{ "__c11_atomic_exchange", 3, C11_VALUE, true, false },
+	{ "__c11_atomic_fetch_add", 3, C11_VALUE, true, false },
+	{ "__c11_atomic_fetch_sub", 3, C11_VALUE, true, false },
+	{ "__c11_atomic_fetch_and", 3, C11_VALUE, true, false },
+	{ "__c11_atomic_fetch_or", 3, C11_VALUE, true, false },
+	{ "__c11_atomic_fetch_xor", 3, C11_VALUE, true, false },
+};
+
+static const c11_atomic_builtin *
+c11_atomic(const char *name)
+{
+	if (allow_gcc)
+		for (size_t i = 0; i < sizeof(c11_atomics) / sizeof(c11_atomics[0]); i++)
+			if (strcmp(name, c11_atomics[i].name) == 0)
+				return &c11_atomics[i];
+	return NULL;
+}
+
 bool
 is_compiler_builtin(const char *name)
 {
 	/* https://gcc.gnu.org/onlinedocs/gcc/C-Extensions.html */
 	if (allow_gcc) {
-		if (strncmp(name, "__atomic_", 9) == 0 ||
+		if (c11_atomic(name) != NULL ||
+		    strncmp(name, "__atomic_", 9) == 0 ||
 		    strncmp(name, "__builtin_", 10) == 0 ||
 		    strcmp(name, "alloca") == 0 ||
 		    /* obsolete but still in use, as of 2021 */
@@ -4739,6 +4776,8 @@ build_function_call(tnode_t *func, bool sys, function_call *call)
 	if (func == NULL)
 		return NULL;
 
+	const c11_atomic_builtin *atomic = func->tn_op == NAME
+	    ? c11_atomic(func->u.sym->s_name) : NULL;
 	call->func = func;
 	check_ctype_function_call(call);
 
@@ -4754,9 +4793,36 @@ build_function_call(tnode_t *func, bool sys, function_call *call)
 
 	check_function_arguments(call);
 
+	type_t *result = func->tn_type->t_subt->t_subt;
+	if (atomic != NULL) {
+		if (call->args_len != atomic->nargs) {
+			error(150, (int)call->args_len,
+			    call->args_len == 1 ? "argument" : "arguments",
+			    (int)atomic->nargs);
+			return NULL;
+		}
+		if (atomic->object && call->args[0]->tn_type->t_tspec != PTR) {
+			error(96, type_name(call->args[0]->tn_type));
+			return NULL;
+		}
+		if (atomic->object &&
+		    (call->args[0]->tn_type->t_subt->t_tspec == VOID ||
+		     call->args[0]->tn_type->t_subt->t_tspec == FUNC)) {
+			error(108, atomic->name, type_name(call->args[0]->tn_type));
+			return NULL;
+		}
+		if (atomic->expected && call->args[1]->tn_type->t_tspec != PTR) {
+			error(96, type_name(call->args[1]->tn_type));
+			return NULL;
+		}
+		result = atomic->result == C11_VOID ? gettyp(VOID) :
+		    atomic->result == C11_BOOL ? gettyp(BOOL) :
+		    expr_unqualified_type(call->args[0]->tn_type->t_subt);
+	}
+
 	tnode_t *ntn = expr_alloc_tnode();
 	ntn->tn_op = CALL;
-	ntn->tn_type = func->tn_type->t_subt->t_subt;
+	ntn->tn_type = result;
 	ntn->tn_sys = sys;
 	ntn->u.call = call;
 	return ntn;
