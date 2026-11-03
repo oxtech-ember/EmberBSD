@@ -742,6 +742,8 @@ build_name_call(sym_t *sym)
 {
 
 	if (is_compiler_builtin(sym->s_name)) {
+		/* A synthesized builtin is used even in a discarded branch. */
+		mark_as_used(sym, true, false);
 		/*
 		 * Do not warn about these, just assume that they are regular
 		 * functions compatible with non-prototype calling conventions.
