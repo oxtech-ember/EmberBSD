@@ -83,7 +83,7 @@ espwifi_wpa2_parse_ie(const u8 *ie, size_t len, wifi_wpa_ie_t *data)
 	data->num_pmkid = parsed.num_pmkid;
 	data->pmkid = parsed.pmkid;
 	data->mgmt_group_cipher = espwifi_cipher_type(parsed.mgmt_group_cipher);
-	/* The shared WPA parser has no RSNXE result in this version. */
+	data->rsnxe_capa = parsed.rsnxe_capa;
 	return 0;
 }
 

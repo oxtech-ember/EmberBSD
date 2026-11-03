@@ -45,6 +45,7 @@ code = r'''
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <net80211/ieee80211_rsn.h>
 typedef uint8_t u8;
 typedef uint32_t u32;
 typedef uint64_t u64;
@@ -124,7 +125,8 @@ struct wpa_ie_data { int proto, pairwise_cipher, has_pairwise, group_cipher,
  has_group, key_mgmt, capabilities; size_t num_pmkid; const uint8_t *pmkid;
  int mgmt_group_cipher; };
 struct espwifi_wpa_ie { int proto, pairwise_cipher, group_cipher, key_mgmt,
- capabilities; size_t num_pmkid; const uint8_t *pmkid; int mgmt_group_cipher; };
+ capabilities; size_t num_pmkid; const uint8_t *pmkid; int mgmt_group_cipher;
+ uint8_t rsnxe_capa; };
 static int wpa_parse_wpa_ie(const u8 *ie,size_t len,struct wpa_ie_data *out) {
  parser_calls++; assert(ie!=NULL && len==3 && ie[0]==48);
  memset(out,0,sizeof(*out)); out->proto=4; out->pairwise_cipher=WPA_CIPHER_CCMP;
@@ -212,7 +214,8 @@ with tempfile.TemporaryDirectory() as td:
     c = Path(td) / 'mgmt.c'
     out = Path(td) / 'mgmt'
     c.write_text(code)
-    subprocess.run([a.cc, '-Werror', '-fsanitize=address,undefined',
+    subprocess.run([a.cc, '-idirafter', str(arch.parents[1]), '-Werror',
+                    '-fsanitize=address,undefined',
                     '-fno-sanitize-recover=all', str(c), '-o', str(out)],
                    check=True)
     subprocess.run([str(out)], check=True)
@@ -231,6 +234,22 @@ void wpa_printf(int level, const char *fmt, ...) { (void)level; (void)fmt; }
 void wpa_hexdump(int level, const char *title, const void *data, size_t len) {
     (void)level; (void)title; (void)data; (void)len;
 }
+typedef enum { WIFI_CIPHER_TYPE_NONE, WIFI_CIPHER_TYPE_WEP40,
+    WIFI_CIPHER_TYPE_WEP104, WIFI_CIPHER_TYPE_TKIP, WIFI_CIPHER_TYPE_CCMP,
+    WIFI_CIPHER_TYPE_TKIP_CCMP, WIFI_CIPHER_TYPE_AES_CMAC128,
+    WIFI_CIPHER_TYPE_SMS4, WIFI_CIPHER_TYPE_GCMP, WIFI_CIPHER_TYPE_GCMP256,
+    WIFI_CIPHER_TYPE_AES_GMAC128, WIFI_CIPHER_TYPE_AES_GMAC256,
+    WIFI_CIPHER_TYPE_UNKNOWN } wifi_cipher_type_t;
+typedef struct {
+    int proto, pairwise_cipher, group_cipher, key_mgmt, capabilities;
+    size_t num_pmkid;
+    const u8 *pmkid;
+    int mgmt_group_cipher;
+    uint8_t rsnxe_capa;
+} wifi_wpa_ie_t;
+#include "wpa_ie_bridge.h"
+''' + function('espwifi_cipher_type', 'wifi_cipher_type_t') + \
+    function('espwifi_wpa2_parse_ie', 'int') + r'''
 int main(void) {
     const u8 rsn[] = {48,20,1,0,0,15,172,4,1,0,0,15,172,4,
         1,0,0,15,172,2,0,0};
@@ -240,7 +259,12 @@ int main(void) {
         1,0,0,15,172,4,2,0,0,15,172,2,0,15,172,8,0xc0,0};
     const u8 wpa[] = {221,24,0,80,242,1,1,0,0,80,242,4,
         1,0,0,80,242,4,1,0,0,80,242,2,0,0};
+    const u8 rsnxe_h2e[] = {244,1,0x20};
+    const u8 rsnxe_multioctet[] = {244,2,0x31,0x80};
+    const u8 rsnxe_zero_len[] = {244,0};
+    const u8 rsnxe_truncated[] = {244,3,0x20};
     struct espwifi_wpa_ie data;
+    wifi_wpa_ie_t vendor_data;
     assert(espwifi_parse_wpa_ie(rsn, sizeof(rsn), &data) == 0);
     assert(data.proto == WPA_PROTO_RSN);
     assert(data.group_cipher == ESPWIFI_WPA_CIPHER_CCMP);
@@ -261,6 +285,23 @@ int main(void) {
     assert(data.proto == WPA_PROTO_RSN &&
         data.key_mgmt == (WPA_KEY_MGMT_PSK | WPA_KEY_MGMT_SAE) &&
         data.capabilities == (WPA_CAPABILITY_MFPC | WPA_CAPABILITY_MFPR));
+    assert(espwifi_wpa2_parse_ie(rsn, sizeof(rsn), &vendor_data) == 0 &&
+        vendor_data.proto == WPA_PROTO_RSN &&
+        vendor_data.key_mgmt == WPA_KEY_MGMT_PSK &&
+        vendor_data.rsnxe_capa == 0);
+    assert(espwifi_wpa2_parse_ie(wpa, sizeof(wpa), &vendor_data) == 0 &&
+        vendor_data.proto == WPA_PROTO_WPA &&
+        vendor_data.key_mgmt == WPA_KEY_MGMT_PSK &&
+        vendor_data.rsnxe_capa == 0);
+    assert(espwifi_wpa2_parse_ie(rsnxe_h2e, sizeof(rsnxe_h2e),
+        &vendor_data) == 0 && vendor_data.rsnxe_capa == 0x20);
+    assert(espwifi_wpa2_parse_ie(rsnxe_multioctet,
+        sizeof(rsnxe_multioctet), &vendor_data) == 0 &&
+        vendor_data.rsnxe_capa == 0x31);
+    assert(espwifi_wpa2_parse_ie(rsnxe_zero_len, sizeof(rsnxe_zero_len),
+        &vendor_data) != 0);
+    assert(espwifi_wpa2_parse_ie(rsnxe_truncated,
+        sizeof(rsnxe_truncated), &vendor_data) != 0);
     memset(&data, 0xa5, sizeof(data));
     assert(espwifi_parse_wpa_ie(rsn, sizeof(rsn) - 1, &data) != 0);
     assert(data.proto == 0 && data.pairwise_cipher == 0 && data.pmkid == NULL);
@@ -276,6 +317,7 @@ with tempfile.TemporaryDirectory() as td:
         wpa_source, Path(a.idf_driver_header).resolve().parents[4] / 'components')
     assert '-DCONFIG_SAE' in common_flags
     common_flags += ['-I' + str(arch / 'espressif/wifi'),
+        '-idirafter', str(arch.parents[1]),
         '-ffunction-sections', '-fdata-sections', '-fsanitize=address,undefined',
         '-fno-sanitize-recover=all']
     linker_gc = '-Wl,-dead_strip' if sys.platform == 'darwin' else '-Wl,--gc-sections'

@@ -31,6 +31,7 @@ struct espwifi_wpa_ie {
 	size_t num_pmkid;
 	const uint8_t *pmkid;
 	int mgmt_group_cipher;
+	uint8_t rsnxe_capa;
 };
 
 int	espwifi_parse_wpa_ie(const uint8_t *, size_t, struct espwifi_wpa_ie *);

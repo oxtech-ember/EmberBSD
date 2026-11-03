@@ -4,6 +4,22 @@
 #define _NET80211_IEEE80211_RSN_H_
 
 
+/* Parse a standalone RSNXE and return its first capability octet. */
+static inline bool
+ieee80211_rsnxe_parse(const uint8_t *ie, size_t len, uint8_t *capab)
+{
+	if (capab != NULL)
+		*capab = 0;
+	if (ie == NULL || len < 3 || ie[0] != 244 ||
+	    (size_t)ie[1] + 2 != len || ie[1] == 0 || ie[1] > 16 ||
+	    (size_t)(ie[2] & 0x0f) + 1 != ie[1])
+		return false;
+	if (capab != NULL)
+		*capab = ie[2];
+	return true;
+}
+
+
 /* Parse a complete association IE stream and return its unique RSN element.
  * The returned view borrows from p. All element framing must be complete;
  * duplicate RSN/RSNXE elements and malformed RSNXE lengths are rejected.
@@ -48,8 +64,8 @@ ieee80211_assoc_rsn_parse(const uint8_t *p, size_t len,
 			found_rsn_offset = pos;
 			break;
 		case 244: /* IEEE80211_ELEMID_RSNX */
-			if (seen_rsnx || payload_len == 0 || payload_len > 16 ||
-			    ((size_t)(p[pos + 2] & 0x0f) + 1) != payload_len)
+			if (seen_rsnx || !ieee80211_rsnxe_parse(p + pos,
+			    element_len, NULL))
 				return false;
 			seen_rsnx = true;
 			break;

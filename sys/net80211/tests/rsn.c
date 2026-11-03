@@ -27,12 +27,44 @@ main(void)
 	};
 	uint8_t ie[64];
 	uint8_t assoc[64];
+	uint8_t rsnxe_capab;
 	const uint8_t *rsn;
 	size_t n, rsn_len, rsn_offset;
 
 	check(!ieee80211_sae_rsn_valid(NULL, 0), "null empty input rejected");
 	check(!ieee80211_sae_rsn_valid(NULL, 22), "null sized input rejected");
 	check(ieee80211_sae_rsn_valid(good, sizeof(good)), "SAE/CCMP/required PMF");
+	{
+		const uint8_t h2e[] = { 244, 1, 0x20 };
+		const uint8_t future[] = { 244, 2, 0x31, 0x80 };
+		const uint8_t outer_mismatch[] = { 244, 2, 0x20 };
+		const uint8_t truncated[] = { 244, 1 };
+		const uint8_t encoded_mismatch[] = { 244, 2, 0x00, 0x80 };
+		const uint8_t zero_payload[] = { 244, 0 };
+		const uint8_t wrong_id[] = { 48, 1, 0x20 };
+		uint8_t oversized[19] = { 244, 17, 0x10 };
+
+		check(ieee80211_rsnxe_parse(h2e, sizeof(h2e), &rsnxe_capab) &&
+		    rsnxe_capab == 0x20, "standalone SAE H2E RSNXE");
+		check(ieee80211_rsnxe_parse(future, sizeof(future),
+		    &rsnxe_capab) && rsnxe_capab == 0x31,
+		    "multi-octet RSNXE first capability octet");
+		rsnxe_capab = 0xff;
+		check(!ieee80211_rsnxe_parse(outer_mismatch,
+		    sizeof(outer_mismatch), &rsnxe_capab) && rsnxe_capab == 0,
+		    "RSNXE outer length mismatch rejected and output cleared");
+		check(!ieee80211_rsnxe_parse(truncated, sizeof(truncated), NULL),
+		    "truncated RSNXE capability length rejected");
+		check(!ieee80211_rsnxe_parse(encoded_mismatch,
+		    sizeof(encoded_mismatch), NULL),
+		    "encoded RSNXE capability length rejected");
+		check(!ieee80211_rsnxe_parse(zero_payload,
+		    sizeof(zero_payload), NULL), "empty RSNXE rejected");
+		check(!ieee80211_rsnxe_parse(wrong_id, sizeof(wrong_id), NULL),
+		    "non-RSNXE element rejected");
+		check(!ieee80211_rsnxe_parse(oversized, sizeof(oversized), NULL),
+		    "oversized RSNXE rejected");
+	}
 	memcpy(assoc, good, sizeof(good));
 	assoc[22] = 244;
 	assoc[23] = 1;

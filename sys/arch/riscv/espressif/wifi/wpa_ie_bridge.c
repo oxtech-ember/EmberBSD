@@ -8,6 +8,8 @@
 
 #include "wpa_ie_bridge.h"
 
+#include <net80211/ieee80211_rsn.h>
+
 static enum espwifi_wpa_cipher
 espwifi_common_cipher(int cipher)
 {
@@ -50,6 +52,9 @@ espwifi_parse_wpa_ie(const uint8_t *ie, size_t len, struct espwifi_wpa_ie *out)
 	if (ie == NULL || out == NULL)
 		return -1;
 	memset(out, 0, sizeof(*out));
+	if (len >= 1 && ie[0] == 244)
+		return ieee80211_rsnxe_parse(ie, len, &out->rsnxe_capa) ?
+		    0 : -1;
 	error = wpa_parse_wpa_ie(ie, len, &parsed);
 	if (error != 0)
 		return error;
