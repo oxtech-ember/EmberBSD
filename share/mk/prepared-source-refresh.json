@@ -283,6 +283,26 @@
       "consumer_dirs": [],
       "linked_names": []
     },
+    "EMBER_NTP_SOURCE": {
+      "producer_dirs": [
+        "external/bsd/ntp/lib/libntp",
+        "external/bsd/ntp/lib/libiscntp",
+        "external/bsd/ntp/lib/libopts",
+        "external/bsd/ntp/lib/libparse",
+        "external/bsd/ntp/bin/ntp-keygen",
+        "external/bsd/ntp/bin/ntpd",
+        "external/bsd/ntp/bin/ntpdate",
+        "external/bsd/ntp/bin/ntpdc",
+        "external/bsd/ntp/bin/ntpq",
+        "external/bsd/ntp/bin/ntptime",
+        "external/bsd/ntp/bin/ntptrace",
+        "external/bsd/ntp/bin/sntp",
+        "external/bsd/ntp/html"
+      ],
+      "header_prefixes": [],
+      "consumer_dirs": [],
+      "linked_names": []
+    },
     "EMBER_OPENSSH_SOURCE": {
       "producer_dirs": [
         "crypto/external/bsd/openssh/bin/scp",

@@ -91,6 +91,7 @@ YHEADER=1
 
 # Generate the scanner table from the parser header selected by this build.
 .include <bsd.host.mk>
+CLEANFILES+= ntp-keyword-gen ntp_keyword.h ntp_keyword.h.tmp
 .NOPATH: ntp_keyword.h ntp-keyword-gen
 ntp-keyword-gen: ${DIST}/keyword-gen.c ${DIST}/ntp_scanner_types.h ntp_parser.h
 	${HOST_CC} ${HOST_CPPFLAGS} ${HOST_CFLAGS} -I${.OBJDIR:Q} -I${DIST:Q} \
