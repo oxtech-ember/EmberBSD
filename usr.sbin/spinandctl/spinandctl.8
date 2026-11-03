@@ -1,0 +1,36 @@
+.\" Copyright (c) 2026 The EmberBSD Project.
+.\" SPDX-License-Identifier: BSD-2-Clause
+.Dd November 3, 2026
+.Dt SPINANDCTL 8
+.Os
+.Sh NAME
+.Nm spinandctl
+.Nd read identification and status from SPI NAND
+.Sh SYNOPSIS
+.Nm
+.Fl d Ar device
+.Sh DESCRIPTION
+.Nm
+configures chip select zero for SPI mode 0 at 1 MHz, then issues only the
+SPI NAND READ ID (0x9f, one dummy byte) and GET FEATURE status (0x0f, feature
+address 0xc0) commands.
+It prints the returned manufacturer ID, device ID, and status register.
+.Pp
+It does not issue page read, write enable, program, erase, or feature-write
+commands.
+.Pp
+The device must be a raw SPI character device whose chip select is connected
+to the NAND device.
+.Pp
+This utility reports transport-level identification and status only.
+It does not provide NAND data access, ECC, bad-block management, or a
+filesystem.
+.Sh OPTIONS
+.Bl -tag -width Ds
+.It Fl d Ar device
+Select the SPI character device.
+.El
+.Sh EXIT STATUS
+.Ex -std
+.Sh SEE ALSO
+.Xr spi 4

@@ -34,6 +34,8 @@ SUBDIR=	ac accton acpitools altq apm apmd arp autofs \
 	wsconscfg wsfontload wsmoused wsmuxctl \
 	zdump zic
 
+SUBDIR+= spinandctl
+
 .if ${MKMAKEMANDB} != "no"
 SUBDIR+= makemandb
 .endif

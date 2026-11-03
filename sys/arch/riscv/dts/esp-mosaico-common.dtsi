@@ -274,3 +274,39 @@
 		];
 	};
 };
+
+&spi3 {
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&nand_spi3_pins>;
+};
+
+&gpio {
+	nand_spi3_pins: nand-spi3-pins {
+		bus-output {
+			pinmux = <ESP32S31_PINMUX(20, ESP32S31_SIG_NONE,
+			    ESP32S31_SPI3_CLK)>,
+			    <ESP32S31_PINMUX(21, ESP32S31_SIG_NONE,
+			    ESP32S31_SPI3_D)>,
+			    <ESP32S31_PINMUX(23, ESP32S31_SIG_NONE,
+			    ESP32S31_SPI3_CS)>;
+			output-enable;
+			bias-disable;
+		};
+		bus-input {
+			pinmux = <ESP32S31_PINMUX(22, ESP32S31_SPI3_Q,
+			    ESP32S31_SIG_NONE)>;
+			input-enable;
+			bias-disable;
+		};
+		idle {
+			pinmux = <ESP32S31_PINMUX(24, ESP32S31_SIG_NONE,
+			    ESP32S31_GPIO_OUT)>,
+			    <ESP32S31_PINMUX(25, ESP32S31_SIG_NONE,
+			    ESP32S31_GPIO_OUT)>;
+			output-enable;
+			output-high;
+			bias-disable;
+		};
+	};
+};
