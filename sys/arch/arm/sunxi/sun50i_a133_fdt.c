@@ -51,7 +51,7 @@
 #define SDIO_MARK "ember,ys-m33-sdio-host"
 #define SDIO_NATIVE_OPT "ember,ys-m33-wlan-warm"
 #define SDIO_NATIVE_MARK "ember,ys-m33-wlan-warm-host"
-#define SDIO_PRESERVE_OPT "ember,ys-m33-wlan-preserved-power"
+#define SDIO_PRESERVE_OPT "ember,ys-m33-wlan-keep-power"
 #define SDIO_PRESERVE "/ember-wlan-preserved-power"
 
 int sun50i_a133_fdt_fixup(void *);
@@ -734,10 +734,10 @@ a133_sdio(void *fdt, uint32_t ccu, bool native)
 			return 0;
 		node = fdt_path_offset(fdt, SDIO);
 		if (!owned && fdt_getprop(fdt, node,
-		    "ember,ys-m33-wlan-original-vqmmc", NULL) != NULL)
+		    "ember,wlan-original-vqmmc", NULL) != NULL)
 			return 0;
 		policy = fdt_getprop(fdt, node, owned ?
-		    "ember,ys-m33-wlan-original-vqmmc" : "vqmmc-supply", &len);
+		    "ember,wlan-original-vqmmc" : "vqmmc-supply", &len);
 		if (policy == NULL || len != 4 ||
 		    (supply = fdt32_to_cpu(*policy)) == 0 || supply == UINT32_MAX)
 			return 0;
@@ -759,7 +759,7 @@ a133_sdio(void *fdt, uint32_t ccu, bool native)
 			    !a133_value(fdt, SDIO_PRESERVE, "compatible",
 			    "mmc-pwrseq-simple", sizeof("mmc-pwrseq-simple")) ||
 			    !a133_value(fdt, SDIO_PRESERVE,
-			    "ember,bootloader-power-preserved", "", 0))
+			    "ember,boot-power-preserved", "", 0))
 				return 0;
 			pn = fdt_path_offset(fdt, SDIO_PRESERVE);
 			if (fdt_getprop(fdt, pn, "reset-gpios", NULL) != NULL ||
@@ -890,9 +890,9 @@ a133_sdio(void *fdt, uint32_t ccu, bool native)
 		if (node < 0)
 			return node;
 		A133_STRING(SDIO_PRESERVE, "compatible", "mmc-pwrseq-simple");
-		A133_SET(SDIO_PRESERVE, "ember,bootloader-power-preserved", NULL, 0);
+		A133_SET(SDIO_PRESERVE, "ember,boot-power-preserved", NULL, 0);
 		A133_CELL(SDIO, "mmc-pwrseq", pwrseq);
-		A133_CELL(SDIO, "ember,ys-m33-wlan-original-vqmmc", supply);
+		A133_CELL(SDIO, "ember,wlan-original-vqmmc", supply);
 		A133_STRING(SDIO, "ember,rtw88-regdomain", "world-min");
 		A133_CELL(SDIO, "ember,rtw88-channels-2ghz", channels);
 		/* Package-neutral selector for the selected 8723D table image,
