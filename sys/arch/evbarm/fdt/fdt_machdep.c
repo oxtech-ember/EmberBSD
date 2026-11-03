@@ -351,10 +351,19 @@ initarm(void *arg)
 #ifdef SOC_SUN50I_A100
 	{
 		int sun50i_a133_fdt_fixup(void *);
+#ifdef SUNXI_A133_GPU_FDT
+		int sun50i_a133_gpu_fdt_fixup(void *);
+#endif
 
 		error = sun50i_a133_fdt_fixup(fdt_data);
 		if (error != 0)
 			panic("A133 FDT fixup: %s", fdt_strerror(error));
+
+#ifdef SUNXI_A133_GPU_FDT
+		error = sun50i_a133_gpu_fdt_fixup(fdt_data);
+		if (error != 0)
+			panic("A133 GPU FDT fixup: %s", fdt_strerror(error));
+#endif
 	}
 #endif
 	VPRINT_FDT("fixed", fdt_data, sizeof(fdt_data));

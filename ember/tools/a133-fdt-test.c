@@ -129,6 +129,8 @@ main(void)
 	    fdt32_to_cpu(cells[0]));
 	assert(fdt_node_check_compatible(fdt, provider,
 	    "allwinner,sun50i-a100-ccu") == 0);
+	assert(fdt_stringlist_search(fdt, provider, "compatible",
+	    "allwinner,sun50i-a133-ccu") == 0);
 	assert(fdt32_to_cpu(cells[1]) == 68 && fdt32_to_cpu(cells[3]) == 64);
 	cells = fdt_getprop(fdt, provider, "clocks", &len);
 	assert(cells != NULL && len == 12);

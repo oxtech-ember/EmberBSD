@@ -1,3 +1,4 @@
+/* Origin: EmberBSD; native A100/A133 clock-controller integration. */
 /*-
  * Copyright (c) 2026 Anton and EmberBSD contributors
  * All rights reserved.
@@ -290,6 +291,8 @@ sun50i_a100_ccu_attach(device_t parent, device_t self, void *aux)
 	sc->sc_nclks = __arraycount(sun50i_a100_ccu_clks);
 
 	sc->sc_clks[A100_CLK_PLL_GPU].enable = sun50i_a100_ccu_gpu_pll_enable;
+	if (clks != NULL)
+		sc->sc_clks[A100_CLK_PLL_GPU].enable = sun50i_a133_ccu_gpu_pll_enable;
 	sc->sc_clks[A100_CLK_PLL_GPU].get_rate = sun50i_a100_ccu_gpu_pll_get_rate;
 	sc->sc_clks[A100_CLK_PLL_GPU].set_rate = sun50i_a100_ccu_gpu_pll_set_rate;
 	sc->sc_clks[A100_CLK_PLL_GPU].get_parent =

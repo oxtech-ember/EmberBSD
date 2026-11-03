@@ -6,6 +6,15 @@ The experimental `EMBER64_A133_GPU` kernel and
 `sun50i-a133-ys-m33-gpu.dts` select this provider explicitly.
 The ordinary YS-M33 device tree keeps it disabled.
 
+The experimental kernel also selects `SUNXI_A133_GPU_FDT`. The early adapter
+can translate the measured vendor PPU binding in the copied FDT in RAM.
+It preserves the complete board tree, existing domain phandle and GPU supply.
+It adds the native R-CCU binding and reuses the existing SRAM-control register
+range as a syscon provider. It marks GPU power as consumer-managed.
+No DTB partition is written. Unknown resources are rejected before translation;
+re-entry validates the converted providers before returning without changes.
+The ordinary WLAN kernel does not select this adapter.
+
 ## Binding and lifetime
 
 The local binding uses `allwinner,sun50i-a133-ppu`, one 64-byte register range,
@@ -50,11 +59,32 @@ Their full callbacks exclude revisions 0/3/4/5 to preserve boot-owned domain A.
 Their inclusion of revision 6 is source evidence, not physical acceptance.
 The GPL implementation is not incorporated into this driver.
 
+## GPU PLL lock detection
+
+The A133 CCU callback can enable the PLL lock detector on a running PLL.
+It preserves PLL power, output enable and frequency factors.
+It requires valid firmware setup and refuses to start or retune the PLL.
+It waits at most five milliseconds, then checks lock after a 20-microsecond settle.
+Timeout restores only a detector bit acquired by the call.
+An unrelated register change stops the operation without restoring old factors.
+The A100 callback remains observation-only.
+The vendor FDT adapter selects the A133 CCU binding first and retains its
+A100 fallback. This selects the A133 GPU divider and detector callback.
+
+Register and timing facts come from the pinned Allwinner
+[clock descriptor](https://github.com/CrealityTech/sonic_pad_os/blob/7f37a7fbf4ad59907034715e3d967b9177de1cd4/lichee/linux-4.9/drivers/clk/sunxi/clk-sun50iw10.c)
+and [factor clock](https://github.com/CrealityTech/sonic_pad_os/blob/7f37a7fbf4ad59907034715e3d967b9177de1cd4/lichee/linux-4.9/drivers/clk/sunxi/clk-factors.c).
+This independently written callback does not incorporate their implementation.
+
 ## Validation boundary
 
 `tests/a133-ppu-power.sh` uses the selected native `CC`. It checks domain
 ownership, pending and unknown requests, protected revisions, readback failures
 and faults at each ON/OFF/request write. Host fixtures do not establish
 electrical timing, interrupt delivery, GPU identity or rendering on a tablet.
+`tests/a133-gpu-pll.sh` checks detector ownership, bounded timeout, factor preservation
+and the unchanged A100 policy with simulated register access.
+`ember/tools/a133-gpu-fdt-test.sh` exercises the actual adapter with libfdt.
+It checks resource rejection, provider ownership, unchanged vendor data and re-entry.
 Clang 23.1.4 on Linux/amd64 built the experimental AArch64 kernel and its
 selected DTB. Physical power/request tests and GPU rendering have not run.

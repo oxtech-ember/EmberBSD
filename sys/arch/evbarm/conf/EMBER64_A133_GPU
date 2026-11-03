@@ -1,4 +1,5 @@
 # Origin: EmberBSD; A133 power-domain bring-up with an explicit PPU provider.
 # This adds PPU ownership and state queries, not a rendering driver.
 include "arch/evbarm/conf/EMBER64_A133_WLAN"
+options SUNXI_A133_GPU_FDT
 sun50ippu* at fdt?

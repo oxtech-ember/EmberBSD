@@ -29,6 +29,8 @@
 #ifndef _SUN50I_A100_CCU_GPU_H
 #define _SUN50I_A100_CCU_GPU_H
 
+/* Origin: EmberBSD; native GPU clock checks and A133 lock detection. */
+
 /* A133 User Manual V1.1, PLL_GPU_CTRL. The PLL is firmware-owned here. */
 #define A100_GPU_PLL_READY_MASK \
 	(__BIT(31) | __BIT(29) | __BIT(28) | __BIT(27))
@@ -54,6 +56,55 @@ sun50i_a100_ccu_gpu_pll_enable(struct sunxi_ccu_softc *sc,
 	if (enable && sun50i_a100_ccu_gpu_pll_ready(val))
 		return 0;
 	return EOPNOTSUPP;
+}
+
+/*
+ * A133 keeps PLL power, output and frequency under the boot setup.
+ * Enable only the lock detector. Do not start or retune a PLL here.
+ */
+static int
+sun50i_a133_ccu_gpu_pll_enable(struct sunxi_ccu_softc *sc,
+    struct sunxi_ccu_clk *clk, int enable)
+{
+	const uint32_t detector = __BIT(29), status = __BIT(28);
+	const uint32_t original = CCU_READ(sc, clk->u.nkmp.reg);
+	uint32_t value;
+	unsigned retry;
+
+	if (!enable)
+		return EOPNOTSUPP;
+	if (sun50i_a100_ccu_gpu_pll_ready(original))
+		return 0;
+	if (!sun50i_a100_ccu_gpu_pll_ready(original | detector | status))
+		return EOPNOTSUPP;
+	if ((original & detector) == 0)
+		CCU_WRITE(sc, clk->u.nkmp.reg, original | detector);
+	for (retry = 0; retry < 5000; retry++) {
+		value = CCU_READ(sc, clk->u.nkmp.reg);
+		if (((value ^ original) & ~(detector | status)) != 0)
+			return EIO;
+		if (sun50i_a100_ccu_gpu_pll_ready(value)) {
+			delay(20);
+			value = CCU_READ(sc, clk->u.nkmp.reg);
+			if (((value ^ original) & ~(detector | status)) != 0 ||
+			    !sun50i_a100_ccu_gpu_pll_ready(value))
+				return EIO;
+			return 0;
+		}
+		delay(1);
+	}
+	/*
+	 * Restore only our detector bit, and only while other fields match.
+	 * An external change is not permission to restore an old frequency.
+	 */
+	if ((original & detector) == 0) {
+		value = CCU_READ(sc, clk->u.nkmp.reg);
+		if (((value ^ original) & ~(detector | status)) != 0)
+			return EIO;
+		if ((value & detector) != 0)
+			CCU_WRITE(sc, clk->u.nkmp.reg, value & ~detector);
+	}
+	return ETIMEDOUT;
 }
 
 static u_int

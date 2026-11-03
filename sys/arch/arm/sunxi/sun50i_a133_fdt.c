@@ -31,6 +31,7 @@
 #endif
 
 #include "sun50i_a100_ccu.h"
+#include "sun50i_a100_r_ccu.h"
 
 #define SOC "/soc@03000000"
 #define PIO SOC "/pinctrl@0300b000"
@@ -49,6 +50,7 @@
 #define SDIO_MARK "ember,ys-m33-sdio-host"
 
 int sun50i_a133_fdt_fixup(void *);
+int sun50i_a133_gpu_fdt_fixup(void *);
 
 static int
 a133_node(void *fdt, const char *parent, const char *name, uint32_t *phandle)
@@ -295,7 +297,7 @@ a133_framebuffer(void *fdt)
 }
 
 static bool
-a133_sdio_value(const void *fdt, const char *path, const char *name,
+a133_value(const void *fdt, const char *path, const char *name,
     const void *value, int size)
 {
 	const void *p;
@@ -309,12 +311,12 @@ a133_sdio_value(const void *fdt, const char *path, const char *name,
 }
 
 static bool
-a133_sdio_cell(const void *fdt, const char *path, const char *name,
+a133_cell(const void *fdt, const char *path, const char *name,
     uint32_t value)
 {
 	fdt32_t cell = cpu_to_fdt32(value);
 
-	return a133_sdio_value(fdt, path, name, &cell, sizeof(cell));
+	return a133_value(fdt, path, name, &cell, sizeof(cell));
 }
 
 /* USB1 is the fixed USB-A host; USB0 remains owned by the vendor USB-C path. */
@@ -350,8 +352,8 @@ a133_usb1(void *fdt, uint32_t ccu)
 		node = fdt_path_offset(fdt, paths[i]);
 		if (node < 0 || !a133_audio_okay(fdt, paths[i]) ||
 		    fdt_node_check_compatible(fdt, node, legacy[i]) != 0 ||
-		    !a133_sdio_cell(fdt, paths[i], "hci_ctrl_no", 1) ||
-		    !a133_sdio_cell(fdt, paths[i], "drvvbus-supply", vbus))
+		    !a133_cell(fdt, paths[i], "hci_ctrl_no", 1) ||
+		    !a133_cell(fdt, paths[i], "drvvbus-supply", vbus))
 			return 0;
 		p = fdt_getprop(fdt, node, "reg", &len);
 		if (p == NULL || len != 64 || fdt32_to_cpu(p[0]) != 0 ||
@@ -360,11 +362,11 @@ a133_usb1(void *fdt, uint32_t ccu)
 			return 0;
 		cells[0] = 0; cells[1] = cpu_to_fdt32(33 + i);
 		cells[2] = cpu_to_fdt32(4);
-		if (!a133_sdio_value(fdt, paths[i], "interrupts", cells, 12))
+		if (!a133_value(fdt, paths[i], "interrupts", cells, 12))
 			return 0;
 	}
 	node = fdt_path_offset(fdt, "/misc_power_en");
-	if (node < 0 || !a133_sdio_cell(fdt, "/misc_power_en",
+	if (node < 0 || !a133_cell(fdt, "/misc_power_en",
 	    "vcc_host_drv1_gpio_level", 1))
 		return 0;
 	p = fdt_getprop(fdt, node, "vcc_host_drv1_gpio", &len);
@@ -380,7 +382,7 @@ a133_usb1(void *fdt, uint32_t ccu)
 		char name[48];
 		for (i = 0; i < 4; i++) {
 			snprintf(name, sizeof(name), "%s_gpio_level", names[i]);
-			if (!a133_sdio_cell(fdt, "/misc_power_en", name, 1))
+			if (!a133_cell(fdt, "/misc_power_en", name, 1))
 				return 0;
 			snprintf(name, sizeof(name), "%s_gpio", names[i]);
 			p = fdt_getprop(fdt, node, name, &len);
@@ -437,10 +439,10 @@ a133_usb1(void *fdt, uint32_t ccu)
 }
 
 static uint32_t
-a133_sdio_phandle(const void *fdt, const char *path)
+a133_phandle(const void *fdt, const char *path)
 {
 	uint32_t phandle;
-	int node;
+	int node, other;
 
 	node = fdt_path_offset(fdt, path);
 	if (node < 0)
@@ -449,7 +451,205 @@ a133_sdio_phandle(const void *fdt, const char *path)
 	if (phandle == 0 || phandle == UINT32_MAX ||
 	    fdt_node_offset_by_phandle(fdt, phandle) != node)
 		return 0;
+	other = -1;
+	while ((other = fdt_next_node(fdt, other, NULL)) >= 0)
+		if (other != node && fdt_get_phandle(fdt, other) == phandle)
+			return 0;
 	return phandle;
+}
+
+static bool
+a133_gpu_active(const void *fdt, const char *path)
+{
+	const char *status;
+	int node, len;
+
+	node = fdt_path_offset(fdt, path);
+	if (node < 0)
+		return false;
+	status = fdt_getprop(fdt, node, "status", &len);
+	return (status == NULL && len == -FDT_ERR_NOTFOUND) ||
+	    (status != NULL && ((len == 5 && memcmp(status, "okay", 5) == 0) ||
+	    (len == 3 && memcmp(status, "ok", 3) == 0)));
+}
+
+static bool
+a133_gpu_reg(const void *fdt, const char *path, uint32_t address,
+    uint32_t size)
+{
+	fdt32_t cells[4] = {0, cpu_to_fdt32(address), 0, cpu_to_fdt32(size)};
+
+	return a133_value(fdt, path, "reg", cells, sizeof(cells));
+}
+
+static bool
+a133_gpu_unique(const void *fdt, const char *compat, int expected)
+{
+	int node;
+
+	node = fdt_node_offset_by_compatible(fdt, -1, compat);
+	return node == expected && (node < 0 ||
+	    fdt_node_offset_by_compatible(fdt, node, compat) == -FDT_ERR_NOTFOUND);
+}
+
+/* Translate only the measured vendor binding in an explicit GPU kernel. */
+int
+sun50i_a133_gpu_fdt_fixup(void *fdt)
+{
+	static const char ppu[] = "/gpu-power-domain";
+	static const char gpu[] = "/gpu";
+	static const char sram[] = "/sram_ctrl";
+	static const char rccu[] = SOC "/clock-controller@07010000";
+	static const char marker[] = "ember,a133-vendor-ppu";
+	fdt32_t cells[5], cell;
+	uint32_t domain, gic, ccu, hosc, losc, iosc, syscon, rclock, legacy;
+	uint32_t total, strings, size;
+	const void *value;
+	bool owned;
+	int node, gpu_node, len, error;
+
+	error = fdt_check_header(fdt);
+	if (error != 0)
+		return error;
+	if (fdt_node_check_compatible(fdt, 0, "allwinner,a133") != 0)
+		return 0;
+	node = fdt_path_offset(fdt, ppu);
+	if (node == -FDT_ERR_NOTFOUND)
+		return 0;
+	if (node < 0)
+		return node;
+	value = fdt_getprop(fdt, node, marker, &len);
+	owned = value != NULL;
+	if ((owned && len != 0) ||
+	    !a133_gpu_unique(fdt, owned ? "allwinner,sun50i-a133-ppu" :
+	    "allwinner,gpu-pd", node) ||
+	    !a133_gpu_unique(fdt, owned ? "allwinner,gpu-pd" :
+	    "allwinner,sun50i-a133-ppu", -FDT_ERR_NOTFOUND))
+		return -FDT_ERR_BADVALUE;
+	gpu_node = fdt_path_offset(fdt, gpu);
+	if (gpu_node < 0 || !a133_gpu_unique(fdt, "img,gpu", gpu_node) ||
+	    !a133_gpu_active(fdt, ppu) || !a133_gpu_active(fdt, gpu) ||
+	    !a133_cell(fdt, "/", "#address-cells", 2) ||
+	    !a133_cell(fdt, "/", "#size-cells", 2) ||
+	    !a133_cell(fdt, SOC, "#address-cells", 2) ||
+	    !a133_cell(fdt, SOC, "#size-cells", 2) ||
+	    !a133_value(fdt, SOC, "ranges", "", 0) ||
+	    !a133_gpu_reg(fdt, ppu, 0x07001000, 0x40) ||
+	    !a133_gpu_reg(fdt, gpu, 0x01800000, 0x80000) ||
+	    !a133_gpu_reg(fdt, sram, 0x03000000, 0x100) ||
+	    (domain = a133_phandle(fdt, ppu)) == 0 ||
+	    !a133_cell(fdt, ppu, "#power-domain-cells", 0) ||
+	    !a133_cell(fdt, gpu, "power-domains", domain) ||
+	    (gic = a133_phandle(fdt, SDIO_GIC)) == 0 ||
+	    fdt_node_check_compatible(fdt, fdt_path_offset(fdt, SDIO_GIC),
+	    "arm,cortex-a15-gic") != 0 ||
+	    !a133_cell(fdt, SDIO_GIC, "#interrupt-cells", 3) ||
+	    !a133_value(fdt, SDIO_GIC, "interrupt-controller", "", 0) ||
+	    (ccu = a133_phandle(fdt, CCU)) == 0 ||
+	    !a133_cell(fdt, CCU, "#clock-cells", 1) ||
+	    !a133_cell(fdt, CCU, "#reset-cells", 1) ||
+	    (hosc = a133_phandle(fdt, "/ember-osc24m")) == 0 ||
+	    (losc = a133_phandle(fdt, "/ember-osc32k")) == 0 ||
+	    (iosc = a133_phandle(fdt, "/ember-iosc")) == 0)
+		return -FDT_ERR_BADVALUE;
+	cells[0] = 0; cells[1] = cpu_to_fdt32(119); cells[2] = cpu_to_fdt32(4);
+	if (!a133_value(fdt, ppu, "interrupts", cells, 12))
+		return -FDT_ERR_BADVALUE;
+	cells[1] = cpu_to_fdt32(97);
+	if (!a133_value(fdt, gpu, "interrupts", cells, 12))
+		return -FDT_ERR_BADVALUE;
+	value = fdt_getprop(fdt, node, "interrupt-parent", &len);
+	if ((value != NULL && !a133_cell(fdt, ppu, "interrupt-parent", gic)) ||
+	    fdt_getprop(fdt, node, "interrupts-extended", &len) != NULL)
+		return -FDT_ERR_BADVALUE;
+	value = fdt_getprop(fdt, gpu_node, "interrupt-parent", &len);
+	if ((value != NULL && !a133_cell(fdt, gpu, "interrupt-parent", gic)) ||
+	    fdt_getprop(fdt, gpu_node, "interrupts-extended", &len) != NULL)
+		return -FDT_ERR_BADVALUE;
+	if (owned) {
+		rclock = a133_phandle(fdt, rccu);
+		syscon = a133_phandle(fdt, sram);
+		cells[0] = cpu_to_fdt32(rclock);
+		cells[1] = cpu_to_fdt32(A100_R_CLK_APB1_PPU);
+		if (rclock == 0 || syscon == 0 ||
+		    !a133_value(fdt, ppu, "clocks", cells, 8) ||
+		    !a133_value(fdt, gpu, "netbsd,consumer-managed-power", "", 0) ||
+		    !a133_cell(fdt, ppu, "syscon", syscon) ||
+		    !a133_cell(fdt, ppu, "interrupt-parent", gic) ||
+		    !a133_gpu_reg(fdt, rccu, 0x07010000, 0x300) ||
+		    !a133_gpu_active(fdt, rccu) ||
+		    !a133_cell(fdt, rccu, "#clock-cells", 1) ||
+		    !a133_cell(fdt, rccu, "#reset-cells", 1) ||
+		    !a133_value(fdt, rccu, "compatible",
+		    "allwinner,sun50i-a100-r-ccu", sizeof("allwinner,sun50i-a100-r-ccu")) ||
+		    !a133_value(fdt, sram, "compatible", "allwinner,sram_ctrl\0syscon",
+		    sizeof("allwinner,sram_ctrl\0syscon")) ||
+		    !a133_value(fdt, ppu, "clock-names", "ppu", sizeof("ppu")) ||
+		    !a133_value(fdt, ppu, "reset-names", "ppu", sizeof("ppu")))
+			return -FDT_ERR_BADVALUE;
+		cells[1] = cpu_to_fdt32(A100_R_RST_APB1_PPU);
+		if (!a133_value(fdt, ppu, "resets", cells, 8))
+			return -FDT_ERR_BADVALUE;
+		cells[0] = cpu_to_fdt32(hosc); cells[1] = cpu_to_fdt32(losc);
+		cells[2] = cpu_to_fdt32(iosc); cells[3] = cpu_to_fdt32(ccu);
+		cells[4] = cpu_to_fdt32(A100_CLK_PLL_PERIPH0);
+		if (!a133_value(fdt, rccu, "clocks", cells, sizeof(cells)) ||
+		    !a133_value(fdt, rccu, "clock-names", "hosc\0losc\0iosc\0pll-periph",
+		    sizeof("hosc\0losc\0iosc\0pll-periph")))
+			return -FDT_ERR_BADVALUE;
+		return 0;
+	}
+	legacy = a133_phandle(fdt, "/clocks/ppu");
+	if (legacy == 0 || !a133_cell(fdt, ppu, "clocks", legacy) ||
+	    !a133_cell(fdt, "/clocks/ppu", "#clock-cells", 0) ||
+	    !a133_value(fdt, "/clocks/ppu", "compatible",
+	    "allwinner,periph-cpus-clock", sizeof("allwinner,periph-cpus-clock")) ||
+	    !a133_value(fdt, sram, "compatible", "allwinner,sram_ctrl",
+	    sizeof("allwinner,sram_ctrl")) || fdt_path_offset(fdt, rccu) >= 0 ||
+	    fdt_node_offset_by_compatible(fdt, -1,
+	    "allwinner,sun50i-a100-r-ccu") >= 0 ||
+	    fdt_getprop(fdt, node, "resets", &len) != NULL ||
+	    fdt_getprop(fdt, node, "syscon", &len) != NULL ||
+	    fdt_getprop(fdt, gpu_node, "netbsd,consumer-managed-power", &len) != NULL)
+		return -FDT_ERR_BADVALUE;
+	/* Reserve more than the complete new node and property payload. */
+	total = fdt_totalsize(fdt);
+	strings = fdt_off_dt_strings(fdt);
+	size = fdt_size_dt_strings(fdt);
+	if (strings > total || size > total - strings ||
+	    total - strings - size < 2048)
+		return -FDT_ERR_NOSPACE;
+
+	node = a133_node(fdt, SOC, "clock-controller@07010000", &rclock);
+	if (node < 0)
+		return node;
+	A133_STRING(rccu, "compatible", "allwinner,sun50i-a100-r-ccu");
+	cells[0] = 0; cells[1] = cpu_to_fdt32(0x07010000);
+	cells[2] = 0; cells[3] = cpu_to_fdt32(0x300);
+	A133_SET(rccu, "reg", cells, 16);
+	cells[0] = cpu_to_fdt32(hosc); cells[1] = cpu_to_fdt32(losc);
+	cells[2] = cpu_to_fdt32(iosc); cells[3] = cpu_to_fdt32(ccu);
+	cells[4] = cpu_to_fdt32(A100_CLK_PLL_PERIPH0);
+	A133_SET(rccu, "clocks", cells, sizeof(cells));
+	A133_STRING(rccu, "clock-names", "hosc\0losc\0iosc\0pll-periph");
+	A133_CELL(rccu, "#clock-cells", 1);
+	A133_CELL(rccu, "#reset-cells", 1);
+	node = a133_node(fdt, "/", "sram_ctrl", &syscon);
+	if (node < 0)
+		return node;
+	A133_STRING(sram, "compatible", "allwinner,sram_ctrl\0syscon");
+	cells[0] = cpu_to_fdt32(rclock);
+	cells[1] = cpu_to_fdt32(A100_R_CLK_APB1_PPU);
+	A133_SET(ppu, "clocks", cells, 8);
+	A133_STRING(ppu, "clock-names", "ppu");
+	cells[1] = cpu_to_fdt32(A100_R_RST_APB1_PPU);
+	A133_SET(ppu, "resets", cells, 8);
+	A133_STRING(ppu, "reset-names", "ppu");
+	A133_CELL(ppu, "syscon", syscon);
+	A133_CELL(ppu, "interrupt-parent", gic);
+	A133_SET(gpu, "netbsd,consumer-managed-power", NULL, 0);
+	A133_STRING(ppu, "compatible", "allwinner,sun50i-a133-ppu");
+	return a133_prop(fdt, ppu, marker, NULL, 0);
 }
 
 /* Host discovery only: preserve radio power and all legacy GPIO providers. */
@@ -494,15 +694,15 @@ a133_sdio(void *fdt, uint32_t ccu)
 	    !a133_audio_okay(fdt, WLAN))
 		return 0;
 	if (fdt_stringlist_count(fdt, 0, "compatible") < 1 ||
-	    !a133_sdio_cell(fdt, "/", "#address-cells", 2) ||
-	    !a133_sdio_cell(fdt, "/", "#size-cells", 2) ||
-	    !a133_sdio_cell(fdt, SOC, "#address-cells", 2) ||
-	    !a133_sdio_cell(fdt, SOC, "#size-cells", 2) ||
-	    !a133_sdio_value(fdt, SOC, "ranges", "", 0))
+	    !a133_cell(fdt, "/", "#address-cells", 2) ||
+	    !a133_cell(fdt, "/", "#size-cells", 2) ||
+	    !a133_cell(fdt, SOC, "#address-cells", 2) ||
+	    !a133_cell(fdt, SOC, "#size-cells", 2) ||
+	    !a133_value(fdt, SOC, "ranges", "", 0))
 		return 0;
-	if (!a133_sdio_value(fdt, SDIO, "compatible",
+	if (!a133_value(fdt, SDIO, "compatible",
 	    "allwinner,sunxi-mmc-v5p3x", sizeof("allwinner,sunxi-mmc-v5p3x")) &&
-	    (!valid_marker || !a133_sdio_value(fdt, SDIO, "compatible",
+	    (!valid_marker || !a133_value(fdt, SDIO, "compatible",
 	    "allwinner,sun50i-a100-mmc", sizeof("allwinner,sun50i-a100-mmc"))))
 		return 0;
 	node = fdt_path_offset(fdt, SDIO);
@@ -514,64 +714,64 @@ a133_sdio(void *fdt, uint32_t ccu)
 		return 0;
 	cells[0] = 0; cells[1] = cpu_to_fdt32(0x0300b000);
 	cells[2] = 0; cells[3] = cpu_to_fdt32(0x400);
-	if (!a133_sdio_value(fdt, PIO, "reg", cells, 16))
+	if (!a133_value(fdt, PIO, "reg", cells, 16))
 		return 0;
 	cells[0] = 0; cells[1] = cpu_to_fdt32(0x04021000);
 	cells[2] = 0; cells[3] = cpu_to_fdt32(0x1000);
-	if (!a133_sdio_value(fdt, SDIO, "reg", cells, 16) ||
-	    !a133_sdio_cell(fdt, SDIO, "bus-width", 4) ||
-	    !a133_sdio_value(fdt, SDIO, "device_type", "sdc1", 5))
+	if (!a133_value(fdt, SDIO, "reg", cells, 16) ||
+	    !a133_cell(fdt, SDIO, "bus-width", 4) ||
+	    !a133_value(fdt, SDIO, "device_type", "sdc1", 5))
 		return 0;
 	cells[0] = 0; cells[1] = cpu_to_fdt32(40); cells[2] = cpu_to_fdt32(4);
-	if (!a133_sdio_value(fdt, SDIO, "interrupts", cells, 12) ||
-	    !a133_sdio_value(fdt, SDIO_GROUP, "allwinner,pins",
+	if (!a133_value(fdt, SDIO, "interrupts", cells, 12) ||
+	    !a133_value(fdt, SDIO_GROUP, "allwinner,pins",
 	    pins, sizeof(pins)) ||
-	    !a133_sdio_value(fdt, SDIO_GROUP, "allwinner,function", "sdc1", 5) ||
-	    !a133_sdio_cell(fdt, SDIO_GROUP, "allwinner,muxsel", 2) ||
-	    !a133_sdio_cell(fdt, SDIO_GROUP, "allwinner,drive", 3) ||
-	    !a133_sdio_cell(fdt, SDIO_GROUP, "allwinner,pull", 1))
+	    !a133_value(fdt, SDIO_GROUP, "allwinner,function", "sdc1", 5) ||
+	    !a133_cell(fdt, SDIO_GROUP, "allwinner,muxsel", 2) ||
+	    !a133_cell(fdt, SDIO_GROUP, "allwinner,drive", 3) ||
+	    !a133_cell(fdt, SDIO_GROUP, "allwinner,pull", 1))
 		return 0;
-	legacy = a133_sdio_phandle(fdt, SDIO_GROUP);
+	legacy = a133_phandle(fdt, SDIO_GROUP);
 	cells[0] = 0; cells[1] = cpu_to_fdt32(0x07022000);
 	cells[2] = 0; cells[3] = cpu_to_fdt32(0x400);
-	if (!a133_sdio_value(fdt, RPIO, "reg", cells, 16) ||
-	    !a133_sdio_value(fdt, RPIO, "compatible",
+	if (!a133_value(fdt, RPIO, "reg", cells, 16) ||
+	    !a133_value(fdt, RPIO, "compatible",
 	    "allwinner,sun50iw10p1-r-pinctrl",
 	    sizeof("allwinner,sun50iw10p1-r-pinctrl")) ||
-	    !a133_sdio_value(fdt, RPIO, "gpio-controller", "", 0) ||
-	    (rpio = a133_sdio_phandle(fdt, RPIO)) == 0 ||
-	    !a133_sdio_cell(fdt, RPIO, "#gpio-cells", 6) ||
-	    !a133_sdio_cell(fdt, WLAN, "wlan_busnum", 1) || legacy == 0)
+	    !a133_value(fdt, RPIO, "gpio-controller", "", 0) ||
+	    (rpio = a133_phandle(fdt, RPIO)) == 0 ||
+	    !a133_cell(fdt, RPIO, "#gpio-cells", 6) ||
+	    !a133_cell(fdt, WLAN, "wlan_busnum", 1) || legacy == 0)
 		return 0;
-	if (!a133_sdio_value(fdt, WLAN, "compatible", "allwinner,sunxi-wlan",
+	if (!a133_value(fdt, WLAN, "compatible", "allwinner,sunxi-wlan",
 	    sizeof("allwinner,sunxi-wlan")))
 		return 0;
 	cells[0] = cpu_to_fdt32(rpio); cells[1] = cpu_to_fdt32(11);
 	cells[2] = cpu_to_fdt32(5); cells[3] = cpu_to_fdt32(1);
 	cells[4] = cells[5] = cpu_to_fdt32(UINT32_MAX); cells[6] = 0;
-	if (!a133_sdio_value(fdt, WLAN, "wlan_regon", cells, 28))
+	if (!a133_value(fdt, WLAN, "wlan_regon", cells, 28))
 		return 0;
 	cells[2] = cpu_to_fdt32(6); cells[3] = cpu_to_fdt32(6);
-	if (!a133_sdio_value(fdt, WLAN, "wlan_hostwake", cells, 28))
+	if (!a133_value(fdt, WLAN, "wlan_hostwake", cells, 28))
 		return 0;
 	node = fdt_path_offset(fdt, SDIO_PINS);
 	if (owned) {
-		if (node < 0 || (pinhandle = a133_sdio_phandle(fdt, SDIO_PINS)) == 0 ||
-		    !a133_sdio_cell(fdt, SDIO, "pinctrl-0", pinhandle) ||
-		    !a133_sdio_value(fdt, SDIO_PINS, "pins", pins, sizeof(pins)) ||
-		    !a133_sdio_value(fdt, SDIO_PINS, "function", "mmc1", 5))
+		if (node < 0 || (pinhandle = a133_phandle(fdt, SDIO_PINS)) == 0 ||
+		    !a133_cell(fdt, SDIO, "pinctrl-0", pinhandle) ||
+		    !a133_value(fdt, SDIO_PINS, "pins", pins, sizeof(pins)) ||
+		    !a133_value(fdt, SDIO_PINS, "function", "mmc1", 5))
 			return 0;
-	} else if (node >= 0 || !a133_sdio_cell(fdt, SDIO, "pinctrl-0", legacy))
+	} else if (node >= 0 || !a133_cell(fdt, SDIO, "pinctrl-0", legacy))
 		return 0;
 	for (unsigned int i = 0; i < sizeof(gic_reg) / sizeof(gic_reg[0]); i++)
 		cells[i] = cpu_to_fdt32(gic_reg[i]);
-	if ((gic = a133_sdio_phandle(fdt, SDIO_GIC)) == 0 ||
-	    !a133_sdio_value(fdt, SDIO_GIC, "reg",
+	if ((gic = a133_phandle(fdt, SDIO_GIC)) == 0 ||
+	    !a133_value(fdt, SDIO_GIC, "reg",
 	    cells, sizeof(cells)) ||
-	    !a133_sdio_value(fdt, SDIO_GIC, "compatible",
+	    !a133_value(fdt, SDIO_GIC, "compatible",
 	    gic_compat, sizeof(gic_compat)) ||
-	    !a133_sdio_cell(fdt, SDIO_GIC, "#interrupt-cells", 3) ||
-	    !a133_sdio_value(fdt, SDIO_GIC,
+	    !a133_cell(fdt, SDIO_GIC, "#interrupt-cells", 3) ||
+	    !a133_value(fdt, SDIO_GIC,
 	    "interrupt-controller", "", 0))
 		return 0;
 
@@ -640,7 +840,8 @@ sun50i_a133_fdt_fixup(void *fdt)
 	node = a133_node(fdt, SOC, "clock-controller@03001000", &ccu);
 	if (node < 0)
 		return node;
-	A133_STRING(CCU, "compatible", "allwinner,sun50i-a100-ccu");
+	A133_STRING(CCU, "compatible",
+	    "allwinner,sun50i-a133-ccu\0allwinner,sun50i-a100-ccu");
 	cells[0] = 0;
 	cells[1] = cpu_to_fdt32(0x03001000);
 	cells[2] = 0;
