@@ -1283,6 +1283,7 @@ _nis_pwscan(int *retval, struct passwd *pw, char *buffer, size_t buflen,
 	_DIAGASSERT(buffer != NULL);
 	_DIAGASSERT(state != NULL);
 	_DIAGASSERT(map_arr != NULL);
+	(void)nmaps; /* Used only by the diagnostic bound check. */
 
 	*retval = 0;
 
