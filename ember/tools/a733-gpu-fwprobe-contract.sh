@@ -10,8 +10,9 @@ if [ "$#" -ne 0 ]; then
 fi
 work=$(mktemp -d "${TMPDIR:-/tmp}/a733-fwprobe.XXXXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
-sed '/^#include /d' "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwprobe.c" \
-    > "$work/driver.h"
+sed '/^#include /d' "$src/sys/dev/powervr/pvr_fwprobe.c" > "$work/driver.h"
+sed '/^#include /d' "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwprobe.c" >> "$work/driver.h"
+sed '/^#include /d' "$src/sys/dev/powervr/pvr_fwprobe.h" > "$work/probe.h"
 for kind in probe boot mem start; do
     if [ "$kind" != probe ]; then
         sed '/^#include /d' "$src/sys/dev/powervr/pvr_fw${kind}.h" > "$work/$kind.h"

@@ -167,6 +167,7 @@ file	arch/arm/sunxi/sun60i_a733_gpu_fwimage.c	sun60i_a733_gpu
 file	dev/powervr/pvr_fwimage.c			sun60i_a733_gpu | pvr_ge8300_experimental | sun50i_a133_gpu
 file	arch/arm/sunxi/sun60i_a733_gpu_mips.c	sun60i_a733_gpu
 file	dev/powervr/pvr_mips.c			sun60i_a733_gpu | pvr_ge8300_experimental | sun50i_a133_gpu
+file	dev/powervr/pvr_mips_irq.c			sun50i_a133_gpu
 file	dev/powervr/pvr_ge8300.c		sun60i_a733_gpu | pvr_ge8300_experimental | sun50i_a133_gpu
 file	arch/arm/sunxi/sun60i_a733_gpu_fwmem.c	sun60i_a733_gpu
 file	dev/powervr/pvr_fwmem.c			sun60i_a733_gpu | pvr_ge8300_experimental | sun50i_a133_gpu
@@ -177,6 +178,7 @@ file	dev/powervr/pvr_fwstart.c			sun60i_a733_gpu | pvr_ge8300_experimental | sun
 file	arch/arm/sunxi/sun60i_a733_gpu_fwboot.c	sun60i_a733_gpu
 file	dev/powervr/pvr_fwboot.c			sun60i_a733_gpu | pvr_ge8300_experimental | sun50i_a133_gpu
 file	dev/powervr/pvr_fw_handshake.c		sun60i_a733_gpu | pvr_ge8300_experimental | sun50i_a133_gpu
+file	dev/powervr/pvr_fwprobe.c			sun60i_a733_gpu | sun50i_a133_gpu
 file	arch/arm/sunxi/sun60i_a733_gpu_fwprobe.c	sun60i_a733_gpu
 file	arch/arm/sunxi/sun60i_a733_gpu_fwservice.c	sun60i_a733_gpu
 file	arch/arm/sunxi/sun60i_a733_gpu_fwbridge.c	sun60i_a733_gpu

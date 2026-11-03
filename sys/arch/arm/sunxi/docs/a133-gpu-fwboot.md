@@ -6,7 +6,9 @@ The optional `sun50ia133gpu` FDT consumer prepares the pinned GE8300 MIPS
 firmware through the common `sys/dev/powervr` owner. Ordinary device attach
 only creates `hw.<device>.firmware_boot`; it performs no GPU DMA allocation,
 power transition or reset. Writing `1` explicitly requests the bounded boot.
-This is not a DRM device, a graphics stack, or evidence of hardware success.
+On one office YS-M33 with preserved WLAN power, the explicit firmware boot
+completed and reported BVNC 22.102.54.38 with the fixed 950000 µV setpoint and
+504 MHz effective clock. This is not a DRM device or graphics acceptance.
 
 The native FDT adapter must prove exclusive ownership before supplying its
 `ember,a133-gpu-exclusive` marker. The consumer requires the native GPU and
@@ -74,6 +76,18 @@ entered, not necessarily one that completed. Numeric stage values are defined
 in `sun50i_a133_gpu_owner.h`; 3 is preflight regulator enabled, 4 is preflight
 voltage, 36 is fixed-voltage preparation, 37 is its readback, 18 is PPU enable,
 19 is its readback, 38 is the PPU OFF preflight, 39 is PLL set-rate,
-40 is core set-rate, and 35 is complete. Failed
+40 is core set-rate, 41 is IRQ setup, and 35 is complete. Failed
 preflight may be requested again; once activation is attempted the owner keeps
 its one-shot state and resources. Reading diagnostics never retries the boot.
+
+The separate, explicit `hw.sun50ia133gpu0.queue_probe` request is one-shot and
+requires successful firmware boot. It submits LOGTYPE in KCCB slot 0, then
+MMUCACHE with the interrupt flag in slot 1. Success requires both return words
+and offsets to show consumption, a delivered MIPS IRQ in the armed interval,
+and a fresh fault/HWR check. Queue stage, error, attempt, offsets, return words,
+IRQ counters and fresh fault state are available as cached read-only sysctls.
+The IRQ status has no command identifier: delivery during the MMUCACHE interval
+is evidence of a real firmware IRQ, not proof of its unique cause. A timeout or
+uncertain operation never retries or frees firmware DMA. This source path has
+not yet received physical queue acceptance and does not establish GPU compute,
+rendering, Vulkan or Qt acceleration.

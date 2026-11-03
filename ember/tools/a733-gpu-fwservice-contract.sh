@@ -11,7 +11,7 @@ fi
 work=$(mktemp -d "${TMPDIR:-/tmp}/a733-fwservice.XXXXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 for kind in mem start boot probe service; do
-    case "$kind" in mem|start|boot)
+    case "$kind" in mem|start|boot|probe)
         sed '/^#include /d' "$src/sys/dev/powervr/pvr_fw${kind}.h" > "$work/$kind.h" ;;
     esac
     sed '/^#include /d' "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fw${kind}.h" >> "$work/$kind.h"

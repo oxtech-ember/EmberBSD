@@ -33,6 +33,7 @@
 #include <sys/bus.h>
 #include <arm/sunxi/sun60i_a733_gpu_fwboot.h>
 #include <arm/sunxi/powervr/pvr_rogue_fwif.h>
+#include <dev/powervr/pvr_fwprobe.h>
 
 #define A733_GPU_FWPROBE_LOGTYPE		UINT32_C(0x2abc00ce)
 #define A733_GPU_FWPROBE_MMUCACHE		UINT32_C(0x2abc0066)
@@ -42,33 +43,11 @@
 #define A733_GPU_FWPROBE_POLL_US		100
 #define A733_GPU_FWPROBE_MAX_POLLS	10001
 
-struct sun60i_a733_gpu_fwprobe_snapshot {
-	uint32_t read_offset, write_offset, wrap_mask, cmd_size, rtn;
-	uint32_t fw_read_offset, fw_write_offset, fw_wrap_mask, fw_cmd_size;
-	uint32_t fw_command, fw_flags, fw_freelist_id;
-	uint32_t cmds_executed, pow_state, hwr_state, fw_faults;
-	uint32_t log_type, fw_state, os_state, alive_fw_token, alive_os_token;
-	uint32_t mmucache_sync;
-	uint8_t firmware_started, compchecks_updated, os_count_support;
-	uint32_t firmware_started_timestamp;
-	uint32_t hw_layout_version, fw_layout_version;
-	uint64_t hw_bvnc, fw_bvnc;
-	uint32_t fw_processor_version, ddk_version, ddk_build, build_options;
-};
+#define sun60i_a733_gpu_fwprobe_snapshot pvr_fwprobe_snapshot
 
-struct sun60i_a733_gpu_fwprobe_result {
-	bool attempted, published, kick_attempted, kicked;
-	int error;
-	uint32_t slot, polls;
-	uint32_t command, cache_flags, sync_fw_addr, sync_update_value;
-	struct sun60i_a733_gpu_fwprobe_snapshot before, after;
-};
+#define sun60i_a733_gpu_fwprobe_result pvr_fwprobe_result
 
-struct sun60i_a733_gpu_fwprobe_observation {
-	bool valid;
-	int error;
-	struct sun60i_a733_gpu_fwprobe_snapshot state;
-};
+#define sun60i_a733_gpu_fwprobe_observation pvr_fwprobe_observation
 
 /*
  * Read current firmware state after a previously accepted slot. Revalidate
@@ -155,15 +134,7 @@ int sun60i_a733_gpu_fwprobe_cmd(bus_space_tag_t, bus_space_handle_t,
  * Zero the state once before attach. Never clear a failed or attached state.
  * The identities and last result are private copies, not caller aliases.
  */
-struct sun60i_a733_gpu_fwqueue {
-	bool attached, failed;
-	uint32_t expected_log_type, fw_read_offset;
-	const struct sun60i_a733_gpu_fwmem *owner;
-	const struct sun60i_a733_gpu_fwboot_result *boot;
-	struct sun60i_a733_gpu_fwmem mem_identity;
-	struct sun60i_a733_gpu_fwboot_result boot_identity;
-	struct sun60i_a733_gpu_fwprobe_result last;
-};
+#define sun60i_a733_gpu_fwqueue pvr_fwqueue
 
 /*
  * Adopt one successful probe from the same unchanged owner and boot.

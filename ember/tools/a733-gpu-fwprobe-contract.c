@@ -452,6 +452,18 @@ reset(void)
 	firmware_failure = 0;
 }
 
+static int irq_arm_calls, irq_arm_error;
+static bool irq_arm_expire;
+static int
+fake_irq_arm(void *cookie)
+{
+	CHECK(cookie == &owner && result.attempted && !result.published && writes == 0);
+	irq_arm_calls++;
+	if (irq_arm_expire)
+		clock_ns += 1000000000;
+	return irq_arm_error;
+}
+
 static int
 run(void)
 {
@@ -1571,6 +1583,62 @@ main(void)
 		CHECK(expected[i] != NULL && saved[i] != NULL);
 		allocations += 3;
 	}
+	/* The A733-only owner cannot yet run the same probe for GE8300. */
+	reset();
+	owner.profile = PVR_FW_PROFILE_GE8300;
+	owner.device_exposed = true;
+	owner.image.info.bvnc = UINT64_C(0x0016006600360026);
+	booted.compchecks_updated = 1; booted.os_count_support = 8;
+	booted.hw_layout_version = booted.fw_layout_version = 3;
+	booted.hw_bvnc = booted.fw_bvnc = owner.image.info.bvnc;
+	booted.fw_processor_version = 0x81234567; booted.ddk_version = 0x23456789;
+	booted.ddk_build = 0x3456789a; booted.build_options = 0x456789ab;
+	put64(cpu[4] + COMPCHECKS + 8, owner.image.info.bvnc);
+	put64(cpu[4] + COMPCHECKS + 24, owner.image.info.bvnc);
+	memcpy(expected[4], cpu[4], sizes[4]);
+	CHECK(run() == EOPNOTSUPP);
+	CHECK(pvr_fwprobe(&owner, 0x12340000, &owner, &booted, &result) == 0);
+	previous = previous_saved = result; memset(&result, 0, sizeof(result)); test_slot = 1;
+	syncs = writes = barriers = waits = observations = completions = 0;
+	phase = read_phase = 0; clock_ns = total_wait_us = jump_ns = 0;
+	fw32(3, KRETURN + 4, 1); irq_arm_calls = irq_arm_error = 0;
+	CHECK(pvr_fwprobe_mmucache_irq(&owner, 0x12340000, &owner, &booted,
+	    &previous, fake_irq_arm, &owner, &result) == 0);
+	CHECK(irq_arm_calls == 1 && result.slot == 1 && result.after.rtn == 1 &&
+	    result.after.read_offset == 2 && result.after.write_offset == 2);
+	{
+		struct pvr_fwqueue ge_queue = {0};
+		struct pvr_fwprobe_result ge_out = {0};
+		struct rogue_fwif_kccb_cmd ge_cmd = { .cmd_type = ROGUE_FWIF_KCCB_CMD_KICK };
+		CHECK(pvr_fwprobe_cmd(&owner, 0x12340000, &owner, &booted,
+		    &result, &ge_cmd, 2, 0, &ge_out) == EOPNOTSUPP);
+		CHECK(pvr_fwqueue_attach(&owner, &booted, &result, &ge_queue) == EOPNOTSUPP);
+		CHECK(!ge_out.attempted && !ge_queue.attached);
+	}
+	for (unsigned mode = 0; mode < 3; mode++) {
+		reset(); owner.profile = PVR_FW_PROFILE_GE8300; owner.device_exposed = true;
+		owner.image.info.bvnc = UINT64_C(0x0016006600360026);
+		booted.compchecks_updated = 1; booted.os_count_support = 8;
+		booted.hw_layout_version = booted.fw_layout_version = 3;
+		booted.hw_bvnc = booted.fw_bvnc = owner.image.info.bvnc;
+		booted.fw_processor_version = 0x81234567; booted.ddk_version = 0x23456789;
+		booted.ddk_build = 0x3456789a; booted.build_options = 0x456789ab;
+		put64(cpu[4] + COMPCHECKS + 8, owner.image.info.bvnc);
+		put64(cpu[4] + COMPCHECKS + 24, owner.image.info.bvnc);
+		memcpy(expected[4], cpu[4], sizes[4]);
+		CHECK(pvr_fwprobe(&owner, 0x12340000, &owner, &booted, &result) == 0);
+		previous = previous_saved = result; memset(&result, 0, sizeof(result)); test_slot = 1;
+		syncs = writes = barriers = waits = observations = completions = 0;
+		phase = read_phase = 0; clock_ns = total_wait_us = jump_ns = 0;
+		irq_arm_calls = 0; irq_arm_error = mode == 0 ? EIO : 0; irq_arm_expire = mode == 1;
+		if (mode == 2) booted.ddk_build ^= 1;
+		CHECK(pvr_fwprobe_mmucache_irq(&owner, 0x12340000, &owner, &booted,
+		    &previous, fake_irq_arm, &owner, &result) ==
+		    (mode == 0 ? EIO : mode == 1 ? ETIMEDOUT : EPROTO));
+		CHECK(irq_arm_calls == (mode == 2 ? 0 : 1) && result.attempted &&
+		    !result.published && writes == 0);
+	}
+	irq_arm_error = 0; irq_arm_expire = false;
 	if (getenv("FWQUEUE_ONLY") == NULL) {
 		runtime_tests();
 		compatibility_tests();
