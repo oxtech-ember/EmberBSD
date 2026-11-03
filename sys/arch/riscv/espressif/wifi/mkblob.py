@@ -127,6 +127,8 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--external-wpa2', action='store_true', required=True,
                    help='build only the experimental BSD-supplicant callback path')
+    p.add_argument('--vendor-debug-once', action='store_true',
+                   help='enable vendor DEBUG logging for the first fullmac connect attempt')
     for opt in ('idf-source', 'wpa-source', 'sysroot', 'host-prefix', 'target-binutils-prefix', 'output'):
         p.add_argument('--'+opt, type=absolute, required=True)
     a = p.parse_args()
@@ -163,6 +165,8 @@ def main():
              '-Werror', '-I'+str(HERE/'shim'),
              '-I'+str(HERE.parents[3]),
              '-isystem', str(a.sysroot/'usr/include'), '-isystem', str(resource/'include')]
+    if a.vendor_debug_once:
+        flags.append('-DESPWIFI_VENDOR_DEBUG_ONCE')
     for pattern in INCLUDES:
         for d in sorted(glob.glob(str(idf/pattern))):
             if Path(d).is_dir():

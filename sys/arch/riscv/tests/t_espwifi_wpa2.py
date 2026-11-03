@@ -46,6 +46,7 @@ code=r'''
 #include <string.h>
 #include <stddef.h>
 #include <net80211/ieee80211_rsn.h>
+#include "fullmac_debug.h"
 typedef int esp_err_t;
 typedef struct { struct { uint8_t ssid[32],bssid[6]; bool bssid_set;
  struct {int authmode;} threshold; struct {bool capable,required;} pmf_cfg;
@@ -141,7 +142,7 @@ int main(void) {
 '''
 with tempfile.TemporaryDirectory() as td:
  c=Path(td)/'wpa2.c';out=Path(td)/'wpa2';c.write_text(code)
- subprocess.run([a.cc,'-idirafter',str(sysroot),'-Werror','-fsanitize=address,undefined',
+ subprocess.run([a.cc,'-I',str(arch/'espressif/wifi'),'-idirafter',str(sysroot),'-Werror','-fsanitize=address,undefined',
                  '-fno-sanitize-recover=all',str(c),'-o',str(out)],check=True)
  subprocess.run([str(out)],check=True)
 print('actual WPA2/SAE parser, RSN/RSNXE appie split, validation and cleanup passed')

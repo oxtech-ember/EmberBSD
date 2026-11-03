@@ -15,6 +15,7 @@ typedef uint64_t u64;
 #include <net80211/ieee80211_rsn.h>
 
 #include "../esp_wifi_os.h"
+#include "fullmac_debug.h"
 
 #define WLAN_FC_STYPE_ASSOC_RESP 1
 #define WLAN_FC_STYPE_REASSOC_RESP 3
@@ -377,8 +378,10 @@ espwifi_ext_connect(const unsigned char *ssid, unsigned int ssid_len,
 		(void)esp_wifi_unset_appie_internal(WIFI_APPIE_ASSOC_REQ);
 		return -1;
 	}
+	espwifi_vendor_debug_once_begin();
 	error = esp_wifi_connect();
 	if (error != ESP_OK) {
+		espwifi_vendor_debug_once_end();
 		espwifi_os_log("espwifi: fullmac connect error %#x\n", error);
 		(void)esp_wifi_unset_appie_internal(WIFI_APPIE_RSN);
 		(void)esp_wifi_unset_appie_internal(WIFI_APPIE_ASSOC_REQ);

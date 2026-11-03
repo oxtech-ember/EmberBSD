@@ -75,6 +75,7 @@
 #include "modem/modem_lpcon_reg.h"
 
 #include "../esp_wifi_os.h"
+#include "fullmac_debug.h"
 
 #if defined(ESPWIFI_EXTERNAL_WPA2)
 _Static_assert((WIFI_FEATURE_CAPS & CONFIG_FEATURE_WPA3_SAE_BIT) != 0,
@@ -1290,6 +1291,46 @@ static void *link_change;
 static int link_up;
 static uint32_t stop_events, start_events;
 
+#ifdef ESPWIFI_VENDOR_DEBUG_ONCE
+static unsigned vendor_debug_once_state;
+
+void
+espwifi_vendor_debug_once_begin(void)
+{
+	unsigned critical;
+	esp_err_t error;
+
+	critical = espwifi_os_critical_enter();
+	if (vendor_debug_once_state != 0) {
+		espwifi_os_critical_exit(critical);
+		return;
+	}
+	vendor_debug_once_state = 1;
+	error = esp_wifi_internal_set_log_level(WIFI_LOG_DEBUG);
+	espwifi_os_critical_exit(critical);
+	espwifi_os_log("espwifi: vendor debug once enabled result=%#x\n",
+	    (unsigned)error);
+}
+
+void
+espwifi_vendor_debug_once_end(void)
+{
+	unsigned critical;
+	esp_err_t error;
+
+	critical = espwifi_os_critical_enter();
+	if (vendor_debug_once_state != 1) {
+		espwifi_os_critical_exit(critical);
+		return;
+	}
+	vendor_debug_once_state = 2;
+	error = esp_wifi_internal_set_log_level(WIFI_LOG_WARNING);
+	espwifi_os_critical_exit(critical);
+	espwifi_os_log("espwifi: vendor debug once restored warning result=%#x\n",
+	    (unsigned)error);
+}
+#endif
+
 static int32_t
 event_post_wrapper(const char *base, int32_t id, void *data, size_t size,
     uint32_t ticks)
@@ -1311,6 +1352,7 @@ event_post_wrapper(const char *base, int32_t id, void *data, size_t size,
 	case WIFI_EVENT_STA_STOP: {
 		unsigned critical;
 
+		espwifi_vendor_debug_once_end();
 		link_up = 0;
 		espwifi_os_radio_stopped();
 		critical = espwifi_os_critical_enter();
@@ -1320,6 +1362,7 @@ event_post_wrapper(const char *base, int32_t id, void *data, size_t size,
 		break;
 	}
 	case WIFI_EVENT_STA_CONNECTED:
+		espwifi_vendor_debug_once_end();
 		if (data == NULL)
 			break;
 		link_up = 1;
@@ -1329,6 +1372,7 @@ event_post_wrapper(const char *base, int32_t id, void *data, size_t size,
 	case WIFI_EVENT_STA_DISCONNECTED: {
 		const wifi_event_sta_disconnected_t *d = data;
 
+		espwifi_vendor_debug_once_end();
 		espwifi_os_log("espwifi: disconnected, reason %d\n",
 		    d != NULL ? d->reason : -1);
 		link_up = 0;

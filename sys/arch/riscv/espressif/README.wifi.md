@@ -103,8 +103,18 @@ tests valid WPA, valid RSN, and malformed IEs under ASan/UBSan:
     --cc "$HOST_PREFIX/bin/clang" \
     --idf-driver-header "$IDF_SOURCE/components/wpa_supplicant/esp_supplicant/src/esp_wifi_driver.h" \
     --wpa-source "$WPA_SOURCE/src"
+
+"$HOST_PREFIX/bin/python3.15" -B sys/arch/riscv/tests/t_espwifi_debug.py \
+    --cc "$HOST_PREFIX/bin/clang" --analyze
 ```
 
 The adapter forwards association responses and rejects general AUTH and ACTION
 management-frame callbacks; its dedicated SAE callbacks are separate. Host
 tests do not establish kernel integration or radio behavior on hardware.
+
+For one bounded vendor security-selection trace, the radio producer accepts
+`--vendor-debug-once`. It raises the vendor Wi-Fi log level to DEBUG immediately
+before the first validated external-WPA connect attempt, then restores WARNING
+on connect, disconnect, stop, or synchronous connect failure. This can emit
+per-BSS diagnostics; the option is off by default and does not change security
+configuration.
