@@ -51,6 +51,11 @@ OSSL_MODULESDIR=${OSSL_LIBDIR}/modules
 .if defined(EMBER_OPENSSL_SOURCE) && ${HAVE_OPENSSL} == 41
 .if make(obj) && empty(.TARGETS:Nobj)
 OPENSSL_OBJECT_ONLY= yes
+.elif (make(clean) || make(cleandir)) && empty(.TARGETS:Nclean:Ncleandir) && \
+    defined(EMBER_OPENSSL_GENERATED) && !exists(${EMBER_OPENSSL_GENERATED})
+# Retry cleanup without regenerating metadata after a previous successful clean.
+OPENSSL_OBJECT_ONLY= yes
+CLEANFILES+= *.o *.po *.pico *.go *.ln *.d *.d.tmp .depend
 .endif
 .if !defined(EMBER_OPENSSL_GENERATED) && !defined(OPENSSL_OBJECT_ONLY)
 .error EMBER_OPENSSL_GENERATED must name the prepared target object directory
