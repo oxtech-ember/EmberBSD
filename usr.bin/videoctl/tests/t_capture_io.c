@@ -12,11 +12,16 @@
 
 #include <assert.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <poll.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/stat.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 #include "mock/sys/videoio.h"
 
@@ -28,29 +33,42 @@ static struct timespec capture_now;
 static bool capture_timeout;
 static bool capture_dq_error;
 static bool capture_streamoff_error;
+static bool capture_write_eintr;
+static bool capture_write_error;
+static size_t capture_write_limit;
+static uint32_t capture_width;
+static uint32_t capture_height;
+static uint32_t capture_fourcc;
+static uint32_t capture_stride;
+static uint32_t capture_sizeimage;
+static uint32_t capture_bytesused;
 static unsigned int capture_poll_calls;
 static unsigned int capture_qbuf_calls;
 static unsigned int capture_dqbuf_calls;
 static unsigned int capture_streamoff_calls;
 static unsigned int capture_unmap_calls;
+static unsigned int capture_write_calls;
 
 static int capture_ioctl(int, unsigned long, void *);
 static int capture_poll(struct pollfd *, nfds_t, int);
 static void *capture_mmap(void *, size_t, int, int, int, off_t);
 static int capture_munmap(void *, size_t);
 static int capture_clock_gettime(clockid_t, struct timespec *);
+static ssize_t capture_write(int, const void *, size_t);
 
 #define ioctl capture_ioctl
 #define poll capture_poll
 #define mmap capture_mmap
 #define munmap capture_munmap
 #define clock_gettime capture_clock_gettime
+#define write capture_write
 #include "../video_capture_bsd.c"
 #undef ioctl
 #undef poll
 #undef mmap
 #undef munmap
 #undef clock_gettime
+#undef write
 
 static int
 capture_ioctl(int fd, unsigned long request, void *data)
@@ -63,10 +81,15 @@ capture_ioctl(int fd, unsigned long request, void *data)
 		return 0;
 	case VIDIOC_G_FMT: {
 		struct v4l2_format *format = data;
-		format->fmt.pix.width = 8;
-		format->fmt.pix.height = 8;
-		format->fmt.pix.pixelformat = 0x59565955;
-		format->fmt.pix.sizeimage = CAPTURE_BYTES;
+		format->fmt.pix.width = capture_width;
+		format->fmt.pix.height = capture_height;
+		format->fmt.pix.pixelformat = capture_fourcc;
+		format->fmt.pix.bytesperline = capture_stride;
+		format->fmt.pix.sizeimage = capture_sizeimage;
+		format->fmt.pix.colorspace = 1;
+		format->fmt.pix.ycbcr_enc = 1;
+		format->fmt.pix.quantization = 2;
+		format->fmt.pix.xfer_func = 1;
 		return 0;
 	}
 	case VIDIOC_REQBUFS:
@@ -88,7 +111,7 @@ capture_ioctl(int fd, unsigned long request, void *data)
 			return -1;
 		}
 		buffer->index = capture_dqbuf_calls++ % CAPTURE_BUFFERS;
-		buffer->bytesused = CAPTURE_BYTES;
+		buffer->bytesused = capture_bytesused;
 		return 0;
 	}
 	case VIDIOC_STREAMON:
@@ -159,6 +182,24 @@ capture_clock_gettime(clockid_t clockid, struct timespec *time)
 	return 0;
 }
 
+static ssize_t
+capture_write(int fd, const void *buffer, size_t length)
+{
+	capture_write_calls++;
+	if (capture_write_eintr) {
+		capture_write_eintr = false;
+		errno = EINTR;
+		return -1;
+	}
+	if (capture_write_error && capture_write_calls > 2) {
+		errno = EIO;
+		return -1;
+	}
+	if (capture_write_limit != 0 && length > capture_write_limit)
+		length = capture_write_limit;
+	return write(fd, buffer, length);
+}
+
 static void
 capture_reset(void)
 {
@@ -167,11 +208,21 @@ capture_reset(void)
 	capture_timeout = false;
 	capture_dq_error = false;
 	capture_streamoff_error = false;
+	capture_write_eintr = false;
+	capture_write_error = false;
+	capture_write_limit = 0;
+	capture_width = 4;
+	capture_height = 8;
+	capture_fourcc = V4L2_PIX_FMT_UYVY;
+	capture_stride = 8;
+	capture_sizeimage = CAPTURE_BYTES;
+	capture_bytesused = CAPTURE_BYTES;
 	capture_poll_calls = 0;
 	capture_qbuf_calls = 0;
 	capture_dqbuf_calls = 0;
 	capture_streamoff_calls = 0;
 	capture_unmap_calls = 0;
+	capture_write_calls = 0;
 }
 
 int
@@ -180,22 +231,23 @@ main(void)
 	const char *stage;
 
 	capture_reset();
-	assert(video_capture_run(1, 2, &stage) == 0);
+	assert(video_capture_run(1, 2, -1, &stage) == 0);
 	assert(stage == NULL && capture_dqbuf_calls == 2 &&
-	    capture_poll_calls == 2 && capture_qbuf_calls == 6);
+	    capture_poll_calls == 2 && capture_qbuf_calls == 6 &&
+	    capture_write_calls == 0);
 	assert(capture_streamoff_calls == 1 &&
 	    capture_unmap_calls == CAPTURE_BUFFERS);
 
 	capture_reset();
 	capture_timeout = true;
-	assert(video_capture_run(1, 1, &stage) == ETIMEDOUT);
+	assert(video_capture_run(1, 1, -1, &stage) == ETIMEDOUT);
 	assert(strcmp(stage, "frame timeout") == 0 && capture_dqbuf_calls == 0);
 	assert(capture_streamoff_calls == 1 &&
 	    capture_unmap_calls == CAPTURE_BUFFERS);
 
 	capture_reset();
 	capture_dq_error = true;
-	assert(video_capture_run(1, 1, &stage) == EIO);
+	assert(video_capture_run(1, 1, -1, &stage) == EIO);
 	assert(strcmp(stage, "VIDIOC_DQBUF") == 0 &&
 	    capture_streamoff_calls == 1 &&
 	    capture_unmap_calls == CAPTURE_BUFFERS);
@@ -203,9 +255,115 @@ main(void)
 	capture_reset();
 	capture_timeout = true;
 	capture_streamoff_error = true;
-	assert(video_capture_run(1, 1, &stage) == ETIMEDOUT);
+	assert(video_capture_run(1, 1, -1, &stage) == ETIMEDOUT);
 	assert(strcmp(stage, "frame timeout") == 0 &&
 	    capture_streamoff_calls == 1 &&
 	    capture_unmap_calls == CAPTURE_BUFFERS);
+
+	{
+		char path[] = "/tmp/videoctl-frame.XXXXXXXXXX";
+		uint8_t actual[CAPTURE_BYTES];
+		uint8_t expected[CAPTURE_BYTES];
+		struct stat st;
+		size_t n;
+		int output_fd, fd;
+
+		fd = mkstemp(path);
+		assert(fd != -1);
+		assert(close(fd) == 0);
+		assert(unlink(path) == 0);
+		assert(video_capture_open_output(path, &output_fd) == 0);
+		assert(fstat(output_fd, &st) == 0);
+		assert((st.st_mode & 0777) == 0600);
+		capture_reset();
+		capture_write_eintr = true;
+		capture_write_limit = 7;
+		assert(video_capture_run(1, 1, output_fd, &stage) == 0);
+		assert(capture_write_calls > 2 && stage == NULL);
+		assert(close(output_fd) == 0);
+		fd = open(path, O_RDONLY);
+		assert(fd != -1);
+		n = 0;
+		while (n < sizeof(actual)) {
+			ssize_t result = read(fd, actual + n, sizeof(actual) - n);
+			assert(result > 0);
+			n += (size_t)result;
+		}
+		assert(read(fd, expected, 1) == 0);
+		assert(close(fd) == 0);
+		memset(expected, 0x5a, sizeof(expected));
+		assert(memcmp(actual, expected, sizeof(actual)) == 0);
+		assert(unlink(path) == 0);
+
+		strcpy(path, "/tmp/videoctl-frame.XXXXXXXXXX");
+		fd = mkstemp(path);
+		assert(fd != -1);
+		assert(write(fd, "keep", 4) == 4);
+		assert(close(fd) == 0);
+		assert(video_capture_open_output(path, &output_fd) == EEXIST);
+		fd = open(path, O_RDONLY);
+		assert(fd != -1);
+		memset(actual, 0, sizeof(actual));
+		assert(read(fd, actual, 4) == 4);
+		assert(memcmp(actual, "keep", 4) == 0);
+		assert(close(fd) == 0);
+		assert(unlink(path) == 0);
+
+		strcpy(path, "/tmp/videoctl-frame.XXXXXXXXXX");
+		fd = mkstemp(path);
+		assert(fd != -1);
+		assert(close(fd) == 0);
+		assert(unlink(path) == 0);
+		assert(video_capture_open_output(path, &output_fd) == 0);
+		capture_reset();
+		capture_write_limit = 3;
+		capture_write_error = true;
+		assert(video_capture_run(1, 1, output_fd, &stage) == EIO);
+		assert(strcmp(stage, "write frame output") == 0);
+		assert(capture_streamoff_calls == 1 &&
+		    capture_unmap_calls == CAPTURE_BUFFERS);
+		assert(close(output_fd) == 0);
+		assert(unlink(path) == 0);
+
+		capture_reset();
+		capture_width = 3;
+		assert(video_capture_run(1, 1, -1, &stage) == 0);
+		assert(video_capture_open_output(path, &output_fd) == 0);
+		assert(video_capture_run(1, 1, output_fd, &stage) == EINVAL);
+		assert(strcmp(stage, "invalid raw output format") == 0);
+		assert(close(output_fd) == 0);
+		assert(unlink(path) == 0);
+
+		capture_reset();
+		capture_stride = 7;
+		assert(video_capture_open_output(path, &output_fd) == 0);
+		assert(video_capture_run(1, 1, output_fd, &stage) == EINVAL);
+		assert(close(output_fd) == 0);
+		assert(unlink(path) == 0);
+
+		capture_reset();
+		capture_fourcc = 0x12345678;
+		capture_stride = 0;
+		assert(video_capture_open_output(path, &output_fd) == 0);
+		assert(video_capture_run(1, 1, output_fd, &stage) == 0);
+		assert(close(output_fd) == 0);
+		assert(unlink(path) == 0);
+
+		capture_reset();
+		capture_bytesused = CAPTURE_BYTES - 1;
+		assert(video_capture_open_output(path, &output_fd) == 0);
+		assert(video_capture_run(1, 1, output_fd, &stage) == EIO);
+		assert(strcmp(stage, "invalid frame payload") == 0);
+		assert(close(output_fd) == 0);
+		assert(unlink(path) == 0);
+
+		capture_reset();
+		capture_height = 7;
+		assert(video_capture_open_output(path, &output_fd) == 0);
+		assert(video_capture_run(1, 1, output_fd, &stage) == EIO);
+		assert(strcmp(stage, "invalid frame payload") == 0);
+		assert(close(output_fd) == 0);
+		assert(unlink(path) == 0);
+	}
 	return 0;
 }

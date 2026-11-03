@@ -62,7 +62,7 @@ static bool		video_print_standards(const char *);
 static bool		video_print_tuners(const char *);
 static bool		video_print_ctrl(uint32_t);
 static void		video_set(const char *);
-static void		video_capture_frames(unsigned int);
+static void		video_capture_frames(unsigned int, const char *);
 static bool		video_set_ctrl(uint32_t, int32_t);
 static const char *	video_cid2name(uint32_t);
 static uint32_t		video_name2cid(const char *);
@@ -114,10 +114,11 @@ main(int argc, char *argv[])
 	int ch;
 	char *end;
 	long capture_count = 0;
+	const char *output_path = NULL;
 
 	setprogname(argv[0]);
 
-	while ((ch = getopt(argc, argv, "ac:d:w")) != -1) {
+	while ((ch = getopt(argc, argv, "ac:d:o:w")) != -1) {
 		switch (ch) {
 		case 'a':
 			aflag = true;
@@ -133,6 +134,9 @@ main(int argc, char *argv[])
 		case 'd':
 			video_dev = strdup(optarg);
 			break;
+		case 'o':
+			output_path = optarg;
+			break;
 		case 'w':
 			wflag = true;
 			break;
@@ -144,7 +148,8 @@ main(int argc, char *argv[])
 	argc -= optind;
 	argv += optind;
 
-	if ((wflag && aflag) || (cflag && (wflag || aflag || argc != 0)))
+	if ((wflag && aflag) || (cflag && (wflag || aflag || argc != 0)) ||
+	    (output_path != NULL && (!cflag || capture_count != 1)))
 		usage();
 		/* NOTREACHED */
 	if (wflag && argc == 0)
@@ -168,7 +173,7 @@ main(int argc, char *argv[])
 	if (aflag) {
 		video_print_all();
 	} else if (cflag) {
-		video_capture_frames((unsigned int)capture_count);
+		video_capture_frames((unsigned int)capture_count, output_path);
 	} else if (wflag) {
 		while (argc > 0) {
 			video_set(argv[0]);
@@ -196,20 +201,43 @@ usage(void)
 	    getprogname());
 	fprintf(stderr, "usage: %s [-d file] -a\n", getprogname());
 	fprintf(stderr, "usage: %s [-d file] -c frames\n", getprogname());
+	fprintf(stderr, "usage: %s [-d file] -c 1 -o raw-frame\n",
+	    getprogname());
 	exit(EXIT_FAILURE);
 }
 
 static void
-video_capture_frames(unsigned int count)
+video_capture_frames(unsigned int count, const char *output_path)
 {
 	const char *stage = NULL;
-	int error;
+	int error, output_fd = -1;
+	bool created = false;
 
-	error = video_capture_run(video_fd, count, &stage);
+	if (output_path != NULL) {
+		error = video_capture_open_output(output_path, &output_fd);
+		if (error != 0) {
+			errno = error;
+			err(EXIT_FAILURE, "couldn't create '%s'", output_path);
+		}
+		created = true;
+	}
+	error = video_capture_run(video_fd, count, output_fd, &stage);
 	if (error != 0) {
-		errno = error;
+		int saved_errno = error;
+		if (output_fd != -1)
+			(void)close(output_fd);
+		if (created && unlink(output_path) == -1)
+			warn("couldn't remove incomplete '%s'", output_path);
+		errno = saved_errno;
 		err(EXIT_FAILURE, "video capture%s%s", stage ? " at " : "",
 		    stage ? stage : "");
+	}
+	if (output_fd != -1 && close(output_fd) == -1) {
+		int saved_errno = errno;
+		if (created && unlink(output_path) == -1)
+			warn("couldn't remove incomplete '%s'", output_path);
+		errno = saved_errno;
+		err(EXIT_FAILURE, "couldn't close '%s'", output_path);
 	}
 }
 

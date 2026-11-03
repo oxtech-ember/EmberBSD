@@ -24,11 +24,64 @@
 
 #define VIDEO_CAPTURE_NBUFS 4
 #define VIDEO_CAPTURE_FRAME_TIMEOUT 5
+#define VIDEO_CAPTURE_MAX_OUTPUT (64U * 1024U * 1024U)
 
 struct video_capture_buffer {
 	void *address;
 	size_t length;
 };
+
+static int
+video_capture_validate_output_format(const struct v4l2_pix_format *format,
+    size_t *frame_size)
+{
+	size_t stride, row_size;
+
+	*frame_size = 0;
+	if (format->sizeimage == 0 ||
+	    format->sizeimage > VIDEO_CAPTURE_MAX_OUTPUT)
+		return EFBIG;
+	if (format->pixelformat != V4L2_PIX_FMT_UYVY)
+		return 0;
+	if (format->width == 0 || format->height == 0 ||
+	    (format->width & 1) != 0)
+		return EINVAL;
+	row_size = (size_t)format->width * 2;
+	if (row_size / 2 != format->width)
+		return EINVAL;
+	stride = format->bytesperline == 0 ? row_size : format->bytesperline;
+	if (stride < row_size || format->height > SIZE_MAX / stride)
+		return EINVAL;
+	*frame_size = stride * format->height;
+	if (*frame_size > format->sizeimage)
+		return EINVAL;
+	return 0;
+}
+
+static int
+video_capture_write_frame(int fd, const void *data, size_t length,
+    const char **stage)
+{
+	const uint8_t *buffer = data;
+	ssize_t n;
+
+	while (length != 0) {
+		n = write(fd, buffer, length);
+		if (n == -1 && errno == EINTR)
+			continue;
+		if (n == -1) {
+			*stage = "write frame output";
+			return errno;
+		}
+		if (n == 0) {
+			*stage = "write frame output";
+			return EIO;
+		}
+		buffer += (size_t)n;
+		length -= (size_t)n;
+	}
+	return 0;
+}
 
 static int
 video_capture_wait_ready(int fd, const struct timespec *deadline,
@@ -97,7 +150,8 @@ video_capture_ioctl(int fd, unsigned long command, void *data,
 }
 
 int
-video_capture_run(int fd, unsigned int count, const char **stage)
+video_capture_run(int fd, unsigned int count, int output_fd,
+    const char **stage)
 {
 	struct v4l2_capability capability;
 	struct v4l2_format format;
@@ -106,6 +160,7 @@ video_capture_run(int fd, unsigned int count, const char **stage)
 	enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
 	uint32_t fourcc;
 	unsigned int i;
+	size_t frame_size = 0;
 	bool streaming = false;
 	int error = 0;
 
@@ -133,6 +188,19 @@ video_capture_run(int fd, unsigned int count, const char **stage)
 		goto out;
 	}
 	fourcc = format.fmt.pix.pixelformat;
+	if (output_fd != -1) {
+		if (count != 1) {
+			*stage = "raw output requires one frame";
+			error = EINVAL;
+			goto out;
+		}
+		error = video_capture_validate_output_format(&format.fmt.pix,
+		    &frame_size);
+		if (error != 0) {
+			*stage = "invalid raw output format";
+			goto out;
+		}
+	}
 
 	memset(&request, 0, sizeof(request));
 	request.count = VIDEO_CAPTURE_NBUFS;
@@ -166,6 +234,11 @@ video_capture_run(int fd, unsigned int count, const char **stage)
 		if (buffer.length == 0) {
 			*stage = "empty mapped buffer";
 			error = EINVAL;
+			goto out;
+		}
+		if (output_fd != -1 && buffer.length > VIDEO_CAPTURE_MAX_OUTPUT) {
+			*stage = "raw output buffer exceeds limit";
+			error = EFBIG;
 			goto out;
 		}
 		buffers[i].length = buffer.length;
@@ -226,9 +299,28 @@ video_capture_run(int fd, unsigned int count, const char **stage)
 		error = video_capture_validate_sample(buffer.bytesused,
 		    buffers[buffer.index].length,
 		    (buffer.flags & V4L2_BUF_FLAG_ERROR) != 0);
+		if (error == 0 && output_fd != -1 &&
+		    buffer.bytesused > VIDEO_CAPTURE_MAX_OUTPUT)
+			error = EFBIG;
+		if (error == 0 && output_fd != -1 &&
+		    fourcc == V4L2_PIX_FMT_UYVY && buffer.bytesused != frame_size)
+			error = EIO;
 		if (error != 0) {
 			*stage = "invalid frame payload";
 			goto out;
+		}
+		if (output_fd != -1 &&
+		    (error = video_capture_write_frame(output_fd,
+		    buffers[buffer.index].address, buffer.bytesused, stage)) != 0)
+			goto out;
+		if (output_fd != -1) {
+			printf("capture.raw width=%u height=%u fourcc=0x%08x "
+			    "bytesperline=%u sizeimage=%u colorspace=%u "
+			    "ycbcr_enc=%u quantization=%u xfer_func=%u\n",
+			    format.fmt.pix.width, format.fmt.pix.height, fourcc,
+			    format.fmt.pix.bytesperline, format.fmt.pix.sizeimage,
+			    format.fmt.pix.colorspace, format.fmt.pix.ycbcr_enc,
+			    format.fmt.pix.quantization, format.fmt.pix.xfer_func);
 		}
 		printf("capture.frame=%u bytes=%u fnv1a64=%016" PRIx64 "\n",
 		    i, buffer.bytesused,

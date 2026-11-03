@@ -12,6 +12,7 @@
 
 int video_capture_validate_sample(size_t, size_t, bool);
 uint64_t video_capture_checksum(const void *, size_t);
-int video_capture_run(int, unsigned int, const char **);
+int video_capture_open_output(const char *, int *);
+int video_capture_run(int, unsigned int, int, const char **);
 
 #endif /* _VIDEO_CAPTURE_H_ */

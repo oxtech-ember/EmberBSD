@@ -17,6 +17,7 @@ enum v4l2_buf_type {
 #define V4L2_CAP_STREAMING 0x04000000U
 #define V4L2_MEMORY_MMAP 1U
 #define V4L2_BUF_FLAG_ERROR 0x00000040U
+#define V4L2_PIX_FMT_UYVY 0x59565955U
 
 #define VIDIOC_QUERYCAP 1UL
 #define VIDIOC_G_FMT 2UL
@@ -31,12 +32,16 @@ struct v4l2_capability {
 	uint32_t capabilities;
 };
 
+struct v4l2_pix_format {
+	uint32_t width, height, pixelformat, field;
+	uint32_t bytesperline, sizeimage, colorspace, priv, flags;
+	uint32_t ycbcr_enc, quantization, xfer_func;
+};
+
 struct v4l2_format {
 	uint32_t type;
 	union {
-		struct {
-			uint32_t width, height, pixelformat, sizeimage;
-		} pix;
+		struct v4l2_pix_format pix;
 	} fmt;
 };
 

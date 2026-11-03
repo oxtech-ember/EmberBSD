@@ -37,6 +37,7 @@
 .Nm
 .Op Fl d Ar device
 .Fl c Ar frames
+.Op Fl o Ar raw-frame
 .Nm
 .Op Fl d Ar device
 .Ar name ...
@@ -48,6 +49,10 @@
 The
 .Nm
 command displays or sets various video system driver variables.
+.Fl o
+is used with
+.Fl c 1
+to save one raw frame.
 If a list of variables is present on the command line, then
 .Nm
 prints the current value of those variables for the specified device.
@@ -61,10 +66,17 @@ flag is specified,
 starts video streaming, dequeues the requested number of memory-mapped frames,
 and prints each frame's byte count and FNV-1a checksum. It then stops streaming
 and unmaps the buffers. Closing the device releases the driver's buffers. This
-mode checks frame delivery and reports changes in frame contents; it does not
-save or decode images. The device must support single-planar video capture with
-streaming I/O. Each frame has a five-second delivery deadline; a timeout stops
-the stream and unmaps its buffers.
+mode checks frame delivery and reports changes in frame contents. With
+.Fl o ,
+exactly one frame can also be saved as raw bytes. The output is created with
+mode 0600 and is never overwritten; the reported format and colorimetry fields
+are the values returned by the device. Raw output is limited to 64 MiB, and a
+partial file created by this command is removed if capture fails. For UYVY,
+the returned width, height, stride, and payload length are checked before
+writing. Other formats are saved without format-specific interpretation.
+The device must support single-planar video capture with streaming I/O. Each
+frame has a five-second delivery deadline; a timeout stops the stream and
+unmaps its buffers.
 If the
 .Fl w
 flag is specified

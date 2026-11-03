@@ -4,9 +4,26 @@
  */
 
 #include <errno.h>
+#include <fcntl.h>
 #include <stdint.h>
+#include <unistd.h>
 
 #include "video_capture.h"
+
+int
+video_capture_open_output(const char *path, int *fdp)
+{
+	int fd;
+
+	if (path == NULL || fdp == NULL)
+		return EINVAL;
+	*fdp = -1;
+	fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0600);
+	if (fd == -1)
+		return errno;
+	*fdp = fd;
+	return 0;
+}
 
 int
 video_capture_validate_sample(size_t bytesused, size_t capacity, bool error)
