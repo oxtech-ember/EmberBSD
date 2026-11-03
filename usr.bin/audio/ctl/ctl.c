@@ -66,7 +66,9 @@ static char encbuf[1000];
 
 static int properties, fullduplex, rerror;
 
+#ifndef CRUNCHEDPROG
 int verbose;
+#endif
 
 static struct field {
 	const char *name;

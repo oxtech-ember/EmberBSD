@@ -67,7 +67,9 @@ static int	port;
 static int	fflag;
 static int	nflag;
 static int	qflag;
+#ifndef CRUNCHEDPROG
 int	verbose;
+#endif
 static int	sample_rate;
 static int	encoding;
 static char	*encoding_str;
