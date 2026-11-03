@@ -90,17 +90,34 @@ void
 outtype(const type_t *tp)
 {
 	/* Available letters: ------GH--K-MNO--R--U-W-YZ */
+static const char tt[NTSPEC] __attribute__((__nonstring__)) =
+	    "???BCCCSSIILLQQ"
 #ifdef INT128_SIZE
-	static const char tt[NTSPEC] __attribute__((__nonstring__)) =
-	    "???BCCCSSIILLQQJJDDD?XXXV?TTTPAF";
-	static const char ss[NTSPEC] __attribute__((__nonstring__)) =
-	    "???  su u u u u us l?s l ?sue   ";
-#else
-	static const char tt[NTSPEC] __attribute__((__nonstring__)) =
-	    "???BCCCSSIILLQQDDD?XXXV?TTTPAF";
-	static const char ss[NTSPEC] __attribute__((__nonstring__)) =
-	    "???  su u u u us l?s l ?sue   ";
+	    "JJ"
 #endif
+	    "DDD"
+#ifdef FLOAT128_SIZE
+	    "G"
+#endif
+	    "?XXX"
+#ifdef FLOAT128_SIZE
+	    "H"
+#endif
+	    "V?TTTPAF";
+	static const char ss[NTSPEC] __attribute__((__nonstring__)) =
+	    "???  su u u u u"
+#ifdef INT128_SIZE
+	    " u"
+#endif
+	    "s l"
+#ifdef FLOAT128_SIZE
+	    " "
+#endif
+	    "?s l"
+#ifdef FLOAT128_SIZE
+	    " "
+#endif
+	    " ?sue   ";
 	int na;
 	tspec_t ts;
 

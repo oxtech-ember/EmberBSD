@@ -38,7 +38,7 @@ THIS SOFTWARE.
 #endif
 
  int
-gethex( CONST char **sp, CONST FPI *fpi, Long *expt, Bigint **bp, int sign, locale_t loc)
+gethex( CONST char **sp, CONST FPI *fpi, Long *expt, Bigint **bp, int sign, GDTOA_LOCALE_TYPE loc)
 {
 	Bigint *b;
 	CONST char *decpt, *s, *s0, *s1;
@@ -47,7 +47,12 @@ gethex( CONST char **sp, CONST FPI *fpi, Long *expt, Bigint **bp, int sign, loca
 	Long e, e1;
 #ifdef USE_LOCALE
 	int i;
+#ifdef GDTOA_XLINT_HOST
+	const char *decimalpoint = ".";
+	(void)loc;
+#else
 	const char *decimalpoint = localeconv_l(loc)->decimal_point;
+#endif
 #endif
 
 	if (!hexdig[(unsigned char)'0'])

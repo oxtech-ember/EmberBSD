@@ -82,10 +82,16 @@ typedef enum {
 	FLOAT,		/* float */
 	DOUBLE,		/* double or, with tflag, long float */
 	LDOUBLE,	/* long double */
+#ifdef FLOAT128_SIZE
+	FLOAT128,	/* __float128 / _Float128 */
+#endif
 	COMPLEX,	/* keyword "_Complex", only used in the parser */
 	FCOMPLEX,	/* float _Complex */
 	DCOMPLEX,	/* double _Complex */
 	LCOMPLEX,	/* long double _Complex */
+#ifdef FLOAT128_SIZE
+	F128COMPLEX,	/* __float128 _Complex */
+#endif
 	VOID,		/* void */
 	AUTO_TYPE,	/* GCC's __auto_type */
 	STRUCT,		/* structure tag */

@@ -618,6 +618,12 @@ parse_tspec(const char **pp, char c, bool *osdef)
 	case 'J':
 		return s == 'u' ? UINT128 : INT128;
 #endif
+#ifdef FLOAT128_SIZE
+	case 'G':
+		return FLOAT128;
+	case 'H':
+		return F128COMPLEX;
+#endif
 	case 'D':
 		return s == 's' ? FLOAT : (s == 'l' ? LDOUBLE : DOUBLE);
 	case 'V':
@@ -821,6 +827,16 @@ gettlen(const char *cp, const char **epp)
 			t = UINT128;
 		else if (s == '\0')
 			t = INT128;
+		break;
+#endif
+#ifdef FLOAT128_SIZE
+	case 'G':
+		if (s == '\0')
+			t = FLOAT128;
+		break;
+	case 'H':
+		if (s == '\0')
+			t = F128COMPLEX;
 		break;
 #endif
 	case 'D':

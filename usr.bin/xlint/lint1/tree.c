@@ -942,6 +942,9 @@ check_integer_comparison(op_t op, tnode_t *ln, tnode_t *rn)
 }
 
 static const tspec_t arith_rank[] = {
+#ifdef FLOAT128_SIZE
+	FLOAT128,
+#endif
 	LDOUBLE, DOUBLE, FLOAT,
 #ifdef INT128_SIZE
 	UINT128, INT128,
@@ -975,6 +978,13 @@ usual_arithmetic_conversion_c90(tspec_t lt, tspec_t rt)
 	if (lt == rt)
 		return lt;
 
+#ifdef FLOAT128_SIZE
+	if (lt == FLOAT128 || rt == FLOAT128 ||
+	    lt == F128COMPLEX || rt == F128COMPLEX)
+		return is_complex(lt) || is_complex(rt)
+		    ? F128COMPLEX : FLOAT128;
+#endif
+
 	if (lt == LCOMPLEX || rt == LCOMPLEX)
 		return LCOMPLEX;
 	if (lt == DCOMPLEX || rt == DCOMPLEX)
@@ -994,7 +1004,9 @@ usual_arithmetic_conversion_c90(tspec_t lt, tspec_t rt)
 		return rt;
 
 	size_t i;
-	for (i = 3; arith_rank[i] != INT; i++)
+	for (i = 0; is_floating(arith_rank[i]); i++)
+		continue;
+	for (; arith_rank[i] != INT; i++)
 		if (arith_rank[i] == lt || arith_rank[i] == rt)
 			break;
 	if ((is_uinteger(lt) || is_uinteger(rt)) &&
@@ -1035,10 +1047,13 @@ balance(op_t op, tnode_t **lnp, tnode_t **rnp)
 
 	if (modtab[op].m_comparison
 	    && is_integer(lt) && (*lnp)->tn_op != CON
-	    && is_floating(t) && (*rnp)->tn_op == CON)
-		/* comparing integer '%s' to floating point constant %Lg */
+	    && is_floating(t) && (*rnp)->tn_op == CON) {
+		char buf[64];
+		format_floating_value(&(*rnp)->u.value, buf, sizeof(buf));
+		/* comparing integer '%s' to floating point constant %s */
 		warning(379, type_name((*lnp)->tn_type),
-		    (*rnp)->u.value.u.floating);
+		    buf);
+	}
 
 	if (t != lt)
 		*lnp = apply_usual_arithmetic_conversions(op, *lnp, t);
@@ -1747,6 +1762,11 @@ build_real_imag(op_t op, bool sys, tnode_t *ln)
 
 	tspec_t t;
 	switch (ln->tn_type->t_tspec) {
+#ifdef FLOAT128_SIZE
+	case F128COMPLEX:
+		t = FLOAT128;
+		break;
+#endif
 	case LCOMPLEX:
 		t = LDOUBLE;
 		break;
@@ -1854,6 +1874,7 @@ fold_constant_compare_zero(tnode_t *tn)
 	return build_constant(tn->tn_type, v);
 }
 
+#ifndef FLOAT128_SIZE
 static long double
 floating_error_value(tspec_t t, long double lv)
 {
@@ -1895,22 +1916,65 @@ is_floating_overflow(tspec_t t, long double val)
 	return false;
 }
 
+#endif
+
 static tnode_t *
 fold_constant_floating(tnode_t *tn)
 {
 
 	fpe = 0;
 
-	tspec_t t = tn->tn_type->t_tspec;
+	tspec_t t = tn->u.ops.left->tn_type->t_tspec;
 
 	val_t *v = xcalloc(1, sizeof(*v));
-	v->v_tspec = t;
+	v->v_tspec = tn->tn_type->t_tspec;
 
 	lint_assert(is_floating(t));
 	lint_assert(has_operands(tn));
 	lint_assert(t == tn->u.ops.left->tn_type->t_tspec);
 	lint_assert(!is_binary(tn) || t == tn->u.ops.right->tn_type->t_tspec);
 
+#ifdef FLOAT128_SIZE
+	lint_fp_t lv = tn->u.ops.left->u.value.u.floating;
+	lint_fp_t rv = is_binary(tn) ? tn->u.ops.right->u.value.u.floating
+	    : (lint_fp_t){0, 0};
+	int cmp = lint_fp_compare(lv, rv);
+	unsigned status = 0;
+	enum lint_fp_format fmt = floating_format(t);
+	switch (tn->tn_op) {
+	case UPLUS: v->u.floating = lv; break;
+	case UMINUS: v->u.floating = lint_fp_negate(lv); break;
+	case MULT: v->u.floating = lint_fp_binary('*', lv, rv, fmt, &status); break;
+	case DIV:
+		if (lint_fp_is_zero(rv)) {
+			/* division by 0 */
+			error(139);
+			v->u.floating = lint_fp_max_finite(fmt);
+			if (lint_fp_signbit(lv))
+				v->u.floating = lint_fp_negate(v->u.floating);
+		} else
+			v->u.floating = lint_fp_binary('/', lv, rv, fmt, &status);
+		break;
+	case PLUS: v->u.floating = lint_fp_binary('+', lv, rv, fmt, &status); break;
+	case MINUS: v->u.floating = lint_fp_binary('-', lv, rv, fmt, &status); break;
+	case LT: v->u.integer = cmp == -1; break;
+	case LE: v->u.integer = cmp == -1 || cmp == 0; break;
+	case GE: v->u.integer = cmp == 1 || cmp == 0; break;
+	case GT: v->u.integer = cmp == 1; break;
+	case EQ: v->u.integer = cmp == 0; break;
+	case NE: v->u.integer = cmp != 0; break;
+	default: lint_assert(false);
+	}
+	if (is_floating(v->v_tspec) && !is_complex(v->v_tspec)
+	    && (status & LINT_FP_OVERFLOW) != 0) {
+		/* operator '%s' produces floating point overflow */
+		warning(142, op_name(tn->tn_op));
+		bool negative = lint_fp_signbit(v->u.floating);
+		v->u.floating = lint_fp_max_finite(fmt);
+		if (negative)
+			v->u.floating = lint_fp_negate(v->u.floating);
+	}
+#else
 	long double lv = tn->u.ops.left->u.value.u.floating;
 	long double rv = is_binary(tn) ? tn->u.ops.right->u.value.u.floating
 	    : 0.0;
@@ -1962,7 +2026,9 @@ fold_constant_floating(tnode_t *tn)
 		lint_assert(false);
 	}
 
-	// XXX: Must not access u.floating after setting u.integer.
+	if (!is_floating(v->v_tspec))
+		return build_constant(tn->tn_type, v);
+
 	lint_assert(fpe != 0 || isnan(v->u.floating) == 0);
 	if (is_complex(v->v_tspec)) {
 		/*
@@ -1977,6 +2043,7 @@ fold_constant_floating(tnode_t *tn)
 		fpe = 0;
 	}
 
+#endif
 	return build_constant(tn->tn_type, v);
 }
 
@@ -2141,15 +2208,16 @@ build_binary(tnode_t *ln, op_t op, bool sys, tnode_t *rn)
 		if (!mp->m_binary || rn->tn_op == CON) {
 			if (mp->m_compares_with_zero)
 				ntn = fold_constant_compare_zero(ntn);
-			else if (is_floating(ntn->tn_type->t_tspec))
+			else if (is_floating(ln->tn_type->t_tspec))
 				ntn = fold_constant_floating(ntn);
 			else
 				ntn = fold_constant_integer(ntn);
 		} else if (op == QUEST) {
 			lint_assert(has_operands(rn));
-			use(ln->u.value.u.integer != 0
+			bool condition = is_nonzero_val(&ln->u.value);
+			use(condition
 			    ? rn->u.ops.right : rn->u.ops.left);
-			ntn = ln->u.value.u.integer != 0
+			ntn = condition
 			    ? rn->u.ops.left : rn->u.ops.right;
 		}
 	}
@@ -3560,18 +3628,32 @@ static void
 check_lossy_floating_to_integer_conversion(
     op_t op, int arg, const type_t *tp, const tnode_t *tn)
 {
-	long double x = tn->u.value.u.floating;
 	integer_constraints ic = ic_any(tp);
+#ifdef FLOAT128_SIZE
+	lint_fp_t x = tn->u.value.u.floating;
+	int64_t si;
+	uint64_t ui;
+	if (is_uinteger(tp->t_tspec)
+	    ? lint_fp_to_u64(x, &ui) && ui >= ic.umin && ui <= ic.umax &&
+	      lint_fp_compare(x, lint_fp_from_u64(ui, LINT_FP128, NULL)) == 0
+	    : lint_fp_to_i64(x, &si) && si >= ic.smin && si <= ic.smax &&
+	      lint_fp_compare(x, lint_fp_from_i64(si, LINT_FP128, NULL)) == 0)
+		return;
+#else
+	long double x = tn->u.value.u.floating;
 	if (is_uinteger(tp->t_tspec)
 	    ? x >= ic.umin && x <= ic.umax && x == (uint64_t)x
 	    : x >= ic.smin && x <= ic.smax && x == (int64_t)x)
 		return;
+#endif
+	char buf[64];
+	format_floating_value(&tn->u.value, buf, sizeof(buf));
 	if (op == FARG)
-		/* lossy conversion of %Lg to '%s', arg #%d */
-		warning(380, x, type_name(tp), arg);
+		/* lossy conversion of %s to '%s', arg #%d */
+		warning(380, buf, type_name(tp), arg);
 	else
-		/* lossy conversion of %Lg to '%s' */
-		warning(381, x, type_name(tp));
+		/* lossy conversion of %s to '%s' */
+		warning(381, buf, type_name(tp));
 }
 
 static void
@@ -3976,6 +4058,42 @@ static void
 convert_constant_from_floating(op_t op, int arg, const type_t *ntp,
 			       tspec_t nt, val_t *nv, val_t *ov)
 {
+#ifdef FLOAT128_SIZE
+	lint_fp_t x = ov->u.floating;
+	if (is_integer(nt)) {
+		integer_constraints ic = ic_any(ntp);
+		if (is_uinteger(nt)) {
+			uint64_t u;
+			if (!lint_fp_to_u64(x, &u))
+				u = lint_fp_signbit(x) || lint_fp_is_nan(x)
+				    ? ic.umin : ic.umax;
+			nv->u.integer = (int64_t)u64_min(u64_max(u, ic.umin), ic.umax);
+		} else {
+			int64_t i;
+			if (!lint_fp_to_i64(x, &i))
+				i = lint_fp_is_nan(x) ? 0
+				    : lint_fp_signbit(x) ? ic.smin : ic.smax;
+			nv->u.integer = s64_min(s64_max(i, ic.smin), ic.smax);
+		}
+		return;
+	}
+	lint_assert(is_floating(nt));
+	enum lint_fp_format fmt = floating_format(nt);
+	lint_fp_t max = lint_fp_max_finite(fmt);
+	if (lint_fp_compare(x, max) == 1 ||
+	    lint_fp_compare(x, lint_fp_negate(max)) == -1) {
+		const char *ot_name = type_name(gettyp(ov->v_tspec));
+		const char *nt_name = type_name(ntp);
+		if (op == FARG)
+			/* conversion of '%s' to '%s' is out of range, ... */
+			warning(295, ot_name, nt_name, arg);
+		else
+			/* conversion of '%s' to '%s' is out of range */
+			warning(119, ot_name, nt_name);
+		x = lint_fp_signbit(x) ? lint_fp_negate(max) : max;
+	}
+	nv->u.floating = lint_fp_round(x, fmt, NULL);
+#else
 	long double max = 0.0, min = 0.0;
 
 	switch (nt) {
@@ -4039,12 +4157,21 @@ convert_constant_from_floating(op_t op, int arg, const type_t *ntp,
 		nv->u.floating = ov->u.floating;
 	else
 		nv->u.integer = (int64_t)ov->u.floating;
+#endif
 }
 
 static bool
 convert_constant_to_floating(tspec_t nt, val_t *nv,
 			     tspec_t ot, const val_t *v)
 {
+#ifdef FLOAT128_SIZE
+	if (!is_floating(nt))
+		return false;
+	enum lint_fp_format fmt = floating_format(nt);
+	nv->u.floating = ot == PTR || is_uinteger(ot)
+	    ? lint_fp_from_u64((uint64_t)v->u.integer, fmt, NULL)
+	    : lint_fp_from_i64(v->u.integer, fmt, NULL);
+#else
 	if (nt == FLOAT) {
 		nv->u.floating = (ot == PTR || is_uinteger(ot)) ?
 		    (float)(uint64_t)v->u.integer : (float)v->u.integer;
@@ -4057,6 +4184,7 @@ convert_constant_to_floating(tspec_t nt, val_t *nv,
 		    : (long double)v->u.integer;
 	} else
 		return false;
+#endif
 	return true;
 }
 
@@ -4227,7 +4355,7 @@ convert_constant(op_t op, int arg, const type_t *ntp, val_t *nv, val_t *ov)
 		return;
 	}
 
-	if (ot == FLOAT || ot == DOUBLE || ot == LDOUBLE)
+	if (is_floating(ot))
 		convert_constant_from_floating(op, arg, ntp, nt, nv, ov);
 	else if (!convert_constant_to_floating(nt, nv, ot, ov)) {
 		range_check = true;	/* Check for lost precision. */
@@ -4666,7 +4794,12 @@ integer_constant(tnode_t *tn, bool required)
 			v->u.integer = tn->u.value.u.integer;
 			return v;
 		}
+#ifdef FLOAT128_SIZE
+		if (!lint_fp_to_i64(tn->u.value.u.floating, &v->u.integer))
+			v->u.integer = 1;
+#else
 		v->u.integer = (int64_t)tn->u.value.u.floating;
+#endif
 	} else
 		v->u.integer = 1;
 

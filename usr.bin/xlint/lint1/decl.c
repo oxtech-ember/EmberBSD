@@ -350,6 +350,16 @@ dcs_add_type(type_t *tp)
 	}
 
 	if (t == COMPLEX) {
+#ifdef FLOAT128_SIZE
+		if (dcs->d_complex_mod == NO_TSPEC &&
+		    dcs->d_abstract_type == NO_TSPEC) {
+			dcs->d_abstract_type = COMPLEX;
+			return;
+		}
+		if (dcs->d_complex_mod == FLOAT128)
+			t = F128COMPLEX;
+		else
+#endif
 		if (dcs->d_complex_mod == FLOAT)
 			t = FCOMPLEX;
 		else if (dcs->d_complex_mod == DOUBLE)
@@ -390,7 +400,29 @@ dcs_add_type(type_t *tp)
 		if (dcs->d_rank_mod != NO_TSPEC)
 			dcs->d_invalid_type_combination = true;
 		dcs->d_rank_mod = t;
-	} else if (t == FLOAT || t == DOUBLE) {
+	} else if (t == FLOAT || t == DOUBLE
+#ifdef FLOAT128_SIZE
+	    || t == FLOAT128
+#endif
+	    ) {
+#ifdef FLOAT128_SIZE
+		if (dcs->d_abstract_type == COMPLEX) {
+			if (dcs->d_rank_mod != NO_TSPEC &&
+			    (t != DOUBLE || dcs->d_rank_mod != LONG))
+				dcs->d_invalid_type_combination = true;
+			if (t == FLOAT128)
+				dcs->d_abstract_type = F128COMPLEX;
+			else if (t == FLOAT)
+				dcs->d_abstract_type = FCOMPLEX;
+			else if (dcs->d_rank_mod == LONG) {
+				dcs->d_abstract_type = LCOMPLEX;
+				dcs->d_rank_mod = NO_TSPEC;
+			} else
+				dcs->d_abstract_type = DCOMPLEX;
+			debug_func_dcs(__func__);
+			return;
+		}
+#endif
 		if (dcs->d_rank_mod == NO_TSPEC || dcs->d_rank_mod == LONG) {
 			if (dcs->d_complex_mod != NO_TSPEC
 			    || (t == FLOAT && dcs->d_rank_mod == LONG))
@@ -713,6 +745,11 @@ dcs_merge_declaration_specifiers(void)
 	if (t == NO_TSPEC && s == NO_TSPEC && (l == NO_TSPEC || l == LONG))
 		t = c;
 
+	if (t == COMPLEX) {
+		/* invalid type for _Complex */
+		error(308);
+		t = DCOMPLEX;
+	}
 	if (t == NO_TSPEC)
 		t = INT;
 	if (s == NO_TSPEC && t == INT)
@@ -860,6 +897,10 @@ alignment(const type_t *tp)
 	unsigned a;
 	if (is_struct_or_union(t))
 		a = tp->u.sou->sou_align;
+#ifdef FLOAT128_SIZE
+	else if (t == FLOAT128 || t == F128COMPLEX)
+		a = FLOAT128_ALIGN;
+#endif
 	else {
 		lint_assert(t != FUNC);
 		if ((a = size_in_bits(t) / CHAR_SIZE) == 0)

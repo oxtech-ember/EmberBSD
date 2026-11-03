@@ -1,0 +1,6 @@
+# Test lint2 read and library emission of distinct float128 types.
+0 s float128.c
+S float128.c
+10 d 0.10 t 4real G
+20 d 0.20 t 7complex H
+30 d 0.30 d 8function F1 G H

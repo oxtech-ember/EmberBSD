@@ -6848,6 +6848,7 @@
 ./usr/tests/usr.bin/xlint/lint1/d_gcc_compound_statements3.c	tests-usr.bin-tests	compattestfile,atf
 ./usr/tests/usr.bin/xlint/lint1/d_gcc_extension.c		tests-obsolete		obsolete,atf
 ./usr/tests/usr.bin/xlint/lint1/d_gcc_extension.exp		tests-obsolete		obsolete
+./usr/tests/usr.bin/xlint/lint1/d_gcc_float128.c		tests-usr.bin-tests	compattestfile,atf
 ./usr/tests/usr.bin/xlint/lint1/d_gcc_func.c			tests-obsolete		obsolete,atf
 ./usr/tests/usr.bin/xlint/lint1/d_gcc_variable_array_init.c	tests-obsolete		obsolete,atf
 ./usr/tests/usr.bin/xlint/lint1/d_incorrect_array_size.c	tests-obsolete		obsolete,atf

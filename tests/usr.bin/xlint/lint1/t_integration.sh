@@ -43,7 +43,7 @@ configure_test_case()
 			platform["arm"]		= "uchar ilp32 long ldbl64"
 			platform["coldfire"]	= "schar ilp32 int  ldbl64"
 			platform["hppa"]	= "schar ilp32 long ldbl64"
-			platform["i386"]	= "schar ilp32 int  ldbl96"
+			platform["i386"]	= "schar ilp32 int  ldbl96 float128"
 			platform["ia64"]	= "schar lp64  long ldbl128"
 			platform["m68000"]	= "schar ilp32 int  ldbl64"
 			platform["m68k"]	= "schar ilp32 int  ldbl96"
@@ -59,11 +59,11 @@ configure_test_case()
 			platform["sparc"]	= "schar ilp32 long ldbl64"
 			platform["sparc64"]	= "schar lp64  long ldbl128"
 			platform["vax"]		= "schar ilp32 long ldbl64"
-			platform["x86_64"]	= "schar lp64  long ldbl128"
+			platform["x86_64"]	= "schar lp64  long ldbl128 float128"
 		}
 
 		function platform_has(prop) {
-			if (!match(prop, /^(schar|uchar|ilp32|lp64|int|long|ldbl64|ldbl96|ldbl128)$/)) {
+			if (!match(prop, /^(schar|uchar|ilp32|lp64|int|long|ldbl64|ldbl96|ldbl128|float128)$/)) {
 				printf("bad property '\''%s'\''\n", prop) > "/dev/stderr"
 				exit(1)
 			}

@@ -102,6 +102,9 @@ ttab_t ttab[NTSPEC] = {
 	typeinfo("float", FLOAT, FLOAT, FLOAT_SIZE, 1, 'f'),
 	typeinfo("double", DOUBLE, DOUBLE, DOUBLE_SIZE, 2, 'f'),
 	typeinfo("long double", LDOUBLE, LDOUBLE, LDOUBLE_SIZE, 3, 'f'),
+#ifdef FLOAT128_SIZE
+	typeinfo("__float128", FLOAT128, FLOAT128, FLOAT128_SIZE, 4, 'f'),
+#endif
 #ifdef DEBUG
 	typeinfo("_Complex", NO_TSPEC, NO_TSPEC, 0, 0, ' '),
 #else
@@ -113,6 +116,10 @@ ttab_t ttab[NTSPEC] = {
 	    DOUBLE_SIZE * 2, 2, 'c'),
 	typeinfo("long double _Complex", LCOMPLEX, LCOMPLEX,
 	    LDOUBLE_SIZE * 2, 3, 'c'),
+#ifdef FLOAT128_SIZE
+	typeinfo("__float128 _Complex", F128COMPLEX, F128COMPLEX,
+	    FLOAT128_SIZE * 2, 4, 'c'),
+#endif
 	typeinfo("void", VOID, VOID, 0, 0, ' '),
 	typeinfo("auto", AUTO_TYPE, AUTO_TYPE, 0, 0, ' '),
 	typeinfo("struct", STRUCT, STRUCT, 0, 0, ' '),

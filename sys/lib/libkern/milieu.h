@@ -58,6 +58,10 @@ code that are retained.
 #ifndef MILIEU_H
 #define MILIEU_H
 
+#ifdef SOFTFLOAT_ENV_HEADER
+#include SOFTFLOAT_ENV_HEADER
+#else
+
 #if !defined(_KERNEL) && !defined(_STANDALONE)
 #include <inttypes.h>
 #else
@@ -136,5 +140,7 @@ typedef int64_t sbits64;
 | to be `static'.
 *----------------------------------------------------------------------------*/
 #define INLINE static __inline
+
+#endif /* SOFTFLOAT_ENV_HEADER */
 
 #endif /* MILIEU_H */

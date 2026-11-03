@@ -46,8 +46,11 @@
 #define	SIZEOF_TSPEC		UINT
 #define	INTPTR_TSPEC		INT
 
+#define	FLOAT128_SIZE		128
+#define	FLOAT128_ALIGN		16
 #define	FLOAT_SIZE		32
 #define	DOUBLE_SIZE		64
 #define	LDOUBLE_SIZE		96
+#define	LDOUBLE_MANT_DIG	64
 
 #define	ENUM_SIZE		32

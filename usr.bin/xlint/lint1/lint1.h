@@ -34,6 +34,9 @@
 
 #include "lint.h"
 #include "op.h"
+#ifdef FLOAT128_SIZE
+#include "lint_fp.h"
+#endif
 
 /*
  * A memory pool collects allocated objects that must be available until:
@@ -97,7 +100,11 @@ typedef struct {
 	bool	v_char_constant;
 	union {
 		int64_t		integer;
+#ifdef FLOAT128_SIZE
+		lint_fp_t	floating;
+#else
 		long double	floating;
+#endif
 	} u;
 } val_t;
 
@@ -660,9 +667,61 @@ unique_curr_pos(void)
 static inline bool
 is_nonzero_val(const val_t *val)
 {
+
+#ifdef FLOAT128_SIZE
+	return is_floating(val->v_tspec)
+	    ? !lint_fp_is_zero(val->u.floating)
+	    : val->u.integer != 0;
+#else
 	return is_floating(val->v_tspec)
 	    ? val->u.floating != 0.0
 	    : val->u.integer != 0;
+#endif
+}
+
+#ifdef FLOAT128_SIZE
+static inline enum lint_fp_format
+floating_format(tspec_t t)
+{
+
+	switch (t) {
+	case FLOAT:
+	case FCOMPLEX:
+		return LINT_FP32;
+	case DOUBLE:
+	case DCOMPLEX:
+		return LINT_FP64;
+	case LDOUBLE:
+	case LCOMPLEX:
+#if LDOUBLE_MANT_DIG == 64
+		return LINT_FP80;
+#elif LDOUBLE_MANT_DIG == 113
+		return LINT_FP128;
+#elif LDOUBLE_MANT_DIG == 53
+		return LINT_FP64;
+#else
+#error "describe the target long double format for portable lint arithmetic"
+#endif
+	case FLOAT128:
+	case F128COMPLEX:
+		return LINT_FP128;
+	default:
+		lint_assert(false);
+		return LINT_FP64;
+	}
+}
+#endif
+
+static inline void
+format_floating_value(const val_t *value, char *buf, size_t size)
+{
+
+#ifdef FLOAT128_SIZE
+	if (!lint_fp_format(value->u.floating, 6, buf, size))
+		(void)snprintf(buf, size, "<unavailable>");
+#else
+	(void)snprintf(buf, size, "%Lg", value->u.floating);
+#endif
 }
 
 static inline bool

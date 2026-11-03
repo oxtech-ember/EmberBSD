@@ -27,6 +27,22 @@ See the test `d_c99_bool_strict.c` for details.
 Lint warns about type conversions that may result in alignment problems.
 See the test `msg_135.c` for examples.
 
+## Target floating-point formats
+
+For i386 and x86_64 targets, `__float128` (also spelled `_Float128` in GCC
+input) is a distinct IEEE binary128 type, including its complex variant.
+It has greater conversion rank than the x87 `long double` type. Constants
+accept `Q`/`q` and `F128`/`f128` suffixes. Other targets retain their existing
+floating-point model.
+
+The x86 constant evaluator uses the OS SoftFloat implementation for arithmetic
+and gdtoa for parsing and formatting. Each operation rounds to the target's
+binary32, binary64, x87-80 or binary128 format, independently of the host
+`long double`. The private adapters isolate their symbols from libc; lint1
+uses them in a single thread and parses the C decimal point regardless of
+the host locale. Complex types are checked, but lint still does not model
+both components of complex constants.
+
 ## Control flow analysis
 
 Lint roughly tracks the control flow inside a single function.
@@ -242,6 +258,16 @@ There may be other code or comments in the same line of the `.c` file.
 Each diagnostic has its own test `msg_???.c` that triggers the corresponding
 diagnostic.
 Most other tests focus on a single feature.
+
+The target-format arithmetic, parsing and formatting checks are in
+`usr.bin/xlint/lint1/tests`; `run-native.sh` also checks lint2's binary128
+library roundtrip using `tests/usr.bin/xlint/float128`. Run this explicit
+check through the SDK `run-native-check.py` shell tool so that `CC` and
+`PYTHON` are supplied by the selected native prefix. Its arguments are the
+absolute OS source and work directories, SDK `link-launcher.py`, shared
+link lock directory and context, and the matching built `lint2` executable.
+The Clang compile-only ABI oracle is `tests/usr.bin/xlint/float128/abi.c`;
+the lint integration fixture is `lint1/d_gcc_float128.c`.
 
 ## Adding a new test
 

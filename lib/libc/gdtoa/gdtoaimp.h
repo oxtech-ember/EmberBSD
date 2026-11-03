@@ -179,6 +179,9 @@ THIS SOFTWARE.
 
 /* #define IEEE_{BIG,LITTLE}_ENDIAN in ${ARCHDIR}/gdtoa/arith.h */
 
+#ifdef GDTOA_XLINT_HOST
+#include "gdtoa_lint_host.h"
+#endif
 #include <assert.h>
 #include <stdint.h>
 #define Short   int16_t
@@ -189,7 +192,7 @@ THIS SOFTWARE.
 #define ULLong uint64_t
 
 #define INFNAN_CHECK
-#ifdef _REENTRANT
+#if defined(_REENTRANT) && !defined(GDTOA_XLINT_HOST)
 #define MULTIPLE_THREADS
 #endif
 #define USE_LOCALE
@@ -605,7 +608,7 @@ extern void memcpy_D2A ANSI((void*, const void*, size_t));
  extern char *dtoa ANSI((double d, int mode, int ndigits,
 			int *decpt, int *sign, char **rve));
  extern char *g__fmt ANSI((char*, char*, char*, int, ULong, size_t));
- extern int gethex ANSI((CONST char**, CONST FPI*, Long*, Bigint**, int, locale_t));
+ extern int gethex ANSI((CONST char**, CONST FPI*, Long*, Bigint**, int, GDTOA_LOCALE_TYPE));
  extern void hexdig_init_D2A(Void);
  extern int hexnan ANSI((CONST char**, CONST FPI*, ULong*));
  extern int hi0bits_D2A ANSI((ULong));

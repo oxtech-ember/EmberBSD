@@ -651,7 +651,7 @@ static floatx80
 {
     int8 roundingMode;
     flag roundNearestEven, increment, isTiny;
-    int64 roundIncrement, roundMask, roundBits;
+    bits64 roundIncrement, roundMask, roundBits;
 
     roundingMode = float_rounding_mode();
     roundNearestEven = ( roundingMode == float_round_nearest_even );
@@ -1284,7 +1284,7 @@ float128 int64_to_float128( int64 a )
 
     if ( a == 0 ) return packFloat128( 0, 0, 0, 0 );
     zSign = ( a < 0 );
-    absA = zSign ? - a : a;
+    absA = zSign ? (uint64) 0 - (uint64) a : (uint64) a;
     shiftCount = countLeadingZeros64( absA ) + 49;
     zExp = 0x406E - shiftCount;
     if ( 64 <= shiftCount ) {
@@ -3833,7 +3833,7 @@ floatx80 floatx80_div( floatx80 a, floatx80 b )
 
 floatx80 floatx80_rem( floatx80 a, floatx80 b )
 {
-    flag aSign, bSign, zSign;
+    flag aSign, zSign;
     int32 aExp, bExp, expDiff;
     bits64 aSig0, aSig1, bSig;
     bits64 q, term0, term1, alternateASig0, alternateASig1;
@@ -3844,7 +3844,6 @@ floatx80 floatx80_rem( floatx80 a, floatx80 b )
     aSign = extractFloatx80Sign( a );
     bSig = extractFloatx80Frac( b );
     bExp = extractFloatx80Exp( b );
-    bSign = extractFloatx80Sign( b );
     if ( aExp == 0x7FFF ) {
         if (    (bits64) ( aSig0<<1 )
              || ( ( bExp == 0x7FFF ) && (bits64) ( bSig<<1 ) ) ) {
@@ -4942,11 +4941,10 @@ float128 float128_div( float128 a, float128 b )
 
 float128 float128_rem( float128 a, float128 b )
 {
-    flag aSign, bSign, zSign;
+    flag aSign, zSign;
     int32 aExp, bExp, expDiff;
     bits64 aSig0, aSig1, bSig0, bSig1, q, term0, term1, term2;
-    bits64 allZero, alternateASig0, alternateASig1, sigMean1;
-    sbits64 sigMean0;
+    bits64 allZero, alternateASig0, alternateASig1, sigMean0, sigMean1;
     float128 z;
 
     aSig1 = extractFloat128Frac1( a );
@@ -4956,7 +4954,6 @@ float128 float128_rem( float128 a, float128 b )
     bSig1 = extractFloat128Frac1( b );
     bSig0 = extractFloat128Frac0( b );
     bExp = extractFloat128Exp( b );
-    bSign = extractFloat128Sign( b );
     if ( aExp == 0x7FFF ) {
         if (    ( aSig0 | aSig1 )
              || ( ( bExp == 0x7FFF ) && ( bSig0 | bSig1 ) ) ) {
@@ -5032,7 +5029,7 @@ float128 float128_rem( float128 a, float128 b )
     } while ( 0 <= (sbits64) aSig0 );
     add128(
         aSig0, aSig1, alternateASig0, alternateASig1, &sigMean0, &sigMean1 );
-    if (    ( sigMean0 < 0 )
+    if (    ( (sbits64) sigMean0 < 0 )
          || ( ( ( sigMean0 | sigMean1 ) == 0 ) && ( q & 1 ) ) ) {
         aSig0 = alternateASig0;
         aSig1 = alternateASig1;

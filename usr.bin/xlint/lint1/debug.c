@@ -223,9 +223,11 @@ debug_node(const tnode_t *tn) // NOLINT(misc-no-recursion)
 		debug_printf("\n");
 		break;
 	case CON:
-		if (is_floating(tn->tn_type->t_tspec))
-			debug_printf(", value %Lg", tn->u.value.u.floating);
-		else if (is_uinteger(tn->tn_type->t_tspec))
+		if (is_floating(tn->tn_type->t_tspec)) {
+			char buf[64];
+			format_floating_value(&tn->u.value, buf, sizeof(buf));
+			debug_printf(", value %s", buf);
+		} else if (is_uinteger(tn->tn_type->t_tspec))
 			debug_printf(", value %llu",
 			    (unsigned long long)tn->u.value.u.integer);
 		else if (is_integer(tn->tn_type->t_tspec))
@@ -560,9 +562,11 @@ debug_token(const token *tok)
 	case TK_CONSTANT:;
 		val_t c = tok->u.constant;
 		tspec_t t = c.v_tspec;
-		if (is_floating(t))
-			debug_printf("%Lg", c.u.floating);
-		else if (is_uinteger(t))
+		if (is_floating(t)) {
+			char buf[64];
+			format_floating_value(&c, buf, sizeof(buf));
+			debug_printf("%s", buf);
+		} else if (is_uinteger(t))
 			debug_printf("%llu", (unsigned long long)c.u.integer);
 		else if (is_integer(t))
 			debug_printf("%lld", (long long)c.u.integer);

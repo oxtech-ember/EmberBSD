@@ -8,6 +8,15 @@ SRCS=		cgram.y \
 		decl.c emit.c emit1.c err.c func.c init.c inittyp.c lex.c \
 		main1.c mem.c mem1.c oper.c scan.l tree.c tyname.c
 
+# The x86 targets model all floating formats independently of host long double.
+.if ${MACHINE_ARCH} == "i386" || ${MACHINE_ARCH} == "x86_64"
+.PATH: ${NETBSDSRCDIR}/lib/libc/gdtoa
+SRCS+= lint_fp.c lint_softfloat.c lint_fp_parse.c lint_fp_format.c
+SRCS+= strtodg.c gethex.c hexnan.c misc.c smisc.c gmisc.c hd_init.c gdtoa.c dmisc.c
+CPPFLAGS+= -DGDTOA_XLINT_HOST -I${NETBSDSRCDIR}/usr.bin/xlint/lint1/gdtoa-host
+CPPFLAGS+= -I${NETBSDSRCDIR}/lib/libc/gdtoa
+.endif
+
 MAN=		lint.7
 YHEADER=
 #DBG=		-g

@@ -47,7 +47,7 @@ __RCSID("$NetBSD: scan.l,v 1.143 2024/12/08 17:12:01 rillig Exp $");
 HEX	[0-9A-Fa-f]
 EXP	([eE][+-]?[0-9]+)
 PEXP	(p[+-]?[0-9A-Fa-f]+)
-FSUF	([fFlL]?[i]?)
+FSUF	(([fFlLqQ]|[fF]128)?[i]?)
 
 punctuator_1	[\[\](){}.]|->
 punctuator_2	{punctuator_1}|\+\+|--|[&*+\-~!]

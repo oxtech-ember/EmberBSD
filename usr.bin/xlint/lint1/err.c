@@ -434,9 +434,9 @@ static const char *const msgs[] = {
 	"'%.*s' overlaps earlier '%.*s' on bit %u",			// 376
 	"redundant '\\0' at the end of the format",			// 377
 	"conversion '%.*s' is unreachable by input value",		// 378
-	"comparing integer '%s' to floating point constant %Lg",	// 379
-	"lossy conversion of %Lg to '%s', arg #%d",			// 380
-	"lossy conversion of %Lg to '%s'",				// 381
+	"comparing integer '%s' to floating point constant %s",	// 379
+	"lossy conversion of %s to '%s', arg #%d",			// 380
+	"lossy conversion of %s to '%s'",				// 381
 	"constant assignment of type '%s' in operand of '%s' always evaluates to '%s'", // 382
 	"passing '%s' as argument %d to '%s' discards '%s'",		// 383
 	"function definition for '%s' with identifier list is obsolete in C23", // 384

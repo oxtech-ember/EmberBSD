@@ -155,6 +155,10 @@ static const struct keyword {
 	kwdef_sclass(	"extern",	EXTERN,			78,0,1),
 	kwdef_const(	"false",	NC_FALSE,		23,0,1),
 	kwdef_type(	"float",	FLOAT,			78),
+#ifdef FLOAT128_SIZE
+	kwdef_type(	"__float128",	FLOAT128,		99),
+	kwdef_type(	"_Float128",	FLOAT128,		99),
+#endif
 	kwdef_keyword(	"for",		T_FOR),
 	kwdef_token(	"_Generic",	T_GENERIC,		11,0,1),
 	kwdef_keyword(	"goto",		T_GOTO),
@@ -637,7 +641,19 @@ lex_floating_constant(const char *text, size_t len)
 
 	char c = cp[len - 1];
 	tspec_t t;
-	if (c == 'f' || c == 'F') {
+	bool quad = c == 'q' || c == 'Q';
+	bool f128 = len > 4 && (cp[len - 4] == 'f' || cp[len - 4] == 'F')
+	    && memcmp(cp + len - 3, "128", 3) == 0;
+	if (quad || f128) {
+#ifdef FLOAT128_SIZE
+		t = imaginary ? F128COMPLEX : FLOAT128;
+#else
+		/* syntax error '%s' */
+		error(249, "__float128 is not supported by this target");
+		t = imaginary ? DCOMPLEX : DOUBLE;
+#endif
+		len -= quad ? 1 : 4;
+	} else if (c == 'f' || c == 'F') {
 		t = imaginary ? FCOMPLEX : FLOAT;
 		len--;
 	} else if (c == 'l' || c == 'L') {
@@ -650,6 +666,16 @@ lex_floating_constant(const char *text, size_t len)
 		/* suffixes 'F' or 'L' require C90 or later */
 		warning(98);
 
+#ifdef FLOAT128_SIZE
+	lint_fp_t value;
+	unsigned status;
+	lint_assert(lint_fp_parse(cp, len, floating_format(t), &value, &status));
+	if ((status & (LINT_FP_OVERFLOW | LINT_FP_UNDERFLOW)) != 0)
+		/* floating-point constant out of range */
+		warning(248);
+	if ((status & LINT_FP_OVERFLOW) != 0)
+		value = lint_fp_max_finite(floating_format(t));
+#else
 	errno = 0;
 	char *eptr;
 	long double ld = strtold(cp, &eptr);
@@ -674,9 +700,14 @@ lex_floating_constant(const char *text, size_t len)
 		}
 	}
 
+#endif
 	yylval.y_val = xcalloc(1, sizeof(*yylval.y_val));
 	yylval.y_val->v_tspec = t;
+#ifdef FLOAT128_SIZE
+	yylval.y_val->u.floating = value;
+#else
 	yylval.y_val->u.floating = ld;
+#endif
 
 	return T_CON;
 }

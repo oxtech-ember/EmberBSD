@@ -323,7 +323,7 @@ mantbits(U *d)
 
  int
 strtodg(CONST char *s00, char **se, CONST FPI *fpi, Long *expt, ULong *bits,
-	locale_t loc)
+	GDTOA_LOCALE_TYPE loc)
 {
 	int abe, abits, asub;
 #ifdef INFNAN_CHECK
@@ -340,8 +340,14 @@ strtodg(CONST char *s00, char **se, CONST FPI *fpi, Long *expt, ULong *bits,
 	ULong *b, *be, y, z;
 	Bigint *ab, *bb, *bb1, *bd, *bd0, *bs, *delta, *rvb, *rvb0;
 #ifdef USE_LOCALE /*{{*/
+#ifdef GDTOA_XLINT_HOST
+	const char *decimalpoint = ".";
+	size_t dplen = 1;
+	(void)loc;
+#else
 	char *decimalpoint = localeconv_l(loc)->decimal_point;
 	size_t dplen = strlen(decimalpoint);
+#endif
 #endif /*USE_LOCALE}}*/
 
 	e2 = 0;	/* XXX gcc */

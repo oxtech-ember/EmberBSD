@@ -55,6 +55,9 @@ code that are retained.
 
 =============================================================================*/
 
+#ifdef SOFTFLOAT_ENV_HEADER
+#include SOFTFLOAT_ENV_HEADER
+#else
 #include <sys/types.h>
 
 #if !defined(_KERNEL) && !defined(_STANDALONE)
@@ -65,6 +68,7 @@ code that are retained.
 #include "machine/ieeefp.h"
 #endif
 #include <sys/endian.h>
+#endif
 
 /*----------------------------------------------------------------------------
 | The macro `FLOATX80' must be defined to enable the double-extended-precision
@@ -345,6 +349,7 @@ int float128_lt( float128, float128 );
 int float128_eq_signaling( float128, float128 );
 int float128_le_quiet( float128, float128 );
 int float128_lt_quiet( float128, float128 );
+int float128_is_nan( float128 );
 int float128_is_signaling_nan( float128 );
 
 #endif
