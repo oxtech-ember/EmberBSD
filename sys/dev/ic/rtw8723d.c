@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0 OR BSD-3-Clause */
+/* Copyright 2024 Fiona Klute. */
 /* Copyright(c) 2018-2019 Realtek Corporation. */
 /* Copyright (c) 2026 EmberBSD contributors. */
 /* Origin: Linux adc218676eef25575469234709c2d87185ca223a,
