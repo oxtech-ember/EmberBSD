@@ -203,6 +203,7 @@ static void ieee80211_sta_leave(struct ieee80211com *,struct ieee80211_node *);
 static void ieee80211_begin_scan(struct ieee80211com *,int);
 static void explicit_memset(void *,int,size_t);
 static int printf(const char *,...);
+static void espwifi_os_log(const char *,...);
 static int ieee80211_new_state(struct ieee80211com *ic,enum ieee80211_state state,int arg);
 ''' + function('espwifi_if_radio_started','void') + function('espwifi_if_radio_stopped','void') + function('espwifi_if_sae_teardown_complete','void') + bridge_function('espwifi_ext_clear_assoc_appies','void') + glue_function('espwifi_disconnect','int') + function('espwifi_if_newstate','int') + function('espwifi_if_join_control','void') + function('espwifi_if_link_event','void') + function('espwifi_if_link','void') + function('espwifi_if_assoc_response','int') + function('espwifi_if_wpa_in_4way','bool') + bridge_function('espwifi_wpa2_sta_rx_mgmt','int') + r'''
 ''' + function('espwifi_if_set_port','int') + r'''
@@ -213,6 +214,7 @@ static int ieee80211_new_state(struct ieee80211com *ic,enum ieee80211_state stat
  return ic->ic_newstate(ic,state,arg); }
 static void explicit_memset(void *p,int c,size_t n) { memset(p,c,n); }
 static int printf(const char *fmt,...) { (void)fmt;return 0; }
+static void espwifi_os_log(const char *fmt,...) { (void)fmt; }
 int main(void) {
  struct espwifi_softc *sc=&espwifi_sc;
  struct ieee80211_node bss={.ni_bssid={2,3,4,5,6,7},.ni_essid={'t','e','s','t'},.ni_esslen=4};

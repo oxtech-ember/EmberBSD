@@ -820,7 +820,22 @@ espwifi_if_newstate(struct ieee80211com *ic, enum ieee80211_state state, int arg
 		size_t ies_len = ic->ic_opt_ie_len;
 		const uint8_t *rsn = NULL;
 		size_t rsn_len = 0, rsn_offset = 0;
-		bool busy, started, stopped, sae;
+		bool busy, started, stopped, sae, sae_selection_valid;
+		bool sae_bssid_match, sae_match, wpa_enabled;
+		unsigned int reject_reason = 0;
+		unsigned int esslen = ni != NULL ? ni->ni_esslen : 0;
+		uint64_t generation;
+		int error;
+		enum {
+			AUTH_REJECT_SAE_STALE = 1,
+			AUTH_REJECT_JOIN_BUSY,
+			AUTH_REJECT_JOIN_STOPPED,
+			AUTH_REJECT_STATE,
+			AUTH_REJECT_ASSOC_IE,
+			AUTH_REJECT_JOIN_RACE,
+			AUTH_REJECT_RADIO_RACE,
+			AUTH_REJECT_SAE_RACE
+		};
 
 		mutex_spin_enter(&sc->sc_scan_lock);
 		busy = sc->sc_join_active != 0 || sc->sc_join_disconnect_pending ||
@@ -829,50 +844,79 @@ espwifi_if_newstate(struct ieee80211com *ic, enum ieee80211_state state, int arg
 		ready = sc->sc_radio_ready;
 		started = sc->sc_sta_started;
 		sae = sc->sc_sae_selection;
-		if (sae && (ni == NULL || sc->sc_sae_selection_generation == 0 ||
-		    memcmp(sc->sc_sae_selection_bssid, ni->ni_bssid,
-		    ETHER_ADDR_LEN) != 0)) {
-			mutex_spin_exit(&sc->sc_scan_lock);
-			return ESTALE;
-		}
+		sae_selection_valid = sc->sc_sae_selection_generation != 0;
+		sae_bssid_match = ni != NULL && memcmp(sc->sc_sae_selection_bssid,
+		    ni->ni_bssid, ETHER_ADDR_LEN) == 0;
 		mutex_spin_exit(&sc->sc_scan_lock);
-		if (busy)
-			return EBUSY;
-		if (stopped)
-			return EOPNOTSUPP;
+		sae_match = !sae || (sae_selection_valid && sae_bssid_match);
+		wpa_enabled = (ic->ic_flags & IEEE80211_F_WPA) != 0;
+		espwifi_os_log("espwifi: AUTH snapshot old=%u busy=%u stopped=%u "
+		    "ready=%u started=%u sae=%u sae_valid=%u sae_bssid_match=%u "
+		    "bss=%u esslen=%u ieslen=%u wpa=%u\n",
+		    (unsigned)oldstate, (unsigned)busy, (unsigned)stopped,
+		    (unsigned)ready, (unsigned)started, (unsigned)sae,
+		    (unsigned)sae_selection_valid, (unsigned)sae_bssid_match,
+		    (unsigned)(ni != NULL), esslen, (unsigned)ies_len,
+		    (unsigned)wpa_enabled);
+		if (!sae_match) {
+			reject_reason = AUTH_REJECT_SAE_STALE;
+			error = ESTALE;
+			goto auth_rejected;
+		}
+		if (busy) {
+			reject_reason = AUTH_REJECT_JOIN_BUSY;
+			error = EBUSY;
+			goto auth_rejected;
+		}
+		if (stopped) {
+			reject_reason = AUTH_REJECT_JOIN_STOPPED;
+			error = EOPNOTSUPP;
+			goto auth_rejected;
+		}
 
 		/* FullMAC owns 802.11 authentication and association frames. */
 		if (!ready || !started || oldstate != IEEE80211_S_SCAN || ni == NULL ||
-		    ni->ni_esslen == 0 || ni->ni_esslen > sizeof(sc->sc_join_ssid) ||
-		    ies == NULL || ies_len == 0 ||
-		    ies_len > sizeof(sc->sc_join_ies) ||
-		    (ic->ic_flags & IEEE80211_F_WPA) == 0)
-			return EOPNOTSUPP;
+		    esslen == 0 || esslen > sizeof(sc->sc_join_ssid) || ies == NULL ||
+		    ies_len == 0 || ies_len > sizeof(sc->sc_join_ies) || !wpa_enabled) {
+			reject_reason = AUTH_REJECT_STATE;
+			error = EOPNOTSUPP;
+			goto auth_rejected;
+		}
 		if (!ieee80211_assoc_rsn_parse(ies, ies_len, &rsn,
 		    &rsn_len, &rsn_offset) ||
-		    (sae && !ieee80211_sae_rsn_valid(rsn, rsn_len)))
-			return EOPNOTSUPP;
+		    (sae && !ieee80211_sae_rsn_valid(rsn, rsn_len))) {
+			reject_reason = AUTH_REJECT_ASSOC_IE;
+			error = EOPNOTSUPP;
+			goto auth_rejected;
+		}
 		mutex_spin_enter(&sc->sc_scan_lock);
 		if (sc->sc_join_active != 0 || sc->sc_join_disconnect_pending ||
 		    sc->sc_join_barrier_busy) {
 			mutex_spin_exit(&sc->sc_scan_lock);
-			return EBUSY;
+			reject_reason = AUTH_REJECT_JOIN_RACE;
+			error = EBUSY;
+			goto auth_rejected;
 		}
 		if (!sc->sc_radio_ready || !sc->sc_sta_started ||
 		    sc->sc_join_stopped) {
 			mutex_spin_exit(&sc->sc_scan_lock);
-			return EOPNOTSUPP;
+			reject_reason = AUTH_REJECT_RADIO_RACE;
+			error = EOPNOTSUPP;
+			goto auth_rejected;
 		}
 		if (sc->sc_sae_selection != sae || (sae &&
 		    (sc->sc_sae_selection_generation == 0 ||
 		    memcmp(sc->sc_sae_selection_bssid, ni->ni_bssid,
 		    ETHER_ADDR_LEN) != 0))) {
 			mutex_spin_exit(&sc->sc_scan_lock);
-			return ESTALE;
+			reject_reason = AUTH_REJECT_SAE_RACE;
+			error = ESTALE;
+			goto auth_rejected;
 		}
 		if (++sc->sc_join_generation == 0)
 			sc->sc_join_generation++;
 		sc->sc_join_active = sc->sc_join_generation;
+		generation = sc->sc_join_active;
 		sc->sc_join_pending = true;
 		sc->sc_joined = false;
 		sc->sc_join_sae = sae;
@@ -890,8 +934,15 @@ espwifi_if_newstate(struct ieee80211com *ic, enum ieee80211_state state, int arg
 		/* FullMAC owns 802.11 authentication and association frames. */
 		ic->ic_state = IEEE80211_S_AUTH;
 		mutex_spin_exit(&sc->sc_scan_lock);
+		espwifi_os_log("espwifi: AUTH decision=queued generation=%llu sae=%u\n",
+		    (unsigned long long)generation, (unsigned)sae);
 		espwifi_os_sem_give(sc->sc_scan_ctl_sem);
 		return 0;
+
+auth_rejected:
+		espwifi_os_log("espwifi: AUTH decision=reject reason=%u error=%d\n",
+		    reject_reason, error);
+		return error;
 #endif
 	}
 	if (state == IEEE80211_S_ASSOC || state == IEEE80211_S_RUN)
@@ -1356,6 +1407,7 @@ espwifi_if_join_control(struct espwifi_softc *sc)
 	disconnect = sc->sc_join_disconnect_pending;
 	join = !disconnect && sc->sc_join_pending;
 	if (disconnect) {
+		generation = sc->sc_join_generation;
 		sc->sc_join_disconnect_pending = false;
 		sc->sc_join_barrier_busy = true;
 		sc->sc_join_stopped = true;
@@ -1378,6 +1430,9 @@ espwifi_if_join_control(struct espwifi_softc *sc)
 		return;
 
 	if (disconnect) {
+		espwifi_os_log("espwifi: join worker teardown start generation=%llu "
+		    "rescan=%u\n", (unsigned long long)generation,
+		    (unsigned)rescan);
 		error = espwifi_disconnect();
 		mutex_spin_enter(&sc->sc_scan_lock);
 		if (error == 0)
@@ -1385,6 +1440,9 @@ espwifi_if_join_control(struct espwifi_softc *sc)
 		else
 			sc->sc_radio_ready = false;
 		mutex_spin_exit(&sc->sc_scan_lock);
+		espwifi_os_log("espwifi: join worker teardown result generation=%llu "
+		    "error=%d rescan=%u\n", (unsigned long long)generation,
+		    error, (unsigned)rescan);
 		if (error != 0) {
 			printf("espwifi0: radio teardown barrier failed\n");
 			return;
@@ -1401,6 +1459,8 @@ espwifi_if_join_control(struct espwifi_softc *sc)
 		return;
 	}
 
+	espwifi_os_log("espwifi: join worker dequeue generation=%llu sae=%u\n",
+	    (unsigned long long)generation, (unsigned)sae);
 	error = espwifi_ext_connect(ssid, ssid_len, bssid, ies, ies_len, sae);
 	explicit_memset(ies, 0, sizeof(ies));
 	explicit_memset(ssid, 0, sizeof(ssid));
@@ -1416,6 +1476,9 @@ espwifi_if_join_control(struct espwifi_softc *sc)
 		sc->sc_join_rescan_pending = true;
 	}
 	mutex_spin_exit(&sc->sc_scan_lock);
+	espwifi_os_log("espwifi: join worker result generation=%llu error=%d "
+	    "current=%u\n", (unsigned long long)generation, error,
+	    (unsigned)current);
 	if (error != 0 && current) {
 		printf("espwifi0: WPA2 association request failed\n");
 		espwifi_os_sem_give(sc->sc_scan_ctl_sem);

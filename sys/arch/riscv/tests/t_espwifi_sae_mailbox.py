@@ -98,6 +98,7 @@ typedef int esp_err_t;
 #define ESPWIFI_NET80211_WPA2 1
 #define ESPWIFI_SAE_HEADER_LEN 30
 #define ESPWIFI_SAE_BODY_MAX (IEEE80211_SAE_DATA_MAX - ESPWIFI_SAE_HEADER_LEN)
+static void espwifi_os_log(const char *fmt,...) { (void)fmt; }
 #define ESPWIFI_SAE_WAIT_NONE 0
 #define ESPWIFI_SAE_WAIT_TX 1
 #define ESPWIFI_SAE_WAIT_STATUS 2
