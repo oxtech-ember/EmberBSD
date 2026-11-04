@@ -5586,10 +5586,11 @@ static int gfx_v9_0_eop_irq(struct amdgpu_device *adev,
 	u8 me_id, pipe_id, queue_id;
 	struct amdgpu_ring *ring;
 
-	DRM_DEBUG("IH: CP EOP\n");
 	me_id = (entry->ring_id & 0x0c) >> 2;
 	pipe_id = (entry->ring_id & 0x03) >> 0;
 	queue_id = (entry->ring_id & 0x70) >> 4;
+	DRM_DEBUG("IH: CP EOP ring_id=%u me=%u pipe=%u queue=%u\n",
+	    entry->ring_id, me_id, pipe_id, queue_id);
 
 	switch (me_id) {
 	case 0:

@@ -251,6 +251,8 @@ bool amdgpu_fence_process(struct amdgpu_ring *ring)
 		seq = amdgpu_fence_read(ring);
 
 	} while (atomic_cmpxchg(&drv->last_seq, last_seq, seq) != last_seq);
+	DRM_DEBUG("ring %s fence: previous=%u read=%u emitted=%u\n",
+	    ring->name, last_seq, seq, READ_ONCE(drv->sync_seq));
 
 	if (del_timer(&ring->fence_drv.fallback_timer) &&
 	    seq != ring->fence_drv.sync_seq)
