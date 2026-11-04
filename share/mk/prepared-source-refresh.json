@@ -380,6 +380,25 @@
       "recursive_producer_dirs": [
         "crypto/external/apache2/openssl"
       ]
+    },
+    "EMBER_EXPAT_SOURCE": {
+      "producer_dirs": [
+        "external/mit/expat/lib/libexpat"
+      ],
+      "header_prefixes": [
+        "usr/include/expat.h",
+        "usr/include/expat_external.h",
+        "usr/include/expat_config.h"
+      ],
+      "consumer_dirs": [
+        "external/mit/expat/bin/xmlwf",
+        "external/bsd/libarchive/bin/cpio",
+        "external/bsd/libarchive/bin/tar"
+      ],
+      "linked_names": [
+        "libexpat.so",
+        "libexpat.a"
+      ]
     }
   },
   "header_independent_object_patterns": [

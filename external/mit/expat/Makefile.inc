@@ -3,7 +3,10 @@
 .include <bsd.own.mk>
 
 EXPATDIR=	${NETBSDSRCDIR}/external/mit/expat
-EXPATSRCDIR=	${NETBSDSRCDIR}/external/mit/expat/dist
+.if !defined(EMBER_EXPAT_SOURCE) && !(make(obj) && empty(.TARGETS:Nobj))
+.error Set EMBER_EXPAT_SOURCE to the prepared common Ports source
+.endif
+EXPATSRCDIR=	${EMBER_EXPAT_SOURCE}
 
 .for _LIB in expat
 .if !defined(EXPATOBJDIR.${_LIB})

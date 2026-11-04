@@ -2,7 +2,7 @@
 
 BINDIR?=	/usr/bin
 
-CPPFLAGS+=	-I ${EXPATSRCDIR}/lib -I ${EXPATSRCDIR}/../lib/libexpat
+CPPFLAGS+=	-I ${EXPATSRCDIR}/lib -I ${EXPATDIR}/lib/libexpat
 
 LDADD+=	-L${EXPATOBJDIR.expat} -lexpat
 DPADD+=	${EXPATLIB.expat}

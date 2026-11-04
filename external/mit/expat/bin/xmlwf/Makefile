@@ -4,8 +4,8 @@
 
 PROG=	xmlwf
 
-.PATH:	${EXPATSRCDIR}/xmlwf
+.PATH:	${EXPATSRCDIR}/xmlwf ${EXPATSRCDIR}/lib
 
-SRCS=	codepage.c unixfilemap.c xmlfile.c xmlwf.c
+SRCS=	xcs.c codepage.c unixfilemap.c xmlfile.c xmlwf.c
 
 .include <bsd.prog.mk>

@@ -87,7 +87,10 @@
 #define PACKAGE_NAME "expat"
 
 /* Define to the full name and version of this package. */
-#define PACKAGE_STRING "expat 2.8.1"
+/* PACKAGE_STRING follows the selected upstream headers. */
+#define EMBER_EXPAT_STRINGIFY_(n) #n
+#define EMBER_EXPAT_STRINGIFY(n) EMBER_EXPAT_STRINGIFY_(n)
+#define PACKAGE_STRING "expat " PACKAGE_VERSION
 
 /* Define to the one symbol short name of this package. */
 #define PACKAGE_TARNAME "expat"
@@ -96,13 +99,14 @@
 #define PACKAGE_URL ""
 
 /* Define to the version of this package. */
-#define PACKAGE_VERSION "2.8.1"
+#define PACKAGE_VERSION EMBER_EXPAT_STRINGIFY(XML_MAJOR_VERSION) "." \
+    EMBER_EXPAT_STRINGIFY(XML_MINOR_VERSION) "." EMBER_EXPAT_STRINGIFY(XML_MICRO_VERSION)
 
 /* Define to 1 if you have the ANSI C header files. */
 #define STDC_HEADERS 1
 
 /* Version number of package */
-#define VERSION "2.8.1"
+#define VERSION PACKAGE_VERSION
 
 /* whether byteorder is bigendian */
 #if defined AC_APPLE_UNIVERSAL_BUILD
@@ -144,5 +148,7 @@
 
 /* Define to `long' if <sys/types.h> does not define. */
 /* #undef off_t */
+
+#include <expat.h>
 
 #endif // ndef EXPAT_CONFIG_H
