@@ -128,6 +128,17 @@ module A133Unlock
       raise A133Unlock::Invalid,'usb_unlock_readback_mismatch' unless after==before.merge(mode:expected)
       after
     end
+    def recovery_root_ready(timeout)
+      return true unless @roots.fetch('recovery')=='adbd'
+      uid=A133Usb::Channel.new(@adb,timeout).run(['-s',@serial,'shell','-T','id -u'])[:output].strip
+      return true if uid=='0'
+      return false if uid=='2000'
+      raise A133Unlock::Invalid,'usb_root_required'
+    rescue A133Usb::Invalid => error
+      # The caller owns adb root. Its daemon restart can interrupt this read.
+      raise unless %w[usb_command_failed usb_pipe_failed usb_timeout].include?(error.message)
+      false
+    end
     def wait_recovery
       deadline=Process.clock_gettime(Process::CLOCK_MONOTONIC)+@wait_timeout
       loop do
@@ -135,8 +146,15 @@ module A133Unlock
         raise A133Unlock::Invalid,'usb_unlock_wait_timeout' if remaining<=0
         state=inventory([@timeout,remaining.ceil].min)
         raise A133Unlock::Invalid,'usb_unlock_wait_timeout' if Process.clock_gettime(Process::CLOCK_MONOTONIC)>=deadline
-        return if state=='recovery'
-        raise A133Unlock::Invalid,'usb_unlock_device_not_ready' unless state.nil? || %w[device offline].include?(state)
+        if state=='recovery'
+          remaining=deadline-Process.clock_gettime(Process::CLOCK_MONOTONIC)
+          raise A133Unlock::Invalid,'usb_unlock_wait_timeout' if remaining<=0
+          ready=recovery_root_ready([@timeout,remaining.ceil].min)
+          raise A133Unlock::Invalid,'usb_unlock_wait_timeout' if Process.clock_gettime(Process::CLOCK_MONOTONIC)>=deadline
+          return if ready
+        elsif !state.nil? && !%w[device offline].include?(state)
+          raise A133Unlock::Invalid,'usb_unlock_device_not_ready'
+        end
         remaining=deadline-Process.clock_gettime(Process::CLOCK_MONOTONIC)
         sleep [remaining,0.1].min if remaining>0
       end
@@ -192,7 +210,7 @@ module A133Unlock
       report=(@latest || {possible_write:started,possible_reboot:started,installation_ready:false}).merge(status:'unlock_stage_stopped',effects_unknown:true)
       raise Invalid.new(self.class.reason(error),report),cause:nil
     end
-    private :initialize,:inventory,:hash_role,:observe,:record,:write_prefix,:wait_recovery,:perform
+    private :initialize,:inventory,:hash_role,:observe,:record,:write_prefix,:recovery_root_ready,:wait_recovery,:perform
   end
 end
 
