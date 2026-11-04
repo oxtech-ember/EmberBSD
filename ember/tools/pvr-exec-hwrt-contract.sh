@@ -12,6 +12,8 @@ sed -n '/^pvr_create_hwrt_dataset(/,/^}/p' \
     "$src/sys/external/bsd/drm2/powervr/pvr_exec_hwrt.c" >> "$work/hwrt-admission.inc"
 printf 'static void\n' > "$work/hwrt-production.inc"
 sed -n '/^hwrt_tiles(/,/^}/p' "$src/sys/external/bsd/drm2/powervr/pvr_exec_hwrt.c" >> "$work/hwrt-production.inc"
+printf 'static void\n' >> "$work/hwrt-production.inc"
+sed -n '/^hwrt_tiles_v1(/,/^}/p' "$src/sys/external/bsd/drm2/powervr/pvr_exec_hwrt.c" >> "$work/hwrt-production.inc"
 printf 'static uint32_t\n' >> "$work/hwrt-production.inc"
 sed -n '/^hwrt_next_pow2(/,/^}/p' "$src/sys/external/bsd/drm2/powervr/pvr_exec_hwrt.c" >> "$work/hwrt-production.inc"
 printf 'static int\n' >> "$work/hwrt-production.inc"

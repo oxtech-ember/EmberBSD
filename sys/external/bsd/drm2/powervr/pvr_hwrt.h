@@ -37,11 +37,15 @@ struct pvr_hwrt_target {
  * The caller retains both free lists, their VM and all GPU mapping spans.
  * It checks that both free lists and each render context use that same VM.
  * GPU addresses, spans and BO flags are checked before this module is called.
- * This profile accepts BVNC 36.56.104.183, 16x16 tiles and parameter format 2.
- * Width and height are 1..8192; samples are 1, 2 or 4; layers are 1..2048.
+ * Two profiles use 16x16 tiles. BVNC 36.56.104.183 uses parameter format 2
+ * and renders up to 8192x8192. BVNC 22.102.54.38 (GE8300) uses parameter
+ * format 1 with one macrotile and no macrotile array, up to 4096x4096.
+ * Samples are 1, 2 or 4 and layers are 1..2048; GE8300 accepts only one
+ * sample and one layer.
  * region_header_size counts headers; the caller separately computes the
  * aligned byte span for the BO hold. tpc_size counts bytes, and tpc_stride
- * counts 4096-byte PM pages. A zero macrotile array is valid for this profile.
+ * counts 4096-byte PM pages. GE8300 requires a zero macrotile array address;
+ * BVNC 36.56.104.183 accepts zero or a valid array.
  *
  * The output slot starts NULL. A non-NULL result on error is still owned.
  * target marks that RT exposed before the caller can publish its first KICK.

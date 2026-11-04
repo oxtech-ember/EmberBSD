@@ -41,6 +41,11 @@
 #define HWRT_RTC_BYTES			768
 #define HWRT_MTA_BYTES			128
 
+/* GE8300 profile: 16x16 tiles, parameter format version 1, one macrotile. */
+#define HWRT_GE8300_BVNC		UINT64_C(0x0016006600360026)
+#define HWRT_V1_REGION_HEADER_BYTES	5
+#define HWRT_V1_RENDER_MAX		4096
+
 struct pvr_exec_hwrt {
 	struct pvr_hwrt *firmware;
 	struct pvr_exec_freelist *local, *global;
@@ -70,6 +75,26 @@ hwrt_tiles(uint32_t width, uint32_t height, uint32_t samples,
 	*tiles_y = HWRT_MACROTILES_XY * ty;
 }
 
+/*
+ * Parameter format version 1 (GE8300) has a single macrotile that covers the
+ * whole render: Mesa rogue_get_num_macrotiles_xy() reports 1x1 and the
+ * region headers and tail pointers have no 2x2 tile groups.
+ */
+static void
+hwrt_tiles_v1(uint32_t width, uint32_t height, uint32_t samples,
+    uint32_t *tiles_x, uint32_t *tiles_y)
+{
+	uint32_t sx, sy;
+
+	switch (samples) {
+	case 2: sx = 1; sy = 2; break;
+	case 4: sx = 2; sy = 2; break;
+	default: sx = 1; sy = 1; break;
+	}
+	*tiles_x = (width + HWRT_TILE - 1) / HWRT_TILE * sx;
+	*tiles_y = (height + HWRT_TILE - 1) / HWRT_TILE * sy;
+}
+
 static uint32_t
 hwrt_next_pow2(uint32_t v)
 {
@@ -85,21 +110,37 @@ static int
 hwrt_spans(const struct drm_pvr_ioctl_create_hwrt_dataset_args *args,
     struct pvr_hwrt_config *config, uint64_t *span)
 {
-	uint32_t tiles_x, tiles_y, mtiles, tpc;
+	uint32_t tiles_x, tiles_y, mtiles, tpc, group, header_bytes;
 	uint64_t headers;
+	bool ge = config->bvnc == HWRT_GE8300_BVNC;
 
-	hwrt_tiles(args->width, args->height, args->samples, &tiles_x,
-	    &tiles_y);
+	if (ge) {
+		if (args->width == 0 || args->height == 0)
+			return EINVAL;
+		/* Hardware acceptance covers single-sample, single-layer renders. */
+		if (args->width > HWRT_V1_RENDER_MAX ||
+		    args->height > HWRT_V1_RENDER_MAX || args->samples != 1 ||
+		    args->layers != 1)
+			return EOPNOTSUPP;
+		hwrt_tiles_v1(args->width, args->height, args->samples,
+		    &tiles_x, &tiles_y);
+		group = 1;
+		header_bytes = HWRT_V1_REGION_HEADER_BYTES;
+	} else {
+		hwrt_tiles(args->width, args->height, args->samples, &tiles_x,
+		    &tiles_y);
+		group = HWRT_GROUP;
+		header_bytes = HWRT_REGION_HEADER_BYTES;
+	}
 	if (tiles_x == 0 || tiles_y == 0)
 		return EINVAL;
 	/* Firmware takes a header count; the mapping hold takes bytes. */
-	headers = (uint64_t)(tiles_x / HWRT_GROUP) *
-	    (tiles_y / HWRT_GROUP);
+	headers = (uint64_t)(tiles_x / group) * (tiles_y / group);
 	if (headers == 0 || headers > UINT32_MAX ||
 	    args->region_header_size != headers)
 		return EINVAL;
 	config->region_header_size = (uint32_t)headers;
-	span[0] = (headers * HWRT_REGION_HEADER_BYTES +
+	span[0] = (headers * header_bytes +
 	    HWRT_REGION_ALIGN - 1) & ~(uint64_t)(HWRT_REGION_ALIGN - 1);
 	if (span[0] > UINT32_MAX)
 		return EINVAL;
@@ -109,10 +150,9 @@ hwrt_spans(const struct drm_pvr_ioctl_create_hwrt_dataset_args *args,
 		if (span[0] > UINT32_MAX)
 			return EINVAL;
 	}
-	/* Tail pointer cache: next power of two squared, per 2x2 group. */
+	/* Tail pointer cache: next power of two squared, per tile group. */
 	mtiles = hwrt_next_pow2(tiles_x > tiles_y ? tiles_x : tiles_y);
-	tpc = (uint64_t)mtiles * mtiles / (HWRT_GROUP * HWRT_GROUP) *
-	    HWRT_TAIL_POINTER;
+	tpc = (uint64_t)mtiles * mtiles / (group * group) * HWRT_TAIL_POINTER;
 	if (tpc == 0)
 		return EINVAL;
 	config->tpc_size = tpc;
@@ -135,7 +175,7 @@ hwrt_spans(const struct drm_pvr_ioctl_create_hwrt_dataset_args *args,
 		return EINVAL;
 	span[2] = HWRT_VHEAP_BYTES;
 	span[3] = args->layers > 1 ? HWRT_RTC_BYTES : 0;
-	span[4] = HWRT_MTA_BYTES;
+	span[4] = ge ? 0 : HWRT_MTA_BYTES;
 	/* The MLIST size derives from both free lists below. */
 	return 0;
 }
@@ -312,8 +352,6 @@ pvr_create_hwrt_dataset(struct drm_device *dev, void *data,
 	const struct pvr_backend *be;
 	int error;
 
-	if (pvr_device_bvnc(dev) == UINT64_C(0x0016006600360026))
-		return -EOPNOTSUPP;
 	be = pvr_device_enter(dev);
 	error = be == NULL ? EOPNOTSUPP :
 	    pvr_create_hwrt_locked(dev, data, file, be);

@@ -34,6 +34,7 @@ static atomic_uint checks, allocations, fence_count;
 	fprintf(stderr,"FAIL %d: %s\n",__LINE__,#e); abort(); \
 } } while (0)
 #define KASSERT(e) CHECK(e)
+#define CTASSERT(e) _Static_assert((e), #e)
 #ifndef ERESTART
 #define ERESTART (-3) /* Native kernel restart sentinel. */
 #endif
@@ -270,7 +271,8 @@ pvr_context_transfer(struct pvr_context *c,
 	CHECK(gated && platform && c->type == DRM_PVR_CTX_TYPE_TRANSFER_FRAG);
 	CHECK(id != 0 && cmd->regs.pds_bgnd0_base == UINT64_C(0x9002000000));
 	CHECK(contexts[2].refs == 2 && contexts[2].vm.prepared == 1);
-	CHECK(cmd->flags == ROGUE_TRANSFER_FLAGS_SINGLE_CORE);
+	CHECK(cmd->flags == (selected_bvnc == PVR_STREAM_GE8300_BVNC ? 0 :
+	    ROGUE_TRANSFER_FLAGS_SINGLE_CORE));
 	transferred++;
 	return transfer_error;
 }
@@ -1063,7 +1065,20 @@ ge_submit_profile(void)
 	initialize(1);
 	selected_bvnc = PVR_STREAM_GE8300_BVNC;
 	set_transfer(0);
-	CHECK(submit() == -EOPNOTSUPP && computed == 0 && transferred == 0);
+	put32(streams[0], PVR_STREAM_GE8300_TRANSFER_SIZE);
+	jobs[0].cmd_stream_len = PVR_STREAM_GE8300_TRANSFER_SIZE;
+	jobs[0].flags = 0;
+	CHECK(submit() == 0 && computed == 0 && transferred == 1);
+	finish();
+	initialize_triple();
+	selected_bvnc = PVR_STREAM_GE8300_BVNC;
+	put32(streams[0], 40); put32(streams[0] + 40, 1);
+	put32(streams[0] + 44, 0x20); jobs[0].cmd_stream_len = 48;
+	for (unsigned i = 1; i < 3; i++) {
+		put32(streams[i], 376); put32(streams[i] + 376, 2);
+		put32(streams[i] + 380, 0x20);
+	}
+	CHECK(submit() == 0 && rendered == 1 && fragmented == 1);
 	finish();
 	selected_bvnc = PVR_STREAM_BVNC;
 }

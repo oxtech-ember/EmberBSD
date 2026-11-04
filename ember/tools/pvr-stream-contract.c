@@ -139,12 +139,14 @@ ge_graphics_streams(void)
 	CHECK(memcmp(&geom, &geom_saved, sizeof(geom)) == 0);
 	header(p, 384);
 	put32(p, 376); put32(p + 368, 0x1234);
-	put32(p + 372, 0x5678); put32(p + 376, 1); put32(p + 380, 0x20);
+	/* Mesa kmd_stream.xml: FRAG0 has_brn49927 is bit 1, unlike GEOM0. */
+	put32(p + 372, 0x5678); put32(p + 376, 2); put32(p + 380, 0x20);
 	CHECK(pvr_stream_fragment(ge, p, 384, 64, &frag, &type) == 0);
 	CHECK(frag.regs.tpu == 0x20 && frag.zls_stride == 0x1234 &&
 	    frag.sls_stride == 0x5678 && type == ROGUE_FWIF_CCB_CMD_TYPE_FRAG_PR);
 	memset(&frag, 0xa5, sizeof(frag)); saved = frag;
-	put32(p + 376, 2);
+	/* BRN47217 (bit 0) is not a GE8300 quirk. */
+	put32(p + 376, 1);
 	CHECK(pvr_stream_fragment(ge, p, 384, 0, &frag, &type) == EOPNOTSUPP);
 	CHECK(memcmp(&frag, &saved, sizeof(frag)) == 0);
 	header(p, 172);

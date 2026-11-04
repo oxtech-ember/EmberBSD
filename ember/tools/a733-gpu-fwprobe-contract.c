@@ -1619,11 +1619,29 @@ ge_service_tests(void)
 		    result.after.write_offset == i + 3);
 		CHECK(pvr_fwqueue_observe(&owner, &booted, &service, &observed) == 0);
 	}
+	next_combined(1, 1);
+	response = 1;
+	CHECK(pvr_fwqueue_cmd(&owner, 0x12340000, &owner, &booted, &service,
+	    &test_command, 0, &result) == 0);
+	CHECK(result.published && result.after.read_offset == result.after.write_offset);
 	unsupported.cmd_type = ROGUE_FWIF_KCCB_CMD_COMBINED_GEOM_FRAG_KICK;
 	old_writes = writes;
 	CHECK(pvr_fwqueue_cmd(&owner, 0x12340000, &owner, &booted, &service,
-	    &unsupported, 0, &result) == EOPNOTSUPP);
+	    &unsupported, 0, &result) == EINVAL);
 	CHECK(writes == old_writes && !service.failed);
+	{
+		uint32_t id = 0;
+		grow_event(123);
+		CHECK(pvr_fwqueue_event(&owner, &booted, &service, &id) == 0);
+		CHECK(id == 123 && !service.failed);
+		CHECK(pvr_fwqueue_event(&owner, &booted, &service, &id) == ENOENT);
+		grow_event(124);
+		fw32(3, FCOMMAND + service.fw_read_offset * sizeof(struct rogue_fwif_fwccb_cmd),
+		    ROGUE_FWIF_FWCCB_CMD_CONTEXT_RESET_NOTIFICATION);
+		id = 0xaaaaaaaa;
+		CHECK(pvr_fwqueue_event(&owner, &booted, &service, &id) != 0);
+		CHECK(service.failed && id == 0xaaaaaaaa);
+	}
 }
 
 int

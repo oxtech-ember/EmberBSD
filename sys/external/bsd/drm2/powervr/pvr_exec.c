@@ -206,9 +206,6 @@ pvr_create_context_locked(struct drm_device *dev,
 		return EOPNOTSUPP;
 	memset(&config, 0, sizeof(config));
 	config.bvnc = pvr_device_bvnc(dev);
-	if (config.bvnc == PVR_STREAM_GE8300_BVNC &&
-	    args->type != DRM_PVR_CTX_TYPE_COMPUTE)
-		return EOPNOTSUPP;
 	switch (args->type) {
 	case DRM_PVR_CTX_TYPE_RENDER:
 		size = PVR_STREAM_STATIC_RENDER_SIZE;
@@ -329,8 +326,6 @@ pvr_create_free_list_locked(struct drm_device *dev,
 	size_t size;
 	int error;
 
-	if (pvr_device_bvnc(dev) == PVR_STREAM_GE8300_BVNC)
-		return EOPNOTSUPP;
 	size = (size_t)args->max_num_pages * sizeof(uint32_t);
 	if (args->max_num_pages == 0 ||
 	    size / sizeof(uint32_t) != args->max_num_pages)

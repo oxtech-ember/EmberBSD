@@ -369,8 +369,66 @@ static void validation_cases(void)
 		CHECK(owner==NULL && m.allocated==0 && heap_objects==0);
 	}
 }
+/*
+ * Parameter format v1 (GE8300): one macrotile covers the render. TE_MTILE
+ * and ISP_MTILE_SIZE hold the full tile counts, MTILE_STRIDE is their
+ * product, and TE_SCREEN has no 2x2 group rounding.
+ */
+static void
+ge_format_v1(void)
+{
+	static const struct { uint32_t w, h, s, tx, ty, ix, iy; } table[] = {
+		{ 256, 256, 1, 16, 16, 16, 16 },
+		{ 1280, 800, 1, 80, 50, 80, 50 },
+		{ 100, 100, 1, 7, 7, 7, 7 },
+		{ 4096, 4096, 1, 256, 256, 256, 256 },
+	};
+	struct model m;
+	struct pvr_hwrt *owner = NULL;
+	struct pvr_hwrt_config c = config(1);
+	struct rogue_fwif_hwrtdata_common *fw;
+	unsigned i;
+
+	c.bvnc = UINT64_C(0x0016006600360026);
+	for (i = 0; i < sizeof(table) / sizeof(table[0]); i++) {
+		c.width = table[i].w;
+		c.height = table[i].h;
+		c.samples = table[i].s;
+		init_model(&m);
+		CHECK(pvr_hwrt_create(&m.backend, &c, &owner) == 0);
+		fw = owner->common.cpu;
+		CHECK(fw->screen_pixel_max ==
+		    ((table[i].w - 1) | ((table[i].h - 1) << 16)));
+		CHECK(fw->te_screen ==
+		    ((table[i].tx - 1) | ((table[i].ty - 1) << 12)));
+		CHECK(fw->te_mtile1 == table[i].tx << 18);
+		CHECK(fw->te_mtile2 == table[i].ty << 18);
+		CHECK(fw->mtile_stride == table[i].tx * table[i].ty);
+		CHECK(fw->isp_mtile_size == ((table[i].ix << 16) | table[i].iy));
+		finish(&m, &owner);
+	}
+	/* No 8K screen support and no macrotile array in format v1. */
+	c.width = 4097;
+	init_model(&m);
+	CHECK(pvr_hwrt_create(&m.backend, &c, &owner) == EOPNOTSUPP);
+	CHECK(owner == NULL && m.allocated == 0);
+	c.width = 256;
+	for (i = 0; i < 4; i++) {
+		c.samples = i == 0 ? 2 : 1;
+		c.layers = i == 1 ? 2 : 1;
+		c.tpc_stride = i == 1 ? 1 : c.tpc_stride;
+		c.rt[0].macrotile_array_dev_addr =
+		    i == 2 ? UINT64_C(0x8000040000) : 0;
+		c.rt[1].macrotile_array_dev_addr =
+		    i == 3 ? UINT64_C(0x8000040000) : 0;
+		init_model(&m);
+		CHECK(pvr_hwrt_create(&m.backend, &c, &owner) == EOPNOTSUPP);
+		CHECK(owner == NULL && m.allocated == 0);
+	}
+}
+
 int main(void)
 {
-	success_cases(); allocation_cases(); descriptor_cases(); cleanup_cases(); validation_cases();
+	ge_format_v1(); success_cases(); allocation_cases(); descriptor_cases(); cleanup_cases(); validation_cases();
 	printf("pvr HWRT: %u checks passed\n",checks); return 0;
 }

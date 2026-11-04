@@ -5,7 +5,8 @@
  * AI-assisted native adaptation of the MIT alternative in Linux
  * 7b63ef2d55f24519e7e9e5f4d15dbea03f126e40: pvr_hwrt.c,
  * pvr_rogue_cr_defs_client.h and pvr_cccb.c. Native ownership is an
- * EmberBSD change. Register generation selects the A733 MC1 profile.
+ * EmberBSD change. Register generation selects the A733 MC1 profile or the
+ * GE8300 parameter format 1 profile.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to
@@ -41,6 +42,8 @@
 #define ROGUE_CR_PPP_SCREEN_PIXYMAX_SHIFT 16
 #define ROGUE_CR_ISP_MTILE_SIZE_X_SHIFT 16
 
+#define PVR_HWRT_GE8300_BVNC UINT64_C(0x0016006600360026)
+
 struct pvr_hwrt_rt {
 	struct pvr_fw_object data, srtc, raa;
 	bool exposed, cleaned;
@@ -66,8 +69,18 @@ pvr_hwrt_validate(const struct pvr_hwrt_config *c)
 {
 	unsigned i;
 
-	if (c->bvnc != UINT64_C(0x00240038006800b7))
+	if (c->bvnc == PVR_HWRT_GE8300_BVNC) {
+		/*
+		 * Parameter format v1 has no macrotile array and 4K renders.
+		 * Only single-sample, single-layer renders are accepted.
+		 */
+		if (c->width > 4096 || c->height > 4096 || c->samples != 1 ||
+		    c->layers != 1 || c->rt[0].macrotile_array_dev_addr != 0 ||
+		    c->rt[1].macrotile_array_dev_addr != 0)
+			return EOPNOTSUPP;
+	} else if (c->bvnc != UINT64_C(0x00240038006800b7)) {
 		return EOPNOTSUPP;
+	}
 	if (c->width == 0 || c->width > 8192 || c->height == 0 ||
 	    c->height > 8192 || c->layers == 0 || c->layers > 2048 ||
 	    (c->samples != 1 && c->samples != 2 && c->samples != 4) ||
@@ -138,9 +151,14 @@ pvr_hwrt_common_init(struct pvr_hwrt *hwrt, const struct pvr_hwrt_config *c)
 	struct rogue_fwif_hwrtdata_common *fw = hwrt->common.cpu;
 	uint32_t tiles_x = (c->width + 15) / 16;
 	uint32_t tiles_y = (c->height + 15) / 16;
-	uint32_t mtile_x = ((tiles_x + 7) / 8) * 2;
-	uint32_t mtile_y = ((tiles_y + 7) / 8) * 2;
+	bool v1 = c->bvnc == PVR_HWRT_GE8300_BVNC;
+	/* Format v1 uses one macrotile for the render; v2 uses a 4x4 grid. */
+	uint32_t mtile_x = v1 ? tiles_x : ((tiles_x + 7) / 8) * 2;
+	uint32_t mtile_y = v1 ? tiles_y : ((tiles_y + 7) / 8) * 2;
 	uint32_t isp_x = mtile_x, isp_y = mtile_y;
+	/* Format v2 aligns the tile range to 2x2 groups; v1 does not. */
+	uint32_t max_x = v1 ? tiles_x : roundup2(tiles_x, 2);
+	uint32_t max_y = v1 ? tiles_y : roundup2(tiles_y, 2);
 
 	fw->screen_pixel_max = (c->width - 1) |
 	    ((c->height - 1) << ROGUE_CR_PPP_SCREEN_PIXYMAX_SHIFT);
@@ -148,8 +166,8 @@ pvr_hwrt_common_init(struct pvr_hwrt *hwrt, const struct pvr_hwrt_config *c)
 	fw->flipped_multi_sample_ctl = pvr_hwrt_multisample(c->samples, true);
 	fw->tpc_stride = c->tpc_stride;
 	fw->tpc_size = c->tpc_size;
-	fw->te_screen = (roundup2(tiles_x, 2) - 1) |
-	    ((roundup2(tiles_y, 2) - 1) << ROGUE_CR_TE_SCREEN_YMAX_SHIFT);
+	fw->te_screen = (max_x - 1) |
+	    ((max_y - 1) << ROGUE_CR_TE_SCREEN_YMAX_SHIFT);
 	fw->mtile_stride = mtile_x * mtile_y;
 	if (c->samples >= 2) {
 		fw->teaa |= ROGUE_CR_TE_AA_Y_EN;

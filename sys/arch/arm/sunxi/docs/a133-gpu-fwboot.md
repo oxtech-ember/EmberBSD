@@ -121,17 +121,25 @@ also verifies backend health and a later completed MMUCACHE command.
 
 The source includes an experimental userspace check for the pinned compute
 image: `ember/tools/pvr-ge8300-drm-compute-check.c`. It checks GE identity,
-quirks, rejected foreign handles and unsupported render, maps the Mesa-generated
-resources, and submits two compute contexts with syncobj waits and canary checks.
+quirks, rejected foreign handles and malformed render objects, maps the
+Mesa-generated resources, and submits two compute contexts with syncobj waits
+and canary checks.
 On one office YS-M33 preserved-power warm RAM trial, this check passed with two
 userspace compute contexts, syncobj waits and GPU canary writes. The final
 cached queue state was drained and healthy after context, VM and BO retirement.
-The negative foreign-handle and unsupported-render checks also passed. This
-qualifies only that bounded DRM userspace compute operation on that device.
+The negative foreign-handle and render checks also passed. This qualifies only
+that bounded DRM userspace compute operation on that device.
 
 On NetBSD an ioctl error does not copy the modified output buffer to userspace:
 the probe checks the original job count after the rejected submit. Linux
 partial-error output semantics are not established here. Mesa and Vulkan
-submission error handling and recovery have not been qualified. This interface
-does not expose GE graphics or establish Vulkan API, Qt acceleration or
-cold-boot support.
+submission error handling and recovery have not been qualified.
+
+GE graphics use parameter format 1: one macrotile, one 5-byte region header per
+tile and no macrotile array. The driver admits render and transfer contexts,
+free lists and HWRT datasets up to 4096x4096 with one sample and one layer.
+On the same warm RAM trial setup, Mesa's Vulkan driver with the EmberBSD Ports
+format 1 patches rendered offscreen 256x256, 1280x800, 256x64 and 64x256
+triangles pixel-exact, with intact guards and no GPU failure. This does not
+establish presentation, Qt acceleration, multisampling, layered rendering,
+sustained use or cold-boot support.

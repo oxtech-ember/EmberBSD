@@ -183,9 +183,13 @@ pvr_stream_fragment(uint64_t bvnc, const void *data, size_t size,
 	if (command_type == NULL)
 		return EINVAL;
 	if (bvnc == PVR_STREAM_GE8300_BVNC) {
+		/*
+		 * FRAG0 extension header: BRN49927 is bit 1 (bit 0 is
+		 * BRN47217, which GE8300 does not have), then CR_TPU.
+		 */
 		error = pvr_stream_header_bytes(data, size,
 		    PVR_STREAM_FRAGMENT_SIZE, 376, out);
-		if (error == 0 && (pvr_stream_u32(p + 376) != 1 ||
+		if (error == 0 && (pvr_stream_u32(p + 376) != 2 ||
 		    pvr_stream_u32(p + 380) != 0x20))
 			return EOPNOTSUPP;
 	} else {

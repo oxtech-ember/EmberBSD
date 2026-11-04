@@ -150,10 +150,10 @@ negative_controls(int fd, const char *node, uint32_t vm,
 	ctx.vm_context_handle = vm;
 	errno = 0;
 	must(ioctl(fd, DRM_IOCTL_PVR_CREATE_CONTEXT, &ctx) == -1 &&
-	    errno == EOPNOTSUPP, "reject render context");
+	    errno == EINVAL, "reject render context without state");
 	errno = 0;
 	must(ioctl(fd, DRM_IOCTL_PVR_CREATE_HWRT_DATASET, &hwrt) == -1 &&
-	    errno == EOPNOTSUPP, "reject render target");
+	    errno == EINVAL, "reject empty render target");
 	job.type = DRM_PVR_JOB_TYPE_COMPUTE;
 	job.context_handle = UINT32_MAX;
 	job.cmd_stream_len = 44;

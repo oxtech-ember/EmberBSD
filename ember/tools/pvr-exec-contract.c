@@ -380,13 +380,19 @@ static void ge_context_admission(void)
 	reset();
 	selected_bvnc = PVR_STREAM_GE8300_BVNC;
 	args = context_args(DRM_PVR_CTX_TYPE_RENDER);
-	CHECK(pvr_create_context(&device, &args, &first) == -EOPNOTSUPP);
-	CHECK(publishes == 0 && context_creates == 0);
+	CHECK(pvr_create_context(&device, &args, &first) == 0);
+	CHECK(publishes == 1 && context_creates == 1);
+	close_files();
+	reset();
+	selected_bvnc = PVR_STREAM_GE8300_BVNC;
 	{
 		struct drm_pvr_ioctl_create_free_list_args fl = freelist_args();
-		CHECK(pvr_create_free_list(&device, &fl, &first) == -EOPNOTSUPP);
-		CHECK(freelist_creates == 0 && publishes == 0);
+		CHECK(pvr_create_free_list(&device, &fl, &first) == 0);
+		CHECK(freelist_creates == 1);
 	}
+	close_files();
+	reset();
+	selected_bvnc = PVR_STREAM_GE8300_BVNC;
 	args = context_args(DRM_PVR_CTX_TYPE_COMPUTE);
 	CHECK(pvr_create_context(&device, &args, &first) == 0);
 	CHECK(observed_config.bvnc == PVR_STREAM_GE8300_BVNC);

@@ -52,6 +52,10 @@
 /* Bound all producer searches in one batch, including empty jobs. */
 #define PVR_SUBMIT_DEPENDENCY_CHECKS (1U << 20)
 
+/* GE8300 streams are copied into the buffers sized for the other profile. */
+CTASSERT(PVR_STREAM_GE8300_TRANSFER_SIZE <= PVR_STREAM_TRANSFER_SIZE);
+CTASSERT(PVR_STREAM_GE8300_GEOMETRY_SIZE <= PVR_STREAM_FRAGMENT_SIZE);
+
 struct pvr_submit_sync {
 	struct drm_pvr_sync_op input;
 	struct drm_syncobj *object;
@@ -145,9 +149,6 @@ pvr_submit_copy(const struct drm_pvr_obj_array *array,
 		if (error != 0)
 			return error;
 		job->type = input.type;
-		if (bvnc == PVR_STREAM_GE8300_BVNC &&
-		    job->type != DRM_PVR_JOB_TYPE_COMPUTE)
-			return EOPNOTSUPP;
 		job->handle = input.context_handle;
 		job->hwrt_handle = input.hwrt.set_handle;
 		job->rt_index = input.hwrt.data_index;
@@ -169,27 +170,35 @@ pvr_submit_copy(const struct drm_pvr_obj_array *array,
 				return error;
 		} else if (job->type == DRM_PVR_JOB_TYPE_TRANSFER_FRAG) {
 			uint8_t transfer[PVR_STREAM_TRANSFER_SIZE];
+			size_t expect = PVR_STREAM_TRANSFER_SIZE;
+
+			if (bvnc == PVR_STREAM_GE8300_BVNC)
+				expect = PVR_STREAM_GE8300_TRANSFER_SIZE;
 
 			if (input.hwrt.set_handle != 0 || input.hwrt.data_index != 0 ||
-			    input.cmd_stream == 0 || input.cmd_stream_len < sizeof(transfer))
+			    input.cmd_stream == 0 || input.cmd_stream_len < expect)
 				return EINVAL;
-			if (input.cmd_stream_len > sizeof(transfer))
+			if (input.cmd_stream_len > expect)
 				return EOPNOTSUPP;
-			if (input.cmd_stream > UINTPTR_MAX - (sizeof(transfer) - 1))
+			if (input.cmd_stream > UINTPTR_MAX - (expect - 1))
 				return EFAULT;
 			error = copyin((const void *)(uintptr_t)input.cmd_stream,
-			    transfer, sizeof(transfer));
+			    transfer, expect);
 			if (error != 0)
 				return error;
 			error = pvr_stream_transfer(bvnc, transfer,
-			    sizeof(transfer), input.flags, &job->command.transfer);
+			    expect, input.flags, &job->command.transfer);
 			if (error != 0)
 				return error;
 		} else if (job->type == DRM_PVR_JOB_TYPE_GEOMETRY ||
 		    job->type == DRM_PVR_JOB_TYPE_FRAGMENT) {
 			uint8_t graphics[PVR_STREAM_FRAGMENT_SIZE];
-			size_t expect = job->type == DRM_PVR_JOB_TYPE_GEOMETRY ?
-			    PVR_STREAM_GEOMETRY_SIZE : PVR_STREAM_FRAGMENT_SIZE;
+			size_t expect = PVR_STREAM_FRAGMENT_SIZE;
+
+			if (job->type == DRM_PVR_JOB_TYPE_GEOMETRY)
+				expect = bvnc == PVR_STREAM_GE8300_BVNC ?
+				    PVR_STREAM_GE8300_GEOMETRY_SIZE :
+				    PVR_STREAM_GEOMETRY_SIZE;
 
 			if (input.hwrt.set_handle == 0 || input.hwrt.data_index > 1 ||
 			    input.cmd_stream == 0 || input.cmd_stream_len < expect)

@@ -704,7 +704,31 @@ static void
 ge_lifetime_tests(void)
 {
 	struct pvr_fwobject *a = NULL, *b = NULL;
+	struct pvr_fwprobe_observation observation;
 	uint8_t before[4096];
+
+	reset();
+	memory.profile = PVR_FW_PROFILE_GE8300;
+	memory.device_exposed = memory.interface_prepared = true;
+	CHECK(pvr_fwservice_attach(&service, &memory, 0x12340000,
+	    &memory, &boot, &predecessor) == 0);
+	CHECK(pvr_fwservice_set_events(&service, &memory,
+	    prepare_event, complete_event) == 0);
+	events_remaining = 1;
+	CHECK(pvr_fwservice_observe(&service, &observation) == 0);
+	CHECK(grow_prepares == 1 && grow_completes == 1 &&
+	    response_commands == 1 && !service.queue.failed);
+	finish();
+
+	reset();
+	memory.profile = PVR_FW_PROFILE_GE8300;
+	memory.device_exposed = memory.interface_prepared = true;
+	CHECK(pvr_fwservice_attach(&service, &memory, 0x12340000,
+	    &memory, &boot, &predecessor) == 0);
+	events_remaining = 1;
+	CHECK(pvr_fwservice_observe(&service, &observation) == EOPNOTSUPP);
+	CHECK(service.queue.failed && grow_prepares == 0 && response_commands == 0);
+	finish();
 
 	reset();
 	memory.profile = PVR_FW_PROFILE_GE8300;

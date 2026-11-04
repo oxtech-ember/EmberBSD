@@ -30,6 +30,9 @@ static int checks;
 #define HWRT_PC_PER_PAGE 0x400
 #define HWRT_PM_SPACES 2
 #define HWRT_MLIST_STRIDE 4
+#define HWRT_GE8300_BVNC UINT64_C(0x0016006600360026)
+#define HWRT_V1_REGION_HEADER_BYTES 5
+#define HWRT_V1_RENDER_MAX 4096
 
 #include "pvr-exec-hwrt-fixture.h"
 
@@ -38,12 +41,15 @@ struct drm_pvr_ioctl_create_hwrt_dataset_args {
 	struct { uint32_t tpc_size, tpc_stride; } geom_data_args;
 };
 struct pvr_hwrt_config {
+	uint64_t bvnc;
 	uint32_t region_header_size, tpc_size, tpc_stride;
 };
 #define hwrt_tiles production_hwrt_tiles
+#define hwrt_tiles_v1 production_hwrt_tiles_v1
 #define hwrt_next_pow2 production_hwrt_next_pow2
 #include "hwrt-production.inc"
 #undef hwrt_tiles
+#undef hwrt_tiles_v1
 #undef hwrt_next_pow2
 
 static void
@@ -72,6 +78,79 @@ hwrt_region_units(void)
 	CHECK(config.region_header_size == 32 && span[0] == 8192);
 	args.region_header_size = 192;
 	CHECK(hwrt_spans(&args, &config, span) == EINVAL);
+}
+
+/*
+ * Parameter format v1 (GE8300): one macrotile covers the render, so region
+ * headers and tail pointers count single tiles, each header has 5 bytes,
+ * and no macrotile array exists. v2 rounding would change every result.
+ */
+static uint32_t next_pow2(uint32_t);
+
+static void
+expect_v1(uint32_t w, uint32_t h, uint32_t samples, uint32_t *headers,
+    uint64_t *rgn, uint32_t *tpc)
+{
+	uint32_t sx = samples == 4 ? 2 : 1, sy = samples >= 2 ? 2 : 1;
+	uint32_t tx = (w + 15) / 16 * sx, ty = (h + 15) / 16 * sy;
+	uint32_t mt = next_pow2(tx > ty ? tx : ty);
+
+	*headers = tx * ty;
+	*rgn = ((uint64_t)*headers * 5 + 63) & ~63ULL;
+	*tpc = mt * mt * 8;
+}
+
+static void
+hwrt_v1_units(void)
+{
+	static const struct { uint32_t w, h, s; } table[] = {
+		{ 256, 256, 1 }, { 1280, 800, 1 }, { 800, 1280, 1 },
+		{ 100, 100, 1 }, { 17, 1, 1 }, { 4096, 4096, 1 },
+	};
+	struct drm_pvr_ioctl_create_hwrt_dataset_args args = { 0 };
+	struct pvr_hwrt_config config = { .bvnc = HWRT_GE8300_BVNC };
+	uint64_t span[5], rgn;
+	uint32_t headers, tpc;
+	size_t i;
+
+	for (i = 0; i < sizeof(table) / sizeof(table[0]); i++) {
+		expect_v1(table[i].w, table[i].h, table[i].s, &headers, &rgn,
+		    &tpc);
+		args.width = table[i].w;
+		args.height = table[i].h;
+		args.samples = table[i].s;
+		args.layers = 1;
+		args.region_header_size = headers;
+		args.geom_data_args.tpc_size = tpc;
+		args.geom_data_args.tpc_stride = 0;
+		memset(span, 0xa5, sizeof(span));
+		CHECK(hwrt_spans(&args, &config, span) == 0);
+		CHECK(config.region_header_size == headers);
+		CHECK(span[0] == rgn);
+		CHECK(span[1] == ((tpc + 63) & ~63U));
+		CHECK(span[4] == 0);
+	}
+	/* 100x100 has 7x7 tiles: 49 headers, not the v2 4x4 grid of groups. */
+	args.width = args.height = 100;
+	args.samples = 1;
+	args.region_header_size = 49;
+	args.geom_data_args.tpc_size = 512;
+	CHECK(hwrt_spans(&args, &config, span) == 0 && span[0] == 256);
+	args.region_header_size = 64;
+	CHECK(hwrt_spans(&args, &config, span) == EINVAL);
+	/* The v1 profile has no 8K screen support. */
+	args.width = 4097;
+	CHECK(hwrt_spans(&args, &config, span) == EOPNOTSUPP);
+	/* An empty render is malformed, as on the other profile. */
+	args.width = 0;
+	CHECK(hwrt_spans(&args, &config, span) == EINVAL);
+	/* Multisampled and layered v1 renders lack hardware acceptance. */
+	args.width = 100;
+	args.samples = 4;
+	CHECK(hwrt_spans(&args, &config, span) == EOPNOTSUPP);
+	args.samples = 1;
+	args.layers = 2;
+	CHECK(hwrt_spans(&args, &config, span) == EOPNOTSUPP);
 }
 
 static uint32_t
@@ -149,9 +228,10 @@ hwrt_profile_admission(void)
 	(void)pvr_device_bvnc;
 	CHECK(pvr_create_hwrt_dataset(&dev, NULL, &file) == 0);
 	CHECK(admission_calls == 1);
-	admission_bvnc = UINT64_C(0x0016006600360026);
-	CHECK(pvr_create_hwrt_dataset(&dev, NULL, &file) == -EOPNOTSUPP);
-	CHECK(admission_calls == 1);
+	/* GE8300 geometry is checked by hwrt_spans under the device gate. */
+	admission_bvnc = HWRT_GE8300_BVNC;
+	CHECK(pvr_create_hwrt_dataset(&dev, NULL, &file) == 0);
+	CHECK(admission_calls == 2);
 }
 
 int
@@ -193,6 +273,7 @@ main(void)
 	CHECK(hwrt_mlist_fixture(1048576, 0) == expect_mlist(1048576, 0));
 	hwrt_profile_admission();
 	hwrt_region_units();
+	hwrt_v1_units();
 	printf("PASS: %d HWRT geometry and admission checks\n", checks);
 	return 0;
 }
