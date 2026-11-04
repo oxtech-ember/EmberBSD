@@ -265,6 +265,14 @@ BUILDTARGETS+=	do-obsolete
 .ORDER:		${BUILDTARGETS}
 includes-lib:	.PHONY includes-include includes-sys
 
+# Both walks include the imported crypto libraries in the same object tree.
+# Finish their lib-owned headers before the crypto walk becomes another reader.
+# Keep explicitly selected crypto-only and BUILD_lib=no traversals bounded.
+.if !empty(SUBDIR:Mlib) && !empty(SUBDIR:Mcrypto/external) && \
+    (make(includes) || (make(includes-lib) && make(includes-crypto/external)))
+includes-crypto/external: includes-lib
+.endif
+
 # The lib and crypto trees both recurse into OpenSSL during includes.
 # Create its one object-tree generation before either becomes a reader.
 .if defined(EMBER_OPENSSL_SOURCE) && (make(includes) || make(depend) || make(dependall) || make(all) || make(install) || !empty(.TARGETS:Mincludes-*) || !empty(.TARGETS:Mdepend-*) || !empty(.TARGETS:Mdependall-*) || !empty(.TARGETS:Mall-*) || !empty(.TARGETS:Minstall-*))
