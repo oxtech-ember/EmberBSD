@@ -13,6 +13,9 @@ struct gt9xx_contact {
 	uint8_t id;
 	uint16_t x, y;
 };
+size_t gt9xx_report_size(unsigned int, unsigned int);
+int gt9110_decode_config(const uint8_t *, size_t, uint16_t *, uint16_t *,
+    unsigned int *);
 int gt9xx_decode_frame(const uint8_t *, size_t, uint16_t, uint16_t,
     struct gt9xx_contact *);
 #endif

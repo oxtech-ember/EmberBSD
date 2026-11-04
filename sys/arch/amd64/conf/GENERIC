@@ -622,6 +622,10 @@ ihidev* at iic?
 ims*	at ihidev? reportid ?
 wsmouse* at ims? mux 0
 
+# Goodix ACPI touchscreen
+gt9xx*	at iic?
+wsmouse* at gt9xx? mux 0
+
 # I2C HID multitouch devices
 imt*	at ihidev?
 wsmouse* at imt? mux 0

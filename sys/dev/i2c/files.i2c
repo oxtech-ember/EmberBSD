@@ -370,12 +370,13 @@ attach	asms at iic
 file	dev/i2c/asms.c				asms
 
 # HID over i2c
-# Goodix GT9271 touch pointer on the YS-M33 vendor FDT route
+# Goodix touchscreen pointer (ACPI GT9110 and YS-M33 FDT GT9271)
 device gt9xx: wsmousedev
 attach gt9xx at iic
 file dev/i2c/gt9xx.c gt9xx
 file dev/i2c/gt9xx_frame.c gt9xx
-file dev/i2c/gt9xx_ys_m33.c gt9xx
+file dev/i2c/gt9xx_fdt.c gt9xx & fdt
+file dev/i2c/gt9xx_ys_m33.c gt9xx & fdt
 
 # HID "bus"
 define  ihidbus {[ reportid = -1 ]}

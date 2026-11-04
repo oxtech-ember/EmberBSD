@@ -1,4 +1,4 @@
-/* Origin: EmberBSD - expose the YS-M33 Goodix GT9271 as a wscons pointer. */
+/* Origin: EmberBSD - expose Goodix GT9xx touchscreens as a wscons pointer. */
 /* SPDX-License-Identifier: BSD-2-Clause */
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -11,12 +11,18 @@
 #include <sys/kmem.h>
 
 #include <dev/i2c/i2cvar.h>
-#include <dev/fdt/fdtvar.h>
+#ifndef _MODULE
+#include "opt_fdt.h"
+#endif
+
 #include <dev/wscons/wsconsio.h>
 #include <dev/wscons/wsmousevar.h>
 #include "gt9xx_frame.h"
 
-int gt9xx_ys_m33_reset(bus_space_tag_t);
+#ifdef FDT
+int gt9xx_fdt_match(struct i2c_attach_args *, cfdata_t);
+int gt9xx_fdt_prepare(struct i2c_attach_args *);
+#endif
 
 struct gt9xx_softc {
 	device_t sc_dev, sc_mouse;
@@ -25,6 +31,7 @@ struct gt9xx_softc {
 	lwp_t *sc_thread;
 	bool sc_ready, sc_enabled, sc_dying, sc_pressed;
 	uint16_t sc_maxx, sc_maxy, sc_x, sc_y;
+	unsigned int sc_contacts;
 };
 
 static int gt9xx_match(device_t, cfdata_t, void *);
@@ -39,13 +46,8 @@ static void gt9xx_poll(void *);
 CFATTACH_DECL2_NEW(gt9xx, sizeof(struct gt9xx_softc), gt9xx_match,
     gt9xx_attach, gt9xx_detach, NULL, NULL, gt9xx_childdet);
 
-static const struct device_compatible_entry gt9xx_compat[] = {
-	{ .compat = "goodix,gt9xx" },
-	{ .compat = "goodix,gt9271" },
-	DEVICE_COMPAT_EOL
-};
-static const struct device_compatible_entry a133_compat[] = {
-	{ .compat = "allwinner,a133" },
+static const struct device_compatible_entry gt9110_acpi[] = {
+	{ .compat = "GDIX1002" },
 	DEVICE_COMPAT_EOL
 };
 static const struct wsmouse_accessops gt9xx_accessops = {
@@ -62,11 +64,11 @@ gt9xx_read(struct gt9xx_softc *sc, uint16_t reg, void *data, size_t len)
 
 	error = iic_acquire_bus(sc->sc_tag, 0);
 	if (error != 0)
-		return error;
+		return (error);
 	error = iic_exec(sc->sc_tag, I2C_OP_READ_WITH_STOP, sc->sc_addr,
 	    cmd, sizeof(cmd), data, len, 0);
 	iic_release_bus(sc->sc_tag, 0);
-	return error;
+	return (error);
 }
 
 static int
@@ -77,11 +79,11 @@ gt9xx_ack(struct gt9xx_softc *sc)
 
 	error = iic_acquire_bus(sc->sc_tag, 0);
 	if (error != 0)
-		return error;
+		return (error);
 	error = iic_exec(sc->sc_tag, I2C_OP_WRITE_WITH_STOP, sc->sc_addr,
 	    cmd, sizeof(cmd), __UNCONST(&zero), 1, 0);
 	iic_release_bus(sc->sc_tag, 0);
-	return error;
+	return (error);
 }
 
 static void
@@ -110,8 +112,9 @@ gt9xx_poll(void *arg)
 {
 	struct gt9xx_softc *sc = arg;
 	struct gt9xx_contact point;
-	uint8_t data[41];
+	uint8_t data[81];
 	unsigned int count;
+	size_t frame_size;
 	int error, decoded;
 
 	/* A non-MPSAFE thread serializes wscons operations with the kernel lock. */
@@ -125,10 +128,11 @@ gt9xx_poll(void *arg)
 		if ((data[0] & 0x80) == 0)
 			goto wait;
 		count = data[0] & 15;
-		if (count > 0 && count <= 5)
-			error = gt9xx_read(sc, 0x814f, data + 1, count * 8);
+		frame_size = gt9xx_report_size(count, sc->sc_contacts);
+		if (frame_size > 1)
+			error = gt9xx_read(sc, 0x814f, data + 1, frame_size - 1);
 		decoded = error == 0 ? gt9xx_decode_frame(data,
-		    count <= 5 ? 1 + count * 8 : 1,
+		    frame_size,
 		    sc->sc_maxx, sc->sc_maxy, &point) : -1;
 		/* Acknowledge malformed ready frames as well, to unblock the sensor. */
 		error = gt9xx_ack(sc);
@@ -152,11 +156,16 @@ gt9xx_match(device_t parent, cfdata_t cf, void *aux)
 	struct i2c_attach_args *ia = aux;
 	int result;
 
-	if (ia->ia_cookietype != I2C_COOKIE_OF || ia->ia_addr != 0x5d)
-		return 0;
-	if (iic_use_direct_match(ia, cf, gt9xx_compat, &result))
-		return result;
-	return 0;
+	if (ia->ia_cookietype == I2C_COOKIE_ACPI &&
+	    (ia->ia_addr == 0x14 || ia->ia_addr == 0x5d) &&
+	    iic_use_direct_match(ia, cf, gt9110_acpi, &result))
+		return (result);
+#ifdef FDT
+	result = gt9xx_fdt_match(ia, cf);
+	if (result != 0)
+		return (result);
+#endif
+	return (0);
 }
 
 static void
@@ -165,40 +174,48 @@ gt9xx_attach(device_t parent, device_t self, void *aux)
 	struct gt9xx_softc *sc = device_private(self);
 	struct i2c_attach_args *ia = aux;
 	struct wsmousedev_attach_args mouse;
-	bus_space_tag_t bst;
-	uint8_t id[10];
-	int error, phandle = ia->ia_cookie;
+	uint8_t id[10], cfg[7];
+	int error;
 
 	sc->sc_dev = self;
 	sc->sc_tag = ia->ia_tag;
 	sc->sc_addr = ia->ia_addr;
 	aprint_naive("\n");
 	aprint_normal(": Goodix touchscreen\n");
-	if (!of_hasprop(phandle, "ember,ys-m33-reset") ||
-	    !of_compatible_match(OF_finddevice("/"), a133_compat)) {
-		aprint_error_dev(self, "unsupported board reset resources\n");
+#ifdef FDT
+	if (ia->ia_cookietype == I2C_COOKIE_OF) {
+		error = gt9xx_fdt_prepare(ia);
+		if (error != 0 || gt9xx_read(sc, 0x8140, id, sizeof(id)) != 0 ||
+		    memcmp(id, "9271", 4) != 0) {
+			aprint_error_dev(self, "sensor reset or identification failed\n");
+			return;
+		}
+		sc->sc_maxx = id[6] | id[7] << 8;
+		sc->sc_maxy = id[8] | id[9] << 8;
+		sc->sc_contacts = 5;
+	} else
+#endif
+	if (ia->ia_cookietype == I2C_COOKIE_ACPI) {
+		if (gt9xx_read(sc, 0x8140, id, sizeof(id)) != 0 ||
+		    memcmp(id, "9110", 4) != 0 ||
+		    gt9xx_read(sc, 0x8047, cfg, sizeof(cfg)) != 0) {
+			aprint_error_dev(self, "sensor identification or config failed\n");
+			return;
+		}
+		if (gt9110_decode_config(cfg, sizeof(cfg), &sc->sc_maxx,
+		    &sc->sc_maxy, &sc->sc_contacts) != 0) {
+			aprint_error_dev(self, "invalid sensor config\n");
+			return;
+		}
+	} else
 		return;
-	}
-	bst = fdtbus_bus_tag_create(phandle, 0);
-	error = gt9xx_ys_m33_reset(bst);
-	kmem_free(bst, sizeof(*bst));
-	if (error != 0 || gt9xx_read(sc, 0x8140, id, sizeof(id)) != 0) {
-		aprint_error_dev(self, "sensor reset or identification failed\n");
-		return;
-	}
-	if (memcmp(id, "9271", 4) != 0) {
-		aprint_error_dev(self, "unsupported Goodix product ID\n");
-		return;
-	}
-	sc->sc_maxx = id[6] | id[7] << 8;
-	sc->sc_maxy = id[8] | id[9] << 8;
 	if (sc->sc_maxx == 0 || sc->sc_maxy == 0 ||
 	    sc->sc_maxx > 8192 || sc->sc_maxy > 8192) {
 		aprint_error_dev(self, "invalid configured sensor dimensions\n");
 		return;
 	}
-	aprint_normal_dev(self, "GT9271 firmware %04x, %ux%u, single pointer, "
-	    "20 ms polling interval\n", id[4] | id[5] << 8,
+	aprint_normal_dev(self, "GT%.4s firmware %04x, %ux%u, single pointer, "
+	    "20 ms polling interval\n", (char *)id, id[4] | id[5] << 8,
 	    sc->sc_maxx, sc->sc_maxy);
 	error = kthread_create(PRI_NONE, KTHREAD_MUSTJOIN, NULL,
 	    gt9xx_poll, sc, &sc->sc_thread, "%s", device_xname(self));
