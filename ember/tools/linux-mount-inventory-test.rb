@@ -49,6 +49,9 @@ reject.call('mount_inventory_too_large') do
 end
 Dir.mktmpdir('linux-mounts-') do |dir|
   proc=File.join(dir,'proc tree');Dir.mkdir(proc)
+  own=File.join(proc,'self');Dir.mkdir(own)
+  Dir.mkdir(File.join(own,'ns'));File.write(File.join(own,'ns','mnt'),'namespace')
+  File.write(File.join(own,'mountinfo'),root)
   make=lambda do |pid,tid,line|
     p=File.join(proc,pid.to_s);Dir.mkdir(p) unless File.directory?(p)
     File.write(File.join(p,'stat'),'live')
@@ -57,14 +60,22 @@ Dir.mktmpdir('linux-mounts-') do |dir|
     File.write(File.join(t,'stat'),'live');File.write(File.join(t,'mountinfo'),line)
     t
   end
-  make.call(101,101,root);hidden=make.call(101,102,target)
+  same=make.call(101,101,root);hidden=make.call(101,102,target)
+  Dir.mkdir(File.join(same,'ns'))
+  File.link(File.join(own,'ns','mnt'),File.join(same,'ns','mnt'))
+  Dir.mkdir(File.join(hidden,'ns'));File.write(File.join(hidden,'ns','mnt'),'foreign')
   gone=make.call(202,202,root)
   bin=File.join(dir,'bin');Dir.mkdir(bin)
   cat=File.join(bin,'cat')
   File.write(cat,<<~RUBY)
     #!#{RbConfig.ruby}
+    File.open(#{File.join(dir,'reads').inspect},'a') { |f| f.puts(File.expand_path(ARGV.fetch(0))) }
+    if ENV['FAIL_OWN_AT'] && File.expand_path(ARGV.fetch(0))==#{File.join(own,'mountinfo').inspect}
+      count=File.readlines(#{File.join(dir,'reads').inspect},chomp:true).count(#{File.join(own,'mountinfo').inspect})
+      exit 1 if count==ENV['FAIL_OWN_AT'].to_i
+    end
     if File.exist?('gone')
-      File.unlink('stat');exit 1
+      File.unlink('stat') if File.exist?('stat');exit 1
     end
     exit 1 if File.exist?('unreadable')
     exec '/bin/cat',*ARGV
@@ -76,9 +87,26 @@ Dir.mktmpdir('linux-mounts-') do |dir|
   r=LinuxMountInventory::Reader.new;r.feed(out)
   abort 'FAIL: task traversal missed hidden mount or rejected departed task' unless status.success? && err.empty? && r.finish==%w[0:1 179:2]
   checks+=1
+  reads=File.readlines(File.join(dir,'reads'),chomp:true)
+  abort 'FAIL: own namespace not sampled twice or redundant task read' unless reads.count(File.join(own,'mountinfo'))==2 && !reads.include?(File.join(same,'mountinfo'))
+  checks+=1
+  # Missing namespace identity must retain the full task read.
+  File.unlink(File.join(same,'ns','mnt'))
+  File.write(File.join(same,'unreadable'),'1')
+  _,_,status=Open3.capture3({'PATH'=>bin+':'+ENV.fetch('PATH')},'/bin/sh','-c',command)
+  abort 'FAIL: unknown namespace bypassed inaccessible live task' if status.success?
+  checks+=1
+  File.unlink(File.join(same,'unreadable'))
   File.write(File.join(hidden,'unreadable'),'1')
   _,_,status=Open3.capture3({'PATH'=>bin+':'+ENV.fetch('PATH')},'/bin/sh','-c',command)
   abort 'FAIL: unreadable live task ignored' if status.success?
   checks+=1
+  File.unlink(File.join(hidden,'unreadable'))
+  [1,2].each do |at|
+    File.write(File.join(dir,'reads'),'')
+    _,_,status=Open3.capture3({'PATH'=>bin+':'+ENV.fetch('PATH'),'FAIL_OWN_AT'=>at.to_s},'/bin/sh','-c',command)
+    abort 'FAIL: failed own namespace sample accepted' if status.success?
+    checks+=1
+  end
 end
 puts "Linux mount inventory: #{checks} stream and actual-shell cases passed"

@@ -22,6 +22,7 @@ if command.start_with?('exec /system/xbin/su ')
   command=tokens.last
 end
 namespace_command=<<~'SH'.strip
+cat /proc/self/mountinfo 2>/dev/null || exit 1
 for p in /proc/[0-9]*; do
   (
     if ! cd "$p" 2>/dev/null; then
@@ -39,6 +40,9 @@ for p in /proc/[0-9]*; do
           [ ! -e "$t" ] && exit 0
           exit 1
         fi
+        if [ ns/mnt -ef /proc/self/ns/mnt ] 2>/dev/null; then
+          exit 0
+        fi
         if ! cat mountinfo 2>/dev/null; then
           [ -x . ] && [ ! -e stat ] || exit 1
         fi
@@ -46,6 +50,7 @@ for p in /proc/[0-9]*; do
     done
   ) || exit 1
 done
+cat /proc/self/mountinfo 2>/dev/null || exit 1
 SH
 case command
 when 'id -u' then puts state.fetch('root','0')
