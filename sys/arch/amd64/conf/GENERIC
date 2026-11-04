@@ -622,6 +622,10 @@ ihidev* at iic?
 ims*	at ihidev? reportid ?
 wsmouse* at ims? mux 0
 
+# I2C HID multitouch devices
+imt*	at ihidev?
+wsmouse* at imt? mux 0
+
 # I2O devices
 iop*	at pci? dev ? function ?	# I/O processor
 iopsp*	at iop? tid ?			# SCSI/FC-AL ports
