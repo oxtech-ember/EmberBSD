@@ -123,7 +123,7 @@
 ./lib/libuutil.so.0.0				base-zfs-shlib		dynamicroot,zfs
 ./lib/libz.so					base-sys-shlib		dynamicroot
 ./lib/libz.so.1					base-sys-shlib		dynamicroot
-./lib/libz.so.1.0				base-sys-shlib		dynamicroot
+./lib/libz.so.1.1				base-sys-shlib		dynamicroot
 ./lib/libzfs.so					base-zfs-shlib		dynamicroot,zfs
 ./lib/libzfs.so.0				base-zfs-shlib		dynamicroot,zfs
 ./lib/libzfs.so.0.0				base-zfs-shlib		dynamicroot,zfs
@@ -966,7 +966,7 @@
 ./usr/lib/libwrap.so.1.0			base-net-shlib		compatfile
 ./usr/lib/libz.so				base-sys-shlib		compatfile
 ./usr/lib/libz.so.1				base-sys-shlib		compatfile
-./usr/lib/libz.so.1.0				base-sys-shlib		compatfile
+./usr/lib/libz.so.1.1				base-sys-shlib		compatfile
 ./usr/lib/libzfs.so				base-zfs-shlib		compatfile,zfs
 ./usr/lib/libzfs.so.0				base-zfs-shlib		compatfile,zfs
 ./usr/lib/libzfs.so.0.0				base-zfs-shlib		compatfile,zfs
