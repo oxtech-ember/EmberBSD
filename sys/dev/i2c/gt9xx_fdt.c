@@ -6,6 +6,7 @@
 #include <sys/kmem.h>
 #include <dev/i2c/i2cvar.h>
 #include <dev/fdt/fdtvar.h>
+#include "gt9xx_fdt.h"
 int gt9xx_ys_m33_reset(bus_space_tag_t);
 static const struct device_compatible_entry gt9xx_compat[] = {
 	{ .compat = "goodix,gt9xx" },

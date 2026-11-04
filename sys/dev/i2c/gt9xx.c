@@ -20,8 +20,7 @@
 #include "gt9xx_frame.h"
 
 #ifdef FDT
-int gt9xx_fdt_match(struct i2c_attach_args *, cfdata_t);
-int gt9xx_fdt_prepare(struct i2c_attach_args *);
+#include "gt9xx_fdt.h"
 #endif
 
 struct gt9xx_softc {
