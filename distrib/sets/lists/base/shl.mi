@@ -1031,5 +1031,6 @@
 ./usr/lib/security/pam_ssh.so.4			base-sys-shlib		compatfile,pam
 ./usr/lib/security/pam_u2f.so.4			base-sys-shlib		compatfile,pam
 ./usr/lib/security/pam_unix.so.4		base-sys-shlib		compatfile,pam
+./usr/lib/security/pam_xdg.so.4		base-sys-shlib		compatfile,pam
 ./usr/libexec/ld.elf_so				base-sys-shlib		dynamicroot
 ./usr/libexec/named/filter-aaaa.so		base-obsolete		obsolete

@@ -361,6 +361,7 @@
 ./usr/libdata/debug/usr/lib/security/pam_ssh.so.4.debug	base-sys-debug	debug,compatfile,pam
 ./usr/libdata/debug/usr/lib/security/pam_u2f.so.4.debug	base-sys-debug	debug,compatfile,pam
 ./usr/libdata/debug/usr/lib/security/pam_unix.so.4.debug	base-sys-debug	debug,compatfile,pam
+./usr/libdata/debug/usr/lib/security/pam_xdg.so.4.debug	base-sys-debug	debug,compatfile,pam
 ./usr/libdata/debug/usr/libexec/ld.elf_so.debug			comp-sys-debug	debug,dynamicroot
 ./usr/libdata/debug/usr/libexec/liblto_plugin.so.0.1.debug	comp-sys-debug	debug,gcc
 ./usr/libdata/debug/usr/tests/lib/csu/h_initfini3_dso.so.1.debug	tests-lib-debug		debug,compattestfile,atf

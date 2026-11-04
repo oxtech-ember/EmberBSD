@@ -2892,6 +2892,7 @@
 ./usr/share/man/html8/pam_ssh.html		man-sysutil-htmlman	pam,html
 ./usr/share/man/html8/pam_u2f.html		man-sysutil-htmlman	pam,html
 ./usr/share/man/html8/pam_unix.html		man-sysutil-htmlman	pam,html
+./usr/share/man/html8/pam_xdg.html		man-sysutil-htmlman	pam,html
 ./usr/share/man/html8/paxctl.html		man-sysutil-htmlman	html
 ./usr/share/man/html8/pcictl.html		man-sysutil-htmlman	html
 ./usr/share/man/html8/pcnfsd.html		man-nfsserver-htmlman	html

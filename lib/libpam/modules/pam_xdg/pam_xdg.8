@@ -1,0 +1,43 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.Dd November 4, 2026
+.Dt PAM_XDG 8
+.Os
+.Sh NAME
+.Nm pam_xdg
+.Nd manage an XDG runtime directory for a PAM session
+.Sh SYNOPSIS
+.Op Ar service-name
+.Ar session control-flag
+.Pa pam_xdg.so
+.Sh DESCRIPTION
+The
+.Nm
+module creates a private per-user runtime directory below
+.Pa /var/run/xdg ,
+sets
+.Ev XDG_RUNTIME_DIR
+in the PAM environment, and removes the directory when the last tracked session
+closes.
+.Pp
+The root-owned control directory
+.Pa /var/run/xdg-control
+has mode 0700; the root-owned runtime parent
+.Pa /var/run/xdg
+has mode 0711.  Each user directory is owned by its user and group and has
+mode 0700 and is named by numeric user ID.
+Existing directories with unexpected owners or modes are rejected.
+.Pp
+Cleanup refuses to descend into mounted filesystems or directories owned by
+another user.
+.Pp
+The PAM session owner must retain its PAM handle until session close.
+.Pp
+Session locks are released when a process exits.  Stale sessions are recovered
+when the next session for the user opens; an abnormal exit alone does not cause
+immediate directory removal.
+.Sh SEE ALSO
+.Xr pam 3 ,
+.Xr pam.conf 5
+.Sh AUTHORS
+Based on the FreeBSD module by Emmanuel Vadot and contributors,
+Copyright 2024 Beckhoff Automation GmbH & Co. KG.

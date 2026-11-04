@@ -182,7 +182,7 @@ STOBJS+= openpam_static_modules.o
 # Static module support.  These go ONLY in the static libpam.a
 STATIC_MODULES=	pam_chroot pam_deny pam_echo pam_exec pam_ftpusers pam_group \
     pam_guest pam_lastlog pam_login_access pam_nologin pam_permit pam_radius \
-    pam_rhosts pam_rootok pam_securetty pam_self pam_unix
+    pam_rhosts pam_rootok pam_securetty pam_self pam_unix pam_xdg
 
 .if (${MKKERBEROS} != "no")
 STATIC_MODULES+= pam_afslog pam_krb5 pam_ksu
