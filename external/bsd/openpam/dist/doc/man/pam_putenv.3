@@ -20,6 +20,9 @@ Its semantics are similar to those of
 .Xr putenv 3 ,
 but it modifies the PAM
 context's environment list instead of the application's.
+A nonempty name without an equals sign removes that variable; removing
+a name that is not present succeeds.
+A name followed by an equals sign sets the variable to the empty value.
 .Sh RETURN VALUES
 The
 .Fn pam_putenv

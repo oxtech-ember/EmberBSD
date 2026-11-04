@@ -20,6 +20,7 @@ struct pam_handle {
 	void (*cleanup)(pam_handle_t *, void *, int);
 	char env[512];
 	int fail_env;
+	int fail_data;
 };
 int pam_get_user(pam_handle_t *h, const char **user, const char *prompt)
 {
@@ -38,6 +39,8 @@ int pam_set_data(pam_handle_t *h, const char *key, void *v,
 		 void (*f)(pam_handle_t *, void *, int))
 {
 	(void)key;
+	if (h->fail_data)
+		return PAM_BUF_ERR;
 	if (h->data && h->cleanup)
 		h->cleanup(h, h->data, 0);
 	h->data = v;
@@ -48,7 +51,10 @@ int pam_putenv(pam_handle_t *h, const char *s)
 {
 	if (h->fail_env)
 		return PAM_BUF_ERR;
-	snprintf(h->env, sizeof(h->env), "%s", s);
+	if (strchr(s, '=') == NULL)
+		h->env[0] = '\0';
+	else
+		snprintf(h->env, sizeof(h->env), "%s", s);
 	return PAM_SUCCESS;
 }
 static ino_t injected_inode;
@@ -132,6 +138,7 @@ int main(void)
 	snprintf(sub, sizeof(sub), "%s/escape", dir);
 	CHECK(symlink(outside, sub) == 0);
 	CHECK(pam_sm_close_session(&a, 0, 0, NULL) == PAM_SUCCESS);
+	CHECK(a.env[0] == '\0');
 	end(&a);
 	CHECK(exists(dir));
 	CHECK(exists(target));
@@ -148,6 +155,11 @@ int main(void)
 	CHECK(symlink(outside, dir) == 0);
 	CHECK(pam_sm_open_session(&a, 0, 0, NULL) == PAM_SESSION_ERR);
 	CHECK(unlink(dir) == 0);
+	a.fail_data = 1;
+	CHECK(pam_sm_open_session(&a, 0, 0, NULL) == PAM_SESSION_ERR);
+	CHECK(a.env[0] == '\0');
+	CHECK(!exists(dir));
+	a.fail_data = 0;
 	a.fail_env = 1;
 	CHECK(pam_sm_open_session(&a, 0, 0, NULL) == PAM_SESSION_ERR);
 	a.fail_env = 0;

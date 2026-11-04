@@ -413,7 +413,8 @@ pam_sm_close_session(pam_handle_t *pamh, int flags, int argc,
 		    unlinkat(base, uid, AT_REMOVEDIR) == -1)
 			goto out;
 	}
-	(void)pam_putenv(pamh, "XDG_RUNTIME_DIR");
+	if (pam_putenv(pamh, "XDG_RUNTIME_DIR") != PAM_SUCCESS)
+		goto out;
 	rc = PAM_SUCCESS;
 out:
 	if (dir >= 0)

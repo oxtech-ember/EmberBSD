@@ -45,6 +45,13 @@ int main(void)
 	      st.st_gid == pw->pw_gid && (st.st_mode & 07777) == 0700);
 	CHECK(pam_close_session(h, 0) == PAM_SUCCESS);
 	CHECK(access(dir, F_OK) != 0);
+	CHECK(pam_getenv(h, "XDG_RUNTIME_DIR") == NULL);
+	CHECK(pam_open_session(h, 0) == PAM_SUCCESS);
+	CHECK(pam_getenv(h, "XDG_RUNTIME_DIR") != NULL &&
+	      !strcmp(pam_getenv(h, "XDG_RUNTIME_DIR"), expected));
+	CHECK(pam_close_session(h, 0) == PAM_SUCCESS);
+	CHECK(pam_getenv(h, "XDG_RUNTIME_DIR") == NULL);
+	CHECK(access(dir, F_OK) != 0);
 	CHECK(pam_end(h, PAM_SUCCESS) == PAM_SUCCESS);
 	puts("PASS real OpenPAM module load, session and XDG_RUNTIME_DIR");
 	return 0;

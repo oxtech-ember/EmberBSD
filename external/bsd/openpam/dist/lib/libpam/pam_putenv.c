@@ -70,8 +70,20 @@ pam_putenv(pam_handle_t *pamh,
 
 	/* sanity checks */
 	if ((p = strchr(namevalue, '=')) == NULL) {
-		errno = EINVAL;
-		RETURNC(PAM_SYSTEM_ERR);
+		if (*namevalue == '\0') {
+			errno = EINVAL;
+			RETURNC(PAM_SYSTEM_ERR);
+		}
+		if ((i = openpam_findenv(pamh, namevalue,
+		    strlen(namevalue))) >= 0) {
+			FREE(pamh->env[i]);
+			memmove(&pamh->env[i], &pamh->env[i + 1],
+			    (pamh->env_count - (size_t)i - 1) *
+			    sizeof(*pamh->env));
+			--pamh->env_count;
+			pamh->env[pamh->env_count] = NULL;
+		}
+		RETURNC(PAM_SUCCESS);
 	}
 
 	/* see if the variable is already in the environment */
@@ -113,6 +125,9 @@ pam_putenv(pam_handle_t *pamh,
  * The =pam_putenv function sets an environment variable.
  * Its semantics are similar to those of =putenv, but it modifies the PAM
  * context's environment list instead of the application's.
+ * A nonempty name without an equals sign removes that variable; removing
+ * a name that is not present succeeds.  A name followed by an equals sign
+ * sets the variable to the empty value.
  *
  * >pam_getenv
  * >pam_getenvlist

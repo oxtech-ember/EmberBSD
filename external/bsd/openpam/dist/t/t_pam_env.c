@@ -97,6 +97,43 @@ t_putenv_simple(char **desc CRYB_UNUSED, void *arg CRYB_UNUSED)
 }
 
 static int
+t_putenv_remove(char **desc CRYB_UNUSED, void *arg CRYB_UNUSED)
+{
+	pam_handle_t *pamh;
+	char **envlist;
+	int pam_err, ret;
+
+	ret = 1;
+	pam_err = pam_start("t_pam_env", "test", &t_null_pamc, &pamh);
+	t_assert(pam_err == PAM_SUCCESS);
+	ret &= t_compare_pam_err(PAM_SUCCESS, pam_putenv(pamh, "A=one"));
+	ret &= t_compare_pam_err(PAM_SUCCESS, pam_putenv(pamh, "AB=two"));
+	ret &= t_compare_pam_err(PAM_SUCCESS, pam_putenv(pamh, "C=three"));
+	ret &= t_compare_pam_err(PAM_SUCCESS, pam_putenv(pamh, "AB"));
+	ret &= t_compare_pam_err(PAM_SUCCESS, pam_putenv(pamh, "AB"));
+	ret &= t_compare_str(NULL, pam_getenv(pamh, "AB"));
+	envlist = pam_getenvlist(pamh);
+	ret &= t_is_not_null(envlist);
+	if (envlist != NULL) {
+		ret &= t_compare_str("A=one", envlist[0]);
+		if (envlist[0] != NULL) {
+			ret &= t_compare_str("C=three", envlist[1]);
+			if (envlist[1] != NULL)
+				ret &= t_is_null(envlist[2]);
+		}
+		openpam_free_envlist(envlist);
+	}
+	ret &= t_compare_pam_err(PAM_SUCCESS, pam_putenv(pamh, "A="));
+	ret &= t_compare_str("", pam_getenv(pamh, "A"));
+	ret &= t_compare_pam_err(PAM_SUCCESS, pam_putenv(pamh, "A"));
+	ret &= t_compare_pam_err(PAM_SUCCESS, pam_putenv(pamh, "C"));
+	ret &= t_compare_pam_err(PAM_SYSTEM_ERR, pam_putenv(pamh, ""));
+	ret &= t_compare_str(NULL, pam_getenv(pamh, "A"));
+	pam_end(pamh, PAM_SUCCESS);
+	return (ret);
+}
+
+static int
 t_setenv_simple(char **desc CRYB_UNUSED, void *arg CRYB_UNUSED)
 {
 	pam_handle_t *pamh;
@@ -184,6 +221,7 @@ t_prepare(int argc CRYB_UNUSED, char *argv[] CRYB_UNUSED)
 
 	t_add_test(t_env_empty, NULL, "initially empty");
 	t_add_test(t_putenv_simple, NULL, "put - simple");
+	t_add_test(t_putenv_remove, NULL, "put - remove");
 	t_add_test(t_setenv_simple, NULL, "set - simple");
 	t_add_test(t_getenv_empty, NULL, "get - empty");
 	t_add_test(t_getenv_simple_miss, NULL, "get - simple (miss)");

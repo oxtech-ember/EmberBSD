@@ -40,3 +40,11 @@ absent, place the test module in a protected root-owned directory and create
 that service containing `session required /absolute/path/to/test/module`.
 Run `./openpam-test` as root and remove only its temporary service, module and
 created test directories afterwards.
+
+`openpam-unwind.c` exercises the real OpenPAM handle when session data
+registration fails. Compile and link it against the selected target libpam with
+explicit unique `XDG_CONTROL` and `XDG_RUNTIME` test paths. Before running as
+root, ensure those paths and `/etc/pam.d/ember-pam-xdg-unwind` do not exist.
+Create only that temporary service with `session required pam_permit.so`, run
+the test, then remove its service and test directories. Existing PAM services
+must remain untouched.
