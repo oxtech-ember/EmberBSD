@@ -94,6 +94,7 @@ static struct {
 	int		done_calls;
 	struct nvme_cqe	done_cqe;
 	int		published;
+	int		phase_loads;	/* the poller's atomic_load_relaxed() */
 	bool		released_after_done;
 	bool		acquired_after_publish;
 	int		released, acquired;
@@ -155,6 +156,8 @@ published(void)
 static uint16_t
 fake_load16(const uint16_t *p)
 {
+	if (p == f.phase)
+		f.phase_loads++;
 	return *p;
 }
 
@@ -381,6 +384,7 @@ check_poll(const char *what, bool irq)
 	CHECK(rv == 0x0004, "status of the completion returned");
 	CHECK(f.acquired == 1 && f.acquired_after_publish, "membar_acquire() after the phase bit");
 	CHECK(caller_cookie_restored(), "caller's cookie restored");
+	CHECK(f.phase_loads > 0, "poller reads the phase bit with atomic_load_relaxed()");
 	CHECK(f.timed_out_msgs == 0, "no timeout");
 	CHECK(q->q_cq_head == 1 && f.doorbells == 1, "entry consumed once");
 	if (irq)
@@ -399,6 +403,7 @@ check_poll_timeout(void)
 	CHECK(f.done_calls == 1, "callback cleans up once");
 	CHECK(f.done_cqe.flags == 0, "cleanup gets an empty entry");
 	CHECK(caller_cookie_restored(), "caller's cookie restored");
+	CHECK(f.phase_loads > 0, "poller reads the phase bit with atomic_load_relaxed()");
 	CHECK(f.ccb->ccb_done == nvme_empty_done, "late completion goes to a no-op");
 
 	/* The command completes after all: nothing must run. */
@@ -422,6 +427,7 @@ check_poll_timeout_claimed(void)
 	CHECK(f.timed_out_msgs == 0, "no timeout for a claimed completion");
 	CHECK(f.ccb->ccb_done == nvme_poll_done, "claimed completion keeps its handler");
 	CHECK(caller_cookie_restored(), "caller's cookie restored");
+	CHECK(f.phase_loads > 0, "poller reads the phase bit with atomic_load_relaxed()");
 }
 
 int
