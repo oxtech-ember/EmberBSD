@@ -20,11 +20,20 @@ copy && /^\}/ { copy = 0 }
 { prev = $0 }
 END { if (n != 4) exit 1 }' "$input" > "$work/nvme-poll.h"
 build() {
-	${CC:-cc} ${CFLAGS:-} -std=c11 -Wall -Wextra -Werror -Wno-unused-function -Wno-unused-parameter \
+	out=$1
+	shift
+	${CC:-cc} "$@" -std=c11 -Wall -Wextra -Werror -Wno-unused-function -Wno-unused-parameter \
 	    -I"$work" "$src/ember/tools/nvme-poll-contract.c" \
-	    ${LDFLAGS:-} -o "$1"
+	    ${LDFLAGS:-} -o "$out"
 }
-build "$work/check"
+build "$work/check" ${CFLAGS:-}
+# A selected -fanalyzer checks the actual code above. The mutants are broken
+# on purpose and must fail when they run; the analyzer would reject some of
+# them before that.
+mutant_cflags=
+for flag in ${CFLAGS:-}; do
+	case $flag in -fanalyzer) ;; *) mutant_cflags="$mutant_cflags $flag" ;; esac
+done
 ${TEST_RUNNER:-} "$work/check"
 # Each mutation must make the contract fail.
 cp "$work/nvme-poll.h" "$work/orig.h"
@@ -51,7 +60,7 @@ for m in 's/membar_release();/(void)0;/' \
 		echo "mutation did not apply: $m" >&2
 		exit 1
 	fi
-	build "$work/mutant"
+	build "$work/mutant" $mutant_cflags
 	# A mutant may crash; its own shell reports that, into /dev/null.
 	if ( ${TEST_RUNNER:-} "$work/mutant"; exit $? ) > /dev/null 2>&1; then
 		echo "mutation not caught: $m" >&2

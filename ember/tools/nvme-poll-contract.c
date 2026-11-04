@@ -31,7 +31,7 @@
 #define ISSET(t, f)		(((t) & (f)) != 0)
 #define CLR(t, f)		((t) &= ~(f))
 #define SET(t, f)		fake_set16(&(t), (f))
-#define atomic_load_relaxed(p)	(*(volatile uint16_t *)(p))
+#define atomic_load_relaxed(p)	fake_load16(p)
 #define atomic_store_relaxed(p, v) fake_store16((p), (v))
 #define NVME_DMA_KVA(m)		((m)->kva)
 #define BUS_DMASYNC_PREREAD	1
@@ -145,6 +145,17 @@ published(void)
 		f.state->cookie = (void *)0xdeadbeef;
 		memcpy(f.poisoned, f.state, sizeof(*f.state));
 	}
+}
+
+/*
+ * The fake runs on one thread, so a plain load models the relaxed atomic
+ * exactly.  A volatile load would be an unknown value to the analyzer: it
+ * would end the poll loop at once, on a path the fake never takes.
+ */
+static uint16_t
+fake_load16(const uint16_t *p)
+{
+	return *p;
 }
 
 static void
@@ -320,6 +331,11 @@ check_done_on_another_cpu(void)
 	struct nvme_poll_state *st = calloc(1, sizeof(*st));
 	struct nvme_queue *q = reset();
 
+	if (st == NULL) {
+		perror("calloc");
+		exit(2);
+	}
+
 	f.poison = true;
 	f.state = st;
 	f.phase = &st->c.flags;
@@ -340,6 +356,18 @@ check_done_on_another_cpu(void)
 	free(st);
 }
 
+/*
+ * After nvme_poll() returns, a cookie it failed to restore still points
+ * into its finished stack frame, and the value of such a pointer is
+ * indeterminate (C11 6.2.4).  Compare the object representation instead:
+ * that is defined for any pointer value.
+ */
+static bool
+caller_cookie_restored(void)
+{
+	return memcmp(&f.ccb->ccb_cookie, &f.cookie, sizeof(f.cookie)) == 0;
+}
+
 static void
 check_poll(const char *what, bool irq)
 {
@@ -352,7 +380,7 @@ check_poll(const char *what, bool irq)
 	CHECK(f.done_calls == 1, what);
 	CHECK(rv == 0x0004, "status of the completion returned");
 	CHECK(f.acquired == 1 && f.acquired_after_publish, "membar_acquire() after the phase bit");
-	CHECK(f.ccb->ccb_cookie == f.cookie, "caller's cookie restored");
+	CHECK(caller_cookie_restored(), "caller's cookie restored");
 	CHECK(f.timed_out_msgs == 0, "no timeout");
 	CHECK(q->q_cq_head == 1 && f.doorbells == 1, "entry consumed once");
 	if (irq)
@@ -370,7 +398,7 @@ check_poll_timeout(void)
 	CHECK(f.timed_out_msgs == 1, "timeout reported");
 	CHECK(f.done_calls == 1, "callback cleans up once");
 	CHECK(f.done_cqe.flags == 0, "cleanup gets an empty entry");
-	CHECK(f.ccb->ccb_cookie == f.cookie, "caller's cookie restored");
+	CHECK(caller_cookie_restored(), "caller's cookie restored");
 	CHECK(f.ccb->ccb_done == nvme_empty_done, "late completion goes to a no-op");
 
 	/* The command completes after all: nothing must run. */
@@ -393,7 +421,7 @@ check_poll_timeout_claimed(void)
 	CHECK(f.done_calls == 1, "callback runs once");
 	CHECK(f.timed_out_msgs == 0, "no timeout for a claimed completion");
 	CHECK(f.ccb->ccb_done == nvme_poll_done, "claimed completion keeps its handler");
-	CHECK(f.ccb->ccb_cookie == f.cookie, "caller's cookie restored");
+	CHECK(caller_cookie_restored(), "caller's cookie restored");
 }
 
 int
