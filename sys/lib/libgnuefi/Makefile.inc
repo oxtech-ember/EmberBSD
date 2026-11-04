@@ -31,8 +31,6 @@ GNUEFILIB_PROF=	${GNUEFIDST}/libgnuefi.po
 GNUEFILIB=		${GNUEFIDST}/libgnuefi.a
 GNUEFILIB_PROF=	${GNUEFIDST}/libgnuefi_p.a
 .endif
-ZLIBSRCDIR:=	${.PARSEDIR}/../../../common/dist/zlib
-GNUEFIMISCCPPFLAGS+=-I${ZLIBSRCDIR}
 
 GNUEFIMAKE= \
 	cd ${GNUEFIDST} && ${MAKE} -f ${GNUEFIDIR:q}/Makefile \

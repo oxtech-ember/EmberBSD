@@ -28,6 +28,46 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
 # THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
+# Match the original non-overlapping GNU gensub substitutions using POSIX awk.
+function cppdef_spaces(value,    out, first, piece) {
+	out = ""
+	first = 1
+	while (first ? match(value, /(^|[^\\])#/) : match(value, /[^\\]#/)) {
+		piece = substr(value, RSTART, RLENGTH)
+		out = out substr(value, 1, RSTART - 1) substr(piece, 1, RLENGTH - 1) " "
+		value = substr(value, RSTART + RLENGTH)
+		first = 0
+	}
+	out = out value
+	gsub(/\\#/, "#", out)
+	return out
+}
+
+# Insert generated project paths literally, including ampersands and backslashes.
+function replace_literal(line, pattern, value,    pos, out) {
+	out = ""
+	while ((pos = index(line, pattern)) != 0) {
+		out = out substr(line, 1, pos - 1) value
+		line = substr(line, pos + length(pattern))
+	}
+	return out line
+}
+
+# Expand a leading generator variable after splitting, retaining spaces in it.
+function project_path(name,    end, key) {
+	if (substr(name, 1, 2) != "$(")
+		return name
+	end = index(name, ")")
+	key = substr(name, 3, end - 3)
+	return ENVIRON[key] substr(name, end + 1)
+}
+
+function source_line(name) {
+	if (substr(name, 1, 2) == "$(")
+		return "SOURCE=\"" project_path(name) "\"\n"
+	return "SOURCE=.\\" name "\n"
+}
+
 function setup_md_files (arch, env, srclist) {
 	srclist=""
 	asm_tmpl="dspgen/asm_build." arch
@@ -43,7 +83,7 @@ function setup_md_files (arch, env, srclist) {
 		}
 		srclist=srclist "# Begin Source File\n"
 		srclist=srclist "\n"
-		srclist=srclist "SOURCE=.\\" a[i] "\n"
+		srclist=srclist source_line(a[i])
 		base = index (a[i], ".asm")
 		if (base != 0) {
 		  basename = substr (a[i], 0, base - 1)
@@ -76,7 +116,7 @@ BEGIN {
 		}
 		SRCFILES=SRCFILES "# Begin Source File\n"
 		SRCFILES=SRCFILES "\n"
-		SRCFILES=SRCFILES "SOURCE=.\\" a[i] "\n"
+		SRCFILES=SRCFILES source_line(a[i])
 		SRCFILES=SRCFILES "# End Source File"
 	}
 
@@ -97,8 +137,7 @@ BEGIN {
 		if (CPPDEFS != "") {
 			CPPDEFS=CPPDEFS " "
 		}
-		a[i] = gensub("([^\\\\]|^)#", "\\1 ", "g", a[i])
-		a[i] = gensub("\\\\#", "#", "g", a[i])
+		a[i] = cppdef_spaces(a[i])
 		CPPDEFS=CPPDEFS "/D " a[i]
 	}
 	sz = split(ENVIRON["CPPDEF_LIST"], a, "[ \t\n]+");
@@ -109,8 +148,7 @@ BEGIN {
 		if (CPPDEFS != "") {
 			CPPDEFS=CPPDEFS " "
 		}
-		a[i] = gensub("([^\\\\]|^)#", "\\1 ", "g", a[i])
-		a[i] = gensub("\\\\#", "#", "g", a[i])
+		a[i] = cppdef_spaces(a[i])
 		CPPDEFS=CPPDEFS "/D " a[i]
 	}
 
@@ -123,7 +161,7 @@ BEGIN {
 		if (INCDIRS != "") {
 			INCDIRS=INCDIRS " "
 		}
-		INCDIRS=INCDIRS "/I \"" a[i] "\""
+		INCDIRS=INCDIRS "/I \"" project_path(a[i]) "\""
 	}
 	sz = split(ENVIRON["INCDIR_LIST"], a, "[ \t\n]+");
 	for (i = 1; i <= sz; i++) {
@@ -133,7 +171,7 @@ BEGIN {
 		if (INCDIRS != "") {
 			INCDIRS=INCDIRS " "
 		}
-		INCDIRS=INCDIRS "/I \"" a[i] "\""
+		INCDIRS=INCDIRS "/I \"" project_path(a[i]) "\""
 	}
 	sz = split(ENVIRON["LIBDEP_LIST"], a, "[ \t\n]+");
 	for (i = 1; i <= sz; i++) {
@@ -194,15 +232,15 @@ BEGIN {
 	}
 }
 {
-	gsub("%%% SRCFILES %%%", SRCFILES)
-	gsub("%%% SRCFILES_ARM %%%", SRCFILES_ARM)
-	gsub("%%% SRCFILES_ARMV4 %%%", SRCFILES_ARMV4)
-	gsub("%%% SRCFILES_SH3 %%%", SRCFILES_SH3)
-	gsub("%%% SRCFILES_SH4 %%%", SRCFILES_SH4)
-	gsub("%%% SRCFILES_SH %%%", SRCFILES_SH)
-	gsub("%%% SRCFILES_MIPS %%%", SRCFILES_MIPS)
+	$0 = replace_literal($0, "%%% SRCFILES %%%", SRCFILES)
+	$0 = replace_literal($0, "%%% SRCFILES_ARM %%%", SRCFILES_ARM)
+	$0 = replace_literal($0, "%%% SRCFILES_ARMV4 %%%", SRCFILES_ARMV4)
+	$0 = replace_literal($0, "%%% SRCFILES_SH3 %%%", SRCFILES_SH3)
+	$0 = replace_literal($0, "%%% SRCFILES_SH4 %%%", SRCFILES_SH4)
+	$0 = replace_literal($0, "%%% SRCFILES_SH %%%", SRCFILES_SH)
+	$0 = replace_literal($0, "%%% SRCFILES_MIPS %%%", SRCFILES_MIPS)
 	gsub("%%% CPPDEFS %%%", CPPDEFS)
-	gsub("%%% INCDIRS %%%", INCDIRS)
+	$0 = replace_literal($0, "%%% INCDIRS %%%", INCDIRS)
 	gsub("%%% LIBRARIES %%%", LIBRARIES)
 	gsub("%%% DEBUG_LIBPATH %%%", DEBUG_LIBPATH)
 	gsub("%%% RELEASE_LIBPATH %%%", RELEASE_LIBPATH)

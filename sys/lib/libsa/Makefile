@@ -51,6 +51,8 @@ SRCS+=	bcopy.c bzero.c	# Remove me eventually.
 SRCS+=	closeall.c dev.c disklabel.c ioctl.c nullfs.c stat.c fstat.c
 SRCS+=	close.c lseek.c open.c read.c write.c
 .if (${SA_USE_CREAD} == "yes")
+.include "${.PARSEDIR}/../libz/source.mk"
+CPPFLAGS+= -I${EMBER_ZLIB_SOURCE}
 CPPFLAGS+= -D__INTERNAL_LIBSA_CREAD
 SRCS+=	cread.c
 .endif

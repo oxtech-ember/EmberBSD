@@ -6,7 +6,8 @@ NOSSP=yes
 NOMAN=
 .include <bsd.own.mk>
 
-SRCDIR=		${.CURDIR}/../../../common/dist/zlib
+.include "${NETBSDSRCDIR}/sys/lib/libz/source.mk"
+SRCDIR=		${EMBER_ZLIB_SOURCE}
 LIBC=		${NETBSDSRCDIR}/lib/libc
 
 .PATH:		${SRCDIR} ${LIBC}/stdlib

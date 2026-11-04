@@ -3,7 +3,8 @@
 LIB=	z
 LIBISPRIVATE=	yes
 
-ZDISTDIR:=${.PARSEDIR}/../../../common/dist/zlib
+.include "${.PARSEDIR}/source.mk"
+ZDISTDIR:=${EMBER_ZLIB_SOURCE}
 
 CPPFLAGS+=	-I${ZDISTDIR} ${ZCPPFLAGS} ${ZMISCCPPFLAGS}
 

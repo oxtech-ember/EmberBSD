@@ -31,8 +31,10 @@ SALIB_PROF=	${SADST}/libsa.po
 SALIB=		${SADST}/libsa.a
 SALIB_PROF=	${SADST}/libsa_p.a
 .endif
-ZLIBSRCDIR:=	${.PARSEDIR}/../../../common/dist/zlib
-SAMISCCPPFLAGS+=-I${ZLIBSRCDIR}
+
+.if defined(EMBER_ZLIB_SOURCE)
+SAMISCMAKEFLAGS+= EMBER_ZLIB_SOURCE=${EMBER_ZLIB_SOURCE:Q}
+.endif
 
 SAMAKE= \
 	cd ${SADST} && ${MAKE} -f ${SADIR:q}/Makefile \

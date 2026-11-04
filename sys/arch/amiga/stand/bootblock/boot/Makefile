@@ -8,8 +8,6 @@
 #XX# lines replace similar lines, or are added, in case we want to
 #XX# compile LIBZ ourselves to save a few bytes (think TXLT)
 
-#XX#DIR_LIBZ =	${DIR_TOP}/../common/dist/zlib
-
 DIR_TOP=	${.CURDIR}/../../../../..
 DIR_SA = 	${DIR_TOP}/lib/libsa
 DIR_LIBZ=
@@ -80,7 +78,7 @@ VERSIONFLAGS+=-n
 ### special  rules for bootblocks ###
 
 INCPATH = -nostdinc -I${DIR_TOP} -I${DIR_TOP}/lib/libsa
-INCPATH += -I${DIR_TOP}/../common/dist/zlib
+INCPATH += -I${EMBER_ZLIB_SOURCE}
 INCPATH += -I${.CURDIR}
 INCPATH += -I${.CURDIR}/../../.. -I${.OBJDIR}
 INCPATH += -I${.CURDIR}/../elf2bb
