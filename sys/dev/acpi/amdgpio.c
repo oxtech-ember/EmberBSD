@@ -408,6 +408,8 @@ amdgpio_intr_establish(void *priv, int pin, int ipl, int irqmode,
 
 	if ((irqmode & GPIO_INTR_LEVEL_MASK) != 0) {
 		dect = AMDGPIO_CONF_LEVEL;
+		if ((irqmode & GPIO_INTR_LOW_LEVEL) != 0)
+			dect |= AMDGPIO_CONF_ACTLO;
 	} else {
 		KASSERT((irqmode & GPIO_INTR_EDGE_MASK) != 0);
 		if ((irqmode & GPIO_INTR_NEG_EDGE) != 0) {
@@ -421,6 +423,8 @@ amdgpio_intr_establish(void *priv, int pin, int ipl, int irqmode,
 	}
 
 	val = RD4(sc, AMDGPIO_PIN_REG(pin));
+	val &= ~(AMDGPIO_CONF_LEVEL | AMDGPIO_CONF_MASK |
+	    AMDGPIO_CONF_GPIOTXSTATE_EN);
 	val |= dect;
 	val |= AMDGPIO_CONF_INTR_MASK_EN | AMDGPIO_CONF_INTR_EN;
 	WR4(sc, AMDGPIO_PIN_REG(pin), val);
@@ -517,8 +521,12 @@ amdgpio_intr(void *priv)
 		if ((val & AMDGPIO_CONF_INTR_STATUS) != 0) {
 			rv |= aih->ih_func(aih->ih_arg);
 
-			val &= ~(AMDGPIO_CONF_INTR_MASK_EN |
-			    AMDGPIO_CONF_INTR_EN);
+			/*
+			 * Acknowledge the W1C status without disabling the pin.
+			 * The child may have masked it until deferred service;
+			 * preserve the current mask, not the pre-callback value.
+			 */
+			val = RD4(sc, AMDGPIO_PIN_REG(pin));
 			WR4(sc, AMDGPIO_PIN_REG(pin), val);
 		}
 	}

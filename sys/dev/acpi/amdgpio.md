@@ -24,3 +24,17 @@ and a missing GPIO child. Two controls restore the old gate or ignore all errors
 Both controls must exit 1 with the expected diagnostic.
 The model accesses no registers and evaluates no AML methods.
 Full kernel builds, GPIO interrupts and peripheral operation need separate acceptance.
+
+## Peripheral interrupts
+
+Interrupt setup clears stale trigger and polarity bits before selecting the
+requested edge or level. After a handled interrupt, the driver rereads the pin
+register and acknowledges its W1C status while preserving the enable and any
+mask set by deferred child service. This follows the corresponding policy in
+[OpenBSD amdgpio.c](https://github.com/openbsd/src/blob/4401108cce3a58e8f9335d6744f07fc25e9728e4/sys/dev/acpi/amdgpio.c).
+
+`ember/tests/amdgpio-irq-fixture.py` extracts the production interrupt routines
+into a register model. Pass the source and output C file as its two arguments,
+then compile the output with the selected host compiler and `sys/dev/acpi` on
+the include path. The fixture checks trigger modes, repeated interrupts, and
+masking during deferred service; it does not replace hardware acceptance.
