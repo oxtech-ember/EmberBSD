@@ -369,8 +369,15 @@ fwprobe_runtime_valid(const struct pvr_fwprobe_snapshot *s,
 	if ((s->fw_read_offset != s->fw_write_offset &&
 	    (!events || s->fw_command != ROGUE_FWIF_FWCCB_CMD_FREELIST_GROW ||
 	    s->fw_flags != 0 || s->fw_freelist_id == 0)) || s->fw_faults != 0 ||
-	    (s->hwr_state & A733_HWR_BAD) != 0)
+	    (s->hwr_state & A733_HWR_BAD) != 0) {
+		printf("PVR_RUNTIME_EIO: fw=%u/%u cmd=%#x flags=%#x id=%#x "
+		    "faults=%u hwr=%#x pow=%u kccb=%u/%u rtn=%#x\n",
+		    s->fw_read_offset, s->fw_write_offset, s->fw_command,
+		    s->fw_flags, s->fw_freelist_id, s->fw_faults,
+		    s->hwr_state, s->pow_state, s->read_offset,
+		    s->write_offset, s->rtn);
 		return EIO;
+	}
 	if (s->pow_state != ROGUE_FWIF_POW_ON &&
 	    s->pow_state != ROGUE_FWIF_POW_IDLE)
 		return EBUSY;
@@ -949,8 +956,55 @@ fwqueue_observe(struct pvr_fwmem *mem,
 	    out->state.firmware_started_timestamp != boot->firmware_started_timestamp))
 		error = EPROTO;
 	out->error = error;
-	if (error != 0)
+	if (error != 0) {
+		const struct pvr_fwinit_region *region;
+		const struct rogue_fwif_hwrinfobuf *hwr;
+		bus_size_t offset;
+		unsigned int hi, hw;
+
+		if (out->state.fw_read_offset < PVR_FWINIT_FWCCB_COUNT &&
+		    out->state.fw_read_offset != out->state.fw_write_offset) {
+			const uint8_t *event;
+			unsigned int i;
+
+			region = &mem->interface_layout.object[
+			    PVR_FWINIT_FWCCB_CMDS];
+			offset = region->offset + out->state.fw_read_offset *
+			    sizeof(struct rogue_fwif_fwccb_cmd);
+			event = (const uint8_t *)mem->work.cpu + offset;
+			bus_dmamap_sync(mem->dmat, mem->work.map, offset,
+			    sizeof(struct rogue_fwif_fwccb_cmd),
+			    BUS_DMASYNC_POSTREAD);
+			printf("PVR_FWCCB_RAW:");
+			for (i = 0; i < sizeof(struct rogue_fwif_fwccb_cmd) / 4;
+			    i++)
+				printf(" %08x", fwprobe_read32(event + i * 4));
+			printf("\n");
+			bus_dmamap_sync(mem->dmat, mem->work.map, offset,
+			    sizeof(struct rogue_fwif_fwccb_cmd),
+			    BUS_DMASYNC_PREREAD);
+		}
+		region = &mem->interface_layout.object[PVR_FWINIT_HWR];
+		hwr = (const void *)fwprobe_object(mem, PVR_FWINIT_HWR);
+		bus_dmamap_sync(mem->dmat, mem->work.map, region->offset,
+		    sizeof(*hwr), BUS_DMASYNC_POSTREAD);
+		printf("PVR_HWR: counter=%u write=%u\n",
+		    hwr->hwr_counter, hwr->write_index);
+		for (hi = 0; hi < ROGUE_FWIF_HWINFO_MAX; hi++) {
+			const uint8_t *record = (const void *)&hwr->hwr_info[hi];
+
+			if (hwr->hwr_info[hi].hwr_number == 0)
+				continue;
+			printf("PVR_HWR_RAW: index=%u bytes=%zu", hi,
+			    sizeof(struct rogue_hwrinfo));
+			for (hw = 0; hw < sizeof(struct rogue_hwrinfo) / 4; hw++)
+				printf(" %08x", fwprobe_read32(record + hw * 4));
+			printf("\n");
+		}
+		bus_dmamap_sync(mem->dmat, mem->work.map, region->offset,
+		    sizeof(*hwr), BUS_DMASYNC_PREREAD);
 		q->failed = true;
+	}
 	return error;
 }
 

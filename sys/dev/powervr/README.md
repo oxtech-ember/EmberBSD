@@ -33,3 +33,16 @@ existing `ember/tools/a733-gpu-fwinfo-contract.sh`,
 `a733-gpu-fwimage-contract.sh` and `pvr-ge8300-fw-contract.sh` with the
 selected host Clang and firmware files. Successful tests establish no GPU,
 firmware execution, compute or rendering support.
+
+## Queue failure diagnostics
+
+A failed queue observation reports the snapshot as `PVR_RUNTIME_EIO` when
+firmware events, faults or recovery flags fail validation. It also reports
+pending FWCCB words and recorded hardware recovery data. Each diagnostic DMA
+read acquires and releases only the selected firmware object.
+
+The native DRM submit path reports copied geometry or fragment command words
+as `PVR_SUBMIT_ERROR_CMD` before retaining a failed VM. A failed paired geometry
+job also reports its fragment command. The dump never follows GPU addresses.
+Successful submissions produce no command dump. These records identify failed
+work; they do not prove that the GPU stopped or permit VM release.

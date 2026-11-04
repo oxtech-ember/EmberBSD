@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: MIT */
+/* Origin: EmberBSD real-source PowerVR DMA ownership tests. */
 /* Copyright (c) 2026 EmberBSD contributors. AI-assisted real-source tests. */
 #define _POSIX_C_SOURCE 200112L
 #include <errno.h>
@@ -89,6 +90,9 @@ static uint32_t response;
 static unsigned int firmware_failure;
 static bool grow_on_completion, event_read_pending, event_bad_ack;
 static unsigned int event_read_writes;
+static unsigned int diagnostic_reads;
+static bool diagnostic_pending;
+static bus_size_t diagnostic_offset, diagnostic_size;
 
 static void bus_dmamap_sync(bus_dma_tag_t, bus_dmamap_t, bus_addr_t,
     bus_size_t, int);
@@ -255,6 +259,36 @@ bus_dmamap_sync(bus_dma_tag_t tag, bus_dmamap_t map, bus_addr_t offset,
 	}
 	CHECK(result.slot == test_slot);
 	CHECK(result.command == get32(golden));
+	/* Error diagnostics acquire only one bounded firmware-owned object. */
+	if (result.kicked && read_phase == 0 && id == 3 &&
+	    ((offset == owner.interface_layout.object[
+	    PVR_FWINIT_HWR].offset &&
+	    size == sizeof(struct rogue_fwif_hwrinfobuf)) ||
+	    (size == sizeof(struct rogue_fwif_fwccb_cmd) &&
+	    offset >= FCOMMAND &&
+	    offset < FCOMMAND + 32 * sizeof(struct rogue_fwif_fwccb_cmd)))) {
+		CHECK(result.published);
+		if (offset == owner.interface_layout.object[PVR_FWINIT_HWR].offset)
+			CHECK(size == sizeof(struct rogue_fwif_hwrinfobuf));
+		else {
+			CHECK((offset - FCOMMAND) %
+			    sizeof(struct rogue_fwif_fwccb_cmd) == 0);
+			CHECK(size == sizeof(struct rogue_fwif_fwccb_cmd));
+		}
+		if (op == BUS_DMASYNC_POSTREAD) {
+			CHECK(!diagnostic_pending);
+			diagnostic_pending = true;
+			diagnostic_offset = offset;
+			diagnostic_size = size;
+			diagnostic_reads++;
+		} else {
+			CHECK(op == BUS_DMASYNC_PREREAD && diagnostic_pending);
+			CHECK(offset == diagnostic_offset && size == diagnostic_size);
+			diagnostic_pending = false;
+		}
+		unchanged_foreign();
+		return;
+	}
 	if (size == sizes[id] && offset == 0) {
 		CHECK(op == BUS_DMASYNC_POSTREAD || op == BUS_DMASYNC_PREREAD);
 		CHECK(id == (read_phase == 0 || read_phase == 3 ? 3U : 4U));
@@ -389,6 +423,8 @@ delay(unsigned int us)
 static void
 reset(void)
 {
+	CHECK(!diagnostic_pending);
+	diagnostic_reads = 0;
 	test_slot = 0;
 	queue_mode = false;
 	grow_on_completion = event_read_pending = event_bad_ack = false;
@@ -1174,7 +1210,7 @@ service_frozen(void)
 	struct sun60i_a733_gpu_fwprobe_observation out;
 	unsigned int old_syncs = syncs, old_writes = writes;
 
-	CHECK(service.failed && booted.device_owned);
+	CHECK(service.failed && booted.device_owned && !diagnostic_pending);
 	CHECK(run_service() == EIO && result.error == EIO && !result.attempted);
 	CHECK(sun60i_a733_gpu_fwqueue_observe(&owner, &booted, &service, &out) == EIO);
 	CHECK(!out.valid && out.error == EIO);
@@ -1199,6 +1235,7 @@ service_tests(void)
 		CHECK(service.last.slot == result.slot && !service.failed);
 		CHECK(sun60i_a733_gpu_fwqueue_observe(&owner, &booted, &service, &out) == 0);
 	}
+	CHECK(diagnostic_reads == 0 && !diagnostic_pending);
 	/* The service owns a deep result copy. Reuse does not alter it. */
 	accepted = service.last;
 	memset(&result, 0xa5, sizeof(result));
@@ -1227,6 +1264,7 @@ service_tests(void)
 	fw32(3, SYSDATA + 3536, 1);
 	CHECK(sun60i_a733_gpu_fwqueue_observe(&owner, &booted, &service, &out) == EIO);
 	CHECK(out.valid && out.state.fw_faults == 1);
+	CHECK(diagnostic_reads == 1 && !diagnostic_pending);
 	service_frozen();
 
 	/* POLL_FAILURE, unknown bits and BUSY on other commands are fatal. */

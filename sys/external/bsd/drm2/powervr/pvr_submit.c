@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: MIT */
+/* Origin: EmberBSD native PowerVR submission and error diagnostics. */
 /* Copyright (c) 2023 Imagination Technologies Ltd. */
 /* Copyright (c) 2026 EmberBSD contributors. */
 /*
@@ -83,6 +84,34 @@ struct pvr_submit_batch {
 	uint32_t count;
 	struct pvr_submit_job jobs[];
 };
+
+/* Keep copied registers available before a failed batch is retained. */
+static void
+pvr_submit_error_command(const struct pvr_submit_job *job, int error)
+{
+	const void *command;
+	size_t size, offset;
+	uint32_t word;
+
+	if (job->type == DRM_PVR_JOB_TYPE_GEOMETRY) {
+		command = &job->command.geometry;
+		size = sizeof(job->command.geometry);
+	} else if (job->type == DRM_PVR_JOB_TYPE_FRAGMENT) {
+		command = &job->command.fragment;
+		size = sizeof(job->command.fragment);
+	} else {
+		return;
+	}
+	printf("PVR_SUBMIT_ERROR_CMD: job=%u type=%u context=%u "
+	    "hwrt=%u rt=%u error=%d bytes=%zu", job->id, job->type,
+	    job->handle, job->hwrt_handle, job->rt_index, error, size);
+	/* Command words only; never dereference an embedded GPU address. */
+	for (offset = 0; offset < size; offset += sizeof(word)) {
+		memcpy(&word, (const uint8_t *)command + offset, sizeof(word));
+		printf(" %08x", word);
+	}
+	printf("\n");
+}
 
 static int
 pvr_submit_bytes(size_t count, size_t stride, size_t prefix, size_t *bytes)
@@ -675,6 +704,12 @@ pvr_submit_jobs(struct drm_device *dev, void *data, struct drm_file *file)
 		}
 		if (error != 0) {
 			/* The caller cannot prove that the GPU stopped using this VM. */
+			pvr_submit_error_command(job, error);
+			if (job->type == DRM_PVR_JOB_TYPE_GEOMETRY &&
+			    index + 1 < batch->count &&
+			    batch->jobs[index + 1].paired_fragment)
+				pvr_submit_error_command(&batch->jobs[index + 1],
+				    error);
 			pvr_file_vm_fail(vm);
 			goto out;
 		}
