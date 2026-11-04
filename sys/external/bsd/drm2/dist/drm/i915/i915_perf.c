@@ -314,6 +314,7 @@ static u32 i915_perf_stream_paranoid = true;
 #define OAREPORT_REASON_CLK_RATIO      (1<<5)
 
 
+#ifndef __NetBSD__		/* XXX i915 perf sysctl */
 /* For sysctl proc_dointvec_minmax of i915_oa_max_sample_rate
  *
  * The highest sampling frequency we can theoretically program the OA unit
@@ -322,6 +323,7 @@ static u32 i915_perf_stream_paranoid = true;
  * Initialized just before we register the sysctl parameter.
  */
 static int oa_sample_rate_hard_limit;
+#endif
 
 /* Theoretically we can program the OA unit to sample every 160ns but don't
  * allow that by default unless root...
@@ -4613,8 +4615,10 @@ void i915_perf_init(struct drm_i915_private *i915)
 	if (perf->ops.enable_metric_set) {
 		mutex_init(&perf->lock);
 
+#ifndef __NetBSD__		/* XXX i915 perf sysctl */
 		oa_sample_rate_hard_limit = 1000 *
 			(RUNTIME_INFO(i915)->cs_timestamp_frequency_khz / 2);
+#endif
 
 		mutex_init(&perf->metrics_lock);
 		idr_init(&perf->metrics_idr);
