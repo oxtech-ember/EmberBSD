@@ -5,6 +5,8 @@ Hardware applicability and physical evidence belong to [DevBoards](https://githu
 This profile targets the observed CIX P1 CD8180 board and RTL8822CE adapter.
 It builds a reduced static C userland from EmberBSD sources using the selected SDK.
 It does not produce a complete base release or an unattended disk installer.
+A root from release sets with shared libraries and packages is
+[a separate profile](cix-p1-sets.md); it installs next to this root.
 
 ## Inputs and build
 

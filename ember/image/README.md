@@ -3,6 +3,7 @@
 For a selected static C cohort without packages or a complete base-set claim,
 see the [CIX P1 reduced userland profile](cix-p1-userland.md). It builds programs
 and receipts only. Root-image creation and board installation remain separate.
+For a CIX P1 root from release sets with packages, see [cix-p1-sets.md](cix-p1-sets.md).
 
 This OS-owned builder combines verified NetBSD base sets, an accepted EmberBSD
 kernel, an accepted static `fsck_ffs`, matching CTF tools and libdwarf,

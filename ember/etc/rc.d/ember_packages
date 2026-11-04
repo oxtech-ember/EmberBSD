@@ -1,0 +1,30 @@
+#!/bin/sh
+# SPDX-License-Identifier: BSD-2-Clause
+# Origin: EmberBSD (AI-assisted). Install the image's package bundle once.
+# The image places the rc.d scripts of the bundle in advance, so services
+# that run after DAEMON start from the installed packages in the same boot.
+# PROVIDE: ember_packages
+# REQUIRE: mountall
+# BEFORE: DAEMON
+
+$_rc_subr_loaded . /etc/rc.subr
+name=ember_packages
+rcvar=$name
+start_cmd=ember_packages_start
+stop_cmd=:
+
+ember_packages_start()
+{
+	bundle=/var/ember/packages
+	if ! cmp -s "$bundle/packages.sha256" "$bundle/installed-packages.sha256"; then
+		echo 'Installing the package bundle.'
+		if ! /bin/sh /usr/libexec/ember/install-packages "$bundle"; then
+			# rc.subr starts a service whose program is missing silently.
+			logger -s -t ember_packages -p daemon.err \
+			    'Package bundle installation failed; its services do not start.'
+			return 1
+		fi
+	fi
+}
+load_rc_config "$name"
+run_rc_command "$1"
