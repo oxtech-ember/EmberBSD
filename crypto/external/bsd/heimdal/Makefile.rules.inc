@@ -55,18 +55,18 @@ ${src:.asn1=_asn1-priv.h}: ${src:.asn1=.ts}
 .if exists(${src:.asn1=.opt})
 ${src:.asn1=.ts}: ${src} ${src:.asn1=.opt} ${TOOL_ASN1_COMPILE}
 	${_MKTARGET_CREATE}
-	@touch $@
 	${TOOL_ASN1_COMPILE}			\
 		${ASN1_OPTS.${src}}		\
 		--option-file=${.ALLSRC:[2]}	\
 		${.ALLSRC:[1]} ${src:.asn1=_asn1}
+	@touch $@
 .else
 ${src:.asn1=.ts}: ${src} ${TOOL_ASN1_COMPILE}
 	${_MKTARGET_CREATE}
-	@touch $@
 	${TOOL_ASN1_COMPILE}			\
 		${ASN1_OPTS.${src}}		\
 		${.ALLSRC:[1]} ${src:.asn1=_asn1}
+	@touch $@
 .endif
 
 .if ${MKREPRO:Uno} == "yes"
