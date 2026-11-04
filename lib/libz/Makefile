@@ -8,7 +8,8 @@ USE_FORT?= yes	# data-driven bugs?
 
 USE_SHLIBDIR=	yes
 
-ZLIBDIR=${NETBSDSRCDIR}/common/dist/zlib
+.include "${NETBSDSRCDIR}/sys/lib/libz/source.mk"
+ZLIBDIR=${EMBER_ZLIB_SOURCE}
 .PATH: ${ZLIBDIR}
 LIB=		z
 
@@ -28,6 +29,15 @@ FILESOWN_zlib.pc=	${BINOWN}
 FILESGRP_zlib.pc=	${BINGRP}
 FILESMODE_zlib.pc=	${NONBINMODE}
 FILESDIR_zlib.pc=	/usr/lib/pkgconfig
+
+# Keep metadata in step with the selected common source.
+zlib.pc: ${.CURDIR}/zlib.pc.in ${EMBER_ZLIB_SOURCE}/zlib.h
+	${_MKTARGET_CREATE}
+	@version=`${TOOL_SED} -n 's/^#define ZLIB_VERSION "\([^"]*\)"/\1/p' ${EMBER_ZLIB_SOURCE}/zlib.h`; \
+	    test -n "$$version" && \
+	    ${TOOL_SED} "s/@ZLIB_VERSION@/$$version/" ${.CURDIR}/zlib.pc.in > ${.TARGET}.tmp && \
+	    mv ${.TARGET}.tmp ${.TARGET}
+CLEANFILES+= zlib.pc
 
 COPTS.infback.c+=	${CC_WNO_IMPLICIT_FALLTHROUGH}
 COPTS.inflate.c+=	${CC_WNO_IMPLICIT_FALLTHROUGH}

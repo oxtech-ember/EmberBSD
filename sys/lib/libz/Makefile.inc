@@ -16,6 +16,8 @@
 #		building.  See library's Makefile for more details about
 #		supported flags and their default values.
 
+.include "${S}/lib/libz/source.mk"
+
 # Default values:
 ZDST?=		${.OBJDIR}/lib/z
 Z_AS?=		library
@@ -33,6 +35,7 @@ ZLIB_PROF=	${ZDST}/libz_p.a
 ZMAKE= \
 	cd ${ZDST} && ${MAKE} -f ${ZDIR:q}/Makefile \
 	    ZDIR=${ZDIR:q} \
+	    EMBER_ZLIB_SOURCE=${EMBER_ZLIB_SOURCE:q} \
 	    CC=${CC:q} CFLAGS=${CFLAGS:q} CPUFLAGS= \
 	    AS=${AS:q} AFLAGS=${AFLAGS:q} \
 	    LORDER=${LORDER:q} \

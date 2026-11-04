@@ -1,6 +1,20 @@
 {
   "version": 1,
   "sources": {
+    "EMBER_ZLIB_SOURCE": {
+      "producer_dirs": [
+        "lib/libz"
+      ],
+      "header_prefixes": [
+        "usr/include/zlib.h",
+        "usr/include/zconf.h"
+      ],
+      "consumer_dirs": [],
+      "linked_names": [
+        "libz.a",
+        "libz.so"
+      ]
+    },
     "EMBER_BYACC_SOURCE": {
       "producer_dirs": [
         "external/bsd/byacc/bin"

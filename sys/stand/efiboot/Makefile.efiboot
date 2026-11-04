@@ -138,7 +138,7 @@ LIBKERN= ${KERNLIB}
 ### find out what to use for libz
 Z_AS= library
 .include "${S}/lib/libz/Makefile.inc"
-CPPFLAGS+=	-I${S}/lib/libz -I${S}/../common/dist/zlib
+CPPFLAGS+=	-I${S}/lib/libz -I${EMBER_ZLIB_SOURCE}
 LIBZ= ${ZLIB}
 
 ### find out what to use for libgnuefi

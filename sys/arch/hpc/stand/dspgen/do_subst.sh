@@ -40,10 +40,7 @@ if [ "X$1" = "X--show-libdeps" ]; then
 	exit
 fi
 
-AWK=gawk
-if [ `uname` = SunOS ]; then
-	AWK=nawk
-fi
+: ${AWK:=awk}
 
 STD_CPPDEF_LIST=''
 STD_INCDIR_LIST=''
@@ -60,5 +57,14 @@ export LIBDEP_LIST
 export LIBRARY_LIST STD_LIBRARY_LIST
 
 . $name/$name.config
+case "$name" in
+libz|hpcboot)
+	case "${EMBER_ZLIB_SOURCE:-}" in
+	[A-Za-z]:[\\/]*|\\\\*) ;;
+	*) echo "EMBER_ZLIB_SOURCE must be an absolute Windows prepared zlib path" >&2; exit 1 ;;
+	esac
+	;;
+esac
+export EMBER_ZLIB_SOURCE
 ${AWK} -f dspgen/do_subst.awk \
     dspgen/${TYPE}.tmpl | ${AWK} '{ printf "%s\r\n", $0 }'
