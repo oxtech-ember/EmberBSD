@@ -37,7 +37,9 @@ class BootstrapBaseTests(unittest.TestCase):
             path.write_text('fixture\n')
         self.log = self.work / 'calls.jsonl'
         recorder = self.work / 'record.py'
-        recorder.write_text('import json, os, sys\n'
+        recorder.write_text('import json, os, sys, time\n'
+                            'if os.environ.get("DELAY_LIB") and sys.argv[1:] == ["lib", "includes"]:\n'
+                            '    time.sleep(0.4)\n'
                             'with open(os.environ["CALL_LOG"], "a") as output:\n'
                             '    output.write(json.dumps(sys.argv[1:]) + "\\n")\n'
                             'if " ".join(sys.argv[1:]) == os.environ.get("FAIL_CALL"):\n'
@@ -94,6 +96,26 @@ class BootstrapBaseTests(unittest.TestCase):
                         expected.append(['lib/libc', 'cleandir'])
                     expected += [['lib/libc', 'dependall'], ['lib/libc', 'install']]
                 self.assertEqual(self.calls(), expected)
+
+    def test_full_includes_orders_lib_before_crypto(self):
+        self.env['DELAY_LIB'] = '1'
+        for goals, options, expect_lib in (
+            (('includes',), (), True),
+            (('includes-lib', 'includes-crypto/external'), (), True),
+            (('includes',), ('BUILD_lib=no',), False),
+            (('includes-crypto/external',), (), False),
+        ):
+            with self.subTest(goals=goals, options=options):
+                self.log.unlink(missing_ok=True)
+                result = self.make(SOURCE, '-j16', self.recorder, *options, *goals)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                calls = self.calls()
+                lib = ['lib', 'includes']
+                crypto = ['crypto/external', 'includes']
+                self.assertIn(crypto, calls)
+                self.assertEqual(lib in calls, expect_lib, calls)
+                if expect_lib:
+                    self.assertLess(calls.index(lib), calls.index(crypto), calls)
 
     def test_refuses_missing_prepared_libedit_and_root_destination(self):
         for setting in ('EMBER_LIBEDIT_SOURCE=', 'DESTDIR=', 'DESTDIR=/'):
