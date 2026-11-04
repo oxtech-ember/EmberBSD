@@ -160,7 +160,7 @@ ${HOST_LIBDIR}/lib${HOSTLIB}.a: lib${HOSTLIB}.a
 HOST_INCINSTFILES+= ${HOST_INCSDIR}/compat/${_f}
 ${HOST_INCSDIR}/compat/${_f}: ${_f}
 	${_MKTARGET_INSTALL}
-	${HOST_INSTALL_FILE} ${.ALLSRC} ${.TARGET}
+	${HOST_COMPAT_INSTALL_FILE} ${.ALLSRC} ${.TARGET}
 .endfor
 
 .for _d in ${INCSUBDIRS}
@@ -173,7 +173,7 @@ ${HOST_INCSDIR}/compat/${_d}:
 # Install include files in ${TOOLDIR}/include/compat
 includes: .PHONY ${HOST_INCINSTDIRS} .WAIT ${HOST_INCINSTFILES}
 	@(cd include && find . -name '*.h' -print | while read f ; do \
-	    ${HOST_INSTALL_FILE} $$f ${HOST_INCSDIR}/compat/$$f ; \
+	    ${HOST_COMPAT_INSTALL_FILE} $$f ${HOST_INCSDIR}/compat/$$f ; \
 	done)
 
 
@@ -183,7 +183,7 @@ ${HOST_SHAREDIR}/compat/defs.mk: defs.mk
 	${_MKTARGET_INSTALL}
 	${HOST_INSTALL_DIR} ${HOST_SHAREDIR}
 	${HOST_INSTALL_DIR} ${HOST_SHAREDIR}/compat
-	${HOST_INSTALL_FILE} ${.ALLSRC} ${.TARGET}
+	${HOST_COMPAT_INSTALL_FILE} ${.ALLSRC} ${.TARGET}
 
 # bsd.hostlib.mk wants HOST_CPPFLAGS, not CPPFLAGS
 
@@ -203,6 +203,14 @@ parsedate.c: ${.CURDIR}/../../lib/libutil/${COMPAT_PARSEDATE_YSRCS}
 # Use uninstalled copy of the install program
 INSTALL_OBJ!=	cd ${NETBSDSRCDIR}/tools/binstall && ${PRINTOBJDIR}
 INSTALL=	${INSTALL_OBJ}/xinstall
+
+# Only our host xinstall implements the content-aware -C option.  Keep
+# externally selected install commands and their arguments unchanged.
+HOST_COMPAT_INSTALL_FILE= ${HOST_INSTALL_FILE}
+.if "${INSTALL}" == "${INSTALL_OBJ}/xinstall" && \
+    "${HOST_INSTALL_FILE}" == "${INSTALL} ${COPY} ${PRESERVE} ${RENAME}"
+HOST_COMPAT_INSTALL_FILE+= -C
+.endif
 
 # Run "${TOOLDIR}/bin/nbmake-${MACHINE} regen" by hand after editing
 # configure.ac.  See more detailed instructions in configure.ac.
