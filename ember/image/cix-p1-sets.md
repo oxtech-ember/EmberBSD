@@ -119,9 +119,21 @@ the target metadata of added files, the placed `rc.d` scripts, the
 startup defaults and the bundle verification.
 
 On 4 November 2026 the root of OS `77cc52ebd1c5` with 24 packages
-(`chrony`, `ptpd`, `aravis` and their dependencies) was installed by the
-steps above in an AArch64 QEMU guest with HVF and the generic `EMBER64`
-kernel. The guest added the partition next to its mounted root, received
-the image over SSH and booted it by wedge name. The first boot installed
-the bundle; `chronyd` and `ptpd2` started from `rc.d` after `DAEMON`.
-This is a VM check. The CIX kernel, the SD card and Wi-Fi need the board.
+(`chrony`, `ptpd` nb2, `aravis` and their dependencies) was installed by
+steps 3 to 7 in AArch64 QEMU guests with HVF and the release `EMBER64`
+kernel. A guest with the full base played the old root. It added the
+partition next to its mounted root and received the 4 GiB image over
+compressed SSH in 29 to 71 seconds; the readback checksum matched. The new
+root booted by wedge name. The first boot installed the bundle; `pkg_admin
+check` found no errors. `chronyd` synchronised to a local NTP server
+(stratum 2) and kept its drift file across reboots. `rcorder` placed
+`ember_packages` before `DAEMON` and `chronyd` and `ptpd2` after it. Two
+more boots did not reinstall the packages and started the same services.
+The restored `boot.cfg` booted the old root again. The root used 11,646 of
+541,694 inodes. Next to `chronyd`, the `ptpd2` service ran as a master-only
+port with `clock:no_adjust`, and the Ports `probes/ptpd/check-ntp-owner.sh`
+found no clock or kernel NTP state write in `PTP_MASTER` and in
+`PTP_PASSIVE` behind a second guest with priority1 1 and clock class 6.
+The guests have no entropy device: `entropy=wait` held each boot for about
+66 seconds. This is a VM check. The CIX kernel, the SD card behind USB,
+Wi-Fi and the board's own entropy source need the board.
