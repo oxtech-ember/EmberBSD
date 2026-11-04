@@ -88,6 +88,7 @@ __RCSID("$NetBSD: xinstall.c,v 1.130.2.1 2026/07/20 08:55:28 martin Exp $");
 #include <sys/wait.h>
 #include <sys/time.h>
 
+
 #include <ctype.h>
 #include <err.h>
 #include <errno.h>
@@ -117,7 +118,8 @@ __RCSID("$NetBSD: xinstall.c,v 1.130.2.1 2026/07/20 08:55:28 martin Exp $");
 
 #define BACKUP_SUFFIX ".old"
 
-static int	dobackup, dodir, dostrip, dolink, dopreserve, dorename, dounpriv;
+static int	dobackup, docompare, dodir, dostrip, dolink, dopreserve,
+		dorename, dounpriv;
 static int	haveopt_f, haveopt_g, haveopt_m, haveopt_o;
 static int	numberedbackup;
 static int	verbose;
@@ -170,6 +172,8 @@ static void	metadata_log(const char *, const char *, struct timeval *,
 static int	parseid(const char *, id_t *);
 static void 	run(const char *, const char *, const char *, int);
 static void	strip(const char *);
+static int	unchanged_host_file(const char *, const char *,
+		    const struct stat *);
 __dead static void	usage(void);
 static char   *xbasename(char *);
 static char   *xdirname(char *);
@@ -187,7 +191,7 @@ main(int argc, char *argv[])
 	setprogname(argv[0]);
 
 	iflags = 0;
-	while ((ch = getopt(argc, argv, "a:cbB:dD:f:g:h:l:m:M:N:o:prsS:T:Uv"))
+	while ((ch = getopt(argc, argv, "a:cCbB:dD:f:g:h:l:m:M:N:o:prsS:T:Uv"))
 	    != -1) {
 		switch((char)ch) {
 		case 'a':
@@ -216,6 +220,9 @@ main(int argc, char *argv[])
 			/*FALLTHROUGH*/
 		case 'b':
 			dobackup = 1;
+			break;
+		case 'C':
+			docompare = 1;
 			break;
 		case 'c':
 			/* ignored; was "docopy" which is now the default. */
@@ -667,6 +674,67 @@ makelink(char *from_name, char *to_name)
 }
 
 /*
+ * Compare only the ordinary host-tool file case.  Cases with install side
+ * effects or metadata we cannot prove equivalent keep the normal copy path.
+ */
+static int
+unchanged_host_file(const char *from, const char *to, const struct stat *src)
+{
+#if HAVE_NBTOOL_CONFIG_H
+	struct stat dst, opened, parent, latest;
+	char a[8192], b[8192];
+	ssize_t na, nb;
+	int in, out, same = 0;
+
+	if (!docompare || !dorename || dobackup || dostrip || dolink ||
+	    dounpriv || verbose || metafile != NULL || digest != NULL ||
+	    tags != NULL ||
+	    afterinstallcmd != NULL || haveopt_o || haveopt_g || haveopt_f ||
+	    !S_ISREG(src->st_mode) || lstat(to, &dst) != 0 ||
+	    !S_ISREG(dst.st_mode) || dst.st_nlink != 1 ||
+	    (dst.st_dev == src->st_dev && dst.st_ino == src->st_ino) ||
+	    (dst.st_mode & 07777) != mode || dst.st_uid != geteuid() ||
+	    dst.st_gid != getegid() ||
+	    stat(xdirname(__UNCONST(to)), &parent) != 0 ||
+	    parent.st_gid != getegid() || src->st_size != dst.st_size)
+		return 0;
+#if HAVE_STRUCT_STAT_ST_FLAGS
+	if (dst.st_flags != 0)
+		return 0;
+#endif
+	in = open(from, O_RDONLY);
+	if (in == -1)
+		return 0;
+	out = open(to, O_RDONLY);
+	if (out == -1) {
+		close(in);
+		return 0;
+	}
+	if (fstat(out, &opened) == 0 && opened.st_dev == dst.st_dev &&
+	    opened.st_ino == dst.st_ino) {
+		do {
+			na = read(in, a, sizeof(a));
+			nb = read(out, b, sizeof(b));
+			if (na < 0 || nb < 0 || na != nb ||
+			    (na > 0 && memcmp(a, b, (size_t)na) != 0))
+				break;
+		} while (na != 0);
+		same = na == 0 && nb == 0 && lstat(to, &latest) == 0 &&
+		    S_ISREG(latest.st_mode) && latest.st_dev == dst.st_dev &&
+		    latest.st_ino == dst.st_ino;
+	}
+	close(out);
+	close(in);
+	return same;
+#else
+	(void)from;
+	(void)to;
+	(void)src;
+	return 0;
+#endif
+}
+
+/*
  * install --
  *	build a path name and install the file
  */
@@ -717,6 +785,9 @@ install(char *from_name, char *to_name, u_int flags)
 		from_sb.st_flags = 0;	/* XXX */
 #endif
 	}
+
+	if (!devnull && unchanged_host_file(from_name, to_name, &from_sb))
+		return;
 
 	/*
 	 * Unlink now... avoid ETXTBSY errors later.  Try and turn
@@ -1353,10 +1424,10 @@ usage(void)
 	prog = getprogname();
 
 	(void)fprintf(stderr,
-"usage: %s [-bcprsUv] [-M log] [-D dest] [-T tags] [-B suffix]\n"
+"usage: %s [-bCcprsUv] [-M log] [-D dest] [-T tags] [-B suffix]\n"
 "           [-a aftercmd] [-f flags] [-m mode] [-N dbdir] [-o owner] [-g group] \n"
 "           [-l linkflags] [-h hash] [-S stripflags] file1 file2\n"
-"       %s [-bcprsUv] [-M log] [-D dest] [-T tags] [-B suffix]\n"
+"       %s [-bCcprsUv] [-M log] [-D dest] [-T tags] [-B suffix]\n"
 "           [-a aftercmd] [-f flags] [-m mode] [-N dbdir] [-o owner] [-g group]\n"
 "           [-l linkflags] [-h hash] [-S stripflags] file1 ... fileN directory\n"
 "       %s -d [-pUv] [-M log] [-D dest] [-T tags] [-a aftercmd] [-m mode]\n"
