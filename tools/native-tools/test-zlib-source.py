@@ -33,7 +33,7 @@ def query(directory, assignments, *variables, success=True):
 
 setting = 'EMBER_ZLIB_SOURCE=' + str(source)
 assert str(source) in query('lib/libz', [setting], 'ZLIBDIR')
-assert query('lib/libz', [setting], 'SHLIB_MAJOR', 'SHLIB_MINOR').splitlines() == ['1', '0']
+assert query('lib/libz', [setting], 'SHLIB_MAJOR', 'SHLIB_MINOR').splitlines() == ['1', '1']
 assert str(source) in query('sys/lib/libz', [setting], 'ZDISTDIR')
 assert str(source) in query('distrib/utils/zcat', [setting], 'SRCDIR')
 query('sys/lib/libsa', ['SA_USE_CREAD=no', 'EMBER_ZLIB_SOURCE='], 'SRCS')
@@ -63,18 +63,19 @@ with tempfile.TemporaryDirectory(prefix='ember-zlib-routing-') as temp:
     fixture_make = obj / 'nbmake'
     fixture_make.write_text('\n'.join(wrapper) + '\n')
     fixture_make.chmod(0o755)
-    result = subprocess.run([str(fixture_make), '-C', str(root / 'lib/libz'), setting, 'zlib.pc'], text=True, capture_output=True)
+    (obj / 'dest/usr/lib/pkgconfig').mkdir(parents=True)
+    result = subprocess.run([str(fixture_make), '-C', str(root / 'lib/libz'), setting, 'MKUPDATE=yes', 'DESTDIR=' + str(obj / 'dest'), 'filesinstall'], text=True, capture_output=True)
     assert result.returncode == 0, result.stdout + result.stderr
     match = re.search(r'^#define ZLIB_VERSION "([^"]+)"', (source / 'zlib.h').read_text(), re.M)
     assert match is not None
-    assert 'Version: ' + match.group(1) + '\n' in (pcobj / 'zlib.pc').read_text()
+    assert 'Version: ' + match.group(1) + '\n' in (obj / 'dest/usr/lib/pkgconfig/zlib.pc').read_text()
 
 # The common sources must compile with the actual base-library warning policy.
 names = ('adler32.c', 'compress.c', 'crc32.c', 'deflate.c', 'infback.c', 'inffast.c',
          'inflate.c', 'inftrees.c', 'trees.c', 'uncompr.c', 'zutil.c', 'gzwrite.c',
          'gzlib.c', 'gzread.c', 'gzclose.c')
 cmd = [args.cc, '--target=x86_64--netbsd', '--sysroot=' + str(args.sysroot), '-I' + str(source),
-       '-Werror=cast-qual', '-fsyntax-only', *(str(source / name) for name in names)]
+       '-Wwrite-strings', '-Werror=cast-qual', '-fsyntax-only', *(str(source / name) for name in names)]
 result = subprocess.run(cmd, text=True, capture_output=True)
 assert result.returncode == 0, result.stdout + result.stderr
 print('OS common zlib routing, refresh and compile PASS')

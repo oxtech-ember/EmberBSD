@@ -2528,6 +2528,7 @@ buildlibs()
 	make_in_dir . do-distrib-dirs
 	make_in_dir . includes
 	make_in_dir . do-lib
+	make_in_dir share/legal install
 	statusmsg "libs built"
 }
 

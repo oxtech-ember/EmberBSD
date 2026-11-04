@@ -25,6 +25,7 @@ INCS=		zconf.h zlib.h
 INCSDIR=	/usr/include
 
 FILES+=			zlib.pc
+FILESBUILD_zlib.pc=	yes
 FILESOWN_zlib.pc=	${BINOWN}
 FILESGRP_zlib.pc=	${BINGRP}
 FILESMODE_zlib.pc=	${NONBINMODE}
