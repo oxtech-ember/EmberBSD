@@ -54,6 +54,11 @@ int main(void) {
  CHECK(axpreg_set_voltage(&dev,950000,950000)==EOPNOTSUPP && b.writes==0 && !b.locked);
  memset(&b,0,sizeof(b));b.reg[3]=0x41;b.reg[0x27]=0x10;b.reg[0x23]=0xac;b.poll_done=4;
  CHECK(axpreg_set_voltage(&dev,950000,950000)==0 && b.writes==1 && b.written==0xad && b.reg[0x23]==0x2d && b.ns>=100000 && !b.locked);
+ /* AXP803 DCDC4 selector 42 is 500 + 42 * 10 = 920 mV. */
+ for (unsigned done=0;done<=1;done++) {
+  memset(&b,0,sizeof(b));b.reg[3]=0x41;b.reg[0x27]=0x10;b.reg[0x23]=42 | (done<<7);b.poll_done=4;
+  CHECK(axpreg_set_voltage(&dev,950000,950000)==0 && b.writes==1 && b.written==(45 | (done<<7)) && b.reg[0x23]==45 && b.ns>=100000 && !b.locked);
+ }
  memset(&b,0,sizeof(b));b.reg[3]=0x41;b.reg[0x27]=0x10;b.reg[0x23]=0x2c;b.write_fail=1;
  CHECK(axpreg_set_voltage(&dev,950000,950000)==EIO && b.writes==1 && !b.locked);
  for (int failure=1; failure<=2; failure++) {

@@ -22,7 +22,7 @@ common owner verifies direct, non-bouncing 36-bit DMA and excludes both MMIO
 resources and the MIPS wrapper window.
 
 The AXP803 DCDC4 rail must already be enabled with an initial programmed
-setpoint of 940000 or 950000 microvolts. After preflight and before any GPU
+setpoint of 920000, 940000 or 950000 microvolts. After preflight and before any GPU
 clock or power transition, the explicit request asks the native regulator
 provider to prepare exactly 950000 microvolts. The provider verifies the AXP803
 chip ID and enabled DVM before writing, then requires DVM completion and the

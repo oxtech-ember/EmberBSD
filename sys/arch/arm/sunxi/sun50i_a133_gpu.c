@@ -258,7 +258,8 @@ a133_gpu_preflight(void *cookie)
 		goto fail;
 	}
 	sc->diag.microvolts = microvolts;
-	if (microvolts != 940000 && microvolts != 950000) {
+	if (microvolts != 920000 && microvolts != 940000 &&
+	    microvolts != 950000) {
 		error = EBUSY;
 		goto fail;
 	}
