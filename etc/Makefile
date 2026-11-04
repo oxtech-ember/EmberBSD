@@ -591,7 +591,7 @@ build_kernelsets: .PHONY
 .if ${configfile} == ${configsel}
 build_kernelsets: kernset-${configfile}
 kernset-${configfile}: .PHONY .MAKE build_kernels snap_pre
-	${MAKE} pack-kernset-${configfile}
+	${MAKEDIRTARGET} . pack-kernset-${configfile}
 
 # Package already-built kernels without staging a full distribution.
 pack-kernset-${configfile}: .PHONY check_RELEASEDIR

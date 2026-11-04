@@ -19,6 +19,10 @@ with tempfile.TemporaryDirectory(prefix='kernel-set-only-') as temporary:
     obj, release = root / 'objects', root / 'release'
     kernel = obj / 'GENERIC_AMDGPU/netbsd'
     kernel.parent.mkdir(parents=True)
+    make_objects = root / 'make-objects'
+    (make_objects / 'etc/mtree').mkdir(parents=True)
+    dest = root / 'dest'
+    dest.mkdir()
     release.mkdir()
     kernel.write_bytes(b'kernel fixture\n')
     old_time = time.time() - 5
@@ -34,7 +38,8 @@ with tempfile.TemporaryDirectory(prefix='kernel-set-only-') as temporary:
         '-C', str(args.source / 'etc'), '-f', str(args.makefile),
         'RELEASEDIR=' + str(release), 'KERNOBJDIR=' + str(obj),
         'KERNEL_SETS=GENERIC_AMDGPU', 'ALL_KERNELS=GENERIC_AMDGPU',
-        'KERNELS_DONE=yes', 'MKDEBUGKERNEL=no']
+        'KERNELS_DONE=yes', 'MKDEBUGKERNEL=no', 'MKUPDATE=yes',
+        'MAKEOBJDIR=${.CURDIR:C,^' + str(args.source) + ',' + str(make_objects) + ',}']
     def run(*extra):
         return subprocess.run(command + list(extra), capture_output=True, text=True, timeout=90)
     result = run('pack-kernset-GENERIC_AMDGPU')
@@ -67,4 +72,19 @@ with tempfile.TemporaryDirectory(prefix='kernel-set-only-') as temporary:
     assert sibling.read_bytes() == b'other set'
     result = run('-n', 'kernset-GENERIC_AMDGPU')
     assert 'distribution' in result.stdout + result.stderr
-    print('PASS: real pax kernel set, no-op, suffix-only, missing input and legacy distribution dependency')
+    # Exercise the legacy recipe from a separate object directory with no
+    # Makefile, as build.sh -O does. The distribution is already staged.
+    assert not (make_objects / 'etc/Makefile').exists()
+    result = run('-V', '.OBJDIR')
+    assert result.returncode == 0 and str(make_objects / 'etc') in result.stdout
+    kernel.write_bytes(b'legacy kernel fixture\n')
+    os.utime(kernel, (new_time + 2, new_time + 2))
+    result = run('DISTRIBUTION_DONE=yes', 'DESTDIR=' + str(dest),
+                 'kernset-GENERIC_AMDGPU')
+    assert result.returncode == 0, result.stdout + result.stderr
+    with tarfile.open(archive, 'r:xz') as tar:
+        files = [member for member in tar if member.isfile()]
+        assert len(files) == 1 and files[0].name == './netbsd'
+        assert tar.extractfile(files[0]).read() == kernel.read_bytes()
+    assert sibling.read_bytes() == b'other set'
+    print('PASS: real pax kernel set, no-op, suffix-only, missing input, legacy dependency and separate object directory')
