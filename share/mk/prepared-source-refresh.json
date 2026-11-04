@@ -1,6 +1,17 @@
 {
   "version": 1,
   "sources": {
+    "EMBER_BYACC_SOURCE": {
+      "producer_dirs": [
+        "external/bsd/byacc/bin"
+      ],
+      "header_prefixes": [],
+      "consumer_dirs": [],
+      "linked_names": [],
+      "native_producer_dirs": [
+        "tools/yacc"
+      ]
+    },
     "EMBER_LIBCBOR_SOURCE": {
       "producer_dirs": [
         "external/mit/libcbor/lib"
