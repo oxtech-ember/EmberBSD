@@ -446,3 +446,14 @@ ownership). Cppcheck could not parse this Darwin configuration: the compilation
 database reached a NAME_MAX header guard; actual GCC preprocessing then exposed
 an SDK errno typedef syntax limitation. Both inputs fail identically. These
 failures are recorded, not a clean Cppcheck claim or a full flex audit.
+
+## Package an existing kernel set
+
+After the selected kernel has been built and inspected, the `etc` make target
+`pack-kernset-CONFIG` packages its existing kernel files without building a
+kernel or staging a full distribution. Use the selected native OS routing and
+`nbmake`, with `KERNOBJDIR`, `RELEASEDIR`, `KERNEL_SETS=CONFIG`,
+`ALL_KERNELS=CONFIG`, and `KERNELS_DONE=yes`. The target writes only the
+corresponding `binary/sets/kern-CONFIG` archive; debug inclusion follows
+`MKDEBUGKERNEL`. A missing required kernel fails before packaging. The usual
+`kernset-CONFIG` still builds kernels and stages the distribution first.

@@ -590,7 +590,11 @@ build_kernelsets: .PHONY
 .for configsel in ${ALL_KERNELS:O:u}
 .if ${configfile} == ${configsel}
 build_kernelsets: kernset-${configfile}
-kernset-${configfile}: .PHONY build_kernels snap_pre
+kernset-${configfile}: .PHONY .MAKE build_kernels snap_pre
+	${MAKE} pack-kernset-${configfile}
+
+# Package already-built kernels without staging a full distribution.
+pack-kernset-${configfile}: .PHONY check_RELEASEDIR
 	@kernlist=$$(${GETKERNELAWK} ${KERNCONFDIR}/${configfile}); \
 	kerndir=${KERNOBJDIR}/${configfile:C/.*\///}; \
 	kernsuffixes="${KERNEL_SUFFIXES:S/^/./}"; \
@@ -600,9 +604,11 @@ kernset-${configfile}: .PHONY build_kernels snap_pre
 	cd $${kerndir} && { \
 		kernels=; newest=; \
 		for kernel in $${kernlist}; do \
+			found=no; \
 			for s in "" $${kernsuffixes}; do \
 				ks="$${kernel}$${s}"; \
 				[ -f $${ks} ] || continue; \
+				found=yes; \
 				kernels="$${kernels} $${ks}"; \
 				[ -z "$${newest}" -o $${ks} \
 				    -nt "$${newest}" ] && newest=$${ks}; \
@@ -610,7 +616,11 @@ kernset-${configfile}: .PHONY build_kernels snap_pre
 				     ! -f $${ks}.gdb ] && continue; \
 				kernels="$${kernels} $${ks}.gdb"; \
 			done; \
+			if [ "$${found}" = no ]; then \
+				echo "Missing kernel: $${kerndir}/$${kernel}" >&2; exit 1; \
+			fi; \
 		done; \
+		${INSTALL} -d -m 755 ${RELEASEDIR}/${RELEASEMACHINEDIR}/binary/sets || exit 1; \
 		[ $${kern_tgz} -nt "$${newest}" ] || { \
 			echo "echo $${kernels} | $${pax_cmd}"; \
 			if [ ${KERNEL_DIR} = "yes" ]; then \
