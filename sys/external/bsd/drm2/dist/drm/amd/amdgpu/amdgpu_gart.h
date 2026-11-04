@@ -71,11 +71,11 @@ void amdgpu_gart_fini(struct amdgpu_device *adev);
 int amdgpu_gart_unbind(struct amdgpu_device *adev, uint64_t gpu_start,
     unsigned npages);
 int amdgpu_gart_map(struct amdgpu_device *adev, uint64_t gpu_start,
-    unsigned npages, bus_size_t map_start, bus_dmamap_t map, uint32_t flags,
+    unsigned npages, bus_size_t map_start, bus_dmamap_t map, uint64_t flags,
     void *dst);
 int amdgpu_gart_bind(struct amdgpu_device *adev, uint64_t gpu_start,
     unsigned npages, struct page **pagelist, bus_dmamap_t dmamap,
-    uint32_t flags);
+    uint64_t flags);
 #else
 int amdgpu_gart_unbind(struct amdgpu_device *adev, uint64_t offset,
 		       int pages);

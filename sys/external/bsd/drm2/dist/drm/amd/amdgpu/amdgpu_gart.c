@@ -409,7 +409,7 @@ int amdgpu_gart_unbind(struct amdgpu_device *adev, uint64_t offset,
  */
 #ifdef __NetBSD__
 int amdgpu_gart_map(struct amdgpu_device *adev, uint64_t gpu_start,
-    unsigned npages, bus_size_t map_start, bus_dmamap_t dmamap, uint32_t flags,
+    unsigned npages, bus_size_t map_start, bus_dmamap_t dmamap, uint64_t flags,
     void *dst)
 {
 	bus_size_t seg_off = 0;
@@ -439,7 +439,7 @@ int amdgpu_gart_map(struct amdgpu_device *adev, uint64_t gpu_start,
 
 	t = gpu_start / AMDGPU_GPU_PAGE_SIZE;
 
-	for (i = 0; npages --> 0;) {
+	for (; npages --> 0;) {
 		for (j = 0; j < AMDGPU_GPU_PAGES_IN_CPU_PAGE; j++, t++) {
 			KASSERT(i < dmamap->dm_nsegs);
 			KASSERT(seg_off < dmamap->dm_segs[i].ds_len);
@@ -484,7 +484,7 @@ int amdgpu_gart_map(struct amdgpu_device *adev, uint64_t offset,
 #ifdef __NetBSD__
 int
 amdgpu_gart_bind(struct amdgpu_device *adev, uint64_t gpu_start,
-    unsigned npages, struct page **pages, bus_dmamap_t dmamap, uint32_t flags)
+    unsigned npages, struct page **pages, bus_dmamap_t dmamap, uint64_t flags)
 {
 	const unsigned gpu_per_cpu = AMDGPU_GPU_PAGES_IN_CPU_PAGE;
 	const unsigned gpu_npages = (npages * gpu_per_cpu);
