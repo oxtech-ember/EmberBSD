@@ -6,6 +6,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -301,7 +302,34 @@ drm_gem_cma_prime_get_sg_table(struct drm_gem_object *obj)
 	exported_sg.obj = obj; return &exported_sg;
 }
 
+static unsigned int diagnostic_count;
+static char diagnostic_stage[32];
+static int diagnostic_error;
+static size_t diagnostic_size;
+static uintmax_t diagnostic_flags;
+
+static int
+capture_bo_diagnostic(const char *format, ...)
+{
+	char message[256];
+	va_list ap;
+	int length;
+
+	va_start(ap, format);
+	length = vsnprintf(message, sizeof(message), format, ap);
+	va_end(ap);
+	CHECK(length > 0 && (size_t)length < sizeof(message));
+	CHECK(sscanf(message,
+	    "PVR_BO_CREATE_FAILED stage=%31s error=%d size=%zu flags=%jx",
+	    diagnostic_stage, &diagnostic_error, &diagnostic_size,
+	    &diagnostic_flags) == 4);
+	diagnostic_count++;
+	return length;
+}
+
+#define printf capture_bo_diagnostic
 #include "pvr-bo-body.h"
+#undef printf
 #include "pvr-gem-core-body.h"
 
 _Static_assert(sizeof(struct drm_pvr_ioctl_create_bo_args) == 24, "CREATE_BO ABI");
@@ -528,6 +556,7 @@ main(void)
 	const uint64_t badsize[] = { 0, 1, 4095, 4097, UINT64_MAX,
 	    (uint64_t)INT_MAX * PAGE_SIZE + PAGE_SIZE };
 
+	(void)capture_bo_diagnostic;
 	dev.dmat = &dev;
 	manager.next = 0x100000;
 	for (unsigned int n = 0; n < sizeof(badsize) / sizeof(badsize[0]); n++) {
@@ -536,10 +565,17 @@ main(void)
 		CHECK(pvr_create_bo(&dev, &create, &a) == -EINVAL);
 		CHECK(memcmp(&create, &saved, sizeof(create)) == 0 && attempts == old_attempts);
 	}
+	CHECK(diagnostic_count == 0);
 	for (unsigned int n = 1; n <= 5; n++) {
+		static const char *const stages[] = { "dmamem_alloc",
+		    "dmamem_map", "dmamap_create", "dmamap_load", "gem_handle" };
 		create = (struct drm_pvr_ioctl_create_bo_args){ PAGE_SIZE, 0xdead, 0, 4 };
 		saved = create; fail = n;
 		CHECK(pvr_create_bo(&dev, &create, &a) == (n == 4 ? -EIO : n == 5 ? -EMFILE : -ENOMEM));
+		CHECK(diagnostic_count == n);
+		CHECK(strcmp(diagnostic_stage, stages[n - 1]) == 0);
+		CHECK(diagnostic_error == (n == 4 ? EIO : n == 5 ? EMFILE : ENOMEM));
+		CHECK(diagnostic_size == PAGE_SIZE && diagnostic_flags == 4);
 		CHECK(memcmp(&create, &saved, sizeof(create)) == 0);
 		empty(&dev);
 	}
@@ -557,6 +593,7 @@ main(void)
 			continue;
 		}
 		CHECK(pvr_create_bo(&dev, &create, &a) == 0);
+		CHECK(diagnostic_count == 6);
 		obj = a.handles[create.handle];
 		CHECK(obj->size == PAGE_SIZE && obj->refcount.refs == 1 && dev.refs == 2);
 		CHECK(pvr_to_bo(obj)->flags == flags);

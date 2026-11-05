@@ -163,11 +163,20 @@ pvr_prime_mmap(struct drm_gem_object *obj, off_t *offp, size_t size,
 	return 0;
 }
 
+static void
+pvr_bo_report_failure(const char *stage, int error, size_t size, uint64_t flags)
+{
+
+	printf("PVR_BO_CREATE_FAILED stage=%s error=%d size=%zu flags=%#jx\n",
+	    stage, error, size, (uintmax_t)flags);
+}
+
 static struct pvr_bo *
 pvr_bo_alloc(struct drm_device *dev, size_t size, uint64_t flags)
 {
 	struct pvr_bo *bo;
 	struct drm_gem_cma_object *cma;
+	const char *stage = "dmamem_alloc";
 	int error, nsegs;
 
 	bo = kmem_zalloc(sizeof(*bo), KM_SLEEP);
@@ -180,14 +189,17 @@ pvr_bo_alloc(struct drm_device *dev, size_t size, uint64_t flags)
 	if (error != 0)
 		goto free_bo;
 	/* Use the same CPU memory attributes as the existing CMA UVM pager. */
+	stage = "dmamem_map";
 	error = bus_dmamem_map(cma->dmat, cma->dmasegs, nsegs, size,
 	    &cma->vaddr, BUS_DMA_NOWAIT | BUS_DMA_PREFETCHABLE);
 	if (error != 0)
 		goto free_dma;
+	stage = "dmamap_create";
 	error = bus_dmamap_create(cma->dmat, size, 1, size, 0,
 	    BUS_DMA_NOWAIT, &cma->dmamap);
 	if (error != 0)
 		goto unmap;
+	stage = "dmamap_load";
 	error = bus_dmamap_load(cma->dmat, cma->dmamap, cma->vaddr,
 	    size, NULL, BUS_DMA_NOWAIT);
 	if (error != 0)
@@ -208,6 +220,7 @@ unmap:
 free_dma:
 	bus_dmamem_free(cma->dmat, cma->dmasegs, nsegs);
 free_bo:
+	pvr_bo_report_failure(stage, error, size, flags);
 	kmem_free(bo, sizeof(*bo));
 	return ERR_PTR(-error);
 }
@@ -239,6 +252,8 @@ pvr_create_bo(struct drm_device *dev, void *data, struct drm_file *file)
 	error = drm_gem_handle_create(file, &bo->cma.base, &handle);
 	if (error == 0)
 		args->handle = handle;
+	else
+		pvr_bo_report_failure("gem_handle", -error, size, args->flags);
 	/* Keep the output unchanged on failure; drop the constructor reference. */
 	drm_gem_object_put_unlocked(&bo->cma.base);
 	return error;
