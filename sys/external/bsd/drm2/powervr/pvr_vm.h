@@ -28,6 +28,9 @@ int pvr_vm_create(bus_dma_tag_t, struct pvr_vm **);
 /* Reject translated DMA addresses for a platform with direct DMA only. */
 int pvr_vm_create_direct(bus_dma_tag_t, struct pvr_vm **);
 int pvr_vm_map(struct pvr_vm *, uint64_t, uint64_t, uint64_t, uint64_t);
+/* One physical address per 4 KiB GPU page; one transactional VA range. */
+int pvr_vm_map_pages(struct pvr_vm *, uint64_t, const uint64_t *, uint64_t,
+    uint64_t);
 int pvr_vm_unmap(struct pvr_vm *, uint64_t, uint64_t);
 void pvr_vm_destroy(struct pvr_vm *);
 

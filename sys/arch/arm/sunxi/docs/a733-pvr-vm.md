@@ -57,8 +57,24 @@ Existing CPU mappings can survive both file closure and VM destruction.
 
 `BYPASS_DEVICE_CACHE` and `PM_FW_PROTECT` select their corresponding PTE bits.
 They do not prove GPU cache coherency or firmware access control in execution.
-The buffer allocator still uses one contiguous native DMA segment.
-Physical fragmentation can cause allocation failure.
+CPU-access BOs first try one contiguous DMA allocation with `NOWAIT`.
+After `ENOMEM`, they can use physically separate segments. Firmware-protected
+BOs retain contiguous placement. The retry checks physical and available pages,
+including native reserves and segment metadata. It does not trigger compaction.
+
+The DMA map and PRIME exporter retain every allocation segment. The CPU pager
+uses a binary segment index and the existing native mapping attributes.
+GPU mappings validate all DMA addresses before modifying any PTE. One transaction
+owns the complete VA range, including rollback and exact-range unmap.
+The direct-DMA profile checks physical identity across both segment streams.
+Temporary page-address vectors use nonblocking kernel allocation.
+
+Actual-source contracts cover fragmented allocation, segment boundaries, CPU
+faults, direct-DMA mismatches, allocation failures and complete resource release.
+The segmented VM check crosses a page-table boundary and rejects invalid later
+pages without modifying existing bytes. Host ASan/UBSan checks pass. A bounded
+A133 kernel start does not alone establish that an SG BO reached GPU execution;
+pair a multi-segment fallback with a later successful application frame.
 
 ## Native cached CPU mappings
 

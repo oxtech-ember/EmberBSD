@@ -15,6 +15,7 @@
 #include <drm/drm_device.h>
 #include <drm/drm_file.h>
 #include <drm/drm_gem.h>
+#include <dev/powervr/pvr_mmu.h>
 #include "pvr_drm.h"
 #include "pvr_drv.h"
 #include "pvr_heap.h"
@@ -189,6 +190,8 @@ pvr_vm_map_ioctl_locked(struct drm_device *dev, void *data, struct drm_file *fil
 	struct pvr_file_vm *vm;
 	struct pvr_file_mapping *mapping;
 	struct drm_gem_object *obj;
+	uint64_t *pages = NULL;
+	size_t page_bytes = 0;
 	uint64_t pa, flags;
 	int error;
 
@@ -201,6 +204,15 @@ pvr_vm_map_ioctl_locked(struct drm_device *dev, void *data, struct drm_file *fil
 	if (obj == NULL)
 		return -ENOENT;
 	error = pvr_bo_mapping(obj, args->offset, args->size, &pa, &flags);
+	if (error == EFBIG) {
+		page_bytes = args->size / PVR_MMU_PAGE_SIZE * sizeof(*pages);
+		pages = kmem_alloc(page_bytes, KM_NOSLEEP);
+		if (pages == NULL) {
+			error = ENOMEM;
+			goto put;
+		}
+		error = pvr_bo_pages(obj, args->offset, args->size, pages, &flags);
+	}
 	if (error != 0)
 		goto put;
 	mapping = kmem_zalloc(sizeof(*mapping), KM_SLEEP);
@@ -209,8 +221,12 @@ pvr_vm_map_ioctl_locked(struct drm_device *dev, void *data, struct drm_file *fil
 	if (vm == NULL) {
 		error = EINVAL;
 	} else {
-		error = pvr_vm_map(vm->tables, args->device_addr, pa,
-		    args->size, flags);
+		if (pages != NULL)
+			error = pvr_vm_map_pages(vm->tables, args->device_addr, pages,
+			    args->size, flags);
+		else
+			error = pvr_vm_map(vm->tables, args->device_addr, pa,
+			    args->size, flags);
 		if (error == 0) {
 			mapping->object = obj;
 			mapping->address = args->device_addr;
@@ -221,10 +237,16 @@ pvr_vm_map_ioctl_locked(struct drm_device *dev, void *data, struct drm_file *fil
 		}
 	}
 	mutex_exit(&pf->lock);
+	if (pages != NULL) {
+		kmem_free(pages, page_bytes);
+		pages = NULL;
+	}
 	if (error == 0)
 		return 0;
 	kmem_free(mapping, sizeof(*mapping));
 put:
+	if (pages != NULL)
+		kmem_free(pages, page_bytes);
 	drm_gem_object_put_unlocked(obj);
 	return -error;
 }

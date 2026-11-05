@@ -547,6 +547,37 @@ main(void)
 	next_pa = pa_end;
 	CHECK(pvr_vm_create(&vm, &vm) == EINVAL && vm == NULL); empty();
 	next_pa = UINT64_C(0x12345000);
+	/* A single VA range can cover nonadjacent physical pages. */
+	CHECK(pvr_vm_create(&vm, &vm) == 0);
+	active_vm = vm;
+	{
+		uint64_t pages[] = { 0x30000000, 0x31000000, 0x32000000 };
+#if !PVR_VM_TEST_MAP_PAGES
+#define pvr_vm_map_pages(v, a, p, z, f) pvr_vm_map(v, a, (p)[0], z, f)
+#endif
+		CHECK(pvr_vm_map_pages(vm, two_m - 4096, pages, 3 * 4096, 8) == 0);
+		for (n = 0; n < 3; n++)
+			CHECK(leaf(vm, two_m - 4096 + n * 4096) == (pages[n] | 9));
+		CHECK(pvr_vm_unmap(vm, two_m - 4096, 4096) == ENOENT);
+		CHECK(pvr_vm_unmap(vm, two_m - 4096, 3 * 4096) == 0);
+		s = snapshot();
+		pages[2] = pa_end;
+		CHECK(pvr_vm_map_pages(vm, two_m - 4096, pages, 3 * 4096, 8) == EINVAL);
+		check_snapshot(s);
+		s = snapshot();
+		pages[2] = 0x32000001;
+		CHECK(pvr_vm_map_pages(vm, two_m - 4096, pages, 3 * 4096, 8) == EINVAL);
+		check_snapshot(s);
+		pages[2] = 0x32000000;
+		for (nth = 1; nth <= 3; nth++) {
+			s = snapshot();
+			fault_at = allocations + nth; fault_stage = 1;
+			CHECK(pvr_vm_map_pages(vm, two_m - 4096, pages, 3 * 4096, 8) == ENOMEM);
+			check_snapshot(s);
+		}
+		fault_at = 0;
+	}
+	pvr_vm_destroy(vm); active_vm = NULL; vm = NULL; empty();
 	published_tests();
 	printf("PASS: %u native PowerVR VM checks\n", checks);
 	return 0;

@@ -308,9 +308,9 @@ pvr_vm_rollback(struct pvr_vm *vm, uint64_t va, uint64_t size)
 	}
 }
 
-int
-pvr_vm_map(struct pvr_vm *vm, uint64_t va, uint64_t pa, uint64_t size,
-    uint64_t flags)
+static int
+pvr_vm_map_internal(struct pvr_vm *vm, uint64_t va, uint64_t pa,
+    const uint64_t *pages, uint64_t size, uint64_t flags)
 {
 	struct pvr_vm_range **slot, *range;
 	struct pvr_vm_pd *pd;
@@ -323,10 +323,18 @@ pvr_vm_map(struct pvr_vm *vm, uint64_t va, uint64_t pa, uint64_t size,
 
 	if (vm != NULL && vm->failed)
 		return EIO;
-	if (vm == NULL || !pvr_vm_range_valid(va, size) ||
-	    pa >= PVR_VM_PA_END || size > PVR_VM_PA_END - pa ||
-	    pvr_mmu_pte(pa, flags, &value) != 0)
+	if (vm == NULL || !pvr_vm_range_valid(va, size))
 		return EINVAL;
+	/* Validate every address before allocating tables or publishing any PTE. */
+	if (pages == NULL) {
+		if (pa >= PVR_VM_PA_END || size > PVR_VM_PA_END - pa ||
+		    pvr_mmu_pte(pa, flags, &value) != 0)
+			return EINVAL;
+	} else {
+		for (at = 0; at < size / PVR_VM_PAGE; at++)
+			if (pvr_mmu_pte(pages[at], flags, &value) != 0)
+				return EINVAL;
+	}
 	for (slot = &vm->ranges; *slot != NULL; slot = &(*slot)->next) {
 		if (va < (*slot)->va + (*slot)->size && (*slot)->va < va + size)
 			return EEXIST;
@@ -375,8 +383,9 @@ pvr_vm_map(struct pvr_vm *vm, uint64_t va, uint64_t pa, uint64_t size,
 		entries = pt->dma.cpu;
 		for (n = 0; n < count; n++) {
 			KASSERT(entries[idx.pt + n] == 0);
-			error = pvr_mmu_pte(pa + at - va +
-			    (uint64_t)n * PVR_VM_PAGE, flags, &value);
+			error = pvr_mmu_pte(pages != NULL ?
+			    pages[(at - va) / PVR_VM_PAGE + n] :
+			    pa + at - va + (uint64_t)n * PVR_VM_PAGE, flags, &value);
 			KASSERT(error == 0);
 			entries[idx.pt + n] = htole64(value);
 		}
@@ -401,6 +410,24 @@ fail:
 	pvr_vm_rollback(vm, va, size);
 	kmem_free(range, sizeof(*range));
 	return error;
+}
+
+int
+pvr_vm_map(struct pvr_vm *vm, uint64_t va, uint64_t pa, uint64_t size,
+    uint64_t flags)
+{
+
+	return pvr_vm_map_internal(vm, va, pa, NULL, size, flags);
+}
+
+int
+pvr_vm_map_pages(struct pvr_vm *vm, uint64_t va, const uint64_t *pages,
+    uint64_t size, uint64_t flags)
+{
+
+	if (pages == NULL)
+		return EINVAL;
+	return pvr_vm_map_internal(vm, va, 0, pages, size, flags);
 }
 
 int

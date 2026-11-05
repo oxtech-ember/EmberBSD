@@ -17,6 +17,7 @@
 #endif
 #define PAGE_SIZE ((size_t)1 << PAGE_SHIFT)
 #define KM_SLEEP 0
+#define KM_NOSLEEP 1
 #define BUS_DMA_NOWAIT 1
 #define BUS_DMA_PREFETCHABLE 2
 #define BUS_DMASYNC_PREWRITE 4
@@ -31,6 +32,8 @@
 #define MAP_PRIVATE 2
 #define DRIVER_GEM 1
 #define roundup2(x, a) (((x) + (a) - 1) & ~((a) - 1))
+#define howmany(x, y) (((x) + (y) - 1) / (y))
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
 #define container_of(p, t, m) ((t *)((char *)(p) - offsetof(t, m)))
 #define ERR_PTR(e) ((void *)(intptr_t)(e))
 #define PTR_ERR(p) ((int)(intptr_t)(p))
@@ -49,7 +52,7 @@ typedef struct {
 	unsigned int device_owned;
 	unsigned int _dm_flags, dm_nsegs;
 	size_t dm_mapsize;
-	bus_dma_segment_t dm_segs[1];
+	bus_dma_segment_t dm_segs[16];
 } *bus_dmamap_t;
 struct uvm_object { int unused; };
 typedef uintptr_t vaddr_t;
@@ -79,13 +82,14 @@ struct uvm_pagerops {
 	    int, int, vm_prot_t, int);
 };
 static int last_map_flags, fault_map_flags, fault_enters, fault_unlocks;
+static paddr_t fault_enter_pa;
 static paddr_t bus_dmamem_mmap(bus_dma_tag_t t, bus_dma_segment_t *s, int n,
     off_t off, int prot, int flags)
-{ fault_map_flags = flags; return (paddr_t)s->memory + off; }
+{ fault_map_flags = flags; return s->ds_addr + off; }
 static paddr_t pmap_phys_address(paddr_t p) { return p; }
 static unsigned pmap_mmap_flags(paddr_t p) { return 0; }
 static int pmap_enter(void *pmap, vaddr_t va, paddr_t pa, int prot, int flags)
-{ fault_enters++; return 0; }
+{ fault_enters++; fault_enter_pa = pa; return 0; }
 static void pmap_update(void *pmap) { }
 static void uvmfault_unlockall(struct uvm_faultinfo *ufi, void *amap,
     struct uvm_object *uobj) { fault_unlocks++; }
@@ -141,6 +145,14 @@ struct file { struct drm_file *f_data; };
 
 static unsigned int checks, fail, attempts, allocated, mapped, maps, loaded;
 static unsigned int objects, structures, syncs;
+static bool scatter_mode;
+static unsigned int scatter_allocations;
+static bool segment_metadata_fail;
+static struct { int npages, reserve_kernel, reserve_pagedaemon; } uvmexp = {
+	1048576, 8, 8 };
+static int available_pages = 1048576;
+static int uvm_availmem(bool cached) { return available_pages; }
+static unsigned int atomic_inc_uint_nv(volatile unsigned int *p) { return ++*p; }
 static struct drm_vma_offset_manager manager;
 #define CHECK(e) do { checks++; if (!(e)) { \
 	fprintf(stderr, "FAIL line %d: %s\n", __LINE__, #e); abort(); \
@@ -148,7 +160,8 @@ static struct drm_vma_offset_manager manager;
 #define KASSERT(e) CHECK(e)
 
 static void *kmem_zalloc(size_t n, int flags)
-{ void *p = calloc(1, n); CHECK(p != NULL); structures++; return p; }
+{ if (flags == KM_NOSLEEP && segment_metadata_fail) return NULL;
+  void *p = calloc(1, n); CHECK(p != NULL); structures++; return p; }
 static void kmem_free(void *p, size_t n)
 { CHECK(structures != 0); structures--; free(p); }
 static int
@@ -156,28 +169,38 @@ bus_dmamem_alloc(bus_dma_tag_t tag, size_t size, size_t align, size_t boundary,
     bus_dma_segment_t *segs, int max, int *nsegs, int flags)
 {
 
-	CHECK(flags == BUS_DMA_NOWAIT && align == PAGE_SIZE && max == 1);
+	CHECK(flags == BUS_DMA_NOWAIT && align == PAGE_SIZE && max >= 1);
 	CHECK(size != 0 && (size & (PAGE_SIZE - 1)) == 0);
 	attempts++;
-	if (fail == 1)
+	if (fail == 1 || (scatter_mode && max == 1))
 		return ENOMEM;
 	segs->memory = malloc(size);
 	CHECK(segs->memory != NULL);
 	memset(segs->memory, 0xa5, size);
 	segs->ds_len = size;
+	segs->ds_addr = UINT64_C(0x10000000);
 	*nsegs = 1;
+	if (scatter_mode) {
+		CHECK(max >= (int)(size / PAGE_SIZE) && size == 3 * PAGE_SIZE);
+		segs[0].ds_len = PAGE_SIZE;
+		segs[1] = (bus_dma_segment_t){ .memory = (char *)segs->memory + PAGE_SIZE,
+		    .ds_len = 2 * PAGE_SIZE, .ds_addr = UINT64_C(0x11000000) };
+		*nsegs = 2;
+		scatter_allocations++;
+	}
 	allocated++;
 	return 0;
 }
 static void bus_dmamem_free(bus_dma_tag_t t, bus_dma_segment_t *s, int n)
-{ CHECK(n == 1 && allocated != 0); allocated--; free(s->memory); }
+{ CHECK((n == 1 || (scatter_mode && n == 2)) && allocated != 0); allocated--; free(s->memory); }
 static int bus_dmamem_map(bus_dma_tag_t t, bus_dma_segment_t *s, int n,
     size_t size, void **p, int flags)
 {
 	CHECK(flags == BUS_DMA_NOWAIT ||
 	    flags == (BUS_DMA_NOWAIT | BUS_DMA_PREFETCHABLE));
 	last_map_flags = flags;
-	CHECK(n == 1 && size == s->ds_len);
+	CHECK((n == 1 && size == s->ds_len) ||
+	    (scatter_mode && n == 2 && size == s[0].ds_len + s[1].ds_len));
 	if (fail == 2) return ENOMEM;
 	*p = s->memory; mapped++; return 0;
 }
@@ -186,7 +209,7 @@ static void bus_dmamem_unmap(bus_dma_tag_t t, void *p, size_t n)
 static int bus_dmamap_create(bus_dma_tag_t t, size_t n, int ns, size_t max,
     size_t boundary, int flags, bus_dmamap_t *map)
 {
-	CHECK(flags == BUS_DMA_NOWAIT && ns == 1 && n == max);
+	CHECK(flags == BUS_DMA_NOWAIT && ns >= 1 && ns <= 16 && n == max);
 	if (fail == 3) return ENOMEM;
 	*map = calloc(1, sizeof(**map)); CHECK(*map != NULL); maps++; return 0;
 }
@@ -201,6 +224,12 @@ static int bus_dmamap_load(bus_dma_tag_t t, bus_dmamap_t map, void *p,
 	map->dm_nsegs = 1; map->dm_mapsize = n;
 	map->dm_segs[0].ds_len = n;
 	map->dm_segs[0].ds_addr = UINT64_C(0x10000000);
+	if (scatter_mode) {
+		map->dm_nsegs = 2;
+		map->dm_segs[0].ds_len = PAGE_SIZE;
+		map->dm_segs[1] = (bus_dma_segment_t){ .ds_len = 2 * PAGE_SIZE,
+		    .ds_addr = UINT64_C(0x11000000) };
+	}
 	loaded++; return 0;
 }
 static void bus_dmamap_unload(bus_dma_tag_t t, bus_dmamap_t map)
@@ -326,6 +355,7 @@ static unsigned int exports, sg_exports;
 static int export_error, sg_error;
 static struct dma_buf exported;
 static struct sg_table exported_sg;
+static struct drm_gem_object *sg_owner;
 static struct dma_buf *
 drm_gem_prime_export(struct drm_gem_object *obj, int flags)
 {
@@ -334,11 +364,13 @@ drm_gem_prime_export(struct drm_gem_object *obj, int flags)
 	exported = (struct dma_buf){ obj, flags }; return &exported;
 }
 static struct sg_table *
-drm_gem_cma_prime_get_sg_table(struct drm_gem_object *obj)
+drm_prime_bus_dmamem_to_sg(bus_dma_tag_t tag, const bus_dma_segment_t *segs,
+    int nsegs)
 {
 	sg_exports++;
 	if (sg_error) return ERR_PTR(sg_error);
-	exported_sg.obj = obj; return &exported_sg;
+	CHECK(nsegs == 1 || (scatter_mode && nsegs == 2));
+	exported_sg.obj = sg_owner; return &exported_sg;
 }
 
 static unsigned int diagnostic_count;
@@ -358,6 +390,8 @@ capture_bo_diagnostic(const char *format, ...)
 	length = vsnprintf(message, sizeof(message), format, ap);
 	va_end(ap);
 	CHECK(length > 0 && (size_t)length < sizeof(message));
+	if (strncmp(message, "PVR_BO_SG_FALLBACK ", 19) == 0)
+		return length;
 	CHECK(sscanf(message,
 	    "PVR_BO_CREATE_FAILED stage=%31s error=%d size=%zu flags=%jx",
 	    diagnostic_stage, &diagnostic_error, &diagnostic_size,
@@ -517,6 +551,7 @@ prime_contract(struct drm_gem_object *obj)
 	unsigned int before = exports, sg_before = sg_exports;
 	const int denied = (bo->flags & (DRM_PVR_BO_PM_FW_PROTECT |
 	    DRM_PVR_BO_EMBER_CPU_CACHED)) ? -EACCES : 0;
+	sg_owner = obj;
 
 	CHECK(obj->funcs->export != NULL && obj->funcs->get_sg_table != NULL);
 	if (denied) {
@@ -656,7 +691,7 @@ main(void)
 	/* Representable large requests reach the allocator; no small driver cap. */
 	create = (struct drm_pvr_ioctl_create_bo_args){ 128U * 1024 * 1024, 0xdead, 0, 4 };
 	fail = 1; old_attempts = attempts;
-	CHECK(pvr_create_bo(&dev, &create, &a) == -ENOMEM && attempts == old_attempts + 1);
+	CHECK(pvr_create_bo(&dev, &create, &a) == -ENOMEM && attempts == old_attempts + 2);
 	empty(&dev); fail = 0;
 	for (unsigned int flags = 0; flags < 16; flags++) {
 		create = (struct drm_pvr_ioctl_create_bo_args){ 4096, 0xdead, 0, flags };
@@ -753,6 +788,74 @@ main(void)
 	/* The earlier lifetime test deliberately closes the owner reference. */
 	dev.refs = 1;
 	cached_contract(&dev, &a);
+	/* Force the single-span allocator to fail while scattered pages exist. */
+	scatter_mode = true;
+	create = (struct drm_pvr_ioctl_create_bo_args){
+	    .size = 3 * PAGE_SIZE, .flags = DRM_PVR_BO_ALLOW_CPU_USERSPACE_ACCESS };
+	CHECK(pvr_create_bo(&dev, &create, &a) == 0);
+	CHECK(scatter_allocations == 1);
+	obj = a.handles[create.handle];
+	CHECK(obj->size == 3 * PAGE_SIZE);
+	prime_contract(obj);
+	{
+		uint64_t pa = 0xdead, bits = 0xbeef;
+		uint64_t pages[3 * PAGE_SIZE / 4096];
+		CHECK(pvr_bo_mapping(obj, 0, obj->size, &pa, &bits) == EFBIG);
+		CHECK(pa == 0xdead && bits == 0xbeef);
+		CHECK(pvr_bo_mapping(obj, PAGE_SIZE, 2 * PAGE_SIZE, &pa, &bits) == 0);
+		CHECK(pa == UINT64_C(0x11000000) && bits == 0);
+		CHECK(pvr_bo_pages(obj, 0, obj->size, pages, &bits) == 0);
+		for (unsigned int n = 0; n < 3 * PAGE_SIZE / 4096; n++)
+			CHECK(pages[n] == (n < PAGE_SIZE / 4096 ?
+			    UINT64_C(0x10000000) + n * 4096 :
+			    UINT64_C(0x11000000) + n * 4096 - PAGE_SIZE));
+		selected_bvnc = UINT64_C(0x0016006600360026);
+		CHECK(pvr_bo_pages(obj, 0, obj->size, pages, &bits) == 0);
+		pvr_to_bo(obj)->cma.dmamap->dm_segs[1].ds_addr += PAGE_SIZE;
+		CHECK(pvr_bo_pages(obj, 0, obj->size, pages, &bits) == EOPNOTSUPP);
+		pvr_to_bo(obj)->cma.dmamap->dm_segs[1].ds_addr -= PAGE_SIZE;
+		selected_bvnc = UINT64_C(0x00240038006800b7);
+	}
+	{
+		struct vm_map map = { 0 };
+		struct vm_map_entry entry = { .object.uvm_obj = &obj->gemo_uvmobj,
+		    .protection = PROT_READ | PROT_WRITE };
+		struct uvm_faultinfo ufi = { .entry = &entry, .orig_map = &map };
+		struct vm_page *pages[] = { NULL };
+		for (unsigned int n = 0; n < 3; n++) {
+			entry.offset = n * PAGE_SIZE;
+			CHECK(pvr_bo_fault(&ufi, 0, pages, 1, 0, PROT_READ, 0) == 0);
+			CHECK(fault_enter_pa == (n == 0 ? UINT64_C(0x10000000) :
+			    UINT64_C(0x11000000) + (n - 1) * PAGE_SIZE));
+			CHECK(fault_map_flags == BUS_DMA_PREFETCHABLE);
+		}
+	}
+	close_args = (struct drm_gem_close){ create.handle, 0 };
+	CHECK(drm_gem_close_ioctl(&dev, &close_args, &a) == 0);
+	empty(&dev);
+	create = (struct drm_pvr_ioctl_create_bo_args){
+	    .size = 3 * PAGE_SIZE, .flags = DRM_PVR_BO_ALLOW_CPU_USERSPACE_ACCESS };
+	available_pages = uvmexp.reserve_kernel + uvmexp.reserve_pagedaemon + 1;
+	old_attempts = attempts;
+	CHECK(pvr_create_bo(&dev, &create, &a) == -ENOMEM);
+	CHECK(attempts == old_attempts + 1 && scatter_allocations == 1);
+	empty(&dev);
+	available_pages = 1048576;
+	segment_metadata_fail = true;
+	CHECK(pvr_create_bo(&dev, &create, &a) == -ENOMEM && scatter_allocations == 1);
+	empty(&dev);
+	segment_metadata_fail = false;
+	/* An impossible request must not allocate metadata or drain free pages. */
+	fail = 1;
+	old_attempts = attempts;
+	create = (struct drm_pvr_ioctl_create_bo_args){
+	    .size = ((uint64_t)uvmexp.npages + 1) * PAGE_SIZE,
+	    .flags = DRM_PVR_BO_ALLOW_CPU_USERSPACE_ACCESS };
+	CHECK(pvr_create_bo(&dev, &create, &a) == -ENOMEM);
+	CHECK(attempts == old_attempts + 1);
+	empty(&dev);
+	fail = 0;
+	scatter_mode = false;
 	printf("PASS: %u PowerVR BO checks (page=%zu, syncs=%u)\n",
 	    checks, PAGE_SIZE, syncs);
 	return 0;

@@ -14,6 +14,7 @@
 #include <string.h>
 
 #define PAGE_SIZE ((size_t)1 << PAGE_SHIFT)
+#define PVR_MMU_PAGE_SIZE 4096
 #define KM_SLEEP 1
 #define KM_NOSLEEP 0
 #define MUTEX_DEFAULT 0
@@ -154,6 +155,17 @@ static int pvr_bo_mapping(struct drm_gem_object *o, uint64_t off, uint64_t size,
 	if (off > o->size || size > o->size - off || size == 0) return EINVAL;
 	*pa = o->pa + off; *flags = o->flags; return 0;
 }
+static unsigned int scattered_maps;
+static int pvr_bo_pages(struct drm_gem_object *o, uint64_t off, uint64_t size,
+    uint64_t *pages, uint64_t *flags)
+{
+	CHECK(mapping_error == EFBIG && o->refs >= 1);
+	if (off > o->size || size > o->size - off || size == 0) return EINVAL;
+	for (uint64_t n = 0; n < size / PVR_MMU_PAGE_SIZE; n++)
+		pages[n] = o->pa + off + n * 2 * PVR_MMU_PAGE_SIZE;
+	*flags = o->flags;
+	return 0;
+}
 static int pvr_vm_create(bus_dma_tag_t tag, struct pvr_vm **out)
 {
 	CHECK(tag != NULL && out != NULL && *out == NULL);
@@ -187,6 +199,15 @@ static int pvr_vm_map(struct pvr_vm *vm, uint64_t va, uint64_t pa, uint64_t size
 		vm->ranges[n] = (struct test_map){ va, pa, size, flags }; return 0;
 	}
 	return ENOMEM;
+}
+static int pvr_vm_map_pages(struct pvr_vm *vm, uint64_t va, const uint64_t *pages,
+    uint64_t size, uint64_t flags)
+{
+	CHECK(size >= PVR_MMU_PAGE_SIZE && size % PVR_MMU_PAGE_SIZE == 0);
+	for (uint64_t n = 0; n < size / PVR_MMU_PAGE_SIZE; n++)
+		CHECK(pages[n] == pages[0] + n * 2 * PVR_MMU_PAGE_SIZE);
+	scattered_maps++;
+	return pvr_vm_map(vm, va, pages[0], size, flags);
 }
 static int pvr_vm_unmap(struct pvr_vm *vm, uint64_t va, uint64_t size)
 {
@@ -716,6 +737,26 @@ main(void)
 	mapping_error = EOPNOTSUPP; CHECK(pvr_vm_map_ioctl(&dev, &map, &a) == -EOPNOTSUPP); mapping_error = 0;
 	map_error = ENOMEM; CHECK(pvr_vm_map_ioctl(&dev, &map, &a) == -ENOMEM); map_error = 0;
 	CHECK(bo->refs == 1);
+	{
+		struct drm_pvr_ioctl_vm_map_args sg = map;
+		struct drm_pvr_ioctl_vm_unmap_args undo = {
+		    .vm_context_handle = first, .device_addr = BASE,
+		    .size = 2 * PAGE_SIZE };
+		sg.offset = 0; sg.size = 2 * PAGE_SIZE;
+		mapping_error = EFBIG;
+		snapshot_alloc_fail = true;
+		CHECK(pvr_vm_map_ioctl(&dev, &sg, &a) == -ENOMEM && bo->refs == 1);
+		CHECK(scattered_maps == 0);
+		snapshot_alloc_fail = false;
+		map_error = ENOMEM;
+		CHECK(pvr_vm_map_ioctl(&dev, &sg, &a) == -ENOMEM && bo->refs == 1);
+		map_error = 0;
+		CHECK(pvr_vm_map_ioctl(&dev, &sg, &a) == 0 && bo->refs == 2);
+		CHECK(scattered_maps == 2);
+		CHECK(pvr_vm_map_ioctl(&dev, &sg, &a) == -EEXIST && bo->refs == 2);
+		CHECK(pvr_vm_unmap_ioctl(&dev, &undo, &a) == 0 && bo->refs == 1);
+		mapping_error = 0;
+	}
 	CHECK(pvr_vm_map_ioctl(&dev, &map, &a) == 0 && bo->refs == 2);
 	struct pvr_file *pf = a.driver_priv;
 	struct pvr_file_vm *fvm = pf->vms.slots[first];

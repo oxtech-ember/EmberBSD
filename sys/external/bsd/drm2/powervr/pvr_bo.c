@@ -7,6 +7,7 @@
  */
 
 #include <sys/cdefs.h>
+#include <sys/atomic.h>
 #include <sys/param.h>
 #include <sys/file.h>
 #include <sys/kmem.h>
@@ -31,6 +32,10 @@
 struct pvr_bo {
 	/* The native CMA pager reaches this member from the GEM object. */
 	struct drm_gem_cma_object cma;
+	bus_dma_segment_t *segments;
+	uint64_t *segment_ends;
+	size_t segment_bytes;
+	int nsegments, segment_capacity;
 	uint64_t flags;
 	int dma_owned;
 	bool firmware_pinned;
@@ -68,7 +73,9 @@ pvr_bo_free(struct drm_gem_object *obj)
 	bus_dmamap_unload(cma->dmat, cma->dmamap);
 	bus_dmamap_destroy(cma->dmat, cma->dmamap);
 	bus_dmamem_unmap(cma->dmat, cma->vaddr, cma->dmasize);
-	bus_dmamem_free(cma->dmat, cma->dmasegs, 1);
+	bus_dmamem_free(cma->dmat, bo->segments, bo->nsegments);
+	if (bo->segments != cma->dmasegs)
+		kmem_free(bo->segments, bo->segment_bytes);
 	kmem_free(bo, sizeof(*bo));
 	/* CPU mappings can outlive both their GEM handle and their DRM fd. */
 	drm_dev_put(dev);
@@ -83,14 +90,79 @@ static const struct drm_gem_object_funcs pvr_bo_funcs = {
 	.free = pvr_bo_free,
 };
 
+/* DMA maps can merge adjacent allocation segments. Validate both streams. */
+static int
+pvr_bo_validate(struct pvr_bo *bo)
+{
+	bus_dmamap_t map = bo->cma.dmamap;
+	const uint64_t limit = UINT64_C(1) << PVR_MMU_PA_BITS;
+	uint64_t total = 0, left, raw_offset = 0, dma_offset = 0, step;
+	unsigned int i = 0, j = 0;
+
+	if ((map->_dm_flags & _BUS_DMAMAP_IS_BOUNCING) != 0 ||
+	    map->dm_nsegs == 0 || map->dm_nsegs > (unsigned)bo->nsegments ||
+	    map->dm_mapsize < bo->cma.base.size)
+		return EOPNOTSUPP;
+	for (i = 0; i < map->dm_nsegs; i++) {
+		if (map->dm_segs[i].ds_len > UINT64_MAX - total)
+			return EINVAL;
+		total += map->dm_segs[i].ds_len;
+	}
+	if (total < bo->cma.base.size)
+		return EOPNOTSUPP;
+	for (i = 0; i < map->dm_nsegs; i++) {
+		uint64_t pa = map->dm_segs[i].ds_addr;
+		uint64_t size = map->dm_segs[i].ds_len;
+		if (size == 0 || ((pa | size) & (PVR_MMU_PAGE_SIZE - 1)) != 0 ||
+		    pa >= limit || size > limit - pa)
+			return EINVAL;
+	}
+	if (pvr_device_bvnc(bo->cma.base.dev) != UINT64_C(0x0016006600360026))
+		return 0;
+	/* The direct-DMA profile must retain physical identity for every byte. */
+	i = 0;
+	for (left = bo->cma.base.size; left != 0; left -= step) {
+		if (i >= map->dm_nsegs || j >= (unsigned)bo->nsegments ||
+		    raw_offset >= bo->segments[j].ds_len ||
+		    map->dm_segs[i].ds_addr + dma_offset !=
+		    bo->segments[j].ds_addr + raw_offset)
+			return EOPNOTSUPP;
+		step = MIN(left, MIN(map->dm_segs[i].ds_len - dma_offset,
+		    bo->segments[j].ds_len - raw_offset));
+		dma_offset += step;
+		raw_offset += step;
+		if (dma_offset == map->dm_segs[i].ds_len) {
+			i++;
+			dma_offset = 0;
+		}
+		if (raw_offset == bo->segments[j].ds_len) {
+			j++;
+			raw_offset = 0;
+		}
+	}
+	return 0;
+}
+
+static uint64_t
+pvr_bo_pte_flags(const struct pvr_bo *bo)
+{
+	uint64_t flags = 0;
+
+	if ((bo->flags & DRM_PVR_BO_BYPASS_DEVICE_CACHE) != 0)
+		flags |= PVR_MMU_PTE_SLC_BYPASS;
+	if ((bo->flags & DRM_PVR_BO_PM_FW_PROTECT) != 0)
+		flags |= PVR_MMU_PTE_PM_FW_PROTECT;
+	return flags;
+}
+
 int
 pvr_bo_mapping(struct drm_gem_object *obj, uint64_t offset, uint64_t size,
     uint64_t *address, uint64_t *flags)
 {
 	struct pvr_bo *bo;
 	bus_dmamap_t map;
-	uint64_t pa, options = 0;
-	const uint64_t limit = UINT64_C(1) << PVR_MMU_PA_BITS;
+	unsigned int i;
+	int error;
 
 	if (obj == NULL || obj->funcs != &pvr_bo_funcs ||
 	    address == NULL || flags == NULL || size == 0 ||
@@ -98,27 +170,59 @@ pvr_bo_mapping(struct drm_gem_object *obj, uint64_t offset, uint64_t size,
 	    offset > obj->size || size > obj->size - offset)
 		return EINVAL;
 	bo = pvr_to_bo(obj);
+	error = pvr_bo_validate(bo);
+	if (error != 0)
+		return error;
 	map = bo->cma.dmamap;
-	/* A bounce buffer cannot preserve CPU/GPU identity across future jobs. */
-	if ((map->_dm_flags & _BUS_DMAMAP_IS_BOUNCING) != 0 ||
-	    map->dm_nsegs != 1 || map->dm_mapsize < obj->size ||
-	    map->dm_segs[0].ds_len < obj->size)
-		return EOPNOTSUPP;
-	pa = map->dm_segs[0].ds_addr;
-	if (pvr_device_bvnc(obj->dev) == UINT64_C(0x0016006600360026) &&
-	    (bo->cma.dmasegs[0].ds_len < obj->size ||
-	    pa != bo->cma.dmasegs[0].ds_addr))
-		return EOPNOTSUPP;
-	if ((pa & (PVR_MMU_PAGE_SIZE - 1)) != 0 ||
-	    pa >= limit || offset >= limit - pa ||
-	    size > limit - pa - offset)
+	for (i = 0; i < map->dm_nsegs; i++) {
+		if (offset >= map->dm_segs[i].ds_len) {
+			offset -= map->dm_segs[i].ds_len;
+			continue;
+		}
+		if (size > map->dm_segs[i].ds_len - offset)
+			return EFBIG;
+		*address = map->dm_segs[i].ds_addr + offset;
+		*flags = pvr_bo_pte_flags(bo);
+		return 0;
+	}
+	return EINVAL;
+}
+
+/* The caller supplies one output entry per 4 KiB GPU page. */
+int
+pvr_bo_pages(struct drm_gem_object *obj, uint64_t offset, uint64_t size,
+    uint64_t *pages, uint64_t *flags)
+{
+	struct pvr_bo *bo;
+	bus_dmamap_t map;
+	uint64_t left, step, at = 0;
+	unsigned int i;
+	int error;
+
+	if (obj == NULL || obj->funcs != &pvr_bo_funcs || pages == NULL ||
+	    flags == NULL || size == 0 ||
+	    ((offset | size) & (PAGE_SIZE - 1)) != 0 ||
+	    offset > obj->size || size > obj->size - offset)
 		return EINVAL;
-	if ((bo->flags & DRM_PVR_BO_BYPASS_DEVICE_CACHE) != 0)
-		options |= PVR_MMU_PTE_SLC_BYPASS;
-	if ((bo->flags & DRM_PVR_BO_PM_FW_PROTECT) != 0)
-		options |= PVR_MMU_PTE_PM_FW_PROTECT;
-	*address = pa + offset;
-	*flags = options;
+	bo = pvr_to_bo(obj);
+	error = pvr_bo_validate(bo);
+	if (error != 0)
+		return error;
+	map = bo->cma.dmamap;
+	left = size;
+	for (i = 0; i < map->dm_nsegs && left != 0; i++) {
+		if (offset >= map->dm_segs[i].ds_len) {
+			offset -= map->dm_segs[i].ds_len;
+			continue;
+		}
+		step = MIN(left, map->dm_segs[i].ds_len - offset);
+		for (uint64_t n = 0; n < step; n += PVR_MMU_PAGE_SIZE)
+			pages[at++] = map->dm_segs[i].ds_addr + offset + n;
+		left -= step;
+		offset = 0;
+	}
+	KASSERT(left == 0);
+	*flags = pvr_bo_pte_flags(bo);
 	return 0;
 }
 
@@ -136,17 +240,17 @@ pvr_bo_export(struct drm_gem_object *obj, int flags)
 static struct sg_table *
 pvr_bo_get_sg_table(struct drm_gem_object *obj)
 {
-	uint64_t address, flags;
+	struct pvr_bo *bo = pvr_to_bo(obj);
 	int error;
 
 	/* An exported page list must describe the original, complete BO. */
-	error = pvr_bo_mapping(obj, 0, obj->size, &address, &flags);
+	error = pvr_bo_validate(bo);
 	if (error != 0)
 		return ERR_PTR(-error);
 	if ((pvr_to_bo(obj)->flags & (DRM_PVR_BO_PM_FW_PROTECT |
 	    DRM_PVR_BO_EMBER_CPU_CACHED)) != 0)
 		return ERR_PTR(-EACCES);
-	return drm_gem_cma_prime_get_sg_table(obj);
+	return drm_prime_bus_dmamem_to_sg(bo->cma.dmat, bo->segments, bo->nsegments);
 }
 
 /* A PRIME fd authorizes this BO; its offset is relative, in bytes. */
@@ -170,6 +274,29 @@ pvr_prime_mmap(struct drm_gem_object *obj, off_t *offp, size_t size,
 	*uobjp = &obj->gemo_uvmobj;
 	*maxprotp = PROT_READ | PROT_WRITE;
 	return 0;
+}
+
+static int
+pvr_bo_segment(const struct pvr_bo *bo, off_t *offset)
+{
+	unsigned int low = 0, high;
+
+	if (*offset < 0 || (uint64_t)*offset >= bo->cma.dmasize ||
+	    bo->nsegments <= 0)
+		return -1;
+	if (bo->nsegments == 1)
+		return 0;
+	high = bo->nsegments - 1;
+	while (low < high) {
+		unsigned int middle = low + (high - low) / 2;
+		if ((uint64_t)*offset < bo->segment_ends[middle])
+			high = middle;
+		else
+			low = middle + 1;
+	}
+	if (low != 0)
+		*offset -= bo->segment_ends[low - 1];
+	return low;
 }
 
 static int
@@ -198,12 +325,20 @@ pvr_bo_fault(struct uvm_faultinfo *ufi, vaddr_t vaddr, struct vm_page **pps,
 	retval = 0;
 	for (lcv = 0; lcv < npages; lcv++, curr_offset += PAGE_SIZE,
 	    curr_va += PAGE_SIZE) {
+		off_t segment_offset = curr_offset;
+		int segment;
 		if ((flags & PGO_ALLPAGES) == 0 && lcv != centeridx)
 			continue;
 		if (pps[lcv] == PGO_DONTCARE)
 			continue;
-		mdpgno = bus_dmamem_mmap(obj->dmat, obj->dmasegs, 1,
-		    curr_offset, access_type, dmaflags);
+		segment = pvr_bo_segment(pvr_to_bo(gem_obj), &segment_offset);
+		if (segment < 0) {
+			retval = EIO;
+			break;
+		}
+		mdpgno = bus_dmamem_mmap(obj->dmat,
+		    &pvr_to_bo(gem_obj)->segments[segment], 1,
+		    segment_offset, access_type, dmaflags);
 		if (mdpgno == (paddr_t)-1) {
 			retval = EIO;
 			break;
@@ -243,30 +378,67 @@ pvr_bo_alloc(struct drm_device *dev, size_t size, uint64_t flags)
 	struct pvr_bo *bo;
 	struct drm_gem_cma_object *cma;
 	const char *stage = "dmamem_alloc";
-	int error, nsegs;
+	static volatile unsigned int sg_events;
+	int error, nsegs = 0;
 
 	bo = kmem_zalloc(sizeof(*bo), KM_SLEEP);
 	cma = &bo->cma;
 	cma->dmat = dev->dmat;
 	cma->dmasize = size;
 	bo->flags = flags;
+	bo->segments = cma->dmasegs;
+	bo->segment_capacity = 1;
 	error = bus_dmamem_alloc(cma->dmat, size, PAGE_SIZE, 0,
 	    cma->dmasegs, 1, &nsegs, BUS_DMA_NOWAIT);
+	if (error == ENOMEM && size > PAGE_SIZE &&
+	    (flags & DRM_PVR_BO_ALLOW_CPU_USERSPACE_ACCESS) != 0) {
+		size_t pages = size / PAGE_SIZE;
+		int available = uvm_availmem(false);
+		int reserve = uvmexp.reserve_pagedaemon + uvmexp.reserve_kernel;
+
+		if (pages > (size_t)uvmexp.npages || available <= reserve ||
+		    pages > (size_t)(available - reserve))
+			goto free_bo;
+		bo->segment_capacity = size / PAGE_SIZE;
+		bo->segment_bytes = pages *
+		    (sizeof(*bo->segments) + sizeof(*bo->segment_ends));
+		if (howmany(bo->segment_bytes, PAGE_SIZE) >
+		    (size_t)(available - reserve) - pages)
+			goto free_bo;
+		bo->segments = kmem_zalloc(bo->segment_bytes, KM_NOSLEEP);
+		if (bo->segments == NULL) {
+			bo->segments = cma->dmasegs;
+			goto free_bo;
+		}
+		error = bus_dmamem_alloc(cma->dmat, size, PAGE_SIZE, 0,
+		    bo->segments, bo->segment_capacity, &nsegs, BUS_DMA_NOWAIT);
+		if (error == 0) {
+			uint64_t end = 0;
+			bo->segment_ends = (uint64_t *)(bo->segments + bo->segment_capacity);
+			for (int n = 0; n < nsegs; n++) {
+				end += bo->segments[n].ds_len;
+				bo->segment_ends[n] = end;
+			}
+		}
+		if (error == 0 && atomic_inc_uint_nv(&sg_events) <= 4)
+			printf("PVR_BO_SG_FALLBACK size=%zu segments=%d\n", size, nsegs);
+	}
 	if (error != 0)
 		goto free_bo;
+	bo->nsegments = nsegs;
 	/*
 	 * Use the same CPU memory attributes as the user mapping. A cached
 	 * BO is then cleaned by the ordinary non-coherent DMA syncs below.
 	 */
 	stage = "dmamem_map";
-	error = bus_dmamem_map(cma->dmat, cma->dmasegs, nsegs, size,
+	error = bus_dmamem_map(cma->dmat, bo->segments, nsegs, size,
 	    &cma->vaddr, BUS_DMA_NOWAIT |
 	    ((flags & DRM_PVR_BO_EMBER_CPU_CACHED) != 0 ?
 	    0 : BUS_DMA_PREFETCHABLE));
 	if (error != 0)
 		goto free_dma;
 	stage = "dmamap_create";
-	error = bus_dmamap_create(cma->dmat, size, 1, size, 0,
+	error = bus_dmamap_create(cma->dmat, size, nsegs, size, 0,
 	    BUS_DMA_NOWAIT, &cma->dmamap);
 	if (error != 0)
 		goto unmap;
@@ -289,8 +461,10 @@ destroy:
 unmap:
 	bus_dmamem_unmap(cma->dmat, cma->vaddr, size);
 free_dma:
-	bus_dmamem_free(cma->dmat, cma->dmasegs, nsegs);
+	bus_dmamem_free(cma->dmat, bo->segments, nsegs);
 free_bo:
+	if (bo->segments != cma->dmasegs)
+		kmem_free(bo->segments, bo->segment_bytes);
 	pvr_bo_report_failure(stage, error, size, flags);
 	kmem_free(bo, sizeof(*bo));
 	return ERR_PTR(-error);

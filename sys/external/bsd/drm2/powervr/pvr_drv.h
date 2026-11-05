@@ -26,6 +26,9 @@ int pvr_get_bo_mmap_offset(struct drm_device *, void *, struct drm_file *);
 /* The caller retains a GEM reference. Return positive native errno. */
 int pvr_bo_mapping(struct drm_gem_object *, uint64_t, uint64_t,
     uint64_t *, uint64_t *);
+/* EFBIG from mapping means a valid range spans multiple DMA segments. */
+int pvr_bo_pages(struct drm_gem_object *, uint64_t, uint64_t,
+    uint64_t *, uint64_t *);
 int pvr_bo_cpu(struct drm_gem_object *, uint64_t, size_t, uint64_t, void **);
 void pvr_bo_sync(struct drm_gem_object *, int);
 /* Caller holds the device gate and a GEM reference for the entire pin. */
