@@ -58,7 +58,7 @@ jobs:
           PYTHON: ${{ steps.python.outputs.python-path }}
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends mksh original-awk llvm
+          sudo apt-get install -y --no-install-recommends mksh original-awk llvm-18
           native=$RUNNER_TEMP/native-prefix
           mkdir -p "$native/bin" "$native/gnu/bin"
           ln -s /usr/bin/mksh "$native/bin/mksh"
@@ -69,10 +69,13 @@ jobs:
           ln -s /usr/bin/original-awk "$native/bin/nawk"
           ln -s /usr/bin/original-awk "$native/bin/awk"
           ln -s /usr/bin/shasum "$native/bin/shasum"
-          # The static userland builders strip and inspect with the prefix LLVM tools.
-          test -x /usr/bin/llvm-nm && test -x /usr/bin/llvm-objcopy
-          ln -s /usr/bin/llvm-nm "$native/bin/llvm-nm"
-          ln -s /usr/bin/llvm-objcopy "$native/bin/llvm-objcopy"
+          # The static userland builders strip and inspect with the prefix LLVM
+          # tools. Only --console-selected runs them; LLVM 18 may not read
+          # objects of a newer Clang if a test starts stripping real ones.
+          ln -s /usr/lib/llvm-18/bin/llvm-nm "$native/bin/llvm-nm"
+          ln -s /usr/lib/llvm-18/bin/llvm-objcopy "$native/bin/llvm-objcopy"
+          "$native/bin/llvm-nm" --version
+          "$native/bin/llvm-objcopy" --version
           ln -s "$PYTHON" "$native/bin/python3.15"
           for tool in '[' basename cat chmod cksum cmp comm cp cut date dd diff \
               dirname du echo env expr false find git grep head id install ln ls \

@@ -18,7 +18,8 @@ openssl-generated:
 		    --cc-flags=${CFLAGS:Q} --cc-options=${COPTS:Q} --sysroot ${DESTDIR:Q} \
 		    --perl ${HOST_PERL:Q} --gmake ${HOST_GMAKE:Q} --shell ${HOST_SH:Q} \
 		    --ar ${AR:[1]:Q} --ranlib ${RANLIB:[1]:Q} \
-		    --tmpdir ${TMPDIR:U${.OBJDIR}:Q} --path ${PATH:Q} --jobs ${MAKE_JOBS:U1:Q}
+		    --tmpdir ${TMPDIR:U${.OBJDIR}:Q} --path ${PATH:Q} --jobs ${MAKE_JOBS:U1:Q} \
+		    ${EMBER_SOURCE_GIT:D--git ${EMBER_SOURCE_GIT:Q}}
 .if ${EMBER_OPENSSL_GENERATION_READY:Uno} != "yes"
 .for target in all depend dependall includes install
 ${target}-lib: openssl-generated

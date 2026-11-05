@@ -40,11 +40,13 @@ GENERATOR_FILES = ('prepare-generated.py', 'generated-sources.pl',
                    'config-sources.pl', 'map-exports.py')
 
 
-def generator_identity(path):
+def generator_identity(path, git=None):
     """Use index blobs for clean scripts and Git-compatible blobs for dirty ones."""
     if not isinstance(path, str) or not path or any(not os.path.isabs(part) for part in path.split(os.pathsep)):
         return None
-    git = shutil.which('git', path=path)
+    git = git or shutil.which('git', path=path)
+    if git is not None and (not os.path.isabs(git) or not os.access(git, os.X_OK)):
+        return None
     if git is None:
         return None
     def run(*arguments):
@@ -78,7 +80,7 @@ def generator_identity(path):
     return blobs
 
 
-def input_identity(source, object_root):
+def input_identity(source, object_root, git=None):
     """Use the identities already selected by the SDK, without reading payloads."""
     receipt = source / 'emberbsd-prepared-source.json'
     if not receipt.is_file():
@@ -101,7 +103,7 @@ def input_identity(source, object_root):
             raise ValueError('invalid SDK object input context: ' + str(context))
         environment = signature.get('environment')
         git_path = environment.get('PATH') if isinstance(environment, dict) else None
-        generators = generator_identity(git_path)
+        generators = generator_identity(git_path, git)
         if generators is None:
             return None
         runtime = signature['runtime']
@@ -132,6 +134,7 @@ def main():
         parser.add_argument('--' + name, required=True)
     for name in ('cc-command', 'cc-flags', 'cc-options'):
         parser.add_argument('--' + name, default='')
+    parser.add_argument('--git', default=None, help='selected Git for source inspection')
     parser.add_argument('--jobs', type=int, default=1)
     args = parser.parse_args()
     try:
@@ -177,7 +180,7 @@ def main():
     fcntl.flock(lock_fd, fcntl.LOCK_EX)
     # The descriptor remains open until all output is complete.
     # Prepared source, generator blobs and selected toolchain context determine reuse.
-    identity = input_identity(source, object_root)
+    identity = input_identity(source, object_root, args.git)
     inputs = (hashlib.sha256(json.dumps(identity, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
               if identity is not None else None)
     key = {'source': str(source), 'inputs': inputs, 'arch': args.arch, 'cpu': args.cpu,
