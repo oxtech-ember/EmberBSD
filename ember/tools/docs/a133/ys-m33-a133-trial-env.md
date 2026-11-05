@@ -81,6 +81,19 @@ verified watchdog path; generating these env copies does not establish either.
 Normal-boot release must follow authenticated, release-bound confirmation in a
 separate stage. Removing a marker alone must not certify installation readiness.
 
+The optional [rc hook](../../../boot/a133-firstboot-guard.rc) installs as
+`/etc/rc.d/ember_firstboot_guard` with mode0555. Install the guard library as
+`/usr/libexec/a133-firstboot-guard.sh` with mode0444. Both belong to root.
+Enable `ember_firstboot_guard=YES` only in the selected first-boot image profile.
+The default is disabled; an already loaded YES is preserved.
+
+The hook orders after critical local mounts and `mcu7502_keepalive`, before
+`random_seed`. Missing or symlinked markers do nothing. A pending marker requires
+the readable guard library and a running MCU service, then starts one120-second
+background guard. The image must supply a writable `/var/log` and root-owned
+marker directory. The hook does not create the marker, arm recovery, stop the
+MCU service, write boot/env partitions or establish watchdog qualification.
+
 ## Prepare normal boot after native acceptance
 
 `A133Recovery::Policy#normal_boot_env(actual_env)` prepares a full environment
@@ -113,6 +126,7 @@ ruby ember/tools/a133-recovery-protect-test.rb
 ruby ember/tools/a133-unlock-env-test.rb
 ruby ember/tools/a133-env-edit-test.rb
 sh ember/tools/a133-firstboot-guard-test.sh
+python3 ember/tools/a133-firstboot-rc-test.py
 ```
 
 The new test independently encodes expected binary env copies and checks all

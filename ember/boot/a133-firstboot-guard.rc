@@ -1,0 +1,31 @@
+#!/bin/sh
+# Origin: EmberBSD - optional rc hook for a caller-armed A133 first boot.
+# SPDX-License-Identifier: BSD-2-Clause
+# PROVIDE: ember_firstboot_guard
+# REQUIRE: mountcritlocal mcu7502_keepalive
+# BEFORE: random_seed
+# KEYWORD: shutdown
+
+. /etc/rc.subr
+
+name=ember_firstboot_guard
+rcvar=$name
+start_cmd=ember_firstboot_guard_start
+stop_cmd=:
+: ${ember_firstboot_guard:=NO}
+
+ember_firstboot_guard_start()
+{
+	[ -f /etc/ember/firstboot-pending ] &&
+	    [ ! -L /etc/ember/firstboot-pending ] || return 0
+	[ -f /usr/libexec/a133-firstboot-guard.sh ] &&
+	    [ ! -L /usr/libexec/a133-firstboot-guard.sh ] &&
+	    [ -r /usr/libexec/a133-firstboot-guard.sh ] || return 1
+	/etc/rc.d/mcu7502_keepalive status >/dev/null || return 1
+	( . /usr/libexec/a133-firstboot-guard.sh
+	  a133_firstboot_guard /etc/ember/firstboot-pending 120
+	) </dev/null >>/var/log/firstboot-guard.log 2>&1 &
+}
+
+load_rc_config "$name"
+run_rc_command "$1"
