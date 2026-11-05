@@ -493,6 +493,53 @@ a133_gpu_reg(const void *fdt, const char *path, uint32_t address,
 	return a133_value(fdt, path, "reg", cells, sizeof(cells));
 }
 
+/* Preserve the vendor interrupt-controller node and all references to it. */
+static int
+a133_keys(void *fdt, uint32_t ccu)
+{
+	static const char nmi[] = "/intc-nmi@07010320";
+	static const char pmu[] = SOC "/s_twi@0x07081400/pmu@34";
+	static const char keys[] = SOC "/keyboard";
+	const fdt32_t nmi_irq[] = { 0, cpu_to_fdt32(103), cpu_to_fdt32(4) };
+	const fdt32_t pmu_irq[] = { 0, cpu_to_fdt32(8) };
+	const fdt32_t key_irq[] = { 0, cpu_to_fdt32(22), 0 };
+	fdt32_t cells[2], cell;
+	uint32_t controller = a133_phandle(fdt, nmi);
+	uint32_t gic = a133_phandle(fdt, SDIO_GIC);
+	int error;
+
+	if (gic == 0)
+		return 0;
+	if (controller != 0 && a133_gpu_active(fdt, nmi) &&
+	    a133_gpu_reg(fdt, nmi, 0x07010320, 0x0c) &&
+	    a133_value(fdt, nmi, "compatible", "allwinner,sun8i-nmi",
+	        sizeof("allwinner,sun8i-nmi")) &&
+	    a133_cell(fdt, nmi, "#interrupt-cells", 2) &&
+	    a133_cell(fdt, nmi, "interrupt-parent", gic) &&
+	    a133_value(fdt, nmi, "interrupts", nmi_irq, sizeof(nmi_irq)) &&
+	    a133_gpu_active(fdt, pmu) && a133_cell(fdt, pmu, "reg", 0x34) &&
+	    a133_value(fdt, pmu, "compatible", "x-powers,axp803",
+	        sizeof("x-powers,axp803")) &&
+	    a133_cell(fdt, pmu, "interrupt-parent", controller) &&
+	    a133_value(fdt, pmu, "interrupts", pmu_irq, sizeof(pmu_irq))) {
+		A133_STRING(nmi, "compatible",
+		    "allwinner,sun8i-nmi\0allwinner,sun9i-a80-nmi");
+	}
+	if (!a133_gpu_active(fdt, keys) ||
+	    !a133_gpu_reg(fdt, keys, 0x05070800, 0x400) ||
+	    !a133_value(fdt, keys, "compatible", "allwinner,keyboard_1350mv",
+	        sizeof("allwinner,keyboard_1350mv")) ||
+	    !a133_value(fdt, keys, "interrupts", key_irq, sizeof(key_irq)))
+		return 0;
+	cells[0] = cpu_to_fdt32(ccu);
+	cells[1] = cpu_to_fdt32(A100_CLK_BUS_LRADC);
+	A133_SET(keys, "clocks", cells, sizeof(cells));
+	cells[1] = cpu_to_fdt32(A100_RST_BUS_LRADC);
+	A133_SET(keys, "resets", cells, sizeof(cells));
+	A133_CELL(keys, "interrupt-parent", gic);
+	return a133_prop(fdt, keys, "ember,ys-m33-volume-keys", NULL, 0);
+}
+
 static bool
 a133_gpu_unique(const void *fdt, const char *compat, int expected)
 {
@@ -1289,6 +1336,9 @@ sun50i_a133_fdt_fixup(void *fdt)
 	error = a133_sdio(fdt, ccu,
 	    fdt_getprop(fdt, 0, SDIO_NATIVE_OPT, NULL) != NULL ||
 	    (node >= 0 && fdt_getprop(fdt, node, SDIO_NATIVE_MARK, NULL) != NULL));
+	if (error != 0)
+		return error;
+	error = a133_keys(fdt, ccu);
 	if (error != 0)
 		return error;
 	error = a133_audio(fdt);

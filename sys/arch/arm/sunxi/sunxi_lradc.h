@@ -66,3 +66,30 @@
 #define AWIN_LRADC_DATA0_REG		0x0c
 #define AWIN_LRADC_DATA1_REG		0x10
 
+
+/* The vendor 1350 mV ladder quantizes each sample in 21 mV steps. */
+static inline bool
+sunxi_lradc_volume_levels(const uint32_t keys[2][2], uint8_t *upper,
+    const char **names)
+{
+	if (keys[0][0] >= keys[1][0] || keys[1][0] >= 1350 ||
+	    !((keys[0][1] == 115 && keys[1][1] == 114) ||
+	      (keys[0][1] == 114 && keys[1][1] == 115)))
+		return false;
+	for (unsigned int i = 0; i < 2; i++) {
+		uint32_t next = i == 0 ? keys[1][0] : 1350;
+		upper[i] = ((keys[i][0] + next) / 2) / 21;
+		names[i] = keys[i][1] == 115 ? "volume-up" : "volume-down";
+	}
+	return upper[0] < upper[1];
+}
+
+static inline int
+sunxi_lradc_volume_index(const uint8_t *upper, uint32_t sample)
+{
+	if (sample <= upper[0])
+		return 0;
+	if (sample <= upper[1])
+		return 1;
+	return -1;
+}

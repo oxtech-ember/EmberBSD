@@ -54,6 +54,9 @@ struct sunxi_lradc_softc {
 	void *sc_ih;
 	struct fdtbus_regulator *sc_supply;
 	int sc_vref;
+	bool sc_volume;
+	bool sc_volume_sampling;
+	int sc_previous_sample;
 	uint8_t sc_chans;
 	uint8_t sc_level[2][32];
 	const char *sc_name[2][32];
@@ -75,6 +78,11 @@ static void	sunxi_lradc_get_levels(struct sunxi_lradc_softc *, int, int);
 static void	sunxi_lradc_print_levels(struct sunxi_lradc_softc *, int);
 static bool	sunxi_lradc_register_switches(struct sunxi_lradc_softc *, int);
 
+static const struct device_compatible_entry volume_compat[] = {
+	{ .compat = "allwinner,keyboard_1350mv" },
+	DEVICE_COMPAT_EOL
+};
+
 static const struct device_compatible_entry compat_data[] = {
 	{ .compat = "allwinner,sun4i-a10-lradc-keys" },
 	DEVICE_COMPAT_EOL
@@ -89,7 +97,35 @@ sunxi_lradc_match(device_t parent, cfdata_t cf, void *aux)
 {
 	struct fdt_attach_args * const faa = aux;
 
+	if (of_hasprop(faa->faa_phandle, "ember,ys-m33-volume-keys"))
+		return of_compatible_match(faa->faa_phandle, volume_compat);
+
 	return of_compatible_match(faa->faa_phandle, compat_data);
+}
+
+static bool
+sunxi_lradc_volume_config(struct sunxi_lradc_softc *sc, int phandle)
+{
+	uint32_t keys[2][2], count;
+
+	if (of_getprop_uint32(phandle, "key_cnt", &count) || count != 2)
+		return false;
+	for (unsigned int i = 0; i < 2; i++) {
+		const uint32_t *cells;
+		int len;
+
+		cells = fdtbus_get_prop(phandle, i == 0 ? "key0" : "key1", &len);
+		if (cells == NULL || len != 2 * sizeof(*cells))
+			return false;
+		keys[i][0] = be32toh(cells[0]);
+		keys[i][1] = be32toh(cells[1]);
+	}
+	if (!sunxi_lradc_volume_levels(keys, sc->sc_level[0], sc->sc_name[0]))
+		return false;
+	sc->sc_chans = 0;
+	sc->sc_nlevels[0] = 2;
+	sc->sc_lastlevel[0] = -1;
+	return true;
 }
 
 static void
@@ -107,6 +143,7 @@ sunxi_lradc_attach(device_t parent, device_t self, void *aux)
 	struct fdtbus_reset *rst;
 
 	sc->sc_dev = self;
+	sc->sc_volume = of_compatible_match(phandle, volume_compat) != 0;
 	mutex_init(&sc->sc_lock, MUTEX_DEFAULT, IPL_VM);
 
 	sc->sc_bst = faa->faa_bst;
@@ -125,42 +162,60 @@ sunxi_lradc_attach(device_t parent, device_t self, void *aux)
 		return;
 	}
 
-	if ((clk = fdtbus_clock_get_index(phandle, 0)) != NULL) {
+	clk = fdtbus_clock_get_index(phandle, 0);
+	rst = fdtbus_reset_get_index(phandle, 0);
+	if (sc->sc_volume && (!sunxi_lradc_volume_config(sc, phandle) ||
+	    clk == NULL || rst == NULL)) {
+		aprint_error(": invalid volume keys, clock or reset\n");
+		return;
+	}
+	if (clk != NULL) {
 		if (clk_enable(clk) != 0) {
 			aprint_error(": couldn't enable clock\n");
 			return;
 		}
 	}
 
-	if ((rst = fdtbus_reset_get_index(phandle, 0)) != NULL) {
+	if (rst != NULL) {
 		if (fdtbus_reset_deassert(rst) != 0) {
 			aprint_error(": couldn't de-assert reset\n");
 			return;
 		}
 	}
 
-	sc->sc_chans = -1;
 	aprint_naive("\n");
 	aprint_normal(": LRADC, ");
-	if (of_hasprop(phandle, "vref-supply")) {
-		sc->sc_supply =
-		    fdtbus_regulator_acquire(phandle, "vref-supply");
-		if (sc->sc_supply == NULL) {
-			aprint_error(": couldn't acquire vref-supply\n");
+	if (sc->sc_volume) {
+		/* Leave interrupts masked until the switches and handler exist. */
+		ADC_WRITE(sc, AWIN_LRADC_INTC_REG, 0);
+		ADC_WRITE(sc, AWIN_LRADC_INTS_REG,
+		    ADC_READ(sc, AWIN_LRADC_INTS_REG));
+		if (!sunxi_lradc_register_switches(sc, 0)) {
+			aprint_error_dev(self, "can't register volume switches\n");
 			return;
 		}
 	} else {
-		aprint_normal("disabled (no vref-supply)\n");
-		return;
+		sc->sc_chans = -1;
+		if (of_hasprop(phandle, "vref-supply")) {
+			sc->sc_supply =
+			    fdtbus_regulator_acquire(phandle, "vref-supply");
+			if (sc->sc_supply == NULL) {
+				aprint_error(": couldn't acquire vref-supply\n");
+				return;
+			}
+		} else {
+			aprint_normal("disabled (no vref-supply)\n");
+			return;
+		}
+		error = fdtbus_regulator_get_voltage(sc->sc_supply, &sc->sc_vref);
+		if (error) {
+			aprint_error(": couldn't get vref (%d)\n", error);
+			return;
+		}
+
+		for (i = 0; i < 2; i++)
+			sunxi_lradc_get_levels(sc, phandle, i);
 	}
-	error = fdtbus_regulator_get_voltage(sc->sc_supply, &sc->sc_vref);
-	if (error) {
-		aprint_error(": couldn't get vref (%d)\n", error);
-		return;
-	}
-	
-	for (i = 0; i < 2; i++)
-		sunxi_lradc_get_levels(sc, phandle, i);
 
 	switch (sc->sc_chans) {
 	case 0:
@@ -192,7 +247,7 @@ sunxi_lradc_attach(device_t parent, device_t self, void *aux)
 		return;
 	}
 	aprint_normal_dev(self, "interrupting on %s\n", intrstr);
-	if (sc->sc_chans == 0 || sc->sc_chans == 2) {
+	if (!sc->sc_volume && (sc->sc_chans == 0 || sc->sc_chans == 2)) {
 		if (!sunxi_lradc_register_switches(sc, 0)) {
 			aprint_error_dev(self, "can't register switches\n");
 			return;
@@ -367,11 +422,71 @@ sunxi_lradc_intr_task(void *arg)
 	mutex_exit(&sc->sc_lock);
 }
 
+static void
+sunxi_lradc_volume_press(void *arg)
+{
+	sysmon_pswitch_event(arg, PSWITCH_EVENT_PRESSED);
+}
+
+static void
+sunxi_lradc_volume_release(void *arg)
+{
+	sysmon_pswitch_event(arg, PSWITCH_EVENT_RELEASED);
+}
+
+/* Capture the sample and switch at IRQ time; a later release has no key ID. */
+static int
+sunxi_lradc_volume_intr(struct sunxi_lradc_softc *sc)
+{
+	const uint32_t edges = AWIN_LRADC_INT_KEY0 | AWIN_LRADC_INT_KEYUP0;
+	uint32_t ints;
+	int sample, key, error = 0;
+
+	mutex_enter(&sc->sc_lock);
+	ints = ADC_READ(sc, AWIN_LRADC_INTS_REG);
+	if ((ints & AWIN_LRADC_INT_KEY0) && sc->sc_lastlevel[0] < 0) {
+		sc->sc_previous_sample = -1;
+		sc->sc_volume_sampling = true;
+		ADC_WRITE(sc, AWIN_LRADC_INTC_REG, edges | AWIN_LRADC_INT_DATA0);
+	}
+	if ((ints & AWIN_LRADC_INT_DATA0) && sc->sc_volume_sampling) {
+		sample = ADC_READ(sc, AWIN_LRADC_DATA0_REG) & 0x3f;
+		key = sunxi_lradc_volume_index(sc->sc_level[0], sample);
+		if (key >= 0 && sample == sc->sc_previous_sample) {
+			error = sysmon_task_queue_sched(0, sunxi_lradc_volume_press,
+			    &sc->sc_switches[0][key]);
+			if (error == 0) {
+				sc->sc_lastlevel[0] = key;
+				sc->sc_volume_sampling = false;
+				ADC_WRITE(sc, AWIN_LRADC_INTC_REG, edges);
+			}
+		}
+		sc->sc_previous_sample = sample;
+	}
+	if (ints & AWIN_LRADC_INT_KEYUP0) {
+		key = sc->sc_lastlevel[0];
+		if (key >= 0)
+			error = sysmon_task_queue_sched(0, sunxi_lradc_volume_release,
+			    &sc->sc_switches[0][key]);
+		sc->sc_lastlevel[0] = -1;
+		sc->sc_volume_sampling = false;
+		ADC_WRITE(sc, AWIN_LRADC_INTC_REG, edges);
+	}
+	ADC_WRITE(sc, AWIN_LRADC_INTS_REG, ints);
+	mutex_exit(&sc->sc_lock);
+	if (error)
+		aprint_error_dev(sc->sc_dev, "volume event queue failed: %d\n", error);
+	return ints != 0;
+}
+
 static int
 sunxi_lradc_intr(void *arg)
 {
 	struct sunxi_lradc_softc *sc = arg;
 	int error;
+
+	if (sc->sc_volume)
+		return sunxi_lradc_volume_intr(sc);
 
 	mutex_enter(&sc->sc_lock);
 	sc->sc_ints = bus_space_read_4(sc->sc_bst, sc->sc_bsh,

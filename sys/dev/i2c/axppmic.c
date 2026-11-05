@@ -1271,6 +1271,11 @@ axppmic_attach(device_t parent, device_t self, void *aux)
 
 	sc->sc_smpsw.smpsw_name = device_xname(self);
 	sc->sc_smpsw.smpsw_type = PSWITCH_TYPE_POWER;
+	if (c == &axp803_config &&
+	    OF_getproplen(sc->sc_phandle, "ember,power-key-long-hotkey") == 0) {
+		sc->sc_smpsw.smpsw_name = "power-long";
+		sc->sc_smpsw.smpsw_type = PSWITCH_TYPE_HOTKEY;
+	}
 	sysmon_pswitch_register(&sc->sc_smpsw);
 
 	mutex_init(&sc->sc_intr_lock, MUTEX_DEFAULT, IPL_VM);

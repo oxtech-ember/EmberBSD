@@ -72,6 +72,7 @@ __KERNEL_RCSID(1, "$NetBSD$");
 #define	USB0_CLK_REG		0xa70
 #define	USB1_CLK_REG		0xa74
 #define	USB_BGR_REG		0xa8c
+#define	LRADC_BGR_REG		0xa9c
 #define	GPU_PLL_CTRL_REG	0x030
 #define	G2D_BGR_REG		0x63c
 #define	GPU_CLK_REG		0x670
@@ -95,6 +96,7 @@ CFATTACH_DECL_NEW(sunxi_a100_ccu, sizeof(struct sunxi_ccu_softc),
 	sun50i_a100_ccu_match, sun50i_a100_ccu_attach, NULL, NULL);
 
 static struct sunxi_ccu_reset sun50i_a100_ccu_resets[] = {
+	SUNXI_CCU_RESET(A100_RST_BUS_LRADC, LRADC_BGR_REG, 16),
 	SUNXI_CCU_RESET(A100_RST_MBUS, MBUS_CFG_REG, 30),
 	SUNXI_CCU_RESET(A100_RST_BUS_G2D, G2D_BGR_REG, 16),
 	SUNXI_CCU_RESET(A100_RST_BUS_GPU, GPU_BGR_REG, 16),
@@ -214,6 +216,7 @@ static struct sunxi_ccu_clk sun50i_a100_ccu_clks[] = {
 	A100_MMC(A100_CLK_MMC0, "mmc0", SMHC0_CLK_REG),
 	A100_MMC(A100_CLK_MMC1, "mmc1", SMHC1_CLK_REG),
 	A100_MMC(A100_CLK_MMC2, "mmc2", SMHC2_CLK_REG),
+	SUNXI_CCU_GATE(A100_CLK_BUS_LRADC, "bus-lradc", "ahb3", LRADC_BGR_REG, 0),
 	SUNXI_CCU_GATE(A100_CLK_BUS_MMC0, "bus-mmc0", "ahb3", SMHC_BGR_REG, 0),
 	SUNXI_CCU_GATE(A100_CLK_BUS_MMC1, "bus-mmc1", "ahb3", SMHC_BGR_REG, 1),
 	SUNXI_CCU_GATE(A100_CLK_BUS_MMC2, "bus-mmc2", "ahb3", SMHC_BGR_REG, 2),

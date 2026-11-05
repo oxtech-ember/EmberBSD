@@ -62,6 +62,7 @@
 #define	A100_RST_BUS_EHCI0	46
 #define	A100_RST_BUS_EHCI1	47
 #define	A100_RST_BUS_OTG	48
+#define	A100_RST_BUS_LRADC	49
 
 #define	A100_CLK_OSC12M		0
 #define	A100_CLK_PLL_GPU	7	/* internal CCU clock, not DT binding */
@@ -109,5 +110,6 @@
 #define	A100_CLK_BUS_EHCI0	114
 #define	A100_CLK_BUS_EHCI1	115
 #define	A100_CLK_BUS_OTG	116
+#define	A100_CLK_BUS_LRADC	117
 
 #endif /* !_SUN50I_A100_CCU_H */
