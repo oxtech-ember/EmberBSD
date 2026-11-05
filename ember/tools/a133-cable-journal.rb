@@ -15,6 +15,8 @@ module A133Cable
   class Journal
     HASHES=%w[backup gpt bootloader boot recovery original_env unlock_env mutable protected_env bundle].map { |key| key+'_sha256' }.freeze
     PHASES=%w[checking unlocking unlocked protecting protected writing verified failed].freeze
+    NATIVE_PHASES=%w[confirming confirmed releasing released].freeze
+    NATIVE_HASHES=%w[host_key kernel_version nonce boot epoch before_env normal_env].map { |key| key+'_sha256' }.freeze
     def self.exact?(value,keys)
       value.is_a?(Hash) && value.keys.all? { |key| key.is_a?(String) } && value.keys.sort==keys.sort
     end
@@ -103,7 +105,9 @@ module A133Cable
       end
     end
     def valid!(data)
-      valid=self.class.exact?(data,%w[schema context phase revision possible_write possible_reboot unlock_verified protection_started hardware_bytes reason checksum]) &&
+      keys=%w[schema context phase revision possible_write possible_reboot unlock_verified protection_started hardware_bytes reason checksum]
+      keys+=['native'] if data.is_a?(Hash) && data.key?('native')
+      valid=self.class.exact?(data,keys) &&
         data['schema']==1 && data['schema'].is_a?(Integer) && PHASES.include?(data['phase']) &&
         data['revision'].is_a?(Integer) && data['revision'].between?(0,1000000) &&
         %w[possible_write possible_reboot unlock_verified protection_started].all? { |key| [true,false].include?(data[key]) } &&
@@ -112,6 +116,11 @@ module A133Cable
       valid &&= (!data['unlock_verified'] || (data['hardware_bytes'] && data['possible_write'] && data['possible_reboot'])) &&
         (!data['protection_started'] || data['unlock_verified'])
       raise Invalid,'cable_journal_state_invalid',cause:nil unless valid
+      if data.key?('native')
+        native_valid!(data['native'])
+        raise Invalid,'cable_native_not_verified',cause:nil unless data['phase']=='verified' &&
+          data['unlock_verified'] && data['protection_started'] && data['possible_write']
+      end
       begin
         self.class.context!(data['context'])
       rescue Invalid
@@ -174,6 +183,7 @@ module A133Cable
     end
     def record(phase,write:false,reboot:false,hardware_bytes:nil,reason:nil,unlocked:false,protection:false)
       lock!
+      raise Invalid,'cable_native_transition_invalid',cause:nil if @data.key?('native')
       raise Invalid,'cable_journal_state_invalid',cause:nil unless [write,reboot,unlocked,protection].all? { |value| [true,false].include?(value) }
       data=snapshot
       data['phase']=phase; data['revision']+=1
@@ -186,6 +196,32 @@ module A133Cable
       data['reason']=reason
       publish(data)
     end
+    def native_valid!(native)
+      valid=self.class.exact?(native,['phase']+NATIVE_HASHES) && NATIVE_PHASES.include?(native['phase']) &&
+        NATIVE_HASHES.all? { |key| native[key].is_a?(String) && native[key].match?(/\A[0-9a-f]{64}\z/) }
+      raise Invalid,'cable_native_state_invalid',cause:nil unless valid
+    end
+    def record_native(native)
+      lock!
+      native_valid!(native)
+      native=native.to_h { |key,value| [key.dup.freeze,value.dup.freeze] }.freeze
+      native_valid!(native)
+      data=snapshot
+      raise Invalid,'cable_native_not_verified',cause:nil unless data['phase']=='verified' &&
+        data['unlock_verified'] && data['protection_started']
+      previous=data['native']
+      if previous
+        raise Invalid,'cable_native_context_changed',cause:nil unless NATIVE_HASHES.all? { |key| previous[key]==native[key] }
+        from=NATIVE_PHASES.index(previous['phase']);to=NATIVE_PHASES.index(native['phase'])
+        raise Invalid,'cable_native_transition_invalid',cause:nil unless to==from || to==from+1
+      else
+        raise Invalid,'cable_native_transition_invalid',cause:nil unless native['phase']=='confirming'
+      end
+      data['native']=JSON.parse(JSON.generate(native))
+      data['possible_write']=true
+      data['revision']+=1
+      publish(data)
+    end
     def snapshot
       lock!
       JSON.parse(JSON.generate(@data))
@@ -193,7 +229,7 @@ module A133Cable
     def report
       snapshot.reject { |key,_| %w[context checksum schema].include?(key) }.transform_keys(&:to_sym).merge(installation_ready:false)
     end
-    private :locked,:lock!,:valid!,:read,:publish
+    private :locked,:lock!,:valid!,:read,:publish,:native_valid!
     private_class_method :new
   end
 end

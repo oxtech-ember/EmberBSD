@@ -40,6 +40,9 @@ Hardware tests confirm Qt Quick frames with the
 [Qt Vulkan offscreen profile](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/qt-bsdfb-vulkan-offscreen.md).
 GPU pixel readback feeds CPU `QBackingStore`/bsdfb presentation, without direct GPU scanout.
 Cold power-on and full restart stability remain unvalidated.
+The [A133 cable tools](ember/tools/docs/a133/ys-m33-a133-cable-stage.md) also provide
+journaled native confirmation and normal-boot release with pinned SSH identity.
+Host contracts cover interrupted operations; the complete factory installer remains incomplete.
 
 ## Building
 

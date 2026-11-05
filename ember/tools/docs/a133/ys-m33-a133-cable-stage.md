@@ -9,7 +9,7 @@ verifies unlocked recovery, installs persistent recovery protection and writes
 the three guarded image ranges. An outer private journal remembers when
 protection began so an interrupted run cannot accidentally re-enter unlock
 after env or boot have changed. It leaves the device in protected recovery;
-accepted first boot and the complete factory installer remain separate.
+the trial arm/reboot and complete factory installer remain separate.
 The [copied-env trial preparer](ys-m33-a133-trial-env.md) prepares a proposed
 next step without device access; this coordinator does not adopt its trial
 or rearmed states and continues to leave recovery protected.
@@ -83,11 +83,71 @@ Errors carry bounded symbolic reasons and redacted conservative prior-effect
 hints. Invalid admission or unreadable prior state reports effects unknown.
 No identifiers, private paths, credentials or binary env are printed.
 
+## Native confirmation and normal release
+
+The [native postboot API](../../a133-native-postboot.rb) extends this same
+journal after a caller-owned trial has reached native EmberBSD.
+It does not arm the loader, start a trial or request a reboot.
+
+```ruby
+require_relative '../../a133-native-postboot'
+require_relative '../../a133-native-source'
+
+source = A133Native::Source.new(ssh: ssh_path, host: native_host,
+  host_alias: unique_alias, known_hosts: private_known_hosts,
+  identity: client_identity, host_key: provisioned_public_key,
+  kernel_version: selected_kernel_version)
+A133Cable.native_postboot(directory: session, policy: captured_policy,
+  source: source, nonce: image_nonce, acceptance: application_acceptance,
+  release: false)
+# After confirmation, the same call with release: true restores normal boot.
+```
+
+Reuse the initialized `A133Recovery::Policy` from the verified capture.
+The nonce is a unique48-hex value installed in this image's root-owned0600
+`/etc/ember/firstboot-pending` file. The source pins this tablet's preprovisioned
+Ed25519 public key; a network key scan does not establish that identity.
+The private known_hosts file has exactly one selected alias/key entry.
+The required `kernel_version` is the exact `uname -v` identity from the selected
+kernel producer, without trailing newlines. Do not discover it from an unknown
+running target. The source checks that identity as well as the installed boot hash.
+The producer/caller must bind the version to the selected image; this is not
+cryptographic runtime attestation. The caller retains the trial, watchdog and
+image-personalization responsibilities.
+
+The API holds the outer lock, then the existing image-store lock.
+It requires verified image roles and matches their semantic bundle digest
+against the outer context. It does not rehash a mutable installed root.
+Native observation checks root/model, MCU service, current boot epoch,
+partition mapping, GPT, installed boot hash, retained recovery and marker.
+`acceptance` is a caller-supplied callable. It must return exactly `true`
+after checking the intended application. OS checks do not certify that UI.
+
+Before marker removal, the existing journal records `confirming` and pins
+key/kernel-version/nonce/boot/epoch hashes plus before/normal env hashes. It also retains
+`native-env-before.bin` privately. Normal release records `releasing` before
+writing only the prepared128KiB prefix, then reads the full16MiB partition.
+Each mutating SSH shell checks its running kernel version and boot epoch before changing data.
+Successful confirmation and release advance to `confirmed` and `released`.
+Old cable journals remain readable; cable writes cannot resume after this boundary.
+
+A resumed marker removal accepts the same nonce or an already absent marker.
+It rejects a foreign nonce. An ambiguous env write is never replayed:
+matching final bytes can finish observation; any other state stops for recovery.
+A different boot epoch stops this operation. Inspect the journal for later boots.
+No automatic rollback, reboot or per-boot recovery is claimed.
+All results retain `installation_ready=false`; these APIs do not complete
+trial arming, full restoration or a factory-to-accepted fleet installer.
+
 ## Inspection and host checks
 
 ```sh
 ruby ember/tools/a133-cable-install.rb /private/tablet-session
 ruby ember/tools/a133-cable-journal-test.rb
+ruby ember/tools/a133-native-journal-test.rb
+ruby ember/tools/a133-native-postboot-test.rb
+ruby ember/tools/a133-native-source-test.rb
+ruby ember/tools/a133-native-epoch-test.rb
 ruby ember/tools/a133-cable-install-test.rb
 ruby ember/tools/a133-cable-install-cli-test.rb
 ruby ember/tools/a133-install-session-regression-test.rb
@@ -102,6 +162,12 @@ run actual dd against sparse files, inspect persisted intent before effects,
 verify actual image bytes and preserved env/recovery/tail, and exercise resume
 before/after protection publication, range drift, release mismatch and errors.
 Late close and filesystem faults are injected at real I/O boundaries.
+
+Native postboot tests use a transport fixture and real private journal files.
+SSH tests check pinned options, binary bounds and independent GPT/marker responses.
+A shell fixture injects a reset between inspection and mutation; removing the
+in-shell epoch or kernel-version guard lets the same fixture reach the forbidden mutation.
+These contracts do not establish physical postboot acceptance.
 
 These tests do not execute vendor hooks on a physical device, prove cold
 power-loss durability, verify early-boot contents after transition, accept data

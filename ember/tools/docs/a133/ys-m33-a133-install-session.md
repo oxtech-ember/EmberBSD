@@ -58,6 +58,9 @@ An optional `expected_bundle_sha256` checks the semantic fingerprint of the
 freshly verified release before USB admission. `A133Install.bundle_digest`
 produces that digest from a verified receipt, independent of artifact order.
 The [composed cable stage](ys-m33-a133-cable-stage.md) supplies this pin.
+Within a held Store lock, `snapshot` returns a detached validated state copy.
+The native postboot stage uses it to bind verified roles without rehashing
+an installed root that now contains runtime changes.
 Only `nil` disables expected-release admission. A non-nil pin is validated and
 copied before the bundle verifier performs blocking I/O.
 Its optional `additional_guard` is passed to every Client core guard, including

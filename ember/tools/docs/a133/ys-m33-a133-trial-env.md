@@ -99,7 +99,8 @@ The caller must authenticate the native boot and bind acceptance to the device
 and release before writing. It must persist intent, preserve the original
 environment and verify the complete partition after writing the prefix.
 This method does not rearm recovery on later boots or request a reboot.
-The cable coordinator does not yet call it.
+The explicit [native postboot stage](ys-m33-a133-cable-stage.md#native-confirmation-and-normal-release) calls this method.
+The cable write stage still stops in protected recovery.
 
 ## Host validation and remaining gates
 
@@ -126,8 +127,9 @@ confirmation marker and test rearm/save failure behavior on the actual loader.
 Host interruption, unknown/partial env, failed save, cold power loss and lost
 host connectivity need explicit recovery policies. The current cable stage
 continues to accept only its original/protected states and never adopts these
-new states automatically. Accepted first boot, normal-boot release, restoration
-and fleet readiness remain unimplemented by this preparer.
+new states automatically. The explicit native postboot API can confirm a caller-accepted native boot and
+release normal boot. Trial arming, restoration and fleet readiness remain
+unimplemented by this preparer.
 
 
 The standalone image Client keeps its existing prefix policy and can accept a

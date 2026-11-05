@@ -220,6 +220,10 @@ module A133Install
       {status: 'session_progress',session_id: @data['session_id'],revision: @data['revision'],
        roles: JSON.parse(JSON.generate(@data['roles'])),installation_ready: false}
     end
+    def snapshot
+      assert_locked!
+      JSON.parse(JSON.generate(@data))
+    end
     private :read,:publish,:valid_state!,:canonical_context,:locked,:assert_locked!,:load_or_create
     private_class_method :new
   end
