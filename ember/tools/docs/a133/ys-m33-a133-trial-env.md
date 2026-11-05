@@ -94,6 +94,33 @@ background guard. The image must supply a writable `/var/log` and root-owned
 marker directory. The hook does not create the marker, arm recovery, stop the
 MCU service, write boot/env partitions or establish watchdog qualification.
 
+## Build MCU helpers for vendor Linux recovery
+
+Run the [host build script](../../mcu7502-linux-build.sh) with the selected
+SDK host prefix and a new output directory:
+
+```sh
+"$SDK_HOST_PREFIX/bin/mksh" ember/tools/mcu7502-linux-build.sh \
+    "$SDK_HOST_PREFIX" /work/recovery-mcu
+```
+
+The script builds three freestanding Linux AArch64 executables with Clang and
+LLD. Each acts once on the recovery driver's `/dev/mcu_7502`. All require
+MCU version `0x170307` and a status in the range 0 through 255. Each control
+ioctl must return 7. Each successful control is followed by a 100 ms pause.
+
+| Executable | Control sequence |
+| --- | --- |
+| `mcu-arm60` | Set the period to 60 seconds, enable, then set the period to 60 seconds again. |
+| `mcu-feed60` | Set the period to 60 seconds once. |
+| `mcu-disable` | Disable once. |
+
+On success, stdout contains seven little-endian 64-bit words. They hold the
+version, initial status, first control result, enable result, second period
+result, final status and completion marker `0xc360`. Unused slots are zero.
+The caller must check exit status zero and the complete 56-byte result.
+The recovery caller owns feed scheduling and watchdog qualification.
+
 ## Prepare normal boot after native acceptance
 
 `A133Recovery::Policy#normal_boot_env(actual_env)` prepares a full environment
