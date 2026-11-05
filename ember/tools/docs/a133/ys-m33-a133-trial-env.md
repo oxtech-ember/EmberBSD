@@ -121,6 +121,43 @@ result, final status and completion marker `0xc360`. Unused slots are zero.
 The caller must check exit status zero and the complete 56-byte result.
 The recovery caller owns feed scheduling and watchdog qualification.
 
+Use the [recovery MCU control](../../a133-recovery-mcu.rb) from the caller
+that already verified the recovery layout. Supply the model, CID, USB serial
+and boot ID from that phase. Select the trusted executable and digest for
+the requested action together. Feed and disable have the same ACK layout.
+
+```ruby
+mcu = A133Recovery::McuControl.new(adb: adb, serial: serial, cid: cid, model: model)
+mcu.run(action: 'arm', helper: arm_path, sha256: arm_digest, boot_id: recovery_boot_id)
+```
+
+Each call requires USB recovery with root and shell v2. Arm requires unlocked
+orange recovery. Feed and disable also accept locked green recovery. The
+shell stages the checked helper in a fresh mode-0700 directory under a
+root-owned RAM-backed `/tmp`, verifies its SHA-256 and checks the pinned
+identity before and after execution. A pre-existing action directory causes
+the call to fail. Success returns `true` after exit zero and ACK validation.
+If `McuControl::Invalid#action_attempted` is true, delivery may already have
+occurred. Resolve that outcome before issuing another action.
+
+Vendor recovery reported a root-owned, mode-0775 `/tmp` on tmpfs through
+`stat -c %u:%a .` and `stat -f -c %t .`. The shell enters the fixed
+`/tmp/ember-mcu7502` directory, checks its filesystem and requires UID 0
+and mode 0700. It compares the device and inode of its current directory
+with the named entry using `stat -c %d:%i:%u:%a` without symlink
+dereference. All helper writes and cleanup then use relative paths within
+that pinned directory. The outer private directory persists in RAM for
+subsequent actions.
+
+One YS-M33 vendor recovery run verified all three actions through this API.
+Each returned exit zero and a valid 56-byte ACK. The recovery initially ran
+adbd as UID 2000. The caller requested `adb root` once, then verified UID 0
+with the same USB serial, CID and boot ID before starting the actions.
+USB re-enumeration required restoring host access to that device node.
+The test made no environment or eMMC writes. It did not measure watchdog
+expiry or exercise the complete trial coordinator.
+[AOSP Android 10 toybox stat](https://android.googlesource.com/platform/external/toybox/+/android-10.0.0_r1/toys/other/stat.c)
+
 ## Prepare normal boot after native acceptance
 
 `A133Recovery::Policy#normal_boot_env(actual_env)` prepares a full environment
