@@ -60,6 +60,28 @@ They do not prove GPU cache coherency or firmware access control in execution.
 The buffer allocator still uses one contiguous native DMA segment.
 Physical fragmentation can cause allocation failure.
 
+## Native cached CPU mappings
+
+`CREATE_BO` accepts the EmberBSD `DRM_PVR_BO_EMBER_CPU_CACHED` extension at bit 63.
+It requires `ALLOW_CPU_USERSPACE_ACCESS`. Older kernels reject the unknown bit.
+The native pager and kernel mapping use matching cacheable memory attributes.
+Ordinary BOs retain their existing write-combined mappings and DMA synchronization.
+
+Cached BOs are not host coherent. Userspace must clean CPU writes before GPU use
+and invalidate completed GPU writes before CPU reads. Kernel per-job synchronization
+does not replace this protocol. Kernel CPU consumers reject these BOs after creation.
+Final release retires the CPU cache before returning the pages to the allocator.
+
+PRIME export and scatter-gather export reject cached BOs with `EACCES`.
+PRIME does not carry this extension's cache attributes. Do not import a cached BO
+as coherent memory. Mesa exposes the optional non-coherent type only after a
+successful allocation probe, and excludes it from external and scanout allocations.
+
+The BO contract covers cached allocation, pager attributes, export refusal,
+per-job synchronization ownership and final release with 4 KiB and 16 KiB pages.
+On one A133/GE8300, a Mesa cached-buffer GPU copy preserved exact data and guards.
+This does not establish other architectures, PRIME presentation or direct scanout.
+
 ## Heap queries
 
 `HEAP_INFO_GET` reports all six upstream heap indexes.

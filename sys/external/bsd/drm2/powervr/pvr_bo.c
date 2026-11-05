@@ -3,7 +3,7 @@
 /*
  * Origin: EmberBSD native DMA/GEM buffer ownership and UVM mapping.
  * UAPI semantics: MIT Linux PowerVR 7b63ef2d55f24519e7e9e5f4d15dbea03f126e40.
- * The existing native CMA pager supplies CPU faults and mapping references.
+ * The fault pager derives from the native CMA pager and adds cacheable maps.
  */
 
 #include <sys/cdefs.h>
@@ -20,6 +20,7 @@
 #include <drm/drm_gem_cma_helper.h>
 #include <drm/drm_prime.h>
 #include <drm/drm_vma_manager.h>
+#include <uvm/uvm_extern.h>
 #include <dev/powervr/pvr_mmu.h>
 #include "pvr_backend.h"
 #include "pvr_drm.h"
@@ -52,6 +53,12 @@ pvr_bo_free(struct drm_gem_object *obj)
 
 	KASSERT(!bo->firmware_pinned && bo->firmware_holds == 0);
 	drm_gem_object_release(obj);
+	/* Retire CPU cache lines of a cached BO before its pages are reused. */
+	if ((bo->flags & DRM_PVR_BO_EMBER_CPU_CACHED) != 0) {
+		bus_dmamap_sync(cma->dmat, cma->dmamap, 0, cma->dmasize,
+		    BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
+		bo->dma_owned |= BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE;
+	}
 	if (bo->dma_owned != 0)
 		bus_dmamap_sync(cma->dmat, cma->dmamap, 0, cma->dmasize,
 		    ((bo->dma_owned & BUS_DMASYNC_PREWRITE) != 0 ?
@@ -115,12 +122,13 @@ pvr_bo_mapping(struct drm_gem_object *obj, uint64_t offset, uint64_t size,
 	return 0;
 }
 
-/* Keep protected firmware memory private to this DRM device. */
+/* PRIME does not carry the cache attributes of this native extension. */
 static struct dma_buf *
 pvr_bo_export(struct drm_gem_object *obj, int flags)
 {
 
-	if ((pvr_to_bo(obj)->flags & DRM_PVR_BO_PM_FW_PROTECT) != 0)
+	if ((pvr_to_bo(obj)->flags & (DRM_PVR_BO_PM_FW_PROTECT |
+	    DRM_PVR_BO_EMBER_CPU_CACHED)) != 0)
 		return ERR_PTR(-EACCES);
 	return drm_gem_prime_export(obj, flags);
 }
@@ -135,7 +143,8 @@ pvr_bo_get_sg_table(struct drm_gem_object *obj)
 	error = pvr_bo_mapping(obj, 0, obj->size, &address, &flags);
 	if (error != 0)
 		return ERR_PTR(-error);
-	if ((pvr_to_bo(obj)->flags & DRM_PVR_BO_PM_FW_PROTECT) != 0)
+	if ((pvr_to_bo(obj)->flags & (DRM_PVR_BO_PM_FW_PROTECT |
+	    DRM_PVR_BO_EMBER_CPU_CACHED)) != 0)
 		return ERR_PTR(-EACCES);
 	return drm_gem_cma_prime_get_sg_table(obj);
 }
@@ -163,6 +172,63 @@ pvr_prime_mmap(struct drm_gem_object *obj, off_t *offp, size_t size,
 	return 0;
 }
 
+static int
+pvr_bo_fault(struct uvm_faultinfo *ufi, vaddr_t vaddr, struct vm_page **pps,
+    int npages, int centeridx, vm_prot_t access_type, int flags)
+{
+	struct vm_map_entry *entry = ufi->entry;
+	struct uvm_object *uobj = entry->object.uvm_obj;
+	struct drm_gem_object *gem_obj =
+	    container_of(uobj, struct drm_gem_object, gemo_uvmobj);
+	struct drm_gem_cma_object *obj = to_drm_gem_cma_obj(gem_obj);
+	off_t curr_offset;
+	vaddr_t curr_va;
+	paddr_t paddr, mdpgno;
+	u_int mmapflags;
+	int lcv, retval, dmaflags;
+	vm_prot_t mapprot;
+
+	if (UVM_ET_ISCOPYONWRITE(entry))
+		return EIO;
+	dmaflags = BUS_DMA_PREFETCHABLE;
+	if ((pvr_to_bo(gem_obj)->flags & DRM_PVR_BO_EMBER_CPU_CACHED) != 0)
+		dmaflags = 0;
+	curr_offset = entry->offset + (vaddr - entry->start);
+	curr_va = vaddr;
+	retval = 0;
+	for (lcv = 0; lcv < npages; lcv++, curr_offset += PAGE_SIZE,
+	    curr_va += PAGE_SIZE) {
+		if ((flags & PGO_ALLPAGES) == 0 && lcv != centeridx)
+			continue;
+		if (pps[lcv] == PGO_DONTCARE)
+			continue;
+		mdpgno = bus_dmamem_mmap(obj->dmat, obj->dmasegs, 1,
+		    curr_offset, access_type, dmaflags);
+		if (mdpgno == (paddr_t)-1) {
+			retval = EIO;
+			break;
+		}
+		paddr = pmap_phys_address(mdpgno);
+		mmapflags = pmap_mmap_flags(mdpgno);
+		mapprot = ufi->entry->protection;
+		if (pmap_enter(ufi->orig_map->pmap, curr_va, paddr, mapprot,
+		    PMAP_CANFAIL | mapprot | mmapflags) != 0) {
+			pmap_update(ufi->orig_map->pmap);
+			uvmfault_unlockall(ufi, ufi->entry->aref.ar_amap, uobj);
+			return ENOMEM;
+		}
+	}
+	pmap_update(ufi->orig_map->pmap);
+	uvmfault_unlockall(ufi, ufi->entry->aref.ar_amap, uobj);
+	return retval;
+}
+
+const struct uvm_pagerops pvr_bo_uvm_ops = {
+	.pgo_reference = drm_gem_pager_reference,
+	.pgo_detach = drm_gem_pager_detach,
+	.pgo_fault = pvr_bo_fault,
+};
+
 static void
 pvr_bo_report_failure(const char *stage, int error, size_t size, uint64_t flags)
 {
@@ -188,10 +254,15 @@ pvr_bo_alloc(struct drm_device *dev, size_t size, uint64_t flags)
 	    cma->dmasegs, 1, &nsegs, BUS_DMA_NOWAIT);
 	if (error != 0)
 		goto free_bo;
-	/* Use the same CPU memory attributes as the existing CMA UVM pager. */
+	/*
+	 * Use the same CPU memory attributes as the user mapping. A cached
+	 * BO is then cleaned by the ordinary non-coherent DMA syncs below.
+	 */
 	stage = "dmamem_map";
 	error = bus_dmamem_map(cma->dmat, cma->dmasegs, nsegs, size,
-	    &cma->vaddr, BUS_DMA_NOWAIT | BUS_DMA_PREFETCHABLE);
+	    &cma->vaddr, BUS_DMA_NOWAIT |
+	    ((flags & DRM_PVR_BO_EMBER_CPU_CACHED) != 0 ?
+	    0 : BUS_DMA_PREFETCHABLE));
 	if (error != 0)
 		goto free_dma;
 	stage = "dmamap_create";
@@ -232,6 +303,8 @@ pvr_create_bo(struct drm_device *dev, void *data, struct drm_file *file)
 	struct pvr_bo *bo;
 	const uint64_t conflict = DRM_PVR_BO_PM_FW_PROTECT |
 	    DRM_PVR_BO_ALLOW_CPU_USERSPACE_ACCESS;
+	const uint64_t cached = DRM_PVR_BO_EMBER_CPU_CACHED |
+	    DRM_PVR_BO_ALLOW_CPU_USERSPACE_ACCESS;
 	size_t size;
 	uint32_t handle;
 	int error;
@@ -240,7 +313,9 @@ pvr_create_bo(struct drm_device *dev, void *data, struct drm_file *file)
 	    args->size > SIZE_MAX - (PAGE_SIZE - 1) ||
 	    (args->size & (PVR_DEVICE_PAGE_SIZE - 1)) != 0 ||
 	    (args->flags & ~DRM_PVR_BO_FLAGS_MASK) != 0 ||
-	    (args->flags & conflict) == conflict)
+	    (args->flags & conflict) == conflict ||
+	    ((args->flags & DRM_PVR_BO_EMBER_CPU_CACHED) != 0 &&
+	    (args->flags & cached) != cached))
 		return -EINVAL;
 	size = roundup2((size_t)args->size, PAGE_SIZE);
 	/* Native uvm_pglistalloc() represents the page count as an int. */
@@ -330,7 +405,9 @@ pvr_bo_cpu(struct drm_gem_object *obj, uint64_t offset, size_t size,
 	    size == 0 || offset > obj->size || size > obj->size - offset)
 		return EINVAL;
 	bo = pvr_to_bo(obj);
-	if ((bo->flags & flags) != flags)
+	/* Kernel users assume the coherent write-combined attributes. */
+	if ((bo->flags & flags) != flags ||
+	    (bo->flags & DRM_PVR_BO_EMBER_CPU_CACHED) != 0)
 		return EACCES;
 	*cpu = (uint8_t *)bo->cma.vaddr + offset;
 	return 0;
@@ -343,6 +420,9 @@ pvr_bo_sync(struct drm_gem_object *obj, int operations)
 	int active = operations;
 
 	KASSERT(obj->funcs == &pvr_bo_funcs);
+	/* Userspace maintains a cached BO; per-job syncs would only cost time. */
+	if ((bo->flags & DRM_PVR_BO_EMBER_CPU_CACHED) != 0)
+		return;
 	/* A BO can have several VM mappings. Close each DMA direction once. */
 	if ((bo->dma_owned & BUS_DMASYNC_PREWRITE) == 0)
 		active &= ~BUS_DMASYNC_POSTWRITE;

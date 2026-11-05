@@ -136,8 +136,17 @@ struct drm_pvr_dev_query_static_data_areas {
 #define DRM_PVR_BO_BYPASS_DEVICE_CACHE		((__u64)1 << 0)
 #define DRM_PVR_BO_PM_FW_PROTECT			((__u64)1 << 1)
 #define DRM_PVR_BO_ALLOW_CPU_USERSPACE_ACCESS	((__u64)1 << 2)
+/*
+ * EmberBSD extension, not in the Linux UAPI: map the BO cacheable for the
+ * CPU. The BO is then not coherent; userspace cleans CPU writes before the
+ * GPU reads them and invalidates before reading GPU writes. Requires
+ * DRM_PVR_BO_ALLOW_CPU_USERSPACE_ACCESS. No kernel CPU access after creation.
+ * PRIME export is not supported because it does not carry cache attributes.
+ */
+#define DRM_PVR_BO_EMBER_CPU_CACHED		((__u64)1 << 63)
 #define DRM_PVR_BO_FLAGS_MASK	(DRM_PVR_BO_BYPASS_DEVICE_CACHE | \
-	DRM_PVR_BO_PM_FW_PROTECT | DRM_PVR_BO_ALLOW_CPU_USERSPACE_ACCESS)
+	DRM_PVR_BO_PM_FW_PROTECT | DRM_PVR_BO_ALLOW_CPU_USERSPACE_ACCESS | \
+	DRM_PVR_BO_EMBER_CPU_CACHED)
 
 struct drm_pvr_ioctl_create_bo_args {
 	__u64 size;

@@ -52,6 +52,43 @@ typedef struct {
 	bus_dma_segment_t dm_segs[1];
 } *bus_dmamap_t;
 struct uvm_object { int unused; };
+typedef uintptr_t vaddr_t;
+typedef uintptr_t paddr_t;
+typedef int vm_prot_t;
+typedef unsigned int u_int;
+void drm_gem_pager_reference(struct uvm_object *);
+void drm_gem_pager_detach(struct uvm_object *);
+struct vm_page { int unused; };
+struct vm_map_entry {
+	struct { struct uvm_object *uvm_obj; } object;
+	struct { void *ar_amap; } aref;
+	voff_t offset;
+	vaddr_t start;
+	vm_prot_t protection;
+};
+struct vm_map { void *pmap; };
+struct uvm_faultinfo { struct vm_map_entry *entry; struct vm_map *orig_map; };
+#define UVM_ET_ISCOPYONWRITE(entry) 0
+#define PGO_ALLPAGES 1
+#define PGO_DONTCARE ((struct vm_page *)(uintptr_t)-1)
+#define PMAP_CANFAIL 8
+struct uvm_pagerops {
+	void (*pgo_reference)(struct uvm_object *);
+	void (*pgo_detach)(struct uvm_object *);
+	int (*pgo_fault)(struct uvm_faultinfo *, vaddr_t, struct vm_page **,
+	    int, int, vm_prot_t, int);
+};
+static int last_map_flags, fault_map_flags, fault_enters, fault_unlocks;
+static paddr_t bus_dmamem_mmap(bus_dma_tag_t t, bus_dma_segment_t *s, int n,
+    off_t off, int prot, int flags)
+{ fault_map_flags = flags; return (paddr_t)s->memory + off; }
+static paddr_t pmap_phys_address(paddr_t p) { return p; }
+static unsigned pmap_mmap_flags(paddr_t p) { return 0; }
+static int pmap_enter(void *pmap, vaddr_t va, paddr_t pa, int prot, int flags)
+{ fault_enters++; return 0; }
+static void pmap_update(void *pmap) { }
+static void uvmfault_unlockall(struct uvm_faultinfo *ufi, void *amap,
+    struct uvm_object *uobj) { fault_unlocks++; }
 struct kref { unsigned int refs; };
 struct drm_file;
 struct drm_vma_offset_node {
@@ -137,7 +174,9 @@ static void bus_dmamem_free(bus_dma_tag_t t, bus_dma_segment_t *s, int n)
 static int bus_dmamem_map(bus_dma_tag_t t, bus_dma_segment_t *s, int n,
     size_t size, void **p, int flags)
 {
-	CHECK(flags == (BUS_DMA_NOWAIT | BUS_DMA_PREFETCHABLE));
+	CHECK(flags == BUS_DMA_NOWAIT ||
+	    flags == (BUS_DMA_NOWAIT | BUS_DMA_PREFETCHABLE));
+	last_map_flags = flags;
 	CHECK(n == 1 && size == s->ds_len);
 	if (fail == 2) return ENOMEM;
 	*p = s->memory; mapped++; return 0;
@@ -476,7 +515,8 @@ prime_contract(struct drm_gem_object *obj)
 	struct pvr_bo *bo = pvr_to_bo(obj);
 	unsigned int references = obj->refcount.refs;
 	unsigned int before = exports, sg_before = sg_exports;
-	const int denied = (bo->flags & DRM_PVR_BO_PM_FW_PROTECT) ? -EACCES : 0;
+	const int denied = (bo->flags & (DRM_PVR_BO_PM_FW_PROTECT |
+	    DRM_PVR_BO_EMBER_CPU_CACHED)) ? -EACCES : 0;
 
 	CHECK(obj->funcs->export != NULL && obj->funcs->get_sg_table != NULL);
 	if (denied) {
@@ -536,6 +576,40 @@ prime_contract(struct drm_gem_object *obj)
 		}
 	}
 	CHECK(obj->refcount.refs == references);
+}
+
+static void
+cached_contract(struct drm_device *dev, struct drm_file *file)
+{
+	struct drm_pvr_ioctl_create_bo_args args = {
+	    .size = PAGE_SIZE, .flags = DRM_PVR_BO_EMBER_CPU_CACHED };
+	struct drm_gem_object *obj;
+	struct vm_map map = { 0 };
+	struct vm_map_entry entry = { .protection = PROT_READ | PROT_WRITE };
+	struct uvm_faultinfo ufi = { .entry = &entry, .orig_map = &map };
+	struct vm_page *pages[] = { NULL };
+	struct drm_gem_close close;
+	unsigned int before;
+	void *cpu = NULL;
+
+	CHECK(pvr_create_bo(dev, &args, file) == -EINVAL);
+	args.flags |= DRM_PVR_BO_ALLOW_CPU_USERSPACE_ACCESS;
+	CHECK(pvr_create_bo(dev, &args, file) == 0);
+	CHECK(last_map_flags == BUS_DMA_NOWAIT);
+	obj = file->handles[args.handle];
+	CHECK(pvr_to_bo(obj)->flags == args.flags);
+	prime_contract(obj);
+	CHECK(pvr_bo_cpu(obj, 0, 4, 0, &cpu) == EACCES && cpu == NULL);
+	before = syncs;
+	pvr_bo_sync(obj, BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
+	CHECK(syncs == before);
+	entry.object.uvm_obj = &obj->gemo_uvmobj;
+	CHECK(pvr_bo_fault(&ufi, 0, pages, 1, 0, PROT_READ, 0) == 0);
+	CHECK(fault_map_flags == 0 && fault_enters == 1 && fault_unlocks == 1);
+	close = (struct drm_gem_close){ args.handle, 0 };
+	CHECK(drm_gem_close_ioctl(dev, &close, file) == 0);
+	CHECK(syncs == before + 2);
+	empty(dev);
 }
 
 int
@@ -676,6 +750,9 @@ main(void)
 	drm_gem_pager_detach(uobj);
 	CHECK(dev.refs == 0 && objects == 0 && structures == 0);
 	CHECK(allocated == 0 && mapped == 0 && maps == 0 && loaded == 0);
+	/* The earlier lifetime test deliberately closes the owner reference. */
+	dev.refs = 1;
+	cached_contract(&dev, &a);
 	printf("PASS: %u PowerVR BO checks (page=%zu, syncs=%u)\n",
 	    checks, PAGE_SIZE, syncs);
 	return 0;

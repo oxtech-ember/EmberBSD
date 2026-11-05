@@ -40,6 +40,7 @@ int pvr_create_vm_context(struct drm_device *, void *, struct drm_file *);
 int pvr_destroy_vm_context(struct drm_device *, void *, struct drm_file *);
 int pvr_vm_map_ioctl(struct drm_device *, void *, struct drm_file *);
 int pvr_vm_unmap_ioctl(struct drm_device *, void *, struct drm_file *);
+extern const struct uvm_pagerops pvr_bo_uvm_ops;
 int pvr_prime_mmap(struct drm_gem_object *, off_t *, size_t, int, int *,
     int *, struct uvm_object **, int *);
 int pvr_mmap_object(struct drm_device *, off_t, size_t, int,
