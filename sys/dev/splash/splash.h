@@ -37,6 +37,10 @@
 #define _DEV_SPLASH_SPLASH_H
 
 #include "opt_splash.h"
+#include <sys/reboot.h>
+
+#define SPLASH_BOOT_DISABLE_MASK (RB_SINGLE | RB_USERCONF | RB_ASKNAME | \
+	AB_VERBOSE | AB_DEBUG)
 
 #ifdef SPLASHSCREEN
 

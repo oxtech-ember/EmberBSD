@@ -10,6 +10,8 @@
 #include <string.h>
 #include <stdatomic.h>
 #include <limits.h>
+#include "opt_splash.h"
+#include "opt_wsdisplay_earlyfb.h"
 #include <sys/bus.h>
 #include "simplefbvar.h"
 #ifdef WSDISPLAY_BOOTFB_DEFER
@@ -23,6 +25,7 @@ static atomic_uint checks;
 	abort(); } } while (0)
 #define KASSERT(x) CHECK(x)
 typedef unsigned char u_char;
+#include <dev/splash/splash.h>
 struct bus_space arm_generic_bs_tag;
 #define BUS_SPACE_MAP_LINEAR 1
 #define BUS_SPACE_MAP_PREFETCHABLE 2
@@ -64,10 +67,16 @@ struct display_device {
 };
 struct consdev {
 	void (*cn_halt)(dev_t);
+	int (*cn_getc)(dev_t);
 	void (*cn_putc)(dev_t, int);
 	void (*cn_pollc)(dev_t, int);
 	dev_t cn_dev;
+	int cn_pri;
 };
+#define CN_NULL 1
+static int boothowto;
+static int old_getc(dev_t dev) { CHECK(dev == 0); return 65; }
+
 static struct consdev wsdisplay_cons, old_cons, *cn_tab, *wsdisplay_ocn;
 static struct wsscreen_internal wsdisplay_console_conf;
 static struct display_device *wsdisplay_console_device;
@@ -338,8 +347,8 @@ static void reset(void)
 	memset(&arm_simplefb_screen, 0, sizeof(arm_simplefb_screen));
 	memset(&wsdisplay_console_conf, 0, sizeof(wsdisplay_console_conf));
 	wsdisplay_console_initted = 0; wsdisplay_console_device = NULL;
-	old_cons = (struct consdev){ .cn_putc = old_putc, .cn_pollc = old_pollc };
-	cn_tab = &old_cons; wsdisplay_ocn = NULL;
+	old_cons = (struct consdev){ .cn_getc = old_getc, .cn_putc = old_putc, .cn_pollc = old_pollc, .cn_pri = 2 };
+	cn_tab = &old_cons; wsdisplay_ocn = NULL; boothowto = SPLASH_BOOT_DISABLE_MASK; (void)boothowto;
 #ifdef WSDISPLAY_MULTICONS
 	wsdisplay_multicons_enable = true; wsdisplay_multicons_suspended = false;
 #endif
@@ -405,6 +414,24 @@ int main(void)
 		CHECK(maps == 0 && attaches == 0 && updates == 0);
 		CHECK(wsdisplay_early_output_snapshot(&value) == ENXIO);
 	}
+#endif
+#if defined(SPLASHSCREEN) && defined(WSDISPLAY_EARLYFB_PRESERVE_SPLASH) && !defined(WSDISPLAY_EARLYFB_HOOKS)
+	/* Firmware pixels survive only with a usable independent console and normal flags. */
+	reset(); boothowto = 0; arm_simplefb_preattach();
+	CHECK(maps == 0 && attaches == 0 && updates == 0);
+	CHECK(arm_simplefb_physaddr() == fixture_address && cn_tab == &old_cons);
+	cn_tab->cn_putc(0, 'u'); CHECK(old_output == 1 && cn_tab->cn_getc(0) == 65);
+	for (unsigned int bit = 0; bit < 5; bit++) {
+		static const int debug_flags[] = { RB_SINGLE, RB_USERCONF, RB_ASKNAME, AB_VERBOSE, AB_DEBUG };
+		reset(); boothowto = debug_flags[bit]; arm_simplefb_preattach();
+		CHECK(maps == 1 && attaches == 1);
+	}
+	reset(); boothowto = 0; old_cons.cn_getc = NULL; arm_simplefb_preattach(); CHECK(maps == 1);
+	reset(); boothowto = 0; cn_tab = NULL; arm_simplefb_preattach(); CHECK(maps == 1);
+	reset(); boothowto = 0; old_cons.cn_pri = CN_NULL; arm_simplefb_preattach(); CHECK(maps == 1);
+	reset(); boothowto = 0; old_cons.cn_putc = NULL; arm_simplefb_preattach(); CHECK(maps == 1);
+	reset(); boothowto = 0; old_cons.cn_pollc = NULL; arm_simplefb_preattach(); CHECK(maps == 1);
+	reset(); boothowto = 0; old_cons.cn_putc = wsdisplay_cnputc; arm_simplefb_preattach(); CHECK(maps == 1);
 #endif
 	reset(); fail_map = true; arm_simplefb_preattach();
 	CHECK(maps == 1 && attaches == 0 && updates == 0);

@@ -42,6 +42,9 @@ __KERNEL_RCSID(0, "$NetBSD: arm_simplefb.c,v 1.13 2022/10/14 22:10:15 jmcneill E
 #include <sys/bus.h>
 #include <sys/cpu.h>
 #include <sys/device.h>
+#include <sys/reboot.h>
+#include <dev/cons.h>
+#include <dev/splash/splash.h>
 #ifdef WSDISPLAY_EARLYFB_HOOKS
 #include <sys/systm.h>
 #endif
@@ -364,6 +367,17 @@ arm_simplefb_preattach(void)
 		goto out;
 	addr = fb.sf_address;
 	size = fb.sf_size;
+#if defined(SPLASHSCREEN) && defined(WSDISPLAY_EARLYFB_PRESERVE_SPLASH) && \
+    !defined(WSDISPLAY_EARLYFB_HOOKS)
+	/* Keep a real independent console while the firmware logo remains visible. */
+	if ((boothowto & SPLASH_BOOT_DISABLE_MASK) == 0 && cn_tab != NULL &&
+	    cn_tab->cn_pri > CN_NULL && cn_tab->cn_putc != NULL &&
+	    cn_tab->cn_getc != NULL && cn_tab->cn_pollc != NULL &&
+	    cn_tab->cn_putc != wsdisplay_cnputc) {
+		arm_simplefb_addr = addr;
+		goto out;
+	}
+#endif
 	swapped = fb.sf_format == SIMPLEFB_FORMAT_R8G8B8A8 ||
 	    fb.sf_format == SIMPLEFB_FORMAT_B8G8R8X8;
 	is_10bit = fb.sf_format == SIMPLEFB_FORMAT_X2R10G10B10;

@@ -16,6 +16,7 @@ inputs = %w[sys/arch/arm/fdt/arm_simplefb.c sys/arch/arm/fdt/arm_simplefb.h
 files = inputs.to_h { |p| [p, File.read(source + '/' + p)] }
 licenses = files.to_h { |p, body| [p, body.split(/^#(?:include|ifndef|ifdef _KERNEL_OPT)/, 2).first] }
 commands = []
+last_run_output = ''
 evidence = ENV['EARLYFB_EVIDENCE']
 if evidence
   abort 'Evidence directory must not exist' if File.exist?(evidence) || File.symlink?(evidence)
@@ -37,6 +38,7 @@ run = lambda do |label, args|
     out = output_reader.value
     err = error_reader.value
   end
+  last_run_output = out + err
   commands << { label: label, argv: args, status: status.exitstatus, signal: status.termsig }
   if evidence
     File.write(evidence + '/' + label + '.stdout', out)
@@ -64,12 +66,12 @@ def conditional(text, marker)
 end
 
 def function(text, name)
-  matches = text.scan(/^(?:static )?(?:int|void)\n#{Regexp.escape(name)}\(.*?^}/m)
+  matches = text.scan(/^(?:static )?(?:int|void|uint64_t)\n#{Regexp.escape(name)}\(.*?^}/m)
   abort "function count #{name}: #{matches.length}" unless matches.length == 1
   matches.first
 end
 arm = files.fetch(inputs[0])
-state = arm[/^static struct arm_simplefb_softc \{.*?^static bus_addr_t arm_simplefb_addr;/m]
+state = arm[/^static struct arm_simplefb_softc \{.*?^static bus_addr_t arm_simplefb_addr;(?:\n#if !defined\(WSDISPLAY_BOOTFB_HANDOFF\).*?^#endif)?/m]
 abort 'missing actual ARM state' unless state
 registration = conditional(files.fetch(inputs[2]), "#ifdef WSDISPLAY_EARLYFB_HOOKS\nenum {")
 abort 'missing actual MI registration' unless registration
@@ -77,7 +79,7 @@ api = files.fetch(inputs[4])[/^#ifdef WSDISPLAY_EARLYFB_HOOKS
 \/\* Actual binding.*?^#endif/m]
 abort 'missing actual MI API' unless api
 api += "\nvoid wsdisplay_preattach(const struct wsscreen_descr *, void *, int, int, long);\n"
-arm_functions = "#ifdef WSDISPLAY_EARLYFB_HOOKS\n" + function(arm, 'arm_simplefb_replay') + "\n#endif\n" + function(arm, 'arm_simplefb_preattach')
+arm_functions = "#include \"opt_splash.h\"\n#include \"opt_wsdisplay_earlyfb.h\"\n#ifdef WSDISPLAY_EARLYFB_HOOKS\n" + function(arm, 'arm_simplefb_replay') + "\n#endif\n" + function(arm, 'arm_simplefb_physaddr') + "\n" + function(arm, 'arm_simplefb_preattach')
 ws_functions = %w[wsdisplay_preattach_impl wsdisplay_preattach wsdisplay_cnputc wsdisplay_pollc].map do |name|
   function(files.fetch(inputs[2]), name)
 end.join("\n\n")
@@ -89,6 +91,8 @@ Dir.mktmpdir('earlyfb-hooks-', ENV.fetch('TMPDIR', '/tmp')) do |work|
   puts "early framebuffer fixture temporary directory: #{work}"
 FileUtils.mkdir_p(work + '/sys')
 FileUtils.mkdir_p(work + '/dev/fdt')
+FileUtils.mkdir_p(work + '/dev/splash')
+FileUtils.cp(source + '/sys/dev/splash/splash.h', work + '/dev/splash/splash.h')
 File.write(work + '/sys/bus.h', <<~H)
   #ifndef EARLYFB_TEST_BUS_H
   #define EARLYFB_TEST_BUS_H
@@ -104,6 +108,7 @@ File.write(work + '/sys/device.h', "typedef void *device_t;\n")
 File.write(work + '/sys/param.h', "#include <stdint.h>\n#include <stddef.h>\n#include <stdbool.h>\n#include <limits.h>\n#define PAGE_SIZE 4096\n")
 File.write(work + '/sys/errno.h', "#include_next <sys/errno.h>\n")
 File.write(work + '/sys/systm.h', "#include <string.h>\n")
+File.write(work + '/sys/reboot.h', "#define RB_SINGLE 0x2\n#define RB_USERCONF 0x1000\n#define RB_ASKNAME 0x1\n#define AB_VERBOSE 0x20000\n#define AB_DEBUG 0x80000\n")
 File.write(work + '/dev/fdt/fdtvar.h', <<~H)
   int OF_finddevice(const char *); int OF_parent(int); int OF_getproplen(int, const char *);
   int fdtbus_get_addr_cells(int); int fdtbus_get_size_cells(int);
@@ -122,17 +127,19 @@ FileUtils.cp(source + '/sys/dev/fdt/simplefb_subr.c', work + '/simplefb_subr.c')
   File.write(work + '/replay-function.h', licenses.fetch(inputs[3]) + replay + "\n")
   saved = %w[mi-state.h arm-functions.h wsdisplay-functions.h].to_h { |name| [name, File.read(work + '/' + name)] }
   compilation = 0
-  compile = lambda do |enabled, multi = true|
+  compile = lambda do |enabled, multi, preserve, splash|
     compilation += 1
+    File.write(work + '/opt_splash.h', splash ? "#define SPLASHSCREEN 1\n" : "")
+    File.write(work + '/opt_wsdisplay_earlyfb.h', preserve ? "#define WSDISPLAY_EARLYFB_PRESERVE_SPLASH 1\n" : "")
     args = [*cc, '-std=c11', '-Wall', '-Werror', '-pthread', *flags,
             *(multi ? ['-DWSDISPLAY_MULTICONS'] : []), *(enabled ? ['-DWSDISPLAY_EARLYFB_HOOKS'] : []),
             '-I' + work, work + '/simplefb_subr.c', source + '/ember/tools/earlyfb-hooks-contract.c',
             '-o', work + '/contract']
     puts Shellwords.join(args)
-    abort 'fixture compile failed' unless run.call("compile-#{compilation}-#{enabled}-#{multi}", args)
+    abort 'fixture compile failed' unless run.call("compile-#{compilation}-#{enabled}-#{multi}-#{preserve}-#{splash}", args)
   end
-[false, true].product([false, true]).each do |enabled, multi|
-  compile.call(enabled, multi)
+[false, true].product([false, true], [false, true], [false, true]).each do |enabled, multi, preserve, splash|
+  compile.call(enabled, multi, preserve, splash)
   next if ENV['EARLYFB_COMPILE_ONLY'] == '1'
   abort 'positive failed' unless run.call("positive-#{enabled}-#{multi}", prefix + [work + '/contract'])
 end
@@ -147,6 +154,21 @@ end
       extraction: 'Unchanged complete named functions and exact static state/API blocks. Original licenses are preserved. Only kernel/FDT/rasops/atomic/pserialize services are controlled.',
       scope: 'Actual functions/state/header, controlled FDT/rasops/atomic/pserialize services. No stop, grace-period writer, handoff, real kernel concurrency or hardware proof.'
     }) + "\n")
+  end
+  unless ENV['EARLYFB_COMPILE_ONLY'] == '1'
+    saved.each { |name, bytes| File.write(work + '/' + name, bytes) }
+    arm_header = work + '/arm-functions.h'
+    arm_bytes = File.read(arm_header)
+    guard = " && cn_tab != NULL &&\n\t    cn_tab->cn_pri > CN_NULL && cn_tab->cn_putc != NULL &&\n\t    cn_tab->cn_getc != NULL && cn_tab->cn_pollc != NULL &&\n\t    cn_tab->cn_putc != wsdisplay_cnputc"
+    abort 'independent-console guard mutation anchor' unless arm_bytes.scan(guard).length == 1
+    File.write(arm_header, arm_bytes.sub(guard, ' && true'))
+    compile.call(false, true, true, true)
+    accepted = run.call('mutant-independent-console-guard', prefix + [work + '/contract'])
+    abort 'independent-console guard mutant survived' if accepted
+    abort 'independent-console guard mutant did not reach the invalid-getc fallback assertion' unless
+        commands.last.fetch(:signal) == Signal.list.fetch('ABRT') &&
+        last_run_output.include?('maps == 1')
+    puts 'early framebuffer hooks: rejected console-predicate removal at invalid-getc fallback (HOOKS disabled)'
   end
   next if ENV['EARLYFB_COMPILE_ONLY'] == '1' || ENV['EARLYFB_SKIP_MUTANTS'] == '1'
   mutants = {
@@ -173,7 +195,7 @@ end
     text = File.read(work + '/' + path)
     abort "mutant anchor #{name}" unless text.scan(before).length == 1
     File.write(work + '/' + path, text.sub(before, after))
-    compile.call(true)
+    compile.call(true, true, true, true)
     log = work + '/mutant-' + name + '.log'
     accepted = run.call('mutant-' + name, prefix + [work + '/contract'])
     abort 'surviving mutant: ' + name if accepted

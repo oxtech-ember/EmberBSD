@@ -86,7 +86,7 @@ file	dev/wscons/wsdisplay_vcons_util.c	vcons
 defflag	opt_vcons.h		VCONS_DRAW_INTR VCONS_INTR_DEBUG VCONS_DEBUG
 
 # Optional early framebuffer reader hooks. No stop or ownership API.
-defflag	opt_wsdisplay_earlyfb.h	WSDISPLAY_EARLYFB_HOOKS
+defflag	opt_wsdisplay_earlyfb.h	WSDISPLAY_EARLYFB_HOOKS WSDISPLAY_EARLYFB_PRESERVE_SPLASH
 # Cold fallback issuer only. No default configuration selects it.
 defflag	opt_wsdisplay_bootfb.h	WSDISPLAY_BOOTFB_DEFER: WSDISPLAY_EARLYFB_HOOKS
 # Checked publishers only. No close/drain or default caller.

@@ -54,6 +54,7 @@ __KERNEL_RCSID(0, "$NetBSD: genfb.c,v 1.92 2025/04/29 12:20:36 tsutsui Exp $");
 #include <dev/wsfont/wsfont.h>
 
 #include <dev/wscons/wsdisplay_vconsvar.h>
+#include <dev/splash/splash.h>
 
 #include <dev/wsfb/genfbvar.h>
 
@@ -61,8 +62,7 @@ __KERNEL_RCSID(0, "$NetBSD: genfb.c,v 1.92 2025/04/29 12:20:36 tsutsui Exp $");
 #include <dev/videomode/edidvar.h>
 
 #ifdef GENFB_DISABLE_TEXT
-#define DISABLESPLASH (boothowto & (RB_SINGLE | RB_USERCONF | RB_ASKNAME | \
-		AB_VERBOSE | AB_DEBUG) )
+#define DISABLESPLASH (boothowto & SPLASH_BOOT_DISABLE_MASK)
 #endif
 
 #ifdef _KERNEL_OPT
