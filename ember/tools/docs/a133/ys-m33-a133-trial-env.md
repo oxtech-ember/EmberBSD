@@ -154,8 +154,9 @@ Each returned exit zero and a valid 56-byte ACK. The recovery initially ran
 adbd as UID 2000. The caller requested `adb root` once, then verified UID 0
 with the same USB serial, CID and boot ID before starting the actions.
 USB re-enumeration required restoring host access to that device node.
-The test made no environment or eMMC writes. It did not measure watchdog
-expiry or exercise the complete trial coordinator.
+File staging used only RAM. These calls did not write boot or environment
+partitions. The test did not measure watchdog expiry or exercise the complete
+trial coordinator.
 [AOSP Android 10 toybox stat](https://android.googlesource.com/platform/external/toybox/+/android-10.0.0_r1/toys/other/stat.c)
 
 ## Prepare normal boot after native acceptance
