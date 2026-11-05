@@ -444,6 +444,16 @@ ttm_tt_wire(struct ttm_tt *ttm)
 	}
 	rw_exit(uobj->vmobjlock);
 
+	/*
+	 * UVM may have zeroed or restored these pages through a cached
+	 * mapping.  If the placement selected WC or UC before population,
+	 * ttm_tt_set_caching could not flush them yet.  Write back those
+	 * stores before exposing the pages through a noncached mapping, or
+	 * a later cache eviction can overwrite CPU or GPU writes.
+	 */
+	if (ttm->caching_state != tt_cached)
+		drm_clflush_pages(ttm->pages, ttm->num_pages);
+
 	/* Success!  */
 	return 0;
 }
