@@ -537,7 +537,7 @@ a133_keys(void *fdt, uint32_t ccu)
 	cells[1] = cpu_to_fdt32(A100_RST_BUS_LRADC);
 	A133_SET(keys, "resets", cells, sizeof(cells));
 	A133_CELL(keys, "interrupt-parent", gic);
-	return a133_prop(fdt, keys, "ember,ys-m33-volume-keys", NULL, 0);
+	return 0;
 }
 
 static bool

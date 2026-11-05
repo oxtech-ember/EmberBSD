@@ -17,7 +17,10 @@ separate IRQ (bank 5, bit 4); a future opt-in can expose it as a separate
 `power-short` hotkey.
 
 For the vendor 1350 mV keyboard at 0x05070800, the adapter supplies the
-A100 LRADC clock and reset and preserves SPI 22. The driver reads the two
+A100 LRADC clock and reset and preserves SPI 22. The common driver selects
+this path from the `allwinner,keyboard_1350mv` hardware-compatible string.
+It requires no board marker. The legacy `allwinner,sun4i-a10-lradc-keys`
+binding keeps its regulator-based path. The driver reads the two
 configured voltage/code pairs from `key0` and `key1`. It accepts volume
 codes 115 and 114 and ignores unused entries beyond `key_cnt`.
 A down interrupt enables sample-ready interrupts until two equal samples

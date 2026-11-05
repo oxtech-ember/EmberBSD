@@ -11,6 +11,11 @@ awk '$2=="LRADC_BGR_REG" || /SUNXI_CCU_RESET\(A100_RST_BUS_LRADC,/ || /SUNXI_CCU
     "$sunxi/sun50i_a100_ccu.c" > "$tmp/keys-ccu.h"
 sed -n '/^sunxi_lradc_volume_intr(/,/^}/p' "$sunxi/sunxi_lradc.c" |
     { printf 'static int\n'; cat; } > "$tmp/keys-intr.h"
+sed -n '/^static const struct device_compatible_entry volume_compat\[\]/,/^};/p;
+    /^static const struct device_compatible_entry compat_data\[\]/,/^};/p' \
+    "$sunxi/sunxi_lradc.c" > "$tmp/keys-match.h"
+sed -n '/^sunxi_lradc_match(/,/^}/p' "$sunxi/sunxi_lradc.c" |
+    { printf 'static int\n'; cat; } >> "$tmp/keys-match.h"
 "$CC" -std=c99 -Wall -Wextra -Werror ${CPPFLAGS:-} -I"$src/sys/arch" -I"$tmp" \
     "$tools/a133-keys-fdt-test.c" "$sunxi/sun50i_a133_fdt.c" ${LDFLAGS:-} -lfdt -o "$tmp/test"
 "$tmp/test"

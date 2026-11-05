@@ -10,6 +10,58 @@
 #define PMU "/soc@03000000/s_twi@0x07081400/pmu@34"
 #define KEYS "/soc@03000000/keyboard"
 
+/* Keep OF access at the host boundary; run the production match function. */
+typedef void *device_t;
+typedef void *cfdata_t;
+struct fdt_attach_args { int faa_phandle; };
+struct device_compatible_entry { const char *compat; };
+#define DEVICE_COMPAT_EOL { .compat = NULL }
+static const void *match_fdt;
+#define of_hasprop(node, prop) (fdt_getprop(match_fdt, node, prop, NULL) != NULL)
+
+static int
+of_compatible_match(int node, const struct device_compatible_entry *table)
+{
+	for (; table->compat != NULL; table++) {
+		if (fdt_node_check_compatible(match_fdt, node, table->compat) == 0)
+			return 1;
+	}
+	return 0;
+}
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-parameter"
+#include "keys-match.h"
+#pragma GCC diagnostic pop
+
+static void
+key_match(void)
+{
+	unsigned char fdt[1024];
+	struct fdt_attach_args faa;
+	static const struct { const char *compat; int match; } cases[] = {
+		{ "allwinner,keyboard_1350mv", 1 },
+		{ "allwinner,sun4i-a10-lradc-keys", 1 },
+		{ "allwinner,unsupported-keyboard", 0 }
+	};
+
+	match_fdt = fdt;
+	for (unsigned i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+		for (int marked = 0; marked < 2; marked++) {
+			assert(fdt_create_empty_tree(fdt, sizeof(fdt)) == 0);
+			assert(fdt_setprop_string(fdt, 0, "compatible",
+			    "example,other-board") == 0);
+			faa.faa_phandle = fdt_add_subnode(fdt, 0, "keyboard");
+			assert(faa.faa_phandle >= 0);
+			assert(fdt_setprop_string(fdt, faa.faa_phandle,
+			    "compatible", cases[i].compat) == 0);
+			if (marked)
+				assert(fdt_setprop(fdt, faa.faa_phandle,
+				    "ember,ys-m33-volume-keys", NULL, 0) == 0);
+			assert(sunxi_lradc_match(NULL, NULL, &faa) == cases[i].match);
+		}
+	}
+}
+
 static void
 make_keys(void *fdt, int bad_irq)
 {
@@ -133,7 +185,9 @@ main(void)
 {
 	unsigned char fdt[32768];
 	const fdt32_t *p;
+	struct fdt_attach_args faa;
 	int n, len, pass;
+	key_match();
 	key_ladder();
 	make_keys(fdt, 0);
 	for (pass = 0; pass < 2; pass++) {
@@ -142,6 +196,9 @@ main(void)
 		assert(fdt_node_check_compatible(fdt, n, "allwinner,sun9i-a80-nmi") == 0);
 		assert(fdt_get_phandle(fdt, n) == 103);
 		n = fdt_path_offset(fdt, KEYS);
+		match_fdt = fdt;
+		faa.faa_phandle = n;
+		assert(sunxi_lradc_match(NULL, NULL, &faa) == 1);
 		p = fdt_getprop(fdt, n, "clocks", &len);
 		assert(p && len == 8 && fdt32_to_cpu(p[1]) == 117);
 		assert(fdt_node_offset_by_phandle(fdt, fdt32_to_cpu(p[0])) ==
@@ -153,6 +210,6 @@ main(void)
 	assert(sun50i_a133_fdt_fixup(fdt) == 0);
 	assert(fdt_node_check_compatible(fdt, fdt_path_offset(fdt, NMI),
 	    "allwinner,sun9i-a80-nmi") != 0);
-	puts("A133 keys: NMI fallback and native LRADC resources passed");
+	puts("A133 keys: hardware match, NMI, LRADC resources, ladder and IRQ passed");
 	return 0;
 }

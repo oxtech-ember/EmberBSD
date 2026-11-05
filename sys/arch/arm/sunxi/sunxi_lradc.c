@@ -97,7 +97,7 @@ sunxi_lradc_match(device_t parent, cfdata_t cf, void *aux)
 {
 	struct fdt_attach_args * const faa = aux;
 
-	if (of_hasprop(faa->faa_phandle, "ember,ys-m33-volume-keys"))
+	if (of_compatible_match(faa->faa_phandle, volume_compat) != 0)
 		return of_compatible_match(faa->faa_phandle, volume_compat);
 
 	return of_compatible_match(faa->faa_phandle, compat_data);
