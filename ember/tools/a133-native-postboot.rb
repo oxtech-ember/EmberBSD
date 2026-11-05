@@ -60,6 +60,13 @@ module A133Cable
         version_sha=source.kernel_version_sha256
         raise Invalid,'native_host_key_invalid',cause:nil unless A133Install.sha?(key_sha)
         raise Invalid,'native_kernel_version_invalid',cause:nil unless A133Install.sha?(version_sha)
+        binding={'host_key_sha256'=>key_sha,'kernel_version_sha256'=>version_sha,
+          'nonce_sha256'=>Digest::SHA256.hexdigest(nonce),'boot_sha256'=>boot_sha}
+        if saved['trial']
+          raise Invalid,'native_confirmation_context_changed',cause:nil unless Journal::TRIAL_NATIVE_HASHES.all? do |key|
+            saved['trial'][key]==binding[key]
+          end
+        end
         observed=source.observe(policy:policy,boot_sha256:boot_sha,nonce:nonce)
         epoch=observed.is_a?(Hash) ? observed[:epoch] : nil
         raise Invalid,'native_observation_invalid',cause:nil unless observed.is_a?(Hash) && observed.keys.all? { |key| key.is_a?(Symbol) } &&
@@ -67,8 +74,7 @@ module A133Cable
           epoch.is_a?(String) && epoch.bytesize.between?(1,512) && epoch.ascii_only? && !epoch.include?("\0") &&
           (observed[:marker].nil? || (observed[:marker].is_a?(String) && observed[:marker].match?(/\A[0-9a-f]{48}\z/)))
         epoch=epoch.dup.freeze
-        binding={'host_key_sha256'=>key_sha,'kernel_version_sha256'=>version_sha,'nonce_sha256'=>Digest::SHA256.hexdigest(nonce),
-          'boot_sha256'=>boot_sha,'epoch_sha256'=>Digest::SHA256.hexdigest(epoch)}
+        binding['epoch_sha256']=Digest::SHA256.hexdigest(epoch)
         native=saved['native']
         raise Invalid,'native_confirmation_marker_changed',cause:nil if observed[:marker] && observed[:marker]!=nonce
         if native

@@ -17,6 +17,9 @@ module A133Cable
     PHASES=%w[checking unlocking unlocked protecting protected writing verified failed].freeze
     NATIVE_PHASES=%w[confirming confirmed releasing released].freeze
     NATIVE_HASHES=%w[host_key kernel_version nonce boot epoch before_env normal_env].map { |key| key+'_sha256' }.freeze
+    TRIAL_PHASES=%w[arming armed mcu_arming mcu_armed rebooting rebooted].freeze
+    TRIAL_HASHES=%w[host_key kernel_version nonce boot recovery_epoch protected_env trial_env arm_helper].map { |key| key+'_sha256' }.freeze
+    TRIAL_NATIVE_HASHES=%w[host_key kernel_version nonce boot].map { |key| key+'_sha256' }.freeze
     def self.exact?(value,keys)
       value.is_a?(Hash) && value.keys.all? { |key| key.is_a?(String) } && value.keys.sort==keys.sort
     end
@@ -107,6 +110,7 @@ module A133Cable
     def valid!(data)
       keys=%w[schema context phase revision possible_write possible_reboot unlock_verified protection_started hardware_bytes reason checksum]
       keys+=['native'] if data.is_a?(Hash) && data.key?('native')
+      keys+=['trial'] if data.is_a?(Hash) && data.key?('trial')
       valid=self.class.exact?(data,keys) &&
         data['schema']==1 && data['schema'].is_a?(Integer) && PHASES.include?(data['phase']) &&
         data['revision'].is_a?(Integer) && data['revision'].between?(0,1000000) &&
@@ -116,10 +120,19 @@ module A133Cable
       valid &&= (!data['unlock_verified'] || (data['hardware_bytes'] && data['possible_write'] && data['possible_reboot'])) &&
         (!data['protection_started'] || data['unlock_verified'])
       raise Invalid,'cable_journal_state_invalid',cause:nil unless valid
+      if data.key?('trial')
+        trial_valid!(data['trial'])
+        raise Invalid,'cable_trial_not_verified',cause:nil unless data['phase']=='verified' &&
+          data['unlock_verified'] && data['protection_started'] && data['possible_write']
+        raise Invalid,'cable_trial_context_changed',cause:nil unless data['context'].is_a?(Hash) &&
+          data['trial']['protected_env_sha256']==data['context']['protected_env_sha256']
+      end
       if data.key?('native')
         native_valid!(data['native'])
         raise Invalid,'cable_native_not_verified',cause:nil unless data['phase']=='verified' &&
           data['unlock_verified'] && data['protection_started'] && data['possible_write']
+        raise Invalid,'cable_native_context_changed',cause:nil if data.key?('trial') &&
+          !TRIAL_NATIVE_HASHES.all? { |key| data['native'][key]==data['trial'][key] }
       end
       begin
         self.class.context!(data['context'])
@@ -184,6 +197,7 @@ module A133Cable
     def record(phase,write:false,reboot:false,hardware_bytes:nil,reason:nil,unlocked:false,protection:false)
       lock!
       raise Invalid,'cable_native_transition_invalid',cause:nil if @data.key?('native')
+      raise Invalid,'cable_trial_transition_invalid',cause:nil if @data.key?('trial')
       raise Invalid,'cable_journal_state_invalid',cause:nil unless [write,reboot,unlocked,protection].all? { |value| [true,false].include?(value) }
       data=snapshot
       data['phase']=phase; data['revision']+=1
@@ -200,6 +214,35 @@ module A133Cable
       valid=self.class.exact?(native,['phase']+NATIVE_HASHES) && NATIVE_PHASES.include?(native['phase']) &&
         NATIVE_HASHES.all? { |key| native[key].is_a?(String) && native[key].match?(/\A[0-9a-f]{64}\z/) }
       raise Invalid,'cable_native_state_invalid',cause:nil unless valid
+    end
+    def trial_valid!(trial)
+      valid=self.class.exact?(trial,['phase']+TRIAL_HASHES) && TRIAL_PHASES.include?(trial['phase']) &&
+        TRIAL_HASHES.all? { |key| trial[key].is_a?(String) && trial[key].match?(/\A[0-9a-f]{64}\z/) }
+      raise Invalid,'cable_trial_state_invalid',cause:nil unless valid
+    end
+    def record_trial(trial)
+      lock!
+      raise Invalid,'cable_trial_transition_invalid',cause:nil if @data.key?('native')
+      trial_valid!(trial)
+      trial=trial.to_h { |key,value| [key.dup.freeze,value.dup.freeze] }.freeze
+      trial_valid!(trial)
+      data=snapshot
+      raise Invalid,'cable_trial_not_verified',cause:nil unless data['phase']=='verified' &&
+        data['unlock_verified'] && data['protection_started']
+      raise Invalid,'cable_trial_context_changed',cause:nil unless trial['protected_env_sha256']==data['context']['protected_env_sha256']
+      previous=data['trial']
+      if previous
+        raise Invalid,'cable_trial_context_changed',cause:nil unless TRIAL_HASHES.all? { |key| previous[key]==trial[key] }
+        from=TRIAL_PHASES.index(previous['phase']);to=TRIAL_PHASES.index(trial['phase'])
+        raise Invalid,'cable_trial_transition_invalid',cause:nil unless to==from || to==from+1
+      else
+        raise Invalid,'cable_trial_transition_invalid',cause:nil unless trial['phase']=='arming'
+      end
+      data['trial']=JSON.parse(JSON.generate(trial))
+      data['possible_write']=true
+      data['possible_reboot']=true if TRIAL_PHASES.index(trial['phase'])>=2
+      data['revision']+=1
+      publish(data)
     end
     def record_native(native)
       lock!
@@ -229,7 +272,7 @@ module A133Cable
     def report
       snapshot.reject { |key,_| %w[context checksum schema].include?(key) }.transform_keys(&:to_sym).merge(installation_ready:false)
     end
-    private :locked,:lock!,:valid!,:read,:publish,:native_valid!
+    private :locked,:lock!,:valid!,:read,:publish,:native_valid!,:trial_valid!
     private_class_method :new
   end
 end

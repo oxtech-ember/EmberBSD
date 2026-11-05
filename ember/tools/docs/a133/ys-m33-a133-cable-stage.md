@@ -83,6 +83,22 @@ Errors carry bounded symbolic reasons and redacted conservative prior-effect
 hints. Invalid admission or unreadable prior state reports effects unknown.
 No identifiers, private paths, credentials or binary env are printed.
 
+## Trial intent in the existing journal
+
+`Journal#record_trial` adds optional trial intent after the verified image stage.
+The phases are `arming`, `armed`, `mcu_arming`, `mcu_armed`, `rebooting` and
+`rebooted`. Only the same phase or its immediate successor is accepted.
+The journal pins the native host key, kernel version, nonce and boot hashes,
+the recovery epoch, both environment hashes and the selected arm helper.
+The protected environment hash must match the existing cable context.
+
+Once trial intent exists, the old cable writer cannot resume. Native
+confirmation must use the pinned host key, kernel, nonce and boot image.
+That check runs before native transport access. An observed native boot can
+be confirmed even if a prior trial acknowledgement was lost. This does not
+replay an arm or reboot operation. Old journals without trial state remain
+readable. Recording intent alone performs no device I/O or trial coordination.
+
 ## Native confirmation and normal release
 
 The [native postboot API](../../a133-native-postboot.rb) extends this same
@@ -144,6 +160,7 @@ trial arming, full restoration or a factory-to-accepted fleet installer.
 ```sh
 ruby ember/tools/a133-cable-install.rb /private/tablet-session
 ruby ember/tools/a133-cable-journal-test.rb
+ruby ember/tools/a133-trial-journal-test.rb
 ruby ember/tools/a133-native-journal-test.rb
 ruby ember/tools/a133-native-postboot-test.rb
 ruby ember/tools/a133-native-source-test.rb

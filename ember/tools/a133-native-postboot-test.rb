@@ -76,11 +76,25 @@ prepare=lambda do |dir|
 end
 Dir.mktmpdir('a133-native-postboot-') do |base|
   # Each test has an independent existing verified cable/image session.
-  %w[accepted refused marker epoch ambiguous images bundle missing marker_resume confirm_resume kernel_context].each do |name|
+  %w[accepted refused marker epoch ambiguous images bundle missing marker_resume confirm_resume kernel_context trial_binding].each do |name|
     dir=File.join(base,name);prepare.call(dir)
     src=NativeFixture.new(rearmed,'4'*48)
     params={directory:dir,policy:policy,source:src,nonce:'4'*48,acceptance:-> { src.accept }}
     case name
+    when 'trial_binding'
+      trial={'phase'=>'arming','host_key_sha256'=>src.host_key_sha256,
+        'kernel_version_sha256'=>src.kernel_version_sha256,'nonce_sha256'=>sha.call('4'*48),
+        'boot_sha256'=>'3'*64,'recovery_epoch_sha256'=>'0'*64,'protected_env_sha256'=>cable['protected_env_sha256'],
+        'trial_env_sha256'=>sha.call(A133Recovery.trial(original.byteslice(0,131072))[:trial_env]+original.byteslice(131072..)),
+        'arm_helper_sha256'=>'1'*64}
+      A133Cable::Journal.open(dir,nil) { |store| store.record_trial(trial) }
+      src.instance_variable_set(:@host_key_sha256,'1'*64)
+      fail_case.call('native_confirmation_context_changed') { A133Cable.native_postboot(**params) }
+      abort 'FAIL: foreign trial key reached native transport' unless src.observations==0 && src.confirmations==0 && src.writes==0
+      src.instance_variable_set(:@host_key_sha256,trial['host_key_sha256'])
+      result=A133Cable.native_postboot(**params)
+      abort 'FAIL: observed native trial was not accepted' unless result[:native_confirmed] && src.confirmations==1
+      checks+=1
     when 'accepted'
       result=A133Cable.native_postboot(**params)
       abort 'FAIL: confirmation did not preserve recovery' unless result[:native_confirmed] && !result[:normal_boot_released] && !result[:installation_ready] && src.confirmations==1 && src.writes==0
