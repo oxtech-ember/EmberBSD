@@ -45,5 +45,6 @@ int pvr_vm_quiesce(struct pvr_vm *);
 
 /* Kernel-only address accessor. It does not transfer or publish ownership. */
 uint64_t pvr_vm_root_pa(const struct pvr_vm *);
+bool pvr_vm_cpu_leaf(const struct pvr_vm *, uint64_t, uint64_t *);
 
 #endif /* _PVR_VM_H_ */

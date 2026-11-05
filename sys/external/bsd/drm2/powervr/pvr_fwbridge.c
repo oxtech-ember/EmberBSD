@@ -169,13 +169,19 @@ static int
 fwbridge_set_events(void *cookie, const struct pvr_fw_events *events)
 {
 	struct pvr_fwbridge *bridge = cookie;
+	int error;
 
 	if (!fwbridge_ready(bridge))
 		return EIO;
 	if (events == NULL)
 		return EINVAL;
-	return pvr_fwservice_set_events(&bridge->service,
+	error = pvr_fwservice_set_events(&bridge->service,
 	    events->cookie, events->grow_prepare, events->grow_complete);
+	if (error == 0) {
+		bridge->service.queue.fault_cookie = events->cookie;
+		bridge->service.queue.page_fault = events->page_fault;
+	}
+	return error;
 }
 
 static void

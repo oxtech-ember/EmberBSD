@@ -181,6 +181,9 @@ int pvr_fwprobe_ge_kick(bus_space_tag_t, bus_space_handle_t,
  * The identities and last result are private copies, not caller aliases.
  */
 struct pvr_fwqueue {
+	/* Optional error observer under the platform gate. No queue operations. */
+	void *fault_cookie;
+	void (*page_fault)(void *, uint32_t, uint32_t, uint64_t, uint64_t);
 	bool attached, failed;
 	uint32_t expected_log_type, fw_read_offset;
 	const struct pvr_fwmem *owner;

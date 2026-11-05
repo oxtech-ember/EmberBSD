@@ -657,6 +657,8 @@ pvr_submit_jobs(struct drm_device *dev, void *data, struct drm_file *file)
 		error = pvr_file_vm_prepare(vm);
 		if (error != 0)
 			goto out;
+		pvr_device_note_job(dev, vm, pvr_exec_context_id(job->context),
+		    job->id, job->type);
 		if (job->type == DRM_PVR_JOB_TYPE_COMPUTE) {
 			error = pvr_context_compute(
 			    pvr_exec_context_firmware(job->context),
@@ -694,6 +696,9 @@ pvr_submit_jobs(struct drm_device *dev, void *data, struct drm_file *file)
 				if (job->id == 0 || frag->id == 0)
 					error = EINVAL;
 			}
+			if (error == 0)
+				pvr_device_note_job(dev, vm,
+				    pvr_exec_context_id(frag->context), frag->id, frag->type);
 			if (error == 0)
 				error = pvr_context_render_pair(
 				    pvr_exec_context_firmware(job->context),

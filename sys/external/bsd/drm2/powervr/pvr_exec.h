@@ -15,6 +15,7 @@ void pvr_exec_close(struct drm_device *, struct pvr_exec_file *);
 struct pvr_exec_file *pvr_file_execution(struct drm_file *);
 struct pvr_exec_context *pvr_exec_context_get(struct drm_file *, uint32_t);
 void pvr_exec_context_put(struct drm_device *, struct pvr_exec_context *);
+uint32_t pvr_exec_context_id(const struct pvr_exec_context *);
 struct pvr_file_vm *pvr_exec_context_vm(struct pvr_exec_context *);
 struct pvr_context *pvr_exec_context_firmware(struct pvr_exec_context *);
 int pvr_create_context(struct drm_device *, void *, struct drm_file *);

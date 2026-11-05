@@ -10,6 +10,8 @@ struct pvr_file_vm;
 /* All calls require the device gate and, if present, the platform gate. */
 struct pvr_file_vm *pvr_file_vm_get(struct drm_file *, uint32_t);
 void pvr_file_vm_put(struct pvr_file_vm *);
+uint64_t pvr_file_vm_pc(const struct pvr_file_vm *);
+void pvr_file_vm_fault(const struct pvr_file_vm *, uint64_t);
 int pvr_file_vm_publish(struct pvr_file_vm *, const struct pvr_backend *, uint32_t *);
 /*
  * Snapshot all current mappings with one GEM reference per array element.

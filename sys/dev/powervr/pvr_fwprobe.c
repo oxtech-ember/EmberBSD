@@ -975,6 +975,20 @@ fwqueue_observe(struct pvr_fwmem *mem,
 			bus_dmamap_sync(mem->dmat, mem->work.map, offset,
 			    sizeof(struct rogue_fwif_fwccb_cmd),
 			    BUS_DMASYNC_POSTREAD);
+			if (q->page_fault != NULL && fwprobe_read32(event) ==
+			    ROGUE_FWIF_FWCCB_CMD_CONTEXT_RESET_NOTIFICATION) {
+				const struct rogue_fwif_fwccb_cmd_context_reset_data *reset =
+				    (const void *)(event + offsetof(struct rogue_fwif_fwccb_cmd,
+				    cmd_data.cmd_context_reset_notification));
+
+				if (fwprobe_read32(&reset->flags) &
+				    ROGUE_FWIF_FWCCB_CMD_CONTEXT_RESET_FLAG_PF)
+					q->page_fault(q->fault_cookie,
+					    fwprobe_read32(&reset->server_common_context_id),
+					    fwprobe_read32(&reset->reset_job_ref),
+					    fwprobe_read64(&reset->pc_address),
+					    fwprobe_read64(&reset->fault_address));
+			}
 			printf("PVR_FWCCB_RAW:");
 			for (i = 0; i < sizeof(struct rogue_fwif_fwccb_cmd) / 4;
 			    i++)

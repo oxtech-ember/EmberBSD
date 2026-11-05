@@ -71,6 +71,7 @@ pvr_file_vm_put(struct pvr_file_vm *vm)
 	if (--vm->refs != 0)
 		return;
 	/* The last reference excludes contexts, jobs and free lists. */
+	pvr_device_forget_vm(vm->dev, vm);
 	if (!vm->failed && vm->published)
 		error = pvr_vm_quiesce(vm->tables);
 	if (error == 0 && !vm->failed && vm->firmware.owner != NULL)
@@ -424,6 +425,38 @@ pvr_file_vm_complete(struct pvr_file_vm *vm)
 	for (mapping = vm->mappings; mapping != NULL; mapping = mapping->next)
 		pvr_bo_sync(mapping->object,
 		    BUS_DMASYNC_POSTWRITE | BUS_DMASYNC_POSTREAD);
+}
+
+uint64_t
+pvr_file_vm_pc(const struct pvr_file_vm *vm)
+{
+
+	return pvr_vm_root_pa(vm->tables);
+}
+
+/* Observe CPU-owned bookkeeping at reset notification, under the device gate. */
+void
+pvr_file_vm_fault(const struct pvr_file_vm *vm, uint64_t va)
+{
+	const struct pvr_file_mapping *map;
+	uint64_t pte;
+
+	for (map = vm->mappings; map != NULL; map = map->next)
+		if (va >= map->address && va - map->address < map->size)
+			break;
+	if (map == NULL)
+		printf("PVR_HWR_VM: mapping=unmapped");
+	else
+		printf("PVR_HWR_VM: start=%#llx end=%#llx bo_offset=%#llx "
+		    "bo_size=%#llx", (unsigned long long)map->address,
+		    (unsigned long long)(map->address + map->size),
+		    (unsigned long long)map->offset,
+		    (unsigned long long)map->object->size);
+	if (pvr_vm_cpu_leaf(vm->tables, va, &pte))
+		printf(" cpu_pte=%#llx present=%u\n", (unsigned long long)pte,
+		    (unsigned int)(pte & 1));
+	else
+		printf(" cpu_pte=unknown\n");
 }
 
 void

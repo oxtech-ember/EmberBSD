@@ -239,6 +239,10 @@ static const struct pvr_backend backend = {
 	.alloc = test_fw_alloc, .free = test_fw_free, .sync = test_fw_sync,
 	.flush = test_flush, .fail = test_fail
 };
+void pvr_device_forget_vm(struct drm_device *dev, struct pvr_file_vm *vm)
+{ (void)dev; (void)vm; }
+static bool pvr_vm_cpu_leaf(const struct pvr_vm *vm, uint64_t va, uint64_t *out)
+{ (void)vm; (void)va; *out = 0; return true; }
 static uint64_t pvr_vm_root_pa(const struct pvr_vm *vm)
 { return 0x12000000; }
 static int pvr_vm_flush(struct pvr_vm *vm)

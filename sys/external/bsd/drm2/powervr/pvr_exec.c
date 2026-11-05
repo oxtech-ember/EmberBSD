@@ -22,6 +22,7 @@
 #include "pvr_stream.h"
 
 struct pvr_exec_context {
+	uint32_t firmware_id;
 	struct pvr_context *firmware;
 	struct pvr_file_vm *vm;
 	unsigned int refs;
@@ -261,6 +262,7 @@ pvr_create_context_locked(struct drm_device *dev,
 	ctx = kmem_zalloc(sizeof(*ctx), KM_SLEEP);
 	ctx->vm = vm;
 	ctx->refs = 1;
+	ctx->firmware_id = id;
 	config.type = args->type;
 	config.id = id;
 	config.pid = (uint32_t)curproc->p_pid;
@@ -403,6 +405,13 @@ pvr_destroy_free_list(struct drm_device *dev, void *data, struct drm_file *file)
 	}
 	pvr_device_leave(dev);
 	return -error;
+}
+
+uint32_t
+pvr_exec_context_id(const struct pvr_exec_context *ctx)
+{
+
+	return ctx->firmware_id;
 }
 
 struct pvr_file_vm *

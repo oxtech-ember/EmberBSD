@@ -335,7 +335,7 @@ static int test_complete(void *c, uint32_t id, int e)
 static void event_tests(void)
 {
 	const struct pvr_backend *b;
-	struct pvr_fw_events events = {&device, test_grow, test_complete};
+	struct pvr_fw_events events = {&device, test_grow, test_complete, NULL};
 	reset(); b = start();
 	CHECK(b->set_events != NULL);
 	CHECK(b->set_events(b->cookie, NULL) == EINVAL);
@@ -345,7 +345,7 @@ static void event_tests(void)
 	CHECK(sc.sc_fwbridge.service.grow_complete == test_complete);
 	memset(&events, 0, sizeof(events));
 	CHECK(sc.sc_fwbridge.service.grow_prepare == test_grow);
-	events = (struct pvr_fw_events){&device, test_grow, test_complete};
+	events = (struct pvr_fw_events){&device, test_grow, test_complete, NULL};
 	CHECK(b->set_events(b->cookie, &events) == EBUSY);
 	b->fail(b->cookie);
 	CHECK(b->set_events(b->cookie, &events) == EIO);

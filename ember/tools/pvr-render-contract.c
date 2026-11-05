@@ -316,6 +316,14 @@ static int pvr_freelist_grow_prepare(struct pvr_freelist *,
     struct rogue_fwif_freelist_gs_data *);
 static int pvr_freelist_grow_complete(struct pvr_freelist *, int);
 #endif
+struct pvr_file_vm { uint64_t pc, seen_va; unsigned int reports; };
+static uint64_t pvr_file_vm_pc(const struct pvr_file_vm *vm) { return vm->pc; }
+static void pvr_file_vm_fault(const struct pvr_file_vm *vm, uint64_t va)
+{
+	struct pvr_file_vm *model = (struct pvr_file_vm *)vm;
+	model->seen_va = va;
+	model->reports++;
+}
 #include "pvr-drv-body.h"
 
 
@@ -588,6 +596,25 @@ backend_lifetime(struct drm_device *dev)
 
 	CHECK(pvr_device_enter(dev) == NULL);
 	CHECK(mutex_owned(&sc->gate));
+	{
+		struct pvr_file_vm vm = { .pc = 0x400b0000 };
+		const uint64_t va = UINT64_C(0x8001f30800);
+
+		pvr_device_note_job(dev, &vm, 384, 759, DRM_PVR_JOB_TYPE_TRANSFER_FRAG);
+		pvr_device_note_job(dev, &vm, 384, 760, DRM_PVR_JOB_TYPE_FRAGMENT);
+		pvr_device_page_fault(sc, 384, 759, vm.pc, va);
+		CHECK(vm.reports == 1 && vm.seen_va == va);
+		CHECK(sc->fault_jobs[759 % __arraycount(sc->fault_jobs)].type ==
+		    DRM_PVR_JOB_TYPE_TRANSFER_FRAG);
+		pvr_device_page_fault(sc, 385, 759, vm.pc, va);
+		pvr_device_page_fault(sc, 384, 759, vm.pc + 4096, va);
+		pvr_device_note_job(dev, &vm, 384, 759 + __arraycount(sc->fault_jobs),
+		    DRM_PVR_JOB_TYPE_FRAGMENT);
+		pvr_device_page_fault(sc, 384, 759, vm.pc, va);
+		pvr_device_forget_vm(dev, &vm);
+		pvr_device_page_fault(sc, 384, 760, vm.pc, va);
+		CHECK(vm.reports == 1);
+	}
 	CHECK(pvr_device_next_id(dev, &id) == 0 && id == 1);
 	CHECK(pvr_device_next_id(dev, &id) == 0 && id == 2);
 	sc->next_id = UINT32_MAX - 1;

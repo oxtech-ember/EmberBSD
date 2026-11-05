@@ -1162,6 +1162,15 @@ kick_consumption_tests(void)
 }
 
 /* Retain the real boot and queue across several full KCCB revolutions. */
+static unsigned int fault_notices;
+static void
+note_page_fault(void *cookie, uint32_t context, uint32_t job, uint64_t pc, uint64_t va)
+{
+	CHECK(cookie == &fault_notices && context == 384 && job == 759);
+	CHECK(pc == UINT64_C(0x400b0000) && va == UINT64_C(0x8001f30800));
+	fault_notices++;
+}
+
 static void
 prepare_service(void)
 {
@@ -1674,11 +1683,21 @@ ge_service_tests(void)
 		CHECK(id == 123 && !service.failed);
 		CHECK(pvr_fwqueue_event(&owner, &booted, &service, &id) == ENOENT);
 		grow_event(124);
-		fw32(3, FCOMMAND + service.fw_read_offset * sizeof(struct rogue_fwif_fwccb_cmd),
-		    ROGUE_FWIF_FWCCB_CMD_CONTEXT_RESET_NOTIFICATION);
+		size_t slot = FCOMMAND + service.fw_read_offset *
+		    sizeof(struct rogue_fwif_fwccb_cmd);
+		service.fault_cookie = &fault_notices;
+		service.page_fault = note_page_fault;
+		fw32(3, slot, ROGUE_FWIF_FWCCB_CMD_CONTEXT_RESET_NOTIFICATION);
+		fw32(3, slot + 8, 384);
+		fw32(3, slot + 20, 759);
+		fw32(3, slot + 24, ROGUE_FWIF_FWCCB_CMD_CONTEXT_RESET_FLAG_PF);
+		fw32(3, slot + 32, 0x400b0000);
+		fw32(3, slot + 40, 0x01f30800);
+		fw32(3, slot + 44, 0x80);
 		id = 0xaaaaaaaa;
 		CHECK(pvr_fwqueue_event(&owner, &booted, &service, &id) != 0);
 		CHECK(service.failed && id == 0xaaaaaaaa);
+		CHECK(fault_notices == 1);
 	}
 }
 

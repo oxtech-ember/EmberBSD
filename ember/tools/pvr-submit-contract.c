@@ -243,6 +243,15 @@ struct pvr_exec_context *pvr_exec_context_get(struct drm_file *f,uint32_t handle
 }
 void pvr_exec_context_put(struct drm_device *dev,struct pvr_exec_context *c)
 { CHECK(gated && platform && c->refs!=0); if(--c->refs==0) c->destroyed=true; }
+uint32_t pvr_exec_context_id(const struct pvr_exec_context *c)
+{ return (uint32_t)(c - contexts + 1); }
+void pvr_device_note_job(struct drm_device *dev, struct pvr_file_vm *vm,
+    uint32_t context, uint32_t id, uint32_t type)
+{
+	CHECK(gated && platform && dev == &device && context != 0 && id != 0);
+	CHECK(vm == &contexts[context - 1].vm);
+	(void)type;
+}
 struct pvr_file_vm *pvr_exec_context_vm(struct pvr_exec_context *c)
 { CHECK(gated && platform && c->refs!=0 && !c->destroyed); return &c->vm; }
 struct pvr_context *pvr_exec_context_firmware(struct pvr_exec_context *c)

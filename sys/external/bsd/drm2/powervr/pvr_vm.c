@@ -185,6 +185,22 @@ pvr_vm_create_direct(bus_dma_tag_t dmat, struct pvr_vm **out)
 	return pvr_vm_create_internal(dmat, true, out);
 }
 
+/* CPU view of the current leaf, not a sample of a GPU TLB. */
+bool
+pvr_vm_cpu_leaf(const struct pvr_vm *vm, uint64_t va, uint64_t *pte)
+{
+	const struct pvr_vm_pd *pd;
+	const struct pvr_vm_pt *pt;
+	struct pvr_mmu_indices idx;
+
+	if (pvr_mmu_indices(va, &idx) != 0)
+		return false;
+	pd = vm->dirs[idx.pc];
+	pt = pd != NULL ? pd->tables[idx.pd] : NULL;
+	*pte = pt == NULL ? 0 : le64toh(((const uint64_t *)pt->dma.cpu)[idx.pt]);
+	return true;
+}
+
 uint64_t
 pvr_vm_root_pa(const struct pvr_vm *vm)
 {

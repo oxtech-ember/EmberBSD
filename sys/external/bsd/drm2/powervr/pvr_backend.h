@@ -21,6 +21,8 @@ struct pvr_fw_events {
 	void *cookie;
 	int (*grow_prepare)(void *, uint32_t, struct rogue_fwif_freelist_gs_data *);
 	int (*grow_complete)(void *, uint32_t, int);
+	/* Observe a copied page-fault event before the queue freezes. */
+	void (*page_fault)(void *, uint32_t, uint32_t, uint64_t, uint64_t);
 };
 
 struct pvr_fw_object {
@@ -57,6 +59,10 @@ struct pvr_backend {
 };
 
 struct drm_device;
+struct pvr_file_vm;
+void pvr_device_note_job(struct drm_device *, struct pvr_file_vm *, uint32_t,
+    uint32_t, uint32_t);
+void pvr_device_forget_vm(struct drm_device *, struct pvr_file_vm *);
 /* Immutable after device registration; no gate is required. */
 uint64_t pvr_device_bvnc(struct drm_device *);
 int pvr_backend_attach(struct drm_device *, const struct pvr_backend *);

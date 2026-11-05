@@ -21,6 +21,7 @@
 #include "pvr_exec.h"
 #include "pvr_exec_hwrt.h"
 #include "pvr_freelist.h"
+#include "pvr_file.h"
 #include "pvr_heap.h"
 #include "pvr_query.h"
 
@@ -39,7 +40,15 @@ struct pvr_freelist_entry {
 	struct pvr_freelist **owner;
 };
 
+/* Device-unique job IDs never wrap; collisions in this cache evict evidence. */
+struct pvr_fault_job {
+	struct pvr_file_vm *vm;	/* Cleared under the gate before final put. */
+	uint64_t pc;
+	uint32_t context, id, type;
+};
+
 struct pvr_device {
+	struct pvr_fault_job fault_jobs[16];
 	rb_tree_t freelists;
 	struct pvr_freelist_entry *grow_pending;
 	struct pvr_orphan *orphans;
@@ -345,6 +354,61 @@ pvr_render_attach(device_t self, bus_dma_tag_t dmat, uint64_t bvnc,
 	return 0;
 }
 
+void
+pvr_device_note_job(struct drm_device *dev, struct pvr_file_vm *vm,
+    uint32_t context, uint32_t id, uint32_t type)
+{
+	struct pvr_device *sc = dev->dev_private;
+	struct pvr_fault_job *job;
+
+	KASSERT(mutex_owned(&sc->gate));
+	job = &sc->fault_jobs[id % __arraycount(sc->fault_jobs)];
+	*job = (struct pvr_fault_job){
+		.vm = vm, .pc = pvr_file_vm_pc(vm),
+		.context = context, .id = id, .type = type,
+	};
+}
+
+void
+pvr_device_forget_vm(struct drm_device *dev, struct pvr_file_vm *vm)
+{
+	struct pvr_device *sc = dev->dev_private;
+	unsigned int i;
+
+	KASSERT(mutex_owned(&sc->gate));
+	for (i = 0; i < __arraycount(sc->fault_jobs); i++)
+		if (sc->fault_jobs[i].vm == vm)
+			sc->fault_jobs[i].vm = NULL;
+}
+
+static void
+pvr_device_page_fault(void *cookie, uint32_t context, uint32_t id,
+    uint64_t pc, uint64_t va)
+{
+	struct pvr_device *sc = cookie;
+	const struct pvr_fault_job *job;
+
+	/* Never take the device gate from a platform-only observer. */
+	printf("PVR_HWR_JOB: ctx=%u job=%u pc=%#llx va=%#llx",
+	    context, id, (unsigned long long)pc, (unsigned long long)va);
+	if (!mutex_owned(&sc->gate) || id == 0) {
+		printf(" type=unknown vm=unknown\n");
+		return;
+	}
+	job = &sc->fault_jobs[id % __arraycount(sc->fault_jobs)];
+	if (job->id != id || job->context != context || job->pc != pc) {
+		printf(" type=unknown vm=unknown\n");
+		return;
+	}
+	printf(" type=%u", job->type);
+	if (job->vm == NULL) {
+		printf(" vm=unknown\n");
+		return;
+	}
+	printf(" vm=live\n");
+	pvr_file_vm_fault(job->vm, va);
+}
+
 int
 pvr_backend_attach(struct drm_device *dev, const struct pvr_backend *backend)
 {
@@ -368,6 +432,7 @@ pvr_backend_attach(struct drm_device *dev, const struct pvr_backend *backend)
 			.cookie = sc,
 			.grow_prepare = pvr_device_grow_prepare,
 			.grow_complete = pvr_device_grow_complete,
+			.page_fault = pvr_device_page_fault,
 		};
 
 		backend->enter(backend->cookie);

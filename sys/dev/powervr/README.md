@@ -41,6 +41,17 @@ firmware events, faults or recovery flags fail validation. It also reports
 pending FWCCB words and recorded hardware recovery data. Each diagnostic DMA
 read acquires and releases only the selected firmware object.
 
+For a context reset with a page fault, `PVR_HWR_JOB` matches the firmware
+context, job ID and page catalogue against 16 recent submission slots.
+The type is the DRM job type, including fragment transfers. A missing match
+or an unavailable device gate produces `unknown`. A closed VM can retain
+a matching job type after its mapping information becomes unavailable.
+
+For a matching live VM, `PVR_HWR_VM` reports the mapping at notification time:
+GPU start and exclusive end, BO offset and size, or `unmapped`. It also reports
+the CPU copy of the leaf PTE and its present bit for the fault address.
+These records do not sample GPU TLB contents or identify the intended surface.
+
 The native DRM submit path reports copied geometry or fragment command words
 as `PVR_SUBMIT_ERROR_CMD` before retaining a failed VM. A failed paired geometry
 job also reports its fragment command. The dump never follows GPU addresses.

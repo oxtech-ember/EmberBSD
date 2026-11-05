@@ -205,6 +205,9 @@ bus_dmamap_load(bus_dma_tag_t t, bus_dmamap_t map, void *cpu,
 
 static void bus_dmamap_sync(bus_dma_tag_t, bus_dmamap_t, size_t, size_t, int);
 static void bus_dmamap_unload(bus_dma_tag_t, bus_dmamap_t);
+#ifndef le64toh
+#define le64toh(x) htole64(x)
+#endif
 #include "pvr-vm-body.h"
 
 static uint64_t
@@ -461,6 +464,17 @@ main(void)
 	CHECK(pvr_vm_create(&vm, &vm) == 0); active_vm = vm;
 	CHECK(pvr_vm_root_pa(vm) == vm->catalogue.map->dm_segs[0].ds_addr);
 	for (n = 0; n < 4096; n++) CHECK(((uint8_t *)vm->catalogue.cpu)[n] == 0);
+	{
+		uint64_t leaf, va = UINT64_C(0x8001f30000);
+
+		CHECK(pvr_vm_cpu_leaf(vm, va + 2048, &leaf) && leaf == 0);
+		CHECK(pvr_vm_map(vm, va, 0x50000000, 4096, 0) == 0);
+		CHECK(pvr_vm_cpu_leaf(vm, va + 2048, &leaf) && leaf == 0x50000001);
+		CHECK(pvr_vm_cpu_leaf(vm, va + 4096, &leaf) && leaf == 0);
+		CHECK(pvr_vm_unmap(vm, va, 4096) == 0);
+		CHECK(pvr_vm_cpu_leaf(vm, va + 2048, &leaf) && leaf == 0);
+		CHECK(!pvr_vm_cpu_leaf(vm, va_end, &leaf));
+	}
 	CHECK(pvr_vm_map(NULL, 0, 0, 4096, 0) == EINVAL);
 	reject_map(vm, 0, 0, 0, 0, EINVAL);
 	reject_map(vm, 1, 0, 4096, 0, EINVAL);
