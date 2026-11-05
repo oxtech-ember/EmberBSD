@@ -81,10 +81,31 @@ verified watchdog path; generating these env copies does not establish either.
 Normal-boot release must follow authenticated, release-bound confirmation in a
 separate stage. Removing a marker alone must not certify installation readiness.
 
+## Prepare normal boot after native acceptance
+
+`A133Recovery::Policy#normal_boot_env(actual_env)` prepares a full environment
+from the saved rearmed state. Construct the policy with this tablet's verified
+backup and original full environment, as for the existing recovery transitions.
+The method performs no I/O and does not confirm native acceptance.
+
+It verifies the full partition length, CRC, original tail and exact rearmed
+variables. It uses the existing direct-profile runtime export matcher.
+It restores only the factory boot selector: `bootcmd` for the direct profile,
+or `boot_normal` for the hook profile. Other entries, inert helpers, opaque
+values and formatting remain. The result is a new frozen byte string.
+Original, unknown and already released states are refused.
+
+The caller must authenticate the native boot and bind acceptance to the device
+and release before writing. It must persist intent, preserve the original
+environment and verify the complete partition after writing the prefix.
+This method does not rearm recovery on later boots or request a reboot.
+The cable coordinator does not yet call it.
+
 ## Host validation and remaining gates
 
 ```sh
 ruby ember/tools/a133-trial-env-test.rb
+ruby ember/tools/a133-native-normal-env-test.rb
 ruby ember/tools/a133-recovery-direct-protect-test.rb
 ruby ember/tools/a133-recovery-env-test.rb
 ruby ember/tools/a133-recovery-protect-test.rb

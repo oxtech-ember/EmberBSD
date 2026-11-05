@@ -79,6 +79,26 @@ module A133Recovery
       false
     end
 
+    # Prepare bytes only. The caller must authenticate the accepted native boot.
+    def normal_boot_env(actual)
+      bytes=A133Backup::INVENTORY.find { |part| part[:name]=='env' }.fetch(:sectors)*512
+      raise Invalid,'native_environment_size_mismatch',cause:nil unless actual.is_a?(String) && actual.bytesize==bytes
+      current=actual.b.dup.freeze
+      tail=current.byteslice(A133Env::SIZE,bytes-A133Env::SIZE)
+      raise Invalid,'native_environment_tail_changed',cause:nil unless Digest::SHA256.hexdigest(tail)==@data[:tail_sha]
+      prefix=current.byteslice(0,A133Env::SIZE)
+      values=A133Env.decode(prefix).fetch(:entries).to_h
+      prepared=A133Recovery.trial(@data[:original_prefix])
+      expected=A133Env.decode(prepared.fetch(:rearmed_env)).fetch(:entries).to_h
+      raise Invalid,'native_environment_not_rearmed',cause:nil unless consumed_values_match?(values,expected)
+      factory=A133Env.decode(@data[:original_prefix]).fetch(:entries).to_h
+      key=@profile=='direct' ? 'bootcmd' : 'boot_normal'
+      restored=A133Env.patch(prefix,key=>factory.fetch(key))
+      (restored+tail).freeze
+    rescue A133Env::Invalid
+      raise Invalid,'invalid_native_environment',cause:nil
+    end
+
     def matches?(expected,current)
       case expected
       when 'original' then current[:sha]==@data[:original_sha]
