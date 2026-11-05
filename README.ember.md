@@ -34,10 +34,12 @@ Run [native net80211 and CCMP contracts](ember/tools/native-net80211-checks.md) 
 Document software mechanisms beside their subsystem. See [ownership](doc/emberbsd-ownership.md).
 
 The experimental [A133 GE8300 native firmware and compute path](sys/arch/arm/sunxi/docs/a133-gpu-fwboot.md)
-also supports bounded offscreen Vulkan rendering through
+supports compute and bounded offscreen Vulkan rendering through
 [Mesa PowerVR](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/powervr.md).
-Compute and pixel readback pass on one preserved-power warm RAM trial.
-Cold boot, display presentation and Qt acceleration remain unvalidated.
+Hardware tests confirm Qt Quick frames with the
+[Qt Vulkan offscreen profile](https://github.com/oxtech-ember/EmberBSD-Ports/blob/main/profiles/common-graphics/cross/qt-bsdfb-vulkan-offscreen.md).
+GPU pixel readback feeds CPU `QBackingStore`/bsdfb presentation, without direct GPU scanout.
+Cold power-on and full restart stability remain unvalidated.
 
 ## Building
 
