@@ -31,6 +31,17 @@ responses before EAPOL; the adapter checks status and selected BSSID before
 publishing net80211 RUN. The later `WIFI_EVENT_STA_CONNECTED` is not treated
 as the association boundary. RX and TX allow only EAPOL until the supplicant
 authorizes the controlled port.
+
+IDF's encrypted-profile selector rejects an empty STA password before it calls
+the external authentication callbacks. This producer therefore writes the
+fixed non-secret `bsd-external-auth` marker into that vendor ABI field. BSD
+retains the actual credential and performs WPA/SAE authentication and key
+derivation; the marker is not a password or fallback credential. The producer
+rejects IDF's native `wpa.c` and `esp_wpa_main.c` sources and their password/PMK
+entry points in this external-auth object. This boundary covers only the
+validated WPA2-PSK/CCMP and SAE-with-required-PMF paths below; it does not claim
+native WPA, FT, SAE-PK, or DPP support.
+
 A vendor `STA_STOP` invalidates the active join and installed-key generation.
 The adapter waits for that event, calls `esp_wifi_start()`, and keeps joins
 fenced until the next `STA_START` event arrives. Old key requests are
