@@ -8,6 +8,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/bus.h>
 #include <sys/device.h>
 #include <sys/endian.h>
+#include <sys/condvar.h>
 #include <sys/mutex.h>
 #include <sys/intr.h>
 #include <sys/kmem.h>
@@ -73,8 +74,9 @@ struct a133_gpu_softc {
 	int compute_faults, compute_hwr;
 	struct a133_gpu_owner owner;
 	kmutex_t irq_lock;
+	kcondvar_t irq_cv;
 	void *irq_cookie, *irq_soft;
-	unsigned irq_total, irq_window;
+	unsigned irq_total, irq_window, irq_generation;
 	int irq_fault;
 	bool irq_armed;
 	int queue_stage, queue_error, queue_attempted;
@@ -97,6 +99,10 @@ static int a133_gpu_compute_control(SYSCTLFN_ARGS);
 static int a133_gpu_interrupt(void *);
 static void a133_gpu_irq_soft(void *);
 static int a133_gpu_irq_arm(void *);
+#ifdef PVR_GE8300_DRM
+static unsigned a133_gpu_irq_mark(void *);
+static void a133_gpu_irq_wait(void *, unsigned, int);
+#endif
 static int a133_gpu_status(SYSCTLFN_ARGS);
 static int a133_gpu_reserved_supported(void);
 static const struct device_compatible_entry a133_gpu_compat[] = {
@@ -591,6 +597,8 @@ a133_gpu_interrupt(void *cookie)
 			sc->irq_total++;
 		if (sc->irq_armed && sc->irq_window != INT_MAX)
 			sc->irq_window++;
+		sc->irq_generation++;
+		cv_broadcast(&sc->irq_cv);
 	}
 	mutex_exit(&sc->irq_lock);
 	if (pending || error != 0)
@@ -605,6 +613,32 @@ a133_gpu_irq_soft(void *cookie)
 
 	wakeup(&sc->irq_window);
 }
+
+#ifdef PVR_GE8300_DRM
+/* Job completion waiters sample a wrapping generation, then sleep on it. */
+static unsigned
+a133_gpu_irq_mark(void *cookie)
+{
+	struct a133_gpu_softc *sc = cookie;
+	unsigned mark;
+
+	mutex_enter(&sc->irq_lock);
+	mark = sc->irq_generation;
+	mutex_exit(&sc->irq_lock);
+	return mark;
+}
+
+static void
+a133_gpu_irq_wait(void *cookie, unsigned mark, int ticks)
+{
+	struct a133_gpu_softc *sc = cookie;
+
+	mutex_enter(&sc->irq_lock);
+	if (sc->irq_generation == mark)
+		(void)cv_timedwait(&sc->irq_cv, &sc->irq_lock, ticks);
+	mutex_exit(&sc->irq_lock);
+}
+#endif
 
 /* Serialize a stale-event drain against any currently executing handler. */
 static int
@@ -1202,6 +1236,9 @@ a133_gpu_drm_attach(struct a133_gpu_softc *sc)
 		error = pvr_fwbridge_prepare(&sc->bridge, &sc->lock, sc->bst,
 		    sc->bsh, sc->memory, &sc->boot_result, &sc->queue_cache,
 		    PVR_FW_PROFILE_GE8300, a133_gpu_drm_health, sc);
+		if (error == 0)
+			pvr_fwbridge_set_irq(&sc->bridge, a133_gpu_irq_mark,
+			    a133_gpu_irq_wait);
 	}
 	mutex_exit(&sc->lock);
 	if (error == 0)
@@ -1279,6 +1316,7 @@ a133_gpu_attach(device_t parent __unused, device_t self, void *aux)
 	}
 	mutex_init(&sc->lock, MUTEX_DEFAULT, IPL_NONE);
 	mutex_init(&sc->irq_lock, MUTEX_DEFAULT, IPL_VM);
+	cv_init(&sc->irq_cv, "pvrirq");
 	a133_gpu_diag_reset(sc);
 	sc->queue_log_read = sc->queue_log_write = sc->queue_log_return = -1;
 	sc->queue_cache_read = sc->queue_cache_write = sc->queue_cache_return = -1;
@@ -1301,6 +1339,7 @@ a133_gpu_attach(device_t parent __unused, device_t self, void *aux)
 	    a133_gpu_compute_control, 0, NULL, 0, CTL_CREATE, CTL_EOL) != 0) {
 		aprint_error_dev(self, "cannot create firmware control\n");
 		sysctl_teardown(&sc->sysctllog);
+		cv_destroy(&sc->irq_cv);
 		mutex_destroy(&sc->irq_lock);
 		mutex_destroy(&sc->lock);
 		return;
@@ -1314,6 +1353,7 @@ a133_gpu_attach(device_t parent __unused, device_t self, void *aux)
 	    a133_gpu_drm_failed_status, 0, NULL, 0, CTL_CREATE, CTL_EOL) != 0) {
 		aprint_error_dev(self, "cannot create DRM control\n");
 		sysctl_teardown(&sc->sysctllog);
+		cv_destroy(&sc->irq_cv);
 		mutex_destroy(&sc->irq_lock);
 		mutex_destroy(&sc->lock);
 		return;
@@ -1390,6 +1430,7 @@ a133_gpu_attach(device_t parent __unused, device_t self, void *aux)
 			if (error != 0) {
 				aprint_error_dev(self, "cannot create firmware status\n");
 				sysctl_teardown(&sc->sysctllog);
+				cv_destroy(&sc->irq_cv);
 				mutex_destroy(&sc->irq_lock);
 				mutex_destroy(&sc->lock);
 				return;

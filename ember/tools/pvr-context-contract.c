@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Origin: EmberBSD native PowerVR context and completion source contracts. */
 /* Copyright (c) 2026 EmberBSD contributors. AI-assisted source contract. */
 /*
  * Execute the real context and stream sources against the real firmware ABI.
@@ -11,6 +12,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <arm/sunxi/powervr/pvr_rogue_fwif.h>
 #include <arm/sunxi/powervr/pvr_rogue_fwif_client.h>
 #include <arm/sunxi/powervr/pvr_rogue_fwif_check.h>
@@ -32,6 +34,7 @@ typedef int32_t __s32;
 #define BUS_DMASYNC_POSTWRITE 8
 #define KM_SLEEP 0
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
 #define roundup2(x, n) (((x) + (n) - 1) & ~((n) - 1))
 #ifndef __arraycount
 #define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
@@ -63,6 +66,34 @@ kmem_free(void *p, size_t size)
 
 static int hz = 100;
 static int kpause(const char *, bool, int, void *);
+static void delay(unsigned);
+static void nanouptime(struct timespec *);
+#define timespeccmp(a, b, op) ((a)->tv_sec == (b)->tv_sec ? \
+    (a)->tv_nsec op (b)->tv_nsec : (a)->tv_sec op (b)->tv_sec)
+
+static void
+timespecsub(const struct timespec *a, const struct timespec *b,
+    struct timespec *out)
+{
+	out->tv_sec = a->tv_sec - b->tv_sec;
+	out->tv_nsec = a->tv_nsec - b->tv_nsec;
+	if (out->tv_nsec < 0) {
+		out->tv_sec--;
+		out->tv_nsec += 1000000000;
+	}
+}
+
+/* Bounded positive intervals; match native tvtohz rounding and its extra tick. */
+static int
+tstohz(const struct timespec *ts)
+{
+	const uint64_t usec = (uint64_t)ts->tv_sec * 1000000 +
+	    (ts->tv_nsec + 999) / 1000;
+	const unsigned tick = 1000000 / hz;
+
+	CHECK(ts->tv_sec >= 0 && ts->tv_nsec >= 0 && ts->tv_nsec < 1000000000);
+	return usec == 0 ? 0 : (int)((usec + tick - 1) / tick + 1);
+}
 #include "pvr-context-body.h"
 
 struct allocation {
@@ -85,6 +116,8 @@ struct model {
 	uint32_t expected_id;
 	struct rogue_fwif_cmd_compute expected_compute;
 	unsigned allocs, frees, live, kicks, cleanups, pads, sleeps, health;
+	unsigned spins, ticks, irqs, generation;
+	uint64_t now_ns, irq_wait_ns;
 	unsigned alloc_fail, free_fail, check_fail, busy;
 	unsigned ufo_delay, read_delay;
 	int command_error;
@@ -100,6 +133,13 @@ struct model {
 	unsigned exposed_mask, cleaned_mask, combined_kicks, cleanup_busy_at, cleanup_bad_at;
 };
 static struct model *active;
+
+static void
+nanouptime(struct timespec *ts)
+{
+	ts->tv_sec = (time_t)(active->now_ns / 1000000000);
+	ts->tv_nsec = (long)(active->now_ns % 1000000000);
+}
 
 static struct allocation *
 find_slot(struct model *m, const struct pvr_fw_object *slot)
@@ -286,7 +326,7 @@ parse_kick(struct model *m, const struct rogue_fwif_kccb_cmd *cmd)
 	m->pending_control = control;
 	m->pending_read = kick->client_woff_update;
 	m->pending = true;
-	m->sleeps = 0;
+	m->sleeps = m->spins = m->ticks = m->irqs = 0;
 	/* All allocations of this one test context are reachable from firmware. */
 	for (i = 0; i < __arraycount(m->objects); i++)
 		if (m->objects[i].slot != NULL)
@@ -417,7 +457,7 @@ parse_graphics_kick(struct model *m, const struct rogue_fwif_kccb_cmd *cmd)
 	}
 	CHECK(memcmp(cmd, &expected, sizeof(expected)) == 0);
 	m->pending = true;
-	m->sleeps = 0;
+	m->sleeps = m->spins = m->ticks = m->irqs = 0;
 }
 
 static int
@@ -474,11 +514,55 @@ model_command(void *cookie, const struct rogue_fwif_kccb_cmd *cmd, uint32_t *res
 	return m->command_error;
 }
 
+static void model_wait(void);
+
 static int
 kpause(const char *name, bool interruptible, int ticks, void *lock)
 {
-	struct model *m = active;
 	CHECK(strcmp(name, "pvrjob") == 0 && !interruptible && ticks > 0 && lock == NULL);
+	CHECK(active != NULL && active->sleeps >= PVR_CONTEXT_SPIN_POLLS);
+	active->ticks++;
+	active->now_ns += (uint64_t)ticks * 1000000000 / hz;
+	model_wait();
+	return 0;
+}
+
+static void
+delay(unsigned us)
+{
+	CHECK(us == PVR_CONTEXT_SPIN_US);
+	CHECK(active != NULL && active->sleeps < PVR_CONTEXT_SPIN_POLLS);
+	active->spins++;
+	active->now_ns += (uint64_t)us * 1000;
+	model_wait();
+}
+
+/* Interrupt waits replace ticks after the fine polls. */
+static unsigned
+model_irq_mark(void *cookie)
+{
+	struct model *m = cookie;
+	CHECK(m == active);
+	return m->generation;
+}
+
+static void
+model_irq_wait(void *cookie, unsigned mark, int ticks)
+{
+	struct model *m = cookie;
+	CHECK(m == active && mark == m->generation && ticks == 1);
+	CHECK(m->sleeps >= PVR_CONTEXT_SPIN_POLLS);
+	m->irqs++;
+	m->now_ns += m->irq_wait_ns;
+	m->generation++;
+	model_wait();
+}
+
+/* One poll wait of either kind advances the modelled firmware. */
+static void
+model_wait(void)
+{
+	struct model *m = active;
 	CHECK(m != NULL && m->pending);
 	m->sleeps++;
 	if (m->graphics) {
@@ -490,7 +574,7 @@ kpause(const char *name, bool interruptible, int ticks, void *lock)
 			if (m->sleeps == q->read_delay)
 				q->read_ready = true;
 		}
-		return 0;
+		return;
 	}
 	if (m->sleeps == m->ufo_delay)
 		*m->pending_ufo = m->pending_value;
@@ -498,7 +582,6 @@ kpause(const char *name, bool interruptible, int ticks, void *lock)
 		m->pending_control->read_offset = m->pending_read;
 	if (*m->pending_ufo == m->pending_value && m->pending_control->read_offset == m->pending_read)
 		m->pending = false;
-	return 0;
 }
 
 static void
@@ -514,6 +597,7 @@ init_model(struct model *m)
 	m->backend.check = model_check;
 	m->backend.fail = model_fail;
 	m->command_result = ROGUE_FWIF_KCCB_RTN_SLOT_CMD_EXECUTED;
+	m->irq_wait_ns = 10000000;
 	m->ufo_delay = 1;
 	m->read_delay = 3;
 	active = m;
@@ -626,7 +710,7 @@ allocation_failures(void)
 }
 
 static void
-run_job(struct model *m, struct pvr_context *ctx, uint32_t id)
+run_job_counts(struct model *m, struct pvr_context *ctx, uint32_t id)
 {
 	uint8_t bytes[44] = { 0 };
 	put32(bytes, sizeof(bytes));
@@ -638,6 +722,58 @@ run_job(struct model *m, struct pvr_context *ctx, uint32_t id)
 	CHECK(pvr_context_compute(ctx, &m->expected_compute, id) == 0);
 	CHECK(m->sleeps == MAX(m->ufo_delay, m->read_delay));
 	CHECK(!m->pending && !m->failed);
+}
+
+static void
+run_job(struct model *m, struct pvr_context *ctx, uint32_t id)
+{
+	uint8_t bytes[44] = { 0 };
+	put32(bytes, sizeof(bytes));
+	put32(bytes + 8, 0x4000);
+	put32(bytes + 16, 0x10000);
+	put32(bytes + 24, 0x20000);
+	CHECK(pvr_stream_compute(PVR_STREAM_BVNC, bytes, sizeof(bytes), 0, &m->expected_compute) == 0);
+	m->expected_id = id;
+	CHECK(pvr_context_compute(ctx, &m->expected_compute, id) == 0);
+	CHECK(m->sleeps == MAX(m->ufo_delay, m->read_delay));
+	/* Prompt completion stays within fine polls and sleeps no tick. */
+	CHECK(m->ticks == 0 && m->spins == m->sleeps);
+	CHECK(!m->pending && !m->failed);
+}
+
+static void reset_model(struct model *, struct pvr_context **);
+
+/* A slow job sleeps on the completion interrupt, never on a bare tick. */
+static void
+irq_jobs(void)
+{
+	struct model m;
+	struct pvr_context *ctx;
+	struct rogue_fwif_cmd_compute command = { 0 };
+	unsigned scenario;
+	for (scenario = 0; scenario < 2; scenario++) {
+		init_model(&m);
+		m.backend.irq_mark = model_irq_mark;
+		m.backend.irq_wait = model_irq_wait;
+		ctx = create_context(&m, DRM_PVR_CTX_TYPE_COMPUTE);
+		m.expected_id = 1;
+		if (scenario == 0) {
+			m.ufo_delay = 300;
+			run_job_counts(&m, ctx, 1);
+			CHECK(m.sleeps == 300 && m.spins == PVR_CONTEXT_SPIN_POLLS);
+			CHECK(m.irqs == 300 - PVR_CONTEXT_SPIN_POLLS && m.ticks == 0);
+			CHECK(pvr_context_destroy(&ctx) == 0);
+			CHECK(ctx == NULL && m.live == 0);
+			continue;
+		}
+		m.ufo_delay = 0;
+		CHECK(pvr_context_compute(ctx, &command, 1) == ETIMEDOUT);
+		CHECK(m.now_ns >= UINT64_C(10000000000) &&
+		    m.now_ns < UINT64_C(10010000000) && m.spins == PVR_CONTEXT_SPIN_POLLS);
+		CHECK(m.irqs == m.sleeps - PVR_CONTEXT_SPIN_POLLS && m.ticks == 0);
+		CHECK(m.failed && ctx->failed);
+		reset_model(&m, &ctx);
+	}
 }
 
 static void
@@ -720,7 +856,10 @@ retained_failures(void)
 			CHECK(pvr_context_compute(ctx, &command, 1) == expected);
 			CHECK(m.failed && ctx->failed && m.live == 5 && m.frees == 0);
 			if (scenario < 2)
-				CHECK(m.sleeps == 1000);
+				CHECK(m.now_ns >= UINT64_C(10000000000) &&
+				    m.now_ns < UINT64_C(10010000000) &&
+				    m.spins == PVR_CONTEXT_SPIN_POLLS &&
+				    m.ticks == m.sleeps - PVR_CONTEXT_SPIN_POLLS);
 			saved = m.kicks;
 			CHECK(pvr_context_compute(ctx, &command, 2) == EIO);
 			CHECK(pvr_context_destroy(&ctx) == EIO);
@@ -955,7 +1094,10 @@ graphics_failures(void)
 			CHECK(render_pair(&m, ctx, ROGUE_FWIF_CCB_CMD_TYPE_FRAG_PR) == expected);
 			CHECK(ctx->failed && m.failed && m.live == 9 && m.frees == 0);
 			if (scenario < 4)
-				CHECK(m.sleeps == 1000);
+				CHECK(m.now_ns >= UINT64_C(10000000000) &&
+				    m.now_ns < UINT64_C(10010000000) &&
+				    m.spins == PVR_CONTEXT_SPIN_POLLS &&
+				    m.ticks == m.sleeps - PVR_CONTEXT_SPIN_POLLS);
 			if (scenario == 6)
 				CHECK(!m.graphics_queue[0].pending && m.graphics_queue[1].pending);
 			if (scenario == 7)
@@ -1093,13 +1235,72 @@ ge_context_profile(void)
 	CHECK(pvr_context_destroy(&ctx) == 0 && m.live == 0);
 }
 
+/* Incomplete interrupt callbacks must fail before touching a backend. */
+static void
+irq_callback_pairs(void)
+{
+	struct model m;
+	struct pvr_context_config config;
+	struct pvr_context *ctx;
+	uint8_t bytes[192];
+	unsigned i;
+
+	for (i = 0; i < 2; i++) {
+		init_model(&m);
+		ctx = NULL;
+		config_init(&config, DRM_PVR_CTX_TYPE_COMPUTE, bytes);
+		m.backend.irq_mark = i == 0 ? model_irq_mark : NULL;
+		m.backend.irq_wait = i == 1 ? model_irq_wait : NULL;
+		CHECK(pvr_context_create(&m.backend, &config, &ctx) == EINVAL);
+		CHECK(ctx == NULL && m.allocs == 0 && m.health == 0);
+	}
+}
+
+/* Wakes are hints. More than 1000 hints may arrive before completion. */
+static void
+irq_early_wakes(void)
+{
+	struct timespec elapsed, zero = { 0 };
+	struct model m;
+	struct pvr_context *ctx;
+
+	init_model(&m);
+	m.backend.irq_mark = model_irq_mark;
+	m.backend.irq_wait = model_irq_wait;
+	m.irq_wait_ns = 1000;
+	ctx = create_context(&m, DRM_PVR_CTX_TYPE_COMPUTE);
+	m.ufo_delay = 1200;
+	m.read_delay = 1201;
+	run_job_counts(&m, ctx, 1);
+	CHECK(m.now_ns < 10000000 && m.sleeps > 1000);
+	nanouptime(&elapsed);
+	timespecsub(&elapsed, &zero, &elapsed);
+	CHECK(tstohz(&elapsed) == 2);
+	CHECK(pvr_context_destroy(&ctx) == 0 && m.live == 0);
+
+	ctx = graphics_context(&m, DRM_PVR_CTX_TYPE_RENDER);
+	m.backend.irq_mark = model_irq_mark;
+	m.backend.irq_wait = model_irq_wait;
+	m.irq_wait_ns = 1000;
+	m.graphics_queue[0].ufo_delay = 1200;
+	m.graphics_queue[0].read_delay = 1201;
+	m.graphics_queue[1].ufo_delay = 1202;
+	m.graphics_queue[1].read_delay = 1203;
+	CHECK(render_pair(&m, ctx, ROGUE_FWIF_CCB_CMD_TYPE_FRAG_PR) == 0);
+	CHECK(m.now_ns < 10000000 && m.sleeps == 1203);
+	CHECK(pvr_context_destroy(&ctx) == 0 && m.live == 0);
+}
+
 int
 main(void)
 {
+	irq_callback_pairs();
+	irq_early_wakes();
 	ge_context_profile();
 	normal_contexts();
 	allocation_failures();
 	jobs_and_cleanup();
+	irq_jobs();
 	retained_failures();
 	invalid_inputs();
 	graphics_jobs();

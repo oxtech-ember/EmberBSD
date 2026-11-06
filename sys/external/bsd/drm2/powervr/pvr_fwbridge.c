@@ -244,6 +244,36 @@ pvr_fwbridge_prepare(struct pvr_fwbridge *bridge,
 	return 0;
 }
 
+static unsigned
+fwbridge_irq_mark(void *cookie)
+{
+	struct pvr_fwbridge *bridge = cookie;
+
+	return bridge->irq_mark(bridge->health_cookie);
+}
+
+static void
+fwbridge_irq_wait(void *cookie, unsigned mark, int ticks)
+{
+	struct pvr_fwbridge *bridge = cookie;
+
+	bridge->irq_wait(bridge->health_cookie, mark, ticks);
+}
+
+void
+pvr_fwbridge_set_irq(struct pvr_fwbridge *bridge, unsigned (*mark)(void *),
+    void (*wait)(void *, unsigned, int))
+{
+
+	KASSERT(mutex_owned(bridge->lock));
+	KASSERT(!bridge->registered && !bridge->publishing);
+	KASSERT(mark != NULL && wait != NULL && bridge->health_cookie != NULL);
+	bridge->irq_mark = mark;
+	bridge->irq_wait = wait;
+	bridge->backend.irq_mark = fwbridge_irq_mark;
+	bridge->backend.irq_wait = fwbridge_irq_wait;
+}
+
 int
 pvr_fwbridge_publish(struct pvr_fwbridge *bridge,
     struct drm_device *dev)

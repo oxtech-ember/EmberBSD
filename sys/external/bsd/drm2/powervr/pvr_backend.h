@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
+/* Origin: EmberBSD native PowerVR backend callbacks. */
 /* Copyright (c) 2026 EmberBSD contributors. AI-assisted native interface. */
 #ifndef _PVR_BACKEND_H_
 #define _PVR_BACKEND_H_
@@ -56,6 +57,12 @@ struct pvr_backend {
 	int (*check)(void *);
 	void (*fail)(void *);
 	int (*set_events)(void *, const struct pvr_fw_events *);
+	/*
+	 * Install both callbacks or leave both NULL. irq_mark returns a generation;
+	 * irq_wait sleeps at most the given ticks unless the generation already moved.
+	 */
+	unsigned (*irq_mark)(void *);
+	void (*irq_wait)(void *, unsigned, int);
 };
 
 struct drm_device;

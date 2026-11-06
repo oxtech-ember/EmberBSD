@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: MIT */
+/* Origin: EmberBSD native PowerVR context completion and lifetime management. */
 /* Copyright (c) 2023 Imagination Technologies Ltd. */
 /* Copyright (c) 2026 EmberBSD contributors. */
 /*
@@ -29,6 +30,8 @@
 #include <sys/kmem.h>
 #include <sys/proc.h>
 #include <sys/systm.h>
+#include <sys/time.h>
+#include <sys/timearith.h>
 #include <arm/sunxi/powervr/pvr_rogue_fwif.h>
 #include <arm/sunxi/powervr/pvr_rogue_fwif_client.h>
 #include "pvr_backend.h"
@@ -37,7 +40,14 @@
 #include "pvr_stream.h"
 
 #define PVR_CONTEXT_RING_SIZE (1U << 15)
-#define PVR_CONTEXT_POLL_COUNT 1000
+#define PVR_CONTEXT_WAIT_SECONDS 10
+/*
+ * Most jobs finish within a millisecond. Poll the first iterations finely
+ * instead of sleeping a whole scheduler tick. Afterwards sleep until the
+ * firmware interrupt when the backend has one, else for a tick.
+ */
+#define PVR_CONTEXT_SPIN_POLLS 160
+#define PVR_CONTEXT_SPIN_US 25
 
 struct pvr_context_queue {
 	struct pvr_fw_object ring, control, state, timeline;
@@ -56,6 +66,38 @@ union pvr_context_image {
 	struct rogue_fwif_fwrendercontext render;
 	struct rogue_fwif_fwtransfercontext transfer;
 };
+
+/* Sample before reading completion state so a later interrupt is seen. */
+static unsigned
+pvr_context_mark(const struct pvr_backend *be)
+{
+
+	return be->irq_wait != NULL ? be->irq_mark(be->cookie) : 0;
+}
+
+/* Interrupts are hints; only elapsed monotonic time exhausts the wait. */
+static int
+pvr_context_pause(const struct pvr_backend *be, unsigned i, unsigned mark,
+    const struct timespec *deadline)
+{
+	struct timespec now, remaining;
+	int ticks;
+
+	nanouptime(&now);
+	if (timespeccmp(&now, deadline, >=))
+		return ETIMEDOUT;
+	if (i < PVR_CONTEXT_SPIN_POLLS) {
+		delay(PVR_CONTEXT_SPIN_US);
+	} else {
+		timespecsub(deadline, &now, &remaining);
+		ticks = MIN(MAX(1, hz / 100), MAX(1, tstohz(&remaining)));
+		if (be->irq_wait != NULL)
+			be->irq_wait(be->cookie, mark, ticks);
+		else
+			(void)kpause("pvrjob", false, ticks, NULL);
+	}
+	return 0;
+}
 
 static int
 pvr_context_queue_init(struct pvr_context *ctx, unsigned index,
@@ -126,6 +168,8 @@ pvr_context_create(const struct pvr_backend *be,
 	if (be == NULL || config == NULL || owner == NULL || *owner != NULL ||
 	    config->priority > 2 || config->id == 0 ||
 	    config->vm_address == 0 || (config->vm_address & 7) != 0)
+		return EINVAL;
+	if ((be->irq_mark == NULL) != (be->irq_wait == NULL))
 		return EINVAL;
 	if (config->bvnc != PVR_STREAM_BVNC &&
 	    config->bvnc != PVR_STREAM_GE8300_BVNC)
@@ -271,9 +315,10 @@ pvr_context_compute(struct pvr_context *ctx,
 	struct rogue_fwif_ccb_cmd_header padding;
 	struct rogue_fwif_kccb_cmd kick;
 	struct rogue_fwif_ufo update;
+	struct timespec deadline;
 	uint32_t read, value, result;
 	size_t used, remaining;
-	unsigned i;
+	unsigned i, mark;
 	int error;
 
 	if (ctx == NULL || command == NULL || id == 0)
@@ -330,7 +375,10 @@ pvr_context_compute(struct pvr_context *ctx,
 		error = EIO;
 		goto failed;
 	}
-	for (i = 0; i < PVR_CONTEXT_POLL_COUNT; i++) {
+	nanouptime(&deadline);
+	deadline.tv_sec += PVR_CONTEXT_WAIT_SECONDS;
+	for (i = 0; ; i++) {
+		mark = pvr_context_mark(be);
 		be->sync(be->cookie, &queue->timeline, BUS_DMASYNC_POSTREAD);
 		value = *(const uint32_t *)queue->timeline.cpu;
 		be->sync(be->cookie, &queue->timeline, BUS_DMASYNC_PREREAD);
@@ -349,9 +397,10 @@ pvr_context_compute(struct pvr_context *ctx,
 			if (error != 0)
 				goto failed;
 		}
-		(void)kpause("pvrjob", false, MAX(1, hz / 100), NULL);
+		error = pvr_context_pause(be, i, mark, &deadline);
+		if (error != 0)
+			goto failed;
 	}
-	error = ETIMEDOUT;
 failed:
 	ctx->failed = true;
 	be->fail(be->cookie);
@@ -433,10 +482,14 @@ pvr_context_graphics_wait(struct pvr_context *ctx, unsigned mask)
 	struct pvr_context_queue *queue;
 	struct rogue_fwif_cccb_ctl *control;
 	uint32_t read, value;
-	unsigned i, j, done = 0;
+	struct timespec deadline;
+	unsigned i, j, mark, done = 0;
 	int error;
 
-	for (i = 0; i < PVR_CONTEXT_POLL_COUNT; i++) {
+	nanouptime(&deadline);
+	deadline.tv_sec += PVR_CONTEXT_WAIT_SECONDS;
+	for (i = 0; ; i++) {
+		mark = pvr_context_mark(be);
 		for (j = 0; j < ctx->count; j++) {
 			if ((mask & (1U << j)) == 0)
 				continue;
@@ -466,9 +519,10 @@ pvr_context_graphics_wait(struct pvr_context *ctx, unsigned mask)
 			if (error != 0)
 				return error;
 		}
-		(void)kpause("pvrjob", false, MAX(1, hz / 100), NULL);
+		error = pvr_context_pause(be, i, mark, &deadline);
+		if (error != 0)
+			return error;
 	}
-	return ETIMEDOUT;
 }
 
 static int
