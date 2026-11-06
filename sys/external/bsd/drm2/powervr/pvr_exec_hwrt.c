@@ -410,8 +410,11 @@ pvr_exec_hwrt_put(struct drm_device *dev, struct pvr_exec_hwrt *hwrt)
 			error = pvr_hwrt_destroy(&hwrt->firmware);
 			if (error != EBUSY)
 				break;
+			/* No handles remain; retained free lists keep backing alive. */
+			pvr_device_leave(dev);
 			(void)kpause("pvrhwrtclean", false, MAX(1, hz / 100),
 			    NULL);
+			(void)pvr_device_enter(dev);
 		}
 	}
 	if (error != 0) {

@@ -128,6 +128,8 @@
 __KERNEL_RCSID(0, "$NetBSD: drm_syncobj.c,v 1.7 2021/12/19 12:35:45 riastradh Exp $");
 
 #include <linux/anon_inodes.h>
+#include <linux/dma-fence-array.h>
+#include <linux/dma-fence-chain.h>
 #include <linux/file.h>
 #include <linux/fs.h>
 #include <linux/sched/signal.h>
@@ -359,6 +361,9 @@ int drm_syncobj_find_fence(struct drm_file *file_private,
 	if (*fence) {
 		ret = dma_fence_chain_find_seqno(fence, point);
 		if (!ret) {
+			/* A collected point is complete; give callers a signaled fence. */
+			if (!*fence)
+				*fence = dma_fence_get_stub();
 #ifdef __NetBSD__
 			drm_syncobj_put(syncobj);
 #endif
@@ -949,6 +954,129 @@ drm_syncobj_fd_to_handle_ioctl(struct drm_device *dev, void *data,
 					&args->handle);
 }
 
+#define DRM_SYNCOBJ_FLATTEN_VISITS 4096
+
+/* Append one reference to a growable vector; on failure drop that reference. */
+static int drm_syncobj_flatten_push(struct dma_fence ***vecp, unsigned int *countp,
+				    unsigned int *capp, struct dma_fence *fence)
+{
+	struct dma_fence **grown;
+	unsigned int cap;
+
+	if (*countp == *capp) {
+		if (*capp > UINT_MAX / 2 / sizeof(*grown)) {
+			dma_fence_put(fence);
+			return -ENOMEM;
+		}
+		cap = MAX(8, *capp * 2);
+		grown = kmalloc_array(cap, sizeof(*grown), GFP_KERNEL);
+		if (grown == NULL) {
+			dma_fence_put(fence);
+			return -ENOMEM;
+		}
+		if (*countp != 0)
+			memcpy(grown, *vecp, *countp * sizeof(*grown));
+		kfree(*vecp);
+		*vecp = grown;
+		*capp = cap;
+	}
+	(*vecp)[(*countp)++] = fence;
+	return 0;
+}
+
+/*
+ * Keep transferred AND dependencies shallow. Snapshot one chain node at a
+ * time; chain_walk can recursively probe an arbitrarily deep payload.
+ * Bound queued plus visited nodes before allocating the work vector.
+ * OR arrays remain opaque so their completion and error latching survive.
+ */
+static int drm_syncobj_flatten(struct dma_fence **fencep)
+{
+	struct dma_fence *fence = *fencep, *prev, *leaf, *flat;
+	struct dma_fence **fences = NULL, **work = NULL;
+	struct dma_fence_chain *chain;
+	struct dma_fence_array *array;
+	unsigned int count = 0, cap = 0, nwork = 0, wcap = 0, visits = 0, i;
+	int ret;
+
+	if (fence == NULL) {
+		*fencep = dma_fence_get_stub();
+		return 0;
+	}
+	if (to_dma_fence_chain(fence) == NULL && !dma_fence_is_array(fence))
+		return 0;
+	ret = drm_syncobj_flatten_push(&work, &nwork, &wcap, dma_fence_get(fence));
+	while (ret == 0 && nwork != 0) {
+		leaf = work[--nwork];
+		visits++;
+		if ((chain = to_dma_fence_chain(leaf)) != NULL) {
+			rcu_read_lock();
+			prev = dma_fence_get_rcu_safe(&chain->dfc_prev);
+			rcu_read_unlock();
+			if (visits + nwork + (prev != NULL) +
+			    (chain->dfc_fence != NULL) > DRM_SYNCOBJ_FLATTEN_VISITS) {
+				ret = -E2BIG;
+				dma_fence_put(prev);
+			} else {
+				if (prev != NULL)
+					ret = drm_syncobj_flatten_push(&work, &nwork,
+					    &wcap, prev);
+				if (ret == 0 && chain->dfc_fence != NULL)
+					ret = drm_syncobj_flatten_push(&work, &nwork,
+					    &wcap, dma_fence_get(chain->dfc_fence));
+			}
+		} else if (dma_fence_is_array(leaf) &&
+		    !to_dma_fence_array(leaf)->dfa_signal_on_any) {
+			array = to_dma_fence_array(leaf);
+			if (array->num_fences > DRM_SYNCOBJ_FLATTEN_VISITS - visits - nwork)
+				ret = -E2BIG;
+			for (i = 0; ret == 0 && i < array->num_fences; i++)
+				ret = drm_syncobj_flatten_push(&work, &nwork, &wcap,
+				    dma_fence_get(array->fences[i]));
+		} else if (dma_fence_is_array(leaf) ||
+		    !dma_fence_is_signaled(leaf) || leaf->error != 0) {
+			/* Keep unfinished and failed leaves once; finished ones add nothing. */
+			for (i = 0; i < count && fences[i] != leaf; i++)
+				continue;
+			if (i == count)
+				ret = drm_syncobj_flatten_push(&fences, &count, &cap,
+				    dma_fence_get(leaf));
+		}
+		dma_fence_put(leaf);
+	}
+	while (nwork != 0)
+		dma_fence_put(work[--nwork]);
+	kfree(work);
+	if (ret != 0)
+		goto fail;
+	if (count == 0) {
+		flat = dma_fence_get_stub();
+		kfree(fences);
+	} else if (count == 1) {
+		flat = fences[0];
+		kfree(fences);
+	} else {
+		array = dma_fence_array_create(count, fences,
+		    dma_fence_context_alloc(1), 1, false);
+		if (array == NULL) {
+			ret = -ENOMEM;
+			goto fail;
+		}
+		flat = &array->base;
+		/* This port's array reports signaled only after enabling. */
+		dma_fence_enable_sw_signaling(flat);
+	}
+	dma_fence_put(fence);
+	*fencep = flat;
+	return 0;
+
+fail:
+	for (i = 0; i < count; i++)
+		dma_fence_put(fences[i]);
+	kfree(fences);
+	return ret;
+}
+
 static int drm_syncobj_transfer_to_timeline(struct drm_file *file_private,
 					    struct drm_syncobj_transfer *args)
 {
@@ -966,6 +1094,9 @@ static int drm_syncobj_transfer_to_timeline(struct drm_file *file_private,
 				     &fence);
 	if (ret)
 		goto err;
+	ret = drm_syncobj_flatten(&fence);
+	if (ret)
+		goto err1;
 	chain = kzalloc(sizeof(struct dma_fence_chain), GFP_KERNEL);
 	if (!chain) {
 		ret = -ENOMEM;

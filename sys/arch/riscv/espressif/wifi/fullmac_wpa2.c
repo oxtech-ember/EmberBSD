@@ -174,6 +174,7 @@ espwifi_wpa2_sta_rx_mgmt(u8 subtype, u8 *body, size_t len, u8 *sender,
 	unsigned int status = 0;
 	bool status_valid = false;
 	int accepted;
+	unsigned int profile_authmode;
 
 	(void)rssi;
 	(void)channel;
@@ -188,10 +189,12 @@ espwifi_wpa2_sta_rx_mgmt(u8 subtype, u8 *body, size_t len, u8 *sender,
 		}
 		accepted = espwifi_os_assoc_response(subtype, body,
 		    (unsigned int)len, sender);
+		profile_authmode =
+		    esp_wifi_sta_get_prof_authmode_internal();
 		espwifi_os_log("espwifi: RX assoc subtype=%u len=%u "
-		    "status_valid=%u status=%u accepted=%u\n",
+		    "status_valid=%u status=%u accepted=%u profile_authmode=%u\n",
 		    (unsigned)subtype, (unsigned)len, (unsigned)status_valid,
-		    status, (unsigned)(accepted != 0));
+		    status, (unsigned)(accepted != 0), profile_authmode);
 		return accepted ? 0 : -1;
 	case WLAN_FC_STYPE_AUTH:
 	case WLAN_FC_STYPE_ACTION:

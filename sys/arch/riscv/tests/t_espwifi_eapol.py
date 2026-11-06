@@ -37,7 +37,7 @@ struct espwifi_softc { struct { struct ifnet ec_if; } sc_ec; bool sc_attached;
  bool sc_joined,sc_join_stopped,sc_link,sc_radio_ready,sc_ptk_installed;
  bool sc_join_sae;
  bool sc_join_pending,sc_join_disconnect_pending,sc_join_rescan_pending;
- bool sc_join_eapol_seen;
+ unsigned sc_join_eapol_boundary_seen;bool sc_join_eapol_seen;
  uint8_t sc_key_slots,sc_group_key_slots,sc_igtk_slots;
  uint64_t sc_key_generation,sc_join_generation;
  void *sc_scan_ctl_sem;unsigned sc_port_authorized; };
@@ -54,8 +54,11 @@ static void mutex_spin_exit(int *p) { (void)p;assert(locked);locked=0; }
 static unsigned atomic_load_acquire(unsigned *p) { return *p; }
 static void atomic_store_release(unsigned *p,unsigned v) { *p=v; }
 static unsigned signals,leaves,sae_cancels;
+static unsigned atomic_cas_uint(unsigned *p,unsigned old,unsigned value) {
+ unsigned seen=*p;if(seen==old)*p=value;return seen; }
 static void espwifi_os_sem_give(void *p) { (void)p;signals++; }
-static void espwifi_os_log(const char *fmt,...) { (void)fmt; }
+static const char *last_log;static unsigned log_calls;
+static void espwifi_os_log(const char *fmt,...) { last_log=fmt;log_calls++; }
 static void espwifi_if_sae_cancel(struct espwifi_softc *sc) { (void)sc;sae_cancels++; }
 static void if_link_state_change(struct ifnet *p,int s) { (void)p;(void)s;leaves++; }
 #define LINK_STATE_DOWN 0
@@ -63,7 +66,15 @@ static void if_link_state_change(struct ifnet *p,int s) { (void)p;(void)s;leaves
 int main(void) {
  const uint8_t src[6]={1,2,3,4,5,6}, msg[4]={2,3,0,0};
  assert(espwifi_if_rx_eapol(src,msg,4)==-1 && !queued);
- espwifi_sc.sc_attached=true;espwifi_sc.sc_ec.ec_if.if_flags=IFF_RUNNING;
+ assert(last_log!=NULL && strstr(last_log,"EAPOL reject stage=boundary")!=NULL);
+ assert(log_calls==1);
+ espwifi_sc.sc_attached=true;
+	/* Simulate the per-join reset before exercising a second boundary. */
+	espwifi_sc.sc_join_eapol_boundary_seen=0;
+ assert(espwifi_if_rx_eapol(src,msg,4)==-1 && !queued);
+ assert(last_log!=NULL && strstr(last_log,"EAPOL reject stage=boundary")!=NULL);
+	assert(log_calls==2);
+ espwifi_sc.sc_ec.ec_if.if_flags=IFF_RUNNING;
  espwifi_sc.sc_ec.ec_if.if_softc=&espwifi_sc;
  memset(espwifi_sc.sc_mac,0xaa,6);
  espwifi_sc.sc_join_active=1;

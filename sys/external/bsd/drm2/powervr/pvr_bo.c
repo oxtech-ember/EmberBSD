@@ -38,6 +38,7 @@ struct pvr_bo {
 	int nsegments, segment_capacity;
 	uint64_t flags;
 	int dma_owned;
+	bool coherent;
 	bool firmware_pinned;
 	unsigned int firmware_holds;
 };
@@ -390,8 +391,10 @@ pvr_bo_alloc(struct drm_device *dev, size_t size, uint64_t flags)
 	bo->segment_capacity = 1;
 	error = bus_dmamem_alloc(cma->dmat, size, PAGE_SIZE, 0,
 	    cma->dmasegs, 1, &nsegs, BUS_DMA_NOWAIT);
+	/* GPU-only images also use page-table mappings. Keep protected firmware
+	 * allocations contiguous; CPU access permission is not a DMA constraint. */
 	if (error == ENOMEM && size > PAGE_SIZE &&
-	    (flags & DRM_PVR_BO_ALLOW_CPU_USERSPACE_ACCESS) != 0) {
+	    (flags & DRM_PVR_BO_PM_FW_PROTECT) == 0) {
 		size_t pages = size / PAGE_SIZE;
 		int available = uvm_availmem(false);
 		int reserve = uvmexp.reserve_pagedaemon + uvmexp.reserve_kernel;
@@ -451,6 +454,10 @@ pvr_bo_alloc(struct drm_device *dev, size_t size, uint64_t flags)
 	bus_dmamap_sync(cma->dmat, cma->dmamap, 0, size,
 	    BUS_DMASYNC_PREWRITE);
 	bo->dma_owned = BUS_DMASYNC_PREWRITE;
+	/* Syncs of a coherent, non-bouncing map are only memory barriers. */
+	bo->coherent = (cma->dmamap->_dm_flags &
+	    (_BUS_DMAMAP_COHERENT | _BUS_DMAMAP_IS_BOUNCING)) ==
+	    _BUS_DMAMAP_COHERENT;
 	drm_dev_get(dev);
 	drm_gem_private_object_init(dev, &cma->base, size);
 	cma->base.funcs = &pvr_bo_funcs;
@@ -585,6 +592,25 @@ pvr_bo_cpu(struct drm_gem_object *obj, uint64_t offset, size_t size,
 		return EACCES;
 	*cpu = (uint8_t *)bo->cma.vaddr + offset;
 	return 0;
+}
+
+bool
+pvr_bo_coherent(struct drm_gem_object *obj)
+{
+
+	KASSERT(obj->funcs == &pvr_bo_funcs);
+	return pvr_to_bo(obj)->coherent;
+}
+
+/* One barrier serves every coherent BO; no cache or ownership changes. */
+void
+pvr_bo_barrier(struct drm_gem_object *obj, int operations)
+{
+	struct pvr_bo *bo = pvr_to_bo(obj);
+
+	KASSERT(obj->funcs == &pvr_bo_funcs && bo->coherent);
+	bus_dmamap_sync(bo->cma.dmat, bo->cma.dmamap, 0, bo->cma.dmasize,
+	    operations);
 }
 
 void

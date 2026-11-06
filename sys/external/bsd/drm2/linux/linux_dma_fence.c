@@ -952,7 +952,7 @@ dma_fence_wait_any_timeout(struct dma_fence **fences, uint32_t nfences,
 	 * have, return success.
 	 */
 	for (j = 0; j < nfences; j++) {
-		if (dma_fence_is_signaled(fences[i])) {
+		if (dma_fence_is_signaled(fences[j])) {
 			if (ip)
 				*ip = j;
 			ret = MAX(1, timeout);

@@ -121,7 +121,7 @@ struct espwifi_softc { struct ieee80211com sc_ic; struct espwifi_ec sc_ec; int s
  uint8_t sc_key_slots,sc_group_key_slots,sc_join_bssid[6],sc_join_ssid[32];
  uint8_t sc_join_ies[256],sc_igtk_slots;
  unsigned sc_join_ies_len;
- unsigned sc_join_ssid_len;bool sc_join_pending,sc_joined,sc_join_disconnect_pending,sc_join_rescan_pending,sc_join_barrier_busy,sc_join_eapol_seen;
+ unsigned sc_join_ssid_len;bool sc_join_pending,sc_joined,sc_join_disconnect_pending,sc_join_rescan_pending,sc_join_barrier_busy,sc_join_eapol_seen;unsigned sc_join_eapol_boundary_seen;
  unsigned sc_port_authorized;bool sc_ptk_installed,sc_link;
  int (*sc_newstate)(struct ieee80211com *,enum ieee80211_state,int); };
 #define IEEE80211_F_SCAN 1

@@ -32,7 +32,7 @@ code = r'''
 #include <stddef.h>
 #include "fullmac_debug.h"
 typedef int esp_err_t;
-#define WIFI_LOG_DEBUG 4
+#define WIFI_LOG_VERBOSE 5
 #define WIFI_LOG_WARNING 2
 static unsigned critical_depth, level, set_calls;
 static unsigned espwifi_os_critical_enter(void) { return ++critical_depth; }
@@ -52,9 +52,9 @@ static void espwifi_os_log(const char *fmt, ...) { (void)fmt; }
 int main(void) {
  assert(level == 0 && set_calls == 0);
  espwifi_vendor_debug_once_begin();
- assert(level == WIFI_LOG_DEBUG && set_calls == 1 && critical_depth == 0);
+ assert(level == WIFI_LOG_VERBOSE && set_calls == 1 && critical_depth == 0);
  espwifi_vendor_debug_once_begin();
- assert(level == WIFI_LOG_DEBUG && set_calls == 1);
+ assert(level == WIFI_LOG_VERBOSE && set_calls == 1);
  espwifi_vendor_debug_once_end();
  assert(level == WIFI_LOG_WARNING && set_calls == 2 && critical_depth == 0);
  espwifi_vendor_debug_once_end();

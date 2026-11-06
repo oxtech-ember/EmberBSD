@@ -140,6 +140,7 @@ struct espwifi_softc {
 	uint64_t	sc_join_generation, sc_join_active;
 	uint8_t	sc_join_bssid[ETHER_ADDR_LEN];
 	bool		sc_join_pending, sc_joined, sc_join_disconnect_pending;
+	unsigned	sc_join_eapol_boundary_seen;
 	bool		sc_join_eapol_seen;
 	bool		sc_join_barrier_busy;
 	bool		sc_join_rescan_pending;
@@ -920,6 +921,7 @@ espwifi_if_newstate(struct ieee80211com *ic, enum ieee80211_state state, int arg
 		generation = sc->sc_join_active;
 		sc->sc_join_pending = true;
 		sc->sc_joined = false;
+		atomic_store_release(&sc->sc_join_eapol_boundary_seen, 0);
 		sc->sc_join_eapol_seen = false;
 		sc->sc_join_sae = sae;
 		sc->sc_ptk_installed = false;
@@ -972,6 +974,7 @@ auth_rejected:
 			sc->sc_join_generation++;
 		sc->sc_join_active = 0;
 		sc->sc_join_pending = false;
+		atomic_store_release(&sc->sc_join_eapol_boundary_seen, 0);
 		sc->sc_join_eapol_seen = false;
 		if ((sc->sc_radio_ready && teardown) || sc->sc_join_barrier_busy)
 			sc->sc_join_disconnect_pending = true;
@@ -1810,10 +1813,42 @@ espwifi_if_rx_eapol(const unsigned char *source, const void *buf, unsigned len)
 	bool associated, diagnose = false;
 	uint64_t generation;
 #endif
+	const char *reject_reason = NULL;
 
-	if (!sc->sc_attached || (ifp->if_flags & IFF_RUNNING) == 0 ||
-	    source == NULL || buf == NULL || len < 4 || len > ETHERMTU)
+	if (!sc->sc_attached)
+		reject_reason = "detached";
+	else if ((ifp->if_flags & IFF_RUNNING) == 0)
+		reject_reason = "not-running";
+	else if (source == NULL)
+		reject_reason = "null-source";
+	else if (buf == NULL)
+		reject_reason = "null-frame";
+	else if (len < 4)
+		reject_reason = "short";
+	else if (len > ETHERMTU)
+		reject_reason = "oversize";
+	if (reject_reason != NULL) {
+#ifdef ESPWIFI_NET80211_WPA2
+		if (sc->sc_attached) {
+			mutex_spin_enter(&sc->sc_scan_lock);
+			generation = sc->sc_join_active;
+			if (atomic_cas_uint(&sc->sc_join_eapol_boundary_seen,
+			    0, 1) == 0) {
+				diagnose = true;
+			}
+			mutex_spin_exit(&sc->sc_scan_lock);
+		} else {
+			generation = 0;
+			diagnose = atomic_cas_uint(
+			    &sc->sc_join_eapol_boundary_seen, 0, 1) == 0;
+		}
+		if (diagnose)
+			espwifi_os_log("espwifi: EAPOL reject stage=boundary "
+			    "reason=%s generation=%llu len=%u\n", reject_reason,
+			    (unsigned long long)generation, len);
+#endif
 		return -1;
+	}
 #ifdef ESPWIFI_NET80211_WPA2
 	/* Consume but never pass pre-association EAPOL to another owner. */
 	mutex_spin_enter(&sc->sc_scan_lock);

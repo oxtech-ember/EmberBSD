@@ -48,6 +48,7 @@ struct pvr_fault_job {
 };
 
 struct pvr_device {
+	struct pvr_submit_queue *submit;
 	struct pvr_fault_job fault_jobs[16];
 	rb_tree_t freelists;
 	struct pvr_freelist_entry *grow_pending;
@@ -220,6 +221,7 @@ pvr_release(struct drm_device *dev)
 	struct pvr_device *sc = dev->dev_private;
 
 	if (sc != NULL) {
+		pvr_submit_queue_destroy(sc->submit);
 		KASSERT(RB_TREE_MIN(&sc->freelists) == NULL);
 		KASSERT(sc->grow_pending == NULL && sc->orphans == NULL);
 		mutex_destroy(&sc->gate);
@@ -227,6 +229,14 @@ pvr_release(struct drm_device *dev)
 	}
 	drm_dev_fini(dev);
 	kfree(dev);
+}
+
+struct pvr_submit_queue *
+pvr_device_submit(struct drm_device *dev)
+{
+	struct pvr_device *sc = dev->dev_private;
+
+	return sc->submit;
 }
 
 uint64_t
@@ -344,7 +354,9 @@ pvr_render_attach(device_t self, bus_dma_tag_t dmat, uint64_t bvnc,
 	    bvnc == PVR_A733_BVNC ? "allwinner,sun60i-a733-gpu" :
 	    "allwinner,sun50i-a133-powervr",
 	    sizeof(dev->native_platform.compatible));
-	error = -drm_dev_register(dev, 0);
+	error = pvr_submit_queue_create(dev, &sc->submit);
+	if (error == 0)
+		error = -drm_dev_register(dev, 0);
 	if (error != 0) {
 		/* The last reference releases private data, including failed attach. */
 		drm_dev_put(dev);

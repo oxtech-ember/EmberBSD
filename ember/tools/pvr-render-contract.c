@@ -244,7 +244,7 @@ drm_dev_register(struct drm_device *dev, unsigned int flags)
 }
 
 /* BO behavior has a separate production-source contract. */
-static const int drm_gem_cma_uvm_ops;
+const struct uvm_pagerops { int unused; } pvr_bo_uvm_ops;
 static int drm_gem_prime_handle_to_fd(struct drm_device *d, struct drm_file *f,
     uint32_t h, uint32_t flags, int *fd) { abort(); }
 static int drm_gem_prime_fd_to_handle(struct drm_device *d, struct drm_file *f,
@@ -324,6 +324,16 @@ static void pvr_file_vm_fault(const struct pvr_file_vm *vm, uint64_t va)
 	model->seen_va = va;
 	model->reports++;
 }
+/* The submit queue has its own contract; attach owns one queue per device. */
+struct pvr_submit_queue { struct drm_device *dev; };
+static unsigned queue_creates, queue_destroys;
+static int pvr_submit_queue_create(struct drm_device *dev, struct pvr_submit_queue **out)
+{
+	*out = calloc(1, sizeof(**out)); CHECK(*out != NULL);
+	(*out)->dev = dev; queue_creates++; return 0;
+}
+static void pvr_submit_queue_destroy(struct pvr_submit_queue *queue)
+{ if (queue == NULL) return; queue_destroys++; free(queue); }
 #include "pvr-drv-body.h"
 
 
@@ -735,7 +745,7 @@ main(void)
 	CHECK(owner->driver->prime_handle_to_fd == drm_gem_prime_handle_to_fd);
 	CHECK(owner->driver->prime_fd_to_handle == drm_gem_prime_fd_to_handle);
 	CHECK(owner->driver->gem_prime_mmap == pvr_prime_mmap);
-	CHECK(owner->driver->gem_uvm_ops == &drm_gem_cma_uvm_ops);
+	CHECK(owner->driver->gem_uvm_ops == &pvr_bo_uvm_ops);
 	CHECK(owner->driver->ioctls[0].flags == (DRM_RENDER_ALLOW | DRM_UNLOCKED));
 	calls = registered;
 	CHECK(pvr_render_attach(parent, dmat, PVR_A733_BVNC, &input, &owner) == EALREADY);
@@ -763,6 +773,7 @@ main(void)
 	memset(&installed_events, 0, sizeof(installed_events));
 	drm_dev_put(owner);
 	CHECK(allocs == frees && private_allocs == private_frees);
+	CHECK(queue_creates != 0 && queue_destroys <= queue_creates);
 	printf("PASS: %u native PowerVR registration/query checks\n", checks);
 	return 0;
 }

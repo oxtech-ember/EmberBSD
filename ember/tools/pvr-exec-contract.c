@@ -119,7 +119,7 @@ static int kauth_cred_get(void) { return 0; }
 static int kauth_authorize_generic(int cred, int what, void *arg)
 { CHECK(cred == 0 && what == KAUTH_GENERIC_ISSUSER && arg == NULL); return privileged ? 0 : EPERM; }
 static int kpause(const char *name, bool interruptible, int ticks, void *lock)
-{ CHECK(gated && name != NULL && !interruptible && ticks == 1 && lock == NULL); pauses++; return 0; }
+{ CHECK(!gated && name != NULL && !interruptible && ticks == 1 && lock == NULL); pauses++; return 0; }
 static int copyin(const void *from, void *to, size_t size)
 {
 	uintptr_t address = (uintptr_t)from, base = (uintptr_t)user_state.bytes;

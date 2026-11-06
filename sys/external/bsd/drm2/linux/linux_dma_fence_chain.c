@@ -104,7 +104,9 @@ dma_fence_chain_callback(struct dma_fence *fence, struct dma_fence_cb *cb)
 	struct dma_fence_chain *chain = container_of(cb,
 	    struct dma_fence_chain, dfc_callback);
 
-	irq_work_queue(&chain->dfc_irq_work);
+	/* A pending work item already owns one chain reference; drop ours. */
+	if (!irq_work_queue(&chain->dfc_irq_work))
+		dma_fence_put(&chain->base);
 	dma_fence_put(fence);
 }
 
@@ -152,44 +154,30 @@ dma_fence_chain_signaled(struct dma_fence *fence)
 	return true;
 }
 
+/* Container final puts must not recurse through nested transferred payloads. */
+static void
+dma_fence_chain_release_work(struct irq_work *work)
+{
+	struct dma_fence_chain *chain = container_of(work,
+	    struct dma_fence_chain, dfc_irq_work);
+
+	dma_fence_put(chain->dfc_prev);
+	dma_fence_put(chain->dfc_fence);
+	spin_lock_destroy(&chain->dfc_lock);
+	dma_fence_free(&chain->base);
+}
+
 static void
 dma_fence_chain_release(struct dma_fence *fence)
 {
 	struct dma_fence_chain *chain = to_dma_fence_chain(fence);
-	struct dma_fence_chain *prev_chain;
-	struct dma_fence *prev;
+	bool queued;
 
-	KASSERT(chain);
-
-	/*
-	 * Release the previous pointer, carefully.  Caller has
-	 * exclusive access to chain, so no need for atomics here.
-	 */
-	while ((prev = chain->dfc_prev) != NULL) {
-		/*
-		 * If anyone else still holds a reference to the
-		 * previous fence, or if it's not a chain, stop here.
-		 */
-		if (kref_read(&prev->refcount) > 1)
-			break;
-		if ((prev_chain = to_dma_fence_chain(prev)) == NULL)
-			break;
-
-		/*
-		 * Cut it out and free it.  We have exclusive access to
-		 * prev so this is safe.  This dma_fence_put triggers
-		 * recursion into dma_fence_chain_release, but the
-		 * recursion is bounded to one level.
-		 */
-		chain->dfc_prev = prev_chain->dfc_prev;
-		prev_chain->dfc_prev = NULL;
-		dma_fence_put(prev);
-	}
-	dma_fence_put(prev);
-
-	dma_fence_put(chain->dfc_fence);
-	spin_lock_destroy(&chain->dfc_lock);
-	dma_fence_free(&chain->base);
+	/* Signaling work owns a reference. At zero, this work can be reused. */
+	init_irq_work(&chain->dfc_irq_work, dma_fence_chain_release_work);
+	queued = irq_work_queue(&chain->dfc_irq_work);
+	KASSERT(queued);
+	(void)queued;
 }
 
 static const struct dma_fence_ops dma_fence_chain_ops = {

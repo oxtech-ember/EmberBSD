@@ -41,6 +41,8 @@ typedef int32_t __s32;
 #endif
 
 static unsigned checks, heap_objects;
+static bool checking_gate, model_gate;
+static unsigned gate_releases;
 #define CHECK(x) do { checks++; if (!(x)) { \
 	fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #x); abort(); \
 } } while (0)
@@ -219,6 +221,7 @@ model_free(void *cookie, struct pvr_fw_object *obj)
 static void
 model_sync(void *cookie, struct pvr_fw_object *obj, int operations)
 {
+	if (checking_gate) CHECK(model_gate);
 	struct model *m = cookie;
 	struct allocation *a = find_slot(m, obj);
 	CHECK(!m->failed && operations != 0 && (operations & ~15) == 0);
@@ -257,6 +260,7 @@ model_sync(void *cookie, struct pvr_fw_object *obj, int operations)
 static int
 model_check(void *cookie)
 {
+	if (checking_gate) CHECK(model_gate);
 	struct model *m = cookie;
 	m->health++;
 	if (m->failed || m->health == m->check_fail)
@@ -567,6 +571,7 @@ model_irq_wait(void *cookie, unsigned mark, int ticks)
 static void
 model_wait(void)
 {
+	if (checking_gate) CHECK(!model_gate);
 	struct model *m = active;
 	CHECK(m != NULL && m->pending);
 	m->sleeps++;
@@ -1297,9 +1302,35 @@ irq_early_wakes(void)
 	CHECK(pvr_context_destroy(&ctx) == 0 && m.live == 0);
 }
 
+static void
+wait_gate(void *cookie, bool enter)
+{
+	CHECK(cookie == &model_gate && checking_gate && model_gate != enter);
+	model_gate = enter;
+	if (!enter) gate_releases++;
+}
+
+static void
+completion_releases_gates(void)
+{
+	struct model m;
+	struct pvr_context *ctx;
+
+	init_model(&m);
+	ctx = create_context(&m, DRM_PVR_CTX_TYPE_COMPUTE);
+	checking_gate = model_gate = true;
+	pvr_context_wait_gate(ctx, wait_gate, &model_gate);
+	run_job_counts(&m, ctx, 1);
+	CHECK(model_gate && gate_releases == m.sleeps && gate_releases != 0);
+	pvr_context_wait_gate(ctx, NULL, NULL);
+	checking_gate = false;
+	CHECK(pvr_context_destroy(&ctx) == 0 && m.live == 0);
+}
+
 int
 main(void)
 {
+	completion_releases_gates();
 	irq_callback_pairs();
 	irq_early_wakes();
 	ge_context_profile();
