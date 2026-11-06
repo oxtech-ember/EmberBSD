@@ -14,6 +14,7 @@ name: Native rtw88 source contracts
       - 'sys/dev/ic/rt2661reg.h'
       - 'sys/dev/pci/if_rtw88_pci.c'
       - 'sys/dev/pci/rtw88_pci_*'
+      - 'sys/dev/pci/rtw88_pcie_*'
       - 'sys/net80211/ieee80211.c'
       - 'sys/net80211/ieee80211_ioctl.c'
       - 'sys/net80211/ieee80211_proto.c'
@@ -72,6 +73,7 @@ name: Native rtw88 source contracts
       - 'sys/dev/ic/rt2661reg.h'
       - 'sys/dev/pci/if_rtw88_pci.c'
       - 'sys/dev/pci/rtw88_pci_*'
+      - 'sys/dev/pci/rtw88_pcie_*'
       - 'sys/net80211/ieee80211.c'
       - 'sys/net80211/ieee80211_ioctl.c'
       - 'sys/net80211/ieee80211_proto.c'
@@ -171,6 +173,7 @@ jobs:
             /sys/dev/ic/rt2661reg.h
             /sys/dev/pci/if_rtw88_pci.c
             /sys/dev/pci/rtw88_pci_*
+            /sys/dev/pci/rtw88_pcie_*
             /sys/dev/pci/pcidevs.h
             /sys/net80211/ieee80211.c
             /sys/net80211/ieee80211_ioctl.c

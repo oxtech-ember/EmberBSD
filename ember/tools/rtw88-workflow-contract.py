@@ -30,7 +30,7 @@ for line in lines[marker + 1:]:
 # family from it, so future transport units and headers also need coverage.
 pci_inputs = subprocess.check_output(
     ["git", "-c", f"safe.directory={root}", "-C", str(root),
-     "ls-files", "--", "sys/dev/pci/rtw88_pci_*"],
+     "ls-files", "--", "sys/dev/pci/rtw88_pci_*", "sys/dev/pci/rtw88_pcie_*"],
     text=True,
 ).splitlines()
 if not pci_inputs:
