@@ -201,6 +201,7 @@ code=r'''
 #include <string.h>
 #include <errno.h>
 typedef unsigned int u_int;
+typedef uint8_t u_int8_t;
 #define ETHER_ADDR_LEN 6
 #define IEEE80211_ADDR_LEN 6
 #define IEEE80211_KEYIX_NONE 65535
