@@ -1583,6 +1583,22 @@ _bus_dmamem_map(bus_dma_tag_t t, bus_dma_segment_t *segs, int nsegs,
 			else if (uncached)
 				pmap_flags |= PMAP_NOCACHE;
 
+#ifdef __HAVE_MM_MD_DIRECT_MAPPED_PHYS
+			/*
+			 * The cacheable direct map can still hold dirty lines
+			 * from the previous owner of this page. A later
+			 * eviction would overwrite data written through the
+			 * uncached or write-combined mapping, so retire those
+			 * lines first. Later speculative refills are clean.
+			 */
+			vaddr_t dva;
+			if ((prefetchable || uncached) &&
+			    mm_md_direct_mapped_phys(pa, &dva)) {
+				cpu_dcache_wbinv_range(dva, PAGE_SIZE);
+				cpu_sdcache_wbinv_range(dva, pa, PAGE_SIZE);
+			}
+#endif
+
 			pmap_kenter_pa(va, pa, VM_PROT_READ | VM_PROT_WRITE,
 			    pmap_flags);
 		}
