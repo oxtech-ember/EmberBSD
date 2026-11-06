@@ -140,6 +140,7 @@ struct espwifi_softc {
 	uint64_t	sc_join_generation, sc_join_active;
 	uint8_t	sc_join_bssid[ETHER_ADDR_LEN];
 	bool		sc_join_pending, sc_joined, sc_join_disconnect_pending;
+	bool		sc_join_eapol_seen;
 	bool		sc_join_barrier_busy;
 	bool		sc_join_rescan_pending;
 	uint8_t	sc_join_ssid[IEEE80211_NWID_LEN];
@@ -919,6 +920,7 @@ espwifi_if_newstate(struct ieee80211com *ic, enum ieee80211_state state, int arg
 		generation = sc->sc_join_active;
 		sc->sc_join_pending = true;
 		sc->sc_joined = false;
+		sc->sc_join_eapol_seen = false;
 		sc->sc_join_sae = sae;
 		sc->sc_ptk_installed = false;
 		sc->sc_key_slots = 0;
@@ -953,8 +955,16 @@ auth_rejected:
 		return EOPNOTSUPP;
 	if (state == IEEE80211_S_INIT) {
 		bool teardown;
+		bool joined, linked, barrier_busy, rescan_pending;
+		uint64_t generation, active;
 
 		mutex_spin_enter(&sc->sc_scan_lock);
+		generation = sc->sc_join_generation;
+		active = sc->sc_join_active;
+		joined = sc->sc_joined;
+		linked = sc->sc_link;
+		barrier_busy = sc->sc_join_barrier_busy;
+		rescan_pending = sc->sc_join_rescan_pending;
 		teardown = sc->sc_join_active != 0 || sc->sc_joined || sc->sc_link;
 		was_link = sc->sc_link;
 		sc->sc_link = false;
@@ -962,6 +972,7 @@ auth_rejected:
 			sc->sc_join_generation++;
 		sc->sc_join_active = 0;
 		sc->sc_join_pending = false;
+		sc->sc_join_eapol_seen = false;
 		if ((sc->sc_radio_ready && teardown) || sc->sc_join_barrier_busy)
 			sc->sc_join_disconnect_pending = true;
 		if (sc->sc_join_barrier_busy)
@@ -976,6 +987,11 @@ auth_rejected:
 		sc->sc_key_generation = 0;
 		atomic_store_release(&sc->sc_port_authorized, 0);
 		mutex_spin_exit(&sc->sc_scan_lock);
+		espwifi_os_log("espwifi: INIT old=%u arg=%d generation=%llu "
+		    "active=%llu joined=%u link=%u barrier=%u rescan=%u\n",
+		    (unsigned)oldstate, arg, (unsigned long long)generation,
+		    (unsigned long long)active, (unsigned)joined, (unsigned)linked,
+		    (unsigned)barrier_busy, (unsigned)rescan_pending);
 #ifdef ESPWIFI_NET80211_WPA2
 		espwifi_if_sae_cancel(sc);
 #endif
@@ -1018,7 +1034,7 @@ static int
 espwifi_if_set_port(struct ieee80211com *ic, bool authorized)
 {
 	struct espwifi_softc * const sc = ic->ic_ifp->if_softc;
-	bool ready;
+	bool ready, allowed;
 
 	mutex_spin_enter(&sc->sc_scan_lock);
 	ready = sc->sc_link && sc->sc_join_active != 0 && sc->sc_joined &&
@@ -1026,13 +1042,15 @@ espwifi_if_set_port(struct ieee80211com *ic, bool authorized)
 	    sc->sc_ptk_installed &&
 	    sc->sc_key_generation == sc->sc_join_active &&
 	    (!sc->sc_join_sae || sc->sc_igtk_slots != 0);
-	if (authorized && !ready) {
-		mutex_spin_exit(&sc->sc_scan_lock);
-		return EACCES;
-	}
-	atomic_store_release(&sc->sc_port_authorized, authorized);
+	allowed = !authorized || ready;
+	if (allowed)
+		atomic_store_release(&sc->sc_port_authorized, authorized);
 	mutex_spin_exit(&sc->sc_scan_lock);
-	return 0;
+	if (authorized)
+		espwifi_os_log("espwifi: port authorization request=%u ready=%u "
+		    "error=%d\n", (unsigned)authorized, (unsigned)ready,
+		    allowed ? 0 : EACCES);
+	return allowed ? 0 : EACCES;
 }
 
 static bool
@@ -1736,9 +1754,28 @@ espwifi_if_input(const void *buf, unsigned int len)
 {
 	struct espwifi_softc * const sc = &espwifi_sc;
 	struct ifnet * const ifp = &sc->sc_ec.ec_if;
+#if defined(ESPWIFI_NET80211) && defined(ESPWIFI_NET80211_WPA2)
+	uint64_t generation;
+	bool diagnose = false;
+#endif
 
 	if (!sc->sc_attached || (ifp->if_flags & IFF_RUNNING) == 0)
 		return;
+#if defined(ESPWIFI_NET80211) && defined(ESPWIFI_NET80211_WPA2)
+	if (espwifi_if_is_eapol(buf, len)) {
+		mutex_spin_enter(&sc->sc_scan_lock);
+		generation = sc->sc_join_active;
+		if (!sc->sc_join_eapol_seen) {
+			sc->sc_join_eapol_seen = true;
+			diagnose = true;
+		}
+		mutex_spin_exit(&sc->sc_scan_lock);
+		if (diagnose)
+			espwifi_os_log("espwifi: EAPOL first generation=%llu len=%u "
+			    "path=ethernet result=observed\n",
+			    (unsigned long long)generation, len);
+	}
+#endif
 #ifdef ESPWIFI_NET80211
 	if (!atomic_load_acquire(&sc->sc_port_authorized) &&
 	    !espwifi_if_is_eapol(buf, len))
@@ -1770,7 +1807,8 @@ espwifi_if_rx_eapol(const unsigned char *source, const void *buf, unsigned len)
 	const uint8_t *eapol = buf;
 	int s;
 #ifdef ESPWIFI_NET80211_WPA2
-	bool associated;
+	bool associated, diagnose = false;
+	uint64_t generation;
 #endif
 
 	if (!sc->sc_attached || (ifp->if_flags & IFF_RUNNING) == 0 ||
@@ -1781,14 +1819,35 @@ espwifi_if_rx_eapol(const unsigned char *source, const void *buf, unsigned len)
 	mutex_spin_enter(&sc->sc_scan_lock);
 	associated = sc->sc_join_active != 0 && sc->sc_joined &&
 	    !sc->sc_join_stopped;
+	generation = sc->sc_join_active;
+	if (!sc->sc_join_eapol_seen) {
+		sc->sc_join_eapol_seen = true;
+		diagnose = true;
+	}
 	mutex_spin_exit(&sc->sc_scan_lock);
-	if (!associated)
+	if (!associated) {
+		if (diagnose)
+			espwifi_os_log("espwifi: EAPOL first generation=%llu "
+			    "len=%u result=pre-association\n",
+			    (unsigned long long)generation, len);
 		return 1;
+	}
 #endif
-	if (eapol[1] != 3) /* This profile accepts EAPOL-Key only. */
+	if (eapol[1] != 3) { /* This profile accepts EAPOL-Key only. */
+#ifdef ESPWIFI_NET80211_WPA2
+		if (diagnose)
+			espwifi_os_log("espwifi: EAPOL first generation=%llu "
+			    "len=%u result=not-key\n",
+			    (unsigned long long)generation, len);
+#endif
 		return 1;
+	}
 	if (((unsigned)eapol[2] << 8 | eapol[3]) > len - 4) {
 #ifdef ESPWIFI_NET80211_WPA2
+		if (diagnose)
+			espwifi_os_log("espwifi: EAPOL first generation=%llu "
+			    "len=%u result=malformed\n",
+			    (unsigned long long)generation, len);
 		espwifi_if_fail_closed(sc);
 #endif
 		return -1;
@@ -1802,6 +1861,10 @@ espwifi_if_rx_eapol(const unsigned char *source, const void *buf, unsigned len)
 	explicit_memset(frame, 0, sizeof(frame));
 	if (m == NULL) {
 #ifdef ESPWIFI_NET80211_WPA2
+		if (diagnose)
+			espwifi_os_log("espwifi: EAPOL first generation=%llu "
+			    "len=%u result=enqueue-failed\n",
+			    (unsigned long long)generation, len);
 		espwifi_if_fail_closed(sc);
 #endif
 		return -1;
@@ -1809,6 +1872,11 @@ espwifi_if_rx_eapol(const unsigned char *source, const void *buf, unsigned len)
 	s = splnet();
 	if_percpuq_enqueue(sc->sc_ipq, m);
 	splx(s);
+#ifdef ESPWIFI_NET80211_WPA2
+	if (diagnose)
+		espwifi_os_log("espwifi: EAPOL first generation=%llu len=%u "
+		    "result=accepted\n", (unsigned long long)generation, len);
+#endif
 	return 1;
 }
 
@@ -1882,6 +1950,8 @@ espwifi_if_link_event(int up, const unsigned char *bssid, bool association)
 	if (publish_run) {
 		int s = splnet();
 		bool current;
+		enum ieee80211_state run_oldstate;
+		int error;
 
 		mutex_spin_enter(&sc->sc_scan_lock);
 		current = generation != 0 && sc->sc_join_active == generation &&
@@ -1896,8 +1966,17 @@ espwifi_if_link_event(int up, const unsigned char *bssid, bool association)
 		}
 		if (accepted && (sc->sc_ic.ic_state == IEEE80211_S_SCAN ||
 		    sc->sc_ic.ic_state == IEEE80211_S_ASSOC)) {
-			if (sc->sc_newstate(&sc->sc_ic, IEEE80211_S_RUN,
-			    IEEE80211_FC0_SUBTYPE_ASSOC_RESP) != 0) {
+			run_oldstate = sc->sc_ic.ic_state;
+			espwifi_os_log("espwifi: RUN notify generation=%llu old=%u "
+			    "arg=%u\n", (unsigned long long)generation,
+			    (unsigned)run_oldstate,
+			    (unsigned)IEEE80211_FC0_SUBTYPE_ASSOC_RESP);
+			error = sc->sc_newstate(&sc->sc_ic, IEEE80211_S_RUN,
+			    IEEE80211_FC0_SUBTYPE_ASSOC_RESP);
+			espwifi_os_log("espwifi: RUN result generation=%llu error=%d "
+			    "state=%u\n", (unsigned long long)generation, error,
+			    (unsigned)sc->sc_ic.ic_state);
+			if (error != 0) {
 				mutex_spin_enter(&sc->sc_scan_lock);
 				atomic_store_release(&sc->sc_port_authorized, 0);
 				if (++sc->sc_join_generation == 0)
@@ -1961,27 +2040,56 @@ espwifi_if_assoc_response(unsigned int subtype, const void *body,
 {
 	struct espwifi_softc * const sc = &espwifi_sc;
 	const uint8_t *response = body;
-	bool accepted, sae;
+	bool accepted, sae, ready, started, stopped, joined, bssid_match;
+	bool result_joined, result_link;
 	uint64_t generation;
+	unsigned int status = 0;
 
 	/* IDF's wpa_sta_rx_mgmt receives the response body, without FC/header. */
 	if ((subtype != 1 && subtype != 3) || response == NULL || len < 6 ||
-	    sender == NULL || response[2] != 0 || response[3] != 0)
+	    sender == NULL) {
+		espwifi_os_log("espwifi: ASSOC reject stage=frame subtype=%u len=%u "
+		    "body=%u sender=%u\n", subtype, len,
+		    (unsigned)(response != NULL), (unsigned)(sender != NULL));
 		return 0;
-	if (!sc->sc_attached)
+	}
+	status = (unsigned int)response[2] |
+	    ((unsigned int)response[3] << 8);
+	if (status != 0) {
+		espwifi_os_log("espwifi: ASSOC reject stage=status subtype=%u "
+		    "len=%u status=%u\n", subtype, len, status);
 		return 0;
+	}
+	if (!sc->sc_attached) {
+		espwifi_os_log("espwifi: ASSOC reject stage=detached subtype=%u "
+		    "len=%u status=%u\n", subtype, len, status);
+		return 0;
+	}
 	mutex_spin_enter(&sc->sc_scan_lock);
-	accepted = sc->sc_radio_ready && sc->sc_sta_started &&
-	    !sc->sc_join_stopped && sc->sc_join_active != 0 &&
-	    !sc->sc_joined && memcmp(sc->sc_join_bssid, sender,
-	    ETHER_ADDR_LEN) == 0;
+	ready = sc->sc_radio_ready;
+	started = sc->sc_sta_started;
+	stopped = sc->sc_join_stopped;
+	joined = sc->sc_joined;
 	generation = sc->sc_join_active;
+	bssid_match = generation != 0 && memcmp(sc->sc_join_bssid, sender,
+	    ETHER_ADDR_LEN) == 0;
+	accepted = ready && started && !stopped && generation != 0 &&
+	    !joined && bssid_match;
 	sae = accepted && sc->sc_join_sae;
 	mutex_spin_exit(&sc->sc_scan_lock);
-	if (!accepted)
+	if (!accepted) {
+		espwifi_os_log("espwifi: ASSOC reject stage=join subtype=%u "
+		    "len=%u status=%u generation=%llu ready=%u started=%u "
+		    "stopped=%u joined=%u bssid_match=%u\n", subtype, len,
+		    status, (unsigned long long)generation, (unsigned)ready,
+		    (unsigned)started, (unsigned)stopped, (unsigned)joined,
+		    (unsigned)bssid_match);
 		return 0;
+	}
 	/* Confirm PMF configuration; RSN and installed keys gate authorization. */
 	if (sae && !espwifi_ext_sta_pmf_configured()) {
+		espwifi_os_log("espwifi: ASSOC reject stage=pmf generation=%llu\n",
+		    (unsigned long long)generation);
 		(void)espwifi_if_fail_closed_generation(sc, generation);
 		return 0;
 	}
@@ -1993,13 +2101,22 @@ espwifi_if_assoc_response(unsigned int subtype, const void *body,
 	if (accepted)
 		sc->sc_joined = true;
 	mutex_spin_exit(&sc->sc_scan_lock);
-	if (!accepted)
+	if (!accepted) {
+		espwifi_os_log("espwifi: ASSOC reject stage=commit-race "
+		    "generation=%llu\n", (unsigned long long)generation);
 		return 0;
+	}
 	espwifi_if_link_event(1, sender, true);
 	mutex_spin_enter(&sc->sc_scan_lock);
 	accepted = sc->sc_joined && sc->sc_link &&
 	    memcmp(sc->sc_join_bssid, sender, ETHER_ADDR_LEN) == 0;
+	result_joined = sc->sc_joined;
+	result_link = sc->sc_link;
 	mutex_spin_exit(&sc->sc_scan_lock);
+	espwifi_os_log("espwifi: ASSOC result generation=%llu joined=%u "
+	    "link=%u accepted=%u\n", (unsigned long long)generation,
+	    (unsigned)result_joined, (unsigned)result_link,
+	    (unsigned)accepted);
 	return accepted ? 1 : 0;
 }
 
@@ -2063,6 +2180,20 @@ espwifi_if_stop(struct ifnet *ifp, int disable)
 {
 #ifdef ESPWIFI_NET80211
 	struct espwifi_softc * const sc = ifp->if_softc;
+	uint64_t generation, active;
+	bool joined, link;
+
+	mutex_spin_enter(&sc->sc_scan_lock);
+	generation = sc->sc_join_generation;
+	active = sc->sc_join_active;
+	joined = sc->sc_joined;
+	link = sc->sc_link;
+	mutex_spin_exit(&sc->sc_scan_lock);
+	espwifi_os_log("espwifi: ioctl reset cmd=stop state=%u flags=%#x "
+	    "generation=%llu active=%llu joined=%u link=%u action=if-stop\n",
+	    (unsigned)sc->sc_ic.ic_state, (unsigned)ifp->if_flags,
+	    (unsigned long long)generation, (unsigned long long)active,
+	    (unsigned)joined, (unsigned)link);
 
 	(void)ieee80211_new_state(&sc->sc_ic, IEEE80211_S_INIT, -1);
 #endif
@@ -2074,6 +2205,8 @@ espwifi_if_ioctl(struct ifnet *ifp, u_long cmd, void *data)
 {
 #ifdef ESPWIFI_NET80211
 	struct espwifi_softc * const sc = ifp->if_softc;
+	uint64_t generation, active;
+	bool joined, link, membership_update;
 	int s, error;
 
 #ifdef ESPWIFI_NET80211_WPA2
@@ -2091,7 +2224,30 @@ espwifi_if_ioctl(struct ifnet *ifp, u_long cmd, void *data)
 
 	if (error == ENETRESET) {
 #ifdef ESPWIFI_NET80211
-		if ((ifp->if_flags & (IFF_UP | IFF_RUNNING)) ==
+		membership_update = cmd == SIOCADDMULTI || cmd == SIOCDELMULTI;
+		mutex_spin_enter(&sc->sc_scan_lock);
+		generation = sc->sc_join_generation;
+		active = sc->sc_join_active;
+		joined = sc->sc_joined;
+		link = sc->sc_link;
+		mutex_spin_exit(&sc->sc_scan_lock);
+		espwifi_os_log("espwifi: ioctl reset cmd=%lu error=%d state=%u "
+		    "flags=%#x generation=%llu active=%llu joined=%u link=%u "
+		    "action=%s\n", (unsigned long)cmd, error,
+		    (unsigned)sc->sc_ic.ic_state, (unsigned)ifp->if_flags,
+		    (unsigned long long)generation, (unsigned long long)active,
+		    (unsigned)joined, (unsigned)link,
+		    membership_update ? "membership-update" :
+		    "restart");
+		/*
+		 * ether_addmulti()/ether_delmulti() maintain the membership list
+		 * and return ENETRESET when it changes.  The vendor RX callback
+		 * continues to deliver frames to the stack; this driver does not
+		 * configure a per-group filter, so restarting the station here
+		 * would only break an otherwise live association.
+		 */
+		if (!membership_update &&
+		    (ifp->if_flags & (IFF_UP | IFF_RUNNING)) ==
 		    (IFF_UP | IFF_RUNNING)) {
 			(void)ieee80211_new_state(&sc->sc_ic, IEEE80211_S_INIT, -1);
 			error = espwifi_if_init(ifp);

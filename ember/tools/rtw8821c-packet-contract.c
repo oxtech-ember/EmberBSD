@@ -204,6 +204,21 @@ test_signal(void)
 int
 main(void)
 {
+	{
+		uint8_t out[48], before[48];
+		struct rtw88_tx_info tx = { .packet_size = 24, .probe_request = 2 };
+
+		memset(out, 0xa5, sizeof(out));
+		memcpy(before, out, sizeof(out));
+		CHECK(rtw8821c_tx_encode(out, sizeof(out), &tx) == EINVAL);
+		CHECK(memcmp(out, before, sizeof(out)) == 0);
+		tx.probe_request = 0;
+		CHECK(rtw8821c_tx_encode(out, sizeof(out), &tx) == 0);
+		memcpy(before, out, sizeof(out));
+		tx.probe_request = 1;
+		CHECK(rtw8821c_tx_encode(out, sizeof(out), &tx) == 0);
+		CHECK(memcmp(out, before, sizeof(out)) == 0);
+	}
 	test_tx(); test_rx(); test_signal();
 	if (failures) return 1;
 	puts("PASS: RTL8821C source packet contract");

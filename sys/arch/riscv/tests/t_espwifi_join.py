@@ -81,7 +81,7 @@ struct espwifi_softc { struct { struct ifnet ec_if; } sc_ec; struct ieee80211com
  bool sc_ptk_installed,sc_link,sc_radio_ready,sc_join_pending,sc_joined,
  sc_join_disconnect_pending,sc_join_rescan_pending,sc_scan_enabled,sc_attached,
  sc_scan_pending,sc_scan_busy,sc_join_barrier_busy,sc_sta_started,sc_join_stopped,
- sc_sae_selection,sc_join_sae;
+ sc_sae_selection,sc_join_sae,sc_join_eapol_seen;
  uint32_t sc_sae_selection_generation;uint8_t sc_sae_selection_bssid[6];
  uint8_t sc_key_slots,sc_group_key_slots,sc_igtk_slots;
  uint64_t sc_key_generation,sc_scan_generation,sc_scan_active;

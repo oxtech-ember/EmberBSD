@@ -242,15 +242,17 @@ int rtw8821c_phy_post(struct rtw8821c_phy *ctx)
 	    0x32b, 0x35c, 0x38e, 0x3c4, 0x3fe};
 	struct rtw88_softc *sc;
 	uint32_t val, defaults[3];
-	uint8_t cck;
+	uint8_t cck, crystal;
 	unsigned i;
 	int error;
 	if (!ctx || !ctx->sc)
 		return EINVAL;
 	sc = ctx->sc;
 	ctx->post_valid = 0;
-	PHY_TRY(phy_mask32(ctx, 0x24, 0x7e000000, ctx->efuse.xtal & 0x3f));
-	PHY_TRY(phy_mask32(ctx, 0x28, 0x7e, ctx->efuse.xtal & 0x3f));
+	/* An unprogrammed crystal cap uses the donor default of zero. */
+	crystal = ctx->efuse.xtal == 0xff ? 0 : ctx->efuse.xtal & 0x3f;
+	PHY_TRY(phy_mask32(ctx, 0x24, 0x7e000000, crystal));
+	PHY_TRY(phy_mask32(ctx, 0x28, 0x7e, crystal));
 	PHY_TRY(phy_mask32(ctx, 0xa2c, (1U << 18) | (1U << 22), 0));
 	PHY_TRY(phy_mask32(ctx, 0x808, 0x30000000, 3));
 	if ((error = rtw8821c_phy_check(ctx)) != 0)

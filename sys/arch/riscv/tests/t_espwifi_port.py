@@ -23,7 +23,9 @@ code=r'''
 #include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>
+#include <string.h>
 #define ESPWIFI_NET80211 1
+#define ESPWIFI_NET80211_WPA2 1
 #define ETHER_HDR_LEN 14
 #define ETHERTYPE_PAE 0x888e
 #define IFF_RUNNING 1
@@ -31,23 +33,32 @@ code=r'''
 #define atomic_load_acquire(p) (*(p))
 struct mbuf { int dummy; };struct ifnet { int if_flags; };
 struct espwifi_softc { struct { struct ifnet ec_if; } sc_ec; bool sc_attached;
- unsigned sc_port_authorized; void *sc_ipq; };
-static struct espwifi_softc espwifi_sc;static int queued,errors,allocfail;static struct mbuf mb;
+ unsigned sc_port_authorized; void *sc_ipq; int sc_scan_lock;
+ uint64_t sc_join_active; bool sc_join_eapol_seen; };
+static struct espwifi_softc espwifi_sc;static int queued,errors,allocfail,eapol_logs;static struct mbuf mb;
 static struct mbuf *m_devget(void *p,unsigned n,int off,struct ifnet *i) {
  (void)p;(void)n;(void)off;(void)i;return allocfail?NULL:&mb; }
 static void if_statinc(struct ifnet *p,int field) { (void)p;(void)field;errors++; }
 static int splnet(void) { return 0; }static void splx(int s) { (void)s; }
+static void mutex_spin_enter(int *p) { (void)p; }
+static void mutex_spin_exit(int *p) { (void)p; }
+static void espwifi_os_log(const char *fmt,...) {
+ if (strstr(fmt,"path=ethernet result=observed")!=NULL) eapol_logs++;
+}
 static void if_percpuq_enqueue(void *q,struct mbuf *m) { (void)q;assert(m==&mb);queued++; }
 #define __UNCONST(p) ((void *)(uintptr_t)(const void *)(p))
 ''' + fn('espwifi_if_is_eapol','bool') + fn('espwifi_if_input','void') + r'''
 int main(void) {
- uint8_t packet[14]={0};espwifi_sc.sc_attached=true;espwifi_sc.sc_ec.ec_if.if_flags=IFF_RUNNING;
+ uint8_t packet[14]={0};espwifi_sc.sc_attached=true;espwifi_sc.sc_join_active=42;
+ espwifi_sc.sc_ec.ec_if.if_flags=IFF_RUNNING;
  espwifi_if_input(packet,sizeof(packet));assert(!queued);
  packet[12]=0x88;packet[13]=0x8e;espwifi_if_input(packet,sizeof(packet));assert(queued==1);
- espwifi_if_input(packet,13);assert(queued==1);
+ assert(eapol_logs==1 && espwifi_sc.sc_join_eapol_seen);
+ espwifi_if_input(packet,sizeof(packet));assert(queued==2 && eapol_logs==1);
+ espwifi_if_input(packet,13);assert(queued==2);
  espwifi_sc.sc_port_authorized=1;packet[12]=0x08;packet[13]=0x00;
- espwifi_if_input(packet,sizeof(packet));assert(queued==2);
- allocfail=1;espwifi_if_input(packet,sizeof(packet));assert(errors==1 && queued==2);
+ espwifi_if_input(packet,sizeof(packet));assert(queued==3);
+ allocfail=1;espwifi_if_input(packet,sizeof(packet));assert(errors==1 && queued==3);
  return 0;
 }
 '''
@@ -197,6 +208,8 @@ typedef unsigned int u_int;
 #define IEEE80211_KEY_GROUP 4
 #define IEEE80211_KEY_XMIT 1
 #define IEEE80211_CIPHER_AES_CCM 3
+#define ESPWIFI_KEY_REQUEST_CCMP 0
+#define ESPWIFI_KEY_REQUEST_IGTK 1
 #define NBBY 8
 #define LINK_STATE_DOWN 0
 struct cipher { unsigned ic_cipher; };
@@ -213,10 +226,12 @@ struct espwifi_softc { struct ieee80211com sc_ic; struct espwifi_ec sc_ec; unsig
  sc_key_abandoned,sc_scan_enabled;
  int sc_key_error;uint64_t sc_key_request_generation;uint8_t sc_key_request_mac[6],
  sc_key_request_seq[6],sc_key_request_data[16];unsigned sc_key_request_index;
- int sc_key_request_group,sc_key_request_xmit;
+ unsigned sc_key_request_type;int sc_key_request_group,sc_key_request_xmit;
  uint64_t sc_join_generation,sc_join_active,sc_key_generation;
- uint8_t sc_key_slots,sc_group_key_slots; };
+ uint8_t sc_key_slots,sc_group_key_slots,sc_igtk_slots;
+ bool sc_join_sae; };
 static struct espwifi_softc sc,espwifi_sc;static int calls,result,held,signals;static unsigned seq_seen;
+static int igtk_calls;static unsigned igtk_index;static uint8_t igtk_seq_seen;
 static bool mutate_generation;
 static bool teardown_on_unlock;
 static bool stale_before_worker, force_timeout, delay_success, timeout_completion;
@@ -281,8 +296,13 @@ static int espwifi_ext_set_key(const unsigned char *mac,unsigned index,int group
 		atomic_store_release(&sc.sc_port_authorized,0);
 	}
 	return result; }
+static int espwifi_ext_set_igtk(unsigned index,const uint8_t *seq,
+    const uint8_t *key) {
+	assert(worker_context && (index==4 || index==5) && seq[0]==8 && key[0]==9);
+	igtk_calls++;igtk_index=index;igtk_seq_seen=seq[0];return result; }
 static void explicit_memset(void *p,int c,size_t n) { memset(p,c,n); }
-''' + fn('espwifi_if_set_port','int') + fn('espwifi_if_fail_closed_generation','bool') + fn('espwifi_if_fail_closed','void') + fn('espwifi_if_key_request_clear','void') + fn('espwifi_if_key_wait','bool') + fn('espwifi_if_key_control','void') + fn('espwifi_if_key_set','int') + fn('espwifi_if_key_delete','int') + fn('espwifi_if_radio_stopped','void') + r'''
+static void espwifi_os_log(const char *fmt, ...) { (void)fmt; }
+''' + fn('espwifi_if_set_port','int') + fn('espwifi_if_fail_closed_generation','bool') + fn('espwifi_if_fail_closed','void') + fn('espwifi_if_key_request_clear','void') + fn('espwifi_if_key_wait','bool') + fn('espwifi_if_key_request','bool') + fn('espwifi_if_key_control','void') + fn('espwifi_if_key_set','int') + fn('espwifi_if_key_delete','int') + fn('espwifi_if_radio_stopped','void') + r'''
 int main(void) {
  struct ifnet ifp={&sc};struct ieee80211com ic={&ifp};struct cipher c={3};
  struct ieee80211_key key={.wk_cipher=&c,.wk_keylen=16,.wk_keyix=0,.wk_flags=1,
@@ -306,8 +326,20 @@ int main(void) {
 	sc.sc_joined=true;sc.sc_radio_ready=true;sc.sc_sta_started=true;
 	sc.sc_scan_enabled=true;
 	assert(espwifi_if_set_port(&ic,true)==EACCES);
+	sc.sc_ptk_installed=true;sc.sc_key_generation=1;sc.sc_join_sae=true;
+	assert(espwifi_if_set_port(&ic,true)==EACCES && !sc.sc_port_authorized);
+	sc.sc_join_sae=false;
+	sc.sc_ptk_installed=false;sc.sc_key_generation=0;
  result=0;assert(espwifi_if_key_set(&ic,&key,mac)==1 && sc.sc_ptk_installed);
  assert(calls==1 && seq_seen==4 && !sc.sc_port_authorized);
+	/* SAE management keys use the same bounded worker and retain their slot. */
+	uint8_t igtk_seq[6]={8},igtk_key[16]={9};
+	assert(espwifi_if_key_request(&sc,1,ESPWIFI_KEY_REQUEST_IGTK,NULL,4,
+	    0,0,igtk_seq,igtk_key));
+	assert(igtk_calls==1 && igtk_index==4 && igtk_seq_seen==8 &&
+	    (sc.sc_igtk_slots & (1U<<4)) && sc.sc_key_generation==1);
+	sc.sc_join_sae=true;
+	assert(espwifi_if_set_port(&ic,true)==0 && sc.sc_port_authorized);
 	key.wk_flags=IEEE80211_KEY_GROUP;delay_success=true;
 	assert(espwifi_if_key_set(&ic,&key,mac)==1);
 	delay_success=false;

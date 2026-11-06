@@ -120,9 +120,11 @@ rtw8821c_discover(struct rtw88_softc *sc)
 	if (error == 0) {
 		ctx->identity_ready = 1;
 		printf("rtwce: RTL8821C cut %u RFE %u board %#x BT %#x "
-		    "crystal %#x\n", sc->sc_cut, sc->sc_rfe,
+		    "crystal %#x channel plan %#x country %02x:%02x\n",
+		    sc->sc_cut, sc->sc_rfe,
 		    ctx->phy.efuse.logical[0xc1], ctx->phy.efuse.logical[0xc3],
-		    ctx->phy.efuse.xtal);
+		    ctx->phy.efuse.xtal, ctx->phy.efuse.channel_plan,
+		    ctx->phy.efuse.logical[0xcb], ctx->phy.efuse.logical[0xcc]);
 	}
 	return error;
 }
@@ -402,11 +404,30 @@ rtw8821c_tx_desc(struct rtw88_softc *sc, uint8_t *out, size_t size,
     const struct rtw88_tx_info *info)
 {
 	struct rtw8821c_runtime *ctx = sc->sc_chip_private;
-	/* Firmware's beacon DMA runs with the radio still disabled. All
-	 * operational frames require the current channel's completed IQK. */
-	if (ctx == NULL || (ctx->needs_iqk &&
-	    (!sc->sc_bootstrapping || sc->sc_started)))
+	/* Firmware beacon DMA and a guarded probe may precede IQK. */
+	if (ctx == NULL)
 		return EACCES;
+	if (ctx->needs_iqk && (!sc->sc_bootstrapping || sc->sc_started)) {
+		/* Only an actual pre-association probe may precede IQK. */
+		if (info == NULL || info->probe_request != 1 ||
+		    ctx->generation != sc->sc_generation || sc->sc_stop_requested ||
+		    !sc->sc_running || !sc->sc_started || !sc->sc_rf_enabled ||
+		    !sc->sc_phy.channel_valid || sc->sc_channel < 1 ||
+		    sc->sc_channel > 13 ||
+		    sc->sc_phy.channel.primary != sc->sc_channel ||
+		    sc->sc_phy.channel.center != sc->sc_channel ||
+		    sc->sc_phy.channel.width_mhz != 20 ||
+		    info->queue != 18 || info->mac_id != 0 ||
+		    info->security != 0 || info->tim_offset != 0 || info->rate > 11 ||
+		    (sc->sc_basic_rates & (1U << info->rate)) == 0 ||
+		    info->bandwidth != 0 || info->data_sc != 0 || info->stbc != 0 ||
+		    info->ampdu_density != 0 || info->ampdu_factor != 0 ||
+		    (info->flags & (RTW88_TX_USE_RATE | RTW88_TX_DIS_RATE_FB)) !=
+		    (RTW88_TX_USE_RATE | RTW88_TX_DIS_RATE_FB) ||
+		    (info->flags & ~(RTW88_TX_USE_RATE | RTW88_TX_DIS_RATE_FB |
+		    RTW88_TX_BMC | RTW88_TX_DIS_QSELSEQ | RTW88_TX_HWSEQ)) != 0)
+			return EACCES;
+	}
 	return rtw8821c_tx_encode(out, size, info);
 }
 

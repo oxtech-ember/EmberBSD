@@ -468,6 +468,48 @@ main(void)
 		signal_bad = 0;
 	}
 	CHECK(rtw8821c_tx_desc(&sc, out, sizeof(out), NULL) == EACCES);
+	{
+		struct rtw88_tx_info probe = {
+		    .probe_request = 1, .packet_size = 24, .queue = 18,
+		    .flags = RTW88_TX_USE_RATE | RTW88_TX_DIS_RATE_FB
+		};
+
+		sc.sc_basic_rates = 1;
+		CHECK(rtw8821c_tx_desc(&sc, out, sizeof(out), &probe) == 0);
+		probe.probe_request = 0;
+		CHECK(rtw8821c_tx_desc(&sc, out, sizeof(out), &probe) == EACCES);
+		probe.probe_request = 1;
+		probe.queue = 0;
+		CHECK(rtw8821c_tx_desc(&sc, out, sizeof(out), &probe) == EACCES);
+		probe.queue = 18;
+		probe.rate = 1;
+		CHECK(rtw8821c_tx_desc(&sc, out, sizeof(out), &probe) == EACCES);
+		probe.rate = 0;
+		probe.flags |= RTW88_TX_AMPDU;
+		CHECK(rtw8821c_tx_desc(&sc, out, sizeof(out), &probe) == EACCES);
+		probe.flags &= ~RTW88_TX_AMPDU;
+		probe.flags |= RTW88_TX_BT_NULL;
+		CHECK(rtw8821c_tx_desc(&sc, out, sizeof(out), &probe) == EACCES);
+		probe.flags &= ~RTW88_TX_BT_NULL;
+		probe.tim_offset = 1;
+		CHECK(rtw8821c_tx_desc(&sc, out, sizeof(out), &probe) == EACCES);
+		probe.tim_offset = 0;
+		probe.security = 1;
+		CHECK(rtw8821c_tx_desc(&sc, out, sizeof(out), &probe) == EACCES);
+		probe.security = 0;
+		sc.sc_generation++;
+		CHECK(rtw8821c_tx_desc(&sc, out, sizeof(out), &probe) == EACCES);
+		sc.sc_generation--;
+		sc.sc_stop_requested = 1;
+		CHECK(rtw8821c_tx_desc(&sc, out, sizeof(out), &probe) == EACCES);
+		sc.sc_stop_requested = 0;
+		sc.sc_phy.channel_valid = 0;
+		CHECK(rtw8821c_tx_desc(&sc, out, sizeof(out), &probe) == EACCES);
+		sc.sc_phy.channel_valid = 1;
+		sc.sc_phy.channel.center++;
+		CHECK(rtw8821c_tx_desc(&sc, out, sizeof(out), &probe) == EACCES);
+		sc.sc_phy.channel.center--;
+	}
 	iqkfail = 1;
 	CHECK(rtw8821c_prepare_station(&sc, current, NULL) == EIO);
 	CHECK(rtw8821c_tx_desc(&sc, out, sizeof(out), NULL) == EACCES);

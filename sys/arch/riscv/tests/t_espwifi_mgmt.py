@@ -144,7 +144,11 @@ static int esp_wifi_register_wpa_cb_internal(struct wpa_funcs *p) {
 static int esp_wifi_sta_connect_internal(uint8_t *bssid) { return bssid!=NULL?ESP_OK:1; }
 static void *espwifi_os_malloc_internal(unsigned long n) { return calloc(1,n); }
 static void espwifi_os_free(void *p) { free(p); }
-static void espwifi_os_log(const char *format, ...) { (void)format; }
+static unsigned unhandled_mgmt_logs;
+static void espwifi_os_log(const char *format, ...) {
+ if (strstr(format,"RX mgmt unhandled") != NULL ||
+     strstr(format,"RX mgmt rejected") != NULL) unhandled_mgmt_logs++;
+}
 static int espwifi_os_rx_eapol(u8 *src,u8 *buf,u32 len) { return src&&buf?(int)len:-1; }
 static bool espwifi_os_wpa_in_4way(void) { return true; }
 static void forced_memzero(void *p,size_t n) { volatile u8 *b=p;while(n--)*b++=0; }
@@ -192,6 +196,9 @@ int main(void) {
  assert(registered->wpa_sta_rx_mgmt(WLAN_FC_STYPE_AUTH,body,6,sender,-35,6,99)==-1);
  assert(registered->wpa_sta_rx_mgmt(WLAN_FC_STYPE_ACTION,body,6,sender,-35,6,99)==-1);
  assert(registered->wpa_sta_rx_mgmt(8,body,6,sender,-35,6,99)==-1);
+ assert(unhandled_mgmt_logs==2);
+ assert(registered->wpa_sta_rx_mgmt(0x10,body,6,sender,-35,6,99)==-1);
+ assert(unhandled_mgmt_logs==3);
  assert(assoc_calls==1);
  wifi_wpa_ie_t parsed; uint8_t ie[3]={48,1,0};
  assert(registered->wpa_parse_wpa_ie==espwifi_wpa2_parse_ie);
