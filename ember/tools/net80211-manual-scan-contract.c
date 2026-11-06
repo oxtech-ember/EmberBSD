@@ -275,8 +275,13 @@ check_scan_channels(struct bsd_driver_data *drv,
 	CHECK(ieee80211_setupscan(&net.ic, active[3]) == 0);
 	CHECK(memcmp(net.ic.ic_chan_active, active[3], sizeof(active[3])) == 0);
 	CHECK(net.ic.ic_state == IEEE80211_S_INIT);
-	/* The identical active-set pointer is a supported setupscan input. */
-	CHECK(ieee80211_setupscan(&net.ic, net.ic.ic_chan_active) == 0);
+	/* Keep the self-alias call opaque to the test compiler. */
+	{
+		int (*volatile setupscan_alias)(struct ieee80211com *,
+		    const unsigned char *) = ieee80211_setupscan;
+
+		CHECK(setupscan_alias(&net.ic, net.ic.ic_chan_active) == 0);
+	}
 	CHECK(memcmp(net.ic.ic_chan_active, active[3], sizeof(active[3])) == 0);
 	reset();
 	memcpy(net.ic.ic_chan_active, active[3], sizeof(active[3]));
