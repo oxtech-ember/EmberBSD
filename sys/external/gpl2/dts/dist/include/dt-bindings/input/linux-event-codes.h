@@ -1,4 +1,4 @@
-/*	$NetBSD: linux-event-codes.h,v 1.10 2021/11/07 16:57:39 jmcneill Exp $	*/
+/*	$NetBSD: linux-event-codes.h,v 1.10.12.2 2026/10/02 18:07:19 martin Exp $	*/
 
 /* SPDX-License-Identifier: GPL-2.0-only WITH Linux-syscall-note */
 /*

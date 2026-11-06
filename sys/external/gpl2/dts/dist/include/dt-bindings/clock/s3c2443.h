@@ -1,4 +1,4 @@
-/*	$NetBSD: s3c2443.h,v 1.1.1.3 2019/01/22 14:57:02 jmcneill Exp $	*/
+/*	$NetBSD: s3c2443.h,v 1.1.1.3.38.2 2026/10/02 18:07:16 martin Exp $	*/
 
 /* SPDX-License-Identifier: GPL-2.0 */
 /*

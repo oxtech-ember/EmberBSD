@@ -14,6 +14,7 @@ inputs = %w[sys/dev/fdt/simplefb.c sys/dev/fdt/simplefb_subr.c sys/dev/fdt/simpl
             sys/dev/wscons/wsdisplay_bootfb.c sys/dev/wscons/wsdisplay_bootfbvar.h
             sys/dev/wscons/wsdisplayvar.h sys/arch/arm/fdt/arm_simplefb.c
             sys/arch/evbarm/fdt/fdt_bus_machdep.c sys/kern/subr_autoconf.c
+            sys/dev/splash/splash.h sys/sys/reboot.h
             sys/dev/wscons/wsdisplay_vcons_util.c ember/tools/earlyfb-hooks-contract.c
             ember/tools/bootfb-issuer-contract.c ember/tools/bootfb-issuer-contract.rb
             ember/tools/autoconf-test-lwp.h]
@@ -71,6 +72,12 @@ run = lambda do |label, argv|
 end
 Dir.mktmpdir('bootfb-issuer-', ENV.fetch('TMPDIR', '/tmp')) do |work|
   File.write(work + '/autoconf-test-lwp.h', files.fetch('ember/tools/autoconf-test-lwp.h'))
+  FileUtils.mkdir_p(work + '/dev/splash')
+  FileUtils.mkdir_p(work + '/sys')
+  File.write(work + '/dev/splash/splash.h', files.fetch('sys/dev/splash/splash.h'))
+  File.write(work + '/sys/reboot.h', files.fetch('sys/sys/reboot.h'))
+  File.write(work + '/opt_splash.h', '')
+  File.write(work + '/opt_wsdisplay_earlyfb.h', '')
   puts "boot framebuffer fixture temporary directory: #{work}"
   saved = nil
   begin

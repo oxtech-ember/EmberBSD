@@ -203,9 +203,6 @@ static void kmem_free(void *p, size_t n) { CHECK(n > 0); hook_frees++; free(p); 
 static int aprint_get_error_count(void) { return 0; }
 #define printf_nolog printf
 #define aprint_debug print_message
-#define AB_QUIET 1
-#define AB_SILENT 2
-#define AB_VERBOSE 4
 struct pdevinit { void (*pdev_attach)(int); int pdev_count; };
 /* This private service table remains an immutable sentinel in this fixture. */
 static struct pdevinit pdevinit[] = {{ NULL, 0 }};

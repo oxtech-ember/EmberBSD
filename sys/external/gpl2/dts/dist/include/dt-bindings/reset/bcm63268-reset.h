@@ -1,4 +1,4 @@
-/*	$NetBSD: bcm63268-reset.h,v 1.1.1.1 2021/11/07 16:49:57 jmcneill Exp $	*/
+/*	$NetBSD: bcm63268-reset.h,v 1.1.1.1.12.2 2026/10/02 18:07:27 martin Exp $	*/
 
 /* SPDX-License-Identifier: GPL-2.0+ */
 

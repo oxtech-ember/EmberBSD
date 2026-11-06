@@ -1,4 +1,4 @@
-/*	$NetBSD: st,stpmic1.h,v 1.1.1.1 2019/05/25 11:29:13 jmcneill Exp $	*/
+/*	$NetBSD: st,stpmic1.h,v 1.1.1.1.38.2 2026/10/02 18:07:22 martin Exp $	*/
 
 /* SPDX-License-Identifier: GPL-2.0 */
 /*

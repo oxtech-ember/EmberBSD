@@ -1,4 +1,4 @@
-/*	$NetBSD: nuvoton,npcm7xx-clock.h,v 1.1.1.1 2018/06/27 16:27:08 jmcneill Exp $	*/
+/*	$NetBSD: nuvoton,npcm7xx-clock.h,v 1.1.1.1.42.2 2026/10/02 18:07:11 martin Exp $	*/
 
 /* SPDX-License-Identifier: GPL-2.0 */
 /*

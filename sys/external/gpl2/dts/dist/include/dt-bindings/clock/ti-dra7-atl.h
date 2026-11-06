@@ -1,4 +1,4 @@
-/*	$NetBSD: ti-dra7-atl.h,v 1.1.1.1 2021/11/07 16:50:00 jmcneill Exp $	*/
+/*	$NetBSD: ti-dra7-atl.h,v 1.1.1.1.12.2 2026/10/02 18:07:17 martin Exp $	*/
 
 /*
  * This header provides constants for DRA7 ATL (Audio Tracking Logic)

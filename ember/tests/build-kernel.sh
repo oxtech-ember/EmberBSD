@@ -5,7 +5,7 @@ set -eu
 # An ambient product version must not replace the selected source version.
 export EMBER_VERSION=9.9
 # Fixtures select their own build mode and toolchain, independent of the shell.
-unset EMBER_HOST_BFD_CONFIG EMBERBSD_SDK_SOURCE EMBER_HOST_PREFIX EMBER_HOST_COMPILER_FAMILY EMBER_BUILD_MODE EMBER_EXTERNAL_TOOLCHAIN EMBER_COMPILER_FAMILY EMBER_LLVM_SOURCE EMBER_BYACC_SOURCE PVR_QUERY_FIRMWARE
+unset EMBER_HOST_BFD_CONFIG EMBERBSD_SDK_SOURCE EMBER_HOST_PREFIX EMBER_HOST_COMPILER_FAMILY EMBER_BUILD_MODE EMBER_EXTERNAL_TOOLCHAIN EMBER_COMPILER_FAMILY EMBER_LLVM_SOURCE EMBER_BYACC_SOURCE EMBER_HEIMDAL_SOURCE PVR_QUERY_FIRMWARE
 repo=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 TEST_SHELL=${EMBER_TEST_SHELL:-$(command -v sh)}
 TEST_PYTHON=${EMBER_TEST_PYTHON:-$(command -v python3)}
@@ -45,6 +45,9 @@ mkdir -p "$work/byacc"
 : > "$work/byacc/emberbsd-prepared-source.json"
 : > "$work/byacc/main.c"
 export EMBER_BYACC_SOURCE="$work/byacc"
+mkdir -p "$work/heimdal/lib/asn1"
+: > "$work/heimdal/emberbsd-prepared-source.json"
+export EMBER_HEIMDAL_SOURCE="$work/heimdal"
 cp "$repo/ember/build-kernel.sh" "$work/src/ember/"
 cp "$repo/ember/tools/kernel-contracts.sh" "$work/src/ember/tools/"
 cp "$repo/sys/arch/evbarm/conf/EMBER64" "$work/src/sys/arch/evbarm/conf/"
@@ -504,6 +507,7 @@ grep -q ' -u ' "$TEST_LOG"
 grep -q ' -c clang ' "$TEST_LOG"
 grep -Fq -- "-V EMBER_LLVM_SOURCE=$EMBER_LLVM_SOURCE" "$TEST_LOG"
 grep -Fq -- "-V EMBER_BYACC_SOURCE=$EMBER_BYACC_SOURCE" "$TEST_LOG"
+grep -Fq -- "-V EMBER_HEIMDAL_SOURCE=$EMBER_HEIMDAL_SOURCE" "$TEST_LOG"
 grep -q 'cpp .*/target-cpp --target=aarch64--netbsd -E ' "$TEST_LOG"
 grep -q 'EMBER_KERNEL_OBJDIR=.*/obj/kernels/EMBER64' "$TEST_LOG"
 grep -q 'cpp .*/tools/bin/target-cpp ' "$TEST_LOG"
@@ -705,6 +709,19 @@ for byacc in '' relative "$work/missing-byacc" "$work/bad source"; do
         echo 'accepted missing or invalid common byacc source' >&2; exit 1
     fi
     grep -q EMBER_BYACC_SOURCE "$work/run.log"
+    ! grep -q '^build.sh ' "$TEST_LOG"
+    test ! -e "$TEST_OUT/netbsd-EMBER64"
+done
+mkdir -p "$work/incomplete-heimdal/lib/asn1"
+mkdir -p "$work/receipt-only-heimdal"
+: > "$work/receipt-only-heimdal/emberbsd-prepared-source.json"
+for heimdal in '' relative "$work/missing-heimdal" "$work/bad source" \
+    "$work/incomplete-heimdal" "$work/receipt-only-heimdal"; do
+    : > "$TEST_LOG"
+    if EMBER_HEIMDAL_SOURCE="$heimdal" sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1; then
+        echo 'accepted missing or invalid common Heimdal source' >&2; exit 1
+    fi
+    grep -q EMBER_HEIMDAL_SOURCE "$work/run.log"
     ! grep -q '^build.sh ' "$TEST_LOG"
     test ! -e "$TEST_OUT/netbsd-EMBER64"
 done

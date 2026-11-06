@@ -1,4 +1,4 @@
-/*	$NetBSD: exynos5420.h,v 1.1.1.5 2021/11/07 16:49:57 jmcneill Exp $	*/
+/*	$NetBSD: exynos5420.h,v 1.1.1.5.12.2 2026/10/02 18:07:09 martin Exp $	*/
 
 /* SPDX-License-Identifier: GPL-2.0 */
 /*

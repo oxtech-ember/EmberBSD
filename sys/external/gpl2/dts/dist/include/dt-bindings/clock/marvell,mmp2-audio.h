@@ -1,4 +1,4 @@
-/*	$NetBSD: marvell,mmp2-audio.h,v 1.1.1.1 2021/11/07 16:49:57 jmcneill Exp $	*/
+/*	$NetBSD: marvell,mmp2-audio.h,v 1.1.1.1.12.2 2026/10/02 18:07:10 martin Exp $	*/
 
 /* SPDX-License-Identifier: (GPL-2.0+ OR BSD-2-Clause) */
 #ifndef __DT_BINDINGS_CLOCK_MARVELL_MMP2_AUDIO_H

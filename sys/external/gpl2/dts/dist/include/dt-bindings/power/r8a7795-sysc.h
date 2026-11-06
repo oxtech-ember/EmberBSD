@@ -1,4 +1,4 @@
-/*	$NetBSD: r8a7795-sysc.h,v 1.1.1.3 2020/01/03 14:33:03 skrll Exp $	*/
+/*	$NetBSD: r8a7795-sysc.h,v 1.1.1.3.34.2 2026/10/02 18:07:26 martin Exp $	*/
 
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*

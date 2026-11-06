@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.475.2.2 2026/08/25 19:51:33 martin Exp $
+#	$NetBSD: Makefile,v 1.475.2.4 2026/10/14 17:45:22 martin Exp $
 #	from: @(#)Makefile	8.7 (Berkeley) 5/25/95
 # Origin: EmberBSD release and login identity, prepared with AI assistance.
 
@@ -49,6 +49,9 @@ DISTRIBVER!=	${HOST_SH} ${NETBSDSRCDIR}/sys/conf/osrelease.sh
 
 GZIP_FLAGS= -9 ${GZIP_N_FLAG}
 
+HASHES+=	MD5
+HASHES+=	SHA512
+
 # Flags for creating ISO CDROM image for mac68k and macppc that require
 # tools mkhybrid(8) to create hybrid ISO9660/HFS images.
 MKISOFS?=	${TOOL_MKHYBRID}
@@ -62,7 +65,7 @@ MKISOFS_FLAGS+= -J -l -r \
 .if ${MKISOFS_FLAGS:N-v}
 MKISOFS_FLAGS+=	-quiet
 .endif
- 
+
 # Reproducible build parameters
 .if ${MKREPRO:Uno} == "no"
 BUILDER!=	echo $${USER-root}@$$(hostname)
@@ -75,6 +78,9 @@ BUILD_DATE!=	date -u
 .else
 PAX_TIMESTAMP=--timestamp "${MKREPRO_TIMESTAMP}"
 BUILD_DATE!=	${TOOL_DATE} -u -r "${MKREPRO_TIMESTAMP}"
+.if ${MKISOFS} == ${TOOL_MKHYBRID}
+MKISOFS_FLAGS+=	-timestamp "${MKREPRO_TIMESTAMP}"
+.endif
 .endif
 
 # MD Makefile.inc may append MD targets to BIN[123].  Make sure all
@@ -700,7 +706,7 @@ install-debugkernels:
 	done
 .	for k in ${ALL_KERNELS}
 install-debugkernels: ${DESTDIR}${DEBUGDIR}/netbsd-${k}.debug
-		
+
 ${DESTDIR}${DEBUGDIR}/netbsd-${k}.debug:
 	${_MKTARGET_INSTALL}
 	touch ${.TARGET}

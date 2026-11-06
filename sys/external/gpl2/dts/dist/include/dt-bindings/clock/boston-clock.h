@@ -1,4 +1,4 @@
-/*	$NetBSD: boston-clock.h,v 1.1.1.1 2017/10/28 10:30:32 jmcneill Exp $	*/
+/*	$NetBSD: boston-clock.h,v 1.1.1.1.44.2 2026/10/02 18:07:08 martin Exp $	*/
 
 /*
  * Copyright (C) 2016 Imagination Technologies

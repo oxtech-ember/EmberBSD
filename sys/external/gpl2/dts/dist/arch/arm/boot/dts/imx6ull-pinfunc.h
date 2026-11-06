@@ -1,4 +1,4 @@
-/*	$NetBSD: imx6ull-pinfunc.h,v 1.1.1.4 2020/01/03 14:33:27 skrll Exp $	*/
+/*	$NetBSD: imx6ull-pinfunc.h,v 1.1.1.4.34.2 2026/10/02 18:02:55 martin Exp $	*/
 
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*

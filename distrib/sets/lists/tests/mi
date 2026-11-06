@@ -1,4 +1,4 @@
-# $NetBSD: mi,v 1.1387.2.13 2026/08/22 10:44:06 martin Exp $
+# $NetBSD: mi,v 1.1387.2.16 2026/10/25 11:52:39 martin Exp $
 # Origin: EmberBSD; include the CAN FD rump regression in release sets.
 #
 # Note: don't delete entries from here - mark them as "obsolete" instead.
@@ -2360,6 +2360,7 @@
 ./usr/tests/kernel/h_fexecve				tests-kernel-tests	compattestfile,atf
 ./usr/tests/kernel/h_fpufork				tests-kernel-tests	compattestfile,atf
 ./usr/tests/kernel/h_getprocpath			tests-kernel-tests	compattestfile,atf
+./usr/tests/kernel/h_getstack				tests-kernel-tests	compattestfile,atf
 ./usr/tests/kernel/h_interpreter			tests-kernel-tests	compattestfile,atf
 ./usr/tests/kernel/h_ps_strings1			tests-kernel-tests	compattestfile,atf
 ./usr/tests/kernel/h_ps_strings2			tests-kernel-tests	compattestfile,atf
@@ -2409,6 +2410,7 @@
 ./usr/tests/kernel/t_extattrctl				tests-kernel-tests	atf,rump
 ./usr/tests/kernel/t_extent				tests-kernel-tests	compattestfile,atf
 ./usr/tests/kernel/t_fcntl				tests-kernel-tests	atf
+./usr/tests/kernel/t_fdpass				tests-kernel-tests	atf,rump
 ./usr/tests/kernel/t_fdrestart				tests-kernel-tests	atf,rump
 ./usr/tests/kernel/t_fexecve				tests-kernel-tests	atf
 ./usr/tests/kernel/t_filedesc				tests-kernel-tests	atf,rump
@@ -7875,6 +7877,10 @@
 ./usr/tests/usr.sbin/certctl/certs4			tests-usr.sbin-tests	compattestfile,atf
 ./usr/tests/usr.sbin/certctl/certs4/AC_RAIZ_FNMT-RCM.pem	tests-usr.sbin-tests	compattestfile,atf
 ./usr/tests/usr.sbin/certctl/certs4/DigiCert_Global_Root_CA.pem	tests-usr.sbin-tests	compattestfile,atf
+./usr/tests/usr.sbin/certctl/certs5			tests-usr.sbin-tests	compattestfile,atf
+./usr/tests/usr.sbin/certctl/certs5/Comodo_AAA_Services_root.pem	tests-usr.sbin-tests	compattestfile,atf
+./usr/tests/usr.sbin/certctl/certs5/DigiCert_Global_Root_CA.pem	tests-usr.sbin-tests	compattestfile,atf
+./usr/tests/usr.sbin/certctl/certs5/emSign_ECC_Root_CA_-_G3.pem	tests-usr.sbin-tests	compattestfile,atf
 ./usr/tests/usr.sbin/certctl/t_certctl			tests-usr.sbin-tests	compattestfile,atf
 ./usr/tests/usr.sbin/cpuctl				tests-usr.sbin-tests	compattestfile,atf
 ./usr/tests/usr.sbin/cpuctl/Atffile			tests-usr.sbin-tests	compattestfile,atf

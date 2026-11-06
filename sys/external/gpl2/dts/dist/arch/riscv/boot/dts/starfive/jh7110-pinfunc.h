@@ -1,4 +1,4 @@
-/*	$NetBSD: jh7110-pinfunc.h,v 1.2 2024/08/12 10:55:55 skrll Exp $	*/
+/*	$NetBSD: jh7110-pinfunc.h,v 1.2.2.2 2026/10/02 18:07:07 martin Exp $	*/
 
 /* SPDX-License-Identifier: GPL-2.0 OR MIT */
 /*

@@ -1,4 +1,4 @@
-/*	$NetBSD: wdc.c,v 1.310 2022/05/31 08:43:15 andvar Exp $ */
+/*	$NetBSD: wdc.c,v 1.310.12.2 2026/08/25 19:13:46 martin Exp $ */
 
 /*
  * Copyright (c) 1998, 2001, 2003 Manuel Bouyer.  All rights reserved.
@@ -58,7 +58,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: wdc.c,v 1.310 2022/05/31 08:43:15 andvar Exp $");
+__KERNEL_RCSID(0, "$NetBSD: wdc.c,v 1.310.12.2 2026/08/25 19:13:46 martin Exp $");
 
 #include "opt_ata.h"
 #include "opt_wdc.h"
@@ -561,9 +561,28 @@ wdcprobe1(struct ata_channel *chp, int poll)
 		ATADEBUG_PRINT(("%s:%d: before reset, st0=0x%x, st1=0x%x\n",
 			__func__, chp->ch_channel, st0, st1), DEBUG_PROBE);
 
+		/*
+		 * Is a drive present?  Originally this code tested either
+		 * for 0xff (ISA controller with no drive present; pull-ups
+		 * take reg values high) or "echo", which meant writing to
+		 * the notionally read-only geometry regs and seeing if we
+		 * could read back what we wrote (if a drive is there, we
+		 * will not).  But some PCI controllers don't have the
+		 * 0xff behavior and also share regs internally in a way
+		 * that tricks the echo test, resulting in a 3 second delay
+		 * later before we find no drive.  We conditionally check for
+		 * 0x00 which should catch this case because a drive that's
+		 * actually present should have at least BSY or DRDY set.
+		 */
 		if (st0 == 0xff || st0 == WDSD_IBM)
 			ret_value &= ~0x01;
+		else if (st0 == 0x00 &&
+		    (wdc->cap & WDC_CAPABILITY_ZERO_ABSENT))
+			ret_value &= ~0x01;
 		if (st1 == 0xff || st1 == (WDSD_IBM | 0x10))
+			ret_value &= ~0x02;
+		else if (st0 == 0x00 &&
+		    (wdc->cap & WDC_CAPABILITY_ZERO_ABSENT))
 			ret_value &= ~0x02;
 		/* Register writability test, drive 0. */
 		if (ret_value & 0x01) {
@@ -1029,7 +1048,7 @@ wdcreset(struct ata_channel *chp, int poll)
 	struct atac_softc *atac = chp->ch_atac;
 	struct wdc_softc *wdc = CHAN_TO_WDC(chp);
 	struct wdc_regs *wdr = &wdc->regs[chp->ch_channel];
-	int drv_mask1, drv_mask2;
+	int drv_mask1 = 0, drv_mask2;
 
 	ata_channel_lock_owned(chp);
 
@@ -1038,8 +1057,9 @@ wdcreset(struct ata_channel *chp, int poll)
 #endif
 	wdc->reset(chp, poll);
 
-	drv_mask1 = (chp->ch_drive[0].drive_type !=  ATA_DRIVET_NONE)
-	    ? 0x01 : 0x00;
+	if (chp->ch_ndrives > 0)
+		drv_mask1 = (chp->ch_drive[0].drive_type !=  ATA_DRIVET_NONE)
+		    ? 0x01 : 0x00;
 	if (chp->ch_ndrives > 1)
 		drv_mask1 |= (chp->ch_drive[1].drive_type != ATA_DRIVET_NONE)
 		    ? 0x02 : 0x00;

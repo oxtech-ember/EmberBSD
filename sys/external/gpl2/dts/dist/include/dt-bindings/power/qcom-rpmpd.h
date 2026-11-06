@@ -1,4 +1,4 @@
-/*	$NetBSD: qcom-rpmpd.h,v 1.1.1.3 2021/11/07 16:49:56 jmcneill Exp $	*/
+/*	$NetBSD: qcom-rpmpd.h,v 1.1.1.3.12.2 2026/10/02 18:07:26 martin Exp $	*/
 
 /* SPDX-License-Identifier: GPL-2.0 */
 /* Copyright (c) 2018, The Linux Foundation. All rights reserved. */

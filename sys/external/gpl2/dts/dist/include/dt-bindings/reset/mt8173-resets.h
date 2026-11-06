@@ -1,4 +1,4 @@
-/*	$NetBSD: mt8173-resets.h,v 1.1.1.2 2020/01/03 14:33:06 skrll Exp $	*/
+/*	$NetBSD: mt8173-resets.h,v 1.1.1.2.34.2 2026/10/02 18:07:27 martin Exp $	*/
 
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*

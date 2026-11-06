@@ -1,4 +1,4 @@
-/*	$NetBSD: jz4770-cgu.h,v 1.1.1.1 2018/04/28 18:25:53 jmcneill Exp $	*/
+/*	$NetBSD: jz4770-cgu.h,v 1.1.1.1.42.2 2026/10/02 18:07:10 martin Exp $	*/
 
 /* SPDX-License-Identifier: GPL-2.0 */
 /*

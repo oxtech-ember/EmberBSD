@@ -1,4 +1,4 @@
-/*	$NetBSD: dra7.h,v 1.1.1.4 2021/11/07 16:49:58 jmcneill Exp $	*/
+/*	$NetBSD: dra7.h,v 1.1.1.4.12.2 2026/10/02 18:07:08 martin Exp $	*/
 
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*

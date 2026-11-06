@@ -1,4 +1,4 @@
-/*	$NetBSD: x1000-cgu.h,v 1.1.1.2 2021/11/07 16:50:00 jmcneill Exp $	*/
+/*	$NetBSD: x1000-cgu.h,v 1.1.1.2.12.2 2026/10/02 18:07:17 martin Exp $	*/
 
 /* SPDX-License-Identifier: GPL-2.0 */
 /*

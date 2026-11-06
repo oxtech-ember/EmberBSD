@@ -1,4 +1,4 @@
-/*	$NetBSD: tegra186-hsp.h,v 1.1.1.3 2019/05/25 11:29:13 jmcneill Exp $	*/
+/*	$NetBSD: tegra186-hsp.h,v 1.1.1.3.36.2 2026/10/02 18:07:21 martin Exp $	*/
 
 /* SPDX-License-Identifier: GPL-2.0 */
 /*

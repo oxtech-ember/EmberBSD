@@ -25,7 +25,10 @@ out=/absolute/build-output
 mkdir "$src"
 git archive "$revision" | tar -xf - -C "$src"
 EMBER_BUILD_MODE=cross EMBER_EXTERNAL_TOOLCHAIN=/absolute/llvm \
+    EMBER_HOST_BFD_CONFIG=/absolute/binutils-aarch64/host-bfd.mk \
     EMBER_LLVM_SOURCE=/absolute/prepared-llvm \
+    EMBER_BYACC_SOURCE=/absolute/prepared-byacc \
+    EMBER_HEIMDAL_SOURCE=/absolute/prepared-heimdal \
     EMBERBSD_SDK_SOURCE=/absolute/sdk-source EMBER_HOST_PREFIX=/absolute/native-prefix \
     BUILDINFO="EmberBSD:$revision" NETBSD2_JOBS=6 \
     sh "$src/ember/build-kernel.sh" "$out" EMBER64
@@ -76,6 +79,10 @@ Both compiler families require `EMBER_LLVM_SOURCE` from the
 [common source producer](llvm-runtime.md). The kernel wrapper forwards it
 to the kernel and matched module builds. This freestanding source input
 does not require an application sysroot or C++ runtime.
+The tools phase also builds yacc and the host ASN.1 compiler. Prepare their
+byacc and Heimdal trees with the common Ports source producers, then select
+them with `EMBER_BYACC_SOURCE` and `EMBER_HEIMDAL_SOURCE`. The wrapper passes
+these paths explicitly through the SDK runner to `build.sh` on every host.
 
 Darwin host tools retain `-no-cpp-precomp` only for Clang. Modern GNU GCC
 rejects that legacy Apple flag. The actual Makefile/compiler regression covers

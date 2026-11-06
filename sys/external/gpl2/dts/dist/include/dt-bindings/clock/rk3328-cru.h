@@ -1,4 +1,4 @@
-/*	$NetBSD: rk3328-cru.h,v 1.1.1.5 2020/01/03 14:33:06 skrll Exp $	*/
+/*	$NetBSD: rk3328-cru.h,v 1.1.1.5.34.2 2026/10/02 18:07:15 martin Exp $	*/
 
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /*

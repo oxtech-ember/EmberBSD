@@ -1,4 +1,4 @@
-/*	$NetBSD: amlogic,meson-g12a-reset.h,v 1.1.1.1 2019/05/25 11:29:13 jmcneill Exp $	*/
+/*	$NetBSD: amlogic,meson-g12a-reset.h,v 1.1.1.1.38.2 2026/10/02 18:07:27 martin Exp $	*/
 
 /* SPDX-License-Identifier: GPL-2.0+ OR BSD-3-Clause */
 /*
