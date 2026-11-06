@@ -1,4 +1,4 @@
-#	$NetBSD: Makefile,v 1.42.2.3 2026/05/07 17:49:29 martin Exp $
+#	$NetBSD: Makefile,v 1.42.2.4 2026/10/24 17:33:10 martin Exp $
 
 # libssh is not meant for applications to link against -- it's a
 # private library of the ssh/sshd/&c. executables we ship.  So don't
@@ -47,15 +47,18 @@ dns.c \
 ed25519.c \
 fatal.c \
 freezero.c \
+getexecpath.c \
 hmac.c \
 hostfile.c \
 kex.c \
 kexc25519.c \
 kex-names.c \
 kexgen.c \
+kexmlkem768ecdh.c \
 kexmlkem768x25519.c \
 kexsntrup761x25519.c \
 krl.c \
+libcrux-mlkem-mldsa.c \
 log.c \
 mac.c \
 match.c \
@@ -72,6 +75,7 @@ smult_curve25519_ref.c \
 sntrup761.c \
 ssh-ed25519.c \
 ssh-ed25519-sk.c \
+ssh-mldsa-eddsa.c \
 ssh-pkcs11.c \
 ssh-sk-client.c \
 sshbuf-getput-basic.c \
@@ -152,7 +156,9 @@ COPTS.sshkey.c+=	${CC_WNO_FORMAT_TRUNCATION}
 COPTS.cipher.c+=	-Wno-error=deprecated-declarations
 COPTS.dh.c+=		-Wno-error=deprecated-declarations
 COPTS.digest-libc.c+=	-Wno-error=cast-function-type
+COPTS.ed25519.c+=	-Wno-error=deprecated-declarations
 COPTS.kex.c+=		-Wno-error=deprecated-declarations
+COPTS.kexmlkem768ecdh.c+=	-Wno-error=deprecated-declarations
 COPTS.kexdh.c+=		-Wno-error=deprecated-declarations
 COPTS.kexecdh.c+=	-Wno-error=deprecated-declarations
 COPTS.kexgexc.c+=	-Wno-error=deprecated-declarations
@@ -171,6 +177,21 @@ COPTS.kexmlkem768x25519.c+=${${ACTIVE_CC} == "clang":? -Wno-error=missing-noretu
 # Keep the deprecation diagnostics visible without promoting them to errors.
 COPTS.kexmlkem768ecdh.c+= -Wno-error=deprecated-declarations
 
+.if !defined(EMBER_OPENSSH_SOURCE) || empty(EMBER_OPENSSH_SOURCE)
+EXPSYM_SRCS=	ssh.expsym.common
+.if ${WITH_OPENSSL:U0} == 1
+EXPSYM_SRCS+=	ssh.expsym.openssl
+.else
+EXPSYM_SRCS+=	ssh.expsym.builtin
+.endif
+
+LIB_EXPSYM=     ssh.expsym
+${LIB_EXPSYM}: ${EXPSYM_SRCS}
+	${_MKTARGET_CREATE}
+	LC_ALL=C sort -m ${.ALLSRC} > ${.TARGET}.tmp && \
+	${MV} ${.TARGET}.tmp ${.TARGET}
+CLEANFILES+=    ${LIB_EXPSYM} ${LIB_EXPSYM}.tmp
+.endif
 
 
 .include <bsd.lib.mk>

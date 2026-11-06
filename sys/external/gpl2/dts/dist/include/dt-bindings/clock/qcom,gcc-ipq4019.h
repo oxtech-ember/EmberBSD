@@ -1,4 +1,4 @@
-/*	$NetBSD: qcom,gcc-ipq4019.h,v 1.1.1.1 2017/06/15 20:14:23 jmcneill Exp $	*/
+/*	$NetBSD: qcom,gcc-ipq4019.h,v 1.1.1.1.50.2 2026/10/02 18:07:11 martin Exp $	*/
 
 /* Copyright (c) 2015 The Linux Foundation. All rights reserved.
  *

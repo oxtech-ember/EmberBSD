@@ -1,4 +1,4 @@
-/*	$NetBSD: meson-g12a-gpio.h,v 1.1.1.1 2019/01/22 14:57:01 jmcneill Exp $	*/
+/*	$NetBSD: meson-g12a-gpio.h,v 1.1.1.1.42.2 2026/10/02 18:07:18 martin Exp $	*/
 
 /* SPDX-License-Identifier: (GPL-2.0+ or MIT) */
 /*

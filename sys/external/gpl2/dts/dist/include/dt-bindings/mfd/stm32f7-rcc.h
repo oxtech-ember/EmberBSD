@@ -1,4 +1,4 @@
-/*	$NetBSD: stm32f7-rcc.h,v 1.1.1.3 2018/04/28 18:25:53 jmcneill Exp $	*/
+/*	$NetBSD: stm32f7-rcc.h,v 1.1.1.3.40.2 2026/10/02 18:07:22 martin Exp $	*/
 
 /* SPDX-License-Identifier: GPL-2.0 */
 /*

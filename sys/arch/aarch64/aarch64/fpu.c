@@ -1,5 +1,5 @@
 /* Origin: EmberBSD; AI-assisted IEEE initial AArch64 FP state correction. */
-/* $NetBSD: fpu.c,v 1.13 2022/08/20 11:34:08 riastradh Exp $ */
+/* $NetBSD: fpu.c,v 1.13.12.1 2026/09/18 15:58:13 martin Exp $ */
 
 /*-
  * Copyright (c) 2014 The NetBSD Foundation, Inc.
@@ -32,7 +32,7 @@
 
 #include <sys/cdefs.h>
 
-__KERNEL_RCSID(1, "$NetBSD: fpu.c,v 1.13 2022/08/20 11:34:08 riastradh Exp $");
+__KERNEL_RCSID(1, "$NetBSD: fpu.c,v 1.13.12.1 2026/09/18 15:58:13 martin Exp $");
 
 #include <sys/param.h>
 #include <sys/types.h>

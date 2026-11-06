@@ -1,4 +1,4 @@
-/*	$NetBSD: r8a7792-clock.h,v 1.1.1.3 2020/01/03 14:33:04 skrll Exp $	*/
+/*	$NetBSD: r8a7792-clock.h,v 1.1.1.3.34.2 2026/10/02 18:07:14 martin Exp $	*/
 
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /*

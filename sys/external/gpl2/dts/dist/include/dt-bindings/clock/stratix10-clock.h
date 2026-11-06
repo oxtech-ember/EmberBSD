@@ -1,4 +1,4 @@
-/*	$NetBSD: stratix10-clock.h,v 1.1.1.2 2020/01/03 14:33:05 skrll Exp $	*/
+/*	$NetBSD: stratix10-clock.h,v 1.1.1.2.34.2 2026/10/02 18:07:16 martin Exp $	*/
 
 /* SPDX-License-Identifier:	GPL-2.0 */
 /*

@@ -1,4 +1,4 @@
-/*	$NetBSD: keystone.h,v 1.1.1.1 2017/06/15 20:14:23 jmcneill Exp $	*/
+/*	$NetBSD: keystone.h,v 1.1.1.1.50.2 2026/10/02 18:07:23 martin Exp $	*/
 
 /*
  * This header provides constants for Keystone pinctrl bindings.

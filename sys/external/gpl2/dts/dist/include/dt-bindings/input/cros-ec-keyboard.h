@@ -1,4 +1,4 @@
-/*	$NetBSD: cros-ec-keyboard.h,v 1.1.1.1 2021/11/07 16:49:57 jmcneill Exp $	*/
+/*	$NetBSD: cros-ec-keyboard.h,v 1.1.1.1.12.2 2026/10/02 18:07:19 martin Exp $	*/
 
 /* SPDX-License-Identifier: GPL-2.0 */
 /*

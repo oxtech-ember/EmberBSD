@@ -1,4 +1,4 @@
-/*	$NetBSD: rt5640.h,v 1.1.1.1 2018/06/27 16:27:08 jmcneill Exp $	*/
+/*	$NetBSD: rt5640.h,v 1.1.1.1.42.2 2026/10/02 18:07:29 martin Exp $	*/
 
 /* SPDX-License-Identifier: GPL-2.0 */
 #ifndef __DT_RT5640_H

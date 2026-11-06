@@ -1,4 +1,4 @@
-/*	$NetBSD: marvell,pxa1928.h,v 1.1.1.2 2017/11/30 19:40:51 jmcneill Exp $	*/
+/*	$NetBSD: marvell,pxa1928.h,v 1.1.1.2.44.2 2026/10/02 18:07:10 martin Exp $	*/
 
 /* SPDX-License-Identifier: GPL-2.0 */
 #ifndef __DTS_MARVELL_PXA1928_CLOCK_H

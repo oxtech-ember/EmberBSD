@@ -1,4 +1,4 @@
-/*	$NetBSD: apple-aic.h,v 1.1.1.1 2021/11/07 16:49:57 jmcneill Exp $	*/
+/*	$NetBSD: apple-aic.h,v 1.1.1.1.12.2 2026/10/02 18:07:21 martin Exp $	*/
 
 /* SPDX-License-Identifier: GPL-2.0+ OR MIT */
 #ifndef _DT_BINDINGS_INTERRUPT_CONTROLLER_APPLE_AIC_H

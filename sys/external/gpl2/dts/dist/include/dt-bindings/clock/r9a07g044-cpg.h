@@ -1,4 +1,4 @@
-/*	$NetBSD: r9a07g044-cpg.h,v 1.1.1.1 2021/11/07 16:49:59 jmcneill Exp $	*/
+/*	$NetBSD: r9a07g044-cpg.h,v 1.1.1.1.12.2 2026/10/02 18:07:15 martin Exp $	*/
 
 /* SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
  *

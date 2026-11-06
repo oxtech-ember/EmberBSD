@@ -1,4 +1,4 @@
-/*	$NetBSD: am4.h,v 1.1.1.3 2020/01/03 14:33:04 skrll Exp $	*/
+/*	$NetBSD: am4.h,v 1.1.1.3.34.2 2026/10/02 18:07:07 martin Exp $	*/
 
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*

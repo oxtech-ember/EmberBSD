@@ -6,10 +6,10 @@ preserves the NetBSD source tree and history, adding device drivers,
 kernel fixes, and build tools for specific boards. Changes in this fork
 should not be treated as changes accepted by the NetBSD developers.
 
-The kernel and common sources are based on the verified NetBSD 11.0
-`syssrc.tgz` release archive. The rest of the tree retains the upstream
-`netbsd-11` snapshot recorded in `ember/source.json`. The adaptation patches
-are already applied to the source tree. Copies in `ember/patches` document
+The source tree incorporates NetBSD 11.1 at the upstream revision recorded
+in `ember/source.json`, including the kernel changes previously excluded by
+the NetBSD 11.0 release baseline. EmberBSD adaptations remain applied to
+the source tree. Copies in `ember/patches` document
 their provenance and support future porting; do not apply them again.
 
 Build and deploy from pinned EmberBSD sources. The retained NetBSD ABI names,

@@ -1,4 +1,4 @@
-/*	$NetBSD: bcm21664.h,v 1.1.1.1 2017/06/15 20:14:23 jmcneill Exp $	*/
+/*	$NetBSD: bcm21664.h,v 1.1.1.1.50.2 2026/10/02 18:07:08 martin Exp $	*/
 
 /*
  * Copyright (C) 2013 Broadcom Corporation

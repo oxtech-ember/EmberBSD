@@ -1,4 +1,4 @@
-# $NetBSD: CHANGES-11.1,v 1.1.2.16 2026/09/22 10:47:11 martin Exp $
+# $NetBSD: CHANGES-11.1,v 1.1.2.36 2026/10/30 19:02:53 martin Exp $
 
 A complete list of changes between the 11.0 release on 2026-07-30
 until the 11.1 release:
@@ -695,4 +695,2003 @@ sys/dev/ic/mk48txxvar.h 			(apply patch)
 					 
 	mk48txx(4): handle TODR difference between current and 11
 	[jdc, ticket #491]
+
+sys/arch/atari/atari/atari_init.c		1.121,1.122
+
+	atari: fix 68030 MMU TC initialization and SRP setup bugs.
+	[tsutsui, ticket #492]
+
+sys/kern/vfs_bio.c				1.309
+
+	vfs_bio: PR 60584: retry fresh buffer allocation if recycling fails.
+	[tsutsui, ticket #493]
+
+usr.sbin/npf/npfctl/npf_build.c			1.64,1.67
+
+	npf: PR 60740: improve error message when table updates fail.
+	[joe, ticket #494]
+
+external/mit/expat/dist/conftools/compile       up to 1.3
+external/mit/expat/dist/conftools/ar-lib        up to 1.3
+external/mit/expat/dist/conftools/config.guess  up to 1.9
+external/mit/expat/dist/conftools/config.sub    up to 1.8
+external/mit/expat/dist/conftools/depcomp       up to 1.3
+external/mit/expat/dist/conftools/install-sh    up to 1.3
+external/mit/expat/dist/conftools/ltmain.sh     up to 1.3
+external/mit/expat/dist/conftools/missing       up to 1.3
+external/mit/expat/dist/conftools/test-driver   up to 1.3
+external/mit/expat/dist/doc/xmlwf.1             up to 1.3
+external/mit/expat/dist/doc/Makefile.in         up to 1.3
+external/mit/expat/dist/examples/Makefile.in    up to 1.3
+external/mit/expat/dist/lib/Makefile.in         up to 1.3
+external/mit/expat/dist/lib/hash_table.h        up to 1.1.1.1
+external/mit/expat/dist/tests/benchmark/Makefile.in up to 1.3
+external/mit/expat/dist/tests/Makefile.in       up to 1.3
+external/mit/expat/dist/tests/hash_tests.c      up to 1.1.1.1
+external/mit/expat/dist/tests/hash_tests.h      up to 1.1.1.1
+external/mit/expat/dist/xmlwf/Makefile.in       up to 1.3
+external/mit/expat/dist/m4/libtool.m4           up to 1.3
+external/mit/expat/dist/m4/ltoptions.m4         up to 1.3
+external/mit/expat/dist/m4/ltsugar.m4           up to 1.3
+external/mit/expat/dist/m4/ltversion.m4         up to 1.3
+external/mit/expat/dist/m4/lt~obsolete.m4       up to 1.3
+external/mit/expat/dist/Makefile.in             up to 1.3
+external/mit/expat/dist/cmake/mingw-toolchain-win32.cmake up to 1.1.1.1
+external/mit/expat/dist/cmake/mingw-toolchain-win64.cmake up to 1.1.1.1
+external/mit/expat/dist/aclocal.m4              up to 1.3
+external/mit/expat/dist/configure               up to 1.3
+external/mit/expat/dist/expat_config.h          up to 1.3
+external/mit/expat/dist/expat_config.h.in       up to 1.3
+external/mit/expat/dist/gennmtab/gennmtab.c     delete
+external/mit/expat/dist/qa.sh                   delete
+external/mit/expat/dist/cmake/mingw-toolchain.cmake delete
+external/mit/expat/dist/coverage.sh             delete
+external/mit/expat/dist/.clang-format           delete
+external/mit/expat/dist/apply-clang-format.sh   delete
+external/mit/expat/dist/apply-clang-tidy.sh     delete
+external/mit/expat/dist/clean_coverage.sh       delete
+external/mit/expat/dist/configure-ac-style.md   delete
+external/mit/expat/dist/distribute.sh           delete
+external/mit/expat/dist/CMake.README            up to 1.1.1.11
+external/mit/expat/dist/CMakeLists.txt          up to 1.1.1.11
+external/mit/expat/dist/Changes                 up to 1.1.1.12
+external/mit/expat/dist/Makefile.am             up to 1.1.1.6
+external/mit/expat/dist/README.md               up to 1.1.1.7
+external/mit/expat/dist/configure.ac            up to 1.1.1.10
+external/mit/expat/dist/fix-xmltest-log.sh      up to 1.1.1.5
+external/mit/expat/dist/cmake/autotools/expat__macos.cmake.in up to 1.1.1.2
+external/mit/expat/dist/doc/reference.html      up to 1.1.1.11
+external/mit/expat/dist/doc/xmlwf.xml           up to 1.1.1.8
+external/mit/expat/dist/examples/element_declarations.c up to 1.1.1.3
+external/mit/expat/dist/examples/elements.c     up to 1.1.1.8
+external/mit/expat/dist/examples/outline.c      up to 1.1.1.7
+external/mit/expat/dist/fuzz/xml_lpm_fuzzer.cpp up to 1.1.1.3
+external/mit/expat/dist/fuzz/xml_parse_fuzzer.c up to 1.1.1.4
+external/mit/expat/dist/fuzz/xml_parsebuffer_fuzzer.c up to 1.1.1.4
+external/mit/expat/dist/lib/Makefile.am         up to 1.1.1.6
+external/mit/expat/dist/lib/ascii.h             up to 1.1.1.4
+external/mit/expat/dist/lib/asciitab.h          up to 1.1.1.4
+external/mit/expat/dist/lib/expat.h             up to 1.1.1.12
+external/mit/expat/dist/lib/expat_external.h    up to 1.1.1.7
+external/mit/expat/dist/lib/fallthrough.h       up to 1.1.1.2
+external/mit/expat/dist/lib/iasciitab.h         up to 1.1.1.4
+external/mit/expat/dist/lib/internal.h          up to 1.1.1.8
+external/mit/expat/dist/lib/latin1tab.h         up to 1.1.1.4
+external/mit/expat/dist/lib/memory_sanitizer.h  up to 1.1.1.2
+external/mit/expat/dist/lib/nametab.h           up to 1.1.1.4
+external/mit/expat/dist/lib/random_arc4random.c up to 1.1.1.2
+external/mit/expat/dist/lib/random_arc4random.h up to 1.1.1.2
+external/mit/expat/dist/lib/random_arc4random_buf.c up to 1.1.1.3
+external/mit/expat/dist/lib/random_arc4random_buf.h up to 1.1.1.2
+external/mit/expat/dist/lib/random_dev_urandom.c up to 1.1.1.3
+external/mit/expat/dist/lib/random_dev_urandom.h up to 1.1.1.2
+external/mit/expat/dist/lib/random_getentropy.c up to 1.1.1.3
+external/mit/expat/dist/lib/random_getentropy.h up to 1.1.1.2
+external/mit/expat/dist/lib/random_getrandom.c  up to 1.1.1.3
+external/mit/expat/dist/lib/random_getrandom.h  up to 1.1.1.2
+external/mit/expat/dist/lib/random_rand_s.c     up to 1.1.1.2
+external/mit/expat/dist/lib/random_rand_s.h     up to 1.1.1.2
+external/mit/expat/dist/lib/siphash.h           up to 1.1.1.6
+external/mit/expat/dist/lib/utf8tab.h           up to 1.1.1.4
+external/mit/expat/dist/lib/winconfig.h         up to 1.1.1.6
+external/mit/expat/dist/lib/xcsinc.c            up to 1.1.1.2
+external/mit/expat/dist/lib/xmlparse.c          up to 1.14
+external/mit/expat/dist/lib/xmlrole.c           up to 1.1.1.9
+external/mit/expat/dist/lib/xmlrole.h           up to 1.1.1.6
+external/mit/expat/dist/lib/xmltok.c            up to 1.10
+external/mit/expat/dist/lib/xmltok.h            up to 1.7
+external/mit/expat/dist/lib/xmltok_impl.c       up to 1.10
+external/mit/expat/dist/lib/xmltok_impl.h       up to 1.1.1.5
+external/mit/expat/dist/lib/xmltok_ns.c         up to 1.1.1.5
+external/mit/expat/dist/tests/Makefile.am       up to 1.1.1.5
+external/mit/expat/dist/tests/acc_tests.c       up to 1.1.1.3
+external/mit/expat/dist/tests/acc_tests.h       up to 1.1.1.2
+external/mit/expat/dist/tests/alloc_tests.c     up to 1.1.1.4
+external/mit/expat/dist/tests/alloc_tests.h     up to 1.1.1.2
+external/mit/expat/dist/tests/basic_tests.c     up to 1.1.1.4
+external/mit/expat/dist/tests/basic_tests.h     up to 1.1.1.2
+external/mit/expat/dist/tests/chardata.c        up to 1.1.1.8
+external/mit/expat/dist/tests/chardata.h        up to 1.1.1.4
+external/mit/expat/dist/tests/common.c          up to 1.1.1.5
+external/mit/expat/dist/tests/common.h          up to 1.1.1.3
+external/mit/expat/dist/tests/dummy.c           up to 1.1.1.2
+external/mit/expat/dist/tests/dummy.h           up to 1.1.1.2
+external/mit/expat/dist/tests/handlers.c        up to 1.1.1.4
+external/mit/expat/dist/tests/handlers.h        up to 1.1.1.4
+external/mit/expat/dist/tests/memcheck.c        up to 1.1.1.6
+external/mit/expat/dist/tests/memcheck.h        up to 1.1.1.4
+external/mit/expat/dist/tests/minicheck.c       up to 1.1.1.8
+external/mit/expat/dist/tests/minicheck.h       up to 1.1.1.9
+external/mit/expat/dist/tests/misc_tests.c      up to 1.1.1.5
+external/mit/expat/dist/tests/misc_tests.h      up to 1.1.1.2
+external/mit/expat/dist/tests/ns_tests.c        up to 1.1.1.2
+external/mit/expat/dist/tests/ns_tests.h        up to 1.1.1.2
+external/mit/expat/dist/tests/nsalloc_tests.c   up to 1.1.1.3
+external/mit/expat/dist/tests/nsalloc_tests.h   up to 1.1.1.2
+external/mit/expat/dist/tests/runtests.c        up to 1.1.1.8
+external/mit/expat/dist/tests/structdata.c      up to 1.1.1.5
+external/mit/expat/dist/tests/structdata.h      up to 1.1.1.3
+external/mit/expat/dist/tests/xmltest.sh        up to 1.8
+external/mit/expat/dist/win32/build_expat_iss.bat up to 1.1.1.5
+external/mit/expat/dist/win32/expat.iss         up to 1.1.1.12
+external/mit/expat/dist/xmlwf/codepage.c        up to 1.1.1.6
+external/mit/expat/dist/xmlwf/codepage.h        up to 1.1.1.4
+external/mit/expat/dist/xmlwf/ct.c              up to 1.1.1.4
+external/mit/expat/dist/xmlwf/filemap.h         up to 1.1.1.6
+external/mit/expat/dist/xmlwf/readfilemap.c     up to 1.1.1.8
+external/mit/expat/dist/xmlwf/unixfilemap.c     up to 1.1.1.7
+external/mit/expat/dist/xmlwf/win32filemap.c    up to 1.1.1.7
+external/mit/expat/dist/xmlwf/xmlfile.c         up to 1.1.1.9
+external/mit/expat/dist/xmlwf/xmlfile.h         up to 1.1.1.5
+external/mit/expat/dist/xmlwf/xmlmime.c         up to 1.1.1.4
+external/mit/expat/dist/xmlwf/xmlmime.h         up to 1.1.1.4
+external/mit/expat/dist/xmlwf/xmltchar.h        up to 1.1.1.4
+external/mit/expat/dist/xmlwf/xmlwf.c           up to 1.1.1.11
+external/mit/expat/dist/xmlwf/xmlwf_helpgen.py  up to 1.1.1.6
+external/mit/expat/dist/xmlwf/xmlwf_helpgen.sh  up to 1.1.1.3
+doc/3RDPARTY					(apply patch)
+
+	Update expat to 2.8.5.
+	[nia, ticket #496]
+
+sys/arch/mips/mips/mips_fixup.c			1.27-1.29
+
+	mips: PR 60780: address some undefined behaviour.
+	[skrll, ticket #497]
+
+sys/arch/mips/include/intr.h			1.14
+sys/arch/mips/mips/mips_fixup.c			1.30
+
+	mips: PR 60779:: tag all the stub functions as __noubsan.
+	[skrll, ticket #498]
+
+sys/dev/ic/rtl8169.c				1.184
+
+	re(4): fix mangled TX queue on DMA map loading errors.
+	[tsutsui, ticket #499]
+
+sys/arch/mips/mips/mipsX_subr.S			1.119,1.120
+
+	mips: PR 60664: fix rdhwr emulation wrt TLB misses on loading
+	the faulting instruction.
+	Remove workarounds introduced to hide this bug (PR 59236).
+	[skrll, ticket #500]
+
+sys/arch/aarch64/aarch64/kobj_machdep.c		1.10
+
+	aarch64: PR 60660: teach kobj_reloc about
+	R_AARCH64_LDST128_ABS_LO12_NC.
+	[skrll, ticket #501]
+
+sys/arch/mips/mips/cpu_subr.c			1.68
+sys/arch/mips/mips/pmap_machdep.c		1.41
+
+	mips: create ci_shootdowncpus early so it's available
+	for MP pmap_update.
+	[skrll, ticket #503]
+
+sys/arch/evbarm/ifpga/plmmc_ifpga.c		1.3
+sys/dev/ic/pl181var.h				1.4
+
+	evbarm: PR 60818: INTEGRATOR_CP: establish interrupt handler for
+	PL181 controller.
+	[skrll, ticket #504]
+
+share/examples/npf/host-npf.conf		1.13,1.14
+share/examples/npf/soho_gw-npf.conf		1.22
+
+	Fix a couple more ``blacklist --> blocklist''
+	[hgutch, ticket #505]
+
+external/bsd/ntp/dist/ntpd/ntp_proto.c		1.21
+
+	ntpd(8): PR 60831: fix overly aggressive rejection of valid servers.
+	[jnemeth, ticket #506]
+
+external/public-domain/tz/dist/CONTRIBUTING     up to 1.1.1.11
+external/public-domain/tz/dist/Makefile         up to 1.7
+external/public-domain/tz/dist/NEWS             up to 1.10
+external/public-domain/tz/dist/README           up to 1.4
+external/public-domain/tz/dist/TZDATA_VERSION   up to 1.48
+external/public-domain/tz/dist/africa           up to 1.5
+external/public-domain/tz/dist/asia             up to 1.17
+external/public-domain/tz/dist/backward         up to 1.13
+external/public-domain/tz/dist/backzone         up to 1.6
+external/public-domain/tz/dist/europe           up to 1.7
+external/public-domain/tz/dist/northamerica     up to 1.9
+external/public-domain/tz/dist/southamerica     up to 1.6
+external/public-domain/tz/dist/theory.html      up to 1.8
+external/public-domain/tz/dist/version          up to 1.21
+external/public-domain/tz/dist/zone.tab         up to 1.8
+external/public-domain/tz/dist/zone1970.tab     up to 1.9
+external/public-domain/tz/dist/zonenow.tab      up to 1.10
+doc/3RDPARTY					(apply patch)
+
+	Updated tzdata to 2026e (using the 2026egtz fork).
+	[kre, ticket #507]
+
+sys/arch/x86/include/specialreg.h		1.223
+
+	x86: fix CPU identification for Zhaoxin family 7 CPUs.
+	[andvar, ticket #508]
+
+sys/arch/x86/x86/tsc.c				1.65-1.67
+
+	x86: add support for invariant TSC for recent Zhaoxin CPUs.
+	[andvar, ticket #509]
+
+external/bsd/unbound/dist/libunbound/remote.h   up to 1.1.1.1
+external/bsd/unbound/dist/testdata/10-unbound-anchor.tdir/key-setup.sh up to 1.1.1.1
+external/bsd/unbound/dist/testdata/auth_xfr_host_bogus.rpl up to 1.1.1.1
+external/bsd/unbound/dist/testdata/dns64_dnssec.rpl up to 1.1.1.1
+external/bsd/unbound/dist/testdata/dns64_fwd_nocache.rpl up to 1.1.1.1
+external/bsd/unbound/dist/testdata/dns64_respip_bypass.rpl up to 1.1.1.1
+external/bsd/unbound/dist/testdata/edns_nsid_repeat.rpl up to 1.1.1.1
+external/bsd/unbound/dist/testdata/errreport_agent_domain_len.rpl up to 1.1.1.1
+external/bsd/unbound/dist/testdata/fill_reply_uninit.rpl up to 1.1.1.1
+external/bsd/unbound/dist/testdata/ghost_glue_a.rpl up to 1.1.1.1
+external/bsd/unbound/dist/testdata/iter_class_any_merge.rpl up to 1.1.1.1
+external/bsd/unbound/dist/testdata/iter_class_mixreferral.rpl up to 1.1.1.1
+external/bsd/unbound/dist/testdata/iter_dname_ttl0_grace.rpl up to 1.1.1.1
+external/bsd/unbound/dist/testdata/iter_ghost_ns_childapex.rpl up to 1.1.1.1
+external/bsd/unbound/dist/testdata/iter_scrub_mx.rpl up to 1.1.1.1
+external/bsd/unbound/dist/testdata/iter_scrub_ns_min.rpl up to 1.1.1.1
+external/bsd/unbound/dist/testdata/iter_self_glue.rpl up to 1.1.1.1
+external/bsd/unbound/dist/testdata/iter_self_glue_promisc.rpl up to 1.1.1.1
+external/bsd/unbound/dist/testdata/local_block_a.rpl up to 1.1.1.1
+external/bsd/unbound/dist/testdata/nsec_cross_zone.rpl up to 1.1.1.1
+external/bsd/unbound/dist/testdata/respip_bogus_rewrite.rpl up to 1.1.1.1
+external/bsd/unbound/dist/testdata/respip_cname_loop_tagged.rpl up to 1.1.1.1
+external/bsd/unbound/dist/testdata/rpz_clientip_passthru_cache.rpl up to 1.1.1.1
+external/bsd/unbound/dist/testdata/rpz_clientip_passthru_dns64.rpl up to 1.1.1.1
+external/bsd/unbound/dist/testdata/rrsig_agr_wild.rpl up to 1.1.1.1
+external/bsd/unbound/dist/testdata/serve_expired_respip_cname.rpl up to 1.1.1.1
+external/bsd/unbound/dist/testdata/serve_expired_respip_drop.rpl up to 1.1.1.1
+external/bsd/unbound/dist/testdata/serve_expired_rpz_drop.rpl up to 1.1.1.1
+external/bsd/unbound/dist/testdata/serve_expired_rpz_nx.rpl up to 1.1.1.1
+external/bsd/unbound/dist/testdata/serve_expired_wildcard_swap_ad.rpl up to 1.1.1.1
+external/bsd/unbound/dist/testdata/stop_nxdomain_label.rpl up to 1.1.1.1
+external/bsd/unbound/dist/testdata/sub_ds_deepcopy.rpl up to 1.1.1.1
+external/bsd/unbound/dist/testdata/subnet_dns64_lookup.crpl up to 1.1.1.1
+external/bsd/unbound/dist/testdata/val_any_cap.rpl up to 1.1.1.1
+external/bsd/unbound/dist/testdata/val_canon_short_px.rpl up to 1.1.1.1
+external/bsd/unbound/dist/testdata/val_cnameother.rpl up to 1.1.1.1
+external/bsd/unbound/dist/testdata/val_global_quota.rpl up to 1.1.1.1
+external/bsd/unbound/dist/testdata/val_negcache_ds_nsec3.rpl up to 1.1.1.1
+external/bsd/unbound/dist/testdata/val_wcnsec_nods.rpl up to 1.1.1.1
+external/bsd/unbound/dist/testdata/auth_transfer_limit.tdir/auth_transfer_limit.conf up to 1.1.1.1
+external/bsd/unbound/dist/testdata/auth_transfer_limit.tdir/auth_transfer_limit.dsc up to 1.1.1.1
+external/bsd/unbound/dist/testdata/auth_transfer_limit.tdir/auth_transfer_limit.post up to 1.1.1.1
+external/bsd/unbound/dist/testdata/auth_transfer_limit.tdir/auth_transfer_limit.pre up to 1.1.1.1
+external/bsd/unbound/dist/testdata/auth_transfer_limit.tdir/auth_transfer_limit.test up to 1.1.1.1
+external/bsd/unbound/dist/testdata/auth_transfer_limit.tdir/auth_transfer_limit.testns up to 1.1.1.1
+external/bsd/unbound/dist/testdata/auth_transfer_limit.tdir/auth_transfer_limit.testns2 up to 1.1.1.1
+external/bsd/unbound/dist/testdata/fast_reload_authdel.tdir/example.com.zone up to 1.1.1.1
+external/bsd/unbound/dist/testdata/fast_reload_authdel.tdir/fast_reload_authdel.conf up to 1.1.1.1
+external/bsd/unbound/dist/testdata/fast_reload_authdel.tdir/fast_reload_authdel.conf2 up to 1.1.1.1
+external/bsd/unbound/dist/testdata/fast_reload_authdel.tdir/fast_reload_authdel.dsc up to 1.1.1.1
+external/bsd/unbound/dist/testdata/fast_reload_authdel.tdir/fast_reload_authdel.post up to 1.1.1.1
+external/bsd/unbound/dist/testdata/fast_reload_authdel.tdir/fast_reload_authdel.pre up to 1.1.1.1
+external/bsd/unbound/dist/testdata/fast_reload_authdel.tdir/fast_reload_authdel.test up to 1.1.1.1
+external/bsd/unbound/dist/testdata/fast_reload_authdel.tdir/fast_reload_authdel.testns up to 1.1.1.1
+external/bsd/unbound/dist/testdata/tcp_conn_limit_dec.tdir/tcp_conn_limit_dec.conf up to 1.1.1.1
+external/bsd/unbound/dist/testdata/tcp_conn_limit_dec.tdir/tcp_conn_limit_dec.dsc up to 1.1.1.1
+external/bsd/unbound/dist/testdata/tcp_conn_limit_dec.tdir/tcp_conn_limit_dec.post up to 1.1.1.1
+external/bsd/unbound/dist/testdata/tcp_conn_limit_dec.tdir/tcp_conn_limit_dec.pre up to 1.1.1.1
+external/bsd/unbound/dist/testdata/tcp_conn_limit_dec.tdir/tcp_conn_limit_dec.test up to 1.1.1.1
+external/bsd/unbound/dist/testdata/tcp_conn_limit_dec.tdir/tcp_conn_limit_dec.testns up to 1.1.1.1
+external/bsd/unbound/dist/README.md             up to 1.1.1.6
+external/bsd/unbound/dist/ax_pthread.m4         up to 1.1.1.3
+external/bsd/unbound/dist/config.guess          up to 1.10
+external/bsd/unbound/dist/config.h.in           up to 1.1.1.12
+external/bsd/unbound/dist/config.sub            up to 1.9
+external/bsd/unbound/dist/configure             up to 1.1.1.12
+external/bsd/unbound/dist/configure.ac          up to 1.1.1.12
+external/bsd/unbound/dist/cachedb/cachedb.c     up to 1.1.1.11
+external/bsd/unbound/dist/compat/getentropy_osx.c up to 1.1.1.3
+external/bsd/unbound/dist/compat/inet_pton.c    up to 1.1.1.2
+external/bsd/unbound/dist/compat/sha512.c       up to 1.1.1.6
+external/bsd/unbound/dist/daemon/cachedump.c    up to 1.1.1.9
+external/bsd/unbound/dist/daemon/daemon.c       up to 1.1.1.11
+external/bsd/unbound/dist/daemon/daemon.h       up to 1.1.1.8
+external/bsd/unbound/dist/daemon/remote.c       up to 1.1.1.12
+external/bsd/unbound/dist/daemon/remote.h       up to 1.1.1.7
+external/bsd/unbound/dist/daemon/stats.c        up to 1.1.1.12
+external/bsd/unbound/dist/daemon/worker.c       up to 1.1.1.12
+external/bsd/unbound/dist/daemon/worker.h       up to 1.1.1.5
+external/bsd/unbound/dist/dns64/dns64.c         up to 1.1.1.11
+external/bsd/unbound/dist/dnscrypt/dnscrypt.c   up to 1.1.1.7
+external/bsd/unbound/dist/dnscrypt/dnscrypt.h   up to 1.1.1.4
+external/bsd/unbound/dist/dnstap/dnstap.c       up to 1.1.1.9
+external/bsd/unbound/dist/dnstap/dnstap.h       up to 1.1.1.6
+external/bsd/unbound/dist/dnstap/dtstream.c     up to 1.1.1.7
+external/bsd/unbound/dist/dnstap/unbound-dnstap-socket.c up to 1.1.1.6
+external/bsd/unbound/dist/doc/Changelog         up to 1.1.1.12
+external/bsd/unbound/dist/doc/README            up to 1.1.1.12
+external/bsd/unbound/dist/doc/example.conf.in   up to 1.1.1.12
+external/bsd/unbound/dist/doc/libunbound.3.in   up to 1.1.1.12
+external/bsd/unbound/dist/doc/unbound-anchor.8.in up to 1.1.1.12
+external/bsd/unbound/dist/doc/unbound-checkconf.8.in up to 1.1.1.12
+external/bsd/unbound/dist/doc/unbound-control.8.in up to 1.1.1.12
+external/bsd/unbound/dist/doc/unbound-control.rst up to 1.1.1.3
+external/bsd/unbound/dist/doc/unbound-host.1.in up to 1.1.1.12
+external/bsd/unbound/dist/doc/unbound.8.in      up to 1.1.1.12
+external/bsd/unbound/dist/doc/unbound.conf.5.in up to 1.1.1.12
+external/bsd/unbound/dist/doc/unbound.conf.rst  up to 1.1.1.3
+external/bsd/unbound/dist/edns-subnet/addrtree.c up to 1.1.1.5
+external/bsd/unbound/dist/edns-subnet/subnetmod.c up to 1.1.1.11
+external/bsd/unbound/dist/ipsecmod/ipsecmod-whitelist.c up to 1.1.1.2
+external/bsd/unbound/dist/ipsecmod/ipsecmod.c   up to 1.1.1.7
+external/bsd/unbound/dist/ipset/ipset.c         up to 1.1.1.5
+external/bsd/unbound/dist/iterator/iter_delegpt.c up to 1.1.1.8
+external/bsd/unbound/dist/iterator/iter_delegpt.h up to 1.1.1.9
+external/bsd/unbound/dist/iterator/iter_donotq.c up to 1.1.1.2
+external/bsd/unbound/dist/iterator/iter_resptype.c up to 1.1.1.3
+external/bsd/unbound/dist/iterator/iter_resptype.h up to 1.1.1.3
+external/bsd/unbound/dist/iterator/iter_scrub.c up to 1.1.1.12
+external/bsd/unbound/dist/iterator/iter_scrub.h up to 1.1.1.3
+external/bsd/unbound/dist/iterator/iter_utils.c up to 1.1.1.11
+external/bsd/unbound/dist/iterator/iter_utils.h up to 1.1.1.10
+external/bsd/unbound/dist/iterator/iterator.c   up to 1.1.1.12
+external/bsd/unbound/dist/iterator/iterator.h   up to 1.1.1.9
+external/bsd/unbound/dist/libunbound/context.h  up to 1.1.1.7
+external/bsd/unbound/dist/libunbound/libunbound.c up to 1.1.1.10
+external/bsd/unbound/dist/libunbound/libworker.c up to 1.1.1.11
+external/bsd/unbound/dist/libunbound/libworker.h up to 1.1.1.4
+external/bsd/unbound/dist/libunbound/worker.h   up to 1.1.1.6
+external/bsd/unbound/dist/pythonmod/interface.i up to 1.1.1.11
+external/bsd/unbound/dist/pythonmod/pythonmod.c up to 1.1.1.9
+external/bsd/unbound/dist/respip/respip.c       up to 1.1.1.9
+external/bsd/unbound/dist/services/authzone.c   up to 1.7
+external/bsd/unbound/dist/services/authzone.h   up to 1.1.1.9
+external/bsd/unbound/dist/services/listen_dnsport.c up to 1.1.1.12
+external/bsd/unbound/dist/services/listen_dnsport.h up to 1.1.1.9
+external/bsd/unbound/dist/services/localzone.c  up to 1.1.1.11
+external/bsd/unbound/dist/services/localzone.h  up to 1.1.1.10
+external/bsd/unbound/dist/services/mesh.c       up to 1.1.1.12
+external/bsd/unbound/dist/services/mesh.h       up to 1.1.1.10
+external/bsd/unbound/dist/services/outside_network.c up to 1.1.1.12
+external/bsd/unbound/dist/services/outside_network.h up to 1.1.1.11
+external/bsd/unbound/dist/services/rpz.c        up to 1.1.1.7
+external/bsd/unbound/dist/services/cache/dns.c  up to 1.1.1.11
+external/bsd/unbound/dist/services/cache/rrset.c up to 1.1.1.9
+external/bsd/unbound/dist/sldns/keyraw.c        up to 1.1.1.7
+external/bsd/unbound/dist/sldns/str2wire.c      up to 1.1.1.10
+external/bsd/unbound/dist/smallapp/unbound-anchor.c up to 1.1.1.11
+external/bsd/unbound/dist/smallapp/unbound-checkconf.c up to 1.1.1.12
+external/bsd/unbound/dist/smallapp/worker_cb.c  up to 1.1.1.8
+external/bsd/unbound/dist/testcode/dohclient.c  up to 1.1.1.6
+external/bsd/unbound/dist/testcode/doqclient.c  up to 1.1.1.4
+external/bsd/unbound/dist/testcode/fake_event.c up to 1.1.1.11
+external/bsd/unbound/dist/testcode/testbound.c  up to 1.1.1.10
+external/bsd/unbound/dist/testcode/unitauth.c   up to 1.1.1.8
+external/bsd/unbound/dist/testcode/unitecs.c    up to 1.1.1.4
+external/bsd/unbound/dist/testcode/unitldns.c   up to 1.1.1.7
+external/bsd/unbound/dist/testcode/unitmain.c   up to 1.1.1.12
+external/bsd/unbound/dist/testcode/unittcpreuse.c up to 1.1.1.3
+external/bsd/unbound/dist/testcode/unitverify.c up to 1.1.1.10
+external/bsd/unbound/dist/testdata/auth_zonemd_xfr_chain_fail.rpl up to 1.1.1.2
+external/bsd/unbound/dist/testdata/dns_error_reporting.rpl up to 1.1.1.2
+external/bsd/unbound/dist/testdata/ipsecmod_hook.sh up to 1.1.1.2
+external/bsd/unbound/dist/testdata/iter_prefetch_fail.rpl up to 1.1.1.4
+external/bsd/unbound/dist/testdata/iter_privaddr.rpl up to 1.1.1.6
+external/bsd/unbound/dist/testdata/iter_resolve_minimised.rpl up to 1.1.1.6
+external/bsd/unbound/dist/testdata/iter_svcb_malformed.rpl up to 1.1.1.2
+external/bsd/unbound/dist/testdata/local_ds.rpl up to 1.1.1.3
+external/bsd/unbound/dist/testdata/stop_nxdomain_minimised.rpl up to 1.1.1.2
+external/bsd/unbound/dist/testdata/val_cnametonsec.rpl up to 1.1.1.4
+external/bsd/unbound/dist/testdata/val_cnametooptin.rpl up to 1.1.1.4
+external/bsd/unbound/dist/testdata/val_ds_cname.rpl up to 1.1.1.7
+external/bsd/unbound/dist/testdata/val_dsnsec.rpl up to 1.1.1.3
+external/bsd/unbound/dist/testdata/val_refer_unsignadd.rpl up to 1.1.1.6
+external/bsd/unbound/dist/testdata/val_referglue.rpl up to 1.1.1.7
+external/bsd/unbound/dist/testdata/val_secds_nosig.rpl up to 1.1.1.5
+external/bsd/unbound/dist/testdata/03-testbound.tdir/03-testbound.test up to 1.1.1.4
+external/bsd/unbound/dist/testdata/10-unbound-anchor.tdir/10-unbound-anchor.conf up to 1.1.1.2
+external/bsd/unbound/dist/testdata/10-unbound-anchor.tdir/10-unbound-anchor.test up to 1.1.1.2
+external/bsd/unbound/dist/testdata/10-unbound-anchor.tdir/petal.key up to 1.1.1.2
+external/bsd/unbound/dist/testdata/10-unbound-anchor.tdir/petal.pem up to 1.1.1.2
+external/bsd/unbound/dist/testdata/10-unbound-anchor.tdir/test_cert.key up to 1.1.1.2
+external/bsd/unbound/dist/testdata/10-unbound-anchor.tdir/test_cert.pem up to 1.1.1.2
+external/bsd/unbound/dist/testdata/10-unbound-anchor.tdir/127.0.0.1/no_more_keys.p7s up to 1.1.1.2
+external/bsd/unbound/dist/testdata/10-unbound-anchor.tdir/127.0.0.1/root.p7s up to 1.1.1.2
+external/bsd/unbound/dist/testdata/dnscrypt_cert.tdir/dnscrypt_cert.test up to 1.1.1.3
+external/bsd/unbound/dist/testdata/dnscrypt_cert_chacha.tdir/dnscrypt_cert_chacha.test up to 1.1.1.3
+external/bsd/unbound/dist/testdata/root_anchor.tdir/root_anchor.test up to 1.1.1.4
+external/bsd/unbound/dist/testdata/stat_values.tdir/stat_values.test up to 1.1.1.7
+external/bsd/unbound/dist/testdata/svcb.tdir/svcb.success-cases.zone up to 1.1.1.3
+external/bsd/unbound/dist/testdata/svcb.tdir/svcb.success-cases.zone.cmp up to 1.1.1.3
+external/bsd/unbound/dist/util/config_file.c    up to 1.1.1.12
+external/bsd/unbound/dist/util/config_file.h    up to 1.1.1.12
+external/bsd/unbound/dist/util/configlexer.c    up to 1.1.1.12
+external/bsd/unbound/dist/util/configlexer.lex  up to 1.1.1.12
+external/bsd/unbound/dist/util/configparser.c   up to 1.1.1.12
+external/bsd/unbound/dist/util/configparser.h   up to 1.1.1.12
+external/bsd/unbound/dist/util/configparser.y   up to 1.1.1.12
+external/bsd/unbound/dist/util/fptr_wlist.c     up to 1.1.1.11
+external/bsd/unbound/dist/util/fptr_wlist.h     up to 1.1.1.8
+external/bsd/unbound/dist/util/iana_ports.inc   up to 1.1.1.12
+external/bsd/unbound/dist/util/module.h         up to 1.1.1.10
+external/bsd/unbound/dist/util/net_help.c       up to 1.1.1.12
+external/bsd/unbound/dist/util/netevent.c       up to 1.10
+external/bsd/unbound/dist/util/netevent.h       up to 1.1.1.10
+external/bsd/unbound/dist/util/proxy_protocol.c up to 1.1.1.3
+external/bsd/unbound/dist/util/proxy_protocol.h up to 1.1.1.2
+external/bsd/unbound/dist/util/tube.c           up to 1.1.1.7
+external/bsd/unbound/dist/util/data/dname.c     up to 1.1.1.8
+external/bsd/unbound/dist/util/data/msgencode.c up to 1.1.1.11
+external/bsd/unbound/dist/util/data/msgparse.c  up to 1.1.1.10
+external/bsd/unbound/dist/util/data/msgreply.c  up to 1.1.1.12
+external/bsd/unbound/dist/util/data/msgreply.h  up to 1.1.1.12
+external/bsd/unbound/dist/util/data/packed_rrset.c up to 1.1.1.7
+external/bsd/unbound/dist/util/data/packed_rrset.h up to 1.1.1.8
+external/bsd/unbound/dist/util/shm_side/shm_main.c up to 1.1.1.7
+external/bsd/unbound/dist/validator/autotrust.c up to 1.1.1.9
+external/bsd/unbound/dist/validator/autotrust.h up to 1.1.1.4
+external/bsd/unbound/dist/validator/val_anchor.c up to 1.1.1.9
+external/bsd/unbound/dist/validator/val_neg.c   up to 1.1.1.9
+external/bsd/unbound/dist/validator/val_nsec.c  up to 1.1.1.8
+external/bsd/unbound/dist/validator/val_nsec.h  up to 1.1.1.6
+external/bsd/unbound/dist/validator/val_nsec3.c up to 1.1.1.8
+external/bsd/unbound/dist/validator/val_nsec3.h up to 1.1.1.7
+external/bsd/unbound/dist/validator/val_secalgo.c up to 1.1.1.9
+external/bsd/unbound/dist/validator/val_sigcrypt.c up to 1.1.1.11
+external/bsd/unbound/dist/validator/val_sigcrypt.h up to 1.1.1.7
+external/bsd/unbound/dist/validator/val_utils.c up to 1.1.1.8
+external/bsd/unbound/dist/validator/val_utils.h up to 1.1.1.8
+external/bsd/unbound/dist/validator/validator.c up to 1.1.1.12
+external/bsd/unbound/dist/validator/validator.h up to 1.1.1.8
+external/bsd/unbound/include/config.h           up to 1.18
+external/bsd/unbound/lib/libunbound/Makefile    up to 1.10
+external/bsd/unbound/lib/libunbound/shlib_version up to 1.10
+external/bsd/unbound/lib/libunbound/unbound.expsym up to 1.5
+distrib/sets/lists/base/shl.mi				1.1049
+distrib/sets/lists/debug/shl.mi				1.413
+
+	Import unbound 1.26.1.
+	[christos, ticket #510]
+
+distrib/utils/embedded/mkimage			1.98
+etc/Makefile					1.478
+etc/etc.evbarm/Makefile.inc			1.139-1.142,1.145
+etc/etc.evbmips/Makefile.inc			1.33
+etc/etc.evbppc/Makefile.inc			1.23
+etc/etc.riscv/Makefile.inc			1.8
+
+	Checksum file generation improvements for various
+	image targets.
+	[gutteridge, ticket #511]
+
+xsrc/external/mit/xorg-server/dist/ChangeLog         up to 1.1.1.35
+xsrc/external/mit/xorg-server/dist/configure         up to 1.28
+xsrc/external/mit/xorg-server/dist/configure.ac      up to 1.30
+xsrc/external/mit/xorg-server/dist/meson.build       up to 1.1.1.25
+xsrc/external/mit/xorg-server/dist/Xext/xtest.c      up to 1.11
+xsrc/external/mit/xorg-server/dist/Xi/exevents.c     up to 1.1.1.16
+xsrc/external/mit/xorg-server/dist/Xi/extinit.c      up to 1.1.1.10
+xsrc/external/mit/xorg-server/dist/Xi/xibarriers.c   up to 1.7
+xsrc/external/mit/xorg-server/dist/Xi/xipassivegrab.c up to 1.10
+xsrc/external/mit/xorg-server/dist/Xi/xiquerydevice.c up to 1.6
+xsrc/external/mit/xorg-server/dist/config/udev.c     up to 1.1.1.7
+xsrc/external/mit/xorg-server/dist/dix/devices.c     up to 1.18
+xsrc/external/mit/xorg-server/dist/dix/region.c      up to 1.5
+xsrc/external/mit/xorg-server/dist/dri3/meson.build  up to 1.1.1.3
+xsrc/external/mit/xorg-server/dist/exa/exa_accel.c   up to 1.8
+xsrc/external/mit/xorg-server/dist/fb/fb.h           up to 1.4
+xsrc/external/mit/xorg-server/dist/fb/fbgc.c         up to 1.1.1.6
+xsrc/external/mit/xorg-server/dist/glamor/glamor_compositerects.c up to 1.1.1.2
+xsrc/external/mit/xorg-server/dist/glx/glxcmds.c     up to 1.18
+xsrc/external/mit/xorg-server/dist/hw/kdrive/src/kinput.c up to 1.1.1.10
+xsrc/external/mit/xorg-server/dist/hw/xfree86/common/xf86.h up to 1.7
+xsrc/external/mit/xorg-server/dist/hw/xfree86/common/xf86Configure.c up to 1.14
+xsrc/external/mit/xorg-server/dist/hw/xfree86/common/xf86fbman.c up to 1.1.1.6
+xsrc/external/mit/xorg-server/dist/hw/xfree86/common/xf86platformBus.c up to 1.1.1.4
+xsrc/external/mit/xorg-server/dist/hw/xfree86/drivers/modesetting/dri2.c up to 1.1.1.6
+xsrc/external/mit/xorg-server/dist/hw/xfree86/drivers/modesetting/drmmode_display.c up to 1.13
+xsrc/external/mit/xorg-server/dist/hw/xfree86/int10/meson.build up to 1.1.1.3
+xsrc/external/mit/xorg-server/dist/hw/xfree86/man/xorg.conf.man up to 1.1.1.8
+xsrc/external/mit/xorg-server/dist/hw/xfree86/os-support/meson.build up to 1.1.1.4
+xsrc/external/mit/xorg-server/dist/hw/xfree86/parser/Files.c up to 1.1.1.7
+xsrc/external/mit/xorg-server/dist/hw/xfree86/parser/Flags.c up to 1.1.1.9
+xsrc/external/mit/xorg-server/dist/hw/xfree86/parser/scan.c up to 1.1.1.8
+xsrc/external/mit/xorg-server/dist/hw/xquartz/X11Application.m up to 1.1.1.12
+xsrc/external/mit/xorg-server/dist/hw/xquartz/GL/indirect.c up to 1.1.1.9
+xsrc/external/mit/xorg-server/dist/hw/xquartz/xpr/dri.c up to 1.1.1.7
+xsrc/external/mit/xorg-server/dist/include/xkbstr.h  up to 1.1.1.5
+xsrc/external/mit/xorg-server/dist/mi/miarc.c        up to 1.6
+xsrc/external/mit/xorg-server/dist/miext/damage/damage.c up to 1.1.1.7
+xsrc/external/mit/xorg-server/dist/miext/damage/damagestr.h up to 1.1.1.6
+xsrc/external/mit/xorg-server/dist/os/utils.c        up to 1.16
+xsrc/external/mit/xorg-server/dist/present/present_notify.c up to 1.1.1.5
+xsrc/external/mit/xorg-server/dist/randr/rrproviderproperty.c up to 1.1.1.4
+xsrc/external/mit/xorg-server/dist/render/glyph.c    up to 1.7
+xsrc/external/mit/xorg-server/dist/test/string.c     up to 1.1.1.4
+xsrc/external/mit/xorg-server/dist/test/xi2/protocol-eventconvert.c up to 1.1.1.6
+xsrc/external/mit/xorg-server/dist/test/xi2/protocol-xiquerydevice.c up to 1.1.1.6
+xsrc/external/mit/xorg-server/dist/xkb/XKBAlloc.c    up to 1.1.1.7
+xsrc/external/mit/xorg-server/dist/xkb/XKBMAlloc.c   up to 1.1.1.9
+xsrc/external/mit/xorg-server/dist/xkb/ddxBeep.c     up to 1.1.1.5
+xsrc/external/mit/xorg-server/dist/xkb/xkb.c         up to 1.15
+xsrc/external/mit/xorg-server/dist/xkb/xkbInit.c     up to 1.1.1.7
+xsrc/external/mit/xorg-server/dist/xkb/xkbUtils.c    up to 1.1.1.11
+xsrc/external/mit/xorg-server/dist/xkb/xkmread.c     up to 1.1.1.7
+xsrc/external/mit/xorg-server/include/dix-config.h   up to 1.61
+xsrc/external/mit/xorg-server/include/version-config.h up to 1.31
+xsrc/external/mit/xorg-server/include/xorg-config.h  up to 1.41
+xsrc/external/mit/xorg-server/include/xorg-server.h  up to 1.41
+share/mk/bsd.x11.mk					(apply patch)
+
+	Import xorg-server-21.1.25.
+	[mrg, ticket #512]
+
+sys/arch/sparc64/sparc64/ofw_patch.c		1.19
+
+	sparc64: remove misplaced break in V215 HDD GPIO case.
+	[jdc, ticket #513]
+
+libexec/ld.elf_so/Makefile			1.152
+share/mk/bsd.kmodule.mk				1.87,1.88
+share/mk/bsd.lib.mk				1.424
+share/mk/bsd.prog.mk				1.360,1.361
+tests/lib/csu/Makefile				1.14
+tests/libexec/ld.elf_so/Makefile		1.33
+
+	bsd.*.mk: PR 57241: fix parallel builds of debug data.
+	[riastradh, ticket #514]
+
+external/gpl3/gcc/dist/gcc/config/arm/arm.cc	1.2,1.3
+external/gpl3/gcc/dist/gcc/config/arm/arm.h	1.27
+external/gpl3/gcc/dist/gcc/config/arm/arm.md	1.24
+
+	gcc/arm: PR 57638: for -mtp=soft, ensure stack alignment
+	even in leaves.
+	[riastradh, ticket #515]
+
+build.sh					1.406
+tools/Makefile.gnuhost				1.58
+
+	build: protect against autoconf/Xcode mishegas on macOS.
+	[tls, ticket #516]
+
+distrib/sets/lists/comp/ad.riscv		1.30 (patch)
+
+	build: all the riscv ldscripts were marked with compat,
+	breaking MKCOMPAT=no builds.
+	[tls, ticket #426]
+
+libexec/httpd/bozohttpd.8			1.103
+
+	bozohttpd(8): clarify how the CGI options work.
+	[nia, ticket #517]
+
+usr.sbin/pwd_mkdb/pwd_mkdb.c			1.63
+
+	pwd_mkdb(8): don't try to get the database version from the host's
+	database when running cross.
+	[tls, ticket #518]
+
+common/lib/libc/stdlib/random.c			1.9
+tools/compat/Makefile				1.98
+tools/compat/compat_defs.h			1.134
+
+	build: make builds reproducible across hosts with different
+	libc random(3) implementations.
+	[tls, ticket #519]
+
+sys/dev/pci/if_vr.c				1.139
+
+	vr(4): PR 60848: reinitialize device when rx engine fails to go to
+	the idle state.
+	[andvar, ticket #520]
+
+sys/arch/hppa/spmath/Makefile			1.7
+sys/arch/hppa/spmath/Makefile.inc		1.13
+
+	build: use tool tsort, not host tsort, for hppa spmath build.
+	[tls, ticket #521]
+
+etc/Makefile					1.479
+external/gpl2/mkhybrid/dist/desktop.c		1.3
+external/gpl2/mkhybrid/dist/libhfs_iso/block.c	1.2
+external/gpl2/mkhybrid/dist/libhfs_iso/data.c	1.2
+external/gpl2/mkhybrid/dist/libhfs_iso/data.h	1.2
+external/gpl2/mkhybrid/dist/libhfs_iso/hfs.c	1.2
+external/gpl2/mkhybrid/dist/libhfs_iso/lvolume.c 1.2
+external/gpl2/mkhybrid/dist/mkhybrid.8		1.3
+external/gpl2/mkhybrid/dist/mkisofs.c		1.8
+external/gpl2/mkhybrid/dist/mkisofs.h		1.7
+external/gpl2/mkhybrid/dist/tree.c		1.4
+external/gpl2/mkhybrid/dist/write.c		1.3
+
+	macppc: add MKREPRO support to mkhybrid and fix bugs.
+	[tls, ticket #522]
+
+common/lib/libc/string/memset2.c		1.12
+
+	mips: PR 60780: fix undefined behaviour.
+	[kre, ticket #523]
+
+sys/net/bsd-comp.c				1.24
+
+	ppp(4): fix bounds check in bsd_decompress().
+	[mrg, ticket #524]
+
+sys/arch/mac68k/dev/akbd.c			1.31
+
+	mac68k: PR 60691: honor keyboard bell volume.
+	[nat, ticket #525]
+
+sys/arch/mac68k/obio/ascaudio.c			1.23
+
+	ascaudio(4): fix locking issue.
+	[nat, ticket #526]
+
+sys/arch/mac68k/obio/ascaudio.c			1.22
+
+	ascaudio(4): respect maximum and minimum values when recording.
+	[nat, ticket #527]
+
+sys/arch/mac68k/obio/ascaudio.c			1.21
+
+	ascaudio(4): fix module build.
+	[nat, ticket #528]
+
+sys/arch/mac68k/obio/ascaudio.c			1.20
+
+	ascaudio(4): honor playback block size within resonable limits.
+	[nat, ticket #529]
+
+sys/arch/mac68k/obio/ascaudio.c			1.19
+
+	ascaudio(4): fix interrupt handling on machines using the aux
+	interrupt mappings.
+	[nat, ticket #530]
+
+lib/libc/stdio/vfwprintf.c			1.42,1.43
+
+	printf(3): PR 60708, PR 60496: fix 'F' format for
+	positional parameters.
+	Fix multi-byte decimal point and grouping separator.
+	[kre, ticket #531]
+
+sys/dev/pci/if_vr.c				1.140
+
+	vr(4): PR 60884: fix promiscous mode setting.
+	[andvar, ticket #532]
+
+tools/gmp/Makefile				1.7
+
+	gcc: PR 60904: fix compiler core dumps on MacOS on Apple Silicon.
+	[tls, ticket #533]
+
+distrib/sets/lists/base/mi			1.1391,1.1392
+etc/mtree/NetBSD.dist.base			1.265
+etc/namedb/bind.keys				1.3
+
+	named(8): PR 52465, PR 60864: fix config dirs and root keys.
+	[jnemeth, ticket #534]
+
+tests/lib/libc/gen/t_arc4random.c		1.6
+
+	t_arc4random: PR 59117: make the test more robust.
+	[riastradh, ticket #535]
+
+external/bsd/fetch/dist/libfetch/common.c	1.14
+
+	libfetch: PR 60878: verify hostname against certificate.
+	[riastradh, ticket #536]
+
+distrib/sets/lists/base/mi			1.1393,1.1394
+doc/3RDPARTY					1.2267
+external/mpl/mozilla-certdata/share/Makefile	1.6
+external/mpl/mozilla-certdata/share/certs/AffirmTrust_Commercial.pem delete
+external/mpl/mozilla-certdata/share/certs/AffirmTrust_Networking.pem delete
+external/mpl/mozilla-certdata/share/certs/AffirmTrust_Premium.pem delete
+external/mpl/mozilla-certdata/share/certs/AffirmTrust_Premium_ECC.pem delete
+external/mpl/mozilla-certdata/share/certs/Baltimore_CyberTrust_Root.pem delete
+external/mpl/mozilla-certdata/share/certs/CommScope_Public_Trust_ECC_Root-01.pem delete
+external/mpl/mozilla-certdata/share/certs/CommScope_Public_Trust_ECC_Root-02.pem delete
+external/mpl/mozilla-certdata/share/certs/CommScope_Public_Trust_RSA_Root-01.pem delete
+external/mpl/mozilla-certdata/share/certs/CommScope_Public_Trust_RSA_Root-02.pem delete
+external/mpl/mozilla-certdata/share/certs/D-TRUST_BR_Root_CA_2_2023.pem 1.1
+external/mpl/mozilla-certdata/share/certs/D-TRUST_EV_Root_CA_2_2023.pem 1.1
+external/mpl/mozilla-certdata/share/certs/Entrust_Root_Certification_Authority.pem delete
+external/mpl/mozilla-certdata/share/certs/Explicitly_Distrust_DigiNotar_Root_CA.pem delete
+external/mpl/mozilla-certdata/share/certs/FIRMAPROFESIONAL_CA_ROOT-A_WEB.pem delete
+external/mpl/mozilla-certdata/share/certs/GLOBALTRUST_2020.pem delete
+external/mpl/mozilla-certdata/share/certs/OISTE_Client_Root_ECC_G1.pem 1.1
+external/mpl/mozilla-certdata/share/certs/OISTE_Client_Root_RSA_G1.pem 1.1
+external/mpl/mozilla-certdata/share/certs/OISTE_Server_Root_ECC_G1.pem 1.1
+external/mpl/mozilla-certdata/share/certs/OISTE_Server_Root_RSA_G1.pem 1.1
+external/mpl/mozilla-certdata/share/certs/SECOM_SMIME_RSA_Root_CA_2024.pem 1.1
+external/mpl/mozilla-certdata/share/certs/SECOM_TLS_ECC_Root_CA_2024.pem 1.1
+external/mpl/mozilla-certdata/share/certs/SECOM_TLS_RSA_Root_CA_2024.pem 1.1
+external/mpl/mozilla-certdata/share/certs/SecureSign_RootCA11.pem delete
+external/mpl/mozilla-certdata/share/certs/SecureSign_Root_CA12.pem delete
+external/mpl/mozilla-certdata/share/certs/SecureSign_Root_CA16.pem 1.1
+external/mpl/mozilla-certdata/share/certs/SecureTrust_CA.pem delete
+external/mpl/mozilla-certdata/share/certs/Secure_Global_CA.pem delete
+external/mpl/mozilla-certdata/share/certs/Security_Communication_RootCA3.pem delete
+external/mpl/mozilla-certdata/share/certs/SwissSign_RSA_SMIME_Root_CA_2022_-_1.pem 1.1
+external/mpl/mozilla-certdata/share/certs/SwissSign_RSA_TLS_Root_CA_2022_-_1.pem 1.1
+external/mpl/mozilla-certdata/share/certs/SwissSign_Silver_CA_-_G2.pem delete
+external/mpl/mozilla-certdata/share/certs/TeliaSonera_Root_CA_v1.pem delete
+external/mpl/mozilla-certdata/share/certs/Telia_EC_Email_Root_CA_v3.pem 1.1
+external/mpl/mozilla-certdata/share/certs/Telia_EC_TLS_Root_CA_v3.pem 1.1
+external/mpl/mozilla-certdata/share/certs/Telia_RSA_Email_Root_CA_v3.pem 1.1
+external/mpl/mozilla-certdata/share/certs/Telia_RSA_TLS_Root_CA_v3.pem 1.1
+external/mpl/mozilla-certdata/share/certs/TrustAsia_SMIME_ECC_Root_CA.pem 1.1
+external/mpl/mozilla-certdata/share/certs/TrustAsia_SMIME_RSA_Root_CA.pem 1.1
+external/mpl/mozilla-certdata/share/certs/TrustAsia_TLS_ECC_Root_CA.pem 1.1
+external/mpl/mozilla-certdata/share/certs/TrustAsia_TLS_RSA_Root_CA.pem 1.1
+external/mpl/mozilla-certdata/share/certs/Trustwave_Global_Certification_Authority.pem delete
+external/mpl/mozilla-certdata/share/certs/Trustwave_Global_ECC_P256_Certification_Authority.pem delete
+external/mpl/mozilla-certdata/share/certs/Trustwave_Global_ECC_P384_Certification_Authority.pem delete
+external/mpl/mozilla-certdata/share/certs/XRamp_Global_CA_Root.pem delete
+external/mpl/mozilla-certdata/share/certs/certSIGN_ROOT_CA.pem delete
+external/mpl/mozilla-certdata/share/certs/e-Szigno_TLS_Root_CA_2023.pem 1.1
+external/mpl/mozilla-certdata/share/certs/ePKI_Root_Certification_Authority.pem delete
+external/mpl/mozilla-certdata/share/certs/emSign_ECC_Root_CA_-_C3.pem delete
+external/mpl/mozilla-certdata/share/certs/emSign_ECC_Root_CA_-_G3.pem delete
+external/mpl/mozilla-certdata/share/certs/emSign_Root_CA_-_C1.pem delete
+external/mpl/mozilla-certdata/share/email.trust	1.4
+external/mpl/mozilla-certdata/share/server.trust 1.4
+
+	mozilla-certdata: PR 60908: update for compromised CA.
+	[riastradh, ticket #537]
+
+external/bsd/file/dist/configure.ac		1.24 (patch)
+external/bsd/file/dist/src/fsmagic.c		1.19 (patch)
+external/bsd/file/include/config.h		1.22 (patch)
+lib/libutil/stat_flags.c			1.4,1.5 (patch)
+tests/dev/fss/t_fss.sh				1.8 (patch)
+
+	file(1), find(1): PR 60379, PR 60380): recognize snapshots.
+	[riastradh, ticket #538]
+
+sys/arch/amd64/amd64/machdep.c			1.381
+
+	amd64: PR 60539: fix ucontext_t FXSAVE area ABI breakage.
+	[riastradh, ticket #539]
+
+sys/arch/amd64/amd64/process_machdep.c		1.51
+sys/arch/i386/i386/process_machdep.c		1.98
+sys/arch/x86/include/dbregs.h			1.9
+sys/arch/x86/x86/dbregs.c			1.16
+sys/compat/netbsd32/netbsd32_ptrace.c		1.10,1.11
+sys/kern/sys_process_lwpstatus.c		1.6-1.10
+sys/sys/ptrace.h				1.78
+
+	kernel: PR 60556, PR 60595, PR 60658:
+	Fix locking around ptrace and procfs debug register access.
+	[riastradh, ticket #540]
+
+distrib/sets/lists/debug/mi			1.518
+distrib/sets/lists/tests/mi			1.1429
+sys/compat/linux32/arch/aarch64/linux32_exec_machdep.c 1.3
+sys/compat/netbsd32/netbsd32_signal.c		1.57
+sys/kern/exec_script.c				1.86
+sys/kern/exec_subr.c				1.93
+sys/kern/kern_exec.c				1.534,1.535
+sys/kern/kern_fork.c				1.235
+tests/kernel/Makefile				1.99,1.100
+tests/kernel/getstack.c				1.1
+tests/kernel/getstack.h				1.1
+tests/kernel/h_getstack.c			1.1
+tests/kernel/t_signal_and_sp.c			1.22-1.24
+
+	exec, fork spawn: PR 60653, PR 60657, PR 60877:
+	Fix process stack base and error branches.
+	[riastradh, ticket #541]
+
+sys/net/if.c					1.539
+
+	ioctl(SIOCSIFGENERIC): PR 60745: check for network interface setpriv.
+	[riastradh, ticket #542]
+
+sys/net/if_l2tp.c				1.50,1.51
+
+	l2tp(4): PR 60743: block unprivileged config, validate
+	cookie length.
+	[riastradh, ticket #543]
+
+common/lib/libc/arch/x86_64/string/memchr.S	1.7,1.8
+tests/lib/libc/string/Makefile			1.16
+tests/lib/libc/string/t_memchr.c		1.4-1.7
+
+	memchr(3): PR 60744: fix case of arbitrary-length inputs
+	[riastradh, ticket #544]
+
+sys/net/if_wg.c					1.144
+
+	wg(4): PR 60734: add missing membar in endpoint updates.
+	[riastradh, ticket #545]
+
+sys/dev/usb/if_atu.c				1.79
+sys/dev/usb/if_otus.c				1.46
+sys/dev/usb/if_rum.c				1.72
+sys/dev/usb/if_run.c				1.43
+sys/dev/usb/if_upgt.c				1.34
+sys/dev/usb/if_ural.c				1.68
+sys/dev/usb/if_urtw.c				1.28
+sys/dev/usb/if_zyd.c				1.62
+
+	usbwifi: PR 60665: avoid crash on hotplug.
+	[riastradh, ticket #546]
+
+distrib/sets/lists/debug/mi			1.521
+distrib/sets/lists/tests/mi			1.1432
+sys/kern/uipc_socket2.c				1.149
+sys/kern/uipc_usrreq.c				1.211
+tests/kernel/Makefile				1.103
+tests/kernel/t_fdpass.c				1.1-1.4
+
+	sendmsg(2): PR 60832: avoid spurious ENOBUFS on fd-passing.
+	[riastradh, ticket #547]
+
+crypto/external/bsd/heimdal/dist/kpasswd/kpasswdd.c 1.6
+
+	kpasswdd(8): PR 60481: avoid crash on exit in inetd mode.
+	[riastradh, ticket #548]
+
+crypto/external/bsd/heimdal/dist/kdc/connect.c	1.6
+
+	kdc(8): PR 60841: fix child worker termination.
+	[riastradh, ticket #549]
+
+crypto/external/bsd/openssh/lib/ssh.expsym.builtin up to 1.1
+crypto/external/bsd/openssh/lib/ssh.expsym.common up to 1.1
+crypto/external/bsd/openssh/lib/ssh.expsym.openssl up to 1.1
+crypto/external/bsd/openssh/dist/ssh-mldsa-eddsa.c up to 1.3
+crypto/external/bsd/openssh/dist/kexmlkem768ecdh.c up to 1.2
+crypto/external/bsd/openssh/dist/getexecpath.c  up to 1.2
+crypto/external/bsd/openssh/dist/getexecpath.h  up to 1.1
+crypto/external/bsd/openssh/dist/libcrux-mlkem-mldsa.c up to 1.2
+crypto/external/bsd/openssh/dist/libcrux_internal.h up to 1.3
+crypto/external/bsd/openssh/dist/mlkem_mldsa.sh up to 1.1.1.1
+crypto/external/bsd/openssh/dist/libcrux_mlkem768_sha3.h delete
+crypto/external/bsd/openssh/dist/mlkem768.sh    delete
+crypto/external/bsd/openssh/lib/ssh.expsym      delete
+crypto/external/bsd/openssh/Makefile.inc        up to 1.21
+crypto/external/bsd/openssh/dist/PROTOCOL.agent up to 1.20
+crypto/external/bsd/openssh/dist/addr.h         up to 1.2
+crypto/external/bsd/openssh/dist/auth-options.c up to 1.31
+crypto/external/bsd/openssh/dist/auth-pam.c     up to 1.30
+crypto/external/bsd/openssh/dist/auth.c         up to 1.41
+crypto/external/bsd/openssh/dist/auth.h         up to 1.28
+crypto/external/bsd/openssh/dist/auth2-chall.c  up to 1.23
+crypto/external/bsd/openssh/dist/auth2-gss.c    up to 1.20
+crypto/external/bsd/openssh/dist/auth2-hostbased.c up to 1.28
+crypto/external/bsd/openssh/dist/auth2-pubkey.c up to 1.40
+crypto/external/bsd/openssh/dist/auth2.c        up to 1.37
+crypto/external/bsd/openssh/dist/authfd.c       up to 1.30
+crypto/external/bsd/openssh/dist/authfile.c     up to 1.32
+crypto/external/bsd/openssh/dist/chacha.c       up to 1.7
+crypto/external/bsd/openssh/dist/channels.c     up to 1.50
+crypto/external/bsd/openssh/dist/channels.h     up to 1.33
+crypto/external/bsd/openssh/dist/cipher.c       up to 1.28
+crypto/external/bsd/openssh/dist/cipher.h       up to 1.18
+crypto/external/bsd/openssh/dist/clientloop.c   up to 1.47
+crypto/external/bsd/openssh/dist/clientloop.h   up to 1.21
+crypto/external/bsd/openssh/dist/crypto_api.h   up to 1.10
+crypto/external/bsd/openssh/dist/digest.h       up to 1.4
+crypto/external/bsd/openssh/dist/ed25519-openssl.c up to 1.3
+crypto/external/bsd/openssh/dist/ed25519.c      up to 1.9
+crypto/external/bsd/openssh/dist/ed25519.sh     up to 1.1.1.4
+crypto/external/bsd/openssh/dist/gss-genr.c     up to 1.18
+crypto/external/bsd/openssh/dist/gss-serv.c     up to 1.19
+crypto/external/bsd/openssh/dist/kex-names.c    up to 1.6
+crypto/external/bsd/openssh/dist/kex.c          up to 1.42
+crypto/external/bsd/openssh/dist/kex.h          up to 1.31
+crypto/external/bsd/openssh/dist/kexecdh.c      up to 1.11
+crypto/external/bsd/openssh/dist/kexgen.c       up to 1.12
+crypto/external/bsd/openssh/dist/kexgexc.c      up to 1.20
+crypto/external/bsd/openssh/dist/kexmlkem768x25519.c up to 1.5
+crypto/external/bsd/openssh/dist/mac.c          up to 1.19
+crypto/external/bsd/openssh/dist/match.c        up to 1.18
+crypto/external/bsd/openssh/dist/misc-agent.c   up to 1.4
+crypto/external/bsd/openssh/dist/misc.c         up to 1.43
+crypto/external/bsd/openssh/dist/misc.h         up to 1.34
+crypto/external/bsd/openssh/dist/monitor.c      up to 1.53
+crypto/external/bsd/openssh/dist/monitor_wrap.c up to 1.41
+crypto/external/bsd/openssh/dist/monitor_wrap.h up to 1.28
+crypto/external/bsd/openssh/dist/mux.c          up to 1.41
+crypto/external/bsd/openssh/dist/myproposal.h   up to 1.29
+crypto/external/bsd/openssh/dist/packet.c       up to 1.59
+crypto/external/bsd/openssh/dist/packet.h       up to 1.31
+crypto/external/bsd/openssh/dist/pathnames.h    up to 1.20
+crypto/external/bsd/openssh/dist/readconf.c     up to 1.53
+crypto/external/bsd/openssh/dist/readconf.h     up to 1.39
+crypto/external/bsd/openssh/dist/scp.1          up to 1.34
+crypto/external/bsd/openssh/dist/scp.c          up to 1.47
+crypto/external/bsd/openssh/dist/servconf.c     up to 1.54
+crypto/external/bsd/openssh/dist/servconf.h     up to 1.36
+crypto/external/bsd/openssh/dist/serverloop.c   up to 1.41
+crypto/external/bsd/openssh/dist/session.c      up to 1.47
+crypto/external/bsd/openssh/dist/sftp-client.c  up to 1.41
+crypto/external/bsd/openssh/dist/sftp-client.h  up to 1.21
+crypto/external/bsd/openssh/dist/sftp-server.8  up to 1.16
+crypto/external/bsd/openssh/dist/sftp-server.c  up to 1.34
+crypto/external/bsd/openssh/dist/sftp-usergroup.c up to 1.4
+crypto/external/bsd/openssh/dist/sftp-usergroup.h up to 1.2
+crypto/external/bsd/openssh/dist/sftp.1         up to 1.32
+crypto/external/bsd/openssh/dist/sftp.c         up to 1.46
+crypto/external/bsd/openssh/dist/sk-api.h       up to 1.2
+crypto/external/bsd/openssh/dist/sk-usbhid.c    up to 1.13
+crypto/external/bsd/openssh/dist/srclimit.h     up to 1.2
+crypto/external/bsd/openssh/dist/ssh-add.1      up to 1.24
+crypto/external/bsd/openssh/dist/ssh-add.c      up to 1.36
+crypto/external/bsd/openssh/dist/ssh-agent.1    up to 1.23
+crypto/external/bsd/openssh/dist/ssh-agent.c    up to 1.48
+crypto/external/bsd/openssh/dist/ssh-ed25519-sk.c up to 1.7
+crypto/external/bsd/openssh/dist/ssh-ed25519.c  up to 1.14
+crypto/external/bsd/openssh/dist/ssh-gss.h      up to 1.12
+crypto/external/bsd/openssh/dist/ssh-keygen.1   up to 1.44
+crypto/external/bsd/openssh/dist/ssh-keygen.c   up to 1.53
+crypto/external/bsd/openssh/dist/ssh-keyscan.1  up to 1.21
+crypto/external/bsd/openssh/dist/ssh-keyscan.c  up to 1.39
+crypto/external/bsd/openssh/dist/ssh-keysign.8  up to 1.16
+crypto/external/bsd/openssh/dist/ssh-keysign.c  up to 1.30
+crypto/external/bsd/openssh/dist/ssh-sk.h       up to 1.2
+crypto/external/bsd/openssh/dist/ssh.1          up to 1.45
+crypto/external/bsd/openssh/dist/ssh.c          up to 1.51
+crypto/external/bsd/openssh/dist/ssh_api.c      up to 1.21
+crypto/external/bsd/openssh/dist/ssh_config.5   up to 1.48
+crypto/external/bsd/openssh/dist/sshbuf-io.c    up to 1.3
+crypto/external/bsd/openssh/dist/sshbuf.h       up to 1.24
+crypto/external/bsd/openssh/dist/sshconnect.c   up to 1.44
+crypto/external/bsd/openssh/dist/sshconnect.h   up to 1.21
+crypto/external/bsd/openssh/dist/sshconnect2.c  up to 1.55
+crypto/external/bsd/openssh/dist/sshd-auth.c    up to 1.9
+crypto/external/bsd/openssh/dist/sshd-session.c up to 1.18
+crypto/external/bsd/openssh/dist/sshd.8         up to 1.36
+crypto/external/bsd/openssh/dist/sshd.c         up to 1.59
+crypto/external/bsd/openssh/dist/sshd_config    up to 1.31
+crypto/external/bsd/openssh/dist/sshd_config.5  up to 1.51
+crypto/external/bsd/openssh/dist/ssherr-libcrypto.c up to 1.2
+crypto/external/bsd/openssh/dist/ssherr-nolibcrypto.c up to 1.2
+crypto/external/bsd/openssh/dist/ssherr.c       up to 1.13
+crypto/external/bsd/openssh/dist/ssherr.h       up to 1.7
+crypto/external/bsd/openssh/dist/sshkey.c       up to 1.39
+crypto/external/bsd/openssh/dist/sshkey.h       up to 1.28
+crypto/external/bsd/openssh/dist/sshpty.c       up to 1.10
+crypto/external/bsd/openssh/dist/sshpty.h       up to 1.8
+crypto/external/bsd/openssh/dist/sshsig.h       up to 1.2
+crypto/external/bsd/openssh/dist/version.h      up to 1.55
+crypto/external/bsd/openssh/dist/moduli-gen/moduli.2048 up to 1.23
+crypto/external/bsd/openssh/dist/moduli-gen/moduli.3072 up to 1.25
+crypto/external/bsd/openssh/dist/moduli-gen/moduli.4096 up to 1.25
+crypto/external/bsd/openssh/dist/moduli-gen/moduli.6144 up to 1.25
+crypto/external/bsd/openssh/dist/moduli-gen/moduli.7680 up to 1.25
+crypto/external/bsd/openssh/dist/moduli-gen/moduli.8192 up to 1.25
+crypto/external/bsd/openssh/lib/Makefile        up to 1.55
+crypto/external/bsd/openssh/lib/shlib_version   up to 1.44
+crypto/external/bsd/openssh/libexec/Makefile    up to 1.4 (adapted)
+distrib/sets/lists/base/shl.mi			1.1052
+distrib/sets/lists/debug/shl.mi			1.416
+doc/3RDPARTY					(manually edited)
+
+	Import OpenSSH 10.6.
+	[christos, ticket #550]
+
+sys/nfs/nfs_vnops.c				1.328,1.329
+
+	nfs: PR 60554: fix UB in shift.
+	[riastradh, ticket #551]
+
+sys/nfs/nfs_export.c				1.64,1.65
+sys/nfs/nfs_syscalls.c				1.166-1.170
+sys/nfs/nfs_var.h				1.98,1.99
+
+	nfssvc(2): PR 60645: avoid user-triggered arithmetic overflow.
+	[riastradh, ticket #552]
+
+sys/kern/kern_proc.c				1.284-1.286
+sys/sys/proc.h					1.374
+sys/uvm/uvm_map.c				1.432
+
+	kernel: PR 60568: fix deadlock/panic in process introspection paths.
+	[riastradh, ticket #553]
+
+sys/kern/vfs_vnode.c				1.159
+
+	kern.maxvnodes: PR 60603: don't undertake a sisyphean task.
+	[riastradh, ticket #554]
+
+sys/kern/kern_proc.c				1.287
+sys/kern/subr_pool.c				1.296,1.297,1.299
+sys/kern/vfs_vnode.c				1.160
+
+	kernel: PR 60812: allocate various things with declared alignment.
+	[riastradh, ticket #555]
+
+xsrc/external/mit/libX11/dist/src/os2Stubs.c         delete
+xsrc/external/mit/libX11/dist/AUTHORS                up to 1.1.1.4
+xsrc/external/mit/libX11/dist/COPYING                up to 1.1.1.5
+xsrc/external/mit/libX11/dist/ChangeLog              up to 1.11
+xsrc/external/mit/libX11/dist/Makefile.in            up to 1.1.1.29
+xsrc/external/mit/libX11/dist/README.md              up to 1.10
+xsrc/external/mit/libX11/dist/aclocal.m4             up to 1.10
+xsrc/external/mit/libX11/dist/compile                up to 1.1.1.16
+xsrc/external/mit/libX11/dist/config.guess           up to 1.1.1.21
+xsrc/external/mit/libX11/dist/config.sub             up to 1.1.1.20
+xsrc/external/mit/libX11/dist/configure              up to 1.11
+xsrc/external/mit/libX11/dist/configure.ac           up to 1.11
+xsrc/external/mit/libX11/dist/depcomp                up to 1.1.1.19
+xsrc/external/mit/libX11/dist/install-sh             up to 1.1.1.17
+xsrc/external/mit/libX11/dist/ltmain.sh              up to 1.1.1.21
+xsrc/external/mit/libX11/dist/missing                up to 1.1.1.18
+xsrc/external/mit/libX11/dist/test-driver            up to 1.1.1.16
+xsrc/external/mit/libX11/dist/include/Makefile.in    up to 1.1.1.30
+xsrc/external/mit/libX11/dist/include/X11/Xlibint.h  up to 1.7
+xsrc/external/mit/libX11/dist/include/X11/Xutil.h    up to 1.1.1.7
+xsrc/external/mit/libX11/dist/m4/libtool.m4          up to 1.16
+xsrc/external/mit/libX11/dist/m4/ltoptions.m4        up to 1.10
+xsrc/external/mit/libX11/dist/m4/ltsugar.m4          up to 1.10
+xsrc/external/mit/libX11/dist/m4/ltversion.m4        up to 1.10
+xsrc/external/mit/libX11/dist/m4/lt~obsolete.m4      up to 1.10
+xsrc/external/mit/libX11/dist/man/AllPlanes.man      up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/BlackPixelOfScreen.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/Compose.man        up to 1.1.1.8
+xsrc/external/mit/libX11/dist/man/DisplayOfCCC.man   up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/ImageByteOrder.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/IsCursorKey.man    up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/Makefile.in        up to 1.1.1.29
+xsrc/external/mit/libX11/dist/man/XAddHost.man       up to 1.1.1.8
+xsrc/external/mit/libX11/dist/man/XAllocClassHint.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/XAllocColor.man    up to 1.1.1.8
+xsrc/external/mit/libX11/dist/man/XAllocIconSize.man up to 1.1.1.7
+xsrc/external/mit/libX11/dist/man/XAllocSizeHints.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/XAllocStandardColormap.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/XAllocWMHints.man  up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/XAnyEvent.man      up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/XButtonEvent.man   up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XChangeKeyboardControl.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/XChangeKeyboardMapping.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/XChangeSaveSet.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XChangeWindowAttributes.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XCirculateEvent.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XCirculateRequestEvent.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XClearArea.man     up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XClientMessageEvent.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XColormapEvent.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XConfigureEvent.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XConfigureRequestEvent.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XConfigureWindow.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/XCopyArea.man      up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/XCreateColormap.man up to 1.1.1.7
+xsrc/external/mit/libX11/dist/man/XCreateFontCursor.man up to 1.1.1.7
+xsrc/external/mit/libX11/dist/man/XCreateFontSet.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/XCreateGC.man      up to 1.8
+xsrc/external/mit/libX11/dist/man/XCreateIC.man      up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XCreateOC.man      up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/XCreatePixmap.man  up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XCreateRegion.man  up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XCreateWindow.man  up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/XCreateWindowEvent.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XCrossingEvent.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XDefineCursor.man  up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XDestroyWindow.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XDestroyWindowEvent.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XDrawArc.man       up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XDrawImageString.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/XDrawLine.man      up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XDrawPoint.man     up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XDrawRectangle.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XDrawString.man    up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/XDrawText.man      up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XEmptyRegion.man   up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XErrorEvent.man    up to 1.1.1.7
+xsrc/external/mit/libX11/dist/man/XExposeEvent.man   up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XExtentsOfFontSet.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XFillRectangle.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XFilterEvent.man   up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XFlush.man         up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/XFocusChangeEvent.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XFontSetExtents.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XFontsOfFontSet.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XGetEventData.man  up to 1.1.1.4
+xsrc/external/mit/libX11/dist/man/XGetVisualInfo.man up to 1.1.1.7
+xsrc/external/mit/libX11/dist/man/XGetWindowAttributes.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XGetWindowProperty.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/XGetXCBConnection.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XGrabButton.man    up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XGrabKey.man       up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XGrabKeyboard.man  up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/XGrabPointer.man   up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/XGrabServer.man    up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XGraphicsExposeEvent.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/XGravityEvent.man  up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XIconifyWindow.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XIfEvent.man       up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/XInitImage.man     up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/XInstallColormap.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XInternAtom.man    up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/XIntersectRegion.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XKeymapEvent.man   up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XListFonts.man     up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/XLoadFont.man      up to 1.1.1.7
+xsrc/external/mit/libX11/dist/man/XLookupKeysym.man  up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/XMapEvent.man      up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XMapRequestEvent.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XMapWindow.man     up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/XNextEvent.man     up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XOpenDisplay.man   up to 1.1.1.7
+xsrc/external/mit/libX11/dist/man/XOpenIM.man        up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/XOpenOM.man        up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/XParseGeometry.man up to 1.1.1.7
+xsrc/external/mit/libX11/dist/man/XPolygonRegion.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XPropertyEvent.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XPutBackEvent.man  up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XQueryBestSize.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XQueryColor.man    up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/XQueryExtension.man up to 1.1.1.3
+xsrc/external/mit/libX11/dist/man/XQueryPointer.man  up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XQueryTree.man     up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XRaiseWindow.man   up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/XReadBitmapFile.man up to 1.1.1.7
+xsrc/external/mit/libX11/dist/man/XRecolorCursor.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/XReparentEvent.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XReparentWindow.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XResizeRequestEvent.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XSelectionClearEvent.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XSelectionEvent.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XSelectionRequestEvent.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XSendEvent.man     up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XSetArcMode.man    up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XSetClipOrigin.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XSetCommand.man    up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XSetErrorHandler.man up to 1.1.1.7
+xsrc/external/mit/libX11/dist/man/XSetEventQueueOwner.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XSetFillStyle.man  up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XSetFont.man       up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XSetFontPath.man   up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XSetICFocus.man    up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XSetICValues.man   up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XSetInputFocus.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/XSetLineAttributes.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/XSetPointerMapping.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/XSetState.man      up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/XSetTextProperty.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XSetTile.man       up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XSetTransientForHint.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XSetWMClientMachine.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XSetWMColormapWindows.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XSetWMIconName.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/XSetWMName.man     up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/XSetWMProperties.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/XSetWMProtocols.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XStoreBytes.man    up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/XStoreColors.man   up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/XStringListToTextProperty.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XStringToKeysym.man up to 1.1.1.8
+xsrc/external/mit/libX11/dist/man/XSynchronize.man   up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XTextExtents.man   up to 1.1.1.7
+xsrc/external/mit/libX11/dist/man/XTextWidth.man     up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/XUnmapEvent.man    up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XUnmapWindow.man   up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/XVisibilityEvent.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XWarpPointer.man   up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XcmsAllocColor.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/XcmsCCCOfColormap.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XcmsCIELabQueryMaxC.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XcmsCIELuvQueryMaxC.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XcmsColor.man      up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XcmsConvertColors.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XcmsCreateCCC.man  up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XcmsDefaultCCC.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XcmsQueryBlack.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XcmsQueryColor.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/XcmsSetWhitePoint.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XcmsStoreColor.man up to 1.1.1.7
+xsrc/external/mit/libX11/dist/man/XcmsTekHVCQueryMaxC.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XmbDrawImageString.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/XmbDrawString.man  up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/XmbDrawText.man    up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XmbLookupString.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XmbResetIC.man     up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XmbTextEscapement.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/XmbTextExtents.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/XmbTextListToTextProperty.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/XmbTextPerCharExtents.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/XrmEnumerateDatabase.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XrmGetFileDatabase.man up to 1.1.1.7
+xsrc/external/mit/libX11/dist/man/XrmGetResource.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/XrmInitialize.man  up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/XrmMergeDatabases.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/XrmPutResource.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/XrmUniqueQuark.man up to 1.1.1.7
+xsrc/external/mit/libX11/dist/man/xkb/Makefile.am    up to 1.1.1.8
+xsrc/external/mit/libX11/dist/man/xkb/Makefile.in    up to 1.1.1.30
+xsrc/external/mit/libX11/dist/man/xkb/XkbActionCtrls.man up to 1.1.1.7
+xsrc/external/mit/libX11/dist/man/xkb/XkbActionSetCtrls.man up to 1.1.1.2
+xsrc/external/mit/libX11/dist/man/xkb/XkbAddDeviceLedInfo.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/xkb/XkbAddGeomColor.man up to 1.1.1.7
+xsrc/external/mit/libX11/dist/man/xkb/XkbAddGeomDoodad.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbAddGeomKey.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/xkb/XkbAddGeomKeyAlias.man up to 1.1.1.7
+xsrc/external/mit/libX11/dist/man/xkb/XkbAddGeomOutline.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/xkb/XkbAddGeomOverlay.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/xkb/XkbAddGeomOverlayKey.man up to 1.1.1.7
+xsrc/external/mit/libX11/dist/man/xkb/XkbAddGeomOverlayRow.man up to 1.1.1.7
+xsrc/external/mit/libX11/dist/man/xkb/XkbAddGeomProperty.man up to 1.1.1.7
+xsrc/external/mit/libX11/dist/man/xkb/XkbAddGeomRow.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbAddGeomSection.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/xkb/XkbAddGeomShape.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/xkb/XkbAddSymInterpret.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbAllocClientMap.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbAllocCompatMap.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/xkb/XkbAllocControls.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbAllocDeviceInfo.man up to 1.1.1.7
+xsrc/external/mit/libX11/dist/man/xkb/XkbAllocGeomColors.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbAllocGeomDoodads.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbAllocGeomKeyAliases.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbAllocGeomKeys.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbAllocGeomOutlines.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbAllocGeomOverlayKeys.man up to 1.1.1.3
+xsrc/external/mit/libX11/dist/man/xkb/XkbAllocGeomOverlayRows.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbAllocGeomOverlays.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbAllocGeomPoints.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbAllocGeomProps.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbAllocGeomRows.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbAllocGeomSectionDoodads.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbAllocGeomSections.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbAllocGeomShapes.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbAllocGeometry.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbAllocIndicatorMaps.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbAllocKeyboard.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbAllocNames.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbAllocServerMap.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbApplyCompatMapToKey.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/xkb/XkbBell.man    up to 1.1.1.8
+xsrc/external/mit/libX11/dist/man/xkb/XkbBellEvent.man up to 1.1.1.8
+xsrc/external/mit/libX11/dist/man/xkb/XkbChangeControls.man up to 1.1.1.8
+xsrc/external/mit/libX11/dist/man/xkb/XkbChangeDeviceInfo.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/xkb/XkbChangeEnabledControls.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/xkb/XkbChangeMap.man up to 1.1.1.7
+xsrc/external/mit/libX11/dist/man/xkb/XkbChangeNames.man up to 1.1.1.7
+xsrc/external/mit/libX11/dist/man/xkb/XkbChangeTypesOfKey.man up to 1.1.1.7
+xsrc/external/mit/libX11/dist/man/xkb/XkbComputeRowBounds.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbComputeSectionBounds.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbComputeShapeBounds.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/xkb/XkbComputeShapeTop.man up to 1.1.1.7
+xsrc/external/mit/libX11/dist/man/xkb/XkbCopyKeyType.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/xkb/XkbCopyKeyTypes.man up to 1.1.1.7
+xsrc/external/mit/libX11/dist/man/xkb/XkbDeviceBell.man up to 1.1.1.7
+xsrc/external/mit/libX11/dist/man/xkb/XkbDeviceBellEvent.man up to 1.1.1.7
+xsrc/external/mit/libX11/dist/man/xkb/XkbFindOverlayForKey.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/xkb/XkbForceBell.man up to 1.1.1.7
+xsrc/external/mit/libX11/dist/man/xkb/XkbForceDeviceBell.man up to 1.1.1.7
+xsrc/external/mit/libX11/dist/man/xkb/XkbFreeClientMap.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/xkb/XkbFreeCompatMap.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/xkb/XkbFreeComponentList.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbFreeControls.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbFreeDeviceInfo.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/xkb/XkbFreeGeomColors.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbFreeGeomDoodads.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbFreeGeomKeyAliases.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbFreeGeomKeys.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbFreeGeomOutlines.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbFreeGeomOverlayKeys.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbFreeGeomOverlayRows.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbFreeGeomOverlays.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbFreeGeomPoints.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbFreeGeomProperties.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbFreeGeomRows.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbFreeGeomSections.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbFreeGeomShapes.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbFreeGeometry.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/xkb/XkbFreeIndicatorMaps.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/xkb/XkbFreeKeyboard.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/xkb/XkbFreeNames.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbFreeServerMap.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/xkb/XkbGetAutoRepeatRate.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbGetAutoResetControls.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbGetCompatMap.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbGetControls.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbGetControlsChanges.man up to 1.1.1.7
+xsrc/external/mit/libX11/dist/man/xkb/XkbGetDeviceButtonActions.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbGetDeviceInfo.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/xkb/XkbGetDeviceInfoChanges.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbGetDeviceLedInfo.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbGetGeometry.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbGetIndicatorMap.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbGetIndicatorState.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/xkb/XkbGetKeyActions.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbGetKeyBehaviors.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/xkb/XkbGetKeyExplicitComponents.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbGetKeyModifierMap.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbGetKeySyms.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbGetKeyTypes.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/xkb/XkbGetKeyVirtualModMap.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbGetKeyboard.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/xkb/XkbGetKeyboardByName.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/xkb/XkbGetMap.man  up to 1.1.1.7
+xsrc/external/mit/libX11/dist/man/xkb/XkbGetNamedGeometry.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/xkb/XkbGetNamedIndicator.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/xkb/XkbGetNames.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbGetState.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/xkb/XkbGetUpdatedMap.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/xkb/XkbGetVirtualMods.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/xkb/XkbGetXlibControls.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbIgnoreExtension.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbKeyAction.man up to 1.1.1.7
+xsrc/external/mit/libX11/dist/man/xkb/XkbKeyActionEntry.man up to 1.1.1.8
+xsrc/external/mit/libX11/dist/man/xkb/XkbKeyActionsPtr.man up to 1.1.1.7
+xsrc/external/mit/libX11/dist/man/xkb/XkbKeyGroupInfo.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/xkb/XkbKeyGroupWidth.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbKeyGroupsWidth.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbKeyHasActions.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/xkb/XkbKeyKeyType.man up to 1.1.1.2
+xsrc/external/mit/libX11/dist/man/xkb/XkbKeyKeyTypeIndex.man up to 1.1.1.2
+xsrc/external/mit/libX11/dist/man/xkb/XkbKeyNumActions.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/xkb/XkbKeyNumGroups.man up to 1.1.1.8
+xsrc/external/mit/libX11/dist/man/xkb/XkbKeyNumSyms.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbKeySymEntry.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbKeySymsPtr.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbKeyTypesForCoreSymbols.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbKeycodeToKeysym.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbKeysymToModifiers.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbLatchGroup.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbLatchModifiers.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbLibraryVersion.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbListComponents.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/xkb/XkbLockGroup.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbLockModifiers.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbLookupKeyBinding.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbLookupKeySym.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/xkb/XkbModActionVMods.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbNoteControlsChanges.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/xkb/XkbNoteDeviceChanges.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/xkb/XkbNoteNameChanges.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbOpenDisplay.man up to 1.1.1.7
+xsrc/external/mit/libX11/dist/man/xkb/XkbOutOfRangeGroupInfo.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/xkb/XkbOutOfRangeGroupNumber.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/xkb/XkbPtrActionX.man up to 1.1.1.7
+xsrc/external/mit/libX11/dist/man/xkb/XkbPtrActionY.man up to 1.1.1.7
+xsrc/external/mit/libX11/dist/man/xkb/XkbQueryExtension.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbRefreshKeyboardMapping.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbResizeDeviceButtonActions.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/xkb/XkbResizeKeyActions.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbResizeKeySyms.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbResizeKeyType.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbSAGroup.man up to 1.1.1.9
+xsrc/external/mit/libX11/dist/man/xkb/XkbSAPtrDfltValue.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/xkb/XkbSARedirectSetVMods.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/xkb/XkbSARedirectSetVModsMask.man up to 1.1.1.7
+xsrc/external/mit/libX11/dist/man/xkb/XkbSARedirectVMods.man up to 1.1.1.7
+xsrc/external/mit/libX11/dist/man/xkb/XkbSARedirectVModsMask.man up to 1.1.1.7
+xsrc/external/mit/libX11/dist/man/xkb/XkbSAScreen.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/xkb/XkbSASetGroup.man up to 1.1.1.8
+xsrc/external/mit/libX11/dist/man/xkb/XkbSASetPtrDfltValue.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/xkb/XkbSASetScreen.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/xkb/XkbSelectEventDetails.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbSetAutoRepeatRate.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbSetAutoResetControls.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbSetCompatMap.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/xkb/XkbSetControls.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbSetDebuggingFlags.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbSetDeviceButtonActions.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/xkb/XkbSetDeviceInfo.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/xkb/XkbSetIgnoreLockMods.man up to 1.1.1.7
+xsrc/external/mit/libX11/dist/man/xkb/XkbSetIndicatorMap.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/xkb/XkbSetMap.man  up to 1.1.1.7
+xsrc/external/mit/libX11/dist/man/xkb/XkbSetModActionVMods.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbSetNamedIndicator.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/xkb/XkbSetNames.man up to 1.1.1.7
+xsrc/external/mit/libX11/dist/man/xkb/XkbSetPtrActionX.man up to 1.1.1.7
+xsrc/external/mit/libX11/dist/man/xkb/XkbSetPtrActionY.man up to 1.1.1.7
+xsrc/external/mit/libX11/dist/man/xkb/XkbSetServerInternalMods.man up to 1.1.1.7
+xsrc/external/mit/libX11/dist/man/xkb/XkbSetXlibControls.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbTranslateKeyCode.man up to 1.1.1.6
+xsrc/external/mit/libX11/dist/man/xkb/XkbTranslateKeySym.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbUpdateMapFromCore.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/man/xkb/XkbVirtualModsToReal.man up to 1.1.1.5
+xsrc/external/mit/libX11/dist/modules/Makefile.in    up to 1.1.1.29
+xsrc/external/mit/libX11/dist/modules/im/Makefile.in up to 1.1.1.29
+xsrc/external/mit/libX11/dist/modules/im/ximcp/Makefile.in up to 1.1.1.29
+xsrc/external/mit/libX11/dist/modules/im/ximcp/imDefFlt.c up to 1.1.1.7
+xsrc/external/mit/libX11/dist/modules/im/ximcp/imDefIm.c up to 1.1.1.16
+xsrc/external/mit/libX11/dist/modules/im/ximcp/imDefLkup.c up to 1.1.1.12
+xsrc/external/mit/libX11/dist/modules/im/ximcp/imLcIc.c up to 1.1.1.9
+xsrc/external/mit/libX11/dist/modules/im/ximcp/imRm.c up to 1.1.1.12
+xsrc/external/mit/libX11/dist/modules/im/ximcp/imRmAttr.c up to 1.5
+xsrc/external/mit/libX11/dist/modules/im/ximcp/imThaiFlt.c up to 1.1.1.9
+xsrc/external/mit/libX11/dist/modules/lc/Makefile.in up to 1.1.1.29
+xsrc/external/mit/libX11/dist/modules/lc/Utf8/Makefile.in up to 1.1.1.29
+xsrc/external/mit/libX11/dist/modules/lc/def/Makefile.in up to 1.1.1.29
+xsrc/external/mit/libX11/dist/modules/lc/gen/Makefile.in up to 1.1.1.29
+xsrc/external/mit/libX11/dist/modules/lc/gen/lcGenConv.c up to 1.10
+xsrc/external/mit/libX11/dist/modules/om/Makefile.in up to 1.1.1.29
+xsrc/external/mit/libX11/dist/modules/om/generic/Makefile.in up to 1.1.1.29
+xsrc/external/mit/libX11/dist/modules/om/generic/omGeneric.c up to 1.1.1.13
+xsrc/external/mit/libX11/dist/nls/Makefile.in        up to 1.1.1.29
+xsrc/external/mit/libX11/dist/nls/compose.dir.pre    up to 1.1.1.13
+xsrc/external/mit/libX11/dist/nls/locale.alias.pre   up to 1.1.1.15
+xsrc/external/mit/libX11/dist/nls/C/XLC_LOCALE.pre   up to 1.1.1.4
+xsrc/external/mit/libX11/dist/nls/armscii-8/XLC_LOCALE.pre up to 1.1.1.4
+xsrc/external/mit/libX11/dist/nls/en_US.UTF-8/XLC_LOCALE.pre up to 1.4
+xsrc/external/mit/libX11/dist/nls/georgian-academy/XLC_LOCALE.pre up to 1.1.1.4
+xsrc/external/mit/libX11/dist/nls/georgian-ps/XLC_LOCALE.pre up to 1.1.1.4
+xsrc/external/mit/libX11/dist/nls/ibm-cp1133/XLC_LOCALE.pre up to 1.1.1.4
+xsrc/external/mit/libX11/dist/nls/iscii-dev/XLC_LOCALE.pre up to 1.1.1.4
+xsrc/external/mit/libX11/dist/nls/isiri-3342/XLC_LOCALE.pre up to 1.1.1.4
+xsrc/external/mit/libX11/dist/nls/iso8859-1/XLC_LOCALE.pre up to 1.1.1.4
+xsrc/external/mit/libX11/dist/nls/iso8859-10/XLC_LOCALE.pre up to 1.1.1.4
+xsrc/external/mit/libX11/dist/nls/iso8859-11/XLC_LOCALE.pre up to 1.1.1.4
+xsrc/external/mit/libX11/dist/nls/iso8859-13/XLC_LOCALE.pre up to 1.1.1.4
+xsrc/external/mit/libX11/dist/nls/iso8859-14/XLC_LOCALE.pre up to 1.1.1.4
+xsrc/external/mit/libX11/dist/nls/iso8859-15/XLC_LOCALE.pre up to 1.1.1.4
+xsrc/external/mit/libX11/dist/nls/iso8859-2/Compose.pre up to 1.1.1.3
+xsrc/external/mit/libX11/dist/nls/iso8859-2/XLC_LOCALE.pre up to 1.1.1.4
+xsrc/external/mit/libX11/dist/nls/iso8859-3/XLC_LOCALE.pre up to 1.1.1.4
+xsrc/external/mit/libX11/dist/nls/iso8859-4/XLC_LOCALE.pre up to 1.1.1.4
+xsrc/external/mit/libX11/dist/nls/iso8859-5/XLC_LOCALE.pre up to 1.1.1.4
+xsrc/external/mit/libX11/dist/nls/iso8859-6/XLC_LOCALE.pre up to 1.1.1.4
+xsrc/external/mit/libX11/dist/nls/iso8859-7/XLC_LOCALE.pre up to 1.1.1.4
+xsrc/external/mit/libX11/dist/nls/iso8859-8/XLC_LOCALE.pre up to 1.1.1.4
+xsrc/external/mit/libX11/dist/nls/iso8859-9/XLC_LOCALE.pre up to 1.1.1.4
+xsrc/external/mit/libX11/dist/nls/iso8859-9e/XLC_LOCALE.pre up to 1.1.1.4
+xsrc/external/mit/libX11/dist/nls/ja/XLC_LOCALE.pre  up to 1.1.1.4
+xsrc/external/mit/libX11/dist/nls/ja.JIS/XLC_LOCALE.pre up to 1.1.1.4
+xsrc/external/mit/libX11/dist/nls/ja.SJIS/XLC_LOCALE.pre up to 1.1.1.5
+xsrc/external/mit/libX11/dist/nls/ja_JP.UTF-8/XLC_LOCALE.pre up to 1.1.1.3
+xsrc/external/mit/libX11/dist/nls/ko/XLC_LOCALE.pre  up to 1.1.1.4
+xsrc/external/mit/libX11/dist/nls/ko_KR.UTF-8/XLC_LOCALE.pre up to 1.1.1.3
+xsrc/external/mit/libX11/dist/nls/koi8-c/XLC_LOCALE.pre up to 1.1.1.4
+xsrc/external/mit/libX11/dist/nls/koi8-r/XLC_LOCALE.pre up to 1.1.1.4
+xsrc/external/mit/libX11/dist/nls/koi8-u/XLC_LOCALE.pre up to 1.1.1.4
+xsrc/external/mit/libX11/dist/nls/microsoft-cp1251/XLC_LOCALE.pre up to 1.1.1.4
+xsrc/external/mit/libX11/dist/nls/microsoft-cp1255/XLC_LOCALE.pre up to 1.1.1.4
+xsrc/external/mit/libX11/dist/nls/microsoft-cp1256/XLC_LOCALE.pre up to 1.1.1.4
+xsrc/external/mit/libX11/dist/nls/mulelao-1/XLC_LOCALE.pre up to 1.1.1.4
+xsrc/external/mit/libX11/dist/nls/nokhchi-1/XLC_LOCALE.pre up to 1.1.1.4
+xsrc/external/mit/libX11/dist/nls/pt_BR.UTF-8/XLC_LOCALE.pre up to 1.1.1.2
+xsrc/external/mit/libX11/dist/nls/pt_PT.UTF-8/XLC_LOCALE.pre up to 1.1.1.2
+xsrc/external/mit/libX11/dist/nls/tatar-cyr/XLC_LOCALE.pre up to 1.1.1.4
+xsrc/external/mit/libX11/dist/nls/th_TH/XLC_LOCALE.pre up to 1.1.1.6
+xsrc/external/mit/libX11/dist/nls/th_TH.UTF-8/XLC_LOCALE.pre up to 1.1.1.5
+xsrc/external/mit/libX11/dist/nls/tscii-0/XLC_LOCALE.pre up to 1.1.1.4
+xsrc/external/mit/libX11/dist/nls/vi_VN.tcvn/XLC_LOCALE.pre up to 1.1.1.4
+xsrc/external/mit/libX11/dist/nls/vi_VN.viscii/XLC_LOCALE.pre up to 1.1.1.4
+xsrc/external/mit/libX11/dist/nls/zh_CN.UTF-8/XLC_LOCALE.pre up to 1.1.1.3
+xsrc/external/mit/libX11/dist/nls/zh_CN.gb18030/XLC_LOCALE.pre up to 1.1.1.2
+xsrc/external/mit/libX11/dist/nls/zh_CN.gbk/XLC_LOCALE.pre up to 1.1.1.3
+xsrc/external/mit/libX11/dist/nls/zh_HK.UTF-8/XLC_LOCALE.pre up to 1.1.1.2
+xsrc/external/mit/libX11/dist/nls/zh_HK.big5/XLC_LOCALE.pre up to 1.1.1.3
+xsrc/external/mit/libX11/dist/nls/zh_HK.big5hkscs/XLC_LOCALE.pre up to 1.1.1.3
+xsrc/external/mit/libX11/dist/nls/zh_TW/XLC_LOCALE.pre up to 1.1.1.4
+xsrc/external/mit/libX11/dist/nls/zh_TW.UTF-8/XLC_LOCALE.pre up to 1.1.1.3
+xsrc/external/mit/libX11/dist/specs/Makefile.in      up to 1.1.1.26
+xsrc/external/mit/libX11/dist/specs/XIM/Makefile.in  up to 1.1.1.26
+xsrc/external/mit/libX11/dist/specs/XKB/Makefile.in  up to 1.1.1.22
+xsrc/external/mit/libX11/dist/specs/i18n/Makefile.in up to 1.1.1.26
+xsrc/external/mit/libX11/dist/specs/i18n/compose/Makefile.in up to 1.1.1.19
+xsrc/external/mit/libX11/dist/specs/i18n/framework/Makefile.in up to 1.1.1.22
+xsrc/external/mit/libX11/dist/specs/i18n/localedb/Makefile.in up to 1.1.1.22
+xsrc/external/mit/libX11/dist/specs/i18n/trans/Makefile.in up to 1.1.1.22
+xsrc/external/mit/libX11/dist/specs/i18n/trans/trans.xml up to 1.1.1.5
+xsrc/external/mit/libX11/dist/specs/libX11/AppC.xml  up to 1.1.1.9
+xsrc/external/mit/libX11/dist/specs/libX11/AppD.xml  up to 1.1.1.6
+xsrc/external/mit/libX11/dist/specs/libX11/CH02.xml  up to 1.1.1.6
+xsrc/external/mit/libX11/dist/specs/libX11/CH03.xml  up to 1.1.1.7
+xsrc/external/mit/libX11/dist/specs/libX11/CH04.xml  up to 1.1.1.8
+xsrc/external/mit/libX11/dist/specs/libX11/CH05.xml  up to 1.1.1.7
+xsrc/external/mit/libX11/dist/specs/libX11/CH06.xml  up to 1.1.1.7
+xsrc/external/mit/libX11/dist/specs/libX11/CH07.xml  up to 1.1.1.7
+xsrc/external/mit/libX11/dist/specs/libX11/CH08.xml  up to 1.1.1.7
+xsrc/external/mit/libX11/dist/specs/libX11/CH09.xml  up to 1.1.1.7
+xsrc/external/mit/libX11/dist/specs/libX11/CH10.xml  up to 1.1.1.4
+xsrc/external/mit/libX11/dist/specs/libX11/CH11.xml  up to 1.1.1.6
+xsrc/external/mit/libX11/dist/specs/libX11/CH12.xml  up to 1.1.1.7
+xsrc/external/mit/libX11/dist/specs/libX11/CH13.xml  up to 1.1.1.9
+xsrc/external/mit/libX11/dist/specs/libX11/CH14.xml  up to 1.1.1.8
+xsrc/external/mit/libX11/dist/specs/libX11/CH15.xml  up to 1.1.1.6
+xsrc/external/mit/libX11/dist/specs/libX11/CH16.xml  up to 1.1.1.7
+xsrc/external/mit/libX11/dist/specs/libX11/Makefile.in up to 1.1.1.26
+xsrc/external/mit/libX11/dist/specs/libX11/credits.xml up to 1.1.1.3
+xsrc/external/mit/libX11/dist/specs/libX11/glossary.xml up to 1.1.1.3
+xsrc/external/mit/libX11/dist/specs/libX11/libX11.xml up to 1.1.1.3
+xsrc/external/mit/libX11/dist/src/KeysymStr.c        up to 1.1.1.6
+xsrc/external/mit/libX11/dist/src/Makefile.am        up to 1.1.1.16
+xsrc/external/mit/libX11/dist/src/Makefile.in        up to 1.1.1.29
+xsrc/external/mit/libX11/dist/src/OpenDis.c          up to 1.6
+xsrc/external/mit/libX11/dist/src/SetFPath.c         up to 1.5
+xsrc/external/mit/libX11/dist/src/XErrorDB           up to 1.1.1.7
+xsrc/external/mit/libX11/dist/src/XlibInt.c          up to 1.18
+xsrc/external/mit/libX11/dist/src/Xrm.c              up to 1.1.1.13
+xsrc/external/mit/libX11/dist/src/config.h.in        up to 1.1.1.20
+xsrc/external/mit/libX11/dist/src/xcb_io.c           up to 1.1.1.19
+xsrc/external/mit/libX11/dist/src/util/Makefile.in   up to 1.1.1.30
+xsrc/external/mit/libX11/dist/src/util/mkks.sh       up to 1.1.1.2
+xsrc/external/mit/libX11/dist/src/xcms/Makefile.in   up to 1.1.1.29
+xsrc/external/mit/libX11/dist/src/xkb/Makefile.in    up to 1.1.1.29
+xsrc/external/mit/libX11/dist/src/xkb/XKBBind.c      up to 1.4
+xsrc/external/mit/libX11/dist/src/xkb/XKBGAlloc.c    up to 1.1.1.13
+xsrc/external/mit/libX11/dist/src/xkb/XKBGeom.c      up to 1.1.1.11
+xsrc/external/mit/libX11/dist/src/xkb/XKBGetMap.c    up to 1.1.1.9
+xsrc/external/mit/libX11/dist/src/xkb/XKBMisc.c      up to 1.1.1.11
+xsrc/external/mit/libX11/dist/src/xkb/XKBNames.c     up to 1.1.1.11
+xsrc/external/mit/libX11/dist/src/xkb/XKBSetGeom.c   up to 1.1.1.8
+xsrc/external/mit/libX11/dist/src/xkb/XKBUse.c       up to 1.1.1.7
+xsrc/external/mit/libX11/dist/src/xkb/XKBleds.c      up to 1.1.1.7
+xsrc/external/mit/libX11/dist/src/xlibi18n/Makefile.in up to 1.1.1.29
+xsrc/external/mit/libX11/dist/src/xlibi18n/XimintP.h up to 1.1.1.10
+xsrc/external/mit/libX11/dist/src/xlibi18n/lcGeneric.c up to 1.1.1.12
+xsrc/external/mit/libX11/dist/src/xlibi18n/lcUTF8.c  up to 1.1.1.10
+xsrc/external/mit/libX11/dist/src/xlibi18n/lcUniConv/iso8859_9e.h up to 1.1.1.4
+xsrc/external/mit/libXi/dist/ChangeLog               up to 1.1.1.20
+xsrc/external/mit/libXi/dist/Makefile.in             up to 1.1.1.17
+xsrc/external/mit/libXi/dist/aclocal.m4              up to 1.1.1.19
+xsrc/external/mit/libXi/dist/compile                 up to 1.1.1.7
+xsrc/external/mit/libXi/dist/config.guess            up to 1.1.1.15
+xsrc/external/mit/libXi/dist/config.sub              up to 1.1.1.15
+xsrc/external/mit/libXi/dist/configure               up to 1.1.1.20
+xsrc/external/mit/libXi/dist/configure.ac            up to 1.1.1.20
+xsrc/external/mit/libXi/dist/depcomp                 up to 1.1.1.11
+xsrc/external/mit/libXi/dist/install-sh              up to 1.1.1.9
+xsrc/external/mit/libXi/dist/ltmain.sh               up to 1.1.1.15
+xsrc/external/mit/libXi/dist/missing                 up to 1.1.1.11
+xsrc/external/mit/libXi/dist/include/X11/extensions/XInput.h up to 1.1.1.3
+xsrc/external/mit/libXi/dist/m4/libtool.m4           up to 1.1.1.3
+xsrc/external/mit/libXi/dist/m4/ltoptions.m4         up to 1.1.1.3
+xsrc/external/mit/libXi/dist/m4/ltsugar.m4           up to 1.1.1.3
+xsrc/external/mit/libXi/dist/m4/ltversion.m4         up to 1.1.1.3
+xsrc/external/mit/libXi/dist/m4/lt~obsolete.m4       up to 1.1.1.3
+xsrc/external/mit/libXi/dist/man/Makefile.in         up to 1.1.1.17
+xsrc/external/mit/libXi/dist/man/XAllowDeviceEvents.man up to 1.1.1.14
+xsrc/external/mit/libXi/dist/man/XChangeDeviceControl.man up to 1.1.1.8
+xsrc/external/mit/libXi/dist/man/XChangeDeviceDontPropagateList.man up to 1.1.1.14
+xsrc/external/mit/libXi/dist/man/XChangeDeviceKeyMapping.man up to 1.1.1.8
+xsrc/external/mit/libXi/dist/man/XChangeDeviceProperty.man up to 1.1.1.8
+xsrc/external/mit/libXi/dist/man/XChangeFeedbackControl.man up to 1.1.1.8
+xsrc/external/mit/libXi/dist/man/XChangeKeyboardDevice.man up to 1.1.1.14
+xsrc/external/mit/libXi/dist/man/XChangePointerDevice.man up to 1.1.1.14
+xsrc/external/mit/libXi/dist/man/XCloseDevice.man    up to 1.1.1.8
+xsrc/external/mit/libXi/dist/man/XDeleteDeviceProperty.man up to 1.1.1.8
+xsrc/external/mit/libXi/dist/man/XDeviceBell.man     up to 1.1.1.14
+xsrc/external/mit/libXi/dist/man/XDeviceTimeCoord.man up to 1.1.1.8
+xsrc/external/mit/libXi/dist/man/XFreeDeviceList.man up to 1.1.1.8
+xsrc/external/mit/libXi/dist/man/XGetDeviceButtonMapping.man up to 1.1.1.8
+xsrc/external/mit/libXi/dist/man/XGetDeviceControl.man up to 1.1.1.14
+xsrc/external/mit/libXi/dist/man/XGetDeviceDontPropagateList.man up to 1.1.1.8
+xsrc/external/mit/libXi/dist/man/XGetDeviceFocus.man up to 1.1.1.8
+xsrc/external/mit/libXi/dist/man/XGetDeviceKeyMapping.man up to 1.6
+xsrc/external/mit/libXi/dist/man/XGetDeviceModifierMapping.man up to 1.1.1.14
+xsrc/external/mit/libXi/dist/man/XGetDeviceMotionEvents.man up to 1.1.1.14
+xsrc/external/mit/libXi/dist/man/XGetDeviceProperty.man up to 1.1.1.14
+xsrc/external/mit/libXi/dist/man/XGetDeviceProperty.txt up to 1.1.1.4
+xsrc/external/mit/libXi/dist/man/XGetExtensionVersion.man up to 1.1.1.14
+xsrc/external/mit/libXi/dist/man/XGetFeedbackControl.man up to 1.1.1.14
+xsrc/external/mit/libXi/dist/man/XGetSelectedExtensionEvents.man up to 1.1.1.8
+xsrc/external/mit/libXi/dist/man/XGrabDevice.man     up to 1.1.1.14
+xsrc/external/mit/libXi/dist/man/XGrabDeviceButton.man up to 1.1.1.14
+xsrc/external/mit/libXi/dist/man/XGrabDeviceKey.man  up to 1.1.1.14
+xsrc/external/mit/libXi/dist/man/XIAllowEvents.man   up to 1.1.1.5
+xsrc/external/mit/libXi/dist/man/XIBarrierReleasePointer.man up to 1.1.1.10
+xsrc/external/mit/libXi/dist/man/XIBarrierReleasePointers.man up to 1.1.1.6
+xsrc/external/mit/libXi/dist/man/XIChangeHierarchy.man up to 1.1.1.13
+xsrc/external/mit/libXi/dist/man/XIChangeProperty.man up to 1.1.1.13
+xsrc/external/mit/libXi/dist/man/XIChangeProperty.txt up to 1.1.1.5
+xsrc/external/mit/libXi/dist/man/XIDefineCursor.man  up to 1.1.1.13
+xsrc/external/mit/libXi/dist/man/XIDeleteProperty.man up to 1.1.1.8
+xsrc/external/mit/libXi/dist/man/XIFreeDeviceInfo.man up to 1.1.1.8
+xsrc/external/mit/libXi/dist/man/XIGetClientPointer.man up to 1.1.1.8
+xsrc/external/mit/libXi/dist/man/XIGetFocus.man      up to 1.1.1.8
+xsrc/external/mit/libXi/dist/man/XIGetProperty.man   up to 1.1.1.8
+xsrc/external/mit/libXi/dist/man/XIGetSelectedEvents.man up to 1.1.1.8
+xsrc/external/mit/libXi/dist/man/XIGrabButton.man    up to 1.1.1.13
+xsrc/external/mit/libXi/dist/man/XIGrabButton.txt    up to 1.1.1.5
+xsrc/external/mit/libXi/dist/man/XIGrabDevice.man    up to 1.1.1.13
+xsrc/external/mit/libXi/dist/man/XIGrabDevice.txt    up to 1.1.1.3
+xsrc/external/mit/libXi/dist/man/XIGrabEnter.man     up to 1.1.1.13
+xsrc/external/mit/libXi/dist/man/XIGrabFocusIn.man   up to 1.1.1.8
+xsrc/external/mit/libXi/dist/man/XIGrabKeycode.man   up to 1.1.1.8
+xsrc/external/mit/libXi/dist/man/XIGrabTouchBegin.man up to 1.1.1.6
+xsrc/external/mit/libXi/dist/man/XIListProperties.man up to 1.1.1.13
+xsrc/external/mit/libXi/dist/man/XIListProperties.txt up to 1.1.1.2
+xsrc/external/mit/libXi/dist/man/XIQueryDevice.man   up to 1.1.1.13
+xsrc/external/mit/libXi/dist/man/XIQueryPointer.man  up to 1.1.1.13
+xsrc/external/mit/libXi/dist/man/XIQueryVersion.man  up to 1.1.1.14
+xsrc/external/mit/libXi/dist/man/XIQueryVersion.txt  up to 1.1.1.4
+xsrc/external/mit/libXi/dist/man/XISelectEvents.man  up to 1.1.1.13
+xsrc/external/mit/libXi/dist/man/XISelectEvents.txt  up to 1.1.1.2
+xsrc/external/mit/libXi/dist/man/XISetClientPointer.man up to 1.1.1.13
+xsrc/external/mit/libXi/dist/man/XISetClientPointer.txt up to 1.1.1.3
+xsrc/external/mit/libXi/dist/man/XISetFocus.man      up to 1.1.1.13
+xsrc/external/mit/libXi/dist/man/XIUndefineCursor.man up to 1.1.1.8
+xsrc/external/mit/libXi/dist/man/XIUngrabButton.man  up to 1.1.1.8
+xsrc/external/mit/libXi/dist/man/XIUngrabDevice.man  up to 1.1.1.8
+xsrc/external/mit/libXi/dist/man/XIUngrabEnter.man   up to 1.1.1.8
+xsrc/external/mit/libXi/dist/man/XIUngrabFocusIn.man up to 1.1.1.8
+xsrc/external/mit/libXi/dist/man/XIUngrabKeycode.man up to 1.1.1.8
+xsrc/external/mit/libXi/dist/man/XIUngrabTouchBegin.man up to 1.1.1.6
+xsrc/external/mit/libXi/dist/man/XIWarpPointer.man   up to 1.1.1.13
+xsrc/external/mit/libXi/dist/man/XIWarpPointer.txt   up to 1.1.1.2
+xsrc/external/mit/libXi/dist/man/XListDeviceProperties.man up to 1.1.1.14
+xsrc/external/mit/libXi/dist/man/XListInputDevices.man up to 1.1.1.15
+xsrc/external/mit/libXi/dist/man/XOpenDevice.man     up to 1.1.1.14
+xsrc/external/mit/libXi/dist/man/XQueryDeviceState.man up to 1.1.1.14
+xsrc/external/mit/libXi/dist/man/XQueryDeviceState.txt up to 1.1.1.2
+xsrc/external/mit/libXi/dist/man/XSelectExtensionEvent.man up to 1.1.1.14
+xsrc/external/mit/libXi/dist/man/XSendExtensionEvent.man up to 1.1.1.14
+xsrc/external/mit/libXi/dist/man/XSendExtensionEvent.txt up to 1.1.1.3
+xsrc/external/mit/libXi/dist/man/XSetDeviceButtonMapping.man up to 1.1.1.14
+xsrc/external/mit/libXi/dist/man/XSetDeviceFocus.man up to 1.1.1.14
+xsrc/external/mit/libXi/dist/man/XSetDeviceFocus.txt up to 1.1.1.3
+xsrc/external/mit/libXi/dist/man/XSetDeviceMode.man  up to 1.1.1.14
+xsrc/external/mit/libXi/dist/man/XSetDeviceModifierMapping.man up to 1.1.1.8
+xsrc/external/mit/libXi/dist/man/XSetDeviceValuators.man up to 1.1.1.14
+xsrc/external/mit/libXi/dist/man/XUngrabDevice.man   up to 1.1.1.8
+xsrc/external/mit/libXi/dist/man/XUngrabDeviceButton.man up to 1.1.1.8
+xsrc/external/mit/libXi/dist/man/XUngrabDeviceKey.man up to 1.1.1.8
+xsrc/external/mit/libXi/dist/specs/Makefile.in       up to 1.1.1.14
+xsrc/external/mit/libXi/dist/specs/encoding.xml      up to 1.1.1.3
+xsrc/external/mit/libXi/dist/specs/inputlib.xml      up to 1.1.1.3
+xsrc/external/mit/libXi/dist/specs/library.xml       up to 1.1.1.4
+xsrc/external/mit/libXi/dist/src/Makefile.in         up to 1.1.1.17
+xsrc/external/mit/libXi/dist/src/XExtInt.c           up to 1.1.1.16
+xsrc/external/mit/libXi/dist/src/XGetDCtl.c          up to 1.6
+xsrc/external/mit/libXi/dist/src/XIQueryDevice.c     up to 1.5
+xsrc/external/mit/libXi/dist/src/XListDev.c          up to 1.6
+xsrc/external/mit/libXi/dist/src/XQueryDv.c          up to 1.6
+xsrc/external/mit/libXi/dist/src/config.h.in         up to 1.1.1.10
+xsrc/external/mit/libXpm/dist/ChangeLog              up to 1.1.1.13
+xsrc/external/mit/libXpm/dist/Makefile.in            up to 1.1.1.12
+xsrc/external/mit/libXpm/dist/aclocal.m4             up to 1.1.1.13
+xsrc/external/mit/libXpm/dist/compile                up to 1.1.1.7
+xsrc/external/mit/libXpm/dist/config.guess           up to 1.1.1.11
+xsrc/external/mit/libXpm/dist/config.sub             up to 1.1.1.12
+xsrc/external/mit/libXpm/dist/configure              up to 1.1.1.13
+xsrc/external/mit/libXpm/dist/configure.ac           up to 1.1.1.13
+xsrc/external/mit/libXpm/dist/depcomp                up to 1.1.1.9
+xsrc/external/mit/libXpm/dist/ltmain.sh              up to 1.1.1.13
+xsrc/external/mit/libXpm/dist/missing                up to 1.1.1.10
+xsrc/external/mit/libXpm/dist/tap-driver.sh          up to 1.1.1.4
+xsrc/external/mit/libXpm/dist/test-driver            up to 1.1.1.4
+xsrc/external/mit/libXpm/dist/cxpm/Makefile.in       up to 1.1.1.12
+xsrc/external/mit/libXpm/dist/doc/Makefile.in        up to 1.1.1.10
+xsrc/external/mit/libXpm/dist/include/Makefile.in    up to 1.1.1.10
+xsrc/external/mit/libXpm/dist/m4/libtool.m4          up to 1.1.1.8
+xsrc/external/mit/libXpm/dist/m4/ltoptions.m4        up to 1.1.1.7
+xsrc/external/mit/libXpm/dist/m4/ltsugar.m4          up to 1.1.1.7
+xsrc/external/mit/libXpm/dist/m4/ltversion.m4        up to 1.1.1.7
+xsrc/external/mit/libXpm/dist/m4/lt~obsolete.m4      up to 1.1.1.7
+xsrc/external/mit/libXpm/dist/man/Makefile.in        up to 1.1.1.9
+xsrc/external/mit/libXpm/dist/src/Makefile.in        up to 1.1.1.12
+xsrc/external/mit/libXpm/dist/src/parse.c            up to 1.1.1.11
+xsrc/external/mit/libXpm/dist/sxpm/Makefile.in       up to 1.1.1.12
+xsrc/external/mit/libXpm/dist/test/Makefile.in       up to 1.1.1.4
+xsrc/external/mit/libXrender/dist/meson.build        up to 1.1.1.1
+xsrc/external/mit/libXrender/dist/ChangeLog          up to 1.1.1.10
+xsrc/external/mit/libXrender/dist/Makefile.am        up to 1.1.1.6
+xsrc/external/mit/libXrender/dist/Makefile.in        up to 1.1.1.10
+xsrc/external/mit/libXrender/dist/aclocal.m4         up to 1.1.1.10
+xsrc/external/mit/libXrender/dist/compile            up to 1.1.1.5
+xsrc/external/mit/libXrender/dist/config.guess       up to 1.1.1.10
+xsrc/external/mit/libXrender/dist/config.sub         up to 1.1.1.10
+xsrc/external/mit/libXrender/dist/configure          up to 1.1.1.10
+xsrc/external/mit/libXrender/dist/configure.ac       up to 1.1.1.10
+xsrc/external/mit/libXrender/dist/depcomp            up to 1.1.1.8
+xsrc/external/mit/libXrender/dist/install-sh         up to 1.1.1.8
+xsrc/external/mit/libXrender/dist/ltmain.sh          up to 1.1.1.9
+xsrc/external/mit/libXrender/dist/missing            up to 1.1.1.8
+xsrc/external/mit/libXrender/dist/xrender.pc.in      up to 1.1.1.2
+xsrc/external/mit/libXrender/dist/m4/libtool.m4      up to 1.1.1.2
+xsrc/external/mit/libXrender/dist/m4/ltoptions.m4    up to 1.1.1.2
+xsrc/external/mit/libXrender/dist/m4/ltsugar.m4      up to 1.1.1.2
+xsrc/external/mit/libXrender/dist/m4/ltversion.m4    up to 1.1.1.2
+xsrc/external/mit/libXrender/dist/m4/lt~obsolete.m4  up to 1.1.1.2
+xsrc/external/mit/libXrender/dist/src/Makefile.in    up to 1.1.1.10
+xsrc/external/mit/libXrender/dist/src/Xrender.c      up to 1.7
+xsrc/external/mit/libXtst/dist/ChangeLog             up to 1.1.1.9
+xsrc/external/mit/libXtst/dist/Makefile.in           up to 1.1.1.9
+xsrc/external/mit/libXtst/dist/aclocal.m4            up to 1.1.1.9
+xsrc/external/mit/libXtst/dist/compile               up to 1.1.1.4
+xsrc/external/mit/libXtst/dist/config.guess          up to 1.1.1.8
+xsrc/external/mit/libXtst/dist/config.sub            up to 1.1.1.8
+xsrc/external/mit/libXtst/dist/configure             up to 1.1.1.9
+xsrc/external/mit/libXtst/dist/configure.ac          up to 1.1.1.9
+xsrc/external/mit/libXtst/dist/depcomp               up to 1.1.1.8
+xsrc/external/mit/libXtst/dist/install-sh            up to 1.1.1.7
+xsrc/external/mit/libXtst/dist/ltmain.sh             up to 1.1.1.8
+xsrc/external/mit/libXtst/dist/missing               up to 1.1.1.7
+xsrc/external/mit/libXtst/dist/m4/libtool.m4         up to 1.1.1.2
+xsrc/external/mit/libXtst/dist/m4/ltoptions.m4       up to 1.1.1.2
+xsrc/external/mit/libXtst/dist/m4/ltsugar.m4         up to 1.1.1.2
+xsrc/external/mit/libXtst/dist/m4/ltversion.m4       up to 1.1.1.2
+xsrc/external/mit/libXtst/dist/m4/lt~obsolete.m4     up to 1.1.1.2
+xsrc/external/mit/libXtst/dist/man/Makefile.in       up to 1.1.1.9
+xsrc/external/mit/libXtst/dist/specs/Makefile.in     up to 1.1.1.7
+xsrc/external/mit/libXtst/dist/src/Makefile.in       up to 1.1.1.9
+xsrc/external/mit/libXtst/dist/src/XRecord.c         up to 1.10
+
+	Update libX11 to 1.8.14, libXi to 1.8.4, libXpm to 3.5.20,
+	libXrender to 1.9.13 and libXtst to 1.2.6.
+	[mrg, ticket #556]
+
+sys/arch/alpha/alpha/machdep.c			1.386
+sys/arch/alpha/alpha/vm_machdep.c		1.124
+
+	alpha: PR 60865: align kernel stack pointer to 16-byte boundaries.
+	[rin, ticket #557]
+
+distrib/sets/lists/tests/mi			1.1433
+etc/mtree/NetBSD.dist.tests			1.217
+tests/usr.sbin/certctl/Makefile			1.2
+tests/usr.sbin/certctl/certs5/Comodo_AAA_Services_root.pem 1.1
+tests/usr.sbin/certctl/certs5/DigiCert_Global_Root_CA.pem 1.1
+tests/usr.sbin/certctl/certs5/Makefile		1.1
+tests/usr.sbin/certctl/certs5/emSign_ECC_Root_CA_-_G3.pem 1.1
+tests/usr.sbin/certctl/t_certctl.sh		1.11,1.12
+usr.sbin/certctl/certctl.sh			1.8
+
+	certctl(8): PR 60916: gracefully handle removal of untrusted certs.
+	[riastradh, ticket #558]
+
+xsrc/external/mit/xf86-video-intel/dist/.gitignore   delete
+xsrc/external/mit/xf86-video-intel/dist/benchmarks/.gitignore delete
+xsrc/external/mit/xf86-video-intel/dist/test/.gitignore delete
+xsrc/external/mit/xf86-video-intel/dist/tools/.gitignore delete
+xsrc/external/mit/xf86-video-intel/dist/configure.ac up to 1.1.1.7
+xsrc/external/mit/xf86-video-intel/dist/src/compat-api.h up to 1.5
+xsrc/external/mit/xf86-video-intel/dist/src/i915_pciids.h up to 1.1.1.5
+xsrc/external/mit/xf86-video-intel/dist/src/intel_device.c up to 1.1.1.5
+xsrc/external/mit/xf86-video-intel/dist/src/intel_module.c up to 1.3
+xsrc/external/mit/xf86-video-intel/dist/src/meson.build up to 1.1.1.2
+xsrc/external/mit/xf86-video-intel/dist/src/legacy/i810/xvmc/I810XvMC.c up to 1.1.1.3
+xsrc/external/mit/xf86-video-intel/dist/src/sna/blt.c up to 1.1.1.4
+xsrc/external/mit/xf86-video-intel/dist/src/sna/compiler.h up to 1.1.1.3
+xsrc/external/mit/xf86-video-intel/dist/src/sna/gen2_render.c up to 1.1.1.4
+xsrc/external/mit/xf86-video-intel/dist/src/sna/gen3_render.c up to 1.1.1.4
+xsrc/external/mit/xf86-video-intel/dist/src/sna/gen4_render.c up to 1.1.1.5
+xsrc/external/mit/xf86-video-intel/dist/src/sna/gen5_render.c up to 1.1.1.5
+xsrc/external/mit/xf86-video-intel/dist/src/sna/gen6_common.h up to 1.1.1.3
+xsrc/external/mit/xf86-video-intel/dist/src/sna/gen6_render.c up to 1.1.1.5
+xsrc/external/mit/xf86-video-intel/dist/src/sna/gen7_render.c up to 1.1.1.5
+xsrc/external/mit/xf86-video-intel/dist/src/sna/gen8_render.c up to 1.1.1.4
+xsrc/external/mit/xf86-video-intel/dist/src/sna/gen9_render.c up to 1.1.1.2
+xsrc/external/mit/xf86-video-intel/dist/src/sna/kgem.c up to 1.9
+xsrc/external/mit/xf86-video-intel/dist/src/sna/kgem.h up to 1.1.1.5
+xsrc/external/mit/xf86-video-intel/dist/src/sna/meson.build up to 1.1.1.2
+xsrc/external/mit/xf86-video-intel/dist/src/sna/sna.h up to 1.5
+xsrc/external/mit/xf86-video-intel/dist/src/sna/sna_accel.c up to 1.8
+xsrc/external/mit/xf86-video-intel/dist/src/sna/sna_blt.c up to 1.1.1.5
+xsrc/external/mit/xf86-video-intel/dist/src/sna/sna_composite.c up to 1.1.1.5
+xsrc/external/mit/xf86-video-intel/dist/src/sna/sna_damage.h up to 1.1.1.5
+xsrc/external/mit/xf86-video-intel/dist/src/sna/sna_display.c up to 1.8
+xsrc/external/mit/xf86-video-intel/dist/src/sna/sna_display_fake.c up to 1.1.1.4
+xsrc/external/mit/xf86-video-intel/dist/src/sna/sna_dri2.c up to 1.4
+xsrc/external/mit/xf86-video-intel/dist/src/sna/sna_driver.c up to 1.5
+xsrc/external/mit/xf86-video-intel/dist/src/sna/sna_glyphs.c up to 1.1.1.5
+xsrc/external/mit/xf86-video-intel/dist/src/sna/sna_io.c up to 1.1.1.5
+xsrc/external/mit/xf86-video-intel/dist/src/sna/sna_render.c up to 1.1.1.5
+xsrc/external/mit/xf86-video-intel/dist/src/sna/sna_render.h up to 1.1.1.5
+xsrc/external/mit/xf86-video-intel/dist/src/sna/sna_trapezoids_mono.c up to 1.1.1.4
+xsrc/external/mit/xf86-video-intel/dist/src/sna/sna_video_overlay.c up to 1.1.1.4
+xsrc/external/mit/xf86-video-intel/dist/src/sna/sna_video_sprite.c up to 1.1.1.4
+xsrc/external/mit/xf86-video-intel/dist/src/sna/sna_video_textured.c up to 1.1.1.5
+xsrc/external/mit/xf86-video-intel/dist/src/sna/fb/fb.h up to 1.1.1.5
+xsrc/external/mit/xf86-video-intel/dist/src/sna/fb/fbpict.c up to 1.1.1.3
+xsrc/external/mit/xf86-video-intel/dist/src/sna/fb/fbspan.c up to 1.1.1.2
+xsrc/external/mit/xf86-video-intel/dist/src/uxa/i965_render.c up to 1.1.1.4
+xsrc/external/mit/xf86-video-intel/dist/src/uxa/i965_video.c up to 1.1.1.5
+xsrc/external/mit/xf86-video-intel/dist/src/uxa/intel_display.c up to 1.6
+xsrc/external/mit/xf86-video-intel/dist/src/uxa/intel_dri.c up to 1.1.1.5
+xsrc/external/mit/xf86-video-intel/dist/src/uxa/intel_driver.c up to 1.6
+xsrc/external/mit/xf86-video-intel/dist/src/uxa/meson.build up to 1.1.1.2
+xsrc/external/mit/xf86-video-intel/dist/test/dri3-test.c up to 1.1.1.3
+xsrc/external/mit/xf86-video-intel/dist/tools/backlight_helper.c up to 1.1.1.3
+xsrc/external/mit/xf86-video-intel/dist/tools/meson.build up to 1.1.1.2
+xsrc/external/mit/xf86-video-intel/dist/tools/virtual.c up to 1.1.1.4
+
+	Update xf86-video-intel to 2.99.917.20210115.
+	[maya, ticket #559]
+
+sys/dev/pci/if_vmx.c				1.19
+
+	vmx(4): fix wrong range from computing the MIN of tx and rx queues.
+	[joe, ticket #560]
+
+sys/arch/arm/ti/am3_prcm.c			1.15
+
+	am335x: PR 60910: fix timer clock offset.
+	[yurix, ticket #561]
+
+xsrc/external/mit/brotli/dist/BUILD.bazel            up to 1.1.1.1
+xsrc/external/mit/brotli/dist/c/common/dictionary_inc.h up to 1.1.1.1
+xsrc/external/mit/brotli/dist/c/common/shared_dictionary.c up to 1.1.1.1
+xsrc/external/mit/brotli/dist/c/common/shared_dictionary_internal.h up to 1.1.1.1
+xsrc/external/mit/brotli/dist/c/common/static_init.h up to 1.1.1.1
+xsrc/external/mit/brotli/dist/c/dec/prefix.c         up to 1.1.1.1
+xsrc/external/mit/brotli/dist/c/dec/prefix_inc.h     up to 1.1.1.1
+xsrc/external/mit/brotli/dist/c/dec/static_init.c    up to 1.1.1.1
+xsrc/external/mit/brotli/dist/c/dec/static_init.h    up to 1.1.1.1
+xsrc/external/mit/brotli/dist/c/include/brotli/shared_dictionary.h up to 1.1.1.1
+xsrc/external/mit/brotli/dist/docs/brotli.svg        up to 1.1.1.1
+xsrc/external/mit/brotli/dist/scripts/download_testdata.sh up to 1.1.1.1
+xsrc/external/mit/brotli/dist/tests/testdata/zerosukkanooa.compressed up to 1.1.1.1
+xsrc/external/mit/brotli/dist/tests/cli_test.sh      up to 1.1.1.1
+xsrc/external/mit/brotli/dist/SECURITY.md            up to 1.1.1.1
+xsrc/external/mit/brotli/dist/.bazelignore           up to 1.1.1.1
+xsrc/external/mit/brotli/dist/CHANGELOG.md           up to 1.1.1.1
+xsrc/external/mit/brotli/dist/BUILD                  delete
+xsrc/external/mit/brotli/dist/Makefile               delete
+xsrc/external/mit/brotli/dist/Makefile.am            delete
+xsrc/external/mit/brotli/dist/WORKSPACE              delete
+xsrc/external/mit/brotli/dist/bootstrap              delete
+xsrc/external/mit/brotli/dist/compiler_config_setting.bzl delete
+xsrc/external/mit/brotli/dist/configure              delete
+xsrc/external/mit/brotli/dist/configure-cmake        delete
+xsrc/external/mit/brotli/dist/configure.ac           delete
+xsrc/external/mit/brotli/dist/premake5.lua           delete
+xsrc/external/mit/brotli/dist/c/enc/backward_references.c delete
+xsrc/external/mit/brotli/dist/c/enc/backward_references.h delete
+xsrc/external/mit/brotli/dist/c/enc/backward_references_hq.c delete
+xsrc/external/mit/brotli/dist/c/enc/backward_references_hq.h delete
+xsrc/external/mit/brotli/dist/c/enc/backward_references_inc.h delete
+xsrc/external/mit/brotli/dist/c/enc/bit_cost.c       delete
+xsrc/external/mit/brotli/dist/c/enc/bit_cost.h       delete
+xsrc/external/mit/brotli/dist/c/enc/bit_cost_inc.h   delete
+xsrc/external/mit/brotli/dist/c/enc/block_encoder_inc.h delete
+xsrc/external/mit/brotli/dist/c/enc/block_splitter.c delete
+xsrc/external/mit/brotli/dist/c/enc/block_splitter.h delete
+xsrc/external/mit/brotli/dist/c/enc/block_splitter_inc.h delete
+xsrc/external/mit/brotli/dist/c/enc/brotli_bit_stream.c delete
+xsrc/external/mit/brotli/dist/c/enc/brotli_bit_stream.h delete
+xsrc/external/mit/brotli/dist/c/enc/cluster.c        delete
+xsrc/external/mit/brotli/dist/c/enc/cluster.h        delete
+xsrc/external/mit/brotli/dist/c/enc/cluster_inc.h    delete
+xsrc/external/mit/brotli/dist/c/enc/command.c        delete
+xsrc/external/mit/brotli/dist/c/enc/command.h        delete
+xsrc/external/mit/brotli/dist/c/enc/compress_fragment.c delete
+xsrc/external/mit/brotli/dist/c/enc/compress_fragment.h delete
+xsrc/external/mit/brotli/dist/c/enc/compress_fragment_two_pass.c delete
+xsrc/external/mit/brotli/dist/c/enc/compress_fragment_two_pass.h delete
+xsrc/external/mit/brotli/dist/c/enc/dictionary_hash.c delete
+xsrc/external/mit/brotli/dist/c/enc/dictionary_hash.h delete
+xsrc/external/mit/brotli/dist/c/enc/encode.c         delete
+xsrc/external/mit/brotli/dist/c/enc/encoder_dict.c   delete
+xsrc/external/mit/brotli/dist/c/enc/encoder_dict.h   delete
+xsrc/external/mit/brotli/dist/c/enc/entropy_encode.c delete
+xsrc/external/mit/brotli/dist/c/enc/entropy_encode.h delete
+xsrc/external/mit/brotli/dist/c/enc/entropy_encode_static.h delete
+xsrc/external/mit/brotli/dist/c/enc/fast_log.c       delete
+xsrc/external/mit/brotli/dist/c/enc/fast_log.h       delete
+xsrc/external/mit/brotli/dist/c/enc/find_match_length.h delete
+xsrc/external/mit/brotli/dist/c/enc/hash.h           delete
+xsrc/external/mit/brotli/dist/c/enc/hash_composite_inc.h delete
+xsrc/external/mit/brotli/dist/c/enc/hash_forgetful_chain_inc.h delete
+xsrc/external/mit/brotli/dist/c/enc/hash_longest_match64_inc.h delete
+xsrc/external/mit/brotli/dist/c/enc/hash_longest_match_inc.h delete
+xsrc/external/mit/brotli/dist/c/enc/hash_longest_match_quickly_inc.h delete
+xsrc/external/mit/brotli/dist/c/enc/hash_rolling_inc.h delete
+xsrc/external/mit/brotli/dist/c/enc/hash_to_binary_tree_inc.h delete
+xsrc/external/mit/brotli/dist/c/enc/histogram.c      delete
+xsrc/external/mit/brotli/dist/c/enc/histogram.h      delete
+xsrc/external/mit/brotli/dist/c/enc/histogram_inc.h  delete
+xsrc/external/mit/brotli/dist/c/enc/literal_cost.c   delete
+xsrc/external/mit/brotli/dist/c/enc/literal_cost.h   delete
+xsrc/external/mit/brotli/dist/c/enc/memory.c         delete
+xsrc/external/mit/brotli/dist/c/enc/memory.h         delete
+xsrc/external/mit/brotli/dist/c/enc/metablock.c      delete
+xsrc/external/mit/brotli/dist/c/enc/metablock.h      delete
+xsrc/external/mit/brotli/dist/c/enc/metablock_inc.h  delete
+xsrc/external/mit/brotli/dist/c/enc/params.h         delete
+xsrc/external/mit/brotli/dist/c/enc/prefix.h         delete
+xsrc/external/mit/brotli/dist/c/enc/quality.h        delete
+xsrc/external/mit/brotli/dist/c/enc/utf8_util.c      delete
+xsrc/external/mit/brotli/dist/c/enc/ringbuffer.h     delete
+xsrc/external/mit/brotli/dist/c/enc/static_dict.c    delete
+xsrc/external/mit/brotli/dist/c/enc/static_dict.h    delete
+xsrc/external/mit/brotli/dist/c/enc/static_dict_lut.h delete
+xsrc/external/mit/brotli/dist/c/enc/utf8_util.h      delete
+xsrc/external/mit/brotli/dist/c/enc/write_bits.h     delete
+xsrc/external/mit/brotli/dist/python/Makefile        delete
+xsrc/external/mit/brotli/dist/python/README.md       delete
+xsrc/external/mit/brotli/dist/python/_brotli.cc      delete
+xsrc/external/mit/brotli/dist/python/bro.py          delete
+xsrc/external/mit/brotli/dist/python/brotli.py       delete
+xsrc/external/mit/brotli/dist/python/tests/__init__.py delete
+xsrc/external/mit/brotli/dist/python/tests/_test_utils.py delete
+xsrc/external/mit/brotli/dist/python/tests/bro_test.py delete
+xsrc/external/mit/brotli/dist/python/tests/compress_test.py delete
+xsrc/external/mit/brotli/dist/python/tests/compressor_test.py delete
+xsrc/external/mit/brotli/dist/python/tests/decompress_test.py delete
+xsrc/external/mit/brotli/dist/python/tests/decompressor_test.py delete
+xsrc/external/mit/brotli/dist/scripts/sources.lst    delete
+xsrc/external/mit/brotli/dist/tests/Makefile         delete
+xsrc/external/mit/brotli/dist/tests/compatibility_test.sh delete
+xsrc/external/mit/brotli/dist/tests/roundtrip_test.sh delete
+xsrc/external/mit/brotli/dist/CMakeLists.txt         up to 1.1.1.2
+xsrc/external/mit/brotli/dist/CONTRIBUTING.md        up to 1.1.1.2
+xsrc/external/mit/brotli/dist/MANIFEST.in            up to 1.1.1.2
+xsrc/external/mit/brotli/dist/README                 up to 1.1.1.2
+xsrc/external/mit/brotli/dist/README.md              up to 1.1.1.2
+xsrc/external/mit/brotli/dist/setup.cfg              up to 1.1.1.2
+xsrc/external/mit/brotli/dist/setup.py               up to 1.1.1.2
+xsrc/external/mit/brotli/dist/c/common/constants.c   up to 1.1.1.2
+xsrc/external/mit/brotli/dist/c/common/constants.h   up to 1.1.1.2
+xsrc/external/mit/brotli/dist/c/common/context.c     up to 1.1.1.2
+xsrc/external/mit/brotli/dist/c/common/context.h     up to 1.1.1.2
+xsrc/external/mit/brotli/dist/c/common/dictionary.c  up to 1.1.1.2
+xsrc/external/mit/brotli/dist/c/common/dictionary.h  up to 1.1.1.2
+xsrc/external/mit/brotli/dist/c/common/platform.c    up to 1.1.1.2
+xsrc/external/mit/brotli/dist/c/common/platform.h    up to 1.2
+xsrc/external/mit/brotli/dist/c/common/transform.c   up to 1.1.1.2
+xsrc/external/mit/brotli/dist/c/common/transform.h   up to 1.1.1.2
+xsrc/external/mit/brotli/dist/c/common/version.h     up to 1.1.1.2
+xsrc/external/mit/brotli/dist/c/dec/bit_reader.c     up to 1.1.1.2
+xsrc/external/mit/brotli/dist/c/dec/bit_reader.h     up to 1.1.1.2
+xsrc/external/mit/brotli/dist/c/dec/decode.c         up to 1.1.1.2
+xsrc/external/mit/brotli/dist/c/dec/huffman.c        up to 1.1.1.2
+xsrc/external/mit/brotli/dist/c/dec/huffman.h        up to 1.1.1.2
+xsrc/external/mit/brotli/dist/c/dec/prefix.h         up to 1.1.1.2
+xsrc/external/mit/brotli/dist/c/dec/state.c          up to 1.1.1.2
+xsrc/external/mit/brotli/dist/c/dec/state.h          up to 1.1.1.2
+xsrc/external/mit/brotli/dist/c/include/brotli/decode.h up to 1.1.1.2
+xsrc/external/mit/brotli/dist/c/include/brotli/encode.h up to 1.1.1.2
+xsrc/external/mit/brotli/dist/c/include/brotli/port.h up to 1.1.1.2
+xsrc/external/mit/brotli/dist/c/include/brotli/types.h up to 1.1.1.2
+xsrc/external/mit/brotli/dist/c/tools/brotli.c       up to 1.1.1.2
+xsrc/external/mit/brotli/dist/c/tools/brotli.md      up to 1.1.1.2
+xsrc/external/mit/brotli/dist/docs/brotli.1          up to 1.1.1.2
+xsrc/external/mit/brotli/dist/docs/constants.h.3     up to 1.1.1.2
+xsrc/external/mit/brotli/dist/docs/decode.h.3        up to 1.1.1.2
+xsrc/external/mit/brotli/dist/docs/encode.h.3        up to 1.1.1.2
+xsrc/external/mit/brotli/dist/docs/types.h.3         up to 1.1.1.2
+xsrc/external/mit/brotli/dist/scripts/libbrotlicommon.pc.in up to 1.1.1.2
+xsrc/external/mit/brotli/dist/scripts/libbrotlidec.pc.in up to 1.1.1.2
+xsrc/external/mit/brotli/dist/scripts/libbrotlienc.pc.in up to 1.1.1.2
+external/mit/xorg/lib/brotli/brotli-rename.mk	1.2
+external/mit/xorg/lib/brotli/brotli.mk		1.2
+
+	Initial import of brotli 1.2.1, that fixes CVE 2026-111497.
+	[mrg, ticket #562]
+
+usr.sbin/postinstall/postinstall.in		1.73
+
+	postinstall(8): PR 60932: do obsolete _then_ opensslcertsrehash.
+	[riastradh, ticket #563]
+
+sys/net/if_tun.c				1.179
+
+	tun(4): drop spurious EAFNOSUPPORT.
+	[gdt, ticket #564]
+
+external/public-domain/tz/dist/Makefile         up to 1.8
+external/public-domain/tz/dist/NEWS             up to 1.11
+external/public-domain/tz/dist/TZDATA_VERSION   up to 1.49
+external/public-domain/tz/dist/backzone         up to 1.7
+external/public-domain/tz/dist/leapseconds      up to 1.13
+external/public-domain/tz/dist/leapseconds.awk  up to 1.1.1.16
+external/public-domain/tz/dist/northamerica     up to 1.10
+external/public-domain/tz/dist/southamerica     up to 1.7
+external/public-domain/tz/dist/theory.html      up to 1.9
+external/public-domain/tz/dist/version          up to 1.22
+doc/3RDPARTY					(manually edited)
+
+	Updated tzdata to version 2026f (using 2026fgtz)
+	[kre, ticket #565]
+
 

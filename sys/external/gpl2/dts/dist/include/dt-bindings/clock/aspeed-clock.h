@@ -1,4 +1,4 @@
-/*	$NetBSD: aspeed-clock.h,v 1.1.1.4 2020/01/03 14:33:05 skrll Exp $	*/
+/*	$NetBSD: aspeed-clock.h,v 1.1.1.4.34.2 2026/10/02 18:07:08 martin Exp $	*/
 
 /* SPDX-License-Identifier: (GPL-2.0+ OR MIT) */
 
