@@ -19,8 +19,11 @@ static int read_reg(uint32_t a,unsigned n,uint32_t *v) {
 	*v=0; for (i=0;i<n;i++) *v |= (uint32_t)reg[a+i] << (8*i); finish(); return 0;
 }
 static int write_reg(uint32_t a,unsigned n,uint32_t v) {
-	unsigned i; if (failed) writes_after_failure++; if (operation()) return EIO;
-	if (a+n > sizeof(reg)) return EINVAL; for(i=0;i<n;i++) reg[a+i]=(uint8_t)(v>>(8*i)); finish(); return 0;
+	unsigned i; if (failed) writes_after_failure++;
+	if (operation()) return EIO;
+	if (a+n > sizeof(reg)) return EINVAL;
+	for(i=0;i<n;i++) reg[a+i]=(uint8_t)(v>>(8*i));
+	finish(); return 0;
 }
 static int r1(void *p,uint32_t a,uint8_t *v) { uint32_t t; int e; (void)p; e=read_reg(a,1,&t); if (!e) *v=t; return e; }
 static int r2(void *p,uint32_t a,uint16_t *v) { uint32_t t; int e; (void)p; e=read_reg(a,2,&t); if (!e) *v=t; return e; }
@@ -33,14 +36,16 @@ static const struct rtw88_bus_ops ops={ .read_1=r1,.read_2=r2,.read_4=r4,.write_
 /* Shared transport declaration requires a mutable softc. */
 // cppcheck-suppress constParameterPointer
 int rtw88_wcpu_lte_update(struct rtw88_softc *sc,uint32_t generation,uint16_t addr,uint32_t mask,uint32_t value) {
-	if (failed) writes_after_failure++; if (operation()) return EIO;
+	if (failed) writes_after_failure++;
+	if (operation()) return EIO;
 	if (sc!=active || generation!=sc->sc_generation || addr!=0x38 || lte_count>=4) return EINVAL;
 	lte_masks[lte_count]=mask; lte_values[lte_count++]=value; finish(); return 0;
 }
 int rtw88_wcpu_boot_command(struct rtw88_softc *sc, uint8_t id, const void *p, size_t n) {
 	(void)sc; (void)id; (void)p; (void)n;
 	command_count++;
-	if (failed) writes_after_failure++; if (operation()) return EIO;
+	if (failed) writes_after_failure++;
+	if (operation()) return EIO;
 	finish(); return 0;
 }
 static void reset(struct rtw88_softc *sc,unsigned rfe) {
