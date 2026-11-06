@@ -120,9 +120,11 @@ rtw8821c_discover(struct rtw88_softc *sc)
 	if (error == 0) {
 		ctx->identity_ready = 1;
 		printf("rtwce: RTL8821C cut %u RFE %u board %#x BT %#x "
-		    "crystal %#x channel plan %#x\n", sc->sc_cut, sc->sc_rfe,
+		    "crystal %#x channel plan %#x country %02x:%02x\n",
+		    sc->sc_cut, sc->sc_rfe,
 		    ctx->phy.efuse.logical[0xc1], ctx->phy.efuse.logical[0xc3],
-		    ctx->phy.efuse.xtal, ctx->phy.efuse.channel_plan);
+		    ctx->phy.efuse.xtal, ctx->phy.efuse.channel_plan,
+		    ctx->phy.efuse.logical[0xcb], ctx->phy.efuse.logical[0xcc]);
 	}
 	return error;
 }
