@@ -27,6 +27,13 @@
 #define IPL_NONE 0
 #define IPL_NET 1
 #define DVF_DETACH_SHUTDOWN 0
+#define PCI_CAP_PCIEXPRESS 0x10
+#define PCIE_XCAP_VER(x) (((x) >> 16) & 15)
+#define PCIE_XCAP_VER_2 2
+#define PCIE_DCAP2 0x24
+#define PCIE_DCSR2 0x28
+#define PCIE_DCAP2_COMPT_DIS (1U << 4)
+#define PCIE_DCSR2_COMPT_DIS (1U << 4)
 #define PCI_ID_REG 0
 #define PCI_COMMAND_STATUS_REG 4
 #define PCI_COMMAND_MASTER_ENABLE 4
@@ -99,6 +106,7 @@ void mutex_exit(kmutex_t *);
 int _init_once(once_t *, int (*)(void));
 void delay(unsigned);
 void xc_barrier(unsigned);
+int pci_get_capability(pci_chipset_tag_t, pcitag_t, int, int *, pcireg_t *);
 pcireg_t pci_conf_read(pci_chipset_tag_t, pcitag_t, int);
 void pci_conf_write(pci_chipset_tag_t, pcitag_t, int, pcireg_t);
 pcireg_t pci_mapreg_type(pci_chipset_tag_t, pcitag_t, int);

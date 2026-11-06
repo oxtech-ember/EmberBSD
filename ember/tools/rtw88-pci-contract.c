@@ -11,6 +11,35 @@
 #include <dev/ic/rtw88_net.h>
 #include <setjmp.h>
 
+/* PCI-policy fixture only: it does not implement or validate RTL8821C runtime.
+ */
+static int fixture_8821_identify(struct rtw88_softc *sc)
+{
+	static const uint8_t mac[6] = {2, 0x12, 0x23, 0x34, 0x45, 0x56};
+	memcpy(sc->sc_mac, mac, sizeof(mac));
+	return 0;
+}
+const struct rtw88_chip_ops rtw8821c_chip_ops = {
+    .caps = {.bands = RTW88_BAND_2G,
+	     .widths = RTW88_WIDTH_20,
+	     .nss = 1,
+	     .tx_desc_size = 48,
+	     .rx_desc_size = 24},
+    .identify = fixture_8821_identify,
+    .start = rtw8822c_runtime_start,
+    .stop = rtw8822c_runtime_stop,
+    .fw_init = rtw8822c_runtime_fw_init,
+    .channel = rtw8822c_runtime_channel,
+    .station = rtw8822c_runtime_station,
+    .edca = rtw8822c_runtime_edca,
+    .ra = rtw8822c_runtime_ra,
+    .mailbox_begin = rtw8822c_runtime_mailbox_begin,
+    .mailbox_end = rtw8822c_runtime_mailbox_end,
+    .command = rtw8822c_runtime_command,
+    .diag = rtw8822c_runtime_diag,
+    .loopback = rtw8822c_runtime_loopback,
+    .tx_desc = rtw8822c_runtime_tx_desc,
+    .rx_desc = rtw8822c_runtime_rx_desc};
 static unsigned assertions, failures;
 static int parent_tag, restricted_tag;
 static bus_dmamap_t firmware_map;
@@ -35,6 +64,9 @@ static struct {
 	int shutdown_fault;
 	unsigned config_writes;
 	uint32_t command, reg[16384];
+	uint32_t pci_id, devctl2, devstatus2, dcap2;
+	int cap_present, cap_version, cap_refuse_write, cap_remove_on_write;
+	unsigned cap_writes;
 	uint8_t efuse[512];
 	int (*handler)(void *);
 	void *arg;
@@ -177,6 +209,18 @@ void delay(unsigned n)
 {
 	(void)n;
 }
+int pci_get_capability(pci_chipset_tag_t pc, pcitag_t tag, int id, int *offset,
+		       pcireg_t *cap)
+{
+	(void)pc;
+	(void)tag;
+	CHECK(id == PCI_CAP_PCIEXPRESS);
+	if (!f.cap_present || f.removed)
+		return 0;
+	*offset = 0x80;
+	*cap = (uint32_t)f.cap_version << 16;
+	return 1;
+}
 pcireg_t pci_conf_read(pci_chipset_tag_t pc, pcitag_t tag, int r)
 {
 	(void)pc;
@@ -185,16 +229,31 @@ pcireg_t pci_conf_read(pci_chipset_tag_t pc, pcitag_t tag, int r)
 		f.removed = 1;
 	if (f.removed)
 		return UINT32_MAX;
-	return r == PCI_ID_REG ? 0xc82210ecU : f.command;
+	if (r == PCI_ID_REG)
+		return f.pci_id;
+	if (r == 0x80 + PCIE_DCAP2)
+		return f.dcap2;
+	if (r == 0x80 + PCIE_DCSR2)
+		return f.devctl2 | f.devstatus2;
+	CHECK(r == PCI_COMMAND_STATUS_REG);
+	return f.command;
 }
 void pci_conf_write(pci_chipset_tag_t pc, pcitag_t tag, int r, pcireg_t v)
 {
 	(void)pc;
 	(void)tag;
-	CHECK(r == PCI_COMMAND_STATUS_REG);
-	f.config_writes++;
 	CHECK((v & 0xffff0000U) == 0);
 	CHECK(!f.removed);
+	if (r == 0x80 + PCIE_DCSR2) {
+		f.cap_writes++;
+		if (!f.cap_refuse_write)
+			f.devctl2 = v & 0xffff;
+		if (f.cap_remove_on_write)
+			f.removed = 1;
+		return;
+	}
+	CHECK(r == PCI_COMMAND_STATUS_REG);
+	f.config_writes++;
 	if (v & PCI_COMMAND_MASTER_ENABLE)
 		f.master_writes++;
 	if (!f.refuse_master_clear)
@@ -532,6 +591,12 @@ static void reset(struct rtw88_pci_softc *p)
 	memset(p, 0, sizeof(*p));
 	memset(&f, 0, sizeof(f));
 	f.command = 0x140 | PCI_COMMAND_MASTER_ENABLE;
+	f.pci_id = 0xc82210ecU;
+	f.cap_present = 1;
+	f.cap_version = 2;
+	f.dcap2 = PCIE_DCAP2_COMPT_DIS;
+	f.devctl2 = 0x4243;
+	f.devstatus2 = 0xa5000000U;
 	f.msi_available = 1;
 	f.reg[0xb0 / 4] = f.reg[0xb8 / 4] = f.reg[0x10b8 / 4] = UINT32_MAX;
 	memset(f.efuse, 0xff, sizeof(f.efuse));
@@ -581,8 +646,10 @@ rtw88_net_attach(struct rtw88_softc *core, device_t dev, kmutex_t *lock,
 	CHECK(core == &psc->sc_core && lock == &psc->sc_lock);
 	CHECK(core->sc_resources_ready && !core->sc_started && !core->sc_powered);
 	CHECK(!lock->held && lock->initialized && f.irq == 1);
-	CHECK(f.efuse_reads == 512 && !f.efuse_enabled);
-	CHECK(core->sc_rfe == 5 && memcmp(mac, expected, 6) == 0);
+	if (core->sc_product == 0xc822) {
+		CHECK(f.efuse_reads == 512 && !f.efuse_enabled);
+		CHECK(core->sc_rfe == 5 && memcmp(mac, expected, 6) == 0);
+	}
 	/* The global diagnostics must not expose a half-attached instance. */
 	CHECK(rtwce_bootstrap(1) == ENXIO);
 	if (acquire())
@@ -685,17 +752,101 @@ static void test_context_cleanup(void) {
     p.sc_core.sc_ops=&rtw88_pci_ops;p.sc_net=net;
     clean_detach(&p);
 }
+/* PCI-policy fixture: device identity and cap behavior only, no 8821 radio. */
+static void test_8821_pcie_policy(void)
+{
+	struct rtw88_pci_softc p;
+	struct pci_attach_args pa = fixture_pa;
+	const uint32_t old_control = 0x4243, old_status = 0xa5000000U;
+	pa.pa_id = 0xc82110ecU;
+	reset(&p);
+	f.pci_id = pa.pa_id;
+	rtw88_pci_attach(NULL, &p, &pa);
+	CHECK(p.sc_core.sc_resources_ready &&
+	      p.sc_core.sc_chip == &rtw8821c_chip_ops);
+	CHECK(f.net_owned && f.cap_writes == 1 &&
+	      f.devctl2 == (old_control | PCIE_DCSR2_COMPT_DIS));
+	CHECK(f.devstatus2 == old_status);
+	clean_detach(&p);
+	CHECK(f.cap_writes == 2 && f.devctl2 == old_control &&
+	      f.devstatus2 == old_status);
+	balanced();
+	/* Quirk must be restored even if a later BAR validation fails. */
+	reset(&p);
+	f.pci_id = pa.pa_id;
+	f.wrong_type = 1;
+	rtw88_pci_attach(NULL, &p, &pa);
+	CHECK(f.errors == 1 && f.cap_writes == 2 && f.devctl2 == old_control &&
+	      f.devstatus2 == old_status);
+	balanced();
+	/* PCIe capability v2 and explicit completion-timeout-disable support
+	 * required. */
+	for (unsigned which = 0; which < 3; which++) {
+		reset(&p);
+		f.pci_id = pa.pa_id;
+		if (which == 0)
+			f.cap_present = 0;
+		if (which == 1)
+			f.cap_version = 1;
+		if (which == 2)
+			f.dcap2 = 0;
+		rtw88_pci_attach(NULL, &p, &pa);
+		CHECK(f.errors == 1 && f.cap_writes == 0 &&
+		      f.devctl2 == old_control);
+		balanced();
+	}
+	/* Hardware that refuses control bit must not attach; detach restores
+	 * state. */
+	reset(&p);
+	f.pci_id = pa.pa_id;
+	f.cap_refuse_write = 1;
+	rtw88_pci_attach(NULL, &p, &pa);
+	CHECK(f.errors == 1 && f.cap_writes == 2 && f.devctl2 == old_control);
+	balanced();
+	/* Device disappears after configure write: never touch config
+	 * thereafter. */
+	reset(&p);
+	f.pci_id = pa.pa_id;
+	f.cap_remove_on_write = 1;
+	rtw88_pci_attach(NULL, &p, &pa);
+	CHECK(f.errors == 1 && f.removed && f.cap_writes == 1);
+	balanced();
+	/* Live ID mismatch and removed endpoint must refuse without cap
+	 * mutation. */
+	reset(&p);
+	p.sc_pa = pa;
+	f.pci_id = 0xc82210ecU;
+	CHECK(rtw88_pci_configure(&p, RTW88_PCI_NO_COMPLETION_TIMEOUT) ==
+	      ENXIO);
+	CHECK(f.cap_writes == 0 && f.devctl2 == old_control);
+	reset(&p);
+	p.sc_pa = pa;
+	f.removed = 1;
+	CHECK(rtw88_pci_configure(&p, RTW88_PCI_NO_COMPLETION_TIMEOUT) ==
+	      EOPNOTSUPP);
+	CHECK(f.cap_writes == 0 && f.devctl2 == old_control);
+	/* 8822 must not receive the 8821 quirk. */
+	reset(&p);
+	rtw88_pci_attach(NULL, &p, &fixture_pa);
+	CHECK(f.net_owned && f.cap_writes == 0 && f.devctl2 == old_control);
+	clean_detach(&p);
+	balanced();
+}
+
 int main(void)
 {
 	struct rtw88_pci_softc p;
 	unsigned stages;
 	test_context_cleanup();
+	test_8821_pcie_policy();
 	reset(&p);
 	CHECK(rtwce_bootstrap(1) == ENXIO);
 	CHECK(rtwce_started() == 0);
 	CHECK(rtw88_pci_match(NULL, NULL, &fixture_pa) == 1);
 	struct pci_attach_args other = fixture_pa;
 	other.pa_id = 0xc82110ecU;
+	CHECK(rtw88_pci_match(NULL, NULL, &other) == 1);
+	other.pa_id = 0xc82310ecU;
 	CHECK(rtw88_pci_match(NULL, NULL, &other) == 0);
 	rtw88_pci_attach(NULL, &p, &fixture_pa);
 	CHECK(p.sc_core.sc_resources_ready && p.sc_core.sc_nring == 9);
