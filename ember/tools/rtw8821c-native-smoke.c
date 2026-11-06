@@ -159,6 +159,23 @@ int main(void)
 	ctx.efuse.rfe_option = 0;
 	tracing = 0;
 	writes = 0;
+	/* Both crystal registers must use the normalized EFUSE value. */
+	{
+		static const uint8_t raw[] = { 0xff, 0x2b, 0x00 };
+		static const uint8_t expected[] = { 0, 0x2b, 0 };
+		uint32_t xtal, pll;
+
+		for (k = 0; k < sizeof(raw); k++) {
+			ctx.efuse.xtal = raw[k];
+			if (rtw8821c_phy_post(&ctx))
+				return 20;
+			memcpy(&xtal, regs + 0x24, sizeof(xtal));
+			memcpy(&pll, regs + 0x28, sizeof(pll));
+			if (((xtal >> 25) & 0x3f) != expected[k] ||
+			    ((pll >> 1) & 0x3f) != expected[k])
+				return 21;
+		}
+	}
 	ctx.efuse.xtal = 20;
 	ctx.efuse.logical[0xc6] = 0;
 	if (rtw8821c_phy_pre(&ctx) || rtw8821c_phy_post(&ctx) ||
