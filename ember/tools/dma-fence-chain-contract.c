@@ -74,7 +74,7 @@ static struct dma_fence *dma_fence_get(struct dma_fence *f)
 static void dma_fence_put(struct dma_fence *f)
 {
 	if (f == NULL) return;
-	CHECK(f->refcount.value != 0);
+	CHECK(kref_read(&f->refcount) != 0);
 	if (--f->refcount.value != 0) return;
 	CHECK(f->callbacks == NULL && !f->lock->held);
 	if (f->ops->release != NULL) f->ops->release(f);
@@ -143,7 +143,7 @@ static void drain_irqs(void)
 	unsigned count = 0;
 	while (irq_head != NULL) {
 		struct irq_work *w = irq_head;
-		CHECK(++count < 1024 && w->pending);
+		CHECK(++count < 100000 && w->pending);
 		irq_head = w->next;
 		if (irq_head == NULL) irq_tail = &irq_head;
 		w->next = NULL; w->pending = false; irqs++; w->fn(w);
@@ -184,7 +184,7 @@ static struct dma_fence_chain *new_chain(struct dma_fence *prev,
 static void notified(struct dma_fence *f, struct dma_fence_cb *cb)
 { CHECK(f->signaled && !cb->queued); notifications++; }
 static void clean(void)
-{ CHECK(live == 0 && irq_head == NULL && rcu_depth == 0 && signal_before_arm == NULL); }
+{ drain_irqs(); CHECK(live == 0 && irq_head == NULL && rcu_depth == 0 && signal_before_arm == NULL); }
 
 static void single_pending(void)
 {
@@ -282,6 +282,7 @@ static void traversal_and_release(void)
 	CHECK(dma_fence_chain_find_seqno(&f, 1) == -EINVAL && f == leaf);
 	dma_fence_put(f);
 	dma_fence_put(&b->base); dma_fence_put(&c->base);
+	drain_irqs();
 	CHECK(a->base.refcount.value == 1); /* Shared predecessor survives. */
 	dma_fence_put(&a->base); dma_fence_put(leaf); clean();
 
@@ -298,13 +299,27 @@ static void traversal_and_release(void)
 	dma_fence_put(&a->base); dma_fence_put(&b->base); dma_fence_put(leaf); clean();
 }
 
+/* The contained edge, not the prev edge, caused the observed stack overflow. */
+static void deep_payload_release(void)
+{
+	struct dma_fence *f = new_leaf(false);
+	for (unsigned n = 1; n <= 20000; n++) {
+		struct dma_fence_chain *c = new_chain(NULL, f, n);
+		dma_fence_put(f);
+		f = &c->base;
+	}
+	dma_fence_put(f);
+	CHECK(irq_head != NULL);
+	clean();
+}
+
 int main(void)
 {
 	single_pending();
 	pending_predecessors(false, false); pending_predecessors(true, false);
 	pending_predecessors(false, true); pending_predecessors(true, true);
 	already_signaled_and_race(false); already_signaled_and_race(true);
-	all_signaled(); traversal_and_release();
+	all_signaled(); traversal_and_release(); deep_payload_release();
 	CHECK(irqs != 0 && released != 0);
 	printf("native fence chain: %u checks, %u releases, %u deferred IRQs\n",
 	    checks, released, irqs);

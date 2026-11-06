@@ -119,7 +119,7 @@ struct drm_device { bus_dma_tag_t dmat; };
 static uint64_t selected_bvnc = UINT64_C(0x00240038006800b7);
 static unsigned direct_creates;
 uint64_t pvr_device_bvnc(struct drm_device *d) { (void)d; return selected_bvnc; }
-struct drm_gem_object { unsigned int refs; uint64_t size, pa, flags; bool pinned; unsigned holds; void *resv; };
+struct drm_gem_object { unsigned int refs; uint64_t size, pa, flags; bool pinned, coherent; unsigned holds; void *resv; };
 struct drm_file { void *driver_priv; struct drm_gem_object *handles[SLOTS]; };
 struct test_map { uint64_t va, pa, size, flags; };
 struct pvr_vm { struct test_map ranges[SLOTS]; int (*invalidate)(void *); void *cookie; bool failed; };
@@ -284,6 +284,10 @@ static int pvr_bo_cpu(struct drm_gem_object *obj, uint64_t offset, size_t size, 
 }
 static void pvr_bo_sync(struct drm_gem_object *obj, int operations)
 { CHECK(obj->refs != 0 && mutex_owned(&device_gate)); if (operations == 3) pre_syncs++; else { CHECK(operations == 12); post_syncs++; } }
+static bool pvr_bo_coherent(struct drm_gem_object *obj)
+{ CHECK(obj->refs != 0); return obj->coherent; }
+static void pvr_bo_barrier(struct drm_gem_object *obj, int operations)
+{ CHECK(obj->coherent); pvr_bo_sync(obj, operations); }
 static int pvr_bo_pin(struct drm_gem_object *obj)
 { CHECK(obj->refs > 0); if (obj->pinned || obj->holds != 0) return EBUSY; obj->pinned = true; return 0; }
 static void pvr_bo_unpin(struct drm_gem_object *obj)
@@ -299,10 +303,39 @@ struct pvr_exec_file *pvr_exec_open(void)
 { struct pvr_exec_file *p = calloc(1, sizeof(*p)); CHECK(p != NULL); p->magic = 0x1739; exec_live++; return p; }
 void pvr_exec_close(struct drm_device *dev, struct pvr_exec_file *exec)
 { CHECK(mutex_owned(&device_gate) && exec_live > 0 && exec->magic == 0x1739); exec_live--; free(exec); }
+#ifndef ERESTART
+#define ERESTART (-3)
+#endif
+static unsigned submit_pauses;
+static void (*pause_hook)(void);
+static int pause_result = EINTR;
+static int kpause(const char *name, bool interruptible, int ticks, void *lock)
+{
+	CHECK(strcmp(name,"pvrvm")==0 && interruptible && ticks==1 && lock==NULL); CHECK(!mutex_owned(&device_gate)); submit_pauses++;
+	if (pause_hook != NULL) pause_hook();
+	return pause_result;
+}
+#define atomic_store_relaxed(p, v) (*(p) = (v))
+#define atomic_load_relaxed(p) (*(p))
 /* Match the function-like macro shape from kernel sys/malloc.h. */
 #define free(a, b) unexpected_backend_free_macro(a, b)
 #include "pvr-file-body.h"
 #undef free
+
+static struct drm_device *hook_dev;
+static struct pvr_file_vm *hook_vm;
+static unsigned barred_holds;
+/* Runs outside the gates while a MAP waits: new holds fail, old work retires. */
+static void
+drain_while_barred(void)
+{
+	(void)pvr_device_enter(hook_dev);
+	CHECK(hook_vm->mutators == 1);
+	CHECK(pvr_file_vm_submit_hold(hook_vm) == EAGAIN);
+	barred_holds++;
+	pvr_file_vm_submit_drop(hook_vm);
+	pvr_device_leave(hook_dev);
+}
 
 
 typedef int (*ioctl_fn)(struct drm_device *, void *, struct drm_file *);
@@ -330,7 +363,8 @@ static struct drm_gem_object *new_bo(struct drm_file *f, unsigned h, uint64_t pa
 {
 	struct drm_gem_object *o = calloc(1, sizeof(*o));
 	CHECK(o != NULL && h != 0 && h < SLOTS && f->handles[h] == NULL);
-	*o = (struct drm_gem_object){ 1, 4 * PAGE_SIZE, pa, UINT64_C(1) << 62, false, 0, o };
+	*o = (struct drm_gem_object){ .refs = 1, .size = 4 * PAGE_SIZE,
+	    .pa = pa, .flags = UINT64_C(1) << 62, .resv = o };
 	for (unsigned n = 0; n < SLOTS; n++) if (all_objects[n] == NULL) {
 		all_objects[n] = o; f->handles[h] = o; atomic_fetch_add(&objects, 1); return o;
 	}
@@ -371,6 +405,7 @@ firmware_lifetime(struct drm_device *dev)
 		CHECK(pvr_file_open(dev, &file) == 0);
 		handle = create_vm(dev, &file);
 		bo = new_bo(&file, 1, 0x62000000);
+		bo->coherent = (mode % 2) == 0;
 		map = (struct drm_pvr_ioctl_vm_map_args){ .vm_context_handle = handle,
 		    .handle = 1, .device_addr = BASE, .offset = PAGE_SIZE, .size = PAGE_SIZE };
 		CHECK(pvr_vm_map_ioctl(dev, &map, &file) == 0);
@@ -399,7 +434,9 @@ firmware_lifetime(struct drm_device *dev)
 		pvr_device_leave(dev);
 		/* Removing the handle must preserve the context's VM reference. */
 		destroy_vm(dev, &file, handle); CHECK(vm->refs == 1 && bo->refs == 2);
+		CHECK(!pvr_file_vm_closed(vm));
 		close_file(dev, &file); CHECK(bo->refs == 1);
+		CHECK(pvr_file_vm_closed(vm));
 		(void)pvr_device_enter(dev);
 		pvr_file_vm_put(vm);
 		if (mode >= 2) {
@@ -672,7 +709,7 @@ main(void)
 	struct drm_file a = { 0 }, b = { 0 };
 	struct drm_pvr_ioctl_create_vm_context_args create = { .handle = 0xa5, ._padding_4 = 1 };
 	struct drm_pvr_ioctl_destroy_vm_context_args destroy = { 0 };
-	struct drm_pvr_ioctl_vm_map_args map, invalid;
+	struct drm_pvr_ioctl_vm_map_args map, invalid, barrier;
 	struct drm_pvr_ioctl_vm_unmap_args unmap;
 	struct drm_gem_object *bo;
 	uint32_t first, second, foreign;
@@ -770,6 +807,40 @@ main(void)
 	unmap.device_addr++; CHECK(pvr_vm_unmap_ioctl(&dev, &unmap, &a) == -EINVAL); unmap.device_addr--;
 	unmap.vm_context_handle = UINT32_MAX; CHECK(pvr_vm_unmap_ioctl(&dev, &unmap, &a) == -EINVAL); unmap.vm_context_handle = first;
 	CHECK(pvr_vm_unmap_ioctl(&dev, &unmap, &b) == -ENOENT);
+	/* A queued/active submit retains the complete mapping set. Both mutation
+	 * paths leave the gates before waiting, and preserve the existing GEM ref. */
+	(void)pvr_device_enter(&dev);
+	fvm->published = true;
+	CHECK(pvr_file_vm_submit_hold(fvm) == 0);
+	pvr_device_leave(&dev);
+	before = core_unmaps;
+	CHECK(pvr_vm_unmap_ioctl(&dev, &unmap, &a) == -EINTR);
+	CHECK(core_unmaps == before && bo->refs == 3 && submit_pauses == 1);
+	before = core_maps;
+	CHECK(pvr_vm_map_ioctl(&dev, &map, &a) == -EINTR);
+	CHECK(core_maps == before && bo->refs == 3 && submit_pauses == 2);
+	/* A waiting mutation bars new holds, so queued work drains and it runs. */
+	hook_dev = &dev; hook_vm = fvm; pause_hook = drain_while_barred; pause_result = EWOULDBLOCK;
+	barrier = map; barrier.device_addr = BASE + 8 * PAGE_SIZE;
+	before = core_maps;
+	CHECK(pvr_vm_map_ioctl(&dev, &barrier, &a) == 0 && core_maps == before + 1 && bo->refs == 4);
+	CHECK(barred_holds == 1 && submit_pauses == 3);
+	pause_hook = NULL; pause_result = EINTR;
+	(void)pvr_device_enter(&dev);
+	CHECK(fvm->mutators == 0 && fvm->submissions == 0);
+	CHECK(pvr_file_vm_submit_hold(fvm) == 0);
+	pvr_device_leave(&dev);
+	unmap.device_addr = barrier.device_addr;
+	CHECK(pvr_vm_unmap_ioctl(&dev, &unmap, &a) == -EINTR && submit_pauses == 4);
+	(void)pvr_device_enter(&dev);
+	CHECK(fvm->mutators == 0);
+	pvr_file_vm_submit_drop(fvm);
+	pvr_device_leave(&dev);
+	CHECK(pvr_vm_unmap_ioctl(&dev, &unmap, &a) == 0 && bo->refs == 3);
+	unmap.device_addr = BASE;
+	(void)pvr_device_enter(&dev);
+	fvm->published = false;
+	pvr_device_leave(&dev);
 	unmap_error = EIO; CHECK(pvr_vm_unmap_ioctl(&dev, &unmap, &a) == -EIO && bo->refs == 3); unmap_error = 0;
 	CHECK(pvr_vm_unmap_ioctl(&dev, &unmap, &a) == 0 && bo->refs == 2);
 	CHECK(pvr_vm_unmap_ioctl(&dev, &unmap, &a) == -ENOENT);

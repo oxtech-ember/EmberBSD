@@ -558,6 +558,7 @@ main(void)
 	dma_fence_put(&second->base);
 	resv_fini(&r);
 	dma_fence_put(&stub->base);
+	drain();
 	CHECK(!file_count && sync_allocs == sync_frees &&
 	      allocations == releases);
 	printf("native DMA-BUF sync: %u checks PASS\n", checks);

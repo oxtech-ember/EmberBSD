@@ -39,5 +39,9 @@ int pvr_context_fragment(struct pvr_context *, const struct rogue_fwif_cmd_frag 
     uint32_t, uint32_t);
 int pvr_context_transfer(struct pvr_context *, const struct rogue_fwif_cmd_transfer *,
     uint32_t);
+/* Only the serial submit worker installs this hook, while holding both gates.
+ * It releases/reacquires both gates around completion pauses, never probes.
+ * The caller retains context/VM/mappings until it removes the hook. */
+void pvr_context_wait_gate(struct pvr_context *, void (*)(void *, bool), void *);
 uint32_t pvr_context_type(const struct pvr_context *);
 #endif /* _PVR_CONTEXT_H_ */

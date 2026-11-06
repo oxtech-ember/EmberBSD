@@ -104,7 +104,10 @@ pvr_exec_context_put(struct drm_device *dev, struct pvr_exec_context *ctx)
 			error = pvr_context_destroy(&ctx->firmware);
 			if (error != EBUSY)
 				break;
+			/* The last reference owns cleanup; other files may progress. */
+			pvr_device_leave(dev);
 			(void)kpause("pvrclean", false, MAX(1, hz / 100), NULL);
+			(void)pvr_device_enter(dev);
 		}
 	}
 	if (error != 0) {
@@ -131,7 +134,9 @@ pvr_exec_freelist_put(struct drm_device *dev, struct pvr_exec_freelist *fl)
 			error = pvr_freelist_destroy(&fl->firmware);
 			if (error != EBUSY)
 				break;
+			pvr_device_leave(dev);
 			(void)kpause("pvrflclean", false, MAX(1, hz / 100), NULL);
+			(void)pvr_device_enter(dev);
 		}
 	}
 	if (error == 0 && fl->registered) {

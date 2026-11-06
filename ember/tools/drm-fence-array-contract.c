@@ -202,7 +202,7 @@ init_irq_work(struct irq_work *w, void (*fn)(struct irq_work *))
 {
 	w->fn = fn;
 }
-static void
+static bool
 irq_work_queue(struct irq_work *w)
 {
 	CHECK(pthread_mutex_lock(&work_lock) == 0);
@@ -211,6 +211,7 @@ irq_work_queue(struct irq_work *w)
 	w->next = work_head;
 	work_head = w;
 	CHECK(pthread_mutex_unlock(&work_lock) == 0);
+	return true;
 }
 static void
 drain(void)
@@ -331,6 +332,7 @@ run(unsigned n, bool any, unsigned complete, int error, bool threaded)
 	CHECK(fixture_status(&a->base) == (error ? error : 1));
 	CHECK(a->base.refs == 1);
 	dma_fence_put(&a->base);
+	drain();
 	for (unsigned i = 0; i < n; i++) {
 		CHECK(c[i]->base.refs == 1);
 		dma_fence_put(&c[i]->base);
@@ -372,6 +374,17 @@ main(int argc, char **argv)
 		dma_fence_put(&a->base);
 		dma_fence_put(&first->base);
 		dma_fence_put(&late->base);
+		drain();
+		/* Nested OR containers release without consuming the kernel stack. */
+		struct dma_fence *nested = &child_new(0)->base;
+		for (unsigned i = 0; i < 20000; i++) {
+			struct dma_fence **v = calloc(1, sizeof(*v)); CHECK(v);
+			v[0] = nested;
+			nested = &dma_fence_array_create(1, v, 11, i, true)->base;
+		}
+		dma_fence_put(nested);
+		CHECK(work_head != NULL);
+		drain();
 		allocation_failure = true;
 		CHECK(dma_fence_array_create(1, NULL, 1, 1, false) == NULL);
 		CHECK(allocations == releases);

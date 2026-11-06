@@ -25,6 +25,11 @@ int pvr_file_vm_publish(struct pvr_file_vm *, const struct pvr_backend *, uint32
 int pvr_file_vm_objects(struct pvr_file_vm *, struct drm_gem_object ***, size_t *);
 bool pvr_file_vm_objects_cover(struct pvr_file_vm *,
     struct drm_gem_object * const *, size_t);
+/* Hold the complete mapping set while queued or executing; retain a VM owner. */
+int pvr_file_vm_submit_hold(struct pvr_file_vm *);
+void pvr_file_vm_submit_drop(struct pvr_file_vm *);
+/* True after the owning file closed; its queued work is cancelled. */
+bool pvr_file_vm_closed(struct pvr_file_vm *);
 int pvr_file_vm_prepare(struct pvr_file_vm *);
 void pvr_file_vm_complete(struct pvr_file_vm *);
 void pvr_file_vm_fail(struct pvr_file_vm *);

@@ -31,6 +31,8 @@ int pvr_bo_pages(struct drm_gem_object *, uint64_t, uint64_t,
     uint64_t *, uint64_t *);
 int pvr_bo_cpu(struct drm_gem_object *, uint64_t, size_t, uint64_t, void **);
 void pvr_bo_sync(struct drm_gem_object *, int);
+bool pvr_bo_coherent(struct drm_gem_object *);
+void pvr_bo_barrier(struct drm_gem_object *, int);
 /* Caller holds the device gate and a GEM reference for the entire pin. */
 int pvr_bo_pin(struct drm_gem_object *);
 void pvr_bo_unpin(struct drm_gem_object *);

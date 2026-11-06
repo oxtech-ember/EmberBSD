@@ -147,8 +147,8 @@ static void
 linux_fini(void)
 {
 
-	linux_dma_fences_fini();
 	linux_irq_work_fini();
+	linux_dma_fences_fini();
 	linux_kthread_fini();
 	linux_wait_bit_fini();
 	linux_tasklets_fini();

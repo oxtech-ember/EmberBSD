@@ -5,7 +5,7 @@
 /*
  * AI-assisted native adaptation of the MIT alternative in Linux
  * 7b63ef2d55f24519e7e9e5f4d15dbea03f126e40: pvr_job.c and pvr_sync.c.
- * Native synchronous submission and retained wait references are EmberBSD changes.
+ * Native queued submission and retained wait references are EmberBSD changes.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to
@@ -30,6 +30,9 @@
 #include <sys/systm.h>
 #include <sys/time.h>
 #include <sys/timearith.h>
+#include <sys/mutex.h>
+#include <sys/workqueue.h>
+#include <sys/proc.h>
 #include <linux/errno.h>
 #include <linux/dma-fence.h>
 #include <linux/dma-fence-chain.h>
@@ -48,7 +51,10 @@
 #include "pvr_file.h"
 #include "pvr_stream.h"
 
-/* Policy for this synchronous slice, not a firmware or UAPI size limit. */
+/* Bounded native scheduler policy, not firmware or UAPI size limits. */
+#define PVR_SUBMIT_BATCHES 8
+#define PVR_SUBMIT_JOBS 256
+#define PVR_SUBMIT_BYTES (1U << 20)
 #define PVR_SUBMIT_WAIT_SECONDS 10
 /* Bound all producer searches in one batch, including empty jobs. */
 #define PVR_SUBMIT_DEPENDENCY_CHECKS (1U << 20)
@@ -61,6 +67,7 @@ struct pvr_submit_sync {
 	struct drm_pvr_sync_op input;
 	struct drm_syncobj *object;
 	struct dma_fence_chain *chain;
+	struct dma_fence *wait;
 };
 struct pvr_submit_job {
 	union {
@@ -77,13 +84,165 @@ struct pvr_submit_job {
 	uint32_t type;
 	uint8_t rt_index;
 	uint32_t fragment_type;
-	bool paired_fragment;
+	bool paired_fragment, vm_held;
+	/* Held VM, recorded under the gate; the worker reads it while waiting. */
+	struct pvr_file_vm *vm;
+	struct dma_fence *finished;
 };
 struct pvr_submit_batch {
-	size_t bytes;
+	struct work work;
+	struct pvr_submit_queue *queue;
+	const struct pvr_backend *backend;
+	size_t bytes, charged;
 	uint32_t count;
 	struct pvr_submit_job jobs[];
 };
+
+struct pvr_submit_queue {
+	struct drm_device *dev;
+	struct workqueue *worker;
+	struct work drain;
+	kmutex_t lock;
+	unsigned reserved;
+	bool stopping;
+};
+struct pvr_submit_fence {
+	struct dma_fence base;
+	spinlock_t lock;
+};
+
+static void pvr_submit_execute(struct work *, void *);
+
+static const char *
+pvr_submit_fence_name(struct dma_fence *fence)
+{
+	return "powervr";
+}
+
+static void
+pvr_submit_fence_free(struct rcu_head *rcu)
+{
+	struct dma_fence *base = container_of(rcu, struct dma_fence, rcu);
+	struct pvr_submit_fence *fence = container_of(base, struct pvr_submit_fence, base);
+
+	dma_fence_destroy(base);
+	spin_lock_destroy(&fence->lock);
+	kfree(fence);
+}
+
+static void
+pvr_submit_fence_release(struct dma_fence *fence)
+{
+	call_rcu(&fence->rcu, pvr_submit_fence_free);
+}
+
+static const struct dma_fence_ops pvr_submit_fence_ops = {
+	.use_64bit_seqno = true,
+	.get_driver_name = pvr_submit_fence_name,
+	.get_timeline_name = pvr_submit_fence_name,
+	.release = pvr_submit_fence_release,
+};
+
+static struct dma_fence *
+pvr_submit_fence_create(void)
+{
+	struct pvr_submit_fence *fence;
+
+	fence = kzalloc(sizeof(*fence), GFP_NOWAIT);
+	if (fence == NULL)
+		return NULL;
+	spin_lock_init(&fence->lock);
+	/* Preparation may finish out of order: do not claim a common timeline. */
+	dma_fence_init(&fence->base, &pvr_submit_fence_ops, &fence->lock,
+	    dma_fence_context_alloc(1), 1);
+	return &fence->base;
+}
+
+int
+pvr_submit_queue_create(struct drm_device *dev, struct pvr_submit_queue **out)
+{
+	struct pvr_submit_queue *queue;
+	int error;
+
+	queue = kmem_zalloc(sizeof(*queue), KM_SLEEP);
+	queue->dev = dev;
+	mutex_init(&queue->lock, MUTEX_DEFAULT, IPL_NONE);
+	error = workqueue_create(&queue->worker, "pvrsubmit", pvr_submit_execute,
+	    queue, PRI_NONE, IPL_NONE, WQ_MPSAFE);
+	if (error != 0) {
+		mutex_destroy(&queue->lock);
+		kmem_free(queue, sizeof(*queue));
+		return error;
+	}
+	*out = queue;
+	return 0;
+}
+
+/* Attachment owns dev until reboot. Any future detach must stop admission and
+ * call this after excluding ioctls and before dropping that owner, without
+ * either execution gate held. */
+void
+pvr_submit_queue_destroy(struct pvr_submit_queue *queue)
+{
+
+	if (queue == NULL)
+		return;
+	mutex_enter(&queue->lock);
+	queue->stopping = true;
+	mutex_exit(&queue->lock);
+	/* NetBSD workqueue_destroy replaces the callback; it does not drain jobs.
+	 * A FIFO marker waits for queued cancellations and active DMA retirement. */
+	workqueue_enqueue(queue->worker, &queue->drain, NULL);
+	workqueue_wait(queue->worker, &queue->drain);
+	workqueue_destroy(queue->worker);
+	KASSERT(queue->reserved == 0);
+	mutex_destroy(&queue->lock);
+	kmem_free(queue, sizeof(*queue));
+}
+
+static bool
+pvr_submit_stopping(struct pvr_submit_queue *queue)
+{
+	bool stopping;
+
+	mutex_enter(&queue->lock);
+	stopping = queue->stopping;
+	mutex_exit(&queue->lock);
+	return stopping;
+}
+
+static int
+pvr_submit_reserve(struct pvr_submit_queue *queue)
+{
+	int error;
+
+	for (;;) {
+		mutex_enter(&queue->lock);
+		if (queue->stopping) {
+			mutex_exit(&queue->lock);
+			return ENXIO;
+		}
+		if (queue->reserved < PVR_SUBMIT_BATCHES) {
+			queue->reserved++;
+			mutex_exit(&queue->lock);
+			return 0;
+		}
+		mutex_exit(&queue->lock);
+		error = kpause("pvrqueue", true, 1, NULL);
+		if (error != 0 && error != EWOULDBLOCK)
+			return error == ERESTART ? EINTR : error;
+	}
+}
+
+static void
+pvr_submit_unreserve(struct pvr_submit_queue *queue)
+{
+
+	mutex_enter(&queue->lock);
+	KASSERT(queue->reserved != 0);
+	queue->reserved--;
+	mutex_exit(&queue->lock);
+}
 
 /* Keep copied registers available before a failed batch is retained. */
 static void
@@ -264,6 +423,11 @@ pvr_submit_copy(const struct drm_pvr_obj_array *array,
 		    0, &bytes);
 		if (error != 0)
 			return error;
+		if (bytes > PVR_SUBMIT_BYTES - batch->charged ||
+		    input.sync_ops.count > (PVR_SUBMIT_BYTES - batch->charged - bytes) /
+		    sizeof(struct dma_fence_chain))
+			return E2BIG;
+		batch->charged += bytes + input.sync_ops.count * sizeof(struct dma_fence_chain);
 		job->syncs = kmem_zalloc(bytes, KM_NOSLEEP);
 		if (job->syncs == NULL)
 			return ENOMEM;
@@ -365,6 +529,9 @@ pvr_submit_references(struct drm_device *dev, struct drm_file *file,
 					return ENOMEM;
 			}
 		}
+		job->finished = pvr_submit_fence_create();
+		if (job->finished == NULL)
+			return ENOMEM;
 		error = pvr_device_next_id(dev, &job->id);
 		if (error != 0)
 			return error;
@@ -395,7 +562,7 @@ pvr_submit_fence_status(struct dma_fence *fence)
 static int
 pvr_submit_producer(const struct pvr_submit_batch *batch, uint32_t first,
     uint32_t end, const struct pvr_submit_sync *wait, bool exact,
-    uint32_t *budget, bool *found)
+    uint32_t *budget, bool *found, struct dma_fence **producer)
 {
 	const struct pvr_submit_job *job;
 	uint32_t i, j, type;
@@ -424,6 +591,8 @@ pvr_submit_producer(const struct pvr_submit_batch *batch, uint32_t first,
 			    signal->input.value < wait->input.value)
 				continue;
 			*found = true;
+			if (producer != NULL)
+				*producer = dma_fence_get(job->finished);
 			return 0;
 		}
 	}
@@ -431,7 +600,7 @@ pvr_submit_producer(const struct pvr_submit_batch *batch, uint32_t first,
 }
 
 /*
- * An unpublished self or forward dependency cannot run in this synchronous
+ * An unpublished self or forward dependency cannot run in this serial
  * batch. A published fence can have an external producer and must be waited.
  */
 static int
@@ -444,32 +613,30 @@ pvr_submit_forward(const struct pvr_submit_batch *batch, uint32_t first,
 	if (*checked)
 		return 0;
 	error = pvr_submit_producer(batch, first, batch->count, sync, false,
-	    budget, &found);
+	    budget, &found, NULL);
 	if (error != 0)
 		return error;
 	*checked = true;
 	return found ? EDEADLK : 0;
 }
 
-/* No device or platform gate may be held during this function. */
+/* Capture every input before publishing any output. Only publication can wait
+ * here; GPU completion is the worker's responsibility. Never reacquire a binary
+ * syncobj's current payload later: it may already be this batch's own output. */
 static int
-pvr_submit_wait(struct pvr_submit_batch *batch, uint32_t index,
-    uint32_t first, uint32_t *budget)
+pvr_submit_capture(struct pvr_submit_batch *batch, uint32_t index,
+    uint32_t *budget)
 {
-	struct pvr_submit_job *job;
-	struct timespec now, deadline, remaining;
-	struct dma_fence *fence;
+	struct pvr_submit_job *job = &batch->jobs[index];
 	struct pvr_submit_sync *sync;
+	struct dma_fence *fence;
+	struct timespec now, deadline;
+	uint32_t first = job->paired_fragment ? index - 1 : index;
+	uint32_t i, prior;
 	uint64_t polls;
-	uint32_t i;
-	long waited;
 	bool checked, matched;
-	int error, status, ticks;
+	int error;
 
-	KASSERT(index < batch->count && first <= index);
-	job = &batch->jobs[index];
-	KASSERT(job->paired_fragment ?
-	    first + 1 == index : first == index);
 	getnanouptime(&deadline);
 	deadline.tv_sec += PVR_SUBMIT_WAIT_SECONDS;
 	polls = (uint64_t)MAX(hz, 1) * PVR_SUBMIT_WAIT_SECONDS + 1;
@@ -478,42 +645,33 @@ pvr_submit_wait(struct pvr_submit_batch *batch, uint32_t index,
 		if ((sync->input.flags & DRM_PVR_SYNC_OP_FLAG_SIGNAL) != 0)
 			continue;
 		if (job->paired_fragment) {
-			/* The validated pair emits FENCE_PR before its fragment. */
 			error = pvr_submit_producer(batch, first, index, sync, true,
-			    budget, &matched);
+			    budget, &matched, NULL);
 			if (error != 0)
 				return error;
 			if (matched)
-				continue;
+				continue; /* Firmware FENCE_PR, not a host self-dependency. */
 		}
+		/* The latest earlier matching signal replaces an older binary payload. */
+		matched = false;
+		for (prior = first; prior != 0 && !matched; prior--) {
+			error = pvr_submit_producer(batch, prior - 1, prior, sync, false,
+			    budget, &matched, &sync->wait);
+			if (error != 0)
+				return error;
+		}
+		if (matched)
+			continue;
 		checked = false;
 		for (;;) {
-			getnanouptime(&now);
-			if (timespeccmp(&now, &deadline, >=) || polls == 0)
-				return ETIMEDOUT;
-			/* A prior job may just have replaced this object's payload. */
+			if (pvr_submit_stopping(batch->queue))
+				return ENXIO;
 			fence = drm_syncobj_fence_get(sync->object);
 			if (fence != NULL) {
 				error = dma_fence_chain_find_seqno(&fence, sync->input.value);
 				if (error == 0) {
-					/* A collected, completed point may have no remaining fence. */
-					if (fence == NULL)
-						break;
-					timespecsub(&deadline, &now, &remaining);
-					ticks = MAX(1, tstohz(&remaining));
-					waited = dma_fence_wait_timeout(fence, true, ticks);
-					status = waited > 0 ? pvr_submit_fence_status(fence) : 0;
-					dma_fence_put(fence);
-					/* A restart could repeat earlier completed jobs in this batch. */
-					if (waited == -ERESTARTSYS)
-						return EINTR;
-					if (waited < 0)
-						return (int)-waited;
-					if (waited == 0)
-						return ETIMEDOUT;
-					if (status <= 0)
-						return status < 0 ? -status : EIO;
-					break;
+					sync->wait = fence;
+					break; /* NULL means an already collected completed point. */
 				}
 				dma_fence_put(fence);
 				if (error != -EINVAL)
@@ -522,40 +680,81 @@ pvr_submit_wait(struct pvr_submit_batch *batch, uint32_t index,
 			error = pvr_submit_forward(batch, first, sync, budget, &checked);
 			if (error != 0)
 				return error;
-			/* Wait for publication on the retained object, not its handle. */
-			polls--;
+			getnanouptime(&now);
+			if (timespeccmp(&now, &deadline, >=) || polls-- == 0)
+				return ETIMEDOUT;
 			error = kpause("pvrdep", true, 1, NULL);
-			if (error == ERESTART)
-				return EINTR;
 			if (error != 0 && error != EWOULDBLOCK)
-				return error;
+				return error == ERESTART ? EINTR : error;
+		}
+	}
+	return 0;
+}
+
+/* No gates held. Short waits allow shutdown to cancel external dependencies. */
+static int
+pvr_submit_wait(struct pvr_submit_batch *batch, struct pvr_submit_job *job)
+{
+	struct timespec now, deadline;
+	struct dma_fence *fence;
+	uint32_t i;
+	long waited;
+	int status;
+
+	getnanouptime(&deadline);
+	deadline.tv_sec += PVR_SUBMIT_WAIT_SECONDS;
+	for (i = 0; i < job->sync_count; i++) {
+		fence = job->syncs[i].wait;
+		if (fence == NULL)
+			continue;
+		for (;;) {
+			if (pvr_submit_stopping(batch->queue) ||
+			    (job->vm != NULL && pvr_file_vm_closed(job->vm)))
+				return ECANCELED;
+			status = pvr_submit_fence_status(fence);
+			if (status != 0) {
+				if (status < 0)
+					return -status;
+				break;
+			}
+			getnanouptime(&now);
+			if (timespeccmp(&now, &deadline, >=))
+				return ETIMEDOUT;
+			waited = dma_fence_wait_timeout(fence, false, MAX(1, hz / 100));
+			if (waited < 0)
+				return waited == -ERESTARTSYS ? EINTR : (int)-waited;
 		}
 	}
 	return 0;
 }
 
 static void
-pvr_submit_signal(struct pvr_submit_job *job)
+pvr_submit_publish(struct pvr_submit_job *job)
 {
 	struct pvr_submit_sync *sync;
-	struct dma_fence *completed;
 	uint32_t i;
 
-	/* Only call after real CCCB consumption, UFO completion, and health checks. */
-	completed = dma_fence_get_stub();
 	for (i = 0; i < job->sync_count; i++) {
 		sync = &job->syncs[i];
 		if ((sync->input.flags & DRM_PVR_SYNC_OP_FLAG_SIGNAL) == 0)
 			continue;
 		if (sync->chain != NULL) {
 			drm_syncobj_add_point(sync->object, sync->chain,
-			    completed, sync->input.value);
+			    job->finished, sync->input.value);
 			sync->chain = NULL;
 		} else {
-			drm_syncobj_replace_fence(sync->object, completed);
+			drm_syncobj_replace_fence(sync->object, job->finished);
 		}
 	}
-	dma_fence_put(completed);
+}
+
+static void
+pvr_submit_signal(struct pvr_submit_job *job, int error)
+{
+
+	if (error != 0)
+		dma_fence_set_error(job->finished, -error);
+	dma_fence_signal(job->finished);
 }
 
 static void
@@ -571,11 +770,15 @@ pvr_submit_release(struct drm_device *dev, struct pvr_submit_batch *batch,
 			if (job->syncs[j].object != NULL)
 				drm_syncobj_put(job->syncs[j].object);
 			kfree(job->syncs[j].chain);
+			dma_fence_put(job->syncs[j].wait);
 		}
 		if (job->syncs != NULL)
 			kmem_free(job->syncs, job->sync_count * sizeof(*job->syncs));
+		dma_fence_put(job->finished);
 		if (job->context != NULL) {
 			KASSERT(gated);
+			if (job->vm_held)
+				pvr_file_vm_submit_drop(pvr_exec_context_vm(job->context));
 			pvr_exec_context_put(dev, job->context);
 		}
 		if (job->hwrt != NULL && job->type != DRM_PVR_JOB_TYPE_FRAGMENT) {
@@ -586,77 +789,59 @@ pvr_submit_release(struct drm_device *dev, struct pvr_submit_batch *batch,
 	kmem_free(batch, batch->bytes);
 }
 
-int
-pvr_submit_jobs(struct drm_device *dev, void *data, struct drm_file *file)
+/* Called only between completion probes, with retained context/VM/mappings. */
+static void
+pvr_submit_wait_gate(void *cookie, bool enter)
 {
-	struct drm_pvr_ioctl_submit_jobs_args *args = data;
-	struct drm_pvr_obj_array input = args->jobs;
+	struct pvr_submit_batch *batch = cookie;
+
+	if (enter) {
+		const struct pvr_backend *backend = pvr_device_enter(batch->queue->dev);
+		KASSERT(backend == batch->backend); /* Installed once, alive until reboot. */
+	} else {
+		pvr_device_leave(batch->queue->dev);
+	}
+}
+
+static void
+pvr_submit_execute(struct work *work, void *cookie)
+{
+	struct pvr_submit_queue *queue = cookie;
 	struct pvr_submit_batch *batch;
+	struct drm_device *dev = queue->dev;
+	const struct pvr_backend *backend;
 	struct pvr_submit_job *job;
 	struct pvr_file_vm *vm;
-	const struct pvr_backend *backend, *active_backend;
-	size_t bytes;
-	uint32_t index = 0, budget = PVR_SUBMIT_DEPENDENCY_CHECKS;
-	int error;
+	uint32_t index;
+	int error = 0;
 
-	args->jobs.count = 0;
-	if (input.count == 0)
-		return -EINVAL;
-	error = pvr_submit_array(&input, sizeof(struct drm_pvr_job));
-	if (error != 0)
-		return -error;
-	error = pvr_submit_bytes(input.count, sizeof(batch->jobs[0]),
-	    sizeof(*batch), &bytes);
-	if (error != 0)
-		return -error;
-	batch = kmem_zalloc(bytes, KM_NOSLEEP);
-	if (batch == NULL)
-		return -ENOMEM;
-	batch->bytes = bytes;
-	batch->count = input.count;
-	error = pvr_submit_copy(&input, batch, &index, pvr_device_bvnc(dev));
-	if (error != 0) {
-		pvr_submit_release(dev, batch, false);
-		args->jobs.count = index;
-		return -error;
-	}
-	backend = pvr_device_enter(dev);
-	if (backend == NULL) {
-		error = EOPNOTSUPP;
-		index = 0;
-		goto out;
-	}
-	error = pvr_submit_references(dev, file, batch, &index);
-	if (error != 0)
-		goto out;
+	if (work == &queue->drain)
+		return;
+	batch = container_of(work, struct pvr_submit_batch, work);
+	backend = batch->backend;
 	for (index = 0; index < batch->count; index++) {
 		job = &batch->jobs[index];
-		if (job->paired_fragment) {
-			/* Handled together with its preceding geometry job. */
-			pvr_submit_signal(job);
+		if (job->paired_fragment)
 			continue;
-		}
-		pvr_device_leave(dev);
-		error = pvr_submit_wait(batch, index, index, &budget);
+		error = pvr_submit_wait(batch, job);
 		if (error == 0 && job->type == DRM_PVR_JOB_TYPE_GEOMETRY)
-			error = pvr_submit_wait(batch, index + 1, index, &budget);
-		active_backend = pvr_device_enter(dev);
-		if (active_backend != backend) {
-			/* Broken backend lifetime: preserve all references until reset. */
-			pvr_device_retain(dev, batch);
-			pvr_device_leave(dev);
-			args->jobs.count = index;
-			return -EIO;
-		}
-		if (error != 0)
-			goto out;
-		error = backend->check(backend->cookie);
-		if (error != 0)
-			goto out;
+			error = pvr_submit_wait(batch, &batch->jobs[index + 1]);
+		(void)pvr_device_enter(dev);
 		vm = pvr_exec_context_vm(job->context);
-		error = pvr_file_vm_prepare(vm);
-		if (error != 0)
-			goto out;
+		/* Work of a closed file has no consumer; do not run it. */
+		if (error == 0 && (pvr_submit_stopping(queue) ||
+		    pvr_file_vm_closed(vm)))
+			error = ECANCELED;
+		if (error == 0)
+			error = backend->check(backend->cookie);
+		if (error == 0)
+			error = pvr_file_vm_prepare(vm);
+		if (error != 0) {
+			pvr_device_leave(dev);
+			break;
+		}
+		pvr_context_wait_gate(pvr_exec_context_firmware(job->context),
+		    pvr_submit_wait_gate, batch);
 		pvr_device_note_job(dev, vm, pvr_exec_context_id(job->context),
 		    job->id, job->type);
 		if (job->type == DRM_PVR_JOB_TYPE_COMPUTE) {
@@ -707,24 +892,157 @@ pvr_submit_jobs(struct drm_device *dev, void *data, struct drm_file *file)
 				    frag->fragment_type, target.cleanup_address,
 				    job->id, frag->id);
 		}
+		pvr_context_wait_gate(pvr_exec_context_firmware(job->context), NULL, NULL);
 		if (error != 0) {
-			/* The caller cannot prove that the GPU stopped using this VM. */
+			/* An error is not proof that DMA stopped. VM retirement quarantines
+			 * all tables and mapped BOs until acknowledged device recovery. */
 			pvr_submit_error_command(job, error);
-			if (job->type == DRM_PVR_JOB_TYPE_GEOMETRY &&
-			    index + 1 < batch->count &&
-			    batch->jobs[index + 1].paired_fragment)
-				pvr_submit_error_command(&batch->jobs[index + 1],
-				    error);
 			pvr_file_vm_fail(vm);
+		} else {
+			pvr_file_vm_complete(vm);
+		}
+		pvr_device_leave(dev);
+		if (error != 0)
+			break;
+		/* Signal outside execution gates: fence callbacks may take other locks. */
+		pvr_submit_signal(job, 0);
+		if (job->type == DRM_PVR_JOB_TYPE_GEOMETRY)
+			pvr_submit_signal(&batch->jobs[index + 1], 0);
+	}
+	if (error != 0)
+		for (; index < batch->count; index++)
+			pvr_submit_signal(&batch->jobs[index], error);
+	(void)pvr_device_enter(dev);
+	pvr_submit_release(dev, batch, true);
+	pvr_device_leave(dev);
+	pvr_submit_unreserve(queue);
+}
+
+int
+pvr_submit_jobs(struct drm_device *dev, void *data, struct drm_file *file)
+{
+	struct drm_pvr_ioctl_submit_jobs_args *args = data;
+	struct drm_pvr_obj_array input = args->jobs;
+	struct pvr_submit_queue *queue = pvr_device_submit(dev);
+	struct pvr_submit_batch *batch;
+	const struct pvr_backend *backend;
+	struct timespec now, deadline;
+	size_t bytes;
+	uint32_t index = 0, budget = PVR_SUBMIT_DEPENDENCY_CHECKS;
+	int error, paused;
+
+	args->jobs.count = 0;
+	if (input.count == 0)
+		return -EINVAL;
+	if (input.count > PVR_SUBMIT_JOBS)
+		return -E2BIG;
+	error = pvr_submit_array(&input, sizeof(struct drm_pvr_job));
+	if (error != 0)
+		return -error;
+	error = pvr_submit_bytes(input.count, sizeof(batch->jobs[0]), sizeof(*batch), &bytes);
+	if (error != 0)
+		return -error;
+	error = pvr_submit_reserve(queue);
+	if (error != 0)
+		return -error;
+	batch = kmem_zalloc(bytes, KM_NOSLEEP);
+	if (batch == NULL) {
+		pvr_submit_unreserve(queue);
+		return -ENOMEM;
+	}
+	batch->queue = queue;
+	batch->bytes = bytes;
+	batch->charged = bytes + input.count * sizeof(struct pvr_submit_fence);
+	batch->count = input.count;
+	error = pvr_submit_copy(&input, batch, &index, pvr_device_bvnc(dev));
+	if (error != 0) {
+		pvr_submit_release(dev, batch, false);
+		pvr_submit_unreserve(queue);
+		return -error;
+	}
+	backend = pvr_device_enter(dev);
+	batch->backend = backend;
+	if (backend == NULL) {
+		error = EOPNOTSUPP;
+		goto out;
+	}
+	error = pvr_submit_references(dev, file, batch, &index);
+	if (error != 0)
+		goto out;
+	pvr_device_leave(dev);
+	for (index = 0; index < batch->count; index++) {
+		error = pvr_submit_capture(batch, index, &budget);
+		if (error != 0)
+			break;
+	}
+	if (pvr_device_enter(dev) != backend) {
+		/* A backend owner must never change while retained contexts exist. */
+		pvr_device_retain(dev, batch);
+		pvr_device_leave(dev);
+		pvr_submit_unreserve(queue);
+		return -EIO;
+	}
+	if (error != 0)
+		goto out;
+	if (pvr_submit_stopping(queue)) {
+		error = ENXIO;
+		goto out;
+	}
+	getnanouptime(&deadline);
+	deadline.tv_sec += PVR_SUBMIT_WAIT_SECONDS;
+	for (;;) {
+		for (index = 0; index < batch->count; index++) {
+			struct pvr_submit_job *job = &batch->jobs[index];
+
+			job->vm = pvr_exec_context_vm(job->context);
+			error = pvr_file_vm_submit_hold(job->vm);
+			if (error != 0)
+				break;
+			job->vm_held = true;
+		}
+		if (error != EAGAIN)
+			break;
+		/* A waiting MAP/UNMAP drains this VM first. Wait holding nothing. */
+		while (index-- > 0) {
+			pvr_file_vm_submit_drop(
+			    pvr_exec_context_vm(batch->jobs[index].context));
+			batch->jobs[index].vm_held = false;
+		}
+		pvr_device_leave(dev);
+		paused = kpause("pvrvmbar", true, 1, NULL);
+		getnanouptime(&now);
+		if (pvr_device_enter(dev) != backend) {
+			pvr_device_retain(dev, batch);
+			pvr_device_leave(dev);
+			pvr_submit_unreserve(queue);
+			return -EIO;
+		}
+		if (paused != 0 && paused != EWOULDBLOCK) {
+			error = paused == ERESTART ? EINTR : paused;
 			goto out;
 		}
-		pvr_file_vm_complete(vm);
-		pvr_submit_signal(job);
+		if (timespeccmp(&now, &deadline, >=)) {
+			error = ETIMEDOUT;
+			goto out;
+		}
+		if (pvr_submit_stopping(queue)) {
+			error = ENXIO;
+			goto out;
+		}
 	}
-	error = 0;
+	if (error != 0)
+		goto out;
+	/* Publication and enqueue have one order under the device gate. Another
+	 * submit may capture these fences but cannot enqueue ahead of this batch. */
+	for (index = 0; index < batch->count; index++)
+		pvr_submit_publish(&batch->jobs[index]);
+	workqueue_enqueue(queue->worker, &batch->work, NULL);
+	pvr_device_leave(dev);
+	args->jobs.count = input.count;
+	return 0;
 out:
 	pvr_submit_release(dev, batch, true);
 	pvr_device_leave(dev);
-	args->jobs.count = index;
+	pvr_submit_unreserve(queue);
 	return -error;
 }

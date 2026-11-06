@@ -36,6 +36,20 @@ firmware execution, compute or rendering support.
 
 ## Queue failure diagnostics
 
+The native DRM submit ioctl returns after validation and bounded queue admission.
+The worker retains each context, VM mapping set, render target and dependency.
+It signals completion only after firmware completion or a recorded error.
+Closing a file cancels its queued work, including VMs with removed handles.
+Waiting mapping changes prevent new holds until the queued work retires.
+Completion waits and cleanup retries release the device gates between probes.
+
+Timeline transfers flatten AND dependencies with a bounded work list. OR arrays
+retain their original semantics. Fence containers release children through IRQ
+work, which prevents recursive destruction of deeply nested payloads.
+The compatibility layer drains this work before its fence state is destroyed.
+Actual-source contracts cover submission, close, mapping barriers and nested
+fence release. They do not establish device acceptance or module unload support.
+
 A failed queue observation reports the snapshot as `PVR_RUNTIME_EIO` when
 firmware events, faults or recovery flags fail validation. It also reports
 pending FWCCB words and recorded hardware recovery data. Each diagnostic DMA

@@ -61,6 +61,8 @@ struct pvr_context {
 	struct pvr_context_queue queue[2];
 	uint32_t type, count;
 	bool failed;
+	void (*wait_gate)(void *, bool);
+	void *wait_cookie;
 };
 union pvr_context_image {
 	struct rogue_fwif_fwcomputecontext compute;
@@ -78,15 +80,18 @@ pvr_context_mark(const struct pvr_backend *be)
 
 /* Interrupts are hints; only elapsed monotonic time exhausts the wait. */
 static int
-pvr_context_pause(const struct pvr_backend *be, unsigned i, unsigned mark,
+pvr_context_pause(struct pvr_context *ctx, unsigned i, unsigned mark,
     const struct timespec *deadline)
 {
+	const struct pvr_backend *be = ctx->backend;
 	struct timespec now, remaining;
 	int ticks;
 
 	nanouptime(&now);
 	if (timespeccmp(&now, deadline, >=))
 		return ETIMEDOUT;
+	if (ctx->wait_gate != NULL)
+		ctx->wait_gate(ctx->wait_cookie, false);
 	if (i < (be->irq_wait != NULL ? PVR_CONTEXT_IRQ_SPIN_POLLS :
 	    PVR_CONTEXT_SPIN_POLLS)) {
 		delay(PVR_CONTEXT_SPIN_US);
@@ -98,7 +103,18 @@ pvr_context_pause(const struct pvr_backend *be, unsigned i, unsigned mark,
 		else
 			(void)kpause("pvrjob", false, ticks, NULL);
 	}
+	if (ctx->wait_gate != NULL)
+		ctx->wait_gate(ctx->wait_cookie, true);
 	return 0;
+}
+
+void
+pvr_context_wait_gate(struct pvr_context *ctx, void (*gate)(void *, bool),
+    void *cookie)
+{
+
+	ctx->wait_gate = gate;
+	ctx->wait_cookie = cookie;
 }
 
 static int
@@ -340,7 +356,7 @@ pvr_context_compute(struct pvr_context *ctx,
 	be->sync(be->cookie, &queue->control, BUS_DMASYNC_POSTREAD);
 	read = control->read_offset;
 	be->sync(be->cookie, &queue->control, BUS_DMASYNC_PREREAD);
-	/* This first native scheduler has one synchronous job per device. */
+	/* This first native scheduler has one executing job per device. */
 	if (read != queue->written) {
 		error = EIO;
 		goto failed;
@@ -399,7 +415,7 @@ pvr_context_compute(struct pvr_context *ctx,
 			if (error != 0)
 				goto failed;
 		}
-		error = pvr_context_pause(be, i, mark, &deadline);
+		error = pvr_context_pause(ctx, i, mark, &deadline);
 		if (error != 0)
 			goto failed;
 	}
@@ -521,7 +537,7 @@ pvr_context_graphics_wait(struct pvr_context *ctx, unsigned mask)
 			if (error != 0)
 				return error;
 		}
-		error = pvr_context_pause(be, i, mark, &deadline);
+		error = pvr_context_pause(ctx, i, mark, &deadline);
 		if (error != 0)
 			return error;
 	}

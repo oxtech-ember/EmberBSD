@@ -22,6 +22,10 @@ int pvr_create_context(struct drm_device *, void *, struct drm_file *);
 int pvr_destroy_context(struct drm_device *, void *, struct drm_file *);
 int pvr_create_free_list(struct drm_device *, void *, struct drm_file *);
 int pvr_destroy_free_list(struct drm_device *, void *, struct drm_file *);
+struct pvr_submit_queue;
+int pvr_submit_queue_create(struct drm_device *, struct pvr_submit_queue **);
+void pvr_submit_queue_destroy(struct pvr_submit_queue *);
+struct pvr_submit_queue *pvr_device_submit(struct drm_device *);
 int pvr_submit_jobs(struct drm_device *, void *, struct drm_file *);
 
 struct idr;

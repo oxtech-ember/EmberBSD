@@ -24,6 +24,7 @@
 #define BUS_DMASYNC_PREREAD 1
 #define BUS_DMASYNC_POSTREAD 2
 #define BUS_DMASYNC_POSTWRITE 8
+#define _BUS_DMAMAP_COHERENT 2U
 #define _BUS_DMAMAP_IS_BOUNCING 8
 #define PROT_READ 1
 #define PROT_WRITE 2
@@ -855,6 +856,22 @@ main(void)
 	CHECK(attempts == old_attempts + 1);
 	empty(&dev);
 	fail = 0;
+	/* GPU-only render targets need virtual, not physical, contiguity too. */
+	create = (struct drm_pvr_ioctl_create_bo_args){ .size = 3 * PAGE_SIZE, .flags = 0 };
+	CHECK(pvr_create_bo(&dev, &create, &a) == 0);
+	obj = a.handles[create.handle];
+	{
+		uint64_t pages[3 * PAGE_SIZE / 4096], bits;
+		CHECK(pvr_bo_pages(obj, 0, obj->size, pages, &bits) == 0);
+		CHECK(pages[0] == UINT64_C(0x10000000) && pages[PAGE_SIZE / 4096] == UINT64_C(0x11000000));
+	}
+	close_args = (struct drm_gem_close){ create.handle, 0 };
+	CHECK(drm_gem_close_ioctl(&dev, &close_args, &a) == 0);
+	empty(&dev);
+	old_attempts = attempts;
+	create.flags = DRM_PVR_BO_PM_FW_PROTECT;
+	CHECK(pvr_create_bo(&dev, &create, &a) == -ENOMEM && attempts == old_attempts + 1);
+	empty(&dev);
 	scatter_mode = false;
 	printf("PASS: %u PowerVR BO checks (page=%zu, syncs=%u)\n",
 	    checks, PAGE_SIZE, syncs);

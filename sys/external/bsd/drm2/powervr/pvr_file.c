@@ -9,6 +9,7 @@
 #include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/kmem.h>
+#include <sys/atomic.h>
 #include <sys/mutex.h>
 #include <sys/systm.h>
 #include <linux/idr.h>
@@ -34,15 +35,22 @@ struct pvr_file_mapping {
 
 struct pvr_file_vm {
 	struct drm_device *dev;
+	struct pvr_file *owner;
 	const struct pvr_backend *backend;
 	struct pvr_fw_object firmware;
 	unsigned int refs;
+	unsigned int submissions;
+	/* Waiting MAP/UNMAP calls; while nonzero, no new submission is held. */
+	unsigned int mutators;
 	bool published, failed;
 	struct pvr_vm *tables;
 	struct pvr_file_mapping *mappings;
 };
 
 struct pvr_file {
+	/* VMs retain the close state even after their handles are removed. */
+	unsigned int refs;
+	bool closed;
 	struct pvr_exec_file *execution;
 	/* Serialize lookup, table mutation and removal. DMA allocation can sleep. */
 	kmutex_t lock;
@@ -55,11 +63,21 @@ pvr_file_open(struct drm_device *dev, struct drm_file *file)
 	struct pvr_file *pf;
 
 	pf = kmem_zalloc(sizeof(*pf), KM_SLEEP);
+	pf->refs = 1;
 	mutex_init(&pf->lock, MUTEX_DEFAULT, IPL_NONE);
 	idr_init(&pf->vms);
 	pf->execution = pvr_exec_open();
 	file->driver_priv = pf;
 	return 0;
+}
+
+static void
+pvr_file_put(struct pvr_file *pf)
+{
+
+	KASSERT(pf->refs != 0);
+	if (--pf->refs == 0)
+		kmem_free(pf, sizeof(*pf));
 }
 
 void
@@ -89,6 +107,7 @@ pvr_file_vm_put(struct pvr_file_vm *vm)
 		drm_gem_object_put_unlocked(mapping->object);
 		kmem_free(mapping, sizeof(*mapping));
 	}
+	pvr_file_put(vm->owner);
 	kmem_free(vm, sizeof(*vm));
 }
 
@@ -99,6 +118,7 @@ pvr_file_close_locked(struct drm_device *dev, struct drm_file *file)
 	struct pvr_file_vm *vm;
 	int id;
 
+	atomic_store_relaxed(&pf->closed, true);
 	pvr_exec_close(dev, pf->execution);
 	/* DRM calls postclose after all file operations and GEM handle release. */
 	for (;;) {
@@ -112,7 +132,7 @@ pvr_file_close_locked(struct drm_device *dev, struct drm_file *file)
 	idr_destroy(&pf->vms);
 	mutex_destroy(&pf->lock);
 	file->driver_priv = NULL;
-	kmem_free(pf, sizeof(*pf));
+	pvr_file_put(pf);
 }
 
 static struct pvr_file_vm *
@@ -148,6 +168,8 @@ pvr_create_vm_context_locked(struct drm_device *dev, void *data, struct drm_file
 		kmem_free(vm, sizeof(*vm));
 		return -error;
 	}
+	vm->owner = pf;
+	pf->refs++;
 	/* Native idr_alloc requires a preloaded node, even for GFP_KERNEL. */
 	idr_preload(GFP_KERNEL);
 	mutex_enter(&pf->lock);
@@ -220,6 +242,10 @@ pvr_vm_map_ioctl_locked(struct drm_device *dev, void *data, struct drm_file *fil
 	vm = pvr_file_vm_find(pf, args->vm_context_handle);
 	if (vm == NULL) {
 		error = EINVAL;
+	} else if (vm->failed) {
+		error = EIO;
+	} else if (vm->submissions != 0) {
+		error = EAGAIN;
 	} else {
 		if (pages != NULL)
 			error = pvr_vm_map_pages(vm->tables, args->device_addr, pages,
@@ -269,6 +295,11 @@ pvr_vm_unmap_ioctl_locked(struct drm_device *dev, void *data, struct drm_file *f
 	if (vm == NULL) {
 		mutex_exit(&pf->lock);
 		return -EINVAL;
+	}
+	if (vm->failed || vm->submissions != 0) {
+		error = vm->failed ? EIO : EAGAIN;
+		mutex_exit(&pf->lock);
+		return -error;
 	}
 	for (link = &vm->mappings; (mapping = *link) != NULL;
 	    link = &mapping->next) {
@@ -420,10 +451,62 @@ pvr_file_vm_objects_cover(struct pvr_file_vm *vm,
 	return true;
 }
 
+/*
+ * A sync of a coherent map is only a barrier, so one call covers every
+ * coherent BO. Other BOs keep their own cache maintenance.
+ */
+static void
+pvr_file_vm_sync(struct pvr_file_vm *vm, int operations)
+{
+	struct pvr_file_mapping *mapping;
+	struct drm_gem_object *barrier = NULL;
+
+	for (mapping = vm->mappings; mapping != NULL; mapping = mapping->next) {
+		if (pvr_bo_coherent(mapping->object))
+			barrier = mapping->object;
+		else
+			pvr_bo_sync(mapping->object, operations);
+	}
+	if (barrier != NULL)
+		pvr_bo_barrier(barrier, operations);
+}
+
+/* Freeze the mapping set, including its GEM references, through queue retirement.
+ * Context references keep the VM alive. CPU stores still obey Vulkan ownership:
+ * applications must not overwrite resources used by an unfinished submission. */
+int
+pvr_file_vm_submit_hold(struct pvr_file_vm *vm)
+{
+
+	if (vm->failed || !vm->published)
+		return EIO;
+	if (vm->mutators != 0)
+		return EAGAIN;
+	if (vm->submissions == UINT_MAX)
+		return EOVERFLOW;
+	vm->submissions++;
+	return 0;
+}
+
+/* Monotonic; read without the gate by the submit worker while it waits. */
+bool
+pvr_file_vm_closed(struct pvr_file_vm *vm)
+{
+
+	return atomic_load_relaxed(&vm->owner->closed);
+}
+
+void
+pvr_file_vm_submit_drop(struct pvr_file_vm *vm)
+{
+
+	KASSERT(vm->submissions != 0);
+	vm->submissions--;
+}
+
 int
 pvr_file_vm_prepare(struct pvr_file_vm *vm)
 {
-	struct pvr_file_mapping *mapping;
 	int error;
 
 	if (vm->failed || !vm->published)
@@ -433,20 +516,15 @@ pvr_file_vm_prepare(struct pvr_file_vm *vm)
 		vm->failed = true;
 		return error;
 	}
-	for (mapping = vm->mappings; mapping != NULL; mapping = mapping->next)
-		pvr_bo_sync(mapping->object,
-		    BUS_DMASYNC_PREWRITE | BUS_DMASYNC_PREREAD);
+	pvr_file_vm_sync(vm, BUS_DMASYNC_PREWRITE | BUS_DMASYNC_PREREAD);
 	return 0;
 }
 
 void
 pvr_file_vm_complete(struct pvr_file_vm *vm)
 {
-	struct pvr_file_mapping *mapping;
 
-	for (mapping = vm->mappings; mapping != NULL; mapping = mapping->next)
-		pvr_bo_sync(mapping->object,
-		    BUS_DMASYNC_POSTWRITE | BUS_DMASYNC_POSTREAD);
+	pvr_file_vm_sync(vm, BUS_DMASYNC_POSTWRITE | BUS_DMASYNC_POSTREAD);
 }
 
 uint64_t
@@ -541,26 +619,93 @@ pvr_destroy_vm_context(struct drm_device *dev, void *data, struct drm_file *file
 	return error;
 }
 
+/* Called with the device gate held. */
+static void
+pvr_vm_mutator_leave(struct pvr_file_vm **vmp)
+{
+
+	if (*vmp == NULL)
+		return;
+	KASSERT((*vmp)->mutators != 0);
+	(*vmp)->mutators--;
+	pvr_file_vm_put(*vmp);
+	*vmp = NULL;
+}
+
+static bool
+pvr_vm_mutate_same(struct drm_file *file, uint32_t handle,
+    const struct pvr_file_vm *vm)
+{
+	struct pvr_file *pf = file->driver_priv;
+	bool same;
+
+	mutex_enter(&pf->lock);
+	same = pvr_file_vm_find(pf, handle) == vm;
+	mutex_exit(&pf->lock);
+	return same;
+}
+
+/*
+ * A mapping change waits until its VM has no queued submission. A waiting
+ * change bars new submissions on that VM, so the wait ends even while other
+ * threads keep submitting. Never hold either gate while the worker retires.
+ */
+static int
+pvr_vm_mutate(struct drm_device *dev, struct drm_file *file, uint32_t handle,
+    int (*locked)(struct drm_device *, void *, struct drm_file *), void *data)
+{
+	struct pvr_file_vm *vm = NULL;
+	int error, paused;
+
+	for (;;) {
+		(void)pvr_device_enter(dev);
+		/* The barrier belongs to one VM; a reused handle names another. */
+		if (vm != NULL && !pvr_vm_mutate_same(file, handle, vm))
+			error = -EINVAL;
+		else
+			error = locked(dev, data, file);
+		if (error == -EAGAIN && vm == NULL) {
+			vm = pvr_file_vm_get(file, handle);
+			if (vm == NULL || vm->mutators == UINT_MAX) {
+				if (vm != NULL)
+					pvr_file_vm_put(vm);
+				vm = NULL;
+				error = -EOVERFLOW;
+			} else {
+				vm->mutators++;
+			}
+		}
+		if (error != -EAGAIN)
+			pvr_vm_mutator_leave(&vm);
+		pvr_device_leave(dev);
+		if (error != -EAGAIN)
+			return error;
+		paused = kpause("pvrvm", true, 1, NULL);
+		if (paused != 0 && paused != EWOULDBLOCK) {
+			(void)pvr_device_enter(dev);
+			pvr_vm_mutator_leave(&vm);
+			pvr_device_leave(dev);
+			return paused == ERESTART ? -EINTR : -paused;
+		}
+	}
+}
+
 int
 pvr_vm_map_ioctl(struct drm_device *dev, void *data, struct drm_file *file)
 {
-	int error;
+	const struct drm_pvr_ioctl_vm_map_args *args = data;
 
-	(void)pvr_device_enter(dev);
-	error = pvr_vm_map_ioctl_locked(dev, data, file);
-	pvr_device_leave(dev);
-	return error;
+	return pvr_vm_mutate(dev, file, args->vm_context_handle,
+	    pvr_vm_map_ioctl_locked, data);
 }
 
 int
 pvr_vm_unmap_ioctl(struct drm_device *dev, void *data, struct drm_file *file)
 {
-	int error;
+	const struct drm_pvr_ioctl_vm_unmap_args *args = data;
 
-	(void)pvr_device_enter(dev);
-	error = pvr_vm_unmap_ioctl_locked(dev, data, file);
-	pvr_device_leave(dev);
-	return error;
+	return pvr_vm_mutate(dev, file, args->vm_context_handle,
+	    pvr_vm_unmap_ioctl_locked, data);
 }
 
 int

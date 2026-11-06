@@ -36,10 +36,13 @@ __KERNEL_RCSID(0, "$NetBSD: linux_irq_work.c,v 1.2 2021/12/19 11:50:54 riastradh
 
 #include <sys/atomic.h>
 #include <sys/intr.h>
+#include <sys/kernel.h>
 #include <sys/kmem.h>
 #include <sys/mutex.h>
 #include <sys/percpu.h>
+#include <sys/proc.h>
 #include <sys/queue.h>
+#include <sys/systm.h>
 
 #include <linux/irq_work.h>
 
@@ -54,6 +57,7 @@ enum {
 
 static struct percpu *irq_work_percpu;
 static void *irq_work_sih __read_mostly;
+static volatile unsigned irq_work_outstanding;
 
 static void
 irq_work_intr(void *cookie)
@@ -72,6 +76,9 @@ irq_work_intr(void *cookie)
 	SIMPLEQ_FOREACH_SAFE(iw, &todo, iw_entry, next) {
 		atomic_store_relaxed(&iw->iw_flags, 0);
 		(*iw->func)(iw);
+		/* The callback may free iw or enqueue children before it returns. */
+		membar_release();
+		atomic_dec_uint(&irq_work_outstanding);
 	}
 }
 
@@ -109,6 +116,9 @@ void
 linux_irq_work_fini(void)
 {
 
+	/* External producers have stopped. Drain callbacks and their children. */
+	while (atomic_load_acquire(&irq_work_outstanding) != 0)
+		(void)kpause("irqdrain", false, 1, NULL);
 	softint_disestablish(irq_work_sih);
 	percpu_free(irq_work_percpu, sizeof(struct irq_work_cpu));
 }
@@ -130,6 +140,7 @@ irq_work_queue(struct irq_work *iw)
 	    & IRQ_WORK_PENDING)
 		return false;
 
+	atomic_inc_uint(&irq_work_outstanding);
 	iwcp = percpu_getref(irq_work_percpu);
 	iwc = *iwcp;
 	mutex_spin_enter(&iwc->iwc_lock);

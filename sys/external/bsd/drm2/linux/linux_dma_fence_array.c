@@ -135,17 +135,30 @@ dma_fence_array_signaled(struct dma_fence *fence)
 }
 
 static void
-dma_fence_array_release(struct dma_fence *fence)
+dma_fence_array_release_work(struct irq_work *work)
 {
-	struct dma_fence_array *A = to_dma_fence_array(fence);
+	struct dma_fence_array *A = container_of(work, struct dma_fence_array,
+	    dfa_work);
 	unsigned i;
 
 	for (i = 0; i < A->num_fences; i++)
 		dma_fence_put(A->fences[i]);
-
 	kfree(A->fences);
 	spin_lock_destroy(&A->dfa_lock);
-	dma_fence_free(fence);
+	dma_fence_free(&A->base);
+}
+
+static void
+dma_fence_array_release(struct dma_fence *fence)
+{
+	struct dma_fence_array *A = to_dma_fence_array(fence);
+	bool queued;
+
+	/* Signaling work holds a reference; reuse its storage at the final put. */
+	init_irq_work(&A->dfa_work, dma_fence_array_release_work);
+	queued = irq_work_queue(&A->dfa_work);
+	KASSERT(queued);
+	(void)queued;
 }
 
 static const struct dma_fence_ops dma_fence_array_ops = {
