@@ -120,14 +120,14 @@ SYSCTL_SETUP(sysctl_hw_rtwce_setup, "rtwce firmware bootstrap")
 	err = sysctl_createv(clog, 0, NULL, NULL,
 	    CTLFLAG_PERMANENT | CTLFLAG_READWRITE, CTLTYPE_INT,
 	    "rtwce_bootstrap",
-	    SYSCTL_DESCR("Write 1 to load RTL8822CE firmware, 0 to stop"),
+	    SYSCTL_DESCR("Write 1 to load rtw88 firmware, 0 to stop"),
 	    rtwce_sysctl_bootstrap, 0, NULL, 0,
 	    CTL_HW, CTL_CREATE, CTL_EOL);
 	if (err != 0)
 		aprint_error("rtwce: sysctl_createv failed: %d\n", err);
 	err = sysctl_createv(clog, 0, NULL, NULL,
 	    CTLFLAG_PERMANENT | CTLFLAG_READONLY, CTLTYPE_STRING,
-	    "rtwce_stats", SYSCTL_DESCR("RTL8822CE interrupt and RX counters"),
+	    "rtwce_stats", SYSCTL_DESCR("rtw88 interrupt and RX counters"),
 	    rtwce_sysctl_stats, 0, NULL, 0, CTL_HW, CTL_CREATE, CTL_EOL);
 	if (err != 0)
 		aprint_error("rtwce: sysctl_createv failed: %d\n", err);
@@ -153,7 +153,7 @@ SYSCTL_SETUP(sysctl_hw_rtwce_setup, "rtwce firmware bootstrap")
 		aprint_error("rtwce: sysctl_createv failed: %d\n", err);
 	err = sysctl_createv(clog, 0, NULL, NULL,
 	    CTLFLAG_PERMANENT | CTLFLAG_READWRITE, CTLTYPE_INT,
-	    "rtwce_channel", SYSCTL_DESCR("RTL8822CE 20 MHz receive channel"),
+	    "rtwce_channel", SYSCTL_DESCR("rtw88 20 MHz receive channel"),
 	    rtwce_sysctl_channel, 0, NULL, 0, CTL_HW, CTL_CREATE, CTL_EOL);
 	if (err != 0)
 		aprint_error("rtwce: sysctl_createv failed: %d\n", err);
