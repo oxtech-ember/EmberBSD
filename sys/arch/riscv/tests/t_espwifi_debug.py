@@ -20,9 +20,9 @@ state = re.search(r'^static unsigned vendor_debug_once_state;$', source,
 assert state, 'debug-once state missing'
 
 
-def function(name):
-    match = re.search(r'\nvoid\n' + name + r'\(void\)\n\{.*?\n\}',
-                      source, re.S)
+def function(name, arguments):
+    match = re.search(r'\nvoid\n' + name + r'\(' + arguments +
+                      r'\)\n\{.*?\n\}', source, re.S)
     assert match, name
     return match.group()
 
@@ -47,18 +47,20 @@ static int esp_wifi_internal_set_log_level(int next) {
  return 0;
 }
 static void espwifi_os_log(const char *fmt, ...) { (void)fmt; }
-''' + state.group() + '\n' + function('espwifi_vendor_debug_once_begin') + '\n' + \
-    function('espwifi_vendor_debug_once_end') + r'''
+''' + state.group() + '\n' + function('espwifi_vendor_debug_once_begin',
+    r'const unsigned char \*bssid') + '\n' + \
+    function('espwifi_vendor_debug_once_end', r'void') + r'''
 int main(void) {
+ static const unsigned char bssid[6] = { 1, 2, 3, 4, 5, 6 };
  assert(level == 0 && set_calls == 0);
- espwifi_vendor_debug_once_begin();
+ espwifi_vendor_debug_once_begin(bssid);
  assert(level == WIFI_LOG_VERBOSE && set_calls == 1 && critical_depth == 0);
- espwifi_vendor_debug_once_begin();
+ espwifi_vendor_debug_once_begin(bssid);
  assert(level == WIFI_LOG_VERBOSE && set_calls == 1);
  espwifi_vendor_debug_once_end();
  assert(level == WIFI_LOG_WARNING && set_calls == 2 && critical_depth == 0);
  espwifi_vendor_debug_once_end();
- espwifi_vendor_debug_once_begin();
+ espwifi_vendor_debug_once_begin(bssid);
  assert(level == WIFI_LOG_WARNING && set_calls == 2);
  return 0;
 }
@@ -67,7 +69,7 @@ int main(void) {
 disabled = r'''
 #include "fullmac_debug.h"
 int main(void) {
- espwifi_vendor_debug_once_begin();
+ espwifi_vendor_debug_once_begin((const unsigned char *)0);
  espwifi_vendor_debug_once_end();
  return 0;
 }

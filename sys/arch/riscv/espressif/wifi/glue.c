@@ -76,6 +76,9 @@
 
 #include "../esp_wifi_os.h"
 #include "fullmac_debug.h"
+#ifdef ESPWIFI_RX_OBSERVE_ONCE
+#include "fullmac_rx_observe.h"
+#endif
 
 #if defined(ESPWIFI_EXTERNAL_WPA2)
 _Static_assert((WIFI_FEATURE_CAPS & CONFIG_FEATURE_WPA3_SAE_BIT) != 0,
@@ -1291,11 +1294,87 @@ static void *link_change;
 static int link_up;
 static uint32_t stop_events, start_events;
 
+#ifdef ESPWIFI_RX_OBSERVE_ONCE
+static void espwifi_scan_capture_rx(void *, wifi_promiscuous_pkt_type_t);
+static struct espwifi_rx_observation rx_observation;
+static wifi_promiscuous_filter_t rx_observe_saved_filter;
+static uint8_t rx_observe_bssid[6], rx_observe_mac[6];
+static bool rx_observe_active, rx_observe_configured, rx_observe_saved_mode;
+
+static void
+espwifi_rx_observe_end(void)
+{
+	struct espwifi_rx_observation snapshot;
+	esp_err_t disable, filter, enable = ESP_OK;
+	unsigned critical;
+
+	critical = espwifi_os_critical_enter();
+	if (!rx_observe_configured) {
+		espwifi_os_critical_exit(critical);
+		return;
+	}
+	rx_observe_active = false;
+	rx_observe_configured = false;
+	snapshot = rx_observation;
+	espwifi_os_critical_exit(critical);
+	disable = esp_wifi_set_promiscuous(false);
+	filter = esp_wifi_set_promiscuous_filter(&rx_observe_saved_filter);
+	if (rx_observe_saved_mode)
+		enable = esp_wifi_set_promiscuous(true);
+	espwifi_os_log("espwifi: RX observe mgmt=%u data=%u protected=%u "
+	    "amsdu=%u truncated=%u llc=%u eapol=%u type=%u key_info=%#x "
+	    "restore=%#x/%#x/%#x\n", snapshot.mgmt, snapshot.data,
+	    snapshot.protected_data, snapshot.aggregate, snapshot.truncated,
+	    snapshot.llc, snapshot.eapol, snapshot.eapol_type, snapshot.key_info,
+	    (unsigned)disable, (unsigned)filter, (unsigned)enable);
+}
+
+static void
+espwifi_rx_observe_begin(const uint8_t *bssid)
+{
+	wifi_promiscuous_filter_t filter = {
+		.filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT |
+		    WIFI_PROMIS_FILTER_MASK_DATA
+	};
+	esp_err_t error;
+	unsigned critical;
+
+	error = esp_wifi_get_promiscuous(&rx_observe_saved_mode);
+	if (error != ESP_OK)
+		goto done;
+	error = esp_wifi_get_promiscuous_filter(&rx_observe_saved_filter);
+	if (error != ESP_OK)
+		goto done;
+	error = esp_wifi_get_mac(WIFI_IF_STA, rx_observe_mac);
+	if (error != ESP_OK)
+		goto done;
+	memcpy(rx_observe_bssid, bssid, sizeof(rx_observe_bssid));
+	/* The scan path owns the same callback; keep its management delivery. */
+	error = esp_wifi_set_promiscuous_rx_cb(espwifi_scan_capture_rx);
+	if (error != ESP_OK)
+		goto done;
+	critical = espwifi_os_critical_enter();
+	memset(&rx_observation, 0, sizeof(rx_observation));
+	rx_observe_configured = true;
+	rx_observe_active = true;
+	espwifi_os_critical_exit(critical);
+	error = esp_wifi_set_promiscuous_filter(&filter);
+	if (error == ESP_OK)
+		error = esp_wifi_set_promiscuous(true);
+	if (error != ESP_OK)
+		espwifi_rx_observe_end();
+done:
+	espwifi_os_log("espwifi: RX observe setup result=%#x previous_mode=%u "
+	    "previous_filter=%#x\n", (unsigned)error,
+	    (unsigned)rx_observe_saved_mode, rx_observe_saved_filter.filter_mask);
+}
+#endif
+
 #ifdef ESPWIFI_VENDOR_DEBUG_ONCE
 static unsigned vendor_debug_once_state;
 
 void
-espwifi_vendor_debug_once_begin(void)
+espwifi_vendor_debug_once_begin(const unsigned char *bssid)
 {
 	unsigned critical;
 	esp_err_t error;
@@ -1310,6 +1389,11 @@ espwifi_vendor_debug_once_begin(void)
 	espwifi_os_critical_exit(critical);
 	espwifi_os_log("espwifi: vendor debug once enabled result=%#x level=verbose\n",
 	    (unsigned)error);
+#ifdef ESPWIFI_RX_OBSERVE_ONCE
+	espwifi_rx_observe_begin(bssid);
+#else
+	(void)bssid;
+#endif
 }
 
 void
@@ -1328,6 +1412,9 @@ espwifi_vendor_debug_once_end(void)
 	espwifi_os_critical_exit(critical);
 	espwifi_os_log("espwifi: vendor debug once restored warning result=%#x\n",
 	    (unsigned)error);
+#ifdef ESPWIFI_RX_OBSERVE_ONCE
+	espwifi_rx_observe_end();
+#endif
 }
 #endif
 
@@ -1739,7 +1826,7 @@ espwifi_scan_capture_rx(void *buffer, wifi_promiscuous_pkt_type_t type)
 	const uint8_t *frame;
 	unsigned len, subtype;
 
-	if (type != WIFI_PKT_MGMT || packet == NULL)
+	if (packet == NULL || (type != WIFI_PKT_MGMT && type != WIFI_PKT_DATA))
 		return;
 	len = packet->rx_ctrl.sig_len;
 	/* ESP-IDF reports the 802.11 FCS as part of sig_len. */
@@ -1747,6 +1834,18 @@ espwifi_scan_capture_rx(void *buffer, wifi_promiscuous_pkt_type_t type)
 		return;
 	len -= 4;
 	frame = packet->payload;
+#ifdef ESPWIFI_RX_OBSERVE_ONCE
+	{
+		unsigned critical = espwifi_os_critical_enter();
+
+		if (rx_observe_active && packet->rx_ctrl.rx_state == 0)
+			espwifi_rx_observe_frame(&rx_observation, frame, len,
+			    rx_observe_bssid, rx_observe_mac);
+		espwifi_os_critical_exit(critical);
+	}
+#endif
+	if (type != WIFI_PKT_MGMT)
+		return;
 	if ((frame[0] & 0x0c) != 0)
 		return;
 	subtype = frame[0] & 0xf0;

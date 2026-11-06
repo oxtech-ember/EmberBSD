@@ -153,10 +153,14 @@ def main():
     p.add_argument('--external-wpa2', action='store_true', required=True,
                    help='build only the experimental BSD-supplicant callback path')
     p.add_argument('--vendor-debug-once', action='store_true',
-                   help='enable vendor DEBUG logging for the first fullmac connect attempt')
+                   help='enable vendor VERBOSE logging for the first fullmac connect attempt')
+    p.add_argument('--vendor-rx-observe-once', action='store_true',
+                   help='observe selected-peer RX metadata during the first debug attempt')
     for opt in ('idf-source', 'wpa-source', 'sysroot', 'host-prefix', 'target-binutils-prefix', 'output'):
         p.add_argument('--'+opt, type=absolute, required=True)
     a = p.parse_args()
+    if a.vendor_rx_observe_once and not a.vendor_debug_once:
+        p.error('--vendor-rx-observe-once requires --vendor-debug-once')
     idf = a.idf_source / 'components'
     clang = (a.host_prefix / 'bin/clang').resolve(strict=True)
     if not clang.is_relative_to(a.host_prefix.resolve(strict=True)):
@@ -192,6 +196,8 @@ def main():
              '-isystem', str(a.sysroot/'usr/include'), '-isystem', str(resource/'include')]
     if a.vendor_debug_once:
         flags.append('-DESPWIFI_VENDOR_DEBUG_ONCE')
+    if a.vendor_rx_observe_once:
+        flags.append('-DESPWIFI_RX_OBSERVE_ONCE')
     for pattern in INCLUDES:
         for d in sorted(glob.glob(str(idf/pattern))):
             if Path(d).is_dir():

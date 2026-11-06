@@ -118,6 +118,9 @@ tests valid WPA, valid RSN, and malformed IEs under ASan/UBSan:
 "$HOST_PREFIX/bin/python3.15" -B sys/arch/riscv/tests/t_espwifi_debug.py \
     --cc "$HOST_PREFIX/bin/clang" --analyze
 
+"$HOST_PREFIX/bin/python3.15" -B sys/arch/riscv/tests/t_espwifi_rx_observe.py \
+    --cc "$HOST_PREFIX/bin/clang" --analyze
+
 "$HOST_PREFIX/bin/python3.15" -B sys/arch/riscv/tests/t_espwifi_ioctl_reset.py \
     --cc "$HOST_PREFIX/bin/clang"
 
@@ -136,3 +139,15 @@ For one bounded vendor association trace, the radio producer accepts
 immediately before the first validated external-WPA connect attempt, then
 restores WARNING on connect, disconnect, stop, or synchronous connect failure.
 The option is off by default and does not change security configuration.
+
+For receive-path diagnosis, add `--vendor-rx-observe-once` to that option.
+During the same first attempt it temporarily enables the existing promiscuous
+callback for management and data frames, then restores its previous mode and
+filter. The callback counts successful RX frames from the selected AP, and
+unicast downlink data addressed to this station. It records only counters,
+EAPOL type and key-information bits; no frame bodies, keys or addresses are
+logged. Encrypted data and A-MSDUs are counted separately without parsing their
+payloads. This observer can affect reception and timing, so its counters do not
+establish normal-mode delivery or a working connection. The underlying mode
+and callback constraints are described in the
+[ESP32-S31 sniffer documentation](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s31/api-guides/wifi-driver/wifi-modes.html#wi-fi-sniffer-mode).

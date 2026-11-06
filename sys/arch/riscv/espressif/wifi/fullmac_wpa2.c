@@ -417,7 +417,7 @@ espwifi_ext_connect(const unsigned char *ssid, unsigned int ssid_len,
 		(void)esp_wifi_unset_appie_internal(WIFI_APPIE_ASSOC_REQ);
 		return -1;
 	}
-	espwifi_vendor_debug_once_begin();
+	espwifi_vendor_debug_once_begin(bssid);
 	error = esp_wifi_connect();
 	if (error != ESP_OK) {
 		espwifi_vendor_debug_once_end();
