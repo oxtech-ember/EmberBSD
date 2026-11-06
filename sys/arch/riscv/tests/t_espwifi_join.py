@@ -82,6 +82,7 @@ struct espwifi_softc { struct { struct ifnet ec_if; } sc_ec; struct ieee80211com
  sc_join_disconnect_pending,sc_join_rescan_pending,sc_scan_enabled,sc_attached,
  sc_scan_pending,sc_scan_busy,sc_join_barrier_busy,sc_sta_started,sc_join_stopped,
  sc_sae_selection,sc_join_sae,sc_join_eapol_seen;
+ unsigned sc_join_eapol_boundary_seen;
  uint32_t sc_sae_selection_generation;uint8_t sc_sae_selection_bssid[6];
  uint8_t sc_key_slots,sc_group_key_slots,sc_igtk_slots;
  uint64_t sc_key_generation,sc_scan_generation,sc_scan_active;
@@ -104,6 +105,7 @@ static int expected_sae,pmf_configured,fail_closed_calls;
 static int run_calls,run_old_state,softmac_auth_assoc_calls;
 int espwifi_if_assoc_response(unsigned int,const void *,unsigned,
  const unsigned char *);
+static uint8_t esp_wifi_sta_get_prof_authmode_internal(void) { return 9; }
 static int splnet(void) { return 0; } static void splx(int s) { (void)s; }
 static void mutex_enter(int *p) { (void)p;assert(!sae_locked && !locked);sae_locked=1; }
 static void mutex_exit(int *p) { (void)p;assert(sae_locked);sae_locked=0; }

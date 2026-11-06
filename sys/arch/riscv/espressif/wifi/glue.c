@@ -1306,9 +1306,9 @@ espwifi_vendor_debug_once_begin(void)
 		return;
 	}
 	vendor_debug_once_state = 1;
-	error = esp_wifi_internal_set_log_level(WIFI_LOG_DEBUG);
+	error = esp_wifi_internal_set_log_level(WIFI_LOG_VERBOSE);
 	espwifi_os_critical_exit(critical);
-	espwifi_os_log("espwifi: vendor debug once enabled result=%#x\n",
+	espwifi_os_log("espwifi: vendor debug once enabled result=%#x level=verbose\n",
 	    (unsigned)error);
 }
 
@@ -1649,8 +1649,10 @@ espwifi_start_impl(void)
 	 * No power saving: a sleeping station wakes for beacons by a clock
 	 * this port does not keep to the microsecond, and misses its frames.
 	 */
-	esp_wifi_set_ps(WIFI_PS_NONE);
-	esp_wifi_internal_reg_rxcb(WIFI_IF_STA, rx_frame);
+	error = esp_wifi_set_ps(WIFI_PS_NONE);
+	espwifi_os_log("espwifi: set_ps result=%#x\n", (unsigned)error);
+	error = esp_wifi_internal_reg_rxcb(WIFI_IF_STA, rx_frame);
+	espwifi_os_log("espwifi: reg_rxcb result=%#x\n", (unsigned)error);
 	return 0;
 }
 
