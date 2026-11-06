@@ -6,6 +6,7 @@
 #include <sys/errno.h>
 #ifdef _KERNEL
 #include <sys/kmem.h>
+#include <sys/proc.h>
 #include <sys/kernel.h>
 #endif
 #include <dev/ic/rtw88var.h>
