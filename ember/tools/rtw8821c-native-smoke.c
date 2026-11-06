@@ -9,10 +9,14 @@ static uint8_t regs[0x4000];
 static unsigned writes, mode, tracing, events;
 static uint64_t hash;
 static unsigned fault_at, operations, checks, stale_at, failure_ops;
+static uint32_t invalidate_read_addr, invalidate_write_addr;
+static int invalidated;
 static int generation(void *p)
 {
 	(void)p;
 	checks++;
+	if (invalidated)
+		return ECANCELED;
 	if (stale_at && checks == stale_at) {
 		failure_ops = operations;
 		return ECANCELED;
@@ -55,6 +59,8 @@ static int r4(void *v, uint32_t a, uint32_t *x)
 	if (a + 4 > sizeof(regs))
 		return 1;
 	memcpy(x, regs + a, 4);
+	if (invalidate_read_addr && invalidate_read_addr == a)
+		invalidated = 1;
 	return 0;
 }
 static int w1(void *v, uint32_t a, uint8_t x)
@@ -90,6 +96,8 @@ static int w4(void *v, uint32_t a, uint32_t x)
 	memcpy(regs + a, &x, 4);
 	writes++;
 	ev(4, a, x);
+	if (invalidate_write_addr && invalidate_write_addr == a)
+		invalidated = 1;
 	if (a == 0xc90) {
 		uint32_t direct = 0x2800 + (((x >> 20) & 255) * 4),
 			 value = x & 0xfffff;
@@ -223,6 +231,26 @@ int main(void)
 		    operations != failure_ops)
 			return 19;
 	}
+	/* Generation changes in the final callback must not publish success. */
+	stale_at = 0;
+	invalidated = 0;
+	invalidate_read_addr = 0x2954;
+	v = 0x12345678;
+	if (rtw8821c_read_rf(&ctx, 0x55, &v) != ECANCELED || v != 0x12345678)
+		return 20;
+	invalidate_read_addr = 0;
+	invalidated = 0;
+	invalidate_write_addr = 0x1c94;
+	ctx.post_valid = 1;
+	if (rtw8821c_phy_post(&ctx) != ECANCELED || ctx.post_valid != 0)
+		return 21;
+	invalidate_write_addr = 0;
+	invalidated = 0;
+	invalidate_read_addr = 0x1bf0;
+	if (rtw8821c_calibrate(&ctx) != ECANCELED)
+		return 22;
+	invalidate_read_addr = 0;
+	invalidated = 0;
 	ctx.check = NULL;
 	stale_at = 0;
 	memset(regs, 0, sizeof(regs));

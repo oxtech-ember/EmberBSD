@@ -274,6 +274,8 @@ int rtw8821c_phy_post(struct rtw8821c_phy *ctx)
 	PHY_TRY(sc->sc_ops->write_1(sc->sc_bus, 0x45f, 0x10));
 	PHY_TRY(phy_mask32(ctx, 0x6dc, 0x3f000000, 4));
 	PHY_TRY(sc->sc_ops->write_4(sc->sc_bus, 0x1c94, 0xafffafff));
+	if ((error = rtw8821c_phy_check(ctx)) != 0)
+		return error;
 	ctx->channel_defaults[0] = defaults[0];
 	ctx->channel_defaults[1] = defaults[1];
 	ctx->channel_defaults[2] = defaults[2];
@@ -312,9 +314,13 @@ static int phy_rf_read(struct rtw8821c_phy *ctx, unsigned addr, uint32_t *out)
 		return e;
 	e = sc->sc_ops->read_4(sc->sc_bus, 0x2800 + ((addr & 0xff) << 2),
 			       &value);
-	if (e == 0)
-		*out = value & 0xfffff;
-	return e;
+	if (e != 0)
+		return e;
+	e = rtw8821c_phy_check(ctx);
+	if (e != 0)
+		return e;
+	*out = value & 0xfffff;
+	return 0;
 }
 int rtw8821c_read_rf(struct rtw8821c_phy *ctx, unsigned addr, uint32_t *value)
 {
@@ -473,6 +479,8 @@ int rtw8821c_calibrate(struct rtw8821c_phy *ctx)
 		return error;
 	error = sc->sc_ops->read_4(sc->sc_bus, 0x1bf0, &status);
 	if (error != 0)
+		return error;
+	if ((error = rtw8821c_phy_check(ctx)) != 0)
 		return error;
 	if (status & 0xff)
 		return EIO;
