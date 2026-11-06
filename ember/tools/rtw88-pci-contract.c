@@ -30,12 +30,12 @@ const struct rtw88_chip_ops rtw8821c_chip_ops = {
     .stop = rtw8822c_runtime_stop,
     .fw_init = rtw8822c_runtime_fw_init,
     .channel = rtw8822c_runtime_channel,
-    .station = rtw8822c_runtime_station,
-    .edca = rtw8822c_runtime_edca,
-    .ra = rtw8822c_runtime_ra,
-    .mailbox_begin = rtw8822c_runtime_mailbox_begin,
-    .mailbox_end = rtw8822c_runtime_mailbox_end,
-    .command = rtw8822c_runtime_command,
+    .station = rtw88_wcpu_station,
+    .edca = rtw88_wcpu_edca,
+    .ra = rtw88_wcpu_ra,
+    .mailbox_begin = rtw88_wcpu_mailbox_begin,
+    .mailbox_end = rtw88_wcpu_mailbox_end,
+    .command = rtw88_wcpu_command,
     .diag = rtw8822c_runtime_diag,
     .loopback = rtw8822c_runtime_loopback,
     .tx_desc = rtw8822c_runtime_tx_desc,
@@ -58,6 +58,7 @@ static struct {
 	int bar, tag, heap, maps, mem, kva, loaded, vectors, irq, locks;
 	int errors, io, writes, master_writes, removed, remove_read;
 	int mask_stuck, small_bar, wrong_type, refuse_master_clear, remove_config;
+	int pcie_mdio_stuck;
 	int msi_available, selected_irq, callbacks, pending;
 	unsigned efuse_reads, efuse_writes, net_attach_calls, net_detach_calls;
 	int efuse_enabled, efuse_stuck, net_owned, net_detach_error;
@@ -231,6 +232,8 @@ pcireg_t pci_conf_read(pci_chipset_tag_t pc, pcitag_t tag, int r)
 		return UINT32_MAX;
 	if (r == PCI_ID_REG)
 		return f.pci_id;
+	if (r == 0x80 + PCIE_LCSR)
+		return 0;
 	if (r == 0x80 + PCIE_DCAP2)
 		return f.dcap2;
 	if (r == 0x80 + PCIE_DCSR2)
@@ -298,6 +301,8 @@ static uint32_t io_read(bus_size_t r)
 	f.io++;
 	if (f.remove_read)
 		f.removed = 1;
+	if (r == 0x3f8 && !f.pcie_mdio_stuck)
+		return f.reg[r / 4] & ~0x20U;
 	return f.reg[r / 4];
 }
 uint8_t bus_space_read_1(bus_space_tag_t st, bus_space_handle_t sh,
@@ -326,6 +331,11 @@ static void io_write(bus_size_t r, uint32_t v)
 	CHECK(f.bar == 1 && !f.removed);
 	f.io++;
 	f.writes++;
+	/* PCIe PHY MDIO writes use these mapped registers. */
+	if (r == 0x3f4 || r == 0x3f8 || r == 0x3fb) {
+		f.reg[r / 4] = v;
+		return;
+	}
 	/* Identification may access only EFUSE and the existing interrupt masks. */
 	if (r == 0xcf) {
 		CHECK(v == 0 || v == 0x69);
@@ -795,6 +805,14 @@ static void test_8821_pcie_policy(void)
 		      f.devctl2 == old_control);
 		balanced();
 	}
+	/* A PHY MDIO timeout must unwind PCI resources before net attach. */
+	reset(&p);
+	f.pci_id = pa.pa_id;
+	f.pcie_mdio_stuck = 1;
+	rtw88_pci_attach(NULL, &p, &pa);
+	CHECK(f.errors == 1 && !f.net_owned && f.net_attach_calls == 0);
+	CHECK(f.devctl2 == old_control && f.cap_writes == 2);
+	balanced();
 	/* Hardware that refuses control bit must not attach; detach restores
 	 * state. */
 	reset(&p);

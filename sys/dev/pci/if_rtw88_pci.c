@@ -853,8 +853,11 @@ static const struct rtw88_bus_ops rtw88_pci_ops = {
 	.bus_master = rtw88_pci_bus_master
 };
 
+#include <dev/pci/rtw88_pcie_phy.h>
+
 /* PCIe device policy is selected by silicon, independent of the board. */
 #define RTW88_PCI_NO_COMPLETION_TIMEOUT 1U
+#define RTW88_PCI_8821_PCIE_PHY 2U
 static const struct rtw88_pci_device {
 	uint16_t product;
 	const struct rtw88_chip_ops *chip;
@@ -862,7 +865,7 @@ static const struct rtw88_pci_device {
 	unsigned quirks;
 } rtw88_pci_devices[] = {
 	{ PCI_PRODUCT_REALTEK_RTL8821CE, &rtw8821c_chip_ops,
-	  "RTL8821CE", RTW88_PCI_NO_COMPLETION_TIMEOUT },
+	  "RTL8821CE", RTW88_PCI_NO_COMPLETION_TIMEOUT | RTW88_PCI_8821_PCIE_PHY },
 	{ PCI_PRODUCT_REALTEK_RTL8822CE, &rtw8822c_chip_ops, "RTL8822CE", 0 }
 };
 
@@ -987,6 +990,24 @@ rtw88_pci_attach(device_t parent, device_t self, void *aux)
 	error = sc->sc_chip->identify(sc);
 	if (error != 0)
 		goto fail;
+	if ((device->quirks & RTW88_PCI_8821_PCIE_PHY) != 0) {
+		pcireg_t link;
+
+		if (!rtw88_pci_present(psc)) {
+			error = ENXIO;
+			goto fail;
+		}
+		link = pci_conf_read(pa->pa_pc, pa->pa_tag,
+		    psc->sc_pcie_cap + PCIE_LCSR);
+		if (link == UINT32_MAX || !rtw88_pci_present(psc)) {
+			error = ENXIO;
+			goto fail;
+		}
+		error = rtw88_pcie_8821_setup(sc, sc->sc_generation,
+		    (link & PCIE_LCSR_ENCLKPM) != 0);
+		if (error != 0)
+			goto fail;
+	}
 	error = rtw88_net_attach(sc, self, &psc->sc_lock, sc->sc_mac,
 	    &psc->sc_net);
 	if (error != 0)

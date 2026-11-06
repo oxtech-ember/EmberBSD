@@ -22,6 +22,8 @@ mkdir -p "$work/include/sys" "$work/include/dev/pci"
 printf '#include "rtw88-rfk-atomic-model.h"\n' > "$work/include/sys/atomic.h"
 ln -s "$src/sys/dev/ic" "$work/include/dev/ic"
 ln -s "$src/sys/dev/pci/pcidevs.h" "$work/include/dev/pci/pcidevs.h"
+ln -s "$src/sys/dev/pci/rtw88_pcie_phy.h" "$work/include/dev/pci/rtw88_pcie_phy.h"
+
 mkdir -p "$work/include/dev"
 for header in sys/param.h sys/systm.h sys/device.h sys/kmem.h \
     sys/mutex.h sys/once.h sys/bus.h sys/intr.h sys/xcall.h dev/pci/pcireg.h \
