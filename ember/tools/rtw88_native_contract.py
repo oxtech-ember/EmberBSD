@@ -44,7 +44,8 @@ def main(variant="hci"):
                  root / "sys/dev/pci/rtw88_pci_hci.c",
                  root / "sys/dev/pci/rtw88_pci_packet.c"]
         units += [root / "sys/dev/ic/rtw88_chip.c",
-                  root / "sys/dev/ic/rtw8822c_runtime.c"]
+                  root / "sys/dev/ic/rtw8822c_runtime.c",
+                  root / "sys/dev/ic/rtw88_wcpu.c"]
         units += [root / "sys/dev/ic" / (name + ".c") for name in (
             "rtw88_net_policy", "rtw88_hw", "rtw8822c_hw", "rtw88_fw_init",
             "rtw88_phy_table", "rtw8822c",

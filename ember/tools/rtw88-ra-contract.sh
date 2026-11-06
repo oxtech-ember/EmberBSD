@@ -16,9 +16,6 @@ tools=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 src=$(CDPATH= cd -- "$tools/../.." && pwd)
 work=$(mktemp -d "${TMPDIR:-/tmp}/rtw88-ra-contract.XXXXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
-if [ "$(uname -s)" = Darwin ] && [ -z "${SDKROOT:-}" ]; then
-    SDKROOT=$(xcrun --show-sdk-path); export SDKROOT
-fi
 python3 "$tools/rtw88-state-contract.py" "$src" "$work"
 mkdir -p "$work/include/sys" "$work/include/dev"
 ln -s "$src/sys/dev/ic" "$work/include/dev/ic"
@@ -40,7 +37,7 @@ for vht in 0 1 2; do
         "$tools/rtw88-ra-contract.c" \
         "$src/sys/dev/ic/rtw88.c" \
         "$src/sys/dev/ic/rtw88_chip.c" \
-        "$src/sys/dev/ic/rtw8822c_runtime.c" \
+        "$src/sys/dev/ic/rtw8822c_runtime.c" "$src/sys/dev/ic/rtw88_wcpu.c" \
         "$src/sys/dev/pci/rtw88_pci_hci.c" \
         "$src/sys/dev/pci/rtw88_pci_packet.c" \
         "$src/sys/dev/ic/rtw88_net_policy.c" \
@@ -130,7 +127,7 @@ if [ "${RTW88_RA_ANALYZE:-0}" = 1 ]; then
             -I"$work" -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \
             "$tools/rtw88-ra-contract.c" "$src/sys/dev/ic/rtw88.c" \
             "$src/sys/dev/ic/rtw88_chip.c" \
-            "$src/sys/dev/ic/rtw8822c_runtime.c" \
+            "$src/sys/dev/ic/rtw8822c_runtime.c" "$src/sys/dev/ic/rtw88_wcpu.c" \
             "$src/sys/dev/pci/rtw88_pci_hci.c" \
             "$src/sys/dev/pci/rtw88_pci_packet.c" \
             "$src/sys/dev/ic/rtw88_net_policy.c"

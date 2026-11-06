@@ -43,7 +43,7 @@ for altq in 0 1; do
         "$src/sys/dev/ic/rtw88_net_policy.c" "$src/sys/dev/ic/rtw88_async.c" \
         "$src/sys/dev/ic/rtw88.c" \
         "$src/sys/dev/ic/rtw88_chip.c" \
-        "$src/sys/dev/ic/rtw8822c_runtime.c" \
+        "$src/sys/dev/ic/rtw8822c_runtime.c" "$src/sys/dev/ic/rtw88_wcpu.c" \
         "$src/sys/dev/pci/rtw88_pci_hci.c" \
         "$src/sys/dev/pci/rtw88_pci_packet.c" \
         "$src/sys/dev/ic/rtw88_hw.c" "$src/sys/dev/ic/rtw8822c_hw.c" \
@@ -74,7 +74,7 @@ for altq in 0 1; do
             -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \
             "$tools/rtw88-routing-contract.c" "$src/sys/dev/ic/rtw88_net_policy.c" "$src/sys/dev/ic/rtw88_async.c" \
             "$src/sys/dev/ic/rtw88.c" "$src/sys/dev/ic/rtw88_chip.c" \
-            "$src/sys/dev/ic/rtw8822c_runtime.c" \
+            "$src/sys/dev/ic/rtw8822c_runtime.c" "$src/sys/dev/ic/rtw88_wcpu.c" \
             "$src/sys/dev/pci/rtw88_pci_hci.c" \
             "$src/sys/dev/pci/rtw88_pci_packet.c"
         ${CC:-cc} -std=c11 -O0 -g -Wall -Werror -fanalyzer $flags \

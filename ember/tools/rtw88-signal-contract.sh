@@ -23,7 +23,7 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror ${RTW88_TEST_CFLAGS:-} \
     "$tools/rtw88-signal-scan-contract.c" \
     "$src/sys/dev/ic/rtw88.c" \
     "$src/sys/dev/ic/rtw88_chip.c" \
-    "$src/sys/dev/ic/rtw8822c_runtime.c" \
+    "$src/sys/dev/ic/rtw8822c_runtime.c" "$src/sys/dev/ic/rtw88_wcpu.c" \
     "$src/sys/dev/pci/rtw88_pci_hci.c" \
     "$src/sys/dev/pci/rtw88_pci_packet.c" \
     "$src/sys/dev/ic/rtw88_net_policy.c" \
@@ -50,7 +50,7 @@ ${CC:-cc} -std=c11 -Wall -Werror ${RTW88_TEST_CFLAGS:-} \
     "$tools/rtw88-signal-scan-contract.c" \
     "$src/sys/dev/ic/rtw88.c" \
     "$src/sys/dev/ic/rtw88_chip.c" \
-    "$src/sys/dev/ic/rtw8822c_runtime.c" \
+    "$src/sys/dev/ic/rtw8822c_runtime.c" "$src/sys/dev/ic/rtw88_wcpu.c" \
     "$src/sys/dev/pci/rtw88_pci_hci.c" \
     "$src/sys/dev/pci/rtw88_pci_packet.c" \
     "$src/sys/dev/ic/rtw88_net_policy.c" \
@@ -78,7 +78,7 @@ if [ "${RTW88_START_ANALYZE:-0}" = 1 ]; then
  if ${CC:-cc} -std=c11 -O0 -Wall -Werror -fanalyzer -c "$work/causal.c" -o "$work/causal.o" > "$work/causal.log" 2>&1;then exit 1;fi
  grep -F analyzer-null-dereference "$work/causal.log" >/dev/null
  echo 'GCC analyzer causal NULL: rejected'
- for unit in "$tools/rtw88-signal-contract.c" "$tools/rtw88-signal-core-contract.c" "$tools/rtw88-signal-queue-contract.c" "$tools/rtw88-signal-scan-contract.c" "$src/sys/dev/ic/rtw88_hw.c" "$src/sys/dev/ic/rtw8822c_hw.c" "$src/sys/dev/ic/rtw8822c_phy.c" "$src/sys/dev/ic/rtw88.c" "$src/sys/dev/ic/rtw88_chip.c" "$src/sys/dev/ic/rtw8822c_runtime.c" "$src/sys/dev/pci/rtw88_pci_hci.c" "$src/sys/dev/pci/rtw88_pci_packet.c";do
+ for unit in "$tools/rtw88-signal-contract.c" "$tools/rtw88-signal-core-contract.c" "$tools/rtw88-signal-queue-contract.c" "$tools/rtw88-signal-scan-contract.c" "$src/sys/dev/ic/rtw88_hw.c" "$src/sys/dev/ic/rtw8822c_hw.c" "$src/sys/dev/ic/rtw8822c_phy.c" "$src/sys/dev/ic/rtw88.c" "$src/sys/dev/ic/rtw88_chip.c" "$src/sys/dev/ic/rtw8822c_runtime.c" "$src/sys/dev/ic/rtw88_wcpu.c" "$src/sys/dev/pci/rtw88_pci_hci.c" "$src/sys/dev/pci/rtw88_pci_packet.c";do
   ${CC:-cc} -std=c11 -D_DEFAULT_SOURCE -D_DARWIN_C_SOURCE -O0 -g -Wall -Werror -fanalyzer \
    -I"$work" -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" -I"$src/sys/net80211" -c "$unit" -o "$work/analysis.o"
   ${CLANG:-clang} ${RTW88_CLANG_FLAGS:-} --analyze -std=c11 -D_DEFAULT_SOURCE -D_DARWIN_C_SOURCE \

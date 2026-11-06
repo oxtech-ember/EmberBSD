@@ -28,7 +28,7 @@ done
     "$tools/rtw88-start-contract.c" \
     "$src/sys/dev/ic/rtw88.c" \
     "$src/sys/dev/ic/rtw88_chip.c" \
-    "$src/sys/dev/ic/rtw8822c_runtime.c" \
+    "$src/sys/dev/ic/rtw8822c_runtime.c" "$src/sys/dev/ic/rtw88_wcpu.c" \
     "$src/sys/dev/pci/rtw88_pci_hci.c" \
     "$src/sys/dev/pci/rtw88_pci_packet.c" \
     "$src/sys/dev/ic/rtw88_net_policy.c" \
@@ -71,7 +71,7 @@ if [ "${RTW88_START_ANALYZE:-0}" = 1 ]; then
         -I"$work" -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \
         "$tools/rtw88-start-contract.c" "$src/sys/dev/ic/rtw88_net_policy.c" \
         "$src/sys/dev/ic/rtw88.c" "$src/sys/dev/ic/rtw88_chip.c" \
-        "$src/sys/dev/ic/rtw8822c_runtime.c" \
+        "$src/sys/dev/ic/rtw8822c_runtime.c" "$src/sys/dev/ic/rtw88_wcpu.c" \
         "$src/sys/dev/pci/rtw88_pci_hci.c" \
         "$src/sys/dev/pci/rtw88_pci_packet.c"
     ${CLANG:-clang} ${RTW88_CLANG_FLAGS:-} --analyze -std=c11 \

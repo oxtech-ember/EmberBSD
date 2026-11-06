@@ -17,9 +17,6 @@ src=$(CDPATH= cd -- "$tools/../.." && pwd)
 core_source=${RTW88_CORE_SOURCE:-"$src/sys/dev/ic/rtw88.c"}
 work=$(mktemp -d "${TMPDIR:-/tmp}/rtw88-hwfeature-contract.XXXXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
-if [ "$(uname -s)" = Darwin ] && [ -z "${SDKROOT:-}" ]; then
-    SDKROOT=$(xcrun --show-sdk-path); export SDKROOT
-fi
 
 mkdir -p "$work/include/sys" "$work/include/dev"
 ln -s "$src/sys/dev/ic" "$work/include/dev/ic"
@@ -33,7 +30,7 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror ${RTW88_TEST_CFLAGS:-} \
     "$src/sys/dev/pci/rtw88_pci_hci.c" \
     "$src/sys/dev/pci/rtw88_pci_packet.c" \
     "$src/sys/dev/ic/rtw88_chip.c" \
-    "$src/sys/dev/ic/rtw8822c_runtime.c" \
+    "$src/sys/dev/ic/rtw8822c_runtime.c" "$src/sys/dev/ic/rtw88_wcpu.c" \
     "$src/sys/dev/ic/rtw88_net_policy.c" \
     "$src/sys/dev/ic/rtw88_hw.c" "$src/sys/dev/ic/rtw8822c_hw.c" \
     "$src/sys/dev/ic/rtw88_fw_init.c" \
@@ -63,7 +60,7 @@ if [ "${RTW88_HWFEATURE_ANALYZE:-0}" = 1 ]; then
     # Consumer executes actual startup; analyze core and byte decoder too.
     for source in "$tools/rtw88-hwfeature-contract.c" \
         "$src/sys/dev/ic/rtw88.c" "$src/sys/dev/ic/rtw88_chip.c" \
-        "$src/sys/dev/ic/rtw8822c_runtime.c" "$src/sys/dev/pci/rtw88_pci_hci.c" \
+        "$src/sys/dev/ic/rtw8822c_runtime.c" "$src/sys/dev/ic/rtw88_wcpu.c" "$src/sys/dev/pci/rtw88_pci_hci.c" \
         "$src/sys/dev/pci/rtw88_pci_packet.c" "$src/sys/dev/ic/rtw88_hw.c" "$src/sys/dev/ic/rtw8822c_hw.c"; do
         ${CC:-cc} -std=c11 -O0 -g -Wall -Wextra -Werror -fanalyzer \
             -I"$work" -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \
@@ -80,7 +77,7 @@ if [ "${RTW88_HWFEATURE_ANALYZE:-0}" = 1 ]; then
         -I"$work" -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \
         "$tools/rtw88-hwfeature-contract.c" "$src/sys/dev/ic/rtw88.c" \
         "$src/sys/dev/ic/rtw88_chip.c" \
-        "$src/sys/dev/ic/rtw8822c_runtime.c" \
+        "$src/sys/dev/ic/rtw8822c_runtime.c" "$src/sys/dev/ic/rtw88_wcpu.c" \
         "$src/sys/dev/pci/rtw88_pci_hci.c" \
         "$src/sys/dev/pci/rtw88_pci_packet.c" \
         "$src/sys/dev/ic/rtw88_hw.c" "$src/sys/dev/ic/rtw8822c_hw.c"

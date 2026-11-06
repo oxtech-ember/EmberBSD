@@ -16,9 +16,6 @@ tools=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 src=${RTW88_ENABLE_SOURCE:-$(CDPATH= cd -- "$tools/../.." && pwd)}
 work=$(mktemp -d "${TMPDIR:-/tmp}/rtw88-enable-contract.XXXXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
-if [ "$(uname -s)" = Darwin ] && [ -z "${SDKROOT:-}" ]; then
-    SDKROOT=$(xcrun --show-sdk-path); export SDKROOT
-fi
 mkdir -p "$work/include/sys" "$work/include/dev" "$work/include/net80211"
 cp "$src/sys/net80211/_ieee80211.h" "$work/include/net80211/"
 python3 "$tools/rtw88-fixed-contract.py" "$src" "$work/include"
@@ -38,7 +35,7 @@ for altq in 0 1; do
         "$src/sys/dev/ic/rtw88_net_policy.c" \
         "$src/sys/dev/ic/rtw88.c" \
         "$src/sys/dev/ic/rtw88_chip.c" \
-        "$src/sys/dev/ic/rtw8822c_runtime.c" \
+        "$src/sys/dev/ic/rtw8822c_runtime.c" "$src/sys/dev/ic/rtw88_wcpu.c" \
         "$src/sys/dev/pci/rtw88_pci_hci.c" \
         "$src/sys/dev/pci/rtw88_pci_packet.c" \
         "$src/sys/dev/ic/rtw88_hw.c" "$src/sys/dev/ic/rtw8822c_hw.c" \
@@ -69,7 +66,7 @@ for altq in 0 1; do
             -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \
             "$tools/rtw88-enable-contract.c" "$src/sys/dev/ic/rtw88_net_policy.c" \
             "$src/sys/dev/ic/rtw88.c" "$src/sys/dev/ic/rtw88_chip.c" \
-            "$src/sys/dev/ic/rtw8822c_runtime.c" \
+            "$src/sys/dev/ic/rtw8822c_runtime.c" "$src/sys/dev/ic/rtw88_wcpu.c" \
             "$src/sys/dev/pci/rtw88_pci_hci.c" \
             "$src/sys/dev/pci/rtw88_pci_packet.c"
         ${CC:-cc} -std=c11 -D_DEFAULT_SOURCE -D_DARWIN_C_SOURCE -O0 -g -Wall -Werror -pthread -fanalyzer $flags \
