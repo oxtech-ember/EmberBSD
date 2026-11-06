@@ -15,6 +15,8 @@
 #include <dev/ic/rtw88_io.h>
 #include <dev/ic/rtw88_internal.h>
 
+#define RTW88_RATEID_G		7
+#define RTW88_RATEID_B_20M	8
 #define RTW88_REG_MCUFW_CTRL	0x0080
 #define RTW88_MCUFWDL_EN	0x0001
 #define RTW88_FW_DW_RDY		0x4000
@@ -515,5 +517,219 @@ rtw88_wcpu_command(struct rtw88_softc *sc, uint8_t id, const void *payload,
 		sc->sc_mailbox.sent++;
 	if (sc->sc_generation != gen)
 		return EINTR;
+	return 0;
+}
+
+int
+rtw88_wcpu_station(struct rtw88_softc *sc, const uint8_t *bssid,
+    unsigned aid, unsigned basic_rates, unsigned slot, int linked)
+{
+	struct rtw88_io io;
+	uint8_t media[3] = { 0 }, port[3] = { 0 }, any = 0;
+	unsigned i;
+
+	if (linked != 0 && linked != 1)
+		return EINVAL;
+	if (basic_rates == 0 || (basic_rates & ~0xfffU) != 0 ||
+	    (slot != 9 && slot != 20))
+		return EINVAL;
+	if (linked) {
+		if (bssid == NULL || (bssid[0] & 1) != 0 ||
+		    aid == 0 || aid > 2007)
+			return EINVAL;
+		for (i = 0; i < 6; i++)
+			any |= bssid[i];
+		if (any == 0)
+			return EINVAL;
+	} else if (aid != 0 || bssid != NULL) {
+		return EINVAL;
+	}
+	if (sc->sc_edca_error != 0)
+		return sc->sc_edca_error;
+	if (sc->sc_ra.error != 0)
+		return sc->sc_ra.error;
+	if (!sc->sc_running || !sc->sc_started || sc->sc_stop_requested)
+		return ENXIO;
+	if (sc->sc_channel > 14 && (basic_rates & 0xf) != 0)
+		return EINVAL;
+	rtw88_io_init(&io, sc->sc_ops, sc->sc_bus);
+	if (io.error != 0)
+		return io.error;
+	rtw88_ra_invalidate(sc);
+	sc->sc_linked = 0;
+	/* Keep data paused and port unlinked until all setup writes succeed. */
+	rtw88_io_wr_mask(&io, 0x0100, 0x30000, 0);
+	rtw88_io_set(&io, 0x0522, 1, 0x0f);
+	rtw88_io_wr(&io, 0x06a4, 2, 0);
+	for (i = 0; i < 6; i++) {
+		rtw88_io_wr(&io, 0x0610 + i, 1, sc->sc_mac[i]);
+		rtw88_io_wr(&io, 0x0618 + i, 1, linked ? bssid[i] : 0);
+	}
+	/* SECCFG.TXDEC/RXDEC are off: the stack owns CCMP/PN/MIC. */
+	rtw88_io_clr(&io, 0x0680, 1, 0x0c);
+	rtw88_io_wr_mask(&io, 0x06a8, 0x7ff, aid);
+	rtw88_io_wr_mask(&io, 0x0440, 0xfff, basic_rates);
+	rtw88_io_wr(&io, 0x051b, 1, slot);
+	rtw88_io_set(&io, 0x0550, 1, 0x18);
+	rtw88_io_clr(&io, 0x0608, 4, 0xc0);
+	if (io.error != 0)
+		return io.error;
+	media[0] = linked ? 1 : 0;
+	io.error = rtw88_fw_command(sc, 0x01, media, sizeof(media));
+	if (linked && io.error == 0)
+		io.error = rtw88_fw_command(sc, 0x2c, port, sizeof(port));
+	if (linked) {
+		rtw88_io_set(&io, 0x0608, 4, 0xc0);
+		rtw88_io_clr(&io, 0x0550, 1, 0x10);
+		rtw88_io_wr(&io, 0x06a4, 2, 0xffff);
+		rtw88_io_wr_mask(&io, 0x0100, 0x30000, 2);
+		rtw88_io_clr(&io, 0x0522, 1, 0x0f);
+	}
+	if (io.error == 0) {
+		sc->sc_basic_rates = basic_rates;
+		sc->sc_linked = linked;
+	}
+	return io.error;
+}
+
+int
+rtw88_wcpu_ra(struct rtw88_softc *sc, const struct rtw88_ra_config *cfg)
+{
+	struct rtw88_ra_state ra = { 0 };
+	uint8_t payload[7] = { 0 };
+	unsigned mask;
+	int error, tuple_ok;
+
+	if (cfg == NULL || cfg->epoch == 0 || cfg->use_protection > 1 ||
+	    cfg->channel == 0 || cfg->channel != sc->sc_channel ||
+	    cfg->common_rates == 0 || (cfg->common_rates & ~0xfffU) != 0 ||
+	    cfg->sgi > 1 || (cfg->sgi && cfg->phy == RTW88_RA_LEGACY) ||
+	    cfg->ldpc > 1 || (cfg->ldpc && cfg->phy == RTW88_RA_LEGACY))
+		return EINVAL;
+#ifndef RTW88_VHT80
+	if (cfg->sgi || cfg->ldpc)
+		return EOPNOTSUPP;
+#endif
+	if (cfg->phy == RTW88_RA_HT20_1SS) {
+		if (cfg->mode != RTW88_FIXED_11A || cfg->channel <= 14 ||
+		    cfg->use_protection != 0 || cfg->vht_tx_map != 0 ||
+		    rtw88_ht20_policy_check(&cfg->ht, cfg->ht_operation) != 0 ||
+		    cfg->profile_generation == 0 || cfg->ht_mcs == 0 ||
+		    (cfg->ht_mcs & ~0xffU) != 0)
+			return EOPNOTSUPP;
+#ifdef RTW88_VHT80
+	} else if (cfg->phy == RTW88_RA_VHT_1SS) {
+		/* No HT-mixed entry; keep the mandatory 6 Mbps fallback. */
+		if (cfg->mode != RTW88_FIXED_11A || cfg->channel <= 14 ||
+		    cfg->use_protection != 0 ||
+		    rtw88_ht20_policy_check(&cfg->ht, cfg->ht_operation) != 0 ||
+		    cfg->profile_generation == 0 || cfg->ht_mcs != 0 ||
+		    rtw88_vht_rates(sc, cfg->vht_tx_map, NULL) != 0 ||
+		    (cfg->common_rates & 0x10) == 0)
+			return EOPNOTSUPP;
+#endif
+	} else if (cfg->phy != RTW88_RA_LEGACY || cfg->ht_mcs != 0 ||
+	    cfg->ht_operation != 0 || cfg->profile_generation != 0 ||
+	    cfg->ht.peer_cap != 0 || cfg->ht.mtu != 0 || cfg->ht.max_mpdu != 0 ||
+	    cfg->ht.rts_threshold != 0 || cfg->ht.secondary != 0 ||
+	    cfg->ht.qualification != 0 || cfg->vht_tx_map != 0) {
+		return EINVAL;
+	}
+	mask = cfg->common_rates;
+	switch (cfg->mode) {
+	case RTW88_FIXED_11A:
+		if (cfg->channel <= 14 || (mask & 0xf) != 0)
+			return EINVAL;
+		break;
+	case RTW88_FIXED_11B:
+		if (cfg->channel > 14 || (mask & ~0xfU) != 0)
+			return EINVAL;
+		break;
+	case RTW88_FIXED_11G:
+		if (cfg->channel > 14)
+			return EINVAL;
+		break;
+	default:
+		return EINVAL;
+	}
+	if (sc->sc_edca_error != 0)
+		return sc->sc_edca_error;
+	if (sc->sc_ra.error != 0)
+		return sc->sc_ra.error;
+	if (!sc->sc_running || !sc->sc_started || !sc->sc_linked ||
+	    sc->sc_stop_requested)
+		return ENXIO;
+	/* Each RA entry is qualified only for its committed channel tuple. */
+	tuple_ok = rtw88_channel_narrow(sc);
+#ifdef RTW88_VHT80
+	if (cfg->phy == RTW88_RA_VHT_1SS)
+		tuple_ok = rtw88_vht_committed(sc);
+#endif
+	if (!tuple_ok)
+		return EOPNOTSUPP;
+	ra.epoch = cfg->epoch;
+	ra.generation = sc->sc_generation;
+	ra.channel = cfg->channel;
+	ra.common_rates = mask;
+	ra.configured = 1;
+	ra.phy = cfg->phy;
+	ra.ht_mcs = cfg->ht_mcs;
+	ra.ht_operation = cfg->ht_operation;
+	ra.profile_generation = cfg->profile_generation;
+	ra.ht = cfg->ht;
+	ra.vht_tx_map = cfg->vht_tx_map;
+	ra.sgi = cfg->sgi;
+	ra.ldpc = cfg->ldpc;
+	ra.tuple = sc->sc_phy.channel;
+	if (cfg->phy == RTW88_RA_HT20_1SS) {
+		ra.rate_id = 5; /* Pinned RTW_RATEID_GN_N1SS, 5 GHz only. */
+		mask = (unsigned)cfg->ht_mcs << 12 | (mask & 0x30);
+#ifdef RTW88_VHT80
+	} else if (cfg->phy == RTW88_RA_VHT_1SS) {
+		struct rtw88_vht_rate_set rates;
+
+		(void)rtw88_vht_rates(sc, cfg->vht_tx_map, &rates);
+		ra.rate_id = rates.rate_id;
+		ra.vht_seed = rates.seed;
+		mask = rates.mask | (mask & 0x10);
+#endif
+	} else if ((mask & ~0xfU) == 0)
+		ra.rate_id = RTW88_RATEID_B_20M;
+	else if ((mask & 0xf) == 0)
+		ra.rate_id = RTW88_RATEID_G;
+	else {
+		ra.rate_id = 6; /* Pinned RTW_RATEID_BG. */
+		mask &= 0xff5;
+	}
+	ra.mask = mask;
+	if (cfg->use_protection) {
+		/* No qualified RTS policy: keep a visible legacy CCK path. */
+		if ((sc->sc_basic_rates & cfg->common_rates & 0xf) == 0)
+			return EOPNOTSUPP;
+		ra.protection_limited = 1;
+		sc->sc_ra = ra;
+		return 0;
+	}
+	/* Initial RA level1; bit7 SGI_EN lets firmware RA choose short GI. */
+	payload[1] = ra.rate_id | (1U << 5) | (unsigned)ra.sgi << 7;
+	/* DIS_PT, BW20, NO_UPDATE0, VHT0; bit2 LDPC. */
+	payload[2] = 0x40 | (unsigned)ra.ldpc << 2;
+	if (ra.phy == RTW88_RA_VHT_1SS)
+		/* VHT1 and the committed width: BW40 1, BW80 2. */
+		payload[2] |= 0x10 | (ra.tuple.width_mhz == 80 ? 2 : 1);
+	payload[3] = (uint8_t)mask;
+	payload[4] = (uint8_t)(mask >> 8);
+	payload[5] = (uint8_t)(mask >> 16);
+	payload[6] = (uint8_t)(mask >> 24);
+	error = rtw88_fw_command(sc, 0x40, payload, sizeof(payload));
+	if (error != 0) {
+		rtw88_ra_invalidate(sc);
+		sc->sc_ra.error = error;
+		sc->sc_stats.ra_command_errors++;
+		return error;
+	}
+	ra.active = 1;
+	sc->sc_ra = ra;
+	sc->sc_stats.ra_commands++;
 	return 0;
 }
