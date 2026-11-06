@@ -447,6 +447,12 @@
   "nested_object_owners": {
     "external/bsd/tdb/lib/waf-build": "external/bsd/tdb/lib",
     "crypto/external/bsd/openssh/config/generated": "crypto/external/bsd/openssh/config",
-    "crypto/external/apache2/openssl/generated": "crypto/external/apache2/openssl"
+    "crypto/external/apache2/openssl/generated": "crypto/external/apache2/openssl",
+    "external/bsd/libxml2/gnu/gnu-build": "external/bsd/libxml2/gnu",
+    "external/gpl2/gettext/gnu/gnu-build": "external/gpl2/gettext/gnu",
+    "external/gpl2/grep/bin/gnu-build": "external/gpl2/grep/bin",
+    "external/gpl2/rcs/gnu/gnu-build": "external/gpl2/rcs/gnu",
+    "external/gpl2/diffutils/gnu/gnu-build": "external/gpl2/diffutils/gnu",
+    "external/gpl2/texinfo/bin/gnu-build": "external/gpl2/texinfo/bin"
   }
 }

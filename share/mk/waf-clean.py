@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 # Copyright (c) 2026 EmberBSD contributors.
 # Origin: EmberBSD (AI-assisted).
-"""Remove only a Waf output directory owned by the selected make objdir."""
+"""Remove only a nested output directory owned by the selected make objdir."""
 import argparse
 import os
 from pathlib import Path

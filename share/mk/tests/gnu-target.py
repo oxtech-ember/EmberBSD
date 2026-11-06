@@ -45,6 +45,7 @@ GNU_BUILD_TRIPLE= aarch64-apple-darwin27.0.0
 GNU_HOST_TRIPLE= aarch64--netbsd
 HOST_SH= %s
 HOST_GMAKE= %s
+HOST_PYTHON= %s
 CC= %s --target=aarch64--netbsd
 CPPFLAGS= --sysroot=%s
 CFLAGS= -O1 -Werror -Wstrict-prototypes -DVALUE=1
@@ -55,7 +56,7 @@ GNU_MAKE_ENV= SOURCE=%s
 GNU_CONFIGURE_DEPENDENCY= %s %s
 .include "%s"
 all: gnu-target-build
-''' % (source, work / 'build', host / 'bin/mksh', host / 'bin/gmake',
+''' % (source, work / 'build', host / 'bin/mksh', host / 'bin/gmake', host / 'bin/python3.15',
        host / 'bin/clang', a.sysroot, a.sysroot, host / 'bin/ld.lld', source, dependency, metadata,
        root / 'share/mk/bsd.gnutarget.mk'))
     env = dict(os.environ, PATH=str(host / 'bin') + ':' + str(host / 'gnu/bin'),
@@ -170,7 +171,7 @@ all: gnu-target-build
         raise SystemExit('partial BSD cleandir did not fail')
     result = subprocess.run(command[:-1] + ['cleandir'], cwd=work, env=env,
                             capture_output=True, text=True)
-    if result.returncode or (build / 'fixture.o').exists() or (build / '.configure-inputs').exists():
+    if result.returncode or (build / 'fixture.o').exists() or build.exists():
         raise SystemExit('BSD cleandir left reusable nested GNU output')
     result = subprocess.run(command, cwd=work, env=env, capture_output=True, text=True)
     if result.returncode or not (build / 'fixture.o').exists():

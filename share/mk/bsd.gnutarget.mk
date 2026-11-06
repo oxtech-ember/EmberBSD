@@ -161,6 +161,11 @@ gnu-target-build: ${GNU_OBJDIR}/Makefile
 	    ${_GNU_LIBTOOL_MAKE_ARG} ${GNU_MAKE_TARGETS.${_GNU_DIR}:U${GNU_MAKE_TARGETS}}
 .endfor
 
+_GNU_CLEAN_HELPER:= ${.PARSEDIR}/waf-clean.py
+.if make(cleandir) && !defined(HOST_PYTHON)
+.error Set HOST_PYTHON to the selected native Python for nested GNU object cleanup
+.endif
+
 # Source refresh reaches this owner through the ordinary BSD cleandir target.
 # GNU make owns the nested objects and must remove them before reconfiguration.
 .PHONY: gnu-target-cleandir
@@ -180,3 +185,4 @@ gnu-target-cleandir:
 	rm -f ${GNU_OBJDIR:Q}/.configure-inputs ${GNU_OBJDIR:Q}/.configure-source \
 	    ${GNU_OBJDIR:Q}/.configure-libtool ${GNU_OBJDIR:Q}/.configure-dependency \
 	    ${GNU_OBJDIR:Q}/.cleanup-makefile
+	${HOST_PYTHON:Q} -B -S ${_GNU_CLEAN_HELPER:Q} --objdir ${.OBJDIR:Q} --output ${GNU_OBJDIR:Q}
