@@ -142,6 +142,7 @@ static int esp_wifi_register_wpa_cb_internal(struct wpa_funcs *p) {
  registered=p; callback_calls++; return ESP_OK;
 }
 static int esp_wifi_sta_connect_internal(uint8_t *bssid) { return bssid!=NULL?ESP_OK:1; }
+static uint8_t esp_wifi_sta_get_prof_authmode_internal(void) { return 9; }
 static void *espwifi_os_malloc_internal(unsigned long n) { return calloc(1,n); }
 static void espwifi_os_free(void *p) { free(p); }
 static unsigned unhandled_mgmt_logs;
