@@ -47,7 +47,6 @@ dns.c \
 ed25519.c \
 fatal.c \
 freezero.c \
-getexecpath.c \
 hmac.c \
 hostfile.c \
 kex.c \
@@ -113,9 +112,9 @@ LIB_EXPSYM=	${.CURDIR}/ssh-selected.expsym
 SRCS+=	bsd-getpeereid.c bsd-malloc.c bsd-misc.c bsd-setres_id.c \
 	glob.c \
 	cipher-chachapoly-libcrypto.c ed25519-openssl.c entropy.c \
-	explicit_bzero.c kexmlkem768ecdh.c libcrux-mlkem-mldsa.c mktemp.c \
+	explicit_bzero.c mktemp.c \
 	openssl-compat.c platform-misc.c platform-pledge.c platform-tracing.c \
-	port-net.c ssh-mldsa-eddsa.c timingsafe_bcmp.c vis.c
+	port-net.c timingsafe_bcmp.c vis.c
 .ifdef WITH_OPENSSL
 OPENSSL_SRCS+=	cipher-aes.c
 .endif
@@ -124,7 +123,7 @@ OPENSSL_SRCS+=	cipher-aes.c
 SRCS+=	fmt_scaled.c
 SRCS+=	readpassphrase.c getrrsetbyname.c
 .if !defined(EMBER_OPENSSH_SOURCE) || empty(EMBER_OPENSSH_SOURCE)
-SRCS+=	getpeereid.c
+SRCS+=	getexecpath.c getpeereid.c
 .endif
 COPTS.monitor_fdpass.c+=-Wno-stack-protector
 COPTS.sntrup761.c+=	-Wno-stack-protector

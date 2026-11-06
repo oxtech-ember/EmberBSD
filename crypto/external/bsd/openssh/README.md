@@ -4,6 +4,9 @@ The base build uses `EMBER_OPENSSH_SOURCE` to select the source prepared by the
 common Ports OpenSSH owner. The native makefiles provide target configuration,
 base integration and installation; the common source supplies upstream code and
 Ports patches. `obj` and other metadata-only operations do not require a source.
+The NetBSD-vendored `getexecpath.c` is selected only with that vendored tree;
+the common portable release uses its configured function check and upstream
+fallback. Its source list must resolve entirely within the selected make paths.
 
 The selected release intentionally changes the private `libssh` ABI from
 major 50 to 51. Consumers must be rebuilt against major 51; no major-50 alias
