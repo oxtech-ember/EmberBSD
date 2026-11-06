@@ -8,12 +8,19 @@
 
 /* Actual native callback and complete worker use explicit kernel/core services.
  * RF programming and full core I/O are not claimed by this exchange. */
-struct rtw88_softc { void *sc_executor; int sc_started, sc_running, sc_stop_requested; unsigned sc_channel, sc_generation, sc_h2c_box, modeled_tx_pending; int sc_linked; struct { int active, configured; } sc_ra; struct rtw88_phy_state sc_phy; };
+struct rtw88_chip_ops { int (*prepare_station)(void); };
+struct rtw88_mailbox { unsigned active, generation, box, total, sent; };
+struct rtw88_async_epoch { uint64_t epoch, key_epoch; uint32_t generation; };
+struct rtw88_net;
+struct rtw88_prepare_context { struct rtw88_net *net; struct rtw88_async_epoch id; };
+static const struct rtw88_chip_ops ht20_no_prepare = { NULL };
+struct rtw88_softc { const struct rtw88_chip_ops *sc_chip; struct rtw88_mailbox sc_mailbox; void *sc_executor; int sc_started, sc_running, sc_stop_requested; unsigned sc_channel, sc_generation, sc_h2c_box, modeled_tx_pending; int sc_linked; struct { int active, configured; } sc_ra; struct rtw88_phy_state sc_phy; };
 struct rtw88_net {
 	struct { struct ifnet ec_if; } ec;
 	struct ieee80211com ic;
 	struct rtw88_net_neg neg;
 	int run_pending;
+	uint64_t key_epoch;
 	volatile uint64_t ht20_snapshot;
 	volatile uint32_t ht20_generation;
 	void *dev, *softint;
@@ -123,6 +130,12 @@ static int
 rtw88_net_ht20_profile_prepare(struct rtw88_net *net,
     struct ieee80211_ht20_profile *profile)
 { (void)net; memset(profile,0,sizeof(*profile)); return EOPNOTSUPP; }
+/* Optional station preparation is outside this fixture's modeled domain. */
+static int rtw88_net_prepare_current(void *p) { (void)p; abort(); }
+static int rtw88_prepare_station(struct rtw88_softc *sc, int (*fn)(void *), void *p)
+{ (void)sc; (void)fn; (void)p; abort(); }
+static int rtw88_net_control_current_locked(struct rtw88_net *net, const struct rtw88_async_epoch *id)
+{ (void)net; (void)id; abort(); }
 #include "native-ht20-worker.inc"
 static int worker_parent(struct ieee80211com *ic,enum ieee80211_state state,int arg)
 {
@@ -166,6 +179,7 @@ ht_setup(void)
 	setup();
 	test_ic.ic_fixed_rate=IEEE80211_FIXED_RATE_NONE;
 	memset(&native_core,0,sizeof(native_core));
+	native_core.sc_chip=&ht20_no_prepare;
 	memset(&native_net,0,sizeof(native_net));
 	native_net.core=&native_core; native_net.lock=&native_lock;
 	test_ifp.if_softc=&native_net;
