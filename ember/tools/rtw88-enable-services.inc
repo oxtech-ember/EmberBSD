@@ -77,6 +77,9 @@ void aprint_error_dev(device_t d,const char *fmt,...)
 { (void)d;enable_state_errors++;va_list ap;va_start(ap,fmt);vfprintf(stderr,fmt,ap);va_end(ap); }
 static size_t enable_strlcpy(char *dst,const char *src,size_t n)
 { size_t len=strlen(src);if(n) { size_t copy=len<n-1?len:n-1;memcpy(dst,src,copy);dst[copy]=0; }return len; }
+#ifdef strlcpy
+#undef strlcpy
+#endif
 #define strlcpy enable_strlcpy
 #define IFQ_SET_READY(q) ((void)(q))
 static void if_initialize(struct ifnet *p) { p->if_snd.ifq_lock=&enable_queue_lock; }

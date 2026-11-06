@@ -6,6 +6,7 @@
 /* BSD sys/types.h alias used by the unchanged shared channel functions. */
 typedef unsigned int u_int;
 #include <dev/ic/rtw88_net_policy.h>
+#include <dev/ic/rtw88_async.h>
 #include "native-state-types.inc"
 #ifndef __UNCONST
 #define __UNCONST(p) ((void *)(uintptr_t)(const void *)(p))
@@ -93,6 +94,7 @@ struct rtw88_net {
 	unsigned txba_wanted;
 	int work_pending, reset_required;
 	int tx_quiet, quiet_error, csa_pending;
+	int stop_pending; uint64_t key_epoch;
 	unsigned tx_timer, tx_completed;
 	uint64_t dfs_frontier;
 	uint32_t dfs_frontier_generation;

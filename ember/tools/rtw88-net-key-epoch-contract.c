@@ -21,7 +21,10 @@ enum ieee80211_state { IEEE80211_S_INIT, IEEE80211_S_SCAN, IEEE80211_S_AUTH, IEE
 #define RTW88_EXEC_TX 2U
 #define RTW88_EXEC_STOP 8U
 struct rtw88_net;
-struct rtw88_softc { void *sc_rx_frame,*sc_tx_complete,*sc_net_cookie; struct rtw88_net *sc_net; void *sc_executor; uint32_t sc_generation; unsigned sc_channel; int sc_resources_ready; int sc_stop_requested,sc_hci_error,sc_dma_error,sc_power_error,sc_rf_enabled,sc_bootstrapping; int sc_started,sc_running,sc_powered,sc_power_dirty,sc_dma_master; };
+struct rtw88_softc;
+struct rtw88_chip_ops { int (*prepare_station)(struct rtw88_softc *,int (*)(void *),void *); };
+static const struct rtw88_chip_ops no_prepare = {0};
+struct rtw88_softc { const struct rtw88_chip_ops *sc_chip; void *sc_rx_frame,*sc_tx_complete,*sc_net_cookie; struct rtw88_net *sc_net; void *sc_executor; uint32_t sc_generation; unsigned sc_channel; int sc_resources_ready; int sc_stop_requested,sc_hci_error,sc_dma_error,sc_power_error,sc_rf_enabled,sc_bootstrapping; int sc_started,sc_running,sc_powered,sc_power_dirty,sc_dma_master; };
 struct ieee80211_node { unsigned *ni_chan; uint8_t ni_bssid[6]; unsigned ni_associd; struct { unsigned rs_nrates; } ni_rates; struct { int valid; } ni_ht20; };
 struct ifnet { void *if_softc; unsigned if_flags,if_timer; };
 #define mstohz(x) (x)
@@ -122,6 +125,25 @@ static int rtw88_station_config(struct rtw88_softc *s,const uint8_t *b,unsigned 
 static int rtw88_edca_apply(struct rtw88_softc *s,const struct rtw88_edca_params *p,unsigned l){(void)s;(void)p;(void)l;return 0;}
 static int rtw88_ra_configure(struct rtw88_softc *s,const struct rtw88_ra_config *r){(void)s;(void)r;return 0;}
 static int rtw88_fw_mailbox_end(struct rtw88_softc *s,int e){(void)s;mailbox_ends++;return e;}
+static struct rtw88_net *prepare_target;
+static unsigned prepare_calls, prepare_mutation;
+static int fixture_prepare(struct rtw88_softc *sc,int (*current)(void *),void *cookie)
+{
+ struct rtw88_net *n=prepare_target;
+ assert(n && sc==n->core && !*n->lock && current(cookie)==0);
+ prepare_calls++;
+ switch(prepare_mutation) {
+ case 1: n->policy.epoch++; break;
+ case 2: n->key_epoch++; break;
+ case 3: n->core->sc_generation++; break;
+ case 4: n->policy.dying=1; break;
+ case 5: n->stop_pending=1; break;
+ case 6: n->tx_quiet=1; break;
+ }
+ if(prepare_mutation) assert(current(cookie)!=0);
+ return 0;
+}
+static const struct rtw88_chip_ops with_prepare = { fixture_prepare };
 static struct rtw88_net *snapshot_mutation;
 static unsigned rtw88_net_basic_rates(struct ieee80211com *ic){(void)ic;return 0xfff;}
 static int ieee80211_ht20_state_request(struct ieee80211com *ic,int state){(void)ic;(void)state;return 0;}
@@ -179,7 +201,7 @@ int main(void)
  rtw88_net_stop_service(&c);
  assert(stop_calls==1 && c.stop_error==EIO && c.quiet_error==EIO);
  assert(c.prep_requested && !c.stop_pending);
- struct rtw88_softc sc2={.sc_generation=8,.sc_started=1};
+ struct rtw88_softc sc2={.sc_chip=&no_prepare,.sc_generation=8,.sc_started=1};
  struct rtw88_net e={.lock=&lock,.core=&sc2,.key_epoch=2};
  struct rtw88_control_snapshot request={.kind=RTW88_CTL_STATE,.state=IEEE80211_S_RUN,.id={.generation=8,.epoch=9,.key_epoch=2}};
  e.caps.bands=RTW88_BAND_2G; e.policy.epoch=9; invalidate_net=&e;
@@ -191,6 +213,50 @@ int main(void)
  rtw88_net_control_service(&e);
  assert(channel_calls==1 && station_calls==0 && mailbox_ends==1);
  assert(stop_calls==1 && e.reset_required && !e.control_ready);
+ /* Actual async AUTH executor, with and without the optional hook. */
+ invalidate_net=NULL;
+ for(unsigned mutation=0;mutation<=6;mutation++) {
+  struct rtw88_softc corep={.sc_chip=&with_prepare,.sc_generation=8,.sc_started=1};
+  struct rtw88_net netp={.lock=&lock,.core=&corep,.key_epoch=2};
+  struct rtw88_control_snapshot auth={.kind=RTW88_CTL_STATE,.state=IEEE80211_S_AUTH,.id={.generation=8,.epoch=9,.key_epoch=2}};
+  netp.caps.bands=RTW88_BAND_2G;netp.policy.epoch=9;prepare_target=&netp;prepare_mutation=mutation;
+  channel_calls=station_calls=mailbox_ends=prepare_calls=0;
+  int result=rtw88_net_control_execute(&netp,&auth,0);
+  assert(result==(mutation?ECANCELED:0));
+  assert(channel_calls==1 && prepare_calls==1 && station_calls==(mutation?0U:1U) && mailbox_ends==1);
+ }
+ /* Single executor retains hardware ownership through stale cleanup. */
+ for(unsigned mutation=1;mutation<=6;mutation++) {
+  struct rtw88_softc corep={.sc_chip=&with_prepare,.sc_generation=8,.sc_started=1,.sc_running=1};
+  struct rtw88_net netp={.lock=&lock,.core=&corep,.key_epoch=2,.io_active=1};
+  struct rtw88_control_snapshot auth={.kind=RTW88_CTL_STATE,.state=IEEE80211_S_AUTH,.id={.generation=8,.epoch=9,.key_epoch=2}};
+  netp.caps.bands=RTW88_BAND_2G;netp.policy.epoch=9;netp.hw.generation=8;
+  netp.control_pending=auth;netp.control_pending_valid=1;
+  prepare_target=&netp;prepare_mutation=mutation;
+  channel_calls=station_calls=mailbox_ends=prepare_calls=stop_calls=0;
+  rtw88_net_control_service(&netp);
+  assert(channel_calls==1 && prepare_calls==1 && station_calls==0 && mailbox_ends==1);
+  assert(stop_calls==1 && netp.reset_required && !netp.policy.accepting);
+  assert(!netp.control_ready || netp.control_result.error==ECANCELED);
+ }
+ {
+  struct rtw88_softc corep={.sc_chip=&with_prepare,.sc_generation=8,.sc_started=1};
+  struct rtw88_net netp={.lock=&lock,.core=&corep,.key_epoch=2};
+  struct rtw88_control_snapshot scan={.kind=RTW88_CTL_STATE,.state=IEEE80211_S_SCAN,.id={.generation=8,.epoch=9,.key_epoch=2}};
+  netp.caps.bands=RTW88_BAND_2G;netp.policy.epoch=9;
+  channel_calls=station_calls=mailbox_ends=prepare_calls=0;
+  assert(rtw88_net_control_execute(&netp,&scan,0)==0);
+  assert(channel_calls==1 && prepare_calls==0 && station_calls==1 && mailbox_ends==1);
+ }
+ {
+  struct rtw88_softc corep={.sc_chip=&no_prepare,.sc_generation=8,.sc_started=1};
+  struct rtw88_net netp={.lock=&lock,.core=&corep,.key_epoch=2};
+  struct rtw88_control_snapshot auth={.kind=RTW88_CTL_STATE,.state=IEEE80211_S_AUTH,.id={.generation=8,.epoch=9,.key_epoch=2}};
+  netp.caps.bands=RTW88_BAND_2G;netp.policy.epoch=9;
+  channel_calls=station_calls=mailbox_ends=prepare_calls=0;
+  assert(rtw88_net_control_execute(&netp,&auth,0)==0);
+  assert(channel_calls==1 && prepare_calls==0 && station_calls==1 && mailbox_ends==1);
+ }
  struct ieee80211_node node={.ni_bssid={2,3,4,5,6,7},.ni_associd=7};
  struct rtw88_net g={.lock=&lock,.core=&sc2,.key_epoch=2,.prep_granted=1,.requested=IEEE80211_S_RUN};
  struct rtw88_control_snapshot snap; struct rtw88_net_state_diag diag;

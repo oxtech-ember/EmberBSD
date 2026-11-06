@@ -58,6 +58,11 @@ parts=[net[:net.index('#include')], ht[:ht.index('#include')],
 shared=read('sys/net80211/ieee80211_proto.c')
 parts.append(shared[:shared.index('#include')])
 parts.append('void\n'+re.search(r'^ieee80211_wme_reset\(.*?^}',shared,re.M|re.S).group()+'\n')
+ctx = re.search(r'^struct rtw88_prepare_context \{.*?^};', net, re.M|re.S)
+if not ctx: raise ValueError('rtw88_prepare_context')
+parts.append(ctx.group()+'\n')
+parts.append(function('rtw88_net_control_current_locked','static int'))
+parts.append(function('rtw88_net_prepare_current','static int'))
 for name, result in [('rtw88_net_basic_rates','static unsigned'),
                      ('rtw88_net_edca_prepare','static int'),
                      ('rtw88_net_ht20_local_policy','static int'),

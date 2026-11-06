@@ -2784,6 +2784,65 @@ test_tx_quiet_fence(void)
 #include "rtw88-state-test.h"
 #endif
 
+#ifndef RTW88_START_CORE_ONLY
+static unsigned prepare_mutation_legacy, prepare_calls_legacy, prepare_foreign_box;
+static int
+prepare_legacy(struct rtw88_softc *sc, int (*current)(void *), void *cookie)
+{
+ struct rtw88_prepare_context *p=cookie;
+ struct rtw88_net *net=p->net;
+ CHECK(!state_lock.held && net->core==sc);
+ CHECK(current(cookie)==0 && sc->sc_mailbox.active);
+ prepare_calls_legacy++;
+ switch(prepare_mutation_legacy) {
+ case 1: net->policy.epoch++; break;
+ case 2: net->key_epoch++; break;
+ case 3: sc->sc_generation++; break;
+ case 4: net->policy.dying=1; break;
+ case 5: net->stop_pending=1; break;
+ case 6: net->tx_quiet=1; break;
+ case 7: net->policy.epoch++; sc->sc_mailbox.box=(sc->sc_mailbox.box+1)&3; prepare_foreign_box=sc->sc_mailbox.box; break;
+ }
+ if(prepare_mutation_legacy) {
+  CHECK(current(cookie)!=0);
+  /* End the worker after the stale-owner path; no new hardware owner runs. */
+  net->policy.dying=1;
+ }
+ return 0;
+}
+static void
+test_prepare_legacy_auth(void)
+{
+ for(unsigned mutation=0;mutation<=8;mutation++) {
+  struct state_fixture s; struct rtw88_chip_ops chip;
+  unsigned before_parent;
+  if(!state_fixture_start(&s,1,20)) continue;
+  rtw88_net_state_work(&s.net.state_work,&s.net);
+  chip=*s.sc.sc_chip; chip.prepare_station=mutation==8?NULL:prepare_legacy; s.sc.sc_chip=&chip;
+  prepare_calls_legacy=0;prepare_mutation_legacy=mutation;
+  state_station_calls=0;before_parent=state_parent_tx;
+  CHECK(rtw88_net_newstate(&s.net.ic,IEEE80211_S_AUTH,0)==0);
+  rtw88_net_state_work(&s.net.state_work,&s.net);
+  CHECK(prepare_calls_legacy==(mutation==8?0U:1U));
+  if(mutation==0 || mutation==8) {
+   CHECK(state_station_calls==1 && state_parent_tx==before_parent+1);
+   CHECK(!s.sc.sc_mailbox.active);
+  } else {
+   CHECK(state_station_calls==0 && state_parent_tx==before_parent);
+   CHECK(s.sc.sc_started && s.sc.sc_running);
+   CHECK((mutation==7) == !!s.sc.sc_mailbox.active);
+   if(mutation==7) CHECK(s.sc.sc_mailbox.box==prepare_foreign_box);
+  }
+  if (mutation==0) {
+   CHECK(rtw88_net_newstate(&s.net.ic,IEEE80211_S_SCAN,0)==0);
+   rtw88_net_state_work(&s.net.state_work,&s.net);
+   CHECK(prepare_calls_legacy==1);
+  }
+  state_fixture_finish(&s);
+ }
+}
+#endif
+
 int
 main(void)
 {
@@ -2836,6 +2895,7 @@ main(void)
 	test_tx_posted_diagnostics();
 	test_edca_quarantine_recovery();
 #ifndef RTW88_START_CORE_ONLY
+	test_prepare_legacy_auth();
 	test_native_state_defaults();
 	test_native_state_edca_failures();
 	test_native_state_negotiated();
