@@ -1754,9 +1754,28 @@ espwifi_if_input(const void *buf, unsigned int len)
 {
 	struct espwifi_softc * const sc = &espwifi_sc;
 	struct ifnet * const ifp = &sc->sc_ec.ec_if;
+#if defined(ESPWIFI_NET80211) && defined(ESPWIFI_NET80211_WPA2)
+	uint64_t generation;
+	bool diagnose = false;
+#endif
 
 	if (!sc->sc_attached || (ifp->if_flags & IFF_RUNNING) == 0)
 		return;
+#if defined(ESPWIFI_NET80211) && defined(ESPWIFI_NET80211_WPA2)
+	if (espwifi_if_is_eapol(buf, len)) {
+		mutex_spin_enter(&sc->sc_scan_lock);
+		generation = sc->sc_join_active;
+		if (!sc->sc_join_eapol_seen) {
+			sc->sc_join_eapol_seen = true;
+			diagnose = true;
+		}
+		mutex_spin_exit(&sc->sc_scan_lock);
+		if (diagnose)
+			espwifi_os_log("espwifi: EAPOL first generation=%llu len=%u "
+			    "path=ethernet result=observed\n",
+			    (unsigned long long)generation, len);
+	}
+#endif
 #ifdef ESPWIFI_NET80211
 	if (!atomic_load_acquire(&sc->sc_port_authorized) &&
 	    !espwifi_if_is_eapol(buf, len))
@@ -2161,6 +2180,20 @@ espwifi_if_stop(struct ifnet *ifp, int disable)
 {
 #ifdef ESPWIFI_NET80211
 	struct espwifi_softc * const sc = ifp->if_softc;
+	uint64_t generation, active;
+	bool joined, link;
+
+	mutex_spin_enter(&sc->sc_scan_lock);
+	generation = sc->sc_join_generation;
+	active = sc->sc_join_active;
+	joined = sc->sc_joined;
+	link = sc->sc_link;
+	mutex_spin_exit(&sc->sc_scan_lock);
+	espwifi_os_log("espwifi: ioctl reset cmd=stop state=%u flags=%#x "
+	    "generation=%llu active=%llu joined=%u link=%u action=if-stop\n",
+	    (unsigned)sc->sc_ic.ic_state, (unsigned)ifp->if_flags,
+	    (unsigned long long)generation, (unsigned long long)active,
+	    (unsigned)joined, (unsigned)link);
 
 	(void)ieee80211_new_state(&sc->sc_ic, IEEE80211_S_INIT, -1);
 #endif
@@ -2172,6 +2205,8 @@ espwifi_if_ioctl(struct ifnet *ifp, u_long cmd, void *data)
 {
 #ifdef ESPWIFI_NET80211
 	struct espwifi_softc * const sc = ifp->if_softc;
+	uint64_t generation, active;
+	bool joined, link, membership_update;
 	int s, error;
 
 #ifdef ESPWIFI_NET80211_WPA2
@@ -2189,7 +2224,30 @@ espwifi_if_ioctl(struct ifnet *ifp, u_long cmd, void *data)
 
 	if (error == ENETRESET) {
 #ifdef ESPWIFI_NET80211
-		if ((ifp->if_flags & (IFF_UP | IFF_RUNNING)) ==
+		membership_update = cmd == SIOCADDMULTI || cmd == SIOCDELMULTI;
+		mutex_spin_enter(&sc->sc_scan_lock);
+		generation = sc->sc_join_generation;
+		active = sc->sc_join_active;
+		joined = sc->sc_joined;
+		link = sc->sc_link;
+		mutex_spin_exit(&sc->sc_scan_lock);
+		espwifi_os_log("espwifi: ioctl reset cmd=%lu error=%d state=%u "
+		    "flags=%#x generation=%llu active=%llu joined=%u link=%u "
+		    "action=%s\n", (unsigned long)cmd, error,
+		    (unsigned)sc->sc_ic.ic_state, (unsigned)ifp->if_flags,
+		    (unsigned long long)generation, (unsigned long long)active,
+		    (unsigned)joined, (unsigned)link,
+		    membership_update ? "membership-update" :
+		    "restart");
+		/*
+		 * ether_addmulti()/ether_delmulti() maintain the membership list
+		 * and return ENETRESET when it changes.  The vendor RX callback
+		 * continues to deliver frames to the stack; this driver does not
+		 * configure a per-group filter, so restarting the station here
+		 * would only break an otherwise live association.
+		 */
+		if (!membership_update &&
+		    (ifp->if_flags & (IFF_UP | IFF_RUNNING)) ==
 		    (IFF_UP | IFF_RUNNING)) {
 			(void)ieee80211_new_state(&sc->sc_ic, IEEE80211_S_INIT, -1);
 			error = espwifi_if_init(ifp);

@@ -117,11 +117,19 @@ tests valid WPA, valid RSN, and malformed IEs under ASan/UBSan:
 
 "$HOST_PREFIX/bin/python3.15" -B sys/arch/riscv/tests/t_espwifi_debug.py \
     --cc "$HOST_PREFIX/bin/clang" --analyze
+
+"$HOST_PREFIX/bin/python3.15" -B sys/arch/riscv/tests/t_espwifi_ioctl_reset.py \
+    --cc "$HOST_PREFIX/bin/clang"
+
+"$HOST_PREFIX/bin/python3.15" -B sys/arch/riscv/tests/t_espwifi_port.py \
+    --cc "$HOST_PREFIX/bin/clang"
 ```
 
 The adapter forwards association responses and rejects general AUTH and ACTION
 management-frame callbacks; its dedicated SAE callbacks are separate. Host
-tests do not establish kernel integration or radio behavior on hardware.
+tests also cover Ethernet multicast-reset handling and controlled-port ingress
+and transmit behavior. Host tests do not establish kernel integration or radio
+behavior on hardware.
 
 For one bounded vendor security-selection trace, the radio producer accepts
 `--vendor-debug-once`. It raises the vendor Wi-Fi log level to DEBUG immediately

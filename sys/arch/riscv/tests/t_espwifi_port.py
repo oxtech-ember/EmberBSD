@@ -23,7 +23,9 @@ code=r'''
 #include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>
+#include <string.h>
 #define ESPWIFI_NET80211 1
+#define ESPWIFI_NET80211_WPA2 1
 #define ETHER_HDR_LEN 14
 #define ETHERTYPE_PAE 0x888e
 #define IFF_RUNNING 1
@@ -31,23 +33,32 @@ code=r'''
 #define atomic_load_acquire(p) (*(p))
 struct mbuf { int dummy; };struct ifnet { int if_flags; };
 struct espwifi_softc { struct { struct ifnet ec_if; } sc_ec; bool sc_attached;
- unsigned sc_port_authorized; void *sc_ipq; };
-static struct espwifi_softc espwifi_sc;static int queued,errors,allocfail;static struct mbuf mb;
+ unsigned sc_port_authorized; void *sc_ipq; int sc_scan_lock;
+ uint64_t sc_join_active; bool sc_join_eapol_seen; };
+static struct espwifi_softc espwifi_sc;static int queued,errors,allocfail,eapol_logs;static struct mbuf mb;
 static struct mbuf *m_devget(void *p,unsigned n,int off,struct ifnet *i) {
  (void)p;(void)n;(void)off;(void)i;return allocfail?NULL:&mb; }
 static void if_statinc(struct ifnet *p,int field) { (void)p;(void)field;errors++; }
 static int splnet(void) { return 0; }static void splx(int s) { (void)s; }
+static void mutex_spin_enter(int *p) { (void)p; }
+static void mutex_spin_exit(int *p) { (void)p; }
+static void espwifi_os_log(const char *fmt,...) {
+ if (strstr(fmt,"path=ethernet result=observed")!=NULL) eapol_logs++;
+}
 static void if_percpuq_enqueue(void *q,struct mbuf *m) { (void)q;assert(m==&mb);queued++; }
 #define __UNCONST(p) ((void *)(uintptr_t)(const void *)(p))
 ''' + fn('espwifi_if_is_eapol','bool') + fn('espwifi_if_input','void') + r'''
 int main(void) {
- uint8_t packet[14]={0};espwifi_sc.sc_attached=true;espwifi_sc.sc_ec.ec_if.if_flags=IFF_RUNNING;
+ uint8_t packet[14]={0};espwifi_sc.sc_attached=true;espwifi_sc.sc_join_active=42;
+ espwifi_sc.sc_ec.ec_if.if_flags=IFF_RUNNING;
  espwifi_if_input(packet,sizeof(packet));assert(!queued);
  packet[12]=0x88;packet[13]=0x8e;espwifi_if_input(packet,sizeof(packet));assert(queued==1);
- espwifi_if_input(packet,13);assert(queued==1);
+ assert(eapol_logs==1 && espwifi_sc.sc_join_eapol_seen);
+ espwifi_if_input(packet,sizeof(packet));assert(queued==2 && eapol_logs==1);
+ espwifi_if_input(packet,13);assert(queued==2);
  espwifi_sc.sc_port_authorized=1;packet[12]=0x08;packet[13]=0x00;
- espwifi_if_input(packet,sizeof(packet));assert(queued==2);
- allocfail=1;espwifi_if_input(packet,sizeof(packet));assert(errors==1 && queued==2);
+ espwifi_if_input(packet,sizeof(packet));assert(queued==3);
+ allocfail=1;espwifi_if_input(packet,sizeof(packet));assert(errors==1 && queued==3);
  return 0;
 }
 '''
