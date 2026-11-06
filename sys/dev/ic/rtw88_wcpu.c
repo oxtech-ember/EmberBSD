@@ -61,7 +61,8 @@ rtw88_poll(struct rtw88_softc *sc, uint32_t gen, unsigned budget_us,
 		if (error < 0)
 			return -error;
 		if (error == 0)
-			return 0;
+			return sc->sc_stop_requested || sc->sc_generation != gen ?
+			    EINTR : 0;
 		sc->sc_ops->delay_us(sc->sc_bus, RTW88_POLL_STEP_US);
 		waited += RTW88_POLL_STEP_US;
 	}
@@ -120,8 +121,11 @@ rtw88_wcpu_lte_read(struct rtw88_softc *sc, uint32_t gen, uint16_t reg,
 {
 	struct rtw88_poll32 ready = { 0x1700, UINT32_C(0x20000000),
 	    UINT32_C(0x20000000) };
+	uint32_t result;
 	int error;
 
+	if (value == NULL)
+		return EINVAL;
 	error = rtw88_poll(sc, gen, 10000, rtw88_ready32, &ready);
 	if (error != 0)
 		return error;
@@ -130,7 +134,13 @@ rtw88_wcpu_lte_read(struct rtw88_softc *sc, uint32_t gen, uint16_t reg,
 		return error;
 	if (sc->sc_stop_requested || sc->sc_generation != gen)
 		return EINTR;
-	return sc->sc_ops->read_4(sc->sc_bus, 0x1708, value);
+	error = sc->sc_ops->read_4(sc->sc_bus, 0x1708, &result);
+	if (error != 0)
+		return error;
+	if (sc->sc_stop_requested || sc->sc_generation != gen)
+		return EINTR;
+	*value = result;
+	return 0;
 }
 
 int
@@ -149,7 +159,11 @@ rtw88_wcpu_lte_write(struct rtw88_softc *sc, uint32_t gen, uint16_t reg,
 		return error;
 	if (sc->sc_stop_requested || sc->sc_generation != gen)
 		return EINTR;
-	return sc->sc_ops->write_4(sc->sc_bus, 0x1700, (UINT32_C(0xc00f0000) | reg));
+	error = sc->sc_ops->write_4(sc->sc_bus, 0x1700,
+	    UINT32_C(0xc00f0000) | reg);
+	if (error != 0)
+		return error;
+	return sc->sc_stop_requested || sc->sc_generation != gen ? EINTR : 0;
 }
 
 int
@@ -172,17 +186,19 @@ rtw88_wcpu_snapshot(struct rtw88_softc *sc, uint32_t gen,
 {
 	int error;
 
-	error = rtw88_wcpu_lte_read(sc, gen, 0x38, &saved->lte);
-	if (error == 0)
-		error = sc->sc_ops->read_1(sc->sc_bus, RTW88_REG_TXDMA_PQ + 1, &saved->pq);
-	if (error == 0)
-		error = sc->sc_ops->read_1(sc->sc_bus, RTW88_REG_CR, &saved->cr);
-	if (error == 0)
-		error = sc->sc_ops->read_2(sc->sc_bus, RTW88_REG_FIFOPAGE_1, &saved->fifo);
-	if (error == 0)
-		error = sc->sc_ops->read_4(sc->sc_bus, RTW88_REG_RQPN_CTRL2, &saved->rqpn);
-	if (error == 0)
-		error = sc->sc_ops->read_1(sc->sc_bus, RTW88_REG_BCN_CTRL, &saved->beacon);
+#define SNAPSHOT(expr) do { \
+	if (sc->sc_stop_requested || sc->sc_generation != gen) return EINTR; \
+	error = (expr); \
+	if (error != 0) return error; \
+	if (sc->sc_stop_requested || sc->sc_generation != gen) return EINTR; \
+} while (0)
+	SNAPSHOT(rtw88_wcpu_lte_read(sc, gen, 0x38, &saved->lte));
+	SNAPSHOT(sc->sc_ops->read_1(sc->sc_bus, RTW88_REG_TXDMA_PQ + 1, &saved->pq));
+	SNAPSHOT(sc->sc_ops->read_1(sc->sc_bus, RTW88_REG_CR, &saved->cr));
+	SNAPSHOT(sc->sc_ops->read_2(sc->sc_bus, RTW88_REG_FIFOPAGE_1, &saved->fifo));
+	SNAPSHOT(sc->sc_ops->read_4(sc->sc_bus, RTW88_REG_RQPN_CTRL2, &saved->rqpn));
+	SNAPSHOT(sc->sc_ops->read_1(sc->sc_bus, RTW88_REG_BCN_CTRL, &saved->beacon));
+#undef SNAPSHOT
 	return error;
 }
 
@@ -321,10 +337,14 @@ rtw88_wcpu_fw_download(struct rtw88_softc *sc, uint32_t gen, const uint8_t *fw,
 	error = sc->sc_ops->read_2(sc->sc_bus, RTW88_REG_MCUFW_CTRL, &ctrl);
 	if (error != 0)
 		return error;
+	if (sc->sc_stop_requested || sc->sc_generation != gen)
+		return EINTR;
 	ctrl = (uint16_t)((ctrl & 0x3800) | RTW88_MCUFWDL_EN);
 	error = sc->sc_ops->write_2(sc->sc_bus, RTW88_REG_MCUFW_CTRL, ctrl);
 	if (error != 0)
 		return error;
+	if (sc->sc_stop_requested || sc->sc_generation != gen)
+		return EINTR;
 	error = rtw88_fw_prepare(sc);
 	if (error != 0)
 		goto restore;

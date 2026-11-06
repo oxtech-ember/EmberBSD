@@ -712,6 +712,18 @@ static unsigned restore_pq_writes;
 static int restore_mode;
 
 static int
+restore_read4(void *cookie, uint32_t reg, uint32_t *value)
+{
+	int error = read_4(cookie, reg, value);
+
+	if (error == 0 && reg == 0x1700 && restore_mode == 7)
+		f.sc->sc_stop_requested = 1;
+	if (error == 0 && reg == 0x1708 && restore_mode == 8)
+		f.sc->sc_generation++;
+	return error;
+}
+
+static int
 restore_write1(void *cookie, uint32_t reg, uint8_t value)
 {
 	if (reg == 0x10d && ++restore_pq_writes == 2 && restore_mode == 3)
@@ -817,6 +829,19 @@ test_fw_register_restore(void)
 	sc.sc_generation++;
 	CHECK(rtw88_wcpu_lte_update(&sc, 7, 0x54, 0xffffffff, 0) == EINTR);
 	CHECK(f.lte[0x54] == UINT32_C(0x12ab5678));
+	for (mode = 7; mode <= 8; mode++) {
+		uint32_t value = UINT32_C(0xfeedface);
+
+		reset_bus(&sc);
+		sc.sc_generation = 7;
+		restore_mode = mode;
+		restore_ops = ops;
+		restore_ops.read_4 = restore_read4;
+		sc.sc_ops = &restore_ops;
+		CHECK(rtw88_wcpu_lte_read(&sc, 7, 0x54, &value) == EINTR);
+		CHECK(value == UINT32_C(0xfeedface));
+		CHECK(f.writes == (mode == 7 ? 0U : 1U));
+	}
 }
 
 static void
