@@ -28,6 +28,9 @@ struct rtw88_hw_feature {
 };
 int rtw88_hw_feature_decode(const uint8_t *, size_t, struct rtw88_hw_feature *);
 
+#define RTW88_TX_PACKET_DESC_SIZE	48
+#define RTW88_RX_PACKET_DESC_SIZE	24
+
 #define RTW8822C_TX_PACKET_DESC_SIZE	48
 #define RTW8822C_TX_BUFFER_DESC_SIZE	16
 #define RTW8822C_RX_PACKET_DESC_SIZE	24
@@ -159,6 +162,17 @@ struct rtw88_rx_info {
 	uint8_t host_epoch_valid;
 	uint64_t epoch, key_epoch;
 };
+
+/* Common fixed48 encoder. The trusted chip profile selects checksum coverage
+ * (32 or 48 bytes) and DATA_SC mask (0 or 0x0f). Unsupported DATA_SC and
+ * packet offsets return ENOTSUP; errors leave dst unchanged. */
+struct rtw88_tx_profile {
+	uint8_t checksum_bytes;
+	uint8_t data_sc_mask;
+};
+int rtw88_tx_encode_profile(uint8_t *, size_t, const struct rtw88_tx_info *,
+    const struct rtw88_tx_profile *);
+int rtw88_rx_decode_common(const uint8_t *, size_t, struct rtw88_rx_info *);
 
 /*
  * Native fixed48 TX profile: OFFSET=48, LS=1, PKT_OFFSET=0. Compute the
