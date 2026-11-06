@@ -250,6 +250,7 @@ jobs:
           RTW88_RECONNECT_ANALYZE: '1'
           RTW88_HWFEATURE_ANALYZE: '1'
           RTW88_RFK_ANALYZE: '1'
+          CSA: clang
           RXBA_ANALYZE: '1'
           HT20_ANALYZE: '1'
         run: |
@@ -267,6 +268,10 @@ jobs:
           test -n "$contracts"
           for contract in $contracts; do
             echo "::group::$contract"
-            sh "$contract" || { rc=$?; echo "::endgroup::"; echo "::error::$contract failed ($rc)"; exit "$rc"; }
+            if [ "$contract" = ember/tools/rtw8821c-runtime-contract.sh ]; then
+              sh "$contract" --analyze || { rc=$?; echo "::endgroup::"; echo "::error::$contract failed ($rc)"; exit "$rc"; }
+            else
+              sh "$contract" || { rc=$?; echo "::endgroup::"; echo "::error::$contract failed ($rc)"; exit "$rc"; }
+            fi
             echo "::endgroup::"
           done

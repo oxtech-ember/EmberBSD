@@ -191,10 +191,17 @@ print(f"rtw88 contract shards: {len(shards)} shards cover "
 
 # Clang Static Analyzer runners default CSA to clang; the workflow must
 # install clang or set CSA so the analyzer always runs.
+analysis_step = text.partition("      - name: Execute actual source under Memcheck and GCC path analysis\n")[2]
+if not analysis_step:
+    raise SystemExit("rtw88 workflow is missing its analysis step")
 csa_required = [n for n in expected if "${CSA:?" in (root / n).read_text()]
-if csa_required:
-    raise SystemExit("rtw88 runners require CSA without a clang default: "
+if csa_required and not re.search(r"^\s+CSA:\s*clang\s*$", analysis_step, re.M):
+    raise SystemExit("rtw88 required CSA runners need explicit clang in analysis step: "
                      + ", ".join(csa_required))
+if "ember/tools/rtw8821c-runtime-contract.sh" in csa_required:
+    if ('if [ "$contract" = ember/tools/rtw8821c-runtime-contract.sh ]; then' not in analysis_step or
+            'sh "$contract" --analyze ||' not in analysis_step):
+        raise SystemExit("rtw8821c runtime analysis mode is not selected in workflow")
 csa_users = [n for n in expected if "${CSA:-clang}" in (root / n).read_text()]
 if csa_users and not (
         re.search(r"^\s*apt-get install\b.*\sclang(?:\s|$)", text, re.M) or
