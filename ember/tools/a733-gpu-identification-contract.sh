@@ -31,14 +31,28 @@ mkdir "$work/powervr"
 cp "$src/sys/dev/powervr/fwif/"*.h "$work/powervr/"
 # Keep the production memory interface. Only native bus-DMA types are stubbed.
 for header in fwmem fwstart fwboot fwprobe fwservice fwbridge; do
-    case "$header" in fwmem|fwstart|fwboot|fwprobe)
+    case "$header" in
+    fwmem|fwstart|fwboot|fwprobe|fwservice)
         sed '/^#include /d' "$src/sys/dev/powervr/pvr_$header.h" > "$work/sun60i_a733_gpu_$header.h" ;;
+    fwbridge)
+        sed '/^#include /d' "$src/sys/external/bsd/drm2/powervr/pvr_fwbridge.h" > "$work/sun60i_a733_gpu_$header.h" ;;
     esac
     sed '/^#include /d' "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_$header.h" \
         >> "$work/sun60i_a733_gpu_$header.h"
 done
 sed '/^#include /d' "$src/sys/external/bsd/drm2/powervr/pvr_backend.h" \
     > "$work/pvr-backend.h-body.h"
+# The platform driver calls the common firmware-info adapter. Compile its
+# production implementation with only the native declarations needed here.
+{
+    printf '%s\n' '#include <errno.h>' '#include <stdbool.h>' '#include <stdint.h>' \
+        '#include <stddef.h>' '#include "pvr-query.h-body.h"' \
+        '#include <dev/powervr/pvr_fwinfo.h>' \
+        '#ifndef __arraycount' '#define __arraycount(a) (sizeof(a) / sizeof((a)[0]))' '#endif'
+    awk '/^pvr_query_input_from_fwinfo\(/ { print "int"; capture = 1 } \
+        capture { print; if ($0 == "}") exit }' \
+        "$src/sys/external/bsd/drm2/powervr/pvr_query.c"
+} > "$work/pvr-query-input.c"
 # Exercise the real parent-specific queue and finalization dispatch as well.
 autoconf="$src/sys/kern/subr_autoconf.c"
 sed -n '1,/^#include /p' "$autoconf" | sed '/^#include /d' \
@@ -55,11 +69,12 @@ for name in config_defer config_mountroot_done config_process_deferred config_fi
     sed -n "/^$name(/,/^}/p" "$autoconf" >> "$work/autoconf.h"
 done
 ${CC:-cc} -std=c11 -Wall -Wextra -Werror -Wno-unused-parameter \
-    ${GPU_ID_TEST_CFLAGS:-} -I"$work" -I"$src/sys/arch/arm/sunxi" \
+    ${GPU_ID_TEST_CFLAGS:-} -I"$work" -I"$src/sys/arch/arm/sunxi" -idirafter "$src/sys" \
     "$tools/a733-gpu-identification-contract.c" \
     "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwinfo.c" "$src/sys/dev/powervr/pvr_fwinfo.c" \
     "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwcompute_cmd.c" "$src/sys/dev/powervr/pvr_fwcompute_cmd.c" \
     "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwcompute_file.c" \
     "$src/sys/dev/powervr/pvr_fwcompute_file.c" \
-    "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwcompute.c" "$src/sys/dev/powervr/pvr_fwcompute.c" -o "$work/test"
+    "$src/sys/arch/arm/sunxi/sun60i_a733_gpu_fwcompute.c" "$src/sys/dev/powervr/pvr_fwcompute.c" \
+    "$work/pvr-query-input.c" -o "$work/test"
 "$work/test"
