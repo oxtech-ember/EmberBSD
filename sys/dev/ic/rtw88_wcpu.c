@@ -107,6 +107,108 @@ rtw88_rmw8(struct rtw88_softc *sc, uint32_t addr, uint8_t clear, uint8_t set)
 	return sc->sc_ops->write_1(sc->sc_bus, addr, v);
 }
 
+/* Snapshot temporary download registers before the first mutation. */
+struct rtw88_wcpu_saved {
+	uint8_t pq, cr, beacon;
+	uint16_t fifo;
+	uint32_t rqpn, lte;
+};
+
+int
+rtw88_wcpu_lte_read(struct rtw88_softc *sc, uint32_t gen, uint16_t reg,
+    uint32_t *value)
+{
+	struct rtw88_poll32 ready = { 0x1700, UINT32_C(0x20000000),
+	    UINT32_C(0x20000000) };
+	int error;
+
+	error = rtw88_poll(sc, gen, 10000, rtw88_ready32, &ready);
+	if (error != 0)
+		return error;
+	error = sc->sc_ops->write_4(sc->sc_bus, 0x1700, (UINT32_C(0x800f0000) | reg));
+	if (error != 0)
+		return error;
+	if (sc->sc_stop_requested || sc->sc_generation != gen)
+		return EINTR;
+	return sc->sc_ops->read_4(sc->sc_bus, 0x1708, value);
+}
+
+int
+rtw88_wcpu_lte_write(struct rtw88_softc *sc, uint32_t gen, uint16_t reg,
+    uint32_t value)
+{
+	struct rtw88_poll32 ready = { 0x1700, UINT32_C(0x20000000),
+	    UINT32_C(0x20000000) };
+	int error;
+
+	error = rtw88_poll(sc, gen, 10000, rtw88_ready32, &ready);
+	if (error != 0)
+		return error;
+	error = sc->sc_ops->write_4(sc->sc_bus, 0x1704, value);
+	if (error != 0)
+		return error;
+	if (sc->sc_stop_requested || sc->sc_generation != gen)
+		return EINTR;
+	return sc->sc_ops->write_4(sc->sc_bus, 0x1700, (UINT32_C(0xc00f0000) | reg));
+}
+
+int
+rtw88_wcpu_lte_update(struct rtw88_softc *sc, uint32_t gen, uint16_t reg,
+    uint32_t mask, uint32_t value)
+{
+	uint32_t old;
+	int error;
+
+	error = rtw88_wcpu_lte_read(sc, gen, reg, &old);
+	if (error != 0)
+		return error;
+	return rtw88_wcpu_lte_write(sc, gen, reg,
+	    (old & ~mask) | (value & mask));
+}
+
+static int
+rtw88_wcpu_snapshot(struct rtw88_softc *sc, uint32_t gen,
+    struct rtw88_wcpu_saved *saved)
+{
+	int error;
+
+	error = rtw88_wcpu_lte_read(sc, gen, 0x38, &saved->lte);
+	if (error == 0)
+		error = sc->sc_ops->read_1(sc->sc_bus, RTW88_REG_TXDMA_PQ + 1, &saved->pq);
+	if (error == 0)
+		error = sc->sc_ops->read_1(sc->sc_bus, RTW88_REG_CR, &saved->cr);
+	if (error == 0)
+		error = sc->sc_ops->read_2(sc->sc_bus, RTW88_REG_FIFOPAGE_1, &saved->fifo);
+	if (error == 0)
+		error = sc->sc_ops->read_4(sc->sc_bus, RTW88_REG_RQPN_CTRL2, &saved->rqpn);
+	if (error == 0)
+		error = sc->sc_ops->read_1(sc->sc_bus, RTW88_REG_BCN_CTRL, &saved->beacon);
+	return error;
+}
+
+static int
+rtw88_wcpu_restore(struct rtw88_softc *sc, uint32_t gen,
+    const struct rtw88_wcpu_saved *saved)
+{
+	int error = 0, next;
+
+#define RESTORE(expr) do { \
+	if (sc->sc_stop_requested || sc->sc_generation != gen) \
+		return error != 0 ? error : EINTR; \
+	next = (expr); \
+	if (error == 0) error = next; \
+} while (0)
+	RESTORE(sc->sc_ops->write_1(sc->sc_bus, RTW88_REG_TXDMA_PQ + 1, saved->pq));
+	RESTORE(sc->sc_ops->write_1(sc->sc_bus, RTW88_REG_CR, saved->cr));
+	RESTORE(sc->sc_ops->write_4(sc->sc_bus, RTW88_REG_H2CQ_CSR, UINT32_C(0x80000000)));
+	RESTORE(sc->sc_ops->write_2(sc->sc_bus, RTW88_REG_FIFOPAGE_1, saved->fifo));
+	RESTORE(sc->sc_ops->write_4(sc->sc_bus, RTW88_REG_RQPN_CTRL2,
+	    saved->rqpn | UINT32_C(0x80000000)));
+	RESTORE(sc->sc_ops->write_1(sc->sc_bus, RTW88_REG_BCN_CTRL, saved->beacon));
+#undef RESTORE
+	return error;
+}
+
 static int
 rtw88_fw_prepare(struct rtw88_softc *sc)
 {
@@ -208,8 +310,13 @@ rtw88_wcpu_fw_download(struct rtw88_softc *sc, uint32_t gen, const uint8_t *fw,
     size_t fw_len, const struct rtw88_fw_info *info)
 {
 	struct rtw88_poll32 ready;
+	struct rtw88_wcpu_saved saved;
 	uint16_t ctrl;
-	int error;
+	int error, restore_error;
+
+	error = rtw88_wcpu_snapshot(sc, gen, &saved);
+	if (error != 0)
+		return error;
 
 	error = sc->sc_ops->read_2(sc->sc_bus, RTW88_REG_MCUFW_CTRL, &ctrl);
 	if (error != 0)
@@ -220,17 +327,30 @@ rtw88_wcpu_fw_download(struct rtw88_softc *sc, uint32_t gen, const uint8_t *fw,
 		return error;
 	error = rtw88_fw_prepare(sc);
 	if (error != 0)
-		return error;
+		goto restore;
+	if (sc->sc_stop_requested || sc->sc_generation != gen) {
+		error = EINTR;
+		goto restore;
+	}
 	error = rtw88_download_section(sc, gen, fw, fw_len, &info->dmem);
 	if (error != 0)
-		return error;
+		goto restore;
 	error = rtw88_download_section(sc, gen, fw, fw_len, &info->imem);
 	if (error != 0)
-		return error;
+		goto restore;
 	if (info->emem.size != 0) {
 		error = rtw88_download_section(sc, gen, fw, fw_len, &info->emem);
 		if (error != 0)
-			return error;
+			goto restore;
+	}
+	if (sc->sc_stop_requested || sc->sc_generation != gen) {
+		error = EINTR;
+		goto restore;
+	}
+	error = rtw88_wcpu_restore(sc, gen, &saved);
+	if (error != 0) {
+		(void)rtw88_wcpu_lte_write(sc, gen, 0x38, saved.lte);
+		return error;
 	}
 	error = sc->sc_ops->write_4(sc->sc_bus, RTW88_REG_TXDMA_STATUS,
 	    RTW88_PAGE_OVF);
@@ -256,6 +376,9 @@ rtw88_wcpu_fw_download(struct rtw88_softc *sc, uint32_t gen, const uint8_t *fw,
 	error = rtw88_rmw8(sc, RTW88_REG_SYS_FUNC_EN + 1, 0, 0x04);
 	if (error != 0)
 		return error;
+	error = rtw88_wcpu_lte_write(sc, gen, 0x38, saved.lte);
+	if (error != 0)
+		return error;
 	error = rtw88_poll(sc, gen, RTW88_BOOTSTRAP_US, rtw88_ready32, &ready);
 	if (error != 0) {
 		uint32_t mcu = 0, dbg7 = 0;
@@ -266,6 +389,18 @@ rtw88_wcpu_fw_download(struct rtw88_softc *sc, uint32_t gen, const uint8_t *fw,
 		    mcu, dbg7);
 	}
 	return error;
+
+restore:
+	if (sc->sc_stop_requested || sc->sc_generation != gen)
+		return error; /* Caller owns power-off after cancellation. */
+	restore_error = rtw88_wcpu_restore(sc, gen, &saved);
+	{
+		int lte_error = rtw88_wcpu_lte_write(sc, gen, 0x38, saved.lte);
+
+		if (restore_error == 0)
+			restore_error = lte_error;
+	}
+	return error != 0 ? error : restore_error;
 }
 
 static int

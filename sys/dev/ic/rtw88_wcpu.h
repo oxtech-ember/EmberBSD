@@ -12,4 +12,8 @@ int rtw88_wcpu_mailbox_end(struct rtw88_softc *, int);
 int rtw88_wcpu_command(struct rtw88_softc *, uint8_t, const void *, size_t);
 int rtw88_wcpu_station(struct rtw88_softc *, const uint8_t *, unsigned, unsigned, unsigned, int);
 int rtw88_wcpu_ra(struct rtw88_softc *, const struct rtw88_ra_config *);
+/* Caller serializes LTE indirect operations; value is already mask-aligned. */
+int rtw88_wcpu_lte_read(struct rtw88_softc *, uint32_t, uint16_t, uint32_t *);
+int rtw88_wcpu_lte_write(struct rtw88_softc *, uint32_t, uint16_t, uint32_t);
+int rtw88_wcpu_lte_update(struct rtw88_softc *, uint32_t, uint16_t, uint32_t, uint32_t);
 #endif

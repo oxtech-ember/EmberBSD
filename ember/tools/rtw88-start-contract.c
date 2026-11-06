@@ -10,6 +10,7 @@
 #include "rtw88-test-kernel.h"
 #include <dev/ic/rtw88var.h>
 #include <dev/ic/rtw8822c.h>
+#include <dev/ic/rtw88_wcpu.h>
 #include <dev/ic/rtw8822c_table.h>
 #include "rtw8822c-dack-model.h"
 
@@ -279,7 +280,8 @@ read_4(void *cookie, uint32_t reg, uint32_t *out)
 		v |= 0x8000;
 	if (reg == 0x1208 && f.ddma_bad_sum)
 		v |= UINT32_C(1) << 27;
-	if (reg == 0x1700 && (!f.sc->sc_running || f.h2c_sent < 2))
+	if (reg == 0x1700 && f.sc->sc_packet_h2c.active &&
+	    (!f.sc->sc_running || f.h2c_sent < 2))
 		f.coex_before_h2c = 1;
 	if (reg == 0x1700 && !f.coex_busy)
 		v |= UINT32_C(0x20000000);
@@ -702,6 +704,119 @@ attach_ok(struct rtw88_softc *sc)
 	CHECK(sc->sc_resources_ready);
 	CHECK(!sc->sc_rf_enabled && !sc->sc_dma_master);
 	return sc->sc_resources_ready;
+}
+
+static struct rtw88_bus_ops restore_ops;
+static struct rtw88_hci_ops restore_hci;
+static unsigned restore_pq_writes;
+static int restore_mode;
+
+static int
+restore_write1(void *cookie, uint32_t reg, uint8_t value)
+{
+	if (reg == 0x10d && ++restore_pq_writes == 2 && restore_mode == 3)
+		return EIO;
+	if (reg == 0x10d && restore_pq_writes == 2 && restore_mode == 6) {
+		int error = write_1(cookie, reg, value);
+
+		f.sc->sc_generation++;
+		return error;
+	}
+	return write_1(cookie, reg, value);
+}
+
+static int
+restore_write4(void *cookie, uint32_t reg, uint32_t value)
+{
+	if (reg == 0x1700 && value == UINT32_C(0xc00f0038) && restore_mode == 4)
+		return EIO;
+	return write_4(cookie, reg, value);
+}
+
+static int
+restore_setup(struct rtw88_softc *sc)
+{
+	(void)sc;
+	return 0;
+}
+
+static int
+restore_section(struct rtw88_softc *sc, uint32_t generation,
+    const uint8_t *fw, size_t len, const struct rtw88_fw_section *section)
+{
+	(void)generation; (void)fw; (void)len; (void)section;
+	f.lte[0x38] = UINT32_C(0xdeadbeef);
+	if (restore_mode == 1)
+		return EIO;
+	if (restore_mode == 2 || restore_mode == 5) {
+		if (restore_mode == 2)
+			sc->sc_stop_requested = 1;
+		else
+			sc->sc_generation++;
+		return EINTR;
+	}
+	return 0;
+}
+
+static void
+test_fw_register_restore(void)
+{
+	struct rtw88_softc sc;
+	struct rtw88_fw_info info = { 0 };
+	uint8_t image = 0;
+	int mode, error;
+
+	info.dmem.load_address = UINT32_C(0x00200000);
+	info.imem.load_address = UINT32_C(0x00030000);
+	for (mode = 0; mode <= 6; mode++) {
+		reset_bus(&sc);
+		sc.sc_generation = 7;
+		restore_mode = mode;
+		restore_pq_writes = 0;
+		restore_ops = ops;
+		restore_ops.write_1 = restore_write1;
+		restore_ops.write_4 = restore_write4;
+		sc.sc_ops = &restore_ops;
+		restore_hci = rtw88_pci_hci_ops;
+		restore_hci.setup = restore_setup;
+		restore_hci.fw_section = restore_section;
+		sc.sc_hci = &restore_hci;
+		f.mmio[0x10d] = 0x5a;
+		f.mmio[0x100] = 0x19;
+		f.mmio[0x230] = 0x63;
+		f.mmio[0x231] = 0x24;
+		f.mmio[0x22c] = 0x31;
+		f.mmio[0x550] = 0x29;
+		f.lte[0x38] = UINT32_C(0x12345678);
+		error = rtw88_wcpu_fw_download(&sc, 7, &image, 1, &info);
+		CHECK(error == (mode == 0 ? 0 : (mode == 2 || mode == 5 || mode == 6) ? EINTR : EIO));
+		if (mode == 6) {
+			CHECK(restore_pq_writes == 2 && f.mmio[0x100] == 0x05);
+			continue;
+		}
+		if (mode == 2 || mode == 5) {
+			CHECK(restore_pq_writes == 1); /* no stale-generation writes */
+			continue;
+		}
+		CHECK(restore_pq_writes == 2);
+		if (mode != 3)
+			CHECK(f.mmio[0x10d] == 0x5a);
+		CHECK(f.mmio[0x100] == 0x19);
+		CHECK(f.mmio[0x230] == 0x63 && f.mmio[0x231] == 0x24);
+		CHECK(f.mmio[0x22c] == 0x31 && f.mmio[0x22f] == 0x80);
+		CHECK(f.mmio[0x550] == 0x29);
+		if (mode == 0 || mode == 1 || mode == 3)
+			CHECK(f.lte[0x38] == UINT32_C(0x12345678));
+	}
+	reset_bus(&sc);
+	sc.sc_generation = 7;
+	f.lte[0x54] = UINT32_C(0x12345678);
+	CHECK(rtw88_wcpu_lte_update(&sc, 7, 0x54, 0x00ff0000,
+	    0x00ab0000) == 0);
+	CHECK(f.lte[0x54] == UINT32_C(0x12ab5678));
+	sc.sc_generation++;
+	CHECK(rtw88_wcpu_lte_update(&sc, 7, 0x54, 0xffffffff, 0) == EINTR);
+	CHECK(f.lte[0x54] == UINT32_C(0x12ab5678));
 }
 
 static void
@@ -2650,6 +2765,7 @@ main(void)
 
 	test_tx_quiet_fence();
 	test_cold_dack_startup();
+	test_fw_register_restore();
 	test_radio_dependencies();
 	test_power_system_integration();
 	test_power_setup_unwind();
