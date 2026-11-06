@@ -136,10 +136,75 @@ test_rx(void)
 	}
 }
 
+static void
+test_signal(void)
+{
+	struct rtw88_rx_info rx = { .flags = RTW88_RX_PHY_STATUS, .rate = 0 };
+	struct rtw88_channel_tuple channel = { 3, 3, 20 };
+	struct rtw88_rx_signal signal;
+	uint8_t p[16] = { 0 };
+	unsigned rfe;
+
+	p[6] = 3;
+	p[13] = (7 << 5) | 12;
+	CHECK(rtw8821c_signal_decode(p, 15, &rx, 0, 1, 1, &channel, 1,
+	    &signal) == 0 && signal.valid && signal.power[0] == -76 &&
+	    signal.quality == 24);
+	p[14] = 0x80;
+	CHECK(rtw8821c_signal_decode(p, 15, &rx, 0, 1, 1, &channel, 1,
+	    &signal) == ENOENT && !signal.valid);
+	for (rfe = 2; rfe <= 6; rfe += 2)
+		CHECK(rtw8821c_signal_decode(p, 15, &rx, rfe, 1, 1,
+		    &channel, 1, &signal) == 0 && signal.power[0] == -68);
+	CHECK(rtw8821c_signal_decode(p, 14, &rx, 2, 1, 1, &channel, 1,
+	    &signal) == ENOENT);
+	CHECK(rtw8821c_signal_decode(p, 15, &rx, 2, 1, 2, &channel, 1,
+	    &signal) == ENOENT);
+	CHECK(rtw8821c_signal_decode(p, 15, &rx, 2, 1, 1, &channel, 0,
+	    &signal) == ENOENT);
+	p[0] = 1;
+	p[1] = 40;
+	rx.rate = 4;
+	CHECK(rtw8821c_signal_decode(p, 7, &rx, 0, 1, 1, &channel, 1,
+	    &signal) == 0 && signal.power[0] == -70 && signal.quality == 30);
+	rx.rate = 0;
+	CHECK(rtw8821c_signal_decode(p, 7, &rx, 0, 1, 1, &channel, 1,
+	    &signal) == ENOENT);
+	rx.flags = RTW88_RX_PHY_STATUS | RTW88_RX_CRC_ERROR;
+	CHECK(rtw8821c_signal_decode(p, 7, &rx, 0, 1, 1, &channel, 1,
+	    &signal) == ENOENT);
+	rx.flags = 0;
+	CHECK(rtw8821c_signal_decode(p, 7, &rx, 0, 1, 1, &channel, 1,
+	    &signal) == ENOENT);
+	rx.flags = RTW88_RX_PHY_STATUS;
+	rx.rate = 4;
+	CHECK(rtw8821c_signal_decode(p, 6, &rx, 0, 1, 1, &channel, 1,
+	    &signal) == ENOENT && !signal.valid);
+	p[6] = 4;
+	CHECK(rtw8821c_signal_decode(p, 7, &rx, 0, 1, 1, &channel, 1,
+	    &signal) == ENOENT && !signal.valid);
+	p[6] = 3;
+	p[0] = 2;
+	CHECK(rtw8821c_signal_decode(p, 7, &rx, 0, 1, 1, &channel, 1,
+	    &signal) == ENOENT && !signal.valid);
+	p[0] = 1;
+	CHECK(rtw8821c_signal_decode(p, 7, &rx, 3, 1, 1, &channel, 1,
+	    &signal) == ENOENT && !signal.valid);
+	p[1] = 10;
+	CHECK(rtw8821c_signal_decode(p, 7, &rx, 0, 1, 1, &channel, 1,
+	    &signal) == 0 && signal.quality == 0);
+	p[1] = 110;
+	CHECK(rtw8821c_signal_decode(p, 7, &rx, 0, 1, 1, &channel, 1,
+	    &signal) == 0 && signal.quality == 100);
+	p[1] = 130;
+	CHECK(rtw8821c_signal_decode(p, 7, &rx, 0, 1, 1, &channel, 1,
+	    &signal) == ENOENT && !signal.valid);
+}
+
 int
 main(void)
 {
-	test_tx(); test_rx();
+	test_tx(); test_rx(); test_signal();
 	if (failures) return 1;
 	puts("PASS: RTL8821C source packet contract");
 	return 0;
