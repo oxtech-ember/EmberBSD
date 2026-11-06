@@ -2520,10 +2520,13 @@ ieee80211_ioctl_set80211(struct ieee80211com *ic, u_long cmd,
 		} else
 			ic->ic_flags &= ~IEEE80211_F_COUNTERM;
 		break;
-	case IEEE80211_IOC_WPA:
-		if (ireq->i_val > 3)
+	case IEEE80211_IOC_WPA: {
+		uint32_t previous;
+
+		if (ireq->i_val < 0 || ireq->i_val > 3)
 			return EINVAL;
 		/* XXX verify ciphers available */
+		previous = ic->ic_flags & IEEE80211_F_WPA;
 		ic->ic_flags &= ~IEEE80211_F_WPA;
 		switch (ireq->i_val) {
 		case 1:
@@ -2536,8 +2539,11 @@ ieee80211_ioctl_set80211(struct ieee80211com *ic, u_long cmd,
 			ic->ic_flags |= IEEE80211_F_WPA1 | IEEE80211_F_WPA2;
 			break;
 		}
-		error = ENETRESET;		/* XXX? */
+		/* A repeated WPA setting during a scan must not reset the radio. */
+		error = previous != (ic->ic_flags & IEEE80211_F_WPA) ?
+		    ENETRESET : 0;
 		break;
+	}
 	case IEEE80211_IOC_WME:
 		if (ireq->i_val) {
 			if ((ic->ic_caps & IEEE80211_C_WME) == 0)

@@ -24,7 +24,7 @@ def function(source, name):
     return source[match.start():end]
 
 def arm(source, name):
-    match = re.search(r'^\tcase ' + name + r':\n', source, re.M)
+    match = re.search(r'^\tcase ' + name + r':(?: \{)?\n', source, re.M)
     if not match:
         raise RuntimeError('missing case: ' + name)
     following = re.search(r'^\t(?:case |default:)', source[match.end():], re.M)
@@ -46,11 +46,11 @@ with tempfile.TemporaryDirectory(prefix='manual-scan-') as directory:
     setter = function(stack, 'ieee80211_ioctl_set80211')
     generated += ['static int kernel_set(struct ieee80211com *ic, struct ieee80211req *ireq) {\n'
                   'int error=0; switch (ireq->i_type) {\n' + arm(setter, 'IEEE80211_IOC_ROAMING') +
-                  arm(setter, 'IEEE80211_IOC_SCAN_REQ') + '\n default: return EINVAL;\n}\n' +
+                  arm(setter, 'IEEE80211_IOC_SCAN_REQ') + arm(setter, 'IEEE80211_IOC_PRIVACY') + arm(setter, 'IEEE80211_IOC_WPA') + '\n default: return EINVAL;\n}\n' +
                   setter[setter.rindex('\tif (error == ENETRESET && !IS_UP_AUTO(ic))'):]]
     generated += ['static int ' + function(net, 'rtw88_net_ioctl')]
     for name in ('bsd_set80211', 'set80211param', 'bsd_set_ssid', 'bsd_get_if_media',
-                 'bsd_set_if_media', 'bsd_set_mediaopt', 'wpa_driver_bsd_scan'):
+                 'bsd_set_if_media', 'bsd_set_mediaopt', 'wpa_driver_bsd_set_wpa_internal', 'wpa_driver_bsd_set_wpa', 'wpa_driver_bsd_scan'):
         generated += ['static int ' + function(bsd, name)]
     (work / 'actual.inc').write_text('\n\n'.join(generated) + '\n')
     compiler = [os.environ['CC']]

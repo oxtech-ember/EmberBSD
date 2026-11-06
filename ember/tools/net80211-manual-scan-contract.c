@@ -24,6 +24,12 @@
 #define SIOCSIFFLAGS 5
 #define SIOCADDMULTI 6
 #define SIOCDELMULTI 7
+#define IEEE80211_IOC_WPA 7
+#define IEEE80211_IOC_PRIVACY 8
+#define IEEE80211_F_WPA1 0x100
+#define IEEE80211_F_WPA2 0x200
+#define IEEE80211_F_WPA (IEEE80211_F_WPA1 | IEEE80211_F_WPA2)
+#define IEEE80211_F_PRIVACY 0x400
 #define IEEE80211_IOC_ROAMING 12
 #define IEEE80211_IOC_SCAN_REQ 23
 #define IEEE80211_ROAMING_DEVICE 0
@@ -61,6 +67,7 @@ struct ieee80211com {
 	struct ifnet *ic_ifp;
 	void *ic_bss;
 	int ic_state, ic_roaming, ic_opmode;
+	unsigned ic_flags;
 	unsigned char ic_chan_avail[IEEE80211_CHAN_BYTES];
 	unsigned char ic_chan_active[IEEE80211_CHAN_BYTES];
 	unsigned char ic_des_essid[IEEE80211_NWID_LEN];
@@ -170,12 +177,8 @@ static void rtw88_net_stop(struct ifnet *ifp, int disable)
 }
 static int ieee80211_ioctl(struct ieee80211com *, u_long, void *);
 static int model_ioctl(int, u_long, void *);
-static int wpa_driver_bsd_set_wpa(void *priv, int enabled)
-{
-	(void)priv;
-	(void)enabled;
-	return 0;
-}
+static int wpa_driver_bsd_set_wpa_ie(void *priv, const void *p, size_t len)
+{ (void)priv; (void)p; (void)len; return 0; }
 #include "actual.inc"
 static int ieee80211_ioctl(struct ieee80211com *ic, u_long cmd, void *data)
 {
@@ -303,6 +306,52 @@ int main(void)
 	struct wpa_driver_scan_params scan = {1, {{ssid, sizeof(ssid)}}};
 	struct ieee80211_nwid nwid = {3, {0x61, 0, 0x62}};
 	struct ifreq request = {{0}, &nwid, 0};
+	/* Repeated WPA configuration keeps an already running interface. */
+	reset();
+	net.ic.ic_flags = IEEE80211_F_WPA | IEEE80211_F_PRIVACY;
+	net.ic.ic_roaming = IEEE80211_ROAMING_AUTO;
+	CHECK(wpa_driver_bsd_scan(&drv, &scan) == 0);
+	CHECK(cold_starts == 0 && net.ic.ic_flags ==
+	    (IEEE80211_F_WPA | IEEE80211_F_PRIVACY));
+	{
+		struct ieee80211req change = {
+		    .i_type = IEEE80211_IOC_WPA, .i_val = 3};
+
+		reset();
+		net.ic.ic_roaming = IEEE80211_ROAMING_AUTO;
+		net.ic.ic_flags = IEEE80211_F_WPA | IEEE80211_F_PRIVACY;
+		CHECK(rtw88_net_ioctl(&interface, SIOCS80211, &change) == 0);
+		CHECK(cold_starts == 0);
+		change.i_val = 2;
+		CHECK(rtw88_net_ioctl(&interface, SIOCS80211, &change) == 0);
+		CHECK(cold_starts == 1);
+	}
+	{
+		struct ieee80211req req = {.i_type = IEEE80211_IOC_WPA};
+
+		for (int old = 0; old <= 3; old++) {
+			for (int value = 0; value <= 3; value++) {
+				reset();
+				net.ic.ic_roaming = IEEE80211_ROAMING_AUTO;
+				net.ic.ic_flags = (unsigned)old * IEEE80211_F_WPA1 |
+				    IEEE80211_F_PRIVACY;
+				req.i_val = value;
+				CHECK(kernel_set(&net.ic, &req) ==
+				    (old == value ? 0 : ENETRESET));
+				CHECK(net.ic.ic_flags ==
+				    ((unsigned)value * IEEE80211_F_WPA1 |
+				    IEEE80211_F_PRIVACY));
+			}
+		}
+		for (int invalid = -1; invalid <= 4; invalid += 5) {
+			reset();
+			net.ic.ic_flags = IEEE80211_F_WPA | IEEE80211_F_PRIVACY;
+			req.i_val = invalid;
+			CHECK(kernel_set(&net.ic, &req) == EINVAL);
+			CHECK(net.ic.ic_flags ==
+			    (IEEE80211_F_WPA | IEEE80211_F_PRIVACY));
+		}
+	}
 	check_scan_channels(&drv, &scan);
 	reset();
 	CHECK(wpa_driver_bsd_scan(&drv, &scan) == 0);
