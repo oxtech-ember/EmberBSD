@@ -370,14 +370,17 @@ power_step_run(struct rtw88_softc *sc, const struct power_step *step,
 		if (!shutdown && (sc->sc_stop_requested || sc->sc_generation != generation))
 			return EINTR;
 		error = sc->sc_ops->read_1(sc->sc_bus, step->offset, &value);
-		if (error != 0) return error;
+		if (error != 0)
+			return error;
 		if (!shutdown && (sc->sc_stop_requested || sc->sc_generation != generation))
 			return EINTR;
 		if (step->cmd == RTW_PWR_CMD_WRITE)
 			return sc->sc_ops->write_1(sc->sc_bus, step->offset,
 			    (uint8_t)((value & ~step->mask) | (step->value & step->mask)));
-		if (step->cmd != RTW_PWR_CMD_POLLING) return EINVAL;
-		if ((value & step->mask) == (step->value & step->mask)) return 0;
+		if (step->cmd != RTW_PWR_CMD_POLLING)
+			return EINVAL;
+		if ((value & step->mask) == (step->value & step->mask))
+			return 0;
 		sc->sc_ops->delay_us(sc->sc_bus, 50);
 	}
 	return ETIMEDOUT;
@@ -393,15 +396,18 @@ rtw8821c_power(struct rtw88_softc *sc, int on)
 
 	if (sc == NULL || sc->sc_ops == NULL || sc->sc_ops->read_1 == NULL ||
 	    sc->sc_ops->write_1 == NULL || sc->sc_ops->delay_us == NULL ||
-	    (on != 0 && on != 1) || sc->sc_cut > 6) return EINVAL;
+	    (on != 0 && on != 1) || sc->sc_cut > 6)
+		return EINVAL;
 	generation = sc->sc_generation;
 	flow = on ? card_enable_flow_8821c : card_disable_flow_8821c;
 	for (; *flow != NULL; flow++) {
 		for (step = *flow; step->cmd != RTW_PWR_CMD_END; step++) {
 			if ((step->intf_mask & RTW_PWR_INTF_PCI_MSK) == 0 ||
-			    (step->cut_mask & (1U << (sc->sc_cut + 1))) == 0) continue;
+			    (step->cut_mask & (1U << (sc->sc_cut + 1))) == 0)
+				continue;
 			error = power_step_run(sc, step, generation, !on);
-			if (error != 0) return error;
+			if (error != 0)
+				return error;
 		}
 	}
 	return !on || (!sc->sc_stop_requested && sc->sc_generation == generation) ? 0 : EINTR;
