@@ -2266,6 +2266,58 @@ test_station_config(void)
 	rtw88_core_detach(&sc);
 }
 
+static unsigned observed_probe;
+static struct rtw88_tx_info observed_probe_info;
+
+static int
+capture_probe(struct rtw88_softc *sc, unsigned q, const uint8_t *frame,
+    size_t len, const struct rtw88_tx_info *info, enum rtw88_tx_progress *progress)
+{
+	(void)sc;
+	(void)q;
+	(void)frame;
+	(void)len;
+	observed_probe = info->probe_request;
+	observed_probe_info = *info;
+	*progress = RTW88_TX_ACCEPTED;
+	return 0;
+}
+
+static void
+test_probe_frame_metadata(void)
+{
+	struct rtw88_softc sc;
+	struct rtw88_hci_ops hci;
+	const struct rtw88_hci_ops *original;
+	uint8_t frame[24] = { 0 };
+
+	if (!start_ok(&sc))
+		return;
+	original = sc.sc_hci;
+	hci = *original;
+	hci.xmit = capture_probe;
+	sc.sc_hci = &hci;
+	frame[0] = 0x40;
+	CHECK(rtw88_tx_raw(&sc, RTW88_TXQ_MGMT, frame, sizeof(frame)) == 0);
+	CHECK(observed_probe == 1);
+	CHECK(observed_probe_info.queue == 18 && observed_probe_info.rate == 0);
+	CHECK(observed_probe_info.rate_id == 8 &&
+	    (observed_probe_info.flags & (RTW88_TX_USE_RATE |
+	    RTW88_TX_DIS_RATE_FB | RTW88_TX_HWSEQ)) ==
+	    (RTW88_TX_USE_RATE | RTW88_TX_DIS_RATE_FB | RTW88_TX_HWSEQ));
+	frame[1] = 0x40;
+	CHECK(rtw88_tx_raw(&sc, RTW88_TXQ_MGMT, frame, sizeof(frame)) == 0);
+	CHECK(observed_probe == 0);
+	frame[0] = 0xb0;
+	frame[1] = 0;
+	CHECK(rtw88_tx_raw(&sc, RTW88_TXQ_MGMT, frame, sizeof(frame)) == 0);
+	CHECK(observed_probe == 0);
+	CHECK(rtw88_tx_raw(&sc, RTW88_TXQ_MGMT, frame, 23) == EMSGSIZE);
+	sc.sc_hci = original;
+	rtw88_stop(&sc);
+	rtw88_core_detach(&sc);
+}
+
 static void
 test_tx_band_and_sequence(void)
 {
@@ -2932,6 +2984,7 @@ main(void)
 	test_diag_regs();
 	test_tx_descriptors_and_full_ring();
 	test_station_config();
+	test_probe_frame_metadata();
 	test_tx_band_and_sequence();
 	test_tx_data_rate_diagnostics();
 	test_tx_completion();

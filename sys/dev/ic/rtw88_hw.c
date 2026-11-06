@@ -45,7 +45,7 @@ rtw88_tx_encode_profile(uint8_t *dst, size_t cap, const struct rtw88_tx_info *tx
 	    (profile->checksum_bytes != 32 && profile->checksum_bytes != 48) ||
 	    (profile->data_sc_mask != 0 && profile->data_sc_mask != 0x0f))
 		return EINVAL;
-	if (tx->packet_size == 0 || tx->packet_size > 65535 ||
+	if (tx->probe_request > 1 || tx->packet_size == 0 || tx->packet_size > 65535 ||
 	    (tx->flags & ~RTW88_TX_FLAGS) != 0 || tx->sequence > 4095 ||
 	    tx->report_sequence > 4095 || tx->queue > 19 ||
 	    tx->rate_id > 31 || tx->security > 3 || tx->rate > 127 ||

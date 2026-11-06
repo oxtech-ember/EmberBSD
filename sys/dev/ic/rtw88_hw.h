@@ -62,6 +62,7 @@ struct rtw88_tx_info {
 	uint32_t flags;
 	uint16_t sequence;	/* 12-bit software sequence. */
 	uint16_t report_sequence;	/* 12-bit SW_DEFINE field. */
+	uint8_t probe_request;	/* Host-only, derived from the validated frame. */
 	uint8_t mac_id;
 	uint8_t queue;		/* TID 0-15, beacon 16, high 17, mgmt 18, H2C 19. */
 	uint8_t rate_id;
@@ -154,6 +155,7 @@ struct rtw88_rx_info {
 	uint8_t flags;
 	uint8_t shift;
 	uint8_t security;	/* Raw three-bit ENC_TYPE. */
+	uint8_t probe_request;	/* Host-only, derived from the validated frame. */
 	uint8_t mac_id;
 	uint8_t ppdu_count;
 	uint8_t rate;

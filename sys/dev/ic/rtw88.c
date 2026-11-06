@@ -632,6 +632,7 @@ rtw88_tx_submit(struct rtw88_softc *sc, unsigned q, const void *frame,
 	}
 	memset(&tx, 0, sizeof(tx));
 	tx.packet_size = (uint32_t)len;
+	tx.probe_request = bytes[0] == 0x40 && bytes[1] == 0;
 	tx.queue = (uint8_t)qsel;
 	/* main.h DESC_RATE6M and RATEID_G: CCK is invalid on 5 GHz. */
 	tx.rate = sc->sc_channel > 14 ? 4 : 0;
