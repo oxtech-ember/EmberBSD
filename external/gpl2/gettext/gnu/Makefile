@@ -3,7 +3,7 @@
 # Origin: EmberBSD (AI-assisted).
 .include <bsd.init.mk>
 
-.if defined(EMBER_GETTEXT_SOURCE) && defined(EMBER_LIBXML2_SOURCE)
+.if defined(EMBER_GETTEXT_SOURCE) && defined(EMBER_LIBXML2_SOURCE) && defined(EMBER_TREE_SITTER_SOURCE)
 .if (make(obj) || make(includes)) && empty(.MAKEFLAGS:M-V*)
 .include <bsd.obj.mk>
 .PHONY: includes
@@ -55,8 +55,12 @@ _XML_QUERY_FLAGS+= MAKEOBJDIRPREFIX=${MAKEOBJDIRPREFIX:Q}
 .endif
 _XML_OBJ!= ${MAKE} -C ${.CURDIR:Q}/../../../bsd/libxml2/gnu ${_XML_QUERY_FLAGS} -V .OBJDIR
 _XML_BUILD= ${_XML_OBJ}/gnu-build
+_TREE_SITTER_OBJ!= ${MAKE} -C ${.CURDIR:Q}/../../../mit/tree-sitter/lib ${_XML_QUERY_FLAGS} -V .OBJDIR
+GNU_CONFIGURE_ENV+= PKG_CONFIG=${HOST_PKG_CONFIG:Q} \
+    PKG_CONFIG_SYSROOT_DIR=${DESTDIR:Q} PKG_CONFIG_PATH= \
+    PKG_CONFIG_LIBDIR=${_TREE_SITTER_OBJ:Q}:${DESTDIR:Q}/usr/lib/pkgconfig:${DESTDIR:Q}/usr/share/pkgconfig
 .if defined(HOST_PKG_CONFIG) && exists(${_XML_BUILD}/libxml-2.0.pc)
-_XML_DEPS!= env PKG_CONFIG_SYSROOT_DIR=${DESTDIR:Q} \
+_XML_DEPS!= env PKG_CONFIG_PATH= PKG_CONFIG_SYSROOT_DIR=${DESTDIR:Q} \
     PKG_CONFIG_LIBDIR=${_XML_BUILD:Q}:${DESTDIR:Q}/usr/lib/pkgconfig:${DESTDIR:Q}/usr/share/pkgconfig \
     ${HOST_PKG_CONFIG:Q} --static --libs libxml-2.0
 .endif
@@ -66,7 +70,8 @@ _XML_DEPS!= env PKG_CONFIG_SYSROOT_DIR=${DESTDIR:Q} \
 CPPFLAGS+= -I${_XML_BUILD}/include -I${EMBER_LIBXML2_SOURCE}/include
 LDFLAGS+= -L${_XML_BUILD}/.libs
 GNU_CONFIGURE_ENV+= LIBS=${_XML_DEPS:Q}
-GNU_CONFIGURE_DEPENDENCY= ${_XML_BUILD}/.libs/libxml2.a
+GNU_CONFIGURE_DEPENDENCY= ${_XML_BUILD}/.libs/libxml2.a \
+    ${_TREE_SITTER_OBJ}/libtree-sitter.a ${_TREE_SITTER_OBJ}/tree-sitter-uninstalled.pc
 .include <bsd.gnutarget.mk>
 .PHONY: gettext-host-tools
 gnu-target-config-inputs: gettext-host-tools
@@ -87,7 +92,7 @@ ${_PROGDEBUG.${_P}}: ${_P} __progdebug
 .endif
 .else
 .if empty(.MAKEFLAGS:M-V*) && (make(all) || make(dependall) || make(install))
-.error Set EMBER_GETTEXT_SOURCE and EMBER_LIBXML2_SOURCE to the prepared common Ports sources
+.error Set EMBER_GETTEXT_SOURCE and EMBER_LIBXML2_SOURCE and EMBER_TREE_SITTER_SOURCE to the prepared common Ports sources
 .endif
 .include <bsd.prog.mk>
 .endif

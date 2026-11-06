@@ -1,8 +1,9 @@
 # Native gettext tools
 
 The base tools use the prepared `devel/gettext` source selected by
-`EMBER_GETTEXT_SOURCE` and the shared `textproc/libxml2` source selected by
-`EMBER_LIBXML2_SOURCE`. The operating system retains its native program,
+`EMBER_GETTEXT_SOURCE`, the shared `textproc/libxml2` source selected by
+`EMBER_LIBXML2_SOURCE`, and `textproc/tree-sitter` selected by
+`EMBER_TREE_SITTER_SOURCE`. The operating system retains its native program,
 manual, Info and locale installation rules. The historical source tree is no
 longer part of this build graph.
 
@@ -12,3 +13,7 @@ and `--style` options report that styling is unavailable. Base `libintl`
 remains the BSD Citrus implementation. The common libxml2 producer builds a
 private static position-independent archive for the tools; it does not install
 another libxml2 or libintl into the base.
+
+The common TreeSitter runtime also builds as a private target archive.
+Gettext retains its pinned language grammars. Configure checks their runtime
+ABI through the selected host pkg-config and target metadata directories.

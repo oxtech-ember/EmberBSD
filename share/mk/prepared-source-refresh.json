@@ -399,6 +399,34 @@
         "libexpat.so",
         "libexpat.a"
       ]
+    },
+    "EMBER_GETTEXT_SOURCE": {
+      "producer_dirs": [
+        "external/gpl2/gettext/gnu"
+      ],
+      "header_prefixes": [],
+      "consumer_dirs": [],
+      "linked_names": []
+    },
+    "EMBER_LIBXML2_SOURCE": {
+      "producer_dirs": [
+        "external/bsd/libxml2/gnu"
+      ],
+      "header_prefixes": [],
+      "consumer_dirs": [
+        "external/gpl2/gettext/gnu"
+      ],
+      "linked_names": []
+    },
+    "EMBER_TREE_SITTER_SOURCE": {
+      "producer_dirs": [
+        "external/mit/tree-sitter/lib"
+      ],
+      "header_prefixes": [],
+      "consumer_dirs": [
+        "external/gpl2/gettext/gnu"
+      ],
+      "linked_names": []
     }
   },
   "header_independent_object_patterns": [

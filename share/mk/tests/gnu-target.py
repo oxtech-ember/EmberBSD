@@ -36,6 +36,8 @@ END
 ''')
     dependency = work / 'dependency.a'
     dependency.write_bytes(b'first archive')
+    metadata = work / 'dependency.pc'
+    metadata.write_text('target metadata v1\n')
     makefile = work / 'Makefile'
     makefile.write_text('''GNU_SOURCE= %s
 GNU_OBJDIR= %s
@@ -50,11 +52,11 @@ GNU_CONFIGURE_CFLAGS= ${CFLAGS:N-Werror}
 LDFLAGS= --sysroot=%s
 LD_DRIVER_FLAGS= --ld-path=%s
 GNU_MAKE_ENV= SOURCE=%s
-GNU_CONFIGURE_DEPENDENCY= %s
+GNU_CONFIGURE_DEPENDENCY= %s %s
 .include "%s"
 all: gnu-target-build
 ''' % (source, work / 'build', host / 'bin/mksh', host / 'bin/gmake',
-       host / 'bin/clang', a.sysroot, a.sysroot, host / 'bin/ld.lld', source, dependency,
+       host / 'bin/clang', a.sysroot, a.sysroot, host / 'bin/ld.lld', source, dependency, metadata,
        root / 'share/mk/bsd.gnutarget.mk'))
     env = dict(os.environ, PATH=str(host / 'bin') + ':' + str(host / 'gnu/bin'),
                TMPDIR=str(a.work_dir))
@@ -74,7 +76,7 @@ all: gnu-target-build
             raise SystemExit('unchanged GNU build did not reuse its configured objects')
         previous = current
     build = work / 'build'
-    if ('configure-dependency=' + str(dependency)) not in (build / '.configure-inputs').read_text().splitlines():
+    if ('configure-dependency=' + str(dependency) + ' ' + str(metadata)) not in (build / '.configure-inputs').read_text().splitlines():
         raise SystemExit('dependency snapshot lacks its role marker')
     args = (build / 'configured.args').read_text().splitlines()
     if '--build=aarch64-apple-darwin27.0.0' not in args or '--host=aarch64--netbsd' not in args:
@@ -136,10 +138,10 @@ all: gnu-target-build
         raise SystemExit('reverted inputs reused an object after partial clean')
     # External static dependency content changes invalidate the target graph.
     before_inode = (build / 'fixture.o').stat().st_ino
-    dependency.write_bytes(b'second archive')
+    metadata.write_text('target metadata v2\n')
     result = subprocess.run(command, cwd=work, env=env, capture_output=True, text=True)
     if result.returncode or (build / 'fixture.o').stat().st_ino == before_inode:
-        raise SystemExit('changed external dependency left a stale target object')
+        raise SystemExit('changed second external dependency left a stale target object')
     # Changed configure content must invalidate objects even in the same second.
     before_inode = (build / 'fixture.o').stat().st_ino
     configure = source / 'configure'
@@ -158,6 +160,21 @@ all: gnu-target-build
     result = subprocess.run(command, cwd=work, env=env, capture_output=True, text=True)
     if result.returncode or '-DEMBER_CHANGED=1' not in (build / 'selected.env').read_text():
         raise SystemExit('changed target compiler flags were silently ignored')
+    # Scoped source refresh must clean objects owned by nested GNU make.
+    generated.write_text(generated.read_text().replace('\trm -f fixture.o Makefile',
+        '\tif test -f failonce; then rm failonce Makefile; exit 1; fi; rm -f fixture.o Makefile'))
+    (build / 'failonce').write_text('1')
+    result = subprocess.run(command[:-1] + ['cleandir'], cwd=work, env=env,
+                            capture_output=True, text=True)
+    if result.returncode == 0:
+        raise SystemExit('partial BSD cleandir did not fail')
+    result = subprocess.run(command[:-1] + ['cleandir'], cwd=work, env=env,
+                            capture_output=True, text=True)
+    if result.returncode or (build / 'fixture.o').exists() or (build / '.configure-inputs').exists():
+        raise SystemExit('BSD cleandir left reusable nested GNU output')
+    result = subprocess.run(command, cwd=work, env=env, capture_output=True, text=True)
+    if result.returncode or not (build / 'fixture.o').exists():
+        raise SystemExit('GNU producer cannot rebuild after BSD cleandir')
     failed_source = work / 'failed-source'
     failed_source.mkdir()
     (failed_source / 'configure').write_text('echo partial > Makefile\nexit 1\n')

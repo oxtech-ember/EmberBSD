@@ -1,0 +1,5 @@
+Name: tree-sitter
+Description: Incremental parsing library for base gettext
+Version: @VERSION@
+Libs: -L@LIBDIR@ -ltree-sitter
+Cflags: -I@INCLUDEDIR@

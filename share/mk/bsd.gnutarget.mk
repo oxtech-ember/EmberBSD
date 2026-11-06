@@ -24,8 +24,8 @@ GNU_CONFIGURE_ARGS?=
 GNU_CONFIGURE_ENV?=
 GNU_MAKE_ENV?=
 GNU_CONFIGURE_CFLAGS?= ${CFLAGS}
-# Optional file consumed by configure or target link (for example a static
-# library). Its contents participate in incremental build invalidation.
+# Optional files consumed by configure or target link (for example static
+# libraries). Their contents participate in incremental build invalidation.
 _GNU_DEPENDENCY_VALUE= ${GNU_CONFIGURE_DEPENDENCY:Unone}
 # Optional selected target libtool overrides generated scripts only for target
 # make. Separate GNU_HOST_MAKE_DIRS use their own host tools; recursive
@@ -74,7 +74,10 @@ gnu-target-config-inputs:
 	        cp ${GNU_TARGET_LIBTOOL:U:Q} "$$tmp.libtool" || exit 1; \
 	    fi; \
 	    if test ${_GNU_DEPENDENCY_VALUE:Q} != none; then \
-	        cp ${GNU_CONFIGURE_DEPENDENCY:U:Q} "$$tmp.dependency" || exit 1; \
+	        (for dependency in ${GNU_CONFIGURE_DEPENDENCY:U:@_D@${_D:Q}@}; do \
+	            printf '%s\n' "$$dependency" && wc -c < "$$dependency" && \
+	            cat "$$dependency" || exit 1; \
+	        done) > "$$tmp.dependency" || exit 1; \
 	    fi; \
 	    printf '%s\n' ${GNU_SOURCE:Q} ${GNU_BUILD_TRIPLE:Q} ${GNU_HOST_TRIPLE:Q} \
 	    ${HOST_SH:Q} ${HOST_GMAKE:Q} ${_GNU_TARGET_ENV:Q} \
@@ -157,3 +160,23 @@ gnu-target-build: ${GNU_OBJDIR}/Makefile
 	    -j1 SHELL=${HOST_SH:Q} CFLAGS=${CFLAGS:Q} CXXFLAGS=${CXXFLAGS:Q} \
 	    ${_GNU_LIBTOOL_MAKE_ARG} ${GNU_MAKE_TARGETS.${_GNU_DIR}:U${GNU_MAKE_TARGETS}}
 .endfor
+
+# Source refresh reaches this owner through the ordinary BSD cleandir target.
+# GNU make owns the nested objects and must remove them before reconfiguration.
+.PHONY: gnu-target-cleandir
+cleandir: gnu-target-cleandir
+gnu-target-cleandir:
+	@if test -f ${GNU_OBJDIR:Q}/.cleanup-makefile; then \
+	    cp ${GNU_OBJDIR:Q}/.cleanup-makefile ${GNU_OBJDIR:Q}/Makefile || exit 1; \
+	fi; \
+	if test -f ${GNU_OBJDIR:Q}/Makefile; then \
+	    if test ! -f ${GNU_OBJDIR:Q}/.cleanup-makefile; then \
+	        cp ${GNU_OBJDIR:Q}/Makefile ${GNU_OBJDIR:Q}/.cleanup-makefile.tmp.$$$$ && \
+	            mv ${GNU_OBJDIR:Q}/.cleanup-makefile.tmp.$$$$ ${GNU_OBJDIR:Q}/.cleanup-makefile || exit 1; \
+	    fi; \
+	    (cd ${GNU_OBJDIR:Q} && env MAKEFLAGS= MAKEOVERRIDES= SHELL=${HOST_SH:Q} \
+	        ${HOST_GMAKE:Q} -j1 SHELL=${HOST_SH:Q} distclean) || exit 1; \
+	fi; \
+	rm -f ${GNU_OBJDIR:Q}/.configure-inputs ${GNU_OBJDIR:Q}/.configure-source \
+	    ${GNU_OBJDIR:Q}/.configure-libtool ${GNU_OBJDIR:Q}/.configure-dependency \
+	    ${GNU_OBJDIR:Q}/.cleanup-makefile

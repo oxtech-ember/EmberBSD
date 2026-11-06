@@ -98,6 +98,7 @@ REPROFLAGS+=	-fdebug-regex-map='/usr/src/(.*)/obj\..*/(.*)=/usr/obj/\1/\2'
     EMBER_LIBOPTS_SOURCE /usr/src/external/libopts \
     EMBER_GETTEXT_SOURCE /usr/src/external/gettext \
     EMBER_LIBXML2_SOURCE /usr/src/external/libxml2 \
+    EMBER_TREE_SITTER_SOURCE /usr/src/external/tree-sitter \
     EMBER_TDB_SOURCE /usr/src/external/tdb \
     EMBER_LLVM_SOURCE /usr/src/external/llvm \
     EMBER_EXTERNAL_LLVM_RUNTIME /usr/pkg/llvm \
