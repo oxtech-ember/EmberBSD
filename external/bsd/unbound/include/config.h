@@ -33,7 +33,7 @@
 /* #undef DEPRECATED_DAEMON */
 
 /* Whether X509_NAME_get_text_by_NID is deprecated */
-/* #undef DEPRECATED_X509_NAME_GET_TEXT_BY_NID */
+#define DEPRECATED_X509_NAME_GET_TEXT_BY_NID 1
 
 /* Deprecate RSA 1024 bit length, makes that an unsupported key */
 /* #undef DEPRECATE_RSA_1024 */
