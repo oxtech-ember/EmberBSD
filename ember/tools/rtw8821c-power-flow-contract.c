@@ -16,12 +16,14 @@ static int op(void) { if (failed) after_failure++; calls++; if (calls == fail_at
 static int rd(void *p, uint32_t a, uint8_t *v) {
 	(void)p; if (op()) return EIO; if (a >= sizeof(reg)) return EINVAL;
 	if (a == 5 && !timeout) reg[a] &= (uint8_t)~3U;
-	*v = reg[a]; if (calls == cancel_at) active->sc_stop_requested = 1; return 0;
+	*v = reg[a]; if (calls == cancel_at) active->sc_stop_requested = 1;
+	return 0;
 }
 static int wr(void *p, uint32_t a, uint8_t v) {
 	(void)p; if (op()) return EIO; if (a >= sizeof(reg)) return EINVAL;
 	reg[a] = v; if (nwrite < 128) written[nwrite++] = (a << 8) | v;
-	if (calls == cancel_at) active->sc_stop_requested = 1; return 0;
+	if (calls == cancel_at) active->sc_stop_requested = 1;
+	return 0;
 }
 static void delay(void *p, unsigned us) { (void)p; (void)us; }
 static const struct rtw88_bus_ops ops = { .read_1=rd, .write_1=wr, .delay_us=delay };

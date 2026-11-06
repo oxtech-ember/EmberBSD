@@ -30,7 +30,7 @@ for line in lines[marker + 1:]:
 # family from it, so future transport units and headers also need coverage.
 pci_inputs = subprocess.check_output(
     ["git", "-c", f"safe.directory={root}", "-C", str(root),
-     "ls-files", "--", "sys/dev/pci/rtw88_pci_*"],
+     "ls-files", "--", "sys/dev/pci/rtw88_pci_*", "sys/dev/pci/rtw88_pcie_*"],
     text=True,
 ).splitlines()
 if not pci_inputs:
@@ -191,10 +191,17 @@ print(f"rtw88 contract shards: {len(shards)} shards cover "
 
 # Clang Static Analyzer runners default CSA to clang; the workflow must
 # install clang or set CSA so the analyzer always runs.
+analysis_step = text.partition("      - name: Execute actual source under Memcheck and GCC path analysis\n")[2]
+if not analysis_step:
+    raise SystemExit("rtw88 workflow is missing its analysis step")
 csa_required = [n for n in expected if "${CSA:?" in (root / n).read_text()]
-if csa_required:
-    raise SystemExit("rtw88 runners require CSA without a clang default: "
+if csa_required and not re.search(r"^\s+CSA:\s*clang\s*$", analysis_step, re.M):
+    raise SystemExit("rtw88 required CSA runners need explicit clang in analysis step: "
                      + ", ".join(csa_required))
+if "ember/tools/rtw8821c-runtime-contract.sh" in csa_required:
+    if ('if [ "$contract" = ember/tools/rtw8821c-runtime-contract.sh ]; then' not in analysis_step or
+            'sh "$contract" --analyze ||' not in analysis_step):
+        raise SystemExit("rtw8821c runtime analysis mode is not selected in workflow")
 csa_users = [n for n in expected if "${CSA:-clang}" in (root / n).read_text()]
 if csa_users and not (
         re.search(r"^\s*apt-get install\b.*\sclang(?:\s|$)", text, re.M) or

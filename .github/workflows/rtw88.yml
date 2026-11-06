@@ -14,6 +14,7 @@ name: Native rtw88 source contracts
       - 'sys/dev/ic/rt2661reg.h'
       - 'sys/dev/pci/if_rtw88_pci.c'
       - 'sys/dev/pci/rtw88_pci_*'
+      - 'sys/dev/pci/rtw88_pcie_*'
       - 'sys/net80211/ieee80211.c'
       - 'sys/net80211/ieee80211_ioctl.c'
       - 'sys/net80211/ieee80211_proto.c'
@@ -72,6 +73,7 @@ name: Native rtw88 source contracts
       - 'sys/dev/ic/rt2661reg.h'
       - 'sys/dev/pci/if_rtw88_pci.c'
       - 'sys/dev/pci/rtw88_pci_*'
+      - 'sys/dev/pci/rtw88_pcie_*'
       - 'sys/net80211/ieee80211.c'
       - 'sys/net80211/ieee80211_ioctl.c'
       - 'sys/net80211/ieee80211_proto.c'
@@ -171,6 +173,7 @@ jobs:
             /sys/dev/ic/rt2661reg.h
             /sys/dev/pci/if_rtw88_pci.c
             /sys/dev/pci/rtw88_pci_*
+            /sys/dev/pci/rtw88_pcie_*
             /sys/dev/pci/pcidevs.h
             /sys/net80211/ieee80211.c
             /sys/net80211/ieee80211_ioctl.c
@@ -250,6 +253,7 @@ jobs:
           RTW88_RECONNECT_ANALYZE: '1'
           RTW88_HWFEATURE_ANALYZE: '1'
           RTW88_RFK_ANALYZE: '1'
+          CSA: clang
           RXBA_ANALYZE: '1'
           HT20_ANALYZE: '1'
         run: |
@@ -267,6 +271,10 @@ jobs:
           test -n "$contracts"
           for contract in $contracts; do
             echo "::group::$contract"
-            sh "$contract" || { rc=$?; echo "::endgroup::"; echo "::error::$contract failed ($rc)"; exit "$rc"; }
+            if [ "$contract" = ember/tools/rtw8821c-runtime-contract.sh ]; then
+              sh "$contract" --analyze || { rc=$?; echo "::endgroup::"; echo "::error::$contract failed ($rc)"; exit "$rc"; }
+            else
+              sh "$contract" || { rc=$?; echo "::endgroup::"; echo "::error::$contract failed ($rc)"; exit "$rc"; }
+            fi
             echo "::endgroup::"
           done
