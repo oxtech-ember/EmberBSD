@@ -287,6 +287,8 @@ rtw8821c_start(struct rtw88_softc *sc,
 } while (0)
 	STEP("identity", rtw8821c_identify(sc));
 	STEP("HCI prepare", sc->sc_hci->prepare(sc));
+	/* Arm DMA before MAC power-on, as in the donor rtw_power_on(). */
+	STEP("HCI setup", sc->sc_hci->setup(sc));
 	sc->sc_power_dirty = 1;
 	STEP("power preinit", rtw8821c_power_pre(sc));
 	STEP("power on", rtw8821c_power(sc, 1));
@@ -299,7 +301,7 @@ rtw8821c_start(struct rtw88_softc *sc,
 	memset(&sc->sc_packet_h2c, 0, sizeof(sc->sc_packet_h2c));
 	sc->sc_packet_h2c.active = 1;
 	sc->sc_packet_h2c.generation = gen;
-	STEP("HCI setup", sc->sc_hci->setup(sc));
+	STEP("HCI reset", sc->sc_hci->setup(sc));
 	STEP("MAC", rtw8821c_mac_init(sc));
 	STEP("PHY preinit", rtw8821c_phy_pre(&ctx->phy));
 	STEP("PHY tables", rtw8821c_load_tables(&ctx->phy));
