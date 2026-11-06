@@ -225,7 +225,7 @@ rtw88_wcpu_station(struct rtw88_softc *s, const uint8_t *b, unsigned a,
 	return 0;
 }
 int
-rtw88_wcpu_edca(struct rtw88_softc *s, const struct rtw88_edca_params *p,
+rtw88_wcpu_edca(struct rtw88_softc *s, const struct rtw88_edca_params p[RTW88_WME_NAC],
 		    unsigned x)
 {
 	(void)s;
