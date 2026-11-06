@@ -145,6 +145,68 @@ main(void)
  assert(len > 24 + 11);
  assert(t.llc == 1 && t.eapol == 1 && t.truncated == 4);
  assert(t.eapol_type == 0 && t.key_info == 0);
+
+ /* Callback counts precede the RX-state and packet-length filters. */
+ memset(&t, 0, sizeof(t));
+ fill_header(frame, 0x80, 0);
+ espwifi_rx_observe_packet(&t, frame, 28, 0, 0, bssid, mac);
+ assert(t.cb_mgmt == 1 && t.mgmt == 1);
+ espwifi_rx_observe_packet(&t, frame, 28, 0, 1, bssid, mac);
+ assert(t.cb_mgmt == 2 && t.bad_mgmt == 1 && t.mgmt == 1);
+ espwifi_rx_observe_packet(&t, frame, 27, 0, 0, bssid, mac);
+ assert(t.cb_mgmt == 3 && t.short_mgmt == 1 && t.mgmt == 1);
+
+ fill_header(frame, 0x08, 0x02);
+ espwifi_rx_observe_packet(&t, frame, 28, 1, 1, bssid, mac);
+ assert(t.cb_data == 1 && t.bad_data == 1 && t.all_data == 0);
+ espwifi_rx_observe_packet(&t, frame, 27, 1, 0, bssid, mac);
+ assert(t.cb_data == 2 && t.short_data == 1 && t.all_data == 0);
+ espwifi_rx_observe_packet(&t, NULL, 28, 1, 0, bssid, mac);
+ assert(t.cb_data == 3 && t.short_data == 2 && t.all_data == 0);
+
+ /* Valid data counters separate all DATA, selected TA, FromDS, and own DA. */
+ {
+  struct espwifi_rx_observation u = { 0 };
+
+  fill_header(frame, 0x08, 0x02);
+  memcpy(frame + 10, other, sizeof(other)); /* Other transmitter, own DA. */
+  espwifi_rx_observe_packet(&u, frame, 28, 1, 0, bssid, mac);
+  assert(u.all_data == 1 && u.ap_data == 0 && u.ap_downlink == 0);
+  assert(u.data == 0);
+
+  fill_header(frame, 0x08, 0x01); /* Selected TA, ToDS, own DA. */
+  espwifi_rx_observe_packet(&u, frame, 28, 1, 0, bssid, mac);
+  assert(u.all_data == 2 && u.ap_data == 1 && u.ap_downlink == 0);
+  assert(u.data == 0);
+
+  fill_header(frame, 0x08, 0x02);
+  memcpy(frame + 4, other, sizeof(other)); /* Selected TA, wrong DA. */
+  espwifi_rx_observe_packet(&u, frame, 28, 1, 0, bssid, mac);
+  assert(u.all_data == 3 && u.ap_data == 2 && u.ap_downlink == 1);
+  assert(u.data == 0);
+
+  fill_header(frame, 0x08, 0x02); /* Selected TA, FromDS, own DA. */
+  espwifi_rx_observe_packet(&u, frame, 28, 1, 0, bssid, mac);
+  assert(u.all_data == 4 && u.ap_data == 3 && u.ap_downlink == 2);
+  assert(u.data == 1);
+ }
+
+ /* Association/reassociation responses distinguish own and other DA. */
+ {
+  struct espwifi_rx_observation u = { 0 };
+
+  fill_header(frame, 0x10, 0); /* Association response to this STA. */
+  espwifi_rx_observe_packet(&u, frame, 28, 0, 0, bssid, mac);
+  assert(u.mgmt == 1 && u.assoc_self == 1 && u.assoc_other == 0);
+  fill_header(frame, 0x30, 0); /* Reassociation response to another STA. */
+  memcpy(frame + 4, other, sizeof(other));
+  espwifi_rx_observe_packet(&u, frame, 28, 0, 0, bssid, mac);
+  assert(u.mgmt == 2 && u.assoc_self == 1 && u.assoc_other == 1);
+  fill_header(frame, 0x10, 0);
+  memcpy(frame + 10, other, sizeof(other)); /* Unselected transmitter. */
+  espwifi_rx_observe_packet(&u, frame, 28, 0, 0, bssid, mac);
+  assert(u.mgmt == 2 && u.assoc_self == 1 && u.assoc_other == 1);
+ }
  return 0;
 }
 '''
@@ -189,6 +251,8 @@ static bool rx_observe_active, rx_observe_configured;
 static unsigned fail_at, calls[8];
 static bool prior_mode;
 static uint32_t prior_filter;
+static bool current_mode, observed_mode;
+static uint32_t current_filter, observed_filter;
 static unsigned espwifi_os_critical_enter(void) { return ++critical; }
 static void espwifi_os_critical_exit(unsigned token) {
  assert(token == critical); --critical;
@@ -197,11 +261,28 @@ static void espwifi_os_log(const char *fmt, ...) { (void)fmt; }
 static void espwifi_scan_capture_rx(void *buffer,
     wifi_promiscuous_pkt_type_t type) { (void)buffer; (void)type; }
 static esp_err_t esp_wifi_get_promiscuous(bool *mode) {
- calls[1]++; *mode = prior_mode; return fail_at == 1 ? -1 : ESP_OK;
+ calls[1]++;
+ if (calls[1] == 1) {
+  *mode = prior_mode;
+  return fail_at == 1 ? -1 : ESP_OK;
+ }
+ assert(calls[1] == 2 && calls[5] == 1 &&
+     calls[6] == (fail_at == 5 ? 0u : 1u));
+ *mode = current_mode;
+ observed_mode = current_mode;
+ return ESP_OK;
 }
 static esp_err_t esp_wifi_get_promiscuous_filter(wifi_promiscuous_filter_t *f) {
- calls[2]++; f->filter_mask = prior_filter;
- return fail_at == 2 ? -2 : ESP_OK;
+ calls[2]++;
+ if (calls[2] == 1) {
+  f->filter_mask = prior_filter;
+  return fail_at == 2 ? -2 : ESP_OK;
+ }
+ assert(calls[2] == 2 && calls[5] == 1 &&
+     calls[6] == (fail_at == 5 ? 0u : 1u));
+ f->filter_mask = current_filter;
+ observed_filter = current_filter;
+ return ESP_OK;
 }
 static esp_err_t esp_wifi_get_mac(wifi_interface_t iface, uint8_t *mac) {
  static const uint8_t expected[6] = { 1, 2, 3, 4, 5, 6 };
@@ -220,11 +301,17 @@ static esp_err_t esp_wifi_set_promiscuous_filter(
       WIFI_PROMIS_FILTER_MASK_DATA));
  else
   assert(f->filter_mask == prior_filter);
- return fail_at == 5 ? -5 : ESP_OK;
+ if (calls[5] == 1 && fail_at == 5)
+  return -5;
+ current_filter = f->filter_mask;
+ return ESP_OK;
 }
 static esp_err_t esp_wifi_set_promiscuous(bool enabled) {
  calls[6]++;
- return fail_at == 6 && enabled && rx_observe_active ? -6 : ESP_OK;
+ if (calls[6] == 1 && fail_at == 6 && enabled && rx_observe_active)
+  return -6;
+ current_mode = enabled;
+ return ESP_OK;
 }
 ''' + glue_function('espwifi_rx_observe_end') + '\n' + \
     glue_function('espwifi_rx_observe_begin') + r'''
@@ -233,6 +320,8 @@ static void reset_case(unsigned failure, bool was_enabled) {
  memset(&rx_observation, 0, sizeof(rx_observation));
  rx_observe_configured = rx_observe_active = false;
  fail_at = failure; prior_mode = was_enabled; prior_filter = 0x40;
+ current_mode = prior_mode; current_filter = prior_filter;
+ observed_mode = false; observed_filter = 0;
 }
 int main(void) {
  static const uint8_t peer[6] = { 9, 8, 7, 6, 5, 4 };
@@ -245,6 +334,9 @@ int main(void) {
  assert(calls[1] == 1 && calls[2] == 1 && calls[3] == 1 && calls[4] == 1);
  assert(calls[5] == 1 && calls[6] == 1 && critical == 0);
  espwifi_rx_observe_end();
+ assert(observed_mode && observed_filter ==
+     (WIFI_PROMIS_FILTER_MASK_MGMT | WIFI_PROMIS_FILTER_MASK_DATA));
+ assert(current_mode && current_filter == 0x40);
  assert(!rx_observe_configured && !rx_observe_active);
  assert(calls[5] == 2 && calls[6] == 3 && critical == 0);
  espwifi_rx_observe_end();
@@ -262,7 +354,11 @@ int main(void) {
   reset_case(i, true);
   espwifi_rx_observe_begin(peer);
   assert(!rx_observe_configured && !rx_observe_active && critical == 0);
- assert(calls[5] == 2 && calls[6] == (i == 5 ? 2u : 3u));
+  assert(calls[5] == 2 && calls[6] == (i == 5 ? 2u : 3u));
+  assert(calls[1] == 2 && calls[2] == 2);
+  assert(observed_mode && observed_filter ==
+      (i == 5 ? prior_filter : WIFI_PROMIS_FILTER_MASK_MGMT |
+      WIFI_PROMIS_FILTER_MASK_DATA));
  }
  /* A previously disabled mode is restored without enabling it on end. */
  reset_case(0, false);
@@ -270,6 +366,9 @@ int main(void) {
  assert(rx_observe_configured && calls[6] == 1);
  espwifi_rx_observe_end();
  assert(!rx_observe_configured && calls[6] == 2 && critical == 0);
+ assert(observed_mode && observed_filter ==
+     (WIFI_PROMIS_FILTER_MASK_MGMT | WIFI_PROMIS_FILTER_MASK_DATA));
+ assert(!current_mode && current_filter == 0x40);
  return 0;
 }
 '''

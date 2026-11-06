@@ -1305,6 +1305,9 @@ static void
 espwifi_rx_observe_end(void)
 {
 	struct espwifi_rx_observation snapshot;
+	wifi_promiscuous_filter_t current_filter = { 0 };
+	bool current_mode = false;
+	esp_err_t mode_error, filter_error;
 	esp_err_t disable, filter, enable = ESP_OK;
 	unsigned critical;
 
@@ -1317,10 +1320,23 @@ espwifi_rx_observe_end(void)
 	rx_observe_configured = false;
 	snapshot = rx_observation;
 	espwifi_os_critical_exit(critical);
+	mode_error = esp_wifi_get_promiscuous(&current_mode);
+	filter_error = esp_wifi_get_promiscuous_filter(&current_filter);
 	disable = esp_wifi_set_promiscuous(false);
 	filter = esp_wifi_set_promiscuous_filter(&rx_observe_saved_filter);
 	if (rx_observe_saved_mode)
 		enable = esp_wifi_set_promiscuous(true);
+	espwifi_os_log("espwifi: RX callback mgmt=%u data=%u bad_mgmt=%u "
+	    "bad_data=%u short_mgmt=%u short_data=%u mode=%u/%#x "
+	    "filter=%#x/%#x\n",
+	    snapshot.cb_mgmt, snapshot.cb_data, snapshot.bad_mgmt,
+	    snapshot.bad_data, snapshot.short_mgmt, snapshot.short_data,
+	    (unsigned)current_mode, (unsigned)mode_error,
+	    current_filter.filter_mask, (unsigned)filter_error);
+	espwifi_os_log("espwifi: RX filter all_data=%u ap_data=%u "
+	    "ap_downlink=%u assoc_self=%u assoc_other=%u\n",
+	    snapshot.all_data, snapshot.ap_data, snapshot.ap_downlink,
+	    snapshot.assoc_self, snapshot.assoc_other);
 	espwifi_os_log("espwifi: RX observe mgmt=%u data=%u protected=%u "
 	    "amsdu=%u truncated=%u llc=%u eapol=%u type=%u key_info=%#x "
 	    "restore=%#x/%#x/%#x\n", snapshot.mgmt, snapshot.data,
@@ -1829,21 +1845,22 @@ espwifi_scan_capture_rx(void *buffer, wifi_promiscuous_pkt_type_t type)
 	if (packet == NULL || (type != WIFI_PKT_MGMT && type != WIFI_PKT_DATA))
 		return;
 	len = packet->rx_ctrl.sig_len;
-	/* ESP-IDF reports the 802.11 FCS as part of sig_len. */
-	if (len < 28)
-		return;
-	len -= 4;
 	frame = packet->payload;
 #ifdef ESPWIFI_RX_OBSERVE_ONCE
 	{
 		unsigned critical = espwifi_os_critical_enter();
 
-		if (rx_observe_active && packet->rx_ctrl.rx_state == 0)
-			espwifi_rx_observe_frame(&rx_observation, frame, len,
+		if (rx_observe_active)
+			espwifi_rx_observe_packet(&rx_observation, frame, len,
+			    type == WIFI_PKT_DATA, packet->rx_ctrl.rx_state,
 			    rx_observe_bssid, rx_observe_mac);
 		espwifi_os_critical_exit(critical);
 	}
 #endif
+	/* ESP-IDF reports the 802.11 FCS as part of sig_len. */
+	if (len < 28)
+		return;
+	len -= 4;
 	if (type != WIFI_PKT_MGMT)
 		return;
 	if ((frame[0] & 0x0c) != 0)

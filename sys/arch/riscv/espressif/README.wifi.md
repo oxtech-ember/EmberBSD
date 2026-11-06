@@ -143,8 +143,14 @@ The option is off by default and does not change security configuration.
 For receive-path diagnosis, add `--vendor-rx-observe-once` to that option.
 During the same first attempt it temporarily enables the existing promiscuous
 callback for management and data frames, then restores its previous mode and
-filter. The callback counts successful RX frames from the selected AP, and
-unicast downlink data addressed to this station. It records only counters,
+filter. Callback counts are recorded before the RX-status, length and address
+filters, with failed RX and short buffers counted separately for management
+and data callbacks. Successful data frames then pass successive counters for
+any transmitter, the selected AP, FromDS direction and this station's address.
+Association-response destination counters check that the observer's station
+address agrees with the received association. The final snapshot also reads
+the current promiscuous mode and filter, with API result codes, before restoring
+the saved settings. It records only counters,
 EAPOL type and key-information bits; no frame bodies, keys or addresses are
 logged. Encrypted data and A-MSDUs are counted separately without parsing their
 payloads. This observer can affect reception and timing, so its counters do not
