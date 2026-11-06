@@ -800,7 +800,9 @@ file	dev/ic/rtw88_executor.c	rtw88_executor
 # Realtek RTL8822CE native station core.
 # Config base cannot be rtw88: names must not end in a digit. rtw is RTL8180.
 define	rtw88_core: arp, wlan, ifnet, firmload, rtw88_executor
-define	rtw8822c_chip: rtw88_core
+define	rtw88_wcpu: rtw88_core
+file	dev/ic/rtw88_wcpu.c		rtw88_wcpu
+define	rtw8822c_chip: rtw88_wcpu
 device	rtwce: rtw8822c_chip
 defflag	opt_rtw88_rfk.h	RTW88_RFK_EXPERIMENT
 defflag	opt_rtw88_vht.h	RTW88_VHT_EXPERIMENT

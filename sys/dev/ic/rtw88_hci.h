@@ -15,6 +15,14 @@ struct rtw88_tx_info;
 struct rtw88_fw_section;
 struct rtw88_async_epoch;
 
+/* Fixed PCI WCPU3081 wire layout shared by RTL8821C and RTL8822C.
+ * Packet field encoding remains the selected chip's responsibility. */
+#define RTW88_PCI_TX_PACKET_DESC_SIZE 48U
+#define RTW88_PCI_TX_BUFFER_DESC_SIZE 16U
+#define RTW88_PCI_RX_PACKET_DESC_SIZE 24U
+#define RTW88_PCI_RX_BUFFER_DESC_SIZE 8U
+#define RTW88_PCI_DMA_ADDR_BITS 32U
+
 /* An error after publication does not return ownership to the caller. */
 enum rtw88_tx_progress {
 	RTW88_TX_NOT_STARTED,

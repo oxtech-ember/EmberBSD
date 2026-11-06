@@ -37,6 +37,29 @@ test_hci_required_operations(void)
 }
 
 static void
+test_pci_descriptor_geometry(void)
+{
+	struct rtw88_softc sc;
+	struct rtw88_chip_ops chip;
+
+	/* Unsupported nonzero sizes pass generic chip validation, but the PCI
+	 * fixed-ring transport must refuse them before allocating any DMA. */
+	for (unsigned which = 0; which < 2; which++) {
+		reset_bus(&sc);
+		chip = rtw8822c_chip_ops;
+		if (which == 0)
+			chip.caps.tx_desc_size++;
+		else
+			chip.caps.rx_desc_size++;
+		sc.sc_chip = &chip;
+		CHECK(rtw88_chip_valid(&sc));
+		CHECK(rtw88_core_attach(&sc) == EOPNOTSUPP);
+		CHECK(f.alloc_calls == 0);
+		CHECK(sc.sc_nring == 0 && !sc.sc_resources_ready);
+	}
+}
+
+static void
 test_hci_sdio_extensions_default_off(void)
 {
 	struct rtw88_softc sc;
@@ -230,6 +253,7 @@ main(void)
 	if (rtw88_start_contract_main() != EXIT_SUCCESS)
 		return EXIT_FAILURE;
 	test_hci_required_operations();
+	test_pci_descriptor_geometry();
 	test_hci_sdio_extensions_default_off();
 	test_hci_stop_failure_retains_resources();
 	test_hci_optional_packet_command();

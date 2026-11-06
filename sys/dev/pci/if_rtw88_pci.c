@@ -618,7 +618,7 @@ rtw88_pci_dma_alloc(void *cookie, struct rtw88_dma *ring, size_t size)
 		goto unload_map;
 	}
 	error = rtw88_dma_validate(dma->map->dm_segs[0].ds_addr, size,
-	    RTW8822C_DMA_ADDR_BITS);
+	    RTW88_PCI_DMA_ADDR_BITS);
 	if (error != 0)
 		goto unload_map;
 	memset(kva, 0, size);

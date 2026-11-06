@@ -17,8 +17,6 @@
 #include <dev/ic/rtw8822c_rfk.h>
 #endif
 
-#define RTW88_FW_DRV		"rtwce"
-#define RTW88_FW_IMG		"rtw8822c_fw.bin"
 #define RTW88_REG_MCUFW_CTRL	0x0080
 #define RTW88_MCUFWDL_EN	0x0001
 #define RTW88_FW_DW_RDY		0x4000
@@ -213,7 +211,7 @@ rtw88_pci_post_fw_chunk(struct rtw88_softc *sc, uint32_t gen, size_t len)
 	uint32_t total, psb, dma;
 	int error;
 
-	if (bcn->vaddr == NULL || bcn->size < RTW8822C_TX_BUFFER_DESC_SIZE)
+	if (bcn->vaddr == NULL || bcn->size < RTW88_PCI_TX_BUFFER_DESC_SIZE)
 		return ENXIO;
 	if (sc->sc_fw_dma.addr > UINT32_MAX || bcn->addr > UINT32_MAX)
 		return EOVERFLOW;
@@ -228,7 +226,7 @@ rtw88_pci_post_fw_chunk(struct rtw88_softc *sc, uint32_t gen, size_t len)
 	if (error != 0)
 		return error;
 	bd = bcn->vaddr;
-	memset(bd, 0, RTW8822C_TX_BUFFER_DESC_SIZE);
+	memset(bd, 0, RTW88_PCI_TX_BUFFER_DESC_SIZE);
 	total = (uint32_t)len + RTW88_TX_DESC;
 	psb = (total - 1) / 128 + 1;
 	psb |= RTW88_BD_OWN;
@@ -308,7 +306,7 @@ static void
 rtw88_pci_rx_arm(struct rtw88_softc *sc, unsigned idx)
 {
 	uint8_t *bd = (uint8_t *)sc->sc_ring[RTW88_RING_RX].vaddr +
-	    RTW8822C_RX_BUFFER_DESC_SIZE * idx;
+	    RTW88_PCI_RX_BUFFER_DESC_SIZE * idx;
 
 	rtw88_pci_put16(bd, RTW88_RX_BUF_SIZE);
 	rtw88_pci_put16(bd + 2, 0);
@@ -355,7 +353,7 @@ rtw88_pci_hci_setup(struct rtw88_softc *sc)
 		if (txq->nbuf != RTW88_TX_SLOTS)
 			return EINVAL;
 		memset(sc->sc_ring[rtw88_txq_hw[i].ring].vaddr, 0,
-		    RTW88_TX_SLOTS * RTW8822C_TX_BUFFER_DESC_SIZE);
+		    RTW88_TX_SLOTS * RTW88_PCI_TX_BUFFER_DESC_SIZE);
 		txq->wp = txq->rp = txq->queued = 0;
 		error = sc->sc_ops->write_2(sc->sc_bus, rtw88_txq_hw[i].num,
 		    RTW88_TX_SLOTS);
@@ -364,7 +362,7 @@ rtw88_pci_hci_setup(struct rtw88_softc *sc)
 		return error;
 	if (sc->sc_nrxbuf == 0 ||
 	    sc->sc_ring[RTW88_RING_RX].size <
-	    sc->sc_nrxbuf * RTW8822C_RX_BUFFER_DESC_SIZE)
+	    sc->sc_nrxbuf * RTW88_PCI_RX_BUFFER_DESC_SIZE)
 		return EINVAL;
 	for (i = 0; i < sc->sc_nrxbuf; i++)
 		rtw88_pci_rx_arm(sc, i);
@@ -514,7 +512,7 @@ rtw88_pci_rx(struct rtw88_softc *sc)
 		/* Every consumed slot advances, including rejected tags and C2H. */
 		sequence = sc->sc_rx_sequence == UINT64_MAX ? 0 :
 		    ++sc->sc_rx_sequence;
-		bd = (uint8_t *)ring->vaddr + RTW8822C_RX_BUFFER_DESC_SIZE * rp;
+		bd = (uint8_t *)ring->vaddr + RTW88_PCI_RX_BUFFER_DESC_SIZE * rp;
 		tag = (uint16_t)(bd[2] | bd[3] << 8);
 		if (tag != sc->sc_rx_tag)
 			sc->sc_stats.rx_tag_errors++;
@@ -560,8 +558,8 @@ rtw88_pci_rx_frontier(struct rtw88_softc *sc, uint32_t expected_generation,
 	ring = &sc->sc_ring[RTW88_RING_RX];
 	if (nrxbuf == 0 || nrxbuf > RTW88_RX_BUFS || rp >= nrxbuf ||
 	    ring->vaddr == NULL ||
-	    ring->size < nrxbuf * RTW8822C_RX_BUFFER_DESC_SIZE ||
-	    (ring->size % RTW8822C_RX_BUFFER_DESC_SIZE) != 0)
+	    ring->size < nrxbuf * RTW88_PCI_RX_BUFFER_DESC_SIZE ||
+	    (ring->size % RTW88_PCI_RX_BUFFER_DESC_SIZE) != 0)
 		return EINVAL;
 	if (sc->sc_rx_sequence == UINT64_MAX)
 		return EOVERFLOW;
@@ -685,6 +683,11 @@ rtw88_pci_resources_attach(struct rtw88_softc *sc)
 	if (sc->sc_nring != 0 || sc->sc_intr_established ||
 	    sc->sc_resources_ready)
 		return EBUSY;
+	/* A packet codec for another HCI must not size PCI DMA buffers. */
+	if (sc->sc_chip == NULL ||
+	    sc->sc_chip->caps.tx_desc_size != RTW88_PCI_TX_PACKET_DESC_SIZE ||
+	    sc->sc_chip->caps.rx_desc_size != RTW88_PCI_RX_PACKET_DESC_SIZE)
+		return EOPNOTSUPP;
 	for (unsigned i = 0; i < RTW88_NRING; i++) {
 		struct rtw88_dma *ring = &sc->sc_ring[i];
 
@@ -694,7 +697,7 @@ rtw88_pci_resources_attach(struct rtw88_softc *sc)
 		sc->sc_nring++;
 		/* Validate the whole mapping again at the ownership boundary. */
 		error = rtw88_dma_validate(ring->addr, ring->size,
-		    RTW8822C_DMA_ADDR_BITS);
+		    RTW88_PCI_DMA_ADDR_BITS);
 		if (error != 0)
 			goto fail;
 	}
@@ -707,7 +710,7 @@ rtw88_pci_resources_attach(struct rtw88_softc *sc)
 			goto fail;
 		sc->sc_nrxbuf++;
 		error = rtw88_dma_validate(buf->addr, buf->size,
-		    RTW8822C_DMA_ADDR_BITS);
+		    RTW88_PCI_DMA_ADDR_BITS);
 		if (error != 0)
 			goto fail;
 	}
@@ -721,7 +724,7 @@ rtw88_pci_resources_attach(struct rtw88_softc *sc)
 				goto fail;
 			txq->nbuf++;
 			error = rtw88_dma_validate(txq->buf[i].addr,
-			    txq->buf[i].size, RTW8822C_DMA_ADDR_BITS);
+			    txq->buf[i].size, RTW88_PCI_DMA_ADDR_BITS);
 			if (error != 0)
 				goto fail;
 		}
@@ -791,14 +794,14 @@ rtw88_pci_xmit(struct rtw88_softc *sc, unsigned q, const uint8_t *frame,
 		return EINVAL;
 	*progress = RTW88_TX_NOT_STARTED;
 	if (q >= RTW88_NTXQ || frame == NULL || tx == NULL ||
-	    len > RTW88_TX_BUF_SIZE - RTW8822C_TX_PACKET_DESC_SIZE ||
+	    len > RTW88_TX_BUF_SIZE - RTW88_PCI_TX_PACKET_DESC_SIZE ||
 	    tx->packet_size != len)
 		return EINVAL;
 	txq = &sc->sc_txq[q];
 	ring = &sc->sc_ring[rtw88_txq_hw[q].ring];
 	if (txq->nbuf != RTW88_TX_SLOTS || ring->cookie == NULL ||
 	    ring->vaddr == NULL ||
-	    ring->size < RTW88_TX_SLOTS * RTW8822C_TX_BUFFER_DESC_SIZE)
+	    ring->size < RTW88_TX_SLOTS * RTW88_PCI_TX_BUFFER_DESC_SIZE)
 		return ENXIO;
 	if (txq->wp >= RTW88_TX_SLOTS || txq->rp >= RTW88_TX_SLOTS)
 		return EPROTO;
@@ -810,26 +813,26 @@ rtw88_pci_xmit(struct rtw88_softc *sc, unsigned q, const uint8_t *frame,
 	}
 	buf = &txq->buf[txq->wp];
 	if (buf->cookie == NULL || buf->vaddr == NULL ||
-	    buf->size < RTW8822C_TX_PACKET_DESC_SIZE + len)
+	    buf->size < RTW88_PCI_TX_PACKET_DESC_SIZE + len)
 		return ENXIO;
 	error = rtw88_chip_tx_desc(sc, buf->vaddr, buf->size, tx);
 	if (error != 0)
 		return error;
-	memcpy((uint8_t *)buf->vaddr + RTW8822C_TX_PACKET_DESC_SIZE, frame,
+	memcpy((uint8_t *)buf->vaddr + RTW88_PCI_TX_PACKET_DESC_SIZE, frame,
 	    len);
 	/* DMA ownership can become uncertain at the first publication. */
 	*progress = RTW88_TX_MAY_HAVE_WRITTEN;
 	sc->sc_ops->dma_sync(sc->sc_bus, buf, BUS_DMASYNC_PREWRITE);
 	ring = &sc->sc_ring[rtw88_txq_hw[q].ring];
-	bd = (uint8_t *)ring->vaddr + RTW8822C_TX_BUFFER_DESC_SIZE * txq->wp;
+	bd = (uint8_t *)ring->vaddr + RTW88_PCI_TX_BUFFER_DESC_SIZE * txq->wp;
 	addr = (uint32_t)buf->addr;
-	memset(bd, 0, RTW8822C_TX_BUFFER_DESC_SIZE);
-	rtw88_pci_put16(bd, RTW8822C_TX_PACKET_DESC_SIZE);
-	rtw88_pci_put16(bd + 2, (uint16_t)((len + RTW8822C_TX_PACKET_DESC_SIZE -
+	memset(bd, 0, RTW88_PCI_TX_BUFFER_DESC_SIZE);
+	rtw88_pci_put16(bd, RTW88_PCI_TX_PACKET_DESC_SIZE);
+	rtw88_pci_put16(bd + 2, (uint16_t)((len + RTW88_PCI_TX_PACKET_DESC_SIZE -
 	    1) / 128 + 1));
 	rtw88_pci_put32(bd + 4, addr);
 	rtw88_pci_put16(bd + 8, (uint16_t)len);
-	rtw88_pci_put32(bd + 12, addr + RTW8822C_TX_PACKET_DESC_SIZE);
+	rtw88_pci_put32(bd + 12, addr + RTW88_PCI_TX_PACKET_DESC_SIZE);
 	sc->sc_ops->dma_sync(sc->sc_bus, ring, BUS_DMASYNC_PREWRITE);
 	txq->wp = (txq->wp + 1) % RTW88_TX_SLOTS;
 	txq->queued++;
@@ -856,7 +859,7 @@ rtw88_pci_prepare(struct rtw88_softc *sc)
 		return error;
 	sc->sc_fw_dma_owned = 1;
 	error = rtw88_dma_validate(sc->sc_fw_dma.addr, sc->sc_fw_dma.size,
-	    RTW8822C_DMA_ADDR_BITS);
+	    RTW88_PCI_DMA_ADDR_BITS);
 	if (error != 0)
 		return error;
 	/* An enable method may fail after hardware has accepted the write. */
