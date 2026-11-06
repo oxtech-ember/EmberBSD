@@ -86,7 +86,7 @@ for contract in bcm2712-display bcm2712-display-irq bcm2712-display-hsm bcm2712-
     bcm2712-v3d-queue bcm2712-v3d-irq bcm2712-v3d-fault \
     bcm2712-v3d-uapi bcm2712-v3d-bo bcm2712-v3d-sg bcm2712-v3d-job bcm2712-v3d-csd \
     bcm2712-v3d-cl bcm2712-v3d-wait bcm2712-v3d-sync drm-syncobj-wait \
-    drm-syncobj-dispatch drm-syncobj-find dma-fence-chain drm-jiffies \
+    drm-syncobj-dispatch drm-syncobj-find drm-syncobj-flatten dma-fence-chain drm-jiffies \
     linux-idr i915-elsq-desc i915-rps-lifetime drm-pci-identity linux-rcu-replace \
     pvr-render pvr-heap pvr-bo pvr-vm pvr-file pvr-stream pvr-context pvr-hwrt pvr-submit pvr-render-attach; do
     cat > "$work/src/ember/tools/$contract-contract.sh" <<'SH'
@@ -489,7 +489,7 @@ export CC=/target/compiler CXX=/target/compiler-cxx CFLAGS=-Dwrong_target CXXFLA
 check_contract_counts() {
     test "$(grep -c '^contract ' "$TEST_LOG")" -eq "$1"
     test "$(grep -c '^a733-contract ' "$TEST_LOG")" -eq 24
-    test "$(grep -c '^gpu-contract ' "$TEST_LOG")" -eq 38
+    test "$(grep -c '^gpu-contract ' "$TEST_LOG")" -eq 39
     test "$(grep -c '^ruby-contract ' "$TEST_LOG")" -eq 14
     test "$(grep -c '^network-contract ' "$TEST_LOG")" -eq 8
 }
@@ -620,7 +620,7 @@ for failure in $root_argument_failures tools module cpp dtb diagnostic-dtb contr
     a733-gpu-fwheap-observe-contract.sh a733-gpu-fwbridge-contract.sh \
     a733-gpu-fwservice-contract.sh pvr-exec-contract.sh \
     pvr-render-contract.sh pvr-heap-contract.sh pvr-bo-contract.sh pvr-vm-contract.sh pvr-file-contract.sh pvr-stream-contract.sh pvr-context-contract.sh pvr-hwrt-contract.sh pvr-submit-contract.sh pvr-render-attach-contract.sh \
-    gpu-contract bcm2712-display-contract.sh \
+    gpu-contract drm-syncobj-flatten-contract.sh bcm2712-display-contract.sh \
     bcm2712-display-irq-contract.sh bcm2712-display-hsm-contract.sh bcm2712-display-dvp-contract.sh dmabuf-map dmabuf-lifetime dmabuf-array dmabuf-sync ruby-contract simplefb-contract.rb drm-hotplug-contract.rb \
     bcm2712-v3d-prime-contract.rb bcm2712-v3d-bo-stats-contract.rb network-contract cemac-stop.sh bwfm-link-check.sh \
     aicwf-sta.sh aicwf-vht.sh publish; do
@@ -647,6 +647,10 @@ for failure in $root_argument_failures tools module cpp dtb diagnostic-dtb contr
         grep -Fq "gpu-contract $failure " "$TEST_LOG"
         grep -Fq "injected contract failure: $failure" "$TEST_OUT/contracts.log"
         ! grep -q '^gpu-contract bcm2712-v3d-contract.sh ' "$TEST_LOG"
+        ;;
+    drm-syncobj-flatten-contract.sh)
+        grep -Fq "gpu-contract $failure " "$TEST_LOG"
+        ! grep -q '^gpu-contract drm-jiffies-contract.sh ' "$TEST_LOG"
         ;;
     cemac-stop.sh)
         grep -Fq "network-contract $failure " "$TEST_LOG"
