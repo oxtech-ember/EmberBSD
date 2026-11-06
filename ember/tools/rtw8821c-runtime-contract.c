@@ -173,6 +173,30 @@ rtw8821c_rx_decode(const uint8_t *p, size_t n, struct rtw88_rx_info *i)
 	(void)i;
 	return 0;
 }
+static unsigned signal_calls;
+static int signal_bad, signal_expected_valid = 1;
+static int signal_expect_stale;
+int
+rtw8821c_signal_decode(const uint8_t *p, size_t n,
+    const struct rtw88_rx_info *rx, unsigned rfe, uint32_t generation,
+    uint32_t current_generation, const struct rtw88_channel_tuple *channel,
+    int valid, struct rtw88_rx_signal *out)
+{
+	(void)p;
+	(void)n;
+	(void)rx;
+	(void)rfe;
+	CHECK((generation != current_generation) == signal_expect_stale);
+	CHECK(channel != NULL && valid == signal_expected_valid);
+	signal_calls++;
+	if (signal_bad) {
+		out->valid = 0;
+		return ENOENT;
+	}
+	out->quality = 24;
+	out->valid = 1;
+	return 0;
+}
 int
 rtw88_fw_parse(const uint8_t *a, size_t n, const struct rtw88_fw_profile *p,
 		   struct rtw88_fw_info *i)
@@ -422,6 +446,27 @@ main(void)
 	expected_bt = 0;
 	CHECK(boot_tx == 0 && packets == 2 && ctx->needs_iqk);
 	CHECK(early_rx == 1 && power_after_setup >= 1 && rx_bd_armed);
+	{
+		struct rtw88_rx_info rx = {0};
+		uint8_t wire[24] = {0};
+
+		CHECK(rtw8821c_rx_desc(&sc, wire, sizeof(wire), &rx) == 0);
+		CHECK(signal_calls == 1 && rx.signal.valid && rx.signal.quality == 24);
+		signal_bad = 1;
+		rx.signal.valid = 1;
+		CHECK(rtw8821c_rx_desc(&sc, wire, sizeof(wire), &rx) == 0 &&
+		    !rx.signal.valid);
+		signal_expect_stale = 1; sc.sc_generation++;
+		CHECK(rtw8821c_rx_desc(&sc, wire, sizeof(wire), &rx) == 0);
+		sc.sc_generation--;
+		signal_expect_stale = 0;
+		signal_expected_valid = 0;
+		sc.sc_stop_requested = 1;
+		CHECK(rtw8821c_rx_desc(&sc, wire, sizeof(wire), &rx) == 0);
+		sc.sc_stop_requested = 0;
+		signal_expected_valid = 1;
+		signal_bad = 0;
+	}
 	CHECK(rtw8821c_tx_desc(&sc, out, sizeof(out), NULL) == EACCES);
 	iqkfail = 1;
 	CHECK(rtw8821c_prepare_station(&sc, current, NULL) == EIO);

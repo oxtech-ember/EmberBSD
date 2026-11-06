@@ -2857,10 +2857,11 @@ static void
 test_prepare_legacy_auth(void)
 {
  for(unsigned mutation=0;mutation<=8;mutation++) {
-  struct state_fixture s; struct rtw88_chip_ops chip;
+  struct state_fixture s = {0}; struct rtw88_chip_ops chip;
   unsigned before_parent;
   if(!state_fixture_start(&s,1,20)) continue;
   rtw88_net_state_work(&s.net.state_work,&s.net);
+  if (s.sc.sc_chip == NULL) abort();
   chip=*s.sc.sc_chip; chip.prepare_station=mutation==8?NULL:prepare_legacy; s.sc.sc_chip=&chip;
   prepare_calls_legacy=0;prepare_mutation_legacy=mutation;
   state_station_calls=0;before_parent=state_parent_tx;

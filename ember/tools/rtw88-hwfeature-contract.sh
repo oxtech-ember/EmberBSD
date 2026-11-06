@@ -85,6 +85,7 @@ if [ "${RTW88_HWFEATURE_ANALYZE:-0}" = 1 ]; then
     # Reuse its explicit kernel-service shim, then analyze that consumer too.
     mkdir -p "$work/include/dev/pci"
     ln -s "$src/sys/dev/pci/pcidevs.h" "$work/include/dev/pci/pcidevs.h"
+    ln -s "$src/sys/dev/pci/rtw88_pcie_phy.h" "$work/include/dev/pci/rtw88_pcie_phy.h"
     for header in sys/device.h sys/kmem.h sys/mutex.h sys/once.h sys/bus.h \
         sys/intr.h sys/xcall.h dev/pci/pcireg.h dev/pci/pcivar.h dev/firmload.h; do
         printf '#include "rtw88-test-kernel.h"\n' > "$work/include/$header"

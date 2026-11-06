@@ -39,6 +39,10 @@ espwifi_connect espwifi_tx espwifi_get_mac espwifi_scan_capture
 espwifi_disconnect espwifi_ext_connect espwifi_ext_set_key
 espwifi_ext_clear_assoc_appies espwifi_ext_set_igtk
 espwifi_ext_sta_pmf_configured'''.split()
+NATIVE_WPA_SOURCES = ('wpa_supplicant/src/rsn_supp/wpa.c',
+                      'wpa_supplicant/esp_supplicant/src/esp_wpa_main.c')
+NATIVE_WPA_SYMBOLS = frozenset(('wpa_set_profile', 'wpa_set_bss',
+                                'wpa_set_passphrase', 'esp_supplicant_init'))
 
 
 def check_consumer_boundary(entries, header, consumers):
@@ -62,6 +66,27 @@ def check_consumer_boundary(entries, header, consumers):
     if unknown:
         raise ValueError('radio producer exports undeclared entries: ' +
                          ', '.join(sorted(unknown)))
+
+
+def check_external_auth_boundary(units, idf, defined=()):
+    """Keep the external-auth object free of IDF's native WPA state machine."""
+    forbidden = {(idf / source).resolve() for source in NATIVE_WPA_SOURCES}
+    included = sorted(str(Path(source).resolve()) for source, _ in units
+                      if Path(source).resolve() in forbidden)
+    if included:
+        raise ValueError('native IDF WPA source in external-auth radio: ' +
+                         ', '.join(included))
+    linked = NATIVE_WPA_SYMBOLS.intersection(defined)
+    if linked:
+        raise ValueError('native IDF WPA symbols in external-auth radio: ' +
+                         ', '.join(sorted(linked)))
+
+
+def defined_symbols_for(path, nm, env):
+    """Return global and local defined symbols for the external-auth guard."""
+    result = subprocess.check_output([str(nm), '--defined-only',
+        '--format=posix', str(path)], env=env, text=True)
+    return {line.split()[0] for line in result.splitlines() if line.split()}
 
 
 def absolute(value):
@@ -186,6 +211,7 @@ def main():
     units += [(idf/'wpa_supplicant/src/crypto/ccmp.c', common_flags)]
     units += [(idf/'wpa_supplicant/src/crypto/crypto_ops.c', common_flags +
         ['-include', str(common/'utils/includes.h')])]
+    check_external_auth_boundary(units, idf)
     libs = [idf/'esp_wifi/lib/esp32s31/libnet80211.a', idf/'esp_wifi/lib/esp32s31/libpp.a',
             idf/'esp_phy/lib/esp32s31/libphy.a', idf/'esp_wifi/lib/esp32s31/libcore.a']
     for item in [x[0] for x in units] + libs + [idf/'esp_rom/esp32s31/ld'/x for x in ROM]:
@@ -223,6 +249,8 @@ def main():
             result = subprocess.check_output([str(nm), '--defined-only', '--extern-only',
                 '--format=posix', str(path)], env=env, text=True)
             return {line.split()[0] for line in result.splitlines() if line.split()}
+        all_defined = defined_symbols_for(output, nm, env)
+        check_external_auth_boundary(units, idf, all_defined)
         defined = globals_for(output)
         if not set(ENTRIES) <= defined:
             raise ValueError('radio object is missing required entry points')

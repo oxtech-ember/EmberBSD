@@ -1,5 +1,8 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* ESP-IDF ABI bridge for an externally managed WPA2/SAE station. */
+#ifndef ESPWIFI_EXTERNAL_WPA2
+#error "fullmac_wpa2 requires the external BSD WPA interface"
+#endif
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -22,6 +25,16 @@ typedef uint64_t u64;
 #define WLAN_FC_STYPE_AUTH 11
 #define WLAN_FC_STYPE_ACTION 13
 #define ESPWIFI_SAE_BODY_MAX (1536 - 30)
+
+/*
+ * IDF's vendor scan gate requires a nonempty encrypted-profile password.
+ * In this external-auth build the value is only a non-secret ABI marker;
+ * credentials and all WPA/SAE key derivation remain in BSD.
+ */
+#define ESPWIFI_EXTERNAL_AUTH_PROFILE_MARKER "bsd-external-auth"
+_Static_assert(sizeof(ESPWIFI_EXTERNAL_AUTH_PROFILE_MARKER) <=
+    sizeof(((wifi_config_t *)0)->sta.password),
+    "external-auth marker does not fit the IDF STA password field");
 
 void forced_memzero(void *, size_t);
 
@@ -335,6 +348,8 @@ espwifi_ext_connect(const unsigned char *ssid, unsigned int ssid_len,
 		    ies_len - (rsn_offset + rsn_len));
 	memset(&config, 0, sizeof(config));
 	memcpy(config.sta.ssid, ssid, ssid_len);
+	memcpy(config.sta.password, ESPWIFI_EXTERNAL_AUTH_PROFILE_MARKER,
+	    sizeof(ESPWIFI_EXTERNAL_AUTH_PROFILE_MARKER));
 	memcpy(config.sta.bssid, bssid, sizeof(config.sta.bssid));
 	config.sta.bssid_set = true;
 	config.sta.threshold.authmode = sae ? WIFI_AUTH_WPA3_PSK :

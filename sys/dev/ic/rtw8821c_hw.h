@@ -17,5 +17,8 @@
  * before publishing *out; both codecs accept unaligned buffers. */
 int rtw8821c_tx_encode(uint8_t *, size_t, const struct rtw88_tx_info *);
 int rtw8821c_rx_decode(const uint8_t *, size_t, struct rtw88_rx_info *);
+int rtw8821c_signal_decode(const uint8_t *, size_t,
+    const struct rtw88_rx_info *, unsigned, uint32_t, uint32_t,
+    const struct rtw88_channel_tuple *, int, struct rtw88_rx_signal *);
 
 #endif /* _DEV_IC_RTW8821C_HW_H_ */

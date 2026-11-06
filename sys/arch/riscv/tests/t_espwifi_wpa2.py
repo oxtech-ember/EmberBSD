@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """Test the actual WPA2 and SAE/PMF vendor configuration boundary."""
 import argparse
+import importlib.util
+import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -10,12 +13,19 @@ import tempfile
 if not __debug__:
     sys.exit('this test requires Python assertions enabled')
 
-p=argparse.ArgumentParser();p.add_argument('--cc',required=True);a=p.parse_args()
+p=argparse.ArgumentParser()
+p.add_argument('--cc',required=True)
+p.add_argument('--nm',help='symbol tool; defaults to llvm-nm or nm beside --cc')
+a=p.parse_args()
 arch=Path(__file__).resolve().parents[1]
 sysroot=arch.parents[1]
 s=(arch/'espressif/wifi/fullmac_wpa2.c').read_text()
 glue=(arch/'espressif/wifi/glue.c').read_text()
 files=(arch/'espressif/files.espressif').read_text()
+marker=re.search(r'^#define ESPWIFI_EXTERNAL_AUTH_PROFILE_MARKER "([^"]+)"$',
+                 s,re.M)
+assert marker is not None and marker.group(1)
+assert re.search(r'#ifndef ESPWIFI_EXTERNAL_WPA2\s+#error',s)
 assert re.search(r'^defflag\s+opt_espwifi_wpa2\.h\s+ESPWIFI_NET80211_WPA2:\s+ESPWIFI_NET80211\s*$',
                  files,re.M)
 configs = {p.name: p.read_text(errors='ignore') for p in (arch/'conf').glob('*') if p.is_file()}
@@ -29,6 +39,55 @@ for option in ('ESPWIFI', 'ESPWIFI_NET80211', 'ESPWIFI_NET80211_WPA2',
     assert re.search(r'^options\s+' + option + r'\s*$', profile, re.M), option
 assert re.search(r'^makeoptions\s+EXTRA_OBJ="\$\{ESPWIFI_OBJECT\}"$',
                  profile, re.M)
+producer_path=arch/'espressif/wifi/mkblob.py'
+producer_spec=importlib.util.spec_from_file_location('espwifi_mkblob',producer_path)
+producer=importlib.util.module_from_spec(producer_spec)
+producer_spec.loader.exec_module(producer)
+assert "'-DESPWIFI_EXTERNAL_WPA2'" in (arch/'espressif/wifi/mkblob.py').read_text()
+with tempfile.TemporaryDirectory() as td:
+    idf=Path(td)/'components'
+    for native in ('wpa_supplicant/src/rsn_supp/wpa.c',
+                   'wpa_supplicant/esp_supplicant/src/esp_wpa_main.c'):
+        try:
+            producer.check_external_auth_boundary([(idf/native,[])],idf)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('producer accepted native IDF WPA source '+native)
+    for symbol in ('wpa_set_profile','wpa_set_bss','wpa_set_passphrase',
+                   'esp_supplicant_init'):
+        try:
+            producer.check_external_auth_boundary([],idf,{symbol})
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('producer accepted native IDF WPA symbol '+symbol)
+    local_c=Path(td)/'local.c'
+    local_o=Path(td)/'local.o'
+    local_c.write_text('__attribute__((used)) static void '
+                       'wpa_set_passphrase(void) {}\n')
+    subprocess.run([a.cc,'-c',str(local_c),'-o',str(local_o)],check=True)
+    if a.nm:
+        nm=Path(shutil.which(a.nm) or a.nm)
+    else:
+        cc_path=Path(shutil.which(a.cc) or a.cc).absolute()
+        nm=next((candidate for candidate in
+                 (cc_path.with_name('llvm-nm'),cc_path.with_name('nm'))
+                 if candidate.is_file()),None)
+    if nm is None or not nm.is_file():
+        raise SystemExit('provide --nm or install llvm-nm/nm beside --cc')
+    local_symbols=producer.defined_symbols_for(local_o,nm,os.environ.copy())
+    if 'wpa_set_passphrase' not in local_symbols and \
+            '_wpa_set_passphrase' in local_symbols:
+        local_symbols.add('wpa_set_passphrase')  # Mach-O host-object spelling
+    assert 'wpa_set_passphrase' in local_symbols
+    try:
+        producer.check_external_auth_boundary([],idf,local_symbols)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('producer accepted local/static native PMK symbol')
+    producer.check_external_auth_boundary([(producer_path,[])],idf,set())
 adapter=(arch/'espressif/esp_wifi_if.c').read_text()
 assert re.search(r'#ifdef ESPWIFI_NET80211_WPA2\s+sc->sc_ic\.ic_caps\s*=\s*IEEE80211_C_AES_CCM\s*\|\s*IEEE80211_C_WPA2;',adapter)
 disconnect=re.search(r'\nespwifi_disconnect\(void\)\n\{(.*?)\n\}',glue,re.S)
@@ -49,6 +108,7 @@ code=r'''
 #include "fullmac_debug.h"
 typedef int esp_err_t;
 typedef struct { struct { uint8_t ssid[32],bssid[6]; bool bssid_set;
+ uint8_t password[64];
  struct {int authmode;} threshold; struct {bool capable,required;} pmf_cfg;
  uint8_t sae_pwe_h2e; } sta; } wifi_config_t;
 #define WIFI_IF_STA 0
@@ -61,6 +121,13 @@ static int cfgcalls,rsncalls,assoc_calls,connects,fail,unset_rsn;
 static int unset_assoc,pmf_configured;
 static uint8_t copied_rsn[64],copied_assoc[64];
 static unsigned copied_rsn_len,copied_assoc_len;
+#define ESPWIFI_EXTERNAL_AUTH_PROFILE_MARKER "@external-auth-marker@"
+_Static_assert(sizeof(ESPWIFI_EXTERNAL_AUTH_PROFILE_MARKER) <=
+ sizeof(((wifi_config_t *)0)->sta.password), "marker must fit vendor field");
+static bool vendor_accepts_encrypted_profile(const wifi_config_t *c) {
+ return c->sta.threshold.authmode >= WIFI_AUTH_WPA2_PSK &&
+     c->sta.password[0] != 0;
+}
 static void espwifi_os_log(const char *fmt, ...) { (void)fmt; }
 static int esp_wifi_set_config(int ifx,wifi_config_t *c) {
  assert(ifx==0 && c->sta.bssid_set);
@@ -69,6 +136,9 @@ static int esp_wifi_set_config(int ifx,wifi_config_t *c) {
   assert(!c->sta.pmf_cfg.capable && !c->sta.pmf_cfg.required);
  else
   assert(c->sta.pmf_cfg.capable && c->sta.pmf_cfg.required);
+ assert(vendor_accepts_encrypted_profile(c));
+ assert(!strcmp((const char *)c->sta.password,
+     ESPWIFI_EXTERNAL_AUTH_PROFILE_MARKER));
  assert(!memcmp(c->sta.ssid,"test",4));cfgcalls++;return fail==1?9:0; }
 static int esp_wifi_set_appie_internal(int type,uint8_t *p,uint16_t n,int flag) {
  assert(n<=sizeof(copied_rsn));
@@ -140,6 +210,8 @@ int main(void) {
  return 0;
 }
 '''
+code=code.replace('#define ESPWIFI_EXTERNAL_AUTH_PROFILE_MARKER "@external-auth-marker@"',
+                  '#define ESPWIFI_EXTERNAL_AUTH_PROFILE_MARKER "'+marker.group(1)+'"')
 with tempfile.TemporaryDirectory() as td:
  c=Path(td)/'wpa2.c';out=Path(td)/'wpa2';c.write_text(code)
  subprocess.run([a.cc,'-I',str(arch/'espressif/wifi'),'-idirafter',str(sysroot),'-Werror','-fsanitize=address,undefined',

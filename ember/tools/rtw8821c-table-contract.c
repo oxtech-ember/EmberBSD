@@ -51,7 +51,9 @@ int main(void)
 	} vectors[] = {{0, 0, 0, 3935, UINT64_C(0xac511522a2b5e1e1)},
 		       {2, 0, 0, 4063, UINT64_C(0x169bf9fc7ccee0b0)},
 		       {4, 1, 1, 4063, UINT64_C(0xe0ef4ba3c6fe1e40)},
-		       {6, 2, 0, 3935, UINT64_C(0xac511522a2b5e1e1)}};
+		       {6, 2, 0, 3935, UINT64_C(0xac511522a2b5e1e1)},
+		       {0, 4, 0, 3935, UINT64_C(0xac511522a2b5e1e1)},
+		       {0, 4, 1, 3935, UINT64_C(0xac511522a2b5e1e1)}};
 	struct fake f;
 	struct rtw8821c_phy_io io = {&f, w1, w4, delay, check};
 	struct rtw8821c_phy_profile p;
@@ -76,7 +78,7 @@ int main(void)
 	e = rtw8821c_load_tables_io(&io, &p);
 	if (e != EINTR || f.writes != 5)
 		return 3;
-	puts("four pinned donor table traces, invalid RFE and cancellation: "
+	puts("six pinned donor table traces, invalid RFE and cancellation: "
 	     "PASS");
 	return 0;
 }

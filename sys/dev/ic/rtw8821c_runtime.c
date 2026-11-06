@@ -414,8 +414,18 @@ static int
 rtw8821c_rx_desc(struct rtw88_softc *sc, const uint8_t *data,
     size_t size, struct rtw88_rx_info *info)
 {
-	(void)sc;
-	return rtw8821c_rx_decode(data, size, info);
+	struct rtw8821c_runtime *ctx = sc->sc_chip_private;
+	int error;
+
+	error = rtw8821c_rx_decode(data, size, info);
+	if (error != 0)
+		return error;
+	if (ctx != NULL)
+		(void)rtw8821c_signal_decode(data + info->driver_info_offset,
+		    info->driver_info_size, info, ctx->phy.efuse.rfe_option,
+		    ctx->generation, sc->sc_generation, &sc->sc_phy.channel,
+		    sc->sc_phy.channel_valid && !sc->sc_stop_requested, &info->signal);
+	return 0;
 }
 
 static int
