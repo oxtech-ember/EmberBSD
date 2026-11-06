@@ -680,22 +680,47 @@ rtw88_net_stop_service(struct rtw88_net *net)
 }
 
 static int
+rtw88_net_control_current_locked(struct rtw88_net *net,
+    const struct rtw88_async_epoch *id)
+{
+	KASSERT(mutex_owned(net->lock));
+	if (net->policy.dying || net->stop_pending || net->tx_quiet ||
+	    id->epoch != net->policy.epoch || id->key_epoch != net->key_epoch)
+		return ECANCELED;
+	if (id->generation != net->core->sc_generation)
+		return ESTALE;
+#ifdef RTW88_RFK_EXPERIMENT
+	if (net->rfk.notice_pending)
+		return ECANCELED;
+#endif
+	return 0;
+}
+
+struct rtw88_prepare_context {
+	struct rtw88_net *net;
+	struct rtw88_async_epoch id;
+};
+
+static int
+rtw88_net_prepare_current(void *cookie)
+{
+	struct rtw88_prepare_context *ctx = cookie;
+	int error;
+
+	mutex_enter(ctx->net->lock);
+	error = rtw88_net_control_current_locked(ctx->net, &ctx->id);
+	mutex_exit(ctx->net->lock);
+	return error == 0 ? 0 : ECANCELED;
+}
+
+static int
 rtw88_net_control_current(struct rtw88_net *net,
     const struct rtw88_control_snapshot *request)
 {
-	int error = 0;
+	int error;
 
 	mutex_enter(net->lock);
-	if (net->policy.dying || net->stop_pending || net->tx_quiet ||
-	    request->id.epoch != net->policy.epoch ||
-	    request->id.key_epoch != net->key_epoch)
-		error = ECANCELED;
-	else if (request->id.generation != net->core->sc_generation)
-		error = ESTALE;
-#ifdef RTW88_RFK_EXPERIMENT
-	else if (net->rfk.notice_pending)
-		error = ECANCELED;
-#endif
+	error = rtw88_net_control_current_locked(net, &request->id);
 	mutex_exit(net->lock);
 	return error;
 }
@@ -850,6 +875,15 @@ rtw88_net_control_execute(struct rtw88_net *net,
 	}
 	if (error == 0)
 		error = rtw88_net_control_current(net, request);
+	if (error == 0 && !wme && request->state == IEEE80211_S_AUTH &&
+	    sc->sc_chip->prepare_station != NULL) {
+		struct rtw88_prepare_context ctx = { net, request->id };
+
+		diag->stage = RTW88_NET_STAGE_STATION;
+		error = rtw88_prepare_station(sc, rtw88_net_prepare_current, &ctx);
+		if (error == 0)
+			error = rtw88_net_control_current(net, request);
+	}
 	if (error == 0 && !wme) {
 		diag->stage = RTW88_NET_STAGE_STATION;
 		error = rtw88_station_config(sc,
@@ -2937,6 +2971,41 @@ rtw88_net_state_work(struct work *work, void *cookie)
 #endif
 					error = rtw88_channel_apply(net->core,
 					    &channel_tuple);
+			}
+			if (error == 0 && state == IEEE80211_S_AUTH &&
+			    net->core->sc_chip->prepare_station != NULL) {
+				struct rtw88_prepare_context ctx;
+				struct rtw88_mailbox *mb = &net->core->sc_mailbox;
+				int owned, stale;
+
+				diag.stage = RTW88_NET_STAGE_STATION;
+				ctx.net = net;
+				ctx.id.epoch = epoch;
+				ctx.id.key_epoch = net->key_epoch;
+				ctx.id.generation = gen;
+				mutex_exit(net->lock);
+				error = rtw88_prepare_station(net->core,
+				    rtw88_net_prepare_current, &ctx);
+				mutex_enter(net->lock);
+				stale = rtw88_net_control_current_locked(net, &ctx.id) != 0;
+				/* A stop or successor may have replaced the reservation
+				 * while the callback slept; release only our own. */
+				owned = mailbox_reserved && mb->active &&
+				    mb->generation == mailbox_gen && mb->box == mailbox_box &&
+				    mb->total == mailbox_count && mb->sent == 0;
+				if (stale) {
+					if (owned)
+						(void)rtw88_fw_mailbox_end(net->core, ECANCELED);
+					mutex_exit(net->lock);
+					/* Do not publish or stop the successor's state. */
+					continue;
+				}
+				if (mailbox_reserved && !owned) {
+					mailbox_reserved = 0;
+					error = EPROTO;
+				} else if (error == ECANCELED) {
+					error = ESTALE;
+				}
 			}
 #ifdef RTW88_DFS64
 			/* A descriptor may have completed before the state request but

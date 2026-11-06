@@ -803,7 +803,8 @@ define	rtw88_core: arp, wlan, ifnet, firmload, rtw88_executor
 define	rtw88_wcpu: rtw88_core
 file	dev/ic/rtw88_wcpu.c		rtw88_wcpu
 define	rtw8822c_chip: rtw88_wcpu
-device	rtwce: rtw8822c_chip
+define	rtw8821c_chip: rtw88_wcpu
+device	rtwce: rtw8822c_chip, rtw8821c_chip
 defflag	opt_rtw88_rfk.h	RTW88_RFK_EXPERIMENT
 defflag	opt_rtw88_vht.h	RTW88_VHT_EXPERIMENT
 defflag	opt_rtw88_dfs.h	RTW88_DFS64_EXPERIMENT
@@ -811,6 +812,16 @@ file	dev/ic/rtw88.c			rtw88_core
 file	dev/ic/rtw88_chip.c		rtw88_core
 file	dev/ic/rtw88_phy_table.c	rtw88_core
 file	dev/ic/rtw88_async.c		rtw88_core
+file	dev/ic/rtw8821c.c		rtw8821c_chip
+file	dev/ic/rtw8821c_runtime.c		rtw8821c_chip
+file	dev/ic/rtw8821c_hw.c		rtw8821c_chip
+file	dev/ic/rtw8821c_boot.c		rtw8821c_chip
+file	dev/ic/rtw8821c_power.c		rtw8821c_chip
+file	dev/ic/rtw8821c_mac.c		rtw8821c_chip
+file	dev/ic/rtw8821c_phy.c		rtw8821c_chip
+file	dev/ic/rtw8821c_table.c		rtw8821c_chip
+file	dev/ic/rtw8821c_txpwr.c		rtw8821c_chip
+file	dev/ic/rtw8821c_coex.c		rtw8821c_chip
 file	dev/ic/rtw8822c_runtime.c		rtw8822c_chip
 file	dev/ic/rtw8822c_hw.c		rtw8822c_chip
 file	dev/ic/rtw88_fw_init.c		rtw88_core

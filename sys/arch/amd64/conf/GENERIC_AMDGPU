@@ -7,3 +7,6 @@ include "arch/amd64/conf/GENERIC"
 amdgpu* at pci? dev ? function ?
 amdgpufb* at amdgpufbbus?
 amdgpio* at acpi?
+
+# Native RTL8821CE/RTL8822CE PCIe Wi-Fi.
+rtwce* at pci? dev ? function ?

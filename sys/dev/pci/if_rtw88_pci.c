@@ -18,6 +18,7 @@
 #include <dev/pci/pcidevs.h>
 #include <dev/ic/rtw88var.h>
 #include <dev/ic/rtw8822c.h>
+#include <dev/ic/rtw8821c.h>
 #include <dev/ic/rtw88_net.h>
 
 struct rtw88_pci_softc {
@@ -33,6 +34,9 @@ struct rtw88_pci_softc {
 	void *sc_ih;
 	kmutex_t sc_lock;
 	pcireg_t sc_command;
+	int sc_pcie_cap;
+	uint16_t sc_devctl2;
+	int sc_devctl2_saved;
 	uint8_t *sc_fw;
 	size_t sc_fwlen;
 	int sc_mapped;
@@ -849,6 +853,63 @@ static const struct rtw88_bus_ops rtw88_pci_ops = {
 	.bus_master = rtw88_pci_bus_master
 };
 
+/* PCIe device policy is selected by silicon, independent of the board. */
+#define RTW88_PCI_NO_COMPLETION_TIMEOUT 1U
+static const struct rtw88_pci_device {
+	uint16_t product;
+	const struct rtw88_chip_ops *chip;
+	const char *name;
+	unsigned quirks;
+} rtw88_pci_devices[] = {
+	{ PCI_PRODUCT_REALTEK_RTL8821CE, &rtw8821c_chip_ops,
+	  "RTL8821CE", RTW88_PCI_NO_COMPLETION_TIMEOUT },
+	{ PCI_PRODUCT_REALTEK_RTL8822CE, &rtw8822c_chip_ops, "RTL8822CE", 0 }
+};
+
+static const struct rtw88_pci_device *
+rtw88_pci_lookup(pcireg_t id)
+{
+	if (PCI_VENDOR(id) != PCI_VENDOR_REALTEK)
+		return NULL;
+	for (unsigned i = 0; i < __arraycount(rtw88_pci_devices); i++)
+		if (PCI_PRODUCT(id) == rtw88_pci_devices[i].product)
+			return &rtw88_pci_devices[i];
+	return NULL;
+}
+
+/* The pinned donor disables RTL8821CE completion timeout at probe.
+ * Preserve device control only: the upper half contains W1C status. */
+static int
+rtw88_pci_configure(struct rtw88_pci_softc *psc, unsigned quirks)
+{
+	const struct pci_attach_args *pa = &psc->sc_pa;
+	pcireg_t cap, supported, control, check;
+	int offset;
+
+	if ((quirks & RTW88_PCI_NO_COMPLETION_TIMEOUT) == 0)
+		return 0;
+	if (!pci_get_capability(pa->pa_pc, pa->pa_tag, PCI_CAP_PCIEXPRESS,
+	    &offset, &cap) || PCIE_XCAP_VER(cap) < PCIE_XCAP_VER_2)
+		return EOPNOTSUPP;
+	supported = pci_conf_read(pa->pa_pc, pa->pa_tag, offset + PCIE_DCAP2);
+	control = pci_conf_read(pa->pa_pc, pa->pa_tag, offset + PCIE_DCSR2);
+	if (supported == UINT32_MAX || control == UINT32_MAX ||
+	    !rtw88_pci_present(psc))
+		return ENXIO;
+	if ((supported & PCIE_DCAP2_COMPT_DIS) == 0)
+		return EOPNOTSUPP;
+	psc->sc_pcie_cap = offset;
+	psc->sc_devctl2 = control & 0xffff;
+	psc->sc_devctl2_saved = 1;
+	pci_conf_write(pa->pa_pc, pa->pa_tag, offset + PCIE_DCSR2,
+	    psc->sc_devctl2 | PCIE_DCSR2_COMPT_DIS);
+	check = pci_conf_read(pa->pa_pc, pa->pa_tag, offset + PCIE_DCSR2);
+	if (!rtw88_pci_present(psc))
+		return ENXIO;
+	return (check & 0xffff) ==
+	    (psc->sc_devctl2 | PCIE_DCSR2_COMPT_DIS) ? 0 : EIO;
+}
+
 static int
 rtw88_pci_match(device_t parent, cfdata_t match, void *aux)
 {
@@ -856,8 +917,7 @@ rtw88_pci_match(device_t parent, cfdata_t match, void *aux)
 
 	(void)parent;
 	(void)match;
-	return PCI_VENDOR(pa->pa_id) == PCI_VENDOR_REALTEK &&
-	    PCI_PRODUCT(pa->pa_id) == PCI_PRODUCT_REALTEK_RTL8822CE;
+	return rtw88_pci_lookup(pa->pa_id) != NULL;
 }
 
 static void
@@ -866,6 +926,7 @@ rtw88_pci_attach(device_t parent, device_t self, void *aux)
 	struct rtw88_pci_softc *psc = device_private(self);
 	struct rtw88_softc *sc = &psc->sc_core;
 	const struct pci_attach_args *pa = aux;
+	const struct rtw88_pci_device *device = rtw88_pci_lookup(pa->pa_id);
 	pcireg_t command, type;
 	int error = ENXIO;
 
@@ -875,10 +936,11 @@ rtw88_pci_attach(device_t parent, device_t self, void *aux)
 	sc->sc_bus = psc;
 	sc->sc_ops = &rtw88_pci_ops;
 	sc->sc_hci = &rtw88_pci_hci_ops;
-	sc->sc_chip = &rtw8822c_chip_ops;
+	KASSERT(device != NULL);
+	sc->sc_chip = device->chip;
 	sc->sc_vendor = PCI_VENDOR(pa->pa_id);
 	sc->sc_product = PCI_PRODUCT(pa->pa_id);
-	aprint_normal(": Realtek RTL8822CE PCI resources\n");
+	aprint_normal(": Realtek %s PCI resources\n", device->name);
 	if (!rtw88_pci_present(psc))
 		goto fail;
 	command = pci_conf_read(pa->pa_pc, pa->pa_tag, PCI_COMMAND_STATUS_REG);
@@ -891,6 +953,9 @@ rtw88_pci_attach(device_t parent, device_t self, void *aux)
 	    psc->sc_command);
 	command = pci_conf_read(pa->pa_pc, pa->pa_tag, PCI_COMMAND_STATUS_REG);
 	if ((command & PCI_COMMAND_MASTER_ENABLE) != 0)
+		goto fail;
+	error = rtw88_pci_configure(psc, device->quirks);
+	if (error != 0)
 		goto fail;
 	type = pci_mapreg_type(pa->pa_pc, pa->pa_tag, RTW88_PCI_BAR);
 	if (PCI_MAPREG_TYPE(type) != PCI_MAPREG_TYPE_MEM)
@@ -917,11 +982,9 @@ rtw88_pci_attach(device_t parent, device_t self, void *aux)
 	error = rtw88_core_attach(sc);
 	if (error != 0)
 		goto fail;
-	/*
-	 * Identify reads physical EFUSE through its command register. It does
-	 * not start the radio, publish DMA, or load firmware.
-	 */
-	error = rtw8822c_identify(sc);
+	/* Chip discovery may power the MAC for EFUSE, then powers it off.
+	 * It cannot publish DMA or enable radio traffic. */
+	error = sc->sc_chip->identify(sc);
 	if (error != 0)
 		goto fail;
 	error = rtw88_net_attach(sc, self, &psc->sc_lock, sc->sc_mac,
@@ -974,6 +1037,12 @@ rtw88_pci_detach(device_t self, int flags)
 	if (psc->sc_mapped) {
 		bus_space_unmap(psc->sc_st, psc->sc_sh, psc->sc_mapsize);
 		psc->sc_mapped = 0;
+	}
+	if (psc->sc_devctl2_saved) {
+		if (rtw88_pci_present(psc))
+			pci_conf_write(psc->sc_pa.pa_pc, psc->sc_pa.pa_tag,
+			    psc->sc_pcie_cap + PCIE_DCSR2, psc->sc_devctl2);
+		psc->sc_devctl2_saved = 0;
 	}
 	if (psc->sc_command_saved) {
 		/* Released DMA mappings must never regain firmware bus mastering. */

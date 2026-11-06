@@ -86,6 +86,25 @@ rtw88_channel_apply(struct rtw88_softc *sc, const struct rtw88_channel_tuple *tu
 }
 
 int
+rtw88_prepare_station(struct rtw88_softc *sc, int (*current)(void *), void *cookie)
+{
+	int error;
+
+	if (sc == NULL || sc->sc_chip == NULL)
+		return EINVAL;
+	if (sc->sc_chip->prepare_station == NULL)
+		return 0;
+	if (current == NULL)
+		return EINVAL;
+	if (current(cookie) != 0)
+		return ECANCELED;
+	error = sc->sc_chip->prepare_station(sc, current, cookie);
+	if (current(cookie) != 0)
+		return ECANCELED;
+	return error;
+}
+
+int
 rtw88_station_config(struct rtw88_softc *sc, const uint8_t *bssid, unsigned aid, unsigned rates, unsigned slot, int linked)
 {
 	if (sc == NULL || sc->sc_chip == NULL || sc->sc_chip->station == NULL)

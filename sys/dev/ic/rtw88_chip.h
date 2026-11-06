@@ -47,6 +47,9 @@ struct rtw88_chip_ops {
 	int (*stop)(struct rtw88_softc *);
 	int (*fw_init)(struct rtw88_softc *);
 	int (*channel)(struct rtw88_softc *, const struct rtw88_channel_tuple *);
+	/* Synchronous; caller owns lifetime and hardware, without net lock.
+	 * current returns 0 or ECANCELED; the cookie is never retained. */
+	int (*prepare_station)(struct rtw88_softc *, int (*)(void *), void *);
 	int (*station)(struct rtw88_softc *, const uint8_t *, unsigned,
 	    unsigned, unsigned, int);
 	int (*edca)(struct rtw88_softc *, const struct rtw88_edca_params *, unsigned);
@@ -70,6 +73,7 @@ struct rtw88_chip_ops {
 
 extern const struct rtw88_chip_ops rtw8822c_chip_ops;
 int rtw88_chip_valid(const struct rtw88_softc *);
+int rtw88_prepare_station(struct rtw88_softc *, int (*)(void *), void *);
 unsigned rtw88_station_commands(const struct rtw88_softc *, int);
 int rtw88_get_caps(const struct rtw88_softc *, struct rtw88_caps *);
 int rtw88_chip_tx_desc(struct rtw88_softc *, uint8_t *, size_t,

@@ -34,5 +34,6 @@ int rtw8821c_efuse_decode(const uint8_t *, size_t, struct rtw8821c_efuse *);
 int rtw8821c_validate_identity(const struct rtw8821c_identity *);
 
 extern const struct rtw88_fw_profile rtw8821c_fw_profile;
+extern const struct rtw88_chip_ops rtw8821c_chip_ops;
 
 #endif
