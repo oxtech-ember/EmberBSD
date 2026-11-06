@@ -96,6 +96,10 @@ tstohz(const struct timespec *ts)
 }
 #include "pvr-context-body.h"
 
+/* An interrupt-backed wait must not burn milliseconds of CPU. */
+_Static_assert(PVR_CONTEXT_IRQ_SPIN_POLLS * PVR_CONTEXT_SPIN_US <= 500,
+    "interrupt-backed spin budget");
+
 struct allocation {
 	struct pvr_fw_object *slot;
 	unsigned pre;
@@ -531,7 +535,8 @@ static void
 delay(unsigned us)
 {
 	CHECK(us == PVR_CONTEXT_SPIN_US);
-	CHECK(active != NULL && active->sleeps < PVR_CONTEXT_SPIN_POLLS);
+	CHECK(active != NULL && active->sleeps < (active->backend.irq_wait != NULL ?
+	    PVR_CONTEXT_IRQ_SPIN_POLLS : PVR_CONTEXT_SPIN_POLLS));
 	active->spins++;
 	active->now_ns += (uint64_t)us * 1000;
 	model_wait();
@@ -551,7 +556,7 @@ model_irq_wait(void *cookie, unsigned mark, int ticks)
 {
 	struct model *m = cookie;
 	CHECK(m == active && mark == m->generation && ticks == 1);
-	CHECK(m->sleeps >= PVR_CONTEXT_SPIN_POLLS);
+	CHECK(m->sleeps >= PVR_CONTEXT_IRQ_SPIN_POLLS);
 	m->irqs++;
 	m->now_ns += m->irq_wait_ns;
 	m->generation++;
@@ -760,8 +765,8 @@ irq_jobs(void)
 		if (scenario == 0) {
 			m.ufo_delay = 300;
 			run_job_counts(&m, ctx, 1);
-			CHECK(m.sleeps == 300 && m.spins == PVR_CONTEXT_SPIN_POLLS);
-			CHECK(m.irqs == 300 - PVR_CONTEXT_SPIN_POLLS && m.ticks == 0);
+			CHECK(m.sleeps == 300 && m.spins == PVR_CONTEXT_IRQ_SPIN_POLLS);
+			CHECK(m.irqs == 300 - PVR_CONTEXT_IRQ_SPIN_POLLS && m.ticks == 0);
 			CHECK(pvr_context_destroy(&ctx) == 0);
 			CHECK(ctx == NULL && m.live == 0);
 			continue;
@@ -769,8 +774,9 @@ irq_jobs(void)
 		m.ufo_delay = 0;
 		CHECK(pvr_context_compute(ctx, &command, 1) == ETIMEDOUT);
 		CHECK(m.now_ns >= UINT64_C(10000000000) &&
-		    m.now_ns < UINT64_C(10010000000) && m.spins == PVR_CONTEXT_SPIN_POLLS);
-		CHECK(m.irqs == m.sleeps - PVR_CONTEXT_SPIN_POLLS && m.ticks == 0);
+		    m.now_ns < UINT64_C(10010000000) &&
+		    m.spins == PVR_CONTEXT_IRQ_SPIN_POLLS);
+		CHECK(m.irqs == m.sleeps - PVR_CONTEXT_IRQ_SPIN_POLLS && m.ticks == 0);
 		CHECK(m.failed && ctx->failed);
 		reset_model(&m, &ctx);
 	}

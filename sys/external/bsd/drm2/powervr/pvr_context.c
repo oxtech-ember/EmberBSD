@@ -42,11 +42,12 @@
 #define PVR_CONTEXT_RING_SIZE (1U << 15)
 #define PVR_CONTEXT_WAIT_SECONDS 10
 /*
- * Most jobs finish within a millisecond. Poll the first iterations finely
- * instead of sleeping a whole scheduler tick. Afterwards sleep until the
- * firmware interrupt when the backend has one, else for a tick.
+ * Poll the first iterations finely instead of sleeping a whole scheduler
+ * tick. A backend with a completion interrupt then sleeps until it, so
+ * keep that spin short; without one, poll longer before tick sleeps.
  */
 #define PVR_CONTEXT_SPIN_POLLS 160
+#define PVR_CONTEXT_IRQ_SPIN_POLLS 8
 #define PVR_CONTEXT_SPIN_US 25
 
 struct pvr_context_queue {
@@ -86,7 +87,8 @@ pvr_context_pause(const struct pvr_backend *be, unsigned i, unsigned mark,
 	nanouptime(&now);
 	if (timespeccmp(&now, deadline, >=))
 		return ETIMEDOUT;
-	if (i < PVR_CONTEXT_SPIN_POLLS) {
+	if (i < (be->irq_wait != NULL ? PVR_CONTEXT_IRQ_SPIN_POLLS :
+	    PVR_CONTEXT_SPIN_POLLS)) {
 		delay(PVR_CONTEXT_SPIN_US);
 	} else {
 		timespecsub(deadline, &now, &remaining);
