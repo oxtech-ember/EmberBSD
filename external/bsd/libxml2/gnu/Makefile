@@ -38,5 +38,6 @@ all dependall: gnu-target-build
 .endif
 .endif
 .include <bsd.obj.mk>
+.include <bsd.clean.mk>
 .PHONY: includes install
 includes install:
