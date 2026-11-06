@@ -70,6 +70,8 @@ They do not produce a complete application sysroot.
 EMBER_BUILD_MODE=cross EMBER_EXTERNAL_TOOLCHAIN=/absolute/llvm \
     EMBER_HOST_BFD_CONFIG=/absolute/binutils-aarch64/host-bfd.mk \
     EMBER_LLVM_SOURCE=/absolute/prepared-llvm \
+    EMBER_BYACC_SOURCE=/absolute/prepared-byacc \
+    EMBER_HEIMDAL_SOURCE=/absolute/prepared-heimdal \
     EMBERBSD_SDK_SOURCE=/absolute/sdk-source EMBER_HOST_PREFIX=/absolute/native-prefix \
     sh ember/build-kernel.sh /absolute/output EMBER64
 ```

@@ -41,6 +41,11 @@ through the SDK. LLVM/Clang is the default; a rare platform may explicitly
 select GCC with `EMBER_COMPILER_FAMILY=gcc`. Kernel-only mode does not require
 an application sysroot or supply a complete application runtime. Both families
 consume the common Ports-prepared LLVM sources through `EMBER_LLVM_SOURCE`.
+The tools phase also needs Ports-prepared byacc and Heimdal sources through
+`EMBER_BYACC_SOURCE` and `EMBER_HEIMDAL_SOURCE`; the latter supplies the host
+ASN.1 compiler even for a kernel-only build. The wrapper forwards all three
+source paths explicitly to `build.sh`, including on Linux where the SDK runner
+does not inherit arbitrary source variables from the environment.
 Host contracts use the shared SDK native-check runner and independent
 `EMBER_HOST_PREFIX`/`EMBER_HOST_COMPILER_FAMILY` selection.
 Keep historical GCC build results separate from Clang build and boot checks.
