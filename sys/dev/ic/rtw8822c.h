@@ -8,6 +8,8 @@
 
 #include "rtw88_hw.h"
 
+extern const struct rtw88_fw_profile rtw8822c_fw_profile;
+
 #define RTW8822C_EFUSE_PHYSICAL_SIZE	512
 #define RTW8822C_EFUSE_PROTECTED_SIZE	124
 #define RTW8822C_EFUSE_LOGICAL_SIZE	768

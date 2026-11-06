@@ -1,4 +1,4 @@
-name: Native RTL8822CE source contracts
+name: Native rtw88 source contracts
 
 'on':
   push:

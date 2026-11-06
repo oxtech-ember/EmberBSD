@@ -213,7 +213,7 @@ struct rtw88_fw_section {
 };
 
 struct rtw88_fw_info {
-	uint16_t signature;	/* Shared by RTL8822B and RTL8822C. */
+	uint16_t signature;	/* Container signature, not chip identity. */
 	uint16_t version;
 	uint8_t subversion;
 	uint8_t subindex;
@@ -224,14 +224,24 @@ struct rtw88_fw_info {
 	struct rtw88_fw_section emem;
 };
 
+/* Chip-owned, trusted normal-firmware policy; raw addresses retain bit 31.
+ * The shared parser accepts three sections with checksum trailers. */
+struct rtw88_fw_profile {
+	uint16_t signature;
+	uint32_t dmem_address, dmem_size;
+	uint32_t imem_address, imem_size;
+	uint32_t emem_address, emem_size;
+};
+
 /*
- * Accept only the pinned RTL8822C normal-firmware load profile documented
- * in rtw88-provenance.md. No alignment is required. Return 0, EINVAL for
+ * Accept only the caller-selected, evidenced firmware load profile.
+ * No alignment is required. Return 0, EINVAL for
  * malformed input, EOVERFLOW for arithmetic overflow, or ENOTSUP for an
  * unsupported signature or load profile. Leave *out unchanged on error.
  * Success validates container ranges, not firmware authenticity, checksum
  * contents, silicon compatibility, or readiness to enable the radio.
  */
-int rtw88_fw_parse(const uint8_t *, size_t, struct rtw88_fw_info *);
+int rtw88_fw_parse(const uint8_t *, size_t,
+    const struct rtw88_fw_profile *, struct rtw88_fw_info *);
 
 #endif /* _DEV_IC_RTW88_HW_H_ */

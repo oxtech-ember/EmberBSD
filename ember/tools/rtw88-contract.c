@@ -63,7 +63,7 @@ reject(const uint8_t *data, size_t size, int expected)
 
 	memset(&info, 0xa5, sizeof(info));
 	memcpy(&before, &info, sizeof(before));
-	CHECK(rtw88_fw_parse(data, size, &info) == expected);
+	CHECK(rtw88_fw_parse(data, size, &rtw8822c_fw_profile, &info) == expected);
 	CHECK(memcmp(&info, &before, sizeof(info)) == 0);
 }
 
@@ -86,7 +86,7 @@ test_fw_short(void)
 		free(data);
 	}
 	reject(NULL, 202456, EINVAL);
-	CHECK(rtw88_fw_parse(header, 64, NULL) == EINVAL);
+	CHECK(rtw88_fw_parse(header, 64, &rtw8822c_fw_profile, NULL) == EINVAL);
 }
 
 /* Catch u32 checksum wrapping, missing trailers, and out-of-file ranges. */
@@ -152,7 +152,7 @@ exact_sections(const uint8_t *data)
 	int error;
 
 	memset(&info, 0, sizeof(info));
-	error = rtw88_fw_parse(data, 202456, &info);
+	error = rtw88_fw_parse(data, 202456, &rtw8822c_fw_profile, &info);
 	CHECK(error == 0);
 	if (error != 0)
 		return;

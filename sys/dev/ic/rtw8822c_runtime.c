@@ -425,7 +425,7 @@ rtw8822c_runtime_start(struct rtw88_softc *sc,
 		rtw88_release_fw(sc);
 		return EINTR;
 	}
-	error = rtw88_fw_parse(fw, fw_len, &info);
+	error = rtw88_fw_parse(fw, fw_len, &rtw8822c_fw_profile, &info);
 	if (error != 0) {
 		rtw88_release_fw(sc);
 		return error;

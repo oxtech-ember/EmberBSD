@@ -16,16 +16,14 @@ tools=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 src=$(CDPATH= cd -- "$tools/../.." && pwd)
 work=$(mktemp -d "${TMPDIR:-/tmp}/rtw88-start-contract.XXXXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
-if [ "$(uname -s)" = Darwin ] && [ -z "${SDKROOT:-}" ]; then
-    SDKROOT=$(xcrun --show-sdk-path); export SDKROOT
-fi
+: "${CC:?select CC using SDK run-native-check}"
 python3 "$tools/rtw88-state-contract.py" "$src" "$work"
 mkdir -p "$work/include/sys" "$work/include/dev"
 ln -s "$src/sys/dev/ic" "$work/include/dev/ic"
 for header in sys/param.h sys/systm.h; do
     printf '#include <errno.h>\n#include "rtw88-test-kernel.h"\n' > "$work/include/$header"
 done
-${CC:-cc} -std=c11 -Wall -Wextra -Werror ${RTW88_TEST_CFLAGS:-} \
+"$CC" -std=c11 -Wall -Wextra -Werror ${RTW88_TEST_CFLAGS:-} \
     -I"$work" -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \
     "$tools/rtw88-start-contract.c" \
     "$src/sys/dev/ic/rtw88.c" \
@@ -58,16 +56,16 @@ grep -F 'WARNING: cold calibration degraded: ADC nonconverged 0 DAC nonconverged
 if [ "${RTW88_START_ANALYZE:-0}" = 1 ]; then
     # Analyze the complete extracted worker in its executable source consumer.
     # O0 avoids compiler-optimization artifacts in this host kernel model.
-    ${CC:-cc} -std=c11 -O0 -g -Wall -Wextra -Werror -fanalyzer \
+    "$CC" -std=c11 -O0 -g -Wall -Wextra -Werror -fanalyzer \
         -I"$work" -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \
         -c "$tools/rtw88-start-contract.c" -o "$work/analysis.o"
-    ${CC:-cc} -std=c11 -O0 -g -Wall -Wextra -Werror -fanalyzer \
+    "$CC" -std=c11 -O0 -g -Wall -Wextra -Werror -fanalyzer \
         -I"$work" -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \
         -c "$src/sys/dev/pci/rtw88_pci_hci.c" -o "$work/pci-hci-analysis.o"
-    ${CC:-cc} -std=c11 -O0 -g -Wall -Wextra -Werror -fanalyzer \
+    "$CC" -std=c11 -O0 -g -Wall -Wextra -Werror -fanalyzer \
         -I"$work" -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \
         -c "$src/sys/dev/pci/rtw88_pci_packet.c" -o "$work/pci-packet-analysis.o"
-    ${CC:-cc} -std=c11 -dM -E - < /dev/null > "$work/predefines.h"
+    "$CC" -std=c11 -dM -E - < /dev/null > "$work/predefines.h"
     cppcheck --enable=warning,performance,portability --error-exitcode=1 \
         --check-level=exhaustive --include="$work/predefines.h" \
         -I"$work" -I"$work/include" -I"$tools" -I"$src/sys/dev/ic" \

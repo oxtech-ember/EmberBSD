@@ -1,11 +1,12 @@
 <!-- Origin: EmberBSD native RTL8822C format research, AI-assisted. -->
-# RTL8822C portable format contracts
+# rtw88 portable format contracts
 
-These portable codecs validate one normal-firmware load profile,
-physical EFUSE records, packet descriptors, and bounded DMA ranges.
-It does not attach a device or enable a radio.
-The firmware parser does not establish chip identity, authenticity, checksum validity,
-or physical Wi-Fi operation. No kernel or firmware-loader integration exists yet.
+This page describes the RTL8822C firmware load profile, physical EFUSE
+records, packet descriptors, and bounded DMA ranges. The shared firmware
+parser in `rtw88_hw.c` takes an explicit chip-owned profile; the separate
+[RTL8821CE contract](rtw8821c.md) uses the same bounds checks.
+These portable tests do not establish PCI attachment, chip identity,
+firmware authenticity, hardware checksum validation, or physical Wi-Fi operation.
 
 ## Driver reference and license
 

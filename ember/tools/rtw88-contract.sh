@@ -11,18 +11,14 @@ run_test() {
         "$@"
     fi
 }
-# Homebrew GCC can retain a removed Command Line Tools SDK as its default.
-if [ "$(uname -s)" = Darwin ] && [ -z "${SDKROOT:-}" ]; then
-    SDKROOT=$(xcrun --show-sdk-path)
-    export SDKROOT
-fi
+: "${CC:?select CC using SDK run-native-check}"
 [ "$#" -eq 0 ] || { echo "usage: $0" >&2; exit 2; }
 tools=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 src=$(CDPATH= cd -- "$tools/../.." && pwd)
 work=$(mktemp -d "${TMPDIR:-/tmp}/rtw88-contract.XXXXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 
-${CC:-cc} -std=c11 -Wall -Wextra -Werror ${RTW88_TEST_CFLAGS:-} \
+"$CC" -std=c11 -Wall -Wextra -Werror ${RTW88_TEST_CFLAGS:-} \
     -I"$src/sys/dev/ic" "$tools/rtw88-contract.c" \
     "$src/sys/dev/ic/rtw88_hw.c" "$src/sys/dev/ic/rtw8822c_hw.c" "$src/sys/dev/ic/rtw8822c.c" -o "$work/rtw88-contract"
 run_test "$work/rtw88-contract"
