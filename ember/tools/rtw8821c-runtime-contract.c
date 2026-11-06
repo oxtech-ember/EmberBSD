@@ -26,6 +26,7 @@ rtw8821c_coex_init(struct rtw88_softc *);
 #include "../../sys/dev/ic/rtw8821c_runtime.c"
 static int stage, fail, stopped, packets, boot_tx, txs, cancel, iqkfail,
     restore_pause, off_error;
+static int hci_prepared, rx_bd_armed, early_rx, power_after_setup;
 static struct rtw88_softc *active;
 const struct rtw88_fw_profile rtw8821c_fw_profile = {0};
 void *kmem_zalloc(size_t n, int f)
@@ -71,6 +72,12 @@ rtw8821c_power(struct rtw88_softc *s, int on)
 	(void)s;
 	if (!on)
 		return off_error ? EIO : 0;
+	if (s->sc_chip_private != NULL &&
+	    ((struct rtw8821c_runtime *)s->sc_chip_private)->identity_ready) {
+		/* Power may enable DMA before firmware download begins. */
+		CHECK(rx_bd_armed);
+		power_after_setup++;
+	}
 	return step();
 }
 int
@@ -184,6 +191,9 @@ rtw88_wcpu_fw_download(struct rtw88_softc *s, uint32_t g, const uint8_t *p,
 	(void)p;
 	(void)n;
 	(void)i;
+	/* Firmware may receive before the download routine returns. */
+	CHECK(rx_bd_armed);
+	early_rx++;
 	boot_tx = rtw8821c_tx_desc(s, d, sizeof(d), NULL);
 	return step();
 }
@@ -270,6 +280,8 @@ int
 rtw88_stop(struct rtw88_softc *s)
 {
 	stopped++;
+	/* Runtime must enter the single teardown on every failed startup. */
+	hci_prepared = rx_bd_armed = 0;
 	s->sc_started = s->sc_running = s->sc_powered = s->sc_power_dirty =
 	    s->sc_dma_master = 0;
 	s->sc_bootstrapping = 0;
@@ -328,8 +340,23 @@ write4(void *c, uint32_t r, uint32_t v)
 static int
 prepare(struct rtw88_softc *s)
 {
+	int e;
 	(void)s;
-	return step();
+	e = step();
+	if (e == 0)
+		hci_prepared = 1;
+	return e;
+}
+static int
+setup(struct rtw88_softc *s)
+{
+	int e;
+	(void)s;
+	CHECK(hci_prepared);
+	e = step();
+	if (e == 0)
+		rx_bd_armed = 1;
+	return e;
 }
 static int
 start(struct rtw88_softc *s)
@@ -371,7 +398,7 @@ main(void)
 				    .read_4 = read4,
 				    .write_4 = write4};
 	struct rtw88_hci_ops hci = {.prepare = prepare,
-				    .setup = prepare,
+				    .setup = setup,
 				    .start = start,
 				    .fw_packet = packet};
 	struct rtw88_channel_tuple tuple = {
@@ -390,6 +417,7 @@ main(void)
 	CHECK(rtw8821c_start(&sc, &tuple) == 0);
 	maxstage = stage;
 	CHECK(boot_tx == 0 && packets == 2 && ctx->needs_iqk);
+	CHECK(early_rx == 1 && power_after_setup >= 1 && rx_bd_armed);
 	CHECK(rtw8821c_tx_desc(&sc, out, sizeof(out), NULL) == EACCES);
 	iqkfail = 1;
 	CHECK(rtw8821c_prepare_station(&sc, current, NULL) == EIO);
@@ -436,7 +464,10 @@ main(void)
 		ctx = sc.sc_chip_private;
 		ctx->identity_ready = 1;
 		fail = i;
+		int stop_before = stopped;
 		e = rtw8821c_start(&sc, &tuple);
+		CHECK(stopped == stop_before + (i > 2));
+		CHECK(!hci_prepared && !rx_bd_armed);
 		CHECK(e != 0);
 		CHECK(!sc.sc_started && !sc.sc_rf_enabled);
 		fail = 0;
@@ -454,7 +485,10 @@ main(void)
 		ctx = sc.sc_chip_private;
 		ctx->identity_ready = 1;
 		cancel = i;
+		int stop_before = stopped;
 		e = rtw8821c_start(&sc, &tuple);
+		CHECK(stopped == stop_before + (i > 2));
+		CHECK(!hci_prepared && !rx_bd_armed);
 		if (e != EINTR)
 			fprintf(stderr, "cancel stage %d returned %d\n", i, e);
 		CHECK(e == EINTR);
