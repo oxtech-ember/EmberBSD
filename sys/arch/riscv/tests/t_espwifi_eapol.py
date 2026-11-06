@@ -13,8 +13,9 @@ if not __debug__:
 p=argparse.ArgumentParser();p.add_argument('--cc',required=True);a=p.parse_args()
 s=(Path(__file__).resolve().parents[1]/'espressif/esp_wifi_if.c').read_text()
 f=re.search(r'\nint\nespwifi_if_rx_eapol\(.*?\)\n\{.*?\n\}',s,re.S)
+closed_generation=re.search(r'\nstatic bool\nespwifi_if_fail_closed_generation\(.*?\)\n\{.*?\n\}',s,re.S)
 closed=re.search(r'\nstatic void\nespwifi_if_fail_closed\(.*?\)\n\{.*?\n\}',s,re.S)
-assert f
+assert f and closed_generation
 assert closed
 code=r'''
 #include <assert.h>
@@ -34,8 +35,11 @@ struct ifnet { int if_flags; void *if_softc; };
 struct espwifi_softc { struct { struct ifnet ec_if; } sc_ec; bool sc_attached;
  uint8_t sc_mac[6]; void *sc_ipq; int sc_scan_lock; uint64_t sc_join_active;
  bool sc_joined,sc_join_stopped,sc_link,sc_radio_ready,sc_ptk_installed;
+ bool sc_join_sae;
  bool sc_join_pending,sc_join_disconnect_pending,sc_join_rescan_pending;
- uint8_t sc_key_slots,sc_group_key_slots;uint64_t sc_key_generation,sc_join_generation;
+ bool sc_join_eapol_seen;
+ uint8_t sc_key_slots,sc_group_key_slots,sc_igtk_slots;
+ uint64_t sc_key_generation,sc_join_generation;
  void *sc_scan_ctl_sem;unsigned sc_port_authorized; };
 static struct espwifi_softc espwifi_sc; static struct mbuf mb;
 static unsigned char copied[1514];static int copied_len,fail,queued,wiped;
@@ -49,10 +53,13 @@ static void mutex_spin_enter(int *p) { (void)p;assert(!locked);locked=1; }
 static void mutex_spin_exit(int *p) { (void)p;assert(locked);locked=0; }
 static unsigned atomic_load_acquire(unsigned *p) { return *p; }
 static void atomic_store_release(unsigned *p,unsigned v) { *p=v; }
-static void espwifi_os_sem_give(void *p) { (void)p; }
-static void if_link_state_change(struct ifnet *p,int s) { (void)p;(void)s; }
+static unsigned signals,leaves,sae_cancels;
+static void espwifi_os_sem_give(void *p) { (void)p;signals++; }
+static void espwifi_os_log(const char *fmt,...) { (void)fmt; }
+static void espwifi_if_sae_cancel(struct espwifi_softc *sc) { (void)sc;sae_cancels++; }
+static void if_link_state_change(struct ifnet *p,int s) { (void)p;(void)s;leaves++; }
 #define LINK_STATE_DOWN 0
-''' + closed.group() + f.group() + r'''
+''' + closed_generation.group() + closed.group() + f.group() + r'''
 int main(void) {
  const uint8_t src[6]={1,2,3,4,5,6}, msg[4]={2,3,0,0};
  assert(espwifi_if_rx_eapol(src,msg,4)==-1 && !queued);
@@ -73,10 +80,18 @@ int main(void) {
  assert(espwifi_if_rx_eapol(src,truncated,4)==-1 && !queued);
  assert(!espwifi_sc.sc_port_authorized && !espwifi_sc.sc_link &&
   espwifi_sc.sc_join_disconnect_pending);
+ assert(espwifi_sc.sc_join_generation==1 && espwifi_sc.sc_join_active==0 &&
+  !espwifi_sc.sc_joined && !espwifi_sc.sc_ptk_installed &&
+  espwifi_sc.sc_key_slots==0 && espwifi_sc.sc_group_key_slots==0 &&
+  espwifi_sc.sc_igtk_slots==0 && espwifi_sc.sc_key_generation==0 &&
+  espwifi_sc.sc_join_rescan_pending && signals==1 && leaves==1 &&
+  sae_cancels==1);
  espwifi_sc.sc_join_active=2;espwifi_sc.sc_joined=true;
  espwifi_sc.sc_link=true;espwifi_sc.sc_port_authorized=1;
  fail=1;assert(espwifi_if_rx_eapol(src,msg,4)==-1 && wiped==1 && !queued);
- assert(!espwifi_sc.sc_port_authorized && !espwifi_sc.sc_link);
+ assert(!espwifi_sc.sc_port_authorized && !espwifi_sc.sc_link &&
+  espwifi_sc.sc_join_generation==2 && espwifi_sc.sc_join_active==0 &&
+  signals==2 && leaves==2 && sae_cancels==2);
  espwifi_sc.sc_join_active=3;espwifi_sc.sc_joined=true;
  fail=0;assert(espwifi_if_rx_eapol(src,msg,4)==1);
  assert(queued==1 && wiped==2 && copied_len==18 && copied[0]==0xaa);

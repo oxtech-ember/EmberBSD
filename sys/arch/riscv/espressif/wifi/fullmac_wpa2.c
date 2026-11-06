@@ -171,18 +171,39 @@ static int
 espwifi_wpa2_sta_rx_mgmt(u8 subtype, u8 *body, size_t len, u8 *sender,
     int8_t rssi, u8 channel, u64 current_tsf)
 {
+	unsigned int status = 0;
+	bool status_valid = false;
+	int accepted;
+
 	(void)rssi;
 	(void)channel;
 	(void)current_tsf;
 	switch (subtype) {
 	case WLAN_FC_STYPE_ASSOC_RESP:
 	case WLAN_FC_STYPE_REASSOC_RESP:
-		return espwifi_os_assoc_response(subtype, body,
-		    (unsigned int)len, sender) ? 0 : -1;
+		if (body != NULL && len >= 4) {
+			status = (unsigned int)body[2] |
+			    ((unsigned int)body[3] << 8);
+			status_valid = true;
+		}
+		accepted = espwifi_os_assoc_response(subtype, body,
+		    (unsigned int)len, sender);
+		espwifi_os_log("espwifi: RX assoc subtype=%u len=%u "
+		    "status_valid=%u status=%u accepted=%u\n",
+		    (unsigned)subtype, (unsigned)len, (unsigned)status_valid,
+		    status, (unsigned)(accepted != 0));
+		return accepted ? 0 : -1;
 	case WLAN_FC_STYPE_AUTH:
 	case WLAN_FC_STYPE_ACTION:
+		espwifi_os_log("espwifi: RX mgmt rejected subtype=%u len=%u "
+		    "status_valid=0\n", (unsigned)subtype, (unsigned)len);
 		return -1;
 	default:
+		/* Beacon/probe callbacks are normal scan traffic. */
+		if (subtype != 5 && subtype != 8)
+			espwifi_os_log("espwifi: RX mgmt unhandled subtype=%u "
+			    "len=%u status_valid=0\n", (unsigned)subtype,
+			    (unsigned)len);
 		return -1;
 	}
 }
