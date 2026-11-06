@@ -1446,6 +1446,9 @@ static void
 rtw88_net_rxba_quiesce(struct rtw88_net *net)
 {
 
+	/* Devices without RX BA never initialize its optional timer. */
+	if ((net->caps.features & RTW88_CAP_RXBA) == 0)
+		return;
 	rtw88_net_rxba_cancel(&net->ic);
 	/* The MPSAFE callback never waits for Giant. No PCI lock is held here. */
 	callout_halt(&net->rxba_callout, NULL);
@@ -1464,6 +1467,8 @@ static void
 rtw88_net_rxba_detach(struct rtw88_net *net)
 {
 
+	if ((net->caps.features & RTW88_CAP_RXBA) == 0)
+		return;
 	rtw88_net_rxba_quiesce(net);
 	net->ic.ic_rxba_ops = NULL;
 	callout_destroy(&net->rxba_callout);
