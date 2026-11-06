@@ -596,8 +596,8 @@ rtw88_wcpu_mailbox_end(struct rtw88_softc *sc, int error)
 	return error;
 }
 
-int
-rtw88_wcpu_command(struct rtw88_softc *sc, uint8_t id, const void *payload,
+static int
+rtw88_wcpu_send_command(struct rtw88_softc *sc, uint8_t id, const void *payload,
     size_t size)
 {
 	struct rtw88_poll32 box;
@@ -605,8 +605,6 @@ rtw88_wcpu_command(struct rtw88_softc *sc, uint8_t id, const void *payload,
 	uint32_t gen, w0, w1, ex_reg, box_reg;
 	int error;
 
-	if (!sc->sc_started || !sc->sc_rf_enabled || sc->sc_stop_requested)
-		return ENXIO;
 	if (size > 0 && payload == NULL)
 		return EINVAL;
 	if (size > RTW88_FW_CMD_MAX)
@@ -657,22 +655,48 @@ rtw88_wcpu_command(struct rtw88_softc *sc, uint8_t id, const void *payload,
 		w1 |= (uint32_t)p[6] << 24;
 	box_reg = RTW88_REG_HMEBOX0 + 4 * (sc->sc_h2c_box & 3);
 	ex_reg = RTW88_REG_HMEBOX0_EX + 4 * (sc->sc_h2c_box & 3);
-	if (sc->sc_mailbox.active && gen != sc->sc_generation)
-		return ESTALE;
+	if (sc->sc_stop_requested || gen != sc->sc_generation)
+		return sc->sc_mailbox.active ? ESTALE : EINTR;
 	error = sc->sc_ops->write_4(sc->sc_bus, ex_reg, w1);
 	if (error != 0)
 		return error;
-	if (sc->sc_mailbox.active && gen != sc->sc_generation)
-		return ESTALE;
+	if (sc->sc_stop_requested || gen != sc->sc_generation)
+		return sc->sc_mailbox.active ? ESTALE : EINTR;
 	error = sc->sc_ops->write_4(sc->sc_bus, box_reg, w0);
 	if (error != 0)
 		return error;
 	sc->sc_h2c_box = (sc->sc_h2c_box + 1) & 3;
 	if (sc->sc_mailbox.active)
 		sc->sc_mailbox.sent++;
-	if (sc->sc_generation != gen)
+	if (sc->sc_stop_requested || sc->sc_generation != gen)
 		return EINTR;
 	return 0;
+}
+
+int
+rtw88_wcpu_command(struct rtw88_softc *sc, uint8_t id, const void *payload,
+    size_t size)
+{
+	if (sc == NULL || !sc->sc_started || !sc->sc_rf_enabled ||
+	    sc->sc_stop_requested)
+		return ENXIO;
+	return rtw88_wcpu_send_command(sc, id, payload, size);
+}
+
+/* Narrow bootstrap coex commands; caller serializes the mailbox. */
+int
+rtw88_wcpu_boot_command(struct rtw88_softc *sc, uint8_t id,
+    const void *payload, size_t size)
+{
+	if (sc == NULL || !sc->sc_bootstrapping || sc->sc_started ||
+	    !sc->sc_running || !sc->sc_powered || sc->sc_stop_requested ||
+	    !sc->sc_packet_h2c.initialized || !sc->sc_packet_h2c.active ||
+	    sc->sc_packet_h2c.generation != sc->sc_generation ||
+	    sc->sc_mailbox.active)
+		return ENXIO;
+	if (id != 0x60 && id != 0x69)
+		return EOPNOTSUPP;
+	return rtw88_wcpu_send_command(sc, id, payload, size);
 }
 
 int

@@ -28,12 +28,17 @@ $x "$work/body.c" \
     util.c:fn:check_hw_ready util.c:fn:ltecoex_read_reg util.c:fn:ltecoex_reg_write \
     coex.c:fn:rtw_coex_read_indirect_reg coex.c:fn:rtw_coex_write_indirect_reg \
     rtw8821c.c:fn:rtw8821c_coex_cfg_ant_switch \
+    coex.c:fn:rtw_coex_write_scbd coex.c:fn:rtw_coex_read_scbd coex.c:fn:rtw_coex_check_rfk \
+    coex.c:fn:rtw_coex_wl_slot_extend coex.c:fn:rtw_coex_monitor_bt_enable \
+    coex.c:fn:rtw_coex_set_table coex.c:fn:rtw_coex_table coex.c:fn:rtw_coex_set_tdma coex.c:fn:rtw_coex_tdma \
+    coex.c:fn:rtw_coex_query_bt_info coex.c:fn:rtw_coex_init_coex_var \
     coex.c:fn:rtw_coex_coex_ctrl_owner coex.c:fn:rtw_coex_set_gnt_bt \
     coex.c:fn:rtw_coex_set_gnt_wl coex.c:fn:rtw_coex_set_ant_path \
     coex.c:fn:rtw_coex_set_wl_pri_mask coex.c:fn:rtw_coex_switchband_notify \
     phy.c:fn:rtw_phy_write_rf_reg \
     rtw8821c.c:fn:rtw8821c_coex_cfg_rfe_type \
-    rtw8821c.c:fn:rtw8821c_coex_cfg_gnt_debug rtw8821c.c:fn:rtw8821c_coex_cfg_init
+    rtw8821c.c:fn:rtw8821c_coex_cfg_gnt_debug rtw8821c.c:fn:rtw8821c_coex_cfg_init \
+    coex.c:fn:rtw_coex_power_on_setting coex.c:fn:__rtw_coex_init_hw_config
 "${CC:?select CC using SDK run-native-check}" -std=gnu11 -w ${RTW88_TEST_CFLAGS:-} -I"$ref" -I"$tools" -I"$work" \
     "$tools/rtw8821c-coex-trace-ref.c" -o "$work/gen"
 "$work/gen"

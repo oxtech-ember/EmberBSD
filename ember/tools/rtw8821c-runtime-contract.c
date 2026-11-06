@@ -22,10 +22,10 @@ kpause(const char *s, bool b, int n, void *p)
 	return 0;
 }
 int
-rtw8821c_coex_init(struct rtw88_softc *);
+rtw8821c_coex_init(struct rtw88_softc *, uint8_t);
 #include "../../sys/dev/ic/rtw8821c_runtime.c"
 static int stage, fail, stopped, packets, boot_tx, txs, cancel, iqkfail,
-    restore_pause, off_error;
+    restore_pause, off_error, expected_bt;
 static int hci_prepared, rx_bd_armed, early_rx, power_after_setup;
 static struct rtw88_softc *active;
 const struct rtw88_fw_profile rtw8821c_fw_profile = {0};
@@ -101,9 +101,10 @@ rtw8821c_mac_init(struct rtw88_softc *s)
 	return step();
 }
 int
-rtw8821c_coex_init(struct rtw88_softc *s)
+rtw8821c_coex_init(struct rtw88_softc *s, uint8_t bt)
 {
 	(void)s;
+	CHECK(bt == expected_bt);
 	return step();
 }
 int
@@ -413,9 +414,12 @@ main(void)
 	CHECK(rtw8821c_attach(&sc) == 0);
 	CHECK(rtw8821c_discover(&sc) == 0);
 	ctx = sc.sc_chip_private;
+	ctx->phy.efuse.bt_setting = 1;
+	expected_bt = 1;
 	stage = 0;
 	CHECK(rtw8821c_start(&sc, &tuple) == 0);
 	maxstage = stage;
+	expected_bt = 0;
 	CHECK(boot_tx == 0 && packets == 2 && ctx->needs_iqk);
 	CHECK(early_rx == 1 && power_after_setup >= 1 && rx_bd_armed);
 	CHECK(rtw8821c_tx_desc(&sc, out, sizeof(out), NULL) == EACCES);

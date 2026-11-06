@@ -770,6 +770,49 @@ restore_section(struct rtw88_softc *sc, uint32_t generation,
 	return 0;
 }
 
+static struct rtw88_bus_ops boot_command_ops;
+static int boot_cancel_after_ext;
+
+static int
+boot_command_write4(void *cookie, uint32_t reg, uint32_t value)
+{
+	int error = write_4(cookie, reg, value);
+
+	if (error == 0 && reg == 0x01f0 && boot_cancel_after_ext)
+		f.sc->sc_generation++;
+	return error;
+}
+
+static void
+test_wonly_boot_mailbox(void)
+{
+	const uint8_t payload[] = { 0x0c, 1, 0, 0, 0, 0 };
+	struct rtw88_softc sc;
+
+	reset_bus(&sc);
+	sc.sc_generation = 7;
+	sc.sc_bootstrapping = sc.sc_running = sc.sc_powered = 1;
+	sc.sc_packet_h2c.active = sc.sc_packet_h2c.initialized = 1;
+	sc.sc_packet_h2c.generation = 7;
+	CHECK(rtw88_wcpu_command(&sc, 0x69, payload, sizeof(payload)) == ENXIO);
+	CHECK(rtw88_wcpu_boot_command(&sc, 0x01, payload, sizeof(payload)) == EOPNOTSUPP);
+	CHECK(rtw88_wcpu_boot_command(&sc, 0x69, payload, sizeof(payload)) == 0);
+	CHECK(f.mmio[0x1d0] == 0x69 && f.mmio[0x1d1] == 0x0c &&
+	    f.mmio[0x1d2] == 1 && sc.sc_h2c_box == 1);
+	reset_bus(&sc);
+	sc.sc_generation = 7;
+	sc.sc_bootstrapping = sc.sc_running = sc.sc_powered = 1;
+	sc.sc_packet_h2c.active = sc.sc_packet_h2c.initialized = 1;
+	sc.sc_packet_h2c.generation = 7;
+	boot_command_ops = ops;
+	boot_command_ops.write_4 = boot_command_write4;
+	sc.sc_ops = &boot_command_ops;
+	boot_cancel_after_ext = 1;
+	CHECK(rtw88_wcpu_boot_command(&sc, 0x69, payload, sizeof(payload)) == EINTR);
+	CHECK(f.mmio[0x1d0] == 0 && sc.sc_h2c_box == 0);
+	boot_cancel_after_ext = 0;
+}
+
 static void
 test_fw_register_restore(void)
 {
@@ -2849,6 +2892,7 @@ main(void)
 
 	test_tx_quiet_fence();
 	test_cold_dack_startup();
+	test_wonly_boot_mailbox();
 	test_fw_register_restore();
 	test_radio_dependencies();
 	test_power_system_integration();

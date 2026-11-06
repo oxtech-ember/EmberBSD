@@ -9,6 +9,7 @@ int rtw88_wcpu_hw_feature_read(struct rtw88_softc *, uint32_t);
 int rtw88_wcpu_edca(struct rtw88_softc *, const struct rtw88_edca_params [RTW88_WME_NAC], unsigned);
 int rtw88_wcpu_mailbox_begin(struct rtw88_softc *, unsigned, int *);
 int rtw88_wcpu_mailbox_end(struct rtw88_softc *, int);
+int rtw88_wcpu_boot_command(struct rtw88_softc *, uint8_t, const void *, size_t);
 int rtw88_wcpu_command(struct rtw88_softc *, uint8_t, const void *, size_t);
 int rtw88_wcpu_station(struct rtw88_softc *, const uint8_t *, unsigned, unsigned, unsigned, int);
 int rtw88_wcpu_ra(struct rtw88_softc *, const struct rtw88_ra_config *);

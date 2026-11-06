@@ -317,7 +317,7 @@ rtw8821c_start(struct rtw88_softc *sc,
 	STEP("HCI start", sc->sc_hci->start(sc));
 	STEP("firmware information", rtw8821c_fw_init(sc));
 	/* Antenna ownership is configured by the chip's Wi-Fi-only slice. */
-	STEP("Wi-Fi antenna", rtw8821c_coex_init(sc));
+	STEP("Wi-Fi antenna", rtw8821c_coex_init(sc, ctx->phy.efuse.bt_setting));
 #undef STEP
 	sc->sc_rf_enabled = 1;
 	sc->sc_edca_error = sc->sc_ra.error = 0;

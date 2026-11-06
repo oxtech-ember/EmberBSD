@@ -65,25 +65,40 @@ rtw88_wcpu_lte_update(struct rtw88_softc *sc, uint32_t gen, uint16_t reg,
 	return sc->sc_ops->write_4(sc->sc_bus, 0x1700, 0xc00f0000U | reg);
 }
 
+int
+rtw88_wcpu_boot_command(struct rtw88_softc *sc, uint8_t id,
+    const void *payload, size_t len)
+{
+	const uint8_t *p = payload;
+	uint32_t value = 0;
+	(void)sc;
+	if (operation()) return EIO;
+	if (len > 0) value |= p[0];
+	if (len > 1) value |= (uint32_t)p[1] << 8;
+	record('h', 0, id, value);
+	return 0;
+}
+
 static void
-compare(const char *path, unsigned rfe)
+compare(const char *path, unsigned rfe, unsigned share)
 {
 	struct rtw88_softc sc = { .sc_ops = &ops, .sc_rfe = rfe };
 	char line[128];
 	FILE *fp = fopen(path, "r");
-	unsigned r, count, n = 0;
+	unsigned r, sh, count, n = 0;
 	int active = 0;
 	CHECK(fp != NULL);
 	model_reset();
-	CHECK(rtw8821c_coex_init(&sc) == 0);
+	poke(0x00aa,2,0); poke(0x049c,1,0);
+	CHECK(rtw8821c_coex_init(&sc, share) == 0);
 	while (fgets(line, sizeof(line), fp) != NULL) {
 		line[strcspn(line, "\n")] = 0;
-		if (sscanf(line, "rfe %u events %u", &r, &count) == 2) {
-			active = r == rfe;
+		if (sscanf(line, "rfe %u share %u events %u", &r, &sh, &count) == 3) {
+			active = r == rfe && sh == share;
 			if (active) CHECK(count == ntrace);
 			continue;
 		}
-		if (!active || (line[0] != 'r' && line[0] != 'w' && line[0] != 'd')) continue;
+		if (!active || (line[0] != 'r' && line[0] != 'w' && line[0] != 'd' && line[0] != 'h')) continue;
 		CHECK(n < ntrace);
 		if (strcmp(line, trace[n]) != 0) {
 			fprintf(stderr, "rfe%u event%u want:%s got:%s\n", rfe, n, line, trace[n]);
@@ -100,7 +115,10 @@ main(int argc, char **argv)
 	static const unsigned profiles[] = {0, 2, 4, 6};
 	unsigned i;
 	CHECK(argc == 2);
-	for (i = 0; i < sizeof(profiles) / sizeof(profiles[0]); i++) compare(argv[1], profiles[i]);
+	for (i = 0; i < sizeof(profiles) / sizeof(profiles[0]); i++) {
+		compare(argv[1], profiles[i], 0);
+		compare(argv[1], profiles[i], 1);
+	}
 	printf("%u RTL8821C donor trace assertions passed\n", assertions);
 	return 0;
 }
