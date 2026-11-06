@@ -118,8 +118,11 @@ __RCSID("$NetBSD: xinstall.c,v 1.130.2.1 2026/07/20 08:55:28 martin Exp $");
 
 #define BACKUP_SUFFIX ".old"
 
-static int	dobackup, docompare, dodir, dostrip, dolink, dopreserve,
+static int	dobackup, dodir, dostrip, dolink, dopreserve,
 		dorename, dounpriv;
+#if HAVE_NBTOOL_CONFIG_H
+static int	docompare;
+#endif
 static int	haveopt_f, haveopt_g, haveopt_m, haveopt_o;
 static int	numberedbackup;
 static int	verbose;
@@ -222,7 +225,9 @@ main(int argc, char *argv[])
 			dobackup = 1;
 			break;
 		case 'C':
+#if HAVE_NBTOOL_CONFIG_H
 			docompare = 1;
+#endif
 			break;
 		case 'c':
 			/* ignored; was "docopy" which is now the default. */
