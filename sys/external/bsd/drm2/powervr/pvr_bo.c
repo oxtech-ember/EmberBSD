@@ -12,7 +12,9 @@
 #include <sys/file.h>
 #include <sys/kmem.h>
 #include <sys/mman.h>
+#include <sys/proc.h>
 #include <sys/systm.h>
+#include <sys/time.h>
 #include <linux/err.h>
 #include <drm/drm_device.h>
 #include <drm/drm_drv.h>
@@ -21,7 +23,9 @@
 #include <drm/drm_gem_cma_helper.h>
 #include <drm/drm_prime.h>
 #include <drm/drm_vma_manager.h>
+#include <uvm/uvm.h>
 #include <uvm/uvm_extern.h>
+#include <uvm/uvm_pdaemon.h>
 #include <dev/powervr/pvr_mmu.h>
 #include "pvr_backend.h"
 #include "pvr_drm.h"
@@ -373,13 +377,78 @@ pvr_bo_report_failure(const char *stage, int error, size_t size, uint64_t flags)
 	    stage, error, size, (uintmax_t)flags);
 }
 
+/*
+ * NOWAIT page allocation counts only free pages, while NetBSD keeps most idle
+ * RAM as reclaimable file cache. A WAITOK allocation may wait for the
+ * pagedaemon without bound. Allocate scattered backing in small NOWAIT
+ * chunks instead. Take a chunk only while free pages are at least freemin,
+ * so they drop at most one chunk below it, other processes keep their margin
+ * and a short supply always wakes the pagedaemon; otherwise sleep one tick.
+ * Give up after a bounded total time. An allocation failure with enough free
+ * pages is not a cache shortage: retry it once, then fail. No gate is held.
+ */
+#define PVR_BO_CHUNK_PAGES	64
+#define PVR_BO_RECLAIM_SECONDS	2
+
+static int
+pvr_bo_alloc_pages(bus_dma_tag_t dmat, size_t size, bus_dma_segment_t *segs,
+    int capacity, int *nsegsp, unsigned int *waitsp)
+{
+	const int reserve = uvmexp.reserve_pagedaemon + uvmexp.reserve_kernel;
+	const int floor = MAX(reserve, uvmexp.freemin - PVR_BO_CHUNK_PAGES - 1);
+	struct timespec now, deadline;
+	size_t done = 0, chunk;
+	unsigned int waits = 0;
+	int nsegs = 0, n, error = 0, paused;
+	bool retried = false;
+
+	getnanouptime(&deadline);
+	deadline.tv_sec += PVR_BO_RECLAIM_SECONDS;
+	while (done < size) {
+		chunk = MIN(size - done, (size_t)PVR_BO_CHUNK_PAGES * PAGE_SIZE);
+		if (uvm_availmem(false) - floor > (int)(chunk / PAGE_SIZE)) {
+			n = 0;
+			error = bus_dmamem_alloc(dmat, chunk, PAGE_SIZE, 0,
+			    segs + nsegs, capacity - nsegs, &n, BUS_DMA_NOWAIT);
+			if (error == 0) {
+				nsegs += n;
+				done += chunk;
+				continue;
+			}
+			if (error != ENOMEM || retried)
+				break;
+			retried = true;
+		}
+		error = ENOMEM;
+		getnanouptime(&now);
+		if (timespeccmp(&now, &deadline, >=) || !uvm_reclaimable())
+			break;
+		uvm_kick_pdaemon();
+		paused = kpause("pvrbomem", true, 1, NULL);
+		waits++;
+		if (paused != 0 && paused != EWOULDBLOCK) {
+			error = EINTR;
+			break;
+		}
+	}
+	*waitsp = waits;
+	if (error != 0) {
+		if (nsegs != 0)
+			bus_dmamem_free(dmat, segs, nsegs);
+		return error;
+	}
+	*nsegsp = nsegs;
+	return 0;
+}
+
 static struct pvr_bo *
 pvr_bo_alloc(struct drm_device *dev, size_t size, uint64_t flags)
 {
 	struct pvr_bo *bo;
 	struct drm_gem_cma_object *cma;
 	const char *stage = "dmamem_alloc";
-	static volatile unsigned int sg_events;
+	static volatile unsigned int sg_events, reclaim_events;
+	unsigned int waits = 0;
 	int error, nsegs = 0;
 
 	bo = kmem_zalloc(sizeof(*bo), KM_SLEEP);
@@ -396,25 +465,22 @@ pvr_bo_alloc(struct drm_device *dev, size_t size, uint64_t flags)
 	if (error == ENOMEM && size > PAGE_SIZE &&
 	    (flags & DRM_PVR_BO_PM_FW_PROTECT) == 0) {
 		size_t pages = size / PAGE_SIZE;
-		int available = uvm_availmem(false);
-		int reserve = uvmexp.reserve_pagedaemon + uvmexp.reserve_kernel;
 
-		if (pages > (size_t)uvmexp.npages || available <= reserve ||
-		    pages > (size_t)(available - reserve))
+		/* Wired memory and the free target cannot be reclaimed for it. */
+		if (pages > (size_t)uvmexp.npages ||
+		    (uint64_t)pages + (uint64_t)uvmexp.wired +
+		    (uint64_t)uvmexp.freetarg > (uint64_t)uvmexp.npages)
 			goto free_bo;
 		bo->segment_capacity = size / PAGE_SIZE;
 		bo->segment_bytes = pages *
 		    (sizeof(*bo->segments) + sizeof(*bo->segment_ends));
-		if (howmany(bo->segment_bytes, PAGE_SIZE) >
-		    (size_t)(available - reserve) - pages)
-			goto free_bo;
 		bo->segments = kmem_zalloc(bo->segment_bytes, KM_NOSLEEP);
 		if (bo->segments == NULL) {
 			bo->segments = cma->dmasegs;
 			goto free_bo;
 		}
-		error = bus_dmamem_alloc(cma->dmat, size, PAGE_SIZE, 0,
-		    bo->segments, bo->segment_capacity, &nsegs, BUS_DMA_NOWAIT);
+		error = pvr_bo_alloc_pages(cma->dmat, size, bo->segments,
+		    bo->segment_capacity, &nsegs, &waits);
 		if (error == 0) {
 			uint64_t end = 0;
 			bo->segment_ends = (uint64_t *)(bo->segments + bo->segment_capacity);
@@ -423,8 +489,12 @@ pvr_bo_alloc(struct drm_device *dev, size_t size, uint64_t flags)
 				bo->segment_ends[n] = end;
 			}
 		}
-		if (error == 0 && atomic_inc_uint_nv(&sg_events) <= 4)
-			printf("PVR_BO_SG_FALLBACK size=%zu segments=%d\n", size, nsegs);
+		/* Bounded diagnostics: first plain fallbacks, first reclaims. */
+		if (waits != 0 ? atomic_inc_uint_nv(&reclaim_events) <= 16 :
+		    error == 0 && atomic_inc_uint_nv(&sg_events) <= 4)
+			printf("PVR_BO_SG_FALLBACK size=%zu segments=%d waits=%u "
+			    "error=%d free=%d\n", size, nsegs, waits, error,
+			    uvm_availmem(false));
 	}
 	if (error != 0)
 		goto free_bo;

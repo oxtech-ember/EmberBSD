@@ -10,6 +10,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <sys/types.h>
 
 #ifndef PAGE_SHIFT
@@ -35,6 +36,8 @@
 #define roundup2(x, a) (((x) + (a) - 1) & ~((a) - 1))
 #define howmany(x, y) (((x) + (y) - 1) / (y))
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
+#define EWOULDBLOCK EAGAIN
 #define container_of(p, t, m) ((t *)((char *)(p) - offsetof(t, m)))
 #define ERR_PTR(e) ((void *)(intptr_t)(e))
 #define PTR_ERR(p) ((int)(intptr_t)(p))
@@ -149,8 +152,8 @@ static unsigned int objects, structures, syncs;
 static bool scatter_mode;
 static unsigned int scatter_allocations;
 static bool segment_metadata_fail;
-static struct { int npages, reserve_kernel, reserve_pagedaemon; } uvmexp = {
-	1048576, 8, 8 };
+static struct { int npages, reserve_kernel, reserve_pagedaemon, freemin;
+	int wired, freetarg; } uvmexp = { 1048576, 8, 8, 0, 0, 0 };
 static int available_pages = 1048576;
 static int uvm_availmem(bool cached) { return available_pages; }
 static unsigned int atomic_inc_uint_nv(volatile unsigned int *p) { return ++*p; }
@@ -159,6 +162,36 @@ static struct drm_vma_offset_manager manager;
 	fprintf(stderr, "FAIL line %d: %s\n", __LINE__, #e); abort(); \
 } } while (0)
 #define KASSERT(e) CHECK(e)
+/* Pagedaemon model: each one-tick pause reclaims this many file pages. */
+static bool reclaimable = true;
+static int reclaim_per_pause, pause_result;
+static unsigned int kicks, pauses;
+static uint64_t clock_ns, lowest_available = UINT64_MAX;
+#ifndef timespeccmp
+#define timespeccmp(a, b, op) ((a)->tv_sec == (b)->tv_sec ? \
+    (a)->tv_nsec op (b)->tv_nsec : (a)->tv_sec op (b)->tv_sec)
+#endif
+static void
+getnanouptime(struct timespec *ts)
+{
+	ts->tv_sec = (time_t)(clock_ns / 1000000000);
+	ts->tv_nsec = (long)(clock_ns % 1000000000);
+}
+static bool uvm_reclaimable(void) { return reclaimable; }
+static void uvm_kick_pdaemon(void) { kicks++; }
+static int
+kpause(const char *wmesg, bool intr, int ticks, void *lock)
+{
+	CHECK(strcmp(wmesg, "pvrbomem") == 0 && intr && ticks == 1 && lock == NULL);
+	pauses++;
+	clock_ns += 1000000;	/* one tick at HZ=1000 */
+	available_pages += reclaim_per_pause;
+	return pause_result;
+}
+/* Chunk model: one contiguous arena, handed out in sequential segments. */
+static bool chunk_mode;
+static unsigned char chunk_arena[130 * ((size_t)1 << PAGE_SHIFT)];
+static size_t chunk_used;
 
 static void *kmem_zalloc(size_t n, int flags)
 { if (flags == KM_NOSLEEP && segment_metadata_fail) return NULL;
@@ -175,6 +208,24 @@ bus_dmamem_alloc(bus_dma_tag_t tag, size_t size, size_t align, size_t boundary,
 	attempts++;
 	if (fail == 1 || (scatter_mode && max == 1))
 		return ENOMEM;
+	if (chunk_mode) {
+		/* Only chunks succeed, and each chunk takes its free pages. */
+		if (max == 1 && size > 64 * PAGE_SIZE)
+			return ENOMEM;
+		CHECK(max >= (int)(size / PAGE_SIZE) && size <= 64 * PAGE_SIZE);
+		CHECK(available_pages >= (int)(size / PAGE_SIZE));
+		CHECK(chunk_used + size <= sizeof(chunk_arena));
+		segs->memory = chunk_arena + chunk_used;
+		segs->ds_addr = UINT64_C(0x20000000) + chunk_used;
+		segs->ds_len = size;
+		chunk_used += size;
+		available_pages -= (int)(size / PAGE_SIZE);
+		if ((uint64_t)available_pages < lowest_available)
+			lowest_available = (uint64_t)available_pages;
+		*nsegs = 1;
+		allocated++;
+		return 0;
+	}
 	segs->memory = malloc(size);
 	CHECK(segs->memory != NULL);
 	memset(segs->memory, 0xa5, size);
@@ -193,15 +244,33 @@ bus_dmamem_alloc(bus_dma_tag_t tag, size_t size, size_t align, size_t boundary,
 	return 0;
 }
 static void bus_dmamem_free(bus_dma_tag_t t, bus_dma_segment_t *s, int n)
-{ CHECK((n == 1 || (scatter_mode && n == 2)) && allocated != 0); allocated--; free(s->memory); }
+{
+	if (chunk_mode) {
+		CHECK(n >= 1 && allocated >= (unsigned int)n);
+		for (int i = 0; i < n; i++)
+			available_pages += (int)(s[i].ds_len / PAGE_SIZE);
+		allocated -= (unsigned int)n;
+		chunk_used = 0;
+		return;
+	}
+	CHECK((n == 1 || (scatter_mode && n == 2)) && allocated != 0); allocated--; free(s->memory);
+}
 static int bus_dmamem_map(bus_dma_tag_t t, bus_dma_segment_t *s, int n,
     size_t size, void **p, int flags)
 {
 	CHECK(flags == BUS_DMA_NOWAIT ||
 	    flags == (BUS_DMA_NOWAIT | BUS_DMA_PREFETCHABLE));
 	last_map_flags = flags;
-	CHECK((n == 1 && size == s->ds_len) ||
-	    (scatter_mode && n == 2 && size == s[0].ds_len + s[1].ds_len));
+	if (chunk_mode) {
+		size_t total = 0;
+		for (int i = 0; i < n; i++) {
+			CHECK((unsigned char *)s[i].memory == chunk_arena + total);
+			total += s[i].ds_len;
+		}
+		CHECK(total == size);
+	} else
+		CHECK((n == 1 && size == s->ds_len) ||
+		    (scatter_mode && n == 2 && size == s[0].ds_len + s[1].ds_len));
 	if (fail == 2) return ENOMEM;
 	*p = s->memory; mapped++; return 0;
 }
@@ -689,11 +758,23 @@ main(void)
 		CHECK(memcmp(&create, &saved, sizeof(create)) == 0);
 		empty(&dev);
 	}
-	/* Representable large requests reach the allocator; no small driver cap. */
+	/* Representable large requests reach the allocator; no small driver cap.
+	 * A chunk that fails despite free pages is retried once, not waited out. */
 	create = (struct drm_pvr_ioctl_create_bo_args){ 128U * 1024 * 1024, 0xdead, 0, 4 };
-	fail = 1; old_attempts = attempts;
-	CHECK(pvr_create_bo(&dev, &create, &a) == -ENOMEM && attempts == old_attempts + 2);
+	fail = 1; old_attempts = attempts; pauses = 0;
+	CHECK(pvr_create_bo(&dev, &create, &a) == -ENOMEM);
+	CHECK(attempts == old_attempts + 3 && pauses == 1 && structures == 0);
 	empty(&dev); fail = 0;
+	/* Wired memory and the free target bound a request before any wait. */
+	uvmexp.wired = uvmexp.npages - 8192; uvmexp.freetarg = 1; fail = 1;
+	create = (struct drm_pvr_ioctl_create_bo_args){ (uint64_t)8192 * PAGE_SIZE, 0xdead, 0, 4 };
+	old_attempts = attempts; pauses = 0;
+	CHECK(pvr_create_bo(&dev, &create, &a) == -ENOMEM);
+	CHECK(attempts == old_attempts + 1 && pauses == 0 && structures == 0);
+	CHECK(strcmp(diagnostic_stage, "dmamem_alloc") == 0);
+	diagnostic_count--;	/* Later checks count only their own reports. */
+	empty(&dev);
+	uvmexp.wired = uvmexp.freetarg = 0; fail = 0;
 	for (unsigned int flags = 0; flags < 16; flags++) {
 		create = (struct drm_pvr_ioctl_create_bo_args){ 4096, 0xdead, 0, flags };
 		saved = create;
@@ -836,14 +917,32 @@ main(void)
 	empty(&dev);
 	create = (struct drm_pvr_ioctl_create_bo_args){
 	    .size = 3 * PAGE_SIZE, .flags = DRM_PVR_BO_ALLOW_CPU_USERSPACE_ACCESS };
+	/* Short free pages and nothing reclaimed: bounded wait, then ENOMEM. */
 	available_pages = uvmexp.reserve_kernel + uvmexp.reserve_pagedaemon + 1;
-	old_attempts = attempts;
+	old_attempts = attempts; pauses = kicks = 0;
 	CHECK(pvr_create_bo(&dev, &create, &a) == -ENOMEM);
 	CHECK(attempts == old_attempts + 1 && scatter_allocations == 1);
+	CHECK(pauses == 2000 && kicks == 2000 && structures == 0);
 	empty(&dev);
+	/* Nothing reclaimable fails at once; a signal ends the wait with EINTR. */
+	pauses = kicks = 0; reclaimable = false;
+	CHECK(pvr_create_bo(&dev, &create, &a) == -ENOMEM && pauses == 0);
+	empty(&dev);
+	reclaimable = true; pause_result = EINTR;
+	CHECK(pvr_create_bo(&dev, &create, &a) == -EINTR && pauses == 1);
+	empty(&dev);
+	pause_result = EWOULDBLOCK;
+	/* The pagedaemon refills free pages from cache: the BO then succeeds. */
+	pauses = kicks = 0; reclaim_per_pause = 1;
+	CHECK(pvr_create_bo(&dev, &create, &a) == 0);
+	CHECK(pauses == 3 && kicks == 3 && scatter_allocations == 2);
+	close_args = (struct drm_gem_close){ create.handle, 0 };
+	CHECK(drm_gem_close_ioctl(&dev, &close_args, &a) == 0);
+	empty(&dev);
+	reclaim_per_pause = 0;
 	available_pages = 1048576;
 	segment_metadata_fail = true;
-	CHECK(pvr_create_bo(&dev, &create, &a) == -ENOMEM && scatter_allocations == 1);
+	CHECK(pvr_create_bo(&dev, &create, &a) == -ENOMEM && scatter_allocations == 2);
 	empty(&dev);
 	segment_metadata_fail = false;
 	/* An impossible request must not allocate metadata or drain free pages. */
@@ -873,6 +972,39 @@ main(void)
 	CHECK(pvr_create_bo(&dev, &create, &a) == -ENOMEM && attempts == old_attempts + 1);
 	empty(&dev);
 	scatter_mode = false;
+	/* Large GPU-only BOs accumulate chunks while the pagedaemon reclaims;
+	 * a failure releases every chunk already taken. */
+	chunk_mode = true;
+	create = (struct drm_pvr_ioctl_create_bo_args){ .size = 130 * PAGE_SIZE, .flags = 0 };
+	available_pages = uvmexp.reserve_kernel + uvmexp.reserve_pagedaemon + 70;
+	pauses = 0; reclaim_per_pause = 8;
+	CHECK(pvr_create_bo(&dev, &create, &a) == 0);
+	obj = a.handles[create.handle];
+	CHECK(obj->size == 130 * PAGE_SIZE && pvr_to_bo(obj)->nsegments == 3);
+	CHECK(pauses != 0 && chunk_used == 130 * PAGE_SIZE);
+	close_args = (struct drm_gem_close){ create.handle, 0 };
+	CHECK(drm_gem_close_ioctl(&dev, &close_args, &a) == 0);
+	empty(&dev);
+	CHECK(allocated == 0);
+	available_pages = uvmexp.reserve_kernel + uvmexp.reserve_pagedaemon + 70;
+	reclaim_per_pause = 0; pauses = 0;
+	CHECK(pvr_create_bo(&dev, &create, &a) == -ENOMEM);
+	CHECK(pauses == 2000 && allocated == 0 && structures == 0 &&
+	    available_pages == uvmexp.reserve_kernel + uvmexp.reserve_pagedaemon + 70);
+	empty(&dev);
+	/* Chunks keep free pages near freemin; the pagedaemon supplies the rest. */
+	uvmexp.freemin = 200;
+	available_pages = 250; reclaim_per_pause = 8; pauses = 0;
+	lowest_available = UINT64_MAX;
+	CHECK(pvr_create_bo(&dev, &create, &a) == 0);
+	CHECK(pauses == 2 && lowest_available == 136);
+	obj = a.handles[create.handle];
+	close_args = (struct drm_gem_close){ create.handle, 0 };
+	CHECK(drm_gem_close_ioctl(&dev, &close_args, &a) == 0);
+	empty(&dev);
+	uvmexp.freemin = 0; reclaim_per_pause = 0;
+	chunk_mode = false;
+	available_pages = 1048576;
 	printf("PASS: %u PowerVR BO checks (page=%zu, syncs=%u)\n",
 	    checks, PAGE_SIZE, syncs);
 	return 0;
