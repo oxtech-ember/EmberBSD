@@ -655,31 +655,87 @@ rtw88_pci_tx_drain_snapshot(struct rtw88_softc *sc, unsigned *pending)
 }
 
 static int
+rtw88_pci_intr_mask(struct rtw88_softc *sc, int enable)
+{
+	static const uint32_t regs[] = {
+		RTW88_REG_HIMR0, RTW88_REG_HIMR1, RTW88_REG_HIMR3
+	};
+	static const uint32_t masks[] = { RTW88_IMR0, RTW88_IMR1, RTW88_IMR3 };
+	int error = 0, next;
+
+	for (unsigned i = 0; i < __arraycount(regs); i++) {
+		next = sc->sc_ops->write_4(sc->sc_bus, regs[i],
+		    enable ? masks[i] : 0);
+		if (error == 0)
+			error = next;
+	}
+	return error;
+}
+
+static int
 rtw88_pci_hci_intr(struct rtw88_softc *sc)
 {
-	uint32_t s0, s1, s3;
+	uint32_t s0, s1, s3, gen = sc->sc_generation;
+	int error;
 
-	if (!sc->sc_running)
+	if (!sc->sc_running || sc->sc_stop_requested)
 		return 0;
+	/* A shared INTx belonging to another device must not change our masks. */
 	if (sc->sc_ops->read_4(sc->sc_bus, RTW88_REG_HISR0, &s0) != 0 ||
 	    sc->sc_ops->read_4(sc->sc_bus, RTW88_REG_HISR1, &s1) != 0 ||
 	    sc->sc_ops->read_4(sc->sc_bus, RTW88_REG_HISR3, &s3) != 0)
 		return 0;
+	if (((s0 & RTW88_IMR0) | (s1 & RTW88_IMR1) |
+	    (s3 & RTW88_IMR3)) == 0)
+		return 0;
+	/*
+	 * As in the pinned rtw88 PCI interrupt handler, mask all banks before
+	 * taking the snapshot to acknowledge. Otherwise a cause arriving
+	 * between the reads and W1C can keep the interrupt asserted, losing
+	 * subsequent MSI edges. Re-read after masking, including late causes.
+	 */
+	error = rtw88_pci_intr_mask(sc, 0);
+	if (error != 0)
+		goto fail;
+	error = sc->sc_ops->read_4(sc->sc_bus, RTW88_REG_HISR0, &s0);
+	if (error == 0)
+		error = sc->sc_ops->read_4(sc->sc_bus, RTW88_REG_HISR1, &s1);
+	if (error == 0)
+		error = sc->sc_ops->read_4(sc->sc_bus, RTW88_REG_HISR3, &s3);
+	if (error != 0)
+		goto fail;
 	s0 &= RTW88_IMR0;
 	s1 &= RTW88_IMR1;
 	s3 &= RTW88_IMR3;
-	if ((s0 | s1 | s3) == 0)
-		return 0;
-	/* Clear every taken cause before work, so MSI edges are not lost. */
-	(void)sc->sc_ops->write_4(sc->sc_bus, RTW88_REG_HISR0, s0);
-	(void)sc->sc_ops->write_4(sc->sc_bus, RTW88_REG_HISR1, s1);
-	(void)sc->sc_ops->write_4(sc->sc_bus, RTW88_REG_HISR3, s3);
+	error = sc->sc_ops->write_4(sc->sc_bus, RTW88_REG_HISR0, s0);
+	if (error == 0)
+		error = sc->sc_ops->write_4(sc->sc_bus, RTW88_REG_HISR1, s1);
+	if (error == 0)
+		error = sc->sc_ops->write_4(sc->sc_bus, RTW88_REG_HISR3, s3);
+	if (error != 0)
+		goto fail;
+	if (!sc->sc_running || sc->sc_stop_requested || sc->sc_generation != gen)
+		return 1;
 	sc->sc_stats.intr++;
 	for (unsigned q = 0; q < RTW88_NTXQ; q++)
 		if ((s0 & rtw88_txq_hw[q].done) != 0)
 			(void)rtw88_pci_tx_reclaim(sc, q);
 	if ((s0 & RTW88_IMR_ROK) != 0)
 		rtw88_pci_rx(sc);
+	if (!sc->sc_running || sc->sc_stop_requested || sc->sc_generation != gen)
+		return 1;
+	error = rtw88_pci_intr_mask(sc, 1);
+	if (error != 0)
+		goto fail;
+	/* Stop may have withdrawn admission while these writes completed. */
+	if (!sc->sc_running || sc->sc_stop_requested || sc->sc_generation != gen)
+		(void)rtw88_pci_intr_mask(sc, 0);
+	return 1;
+
+fail:
+	sc->sc_hci_error = error;
+	sc->sc_stop_requested = 1;
+	(void)rtw88_pci_intr_mask(sc, 0);
 	return 1;
 }
 
@@ -894,6 +950,8 @@ rtw88_pci_quiesce(struct rtw88_softc *sc)
 		(void)sc->sc_ops->write_4(sc->sc_bus, RTW88_REG_HIMR3, 0);
 		if (sc->sc_ops->intr_barrier != NULL)
 			sc->sc_ops->intr_barrier(sc->sc_bus);
+		/* A handler already in its unmask writes has now finished. */
+		(void)rtw88_pci_intr_mask(sc, 0);
 		for (unsigned q = 0; q < RTW88_NTXQ; q++) {
 			sc->sc_stats.tx_dropped += sc->sc_txq[q].queued;
 			sc->sc_txq[q].queued = 0;

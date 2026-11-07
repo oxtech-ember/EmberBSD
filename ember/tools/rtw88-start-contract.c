@@ -1646,6 +1646,214 @@ network_tx(void *cookie, unsigned count)
 	tx_completed += count;
 }
 
+/* Model a second cause arriving while the first MSI remains asserted. */
+static unsigned irq_inject_late, irq_acked, irq_unmasked_ack;
+static unsigned irq_restore_early, irq_stop_on_ack, irq_fail_mask;
+static unsigned irq_fail_phase, irq_cancel_restore, irq_barrier_restore;
+
+static int
+irq_model_read4(void *cookie, uint32_t reg, uint32_t *out)
+{
+	int error;
+
+	if (irq_fail_phase == 1 && reg == 0xb4 &&
+	    !mmio32(0xb0) && !mmio32(0xb8) && !mmio32(0x10b8)) {
+		irq_fail_phase = 0;
+		return EIO;
+	}
+	error = read_4(cookie, reg, out);
+	if (error == 0 && reg == 0xb4 && irq_inject_late) {
+		irq_inject_late = 0;
+		/* MGNTDOK rises while ROK is still pending: no second edge. */
+		f.mmio[0xb4] |= 0x40;
+	}
+	return error;
+}
+
+static int
+irq_model_write4(void *cookie, uint32_t reg, uint32_t value)
+{
+	int error;
+
+	if ((reg == 0xb4 || reg == 0xbc || reg == 0x10bc) && value != 0) {
+		irq_acked++;
+		if (mmio32(0xb0) || mmio32(0xb8) || mmio32(0x10b8))
+			irq_unmasked_ack++;
+		if (irq_stop_on_ack) {
+			irq_stop_on_ack = 0;
+			f.sc->sc_stop_requested = 1;
+		}
+	}
+	if ((reg == 0xb0 || reg == 0xb8 || reg == 0x10b8) && value != 0 &&
+	    (f.sc->sc_rx_rp != 1 || f.sc->sc_txq[0].queued != 0))
+		irq_restore_early++;
+	error = write_4(cookie, reg, value);
+	if (error == 0 && irq_fail_phase == 2 && reg == 0xb4 && value != 0) {
+		irq_fail_phase = 0;
+		return EIO;
+	}
+	if (error == 0 && irq_fail_phase == 3 && reg == 0xb0 && value != 0) {
+		irq_fail_phase = 0;
+		return EIO;
+	}
+	if (error == 0 && irq_cancel_restore && reg == 0xb0 && value != 0) {
+		if (irq_cancel_restore == 1)
+			f.sc->sc_stop_requested = 1;
+		else
+			f.sc->sc_generation++;
+		irq_cancel_restore = 0;
+	}
+	if (error == 0 && irq_fail_mask && reg == 0xb8 && value == 0) {
+		irq_fail_mask = 0;
+		return EIO; /* posted mask write */
+	}
+	return error;
+}
+
+static void
+irq_model_barrier(void *cookie)
+{
+	intr_barrier(cookie);
+	if (irq_barrier_restore) {
+		irq_barrier_restore = 0;
+		(void)write_4(cookie, 0xb0, 0x44fd);
+		(void)write_4(cookie, 0xb8, 0x200);
+		(void)write_4(cookie, 0x10b8, 0x10000);
+	}
+}
+
+static void
+test_irq_rearm(void)
+{
+	struct rtw88_softc sc;
+	struct rtw88_bus_ops model;
+	const struct rtw88_bus_ops *saved;
+	uint8_t frame[28] = { 0x80, 0x00 };
+	unsigned writes;
+
+	if (!start_ok(&sc))
+		return;
+	saved = sc.sc_ops;
+	model = *saved;
+	model.read_4 = irq_model_read4;
+	model.write_4 = irq_model_write4;
+	sc.sc_ops = &model;
+	irq_inject_late = irq_acked = irq_unmasked_ack = 0;
+	irq_restore_early = irq_stop_on_ack = irq_fail_mask = 0;
+	/* A foreign INTx is observed without disturbing this device. */
+	writes = f.writes;
+	CHECK(rtw88_intr(&sc) == 0 && f.writes == writes);
+	rx_delivered = tx_completed = 0;
+	sc.sc_net_cookie = &rx_delivered;
+	sc.sc_rx_frame = network_rx;
+	sc.sc_tx_complete = network_tx;
+	rx_put(&sc, 0, sizeof(frame), 0, frame, 0);
+	f.rx_hw_idx = 1;
+	CHECK(rtw88_tx_raw(&sc, RTW88_TXQ_MGMT, frame, 24) == 0);
+	f.tx_hw_rp[0] = 1;
+	set_hisr0(1);
+	irq_inject_late = 1;
+	CHECK(rtw88_intr(&sc) == 1);
+	CHECK(!irq_inject_late && irq_acked != 0 && !irq_unmasked_ack);
+	CHECK(rx_delivered == 1 && tx_completed == 1);
+	CHECK((mmio32(0xb4) & 0x41) == 0 && !irq_restore_early);
+	CHECK(mmio32(0xb0) == 0x44fd && mmio32(0xb8) == 0x200 &&
+	    mmio32(0x10b8) == 0x10000);
+	sc.sc_ops = saved;
+	CHECK(rtw88_stop(&sc) == 0);
+	CHECK(rtw88_core_detach(&sc) == 0);
+
+	if (!start_ok(&sc))
+		return;
+	saved = sc.sc_ops;
+	model = *saved;
+	model.read_4 = irq_model_read4;
+	model.write_4 = irq_model_write4;
+	sc.sc_ops = &model;
+	rx_delivered = tx_completed = 0;
+	sc.sc_net_cookie = &rx_delivered;
+	sc.sc_rx_frame = network_rx;
+	sc.sc_tx_complete = network_tx;
+	rx_put(&sc, 0, sizeof(frame), 0, frame, 0);
+	f.rx_hw_idx = 1;
+	CHECK(rtw88_tx_raw(&sc, RTW88_TXQ_MGMT, frame, 24) == 0);
+	f.tx_hw_rp[0] = 1;
+	set_hisr0(0x41);
+	irq_stop_on_ack = 1;
+	CHECK(rtw88_intr(&sc) == 1);
+	CHECK(sc.sc_stop_requested && !mmio32(0xb0) && !mmio32(0xb8) &&
+	    !mmio32(0x10b8));
+	CHECK(sc.sc_rx_rp == 0 && sc.sc_txq[0].queued == 1);
+	CHECK(rx_delivered == 0 && tx_completed == 0);
+	sc.sc_ops = saved;
+	CHECK(rtw88_stop(&sc) == 0);
+	CHECK(rtw88_core_detach(&sc) == 0);
+
+	if (!start_ok(&sc))
+		return;
+	saved = sc.sc_ops;
+	model = *saved;
+	model.read_4 = irq_model_read4;
+	model.write_4 = irq_model_write4;
+	sc.sc_ops = &model;
+	set_hisr0(1);
+	irq_fail_mask = 1;
+	CHECK(rtw88_intr(&sc) == 1);
+	CHECK(sc.sc_stop_requested && sc.sc_hci_error == EIO);
+	CHECK(!mmio32(0xb0) && !mmio32(0xb8) && !mmio32(0x10b8));
+	sc.sc_ops = saved;
+	(void)rtw88_stop(&sc);
+	(void)rtw88_core_detach(&sc);
+
+	for (unsigned phase = 1; phase <= 3; phase++) {
+		if (!start_ok(&sc))
+			return;
+		saved = sc.sc_ops;
+		model = *saved;
+		model.read_4 = irq_model_read4;
+		model.write_4 = irq_model_write4;
+		sc.sc_ops = &model;
+		set_hisr0(1);
+		irq_fail_phase = phase;
+		CHECK(rtw88_intr(&sc) == 1);
+		CHECK(!irq_fail_phase && sc.sc_stop_requested &&
+		    sc.sc_hci_error == EIO);
+		CHECK(!mmio32(0xb0) && !mmio32(0xb8) && !mmio32(0x10b8));
+		sc.sc_ops = saved;
+		(void)rtw88_stop(&sc);
+		(void)rtw88_core_detach(&sc);
+	}
+	for (unsigned cancel = 1; cancel <= 2; cancel++) {
+		if (!start_ok(&sc))
+			return;
+		saved = sc.sc_ops;
+		model = *saved;
+		model.read_4 = irq_model_read4;
+		model.write_4 = irq_model_write4;
+		sc.sc_ops = &model;
+		set_hisr0(1);
+		irq_cancel_restore = cancel;
+		CHECK(rtw88_intr(&sc) == 1);
+		CHECK(!irq_cancel_restore && !mmio32(0xb0) &&
+		    !mmio32(0xb8) && !mmio32(0x10b8));
+		sc.sc_ops = saved;
+		CHECK(rtw88_stop(&sc) == 0);
+		CHECK(rtw88_core_detach(&sc) == 0);
+	}
+	if (!start_ok(&sc))
+		return;
+	saved = sc.sc_ops;
+	model = *saved;
+	model.intr_barrier = irq_model_barrier;
+	sc.sc_ops = &model;
+	irq_barrier_restore = 1;
+	CHECK(rtw88_stop(&sc) == 0);
+	CHECK(!irq_barrier_restore && !mmio32(0xb0) &&
+	    !mmio32(0xb8) && !mmio32(0x10b8));
+	sc.sc_ops = saved;
+	CHECK(rtw88_core_detach(&sc) == 0);
+}
+
 static void
 test_network_delivery(void)
 {
@@ -3124,6 +3332,7 @@ main(void)
 	test_beacon_never_valid();
 	test_firmware_checksum_bad();
 	test_hci_start_masks();
+	test_irq_rearm();
 	test_network_delivery();
 	test_rx_c2h_and_frame();
 	test_rx_malformed_and_short();

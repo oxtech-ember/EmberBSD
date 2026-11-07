@@ -62,6 +62,14 @@ The native station publishes only the bands and features in that description.
 Absent calibration operations return `EOPNOTSUPP` without reporting calibration success.
 An uncertain TX publication retains ownership, even when submission returns an error.
 Failed transport shutdown prevents resource release.
+The PCI interrupt handler first reads enabled causes without changing masks, so
+an unrelated shared INTx is left untouched. For an owned interrupt it masks
+all banks, takes a fresh status snapshot, acknowledges its enabled causes by
+write-one-to-clear, processes completions and RX, then unmasks. A stop or
+changed generation observed after acknowledgement prevents further work and
+rearming. Quiesce masks again after the interrupt barrier, including when a
+handler had already begun rearming. This ordering follows the pinned rtw88
+PCI interrupt mechanism while retaining the native lifecycle fences.
 Transports that can sleep defer interrupts through a required scheduling callback.
 This separation does not establish RTL8723DS network or physical-device support.
 
