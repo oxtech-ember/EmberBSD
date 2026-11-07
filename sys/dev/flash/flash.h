@@ -100,6 +100,7 @@ struct flash_interface {
 	int (*write)(device_t, flash_off_t, size_t, size_t *, const uint8_t *);
 	int (*block_markbad)(device_t, flash_off_t);
 	int (*block_isbad)(device_t, flash_off_t, bool *);
+	/* Optional: wait for pending writes; NULL means writes complete inline. */
 	int (*sync)(device_t);
 
 	int (*submit)(device_t, struct buf *);

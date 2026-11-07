@@ -57,7 +57,7 @@ void flash_io_read(struct flash_io *, struct buf *);
 void flash_io_write(struct flash_io *, struct buf *);
 void flash_io_done(struct flash_io *, struct buf *, int);
 int flash_io_cache_write(struct flash_io *, flash_addr_t, struct buf *);
-void flash_io_cache_sync(struct flash_io *);
+int flash_io_cache_sync(struct flash_io *);
 
 static int
 flash_timestamp_diff(struct bintime *bt, struct bintime *b2)
@@ -155,6 +155,18 @@ flash_sync_thread_destroy(struct flash_io *fio)
 }
 
 int
+flash_io_sync(struct flash_io *fio)
+{
+	int error = 0;
+
+	mutex_enter(&fio->fio_lock);
+	if (fio->fio_write_pending)
+		error = flash_io_cache_sync(fio);
+	mutex_exit(&fio->fio_lock);
+	return error;
+}
+
+int
 flash_io_submit(struct flash_io *fio, struct buf *bp)
 {
 	FLDPRINTF(("submitting job to flash io thread: %p\n", bp));
@@ -225,7 +237,7 @@ flash_io_cache_write(struct flash_io *fio, flash_addr_t block, struct buf *bp)
 	return 0;
 }
 
-void
+int
 flash_io_cache_sync(struct flash_io *fio)
 {
 	struct flash_erase_instruction ei;
@@ -238,7 +250,7 @@ flash_io_cache_sync(struct flash_io *fio)
 
 	if (!fio->fio_write_pending) {
 		FLDPRINTF(("trying to sync with an invalid buffer\n"));
-		return;
+		return 0;
 	}
 
 	base = fio->fio_block * fio->fio_if->erasesize;
@@ -261,6 +273,8 @@ flash_io_cache_sync(struct flash_io *fio)
 	    base, fio->fio_if->erasesize, &retlen, fio->fio_data);
 
 	if (error || retlen != fio->fio_if->erasesize) {
+		if (!error)
+			error = EIO;
 		aprint_error_dev(fio->fio_dev, "can't sync write cache: %d\n", error);
 		goto out;
 	}
@@ -271,6 +285,7 @@ out:
 
 	fio->fio_block = -1;
 	fio->fio_write_pending = false;
+	return error;
 }
 
 void
@@ -300,6 +315,8 @@ flash_sync_thread(void * arg)
 			flash_io_cache_sync(fio);
 		}
 	}
+	if (fio->fio_write_pending)
+		(void)flash_io_cache_sync(fio);
 
 	mutex_exit(&fio->fio_lock);
 

@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Mosaico with littlefs root support; FFS remains available for recovery.
+include "arch/riscv/conf/ESP_MOSAICO_SC101IOT_WIFI"
+
+file-system LITTLEFS

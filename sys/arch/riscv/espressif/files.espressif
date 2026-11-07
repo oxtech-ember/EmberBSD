@@ -36,6 +36,12 @@ device	espspi: spibus
 attach	espspi at fdt
 file	arch/riscv/espressif/esp_spi.c		espspi
 
+# SPI0 NOR is owned by the boot ROM/SPL; S-mode accesses it through OpenSBI.
+defflag opt_esp32s31_flash.h	ESP32S31_FLASH
+device	esp32s31flash: flashbus
+attach	esp32s31flash at fdt
+file	arch/riscv/espressif/esp32s31_flash.c	esp32s31flash & esp32s31_flash
+
 # ESP32-S31 AXI peripheral DMA receive channels.
 device	espaxigdma
 attach	espaxigdma at fdt

@@ -68,6 +68,7 @@ static void nand_address_column(device_t, size_t, size_t);
 static int nand_fill_chip_structure(device_t, struct nand_chip *);
 static int nand_scan_media(device_t, struct nand_chip *);
 static bool nand_check_wp(device_t);
+static int nand_flash_sync(device_t);
 
 CFATTACH_DECL_NEW(nand, sizeof(struct nand_softc),
     nand_match, nand_attach, nand_detach, NULL);
@@ -84,9 +85,18 @@ struct flash_interface nand_flash_if = {
 	.erase = nand_flash_erase,
 	.block_isbad = nand_flash_isbad,
 	.block_markbad = nand_flash_markbad,
+	.sync = nand_flash_sync,
 
 	.submit = nand_flash_submit
 };
+
+static int
+nand_flash_sync(device_t self)
+{
+	struct nand_softc * const sc = device_private(self);
+
+	return flash_io_sync(&sc->sc_flash_io);
+}
 
 const struct nand_manufacturer nand_mfrs[] = {
 	{ NAND_MFR_AMD,		"AMD" },

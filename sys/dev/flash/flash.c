@@ -529,25 +529,57 @@ flash_get_size(dev_t dev)
 	return sc->sc_partinfo.part_size;
 }
 
+/*
+ * Validate a partition-relative range before translating it to the parent
+ * device's address space.  Keep the exclusive physical end representable in
+ * flash_off_t so callers can use it as the address of a zero-length range.
+ */
+static int
+flash_partition_range(const struct flash_softc *sc, flash_off_t offset,
+    flash_size_t length, flash_off_t *physical)
+{
+	flash_off_t base = sc->sc_partinfo.part_offset;
+	flash_size_t relative;
+
+	if (offset < 0 || base < 0 ||
+	    sc->sc_partinfo.part_size >
+	    (flash_size_t)(INT64_MAX - base))
+		return EINVAL;
+	relative = (flash_size_t)offset;
+	if (relative > sc->sc_partinfo.part_size ||
+	    length > sc->sc_partinfo.part_size - relative)
+		return EINVAL;
+	*physical = base + offset;
+	return 0;
+}
+
 int
 flash_erase(device_t self, struct flash_erase_instruction * const ei)
 {
 	struct flash_softc * const sc = device_private(self);
 	KASSERT(ei != NULL);
 	struct flash_erase_instruction e = *ei;
+	flash_off_t physical;
+	int error;
 
+	e.ei_state = ei->ei_state = FLASH_ERASE_FAILED;
 	if (sc->sc_readonly)
 		return EACCES;
 
-	/* adjust for flash partition */
-	e.ei_addr += sc->sc_partinfo.part_offset;
-
-	/* bounds check for flash partition */
-	if (e.ei_addr + e.ei_len > sc->sc_partinfo.part_size +
-	    sc->sc_partinfo.part_offset)
+	/* Keep the caller's address partition-relative; offset only the copy. */
+	if (e.ei_len < 0)
 		return EINVAL;
+	error = flash_partition_range(sc, e.ei_addr,
+	    (flash_size_t)e.ei_len, &physical);
+	if (error)
+		return error;
+	e.ei_addr = physical;
 
-	return sc->flash_if->erase(device_parent(self), &e);
+	error = sc->flash_if->erase(device_parent(self), &e);
+	if (error)
+		return error;
+	ei->ei_state = e.ei_state;
+	return 0;
 }
 
 int
@@ -555,15 +587,15 @@ flash_read(device_t self, flash_off_t offset, size_t len, size_t * const retlen,
     uint8_t * const buf)
 {
 	struct flash_softc * const sc = device_private(self);
+	flash_off_t physical;
+	int error;
 
-	offset += sc->sc_partinfo.part_offset;
-
-	if (offset + len > sc->sc_partinfo.part_size +
-	    sc->sc_partinfo.part_offset)
-		return EINVAL;
+	error = flash_partition_range(sc, offset, len, &physical);
+	if (error)
+		return error;
 
 	return sc->flash_if->read(device_parent(self),
-	    offset, len, retlen, buf);
+	    physical, len, retlen, buf);
 }
 
 int
@@ -571,51 +603,51 @@ flash_write(device_t self, flash_off_t offset, size_t len,
     size_t * const retlen, const uint8_t * const buf)
 {
 	struct flash_softc * const sc = device_private(self);
+	flash_off_t physical;
+	int error;
 
 	if (sc->sc_readonly)
 		return EACCES;
 
-	offset += sc->sc_partinfo.part_offset;
-
-	if (offset + len > sc->sc_partinfo.part_size +
-	    sc->sc_partinfo.part_offset)
-		return EINVAL;
+	error = flash_partition_range(sc, offset, len, &physical);
+	if (error)
+		return error;
 
 	return sc->flash_if->write(device_parent(self),
-	    offset, len, retlen, buf);
+	    physical, len, retlen, buf);
 }
 
 int
 flash_block_markbad(device_t self, flash_off_t offset)
 {
 	struct flash_softc * const sc = device_private(self);
+	flash_off_t physical;
+	int error;
 
 	if (sc->sc_readonly)
 		return EACCES;
 
-	offset += sc->sc_partinfo.part_offset;
+	error = flash_partition_range(sc, offset, sc->flash_if->erasesize,
+	    &physical);
+	if (error)
+		return error;
 
-	if (offset + sc->flash_if->erasesize >=
-	    sc->sc_partinfo.part_size +
-	    sc->sc_partinfo.part_offset)
-		return EINVAL;
-
-	return sc->flash_if->block_markbad(device_parent(self), offset);
+	return sc->flash_if->block_markbad(device_parent(self), physical);
 }
 
 int
 flash_block_isbad(device_t self, flash_off_t offset, bool * const bad)
 {
 	struct flash_softc * const sc = device_private(self);
+	flash_off_t physical;
+	int error;
 
-	offset += sc->sc_partinfo.part_offset;
+	error = flash_partition_range(sc, offset, sc->flash_if->erasesize,
+	    &physical);
+	if (error)
+		return error;
 
-	if (offset + sc->flash_if->erasesize >
-	    sc->sc_partinfo.part_size +
-	    sc->sc_partinfo.part_offset)
-		return EINVAL;
-
-	return sc->flash_if->block_isbad(device_parent(self), offset, bad);
+	return sc->flash_if->block_isbad(device_parent(self), physical, bad);
 }
 
 int
@@ -623,11 +655,11 @@ flash_sync(device_t self)
 {
 	struct flash_softc * const sc = device_private(self);
 
-	if (sc->sc_readonly)
-		return EACCES;
+	/* Read-only partitions and synchronous drivers have nothing to flush. */
+	if (sc->sc_readonly || sc->flash_if->sync == NULL)
+		return 0;
 
-	/* noop now TODO: implement */
-	return 0;
+	return sc->flash_if->sync(device_parent(self));
 }
 
 MODULE(MODULE_CLASS_DRIVER, flash, NULL);

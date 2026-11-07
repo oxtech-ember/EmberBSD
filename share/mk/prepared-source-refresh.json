@@ -1,6 +1,13 @@
 {
   "version": 1,
   "sources": {
+    "EMBER_LITTLEFS_SOURCE": {
+      "producer_dirs": ["usr.sbin/makefs"],
+      "native_producer_dirs": ["tools/makefs"],
+      "header_prefixes": [],
+      "consumer_dirs": [],
+      "linked_names": []
+    },
     "EMBER_ZLIB_SOURCE": {
       "producer_dirs": [
         "lib/libz"
