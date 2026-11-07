@@ -111,8 +111,13 @@ pvr_exec_context_put(struct drm_device *dev, struct pvr_exec_context *ctx)
 		}
 	}
 	if (error != 0) {
-		/* Keep the VM, mappings and GEM objects reachable through ctx. */
-		pvr_file_vm_fail(ctx->vm);
+		/* Keep the VM, mappings and GEM objects reachable through ctx.
+		 * A drained reset context keeps that retention local. */
+		if (ctx->firmware != NULL && pvr_context_lost(ctx->firmware) &&
+		    !pvr_context_retained(ctx->firmware))
+			pvr_file_vm_retain(ctx->vm);
+		else
+			pvr_file_vm_fail(ctx->vm);
 		pvr_device_retain(dev, ctx);
 		return;
 	}

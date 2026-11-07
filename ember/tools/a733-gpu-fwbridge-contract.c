@@ -190,6 +190,23 @@ pvr_fwservice_set_events(struct sun60i_a733_gpu_fwservice *s,
 	s->grow_prepare = prepare; s->grow_complete = complete;
 	return 0;
 }
+static unsigned int resets_enabled, lost_queries;
+int
+pvr_fwservice_enable_resets(struct sun60i_a733_gpu_fwservice *s)
+{
+	CHECK(s == &sc.sc_fwbridge.service && mutex_owned(&sc.sc_run_lock));
+	CHECK(s->events_set && s->memory->profile == PVR_FW_PROFILE_GE8300);
+	if (s->queue.failed) return EIO;
+	s->queue.reset_events = true; resets_enabled++;
+	return 0;
+}
+bool
+pvr_fwservice_context_lost(const struct sun60i_a733_gpu_fwservice *s, uint32_t id)
+{
+	CHECK(s == &sc.sc_fwbridge.service && mutex_owned(&sc.sc_run_lock));
+	lost_queries++;
+	return s->queue.reset_events && id == 384;
+}
 int
 pvr_backend_attach(struct drm_device *d, const struct pvr_backend *b)
 {
@@ -336,13 +353,16 @@ static void event_tests(void)
 {
 	const struct pvr_backend *b;
 	struct pvr_fw_events events = {&device, test_grow, test_complete, NULL};
-	reset(); b = start();
+	reset(); b = start(); resets_enabled = 0;
 	CHECK(b->set_events != NULL);
 	CHECK(b->set_events(b->cookie, NULL) == EINVAL);
 	CHECK(b->set_events(b->cookie, &events) == 0);
 	CHECK(sc.sc_fwbridge.service.event_cookie == &device);
 	CHECK(sc.sc_fwbridge.service.grow_prepare == test_grow);
 	CHECK(sc.sc_fwbridge.service.grow_complete == test_complete);
+	/* Per-context recovery is not enabled for the A733 profile. */
+	CHECK(!sc.sc_fwbridge.service.queue.reset_events && resets_enabled == 0);
+	CHECK(b->context_lost != NULL && !b->context_lost(b->cookie, 384));
 	memset(&events, 0, sizeof(events));
 	CHECK(sc.sc_fwbridge.service.grow_prepare == test_grow);
 	events = (struct pvr_fw_events){&device, test_grow, test_complete, NULL};
@@ -371,6 +391,15 @@ ge_health_test(void)
 	    PVR_FW_PROFILE_GE8300, ge_irq_health, &irq_error) == 0);
 	be = &sc.sc_fwbridge.backend;
 	CHECK(be->check(be->cookie) == 0);
+	{
+		/* GE8300 opts in when the DRM device installs its events. */
+		struct pvr_fw_events events = {&device, test_grow, test_complete, NULL};
+		resets_enabled = lost_queries = 0;
+		CHECK(be->set_events(be->cookie, &events) == 0);
+		CHECK(resets_enabled == 1 && sc.sc_fwbridge.service.queue.reset_events);
+		CHECK(be->context_lost(be->cookie, 384));
+		CHECK(!be->context_lost(be->cookie, 385) && lost_queries == 2);
+	}
 	irq_error = EIO;
 	{
 		struct pvr_fw_object obj = { 0 };

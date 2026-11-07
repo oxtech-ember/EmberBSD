@@ -66,6 +66,9 @@ static bool concurrent, waiter_entered, waiter_released, frozen_clock, complete_
 static unsigned allocate_calls, allocation_fault, copy_calls, copy_fault;
 static unsigned prepared, completed, computed, poisoned, signals, wait_calls, polls;
 static unsigned compute_error_at, next_id, transferred, fragmented;
+/* A firmware-reported reset of the computed context, and its VM outcomes. */
+static unsigned compute_lost_at, lost_vms;
+static bool lost_retained;
 static bool triple_model;
 static int fragment_error, after_pair_prepare, after_pair_backend, after_pair_target;
 static int transfer_error;
@@ -78,8 +81,8 @@ struct drm_device { unsigned dummy; };
 struct pvr_submit_queue *pvr_device_submit(struct drm_device *d)
 { (void)d; return submit_queue; }
 struct drm_file { unsigned dummy; };
-struct pvr_file_vm { unsigned prepared, holds, barred; bool failed, closed; };
-struct pvr_context { uint32_t type; };
+struct pvr_file_vm { unsigned prepared, holds, barred; bool failed, closed, lost; };
+struct pvr_context { uint32_t type; bool lost, retained; };
 struct pvr_exec_context {
 	unsigned refs;
 	bool handle_live, destroyed;
@@ -267,6 +270,10 @@ struct pvr_file_vm *pvr_exec_context_vm(struct pvr_exec_context *c)
 struct pvr_context *pvr_exec_context_firmware(struct pvr_exec_context *c)
 { CHECK(gated && platform && c->refs!=0 && !c->destroyed); return &c->firmware; }
 uint32_t pvr_context_type(const struct pvr_context *c) { return c->type; }
+bool pvr_context_lost(const struct pvr_context *c) { CHECK(gated && platform); return c->lost; }
+bool pvr_context_retained(const struct pvr_context *c) { CHECK(gated && platform); return c->retained; }
+void pvr_file_vm_lose(struct pvr_file_vm *vm)
+{ CHECK(gated && platform && !vm->lost); vm->lost=true; lost_vms++; }
 int pvr_file_vm_prepare(struct pvr_file_vm *vm)
 { CHECK(gated && platform && !vm->failed); prepared++; vm->prepared++; return prepare_error; }
 void pvr_file_vm_complete(struct pvr_file_vm *vm)
@@ -281,6 +288,7 @@ int pvr_context_compute(struct pvr_context *c,const struct rogue_fwif_cmd_comput
 		CHECK(cmd->regs.tpu == 0x20 && cmd->regs.tpu_tag_cdm_ctrl == 0);
 	computed++;
 	if(computed==compute_error_at) return EIO;
+	if(computed==compute_lost_at) { c->lost=true; c->retained=lost_retained; return EIO; }
 	return 0;
 }
 int
@@ -463,7 +471,7 @@ static void workqueue_wait(struct workqueue *q, struct work *w) { (void)w; pump(
 static void workqueue_destroy(struct workqueue *q) { CHECK(q->n==0); free(q); }
 int pvr_file_vm_submit_hold(struct pvr_file_vm *vm)
 {
-	CHECK(gated && platform); if(vm->failed) return EIO;
+	CHECK(gated && platform); if(vm->failed || vm->lost) return EIO;
 	/* A waiting MAP/UNMAP: UINT_MAX models a barrier that never lifts. */
 	if(vm->barred) { if(vm->barred!=UINT_MAX) vm->barred--; return EAGAIN; }
 	vm->holds++; return 0;
@@ -498,6 +506,7 @@ static void initialize(unsigned count)
 	fragmented = 0; triple_model = false;
 	fragment_error = after_pair_prepare = after_pair_backend = after_pair_target = 0;
 	transferred=0; transfer_error=0; compute_error_at=next_id=0; prepare_error=backend_error=pause_error=wait_error=id_error=0;
+	compute_lost_at=lost_vms=0; lost_retained=false;
 	backend_changed=switch_backend_on_pause=backend_absent=false; retained=NULL; concurrent=waiter_entered=waiter_released=frozen_clock=complete_on_wait=false;
 	clock_ns=0; waiting_thread=false; nranges=0;
 	atomic_init(&stub.refs,1); stub.status=1; stub.immortal=true; stub.chain=false;
@@ -861,6 +870,16 @@ static void error_cases(void)
 	initialize(2); add_op(0,1,DRM_PVR_SYNC_OP_FLAG_SIGNAL,0); add_op(1,2,DRM_PVR_SYNC_OP_FLAG_SIGNAL,0);
 	compute_error_at=2;
 	CHECK(submit_completed()==-EIO && arguments.jobs.count==1 && computed==2 && signals==1 && poisoned==1); finish();
+	/* A drained reported reset marks only that VM lost and completes its DMA
+	 * syncs; an undrained one is an ordinary backend failure. */
+	for(i=0;i<2;i++) {
+		initialize(2); add_op(0,1,DRM_PVR_SYNC_OP_FLAG_SIGNAL,0); add_op(1,2,DRM_PVR_SYNC_OP_FLAG_SIGNAL,0);
+		compute_lost_at=2; lost_retained=i==1;
+		CHECK(submit_completed()==-EIO && arguments.jobs.count==1 && computed==2 && signals==1);
+		CHECK(lost_vms==(i==0 ? 1U : 0U) && contexts[1].vm.lost==(i==0));
+		CHECK(completed==(i==0 ? 2U : 1U) && poisoned==i);
+		finish();
+	}
 	initialize(2); add_op(0,2,DRM_PVR_SYNC_OP_FLAG_SIGNAL,0);
 	add_op(1,1,0,0); syncobjs[1].fence=new_fence(0); wait_error=ERESTARTSYS;
 	CHECK(submit_completed()==-EINTR && arguments.jobs.count==1 && computed==1 && signals==1 && poisoned==0); finish();

@@ -42,7 +42,8 @@ struct pvr_file_vm {
 	unsigned int submissions;
 	/* Waiting MAP/UNMAP calls; while nonzero, no new submission is held. */
 	unsigned int mutators;
-	bool published, failed;
+	/* lost: a context on this VM was reset by recovered firmware. */
+	bool published, failed, lost;
 	struct pvr_vm *tables;
 	struct pvr_file_mapping *mappings;
 };
@@ -478,7 +479,7 @@ int
 pvr_file_vm_submit_hold(struct pvr_file_vm *vm)
 {
 
-	if (vm->failed || !vm->published)
+	if (vm->failed || vm->lost || !vm->published)
 		return EIO;
 	if (vm->mutators != 0)
 		return EAGAIN;
@@ -509,7 +510,7 @@ pvr_file_vm_prepare(struct pvr_file_vm *vm)
 {
 	int error;
 
-	if (vm->failed || !vm->published)
+	if (vm->failed || vm->lost || !vm->published)
 		return EIO;
 	error = pvr_vm_flush(vm->tables);
 	if (error != 0) {
@@ -566,6 +567,21 @@ pvr_file_vm_fail(struct pvr_file_vm *vm)
 	vm->failed = true;
 	if (vm->backend != NULL)
 		vm->backend->fail(vm->backend->cookie);
+}
+
+void
+pvr_file_vm_lose(struct pvr_file_vm *vm)
+{
+
+	vm->lost = true;
+}
+
+void
+pvr_file_vm_retain(struct pvr_file_vm *vm)
+{
+
+	vm->lost = true;
+	vm->failed = true;
 }
 
 int

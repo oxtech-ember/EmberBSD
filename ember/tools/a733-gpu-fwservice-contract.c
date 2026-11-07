@@ -68,8 +68,11 @@ static unsigned int events_remaining, event_dequeues, grow_prepares, grow_comple
 static unsigned int response_commands, observed_responses, grow_delta;
 static int event_error, prepare_error, complete_error, health_error, completion_status;
 static bool events_forever, prepare_reentry;
+static unsigned int resets_remaining, reset_dequeues, observe_again, next_again;
+static unsigned int delays, fault_reports;
 
 static void *kmem_zalloc(size_t, int);
+static void delay(unsigned int);
 static void kmem_free(void *, size_t);
 static int bus_dmamem_alloc(bus_dma_tag_t, size_t, size_t, size_t,
     bus_dma_segment_t *, int, int *, int);
@@ -374,9 +377,15 @@ pvr_fwqueue_observe(struct sun60i_a733_gpu_fwmem *mem,
 	CHECK(mem == &memory && b == &boot && q == &service.queue);
 	memset(out, 0, sizeof(*out));
 	out->valid = true;
-	out->state.fw_read_offset = event_dequeues & 31;
-	out->state.fw_write_offset = (event_dequeues +
-	    (events_remaining != 0 || events_forever ? 1 : 0)) & 31;
+	out->state.fw_read_offset = (event_dequeues + reset_dequeues) & 31;
+	out->state.fw_write_offset = (event_dequeues + reset_dequeues +
+	    (events_remaining != 0 || resets_remaining != 0 ||
+	    events_forever ? 1 : 0)) & 31;
+	if (observe_again != 0) {
+		CHECK(q->reset_events && !q->failed);
+		observe_again--;
+		return EAGAIN;
+	}
 	if (response_commands != 0 && health_error != 0) {
 		q->failed = true;
 		return health_error;
@@ -386,18 +395,45 @@ pvr_fwqueue_observe(struct sun60i_a733_gpu_fwmem *mem,
 }
 
 int
-pvr_fwqueue_event(struct sun60i_a733_gpu_fwmem *mem,
+pvr_fwqueue_next(struct sun60i_a733_gpu_fwmem *mem,
     const struct sun60i_a733_gpu_fwboot_result *b,
-    struct sun60i_a733_gpu_fwqueue *q, uint32_t *id)
+    struct sun60i_a733_gpu_fwqueue *q, struct pvr_fwqueue_event *event)
 {
 	CHECK(mem == &memory && b == &boot && q == &service.queue);
 	CHECK(service.dispatching && !q->failed);
+	if (next_again != 0) {
+		CHECK(q->reset_events);
+		next_again--;
+		return EAGAIN;
+	}
 	if (event_error != 0) { q->failed = true; return event_error; }
+	memset(event, 0, sizeof(*event));
+	if (resets_remaining != 0) {
+		CHECK(q->reset_events);
+		resets_remaining--;
+		event->type = ROGUE_FWIF_FWCCB_CMD_CONTEXT_RESET_NOTIFICATION;
+		event->id = 384 + reset_dequeues++;
+		event->reason = ROGUE_CONTEXT_RESET_REASON_GUILTY_LOCKUP;
+		event->dm = 3;
+		event->job = 759;
+		event->flags = ROGUE_FWIF_FWCCB_CMD_CONTEXT_RESET_FLAG_PF;
+		event->pc = UINT64_C(0x400b0000);
+		event->fault = UINT64_C(0x8001f30800);
+		return 0;
+	}
 	if (events_remaining == 0 && !events_forever) return ENOENT;
 	if (events_remaining != 0) events_remaining--;
 	event_dequeues++;
-	*id = 123;
+	event->type = ROGUE_FWIF_FWCCB_CMD_FREELIST_GROW;
+	event->id = 123;
 	return 0;
+}
+
+static void
+delay(unsigned int us)
+{
+	CHECK(us == 1000);
+	delays++;
 }
 
 static void
@@ -440,6 +476,8 @@ reset(void)
 	transport_freezes = true;
 	quiescent = table_edit = false;
 	events_remaining = event_dequeues = grow_prepares = grow_completes = 0;
+	resets_remaining = reset_dequeues = observe_again = next_again = 0;
+	delays = fault_reports = 0;
 	response_commands = observed_responses = grow_delta = 0;
 	event_error = prepare_error = complete_error = health_error = completion_status = 0;
 	events_forever = prepare_reentry = false;
@@ -701,6 +739,71 @@ event_tests(void)
 }
 
 static void
+note_fault(void *cookie, uint32_t context, uint32_t job, uint64_t pc,
+    uint64_t va)
+{
+	CHECK(cookie == &memory && context >= 384 && job == 759);
+	CHECK(pc == UINT64_C(0x400b0000) && va == UINT64_C(0x8001f30800));
+	CHECK(service.dispatching);
+	fault_reports++;
+}
+
+/* A recovered context is recorded locally; the service keeps running. */
+static void
+reset_tests(void)
+{
+	struct sun60i_a733_gpu_fwprobe_observation observation;
+
+	reset(); attach(); install_events();
+	CHECK(!pvr_fwservice_context_lost(&service, 384));
+	CHECK(pvr_fwservice_enable_resets(&service) == 0);
+	CHECK(service.queue.reset_events && !service.queue.failed);
+	service.queue.fault_cookie = &memory;
+	service.queue.page_fault = note_fault;
+	resets_remaining = 2; events_remaining = 1;
+	CHECK(sun60i_a733_gpu_fwservice_observe(&service, &observation) == 0);
+	CHECK(!service.queue.failed && !service.dispatching);
+	CHECK(reset_dequeues == 2 && fault_reports == 2);
+	CHECK(pvr_fwservice_context_lost(&service, 384));
+	CHECK(pvr_fwservice_context_lost(&service, 385));
+	CHECK(!pvr_fwservice_context_lost(&service, 386));
+	CHECK(!pvr_fwservice_context_lost(&service, 0));
+	/* Grow requests behind the reports still complete normally. */
+	CHECK(grow_prepares == 1 && grow_completes == 1 && completion_status == 0);
+	/* The bounded record keeps the most recent reports. */
+	resets_remaining = PVR_FWSERVICE_LOST;
+	CHECK(sun60i_a733_gpu_fwservice_observe(&service, &observation) == 0);
+	CHECK(!pvr_fwservice_context_lost(&service, 384));
+	CHECK(!pvr_fwservice_context_lost(&service, 385));
+	CHECK(pvr_fwservice_context_lost(&service, 386));
+	CHECK(pvr_fwservice_context_lost(&service, 384 + 17));
+	CHECK(!service.queue.failed);
+	/* A transient recovery is waited out, also while draining. */
+	observe_again = 5; next_again = 3; resets_remaining = 1;
+	CHECK(sun60i_a733_gpu_fwservice_observe(&service, &observation) == 0);
+	CHECK(delays == 8 && !service.queue.failed);
+	CHECK(pvr_fwservice_context_lost(&service, 384 + 18));
+	finish();
+
+	/* A persistent recovery freezes the service after the bounded wait. */
+	reset(); attach(); install_events();
+	CHECK(pvr_fwservice_enable_resets(&service) == 0);
+	observe_again = 1000;
+	CHECK(sun60i_a733_gpu_fwservice_observe(&service, &observation) == ETIMEDOUT);
+	CHECK(service.queue.failed && delays == 250);
+	CHECK(pvr_fwservice_enable_resets(&service) == EIO);
+	observe_again = 0;
+	finish();
+	reset(); attach(); install_events();
+	CHECK(pvr_fwservice_enable_resets(&service) == 0);
+	next_again = 1000;
+	CHECK(sun60i_a733_gpu_fwservice_observe(&service, &observation) == ETIMEDOUT);
+	CHECK(service.queue.failed && !service.dispatching && delays == 250);
+	next_again = 0;
+	finish();
+}
+
+static void
 ge_lifetime_tests(void)
 {
 	struct pvr_fwobject *a = NULL, *b = NULL;
@@ -770,6 +873,7 @@ main(void)
 	basic_tests();
 	failure_tests();
 	event_tests();
+	reset_tests();
 	printf("a733-gpu-fwservice-contract: PASS %u checks\n", checks);
 	return 0;
 }

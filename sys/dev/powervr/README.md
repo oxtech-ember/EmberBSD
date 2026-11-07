@@ -55,6 +55,23 @@ firmware events, faults or recovery flags fail validation. It also reports
 pending FWCCB words and recorded hardware recovery data. Each diagnostic DMA
 read acquires and releases only the selected firmware object.
 
+## Single-context recovery
+
+On GE8300 the DRM bridge opts the queue in to per-context recovery. A
+`CONTEXT_RESET_NOTIFICATION` for one context with a guilty or innocent lockup
+or overrun reason is then a valid event: the service consumes it, prints
+`PVR_CONTEXT_RESET`, records the server context ID and keeps the queue usable.
+A job of the reset context that is still running fails with `EIO`; if the
+report arrives only after that job completed, the next job fails instead.
+The context refuses later jobs and its VM accepts no new submissions. Its
+CCCBs must drain within one second; the normal acknowledged `CLEANUP` path
+then retires it, and a failed cleanup retains only that VM. If firmware does
+not drain it, the service freezes as before. `HWR_RESET_IN_PROGRESS` alone is
+waited out with bounded 1 ms busy polls, 250 per observation. All-context
+resets, firmware fault or watchdog reasons, unknown flags, firmware faults and
+the other HWR flags keep the previous fail-stop behavior. A733 is unchanged.
+Linux likewise continues after this notification; it has no host action.
+
 For a context reset with a page fault, `PVR_HWR_JOB` matches the firmware
 context, job ID and page catalogue against 16 recent submission slots.
 The type is the DRM job type, including fragment transfers. A missing match

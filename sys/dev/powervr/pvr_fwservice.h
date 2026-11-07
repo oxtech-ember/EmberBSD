@@ -14,6 +14,9 @@ struct pvr_fwobject {
 	bool mapped;
 };
 
+/* Recent recovered contexts kept for their owners' next health check. */
+#define PVR_FWSERVICE_LOST	16
+
 struct pvr_fwservice {
 	struct pvr_fwmem *memory;
 	const struct pvr_fwboot_result *boot;
@@ -24,6 +27,9 @@ struct pvr_fwservice {
 	void *event_cookie;
 	int (*grow_prepare)(void *, uint32_t, struct rogue_fwif_freelist_gs_data *);
 	int (*grow_complete)(void *, uint32_t, int);
+	/* Recent recovered contexts, by server common context ID. */
+	uint32_t lost[PVR_FWSERVICE_LOST];
+	unsigned lost_next;
 	bool events_set, dispatching;
 };
 
@@ -73,5 +79,15 @@ int pvr_fwservice_observe(struct pvr_fwservice *,
 /* Caller owns the object and validates its CPU/FW subranges. */
 void pvr_fwservice_sync(struct pvr_fwservice *,
     struct pvr_fwobject *, int);
+/*
+ * Opt in once to per-context recovery. Afterwards a validated report of one
+ * recovered context is consumed and recorded instead of freezing service,
+ * and a transient in-progress recovery is waited out for a bounded time.
+ * The recorded context accepts no new work; its owner retires it through
+ * the normal acknowledged CLEANUP. Other reports keep the fail-stop policy.
+ */
+int pvr_fwservice_enable_resets(struct pvr_fwservice *);
+/* True if firmware recently reported a reset of this server context ID. */
+bool pvr_fwservice_context_lost(const struct pvr_fwservice *, uint32_t);
 
 #endif /* _PVR_FWSERVICE_H_ */

@@ -125,6 +125,8 @@ struct model {
 	unsigned spins, ticks, irqs, generation;
 	uint64_t now_ns, irq_wait_ns;
 	unsigned alloc_fail, free_fail, check_fail, busy;
+	/* Health check number from which firmware reports context 101 reset. */
+	unsigned lost_at, lost_queries;
 	unsigned ufo_delay, read_delay;
 	int command_error;
 	uint32_t command_result;
@@ -266,6 +268,16 @@ model_check(void *cookie)
 	if (m->failed || m->health == m->check_fail)
 		return EIO;
 	return 0;
+}
+
+static bool
+model_context_lost(void *cookie, uint32_t id)
+{
+	if (checking_gate) CHECK(model_gate);
+	struct model *m = cookie;
+	CHECK(id == 101 && !m->failed);
+	m->lost_queries++;
+	return m->lost_at != 0 && m->health >= m->lost_at;
 }
 
 static void
@@ -1327,6 +1339,103 @@ completion_releases_gates(void)
 	CHECK(pvr_context_destroy(&ctx) == 0 && m.live == 0);
 }
 
+static void
+compute_command(struct model *m, uint32_t id)
+{
+	uint8_t bytes[44] = { 0 };
+	put32(bytes, sizeof(bytes));
+	put32(bytes + 8, 0x4000);
+	put32(bytes + 16, 0x10000);
+	put32(bytes + 24, 0x20000);
+	CHECK(pvr_stream_compute(PVR_STREAM_BVNC, bytes, sizeof(bytes), 0, &m->expected_compute) == 0);
+	m->expected_id = id;
+}
+
+/*
+ * A reported reset of a drained context is local: the job fails with EIO,
+ * the context accepts no work and the backend stays usable. A reported
+ * context that firmware does not drain freezes the backend.
+ */
+static void
+lost_contexts(void)
+{
+	struct model m;
+	struct pvr_context *ctx;
+	unsigned scenario, kicks;
+
+	for (scenario = 0; scenario < 4; scenario++) {
+		init_model(&m);
+		m.backend.context_lost = model_context_lost;
+		ctx = create_context(&m, DRM_PVR_CTX_TYPE_COMPUTE);
+		run_job(&m, ctx, 1);
+		CHECK(!pvr_context_lost(ctx) && m.lost_queries != 0);
+		compute_command(&m, 2);
+		switch (scenario) {
+		case 0:	/* Recovery consumed the CCCB but skipped the timeline. */
+			m.ufo_delay = 0; m.read_delay = 5; m.lost_at = m.health + 2;
+			break;
+		case 1:	/* The report follows an apparently complete job. */
+			m.ufo_delay = 1; m.read_delay = 3; m.lost_at = m.health + 3;
+			break;
+		case 2:	/* Firmware never consumes the reset job. */
+			m.ufo_delay = 0; m.read_delay = 0; m.lost_at = m.health + 2;
+			break;
+		case 3:	/* Reported before submission: nothing is published. */
+			m.lost_at = m.health + 1;
+			break;
+		}
+		kicks = m.kicks;
+		CHECK(pvr_context_compute(ctx, &m.expected_compute, 2) == EIO);
+		CHECK(m.failed == (scenario == 2) && pvr_context_lost(ctx));
+		CHECK(m.kicks == kicks + (scenario == 3 ? 0U : 1U));
+		CHECK(pvr_context_retained(ctx) == (scenario == 2));
+		if (scenario == 2)
+			CHECK(m.now_ns < UINT64_C(2000000000) && m.ticks != 0);
+		if (scenario == 0)
+			CHECK(m.sleeps == 5);
+		kicks = m.kicks;
+		compute_command(&m, 3);
+		CHECK(pvr_context_compute(ctx, &m.expected_compute, 3) == EIO);
+		CHECK(m.kicks == kicks && m.failed == (scenario == 2));
+		if (scenario == 2) {
+			CHECK(pvr_context_destroy(&ctx) == EIO);
+			CHECK(ctx != NULL && m.live == 5 && m.frees == 0);
+			reset_model(&m, &ctx);
+			continue;
+		}
+		/* The model firmware has dropped the job; CLEANUP retires it. */
+		m.pending = false;
+		CHECK(pvr_context_destroy(&ctx) == 0);
+		CHECK(ctx == NULL && m.live == 0 && m.cleanups == 1 && !m.failed);
+	}
+
+	for (scenario = 0; scenario < 2; scenario++) {
+		ctx = graphics_context(&m, DRM_PVR_CTX_TYPE_RENDER);
+		m.backend.context_lost = model_context_lost;
+		m.graphics_queue[1].ufo_delay = 0;
+		m.graphics_queue[1].read_delay = scenario == 0 ? 9 : 0;
+		m.lost_at = m.health + 2;
+		CHECK(render_pair(&m, ctx, ROGUE_FWIF_CCB_CMD_TYPE_FRAG) == EIO);
+		CHECK(m.failed == (scenario == 1) && pvr_context_lost(ctx) &&
+		    m.combined_kicks == 1);
+		CHECK(pvr_context_retained(ctx) == (scenario == 1));
+		CHECK(pvr_context_fragment(ctx, &m.expected_fragment,
+		    m.expected_cleanup, 104) == EIO);
+		CHECK(m.kicks == 1 && m.failed == (scenario == 1));
+		if (scenario == 1) {
+			CHECK(m.now_ns < UINT64_C(2000000000));
+			CHECK(pvr_context_destroy(&ctx) == EIO);
+			CHECK(ctx != NULL && m.live == 9 && m.frees == 0);
+			reset_model(&m, &ctx);
+			continue;
+		}
+		CHECK(m.sleeps == 9);
+		m.pending = m.graphics_queue[1].pending = false;
+		CHECK(pvr_context_destroy(&ctx) == 0);
+		CHECK(ctx == NULL && m.live == 0 && m.cleanups == 2 && !m.failed);
+	}
+}
+
 int
 main(void)
 {
@@ -1343,6 +1452,7 @@ main(void)
 	graphics_jobs();
 	graphics_failures();
 	graphics_admission();
+	lost_contexts();
 	CHECK(heap_objects == 0);
 	printf("PowerVR native context contract: PASS (%u checks)\n", checks);
 	return 0;

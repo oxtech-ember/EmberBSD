@@ -63,6 +63,13 @@ struct pvr_backend {
 	 */
 	unsigned (*irq_mark)(void *);
 	void (*irq_wait)(void *, unsigned, int);
+	/*
+	 * Optional, under both gates and after a successful check(): true when
+	 * firmware reported that it recovered the hardware and reset this
+	 * server common context. Its running work is lost; the service stays
+	 * usable for other contexts. NULL means no context is ever reported.
+	 */
+	bool (*context_lost)(void *, uint32_t);
 };
 
 struct drm_device;

@@ -57,6 +57,13 @@ __CTASSERT(offsetof(struct rogue_fwif_kccb_cmd_combined_geom_frag_kick_data,
 #define A733_HWR_BAD	(ROGUE_FWIF_HWR_RESET_IN_PROGRESS | \
     ROGUE_FWIF_HWR_GENERAL_LOCKUP | ROGUE_FWIF_HWR_DM_STALLING | \
     ROGUE_FWIF_HWR_FW_FAULT | ROGUE_FWIF_HWR_RESTART_REQUESTED)
+/* Pending FWCCB events a runtime observation may admit. */
+#define FWQUEUE_GROW	1U
+#define FWQUEUE_RESET	2U
+/* Private: an opted-in queue observed HWR_RESET_IN_PROGRESS alone. */
+#define FWQUEUE_HWR_BUSY	EINPROGRESS
+__CTASSERT(sizeof(struct rogue_fwif_fwccb_cmd_context_reset_data) == 40);
+__CTASSERT(offsetof(struct rogue_fwif_fwccb_cmd, cmd_data) == 8);
 
 static bool
 fwprobe_span(const void *p, size_t size, size_t alignment)
@@ -260,6 +267,9 @@ fwprobe_observe(struct pvr_fwmem *mem, unsigned int slot,
 	s->fw_command = 0;
 	s->fw_flags = 0;
 	s->fw_freelist_id = 0;
+	s->fw_reset_reason = s->fw_reset_dm = 0;
+	s->fw_reset_job = s->fw_reset_flags = 0;
+	s->fw_reset_pc = s->fw_reset_fault = 0;
 	if (s->fw_read_offset < PVR_FWINIT_FWCCB_COUNT &&
 	    s->fw_read_offset != s->fw_write_offset) {
 		const uint8_t *event = fwprobe_object(mem,
@@ -274,6 +284,24 @@ fwprobe_observe(struct pvr_fwmem *mem, unsigned int slot,
 		s->fw_command = fwprobe_read32(fwprobe_object(mem,
 		    PVR_FWINIT_FWCCB_CMDS) + s->fw_read_offset *
 		    sizeof(struct rogue_fwif_fwccb_cmd));
+		if (s->fw_command ==
+		    ROGUE_FWIF_FWCCB_CMD_CONTEXT_RESET_NOTIFICATION) {
+			const uint8_t *reset = event +
+			    offsetof(struct rogue_fwif_fwccb_cmd,
+			    cmd_data.cmd_context_reset_notification);
+#define RESET32(field) fwprobe_read32(reset + offsetof( \
+    struct rogue_fwif_fwccb_cmd_context_reset_data, field))
+#define RESET64(field) fwprobe_read64(reset + offsetof( \
+    struct rogue_fwif_fwccb_cmd_context_reset_data, field))
+			s->fw_reset_reason = RESET32(reset_reason);
+			s->fw_reset_dm = RESET32(dm);
+			s->fw_reset_job = RESET32(reset_job_ref);
+			s->fw_reset_flags = RESET32(flags);
+			s->fw_reset_pc = RESET64(pc_address);
+			s->fw_reset_fault = RESET64(fault_address);
+#undef RESET32
+#undef RESET64
+		}
 	}
 	s->cmds_executed = READ32(od, rogue_fwif_osdata, kccb_cmds_executed);
 	s->pow_state = READ32(sd, rogue_fwif_sysdata, pow_state);
@@ -347,10 +375,33 @@ fwprobe_matches_boot(const struct pvr_fwprobe_snapshot *s,
 	    s->build_options == boot->build_options;
 }
 
+/*
+ * A reset report is admitted only for one recovered context whose reason
+ * names a guilty or innocent lockup or overrun. All-context resets, firmware
+ * resets and unknown reasons keep the service fail-stop.
+ */
+static bool
+fwprobe_event_valid(const struct pvr_fwprobe_snapshot *s, unsigned events)
+{
+	if (s->fw_flags != 0 || s->fw_freelist_id == 0)
+		return false;
+	if (s->fw_command == ROGUE_FWIF_FWCCB_CMD_FREELIST_GROW)
+		return (events & FWQUEUE_GROW) != 0;
+	if (s->fw_command != ROGUE_FWIF_FWCCB_CMD_CONTEXT_RESET_NOTIFICATION ||
+	    (events & FWQUEUE_RESET) == 0)
+		return false;
+	return s->fw_reset_reason >= ROGUE_CONTEXT_RESET_REASON_GUILTY_LOCKUP &&
+	    s->fw_reset_reason <= ROGUE_CONTEXT_RESET_REASON_INNOCENT_OVERRUNING &&
+	    s->fw_reset_dm < PVR_FWIF_DM_MAX &&
+	    (s->fw_reset_flags &
+	    ~ROGUE_FWIF_FWCCB_CMD_CONTEXT_RESET_FLAG_PF) == 0;
+}
+
 static int
 fwprobe_runtime_valid(const struct pvr_fwprobe_snapshot *s,
-    uint32_t expected_log_type, bool events, uint64_t expected_bvnc)
+    uint32_t expected_log_type, unsigned events, uint64_t expected_bvnc)
 {
+	bool pending_valid;
 	int error;
 
 	error = pvr_fw_handshake_check(s->firmware_started, s->compchecks_updated,
@@ -366,9 +417,13 @@ fwprobe_runtime_valid(const struct pvr_fwprobe_snapshot *s,
 	    s->fw_write_offset >= PVR_FWINIT_FWCCB_COUNT ||
 	    s->log_type != expected_log_type)
 		return EPROTO;
-	if ((s->fw_read_offset != s->fw_write_offset &&
-	    (!events || s->fw_command != ROGUE_FWIF_FWCCB_CMD_FREELIST_GROW ||
-	    s->fw_flags != 0 || s->fw_freelist_id == 0)) || s->fw_faults != 0 ||
+	pending_valid = s->fw_read_offset == s->fw_write_offset ||
+	    fwprobe_event_valid(s, events);
+	/* Recovery of a single context may be observed before it completes. */
+	if ((events & FWQUEUE_RESET) != 0 && pending_valid && s->fw_faults == 0 &&
+	    (s->hwr_state & A733_HWR_BAD) == ROGUE_FWIF_HWR_RESET_IN_PROGRESS)
+		return FWQUEUE_HWR_BUSY;
+	if (!pending_valid || s->fw_faults != 0 ||
 	    (s->hwr_state & A733_HWR_BAD) != 0) {
 		printf("PVR_RUNTIME_EIO: fw=%u/%u cmd=%#x flags=%#x id=%#x "
 		    "faults=%u hwr=%#x pow=%u kccb=%u/%u rtn=%#x\n",
@@ -424,7 +479,7 @@ pvr_fwprobe_observe(struct pvr_fwmem *mem,
 	memset(&observation, 0, sizeof(observation));
 	fwprobe_observe(mem, slot, &observation.state);
 	observation.valid = true;
-	error = fwprobe_runtime_valid(&observation.state, expected_log_type, false, mem->image.info.bvnc);
+	error = fwprobe_runtime_valid(&observation.state, expected_log_type, 0, mem->image.info.bvnc);
 	if (error == 0 && mem->profile == PVR_FW_PROFILE_GE8300 &&
 	    !fwprobe_matches_boot(&observation.state, boot))
 		error = EPROTO;
@@ -470,8 +525,8 @@ fwprobe_previous_valid(const struct pvr_fwmem *mem,
 	    previous->before.read_offset != 0 || previous->before.write_offset != 0 ||
 	    previous->after.read_offset != 1 || previous->after.write_offset != 1 ||
 	    previous->after.rtn != ROGUE_FWIF_KCCB_RTN_SLOT_CMD_EXECUTED ||
-	    fwprobe_runtime_valid(&previous->before, 0, false, mem->image.info.bvnc) != 0 ||
-	    fwprobe_runtime_valid(&previous->after, 0, false, mem->image.info.bvnc) != 0)
+	    fwprobe_runtime_valid(&previous->before, 0, 0, mem->image.info.bvnc) != 0 ||
+	    fwprobe_runtime_valid(&previous->after, 0, 0, mem->image.info.bvnc) != 0)
 		return EINVAL;
 	return 0;
 }
@@ -531,7 +586,7 @@ fwprobe_run(bus_space_tag_t bst, bus_space_handle_t bsh,
     const struct pvr_fwboot_result *boot,
     const struct pvr_fwprobe_result *previous,
     const struct rogue_fwif_kccb_cmd *cmd, unsigned int slot,
-    uint32_t expected_log_type, bool reusable, uint32_t fw_read,
+    uint32_t expected_log_type, bool reusable, unsigned events, uint32_t fw_read,
     int (*irq_arm)(void *), void *irq_cookie, struct pvr_fwprobe_result *out)
 {
 	struct rogue_fwif_kccb_cmd built;
@@ -621,13 +676,14 @@ fwprobe_run(bus_space_tag_t bst, bus_space_handle_t bsh,
 		if (!out->published)
 			out->before = out->after;
 		state_error = fwprobe_runtime_valid(&out->after,
-		    expected_log_type, reusable, mem->image.info.bvnc);
+		    expected_log_type, events, mem->image.info.bvnc);
 		if (state_error == 0 && mem->profile == PVR_FW_PROFILE_GE8300 &&
 		    !fwprobe_matches_boot(&out->after, boot))
 			state_error = EPROTO;
 		if (reusable && out->after.fw_read_offset != fw_read)
 			state_error = EPROTO;
-		if (state_error != 0 && state_error != EAGAIN) {
+		if (state_error != 0 && state_error != EAGAIN &&
+		    state_error != FWQUEUE_HWR_BUSY) {
 			error = state_error;
 			break;
 		}
@@ -641,13 +697,15 @@ fwprobe_run(bus_space_tag_t bst, bus_space_handle_t bsh,
 
 			if (reusable && out->command == ROGUE_FWIF_KCCB_CMD_CLEANUP)
 				allowed |= ROGUE_FWIF_KCCB_RTN_SLOT_CLEANUP_BUSY;
-			if (state_error == EAGAIN || out->after.write_offset != next ||
+			/* Poll through a reported single-context recovery. */
+			if (state_error == FWQUEUE_HWR_BUSY) {
+				/* The remaining time and poll budget still bound it. */
+			} else if (state_error == EAGAIN || out->after.write_offset != next ||
 			    (out->after.read_offset != slot && out->after.read_offset != next) ||
 			    (out->after.rtn & ~allowed) != 0) {
 				error = EPROTO;
 				break;
-			}
-			if ((fwprobe_return_valid(out->command, out->after.rtn) ||
+			} else if ((fwprobe_return_valid(out->command, out->after.rtn) ||
 			    (reusable && (out->command ==
 			    ROGUE_FWIF_KCCB_CMD_FREELIST_GROW_UPDATE ||
 			    out->command == ROGUE_FWIF_KCCB_CMD_COMBINED_GEOM_FRAG_KICK) &&
@@ -723,7 +781,7 @@ pvr_fwprobe(bus_space_tag_t bst, bus_space_handle_t bsh,
     const struct pvr_fwboot_result *boot,
     struct pvr_fwprobe_result *out)
 {
-	return fwprobe_run(bst, bsh, mem, boot, NULL, NULL, 0, 0, false, 0, NULL, NULL, out);
+	return fwprobe_run(bst, bsh, mem, boot, NULL, NULL, 0, 0, false, 0, 0, NULL, NULL, out);
 }
 
 int
@@ -733,7 +791,7 @@ pvr_fwprobe_mmucache(bus_space_tag_t bst, bus_space_handle_t bsh,
     const struct pvr_fwprobe_result *logtype,
     struct pvr_fwprobe_result *out)
 {
-	return fwprobe_run(bst, bsh, mem, boot, logtype, NULL, 1, 0, false, 0, NULL, NULL, out);
+	return fwprobe_run(bst, bsh, mem, boot, logtype, NULL, 1, 0, false, 0, 0, NULL, NULL, out);
 }
 
 /* GE one-shot: arm IRQ observation immediately before slot publication. */
@@ -748,7 +806,7 @@ pvr_fwprobe_mmucache_irq(bus_space_tag_t bst, bus_space_handle_t bsh,
 		return EINVAL;
 	if (mem->profile != PVR_FW_PROFILE_GE8300)
 		return EOPNOTSUPP;
-	return fwprobe_run(bst, bsh, mem, boot, logtype, NULL, 1, 0, false, 0,
+	return fwprobe_run(bst, bsh, mem, boot, logtype, NULL, 1, 0, false, 0, 0,
 	    irq_arm, cookie, out);
 }
 
@@ -772,7 +830,7 @@ pvr_fwprobe_cmd(bus_space_tag_t bst, bus_space_handle_t bsh,
 	    (expected_log_type & ROGUE_FWIF_LOG_TYPE_GROUP_MASK) == 0)))
 		return EINVAL;
 	return fwprobe_run(bst, bsh, mem, boot, previous, cmd, slot,
-	    expected_log_type, false, 0, NULL, NULL, out);
+	    expected_log_type, false, 0, 0, NULL, NULL, out);
 }
 
 /* One bounded GE chain: heap MMUCACHE followed by its prepared VM kick. */
@@ -807,7 +865,7 @@ pvr_fwprobe_ge_heap_sync(bus_space_tag_t bst, bus_space_handle_t bsh,
 	cmd.cmd_data.mmu_cache_data.mmu_cache_sync_fw_addr =
 	    mem->interface_layout.object[PVR_FWINIT_MMUCACHE_SYNC].fw_addr;
 	error = fwprobe_run(bst, bsh, mem, boot, previous, &cmd, 2, 0,
-	    false, 0, NULL, NULL, out);
+	    false, 0, 0, NULL, NULL, out);
 	if (error == 0)
 		heap->sync_complete = true;
 	return error;
@@ -850,7 +908,7 @@ pvr_fwprobe_ge_kick(bus_space_tag_t bst, bus_space_handle_t bsh,
 	cmd.cmd_data.cmd_kick_data.client_wrap_mask_update =
 	    PVR_FWCOMPUTE_CCCB_SIZE - 1;
 	return fwprobe_run(bst, bsh, mem, boot, previous, &cmd, 3, 0,
-	    false, 0, NULL, NULL, out);
+	    false, 0, 0, NULL, NULL, out);
 }
 
 static bool
@@ -876,8 +934,15 @@ fwqueue_return_valid(const struct pvr_fwprobe_result *r)
 	return r->error == 0 && fwprobe_return_valid(r->command, r->after.rtn);
 }
 
+static unsigned
+fwqueue_events(const struct pvr_fwqueue *q)
+{
+	return FWQUEUE_GROW | (q->reset_events ? FWQUEUE_RESET : 0);
+}
+
 static bool
-fwqueue_last_valid(const struct pvr_fwprobe_result *r, uint64_t expected_bvnc)
+fwqueue_last_valid(const struct pvr_fwprobe_result *r, uint64_t expected_bvnc,
+    unsigned events)
 {
 	unsigned int next;
 
@@ -889,8 +954,8 @@ fwqueue_last_valid(const struct pvr_fwprobe_result *r, uint64_t expected_bvnc)
 	    r->before.read_offset == r->slot && r->before.write_offset == r->slot &&
 	    r->after.read_offset == next && r->after.write_offset == next &&
 	    fwqueue_log_valid(r->after.log_type) &&
-	    fwprobe_runtime_valid(&r->before, r->after.log_type, true, expected_bvnc) == 0 &&
-	    fwprobe_runtime_valid(&r->after, r->after.log_type, true, expected_bvnc) == 0 &&
+	    fwprobe_runtime_valid(&r->before, r->after.log_type, events, expected_bvnc) == 0 &&
+	    fwprobe_runtime_valid(&r->after, r->after.log_type, events, expected_bvnc) == 0 &&
 	    fwqueue_same_firmware(&r->before, &r->after) && fwqueue_return_valid(r);
 }
 
@@ -925,7 +990,7 @@ fwqueue_owner_valid(struct pvr_fwmem *mem,
 	if (q->owner != mem || q->boot != boot ||
 	    memcmp(&q->mem_identity, mem, sizeof(*mem)) != 0 ||
 	    memcmp(&q->boot_identity, boot, sizeof(*boot)) != 0 ||
-	    !fwqueue_last_valid(&q->last, mem->image.info.bvnc) ||
+	    !fwqueue_last_valid(&q->last, mem->image.info.bvnc, fwqueue_events(q)) ||
 	    q->expected_log_type != q->last.after.log_type) {
 		q->failed = true;
 		return EINVAL;
@@ -946,7 +1011,8 @@ fwqueue_observe(struct pvr_fwmem *mem,
 	memset(out, 0, sizeof(*out));
 	fwprobe_observe(mem, q->last.slot, &out->state);
 	out->valid = true;
-	error = fwprobe_runtime_valid(&out->state, q->expected_log_type, true, mem->image.info.bvnc);
+	error = fwprobe_runtime_valid(&out->state, q->expected_log_type,
+	    fwqueue_events(q), mem->image.info.bvnc);
 	check = q->last;
 	check.after = out->state;
 	if (error == 0 && (out->state.fw_read_offset != q->fw_read_offset ||
@@ -956,6 +1022,11 @@ fwqueue_observe(struct pvr_fwmem *mem,
 	    out->state.firmware_started_timestamp != boot->firmware_started_timestamp))
 		error = EPROTO;
 	out->error = error;
+	/* An opted-in queue waits out an in-progress recovery; nothing froze. */
+	if (error == FWQUEUE_HWR_BUSY) {
+		out->error = EAGAIN;
+		return EAGAIN;
+	}
 	if (error != 0) {
 		const struct pvr_fwinit_region *region;
 		const struct rogue_fwif_hwrinfobuf *hwr;
@@ -1037,9 +1108,10 @@ pvr_fwqueue_attach(struct pvr_fwmem *mem,
 		return error;
 	if (q->attached || q->failed)
 		return EBUSY;
-	if (previous->error != 0 || !fwqueue_last_valid(previous, mem->image.info.bvnc) ||
-	    fwprobe_runtime_valid(&previous->before, previous->after.log_type, false, mem->image.info.bvnc) != 0 ||
-	    fwprobe_runtime_valid(&previous->after, previous->after.log_type, false, mem->image.info.bvnc) != 0 ||
+	if (previous->error != 0 ||
+	    !fwqueue_last_valid(previous, mem->image.info.bvnc, FWQUEUE_GROW) ||
+	    fwprobe_runtime_valid(&previous->before, previous->after.log_type, 0, mem->image.info.bvnc) != 0 ||
+	    fwprobe_runtime_valid(&previous->after, previous->after.log_type, 0, mem->image.info.bvnc) != 0 ||
 	    previous->after.firmware_started_timestamp != boot->firmware_started_timestamp)
 		return EINVAL;
 	q->attached = true;
@@ -1184,8 +1256,9 @@ pvr_fwqueue_cmd(bus_space_tag_t bst, bus_space_handle_t bsh,
 	slot = (q->last.slot + 1) & (PVR_FWINIT_KCCB_COUNT - 1);
 	memset(out, 0, sizeof(*out));
 	error = fwprobe_run(bst, bsh, mem, boot, &q->last, &built, slot,
-	    expected_log_type, true, q->fw_read_offset, NULL, NULL, out);
-	if (fwqueue_last_valid(out, mem->image.info.bvnc)) {
+	    expected_log_type, true, fwqueue_events(q), q->fw_read_offset,
+	    NULL, NULL, out);
+	if (fwqueue_last_valid(out, mem->image.info.bvnc, fwqueue_events(q))) {
 		memcpy(&q->last, out, sizeof(*out));
 		q->expected_log_type = expected_log_type;
 	} else {
@@ -1214,19 +1287,17 @@ pvr_fwqueue_observe(struct pvr_fwmem *mem,
 	return fwqueue_observe(mem, boot, q, out);
 }
 
-int
-pvr_fwqueue_event(struct pvr_fwmem *mem,
-    const struct pvr_fwboot_result *boot,
-    struct pvr_fwqueue *q, uint32_t *id)
+/* Consume one admitted event; publish only the host-owned read offset. */
+static int
+fwqueue_consume(struct pvr_fwmem *mem, const struct pvr_fwboot_result *boot,
+    struct pvr_fwqueue *q, struct pvr_fwqueue_event *out)
 {
 	struct pvr_fwprobe_observation observation;
+	struct pvr_fwqueue_event event;
 	size_t offset;
-	uint32_t value, next;
+	uint32_t next;
 	int error;
 
-	error = fwqueue_validate(mem, boot, q, id, sizeof(*id), _Alignof(uint32_t));
-	if (error != 0)
-		return error;
 	error = fwqueue_owner_valid(mem, boot, q);
 	if (error != 0)
 		return error;
@@ -1235,8 +1306,18 @@ pvr_fwqueue_event(struct pvr_fwmem *mem,
 		return error;
 	if (observation.state.fw_read_offset == observation.state.fw_write_offset)
 		return ENOENT;
-	/* Runtime validation admits only a complete, known GROW request. */
-	value = observation.state.fw_freelist_id;
+	/* Runtime validation admitted only a complete, known event. */
+	memset(&event, 0, sizeof(event));
+	event.type = observation.state.fw_command;
+	event.id = observation.state.fw_freelist_id;
+	if (event.type == ROGUE_FWIF_FWCCB_CMD_CONTEXT_RESET_NOTIFICATION) {
+		event.reason = observation.state.fw_reset_reason;
+		event.dm = observation.state.fw_reset_dm;
+		event.job = observation.state.fw_reset_job;
+		event.flags = observation.state.fw_reset_flags;
+		event.pc = observation.state.fw_reset_pc;
+		event.fault = observation.state.fw_reset_fault;
+	}
 	next = (q->fw_read_offset + 1) & (PVR_FWINIT_FWCCB_COUNT - 1);
 	offset = mem->interface_layout.object[PVR_FWINIT_FWCCB_CTL].offset +
 	    offsetof(struct rogue_fwif_ccb_ctl, read_offset);
@@ -1246,10 +1327,51 @@ pvr_fwqueue_event(struct pvr_fwmem *mem,
 	bus_dmamap_sync(mem->dmat, mem->work.map, offset, sizeof(uint32_t),
 	    BUS_DMASYNC_PREWRITE);
 	q->fw_read_offset = next;
-	/* Confirm the read publication and health before dispatching the copy. */
+	/*
+	 * Confirm the read publication and health before dispatching the copy.
+	 * A consumed event is still delivered during a transient recovery; the
+	 * caller's next observation rechecks health.
+	 */
 	error = fwqueue_observe(mem, boot, q, &observation);
+	if (error != 0 && (error != EAGAIN || q->failed))
+		return error;
+	*out = event;
+	return 0;
+}
+
+int
+pvr_fwqueue_event(struct pvr_fwmem *mem,
+    const struct pvr_fwboot_result *boot,
+    struct pvr_fwqueue *q, uint32_t *id)
+{
+	struct pvr_fwqueue_event event;
+	int error;
+
+	error = fwqueue_validate(mem, boot, q, id, sizeof(*id), _Alignof(uint32_t));
 	if (error != 0)
 		return error;
-	*id = value;
+	error = fwqueue_consume(mem, boot, q, &event);
+	if (error != 0)
+		return error;
+	/* This interface dispatches only GROW requests. */
+	if (event.type != ROGUE_FWIF_FWCCB_CMD_FREELIST_GROW) {
+		q->failed = true;
+		return EPROTO;
+	}
+	*id = event.id;
 	return 0;
+}
+
+int
+pvr_fwqueue_next(struct pvr_fwmem *mem,
+    const struct pvr_fwboot_result *boot,
+    struct pvr_fwqueue *q, struct pvr_fwqueue_event *out)
+{
+	int error;
+
+	error = fwqueue_validate(mem, boot, q, out, sizeof(*out),
+	    _Alignof(struct pvr_fwqueue_event));
+	if (error != 0)
+		return error;
+	return fwqueue_consume(mem, boot, q, out);
 }

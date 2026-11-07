@@ -113,7 +113,11 @@ the bounded queue check if needed and adopts that queue for the DRM backend.
 Do not run the diagnostic compute probe before adoption: its exposed allocations
 are retained and the DRM path refuses to reuse them. Once adoption is attempted,
 diagnostic compute cannot mutate the firmware queue. The owner retains resources
-on uncertain failures; this path does not claim a working reset or recovery.
+on uncertain failures; this path does not claim a GPU reset or firmware reboot.
+The firmware's own recovery of one context is handled: after a validated
+single-context `CONTEXT_RESET_NOTIFICATION`, only that context and its VM
+fail with `EIO`, and `drm_failed` stays 0 for new contexts and processes.
+`sys/dev/powervr/README.md` lists the admitted reports and the fail-stop cases.
 The cached `drm_queue_read`, `drm_queue_write`, `drm_queue_error`,
 `drm_queue_command` and `drm_failed` values do not read hardware. A successful
 context-handle destroy alone does not prove firmware cleanup; the trial check

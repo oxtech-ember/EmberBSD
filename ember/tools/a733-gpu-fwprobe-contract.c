@@ -227,6 +227,8 @@ firmware_tick(void)
 		case 8: fw32(3, SYSDATA + 8, 2); break;
 		case 9: fw32(3, 128, 0); break;
 		case 10: fw32(3, TRACECTL, test_log_type ^ 4); break;
+		/* A single-context recovery in progress, then complete. */
+		case 11: fw32(3, SYSDATA + 3576, completions < 3 ? 3 : 1); break;
 		default: break;
 		}
 	}
@@ -1395,6 +1397,109 @@ grow_event(uint32_t id)
 }
 
 static void
+reset_event(uint32_t context, uint32_t reason, uint32_t dm, uint32_t flags)
+{
+	uint32_t slot = FCOMMAND + service.fw_read_offset * 88;
+
+	fw32(3, slot, ROGUE_FWIF_FWCCB_CMD_CONTEXT_RESET_NOTIFICATION);
+	fw32(3, slot + 4, 0);
+	fw32(3, slot + 8, context);
+	fw32(3, slot + 12, reason);
+	fw32(3, slot + 16, dm);
+	fw32(3, slot + 20, 759);
+	fw32(3, slot + 24, flags);
+	fw32(3, slot + 32, 0x400b0000);
+	fw32(3, slot + 40, 0x01f30800);
+	fw32(3, slot + 44, 0x80);
+	fw32(3, FCONTROL, (service.fw_read_offset + 1) & 31);
+}
+
+/* Per-context recovery is admitted only after an explicit queue opt-in. */
+static void
+reset_event_tests(void)
+{
+	struct sun60i_a733_gpu_fwprobe_observation observation;
+	struct pvr_fwqueue_event event;
+	uint32_t id;
+	unsigned int start = assertions;
+
+	prepare_service(); service.reset_events = true;
+	reset_event(384, ROGUE_CONTEXT_RESET_REASON_GUILTY_LOCKUP, 3,
+	    ROGUE_FWIF_FWCCB_CMD_CONTEXT_RESET_FLAG_PF);
+	CHECK(sun60i_a733_gpu_fwqueue_observe(&owner, &booted, &service,
+	    &observation) == 0 && !service.failed);
+	memset(&event, 0xa5, sizeof(event));
+	CHECK(pvr_fwqueue_next(&owner, &booted, &service, &event) == 0);
+	CHECK(event.type == ROGUE_FWIF_FWCCB_CMD_CONTEXT_RESET_NOTIFICATION);
+	CHECK(event.id == 384 && event.job == 759 && event.dm == 3);
+	CHECK(event.reason == ROGUE_CONTEXT_RESET_REASON_GUILTY_LOCKUP);
+	CHECK(event.flags == ROGUE_FWIF_FWCCB_CMD_CONTEXT_RESET_FLAG_PF);
+	CHECK(event.pc == UINT64_C(0x400b0000) &&
+	    event.fault == UINT64_C(0x8001f30800));
+	CHECK(!service.failed && service.fw_read_offset == 1 &&
+	    event_read_writes == 1);
+	CHECK(pvr_fwqueue_next(&owner, &booted, &service, &event) == ENOENT);
+	/* GROW keeps its meaning; innocent resets are reports too. */
+	grow_event(77);
+	CHECK(pvr_fwqueue_next(&owner, &booted, &service, &event) == 0);
+	CHECK(event.type == ROGUE_FWIF_FWCCB_CMD_FREELIST_GROW && event.id == 77);
+	reset_event(385, ROGUE_CONTEXT_RESET_REASON_INNOCENT_OVERRUNING, 2, 0);
+	CHECK(pvr_fwqueue_next(&owner, &booted, &service, &event) == 0);
+	CHECK(event.id == 385 && event.flags == 0 && !service.failed);
+	/* An in-progress recovery is transient, then healthy again. */
+	fw32(3, SYSDATA + 3576, 3);
+	CHECK(sun60i_a733_gpu_fwqueue_observe(&owner, &booted, &service,
+	    &observation) == EAGAIN && !service.failed);
+	CHECK(pvr_fwqueue_next(&owner, &booted, &service, &event) == EAGAIN);
+	CHECK(!service.failed && event_read_writes == 3);
+	fw32(3, SYSDATA + 3576, 1);
+	CHECK(sun60i_a733_gpu_fwqueue_observe(&owner, &booted, &service,
+	    &observation) == 0);
+	/* KCCB consumption polls through the same transient state. */
+	next_service(ROGUE_FWIF_KCCB_CMD_KICK); response = 0;
+	firmware_failure = 11; complete_at = 4;
+	CHECK(run_service() == 0 && !service.failed);
+	firmware_failure = 0;
+	prepare_service(); next_service(ROGUE_FWIF_KCCB_CMD_KICK); response = 0;
+	firmware_failure = 11; complete_at = 4;
+	CHECK(run_service() == EIO); service_frozen();
+	firmware_failure = 0;
+	/* Unknown, global or firmware resets and faults still freeze service. */
+	for (unsigned int n = 0; n < 10; n++) {
+		uint32_t reason = ROGUE_CONTEXT_RESET_REASON_GUILTY_LOCKUP;
+		uint32_t flags = 0, dm = 3, context = 384;
+
+		prepare_service(); service.reset_events = true;
+		if (n == 0) flags = ROGUE_FWIF_FWCCB_CMD_CONTEXT_RESET_FLAG_ALL_CTXS;
+		if (n == 1) reason = ROGUE_CONTEXT_RESET_REASON_NONE;
+		if (n == 2) reason = ROGUE_CONTEXT_RESET_REASON_HARD_CONTEXT_SWITCH;
+		if (n == 3) reason = ROGUE_CONTEXT_RESET_REASON_FW_PAGEFAULT;
+		if (n == 4) dm = PVR_FWIF_DM_MAX;
+		if (n == 5) context = 0;
+		if (n == 6) flags = 4;
+		reset_event(context, reason, dm, flags);
+		if (n == 7) fw32(3, FCOMMAND + 4, 1);
+		if (n == 8) fw32(3, SYSDATA + 3576, 3U | (1U << 6));
+		if (n == 9) fw32(3, SYSDATA + 3536, 1);
+		memset(&event, 0xa5, sizeof(event));
+		CHECK(pvr_fwqueue_next(&owner, &booted, &service, &event) != 0);
+		CHECK(service.failed && event_read_writes == 0);
+	}
+	/* The GROW-only interface never dispatches a reset as a free list. */
+	prepare_service(); service.reset_events = true; id = 0xaaaaaaaa;
+	reset_event(384, ROGUE_CONTEXT_RESET_REASON_GUILTY_LOCKUP, 3, 0);
+	CHECK(sun60i_a733_gpu_fwqueue_event(&owner, &booted, &service, &id) == EPROTO);
+	CHECK(service.failed && id == 0xaaaaaaaa);
+	/* Cleared compatibility checks are not a recovery in progress. */
+	prepare_service(); service.reset_events = true;
+	next_service(ROGUE_FWIF_KCCB_CMD_KICK); response = 0;
+	firmware_failure = 2; complete_at = 4;
+	CHECK(run_service() == EPROTO); service_frozen();
+	firmware_failure = 0;
+	printf("a733-gpu-fwqueue reset events: PASS %u checks\n", assertions - start);
+}
+
+static void
 event_tests(void)
 {
 	struct sun60i_a733_gpu_fwprobe_observation observation;
@@ -1875,6 +1980,7 @@ main(void)
 	service_tests();
 	combined_tests();
 	event_tests();
+	reset_event_tests();
 	/* No real device ran. The test alone owns final reclamation. */
 	for (unsigned int i = 0; i < 5; i++) {
 		free(cpu[i]);

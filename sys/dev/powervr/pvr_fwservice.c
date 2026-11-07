@@ -21,6 +21,9 @@
 #define FWSERVICE_FLUSH_FLAGS (ROGUE_FWIF_MMUCACHEDATA_FLAGS_PT | \
     ROGUE_FWIF_MMUCACHEDATA_FLAGS_PD | ROGUE_FWIF_MMUCACHEDATA_FLAGS_PC | \
     ROGUE_FWIF_MMUCACHEDATA_FLAGS_TLB | ROGUE_FWIF_MMUCACHEDATA_FLAGS_INTERRUPT)
+/* Bounded busy wait for a reported in-progress recovery, under the gates. */
+#define FWSERVICE_HWR_POLL_US	1000
+#define FWSERVICE_HWR_POLLS	250
 
 static bool
 fwservice_ready(const struct pvr_fwservice *service)
@@ -74,6 +77,96 @@ pvr_fwservice_set_events(struct pvr_fwservice *service,
 	return 0;
 }
 
+int
+pvr_fwservice_enable_resets(struct pvr_fwservice *service)
+{
+
+	if (!fwservice_ready(service))
+		return EIO;
+	if (service->dispatching)
+		return EBUSY;
+	service->queue.reset_events = true;
+	return 0;
+}
+
+bool
+pvr_fwservice_context_lost(const struct pvr_fwservice *service, uint32_t id)
+{
+	unsigned int i;
+
+	if (id == 0)
+		return false;
+	for (i = 0; i < PVR_FWSERVICE_LOST; i++)
+		if (service->lost[i] == id)
+			return true;
+	return false;
+}
+
+static int
+fwservice_stuck(struct pvr_fwservice *service)
+{
+
+	printf("PVR_HWR_STUCK: recovery still in progress after %u us\n",
+	    FWSERVICE_HWR_POLLS * FWSERVICE_HWR_POLL_US);
+	service->queue.failed = true;
+	return ETIMEDOUT;
+}
+
+/* Wait out a transient recovery; persistent recovery freezes the service. */
+static int
+fwservice_observe(struct pvr_fwservice *service,
+    struct pvr_fwprobe_observation *observation)
+{
+	unsigned int polls;
+	int error;
+
+	for (polls = 0; polls < FWSERVICE_HWR_POLLS; polls++) {
+		error = pvr_fwqueue_observe(service->memory, service->boot,
+		    &service->queue, observation);
+		if (error != EAGAIN)
+			return error;
+		delay(FWSERVICE_HWR_POLL_US);
+	}
+	return fwservice_stuck(service);
+}
+
+static int
+fwservice_next(struct pvr_fwservice *service, struct pvr_fwqueue_event *event)
+{
+	unsigned int polls;
+	int error;
+
+	for (polls = 0; polls < FWSERVICE_HWR_POLLS; polls++) {
+		error = pvr_fwqueue_next(service->memory, service->boot,
+		    &service->queue, event);
+		if (error != EAGAIN)
+			return error;
+		delay(FWSERVICE_HWR_POLL_US);
+	}
+	return fwservice_stuck(service);
+}
+
+/*
+ * Firmware has already recovered the hardware and dropped this context's
+ * running work. Record the context; its owner refuses further work on it.
+ */
+static void
+fwservice_context_reset(struct pvr_fwservice *service,
+    const struct pvr_fwqueue_event *event)
+{
+
+	printf("PVR_CONTEXT_RESET: ctx=%u job=%u reason=%u dm=%u flags=%#x\n",
+	    event->id, event->job, event->reason, event->dm, event->flags);
+	if ((event->flags & ROGUE_FWIF_FWCCB_CMD_CONTEXT_RESET_FLAG_PF) != 0 &&
+	    service->queue.page_fault != NULL)
+		service->queue.page_fault(service->queue.fault_cookie,
+		    event->id, event->job, event->pc, event->fault);
+	if (pvr_fwservice_context_lost(service, event->id))
+		return;
+	service->lost[service->lost_next] = event->id;
+	service->lost_next = (service->lost_next + 1) % PVR_FWSERVICE_LOST;
+}
+
 /* No callback may recursively enter the transport while it owns an event. */
 static int
 fwservice_drain(struct pvr_fwservice *service,
@@ -81,6 +174,7 @@ fwservice_drain(struct pvr_fwservice *service,
 {
 	struct pvr_fwprobe_result result;
 	struct rogue_fwif_kccb_cmd command;
+	struct pvr_fwqueue_event event;
 	uint32_t id;
 	unsigned int count;
 	int error, completion;
@@ -91,14 +185,19 @@ fwservice_drain(struct pvr_fwservice *service,
 	}
 	service->dispatching = true;
 	for (count = 0; count < PVR_FWINIT_FWCCB_COUNT; count++) {
-		error = pvr_fwqueue_event(service->memory, service->boot,
-		    &service->queue, &id);
+		error = fwservice_next(service, &event);
 		if (error == ENOENT) {
 			error = 0;
 			break;
 		}
 		if (error != 0)
 			break;
+		if (event.type ==
+		    ROGUE_FWIF_FWCCB_CMD_CONTEXT_RESET_NOTIFICATION) {
+			fwservice_context_reset(service, &event);
+			continue;
+		}
+		id = event.id;
 		if (!service->events_set) {
 			error = EOPNOTSUPP;
 			break;
@@ -114,8 +213,7 @@ fwservice_drain(struct pvr_fwservice *service,
 		    service->memory, service->boot, &service->queue, &command,
 		    service->queue.expected_log_type, &result);
 		if (error == 0)
-			error = pvr_fwqueue_observe(service->memory,
-			    service->boot, &service->queue, observation);
+			error = fwservice_observe(service, observation);
 		completion = service->grow_complete(service->event_cookie, id, error);
 		if (error == 0)
 			error = completion;
@@ -125,8 +223,7 @@ fwservice_drain(struct pvr_fwservice *service,
 			break;
 	}
 	if (error == 0) {
-		error = pvr_fwqueue_observe(service->memory,
-		    service->boot, &service->queue, observation);
+		error = fwservice_observe(service, observation);
 		if (error == 0 && observation->state.fw_read_offset !=
 		    observation->state.fw_write_offset)
 			error = ELOOP;
@@ -176,8 +273,7 @@ pvr_fwservice_observe(struct pvr_fwservice *service,
 		service->queue.failed = true;
 		return EDEADLK;
 	}
-	error = pvr_fwqueue_observe(service->memory, service->boot,
-	    &service->queue, result);
+	error = fwservice_observe(service, result);
 	if (error != 0)
 		return error;
 	error = fwservice_drain(service, result);

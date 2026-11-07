@@ -46,7 +46,11 @@
 struct pvr_fwprobe_snapshot {
 	uint32_t read_offset, write_offset, wrap_mask, cmd_size, rtn;
 	uint32_t fw_read_offset, fw_write_offset, fw_wrap_mask, fw_cmd_size;
+	/* fw_freelist_id is the first payload word of any pending FWCCB event. */
 	uint32_t fw_command, fw_flags, fw_freelist_id;
+	/* Copied only from a pending CONTEXT_RESET_NOTIFICATION, otherwise zero. */
+	uint32_t fw_reset_reason, fw_reset_dm, fw_reset_job, fw_reset_flags;
+	uint64_t fw_reset_pc, fw_reset_fault;
 	uint32_t cmds_executed, pow_state, hwr_state, fw_faults;
 	uint32_t log_type, fw_state, os_state, alive_fw_token, alive_os_token;
 	uint32_t mmucache_sync;
@@ -184,6 +188,12 @@ struct pvr_fwqueue {
 	/* Optional error observer under the platform gate. No queue operations. */
 	void *fault_cookie;
 	void (*page_fault)(void *, uint32_t, uint32_t, uint64_t, uint64_t);
+	/*
+	 * Opt-in for per-context recovery: admit validated reports of one
+	 * recovered guilty or innocent context and tolerate an in-progress HWR
+	 * as a transient state. Set once under the platform gate after attach.
+	 */
+	bool reset_events;
 	bool attached, failed;
 	uint32_t expected_log_type, fw_read_offset;
 	const struct pvr_fwmem *owner;
@@ -227,6 +237,9 @@ int pvr_fwqueue_cmd(bus_space_tag_t, bus_space_handle_t,
  * Read fresh fault state without consuming FWCCB or changing last.
  * Valid pending GROW events may remain during KCCB consumption. They must
  * be drained by the service before job acceptance. Unknown events failstop.
+ * With reset_events, a validated single-context reset report is also a
+ * pending event, and HWR_RESET_IN_PROGRESS alone returns EAGAIN without
+ * freezing the queue. Firmware faults and every other HWR state failstop.
  */
 int pvr_fwqueue_observe(struct pvr_fwmem *,
     const struct pvr_fwboot_result *,
@@ -244,5 +257,23 @@ int pvr_fwqueue_observe(struct pvr_fwmem *,
 int pvr_fwqueue_event(struct pvr_fwmem *,
     const struct pvr_fwboot_result *,
     struct pvr_fwqueue *, uint32_t *);
+
+/* One consumed FWCCB event: a GROW request or a recovered context reset. */
+struct pvr_fwqueue_event {
+	uint32_t type;		/* ROGUE_FWIF_FWCCB_CMD_* */
+	uint32_t id;		/* free list ID or server common context ID */
+	uint32_t reason, dm, job, flags;
+	uint64_t pc, fault;
+};
+
+/*
+ * Like pvr_fwqueue_event(), but also consume a validated reset report when
+ * reset_events is set. The report is a copy; the caller must record it
+ * before job acceptance. The firmware context stays owned by firmware until
+ * its normal CLEANUP is acknowledged.
+ */
+int pvr_fwqueue_next(struct pvr_fwmem *,
+    const struct pvr_fwboot_result *,
+    struct pvr_fwqueue *, struct pvr_fwqueue_event *);
 
 #endif /* _SUN60I_PVR_FWPROBE_H */

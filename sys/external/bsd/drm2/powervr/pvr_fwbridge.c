@@ -177,11 +177,24 @@ fwbridge_set_events(void *cookie, const struct pvr_fw_events *events)
 		return EINVAL;
 	error = pvr_fwservice_set_events(&bridge->service,
 	    events->cookie, events->grow_prepare, events->grow_complete);
+	/* Only the GE8300 profile has qualified single-context recovery. */
+	if (error == 0 &&
+	    bridge->service.memory->profile == PVR_FW_PROFILE_GE8300)
+		error = pvr_fwservice_enable_resets(&bridge->service);
 	if (error == 0) {
 		bridge->service.queue.fault_cookie = events->cookie;
 		bridge->service.queue.page_fault = events->page_fault;
 	}
 	return error;
+}
+
+static bool
+fwbridge_context_lost(void *cookie, uint32_t id)
+{
+	struct pvr_fwbridge *bridge = cookie;
+
+	KASSERT(mutex_owned(bridge->lock));
+	return pvr_fwservice_context_lost(&bridge->service, id);
 }
 
 static void
@@ -240,6 +253,7 @@ pvr_fwbridge_prepare(struct pvr_fwbridge *bridge,
 		.check = fwbridge_check,
 		.fail = fwbridge_fail,
 		.set_events = fwbridge_set_events,
+		.context_lost = fwbridge_context_lost,
 	};
 	return 0;
 }

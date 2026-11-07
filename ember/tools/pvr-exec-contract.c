@@ -31,7 +31,7 @@ typedef void *bus_dma_tag_t;
 #include "stream.h"
 struct idr { void *slot[32]; };
 struct drm_device { bus_dma_tag_t dmat; };
-struct pvr_file_vm { unsigned refs, pins; bool alive, failed; };
+struct pvr_file_vm { unsigned refs, pins; bool alive, failed, lost; };
 struct drm_file {
 	struct pvr_exec_file *execution;
 	struct pvr_file_vm *vm;
@@ -60,6 +60,9 @@ static int context_error, freelist_error, context_destroy_error, freelist_destro
 static unsigned context_busy, freelist_busy, context_destroys, freelist_destroys;
 static unsigned context_creates, freelist_creates, pauses, copies, ids, publishes;
 static unsigned unpins, vm_puts, fails, retained_count, context_order, freelist_order;
+/* A firmware-reported reset of the destroyed context keeps retention local. */
+static bool context_lost;
+static unsigned retains;
 static unsigned event_order, unpin_order, put_order;
 static unsigned registry_adds, registry_removes;
 static int registry_error, registry_remove_error;
@@ -183,6 +186,12 @@ void pvr_file_vm_put(struct pvr_file_vm *vm)
 }
 void pvr_file_vm_fail(struct pvr_file_vm *vm)
 { CHECK(gated && vm->alive); vm->failed = true; fails++; }
+void pvr_file_vm_retain(struct pvr_file_vm *vm)
+{ CHECK(gated && vm->alive && !vm->failed); vm->lost = vm->failed = true; retains++; }
+bool pvr_context_lost(const struct pvr_context *ctx)
+{ CHECK(gated && ctx != NULL); return context_lost; }
+bool pvr_context_retained(const struct pvr_context *ctx)
+{ CHECK(gated && ctx != NULL); return false; }
 int pvr_file_vm_publish(struct pvr_file_vm *vm, const struct pvr_backend *be, uint32_t *addr)
 { CHECK(gated && vm->alive && be == &backend); publishes++; if (publish_error != 0) return publish_error; *addr = 0xc0123000; return 0; }
 int pvr_file_vm_pin(struct pvr_file_vm *vm, uint64_t address, size_t size,
@@ -271,6 +280,7 @@ static void reset(void)
 	context_busy = freelist_busy = context_destroys = freelist_destroys = 0;
 	context_creates = freelist_creates = pauses = copies = ids = publishes = 0;
 	unpins = vm_puts = fails = context_order = freelist_order = 0;
+	context_lost = false; retains = 0;
 	event_order = unpin_order = put_order = 0; observed_pin_size = 0; retained_is_freelist = false;
 }
 static void drop_vm_handle(struct drm_file *f)
@@ -424,15 +434,18 @@ static void context_ownership(void)
 		CHECK(memcmp(&a, &saved, sizeof(a)) == 0 && vms[0].refs == 1);
 		CHECK(context_destroys == (i == 0 ? 0U : 1U)); close_files();
 	}
-	for (unsigned i = 0; i < 3; i++) {
+	for (unsigned i = 0; i < 5; i++) {
 		reset(); a = context_args(1); CHECK(pvr_create_context(&device, &a, &first) == 0);
-		context_busy = i == 0 ? 2 : i == 1 ? 1000 : 0;
-		context_destroy_error = i == 2 ? EIO : 0;
+		context_busy = i == 0 ? 2 : i == 1 || i == 3 ? 1000 : 0;
+		context_destroy_error = i == 2 || i == 4 ? EIO : 0;
+		/* A drained lost context's failed cleanup retains only its own VM. */
+		context_lost = i >= 3;
 		close_files();
 		if (i == 0) CHECK(context_destroys == 3 && pauses == 2 && retained_count == 0);
-		else { CHECK(context_destroys == (i == 1 ? 100U : 1U));
-			CHECK(retained_count == 1 && fails == 1 && vms[0].refs == 1 && vms[0].alive);
-			CHECK(pauses == (i == 1 ? 100U : 0U)); reset_reclaim(); }
+		else { CHECK(context_destroys == (i == 1 || i == 3 ? 100U : 1U));
+			CHECK(retained_count == 1 && vms[0].refs == 1 && vms[0].alive);
+			CHECK(fails == (i >= 3 ? 0U : 1U) && retains == (i >= 3 ? 1U : 0U));
+			CHECK(pauses == (i == 1 || i == 3 ? 100U : 0U)); reset_reclaim(); }
 	}
 	reset(); a = context_args(1); saved = a; context_error = ENOMEM;
 	context_partial = true; context_destroy_error = EIO;

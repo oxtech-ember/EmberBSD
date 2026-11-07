@@ -49,18 +49,26 @@
 #define PVR_CONTEXT_SPIN_POLLS 160
 #define PVR_CONTEXT_IRQ_SPIN_POLLS 8
 #define PVR_CONTEXT_SPIN_US 25
+/* After a reported reset, wait this long for firmware to drain the CCCBs. */
+#define PVR_CONTEXT_LOST_DRAIN_SECONDS 1
 
 struct pvr_context_queue {
 	struct pvr_fw_object ring, control, state, timeline;
 	uint32_t offset, written, sequence;
 	bool exposed, cleaned;
 };
+/*
+ * failed: firmware may still own submitted work; never clean up or submit.
+ * lost: firmware reported a recovered reset of this context; submit nothing.
+ * A lost context whose CCCBs drained retires through the normal CLEANUP and
+ * leaves the backend usable. Every other failure freezes the whole backend.
+ */
 struct pvr_context {
 	const struct pvr_backend *backend;
 	struct pvr_fw_object firmware;
 	struct pvr_context_queue queue[2];
-	uint32_t type, count;
-	bool failed;
+	uint32_t type, count, id;
+	bool failed, lost;
 	void (*wait_gate)(void *, bool);
 	void *wait_cookie;
 };
@@ -76,6 +84,48 @@ pvr_context_mark(const struct pvr_backend *be)
 {
 
 	return be->irq_wait != NULL ? be->irq_mark(be->cookie) : 0;
+}
+
+/* Query only after a successful check() has drained firmware events. */
+static bool
+pvr_context_reset_seen(struct pvr_context *ctx)
+{
+	const struct pvr_backend *be = ctx->backend;
+
+	if (!ctx->lost && be->context_lost != NULL &&
+	    be->context_lost(be->cookie, ctx->id)) {
+		printf("PVR_CONTEXT_LOST: ctx=%u type=%u\n", ctx->id, ctx->type);
+		ctx->lost = true;
+	}
+	return ctx->lost;
+}
+
+/* A reported reset shortens the wait for the remaining CCCB consumption. */
+static void
+pvr_context_lost_deadline(struct timespec *deadline)
+{
+	struct timespec drain;
+
+	nanouptime(&drain);
+	drain.tv_sec += PVR_CONTEXT_LOST_DRAIN_SECONDS;
+	if (timespeccmp(&drain, deadline, <))
+		*deadline = drain;
+}
+
+/*
+ * Record a failed operation. A lost context whose queues drained keeps its
+ * cleanup path. If firmware did not drain a reported context, it may still
+ * run or retry that work, so this is not a recovered state: freeze.
+ */
+static void
+pvr_context_failure(struct pvr_context *ctx, bool drained)
+{
+	const struct pvr_backend *be = ctx->backend;
+
+	if (ctx->lost && drained)
+		return;
+	ctx->failed = true;
+	be->fail(be->cookie);
 }
 
 /* Interrupts are hints; only elapsed monotonic time exhausts the wait. */
@@ -226,6 +276,7 @@ pvr_context_create(const struct pvr_backend *be,
 	ctx = kmem_zalloc(sizeof(*ctx), KM_SLEEP);
 	ctx->backend = be;
 	ctx->type = config->type;
+	ctx->id = config->id;
 	ctx->count = config->type == DRM_PVR_CTX_TYPE_RENDER ? 2 : 1;
 	*owner = ctx;
 	error = be->alloc(be->cookie, size, &ctx->firmware);
@@ -343,7 +394,7 @@ pvr_context_compute(struct pvr_context *ctx,
 		return EINVAL;
 	if (ctx->type != DRM_PVR_CTX_TYPE_COMPUTE)
 		return EOPNOTSUPP;
-	if (ctx->failed)
+	if (ctx->failed || ctx->lost)
 		return EIO;
 	be = ctx->backend;
 	queue = &ctx->queue[0];
@@ -352,6 +403,8 @@ pvr_context_compute(struct pvr_context *ctx,
 	error = be->check(be->cookie);
 	if (error != 0)
 		return error;
+	if (pvr_context_reset_seen(ctx))
+		return EIO;
 	control = queue->control.cpu;
 	be->sync(be->cookie, &queue->control, BUS_DMASYNC_POSTREAD);
 	read = control->read_offset;
@@ -403,10 +456,16 @@ pvr_context_compute(struct pvr_context *ctx,
 		be->sync(be->cookie, &queue->control, BUS_DMASYNC_POSTREAD);
 		read = control->read_offset;
 		be->sync(be->cookie, &queue->control, BUS_DMASYNC_PREREAD);
-		if (value == queue->sequence && read == queue->written) {
+		/* Recovery may skip the timeline update of the reset job. */
+		if ((value == queue->sequence || ctx->lost) &&
+		    read == queue->written) {
 			error = be->check(be->cookie);
 			if (error != 0)
 				goto failed;
+			if (pvr_context_reset_seen(ctx)) {
+				pvr_context_failure(ctx, true);
+				return EIO;
+			}
 			be->sync(be->cookie, &queue->ring, BUS_DMASYNC_POSTWRITE);
 			return 0;
 		}
@@ -414,15 +473,16 @@ pvr_context_compute(struct pvr_context *ctx,
 			error = be->check(be->cookie);
 			if (error != 0)
 				goto failed;
+			if (!ctx->lost && pvr_context_reset_seen(ctx))
+				pvr_context_lost_deadline(&deadline);
 		}
 		error = pvr_context_pause(ctx, i, mark, &deadline);
 		if (error != 0)
 			goto failed;
 	}
 failed:
-	ctx->failed = true;
-	be->fail(be->cookie);
-	return error;
+	pvr_context_failure(ctx, false);
+	return ctx->lost ? EIO : error;
 }
 
 /* The caller validates both queues before publishing either half of a pair. */
@@ -492,22 +552,27 @@ pvr_context_graphics_kick(struct pvr_context *ctx, unsigned index,
 	queue->exposed = true;
 }
 
-/* Wait for all queues together. Geometry may need a partial render to finish. */
+/*
+ * Wait for all queues together. Geometry may need a partial render to finish.
+ * *drained reports that a lost context's queues were consumed by firmware.
+ */
 static int
-pvr_context_graphics_wait(struct pvr_context *ctx, unsigned mask)
+pvr_context_graphics_wait(struct pvr_context *ctx, unsigned mask, bool *drained)
 {
 	const struct pvr_backend *be = ctx->backend;
 	struct pvr_context_queue *queue;
 	struct rogue_fwif_cccb_ctl *control;
 	uint32_t read, value;
 	struct timespec deadline;
-	unsigned i, j, mark, done = 0;
+	unsigned i, j, mark, done = 0, consumed;
 	int error;
 
+	*drained = false;
 	nanouptime(&deadline);
 	deadline.tv_sec += PVR_CONTEXT_WAIT_SECONDS;
 	for (i = 0; ; i++) {
 		mark = pvr_context_mark(be);
+		consumed = 0;
 		for (j = 0; j < ctx->count; j++) {
 			if ((mask & (1U << j)) == 0)
 				continue;
@@ -521,11 +586,18 @@ pvr_context_graphics_wait(struct pvr_context *ctx, unsigned mask)
 			be->sync(be->cookie, &queue->control, BUS_DMASYNC_PREREAD);
 			if (value == queue->sequence && read == queue->written)
 				done |= 1U << j;
+			if (read == queue->written)
+				consumed |= 1U << j;
 		}
-		if (done == mask) {
+		/* Recovery may skip the timeline update of the reset job. */
+		if (done == mask || (ctx->lost && consumed == mask)) {
 			error = be->check(be->cookie);
 			if (error != 0)
 				return error;
+			if (pvr_context_reset_seen(ctx)) {
+				*drained = true;
+				return EIO;
+			}
 			for (j = 0; j < ctx->count; j++)
 				if ((mask & (1U << j)) != 0)
 					be->sync(be->cookie, &ctx->queue[j].ring,
@@ -536,6 +608,8 @@ pvr_context_graphics_wait(struct pvr_context *ctx, unsigned mask)
 			error = be->check(be->cookie);
 			if (error != 0)
 				return error;
+			if (!ctx->lost && pvr_context_reset_seen(ctx))
+				pvr_context_lost_deadline(&deadline);
 		}
 		error = pvr_context_pause(ctx, i, mark, &deadline);
 		if (error != 0)
@@ -549,6 +623,7 @@ pvr_context_graphics_send(struct pvr_context *ctx,
 {
 	const struct pvr_backend *be = ctx->backend;
 	uint32_t result;
+	bool drained = false;
 	int error;
 
 	error = be->command(be->cookie, kick, &result);
@@ -557,10 +632,11 @@ pvr_context_graphics_send(struct pvr_context *ctx,
 	    (result & ~ROGUE_FWIF_KCCB_RTN_SLOT_CMD_EXECUTED) != 0)
 		error = EIO;
 	if (error == 0)
-		error = pvr_context_graphics_wait(ctx, mask);
+		error = pvr_context_graphics_wait(ctx, mask, &drained);
 	if (error != 0) {
-		ctx->failed = true;
-		be->fail(be->cookie);
+		pvr_context_failure(ctx, drained);
+		if (ctx->lost)
+			error = EIO;
 	}
 	return error;
 }
@@ -586,9 +662,11 @@ pvr_context_render_pair(struct pvr_context *ctx,
 	    (fragment_type != ROGUE_FWIF_CCB_CMD_TYPE_FRAG &&
 	    fragment_type != ROGUE_FWIF_CCB_CMD_TYPE_FRAG_PR))
 		return EOPNOTSUPP;
-	if (ctx->failed)
+	if (ctx->failed || ctx->lost)
 		return EIO;
 	error = ctx->backend->check(ctx->backend->cookie);
+	if (error == 0 && pvr_context_reset_seen(ctx))
+		error = EIO;
 	if (error == 0)
 		error = pvr_context_queue_idle(ctx, 0);
 	if (error == 0)
@@ -622,9 +700,11 @@ pvr_context_graphics_single(struct pvr_context *ctx, unsigned index,
 	struct rogue_fwif_kccb_cmd kick;
 	int error;
 
-	if (ctx->failed)
+	if (ctx->failed || ctx->lost)
 		return EIO;
 	error = ctx->backend->check(ctx->backend->cookie);
+	if (error == 0 && pvr_context_reset_seen(ctx))
+		error = EIO;
 	if (error == 0)
 		error = pvr_context_queue_idle(ctx, index);
 	if (error != 0)
@@ -668,4 +748,18 @@ pvr_context_type(const struct pvr_context *ctx)
 {
 
 	return ctx->type;
+}
+
+bool
+pvr_context_lost(const struct pvr_context *ctx)
+{
+
+	return ctx->lost;
+}
+
+bool
+pvr_context_retained(const struct pvr_context *ctx)
+{
+
+	return ctx->failed;
 }

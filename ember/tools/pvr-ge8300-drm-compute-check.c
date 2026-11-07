@@ -249,6 +249,94 @@ run_once(int fd, uint32_t vm, const struct pvr_fwcompute_file *image,
 	    "destroy syncobj");
 }
 
+/*
+ * Optional single-context recovery check: unmap the canary page, submit the
+ * same job and require that only this context and VM fail. The backend must
+ * stay healthy; a later process is the separate proof of continued service.
+ */
+static void
+fault_once(int fd, uint32_t vm, const struct pvr_fwcompute_file *image,
+    const uint8_t *payload, struct object *scratch)
+{
+	uint8_t state[64] = { 0 };
+	struct drm_pvr_ioctl_create_context_args ctx = { 0 };
+	struct drm_pvr_ioctl_destroy_context_args destroy = { 0 };
+	struct drm_pvr_ioctl_vm_unmap_args unmap = { 0 };
+	struct drm_syncobj_create sync = { 0 };
+	struct drm_syncobj_destroy sync_destroy = { 0 };
+	struct drm_syncobj_wait wait = { 0 };
+	struct drm_pvr_sync_op signal = { 0 };
+	struct drm_pvr_job job = { 0 };
+	struct drm_pvr_ioctl_submit_jobs_args submit = { 0 };
+	struct timespec now;
+	uint32_t state_size = sizeof(state), flags, canary;
+	int rc, saved;
+
+	memcpy(state, &state_size, sizeof(state_size));
+	memcpy(state + 8, payload + image->static_offset, 56);
+	ctx.type = DRM_PVR_CTX_TYPE_COMPUTE;
+	ctx.priority = DRM_PVR_CTX_PRIORITY_NORMAL;
+	ctx.vm_context_handle = vm;
+	ctx.static_context_state = (uintptr_t)state;
+	ctx.static_context_state_len = sizeof(state);
+	must(ioctl(fd, DRM_IOCTL_PVR_CREATE_CONTEXT, &ctx) == 0,
+	    "create faulting context");
+	must(ioctl(fd, DRM_IOCTL_SYNCOBJ_CREATE, &sync) == 0, "create syncobj");
+	unmap.vm_context_handle = vm;
+	unmap.device_addr = scratch->va;
+	unmap.size = scratch->size;
+	must(ioctl(fd, DRM_IOCTL_PVR_VM_UNMAP, &unmap) == 0, "unmap canary page");
+	scratch->va = 0;
+	memcpy(&flags, payload + image->command_offset + 44, sizeof(flags));
+	signal.handle = sync.handle;
+	signal.flags = DRM_PVR_SYNC_OP_FLAG_SIGNAL;
+	job.type = DRM_PVR_JOB_TYPE_COMPUTE;
+	job.context_handle = ctx.handle;
+	job.flags = flags;
+	job.cmd_stream_len = 44;
+	job.cmd_stream = (uintptr_t)(payload + image->command_offset);
+	job.sync_ops = (struct drm_pvr_obj_array) {
+		.stride = sizeof(signal), .count = 1, .array = (uintptr_t)&signal
+	};
+	submit.jobs = (struct drm_pvr_obj_array) {
+		.stride = sizeof(job), .count = 1, .array = (uintptr_t)&job
+	};
+	memset(scratch->cpu, 0, sizeof(canary));
+	must(ioctl(fd, DRM_IOCTL_PVR_SUBMIT_JOBS, &submit) == 0 &&
+	    submit.jobs.count == 1, "submit faulting compute");
+	must(clock_gettime(CLOCK_MONOTONIC, &now) == 0, "monotonic time");
+	wait.handles = (uintptr_t)&sync.handle;
+	wait.count_handles = 1;
+	wait.flags = DRM_SYNCOBJ_WAIT_FLAGS_WAIT_ALL;
+	wait.timeout_nsec = ((int64_t)now.tv_sec + 15) * INT64_C(1000000000) + now.tv_nsec;
+	must(ioctl(fd, DRM_IOCTL_SYNCOBJ_WAIT, &wait) == 0, "faulting job fence");
+	memcpy(&canary, scratch->cpu, sizeof(canary));
+	must(canary == 0, "unmapped canary stays unwritten");
+	must(queue_value("hw.sun50ia133gpu0.drm_failed") == 0 &&
+	    queue_value("hw.sun50ia133gpu0.drm_queue_error") == 0,
+	    "backend survives the faulting job");
+	/* The lost VM refuses later work with EIO before any publication. */
+	submit.jobs.count = 1;
+	signal.flags = 0;
+	job.sync_ops.count = 0;
+	errno = 0;
+	rc = ioctl(fd, DRM_IOCTL_PVR_SUBMIT_JOBS, &submit);
+	saved = errno;
+	if (rc != -1 || saved != EIO) {
+		fprintf(stderr, "lost context submit: rc=%d errno=%d\n", rc, saved);
+		exit(1);
+	}
+	destroy.handle = ctx.handle;
+	must(ioctl(fd, DRM_IOCTL_PVR_DESTROY_CONTEXT, &destroy) == 0,
+	    "destroy lost context handle");
+	sync_destroy.handle = sync.handle;
+	must(ioctl(fd, DRM_IOCTL_SYNCOBJ_DESTROY, &sync_destroy) == 0,
+	    "destroy syncobj");
+	must(queue_value("hw.sun50ia133gpu0.drm_failed") == 0,
+	    "backend survives lost context retirement");
+	puts("FAULT: lost context isolated, backend healthy");
+}
+
 int
 main(int argc, char **argv)
 {
@@ -262,10 +350,13 @@ main(int argc, char **argv)
 	FILE *file;
 	int fd, before_unmap, final_read, final_write, final_command, final_error,
 	    final_failed;
+	bool fault;
 	size_t i;
 
-	if (argc != 3) {
-		fprintf(stderr, "usage: %s /dev/dri/renderD... GE-compute-image\n", argv[0]);
+	fault = argc == 4 && strcmp(argv[3], "fault") == 0;
+	if (argc != 3 && !fault) {
+		fprintf(stderr, "usage: %s /dev/dri/renderD... GE-compute-image [fault]\n",
+		    argv[0]);
 		return 2;
 	}
 	must(getpagesize() == 4096, "4K host pages");
@@ -293,6 +384,8 @@ main(int argc, char **argv)
 	must(scratch != NULL, "scratch object");
 	run_once(fd, vm.handle, &image, payload, scratch);
 	run_once(fd, vm.handle, &image, payload, scratch);
+	if (fault)
+		fault_once(fd, vm.handle, &image, payload, scratch);
 	before_unmap = queue_value("hw.sun50ia133gpu0.drm_queue_read");
 	for (i = 0; i < PVR_FWCOMPUTE_RESOURCES; i++) {
 		struct drm_pvr_ioctl_vm_unmap_args unmap = {
@@ -300,7 +393,8 @@ main(int argc, char **argv)
 			.size = objects[i].size
 		};
 		struct drm_gem_close close_bo = { .handle = objects[i].handle };
-		must(ioctl(fd, DRM_IOCTL_PVR_VM_UNMAP, &unmap) == 0, "VM unmap");
+		if (objects[i].va != 0)
+			must(ioctl(fd, DRM_IOCTL_PVR_VM_UNMAP, &unmap) == 0, "VM unmap");
 		must(munmap(objects[i].cpu, objects[i].size) == 0, "BO munmap");
 		must(ioctl(fd, DRM_IOCTL_GEM_CLOSE, &close_bo) == 0, "close BO");
 	}
@@ -323,6 +417,7 @@ main(int argc, char **argv)
 	}
 	must(close(fd) == 0, "close render node");
 	free(bytes);
-	puts("PASS: GE8300 userspace compute, two contexts and canary checks");
+	puts(fault ? "PASS: GE8300 compute, canaries and one isolated faulting context" :
+	    "PASS: GE8300 userspace compute, two contexts and canary checks");
 	return 0;
 }

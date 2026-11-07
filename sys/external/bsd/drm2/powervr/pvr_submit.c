@@ -893,7 +893,15 @@ pvr_submit_execute(struct work *work, void *cookie)
 				    job->id, frag->id);
 		}
 		pvr_context_wait_gate(pvr_exec_context_firmware(job->context), NULL, NULL);
-		if (error != 0) {
+		if (error != 0 &&
+		    pvr_context_lost(pvr_exec_context_firmware(job->context)) &&
+		    !pvr_context_retained(pvr_exec_context_firmware(job->context))) {
+			/* Firmware recovered, reset and drained only this context.
+			 * Its file sees EIO; other files and contexts keep running. */
+			pvr_submit_error_command(job, error);
+			pvr_file_vm_lose(vm);
+			pvr_file_vm_complete(vm);
+		} else if (error != 0) {
 			/* An error is not proof that DMA stopped. VM retirement quarantines
 			 * all tables and mapped BOs until acknowledged device recovery. */
 			pvr_submit_error_command(job, error);

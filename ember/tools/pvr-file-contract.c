@@ -401,7 +401,7 @@ firmware_lifetime(struct drm_device *dev)
 	void *cpu;
 	unsigned before;
 
-	for (unsigned mode = 0; mode < 6; mode++) {
+	for (unsigned mode = 0; mode < 9; mode++) {
 		CHECK(pvr_file_open(dev, &file) == 0);
 		handle = create_vm(dev, &file);
 		bo = new_bo(&file, 1, 0x62000000);
@@ -430,6 +430,16 @@ firmware_lifetime(struct drm_device *dev)
 			pvr_file_vm_complete(vm); CHECK(pre_syncs == post_syncs);
 			if (mode == 4) free_error = EIO;
 			if (mode == 5) pvr_file_vm_fail(vm);
+			/* A lost VM takes no work. Only explicit retention of
+			 * the lost context's VM avoids freezing the backend. */
+			if (mode >= 6) {
+				pvr_file_vm_lose(vm);
+				CHECK(pvr_file_vm_submit_hold(vm) == EIO);
+				CHECK(pvr_file_vm_prepare(vm) == EIO);
+				if (mode == 6) pvr_file_vm_retain(vm);
+				if (mode == 8) pvr_file_vm_fail(vm);
+				CHECK(flush_error == (mode == 8 ? EIO : 0));
+			}
 		}
 		pvr_device_leave(dev);
 		/* Removing the handle must preserve the context's VM reference. */
@@ -439,7 +449,8 @@ firmware_lifetime(struct drm_device *dev)
 		CHECK(pvr_file_vm_closed(vm));
 		(void)pvr_device_enter(dev);
 		pvr_file_vm_put(vm);
-		if (mode >= 2) {
+		/* A lost VM without a failure retires normally. */
+		if (mode >= 2 && mode != 7) {
 			CHECK(orphan_count == before + 1 && orphans[before] == vm);
 			CHECK(atomic_load(&objects) >= 1 && vm->firmware.owner != NULL);
 			/* Test teardown follows an explicit model reset, not a driver reset. */

@@ -23,6 +23,8 @@ struct pvr_context_config {
  * A failed destroy retains the object and requires the VM owner to survive.
  * Compute submission is synchronous. Success requires the real client UFO,
  * the consumed CCCB read offset and a fresh firmware health observation.
+ * A reported reset of this context fails the job with EIO without freezing
+ * the backend; see pvr_context_lost().
  */
 int pvr_context_create(const struct pvr_backend *, const struct pvr_context_config *,
     struct pvr_context **);
@@ -44,4 +46,12 @@ int pvr_context_transfer(struct pvr_context *, const struct rogue_fwif_cmd_trans
  * The caller retains context/VM/mappings until it removes the hook. */
 void pvr_context_wait_gate(struct pvr_context *, void (*)(void *, bool), void *);
 uint32_t pvr_context_type(const struct pvr_context *);
+/*
+ * Lost: the backend reported a recovered reset of this context. Every later
+ * submission returns EIO. If its queues drained, the backend stays usable.
+ * Retained: firmware may still own submitted work; destroy returns EIO and
+ * keeps it, and the backend is frozen (including an undrained lost context).
+ */
+bool pvr_context_lost(const struct pvr_context *);
+bool pvr_context_retained(const struct pvr_context *);
 #endif /* _PVR_CONTEXT_H_ */

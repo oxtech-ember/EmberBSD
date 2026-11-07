@@ -32,7 +32,18 @@ void pvr_file_vm_submit_drop(struct pvr_file_vm *);
 bool pvr_file_vm_closed(struct pvr_file_vm *);
 int pvr_file_vm_prepare(struct pvr_file_vm *);
 void pvr_file_vm_complete(struct pvr_file_vm *);
+/* Retain the VM until reboot and freeze the backend. */
 void pvr_file_vm_fail(struct pvr_file_vm *);
+/*
+ * A context on this VM was reset by recovered firmware. Refuse new
+ * submissions with EIO. Teardown still requires acknowledged cleanups.
+ */
+void pvr_file_vm_lose(struct pvr_file_vm *);
+/*
+ * Retain a lost VM until reboot without freezing the backend. Only for a
+ * failure of the drained lost context itself; others use pvr_file_vm_fail.
+ */
+void pvr_file_vm_retain(struct pvr_file_vm *);
 int pvr_file_vm_buffer(struct pvr_file_vm *, uint64_t, size_t, uint64_t, void **);
 /* A pin requires a live VM reference and prevents removal of its mapping. */
 struct pvr_file_pin {
