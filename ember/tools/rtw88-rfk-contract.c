@@ -287,13 +287,13 @@ static void rfk_beacon_arrival(void)
             rfk_post_beacons++;return;
         }
         if(rfk_is("post-setup-budget") || rfk_is("post-final-budget") ||
-            rfk_is("post-mailbox-budget")) {
+            rfk_is("post-unlinked-budget")) {
             uint64_t left=rfk_is("post-setup-budget")?1000:10000;
             CHECK(rfk_now_us()+left<rfk_net->rfk.deadline_us);
             rfk_advance_us(rfk_net->rfk.deadline_us-rfk_now_us()-left);
         }
         rfk_beacon_emit(rfk_net);rfk_post_beacons++;
-        if(rfk_is("post-mailbox-retry")) {
+        if(rfk_is("post-unlinked-no-wait")) {
             struct rtw88_rfk_diag d;rtw8822c_rfk_progress(rfk_net->core,&d);
             rfk_retry_frontier=rfk_net->rfk.frontier;
             rfk_retry_deadline=rfk_net->rfk.deadline_us;rfk_retry_token=d.token;
@@ -321,10 +321,10 @@ static int rfk_pause(unsigned ticks)
 {
     rfk_beacon_arrival();
     if(rfk_net->rfk.ran && rfk_post_mailbox_reads &&
-        !rfk_post_mailbox_pauses && (rfk_is("post-mailbox-retry") ||
-        rfk_is("post-mailbox-budget"))) {
+        !rfk_post_mailbox_pauses && (rfk_is("post-unlinked-no-wait") ||
+        rfk_is("post-unlinked-budget"))) {
         rfk_post_mailbox_pauses++;
-        if(rfk_is("post-mailbox-budget"))rfk_advance_us(20000);
+        if(rfk_is("post-unlinked-budget"))rfk_advance_us(20000);
     }
     CHECK(!mutex_owned(rfk_net->lock));
     if(!rfk_paused && rfk_rx_quiet() && rfk_gapk) {
@@ -629,7 +629,7 @@ static int rfk_read1(void *cookie,uint32_t reg,uint8_t *value)
             if(rfk_is("post-provider-ready"))rfk_ready=0x1f;
             else rfk_spacing=20;
         }
-        if((rfk_is("post-mailbox-retry") || rfk_is("post-mailbox-budget")) &&
+        if((rfk_is("post-unlinked-no-wait") || rfk_is("post-unlinked-budget")) &&
             !rfk_post_mailbox_reads++) {
             *value=(uint8_t)(1U<<(f.sc->sc_h2c_box&3));return 0;
         }
@@ -1323,16 +1323,20 @@ main(void)
     if(strncmp(rfk_case,"post-",5)==0 && !rfk_is("post-complete-change")) {
         CHECK(rfk_handshakes==2 && rfk_coef==1);
         CHECK(!rtw8822c_rfk_active(&sc) && !rtw8822c_rfk_blocked());
-        if(rfk_is("post-good") || rfk_is("post-mailbox-retry") ||
-            rfk_is("post-real-provider")) {
+        if(rfk_is("post-good") || rfk_is("post-unlinked-no-wait") ||
+            rfk_is("post-unlinked-budget") || rfk_is("post-real-provider")) {
             CHECK(rfk_parent_auth==1 && rfk_post_beacons==1);
             CHECK(sc.sc_operating.sealed && net->policy.accepting);
-            if(rfk_is("post-mailbox-retry")) {
-                CHECK(rfk_post_mailbox_pauses==1 && rfk_snapshot_reads==2);
+            if(rfk_is("post-unlinked-no-wait")) {
+                CHECK(rfk_post_mailbox_pauses==0 && rfk_post_mailbox_reads==0 &&
+                    rfk_snapshot_reads==2);
                 CHECK(net->rfk.frontier==rfk_retry_frontier);
                 CHECK(net->rfk.deadline_us==rfk_retry_deadline);
                 CHECK(sc.sc_operating.token==rfk_retry_token);
             }
+            if(rfk_is("post-unlinked-budget"))
+                CHECK(rfk_post_mailbox_pauses==0 && rfk_post_mailbox_reads==0 &&
+                    rfk_now_us()<net->rfk.deadline_us);
             if(rfk_is("post-real-provider"))CHECK(rfk_real_observations==3);
         } else if(rfk_is("post-successor")) {
             CHECK(rfk_parent_auth==0 && rfk_parent_scan==1);
@@ -1347,8 +1351,7 @@ main(void)
                 CHECK(rfk_now_us()<net->rfk.deadline_us);
                 CHECK(rfk_now_us()-net->rfk.beacon_us>=716800);
             }
-            if(rfk_is("post-setup-budget") || rfk_is("post-final-budget") ||
-                rfk_is("post-mailbox-budget")) {
+            if(rfk_is("post-setup-budget") || rfk_is("post-final-budget")) {
                 CHECK(rfk_now_us()>=net->rfk.deadline_us);
                 CHECK(rfk_now_us()-net->rfk.beacon_us<716800);
             }
