@@ -176,7 +176,12 @@ gttwsi_intr(void *arg)
 	mutex_enter(&sc->sc_mtx);
 	val = gttwsi_read_4(sc, TWSI_CONTROL);
 	if (val & CONTROL_IFLG) {
-		gttwsi_write_4(sc, TWSI_CONTROL, val & ~CONTROL_INTEN);
+		/*
+		 * Keep IFLG for the waiter. Writing back a set IFLG clears
+		 * it on controllers where the flag is write-one-to-clear.
+		 */
+		gttwsi_write_4(sc, TWSI_CONTROL, val & ~(CONTROL_INTEN |
+		    (sc->sc_iflg_rwc ? CONTROL_IFLG : 0)));
 		cv_broadcast(&sc->sc_cv);
 		mutex_exit(&sc->sc_mtx);
 		return 1;	/* handled */
@@ -319,11 +324,12 @@ gttwsi_wait(struct gttwsi_softc *sc, uint32_t control, uint32_t expect,
 	int timo, error = 0;
 
 	/*
-	 * XXX Interrupt-driven mode seems to be horribly broken,
-	 * XXX at least on AllWinner implementations.  Force polled
-	 * XXX mode for now.
+	 * The interrupt handler preserves a write-one-to-clear IFLG, so
+	 * those controllers sleep until completion instead of spinning.
+	 * Other implementations keep the historical polled mode.
 	 */
-	flags |= I2C_F_POLL;
+	if (!sc->sc_iflg_rwc)
+		flags |= I2C_F_POLL;
 
 	DELAY(5);
 	if (!(flags & I2C_F_POLL))
