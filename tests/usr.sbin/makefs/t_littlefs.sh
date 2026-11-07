@@ -18,19 +18,23 @@ EOF
 	atf_check -s exit:0 makefs -s 1m -t littlefs -F device.mtree image.lfs tree
 	atf_check -s exit:0 h_littlefs_check image.lfs
 	atf_check -s not-exit:0 makefs -s 1048575 -t littlefs bad-size.lfs tree
+	# The complete image span must fit in off_t before makefs opens the output.
+	atf_check -s not-exit:0 -e match:'littlefs image offset range exceeds off_t' \
+	    makefs -s 1m -t littlefs -O 9223372036854771712 overflow.lfs tree
+	test ! -e overflow.lfs || atf_fail "overflow image was created"
 	mkdir hardlinks
 	echo hardlink > hardlinks/a
 	ln hardlinks/a hardlinks/b
-	atf_check -s not-exit:0 -o match:EOPNOTSUPP makefs -s 1m \
+	atf_check -s not-exit:0 -e match:EOPNOTSUPP makefs -s 1m \
 	    -t littlefs hardlinks.lfs hardlinks
 	mkdir reserved
 	mkdir reserved/.littlefs-tmp
-	atf_check -s not-exit:0 -o match:reserved makefs -s 1m \
+	atf_check -s not-exit:0 -e match:reserved makefs -s 1m \
 	    -t littlefs reserved.lfs reserved
 }
 littlefs_image_cleanup() {
 	rm -rf tree hardlinks reserved image.lfs bad-size.lfs hardlinks.lfs \
-	    reserved.lfs
+	    reserved.lfs overflow.lfs
 	rm -f device.mtree
 }
 

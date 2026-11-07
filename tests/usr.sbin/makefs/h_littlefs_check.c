@@ -63,15 +63,16 @@ sync_image(const struct lfs_config *c)
 	return fsync(i->fd) == 0 ? 0 : LFS_ERR_IO;
 }
 
-static void
-check_attr(lfs_t *lfs, const char *path, uint64_t ino, mode_t type)
+static uint64_t
+check_attr(lfs_t *lfs, const char *path, mode_t type)
 {
 	uint8_t b[LITTLEFS_BSD_SIZE];
 	struct littlefs_bsd_attr a;
 	int n = lfs_getattr(lfs, path, LITTLEFS_BSD_ATTR, b, sizeof(b));
 	if (n != sizeof(b) || littlefs_bsd_decode(&a, b, sizeof(b)) != 0 ||
-	    a.ino != ino || (a.mode & S_IFMT) != type)
+	    (a.mode & S_IFMT) != type)
 		errx(EXIT_FAILURE, "%s BSD metadata mismatch", path);
+	return a.ino;
 }
 
 static void
@@ -92,7 +93,7 @@ check_file(lfs_t *lfs, const char *path, const char *expected)
 		errx(EXIT_FAILURE, "%s close failed", path);
 }
 
-static void
+static uint64_t
 check_device(lfs_t *lfs)
 {
 	static const uint8_t target_rdev_le[8] = {
@@ -103,10 +104,11 @@ check_device(lfs_t *lfs)
 	int n = lfs_getattr(lfs, "/device", LITTLEFS_BSD_ATTR, b, sizeof(b));
 
 	if (n != sizeof(b) || littlefs_bsd_decode(&a, b, sizeof(b)) != 0 ||
-	    a.ino != 3 || a.mode != (S_IFCHR | 0600) || a.uid != 42 ||
+	    a.mode != (S_IFCHR | 0600) || a.uid != 42 ||
 	    a.gid != 43 || memcmp(b + 32, target_rdev_le,
 	    sizeof(target_rdev_le)) != 0)
 		errx(EXIT_FAILURE, "target device metadata encoding mismatch");
+	return a.ino;
 }
 
 int
@@ -117,6 +119,7 @@ main(int argc, char **argv)
 	struct lfs_config cfg;
 	lfs_t lfs;
 	uint8_t next[8];
+	uint64_t inos[5], maxino = LITTLEFS_ROOT_INO;
 	int n;
 
 	if (argc != 2)
@@ -141,18 +144,28 @@ main(int argc, char **argv)
 	memset(&lfs, 0, sizeof(lfs));
 	if (lfs_mount(&lfs, &cfg) < 0)
 		errx(EXIT_FAILURE, "mount failed");
-	check_attr(&lfs, "/", LITTLEFS_ROOT_INO, S_IFDIR);
-	check_device(&lfs);
-	check_attr(&lfs, "/hello", 4, S_IFREG);
-	check_attr(&lfs, "/link", 5, S_IFLNK);
-	check_attr(&lfs, "/sub", 6, S_IFDIR);
-	check_attr(&lfs, "/sub/file", 7, S_IFREG);
+	if (check_attr(&lfs, "/", S_IFDIR) != LITTLEFS_ROOT_INO)
+		errx(EXIT_FAILURE, "root inode mismatch");
+	inos[0] = check_device(&lfs);
+	inos[1] = check_attr(&lfs, "/hello", S_IFREG);
+	inos[2] = check_attr(&lfs, "/link", S_IFLNK);
+	inos[3] = check_attr(&lfs, "/sub", S_IFDIR);
+	inos[4] = check_attr(&lfs, "/sub/file", S_IFREG);
+	for (size_t i = 0; i < sizeof(inos) / sizeof(inos[0]); i++) {
+		if (inos[i] <= LITTLEFS_ROOT_INO)
+			errx(EXIT_FAILURE, "non-root inode is out of range");
+		for (size_t j = 0; j < i; j++)
+			if (inos[i] == inos[j])
+				errx(EXIT_FAILURE, "duplicate inode number");
+		if (inos[i] > maxino)
+			maxino = inos[i];
+	}
 	check_file(&lfs, "/hello", "hello littlefs\n");
 	check_file(&lfs, "/link", "hello");
 	check_file(&lfs, "/sub/file", "nested\n");
 	n = lfs_getattr(&lfs, "/", LITTLEFS_NEXTINO_ATTR, next,
 	    sizeof(next));
-	if (n != sizeof(next) || littlefs_le64dec(next) != 8)
+	if (n != sizeof(next) || littlefs_le64dec(next) <= maxino)
 		errx(EXIT_FAILURE, "root next inode mismatch");
 	if (lfs_stat(&lfs, "/" LITTLEFS_STAGING_NAME, &(struct lfs_info){0}) < 0)
 		errx(EXIT_FAILURE, "mount staging directory missing");

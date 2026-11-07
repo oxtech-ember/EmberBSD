@@ -147,7 +147,8 @@ put_attr(lfs_t *lfs, const char *path, const fsnode *node, uint64_t ino)
 	a.gid = (uint32_t)st->st_gid;
 	a.flags = (uint32_t)FSINODE_ST_FLAGS(*node->inode);
 	/* makefs stores the target encoding; mtree's device=netbsd is portable. */
-	a.rdev = (uint64_t)st->st_rdev;
+	/* Device numbers use the target's 32-bit makedev encoding. */
+	a.rdev = (uint32_t)st->st_rdev;
 	a.atime = st->st_atime;
 	a.mtime = st->st_mtime;
 	a.ctime = st->st_ctime;
@@ -390,6 +391,8 @@ littlefs_makefs(const char *image, const char *directory, fsnode *root,
 	if (fi->minsize > image_size ||
 	    (fi->maxsize > 0 && fi->maxsize < image_size))
 		errx(EXIT_FAILURE, "littlefs image size violates -M or -m");
+	if (fi->offset > __type_max(off_t) - image_size)
+		errx(EXIT_FAILURE, "littlefs image offset range exceeds off_t");
 	if (fi->needswap)
 		errx(EXIT_FAILURE, "littlefs on-disk byte order is always little-endian");
 	if (root == NULL)
