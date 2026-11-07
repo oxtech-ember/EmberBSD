@@ -500,6 +500,7 @@ const struct rtw88_chip_ops rtw8821c_chip_ops = {
 	.fw_init = rtw8821c_fw_init,
 	.channel = rtw8821c_channel,
 	.prepare_station = rtw8821c_prepare_station,
+	.station_commands = rtw88_wcpu_station_commands,
 	.station = rtw88_wcpu_station,
 	.edca = rtw88_wcpu_edca,
 	.ra = rtw88_wcpu_ra,

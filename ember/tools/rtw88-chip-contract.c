@@ -46,25 +46,50 @@ count_tx(struct rtw88_softc *sc, uint8_t *out, size_t size,
 	return EAGAIN;
 }
 
+static unsigned
+one_station_command(const struct rtw88_softc *sc, int linked)
+{
+
+	(void)sc;
+	(void)linked;
+	return 1;
+}
+
+static unsigned
+invalid_station_commands(const struct rtw88_softc *sc, int linked)
+{
+
+	(void)sc;
+	(void)linked;
+	return 3;
+}
+
 static void
 test_chip_station_commands(void)
 {
 	struct rtw88_softc sc;
 	struct rtw88_chip_ops chip;
+
 	reset_bus(&sc);
 	chip = rtw8822c_chip_ops;
 	sc.sc_chip = &chip;
-	CHECK(chip.station_run_commands == 0 && chip.station_macid == 0);
+	CHECK(chip.station_macid == 0);
+	CHECK(rtw88_station_commands(&sc, 0) == 0);
 	CHECK(rtw88_station_commands(&sc, 1) == 2);
+	sc.sc_linked = 1;
 	CHECK(rtw88_station_commands(&sc, 0) == 1);
-	chip.station_run_commands = 1;
+	CHECK(rtw88_station_commands(&sc, 2) == 0);
+	chip.station_commands = one_station_command;
 	chip.station_macid = 1;
 	CHECK(rtw88_chip_valid(&sc));
+	CHECK(rtw88_station_commands(&sc, 0) == 1);
 	CHECK(rtw88_station_commands(&sc, 1) == 1);
-	chip.station_run_commands = 3;
+	chip.station_commands = invalid_station_commands;
+	CHECK(rtw88_station_commands(&sc, 1) == 0);
+	chip.station_commands = NULL;
 	CHECK(!rtw88_chip_valid(&sc));
 	CHECK(rtw88_station_commands(&sc, 1) == 0);
-	chip.station_run_commands = 1;
+	chip.station_commands = one_station_command;
 	chip.station_macid = 128;
 	CHECK(!rtw88_chip_valid(&sc));
 }

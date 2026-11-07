@@ -69,6 +69,11 @@ int main(void)
  struct rtw88_softc sc={0};
  struct rtw88_caps caps={0};
  sc.sc_chip=&rtw8723d_chip_ops; sc.sc_hci=&rtw88_sdio_hci_ops;
+ assert(rtw88_chip_valid(&sc));
+ assert(rtw88_station_commands(&sc,0)==1);
+ assert(rtw88_station_commands(&sc,1)==1);
+ sc.sc_linked=1;
+ assert(rtw88_station_commands(&sc,0)==1);
  assert(rtw88_get_caps(&sc,&caps)==0);
  assert(caps.bands==RTW88_BAND_2G && caps.widths==RTW88_WIDTH_20);
  assert(caps.ht_mcs==0 && (caps.features&RTW88_CAP_WPA2) &&

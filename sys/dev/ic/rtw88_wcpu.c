@@ -699,6 +699,13 @@ rtw88_wcpu_boot_command(struct rtw88_softc *sc, uint8_t id,
 	return rtw88_wcpu_send_command(sc, id, payload, size);
 }
 
+unsigned
+rtw88_wcpu_station_commands(const struct rtw88_softc *sc, int linked)
+{
+
+	return linked ? 2 : (sc->sc_linked != 0);
+}
+
 int
 rtw88_wcpu_station(struct rtw88_softc *sc, const uint8_t *bssid,
     unsigned aid, unsigned basic_rates, unsigned slot, int linked)
@@ -706,6 +713,7 @@ rtw88_wcpu_station(struct rtw88_softc *sc, const uint8_t *bssid,
 	struct rtw88_io io;
 	uint8_t media[3] = { 0 }, port[3] = { 0 }, any = 0;
 	unsigned i;
+	int was_linked;
 
 	if (linked != 0 && linked != 1)
 		return EINVAL;
@@ -734,6 +742,7 @@ rtw88_wcpu_station(struct rtw88_softc *sc, const uint8_t *bssid,
 	rtw88_io_init(&io, sc->sc_ops, sc->sc_bus);
 	if (io.error != 0)
 		return io.error;
+	was_linked = sc->sc_linked;
 	rtw88_ra_invalidate(sc);
 	sc->sc_linked = 0;
 	/* Keep data paused and port unlinked until all setup writes succeed. */
@@ -752,9 +761,11 @@ rtw88_wcpu_station(struct rtw88_softc *sc, const uint8_t *bssid,
 	rtw88_io_set(&io, 0x0550, 1, 0x18);
 	rtw88_io_clr(&io, 0x0608, 4, 0xc0);
 	if (io.error != 0)
-		return io.error;
+		goto fail;
 	media[0] = linked ? 1 : 0;
-	io.error = rtw88_fw_command(sc, 0x01, media, sizeof(media));
+	/* Media reports describe station membership, not scan steps. */
+	if (linked || was_linked)
+		io.error = rtw88_fw_command(sc, 0x01, media, sizeof(media));
 	if (linked && io.error == 0)
 		io.error = rtw88_fw_command(sc, 0x2c, port, sizeof(port));
 	if (linked) {
@@ -764,10 +775,15 @@ rtw88_wcpu_station(struct rtw88_softc *sc, const uint8_t *bssid,
 		rtw88_io_wr_mask(&io, 0x0100, 0x30000, 2);
 		rtw88_io_clr(&io, 0x0522, 1, 0x0f);
 	}
-	if (io.error == 0) {
-		sc->sc_basic_rates = basic_rates;
-		sc->sc_linked = linked;
-	}
+	if (io.error != 0)
+		goto fail;
+	sc->sc_basic_rates = basic_rates;
+	sc->sc_linked = linked;
+	return 0;
+
+fail:
+	/* Firmware or registers may have changed; require a fresh epoch. */
+	sc->sc_stop_requested = 1;
 	return io.error;
 }
 

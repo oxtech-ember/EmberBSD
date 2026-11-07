@@ -2286,13 +2286,27 @@ test_tx_descriptors_and_full_ring(void)
 }
 
 /* Legacy station TX must use a legal basic rate for the selected band. */
+static uint32_t station_posted_fault_reg;
+
+static int
+station_posted_fault_write4(void *cookie, uint32_t reg, uint32_t value)
+{
+	int error = write_4(cookie, reg, value);
+
+	if (error == 0 && reg == station_posted_fault_reg)
+		return EIO;
+	return error;
+}
+
 static void
 test_station_config(void)
 {
 	static const uint8_t mac[6] = { 0x02, 0x12, 0x23, 0x34, 0x45, 0x56 };
 	static const uint8_t bssid[6] = { 0x02, 0x65, 0x54, 0x43, 0x32, 0x21 };
 	struct rtw88_softc sc;
-	unsigned writes;
+	struct rtw88_bus_ops fault_ops;
+	const struct rtw88_bus_ops *saved_ops;
+	unsigned writes, box;
 	uint32_t rcr;
 
 	if (!start_ok(&sc))
@@ -2302,7 +2316,13 @@ test_station_config(void)
 	f.mmio[0x551] = 0x71;
 	f.mmio[0x6ab] = 0x8a;
 	rcr = mmio32(0x608);
+	box = sc.sc_h2c_box;
+	CHECK(rtw88_station_commands(&sc, 0) == 0);
+	CHECK(rtw88_station_commands(&sc, 1) == 2);
 	CHECK(rtw88_station_config(&sc, NULL, 0, 0xf, 20, 0) == 0);
+	CHECK(sc.sc_h2c_box == box);
+	CHECK(rtw88_station_config(&sc, NULL, 0, 0xf, 20, 0) == 0);
+	CHECK(sc.sc_h2c_box == box);
 	CHECK(memcmp(f.mmio + 0x610, mac, sizeof(mac)) == 0);
 	CHECK((mmio32(0x100) & 0x30000) == 0);
 	CHECK((f.mmio[0x680] & 0x0c) == 0 && (f.mmio[0x680] & 0xf3) == 0xf3);
@@ -2320,8 +2340,10 @@ test_station_config(void)
 	CHECK(rtw88_station_config(&sc, NULL, 1, 0x10, 9, 1) == EINVAL);
 	CHECK(f.writes == writes);
 	CHECK(rtw88_station_config(&sc, bssid, 123, 0xff0, 9, 1) == 0);
-	CHECK(mmio32(0x1d0) == 0x01 && mmio32(0x1d4) == 0x0101 &&
-	    mmio32(0x1d8) == 0x2c); /* media off/on and default port0/MACID0. */
+	CHECK(sc.sc_h2c_box == ((box + 2) & 3));
+	CHECK(mmio32(0x1d0 + box * 4) == 0x0101);
+	CHECK(mmio32(0x1d0 + ((box + 1) & 3) * 4) == 0x2c);
+	CHECK(rtw88_station_commands(&sc, 0) == 1);
 	CHECK(memcmp(f.mmio + 0x618, bssid, sizeof(bssid)) == 0);
 	CHECK((mmio32(0x100) & 0x30000) == 0x20000);
 	CHECK((mmio32(0x6a8) & 0x7ff) == 123 && f.mmio[0x6ab] == 0x8a);
@@ -2336,9 +2358,68 @@ test_station_config(void)
 	CHECK(((const uint8_t *)sc.sc_txq[0].buf[0].vaddr)[16] == 4);
 	CHECK(rtw88_tx_available(&sc, RTW88_TXQ_BE) == RTW88_TX_SLOTS - 1);
 	CHECK(rtw88_tx_available(&sc, 7) == 0);
+	box = sc.sc_h2c_box;
+	CHECK(rtw88_station_config(&sc, NULL, 0, 0xf, 20, 0) == 0);
+	CHECK(sc.sc_h2c_box == ((box + 1) & 3));
+	CHECK(mmio32(0x1d0 + box * 4) == 0x01);
+	CHECK(rtw88_station_commands(&sc, 0) == 0);
+	box = sc.sc_h2c_box;
+	CHECK(rtw88_station_config(&sc, NULL, 0, 0xf, 20, 0) == 0);
+	CHECK(sc.sc_h2c_box == box);
+	CHECK(rtw88_station_config(&sc, bssid, 123, 0xff0, 9, 1) == 0);
 	f.mmio[0x1cc] = 0x0f; /* All mailbox slots remain busy. */
 	CHECK(rtw88_station_config(&sc, NULL, 0, 0xf, 20, 0) == ETIMEDOUT);
-	rtw88_stop(&sc);
+	CHECK(sc.sc_stop_requested);
+	writes = f.writes;
+	CHECK(rtw88_station_config(&sc, NULL, 0, 0xf, 20, 0) == ENXIO);
+	CHECK(f.writes == writes);
+	f.mmio[0x1cc] = 0;
+	CHECK(rtw88_stop(&sc) == 0);
+	CHECK(rtw88_start(&sc) == 0);
+	CHECK(rtw88_station_config(&sc, NULL, 0, 0xf, 20, 0) == 0);
+	f.mmio[0x1cc] = 0x0f;
+	CHECK(rtw88_station_config(&sc, bssid, 123, 0xff0, 9, 1) == ETIMEDOUT);
+	CHECK(sc.sc_stop_requested && !sc.sc_linked);
+	writes = f.writes;
+	CHECK(rtw88_station_config(&sc, bssid, 123, 0xff0, 9, 1) == ENXIO);
+	CHECK(f.writes == writes);
+	f.mmio[0x1cc] = 0;
+	CHECK(rtw88_stop(&sc) == 0);
+	CHECK(rtw88_start(&sc) == 0);
+	box = sc.sc_h2c_box;
+	saved_ops = sc.sc_ops;
+	fault_ops = *saved_ops;
+	fault_ops.write_4 = station_posted_fault_write4;
+	station_posted_fault_reg = 0x1d0 + ((box + 1) & 3) * 4;
+	sc.sc_ops = &fault_ops;
+	CHECK(rtw88_station_config(&sc, bssid, 123, 0xff0, 9, 1) == EIO);
+	CHECK(mmio32(0x1d0 + box * 4) == 0x0101);
+	CHECK(mmio32(station_posted_fault_reg) == 0x2c);
+	CHECK(sc.sc_stop_requested && !sc.sc_linked);
+	writes = f.writes;
+	CHECK(rtw88_station_config(&sc, bssid, 123, 0xff0, 9, 1) == ENXIO);
+	CHECK(f.writes == writes);
+	sc.sc_ops = saved_ops;
+	CHECK(rtw88_stop(&sc) == 0);
+	CHECK(rtw88_start(&sc) == 0);
+	CHECK(rtw88_station_config(&sc, bssid, 123, 0xff0, 9, 1) == 0);
+	box = sc.sc_h2c_box;
+	saved_ops = sc.sc_ops;
+	fault_ops = *saved_ops;
+	fault_ops.write_4 = station_posted_fault_write4;
+	station_posted_fault_reg = 0x1d0 + box * 4;
+	sc.sc_ops = &fault_ops;
+	CHECK(rtw88_station_config(&sc, NULL, 0, 0xf, 20, 0) == EIO);
+	CHECK(mmio32(station_posted_fault_reg) == 0x01);
+	CHECK(sc.sc_stop_requested && !sc.sc_linked);
+	writes = f.writes;
+	CHECK(rtw88_station_config(&sc, NULL, 0, 0xf, 20, 0) == ENXIO);
+	CHECK(f.writes == writes);
+	sc.sc_ops = saved_ops;
+	CHECK(rtw88_stop(&sc) == 0);
+	CHECK(rtw88_start(&sc) == 0);
+	CHECK(rtw88_station_config(&sc, NULL, 0, 0xf, 20, 0) == 0);
+	CHECK(rtw88_stop(&sc) == 0);
 	CHECK(rtw88_tx_available(&sc, 0) == 0);
 	CHECK(rtw88_station_config(&sc, NULL, 0, 0xf, 20, 0) == ENXIO);
 	rtw88_core_detach(&sc);
@@ -2965,7 +3046,7 @@ prepare_legacy(struct rtw88_softc *sc, int (*current)(void *), void *cookie)
  struct rtw88_prepare_context *p=cookie;
  struct rtw88_net *net=p->net;
  CHECK(!state_lock.held && net->core==sc);
- CHECK(current(cookie)==0 && sc->sc_mailbox.active);
+ CHECK(current(cookie)==0 && !sc->sc_mailbox.active);
  prepare_calls_legacy++;
  switch(prepare_mutation_legacy) {
  case 1: net->policy.epoch++; break;
@@ -2974,7 +3055,7 @@ prepare_legacy(struct rtw88_softc *sc, int (*current)(void *), void *cookie)
  case 4: net->policy.dying=1; break;
  case 5: net->stop_pending=1; break;
  case 6: net->tx_quiet=1; break;
- case 7: net->policy.epoch++; sc->sc_mailbox.box=(sc->sc_mailbox.box+1)&3; prepare_foreign_box=sc->sc_mailbox.box; break;
+ case 7: net->policy.epoch++; sc->sc_mailbox.active=1; sc->sc_mailbox.box=(sc->sc_mailbox.box+1)&3; prepare_foreign_box=sc->sc_mailbox.box; break;
  }
  if(prepare_mutation_legacy) {
   CHECK(current(cookie)!=0);

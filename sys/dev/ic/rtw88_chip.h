@@ -50,6 +50,8 @@ struct rtw88_chip_ops {
 	/* Synchronous; caller owns lifetime and hardware, without net lock.
 	 * current returns 0 or ECANCELED; the cookie is never retained. */
 	int (*prepare_station)(struct rtw88_softc *, int (*)(void *), void *);
+	/* Pure prediction of station mailbox commands; no hardware I/O. */
+	unsigned (*station_commands)(const struct rtw88_softc *, int);
 	int (*station)(struct rtw88_softc *, const uint8_t *, unsigned,
 	    unsigned, unsigned, int);
 	int (*edca)(struct rtw88_softc *, const struct rtw88_edca_params *, unsigned);
@@ -66,8 +68,6 @@ struct rtw88_chip_ops {
 	    const struct rtw88_tx_info *);
 	int (*rx_desc)(struct rtw88_softc *, const uint8_t *, size_t,
 	    struct rtw88_rx_info *);
-	/* Zero keeps the 8822C two-command, peer-zero behavior. */
-	uint8_t station_run_commands;
 	uint8_t station_macid;
 };
 

@@ -236,6 +236,13 @@ rtw88_wcpu_hw_feature_read(struct rtw88_softc *s, uint32_t g)
 	(void)g;
 	return step();
 }
+unsigned
+rtw88_wcpu_station_commands(const struct rtw88_softc *s, int linked)
+{
+
+	return linked ? 2 : (s->sc_linked != 0);
+}
+
 int
 rtw88_wcpu_station(struct rtw88_softc *s, const uint8_t *b, unsigned a,
 		       unsigned r, unsigned l, int v)
@@ -467,6 +474,11 @@ main(void)
 		signal_expected_valid = 1;
 		signal_bad = 0;
 	}
+	CHECK(rtw8821c_chip_ops.station_commands(&sc, 0) == 0);
+	CHECK(rtw8821c_chip_ops.station_commands(&sc, 1) == 2);
+	sc.sc_linked = 1;
+	CHECK(rtw8821c_chip_ops.station_commands(&sc, 0) == 1);
+	sc.sc_linked = 0;
 	CHECK(rtw8821c_tx_desc(&sc, out, sizeof(out), NULL) == EACCES);
 	{
 		struct rtw88_tx_info probe = {

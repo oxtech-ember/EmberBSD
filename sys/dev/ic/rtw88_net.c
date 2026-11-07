@@ -863,7 +863,7 @@ rtw88_net_control_execute(struct rtw88_net *net,
 	    !request->ra.use_protection) :
 	    request->state == IEEE80211_S_RUN ? rtw88_station_commands(sc, 1) +
 	    ((request->valid & RTW88_CONTROL_RA) != 0 &&
-	    !request->ra.use_protection) : 1;
+	    !request->ra.use_protection) : rtw88_station_commands(sc, 0);
 	error = rtw88_net_control_mailbox(net, request, count);
 	if (error != 0)
 		goto done;
@@ -2882,8 +2882,9 @@ rtw88_net_state_work(struct work *work, void *cookie)
 #endif
 		/* Current core is stable under Giant; no pointers survive a sleep. */
 		mailbox_count = prepare_error != 0 || !net->core->sc_started ? 0 :
-		    state == IEEE80211_S_RUN ? 2 +
-		    (use_ra && !ra.use_protection) : 1;
+		    state == IEEE80211_S_RUN ? rtw88_station_commands(net->core, 1) +
+		    (use_ra && !ra.use_protection) :
+		    rtw88_station_commands(net->core, 0);
 		gen = net->core->sc_generation;
 		if (mailbox_epoch != epoch) {
 			mailbox_epoch = epoch;

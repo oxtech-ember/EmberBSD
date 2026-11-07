@@ -214,6 +214,14 @@ rtw8723d_chip_loopback(struct rtw88_softc *sc __unused, int mode __unused)
 	return EOPNOTSUPP;
 }
 
+static unsigned
+rtw8723d_station_commands(const struct rtw88_softc *sc __unused,
+    int linked __unused)
+{
+
+	return 1;
+}
+
 const struct rtw88_chip_ops rtw8723d_chip_ops = {
 	/* Initial implemented subset, not the complete chipset specification. */
 	.caps = { .bands = RTW88_BAND_2G, .widths = RTW88_WIDTH_20, .nss = 1,
@@ -225,6 +233,7 @@ const struct rtw88_chip_ops rtw8723d_chip_ops = {
 	.stop = rtw8723d_chip_stop,
 	.fw_init = rtw8723d_fw_runtime_init,
 	.channel = rtw8723d_runtime_channel,
+	.station_commands = rtw8723d_station_commands,
 	.station = rtw8723d_runtime_station,
 	.edca = rtw8723d_runtime_edca,
 	.ra = rtw8723d_runtime_ra,
@@ -235,7 +244,6 @@ const struct rtw88_chip_ops rtw8723d_chip_ops = {
 	.loopback = rtw8723d_chip_loopback,
 	.tx_desc = rtw8723d_chip_tx_desc,
 	.rx_desc = rtw8723d_rx_desc,
-	.station_run_commands = 1,
 	.station_macid = RTW8723D_STATION_MACID
 };
 

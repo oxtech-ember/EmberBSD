@@ -857,8 +857,9 @@ This change does not implement an association-preserving background scan.
 ## Managed register-mailbox checkpoint
 
 The existing native state worker plans zero to three register-mailbox commands.
-A non-started INIT has no mailbox access or wait. Started unlinked setup sends
-media0x01; linked setup also sends port0x2c and, when needed, legacy RA0x40.
+A non-started INIT has no mailbox access or wait. Initial and repeated unlinked
+setup send no media command; a linked-to-unlinked transition sends media0x01.
+Linked setup sends media0x01, port0x2c and, when needed, legacy RA0x40.
 Busy required boxes cause a bounded process sleep without holding PCI. Each
 wake returns to actual HT/BSS/security/rate/EDCA/RA preparation under Giant.
 An unchanged request epoch does not make an old profile snapshot current.
