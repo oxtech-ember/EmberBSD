@@ -56,27 +56,50 @@ static flash_size_t
 flash_parse_size(char *partdef, char **ep)
 {
 	flash_size_t size;
+	char *end;
+	int shift;
 
 	/* Parse the size parameter */
-	size = strtoul(partdef, ep, 10);
-	if (partdef == *ep)
+	size = 0;
+	end = partdef;
+	while (*end >= '0' && *end <= '9') {
+		unsigned int digit = *end++ - '0';
+		if (size > ((flash_size_t)-1 - digit) / 10) {
+			*ep = partdef;
+			return 0;
+		}
+		size = size * 10 + digit;
+	}
+	if (end == partdef) {
+		*ep = partdef;
 		return 0;
+	}
+	*ep = end;
 
-	switch (**ep) {
+	shift = 0;
+	switch (*end) {
 	case 'G':
 	case 'g':
-		size <<= 10;
+		shift += 10;
 		/* FALLTHROUGH */
 	case 'M':
 	case 'm':
-		size <<= 10;
+		shift += 10;
 		/* FALLTHROUGH */
 	case 'K':
 	case 'k':
-		size <<= 10;
-		(*ep)++;
+		shift += 10;
 		break;
 	}
+	if (shift != 0) {
+		if (size > ((flash_size_t)-1 >> shift)) {
+			*ep = partdef;
+			return 0;
+		}
+		size <<= shift;
+		end++;
+	}
+	*ep = end;
 
 	return size;
 }
@@ -86,6 +109,11 @@ flash_parse_partdef(flash_size_t flash_size, char *partdef, flash_off_t *offset,
     struct flash_partition *ppart)
 {
 	struct flash_partition part;
+	flash_size_t part_offset;
+	flash_size_t end;
+	char *ep;
+
+	part.part_name = NULL;
 
 	/* Get the partition size */
 	if (*partdef == '-') {
@@ -93,23 +121,39 @@ flash_parse_partdef(flash_size_t flash_size, char *partdef, flash_off_t *offset,
 		part.part_size = 0;
 		partdef++;
 	} else {
-		part.part_size = flash_parse_size(partdef, &partdef);
+		part.part_size = flash_parse_size(partdef, &ep);
 		if (part.part_size == 0)
 			return EINVAL;
+		partdef = ep;
 	}
 
 	if (*partdef == '@') {
 		/* Explicit offset */
 		partdef++;
-		part.part_offset = flash_parse_size(partdef, &partdef);
+		part_offset = flash_parse_size(partdef, &ep);
+		if (partdef == ep || part_offset > (flash_size_t)INT64_MAX)
+			return EINVAL;
+		partdef = ep;
+		part.part_offset = (flash_off_t)part_offset;
 	} else {
 		/* Offset is the end of the previous partition */
 		part.part_offset = *offset;
 	}
 
+	if (part.part_offset < 0 ||
+	    (flash_size_t)part.part_offset > flash_size)
+		return EINVAL;
+	part_offset = (flash_size_t)part.part_offset;
+
 	/* Calculate partition size for "all remaining space" parts */
 	if (part.part_size == 0)
-		part.part_size = flash_size - part.part_offset;
+		part.part_size = flash_size - part_offset;
+
+	/* The endpoint must fit both the device and flash_off_t. */
+	if (part.part_size > flash_size - part_offset ||
+	    part.part_size > (flash_size_t)INT64_MAX - part_offset)
+		return EINVAL;
+	end = part_offset + part.part_size;
 
 	if (*partdef == '(') {
 		/* Partition name */
@@ -130,7 +174,7 @@ flash_parse_partdef(flash_size_t flash_size, char *partdef, flash_off_t *offset,
 
 	*ppart = part;
 
-	*offset = part.part_offset + part.part_size;
+	*offset = (flash_off_t)end;
 
 	return 0;
 }
