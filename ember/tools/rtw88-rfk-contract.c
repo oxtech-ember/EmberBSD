@@ -293,6 +293,13 @@ static void rfk_beacon_arrival(void)
             rfk_advance_us(rfk_net->rfk.deadline_us-rfk_now_us()-left);
         }
         rfk_beacon_emit(rfk_net);rfk_post_beacons++;
+        /* Mutate the actual provider after listening, before its owning
+         * precommit capture; unlinked AUTH performs no mailbox wait. */
+        if(rfk_is("post-provider") || rfk_is("post-provider-ready")) {
+            rfk_fault=1;
+            if(rfk_is("post-provider-ready"))rfk_ready=0x1f;
+            else rfk_spacing=20;
+        }
         if(rfk_is("post-unlinked-no-wait")) {
             struct rtw88_rfk_diag d;rtw8822c_rfk_progress(rfk_net->core,&d);
             rfk_retry_frontier=rfk_net->rfk.frontier;
@@ -490,10 +497,13 @@ static int rfk_write4(void *cookie,uint32_t reg,uint32_t value)
         reg>=0x1d0 && reg<=0x1dc && (reg-0x1d0)%4==0 &&
         (value&0xff)==1) {
         rfk_post_station_commands++;
-        if(!rfk_fault && (rfk_is("post-setup-budget") || rfk_is("post-setup-age"))) {
-            rfk_fault=1;
-            rfk_advance_us(rfk_is("post-setup-budget")?2000:716801);
-        }
+    }
+    /* Unlinked station setup no longer sends media H2C. Inject the same
+     * elapsed-time fault at its actual first 32-bit MAC control write. */
+    if(rfk_net && rfk_net->rfk.ran && rfk_post_beacons && reg==0x100 &&
+        !rfk_fault && (rfk_is("post-setup-budget") || rfk_is("post-setup-age"))) {
+        rfk_fault=1;
+        rfk_advance_us(rfk_is("post-setup-budget")?2000:716801);
     }
     if(!rtw8822c_rfk_active(f.sc))return 0;
     if(reg>=0x1f0 && reg<=0x1fc && (reg-0x1f0)%4==0 &&
@@ -624,11 +634,6 @@ static int rfk_read4(void *cookie,uint32_t reg,uint32_t *value)
 static int rfk_read1(void *cookie,uint32_t reg,uint8_t *value)
 {
     if(reg==0x1cc && rfk_net && rfk_net->rfk.ran && rfk_post_beacons) {
-        if((rfk_is("post-provider") || rfk_is("post-provider-ready")) && !rfk_fault) {
-            rfk_fault=1;
-            if(rfk_is("post-provider-ready"))rfk_ready=0x1f;
-            else rfk_spacing=20;
-        }
         if((rfk_is("post-unlinked-no-wait") || rfk_is("post-unlinked-budget")) &&
             !rfk_post_mailbox_reads++) {
             *value=(uint8_t)(1U<<(f.sc->sc_h2c_box&3));return 0;

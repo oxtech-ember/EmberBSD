@@ -91,6 +91,8 @@ rtw88_channel_apply(struct rtw88_softc *sc,
 	    tuple->primary == tuple->center);
 	return rtw88_channel(sc, tuple->primary);
 }
+static unsigned rtw88_station_commands(const struct rtw88_softc *sc,int linked)
+{ return linked ? 2 : (sc->sc_linked != 0); }
 static int rtw88_station_config(struct rtw88_softc *sc,const uint8_t *bssid,unsigned aid,unsigned basic,unsigned slot,int linked)
 { (void)bssid;(void)aid;(void)basic;(void)slot;assert(native_lock);worker_hw_calls++;sc->sc_linked=linked;return 0; }
 static int rtw88_edca_apply(struct rtw88_softc *sc,struct rtw88_edca_params *p,unsigned slot)
