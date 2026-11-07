@@ -45,6 +45,7 @@ SUBDIR+= mount_ffs
 SUBDIR+= mount_hfs
 SUBDIR+= mount_kernfs
 SUBDIR+= mount_lfs
+SUBDIR+= mount_littlefs
 SUBDIR+= mount_msdos
 SUBDIR+= mount_udf
 SUBDIR+= mount_nfs

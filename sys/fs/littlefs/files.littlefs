@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: BSD-2-Clause
+
+deffs LITTLEFS
+defflag opt_littlefs.h LITTLEFS_FLASH
+
+define littlefs: vfs
+file fs/littlefs/littlefs_core.c littlefs
+file fs/littlefs/littlefs_util.c littlefs
+file fs/littlefs/littlefs_io.c littlefs
+file fs/littlefs/littlefs_vfsops.c littlefs
+file fs/littlefs/littlefs_vnops.c littlefs
+file fs/littlefs/littlefs_rename.c littlefs

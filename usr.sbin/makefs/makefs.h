@@ -209,6 +209,9 @@ DECLARE_FUN(chfs);
 DECLARE_FUN(v7fs);
 DECLARE_FUN(msdos);
 DECLARE_FUN(udf);
+#ifdef MAKEFS_LITTLEFS
+DECLARE_FUN(littlefs);
+#endif
 
 extern	u_int		debug;
 extern	struct timespec	start_time;

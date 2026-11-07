@@ -11,6 +11,15 @@
 	aliases { serial0 = &uart0; };
 	chosen { stdout-path = "serial0:115200n8"; };
 
+	/*
+	 * Logical NOR provider: SPI0 is initialized by the SPL and remains under
+	 * ROM/OpenSBI control; this node is not an S-mode SPI controller.
+	 */
+	esp32s31-nor {
+		compatible = "espressif,esp32s31-nor-sbi";
+		status = "okay";
+	};
+
 	vcc_3v3: regulator-vcc-3v3 {
 		compatible = "regulator-fixed";
 		regulator-name = "VCC_3V3";

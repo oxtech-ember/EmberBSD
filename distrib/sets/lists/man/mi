@@ -3113,6 +3113,7 @@
 ./usr/share/man/cat8/mount_hfsp.0		man-obsolete		obsolete
 ./usr/share/man/cat8/mount_kernfs.0		man-sysutil-catman	.cat
 ./usr/share/man/cat8/mount_lfs.0		man-sysutil-catman	.cat
+./usr/share/man/cat8/mount_littlefs.0	man-sysutil-catman	.cat
 ./usr/share/man/cat8/mount_mfs.0		man-sysutil-catman	.cat
 ./usr/share/man/cat8/mount_msdos.0		man-sysutil-catman	.cat
 ./usr/share/man/cat8/mount_nfs.0		man-nfsclient-catman	.cat
@@ -6718,6 +6719,7 @@
 ./usr/share/man/man8/mount_hfsp.8		man-obsolete		obsolete
 ./usr/share/man/man8/mount_kernfs.8		man-sysutil-man		.man
 ./usr/share/man/man8/mount_lfs.8		man-sysutil-man		.man
+./usr/share/man/man8/mount_littlefs.8	man-sysutil-man		.man
 ./usr/share/man/man8/mount_mfs.8		man-sysutil-man		.man
 ./usr/share/man/man8/mount_msdos.8		man-sysutil-man		.man
 ./usr/share/man/man8/mount_nfs.8		man-nfsclient-man	.man

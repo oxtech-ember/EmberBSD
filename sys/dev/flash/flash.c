@@ -535,19 +535,32 @@ flash_erase(device_t self, struct flash_erase_instruction * const ei)
 	struct flash_softc * const sc = device_private(self);
 	KASSERT(ei != NULL);
 	struct flash_erase_instruction e = *ei;
+	flash_size_t addr, len;
+	int error;
 
+	e.ei_state = ei->ei_state = FLASH_ERASE_FAILED;
 	if (sc->sc_readonly)
 		return EACCES;
 
-	/* adjust for flash partition */
+	/* Keep the caller's address partition-relative; offset only the copy. */
+	if (e.ei_addr < 0 || e.ei_len < 0 ||
+	    sc->sc_partinfo.part_offset < 0 ||
+	    sc->sc_partinfo.part_size >
+	    (flash_size_t)(INT64_MAX - sc->sc_partinfo.part_offset))
+		return EINVAL;
+	addr = (flash_size_t)e.ei_addr;
+	len = (flash_size_t)e.ei_len;
+	if (addr > sc->sc_partinfo.part_size ||
+	    len > sc->sc_partinfo.part_size - addr ||
+	    e.ei_addr > INT64_MAX - sc->sc_partinfo.part_offset)
+		return EINVAL;
 	e.ei_addr += sc->sc_partinfo.part_offset;
 
-	/* bounds check for flash partition */
-	if (e.ei_addr + e.ei_len > sc->sc_partinfo.part_size +
-	    sc->sc_partinfo.part_offset)
-		return EINVAL;
-
-	return sc->flash_if->erase(device_parent(self), &e);
+	error = sc->flash_if->erase(device_parent(self), &e);
+	if (error)
+		return error;
+	ei->ei_state = e.ei_state;
+	return 0;
 }
 
 int
@@ -623,11 +636,11 @@ flash_sync(device_t self)
 {
 	struct flash_softc * const sc = device_private(self);
 
-	if (sc->sc_readonly)
-		return EACCES;
+	/* Read-only partitions and synchronous drivers have nothing to flush. */
+	if (sc->sc_readonly || sc->flash_if->sync == NULL)
+		return 0;
 
-	/* noop now TODO: implement */
-	return 0;
+	return sc->flash_if->sync(device_parent(self));
 }
 
 MODULE(MODULE_CLASS_DRIVER, flash, NULL);

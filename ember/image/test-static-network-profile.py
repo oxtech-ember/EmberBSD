@@ -26,6 +26,19 @@ def check(condition, message):
 
 
 selected = profile.network('riscv32')
+littlefs = profile.network('riscv32', root_filesystem='littlefs')
+check('sbin/mount_littlefs' in littlefs['crunch_programs'] and
+      'sys/sys' in littlefs['headers'] and
+      'sys/fs/littlefs' in littlefs['headers'] and
+      'sbin/mount_ffs' not in littlefs['crunch_programs'] and
+      'sbin/fsck_ffs' not in littlefs['crunch_programs'] and
+      'sbin/mount_ffs' in selected['crunch_programs'] and
+      set(selected['crunch_programs']) - {'sbin/mount_ffs', 'sbin/fsck_ffs'} <=
+      set(littlefs['crunch_programs']),
+      'littlefs replaces only filesystem utilities and preserves network services')
+flash_nodes = profile.network_device_selection(littlefs, 'flash0', '')
+check('rflash0' in flash_nodes[0] and flash_nodes[3] == ('flash0',),
+      'unpartitioned flash nodes use the generic flash driver numbering')
 peripheral = profile.network('riscv32', ('system', 'audio', 'video', 'envsys', 'spi'),
                              ('1',))
 transfer = profile.network('riscv32', ('transfer',))
@@ -157,8 +170,11 @@ check('BINMODE=4555' in (source / 'sbin/ping/Makefile').read_text() and
       'sbin/ping' in selected['crunch_programs'] and
       'sbin/ping' not in dict(selected['install_map']),
       'root-only ping uses normal socket ops in the 0555 crunch binary with IPsec support')
-check('external/bsd/libpcap/lib' in selected['libraries'],
-      'selected WPA link dependency libpcap is built by its OS target')
+check('external/bsd/libpcap/lib' in selected['libraries'] and
+      'lib/libpthread' not in selected['libraries'] and
+      'lib/libpthread' not in profile.network('riscv32', wpa_backend='openssl')['libraries'] and
+      'lib/libpthread' in profile.network('riscv32', wpa_backend='wolfssl')['libraries'],
+      'network profile selects pthread only for the WolfSSL WPA backend')
 check(all(path in transfer['crunch_programs'] for path in (
           'usr.bin/cksum/cksum', 'usr.bin/uuencode/uuencode',
           'usr.bin/uudecode/uudecode')) and
@@ -174,6 +190,8 @@ check("printf 'libs -ledit -lterminfo -lutil -lkvm -lprop -lcrypt -lpcap -lipsec
       "*\" usr.sbin/envstat/envstat \"*) printf ' -lmj'" in crunch_source and
       '-V EMBER_GREP_UNCOMPRESSED_ONLY=yes' in crunch_source,
       'network crunch includes service dependencies and compact grep option')
+check("wolfssl) printf ' -lwolfssl -lpthread' ;;" in crunch_source,
+      'WolfSSL static consumers link the OS semaphore provider')
 check("usr.sbin usr.bin/videoctl" in crunch_source and
       'special %s srcdir %s' in crunch_source and
       'obj/usr.bin/audio/common' in crunch_source and
@@ -498,9 +516,6 @@ with tempfile.TemporaryDirectory(prefix='static-network-') as temporary:
           (out / 'var/chroot/dhcpcd').is_dir() and (out / 'var/log').is_dir() and
           (out / 'var/tmp').is_dir(),
           'DHCP resolver, lease/state and runtime paths are writable locations')
-    check((source / 'ember/image/static-profile.py').read_text().find(
-          "len(sys.argv) == 10 and sys.argv[1] == 'stage-network'") >= 0,
-          'standard staged network command accepts selected root device and partition')
     check((out / 'etc/rc.network.d/wpa_supplicant').is_file() and
           (out / 'etc/rc.network.d/wpa_supplicant').stat().st_mode & 0o777 == 0o555 and
           (out / 'etc/rc.network.d/mdnsd').is_file() and
@@ -538,6 +553,15 @@ with tempfile.TemporaryDirectory(prefix='static-network-') as temporary:
           (dotted / 'etc/ifconfig.wifi0.1').read_text() == 'up\n' and
           'ifconfig_wifi0.1=' not in (dotted / 'etc/rc.conf').read_text(),
           'dot-containing interface names use a valid rc file, not shell variable syntax')
+
+    flash_root = temporary / 'root-littlefs'
+    flash_root.mkdir()
+    profile.stage_network(flash_root, source, overlay, 'wifi0', pwd_mkdb,
+                          dhcp_dest, 'flash0', '', 'littlefs')
+    check((flash_root / 'etc/fstab').read_text().splitlines() == [
+              '/dev/flash0 / littlefs rw 0 0',
+              'tmpfs /tmp tmpfs rw', 'tmpfs /var/run tmpfs rw'],
+          'littlefs root uses its flash node and upstream recovery rather than an FFS checker')
 
     try:
         profile.stage_overlay(overlay, out)

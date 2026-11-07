@@ -94,6 +94,7 @@
 #define MOUNT_PUFFS	"puffs"		/* Pass-to-Userspace filesystem */
 #define MOUNT_HFS	"hfs"		/* Apple HFS+ Filesystem */
 #define MOUNT_EFS	"efs"		/* SGI's Extent Filesystem */
+#define MOUNT_LITTLEFS	"littlefs"	/* littlefs with BSD metadata */
 #define MOUNT_ZFS	"zfs"		/* Sun ZFS */
 #define MOUNT_NILFS	"nilfs"		/* NTT's NiLFS(2) logging file system */
 #define MOUNT_RUMPFS	"rumpfs"	/* rump virtual file system */

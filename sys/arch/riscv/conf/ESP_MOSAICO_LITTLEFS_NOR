@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Mosaico LittleFS root over the SPI0 NOR provider exposed by OpenSBI.
+include "arch/riscv/conf/ESP_MOSAICO_LITTLEFS"
+
+no file-system FFS
+no options FFS_NO_SNAPSHOT
+
+options LITTLEFS_FLASH
+options ESP32S31_FLASH
+
+esp32s31flash* at fdt? pass 2
+flash* at flashbus?

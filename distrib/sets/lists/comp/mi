@@ -994,6 +994,8 @@
 ./usr/include/fs/hfs/libhfs.h			comp-c-include
 ./usr/include/fs/hfsp/hfsp.h			comp-obsolete		obsolete
 ./usr/include/fs/hfsp/libhfsp.h			comp-obsolete		obsolete
+./usr/include/fs/littlefs/littlefs_format.h	comp-c-include
+./usr/include/fs/littlefs/littlefs_mount.h	comp-c-include
 ./usr/include/fs/nilfs/nilfs_fs.h		comp-c-include
 ./usr/include/fs/nilfs/nilfs_mount.h		comp-c-include
 ./usr/include/fs/ptyfs/ptyfs.h			comp-c-include

@@ -311,6 +311,11 @@ ISO 9660 file system.
 Chip flash file system.
 .It Sy ffs
 BSD fast file system (default).
+.It Sy littlefs
+Littlefs filesystem with BSD inode metadata attributes.
+The image byte order is fixed to little endian.
+Littlefs does not support hard links or compression; image creation rejects
+hard-linked input files.
 .It Sy msdos
 FAT12, FAT16, or FAT32 file system.
 .It Sy udf
@@ -351,6 +356,46 @@ Word; multiply by the number of bytes in an integer
 .El
 .\"
 .\"
+.Ss LittleFS-specific options
+.Sy littlefs
+images require an explicit size with
+.Fl s
+or a
+.Sy block_count
+option.
+The image size must be an exact multiple of
+.Sy block_size ;
+the image size and resulting block count must fit littlefs's 32-bit geometry.
+The default block size is 4096 bytes; the default read and program sizes are
+16 bytes, the cache size is 256 bytes, and the allocation lookahead size is
+32 bytes.
+The block size must be divisible by the read size, program size, and cache
+size; the cache size must be divisible by the read and program sizes.
+The following options are supported:
+.Pp
+.Bl -tag -width lookahead_size -offset indent -compact
+.It Sy block_size
+Erase block size in bytes.
+.It Sy read_size
+Minimum read size in bytes.
+.It Sy prog_size
+Minimum program size in bytes.
+.It Sy cache_size
+Read and program cache size in bytes.
+.It Sy block_count
+Number of erase blocks.
+When used with
+.Fl s ,
+it must match the image size divided by
+.Sy block_size .
+.It Sy lookahead_size
+Allocation lookahead bitmap size in bytes; it must be a multiple of 8.
+.El
+.Pp
+The mtree specification supplies BSD ownership, permissions, timestamps,
+and device numbers, stored in the filesystem's BSD metadata attributes.
+Symbolic links retain their target strings as file contents tagged with
+the BSD symbolic-link type.
 .Ss FFS-specific options
 .Sy ffs
 images have ffs-specific optional parameters that may be provided.

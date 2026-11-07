@@ -442,7 +442,8 @@ def console(target, compact=False, toolsets=()):
                 libraries=libraries, programs=programs, compact=compact)
 
 
-def network(target, toolsets=(), spi_units=()):
+def network(target, toolsets=(), spi_units=(), root_filesystem='ffs',
+            wpa_backend=''):
     """Select the ordinary-init network userland from the same C foundation."""
     import re
 
@@ -456,13 +457,18 @@ def network(target, toolsets=(), spi_units=()):
         raise ValueError('SPI units must be unique nonnegative unit numbers')
     if spi_units and 'spi' not in toolsets:
         raise ValueError('SPI units require the spi toolset')
+    if root_filesystem not in ('ffs', 'littlefs'):
+        raise ValueError('network root filesystem must be ffs or littlefs')
     selected = console(target)
+    selected['root_filesystem'] = root_filesystem
     selected.update(profile='network', compact=False)
     selected['headers'] = ('lib/libcurses',)
     selected['libraries'] = ('lib/libcrypt', 'lib/libterminfo', 'lib/libedit',
                              'lib/libm', 'lib/libutil', 'lib/libprop',
                              'lib/libkvm', 'lib/libipsec',
                              'external/bsd/libpcap/lib')
+    if wpa_backend == 'wolfssl':
+        selected['libraries'] += ('lib/libpthread',)
     selected['crunch_programs'] = (
         'bin/sh', 'bin/cat', 'bin/chmod', 'bin/cp', 'bin/date', 'bin/echo', 'bin/expr',
         'bin/hostname', 'bin/kill', 'bin/ln', 'bin/ls', 'bin/mkdir', 'bin/mv',
@@ -476,6 +482,11 @@ def network(target, toolsets=(), spi_units=()):
         'external/bsd/wpa/bin/wpa_supplicant', 'external/bsd/wpa/bin/wpa_cli',
         'external/apache2/mDNSResponder/usr.sbin/mdnsd')
     selected['programs'] = ('usr.bin/login',)
+    if root_filesystem == 'littlefs':
+        selected['headers'] += ('sys/sys', 'sys/fs/littlefs')
+        selected['crunch_programs'] = tuple(
+            name for name in selected['crunch_programs']
+            if name not in ('sbin/fsck_ffs', 'sbin/mount_ffs')) + ('sbin/mount_littlefs',)
     selected['data_components'] = (
         'external/bsd/dhcpcd/libexec/dhcpcd-run-hooks',
         'external/bsd/dhcpcd/libexec/dhcpcd-hooks')
@@ -532,8 +543,8 @@ def network_device_selection(settings, root_device, root_partition='a', applicat
     import re
     if not re.fullmatch(r'[A-Za-z]+[0-9]*', root_device):
         raise ValueError('network root device must be a device name without a partition')
-    if not re.fullmatch(r'[a-p]', root_partition):
-        raise ValueError('network root partition must be a single disk partition letter')
+    if not re.fullmatch(r'[a-p]?', root_partition):
+        raise ValueError('network root partition must be a disk partition letter or empty')
     nodes = settings['device_nodes']
     root_partitioned = root_device + root_partition
     nodes += ('r' + root_partitioned,)
@@ -546,7 +557,7 @@ def network_device_selection(settings, root_device, root_partition='a', applicat
 
 
 def stage_network(root, source, overlay, interface, pwd_mkdb, dhcpcd_dest,
-                  root_device, root_partition='a'):
+                  root_device, root_partition='a', root_filesystem='ffs'):
     """Stage standard init/rc network services over the normal OS defaults."""
     import shutil
     import subprocess
@@ -561,8 +572,10 @@ def stage_network(root, source, overlay, interface, pwd_mkdb, dhcpcd_dest,
         raise ValueError('network interface must be a plain interface name')
     if not __import__('re').fullmatch(r'[A-Za-z]+[0-9]*', root_device):
         raise ValueError('network root device must be a device name without a partition')
-    if not __import__('re').fullmatch(r'[a-p]', root_partition):
-        raise ValueError('network root partition must be a single disk partition letter')
+    if not __import__('re').fullmatch(r'[a-p]?', root_partition):
+        raise ValueError('network root partition must be a disk partition letter or empty')
+    if root_filesystem not in ('ffs', 'littlefs'):
+        raise ValueError('network root filesystem must be ffs or littlefs')
     for name in ('bin', 'sbin', 'usr/bin', 'usr/sbin', 'usr/libexec', 'etc/defaults',
                  'etc/rc.network.d', 'tmp', 'var/run', 'var/run/dhcpcd',
                  'var/db/dhcpcd', 'var/log', 'var/tmp', 'root',
@@ -586,8 +599,10 @@ def stage_network(root, source, overlay, interface, pwd_mkdb, dhcpcd_dest,
     write_if_different(root / 'etc/ttys',
         'console "/usr/libexec/getty default" vt100 off secure\n'
         'constty "/usr/libexec/getty std.115200" vt100 on secure\n')
+    root_spec = f'ROOT.{root_partition}' if root_partition else f'/dev/{root_device}'
+    fsck_pass = 1 if root_filesystem == 'ffs' else 0
     write_if_different(root / 'etc/fstab',
-        f'ROOT.{root_partition} / ffs rw 1 1\n'
+        f'{root_spec} / {root_filesystem} rw {fsck_pass} {fsck_pass}\n'
         'tmpfs /tmp tmpfs rw\n'
         'tmpfs /var/run tmpfs rw\n')
     write_if_different(root / 'etc/rc.conf',
@@ -805,6 +820,7 @@ def run_console(arguments):
     target = os.environ['EMBER_CONSOLE_TARGET']
     profile = os.environ.get('EMBER_USERLAND_PROFILE', 'console')
     is_network = profile == 'network'
+    wpa_backend = os.environ.get('EMBER_WPA_CRYPTO_BACKEND', '') if is_network else ''
     selected_toolsets = ()
     if is_network:
         selected_toolsets = tuple(filter(None,
@@ -812,7 +828,9 @@ def run_console(arguments):
         selected_spi_units = tuple(filter(None,
             os.environ.get('EMBER_NETWORK_SPI_UNITS', '').split(',')))
         try:
-            settings = network(target, selected_toolsets, selected_spi_units)
+            settings = network(target, selected_toolsets, selected_spi_units,
+                               os.environ.get('EMBER_NETWORK_ROOT_FILESYSTEM', 'ffs'),
+                               wpa_backend)
         except ValueError as exc:
             raise SystemExit('static-console: ' + str(exc)) from exc
     else:
@@ -901,7 +919,6 @@ def run_console(arguments):
         network_interface = os.environ.get('EMBER_NETWORK_INTERFACE', '')
         network_root_device = os.environ.get('EMBER_NETWORK_ROOT_DEVICE', '')
         network_root_partition = os.environ.get('EMBER_NETWORK_ROOT_PARTITION', 'a')
-        wpa_backend = os.environ.get('EMBER_WPA_CRYPTO_BACKEND', '') if is_network else ''
         wolfssl_prefix = os.environ.get('EMBER_WOLFSSL_PREFIX', '') if is_network else ''
         network_sources = {}
         wolfssl_hash = ''
@@ -917,8 +934,8 @@ def run_console(arguments):
                 raise SDKError('EMBER_NETWORK_INTERFACE must be an interface name')
             if not re.fullmatch(r'[A-Za-z]+[0-9]*', network_root_device):
                 raise SDKError('EMBER_NETWORK_ROOT_DEVICE must select a device name without a partition')
-            if not re.fullmatch(r'[a-p]', network_root_partition):
-                raise SDKError('EMBER_NETWORK_ROOT_PARTITION must select a disk partition letter')
+            if not re.fullmatch(r'[a-p]?', network_root_partition):
+                raise SDKError('EMBER_NETWORK_ROOT_PARTITION must select a disk partition letter or be empty')
             if not overlay:
                 raise SDKError('EMBER_NETWORK_OVERLAY must name the selected runtime overlay')
             if wolfssl_prefix:
@@ -1075,7 +1092,7 @@ def run_console(arguments):
                    network_root_partition if is_network else '',
                    str(network_root_stage) if network_root_stage is not None else '',
                    ' '.join(settings.get('data_components', ())) if is_network else '',
-                   selected_root_size]
+                   selected_root_size, settings.get('root_filesystem', 'ffs')]
         orchestrator_log = network_orchestrator_log(output) if is_network else output / 'logs/orchestrator.log'
         native_os.run_native_os(native, source=str(source), routing=str(output / 'routing'), cwd=str(source),
                                 arguments=command, shell=True, log=str(orchestrator_log))
@@ -1116,6 +1133,7 @@ def run_console(arguments):
             ('console-toolsets=' + ' '.join(selected_toolsets) + '\n' +
              'console-root-size=' + selected_root_size + '\n' if settings['compact'] else '') +
             (f'network-interface={network_interface}\nwpa-crypto-backend={wpa_backend or "default"}\n' +
+             f'root-filesystem={settings["root_filesystem"]}\n' +
              'network-toolsets=' + ' '.join(selected_toolsets) + '\n' +
              (f'wolfssl-sha256={wolfssl_hash}\n' if wolfssl_hash else '') +
              (f'libpcap-archive-sha256={libpcap_archive_hash}\n' if libpcap_archive_hash else '') +
@@ -1165,8 +1183,8 @@ if __name__ == '__main__':
         link_if_same(sys.argv[2], sys.argv[3])
     elif len(sys.argv) == 7 and sys.argv[1] == 'apply-metalog-modes':
         apply_metalog_modes(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6])
-    elif len(sys.argv) == 10 and sys.argv[1] == 'stage-network':
+    elif len(sys.argv) == 11 and sys.argv[1] == 'stage-network':
         stage_network(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6],
-                      sys.argv[7], sys.argv[8], sys.argv[9])
+                      sys.argv[7], sys.argv[8], sys.argv[9], sys.argv[10])
     else:
-        raise SystemExit('usage: static-profile.py stage-overlay DIRECTORY ROOT | link-if-same TARGET LINK | stage-network ROOT SOURCE OVERLAY INTERFACE PWD_MKDB DHCPCD_SOURCE ROOT_DEVICE ROOT_PARTITION')
+        raise SystemExit('usage: static-profile.py stage-overlay DIRECTORY ROOT | link-if-same TARGET LINK | stage-network ROOT SOURCE OVERLAY INTERFACE PWD_MKDB DHCPCD_SOURCE ROOT_DEVICE ROOT_PARTITION ROOT_FILESYSTEM')

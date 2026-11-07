@@ -66,6 +66,14 @@ S!=	cd ../../../.. && pwd
 INCLUDES?=	-I. ${EXTRA_INCLUDES} -I${S}/../common/include -I$S/arch \
 		-I$S -nostdinc
 CPPFLAGS+=	${INCLUDES} ${IDENT} -D_KERNEL -D_KERNEL_OPT
+.if !empty(ALLFILES:M*/littlefs_core.c)
+.include "${S}/fs/littlefs/source.mk"
+.for _littlefs_file in ${ALLFILES:T:Mlittlefs_*.c}
+CPPFLAGS.${_littlefs_file}+= -I${EMBER_LITTLEFS_SOURCE}
+.endfor
+CWARNFLAGS.littlefs_core.c+= -Wno-shadow -Wno-cast-qual \
+    ${${ACTIVE_CC} == "clang":? -Wno-unneeded-internal-declaration :}
+.endif
 .if !defined(EMBER_VERSION)
 .error Include source <bsd.own.mk> before Makefile.kern.inc
 .endif
