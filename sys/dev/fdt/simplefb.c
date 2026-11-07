@@ -30,6 +30,7 @@
 #include "opt_wsdisplay_compat.h"
 #include "opt_virtgpu_console.h"
 #include "opt_wsdisplay_bootfb.h"
+#include "opt_wsdisplay_earlyfb.h"
 
 #include <sys/cdefs.h>
 __KERNEL_RCSID(0, "$NetBSD: simplefb.c,v 1.15 2021/08/30 22:47:24 jmcneill Exp $");
@@ -49,6 +50,8 @@ __KERNEL_RCSID(0, "$NetBSD: simplefb.c,v 1.15 2021/08/30 22:47:24 jmcneill Exp $
 #endif
 
 #include <dev/wsfb/genfbvar.h>
+#include <dev/cons.h>
+#include <dev/splash/splash.h>
 #ifdef WSDISPLAY_BOOTFB_HANDOFF
 #include <dev/wscons/wsdisplayvar.h>
 #endif
@@ -512,6 +515,15 @@ simplefb_attach_genfb(struct simplefb_softc *sc)
 #endif
 
 	prop_dictionary_set_bool(dict, "is_console", is_console);
+
+#if defined(SPLASHSCREEN) && defined(WSDISPLAY_EARLYFB_PRESERVE_SPLASH)
+	/* Keep firmware pixels while a usable independent console owns text. */
+	prop_dictionary_set_bool(dict, "preserve-splash",
+	    !is_console && (boothowto & SPLASH_BOOT_DISABLE_MASK) == 0 &&
+	    cn_tab != NULL && cn_tab->cn_pri > CN_NULL &&
+	    cn_tab->cn_putc != NULL && cn_tab->cn_getc != NULL &&
+	    cn_tab->cn_pollc != NULL && cn_tab->cn_putc != wsdisplay_cnputc);
+#endif
 
 #ifdef WSDISPLAY_BOOTFB_HANDOFF
 	error = genfb_attach(&sc->sc_gen, &ops);

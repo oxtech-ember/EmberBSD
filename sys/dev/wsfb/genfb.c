@@ -381,6 +381,7 @@ genfb_attach(struct genfb_softc *sc, struct genfb_ops *ops)
 #ifdef SPLASHSCREEN
 	int i, j;
 	int error = ENXIO;
+	bool preserve_splash = false;
 #endif
 
 	KASSERTMSG(scp != NULL, "missing genfb_init");
@@ -400,6 +401,13 @@ genfb_attach(struct genfb_softc *sc, struct genfb_ops *ops)
 	if (prop_dictionary_get_bool(dict, "clear-screen", &scp->sc_want_clear)
 	    == false)
 		scp->sc_want_clear = true;
+#ifdef SPLASHSCREEN
+	/* The bus frontend validates the firmware image and text console. */
+	if (!console && !DISABLESPLASH)
+		prop_dictionary_get_bool(dict, "preserve-splash", &preserve_splash);
+	if (preserve_splash)
+		scp->sc_want_clear = false;
+#endif
 
 	fb_phys = (paddr_t)sc->sc_fboffset;
 	if (fb_phys == 0) {
@@ -511,7 +519,8 @@ genfb_attach(struct genfb_softc *sc, struct genfb_ops *ops)
 		}
 		j += 3;
 	}
-	genfb_restore_palette(sc);
+	if (!preserve_splash)
+		genfb_restore_palette(sc);
 
 	scp->sc_splash.si_depth = sc->sc_depth;
 	scp->sc_splash.si_bits = scp->sc_console_screen.scr_ri.ri_origbits;
@@ -521,8 +530,11 @@ genfb_attach(struct genfb_softc *sc, struct genfb_ops *ops)
 	scp->sc_splash.si_stride = sc->sc_stride;
 	scp->sc_splash.si_fillrect = NULL;
 	if (!DISABLESPLASH) {
-		error = splash_render(&scp->sc_splash,
-		    SPLASH_F_CENTER|SPLASH_F_FILL);
+		if (preserve_splash)
+			error = 0;
+		else
+			error = splash_render(&scp->sc_splash,
+			    SPLASH_F_CENTER|SPLASH_F_FILL);
 		if (error) {
 			SCREEN_ENABLE_DRAWING(&scp->sc_console_screen);
 			genfb_init_palette(sc);

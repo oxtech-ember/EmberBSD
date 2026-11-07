@@ -26,7 +26,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd July 26, 2019
+.Dd November 7, 2026
 .Dt GENFB 4
 .Os
 .Sh NAME
@@ -43,6 +43,24 @@ The
 .Nm
 driver provides support for generic framebuffers that have no native driver.
 All it needs are some parameters to describe the framebuffer and an address.
+.Ss Firmware splash preservation
+The bus frontend can set the boolean device property
+.Dv preserve-splash
+after it validates the firmware framebuffer and a usable independent text
+console.
+With
+.Dv SPLASHSCREEN
+enabled, this property preserves the framebuffer pixels and palette during
+initial attachment.
+It suppresses the initial screen clear and embedded splash rendering.
+It does not change later explicit splash requests or display mode changes.
+The property is ignored for a system framebuffer console and for single-user,
+user configuration, interactive boot, verbose, or debug boot modes.
+.Pp
+The simple-framebuffer frontend requests this behavior only with
+.Dv WSDISPLAY_EARLYFB_PRESERVE_SPLASH
+enabled and a usable independent console.
+The default behavior is unchanged.
 .Ss PCI
 When attaching to a
 .Xr pci 4
