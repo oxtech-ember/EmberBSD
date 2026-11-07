@@ -62,6 +62,10 @@ static struct {
 	unsigned rx_idx_reads;
 	int rx_idx_error, rx_idx_change_generation, rx_idx_stop;
 	unsigned bcn_valid_sets;
+	int check_fw_chunk;
+	int chunk_mode, chunk_faulted, chunk_cancelled;
+	unsigned chunk_after_cancel;
+	uint8_t chunk_cr, chunk_bcn, chunk_txq;
 	unsigned tx_hw_rp[5];	/* MGMT, BE, BK, VI, VO read indices. */
 	unsigned barriers;
 	uint32_t imr_at_barrier;
@@ -172,6 +176,8 @@ read_1(void *cookie, uint32_t reg, uint8_t *out)
 
 	(void)cookie;
 	f.reads++;
+	if (f.chunk_cancelled)
+		f.chunk_after_cancel++;
 	error = access_ok(reg, 1);
 	if (error != 0)
 		return error;
@@ -187,6 +193,15 @@ read_1(void *cookie, uint32_t reg, uint8_t *out)
 	if (f.fail_syscfg && reg == 0x00f0)
 		return EIO;
 	*out = f.mmio[reg];
+	if (((reg == 0x205 && (f.chunk_mode == 4 || f.chunk_mode == 5)) ||
+	    (reg == 0x101 && f.chunk_mode == 6) ||
+	    (reg == 0x383 && f.chunk_mode == 7)) && !f.chunk_cancelled) {
+		f.chunk_cancelled = 1;
+		if (f.chunk_mode != 5)
+			f.sc->sc_generation++;
+		else
+			f.sc->sc_stop_requested = 1;
+	}
 	if (f.off_stuck && f.sc->sc_stop_requested && reg == 0x05)
 		*out |= 0x02;
 	if (reg == 0x06)
@@ -202,6 +217,8 @@ read_2(void *cookie, uint32_t reg, uint16_t *out)
 	int error;
 
 	(void)cookie;
+	if (f.chunk_cancelled)
+		f.chunk_after_cancel++;
 	f.reads++;
 	error = access_ok(reg, 2);
 	if (error != 0)
@@ -219,6 +236,8 @@ read_4(void *cookie, uint32_t reg, uint32_t *out)
 	uint32_t v;
 
 	(void)cookie;
+	if (f.chunk_cancelled)
+		f.chunk_after_cancel++;
 	f.reads++;
 	if (reg == 0x3c60 || reg == 0x4c60) {
 		f.diag_reads++;
@@ -327,9 +346,17 @@ write_1(void *cookie, uint32_t reg, uint8_t val)
 	int error;
 
 	(void)cookie;
+	if (f.chunk_cancelled)
+		f.chunk_after_cancel++;
 	error = access_ok(reg, 1);
 	if (error != 0)
 		return error;
+	if (!f.chunk_faulted && ((f.chunk_mode == 1 && reg == 0x422) ||
+	    ((f.chunk_mode == 3 || f.chunk_mode == 9) &&
+	    reg == 0x101 && val == 0x52))) {
+		f.chunk_faulted = 1;
+		return EIO;
+	}
 	if (!f.sc->sc_stop_requested &&
 	    ((f.fail_power_stage == 1 && reg == 0x1c) ||
 	    (f.fail_power_stage == 3 && reg == 0x1103)))
@@ -344,10 +371,20 @@ write_1(void *cookie, uint32_t reg, uint8_t val)
 		f.bad_power_order |= !f.power_table_seen;
 		f.power_post_seen = 1;
 	}
+	if (f.check_fw_chunk && reg == 0x0101 && !f.bcn_valid_sets) {
+		f.chunk_cr = f.mmio[0x101];
+		f.chunk_bcn = f.mmio[0x550];
+		f.chunk_txq = f.mmio[0x422];
+	}
 	f.writes++;
 	if (is_cfg_reg(reg))
 		f.cfg_writes++;
 	f.mmio[reg] = val;
+	if (f.chunk_mode == 8 && reg == 0x550 && val == 0x29 &&
+	    !f.chunk_cancelled) {
+		f.chunk_cancelled = 1;
+		f.sc->sc_generation++;
+	}
 	if (reg == 0x73 && f.stop_coex_final && f.sc->sc_running &&
 	    (f.lte[0x38] & 0xff00) == 0x7700) {
 		if (f.stop_coex_final == 1)
@@ -399,6 +436,8 @@ write_2(void *cookie, uint32_t reg, uint16_t val)
 	int error;
 
 	(void)cookie;
+	if (f.chunk_cancelled)
+		f.chunk_after_cancel++;
 	error = access_ok(reg, 2);
 	if (error != 0)
 		return error;
@@ -446,9 +485,16 @@ write_4(void *cookie, uint32_t reg, uint32_t val)
 	}
 
 	(void)cookie;
+	if (f.chunk_cancelled)
+		f.chunk_after_cancel++;
 	error = access_ok(reg, 4);
 	if (error != 0)
 		return error;
+	if (f.check_fw_chunk && reg == 0x1208 && (val & 0x80000000)) {
+		CHECK(f.mmio[0x101] == f.chunk_cr);
+		CHECK(f.mmio[0x550] == f.chunk_bcn);
+		CHECK(f.mmio[0x422] == f.chunk_txq);
+	}
 	model_write(reg, 4, val);
 	if (reg == 0x1c3c && val == 0xa8003)
 		f.dack_seen = 1;
@@ -1203,6 +1249,7 @@ test_command_length(void)
 	uint8_t buf[8] = { 0 };
 
 	reset_bus(&sc);
+	f.check_fw_chunk = 1;
 	if (!attach_ok(&sc))
 		return;
 	CHECK(rtw88_start(&sc) == 0);
@@ -1231,6 +1278,37 @@ test_command_length(void)
 		/* No beacon write-back: OWN stays, the chip sets BCN_VALID. */
 		CHECK((bd[3] & 0x80) != 0);
 		CHECK(f.bcn_valid_sets > 0);
+	}
+	f.check_fw_chunk = 0;
+	/* Direct PCI chunk failure paths, without the outer stop masking state. */
+	for (int mode = 0; mode <= 9; mode++) {
+		struct rtw88_fw_section sec = { .size = 1, .load_address = 0x1000 };
+		int error;
+
+		f.bcn_valid_sets = 0;
+		f.mmio[0x101] = 0x52;
+		f.mmio[0x550] = 0x29;
+		f.mmio[0x422] = 0xe7;
+		f.chunk_mode = mode;
+		f.chunk_faulted = f.chunk_cancelled = f.chunk_after_cancel = 0;
+		f.bcn_dead = mode == 2 || mode == 9;
+		error = rtw88_pci_hci_ops.fw_section(&sc, sc.sc_generation,
+		    buf, sizeof(buf), &sec);
+		if (error != (mode == 0 ? 0 : mode == 2 || mode == 9 ? ETIMEDOUT :
+		    mode >= 4 ? EINTR : EIO))
+			fprintf(stderr, "chunk mode %d error %d\n", mode, error);
+		CHECK(error == (mode == 0 ? 0 : mode == 2 || mode == 9 ? ETIMEDOUT :
+		    mode >= 4 ? EINTR : EIO));
+		if (mode < 4 || mode == 9) {
+			if (mode != 3 && mode != 9)
+				CHECK(f.mmio[0x101] == 0x52);
+			CHECK(f.mmio[0x550] == 0x29);
+			CHECK(f.mmio[0x422] == 0xe7);
+		} else {
+			CHECK(f.chunk_after_cancel == 0);
+		}
+		f.chunk_mode = f.chunk_cancelled = f.bcn_dead = 0;
+		sc.sc_stop_requested = 0;
 	}
 	CHECK(rtw88_fw_command(&sc, 1, buf, 8) == EMSGSIZE);
 	CHECK(rtw88_fw_command(&sc, 1, buf, 7) == 0);

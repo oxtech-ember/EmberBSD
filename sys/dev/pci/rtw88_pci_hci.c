@@ -189,32 +189,26 @@ rtw88_pci_put32(uint8_t *p, uint32_t v)
 }
 
 static int
-rtw88_pci_rmw8(struct rtw88_softc *sc, uint32_t addr, uint8_t clear, uint8_t set)
-{
-	uint8_t v;
-	int error;
-
-	error = sc->sc_ops->read_1(sc->sc_bus, addr, &v);
-	if (error != 0)
-		return error;
-	v = (uint8_t)((v & ~clear) | set);
-	return sc->sc_ops->write_1(sc->sc_bus, addr, v);
-}
-
-static int
 rtw88_pci_post_fw_chunk(struct rtw88_softc *sc, uint32_t gen, size_t len)
 {
+	enum { SAVE_BCN, SAVE_TXQ, SAVE_CR, NSAVED };
+	const uint32_t regs[NSAVED] = {
+		RTW88_REG_BCN_CTRL, RTW88_REG_FWHW_TXQ + 2, RTW88_REG_CR + 1
+	};
 	struct rtw88_tx_info tx;
 	struct rtw88_dma *bcn = &sc->sc_ring[RTW88_RING_BCN];
 	struct rtw88_pci_poll32 valid;
-	uint8_t *bd;
+	uint8_t saved[NSAVED], work, *bd;
 	uint32_t total, psb, dma;
-	int error;
+	unsigned changed = 0, i;
+	int error, next;
 
 	if (bcn->vaddr == NULL || bcn->size < RTW88_PCI_TX_BUFFER_DESC_SIZE)
 		return ENXIO;
 	if (sc->sc_fw_dma.addr > UINT32_MAX || bcn->addr > UINT32_MAX)
 		return EOVERFLOW;
+	if (sc->sc_stop_requested || sc->sc_generation != gen)
+		return EINTR;
 	memset(&tx, 0, sizeof(tx));
 	tx.packet_size = (uint32_t)len;
 	tx.queue = RTW88_QSEL_BEACON;
@@ -236,53 +230,72 @@ rtw88_pci_post_fw_chunk(struct rtw88_softc *sc, uint32_t gen, size_t len)
 	rtw88_pci_put32(bd + 4, dma);
 	rtw88_pci_put16(bd + 8, (uint16_t)len);
 	rtw88_pci_put32(bd + 12, dma + RTW88_TX_DESC);
+	if (sc->sc_stop_requested || sc->sc_generation != gen)
+		return EINTR;
 	sc->sc_ops->dma_sync(sc->sc_bus, &sc->sc_fw_dma, BUS_DMASYNC_PREWRITE);
+	if (sc->sc_stop_requested || sc->sc_generation != gen)
+		return EINTR;
 	sc->sc_ops->dma_sync(sc->sc_bus, bcn, BUS_DMASYNC_PREWRITE);
-	error = sc->sc_ops->write_4(sc->sc_bus, RTW88_REG_TXBD_DESA_BCN,
-	    (uint32_t)bcn->addr);
-	if (error != 0)
-		return error;
-	error = sc->sc_ops->write_2(sc->sc_bus, RTW88_REG_FIFOPAGE_2,
-	    RTW88_BCN_VALID);
-	if (error != 0)
-		return error;
-	error = rtw88_pci_rmw8(sc, RTW88_REG_CR + 1, 0, 0x01);
-	if (error != 0)
-		return error;
-	error = rtw88_pci_rmw8(sc, RTW88_REG_BCN_CTRL, 0x08, 0x10);
-	if (error != 0)
-		return error;
-	error = rtw88_pci_rmw8(sc, RTW88_REG_FWHW_TXQ + 2, 0x40, 0);
-	if (error != 0)
-		return error;
-	error = rtw88_pci_rmw8(sc, RTW88_REG_BCN_WORK, 0, RTW88_BCN_WORK_FLAG);
-	if (error != 0)
-		return error;
-	/*
-	 * The beacon queue has no completion write-back: the host OWN bit
-	 * stays set. The chip reports the copy by setting BCN_VALID.
-	 */
+
+#define CHUNK_IO(expr) do { \
+	if (sc->sc_stop_requested || sc->sc_generation != gen) { \
+		error = EINTR; \
+		goto restore; \
+	} \
+	error = (expr); \
+	if (error != 0) goto restore; \
+	if (sc->sc_stop_requested || sc->sc_generation != gen) { \
+		error = EINTR; \
+		goto restore; \
+	} \
+} while (0)
+	/* Each reserved-page transfer borrows these controls until BCN_VALID. */
+	for (i = 0; i < NSAVED; i++)
+		CHUNK_IO(sc->sc_ops->read_1(sc->sc_bus, regs[i], &saved[i]));
+	CHUNK_IO(sc->sc_ops->write_4(sc->sc_bus, RTW88_REG_TXBD_DESA_BCN,
+	    (uint32_t)bcn->addr));
+	CHUNK_IO(sc->sc_ops->write_2(sc->sc_bus, RTW88_REG_FIFOPAGE_2,
+	    RTW88_BCN_VALID));
+	/* Mark attempted writes too: an I/O failure may leave a changed byte. */
+	changed |= 1U << SAVE_CR;
+	CHUNK_IO(sc->sc_ops->write_1(sc->sc_bus, regs[SAVE_CR],
+	    saved[SAVE_CR] | 0x01));
+	changed |= 1U << SAVE_BCN;
+	CHUNK_IO(sc->sc_ops->write_1(sc->sc_bus, regs[SAVE_BCN],
+	    (saved[SAVE_BCN] & ~0x08) | 0x10));
+	changed |= 1U << SAVE_TXQ;
+	CHUNK_IO(sc->sc_ops->write_1(sc->sc_bus, regs[SAVE_TXQ],
+	    saved[SAVE_TXQ] & ~0x40));
+	CHUNK_IO(sc->sc_ops->read_1(sc->sc_bus, RTW88_REG_BCN_WORK, &work));
+	CHUNK_IO(sc->sc_ops->write_1(sc->sc_bus, RTW88_REG_BCN_WORK,
+	    work | RTW88_BCN_WORK_FLAG));
+#undef CHUNK_IO
+	/* The host OWN bit stays set; BCN_VALID reports the completed copy. */
 	valid.reg = RTW88_REG_FIFOPAGE_2 + 1;
 	valid.mask = RTW88_BCN_VALID >> 8;
 	valid.value = RTW88_BCN_VALID >> 8;
 	error = rtw88_pci_poll(sc, gen, RTW88_COMMAND_US, rtw88_pci_ready8, &valid);
 	if (error != 0) {
-		uint32_t desa = 0, cr = 0;
-		uint16_t page = 0;
-
-		(void)sc->sc_ops->read_4(sc->sc_bus, RTW88_REG_TXBD_DESA_BCN,
-		    &desa);
-		(void)sc->sc_ops->read_4(sc->sc_bus, RTW88_REG_CR, &cr);
-		(void)sc->sc_ops->read_2(sc->sc_bus, RTW88_REG_FIFOPAGE_2,
-		    &page);
-		printf("rtwce: firmware beacon queue timed out "
-		    "bd %#lx data %#lx desa %#x cr %#x page %#x own %#x\n",
-		    (unsigned long)sc->sc_ring[RTW88_RING_BCN].addr,
-		    (unsigned long)sc->sc_fw_dma.addr, desa, cr, page,
+		/* Do not issue diagnostic MMIO reads after a cancelled transfer. */
+		printf("rtwce: firmware beacon queue failed (%d) "
+		    "bd %#lx data %#lx own %#x\n", error,
+		    (unsigned long)bcn->addr, (unsigned long)sc->sc_fw_dma.addr,
 		    (unsigned)bd[2] | (unsigned)bd[3] << 8);
-		return error;
 	}
-	return 0;
+restore:
+	/* Match the donor's per-chunk restore, before the caller starts DDMA. */
+	for (i = 0; i < NSAVED; i++) {
+		if ((changed & (1U << i)) == 0)
+			continue;
+		if (sc->sc_stop_requested || sc->sc_generation != gen)
+			return error != 0 ? error : EINTR;
+		next = sc->sc_ops->write_1(sc->sc_bus, regs[i], saved[i]);
+		if (error == 0)
+			error = next;
+		if (sc->sc_stop_requested || sc->sc_generation != gen)
+			return error != 0 ? error : EINTR;
+	}
+	return error;
 }
 
 static int
