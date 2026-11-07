@@ -682,10 +682,13 @@ littlefs_readdir(void *v)
 	char *path;
 	off_t *cookies = NULL, cookie;
 	int error = 0, count = 0, maxcookies = 0;
+	bool emitted = false;
 
 	if (ap->a_vp->v_type != VDIR)
 		return ENOTDIR;
 	if (uio->uio_offset < 0 || (uint64_t)uio->uio_offset > UINT32_MAX)
+		return EINVAL;
+	if (uio->uio_resid < _DIRENT_MINSIZE(&de))
 		return EINVAL;
 	if (ap->a_eofflag != NULL)
 		*ap->a_eofflag = false;
@@ -733,11 +736,15 @@ littlefs_readdir(void *v)
 		de.d_reclen = _DIRENT_RECLEN(&de, de.d_namlen);
 		de.d_type = IFTODT(attr.mode);
 		memcpy(de.d_name, info.name, de.d_namlen + 1);
-		if (de.d_reclen > uio->uio_resid)
+		if (de.d_reclen > uio->uio_resid) {
+			if (!emitted)
+				error = EINVAL;
 			break;
+		}
 		error = uiomove(&de, de.d_reclen, uio);
 		if (error)
 			break;
+		emitted = true;
 		uio->uio_offset = cookie;
 		if (cookies != NULL) {
 			cookies[count++] = cookie;
