@@ -30,8 +30,18 @@ def extract(path, pattern):
     return text[match.start():end]
 
 
+generic_bounds = extract(root / "sys/dev/flash/flash.c",
+                         r"static int\nflash_partition_range\(const struct flash_softc \*sc, flash_off_t offset,\n    flash_size_t length, flash_off_t \*physical\)\n\{")
 generic_erase = extract(root / "sys/dev/flash/flash.c",
                         r"int\nflash_erase\(device_t self, struct flash_erase_instruction \* const ei\)\n\{")
+generic_read = extract(root / "sys/dev/flash/flash.c",
+                       r"int\nflash_read\(device_t self, flash_off_t offset, size_t len, size_t \* const retlen,\n    uint8_t \* const buf\)\n\{")
+generic_write = extract(root / "sys/dev/flash/flash.c",
+                        r"int\nflash_write\(device_t self, flash_off_t offset, size_t len,\n    size_t \* const retlen, const uint8_t \* const buf\)\n\{")
+generic_markbad = extract(root / "sys/dev/flash/flash.c",
+                          r"int\nflash_block_markbad\(device_t self, flash_off_t offset\)\n\{")
+generic_isbad = extract(root / "sys/dev/flash/flash.c",
+                        r"int\nflash_block_isbad\(device_t self, flash_off_t offset, bool \* const bad\)\n\{")
 s31_erase = extract(root / "sys/arch/riscv/espressif/esp32s31_flash.c",
                     r"static int\nesp32s31_flash_erase\(device_t self, struct flash_erase_instruction \*ei\)\n\{")
 s31_read = extract(root / "sys/arch/riscv/espressif/esp32s31_flash.c",
@@ -64,6 +74,11 @@ struct flash_partition {
 };
 struct flash_interface {
     int (*erase)(device_t, struct flash_erase_instruction *);
+    int (*read)(device_t, flash_off_t, size_t, size_t *, uint8_t *);
+    int (*write)(device_t, flash_off_t, size_t, size_t *, const uint8_t *);
+    int (*block_markbad)(device_t, flash_off_t);
+    int (*block_isbad)(device_t, flash_off_t, bool *);
+    uint32_t erasesize;
 };
 struct flash_softc {
     struct flash_interface *flash_if;
@@ -90,6 +105,9 @@ static bool generic_leave_state;
 static unsigned generic_calls;
 static flash_off_t generic_seen_addr, generic_seen_len;
 static device_t generic_seen_device;
+static unsigned generic_read_calls, generic_write_calls;
+static unsigned generic_markbad_calls, generic_isbad_calls;
+static flash_off_t generic_seen_offset;
 static int mock_generic_erase(device_t dev, struct flash_erase_instruction *ei)
 {
     generic_calls++;
@@ -99,6 +117,39 @@ static int mock_generic_erase(device_t dev, struct flash_erase_instruction *ei)
     if (!generic_leave_state)
         ei->ei_state = generic_error ? FLASH_ERASE_FAILED : FLASH_ERASE_DONE;
     return generic_error;
+}
+static int mock_generic_read(device_t dev, flash_off_t offset, size_t len,
+    size_t *retlen, uint8_t *buf)
+{
+    (void)dev; (void)buf;
+    generic_read_calls++;
+    generic_seen_offset = offset;
+    *retlen = len;
+    return 0;
+}
+static int mock_generic_write(device_t dev, flash_off_t offset, size_t len,
+    size_t *retlen, const uint8_t *buf)
+{
+    (void)dev; (void)buf;
+    generic_write_calls++;
+    generic_seen_offset = offset;
+    *retlen = len;
+    return 0;
+}
+static int mock_generic_markbad(device_t dev, flash_off_t offset)
+{
+    (void)dev;
+    generic_markbad_calls++;
+    generic_seen_offset = offset;
+    return 0;
+}
+static int mock_generic_isbad(device_t dev, flash_off_t offset, bool *bad)
+{
+    (void)dev;
+    generic_isbad_calls++;
+    generic_seen_offset = offset;
+    *bad = false;
+    return 0;
 }
 
 static bool s31_locked;
@@ -135,11 +186,15 @@ static void s31_done_callback(struct flash_erase_instruction *ei)
     s31_callbacks++;
 }
 
-""" + generic_erase + s31_read + s31_write + s31_erase + r"""
+""" + generic_bounds + generic_erase + generic_read + generic_write + generic_markbad + \
+    generic_isbad + s31_read + s31_write + s31_erase + r"""
 int main(void)
 {
     struct device parent = {0};
-    struct flash_interface fi = { .erase = mock_generic_erase };
+    struct flash_interface fi = { .erase = mock_generic_erase,
+        .read = mock_generic_read, .write = mock_generic_write,
+        .block_markbad = mock_generic_markbad,
+        .block_isbad = mock_generic_isbad, .erasesize = 0x400 };
     struct flash_softc fsc = { .flash_if = &fi,
         .sc_partinfo = { .part_offset = 0x1000, .part_size = 0x3000 } };
     struct device flash = { .private = &fsc, .parent = &parent };
@@ -214,6 +269,59 @@ int main(void)
     fsc.sc_partinfo.part_size = 0x3000;
 
     {
+        uint8_t buffer[8] = {0};
+        size_t retlen = 0;
+        bool bad;
+
+        /* A negative partition-relative offset must never reach the parent. */
+        assert(flash_read(&flash, -1, 1, &retlen, buffer) == EINVAL);
+        assert(flash_write(&flash, -1, 1, &retlen, buffer) == EINVAL);
+        assert(flash_block_markbad(&flash, -1) == EINVAL);
+        assert(flash_block_isbad(&flash, -1, &bad) == EINVAL);
+        assert(generic_read_calls == 0 && generic_write_calls == 0);
+        assert(generic_markbad_calls == 0 && generic_isbad_calls == 0);
+
+        /* Preserve write protection while reads and bad-block queries remain available. */
+        fsc.sc_readonly = true;
+        assert(flash_write(&flash, -1, 1, &retlen, buffer) == EACCES);
+        assert(flash_block_markbad(&flash, -1) == EACCES);
+        assert(flash_read(&flash, 0, 1, &retlen, buffer) == 0);
+        assert(flash_block_isbad(&flash, 0, &bad) == 0);
+        assert(generic_read_calls == 1 && generic_write_calls == 0);
+        assert(generic_markbad_calls == 0 && generic_isbad_calls == 1);
+        fsc.sc_readonly = false;
+
+        /* Empty I/O at the partition end is valid and maps to its physical end. */
+        assert(flash_read(&flash, 0x3000, 0, &retlen, buffer) == 0);
+        assert(generic_read_calls == 2 && generic_seen_offset == 0x4000);
+        assert(flash_write(&flash, 0x3000, 0, &retlen, buffer) == 0);
+        assert(generic_write_calls == 1 && generic_seen_offset == 0x4000);
+
+        /* A full final erase block is within the partition. */
+        assert(flash_block_markbad(&flash, 0x2c00) == 0);
+        assert(generic_markbad_calls == 1 && generic_seen_offset == 0x3c00);
+        assert(flash_block_isbad(&flash, 0x2c00, &bad) == 0);
+        assert(generic_isbad_calls == 2 && generic_seen_offset == 0x3c00);
+
+        /* Non-empty I/O at end and oversized spans are rejected before I/O. */
+        assert(flash_read(&flash, 0x3000, 1, &retlen, buffer) == EINVAL);
+        assert(flash_write(&flash, 0x3000, 1, &retlen, buffer) == EINVAL);
+        assert(flash_read(&flash, 0, SIZE_MAX, &retlen, buffer) == EINVAL);
+        assert(flash_write(&flash, 0, SIZE_MAX, &retlen, buffer) == EINVAL);
+        assert(generic_read_calls == 2 && generic_write_calls == 1);
+
+        /* The exclusive physical end must fit in signed flash_off_t. */
+        fsc.sc_partinfo.part_offset = INT64_MAX - 3;
+        fsc.sc_partinfo.part_size = 8;
+        assert(flash_read(&flash, 0, 0, &retlen, buffer) == EINVAL);
+        assert(flash_write(&flash, 0, 0, &retlen, buffer) == EINVAL);
+        assert(flash_block_markbad(&flash, 0) == EINVAL);
+        assert(flash_block_isbad(&flash, 0, &bad) == EINVAL);
+        assert(generic_read_calls == 2 && generic_write_calls == 1);
+        assert(generic_markbad_calls == 1 && generic_isbad_calls == 2);
+    }
+
+    {
         struct esp32s31_flash_softc ssc = { .sc_if = { .erasesize = 4096 },
             .sc_size = 8192 };
         struct device s31 = { .private = &ssc };
@@ -264,5 +372,6 @@ source = out_dir / "t_flash_erase.c"
 binary = out_dir / "t_flash_erase"
 source.write_text(fixture)
 subprocess.run([args.cc, "-std=c99", "-Wall", "-Wextra", "-Werror",
+                "-Wno-sign-compare",
                 str(source), "-o", str(binary)], check=True)
 subprocess.run([str(binary)], check=True)
