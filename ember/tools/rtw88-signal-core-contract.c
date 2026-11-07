@@ -71,6 +71,17 @@ static void context_rx(struct rtw88_softc *sc,unsigned n) {
     f.rx_hw_idx=n+1;set_hisr0(1);
     CHECK(rtw88_intr(sc)==1 && signal_count==n+1);
 }
+/* A failed channel transaction withdraws RX admission. Pending DMA must
+ * not reach the signal consumer or touch device registers after that fence. */
+static void context_rx_stopped(struct rtw88_softc *sc) {
+    CHECK(sc->sc_stop_requested && !sc->sc_phy.channel_valid);
+    signal_packet(sc,0,0,60);
+    f.rx_hw_idx=1;set_hisr0(1);
+    unsigned reads=f.reads,writes=f.writes,rp=sc->sc_rx_rp;
+    CHECK(rtw88_intr(sc)==0);
+    CHECK(signal_count==0 && sc->sc_rx_rp==rp);
+    CHECK(f.reads==reads && f.writes==writes);
+}
 static void context_success(void) {
     struct rtw88_softc sc;
     const struct rtw88_channel_tuple wide={36,42,80};
@@ -126,7 +137,7 @@ static void context_failure(void) {
     fault.write_4=context_write4;sc.sc_ops=&fault;
     CHECK(rtw88_channel(&sc,36)==EIO);
     sc.sc_ops=&ops;sc.sc_rx_frame=signal_capture;signal_count=0;
-    context_rx(&sc,0);CHECK(!signal_observed[0].valid && signal_observed[0].quality==0);
+    context_rx_stopped(&sc);
     for(unsigned q=0;q<RTW88_NTXQ;q++){
         CHECK(rtw88_tx_available(&sc,q)==0);wp[q]=sc.sc_txq[q].wp;
     }
@@ -155,8 +166,7 @@ static void context_power_validation(void) {
     sc.sc_efuse_phys[1]=0;
     CHECK(rtw88_channel(&sc,1)==ERANGE);
     CHECK(sc.sc_stop_requested && !sc.sc_phy.channel_valid && sc.sc_channel==36);
-    sc.sc_rx_frame=signal_capture;signal_count=0;context_rx(&sc,0);
-    CHECK(!signal_observed[0].valid && signal_observed[0].quality==0);
+    sc.sc_rx_frame=signal_capture;signal_count=0;context_rx_stopped(&sc);
     CHECK(rtw88_stop(&sc)==0 && rtw88_core_detach(&sc)==0);
 }
 static unsigned context_hci_failure_seen;
