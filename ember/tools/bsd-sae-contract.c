@@ -107,6 +107,7 @@ static int ioctl(int fd, unsigned long cmd, void *data)
 	struct ieee80211req *req = data;
 	struct ifreq *ifr = data;
 	(void)fd;
+	if (!data) return -1;
 	if (cmd == SIOCGIFFLAGS) {
 		if (fail_get_flags) return -1;
 		ifr->ifr_flags = iface_flags;
@@ -128,6 +129,7 @@ static int ioctl(int fd, unsigned long cmd, void *data)
 #endif
 		return 0;
 	}
+	if (cmd != SIOCG80211) return -1;
 	if (req->i_type == IEEE80211_IOC_SAE) { req->i_val = caps; return caps < 0 ? -1 : 0; }
 #ifdef IEEE80211_IOC_STA_PORT
 	if (req->i_type == IEEE80211_IOC_STA_PORT) { req->i_val = port_supported; return port_supported < 0 ? -1 : 0; }
@@ -138,25 +140,39 @@ static int ioctl(int fd, unsigned long cmd, void *data)
 static int set80211var(void *priv, int op, const void *data, int len)
 {
 	struct request *out;
-	const struct ieee80211req_sae *sae = data;
+	struct ieee80211req_sae sae;
+#ifdef CONFIG_SAE
+	struct ieee80211req_mlme mlme;
+#endif
 	(void)priv;
-	/* ieee80211_ioctl_sae requires an exact envelope and successful copyin
-	 * before validating or dispatching its contents to the provider. */
-	if (op == IEEE80211_IOC_SAE && (!data || len != sizeof(*sae)))
+	/* NULL is valid for scalar ioctls and empty IE clears, never copyin. */
+	if (len < 0 || (size_t)len > sizeof(requests[0].data) || (len && !data))
 		return -1;
-	if (calls == 64 || len < 0 || len > 2048) abort();
+	/* The kernel requires exact SAE/MLME envelopes, then copyin to aligned
+	 * local storage before inspecting fields. Do not dereference user data. */
+	if (op == IEEE80211_IOC_SAE) {
+		if (!data || len != sizeof(sae)) return -1;
+		memcpy(&sae, data, sizeof(sae));
+	}
+	if (op == IEEE80211_IOC_MLME) {
+		if (!data || len != sizeof(struct ieee80211req_mlme)) return -1;
+#ifdef CONFIG_SAE
+		memcpy(&mlme, data, sizeof(mlme));
+#endif
+	}
+	if (calls == 64) abort();
 	out = &requests[calls++];
 	out->op = op; out->len = len;
 	if (len) memcpy(out->data, data, len);
 	if (op == IEEE80211_IOC_SAE &&
-	    (sae->op == fail_sae_op || (sae->op == IEEE80211_SAE_CONFIGURE &&
-	    sae->data[0] == 0 && fail_configure_off))) return -1;
+	    (sae.op == fail_sae_op || (sae.op == IEEE80211_SAE_CONFIGURE &&
+	    sae.data[0] == 0 && fail_configure_off))) return -1;
 #ifdef CONFIG_SAE
-	if (op == IEEE80211_IOC_SAE && sae->op == IEEE80211_SAE_CONFIGURE)
-		native_configured = sae->data[0];
+	if (op == IEEE80211_IOC_SAE && sae.op == IEEE80211_SAE_CONFIGURE)
+		native_configured = sae.data[0];
 	if (op == IEEE80211_IOC_MLME && (caps & 8) &&
 	    ((struct bsd_driver_data *)priv)->sae_active &&
-	    ((const struct ieee80211req_mlme *)data)->im_op == IEEE80211_MLME_ASSOC) {
+	    mlme.im_op == IEEE80211_MLME_ASSOC) {
 		if (!(iface_flags & IFF_UP)) { iface_flags |= IFF_UP; native_configured = 0; }
 		if (!native_configured) return -1;
 	}
@@ -235,6 +251,70 @@ static void test_ioctl_boundaries(void)
 	calls = 0; memset(requests, 0, sizeof(requests));
 }
 
+static void test_payload_copy_boundaries(void)
+{
+	struct bsd_driver_data drv;
+	struct ieee80211req_mlme mlme;
+	struct ieee80211req_sae sae;
+	union {
+		struct ieee80211req_sae align;
+		u8 bytes[sizeof(struct ieee80211req_sae) + 1];
+	} unaligned;
+	const u8 short_data = 0, options[3] = { 48, 1, 0 };
+	int saved_caps = caps;
+	memset(&drv, 0, sizeof(drv)); memset(&mlme, 0, sizeof(mlme));
+	memset(&sae, 0, sizeof(sae));
+	/* Exercise the same provider-state branch as Linux GCC's OLD_ABI path. */
+	caps = 8;
+#ifdef CONFIG_SAE
+	drv.sae_active = 1;
+#endif
+	mlme.im_op = IEEE80211_MLME_DEAUTH;
+	check(set80211var(&drv, IEEE80211_IOC_MLME, &mlme, sizeof(mlme) - 1) == -1 && calls == 0,
+	    "MLME rejects a truncated envelope before recording or reading im_op");
+#ifndef HOSTAPD
+	check(set80211param(&drv, IEEE80211_IOC_MLME, 0) == -1 && calls == 0,
+	    "active SAE scalar MLME request cannot dereference NULL or mutate the request log");
+#endif
+	check(set80211var(&drv, IEEE80211_IOC_MLME, NULL, 0) == -1 && calls == 0,
+	    "MLME rejects an empty NULL envelope even without an active SAE provider");
+	check(set80211var(&drv, IEEE80211_IOC_MLME, NULL, sizeof(mlme)) == -1 && calls == 0,
+	    "MLME rejects a NULL complete-sized envelope before copyin");
+	check(set80211var(&drv, IEEE80211_IOC_MLME, &short_data, 1) == -1 && calls == 0,
+	    "MLME rejects a short header before copying or reading fields");
+	check(set80211var(&drv, IEEE80211_IOC_MLME, &mlme, sizeof(mlme) + 1) == -1 && calls == 0,
+	    "MLME requires the exact kernel envelope size");
+	check(set80211var(&drv, IEEE80211_IOC_OPTIE, NULL, 1) == -1 && calls == 0,
+	    "generic nonempty copyin rejects NULL before recording");
+	check(set80211var(&drv, IEEE80211_IOC_OPTIE, &short_data, -1) == -1 && calls == 0,
+	    "generic copyin rejects negative lengths without recording");
+	check(set80211var(&drv, IEEE80211_IOC_OPTIE, &short_data, sizeof(requests[0].data) + 1) == -1 && calls == 0,
+	    "generic copyin rejects lengths beyond the modeled destination before copying");
+#ifndef HOSTAPD
+	check(ioctl(0, SIOCGIFFLAGS, NULL) == -1 && ioctl(0, SIOCSIFFLAGS, NULL) == -1 &&
+	    ioctl(0, SIOCG80211, NULL) == -1 && calls == 0,
+	    "modeled ioctl rejects NULL envelopes before reading or writing fields");
+	check(ioctl(0, 0, (void *)&short_data) == -1 && calls == 0,
+	    "unknown ioctl commands cannot reinterpret an unrelated payload");
+#endif
+	check(set80211var(&drv, IEEE80211_IOC_OPTIE, NULL, 0) == 0 && calls == 1 && requests[0].len == 0,
+	    "zero-length NULL optional IE still clears the element");
+	check(set80211var(&drv, IEEE80211_IOC_OPTIE, options, sizeof(options)) == 0 && calls == 2 &&
+	    requests[1].len == sizeof(options) && memcmp(requests[1].data, options, sizeof(options)) == 0,
+	    "valid variable-length payload preserves its bytes");
+	memcpy(unaligned.bytes + 1, &mlme, sizeof(mlme));
+	check(set80211var(&drv, IEEE80211_IOC_MLME, unaligned.bytes + 1, sizeof(mlme)) == 0 && calls == 3 &&
+	    memcmp(requests[2].data, &mlme, sizeof(mlme)) == 0,
+	    "MLME copyin accepts an unaligned user buffer without a typed user-pointer read");
+	sae.version = IEEE80211_SAE_VERSION; sae.generation = 42;
+	sae.op = IEEE80211_SAE_AUTH_STATUS; sae.len = 2; sae.bssid[0] = 2;
+	memcpy(unaligned.bytes + 1, &sae, sizeof(sae));
+	check(set80211var(&drv, IEEE80211_IOC_SAE, unaligned.bytes + 1, sizeof(sae)) == 0 && calls == 4 &&
+	    memcmp(requests[3].data, &sae, sizeof(sae)) == 0,
+	    "SAE copyin accepts an unaligned user buffer without a typed user-pointer read");
+	caps = saved_caps; calls = 0; memset(requests, 0, sizeof(requests));
+}
+
 /* PRODUCTION */
 static const struct wpa_driver_ops key_ops = { /* KEY_CALLBACK */
 #ifdef HOSTAPD
@@ -310,6 +390,7 @@ int main(void)
 	k.link_id = -1;
 	k.key = key; k.key_len = 16; k.seq = seq; k.seq_len = 6; k.set_tx = 1;
 	test_ioctl_boundaries();
+	test_payload_copy_boundaries();
 	check(wpa_driver_bsd_associate(&drv, &p) == 0, "PSK selection remains available on transition-capable provider");
 	clear_calls();
 	check(key_ops.set_key && key_ops.set_key(&drv, &k) == 0 && has_op(IEEE80211_IOC_WPAKEY), "PSK uses legacy key ABI");
@@ -570,6 +651,7 @@ int main(void)
 	u8 material[16] = { 1 };
 	memset(&drv, 0, sizeof(drv)); memset(&key, 0, sizeof(key));
 	test_ioctl_boundaries();
+	test_payload_copy_boundaries();
 	key.alg = WPA_ALG_CCMP; key.key = material; key.key_len = sizeof(material); key.link_id = -1;
 	check(key_ops.set_key && key_ops.set_key(&drv, &key) == 0 && calls == 1 && requests[0].op == IEEE80211_IOC_WPAKEY,
 	    "hostapd and old-header builds retain legacy key installation");
