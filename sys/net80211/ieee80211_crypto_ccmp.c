@@ -76,6 +76,7 @@ struct ccmp_ctx {
 	struct aesenc cc_aes;
 	struct ieee80211com *cc_ic;	/* for diagnostics */
 	uint64_t cc_rxrsc[16];		/* one replay domain per QoS TID */
+	uint64_t cc_mgtrsc;		/* robust management replay domain */
 };
 
 static	void *ccmp_attach(struct ieee80211com *, struct ieee80211_key *);
@@ -146,7 +147,39 @@ ccmp_setkey(struct ieee80211_key *k)
 		aes_setenckey128(&ctx->cc_aes, k->wk_key);
 	for (i = 0; i < __arraycount(ctx->cc_rxrsc); i++)
 		ctx->cc_rxrsc[i] = k->wk_keyrsc;
+	ctx->cc_mgtrsc = k->wk_keyrsc;
 	return 1;
+}
+
+/*
+ * The common PMF consumer supports unfragmented, unicast PV0 robust
+ * management frames with the ordinary 24-byte header.  In particular,
+ * ieee80211_hdrsize() does not account for management HT-Control; reject
+ * it instead of treating those bytes as a CCMP header.  Group management
+ * protection uses BIP, not this cipher.  Action category policy belongs
+ * to the PMF consumer after authentication.
+ * Original EmberBSD validation, prepared with OpenAI Codex assistance.
+ */
+static int
+ccmp_mgmt_header(const struct ieee80211_frame *wh)
+{
+
+	if ((wh->i_fc[0] & IEEE80211_FC0_VERSION_MASK) !=
+	    IEEE80211_FC0_VERSION_0 ||
+	    (wh->i_fc[1] & (IEEE80211_FC1_DIR_MASK | IEEE80211_FC1_ORDER |
+	    IEEE80211_FC1_MORE_FRAG | IEEE80211_FC1_PROTECTED)) !=
+	    IEEE80211_FC1_PROTECTED ||
+	    (wh->i_seq[0] & IEEE80211_SEQ_FRAG_MASK) != 0 ||
+	    (wh->i_addr1[0] & 1) != 0)
+		return 0;
+	switch (wh->i_fc[0] & IEEE80211_FC0_SUBTYPE_MASK) {
+	case IEEE80211_FC0_SUBTYPE_DEAUTH:
+	case IEEE80211_FC0_SUBTYPE_DISASSOC:
+	case IEEE80211_FC0_SUBTYPE_ACTION:
+		return 1;
+	default:
+		return 0;
+	}
 }
 
 /*
@@ -157,13 +190,38 @@ ccmp_encap(struct ieee80211_key *k, struct mbuf *m, u_int8_t keyid)
 {
 	struct ccmp_ctx *ctx = k->wk_private;
 	struct ieee80211com *ic = ctx->cc_ic;
+	const struct ieee80211_frame *wh;
 	u_int8_t *ivp;
 	int hdrlen;
 
-	hdrlen = ieee80211_hdrspace(ic, mtod(m, void *));
+	/* Never reuse a 48-bit PN, including on the software-IV HW path. */
+	if (k->wk_keytsc >= UINT64_C(0xffffffffffff))
+		return 0;
+	if (m->m_len < (int)sizeof(*wh) ||
+	    m->m_pkthdr.len < (int)sizeof(*wh))
+		return 0;
+	wh = mtod(m, const struct ieee80211_frame *);
+	if ((wh->i_fc[0] & IEEE80211_FC0_TYPE_MASK) !=
+	    IEEE80211_FC0_TYPE_DATA &&
+	    (wh->i_fc[0] & IEEE80211_FC0_TYPE_MASK) !=
+	    IEEE80211_FC0_TYPE_MGT)
+		return 0;
+	if ((wh->i_fc[0] & IEEE80211_FC0_TYPE_MASK) ==
+	    IEEE80211_FC0_TYPE_MGT && !ccmp_mgmt_header(wh))
+		return 0;
+	hdrlen = ieee80211_hdrspace(ic, wh);
+	if (hdrlen > m->m_len ||
+	    ccmp.ic_header > (unsigned)(m->m_len - hdrlen) ||
+	    hdrlen > m->m_pkthdr.len ||
+	    ccmp.ic_header > (unsigned)(m->m_pkthdr.len - hdrlen))
+		return 0;
+	if ((wh->i_fc[0] & IEEE80211_FC0_TYPE_MASK) ==
+	    IEEE80211_FC0_TYPE_MGT &&
+	    ccmp.ic_header == (unsigned)(m->m_pkthdr.len - hdrlen))
+		return 0;
 	ivp = mtod(m, u_int8_t *) + hdrlen;
 
-	k->wk_keytsc++;		/* XXX wrap at 48 bits */
+	k->wk_keytsc++;
 	ivp[0] = k->wk_keytsc >> 0;		/* PN0 */
 	ivp[1] = k->wk_keytsc >> 8;		/* PN1 */
 	ivp[2] = 0;				/* Reserved */
@@ -215,7 +273,7 @@ ccmp_decap(struct ieee80211_key *k, struct mbuf *m, int hdrlen)
 	struct ieee80211_frame *wh;
 	uint8_t *ivp;
 	uint64_t pn, *rsc;
-	int minhdr;
+	int minhdr, ismgmt;
 
 	/* Validate every header byte before selecting the replay domain. */
 	if (m->m_len < (int)sizeof(*wh) ||
@@ -227,6 +285,10 @@ ccmp_decap(struct ieee80211_key *k, struct mbuf *m, int hdrlen)
 	    (wh->i_fc[0] & IEEE80211_FC0_TYPE_MASK) !=
 	    IEEE80211_FC0_TYPE_MGT)
 		goto badformat;
+	ismgmt = (wh->i_fc[0] & IEEE80211_FC0_TYPE_MASK) ==
+	    IEEE80211_FC0_TYPE_MGT;
+	if (ismgmt && (!ccmp_mgmt_header(wh) || hdrlen != (int)sizeof(*wh)))
+		goto badformat;
 	minhdr = ieee80211_hdrsize(wh);
 	if (hdrlen < minhdr || hdrlen > m->m_len ||
 	    ccmp.ic_header > (unsigned)(m->m_len - hdrlen) ||
@@ -235,7 +297,9 @@ ccmp_decap(struct ieee80211_key *k, struct mbuf *m, int hdrlen)
 	    (unsigned)(m->m_pkthdr.len - hdrlen))
 		goto badformat;
 	rsc = &k->wk_keyrsc;
-	if (ieee80211_has_qos(wh))
+	if (ismgmt)
+		rsc = &ctx->cc_mgtrsc;
+	else if (ieee80211_has_qos(wh))
 		rsc = &ctx->cc_rxrsc[mtod(m, uint8_t *)[minhdr - 2] &
 		    IEEE80211_QOS_TID];
 
@@ -244,6 +308,8 @@ ccmp_decap(struct ieee80211_key *k, struct mbuf *m, int hdrlen)
 	 * verify the former and validate the latter.
 	 */
 	ivp = mtod(m, uint8_t *) + hdrlen;
+	if (ismgmt && (ivp[2] != 0 || (ivp[3] & 0x1f) != 0))
+		goto badformat;
 	if ((ivp[IEEE80211_WEP_IVLEN] & IEEE80211_WEP_EXTIV) == 0) {
 		/*
 		 * No extended IV; discard frame.
@@ -331,7 +397,7 @@ ccmp_init_blocks(struct aesenc *ctx, struct ieee80211_frame *wh,
 	((wh->i_fc[1] & IEEE80211_FC1_DIR_MASK) == IEEE80211_FC1_DIR_DSTODS)
 #define	IS_QOS_DATA(wh)	ieee80211_has_qos(wh)
 
-	/* nonce[0] is qos, determined later */
+	/* nonce[0] contains priority and management bits, determined below. */
 	IEEE80211_ADDR_COPY(nonce + 1, wh->i_addr2);
 	nonce[7] = pn >> 40;
 	nonce[8] = pn >> 32;
@@ -340,7 +406,10 @@ ccmp_init_blocks(struct aesenc *ctx, struct ieee80211_frame *wh,
 	nonce[11] = pn >> 8;
 	nonce[12] = pn >> 0;
 
-	ad[0] = wh->i_fc[0] & 0x8f;	/* XXX magic #s */
+	/* IEEE 802.11-2020 12.5.3.3.3: mask subtype bits only for data. */
+	ad[0] = wh->i_fc[0];
+	if ((wh->i_fc[0] & IEEE80211_FC0_TYPE_MASK) == IEEE80211_FC0_TYPE_DATA)
+		ad[0] &= 0x8f;
 	ad[1] = wh->i_fc[1] & 0xc7;	/* XXX magic #s */
 	/* NB: we know 3 addresses are contiguous */
 	memcpy(ad + 2, wh->i_addr1, 3 * IEEE80211_ADDR_LEN);
@@ -383,6 +452,9 @@ ccmp_init_blocks(struct aesenc *ctx, struct ieee80211_frame *wh,
 		}
 	}
 	nonce[0] = qos;
+	/* IEEE 802.11-2020 12.5.3.3.4: separate management nonce space. */
+	if ((wh->i_fc[0] & IEEE80211_FC0_TYPE_MASK) == IEEE80211_FC0_TYPE_MGT)
+		nonce[0] |= 0x10;
 
 	aes_ccm_init(aes_ccm, AES_128_NROUNDS, ctx, 2 /* L, counter octets */,
 	    IEEE80211_WEP_MICLEN, nonce, sizeof nonce, ad, adlen, data_len);

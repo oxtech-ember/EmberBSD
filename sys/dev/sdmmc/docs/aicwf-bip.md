@@ -1,8 +1,11 @@
 # AIC8800D80 BIP verification helper
 
-The internal `if_aicwf_bip.h` helper verifies BIP-CMAC-128 management frames.
-It is software preparation for host PMF processing. The driver does not call
-it yet. It does not remove the nonzero initial IGTK IPN restriction.
+The internal `if_aicwf_bip.h` compatibility helper delegates BIP-CMAC-128
+verification to [common net80211](../../../net80211/docs/net80211-bip.md).
+It retains the original isolated host preparation contract. The AIC driver
+does not call it: actual BIP processing belongs to the separate
+[firmware path](aicwf-firmware-bip.md), including that path's initial-IPN
+capability checks. Promoting this helper does not change AIC runtime behavior.
 See [SAE support and limits](aicwf-sae.md).
 
 ## Contract
@@ -54,7 +57,8 @@ Its RX descriptor has no separate BIP verification result. The known vendor
 host path preserves group management uploads, but that does not prove that
 the firmware preserves the complete MMIE.
 
-Before integration, verify the received frame and MMIE on physical hardware.
+Before any future integration of this host helper, verify the received frame
+and MMIE on physical hardware.
 Check fresh frames, repeats, values below the initial IPN and invalid MICs.
 Repeat the check after IGTK reinstallation. A firmware disconnect indication
 contains no authenticated frame or packet number. Establish that the firmware

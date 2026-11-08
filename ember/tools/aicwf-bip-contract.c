@@ -149,13 +149,13 @@ cmac_tests(const struct cipher *c)
 		{ 0x51,0xf0,0xbe,0xbf,0x7e,0x3b,0x9d,0x92,
 		  0xfc,0x49,0x74,0x17,0x79,0x36,0x3c,0xfe }
 	};
-	struct aicwf_bip_part parts[3];
+	struct ieee80211_bip_part parts[3];
 	uint8_t result[16], expected[16], saved[16];
 
 	for (unsigned n = 0; n < 4; n++) {
 		parts[0].data = message;
 		parts[0].len = sizes[n];
-		CHECK(aicwf_bip_cmac(block_encrypt, c, parts, 1, result));
+		CHECK(ieee80211_bip_cmac(block_encrypt, c, parts, 1, result));
 		CHECK(memcmp(result, answers[n], 16) == 0);
 		oracle(message, sizes[n], expected);
 		CHECK(memcmp(result, expected, 16) == 0);
@@ -164,30 +164,30 @@ cmac_tests(const struct cipher *c)
 		oracle(message, len, expected);
 		for (size_t first = 0; first <= len; first++) {
 			for (size_t second = first; second <= len; second++) {
-				parts[0] = (struct aicwf_bip_part){message, first};
-				parts[1] = (struct aicwf_bip_part){message + first,
+				parts[0] = (struct ieee80211_bip_part){message, first};
+				parts[1] = (struct ieee80211_bip_part){message + first,
 				    second - first};
-				parts[2] = (struct aicwf_bip_part){message + second,
+				parts[2] = (struct ieee80211_bip_part){message + second,
 				    len - second};
-				CHECK(aicwf_bip_cmac(block_encrypt, c, parts, 3,
+				CHECK(ieee80211_bip_cmac(block_encrypt, c, parts, 3,
 				    result));
 				CHECK(memcmp(result, expected, 16) == 0);
 			}
 		}
 	}
-	CHECK(aicwf_bip_cmac(block_encrypt, c, NULL, 0, result));
+	CHECK(ieee80211_bip_cmac(block_encrypt, c, NULL, 0, result));
 	CHECK(memcmp(result, answers[0], 16) == 0);
 	memset(result, 0x5a, sizeof(result));
 	memcpy(saved, result, sizeof(saved));
-	parts[0] = (struct aicwf_bip_part){NULL, 1};
-	CHECK(!aicwf_bip_cmac(block_encrypt, c, parts, 1, result));
-	parts[0] = (struct aicwf_bip_part){message, SIZE_MAX};
-	CHECK(!aicwf_bip_cmac(block_encrypt, c, parts, 1, result));
-	CHECK(!aicwf_bip_cmac(block_encrypt, c, parts, 4, result));
-	CHECK(!aicwf_bip_cmac(block_encrypt, c, NULL, 1, result));
-	CHECK(!aicwf_bip_cmac(NULL, c, parts, 0, result));
-	CHECK(!aicwf_bip_cmac(block_encrypt, NULL, parts, 0, result));
-	CHECK(!aicwf_bip_cmac(block_encrypt, c, parts, 0, NULL));
+	parts[0] = (struct ieee80211_bip_part){NULL, 1};
+	CHECK(!ieee80211_bip_cmac(block_encrypt, c, parts, 1, result));
+	parts[0] = (struct ieee80211_bip_part){message, SIZE_MAX};
+	CHECK(!ieee80211_bip_cmac(block_encrypt, c, parts, 1, result));
+	CHECK(!ieee80211_bip_cmac(block_encrypt, c, parts, 4, result));
+	CHECK(!ieee80211_bip_cmac(block_encrypt, c, NULL, 1, result));
+	CHECK(!ieee80211_bip_cmac(NULL, c, parts, 0, result));
+	CHECK(!ieee80211_bip_cmac(block_encrypt, NULL, parts, 0, result));
+	CHECK(!ieee80211_bip_cmac(block_encrypt, c, parts, 0, NULL));
 	CHECK(memcmp(result, saved, sizeof(result)) == 0);
 }
 
@@ -196,10 +196,18 @@ frame_tests(const struct cipher *c)
 {
 	uint8_t frame[AICWF_BIP_MAX_FRAME + 1], saved[128], wrong[6];
 	uint8_t wrong_key[16];
+	const uint8_t oversized[1] = { 0xd0 };
 	struct cipher bad;
 	uint64_t pn = 99;
 	static const uint64_t numbers[] = { 1, 255, 256, 65535, 65536,
 	    UINT64_C(0x100000000), AICWF_BIP_MAX_PN };
+
+	/* Reject an impossible length before inspecting action/body fields. */
+	CHECK(!aicwf_bip_verify(block_encrypt, c, oversized,
+	    AICWF_BIP_MAX_FRAME + 1, peer, peer, 4, 0, &pn));
+	CHECK(!aicwf_bip_verify(block_encrypt, c, oversized,
+	    SIZE_MAX, peer, peer, 4, 0, &pn));
+	CHECK(pn == 99);
 
 	for (unsigned index = 4; index <= 5; index++) {
 		for (unsigned i = 0; i < sizeof(numbers) / sizeof(numbers[0]); i++) {

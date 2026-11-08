@@ -301,6 +301,24 @@ copyin(const void *in, void *out, size_t n)
 	memcpy(out, in, n);
 	return 0;
 }
+/* Native owner entry points stay inactive in the legacy CCMP/RXBA lane. */
+#define ieee80211_sae_leave(ic) ((void)(ic))
+#define ieee80211_sae_retire(ic) ((void)(ic))
+#define ieee80211_sae_state_request(ic, state) ((void)(ic), (void)(state))
+#define ieee80211_sae_key_changed(ic, key) ((void)(ic), (void)(key))
+#define ieee80211_sae_tag_tx(ic, ni, m) 0
+#define ieee80211_sae_tx_current(ic, ni, m) 1
+#define ieee80211_sae_crypto_tx(ic, ni, m) 0
+#define ieee80211_sae_crypto_done(m) ((void)(m))
+#define ieee80211_sae_data_allowed(ic, ni, key, eapol) 1
+#define ieee80211_sae_input(ic, ni, mp) 0
+/* Legacy ioctl/data coverage runs with the separate native SAE owner off. */
+static bool
+ieee80211_sae_active(const struct ieee80211com *ic)
+{
+	(void)ic;
+	return false;
+}
 static void
 ieee80211_key_update_begin(struct ieee80211com *ic)
 {
