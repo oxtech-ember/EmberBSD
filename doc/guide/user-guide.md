@@ -11,7 +11,9 @@ Use `man` for the installed command's version-specific options.
 ## First login and local configuration
 
 Use the credentials configured during installation.
-The AArch64 development image allows a passwordless root console and disables SSH.
+Configure SSH in new installation and image profiles for use at the first normal boot.
+The existing AArch64 development image described here allows a passwordless root console and disables SSH.
+That older image still needs the SSH setup below; it does not yet meet the first-boot requirement.
 Check the documented access defaults for the selected image.
 Keep console access until network access survives a reboot.
 
@@ -93,12 +95,13 @@ Read their security modes and unsupported cases before changing an existing netw
 Preserve the accepted firmware files and licenses recorded in [image-assets.tsv](../../ember/boot/image-assets.tsv).
 A network test on Ethernet does not validate Wi-Fi or Bluetooth.
 
-## Enable SSH
+## SSH access
 
 The guided amd64 installer includes and enables SSH for both console and XFCE installations.
 It creates host keys at first boot and keeps the existing authentication policy.
 Check `/etc/rc.d/sshd status` before starting another server.
-Other image profiles can explicitly disable SSH, including the isolated AArch64 development image described above.
+Prepare new image profiles with SSH configured and enabled at first boot.
+For the older isolated AArch64 development image described above, complete the setup below.
 
 Create a key on your **client host**, or use an existing key under your control.
 Copy only its public key to the normal user's `~/.ssh/authorized_keys` on EmberBSD.
@@ -114,7 +117,7 @@ ssh-keygen -A
 ssh-keygen -l -f /etc/ssh/ssh_host_ed25519_key.pub
 ```
 
-For a profile which disables SSH, set `sshd=YES` in `/etc/rc.conf`, then run `/etc/rc.d/sshd start`.
+When updating an older profile with SSH disabled, set `sshd=YES` in `/etc/rc.conf`, then run `/etc/rc.d/sshd start`.
 On the client, connect with `ssh emberuser@DEVICE_ADDRESS` and confirm the host-key fingerprint through the console.
 Check an administrative `su -` session while console access remains available.
 For key-only access, set `PasswordAuthentication no` and `KbdInteractiveAuthentication no` in `/etc/ssh/sshd_config`.

@@ -19,7 +19,9 @@ version. Multi-line copyright years are not printed at each login; attribution
 remains in /etc/release and the source licenses. Local motd notices survive
 automatic greeting updates. Diagnostic tools retain their upstream ABI names.
 
-SSH is enabled by default; its authentication defaults are unchanged.
+Configure and enable SSH during installation for console and XFCE profiles.
+The first normal boot must accept SSH login with the account and authentication method configured during installation.
+Keep the existing authentication policy and supported methods; verify an actual login as part of first-boot acceptance.
 The System step has a Graphics menu: None, XFCE with a Wi-Fi manager,
 and an experimental KDE Plasma entry. None is the default.
 XFCE also selects the base X11 sets, independently of the base profile.
