@@ -33,6 +33,11 @@ no deferred plaintext may select a new session's key.
 Native registration requires atomic 64-bit serial publication; unsupported
 targets remain opted out, while their existing FullMAC contracts are unchanged.
 
+Native hardware-RX adapters register `ieee80211_sae_attach_hw()`. They supply
+authenticated per-frame metadata and transactional RX-only key snapshots.
+Common net80211 validates key generations, replay and PMF before admission.
+The adapter owns firmware acknowledgements, RX drain and hardware retirement.
+
 FullMAC providers retain their firmware lifecycle and key installation. Their
 capabilities must come from the actual firmware contract. They use the common
 SAE ioctl authorization, RSN profile and station-management validators. The
@@ -53,7 +58,7 @@ the existing FullMAC key ABI.
 | Zero4 / A733 | AIC8800D80 / `aicwf` | Same FullMAC protocol owner; separate board/firmware qualification | [WPA2/CCMP on both bands and HT40](https://github.com/oxtech-ember/EmberBSD-DevBoards/blob/0e8fa40180224dd49c64ccdfddbf4dc7e7cf3058/boards/a733-zero4/interfaces.md) recorded. Zero3W SAE and VHT80 results do not establish WPA3 acceptance on Zero4. |
 | ESP32-S31 generic board | Espressif / `espwifi` | Host SAE/EAPOL; firmware association and key installation | [WPA2 and 6000-ping receipt](https://github.com/oxtech-ember/EmberBSD-DevBoards/blob/0e8fa40180224dd49c64ccdfddbf4dc7e7cf3058/boards/esp32-s31/interfaces.md) belongs to this profile; it does not qualify Mosaico or WPA3. |
 | Mosaico / ESP32-S31 kit | Espressif / `espwifi` | Same FullMAC protocol owner; separate ROM/IDF integration | Active Mosaico owner controls ROM/IDF RX and firmware work. SAE/association completed; EAPOL reception failure also reproduces with WPA2. No completed WPA3 data-session claim. Firmware SA Query capability remains distinct. |
-| Experimental MSI BE200 | `iwx` development module | Imported raw/software-crypto path remains opted out | Firmware-dependent combined MIC/FCS tail handling does not prove intact PMF authentication bytes. Private pre-net80211 action processing and association mbuf replacement also require migration behind common authentication and tag preservation. Existing WPA2 HT/VHT/BA work remains separate. |
+| Experimental MSI BE200 | `iwx` development module, BZ/MLD firmware | Common native SAE, PMF/BIP, CCMP replay and software TX; authenticated hardware CCMP RX | [Software integration](../../../ember/development/iwx-be200/README.md#native-saepmf-integration-2026-11-08) is present. Native TX uses non-QoS policy; A-MSDU within A-MPDU is declined. Descriptor/air agreement, firmware key drain, WPA3/PMF, reconnect and load require physical acceptance. |
 | Other inherited drivers | Individually enumerated when adopted | No automatic native opt-in | Raw management preservation, software crypto, key epochs and queue retirement must be demonstrated before advertising the new capability. |
 
 The inherited USB configuration includes `athn`, `atu`, `bwfm`, `otus`, `rum`,
