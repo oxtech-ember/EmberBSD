@@ -92,27 +92,33 @@ Firmware descriptor decoding, decryption offsets, TID, sequence and reorder disp
 The existing native RX BA consumer cannot directly replace the AIC reorder path.
 It owns raw 802.11 mbufs, native HT20 admission, ADDBA state, and node/key epochs.
 The AIC firmware negotiates BA and flags packets for host ordering after Ethernet conversion.
-A shared BA migration must preserve these different provider contracts.
+The [shared offload API](../../../net80211/docs/net80211-rxba.md#firmware-offload-receiver)
+preserves those different owners and now supplies the AIC sequence window.
 
-Run the actual-source RX contract with GCC 16:
+Run the actual-source RX contract through the SDK native-check route with the
+selected host prefix and Clang/LLVM compiler family. Pass these arguments to
+the SDK's `scripts/run-native-check.py`:
 
 ```sh
-CC=gcc-16 python3 ember/tools/aicwf-amsdu-contract.py --work /path/to/build/obj
+--host-prefix "$HOST_PREFIX" --compiler-family clang --required-role python \
+  --tool python --cwd "$OS_SOURCE" --log "$CHECK_LOG" --bindings "$CHECK_BINDINGS" \
+  -- ember/tools/aicwf-amsdu-contract.py --work "$CHECK_WORK"
 ```
 
 Set `AMSDU_CFLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer'` for memory checks.
-Set `AMSDU_CFLAGS=-fanalyzer` for GCC path analysis.
+The explicit GCC compatibility lane also supports `AMSDU_CFLAGS=-fanalyzer`.
 Use `--keep` to retain the extracted source and `compile_commands.json` for Cppcheck or Clang analysis.
 Use `TEST_RUNNER='valgrind --leak-check=full --error-exitcode=1'` on a supported host.
-Use `--revision PARENT` to reproduce delivery of the valid prefix before this change.
-The baseline must compile and then fail the malformed-tail delivery assertion.
+`--revision` accepts source revisions with the current RX adapter ABI. Older
+RX APIs require their matching historical test harness; an ABI compilation
+failure is not evidence that a malformed-tail regression was reproduced.
 
 The check compiles the real RX dispatcher, Ethernet writer, list ownership functions and common parser.
 Only mbuf allocation, input queues, management sinks and reorder services are modeled.
 The extraction suppresses one Cppcheck const-context suggestion because the common reader callback requires `void *`.
 It checks limits of 3839 and 3840 bytes, malformed tails, allocation rollback and descriptor dispatch.
 These host checks do not qualify target kernel integration, firmware cryptography, BA timing or a physical radio.
-Valgrind does not support the macOS arm64 host; use GCC16 ASan/UBSan there.
+Valgrind does not support the macOS arm64 host; use SDK Clang ASan/UBSan there.
 Implementation and contract changes are AI-assisted.
 
 ## Software validation

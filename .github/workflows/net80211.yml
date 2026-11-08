@@ -21,6 +21,7 @@ name: Native net80211 crypto, scan, aggregation and WME contracts
       - 'sys/dev/pci/rtw89/if_rtw89.c'
       - 'ember/tools/aicwf-vht-test.c'
       - 'ember/tools/aicwf-sta-contract.c'
+      - 'ember/tools/aicwf-rxba-*'
       - 'external/bsd/wpa/dist/src/**'
       - 'sys/crypto/aes/**'
       - 'sys/sys/mbuf.h'
@@ -79,6 +80,7 @@ name: Native net80211 crypto, scan, aggregation and WME contracts
       - 'sys/dev/pci/rtw89/if_rtw89.c'
       - 'ember/tools/aicwf-vht-test.c'
       - 'ember/tools/aicwf-sta-contract.c'
+      - 'ember/tools/aicwf-rxba-*'
       - 'external/bsd/wpa/dist/src/**'
       - 'sys/crypto/aes/**'
       - 'sys/sys/mbuf.h'
@@ -154,6 +156,7 @@ jobs:
             /sys/dev/pci/rtw89/if_rtw89.c
             /ember/tools/aicwf-vht-test.c
             /ember/tools/aicwf-sta-contract.c
+            /ember/tools/aicwf-rxba-*
             /external/bsd/wpa/dist/src/
             /sys/crypto/aes/
             /sys/sys/mbuf.h

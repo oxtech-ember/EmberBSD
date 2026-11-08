@@ -56,7 +56,7 @@ awk '/^aicwf_rx_data\(/ {copy=1; print "static void"}
     copy {print}' "$driver" >> "$work/driver.h"
 cat >> "$work/driver.h" <<'C'
     (void)ifp; (void)&seq; (void)m;
-    (void)qos; (void)amsdu; (void)tid; (void)&hdr;
+    (void)qos; (void)amsdu; (void)tid; (void)&hdr; (void)&current; (void)serial;
 }
 C
 : > "$work/client.h"

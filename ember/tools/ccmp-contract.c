@@ -57,6 +57,7 @@ init_key(struct ieee80211com *ic, struct ieee80211_key *k, uint64_t rsc,
 	k->wk_keyrsc = rsc;
 	memset(k->wk_key, (int)marker, 16);
 	k->wk_private = ccmp_attach(ic, k);
+	assert(k->wk_private != NULL);
 	CHECK(ccmp_setkey(k) == 1);
 }
 static void

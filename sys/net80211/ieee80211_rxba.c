@@ -22,10 +22,17 @@
 #define RXBA_HEAP_LIMIT (IEEE80211_RXBA_BUDGET - sizeof(struct ieee80211_rxba_state))
 
 struct rxba_slot {
-	struct mbuf *m;
+	struct mbuf *m, *tail;
 	uint64_t arrived, epoch, key_epoch;
 	uint16_t seq;
 	size_t charged;
+};
+/* Both owners use these window operations. Emission is a private continuation:
+ * raw input resumes net80211; offload only appends to the caller's output. */
+typedef void (*rxba_emit_fn)(void *, struct rxba_slot *);
+struct rxba_raw_owner {
+	struct ieee80211com *ic;
+	struct ieee80211_node *ni;
 };
 struct ieee80211_rxba_tid {
 	struct rxba_slot slot[IEEE80211_RXBA_WINDOW];
@@ -335,9 +342,11 @@ txba_response(struct ieee80211com *ic, struct ieee80211_node *ni,
 }
 
 static void
-rxba_deliver(struct ieee80211com *ic, struct ieee80211_node *ni,
-    struct rxba_slot *slot)
+rxba_deliver(void *arg, struct rxba_slot *slot)
 {
+	struct rxba_raw_owner *owner = arg;
+	struct ieee80211com *ic = owner->ic;
+	struct ieee80211_node *ni = owner->ni;
 	struct ieee80211_rxba_state *ba = &ni->ni_rxba;
 	struct mbuf *m = slot->m;
 	int current;
@@ -355,8 +364,7 @@ rxba_deliver(struct ieee80211com *ic, struct ieee80211_node *ni,
 }
 
 static void
-rxba_contiguous(struct ieee80211com *ic, struct ieee80211_node *ni,
-    struct ieee80211_rxba_tid *r)
+rxba_contiguous(struct ieee80211_rxba_tid *r, rxba_emit_fn emit, void *arg)
 {
 	unsigned n;
 
@@ -364,14 +372,14 @@ rxba_contiguous(struct ieee80211com *ic, struct ieee80211_node *ni,
 		struct rxba_slot *s = &r->slot[r->head % IEEE80211_RXBA_WINDOW];
 		if (s->m == NULL || s->seq != r->head)
 			break;
-		rxba_deliver(ic, ni, s);
+		emit(arg, s);
 		r->head = (r->head + 1) & 4095;
 	}
 }
 
 static void
-rxba_advance(struct ieee80211com *ic, struct ieee80211_node *ni,
-    struct ieee80211_rxba_tid *r, unsigned count)
+rxba_advance(struct ieee80211_rxba_tid *r, unsigned count,
+    rxba_emit_fn emit, void *arg)
 {
 	unsigned n, limit = MIN(count, r->window);
 
@@ -379,14 +387,15 @@ rxba_advance(struct ieee80211com *ic, struct ieee80211_node *ni,
 	for (n = 0; n < limit; n++) {
 		struct rxba_slot *s = &r->slot[r->head % IEEE80211_RXBA_WINDOW];
 		if (s->m != NULL && s->seq == r->head)
-			rxba_deliver(ic, ni, s);
+			emit(arg, s);
 		r->head = (r->head + 1) & 4095;
 	}
 	r->head = (r->head + count - limit) & 4095;
 }
 
 static int
-rxba_deadline(struct ieee80211_rxba_tid *r, uint64_t *deadline)
+rxba_deadline(struct ieee80211_rxba_tid *r, unsigned hole_ms,
+    uint64_t *deadline)
 {
 	uint64_t oldest = UINT64_MAX, next = UINT64_MAX, span;
 	unsigned i;
@@ -395,9 +404,9 @@ rxba_deadline(struct ieee80211_rxba_tid *r, uint64_t *deadline)
 		if (r->slot[i].m != NULL && r->slot[i].arrived < oldest)
 			oldest = r->slot[i].arrived;
 	if (oldest != UINT64_MAX) {
-		if (oldest > UINT64_MAX - IEEE80211_RXBA_HOLE_MS)
+		if (oldest >= UINT64_MAX - hole_ms)
 			return EOVERFLOW;
-		next = oldest + IEEE80211_RXBA_HOLE_MS;
+		next = oldest + hole_ms;
 	}
 	if (r->timeout != 0) {
 		span = ((uint64_t)r->timeout * 1024 + 999) / 1000;
@@ -408,6 +417,61 @@ rxba_deadline(struct ieee80211_rxba_tid *r, uint64_t *deadline)
 	}
 	*deadline = next;
 	return 0;
+}
+
+/* Reject late/duplicate and exactly half-space sequence numbers. Retain the
+ * complete incoming slot only after releasing any window displacement. */
+static int
+rxba_insert(struct ieee80211_rxba_tid *r, const struct rxba_slot *incoming,
+    size_t *bytes, size_t limit, rxba_emit_fn emit, void *arg)
+{
+	struct rxba_slot *slot;
+	unsigned delta = rxba_delta(incoming->seq, r->head);
+
+	if (delta >= 2048)
+		return EINVAL;
+	if (delta >= r->window)
+		rxba_advance(r, delta - r->window + 1, emit, arg);
+	slot = &r->slot[incoming->seq % IEEE80211_RXBA_WINDOW];
+	if (slot->m != NULL)
+		return EALREADY;
+	if (incoming->charged == 0 || *bytes > limit ||
+	    incoming->charged > limit - *bytes)
+		return ENOBUFS;
+	*slot = *incoming;
+	*bytes += slot->charged;
+	rxba_contiguous(r, emit, arg);
+	return 0;
+}
+
+static unsigned
+rxba_expire(struct ieee80211_rxba_tid *r, uint64_t now, unsigned hole_ms,
+    rxba_emit_fn emit, void *arg)
+{
+	uint64_t oldest;
+	unsigned n, i, first, delta, gaps = 0;
+
+	for (n = 0; n < IEEE80211_RXBA_WINDOW; n++) {
+		oldest = UINT64_MAX;
+		first = IEEE80211_RXBA_WINDOW;
+		for (i = 0; i < IEEE80211_RXBA_WINDOW; i++) {
+			struct rxba_slot *s = &r->slot[i];
+			if (s->m == NULL)
+				continue;
+			if (s->arrived < oldest)
+				oldest = s->arrived;
+			delta = rxba_delta(s->seq, r->head);
+			if (delta < first)
+				first = delta;
+		}
+		if (oldest == UINT64_MAX || now < oldest || now - oldest < hole_ms)
+			break;
+		KASSERT(first < r->window);
+		rxba_advance(r, first, emit, arg);
+		rxba_contiguous(r, emit, arg);
+		gaps++;
+	}
+	return gaps;
 }
 
 static int
@@ -423,7 +487,7 @@ rxba_reschedule(struct ieee80211com *ic, struct ieee80211_node *ni)
 	for (i = 0; i < IEEE80211_RXBA_TIDS; i++) {
 		if (ba->tid[i] == NULL)
 			continue;
-		if (rxba_deadline(ba->tid[i], &deadline) != 0)
+		if (rxba_deadline(ba->tid[i], IEEE80211_RXBA_HOLE_MS, &deadline) != 0)
 			goto invalid;
 		if (deadline < next)
 			next = deadline;
@@ -473,10 +537,11 @@ ieee80211_rxba_input(struct ieee80211com *ic, struct ieee80211_node *ni,
 {
 	struct ieee80211_rxba_state *ba = &ni->ni_rxba;
 	struct ieee80211_rxba_tid *r;
-	struct rxba_slot *slot;
+	struct rxba_slot incoming = {0};
+	struct rxba_raw_owner owner = { ic, ni };
 	const uint8_t *p = mtod(m, const uint8_t *);
 	uint64_t now;
-	unsigned tid, seq, delta;
+	unsigned tid, seq;
 	size_t cost;
 
 	if (m->m_len < 26 || (p[0] & 0x8f) != 0x88 || (p[1] & 3) != 2 ||
@@ -508,25 +573,18 @@ ieee80211_rxba_input(struct ieee80211com *ic, struct ieee80211_node *ni,
 	}
 	r->last_rx = now;
 	seq = rxba_le16(p + 22) >> 4;
-	delta = rxba_delta(seq, r->head);
-	if (delta >= 2048)
-		goto drop;
 	cost = rxba_cost(m);
 	if (cost == 0)
 		goto drop;
-	if (delta >= r->window)
-		rxba_advance(ic, ni, r, delta - r->window + 1);
-	slot = &r->slot[seq % IEEE80211_RXBA_WINDOW];
-	if (slot->m != NULL || cost == 0 || cost > RXBA_HEAP_LIMIT - ba->bytes)
+	incoming.m = incoming.tail = m;
+	incoming.charged = cost;
+	incoming.seq = seq;
+	incoming.arrived = now;
+	incoming.epoch = ba->epoch;
+	incoming.key_epoch = ba->key_epoch;
+	if (rxba_insert(r, &incoming, &ba->bytes, RXBA_HEAP_LIMIT,
+	    rxba_deliver, &owner) != 0)
 		goto drop;
-	slot->m = m;
-	slot->charged = cost;
-	slot->seq = seq;
-	slot->arrived = now;
-	slot->epoch = ba->epoch;
-	slot->key_epoch = ba->key_epoch;
-	ba->bytes += cost;
-	rxba_contiguous(ic, ni, r);
 	(void)rxba_reschedule(ic, ni);
 	return 1;
 drop:
@@ -539,6 +597,7 @@ ieee80211_rxba_bar(struct ieee80211com *ic, struct ieee80211_node *ni,
     const uint8_t *p, size_t len)
 {
 	struct ieee80211_rxba_tid *r;
+	struct rxba_raw_owner owner = { ic, ni };
 	uint64_t now;
 	unsigned control, tid, seq, delta;
 
@@ -561,8 +620,8 @@ ieee80211_rxba_bar(struct ieee80211com *ic, struct ieee80211_node *ni,
 	if (delta >= 2048)
 		return EINVAL;
 	r->last_rx = now;
-	rxba_advance(ic, ni, r, delta);
-	rxba_contiguous(ic, ni, r);
+	rxba_advance(r, delta, rxba_deliver, &owner);
+	rxba_contiguous(r, rxba_deliver, &owner);
 	return rxba_reschedule(ic, ni);
 }
 
@@ -572,8 +631,9 @@ ieee80211_rxba_age(struct ieee80211com *ic, struct ieee80211_node *ni,
 {
 	struct ieee80211_rxba_state *ba = &ni->ni_rxba;
 	struct ieee80211_rxba_tid *r;
-	uint64_t now, oldest, span;
-	unsigned tid, i, n, first, delta;
+	struct rxba_raw_owner owner = { ic, ni };
+	uint64_t now, span;
+	unsigned tid;
 
 	if (token == 0 || token != ba->timer_token)
 		return;
@@ -595,26 +655,8 @@ ieee80211_rxba_age(struct ieee80211com *ic, struct ieee80211_node *ni,
 			rxba_free_tid(ba, tid);
 			continue;
 		}
-		for (n = 0; n < IEEE80211_RXBA_WINDOW; n++) {
-			oldest = UINT64_MAX;
-			first = IEEE80211_RXBA_WINDOW;
-			for (i = 0; i < IEEE80211_RXBA_WINDOW; i++) {
-				struct rxba_slot *s = &r->slot[i];
-				if (s->m == NULL)
-					continue;
-				if (s->arrived < oldest)
-					oldest = s->arrived;
-				delta = rxba_delta(s->seq, r->head);
-				if (delta < first)
-					first = delta;
-			}
-			if (oldest == UINT64_MAX || now < oldest ||
-			    now - oldest < IEEE80211_RXBA_HOLE_MS)
-				break;
-			KASSERT(first < r->window);
-			rxba_advance(ic, ni, r, first);
-			rxba_contiguous(ic, ni, r);
-		}
+		(void)rxba_expire(r, now, IEEE80211_RXBA_HOLE_MS,
+		    rxba_deliver, &owner);
 	}
 	(void)rxba_reschedule(ic, ni);
 }
@@ -676,7 +718,7 @@ rxba_candidate_schedule(struct ieee80211com *ic, struct ieee80211_node *ni,
 		    c->fresh : ba->tid[tid];
 		if (r == NULL)
 			continue;
-		error = rxba_deadline(r, &deadline);
+		error = rxba_deadline(r, IEEE80211_RXBA_HOLE_MS, &deadline);
 		if (error != 0)
 			goto failed;
 		if (deadline < next)
@@ -821,4 +863,284 @@ out:
 	}
 	kmem_intr_free(c, sizeof(*c));
 	return error;
+}
+
+/* The negotiated raw owner and the firmware owner retain separate lifetimes,
+ * but use the same insertion, advance, contiguous and hole-expiry mechanism. */
+#define RXBA_OFFLOAD_LIMIT \
+    (IEEE80211_RXBA_BUDGET - sizeof(struct ieee80211_rxba_offload))
+
+struct rxba_offload_owner {
+	struct ieee80211_rxba_offload *ba;
+	struct ieee80211_rxba_output *out;
+	unsigned tid;
+	int drain;
+};
+
+static void
+rxba_append(struct mbuf **head, struct mbuf **tail, struct mbuf *m,
+    struct mbuf *last)
+{
+
+	if (*tail != NULL)
+		(*tail)->m_nextpkt = m;
+	else
+		*head = m;
+	*tail = last;
+}
+
+static void
+rxba_offload_emit(void *arg, struct rxba_slot *slot)
+{
+	struct rxba_offload_owner *owner = arg;
+	struct ieee80211_rxba_offload *ba = owner->ba;
+	struct ieee80211_rxba_output *out = owner->out;
+	struct ieee80211_rxba_batch *batch = &out->ready[owner->tid];
+
+	if (slot->m == NULL)
+		return;
+	KASSERT(ba->bytes >= slot->charged);
+	ba->bytes -= slot->charged;
+	if (owner->drain) {
+		batch->epoch = ba->epoch;
+		batch->key_epoch = ba->key_epoch;
+		batch->session = ba->session[owner->tid];
+		rxba_append(&batch->head, &batch->tail, slot->m, slot->tail);
+	} else {
+		rxba_append(&out->discard, &out->discard_tail, slot->m, slot->tail);
+	}
+	memset(slot, 0, sizeof(*slot));
+}
+
+static void
+rxba_offload_free_tid(struct rxba_offload_owner *owner)
+{
+	struct ieee80211_rxba_offload *ba = owner->ba;
+	struct ieee80211_rxba_tid *r = ba->tid[owner->tid];
+
+	if (r == NULL)
+		return;
+	rxba_advance(r, r->window, rxba_offload_emit, owner);
+	KASSERT(ba->bytes >= sizeof(*r));
+	ba->bytes -= sizeof(*r);
+	ba->tid[owner->tid] = NULL;
+	kmem_intr_free(r, sizeof(*r));
+}
+
+void
+ieee80211_rxba_offload_retire(struct ieee80211_rxba_offload *ba,
+    struct ieee80211_rxba_output *out)
+{
+	struct rxba_offload_owner owner = { ba, out, 0, 0 };
+
+	for (; owner.tid < IEEE80211_RXBA_OFFLOAD_TIDS; owner.tid++) {
+		rxba_offload_free_tid(&owner);
+		ba->deliver[owner.tid] = 0;
+	}
+	ba->epoch = ba->key_epoch = ba->timer_token = 0;
+	ba->deadline = UINT64_MAX;
+	KASSERT(ba->bytes == 0);
+}
+
+static int
+rxba_offload_epoch(const struct ieee80211_rxba_offload *ba, uint64_t epoch,
+    uint64_t key)
+{
+
+	return epoch != 0 && key != 0 && epoch == ba->epoch && key == ba->key_epoch;
+}
+
+static int
+rxba_offload_clock(struct ieee80211_rxba_offload *ba, uint64_t now,
+    struct ieee80211_rxba_output *out)
+{
+
+	if (now < ba->now || now >= UINT64_MAX - ba->hole_ms) {
+		ieee80211_rxba_offload_retire(ba, out);
+		return EOVERFLOW;
+	}
+	ba->now = now;
+	return 0;
+}
+
+static int
+rxba_offload_schedule(struct ieee80211_rxba_offload *ba,
+    struct ieee80211_rxba_output *out)
+{
+	uint64_t deadline, next = UINT64_MAX;
+	unsigned tid;
+
+	for (tid = 0; tid < IEEE80211_RXBA_OFFLOAD_TIDS; tid++) {
+		if (ba->tid[tid] == NULL)
+			continue;
+		if (rxba_deadline(ba->tid[tid], ba->hole_ms, &deadline) != 0)
+			goto invalid;
+		if (deadline < next)
+			next = deadline;
+	}
+	ba->deadline = next;
+	if (next == UINT64_MAX) {
+		ba->timer_token = 0;
+		return 0;
+	}
+	if (ba->serial >= UINT64_MAX - 1) {
+		ba->serial = UINT64_MAX;
+		goto invalid;
+	}
+	ba->timer_token = ++ba->serial;
+	return 0;
+invalid:
+	ieee80211_rxba_offload_retire(ba, out);
+	return EOVERFLOW;
+}
+
+int
+ieee80211_rxba_offload_configure(struct ieee80211_rxba_offload *ba,
+    uint64_t epoch, uint64_t key, unsigned hole_ms, uint64_t now,
+    struct ieee80211_rxba_output *out)
+{
+
+	if (epoch == 0 || key == 0 || epoch == UINT64_MAX || key == UINT64_MAX ||
+	    hole_ms == 0 || now >= UINT64_MAX - hole_ms || ba->serial == UINT64_MAX)
+		return EINVAL;
+	if (epoch < ba->last_epoch || (epoch == ba->last_epoch && key <= ba->last_key))
+		return ESTALE;
+	ieee80211_rxba_offload_retire(ba, out);
+	ba->epoch = ba->last_epoch = epoch;
+	ba->key_epoch = ba->last_key = key;
+	ba->hole_ms = hole_ms;
+	ba->now = now;
+	return 0;
+}
+
+int
+ieee80211_rxba_offload_start(struct ieee80211_rxba_offload *ba, unsigned tid,
+    uint64_t epoch, uint64_t key, uint64_t session, unsigned ssn,
+    unsigned window, uint64_t now, struct ieee80211_rxba_output *out)
+{
+	struct rxba_offload_owner owner = { ba, out, tid, 0 };
+	struct ieee80211_rxba_tid *r;
+
+	if (tid >= IEEE80211_RXBA_OFFLOAD_TIDS || session == 0 ||
+	    session == UINT64_MAX || ssn > 4095 || window == 0 ||
+	    window > IEEE80211_RXBA_WINDOW)
+		return EINVAL;
+	if (!rxba_offload_epoch(ba, epoch, key) || session <= ba->session[tid])
+		return ESTALE;
+	if (rxba_offload_clock(ba, now, out) != 0)
+		return EOVERFLOW;
+	rxba_offload_free_tid(&owner);
+	ba->session[tid] = session;
+	ba->deliver[tid] = 0;
+	if (sizeof(*r) > RXBA_OFFLOAD_LIMIT - ba->bytes)
+		return ENOBUFS;
+	r = kmem_intr_zalloc(sizeof(*r), KM_NOSLEEP);
+	if (r == NULL) {
+		(void)rxba_offload_schedule(ba, out);
+		return ENOMEM;
+	}
+	r->window = window;
+	r->head = ssn;
+	r->last_rx = now;
+	ba->tid[tid] = r;
+	ba->deliver[tid] = session;
+	ba->bytes += sizeof(*r);
+	return rxba_offload_schedule(ba, out);
+}
+
+int
+ieee80211_rxba_offload_stop(struct ieee80211_rxba_offload *ba, unsigned tid,
+    uint64_t epoch, uint64_t key, uint64_t session, int drain,
+    struct ieee80211_rxba_output *out)
+{
+	struct rxba_offload_owner owner = { ba, out, tid, drain };
+
+	if (tid >= IEEE80211_RXBA_OFFLOAD_TIDS || session == 0 ||
+	    (drain != 0 && drain != 1))
+		return EINVAL;
+	if (!rxba_offload_epoch(ba, epoch, key) || session != ba->session[tid])
+		return ESTALE;
+	rxba_offload_free_tid(&owner);
+	if (!drain)
+		ba->deliver[tid] = 0;
+	return rxba_offload_schedule(ba, out);
+}
+
+int
+ieee80211_rxba_offload_input(struct ieee80211_rxba_offload *ba, unsigned tid,
+    uint64_t epoch, uint64_t key, uint64_t session, unsigned seq, uint64_t now,
+    struct mbuf *m, struct ieee80211_rxba_output *out)
+{
+	struct rxba_offload_owner owner = { ba, out, tid, 1 };
+	struct rxba_slot incoming = {0};
+	struct mbuf *part;
+	size_t cost;
+	unsigned packets = 0;
+	int error = EINVAL;
+
+	KASSERT(out->rejected == NULL);
+	if (tid >= IEEE80211_RXBA_OFFLOAD_TIDS || seq > 4095 || m == NULL)
+		goto reject;
+	error = ESTALE;
+	if (!rxba_offload_epoch(ba, epoch, key) || session == 0 ||
+	    session != ba->session[tid] || ba->tid[tid] == NULL)
+		goto reject;
+	error = rxba_offload_clock(ba, now, out);
+	if (error != 0)
+		goto reject;
+	error = EINVAL;
+	for (part = m; part != NULL; part = part->m_nextpkt) {
+		if (++packets > IEEE80211_RXBA_PACKETS_MAX)
+			goto reject;
+		cost = rxba_cost(part);
+		if (cost == 0 || cost > RXBA_OFFLOAD_LIMIT - incoming.charged)
+			goto reject;
+		incoming.charged += cost;
+		incoming.tail = part;
+	}
+	incoming.m = m;
+	incoming.seq = seq;
+	incoming.arrived = now;
+	incoming.epoch = epoch;
+	incoming.key_epoch = key;
+	ba->tid[tid]->last_rx = now;
+	error = rxba_insert(ba->tid[tid], &incoming, &ba->bytes,
+	    RXBA_OFFLOAD_LIMIT, rxba_offload_emit, &owner);
+	if (error != 0)
+		out->rejected = m;
+	/* A rejected input can still have advanced the window. */
+	if (rxba_offload_schedule(ba, out) != 0)
+		return EOVERFLOW;
+	return error;
+reject:
+	out->rejected = m;
+	return error;
+}
+
+void
+ieee80211_rxba_offload_age(struct ieee80211_rxba_offload *ba, uint64_t token,
+    uint64_t now, struct ieee80211_rxba_output *out)
+{
+	struct rxba_offload_owner owner = { ba, out, 0, 1 };
+
+	if (token == 0 || token != ba->timer_token)
+		return;
+	if (rxba_offload_clock(ba, now, out) != 0)
+		return;
+	for (; owner.tid < IEEE80211_RXBA_OFFLOAD_TIDS; owner.tid++) {
+		if (ba->tid[owner.tid] != NULL)
+			out->gaps += rxba_expire(ba->tid[owner.tid], now,
+			    ba->hole_ms, rxba_offload_emit, &owner);
+	}
+	(void)rxba_offload_schedule(ba, out);
+}
+
+int
+ieee80211_rxba_offload_current(const struct ieee80211_rxba_offload *ba,
+    unsigned tid, const struct ieee80211_rxba_batch *batch)
+{
+
+	return tid < IEEE80211_RXBA_OFFLOAD_TIDS && batch->session != 0 &&
+	    batch->session == ba->deliver[tid] &&
+	    rxba_offload_epoch(ba, batch->epoch, batch->key_epoch);
 }

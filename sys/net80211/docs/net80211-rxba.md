@@ -8,7 +8,7 @@ handling on the air belong to the driver and its MAC.
 
 ## Ownership and bounds
 
-The receiver supports TIDs 0 through 7, windows up to 64 MPDUs and 12-bit
+The raw 802.11 receiver supports TIDs 0 through 7, windows up to 64 MPDUs and 12-bit
 sequence arithmetic. It rejects ambiguous half-range jumps. The per-node
 2 MiB limit includes state, candidates, windows and retained mbuf storage.
 External allocations and tags are charged conservatively. Chain and tag walks
@@ -80,14 +80,20 @@ without partial Ethernet delivery.
 
 ## Source checks
 
-Run the actual-source consumer with GCC16:
+Run the actual-source consumer through the SDK native-check route, with the
+selected native prefix and compiler family. The normal compiler is Clang/LLVM.
+For example, run the SDK's `scripts/run-native-check.py` with these arguments:
 
 ```sh
-CC=/absolute/gcc16/bin/gcc sh ember/tools/net80211-rxba-contract.sh
+--host-prefix "$HOST_PREFIX" --compiler-family clang --required-role python \
+  --tool sh --cwd "$OS_SOURCE" --log "$CHECK_LOG" --bindings "$CHECK_BINDINGS" \
+  -- ember/tools/net80211-rxba-contract.sh
 ```
 
-Set `RXBA_ANALYZE=1` for GCC path analysis, Cppcheck and Clang Static Analyzer.
-Clang is used only for analysis. `RXBA_TEST_CFLAGS` selects runtime sanitizer
+Set `RXBA_ANALYZE=clang` and select the SDK `cppcheck` role for exhaustive
+Cppcheck and Clang Static Analyzer. `RXBA_ANALYZE=1` keeps the explicit GCC
+compatibility lane and adds GCC path analysis. Each analyzer must reject a
+causal null-dereference fixture. `RXBA_TEST_CFLAGS` selects runtime sanitizer
 flags. `TEST_RUNNER` can name a supported Memcheck wrapper.
 
 The shared and native fixtures execute Action/output, key lifecycle, CCMP/AES,
@@ -100,38 +106,100 @@ hardware BlockAck, scheduler latency or endurance.
 The [RTL8822CE boundary](../../dev/ic/docs/rtl8822ce-proposal.md#current-source-boundary) and
 [board record](https://github.com/oxtech-ember/EmberBSD-DevBoards/blob/main/boards/cix-p1-orangepi6plus/README.md) track target checks separately.
 
-## Firmware-offload follow-up
+## Firmware-offload receiver
 
-The AIC Ethernet-decapsulated reorder migration is pending. Its current slots
-can own an `m_nextpkt` chain, while firmware owns BA negotiation and reports
-reorder metadata. `ieee80211_rxba_input()` accepts raw 802.11 and owns negotiated
-node/key epochs; passing those Ethernet chains to it would violate its contract.
-The shared RSN, station-management and WPA3 work does not remove AIC's private
-reorder algorithm.
+`ieee80211_rxba_offload_*()` receives opaque packet chains after firmware
+processing. It shares sequence insertion, window advancement, contiguous
+release, storage measurement and hole expiry with the raw receiver. The two
+owners retain separate negotiation and security lifetimes. Raw ciphertext
+continues through `ieee80211_input_ordered()`; offload output returns complete
+packet chains for the adapter's existing Ethernet delivery path.
 
-The next independently reviewable implementation has these boundaries:
+The offload owner supports 16 TIDs and windows of 1 through 64 MPDUs. Start
+supplies an explicit SSN and session generation. Input supplies a TID, 12-bit
+sequence, association generation, pairwise-key generation and session
+generation. Input cannot start a session. Stop explicitly drains or discards.
+Late, duplicate and exactly half-space sequences are rejected. A new start
+must exceed that TID's last session generation, including after retirement or
+allocation failure. Association/key high-water marks survive retirement.
+Generation exhaustion prevents reuse; only destruction of the owner ends
+these marks.
 
-1. Extract sequence-window, slot and deadline operations into one shared core
-   used by raw input and firmware offload. Preserve raw BA candidate commit,
-   storage accounting, BAR handling and timer tokens.
-2. Add an explicit offload session API with TID, 12-bit sequence, association
-   generation, key generation and per-TID session generation. Start selects
-   SSN/window; stop selects drain or discard. Invalid values and exhausted
-   generations fail closed. Packet arrival cannot resurrect a retired session.
-3. Input consumes the complete packet chain on every return. Slots retain
-   head/tail and charged storage; output returns separate ready/discard chains.
-   Delivery/freeing occurs after the state lock is released. Bound packet,
-   fragment and tag walks, storage and arithmetic overflow.
-4. Keep firmware metadata decoding and event ordering in AIC. Map observed
-   reorder-run transitions explicitly. Verify whether firmware provides a
-   session identifier sufficient to distinguish delayed old RX. Reassociation,
-   rekey and firmware reset retire generations before delivery resumes; timer
-   tokens and ready chains are checked again against the delivery epoch.
-5. Test in-order/gapped/duplicate/late input, sequence wrap and half-space
-   ambiguity, window advance, bounded multi-packet A-MSDU ownership, timeout
-   rescheduling, stale callbacks, stop/restart, rekey, same-BSSID reconnect,
-   invalid metadata and allocation failure. Run existing raw BA contracts
-   against the same extracted core.
-6. Remove AIC's private release/reorder/flush/timeout routines only after both
-   consumers use that core. Record SDK compilation, static analysis, memory
-   tests and target kernel results separately from physical acceptance.
+Each input consumes one exclusively owned, acyclic `m_nextpkt` chain, including
+all error returns. A slot retains its head, tail and charged allocation size.
+The 2 MiB limit includes owner state, windows, mbufs, external storage and tags.
+An MPDU contains at most 256 packets; each packet has at most 16 segments and
+16 tags. These walks are bounded before retention. Invalid input is returned
+separately as `rejected`, without a tail walk under the state lock. Other
+output consists of per-TID ready batches and a discard chain. The caller
+initializes each output to zero, then delivers or frees it outside the state
+lock. It must serialize producers through delivery and make the final
+`offload_current()` check atomic with handoff and retirement.
+
+This API accepts complete MPDU chains. It does not yet collect firmware-split
+A-MSDU subframes by index/LAST or accept an explicit NSSN window advance.
+An Intel-style consumer needs those extensions in the shared layer, including
+PN/index/generation checks, bounded incomplete ownership and deferred advance.
+Submitting each subframe independently with the same sequence would incorrectly
+treat the later subframes as duplicates.
+
+Ready batches carry association, key and session generations. Drain permits
+the retiring run's ready batches until restart, discard or an epoch change.
+Discard invalidates them immediately. Absolute hole deadlines derive from the
+oldest retained arrival. Timer tokens change on rescheduling; stale tokens
+cannot age a replacement window. Clock regression, deadline overflow or timer
+serial exhaustion retires retained state. Provider detach must halt its
+physical callback before releasing the device owner.
+
+### AIC adapter
+
+[if_aicwf.c](../../dev/sdmmc/if_aicwf.c) maps the checked firmware reorder flag
+to explicit start and drain operations, with a 64-slot window and 50 ms hole
+timeout. The first frame of an observed reorder run supplies the SSN. Firmware
+owns negotiation, BlockAck responses, decryption/replay and the controlled
+port. The driver retains metadata decoding, firmware commands and Ethernet
+conversion. It no longer owns a separate sequence-window algorithm.
+
+The descriptor contract is the Radxa AIC8800 SDIO source at
+[`d13d07963cd15d731e2895e8288a04cca6152ac9`](https://github.com/radxa-pkg/aic8800/blob/d13d07963cd15d731e2895e8288a04cca6152ac9/src/SDIO/driver_fw/driver/aic8800/aic8800_fdrv/rwnx_rx.h).
+Its VIF and STA indexes are checked along with the transmitter/BSSID and local
+receiver address. STA `0xff` is accepted only with those address checks.
+The ABI provides no BA-session or key-generation identifier. A host generation
+is captured before each FIFO read. A connection or key event cannot relabel
+later data from that same read. Host queues and pending output are retired
+before deferred stop/reconfigure or pairwise-key work. Key confirmation resumes
+RX only if its saved generation is still current and the controlled-port
+command succeeded. Duplicate PTK installation preserves firmware PN state.
+A canceled host CONNECT request cannot reopen RX through a late indication.
+
+`sc_epoch_lock` protects state and final handoff. `sc_rx_lock` serializes data
+and timer producers through handoff; its lock order is RX then epoch. Retirement
+takes only epoch and can invalidate output between mutation and handoff.
+The returned chains are consumed after window mutation releases the state
+lock. The final epoch check and `if_percpuq_enqueue()` then share that lock.
+The current driver has no detach entry point; a future detach must halt
+`sc_rxba_ch` before releasing the softc.
+
+These fences cannot identify an old packet still held inside firmware before
+a later FIFO read. Same-BSSID reconnect, key changes and unreported BA restart
+therefore retain a firmware-boundary limitation. A full wire-generation claim
+requires a documented firmware identifier or an acknowledged drain operation.
+The host no longer assumes firmware has removed every duplicate: late and
+repeated sequences are dropped. These changes require aggregate-loss and
+reconnect acceptance on the physical board.
+
+### Software and physical checks
+
+The common fixture exercises multi-packet ownership, all 16 TIDs, wrap and
+half-space sequence boundaries, window displacement, byte budgets, malformed
+storage, allocation failure, absolute deadlines, stale tokens, drain/discard,
+rekey, reconnect and generation exhaustion. The AIC fixture executes actual
+RX decapsulation, the common core, metadata admission, packet handoff and
+key/state callbacks, including retirement between mutation and delivery and
+a control event inside one FIFO batch. Existing raw BA/CCMP/native-timer and
+AIC station/SAE/PMF/A-MSDU checks remain active.
+
+Host models and target builds do not prove radio behavior. Physical acceptance
+still covers aggregation under load, loss and timeout recovery, firmware event
+ordering, same-BSSID reconnect, pairwise rekey and stop/reconfigure with the
+actual AIC firmware. No physical session is part of the software checks.

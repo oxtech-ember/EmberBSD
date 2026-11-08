@@ -132,6 +132,7 @@ struct aicwf_softc {
 	uint8_t sc_sae_bssid[6], sc_hwkey[5], sc_vif;
 	uint32_t sc_sae_generation;
 	uint64_t sc_sae_epoch, sc_pmf_rx_pn, sc_join_serial, sc_configure_serial;
+	uint64_t sc_rx_join, sc_rx_serial;
 	uint64_t sc_alive_epoch, sc_alive_join_serial;
 	bool sc_alive_queued; unsigned sc_alive_misses;
 	int (*sc_newstate)(struct ieee80211com *, enum ieee80211_state, int);
@@ -256,8 +257,8 @@ static void ieee80211_sta_leave(struct ieee80211com *ic, struct ieee80211_node *
 { assert(ic->ic_bss == node); }
 static void kpause(const char *name, bool intr, int delay, void *lock)
 { (void)name; (void)intr; (void)delay; (void)lock; }
-static void aicwf_reorder_flush(struct aicwf_softc *s, int tid, bool deliver)
-{ (void)s; assert(tid == -1 && !deliver); }
+static void aicwf_rx_retire(struct aicwf_softc *s)
+{ (void)s; }
 static void *pool_cache_get(void *pool, int flags)
 { (void)pool;assert(flags==PR_NOWAIT);return failtask?NULL:calloc(1,sizeof(struct aicwf_task)); }
 static void workqueue_enqueue(void *q, struct work *w, void *arg)
@@ -301,7 +302,7 @@ static int cv_timedwait(int *cv, int *lock, int delay)
 	return ETIMEDOUT;
 }
 static void cv_broadcast(int *cv) { (void)cv; }
-static void aicwf_rx_data(struct aicwf_softc *, const uint8_t *, size_t);
+static void aicwf_rx_data(struct aicwf_softc *, const uint8_t *, size_t, uint64_t);
 static void aicwf_scan_done(struct aicwf_softc *, const uint8_t *, size_t);
 static void aicwf_rx_msg(struct aicwf_softc *s, const uint8_t *msg, size_t len)
 {
@@ -520,7 +521,7 @@ receive(const uint8_t *f, size_t len, uint32_t status, uint32_t flags)
 	memcpy(pkt + AICWF_RXHDR_LEN, f, len);
 	le32enc(pkt + AICWF_RXHDR_STATUS, status);
 	le32enc(pkt + AICWF_RXHDR_FLAGS, flags);
-	aicwf_rx_data(&sc, pkt, len);
+	aicwf_rx_data(&sc, pkt, len, 0);
 }
 
 static void
@@ -739,7 +740,7 @@ cfm_receive(uint32_t status, uint32_t token, size_t len)
 	packet[2] = AICWF_TYPE_TX_CFM;
 	le32enc(packet + 4, status);
 	le32enc(packet + 8, token);
-	aicwf_rx(&sc, packet, sizeof(packet));
+	aicwf_rx(&sc, packet, sizeof(packet), 0);
 }
 
 static void

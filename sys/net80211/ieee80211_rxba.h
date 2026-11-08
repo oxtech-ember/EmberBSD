@@ -15,7 +15,61 @@ struct ieee80211_rxba_candidate;
 #define IEEE80211_RXBA_HOLE_MS 100
 #define IEEE80211_RXBA_CHAIN_MAX 16
 #define IEEE80211_RXBA_TAG_MAX 16
-/* All operations require Giant. Providers retain no node/key pointers.
+/* Firmware owns BA negotiation; the host owns only the receive window.
+ * The adapter serializes every operation and the final delivery check.
+ * Zero-initialize once. Retire preserves all generation high-water marks.
+ * Association, key and per-TID session generations are nonzero, never reused,
+ * and never UINT64_MAX. Key generations increase within an association.
+ * Start is explicit: input never creates a session.
+ *
+ * Input consumes an exclusively owned, acyclic m_nextpkt chain on every
+ * return. Each member is an ordinary, acyclic mbuf packet. Bound packet,
+ * segment and tag counts before retaining it. A slot is one complete MPDU.
+ * Outputs must be zeroed before each operation and consumed after unlocking.
+ * Ready chains carry their original generations; current() and the final
+ * handoff must be atomic with retirement. No callbacks run from this API.
+ * A drain permits delivery until the next start, discard or epoch change.
+ * Timer providers capture token at callback entry, then age under the lock.
+ * Logical cancellation does not replace provider halt at device destruction.
+ */
+#define IEEE80211_RXBA_OFFLOAD_TIDS 16
+#define IEEE80211_RXBA_PACKETS_MAX 256
+struct ieee80211_rxba_batch {
+	struct mbuf *head, *tail;
+	uint64_t epoch, key_epoch, session;
+};
+struct ieee80211_rxba_output {
+	struct ieee80211_rxba_batch ready[IEEE80211_RXBA_OFFLOAD_TIDS];
+	struct mbuf *discard, *discard_tail;
+	struct mbuf *rejected; /* Invalid input: no unbounded tail walk under lock. */
+	unsigned gaps;
+};
+struct ieee80211_rxba_offload {
+	struct ieee80211_rxba_tid *tid[IEEE80211_RXBA_OFFLOAD_TIDS];
+	uint64_t session[IEEE80211_RXBA_OFFLOAD_TIDS];
+	uint64_t deliver[IEEE80211_RXBA_OFFLOAD_TIDS];
+	uint64_t epoch, key_epoch, last_epoch, last_key;
+	uint64_t serial, timer_token, deadline, now;
+	size_t bytes;
+	unsigned hole_ms;
+};
+int ieee80211_rxba_offload_configure(struct ieee80211_rxba_offload *,
+    uint64_t, uint64_t, unsigned, uint64_t, struct ieee80211_rxba_output *);
+void ieee80211_rxba_offload_retire(struct ieee80211_rxba_offload *,
+    struct ieee80211_rxba_output *);
+int ieee80211_rxba_offload_start(struct ieee80211_rxba_offload *, unsigned,
+    uint64_t, uint64_t, uint64_t, unsigned, unsigned, uint64_t,
+    struct ieee80211_rxba_output *);
+int ieee80211_rxba_offload_stop(struct ieee80211_rxba_offload *, unsigned,
+    uint64_t, uint64_t, uint64_t, int, struct ieee80211_rxba_output *);
+int ieee80211_rxba_offload_input(struct ieee80211_rxba_offload *, unsigned,
+    uint64_t, uint64_t, uint64_t, unsigned, uint64_t, struct mbuf *,
+    struct ieee80211_rxba_output *);
+void ieee80211_rxba_offload_age(struct ieee80211_rxba_offload *, uint64_t,
+    uint64_t, struct ieee80211_rxba_output *);
+int ieee80211_rxba_offload_current(const struct ieee80211_rxba_offload *,
+    unsigned, const struct ieee80211_rxba_batch *);
+/* Raw node operations below require Giant. Providers retain no node/key pointers.
  * Callbacks are bounded, non-reentrant and do not call the shared stack.
  * Cleanup cancels logically only. Provider detach owns halt outside its locks. */
 struct ieee80211_rxba_ops {

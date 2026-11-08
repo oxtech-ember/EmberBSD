@@ -32,6 +32,7 @@
 #define ETHER_HDR_LEN 14
 #define ETHER_ALIGN 2
 #define ETHER_IS_MULTICAST(p) ((p)[0] & 1)
+#define IEEE80211_ADDR_EQ(a,b) (memcmp((a),(b),6)==0)
 #define MCLBYTES 2048
 #define MHLEN 200
 #define M_EXT 1
@@ -58,7 +59,10 @@ struct aicwf_softc {
 	struct { uint8_t ic_myaddr[6]; } sc_ic;
 	struct { unsigned ev_count; } sc_ev_amsdu, sc_ev_ampdu;
 	bool sc_if_attached;
-	uint8_t sc_vif;
+	uint8_t sc_vif, sc_rx_vif, sc_rx_ap, sc_rx_bssid[6];
+	int sc_epoch_lock;
+	bool sc_rx_active;
+	uint64_t sc_rx_serial;
 	unsigned sc_alive_rx;
 	uint64_t sc_sae_epoch;
 };
@@ -98,8 +102,10 @@ m_set_rcvif(struct mbuf *m, struct ifnet *ifp)
 	m->m_pkthdr.rcvif = ifp;
 }
 
-static int splnet(void) { return 0; }
-static void splx(int s) { CHECK(s == 0); }
+static void mutex_spin_enter(int *p) { CHECK(!*p); *p=1; }
+static void mutex_spin_exit(int *p) { CHECK(*p); *p=0; }
+#define mutex_owned(p) (*(p))
+#define KASSERT CHECK
 
 static void
 if_percpuq_enqueue(const void *q, struct mbuf *m)
@@ -113,18 +119,19 @@ if_percpuq_enqueue(const void *q, struct mbuf *m)
 	m_freem(m);
 }
 
+static void aicwf_rx_input(struct aicwf_softc *, struct mbuf *);
+/* Decapsulation test boundary. Full reorder/lifetime is exercised separately
+ * by aicwf-rxba-contract.c using both production implementations. */
 static void
-aicwf_reorder(const struct aicwf_softc *sc, u_int tid, uint16_t seq, struct mbuf *m)
+aicwf_rx_submit(struct aicwf_softc *sc, uint64_t serial, unsigned tid,
+    unsigned seq, bool qos, bool reorder, struct mbuf *m)
 {
-	CHECK(sc->sc_sae_epoch == 77 && held == NULL);
-	held = m; reordered++; last_tid = tid; last_seq = seq;
-}
-
-static void
-aicwf_reorder_flush(const struct aicwf_softc *sc, int tid, bool deliver)
-{
-	CHECK(sc->sc_sae_epoch == 77 && tid == 5 && deliver);
-	flushed++;
+ CHECK(serial==sc->sc_rx_serial);
+ if(reorder) {CHECK(qos && held==NULL);held=m;reordered++;last_tid=tid;last_seq=seq;}
+ else {
+  if(qos)flushed++;
+  mutex_spin_enter(&sc->sc_epoch_lock);aicwf_rx_input(sc,m);mutex_spin_exit(&sc->sc_epoch_lock);
+ }
 }
 
 static void
@@ -157,6 +164,8 @@ reset(void)
 	memcpy(device.sc_ic.ic_myaddr, station, 6);
 	device.sc_if_attached = true;
 	device.sc_sae_epoch = 77;
+	device.sc_rx_serial = 1;device.sc_rx_active = true;
+	memcpy(device.sc_rx_bssid,sender,6);
 	receive_if = &device.sc_if;
 	device.sc_if.if_percpuq = receive_if;
 	allocations = frees = alloc_fail = clusters = cluster_fail = 0;
@@ -166,6 +175,7 @@ reset(void)
 	uint8_t *wh = packet + AICWF_RXHDR_LEN;
 	wh[0] = 0x88; wh[1] = 2;
 	memcpy(wh + 4, station, 6);
+	memcpy(wh + 10, sender, 6);
 	memcpy(wh + 16, sender, 6);
 	wh[22] = 0x30; wh[23] = 0x12; wh[24] = 0x85;
 }
@@ -186,7 +196,7 @@ subframe(uint8_t *p, size_t payload)
 static void
 receive(size_t body)
 {
-	aicwf_rx_data(&device, packet, 26 + body);
+	aicwf_rx_data(&device, packet, 26 + body, device.sc_rx_serial);
 	CHECK(device.sc_sae_epoch == 77);
 }
 

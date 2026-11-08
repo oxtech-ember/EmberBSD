@@ -243,12 +243,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
  * sequence. The window and the wait for a missing frame are the vendor
  * driver's.
  */
-#define	AICWF_REORDER_WINDOW		64
 #define	AICWF_REORDER_WAIT_MS		50
-#define	AICWF_NTID			16
-#define	AICWF_SEQ_MASK			0xfff
-#define	AICWF_SEQ_SUB(a, b)		(((a) - (b)) & AICWF_SEQ_MASK)
-#define	AICWF_SEQ_BEFORE(a, b)		(AICWF_SEQ_SUB(a, b) >= 0x800)
 
 #define	AICWF_SCAN_INTERVAL_MS		3000
 
@@ -356,6 +351,7 @@ struct aicwf_task {
 	u_int			t_keyix;
 	bool			t_group;
 	uint64_t		t_epoch;
+	uint64_t		t_rx_serial;
 	uint64_t		t_join_serial;
 	uint64_t		t_configure_serial;
 	u_int			t_keylen;
@@ -407,9 +403,11 @@ struct aicwf_softc {
 	struct work		sc_txwork;
 	volatile u_int		sc_txqueued;
 
-	/* Frames of an A-MPDU waiting for the ones before them. */
-	kmutex_t		sc_reorder_lock;
-	callout_t		sc_reorder_ch;
+	/* Serialize RX producers through delivery; state uses sc_epoch_lock.
+	 * Lock order: sc_rx_lock -> sc_epoch_lock. Retirement needs only epoch.
+	 * No path takes sc_rx_lock while it holds sc_lock or sc_epoch_lock. */
+	kmutex_t		sc_rx_lock;
+	callout_t		sc_rxba_ch;
 	callout_t		sc_alive_ch;
 	struct work		sc_alive_work;
 	struct aicwf_ft_bss {
@@ -439,12 +437,11 @@ struct aicwf_softc {
 	uint64_t		sc_join_serial;	/* sc_epoch_lock */
 	uint64_t		sc_configure_serial; /* sc_epoch_lock */
 	uint64_t		sc_alive_join_serial;
-	struct aicwf_reorder {
-		bool		started;
-		uint16_t	head;	/* next sequence number to pass */
-		u_int		held;
-		struct mbuf	*slot[AICWF_REORDER_WINDOW];
-	}			sc_reorder[AICWF_NTID];
+	struct ieee80211_rxba_offload sc_rxba;
+	uint64_t		sc_rx_serial, sc_rx_assoc; /* sc_epoch_lock */
+	uint64_t		sc_rx_join; /* Host CONNECT request eligible for indication. */
+	bool			sc_rx_active;
+	uint8_t			sc_rx_vif, sc_rx_ap, sc_rx_bssid[ETHER_ADDR_LEN];
 	struct evcnt		sc_ev_ampdu;	/* frames of an A-MPDU */
 	struct evcnt		sc_ev_amsdu;	/* frames with several packets */
 	struct evcnt		sc_ev_gap;	/* waits that ran out */
@@ -498,9 +495,14 @@ static void	aicwf_alive_work(struct aicwf_softc *);
 static uint64_t aicwf_recover_disconnect(struct aicwf_softc *, uint64_t);
 static void	aicwf_sae_event(struct aicwf_softc *, bool,
 		    const uint8_t *, size_t);
-static void	aicwf_rx_data(struct aicwf_softc *, const uint8_t *, size_t);
-static void	aicwf_reorder_flush(struct aicwf_softc *, int, bool);
-static void	aicwf_reorder_timeout(void *);
+static void	aicwf_rx_data(struct aicwf_softc *, const uint8_t *, size_t, uint64_t);
+static void	aicwf_rx_retire(struct aicwf_softc *);
+static bool	aicwf_rx_begin(struct aicwf_softc *);
+static void	aicwf_rx_resume(struct aicwf_softc *, uint64_t);
+static void	aicwf_rx_fence_locked(struct aicwf_softc *,
+		    struct ieee80211_rxba_output *);
+static void	aicwf_rx_discard(struct ieee80211_rxba_output *);
+static void	aicwf_rxba_timeout(void *);
 
 static void	aicwf_sta_tx_cfm(struct aicwf_softc *, const uint8_t *, size_t);
 static bool	aicwf_sta_ready(struct aicwf_softc *);
@@ -781,7 +783,7 @@ aicwf_rx_msg
 
 /* Split what one read returned into frames. */
 static void
-aicwf_rx(struct aicwf_softc *sc, const uint8_t *buf, size_t len)
+aicwf_rx(struct aicwf_softc *sc, const uint8_t *buf, size_t len, uint64_t serial)
 {
 	while (len >= AICWF_HDR_LEN) {
 		const size_t frame_len = le16dec(buf);
@@ -794,7 +796,7 @@ aicwf_rx(struct aicwf_softc *sc, const uint8_t *buf, size_t len)
 
 			if (total > len)
 				break;
-			aicwf_rx_data(sc, buf, frame_len);
+			aicwf_rx_data(sc, buf, frame_len, serial);
 			if (roundup(total, 4) >= len)
 				break;
 			buf += roundup(total, 4);
@@ -824,6 +826,7 @@ aicwf_intr(void *arg)
 	struct aicwf_softc * const sc = arg;
 	struct sdmmc_function * const sf = sc->sc_sf;
 	uint8_t status, pending;
+	uint64_t serial;
 	size_t len;
 	int error;
 
@@ -849,6 +852,11 @@ aicwf_intr(void *arg)
 		mutex_exit(&sc->sc_bus_lock);
 		return 1;
 	}
+	/* An entire FIFO read belongs to this host lifetime. A connection/key
+	 * event inside the batch can retire it, but cannot relabel its data. */
+	mutex_spin_enter(&sc->sc_epoch_lock);
+	serial = sc->sc_rx_serial;
+	mutex_spin_exit(&sc->sc_epoch_lock);
 	error = aicwf_fifo(sc, false, sc->sc_rxbuf, len);
 	mutex_exit(&sc->sc_bus_lock);
 
@@ -856,7 +864,7 @@ aicwf_intr(void *arg)
 		device_printf(sc->sc_dev, "read of %zu bytes failed\n", len);
 		return 1;
 	}
-	aicwf_rx(sc, sc->sc_rxbuf, len);
+	aicwf_rx(sc, sc->sc_rxbuf, len, serial);
 
 	return 1;
 }
@@ -1693,10 +1701,11 @@ aicwf_sae_advance_if(struct aicwf_softc *sc, uint64_t expected)
 		return 0;
 	}
 	aicwf_sta_retire_locked(sc, tx, &tx_event, scan, &scan_event);
+	aicwf_rx_retire(sc);
+	mutex_spin_enter(&sc->sc_epoch_lock);
 	sc->sc_ptk_valid = false;
 	sc->sc_pmf_rx_pn = 0;
 	explicit_memset(sc->sc_ptk, 0, sizeof(sc->sc_ptk));
-	mutex_spin_enter(&sc->sc_epoch_lock);
 	if (++sc->sc_sae_epoch == 0)
 		sc->sc_sae_epoch++;
 	epoch = sc->sc_sae_epoch;
@@ -2006,6 +2015,9 @@ aicwf_connect(struct aicwf_softc *sc)
 	sc->sc_sae_pending = false;
 	sc->sc_sae_authenticated = false;
 	sc->sc_connecting = true;
+	mutex_spin_enter(&sc->sc_epoch_lock);
+	sc->sc_rx_join = sc->sc_rx_serial;
+	mutex_spin_exit(&sc->sc_epoch_lock);
 	mutex_exit(&sc->sc_lock);
 	error = aicwf_cmd_reply(sc, AICWF_SM_CONNECT_REQ, req, sizeof(req),
 	    AICWF_SM_CONNECT_CFM, cfm, sizeof(cfm), true, epoch);
@@ -2019,6 +2031,7 @@ aicwf_connect(struct aicwf_softc *sc)
 		device_printf(sc->sc_dev, "connect request failed: %d, %u\n",
 		    error, cfm[0]);
 		sc->sc_connecting = false;
+		aicwf_rx_retire(sc);
 	} else
 		/* New IGTK requests cannot run until IFNET is released. */
 		memset(sc->sc_igtk, AICWF_HWKEY_NONE, sizeof(sc->sc_igtk));
@@ -2132,6 +2145,10 @@ aicwf_connect_ind(struct aicwf_softc *sc, const uint8_t *ind, size_t len)
 		aicwf_sta_assoc(sc, ind, len);
 		sc->sc_ap = ind[10];
 		sc->sc_qos = ind[12] != 0;
+		if (!aicwf_rx_begin(sc)) {
+			splx(s);
+			return;
+		}
 		sc->sc_connected = true;
 		sc->sc_alive_rx = ticks;
 		sc->sc_alive_misses = 0;
@@ -2848,8 +2865,9 @@ aicwf_disconnect_ind(struct aicwf_softc *sc, const uint8_t *ind, size_t len)
 			memset(sc->sc_igtk, AICWF_HWKEY_NONE, sizeof(sc->sc_igtk));
 		}
 		mutex_exit(&sc->sc_lock);
-		if (old_ap)
-			aicwf_reorder_flush(sc, -1, false);
+		/* CONNECT already retired the old RX lifetime before its command.
+		 * Preserve that pending CONNECT token; an old-AP indication does
+		 * not cancel the replacement association. */
 		return;
 	}
 	if (!sc->sc_connected) {
@@ -2876,7 +2894,7 @@ aicwf_disconnect_ind(struct aicwf_softc *sc, const uint8_t *ind, size_t len)
 	memset(sc->sc_igtk, AICWF_HWKEY_NONE, sizeof(sc->sc_igtk));
 	recover = ic->ic_state == IEEE80211_S_RUN;
 	mutex_exit(&sc->sc_lock);
-	aicwf_reorder_flush(sc, -1, false);
+	aicwf_rx_retire(sc);
 	if (recover)
 		aicwf_recover_scan(sc, epoch, serial);
 }
@@ -2926,7 +2944,7 @@ aicwf_recover_disconnect(struct aicwf_softc *sc, uint64_t expected)
 	sc->sc_sae_pending = sc->sc_sae_authenticated = false;
 	sc->sc_alive_misses = 0;
 	mutex_exit(&sc->sc_lock);
-	aicwf_reorder_flush(sc, -1, false);
+	aicwf_rx_retire(sc);
 	for (size_t i = 0; i < __arraycount(keys); i++) {
 		if (keys[i] == AICWF_HWKEY_NONE)
 			continue;
@@ -2964,7 +2982,7 @@ aicwf_disconnect(struct aicwf_softc *sc)
 		return;
 	sc->sc_connected = false;
 	sc->sc_connecting = false;
-	aicwf_reorder_flush(sc, -1, false);
+	aicwf_rx_retire(sc);
 
 	memset(req, 0, sizeof(req));
 	le16enc(req, IEEE80211_REASON_AUTH_LEAVE);
@@ -3108,8 +3126,10 @@ aicwf_key_set_cb(struct aicwf_softc *sc, const struct aicwf_task *t)
 	duplicate = !t->t_group && sc->sc_ptk_valid &&
 	    memcmp(sc->sc_ptk, t->t_key, sizeof(sc->sc_ptk)) == 0;
 	/* Never reset firmware TX PN by programming the same live PTK twice. */
+	mutex_spin_enter(&sc->sc_epoch_lock);
 	if (!t->t_group && !duplicate)
 		sc->sc_ptk_valid = false;
+	mutex_spin_exit(&sc->sc_epoch_lock);
 	memset(req, 0, sizeof(req));
 	req[0] = t->t_group ? t->t_keyix : 0;
 	req[1] = t->t_group ? AICWF_STA_NONE : sc->sc_ap;
@@ -3140,9 +3160,11 @@ aicwf_key_set_cb(struct aicwf_softc *sc, const struct aicwf_task *t)
 	if (!duplicate) {
 		sc->sc_hwkey[slot] = cfm[1];
 		if (!t->t_group) {
+			mutex_spin_enter(&sc->sc_epoch_lock);
 			memcpy(sc->sc_ptk, t->t_key, sizeof(sc->sc_ptk));
 			sc->sc_pmf_rx_pn = 0;
 			sc->sc_ptk_valid = true;
+			mutex_spin_exit(&sc->sc_epoch_lock);
 		}
 	}
 	explicit_memset(req, 0, sizeof(req));
@@ -3151,8 +3173,10 @@ aicwf_key_set_cb(struct aicwf_softc *sc, const struct aicwf_task *t)
 	mutex_exit(&sc->sc_lock);
 	if (!t->t_group) {
 		/* The pairwise key is in: let all traffic through. */
-		(void)aicwf_cmd_reply(sc, AICWF_ME_SET_CONTROL_PORT_REQ, req, 2,
+		error = aicwf_cmd_reply(sc, AICWF_ME_SET_CONTROL_PORT_REQ, req, 2,
 		    AICWF_ME_SET_CONTROL_PORT_CFM, NULL, 0, true, t->t_epoch);
+		if (error == 0)
+			aicwf_rx_resume(sc, t->t_rx_serial);
 	}
 }
 
@@ -3160,6 +3184,7 @@ static void
 aicwf_key_delete_cb(struct aicwf_softc *sc, const struct aicwf_task *t)
 {
 	const u_int slot = t->t_group ? t->t_keyix : AICWF_KEY_SLOT_PAIRWISE;
+	struct ieee80211_rxba_output out = {0};
 	uint8_t req[1];
 
 	if (slot >= AICWF_KEY_SLOTS)
@@ -3175,10 +3200,18 @@ aicwf_key_delete_cb(struct aicwf_softc *sc, const struct aicwf_task *t)
 	req[0] = sc->sc_hwkey[slot];
 	sc->sc_hwkey[slot] = AICWF_HWKEY_NONE;
 	if (!t->t_group) {
+		mutex_spin_enter(&sc->sc_epoch_lock);
+		/* Admission normally fenced this deletion. If the live hardware
+		 * identity changed meanwhile, retire it before this actual delete.
+		 * Do not cancel a later SET whose admission already closed RX. */
+		if (sc->sc_rx_active)
+			aicwf_rx_fence_locked(sc, &out);
 		sc->sc_ptk_valid = false;
 		explicit_memset(sc->sc_ptk, 0, sizeof(sc->sc_ptk));
+		mutex_spin_exit(&sc->sc_epoch_lock);
 	}
 	mutex_exit(&sc->sc_lock);
+	aicwf_rx_discard(&out);
 	(void)aicwf_cmd_reply(sc, AICWF_MM_KEY_DEL_REQ, req, sizeof(req),
 	    AICWF_MM_KEY_DEL_CFM, NULL, 0, true, t->t_epoch);
 }
@@ -3228,6 +3261,9 @@ aicwf_newstate(struct ieee80211com *ic, enum ieee80211_state nstate, int arg)
 	if (nstate == IEEE80211_S_AUTH &&
 	    (sc->sc_if.if_flags & IFF_RUNNING) == 0)
 		return ENETDOWN;
+	if (nstate == IEEE80211_S_INIT || nstate == IEEE80211_S_SCAN ||
+	    nstate == IEEE80211_S_AUTH)
+		aicwf_rx_retire(sc);
 	t = pool_cache_get(sc->sc_taskpool, PR_NOWAIT);
 	if (t == NULL) {
 		device_printf(sc->sc_dev, "no free tasks\n");
@@ -3255,16 +3291,35 @@ aicwf_key_task(struct ieee80211com *ic, const struct ieee80211_key *wk,
 {
 	struct aicwf_softc * const sc = ic->ic_ifp->if_softc;
 	struct aicwf_task *t;
+	struct ieee80211_rxba_output out = {0};
+	uint64_t serial = 0, epoch;
+
+	/* Pairwise firmware key changes retire the decrypt/reorder lifetime at
+	 * queue admission. GTK/IGTK do not decrypt these unicast BA slots.
+	 * Ignore a stale DELETE for a different stable current PTK. A pending
+	 * SET has closed RX: conservatively invalidate that completion on DELETE.
+	 * Both PTK writers
+	 * hold sc_lock and sc_epoch_lock; this IPL_NET callback needs only epoch. */
+	mutex_spin_enter(&sc->sc_epoch_lock);
+	epoch = sc->sc_sae_epoch;
+	if ((wk->wk_flags & IEEE80211_KEY_GROUP) == 0 &&
+	    (cmd == AICWF_TASK_KEY_SET || !sc->sc_rx_active ||
+	    !sc->sc_ptk_valid || (wk->wk_keylen == sizeof(sc->sc_ptk) &&
+	    memcmp(wk->wk_key, sc->sc_ptk, sizeof(sc->sc_ptk)) == 0))) {
+		aicwf_rx_fence_locked(sc, &out);
+		serial = sc->sc_rx_serial;
+	}
+	mutex_spin_exit(&sc->sc_epoch_lock);
+	aicwf_rx_discard(&out);
 
 	t = pool_cache_get(sc->sc_taskpool, PR_NOWAIT);
 	if (t == NULL) {
 		device_printf(sc->sc_dev, "no free tasks\n");
 		return 0;
 	}
-	/* net80211 may call DELETE while holding its IPL_NET node lock. */
-	mutex_spin_enter(&sc->sc_epoch_lock);
-	t->t_epoch = sc->sc_sae_epoch;
-	mutex_spin_exit(&sc->sc_epoch_lock);
+	/* Keep the epoch captured with the RX fence, before pool allocation. */
+	t->t_epoch = epoch;
+	t->t_rx_serial = serial;
 	t->t_cmd = cmd;
 	t->t_cipher = wk->wk_cipher->ic_cipher;
 	t->t_keyix = wk->wk_keyix;
@@ -3389,21 +3444,19 @@ aicwf_start(struct ifnet *ifp)
  * A received 802.11 data frame, already decrypted: turn it into an
  * Ethernet frame.
  */
-/* Pass a chain of received packets (linked by m_nextpkt) to the stack. */
+/* Packet handoff is called with sc_epoch_lock held, after window mutation.
+ * The RX producer lock prevents a timeout from overtaking an earlier batch. */
 static void
 aicwf_rx_input(struct aicwf_softc *sc, struct mbuf *m)
 {
-	const struct ifnet * const ifp = &sc->sc_if;
 	struct mbuf *next;
-	int s;
 
-	s = splnet();
+	KASSERT(mutex_owned(&sc->sc_epoch_lock));
 	for (; m != NULL; m = next) {
 		next = m->m_nextpkt;
 		m->m_nextpkt = NULL;
-		if_percpuq_enqueue(ifp->if_percpuq, m);
+		if_percpuq_enqueue(sc->sc_if.if_percpuq, m);
 	}
-	splx(s);
 }
 
 static void
@@ -3413,138 +3466,209 @@ aicwf_rx_free(struct mbuf *m)
 
 	for (; m != NULL; m = next) {
 		next = m->m_nextpkt;
+		m->m_nextpkt = NULL;
 		m_freem(m);
 	}
 }
 
-/*
- * Move what is ready from the window of one traffic class to the end of
- * the chain at *tailp: everything before "upto", then the unbroken run
- * that follows.
- */
-static struct mbuf **
-aicwf_reorder_release(struct aicwf_reorder *ro, uint16_t upto,
-    struct mbuf **tailp)
+static void
+aicwf_rx_discard(struct ieee80211_rxba_output *out)
 {
-	struct mbuf *m;
+	unsigned tid;
 
-	for (;;) {
-		m = ro->slot[ro->head % AICWF_REORDER_WINDOW];
-		if (m == NULL && (ro->head == upto || ro->held == 0))
-			break;
-		if (m != NULL) {
-			ro->slot[ro->head % AICWF_REORDER_WINDOW] = NULL;
-			ro->held--;
-			*tailp = m;
-			while (m->m_nextpkt != NULL)
-				m = m->m_nextpkt;
-			tailp = &m->m_nextpkt;
-		}
-		if (ro->head == upto)
-			upto = (upto + 1) & AICWF_SEQ_MASK;
-		ro->head = (ro->head + 1) & AICWF_SEQ_MASK;
-	}
-	if (ro->held == 0 && AICWF_SEQ_BEFORE(ro->head, upto))
-		ro->head = upto;
-	return tailp;
+	for (tid = 0; tid < IEEE80211_RXBA_OFFLOAD_TIDS; tid++)
+		aicwf_rx_free(out->ready[tid].head);
+	aicwf_rx_free(out->discard);
+	aicwf_rx_free(out->rejected);
 }
 
-/* A frame of an A-MPDU: hold it until the frames before it have come. */
-static void
-aicwf_reorder(struct aicwf_softc *sc, u_int tid, uint16_t seq,
-    struct mbuf *m)
+static uint64_t
+aicwf_rx_now(void)
 {
-	struct aicwf_reorder * const ro = &sc->sc_reorder[tid];
-	struct mbuf *ready = NULL, **tailp = &ready;
-	u_int slot;
+	struct timespec ts;
 
-	mutex_enter(&sc->sc_reorder_lock);
-	if (!ro->started) {
-		ro->started = true;
-		ro->head = seq;
-	}
-	if (AICWF_SEQ_BEFORE(seq, ro->head)) {
-		/* Late; the firmware has dropped the duplicates. */
-		mutex_exit(&sc->sc_reorder_lock);
-		aicwf_rx_input(sc, m);
+	getnanouptime(&ts);
+	if (ts.tv_sec < 0 || (uint64_t)ts.tv_sec >= UINT64_MAX / 1000)
+		return UINT64_MAX;
+	return (uint64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
+static void
+aicwf_rx_schedule_locked(struct aicwf_softc *sc)
+{
+	uint64_t now, delay;
+
+	KASSERT(mutex_owned(&sc->sc_epoch_lock));
+	if (sc->sc_rxba.timer_token == 0) {
+		callout_stop(&sc->sc_rxba_ch);
 		return;
 	}
-	if (AICWF_SEQ_SUB(seq, ro->head) >= AICWF_REORDER_WINDOW) {
-		/* The window moves on; what falls out of it goes up. */
-		tailp = aicwf_reorder_release(ro, (seq -
-		    (AICWF_REORDER_WINDOW - 1)) & AICWF_SEQ_MASK, tailp);
-	}
-	slot = seq % AICWF_REORDER_WINDOW;
-	if (ro->slot[slot] != NULL) {
-		aicwf_rx_free(ro->slot[slot]);
-		ro->held--;
-	}
-	ro->slot[slot] = m;
-	ro->held++;
-	tailp = aicwf_reorder_release(ro, ro->head, tailp);
-	if (ro->held != 0 && !callout_pending(&sc->sc_reorder_ch))
-		callout_schedule(&sc->sc_reorder_ch,
-		    mstohz(AICWF_REORDER_WAIT_MS));
-	mutex_exit(&sc->sc_reorder_lock);
-
-	aicwf_rx_input(sc, ready);
+	now = aicwf_rx_now();
+	delay = sc->sc_rxba.deadline > now ? sc->sc_rxba.deadline - now : 1;
+	callout_schedule(&sc->sc_rxba_ch,
+	    MAX(1, mstohz(MIN(delay, AICWF_REORDER_WAIT_MS))));
 }
 
-/* Empty the windows: of one traffic class, or of all (tid < 0). */
+/* Fence host-held packets before a sleeping firmware or deferred state change.
+ * The firmware ABI has no key/BA generation: this fence covers host ownership,
+ * not packets that firmware retained before the next FIFO read. */
 static void
-aicwf_reorder_flush(struct aicwf_softc *sc, int tid, bool deliver)
+aicwf_rx_fence_locked(struct aicwf_softc *sc,
+    struct ieee80211_rxba_output *out)
 {
-	struct mbuf *ready = NULL, **tailp = &ready;
 
-	mutex_enter(&sc->sc_reorder_lock);
-	for (u_int i = 0; i < AICWF_NTID; i++) {
-		struct aicwf_reorder * const ro = &sc->sc_reorder[i];
-
-		if (tid >= 0 && (u_int)tid != i)
-			continue;
-		if (ro->held != 0)
-			tailp = aicwf_reorder_release(ro, (ro->head +
-			    AICWF_REORDER_WINDOW) & AICWF_SEQ_MASK, tailp);
-		ro->started = false;
-	}
-	mutex_exit(&sc->sc_reorder_lock);
-
-	if (deliver)
-		aicwf_rx_input(sc, ready);
-	else
-		aicwf_rx_free(ready);
+	KASSERT(mutex_owned(&sc->sc_epoch_lock));
+	ieee80211_rxba_offload_retire(&sc->sc_rxba, out);
+	sc->sc_rx_active = false;
+	sc->sc_rx_join = 0;
+	if (sc->sc_rx_serial < UINT64_MAX)
+		sc->sc_rx_serial++;
+	callout_stop(&sc->sc_rxba_ch);
 }
 
-/* A frame did not come in time: go on without it. */
 static void
-aicwf_reorder_timeout(void *arg)
+aicwf_rx_retire(struct aicwf_softc *sc)
 {
-	struct aicwf_softc * const sc = arg;
-	struct mbuf *ready = NULL, **tailp = &ready;
-	bool again = false;
+	struct ieee80211_rxba_output out = {0};
 
-	mutex_enter(&sc->sc_reorder_lock);
-	for (u_int i = 0; i < AICWF_NTID; i++) {
-		struct aicwf_reorder * const ro = &sc->sc_reorder[i];
-		uint16_t seq;
+	mutex_spin_enter(&sc->sc_epoch_lock);
+	aicwf_rx_fence_locked(sc, &out);
+	sc->sc_rx_assoc = 0;
+	mutex_spin_exit(&sc->sc_epoch_lock);
+	aicwf_rx_discard(&out);
+}
 
-		if (ro->held == 0)
-			continue;
-		for (seq = ro->head;
-		    ro->slot[seq % AICWF_REORDER_WINDOW] == NULL;
-		    seq = (seq + 1) & AICWF_SEQ_MASK)
-			continue;
-		sc->sc_ev_gap.ev_count++;
-		tailp = aicwf_reorder_release(ro, seq, tailp);
-		if (ro->held != 0)
-			again = true;
+static bool
+aicwf_rx_begin(struct aicwf_softc *sc)
+{
+	struct ieee80211_rxba_output out = {0};
+	bool active;
+
+	mutex_spin_enter(&sc->sc_epoch_lock);
+	if (sc->sc_rx_join == 0 || sc->sc_rx_join != sc->sc_rx_serial ||
+	    (sc->sc_if.if_flags & IFF_RUNNING) == 0) {
+		mutex_spin_exit(&sc->sc_epoch_lock);
+		return false;
 	}
-	if (again)
-		callout_schedule(&sc->sc_reorder_ch,
-		    mstohz(AICWF_REORDER_WAIT_MS));
-	mutex_exit(&sc->sc_reorder_lock);
+	aicwf_rx_fence_locked(sc, &out);
+	sc->sc_rx_assoc = sc->sc_rx_serial;
+	sc->sc_rx_vif = sc->sc_vif;
+	sc->sc_rx_ap = sc->sc_ap;
+	memcpy(sc->sc_rx_bssid, sc->sc_ic.ic_bss->ni_bssid, ETHER_ADDR_LEN);
+	sc->sc_rx_active = ieee80211_rxba_offload_configure(&sc->sc_rxba,
+	    sc->sc_rx_assoc, sc->sc_rx_serial, AICWF_REORDER_WAIT_MS,
+	    aicwf_rx_now(), &out) == 0;
+	active = sc->sc_rx_active;
+	mutex_spin_exit(&sc->sc_epoch_lock);
+	aicwf_rx_discard(&out);
+	return active;
+}
 
-	aicwf_rx_input(sc, ready);
+/* Called only after the bound key and controlled-port firmware commands pass.
+ * A later queued key change or disconnect prevents this completion reopening RX. */
+static void
+aicwf_rx_resume(struct aicwf_softc *sc, uint64_t serial)
+{
+	struct ieee80211_rxba_output out = {0};
+
+	mutex_spin_enter(&sc->sc_epoch_lock);
+	if (serial != 0 && serial == sc->sc_rx_serial && sc->sc_rx_assoc != 0) {
+		aicwf_rx_fence_locked(sc, &out);
+		sc->sc_rx_active = ieee80211_rxba_offload_configure(&sc->sc_rxba,
+		    sc->sc_rx_assoc, sc->sc_rx_serial, AICWF_REORDER_WAIT_MS,
+		    aicwf_rx_now(), &out) == 0;
+	}
+	mutex_spin_exit(&sc->sc_epoch_lock);
+	aicwf_rx_discard(&out);
+}
+
+static void
+aicwf_rx_output(struct aicwf_softc *sc, struct ieee80211_rxba_output *out)
+{
+	unsigned tid;
+
+	KASSERT(mutex_owned(&sc->sc_rx_lock));
+	for (tid = 0; tid < IEEE80211_RXBA_OFFLOAD_TIDS; tid++) {
+		struct ieee80211_rxba_batch *batch = &out->ready[tid];
+		mutex_spin_enter(&sc->sc_epoch_lock);
+		if (sc->sc_rx_active && ieee80211_rxba_offload_current(
+		    &sc->sc_rxba, tid, batch)) {
+			aicwf_rx_input(sc, batch->head);
+			batch->head = NULL;
+		}
+		mutex_spin_exit(&sc->sc_epoch_lock);
+	}
+	sc->sc_ev_gap.ev_count += out->gaps;
+	aicwf_rx_discard(out);
+}
+
+/* Convert the observed firmware reorder-run flag to explicit start/stop.
+ * Firmware owns negotiation and the controlled port. No ADDBA is synthesized. */
+static void
+aicwf_rx_submit(struct aicwf_softc *sc, uint64_t serial, unsigned tid,
+    unsigned seq, bool qos, bool reorder, struct mbuf *m)
+{
+	struct ieee80211_rxba_output out = {0};
+	struct ieee80211_rxba_offload *ba = &sc->sc_rxba;
+	uint64_t now;
+	int error = 0;
+
+	mutex_spin_enter(&sc->sc_rx_lock);
+	mutex_spin_enter(&sc->sc_epoch_lock);
+	if (!sc->sc_rx_active || serial != sc->sc_rx_serial)
+		goto unlock;
+	now = aicwf_rx_now();
+	if (qos && reorder) {
+		if (ba->tid[tid] == NULL) {
+			error = ieee80211_rxba_offload_start(ba, tid, ba->epoch,
+			    ba->key_epoch, ba->session[tid] + 1, seq,
+			    IEEE80211_RXBA_WINDOW, now, &out);
+		}
+		if (error == 0) {
+			(void)ieee80211_rxba_offload_input(ba, tid, ba->epoch,
+			    ba->key_epoch, ba->session[tid], seq, now, m, &out);
+			m = NULL; /* The complete MPDU is consumed on every return. */
+		}
+	} else if (qos && ba->tid[tid] != NULL) {
+		(void)ieee80211_rxba_offload_stop(ba, tid, ba->epoch,
+		    ba->key_epoch, ba->session[tid], 1, &out);
+	}
+	if (ba->epoch == 0)
+		sc->sc_rx_active = false;
+	aicwf_rx_schedule_locked(sc);
+unlock:
+	mutex_spin_exit(&sc->sc_epoch_lock);
+	aicwf_rx_output(sc, &out);
+	/* The non-reordered frame follows the drain from its old run. */
+	mutex_spin_enter(&sc->sc_epoch_lock);
+	if (m != NULL && !reorder && sc->sc_rx_active && serial == sc->sc_rx_serial) {
+		aicwf_rx_input(sc, m);
+		m = NULL;
+	}
+	mutex_spin_exit(&sc->sc_epoch_lock);
+	aicwf_rx_free(m);
+	mutex_spin_exit(&sc->sc_rx_lock);
+}
+
+static void
+aicwf_rxba_timeout(void *arg)
+{
+	struct aicwf_softc *sc = arg;
+	struct ieee80211_rxba_output out = {0};
+	uint64_t token;
+
+	mutex_spin_enter(&sc->sc_epoch_lock);
+	token = sc->sc_rxba.timer_token;
+	mutex_spin_exit(&sc->sc_epoch_lock);
+	mutex_spin_enter(&sc->sc_rx_lock);
+	mutex_spin_enter(&sc->sc_epoch_lock);
+	ieee80211_rxba_offload_age(&sc->sc_rxba, token, aicwf_rx_now(), &out);
+	if (sc->sc_rxba.epoch == 0)
+		sc->sc_rx_active = false;
+	aicwf_rx_schedule_locked(sc);
+	mutex_spin_exit(&sc->sc_epoch_lock);
+	aicwf_rx_output(sc, &out);
+	mutex_spin_exit(&sc->sc_rx_lock);
 }
 
 /* One Ethernet packet from addresses and an LLC/SNAP payload. */
@@ -3718,8 +3842,8 @@ aicwf_mgmt_rx(struct aicwf_softc *sc, const uint8_t *frame, size_t len,
 }
 
 static void
-aicwf_rx_data(
-struct aicwf_softc *sc, const uint8_t *pkt, size_t mpdu_len)
+aicwf_rx_data(struct aicwf_softc *sc, const uint8_t *pkt, size_t mpdu_len,
+    uint64_t serial)
 {
 	struct ifnet * const ifp = &sc->sc_if;
 	const uint8_t * const wh = pkt + AICWF_RXHDR_LEN;
@@ -3727,7 +3851,7 @@ struct aicwf_softc *sc, const uint8_t *pkt, size_t mpdu_len)
 	const uint32_t flags = le32dec(pkt + AICWF_RXHDR_FLAGS);
 	uint16_t seq;
 	struct mbuf *m = NULL;
-	bool qos = false, amsdu = false;
+	bool qos = false, amsdu = false, current;
 	u_int tid = 0;
 	size_t hdr;
 
@@ -3767,6 +3891,20 @@ struct aicwf_softc *sc, const uint8_t *pkt, size_t mpdu_len)
 	if ((wh[1] & IEEE80211_FC1_DIR_MASK) != IEEE80211_FC1_DIR_FROMDS ||
 	    (wh[1] & IEEE80211_FC1_MORE_FRAG) != 0 || (wh[22] & 0x0f) != 0)
 		goto drop;
+	/* hw_rxhdr flags_vif_idx and flags_sta_idx are bytes 1 and 2.
+	 * The vendor ABI permits STA=0xff; the actual transmitter/BSSID and
+	 * destination checks still bind such a frame to the current peer. */
+	mutex_spin_enter(&sc->sc_epoch_lock);
+	current = sc->sc_rx_active && serial == sc->sc_rx_serial &&
+	    ((flags >> 8) & 0xff) == sc->sc_rx_vif &&
+	    (((flags >> 16) & 0xff) == sc->sc_rx_ap ||
+	    ((flags >> 16) & 0xff) == 0xff) &&
+	    IEEE80211_ADDR_EQ(wh + 10, sc->sc_rx_bssid) &&
+	    (ETHER_IS_MULTICAST(wh + 4) ||
+	    IEEE80211_ADDR_EQ(wh + 4, sc->sc_ic.ic_myaddr));
+	mutex_spin_exit(&sc->sc_epoch_lock);
+	if (!current)
+		goto drop;
 
 	hdr = sizeof(struct ieee80211_frame);
 	if ((wh[0] & IEEE80211_FC0_SUBTYPE_QOS) != 0) {
@@ -3805,16 +3943,11 @@ struct aicwf_softc *sc, const uint8_t *pkt, size_t mpdu_len)
 			goto drop;
 	}
 
-	if (qos && !ETHER_IS_MULTICAST(wh + 4)) {
-		if ((flags & AICWF_RX_FLAG_REORDER) != 0) {
-			sc->sc_ev_ampdu.ev_count++;
-			aicwf_reorder(sc, tid, seq, m);
-			return;
-		}
-		/* The aggregation on this traffic class has ended. */
-		aicwf_reorder_flush(sc, tid, true);
-	}
-	aicwf_rx_input(sc, m);
+	qos = qos && !ETHER_IS_MULTICAST(wh + 4);
+	const bool reorder = qos && (flags & AICWF_RX_FLAG_REORDER) != 0;
+	if (reorder)
+		sc->sc_ev_ampdu.ev_count++;
+	aicwf_rx_submit(sc, serial, tid, seq, qos, reorder, m);
 	return;
 
 drop:
@@ -4033,9 +4166,9 @@ aicwf_attach(device_t parent, device_t self, void *aux)
 	mutex_init(&sc->sc_lock, MUTEX_DEFAULT, IPL_NONE);
 	mutex_init(&sc->sc_epoch_lock, MUTEX_DEFAULT, IPL_NET);
 	mutex_init(&sc->sc_bus_lock, MUTEX_DEFAULT, IPL_NONE);
-	mutex_init(&sc->sc_reorder_lock, MUTEX_DEFAULT, IPL_SOFTNET);
-	callout_init(&sc->sc_reorder_ch, CALLOUT_MPSAFE);
-	callout_setfunc(&sc->sc_reorder_ch, aicwf_reorder_timeout, sc);
+	mutex_init(&sc->sc_rx_lock, MUTEX_DEFAULT, IPL_NET);
+	callout_init(&sc->sc_rxba_ch, CALLOUT_MPSAFE);
+	callout_setfunc(&sc->sc_rxba_ch, aicwf_rxba_timeout, sc);
 	callout_init(&sc->sc_alive_ch, CALLOUT_MPSAFE);
 	callout_setfunc(&sc->sc_alive_ch, aicwf_alive_tick, sc);
 	sc->sc_alive_rx = ticks;

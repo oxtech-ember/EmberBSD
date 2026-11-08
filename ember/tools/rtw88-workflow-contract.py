@@ -48,6 +48,9 @@ if not interface_ic:
     raise SystemExit("rtw88 interface regression has no tracked device inputs")
 interface_inputs = (
     *interface_ic,
+    "sys/dev/sdmmc/if_aicwf.c",
+    "ember/tools/aicwf-rxba-contract.py",
+    "ember/tools/aicwf-rxba-contract.c",
     "sys/dev/sdmmc/sdmmc_io_status.h",
     "ember/tools/rtw88-runner-interface-contract.py",
     "ember/tools/rtw88-fixture-runner.subr",

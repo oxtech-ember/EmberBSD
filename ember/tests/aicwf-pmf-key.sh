@@ -26,9 +26,9 @@ typedef unsigned u_int;
 #define AICWF_ME_SET_CONTROL_PORT_CFM 6
 #define explicit_memset memset
 #define device_printf(...) ((void)0)
-enum aicwf_task_cmd { TASK_SET, TASK_DELETE };
-struct aicwf_task { int t_work; enum aicwf_task_cmd t_cmd; bool t_group; unsigned t_keyix,t_cipher,t_keylen; uint64_t t_epoch; uint8_t t_key[32];};
-struct aicwf_softc {int sc_lock,sc_dev,sc_epoch_lock,sc_taskpool,sc_taskq; bool sc_connected,sc_ptk_valid; uint64_t sc_sae_epoch,sc_pmf_rx_pn; uint8_t sc_ptk[16],sc_hwkey[5],sc_ap,sc_vif;};
+enum aicwf_task_cmd { AICWF_TASK_KEY_SET, AICWF_TASK_KEY_DELETE };
+struct aicwf_task { int t_work; enum aicwf_task_cmd t_cmd; bool t_group; unsigned t_keyix,t_cipher,t_keylen; uint64_t t_epoch,t_rx_serial; uint8_t t_key[32];};
+struct aicwf_softc {int sc_lock,sc_dev,sc_epoch_lock,sc_taskpool,sc_taskq; bool sc_connected,sc_ptk_valid,sc_rx_active; uint64_t sc_sae_epoch,sc_pmf_rx_pn,sc_rx_serial; uint8_t sc_ptk[16],sc_hwkey[5],sc_ap,sc_vif;};
 static bool node_spin_held;
 static void mutex_enter(int *p) {assert(!node_spin_held);assert(!*p);*p=1;}
 static void mutex_exit(int *p) {assert(*p);*p=0;}
@@ -44,6 +44,12 @@ static struct aicwf_task queued;
 static void *pool_cache_get(int pool,int flags) {(void)pool;(void)flags;return &queued;}
 static void workqueue_enqueue(int q,int *work,void *cpu) {(void)q;(void)work;(void)cpu;}
 static unsigned adds,deletes,ports,mode;
+struct ieee80211_rxba_output { int unused; };
+static void aicwf_rx_fence_locked(struct aicwf_softc *sc,struct ieee80211_rxba_output *out)
+{ assert(sc->sc_epoch_lock);(void)out;sc->sc_rx_serial++; }
+static void aicwf_rx_discard(struct ieee80211_rxba_output *out) { (void)out; }
+static void aicwf_rx_resume(struct aicwf_softc *sc,uint64_t serial) { (void)sc;(void)serial; }
+
 
 static int aicwf_cmd_reply(struct aicwf_softc *sc, unsigned id,const void *p,size_t n,unsigned cid,void *reply,size_t len,bool strict,uint64_t epoch)
 {
@@ -95,7 +101,7 @@ int main(void)
     struct ieee80211_key key={.wk_cipher=&cipher,.wk_keylen=16};
     /* DELETE is called under net80211's IPL_NET node lock. */
     node_spin_held=true;
-    assert(aicwf_key_task(&ic,&key,TASK_DELETE)==1);
+    assert(aicwf_key_task(&ic,&key,AICWF_TASK_KEY_DELETE)==1);
     assert(queued.t_epoch==sc.sc_sae_epoch && !sc.sc_epoch_lock);
     node_spin_held=false;
     puts("PASS: PTK confirmation, stale lifetime, duplicate PN, rekey, deletion and spin context");

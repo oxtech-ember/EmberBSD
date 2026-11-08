@@ -298,7 +298,8 @@ with (out/'native-rxba-native.inc').open('a') as f:
 s=(out/'rxba-test-kernel.h').read_text()
 s=s.replace('static unsigned rxba_kmem_live;', 'static unsigned rxba_kmem_live,rxba_kmem_calls,rxba_kmem_fail_at;',1)
 a='\tvoid *p = calloc(1, n);\n\tassert(p);\n\trxba_kmem_live++;'
-b='\tif(++rxba_kmem_calls==rxba_kmem_fail_at)return NULL;\n'+a
+b=('\trxba_kmem_calls++;\n'
+   '\tif(rxba_kmem_fail_at!=0 && rxba_kmem_calls==rxba_kmem_fail_at)return NULL;\n')+a
 if s.count(a)!=1:raise ValueError('kernel allocation fault model')
 s=s.replace(a,b,1)
 (out/'rxba-test-kernel.h').write_text(s)

@@ -84,7 +84,7 @@ and WPA2 regression on each actual board/firmware combination. No hardware
 tests are performed by this software task. Mosaico's independently authorized
 hardware work remains with its existing owner.
 
-The separate AIC Ethernet-decapsulated RX A-MPDU reorder migration is still
-[pending](net80211-rxba.md#firmware-offload-follow-up). It requires an offload
-session/sequence/epoch and packet-chain API;
-feeding those packets to raw `ieee80211_rxba_input()` is not valid.
+The AIC Ethernet-decapsulated RX A-MPDU path uses the
+[shared offload receiver](net80211-rxba.md#firmware-offload-receiver), with
+explicit session/sequence/epochs and complete packet-chain ownership.
+Firmware-generation limits and physical acceptance remain documented there.

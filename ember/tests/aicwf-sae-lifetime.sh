@@ -67,7 +67,7 @@ static int copyin(void *src,void *dst,size_t n) {memcpy(dst,src,n); return 0;}
 static uint16_t le16dec(const void *ptr) {const uint8_t *p=ptr; return p[0]+256*p[1];}
 static void le16enc(void *ptr,uint16_t v) {uint8_t *p=ptr;p[0]=v;p[1]=v>>8;}
 #endif
-static void aicwf_reorder_flush(struct aicwf_softc *sc,int i,bool b) {(void)sc;(void)i;(void)b;}
+static void aicwf_rx_retire(struct aicwf_softc *sc) {(void)sc;}
 
 #include "if_aicwf_sae.h"
 static int aicwf_sae_tx(struct aicwf_softc *sc,const uint8_t *p,size_t n,uint64_t epoch,bool query) {(void)query;(void)sc;(void)p;(void)n;(void)epoch;return 0;}

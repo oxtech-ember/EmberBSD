@@ -1122,8 +1122,11 @@ static void test_prepend_fallback_ownership(void)
   unit_prepend_fail=0;
  }
 }
+#include "net80211-rxba-offload-tests.inc"
 int RXBA_SHARED_MAIN(void)
 {
+ test_offload_chain_window_epochs();test_offload_invalid_and_allocation();
+ test_offload_tid_deadlines_and_budget();
  test_prepend_fast_path_avoids_allocation();
  test_prepend_fallback_ownership();
  test_txba_originator();
