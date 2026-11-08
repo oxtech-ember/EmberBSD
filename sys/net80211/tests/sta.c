@@ -103,6 +103,7 @@ action_checks(void)
 	for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
 		memset(b, 0, sizeof(b));
 		b[0] = cases[i].category; b[1] = cases[i].action;
+		CHECK(cases[i].len <= sizeof(b) - 3);
 		for (n = 0; n < cases[i].len; n++)
 			CHECK(!ieee80211_sta_action_valid(b, n, cases[i].to_ap, caps, 1024));
 		CHECK(ieee80211_sta_action_valid(b, n, cases[i].to_ap, caps, n));
