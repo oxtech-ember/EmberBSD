@@ -117,7 +117,8 @@ static struct ieee80211_node *ieee80211_ref_node(struct ieee80211_node *ni)
     { assert(ni == &rxnode); ni->refs++; return ni; }
 static struct mbuf *ieee80211_getmgtframe(uint8_t **p, unsigned len)
     { struct mbuf *m=m_gethdr(0,1); assert(len<=IEEE80211_MAX_LEN);
-      if (m) *p=m->data; return m; }
+      if (m) { *p=m->data; }
+      return m; }
 static unsigned queued; static int output_error;
 static int ieee80211_mgmt_output(struct ieee80211com *ic,
     struct ieee80211_node *ni, struct mbuf *m, int subtype, int timer,
@@ -125,7 +126,8 @@ static int ieee80211_mgmt_output(struct ieee80211com *ic,
     { assert(ic && ni==&rxnode && subtype==0xd0 && timer==0 && wme==0);
       assert(!ht && !vht && !chan && !ba && m->m_len==9);
       assert(m->data[0]==3 && m->data[1]==1 && m->data[2]==7);
-      if (!output_error) queued++; m_freem(m); return output_error; }
+      if (!output_error) { queued++; }
+      m_freem(m); return output_error; }
 '''
     # Node references are observed by both RX and action output services.
     prelude = prelude.replace(
