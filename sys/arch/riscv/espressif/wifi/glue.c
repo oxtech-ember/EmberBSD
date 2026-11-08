@@ -89,6 +89,9 @@ volatile uint32_t espwifi_rx_chain_diag_active;
 volatile uint32_t espwifi_rx_chain_sta_input_count;
 volatile uint32_t espwifi_rx_chain_sta_rx_cb_count;
 volatile uint32_t espwifi_rx_chain_sta_rx_cb_type_count[4];
+volatile uint32_t espwifi_rx_chain_pp_proto_fc_match_count[8];
+volatile uint32_t espwifi_rx_chain_pp_proto_invalid_count;
+volatile uint32_t espwifi_rx_chain_pp_proto_short_count;
 volatile uint32_t espwifi_rx_chain_crypto_decap_count;
 volatile uint32_t espwifi_rx_chain_decap_count;
 volatile uint32_t espwifi_rx_chain_eapol_count;
@@ -97,11 +100,14 @@ volatile uint32_t espwifi_rx_chain_eapol_count;
 extern void * volatile net80211_funcs;
 /* The normal STA receive callback lives in the separate pTxRx table. */
 extern void * volatile pTxRx;
+/* The ROM ppRxPkt entry calls this relocatable protocol callback table. */
+extern void * volatile pp_wdev_funcs;
 extern void __wrap_sta_input(void);
 extern void __wrap_sta_rx_cb(void);
 extern void __wrap_ieee80211_crypto_decap(void);
 extern void __wrap_ieee80211_decap(void);
 extern void __wrap_sta_rx_eapol(void);
+extern void __wrap_ppRxProtoProc(void);
 
 struct espwifi_rx_chain_table_state {
 	void *table;
@@ -110,6 +116,12 @@ struct espwifi_rx_chain_table_state {
 };
 
 struct espwifi_rx_chain_pp_table_state {
+	void *table;
+	uint32_t entry;
+	uint8_t matches;
+};
+
+struct espwifi_rx_chain_proto_table_state {
 	void *table;
 	uint32_t entry;
 	uint8_t matches;
@@ -134,6 +146,8 @@ _Static_assert(sizeof(void *) == sizeof(uint32_t) &&
 
 static struct espwifi_rx_chain_table_state espwifi_rx_chain_table_begin;
 static struct espwifi_rx_chain_pp_table_state espwifi_rx_chain_pp_begin;
+static struct espwifi_rx_chain_proto_table_state
+	espwifi_rx_chain_proto_begin;
 #endif
 
 #if defined(ESPWIFI_EXTERNAL_WPA2)
@@ -1520,6 +1534,21 @@ espwifi_rx_chain_pp_table_snapshot(void)
 	    __wrap_sta_rx_cb, &state.entry);
 	return state;
 }
+
+static struct espwifi_rx_chain_proto_table_state
+espwifi_rx_chain_proto_table_snapshot(void)
+{
+	struct espwifi_rx_chain_proto_table_state state = { 0 };
+	const volatile unsigned char *table;
+
+	state.table = pp_wdev_funcs;
+	if (state.table == NULL)
+		return state;
+	table = state.table;
+	state.matches = espwifi_rx_chain_slot_matches(table, 0x198,
+	    __wrap_ppRxProtoProc, &state.entry);
+	return state;
+}
 #endif
 
 #ifdef ESPWIFI_VENDOR_DEBUG_ONCE
@@ -1547,11 +1576,18 @@ espwifi_vendor_debug_once_begin(const unsigned char *bssid)
 	espwifi_rx_chain_sta_rx_cb_type_count[1] = 0;
 	espwifi_rx_chain_sta_rx_cb_type_count[2] = 0;
 	espwifi_rx_chain_sta_rx_cb_type_count[3] = 0;
+	for (unsigned i = 0; i < sizeof(espwifi_rx_chain_pp_proto_fc_match_count) /
+	    sizeof(espwifi_rx_chain_pp_proto_fc_match_count[0]); i++)
+		espwifi_rx_chain_pp_proto_fc_match_count[i] = 0;
+	espwifi_rx_chain_pp_proto_invalid_count = 0;
+	espwifi_rx_chain_pp_proto_short_count = 0;
 	espwifi_rx_chain_crypto_decap_count = 0;
 	espwifi_rx_chain_decap_count = 0;
 	espwifi_rx_chain_eapol_count = 0;
 	espwifi_rx_chain_table_begin = espwifi_rx_chain_table_snapshot();
 	espwifi_rx_chain_pp_begin = espwifi_rx_chain_pp_table_snapshot();
+	espwifi_rx_chain_proto_begin =
+	    espwifi_rx_chain_proto_table_snapshot();
 	espwifi_os_alloc_diag_window_begin();
 	espwifi_os_alloc_diag_snapshot(&espwifi_rx_chain_alloc_begin);
 	espwifi_rx_chain_hw_begin_result =
@@ -1584,9 +1620,12 @@ espwifi_vendor_debug_once_end(void)
 	uint32_t sta_rx_cb_fc_count[4];
 	struct espwifi_rx_chain_table_state table_begin, table_end;
 	struct espwifi_rx_chain_pp_table_state pp_begin, pp_end;
+	struct espwifi_rx_chain_proto_table_state proto_begin, proto_end;
 	uint32_t sta_rx_cb_count;
 	bool table_changed, wrapper_match;
 	bool pp_table_changed, pp_wrapper_match;
+	bool proto_table_changed, proto_wrapper_match;
+	uint32_t proto_fc_match_count[8], proto_invalid_count, proto_short_count;
 	bool hw_delta_valid;
 	uint16_t rx_mpdu_delta = 0, rx_end_cnt_delta = 0;
 	uint16_t rx_datasuc_delta = 0, rx_fcs_err_delta = 0;
@@ -1608,6 +1647,12 @@ espwifi_vendor_debug_once_end(void)
 	sta_rx_cb_fc_count[1] = espwifi_rx_chain_sta_rx_cb_type_count[1];
 	sta_rx_cb_fc_count[2] = espwifi_rx_chain_sta_rx_cb_type_count[2];
 	sta_rx_cb_fc_count[3] = espwifi_rx_chain_sta_rx_cb_type_count[3];
+	for (unsigned i = 0; i < sizeof(proto_fc_match_count) /
+	    sizeof(proto_fc_match_count[0]); i++)
+		proto_fc_match_count[i] =
+		    espwifi_rx_chain_pp_proto_fc_match_count[i];
+	proto_invalid_count = espwifi_rx_chain_pp_proto_invalid_count;
+	proto_short_count = espwifi_rx_chain_pp_proto_short_count;
 	crypto_decap_count = espwifi_rx_chain_crypto_decap_count;
 	decap_count = espwifi_rx_chain_decap_count;
 	eapol_count = espwifi_rx_chain_eapol_count;
@@ -1615,10 +1660,15 @@ espwifi_vendor_debug_once_end(void)
 	table_end = espwifi_rx_chain_table_snapshot();
 	pp_begin = espwifi_rx_chain_pp_begin;
 	pp_end = espwifi_rx_chain_pp_table_snapshot();
+	proto_begin = espwifi_rx_chain_proto_begin;
+	proto_end = espwifi_rx_chain_proto_table_snapshot();
 	table_changed = table_begin.table != table_end.table;
 	wrapper_match = table_begin.matches == 0x0f && table_end.matches == 0x0f;
 	pp_table_changed = pp_begin.table != pp_end.table;
 	pp_wrapper_match = pp_begin.matches != 0 && pp_end.matches != 0;
+	proto_table_changed = proto_begin.table != proto_end.table;
+	proto_wrapper_match = proto_begin.matches != 0 &&
+	    proto_end.matches != 0;
 	espwifi_rx_chain_hw_end_result =
 	    espwifi_rx_hw_snapshot(&espwifi_rx_chain_hw_end);
 	espwifi_os_alloc_diag_window_end();
@@ -1695,6 +1745,26 @@ espwifi_vendor_debug_once_end(void)
 		espwifi_os_log("espwifi: vendor rx pp table entries "
 		    "begin=%#x end=%#x\n", (unsigned)pp_begin.entry,
 		    (unsigned)pp_end.entry);
+	espwifi_os_log("espwifi: vendor rx proto table once table=%p/%p "
+	    "table_changed=%u wrapper_match=%u begin_slot=%#x end_slot=%#x\n",
+	    proto_begin.table, proto_end.table,
+	    (unsigned)proto_table_changed, (unsigned)proto_wrapper_match,
+	    (unsigned)proto_begin.matches, (unsigned)proto_end.matches);
+	if (!proto_wrapper_match)
+		espwifi_os_log("espwifi: vendor rx proto table entries "
+		    "begin=%#x end=%#x\n", (unsigned)proto_begin.entry,
+		    (unsigned)proto_end.entry);
+	espwifi_os_log("espwifi: vendor rx proto once fc_match="
+	    "%u/%u,%u/%u,%u/%u,%u/%u invalid=%u short=%u\n",
+	    (unsigned)proto_fc_match_count[0],
+	    (unsigned)proto_fc_match_count[1],
+	    (unsigned)proto_fc_match_count[2],
+	    (unsigned)proto_fc_match_count[3],
+	    (unsigned)proto_fc_match_count[4],
+	    (unsigned)proto_fc_match_count[5],
+	    (unsigned)proto_fc_match_count[6],
+	    (unsigned)proto_fc_match_count[7],
+	    (unsigned)proto_invalid_count, (unsigned)proto_short_count);
 	if (hw_delta_valid) {
 		espwifi_os_log("espwifi: vendor rx hw once start_rc=%#x "
 		    "window_rc=%#x/%#x start_mpdu=%u start_data=%u "

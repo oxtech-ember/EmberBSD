@@ -25,6 +25,9 @@ chain_state = re.search(
     r'volatile uint32_t espwifi_rx_chain_sta_input_count;\n'
     r'volatile uint32_t espwifi_rx_chain_sta_rx_cb_count;\n'
     r'volatile uint32_t espwifi_rx_chain_sta_rx_cb_type_count\[4\];\n'
+    r'volatile uint32_t espwifi_rx_chain_pp_proto_fc_match_count\[8\];\n'
+    r'volatile uint32_t espwifi_rx_chain_pp_proto_invalid_count;\n'
+    r'volatile uint32_t espwifi_rx_chain_pp_proto_short_count;\n'
     r'volatile uint32_t espwifi_rx_chain_crypto_decap_count;\n'
     r'volatile uint32_t espwifi_rx_chain_decap_count;\n'
     r'volatile uint32_t espwifi_rx_chain_eapol_count;$', source, re.M)
@@ -32,7 +35,9 @@ assert chain_state, 'RX chain counters missing'
 rx_table_declarations = re.search(
     r'^extern void \* volatile net80211_funcs;\n.*?'
     r'^static struct espwifi_rx_chain_pp_table_state '
-    r'espwifi_rx_chain_pp_begin;$', source, re.M | re.S)
+    r'espwifi_rx_chain_pp_begin;\n'
+    r'^static struct espwifi_rx_chain_proto_table_state\s+'
+    r'espwifi_rx_chain_proto_begin;$', source, re.M | re.S)
 assert rx_table_declarations, \
     'net80211 and normal PP receive callback snapshot state missing'
 rx_chain_asm = (wifi / 'rx_chain_diag.S').read_text()
@@ -40,6 +45,8 @@ assert 'RX_STA_RX_CB_WRAP' in rx_chain_asm, \
     'normal STA RX callback integer wrapper missing'
 assert 'RX_STA_RX_CB_WRAP' in rx_chain_asm, \
     'normal RX callback classification wrapper missing'
+assert 'RX_PP_RX_PROTO_PROC_WRAP' in rx_chain_asm, \
+    'pre-route PP RX protocol wrapper missing'
 for fragment in ('lw t0, 4(a0)', 'lw t0, 4(t0)', 'lhu t1, 0x24(a0)',
                  'addi t0, t0, 8', 'lbu t2, 0(t0)',
                  'andi t2, t2, 0x0c',
@@ -48,6 +55,13 @@ for fragment in ('lw t0, 4(a0)', 'lw t0, 4(t0)', 'lhu t1, 0x24(a0)',
         'normal RX reader differs from the pinned null-guarded FC path: ' + fragment
 assert 'tail __real_sta_rx_cb' in rx_chain_asm, \
     'normal RX callback does not chain to the original callback'
+for fragment in ('__wrap_ppRxProtoProc:', 'beqz a0', 'beqz a1',
+                 'lw t0, 4(a0)', 'lw t0, 4(t0)', 'lhu t1, 0x24(a0)',
+                 'lhu t1, 0x38(a1)', 'lbu t2, 0(t0)', 'lbu t1, 3(a1)',
+                 'espwifi_rx_chain_pp_proto_fc_match_count',
+                 'tail __real_ppRxProtoProc'):
+    assert fragment in rx_chain_asm, \
+        'pre-route RX reader differs from pinned ppRxProtoProc ABI: ' + fragment
 start_impl = re.search(r'\nstatic int\nespwifi_start_impl\(void\)\n\{.*?\n\}',
                        source, re.S)
 assert start_impl, 'Wi-Fi start implementation missing'
@@ -93,6 +107,14 @@ def pp_table_function():
                       r'espwifi_rx_chain_pp_table_snapshot\(void\)\n'
                       r'\{.*?\n\}', source, re.S)
     assert match, 'espwifi_rx_chain_pp_table_snapshot'
+    return match.group()
+
+
+def proto_table_function():
+    match = re.search(r'\nstatic struct espwifi_rx_chain_proto_table_state\n'
+                      r'espwifi_rx_chain_proto_table_snapshot\(void\)\n'
+                      r'\{.*?\n\}', source, re.S)
+    assert match, 'espwifi_rx_chain_proto_table_snapshot'
     return match.group()
 
 
@@ -150,6 +172,7 @@ chain_code = r'''
 #include <stdio.h>
 #include <string.h>
 #include "fullmac_debug.h"
+#define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
 typedef int esp_err_t;
 struct espwifi_alloc_diag {
  unsigned long pool_free, pool_min_free, window_min_free;
@@ -231,6 +254,7 @@ static void espwifi_os_log(const char *fmt, ...) {
     slot_function() + '\n' + \
     table_function('espwifi_rx_chain_table_snapshot') + '\n' + \
     pp_table_function() + '\n' + \
+    proto_table_function() + '\n' + \
     function('espwifi_vendor_debug_once_begin',
         r'const unsigned char \*bssid') + '\n' + \
     function('espwifi_vendor_debug_once_end', r'void') + r'''
@@ -242,11 +266,15 @@ void __wrap_sta_input(void) { wrap_sta_input(); }
 void __wrap_ieee80211_crypto_decap(void) { wrap_crypto_decap(); }
 void __wrap_ieee80211_decap(void) { wrap_decap(); }
 void __wrap_sta_rx_eapol(void) { wrap_sta_rx_eapol(); }
+static void real_pp_rx_proto_proc(void) { }
+void __wrap_ppRxProtoProc(void) { real_pp_rx_proto_proc(); }
 void __wrap_sta_rx_cb(void) { }
 void * volatile net80211_funcs;
 void * volatile pTxRx;
+void * volatile pp_wdev_funcs;
 static unsigned char table_a[0x14c], table_b[0x14c];
 static unsigned char pp_table_a[0x400], pp_table_b[0x400];
+static unsigned char proto_table_a[0x1a0], proto_table_b[0x1a0];
 static int fixture_fc_type(const unsigned char *packet) {
  return packet == NULL ? -1 : (packet[0] & 0x0c) >> 2;
 }
@@ -262,6 +290,9 @@ static void install_wrappers(unsigned char *table) {
 }
 static void install_pp_wrapper(unsigned char *table, void (*entry)(void)) {
  set_table_entry(table, 0x3f8, entry);
+}
+static void install_proto_wrapper(unsigned char *table, void (*entry)(void)) {
+ set_table_entry(table, 0x198, entry);
 }
 int main(void) {
  static const unsigned char bssid[6] = { 1, 2, 3, 4, 5, 6 };
@@ -352,7 +383,10 @@ int main(void) {
  install_wrappers(table_b);
  install_pp_wrapper(pp_table_a, __wrap_sta_rx_cb);
  install_pp_wrapper(pp_table_b, __wrap_sta_rx_cb);
+ install_proto_wrapper(proto_table_a, __wrap_ppRxProtoProc);
+ install_proto_wrapper(proto_table_b, __wrap_ppRxProtoProc);
  pTxRx = pp_table_a;
+ pp_wdev_funcs = proto_table_a;
  net80211_funcs = table_a;
  vendor_debug_once_state = 0;
  espwifi_vendor_debug_once_begin(bssid);
@@ -361,6 +395,9 @@ int main(void) {
      "begin_slots=0xf end_slots=0xf") != NULL);
  assert(strstr(log_message, "vendor rx pp table once") != NULL &&
      strstr(log_message, "begin_slot=0x1 end_slot=0x1") != NULL);
+ assert(strstr(log_message, "vendor rx proto table once") != NULL &&
+     strstr(log_message, "wrapper_match=1 begin_slot=0x1 end_slot=0x1") != NULL);
+ assert(strstr(log_message, "fc_match=0/0,0/0,0/0,0/0 invalid=0 short=0") != NULL);
  vendor_debug_once_state = 0;
  net80211_funcs = table_a;
  espwifi_vendor_debug_once_begin(bssid);
@@ -394,18 +431,33 @@ int main(void) {
  espwifi_rx_chain_sta_rx_cb_type_count[1] = 1;
  espwifi_rx_chain_sta_rx_cb_type_count[2] = 2;
  espwifi_rx_chain_sta_rx_cb_type_count[3] = 1;
+ espwifi_rx_chain_pp_proto_fc_match_count[0] = 10;
+ espwifi_rx_chain_pp_proto_fc_match_count[1] = 11;
+ espwifi_rx_chain_pp_proto_fc_match_count[2] = 20;
+ espwifi_rx_chain_pp_proto_fc_match_count[3] = 21;
+ espwifi_rx_chain_pp_proto_fc_match_count[4] = 30;
+ espwifi_rx_chain_pp_proto_fc_match_count[5] = 31;
+ espwifi_rx_chain_pp_proto_fc_match_count[6] = 40;
+ espwifi_rx_chain_pp_proto_fc_match_count[7] = 41;
+ espwifi_rx_chain_pp_proto_invalid_count = 2;
+ espwifi_rx_chain_pp_proto_short_count = 3;
  espwifi_vendor_debug_once_end();
  assert(strstr(log_message, "sta_input_table=0 sta_rx_cb=5 "
      "sta_rx_cb_type=1/1/2/1") != NULL);
  assert(strstr(log_message, "vendor rx pp table once") != NULL &&
      strstr(log_message, "begin_slot=0x1 end_slot=0x1") != NULL);
+ assert(strstr(log_message, "fc_match=10/11,20/21,30/31,40/41 invalid=2 short=3")
+     != NULL);
  vendor_debug_once_state = 0;
  net80211_funcs = table_a;
  pTxRx = NULL;
+	pp_wdev_funcs = NULL;
  memset(log_message, 0, sizeof(log_message));
  espwifi_vendor_debug_once_begin(bssid);
  espwifi_vendor_debug_once_end();
  assert(strstr(log_message, "begin_slot=0 end_slot=0") != NULL);
+ assert(strstr(log_message, "vendor rx proto table once") != NULL &&
+     strstr(log_message, "wrapper_match=0") != NULL);
  vendor_debug_once_state = 0;
  pTxRx = pp_table_a;
  espwifi_vendor_debug_once_begin(bssid);

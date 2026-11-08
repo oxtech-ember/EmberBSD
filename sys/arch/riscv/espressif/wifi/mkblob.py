@@ -136,10 +136,11 @@ def check_f_only(disassembly):
 
 
 RX_CHAIN_WRAPS = {
-    'sta_input': (88, 0x2f800cfc),
-    'ieee80211_crypto_decap': (96, 0x2f800cb0),
-    'ieee80211_decap': (100, 0x2f800cb4),
-    'sta_rx_eapol': (104, 0x2f800d00),
+    'sta_input': ('net80211_funcs_init', 88, 0x2f800cfc),
+    'ieee80211_crypto_decap': ('net80211_funcs_init', 96, 0x2f800cb0),
+    'ieee80211_decap': ('net80211_funcs_init', 100, 0x2f800cb4),
+    'sta_rx_eapol': ('net80211_funcs_init', 104, 0x2f800d00),
+    'ppRxProtoProc': ('wdev_funcs_init', 0x198, 0x2f800fac),
 }
 RX_CHAIN_WRAP_SYMBOLS = tuple(RX_CHAIN_WRAPS) + ('sta_rx_cb',)
 
@@ -169,8 +170,8 @@ def check_rx_chain_wrappers(path, objdump, nm, env):
             f'--stop-address=0x{start + size:x}', str(path)],
             env=env, text=True)
 
-    init = disassemble('net80211_funcs_init')
-    for symbol, (slot, rom_address) in RX_CHAIN_WRAPS.items():
+    for symbol, (init_symbol, slot, rom_address) in RX_CHAIN_WRAPS.items():
+        init = disassemble(init_symbol)
         reloc = re.compile(rf'R_RISCV_HI20\s+__wrap_{re.escape(symbol)}\b')
         matches = list(reloc.finditer(init))
         if not matches:
@@ -182,11 +183,22 @@ def check_rx_chain_wrappers(path, objdump, nm, env):
             raise ValueError('net80211_funcs_init has no relocation through ' +
                 f'__wrap_{symbol} for table slot +{slot}' +
                 f'\nrelated relocations:\n{excerpt}')
-        slot_offset = rf'(?:{slot}|0x{slot:x})'
-        if not any(re.search(rf'\b(?:c\.)?sw\s+\w+,\s*{slot_offset}\(a0\)',
-                             init[m.end():m.end() + 320]) for m in matches):
+        if symbol == 'ppRxProtoProc':
+            # wdev_funcs_init uses a subtable base at a0 + 0x180, so the
+            # function is stored at local offset 0x18 (absolute slot +0x198).
+            store = r'\b(?:c\.)?sw\s+\w+,\s*(?:24|0x18)\(a4\)'
+            base = r'\baddi\s+a4,\s*a0,\s*(?:384|0x180)'
+        else:
+            slot_offset = rf'(?:{slot}|0x{slot:x})'
+            store = rf'\b(?:c\.)?sw\s+\w+,\s*{slot_offset}\(a0\)'
+            base = None
+        if not any(re.search(store, init[m.end():m.end() + 320])
+                   for m in matches):
             raise ValueError(f'__wrap_{symbol} relocation is not followed by ' +
                              f'the table slot +{slot} store')
+        if base is not None and not re.search(base, init):
+            raise ValueError('wdev_funcs_init does not establish the ' +
+                             'pinned +0x180 subtable base for +0x198')
 
         wrapper = disassemble('__wrap_' + symbol)
         real_reloc = re.compile(rf'R_RISCV_[A-Z0-9_]+\s+{re.escape(symbol)}\b')
@@ -196,6 +208,31 @@ def check_rx_chain_wrappers(path, objdump, nm, env):
         if addresses.get(symbol) != rom_address:
             raise ValueError(f'{symbol} resolves to {addresses.get(symbol)!r}, ' +
                              f'expected ROM address 0x{rom_address:08x}')
+
+    proto_wrapper = disassemble('__wrap_ppRxProtoProc')
+    if not re.search(r'R_RISCV_[A-Z0-9_]+\s+ppRxProtoProc\b',
+                     proto_wrapper):
+        raise ValueError('__wrap_ppRxProtoProc does not tail-chain to ROM')
+    for pattern, label in (
+            (r'\bbeqz\s+a0\b', 'ESF'),
+            (r'\bbeqz\s+a1\b', 'RX-control'),
+            (r'\blw\s+t0,\s*(?:4|0x4)\(a0\)', 'ESF buffer'),
+            (r'\blw\s+t0,\s*(?:4|0x4)\(t0\)', 'packet buffer'),
+            (r'\blhu\s+t1,\s*(?:36|0x24)\(a0\)', 'ESF flags'),
+            (r'\blbu\s+t1,\s*(?:3|0x3)\(a1\)', 'rxmatch0'),
+            (r'\blbu\s+t2,\s*(?:0|0x0)\(t0\)', 'FC byte'),
+            (r'R_RISCV_(?:PCREL_|GOT_)?HI20\s+'
+             r'espwifi_rx_chain_pp_proto_fc_match_count\b', 'FC matrix')):
+        if not re.search(pattern, proto_wrapper):
+            raise ValueError('__wrap_ppRxProtoProc lacks its pinned ' + label +
+                             ' read')
+    if sizes.get('espwifi_rx_chain_pp_proto_fc_match_count') != 32:
+        raise ValueError('PP FC/match counters are not an eight-element '
+                         'uint32_t array')
+    if not re.search(r'R_RISCV_(?:PCREL_|GOT_)?HI20\s+'
+                     r'espwifi_rx_chain_pp_proto_invalid_count\b',
+                     proto_wrapper):
+        raise ValueError('__wrap_ppRxProtoProc lacks the invalid-path counter')
 
     # wifi_create_sta registers the normal callback through ifidx zero;
     # ppRegisterRxCallback stores it in pTxRx + 0x3f8 on this pinned ABI.

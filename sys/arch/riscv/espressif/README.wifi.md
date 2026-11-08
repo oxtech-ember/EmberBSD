@@ -200,6 +200,20 @@ dispatcher. The FC type counts show only that a frame pointer reached this
 callback and passed the pinned header lookup; they do not establish delivery
 of EAPOL or a completed handshake.
 
+The chain probe also wraps the S31 `ppRxProtoProc` entry in `pp_wdev_funcs` at
+`+0x198`. ROM `ppRxPkt` calls that slot with the ESF and RX-control pointers
+before checking the per-interface `rxmatch0` routing bit. The wrapper counts
+the four FC types crossed with `rxmatch0` clear/set, plus null-pointer and
+zero-MPDU-length cases, then tail-chains without changing arguments. The FC
+lookup follows the same ESF indirections and optional eight-byte adjustment
+that the pinned ROM callback uses. `rxmatch0` is the documented MAC-v3
+interface-0 match bit. These counts cover frames reaching this PP processing
+point after queueing and an earlier status check; they do not count all
+over-the-air receptions or prove EAPOL delivery. A DATA count with
+`rxmatch0` clear shows it reached PP processing but did not match the STA
+interface. No count cannot distinguish an earlier radio/driver drop from no
+on-air DATA frame.
+
 The probe also samples the S31 hardware RX statistics
 through the pinned IDF getter at successful radio start and at the window
 boundaries. It reports modulo-16-bit deltas for the fields `rx_mpdu`,
