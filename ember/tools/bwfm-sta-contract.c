@@ -39,7 +39,7 @@ static void le32enc(void *p, uint32_t v)
 #include "abi.h"
 #include "flags.h"
 #include "ieee80211_rsn.h"
-#include "bwfm_sta.h"
+#include "ieee80211_sta.h"
 enum { IEEE80211_M_STA, IEEE80211_M_HOSTAP };
 enum { IEEE80211_S_INIT, IEEE80211_S_SCAN, IEEE80211_S_AUTH,
     IEEE80211_S_ASSOC, IEEE80211_S_RUN };
@@ -227,6 +227,8 @@ static int bwfm_scan(struct bwfm_softc *sc, const uint16_t *freqs, size_t n)
 static int
 #include "bwfm_fwvar_var_get_checked.h"
 static bool
+#include "bwfm_sta_action_valid.h"
+static bool
 #include "bwfm_sta_security.h"
 static int
 #include "bwfm_sta_wnm.h"
@@ -286,7 +288,19 @@ static void drain(void)
 static void security_tests(struct bwfm_softc *sc)
 {
     uint8_t rsn[sizeof(sae_rsn)]; size_t i;
+    uint8_t malformed[26] = {0};
     check(bwfm_sta_security(sc), "selected WPA2 PSK CCMP without PMF is allowed");
+    memcpy(malformed + 2, psk_rsn, sizeof(psk_rsn));
+    malformed[0] = 221;
+    sc->sc_ic.ic_opt_ie = malformed; sc->sc_ic.ic_opt_ie_len = sizeof(psk_rsn) + 2;
+    check(!bwfm_sta_security(sc), "firmware security contract requires RSN first");
+    memcpy(malformed, psk_rsn, sizeof(psk_rsn));
+    malformed[1] = 24; malformed[22] = 1;
+    sc->sc_ic.ic_opt_ie = malformed; sc->sc_ic.ic_opt_ie_len = sizeof(malformed);
+    check(!bwfm_sta_security(sc), "truncated PSK PMKID list is rejected");
+    malformed[1] = 19; sc->sc_ic.ic_opt_ie_len = 21;
+    check(!bwfm_sta_security(sc), "partial PSK capabilities are rejected");
+    sc->sc_ic.ic_opt_ie = psk_rsn; sc->sc_ic.ic_opt_ie_len = sizeof(psk_rsn);
     sc->sc_ic.ic_flags = IEEE80211_F_WPA1;
     check(!bwfm_sta_security(sc), "WPA1 cannot enable station actions");
     sc->sc_ic.ic_flags = IEEE80211_F_WPA2;
@@ -328,10 +342,10 @@ static void association_tests(struct bwfm_softc *sc, struct ieee80211_node *bss,
 {
     unsigned i;
     uint8_t ies[] = {70, 1, 2, 127, 0};
-    check(bwfm_sta_ies_valid(ies,sizeof(ies)), "complete association IE chain is accepted");
-    check(!bwfm_sta_ies_valid(ies,1), "partial IE header is rejected");
-    check(!bwfm_sta_ies_valid(ies,2), "partial IE body is rejected");
-    check(!bwfm_sta_ies_valid(ies,4), "partial final IE header is rejected");
+    check(ieee80211_sta_ies_valid(ies,sizeof(ies)), "complete association IE chain is accepted");
+    check(!ieee80211_sta_ies_valid(ies,1), "partial IE header is rejected");
+    check(!ieee80211_sta_ies_valid(ies,2), "partial IE body is rejected");
+    check(!ieee80211_sta_ies_valid(ies,4), "partial final IE header is rejected");
     for (i = 0; i < 2; i++) {
         fixture(sc,bss,chan); assoc_flags = i; assoc_req_len += i * 6;
         bwfm_sta_assoc_ies(sc);
@@ -363,18 +377,23 @@ static void action_tests(void)
 {
     uint8_t body[1025] = {10,7,1}; size_t i;
     uint8_t capabilities[] = {70, 1, 2, 127, 3, 0, 0, 8, 0, 1, 0};
-    check(bwfm_sta_btm_requested(capabilities,sizeof(capabilities)), "selected Extended Capabilities advertises BTM");
+    check(ieee80211_sta_btm_requested(capabilities,sizeof(capabilities)), "selected Extended Capabilities advertises BTM");
     capabilities[7] = 0;
-    check(!bwfm_sta_btm_requested(capabilities,sizeof(capabilities)), "RRM-only selection cannot enable firmware WNM");
+    check(!ieee80211_sta_btm_requested(capabilities,sizeof(capabilities)), "RRM-only selection cannot enable firmware WNM");
     capabilities[7] = 8;
-    check(!bwfm_sta_btm_requested(capabilities,sizeof(capabilities)-1), "truncated trailing IE invalidates advertised BTM");
-    check(!bwfm_sta_btm_requested(capabilities,7), "truncated Extended Capabilities cannot advertise BTM");
-    check(!bwfm_sta_btm_requested(capabilities,0), "empty IE selection cannot advertise BTM");
+    check(!ieee80211_sta_btm_requested(capabilities,sizeof(capabilities)-1), "truncated trailing IE invalidates advertised BTM");
+    check(!ieee80211_sta_btm_requested(capabilities,7), "truncated Extended Capabilities cannot advertise BTM");
+    check(!ieee80211_sta_btm_requested(capabilities,0), "empty IE selection cannot advertise BTM");
     capabilities[3] = 126;
-    check(!bwfm_sta_btm_requested(capabilities,sizeof(capabilities)), "same bit in an unrelated IE cannot advertise BTM");
+    check(!ieee80211_sta_btm_requested(capabilities,sizeof(capabilities)), "same bit in an unrelated IE cannot advertise BTM");
 
     for (i = 0; i < 7; i++) check(!bwfm_sta_action_valid(body,i,true), "truncated BTM request rejected");
     check(bwfm_sta_action_valid(body,7,true), "complete fixed BTM request accepted");
+    body[3] = 8;
+    check(!bwfm_sta_action_valid(body,7,true), "BTM termination flag requires its duration field");
+    body[3] = 0; body[7] = 52; body[8] = 13;
+    check(!bwfm_sta_action_valid(body,9,true), "truncated neighbor report cannot cross the action ABI");
+    body[7] = body[8] = 0;
     check(!bwfm_sta_action_valid(body,sizeof(body),true), "oversized BTM request rejected");
     check(!bwfm_sta_action_valid(body,7,false), "request cannot be sent through response interface");
     body[1] = 8;

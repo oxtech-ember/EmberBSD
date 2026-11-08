@@ -49,7 +49,7 @@
 #include <dev/ic/bwfmvar.h>
 #include <dev/ic/bwfm_sae.h>
 #include <net80211/ieee80211_rsn.h>
-#include <dev/ic/bwfm_sta.h>
+#include <net80211/ieee80211_sta.h>
 #include <dev/ic/bwfm_scan.h>
 
 /* #define BWFM_DEBUG */
@@ -2409,28 +2409,25 @@ bwfm_fwvar_var_get_checked(struct bwfm_softc *sc, const char *name,
 	return error;
 }
 
-/*
- * FullMAC uses the selected RSN IE, not net80211's software cipher defaults.
- * Allow PSK/CCMP without PMF, or SAE/CCMP with required firmware PMF.
- */
+/* The supported firmware contract excludes RRM measurement requests. */
+static bool
+bwfm_sta_action_valid(const uint8_t *body, size_t len, bool rx)
+{
+	return ieee80211_sta_action_valid(body, len, !rx,
+	    IEEE80211_STA_ACTION_BTM | IEEE80211_STA_ACTION_NR |
+	    IEEE80211_STA_ACTION_RM_REPORT, IEEE80211_STA_MAX_BODY);
+}
+
+/* FullMAC uses the selected RSN IE, not software cipher defaults. */
 static bool
 bwfm_sta_security(struct bwfm_softc *sc)
 {
 	struct ieee80211com *ic = &sc->sc_ic;
-	const uint8_t *ie = ic->ic_opt_ie;
-	static const uint8_t ccmp[] = { 0x00, 0x0f, 0xac, 4 };
-	static const uint8_t psk[] = { 0x00, 0x0f, 0xac, 2 };
 
-	if (sc->sc_sae_enabled)
-		return ieee80211_sae_rsn_valid(ie, ic->ic_opt_ie_len);
-	return (ic->ic_flags & IEEE80211_F_WPA) == IEEE80211_F_WPA2 &&
-	    ie != NULL && ic->ic_opt_ie_len >= 20 &&
-	    ie[0] == IEEE80211_ELEMID_RSN && ie[1] >= 18 &&
-	    ie[1] + 2 <= ic->ic_opt_ie_len && le16dec(ie + 2) == 1 &&
-	    memcmp(ie + 4, ccmp, 4) == 0 && le16dec(ie + 8) == 1 &&
-	    memcmp(ie + 10, ccmp, 4) == 0 && le16dec(ie + 14) == 1 &&
-	    memcmp(ie + 16, psk, 4) == 0 &&
-	    (ie[1] < 20 || (le16dec(ie + 20) & 0x00c0) == 0);
+	return (sc->sc_sae_enabled ||
+	    (ic->ic_flags & IEEE80211_F_WPA) == IEEE80211_F_WPA2) &&
+	    ieee80211_sta_rsn_valid(ic->ic_opt_ie, ic->ic_opt_ie_len,
+	    sc->sc_sae_enabled, true);
 }
 
 /* A missing SET reply does not prove that firmware ignored the command. */
@@ -2475,12 +2472,12 @@ bwfm_sta_assoc_ies(struct bwfm_softc *sc)
 		return;
 	buf = kmem_zalloc(IEEE80211_STA_MAX_BODY, KM_SLEEP);
 	if (bwfm_fwvar_var_get_checked(sc, "assoc_req_ies", buf, request) ||
-	    !bwfm_sta_ies_valid(buf, request))
+	    !ieee80211_sta_ies_valid(buf, request))
 		goto out;
 	memcpy(sc->sc_sta_assoc + 4, buf, request);
 	memset(buf, 0, IEEE80211_STA_MAX_BODY);
 	if (bwfm_fwvar_var_get_checked(sc, "assoc_resp_ies", buf, response) ||
-	    !bwfm_sta_ies_valid(buf, response) ||
+	    !ieee80211_sta_ies_valid(buf, response) ||
 	    generation != sc->sc_sta_generation)
 		goto out;
 	memcpy(sc->sc_sta_assoc + 4 + request, buf, response);
@@ -3139,7 +3136,7 @@ bwfm_connect(struct bwfm_softc *sc)
 	}
 
 	if (sc->sc_sta_enabled && bwfm_sta_security(sc) &&
-	    bwfm_sta_btm_requested(ic->ic_opt_ie, ic->ic_opt_ie_len)) {
+	    ieee80211_sta_btm_requested(ic->ic_opt_ie, ic->ic_opt_ie_len)) {
 		if (bwfm_fwvar_var_set_int(sc, "wnm_bsstrans_resp", 3) ||
 		    bwfm_sta_wnm(sc, true))
 			return EIO;

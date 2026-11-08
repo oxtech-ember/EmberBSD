@@ -23,6 +23,9 @@ builds. The common RSN assertions live in `sys/net80211/tests/rsn.c`.
 Host contracts check parser bounds and security policy. They do not qualify
 kernel integration, firmware behavior, or radio hardware.
 
+The [station management contract](station-management.md) shares selected PSK/SAE
+stream validation and RRM/WNM syntax between the firmware adapters.
+
 ## External SAE ioctl boundary
 
 `ieee80211_ioctl_sae()` owns authorization, request allocation, copyin,

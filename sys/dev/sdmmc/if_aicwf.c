@@ -70,6 +70,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 
 #include <dev/firmload.h>
 #include <net80211/ieee80211_rsn.h>
+#include <net80211/ieee80211_sta.h>
 #include <dev/sdmmc/if_aicwf_sae.h>
 #include <dev/sdmmc/if_aicwf_fw_bip.h>
 #include <dev/sdmmc/if_aicwf_vht.h>
@@ -2164,27 +2165,14 @@ aicwf_connect_ind(struct aicwf_softc *sc, const uint8_t *ind, size_t len)
 	splx(s);
 }
 
-/* Action codes and minimum bodies from IEEE 802.11 RRM and WNM. */
+/* Firmware routes measurement requests as well as neighbor reports. */
 static bool
 aicwf_sta_action_valid(const uint8_t *body, size_t len, bool to_ap)
 {
-
-	if (len < 3 || len > IEEE80211_STA_MAX_BODY)
-		return false;
-	if (body[0] == 10) {		/* WNM */
-		if (to_ap)
-			return (body[1] == 6 && len >= 4) || /* BTM query */
-			    (body[1] == 8 && len >= 5 && /* BTM response */
-			    (body[3] != 0 || len >= 11));
-		return body[1] == 7 && len >= 7; /* BTM request */
-	}
-	if (body[0] == 5) {		/* RRM */
-		if (to_ap)
-			return body[1] == 4 || body[1] == 1; /* NR request, RM report */
-		return body[1] == 5 || /* Neighbor Report response */
-		    (body[1] == 0 && len >= 5); /* measurement request */
-	}
-	return false;
+	return ieee80211_sta_action_valid(body, len, to_ap,
+	    IEEE80211_STA_ACTION_BTM | IEEE80211_STA_ACTION_NR |
+	    IEEE80211_STA_ACTION_RM_REPORT | IEEE80211_STA_ACTION_RM_REQUEST,
+	    IEEE80211_STA_MAX_BODY);
 }
 
 /* The checked SDIO firmware ABI is separate from the current security mode. */
@@ -2200,12 +2188,13 @@ aicwf_sta_security(struct aicwf_softc *sc)
 {
 	struct ieee80211com * const ic = &sc->sc_ic;
 
-	if (sc->sc_sae_enabled)
-		return ic->ic_opt_ie != NULL &&
-		    (sc->sc_sae_caps & IEEE80211_SAE_CAP_PMF) != 0 &&
-		    ieee80211_sae_rsn_valid(ic->ic_opt_ie, ic->ic_opt_ie_len);
-	return (ic->ic_flags & IEEE80211_F_WPA) == IEEE80211_F_WPA2 &&
-	    aicwf_sta_psk_valid(ic->ic_opt_ie, ic->ic_opt_ie_len);
+	if (sc->sc_sae_enabled &&
+	    (sc->sc_sae_caps & IEEE80211_SAE_CAP_PMF) == 0)
+		return false;
+	return (sc->sc_sae_enabled ||
+	    (ic->ic_flags & IEEE80211_F_WPA) == IEEE80211_F_WPA2) &&
+	    ieee80211_sta_rsn_valid(ic->ic_opt_ie, ic->ic_opt_ie_len,
+	    sc->sc_sae_enabled, true);
 }
 
 static bool

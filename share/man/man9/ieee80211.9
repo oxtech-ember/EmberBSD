@@ -28,7 +28,7 @@
 .\"
 .\" $FreeBSD: src/share/man/man9/ieee80211.9,v 1.3 2004/07/07 12:59:39 ru Exp $
 .\"
-.Dd September 12, 2006
+.Dd November 8, 2026
 .Dt IEEE80211 9
 .Os
 .Sh NAME
@@ -225,6 +225,50 @@ units) corresponding to an
 .Vt ifmedia
 sub-type.
 .\"
+.Sh STATION MANAGEMENT VALIDATION
+The header
+.In net80211/ieee80211_rsn.h
+provides
+.Fn ieee80211_sta_rsn_valid "ies" "len" "sae" "rsn_first" .
+It checks a complete association element stream with one RSN element.
+When
+.Fa rsn_first
+is true, the RSN element must be first to match the firmware contract.
+The selected pairwise and group ciphers must use CCMP.
+When
+.Fa sae
+is true, the selected AKM must use SAE with required PMF.
+Otherwise, it must use PSK without PMF.
+Optional PMKID and group management cipher fields must be complete.
+.Pp
+The header
+.In net80211/ieee80211_sta.h
+provides
+.Fn ieee80211_sta_action_valid "body" "len" "to_ap" "caps" "max_body" .
+It checks action direction, fixed fields, optional BTM fields,
+and element framing.
+.Fa to_ap
+is true for station transmission and false for reception from its AP.
+The capability mask selects BTM, neighbor reports,
+measurement report transmission, and measurement request reception with
+.Dv IEEE80211_STA_ACTION_BTM ,
+.Dv IEEE80211_STA_ACTION_NR ,
+.Dv IEEE80211_STA_ACTION_RM_REPORT ,
+and
+.Dv IEEE80211_STA_ACTION_RM_REQUEST .
+The caller supplies its firmware body limit in
+.Fa max_body .
+Unknown elements remain opaque but must have complete framing.
+Measurement payload semantics remain the station client's responsibility.
+.Pp
+.Fn ieee80211_sta_ies_valid "ies" "len"
+checks generic element framing.
+.Fn ieee80211_sta_btm_requested "ies" "len"
+checks that complete selected elements advertise BTM.
+These helpers return a boolean and allocate no memory.
+They retain no input pointers.
+They do not authenticate peers or authorize operations.
+Callers must still enforce association, key, PMF, and generation requirements.
 .Sh SEE ALSO
 .Xr ieee80211_crypto 9 ,
 .Xr ieee80211_input 9 ,

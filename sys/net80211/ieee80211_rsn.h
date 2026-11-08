@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
-/* Bounded RSN validation for SAE associations. */
+/* Bounded RSN validation for selected station security modes. */
 #ifndef _NET80211_IEEE80211_RSN_H_
 #define _NET80211_IEEE80211_RSN_H_
 
@@ -83,13 +83,17 @@ ieee80211_assoc_rsn_parse(const uint8_t *p, size_t len,
 	return true;
 }
 
-/* An SAE association uses one CCMP pairwise cipher and requires PMF. */
+/* Validate one selected CCMP suite and AKM, including every optional field.
+ * The caller supplies the selected AKM and required PMF bits, not a peer mask.
+ * Bytes after the RSN element belong to the caller's association IE stream.
+ */
 static inline bool
-ieee80211_sae_rsn_valid(const uint8_t *p, size_t len)
+ieee80211_rsn_ccmp_valid(const uint8_t *p, size_t len, uint8_t akm,
+    uint8_t pmf)
 {
 	size_t end, pos, count;
 
-	if (p == NULL || len < 22 || p[0] != 48 || p[1] < 20)
+	if (p == NULL || len < 20 || p[0] != 48 || p[1] < 18)
 		return false;
 	end = (size_t)p[1] + 2;
 	if (end > len || p[2] != 1 || p[3] != 0 ||
@@ -97,8 +101,12 @@ ieee80211_sae_rsn_valid(const uint8_t *p, size_t len)
 	    p[8] != 1 || p[9] != 0 ||
 	    memcmp(p + 10, "\x00\x0f\xac\x04", 4) != 0 ||
 	    p[14] != 1 || p[15] != 0 ||
-	    memcmp(p + 16, "\x00\x0f\xac\x08", 4) != 0 ||
-	    (p[20] & 0xc0) != 0xc0)
+	    memcmp(p + 16, "\x00\x0f\xac", 3) != 0 || p[19] != akm)
+		return false;
+	/* Absent capabilities mean zero; a partial field is never valid. */
+	if (end == 20)
+		return pmf == 0;
+	if (end < 22 || (p[20] & 0xc0) != pmf)
 		return false;
 	/* Missing group management suite means the BIP-CMAC-128 default. */
 	pos = 22;
@@ -113,6 +121,30 @@ ieee80211_sae_rsn_valid(const uint8_t *p, size_t len)
 	pos += count * 16;
 	return end == pos || (end - pos == 4 &&
 	    memcmp(p + pos, "\x00\x0f\xac\x06", 4) == 0);
+}
+
+/* An SAE association uses one CCMP pairwise cipher and requires PMF. */
+static inline bool
+ieee80211_sae_rsn_valid(const uint8_t *p, size_t len)
+{
+	return ieee80211_rsn_ccmp_valid(p, len, 8, 0xc0);
+}
+
+/* Validate the complete selected stream before station management admission.
+ * rsn_first restricts streams for firmware consumers that require RSN first.
+ * Firmware PMF capability and peer authorization remain caller requirements.
+ */
+static inline bool
+ieee80211_sta_rsn_valid(const uint8_t *ies, size_t len, bool sae,
+    bool rsn_first)
+{
+	const uint8_t *rsn;
+	size_t rsn_len, offset;
+
+	return ieee80211_assoc_rsn_parse(ies, len, &rsn, &rsn_len, &offset) &&
+	    (!rsn_first || offset == 0) &&
+	    ieee80211_rsn_ccmp_valid(rsn, rsn_len, sae ? 8 : 2,
+	    sae ? 0xc0 : 0);
 }
 
 #endif

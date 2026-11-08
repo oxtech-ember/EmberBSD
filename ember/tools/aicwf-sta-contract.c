@@ -236,6 +236,7 @@ static void be16enc(void *v, uint16_t x)
 { uint8_t *p=v; p[0]=x>>8; p[1]=x; }
 #endif
 #include "ieee80211_rsn.h"
+#include "ieee80211_sta.h"
 #include "if_aicwf_vht.h"
 #include "if_aicwf_sta.h"
 static int splnet(void) { return 0; }
@@ -426,11 +427,17 @@ action_checks(void)
 	b[0] = WLAN_ACTION_WNM;
 	b[1] = WNM_BSS_TRANS_MGMT_REQ;
 	CHECK(bsd_sta_rx_body(&drv, b, 7) && aicwf_sta_action_valid(b, 7, false));
+	b[3] = 8;
+	CHECK(!aicwf_sta_action_valid(b, 7, false));
+	b[3] = 0; b[7] = 52; b[8] = 13;
+	CHECK(!aicwf_sta_action_valid(b, 9, false));
+	b[7] = b[8] = 0;
 	CHECK(!aicwf_sta_action_valid(b, 6, false));
 	CHECK(!aicwf_sta_action_valid(b, 7, true));
 	for (size_t i = 0; i < sizeof(tx) / sizeof(tx[0]); i++) {
+		size_t len = tx[i] == WNM_BSS_TRANS_MGMT_QUERY ? 4 : 11;
 		b[1] = tx[i];
-		CHECK(bsd_sta_tx_body(&drv, b, 11) && aicwf_sta_action_valid(b, 11, true));
+		CHECK(bsd_sta_tx_body(&drv, b, len) && aicwf_sta_action_valid(b, len, true));
 		CHECK(!aicwf_sta_action_valid(b, 11, false));
 	}
 	b[1] = WNM_BSS_TRANS_MGMT_RESP;
@@ -450,6 +457,40 @@ action_checks(void)
 	CHECK(!aicwf_sta_action_valid(b, 4, false));
 	CHECK(!aicwf_sta_action_valid(b, sizeof(b), false));
 	CHECK(!aicwf_sta_action_valid(b, 2, false));
+}
+
+static void
+security_checks(void)
+{
+	uint8_t ie[64] = {0};
+
+	reset();
+	memcpy(ie, sc.sc_ic.ic_opt_ie, sc.sc_ic.ic_opt_ie_len);
+	sc.sc_ic.ic_opt_ie = ie;
+	CHECK(aicwf_sta_security(&sc));
+	memmove(ie + 2, ie, 22); ie[0] = 221; ie[1] = 0;
+	sc.sc_ic.ic_opt_ie_len = 24;
+	CHECK(!aicwf_sta_security(&sc));
+	memmove(ie, ie + 2, 22); ie[23] = 0;
+	ie[1] = 24; ie[22] = 1; sc.sc_ic.ic_opt_ie_len = 26;
+	CHECK(!aicwf_sta_security(&sc));
+	ie[1] = 19; sc.sc_ic.ic_opt_ie_len = 21;
+	CHECK(!aicwf_sta_security(&sc));
+	ie[1] = 20; sc.sc_ic.ic_opt_ie_len = 22;
+	ie[19] = 8; ie[20] = 0xc0;
+	CHECK(!aicwf_sta_security(&sc));
+	sc.sc_sae_enabled = true;
+	CHECK(aicwf_sta_security(&sc));
+	sc.sc_sae_caps = 0;
+	CHECK(!aicwf_sta_security(&sc));
+	sc.sc_sae_caps = IEEE80211_SAE_CAP_PMF;
+	ie[22] = 221; ie[23] = 1; sc.sc_ic.ic_opt_ie_len = 24;
+	CHECK(!aicwf_sta_security(&sc));
+	ie[23] = 0;
+	CHECK(aicwf_sta_security(&sc));
+	memcpy(ie + 24, ie, 22); sc.sc_ic.ic_opt_ie_len = 46;
+	CHECK(!aicwf_sta_security(&sc));
+	reset();
 }
 
 static size_t
@@ -523,6 +564,8 @@ rx_checks(void)
 	CHECK(deliveries == before);
 	/* Both maximum accepted length and one-byte overflow cross the raw RX path. */
 	f[25] = WNM_BSS_TRANS_MGMT_REQ;
+	/* One three-byte IE leaves an even number of empty IEs in the body. */
+	f[hdr + 7] = 221; f[hdr + 8] = 1;
 	receive(f, hdr + IEEE80211_STA_MAX_BODY, success, vif);
 	CHECK(deliveries == before + 1);
 	receive(f, hdr + IEEE80211_STA_MAX_BODY + 1, success, vif);
@@ -552,6 +595,7 @@ rx_checks(void)
 	CHECK(deliveries == 1 && sc.sc_pmf_rx_pn == 1);
 	failalloc = true; receive(f, hdr + 7, ccmp, vif); failalloc = false;
 	CHECK(deliveries == 1 && sc.sc_pmf_rx_pn == 1);
+	f[hdr + 7] = 221; f[hdr + 8] = 1;
 	receive(f, hdr + IEEE80211_STA_MAX_BODY, ccmp, vif);
 	CHECK(deliveries == 2 && sc.sc_pmf_rx_pn == 2);
 	f[24] = 3;
@@ -1158,6 +1202,7 @@ main(int argc, char **argv)
 	if (!strcmp(group, "all") || !strcmp(group, "abi")) abi_checks();
 	if (!strcmp(group, "all") || !strcmp(group, "ioctl")) ioctl_rejection_checks();
 	if (!strcmp(group, "all") || !strcmp(group, "actions")) action_checks();
+	if (!strcmp(group, "all") || !strcmp(group, "security")) security_checks();
 	if (!strcmp(group, "all") || !strcmp(group, "rx")) rx_checks();
 	if (!strcmp(group, "all") || !strcmp(group, "oversize")) oversize_check();
 	if (!strcmp(group, "all") || !strcmp(group, "tx")) tx_checks();

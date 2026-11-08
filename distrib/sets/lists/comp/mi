@@ -2773,6 +2773,7 @@
 ./usr/include/net80211/ieee80211_rsn.h	comp-c-include
 ./usr/include/net80211/ieee80211_rssadapt.h	comp-c-include
 ./usr/include/net80211/ieee80211_rxba.h	comp-c-include
+./usr/include/net80211/ieee80211_sta.h	comp-c-include
 ./usr/include/net80211/ieee80211_sysctl.h	comp-c-include
 ./usr/include/net80211/ieee80211_var.h		comp-c-include
 ./usr/include/net80211/ieee80211_vht_ies.h	comp-c-include

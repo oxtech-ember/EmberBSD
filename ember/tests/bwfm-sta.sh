@@ -9,7 +9,7 @@ if [ "${BWFM_TEST_KEEP:-0}" != 1 ]; then
 else
     printf 'Test sources: %s\n' "$work"
 fi
-for fn in bwfm_sta_security bwfm_sta_wnm bwfm_sta_ready bwfm_sta_tx_done \
+for fn in bwfm_sta_action_valid bwfm_sta_security bwfm_sta_wnm bwfm_sta_ready bwfm_sta_tx_done \
     bwfm_sta_scan_cancel bwfm_sta_mgmt bwfm_sta_mgmt_cb bwfm_sta_assoc_ies \
     bwfm_sta_scan_done bwfm_fwvar_var_get_checked; do
     awk -v fn="$fn" '$0 ~ "^" fn "\\(" {copy=1}
@@ -23,7 +23,7 @@ awk '/^#define[[:space:]]+IEEE80211_STA_/ {print}
 test -s "$work/abi.h"
 awk '/^#define[[:space:]]+IEEE80211_F_(WPA|WPA1|WPA2|SCAN)[[:space:]]/ {print}' \
     "$src/sys/net80211/ieee80211_var.h" > "$work/flags.h"
-cp "$src/sys/net80211/ieee80211_rsn.h" "$src/sys/dev/ic/bwfm_sta.h" "$work/"
+cp "$src/sys/net80211/ieee80211_rsn.h" "$src/sys/net80211/ieee80211_sta.h" "$work/"
 cp "$src/ember/tools/bwfm-sta-contract.c" "$work/check.c"
 ${CC:-cc} -std=c99 -Wall -Wextra -Werror -Wno-unused-parameter ${CFLAGS:-} \
     -I"$work" "$work/check.c" -o "$work/check"

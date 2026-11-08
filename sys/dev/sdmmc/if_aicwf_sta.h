@@ -30,34 +30,6 @@ aicwf_sta_cfm_decode(const uint8_t *p, size_t len, uint32_t *status,
 	return true;
 }
 
-static inline bool
-aicwf_sta_ies_valid(const uint8_t *p, size_t len)
-{
-	while (len != 0) {
-		if (len < 2 || p[1] > len - 2)
-			return false;
-		len -= p[1] + 2;
-		p += p[1] + 2;
-	}
-	return true;
-}
-
-/* Keep the selected WPA2 mode distinct from SAE and unsupported PMF modes. */
-static inline bool
-aicwf_sta_psk_valid(const uint8_t *ie, size_t len)
-{
-	static const uint8_t ccmp[] = { 0x00, 0x0f, 0xac, 4 };
-	static const uint8_t psk[] = { 0x00, 0x0f, 0xac, 2 };
-
-	return ie != NULL && len >= 20 && aicwf_sta_ies_valid(ie, len) &&
-	    ie[0] == 48 && ie[1] >= 18 && le16dec(ie + 2) == 1 &&
-	    memcmp(ie + 4, ccmp, 4) == 0 && le16dec(ie + 8) == 1 &&
-	    memcmp(ie + 10, ccmp, 4) == 0 && le16dec(ie + 14) == 1 &&
-	    memcmp(ie + 16, psk, 4) == 0 &&
-	    (ie[1] == 18 || (ie[1] >= 20 &&
-	    (le16dec(ie + 20) & 0x00c0) == 0));
-}
-
 /* Return a complete result span. Never repair a truncated firmware frame. */
 static inline bool
 aicwf_sta_scan_result_valid(const uint8_t *p, size_t len, uint8_t vif)
