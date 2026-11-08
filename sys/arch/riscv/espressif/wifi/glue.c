@@ -87,6 +87,27 @@ volatile uint32_t espwifi_rx_chain_sta_input_count;
 volatile uint32_t espwifi_rx_chain_crypto_decap_count;
 volatile uint32_t espwifi_rx_chain_decap_count;
 volatile uint32_t espwifi_rx_chain_eapol_count;
+
+/* S31 ROM init stores its OSI-allocated 0x14c-byte table through this slot. */
+extern void * volatile net80211_funcs;
+extern void __wrap_sta_input(void);
+extern void __wrap_ieee80211_crypto_decap(void);
+extern void __wrap_ieee80211_decap(void);
+extern void __wrap_sta_rx_eapol(void);
+
+struct espwifi_rx_chain_table_state {
+	void *table;
+	uint32_t entries[4];
+	uint8_t matches;
+};
+
+#if defined(__riscv)
+_Static_assert(sizeof(void *) == sizeof(uint32_t) &&
+    sizeof(void (*)(void)) == sizeof(uint32_t),
+    "S31 ROM function-table pointer width changed");
+#endif
+
+static struct espwifi_rx_chain_table_state espwifi_rx_chain_table_begin;
 #endif
 
 #if defined(ESPWIFI_EXTERNAL_WPA2)
@@ -1395,6 +1416,49 @@ done:
 }
 #endif
 
+#ifdef ESPWIFI_RX_CHAIN_ONCE
+static bool
+espwifi_rx_chain_slot_matches(const volatile unsigned char *table,
+	    size_t offset, void (*expected)(void), uint32_t *entry)
+{
+	unsigned char actual[sizeof(uint32_t)];
+	unsigned char wanted[sizeof(uint32_t)];
+	const unsigned char *expected_bytes = (const unsigned char *)&expected;
+	size_t i;
+
+	for (i = 0; i < sizeof(actual); i++)
+		actual[i] = table[offset + i];
+	memcpy(entry, actual, sizeof(*entry));
+	memcpy(wanted, expected_bytes, sizeof(wanted));
+	return memcmp(actual, wanted, sizeof(actual)) == 0;
+}
+
+static struct espwifi_rx_chain_table_state
+espwifi_rx_chain_table_snapshot(void)
+{
+	struct espwifi_rx_chain_table_state state = { 0 };
+	const volatile unsigned char *table;
+
+	state.table = net80211_funcs;
+	if (state.table == NULL)
+		return state;
+	table = state.table;
+	if (espwifi_rx_chain_slot_matches(table, 0x58, __wrap_sta_input,
+	    &state.entries[0]))
+		state.matches |= 1U << 0;
+	if (espwifi_rx_chain_slot_matches(table, 0x60,
+	    __wrap_ieee80211_crypto_decap, &state.entries[1]))
+		state.matches |= 1U << 1;
+	if (espwifi_rx_chain_slot_matches(table, 0x64, __wrap_ieee80211_decap,
+	    &state.entries[2]))
+		state.matches |= 1U << 2;
+	if (espwifi_rx_chain_slot_matches(table, 0x68, __wrap_sta_rx_eapol,
+	    &state.entries[3]))
+		state.matches |= 1U << 3;
+	return state;
+}
+#endif
+
 #ifdef ESPWIFI_VENDOR_DEBUG_ONCE
 static unsigned vendor_debug_once_state;
 
@@ -1418,6 +1482,7 @@ espwifi_vendor_debug_once_begin(const unsigned char *bssid)
 	espwifi_rx_chain_crypto_decap_count = 0;
 	espwifi_rx_chain_decap_count = 0;
 	espwifi_rx_chain_eapol_count = 0;
+	espwifi_rx_chain_table_begin = espwifi_rx_chain_table_snapshot();
 	espwifi_rx_chain_diag_active = 1;
 #endif
 	error = esp_wifi_internal_set_log_level(WIFI_LOG_VERBOSE);
@@ -1443,6 +1508,8 @@ espwifi_vendor_debug_once_end(void)
 	esp_err_t error;
 #ifdef ESPWIFI_RX_CHAIN_ONCE
 	uint32_t sta_input_count, crypto_decap_count, decap_count, eapol_count;
+	struct espwifi_rx_chain_table_state table_begin, table_end;
+	bool table_changed, wrapper_match;
 #endif
 
 	critical = espwifi_os_critical_enter();
@@ -1457,6 +1524,10 @@ espwifi_vendor_debug_once_end(void)
 	crypto_decap_count = espwifi_rx_chain_crypto_decap_count;
 	decap_count = espwifi_rx_chain_decap_count;
 	eapol_count = espwifi_rx_chain_eapol_count;
+	table_begin = espwifi_rx_chain_table_begin;
+	table_end = espwifi_rx_chain_table_snapshot();
+	table_changed = table_begin.table != table_end.table;
+	wrapper_match = table_begin.matches == 0x0f && table_end.matches == 0x0f;
 #endif
 	error = esp_wifi_internal_set_log_level(WIFI_LOG_WARNING);
 	espwifi_os_critical_exit(critical);
@@ -1467,6 +1538,23 @@ espwifi_vendor_debug_once_end(void)
 	    "crypto_decap=%u decap=%u sta_rx_eapol=%u\n",
 	    (unsigned)sta_input_count, (unsigned)crypto_decap_count,
 	    (unsigned)decap_count, (unsigned)eapol_count);
+	espwifi_os_log("espwifi: vendor rx table once table=%p/%p "
+	    "table_changed=%u wrapper_match=%u begin_slots=%#x "
+	    "end_slots=%#x\n",
+	    table_begin.table, table_end.table, (unsigned)table_changed,
+	    (unsigned)wrapper_match, (unsigned)table_begin.matches,
+	    (unsigned)table_end.matches);
+	if (!wrapper_match)
+		espwifi_os_log("espwifi: vendor rx table entries "
+		    "begin=%#x/%#x/%#x/%#x end=%#x/%#x/%#x/%#x\n",
+		    (unsigned)table_begin.entries[0],
+		    (unsigned)table_begin.entries[1],
+		    (unsigned)table_begin.entries[2],
+		    (unsigned)table_begin.entries[3],
+		    (unsigned)table_end.entries[0],
+		    (unsigned)table_end.entries[1],
+		    (unsigned)table_end.entries[2],
+		    (unsigned)table_end.entries[3]);
 #endif
 #ifdef ESPWIFI_RX_OBSERVE_ONCE
 	espwifi_rx_observe_end();

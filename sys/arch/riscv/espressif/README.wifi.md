@@ -180,5 +180,10 @@ into the selected ESP32-S31 `sta_input`, crypto decapsulation, Ethernet
 decapsulation, and `sta_rx_eapol` ROM-table slots during the same bounded debug
 window, then emits one summary when the window ends. The producer verifies
 each wrapper remains installed in its pinned table slot and tail-chains to the
-matching ROM entry. It reads no packet fields or payloads. This option requires
-`--vendor-debug-once` and is off by default.
+matching ROM entry. At runtime, the probe snapshots the live table pointer and
+checks those four slots at the beginning and end of the window. Its summary
+reports pointer changes and both match masks; a mismatch also reports the
+observed entry words. A zero entry count alone does not establish that an
+on-air frame was absent or that the live callbacks remained bound. It reads no
+packet fields or payloads. This option requires `--vendor-debug-once` and is
+off by default.
