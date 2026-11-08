@@ -12,7 +12,7 @@ Use `man` for the installed command's version-specific options.
 
 Use the credentials configured during installation.
 The AArch64 development image allows a passwordless root console and disables SSH.
-Do not assume other images use those defaults.
+Check the documented access defaults for the selected image.
 Keep console access until network access survives a reboot.
 
 As root, set a root password interactively and create a normal account:
@@ -149,7 +149,7 @@ pkg_info
 ```
 
 Not every image includes these tools or `pkgin`.
-Do not interpret their absence as a request to use a different distribution's package service.
+When the task requires missing tools, obtain them through the selected EmberBSD package provider.
 For a compatible local package bundle, verify the archive hashes and full dependency closure first.
 Preview the operation, then install as root:
 
@@ -160,7 +160,7 @@ pkg_admin check
 ```
 
 Follow the selected Ports profile for repository configuration, build instructions and acceptance checks.
-Do not assume upstream binary packages contain this fork's adaptations or match its selected compiler/runtime profile.
+Verify provenance, adaptations, compiler and runtime compatibility before selecting an upstream binary package.
 Package installation is not an OS-base upgrade.
 Before removal, inspect reverse dependencies with `pkg_info -R PACKAGE`; then use `pkg_delete PACKAGE`.
 Retain package inventory and application data backups before updating dependencies.
@@ -174,7 +174,7 @@ It installs the coherent kernel, modules and userland before the first new-syste
 It preserves the previous powered-off disk and UEFI variables for complete recovery.
 The [headless AArch64 base update](../../ember/tools/docs/aarch64-base-update.md) has a physical Pi 5 receipt.
 Its recorded in-tree GCC12 bootstrap does not validate the current SDK compiler/runtime selection.
-Do not treat that receipt as acceptance on another board or of a complete general release.
+Keep that receipt scoped to its recorded board and build; establish other boards and general releases separately.
 For an installed Orange Pi Zero 3W, use the [DevBoards update recipe](https://github.com/oxtech-ember/EmberBSD-DevBoards/blob/main/boards/a733-zero3w/update.md).
 It adds the board's loader, diagnostic-entry, FAT space and rollback checks. It has no physical update receipt yet.
 

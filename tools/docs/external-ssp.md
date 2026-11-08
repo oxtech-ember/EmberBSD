@@ -21,8 +21,8 @@ This selection leaves the existing SSP exclusions in place:
   overrides in `sys/conf/ssp.mk`.
 
 The external-toolchain workflow separately verifies GCC16 identity and target.
-Do not change `HAVE_GCC` to identify an external compiler. That variable selects
-the imported in-tree compiler sources. No warning suppression is added here.
+Keep `HAVE_GCC` scoped to the imported in-tree compiler sources. Identify an
+external compiler through the external-toolchain selection. No warning suppression is added here.
 
 ## Checks
 

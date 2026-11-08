@@ -22,7 +22,7 @@ Publication is required only when you submit it as a shared contribution.
 | Device-operation and personal-change skills | [EmberBSD-User-Skills](https://github.com/oxtech-ember/EmberBSD-User-Skills) |
 
 Use the accepting repository's current instructions and license.
-Follow [documentation ownership](doc/emberbsd-ownership.md). Do not add another hardware matrix or test diary here.
+Follow [documentation ownership](doc/emberbsd-ownership.md). Keep hardware matrices and scoped evidence in their canonical owner documents; link them here.
 Keep a shared library fix in Ports rather than each application.
 Split changes across owners and state the required commits or interface between them.
 SDK and Runtime names do not establish released APIs.
@@ -52,7 +52,7 @@ Record these fields in the change description:
 
 For a board, use [the board-change worksheet](ember/development/board-change.md).
 For kernel work, use [the kernel guide](ember/development/kernel.md).
-Do not treat a proposal or a source file as tested support.
+Label proposals as proposed and source-only changes as implemented. Claim tested support only for the scenario established by the recorded evidence.
 
 ## 3. Prepare an isolated revision
 
@@ -66,7 +66,7 @@ git log -1 --format='%H %s' origin/main
 git worktree list
 ```
 
-Preserve existing local changes and commits. Do not switch a shared checkout's branch.
+Preserve existing local changes, commits, and the selected branch of a shared checkout.
 Set `worktree` to a new directory outside the source checkout.
 Set `branch` to your own unused topic name:
 
@@ -101,12 +101,12 @@ A trivial fix needs no regression test: step order, typos, paths, and similar me
 Such tests cost time and add no value.
 For a new feature, test its success, failure, and cleanup paths.
 For a port, test the build, boot integration, and the claimed device scenario.
-For documentation, check links and commands; do not require a kernel build for prose changes.
+For prose-only changes, validate the documentation links and commands. Select build checks only for changed build inputs or behavior.
 
 Build from a clean commit. Record the [input key](https://github.com/oxtech-ember/EmberBSD-SDK/blob/main/docs/input-keys.md), commands, and artifact hashes.
 The key contains the Git tree hash, compiler key, configuration, ABI, and target.
 Reuse an output when its key matches; a different key or a dirty worktree means a new build.
-Do not add checks that reread or rehash inputs that a git hash or input key already identifies.
+Use the existing Git hash or input key to identify unchanged inputs and reuse their recorded checks.
 Run relevant shared-path regressions on an existing configuration.
 Keep kernel, modules, firmware and userland compatible.
 Never accept leftover artifacts after a failed build.
@@ -128,7 +128,7 @@ See [kernel validation](ember/development/kernel.md#validate-the-change) for the
 | Physical device | The stated function works on that model, firmware and configuration |
 | Sustained operation | The recorded workload runs for the stated duration |
 
-Name failures and missing checks. Do not replace them with a generic “tests passed”.
+Report each executed check, its result, and each missing check explicitly.
 Keep secrets, private addresses, full personal logs, and personalized images out of public material.
 
 ## 5. Review and integrate
@@ -137,7 +137,7 @@ Prepare a focused change description using [the PR template](.github/PULL_REQUES
 Provide the tested full commit, commands, results, evidence limits, and provenance.
 For an external contribution, publish your topic to your fork and open a PR.
 Select the accepting repository and `main` base explicitly.
-Do not send a fork fix to the NetBSD mirror by mistake.
+Send an EmberBSD fork fix to the EmberBSD accepting repository.
 
 Maintainers can keep topic branches local until a PR, shared work, or server CI requires publication.
 Where protection permits direct integration, the same checks and independent review still apply.
@@ -167,7 +167,7 @@ Keep hardware writes and restarts within the agreed device scope.
 
 Update the public overview and the owning component guide when behavior or support changes.
 Record the integration SHA; retain the mapping if commits are squashed.
-Do not call a merged patch a published release or a physical-device acceptance.
+Report a merged patch as merged. Report release publication and physical-device acceptance only when their separate evidence exists.
 
 ## Development through agents
 
@@ -203,7 +203,7 @@ For example:
 > Use emberbsd-repository-guide and emberbsd-add-board for the approved board-change request.
 > Follow CONTRIBUTING.md. Record source/build/VM/hardware separately.
 > Preserve parallel boot work. Prepare the patch and evidence for independent review.
-> Do not flash or restart the board outside the agreed scope.
+> Perform board writes and restarts only within the agreed device scope.
 
 The implementer's agent output is not an independent review.
 A separate reviewer must inspect the patch and evidence.
@@ -216,4 +216,4 @@ Use its [problem reports](https://www.netbsd.org/support/send-pr.html) or releva
 Recheck [commit guidelines and AI policy](https://www.netbsd.org/developers/commit-guidelines.html) before submission.
 NetBSD requires prior written core approval to commit LLM-generated code.
 Disclose assistance; an EmberBSD review or merge does not supply that approval.
-Do not automatically submit a user's patch upstream.
+Submit a user's patch upstream only when the user authorizes that destination and submission.

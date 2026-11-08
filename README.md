@@ -86,7 +86,7 @@ An assistant follows the same validation requirements as a human contributor.
 
 Use DevBoards for radio hardware, firmware applicability and physical limits.
 Use driver and net80211 guides for protocol behavior and executable checks.
-Do not transfer results between boards solely because radio or SoC names match.
+Claim results for the tested board and configuration. Establish separate evidence for another board, including when radio or SoC names match.
 
 ## Provenance and licenses
 

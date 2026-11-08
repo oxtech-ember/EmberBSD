@@ -60,7 +60,7 @@ An ACPI target needs the corresponding tables and attachment path instead of an 
 
 Use output directories outside the source export, specific to revision, configuration and toolchain.
 Record full source IDs, compiler versions/triplets, firmware IDs, exit status and output hashes.
-Do not mix modules or headers from different kernel builds.
+Use modules and headers from the same selected kernel build.
 Account for kernel/userland interfaces and each dependent consumer when an ABI changes.
 
 ## Validate the change
@@ -94,7 +94,7 @@ Run actual-source user-space contracts with Valgrind Memcheck where supported.
 Enable uninitialized-value and leak checks with a nonzero error status.
 Valgrind does not inspect a running kernel or physical DMA.
 On unsupported hosts, record that gap and use applicable ASan/UBSan or kernel diagnostics.
-Do not report a sanitizer run as a Valgrind pass.
+Name the sanitizer and its actual result; record Valgrind separately as executed or unavailable.
 Static analysis and host execution supplement device acceptance.
 
 The [native CMA import contract](../../sys/external/bsd/drm2/drm/docs/drm-cma-import.md) checks imported-page

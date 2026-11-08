@@ -3,7 +3,7 @@
 Use this worksheet within [CONTRIBUTING](../../CONTRIBUTING.md), including when a maintainer develops the port.
 Keep one change proposal in the accepting project's supported channel.
 For EmberBSD, use the draft proposal PR described in [CONTRIBUTING](../../CONTRIBUTING.md#2-describe-the-change-before-implementation).
-Link related PRs to it. Do not create a separate procedure for each author.
+Link related PRs to this shared proposal and use the same procedure for every author.
 
 ## Proposal worksheet
 

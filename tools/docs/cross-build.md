@@ -16,7 +16,7 @@ The SDK supplies macOS host ABI headers and libraries separately from target
 inputs. Select native tools using the [routing contract](../native-tools/README.md).
 Initial tool acquisition follows the [SDK tool-selection contract](https://github.com/oxtech-ember/EmberBSD-SDK/blob/main/docs/tool-selection.md);
 ordinary builds use the selected prefixes without ambient tool fallback.
-Do not use the target's `/usr/pkg/etc/mk.conf` as the host configuration.
+Select a host build configuration separately from the target's `/usr/pkg/etc/mk.conf`.
 
 ```sh
 revision=FULL_COMMIT_ID

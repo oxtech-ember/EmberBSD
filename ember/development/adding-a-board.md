@@ -43,9 +43,9 @@ can guide an assistant through the same public workflow.
 | Third-party application dependencies | [EmberBSD-Ports](https://github.com/oxtech-ember/EmberBSD-Ports) |
 | Standalone device demonstration | [EmberBSD-Examples](https://github.com/oxtech-ember/EmberBSD-Examples) |
 
-Adaptations already present in this fork are applied to the sources. Do not
-reapply `ember/patches`. Firmware's ordered series is a separate input to its
-builder. Keep fixes in versioned sources, not only in a build VM.
+Build the fork's versioned sources with their existing adaptations.
+Use `ember/patches` as provenance for those applied changes. Firmware's ordered
+series is a separate input to its builder. Publish fixes in versioned sources.
 
 The current AArch64 kernel wrapper accepts a configuration, but explicitly
 lists its device trees and modules. Adding a DTS or a configuration alone does
@@ -55,8 +55,8 @@ new project-owned utilities and tests follow the repository's language rules.
 
 Use the [documented build commands](../../README.ember.md#building) appropriate
 to the architecture. Record the [input key](https://github.com/oxtech-ember/EmberBSD-SDK/blob/main/docs/input-keys.md) and output hashes. Deploy a coherent
-kernel, modules, device tree, firmware and userland; do not silently reuse outputs
-left by a failed build. Board-specific flash layout and recovery instructions
+kernel, modules, device tree, firmware and userland from successful producers
+with matching input identities. Board-specific flash layout and recovery instructions
 belong in the DevBoards profile once verified.
 
 ## Validate incrementally
@@ -83,7 +83,7 @@ of commits and public logs.
 Update the canonical DevBoards profile and its scoped evidence. Record board/revision,
 firmware, exact inputs, scenario, duration, measurements and untested functions.
 Keep hardware capability separate from source, build, VM and physical results.
-Unknown metadata stays unknown. Do not create a second support table in this OS.
+Mark unknown metadata explicitly and keep the single support table in DevBoards.
 
 Document API contracts and reproducible software checks beside their implementation.
 Store a result and its limits, not a diary of attempts or reviewer conversations.

@@ -7,7 +7,7 @@ It does not establish automatic rollback, an application-data migration, or phys
 ## Select complete builds
 
 Use the full ISO, manifest and checksums from each exact release.
-Do not mix the old installer kernel with the new distribution to claim new-media acceptance.
+Establish new-media acceptance with the new release's matching installer kernel and distribution.
 Keep the previous complete release and its recovery medium available.
 The [previous release](https://github.com/oxtech-ember/EmberBSD/releases/tag/build-a0674c0d2c1b067339b9436cf6148426546649ef-amd64-no-x11)
 uses source `a0674c0d2c1b067339b9436cf6148426546649ef`.
@@ -113,7 +113,7 @@ Start QEMU with these recovered files, the matching firmware, and no installatio
 Require the previous source ID, kernel, complete module hashes and critical base-file hashes.
 Require the saved configuration and the user-data state at the backup point.
 Require network access and default-trust HTTPS, then an ordinary reboot with the same results.
-Do not call a kernel-only replacement a complete rollback of modules, userland and configuration.
+Report kernel-only replacement separately. Claim complete rollback only after restoring modules, userland and configuration together.
 
 ## Acceptance record
 

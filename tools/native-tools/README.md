@@ -3,7 +3,7 @@
 `build.sh` can use a native toolset selected by an external SDK producer.
 Set `EMBER_NATIVE_TOOLS` to an absolute routing directory.
 Invoke `build.sh` with the selected absolute shell path.
-Do not use its `env sh` shebang for this mode.
+Use that absolute shell invocation for this mode.
 
 The interface version is 2.
 The static `contract` file belongs to this OS source tree.
@@ -59,12 +59,12 @@ The SDK must publish a routing directory with these entries:
 - `contract`: A regular file with the exact bytes of this source contract.
 - Each `command`: A symbolic link to the absolute selected native-tool spelling.
 
-Do not resolve a selected in-bundle symbolic link before creating the mapping.
+Preserve a selected in-bundle symbolic link's invocation path when creating the mapping.
 A compiler can locate its support files from its invocation path.
 Keep the routing directory and all selected tool inputs immutable.
 Hold their SDK read leases until all child processes have drained.
 Publish the directory atomically through the SDK publication interface.
-Do not append ambient directories to its `PATH`.
+Keep its `PATH` limited to the published routing directory and declared tool paths.
 
 The OS checks protocol compatibility and routing completeness.
 The SDK checks the selected host prefix, executable architecture, and tool routes.

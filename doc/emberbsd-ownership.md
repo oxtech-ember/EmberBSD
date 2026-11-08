@@ -17,16 +17,16 @@ The OS repository is not an umbrella documentation repository for the ecosystem.
 
 ## Keep one current description
 
-Update the existing owner document. Do not copy its support matrix, CLI reference or package versions into the OS README.
+Update the existing owner document. Link its support matrix, CLI reference and package versions from the OS README.
 The root README provides purpose and navigation. Change it when an entry point, owner or product boundary changes.
 A software contract states current behavior, prerequisites, checks and limits.
 A hardware claim states the tested model/revision, inputs, scenario and untested functions in DevBoards.
 Source, build, VM and physical results are different evidence levels.
 
-Do not publish test diaries, reviewer conversations, task plans or sequences of failed attempts as current documentation.
+Publish the current mechanism, reproducible checks and meaningful limits as current documentation. Keep session diaries and coordination outside that documentation.
 Remove completed assistant instructions from design documents. Describe the current mechanism and checks.
 Keep useful source pins, hashes and measured limits with their owner. Git retains the evolution.
-Preserve immutable receipts and licensed source provenance. Do not rewrite old results as current acceptance.
+Preserve immutable receipts and licensed source provenance. Label old results with their original inputs and acceptance scope.
 Place a proposal in the receiving project's supported discussion or change description, not a permanent OS document.
 
 ## The ember integration directory

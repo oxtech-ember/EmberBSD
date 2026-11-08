@@ -10,7 +10,7 @@ The source tree incorporates NetBSD 11.1 at the upstream revision recorded
 in `ember/source.json`, including the kernel changes previously excluded by
 the NetBSD 11.0 release baseline. EmberBSD adaptations remain applied to
 the source tree. Copies in `ember/patches` document
-their provenance and support future porting; do not apply them again.
+their provenance and support future porting. Build the already-adapted source tree directly.
 
 Build and deploy from pinned EmberBSD sources. The retained NetBSD ABI names,
 triplets and upstream identifiers do not select an upstream NetBSD build.
