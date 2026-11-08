@@ -1,0 +1,93 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\" Copyright (c) 2026 EmberBSD contributors.
+.Dd November 8, 2026
+.Dt DRM_SCHED_BATCH 9
+.Os
+.Sh NAME
+.Nm drm_sched_batch
+.Nd submit synchronous batches through the DRM scheduler
+.Sh SYNOPSIS
+.In drm/drm_sched_batch.h
+.Ft int
+.Fn drm_sched_batch_queue_create "const char *name" "struct drm_sched_batch_queue **out"
+.Ft int
+.Fn drm_sched_batch_reserve "struct drm_sched_batch_queue *queue"
+.Ft void
+.Fn drm_sched_batch_unreserve "struct drm_sched_batch_queue *queue"
+.Ft int
+.Fn drm_sched_batch_prepare "struct drm_sched_batch *batch" "struct drm_file *file"
+.Ft int
+.Fn drm_sched_batch_capture "struct drm_sched_batch *batch"
+.Ft int
+.Fn drm_sched_batch_commit "struct drm_sched_batch *batch"
+.Ft void
+.Fn drm_sched_batch_cleanup "struct drm_sched_batch *batch"
+.Ft void
+.Fn drm_sched_batch_queue_stop "struct drm_sched_batch_queue *queue"
+.Ft void
+.Fn drm_sched_batch_queue_destroy "struct drm_sched_batch_queue *queue"
+.Sh DESCRIPTION
+This native extension uses one entity and the existing DRM scheduler thread
+for bounded synchronous batches.
+It preserves the ordinary scheduler interface for other consumers.
+The common layer owns admission, syncobj dependencies, publication, output
+fences, cancellation and drain.
+The driver owns hardware commands and resource retirement.
+.Pp
+Call
+.Fn drm_sched_batch_size
+to validate the driver allocation, reserve a slot, allocate zeroed storage and
+initialize the embedded batch and strided items with
+.Fn drm_sched_batch_init .
+Use
+.Fn drm_sched_batch_sync_alloc
+to allocate normalized binary or timeline sync operations.
+Each item identifies its contiguous atomic execution unit's first item.
+Prepare retains syncobjs and creates output fences; capture retains every
+input before commit can replace a binary payload.
+All fallible driver preparation must also precede commit.
+.Pp
+Commit serializes scheduler initialization, publication and queue insertion.
+Failure publishes nothing.
+Success transfers ownership to the scheduler; the caller must no longer
+access the batch.
+On rejection the caller cleans up, releases driver resources and unreserves.
+For accepted work the sleeping release callback cleans up and frees driver
+storage, then the common layer unreserves.
+Callbacks run outside scheduler and fence locks.
+.Pp
+The worker waits for actual completion and propagates dependency errors,
+including nested fence-chain payload errors.
+It executes each atomic unit once and completes its outputs.
+Failure completes that unit and remaining batch outputs with the error.
+A driver callback may identify exact intra-unit dependencies handled by
+hardware.
+Automatic timeout replay is disabled.
+Execute callbacks return only after retirement or quarantine and must release
+driver gates before returning.
+An error fence does not establish that DMA stopped.
+.Pp
+Policy bounds each queue to eight reserved batches, each batch to 256 items
+and 1 MiB charged memory, and producer searches to 1048576 steps per batch.
+Each item's publication and completion waits have a ten-second deadline.
+.Fn drm_sched_batch_deadline
+supplies the same deadline policy for driver resource barriers.
+Output fences have independent contexts and can outlive the queue.
+.Pp
+Stop closes admission and cancels work at its next cancellation probe.
+The owner must keep the queue live throughout API entry.
+Before destroy, exclude new calls and quiesce entrants not yet in reserve.
+Destroy waits for registered admission waiters, preparation and sleeping
+retirement, then destroys the empty entity and joins the scheduler thread.
+It must run outside that thread, without driver execution gates.
+The queue name remains live through destruction.
+.Sh RETURN VALUES
+Functions returning int return zero on success or a positive BSD errno.
+Admission failure leaves outputs unpublished.
+Accepted output fences report negative errors on execution failure.
+.Sh SEE ALSO
+.Xr dma_fence_chain_get_payload_status 9
+.Sh HISTORY
+The
+.Nm
+interface first appeared in EmberBSD.

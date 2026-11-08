@@ -114,6 +114,7 @@ MLINKS+=cprng.9	cprng_strong.9 \
 
 MAN+=	deviter.9
 MAN+=	dma_fence_chain_get_payload_status.9
+MAN+=	drm_sched_batch.9
 MLINKS+=deviter.9 deviter_first.9 \
 	deviter.9 deviter_init.9 \
 	deviter.9 deviter_next.9 \

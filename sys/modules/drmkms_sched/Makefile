@@ -11,6 +11,7 @@ KMOD=	drmkms_sched
 SRCS+=	sched_entity.c
 SRCS+=	sched_fence.c
 SRCS+=	sched_main.c
+SRCS+=	drm_sched_batch.c
 
 WARNS=	3
 

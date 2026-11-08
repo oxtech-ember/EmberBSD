@@ -118,6 +118,7 @@ makeoptions	drmkms_sched	"CPPFLAGS.drmkms_sched"+="${CPPFLAGS.drmkms}"
 file	external/bsd/drm2/dist/drm/scheduler/sched_entity.c	drmkms_sched
 file	external/bsd/drm2/dist/drm/scheduler/sched_fence.c	drmkms_sched
 file	external/bsd/drm2/dist/drm/scheduler/sched_main.c	drmkms_sched
+file	external/bsd/drm2/drm/drm_sched_batch.c		drmkms_sched
 
 # Generated from drm2netbsd.
 #file	external/bsd/drm2/dist/drm/drm_agpsupport.c	drmkms	# drmkms_pci

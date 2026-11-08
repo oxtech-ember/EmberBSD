@@ -866,6 +866,7 @@ int drm_sched_init(struct drm_gpu_scheduler *sched,
 	if (IS_ERR(thread)) {
 		ret = PTR_ERR(thread);
 		sched->thread = NULL;
+		drm_sched_fini(sched);
 		DRM_ERROR("Failed to create scheduler for %s.\n", name);
 		return ret;
 	}

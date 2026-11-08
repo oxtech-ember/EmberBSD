@@ -82,9 +82,11 @@ Dependency errors, including nested timeline payload errors, use the
 They prevent VM preparation and GPU execution for the dependent job.
 An interrupted admission wait returns `EINTR` before publication.
 
-The queue still owns driver-local admission, dependency, wait and cancellation policy.
-Its transition to the common scheduler remains incomplete.
-See the [shared submission boundary](../../../../external/bsd/drm2/drm/docs/drm-submit.md).
+Admission, syncobj capture/publication, limits, waits and cancellation belong to
+the [DRM batch scheduler](../../../../external/bsd/drm2/drm/docs/drm-submit.md).
+It dispatches through the existing `drmkms_sched` entity and thread, and drains
+admission waiters and retained jobs before destruction. PVR supplies hardware
+execution units and retains context/VM ownership through retirement or quarantine.
 
 ## VM and DMA changes
 

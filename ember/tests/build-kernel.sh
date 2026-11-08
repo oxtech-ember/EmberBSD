@@ -88,7 +88,7 @@ for contract in bcm2712-display bcm2712-display-irq bcm2712-display-hsm bcm2712-
     bcm2712-v3d-cl bcm2712-v3d-wait bcm2712-v3d-sync drm-syncobj-wait \
     drm-syncobj-dispatch drm-syncobj-find drm-syncobj-flatten dma-fence-chain drm-jiffies \
     linux-idr i915-elsq-desc i915-rps-lifetime drm-pci-identity linux-rcu-replace \
-    pvr-render pvr-heap pvr-bo pvr-vm pvr-file pvr-stream pvr-context pvr-hwrt pvr-submit pvr-render-attach; do
+    pvr-render pvr-heap pvr-bo pvr-vm pvr-file pvr-stream pvr-context pvr-hwrt drm-scheduler pvr-submit pvr-render-attach; do
     cat > "$work/src/ember/tools/$contract-contract.sh" <<'SH'
 #!/bin/sh
 set -eu
@@ -133,7 +133,7 @@ done
 ruby_without_source='bcm2712-v3d-prime simplefb drm-hotplug bcm2712-v3d-bo-stats'
 ruby_with_source='drm-gem-fb bcmv3d-resv bcmv3d-read bcmv3d-vblank
 bcmv3d-vblank-native bcmv3d-flip bcmv3d-scanout bcmv3d-job-resv
-serial-console-ready bootfb-serial-handoff'
+late-splash serial-console-ready bootfb-serial-handoff'
 for contract in $ruby_without_source $ruby_with_source; do
     : > "$work/src/ember/tools/$contract-contract.rb"
 done
@@ -145,7 +145,7 @@ case $1 in "$TEST_ROOT/src/ember/tools/"*-contract.rb) ;; *) exit 1;; esac
 case ${1##*/} in
     bcm2712-v3d-prime-contract.rb|simplefb-contract.rb|drm-hotplug-contract.rb|bcm2712-v3d-bo-stats-contract.rb)
         test "$#" -eq 1;;
-    drm-gem-fb-contract.rb|bcmv3d-resv-contract.rb|bcmv3d-read-contract.rb|bcmv3d-vblank-contract.rb|bcmv3d-vblank-native-contract.rb|bcmv3d-flip-contract.rb|bcmv3d-scanout-contract.rb|bcmv3d-job-resv-contract.rb|serial-console-ready-contract.rb|bootfb-serial-handoff-contract.rb)
+    drm-gem-fb-contract.rb|bcmv3d-resv-contract.rb|bcmv3d-read-contract.rb|bcmv3d-vblank-contract.rb|bcmv3d-vblank-native-contract.rb|bcmv3d-flip-contract.rb|bcmv3d-scanout-contract.rb|bcmv3d-job-resv-contract.rb|late-splash-contract.rb|serial-console-ready-contract.rb|bootfb-serial-handoff-contract.rb)
         test "$#" -eq 2
         test "$2" = "$TEST_ROOT/src";;
     *) echo "unexpected Ruby contract: ${1##*/}" >&2; exit 1;;
@@ -489,8 +489,8 @@ export CC=/target/compiler CXX=/target/compiler-cxx CFLAGS=-Dwrong_target CXXFLA
 check_contract_counts() {
     test "$(grep -c '^contract ' "$TEST_LOG")" -eq "$1"
     test "$(grep -c '^a733-contract ' "$TEST_LOG")" -eq 24
-    test "$(grep -c '^gpu-contract ' "$TEST_LOG")" -eq 39
-    test "$(grep -c '^ruby-contract ' "$TEST_LOG")" -eq 14
+    test "$(grep -c '^gpu-contract ' "$TEST_LOG")" -eq 40
+    test "$(grep -c '^ruby-contract ' "$TEST_LOG")" -eq 15
     test "$(grep -c '^network-contract ' "$TEST_LOG")" -eq 8
 }
 export TEST_OUT="$work/cross"
@@ -613,14 +613,14 @@ i915-rps-lifetime-contract.sh drm-pci-identity-contract.sh linux-rcu-replace-con
 drm-gem-fb-contract.rb bcmv3d-resv-contract.rb bcmv3d-read-contract.rb
 bcmv3d-vblank-contract.rb bcmv3d-vblank-native-contract.rb bcmv3d-flip-contract.rb
 bcmv3d-scanout-contract.rb bcmv3d-job-resv-contract.rb serial-console-ready-contract.rb
-bootfb-serial-handoff-contract.rb'
+bootfb-serial-handoff-contract.rb late-splash-contract.rb'
 root_argument_failures_checked=0
 for failure in $root_argument_failures tools module cpp dtb diagnostic-dtb contract a733-contract \
     a733-gpu-vm-contract.sh a733-gpu-fwcompute-vm-contract.sh \
     a733-gpu-fwheap-observe-contract.sh a733-gpu-fwbridge-contract.sh \
     a733-gpu-fwservice-contract.sh pvr-exec-contract.sh \
     pvr-render-contract.sh pvr-heap-contract.sh pvr-bo-contract.sh pvr-vm-contract.sh pvr-file-contract.sh pvr-stream-contract.sh pvr-context-contract.sh pvr-hwrt-contract.sh pvr-submit-contract.sh pvr-render-attach-contract.sh \
-    gpu-contract drm-syncobj-flatten-contract.sh bcm2712-display-contract.sh \
+    drm-scheduler-contract.sh gpu-contract drm-syncobj-flatten-contract.sh bcm2712-display-contract.sh \
     bcm2712-display-irq-contract.sh bcm2712-display-hsm-contract.sh bcm2712-display-dvp-contract.sh dmabuf-map dmabuf-lifetime dmabuf-array dmabuf-sync ruby-contract simplefb-contract.rb drm-hotplug-contract.rb \
     bcm2712-v3d-prime-contract.rb bcm2712-v3d-bo-stats-contract.rb network-contract cemac-stop.sh bwfm-link-check.sh \
     aicwf-sta.sh aicwf-vht.sh publish; do
@@ -639,7 +639,7 @@ for failure in $root_argument_failures tools module cpp dtb diagnostic-dtb contr
         grep -Fq 'injected contract failure: a733-' "$TEST_OUT/contracts.log"
         ! grep -q '^gpu-contract ' "$TEST_LOG"
         ;;
-    a733-gpu-fwcompute-vm-contract.sh|a733-gpu-fwheap-observe-contract.sh|a733-gpu-fwbridge-contract.sh|a733-gpu-fwservice-contract.sh|pvr-*-contract.sh)
+    a733-gpu-fwcompute-vm-contract.sh|a733-gpu-fwheap-observe-contract.sh|a733-gpu-fwbridge-contract.sh|a733-gpu-fwservice-contract.sh|drm-scheduler-contract.sh|pvr-*-contract.sh)
         grep -Fq "injected contract failure: $failure" "$TEST_OUT/contracts.log"
         ! grep -q '^gpu-contract bcm2712-display-contract.sh ' "$TEST_LOG"
         ;;
@@ -674,7 +674,7 @@ for failure in $root_argument_failures tools module cpp dtb diagnostic-dtb contr
         root_argument_failures_checked=$((root_argument_failures_checked + 1))
     done
 done
-test "$root_argument_failures_checked" -eq 15
+test "$root_argument_failures_checked" -eq 16
 echo "PASS: $root_argument_failures_checked explicit-root contract failures stop dispatch and clear outputs"
 : > "$TEST_LOG"
 TEST_HOST=NetBSD EMBER_COMPILER_FAMILY=gcc EMBER_EXTERNAL_TOOLCHAIN=/cross/gcc16 \

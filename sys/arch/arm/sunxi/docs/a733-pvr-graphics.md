@@ -19,6 +19,7 @@ Mesa requires the explicit experimental PowerVR opt-in; do not weaken exact pixe
 | --- | --- |
 | Geometry, fragment and transfer decoders | Compare encoded streams with pinned Linux encoders; reject malformed layouts |
 | Paired queues and execution | Check ordering, queue wrapping, completion, timeouts and failure retention |
+| Shared DRM batch scheduler | Bound admission and sync capture; preserve exact paired dependencies, cancellation and sleeping retirement |
 | HWRT owner | Compare profile geometry with pinned formulas; check references and cleanup |
 | GEM and VM mapping holds | Check aliases, file lifetime, shared spans and backing pins |
 | Free-list growth | Check allocation failures, PFN publication, owner registry and callbacks |

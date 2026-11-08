@@ -12562,6 +12562,7 @@
 ./usr/share/man/cat9/dopowerhooks.0		comp-sys-catman		.cat
 ./usr/share/man/cat9/doshutdownhooks.0		comp-sys-catman		.cat
 ./usr/share/man/cat9/driver.0			comp-sys-catman		.cat
+./usr/share/man/cat9/drm_sched_batch.0	comp-sys-catman	.cat
 ./usr/share/man/cat9/dtoc.0			comp-sys-catman		.cat
 ./usr/share/man/cat9/dumpsys.0			comp-sys-catman		.cat
 ./usr/share/man/cat9/dupfdopen.0		comp-sys-catman		.cat
@@ -21454,6 +21455,7 @@
 ./usr/share/man/html9/dopowerhooks.html		comp-sys-htmlman	html
 ./usr/share/man/html9/doshutdownhooks.html	comp-sys-htmlman	html
 ./usr/share/man/html9/driver.html		comp-sys-htmlman	html
+./usr/share/man/html9/drm_sched_batch.html	comp-sys-htmlman	html
 ./usr/share/man/html9/dtoc.html			comp-sys-htmlman	html
 ./usr/share/man/html9/dumpsys.html		comp-sys-htmlman	html
 ./usr/share/man/html9/dupfdopen.html		comp-sys-htmlman	html
@@ -30487,6 +30489,7 @@
 ./usr/share/man/man9/dopowerhooks.9		comp-sys-man		.man
 ./usr/share/man/man9/doshutdownhooks.9		comp-sys-man		.man
 ./usr/share/man/man9/driver.9			comp-sys-man		.man
+./usr/share/man/man9/drm_sched_batch.9	comp-sys-man	.man
 ./usr/share/man/man9/dtoc.9			comp-sys-man		.man
 ./usr/share/man/man9/dumpsys.9			comp-sys-man		.man
 ./usr/share/man/man9/dupfdopen.9		comp-sys-man		.man

@@ -75,6 +75,48 @@ static int transfer_error;
 static int prepare_error, backend_error, pause_error, wait_error, id_error;
 static bool backend_changed, switch_backend_on_pause, backend_absent;
 static void *retained;
+enum drain_actor { DRAIN_NONE, DRAIN_CAPTURE, DRAIN_ADMISSION, DRAIN_HARDWARE };
+static _Thread_local enum drain_actor drain_actor;
+static _Thread_local bool drain_destroyer;
+static _Thread_local void (*drain_wait_hook)(void *,bool);
+static _Thread_local void *drain_wait_cookie;
+static pthread_mutex_t drain_lock=PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t drain_changed=PTHREAD_COND_INITIALIZER;
+static bool drain_test, drain_entered[4], drain_released[4];
+static bool drain_destroy_waiting, drain_destroy_done;
+static void *drain_owners[7];
+static unsigned drain_frees[7];
+static struct task_struct *drain_scheduler;
+
+static void drain_wait_locked(const bool *flag)
+{
+	while (!*flag) {
+		struct timespec deadline;
+		CHECK(clock_gettime(CLOCK_REALTIME,&deadline)==0); deadline.tv_sec+=10;
+		CHECK(pthread_cond_timedwait(&drain_changed,&drain_lock,&deadline)==0);
+	}
+}
+static void drain_wait(const bool *flag)
+{
+	CHECK(pthread_mutex_lock(&drain_lock)==0);
+	drain_wait_locked(flag);
+	CHECK(pthread_mutex_unlock(&drain_lock)==0);
+}
+static void drain_pause(enum drain_actor actor)
+{
+	CHECK(actor!=DRAIN_NONE && pthread_mutex_lock(&drain_lock)==0);
+	drain_entered[actor]=true;
+	CHECK(pthread_cond_broadcast(&drain_changed)==0);
+	drain_wait_locked(&drain_released[actor]);
+	CHECK(pthread_mutex_unlock(&drain_lock)==0);
+}
+static void drain_release(enum drain_actor actor)
+{
+	CHECK(pthread_mutex_lock(&drain_lock)==0);
+	drain_released[actor]=true;
+	CHECK(pthread_cond_broadcast(&drain_changed)==0);
+	CHECK(pthread_mutex_unlock(&drain_lock)==0);
+}
 
 static struct pvr_submit_queue *submit_queue;
 struct drm_device { unsigned dummy; };
@@ -95,18 +137,12 @@ uint64_t pvr_device_bvnc(struct drm_device *dev) { (void)dev; return selected_bv
 static struct drm_file file;
 static struct pvr_exec_context contexts[4];
 
-struct rcu_head { unsigned unused; };
-struct dma_fence_ops;
-struct dma_fence {
-	struct rcu_head rcu;
-	const struct dma_fence_ops *ops;
-	int error;
-	unsigned output_count;
-	atomic_uint refs;
-	int status;
-	uint64_t seqno;
-	bool chain, immortal;
-};
+/* Extend the shared DMA-fence boundary with syncobj-chain test state. */
+#define DRM_SCHED_MODEL_FENCE_EXTRA \
+	unsigned output_count; int status; bool chain, immortal;
+#define DRM_SCHED_MODEL_EXTERNAL_FENCE_OPERATIONS
+#define DRM_SCHED_MODEL_FENCE_INIT(f) atomic_fetch_add(&fence_count,1)
+#include "drm-scheduler-model.h"
 struct dma_fence_chain {
 	struct dma_fence base;
 	struct dma_fence *dfc_fence, *prev;
@@ -146,7 +182,16 @@ static void *kmem_zalloc(size_t size,int flags)
 	p=calloc(1,size); CHECK(p!=NULL); atomic_fetch_add(&allocations,1); return p;
 }
 static void kmem_free(void *p,size_t size)
-{ CHECK(p!=NULL && atomic_fetch_sub(&allocations,1)!=0); free(p); }
+{
+	CHECK(p!=NULL && atomic_fetch_sub(&allocations,1)!=0);
+	if (drain_test) for (unsigned i=0;i<7;i++) {
+		if (p==drain_owners[i]) {
+			CHECK(model_current==drain_scheduler && model_lock_depth==0);
+			CHECK(++drain_frees[i]==1);
+		}
+	}
+	free(p);
+}
 static void *kzalloc(size_t size,int flags)
 { CHECK(gated && platform && flags==GFP_NOWAIT); return kmem_zalloc(size,KM_NOSLEEP); }
 static void kfree(void *p)
@@ -168,6 +213,8 @@ static void dma_fence_put(struct dma_fence *f)
 		dma_fence_put(chain->dfc_fence); dma_fence_put(chain->prev); kfree(chain);
 	} else if (f->ops) fence_release(f); else free(f);
 }
+static bool dma_fence_is_signaled(struct dma_fence *f)
+{ return f->ops ? atomic_load(&f->signaled) : f->status!=0; }
 static struct dma_fence *new_fence(int status)
 {
 	struct dma_fence *f=calloc(1,sizeof(*f)); CHECK(f!=NULL);
@@ -184,7 +231,7 @@ static int dma_fence_get_status(struct dma_fence *f)
 		if(dma_fence_get_status(c->dfc_fence)==0 || (c->prev && dma_fence_get_status(c->prev)==0)) return 0;
 		return 1; /* Native chain base does not propagate child.error. */
 	}
-	return f->status;
+	return f->ops ? (dma_fence_is_signaled(f) ? (f->error ? f->error : 1) : 0) : f->status;
 }
 #include "dma-fence-payload-status-body.h"
 static unsigned rendered;
@@ -204,6 +251,10 @@ static int dma_fence_chain_find_seqno(struct dma_fence **fp,uint64_t seqno)
 static void pause_for_actor(void)
 {
 	CHECK(!gated && !platform);
+	if (drain_test && drain_actor!=DRAIN_NONE) {
+		drain_pause(drain_actor);
+		return;
+	}
 	if(!concurrent || !waiting_thread) return;
 	CHECK(pthread_mutex_lock(&rendezvous)==0);
 	waiter_entered=true; CHECK(pthread_cond_broadcast(&changed)==0);
@@ -239,7 +290,8 @@ static int check_backend(void *p) { CHECK(gated && platform); return backend_err
 static const struct pvr_backend backend={.check=check_backend}, other_backend={.check=check_backend};
 const struct pvr_backend *pvr_device_enter(struct drm_device *dev)
 {
-	CHECK(dev==&device && !gated && !platform); CHECK(pthread_mutex_lock(&gate)==0);
+	CHECK(dev==&device && !gated && !platform && model_lock_depth==0);
+	CHECK(pthread_mutex_lock(&gate)==0);
 	gated=platform=true;
 	return backend_absent ? NULL : backend_changed ? &other_backend : &backend;
 }
@@ -288,6 +340,13 @@ int pvr_context_compute(struct pvr_context *c,const struct rogue_fwif_cmd_comput
 	if (selected_bvnc == PVR_STREAM_GE8300_BVNC)
 		CHECK(cmd->regs.tpu == 0x20 && cmd->regs.tpu_tag_cdm_ctrl == 0);
 	computed++;
+	if (drain_test) {
+		CHECK(computed==1 && drain_wait_hook!=NULL);
+		drain_wait_hook(drain_wait_cookie,false);
+		drain_pause(DRAIN_HARDWARE);
+		drain_wait_hook(drain_wait_cookie,true);
+		return EIO; /* Firmware completion is uncertain: quarantine the VM. */
+	}
 	if(computed==compute_error_at) return EIO;
 	if(computed==compute_lost_at) { c->lost=true; c->retained=lost_retained; return EIO; }
 	return 0;
@@ -426,50 +485,48 @@ pvr_context_fragment(struct pvr_context *c,
 	fragmented++;
 	return fragment_error;
 }
-/* Kernel scheduling/locking boundaries. Queue callbacks run only when pumped;
- * the production FIFO, capture, publication, retention and retirement are real. */
+/* Native mutex/condition boundaries. The real scheduler owns dispatch. */
 typedef pthread_mutex_t kmutex_t;
-typedef pthread_mutex_t spinlock_t;
+typedef pthread_cond_t kcondvar_t;
 static void mutex_init(kmutex_t *m, int a, int b) { (void)a; (void)b; CHECK(pthread_mutex_init(m,NULL)==0); }
 static void mutex_destroy(kmutex_t *m) { CHECK(pthread_mutex_destroy(m)==0); }
 static void mutex_enter(kmutex_t *m) { CHECK(pthread_mutex_lock(m)==0); }
 static void mutex_exit(kmutex_t *m) { CHECK(pthread_mutex_unlock(m)==0); }
-static void spin_lock_init(spinlock_t *m) { mutex_init(m,0,0); }
-static void spin_lock_destroy(spinlock_t *m) { mutex_destroy(m); }
-struct dma_fence_ops {
-	bool use_64bit_seqno;
-	const char *(*get_driver_name)(struct dma_fence *);
-	const char *(*get_timeline_name)(struct dma_fence *);
-	void (*release)(struct dma_fence *);
-};
+static void cv_init(kcondvar_t *c,const char *name) { CHECK(pthread_cond_init(c,NULL)==0); }
+static void cv_destroy(kcondvar_t *c) { CHECK(pthread_cond_destroy(c)==0); }
+static void cv_broadcast(kcondvar_t *c) { CHECK(pthread_cond_broadcast(c)==0); }
+static void cv_wait(kcondvar_t *c,kmutex_t *m)
+{
+	if (drain_test && drain_destroyer) {
+		CHECK(pthread_mutex_lock(&drain_lock)==0);
+		drain_destroy_waiting=true;
+		CHECK(pthread_cond_broadcast(&drain_changed)==0);
+		CHECK(pthread_mutex_unlock(&drain_lock)==0);
+	}
+	CHECK(pthread_cond_wait(c,m)==0);
+}
 static void fence_release(struct dma_fence *f) { f->ops->release(f); }
-static void call_rcu(struct rcu_head *r,void (*cb)(struct rcu_head *)) { cb(r); }
-static void dma_fence_destroy(struct dma_fence *f) { CHECK(atomic_load(&f->refs)==0); }
-static uint64_t dma_fence_context_alloc(unsigned n) { static uint64_t next; CHECK(n==1); return ++next; }
-static void dma_fence_init(struct dma_fence *f,const struct dma_fence_ops *o,
-    spinlock_t *lock,uint64_t context,uint64_t seqno)
-{ (void)lock; CHECK(context!=0 && seqno==1); atomic_init(&f->refs,1); f->ops=o; f->seqno=seqno; atomic_fetch_add(&fence_count,1); }
 static void dma_fence_set_error(struct dma_fence *f,int error)
-{ CHECK(f->status==0 && error<0); f->error=error; }
+{ CHECK(!dma_fence_is_signaled(f) && error<0); f->error=error; }
 static int dma_fence_signal(struct dma_fence *f)
-{ CHECK(!gated && !platform && f->status==0); f->status=f->error ? f->error : 1; if(!f->error) signals+=f->output_count; return 0; }
-struct work { void *dummy; };
-struct workqueue {
-	struct work *items[16];
-	unsigned n;
-	void (*callback)(struct work *, void *);
-	void *cookie;
-};
-static int workqueue_create(struct workqueue **out,const char *name,
-    void (*callback)(struct work *,void *),void *cookie,int pri,int ipl,int flags)
-{ (void)name; CHECK(pri==PRI_NONE && ipl==IPL_NONE && flags==WQ_MPSAFE); *out=calloc(1,sizeof(**out)); CHECK(*out!=NULL); (*out)->callback=callback; (*out)->cookie=cookie; return 0; }
-static void workqueue_enqueue(struct workqueue *q,struct work *w,void *cpu)
-{ CHECK(q->n<16 && cpu==NULL); q->items[q->n++]=w; }
-static void pump_one(struct workqueue *q)
-{ struct work *w; CHECK(!gated && q->n!=0); w=q->items[0]; memmove(q->items,q->items+1,--q->n*sizeof(*q->items)); q->callback(w,q->cookie); }
-static void pump(struct workqueue *q) { while(q->n) pump_one(q); }
-static void workqueue_wait(struct workqueue *q, struct work *w) { (void)w; pump(q); }
-static void workqueue_destroy(struct workqueue *q) { CHECK(q->n==0); free(q); }
+{
+	CHECK(!gated && !platform && !dma_fence_is_signaled(f));
+	if(!f->error) signals+=f->output_count;
+	return model_dma_fence_signal(f);
+}
+#include "sched-fence-body.h"
+#include "sched-main-body.h"
+#include "sched-entity-body.h"
+#include "drm-sched-batch-api.h"
+#include "drm-sched-batch-body.h"
+static void pump_one(struct drm_sched_batch_queue *q)
+{
+	CHECK(!gated && spsc_queue_count(&q->entity.job_queue)!=0);
+	/* One real scheduler iteration dispatches; the next releases the job. */
+	model_kthread_steps(q->scheduler.thread,2);
+}
+static void pump(struct drm_sched_batch_queue *q)
+{ while(spsc_queue_count(&q->entity.job_queue)!=0) pump_one(q); }
 int pvr_file_vm_submit_hold(struct pvr_file_vm *vm)
 {
 	CHECK(gated && platform); if(vm->failed || vm->lost) return EIO;
@@ -481,7 +538,11 @@ bool pvr_file_vm_closed(struct pvr_file_vm *vm) { return vm->closed; }
 void pvr_file_vm_submit_drop(struct pvr_file_vm *vm)
 { CHECK(gated && platform && vm->holds!=0); vm->holds--; }
 void pvr_context_wait_gate(struct pvr_context *c,void (*hook)(void *,bool),void *cookie)
-{ (void)c; CHECK(gated && platform); if(hook) { hook(cookie,false); CHECK(!gated && !platform); hook(cookie,true); CHECK(gated && platform); } }
+{
+	(void)c; CHECK(gated && platform);
+	if (drain_test) { drain_wait_hook=hook; drain_wait_cookie=cookie; }
+	if(hook) { hook(cookie,false); CHECK(!gated && !platform); hook(cookie,true); CHECK(gated && platform); }
+}
 #include "pvr-submit-body.h"
 
 
@@ -521,12 +582,10 @@ static void initialize(unsigned count)
 	register_user(jobs,sizeof(jobs)); register_user(ops,sizeof(ops)); register_user(streams,sizeof(streams));
 	CHECK(pvr_submit_queue_create(&device, &submit_queue) == 0);
 }
-static void finish(void)
+static void finish_references(void)
 {
 	unsigned i;
 	CHECK(!gated && !platform && retained==NULL);
-	CHECK(submit_queue->reserved == 0);
-	pvr_submit_queue_destroy(submit_queue); submit_queue=NULL;
 	for(i=1;i<8;i++) {
 		CHECK(syncobjs[i].refs==(unsigned)syncobjs[i].handle_live);
 		if(syncobjs[i].handle_live) { syncobjs[i].handle_live=false; drm_syncobj_put(&syncobjs[i]); }
@@ -534,6 +593,14 @@ static void finish(void)
 	for(i=1;i<4;i++) { CHECK(contexts[i].refs==(unsigned)contexts[i].handle_live); CHECK(contexts[i].vm.holds==0); }
 	for(i=0;i<4;i++) CHECK(hwrt_model[i].refs==0);
 	CHECK(atomic_load(&allocations)==0 && atomic_load(&fence_count)==0 && atomic_load(&stub.refs)==1);
+	CHECK(atomic_load(&model_fences)==0 && atomic_load(&model_slabs)==0);
+	CHECK(atomic_load(&model_conditions)==0 && atomic_load(&model_locks)==0);
+}
+static void finish(void)
+{
+	CHECK(submit_queue->scheduler->reserved == 0);
+	pvr_submit_queue_destroy(submit_queue); submit_queue=NULL;
+	finish_references();
 }
 static void add_op(unsigned job,unsigned handle,uint32_t flags,uint64_t value)
 {
@@ -577,7 +644,7 @@ initialize_triple(void)
 }
 
 /* Observe completion for retained regression cases. The ioctl under test is
- * still asynchronous; this fixture explicitly runs the workqueue and reads the
+ * still asynchronous; this fixture steps the actual scheduler thread and reads the
  * actual per-job fences, including jobs with no user SIGNAL operation. */
 static int submit_completed(void)
 {
@@ -587,11 +654,12 @@ static int submit_completed(void)
 	int error = submit();
 
 	if (error != 0) return error;
-	batch = container_of(submit_queue->worker->items[0], struct pvr_submit_batch, work);
+	batch = container_of(container_of(spsc_queue_peek(&submit_queue->scheduler->entity.job_queue),
+	    struct drm_sched_batch, job.queue_node), struct pvr_submit_batch, sched);
 	count = batch->count;
 	CHECK(count <= 4);
-	for(i=0;i<count;i++) fences[i]=dma_fence_get(batch->jobs[i].finished);
-	pump(submit_queue->worker);
+	for(i=0;i<count;i++) fences[i]=dma_fence_get(batch->jobs[i].sched.finished);
+	pump(submit_queue->scheduler);
 	for(i=0;i<count;i++) {
 		int status=dma_fence_get_status(fences[i]);
 		CHECK(status!=0);
@@ -734,7 +802,7 @@ transfer_cases(void)
 	CHECK(transferred == 1 && computed == 0 && rendered == 0);
 	CHECK(prepared == 1 && completed == 1 && signals == 1 && poisoned == 0);
 	CHECK(hwrt_gets == 0 && hwrt_targets == 0 && dma_fence_get_status(syncobjs[1].fence) == 1);
-	copies = copy_calls; allocs = allocate_calls - 1; finish();
+	copies = copy_calls; allocs = allocate_calls - 2; finish();
 
 	for (i = 0; i < 12; i++) {
 		initialize(1); set_transfer(0);
@@ -1109,32 +1177,26 @@ forward_dependencies(void)
 static void
 producer_search_bounds(void)
 {
-	struct pvr_submit_batch *batch;
-	struct pvr_submit_sync wait = {0}, signal = {0};
+	struct drm_sched_batch batch = {0};
+	struct drm_sched_batch_item items[3] = {0};
+	struct drm_sched_batch_sync wait = {0}, signal = {0};
 	uint32_t budget;
 	bool found;
 
 	/* Different user handles can refer to one retained object. */
-	wait.object = &syncobjs[1];
-	wait.input.handle = 1;
-	signal.object = wait.object;
-	signal.input.handle = 2;
-	signal.input.flags = DRM_PVR_SYNC_OP_FLAG_SIGNAL;
-	batch = calloc(1, sizeof(*batch) + 3 * sizeof(batch->jobs[0]));
-	CHECK(batch != NULL);
-	batch->count = 3;
-	batch->jobs[2].syncs = &signal;
-	batch->jobs[2].sync_count = 1;
+	wait.object = &syncobjs[1]; wait.handle = 1;
+	signal.object = wait.object; signal.handle = 2; signal.signal = true;
+	batch.items = items; batch.stride = sizeof(items[0]); batch.count = 3;
+	items[2].syncs = &signal; items[2].sync_count = 1;
 	budget = 3;
-	CHECK(pvr_submit_producer(batch, 0, 3, &wait, true, &budget, &found, NULL) == E2BIG);
+	CHECK(drm_batch_producer(&batch, 0, 3, &wait, true, &budget, &found, NULL) == E2BIG);
 	CHECK(budget == 0 && !found);
 	budget = 4;
-	CHECK(pvr_submit_producer(batch, 0, 3, &wait, true, &budget, &found, NULL) == 0);
+	CHECK(drm_batch_producer(&batch, 0, 3, &wait, true, &budget, &found, NULL) == 0);
 	CHECK(budget == 0 && found);
 	/* The shared budget is not renewed for a second dependency. */
-	CHECK(pvr_submit_producer(batch, 0, 3, &wait, true, &budget, &found, NULL) == E2BIG);
+	CHECK(drm_batch_producer(&batch, 0, 3, &wait, true, &budget, &found, NULL) == E2BIG);
 	CHECK(budget == 0 && !found);
-	free(batch);
 }
 
 struct worker_args { struct drm_pvr_ioctl_submit_jobs_args args; int result; };
@@ -1165,7 +1227,7 @@ static void concurrency_case(void)
 	/* Remove the handle after publication. The waiter still owns its reference. */
 	pvr_device_leave(&device);
 	CHECK(pvr_submit_jobs(&device,&actor,&file)==0 && computed==0);
-	pump(submit_queue->worker); CHECK(computed==1);
+	pump(submit_queue->scheduler); CHECK(computed==1);
 	CHECK(pthread_mutex_lock(&sync_lock)==0);
 	syncobjs[1].handle_live=false;
 	CHECK(pthread_mutex_unlock(&sync_lock)==0); drm_syncobj_put(&syncobjs[1]);
@@ -1173,7 +1235,7 @@ static void concurrency_case(void)
 	CHECK(pthread_mutex_lock(&rendezvous)==0); waiter_released=true;
 	CHECK(pthread_cond_broadcast(&changed)==0); CHECK(pthread_mutex_unlock(&rendezvous)==0);
 	CHECK(pthread_join(thread,NULL)==0);
-	pump(submit_queue->worker);
+	pump(submit_queue->scheduler);
 	CHECK(worker_data.result==0 && worker_data.args.jobs.count==1 && computed==2 && signals==2);
 	CHECK(contexts[1].destroyed && contexts[1].refs==0 && syncobjs[1].refs==0);
 	finish();
@@ -1231,10 +1293,10 @@ pending_fence_and_lifetime(void)
 	syncobjs[1].handle_live=false; drm_syncobj_put(&syncobjs[1]);
 	pvr_device_leave(&device);
 	CHECK(!contexts[1].destroyed && contexts[1].refs==2);
-	pump_one(submit_queue->worker);
+	pump_one(submit_queue->scheduler);
 	CHECK(computed==1 && completed==1 && dma_fence_get_status(first)==1);
 	CHECK(dma_fence_get_status(second)==0 && contexts[1].refs==1 && contexts[1].vm.holds==1);
-	pump_one(submit_queue->worker);
+	pump_one(submit_queue->scheduler);
 	CHECK(computed==2 && completed==2 && dma_fence_get_status(second)==1);
 	CHECK(contexts[1].destroyed && contexts[1].vm.holds==0);
 	dma_fence_put(first); dma_fence_put(second);
@@ -1248,13 +1310,13 @@ batch_dependencies_and_pair(void)
 	add_op(0,1,DRM_PVR_SYNC_OP_FLAG_SIGNAL,0);
 	add_op(1,1,0,0); add_op(1,2,DRM_PVR_SYNC_OP_FLAG_SIGNAL,0);
 	CHECK(submit()==0 && computed==0);
-	pump(submit_queue->worker);
+	pump(submit_queue->scheduler);
 	CHECK(computed==2 && completed==2 && dma_fence_get_status(syncobjs[2].fence)==1);
 	finish();
 
 	initialize_triple();
 	CHECK(submit()==0 && rendered==0 && hwrt_model[0].refs==1);
-	pump(submit_queue->worker);
+	pump(submit_queue->scheduler);
 	CHECK(rendered==1 && fragmented==1 && transferred==0 && prepared==2 && completed==2);
 	CHECK(last_frag_type==ROGUE_FWIF_CCB_CMD_TYPE_FRAG_PR);
 	CHECK(dma_fence_get_status(syncobjs[1].fence)==1 && dma_fence_get_status(syncobjs[2].fence)==1);
@@ -1277,7 +1339,7 @@ error_and_shutdown(void)
 	add_op(1,2,DRM_PVR_SYNC_OP_FLAG_SIGNAL,0);
 	compute_error_at=1;
 	CHECK(submit()==0);
-	pump(submit_queue->worker);
+	pump(submit_queue->scheduler);
 	CHECK(computed==1 && completed==0 && contexts[1].vm.failed);
 	CHECK(dma_fence_get_status(syncobjs[1].fence)==-EIO);
 	CHECK(dma_fence_get_status(syncobjs[2].fence)==-EIO);
@@ -1287,7 +1349,7 @@ error_and_shutdown(void)
 	syncobjs[1].fence=new_fence(-EIO);
 	add_op(0,1,0,0); add_op(0,2,DRM_PVR_SYNC_OP_FLAG_SIGNAL,0);
 	CHECK(submit()==0);
-	pump(submit_queue->worker);
+	pump(submit_queue->scheduler);
 	CHECK(computed==0 && poisoned==0 && dma_fence_get_status(syncobjs[2].fence)==-EIO);
 	finish();
 
@@ -1310,7 +1372,7 @@ error_and_shutdown(void)
 		add_op(0, 1, timeline, timeline ? 7 : 0);
 		add_op(0, 2, DRM_PVR_SYNC_OP_FLAG_SIGNAL, 0);
 		CHECK(submit() == 0);
-		pump(submit_queue->worker);
+		pump(submit_queue->scheduler);
 		CHECK(computed == 0 && prepared == 0 && poisoned == 0);
 		CHECK(dma_fence_get_status(syncobjs[2].fence) == -EIO);
 		finish();
@@ -1320,8 +1382,8 @@ error_and_shutdown(void)
 	add_op(0,1,DRM_PVR_SYNC_OP_FLAG_SIGNAL,0);
 	CHECK(submit()==0);
 	fence=dma_fence_get(syncobjs[1].fence);
-	mutex_enter(&submit_queue->lock); submit_queue->stopping=true; mutex_exit(&submit_queue->lock);
-	pump(submit_queue->worker);
+	drm_sched_batch_queue_stop(submit_queue->scheduler);
+	pump(submit_queue->scheduler);
 	CHECK(computed==0 && dma_fence_get_status(fence)==-ECANCELED);
 	dma_fence_put(fence);
 	finish();
@@ -1334,12 +1396,12 @@ bounded_admission_and_preflight(void)
 
 	initialize(1);
 	for(i=0;i<8;i++) CHECK(submit()==0);
-	CHECK(submit_queue->reserved==8 && computed==0);
+	CHECK(submit_queue->scheduler->reserved==8 && computed==0);
 	pause_error=EINTR;
-	CHECK(submit()==-EINTR && submit_queue->reserved==8);
+	CHECK(submit()==-EINTR && submit_queue->scheduler->reserved==8);
 	pause_error=0;
-	pump(submit_queue->worker);
-	CHECK(computed==8 && submit_queue->reserved==0);
+	pump(submit_queue->scheduler);
+	CHECK(computed==8 && submit_queue->scheduler->reserved==0);
 	finish();
 
 	for(i=0;i<8;i++) {
@@ -1356,7 +1418,7 @@ bounded_admission_and_preflight(void)
 		case 7: allocation_fault=allocate_calls+3; break;
 		}
 		CHECK(submit()<0 && arguments.jobs.count==0);
-		CHECK(computed==0 && syncobjs[1].fence==NULL && submit_queue->reserved==0);
+		CHECK(computed==0 && syncobjs[1].fence==NULL && submit_queue->scheduler->reserved==0);
 		finish();
 	}
 }
@@ -1371,7 +1433,7 @@ vm_barrier_and_close(void)
 	add_op(0,1,DRM_PVR_SYNC_OP_FLAG_SIGNAL,0);
 	contexts[1].vm.barred=2;
 	CHECK(submit()==0 && polls==2 && contexts[1].vm.holds==2);
-	pump(submit_queue->worker);
+	pump(submit_queue->scheduler);
 	CHECK(computed==2 && contexts[1].vm.holds==0 && dma_fence_get_status(syncobjs[1].fence)==1);
 	finish();
 	/* A barrier that never lifts times out and leaves nothing held or queued. */
@@ -1379,7 +1441,7 @@ vm_barrier_and_close(void)
 	add_op(0,1,DRM_PVR_SYNC_OP_FLAG_SIGNAL,0);
 	contexts[1].vm.barred=UINT_MAX;
 	CHECK(submit()==-ETIMEDOUT && contexts[1].vm.holds==0 && computed==0);
-	CHECK(submit_queue->worker->n==0 && syncobjs[1].fence==NULL);
+	CHECK(spsc_queue_count(&submit_queue->scheduler->entity.job_queue)==0 && syncobjs[1].fence==NULL);
 	finish();
 	/* Work queued by a file that then closed is cancelled, never executed. */
 	initialize(1);
@@ -1387,21 +1449,186 @@ vm_barrier_and_close(void)
 	CHECK(submit()==0);
 	queued=dma_fence_get(syncobjs[1].fence);
 	contexts[1].vm.closed=true;
-	pump(submit_queue->worker);
+	pump(submit_queue->scheduler);
 	CHECK(computed==0 && prepared==0 && dma_fence_get_status(queued)==-ECANCELED);
 	CHECK(contexts[1].vm.holds==0 && !contexts[1].vm.failed);
 	dma_fence_put(queued);
 	finish();
 }
 
+static void
+scheduler_failure_and_admission_stop(void)
+{
+	struct pvr_submit_queue *failed_queue=NULL;
+	struct dma_fence *previous;
+	struct worker_args waiter;
+	pthread_t thread;
+	unsigned i;
+
+	/* A failed native thread create leaves neither queue nor kernel objects. */
+	model_fail_kthread=true;
+	CHECK(pvr_submit_queue_create(&device,&failed_queue)==ENOMEM);
+	model_fail_kthread=false;
+	CHECK(failed_queue==NULL && atomic_load(&allocations)==0);
+	CHECK(atomic_load(&model_conditions)==0 && atomic_load(&model_locks)==0);
+
+	/* Scheduler job allocation happens before any user fence is published. */
+	initialize(1);
+	add_op(0,1,DRM_PVR_SYNC_OP_FLAG_SIGNAL,0);
+	syncobjs[1].fence=previous=new_fence(1);
+	model_fail_slab_alloc=true;
+	CHECK(submit()==-ENOMEM && arguments.jobs.count==0);
+	model_fail_slab_alloc=false;
+	CHECK(syncobjs[1].fence==previous && dma_fence_get_status(previous)==1);
+	CHECK(computed==0 && signals==0 && submit_queue->scheduler->users==0);
+	finish();
+
+	/* Stopping wakes a blocked admission path through its next bounded poll. */
+	initialize(1);
+	for (i=0;i<8;i++) CHECK(submit()==0);
+	concurrent=true;
+	waiter=(struct worker_args){arguments,0};
+	CHECK(pthread_create(&thread,NULL,worker,&waiter)==0);
+	CHECK(pthread_mutex_lock(&rendezvous)==0);
+	while (!waiter_entered) CHECK(pthread_cond_wait(&changed,&rendezvous)==0);
+	CHECK(pthread_mutex_unlock(&rendezvous)==0);
+	CHECK(submit_queue->scheduler->reserved==8 && submit_queue->scheduler->users==9);
+	drm_sched_batch_queue_stop(submit_queue->scheduler);
+	CHECK(pthread_mutex_lock(&rendezvous)==0);
+	waiter_released=true;
+	CHECK(pthread_cond_broadcast(&changed)==0);
+	CHECK(pthread_mutex_unlock(&rendezvous)==0);
+	CHECK(pthread_join(thread,NULL)==0);
+	CHECK(waiter.result==-ENXIO && waiter.args.jobs.count==0);
+	CHECK(submit_queue->scheduler->users==8 && submit_queue->scheduler->reserved==8);
+	pump(submit_queue->scheduler);
+	CHECK(computed==0 && submit_queue->scheduler->users==0);
+	finish();
+}
+
+struct drain_submit {
+	struct worker_args work;
+	enum drain_actor actor;
+};
+static void *drain_submit_thread(void *cookie)
+{
+	struct drain_submit *submit=cookie;
+	drain_actor=submit->actor;
+	return worker(&submit->work);
+}
+static void *drain_destroy_thread(void *cookie)
+{
+	drain_destroyer=true;
+	pvr_submit_queue_destroy(cookie);
+	CHECK(pthread_mutex_lock(&drain_lock)==0);
+	drain_destroy_done=true;
+	CHECK(pthread_cond_broadcast(&drain_changed)==0);
+	CHECK(pthread_mutex_unlock(&drain_lock)==0);
+	return NULL;
+}
+static void drain_still_waiting(struct drm_sched_batch_queue *queue,unsigned users)
+{
+	mutex_enter(&queue->lock);
+	CHECK(queue->stopping && queue->users==users && queue->reserved==users);
+	mutex_exit(&queue->lock);
+	CHECK(pthread_mutex_lock(&drain_lock)==0);
+	CHECK(drain_destroy_waiting && !drain_destroy_done);
+	CHECK(pthread_mutex_unlock(&drain_lock)==0);
+}
+
+static void
+combined_destroy_drain(void)
+{
+	struct drain_submit capture, admission;
+	struct drm_pvr_ioctl_submit_jobs_args active;
+	struct drm_sched_batch_queue *queue;
+	struct dma_fence *output;
+	struct spsc_node *node;
+	pthread_t capture_thread, admission_thread, destroy_thread;
+	unsigned i;
+
+	initialize(2);
+	drain_test=true;
+	queue=submit_queue->scheduler;
+	drain_scheduler=queue->scheduler.thread;
+	add_op(0,1,DRM_PVR_SYNC_OP_FLAG_SIGNAL,0);
+	jobs[1].context_handle=2;
+	add_op(1,3,0,0); /* No payload: this prepared ioctl waits in real capture. */
+	add_op(1,2,DRM_PVR_SYNC_OP_FLAG_SIGNAL,0);
+	active=(struct drm_pvr_ioctl_submit_jobs_args){{48,1,(uintptr_t)&jobs[0]}};
+	capture=(struct drain_submit){
+	    .work={{{48,1,(uintptr_t)&jobs[1]}},0}, .actor=DRAIN_CAPTURE};
+	CHECK(pthread_create(&capture_thread,NULL,drain_submit_thread,&capture)==0);
+	drain_wait(&drain_entered[DRAIN_CAPTURE]);
+	CHECK(contexts[2].refs==2 && syncobjs[2].fence==NULL);
+	CHECK(pvr_submit_jobs(&device,&active,&file)==0);
+	output=dma_fence_get(syncobjs[1].fence);
+	for (i=1;i<7;i++) CHECK(pvr_submit_jobs(&device,&active,&file)==0);
+	CHECK(queue->reserved==8 && queue->users==8);
+	node=spsc_queue_peek(&queue->entity.job_queue);
+	for (i=0;i<7;i++) {
+		CHECK(node!=NULL);
+		drain_owners[i]=container_of(node,struct drm_sched_job,queue_node)->s_fence->owner;
+		node=node->next;
+	}
+	CHECK(node==NULL);
+	admission=(struct drain_submit){.work={active,0}, .actor=DRAIN_ADMISSION};
+	CHECK(pthread_create(&admission_thread,NULL,drain_submit_thread,&admission)==0);
+	drain_wait(&drain_entered[DRAIN_ADMISSION]);
+	CHECK(queue->reserved==8 && queue->users==9);
+	model_kthread_autorun(drain_scheduler);
+	drain_wait(&drain_entered[DRAIN_HARDWARE]);
+	CHECK(computed==1 && dma_fence_get_status(output)==0);
+
+	/* All API entrants have reached reserve. The owner admits no new ioctl. */
+	CHECK(pthread_create(&destroy_thread,NULL,drain_destroy_thread,submit_queue)==0);
+	drain_wait(&drain_destroy_waiting);
+	mutex_enter(&queue->lock);
+	CHECK(queue->stopping && queue->reserved==8 && queue->users==9);
+	mutex_exit(&queue->lock);
+	drain_release(DRAIN_ADMISSION);
+	CHECK(pthread_join(admission_thread,NULL)==0);
+	CHECK(admission.work.result==-ENXIO && admission.work.args.jobs.count==0);
+	drain_still_waiting(queue,8);
+	drain_release(DRAIN_CAPTURE);
+	CHECK(pthread_join(capture_thread,NULL)==0);
+	CHECK(capture.work.result==-ENXIO && capture.work.args.jobs.count==0);
+	CHECK(contexts[2].refs==1 && syncobjs[2].fence==NULL);
+	drain_still_waiting(queue,7);
+	CHECK(dma_fence_get_status(output)==0);
+	for (i=0;i<7;i++) CHECK(drain_frees[i]==0);
+
+	drain_release(DRAIN_HARDWARE);
+	CHECK(pthread_join(destroy_thread,NULL)==0);
+	submit_queue=NULL;
+	CHECK(drain_destroy_done && computed==1 && completed==0 && poisoned==1);
+	CHECK(contexts[1].vm.failed && contexts[1].vm.holds==0 && contexts[1].refs==1);
+	for (i=0;i<7;i++) CHECK(drain_frees[i]==1);
+	CHECK(dma_fence_get_status(syncobjs[1].fence)==-ECANCELED);
+	/* The retained output owns neither the freed batch nor its queue. */
+	CHECK(dma_fence_get_status(output)==-EIO);
+	CHECK(strcmp(output->ops->get_driver_name(output),"drm_batch")==0);
+	CHECK(strcmp(output->ops->get_timeline_name(output),"drm_batch")==0);
+	CHECK(dma_fence_wait(output,false)==0);
+	dma_fence_put(dma_fence_get(output));
+	dma_fence_put(output);
+	drain_test=false;
+	finish_references();
+}
+
 int main(void)
 {
+	model_manual_kthreads=true;
+	CHECK(drm_sched_fence_slab_init()==0);
 	ge_submit_profile(); triple_cases(); success_cases(); transfer_cases(); preflight_cases(); error_cases(); backend_lifetime_case(); paired_dependencies(); forward_dependencies(); producer_search_bounds(); concurrency_case();
 	pending_fence_and_lifetime();
 	batch_dependencies_and_pair();
 	error_and_shutdown();
 	bounded_admission_and_preflight();
 	vm_barrier_and_close();
+	scheduler_failure_and_admission_stop();
+	combined_destroy_drain();
+	drm_sched_fence_slab_fini();
 	printf("pvr async submit: %u checks passed\n",atomic_load(&checks));
 	return 0;
 }
