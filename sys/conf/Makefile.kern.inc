@@ -71,6 +71,10 @@ CPPFLAGS+=	${INCLUDES} ${IDENT} -D_KERNEL -D_KERNEL_OPT
 .for _littlefs_file in ${ALLFILES:T:Mlittlefs_*.c}
 CPPFLAGS.${_littlefs_file}+= -I${EMBER_LITTLEFS_SOURCE}
 .endfor
+# Upstream lfs.c uses block-local error variables that shadow outer ones.
+# It also reads TAIL attributes through non-const casts without changing them.
+# Clang reports lfs_mlist_isopen when LFS_ASSERT does not emit a call.
+# Keep these exceptions on the upstream wrapper; retain adapter diagnostics.
 CWARNFLAGS.littlefs_core.c+= -Wno-shadow -Wno-cast-qual \
     ${${ACTIVE_CC} == "clang":? -Wno-unneeded-internal-declaration :}
 .endif
