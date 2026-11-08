@@ -187,10 +187,14 @@ observed entry words. A zero entry count alone does not establish that an
 on-air frame was absent or that the live callbacks remained bound. It reads no
 packet fields or payloads. It also samples the S31 hardware RX statistics
 through the pinned IDF getter at successful radio start and at the window
-boundaries. It reports modulo-16-bit deltas for MPDU, end, successful-data,
-error, buffer-full, and FIFO-overflow counters; it does not clear counters or
-change radio mode or filters. If the radio is stopped before a snapshot, the
-hardware delta is reported unavailable. Allocator output reports internal-pool
-request accounting, including initialization totals and window boundary
-totals; it does not identify whether a caller's field was `_internal` or
-`_wifi_*`. This option requires `--vendor-debug-once` and is off by default.
+boundaries. It reports modulo-16-bit deltas for the fields `rx_mpdu`,
+`rx_end_cnt`, `rx_datasuc`, `rx_fcs_err`, `rx_abort`, `nrx_err_pwrdrop`,
+`rx_buf_fullcnt`, and `rx_fifo_ovfcnt`; it does not clear counters or change
+radio mode or filters. The pinned vendor header does not document the
+increment conditions or frame types for these fields. Treat a delta as
+hardware-stat activity only: it does not establish receipt of a particular
+802.11 frame or EAPOL. If the radio is stopped before a snapshot, the hardware
+delta is reported unavailable. Allocator output reports internal-pool request
+accounting, including initialization totals and window boundary totals; it
+does not identify whether a caller's field was `_internal` or `_wifi_*`. This
+option requires `--vendor-debug-once` and is off by default.
