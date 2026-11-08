@@ -1,0 +1,44 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\" Copyright (c) 2026 EmberBSD contributors.
+.Dd November 8, 2026
+.Dt DMA_FENCE_CHAIN_GET_PAYLOAD_STATUS 9
+.Os
+.Sh NAME
+.Nm dma_fence_chain_get_payload_status
+.Nd get the status of a fence-chain point and its nested payload
+.Sh SYNOPSIS
+.In linux/dma-fence-chain.h
+.Ft int
+.Fn dma_fence_chain_get_payload_status "struct dma_fence *fence"
+.Sh DESCRIPTION
+.Fn dma_fence_chain_get_payload_status
+reads the status of one selected fence, including nested chain payloads.
+The caller must hold a reference to the non-NULL
+.Fa fence
+and must not hold a fence lock.
+The function borrows the reference and does not consume it.
+The outer reference keeps each immutable chain payload alive.
+.Pp
+A pending fence returns zero, even when an error has already been set.
+A completed fence with an error returns that error.
+A successfully completed chain is unwrapped and its payload is checked.
+A successfully completed non-chain fence returns one.
+The first completed error from outer to inner takes precedence.
+.Pp
+Previous timeline points still gate completion but do not supply the selected
+point's error.
+Completed previous points may already have been collected.
+Other fence types, including arrays, retain their own status semantics.
+The function does not flatten them or change any fence's error field.
+The payload walk is iterative; underlying signaling probes are unchanged.
+.Pp
+This function is a native DRM compatibility extension.
+It does not change the behavior of
+.Fn dma_fence_get_status .
+.Sh RETURN VALUES
+The function returns zero for pending work, one for success, or a negative
+error code for completed work that failed.
+.Sh HISTORY
+The
+.Fn dma_fence_chain_get_payload_status
+function first appeared in EmberBSD.

@@ -539,25 +539,6 @@ pvr_submit_references(struct drm_device *dev, struct drm_file *file,
 	return 0;
 }
 
-/* A native chain's base does not inherit its contained fence's error. */
-static int
-pvr_submit_fence_status(struct dma_fence *fence)
-{
-	struct dma_fence_chain *chain;
-	int status;
-
-	for (;;) {
-		status = dma_fence_get_status(fence);
-		if (status <= 0)
-			return status;
-		chain = to_dma_fence_chain(fence);
-		if (chain == NULL)
-			return status;
-		/* The held outer fence reference keeps this immutable child live. */
-		fence = chain->dfc_fence;
-	}
-}
-
 /* References and copied sync arrays stay live while both gates are released. */
 static int
 pvr_submit_producer(const struct pvr_submit_batch *batch, uint32_t first,
@@ -711,7 +692,7 @@ pvr_submit_wait(struct pvr_submit_batch *batch, struct pvr_submit_job *job)
 			if (pvr_submit_stopping(batch->queue) ||
 			    (job->vm != NULL && pvr_file_vm_closed(job->vm)))
 				return ECANCELED;
-			status = pvr_submit_fence_status(fence);
+			status = dma_fence_chain_get_payload_status(fence);
 			if (status != 0) {
 				if (status < 0)
 					return -status;

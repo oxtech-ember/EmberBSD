@@ -114,6 +114,11 @@ static bool dma_fence_is_signaled(struct dma_fence *f)
 		dma_fence_signal(f);
 	return f->signaled;
 }
+static int dma_fence_get_status(struct dma_fence *f)
+{
+	if (!dma_fence_is_signaled(f)) return 0;
+	return f->error ? f->error : 1;
+}
 static int dma_fence_add_callback(struct dma_fence *f, struct dma_fence_cb *cb,
     void (*fn)(struct dma_fence *, struct dma_fence_cb *))
 {

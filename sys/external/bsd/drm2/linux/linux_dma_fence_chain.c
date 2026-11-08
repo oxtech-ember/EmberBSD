@@ -2,6 +2,7 @@
 
 /*-
  * Copyright (c) 2021 The NetBSD Foundation, Inc.
+ * Copyright (c) 2026 EmberBSD contributors.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -202,6 +203,39 @@ to_dma_fence_chain(struct dma_fence *fence)
 	if (fence == NULL || fence->ops != &dma_fence_chain_ops)
 		return NULL;
 	return container_of(fence, struct dma_fence_chain, base);
+}
+
+/*
+ * dma_fence_chain_get_payload_status(fence)
+ *
+ *	AI-assisted extraction of the native pvr_submit payload status check.
+ *
+ *	Native extension.  Caller holds a reference to the nonnull fence and
+ *	holds no fence lock.  Return 0 until the selected point completes.
+ *	Then return its first negative status, from outer to inner payload,
+ *	or 1 on success.  A chain base does not inherit its payload's error.
+ *
+ *	Previous timeline points gate completion but do not supply errors.
+ *	They may already have been collected.  Only nested chain payloads
+ *	are unwrapped; other fence types keep their own status semantics.
+ *	This does not change dma_fence_get_status or any fence's error field.
+ */
+int
+dma_fence_chain_get_payload_status(struct dma_fence *fence)
+{
+	struct dma_fence_chain *chain;
+	int status;
+
+	for (;;) {
+		status = dma_fence_get_status(fence);
+		if (status <= 0)
+			return status;
+		chain = to_dma_fence_chain(fence);
+		if (chain == NULL)
+			return status;
+		/* The held outer reference keeps each immutable payload live. */
+		fence = chain->dfc_fence;
+	}
 }
 
 /*

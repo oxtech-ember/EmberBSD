@@ -1,6 +1,6 @@
 # A733 native PowerVR execution
 
-The native driver now has an experimental synchronous compute submission path.
+The native driver has an experimental queued compute submission path.
 It connects firmware memory, per-file VMs, execution contexts, free lists, and syncobjs.
 Production-source contracts pass with native DMA and firmware boundary models.
 Three physical Vulkan compute lifecycles pass on Zero 3W.
@@ -72,10 +72,19 @@ A transfer job uses the existing transfer-context sender and its completion chec
 KICK accepts a zero return word or `CMD_EXECUTED`; unknown return bits fail.
 Neither word proves job completion. CLEANUP keeps its synchronous return-word check.
 Success requires queue consumption, the expected UFO value, and fresh firmware health.
-Only that success publishes a completed binary fence or timeline point.
-A failure leaves the current and later signal operations unsignaled.
-`jobs.count` reports the failing job index, or the completed count on success.
-An interrupted wait returns `EINTR`; it must not restart an already partially completed batch.
+Admission captures all dependencies before publishing any output fences and enqueuing the batch.
+On successful admission, `jobs.count` reports the submitted count; it does not report GPU completion.
+Admission failure leaves `jobs.count` zero and publishes no output fences.
+The worker signals each output after completion, outside the execution gates.
+A failed operation signals its remaining batch outputs with a negative error.
+Dependency errors, including nested timeline payload errors, use the
+[common fence-chain status contract](../../../../external/bsd/drm2/linux/docs/dma-fence-chain.md).
+They prevent VM preparation and GPU execution for the dependent job.
+An interrupted admission wait returns `EINTR` before publication.
+
+The queue still owns driver-local admission, dependency, wait and cancellation policy.
+Its transition to the common scheduler remains incomplete.
+See the [shared submission boundary](../../../../external/bsd/drm2/drm/docs/drm-submit.md).
 
 ## VM and DMA changes
 

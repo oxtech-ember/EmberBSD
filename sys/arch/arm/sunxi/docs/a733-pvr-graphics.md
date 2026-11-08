@@ -115,14 +115,15 @@ CCCB consumption, the expected UFO value, fresh health and VM synchronization
 must all succeed before results are published. CLEANUP keeps its strict
 acknowledgement. Unknown completion retains backing objects and the batch.
 
-The synchronous path returns `EDEADLK` for an unpublished self or forward
+Admission returns `EDEADLK` for an unpublished self or forward
 dependency that only a later job can satisfy. A later timeline signal can
 satisfy an earlier point, but only the exact pair uses FENCE_PR ordering.
 Published external fences retain normal waits and errors even if this batch
 signals the same object again. Each batch permits at most `1 << 20` job and
 sync visits, including empty jobs. Exhaustion returns `E2BIG`.
 These are implementation limits, not firmware or UAPI limits.
-The returned job count reports partial progress after an earlier completion.
+The returned job count reports the admitted batch size, not partial GPU progress.
+Admission failure returns zero jobs and publishes no output fences.
 
 ## Native transfer submission
 
@@ -132,8 +133,9 @@ and malformed streams before execution. Job types retain all 32 UAPI bits;
 unknown high values cannot alias a supported opcode.
 External waits, retained context/VM references, PRE synchronization and
 firmware completion remain required. Only successful completion performs
-POST synchronization and publishes output fences. Failure marks the VM
-uncertain and prevents premature backing-memory release.
+POST synchronization and signals the previously published output fences.
+Execution errors signal failed fences. Uncertain DMA completion retains backing memory.
+A dependency failure skips VM preparation and GPU execution.
 
 Actual-source contracts cover mixed compute/transfer order, copy and
 allocation errors, malformed admission, external fences, interruption,

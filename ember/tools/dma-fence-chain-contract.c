@@ -14,6 +14,9 @@ static unsigned checks, live, released, notifications, arms, irqs;
 	fprintf(stderr, "FAIL line %d: %s\n", __LINE__, #e); abort(); \
 } } while (0)
 #define KASSERT(e) CHECK(e)
+#define KASSERTMSG(e, ...) CHECK(e)
+#define FENCE_MAGIC_GOOD 1
+#define FENCE_MAGIC_BAD 2
 #define container_of(p, t, m) ((t *)((char *)(p) - offsetof(t, m)))
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 #ifndef __KERNEL_RCSID
@@ -43,6 +46,7 @@ struct dma_fence {
 	uint64_t context, seqno;
 	struct dma_fence_cb *callbacks;
 	bool signaled, enabled;
+	int error, f_magic;
 };
 struct irq_work {
 	void (*fn)(struct irq_work *);
@@ -91,6 +95,7 @@ static void dma_fence_init(struct dma_fence *f, const struct dma_fence_ops *ops,
 {
 	f->ops = ops; f->lock = l; f->context = context; f->seqno = seqno;
 	f->refcount.value = 1;
+	f->f_magic = FENCE_MAGIC_GOOD;
 }
 static void dma_fence_signal_locked(struct dma_fence *f)
 {
@@ -105,13 +110,22 @@ static void dma_fence_signal_locked(struct dma_fence *f)
 }
 static void dma_fence_signal(struct dma_fence *f)
 { spin_lock(f->lock); dma_fence_signal_locked(f); spin_unlock(f->lock); }
-static bool dma_fence_is_signaled(struct dma_fence *f)
+static bool dma_fence_is_signaled_locked(struct dma_fence *f)
 {
-	CHECK(f != NULL && f->refcount.value != 0);
+	CHECK(f != NULL && f->refcount.value != 0 && f->lock->held);
 	if (!f->signaled && f->ops->signaled != NULL && f->ops->signaled(f))
-		dma_fence_signal(f);
+		dma_fence_signal_locked(f);
 	return f->signaled;
 }
+static bool dma_fence_is_signaled(struct dma_fence *f)
+{
+	bool signaled;
+	spin_lock(f->lock);
+	signaled = dma_fence_is_signaled_locked(f);
+	spin_unlock(f->lock);
+	return signaled;
+}
+#include "dma-fence-status-body.h"
 static int dma_fence_add_callback(struct dma_fence *f, struct dma_fence_cb *cb,
     void (*fn)(struct dma_fence *, struct dma_fence_cb *))
 {
@@ -313,6 +327,80 @@ static void deep_payload_release(void)
 	clean();
 }
 
+/* Losing the payload walk hides a failed dependency behind a successful base. */
+static void payload_status(void)
+{
+	struct dma_fence *leaf = new_leaf(false), *previous = new_leaf(false);
+	struct dma_fence_chain *inner = new_chain(NULL, leaf, 7);
+	struct dma_fence_chain *outer = new_chain(previous, &inner->base, 9);
+
+	CHECK(dma_fence_chain_get_payload_status(leaf) == 0);
+	CHECK(dma_fence_chain_get_payload_status(&outer->base) == 0);
+	leaf->error = -EIO;
+	/* An error is not a completion until the fence signals. */
+	CHECK(dma_fence_chain_get_payload_status(&outer->base) == 0);
+	dma_fence_signal(leaf);
+	CHECK(dma_fence_chain_get_payload_status(leaf) == -EIO);
+	/* The previous point still gates completion, even with a failed payload. */
+	CHECK(dma_fence_chain_get_payload_status(&outer->base) == 0);
+	dma_fence_signal(previous);
+	CHECK(dma_fence_get_status(&outer->base) == 1);
+	CHECK(dma_fence_chain_get_payload_status(&outer->base) == -EIO);
+	/* The caller's outer reference alone keeps nested payloads alive. */
+	dma_fence_put(leaf);
+	dma_fence_put(&inner->base);
+	dma_fence_put(previous);
+	CHECK(dma_fence_chain_get_payload_status(&outer->base) == -EIO);
+	dma_fence_put(&outer->base);
+	clean();
+}
+
+static void payload_status_precedence(void)
+{
+	struct dma_fence *leaf = new_leaf(false), *previous = new_leaf(false);
+	struct dma_fence_chain *inner = new_chain(NULL, leaf, 7);
+	struct dma_fence_chain *outer = new_chain(NULL, &inner->base, 9);
+
+	leaf->error = -EIO;
+	inner->base.error = -ECANCELED;
+	outer->base.error = -ETIMEDOUT;
+	CHECK(dma_fence_chain_get_payload_status(&outer->base) == 0);
+	dma_fence_signal(leaf);
+	CHECK(dma_fence_chain_get_payload_status(&outer->base) == -ETIMEDOUT);
+	CHECK(dma_fence_chain_get_payload_status(&inner->base) == -ECANCELED);
+	dma_fence_put(&outer->base);
+	dma_fence_put(&inner->base);
+	dma_fence_put(leaf);
+	/* Previous timeline errors are not the selected point's payload status. */
+	leaf = new_leaf(true);
+	previous->error = -EIO;
+	dma_fence_signal(previous);
+	outer = new_chain(previous, leaf, 10);
+	CHECK(dma_fence_chain_get_payload_status(&outer->base) == 1);
+	CHECK(dma_fence_chain_get_payload_status(leaf) == 1);
+	dma_fence_put(previous);
+	dma_fence_put(leaf);
+	dma_fence_put(&outer->base);
+	clean();
+}
+
+static void deep_payload_status(void)
+{
+	struct dma_fence *f = new_leaf(false);
+	f->error = -EIO;
+	dma_fence_signal(f);
+	for (unsigned n = 1; n <= 20000; n++) {
+		struct dma_fence_chain *c = new_chain(NULL, f, n);
+		/* Each payload already completed; avoid recursive signaling probes. */
+		dma_fence_signal(&c->base);
+		dma_fence_put(f);
+		f = &c->base;
+	}
+	CHECK(dma_fence_chain_get_payload_status(f) == -EIO);
+	dma_fence_put(f);
+	clean();
+}
+
 int main(void)
 {
 	single_pending();
@@ -320,6 +408,7 @@ int main(void)
 	pending_predecessors(false, true); pending_predecessors(true, true);
 	already_signaled_and_race(false); already_signaled_and_race(true);
 	all_signaled(); traversal_and_release(); deep_payload_release();
+	payload_status(); payload_status_precedence(); deep_payload_status();
 	CHECK(irqs != 0 && released != 0);
 	printf("native fence chain: %u checks, %u releases, %u deferred IRQs\n",
 	    checks, released, irqs);

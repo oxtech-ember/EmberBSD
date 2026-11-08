@@ -186,6 +186,7 @@ static int dma_fence_get_status(struct dma_fence *f)
 	}
 	return f->status;
 }
+#include "dma-fence-payload-status-body.h"
 static unsigned rendered;
 static int dma_fence_chain_find_seqno(struct dma_fence **fp,uint64_t seqno)
 {
@@ -1289,6 +1290,31 @@ error_and_shutdown(void)
 	pump(submit_queue->worker);
 	CHECK(computed==0 && poisoned==0 && dma_fence_get_status(syncobjs[2].fence)==-EIO);
 	finish();
+
+	/* Binary transfers and timeline points can both retain nested chains. */
+	for (unsigned timeline = 0; timeline < 2; timeline++) {
+		initialize(1);
+		fence = new_fence(-EIO);
+		for (unsigned depth = 0; depth < 3; depth++) {
+			struct dma_fence_chain *chain = calloc(1, sizeof(*chain));
+			CHECK(chain != NULL);
+			atomic_fetch_add(&allocations, 1);
+			atomic_fetch_add(&fence_count, 1);
+			atomic_init(&chain->base.refs, 1);
+			chain->base.chain = true;
+			chain->base.seqno = 7;
+			chain->dfc_fence = fence;
+			fence = &chain->base;
+		}
+		syncobjs[1].fence = fence;
+		add_op(0, 1, timeline, timeline ? 7 : 0);
+		add_op(0, 2, DRM_PVR_SYNC_OP_FLAG_SIGNAL, 0);
+		CHECK(submit() == 0);
+		pump(submit_queue->worker);
+		CHECK(computed == 0 && prepared == 0 && poisoned == 0);
+		CHECK(dma_fence_get_status(syncobjs[2].fence) == -EIO);
+		finish();
+	}
 
 	initialize(1);
 	add_op(0,1,DRM_PVR_SYNC_OP_FLAG_SIGNAL,0);

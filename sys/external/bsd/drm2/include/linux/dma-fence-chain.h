@@ -47,6 +47,8 @@ struct dma_fence_chain {
 };
 
 #define	dma_fence_chain_find_seqno	linux_dma_fence_chain_find_seqno
+#define	dma_fence_chain_get_payload_status \
+	linux_dma_fence_chain_get_payload_status
 #define	dma_fence_chain_init		linux_dma_fence_chain_init
 #define	dma_fence_chain_walk		linux_dma_fence_chain_walk
 #define	to_dma_fence_chain		linux_to_dma_fence_chain
@@ -54,6 +56,8 @@ struct dma_fence_chain {
 void	dma_fence_chain_init(struct dma_fence_chain *, struct dma_fence *,
 	    struct dma_fence *, uint64_t);
 int	dma_fence_chain_find_seqno(struct dma_fence **, uint64_t);
+/* Native extension: status of one point, including nested chain payloads. */
+int	dma_fence_chain_get_payload_status(struct dma_fence *);
 struct dma_fence_chain *
 	to_dma_fence_chain(struct dma_fence *);
 struct dma_fence *

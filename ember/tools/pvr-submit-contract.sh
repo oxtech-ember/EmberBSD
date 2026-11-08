@@ -6,6 +6,9 @@ src=${1:-$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)}
 work=$(mktemp -d "${TMPDIR:-/tmp}/pvr-submit.XXXXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 sed '/^#include /d' "$src/sys/external/bsd/drm2/powervr/pvr_submit.c" > "$work/pvr-submit-body.h"
+{ echo int; sed -n '/^dma_fence_chain_get_payload_status(/,/^}/p' \
+    "$src/sys/external/bsd/drm2/linux/linux_dma_fence_chain.c"; } \
+    > "$work/dma-fence-payload-status-body.h"
 sed '/^#include /d' "$src/sys/external/bsd/drm2/powervr/pvr_drm.h" > "$work/pvr-uapi-body.h"
 sed '/^#include /d' "$src/sys/external/bsd/drm2/powervr/pvr_exec_hwrt.h" \
     > "$work/pvr-exec-hwrt-body.h"

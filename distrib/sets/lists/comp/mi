@@ -12542,6 +12542,7 @@
 ./usr/share/man/cat9/disk_unbusy.0		comp-sys-catman		.cat
 ./usr/share/man/cat9/disklabel.0		comp-sys-catman		.cat
 ./usr/share/man/cat9/dksubr.0			comp-sys-catman		.cat
+./usr/share/man/cat9/dma_fence_chain_get_payload_status.0	comp-sys-catman	.cat
 ./usr/share/man/cat9/dmover.0			comp-sys-catman		.cat
 ./usr/share/man/cat9/dmover_backend_register.0	comp-sys-catman		.cat
 ./usr/share/man/cat9/dmover_backend_unregister.0	comp-sys-catman		.cat
@@ -21433,6 +21434,7 @@
 ./usr/share/man/html9/disk_unbusy.html		comp-sys-htmlman	html
 ./usr/share/man/html9/disklabel.html		comp-sys-htmlman	html
 ./usr/share/man/html9/dksubr.html		comp-sys-htmlman	html
+./usr/share/man/html9/dma_fence_chain_get_payload_status.html	comp-sys-htmlman	html
 ./usr/share/man/html9/dmover.html		comp-sys-htmlman	html
 ./usr/share/man/html9/dmover_backend_register.html	comp-sys-htmlman	html
 ./usr/share/man/html9/dmover_backend_unregister.html	comp-sys-htmlman	html
@@ -30465,6 +30467,7 @@
 ./usr/share/man/man9/disk_unbusy.9		comp-sys-man		.man
 ./usr/share/man/man9/disklabel.9		comp-sys-man		.man
 ./usr/share/man/man9/dksubr.9			comp-sys-man		.man
+./usr/share/man/man9/dma_fence_chain_get_payload_status.9	comp-sys-man	.man
 ./usr/share/man/man9/dmover.9			comp-sys-man		.man
 ./usr/share/man/man9/dmover_backend_register.9	comp-sys-man		.man
 ./usr/share/man/man9/dmover_backend_unregister.9	comp-sys-man		.man
