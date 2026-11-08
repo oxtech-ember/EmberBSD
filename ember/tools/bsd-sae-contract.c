@@ -140,6 +140,10 @@ static int set80211var(void *priv, int op, const void *data, int len)
 	struct request *out;
 	const struct ieee80211req_sae *sae = data;
 	(void)priv;
+	/* ieee80211_ioctl_sae requires an exact envelope and successful copyin
+	 * before validating or dispatching its contents to the provider. */
+	if (op == IEEE80211_IOC_SAE && (!data || len != sizeof(*sae)))
+		return -1;
 	if (calls == 64 || len < 0 || len > 2048) abort();
 	out = &requests[calls++];
 	out->op = op; out->len = len;
@@ -162,8 +166,10 @@ static int set80211var(void *priv, int op, const void *data, int len)
 #ifndef HOSTAPD
 static int set80211param(void *priv, int op, int value)
 {
+	unsigned recorded = calls;
 	int ret = set80211var(priv, op, NULL, 0);
-	requests[calls - 1].value = value;
+	if (calls > recorded)
+		requests[recorded].value = value;
 	return ret;
 }
 static int bsd_set_mediaopt(void *priv, unsigned mask, unsigned mode)
@@ -189,6 +195,45 @@ static int bsd_sta_set(struct bsd_driver_data *drv,
 	void *req, int op) { (void)drv; (void)req; (void)op; return 0; }
 #endif
 #endif
+
+static void test_ioctl_boundaries(void)
+{
+	struct bsd_driver_data drv;
+	struct ieee80211req_sae req;
+	u8 short_data = 0;
+	unsigned recorded;
+	memset(&drv, 0, sizeof(drv)); memset(&req, 0, sizeof(req));
+#ifndef HOSTAPD
+	check(set80211param(&drv, IEEE80211_IOC_SAE, 17) == -1 && calls == 0,
+	    "rejected scalar SAE request cannot underflow an empty request log");
+#endif
+	req.version = IEEE80211_SAE_VERSION; req.generation = 42;
+	req.op = IEEE80211_SAE_AUTH_STATUS; req.len = 2; req.bssid[0] = 2;
+	check(set80211var(&drv, IEEE80211_IOC_SAE, &req, sizeof(req)) == 0 && calls == 1 &&
+	    requests[0].len == sizeof(req) && memcmp(requests[0].data, &req, sizeof(req)) == 0,
+	    "modeled SAE service accepts and records a complete envelope");
+	recorded = calls;
+	check(set80211var(&drv, IEEE80211_IOC_SAE, &req, sizeof(req) - 1) == -1 && calls == recorded,
+	    "modeled SAE service rejects a truncated envelope before recording");
+	check(set80211var(&drv, IEEE80211_IOC_SAE, NULL, 0) == -1 && calls == recorded,
+	    "modeled SAE service rejects a NULL empty request before recording");
+	check(set80211var(&drv, IEEE80211_IOC_SAE, NULL, sizeof(req)) == -1 && calls == recorded,
+	    "modeled SAE service rejects a NULL full-sized request before copyin");
+	check(set80211var(&drv, IEEE80211_IOC_SAE, &short_data, sizeof(short_data)) == -1 && calls == recorded,
+	    "modeled SAE service rejects a short header before payload access");
+	check(set80211var(&drv, IEEE80211_IOC_SAE, &req, sizeof(req) + 1) == -1 && calls == recorded,
+	    "modeled SAE service requires exact envelope size before copying");
+#ifndef HOSTAPD
+	check(set80211param(&drv, IEEE80211_IOC_SAE, 17) == -1 && calls == recorded &&
+	    requests[0].value == 0,
+	    "rejected scalar SAE request cannot overwrite a preceding request record");
+	check(set80211param(&drv, IEEE80211_IOC_PRIVACY, 1) == 0 && calls == recorded + 1 &&
+	    requests[recorded].op == IEEE80211_IOC_PRIVACY && requests[recorded].value == 1 &&
+	    requests[recorded].len == 0,
+	    "ordinary scalar ioctl still records its value without a payload");
+#endif
+	calls = 0; memset(requests, 0, sizeof(requests));
+}
 
 /* PRODUCTION */
 static const struct wpa_driver_ops key_ops = { /* KEY_CALLBACK */
@@ -264,6 +309,7 @@ int main(void)
 	memset(&k, 0, sizeof(k)); k.alg = WPA_ALG_CCMP; k.addr = test_bssid;
 	k.link_id = -1;
 	k.key = key; k.key_len = 16; k.seq = seq; k.seq_len = 6; k.set_tx = 1;
+	test_ioctl_boundaries();
 	check(wpa_driver_bsd_associate(&drv, &p) == 0, "PSK selection remains available on transition-capable provider");
 	clear_calls();
 	check(key_ops.set_key && key_ops.set_key(&drv, &k) == 0 && has_op(IEEE80211_IOC_WPAKEY), "PSK uses legacy key ABI");
@@ -523,6 +569,7 @@ int main(void)
 	struct wpa_driver_set_key_params key;
 	u8 material[16] = { 1 };
 	memset(&drv, 0, sizeof(drv)); memset(&key, 0, sizeof(key));
+	test_ioctl_boundaries();
 	key.alg = WPA_ALG_CCMP; key.key = material; key.key_len = sizeof(material); key.link_id = -1;
 	check(key_ops.set_key && key_ops.set_key(&drv, &key) == 0 && calls == 1 && requests[0].op == IEEE80211_IOC_WPAKEY,
 	    "hostapd and old-header builds retain legacy key installation");

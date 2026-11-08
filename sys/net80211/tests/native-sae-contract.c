@@ -46,8 +46,8 @@ typedef uint64_t u_int64_t;
 #define IEEE80211_ADDR_EQ(a,b) (memcmp(a,b,6)==0)
 #define IEEE80211_ADDR_COPY(a,b) memcpy(a,b,6)
 #define IEEE80211_IS_MULTICAST(a) ((a)[0]&1)
-#define KM_SLEEP 0
-#define KM_NOSLEEP 1
+#define KM_SLEEP 0x00000001
+#define KM_NOSLEEP 0x00000002
 #define M_DONTWAIT 0
 #define M_NOWAIT 0
 #define MT_DATA 0
@@ -110,7 +110,16 @@ static bool fail_alloc, fail_cipher, reject_crypto, cipher_present = true;
 static uint16_t le16dec(const void *v) { const uint8_t *p=v; return p[0]|(uint16_t)p[1]<<8; }
 static void le16enc(void *v, uint16_t n) { uint8_t *p=v; p[0]=n; p[1]=n>>8; }
 static void explicit_memset(void *v, int c, size_t n) { volatile uint8_t *p=v; while(n--) *p++=c; }
-static void *kmem_zalloc(size_t n, int f) { (void)f; return fail_alloc ? NULL : calloc(1,n); }
+static void *kmem_zalloc(size_t n, int f) {
+    assert(n != 0 && (f == KM_SLEEP || f == KM_NOSLEEP));
+    if (f == KM_NOSLEEP && fail_alloc)
+        return NULL;
+    void *p = calloc(1, n);
+    /* kmem(9): KM_SLEEP cannot fail. Host OOM cannot model a kernel return. */
+    if (f == KM_SLEEP && p == NULL)
+        abort();
+    return p;
+}
 static void kmem_free(void *p,size_t n) { (void)n; free(p); }
 static struct m_tag *m_tag_find(struct mbuf *m, unsigned id) {
     for (struct m_tag *t = m->tags; t; t = t->next)
@@ -271,7 +280,16 @@ int main(void){
     struct ifnet ifp={0};struct ieee80211com ic={.ic_bss=&ni,.ic_ifp=&ifp,.ic_opmode=1,
         .ic_flags=18,.ic_opt_ie=selected_rsn,.ic_opt_ie_len=sizeof(selected_rsn),.ic_myaddr={2,0,0,0,0,2}};
     ni.ni_ic=&ic;ni.ni_ucastkey.wk_cipher=&none;for(unsigned i=0;i<4;i++)ic.ic_nw_keys[i].wk_cipher=&none;
-    CHECK(ieee80211_sae_attach(&ic)==0);CHECK(ieee80211_sae_attach(&ic)==EALREADY);
+    /* NOSLEEP pressure must not manufacture a failed sleeping allocation. */
+    fail_alloc=true;
+    CHECK(kmem_zalloc(8,KM_NOSLEEP)==NULL);
+    uint8_t *sleeping=kmem_zalloc(8,KM_SLEEP);
+    CHECK(sleeping!=NULL);
+    CHECK(memcmp(sleeping,(const uint8_t[8]){0},8)==0);
+    kmem_free(sleeping,8);
+    CHECK(ieee80211_sae_attach(&ic)==0);
+    fail_alloc=false;
+    CHECK(ieee80211_sae_attach(&ic)==EALREADY);
     cipher_present=false;CHECK(config(&ic,7)==EOPNOTSUPP);CHECK(ic.ic_sae->generation==0);cipher_present=true;
     CHECK(config(&ic,0)==EINVAL);selected_rsn[20]=0x80;CHECK(config(&ic,7)==EINVAL);
     CHECK(ic.ic_sae->generation==0);selected_rsn[20]=0xc0;CHECK(config(&ic,7)==0);
@@ -403,7 +421,9 @@ int main(void){
     CHECK(config(&ic,12)==0);uint64_t serial=ic.ic_sae->serial;
     ieee80211_sae_state_request(&ic,IEEE80211_S_SCAN);
     CHECK(ic.ic_sae->phase==SAE_CONFIGURED&&ic.ic_sae->serial==serial);
+    unsigned previous_events=events;
     fail_alloc=true;CHECK(ieee80211_new_state(&ic,IEEE80211_S_AUTH,0)==EACCES);fail_alloc=false;
+    CHECK(events==previous_events);
     CHECK(ic.ic_sae->phase==SAE_RETIRED);
     CHECK(config(&ic,13)==0);ieee80211_sae_state_request(&ic,IEEE80211_S_INIT);
     CHECK(ic.ic_sae->phase==SAE_RETIRED);
