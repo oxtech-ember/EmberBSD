@@ -72,6 +72,19 @@ resets, firmware fault or watchdog reasons, unknown flags, firmware faults and
 the other HWR flags keep the previous fail-stop behavior. A733 is unchanged.
 Linux likewise continues after this notification; it has no host action.
 
+GE8300 firmware can request free-list reconstruction after recovery. The
+service validates and copies all IDs from FWCCB command 104 before releasing
+the slot. The DRM owner rebuilds each list before the service replies with
+KCCB command 112. The reply contains the original count and IDs in order.
+The request's HWR counter is not part of the reply. Invalid requests, failed
+rebuilds, and uncertain transport completion freeze the service. See the
+[Linux request and reply](https://github.com/torvalds/linux/blob/v6.15/drivers/gpu/drm/imagination/pvr_free_list.c).
+The contracts exercise the protocol and reject page counts outside the host
+allocation before rebuilding the PFN table. On A133/GE8300, both a fragment
+and a geometry shader access to an unmapped VA left the originating Vulkan
+device lost on its next submit. A fresh Vulkan device rendered and read back
+the expected green pixel after each fault with the backend still running.
+
 For a context reset with a page fault, `PVR_HWR_JOB` matches the firmware
 context, job ID and page catalogue against 16 recent submission slots.
 The type is the DRM job type, including fragment transfers. A missing match

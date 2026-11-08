@@ -13,6 +13,8 @@
 #include "pvr_hwrt.h"
 #define BUS_DMASYNC_PREREAD 1
 #define BUS_DMASYNC_PREWRITE 4
+#define BUS_DMASYNC_POSTREAD 2
+#define BUS_DMASYNC_POSTWRITE 8
 #define KM_SLEEP 0
 #define roundup2(x,n) (((x)+(n)-1)&~((n)-1))
 #ifndef __arraycount
@@ -104,6 +106,11 @@ static int model_free(void *cookie,struct pvr_fw_object *obj)
 static void model_sync(void *cookie,struct pvr_fw_object *obj,int operations)
 {
 	struct model *m=cookie;
+	if (operations == (BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE)) {
+		CHECK(find_slot(m,obj)->pre);
+		find_slot(m,obj)->pre=false;
+		return;
+	}
 	CHECK(operations==(BUS_DMASYNC_PREWRITE|BUS_DMASYNC_PREREAD));
 	find_slot(m,obj)->pre=true;
 }
@@ -427,8 +434,31 @@ ge_format_v1(void)
 	}
 }
 
+static void
+reconstruction(void)
+{
+	struct model m;
+	struct pvr_hwrt *owner = NULL;
+	struct pvr_hwrt_config c = config(1);
+	struct rogue_fwif_hwrtdata *data[2];
+	unsigned int i;
+
+	init_model(&m);
+	CHECK(pvr_hwrt_create(&m.backend, &c, &owner) == 0);
+	for (i = 0; i < 2; i++) {
+		data[i] = target(&m, owner, i);
+		data[i]->hwrt_data_flags = HWRTDATA_HAS_LAST_GEOM | 1;
+	}
+	CHECK(pvr_hwrt_reconstruct(owner) == 0);
+	for (i = 0; i < 2; i++) {
+		CHECK(data[i]->state == ROGUE_FWIF_RTDATA_STATE_HWR);
+		CHECK(data[i]->hwrt_data_flags == 1);
+	}
+	finish(&m, &owner);
+}
+
 int main(void)
 {
-	ge_format_v1(); success_cases(); allocation_cases(); descriptor_cases(); cleanup_cases(); validation_cases();
+	reconstruction(); ge_format_v1(); success_cases(); allocation_cases(); descriptor_cases(); cleanup_cases(); validation_cases();
 	printf("pvr HWRT: %u checks passed\n",checks); return 0;
 }

@@ -31,6 +31,7 @@ int pvr_submit_jobs(struct drm_device *, void *, struct drm_file *);
 struct idr;
 struct pvr_exec_freelist;
 struct pvr_exec_freelist_info {
+	struct pvr_freelist *firmware;
 	struct pvr_file_vm *vm;
 	uint32_t fw_address;
 	uint32_t initial_pages, current_pages, max_pages;

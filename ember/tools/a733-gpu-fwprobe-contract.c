@@ -1414,6 +1414,40 @@ reset_event(uint32_t context, uint32_t reason, uint32_t dm, uint32_t flags)
 	fw32(3, FCONTROL, (service.fw_read_offset + 1) & 31);
 }
 
+/* FW104 carries count, HWR counter, then firmware-assigned free-list IDs. */
+static void
+reconstruct_event_tests(void)
+{
+	struct pvr_fwqueue_event event;
+
+	for (unsigned int n = 0; n < 7; n++) {
+		prepare_service();
+		service.reconstruct_events = n != 1;
+		fw32(3, FCOMMAND, ROGUE_FWIF_FWCCB_CMD_FREELISTS_RECONSTRUCTION);
+		fw32(3, FCOMMAND + 4, n == 5 ? 1 : 0);
+		fw32(3, FCOMMAND + 8, n == 2 ? 19 : n == 6 ? 0 : 2);
+		fw32(3, FCOMMAND + 12, 37);
+		fw32(3, FCOMMAND + 16, 9);
+		fw32(3, FCOMMAND + 20, n == 3 ? 0 : n == 4 ? 0x80000001 : 8);
+		fw32(3, FCONTROL, 1);
+		if (n != 0) {
+			CHECK(pvr_fwqueue_next(&owner, &booted, &service, &event) != 0);
+			CHECK(service.failed && event_read_writes == 0);
+			continue;
+		}
+		CHECK(pvr_fwqueue_next(&owner, &booted, &service, &event) == 0);
+		CHECK(event.reconstruct.freelist_count == 2 &&
+		    event.reconstruct.freelist_ids[0] == 9 &&
+		    event.reconstruct.freelist_ids[1] == 8 && event_read_writes == 1);
+		next_service(ROGUE_FWIF_KCCB_CMD_FREELISTS_RECONSTRUCTION_UPDATE);
+		test_command.cmd_data.free_lists_reconstruction_data = event.reconstruct;
+		response = 0;
+		CHECK(run_service() == EOPNOTSUPP);
+		service.sending_reconstruction = true;
+		CHECK(run_service() == 0 && result.published && result.after.rtn == 0);
+	}
+}
+
 /* Per-context recovery is admitted only after an explicit queue opt-in. */
 static void
 reset_event_tests(void)
@@ -1981,6 +2015,7 @@ main(void)
 	combined_tests();
 	event_tests();
 	reset_event_tests();
+	reconstruct_event_tests();
 	/* No real device ran. The test alone owns final reclamation. */
 	for (unsigned int i = 0; i < 5; i++) {
 		free(cpu[i]);

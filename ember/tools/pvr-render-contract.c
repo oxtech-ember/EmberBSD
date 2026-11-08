@@ -312,6 +312,7 @@ struct pvr_freelist {
 	unsigned prepares, completions;
 };
 #if PVR_REGISTRY_TEST
+static int pvr_freelist_reconstruct(struct pvr_freelist *fl) { return fl == NULL ? EIO : 0; }
 static int pvr_freelist_grow_prepare(struct pvr_freelist *,
     struct rogue_fwif_freelist_gs_data *);
 static int pvr_freelist_grow_complete(struct pvr_freelist *, int);
@@ -512,6 +513,12 @@ registry_tests(struct drm_device *dev)
 	(void)pvr_device_enter(dev);
 	CHECK(events->cookie == sc);
 	CHECK(pvr_device_freelist_add(dev, 0, &alien) == EINVAL);
+	{
+		uint64_t bvnc = sc->bvnc;
+		sc->bvnc = PVR_GE8300_BVNC;
+		CHECK(pvr_device_freelist_add(dev, UINT32_MAX, &alien) == EOVERFLOW);
+		sc->bvnc = bvnc;
+	}
 	CHECK(pvr_device_freelist_add(dev, 1, NULL) == EINVAL);
 	alien = &objects[0];
 	CHECK(pvr_device_freelist_add(dev, 1, &alien) == EINVAL);
@@ -528,6 +535,8 @@ registry_tests(struct drm_device *dev)
 		CHECK(sc->grow_pending == NULL);
 		slots[i] = &objects[i];
 		objects[i].prepare_error = ENOMEM;
+		CHECK(events->reconstruct(events->cookie, id) == 0);
+		CHECK(events->reconstruct(events->cookie, 0) == ENOENT);
 		CHECK(events->grow_prepare(events->cookie, id, &response) == ENOMEM);
 		CHECK(sc->grow_pending == NULL && !objects[i].pending);
 		objects[i].prepare_error = 0;

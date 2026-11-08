@@ -181,6 +181,10 @@ fwbridge_set_events(void *cookie, const struct pvr_fw_events *events)
 	if (error == 0 &&
 	    bridge->service.memory->profile == PVR_FW_PROFILE_GE8300)
 		error = pvr_fwservice_enable_resets(&bridge->service);
+	if (error == 0 && bridge->service.queue.reset_events) {
+		bridge->service.reconstruct = events->reconstruct;
+		bridge->service.queue.reconstruct_events = events->reconstruct != NULL;
+	}
 	if (error == 0) {
 		bridge->service.queue.fault_cookie = events->cookie;
 		bridge->service.queue.page_fault = events->page_fault;

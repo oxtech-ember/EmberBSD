@@ -49,6 +49,8 @@
 struct pvr_exec_hwrt {
 	struct pvr_hwrt *firmware;
 	struct pvr_exec_freelist *local, *global;
+	struct pvr_freelist *local_firmware;
+	struct pvr_freelist_hwrt link;
 	struct pvr_file_hold hold[2 /* rt */ * 3 + 3 /* geom */ + 2 /* fl-independent */];
 	unsigned holds;
 	unsigned refs;
@@ -332,6 +334,9 @@ pvr_create_hwrt_locked(struct drm_device *dev,
 	}
 	if (error != 0)
 		goto fail;
+	/* The retained local list owns the firmware recovery association. */
+	hwrt->local_firmware = local_info.firmware;
+	pvr_freelist_link_hwrt(hwrt->local_firmware, &hwrt->link, &hwrt->firmware);
 	return 0;
 fail:
 	hwrt_unhold_all(hwrt);
@@ -427,6 +432,7 @@ pvr_exec_hwrt_put(struct drm_device *dev, struct pvr_exec_hwrt *hwrt)
 		pvr_device_retain(dev, hwrt);
 		return;
 	}
+	pvr_freelist_unlink_hwrt(hwrt->local_firmware, &hwrt->link);
 	hwrt_unhold_all(hwrt);
 	pvr_exec_freelist_put(dev, hwrt->local);
 	pvr_exec_freelist_put(dev, hwrt->global);

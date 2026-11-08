@@ -10,6 +10,11 @@
 
 struct pvr_backend;
 struct pvr_freelist;
+struct pvr_hwrt;
+struct pvr_freelist_hwrt {
+	struct pvr_freelist_hwrt *next;
+	struct pvr_hwrt **owner;
+};
 struct rogue_fwif_freelist_gs_data;
 
 struct pvr_freelist_config {
@@ -34,11 +39,15 @@ struct pvr_freelist_config {
  * The caller must retain that state until a proven reset if retry cannot run.
  * A never-exposed, uninitialized firmware object does not require CLEANUP.
  * FWCCB dispatch is separate. The transport must reject unsupported events.
- * Reconstruction is not implemented.
+ * A local list tracks its live render datasets under the same gates.
  */
 int pvr_freelist_create(bus_dma_tag_t, const struct pvr_backend *,
     const struct pvr_freelist_config *, struct pvr_freelist **);
 int pvr_freelist_destroy(struct pvr_freelist **);
+void pvr_freelist_link_hwrt(struct pvr_freelist *, struct pvr_freelist_hwrt *,
+    struct pvr_hwrt **);
+void pvr_freelist_unlink_hwrt(struct pvr_freelist *, struct pvr_freelist_hwrt *);
+int pvr_freelist_reconstruct(struct pvr_freelist *);
 /*
  * Prepare one consumed, validated FWCCB grow request. Hold both gates.
  * The response is caller-owned and must not alias the owner or its memory.

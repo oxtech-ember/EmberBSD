@@ -349,10 +349,18 @@ static int test_grow(void *c, uint32_t id, struct rogue_fwif_freelist_gs_data *r
 { (void)c; (void)id; (void)r; return 0; }
 static int test_complete(void *c, uint32_t id, int e)
 { (void)c; (void)id; return e; }
+static int test_reconstruct(void *c, uint32_t id)
+{ (void)c; (void)id; return 0; }
+static const struct pvr_fw_events qualified_events = {
+	.cookie = &device,
+	.grow_prepare = test_grow,
+	.grow_complete = test_complete,
+	.reconstruct = test_reconstruct
+};
 static void event_tests(void)
 {
 	const struct pvr_backend *b;
-	struct pvr_fw_events events = {&device, test_grow, test_complete, NULL};
+	struct pvr_fw_events events = qualified_events;
 	reset(); b = start(); resets_enabled = 0;
 	CHECK(b->set_events != NULL);
 	CHECK(b->set_events(b->cookie, NULL) == EINVAL);
@@ -362,10 +370,12 @@ static void event_tests(void)
 	CHECK(sc.sc_fwbridge.service.grow_complete == test_complete);
 	/* Per-context recovery is not enabled for the A733 profile. */
 	CHECK(!sc.sc_fwbridge.service.queue.reset_events && resets_enabled == 0);
+	CHECK(!sc.sc_fwbridge.service.queue.reconstruct_events &&
+	    sc.sc_fwbridge.service.reconstruct == NULL);
 	CHECK(b->context_lost != NULL && !b->context_lost(b->cookie, 384));
 	memset(&events, 0, sizeof(events));
 	CHECK(sc.sc_fwbridge.service.grow_prepare == test_grow);
-	events = (struct pvr_fw_events){&device, test_grow, test_complete, NULL};
+	events = qualified_events;
 	CHECK(b->set_events(b->cookie, &events) == EBUSY);
 	b->fail(b->cookie);
 	CHECK(b->set_events(b->cookie, &events) == EIO);
@@ -393,10 +403,12 @@ ge_health_test(void)
 	CHECK(be->check(be->cookie) == 0);
 	{
 		/* GE8300 opts in when the DRM device installs its events. */
-		struct pvr_fw_events events = {&device, test_grow, test_complete, NULL};
+		struct pvr_fw_events events = qualified_events;
 		resets_enabled = lost_queries = 0;
 		CHECK(be->set_events(be->cookie, &events) == 0);
 		CHECK(resets_enabled == 1 && sc.sc_fwbridge.service.queue.reset_events);
+		CHECK(sc.sc_fwbridge.service.queue.reconstruct_events &&
+		    sc.sc_fwbridge.service.reconstruct == test_reconstruct);
 		CHECK(be->context_lost(be->cookie, 384));
 		CHECK(!be->context_lost(be->cookie, 385) && lost_queries == 2);
 	}

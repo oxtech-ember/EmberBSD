@@ -20,6 +20,7 @@
 #include "pvr_drv.h"
 #include "pvr_exec.h"
 #include "pvr_exec_hwrt.h"
+#include <arm/sunxi/powervr/pvr_rogue_fwif.h>
 #include "pvr_freelist.h"
 #include "pvr_file.h"
 #include "pvr_heap.h"
@@ -87,6 +88,21 @@ static const rb_tree_ops_t pvr_freelist_tree_ops = {
 };
 
 static int
+pvr_device_reconstruct(void *cookie, uint32_t id)
+{
+	struct pvr_device *sc = cookie;
+	struct pvr_freelist_entry *entry;
+
+	KASSERT(mutex_owned(&sc->gate));
+	if (sc->grow_pending != NULL)
+		return EBUSY;
+	entry = rb_tree_find_node(&sc->freelists, &id);
+	if (entry == NULL)
+		return ENOENT;
+	return pvr_freelist_reconstruct(*entry->owner);
+}
+
+static int
 pvr_device_grow_prepare(void *cookie, uint32_t id,
     struct rogue_fwif_freelist_gs_data *response)
 {
@@ -136,6 +152,10 @@ pvr_device_freelist_add(struct drm_device *dev, uint32_t id,
 	KASSERT(mutex_owned(&sc->gate));
 	if (id == 0 || owner == NULL || *owner != NULL)
 		return EINVAL;
+	/* GE8300 reconstruction replies reserve the upper bit for failure. */
+	if (sc->bvnc == PVR_GE8300_BVNC &&
+	    (id & ROGUE_FWIF_FREELISTS_RECONSTRUCTION_FAILED_FLAG) != 0)
+		return EOVERFLOW;
 	if (rb_tree_find_node(&sc->freelists, &id) != NULL)
 		return EEXIST;
 	entry = kmem_zalloc(sizeof(*entry), KM_SLEEP);
@@ -444,6 +464,7 @@ pvr_backend_attach(struct drm_device *dev, const struct pvr_backend *backend)
 			.cookie = sc,
 			.grow_prepare = pvr_device_grow_prepare,
 			.grow_complete = pvr_device_grow_complete,
+			.reconstruct = pvr_device_reconstruct,
 			.page_fault = pvr_device_page_fault,
 		};
 

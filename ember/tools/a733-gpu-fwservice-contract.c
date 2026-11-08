@@ -70,6 +70,8 @@ static int event_error, prepare_error, complete_error, health_error, completion_
 static bool events_forever, prepare_reentry;
 static unsigned int resets_remaining, reset_dequeues, observe_again, next_again;
 static unsigned int delays, fault_reports;
+static bool reconstruct_waiting;
+static unsigned int rebuilt, recon_acks, bad_id;
 
 static void *kmem_zalloc(size_t, int);
 static void delay(unsigned int);
@@ -337,6 +339,15 @@ pvr_fwqueue_cmd(bus_space_tag_t tag, bus_space_handle_t handle,
 	CHECK(q == &service.queue && q->attached && log_type == 0x3f);
 	if (q->failed) return EIO;
 	CHECK(cmd->kccb_flags == 0);
+	if (cmd->cmd_type == ROGUE_FWIF_KCCB_CMD_FREELISTS_RECONSTRUCTION_UPDATE) {
+		const struct rogue_fwif_freelists_reconstruction_data *ack =
+		    &cmd->cmd_data.free_lists_reconstruction_data;
+		CHECK(service.dispatching && q->sending_reconstruction && rebuilt == 2);
+		CHECK(ack->freelist_count == 2 && ack->freelist_ids[0] == 9 &&
+		    ack->freelist_ids[1] == 8 && ack->freelist_ids[2] == 0);
+		recon_acks++;
+		return transport_error;
+	}
 	if (cmd->cmd_type == ROGUE_FWIF_KCCB_CMD_FREELIST_GROW_UPDATE) {
 		CHECK(service.dispatching && event_dequeues == grow_prepares);
 		CHECK(cmd->cmd_data.free_list_gs_data.freelist_fw_addr == 0xc0201000);
@@ -408,6 +419,14 @@ pvr_fwqueue_next(struct sun60i_a733_gpu_fwmem *mem,
 	}
 	if (event_error != 0) { q->failed = true; return event_error; }
 	memset(event, 0, sizeof(*event));
+	if (reconstruct_waiting) {
+		reconstruct_waiting = false;
+		event->type = ROGUE_FWIF_FWCCB_CMD_FREELISTS_RECONSTRUCTION;
+		event->reconstruct.freelist_count = 2;
+		event->reconstruct.freelist_ids[0] = 9;
+		event->reconstruct.freelist_ids[1] = 8;
+		return 0;
+	}
 	if (resets_remaining != 0) {
 		CHECK(q->reset_events);
 		resets_remaining--;
@@ -749,6 +768,37 @@ note_fault(void *cookie, uint32_t context, uint32_t job, uint64_t pc,
 }
 
 /* A recovered context is recorded locally; the service keeps running. */
+static int
+rebuild(void *cookie, uint32_t id)
+{
+	CHECK(cookie == &memory && service.dispatching);
+	CHECK(id == (rebuilt == 0 ? 9U : 8U));
+	rebuilt++;
+	return id == bad_id ? ENOENT : 0;
+}
+
+static void
+reconstruct_tests(void)
+{
+	for (unsigned int n = 0; n < 4; n++) {
+		struct pvr_fwprobe_observation result;
+		int error;
+
+		reset(); attach(); install_events();
+		reconstruct_waiting = true;
+		rebuilt = recon_acks = 0;
+		service.reconstruct = n == 3 ? NULL : rebuild;
+		bad_id = n == 1 ? 8U : 0;
+		transport_error = n == 2 ? ETIMEDOUT : 0;
+		error = pvr_fwservice_observe(&service, &result);
+		CHECK(error == (n == 1 ? ENOENT : n == 2 ? ETIMEDOUT :
+		    n == 3 ? EOPNOTSUPP : 0));
+		CHECK(service.queue.failed == (error != 0));
+		CHECK(!service.queue.sending_reconstruction);
+		CHECK(recon_acks == (n == 0 || n == 2 ? 1U : 0U));
+	}
+}
+
 static void
 reset_tests(void)
 {
@@ -874,6 +924,7 @@ main(void)
 	failure_tests();
 	event_tests();
 	reset_tests();
+	reconstruct_tests();
 	printf("a733-gpu-fwservice-contract: PASS %u checks\n", checks);
 	return 0;
 }

@@ -27,6 +27,7 @@ struct pvr_fwservice {
 	void *event_cookie;
 	int (*grow_prepare)(void *, uint32_t, struct rogue_fwif_freelist_gs_data *);
 	int (*grow_complete)(void *, uint32_t, int);
+	int (*reconstruct)(void *, uint32_t);
 	/* Recent recovered contexts, by server common context ID. */
 	uint32_t lost[PVR_FWSERVICE_LOST];
 	unsigned lost_next;

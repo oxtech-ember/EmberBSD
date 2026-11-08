@@ -277,6 +277,33 @@ pvr_hwrt_target(struct pvr_hwrt *hwrt, unsigned index,
 	return 0;
 }
 
+/* Invalidate geometry state on the datasets owned by a rebuilt local list. */
+int
+pvr_hwrt_reconstruct(struct pvr_hwrt *hwrt)
+{
+	const struct pvr_backend *be;
+	struct rogue_fwif_hwrtdata *fw;
+	unsigned int i;
+
+	if (hwrt == NULL || !hwrt->ready || hwrt->failed)
+		return EIO;
+	be = hwrt->backend;
+	for (i = 0; i < __arraycount(hwrt->rt); i++) {
+		struct pvr_hwrt_rt *rt = &hwrt->rt[i];
+
+		if (rt->cleaned || (hwrt->destroying && !rt->exposed))
+			continue;
+		be->sync(be->cookie, &rt->data, BUS_DMASYNC_POSTREAD |
+		    BUS_DMASYNC_POSTWRITE);
+		fw = rt->data.cpu;
+		fw->state = ROGUE_FWIF_RTDATA_STATE_HWR;
+		fw->hwrt_data_flags &= ~HWRTDATA_HAS_LAST_GEOM;
+		be->sync(be->cookie, &rt->data, BUS_DMASYNC_PREREAD |
+		    BUS_DMASYNC_PREWRITE);
+	}
+	return 0;
+}
+
 int
 pvr_hwrt_destroy(struct pvr_hwrt **owner)
 {

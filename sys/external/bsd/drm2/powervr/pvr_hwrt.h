@@ -60,5 +60,6 @@ int pvr_hwrt_create(const struct pvr_backend *, const struct pvr_hwrt_config *,
     struct pvr_hwrt **);
 int pvr_hwrt_target(struct pvr_hwrt *, unsigned, struct pvr_hwrt_target *);
 int pvr_hwrt_destroy(struct pvr_hwrt **);
+int pvr_hwrt_reconstruct(struct pvr_hwrt *);
 
 #endif /* _PVR_HWRT_H_ */

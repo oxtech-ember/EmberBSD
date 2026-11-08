@@ -60,6 +60,7 @@ __CTASSERT(offsetof(struct rogue_fwif_kccb_cmd_combined_geom_frag_kick_data,
 /* Pending FWCCB events a runtime observation may admit. */
 #define FWQUEUE_GROW	1U
 #define FWQUEUE_RESET	2U
+#define FWQUEUE_RECONSTRUCT	4U
 /* Private: an opted-in queue observed HWR_RESET_IN_PROGRESS alone. */
 #define FWQUEUE_HWR_BUSY	EINPROGRESS
 __CTASSERT(sizeof(struct rogue_fwif_fwccb_cmd_context_reset_data) == 40);
@@ -267,6 +268,7 @@ fwprobe_observe(struct pvr_fwmem *mem, unsigned int slot,
 	s->fw_command = 0;
 	s->fw_flags = 0;
 	s->fw_freelist_id = 0;
+	memset(s->fw_reconstruct_ids, 0, sizeof(s->fw_reconstruct_ids));
 	s->fw_reset_reason = s->fw_reset_dm = 0;
 	s->fw_reset_job = s->fw_reset_flags = 0;
 	s->fw_reset_pc = s->fw_reset_fault = 0;
@@ -284,6 +286,15 @@ fwprobe_observe(struct pvr_fwmem *mem, unsigned int slot,
 		s->fw_command = fwprobe_read32(fwprobe_object(mem,
 		    PVR_FWINIT_FWCCB_CMDS) + s->fw_read_offset *
 		    sizeof(struct rogue_fwif_fwccb_cmd));
+		if (s->fw_command == ROGUE_FWIF_FWCCB_CMD_FREELISTS_RECONSTRUCTION &&
+		    s->fw_freelist_id <= ROGUE_FWIF_MAX_FREELISTS_TO_RECONSTRUCT) {
+			const uint8_t *ids = event + offsetof(struct rogue_fwif_fwccb_cmd,
+			    cmd_data.cmd_freelists_reconstruction.freelist_ids);
+
+			/* The request includes an HWR counter between count and IDs. */
+			for (uint32_t i = 0; i < s->fw_freelist_id; i++)
+				s->fw_reconstruct_ids[i] = fwprobe_read32(ids + 4 * i);
+		}
 		if (s->fw_command ==
 		    ROGUE_FWIF_FWCCB_CMD_CONTEXT_RESET_NOTIFICATION) {
 			const uint8_t *reset = event +
@@ -375,6 +386,18 @@ fwprobe_matches_boot(const struct pvr_fwprobe_snapshot *s,
 	    s->build_options == boot->build_options;
 }
 
+static bool
+fwqueue_reconstruct_valid(uint32_t count, const uint32_t *ids)
+{
+	if (count == 0 || count > ROGUE_FWIF_MAX_FREELISTS_TO_RECONSTRUCT)
+		return false;
+	for (uint32_t i = 0; i < count; i++)
+		if (ids[i] == 0 || (ids[i] &
+		    ROGUE_FWIF_FREELISTS_RECONSTRUCTION_FAILED_FLAG) != 0)
+			return false;
+	return true;
+}
+
 /*
  * A reset report is admitted only for one recovered context whose reason
  * names a guilty or innocent lockup or overrun. All-context resets, firmware
@@ -385,6 +408,9 @@ fwprobe_event_valid(const struct pvr_fwprobe_snapshot *s, unsigned events)
 {
 	if (s->fw_flags != 0 || s->fw_freelist_id == 0)
 		return false;
+	if (s->fw_command == ROGUE_FWIF_FWCCB_CMD_FREELISTS_RECONSTRUCTION)
+		return (events & FWQUEUE_RECONSTRUCT) != 0 &&
+		    fwqueue_reconstruct_valid(s->fw_freelist_id, s->fw_reconstruct_ids);
 	if (s->fw_command == ROGUE_FWIF_FWCCB_CMD_FREELIST_GROW)
 		return (events & FWQUEUE_GROW) != 0;
 	if (s->fw_command != ROGUE_FWIF_FWCCB_CMD_CONTEXT_RESET_NOTIFICATION ||
@@ -649,6 +675,7 @@ fwprobe_run(bus_space_tag_t bst, bus_space_handle_t bsh,
 	    cmd->cmd_type != ROGUE_FWIF_KCCB_CMD_KICK &&
 	    (!reusable || (cmd->cmd_type != ROGUE_FWIF_KCCB_CMD_CLEANUP &&
 	    cmd->cmd_type != ROGUE_FWIF_KCCB_CMD_FREELIST_GROW_UPDATE &&
+	    cmd->cmd_type != ROGUE_FWIF_KCCB_CMD_FREELISTS_RECONSTRUCTION_UPDATE &&
 	    cmd->cmd_type != ROGUE_FWIF_KCCB_CMD_COMBINED_GEOM_FRAG_KICK)))
 		return EINVAL;
 	out->command = cmd->cmd_type;
@@ -708,6 +735,7 @@ fwprobe_run(bus_space_tag_t bst, bus_space_handle_t bsh,
 			} else if ((fwprobe_return_valid(out->command, out->after.rtn) ||
 			    (reusable && (out->command ==
 			    ROGUE_FWIF_KCCB_CMD_FREELIST_GROW_UPDATE ||
+			    out->command == ROGUE_FWIF_KCCB_CMD_FREELISTS_RECONSTRUCTION_UPDATE ||
 			    out->command == ROGUE_FWIF_KCCB_CMD_COMBINED_GEOM_FRAG_KICK) &&
 			    (out->after.rtn & ~ROGUE_FWIF_KCCB_RTN_SLOT_CMD_EXECUTED) == 0) ||
 			    (reusable && out->command == ROGUE_FWIF_KCCB_CMD_CLEANUP &&
@@ -928,6 +956,7 @@ fwqueue_return_valid(const struct pvr_fwprobe_result *r)
 		    (r->after.rtn == (ROGUE_FWIF_KCCB_RTN_SLOT_CMD_EXECUTED |
 		    ROGUE_FWIF_KCCB_RTN_SLOT_CLEANUP_BUSY) && r->error == EBUSY);
 	if (r->command == ROGUE_FWIF_KCCB_CMD_FREELIST_GROW_UPDATE ||
+	    r->command == ROGUE_FWIF_KCCB_CMD_FREELISTS_RECONSTRUCTION_UPDATE ||
 	    r->command == ROGUE_FWIF_KCCB_CMD_COMBINED_GEOM_FRAG_KICK)
 		return r->error == 0 &&
 		    (r->after.rtn & ~ROGUE_FWIF_KCCB_RTN_SLOT_CMD_EXECUTED) == 0;
@@ -937,7 +966,8 @@ fwqueue_return_valid(const struct pvr_fwprobe_result *r)
 static unsigned
 fwqueue_events(const struct pvr_fwqueue *q)
 {
-	return FWQUEUE_GROW | (q->reset_events ? FWQUEUE_RESET : 0);
+	return FWQUEUE_GROW | (q->reset_events ? FWQUEUE_RESET : 0) |
+	    (q->reconstruct_events ? FWQUEUE_RECONSTRUCT : 0);
 }
 
 static bool
@@ -1190,6 +1220,19 @@ fwqueue_command(const struct pvr_fwmem *mem,
 		return fwqueue_copy_kick(&pair->frag_cmd_kick_data,
 		    &out->frag_cmd_kick_data);
 	}
+	case ROGUE_FWIF_KCCB_CMD_FREELISTS_RECONSTRUCTION_UPDATE: {
+		const struct rogue_fwif_freelists_reconstruction_data *in =
+		    &cmd->cmd_data.free_lists_reconstruction_data;
+		struct rogue_fwif_freelists_reconstruction_data *out =
+		    &built->cmd_data.free_lists_reconstruction_data;
+
+		if (!fwqueue_reconstruct_valid(in->freelist_count, in->freelist_ids))
+			return EINVAL;
+		out->freelist_count = in->freelist_count;
+		memcpy(out->freelist_ids, in->freelist_ids,
+		    in->freelist_count * sizeof(in->freelist_ids[0]));
+		return 0;
+	}
 	case ROGUE_FWIF_KCCB_CMD_FREELIST_GROW_UPDATE: {
 		const struct rogue_fwif_freelist_gs_data *grow =
 		    &cmd->cmd_data.free_list_gs_data;
@@ -1241,6 +1284,9 @@ pvr_fwqueue_cmd(bus_space_tag_t bst, bus_space_handle_t bsh,
 	if (bst == NULL || !fwqueue_log_valid(expected_log_type) ||
 	    fwprobe_overlap(cmd, sizeof(*cmd), out, sizeof(*out)))
 		return EINVAL;
+	if (cmd->cmd_type == ROGUE_FWIF_KCCB_CMD_FREELISTS_RECONSTRUCTION_UPDATE &&
+	    (!q->reconstruct_events || !q->sending_reconstruction))
+		return EOPNOTSUPP;
 	error = fwqueue_command(mem, cmd, &built);
 	if (error != 0)
 		return error;
@@ -1310,6 +1356,11 @@ fwqueue_consume(struct pvr_fwmem *mem, const struct pvr_fwboot_result *boot,
 	memset(&event, 0, sizeof(event));
 	event.type = observation.state.fw_command;
 	event.id = observation.state.fw_freelist_id;
+	if (event.type == ROGUE_FWIF_FWCCB_CMD_FREELISTS_RECONSTRUCTION) {
+		event.reconstruct.freelist_count = observation.state.fw_freelist_id;
+		memcpy(event.reconstruct.freelist_ids, observation.state.fw_reconstruct_ids,
+		    event.reconstruct.freelist_count * sizeof(event.reconstruct.freelist_ids[0]));
+	}
 	if (event.type == ROGUE_FWIF_FWCCB_CMD_CONTEXT_RESET_NOTIFICATION) {
 		event.reason = observation.state.fw_reset_reason;
 		event.dm = observation.state.fw_reset_dm;

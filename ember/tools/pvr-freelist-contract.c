@@ -267,6 +267,10 @@ static void
 backend_sync(void *cookie, struct pvr_fw_object *object, int flags)
 {
 	CHECK(cookie == &fw && fw.live && object->size == 64);
+	if (flags == (BUS_DMASYNC_POSTWRITE | BUS_DMASYNC_POSTREAD)) {
+		memcpy(object->cpu, fw.image, sizeof(fw.image));
+		return;
+	}
 	CHECK(flags == (BUS_DMASYNC_PREWRITE | BUS_DMASYNC_PREREAD));
 	CHECK(backing.syncs != 0);
 	memcpy(fw.image, object->cpu, 64); fw.initialized = true; fw.syncs++;
@@ -332,6 +336,13 @@ static const struct pvr_backend backend = {
 	.sync = backend_sync, .command = backend_command, .flush = backend_flush,
 	.check = backend_check, .fail = backend_fail
 };
+struct pvr_hwrt { unsigned int reconstructions; int error; };
+static int pvr_hwrt_reconstruct(struct pvr_hwrt *owner)
+{
+	CHECK(owner != NULL);
+	owner->reconstructions++;
+	return owner->error;
+}
 #include "pvr-freelist-body.h"
 
 static void
@@ -708,6 +719,69 @@ current_pages_tests(void)
 	CHECK(pvr_freelist_destroy(&fl) == 0 && fl == NULL);
 }
 
+/* Firmware can overwrite the stack of PFNs before requesting recovery. */
+static void
+reconstruction_case(void)
+{
+	struct pvr_freelist *fl = NULL;
+	struct pvr_freelist_config c;
+	struct rogue_fwif_freelist_gs_data growth;
+	struct rogue_fwif_freelist *fwdata;
+	uint8_t before[64], damaged[64];
+	unsigned int syncs;
+	struct pvr_hwrt rt[2] = {0};
+	struct pvr_hwrt *owners[2] = { &rt[0], &rt[1] };
+	struct pvr_freelist_hwrt links[2] = {0};
+	unsigned int available;
+
+	reset_state();
+	c = config(8, 16, 4, 50);
+	CHECK(pvr_freelist_create(&fw, &backend, &c, &fl) == 0);
+	CHECK(pvr_freelist_grow_prepare(fl, &growth) == 0);
+	CHECK(pvr_freelist_reconstruct(fl) == EBUSY);
+	CHECK(pvr_freelist_grow_complete(fl, 0) == 0);
+	pvr_freelist_link_hwrt(fl, &links[0], &owners[0]);
+	pvr_freelist_link_hwrt(fl, &links[1], &owners[1]);
+	CHECK(pvr_freelist_destroy(&fl) == EBUSY);
+	memcpy(before, backing.visible, sizeof(before));
+	memset((char *)backing.cpu + 16, 0x3a, 48);
+	memcpy(damaged, backing.cpu, sizeof(damaged));
+	syncs = backing.syncs;
+	fwdata = fl->firmware.cpu;
+	available = fl->current_pages;
+	fwdata->current_pages = fl->allocated + 1;
+	memcpy(fw.image, fwdata, sizeof(fw.image));
+	CHECK(pvr_freelist_reconstruct(fl) == EPROTO);
+	CHECK(available != 0);
+	fwdata->current_pages = available - 1;
+	fwdata->ready_pages = fl->allocated - fwdata->current_pages;
+	memcpy(fw.image, fwdata, sizeof(fw.image));
+	CHECK(pvr_freelist_reconstruct(fl) == EPROTO);
+	fwdata->current_pages = available;
+	fwdata->ready_pages = fl->allocated - available + 1;
+	memcpy(fw.image, fwdata, sizeof(fw.image));
+	CHECK(pvr_freelist_reconstruct(fl) == EPROTO);
+	CHECK(backing.syncs == syncs && rt[0].reconstructions == 0 &&
+	    rt[1].reconstructions == 0);
+	CHECK(memcmp(backing.cpu, damaged, sizeof(damaged)) == 0);
+	CHECK(memcmp(backing.visible, before, sizeof(before)) == 0);
+	fwdata->ready_pages = fl->allocated - available;
+	fwdata->current_stack_top = 2;
+	fwdata->allocated_page_count = 3;
+	fwdata->allocated_mmu_page_count = 5;
+	memcpy(fw.image, fwdata, sizeof(fw.image));
+	CHECK(pvr_freelist_reconstruct(fl) == 0);
+	CHECK(rt[0].reconstructions == 1 && rt[1].reconstructions == 1);
+	pvr_freelist_unlink_hwrt(fl, &links[0]);
+	rt[1].error = EIO;
+	CHECK(pvr_freelist_reconstruct(fl) == EIO && rt[0].reconstructions == 1);
+	pvr_freelist_unlink_hwrt(fl, &links[1]);
+	CHECK(memcmp(before, backing.visible, sizeof(before)) == 0);
+	CHECK(fwdata->current_stack_top == available - 1);
+	CHECK(fwdata->allocated_page_count == 0 && fwdata->allocated_mmu_page_count == 0);
+	CHECK(pvr_freelist_destroy(&fl) == 0 && fl == NULL);
+}
+
 int
 main(void)
 {
@@ -719,7 +793,7 @@ main(void)
 	valid_case(4, 8, 4, 100, 4);
 	valid_case(0, 524288, 4, 13, 0);
 	invalid_cases(); allocation_failures(); retained_failures();
-	growth_cases(); growth_failures(); current_pages_tests(); reset_state();
+	growth_cases(); growth_failures(); current_pages_tests(); reconstruction_case(); reset_state();
 	free(backing.cpu); free(backing.visible);
 	printf("pvr FreeList: %u checks passed\n", checks);
 	return 0;

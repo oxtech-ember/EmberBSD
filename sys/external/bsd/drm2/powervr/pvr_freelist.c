@@ -32,6 +32,7 @@
 #include <arm/sunxi/powervr/pvr_rogue_fwif_client.h>
 #include "pvr_backend.h"
 #include "pvr_freelist.h"
+#include "pvr_hwrt.h"
 
 #define PVR_FREELIST_PAGE 4096U
 #define PVR_FREELIST_PA_END (UINT64_C(1) << 36)
@@ -58,6 +59,7 @@ struct pvr_freelist {
 	struct pvr_freelist_config config;
 	struct pvr_fw_object firmware;
 	struct pvr_freelist_page *pages;
+	struct pvr_freelist_hwrt *hwrts;
 	uint32_t allocated, page_capacity, current_pages, ready_pages;
 	bool initialized, ready, cleaned, failed, grow_prepared;
 };
@@ -388,6 +390,82 @@ pvr_freelist_fw_address(const struct pvr_freelist *fl)
 	    fl->firmware.address : 0;
 }
 
+void
+pvr_freelist_link_hwrt(struct pvr_freelist *fl, struct pvr_freelist_hwrt *link,
+    struct pvr_hwrt **owner)
+{
+	KASSERT(link->owner == NULL && *owner != NULL);
+	link->owner = owner;
+	link->next = fl->hwrts;
+	fl->hwrts = link;
+}
+
+void
+pvr_freelist_unlink_hwrt(struct pvr_freelist *fl, struct pvr_freelist_hwrt *link)
+{
+	struct pvr_freelist_hwrt **slot;
+
+	for (slot = &fl->hwrts; *slot != link; slot = &(*slot)->next)
+		KASSERT(*slot != NULL);
+	*slot = link->next;
+	link->next = NULL;
+	link->owner = NULL;
+}
+
+/* Restore the original PFN blocks in growth order, including ready pages. */
+int
+pvr_freelist_reconstruct(struct pvr_freelist *fl)
+{
+	struct rogue_fwif_freelist *fw;
+	struct pvr_freelist_hwrt *link;
+	uint32_t end, first, i, pfn;
+	uint8_t *table;
+	const int post = BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE;
+	const int pre = BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE;
+	int error;
+
+	if (fl == NULL || !fl->ready || fl->cleaned || fl->failed)
+		return EIO;
+	if (fl->grow_prepared)
+		return EBUSY;
+	if (fl->allocated > fl->config.max_pages ||
+	    fl->ready_pages > fl->allocated ||
+	    fl->current_pages != fl->allocated - fl->ready_pages)
+		return EPROTO;
+	/* Firmware can consume the ready reserve before the grow notification. */
+	fl->backend->sync(fl->backend->cookie, &fl->firmware, post);
+	fw = fl->firmware.cpu;
+	if (fw->current_pages < fl->current_pages ||
+	    fw->current_pages > fl->allocated ||
+	    fw->ready_pages != fl->allocated - fw->current_pages) {
+		fl->backend->sync(fl->backend->cookie, &fl->firmware, pre);
+		return EPROTO;
+	}
+	fl->config.backing_sync(fl->config.sync_cookie, post);
+	table = fl->config.backing_cpu;
+	for (first = 0; first < fl->allocated; first = end) {
+		end = first + ((first == 0 && fl->config.initial_pages != 0) ?
+		    fl->config.initial_pages : fl->config.grow_pages);
+		KASSERT(end > first && end <= fl->allocated);
+		for (i = first; i < end; i++) {
+			pfn = htole32((uint32_t)(fl->pages[i].pa >> 12));
+			memcpy(table + (fl->config.max_pages - end + i - first) *
+			    sizeof(pfn), &pfn, sizeof(pfn));
+		}
+	}
+	fl->config.backing_sync(fl->config.sync_cookie, pre);
+	fw->current_stack_top = fw->current_pages - 1;
+	fw->allocated_page_count = 0;
+	fw->allocated_mmu_page_count = 0;
+	fl->backend->sync(fl->backend->cookie, &fl->firmware, pre);
+	for (link = fl->hwrts; link != NULL; link = link->next) {
+		error = pvr_hwrt_reconstruct(*link->owner);
+		if (error != 0)
+			return error;
+	}
+	return 0;
+}
+
 int
 pvr_freelist_destroy(struct pvr_freelist **owner)
 {
@@ -404,7 +482,7 @@ pvr_freelist_destroy(struct pvr_freelist **owner)
 	be = fl->backend;
 	if (fl->failed)
 		return EIO;
-	if (fl->grow_prepared)
+	if (fl->grow_prepared || fl->hwrts != NULL)
 		return EBUSY;
 	error = be->check(be->cookie);
 	if (error != 0)

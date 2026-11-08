@@ -48,6 +48,8 @@ struct pvr_fwprobe_snapshot {
 	uint32_t fw_read_offset, fw_write_offset, fw_wrap_mask, fw_cmd_size;
 	/* fw_freelist_id is the first payload word of any pending FWCCB event. */
 	uint32_t fw_command, fw_flags, fw_freelist_id;
+	/* The reconstruction request uses the first payload word as its count. */
+	uint32_t fw_reconstruct_ids[ROGUE_FWIF_MAX_FREELISTS_TO_RECONSTRUCT];
 	/* Copied only from a pending CONTEXT_RESET_NOTIFICATION, otherwise zero. */
 	uint32_t fw_reset_reason, fw_reset_dm, fw_reset_job, fw_reset_flags;
 	uint64_t fw_reset_pc, fw_reset_fault;
@@ -193,7 +195,9 @@ struct pvr_fwqueue {
 	 * recovered guilty or innocent context and tolerate an in-progress HWR
 	 * as a transient state. Set once under the platform gate after attach.
 	 */
-	bool reset_events;
+	bool reset_events, reconstruct_events;
+	/* Permit an ACK only while the event owner submits a rebuilt list. */
+	bool sending_reconstruction;
 	bool attached, failed;
 	uint32_t expected_log_type, fw_read_offset;
 	const struct pvr_fwmem *owner;
@@ -215,7 +219,7 @@ int pvr_fwqueue_attach(struct pvr_fwmem *,
     struct pvr_fwqueue *);
 
 /*
- * Submit a sanitized LOGTYPE, MMUCACHE, KICK, CLEANUP or GROW_UPDATE packet. CLEANUP
+ * Submit a sanitized LOGTYPE, MMUCACHE, KICK, CLEANUP or GROW_UPDATE or reconstruction reply. CLEANUP
  * supports FWCOMMONCONTEXT, FREELIST and HWRTDATA. Unsupported types and
  * flags fail before I/O. Supply the shared log type explicitly. Only
  * LOGTYPE can change it; the caller writes it before that command.
@@ -258,12 +262,13 @@ int pvr_fwqueue_event(struct pvr_fwmem *,
     const struct pvr_fwboot_result *,
     struct pvr_fwqueue *, uint32_t *);
 
-/* One consumed FWCCB event: a GROW request or a recovered context reset. */
+/* Copy of one consumed grow, reconstruction or context-reset event. */
 struct pvr_fwqueue_event {
 	uint32_t type;		/* ROGUE_FWIF_FWCCB_CMD_* */
 	uint32_t id;		/* free list ID or server common context ID */
 	uint32_t reason, dm, job, flags;
 	uint64_t pc, fault;
+	struct rogue_fwif_freelists_reconstruction_data reconstruct;
 };
 
 /*

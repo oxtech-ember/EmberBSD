@@ -24,6 +24,7 @@ struct pvr_fw_events {
 	int (*grow_complete)(void *, uint32_t, int);
 	/* Observe a copied page-fault event before the queue freezes. */
 	void (*page_fault)(void *, uint32_t, uint32_t, uint64_t, uint64_t);
+	int (*reconstruct)(void *, uint32_t);
 };
 
 struct pvr_fw_object {

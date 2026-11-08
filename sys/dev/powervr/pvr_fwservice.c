@@ -203,6 +203,32 @@ fwservice_drain(struct pvr_fwservice *service,
 			break;
 		}
 		memset(&command, 0, sizeof(command));
+		if (event.type == ROGUE_FWIF_FWCCB_CMD_FREELISTS_RECONSTRUCTION) {
+			if (service->reconstruct == NULL) {
+				error = EOPNOTSUPP;
+				break;
+			}
+			for (uint32_t i = 0; i < event.reconstruct.freelist_count; i++) {
+				error = service->reconstruct(service->event_cookie,
+				    event.reconstruct.freelist_ids[i]);
+				if (error != 0)
+					break;
+			}
+			if (error != 0)
+				break;
+			/* Firmware needs the original ID order, without its HWR counter. */
+			command.cmd_type = ROGUE_FWIF_KCCB_CMD_FREELISTS_RECONSTRUCTION_UPDATE;
+			command.cmd_data.free_lists_reconstruction_data = event.reconstruct;
+			memset(&result, 0, sizeof(result));
+			service->queue.sending_reconstruction = true;
+			error = pvr_fwqueue_cmd(service->bst, service->bsh,
+			    service->memory, service->boot, &service->queue, &command,
+			    service->queue.expected_log_type, &result);
+			service->queue.sending_reconstruction = false;
+			if (error != 0)
+				break;
+			continue;
+		}
 		command.cmd_type = ROGUE_FWIF_KCCB_CMD_FREELIST_GROW_UPDATE;
 		error = service->grow_prepare(service->event_cookie, id,
 		    &command.cmd_data.free_list_gs_data);
