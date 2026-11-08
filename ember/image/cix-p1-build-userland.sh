@@ -24,7 +24,8 @@ component_make()
 {
     log_name=$1; part=$2; shift 2
     if [ "${profile:-}" = network ]; then
-        set -- "$@" "EMBER_MDNS_SOURCE=$mdns_source" "EMBER_DHCPCD_SOURCE=$dhcpcd_source" \
+        [ -z "$mdns_source" ] || set -- "$@" "EMBER_MDNS_SOURCE=$mdns_source"
+        set -- "$@" "EMBER_DHCPCD_SOURCE=$dhcpcd_source" \
             "EMBER_LIBPCAP_SOURCE=$libpcap_source" "EMBER_WPA_SOURCE=$wpa_source" \
             $network_auth_flags
         case "$part" in
@@ -167,12 +168,15 @@ if [ "${1:-}" = --console-selected ]; then
                 -V MKRUMP=no
             for assignment in \
                 "EMBER_DHCPCD_SOURCE=$dhcpcd_source" \
-                "EMBER_MDNS_SOURCE=$mdns_source" \
                 "EMBER_WPA_SOURCE=$wpa_source" \
                 "EMBER_WPA_PROFILE=personal" \
                 "EMBER_LIBPCAP_SOURCE=$libpcap_source"; do
                 set -- "$@" -v "$assignment" -V "$assignment"
             done
+            if [ -n "$mdns_source" ]; then
+                set -- "$@" -v "EMBER_MDNS_SOURCE=$mdns_source" \
+                    -V "EMBER_MDNS_SOURCE=$mdns_source"
+            fi
             if [ -n "$wpa_backend" ]; then
                 set -- "$@" -v "EMBER_WPA_CRYPTO_BACKEND=$wpa_backend" \
                     -V "EMBER_WPA_CRYPTO_BACKEND=$wpa_backend"
@@ -278,9 +282,16 @@ if [ "${1:-}" = --console-selected ]; then
     fi
     chmod 1777 "$root/tmp"
     if [ "$profile" = network ]; then
-        [ -n "$overlay" ] && [ -n "$network_interface" ] && [ -n "$mdns_source" ] && [ -n "$dhcpcd_source" ] && [ -n "$wpa_source" ] || {
+        mdns_enabled=no
+        case " $crunch_programs " in
+            *" external/apache2/mDNSResponder/usr.sbin/mdnsd "*) mdns_enabled=yes ;;
+        esac
+        [ -n "$overlay" ] && [ -n "$network_interface" ] && [ -n "$dhcpcd_source" ] && [ -n "$wpa_source" ] || {
             echo 'Network profile inputs are incomplete.' >&2; exit 1
         }
+        if [ "$mdns_enabled" = yes ] && [ -z "$mdns_source" ]; then
+            echo 'The mdns toolset requires EMBER_MDNS_SOURCE.' >&2; exit 1
+        fi
         for entry in $install_map; do
             install_path=${entry#*=}
             [ -f "$out/dest/$install_path" ] || {
@@ -294,7 +305,7 @@ if [ "${1:-}" = --console-selected ]; then
         [ -x "$root/bin/console-tools" ] || { echo 'Missing network console-tools.' >&2; exit 1; }
         run network-config "$python" -B "$here/static-profile.py" stage-network \
             "$root" "$src" "$overlay" "$network_interface" \
-            "$tools/bin/nbpwd_mkdb" "$out/dest" "$network_root_device" "$network_root_partition" "$network_root_filesystem"
+            "$tools/bin/nbpwd_mkdb" "$out/dest" "$network_root_device" "$network_root_partition" "$network_root_filesystem" "$mdns_enabled"
         MACHINE="$machine" MACHINE_ARCH="$arch" "$HOST_SH" "$out/obj/etc/MAKEDEV" -s std $device_make > "$out/devices-all.spec"
         devices=$device_nodes
         device_link_nodes=$device_links

@@ -27,6 +27,23 @@ def check(condition, message):
 
 selected = profile.network('riscv32')
 littlefs = profile.network('riscv32', root_filesystem='littlefs')
+try:
+    mdns_toolset = profile.network('riscv32', ('mdns',))
+except ValueError:
+    mdns_toolset = {}
+optional_programs = {
+    'bin/df', 'usr.bin/env', 'usr.bin/uname',
+    'usr.bin/audio/ctl/audioctl', 'usr.bin/audio/play/audioplay',
+    'usr.bin/audio/record/audiorecord', 'usr.bin/mixerctl/mixerctl',
+    'usr.bin/timeout', 'usr.bin/wc', 'usr.bin/videoctl/videoctl',
+    'usr.sbin/envstat/envstat', 'usr.sbin/spinandctl/spinandctl',
+    'usr.bin/cksum/cksum', 'usr.bin/uuencode/uuencode',
+    'usr.bin/uudecode/uudecode', 'external/apache2/mDNSResponder/usr.sbin/mdnsd',
+}
+check(not optional_programs.intersection(selected['crunch_programs']) and
+      mdns_toolset and
+      'external/apache2/mDNSResponder/usr.sbin/mdnsd' in mdns_toolset['crunch_programs'],
+      'network defaults omit optional tools and explicit mdns selection adds mdnsd')
 check('sbin/mount_littlefs' in littlefs['crunch_programs'] and
       'sys/sys' in littlefs['headers'] and
       'sys/fs/littlefs' in littlefs['headers'] and
@@ -136,9 +153,12 @@ with tempfile.TemporaryDirectory(prefix='network-logs-') as temporary:
           'incremental network runs receive unique append-preserving log paths')
 check({'sbin/init', 'libexec/getty', 'external/bsd/dhcpcd/sbin/dhcpcd',
        'external/bsd/wpa/bin/wpa_supplicant', 'external/bsd/wpa/bin/wpa_cli',
-       'external/apache2/mDNSResponder/usr.sbin/mdnsd', 'usr.bin/getent',
-       'sbin/ping'} <=
+       'usr.bin/getent', 'sbin/ping'} <=
       set(selected['crunch_programs']) and
+      'external/apache2/mDNSResponder/usr.sbin/mdnsd' not in
+      set(selected['crunch_programs']) and
+      'external/apache2/mDNSResponder/usr.sbin/mdnsd' in
+      set(mdns_toolset['crunch_programs']) and
       selected['programs'] == ('usr.bin/login',) and
       selected['install_map'] == (('usr.bin/login', 'usr/bin/login'),) and
       not selected['compact'] and all('SMALLPROG' not in flag for flag in selected['flags']),
@@ -282,23 +302,41 @@ with tempfile.TemporaryDirectory(prefix='network-reuse-') as temporary:
     staging_spec = Path(str(staging) + '.spec')
     staging_spec.write_text('new device table\n')
     staged_receipt = output / 'BUILD-INPUTS.pending'
-    staged_receipt.write_text('new provenance\n')
+    staged_receipt.write_text('network-toolsets=\n')
     old_root = output / 'root'
     (old_root / 'sbin').mkdir(parents=True)
     (old_root / 'sbin/init').write_text('old init')
     (old_root / 'sbin/init').chmod(0o555)
     (old_root / 'stale-overlay-file').write_text('stale')
+    (old_root / 'etc/rc.network.d').mkdir(parents=True)
+    (old_root / 'etc/rc.network.d/mdnsd').write_text('old mdns service')
+    (old_root / 'etc/rc.conf.d').mkdir(parents=True)
+    (old_root / 'etc/rc.conf.d/mdnsd').write_text('mdnsd=YES\n')
+    (old_root / 'bin').mkdir(parents=True)
+    (old_root / 'bin/littlefs-vfs-check-memory-current').write_text('old test')
     old_spec = output / 'root.spec'
-    old_spec.write_text('old device table\n')
+    old_spec.write_text('./etc/rc.network.d/mdnsd type=file\n'
+                        './etc/rc.conf.d/mdnsd type=file\n'
+                        './bin/littlefs-vfs-check-memory-current type=file\n')
+    (output / 'BUILD-INPUTS.txt').write_text(
+        'network-toolsets=system audio video envsys spi transfer\n'
+        'program-sha256=previous-checker\n')
     profile.commit_network_root(staging, old_root, staging_spec, old_spec,
                                 staged_receipt, output / 'BUILD-INPUTS.txt')
     check((old_root / 'sbin/init').read_text() == 'new init' and
           old_spec.read_text() == 'new device table\n' and
-          (output / 'BUILD-INPUTS.txt').read_text() == 'new provenance\n' and
+          (output / 'BUILD-INPUTS.txt').read_text() == 'network-toolsets=\n' and
           not staging.exists() and not staging_spec.exists(),
           'successful restaging commits root, device table, and receipt together')
     check(not (old_root / 'stale-overlay-file').exists(),
           'recreated root does not retain files removed from the selected overlay')
+    check(not (old_root / 'etc/rc.network.d/mdnsd').exists() and
+          not (old_root / 'etc/rc.conf.d/mdnsd').exists() and
+          not (old_root / 'bin/littlefs-vfs-check-memory-current').exists() and
+          'mdnsd' not in old_spec.read_text() and
+          'littlefs-vfs-check' not in old_spec.read_text() and
+          'program-sha256' not in (output / 'BUILD-INPUTS.txt').read_text(),
+          'default recompose drops previous optional service, checker, manifest entries, and receipt inputs')
 
     link = Path(temporary) / 'root/bin/grep'
     link.parent.mkdir(parents=True)
@@ -353,7 +391,7 @@ check(destinations == {'usr.bin/login': 'usr/bin/login'} and
       {'sbin/chown', 'sbin/fsck_ffs', 'libexec/getty',
        'external/bsd/dhcpcd/sbin/dhcpcd', 'external/bsd/wpa/bin/wpa_supplicant',
        'external/bsd/wpa/bin/wpa_cli',
-       'external/apache2/mDNSResponder/usr.sbin/mdnsd'} <= set(selected['crunch_programs']) and
+       'external/apache2/mDNSResponder/usr.sbin/mdnsd'} <= set(mdns_toolset['crunch_programs']) and
       'sbin/ping' in selected['crunch_programs'] and
       'BINMODE=4555' in (source / 'usr.bin/login/Makefile').read_text(),
       'non-setuid services and root-only ping crunch while setuid login stays standalone')
@@ -366,7 +404,9 @@ check(not any(name in selected['programs'] for name in
 check(not {'usr.bin/audio/ctl/audioctl', 'usr.bin/audio/play/audioplay',
            'usr.bin/audio/record/audiorecord', 'usr.bin/mixerctl/mixerctl',
            'usr.bin/timeout', 'usr.bin/wc', 'usr.bin/videoctl/videoctl',
-           'usr.sbin/envstat/envstat', 'usr.sbin/spinandctl/spinandctl'} &
+           'usr.sbin/envstat/envstat', 'usr.sbin/spinandctl/spinandctl',
+           'usr.bin/cksum/cksum', 'usr.bin/uuencode/uuencode',
+           'usr.bin/uudecode/uudecode', 'bin/df', 'usr.bin/env', 'usr.bin/uname'} &
       set(selected['crunch_programs']) and
       {'usr.bin/audio/ctl/audioctl', 'usr.bin/audio/play/audioplay',
        'usr.bin/audio/record/audiorecord', 'usr.bin/mixerctl/mixerctl',
@@ -489,7 +529,8 @@ with tempfile.TemporaryDirectory(prefix='static-network-') as temporary:
     (dhcp_dest / 'libexec/dhcpcd-run-hooks').write_text('#!/bin/sh\n')
     for hook in ('01-test', '20-resolv.conf', '30-hostname', '50-ntp.conf'):
         (dhcp_dest / 'libexec/dhcpcd-hooks' / hook).write_text('# generated ' + hook + '\n')
-    profile.stage_network(out, source, overlay, 'wifi0', pwd_mkdb, dhcp_dest, 'md0', 'a')
+    profile.stage_network(out, source, overlay, 'wifi0', pwd_mkdb, dhcp_dest,
+                          'md0', 'a', mdns_enabled=True)
     check((out / 'etc/rc.conf').read_text().find('rc_configured=YES') >= 0 and
           'wpa_supplicant=YES' in (out / 'etc/rc.conf').read_text() and
           'dhcpcd=YES' in (out / 'etc/rc.conf').read_text() and
@@ -537,6 +578,17 @@ with tempfile.TemporaryDirectory(prefix='static-network-') as temporary:
           'host-from-overlay.local' in (out / 'etc/rc.conf.d/mdnsd').read_text() and
           (out / 'etc/custom-network.conf').is_file(),
           'OS accounts remain default and overlay identity/service settings are staged')
+    minimal = temporary / 'root-minimal-network'
+    minimal.mkdir()
+    profile.stage_network(minimal, source, overlay, 'wifi0', pwd_mkdb,
+                          dhcp_dest, 'md0', 'a')
+    minimal_rc = (minimal / 'etc/rc.network.d/network_tmpdirs').read_text()
+    check(not (minimal / 'etc/rc.network.d/mdnsd').exists() and
+          not (minimal / 'etc/rc.conf.d/mdnsd').exists() and
+          'mdnsd=NO' in (minimal / 'etc/rc.conf').read_text() and
+          'BEFORE: wpa_supplicant dhcpcd' in minimal_rc and
+          'mdnsd' not in minimal_rc,
+          'default network staging omits optional mDNS service and overlay override')
     (overlay / 'etc/custom-network.conf').write_text('updated setting\n')
     profile.stage_network(out, source, overlay, 'wifi0', pwd_mkdb, dhcp_dest, 'md0', 'a')
     check(sum(line.startswith('_mdnsd:') for line in

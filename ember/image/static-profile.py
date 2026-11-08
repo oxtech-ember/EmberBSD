@@ -447,7 +447,7 @@ def network(target, toolsets=(), spi_units=(), root_filesystem='ffs',
     """Select the ordinary-init network userland from the same C foundation."""
     import re
 
-    allowed_toolsets = {'system', 'audio', 'video', 'envsys', 'spi', 'transfer'}
+    allowed_toolsets = {'system', 'audio', 'video', 'envsys', 'spi', 'transfer', 'mdns'}
     if (len(set(toolsets)) != len(toolsets) or
             any(not re.fullmatch(r'[a-z]+', item) or item not in allowed_toolsets
                 for item in toolsets)):
@@ -479,8 +479,7 @@ def network(target, toolsets=(), spi_units=(), root_filesystem='ffs',
         'sbin/mount_ffs', 'sbin/mount_tmpfs', 'sbin/rcorder', 'sbin/ttyflags',
         'sbin/umount', 'libexec/getty',
         'external/bsd/dhcpcd/sbin/dhcpcd',
-        'external/bsd/wpa/bin/wpa_supplicant', 'external/bsd/wpa/bin/wpa_cli',
-        'external/apache2/mDNSResponder/usr.sbin/mdnsd')
+        'external/bsd/wpa/bin/wpa_supplicant', 'external/bsd/wpa/bin/wpa_cli')
     selected['programs'] = ('usr.bin/login',)
     if root_filesystem == 'littlefs':
         selected['headers'] += ('sys/sys', 'sys/fs/littlefs')
@@ -522,6 +521,9 @@ def network(target, toolsets=(), spi_units=(), root_filesystem='ffs',
         selected['crunch_programs'] += (
             'usr.bin/cksum/cksum', 'usr.bin/uuencode/uuencode',
             'usr.bin/uudecode/uudecode')
+    if 'mdns' in toolsets:
+        selected['crunch_programs'] += (
+            'external/apache2/mDNSResponder/usr.sbin/mdnsd',)
     install_map = [('usr.bin/login', 'usr/bin/login')]
     selected['install_map'] = tuple(install_map)
     return selected
@@ -557,7 +559,8 @@ def network_device_selection(settings, root_device, root_partition='a', applicat
 
 
 def stage_network(root, source, overlay, interface, pwd_mkdb, dhcpcd_dest,
-                  root_device, root_partition='a', root_filesystem='ffs'):
+                  root_device, root_partition='a', root_filesystem='ffs',
+                  mdns_enabled=False):
     """Stage standard init/rc network services over the normal OS defaults."""
     import shutil
     import subprocess
@@ -621,11 +624,13 @@ def stage_network(root, source, overlay, interface, pwd_mkdb, dhcpcd_dest,
         f'wpa_supplicant_flags="-Dbsd -i {interface} -c /etc/wpa_supplicant.conf"\n'
         'dhcpcd=YES\n'
         f'dhcpcd_flags="-b -C wpa_supplicant {interface}"\n'
-        'mdnsd=YES\n')
+        'mdnsd=' + ('YES' if mdns_enabled else 'NO') + '\n')
     scripts = ('fsck_root', 'resize_root', 'root', 'devpubd', 'DISKS', 'swap1', 'fsck',
                'mountcritlocal', 'CRITLOCALMOUNTED', 'bootconf.sh', 'ttys', 'sysctl',
                'ipfilter', 'ipsec', 'network', 'staticroute', 'wpa_supplicant',
-               'dhcpcd', 'mdnsd', 'NETWORKING', 'DAEMON', 'LOGIN')
+               'dhcpcd', 'NETWORKING', 'DAEMON', 'LOGIN')
+    if mdns_enabled:
+        scripts += ('mdnsd',)
     for name in scripts:
         stage_rc_script(source / 'etc/rc.d' / name, root / 'etc/rc.network.d' / name)
     runtime_dirs = root / 'etc/rc.network.d/network_tmpdirs'
@@ -633,7 +638,7 @@ def stage_network(root, source, overlay, interface, pwd_mkdb, dhcpcd_dest,
         '#!/bin/sh\n'
         '# PROVIDE: network_tmpdirs\n'
         '# REQUIRE: CRITLOCALMOUNTED\n'
-        '# BEFORE: wpa_supplicant dhcpcd mdnsd\n'
+        '# BEFORE: wpa_supplicant dhcpcd' + (' mdnsd' if mdns_enabled else '') + '\n'
         '$_rc_subr_loaded . /etc/rc.subr\n'
         'name=network_tmpdirs\n'
         'rcvar=$name\n'
@@ -642,15 +647,29 @@ def stage_network(root, source, overlay, interface, pwd_mkdb, dhcpcd_dest,
         'load_rc_config $name\n'
         'run_rc_command "$1"\n')
     if runtime_dirs.exists():
-        if runtime_dirs.is_symlink() or not runtime_dirs.is_file() or \
-                runtime_dirs.read_text() != runtime_dirs_text:
-            raise ValueError('existing network_tmpdirs script differs from selected profile')
-        runtime_dirs.chmod(0o555)
+        if runtime_dirs.is_symlink() or not runtime_dirs.is_file():
+            raise ValueError('existing network_tmpdirs path is not a regular file')
+        write_if_different(runtime_dirs, runtime_dirs_text, mode=0o555)
     else:
         write_if_different(runtime_dirs, runtime_dirs_text, mode=0o555)
     stage_overlay(overlay, root, allow_identical=True,
                   allow_suffixes={'etc/ifconfig.' + interface: b'up\n'},
                   replace_regular=True)
+    if not mdns_enabled:
+        mdns_script = root / 'etc/rc.network.d/mdnsd'
+        if mdns_script.exists() or mdns_script.is_symlink():
+            if mdns_script.is_symlink() or not mdns_script.is_file():
+                raise ValueError('disabled mDNS script must be a regular staged file')
+            mdns_script.unlink()
+        mdns_config = root / 'etc/rc.conf.d/mdnsd'
+        if mdns_config.exists() or mdns_config.is_symlink():
+            if mdns_config.is_symlink() or not mdns_config.is_file():
+                raise ValueError('disabled mDNS override must be a regular staged file')
+            mdns_config.unlink()
+        rc_conf = root / 'etc/rc.conf'
+        rc_text = rc_conf.read_text()
+        rc_text = __import__('re').sub(r'(?m)^mdnsd=.*(?:\n|$)', '', rc_text)
+        write_if_different(rc_conf, rc_text + 'mdnsd=NO\n')
     interface_config = root / 'etc' / ('ifconfig.' + interface)
     interface_text = interface_config.read_text() if interface_config.exists() else ''
     interface_lines = interface_text.splitlines()
@@ -662,18 +681,19 @@ def stage_network(root, source, overlay, interface, pwd_mkdb, dhcpcd_dest,
     resolv_conf = root / 'etc/resolv.conf'
     if not resolv_conf.exists():
         write_if_different(resolv_conf, '')
-    mdns_accounts = [line for line in (source / 'etc/master.passwd').read_text().splitlines()
-                     if line.startswith('_mdnsd:')]
-    if len(mdns_accounts) != 1:
-        raise ValueError('OS master.passwd must define the mdnsd service account')
-    passwd_file = root / 'etc/master.passwd'
-    current_mdns = [line for line in passwd_file.read_text().splitlines()
-                    if line.startswith('_mdnsd:')]
-    if current_mdns and current_mdns != mdns_accounts:
-        raise ValueError('network root conflicts with the OS mdnsd account')
-    if not current_mdns:
-        with passwd_file.open('a') as stream:
-            stream.write('\n' + mdns_accounts[0] + '\n')
+    if mdns_enabled:
+        mdns_accounts = [line for line in (source / 'etc/master.passwd').read_text().splitlines()
+                         if line.startswith('_mdnsd:')]
+        if len(mdns_accounts) != 1:
+            raise ValueError('OS master.passwd must define the mdnsd service account')
+        passwd_file = root / 'etc/master.passwd'
+        current_mdns = [line for line in passwd_file.read_text().splitlines()
+                        if line.startswith('_mdnsd:')]
+        if current_mdns and current_mdns != mdns_accounts:
+            raise ValueError('network root conflicts with the OS mdnsd account')
+        if not current_mdns:
+            with passwd_file.open('a') as stream:
+                stream.write('\n' + mdns_accounts[0] + '\n')
     subprocess.run([str(pwd_mkdb), '-L', '-p', '-d', str(root),
                     str(root / 'etc/master.passwd')], check=True)
     subprocess.run([str(Path(pwd_mkdb).with_name('nbcap_mkdb')), '-l', '-f',
@@ -872,6 +892,8 @@ def run_console(arguments):
         if is_network:
             extra_path_names.extend(('EMBER_LIBPCAP_SOURCE', 'EMBER_WPA_SOURCE',
                                      'EMBER_PKGSRC_EXPORT'))
+            if 'mdns' in selected_toolsets:
+                extra_path_names.append('EMBER_MDNS_SOURCE')
             if os.environ.get('EMBER_LIBPCAP_ARCHIVE'):
                 extra_path_names.append('EMBER_LIBPCAP_ARCHIVE')
             if os.environ.get('EMBER_WPA_ARCHIVE'):
@@ -919,6 +941,8 @@ def run_console(arguments):
         network_interface = os.environ.get('EMBER_NETWORK_INTERFACE', '')
         network_root_device = os.environ.get('EMBER_NETWORK_ROOT_DEVICE', '')
         network_root_partition = os.environ.get('EMBER_NETWORK_ROOT_PARTITION', 'a')
+        mdns_source = (os.environ.get('EMBER_MDNS_SOURCE', '')
+                       if 'mdns' in selected_toolsets else '')
         wolfssl_prefix = os.environ.get('EMBER_WOLFSSL_PREFIX', '') if is_network else ''
         network_sources = {}
         wolfssl_hash = ''
@@ -948,8 +972,11 @@ def run_console(arguments):
                 wolfssl_hash = hashlib.sha256(
                     Path(wolfssl_prefix, 'lib/libwolfssl.a').read_bytes()).hexdigest()
                 paths.reject_overlap(str(output), wolfssl_prefix)
-            for variable in ('EMBER_MDNS_SOURCE', 'EMBER_DHCPCD_SOURCE',
-                             'EMBER_LIBPCAP_SOURCE', 'EMBER_WPA_SOURCE'):
+            source_variables = ['EMBER_DHCPCD_SOURCE', 'EMBER_LIBPCAP_SOURCE',
+                                'EMBER_WPA_SOURCE']
+            if 'mdns' in selected_toolsets:
+                source_variables.insert(0, 'EMBER_MDNS_SOURCE')
+            for variable in source_variables:
                 if not os.environ.get(variable):
                     raise SDKError('missing required network source: ' + variable)
                 selected_source = paths.canonical_existing(os.environ[variable])
@@ -1077,7 +1104,7 @@ def run_console(arguments):
                    identity['resource_dir'], jobs, timestamp, revision,
                    ' '.join(settings['headers']), ' '.join(settings['libraries']), ' '.join(settings['programs']),
                    native.tool('python'), profile, overlay, extra, native.tool('awk'), wolfssl_prefix,
-                   network_interface, os.environ.get('EMBER_MDNS_SOURCE', ''),
+                   network_interface, mdns_source,
                    os.environ.get('EMBER_DHCPCD_SOURCE', ''),
                    ' '.join('='.join(pair) for pair in settings.get('install_map', ())),
                    os.environ.get('EMBER_WPA_CRYPTO_BACKEND', '') if is_network else '',
@@ -1183,8 +1210,11 @@ if __name__ == '__main__':
         link_if_same(sys.argv[2], sys.argv[3])
     elif len(sys.argv) == 7 and sys.argv[1] == 'apply-metalog-modes':
         apply_metalog_modes(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6])
-    elif len(sys.argv) == 11 and sys.argv[1] == 'stage-network':
+    elif len(sys.argv) == 12 and sys.argv[1] == 'stage-network':
+        if sys.argv[11] not in ('yes', 'no'):
+            raise SystemExit('stage-network MDNS_ENABLED must be yes or no')
         stage_network(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6],
-                      sys.argv[7], sys.argv[8], sys.argv[9], sys.argv[10])
+                      sys.argv[7], sys.argv[8], sys.argv[9], sys.argv[10],
+                      mdns_enabled=sys.argv[11] == 'yes')
     else:
-        raise SystemExit('usage: static-profile.py stage-overlay DIRECTORY ROOT | link-if-same TARGET LINK | stage-network ROOT SOURCE OVERLAY INTERFACE PWD_MKDB DHCPCD_SOURCE ROOT_DEVICE ROOT_PARTITION ROOT_FILESYSTEM')
+        raise SystemExit('usage: static-profile.py stage-overlay DIRECTORY ROOT | link-if-same TARGET LINK | stage-network ROOT SOURCE OVERLAY INTERFACE PWD_MKDB DHCPCD_SOURCE ROOT_DEVICE ROOT_PARTITION ROOT_FILESYSTEM MDNS_ENABLED')
