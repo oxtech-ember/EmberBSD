@@ -49,7 +49,7 @@ struct ieee80211_vht_channel;
 struct ieee80211com {
 	struct { void (*ia_detach)(struct ieee80211com *); } *ic_auth;
 	const struct ieee80211_rxba_ops *ic_rxba_ops;
-	uint64_t ic_rxba_serial;
+	uint64_t ic_rxba_serial, ic_sae_serial;
 	int (*ic_ht20_admit)(struct ieee80211com *, struct ieee80211_ht20_profile *);
 	struct ieee80211_ht20_diag ic_ht20_diag;
 	void *ic_opt_ie;
@@ -75,6 +75,11 @@ struct ieee80211com {
 	int ic_fixed_rate, ic_state;
 	struct ieee80211_rateset ic_sup_rates[IEEE80211_MODE_MAX];
 };
+#define ieee80211_sae_serial(ic) ((ic)->ic_sae_serial)
+static void ieee80211_sae_state_request(struct ieee80211com *ic, int state)
+{ (void)ic; (void)state; }
+#define ieee80211_sae_retire(ic) ((void)(ic))
+#define ieee80211_sae_leave(ic) ((void)(ic))
 struct work { int unused; };
 struct workqueue { int queued; };
 typedef int callout_t;
@@ -104,6 +109,7 @@ struct rtw88_net {
 	unsigned channel, configured_media;
 	struct rtw88_channel_tuple pending_channel;
 	int state_arg;
+	uint64_t state_sae_serial;
 	int (*parent_state)(struct ieee80211com *, enum ieee80211_state, int);
 };
 static unsigned state_mbuf_frees, state_mbuf_free_while_master;
@@ -124,7 +130,7 @@ static int state_media_error, state_real_media;
 static int state_shared_parent(struct ieee80211com *,enum ieee80211_state,int);
 static int state_shared_ieee80211_media_change(struct ifnet *);
 static int state_shared_ieee80211_setmode(struct ieee80211com *,enum ieee80211_phymode);
-static unsigned state_epoch_change;
+static unsigned state_epoch_change, state_sae_sleep_change, state_sae_parent_fail;
 static unsigned state_retune_failure;
 static struct rtw88_net *state_current_net;
 static unsigned state_channel_calls, state_station_calls, state_negotiated;
@@ -169,6 +175,10 @@ static inline int kpause(const char *name,bool intr,int ticks,kmutex_t *lock)
 {
     (void)name;(void)intr;assert(lock==NULL && !state_lock.held && ticks>0);
     state_ticks+=(unsigned)ticks;
+    if(state_sae_sleep_change) {
+        state_current_net->ic.ic_sae_serial++;
+        state_sae_sleep_change=0;
+    }
     if(strcmp(name,"rtwdrn")==0) {
         assert(state_current_net && state_current_net->core==f.sc);
         for(unsigned q=0;q<RTW88_NTXQ;q++)f.tx_hw_rp[q]=f.sc->sc_txq[q].wp;
@@ -447,6 +457,10 @@ state_parent(struct ieee80211com *ic, enum ieee80211_state state, int arg)
 	struct rtw88_net *net=ic->ic_ifp->if_softc;
 	(void)arg;
 	CHECK(!state_lock.held && !state_beacon_lock);
+	if(state_sae_parent_fail) {
+		state_sae_parent_fail=0;ic->ic_sae_serial++;
+		return EACCES;
+	}
 	if (state==IEEE80211_S_INIT) {
 		state_parent_init++;
 		ieee80211_wme_reset(ic->ic_bss);
@@ -610,6 +624,37 @@ state_fixture_finish(struct state_fixture *s)
 	CHECK(f.dma_allocs==0);
 	state_current_net=NULL;
 }
+/* A configure-only replacement changes no driver policy/key epoch. Test
+ * both queued work and an actual drain sleep before any parent publication. */
+static void
+test_native_state_sae_generation(void)
+{
+ for(unsigned sleeping=0;sleeping<3;sleeping++) {
+  struct state_fixture s;
+  if(!state_fixture_start(&s,1,20))continue;
+  state_legacy_peer(&s.net,&s.ni,1);
+  s.ni.ni_associd=1;s.ni.ni_bssid[0]=2;
+  s.net.ic.ic_sae_serial=10;
+  CHECK(rtw88_net_newstate(&s.net.ic,IEEE80211_S_RUN,0)==0);
+  CHECK(s.net.state_sae_serial==10);
+  uint64_t epoch=s.net.policy.epoch;
+  if(sleeping==1) {
+   CHECK(rtw88_tx_raw(&s.sc,RTW88_TXQ_MGMT,bcast_frame,sizeof(bcast_frame))==0);
+   state_sae_sleep_change=1;
+  } else if(sleeping==0) s.net.ic.ic_sae_serial++;
+  else state_sae_parent_fail=1;
+  state_channel_calls=state_station_calls=state_parent_tx=state_parent_init=0;
+  rtw88_net_state_work(&s.net.state_work,&s.net);
+  CHECK(s.net.ic.ic_sae_serial==11 && s.net.policy.epoch==epoch);
+  CHECK(!state_sae_sleep_change && !s.net.work_pending && !s.net.run_pending);
+  CHECK(!state_parent_tx && !state_parent_init);
+  CHECK(state_channel_calls==(sleeping==2) && state_station_calls==(sleeping==2));
+  if(sleeping==2)CHECK(!state_sae_parent_fail && s.net.reset_required);
+  CHECK(!s.net.policy.accepting);
+  state_fixture_finish(&s);
+ }
+}
+
 static void
 test_native_state_edca_failures(void)
 {

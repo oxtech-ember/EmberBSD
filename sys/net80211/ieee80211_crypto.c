@@ -65,6 +65,7 @@ __KERNEL_RCSID(0, "$NetBSD: ieee80211_crypto.c,v 1.23 2018/05/08 07:02:07 maxv E
 
 #include <net80211/ieee80211_netbsd.h>
 #include <net80211/ieee80211_var.h>
+#include <net80211/ieee80211_sae.h>
 
 /*
  * Table of registered cipher modules.
@@ -235,6 +236,12 @@ ieee80211_crypto_unregister(const struct ieee80211_cipher *cip)
 	ciphers[cip->ic_cipher] = NULL;
 }
 
+const struct ieee80211_cipher *
+ieee80211_crypto_cipher(u_int cipher)
+{
+	return cipher < IEEE80211_CIPHER_MAX ? ciphers[cipher] : NULL;
+}
+
 int
 ieee80211_crypto_available(u_int cipher)
 {
@@ -315,6 +322,7 @@ ieee80211_crypto_newkey(struct ieee80211com *ic, int cipher, int flags,
 	}
 
 	/* Purge queued ciphertext before any flags/context can change. */
+	ieee80211_sae_key_changed(ic, key);
 	ieee80211_rxba_key_change(ic, key);
 	oflags = key->wk_flags;
 	flags &= IEEE80211_KEY_COMMON;
@@ -431,6 +439,7 @@ _ieee80211_crypto_delkey(struct ieee80211com *ic, struct ieee80211_key *key)
 	ieee80211_keyix keyix;
 
 	IASSERT(key->wk_cipher != NULL, ("No cipher!"));
+	ieee80211_sae_key_changed(ic, key);
 	ieee80211_rxba_key_change(ic, key);
 	if (ic->ic_bss != NULL && key == &ic->ic_bss->ni_ucastkey)
 		ic->ic_bss->ni_flags &= ~IEEE80211_NODE_AMSDU_RX;
@@ -504,6 +513,7 @@ ieee80211_crypto_setkey(struct ieee80211com *ic, struct ieee80211_key *key,
 
 	IASSERT(cip != NULL, ("No cipher!"));
 	/* Same-pointer setkey can reset CCMP replay domains. */
+	ieee80211_sae_key_changed(ic, key);
 	ieee80211_rxba_key_change(ic, key);
 
 	IEEE80211_DPRINTF(ic, IEEE80211_MSG_CRYPTO,
@@ -550,7 +560,10 @@ ieee80211_crypto_encap(struct ieee80211com *ic, struct ieee80211_node *ni,
 	struct ieee80211_frame *wh;
 	const struct ieee80211_cipher *cip;
 	u_int8_t keyid, *hdr;
-	int hdrlen;
+	int hdrlen, native_mgmt = 0;
+
+	if (!ieee80211_sae_tx_current(ic, ni, m))
+		return NULL;
 
 	/*
 	 * Multicast traffic always uses the multicast key.
@@ -559,7 +572,17 @@ ieee80211_crypto_encap(struct ieee80211com *ic, struct ieee80211_node *ni,
 	 * set we fall back to the default transmit key.
 	 */
 	wh = mtod(m, struct ieee80211_frame *);
-	if (IEEE80211_IS_MULTICAST(wh->i_addr1) ||
+	if (ieee80211_sae_active(ic)) {
+		int result = ieee80211_sae_crypto_tx(ic, ni, m);
+		if (result < 0)
+			return NULL;
+		k = &ni->ni_ucastkey;
+		if (result > 0)
+			return k;
+		keyid = 0;
+		native_mgmt = (wh->i_fc[0] & IEEE80211_FC0_TYPE_MASK) ==
+		    IEEE80211_FC0_TYPE_MGT;
+	} else if (IEEE80211_IS_MULTICAST(wh->i_addr1) ||
 	    ni->ni_ucastkey.wk_cipher == &ieee80211_cipher_none) {
 		if (ic->ic_def_txkey == IEEE80211_KEYIX_NONE) {
 			IEEE80211_DPRINTF(ic, IEEE80211_MSG_CRYPTO,
@@ -583,8 +606,14 @@ ieee80211_crypto_encap(struct ieee80211com *ic, struct ieee80211_node *ni,
 	 * to the beginning of the mbuf. Ensure everything is contiguous.
 	 */
 	hdrlen = ieee80211_hdrspace(ic, mtod(m, void *));
+	/* This API borrows m by value. Native producers reserve writable
+	 * headroom; reject a broken producer before prepend/pullup can replace
+	 * or free the caller's mbuf. Already-encrypted tags returned above. */
+	if (ieee80211_sae_active(ic) &&
+	    ((size_t)M_LEADINGSPACE(m) < cip->ic_header || m->m_len < hdrlen))
+		return NULL;
 	M_PREPEND(m, cip->ic_header, M_NOWAIT);
-	if (m && m->m_len < hdrlen + cip->ic_header) {
+	if (m && (u_int)m->m_len < (u_int)hdrlen + cip->ic_header) {
 		m = m_pullup(m, hdrlen + cip->ic_header);
 	}
 	if (m == NULL) {
@@ -593,7 +622,11 @@ ieee80211_crypto_encap(struct ieee80211com *ic, struct ieee80211_node *ni,
 	hdr = mtod(m, u_int8_t *);
 	memmove(hdr, hdr + cip->ic_header, hdrlen);
 
-	return (cip->ic_encap(k, m, keyid<<6) ? k : NULL);
+	if (!cip->ic_encap(k, m, keyid << 6))
+		return NULL;
+	if (native_mgmt)
+		ieee80211_sae_crypto_done(m);
+	return k;
 }
 
 #define	IEEE80211_WEP_HDRLEN	(IEEE80211_WEP_IVLEN + IEEE80211_WEP_KIDLEN)
@@ -641,7 +674,22 @@ ieee80211_crypto_decap(struct ieee80211com *ic,
 	wh = mtod(m, struct ieee80211_frame *);
 	m_copydata(m, (unsigned)hdrlen + IEEE80211_WEP_IVLEN,
 	    sizeof(keyid), &keyid);
-	if (IEEE80211_IS_MULTICAST(wh->i_addr1) ||
+	if (ieee80211_sae_active(ic)) {
+		if (ni != ic->ic_bss)
+			return NULL;
+		if (IEEE80211_IS_MULTICAST(wh->i_addr1)) {
+			if ((wh->i_fc[0] & IEEE80211_FC0_TYPE_MASK) == IEEE80211_FC0_TYPE_MGT)
+				return NULL;
+			k = &ic->ic_nw_keys[keyid >> 6];
+		} else {
+			if (keyid >> 6 != 0)
+				return NULL;
+			k = &ni->ni_ucastkey;
+		}
+		if (k->wk_cipher->ic_cipher != IEEE80211_CIPHER_AES_CCM ||
+		    !(k->wk_flags & IEEE80211_KEY_SWCRYPT))
+			return NULL;
+	} else if (IEEE80211_IS_MULTICAST(wh->i_addr1) ||
 	    ni->ni_ucastkey.wk_cipher == &ieee80211_cipher_none) {
 		k = &ic->ic_nw_keys[keyid >> 6];
 	} else {

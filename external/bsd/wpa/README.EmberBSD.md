@@ -13,6 +13,17 @@ obligations from the default OpenSSL build. The full profile currently remains
 OpenSSL-only. WPA's EAPOL four-way handshake remains part of the personal
 profile; the optional IEEE 802.1X EAP state machine is excluded.
 
+The BSD kernel ABI adapter is an explicit OS input:
+`dist/src/drivers/driver_bsd.c`. Both supplicant and hostapd select this one
+file through `WPA_BSD_DRIVER`, copying it to a build-private
+`driver_emberbsd.c` so each program and architecture owns its object; other
+WPA code and public driver interfaces
+come from the immutable prepared Ports source. The adapter includes
+`<driver.h>` through that source's include path, so the older reference header
+beside the OS adapter cannot shadow the selected API. This permits OS ioctl
+changes to reach native builds without modifying a prepared source receipt
+or maintaining another copy of WPA protocol algorithms.
+
 The target interface and driver must independently support association, key
 installation, SAE external authentication and protected management frames.
 Building this profile does not establish that a particular driver supports

@@ -11,9 +11,17 @@ name: Native net80211 crypto, scan, aggregation and WME contracts
       - 'ember/tests/aicwf-vht.sh'
       - 'ember/tests/aicwf-sta.sh'
       - 'ember/tests/net80211-sta.sh'
+      - 'ember/tests/net80211-sae.sh'
+      - 'ember/tests/net80211-bip.sh'
+      - 'ember/tests/aicwf-bip.sh'
+      - 'ember/tests/bsd-sae.sh'
+      - 'ember/tools/aicwf-bip-contract.c'
+      - 'ember/tools/bsd-sae-contract.*'
+      - 'ember/tools/rtw89-link-loss-contract.*'
+      - 'sys/dev/pci/rtw89/if_rtw89.c'
       - 'ember/tools/aicwf-vht-test.c'
       - 'ember/tools/aicwf-sta-contract.c'
-      - 'external/bsd/wpa/dist/src/common/ieee802_11_defs.h'
+      - 'external/bsd/wpa/dist/src/**'
       - 'sys/crypto/aes/**'
       - 'sys/sys/mbuf.h'
       - 'sys/sys/queue.h'
@@ -21,7 +29,6 @@ name: Native net80211 crypto, scan, aggregation and WME contracts
       - 'sys/net/if_ether.h'
       - 'ember/tools/ccmp*'
       - 'ember/tools/net80211-*'
-      - 'external/bsd/wpa/dist/src/drivers/driver_bsd.c'
       - 'sys/dev/ic/bwfm.c'
       - 'sys/dev/ic/bwfmreg.h'
       - 'sys/dev/ic/rtw88_net.c'
@@ -61,9 +68,17 @@ name: Native net80211 crypto, scan, aggregation and WME contracts
       - 'ember/tests/aicwf-vht.sh'
       - 'ember/tests/aicwf-sta.sh'
       - 'ember/tests/net80211-sta.sh'
+      - 'ember/tests/net80211-sae.sh'
+      - 'ember/tests/net80211-bip.sh'
+      - 'ember/tests/aicwf-bip.sh'
+      - 'ember/tests/bsd-sae.sh'
+      - 'ember/tools/aicwf-bip-contract.c'
+      - 'ember/tools/bsd-sae-contract.*'
+      - 'ember/tools/rtw89-link-loss-contract.*'
+      - 'sys/dev/pci/rtw89/if_rtw89.c'
       - 'ember/tools/aicwf-vht-test.c'
       - 'ember/tools/aicwf-sta-contract.c'
-      - 'external/bsd/wpa/dist/src/common/ieee802_11_defs.h'
+      - 'external/bsd/wpa/dist/src/**'
       - 'sys/crypto/aes/**'
       - 'sys/sys/mbuf.h'
       - 'sys/sys/queue.h'
@@ -71,7 +86,6 @@ name: Native net80211 crypto, scan, aggregation and WME contracts
       - 'sys/net/if_ether.h'
       - 'ember/tools/ccmp*'
       - 'ember/tools/net80211-*'
-      - 'external/bsd/wpa/dist/src/drivers/driver_bsd.c'
       - 'sys/dev/ic/bwfm.c'
       - 'sys/dev/ic/bwfmreg.h'
       - 'sys/dev/ic/rtw88_net.c'
@@ -128,15 +142,22 @@ jobs:
             /ember/tests/aicwf-vht.sh
             /ember/tests/aicwf-sta.sh
             /ember/tests/net80211-sta.sh
+            /ember/tests/net80211-sae.sh
+            /ember/tests/net80211-bip.sh
+            /ember/tests/aicwf-bip.sh
+            /ember/tests/bsd-sae.sh
+            /ember/tools/aicwf-bip-contract.c
+            /ember/tools/bsd-sae-contract.*
+            /ember/tools/rtw89-link-loss-contract.*
+            /sys/dev/pci/rtw89/if_rtw89.c
             /ember/tools/aicwf-vht-test.c
             /ember/tools/aicwf-sta-contract.c
-            /external/bsd/wpa/dist/src/common/ieee802_11_defs.h
+            /external/bsd/wpa/dist/src/
             /sys/crypto/aes/
             /sys/sys/mbuf.h
             /sys/sys/queue.h
             /sys/net/if.h
             /sys/net/if_ether.h
-            /external/bsd/wpa/dist/src/drivers/driver_bsd.c
             /sys/dev/ic/bwfm.c
             /sys/dev/ic/bwfmreg.h
             /sys/dev/ic/rtw88_net.c
@@ -172,7 +193,7 @@ jobs:
         run: |
           test "$(gcc -dumpfullversion)" = 16.2.0
           apt-get update
-          apt-get install -y --no-install-recommends python3 valgrind libc6-dbg clang cppcheck
+          apt-get install -y --no-install-recommends python3 valgrind libc6-dbg clang cppcheck pkg-config libssl-dev
           valgrind --version
       - name: Check optimized actual sources under Memcheck
         env:
@@ -184,6 +205,9 @@ jobs:
           AICWF_VHT_CFLAGS: -O2 -g -gdwarf-4
           AICWF_STA_CFLAGS: -O2 -g -gdwarf-4
           STA_TEST_CFLAGS: -O2 -g -gdwarf-4
+          SAE_TEST_CFLAGS: -O2 -g -gdwarf-4
+          NET80211_BIP_CFLAGS: -O2 -g -gdwarf-4
+          AICWF_BIP_CFLAGS: -O2 -g -gdwarf-4
           WME_TEST_CFLAGS: -O2 -g -gdwarf-4
           MANUAL_SCAN_CFLAGS: -O2 -g -gdwarf-4
           TXOP_TEST_CFLAGS: -O2 -g -gdwarf-4
@@ -198,6 +222,9 @@ jobs:
           export TEST_RUNNER="$RUNNER_TEMP/memcheck"
           python3 ember/tools/net80211-beacon-ies-contract.py --work-dir "$RUNNER_TEMP" --cc gcc --cflags="$WME_TEST_CFLAGS"
           sh ember/tools/ccmp-contract.sh
+          sh ember/tests/net80211-sae.sh
+          sh ember/tests/net80211-bip.sh
+          sh ember/tests/aicwf-bip.sh
           sh ember/tools/net80211-crypto-bounds-contract.sh
           sh ember/tools/net80211-amsdu-parser-contract.sh
           sh ember/tools/net80211-amsdu-contract.sh
@@ -216,6 +243,12 @@ jobs:
           CC: gcc
           CCMP_TEST_CFLAGS: -O0 -g -gdwarf-4 -fanalyzer
           CCMP_ANALYZE: '1'
+          SAE_TEST_CFLAGS: -O0 -g -gdwarf-4 -fanalyzer
+          SAE_ANALYZE: '1'
+          NET80211_BIP_CFLAGS: -O0 -g -gdwarf-4 -fanalyzer
+          NET80211_BIP_ANALYZE: '1'
+          AICWF_BIP_CFLAGS: -O0 -g -gdwarf-4 -fanalyzer
+          AICWF_BIP_ANALYZE: '1'
           TXOP_TEST_CFLAGS: -O0 -g -gdwarf-4 -fanalyzer
           TXOP_ANALYZE: '1'
           WME_TEST_CFLAGS: -O0 -g -gdwarf-4 -fanalyzer
@@ -226,6 +259,9 @@ jobs:
         run: |
           python3 ember/tools/net80211-beacon-ies-contract.py --work-dir "$RUNNER_TEMP" --cc gcc --cflags="$WME_TEST_CFLAGS"
           sh ember/tools/ccmp-contract.sh
+          sh ember/tests/net80211-sae.sh
+          sh ember/tests/net80211-bip.sh
+          sh ember/tests/aicwf-bip.sh
           sh ember/tools/net80211-crypto-bounds-contract.sh
           sh ember/tools/net80211-amsdu-analysis.sh
           sh ember/tools/net80211-phy-ies-analysis.sh
@@ -247,6 +283,9 @@ jobs:
           AICWF_VHT_CFLAGS: -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
           AICWF_STA_CFLAGS: -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
           STA_TEST_CFLAGS: -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
+          SAE_TEST_CFLAGS: -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
+          NET80211_BIP_CFLAGS: -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
+          AICWF_BIP_CFLAGS: -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
           WME_TEST_CFLAGS: -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
           MANUAL_SCAN_CFLAGS: -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
           TXOP_TEST_CFLAGS: -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
@@ -255,6 +294,9 @@ jobs:
         run: |
           python3 ember/tools/net80211-beacon-ies-contract.py --work-dir "$RUNNER_TEMP" --cc gcc --cflags="$WME_TEST_CFLAGS"
           sh ember/tools/ccmp-contract.sh
+          sh ember/tests/net80211-sae.sh
+          sh ember/tests/net80211-bip.sh
+          sh ember/tests/aicwf-bip.sh
           sh ember/tools/net80211-crypto-bounds-contract.sh
           sh ember/tools/net80211-amsdu-parser-contract.sh
           sh ember/tools/net80211-amsdu-contract.sh

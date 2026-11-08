@@ -35,6 +35,15 @@
 #define IEEE80211_FEXT_PROBECHAN 1
 #define isclr(a, n) (((a)[(n) / 8] & (1U << ((n) % 8))) == 0)
 #define IEEE80211_DISCARD(...) ((void)0)
+/* This fixture covers providers that have not opted into native SAE. */
+#define ieee80211_sae_active(ic) false
+#define ieee80211_sae_port_allowed(ic) true
+#define ieee80211_sae_data_allowed(ic, ni, key, eapol) true
+#define ieee80211_sae_tag_tx(ic, ni, m) 0
+#define ieee80211_sae_leave(ic) ((void)(ic))
+#define ieee80211_sae_retire(ic) ((void)(ic))
+#define ieee80211_sae_serial(ic) ((ic)->ic_sae_serial)
+#define ieee80211_sae_state_request(ic, state) ((void)(ic), (void)(state))
 #define IEEE80211_NO_HOSTAP 1
 #define INET 1
 struct ieee80211com;
@@ -151,7 +160,7 @@ struct ieee80211com {
 	struct ieee80211_key ic_nw_keys[4];
 	unsigned ic_def_txkey;
 	const struct ieee80211_rxba_ops *ic_rxba_ops;
-	uint64_t ic_rxba_serial;
+	uint64_t ic_rxba_serial, ic_sae_serial;
 	int (*ic_ht20_admit)(struct ieee80211com *, struct ieee80211_ht20_profile *);
 	struct ieee80211_ht20_diag ic_ht20_diag;
 	int (*ic_vht_admit)(struct ieee80211com *,

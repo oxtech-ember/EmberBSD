@@ -99,3 +99,39 @@ hardware BlockAck, scheduler latency or endurance.
 
 The [RTL8822CE boundary](../../dev/ic/docs/rtl8822ce-proposal.md#current-source-boundary) and
 [board record](https://github.com/oxtech-ember/EmberBSD-DevBoards/blob/main/boards/cix-p1-orangepi6plus/README.md) track target checks separately.
+
+## Firmware-offload follow-up
+
+The AIC Ethernet-decapsulated reorder migration is pending. Its current slots
+can own an `m_nextpkt` chain, while firmware owns BA negotiation and reports
+reorder metadata. `ieee80211_rxba_input()` accepts raw 802.11 and owns negotiated
+node/key epochs; passing those Ethernet chains to it would violate its contract.
+The shared RSN, station-management and WPA3 work does not remove AIC's private
+reorder algorithm.
+
+The next independently reviewable implementation has these boundaries:
+
+1. Extract sequence-window, slot and deadline operations into one shared core
+   used by raw input and firmware offload. Preserve raw BA candidate commit,
+   storage accounting, BAR handling and timer tokens.
+2. Add an explicit offload session API with TID, 12-bit sequence, association
+   generation, key generation and per-TID session generation. Start selects
+   SSN/window; stop selects drain or discard. Invalid values and exhausted
+   generations fail closed. Packet arrival cannot resurrect a retired session.
+3. Input consumes the complete packet chain on every return. Slots retain
+   head/tail and charged storage; output returns separate ready/discard chains.
+   Delivery/freeing occurs after the state lock is released. Bound packet,
+   fragment and tag walks, storage and arithmetic overflow.
+4. Keep firmware metadata decoding and event ordering in AIC. Map observed
+   reorder-run transitions explicitly. Verify whether firmware provides a
+   session identifier sufficient to distinguish delayed old RX. Reassociation,
+   rekey and firmware reset retire generations before delivery resumes; timer
+   tokens and ready chains are checked again against the delivery epoch.
+5. Test in-order/gapped/duplicate/late input, sequence wrap and half-space
+   ambiguity, window advance, bounded multi-packet A-MSDU ownership, timeout
+   rescheduling, stale callbacks, stop/restart, rekey, same-BSSID reconnect,
+   invalid metadata and allocation failure. Run existing raw BA contracts
+   against the same extracted core.
+6. Remove AIC's private release/reorder/flush/timeout routines only after both
+   consumers use that core. Record SDK compilation, static analysis, memory
+   tests and target kernel results separately from physical acceptance.

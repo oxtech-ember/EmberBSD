@@ -10,11 +10,16 @@
 #define IEEE80211_DPRINTF(...) ((void)0)
 #define IEEE80211_IS_MULTICAST(a) (*(a) & 1)
 #define M_PKTHDR 1
+#define IEEE80211_FC0_TYPE_MASK 12
+#define IEEE80211_FC0_TYPE_MGT 0
+#define IEEE80211_CIPHER_AES_CCM 3
+#define IEEE80211_KEY_SWCRYPT 16
+#define ieee80211_sae_active(ic) 0
 #define IEEE80211_WEP_IVLEN 3
 #define IEEE80211_WEP_KIDLEN 1
 #define IEEE80211_WEP_HDRLEN 4
 struct ieee80211_frame {
-	uint8_t fc[2], dur[2], i_addr1[6], addr2[6], addr3[6], seq[2];
+	uint8_t i_fc[2], dur[2], i_addr1[6], addr2[6], addr3[6], seq[2];
 };
 #define IEEE80211_WEP_MINLEN (sizeof(struct ieee80211_frame) + 4 + 4)
 struct mbuf {
@@ -29,14 +34,17 @@ struct ieee80211_key;
 struct ieee80211_cipher {
 	unsigned ic_header, ic_trailer;
 	int (*ic_decap)(struct ieee80211_key *, struct mbuf *, int);
+	unsigned ic_cipher;
 };
 struct ieee80211_key {
 	const struct ieee80211_cipher *wk_cipher;
+	unsigned wk_flags;
 };
 struct ieee80211_node {
 	struct ieee80211_key ni_ucastkey;
 };
 struct ieee80211com {
+	struct ieee80211_node *ic_bss;
 	struct {
 		unsigned is_rx_tooshort;
 	} ic_stats;
@@ -87,9 +95,9 @@ static unsigned checks, failures;
 int
 main(void)
 {
-	const struct ieee80211_cipher cipher = {8, 8, cipher_decap};
+	const struct ieee80211_cipher cipher = {8, 8, cipher_decap, 0};
 	struct ieee80211com ic = {0};
-	struct ieee80211_node ni = {{&cipher}};
+	struct ieee80211_node ni = {{&cipher, 0}};
 	struct mbuf m, *mp;
 	/* Header lengths cover QoS, addr4 and padded header space. */
 	const int headers[] = {24, 26, 28, 30, 32, 36};

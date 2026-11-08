@@ -67,6 +67,7 @@ __KERNEL_RCSID(0, "$NetBSD: ieee80211_input.c,v 1.117 2022/11/19 07:57:51 yamt E
 #include <net/if_llc.h>
 
 #include <net80211/ieee80211_var.h>
+#include <net80211/ieee80211_sae.h>
 #include <net80211/ieee80211_beacon_ies.h>
 #include <net80211/ieee80211_amsdu.h>
 
@@ -222,6 +223,9 @@ ieee80211_accept_data(struct ieee80211com *ic, struct ieee80211_node *ni,
 	const struct ether_header *eh;
 
 	eh = mtod(m, struct ether_header *);
+	if (!ieee80211_sae_data_allowed(ic, ni, key,
+	    eh->ether_type == htons(ETHERTYPE_PAE)))
+		goto err;
 	if (!ieee80211_node_is_authorized(ni)) {
 		/*
 		 * Deny any non-PAE frames received prior to
@@ -396,7 +400,8 @@ ieee80211_input_data(struct ieee80211com *ic, struct mbuf **mp,
 	 * of replay sequence numbers.
 	 */
 	if (wh->i_fc[1] & IEEE80211_FC1_WEP) {
-		if ((ic->ic_flags & IEEE80211_F_PRIVACY) == 0) {
+		if ((ic->ic_flags & IEEE80211_F_PRIVACY) == 0 &&
+		    !ieee80211_sae_active(ic)) {
 			/*
 			 * Discard encrypted frames when privacy is off.
 			 */
@@ -537,7 +542,7 @@ ieee80211_input_management(struct ieee80211com *ic, struct mbuf **mp,
 	struct ieee80211_frame *wh;
 	u_int8_t dir, subtype;
 	struct mbuf *m = *mp;
-	int hdrspace;
+	int hdrspace, sae;
 
 	wh = mtod(m, struct ieee80211_frame *);
 	dir = wh->i_fc[1] & IEEE80211_FC1_DIR_MASK;
@@ -567,6 +572,15 @@ ieee80211_input_management(struct ieee80211com *ic, struct mbuf **mp,
 	}
 #endif
 
+	sae = ieee80211_sae_input(ic, ni, &m);
+	if (sae < 0)
+		goto out;
+	if (sae > 0) {
+		m_freem(m);
+		*mp = NULL;
+		return 0;
+	}
+	wh = mtod(m, struct ieee80211_frame *);
 	if (wh->i_fc[1] & IEEE80211_FC1_WEP) {
 		if (subtype != IEEE80211_FC0_SUBTYPE_AUTH) {
 			/*
@@ -816,7 +830,10 @@ ieee80211_input(struct ieee80211com *ic, struct mbuf *m,
 		if (type == IEEE80211_FC0_TYPE_DATA &&
 		    ieee80211_rxba_input(ic, ni, m))
 			return IEEE80211_FC0_TYPE_DATA;
-		if (HAS_SEQ(type) && (ic->ic_opmode != IEEE80211_M_STA ||
+		/* PMF replay is authenticated by CCMP/BIP; forged management
+		 * sequence numbers must not mutate the legacy data replay state. */
+		if (!(type == IEEE80211_FC0_TYPE_MGT && ieee80211_sae_active(ic)) &&
+		    HAS_SEQ(type) && (ic->ic_opmode != IEEE80211_M_STA ||
 		    !IEEE80211_IS_MULTICAST(wh->i_addr1))) {
 			u_int8_t tid, retry;
 			u_int16_t rxno, orxno;

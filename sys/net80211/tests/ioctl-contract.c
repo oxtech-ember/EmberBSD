@@ -34,6 +34,7 @@ struct ieee80211_node {
 struct ieee80211com {
 	int ic_opmode, ic_state;
 	uint32_t sae_caps;
+	uint64_t sae_serial;
 	struct ifnet *ic_ifp;
 	struct ieee80211_node *ic_bss;
 	uint8_t ic_myaddr[6];
@@ -119,6 +120,17 @@ authorize(void)
 #define malloc(n, type, flags) allocate(n)
 #define free(p, type) release(p, allocation_size)
 #define explicit_memset wipe
+#define ieee80211_sae_serial(ic) ((ic)->sae_serial)
+static int
+ieee80211_sae_request(struct ieee80211com *ic,
+    const struct ieee80211req_sae *req)
+{
+	(void)ic; (void)req;
+	calls++;
+	return 0;
+}
+static struct ieee80211com *native_ic;
+static void native_reconfigure(void) { native_ic->sae_serial++; }
 /* PRODUCTION_FUNCTIONS */
 #undef malloc
 #undef free
@@ -283,6 +295,19 @@ main(void)
 	const uint8_t src[6] = {2, 0, 0, 0, 0, 2};
 	const uint8_t bssid[6] = {2, 0, 0, 0, 0, 3};
 	unsigned before;
+
+	/* A stop or new same-BSSID owner during sleeping copyin must win. */
+	native_ic = &ic;
+	ic.sae_serial = 1;
+	ireq.i_len = sizeof(req);
+	input_hook = native_reconfigure;
+	before = calls;
+	CHECK(ieee80211_ioctl_sae(&ic, SIOCS80211, &ireq, 15,
+	    ieee80211_sae_request) == ESTALE);
+	CHECK(calls == before);
+	input_hook = NULL;
+	ireq.i_len = 0;
+	allocations = releases = authorizations = 0;
 
 	frame[0] = 0xb0;
 	memcpy(frame + 4, dst, 6);

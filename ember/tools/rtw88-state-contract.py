@@ -196,7 +196,7 @@ for name,result in [('ieee80211_reset_scan','static void'),('ieee80211_begin_sca
 (out/'native-band-shared.inc').write_text('\n'.join(band))
 full=re.search(r'^ieee80211_newstate\(.*?^}',shared,re.M|re.S).group()
 prefix=full[full.index('\tostate = ic->ic_state;'):full.index('\tswitch (nstate) {')]
-arms=full[full.index('\tcase IEEE80211_S_INIT:'):full.index('\tcase IEEE80211_S_AUTH:\n\t\tswitch (ostate)')]
+arms=full[full.index('\tcase IEEE80211_S_INIT:'):re.search(r'^\tcase IEEE80211_S_AUTH:',full,re.M).start()]
 (out/'native-band-parent.inc').write_text(prefix+'\tswitch (nstate) {\n'+arms+'\tdefault: abort();\n\t}\nreturn 0;\n')
 start=net.index('\tic->ic_sup_rates[IEEE80211_MODE_11A] =')
 end=net.index('\tifp->if_softc = net;',start)

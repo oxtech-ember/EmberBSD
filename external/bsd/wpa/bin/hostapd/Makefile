@@ -60,12 +60,19 @@ wpa_ctrl.c
 
 # drivers
 SRCS+= \
-driver_bsd.c \
+driver_emberbsd.c \
 driver_none.c \
 driver_wired.c \
 driver_wired_common.c \
 driver_common.c \
 drivers.c
+
+CLEANFILES+= driver_emberbsd.c
+
+# Keep the generated source/object private to this program and architecture.
+driver_emberbsd.c: ${WPA_BSD_DRIVER}
+	${MKTARGET_CREATE}
+	cp ${.ALLSRC} ${.TARGET}
 
 # radius
 SRCS+= \

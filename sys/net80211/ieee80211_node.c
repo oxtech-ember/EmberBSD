@@ -65,6 +65,7 @@ __KERNEL_RCSID(0, "$NetBSD: ieee80211_node.c,v 1.84 2024/07/05 04:31:53 rin Exp 
 
 #include <net80211/ieee80211_netbsd.h>
 #include <net80211/ieee80211_var.h>
+#include <net80211/ieee80211_sae.h>
 
 #include <net/bpf.h>
 
@@ -214,8 +215,10 @@ ieee80211_node_detach(struct ieee80211com *ic)
 void
 ieee80211_node_authorize(struct ieee80211_node *ni)
 {
-	struct ieee80211com *ic = ni->ni_ic;
+	const struct ieee80211com *ic = ni->ni_ic;
 
+	if (!ieee80211_sae_port_allowed(ic))
+		return;
 	ni->ni_flags |= IEEE80211_NODE_AUTH;
 	ni->ni_inact_reload = ic->ic_inact_run;
 }
@@ -481,6 +484,7 @@ ieee80211_reset_bss(struct ieee80211com *ic)
 {
 	struct ieee80211_node *ni, *obss;
 
+	ieee80211_sae_leave(ic);
 	ieee80211_node_table_reset(&ic->ic_scan);
 	ieee80211_node_table_reset(&ic->ic_sta);
 
@@ -889,6 +893,7 @@ ieee80211_sta_join(struct ieee80211com *ic, struct ieee80211_node *selbs)
 void
 ieee80211_sta_leave(struct ieee80211com *ic, struct ieee80211_node *ni)
 {
+	ieee80211_sae_leave(ic);
 	ieee80211_wme_reset(ni);
 	ic->ic_node_cleanup(ni);
 	ieee80211_notify_node_leave(ic, ni);

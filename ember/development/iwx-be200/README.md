@@ -50,6 +50,48 @@ Still missing: detach/unload, hardware crypto, MFP
 (so WPA3-only networks do not work), RLC_CONFIG v3 (sending the v2
 layout makes the firmware fail, so it is not sent).
 
+## Native SAE prerequisite audit (2026-11-08)
+
+BE200 remains opted out of the common native SAE/PMF owner. The module
+Makefile does not define `IWX_HT`, but the separate local HT/VHT and Block
+Ack implementation is active. Software CCMP alone does not establish the
+raw management receive contract needed to advertise WPA3.
+
+The unresolved boundary is RX authentication-byte preservation.
+`iwx_rx_mpdu_mq()` subtracts the combined `MIC_CRC_LEN` descriptor field
+from every MPDU, and its arguments omit the packet's RADA status. That
+does not establish which MIC/MMIE bytes remain available to the common
+software verifier. In [Linux v6.18 receive code](https://github.com/torvalds/linux/blob/7d0a66e4bb9081d75c82ec4957c50034cb0ea449/drivers/net/wireless/intel/iwlwifi/mvm/rxmq.c),
+`iwl_mvm_create_skb()` removes that combined tail while the CCMP receive
+path marks the MIC stripped after hardware authentication. The equivalent
+[MLD receive path](https://github.com/torvalds/linux/blob/7d0a66e4bb9081d75c82ec4957c50034cb0ea449/drivers/net/wireless/intel/iwlwifi/mld/rx.c)
+also removes the descriptor tail. [OpenBSD iwx revision 1.230](https://github.com/openbsd/src/blob/3ccbab699b92dd6c8c084ef39ef892ce6e52c566/sys/dev/pci/if_iwx.c)
+documents firmware-dependent MIC removal without a known capability
+discriminator. Rejecting `DEC_DONE` frames or omitting hardware keys is
+insufficient evidence that firmware retained all bytes for software PMF.
+An adapter needs an explicit raw-frame metadata contract; guessing the
+MIC/FCS split from packet length would not resolve this prerequisite.
+
+Once that contract is established, the local integration must also:
+
+- Run private association/action handling through `ic_recv_mgmt`, after
+  common PMF verification; the current early action hook accepts plaintext
+  ADDBA/DELBA and rejects protected action frames.
+- Preserve kernel provenance tags when `iwx_ht_tx_assoc()` replaces an
+  mbuf, and tag private action TX with sufficient software-crypto headroom.
+- Retire native state before deferred state changes or stop, and check the
+  current generation immediately before handing a frame to firmware.
+- Disable firmware-originated TX Block Ack negotiation for native SAE
+  until firmware can protect its action frames. Host-authenticated RX
+  Block Ack and HT/VHT rates are separate capabilities.
+
+The DMA doorbell is the TX ownership boundary: already submitted
+ciphertext remains associated with its old key; it is not deferred host
+plaintext. This audit does not require recalling those submitted frames.
+No SAE capability, hardware deployment, or new hardware result is claimed.
+The earlier WPA2 measurements above remain historical results. This source
+audit was prepared with OpenAI Codex assistance.
+
 ## Channel width and station lifecycle
 
 When an HT/VHT station leaves RUN, `iwx_run_stop()` flushes traffic and

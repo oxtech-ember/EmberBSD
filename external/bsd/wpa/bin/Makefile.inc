@@ -4,6 +4,10 @@ BINDIR?=	/usr/sbin
 
 USE_FORT?= yes	# network client/server
 
+# The kernel ABI adapter is maintained with this OS. Protocol algorithms and
+# public WPA driver interfaces continue to come from the prepared Ports tree.
+WPA_BSD_DRIVER:=		${.PARSEDIR}/../dist/src/drivers/driver_bsd.c
+
 .if defined(EMBER_WPA_SOURCE)
 WPA_DISTDIR?=			${EMBER_WPA_SOURCE}
 .if "${WPA_DISTDIR}" != "${EMBER_WPA_SOURCE}"
@@ -37,8 +41,14 @@ CPPFLAGS+= \
 	-I${WPA_DISTDIR}/src/ap \
 	-I${WPA_DISTDIR}/src/common \
 	-I${WPA_DISTDIR}/src/crypto \
+	-I${WPA_DISTDIR}/src/drivers \
 	-I${WPA_DISTDIR}/src/l2_packet \
 	-I${WPA_DISTDIR}/src/utils
+
+# Builds against a newer kernel may stage its net80211 headers privately.
+.if defined(NET80211_INCLUDES)
+CPPFLAGS+= -I${NET80211_INCLUDES}
+.endif
 
 CONFIG_TLS_DEFAULT_CIPHERS = "DEFAULT:!EXP:!LOW"
 

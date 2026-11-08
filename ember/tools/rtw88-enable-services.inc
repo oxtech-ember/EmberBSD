@@ -106,6 +106,8 @@ static void ieee80211_crypto_attach(struct ieee80211com *ic)
 #define ieee80211_sysctl_attach(ic) ((void)(ic))
 #define ieee80211_init_link_state(ic) ((void)(ic))
 static int ieee80211_default_reset(struct ifnet *p) { (void)p;return ENETRESET; }
+static int ieee80211_sae_attach(struct ieee80211com *ic)
+{ (void)ic;return EOPNOTSUPP; }
 static void ieee80211_node_attach(struct ieee80211com *ic)
 { ic->ic_node_cleanup=cleanup_node; }
 static void ieee80211_node_lateattach(struct ieee80211com *ic)

@@ -32,11 +32,12 @@ struct ifnet { void *if_softc; unsigned if_flags,if_timer; };
 #define IFF_RUNNING 1U
 #define IFF_OACTIVE 2U
 #define aprint_error_dev(dev,fmt,...) ((void)(dev))
-struct ieee80211com { struct ifnet *ic_ifp; struct ieee80211_node *ic_bss; unsigned ic_flags; int ic_fixed_rate,ic_state,ic_mgt_timer,ic_mgtq,ic_opmode; unsigned *ic_curchan; };
+struct ieee80211com { uint64_t ic_sae_serial; struct ifnet *ic_ifp; struct ieee80211_node *ic_bss; unsigned ic_flags; int ic_fixed_rate,ic_state,ic_mgt_timer,ic_mgtq,ic_opmode; unsigned *ic_curchan; };
+#define ieee80211_sae_serial(ic) ((ic)->ic_sae_serial)
 typedef int kmutex_t;
 struct rtw88_net_hw_snapshot { uint32_t generation; int started,running,stop_requested,linked,power_ready; struct {int active,configured,phy;} ra; struct {int channel_valid; struct rtw88_channel_tuple channel;} phy; };
 struct rtw88_net {
- kmutex_t *lock; struct rtw88_softc *core; void *dev; struct { struct ifnet ec_if; } ec; uint64_t key_epoch; unsigned key_depth;
+ kmutex_t *lock; struct rtw88_softc *core; void *dev; struct { struct ifnet ec_if; } ec; uint64_t key_epoch, state_sae_serial; unsigned key_depth;
  struct ieee80211com ic; int requested,state_arg,work_pending,run_pending,scan,tx_retry,state_again,state_running,state_enqueued,csa_pending; unsigned tx_timer,tx_producers; struct rtw88_channel_tuple pending_channel; unsigned configured_media,channel; struct rtw88_net_neg neg;
  struct { void *m; } rx[RTW88_NET_RX_LIMIT]; void *wq; int state_work,stack_detached;
  int init_failed,parent_init_failed; int (*parent_state)(struct ieee80211com *,enum ieee80211_state,int);
@@ -53,8 +54,10 @@ struct rtw88_net {
  struct { int init_pending,init_error; uint32_t init_generation; } stats;
 };
 #define KASSERT(x) assert(x)
-#define KERNEL_UNLOCK_ALL(a,b) do {(void)(a);*(b)=0;} while(0)
-#define KERNEL_LOCK(n,p) do {(void)(n);(void)(p);} while(0)
+static void kernel_unlock_all(void *lwp,int *nlocks){assert(lwp==NULL);*nlocks=0;}
+static void kernel_lock(int nlocks,void *lwp){assert(nlocks==0 && lwp==NULL);}
+#define KERNEL_UNLOCK_ALL kernel_unlock_all
+#define KERNEL_LOCK kernel_lock
 #define mutex_owned(m) (*(m))
 static unsigned wakes,scheduled;
 static void rtw88_net_state_schedule_locked(struct rtw88_net *n){(void)n;scheduled++;}
@@ -102,7 +105,9 @@ static unsigned rtw88_net_tx_queued(const struct rtw88_net *n){return n->async.t
 static void rtw88_net_quiet_locked(struct rtw88_net *n){n->tx_quiet=1;}
 static void rtw88_net_fault(struct rtw88_net *n,int e){n->key_error=e;}
 static struct rtw88_net *parent_mutation;
-static int parent_state(struct ieee80211com *ic,enum ieee80211_state s,int a){(void)ic;(void)s;(void)a;if(parent_mutation)parent_mutation->policy.epoch++;return 0;}
+static unsigned parent_calls;
+static int parent_retires;
+static int parent_state(struct ieee80211com *ic,enum ieee80211_state s,int a){(void)ic;(void)s;(void)a;parent_calls++;if(parent_retires){ic->ic_sae_serial++;return EACCES;}if(parent_mutation)parent_mutation->policy.epoch++;return 0;}
 static struct rtw88_net *tx_test_net;
 static int tx_error=EIO;
 static enum rtw88_tx_progress tx_progress=RTW88_TX_MAY_HAVE_WRITTEN;
@@ -139,6 +144,7 @@ static int fixture_prepare(struct rtw88_softc *sc,int (*current)(void *),void *c
  case 4: n->policy.dying=1; break;
  case 5: n->stop_pending=1; break;
  case 6: n->tx_quiet=1; break;
+ case 7: n->ic.ic_sae_serial++; break;
  }
  if(prepare_mutation) assert(current(cookie)!=0);
  return 0;
@@ -215,7 +221,7 @@ int main(void)
  assert(stop_calls==1 && e.reset_required && !e.control_ready);
  /* Actual async AUTH executor, with and without the optional hook. */
  invalidate_net=NULL;
- for(unsigned mutation=0;mutation<=6;mutation++) {
+ for(unsigned mutation=0;mutation<=7;mutation++) {
   struct rtw88_softc corep={.sc_chip=&with_prepare,.sc_generation=8,.sc_started=1};
   struct rtw88_net netp={.lock=&lock,.core=&corep,.key_epoch=2};
   struct rtw88_control_snapshot auth={.kind=RTW88_CTL_STATE,.state=IEEE80211_S_AUTH,.id={.generation=8,.epoch=9,.key_epoch=2}};
@@ -226,7 +232,7 @@ int main(void)
   assert(channel_calls==1 && prepare_calls==1 && station_calls==(mutation?0U:1U) && mailbox_ends==1);
  }
  /* Single executor retains hardware ownership through stale cleanup. */
- for(unsigned mutation=1;mutation<=6;mutation++) {
+ for(unsigned mutation=1;mutation<=7;mutation++) {
   struct rtw88_softc corep={.sc_chip=&with_prepare,.sc_generation=8,.sc_started=1,.sc_running=1};
   struct rtw88_net netp={.lock=&lock,.core=&corep,.key_epoch=2,.io_active=1};
   struct rtw88_control_snapshot auth={.kind=RTW88_CTL_STATE,.state=IEEE80211_S_AUTH,.id={.generation=8,.epoch=9,.key_epoch=2}};
@@ -266,28 +272,61 @@ int main(void)
  snapshot_mutation=NULL; g.policy.epoch=9;
  assert(rtw88_net_state_snapshot(&g,&snap,&diag,0)==0);
  assert(snap.id.epoch==9 && snap.id.key_epoch==2 && snap.aid==7 && snap.bssid[0]==2);
+ /* A configure-only replacement leaves policy/key epochs unchanged. The
+  * original queued request must never be rebound to the successor owner. */
+ g.state_sae_serial=1; g.ic.ic_sae_serial=2;
+ assert(rtw88_net_state_snapshot(&g,&snap,&diag,0)==ECANCELED);
+ g.state_sae_serial=g.ic.ic_sae_serial=0;
+ assert(rtw88_net_state_snapshot(&g,&snap,&diag,0)==0);
  struct ifnet ifp={0}; unsigned ch=6;
  struct rtw88_net h={.lock=&lock,.core=&sc2,.key_epoch=2};
  struct rtw88_async_epoch hid={.generation=8,.epoch=9,.key_epoch=2};
  ifp.if_softc=&h; h.ic.ic_ifp=&ifp; h.ic.ic_curchan=&ch;
- h.hw.generation=8; h.policy.epoch=9; h.policy.accepting=1; rtw88_async_init(&h.async,&hid);
+ h.ic.ic_sae_serial=11; h.hw.generation=8; h.policy.epoch=9; h.policy.accepting=1; rtw88_async_init(&h.async,&hid);
  assert(rtw88_net_newstate_async(&h.ic,IEEE80211_S_AUTH,3)==0);
  assert(h.policy.epoch==10 && h.async.id.epoch==10 && !h.policy.accepting);
  assert(h.requested==IEEE80211_S_AUTH && h.pending_channel.primary==6 && h.work_pending);
+ assert(h.state_sae_serial==11);
  h.policy.epoch=UINT64_MAX-1; h.async.id.epoch=UINT64_MAX-1;
  assert(rtw88_net_newstate_async(&h.ic,IEEE80211_S_AUTH,3)==EOVERFLOW);
  assert(h.async.closed && !h.policy.accepting);
  lock=1; assert(rtw88_net_state_current_locked(&g,&snap.id));
  g.key_epoch++; assert(!rtw88_net_state_current_locked(&g,&snap.id)); lock=0;
- rtw88_net_state_fail(&g,&snap.id,EIO,&diag); assert(!g.stop_pending);
+ rtw88_net_state_fail(&g,&snap.id,snap.sae_serial,EIO,&diag); assert(!g.stop_pending);
  g.key_epoch--; g.ic.ic_state=IEEE80211_S_INIT; g.policy.accepting=1;
- rtw88_net_state_fail(&g,&snap.id,EIO,&diag);
+ rtw88_net_state_fail(&g,&snap.id,snap.sae_serial,EIO,&diag);
  assert(g.stop_pending && g.init_failed && !g.policy.accepting);
  g.stop_pending=0;g.init_failed=0;g.policy.epoch=9;g.key_epoch=2;g.parent_state=parent_state;g.policy.accepting=0;
+ g.ic.ic_sae_serial=1; parent_calls=0;
+ assert(rtw88_net_state_complete(&g,&snap,&diag,0)==ECANCELED);
+ assert(!parent_calls && !g.policy.accepting && g.ic.ic_sae_serial==1);
+ g.ic.ic_sae_serial=0;g.reset_required=0;parent_retires=1;
+ assert(rtw88_net_state_complete(&g,&snap,&diag,0)==ECANCELED);
+ assert(!g.policy.accepting && g.reset_required && g.ic.ic_sae_serial==1);
+ parent_retires=0;g.ic.ic_sae_serial=0;
  parent_mutation=&g; assert(rtw88_net_state_complete(&g,&snap,&diag,0)==ECANCELED);
  assert(!g.policy.accepting);parent_mutation=NULL;
  g.policy.epoch=9; assert(rtw88_net_state_complete(&g,&snap,&diag,0)==0);
  assert(g.policy.accepting && g.neg.run_published==1);
+ /* A stale snapshot cannot start hardware or publish completion. */
+ { struct rtw88_net stale={.lock=&lock,.core=&sc2,.key_epoch=2,.io_active=1};
+   stale.policy.epoch=9;stale.hw.generation=sc2.sc_generation;
+   stale.caps.bands=RTW88_BAND_2G;stale.ic.ic_sae_serial=2;
+   snap.sae_serial=1;snap.id.generation=sc2.sc_generation;
+   channel_calls=station_calls=0;
+   assert(rtw88_net_control_execute(&stale,&snap,0)==ECANCELED);
+   assert(!channel_calls && !station_calls);
+   assert(rtw88_net_request_control(&stale,&snap)==ESTALE);
+   stale.control_pending=snap;stale.control_pending_valid=1;
+   lock=1;assert(rtw88_net_control_take_locked(&stale,&snap)==ESTALE);lock=0;
+   assert(!stale.control_active);
+   stale.control_active=1;stale.control_owner=snap;
+   rtw88_net_control_done(&stale,&snap.id,0);
+   assert(!stale.control_ready && !stale.control_active);
+   stale.state_sae_serial=1;stale.work_pending=stale.run_pending=1;
+   rtw88_net_state_async(&stale);
+   assert(!stale.work_pending && !stale.run_pending && stale.ic.ic_sae_serial==2);
+ }
  struct rtw88_net j={.lock=&lock,.core=&sc2,.key_epoch=2};
  j.ec.ec_if.if_flags=IFF_UP; j.policy.epoch=9; j.hw.generation=8;
  rtw88_net_state_async(&j);

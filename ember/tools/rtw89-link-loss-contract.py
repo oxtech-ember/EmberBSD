@@ -3,7 +3,10 @@
 # Origin: RTL8852BE watchdog source extractor, AI-assisted.
 
 import argparse
+import json
+import os
 import pathlib
+import shlex
 import subprocess
 
 
@@ -29,11 +32,14 @@ def function_body(source: str, name: str) -> str:
 
 def main() -> int:
 	parser = argparse.ArgumentParser(
-		description="Compile the real rtw89 watchdog against a narrow state shim")
+		description="Compile actual rtw89 state/TX paths against a narrow shim",
+		epilog="TEST_RUNNER may name one executable wrapper for the test binary.")
 	parser.add_argument("--source-root", type=pathlib.Path, required=True)
 	parser.add_argument("--work-dir", type=pathlib.Path, required=True)
 	parser.add_argument("--cc", type=pathlib.Path, required=True,
-		help="absolute path to the selected native GCC 16 compiler")
+		help="absolute path to the selected native compiler")
+	parser.add_argument("--cflags", default="",
+		help="additional native compiler/linker flags, e.g. sanitizers")
 	args = parser.parse_args()
 
 	root = args.source_root.resolve(strict=True)
@@ -54,6 +60,8 @@ def main() -> int:
 		"rtw89_sta_quiet": "static void\n",
 		"rtw89_newstate": "static int\n",
 		"rtw89_newstate_task": "static void\n",
+		"rtw89_tx": "static int\n",
+		"rtw89_stop": "static void\n",
 	}
 	beacon_source = (root / "sys/net80211/ieee80211_beacon_ies.c").read_text()
 	parts = [
@@ -67,14 +75,23 @@ def main() -> int:
 	include = work / "rtw89-link-loss.inc"
 	include.write_text("\n\n".join(parts) + "\n")
 	executable = work / "rtw89-link-loss-contract"
-	subprocess.run([
+	command = [
 		str(cc), "-std=c11", "-Wall", "-Wextra", "-Werror",
-		"-Wno-unused-parameter",
+		*shlex.split(args.cflags),
 		"-I", str(work),
 		str(root / "ember/tools/rtw89-link-loss-contract.c"),
 		"-o", str(executable),
-	], check=True)
-	return subprocess.run([str(executable)], check=False).returncode
+	]
+	(work / "compile_commands.json").write_text(json.dumps([{
+		"directory": str(pathlib.Path.cwd()),
+		"file": str(root / "ember/tools/rtw89-link-loss-contract.c"),
+		"arguments": command,
+		"output": str(executable),
+	}], indent=2) + "\n")
+	subprocess.run(command, check=True)
+	runner = os.environ.get("TEST_RUNNER")
+	invocation = [runner, str(executable)] if runner else [str(executable)]
+	return subprocess.run(invocation, check=False).returncode
 
 
 if __name__ == "__main__":

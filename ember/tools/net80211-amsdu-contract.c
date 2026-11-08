@@ -26,6 +26,11 @@
 #define IEEE80211_M_AHDEMO 3
 #define IEEE80211_M_HOSTAP 6
 #define IEEE80211_NO_HOSTAP 1
+/* Native owner policy is tested in native-sae.py; here observe that the
+ * actual shared per-MSDU acceptance consumer honors a closed owner. */
+#define ieee80211_sae_active(ic) 0
+#define ieee80211_sae_data_allowed(ic, ni, key, eapol) \
+    (sae_data_checks++, !sae_data_reject)
 #define IEEE80211_F_PRIVACY 1
 #define IEEE80211_F_DROPUNENC 2
 #define IEEE80211_CIPHER_AES_CCM 3
@@ -111,6 +116,7 @@ struct ieee80211com {
 };
 static int alive, allocated, fail_at, delivered, crypto_ok = 1, mic_ok = 1,
 						 bpf_count;
+static int sae_data_checks, sae_data_reject;
 static int clusters, cluster_fail_at, defrag_calls, checks, need_auth,
     auth_ready;
 static uint8_t payload[174][1600];
@@ -260,6 +266,7 @@ reset(void)
 	    cluster_fail_at = defrag_calls = 0;
 	crypto_ok = mic_ok = 1;
 	cipher.ic_cipher = 3;
+	sae_data_checks = sae_data_reject = 0;
 }
 static struct mbuf *
 frame(void)
@@ -355,6 +362,22 @@ main(void)
 	CHECK(payload[0][12] == 8 && payload[0][13] == 0);
 	CHECK(bpf_count == 1);
 	CHECK(test_node.stats.rx_data == 2 && test_node.stats.rx_bytes == 30);
+	CHECK(sae_data_checks == 2);
+
+	reset();
+	m = aggregate();
+	sae_data_reject = 1;
+	CHECK(input(m) == 0 && delivered == 0 && sae_data_checks == 2);
+	CHECK(net.if_ipackets == 0 && net.if_ierrors == 2 && alive == 0);
+
+	reset();
+	m = frame();
+	m->data[24] = 0;
+	memcpy(m->data + 26, "\xaa\xaa\x03\0\0\0\x08\0\x42", 9);
+	m->m_len = m->m_pkthdr.len = 35;
+	sae_data_reject = 1;
+	CHECK(input(m) == -1 && delivered == 0 && sae_data_checks == 1);
+	CHECK(net.if_ipackets == 0 && net.if_ierrors == 1 && alive == 0);
 
 	reset();
 	m = aggregate();

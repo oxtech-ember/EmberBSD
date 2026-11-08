@@ -3263,19 +3263,20 @@ prepare_legacy(struct rtw88_softc *sc, int (*current)(void *), void *cookie)
  case 4: net->policy.dying=1; break;
  case 5: net->stop_pending=1; break;
  case 6: net->tx_quiet=1; break;
+ case 9: net->ic.ic_sae_serial++; break;
  case 7: net->policy.epoch++; sc->sc_mailbox.active=1; sc->sc_mailbox.box=(sc->sc_mailbox.box+1)&3; prepare_foreign_box=sc->sc_mailbox.box; break;
  }
  if(prepare_mutation_legacy) {
   CHECK(current(cookie)!=0);
   /* End the worker after the stale-owner path; no new hardware owner runs. */
-  net->policy.dying=1;
+  if(prepare_mutation_legacy!=9)net->policy.dying=1;
  }
  return 0;
 }
 static void
 test_prepare_legacy_auth(void)
 {
- for(unsigned mutation=0;mutation<=8;mutation++) {
+ for(unsigned mutation=0;mutation<=9;mutation++) {
   struct state_fixture s = {0}; struct rtw88_chip_ops chip;
   unsigned before_parent;
   if(!state_fixture_start(&s,1,20)) continue;
@@ -3363,6 +3364,7 @@ main(void)
 #ifndef RTW88_START_CORE_ONLY
 	test_prepare_legacy_auth();
 	test_native_state_defaults();
+	test_native_state_sae_generation();
 	test_native_state_edca_failures();
 	test_native_state_negotiated();
 	test_native_state_reject_context();

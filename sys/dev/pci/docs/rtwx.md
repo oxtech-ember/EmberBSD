@@ -149,8 +149,9 @@ It does not replace kernel or physical-device testing.
 - Station mode only. No access point, monitor or IBSS mode.
 - Legacy 802.11a/b/g rates only. HT, VHT, HE and aggregation are disabled
   because the NetBSD net80211 does not negotiate them.
-- Software crypto only. WPA3/SAE and protected management frames are not
-  supported.
+- Software crypto only. WPA3-Personal uses the opt-in common net80211
+  SAE/PMF owner; its new software integration has not yet completed physical
+  acceptance. See the [consumer matrix](../../../net80211/docs/wpa3-consumers.md).
 - No power save. ASPM, CLKREQ and L1 substates are disabled.
 - Link supervision uses a software watchdog independent of firmware beacon
   reports. Only a complete, structurally valid beacon from the associated AP

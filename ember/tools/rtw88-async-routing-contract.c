@@ -41,6 +41,14 @@ int main(void)
  mutex_enter(&lock);assert(rtw88_async_take(&net.async,1,&ticket,&job)==0);
  assert(job->mode==RTW88_TX_MODE_AUTO && job->id.key_epoch==1 && job->length>=24);
  assert(rtw88_async_finish(&net.async,&ticket,0,RTW88_TX_ACCEPTED,1)==0);mutex_exit(&lock);
+ /* Epoch rejection must cancel the reservation before crypto or SDIO I/O. */
+ m=newbuf(30); assert(m); m->m_data[0]=0xb0;
+ ieee80211_ref_node(&ni); M_SETCTX(m,&ni);
+ queue_packet(&net.ic.ic_mgtq,m); route_sae_stale=m;
+ unsigned crypto=route_crypto, errors=route_errors, schedules=async_schedules;
+ rtw88_net_start_async(ifp); route_sae_stale=NULL;
+ assert(net.ic.ic_mgtq.m==NULL && net.async.total==0 && node_refs==1);
+ assert(route_errors==errors+1 && route_crypto==crypto && async_schedules==schedules);
  sc.sc_executor=(void *)&sc; routing_async_dispatch_calls=0;
  rtw88_net_start(ifp);
  assert(routing_async_dispatch_calls==1 && f.writes==writes);

@@ -556,6 +556,8 @@ struct mbuf *
 ieee80211_getmgtframe(u_int8_t **frm, u_int pktlen)
 {
 	struct mbuf *m;
+	/* mgmt_output consumes the MAC header; retain CCMP prepend space. */
+	const u_int headroom = sizeof(struct ieee80211_frame) + 8;
 	u_int len;
 
 	/*
@@ -563,16 +565,16 @@ ieee80211_getmgtframe(u_int8_t **frm, u_int pktlen)
 	 *     so we don't need to do anything special.
 	 */
 	/* XXX 4-address frame? */
-	len = roundup(sizeof(struct ieee80211_frame) + pktlen, 4);
+	if (pktlen > MCLBYTES - headroom)
+		return NULL;
+	len = roundup(headroom + pktlen, 4);
 	IASSERT(len <= MCLBYTES, ("802.11 mgt frame too large: %u", len));
 
 	if (len <= MHLEN) {
 		m = m_gethdr(M_NOWAIT, MT_HEADER);
 		/*
-		 * Align the data in case additional headers are added.
-		 * This should only happen when a WEP header is added
-		 * which only happens for shared key authentication mgt
-		 * frames which all fit in MHLEN.
+		 * Keep the same reserved crypto headroom for both small
+		 * management frames and frames backed by a cluster.
 		 */
 		if (m != NULL)
 			m_align(m, len);
@@ -581,7 +583,7 @@ ieee80211_getmgtframe(u_int8_t **frm, u_int pktlen)
 	}
 
 	if (m != NULL) {
-		m->m_data += sizeof(struct ieee80211_frame);
+		m->m_data += headroom;
 		*frm = m->m_data;
 		IASSERT((uintptr_t)*frm % 4 == 0, ("bad beacon boundary"));
 	}

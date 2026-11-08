@@ -96,6 +96,7 @@ rtw88_net_rfk_rx_deliver(struct rtw88_net *net)
 
 	mutex_enter(net->lock);
 	current = net->rfk.notice_pending && !net->policy.dying &&
+	    net->state_sae_serial == ieee80211_sae_serial(&net->ic) &&
 	    net->rfk.notice_epoch == net->policy.epoch &&
 	    net->rfk.notice_epoch == net->rfk.control_epoch &&
 	    net->rfk.notice_generation == net->rfk.control_generation &&
@@ -135,6 +136,8 @@ rtw88_net_rfk_capture(struct rtw88_net *net, uint32_t values[192])
 	unsigned n = 0, i, slot = net->channel > 14 ? 9 : 20;
 	int error;
 
+	if (net->state_sae_serial != ieee80211_sae_serial(ic))
+		return ECANCELED;
 	if (ni == NULL || (unsigned)ic->ic_curmode >= IEEE80211_MODE_MAX ||
 	    net->requested != IEEE80211_S_AUTH ||
 	    ni->ni_esslen > sizeof(ni->ni_essid))
@@ -239,6 +242,7 @@ rtw88_net_rfk_enter(void *cookie, int cleanup)
 	else if (net->rfk.notice_pending)
 		error = ECANCELED;
 	else if (!cleanup && (net->policy.dying ||
+	    net->state_sae_serial != ieee80211_sae_serial(&net->ic) ||
 	    net->rfk.epoch != net->policy.epoch ||
 	    net->requested != IEEE80211_S_AUTH))
 		error = ECANCELED;

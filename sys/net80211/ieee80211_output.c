@@ -63,6 +63,7 @@ __KERNEL_RCSID(0, "$NetBSD: ieee80211_output.c,v 1.68 2024/07/05 04:31:53 rin Ex
 
 #include <net80211/ieee80211_netbsd.h>
 #include <net80211/ieee80211_var.h>
+#include <net80211/ieee80211_sae.h>
 #include <net80211/ieee80211_vht_ies.h>
 
 #include <net/bpf.h>
@@ -415,6 +416,11 @@ ieee80211_mgmt_output(struct ieee80211com *ic, struct ieee80211_node *ni,
 		m_freem(m);
 		return ENOBUFS;
 	}
+	if (ieee80211_sae_tag_tx(ic, ni, m) != 0) {
+		M_SETCTX(m, NULL);
+		m_freem(m);
+		return EACCES;
+	}
 	IEEE80211_NODE_STAT(ni, tx_mgmt);
 	IF_ENQUEUE(&ic->ic_mgtq, m);
 	if (ba != NULL)
@@ -724,6 +730,8 @@ struct ieee80211_key *
 ieee80211_crypto_getucastkey(struct ieee80211com *ic, struct ieee80211_node *ni)
 {
 	if (IEEE80211_KEY_UNDEFINED(ni->ni_ucastkey)) {
+		if (ieee80211_sae_active(ic))
+			return NULL;
 		if (ic->ic_def_txkey == IEEE80211_KEYIX_NONE ||
 		    IEEE80211_KEY_UNDEFINED(ic->ic_nw_keys[ic->ic_def_txkey]))
 			return NULL;
@@ -766,6 +774,9 @@ ieee80211_encap(struct ieee80211com *ic, struct mbuf *m,
 
 	IASSERT(m->m_len >= sizeof(eh), ("no ethernet header!"));
 	memcpy(&eh, mtod(m, void *), sizeof(struct ether_header));
+	if (ieee80211_sae_active(ic) && !ieee80211_sae_port_allowed(ic) &&
+	    eh.ether_type != htons(ETHERTYPE_PAE))
+		goto bad;
 
 	/*
 	 * Insure space for additional headers.  First identify
@@ -779,7 +790,7 @@ ieee80211_encap(struct ieee80211com *ic, struct mbuf *m,
 	 * buffer may not be expanded as needed by the cipher
 	 * routines, but they will/should discard it.
 	 */
-	if (ic->ic_flags & IEEE80211_F_PRIVACY) {
+	if ((ic->ic_flags & IEEE80211_F_PRIVACY) || ieee80211_sae_active(ic)) {
 		if (ic->ic_opmode == IEEE80211_M_STA ||
 		    !IEEE80211_IS_MULTICAST(eh.ether_dhost)) {
 			key = ieee80211_crypto_getucastkey(ic, ni);
@@ -914,7 +925,7 @@ ieee80211_encap(struct ieee80211com *ic, struct mbuf *m,
 		 * WPA/WPA2: encrypt EAPOL keys when pairwise keys are set.
 		 */
 		if (eh.ether_type != htons(ETHERTYPE_PAE) ||
-		    ((ic->ic_flags & IEEE80211_F_WPA) &&
+		    (((ic->ic_flags & IEEE80211_F_WPA) || ieee80211_sae_active(ic)) &&
 		     (ic->ic_opmode == IEEE80211_M_STA ?
 		      !IEEE80211_KEY_UNDEFINED(*key) :
 		      !IEEE80211_KEY_UNDEFINED(ni->ni_ucastkey)))) {
@@ -929,6 +940,10 @@ ieee80211_encap(struct ieee80211com *ic, struct mbuf *m,
 		}
 	}
 
+	if (ieee80211_sae_active(ic) && txfrag)
+		goto bad;
+	if (ieee80211_sae_tag_tx(ic, ni, m) != 0)
+		goto bad;
 	if (txfrag && !ieee80211_fragment(ic, m, hdrsize,
 	    key != NULL ? key->wk_cipher->ic_header : 0, ic->ic_fragthreshold))
 		goto bad;

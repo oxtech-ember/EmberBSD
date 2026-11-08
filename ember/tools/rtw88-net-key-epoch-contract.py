@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 # Origin: EmberBSD RTL8723D contract tests, AI-assisted.
 """Compile the actual net key fence with the production async queue."""
-import argparse, os, re, shlex, subprocess
+import argparse, json, os, re, shlex, subprocess
 from pathlib import Path
 p=argparse.ArgumentParser(); p.add_argument("source",type=Path); p.add_argument("output",type=Path)
 a=p.parse_args(); root=a.source.resolve(); out=a.output.resolve()
@@ -24,6 +24,9 @@ for name, prefix in (("rtw88_net_key_enter","static void"),("rtw88_net_key_leave
 include=out/"include/dev"; include.mkdir(parents=True)
 (include/"ic").symlink_to(root/"sys/dev/ic",target_is_directory=True)
 cc=shlex.split(os.environ["CC"])
-cmd=cc+["-std=c11","-Wall","-Wextra","-Werror","-UNDEBUG","-I"+str(out/"include"),"-I"+str(out),"-I"+str(root/"sys/dev/ic"),str(root/"sys/dev/ic/rtw88_async.c"),str(root/"ember/tools/rtw88-net-key-epoch-contract.c"),"-o",str(out/"test")]
-subprocess.run(cmd,check=True); subprocess.run([str(out/"test")],check=True)
+cmd=cc+shlex.split(os.environ.get("RTW88_TEST_CFLAGS", ""))+["-std=c11","-Wall","-Wextra","-Werror","-UNDEBUG","-I"+str(out/"include"),"-I"+str(out),"-I"+str(root/"sys/dev/ic"),str(root/"sys/dev/ic/rtw88_async.c"),str(root/"ember/tools/rtw88-net-key-epoch-contract.c"),"-o",str(out/"test")]
+fixture=str(root/"ember/tools/rtw88-net-key-epoch-contract.c")
+analysis_cmd=[arg for arg in cmd if arg != str(root/"sys/dev/ic/rtw88_async.c")]
+(out/"compile_commands.json").write_text(json.dumps([{"directory":str(out),"file":fixture,"arguments":analysis_cmd}],indent=2)+"\n")
+subprocess.run(cmd,check=True); subprocess.run(shlex.split(os.environ.get("TEST_RUNNER", ""))+[str(out/"test")],check=True)
 print("PASS: net key fence and async queue")

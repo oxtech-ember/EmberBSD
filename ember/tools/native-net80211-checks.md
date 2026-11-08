@@ -47,3 +47,33 @@ is never skipped. `net80211-csa-contract.py` checks that each workflow running
 these scripts installs clang or sets `CSA`, and that the selected analyzer rejects
 a causal NULL dereference. The GCC analyzer remains selected through `CC` and
 its `-fanalyzer` flags.
+
+The station SAE fixtures run together through `ember/tests/net80211-sae.sh`.
+The script checks the native kernel owner, all BSD supplicant variants and
+the actual RTL8852BE link-loss/state-transition paths,
+using `SAE_TEST_CFLAGS` and the selected `CC`/`PYTHON`. Set `SAE_ANALYZE=1`
+to run Clang Static Analyzer and Cppcheck on their generated compilation
+databases, retaining each variant's real definitions and include paths.
+Cppcheck receives source preprocessed by the recorded compiler, so its view
+uses that compiler's actual builtins and native system headers. The mandatory
+SAE categories match the existing CCMP policy: warnings, performance and
+portability, without an additional library model. A separate POSIX-model run
+on the Darwin guard-page fixture reports a model limitation: it rejects the
+valid anonymous `mmap` descriptor `-1` and treats failure as `NULL` instead
+of `MAP_FAILED`. Do not change the valid guard-page source to fit that model.
+The analyzer helper's `--style` option adds an advisory style
+run and still returns nonzero for findings; upstream const suggestions and
+callback signatures must be reviewed without changing imported APIs merely
+to satisfy style. Existing analyzer policies are unchanged.
+In the explicit GCC diagnostic profile, add `-fanalyzer` to
+`SAE_TEST_CFLAGS`; Clang's separate pass uses its own analyzer.
+
+The common `ember/tests/net80211-bip.sh` and AIC compatibility
+`ember/tests/aicwf-bip.sh` contracts additionally require `pkg-config` and
+OpenSSL 3 or later for independent host cryptography. Their flag variables
+are `NET80211_BIP_CFLAGS` and `AICWF_BIP_CFLAGS`; their respective
+`NET80211_BIP_ANALYZE=1` and `AICWF_BIP_ANALYZE=1` switches enable both source
+analyzers. All three runners honor `TEST_RUNNER` for Memcheck execution.
+The main net80211 workflow runs these fixtures in its existing optimized
+Memcheck, static-analysis, and fatal ASan/UBSan phases. Its manual A-MSDU
+diagnostic-capture workflow remains separate from acceptance checks.

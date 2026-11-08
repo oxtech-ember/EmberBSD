@@ -35,6 +35,8 @@ enum rtw88_diag_op {
 #define RTW88_CONTROL_RA 4U
 
 struct rtw88_control_snapshot {
+	/* Bound to the original stack request, never refreshed by the executor. */
+	uint64_t sae_serial;
 	enum rtw88_control_kind kind;
 	struct rtw88_async_epoch id;
 	int state, arg;

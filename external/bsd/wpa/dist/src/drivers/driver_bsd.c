@@ -11,7 +11,7 @@
 #include <sys/ioctl.h>
 
 #include "common.h"
-#include "driver.h"
+#include <driver.h>
 #include "eloop.h"
 #include "common/ieee802_11_defs.h"
 #include "common/wpa_common.h"
@@ -76,6 +76,11 @@ struct bsd_driver_data {
 	u32 sae_generation;
 	u8 sae_bssid[ETH_ALEN];
 	int sae_active;
+	int sae_configured;
+	int sae_blocked;
+#ifdef IEEE80211_SAE_CAP_KEY_EPOCH
+	int sae_key_epoch;
+#endif
 #ifdef IEEE80211_SAE_CAP_SA_QUERY
 	int sae_query;
 #endif
@@ -321,6 +326,54 @@ bsd_sae_request(struct bsd_driver_data *drv, u16 op, const void *data, size_t le
 }
 
 #ifndef HOSTAPD
+/* Keep the retiring token until the kernel acknowledges CONFIGURE-off. */
+static int
+bsd_sae_disable(struct bsd_driver_data *drv)
+{
+	u8 disabled = 0;
+
+	drv->sae_active = 0;
+	if (!drv->sae_configured)
+		return 0;
+	drv->sae_blocked = 1;
+	if (drv->ifindex && !drv->if_removed &&
+	    bsd_sae_request(drv, IEEE80211_SAE_CONFIGURE, &disabled, 1) < 0)
+		return -1;
+	drv->sae_configured = 0;
+	os_memset(drv->sae_bssid, 0, sizeof(drv->sae_bssid));
+	return 0;
+}
+
+static int
+bsd_sae_enable(struct bsd_driver_data *drv, const u8 *bssid)
+{
+	u32 generation;
+	u8 enabled = 1;
+	unsigned int i;
+
+	/* The equality token must not restart deterministically at one. A 32-bit
+	 * ABI still has a collision bound; kernel queue lifetimes use their own
+	 * serial. Never substitute a predictable token when entropy fails. */
+	for (i = 0; i < 8; i++) {
+		if (os_get_random((u8 *) &generation, sizeof(generation)) < 0)
+			return -1;
+		if (generation && generation != drv->sae_generation)
+			break;
+	}
+	if (i == 8)
+		return -1;
+	drv->sae_generation = generation;
+	os_memcpy(drv->sae_bssid, bssid, ETH_ALEN);
+	/* CONFIGURE-on is atomic: failure does not install this generation. */
+	if (bsd_sae_request(drv, IEEE80211_SAE_CONFIGURE, &enabled, 1) < 0) {
+		os_memset(drv->sae_bssid, 0, sizeof(drv->sae_bssid));
+		return -1;
+	}
+	drv->sae_configured = 1;
+	drv->sae_active = 1;
+	return 0;
+}
+
 static int
 bsd_sae_send_mlme(void *priv, const u8 *data, size_t len, int noack,
 		  unsigned int freq, const u16 *csa_offs, size_t csa_offs_len,
@@ -328,6 +381,11 @@ bsd_sae_send_mlme(void *priv, const u8 *data, size_t len, int noack,
 {
 	struct bsd_driver_data *drv = priv;
 
+	(void) noack;
+	(void) freq;
+	(void) csa_offs;
+	(void) no_encrypt;
+	(void) wait;
 	if (!drv->sae_active || len < 30 || WPA_GET_LE16(data) != 0xb0 ||
 	    csa_offs_len || link_id >= 0)
 		return -1;
@@ -338,11 +396,21 @@ bsd_sae_send_mlme(void *priv, const u8 *data, size_t len, int noack,
 static int
 bsd_sae_send_action(void *priv, unsigned int freq, unsigned int wait,
 		    const u8 *dst, const u8 *src, const u8 *bssid,
-		    const u8 *data, size_t data_len, int no_cck)
+		    const u8 *data, size_t data_len, int no_cck
+#ifdef WPA_DRIVER_FLAGS2_P2P_FEATURE_V2
+		    , int link_id
+#endif
+		    )
 {
 	struct bsd_driver_data *drv = priv;
 	u8 frame[28] = { 0xd0 };
 
+	(void) freq;
+	(void) no_cck;
+#ifdef WPA_DRIVER_FLAGS2_P2P_FEATURE_V2
+	if (link_id >= 0)
+		return -1;
+#endif
 	/* On-channel SA Query only; the kernel requires the current station PTK. */
 	if (!drv->sae_active || !drv->sae_query || wait || data_len != 4 ||
 	    data[0] != WLAN_ACTION_SA_QUERY || data[1] > 1 ||
@@ -380,12 +448,14 @@ bsd_del_key(void *priv, const u8 *addr, int key_idx)
 	struct ieee80211req_del_key wk;
 #if defined(IEEE80211_IOC_SAE) && defined(CONFIG_SAE)
 	struct bsd_driver_data *drv = priv;
+	if (!drv->sae_active && drv->sae_blocked)
+		return -1;
 	if (key_idx == 4 || key_idx == 5) {
-		u8 index[2];
+		u8 key_id[2];
 		if (!drv->sae_active)
 			return 0;
-		WPA_PUT_LE16(index, key_idx);
-		return bsd_sae_request(drv, IEEE80211_SAE_DELETE_IGTK, index, sizeof(index));
+		WPA_PUT_LE16(key_id, key_idx);
+		return bsd_sae_request(drv, IEEE80211_SAE_DELETE_IGTK, key_id, sizeof(key_id));
 	}
 #endif
 
@@ -401,6 +471,11 @@ bsd_del_key(void *priv, const u8 *addr, int key_idx)
 		wk.idk_keyix = (u_int8_t) IEEE80211_KEYIX_NONE;	/* XXX */
 	}
 
+#if defined(IEEE80211_IOC_SAE) && defined(CONFIG_SAE) && \
+    defined(IEEE80211_SAE_CAP_KEY_EPOCH)
+	if (drv->sae_active && drv->sae_key_epoch)
+		return bsd_sae_request(drv, IEEE80211_SAE_DELETE_KEY, &wk, sizeof(wk));
+#endif
 	return set80211var(priv, IEEE80211_IOC_DELKEY, &wk, sizeof(wk));
 }
 
@@ -450,6 +525,24 @@ bsd_set_key(void *priv, struct wpa_driver_set_key_params *params)
 	size_t seq_len = params->seq_len;
 	const u8 *key = params->key;
 	size_t key_len = params->key_len;
+	int ret;
+
+#if defined(IEEE80211_IOC_SAE) && defined(CONFIG_SAE)
+	struct bsd_driver_data *sae_drv = priv;
+
+	if (!sae_drv->sae_active && sae_drv->sae_blocked)
+		return -1;
+#ifdef IEEE80211_SAE_CAP_KEY_EPOCH
+	if (sae_drv->sae_active && sae_drv->sae_key_epoch &&
+	    (params->link_id >= 0 ||
+	    (alg != WPA_ALG_NONE && alg != WPA_ALG_BIP_CMAC_128 &&
+	    (alg != WPA_ALG_CCMP || key_len != 16 || seq_len > 6))))
+		return -1;
+#endif
+#endif
+	if (key_len > sizeof(wk.ik_keydata) || seq_len > sizeof(wk.ik_keyrsc) ||
+	    (key_len && !key) || (seq_len && !seq))
+		return -1;
 
 	wpa_printf(MSG_DEBUG, "%s: alg=%d addr=%p key_idx=%d set_tx=%d "
 		   "seq_len=%zu key_len=%zu", __func__, alg, addr, key_idx,
@@ -466,9 +559,7 @@ bsd_set_key(void *priv, struct wpa_driver_set_key_params *params)
 
 #if defined(IEEE80211_IOC_SAE) && defined(CONFIG_SAE)
 	if (alg == WPA_ALG_BIP_CMAC_128) {
-		struct bsd_driver_data *sae_drv = priv;
 		u8 material[24];
-		int ret;
 
 		if (!sae_drv->sae_active || key_len != 16 || seq_len != 6 ||
 		    (key_idx != 4 && key_idx != 5))
@@ -549,7 +640,15 @@ bsd_set_key(void *priv, struct wpa_driver_set_key_params *params)
 	}
 	os_memcpy(wk.ik_keydata, key, key_len);
 
-	return set80211var(priv, IEEE80211_IOC_WPAKEY, &wk, sizeof(wk));
+#if defined(IEEE80211_IOC_SAE) && defined(CONFIG_SAE) && \
+    defined(IEEE80211_SAE_CAP_KEY_EPOCH)
+	if (sae_drv->sae_active && sae_drv->sae_key_epoch)
+		ret = bsd_sae_request(sae_drv, IEEE80211_SAE_SET_KEY, &wk, sizeof(wk));
+	else
+#endif
+		ret = set80211var(priv, IEEE80211_IOC_WPAKEY, &wk, sizeof(wk));
+	forced_memzero(&wk, sizeof(wk));
+	return ret;
 }
 
 static int
@@ -1039,17 +1138,29 @@ bsd_sta_tx_body(struct bsd_driver_data *drv, const u8 *data, size_t len)
 static int
 bsd_send_action(void *priv, unsigned int freq, unsigned int wait,
 		const u8 *dst, const u8 *src, const u8 *bssid,
-		const u8 *data, size_t data_len, int no_cck)
+		const u8 *data, size_t data_len, int no_cck
+#ifdef WPA_DRIVER_FLAGS2_P2P_FEATURE_V2
+		, int link_id
+#endif
+		)
 {
 	struct bsd_driver_data *drv = priv;
 	struct ieee80211req_sta_mgmt req;
 	u8 *frame;
 
+#ifdef WPA_DRIVER_FLAGS2_P2P_FEATURE_V2
+	if (link_id >= 0)
+		return -1;
+#endif
 #if defined(IEEE80211_IOC_SAE) && defined(CONFIG_SAE) && \
     defined(IEEE80211_SAE_CAP_SA_QUERY)
 	if (data_len > 0 && data[0] == WLAN_ACTION_SA_QUERY)
 		return bsd_sae_send_action(priv, freq, wait, dst, src, bssid,
-					   data, data_len, no_cck);
+					   data, data_len, no_cck
+#ifdef WPA_DRIVER_FLAGS2_P2P_FEATURE_V2
+					   , link_id
+#endif
+					   );
 #endif
 	if (drv->sta_tx_frame || data_len > sizeof(req.data) ||
 	    !bsd_sta_tx_body(drv, data, data_len) ||
@@ -1383,6 +1494,14 @@ bsd_wireless_event_receive(int sock, void *ctx, void *sock_ctx)
 		case RTM_IEEE80211_DISASSOC:
 			if (drv->is_ap)
 				break;
+#if !defined(HOSTAPD) && defined(IEEE80211_IOC_SAE) && defined(CONFIG_SAE)
+			/* The legacy event has no generation. Suppress local callbacks,
+			 * but only a later tagged retirement may change kernel state. */
+			if (drv->sae_configured) {
+				drv->sae_active = 0;
+				drv->sae_blocked = 1;
+			}
+#endif
 #if !defined(HOSTAPD) && defined(__NetBSD__) && defined(IEEE80211_IOC_STA_MGMT)
 			bsd_sta_disconnected(drv);
 #else
@@ -1612,8 +1731,17 @@ bsd_sta_deauth(void *priv, const u8 *own_addr, const u8 *addr, u16 reason_code,
 
 static int
 bsd_sta_disassoc(void *priv, const u8 *own_addr, const u8 *addr,
-		 u16 reason_code)
+		 u16 reason_code
+#ifdef WPA_DRIVER_FLAGS2_P2P_FEATURE_V2
+		 , int link_id
+#endif
+		 )
 {
+	(void) own_addr;
+#ifdef WPA_DRIVER_FLAGS2_P2P_FEATURE_V2
+	if (link_id >= 0)
+		return -1;
+#endif
 	return bsd_send_mlme_param(priv, IEEE80211_MLME_DISASSOC, reason_code,
 				   addr);
 }
@@ -1798,8 +1926,13 @@ wpa_driver_bsd_set_drop_unencrypted(void *priv, int enabled)
 static int
 wpa_driver_bsd_deauthenticate(void *priv, const u8 *addr, u16 reason_code)
 {
-	return bsd_send_mlme_param(priv, IEEE80211_MLME_DEAUTH, reason_code,
-				   addr);
+	int ret = bsd_send_mlme_param(priv, IEEE80211_MLME_DEAUTH, reason_code,
+				     addr);
+#if defined(IEEE80211_IOC_SAE) && defined(CONFIG_SAE)
+	if (bsd_sae_disable(priv) < 0)
+		ret = -1;
+#endif
+	return ret;
 }
 
 static int
@@ -1826,6 +1959,66 @@ handle_read(void *ctx, const u8 *src_addr, const u8 *buf, size_t len)
 	drv_event_eapol_rx(drv->ctx, src_addr, buf, len);
 }
 
+#if defined(IEEE80211_IOC_SAE) && defined(CONFIG_SAE) && \
+    defined(IEEE80211_SAE_CAP_KEY_EPOCH)
+static int
+bsd_sae_prepare_iface(struct bsd_driver_data *drv)
+{
+	struct ifreq ifr;
+
+	if (!drv->ifindex || drv->if_removed || bsd_get_iface_flags(drv) < 0)
+		return -1;
+	/* SDIO initialization can still be asynchronous after UP. Let the
+	 * supplicant retry once RUNNING is set; AUTH must not enter init work. */
+	if (drv->flags & IFF_UP)
+		return (drv->flags & IFF_RUNNING) ? 0 : -1;
+	os_memset(&ifr, 0, sizeof(ifr));
+	os_strlcpy(ifr.ifr_name, drv->ifname, sizeof(ifr.ifr_name));
+	ifr.ifr_flags = drv->flags | IFF_UP;
+	/* Native initialization starts with stop, which retires SAE. Finish it
+	 * before installing the new generation, never after CONFIGURE-on. */
+	if (ioctl(drv->global->sock, SIOCSIFFLAGS, &ifr) < 0 ||
+	    bsd_get_iface_flags(drv) < 0 ||
+	    (drv->flags & (IFF_UP | IFF_RUNNING)) != (IFF_UP | IFF_RUNNING))
+		return -1;
+	return 0;
+}
+#endif
+
+static int
+bsd_set_supp_port(void *priv, int authorized)
+{
+	struct bsd_driver_data *drv = priv;
+
+	if (authorized != 0 && authorized != 1)
+		return -1;
+#if defined(IEEE80211_IOC_SAE) && defined(CONFIG_SAE)
+	if (!drv->sae_active && drv->sae_blocked)
+		return -1;
+#ifdef IEEE80211_SAE_CAP_KEY_EPOCH
+	if (drv->sae_active && drv->sae_key_epoch) {
+		u8 value = authorized;
+		return bsd_sae_request(drv, IEEE80211_SAE_SET_PORT, &value, 1);
+	}
+#endif
+#endif
+#ifdef IEEE80211_IOC_STA_PORT
+	{
+		struct ieee80211req req;
+
+		os_memset(&req, 0, sizeof(req));
+		os_strlcpy(req.i_name, drv->ifname, sizeof(req.i_name));
+		req.i_type = IEEE80211_IOC_STA_PORT;
+		if (ioctl(drv->global->sock, SIOCG80211, &req) == 0 && req.i_val == 1)
+			return set80211param(drv, IEEE80211_IOC_STA_PORT, authorized);
+	}
+#else
+	(void) drv;
+#endif
+	/* Older drivers have no explicit controlled-port callback. */
+	return 0;
+}
+
 static int
 wpa_driver_bsd_associate(void *priv, struct wpa_driver_associate_params *params)
 {
@@ -1834,6 +2027,30 @@ wpa_driver_bsd_associate(void *priv, struct wpa_driver_associate_params *params)
 	u32 mode;
 	int privacy;
 	int ret = 0;
+	int sae = wpa_key_mgmt_sae(params->key_mgmt_suite);
+
+#if defined(IEEE80211_IOC_SAE) && defined(CONFIG_SAE)
+	if (bsd_sae_disable(drv) < 0)
+		return -1;
+	if (sae) {
+		drv->sae_blocked = 1;
+		if (!(drv->capa.key_mgmt & WPA_DRIVER_CAPA_KEY_MGMT_SAE) ||
+		    params->key_mgmt_suite != WPA_KEY_MGMT_SAE ||
+		    params->mode != IEEE80211_MODE_INFRA ||
+		    params->mgmt_frame_protection != MGMT_FRAME_PROTECTION_REQUIRED ||
+		    params->pairwise_suite != WPA_CIPHER_CCMP ||
+		    params->group_suite != WPA_CIPHER_CCMP || !params->bssid ||
+		    is_multicast_ether_addr(params->bssid) ||
+		    is_zero_ether_addr(params->bssid))
+			return -1;
+	}
+#else
+	if (sae)
+		return -1;
+#endif
+	if (params->ssid_len > sizeof(mlme.im_ssid) ||
+	    (params->ssid_len && !params->ssid))
+		return -1;
 
 	wpa_printf(MSG_DEBUG,
 		"%s: ssid '%.*s' wpa ie len %u pairwise %u group %u key mgmt %u"
@@ -1876,12 +2093,11 @@ wpa_driver_bsd_associate(void *priv, struct wpa_driver_associate_params *params)
 
 	if (wpa_driver_bsd_set_drop_unencrypted(drv, params->drop_unencrypted)
 	    < 0)
-		ret = -1;
+		goto fail;
 	if (wpa_driver_bsd_set_auth_alg(drv, params->auth_alg) < 0)
-		ret = -1;
-	/* XXX error handling is wrong but unclear what to do... */
+		goto fail;
 	if (wpa_driver_bsd_set_wpa_ie(drv, params->wpa_ie, params->wpa_ie_len) < 0)
-		return -1;
+		goto fail;
 
 	privacy = !(params->pairwise_suite == WPA_CIPHER_NONE &&
 	    params->group_suite == WPA_CIPHER_NONE &&
@@ -1890,38 +2106,24 @@ wpa_driver_bsd_associate(void *priv, struct wpa_driver_associate_params *params)
 	wpa_printf(MSG_DEBUG, "%s: set PRIVACY %u", __func__, privacy);
 
 	if (set80211param(drv, IEEE80211_IOC_PRIVACY, privacy) < 0)
-		return -1;
+		goto fail;
 
 	if (params->wpa_ie_len &&
 	    set80211param(drv, IEEE80211_IOC_WPA,
 			  params->wpa_ie[0] == WLAN_EID_RSN ? 2 : 1) < 0)
-		return -1;
+		goto fail;
 
 #if defined(IEEE80211_IOC_SAE) && defined(CONFIG_SAE)
-	if (drv->capa.key_mgmt & WPA_DRIVER_CAPA_KEY_MGMT_SAE) {
-		u8 enabled = params->key_mgmt_suite == WPA_KEY_MGMT_SAE;
-
-		if (enabled && (params->mgmt_frame_protection != MGMT_FRAME_PROTECTION_REQUIRED ||
-		    params->pairwise_suite != WPA_CIPHER_CCMP ||
-		    params->group_suite != WPA_CIPHER_CCMP || !params->bssid))
-			return -1;
-		if (++drv->sae_generation == 0)
-			drv->sae_generation++;
-		os_memset(drv->sae_bssid, 0, ETH_ALEN);
-		if (params->bssid)
-			os_memcpy(drv->sae_bssid, params->bssid, ETH_ALEN);
-		drv->sae_active = enabled;
-		if (bsd_sae_request(drv, IEEE80211_SAE_CONFIGURE, &enabled, 1) < 0) {
-			drv->sae_active = 0;
-			return -1;
-		}
-	}
+#ifdef IEEE80211_SAE_CAP_KEY_EPOCH
+	if (sae && drv->sae_key_epoch && bsd_sae_prepare_iface(drv) < 0)
+		goto fail;
 #endif
-	if (ret)
-		return ret;
+	if (sae && bsd_sae_enable(drv, params->bssid) < 0)
+		goto fail;
+#endif
 #if defined(__NetBSD__) && defined(IEEE80211_IOC_STA_MGMT)
 	if (bsd_sta_associate(drv, params) < 0)
-		return -1;
+		goto fail;
 #endif
 	os_memset(&mlme, 0, sizeof(mlme));
 	mlme.im_op = IEEE80211_MLME_ASSOC;
@@ -1931,8 +2133,17 @@ wpa_driver_bsd_associate(void *priv, struct wpa_driver_associate_params *params)
 	if (params->bssid != NULL)
 		os_memcpy(mlme.im_macaddr, params->bssid, IEEE80211_ADDR_LEN);
 	if (set80211var(drv, IEEE80211_IOC_MLME, &mlme, sizeof(mlme)) < 0)
-		return -1;
+		goto fail;
+#if defined(IEEE80211_IOC_SAE) && defined(CONFIG_SAE)
+	if (!sae)
+		drv->sae_blocked = 0;
+#endif
 	return ret;
+fail:
+#if defined(IEEE80211_IOC_SAE) && defined(CONFIG_SAE)
+	(void) bsd_sae_disable(drv);
+#endif
+	return -1;
 }
 
 static int
@@ -2264,6 +2475,9 @@ static int wpa_driver_bsd_capa(struct bsd_driver_data *drv)
 #ifdef IEEE80211_SAE_CAP_SA_QUERY
 			drv->sae_query = !!(req.i_val & IEEE80211_SAE_CAP_SA_QUERY);
 #endif
+#ifdef IEEE80211_SAE_CAP_KEY_EPOCH
+			drv->sae_key_epoch = !!(req.i_val & IEEE80211_SAE_CAP_KEY_EPOCH);
+#endif
 		}
 	}
 #endif
@@ -2301,13 +2515,20 @@ get80211opmode(struct bsd_driver_data *drv)
 }
 
 static void *
-wpa_driver_bsd_init(void *ctx, const char *ifname, void *priv)
+wpa_driver_bsd_init(void *ctx, const char *ifname, void *priv
+#ifdef WPA_DRIVER_FLAGS2_P2P_FEATURE_V2
+		    , enum wpa_p2p_mode p2p_mode
+#endif
+		    )
 {
 #define	GETPARAM(drv, param, v) \
 	(((v) = get80211param(drv, param)) != -1)
 	struct bsd_driver_data *drv;
 	int i;
 
+#ifdef WPA_DRIVER_FLAGS2_P2P_FEATURE_V2
+	(void) p2p_mode;
+#endif
 	drv = os_zalloc(sizeof(*drv));
 	if (drv == NULL)
 		return NULL;
@@ -2373,6 +2594,11 @@ static void
 wpa_driver_bsd_deinit(void *priv)
 {
 	struct bsd_driver_data *drv = priv;
+
+#if defined(IEEE80211_IOC_SAE) && defined(CONFIG_SAE)
+	if (bsd_sae_disable(drv) < 0)
+		wpa_printf(MSG_ERROR, "BSD: failed to retire external SAE session");
+#endif
 
 #if !defined(HOSTAPD) && defined(__NetBSD__) && defined(IEEE80211_IOC_STA_MGMT)
 	bsd_sta_scan_clear(drv);
@@ -2514,6 +2740,7 @@ const struct wpa_driver_ops wpa_driver_bsd_ops = {
 	.deauthenticate		= wpa_driver_bsd_deauthenticate,
 	.associate		= wpa_driver_bsd_associate,
 	.get_capa		= wpa_driver_bsd_get_capa,
+	.set_supp_port		= bsd_set_supp_port,
 #if defined(__NetBSD__) && defined(IEEE80211_IOC_STA_MGMT)
 	.send_action = bsd_send_action,
 	.signal_poll = bsd_sta_signal_poll,

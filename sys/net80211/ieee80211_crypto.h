@@ -177,6 +177,8 @@ extern	const struct ieee80211_cipher ieee80211_cipher_ccmp;
 void	ieee80211_crypto_register(const struct ieee80211_cipher *);
 void	ieee80211_crypto_unregister(const struct ieee80211_cipher *);
 int	ieee80211_crypto_available(u_int cipher);
+/* Borrowed registered template; caller serializes use with module lifetime. */
+const struct ieee80211_cipher *ieee80211_crypto_cipher(u_int);
 
 /*
  * Caller serializes key updates and keeps the default key index valid.

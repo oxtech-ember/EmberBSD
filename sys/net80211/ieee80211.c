@@ -66,6 +66,7 @@ __KERNEL_RCSID(0, "$NetBSD: ieee80211.c,v 1.61 2021/08/21 11:55:25 andvar Exp $"
 
 #include <net80211/ieee80211_netbsd.h>
 #include <net80211/ieee80211_var.h>
+#include <net80211/ieee80211_sae.h>
 #include <net80211/ieee80211_sysctl.h>
 
 #include <net/bpf.h>
@@ -284,6 +285,7 @@ ieee80211_ifdetach(struct ieee80211com *ic)
 	ieee80211_remove_vap(ic);
 
 	ieee80211_sysctl_detach(ic);
+	ieee80211_sae_detach(ic);
 	ieee80211_proto_detach(ic);
 	ieee80211_crypto_detach(ic);
 	ieee80211_node_detach(ic);

@@ -878,6 +878,12 @@ static int
 rfk_presence_current(struct rtw88_net *net)
 {
     const uint64_t now=(UINT64_C(1)<<32)+10000000;
+    uint32_t values[192];
+    /* Replacing only native SAE cannot reuse a prepared RFK peer snapshot. */
+    net->state_sae_serial=ieee80211_sae_serial(&net->ic);
+    net->ic.ic_sae_serial++;
+    CHECK(rtw88_net_rfk_capture(net,values)==ECANCELED);
+    net->ic.ic_sae_serial=net->state_sae_serial;
     net->requested=IEEE80211_S_AUTH;
     net->rfk.epoch=net->rfk.control_epoch=net->policy.epoch;
     net->rfk.generation=net->rfk.control_generation=net->core->sc_generation;

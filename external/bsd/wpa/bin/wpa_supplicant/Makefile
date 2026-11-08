@@ -40,7 +40,7 @@ sha256-prf.c \
 
 # drivers
 SRCS+= \
-driver_bsd.c \
+driver_emberbsd.c \
 driver_common.c \
 driver_wired_common.c \
 driver_wired.c \
@@ -84,7 +84,12 @@ wpabuf.c \
 
 MAN=	wpa_supplicant.8 wpa_supplicant.conf.5
 
-CLEANFILES+= config_line.c
+CLEANFILES+= config_line.c driver_emberbsd.c
+
+# Keep the generated source/object private to this program and architecture.
+driver_emberbsd.c: ${WPA_BSD_DRIVER}
+	${MKTARGET_CREATE}
+	cp ${.ALLSRC} ${.TARGET}
 
 config_line.c: ${WPA_DISTDIR}/src/utils/config.c
 	${MKTARGET_CREATE}
@@ -96,12 +101,6 @@ config_line.c: ${WPA_DISTDIR}/src/utils/config.c
 	${WPA_DISTDIR}/src/eap_peer \
 	${WPA_DISTDIR}/src/rsn_supp \
 	${COMMON_PATH} \
-
-# Native builds against a newer kernel may stage its net80211 headers here.
-# Keep CFLAGS (including PIE and platform hardening) supplied by bsd.prog.mk.
-.if defined(NET80211_INCLUDES)
-CPPFLAGS+= -I${NET80211_INCLUDES}
-.endif
 
 CPPFLAGS+= \
 	-I${WPA_SUPPLICANT_DISTDIR} \

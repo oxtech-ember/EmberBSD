@@ -25,6 +25,7 @@
 #include <net/bpf.h>
 #include <net80211/ieee80211_var.h>
 #include <net80211/ieee80211_crypto.h>
+#include <net80211/ieee80211_sae.h>
 #include <net80211/ieee80211_beacon_ies.h>
 #include <dev/ic/rtw88var.h>
 #include <dev/ic/rtw88_net.h>
@@ -138,6 +139,7 @@ struct rtw88_net {
 	struct rtw88_channel_tuple pending_channel;
 	unsigned configured_media; /* User configuration, not peer-selected mode. */
 	int state_arg;
+	uint64_t state_sae_serial; /* Native lifetime at the original request. */
 	int (*parent_state)(struct ieee80211com *, enum ieee80211_state, int);
 	uint8_t txbuf[RTW88_TX_BUF_SIZE];
 	uint64_t rx_dropped;
@@ -361,6 +363,7 @@ rtw88_net_quiet_locked(struct rtw88_net *net)
 	net->wme_pending = 0;
 	net->requested = IEEE80211_S_INIT;
 	net->state_arg = -1;
+	net->state_sae_serial = ieee80211_sae_serial(&net->ic);
 	net->work_pending = 1;
 }
 
@@ -377,6 +380,7 @@ rtw88_net_fault_locked(struct rtw88_net *net, int error)
 	net->init_requested = 0;
 	net->requested = IEEE80211_S_INIT;
 	net->state_arg = -1;
+	net->state_sae_serial = ieee80211_sae_serial(&net->ic);
 	net->work_pending = 1;
 	net->run_pending = 0;
 	net->reset_required = 1;
@@ -472,6 +476,8 @@ rtw88_net_request_control(struct rtw88_net *net,
 	    copy.id.key_epoch != net->key_epoch ||
 	    copy.id.generation != net->hw.generation)
 		error = ESTALE;
+	else if (!cleanup && copy.sae_serial != ieee80211_sae_serial(&net->ic))
+		error = ESTALE;
 	else if (!cleanup && (copy.id.epoch == UINT64_MAX ||
 	    copy.id.key_epoch == UINT64_MAX || copy.id.generation == UINT32_MAX))
 		error = EOVERFLOW;
@@ -558,7 +564,8 @@ rtw88_net_control_take_locked(struct rtw88_net *net,
 	*request = net->control_pending;
 	net->control_pending_valid = 0;
 	if (request->kind != RTW88_CTL_STOP && request->kind != RTW88_CTL_QUIET &&
-	    (request->id.generation != net->core->sc_generation ||
+	    (request->sae_serial != ieee80211_sae_serial(&net->ic) ||
+	    request->id.generation != net->core->sc_generation ||
 	    request->id.epoch != net->policy.epoch ||
 	    request->id.key_epoch != net->key_epoch || net->policy.dying)) {
 		net->prep_requested = !net->policy.dying;
@@ -597,7 +604,8 @@ rtw88_net_control_done(struct rtw88_net *net,
 	 * identity here; the owner separately publishes resulting core values
 	 * before granting Giant its completion window. No admission opens here. */
 	if (!net->policy.dying && copy.epoch == net->policy.epoch &&
-	    copy.key_epoch == net->key_epoch) {
+	    copy.key_epoch == net->key_epoch &&
+	    net->control_owner.sae_serial == ieee80211_sae_serial(&net->ic)) {
 		memset(&net->control_result, 0, sizeof(net->control_result));
 		net->control_result.id = copy;
 		net->control_result.error = error;
@@ -698,6 +706,7 @@ rtw88_net_control_current_locked(struct rtw88_net *net,
 
 struct rtw88_prepare_context {
 	struct rtw88_net *net;
+	uint64_t sae_serial;
 	struct rtw88_async_epoch id;
 };
 
@@ -708,7 +717,8 @@ rtw88_net_prepare_current(void *cookie)
 	int error;
 
 	mutex_enter(ctx->net->lock);
-	error = rtw88_net_control_current_locked(ctx->net, &ctx->id);
+	error = ctx->sae_serial != ieee80211_sae_serial(&ctx->net->ic) ?
+	    ECANCELED : rtw88_net_control_current_locked(ctx->net, &ctx->id);
 	mutex_exit(ctx->net->lock);
 	return error == 0 ? 0 : ECANCELED;
 }
@@ -720,7 +730,8 @@ rtw88_net_control_current(struct rtw88_net *net,
 	int error;
 
 	mutex_enter(net->lock);
-	error = rtw88_net_control_current_locked(net, &request->id);
+	error = request->sae_serial != ieee80211_sae_serial(&net->ic) ?
+	    ECANCELED : rtw88_net_control_current_locked(net, &request->id);
 	mutex_exit(net->lock);
 	return error;
 }
@@ -877,7 +888,8 @@ rtw88_net_control_execute(struct rtw88_net *net,
 		error = rtw88_net_control_current(net, request);
 	if (error == 0 && !wme && request->state == IEEE80211_S_AUTH &&
 	    sc->sc_chip->prepare_station != NULL) {
-		struct rtw88_prepare_context ctx = { net, request->id };
+		struct rtw88_prepare_context ctx = {
+		    .net = net, .sae_serial = request->sae_serial, .id = request->id };
 
 		diag->stage = RTW88_NET_STAGE_STATION;
 		error = rtw88_prepare_station(sc, rtw88_net_prepare_current, &ctx);
@@ -1241,6 +1253,7 @@ rtw88_net_sta_quiet(struct ieee80211com *ic)
 	struct rtw88_net *net = ic->ic_ifp->if_softc;
 	struct ifnet *ifp = &net->ec.ec_if;
 
+	ieee80211_sae_retire(ic);
 	if (net->core->sc_executor != NULL) {
 		rtw88_net_sta_quiet_async(ic);
 		return;
@@ -2030,15 +2043,21 @@ rtw88_net_restart_peer(struct rtw88_net *net)
 {
 	struct ifnet *ifp = &net->ec.ec_if;
 	struct rtw88_channel_tuple tuple;
+	uint64_t sae_serial;
 	int error, start;
 
 	mutex_enter(net->lock);
+	sae_serial = net->state_sae_serial;
 #ifdef RTW88_RFK_EXPERIMENT
 	if (net->rfk.notice_pending) {
 		mutex_exit(net->lock);
 		return ECANCELED;
 	}
 #endif
+	if (sae_serial != ieee80211_sae_serial(&net->ic)) {
+		mutex_exit(net->lock);
+		return ECANCELED;
+	}
 	if (!net->reset_required || net->tx_quiet) {
 		mutex_exit(net->lock);
 		return 0;
@@ -2058,6 +2077,8 @@ rtw88_net_restart_peer(struct rtw88_net *net)
 #endif
 	if (error != 0)
 		return error;
+	if (sae_serial != ieee80211_sae_serial(&net->ic))
+		return ECANCELED;
 	/* Coalescing can bypass shared INIT's management-queue drain. */
 	ieee80211_drain_ifq(&net->ic.ic_mgtq);
 	mutex_enter(net->lock);
@@ -2075,7 +2096,8 @@ rtw88_net_restart_peer(struct rtw88_net *net)
 			return error;
 	}
 	mutex_enter(net->lock);
-	if (start && (net->policy.dying || net->tx_quiet ||
+	if (start && (sae_serial != ieee80211_sae_serial(&net->ic) ||
+	    net->policy.dying || net->tx_quiet ||
 	    (ifp->if_flags & IFF_UP) == 0)) {
 		mutex_exit(net->lock);
 		error = rtw88_stop(net->core);
@@ -2182,11 +2204,13 @@ rtw88_net_state_snapshot(struct rtw88_net *net,
 	request->id.generation = net->core->sc_generation;
 	request->id.epoch = net->policy.epoch;
 	request->id.key_epoch = net->key_epoch;
+	request->sae_serial = net->state_sae_serial;
 	request->state = net->requested;
 	request->arg = net->state_arg;
 	request->channel = net->pending_channel;
 	media = net->configured_media;
-	error = net->policy.dying || net->tx_quiet ? ECANCELED : 0;
+	error = net->policy.dying || net->tx_quiet ||
+	    request->sae_serial != ieee80211_sae_serial(ic) ? ECANCELED : 0;
 	mutex_exit(net->lock);
 	if (error != 0)
 		return error;
@@ -2248,7 +2272,8 @@ rtw88_net_state_snapshot(struct rtw88_net *net,
 			request->valid |= RTW88_CONTROL_RA;
 	}
 	mutex_enter(net->lock);
-	if (net->policy.dying || net->tx_quiet ||
+	if (request->sae_serial != ieee80211_sae_serial(ic) ||
+	    net->policy.dying || net->tx_quiet ||
 	    request->id.epoch != net->policy.epoch ||
 	    request->id.key_epoch != net->key_epoch ||
 	    request->id.generation != net->core->sc_generation)
@@ -2271,7 +2296,7 @@ rtw88_net_state_current_locked(struct rtw88_net *net,
 /* Giant failure publication never performs hardware cleanup or waits for it. */
 static void
 rtw88_net_state_fail(struct rtw88_net *net,
-    const struct rtw88_async_epoch *id, int error,
+    const struct rtw88_async_epoch *id, uint64_t sae_serial, int error,
     const struct rtw88_net_state_diag *diag)
 {
 	struct ieee80211com *ic = &net->ic;
@@ -2280,7 +2305,8 @@ rtw88_net_state_fail(struct rtw88_net *net,
 	int parent_error;
 
 	mutex_enter(net->lock);
-	if (!rtw88_net_state_current_locked(net, id)) {
+	if (sae_serial != ieee80211_sae_serial(ic) ||
+	    !rtw88_net_state_current_locked(net, id)) {
 		mutex_exit(net->lock);
 		return;
 	}
@@ -2307,12 +2333,14 @@ rtw88_net_state_fail(struct rtw88_net *net,
 	mutex_enter(net->lock);
 	/* Preparatory INIT may already have completed before start failed.
 	 * A failed INIT is not replayed, and a newer request owns the stack. */
-	parent_error = rtw88_net_state_current_locked(net, id) &&
+	parent_error = sae_serial == ieee80211_sae_serial(ic) &&
+	    rtw88_net_state_current_locked(net, id) &&
 	    !net->parent_init_failed && ic->ic_state != IEEE80211_S_INIT;
 	mutex_exit(net->lock);
 	parent_error = parent_error ? net->parent_state(ic, IEEE80211_S_INIT, -1) : 0;
 	mutex_enter(net->lock);
-	if (parent_error != 0 && rtw88_net_state_current_locked(net, id))
+	if (parent_error != 0 && sae_serial == ieee80211_sae_serial(ic) &&
+	    rtw88_net_state_current_locked(net, id))
 		net->parent_init_failed = 1;
 	mutex_exit(net->lock);
 }
@@ -2331,13 +2359,15 @@ rtw88_net_state_complete(struct rtw88_net *net,
 	if (wme)
 		return EOPNOTSUPP;
 	mutex_enter(net->lock);
-	current = rtw88_net_state_current_locked(net, &request->id);
+	current = request->sae_serial == ieee80211_sae_serial(ic) &&
+	    rtw88_net_state_current_locked(net, &request->id);
 	mutex_exit(net->lock);
 	if (!current)
 		return ECANCELED;
 	error = net->parent_state(ic, request->state, request->arg);
 	mutex_enter(net->lock);
-	current = rtw88_net_state_current_locked(net, &request->id);
+	current = request->sae_serial == ieee80211_sae_serial(ic) &&
+	    rtw88_net_state_current_locked(net, &request->id);
 	if (current && error == 0) {
 		error = rtw88_net_commit(&net->policy, request->id.epoch, 0,
 		    request->state != IEEE80211_S_INIT);
@@ -2350,6 +2380,10 @@ rtw88_net_state_complete(struct rtw88_net *net,
 				ifp->if_timer = 1;
 		}
 	} else if (!current && !net->policy.dying) {
+		if (error != 0 && request->id.epoch == net->policy.epoch) {
+			net->policy.accepting = 0;
+			net->reset_required = 1;
+		}
 		net->prep_requested = 1;
 		net->state_again = 1;
 	}
@@ -2359,7 +2393,8 @@ rtw88_net_state_complete(struct rtw88_net *net,
 	if (error != 0) {
 		failure.stage = RTW88_NET_STAGE_CORE;
 		failure.error = error;
-		rtw88_net_state_fail(net, &request->id, error, &failure);
+		rtw88_net_state_fail(net, &request->id, request->sae_serial,
+		    error, &failure);
 	} else {
 		if (request->state == IEEE80211_S_SCAN)
 			callout_schedule(&net->scan, mstohz(200));
@@ -2376,15 +2411,17 @@ rtw88_net_csa_recover(struct rtw88_net *net)
 {
 	struct ieee80211com *ic = &net->ic;
 	struct ifnet *ifp = &net->ec.ec_if;
-	uint64_t epoch;
+	uint64_t epoch, sae_serial;
 	int error, stop_error, resume;
 
 	mutex_enter(net->lock);
-	if (!net->csa_pending) {
+	if (!net->csa_pending ||
+	    net->state_sae_serial != ieee80211_sae_serial(ic)) {
 		mutex_exit(net->lock);
 		return 0;
 	}
 	epoch = net->policy.epoch;
+	sae_serial = net->state_sae_serial;
 	mutex_exit(net->lock);
 	/* The immediate fence has already removed RUNNING and closed TX. */
 	error = net->parent_state(ic, IEEE80211_S_INIT, -1);
@@ -2402,7 +2439,8 @@ rtw88_net_csa_recover(struct rtw88_net *net)
 			    error);
 		return 1;
 	}
-	if (epoch != net->policy.epoch) {
+	if (epoch != net->policy.epoch ||
+	    sae_serial != ieee80211_sae_serial(ic)) {
 		mutex_exit(net->lock);
 		return 1;
 	}
@@ -2413,7 +2451,8 @@ rtw88_net_csa_recover(struct rtw88_net *net)
 	error = rtw88_start(net->core);
 	mutex_enter(net->lock);
 	resume = error == 0 && net->csa_pending && !net->policy.dying &&
-	    epoch == net->policy.epoch && (ifp->if_flags & IFF_UP) != 0;
+	    sae_serial == ieee80211_sae_serial(ic) &&
+	        epoch == net->policy.epoch && (ifp->if_flags & IFF_UP) != 0;
 	if (resume) {
 		net->csa_pending = 0;
 		net->tx_quiet = 0;
@@ -2468,8 +2507,11 @@ rtw88_net_state_async(struct rtw88_net *net)
 		net->prep_requested = !net->policy.dying;
 		goto idle;
 	}
-	if (net->policy.dying) {
+	if (net->policy.dying ||
+	    net->state_sae_serial != ieee80211_sae_serial(ic)) {
 		net->work_pending = 0;
+		net->run_pending = 0;
+		net->control_ready = 0;
 		goto finish;
 	}
 	if (!rtw88_net_prepare_locked(net))
@@ -2481,7 +2523,8 @@ rtw88_net_state_async(struct rtw88_net *net)
 	wme = net->control_result_wme;
 	if (ready)
 		net->control_ready = 0;
-	current = ready && rtw88_net_state_current_locked(net, &result.id);
+	current = ready && owner.sae_serial == ieee80211_sae_serial(ic) &&
+	    rtw88_net_state_current_locked(net, &result.id);
 	rtw88_net_hw_get_locked(net, &hw);
 	mutex_exit(net->lock);
 	if (current) {
@@ -2491,7 +2534,8 @@ rtw88_net_state_async(struct rtw88_net *net)
 			    hw.stop_requested || hw.generation == UINT32_MAX))
 				error = EIO;
 			mutex_enter(net->lock);
-			if (!rtw88_net_state_current_locked(net, &result.id)) {
+			if (owner.sae_serial != ieee80211_sae_serial(ic) ||
+			    !rtw88_net_state_current_locked(net, &result.id)) {
 				net->prep_requested = !net->policy.dying;
 				net->state_again = !net->policy.dying;
 				mutex_exit(net->lock);
@@ -2513,7 +2557,8 @@ rtw88_net_state_async(struct rtw88_net *net)
 			}
 			mutex_exit(net->lock);
 			if (error != 0) {
-				rtw88_net_state_fail(net, &result.id, error, &diag);
+				rtw88_net_state_fail(net, &result.id, owner.sae_serial,
+				    error, &diag);
 				goto complete;
 			}
 			if (owner.kind == RTW88_CTL_INIT)
@@ -2523,16 +2568,19 @@ rtw88_net_state_async(struct rtw88_net *net)
 			if (error == 0 && owner.id.generation != hw.generation)
 				error = ESTALE;
 			if (error != 0)
-				rtw88_net_state_fail(net, &result.id, error, &diag);
+				rtw88_net_state_fail(net, &result.id, owner.sae_serial,
+				    error, &diag);
 			else
 				(void)rtw88_net_state_complete(net, &owner, &diag, wme);
 			goto complete;
 		} else if (owner.kind == RTW88_CTL_KEY_FENCE) {
 			if (result.error != 0) {
-				rtw88_net_state_fail(net, &result.id, result.error, &diag);
+				rtw88_net_state_fail(net, &result.id, owner.sae_serial,
+				    result.error, &diag);
 			} else {
 				mutex_enter(net->lock);
-				if (rtw88_net_state_current_locked(net, &result.id)) {
+				if (owner.sae_serial == ieee80211_sae_serial(ic) &&
+				    rtw88_net_state_current_locked(net, &result.id)) {
 					(void)rtw88_net_commit(&net->policy,
 					    result.id.epoch, 0, hw.started && hw.running &&
 					    !hw.stop_requested && ic->ic_state != IEEE80211_S_INIT);
@@ -2590,6 +2638,7 @@ rtw88_net_state_async(struct rtw88_net *net)
 		memset(&request, 0, sizeof(request));
 		memset(&diag, 0, sizeof(diag));
 		request.kind = initial ? RTW88_CTL_INIT : RTW88_CTL_RECOVER;
+		request.sae_serial = net->state_sae_serial;
 		request.state = net->requested;
 		request.arg = net->state_arg;
 		request.channel = net->pending_channel;
@@ -2598,7 +2647,8 @@ rtw88_net_state_async(struct rtw88_net *net)
 		parent_error = initial && ic->ic_state != IEEE80211_S_INIT ?
 		    net->parent_state(ic, IEEE80211_S_INIT, -1) : 0;
 		mutex_enter(net->lock);
-		if (net->policy.dying || prepare_epoch != net->policy.epoch) {
+		if (net->policy.dying || prepare_epoch != net->policy.epoch ||
+		    request.sae_serial != ieee80211_sae_serial(ic)) {
 			net->state_again = !net->policy.dying;
 			net->prep_requested = !net->policy.dying;
 			goto finish;
@@ -2619,7 +2669,8 @@ rtw88_net_state_async(struct rtw88_net *net)
 			}
 			mutex_exit(net->lock);
 			diag.error = parent_error;
-			rtw88_net_state_fail(net, &request.id, parent_error, &diag);
+			rtw88_net_state_fail(net, &request.id, request.sae_serial,
+			    parent_error, &diag);
 			goto complete;
 		}
 		ieee80211_drain_ifq(&ic->ic_mgtq);
@@ -2633,7 +2684,8 @@ rtw88_net_state_async(struct rtw88_net *net)
 		error = rtw88_net_state_snapshot(net, &request, &diag, wme);
 		if (error != 0) {
 			diag.error = error;
-			rtw88_net_state_fail(net, &request.id, error, &diag);
+			rtw88_net_state_fail(net, &request.id, request.sae_serial,
+			    error, &diag);
 			goto complete;
 		}
 	}
@@ -2649,7 +2701,8 @@ rtw88_net_state_async(struct rtw88_net *net)
 	mutex_exit(net->lock);
 	if (error != 0 && error != ESTALE) {
 		diag.error = error;
-		rtw88_net_state_fail(net, &request.id, error, &diag);
+		rtw88_net_state_fail(net, &request.id, request.sae_serial,
+		    error, &diag);
 	}
 complete:
 	mutex_enter(net->lock);
@@ -2672,7 +2725,7 @@ rtw88_net_state_work(struct work *work, void *cookie)
 	struct rtw88_edca_params edca[RTW88_WME_NAC];
 	struct rtw88_ra_config ra;
 	enum ieee80211_state state;
-	uint64_t epoch, mailbox_epoch = 0, drain_epoch = 0;
+	uint64_t epoch, sae_serial, mailbox_epoch = 0, drain_epoch = 0;
 	uint32_t gen, mailbox_gen = 0, drain_gen = 0;
 	unsigned mailbox_box = 0, mailbox_count, mailbox_deadline = 0;
 	unsigned drain_deadline = 0;
@@ -2698,11 +2751,21 @@ rtw88_net_state_work(struct work *work, void *cookie)
 		 * return. Detach keeps resources and net allocated through wait. */
 		if (rtw88_calibration_active(net->core) &&
 		    (net->policy.dying || net->reset_required ||
-		     net->rfk.epoch != net->policy.epoch ||
+		     net->state_sae_serial != ieee80211_sae_serial(ic) ||
+		         net->rfk.epoch != net->policy.epoch ||
 		     net->requested != IEEE80211_S_AUTH))
 			(void)rtw88_calibration_retire(net->core);
 		rtw88_net_rfk_publish(net);
 #endif
+		/* CONFIGURE can replace an owner without queuing a new MLME state.
+		 * Discard that original request before any hardware or parent work. */
+		mutex_enter(net->lock);
+		if (net->state_sae_serial != ieee80211_sae_serial(ic)) {
+			net->work_pending = net->run_pending = 0;
+			mutex_exit(net->lock);
+			return;
+		}
+		mutex_exit(net->lock);
 		if (rtw88_net_csa_recover(net))
 			continue;
 		mutex_enter(net->lock);
@@ -2712,6 +2775,7 @@ rtw88_net_state_work(struct work *work, void *cookie)
 			return;
 		}
 		epoch = net->policy.epoch;
+		sae_serial = net->state_sae_serial;
 		state = net->requested;
 		net->run_pending = 0;
 		channel = net->channel;
@@ -2721,6 +2785,9 @@ rtw88_net_state_work(struct work *work, void *cookie)
 		mutex_exit(net->lock);
 		callout_stop(&net->scan);
 		restart_error = rtw88_net_restart_peer(net);
+		/* Stop/start may have yielded Giant. No old node pointer survives. */
+		if (sae_serial != ieee80211_sae_serial(ic))
+			continue;
 		if (state == IEEE80211_S_RUN) {
 			mutex_enter(net->lock);
 			net->neg.run_passes++;
@@ -2732,7 +2799,8 @@ rtw88_net_state_work(struct work *work, void *cookie)
 		}
 #ifdef RTW88_RFK_EXPERIMENT
 		mutex_enter(net->lock);
-		if (epoch == net->policy.epoch && net->rfk.control_epoch == epoch) {
+		if (sae_serial == ieee80211_sae_serial(ic) &&
+		    epoch == net->policy.epoch && net->rfk.control_epoch == epoch) {
 			if (net->rfk.control_generation != net->core->sc_generation) {
 				net->rfk.beacon_epoch = 0;
 				net->rfk.frontier_valid = 0;
@@ -2841,7 +2909,8 @@ rtw88_net_state_work(struct work *work, void *cookie)
 			net->rfk.drained = 1;
 			if (!net->rfk.ran) {
 				mutex_enter(net->lock);
-				if (epoch != net->policy.epoch || net->policy.dying ||
+				if (sae_serial != ieee80211_sae_serial(ic) ||
+				    epoch != net->policy.epoch || net->policy.dying ||
 				    net->rfk.notice_pending) {
 					prepare_error = ECANCELED;
 				} else {
@@ -2858,7 +2927,8 @@ rtw88_net_state_work(struct work *work, void *cookie)
 				rtw88_net_rfk_rx_deliver(net);
 				if (prepare_error == 0) {
 					mutex_enter(net->lock);
-					if (epoch != net->policy.epoch || net->policy.dying ||
+					if (sae_serial != ieee80211_sae_serial(ic) ||
+					    epoch != net->policy.epoch || net->policy.dying ||
 					    net->rfk.notice_pending) {
 						prepare_error = ECANCELED;
 					} else {
@@ -2916,7 +2986,8 @@ rtw88_net_state_work(struct work *work, void *cookie)
 			prepare_error = rtw88_net_rfk_capture_current(net);
 #endif
 		mutex_enter(net->lock);
-		if (epoch != net->policy.epoch || net->policy.dying
+		if (sae_serial != ieee80211_sae_serial(ic) ||
+		    epoch != net->policy.epoch || net->policy.dying
 #ifdef RTW88_RFK_EXPERIMENT
 		    || net->rfk.notice_pending
 #endif
@@ -2986,6 +3057,7 @@ rtw88_net_state_work(struct work *work, void *cookie)
 
 				diag.stage = RTW88_NET_STAGE_STATION;
 				ctx.net = net;
+				ctx.sae_serial = sae_serial;
 				ctx.id.epoch = epoch;
 				ctx.id.key_epoch = net->key_epoch;
 				ctx.id.generation = gen;
@@ -2993,7 +3065,8 @@ rtw88_net_state_work(struct work *work, void *cookie)
 				error = rtw88_prepare_station(net->core,
 				    rtw88_net_prepare_current, &ctx);
 				mutex_enter(net->lock);
-				stale = rtw88_net_control_current_locked(net, &ctx.id) != 0;
+				stale = sae_serial != ieee80211_sae_serial(ic) ||
+				    rtw88_net_control_current_locked(net, &ctx.id) != 0;
 				/* A stop or successor may have replaced the reservation
 				 * while the callback slept; release only our own. */
 				owned = mailbox_reserved && mb->active &&
@@ -3070,13 +3143,15 @@ rtw88_net_state_work(struct work *work, void *cookie)
 		/* Retirement can yield during old-owner cleanup. Never publish an
 		 * old AUTH or abort a successor that requested SCAN meanwhile. */
 		mutex_enter(net->lock);
-		current = epoch == net->policy.epoch && !net->policy.dying;
+		current = sae_serial == ieee80211_sae_serial(ic) &&
+		    epoch == net->policy.epoch && !net->policy.dying;
 		mutex_exit(net->lock);
 		if (!current)
 			error = ECANCELED;
 		if (error == 0 && state == IEEE80211_S_AUTH) {
 			mutex_enter(net->lock);
-			error = epoch != net->policy.epoch || net->policy.dying ||
+			error = sae_serial != ieee80211_sae_serial(ic) ||
+			    epoch != net->policy.epoch || net->policy.dying ||
 			    net->rfk.notice_pending ? ECANCELED :
 			    rtw88_net_rfk_beacon_check(net);
 			if (error == 0)
@@ -3089,7 +3164,8 @@ rtw88_net_state_work(struct work *work, void *cookie)
 		}
 		if (error != 0) {
 			mutex_enter(net->lock);
-			current = epoch == net->policy.epoch && !net->policy.dying;
+			current = sae_serial == ieee80211_sae_serial(ic) &&
+			    epoch == net->policy.epoch && !net->policy.dying;
 			if (current) {
 				net->rfk.frontier_valid = 0;
 				net->rfk.beacon_epoch = 0;
@@ -3106,6 +3182,15 @@ rtw88_net_state_work(struct work *work, void *cookie)
 		}
 		rtw88_net_rfk_publish(net);
 #endif
+		if (sae_serial != ieee80211_sae_serial(ic)) {
+			mutex_enter(net->lock);
+			if (epoch == net->policy.epoch) {
+				net->policy.accepting = 0;
+				net->reset_required = 1;
+			}
+			mutex_exit(net->lock);
+			continue;
+		}
 		if (state == IEEE80211_S_RUN && error != 0) {
 			mutex_enter(net->lock);
 			if (error == ECANCELED)
@@ -3151,6 +3236,23 @@ rtw88_net_state_work(struct work *work, void *cookie)
 					mutex_exit(net->lock);
 				}
 				error = net->parent_state(ic, state, arg);
+				if (sae_serial != ieee80211_sae_serial(ic)) {
+					/* The parent can retire its own rejected SAE
+					 * attempt. Withdraw our earlier commit without
+					 * sending INIT into a replacement configuration. */
+					mutex_enter(net->lock);
+					if (epoch == net->policy.epoch) {
+						net->policy.accepting = 0;
+						net->reset_required = 1;
+						if (error != 0 && state == IEEE80211_S_RUN) {
+							net->neg.run_fails++;
+							net->neg.run_error = error;
+							net->neg.run_stage = RTW88_NET_STAGE_CORE;
+						}
+					}
+					mutex_exit(net->lock);
+					continue;
+				}
 				/* The parent may have queued an HT/VHT offer. */
 				mutex_enter(net->lock);
 				RTW88_NET_NEG_HT20(&net->neg, &ic->ic_ht20_diag);
@@ -3169,7 +3271,8 @@ rtw88_net_state_work(struct work *work, void *cookie)
 					    sizeof(failure), &diag);
 					aprint_error_dev(net->dev, "%s", failure);
 					mutex_enter(net->lock);
-					current = epoch == net->policy.epoch &&
+					current = sae_serial == ieee80211_sae_serial(ic) &&
+					    epoch == net->policy.epoch &&
 					    !net->policy.dying;
 					if (current && state == IEEE80211_S_INIT) {
 						(void)rtw88_net_commit(&net->policy, epoch,
@@ -3270,6 +3373,7 @@ rtw88_net_newstate_async(struct ieee80211com *ic, enum ieee80211_state state,
 		net->neg.run_queued++;
 	net->requested = state;
 	net->state_arg = arg;
+	net->state_sae_serial = ieee80211_sae_serial(&net->ic);
 	net->channel = ieee80211_chan2ieee(ic, ic->ic_curchan);
 	net->pending_channel.primary = net->channel;
 	net->pending_channel.center = net->channel;
@@ -3295,6 +3399,7 @@ rtw88_net_newstate(struct ieee80211com *ic, enum ieee80211_state state,
 	int init_asked = state == IEEE80211_S_INIT;
 	int quiet_error = net->tx_quiet && state != IEEE80211_S_INIT ? EBUSY : 0;
 
+	ieee80211_sae_state_request(ic, state);
 	if (net->core->sc_executor != NULL)
 		return rtw88_net_newstate_async(ic, state, arg);
 
@@ -3373,6 +3478,7 @@ lock_request:
 		net->neg.run_queued++;
 	net->requested = state;
 	net->state_arg = arg;
+	net->state_sae_serial = ieee80211_sae_serial(&net->ic);
 	net->channel = ieee80211_chan2ieee(ic, ic->ic_curchan);
 	net->pending_channel.primary = net->channel;
 	net->pending_channel.center = net->channel;
@@ -4258,6 +4364,10 @@ rtw88_net_start_async(struct ifnet *ifp)
 			if (m == NULL)
 				goto discard;
 		}
+		if (!ieee80211_sae_tx_current(ic, ni, m)) {
+			error = ESTALE;
+			goto discard;
+		}
 		if (m->m_len < 24 && (m = m_pullup(m, 24)) == NULL)
 			goto discard;
 		wh = mtod(m, struct ieee80211_frame *);
@@ -4473,6 +4583,10 @@ rtw88_net_start(struct ifnet *ifp)
 			if (m == NULL)
 				goto tx_error;
 		}
+		if (!ieee80211_sae_tx_current(ic, ni, m)) {
+			error = ESTALE;
+			goto tx_error;
+		}
 		if (m->m_len < 24 && (m = m_pullup(m, 24)) == NULL)
 			goto tx_error;
 		wh = mtod(m, struct ieee80211_frame *);
@@ -4533,6 +4647,7 @@ rtw88_net_stop_async(struct ifnet *ifp, int disable)
 	(void)rtw88_net_request(&net->policy);
 	net->requested = IEEE80211_S_INIT;
 	net->state_arg = -1;
+	net->state_sae_serial = ieee80211_sae_serial(&net->ic);
 	net->stop_pending = net->stop_hold = 1;
 	net->init_requested = 0;
 	net->stats.init_pending = 0;
@@ -4551,6 +4666,7 @@ rtw88_net_stop(struct ifnet *ifp, int disable)
 {
 	struct rtw88_net *net = ifp->if_softc;
 
+	ieee80211_sae_retire(&net->ic);
 	if (net->core->sc_executor != NULL) {
 		rtw88_net_stop_async(ifp, disable);
 		return;
@@ -4573,6 +4689,7 @@ rtw88_net_stop(struct ifnet *ifp, int disable)
 #endif
 	net->requested = IEEE80211_S_INIT;
 	net->state_arg = -1;
+	net->state_sae_serial = ieee80211_sae_serial(&net->ic);
 	mutex_exit(net->lock);
 	workqueue_wait(net->wq, &net->state_work);
 	(void)net->parent_state(&net->ic, IEEE80211_S_INIT, -1);
@@ -4637,6 +4754,7 @@ rtw88_net_init_async(struct rtw88_net *net, unsigned channel)
 	net->stats.init_generation = net->hw.generation;
 	net->requested = IEEE80211_S_INIT;
 	net->state_arg = -1;
+	net->state_sae_serial = ieee80211_sae_serial(&net->ic);
 	net->channel = channel;
 	net->pending_channel.primary = net->pending_channel.center = channel;
 	net->pending_channel.width_mhz = 20;
@@ -4970,6 +5088,11 @@ rtw88_net_attach(struct rtw88_softc *core, device_t dev, kmutex_t *lock,
 	ieee80211_ifattach(ic);
 	if (core->sc_executor != NULL)
 		rtw88_net_async_attach_crypto(net);
+	/* Raw management and software CCMP share the native SAE/PMF owner.
+	 * SDIO's key hooks fence encoded work before its asynchronous handoff;
+	 * PCI hands the final ciphertext directly to the DMA owner. */
+	if ((caps.features & RTW88_CAP_WPA2) != 0)
+		(void)ieee80211_sae_attach(ic);
 	if ((caps.features & RTW88_CAP_RXBA) != 0)
 		rtw88_net_rxba_attach(net);
 	ic->ic_sta_quiet = rtw88_net_sta_quiet;
@@ -5090,9 +5213,6 @@ rtw88_net_detach_async(struct rtw88_net *net)
 	}
 	if (producers == 0) {
 		workqueue_wait(net->wq, &net->state_work);
-#ifdef RTW88_RFK_EXPERIMENT
-		workqueue_wait(net->wq, &net->rfk.capture_work);
-#endif
 	}
 	KERNEL_LOCK(nlocks, NULL);
 	if (producers != 0)

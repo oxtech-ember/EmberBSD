@@ -71,6 +71,7 @@ __KERNEL_RCSID(0, "$NetBSD: ieee80211_ioctl.c,v 1.69 2021/09/21 15:00:34 christo
 #endif
 
 #include <net80211/ieee80211_var.h>
+#include <net80211/ieee80211_sae.h>
 #include <net80211/ieee80211_ioctl.h>
 
 #include <dev/ic/wi_ieee.h>
@@ -1515,6 +1516,7 @@ ieee80211_ioctl_sae(struct ieee80211com *ic, u_long cmd,
     int (*callback)(struct ieee80211com *, const struct ieee80211req_sae *))
 {
 	struct ieee80211req_sae *req;
+	uint64_t serial;
 	int error;
 
 	if (callback == NULL)
@@ -1534,10 +1536,14 @@ ieee80211_ioctl_sae(struct ieee80211com *ic, u_long cmd,
 		return error;
 	if (ireq->i_len != sizeof(*req))
 		return EINVAL;
+	serial = ieee80211_sae_serial(ic);
 	req = kmem_zalloc(sizeof(*req), KM_SLEEP);
 	error = copyin(ireq->i_data, req, sizeof(*req));
 	if (error == 0)
 		error = ieee80211_sae_request_valid(req);
+	if (error == 0 && callback == ieee80211_sae_request &&
+	    serial != ieee80211_sae_serial(ic))
+		error = ESTALE;
 	if (error == 0)
 		error = callback(ic, req);
 	explicit_memset(req, 0, sizeof(*req));
@@ -1633,6 +1639,14 @@ ieee80211_ioctl_get80211(struct ieee80211com *ic, u_long cmd,
 	u_int m;
 
 	switch (ireq->i_type) {
+	case IEEE80211_IOC_SAE:
+		return ieee80211_ioctl_sae(ic, cmd, ireq,
+		    ic->ic_sae != NULL &&
+		    ieee80211_crypto_available(IEEE80211_CIPHER_AES_CCM) ?
+		    (IEEE80211_SAE_CAP_EXTERNAL |
+		    IEEE80211_SAE_CAP_PMF | IEEE80211_SAE_CAP_SA_QUERY |
+		    IEEE80211_SAE_CAP_KEY_EPOCH) : 0,
+		    ic->ic_sae != NULL ? ieee80211_sae_request : NULL);
 	case IEEE80211_IOC_STA_PORT:
 		return ieee80211_ioctl_sta_port(ic, ireq, false);
 	case IEEE80211_IOC_STA_MGMT:
@@ -1818,6 +1832,10 @@ ieee80211_ioctl_setoptie(struct ieee80211com *ic, struct ieee80211req *ireq)
 		free(ie, M_DEVBUF);
 		return error;
 	}
+	if (ieee80211_sae_active(ic) &&
+	    (ireq->i_len != ic->ic_opt_ie_len ||
+	    memcmp(ie, ic->ic_opt_ie, ireq->i_len) != 0))
+		ieee80211_sae_retire(ic);
 	/* XXX sanity check data? */
 	if (ic->ic_opt_ie != NULL)
 		free(ic->ic_opt_ie, M_DEVBUF);
@@ -1835,11 +1853,15 @@ ieee80211_ioctl_setkey(struct ieee80211com *ic, struct ieee80211req *ireq)
 	u_int16_t kid;
 	int error;
 
+	if (ieee80211_sae_active(ic))
+		return EBUSY;
 	if (ireq->i_len != sizeof(ik))
 		return EINVAL;
 	error = copyin(ireq->i_data, &ik, sizeof(ik));
 	if (error)
 		return error;
+	if (ieee80211_sae_active(ic))
+		return EBUSY;
 	/* NB: cipher support is verified by ieee80211_crypt_newkey */
 	/* NB: this also checks ik->ik_keylen > sizeof(wk->wk_key) */
 	if (ik.ik_keylen > sizeof(ik.ik_keydata))
@@ -1897,11 +1919,15 @@ ieee80211_ioctl_delkey(struct ieee80211com *ic, struct ieee80211req *ireq)
 	struct ieee80211req_del_key dk;
 	int kid, error;
 
+	if (ieee80211_sae_active(ic))
+		return EBUSY;
 	if (ireq->i_len != sizeof(dk))
 		return EINVAL;
 	error = copyin(ireq->i_data, &dk, sizeof(dk));
 	if (error)
 		return error;
+	if (ieee80211_sae_active(ic))
+		return EBUSY;
 	kid = dk.idk_keyix;
 	/* XXX u_int8_t -> u_int16_t */
 	if (dk.idk_keyix == (u_int8_t) IEEE80211_KEYIX_NONE) {
@@ -2271,7 +2297,17 @@ ieee80211_ioctl_set80211(struct ieee80211com *ic, u_long cmd,
 
 	error = 0;
 	switch (ireq->i_type) {
+	case IEEE80211_IOC_SAE:
+		return ieee80211_ioctl_sae(ic, cmd, ireq,
+		    ic->ic_sae != NULL &&
+		    ieee80211_crypto_available(IEEE80211_CIPHER_AES_CCM) ?
+		    (IEEE80211_SAE_CAP_EXTERNAL |
+		    IEEE80211_SAE_CAP_PMF | IEEE80211_SAE_CAP_SA_QUERY |
+		    IEEE80211_SAE_CAP_KEY_EPOCH) : 0,
+		    ic->ic_sae != NULL ? ieee80211_sae_request : NULL);
 	case IEEE80211_IOC_STA_PORT:
+		if (ieee80211_sae_active(ic))
+			return EBUSY;
 		return ieee80211_ioctl_sta_port(ic, ireq, true);
 	case IEEE80211_IOC_STA_MGMT:
 		return ieee80211_ioctl_sta_mgmt(ic, ireq, true);

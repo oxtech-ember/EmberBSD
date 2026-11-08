@@ -63,7 +63,7 @@ struct rtw88_net {
     struct rtw88_async async;
     unsigned key_depth;
     int key_error;
-    uint64_t key_epoch, async_failed;
+    uint64_t key_epoch, async_failed, state_sae_serial;
     int async_fault, stop_pending;
     struct { uint32_t generation; unsigned outstanding; struct { int configured,active,phy; } ra; } hw;
     struct mbuf *tx_pending_m;
@@ -132,6 +132,22 @@ static struct mbuf *m_pullup(struct mbuf *m, unsigned need)
 }
 static void *ieee80211_crypto_encap(struct ieee80211com *ic, struct ieee80211_node *ni, struct mbuf *m)
 { (void)ic;(void)ni;(void)m;route_crypto++;return route_crypto_fail?NULL:&route_crypto; }
+/* Common SAE owns the packet epoch; the transport must honor rejection. */
+static struct mbuf *route_sae_stale;
+static unsigned route_sae_requests;
+static enum ieee80211_state route_sae_state;
+#undef ieee80211_sae_state_request
+static void
+ieee80211_sae_state_request(struct ieee80211com *ic,
+    enum ieee80211_state state)
+{
+    (void)ic;
+    route_sae_requests++;
+    route_sae_state=state;
+}
+static bool __attribute__((unused))
+ieee80211_sae_tx_current(struct ieee80211com *ic, struct ieee80211_node *ni, struct mbuf *m)
+{ (void)ic; (void)ni; return m != route_sae_stale; }
 #undef ieee80211_chan2ieee
 static unsigned route_chan2ieee(const struct ieee80211_channel *ch)
 { return ch->ic_freq >= 5000 ? (ch->ic_freq - 5000) / 5 : 1U; }
@@ -296,6 +312,16 @@ int main(void)
         rtw88_net_start(&ifp);
         CHECK(net.ic.ic_mgtq.m==NULL && node_refs==1 && route_errors==errors);
         CHECK(route_raw_delivered==raw+!injected);
+    }
+    /* A retired native SAE epoch cannot consume a PN or reach PCI. */
+    {
+        struct mbuf *m=newbuf(30); assert(m); m->m_data[0]=0xb0;
+        unsigned crypto=route_crypto, errors=route_errors, raw=route_raw_delivered;
+        ieee80211_ref_node(&ni); M_SETCTX(m,&ni);
+        queue_packet(&net.ic.ic_mgtq,m); route_sae_stale=m;
+        rtw88_net_start(&ifp); route_sae_stale=NULL;
+        CHECK(net.ic.ic_mgtq.m==NULL && node_refs==1);
+        CHECK(route_errors==errors+1 && route_crypto==crypto && route_raw_delivered==raw);
     }
     for(unsigned ac=0;ac<4;ac++) {
         CHECK(rtw88_stop(&sc)==0);CHECK(rtw88_start(&sc)==0);
@@ -506,7 +532,9 @@ int main(void)
     uint64_t epoch_drops=net.policy.rx.delivery_epoch;
     unsigned ht20_withdrawals_before=routing_ht20_withdrawals;
     unsigned ht20_rejections_before=routing_ht20_rejections;
+    unsigned sae_requests_before=route_sae_requests;
     CHECK(rtw88_net_newstate(&net.ic,IEEE80211_S_SCAN,-1)==0);
+    CHECK(route_sae_requests==sae_requests_before+1 && route_sae_state==IEEE80211_S_SCAN);
     CHECK(routing_ht20_withdrawals==ht20_withdrawals_before+1);
     CHECK(routing_ht20_rejections==ht20_rejections_before);
     CHECK(rtw88_net_commit(&net.policy,net.policy.epoch,0,1)==0);
@@ -514,6 +542,12 @@ int main(void)
     rtw88_net_softintr(&net);
     CHECK(route_rx==delivered && net.rx[0].m==NULL && net.policy.queued==0);
     CHECK(net.policy.rx.delivery_epoch==epoch_drops+1);
+    /* A sleeping transport dispatches before touching PCI routing state. */
+    unsigned dispatch_before=routing_async_dispatch_calls;
+    sc.sc_executor=(void *)&sc;
+    rtw88_net_start(&ifp);
+    CHECK(routing_async_dispatch_calls==dispatch_before+1);
+    sc.sc_executor=NULL;
     CHECK(rtw88_stop(&sc)==0);CHECK(rtw88_core_detach(&sc)==0);
     printf("Native four-AC wrapper: %u checks, %u failures\n",checks,failures);
     printf("Routing service counters: packets %u RSSI %u polls %u dequeues %u ticks %u\n",

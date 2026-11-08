@@ -67,6 +67,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 
 #include <net80211/ieee80211_beacon_ies.h>
 #include <net80211/ieee80211_var.h>
+#include <net80211/ieee80211_sae.h>
 
 #include <dev/pci/pcireg.h>
 #include <dev/pci/pcivar.h>
@@ -124,6 +125,7 @@ struct rtw89_softc {
 	bool			 sc_nspending;
 	enum ieee80211_state	 sc_nsstate;
 	int			 sc_nsarg;
+	uint64_t		 sc_nsserial;
 	struct callout		 sc_scan_to;
 	bool			 sc_scanning;
 };
@@ -334,6 +336,8 @@ rtw89_attach_hook(device_t self)
 
 	if_initialize(ifp);
 	ieee80211_ifattach(ic);
+	/* Raw management and host CCMP; bridge TX accepts final ciphertext. */
+	(void)ieee80211_sae_attach(ic);
 	ifp->if_percpuq = if_percpuq_create(ifp);
 	if_register(ifp);
 
@@ -649,6 +653,7 @@ rtw89_sta_quiet(struct ieee80211com *ic)
 	struct rtw89_softc *sc = ic->ic_ifp->if_softc;
 	int error;
 
+	ieee80211_sae_retire(ic);
 	if (sc->sc_csa_quiet)
 		return;
 	sc->sc_csa_quiet = true;
@@ -734,11 +739,13 @@ rtw89_newstate(struct ieee80211com *ic, enum ieee80211_state nstate, int arg)
 	struct rtw89_softc *sc = ic->ic_ifp->if_softc;
 	bool enqueue;
 
+	ieee80211_sae_state_request(ic, nstate);
 	callout_stop(&sc->sc_scan_to);
 	mutex_enter(&sc->sc_nslock);
 	nstate = rtw89_csa_defer_state(sc, nstate, &arg);
 	sc->sc_nsstate = nstate;
 	sc->sc_nsarg = arg;
+	sc->sc_nsserial = ieee80211_sae_serial(ic);
 	enqueue = !sc->sc_nspending;
 	sc->sc_nspending = true;
 	mutex_exit(&sc->sc_nslock);
@@ -793,6 +800,8 @@ rtw89_csa_finish_init(struct rtw89_softc *sc, enum ieee80211_state nstate)
 			sc->sc_nsarg = -1;
 			have_next = true;
 		}
+		if (have_next)
+			sc->sc_nsserial = ieee80211_sae_serial(&sc->sc_ic);
 		if (have_next && !sc->sc_nspending) {
 			sc->sc_nspending = true;
 			enqueue = true;
@@ -869,11 +878,14 @@ rtw89_newstate_task(struct work *wk, void *arg)
 	struct ifnet *ifp = &sc->sc_ec.ec_if;
 	struct rtw89_nb_bss bss;
 	enum ieee80211_state ostate, nstate;
+	uint64_t serial;
 	int nsarg, s, error;
 
+	(void)wk;
 	mutex_enter(&sc->sc_nslock);
 	nstate = sc->sc_nsstate;
 	nsarg = sc->sc_nsarg;
+	serial = sc->sc_nsserial;
 	if (sc->sc_stopping) {
 		nstate = IEEE80211_S_INIT;
 		nsarg = -1;
@@ -881,6 +893,10 @@ rtw89_newstate_task(struct work *wk, void *arg)
 	sc->sc_nspending = false;
 	mutex_exit(&sc->sc_nslock);
 
+	/* Configuration can change before this queued request starts, without
+	 * another MLME request. Never bind that old state to the new session. */
+	if (serial != ieee80211_sae_serial(ic))
+		return;
 	ostate = ic->ic_state;
 	if (rtw89_debug)
 		printf("%s: %s -> %s\n", device_xname(sc->sc_dev),
@@ -889,13 +905,19 @@ rtw89_newstate_task(struct work *wk, void *arg)
 	if (sc->sc_running && sc->sc_nb != NULL) {
 		if (nstate < ostate && ostate >= IEEE80211_S_AUTH)
 			rtw89_nb_bss_leave(sc->sc_nb);
+		if (serial != ieee80211_sae_serial(ic))
+			return;
 		if (sc->sc_scanning && nstate != IEEE80211_S_SCAN) {
 			rtw89_nb_scan_end(sc->sc_nb);
+			if (serial != ieee80211_sae_serial(ic))
+				return;
 			sc->sc_scanning = false;
 		}
 		if (sc->sc_csa_quiet &&
 		    (nstate == IEEE80211_S_SCAN || nstate == IEEE80211_S_AUTH)) {
 			error = rtw89_csa_restart(sc);
+			if (serial != ieee80211_sae_serial(ic))
+				return;
 			if (error) {
 				aprint_error_dev(sc->sc_dev,
 				    "can't reset TX rings for channel switch (%d)\n",
@@ -907,13 +929,19 @@ rtw89_newstate_task(struct work *wk, void *arg)
 		case IEEE80211_S_SCAN:
 			if (!sc->sc_scanning) {
 				rtw89_nb_scan_start(sc->sc_nb);
+				if (serial != ieee80211_sae_serial(ic))
+					return;
 				sc->sc_scanning = true;
 			}
 			rtw89_set_curchan(sc, ic->ic_curchan);
 			break;
 		case IEEE80211_S_AUTH:
 			rtw89_set_curchan(sc, ic->ic_bss->ni_chan);
+			if (serial != ieee80211_sae_serial(ic))
+				return;
 			rtw89_csa_scan_resume(sc, nstate);
+			if (serial != ieee80211_sae_serial(ic))
+				return;
 			if (sc->sc_csa_quiet)
 				goto csa_fail;
 			rtw89_fill_bss(sc, &bss);
@@ -937,6 +965,12 @@ rtw89_newstate_task(struct work *wk, void *arg)
 	}
 
 	s = splnet();
+	/* Firmware commands may sleep and drop Giant. A newer configuration
+	 * owns any following state work; stale completion must not retire it. */
+	if (serial != ieee80211_sae_serial(ic)) {
+		splx(s);
+		return;
+	}
 	/* INIT has drained the old management queue and BSS leave has completed.
 	 * Reopen the scheduler only when a fresh scan is about to begin. */
 	if (nstate == IEEE80211_S_SCAN) {
@@ -946,7 +980,19 @@ rtw89_newstate_task(struct work *wk, void *arg)
 			goto csa_fail;
 		}
 	}
-	(void)(*sc->sc_newstate)(ic, nstate, nsarg);
+	if (serial != ieee80211_sae_serial(ic)) {
+		splx(s);
+		return;
+	}
+	error = (*sc->sc_newstate)(ic, nstate, nsarg);
+	if (error != 0) {
+		/* A rejected common transition may retire its own SAE cookie.
+		 * Do not publish requested RUN or disturb a queued successor. */
+		sc->sc_beacon_active = false;
+		ifp->if_timer = 0;
+		splx(s);
+		return;
+	}
 	rtw89_beacon_state(sc, nstate);
 	rtw89_csa_finish_init(sc, nstate);
 	if (ic->ic_state == IEEE80211_S_SCAN && sc->sc_running)
@@ -955,6 +1001,8 @@ rtw89_newstate_task(struct work *wk, void *arg)
 	return;
 
 csa_fail:
+	if (serial != ieee80211_sae_serial(ic))
+		return;
 	mutex_enter(&sc->sc_nslock);
 	sc->sc_stopping = true;
 	sc->sc_csa_deferred = false;
@@ -1015,6 +1063,8 @@ rtw89_tx(struct rtw89_softc *sc, struct mbuf *m, struct ieee80211_node *ni,
 	struct ieee80211_key *k;
 	int len;
 
+	if (!ieee80211_sae_tx_current(ic, ni, m))
+		return ESTALE;
 	wh = mtod(m, struct ieee80211_frame *);
 	if (wh->i_fc[1] & IEEE80211_FC1_WEP) {
 		k = ieee80211_crypto_encap(ic, ni, m);
@@ -1130,6 +1180,8 @@ rtw89_stop(struct ifnet *ifp, int disable)
 	struct ieee80211com *ic = &sc->sc_ic;
 	int s;
 
+	(void)disable;
+	ieee80211_sae_retire(ic);
 	if (sc->sc_nb == NULL)
 		return;
 	mutex_enter(&sc->sc_nslock);

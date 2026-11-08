@@ -2762,6 +2762,7 @@
 ./usr/include/net80211/ieee80211_channel.h	comp-obsolete		obsolete
 ./usr/include/net80211/ieee80211_compat.h	comp-obsolete		obsolete
 ./usr/include/net80211/ieee80211_beacon_ies.h	comp-c-include
+./usr/include/net80211/ieee80211_bip.h	comp-c-include
 ./usr/include/net80211/ieee80211_crypto.h	comp-c-include
 ./usr/include/net80211/ieee80211_ht20.h	comp-c-include
 ./usr/include/net80211/ieee80211_ioctl.h	comp-c-include
@@ -2773,6 +2774,7 @@
 ./usr/include/net80211/ieee80211_rsn.h	comp-c-include
 ./usr/include/net80211/ieee80211_rssadapt.h	comp-c-include
 ./usr/include/net80211/ieee80211_rxba.h	comp-c-include
+./usr/include/net80211/ieee80211_sae.h	comp-c-include
 ./usr/include/net80211/ieee80211_sta.h	comp-c-include
 ./usr/include/net80211/ieee80211_sysctl.h	comp-c-include
 ./usr/include/net80211/ieee80211_var.h		comp-c-include

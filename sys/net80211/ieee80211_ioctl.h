@@ -514,18 +514,22 @@ struct ieee80211req {
 #define	IEEE80211_IOC_MCAST_RATE	72	/* tx rate for mcast frames */
 #define	IEEE80211_IOC_FRAGTHRESHOLD	73	/* tx fragmentation threshold */
 
-/* Full-MAC external SAE authentication. No passwords or PMKs cross this ABI. */
+/* External SAE authentication. No passwords or PMKs cross this ABI. */
 #define IEEE80211_IOC_SAE		74
 #define IEEE80211_SAE_VERSION		1
 #define IEEE80211_SAE_CAP_EXTERNAL	0x0001
 #define IEEE80211_SAE_CAP_PMF		0x0002
 #define IEEE80211_SAE_CAP_SA_QUERY	0x0004
+#define IEEE80211_SAE_CAP_KEY_EPOCH	0x0008
 #define IEEE80211_SAE_CONFIGURE		1
 #define IEEE80211_SAE_AUTH_STATUS	2
 #define IEEE80211_SAE_TX_FRAME		3
 #define IEEE80211_SAE_SET_IGTK		4
 #define IEEE80211_SAE_DELETE_IGTK	5
 #define IEEE80211_SAE_TX_SA_QUERY	6
+#define IEEE80211_SAE_SET_KEY		7
+#define IEEE80211_SAE_DELETE_KEY		8
+#define IEEE80211_SAE_SET_PORT		9
 #define IEEE80211_SAE_START		0x100
 #define IEEE80211_SAE_RX_FRAME		0x101
 #define IEEE80211_SAE_RX_SA_QUERY	0x102
@@ -552,6 +556,11 @@ int ieee80211_sae_auth_frame_validate(const uint8_t *, size_t,
  * firmware to protect the frame; RX passed firmware CCMP and host replay checks.
  * UNPROT_DISCONNECT: 26-byte deauth/disassoc frame, reason 6/7; requests SA Query,
  * never immediate disconnect. These operations require CAP_SA_QUERY.
+ * CAP_KEY_EPOCH requires generation-tagged SET_KEY (ieee80211req_key),
+ * DELETE_KEY (ieee80211req_del_key), and SET_PORT (one byte, 0/1).
+ * Key payloads use the existing native-endian key ABI. Authentication or
+ * association alone never authorizes this port; it is opened only after
+ * the supplicant completes the key exchange for this generation.
  * Route events contain the fixed header followed by exactly len data bytes.
  */
 

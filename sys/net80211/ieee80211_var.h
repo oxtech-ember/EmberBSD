@@ -97,8 +97,12 @@ struct ieee80211_vht_channel;
 #define	IEEE80211_PS_MAX_QUEUE	50	/* maximum saved packets */
 
 struct ieee80211req_sta_mgmt;
+struct ieee80211_sae;
 
 struct ieee80211com {
+	struct ieee80211_sae *ic_sae;
+	/* Published lifetime cookie, readable by a provider whose ic is alive. */
+	uint64_t ic_sae_serial __aligned(8);
 	/* Optional STA stop: close all TX synchronously under Giant, without a
 	 * driver lock. Must not sleep. Called before the shared INIT request. */
 	void (*ic_sta_quiet)(struct ieee80211com *);
