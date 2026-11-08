@@ -141,10 +141,11 @@ RX_CHAIN_WRAPS = {
     'ieee80211_decap': (100, 0x2f800cb4),
     'sta_rx_eapol': (104, 0x2f800d00),
 }
+RX_CHAIN_WRAP_SYMBOLS = tuple(RX_CHAIN_WRAPS) + ('sta_rx_cb',)
 
 
 def check_rx_chain_wrappers(path, objdump, nm, env):
-    """Verify the four version-pinned net80211 table wrappers and chains."""
+    """Verify net80211 wrappers and the normal STA receive callback chain."""
     symbols = subprocess.check_output([str(nm), '--defined-only', '--print-size',
         '--format=posix', str(path)], env=env, text=True)
     addresses = {}
@@ -195,6 +196,63 @@ def check_rx_chain_wrappers(path, objdump, nm, env):
         if addresses.get(symbol) != rom_address:
             raise ValueError(f'{symbol} resolves to {addresses.get(symbol)!r}, ' +
                              f'expected ROM address 0x{rom_address:08x}')
+
+    # wifi_create_sta registers the normal callback through ifidx zero;
+    # ppRegisterRxCallback stores it in pTxRx + 0x3f8 on this pinned ABI.
+    create_sta = disassemble('wifi_create_sta')
+    callback_reloc = re.compile(r'R_RISCV_HI20\s+__wrap_sta_rx_cb\b')
+    callback_refs = list(callback_reloc.finditer(create_sta))
+    if not callback_refs:
+        raise ValueError('wifi_create_sta does not register __wrap_sta_rx_cb')
+    callback_setup = create_sta[callback_refs[-1].start():]
+    if not re.search(r'\bli\s+a1,\s*(?:0|0x0)\b', callback_setup) or not re.search(
+            r'R_RISCV_CALL(?:_PLT)?\s+ic_register_rx_cb\b', callback_setup):
+        raise ValueError('wifi_create_sta callback registration is not the '
+                         'ifidx-0 ic_register_rx_cb path')
+    if 'sta_rx_cb' not in addresses:
+        raise ValueError('missing real sta_rx_cb symbol for wrapper chain')
+    if addresses.get('__wrap_sta_rx_cb') == addresses.get('sta_rx_cb'):
+        raise ValueError('__wrap_sta_rx_cb aliases the real sta_rx_cb')
+    wrapper = disassemble('__wrap_sta_rx_cb')
+    if not re.search(r'R_RISCV_[A-Z0-9_]+\s+sta_rx_cb\b', wrapper):
+        raise ValueError('__wrap_sta_rx_cb does not tail-chain to sta_rx_cb')
+    if not re.search(r'\bbeqz\s+a0\b', wrapper):
+        raise ValueError('__wrap_sta_rx_cb lacks null guards for the packet path')
+    if len(re.findall(r'\bbeqz\s+t0\b', wrapper)) < 2:
+        raise ValueError('__wrap_sta_rx_cb does not null-check both ESF pointers')
+    if not re.search(r'\blw\s+t0,\s*(?:4|0x4)\(a0\)', wrapper) or not re.search(
+            r'\blw\s+t0,\s*(?:4|0x4)\(t0\)', wrapper):
+        raise ValueError('__wrap_sta_rx_cb does not follow the pinned ESF '
+                         'buffer pointer path')
+    if not re.search(r'\blhu\s+t1,\s*(?:36|0x24)\(a0\)', wrapper):
+        raise ValueError('__wrap_sta_rx_cb does not read pinned ESF flags')
+    if not re.search(r'\blui\s+t2,\s*(?:2|0x2)\b', wrapper) or not re.search(
+            r'\band\s+t1,\s*t1,\s*t2\b', wrapper) or not re.search(
+            r'\baddi\s+t0,\s*t0,\s*(?:8|0x8)\b', wrapper):
+        raise ValueError('__wrap_sta_rx_cb does not apply the pinned optional '
+                         '8-byte header adjustment')
+    if not re.search(r'\blbu\s+t2,\s*(?:0|0x0)\(t0\)', wrapper):
+        raise ValueError('__wrap_sta_rx_cb does not read the FC byte from the '
+                         'resolved packet header')
+    if not re.search(r'\bandi\s+t2,\s*t2,\s*(?:12|0xc)\b', wrapper):
+        raise ValueError('__wrap_sta_rx_cb does not classify only FC type bits')
+    if not re.search(r'\badd\s+t0,\s*t0,\s*t2\b', wrapper):
+        raise ValueError('__wrap_sta_rx_cb does not index the FC type array')
+    if not re.search(r'R_RISCV_(?:PCREL_|GOT_)?HI20\s+'
+                     r'espwifi_rx_chain_sta_rx_cb_type_count\b',
+                     wrapper):
+        raise ValueError('__wrap_sta_rx_cb does not index the FC type counter array')
+    if sizes.get('espwifi_rx_chain_sta_rx_cb_type_count') != 16:
+        raise ValueError('FC type counters are not a four-element uint32_t array')
+    # The reader uses only t0-t2 and reads a0 without changing caller arguments.
+    for line in wrapper.splitlines():
+        match = re.match(r'^\s*[0-9a-f]+:\s+[0-9a-f]+\s+([\w.]+)\s+([^,]+)',
+                         line)
+        if match and (match.group(2).strip() in {
+                'a1', 'a2', 'a3', 'a4', 'a5', 'a6', 'a7', 'a0', 'ra', 'sp'} and
+                match.group(1) not in {'beqz', 'bnez'}):
+            raise ValueError('__wrap_sta_rx_cb modifies caller-owned register ' +
+                             match.group(2).strip())
 
 
 def common_wpa_flags(common, idf):
@@ -307,7 +365,7 @@ def main():
         for sym in ENTRIES:
             args += ['-u', sym]
         if a.vendor_rx_chain_once:
-            args += ['--wrap='+sym for sym in RX_CHAIN_WRAPS]
+            args += ['--wrap='+sym for sym in RX_CHAIN_WRAP_SYMBOLS]
         args += ['-o', output] + objects + ['--start-group'] + libs + ['--end-group', '-T', HERE/'espwifi.lds']
         for f in ROM:
             args += ['-T', idf/'esp_rom/esp32s31/ld'/f]

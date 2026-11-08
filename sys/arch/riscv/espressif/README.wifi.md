@@ -183,9 +183,24 @@ each wrapper remains installed in its pinned table slot and tail-chains to the
 matching ROM entry. At runtime, the probe snapshots the live table pointer and
 checks those four slots at the beginning and end of the window. Its summary
 reports pointer changes and both match masks; a mismatch also reports the
-observed entry words. A zero entry count alone does not establish that an
-on-air frame was absent or that the live callbacks remained bound. It reads no
-packet fields or payloads. It also samples the S31 hardware RX statistics
+observed entry words.
+
+The normal station RX route uses a separate `pTxRx` callback table. On the
+pinned S31 path, `wifi_create_sta` registers `sta_rx_cb` at ifidx 0, which is
+stored in `pTxRx + 0x3f8`; `ppRxPkt` calls it, and `sta_rx_cb` forwards the
+packet to ROM `sta_input` directly. This route bypasses the `net80211_funcs`
+`sta_input` slot wrapper. The probe therefore also verifies and snapshots the
+`pTxRx + 0x3f8` entry, counts `sta_rx_cb` entries, and counts only the four
+frame-control type values (management, control, data, extension) after the
+pinned ESF/header resolution. It does not log packet contents, addresses, or
+payload. A zero `sta_input` table count alone does not imply no normal STA RX;
+the `sta_rx_cb` count is the relevant callback boundary. A zero callback count
+still does not establish that the AP sent a frame or that it reached the PP
+dispatcher. The FC type counts show only that a frame pointer reached this
+callback and passed the pinned header lookup; they do not establish delivery
+of EAPOL or a completed handshake.
+
+The probe also samples the S31 hardware RX statistics
 through the pinned IDF getter at successful radio start and at the window
 boundaries. It reports modulo-16-bit deltas for the fields `rx_mpdu`,
 `rx_end_cnt`, `rx_datasuc`, `rx_fcs_err`, `rx_abort`, `nrx_err_pwrdrop`,

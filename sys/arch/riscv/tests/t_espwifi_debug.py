@@ -23,15 +23,31 @@ assert state, 'debug-once state missing'
 chain_state = re.search(
     r'^volatile uint32_t espwifi_rx_chain_diag_active;\n'
     r'volatile uint32_t espwifi_rx_chain_sta_input_count;\n'
+    r'volatile uint32_t espwifi_rx_chain_sta_rx_cb_count;\n'
+    r'volatile uint32_t espwifi_rx_chain_sta_rx_cb_type_count\[4\];\n'
     r'volatile uint32_t espwifi_rx_chain_crypto_decap_count;\n'
     r'volatile uint32_t espwifi_rx_chain_decap_count;\n'
     r'volatile uint32_t espwifi_rx_chain_eapol_count;$', source, re.M)
 assert chain_state, 'RX chain counters missing'
-chain_table_state = re.search(
+rx_table_declarations = re.search(
     r'^extern void \* volatile net80211_funcs;\n.*?'
-    r'^static struct espwifi_rx_chain_table_state '
-    r'espwifi_rx_chain_table_begin;$', source, re.M | re.S)
-assert chain_table_state, 'live RX-chain table snapshot state missing'
+    r'^static struct espwifi_rx_chain_pp_table_state '
+    r'espwifi_rx_chain_pp_begin;$', source, re.M | re.S)
+assert rx_table_declarations, \
+    'net80211 and normal PP receive callback snapshot state missing'
+rx_chain_asm = (wifi / 'rx_chain_diag.S').read_text()
+assert 'RX_STA_RX_CB_WRAP' in rx_chain_asm, \
+    'normal STA RX callback integer wrapper missing'
+assert 'RX_STA_RX_CB_WRAP' in rx_chain_asm, \
+    'normal RX callback classification wrapper missing'
+for fragment in ('lw t0, 4(a0)', 'lw t0, 4(t0)', 'lhu t1, 0x24(a0)',
+                 'addi t0, t0, 8', 'lbu t2, 0(t0)',
+                 'andi t2, t2, 0x0c',
+                 'espwifi_rx_chain_sta_rx_cb_type_count'):
+    assert fragment in rx_chain_asm, \
+        'normal RX reader differs from the pinned null-guarded FC path: ' + fragment
+assert 'tail __real_sta_rx_cb' in rx_chain_asm, \
+    'normal RX callback does not chain to the original callback'
 start_impl = re.search(r'\nstatic int\nespwifi_start_impl\(void\)\n\{.*?\n\}',
                        source, re.S)
 assert start_impl, 'Wi-Fi start implementation missing'
@@ -69,6 +85,14 @@ def table_function(name):
     match = re.search(r'\nstatic struct espwifi_rx_chain_table_state\n' +
                       name + r'\(void\)\n\{.*?\n\}', source, re.S)
     assert match, name
+    return match.group()
+
+
+def pp_table_function():
+    match = re.search(r'\nstatic struct espwifi_rx_chain_pp_table_state\n'
+                      r'espwifi_rx_chain_pp_table_snapshot\(void\)\n'
+                      r'\{.*?\n\}', source, re.S)
+    assert match, 'espwifi_rx_chain_pp_table_snapshot'
     return match.group()
 
 
@@ -201,11 +225,12 @@ static void espwifi_os_log(const char *fmt, ...) {
  va_end(ap);
 }
 ''' + chain_state.group() + '\n' + state.group() + '\n' + \
-    chain_table_state.group() + '\n' + \
+    rx_table_declarations.group() + '\n' + \
     counter_delta.group() + '\n' + \
     hw_snapshot.group() + '\n' + \
     slot_function() + '\n' + \
     table_function('espwifi_rx_chain_table_snapshot') + '\n' + \
+    pp_table_function() + '\n' + \
     function('espwifi_vendor_debug_once_begin',
         r'const unsigned char \*bssid') + '\n' + \
     function('espwifi_vendor_debug_once_end', r'void') + r'''
@@ -217,8 +242,14 @@ void __wrap_sta_input(void) { wrap_sta_input(); }
 void __wrap_ieee80211_crypto_decap(void) { wrap_crypto_decap(); }
 void __wrap_ieee80211_decap(void) { wrap_decap(); }
 void __wrap_sta_rx_eapol(void) { wrap_sta_rx_eapol(); }
+void __wrap_sta_rx_cb(void) { }
 void * volatile net80211_funcs;
+void * volatile pTxRx;
 static unsigned char table_a[0x14c], table_b[0x14c];
+static unsigned char pp_table_a[0x400], pp_table_b[0x400];
+static int fixture_fc_type(const unsigned char *packet) {
+ return packet == NULL ? -1 : (packet[0] & 0x0c) >> 2;
+}
 static void set_table_entry(unsigned char *table, size_t offset,
     void (*entry)(void)) {
  memcpy(table + offset, &entry, sizeof(uint32_t));
@@ -228,6 +259,9 @@ static void install_wrappers(unsigned char *table) {
  set_table_entry(table, 0x60, __wrap_ieee80211_crypto_decap);
  set_table_entry(table, 0x64, __wrap_ieee80211_decap);
  set_table_entry(table, 0x68, __wrap_sta_rx_eapol);
+}
+static void install_pp_wrapper(unsigned char *table, void (*entry)(void)) {
+ set_table_entry(table, 0x3f8, entry);
 }
 int main(void) {
  static const unsigned char bssid[6] = { 1, 2, 3, 4, 5, 6 };
@@ -293,7 +327,8 @@ int main(void) {
      espwifi_rx_chain_sta_input_count == 4 &&
      espwifi_rx_chain_crypto_decap_count == 5 &&
      espwifi_rx_chain_decap_count == 6 && espwifi_rx_chain_eapol_count == 7);
- assert(strstr(log_message, "sta_input=4 crypto_decap=5 decap=6 "
+ assert(strstr(log_message, "sta_input_table=4 sta_rx_cb=0 "
+     "sta_rx_cb_type=0/0/0/0 crypto_decap=5 decap=6 "
      "sta_rx_eapol=7") != NULL);
  assert(alloc_window_end_calls == 1 && alloc_snapshot_calls == 2 &&
      hw_snapshot_calls == 3);
@@ -302,6 +337,11 @@ int main(void) {
  assert(strstr(log_message, "init_fallback=2 init_bytes=32") != NULL);
  assert(strstr(log_message, "miss=10->13 fallback=3->5") != NULL);
  assert(espwifi_rx_counter_delta(UINT16_MAX, 1) == 2);
+ assert(fixture_fc_type(NULL) == -1);
+ assert(fixture_fc_type((const unsigned char[]){ 0x00 }) == 0);
+ assert(fixture_fc_type((const unsigned char[]){ 0x04 }) == 1);
+ assert(fixture_fc_type((const unsigned char[]){ 0x08 }) == 2);
+ assert(fixture_fc_type((const unsigned char[]){ 0x0c }) == 3);
  assert(get_ps_calls == 1 && set_ps_calls == 0 &&
      current_ps == WIFI_PS_MAX_MODEM);
  espwifi_vendor_debug_once_end();
@@ -310,12 +350,17 @@ int main(void) {
      current_ps == WIFI_PS_MAX_MODEM && critical_depth == 0);
  install_wrappers(table_a);
  install_wrappers(table_b);
+ install_pp_wrapper(pp_table_a, __wrap_sta_rx_cb);
+ install_pp_wrapper(pp_table_b, __wrap_sta_rx_cb);
+ pTxRx = pp_table_a;
  net80211_funcs = table_a;
  vendor_debug_once_state = 0;
  espwifi_vendor_debug_once_begin(bssid);
  espwifi_vendor_debug_once_end();
  assert(strstr(log_message, "table_changed=0 wrapper_match=1 "
      "begin_slots=0xf end_slots=0xf") != NULL);
+ assert(strstr(log_message, "vendor rx pp table once") != NULL &&
+     strstr(log_message, "begin_slot=0x1 end_slot=0x1") != NULL);
  vendor_debug_once_state = 0;
  net80211_funcs = table_a;
  espwifi_vendor_debug_once_begin(bssid);
@@ -324,6 +369,7 @@ int main(void) {
  espwifi_vendor_debug_once_end();
  assert(strstr(log_message, "table_changed=1 wrapper_match=0 "
      "begin_slots=0xf end_slots=0xd") != NULL);
+ /* The normal PP table is sampled even when net80211 state is unrelated. */
  vendor_debug_once_state = 0;
  net80211_funcs = NULL;
  espwifi_vendor_debug_once_begin(bssid);
@@ -338,6 +384,42 @@ int main(void) {
  espwifi_vendor_debug_once_end();
  assert(strstr(log_message, "table_changed=1 wrapper_match=0 "
      "begin_slots=0xf end_slots=0") != NULL);
+ vendor_debug_once_state = 0;
+ net80211_funcs = NULL;
+ pTxRx = pp_table_a;
+	memset(log_message, 0, sizeof(log_message));
+ espwifi_vendor_debug_once_begin(bssid);
+ espwifi_rx_chain_sta_rx_cb_count = 5;
+ espwifi_rx_chain_sta_rx_cb_type_count[0] = 1;
+ espwifi_rx_chain_sta_rx_cb_type_count[1] = 1;
+ espwifi_rx_chain_sta_rx_cb_type_count[2] = 2;
+ espwifi_rx_chain_sta_rx_cb_type_count[3] = 1;
+ espwifi_vendor_debug_once_end();
+ assert(strstr(log_message, "sta_input_table=0 sta_rx_cb=5 "
+     "sta_rx_cb_type=1/1/2/1") != NULL);
+ assert(strstr(log_message, "vendor rx pp table once") != NULL &&
+     strstr(log_message, "begin_slot=0x1 end_slot=0x1") != NULL);
+ vendor_debug_once_state = 0;
+ net80211_funcs = table_a;
+ pTxRx = NULL;
+ memset(log_message, 0, sizeof(log_message));
+ espwifi_vendor_debug_once_begin(bssid);
+ espwifi_vendor_debug_once_end();
+ assert(strstr(log_message, "begin_slot=0 end_slot=0") != NULL);
+ vendor_debug_once_state = 0;
+ pTxRx = pp_table_a;
+ espwifi_vendor_debug_once_begin(bssid);
+ pTxRx = pp_table_b;
+ espwifi_vendor_debug_once_end();
+ assert(strstr(log_message, "table_changed=1 wrapper_match=1") != NULL);
+ vendor_debug_once_state = 0;
+ pTxRx = pp_table_a;
+ install_pp_wrapper(pp_table_a, (void (*)(void))0x5678);
+ memset(log_message, 0, sizeof(log_message));
+ espwifi_vendor_debug_once_begin(bssid);
+ espwifi_vendor_debug_once_end();
+ assert(strstr(log_message, "begin_slot=0 end_slot=0") != NULL);
+ assert(strstr(log_message, "vendor rx pp table entries") != NULL);
  vendor_debug_once_state = 0;
  net80211_funcs = table_a;
  hw_snapshot_result = ESP_ERR_INVALID_STATE;
