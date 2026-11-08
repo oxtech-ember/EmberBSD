@@ -31,7 +31,7 @@ if [ "${NET80211_BIP_ANALYZE:-0}" = 1 ]; then
         -I"${NET80211_BIP_INCLUDE:-$src/sys/net80211}" \
         "$src/ember/tools/net80211-bip-contract.c" -o "$work/analysis.plist"
     cppcheck --enable=warning,style,performance,portability \
-        --error-exitcode=1 --std=c11 --library=posix \
+        --check-level=exhaustive --error-exitcode=1 --std=c11 --library=posix \
         -I"${NET80211_BIP_INCLUDE:-$src/sys/net80211}" \
         "$src/ember/tools/net80211-bip-contract.c"
 fi
