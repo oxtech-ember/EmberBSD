@@ -69,7 +69,7 @@ static struct mbuf *unit_mgtframe(uint8_t **p,int len)
 static struct mbuf *unit_prepend(struct mbuf *m,unsigned len)
 {
  if(unit_prepend_fail){m_freem(m);return NULL;}
- assert(m->m_data-m->storage>=(int)len);
+ assert(M_LEADINGSPACE(m)>=(int)len);
  m->m_data-=len;m->m_len+=len;m->m_pkthdr.len+=len;return m;
 }
 #define M_PREPEND(m,len,how) ((m)=unit_prepend((m),(len)))
@@ -117,7 +117,12 @@ static void if_start_lock(struct ifnet *ifp)
 #define ETHER_ALIGN 2
 #define MHLEN 200
 #define MT_DATA 0
-#define MCLGET(m,how) ((m)->m_flags|=M_EXT)
+#define MCLGET(m,how) do { \
+ (m)->m_flags|=M_EXT|M_EXT_RW; \
+ (m)->m_ext.ext_buf=(m)->storage; \
+ (m)->m_ext.ext_size=sizeof((m)->storage); \
+ (m)->m_ext.ext_refcnt=1; \
+} while(0)
 #define MGETHDR(m,how,type) do { uint8_t *p;(m)=unit_mgtframe(&p,0); } while(0)
 #define IEEE80211_NODE_LOCK(nt) ((void)(nt))
 #define IEEE80211_NODE_UNLOCK(nt) ((void)(nt))

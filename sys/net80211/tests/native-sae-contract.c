@@ -112,13 +112,30 @@ static void le16enc(void *v, uint16_t n) { uint8_t *p=v; p[0]=n; p[1]=n>>8; }
 static void explicit_memset(void *v, int c, size_t n) { volatile uint8_t *p=v; while(n--) *p++=c; }
 static void *kmem_zalloc(size_t n, int f) { (void)f; return fail_alloc ? NULL : calloc(1,n); }
 static void kmem_free(void *p,size_t n) { (void)n; free(p); }
-static struct m_tag *m_tag_find(struct mbuf *m,unsigned id) {
-     for(struct m_tag *t=m->tags;t;t=t->next) if(t->m_tag_id==id)return t; return NULL; }
-static struct m_tag *m_tag_get(unsigned id,size_t n,int f) {
-    (void)f; struct m_tag *t=fail_alloc?NULL:calloc(1,sizeof(*t)+n);
-    if(t){t->m_tag_id=id;t->m_tag_len=n;} return t; }
+static struct m_tag *m_tag_find(struct mbuf *m, unsigned id) {
+    for (struct m_tag *t = m->tags; t; t = t->next)
+        if (t->m_tag_id == id)
+            return t;
+    return NULL;
+}
+static struct m_tag *m_tag_get(unsigned id, size_t n, int f) {
+    (void)f;
+    struct m_tag *t = fail_alloc ? NULL : calloc(1, sizeof(*t) + n);
+    if (t) {
+        t->m_tag_id = id;
+        t->m_tag_len = n;
+    }
+    return t;
+}
 static void m_tag_prepend(struct mbuf *m,struct m_tag *t){t->next=m->tags;m->tags=t;}
-static struct mbuf *mbuf_new(void) { struct mbuf *m=fail_alloc?NULL:calloc(1,sizeof(*m)); if(m){m->m_data=m->storage;m->m_flags=M_PKTHDR;}return m; }
+static struct mbuf *mbuf_new(void) {
+    struct mbuf *m = fail_alloc ? NULL : calloc(1, sizeof(*m));
+    if (m) {
+        m->m_data = m->storage;
+        m->m_flags = M_PKTHDR;
+    }
+    return m;
+}
 #define MGETHDR(m,f,t) ((m)=mbuf_new())
 #define MCLGET(m,f) ((m)->m_flags|=M_EXT)
 #define M_SETCTX(m,n) ((m)->node=(n))
@@ -126,7 +143,16 @@ static void enqueue(struct ifqueue *q,struct mbuf *m){m->next=q->head;q->head=m;
 #define IF_ENQUEUE(q,m) enqueue(q,m)
 static void m_copydata(struct mbuf *m,size_t off,size_t n,void *p){assert(off+n<=(size_t)m->m_pkthdr.len);memcpy(p,m->m_data+off,n);}
 static void m_adj(struct mbuf *m,int n){assert(n<0);m->m_len+=n;m->m_pkthdr.len+=n;}
-static void m_freem(struct mbuf *m){if(!m)return;while(m->tags){struct m_tag *t=m->tags;m->tags=t->next;free(t);}free(m);}
+static void m_freem(struct mbuf *m) {
+    if (!m)
+        return;
+    while (m->tags) {
+        struct m_tag *t = m->tags;
+        m->tags = t->next;
+        free(t);
+    }
+    free(m);
+}
 static void if_start_lock(struct ifnet *p){(void)p;}
 static struct ieee80211_node *ieee80211_ref_node(struct ieee80211_node *n){return n;}
 bool ieee80211_sae_port_allowed(const struct ieee80211com *);
@@ -144,12 +170,23 @@ static const struct ieee80211_cipher *ieee80211_crypto_cipher(unsigned c){return
 static const struct ieee80211_cipher none={6,NULL,NULL,NULL,0,NULL};
 static int ieee80211_hdrspace(struct ieee80211com *ic,void *p){(void)ic;(void)p;return 24;}
 void ieee80211_sae_key_changed(struct ieee80211com *,const struct ieee80211_key *);
-static int ieee80211_crypto_delkey(struct ieee80211com *ic,struct ieee80211_key *k){
-    ieee80211_sae_key_changed(ic,k);if(k->wk_private)cipher_detach(k);memset(k,0,sizeof(*k));k->wk_cipher=&none;return 1;}
+static int ieee80211_crypto_delkey(struct ieee80211com *ic, struct ieee80211_key *k) {
+    ieee80211_sae_key_changed(ic, k);
+    if (k->wk_private)
+        cipher_detach(k);
+    memset(k, 0, sizeof(*k));
+    k->wk_cipher = &none;
+    return 1;
+}
 static void ieee80211_crypto_delglobalkeys(struct ieee80211com *ic){for(unsigned i=0;i<4;i++)ieee80211_crypto_delkey(ic,&ic->ic_nw_keys[i]);}
 int ieee80211_sae_state(struct ieee80211com *,int);
-static int ieee80211_new_state(struct ieee80211com *ic,enum ieee80211_state n,int arg){
-    (void)arg;int e=ieee80211_sae_state(ic,n);if(!e)ic->ic_state=n;return e;}
+static int ieee80211_new_state(struct ieee80211com *ic, enum ieee80211_state n, int arg) {
+    (void)arg;
+    int e = ieee80211_sae_state(ic, n);
+    if (!e)
+        ic->ic_state = n;
+    return e;
+}
 static void rt_ieee80211msg(struct ifnet *p,int type,const void *buf,size_t n){
     (void)p;assert(type==109);const struct ieee80211req_sae *e=buf;
     assert(n==offsetof(struct ieee80211req_sae,data)+e->len);last_event=e->op;events++;}
@@ -169,8 +206,14 @@ static struct ieee80211_key *ieee80211_crypto_decap(struct ieee80211com *ic,
 #define M_LEADINGSPACE(m) ((m)->readonly ? 0 : (m)->m_data-(m)->storage)
 static unsigned prepend_replacements,pullup_replacements;
 static struct mbuf *m_gethdr(int how,int type){(void)how;(void)type;return mbuf_new();}
-static struct mbuf *m_getcl(int how,int type,int flags)
-{ (void)how;(void)type;struct mbuf *m=mbuf_new();if(m)m->m_flags=flags|M_EXT;return m; }
+static struct mbuf *m_getcl(int how, int type, int flags) {
+    (void)how;
+    (void)type;
+    struct mbuf *m = mbuf_new();
+    if (m)
+        m->m_flags = flags | M_EXT;
+    return m;
+}
 static void m_align(struct mbuf *m,unsigned len)
 { assert(len<=MHLEN);m->m_data=m->storage+((MHLEN-len)&~7U); }
 static struct mbuf *m_prepend(struct mbuf *m,unsigned len,int how)
@@ -196,11 +239,20 @@ static int install(struct ieee80211com *ic,unsigned id,uint8_t material){
     struct ieee80211req_key k={0};k.ik_type=3;k.ik_keyix=id;k.ik_keylen=16;
     k.ik_flags=id==65535?3:7;memcpy(k.ik_macaddr,ic->ic_sae->bssid,6);memset(k.ik_keydata,material,16);
     struct ieee80211req_sae r=request(ic,7,sizeof(k));memcpy(r.data,&k,sizeof(k));return ieee80211_sae_request(ic,&r);}
-static struct mbuf *frame(const struct ieee80211com *ic,uint8_t type,size_t len){
-    struct mbuf *m=mbuf_new();if(m==NULL)abort();m->m_len=m->m_pkthdr.len=len;m->m_data[0]=type;
-    struct ieee80211_frame *header=mtod(m,struct ieee80211_frame *);memset(header->i_dur,0,sizeof(header->i_dur));memset(header->rest,0,sizeof(header->rest));
-    memcpy(m->m_data+4,ic->ic_myaddr,6);memcpy(m->m_data+10,ic->ic_sae->bssid,6);
-    memcpy(m->m_data+16,ic->ic_sae->bssid,6);return m;}
+static struct mbuf *frame(const struct ieee80211com *ic, uint8_t type, size_t len) {
+    struct mbuf *m = mbuf_new();
+    if (m == NULL)
+        abort();
+    m->m_len = m->m_pkthdr.len = len;
+    m->m_data[0] = type;
+    struct ieee80211_frame *header = mtod(m, struct ieee80211_frame *);
+    memset(header->i_dur, 0, sizeof(header->i_dur));
+    memset(header->rest, 0, sizeof(header->rest));
+    memcpy(m->m_data + 4, ic->ic_myaddr, 6);
+    memcpy(m->m_data + 10, ic->ic_sae->bssid, 6);
+    memcpy(m->m_data + 16, ic->ic_sae->bssid, 6);
+    return m;
+}
 static void bip_mic(struct mbuf *m,const uint8_t key[16]){
     uint8_t aad[20],mic[16];struct aesenc a;size_t len=m->m_pkthdr.len;
     aad[0]=m->m_data[0];aad[1]=m->m_data[1]&~0x38;memcpy(aad+2,m->m_data+4,18);
@@ -238,9 +290,14 @@ int main(void){
     const unsigned bodies[]={2,9,MHLEN-32,MHLEN-31,1536-24};
     for(unsigned i=0;i<sizeof(bodies)/sizeof(bodies[0]);i++) {
         uint8_t *body;struct mbuf *mg=ieee80211_getmgtframe(&body,bodies[i]);
-        if(mg==NULL)abort();CHECK(body==mg->m_data);
+        if (mg == NULL)
+            abort();
+        CHECK(body == mg->m_data);
         mg->m_len=mg->m_pkthdr.len=bodies[i];body[0]=0;body[1]=1;
-        M_PREPEND(mg,24,M_NOWAIT);if(mg==NULL)abort();CHECK(M_LEADINGSPACE(mg)>=8);
+        M_PREPEND(mg, 24, M_NOWAIT);
+        if (mg == NULL)
+            abort();
+        CHECK(M_LEADINGSPACE(mg) >= 8);
         mg->m_data[0]=0xd0;memcpy(mg->m_data+4,ic.ic_sae->bssid,6);
         CHECK(ieee80211_sae_tag_tx(&ic,&ni,mg)==0);
         unsigned encrypted=encryptions;uint8_t *original=mg->m_data;

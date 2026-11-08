@@ -35,12 +35,15 @@ static int giant, pci, pci_token, probe_scan;
 static struct ieee80211com *probe_ic;
 struct ieee80211com;
 struct ieee80211_node { struct ieee80211com *ni_ic; unsigned ni_flags; struct ieee80211_rxba_state ni_rxba; uint8_t ni_bssid[6], ni_essid[32], ni_macaddr[6]; unsigned ni_esslen, ni_fails; struct ieee80211_ht20_node ni_ht20; };
+struct ieee80211_sae { enum sae_phase phase; bool enabled; };
 struct ieee80211_node_table { int nt_inact_timer; void (*nt_timeout)(struct ieee80211_node_table *); };
 struct ifnet { void *if_softc; int if_timer; unsigned if_oerrors; };
 struct work { unsigned unused; };
 struct ieee80211com {
     const struct ieee80211_rxba_ops *ic_rxba_ops;
     uint64_t ic_rxba_serial;
+    struct ieee80211_sae *ic_sae;
+    uint64_t ic_sae_serial;
     struct ifnet *ic_ifp;
     struct ieee80211_node *ic_bss;
     enum ieee80211_state ic_state;
@@ -79,6 +82,7 @@ struct rtw88_net {
     struct rtw88_channel_tuple pending_channel;
     int *lock;
     int scan, dev, work_pending, reset_required, state_arg;
+    uint64_t state_sae_serial;
     int tx_quiet, quiet_error, csa_pending;
     unsigned channel, tx_timer;
     enum ieee80211_state requested;
@@ -92,6 +96,27 @@ rtw88_net_ht20_publish(struct rtw88_net *net,
 	/* AP-loss extraction exercises only the disabled admission boundary. */
 	CHECK(net != NULL);
 	CHECK(profile == NULL);
+}
+
+/* The fixture executes the real request/leave/serial entry points. Only
+ * cryptographic retirement is a service: it records the published lifetime
+ * and retired phase, while checking that the caller still owns Giant. */
+#define __HAVE_ATOMIC64_LOADSTORE 1
+#define atomic_load_relaxed(p) (*(p))
+static unsigned sae_retirements;
+static bool ieee80211_sae_active(const struct ieee80211com *ic)
+{
+    return ic->ic_sae != NULL && ic->ic_sae->enabled;
+}
+static void ieee80211_sae_retire(struct ieee80211com *ic)
+{
+    CHECK(giant && !pci && ic->ic_sae != NULL);
+    if (ic->ic_sae == NULL)
+        return;
+    sae_retirements++;
+    ic->ic_sae_serial++;
+    if (ic->ic_sae->enabled)
+        ic->ic_sae->phase = SAE_RETIRED;
 }
 
 struct ieee80211_leave_event { uint8_t iev_addr[6]; };
@@ -193,6 +218,7 @@ static void setup(struct fixture *f) {
     f->net.policy.epoch=7;f->net.policy.accepting=1;
     f->ni.ni_bssid[0]=2;f->ni.ni_macaddr[0]=2;
     probes=requests=cleanup=events=link_down=begin_scans=0;
+    sae_retirements=0;
     queued_event=0;expect_dfs_closed_probe=0;
     user_disconnects=user_aborts=user_tx_clear=user_scan_clear=0;
     native_run_supervision(&f->net);CHECK(f->ifp.if_timer==1);giant=0;
@@ -353,7 +379,39 @@ static void test_quiet_request_guard(void) {
         CHECK(requests==1 && f.net.work_pending);
     }
 }
+static void test_native_sae_retirement(void)
+{
+    struct fixture f;
+    struct ieee80211_sae owner = {.phase=SAE_RUN, .enabled=true};
+
+    setup(&f);
+    f.net.ic.ic_sae=&owner;
+    f.net.ic.ic_sae_serial=f.net.state_sae_serial=91;
+    second(&f);
+    CHECK(sae_retirements==0 && f.net.ic.ic_sae_serial==91);
+    second(&f);
+    /* AP loss must close the native attempt before queuing driver work. */
+    CHECK(sae_retirements==1 && owner.phase==SAE_RETIRED);
+    CHECK(f.net.ic.ic_sae_serial==92 && f.net.state_sae_serial==92);
+    flush_scan(&f);
+    /* The later shared leave notification cannot retire the cookie again. */
+    CHECK(sae_retirements==1 && f.net.ic.ic_sae_serial==92);
+    CHECK(cleanup==1 && events==1 && link_down==1);
+
+    setup(&f);
+    owner.phase=SAE_RUN;
+    f.net.ic.ic_sae=&owner;
+    f.net.ic.ic_sae_serial=193;
+    giant=1;
+    ieee80211_sta_leave(&f.net.ic,&f.ni);
+    giant=0;
+    /* Shared leave remains an independent retirement boundary. */
+    CHECK(sae_retirements==1 && owner.phase==SAE_RETIRED);
+    CHECK(f.net.ic.ic_sae_serial==194 && cleanup==1 && events==1);
+}
+
 int main(void) {
+    test_native_sae_retirement();
     test_quiet_request_guard();
     test_fast_watchdog_floor();test_dfs_permit_withdrawal();
     test_silent_idle_chain();test_refresh_and_fences();

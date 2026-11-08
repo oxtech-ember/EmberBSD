@@ -12,7 +12,7 @@ struct rtw88_chip_ops { int (*prepare_station)(void); };
 struct rtw88_mailbox { unsigned active, generation, box, total, sent; };
 struct rtw88_async_epoch { uint64_t epoch, key_epoch; uint32_t generation; };
 struct rtw88_net;
-struct rtw88_prepare_context { struct rtw88_net *net; struct rtw88_async_epoch id; };
+struct rtw88_prepare_context { struct rtw88_net *net; uint64_t sae_serial; struct rtw88_async_epoch id; };
 static const struct rtw88_chip_ops ht20_no_prepare = { NULL };
 struct rtw88_softc { const struct rtw88_chip_ops *sc_chip; struct rtw88_mailbox sc_mailbox; void *sc_executor; int sc_started, sc_running, sc_stop_requested; unsigned sc_channel, sc_generation, sc_h2c_box, modeled_tx_pending; int sc_linked; struct { int active, configured; } sc_ra; struct rtw88_phy_state sc_phy; };
 struct rtw88_net {
@@ -21,6 +21,7 @@ struct rtw88_net {
 	struct rtw88_net_neg neg;
 	int run_pending;
 	uint64_t key_epoch;
+	uint64_t state_sae_serial;
 	volatile uint64_t ht20_snapshot;
 	volatile uint32_t ht20_generation;
 	void *dev, *softint;
@@ -613,10 +614,13 @@ test_direct_run_failure_ownership(void)
 static void
 test_delayed_worker_profile(void)
 {
- for (unsigned variant=0;variant<6;variant++) {
-  ht_setup();CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ)==0);release_capture();
+ for (unsigned variant=0;variant<7;variant++) {
+  ht_setup();
+  test_ic.ic_sae_serial=native_net.ic.ic_sae_serial=41;
+  CHECK(request(IEEE80211_FC0_SUBTYPE_ASSOC_REQ)==0);release_capture();
   deliver(ht_response(),IEEE80211_FC0_SUBTYPE_ASSOC_RESP);
   CHECK(test_node.ni_ht20.valid && native_net.requested==IEEE80211_S_RUN);
+  CHECK(native_net.state_sae_serial==41);
   native_net.ic=test_ic;native_net.ec.ec_if=test_ifp;
   native_net.ic.ic_fixed_rate=IEEE80211_FIXED_RATE_NONE;
   native_net.ic.ic_ifp=&native_net.ec.ec_if;
@@ -630,7 +634,15 @@ test_delayed_worker_profile(void)
   if (variant==2 || variant==3) worker_parent_error=EINVAL;
   if (variant==3) worker_parent_newer=1;
   if (variant==4) { worker_init_error=EINVAL;CHECK(rtw88_net_newstate(&native_net.ic,IEEE80211_S_INIT,-1)==0); }
+  if (variant==6) native_net.ic.ic_sae_serial++;
   rtw88_net_state_work(NULL,&native_net);
+  if (variant==6) {
+   /* A later SAE attempt must cancel queued work before any HW or parent call. */
+   CHECK(worker_hw_calls==0 && worker_parent_run==0 && worker_parent_init==0);
+   CHECK(!native_net.work_pending && test_node.ni_ht20.valid);
+   CHECK(native_net.state_sae_serial==41 && native_net.ic.ic_sae_serial==42);
+   continue;
+  }
   if (variant==5) {
    CHECK(native_net.policy.accepting && native_core.sc_ra.active);
    CHECK(test_node.ni_ht20.valid && native_net.ic.ic_state==IEEE80211_S_RUN);

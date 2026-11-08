@@ -10,7 +10,7 @@ import subprocess
 src, out = map(pathlib.Path, sys.argv[1:3])
 subprocess.run([sys.executable,str(src/'ember/tools/net80211-rxba-lifecycle-extract.py'),str(src),str(out)],check=True)
 mutant = sys.argv[3] if len(sys.argv) > 3 else 'none'
-assert mutant in ('none', 'supervision', 'withdrawal', 'ra', 'notification', 'dfs')
+assert mutant in ('none', 'supervision', 'withdrawal', 'ra', 'notification', 'dfs', 'sae-request', 'sae-snapshot', 'sae-leave')
 
 def read(path):
     return (src/path).read_text()
@@ -36,7 +36,8 @@ proto = 'sys/net80211/ieee80211_proto.c'
 node = 'sys/net80211/ieee80211_node.c'
 nbsd = 'sys/net80211/ieee80211_netbsd.c'
 wpa = 'external/bsd/wpa/dist/src/drivers/driver_bsd.c'
-constants = []
+sae = 'sys/net80211/ieee80211_sae.c'
+constants = [re.search(r'^enum sae_phase \{.*?\};', read(sae), re.M|re.S).group()+'\n']
 for path, name in [('sys/net80211/ieee80211_proto.h', 'ieee80211_state'),
                    ('sys/net80211/_ieee80211.h', 'ieee80211_opmode'),
                    ('sys/net80211/_ieee80211.h', 'ieee80211_roamingmode')]:
@@ -61,7 +62,10 @@ assert all(run_watchdog.count(s) == 1 for s in (enter, poll, close, leave, beaco
     run_watchdog.index(enter) < run_watchdog.index(poll) < run_watchdog.index(close) < \
     run_watchdog.index(leave) < run_watchdog.index(beacon_miss), \
     'DFS permit must close before beacon-miss handling'
-parts = [body('sys/net80211/ieee80211_ht20.c', 'ieee80211_ht20_reset', 'void'),
+parts = [body(sae, 'ieee80211_sae_serial', 'static uint64_t'),
+         body(sae, 'ieee80211_sae_state_request', 'static void'),
+         body(sae, 'ieee80211_sae_leave', 'static void'),
+         body('sys/net80211/ieee80211_ht20.c', 'ieee80211_ht20_reset', 'void'),
          body('sys/net80211/ieee80211_ht20.c', 'ieee80211_ht20_state_request', 'int'),
          '#define ieee80211_ht20_state_request aploss_checked_ht20_request\n',
          body('sys/dev/ic/rtw88.c', 'rtw88_ra_invalidate', 'static void'),
@@ -79,6 +83,15 @@ parts += [notice(net), 'static void native_run_supervision(struct rtw88_net *net
 scan = exact_block(read(proto), '\t\tcase IEEE80211_S_RUN:\n\t\t\t/* beacon miss */', '\t\t\tbreak;\n')
 parts += [notice(proto), 'static void shared_run_to_scan(struct ieee80211com *ic, int arg) {\nstruct ieee80211_node *ni=ic->ic_bss;\nswitch (IEEE80211_S_RUN) {\n', scan, '\ndefault: break;\n}\n}\n']
 text=''.join(parts)
+for kind, old in (
+    ('sae-request', '\tieee80211_sae_state_request(ic, state);'),
+    ('sae-snapshot', '\tnet->state_sae_serial = ieee80211_sae_serial(&net->ic);'),
+    ('sae-leave', '\tieee80211_sae_leave(ic);')):
+    if mutant == kind:
+        assert text.count(old) == 1, old
+        # Keep the referenced function compiled: reject semantics, not linkage.
+        text = text.replace(old, '\tif (0) ' + old.strip())
+
 if mutant == 'dfs':
     assert text.count(close) == 1
     text=text.replace(close, '\t\t/* Causal mutant: permit retained after beacon loss. */')

@@ -4,7 +4,7 @@
 set -eu
 [ "$#" -eq 0 ] || exit 2
 case ${RTW88_RECONNECT_ANALYZE:-0} in 0|1) ;; *) exit 2 ;; esac
-case ${RTW88_APLOSS_MUTANT:-none} in none|supervision|withdrawal|ra|notification|dfs) ;; *) exit 2 ;; esac
+case ${RTW88_APLOSS_MUTANT:-none} in none|supervision|withdrawal|ra|notification|dfs|sae-request|sae-snapshot|sae-leave) ;; *) exit 2 ;; esac
 tools=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 src=$(CDPATH= cd -- "$tools/../.." && pwd)
 work=$(mktemp -d "${TMPDIR:-/tmp}/rtw88-aploss-contract.XXXXXXXX")
@@ -18,7 +18,7 @@ ${CC:-cc} -std=c11 -Wall -Wextra -Werror ${RTW88_TEST_CFLAGS:-} \
     "$src/sys/dev/ic/rtw88_net_policy.c" -o "$work/test"
 if [ -n "${TEST_RUNNER:-}" ]; then "$TEST_RUNNER" "$work/test"; else "$work/test"; fi
 if [ "${RTW88_APLOSS_MUTANT:-none}" = none ]; then
-    for mutant in supervision withdrawal ra notification dfs; do
+    for mutant in supervision withdrawal ra notification dfs sae-request sae-snapshot sae-leave; do
         mkdir "$work/$mutant"
         python3 "$tools/rtw88-aploss-contract.py" "$src" "$work/$mutant" "$mutant"
         ${CC:-cc} -std=c11 -Wall -Wextra -Werror ${RTW88_TEST_CFLAGS:-} \

@@ -67,7 +67,7 @@
 #define IEEE80211_ADDR_EQ(a, b) (memcmp((a), (b), 6) == 0)
 #define RTM_IEEE80211_REPLAY 104
 #define M_NOWAIT 0
-#define M_PKTHDR 1
+#include "native-mbuf-headroom.inc"
 #define explicit_memset test_explicit_memset
 static void *
 test_explicit_memset(void *p, int c, size_t n)
@@ -139,7 +139,18 @@ struct mbuf {
 	struct {
 		int len;
 	} m_pkthdr;
-	uint8_t storage[4096];
+	struct {
+		uint8_t *ext_buf;
+		size_t ext_size;
+		unsigned ext_refcnt;
+	} m_ext;
+	/* Internal packet/non-packet buffers share one allocation in this model.
+	 * The production headroom macros select these names and external storage. */
+	union {
+		uint8_t storage[4096];
+		uint8_t m_dat[4096];
+		uint8_t m_pktdat[4096];
+	};
 };
 #define mtod(m, t) ((t)((m)->m_data))
 struct ieee80211com;
@@ -305,6 +316,7 @@ copyin(const void *in, void *out, size_t n)
 #define ieee80211_sae_leave(ic) ((void)(ic))
 #define ieee80211_sae_retire(ic) ((void)(ic))
 #define ieee80211_sae_state_request(ic, state) ((void)(ic), (void)(state))
+#define ieee80211_sae_serial(ic) ((void)(ic), UINT64_C(0))
 #define ieee80211_sae_key_changed(ic, key) ((void)(ic), (void)(key))
 #define ieee80211_sae_tag_tx(ic, ni, m) 0
 #define ieee80211_sae_tx_current(ic, ni, m) 1

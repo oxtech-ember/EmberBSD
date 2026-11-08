@@ -274,7 +274,6 @@ s=(out/'rxba-test-kernel.h').read_text().replace('unsigned if_ipackets,if_ierror
 s=(out/'rxba-test-kernel.h').read_text()
 tag=re.search(r'^struct m_tag \{.*?^};',(src/'sys/sys/mbuf.h').read_text(),re.M|re.S).group()
 s=s.replace('struct mbuf {','#include <sys/queue.h>\n'+tag+'\nstruct mbuf {',1)
-s=s.replace('struct mbuf *m_next;', 'struct { size_t ext_size; } m_ext;\n struct mbuf *m_next;',1)
 s=s.replace('int len;\n unsigned rcvif_index;', 'int len;\n SLIST_HEAD(packet_tags,m_tag) tags;\n unsigned rcvif_index;',1)
 # Modeled pullup owns and releases every consumed segment, as the kernel does.
 s=s.replace('\tm->m_next = NULL;\n\treturn m;', '\twhile(m->m_next) { struct mbuf *tail=m->m_next;m->m_next=tail->m_next;free(tail); }\n\treturn m;',1)

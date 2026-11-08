@@ -75,6 +75,7 @@ interface_inputs = (
     "sys/net80211/ieee80211_node.h", "sys/net80211/ieee80211_phy_ies.h",
     "sys/net80211/ieee80211_proto.c", "sys/net80211/ieee80211_proto.h",
     "sys/net80211/ieee80211_rxba.c", "sys/net80211/ieee80211_rxba.h",
+    "sys/net80211/ieee80211_sae.c",
     "sys/net80211/ieee80211_var.h", "sys/net80211/ieee80211_vht_ies.c",
     "sys/net80211/ieee80211_vht_ies.h",
 )

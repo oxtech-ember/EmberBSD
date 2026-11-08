@@ -39,6 +39,7 @@ struct rtw88_net {
  struct rtw88_caps caps;
  struct rtw88_softc *core;
  void *wq;int state_work,requested,state_arg,work_pending,reset_required;unsigned channel;
+ uint64_t state_sae_serial;
  struct rtw88_channel_tuple pending_channel;
  int tx_quiet,quiet_error,csa_pending;
  int (*parent_state)(struct ieee80211com *,int,int);

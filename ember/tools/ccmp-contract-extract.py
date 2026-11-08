@@ -29,6 +29,23 @@ def structure(text, name):
 def noincludes(text):
     return re.sub(r'^#include[^\n]*\n', '', text, flags=re.M)
 
+def macro(text, name):
+    lines = text.splitlines(keepends=True)
+    for index, line in enumerate(lines):
+        if re.match(r'^#define\s+' + re.escape(name) + r'(?:\s|\()', line):
+            end = index + 1
+            while lines[end - 1].rstrip().endswith('\\'):
+                end += 1
+            return ''.join(lines[index:end])
+    raise ValueError(name)
+
+# Preserve the kernel's writable/headroom contract, including shared and
+# read-only external storage. Only the backing allocation layout is modeled.
+mbuf = read('sys/sys/mbuf.h')
+(out/'native-mbuf-headroom.inc').write_text(notices(mbuf) + '\n' + ''.join(
+    macro(mbuf, name) for name in ['M_EXT', 'M_PKTHDR', 'M_EXT_ROMAP',
+        'M_EXT_RW', 'M_BUFADDR', 'M_READONLY', 'M_LEADINGSPACE']))
+
 crypto = read('sys/net80211/ieee80211_crypto.h')
 (out/'native-key.inc').write_text(notices(crypto) + '\n' +
     structure(crypto, 'ieee80211_key') + structure(crypto, 'ieee80211_cipher'))

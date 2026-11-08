@@ -12,6 +12,41 @@ static unsigned checks, failures;
 		}                                                              \
 	} while (0)
 static void
+mbuf_writable_headroom(void)
+{
+	struct mbuf m = {0};
+	uint8_t external[128];
+
+	m.m_data = m.storage;
+	CHECK(M_LEADINGSPACE(&m) == 0);
+	m.m_data += 64;
+	CHECK(M_LEADINGSPACE(&m) == 64);
+	m.m_flags = M_PKTHDR;
+	CHECK(M_LEADINGSPACE(&m) == 64);
+	/* External-only protection flags do not change internal writability. */
+	m.m_flags |= M_EXT_ROMAP;
+	CHECK(M_LEADINGSPACE(&m) == 64);
+	m.m_flags = M_EXT | M_EXT_RW;
+	m.m_ext.ext_buf = external;
+	m.m_ext.ext_size = sizeof(external);
+	m.m_ext.ext_refcnt = 1;
+	m.m_data = external + 32;
+	CHECK(M_LEADINGSPACE(&m) == 32);
+	m.m_flags |= M_PKTHDR;
+	CHECK(M_LEADINGSPACE(&m) == 32);
+	m.m_ext.ext_refcnt = 2;
+	CHECK(M_LEADINGSPACE(&m) == 0);
+	m.m_ext.ext_refcnt = 1;
+	m.m_flags |= M_EXT_ROMAP;
+	CHECK(M_LEADINGSPACE(&m) == 0);
+	m.m_flags = M_EXT;
+	CHECK(M_LEADINGSPACE(&m) == 0);
+	m.m_flags = M_EXT | M_EXT_RW;
+	m.m_data = external;
+	CHECK(M_LEADINGSPACE(&m) == 0);
+}
+
+static void
 init_key(struct ieee80211com *ic, struct ieee80211_key *k, uint64_t rsc,
 	 unsigned marker)
 {
@@ -698,6 +733,7 @@ tx_pn_exhaustion(void)
 int
 main(void)
 {
+	mbuf_writable_headroom();
 	CHECK(aes_ccm_selftest() == 0);
 	replay_domains();
 	key_isolation();
