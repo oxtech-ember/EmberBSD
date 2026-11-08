@@ -1106,6 +1106,7 @@ static void test_prepend_fallback_ownership(void)
   CHECK(unit_prepend_allocs==allocations+1);
   if(kind==2) {
    CHECK(m==NULL && unit_mbuf_frees==freed+2 && unit_tag_frees==tags+1);
+   if(m)m_freem(m);
   } else {
    CHECK(m!=NULL && m!=original && m->m_next==original);
    if(m) {
