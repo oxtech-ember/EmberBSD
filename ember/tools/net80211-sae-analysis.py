@@ -42,6 +42,7 @@ def analyze(database, style=False):
         standard = next((flag[5:] for flag in reversed(source_flags)
                          if flag.startswith("-std=")), "c99")
         subprocess.run(["cppcheck", "--enable=" + categories,
+                        "--check-level=exhaustive",
                         "--error-exitcode=1", "--std=" + standard,
                         "--language=c", str(preprocessed.resolve())], check=True)
 
