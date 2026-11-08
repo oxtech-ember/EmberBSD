@@ -184,6 +184,8 @@ littlefs_setattr(void *v)
 	struct littlefs_bsd_attr attr;
 	struct vattr *va = ap->a_vap;
 	kauth_cred_t cred = ap->a_cred;
+	const bool special = vp->v_type == VCHR || vp->v_type == VBLK ||
+	    vp->v_type == VFIFO;
 	struct timespec now;
 	int error;
 
@@ -192,6 +194,19 @@ littlefs_setattr(void *v)
 	    va->va_blocksize != VNOVAL || va->va_rdev != VNOVAL ||
 	    va->va_bytes != VNOVAL || va->va_gen != VNOVAL)
 		return EINVAL;
+	/*
+	 * Like UFS, ignore truncation of devices and FIFOs.  In particular,
+	 * opening /dev/null with O_TRUNC must not resize its backing entry or
+	 * write filesystem metadata, including on a read-only mount.
+	 */
+	if (special && va->va_size != VNOVAL && va->va_flags == VNOVAL &&
+	    va->va_mode == VNOVAL && va->va_uid == VNOVAL &&
+	    va->va_gid == VNOVAL && va->va_atime.tv_sec == VNOVAL &&
+	    va->va_mtime.tv_sec == VNOVAL && va->va_birthtime.tv_sec == VNOVAL) {
+		if (node->attr.flags & (IMMUTABLE | APPEND))
+			return EPERM;
+		return VOP_ACCESS(vp, VWRITE, cred);
+	}
 	if (vp->v_mount->mnt_flag & MNT_RDONLY)
 		return EROFS;
 	/* Commit earlier data changes before explicitly restoring privilege bits. */
@@ -257,7 +272,7 @@ littlefs_setattr(void *v)
 			attr.mtimensec = va->va_mtime.tv_nsec;
 		}
 	}
-	if (va->va_size != VNOVAL) {
+	if (va->va_size != VNOVAL && !special) {
 		error = VOP_ACCESS(vp, VWRITE, cred);
 		if (error)
 			return error;

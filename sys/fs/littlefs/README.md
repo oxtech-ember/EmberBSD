@@ -51,6 +51,10 @@ entry with BSD symbolic-link mode; its data is the link target, without a
 terminating NUL. Devices, FIFOs and sockets use empty regular entries tagged
 with the corresponding BSD type. `makefs` consumes target device numbers
 from the normal mtree specification, including `device=netbsd,major,minor`.
+Size changes on device nodes and FIFOs are ignored, as in UFS. Opening a
+device such as `/dev/null` with `O_TRUNC` does not resize its backing entry
+or write filesystem metadata, including on a read-only mount. Access and
+immutable/append checks still apply.
 
 The root name `.littlefs-tmp` is reserved and hidden by the VFS adapter.
 New entries are created there, given their complete metadata and initial
@@ -104,5 +108,6 @@ still selects FFS for existing consumers.
 retains FFS for recovery. `ESP_MOSAICO_LITTLEFS_NOR` enables
 `LITTLEFS_FLASH` with the generic flash/SBI NOR backend and disables FFS.
 Neither configuration embeds a board partition layout in the VFS; partition
-selection belongs to the board profile and boot configuration. Physical NOR
-mount, write, and recovery acceptance is still pending.
+selection belongs to the board profile and boot configuration. Hardware
+acceptance evidence and its limits belong to the board profile in
+[DevBoards](https://github.com/oxtech-ember/EmberBSD-DevBoards).
