@@ -393,6 +393,7 @@
 ./usr/libdata/debug/sbin/mount_hfs.debug	comp-hfs-debug		debug
 ./usr/libdata/debug/sbin/mount_kernfs.debug	comp-sysutil-debug	debug
 ./usr/libdata/debug/sbin/mount_lfs.debug	comp-sysutil-debug	debug
+./usr/libdata/debug/sbin/mount_littlefs.debug	comp-sysutil-debug	debug
 ./usr/libdata/debug/sbin/mount_msdos.debug	comp-sysutil-debug	debug
 ./usr/libdata/debug/sbin/mount_nfs.debug	comp-nfsclient-debug	debug
 ./usr/libdata/debug/sbin/mount_nilfs.debug	comp-sysutil-debug	debug

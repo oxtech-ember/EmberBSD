@@ -1,0 +1,54 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\" Copyright (c) 2026 EmberBSD contributors.
+.Dd November 7, 2026
+.Dt MOUNT_LITTLEFS 8
+.Os
+.Sh NAME
+.Nm mount_littlefs
+.Nd mount a littlefs file system with BSD metadata
+.Sh SYNOPSIS
+.Nm
+.Op Fl b Ar block-size
+.Op Fl o Ar options
+.Ar special node
+.Sh DESCRIPTION
+.Nm
+attaches the littlefs file system on the block device
+.Ar special
+to the directory
+.Ar node .
+The image must contain the BSD metadata attributes produced by
+.Xr makefs 8
+with the
+.Fl t Cm littlefs
+option.
+Images without ownership and permission metadata are rejected.
+.Pp
+The
+.Fl b
+option specifies the erase block size for a regular block device.
+The default is 4096 bytes.
+For a NOR flash device the driver supplies the erase geometry.
+The size must match the image and be a power of two.
+.Pp
+The
+.Fl o
+option accepts the standard
+.Xr mount 8
+options, including
+.Cm ro , rw , update , noexec , nosuid , nodev ,
+and
+.Cm noatime .
+The file system supports regular files, directories, symbolic links, device
+nodes, FIFOs, Unix sockets, file permissions and ownership.
+Hard links, NFS file handles, extended attributes exposed through the BSD
+system calls, and access control lists are not supported.
+.Pp
+The root directory name
+.Pa .littlefs-tmp
+is reserved for interrupted file creation and is not exposed to applications.
+Incomplete creates are removed when the file system is mounted read-write.
+.Sh SEE ALSO
+.Xr makefs 8 ,
+.Xr mount 8 ,
+.Xr mount_tmpfs 8

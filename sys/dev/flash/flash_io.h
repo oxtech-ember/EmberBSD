@@ -17,6 +17,8 @@ struct flash_io {
 };
 
 int flash_io_submit(struct flash_io *, struct buf *);
+/* Flush the cached erase block and complete its queued buffers. */
+int flash_io_sync(struct flash_io *);
 void flash_sync_thread(void *);
 int flash_sync_thread_init(struct flash_io *, device_t,
 	struct flash_interface *);

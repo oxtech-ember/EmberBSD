@@ -26,6 +26,36 @@ def check(condition, message):
 
 
 selected = profile.network('riscv32')
+littlefs = profile.network('riscv32', root_filesystem='littlefs')
+try:
+    mdns_toolset = profile.network('riscv32', ('mdns',))
+except ValueError:
+    mdns_toolset = {}
+optional_programs = {
+    'bin/df', 'usr.bin/env', 'usr.bin/uname',
+    'usr.bin/audio/ctl/audioctl', 'usr.bin/audio/play/audioplay',
+    'usr.bin/audio/record/audiorecord', 'usr.bin/mixerctl/mixerctl',
+    'usr.bin/timeout', 'usr.bin/wc', 'usr.bin/videoctl/videoctl',
+    'usr.sbin/envstat/envstat', 'usr.sbin/spinandctl/spinandctl',
+    'usr.bin/cksum/cksum', 'usr.bin/uuencode/uuencode',
+    'usr.bin/uudecode/uudecode', 'external/apache2/mDNSResponder/usr.sbin/mdnsd',
+}
+check(not optional_programs.intersection(selected['crunch_programs']) and
+      mdns_toolset and
+      'external/apache2/mDNSResponder/usr.sbin/mdnsd' in mdns_toolset['crunch_programs'],
+      'network defaults omit optional tools and explicit mdns selection adds mdnsd')
+check('sbin/mount_littlefs' in littlefs['crunch_programs'] and
+      'sys/sys' in littlefs['headers'] and
+      'sys/fs/littlefs' in littlefs['headers'] and
+      'sbin/mount_ffs' not in littlefs['crunch_programs'] and
+      'sbin/fsck_ffs' not in littlefs['crunch_programs'] and
+      'sbin/mount_ffs' in selected['crunch_programs'] and
+      set(selected['crunch_programs']) - {'sbin/mount_ffs', 'sbin/fsck_ffs'} <=
+      set(littlefs['crunch_programs']),
+      'littlefs replaces only filesystem utilities and preserves network services')
+flash_nodes = profile.network_device_selection(littlefs, 'flash0', '')
+check('rflash0' in flash_nodes[0] and flash_nodes[3] == ('flash0',),
+      'unpartitioned flash nodes use the generic flash driver numbering')
 peripheral = profile.network('riscv32', ('system', 'audio', 'video', 'envsys', 'spi'),
                              ('1',))
 transfer = profile.network('riscv32', ('transfer',))
@@ -123,9 +153,12 @@ with tempfile.TemporaryDirectory(prefix='network-logs-') as temporary:
           'incremental network runs receive unique append-preserving log paths')
 check({'sbin/init', 'libexec/getty', 'external/bsd/dhcpcd/sbin/dhcpcd',
        'external/bsd/wpa/bin/wpa_supplicant', 'external/bsd/wpa/bin/wpa_cli',
-       'external/apache2/mDNSResponder/usr.sbin/mdnsd', 'usr.bin/getent',
-       'sbin/ping'} <=
+       'usr.bin/getent', 'sbin/ping'} <=
       set(selected['crunch_programs']) and
+      'external/apache2/mDNSResponder/usr.sbin/mdnsd' not in
+      set(selected['crunch_programs']) and
+      'external/apache2/mDNSResponder/usr.sbin/mdnsd' in
+      set(mdns_toolset['crunch_programs']) and
       selected['programs'] == ('usr.bin/login',) and
       selected['install_map'] == (('usr.bin/login', 'usr/bin/login'),) and
       not selected['compact'] and all('SMALLPROG' not in flag for flag in selected['flags']),
@@ -157,8 +190,11 @@ check('BINMODE=4555' in (source / 'sbin/ping/Makefile').read_text() and
       'sbin/ping' in selected['crunch_programs'] and
       'sbin/ping' not in dict(selected['install_map']),
       'root-only ping uses normal socket ops in the 0555 crunch binary with IPsec support')
-check('external/bsd/libpcap/lib' in selected['libraries'],
-      'selected WPA link dependency libpcap is built by its OS target')
+check('external/bsd/libpcap/lib' in selected['libraries'] and
+      'lib/libpthread' not in selected['libraries'] and
+      'lib/libpthread' not in profile.network('riscv32', wpa_backend='openssl')['libraries'] and
+      'lib/libpthread' in profile.network('riscv32', wpa_backend='wolfssl')['libraries'],
+      'network profile selects pthread only for the WolfSSL WPA backend')
 check(all(path in transfer['crunch_programs'] for path in (
           'usr.bin/cksum/cksum', 'usr.bin/uuencode/uuencode',
           'usr.bin/uudecode/uudecode')) and
@@ -174,6 +210,8 @@ check("printf 'libs -ledit -lterminfo -lutil -lkvm -lprop -lcrypt -lpcap -lipsec
       "*\" usr.sbin/envstat/envstat \"*) printf ' -lmj'" in crunch_source and
       '-V EMBER_GREP_UNCOMPRESSED_ONLY=yes' in crunch_source,
       'network crunch includes service dependencies and compact grep option')
+check("wolfssl) printf ' -lwolfssl -lpthread' ;;" in crunch_source,
+      'WolfSSL static consumers link the OS semaphore provider')
 check("usr.sbin usr.bin/videoctl" in crunch_source and
       'special %s srcdir %s' in crunch_source and
       'obj/usr.bin/audio/common' in crunch_source and
@@ -264,23 +302,41 @@ with tempfile.TemporaryDirectory(prefix='network-reuse-') as temporary:
     staging_spec = Path(str(staging) + '.spec')
     staging_spec.write_text('new device table\n')
     staged_receipt = output / 'BUILD-INPUTS.pending'
-    staged_receipt.write_text('new provenance\n')
+    staged_receipt.write_text('network-toolsets=\n')
     old_root = output / 'root'
     (old_root / 'sbin').mkdir(parents=True)
     (old_root / 'sbin/init').write_text('old init')
     (old_root / 'sbin/init').chmod(0o555)
     (old_root / 'stale-overlay-file').write_text('stale')
+    (old_root / 'etc/rc.network.d').mkdir(parents=True)
+    (old_root / 'etc/rc.network.d/mdnsd').write_text('old mdns service')
+    (old_root / 'etc/rc.conf.d').mkdir(parents=True)
+    (old_root / 'etc/rc.conf.d/mdnsd').write_text('mdnsd=YES\n')
+    (old_root / 'bin').mkdir(parents=True)
+    (old_root / 'bin/littlefs-vfs-check-memory-current').write_text('old test')
     old_spec = output / 'root.spec'
-    old_spec.write_text('old device table\n')
+    old_spec.write_text('./etc/rc.network.d/mdnsd type=file\n'
+                        './etc/rc.conf.d/mdnsd type=file\n'
+                        './bin/littlefs-vfs-check-memory-current type=file\n')
+    (output / 'BUILD-INPUTS.txt').write_text(
+        'network-toolsets=system audio video envsys spi transfer\n'
+        'program-sha256=previous-checker\n')
     profile.commit_network_root(staging, old_root, staging_spec, old_spec,
                                 staged_receipt, output / 'BUILD-INPUTS.txt')
     check((old_root / 'sbin/init').read_text() == 'new init' and
           old_spec.read_text() == 'new device table\n' and
-          (output / 'BUILD-INPUTS.txt').read_text() == 'new provenance\n' and
+          (output / 'BUILD-INPUTS.txt').read_text() == 'network-toolsets=\n' and
           not staging.exists() and not staging_spec.exists(),
           'successful restaging commits root, device table, and receipt together')
     check(not (old_root / 'stale-overlay-file').exists(),
           'recreated root does not retain files removed from the selected overlay')
+    check(not (old_root / 'etc/rc.network.d/mdnsd').exists() and
+          not (old_root / 'etc/rc.conf.d/mdnsd').exists() and
+          not (old_root / 'bin/littlefs-vfs-check-memory-current').exists() and
+          'mdnsd' not in old_spec.read_text() and
+          'littlefs-vfs-check' not in old_spec.read_text() and
+          'program-sha256' not in (output / 'BUILD-INPUTS.txt').read_text(),
+          'default recompose drops previous optional service, checker, manifest entries, and receipt inputs')
 
     link = Path(temporary) / 'root/bin/grep'
     link.parent.mkdir(parents=True)
@@ -335,7 +391,7 @@ check(destinations == {'usr.bin/login': 'usr/bin/login'} and
       {'sbin/chown', 'sbin/fsck_ffs', 'libexec/getty',
        'external/bsd/dhcpcd/sbin/dhcpcd', 'external/bsd/wpa/bin/wpa_supplicant',
        'external/bsd/wpa/bin/wpa_cli',
-       'external/apache2/mDNSResponder/usr.sbin/mdnsd'} <= set(selected['crunch_programs']) and
+       'external/apache2/mDNSResponder/usr.sbin/mdnsd'} <= set(mdns_toolset['crunch_programs']) and
       'sbin/ping' in selected['crunch_programs'] and
       'BINMODE=4555' in (source / 'usr.bin/login/Makefile').read_text(),
       'non-setuid services and root-only ping crunch while setuid login stays standalone')
@@ -348,7 +404,9 @@ check(not any(name in selected['programs'] for name in
 check(not {'usr.bin/audio/ctl/audioctl', 'usr.bin/audio/play/audioplay',
            'usr.bin/audio/record/audiorecord', 'usr.bin/mixerctl/mixerctl',
            'usr.bin/timeout', 'usr.bin/wc', 'usr.bin/videoctl/videoctl',
-           'usr.sbin/envstat/envstat', 'usr.sbin/spinandctl/spinandctl'} &
+           'usr.sbin/envstat/envstat', 'usr.sbin/spinandctl/spinandctl',
+           'usr.bin/cksum/cksum', 'usr.bin/uuencode/uuencode',
+           'usr.bin/uudecode/uudecode', 'bin/df', 'usr.bin/env', 'usr.bin/uname'} &
       set(selected['crunch_programs']) and
       {'usr.bin/audio/ctl/audioctl', 'usr.bin/audio/play/audioplay',
        'usr.bin/audio/record/audiorecord', 'usr.bin/mixerctl/mixerctl',
@@ -471,7 +529,8 @@ with tempfile.TemporaryDirectory(prefix='static-network-') as temporary:
     (dhcp_dest / 'libexec/dhcpcd-run-hooks').write_text('#!/bin/sh\n')
     for hook in ('01-test', '20-resolv.conf', '30-hostname', '50-ntp.conf'):
         (dhcp_dest / 'libexec/dhcpcd-hooks' / hook).write_text('# generated ' + hook + '\n')
-    profile.stage_network(out, source, overlay, 'wifi0', pwd_mkdb, dhcp_dest, 'md0', 'a')
+    profile.stage_network(out, source, overlay, 'wifi0', pwd_mkdb, dhcp_dest,
+                          'md0', 'a', mdns_enabled=True)
     check((out / 'etc/rc.conf').read_text().find('rc_configured=YES') >= 0 and
           'wpa_supplicant=YES' in (out / 'etc/rc.conf').read_text() and
           'dhcpcd=YES' in (out / 'etc/rc.conf').read_text() and
@@ -498,9 +557,6 @@ with tempfile.TemporaryDirectory(prefix='static-network-') as temporary:
           (out / 'var/chroot/dhcpcd').is_dir() and (out / 'var/log').is_dir() and
           (out / 'var/tmp').is_dir(),
           'DHCP resolver, lease/state and runtime paths are writable locations')
-    check((source / 'ember/image/static-profile.py').read_text().find(
-          "len(sys.argv) == 10 and sys.argv[1] == 'stage-network'") >= 0,
-          'standard staged network command accepts selected root device and partition')
     check((out / 'etc/rc.network.d/wpa_supplicant').is_file() and
           (out / 'etc/rc.network.d/wpa_supplicant').stat().st_mode & 0o777 == 0o555 and
           (out / 'etc/rc.network.d/mdnsd').is_file() and
@@ -522,6 +578,17 @@ with tempfile.TemporaryDirectory(prefix='static-network-') as temporary:
           'host-from-overlay.local' in (out / 'etc/rc.conf.d/mdnsd').read_text() and
           (out / 'etc/custom-network.conf').is_file(),
           'OS accounts remain default and overlay identity/service settings are staged')
+    minimal = temporary / 'root-minimal-network'
+    minimal.mkdir()
+    profile.stage_network(minimal, source, overlay, 'wifi0', pwd_mkdb,
+                          dhcp_dest, 'md0', 'a')
+    minimal_rc = (minimal / 'etc/rc.network.d/network_tmpdirs').read_text()
+    check(not (minimal / 'etc/rc.network.d/mdnsd').exists() and
+          not (minimal / 'etc/rc.conf.d/mdnsd').exists() and
+          'mdnsd=NO' in (minimal / 'etc/rc.conf').read_text() and
+          'BEFORE: wpa_supplicant dhcpcd' in minimal_rc and
+          'mdnsd' not in minimal_rc,
+          'default network staging omits optional mDNS service and overlay override')
     (overlay / 'etc/custom-network.conf').write_text('updated setting\n')
     profile.stage_network(out, source, overlay, 'wifi0', pwd_mkdb, dhcp_dest, 'md0', 'a')
     check(sum(line.startswith('_mdnsd:') for line in
@@ -538,6 +605,15 @@ with tempfile.TemporaryDirectory(prefix='static-network-') as temporary:
           (dotted / 'etc/ifconfig.wifi0.1').read_text() == 'up\n' and
           'ifconfig_wifi0.1=' not in (dotted / 'etc/rc.conf').read_text(),
           'dot-containing interface names use a valid rc file, not shell variable syntax')
+
+    flash_root = temporary / 'root-littlefs'
+    flash_root.mkdir()
+    profile.stage_network(flash_root, source, overlay, 'wifi0', pwd_mkdb,
+                          dhcp_dest, 'flash0', '', 'littlefs')
+    check((flash_root / 'etc/fstab').read_text().splitlines() == [
+              '/dev/flash0 / littlefs rw 0 0',
+              'tmpfs /tmp tmpfs rw', 'tmpfs /var/run tmpfs rw'],
+          'littlefs root uses its flash node and upstream recovery rather than an FFS checker')
 
     try:
         profile.stage_overlay(overlay, out)

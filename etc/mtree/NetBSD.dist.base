@@ -240,6 +240,7 @@
 ./usr/include/fs/autofs
 ./usr/include/fs/efs
 ./usr/include/fs/hfs
+./usr/include/fs/littlefs
 ./usr/include/fs/nilfs
 ./usr/include/fs/ptyfs
 ./usr/include/fs/puffs

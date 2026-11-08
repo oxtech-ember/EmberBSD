@@ -67,6 +67,7 @@ static int nor_flash_read(device_t, flash_off_t, size_t, size_t *, uint8_t *);
 static int nor_flash_erase_all(device_t);
 static int nor_flash_erase(device_t, struct flash_erase_instruction *);
 static int nor_flash_submit(device_t, buf_t *);
+static int nor_flash_sync(device_t);
 
 /* default functions for driver development */
 static void nor_default_select(device_t, bool);
@@ -93,9 +94,18 @@ struct flash_interface nor_flash_if = {
 	.erase = nor_flash_erase,
 	.block_isbad = nor_flash_isbad,
 	.block_markbad = nor_flash_markbad,
+	.sync = nor_flash_sync,
 
 	.submit = nor_flash_submit
 };
+
+static int
+nor_flash_sync(device_t self)
+{
+	struct nor_softc * const sc = device_private(self);
+
+	return flash_io_sync(&sc->sc_flash_io);
+}
 
 #ifdef NOR_VERBOSE
 const struct nor_manufacturer nor_mfrs[] = {

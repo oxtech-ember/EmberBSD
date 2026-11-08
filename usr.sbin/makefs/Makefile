@@ -10,6 +10,13 @@ SRCS=	cd9660.c chfs.c ffs.c v7fs.c msdos.c udf.c\
 	pack_dev.c \
 	spec.c \
 	walk.c
+
+.if defined(EMBER_LITTLEFS_SOURCE) && !empty(EMBER_LITTLEFS_SOURCE)
+.PATH:		${EMBER_LITTLEFS_SOURCE}
+SRCS+=		littlefs.c lfs.c lfs_util.c
+CPPFLAGS+=	-I${EMBER_LITTLEFS_SOURCE} -I${NETBSDSRCDIR}/sys/fs/littlefs \
+	-DMAKEFS_LITTLEFS
+.endif
 MAN=	makefs.8
 
 MKNODSRC=	${NETBSDSRCDIR}/sbin/mknod
@@ -27,6 +34,9 @@ CPPFLAGS+=	-I${.CURDIR} -I${MKNODSRC} -I${MTREESRC} -DMAKEFS
 .include "${.CURDIR}/udf/Makefile.inc"
 
 .if defined(HOSTPROG)
+.if defined(EMBER_HOST_PREFIX) && !empty(EMBER_HOST_PREFIX)
+HOST_LDFLAGS+=	-L${TOOLDIR}/lib -L${EMBER_HOST_PREFIX}/lib
+.endif
 LDADD+=	-lm
 .else
 DPADD+= ${LIBUTIL} ${LIBM}

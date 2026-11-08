@@ -82,6 +82,9 @@ static fstype_t fstypes[] = {
 	ENTRY(v7fs),
 	ENTRY(msdos),
 	ENTRY(udf),
+#ifdef MAKEFS_LITTLEFS
+	ENTRY(littlefs),
+#endif
 	{ .type = NULL	},
 };
 
@@ -249,9 +252,15 @@ main(int argc, char *argv[])
 			if (fstype->cleanup_options)
 				fstype->cleanup_options(&fsoptions);
 			fsoptions.fs_specific = NULL;
-			if ((fstype = get_fstype(optarg)) == NULL)
+			if ((fstype = get_fstype(optarg)) == NULL) {
+#ifndef MAKEFS_LITTLEFS
+				if (strcmp(optarg, "littlefs") == 0)
+					errx(EXIT_FAILURE,
+					    "littlefs support not built");
+#endif
 				errx(EXIT_FAILURE,
 				    "Unknown fs type `%s'.", optarg);
+			}
 			fstype->prepare_options(&fsoptions);
 			break;
 

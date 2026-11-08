@@ -24,7 +24,8 @@ component_make()
 {
     log_name=$1; part=$2; shift 2
     if [ "${profile:-}" = network ]; then
-        set -- "$@" "EMBER_MDNS_SOURCE=$mdns_source" "EMBER_DHCPCD_SOURCE=$dhcpcd_source" \
+        [ -z "$mdns_source" ] || set -- "$@" "EMBER_MDNS_SOURCE=$mdns_source"
+        set -- "$@" "EMBER_DHCPCD_SOURCE=$dhcpcd_source" \
             "EMBER_LIBPCAP_SOURCE=$libpcap_source" "EMBER_WPA_SOURCE=$wpa_source" \
             $network_auth_flags
         case "$part" in
@@ -65,7 +66,7 @@ if [ "${1:-}" = --console-selected ]; then
     runtime_prefix=$1 resource=$2 unwinder=$3 compiler_resource=$4 jobs=$5 timestamp=$6 revision=$7
     shift 7
     headers=$1 libraries=$2 programs=$3 python=$4 profile=${5:-console} overlay=${6:-} extra=${7:-} selected_awk=${8:-$host_prefix/bin/nawk}
-    wolfssl_prefix=${9:-} network_interface=${10:-} mdns_source=${11:-} dhcpcd_source=${12:-} install_map=${13:-} wpa_backend=${14:-} crunch_programs=${15:-} device_nodes=${16:-} device_links=${17:-} libpcap_source=${18:-} device_make=${19:-} wpa_source=${20:-} device_block_nodes=${21:-} network_root_device=${22:-} network_root_partition=${23:-a} network_root_stage=${24:-} data_components=${25:-} console_root_size=${26:-4194304}
+    wolfssl_prefix=${9:-} network_interface=${10:-} mdns_source=${11:-} dhcpcd_source=${12:-} install_map=${13:-} wpa_backend=${14:-} crunch_programs=${15:-} device_nodes=${16:-} device_links=${17:-} libpcap_source=${18:-} device_make=${19:-} wpa_source=${20:-} device_block_nodes=${21:-} network_root_device=${22:-} network_root_partition=${23-a} network_root_stage=${24:-} data_components=${25:-} console_root_size=${26:-4194304} network_root_filesystem=${27:-ffs}
     if [ "$profile" = network ]; then
         COPTS="${COPTS:+$COPTS }-Oz -ffunction-sections -fdata-sections"
         network_auth_flags='MKPAM=no USE_PAM=no MKKERBEROS=no USE_KERBEROS=no MKLDAP=no USE_LDAP=no MKYP=no USE_YP=no MKSKEY=no USE_SKEY=no MKHESIOD=no USE_HESIOD=no'
@@ -150,7 +151,7 @@ if [ "${1:-}" = --console-selected ]; then
                 *" usr.sbin/envstat/envstat "*) printf ' -lmj' ;;
             esac
             case "$wpa_backend" in
-                wolfssl) printf ' -lwolfssl' ;;
+                wolfssl) printf ' -lwolfssl -lpthread' ;;
                 openssl|'') printf ' -lcrypto' ;;
                 *) echo "Unsupported WPA backend for network crunch: $wpa_backend" >&2; exit 2 ;;
             esac
@@ -167,12 +168,15 @@ if [ "${1:-}" = --console-selected ]; then
                 -V MKRUMP=no
             for assignment in \
                 "EMBER_DHCPCD_SOURCE=$dhcpcd_source" \
-                "EMBER_MDNS_SOURCE=$mdns_source" \
                 "EMBER_WPA_SOURCE=$wpa_source" \
                 "EMBER_WPA_PROFILE=personal" \
                 "EMBER_LIBPCAP_SOURCE=$libpcap_source"; do
                 set -- "$@" -v "$assignment" -V "$assignment"
             done
+            if [ -n "$mdns_source" ]; then
+                set -- "$@" -v "EMBER_MDNS_SOURCE=$mdns_source" \
+                    -V "EMBER_MDNS_SOURCE=$mdns_source"
+            fi
             if [ -n "$wpa_backend" ]; then
                 set -- "$@" -v "EMBER_WPA_CRYPTO_BACKEND=$wpa_backend" \
                     -V "EMBER_WPA_CRYPTO_BACKEND=$wpa_backend"
@@ -278,9 +282,16 @@ if [ "${1:-}" = --console-selected ]; then
     fi
     chmod 1777 "$root/tmp"
     if [ "$profile" = network ]; then
-        [ -n "$overlay" ] && [ -n "$network_interface" ] && [ -n "$mdns_source" ] && [ -n "$dhcpcd_source" ] && [ -n "$wpa_source" ] || {
+        mdns_enabled=no
+        case " $crunch_programs " in
+            *" external/apache2/mDNSResponder/usr.sbin/mdnsd "*) mdns_enabled=yes ;;
+        esac
+        [ -n "$overlay" ] && [ -n "$network_interface" ] && [ -n "$dhcpcd_source" ] && [ -n "$wpa_source" ] || {
             echo 'Network profile inputs are incomplete.' >&2; exit 1
         }
+        if [ "$mdns_enabled" = yes ] && [ -z "$mdns_source" ]; then
+            echo 'The mdns toolset requires EMBER_MDNS_SOURCE.' >&2; exit 1
+        fi
         for entry in $install_map; do
             install_path=${entry#*=}
             [ -f "$out/dest/$install_path" ] || {
@@ -294,7 +305,7 @@ if [ "${1:-}" = --console-selected ]; then
         [ -x "$root/bin/console-tools" ] || { echo 'Missing network console-tools.' >&2; exit 1; }
         run network-config "$python" -B "$here/static-profile.py" stage-network \
             "$root" "$src" "$overlay" "$network_interface" \
-            "$tools/bin/nbpwd_mkdb" "$out/dest" "$network_root_device" "$network_root_partition"
+            "$tools/bin/nbpwd_mkdb" "$out/dest" "$network_root_device" "$network_root_partition" "$network_root_filesystem" "$mdns_enabled"
         MACHINE="$machine" MACHINE_ARCH="$arch" "$HOST_SH" "$out/obj/etc/MAKEDEV" -s std $device_make > "$out/devices-all.spec"
         devices=$device_nodes
         device_link_nodes=$device_links

@@ -426,6 +426,7 @@
 ./sbin/mount_hfsp				base-obsolete		obsolete
 ./sbin/mount_kernfs				base-sysutil-root
 ./sbin/mount_lfs				base-sysutil-root
+./sbin/mount_littlefs			base-sysutil-root
 ./sbin/mount_mfs				base-sysutil-root
 ./sbin/mount_msdos				base-sysutil-root
 ./sbin/mount_nfs				base-nfsclient-root
@@ -1050,6 +1051,7 @@
 ./usr/include/fs/efs				base-c-usr
 ./usr/include/fs/hfs				base-c-usr
 ./usr/include/fs/hfsp				base-obsolete		obsolete
+./usr/include/fs/littlefs			base-c-usr
 ./usr/include/fs/nilfs				base-c-usr
 ./usr/include/fs/ptyfs				base-c-usr
 ./usr/include/fs/puffs				base-puffs-usr

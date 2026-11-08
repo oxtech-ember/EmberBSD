@@ -51,6 +51,7 @@ wireless networking, graphics and accelerator interfaces. Read the owning implem
 | BCM2712 display and V3D | [platform](sys/arch/arm/broadcom), [native DRM](sys/external/bsd/drm2/bcmv3d) |
 | CIX platform and peripherals | [ACPI](sys/dev/acpi/docs), [console](sys/arch/evbarm/dev/docs) |
 | Small-memory RISC-V | [Espressif port](sys/arch/riscv/espressif) |
+| Optional flash filesystems | [littlefs VFS and image tools](sys/fs/littlefs/README.md) |
 | Wireless | [net80211](sys/net80211), [SDIO](sys/dev/sdmmc/docs), [drivers](sys/dev/ic/docs) |
 | Display and synchronization | [DRM](sys/external/bsd/drm2/drm/docs), [VirtIO GPU](sys/external/bsd/drm2/virtio/docs) |
 | Installation | [sysinst](usr.sbin/sysinst/docs), [SDK release tooling](https://github.com/oxtech-ember/EmberBSD-SDK/blob/main/docs/os-release.md) |
