@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 /* Copyright (c) 2026 EmberBSD contributors. */
-/* Origin: EmberBSD, AI-assisted; fixed CPU-only NN image interface. */
+/* Origin: EmberBSD, AI-assisted; fixed diagnostic data interface. */
 #ifndef _SUN60I_A733_NPU_NN_H
 #define _SUN60I_A733_NPU_NN_H
 #include <sys/types.h>
@@ -18,12 +18,13 @@ struct sun60i_a733_npu_nn_image {
 };
 
 /*
- * Emit only the fixed 8x8x4 to 8x8x8 unsigned-storage 1x1 convolution.
+ * Copy the generated fixed 8x8x4 to 8x8x8 diagnostic image.
  * The trusted kernel output span must contain at least IMAGE_BYTES bytes.
  * Failure preserves output. Success writes IMAGE_BYTES and preserves its tail.
  * Byte arrays support unaligned output. The config uses fixed device VAs.
- * This CPU mechanism allocates nothing and does not access DMA or hardware.
- * Expected bytes are a CPU oracle. Never copy them into a device output page.
+ * Model preparation and the CPU oracle belong to the host fixture generator.
+ * This copy allocates nothing and does not access DMA or hardware.
+ * Never copy the expected bytes into a device output page.
  * This function does not prove NN dispatch or silicon format acceptance.
  */
 int sun60i_a733_npu_nn_tiny_image(void *, size_t);

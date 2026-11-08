@@ -80,6 +80,10 @@ def main():
     mmu_env.setdefault("NPU_MMU_CFLAGS", os.environ.get("NPU_TEST_CFLAGS", ""))
     subprocess.run([sys.executable, str(root / "ember/tools/a733-npu-mmu-contract.py")],
                    env=mmu_env, check=True)
+    nn_env = dict(os.environ, NPU_NN_SOURCE_ROOT=str(source))
+    nn_env.setdefault("NPU_NN_CFLAGS", os.environ.get("NPU_TEST_CFLAGS", ""))
+    subprocess.run([sys.executable, str(root / "ember/tools/a733-npu-nn-contract.py")],
+                   env=nn_env, check=True)
     dma_env = dict(os.environ, NPU_DMA_SOURCE_ROOT=str(source))
     dma_env.setdefault("NPU_DMA_CFLAGS", os.environ.get("NPU_TEST_CFLAGS", ""))
     subprocess.run([sys.executable, str(root / "ember/tools/a733-npu-dma-contract.py")],

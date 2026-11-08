@@ -21,8 +21,10 @@ def main():
                 name = f"{stem}.{suffix}"
                 source = (root / "sys/arch/arm/sunxi" / name).read_text()
                 text = "\n".join(line for line in source.splitlines()
-                                 if not line.startswith(("#include ", "__KERNEL_RCSID(")))
+                                 if not line.startswith(("#include <", "__KERNEL_RCSID(")))
                 (work / name).write_text(text + "\n")
+        data = "sun60i_a733_npu_nn_data.h"
+        (work / data).write_text((root / "sys/arch/arm/sunxi" / data).read_text())
         command = (shlex.split(os.environ.get("CC", "cc")) +
                    ["-std=c11", "-Wall", "-Wextra", "-Werror"] +
                    shlex.split(os.environ.get("NPU_DMA_CFLAGS", "")) +

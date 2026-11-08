@@ -25,7 +25,7 @@ registers or DMA data.
 
 ## Prepare and run once
 
-Write `task_stage=1` once. This constructs the fixed image and allocates six
+Write `task_stage=1` once. This copies the fixed image and allocates six
 buffers. It does not set up an IRQ, publish DMA, or access NPU registers. The
 first TASK attempt permanently closes legacy `READ_REG`, including on failure.
 It does not restore the old readiness flag. Nonzero observer stages also refuse
@@ -68,7 +68,9 @@ minor feature 5 at `0x0a0`. With MORE clear, minor5 is not read and its raw vali
 stays clear. With MORE set, both minor5 samples must be stable and BLT bit31 must
 be clear. A raw register does not replace the exact identity requirement.
 
-The 144-byte stream uses only the fixed image. It retains the native context,
+The [host fixture generator](a733-npu-nn.md) prepares the model and CPU oracle.
+The kernel copies its checked-in immutable image; it performs no model preparation.
+The 144-byte stream uses only that fixed image. It retains the native context,
 DMA maps, and immutable heap references before the first cache sync. The
 commands, image, and numerical oracle do not depend on a model file.
 

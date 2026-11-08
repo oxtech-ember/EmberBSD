@@ -1,11 +1,23 @@
-# Fixed CPU NN image
+# Fixed NN diagnostic fixture
 
-`sun60i_a733_npu_nn_tiny_image()` emits one finite byte-array image. It does
-not allocate DMA, submit commands, install IRQs or access registers. There is
-no hardware admission in this CPU-only function. The
+`ember/tools/a733-npu-nn-fixture.py` owns the diagnostic weights, coefficient
+packing, input preparation and CPU convolution oracle. It generates the checked-in
+`sun60i_a733_npu_nn_data.h` byte array. Model preparation runs only on the host.
+The kernel build consumes that header without running Python.
+
+`sun60i_a733_npu_nn_tiny_image()` copies this immutable image into a trusted
+kernel reference. It does not compute a model, allocate DMA or access hardware.
+The
 [native TASK guide](a733-npu-tiny-task.md) and
 [acceptance record](https://github.com/oxtech-ember/EmberBSD-DevBoards/blob/main/boards/a733-zero3w/data/fixed-nn-acceptance.json) describe the separate
 fixed-profile physical result. CPU image generation alone does not prove it.
+
+This split preserves the closed diagnostic TASK contract. The hardware command
+encoder, submit, DMA, MMU, IRQ and terminal checks remain in the driver.
+The kernel retains expected bytes for its existing terminal-gated comparison.
+It does not evaluate a CPU convolution. No user model, command or address enters
+this path. A userland result comparison needs a separate bounded result API
+that preserves ownership and terminal proof; this change does not add that API.
 
 The image has 864 constants bytes, 256 input bytes and 512 expected bytes.
 The 192-byte config starts at constants offset 0. A zero 64-byte gap precedes
@@ -36,12 +48,22 @@ OrangePi BSP commit `2ac08e8c7cdc28abbdc5c9a9dd812f887ae9c79f`.
 The fixed record selects HW_V83 and FLOAT_POST_MULT. These sources do not
 by themselves establish an NBG parser contract or hardware completion.
 
+Regenerate the header with the selected SDK host Python:
+
+```sh
+python3 ember/tools/a733-npu-nn-fixture.py > sys/arch/arm/sunxi/sun60i_a733_npu_nn_data.h
+```
+
 Run `python3 ember/tools/a733-npu-nn-contract.py`. Set `CC` and
-`NPU_NN_CFLAGS` for native sanitizers. The fixture compiles the actual
-source. It checks all config words, streams, padding and bounds. A separate
+`NPU_NN_CFLAGS` for native sanitizers. The contract first checks regeneration,
+then compiles the actual kernel copy and command code. It checks all config
+words, streams, padding and bounds. A separate
 pipeline decoder recovers the weights. An arithmetic oracle checks all
 512 expected bytes. Their SHA256 is
 `6b14aa6b1aba47323ba262ae69cba4dd3a970d172097e8d5730736b6bfaafedd`.
+The full 1632-byte image must retain SHA256
+`6f0e9b97af2dcfdccf081d1980978c981852fedeb9c78228e981af0da55d64e8`.
+This pins constants and input as well as expected output to the original image.
 
 Never copy expected bytes into a DMA output page. The separate native TASK
 mechanism requires NN dispatch, fence completion, terminal-gated POSTREAD, all

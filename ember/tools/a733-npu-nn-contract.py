@@ -8,19 +8,25 @@ import os
 from pathlib import Path
 import shlex
 import subprocess
+import sys
 import tempfile
 
 
 def main():
     tools = Path(__file__).resolve().parent
     root = Path(os.environ.get("NPU_NN_SOURCE_ROOT", tools.parent.parent))
+    subprocess.run([sys.executable, str(root / "ember/tools/a733-npu-nn-fixture.py"),
+                    "--check", str(root / "sys/arch/arm/sunxi/sun60i_a733_npu_nn_data.h")],
+                   check=True)
     with tempfile.TemporaryDirectory(prefix="a733-npu-nn-") as directory:
         work = Path(directory)
         for suffix in ("c", "h"):
             name = f"sun60i_a733_npu_nn.{suffix}"
             body = (root / "sys/arch/arm/sunxi" / name).read_text()
             (work / name).write_text("\n".join(line for line in body.splitlines()
-                if not line.startswith(("#include ", "__KERNEL_RCSID("))) + "\n")
+                if not line.startswith(("#include <", "__KERNEL_RCSID("))) + "\n")
+        data = "sun60i_a733_npu_nn_data.h"
+        (work / data).write_text((root / "sys/arch/arm/sunxi" / data).read_text())
         argv = shlex.split(os.environ.get("CC", "cc")) + [
             "-std=c11", "-Wall", "-Wextra", "-Werror"]
         argv += shlex.split(os.environ.get("NPU_NN_CFLAGS", ""))
@@ -30,6 +36,9 @@ def main():
         test = shlex.split(os.environ.get("TEST_RUNNER", "")) + [str(work / "test")]
         subprocess.run(test, check=True)
         image = subprocess.check_output(test + ["--image"])
+        if hashlib.sha256(image).hexdigest() != \
+                "6f0e9b97af2dcfdccf081d1980978c981852fedeb9c78228e981af0da55d64e8":
+            raise RuntimeError("The pinned complete diagnostic image SHA256 differs")
         if len(image) != 1632 or hashlib.sha256(image[1120:]).hexdigest() != \
                 "6b14aa6b1aba47323ba262ae69cba4dd3a970d172097e8d5730736b6bfaafedd":
             raise RuntimeError("The independent expected-image SHA256 differs")
