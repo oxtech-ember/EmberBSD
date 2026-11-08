@@ -86,13 +86,14 @@ static void
 lifecycle(void)
 {
 	struct bank b, before;
-	struct a133_codec_lease lease = { 0 };
+	struct a133_codec_lease lease = { .volume = 255 };
 	struct a133_codec_io io = { &b, rd, wr, wait_us };
 	unsigned writes;
 
 	fixture(&b);
 	/* Reserved DAC bits must survive route setup, not only final restore. */
 	b.regs[A133_CODEC_REG][0x310 / 4] |= 0x04000020;
+	b.regs[A133_CODEC_REG][4 / 4] = 0x84000000;
 	before = b;
 	assert(a133_codec_prepare(&io, &lease) == 0 && lease.prepared);
 	assert(b.resets == 0);
@@ -104,6 +105,11 @@ lifecycle(void)
 	writes = b.writes;
 	assert(a133_codec_prepare(&io, &lease) == EBUSY && b.writes == writes);
 	assert(a133_codec_route(&io, &lease, A133_PCM_PLAY, true) == 0);
+	assert(b.regs[A133_CODEC_REG][4 / 4] == 0x8401a0a0);
+	a133_codec_set_volume(&io, &lease, 128);
+	assert(b.regs[A133_CODEC_REG][4 / 4] == 0x84015050);
+	a133_codec_set_volume(&io, &lease, 0);
+	assert(b.regs[A133_CODEC_REG][4 / 4] == 0x84010000);
 	assert((b.regs[A133_CODEC_REG][0x310 / 4] & 0x04000020) == 0x04000020);
 	assert(b.regs[A133_CODEC_REG][0x324 / 4] == 0x80808f8c);
 	assert((b.regs[A133_CODEC_PIO][0xb4 / 4] & 0x07000000) == 0x01000000);
@@ -112,6 +118,9 @@ lifecycle(void)
 	assert((b.regs[A133_CODEC_REG][0x300 / 4] & 0x80001f00) == 0x80001000);
 	assert(a133_codec_route(&io, &lease, A133_PCM_PLAY, false) == 0);
 	assert((b.regs[A133_CODEC_PIO][0xc4 / 4] & 0x40) != 0);
+	writes = b.writes;
+	a133_codec_set_volume(&io, &lease, 64);
+	assert(b.writes == writes); /* Capture-only lease. */
 	/* Another owner changes an unrelated GPIO bit while the lease is held. */
 	b.regs[A133_CODEC_PIO][0xc4 / 4] ^= 0x100;
 	a133_codec_restore(&io, &lease);
@@ -129,10 +138,14 @@ lifecycle(void)
 	a133_codec_restore(&io, &lease);
 	assert(b.writes == writes);
 
+	writes = b.writes;
+	a133_codec_set_volume(&io, &lease, 32);
+	assert(b.writes == writes && !lease.prepared); /* No route or clocks. */
 	fixture(&b); b.regs[A133_CODEC_CCU][0xa5c / 4] |= 0x10000;
 	before = b;
 	assert(a133_codec_prepare(&io, &lease) == 0);
 	assert(a133_codec_route(&io, &lease, A133_PCM_PLAY, true) == 0);
+	assert(b.regs[A133_CODEC_REG][4 / 4] == 0x11414);
 	assert(b.regs[A133_CODEC_REG][0x320 / 4] == 0x91);
 	assert(b.regs[A133_CODEC_REG][0x100 / 4] == 0x12345678);
 	assert(b.regs[A133_CODEC_REG][0x324 / 4] == 0x80808f8c);

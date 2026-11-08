@@ -40,6 +40,7 @@
 #include <sys/envsys.h>
 #include <sys/wdog.h>
 #include <sys/power.h>
+#include <sys/pmf.h>
 #include <sys/queue.h>
 #include <sys/callout.h>
 #include <sys/mutex.h>
@@ -310,6 +311,9 @@ int	sysmon_pswitch_register(struct sysmon_pswitch *);
 void	sysmon_pswitch_unregister(struct sysmon_pswitch *);
 
 void	sysmon_pswitch_event(struct sysmon_pswitch *, int);
+#ifdef _KERNEL
+void	sysmon_pmf_hotkey_press(struct sysmon_pswitch *, pmf_generic_event_t);
+#endif
 void	sysmon_penvsys_event(struct penvsys_state *, int);
 
 int	sysmon_power_init(void);

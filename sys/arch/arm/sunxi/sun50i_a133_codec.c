@@ -387,6 +387,9 @@ a133_interrupt(void *arg)
 	return handled;
 }
 
+/* Keep the existing route indices stable. */
+#define A133_OUTPUT_MASTER 4
+
 static int
 a133_set_port(void *priv, mixer_ctrl_t *mc)
 {
@@ -396,6 +399,13 @@ a133_set_port(void *priv, mixer_ctrl_t *mc)
 	int error;
 
 	KASSERT(mutex_owned(&sc->lock));
+	if (mc->dev == A133_OUTPUT_MASTER) {
+		if (mc->type != AUDIO_MIXER_VALUE || mc->un.value.num_channels != 1)
+			return EINVAL;
+		a133_codec_set_volume(&sc->io, &sc->lease,
+		    mc->un.value.level[AUDIO_MIXER_LEVEL_MONO]);
+		return 0;
+	}
 	if ((mc->dev != 2 && mc->dev != 3) || mc->type != AUDIO_MIXER_ENUM ||
 	    (mc->un.ord != 0 && mc->un.ord != 1))
 		return EINVAL;
@@ -434,6 +444,12 @@ a133_get_port(void *priv, mixer_ctrl_t *mc)
 {
 	struct a133_softc *sc = priv;
 
+	if (mc->dev == A133_OUTPUT_MASTER) {
+		if (mc->type != AUDIO_MIXER_VALUE || mc->un.value.num_channels != 1)
+			return EINVAL;
+		mc->un.value.level[AUDIO_MIXER_LEVEL_MONO] = sc->lease.volume;
+		return 0;
+	}
 	if ((mc->dev != 2 && mc->dev != 3) || mc->type != AUDIO_MIXER_ENUM)
 		return EINVAL;
 	mc->un.ord = (sc->lease.routes & (mc->dev == 2 ? AUMODE_PLAY : AUMODE_RECORD)) != 0;
@@ -463,6 +479,13 @@ a133_query_devinfo(void *priv, mixer_devinfo_t *di)
 		strlcpy(di->un.e.member[1].label.name,
 		    di->index == 2 ? "speaker" : "mic1",
 		    sizeof(di->un.e.member[1].label.name));
+	} else if (di->index == A133_OUTPUT_MASTER) {
+		di->type = AUDIO_MIXER_VALUE;
+		di->mixer_class = 0;
+		strlcpy(di->label.name, AudioNmaster, sizeof(di->label.name));
+		di->un.v.num_channels = 1;
+		strlcpy(di->un.v.units.name, AudioNvolume, sizeof(di->un.v.units.name));
+		di->un.v.delta = 6; /* About 3 dB per volume key press. */
 	} else {
 		return ENXIO;
 	}
@@ -550,6 +573,7 @@ a133_attach(device_t parent, device_t self, void *aux)
 	mutex_init(&sc->lock, MUTEX_DEFAULT, IPL_NONE);
 	mutex_init(&sc->intr_lock, MUTEX_DEFAULT, IPL_SCHED);
 	LIST_INIT(&sc->memory);
+	sc->lease.volume = AUDIO_MAX_GAIN;
 	sc->io = (struct a133_codec_io){ sc, a133_read, a133_write, a133_delay };
 	evcnt_attach_dynamic(&sc->underrun, EVCNT_TYPE_MISC, NULL, device_xname(self), "TX underruns");
 	evcnt_attach_dynamic(&sc->overrun, EVCNT_TYPE_MISC, NULL, device_xname(self), "RX overruns");

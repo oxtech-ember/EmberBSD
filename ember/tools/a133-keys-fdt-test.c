@@ -107,9 +107,10 @@ static const struct { unsigned id, reg, bit; const char *parent; } clocks[] = {
 #ifndef __BIT
 #define __BIT(n) (1U << (n))
 #endif
+struct sysmon_pswitch { const char *smpsw_name; int smpsw_type; };
 struct sunxi_lradc_softc {
 	int sc_lastlevel[2], sc_previous_sample;
-	int *sc_switches[2];
+	struct sysmon_pswitch *sc_switches[2];
 	uint8_t sc_level[2][32];
 	bool sc_volume_sampling;
 	uint32_t regs[5];
@@ -119,13 +120,50 @@ struct sunxi_lradc_softc {
 #define mutex_enter(lock) ((void)0)
 #define mutex_exit(lock) ((void)0)
 #define aprint_error_dev(...) abort()
-static int events[4], nevents;
-static void sunxi_lradc_volume_press(void *p) { events[nevents++] = *(int *)p; }
-static void sunxi_lradc_volume_release(void *p) { events[nevents++] = -*(int *)p; }
+/* Run the real LRADC callbacks and daemon/PMF arbitration. */
+#define KASSERT assert
+#define KM_NOSLEEP 0
+#define PSWITCH_TYPE_HOTKEY 5
+#define PSWITCH_EVENT_PRESSED 0
+#define PSWITCH_EVENT_RELEASED 1
+typedef enum { PMFE_AUDIO_VOLUME_UP, PMFE_AUDIO_VOLUME_DOWN } pmf_generic_event_t;
+struct power_event_dictionary { void *dict; };
+static void *sysmon_power_daemon;
+static int daemon_events[4], ndaemon, pmf[2], npmfs, events[4], nevents;
+static struct power_event_dictionary dictionary;
+#define kmem_zalloc(n, flag) (&dictionary)
+#define kmem_free(p, n) ((void)0)
+#define prop_dictionary_create() (&dictionary)
+#define prop_object_release(p) ((void)0)
+static int
+sysmon_power_daemon_task(struct power_event_dictionary *ped, struct sysmon_pswitch *sw, int event)
+{
+	int key = strcmp(sw->smpsw_name, "volume-up") == 0 ? 115 : 114;
+	assert(ped->dict != NULL && ndaemon < 4);
+	daemon_events[ndaemon++] = event == PSWITCH_EVENT_PRESSED ? key : -key;
+	return 0;
+}
+static void
+pmf_event_inject(device_t dev, pmf_generic_event_t event)
+{
+	assert(dev == NULL && npmfs < 2);
+	pmf[npmfs++] = event;
+}
+#include "keys-dispatch.h"
+static void
+sysmon_pswitch_event(struct sysmon_pswitch *sw, int event)
+{
+	/* For ordinary hotkeys, the sysmon default is to do nothing. */
+	(void)sysmon_pswitch_dispatch(sw, event, NULL);
+}
+#include "keys-callbacks.h"
 static int
 sysmon_task_queue_sched(unsigned priority, void (*event)(void *), void *arg)
 {
+	struct sysmon_pswitch *sw = arg;
+	int key = strcmp(sw->smpsw_name, "volume-up") == 0 ? 115 : 114;
 	assert(priority == 0 && nevents < 4);
+	events[nevents++] = event == sunxi_lradc_volume_press ? key : -key;
 	event(arg);
 	return 0;
 }
@@ -134,7 +172,10 @@ sysmon_task_queue_sched(unsigned priority, void (*event)(void *), void *arg)
 static void
 key_events(const uint8_t upper[2])
 {
-	int buttons[] = { 115, 114 };
+	const int keys[] = { 115, 114 };
+	struct sysmon_pswitch buttons[] = {
+		{ "volume-up", PSWITCH_TYPE_HOTKEY }, { "volume-down", PSWITCH_TYPE_HOTKEY }
+	};
 	struct sunxi_lradc_softc sc = { .sc_lastlevel = {-1, -1},
 	    .sc_switches = {buttons, NULL} };
 	const uint32_t edges = AWIN_LRADC_INT_KEY0 | AWIN_LRADC_INT_KEYUP0;
@@ -151,10 +192,10 @@ key_events(const uint8_t upper[2])
 		assert(nevents == 2*k);
 		sunxi_lradc_volume_intr(&sc);
 		sunxi_lradc_volume_intr(&sc);
-		assert(nevents == 2*k+1 && events[2*k] == buttons[k] && sc.regs[1] == edges);
+		assert(nevents == 2*k+1 && events[2*k] == keys[k] && sc.regs[1] == edges);
 		sc.regs[2] = AWIN_LRADC_INT_KEYUP0; sc.regs[3] = 63;
 		sunxi_lradc_volume_intr(&sc); sunxi_lradc_volume_intr(&sc);
-		assert(nevents == 2*k+2 && events[2*k+1] == -buttons[k]);
+		assert(nevents == 2*k+2 && events[2*k+1] == -keys[k]);
 	}
 }
 
@@ -171,6 +212,12 @@ key_ladder(void)
 	    strcmp(clocks[1].parent, "ahb3") == 0);
 	assert(sunxi_lradc_volume_levels(keys, upper, names));
 	key_events(upper);
+	assert(ndaemon == 0 && npmfs == 2);
+	assert(pmf[0] == PMFE_AUDIO_VOLUME_UP && pmf[1] == PMFE_AUDIO_VOLUME_DOWN);
+	sysmon_power_daemon = &dictionary;
+	nevents = 0;
+	key_events(upper);
+	assert(ndaemon == 4 && npmfs == 2 && memcmp(events, daemon_events, sizeof(events)) == 0);
 	assert(strcmp(names[0], "volume-up") == 0 && strcmp(names[1], "volume-down") == 0);
 	for (int i = 0; i < 64; i++)
 		assert(sunxi_lradc_volume_index(upper, i) == (i <= 14 ? 0 : i <= 41 ? 1 : -1));

@@ -122,6 +122,25 @@ a133_codec_prepare(const struct a133_codec_io *io, struct a133_codec_lease *l)
 	return 0;
 }
 
+/* DAC_VOL_CTRL: both channels at unity are 0xa0. Never amplify above unity. */
+static void
+apply_volume(const struct a133_codec_io *io, uint8_t volume)
+{
+	uint32_t dac = ((uint32_t)volume * 0xa0 + 127) / 255;
+
+	update(io, A133_CODEC_REG, 0x04, 0x1ffff,
+	    (1U << 16) | (dac << 8) | dac);
+}
+
+void
+a133_codec_set_volume(const struct a133_codec_io *io,
+    struct a133_codec_lease *l, uint8_t volume)
+{
+	l->volume = volume;
+	if (l->prepared && (l->routes & A133_PCM_PLAY) != 0)
+		apply_volume(io, volume);
+}
+
 int
 a133_codec_route(const struct a133_codec_io *io, struct a133_codec_lease *l,
     unsigned mode, bool enable)
@@ -136,7 +155,7 @@ a133_codec_route(const struct a133_codec_io *io, struct a133_codec_lease *l,
 		update(io, A133_CODEC_PIO, 0xb4, 0x07000000, 0x01000000);
 		l->pio_owned = true;
 		if (enable) {
-			io->write(io->cookie, A133_CODEC_REG, 4, 0x1a0a0);
+			apply_volume(io, l->volume);
 			/* Preserve analog bias trims; bit27 is the observed shared rail. */
 			update(io, A133_CODEC_REG, 0x310, 0x7b00f05f, 0x1b00d05a);
 			update(io, A133_CODEC_REG, 0x324, 0xffff, 0x8f8c);

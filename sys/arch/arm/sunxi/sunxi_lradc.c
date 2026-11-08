@@ -425,7 +425,11 @@ sunxi_lradc_intr_task(void *arg)
 static void
 sunxi_lradc_volume_press(void *arg)
 {
-	sysmon_pswitch_event(arg, PSWITCH_EVENT_PRESSED);
+	struct sysmon_pswitch *sw = arg;
+
+	/* The validated A133 ladder registers only these two software keys. */
+	sysmon_pmf_hotkey_press(sw, strcmp(sw->smpsw_name, "volume-up") == 0 ?
+	    PMFE_AUDIO_VOLUME_UP : PMFE_AUDIO_VOLUME_DOWN);
 }
 
 static void

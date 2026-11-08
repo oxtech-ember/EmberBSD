@@ -20,11 +20,14 @@ struct a133_codec_lease {
 	uint32_t codec[13];
 	uint32_t pio_cfg, pio_data;
 	unsigned routes;
+	uint8_t volume;
 	bool saved, prepared, pio_owned, codec_touched;
 };
 
 int a133_codec_prepare(const struct a133_codec_io *, struct a133_codec_lease *);
 void a133_codec_restore(const struct a133_codec_io *, struct a133_codec_lease *);
+void a133_codec_set_volume(const struct a133_codec_io *,
+    struct a133_codec_lease *, uint8_t);
 int a133_codec_route(const struct a133_codec_io *, struct a133_codec_lease *,
     unsigned, bool);
 int a133_codec_transfer(const struct a133_codec_io *,

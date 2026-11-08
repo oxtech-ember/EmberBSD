@@ -969,6 +969,47 @@ sysmon_pswitch_unregister(struct sysmon_pswitch *smpsw)
 	/* nada */
 }
 
+/* Return true if this event needs no further default action. */
+static bool
+sysmon_pswitch_dispatch(struct sysmon_pswitch *smpsw, int event,
+    const pmf_generic_event_t *fallback)
+{
+	struct power_event_dictionary *ped;
+
+	if (sysmon_power_daemon != NULL) {
+		/*
+		 * Create a new dictionary for the event.
+		 */
+		ped = kmem_zalloc(sizeof(*ped), KM_NOSLEEP);
+		if (!ped)
+			return true;
+		ped->dict = prop_dictionary_create();
+
+		if (sysmon_power_daemon_task(ped, smpsw, event) == 0)
+			return true;
+		/* We failed */
+		prop_object_release(ped->dict);
+		kmem_free(ped, sizeof(*ped));
+	} else if (fallback != NULL) {
+		pmf_event_inject(NULL, *fallback);
+		return true;
+	}
+	return false;
+}
+
+/*
+ * A driver may select a PMF default for a software-controlled hotkey.
+ * A power daemon retains ownership of its normal pressed/released events.
+ */
+void
+sysmon_pmf_hotkey_press(struct sysmon_pswitch *smpsw,
+    pmf_generic_event_t fallback)
+{
+
+	KASSERT(smpsw != NULL && smpsw->smpsw_type == PSWITCH_TYPE_HOTKEY);
+	(void)sysmon_pswitch_dispatch(smpsw, PSWITCH_EVENT_PRESSED, &fallback);
+}
+
 /*
  * sysmon_pswitch_event:
  *
@@ -977,7 +1018,6 @@ sysmon_pswitch_unregister(struct sysmon_pswitch *smpsw)
 void
 sysmon_pswitch_event(struct sysmon_pswitch *smpsw, int event)
 {
-	struct power_event_dictionary *ped = NULL;
 
 	KASSERT(smpsw != NULL);
 
@@ -998,21 +1038,8 @@ sysmon_pswitch_event(struct sysmon_pswitch *smpsw, int event)
 		}
 	}
 
-	if (sysmon_power_daemon != NULL) {
-		/*
-		 * Create a new dictionary for the event.
-		 */
-		ped = kmem_zalloc(sizeof(*ped), KM_NOSLEEP);
-		if (!ped)
-			return;
-		ped->dict = prop_dictionary_create();
-
-		if (sysmon_power_daemon_task(ped, smpsw, event) == 0)
-			return;
-		/* We failed */
-		prop_object_release(ped->dict);
-		kmem_free(ped, sizeof(*ped));
-	}
+	if (sysmon_pswitch_dispatch(smpsw, event, NULL))
+		return;
 
 	switch (smpsw->smpsw_type) {
 	case PSWITCH_TYPE_POWER:

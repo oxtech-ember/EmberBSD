@@ -3,13 +3,30 @@
 Hardware routing and audio limits belong to the [A133 profile](https://github.com/oxtech-ember/EmberBSD-DevBoards/blob/main/boards/ys-m33-a133/interfaces.md).
 
 Attachment maps resources and enumerates audio without preparing clocks,
-enabling interrupts or starting streams. Both mixer controls default to
+enabling interrupts or starting streams. Both route controls default to
 disabled: `outputs.route` accepts `speaker`, and `record.route` accepts `mic1`.
 Only explicit route enable prepares hardware, in sleepable thread context;
 running streams reject route changes. No playback or recording runs at boot.
 The adapter checks buffer ownership, format, block size and route state before
 trigger. Interrupt service transfers at most 128 samples per direction and
 counts faults and underrun/overrun events. DMA and suspend/resume are not claimed.
+
+The mono `outputs.master` sets both DAC channels. Mixer level 0 mutes;
+255 preserves the existing unity setting (0xa0 per channel). Lower settings
+select hardware attenuation. A change while the speaker route is disabled
+only updates the saved level. At mute, DAC_VOL_SEL stays set and both
+channel levels are zero. The next speaker enable applies it before
+enabling the amplifier. Level changes leave capture and FIFO service alone.
+The register layout and mute sequence follow the
+[sun50iw10 BSP driver](https://github.com/CrealityTech/sonic_pad_os/blob/7f37a7fbf4ad59907034715e3d967b9177de1cd4/lichee/linux-4.9/sound/soc/sunxi/sun50iw10-codec.c)
+and its [register definitions](https://github.com/CrealityTech/sonic_pad_os/blob/7f37a7fbf4ad59907034715e3d967b9177de1cd4/lichee/linux-4.9/sound/soc/sunxi/sun50iw10-codec.h).
+
+The A133 volume-key ladder sends one audio PMF event on a press when no
+power daemon owns the switch. The audio subsystem moves the master by six
+mixer units and clamps it to 0 through 255. With powerd running, the normal
+hotkey scripts receive the press and release instead. This affects only the
+A133 software volume keys. The [live DAC cache fix for the same IP](https://github.com/spruceUI/oakMOSS/blob/main/sdk-patches/tree/136-sun50iw10-codec-dac-volume-cache.patch)
+also keeps the selector active when changing gain on a live DAC.
 
 The [register lease](../sun50i_a133_codec_io.c) restores
 owned codec state, clocks and the PF6 GPIO while preserving unrelated pins.
