@@ -49,6 +49,7 @@ static void (*aic_unlock_hook)(void), (*aic_command_hook)(void);
 static unsigned aic_delivered,aic_ids[512],aic_key_adds,aic_ports;
 static int aic_command_error;
 static struct aicwf_task *aic_queued;
+static struct aicwf_task *aic_acquired;
 static void mutex_enter(int *p) {assert(!aic_node_lock && !*p);*p=1;}
 static void mutex_exit(int *p) {assert(*p);*p=0;}
 static void mutex_spin_enter(int *p) {assert(!*p);*p=1;}
@@ -76,9 +77,18 @@ static void aic_enqueue(void *q,struct mbuf *m)
 }
 #define if_percpuq_enqueue aic_enqueue
 static void *pool_cache_get(int pool,int flags)
-{(void)pool;assert(flags==PR_NOWAIT);return calloc(1,sizeof(struct aicwf_task));}
+{
+ (void)pool;assert(flags==PR_NOWAIT && aic_acquired==NULL);
+ aic_acquired=calloc(1,sizeof(*aic_acquired));
+ return aic_acquired;
+}
 static void workqueue_enqueue(int queue,struct work *work,void *cpu)
-{(void)queue;(void)cpu;assert(aic_queued==NULL);aic_queued=(void *)work;}
+{
+ (void)queue;(void)cpu;
+ assert(aic_queued==NULL && aic_acquired!=NULL && work==&aic_acquired->t_work);
+ /* Transfer the complete task owner, not its embedded work handle. */
+ aic_queued=aic_acquired;aic_acquired=NULL;
+}
 static void aicwf_sae_event(struct aicwf_softc *sc,bool start,const uint8_t *p,size_t n)
 {(void)sc;(void)start;(void)p;(void)n;}
 static void aicwf_mgmt_rx(struct aicwf_softc *sc,const uint8_t *p,size_t n,uint32_t status,uint32_t flags)
@@ -126,7 +136,7 @@ static void aic_begin(void)
 static void
 aic_reset(void)
 {
- CHECK(aic.sc_rxba.bytes==0 && aic_queued==NULL);
+ CHECK(aic.sc_rxba.bytes==0 && aic_queued==NULL && aic_acquired==NULL);
  memset(&aic,0,sizeof(aic));memset(&aic_peer,0,sizeof(aic_peer));
  aic.sc_ic.ic_bss=&aic_peer;aic.sc_ic.ic_ifp=&aic.sc_if;
  aic.sc_if.if_softc=&aic;aic.sc_if.if_percpuq=&aic;aic.sc_if.if_flags=IFF_RUNNING;
@@ -288,6 +298,7 @@ int main(void)
  test_aic_actual_reorder_lifetime();test_aic_key_stop_and_batch_fences();
  test_aic_delete_during_key_install();test_aic_old_ap_departure_preserves_join();
  CHECK(aic.sc_rxba.bytes==0 && rxba_kmem_live==0 && !aic.sc_epoch_lock && !aic.sc_rx_lock);
+ CHECK(aic_queued==NULL && aic_acquired==NULL);
  printf("AIC actual offload RX/BA/lifetime: %u checks, %u failures\n",checks,failures);
  return failures!=0;
 }
