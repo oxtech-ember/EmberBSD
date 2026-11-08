@@ -57,8 +57,9 @@ name: Native net80211 crypto, scan, aggregation and WME contracts
       - 'sys/dev/pci/if_wpireg.h'
       - 'sys/dev/usb/if_run.c'
       - 'sys/dev/usb/if_urtwn.c'
-      - 'ember/development/iwx-be200/src/if_iwx.c'
-      - 'ember/development/iwx-be200/src/if_iwxreg.h'
+      - 'ember/development/iwx-be200/src/**'
+      - 'ember/tools/iwx-*'
+      - 'ember/tests/iwx-sae.sh'
   pull_request:
     paths:
       - '.github/workflows/net80211.yml'
@@ -114,8 +115,9 @@ name: Native net80211 crypto, scan, aggregation and WME contracts
       - 'sys/dev/pci/if_wpireg.h'
       - 'sys/dev/usb/if_run.c'
       - 'sys/dev/usb/if_urtwn.c'
-      - 'ember/development/iwx-be200/src/if_iwx.c'
-      - 'ember/development/iwx-be200/src/if_iwxreg.h'
+      - 'ember/development/iwx-be200/src/**'
+      - 'ember/tools/iwx-*'
+      - 'ember/tests/iwx-sae.sh'
   workflow_dispatch:
 
 permissions:
@@ -187,8 +189,9 @@ jobs:
             /sys/dev/pci/if_wpireg.h
             /sys/dev/usb/if_run.c
             /sys/dev/usb/if_urtwn.c
-            /ember/development/iwx-be200/src/if_iwx.c
-            /ember/development/iwx-be200/src/if_iwxreg.h
+            /ember/development/iwx-be200/src/
+            /ember/tools/iwx-*
+            /ember/tests/iwx-sae.sh
       - name: Prepare GCC16 and source analyzers
         run: |
           test "$(gcc -dumpfullversion)" = 16.2.0
@@ -223,6 +226,7 @@ jobs:
           python3 ember/tools/net80211-beacon-ies-contract.py --work-dir "$RUNNER_TEMP" --cc gcc --cflags="$WME_TEST_CFLAGS"
           sh ember/tools/ccmp-contract.sh
           sh ember/tests/net80211-sae.sh
+          sh ember/tests/iwx-sae.sh
           sh ember/tests/net80211-bip.sh
           sh ember/tests/aicwf-bip.sh
           sh ember/tools/net80211-crypto-bounds-contract.sh
@@ -260,6 +264,7 @@ jobs:
           python3 ember/tools/net80211-beacon-ies-contract.py --work-dir "$RUNNER_TEMP" --cc gcc --cflags="$WME_TEST_CFLAGS"
           sh ember/tools/ccmp-contract.sh
           sh ember/tests/net80211-sae.sh
+          sh ember/tests/iwx-sae.sh
           sh ember/tests/net80211-bip.sh
           sh ember/tests/aicwf-bip.sh
           sh ember/tools/net80211-crypto-bounds-contract.sh
@@ -295,6 +300,7 @@ jobs:
           python3 ember/tools/net80211-beacon-ies-contract.py --work-dir "$RUNNER_TEMP" --cc gcc --cflags="$WME_TEST_CFLAGS"
           sh ember/tools/ccmp-contract.sh
           sh ember/tests/net80211-sae.sh
+          sh ember/tests/iwx-sae.sh
           sh ember/tests/net80211-bip.sh
           sh ember/tests/aicwf-bip.sh
           sh ember/tools/net80211-crypto-bounds-contract.sh

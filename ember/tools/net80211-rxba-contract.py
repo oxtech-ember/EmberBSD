@@ -133,7 +133,7 @@ for line in (src/'sys/net80211/ieee80211_var.h').read_text().splitlines():
   const.append(line.split('/*',1)[0].rstrip())
 (out/'rxba-stack-constants.inc').write_text('\n'.join(const)+'\n')
 parts=[]
-for name,result in [('ieee80211_input_management','static int'),('ieee80211_input_control','static void'),('ieee80211_input','int')]:
+for name,result in [('ieee80211_input_management','static int'),('ieee80211_input_control','static void'),('ieee80211_rx_duplicate','static bool'),('ieee80211_input','int')]:
  parts.append(extract('sys/net80211/ieee80211_input.c',name,result))
 (out/'native-rxba-common-input.inc').write_text('\n'.join(parts))
 with (out/'rxba-mbuf-flags.inc').open('a') as f:

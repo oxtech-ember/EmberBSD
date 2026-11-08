@@ -129,6 +129,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 
 #include <net80211/ieee80211_var.h>
 #include <net80211/ieee80211_radiotap.h>
+#include <net80211/ieee80211_sae.h>
 
 #include <dev/pci/if_iwx_compat.h>
 
@@ -524,6 +525,8 @@ struct mbuf *iwx_ht_tx_assoc(struct iwx_softc *, struct mbuf *,
 	    struct ieee80211_node *);
 void	iwx_ht_rx_assoc(struct iwx_softc *, struct mbuf *);
 void	iwx_ht_rx_action(struct iwx_softc *, struct mbuf *);
+void	iwx_recv_mgmt(struct ieee80211com *, struct mbuf *,
+	    struct ieee80211_node *, int, int, uint32_t);
 void	iwx_ht_send_action(struct iwx_softc *, const uint8_t *, size_t);
 void	iwx_ba_task(void *);
 void	iwx_ba_release(void *, void *);
@@ -532,6 +535,18 @@ void	iwx_ba_stop(struct iwx_softc *, int, int);
 void	iwx_ba_reset(struct iwx_softc *, int);
 void	iwx_txq_task(void *);
 void	iwx_rx_ba_notif(struct iwx_softc *, struct iwx_rx_packet *);
+void	iwx_sae_fence(struct ieee80211com *);
+int	iwx_sae_replace(struct ieee80211com *, uint64_t,
+	    const struct ieee80211_sae_hw_key *, size_t);
+int	iwx_sae_key_cmd(struct iwx_softc *, unsigned,
+	    const struct ieee80211_sae_hw_key *);
+int	iwx_sae_send_cmd(struct iwx_softc *, uint32_t, uint16_t, const void *);
+int	iwx_sae_sync_rx(struct iwx_softc *);
+void	iwx_sae_rx_synced(struct iwx_softc *, struct iwx_rx_packet *);
+int	iwx_sae_rx(struct iwx_softc *, struct mbuf *,
+	    const struct iwx_rx_mpdu_desc *);
+int	iwx_rx_mpdu_prepare(struct ieee80211com *, struct mbuf *, void *,
+	    size_t, size_t);
 int	iwx_ba_rx_input(struct iwx_softc *, struct mbuf *,
 	    struct iwx_rx_mpdu_desc *, int, uint32_t, int, uint32_t, uint32_t,
 	    struct ieee80211_rxinfo *);
@@ -828,28 +843,27 @@ iwx_alloc_fw_monitor_block(struct iwx_softc *sc, uint8_t max_power,
 {
 	struct iwx_dma_info *fw_mon = &sc->fw_mon;
 	uint32_t size = 0;
-	uint8_t power;
+	int power;
 	int err;
 
 	if (fw_mon->size)
 		return 0;
+	if (min_power < 11 || max_power > 26 || min_power > max_power)
+		return EINVAL;
 
-	for (power = max_power; power >= min_power; power--) {
-		size = (1 << power);
+	for (power = max_power;; power--) {
+		size = (1U << power);
 
 		err = iwx_dma_contig_alloc(sc->sc_dmat, fw_mon, size, 0);
-		if (err)
-			continue;
-
-		DPRINTF(("%s: allocated 0x%08x bytes for firmware monitor.\n",
-			 device_xname(sc->sc_dev), size));
-		break;
+		if (err == 0)
+			break;
+		if (power == min_power) {
+			fw_mon->size = 0;
+			return err;
+		}
 	}
-
-	if (err) {
-		fw_mon->size = 0;
-		return err;
-	}
+	DPRINTF(("%s: allocated 0x%08x bytes for firmware monitor.\n",
+		 device_xname(sc->sc_dev), size));
 
 	if (power != max_power)
 		DPRINTF(("%s: Sorry - debug buffer is only %luK while you requested %luK\n",
@@ -1455,7 +1469,8 @@ iwx_read_firmware(struct iwx_softc *sc)
 
 		case IWX_UCODE_TLV_API_CHANGES_SET: {
 			struct iwx_ucode_api *api;
-			int idx, i;
+			uint32_t idx;
+			int i;
 			if (tlv_len != sizeof(*api)) {
 				err = EINVAL;
 				goto parse_out;
@@ -1467,7 +1482,7 @@ iwx_read_firmware(struct iwx_softc *sc)
 				goto parse_out;
 			}
 			for (i = 0; i < 32; i++) {
-				if ((le32toh(api->api_flags) & (1 << i)) == 0)
+				if ((le32toh(api->api_flags) & (1U << i)) == 0)
 					continue;
 				setbit(sc->sc_ucode_api, i + (32 * idx));
 			}
@@ -1476,7 +1491,8 @@ iwx_read_firmware(struct iwx_softc *sc)
 
 		case IWX_UCODE_TLV_ENABLED_CAPABILITIES: {
 			struct iwx_ucode_capa *capa;
-			int idx, i;
+			uint32_t idx;
+			int i;
 			if (tlv_len != sizeof(*capa)) {
 				err = EINVAL;
 				goto parse_out;
@@ -1488,7 +1504,7 @@ iwx_read_firmware(struct iwx_softc *sc)
 				goto parse_out;
 			}
 			for (i = 0; i < 32; i++) {
-				if ((le32toh(capa->api_capa) & (1 << i)) == 0)
+				if ((le32toh(capa->api_capa) & (1U << i)) == 0)
 					continue;
 				setbit(sc->sc_enabled_capa, i + (32 * idx));
 			}
@@ -1730,7 +1746,7 @@ iwx_read_firmware(struct iwx_softc *sc)
  parse_out:
 	if (err) {
 		printf("%s: firmware parse error %d, "
-		    "section type %d\n", device_xname(sc->sc_dev), err, tlv_type);
+		    "section type %u\n", device_xname(sc->sc_dev), err, tlv_type);
 	}
 
  out:
@@ -2353,6 +2369,7 @@ iwx_check_rfkill(struct iwx_softc *sc)
 	v = IWX_READ(sc, IWX_CSR_GP_CNTRL);
 	rv = (v & IWX_CSR_GP_CNTRL_REG_FLAG_HW_RF_KILL_SW) == 0;
 	if (rv) {
+		ieee80211_sae_retire(&sc->sc_ic);
 		sc->sc_flags |= IWX_FLAG_RFKILL;
 	} else {
 		sc->sc_flags &= ~IWX_FLAG_RFKILL;
@@ -3155,7 +3172,6 @@ iwx_post_alive(struct iwx_softc *sc)
 	else
 		sc->sc_rate_n_flags_version = 1;
 
-	txcmd_ver = iwx_lookup_cmd_ver(sc, IWX_LONG_GROUP, IWX_TX_CMD);
 }
 
 int
@@ -4379,7 +4395,7 @@ iwx_pnvm_handle_section(struct iwx_softc *sc, const uint8_t *data,
 		tlv_type = le32toh(tlv->type);
 
 		if (len < tlv_len) {
-			printf("%s: invalid TLV len: %zd/%u\n",
+			printf("%s: invalid TLV len: %zu/%u\n",
 			    device_xname(sc->sc_dev), len, tlv_len);
 			err = EINVAL;
 			goto out;
@@ -4868,7 +4884,7 @@ iwx_get_noise(const struct iwx_statistics_rx_non_phy *stats)
 {
 	int i, total, nbant, noise;
 
-	total = nbant = noise = 0;
+	total = nbant = 0;
 	for (i = 0; i < 3; i++) {
 		noise = letoh32(stats->beacon_silence_rssi[i]) & 0xff;
 		if (noise) {
@@ -5026,9 +5042,6 @@ iwx_rx_frame(struct iwx_softc *sc, struct mbuf *m, int chanidx,
 			ic->ic_curchan = &ic->ic_channels[chanidx];
 	}
 
-	iwx_ht_rx_assoc(sc, m);
-	iwx_ht_rx_action(sc, m);
-
 	ni = ieee80211_find_rxnode(ic, (struct ieee80211_frame_min *)wh);
 	ni->ni_chan = &ic->ic_channels[chanidx];
 
@@ -5118,6 +5131,19 @@ iwx_rx_frame(struct iwx_softc *sc, struct mbuf *m, int chanidx,
 		ieee80211_free_node(ni);
 		splx(s);
 	}
+}
+
+/* net80211 has admitted the frame and verified/decrypted native PMF. */
+void
+iwx_recv_mgmt(struct ieee80211com *ic, struct mbuf *m,
+    struct ieee80211_node *ni, int subtype, int rssi, uint32_t rstamp)
+{
+	struct iwx_softc *sc = IC2IFP(ic)->if_softc;
+
+	/* Association capabilities must be available before the RUN request. */
+	iwx_ht_rx_assoc(sc, m);
+	iwx_ht_rx_action(sc, m);
+	sc->sc_recv_mgmt(ic, m, ni, subtype, rssi, rstamp);
 }
 
 /*
@@ -5387,103 +5413,139 @@ drop:
 }
 #endif /* IWX_HT */
 
+/* Translate MLD descriptor authentication into common per-frame provenance. */
+int
+iwx_sae_rx(struct iwx_softc *sc, struct mbuf *m,
+    const struct iwx_rx_mpdu_desc *desc)
+{
+	struct ieee80211com *ic = &sc->sc_ic;
+	const struct ieee80211_frame *wh = mtod(m, const void *);
+	const uint8_t *iv;
+	uint32_t status = le32toh(desc->status);
+	unsigned hdrlen, id, slot;
+	const unsigned flags = IEEE80211_SAE_RX_AUTHENTICATED |
+	    IEEE80211_SAE_RX_IV_PRESENT | IEEE80211_SAE_RX_MIC_STRIPPED;
+
+	if (!ieee80211_sae_active(ic) || ic->ic_opmode == IEEE80211_M_MONITOR)
+		return 0;
+	if ((size_t)m->m_len < sizeof(*wh))
+		return EINVAL;
+	/* Group robust management retains its MMIE for software BIP. */
+	if (!(wh->i_fc[1] & IEEE80211_FC1_WEP))
+		return 0;
+	if (sc->sc_sae_epoch == 0 || sc->sc_sae_replacing ||
+	    (status & IWX_RX_MPDU_RES_STATUS_SEC_ENC_MSK) !=
+	    IWX_RX_MPDU_RES_STATUS_SEC_CCM_ENC ||
+	    !(status & IWX_RX_MPDU_RES_STATUS_MIC_OK))
+		return EACCES;
+	hdrlen = ieee80211_anyhdrsize(wh);
+	if ((size_t)m->m_len < hdrlen + IEEE80211_CCMP_HDRLEN)
+		return EINVAL;
+	iv = mtod(m, const uint8_t *) + hdrlen;
+	id = iv[3] >> 6;
+	if (IEEE80211_IS_MULTICAST(wh->i_addr1))
+		slot = id + 1;
+	else {
+		if (id != 0)
+			return EACCES;
+		slot = 0;
+		id = IEEE80211_SAE_HW_PTK;
+	}
+	if (!(sc->sc_sae_keys & (1 << slot)))
+		return EACCES;
+	if (desc->mac_flags2 & IWX_RX_MPDU_MFLG2_AMSDU)
+		return ieee80211_sae_tag_rx_amsdu(ic, m, sc->sc_sae_epoch, id,
+		    IEEE80211_CIPHER_AES_CCM, flags,
+		    desc->amsdu_info & IWX_RX_MPDU_AMSDU_SUBFRAME_IDX_MASK,
+		    (desc->amsdu_info & IWX_RX_MPDU_AMSDU_LAST_SUBFRAME) != 0);
+	return ieee80211_sae_tag_rx(ic, m, sc->sc_sae_epoch, id,
+	    IEEE80211_CIPHER_AES_CCM, flags);
+}
+
+/* Normalize the documented station tail and optional pad; retain the IV.
+ * This helper borrows m on both success and failure. */
+int
+iwx_rx_mpdu_prepare(struct ieee80211com *ic, struct mbuf *m, void *pktdata,
+    size_t maxlen, size_t desc_size)
+{
+	const struct iwx_rx_mpdu_desc *desc = pktdata;
+	struct ieee80211_frame *wh;
+	uint32_t status, len, hdrlen, minimum, tail;
+
+	if ((desc_size != sizeof(*desc) && desc_size != IWX_RX_DESC_SIZE_V1) ||
+	    maxlen < desc_size)
+		return EINVAL;
+	status = le32toh(desc->status);
+	if ((status & (IWX_RX_MPDU_RES_STATUS_CRC_OK |
+	    IWX_RX_MPDU_RES_STATUS_OVERRUN_OK)) !=
+	    (IWX_RX_MPDU_RES_STATUS_CRC_OK | IWX_RX_MPDU_RES_STATUS_OVERRUN_OK))
+		return EIO;
+	len = le16toh(desc->mpdu_len);
+	minimum = ic->ic_opmode == IEEE80211_M_MONITOR ?
+	    sizeof(struct ieee80211_frame_cts) : sizeof(*wh);
+	if (len < minimum || len > maxlen - desc_size)
+		return EINVAL;
+	/* This combined field alone cannot distinguish MIC from FCS. */
+	if (ic->ic_opmode != IEEE80211_M_MONITOR) {
+		tail = (desc->mac_flags1 & IWX_RX_MPDU_MFLG1_MIC_CRC_LEN_MASK) >>
+		    IWX_RX_MPDU_MFLG1_MIC_CRC_LEN_SHIFT;
+		if (tail > len - minimum)
+			return EINVAL;
+		len -= tail;
+	}
+	m->m_data = (uint8_t *)pktdata + desc_size;
+	m->m_pkthdr.len = m->m_len = len;
+	if (!(desc->mac_flags2 & IWX_RX_MPDU_MFLG2_PAD))
+		return 0;
+	wh = mtod(m, struct ieee80211_frame *);
+	if ((wh->i_fc[0] & IEEE80211_FC0_TYPE_MASK) == IEEE80211_FC0_TYPE_CTL) {
+		switch (wh->i_fc[0] & IEEE80211_FC0_SUBTYPE_MASK) {
+		case IEEE80211_FC0_SUBTYPE_CTS:
+			hdrlen = sizeof(struct ieee80211_frame_cts);
+			break;
+		case IEEE80211_FC0_SUBTYPE_ACK:
+			hdrlen = sizeof(struct ieee80211_frame_ack);
+			break;
+		default:
+			hdrlen = sizeof(struct ieee80211_frame_min);
+			break;
+		}
+	} else
+		hdrlen = ieee80211_anyhdrsize(wh);
+	if ((wh->i_fc[1] & IEEE80211_FC1_WEP) &&
+	    (status & IWX_RX_MPDU_RES_STATUS_SEC_ENC_MSK) ==
+	    IWX_RX_MPDU_RES_STATUS_SEC_CCM_ENC)
+		hdrlen += IEEE80211_CCMP_HDRLEN;
+	if (hdrlen > len || len - hdrlen < 2)
+		return EINVAL;
+	memmove(m->m_data + 2, m->m_data, hdrlen);
+	m_adj(m, 2);
+	return 0;
+}
+
 void
 iwx_rx_mpdu_mq(struct iwx_softc *sc, struct mbuf *m, void *pktdata,
     size_t maxlen)
 {
 	struct ieee80211com *ic = &sc->sc_ic;
 	struct ieee80211_rxinfo rxi;
-	struct iwx_rx_mpdu_desc *desc;
-	uint32_t len, hdrlen, rate_n_flags, device_timestamp;
+	struct iwx_rx_mpdu_desc *desc = pktdata;
+	uint32_t rate_n_flags, device_timestamp;
 	int rssi;
 	uint8_t chanidx;
 	uint16_t phy_info;
-	size_t desc_size;
+	size_t desc_size = sc->sc_device_family >= IWX_DEVICE_FAMILY_AX210 ?
+	    sizeof(*desc) : IWX_RX_DESC_SIZE_V1;
 
-	if (sc->sc_device_family >= IWX_DEVICE_FAMILY_AX210)
-		desc_size = sizeof(*desc);
-	else
-		desc_size = IWX_RX_DESC_SIZE_V1;
-
-	if (maxlen < desc_size) {
-		m_freem(m);
-		return; /* drop */
-	}
-
-	desc = (struct iwx_rx_mpdu_desc *)pktdata;
-
-	if (!(desc->status & htole32(IWX_RX_MPDU_RES_STATUS_CRC_OK)) ||
-	    !(desc->status & htole32(IWX_RX_MPDU_RES_STATUS_OVERRUN_OK))) {
-		m_freem(m);
-		return; /* drop */
-	}
-
-	len = le16toh(desc->mpdu_len);
-	if (ic->ic_opmode == IEEE80211_M_MONITOR) {
-		/* Allow control frames in monitor mode. */
-		if (len < sizeof(struct ieee80211_frame_cts)) {
-			ic->ic_stats.is_rx_tooshort++;
-			if_statinc(IC2IFP(ic), if_ierrors);
-			m_freem(m);
-			return;
-		}
-	} else if (len < sizeof(struct ieee80211_frame)) {
-		ic->ic_stats.is_rx_tooshort++;
+	if (iwx_rx_mpdu_prepare(ic, m, pktdata, maxlen, desc_size) != 0) {
 		if_statinc(IC2IFP(ic), if_ierrors);
 		m_freem(m);
 		return;
 	}
-	if (len > maxlen - desc_size) {
+	if (iwx_sae_rx(sc, m, desc) != 0) {
 		if_statinc(IC2IFP(ic), if_ierrors);
 		m_freem(m);
 		return;
-	}
-
-	/*
-	 * The firmware counts the MIC/FCS tail in mpdu_len; NetBSD net80211
-	 * rejects beacons whose last element then appears truncated.  Strip
-	 * it like Linux iwl_mvm_rx_mpdu_mq() (MIC_CRC_LEN in 2-byte units).
-	 */
-	{
-		uint32_t mic_crc_len = (desc->mac_flags1 &
-		    IWX_RX_MPDU_MFLG1_MIC_CRC_LEN_MASK) >>
-		    IWX_RX_MPDU_MFLG1_MIC_CRC_LEN_SHIFT;
-
-		if (len > mic_crc_len)
-			len -= mic_crc_len;
-	}
-
-	m->m_data = (uint8_t *)pktdata + desc_size;
-	m->m_pkthdr.len = m->m_len = len;
-
-	/* Account for padding following the frame header. */
-	if (desc->mac_flags2 & IWX_RX_MPDU_MFLG2_PAD) {
-		struct ieee80211_frame *wh = mtod(m, struct ieee80211_frame *);
-		int type = wh->i_fc[0] & IEEE80211_FC0_TYPE_MASK;
-		if (type == IEEE80211_FC0_TYPE_CTL) {
-			switch (wh->i_fc[0] & IEEE80211_FC0_SUBTYPE_MASK) {
-			case IEEE80211_FC0_SUBTYPE_CTS:
-				hdrlen = sizeof(struct ieee80211_frame_cts);
-				break;
-			case IEEE80211_FC0_SUBTYPE_ACK:
-				hdrlen = sizeof(struct ieee80211_frame_ack);
-				break;
-			default:
-				hdrlen = sizeof(struct ieee80211_frame_min);
-				break;
-			}
-		} else
-			hdrlen = ieee80211_anyhdrsize(wh);
-
-		if ((le32toh(desc->status) &
-		    IWX_RX_MPDU_RES_STATUS_SEC_ENC_MSK) ==
-		    IWX_RX_MPDU_RES_STATUS_SEC_CCM_ENC) {
-			/* Padding is inserted after the IV. */
-			hdrlen += IEEE80211_CCMP_HDRLEN;
-		}
-
-		memmove(m->m_data + 2, m->m_data, hdrlen);
-		m_adj(m, 2);
 	}
 
 	memset(&rxi, 0, sizeof(rxi));
@@ -5501,7 +5563,8 @@ iwx_rx_mpdu_mq(struct iwx_softc *sc, struct mbuf *m, void *pktdata,
 	 * And we must allow the same CCMP PN for subframes following the
 	 * first subframe. Otherwise they would be discarded as replays.
 	 */
-	if (desc->mac_flags2 & IWX_RX_MPDU_MFLG2_AMSDU) {
+	if (!ieee80211_sae_active(ic) &&
+	    (desc->mac_flags2 & IWX_RX_MPDU_MFLG2_AMSDU)) {
 		struct ieee80211_frame *wh = mtod(m, struct ieee80211_frame *);
 		uint8_t subframe_idx = (desc->amsdu_info &
 		    IWX_RX_MPDU_AMSDU_SUBFRAME_IDX_MASK);
@@ -5752,14 +5815,13 @@ iwx_rx_bmiss(struct iwx_softc *sc, struct iwx_rx_packet *pkt,
     struct iwx_rx_data *data)
 {
 	struct ieee80211com *ic = &sc->sc_ic;
-	struct iwx_missed_beacons_notif *mbn = (void *)pkt->data;
 
 	if ((ic->ic_opmode != IEEE80211_M_STA) ||
 	    (ic->ic_state != IEEE80211_S_RUN))
 		return;
 
 	bus_dmamap_sync(sc->sc_dmat, data->map, sizeof(*pkt),
-	    sizeof(*mbn), BUS_DMASYNC_POSTREAD);
+	    sizeof(struct iwx_missed_beacons_notif), BUS_DMASYNC_POSTREAD);
 
 	if (ic->ic_mgt_timer == 0) {
 		if (ic->ic_ifp->if_flags & IFF_DEBUG)
@@ -6075,22 +6137,21 @@ iwx_send_cmd(struct iwx_softc *sc, struct iwx_host_cmd *hcmd)
 		/* Command is too large to fit in pre-allocated space. */
 		size_t totlen = hdrlen + paylen;
 		if ((size_t)paylen > IWX_MAX_CMD_PAYLOAD_SIZE) {
-			printf("%s: firmware command too long (%zd bytes)\n",
-			    device_xname(sc->sc_dev), totlen);
+			printf("%s: firmware command too long (%llu bytes)\n",
+			    device_xname(sc->sc_dev), (unsigned long long)totlen);
 			err = EINVAL;
 			goto out;
 		}
 		m = m_gethdr(M_DONTWAIT, MT_DATA);
 		if (m != NULL)
 			MEXTMALLOC(m, totlen, M_DONTWAIT);
-		if ((m->m_flags & M_EXT) == 0) {
-			if (m != NULL)
-				m_freem(m);
+		if (m != NULL && (m->m_flags & M_EXT) == 0) {
+			m_freem(m);
 			m = NULL;
 		}
 		if (m == NULL) {
-			printf("%s: could not get fw cmd mbuf (%zd bytes)\n",
-			    device_xname(sc->sc_dev), totlen);
+			printf("%s: could not get fw cmd mbuf (%llu bytes)\n",
+			    device_xname(sc->sc_dev), (unsigned long long)totlen);
 			err = ENOMEM;
 			goto out;
 		}
@@ -6098,8 +6159,8 @@ iwx_send_cmd(struct iwx_softc *sc, struct iwx_host_cmd *hcmd)
 		err = bus_dmamap_load(sc->sc_dmat, txdata->map, cmd,
 		    totlen, NULL, BUS_DMA_NOWAIT | BUS_DMA_WRITE);
 		if (err) {
-			printf("%s: could not load fw cmd mbuf (%zd bytes)\n",
-			    device_xname(sc->sc_dev), totlen);
+			printf("%s: could not load fw cmd mbuf (%llu bytes)\n",
+			    device_xname(sc->sc_dev), (unsigned long long)totlen);
 			m_freem(m);
 			goto out;
 		}
@@ -6224,7 +6285,7 @@ iwx_send_cmd_status(struct iwx_softc *sc, struct iwx_host_cmd *cmd,
 	resp = (void *)pkt->data;
 	*status = le32toh(resp->status);
 	iwx_free_resp(sc, cmd);
-	return err;
+	return 0;
 }
 
 int
@@ -6452,7 +6513,7 @@ iwx_tx(struct iwx_softc *sc, struct mbuf *m, struct ieee80211_node *ni)
 	struct iwx_device_cmd *cmd;
 	struct ieee80211_frame *wh;
 	struct ieee80211_key *k = NULL;
-	uint64_t paddr;
+	uint64_t paddr, sae_serial = ieee80211_sae_serial(ic);
 	u_int hdrlen;
 	bus_dma_segment_t *seg;
 	uint32_t rate_n_flags;
@@ -6477,6 +6538,7 @@ iwx_tx(struct iwx_softc *sc, struct mbuf *m, struct ieee80211_node *ni)
 	 * frame uses the default data queue and the queue is requested.
 	 */
 	if (type == IEEE80211_FC0_TYPE_DATA &&
+	    !ieee80211_sae_active(ic) &&
 	    (wh->i_fc[0] & (0x80 | 0x40)) == 0x80 &&	/* QoS, not null */
 	    !IEEE80211_IS_MULTICAST(wh->i_addr1) &&
 	    hdrlen >= sizeof(struct ieee80211_qosframe) &&
@@ -6537,7 +6599,7 @@ iwx_tx(struct iwx_softc *sc, struct mbuf *m, struct ieee80211_node *ni)
 	}
 #endif
 
-	/* Encrypt the frame in software; no hardware keys in stage 1. */
+	/* Native hardware keys are RX-only; TX encryption remains common. */
 	if (wh->i_fc[1] & IEEE80211_FC1_PROTECTED) {
 		k = ieee80211_crypto_encap(ic, ni, m);
 		if (k == NULL) {
@@ -6549,6 +6611,10 @@ iwx_tx(struct iwx_softc *sc, struct mbuf *m, struct ieee80211_node *ni)
 		hdrlen = ieee80211_anyhdrsize(wh);
 	}
 	flags |= IWX_TX_FLAGS_ENCRYPT_DIS;
+	if (sc->sc_sae_replacing || !ieee80211_sae_tx_current(ic, ni, m)) {
+		m_freem(m);
+		return ESTALE;
+	}
 
 	totlen = m->m_pkthdr.len;
 
@@ -6652,6 +6718,14 @@ iwx_tx(struct iwx_softc *sc, struct mbuf *m, struct ieee80211_node *ni)
 	iwx_tx_update_byte_tbl(sc, ring, ring->cur, totlen, num_tbs);
 
 	/* Kick TX ring. */
+	/* Validate the epoch again after DMA preparation, before the doorbell. */
+	if (sc->sc_sae_replacing || sae_serial != ieee80211_sae_serial(ic)) {
+		bus_dmamap_unload(sc->sc_dmat, data->map);
+		data->m = NULL;
+		data->in = NULL;
+		m_freem(m);
+		return ESTALE;
+	}
 	ring->cur = (ring->cur + 1) % IWX_TX_RING_COUNT;
 	ring->cur_hw = (ring->cur_hw + 1) % sc->max_tfd_queue_size;
 	IWX_WRITE(sc, IWX_HBUS_TARG_WRPTR, ring->qid << 16 | ring->cur_hw);
@@ -7391,6 +7465,8 @@ iwx_mld_add_sta_cmd(struct iwx_softc *sc, struct iwx_node *in, int update)
 			    htole32(sc->sc_bss_ht.ampdu_param & 0x3);
 	}
 
+	if (ieee80211_sae_active(ic))
+		sta_cmd.mfp = htole32(1);
 	return iwx_send_cmd_pdu(sc,
 	    IWX_WIDE_ID(IWX_MAC_CONF_GROUP, IWX_STA_CONFIG_CMD),
 	    0, cmd_size, &sta_cmd);
@@ -7668,7 +7744,6 @@ iwx_fill_probe_req(struct iwx_softc *sc, struct iwx_scan_probe_req *preq)
 		if (rs->rs_nrates > IEEE80211_RATE_SIZE)
 			frm = ieee80211_add_xrates(frm, rs);
 		preq->band_data[1].len = htole16(frm - pos);
-		remain -= frm - pos;
 	}
 
 	/* Send 11n IEs on both 2GHz and 5GHz bands. */
@@ -8485,7 +8560,7 @@ iwx_clear_statistics(struct iwx_softc *sc)
 	case 1:
 		return iwx_send_system_statistics_cmd_clear(sc);
 	default:
-		printf("%s: unknown statistics command version %d\n",
+		printf("%s: unknown statistics command version %u\n",
 		    device_xname(sc->sc_dev), ver);
 		break;
 	}
@@ -8954,6 +9029,11 @@ iwx_ht_tx_assoc(struct iwx_softc *sc, struct mbuf *m,
 			return m;
 		}
 	}
+	/* Preserve native generation tags; keep the original on copy failure. */
+	if (!m_tag_copy_chain(n, m)) {
+		m_freem(n);
+		return m;
+	}
 	m_copydata(m, 0, hdrlen, mtod(n, void *));
 	memcpy(mtod(n, uint8_t *) + hdrlen, sc->sc_ht_buf[1], newlen);
 	n->m_len = n->m_pkthdr.len = hdrlen + newlen;
@@ -9054,6 +9134,7 @@ iwx_ht_rx_action(struct iwx_softc *sc, struct mbuf *m)
 		printf("%s: action frame category %u action %u\n",
 		    device_xname(sc->sc_dev), body[0], body[1]);
 
+	sc->sc_ba_sae_serial = ieee80211_sae_serial(ic);
 	if (iwx_ht_delba_parse(body, len, &tid, &initiator) == 0) {
 		if (initiator && tid < 8) {
 			sc->sc_ba_stop |= 1 << tid;
@@ -9089,33 +9170,9 @@ void
 iwx_ht_send_action(struct iwx_softc *sc, const uint8_t *body, size_t len)
 {
 	struct ieee80211com *ic = &sc->sc_ic;
-	struct ifnet *ifp = IC2IFP(ic);
-	struct ieee80211_node *ni = ic->ic_bss;
-	struct ieee80211_frame *wh;
-	struct mbuf *m;
 
-	if (sizeof(*wh) + len > MHLEN)
-		return;
-	m = m_gethdr(M_DONTWAIT, MT_DATA);
-	if (m == NULL)
-		return;
-	wh = mtod(m, struct ieee80211_frame *);
-	memset(wh, 0, sizeof(*wh));
-	wh->i_fc[0] = IEEE80211_FC0_VERSION_0 | IEEE80211_FC0_TYPE_MGT |
-	    IWX_HT_FC0_SUBTYPE_ACTION;
-	wh->i_fc[1] = IEEE80211_FC1_DIR_NODS;
-	IEEE80211_ADDR_COPY(wh->i_addr1, ni->ni_macaddr);
-	IEEE80211_ADDR_COPY(wh->i_addr2, ic->ic_myaddr);
-	IEEE80211_ADDR_COPY(wh->i_addr3, ni->ni_bssid);
-	/* Non-QoS sequence space, as ieee80211_send_setup() uses. */
-	*(uint16_t *)&wh->i_seq[0] =
-	    htole16(ni->ni_txseqs[0] << IEEE80211_SEQ_SEQ_SHIFT);
-	ni->ni_txseqs[0]++;
-	memcpy(wh + 1, body, len);
-	m->m_len = m->m_pkthdr.len = sizeof(*wh) + len;
-	M_SETCTX(m, ieee80211_ref_node(ni));
-	IF_ENQUEUE(&ic->ic_mgtq, m);
-	if_start_lock(ifp);
+	if (ieee80211_send_action(ic, ic->ic_bss, body, len) != 0)
+		if_statinc(IC2IFP(ic), if_oerrors);
 }
 
 /* Reorder callbacks: hand a frame to net80211, or drop it. */
@@ -9161,7 +9218,6 @@ iwx_ba_rx_input(struct iwx_softc *sc, struct mbuf *m,
 	    (wh->i_fc[0] & (IEEE80211_FC0_TYPE_MASK | 0x80 | 0x40)) !=
 	    (IEEE80211_FC0_TYPE_DATA | 0x80) ||	/* QoS data, not null */
 	    IEEE80211_IS_MULTICAST(wh->i_addr1) ||
-	    (desc->mac_flags2 & IWX_RX_MPDU_MFLG2_AMSDU) ||
 	    (size_t)m->m_len < sizeof(struct ieee80211_qosframe) ||
 	    (wh->i_fc[1] & IEEE80211_FC1_DIR_MASK) == IEEE80211_FC1_DIR_DSTODS)
 		return 0;
@@ -9174,6 +9230,12 @@ iwx_ba_rx_input(struct iwx_softc *sc, struct mbuf *m,
 	tid = ((struct ieee80211_qosframe *)wh)->i_qos[0] & 0xf;
 	if (!b->active || b->tid != tid)
 		return 0;
+	/* Our ADDBA response clears A-MSDU support (parameter bit zero).
+	 * An aggregate must not bypass the negotiated BA receive window. */
+	if (desc->mac_flags2 & IWX_RX_MPDU_MFLG2_AMSDU) {
+		m_freem(m);
+		return 1;
+	}
 	sc->sc_dbg_ba_rx++;
 
 	nssn = rd & IWX_RX_MPDU_REORDER_NSSN_MASK;
@@ -9280,10 +9342,12 @@ iwx_ba_task(void *arg)
 	struct iwx_rx_baid_cfg_cmd c;
 	uint8_t resp[16];
 	uint32_t baid;
+	uint64_t serial = sc->sc_ba_sae_serial;
 	int tid, s = splnet();
 
 	if ((sc->sc_flags & IWX_FLAG_SHUTDOWN) ||
-	    ic->ic_state != IEEE80211_S_RUN) {
+	    ic->ic_state != IEEE80211_S_RUN ||
+	    serial != ieee80211_sae_serial(ic)) {
 		sc->sc_ba_start = sc->sc_ba_stop = 0;
 		refcnt_rele_wake(&sc->task_refs);
 		splx(s);
@@ -9297,13 +9361,16 @@ iwx_ba_task(void *arg)
 		}
 	}
 	for (tid = 0; tid < 8; tid++) {
-		const struct iwx_ht_addba *a = &sc->sc_ba_req[tid];
+		struct iwx_ht_addba request = sc->sc_ba_req[tid];
+		const struct iwx_ht_addba *a = &request;
 		uint16_t size;
 
 		if ((sc->sc_ba_start & (1 << tid)) == 0)
 			continue;
 		sc->sc_ba_start &= ~(1 << tid);
 		iwx_ba_stop(sc, tid, 1);	/* a repeated ADDBA restarts */
+		if (serial != ieee80211_sae_serial(ic))
+			break;
 
 		size = (a->bufsize == 0 || a->bufsize > IWX_HT_RO_MAX) ?
 		    IWX_HT_RO_MAX : a->bufsize;
@@ -9314,8 +9381,15 @@ iwx_ba_task(void *arg)
 		c.alloc.ssn = htole16(a->ssn);
 		c.alloc.win_size = htole16(size);
 		baid = IWX_MAX_BAID;
-		if (iwx_send_cmd_pdu_status(sc, IWX_WIDE_ID(IWX_DATA_PATH_GROUP,
-		    IWX_RX_BAID_ALLOCATION_CONFIG_CMD), sizeof(c), &c, &baid) ||
+		int error = iwx_send_cmd_pdu_status(sc,
+		    IWX_WIDE_ID(IWX_DATA_PATH_GROUP,
+		    IWX_RX_BAID_ALLOCATION_CONFIG_CMD), sizeof(c), &c, &baid);
+		if (serial != ieee80211_sae_serial(ic)) {
+			/* A sleeping command may have allocated a now-stale BAID. */
+			task_add(sc->sc_systq, &sc->init_task);
+			break;
+		}
+		if (error ||
 		    baid >= IWX_MAX_BAID || sc->sc_ba[baid].active) {
 			uint8_t req[9] = { 3, 0, a->token };
 
@@ -9358,7 +9432,7 @@ iwx_dbg_rate(struct iwx_softc *sc, uint32_t r, char *buf, size_t len)
 	else
 		snprintf(buf, len, "%s MCS %u NSS %u %u MHz (0x%08x)", mod[m],
 		    r & (m == 2 ? 7 : 15), ((r >> 4) & 1) + 1,
-		    20 << ((r >> 11) & 7), r);
+		    20U << ((r >> 11) & 7), r);
 }
 
 /* With IFF_DEBUG, print link counters every 5 seconds and reset them. */
@@ -9411,7 +9485,8 @@ iwx_txq_task(void *arg)
 		if ((sc->sc_txq_want & (1 << tid)) == 0)
 			continue;
 		if ((sc->sc_flags & IWX_FLAG_SHUTDOWN) ||
-		    ic->ic_state != IEEE80211_S_RUN || sc->aggqid[tid] != 0) {
+		    ic->ic_state != IEEE80211_S_RUN || sc->aggqid[tid] != 0 ||
+		    ieee80211_sae_active(ic)) {
 			sc->sc_txq_want &= ~(1 << tid);
 			continue;
 		}
@@ -10131,6 +10206,209 @@ iwx_node_alloc(struct ieee80211_node_table *nt __unused)
 	return malloc(sizeof (struct iwx_node), M_80211_NODE,
 	    M_NOWAIT | M_ZERO);
 }
+/*
+ * Native SAE keeps protocol, replay and all TX encryption in net80211.
+ * The MLD firmware's CCMP RX contract retains the IV and removes the MIC.
+ * Epoch publication therefore requires removing old keys and draining RX.
+ */
+void
+iwx_sae_fence(struct ieee80211com *ic)
+{
+	struct iwx_softc *sc = IC2IFP(ic)->if_softc;
+	int i;
+
+	sc->sc_sae_epoch = 0;
+	sc->sc_ba_start = sc->sc_ba_stop = sc->sc_txq_want = 0;
+	for (i = 0; i < IWX_MAX_BAID; i++) {
+		if (sc->sc_ba[i].active)
+			iwx_ht_reorder_flush(&sc->sc_ba[i].ro, iwx_ba_drop, sc);
+	}
+}
+
+/* These commands return an ACK, not a generic four-byte status response. */
+int
+iwx_sae_send_cmd(struct iwx_softc *sc, uint32_t id, uint16_t len,
+    const void *data)
+{
+	struct iwx_host_cmd cmd = {
+		.id = id,
+		.len = { len },
+		.data = { data },
+		.flags = IWX_CMD_WANT_RESP,
+		.resp_pkt_len = IWX_CMD_RESP_MAX
+	};
+	int error;
+
+	error = iwx_send_cmd(sc, &cmd);
+	/* Modern RX headers carry a group ID, not a guessed status payload.
+	 * Exact correlation also rejects an unfilled preallocated buffer. */
+	if (error == 0 && (cmd.resp_pkt == NULL ||
+	    cmd.resp_pkt->hdr.code != iwx_cmd_opcode(id) ||
+	    cmd.resp_pkt->hdr.flags != iwx_cmd_groupid(id) ||
+	    iwx_rx_packet_len(cmd.resp_pkt) < sizeof(cmd.resp_pkt->hdr) ||
+	    iwx_rx_packet_len(cmd.resp_pkt) >
+	    IWX_CMD_RESP_MAX - sizeof(cmd.resp_pkt->len_n_flags)))
+		error = EIO;
+	if (cmd.resp_pkt != NULL)
+		iwx_free_resp(sc, &cmd);
+	return error;
+}
+
+/* One RX queue is configured by this transport; firmware echoes our cookie. */
+int
+iwx_sae_sync_rx(struct iwx_softc *sc)
+{
+	struct iwx_rxq_sync_cmd cmd;
+	int error, generation = sc->sc_generation;
+
+	if (sc->sc_sae_rx_cookie == UINT64_MAX)
+		return EOVERFLOW;
+	memset(&cmd, 0, sizeof(cmd));
+	cmd.rxq_mask = htole32(1);
+	cmd.count = htole32(sizeof(cmd.cookie));
+	cmd.cookie = htole64(++sc->sc_sae_rx_cookie);
+	sc->sc_sae_rx_pending = true;
+	error = iwx_sae_send_cmd(sc, IWX_WIDE_ID(IWX_DATA_PATH_GROUP,
+	    IWX_TRIGGER_RX_QUEUES_NOTIF_CMD), sizeof(cmd), &cmd);
+	if (error == 0 && sc->sc_sae_rx_pending)
+		error = tsleep_nsec(&sc->sc_sae_rx_pending, PCATCH, "iwxrxsync",
+		    SEC_TO_NSEC(1));
+	if (error == 0 && (sc->sc_sae_rx_pending ||
+	    generation != sc->sc_generation))
+		error = EIO;
+	sc->sc_sae_rx_pending = false;
+	return error;
+}
+
+void
+iwx_sae_rx_synced(struct iwx_softc *sc, struct iwx_rx_packet *pkt)
+{
+	const struct iwx_rxq_sync_notification *n = (const void *)pkt->data;
+
+	if (iwx_rx_packet_payload_len(pkt) != sizeof(*n) ||
+	    le32toh(n->count) != sizeof(n->cookie) ||
+	    !sc->sc_sae_rx_pending ||
+	    le64toh(n->cookie) != sc->sc_sae_rx_cookie)
+		return;
+	sc->sc_sae_rx_pending = false;
+	wakeup(&sc->sc_sae_rx_pending);
+}
+
+/* Slots: pairwise, GTK 0..3, IGTK 4..5. No key material is retained here. */
+int
+iwx_sae_key_cmd(struct iwx_softc *sc, unsigned slot,
+    const struct ieee80211_sae_hw_key *key)
+{
+	struct iwx_sec_key_cmd cmd;
+	uint32_t flags = IWX_SEC_KEY_FLAG_CIPHER_CCMP | IWX_SEC_KEY_FLAG_NO_TX;
+	int error;
+
+	if (slot >= 7)
+		return EINVAL;
+	if (slot != 0)
+		flags |= IWX_SEC_KEY_FLAG_MCAST_KEY;
+	if (slot == 0 || slot >= 5)
+		flags |= IWX_SEC_KEY_FLAG_MFP;
+	memset(&cmd, 0, sizeof(cmd));
+	cmd.action = htole32(key == NULL ? IWX_FW_CTXT_ACTION_REMOVE :
+	    IWX_FW_CTXT_ACTION_ADD);
+	cmd.u.add.sta_mask = htole32(1 << IWX_STATION_ID);
+	cmd.u.add.key_id = htole32(slot == 0 ? 0 : slot - 1);
+	cmd.u.add.key_flags = htole32(flags);
+	if (key != NULL) {
+		memcpy(cmd.u.add.key, key->key, sizeof(key->key));
+		/* Replay remains in net80211, including separate TID/PMF spaces. */
+		cmd.u.add.rx_seq = 0;
+	}
+	error = iwx_sae_send_cmd(sc,
+	    IWX_WIDE_ID(IWX_DATA_PATH_GROUP, IWX_SEC_KEY_CMD),
+	    sizeof(cmd), &cmd);
+	explicit_memset(&cmd, 0, sizeof(cmd));
+	return error;
+}
+
+int
+iwx_sae_replace(struct ieee80211com *ic, uint64_t epoch,
+    const struct ieee80211_sae_hw_key *keys, size_t count)
+{
+	struct iwx_softc *sc = IC2IFP(ic)->if_softc;
+	unsigned i, slot, mask = 0;
+	int error = 0, generation = sc->sc_generation;
+
+	if (sc->sc_sae_replacing || count > 7)
+		return EBUSY;
+	for (i = 0; i < count; i++) {
+		slot = keys[i].id == IEEE80211_SAE_HW_PTK ? 0 : keys[i].id + 1;
+		if (slot >= 7 || (mask & (1 << slot)) ||
+		    keys[i].cipher != (slot >= 5 ? IEEE80211_SAE_HW_BIP :
+		    IEEE80211_CIPHER_AES_CCM))
+			return EINVAL;
+		mask |= 1 << slot;
+	}
+	iwx_sae_fence(ic);
+	sc->sc_sae_replacing = true;
+	if ((sc->sc_flags & IWX_FLAG_SHUTDOWN) ||
+	    !(IC2IFP(ic)->if_flags & IFF_RUNNING)) {
+		if (count != 0)
+			error = ENETDOWN;
+		else
+			sc->sc_sae_keys = 0;
+		goto done;
+	}
+	if (sc->sc_flags & IWX_FLAG_STA_ACTIVE) {
+		error = iwx_flush_sta(sc, (void *)ic->ic_bss);
+		if (error != 0)
+			goto done;
+		for (slot = 0; slot < 7; slot++) {
+			if (epoch != ieee80211_sae_serial(ic) ||
+			    generation != sc->sc_generation) {
+				error = ESTALE;
+				goto done;
+			}
+			if (!(sc->sc_sae_keys & (1 << slot)))
+				continue;
+			error = iwx_sae_key_cmd(sc, slot, NULL);
+			if (error != 0)
+				goto done;
+			sc->sc_sae_keys &= ~(1 << slot);
+		}
+	} else {
+		sc->sc_sae_keys = 0;
+		if (count != 0) {
+			error = ENOTCONN;
+			goto done;
+		}
+	}
+	error = iwx_sae_sync_rx(sc);
+	for (i = 0; error == 0 && i < count; i++) {
+		if (epoch != ieee80211_sae_serial(ic) ||
+		    generation != sc->sc_generation) {
+			error = ESTALE;
+			break;
+		}
+		slot = keys[i].id == IEEE80211_SAE_HW_PTK ? 0 : keys[i].id + 1;
+		error = iwx_sae_key_cmd(sc, slot, &keys[i]);
+		if (error == 0)
+			sc->sc_sae_keys |= 1 << slot;
+	}
+done:
+	if (error == 0 && (epoch != ieee80211_sae_serial(ic) ||
+	    generation != sc->sc_generation))
+		error = ESTALE;
+	if (error == 0)
+		sc->sc_sae_epoch = epoch;
+	else if (IC2IFP(ic)->if_flags & IFF_RUNNING)
+		task_add(sc->sc_systq, &sc->init_task);
+	sc->sc_sae_replacing = false;
+	return error;
+}
+
+static const struct ieee80211_sae_hw_ops iwx_sae_ops = {
+	.fence = iwx_sae_fence,
+	.replace = iwx_sae_replace,
+	.flags = IEEE80211_SAE_HW_NO_QOS_TX
+};
+
 #if defined(IWX_HT) /* iwx_set_key */
 
 int
@@ -10487,9 +10765,11 @@ iwx_newstate_task(void *psc)
 	enum ieee80211_state nstate = sc->ns_nstate;
 	enum ieee80211_state ostate = ic->ic_state;
 	int arg = sc->ns_arg;
+	uint64_t serial = sc->sc_ns_sae_serial;
 	int err = 0, s = splnet();
 
-	if (sc->sc_flags & IWX_FLAG_SHUTDOWN) {
+	if ((sc->sc_flags & IWX_FLAG_SHUTDOWN) ||
+	    serial != ieee80211_sae_serial(ic)) {
 		/* iwx_stop() is waiting for us. */
 		refcnt_rele_wake(&sc->task_refs);
 		splx(s);
@@ -10529,7 +10809,8 @@ iwx_newstate_task(void *psc)
 		}
 
 		/* Die now if iwx_stop() was called while we were sleeping. */
-		if (sc->sc_flags & IWX_FLAG_SHUTDOWN) {
+		if ((sc->sc_flags & IWX_FLAG_SHUTDOWN) ||
+		    serial != ieee80211_sae_serial(ic)) {
 			refcnt_rele_wake(&sc->task_refs);
 			splx(s);
 			return;
@@ -10562,10 +10843,13 @@ next_scan:
 	}
 
 out:
+	if (serial != ieee80211_sae_serial(ic))
+		err = ESTALE;
 	if ((sc->sc_flags & IWX_FLAG_SHUTDOWN) == 0) {
-		if (err)
+		if (err) {
+			ieee80211_sae_retire(ic);
 			task_add(sc->sc_systq, &sc->init_task);
-		else
+		} else
 			sc->sc_newstate(ic, nstate, arg);
 	}
 	refcnt_rele_wake(&sc->task_refs);
@@ -10577,6 +10861,8 @@ iwx_newstate(struct ieee80211com *ic, enum ieee80211_state nstate, int arg)
 {
 	struct ifnet *ifp = IC2IFP(ic);
 	struct iwx_softc *sc = ifp->if_softc;
+
+	ieee80211_sae_state_request(ic, nstate);
 
 	/*
 	 * Prevent attempts to transition towards the same state, unless
@@ -10600,6 +10886,7 @@ iwx_newstate(struct ieee80211com *ic, enum ieee80211_state nstate, int arg)
 
 	sc->ns_nstate = nstate;
 	sc->ns_arg = arg;
+	sc->sc_ns_sae_serial = ieee80211_sae_serial(ic);
 
 	iwx_add_task(sc, sc->sc_nswq, &sc->newstate_task);
 
@@ -10817,7 +11104,7 @@ iwx_send_update_mcc_cmd(struct iwx_softc *sc, const char *alpha2)
 	    IWX_MCC_UPDATE_CMD);
 	if (resp_version > 8) {
 		printf("%s: unsupported MCC update command response "
-		    "version %u\n", device_xname(sc->sc_dev), resp_version);
+		    "version %d\n", device_xname(sc->sc_dev), resp_version);
 		return ENOTSUP;
 	}
 
@@ -11155,7 +11442,7 @@ iwx_start(struct ifnet *ifp)
 		}
 
 		/* Don't queue additional frames while flushing Tx queues. */
-		if (sc->sc_flags & IWX_FLAG_TXFLUSH)
+		if ((sc->sc_flags & IWX_FLAG_TXFLUSH) || sc->sc_sae_replacing)
 			break;
 
 		/* need to send management frames even if we're not RUNning */
@@ -11270,6 +11557,7 @@ iwx_stop(struct ifnet *ifp, int disable __unused)
 	int i, s = splnet();
 
 	rw_assert_wrlock(&sc->ioctl_rwl);
+	ieee80211_sae_retire(ic);
 
 	sc->sc_flags |= IWX_FLAG_SHUTDOWN; /* Disallow new tasks. */
 
@@ -11296,6 +11584,9 @@ iwx_stop(struct ifnet *ifp, int disable __unused)
 		iwx_mfp_leave(sc);
 #endif
 	iwx_stop_device(sc);
+	sc->sc_sae_keys = 0;
+	sc->sc_sae_rx_pending = false;
+	wakeup(&sc->sc_sae_rx_pending);
 
 	/* Reset soft state. */
 
@@ -11587,7 +11878,7 @@ iwx_nic_umac_error(struct iwx_softc *sc)
 
 	if (ERROR_START_OFFSET <= table.valid * ERROR_ELEM_SIZE) {
 		printf("%s: Start UMAC Error Log Dump:\n", device_xname(sc->sc_dev));
-		printf("%s: Status: 0x%x, count: %d\n", device_xname(sc->sc_dev),
+		printf("%s: Status: 0x%x, count: %u\n", device_xname(sc->sc_dev),
 			sc->sc_flags, table.valid);
 	}
 
@@ -11689,7 +11980,7 @@ iwx_nic_error(struct iwx_softc *sc)
 
 	if (ERROR_START_OFFSET <= table.valid * ERROR_ELEM_SIZE) {
 		printf("%s: Start Error Log Dump:\n", device_xname(sc->sc_dev));
-		printf("%s: Status: 0x%x, count: %d\n", device_xname(sc->sc_dev),
+		printf("%s: Status: 0x%x, count: %u\n", device_xname(sc->sc_dev),
 		    sc->sc_flags, table.valid);
 	}
 
@@ -11839,7 +12130,7 @@ iwx_rx_pkt(struct iwx_softc *sc, struct iwx_rx_data *data)
 			break;
 
 		case IWX_REPLY_RX_MPDU_CMD: {
-			size_t maxlen = IWX_RBUF_SIZE - offset - minsz;
+			size_t maxlen = iwx_rx_packet_payload_len(pkt);
 			nextoff = offset +
 			    roundup(len, IWX_FH_RSCSR_FRAME_ALIGN);
 			nextpkt = (struct iwx_rx_packet *)
@@ -11997,6 +12288,10 @@ iwx_rx_pkt(struct iwx_softc *sc, struct iwx_rx_data *data)
 			break;
 		}
 
+		case IWX_WIDE_ID(IWX_DATA_PATH_GROUP, IWX_RX_QUEUES_NOTIFICATION):
+			iwx_sae_rx_synced(sc, pkt);
+			break;
+
 		case IWX_STATISTICS_NOTIFICATION: {
 			struct iwx_notif_statistics *stats;
 			SYNC_RESP_STRUCT(stats, pkt);
@@ -12019,6 +12314,7 @@ iwx_rx_pkt(struct iwx_softc *sc, struct iwx_rx_data *data)
 			printf("%s: device at critical temperature (%u degC), "
 			    "stopping device\n",
 			    device_xname(sc->sc_dev), le16toh(notif->temperature));
+			ieee80211_sae_retire(&sc->sc_ic);
 			sc->sc_flags |= IWX_FLAG_HW_ERR;
 			task_add(sc->sc_systq, &sc->init_task);
 			break;
@@ -12030,6 +12326,8 @@ iwx_rx_pkt(struct iwx_softc *sc, struct iwx_rx_data *data)
 		    IWX_RX_BAID_ALLOCATION_CONFIG_CMD):
 		case IWX_WIDE_ID(IWX_DATA_PATH_GROUP,
 		    IWX_SEC_KEY_CMD):
+		case IWX_WIDE_ID(IWX_DATA_PATH_GROUP,
+		    IWX_TRIGGER_RX_QUEUES_NOTIF_CMD):
 		case IWX_WIDE_ID(IWX_MAC_CONF_GROUP,
 		    IWX_SESSION_PROTECTION_CMD):
 		case IWX_WIDE_ID(IWX_MAC_CONF_GROUP,
@@ -12418,6 +12716,11 @@ iwx_intr(void *arg)
 
 	IWX_WRITE(sc, IWX_CSR_INT, r1 | ~sc->sc_intmask);
 
+	/* RF-kill may coalesce with a fatal cause and take its early exit. */
+	if (r1 & (IWX_CSR_INT_BIT_RF_KILL | IWX_CSR_INT_BIT_SW_ERR |
+	    IWX_CSR_INT_BIT_HW_ERR))
+		ieee80211_sae_retire(ic);
+
 	if (r1 & IWX_CSR_INT_BIT_ALIVE) {
 		int i;
 
@@ -12430,7 +12733,6 @@ iwx_intr(void *arg)
 	handled |= (r1 & (IWX_CSR_INT_BIT_ALIVE /*| IWX_CSR_INT_BIT_SCD*/));
 
 	if (r1 & IWX_CSR_INT_BIT_RF_KILL) {
-		handled |= IWX_CSR_INT_BIT_RF_KILL;
 		iwx_check_rfkill(sc);
 		task_add(sc->sc_systq, &sc->init_task);
 		rv = 1;
@@ -12451,7 +12753,6 @@ iwx_intr(void *arg)
 	}
 
 	if (r1 & IWX_CSR_INT_BIT_HW_ERR) {
-		handled |= IWX_CSR_INT_BIT_HW_ERR;
 		printf("%s: hardware error, stopping device \n", device_xname(sc->sc_dev));
 		if ((sc->sc_flags & IWX_FLAG_SHUTDOWN) == 0) {
 			sc->sc_flags |= IWX_FLAG_HW_ERR;
@@ -12521,6 +12822,15 @@ iwx_intr_msix(void *arg)
 	IWX_WRITE(sc, IWX_CSR_MSIX_HW_INT_CAUSES_AD, inta_hw);
 	inta_fh &= sc->sc_fh_mask;
 	inta_hw &= sc->sc_hw_mask;
+
+	/* Fatal and RF-kill causes fence native RX before coalesced RX work. */
+	if ((inta_fh & IWX_MSIX_FH_INT_CAUSES_FH_ERR) ||
+	    (inta_hw & (IWX_MSIX_HW_INT_CAUSES_REG_TOP_FATAL_ERR |
+	    IWX_MSIX_HW_INT_CAUSES_REG_SW_ERR |
+	    IWX_MSIX_HW_INT_CAUSES_REG_SW_ERR_V2 |
+	    IWX_MSIX_HW_INT_CAUSES_REG_HW_ERR |
+	    IWX_MSIX_HW_INT_CAUSES_REG_RF_KILL)))
+		ieee80211_sae_retire(ic);
 
 	if (inta_fh & IWX_MSIX_FH_INT_CAUSES_Q0 ||
 	    inta_fh & IWX_MSIX_FH_INT_CAUSES_Q1) {
@@ -13141,6 +13451,16 @@ iwx_config_complete(struct iwx_softc *sc)
 	/* Override 802.11 state transition machine. */
 	sc->sc_newstate = ic->ic_newstate;
 	ic->ic_newstate = iwx_newstate;
+	sc->sc_recv_mgmt = ic->ic_recv_mgmt;
+	ic->ic_recv_mgmt = iwx_recv_mgmt;
+	/* This contract is the BZ MLD RX/key ABI, not the older MVM path. */
+	if (sc->sc_device_family == IWX_DEVICE_FAMILY_BZ && sc->sc_use_mld_api) {
+		int error = ieee80211_sae_attach_hw(ic, &iwx_sae_ops);
+		if (error != 0)
+			printf("%s: native SAE/PMF unavailable (error %d)\n",
+			    device_xname(sc->sc_dev), error);
+	}
+	sc->sc_ns_sae_serial = ieee80211_sae_serial(ic);
 	ic->ic_updateslot = iwx_updateslot;
 #if defined(IWX_HT)
 	ic->ic_ampdu_rx_start = iwx_ampdu_rx_start;

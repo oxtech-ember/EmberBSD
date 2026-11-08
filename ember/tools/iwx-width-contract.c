@@ -86,6 +86,7 @@ struct iwx_softc {
 	void *sc_dev;
 	int sc_flags, sc_generation, sc_bss_ht_valid, task_refs;
 	int sc_systq, init_task, ns_arg;
+	uint64_t sc_ns_sae_serial;
 	enum ieee80211_state ns_nstate;
 	struct iwx_phy_ctxt sc_phyctxt[1];
 	int (*sc_newstate)(struct ieee80211com *, enum ieee80211_state, int);
@@ -258,6 +259,10 @@ static void task_add(int queue, int *task)
 { (void)queue; (void)task; recovery_count++; }
 static int iwx_scan(struct iwx_softc *sc) { (void)sc; return 0; }
 static int iwx_run(struct iwx_softc *sc) { (void)sc; return 0; }
+/* This existing width fixture models a station without a native SAE owner. */
+static uint64_t ieee80211_sae_serial(struct ieee80211com *ic)
+{ (void)ic; return 0; }
+static void ieee80211_sae_retire(struct ieee80211com *ic) { (void)ic; }
 
 static int
 record_newstate(struct ieee80211com *ic, enum ieee80211_state state, int arg)

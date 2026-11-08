@@ -1,5 +1,11 @@
 # Intel BE200 Wi-Fi: iwx(4) port proposal (work in progress)
 
+Status (2026-11-08): the BZ/MLD BE200 adapter now opts in to the shared
+native net80211 SAE/PMF implementation. See [the integration contract](#native-saepmf-integration-2026-11-08)
+for firmware evidence, software verification and remaining bench work.
+There is no new hardware acceptance result. The WPA2 measurements and
+stage descriptions below describe the earlier port.
+
 Status (2026-10-20): **stage 1 works on the MSI, HT/VHT negotiates**.
 The module loads at boot, the BE200 runs firmware `100.3f3ef548.0` with
 PNVM `1464be58`, scans 2.4/5 GHz, associates with WPA2-PSK (CCMP)
@@ -46,13 +52,14 @@ moving between the 2.4 and 5 GHz BSS (likely the same 5 GHz management
 rate bug; not re-verified). A fatal firmware error is still seen during
 system shutdown.
 
-Still missing: detach/unload, hardware crypto, MFP
-(so WPA3-only networks do not work), RLC_CONFIG v3 (sending the v2
-layout makes the firmware fail, so it is not sent).
+Still missing from that earlier stage: detach/unload, hardware crypto,
+MFP and RLC_CONFIG v3. Native SAE now has the RX-only crypto/PMF adapter
+described below; detach/unload and RLC_CONFIG v3 remain separate port work.
 
 ## Native SAE prerequisite audit (2026-11-08)
 
-BE200 remains opted out of the common native SAE/PMF owner. The module
+This historical audit describes the prerequisites before the integration
+below. At the audit point, BE200 was opted out of the common native SAE/PMF owner. The module
 Makefile does not define `IWX_HT`, but the separate local HT/VHT and Block
 Ack implementation is active. Software CCMP alone does not establish the
 raw management receive contract needed to advertise WPA3.
@@ -91,6 +98,124 @@ plaintext. This audit does not require recalling those submitted frames.
 No SAE capability, hardware deployment, or new hardware result is claimed.
 The earlier WPA2 measurements above remain historical results. This source
 audit was prepared with OpenAI Codex assistance.
+
+## Native SAE/PMF integration (2026-11-08)
+
+The driver is an RX hardware adapter to the common owner. SAE exchange,
+association admission, controlled-port policy, software CCMP transmit,
+CCMP replay, BIP/MMIE verification and SA Query remain in net80211 and its
+existing supplicant interface. The adapter is enabled for BZ devices using
+the MLD firmware API; it does not enable the dormant `IWX_HT` implementation.
+
+### Firmware receive and key contract
+
+The implementation uses the authenticated receive contract in pinned
+[Linux iwlmld RX](https://github.com/torvalds/linux/blob/7d0a66e4bb9081d75c82ec4957c50034cb0ea449/drivers/net/wireless/intel/iwlwifi/mld/rx.c),
+[key programming](https://github.com/torvalds/linux/blob/7d0a66e4bb9081d75c82ec4957c50034cb0ea449/drivers/net/wireless/intel/iwlwifi/mld/key.c),
+[station setup](https://github.com/torvalds/linux/blob/7d0a66e4bb9081d75c82ec4957c50034cb0ea449/drivers/net/wireless/intel/iwlwifi/mld/sta.c),
+[RX descriptors](https://github.com/torvalds/linux/blob/7d0a66e4bb9081d75c82ec4957c50034cb0ea449/drivers/net/wireless/intel/iwlwifi/fw/api/rx.h)
+and [RX queue synchronization ABI](https://github.com/torvalds/linux/blob/7d0a66e4bb9081d75c82ec4957c50034cb0ea449/drivers/net/wireless/intel/iwlwifi/fw/api/datapath.h).
+
+- `STA_CONFIG.mfp` and RX-only `SEC_KEY` snapshots install the PTK, GTKs
+  and IGTKs. `NO_TX` preserves common software encryption. Firmware gets
+  the correct unicast/multicast and MFP flags; common per-TID replay remains
+  authoritative instead of copying one PN into every firmware TID.
+- Only a protected CCMP MPDU with `SEC_CCM`, `MIC_OK`, a retained eight-byte
+  IV, a known installed key and the published hardware epoch receives
+  authenticated metadata. The common owner validates that metadata against
+  its current key before accepting firmware plaintext. Tag allocation
+  failure, missing authentication, stale epochs and bad bounds drop the frame.
+- The descriptor's combined MIC/FCS tail is trimmed as specified by the
+  authenticated firmware path; it is not guessed into separate components.
+  Descriptor versions, actual notification length and optional header padding
+  are checked before extraction. Monitor mode retains the descriptor FCS tail.
+  Group robust management frames retain MMIE for common BIP verification.
+- Key replacement first fences host RX/TX and queued reorder frames, removes
+  the previous keys, waits for an opaque-cookie RX queue drain, then installs
+  the complete new set. Exact command identity and response bounds are checked.
+  Timeout, wrong acknowledgements and ownership changes fail closed. A stale
+  notification cannot publish a new epoch or complete a newer drain.
+
+`ieee80211_sae_attach_hw()` defines this shared snapshot/metadata interface.
+Its callbacks specify non-sleeping retirement and serialized, potentially
+sleeping replacement; failure never makes a partial set usable. The driver
+stores no second SAE state machine and no persistent copy of key material.
+
+### Management and aggregation
+
+Association and action handling now runs in `ic_recv_mgmt`, after common
+management admission and PMF verification. Association mbuf replacement
+copies all provenance tags and handles allocation failure. Private Block Ack
+responses use `ieee80211_send_action()` for common crypto headroom, node
+ownership and PMF tagging. Deferred state work, TX submission, stop,
+RFkill and fatal interrupts check or retire the common generation; combined
+RX/error interrupts fence native admission before processing RX.
+
+Native BE200 transmit uses the firmware non-QoS queue and the common
+`IEEE80211_SAE_HW_NO_QOS_TX` producer policy. It therefore does not trigger
+firmware-originated TX Block Ack actions whose PMF protection is unproven.
+This limits native TX aggregation performance, not SAE or PMF security.
+Host-authenticated RX Block Ack and HT/VHT rates remain available.
+A-MSDU within A-MPDU is explicitly declined in ADDBA responses and rejected
+if received with an active BAID. Standalone firmware-deaggregated A-MSDU is
+accepted through common CCMP replay: first index, sequence/TID, increasing
+subframe indices, PN, key epoch and last-subframe boundaries must agree.
+
+### Software verification and bench remainder
+
+The host fixtures execute production functions with bounded kernel/firmware
+service models. They cover shared owner/key transactions, real CCMP/BIP,
+management admission and mbuf ownership, descriptor extraction, command
+acknowledgements, RX drain, A-MSDU replay and simultaneous fatal/RFkill RX.
+Causal mutations test that broken fencing, acknowledgements, MIC admission,
+payload bounds and interrupt ordering are rejected. These tests do not run
+firmware or reproduce arbitrary kernel scheduling interleavings.
+
+Run from the source root with an explicit compiler:
+
+```sh
+CC=clang sh ember/tests/net80211-sae.sh
+CC=clang sh ember/tools/ccmp-contract.sh
+CC=clang sh ember/tests/iwx-sae.sh
+CC=clang sh ember/tests/net80211-bip.sh
+CC=clang sh ember/tools/net80211-rxba-contract.sh
+CC=clang sh ember/tools/iwx-width-contract.sh
+CC=clang sh ember/tools/iwx-ht-contract.sh
+```
+
+`SAE_TEST_CFLAGS` selects instrumentation; `IWX_TEST_CFLAGS` can override it
+for the adapter fixtures. `IWX_ANALYZE=1` runs Clang analysis and Cppcheck
+on their exact generated translation units. The net80211 workflow runs the
+adapter alongside existing consumers under Memcheck, source analysis and
+ASan/UBSan. The amd64 module and changed kernel units also compile with the
+EmberBSD LLVM SDK and target headers.
+
+The broader target analysis also found and fixed unsupported WPA/RSN
+pairwise-selector shifts, signed firmware capability masks, invalid monitor
+allocation bounds and command-mbuf allocation failure. These paths have
+actual-source sanitizer regressions. Whole-target analysis is not claimed
+clean: Clang still reports four pre-existing final-shift dead stores in
+`sys/sys/bitops.h`; Cppcheck 2.22.0 reports kernel poison/atomic/type-check
+macros, correct `size_t` formats and a channel-profile NULL branch excluded
+by the validated callers. Those diagnostics remain enabled and recorded.
+Scoped production-function fixtures pass Clang analysis and Cppcheck.
+
+Bench acceptance still needs the matching kernel and module, recorded
+firmware/PNVM versions, WPA3-only and transition-mode association, SAE retries,
+protected/unprotected SA Query/deauth/action injection, CCMP/BIP replay and
+PTK/GTK/IGTK replacement, interface stop/restart, RFkill/reset and sustained
+traffic including RX aggregation. Capture descriptor/notification traces and
+over-the-air frames to verify retained IV/MMIE, firmware key acknowledgements,
+drain ordering and protected management transmission on the deployed firmware.
+No physical session, flash, deployment or radio test was performed for this change.
+
+A raw software-only PMF receive path without hardware keys remains unproven:
+the combined tail field does not identify the MIC/FCS split. Enabling that
+alternative, or firmware-originated protected TX BA, requires an explicit
+firmware ABI guarantee or correlated descriptor/air captures. This is a
+firmware-contract uncertainty, not evidence of a BE200 hardware limitation;
+the implemented authenticated RX/non-QoS TX path does not depend on it.
+Implementation and regression work was assisted by OpenAI Codex.
 
 ## Channel width and station lifecycle
 

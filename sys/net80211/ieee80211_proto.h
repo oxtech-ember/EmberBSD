@@ -74,6 +74,8 @@ int	ieee80211_send_probereq(struct ieee80211_node *ni,
 		const void *optie, size_t optielen);
 int	ieee80211_send_mgmt(struct ieee80211com *, struct ieee80211_node *,
 		int, int);
+int	ieee80211_send_action(struct ieee80211com *, struct ieee80211_node *,
+		const uint8_t *, size_t);
 int	ieee80211_classify(struct ieee80211com *, struct mbuf *,
 		struct ieee80211_node *);
 struct mbuf *ieee80211_encap(struct ieee80211com *, struct mbuf *,

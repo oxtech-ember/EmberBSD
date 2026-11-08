@@ -650,7 +650,16 @@ struct iwx_softc {
 	struct ethercom sc_ec;
 	struct ieee80211com sc_ic;
 	int (*sc_newstate)(struct ieee80211com *, enum ieee80211_state, int);
+	void (*sc_recv_mgmt)(struct ieee80211com *, struct mbuf *,
+	    struct ieee80211_node *, int, int, uint32_t);
 	int sc_newstate_pending;
+	uint64_t sc_ns_sae_serial;
+	uint64_t sc_ba_sae_serial;
+	uint64_t sc_sae_epoch;
+	uint64_t sc_sae_rx_cookie;
+	uint8_t sc_sae_keys;
+	bool sc_sae_replacing;
+	bool sc_sae_rx_pending;
 	int attached;
 
 	struct task		init_task; /* NB: not reference-counted */

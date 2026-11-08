@@ -37,6 +37,7 @@
 #define IEEE80211_DISCARD(...) ((void)0)
 /* This fixture covers providers that have not opted into native SAE. */
 #define ieee80211_sae_active(ic) false
+#define ieee80211_sae_qos_tx_allowed(ic) true
 #define ieee80211_sae_port_allowed(ic) true
 #define ieee80211_sae_data_allowed(ic, ni, key, eapol) true
 #define ieee80211_sae_tag_tx(ic, ni, m) 0

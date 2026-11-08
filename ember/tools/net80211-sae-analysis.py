@@ -19,6 +19,9 @@ def analyze(database, style=False):
         for argument in arguments:
             if argument == "-o":
                 next(arguments)
+            elif argument == "-c":
+                # Analysis/preprocessing select their own compiler action.
+                continue
             else:
                 source_flags.append(argument)
         # GCC's analyzer is run by the fixture compiler. Clang uses its own

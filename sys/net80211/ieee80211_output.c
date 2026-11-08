@@ -818,6 +818,7 @@ ieee80211_encap(struct ieee80211com *ic, struct mbuf *m,
 	 * configurable.
 	 */
 	addqos = (ni->ni_flags & IEEE80211_NODE_QOS) &&
+	    ieee80211_sae_qos_tx_allowed(ic) &&
 	    eh.ether_type != htons(ETHERTYPE_PAE);
 	if (addqos)
 		hdrsize = sizeof(struct ieee80211_qosframe);
@@ -1558,6 +1559,31 @@ ieee80211_add_wme_param(u_int8_t *frm, struct ieee80211_wme_state *wme)
 #undef ADDSHORT
 }
 #undef WME_OUI_BYTES
+
+/* Queue a provider's action body through the common bounded PMF transport. */
+int
+ieee80211_send_action(struct ieee80211com *ic, struct ieee80211_node *ni,
+    const uint8_t *body, size_t len)
+{
+	struct mbuf *m;
+	uint8_t *p;
+	int error;
+
+	if (ni == NULL || body == NULL || len < 2 ||
+	    len > IEEE80211_MAX_LEN - sizeof(struct ieee80211_frame))
+		return EINVAL;
+	m = ieee80211_getmgtframe(&p, len);
+	if (m == NULL)
+		return ENOMEM;
+	memcpy(p, body, len);
+	m->m_len = m->m_pkthdr.len = len;
+	ieee80211_ref_node(ni);
+	error = ieee80211_mgmt_output(ic, ni, m, IEEE80211_FC0_SUBTYPE_ACTION,
+	    0, 0, NULL, NULL, NULL, NULL);
+	if (error != 0)
+		ieee80211_free_node(ni);
+	return error;
+}
 
 /* Immediate RX ADDBA response. A success requires a prepared shared candidate. */
 int

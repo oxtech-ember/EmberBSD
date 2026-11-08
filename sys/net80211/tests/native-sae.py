@@ -25,6 +25,15 @@ source = source[source.index('enum sae_phase'):]
 fixture = (owner / 'tests/native-sae-contract.c').read_text()
 fixture = fixture.replace('/* ABI */', abi[key_start:key_end] + '\n' + abi[start:end])
 fixture = fixture.replace('/* IMPLEMENTATION */', source)
+input_source = (owner / 'ieee80211_input.c').read_text()
+duplicate = re.search(r'(?m)^static bool\nieee80211_rx_duplicate\([\s\S]+?^\}', input_source).group(0)
+fixture = fixture.replace('/* ACTUAL DUPLICATE */', duplicate)
+amsdu = re.search(r'\tamsdu = ([\s\S]+?);', input_source).group(1)
+fixture = fixture.replace('/* ACTUAL AMSDU SELECTION */',
+    'static bool input_amsdu_selection(struct ieee80211com *ic, struct ieee80211_node *ni, struct mbuf *m) { '
+    'const struct ieee80211_frame *wh=mtod(m,const void *); (void)ic; (void)ni; return ' + amsdu + '; }')
+
+
 netbsd = (owner / 'ieee80211_netbsd.c').read_text()
 allocator = re.search(r'(?m)^struct mbuf \*\nieee80211_getmgtframe\([\s\S]+?^\}', netbsd).group(0)
 crypto = (owner / 'ieee80211_crypto.c').read_text()

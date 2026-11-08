@@ -730,9 +730,80 @@ tx_pn_exhaustion(void)
 	}
 	ccmp_detach(&tx);
 }
+static void
+native_authenticated_rx(void)
+{
+    struct ifnet ifp = {0};
+    struct ieee80211com ic = {.ic_ifp = &ifp};
+    struct ieee80211_key rx, tx;
+    struct mbuf m;
+    init_key(&ic, &rx, 0, 0x11);
+    init_key(&ic, &tx, 0, 0x11);
+    frame(&m, &tx, -1, false, 1, false, 0);
+    /* Firmware result: authenticated plaintext, retained IV, stripped MIC. */
+    for (unsigned i = 0; i < 31; i++) m.m_data[32+i] = 0x31+i;
+    m_adj(&m, -8);
+    native_rx_status = -1;
+    CHECK(deliver(&rx, &m, 24) == 0);
+    native_rx_status = 1;
+    CHECK(deliver(&rx, &m, 24) == 1);
+    CHECK(deliver(&rx, &m, 24) == 0);
+    frame(&m, &tx, 7, false, 1, false, 0);
+    for (unsigned i = 0; i < 31; i++) m.m_data[34+i] = 0x31+i;
+    m_adj(&m, -8);
+    m.m_data[28] = 1;
+    CHECK(deliver(&rx, &m, 26) == 0);
+    m.m_data[28] = 0;
+    m.m_data[29] &= ~0x20;
+    CHECK(deliver(&rx, &m, 26) == 0);
+    m.m_data[29] |= 0x20;
+    CHECK(deliver(&rx, &m, 26) == 1);
+    frame(&m, &tx, 7, false, 2, false, 0);
+    for (unsigned i = 0; i < 31; i++) m.m_data[34+i] = 0x31+i;
+    m_adj(&m, -8);
+    native_amsdu_index = 1; native_amsdu_last = false;
+    CHECK(deliver(&rx, &m, 26) == 1);
+    CHECK(deliver(&rx, &m, 26) == 0);
+    native_amsdu_index = 3;
+    CHECK(deliver(&rx, &m, 26) == 1);
+    native_amsdu_index = 2;
+    CHECK(deliver(&rx, &m, 26) == 0);
+    native_amsdu_index = 4; native_amsdu_epoch++;
+    CHECK(deliver(&rx, &m, 26) == 0);
+    native_amsdu_epoch--; native_amsdu_last = true;
+    CHECK(deliver(&rx, &m, 26) == 1);
+    native_amsdu_index = 5;
+    CHECK(deliver(&rx, &m, 26) == 0);
+    native_amsdu_index = 0;
+    management_frame(&m, &tx, 1);
+    for (unsigned i = 0; i < 31; i++) m.m_data[32+i] = 0x31+i;
+    m_adj(&m, -8);
+    CHECK(deliver(&rx, &m, 24) == 1);
+    CHECK(deliver(&rx, &m, 24) == 0);
+    for (unsigned length = 2; length <= 4; length += 2) {
+        uint8_t body[4] = {8, 0, 1, 2};
+        management_plain(&m, length == 2 ? 0xc0 : 0xd0, body, length);
+        tx.wk_keytsc = length;
+        CHECK(ccmp_encap(&tx, &m, 0) == 1);
+        memcpy(m.m_data + 32, body, length); m_adj(&m, -8);
+        struct mbuf *short_frame = duplicate(&m);
+        CHECK(ccmp_decap(&rx, short_frame, 24) == 1);
+        CHECK(short_frame->m_pkthdr.len == (int)(24 + length));
+        CHECK(memcmp(short_frame->m_data + 24, body, length) == 0);
+        free(short_frame);
+    }
+    frame(&m, &tx, -1, false, 100, true, 0);
+    for (unsigned i = 0; i < 31; i++) m.m_data[32+i] = 0x31+i;
+    m_adj(&m, -8);
+    CHECK(deliver(&rx, &m, 24) == 1);
+    CHECK(deliver(&rx, &m, 24) == 0);
+    native_rx_status = 0;
+    ccmp_detach(&rx); ccmp_detach(&tx);
+}
 int
 main(void)
 {
+	native_authenticated_rx();
 	mbuf_writable_headroom();
 	CHECK(aes_ccm_selftest() == 0);
 	replay_domains();

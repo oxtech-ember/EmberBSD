@@ -9,6 +9,8 @@ trap 'rm -rf "$work"' EXIT HUP INT TERM
 flags=${SAE_TEST_CFLAGS:-${CFLAGS:-}}
 "${PYTHON:-python3}" "$src/sys/net80211/tests/native-sae.py" \
     --cc "$CC" --cflags="$flags" --build-dir "$work/native"
+"${PYTHON:-python3}" "$src/ember/tools/net80211-cipher-parser-contract.py" \
+    --cc "$CC" --cflags="$flags" --build-dir "$work/cipher-parser"
 "${PYTHON:-python3}" "$src/ember/tools/bsd-sae-contract.py" \
     --cc "$CC" --cflags="$flags" --build-dir "$work/bsd"
 mkdir "$work/rtw89"
@@ -18,5 +20,5 @@ mkdir "$work/rtw89"
 if [ "${SAE_ANALYZE:-0}" = 1 ]; then
     "${PYTHON:-python3}" "$src/ember/tools/net80211-sae-analysis.py" \
         "$work/native/compile_commands.json" "$work/bsd/compile_commands.json" \
-        "$work/rtw89/compile_commands.json"
+        "$work/rtw89/compile_commands.json" "$work/cipher-parser/compile_commands.json"
 fi

@@ -86,7 +86,7 @@ struct ieee80211_key {
     const struct ieee80211_cipher *wk_cipher;
     void *wk_private;
 };
-struct ieee80211_node { uint8_t ni_bssid[6], ni_essid[32], ni_esslen;
+struct ieee80211_node { uint16_t ni_rxseqs[17]; uint8_t ni_bssid[6], ni_essid[32], ni_esslen;
     unsigned ni_txseqs[1], ni_flags, ni_inact_reload; struct ieee80211com *ni_ic; struct ieee80211_key ni_ucastkey; };
 struct ieee80211_frame { uint8_t i_fc[2], i_dur[2], i_addr1[6], rest[14]; };
 struct m_tag { struct m_tag *next; unsigned m_tag_id, m_tag_len; };
@@ -204,13 +204,23 @@ static void aes_setenckey128(struct aesenc *a,const uint8_t k[16]){memcpy(a->key
 static void aes_enc(const void *ctx,const uint8_t in[16],uint8_t out[16],int rounds){
     const struct aesenc *a=ctx;assert(rounds==10);
     for(unsigned i=0;i<16;i++)out[i]=(uint8_t)(in[(i+1)%16]^a->key[i]^0x63);}
+#include "ieee80211_sae.h"
 static struct ieee80211_key *ieee80211_crypto_decap(struct ieee80211com *ic,
     struct ieee80211_node *ni,struct mbuf **mp,int hdr){
     (void)ic;struct mbuf *m=*mp;assert(hdr==24);if(reject_crypto)return NULL;
-    memmove(m->m_data+24,m->m_data+32,m->m_pkthdr.len-40);
-    m->m_len-=16;m->m_pkthdr.len-=16;return &ni->ni_ucastkey;}
+    int strip=ieee80211_sae_rx_status(ic,&ni->ni_ucastkey,m)==1?8:16;
+    memmove(m->m_data+24,m->m_data+32,m->m_pkthdr.len-24-strip);
+    m->m_len-=strip;m->m_pkthdr.len-=strip;return &ni->ni_ucastkey;}
 /* AUTH VALIDATOR */
+#include "ieee80211_sae.h"
 /* IMPLEMENTATION */
+#define IEEE80211_SEQ_SEQ_SHIFT 4
+#define IEEE80211_FC1_RETRY 8
+/* ACTUAL DUPLICATE */
+struct ieee80211_qosframe { uint8_t header[24], i_qos[2]; };
+#define ieee80211_has_qos(wh) (((wh)->i_fc[0]&0x8c)==0x88)
+#define IEEE80211_QOS_AMSDU 0x80
+/* ACTUAL AMSDU SELECTION */
 #define ieee80211_cipher_none none
 #define M_LEADINGSPACE(m) ((m)->readonly ? 0 : (m)->m_data-(m)->storage)
 static unsigned prepend_replacements,pullup_replacements;
@@ -245,10 +255,12 @@ static void connect(struct ieee80211com *ic,uint32_t generation){
     CHECK(ieee80211_sae_request(ic,&r)==0);CHECK(ic->ic_state==IEEE80211_S_ASSOC);
     CHECK(ieee80211_new_state(ic,IEEE80211_S_RUN,0)==0);CHECK(!(ic->ic_bss->ni_flags & IEEE80211_NODE_AUTH));}
 static int install(struct ieee80211com *ic,unsigned id,uint8_t material){
+    assert(ic->ic_sae != NULL);
     struct ieee80211req_key k={0};k.ik_type=3;k.ik_keyix=id;k.ik_keylen=16;
     k.ik_flags=id==65535?3:7;memcpy(k.ik_macaddr,ic->ic_sae->bssid,6);memset(k.ik_keydata,material,16);
     struct ieee80211req_sae r=request(ic,7,sizeof(k));memcpy(r.data,&k,sizeof(k));return ieee80211_sae_request(ic,&r);}
 static struct mbuf *frame(const struct ieee80211com *ic, uint8_t type, size_t len) {
+    assert(ic->ic_sae != NULL);
     struct mbuf *m = mbuf_new();
     if (m == NULL)
         abort();
@@ -269,6 +281,168 @@ static void bip_mic(struct mbuf *m,const uint8_t key[16]){
     aes_setenckey128(&a,key);CHECK(ieee80211_bip_cmac(sae_aes,&a,parts,2,mic));memcpy(m->m_data+len-8,mic,8);}
 static bool key_counters(const struct ieee80211_key *key,uint64_t tx,uint64_t rx)
 { return key->wk_keytsc==tx && key->wk_keyrsc==rx; }
+static unsigned hw_calls, hw_fences;
+static int hw_error;
+static bool hw_retire;
+static void hw_fence(struct ieee80211com *ic) { (void)ic; hw_fences++; }
+static int hw_replace(struct ieee80211com *ic, uint64_t epoch,
+    const struct ieee80211_sae_hw_key *keys, size_t count)
+{
+    CHECK(epoch == ieee80211_sae_serial(ic));
+    CHECK(count <= 7);
+    for (size_t i = 0; i < count; i++)
+        CHECK(keys[i].cipher == ((keys[i].id == 4 || keys[i].id == 5) ?
+            IEEE80211_SAE_HW_BIP : IEEE80211_CIPHER_AES_CCM));
+    struct mbuf *m = frame(ic, 0xc0, 40);
+    CHECK(ieee80211_sae_tag_tx(ic, ic->ic_bss, m) != 0);
+    CHECK(!ieee80211_sae_tx_current(ic, ic->ic_bss, m));
+    m_freem(m);
+    hw_calls++;
+    if (hw_retire) ieee80211_sae_retire(ic);
+    return hw_error;
+}
+static const struct ieee80211_sae_hw_ops hw_ops = {
+    .fence = hw_fence, .replace = hw_replace, .flags = IEEE80211_SAE_HW_NO_QOS_TX
+};
+static void hardware_contract(struct ieee80211com *ic)
+{
+    ieee80211_sae_detach(ic);
+    CHECK(ieee80211_sae_attach_hw(ic, &hw_ops) == 0);
+    CHECK(ieee80211_sae_qos_tx_allowed(ic));
+    connect(ic, 100);
+    CHECK(!ieee80211_sae_qos_tx_allowed(ic));
+    CHECK(!ic->ic_sae->hw_blocked);
+    hw_calls = 0;
+    CHECK(install(ic, 65535, 0x71) == 0);
+    CHECK(hw_calls == 1 && hw_fences > 0);
+    uint64_t epoch = ieee80211_sae_serial(ic);
+    CHECK(install(ic, 65535, 0x71) == 0 && hw_calls == 1);
+    struct mbuf *m = frame(ic, 0xc0, 40);
+    CHECK(ieee80211_sae_rx_status(ic, &ic->ic_bss->ni_ucastkey, m) == -1);
+    CHECK(ieee80211_sae_tag_rx(ic, m, epoch, 65535, 3, 6) == EACCES);
+    CHECK(ieee80211_sae_tag_rx(ic, m, epoch, 65535, 2, 7) == EACCES);
+    CHECK(ieee80211_sae_tag_rx(ic, m, epoch-1, 65535, 3, 7) == EACCES);
+    fail_alloc = true;
+    CHECK(ieee80211_sae_tag_rx(ic, m, epoch, 65535, 3, 7) == ENOMEM);
+    fail_alloc = false;
+    CHECK(ieee80211_sae_tag_rx(ic, m, epoch, 65535, 3,
+        IEEE80211_SAE_RX_AUTHENTICATED | IEEE80211_SAE_RX_IV_PRESENT |
+        IEEE80211_SAE_RX_MIC_STRIPPED) == 0);
+    CHECK(ieee80211_sae_rx_status(ic, &ic->ic_bss->ni_ucastkey, m) == 1);
+    CHECK(ieee80211_sae_rx_status(ic, &ic->ic_nw_keys[0], m) == -1);
+    struct mbuf *aggregate = frame(ic, 0x88, 60);
+    CHECK(ieee80211_sae_tag_rx_amsdu(ic, aggregate, epoch, 65535, 3, 7, 0, false) == EINVAL);
+    CHECK(ieee80211_sae_tag_rx_amsdu(ic, aggregate, epoch, 65535, 3, 7, 128, false) == EINVAL);
+    CHECK(ieee80211_sae_tag_rx_amsdu(ic, aggregate, epoch, 65535, 3, 7, 1, true) == 0);
+    uint64_t aggregate_epoch = 0; unsigned aggregate_index = 0; bool aggregate_last = false;
+    CHECK(ieee80211_sae_rx_amsdu(ic, &ic->ic_bss->ni_ucastkey, aggregate,
+        &aggregate_epoch, &aggregate_index, &aggregate_last));
+    CHECK(aggregate_epoch == epoch && aggregate_index == 1 && aggregate_last);
+    aggregate->m_data[1] = 64; aggregate->m_data[24] = 0x80;
+    CHECK(!input_amsdu_selection(ic, ic->ic_bss, aggregate));
+    aggregate->m_data[1] = 0;
+    CHECK(input_amsdu_selection(ic, ic->ic_bss, aggregate));
+    ic->ic_bss->ni_rxseqs[8] = 0x100;
+    aggregate->m_data[1] = 72;
+    CHECK(ieee80211_rx_duplicate(ic, ic->ic_bss, aggregate, 8, 0x100));
+    m_freem(aggregate);
+    aggregate = frame(ic, 0x88, 60); aggregate->m_data[1] = 72;
+    CHECK(ieee80211_sae_tag_rx_amsdu(ic, aggregate, epoch, 65535, 3, 7, 2, true) == 0);
+    CHECK(!ieee80211_rx_duplicate(ic, ic->ic_bss, aggregate, 8, 0x100));
+    aggregate->m_data[1] = 8;
+    CHECK(ieee80211_rx_duplicate(ic, ic->ic_bss, aggregate, 8, 0x100));
+    aggregate->m_data[1] = 72;
+    ((struct sae_rx_packet *)(m_tag_find(aggregate, SAE_RX_TAG)+1))->epoch--;
+    CHECK(ieee80211_rx_duplicate(ic, ic->ic_bss, aggregate, 8, 0x100));
+    m_freem(aggregate);
+    struct ieee80211req_sae r = request(ic, IEEE80211_SAE_SET_IGTK, 24);
+    r.data[0] = 4; memset(r.data+8, 0x55, 16);
+    CHECK(ieee80211_sae_request(ic, &r) == 0);
+    r = request(ic, IEEE80211_SAE_SET_PORT, 1); r.data[0] = 1;
+    CHECK(ieee80211_sae_request(ic, &r) == 0);
+    CHECK(ieee80211_sae_port_allowed(ic));
+    unsigned prior_fences = hw_fences;
+    r.data[0] = 0;
+    CHECK(ieee80211_sae_request(ic, &r) == 0);
+    CHECK(hw_fences > prior_fences);
+    r.data[0] = 1;
+    CHECK(ieee80211_sae_request(ic, &r) == 0);
+    CHECK(ieee80211_sae_port_allowed(ic));
+    r = request(ic, IEEE80211_SAE_DELETE_IGTK, 2); r.data[0] = 4;
+    CHECK(ieee80211_sae_request(ic, &r) == 0);
+    CHECK(ic->ic_sae->hw_epoch == ieee80211_sae_serial(ic));
+    CHECK(install(ic, 1, 0x33) == 0);
+    struct mbuf *group = frame(ic, 0x08, 60); group->m_data[4] = 1;
+    CHECK(ieee80211_sae_tag_rx(ic, group, ieee80211_sae_serial(ic), 1, 3, 7) == 0);
+    CHECK(ieee80211_sae_rx_status(ic, &ic->ic_nw_keys[1], group) == 1);
+    CHECK(ieee80211_sae_rx_status(ic, &ic->ic_bss->ni_ucastkey, group) == -1);
+    m_freem(group);
+    CHECK(install(ic, 65535, 0x72) == 0);
+    CHECK(ieee80211_sae_rx_status(ic, &ic->ic_bss->ni_ucastkey, m) == -1);
+    m_freem(m);
+    m = frame(ic, 0xd0, 36); m->m_data[1] = 64;
+    m->m_data[32] = 8; m->m_data[33] = 0;
+    CHECK(ieee80211_sae_tag_rx(ic, m, ieee80211_sae_serial(ic), 65535, 3, 7) == 0);
+    CHECK(ieee80211_sae_input(ic, ic->ic_bss, &m) == 1);
+    CHECK(m->m_pkthdr.len == 28); m_freem(m);
+    hw_error = EIO;
+    CHECK(install(ic, 65535, 0x73) == EIO);
+    CHECK(!ieee80211_sae_port_allowed(ic));
+    hw_error = 0; hw_retire = true;
+    CHECK(install(ic, 65535, 0x74) != 0);
+    CHECK(ic->ic_sae->phase == SAE_RETIRED);
+    hw_retire = false;
+    connect(ic, 101); CHECK(install(ic, 65535, 0x75) == 0);
+    m = frame(ic, 0xc0, 34); m->m_data[1] = 64; m->m_data[32] = 3;
+    CHECK(ieee80211_sae_tag_rx(ic, m, ieee80211_sae_serial(ic), 65535, 3, 7) == 0);
+    CHECK(ieee80211_sae_input(ic, ic->ic_bss, &m) == 1);
+    CHECK(m->m_pkthdr.len == 26); m_freem(m);
+    struct ieee80211req_sae off = request(ic, IEEE80211_SAE_CONFIGURE, 1);
+    off.data[0] = 0;
+    hw_error = EIO;
+    CHECK(ieee80211_sae_request(ic, &off) == EIO);
+    CHECK(ieee80211_sae_active(ic));
+    hw_error = 0;
+    unsigned before_disable = hw_calls;
+    CHECK(ieee80211_sae_request(ic, &off) == 0);
+    CHECK(hw_calls == before_disable + 1);
+    CHECK(ieee80211_sae_qos_tx_allowed(ic));
+    m = frame(ic, 0x08, 40);
+    CHECK(ieee80211_sae_tx_current(ic, ic->ic_bss, m)); m_freem(m);
+    for (unsigned operation = 0; operation < 3; operation++) {
+        for (unsigned stale = 0; stale < 2; stale++) {
+            connect(ic, 110 + operation * 2 + stale);
+            CHECK(install(ic, 65535, 0x61) == 0);
+            struct ieee80211req_sae change = request(ic, IEEE80211_SAE_SET_IGTK, 24);
+            change.data[0] = 4; memset(change.data+8, 0x62, 16);
+            CHECK(ieee80211_sae_request(ic, &change) == 0);
+            if (operation == 0) {
+                memset(change.data+8, 0x63, 16);
+            } else if (operation == 1) {
+                struct ieee80211req_del_key dk = {0};
+                dk.idk_keyix = 255; memcpy(dk.idk_macaddr, ic->ic_sae->bssid, 6);
+                change = request(ic, IEEE80211_SAE_DELETE_KEY, sizeof(dk));
+                memcpy(change.data, &dk, sizeof(dk));
+            } else {
+                change = request(ic, IEEE80211_SAE_SET_PORT, 1); change.data[0] = 1;
+                CHECK(ieee80211_sae_request(ic, &change) == 0);
+                change.data[0] = 0; CHECK(ieee80211_sae_request(ic, &change) == 0);
+                change.data[0] = 1;
+            }
+            hw_retire = stale != 0; hw_error = stale ? 0 : EIO;
+            CHECK(ieee80211_sae_request(ic, &change) == (stale ? ESTALE : EIO));
+            CHECK(!ieee80211_sae_port_allowed(ic) && ic->ic_sae->hw_blocked);
+            CHECK(!ic->ic_sae->hw_reopen);
+            hw_retire = false; hw_error = 0;
+            ieee80211_sae_retire(ic);
+        }
+    }
+    connect(ic, 120); CHECK(install(ic, 65535, 0x64) == 0);
+    prior_fences = hw_fences;
+    ieee80211_sae_key_changed(ic, &ic->ic_bss->ni_ucastkey);
+    CHECK(hw_fences > prior_fences && ic->ic_sae->hw_blocked);
+    ieee80211_sae_retire(ic);
+}
 int main(void){
 #ifdef SAE_TEST_NO_ATOMIC64
     struct ieee80211com unsupported={0};
@@ -436,6 +610,8 @@ int main(void){
     CHECK(ieee80211_sae_serial(&ic)>serial);serial=ieee80211_sae_serial(&ic);
     CHECK(ieee80211_sae_attach(&ic)==0);CHECK(ieee80211_sae_serial(&ic)>serial);
     CHECK(config(&ic,13)==0);ieee80211_sae_retire(&ic);
+    hardware_contract(&ic);
+    ic.ic_sae->generation=13;
     ic.ic_sae->serial=UINT64_MAX;CHECK(config(&ic,14)==EINVAL);CHECK(ic.ic_sae->generation==13);
     CHECK(fences==unfences);ieee80211_sae_detach(&ic);CHECK(ic.ic_sae==NULL);
     printf("PASS: %u native SAE lifetime/key/PMF checks\n",checks);return 0;

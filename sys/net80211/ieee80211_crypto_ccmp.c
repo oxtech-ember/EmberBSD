@@ -58,6 +58,7 @@ __KERNEL_RCSID(0, "$NetBSD: ieee80211_crypto_ccmp.c,v 1.20 2023/06/24 05:12:03 m
 #include <net/if_ether.h>
 #include <net/if_media.h>
 
+#include <net80211/ieee80211_sae.h>
 #include <net80211/ieee80211_var.h>
 
 #include <crypto/aes/aes.h>
@@ -72,7 +73,15 @@ __KERNEL_RCSID(0, "$NetBSD: ieee80211_crypto_ccmp.c,v 1.20 2023/06/24 05:12:03 m
  * Keep QoS state private. The key scalar remains the non-QoS RSC.
  * Prepared with OpenAI Codex assistance.
  */
+struct ccmp_rx_aggregate {
+	uint64_t epoch, pn;
+	uint16_t sequence;
+	unsigned index;
+	bool active;
+};
+
 struct ccmp_ctx {
+	struct ccmp_rx_aggregate cc_aggregate[16];
 	struct aesenc cc_aes;
 	struct ieee80211com *cc_ic;	/* for diagnostics */
 	uint64_t cc_rxrsc[16];		/* one replay domain per QoS TID */
@@ -145,6 +154,7 @@ ccmp_setkey(struct ieee80211_key *k)
 	}
 	if (k->wk_flags & IEEE80211_KEY_SWCRYPT)
 		aes_setenckey128(&ctx->cc_aes, k->wk_key);
+	memset(ctx->cc_aggregate, 0, sizeof(ctx->cc_aggregate));
 	for (i = 0; i < __arraycount(ctx->cc_rxrsc); i++)
 		ctx->cc_rxrsc[i] = k->wk_keyrsc;
 	ctx->cc_mgtrsc = k->wk_keyrsc;
@@ -274,6 +284,17 @@ ccmp_decap(struct ieee80211_key *k, struct mbuf *m, int hdrlen)
 	uint8_t *ivp;
 	uint64_t pn, *rsc;
 	int minhdr, ismgmt;
+	uint64_t epoch = 0;
+	unsigned index = 0;
+	bool last = false, aggregate, continuation = false;
+	struct ccmp_rx_aggregate *chain = NULL;
+	uint16_t sequence = 0;
+	int authenticated = ieee80211_sae_rx_status(ctx->cc_ic, k, m);
+
+	if (authenticated < 0)
+		return 0;
+	aggregate = authenticated && ieee80211_sae_rx_amsdu(ctx->cc_ic,
+	    k, m, &epoch, &index, &last);
 
 	/* Validate every header byte before selecting the replay domain. */
 	if (m->m_len < (int)sizeof(*wh) ||
@@ -293,7 +314,7 @@ ccmp_decap(struct ieee80211_key *k, struct mbuf *m, int hdrlen)
 	if (hdrlen < minhdr || hdrlen > m->m_len ||
 	    ccmp.ic_header > (unsigned)(m->m_len - hdrlen) ||
 	    hdrlen > m->m_pkthdr.len ||
-	    ccmp.ic_header + ccmp.ic_trailer >=
+	    ccmp.ic_header + (authenticated ? 0 : ccmp.ic_trailer) >=
 	    (unsigned)(m->m_pkthdr.len - hdrlen))
 		goto badformat;
 	rsc = &k->wk_keyrsc;
@@ -308,7 +329,7 @@ ccmp_decap(struct ieee80211_key *k, struct mbuf *m, int hdrlen)
 	 * verify the former and validate the latter.
 	 */
 	ivp = mtod(m, uint8_t *) + hdrlen;
-	if (ismgmt && (ivp[2] != 0 || (ivp[3] & 0x1f) != 0))
+	if ((ismgmt || authenticated) && (ivp[2] != 0 || (ivp[3] & 0x1f) != 0))
 		goto badformat;
 	if ((ivp[IEEE80211_WEP_IVLEN] & IEEE80211_WEP_EXTIV) == 0) {
 		/*
@@ -321,7 +342,22 @@ ccmp_decap(struct ieee80211_key *k, struct mbuf *m, int hdrlen)
 		return 0;
 	}
 	pn = READ_6(ivp[0], ivp[1], ivp[4], ivp[5], ivp[6], ivp[7]);
-	if (pn <= *rsc) {
+	if (!ismgmt && ieee80211_has_qos(wh))
+		chain = &ctx->cc_aggregate[mtod(m, uint8_t *)[minhdr - 2] &
+		    IEEE80211_QOS_TID];
+	if (aggregate) {
+		if (chain == NULL || index == 0 || index > 127 ||
+		    (wh->i_fc[1] & IEEE80211_FC1_MORE_FRAG) ||
+		    (wh->i_seq[0] & 15))
+			goto badformat;
+		sequence = wh->i_seq[0] | (uint16_t)wh->i_seq[1] << 8;
+		continuation = chain->active && chain->epoch == epoch &&
+		    chain->pn == pn && pn == *rsc && chain->sequence == sequence &&
+		    index > chain->index;
+		if (index != 1 && !continuation)
+			goto badformat;
+	}
+	if (pn <= *rsc && !continuation) {
 		/*
 		 * Replay violation.
 		 */
@@ -338,16 +374,28 @@ ccmp_decap(struct ieee80211_key *k, struct mbuf *m, int hdrlen)
 	 * latter we leave the header in place for use in the
 	 * decryption work.
 	 */
-	if ((k->wk_flags & IEEE80211_KEY_SWCRYPT) &&
+	if (!authenticated && (k->wk_flags & IEEE80211_KEY_SWCRYPT) &&
 	    !ccmp_decrypt(k, pn, m, hdrlen))
 		return 0;
 
 	/*
 	 * Copy up 802.11 header and strip crypto bits.
 	 */
+	if (chain != NULL) {
+		chain->active = aggregate && !last;
+		if (aggregate) {
+			chain->epoch = epoch;
+			chain->pn = pn;
+			chain->sequence = sequence;
+			chain->index = index;
+			/* Firmware already split the MSDUs. */
+			mtod(m, uint8_t *)[minhdr - 2] &= ~0x80;
+		}
+	}
 	memmove(mtod(m, u_int8_t *) + ccmp.ic_header, mtod(m, void *), hdrlen);
 	m_adj(m, ccmp.ic_header);
-	m_adj(m, -ccmp.ic_trailer);
+	if (!authenticated)
+		m_adj(m, -ccmp.ic_trailer);
 
 	/*
 	 * Ok to update rsc now.

@@ -61,7 +61,8 @@
 #define IEEE80211_CIPHER_AES_CCM 3
 #define IEEE80211_M_STA 1
 #define IEEE80211_F_DATAPAD 0x00002000
-#define IEEE80211_DPRINTF(...) ((void)0)
+static inline void test_dprintf(void) {}
+#define IEEE80211_DPRINTF(...) test_dprintf()
 #define IEEE80211_MSG_CRYPTO 0
 #define IEEE80211_ADDR_COPY(d, s) memcpy((d), (s), 6)
 #define IEEE80211_ADDR_EQ(a, b) (memcmp((a), (b), 6) == 0)
@@ -305,6 +306,30 @@ aes_ccm_dec1(const struct aesenc *e, const uint8_t in[static 16],
 #include "native-ccm-mbuf.inc"
 #include "native-ccm.inc"
 #include "native-notify.inc"
+static unsigned native_amsdu_index;
+static bool native_amsdu_last;
+static uint64_t native_amsdu_epoch = 1;
+static bool
+ieee80211_sae_rx_amsdu(const struct ieee80211com *ic,
+    const struct ieee80211_key *key, struct mbuf *m,
+    uint64_t *epoch, unsigned *index, bool *last)
+{
+    (void)ic; (void)key; (void)m;
+    *epoch = native_amsdu_epoch; *index = native_amsdu_index;
+    *last = native_amsdu_last;
+    return native_amsdu_index != 0;
+}
+static int native_rx_status;
+static int
+ieee80211_sae_rx_status(const struct ieee80211com *ic,
+    const struct ieee80211_key *key, struct mbuf *m)
+{
+    (void)ic; (void)key; (void)m;
+    return native_rx_status;
+}
+#define ieee80211_sae_rx_continuation(ic, ni, m) false
+#define ieee80211_sae_rx_deaggregated(ic, ni, m) false
+#define ieee80211_sae_qos_tx_allowed(ic) true
 #include "native-ccmp.inc"
 static int
 copyin(const void *in, void *out, size_t n)

@@ -713,7 +713,11 @@ ieee80211_crypto_decap(struct ieee80211com *ic,
 	/*
 	 * Ensure there is a header+trailer included.
 	 */
-	if (m->m_pkthdr.len < hdrlen + cip->ic_header + cip->ic_trailer) {
+	int authenticated = ieee80211_sae_rx_status(ic, k, m);
+	if (authenticated < 0)
+		return NULL;
+	if (m->m_pkthdr.len < hdrlen + cip->ic_header +
+	    (authenticated ? 0 : cip->ic_trailer)) {
 		IEEE80211_DPRINTF(ic, IEEE80211_MSG_ANY,
 			"%s: WEP data frame too short, len %u\n",
 			__func__, m->m_pkthdr.len);

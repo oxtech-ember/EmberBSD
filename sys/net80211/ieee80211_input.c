@@ -299,7 +299,8 @@ ieee80211_input_data(struct ieee80211com *ic, struct mbuf **mp,
 		goto out;
 	}
 	wh = mtod(m, struct ieee80211_frame *);
-	amsdu = ieee80211_has_qos(wh) &&
+	amsdu = !ieee80211_sae_rx_deaggregated(ic, ni, m) &&
+	    ieee80211_has_qos(wh) &&
 	    (((const struct ieee80211_qosframe *)wh)->i_qos[0] &
 	    IEEE80211_QOS_AMSDU) != 0;
 	if (amsdu && (ic->ic_opmode != IEEE80211_M_STA ||
@@ -660,6 +661,23 @@ ieee80211_input_control(struct ieee80211com *ic, struct mbuf *m,
 
 /* -------------------------------------------------------------------------- */
 
+/* Duplicate filtering runs before crypto; authenticated deaggregation may
+ * defer a subframe to CCMP's epoch/PN/sequence/index replay checks. */
+static bool
+ieee80211_rx_duplicate(struct ieee80211com *ic, struct ieee80211_node *ni,
+    struct mbuf *m, unsigned tid, uint16_t rxseq)
+{
+	const struct ieee80211_frame *wh = mtod(m, const void *);
+	unsigned rxno = rxseq >> IEEE80211_SEQ_SEQ_SHIFT;
+	unsigned old = ni->ni_rxseqs[tid] >> IEEE80211_SEQ_SEQ_SHIFT;
+
+	if (ieee80211_sae_rx_continuation(ic, ni, m))
+		return false;
+	return (wh->i_fc[1] & IEEE80211_FC1_RETRY) &&
+	    ((old == 4095 && rxno == old) || (old != 4095 &&
+	    (int)(rxseq - ni->ni_rxseqs[tid]) <= 0));
+}
+
 /*
  * Process a received frame.  The node associated with the sender
  * should be supplied.  If nothing was found in the node table then
@@ -674,7 +692,6 @@ int
 ieee80211_input(struct ieee80211com *ic, struct mbuf *m,
 	struct ieee80211_node *ni, int rssi, u_int32_t rstamp)
 {
-#define	SEQ_LEQ(a,b)	((int)((a)-(b)) <= 0)
 #define	HAS_SEQ(type)	((type & 0x4) == 0)
 	struct ifnet *ifp = ic->ic_ifp;
 	struct ieee80211_frame *wh;
@@ -835,8 +852,7 @@ ieee80211_input(struct ieee80211com *ic, struct mbuf *m,
 		if (!(type == IEEE80211_FC0_TYPE_MGT && ieee80211_sae_active(ic)) &&
 		    HAS_SEQ(type) && (ic->ic_opmode != IEEE80211_M_STA ||
 		    !IEEE80211_IS_MULTICAST(wh->i_addr1))) {
-			u_int8_t tid, retry;
-			u_int16_t rxno, orxno;
+			u_int8_t tid;
 
 			if (ieee80211_has_qos(wh)) {
 				struct ieee80211_qosframe *qosf;
@@ -860,21 +876,14 @@ ieee80211_input(struct ieee80211com *ic, struct mbuf *m,
 			}
 
 			rxseq = le16toh(*(u_int16_t *)wh->i_seq);
-			retry = wh->i_fc[1] & IEEE80211_FC1_RETRY;
-			rxno = rxseq >> IEEE80211_SEQ_SEQ_SHIFT;
-			orxno = ni->ni_rxseqs[tid] >> IEEE80211_SEQ_SEQ_SHIFT;
 
-			if (retry && (
-			    (orxno == 4095 && rxno == orxno) ||
-			    (orxno != 4095 &&
-			     SEQ_LEQ(rxseq, ni->ni_rxseqs[tid]))
-			    )) {
+			if (ieee80211_rx_duplicate(ic, ni, m, tid, rxseq)) {
 				/* duplicate, discard */
 				IEEE80211_DISCARD_MAC(ic, IEEE80211_MSG_INPUT,
 				    bssid, "duplicate",
 				    "seqno <%u,%u> fragno <%u,%u> tid %u",
-				    rxno,
-				    orxno,
+				    rxseq >> IEEE80211_SEQ_SEQ_SHIFT,
+				    ni->ni_rxseqs[tid] >> IEEE80211_SEQ_SEQ_SHIFT,
 				    rxseq & IEEE80211_SEQ_FRAG_MASK,
 				    ni->ni_rxseqs[tid] &
 					IEEE80211_SEQ_FRAG_MASK,
@@ -922,7 +931,6 @@ out:
 		m_freem(m);
 	}
 	return type;
-#undef SEQ_LEQ
 }
 
 /*
@@ -1453,7 +1461,6 @@ ieee80211_auth_shared(struct ieee80211com *ic, struct ieee80211_frame *wh,
 		}
 		if (*frm == IEEE80211_ELEMID_CHALLENGE)
 			challenge = frm;
-		frm += frm[1] + 2;
 	}
 
 	switch (seq) {
@@ -1760,7 +1767,7 @@ wpa_cipher(u_int8_t *sel, u_int8_t *keylen)
 	case WPA_SEL(WPA_CSE_CCMP):
 		return IEEE80211_CIPHER_AES_CCM;
 	}
-	return 32;		/* NB: so 1<< is discarded */
+	return 32;		/* Unsupported selector; not a valid bit index. */
 #undef WPA_SEL
 }
 
@@ -1797,7 +1804,7 @@ ieee80211_parse_wpa(struct ieee80211com *ic, u_int8_t *frm,
 {
 	u_int8_t len = frm[1];
 	u_int32_t w;
-	int n;
+	int cipher, n;
 
 	if ((ic->ic_flags & IEEE80211_F_WPA1) == 0) {
 		IEEE80211_DISCARD_IE(ic,
@@ -1852,9 +1859,14 @@ ieee80211_parse_wpa(struct ieee80211com *ic, u_int8_t *frm,
 		    len, n);
 		return IEEE80211_REASON_IE_INVALID;
 	}
+	/* This pairwise chooser implements only TKIP and CCMP.
+	 * Unsupported and group-only selectors cannot imply CCMP support. */
 	w = 0;
 	for (; n > 0; n--) {
-		w |= 1 << wpa_cipher(frm, &rsn->rsn_ucastkeylen);
+		cipher = wpa_cipher(frm, NULL);
+		if (cipher == IEEE80211_CIPHER_TKIP ||
+		    cipher == IEEE80211_CIPHER_AES_CCM)
+			w |= 1U << cipher;
 		frm += 4, len -= 4;
 	}
 	w &= rsn->rsn_ucastcipherset;
@@ -1931,7 +1943,7 @@ rsn_cipher(u_int8_t *sel, u_int8_t *keylen)
 	case RSN_SEL(RSN_CSE_WRAP):
 		return IEEE80211_CIPHER_AES_OCB;
 	}
-	return 32;		/* NB: so 1<< is discarded */
+	return 32;		/* Unsupported selector; not a valid bit index. */
 #undef WPA_SEL
 }
 
@@ -1968,7 +1980,7 @@ ieee80211_parse_rsn(struct ieee80211com *ic, u_int8_t *frm,
 {
 	u_int8_t len = frm[1];
 	u_int32_t w;
-	int n;
+	int cipher, n;
 
 	if ((ic->ic_flags & IEEE80211_F_WPA2) == 0) {
 		IEEE80211_DISCARD_IE(ic,
@@ -2020,9 +2032,14 @@ ieee80211_parse_rsn(struct ieee80211com *ic, u_int8_t *frm,
 		    len, n);
 		return IEEE80211_REASON_IE_INVALID;
 	}
+	/* This pairwise chooser implements only TKIP and CCMP.
+	 * Unsupported and group-only selectors cannot imply CCMP support. */
 	w = 0;
 	for (; n > 0; n--) {
-		w |= 1 << rsn_cipher(frm, &rsn->rsn_ucastkeylen);
+		cipher = rsn_cipher(frm, NULL);
+		if (cipher == IEEE80211_CIPHER_TKIP ||
+		    cipher == IEEE80211_CIPHER_AES_CCM)
+			w |= 1U << cipher;
 		frm += 4, len -= 4;
 	}
 	w &= rsn->rsn_ucastcipherset;

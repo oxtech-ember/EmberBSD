@@ -761,7 +761,7 @@ struct iwx_rx_completion_desc_bz {
 #define IWX_CSR_GP_CNTRL_REG_FLAG_BZ_MAC_ACCESS_REQ		(1 << 21)
 #define IWX_CSR_GP_CNTRL_REG_FLAG_BUS_MASTER_DISABLE_STATUS	(1 << 28)
 #define IWX_CSR_GP_CNTRL_REG_FLAG_BUS_MASTER_DISABLE_REQ	(1 << 29)
-#define IWX_CSR_GP_CNTRL_REG_FLAG_SW_RESET			(1 << 31)
+#define IWX_CSR_GP_CNTRL_REG_FLAG_SW_RESET			(1U << 31)
 
 /* HW REV */
 #define IWX_CSR_HW_REV_DASH(_val)          (((_val) & 0x0000003) >> 0)
@@ -2083,6 +2083,7 @@ struct iwx_tx_queue_cfg_rsp {
 
 /* DATA_PATH group subcommand IDs */
 #define IWX_DQA_ENABLE_CMD	0x00
+#define IWX_TRIGGER_RX_QUEUES_NOTIF_CMD 0x02
 #define IWX_RLC_CONFIG_CMD	0x08
 #define IWX_TLC_MNG_CONFIG_CMD	0x0f
 #define IWX_RX_BAID_ALLOCATION_CONFIG_CMD	0x16
@@ -2091,6 +2092,20 @@ struct iwx_tx_queue_cfg_rsp {
 #define IWX_RX_NO_DATA_NOTIF	0xf5
 #define IWX_THERMAL_DUAL_CHAIN_REQUEST 0xf6
 #define IWX_TLC_MNG_UPDATE_NOTIF 0xf7
+#define IWX_RX_QUEUES_NOTIFICATION 0xff
+
+/* MULTI_QUEUE_DRV_SYNC_HDR_CMD_API_S_VER_1; payload is echoed verbatim. */
+struct iwx_rxq_sync_cmd {
+	uint32_t flags;
+	uint32_t rxq_mask;
+	uint32_t count;
+	uint64_t cookie;
+} __packed;
+
+struct iwx_rxq_sync_notification {
+	uint32_t count;
+	uint64_t cookie;
+} __packed;
 
 /* BT COEX group subcommand IDs */
 #define IWX_PROFILE_NOTIF	0xff
@@ -8850,9 +8865,9 @@ iwx_cmd_version(uint32_t cmdid)
 }
 
 static inline uint32_t
-iwx_cmd_id(uint8_t opcode, uint8_t groupid, uint8_t version)
+iwx_cmd_id(uint8_t opcode, uint8_t groupid, uint8_t command_version)
 {
-	return opcode + (groupid << 8) + (version << 16);
+	return opcode + (groupid << 8) + (command_version << 16);
 }
 
 /* make uint16_t wide id out of uint8_t group and opcode */
