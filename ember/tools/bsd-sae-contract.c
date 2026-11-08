@@ -104,16 +104,16 @@ int os_get_random(unsigned char *buf, size_t len)
 #ifndef HOSTAPD
 static int ioctl(int fd, unsigned long cmd, void *data)
 {
-	struct ieee80211req *req = data;
-	struct ifreq *ifr = data;
 	(void)fd;
 	if (!data) return -1;
 	if (cmd == SIOCGIFFLAGS) {
+		struct ifreq *ifr = data;
 		if (fail_get_flags) return -1;
 		ifr->ifr_flags = iface_flags;
 		return 0;
 	}
 	if (cmd == SIOCSIFFLAGS) {
+		struct ifreq *ifr = data;
 		struct request *out;
 		if (calls == 64) abort();
 		out = &requests[calls++]; out->op = -SIOCSIFFLAGS; out->value = ifr->ifr_flags;
@@ -129,11 +129,13 @@ static int ioctl(int fd, unsigned long cmd, void *data)
 #endif
 		return 0;
 	}
-	if (cmd != SIOCG80211) return -1;
-	if (req->i_type == IEEE80211_IOC_SAE) { req->i_val = caps; return caps < 0 ? -1 : 0; }
+	if (cmd == SIOCG80211) {
+		struct ieee80211req *req = data;
+		if (req->i_type == IEEE80211_IOC_SAE) { req->i_val = caps; return caps < 0 ? -1 : 0; }
 #ifdef IEEE80211_IOC_STA_PORT
-	if (req->i_type == IEEE80211_IOC_STA_PORT) { req->i_val = port_supported; return port_supported < 0 ? -1 : 0; }
+		if (req->i_type == IEEE80211_IOC_STA_PORT) { req->i_val = port_supported; return port_supported < 0 ? -1 : 0; }
 #endif
+	}
 	return -1;
 }
 #endif
