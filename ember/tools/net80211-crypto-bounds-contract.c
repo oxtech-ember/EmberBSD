@@ -15,6 +15,8 @@
 #define IEEE80211_CIPHER_AES_CCM 3
 #define IEEE80211_KEY_SWCRYPT 16
 #define ieee80211_sae_active(ic) 0
+/* This consumer fixture models the ordinary software-crypto RX provider. */
+#define ieee80211_sae_rx_status(ic, key, m) 0
 #define IEEE80211_WEP_IVLEN 3
 #define IEEE80211_WEP_KIDLEN 1
 #define IEEE80211_WEP_HDRLEN 4

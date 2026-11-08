@@ -29,6 +29,8 @@
 /* Native owner policy is tested in native-sae.py; here observe that the
  * actual shared per-MSDU acceptance consumer honors a closed owner. */
 #define ieee80211_sae_active(ic) 0
+/* Raw MPDUs here require the common software A-MSDU parser. */
+#define ieee80211_sae_rx_deaggregated(ic, ni, m) 0
 #define ieee80211_sae_data_allowed(ic, ni, key, eapol) \
     (sae_data_checks++, !sae_data_reject)
 #define IEEE80211_F_PRIVACY 1

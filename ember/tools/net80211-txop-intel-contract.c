@@ -19,6 +19,8 @@
 #define IEEE80211_HTOP1_PROT_MASK 3
 #define IEEE80211_ADDR_COPY(dst, src) memcpy(dst, src, 6)
 #define IEEE80211_AID(id) ((id) & 0x3fff)
+/* TXOP coverage models a legacy station; native PMF has its own fixture. */
+#define ieee80211_sae_active(ic) 0
 struct model_phy { unsigned id; };
 struct model_node {
 	struct ieee80211_node in_ni;
@@ -51,7 +53,7 @@ struct iwx_link_config_cmd {
 };
 struct iwx_sta_cfg_cmd_v2 {
 	uint32_t sta_id, station_type, link_id, assoc_id;
-	uint32_t mimo, tx_ampdu_spacing, tx_ampdu_max_size;
+	uint32_t mimo, tx_ampdu_spacing, tx_ampdu_max_size, mfp;
 	uint8_t peer_mld_address[6], peer_link_address[6];
 };
 struct iwx_mvm_sta_cfg_cmd { unsigned dummy; };
