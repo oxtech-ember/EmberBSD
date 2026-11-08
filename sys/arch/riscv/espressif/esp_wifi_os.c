@@ -149,6 +149,15 @@ struct espwifi_intr {
 static kmutex_t espwifi_mtx;
 static vmem_t *espwifi_pool;
 static u_long espwifi_pool_free;
+static volatile bool espwifi_alloc_diag_enabled;
+static bool espwifi_alloc_diag_initialized;
+static unsigned int espwifi_alloc_diag_window_state;
+static u_long espwifi_alloc_diag_pool_min_free;
+static u_long espwifi_alloc_diag_window_min_free;
+static u_long espwifi_alloc_diag_pool_misses;
+static u_long espwifi_alloc_diag_fallback_successes;
+static u_long espwifi_alloc_diag_fallback_requested_bytes;
+static u_long espwifi_alloc_diag_final_nulls;
 static int espwifi_crit_depth;
 static int espwifi_crit_spl;
 static struct espwifi_task *espwifi_tasks[ESPWIFI_NTHREADS];
@@ -190,24 +199,135 @@ espwifi_wait(kcondvar_t *cv, u_int ticks, int *left)
  * Memory.
  */
 
+void
+espwifi_os_alloc_diag_enable(void)
+{
+	unsigned int critical;
+	u_long pool_free;
+
+	critical = espwifi_os_critical_enter();
+	if (!espwifi_alloc_diag_initialized) {
+		pool_free = espwifi_pool != NULL ? espwifi_pool_free : 0;
+		espwifi_alloc_diag_initialized = true;
+		espwifi_alloc_diag_pool_min_free = pool_free;
+		espwifi_alloc_diag_window_min_free = 0;
+		espwifi_alloc_diag_window_state = 0;
+		espwifi_alloc_diag_pool_misses = 0;
+		espwifi_alloc_diag_fallback_successes = 0;
+		espwifi_alloc_diag_fallback_requested_bytes = 0;
+		espwifi_alloc_diag_final_nulls = 0;
+		espwifi_alloc_diag_enabled = true;
+	} else if (espwifi_alloc_diag_window_state != 2) {
+		/* A repeated start keeps the first init/connection window intact. */
+		espwifi_alloc_diag_enabled = true;
+	}
+	espwifi_os_critical_exit(critical);
+}
+
+void
+espwifi_os_alloc_diag_window_begin(void)
+{
+	unsigned int critical;
+
+	critical = espwifi_os_critical_enter();
+	if (espwifi_alloc_diag_enabled && espwifi_alloc_diag_window_state == 0) {
+		espwifi_alloc_diag_window_state = 1;
+		espwifi_alloc_diag_window_min_free =
+		    espwifi_pool != NULL ? espwifi_pool_free : 0;
+	}
+	espwifi_os_critical_exit(critical);
+}
+
+void
+espwifi_os_alloc_diag_window_end(void)
+{
+	unsigned int critical;
+
+	critical = espwifi_os_critical_enter();
+	if (espwifi_alloc_diag_window_state == 1) {
+		espwifi_alloc_diag_window_state = 2;
+		espwifi_alloc_diag_enabled = false;
+	}
+	espwifi_os_critical_exit(critical);
+}
+
+void
+espwifi_os_alloc_diag_snapshot(struct espwifi_alloc_diag *snapshot)
+{
+	unsigned int critical;
+
+	if (snapshot == NULL)
+		return;
+	critical = espwifi_os_critical_enter();
+	snapshot->pool_free = espwifi_pool != NULL ? espwifi_pool_free : 0;
+	snapshot->pool_min_free = espwifi_alloc_diag_initialized ?
+	    espwifi_alloc_diag_pool_min_free : snapshot->pool_free;
+	snapshot->window_min_free = espwifi_alloc_diag_window_min_free;
+	snapshot->pool_misses = espwifi_alloc_diag_pool_misses;
+	snapshot->fallback_successes =
+	    espwifi_alloc_diag_fallback_successes;
+	snapshot->fallback_requested_bytes =
+	    espwifi_alloc_diag_fallback_requested_bytes;
+	snapshot->final_nulls = espwifi_alloc_diag_final_nulls;
+	espwifi_os_critical_exit(critical);
+}
+
 static void *
 espwifi_alloc(size_t size, bool internal)
 {
 	const size_t total = roundup2(size + sizeof(struct espwifi_hdr), 16);
 	struct espwifi_hdr *h = NULL;
 	vmem_addr_t addr;
+	const bool diag = espwifi_alloc_diag_enabled;
 
 	if (internal && espwifi_pool != NULL &&
 	    vmem_alloc(espwifi_pool, total, VM_INSTANTFIT | VM_NOSLEEP,
 	    &addr) == 0) {
+		unsigned int critical;
+		u_long pool_free;
+
 		h = (void *)addr;
 		h->h_pool = 1;
-		atomic_add_long(&espwifi_pool_free, -(long)total);
+		pool_free = atomic_add_long_nv(&espwifi_pool_free, -(long)total);
+		if (diag) {
+			critical = espwifi_os_critical_enter();
+			if (espwifi_alloc_diag_enabled) {
+				if (pool_free < espwifi_alloc_diag_pool_min_free)
+					espwifi_alloc_diag_pool_min_free = pool_free;
+				if (espwifi_alloc_diag_window_state == 1 &&
+				    pool_free < espwifi_alloc_diag_window_min_free)
+					espwifi_alloc_diag_window_min_free = pool_free;
+			}
+			espwifi_os_critical_exit(critical);
+		}
 	} else {
+		unsigned int critical;
+
+		if (internal && diag) {
+			critical = espwifi_os_critical_enter();
+			if (espwifi_alloc_diag_enabled)
+				espwifi_alloc_diag_pool_misses++;
+			espwifi_os_critical_exit(critical);
+		}
 		h = malloc(total, M_DEVBUF, M_NOWAIT);
-		if (h == NULL)
+		if (h == NULL) {
+			if (internal && diag) {
+				critical = espwifi_os_critical_enter();
+				if (espwifi_alloc_diag_enabled)
+					espwifi_alloc_diag_final_nulls++;
+				espwifi_os_critical_exit(critical);
+			}
 			return NULL;
+		}
 		h->h_pool = 0;
+		if (internal && diag) {
+			critical = espwifi_os_critical_enter();
+			if (espwifi_alloc_diag_enabled) {
+				espwifi_alloc_diag_fallback_successes++;
+				espwifi_alloc_diag_fallback_requested_bytes += size;
+			}
+			espwifi_os_critical_exit(critical);
+		}
 	}
 	h->h_size = total;
 	return h + 1;

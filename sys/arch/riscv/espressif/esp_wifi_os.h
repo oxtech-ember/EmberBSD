@@ -28,6 +28,21 @@ void	*espwifi_os_realloc(void *, unsigned long);
 void	espwifi_os_free(void *);
 unsigned long espwifi_os_free_heap(void);
 
+/* One-shot accounting for internal-pool requests, not their callback field. */
+struct espwifi_alloc_diag {
+	unsigned long pool_free; /* Current free bytes in the internal pool. */
+	unsigned long pool_min_free; /* Minimum since diagnostics were enabled. */
+	unsigned long window_min_free; /* Minimum in the first diagnostic window. */
+	unsigned long pool_misses; /* Internal requests that missed the pool. */
+	unsigned long fallback_successes; /* Pool misses served by M_DEVBUF. */
+	unsigned long fallback_requested_bytes; /* Requested bytes on those misses. */
+	unsigned long final_nulls; /* Internal requests that returned NULL. */
+};
+void	espwifi_os_alloc_diag_enable(void);
+void	espwifi_os_alloc_diag_window_begin(void);
+void	espwifi_os_alloc_diag_window_end(void);
+void	espwifi_os_alloc_diag_snapshot(struct espwifi_alloc_diag *);
+
 unsigned int espwifi_os_critical_enter(void);
 void	espwifi_os_critical_exit(unsigned int);
 int	espwifi_os_in_isr(void);

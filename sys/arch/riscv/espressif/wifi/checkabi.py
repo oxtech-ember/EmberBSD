@@ -17,7 +17,16 @@ a = p.parse_args()
 header = Path(__file__).resolve().parents[1] / 'esp_wifi_os.h'
 src = r'''
 #include "esp_wifi_os.h"
+#include <stddef.h>
 #include <stdarg.h>
+_Static_assert(sizeof(struct espwifi_alloc_diag) == 7 * sizeof(unsigned long), "allocator diagnostic ABI size");
+_Static_assert(offsetof(struct espwifi_alloc_diag, pool_free) == 0 * sizeof(unsigned long), "allocator diagnostic ABI field 0");
+_Static_assert(offsetof(struct espwifi_alloc_diag, pool_min_free) == 1 * sizeof(unsigned long), "allocator diagnostic ABI field 1");
+_Static_assert(offsetof(struct espwifi_alloc_diag, window_min_free) == 2 * sizeof(unsigned long), "allocator diagnostic ABI field 2");
+_Static_assert(offsetof(struct espwifi_alloc_diag, pool_misses) == 3 * sizeof(unsigned long), "allocator diagnostic ABI field 3");
+_Static_assert(offsetof(struct espwifi_alloc_diag, fallback_successes) == 4 * sizeof(unsigned long), "allocator diagnostic ABI field 4");
+_Static_assert(offsetof(struct espwifi_alloc_diag, fallback_requested_bytes) == 5 * sizeof(unsigned long), "allocator diagnostic ABI field 5");
+_Static_assert(offsetof(struct espwifi_alloc_diag, final_nulls) == 6 * sizeof(unsigned long), "allocator diagnostic ABI field 6");
 __attribute__((noinline)) int a(void (*f)(void *), const char *n, unsigned int s, void *v, void **h) { return espwifi_os_task_create(f,n,s,v,h); }
 __attribute__((noinline)) unsigned int b(void *p, unsigned int x, int y, int z, unsigned int t) { return espwifi_os_event_wait(p,x,y,z,t); }
 __attribute__((noinline)) long long c(void) { return espwifi_os_time_us(); }
@@ -27,6 +36,7 @@ __attribute__((noinline)) int f(const char *s, const char *p) { return espwifi_c
 __attribute__((noinline)) void g(unsigned char *p) { espwifi_get_mac(p); }
 /* A float argument really is different and must never cross this boundary. */
 __attribute__((noinline)) float h(float x) { return x + 1.0f; }
+__attribute__((noinline)) void i(struct espwifi_alloc_diag *p) { espwifi_os_alloc_diag_snapshot(p); }
 '''
 with tempfile.TemporaryDirectory() as td:
     path = Path(td) / 'abi.c'
@@ -40,7 +50,7 @@ with tempfile.TemporaryDirectory() as td:
                '-ffreestanding', '-O2', '-S', str(path), '-o', '-']
         asm = subprocess.check_output(cmd, text=True)
         bodies = []
-        for name in 'abcdefgh':
+        for name in 'abcdefghi':
             match = re.search(r'^'+name+r':.*?^\s*\.size\s+'+name+r',', asm, re.M | re.S)
             if not match:
                 raise SystemExit('missing function '+name)
@@ -50,7 +60,7 @@ with tempfile.TemporaryDirectory() as td:
                     if line.strip() and not line.lstrip().startswith(('.', '#'))]
             bodies.append(body)
         results.append(bodies)
-    if results[0][:7] != results[1][:7]:
+    if results[0][:7] != results[1][:7] or results[0][8] != results[1][8]:
         raise SystemExit('soft and single-float call sequences differ: '+repr(results))
     if results[0][7] == results[1][7]:
         raise SystemExit('float ABI negative control did not differ')
@@ -68,10 +78,14 @@ with tempfile.TemporaryDirectory() as td:
                 continue
             qual = node['type']['qualType']
             words = set(re.findall(r'[A-Za-z_][A-Za-z_0-9]*', qual))
-            allowed = {'void','int','long','unsigned','char','const','restrict',
+            if name == 'espwifi_os_alloc_diag_snapshot':
+                if qual != 'void (struct espwifi_alloc_diag *)':
+                    raise SystemExit('unverified allocator diagnostic boundary: '+qual)
+            else:
+                allowed = {'void','int','long','unsigned','char','const','restrict',
                        '__size_t','__builtin_va_list','__attribute__','noreturn'}
-            if words - allowed:
-                raise SystemExit('unverified boundary type '+name+': '+qual)
+                if words - allowed:
+                    raise SystemExit('unverified boundary type '+name+': '+qual)
             found[name] = qual
         declarations.append(found)
     if declarations[0] != declarations[1]:

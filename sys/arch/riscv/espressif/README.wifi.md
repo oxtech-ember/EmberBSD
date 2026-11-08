@@ -185,5 +185,12 @@ checks those four slots at the beginning and end of the window. Its summary
 reports pointer changes and both match masks; a mismatch also reports the
 observed entry words. A zero entry count alone does not establish that an
 on-air frame was absent or that the live callbacks remained bound. It reads no
-packet fields or payloads. This option requires `--vendor-debug-once` and is
-off by default.
+packet fields or payloads. It also samples the S31 hardware RX statistics
+through the pinned IDF getter at successful radio start and at the window
+boundaries. It reports modulo-16-bit deltas for MPDU, end, successful-data,
+error, buffer-full, and FIFO-overflow counters; it does not clear counters or
+change radio mode or filters. If the radio is stopped before a snapshot, the
+hardware delta is reported unavailable. Allocator output reports internal-pool
+request accounting, including initialization totals and window boundary
+totals; it does not identify whether a caller's field was `_internal` or
+`_wifi_*`. This option requires `--vendor-debug-once` and is off by default.

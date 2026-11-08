@@ -49,6 +49,9 @@
 #include "esp_private/periph_ctrl.h"
 #include "esp_private/wifi_os_adapter.h"
 #include "esp_private/wifi.h"
+#ifdef ESPWIFI_RX_CHAIN_ONCE
+#include "esp_private/esp_wifi_he_private.h"
+#endif
 #include "esp_private/phy.h"
 #include "esp_phy_init.h"
 #include "esp_wifi.h"
@@ -100,6 +103,17 @@ struct espwifi_rx_chain_table_state {
 	uint32_t entries[4];
 	uint8_t matches;
 };
+
+static esp_err_t espwifi_rx_chain_hw_init_result = ESP_ERR_INVALID_STATE;
+static esp_err_t espwifi_rx_chain_hw_begin_result;
+static esp_err_t espwifi_rx_chain_hw_end_result;
+static bool espwifi_rx_chain_hw_ready;
+static esp_test_hw_rx_statistics_t espwifi_rx_chain_hw_init;
+static esp_test_hw_rx_statistics_t espwifi_rx_chain_hw_begin;
+static esp_test_hw_rx_statistics_t espwifi_rx_chain_hw_end;
+static struct espwifi_alloc_diag espwifi_rx_chain_alloc_init;
+static struct espwifi_alloc_diag espwifi_rx_chain_alloc_begin;
+static struct espwifi_alloc_diag espwifi_rx_chain_alloc_end;
 
 #if defined(__riscv)
 _Static_assert(sizeof(void *) == sizeof(uint32_t) &&
@@ -1417,6 +1431,28 @@ done:
 #endif
 
 #ifdef ESPWIFI_RX_CHAIN_ONCE
+static uint16_t
+espwifi_rx_counter_delta(uint16_t before, uint16_t after)
+{
+	return (uint16_t)(after - before);
+}
+
+static esp_err_t
+espwifi_rx_hw_snapshot(esp_test_hw_rx_statistics_t *statistics)
+{
+	unsigned critical;
+	bool ready;
+
+	critical = espwifi_os_critical_enter();
+	ready = espwifi_rx_chain_hw_ready;
+	espwifi_os_critical_exit(critical);
+	if (!ready) {
+		memset(statistics, 0, sizeof(*statistics));
+		return ESP_ERR_INVALID_STATE;
+	}
+	return esp_test_get_hw_rx_statistics(statistics);
+}
+
 static bool
 espwifi_rx_chain_slot_matches(const volatile unsigned char *table,
 	    size_t offset, void (*expected)(void), uint32_t *entry)
@@ -1483,6 +1519,10 @@ espwifi_vendor_debug_once_begin(const unsigned char *bssid)
 	espwifi_rx_chain_decap_count = 0;
 	espwifi_rx_chain_eapol_count = 0;
 	espwifi_rx_chain_table_begin = espwifi_rx_chain_table_snapshot();
+	espwifi_os_alloc_diag_window_begin();
+	espwifi_os_alloc_diag_snapshot(&espwifi_rx_chain_alloc_begin);
+	espwifi_rx_chain_hw_begin_result =
+	    espwifi_rx_hw_snapshot(&espwifi_rx_chain_hw_begin);
 	espwifi_rx_chain_diag_active = 1;
 #endif
 	error = esp_wifi_internal_set_log_level(WIFI_LOG_VERBOSE);
@@ -1510,6 +1550,11 @@ espwifi_vendor_debug_once_end(void)
 	uint32_t sta_input_count, crypto_decap_count, decap_count, eapol_count;
 	struct espwifi_rx_chain_table_state table_begin, table_end;
 	bool table_changed, wrapper_match;
+	bool hw_delta_valid;
+	uint16_t rx_mpdu_delta = 0, rx_end_cnt_delta = 0;
+	uint16_t rx_datasuc_delta = 0, rx_fcs_err_delta = 0;
+	uint16_t rx_abort_delta = 0, nrx_err_pwrdrop_delta = 0;
+	uint16_t rx_buf_fullcnt_delta = 0, rx_fifo_ovfcnt_delta = 0;
 #endif
 
 	critical = espwifi_os_critical_enter();
@@ -1528,7 +1573,43 @@ espwifi_vendor_debug_once_end(void)
 	table_end = espwifi_rx_chain_table_snapshot();
 	table_changed = table_begin.table != table_end.table;
 	wrapper_match = table_begin.matches == 0x0f && table_end.matches == 0x0f;
+	espwifi_rx_chain_hw_end_result =
+	    espwifi_rx_hw_snapshot(&espwifi_rx_chain_hw_end);
+	espwifi_os_alloc_diag_window_end();
+	espwifi_os_alloc_diag_snapshot(&espwifi_rx_chain_alloc_end);
+	hw_delta_valid = espwifi_rx_chain_hw_begin_result == ESP_OK &&
+	    espwifi_rx_chain_hw_end_result == ESP_OK;
 #endif
+	espwifi_os_critical_exit(critical);
+#ifdef ESPWIFI_RX_CHAIN_ONCE
+	if (hw_delta_valid) {
+		rx_mpdu_delta = espwifi_rx_counter_delta(
+		    espwifi_rx_chain_hw_begin.rx_mpdu,
+		    espwifi_rx_chain_hw_end.rx_mpdu);
+		rx_end_cnt_delta = espwifi_rx_counter_delta(
+		    espwifi_rx_chain_hw_begin.rx_end_cnt,
+		    espwifi_rx_chain_hw_end.rx_end_cnt);
+		rx_datasuc_delta = espwifi_rx_counter_delta(
+		    espwifi_rx_chain_hw_begin.rx_datasuc,
+		    espwifi_rx_chain_hw_end.rx_datasuc);
+		rx_fcs_err_delta = espwifi_rx_counter_delta(
+		    espwifi_rx_chain_hw_begin.rx_fcs_err,
+		    espwifi_rx_chain_hw_end.rx_fcs_err);
+		rx_abort_delta = espwifi_rx_counter_delta(
+		    espwifi_rx_chain_hw_begin.rx_abort,
+		    espwifi_rx_chain_hw_end.rx_abort);
+		nrx_err_pwrdrop_delta = espwifi_rx_counter_delta(
+		    espwifi_rx_chain_hw_begin.nrx_err_pwrdrop,
+		    espwifi_rx_chain_hw_end.nrx_err_pwrdrop);
+		rx_buf_fullcnt_delta = espwifi_rx_counter_delta(
+		    espwifi_rx_chain_hw_begin.rx_buf_fullcnt,
+		    espwifi_rx_chain_hw_end.rx_buf_fullcnt);
+		rx_fifo_ovfcnt_delta = espwifi_rx_counter_delta(
+		    espwifi_rx_chain_hw_begin.rx_fifo_ovfcnt,
+		    espwifi_rx_chain_hw_end.rx_fifo_ovfcnt);
+	}
+#endif
+	critical = espwifi_os_critical_enter();
 	error = esp_wifi_internal_set_log_level(WIFI_LOG_WARNING);
 	espwifi_os_critical_exit(critical);
 	espwifi_os_log("espwifi: vendor debug once restored warning result=%#x\n",
@@ -1555,6 +1636,49 @@ espwifi_vendor_debug_once_end(void)
 		    (unsigned)table_end.entries[1],
 		    (unsigned)table_end.entries[2],
 		    (unsigned)table_end.entries[3]);
+	if (hw_delta_valid) {
+		espwifi_os_log("espwifi: vendor rx hw once start_rc=%#x "
+		    "window_rc=%#x/%#x start_mpdu=%u start_data=%u "
+		    "rx_mpdu=%u rx_end_cnt=%u rx_datasuc=%u rx_fcs_err=%u "
+		    "rx_abort=%u nrx_err_pwrdrop=%u rx_buf_fullcnt=%u "
+		    "rx_fifo_ovfcnt=%u\n",
+		    (unsigned)espwifi_rx_chain_hw_init_result,
+		    (unsigned)espwifi_rx_chain_hw_begin_result,
+		    (unsigned)espwifi_rx_chain_hw_end_result,
+		    (unsigned)espwifi_rx_chain_hw_init.rx_mpdu,
+		    (unsigned)espwifi_rx_chain_hw_init.rx_datasuc,
+		    (unsigned)rx_mpdu_delta, (unsigned)rx_end_cnt_delta,
+		    (unsigned)rx_datasuc_delta, (unsigned)rx_fcs_err_delta,
+		    (unsigned)rx_abort_delta, (unsigned)nrx_err_pwrdrop_delta,
+		    (unsigned)rx_buf_fullcnt_delta, (unsigned)rx_fifo_ovfcnt_delta);
+	} else {
+		espwifi_os_log("espwifi: vendor rx hw once start_rc=%#x "
+		    "window_rc=%#x/%#x delta=unavailable\n",
+		    (unsigned)espwifi_rx_chain_hw_init_result,
+		    (unsigned)espwifi_rx_chain_hw_begin_result,
+		    (unsigned)espwifi_rx_chain_hw_end_result);
+	}
+	espwifi_os_log("espwifi: vendor rx alloc once init_free=%lu "
+	    "init_min=%lu init_miss=%lu init_fallback=%lu init_bytes=%lu "
+	    "init_null=%lu free=%lu->%lu window_min=%lu miss=%lu->%lu "
+	    "fallback=%lu->%lu bytes=%lu->%lu null=%lu->%lu\n",
+	    (unsigned long)espwifi_rx_chain_alloc_init.pool_free,
+	    (unsigned long)espwifi_rx_chain_alloc_init.pool_min_free,
+	    (unsigned long)espwifi_rx_chain_alloc_init.pool_misses,
+	    (unsigned long)espwifi_rx_chain_alloc_init.fallback_successes,
+	    (unsigned long)espwifi_rx_chain_alloc_init.fallback_requested_bytes,
+	    (unsigned long)espwifi_rx_chain_alloc_init.final_nulls,
+	    (unsigned long)espwifi_rx_chain_alloc_begin.pool_free,
+	    (unsigned long)espwifi_rx_chain_alloc_end.pool_free,
+	    (unsigned long)espwifi_rx_chain_alloc_end.window_min_free,
+	    (unsigned long)espwifi_rx_chain_alloc_begin.pool_misses,
+	    (unsigned long)espwifi_rx_chain_alloc_end.pool_misses,
+	    (unsigned long)espwifi_rx_chain_alloc_begin.fallback_successes,
+	    (unsigned long)espwifi_rx_chain_alloc_end.fallback_successes,
+	    (unsigned long)espwifi_rx_chain_alloc_begin.fallback_requested_bytes,
+	    (unsigned long)espwifi_rx_chain_alloc_end.fallback_requested_bytes,
+	    (unsigned long)espwifi_rx_chain_alloc_begin.final_nulls,
+	    (unsigned long)espwifi_rx_chain_alloc_end.final_nulls);
 #endif
 #ifdef ESPWIFI_RX_OBSERVE_ONCE
 	espwifi_rx_observe_end();
@@ -1583,6 +1707,11 @@ event_post_wrapper(const char *base, int32_t id, void *data, size_t size,
 	case WIFI_EVENT_STA_STOP: {
 		unsigned critical;
 
+#ifdef ESPWIFI_RX_CHAIN_ONCE
+		critical = espwifi_os_critical_enter();
+		espwifi_rx_chain_hw_ready = false;
+		espwifi_os_critical_exit(critical);
+#endif
 		espwifi_vendor_debug_once_end();
 		link_up = 0;
 		espwifi_os_radio_stopped();
@@ -1790,6 +1919,9 @@ espwifi_start_impl(void)
 {
 	wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
 	esp_err_t error;
+#ifdef ESPWIFI_RX_CHAIN_ONCE
+	unsigned critical;
+#endif
 
 	/*
 	 * The modem's clocks are gated by a code the power unit holds for
@@ -1801,6 +1933,10 @@ espwifi_start_impl(void)
 	    PMU_HP_ICG_MODEM_CODE_ACTIVE);
 	pmu_ll_imm_update_dig_icg_modem_code(&PMU, true);
 	pmu_ll_imm_update_dig_icg_switch(&PMU, true);
+
+#ifdef ESPWIFI_RX_CHAIN_ONCE
+	espwifi_os_alloc_diag_enable();
+#endif
 
 	/*
 	 * The ROM times its delays by the cycle counter and still believes
@@ -1847,6 +1983,10 @@ espwifi_start_impl(void)
 	    (unsigned)((cfg.feature_caps & CONFIG_FEATURE_WPA3_SAE_BIT) != 0));
 	esp_wifi_internal_set_log_level(WIFI_LOG_WARNING);
 	error = esp_wifi_init_internal(&cfg);
+#ifdef ESPWIFI_RX_CHAIN_ONCE
+	/* Retain the allocation baseline even if vendor init fails. */
+	espwifi_os_alloc_diag_snapshot(&espwifi_rx_chain_alloc_init);
+#endif
 	if (error != ESP_OK) {
 		espwifi_os_log("espwifi: init: error %#x\n", error);
 		return error;
@@ -1876,6 +2016,13 @@ espwifi_start_impl(void)
 		espwifi_os_log("espwifi: start: error %#x\n", error);
 		return error;
 	}
+#ifdef ESPWIFI_RX_CHAIN_ONCE
+	critical = espwifi_os_critical_enter();
+	espwifi_rx_chain_hw_ready = true;
+	espwifi_rx_chain_hw_init_result =
+	    espwifi_rx_hw_snapshot(&espwifi_rx_chain_hw_init);
+	espwifi_os_critical_exit(critical);
+#endif
 	/*
 	 * No power saving: a sleeping station wakes for beacons by a clock
 	 * this port does not keep to the microsecond, and misses its frames.
