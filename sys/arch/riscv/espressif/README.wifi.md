@@ -173,3 +173,12 @@ payloads. This observer can affect reception and timing, so its counters do not
 establish normal-mode delivery or a working connection. The underlying mode
 and callback constraints are described in the
 [ESP32-S31 sniffer documentation](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s31/api-guides/wifi-driver/wifi-modes.html#wi-fi-sniffer-mode).
+
+For a receive-path probe that leaves the radio mode and filter unchanged, add
+`--vendor-rx-chain-once` instead of `--vendor-rx-observe-once`. It counts entry
+into the selected ESP32-S31 `sta_input`, crypto decapsulation, Ethernet
+decapsulation, and `sta_rx_eapol` ROM-table slots during the same bounded debug
+window, then emits one summary when the window ends. The producer verifies
+each wrapper remains installed in its pinned table slot and tail-chains to the
+matching ROM entry. It reads no packet fields or payloads. This option requires
+`--vendor-debug-once` and is off by default.

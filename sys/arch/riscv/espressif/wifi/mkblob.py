@@ -135,6 +135,68 @@ def check_f_only(disassembly):
                 raise ValueError('double-precision instruction in F-only radio: ' + op)
 
 
+RX_CHAIN_WRAPS = {
+    'sta_input': (88, 0x2f800cfc),
+    'ieee80211_crypto_decap': (96, 0x2f800cb0),
+    'ieee80211_decap': (100, 0x2f800cb4),
+    'sta_rx_eapol': (104, 0x2f800d00),
+}
+
+
+def check_rx_chain_wrappers(path, objdump, nm, env):
+    """Verify the four version-pinned net80211 table wrappers and chains."""
+    symbols = subprocess.check_output([str(nm), '--defined-only', '--print-size',
+        '--format=posix', str(path)], env=env, text=True)
+    addresses = {}
+    sizes = {}
+    for line in symbols.splitlines():
+        fields = line.split()
+        if len(fields) >= 3:
+            try:
+                addresses[fields[0]] = int(fields[2], 16)
+                sizes[fields[0]] = int(fields[3], 16) if len(fields) >= 4 else 0
+            except ValueError:
+                continue
+
+    def disassemble(symbol):
+        start = addresses.get(symbol)
+        size = sizes.get(symbol)
+        if start is None or not size:
+            raise ValueError(f'missing sized symbol {symbol} in linked radio object')
+        return subprocess.check_output([str(objdump), '-dr',
+            f'--start-address=0x{start:x}',
+            f'--stop-address=0x{start + size:x}', str(path)],
+            env=env, text=True)
+
+    init = disassemble('net80211_funcs_init')
+    for symbol, (slot, rom_address) in RX_CHAIN_WRAPS.items():
+        reloc = re.compile(rf'R_RISCV_HI20\s+__wrap_{re.escape(symbol)}\b')
+        matches = list(reloc.finditer(init))
+        if not matches:
+            all_relocs = subprocess.check_output([str(objdump), '-r',
+                str(path)], env=env, text=True)
+            relevant = [line for line in all_relocs.splitlines()
+                if re.search(rf'\b(?:__wrap_|__real_)?{re.escape(symbol)}\b', line)]
+            excerpt = '\n'.join(relevant[:8])
+            raise ValueError('net80211_funcs_init has no relocation through ' +
+                f'__wrap_{symbol} for table slot +{slot}' +
+                f'\nrelated relocations:\n{excerpt}')
+        slot_offset = rf'(?:{slot}|0x{slot:x})'
+        if not any(re.search(rf'\b(?:c\.)?sw\s+\w+,\s*{slot_offset}\(a0\)',
+                             init[m.end():m.end() + 320]) for m in matches):
+            raise ValueError(f'__wrap_{symbol} relocation is not followed by ' +
+                             f'the table slot +{slot} store')
+
+        wrapper = disassemble('__wrap_' + symbol)
+        real_reloc = re.compile(rf'R_RISCV_[A-Z0-9_]+\s+{re.escape(symbol)}\b')
+        if not real_reloc.search(wrapper):
+            raise ValueError(f'__wrap_{symbol} does not chain to ROM ' +
+                             f'address 0x{rom_address:08x}')
+        if addresses.get(symbol) != rom_address:
+            raise ValueError(f'{symbol} resolves to {addresses.get(symbol)!r}, ' +
+                             f'expected ROM address 0x{rom_address:08x}')
+
+
 def common_wpa_flags(common, idf):
     return ['-I'+str(common), '-I'+str(common/'utils'), '-I'+str(common/'crypto'),
         '-D__ets__', '-DESP_PLATFORM', '-DESP_SUPPLICANT', '-DIEEE8021X_EAPOL',
@@ -156,11 +218,15 @@ def main():
                    help='enable vendor VERBOSE logging for the first fullmac connect attempt')
     p.add_argument('--vendor-rx-observe-once', action='store_true',
                    help='observe selected-peer RX metadata during the first debug attempt')
+    p.add_argument('--vendor-rx-chain-once', action='store_true',
+                   help='count net80211 RX entry points during the first debug attempt')
     for opt in ('idf-source', 'wpa-source', 'sysroot', 'host-prefix', 'target-binutils-prefix', 'output'):
         p.add_argument('--'+opt, type=absolute, required=True)
     a = p.parse_args()
     if a.vendor_rx_observe_once and not a.vendor_debug_once:
         p.error('--vendor-rx-observe-once requires --vendor-debug-once')
+    if a.vendor_rx_chain_once and not a.vendor_debug_once:
+        p.error('--vendor-rx-chain-once requires --vendor-debug-once')
     idf = a.idf_source / 'components'
     clang = (a.host_prefix / 'bin/clang').resolve(strict=True)
     if not clang.is_relative_to(a.host_prefix.resolve(strict=True)):
@@ -198,6 +264,8 @@ def main():
         flags.append('-DESPWIFI_VENDOR_DEBUG_ONCE')
     if a.vendor_rx_observe_once:
         flags.append('-DESPWIFI_RX_OBSERVE_ONCE')
+    if a.vendor_rx_chain_once:
+        flags.append('-DESPWIFI_RX_CHAIN_ONCE')
     for pattern in INCLUDES:
         for d in sorted(glob.glob(str(idf/pattern))):
             if Path(d).is_dir():
@@ -206,6 +274,8 @@ def main():
              (HERE/'fullmac_wpa2.c', ['-I'+str(idf/'wpa_supplicant/esp_supplicant/src'),
                 '-I'+str(a.wpa_source/'src'),
                 '-I'+str(a.wpa_source/'src/rsn_supp')])]
+    if a.vendor_rx_chain_once:
+        units.append((HERE/'rx_chain_diag.S', []))
     units += [(idf/s, ['-DCONFIG_ESP_WIFI_FTM_ENABLE=1'] if s.endswith('ftm_load_calibration.c') else []) for s in CORE]
     common = a.wpa_source / 'src'
     common_flags = common_wpa_flags(common, idf)
@@ -236,12 +306,25 @@ def main():
                 '-e', 'espwifi_start_wpa2']
         for sym in ENTRIES:
             args += ['-u', sym]
+        if a.vendor_rx_chain_once:
+            args += ['--wrap='+sym for sym in RX_CHAIN_WRAPS]
         args += ['-o', output] + objects + ['--start-group'] + libs + ['--end-group', '-T', HERE/'espwifi.lds']
         for f in ROM:
             args += ['-T', idf/'esp_rom/esp32s31/ld'/f]
         args += ['-T', idf/'soc/esp32s31/ld/esp32s31.peripherals.ld']
         run(args, env)
         check_vendor_elf(output.read_bytes())
+        if a.vendor_rx_chain_once:
+            try:
+                check_rx_chain_wrappers(output, objdump, nm, env)
+            except ValueError as error:
+                with tempfile.NamedTemporaryFile(
+                        prefix=a.output.name + '.rx-chain-check-failed-',
+                        suffix='.o', dir=a.output.parent, delete=False) as saved:
+                    saved.write(output.read_bytes())
+                    failed_object = Path(saved.name)
+                raise ValueError(f'{error}; failed checker input saved at '
+                                 f'{failed_object}') from error
         disassembly = subprocess.check_output([str(objdump), '-d',
             '--disassemble-symbols=espwifi_get_mac', str(output)], env=env, text=True)
         if '<espwifi_get_mac>:' not in disassembly:

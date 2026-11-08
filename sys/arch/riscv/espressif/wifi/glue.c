@@ -80,6 +80,15 @@
 #include "fullmac_rx_observe.h"
 #endif
 
+#ifdef ESPWIFI_RX_CHAIN_ONCE
+/* Private to the first vendor-debug window; sampled by rx_chain_diag.S. */
+volatile uint32_t espwifi_rx_chain_diag_active;
+volatile uint32_t espwifi_rx_chain_sta_input_count;
+volatile uint32_t espwifi_rx_chain_crypto_decap_count;
+volatile uint32_t espwifi_rx_chain_decap_count;
+volatile uint32_t espwifi_rx_chain_eapol_count;
+#endif
+
 #if defined(ESPWIFI_EXTERNAL_WPA2)
 _Static_assert((WIFI_FEATURE_CAPS & CONFIG_FEATURE_WPA3_SAE_BIT) != 0,
     "external WPA SAE callbacks require the IDF SAE feature capability");
@@ -1394,6 +1403,9 @@ espwifi_vendor_debug_once_begin(const unsigned char *bssid)
 {
 	unsigned critical;
 	esp_err_t error;
+#ifdef ESPWIFI_RX_CHAIN_ONCE
+	wifi_ps_type_t ps = (wifi_ps_type_t)0;
+#endif
 
 	critical = espwifi_os_critical_enter();
 	if (vendor_debug_once_state != 0) {
@@ -1401,10 +1413,22 @@ espwifi_vendor_debug_once_begin(const unsigned char *bssid)
 		return;
 	}
 	vendor_debug_once_state = 1;
+#ifdef ESPWIFI_RX_CHAIN_ONCE
+	espwifi_rx_chain_sta_input_count = 0;
+	espwifi_rx_chain_crypto_decap_count = 0;
+	espwifi_rx_chain_decap_count = 0;
+	espwifi_rx_chain_eapol_count = 0;
+	espwifi_rx_chain_diag_active = 1;
+#endif
 	error = esp_wifi_internal_set_log_level(WIFI_LOG_VERBOSE);
 	espwifi_os_critical_exit(critical);
 	espwifi_os_log("espwifi: vendor debug once enabled result=%#x level=verbose\n",
 	    (unsigned)error);
+#ifdef ESPWIFI_RX_CHAIN_ONCE
+	error = esp_wifi_get_ps(&ps);
+	espwifi_os_log("espwifi: vendor debug once ps result=%#x value=%u\n",
+	    (unsigned)error, (unsigned)ps);
+#endif
 #ifdef ESPWIFI_RX_OBSERVE_ONCE
 	espwifi_rx_observe_begin(bssid);
 #else
@@ -1417,6 +1441,9 @@ espwifi_vendor_debug_once_end(void)
 {
 	unsigned critical;
 	esp_err_t error;
+#ifdef ESPWIFI_RX_CHAIN_ONCE
+	uint32_t sta_input_count, crypto_decap_count, decap_count, eapol_count;
+#endif
 
 	critical = espwifi_os_critical_enter();
 	if (vendor_debug_once_state != 1) {
@@ -1424,10 +1451,23 @@ espwifi_vendor_debug_once_end(void)
 		return;
 	}
 	vendor_debug_once_state = 2;
+#ifdef ESPWIFI_RX_CHAIN_ONCE
+	espwifi_rx_chain_diag_active = 0;
+	sta_input_count = espwifi_rx_chain_sta_input_count;
+	crypto_decap_count = espwifi_rx_chain_crypto_decap_count;
+	decap_count = espwifi_rx_chain_decap_count;
+	eapol_count = espwifi_rx_chain_eapol_count;
+#endif
 	error = esp_wifi_internal_set_log_level(WIFI_LOG_WARNING);
 	espwifi_os_critical_exit(critical);
 	espwifi_os_log("espwifi: vendor debug once restored warning result=%#x\n",
 	    (unsigned)error);
+#ifdef ESPWIFI_RX_CHAIN_ONCE
+	espwifi_os_log("espwifi: vendor rx chain once sta_input=%u "
+	    "crypto_decap=%u decap=%u sta_rx_eapol=%u\n",
+	    (unsigned)sta_input_count, (unsigned)crypto_decap_count,
+	    (unsigned)decap_count, (unsigned)eapol_count);
+#endif
 #ifdef ESPWIFI_RX_OBSERVE_ONCE
 	espwifi_rx_observe_end();
 #endif
