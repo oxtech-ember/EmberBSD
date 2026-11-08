@@ -1,5 +1,6 @@
 #!/bin/sh
 #
+# Origin: EmberBSD (AI-assisted), first-boot personalization.
 # PROVIDE: rpi_preseed
 # REQUIRE: mountcritlocal
 # BEFORE: network
@@ -107,39 +108,59 @@ rpi_preseed_start()
 		if ! id "$user" >/dev/null 2>&1; then
 			groups=$(all user.groups | sed 's/^sudo$/wheel/' | grep -Ex '[a-z_][a-z0-9_-]{0,30}' |
 			    sort -u | paste -sd, -)
-			run useradd -m -s /bin/sh ${groups:+-G "$groups"} "$user"
+			run useradd -m -s /bin/sh ${groups:+-G "$groups"} "$user" || {
+				say "cannot create account $user; preseed retained"; return 1
+			}
 			say "account $user${groups:+ in $groups}"
 		fi
 		hash=$(get user.password)
 		case "$hash" in
 		'') ;;
 		\$1\$*|\$2a\$*|\$2b\$*|\$sha1\$*|\$argon2*)
-			run usermod -p "$hash" "$user"; say "password of $user set" ;;
+			run usermod -p "$hash" "$user" || {
+				say "cannot set password of $user; preseed retained"; return 1
+			}
+			say "password of $user set" ;;
 		*)
 			say "password of $user not set: crypt(3) cannot check its hash; log in with an SSH key" ;;
 		esac
 	fi
 
 	if [ "$(get ssh.enabled)" = true ]; then
-		rcset sshd YES
+		rcset sshd YES || { say "cannot enable sshd; preseed retained"; return 1; }
 		sc="$root/etc/ssh/sshd_config"
 		pa=no; [ "$(get ssh.password_authentication)" = true ] && pa=yes
-		if [ -f "$sc" ]; then
-			grep -v '^PasswordAuthentication ' "$sc" > "$sc.new" &&
-			    echo "PasswordAuthentication $pa" >> "$sc.new" && mv "$sc.new" "$sc"
+		# Set the global choice before any Match blocks. With PAM enabled,
+		# keyboard-interactive is another password path; honor the same user
+		# choice for both. Preserve independent and per-Match policies.
+		if ! { cp -p "$sc" "$sc.new" && awk -v pa="$pa" '
+		    BEGIN {
+		        print "PasswordAuthentication " pa
+		        print "KbdInteractiveAuthentication " pa
+		    }
+		    tolower($0) ~ /^[ \t]*match[ \t=]/ { scoped = 1 }
+		    !scoped && tolower($0) ~ /^[ \t]*(passwordauthentication|kbdinteractiveauthentication|challengeresponseauthentication)[ \t=]/ { next }
+		    { print }
+		    ' "$sc" > "$sc.new" && mv "$sc.new" "$sc"; }; then
+			say "cannot configure sshd; preseed retained"; return 1
 		fi
 		keys=$(all ssh.authorized_keys)
 		if [ -n "$user" ] && [ -n "$keys" ]; then
-			home=$(awk -F: -v u="$user" '$1 == u { print $6 }' /etc/passwd)
+			home=$(awk -F: -v u="$user" '$1 == u { print $6 }' "$root/etc/passwd")
 			home="$root${home:-/home/$user}"
-			run mkdir -p "$home/.ssh"
+			run mkdir -p "$home/.ssh" || {
+				say "cannot create SSH directory for $user; preseed retained"; return 1
+			}
 			ak="$home/.ssh/authorized_keys"
 			if ! checkyesno rpi_preseed_dryrun; then
-				printf '%s\n' "$keys" | while IFS= read -r k; do
-					grep -qxF "$k" "$ak" 2>/dev/null || echo "$k" >> "$ak"
-				done
-				chmod 700 "$home/.ssh"; chmod 600 "$ak"
-				chown -R "$user" "$home/.ssh" 2>/dev/null
+				if ! {
+					printf '%s\n' "$keys" | while IFS= read -r k; do
+						grep -qxF "$k" "$ak" 2>/dev/null || echo "$k" >> "$ak" || exit 1
+					done &&
+					chmod 700 "$home/.ssh" && chmod 600 "$ak" &&
+					chown -R "$user" "$home/.ssh"; }; then
+					say "cannot install SSH keys for $user; preseed retained"; return 1
+				fi
 			fi
 			say "sshd on, $(printf '%s\n' "$keys" | wc -l | tr -d ' ') key(s) for $user, password login $pa"
 		else
@@ -225,7 +246,7 @@ rpi_preseed_start()
 	done
 	[ "$(get connect.enabled)" = true ] && say "Raspberry Pi Connect: not on NetBSD, skipped"
 
-	run rm -f "$f"
+	run rm -f "$f" || { say "cannot remove preseed"; return 1; }
 	say "done; $f removed"
 }
 

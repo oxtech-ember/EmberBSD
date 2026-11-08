@@ -20,8 +20,12 @@ remains in Git; it must not be used as acceptance of the current source.
 Use [SDK release tooling](https://github.com/oxtech-ember/EmberBSD-SDK/blob/main/docs/os-release.md)
 for release composition. The low-level contract and fixtures below describe this assembler.
 
-The development console accepts the base set root login without a password; SSH is disabled.
-Configure access separately before deployment. These defaults do not apply to other images.
+The native SSH service is enabled on the first ordinary boot. The builder does
+not copy the developer's accounts, passwords or SSH keys. Native `sshd` creates
+missing host keys on the target and preserves them on subsequent boots.
+The development console still inherits the base set root login without a
+password; this does not grant remote passwordless root access. These defaults
+do not apply to other images.
 
 ## Required inputs
 
@@ -53,6 +57,38 @@ sh ember/image/development-image.sh \
     /absolute/ctf-tools CTF_COMMIT \
     /absolute/packages PORTS_COMMIT /absolute/tools /absolute/new-image
 ```
+
+For a selected user's access on the first boot, append the path to that user's
+`rpi-preseed.toml` as the optional twelfth argument, or place it at the root of
+the image's EFI partition before booting. The existing first-boot handler
+creates the selected account and applies its SSH settings before networking
+and `sshd` start. For example, replace the account and public-key placeholders
+with the owner's choices:
+
+```toml
+[user]
+name = "YOUR_ACCOUNT"
+groups = ["wheel"]
+[ssh]
+enabled = true
+password_authentication = false
+authorized_keys = ["YOUR_SSH_PUBLIC_KEY"]
+```
+
+Use a supported lowercase account name; membership of `wheel` is optional.
+For password access, select `password_authentication = true` and provide the
+owner's `user.password` hash supported by the target's `usermod` and `crypt(3)`,
+such as `$sha1$` or `$2a$`. Imager's sha256crypt and yescrypt hashes remain
+unsupported and produce a warning. The SSH choice
+covers both password and PAM keyboard-interactive authentication; independent
+root-login and scoped `Match` policies remain intact.
+
+Without preseed, no named account or login credential is supplied; the owner
+can configure access from the console. Distributable images must remain
+unpersonalized. A preseed file and the image made from it belong to that user
+and may contain a password hash or Wi-Fi credentials. The file is removed
+after successful application; account or SSH setup failures retain it for
+retry. The builder never embeds the preseed contents in provenance receipts.
 
 The builder records hashes with stable artifact names, avoiding private host
 paths in the image. Distribution mtree files preserve target users, groups,
@@ -110,13 +146,19 @@ libraries. Record its SHA256 and source revision with its acceptance results.
 
 ```sh
 sh ember/image/test-development.sh /absolute/tools
+sh ember/image/test-preseed.sh
 sh ember/tools/ffs-superblock-contract.sh /absolute/tools /absolute/new-fixtures
 ```
 
 The first test covers bundle rejection, distribution ownership, traversal of
 nested directories with mode `000`, special nodes, debugger selection, the
-rescue hardlink, recovery menu and sanitized provenance.
-Its fake `makefs` stops before any image is built. The second compiles the actual
+rescue hardlink, recovery menu, sanitized provenance, SSH enablement and
+optional preseed staging without developer credentials or host keys.
+Its fake `makefs` stops before any image is built. The preseed test exercises
+the production handler with temporary files and substitutes host account and
+ownership commands. It covers account/password/key failures and retry, the
+selected home directory, supported and unsupported hashes, both password
+paths and preservation of independent SSH policies. The FFS test compiles the actual
 production selector, checks UFS1 and both byte orders, and creates four small
 UFS2/UFS2EA files using real `makefs`. Original code fails the alternate-location
 check; corrected code passes. Optional native fixtures make only the primary

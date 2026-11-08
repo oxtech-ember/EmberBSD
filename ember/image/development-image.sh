@@ -2,13 +2,19 @@
 # Origin: EmberBSD (AI-assisted), assemble an offline AArch64 development image.
 set -eu
 export LC_ALL=C
-[ "$#" = 11 ] || {
-	echo "Usage: $0 SETS KERNEL KERNEL_REV FSCK FSCK_REV CTF_TOOLS CTF_REV PACKAGES PORTS_REV TOOLDIR NEW_WORK" >&2
+[ "$#" = 11 ] || [ "$#" = 12 ] || {
+	echo "Usage: $0 SETS KERNEL KERNEL_REV FSCK FSCK_REV CTF_TOOLS CTF_REV PACKAGES PORTS_REV TOOLDIR NEW_WORK [PRESEED]" >&2
 	exit 2
 }
 sets=$1 kernel=$2 kernel_rev=$3 fsck=$4 fsck_rev=$5
 ctf=$6 ctf_rev=$7 packages=$8 ports_rev=$9 tools=${10} work=${11}
+preseed=${12:-}
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+if [ -n "$preseed" ]; then
+	[ -f "$preseed" ] || { echo 'Preseed file not found.' >&2; exit 2; }
+	# A personalized image can contain a password hash or Wi-Fi credentials.
+	umask 077
+fi
 for path in "$sets" "$kernel" "$fsck" "$ctf" "$packages" "$tools" "$work"; do
 	case "$path" in /*) ;; *) echo 'Absolute paths required.' >&2; exit 2 ;; esac
 	case "$path" in *[!A-Za-z0-9_./-]*) echo 'Unsafe path.' >&2; exit 2 ;; esac
@@ -70,7 +76,9 @@ done
 printf '%s\n' "$ports_rev" > "$bundle/ports-revision"
 cp "$here/install-development.sh" "$root/usr/libexec/ember/install-development"
 cp "$here/../etc/rc.d/ember_development" "$root/etc/rc.d/ember_development"
-chmod 555 "$root/usr/libexec/ember/install-development" "$root/etc/rc.d/ember_development"
+cp "$here/../etc/rc.d/rpi_preseed" "$root/etc/rc.d/rpi_preseed"
+chmod 555 "$root/usr/libexec/ember/install-development" "$root/etc/rc.d/ember_development" \
+    "$root/etc/rc.d/rpi_preseed"
 sh "$here/install-development.sh" --verify "$bundle"
 # Both base debugger entry points must stop selecting the old executable.
 rm -f "$root/usr/bin/gdb" "$root/usr/bin/gdbtui"
@@ -90,6 +98,10 @@ default=1
 timeout=10
 EOF
 cp "$work/boot/boot.cfg" "$work/boot/EFI/BOOT/boot.cfg"
+if [ -n "$preseed" ]; then
+	cp "$preseed" "$work/boot/rpi-preseed.toml"
+	chmod 600 "$work/boot/rpi-preseed.toml"
+fi
 cat > "$root/etc/fstab" <<'EOF'
 NAME=netbsd-root / ffs rw,noatime 1 1
 NAME=EFI /boot msdos rw 1 1
@@ -104,7 +116,8 @@ no_swap=YES
 savecore=NO
 dhcpcd=YES
 dhcpcd_flags="-b"
-sshd=NO
+sshd=YES
+rpi_preseed=YES
 wscons=NO
 xdm=NO
 ember_development=YES
@@ -127,6 +140,8 @@ EOF
 	done
 	printf 'SHA256 (ember_development) = %s\n' \
 	    "$(shasum -a 256 "$root/etc/rc.d/ember_development" | awk '{print $1}')"
+	printf 'SHA256 (rpi_preseed) = %s\n' \
+	    "$(shasum -a 256 "$root/etc/rc.d/rpi_preseed" | awk '{print $1}')"
 	printf 'SHA256 (packages.sha256) = %s\n' \
 	    "$(shasum -a 256 "$bundle/packages.sha256" | awk '{print $1}')"
 } > "$work/inputs.txt"
@@ -160,6 +175,7 @@ cat >> "$work/spec" <<'EOF'
 ./etc/fstab type=file uname=root gname=wheel mode=0644
 ./etc/rc.conf type=file uname=root gname=wheel mode=0644
 ./etc/rc.d/ember_development type=file uname=root gname=wheel mode=0555
+./etc/rc.d/rpi_preseed type=file uname=root gname=wheel mode=0555
 ./usr/bin/gdb type=link uname=root gname=wheel mode=0755 link=/usr/pkg/bin/gdb
 ./usr/bin/cc type=link uname=root gname=wheel mode=0755 link=/usr/pkg/gcc16/bin/cc
 ./usr/bin/c++ type=link uname=root gname=wheel mode=0755 link=/usr/pkg/gcc16/bin/c++

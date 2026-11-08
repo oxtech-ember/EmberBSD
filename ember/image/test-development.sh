@@ -124,7 +124,7 @@ mkdir -p "$work/base/usr/bin" "$work/base/usr/mdec" "$work/base/usr/lib" \
     "$work/base/usr/include" "$work/base/sbin" "$work/base/rescue" \
     "$work/base/var/chroot/nsd/var/db" "$work/base/usr/share/man/man1" \
     "$work/base/var/spool/ftp/hidden/nested" \
-    "$work/etc/etc/rc.d" "$work/etc/dev" "$work/comp/usr/bin" \
+    "$work/etc/etc/rc.d" "$work/etc/etc/ssh" "$work/etc/dev" "$work/comp/usr/bin" \
     "$work/sets" "$work/packages" "$work/tools/bin" "$work/ctf"
 printf 'wall\n' > "$work/base/usr/bin/wall"
 printf 'write\n' > "$work/base/usr/bin/write"
@@ -142,6 +142,8 @@ for tool in cc c++ cpp g++ gcc; do
 done
 printf 'restricted directory payload\n' > "$work/base/var/spool/ftp/hidden/nested/payload"
 printf 'rc_configured=NO\n' > "$work/etc/etc/rc.conf"
+printf '# Selected base authentication policy\nPermitRootLogin prohibit-password\nPermitEmptyPasswords no\n' \
+    > "$work/etc/etc/ssh/sshd_config"
 printf 'root:*:0:0::0:0:root:/root:/bin/sh\n_nsd:*:32:32::0:0:nsd:/var/empty:/sbin/nologin\n' \
     > "$work/etc/etc/master.passwd"
 printf 'wheel:*:0:root\ntty:*:4:\n_nsd:*:32:\n' > "$work/etc/etc/group"
@@ -244,6 +246,17 @@ sh "$here/development-image.sh" "$work/sets" "$work/netbsd" "$revision" \
     "$work/stage" > "$work/stage.log" 2>&1 || status=$?
 if [ "$status" != 99 ]; then cat "$work/stage.log" >&2; exit 1; fi
 root=$work/stage/root
+if ! grep -q '^sshd=YES$' "$root/etc/rc.conf"; then
+	echo 'FAIL: ordinary first boot must enable the native SSH service' >&2
+	exit 1
+fi
+grep -q '^rpi_preseed=YES$' "$root/etc/rc.conf"
+cmp "$here/../etc/rc.d/rpi_preseed" "$root/etc/rc.d/rpi_preseed"
+cmp "$work/etc/etc/ssh/sshd_config" "$root/etc/ssh/sshd_config"
+cmp "$work/etc/etc/master.passwd" "$root/etc/master.passwd"
+[ ! -e "$work/stage/boot/rpi-preseed.toml" ]
+[ -z "$(find "$root/etc/ssh" -name 'ssh_host_*' -print)" ]
+[ -z "$(find "$root" \( -name authorized_keys -o -name 'id_*' \) -print)" ]
 "$tools/bin/nbmtree" -C -k type,uname,gname,mode,link,device,size \
     -N "$root/etc" -f "$work/stage/spec" > "$work/normalized.spec"
 grep '^./usr/bin/wall ' "$work/normalized.spec" | grep -q 'gname=tty'
@@ -286,5 +299,29 @@ cmp "$work/stage/boot/boot.cfg" "$work/stage/boot/EFI/BOOT/boot.cfg"
 grep -q '^SHA256 (packages.sha256) = ' "$root/var/ember/image-inputs.txt"
 grep -q '^SHA256 (fsck_ffs) = ' "$root/var/ember/image-inputs.txt"
 grep -q "^fsck-source=$revision\$" "$root/var/ember/image-inputs.txt"
+# Pass the user's first-boot selection through the real producer. Its rc
+# consumer creates the account and applies authentication before networking.
+cat > "$work/operator.toml" <<'EOF'
+[user]
+name = "embertest"
+groups = ["wheel"]
+[ssh]
+enabled = true
+password_authentication = false
+authorized_keys = ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA fixture"]
+EOF
+status=0
+sh "$here/development-image.sh" "$work/sets" "$work/netbsd" "$revision" \
+    "$work/fsck_ffs" "$revision" "$work/ctf" "$revision" \
+    "$work/packages" "$revision" "$work/tools" "$work/stage-preseed" \
+    "$work/operator.toml" > "$work/preseed.log" 2>&1 || status=$?
+if [ "$status" != 99 ]; then cat "$work/preseed.log" >&2; exit 1; fi
+cmp "$work/operator.toml" "$work/stage-preseed/boot/rpi-preseed.toml"
+cmp "$work/etc/etc/ssh/sshd_config" "$work/stage-preseed/root/etc/ssh/sshd_config"
+cmp "$work/etc/etc/master.passwd" "$work/stage-preseed/root/etc/master.passwd"
+[ -z "$(find "$work/stage-preseed/root" \( -name authorized_keys -o -name 'ssh_host_*' -o -name 'id_*' \) -print)" ]
+grep '^./etc/rc.d/rpi_preseed ' "$work/stage-preseed/spec" | grep -q 'mode=0555'
+! grep -q "$work" "$work/stage-preseed/root/var/ember/image-inputs.txt"
+printf 'PASS: native SSH enabled, preseed staged, authentication policy and host-key generation preserved\n'
 printf 'PASS: staging ownership, restricted traversal, devices, debugger selection, recovery and provenance\n'
 printf 'Passed %s bundle cases and the image staging regression. No image built.\n' "$passed"
