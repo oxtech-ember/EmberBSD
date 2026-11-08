@@ -510,7 +510,7 @@ vcons_load_font(void *v, void *cookie, struct wsdisplay_font *f)
 		return EINVAL;
 
 	/* ok, we got a font. Now clear the screen with the old parameters */
-	if (SCREEN_IS_VISIBLE(scr))
+	if (SCREEN_IS_VISIBLE(scr) && !(scr->scr_flags & VCONS_BOOT_SPLASH))
 		vdp->eraserows(ri, 0, ri->ri_rows, scr->scr_defattr);
 
 	vcons_lock(vd->active);
@@ -630,6 +630,8 @@ vcons_do_switch(void *arg)
 
 	if (scr == oldscr)
 		return;
+	if (oldscr != NULL)
+		oldscr->scr_flags &= ~VCONS_BOOT_SPLASH;
 
 #ifdef DIAGNOSTIC
 	if (SCREEN_IS_VISIBLE(scr))
@@ -1579,6 +1581,8 @@ vcons_do_scroll(struct vcons_screen *scr)
 	scr->scr_current_line = scr->scr_line_wanted;
 	scr->scr_current_offset = scr->scr_ri.ri_cols *
 	    (scr->scr_lines_in_buffer - scr->scr_current_line);
+	if (scr->scr_flags & VCONS_BOOT_SPLASH)
+		return;
 	if (abs(dist) >= scr->scr_ri.ri_rows) {
 		vcons_redraw_screen(scr);
 		return;
@@ -1716,6 +1720,7 @@ vcons_hard_switch(struct vcons_screen *scr)
 	struct vcons_screen *oldscr = vd->active;
 
 	if (oldscr) {
+		oldscr->scr_flags &= ~VCONS_BOOT_SPLASH;
 		SCREEN_INVISIBLE(oldscr);
 		oldscr->scr_ri.ri_flg &= ~RI_CURSOR;
 	}

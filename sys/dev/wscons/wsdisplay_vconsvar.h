@@ -80,7 +80,8 @@ struct vcons_screen {
 					 * wsfont_find() */
 #define VCONS_FONT_BYTES_R2L	0x200	/* request right-to-left byteorder in
 					 * wsfont_find() */
-					 
+#define VCONS_BOOT_SPLASH	0x400	/* retain firmware pixels until VT switch */
+
 	/* status flags used by vcons */
 	uint32_t scr_status;
 #define VCONS_IS_VISIBLE	1	/* this screen is currently visible */
@@ -100,7 +101,8 @@ struct vcons_screen {
 
 #define SCREEN_IS_VISIBLE(scr) (((scr)->scr_status & VCONS_IS_VISIBLE) != 0)
 #define SCREEN_IS_BUSY(scr) (membar_consumer(), (scr)->scr_busy != 0)
-#define SCREEN_CAN_DRAW(scr) (((scr)->scr_flags & VCONS_DONT_DRAW) == 0)
+#define SCREEN_CAN_DRAW(scr) \
+    (((scr)->scr_flags & (VCONS_DONT_DRAW | VCONS_BOOT_SPLASH)) == 0)
 #define SCREEN_BUSY(scr) ((scr)->scr_busy = 1, membar_producer())
 #define SCREEN_IDLE(scr) ((scr)->scr_busy = 0, membar_producer())
 #define SCREEN_VISIBLE(scr) ((scr)->scr_status |= VCONS_IS_VISIBLE)

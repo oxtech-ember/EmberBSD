@@ -102,6 +102,7 @@ struct genfb_private {
 	bool sc_want_clear;
 #ifdef SPLASHSCREEN
 	struct splash_info sc_splash;
+	bool sc_hold_first_vt;
 #endif
 	struct wsdisplay_accessops sc_accessops;
 #if GENFB_GLYPHCACHE > 0
@@ -560,6 +561,10 @@ genfb_attach(struct genfb_softc *sc, struct genfb_ops *ops)
 		SCREEN_DISABLE_DRAWING(&scp->sc_console_screen);
 #endif
 
+#ifdef SPLASHSCREEN
+	/* A serial console gets a separate wsdisplay VT during child attach. */
+	scp->sc_hold_first_vt = preserve_splash;
+#endif
 #ifdef WSDISPLAY_BOOTFB_HANDOFF
 	attach_error = wsdisplay_emul_attach_checked(sc->sc_dev, &aa,
 	    CFARGS(.iattr = "wsemuldisplaydev"), &child);
@@ -568,10 +573,16 @@ genfb_attach(struct genfb_softc *sc, struct genfb_ops *ops)
 out:
 	if (console)
 		wsdisplay_console_exit(sc->sc_dev);
-	return attach_error;
 #else
 	config_found(sc->sc_dev, &aa, wsemuldisplaydevprint,
 	    CFARGS(.iattr = "wsemuldisplaydev"));
+#endif
+#ifdef SPLASHSCREEN
+	scp->sc_hold_first_vt = false;
+#endif
+#ifdef WSDISPLAY_BOOTFB_HANDOFF
+	return attach_error;
+#else
 	return 0;
 #endif
 }
@@ -587,6 +598,7 @@ genfb_ioctl(void *v, void *vs, u_long cmd, void *data, int flag,
 	struct vcons_screen *ms = vd->active;
 	struct wsdisplay_param *param;
 	int new_mode, error, val, ret;
+	bool mode_changed;
 
 	switch (cmd) {
 	case WSDISPLAYIO_GINFO:
@@ -621,16 +633,24 @@ genfb_ioctl(void *v, void *vs, u_long cmd, void *data, int flag,
 		if (error && error != EPASSTHROUGH)
 			return error;
 
-		if (new_mode != scp->sc_mode) {
+		mode_changed = new_mode != scp->sc_mode;
+		if (mode_changed) {
 			scp->sc_mode = new_mode;
 			if (scp->sc_modecb != NULL) {
 				scp->sc_modecb->gmc_setmode(sc, scp->sc_mode);
 			}
-			if (new_mode == WSDISPLAYIO_MODE_EMUL) {
-				genfb_restore_palette(sc);
-				vcons_redraw_screen(ms);
-			}
 		}
+		if (new_mode != WSDISPLAYIO_MODE_EMUL || ms == NULL)
+			return 0;
+		if (ms->scr_flags & VCONS_BOOT_SPLASH) {
+			/* A request on a background VT must not uncover this one. */
+			if (ms != vs)
+				return 0;
+			ms->scr_flags &= ~VCONS_BOOT_SPLASH;
+		} else if (!mode_changed)
+			return 0;
+		genfb_restore_palette(sc);
+		vcons_redraw_screen(ms);
 		return 0;
 
 	case WSDISPLAYIO_SSPLASH:
@@ -641,6 +661,8 @@ genfb_ioctl(void *v, void *vs, u_long cmd, void *data, int flag,
 			    SPLASH_F_CENTER|SPLASH_F_FILL);
 		} else {
 			SCREEN_ENABLE_DRAWING(&scp->sc_console_screen);
+			if (ms != NULL)
+				ms->scr_flags &= ~VCONS_BOOT_SPLASH;
 			genfb_init_palette(sc);
 		}
 		vcons_redraw_screen(ms);
@@ -777,6 +799,12 @@ genfb_init_screen(void *cookie, struct vcons_screen *scr,
 		ri->ri_flg |= RI_FULLCLEAR;
 
 	scr->scr_flags |= VCONS_LOADFONT;
+#ifdef SPLASHSCREEN
+	if (!existing && scp->sc_hold_first_vt) {
+		scr->scr_flags |= VCONS_BOOT_SPLASH;
+		scp->sc_hold_first_vt = false;
+	}
+#endif
 
 	if (scp->sc_shadowfb != NULL) {
 		ri->ri_hwbits = (char *)sc->sc_fbaddr;
@@ -1368,6 +1396,7 @@ genfb_restore_console(struct genfb_softc *sc)
 	if (scp->sc_modecb != NULL)
 		scp->sc_modecb->gmc_setmode(sc, scp->sc_mode);
 	if (sc->vd.active != NULL) {
+		sc->vd.active->scr_flags &= ~VCONS_BOOT_SPLASH;
 		genfb_restore_palette(sc);
 		vcons_redraw_screen(sc->vd.active);
 	}

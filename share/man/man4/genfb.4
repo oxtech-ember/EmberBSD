@@ -53,7 +53,11 @@ With
 enabled, this property preserves the framebuffer pixels and palette during
 initial attachment.
 It suppresses the initial screen clear and embedded splash rendering.
-It does not change later explicit splash requests or display mode changes.
+The first virtual terminal retains the firmware image during automatic
+activation and subsequent text redraws.
+Switching to another terminal, requesting text mode on the active terminal,
+or disabling the splash restores text output.
+Debugger polling also restores the console.
 The property is ignored for a system framebuffer console and for single-user,
 user configuration, interactive boot, verbose, or debug boot modes.
 .Pp

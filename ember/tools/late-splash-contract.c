@@ -55,8 +55,9 @@
 #define SPLASH_F_FILL 2
 #define uimin(a, b) ((a) < (b) ? (a) : (b))
 #define CFARGS(...) 0
-#define SCREEN_DISABLE_DRAWING(s) ((s)->disabled = true)
-#define SCREEN_ENABLE_DRAWING(s) ((s)->disabled = false)
+#include "draw-flags.h"
+#define SCREEN_DISABLE_DRAWING(s) ((s)->scr_flags |= VCONS_DONT_DRAW)
+#define SCREEN_ENABLE_DRAWING(s) ((s)->scr_flags &= ~VCONS_DONT_DRAW)
 typedef uintptr_t paddr_t, vaddr_t, bus_space_handle_t;
 typedef uint64_t bus_addr_t, bus_size_t;
 struct properties {
@@ -93,7 +94,6 @@ struct rasops_info {
 struct vcons_screen {
 	struct rasops_info scr_ri;
 	int scr_flags;
-	bool disabled;
 	struct emulops scr_driver_ops;
 };
 struct wsscreen_descr {
@@ -139,7 +139,7 @@ struct genfb_private {
 	void *sc_cmcb;
 	uint32_t *sc_devcmap;
 	void *sc_shadowfb;
-	bool sc_enable_shadowfb, sc_want_clear, sc_palette_ready;
+	bool sc_enable_shadowfb, sc_want_clear, sc_palette_ready, sc_hold_first_vt;
 	int sc_mode;
 	uint8_t sc_cmap_red[256], sc_cmap_green[256], sc_cmap_blue[256];
 	struct splash_info sc_splash;
@@ -190,6 +190,7 @@ static void wsdisplay_cnputc(void)
 static struct consdev uart, *cn_tab;
 static int boothowto, simplefb_console_phandle = -1;
 static unsigned clears, splashes, replays, attaches, palettes;
+static struct vcons_screen first_vt;
 static bool shadow;
 static bool fail_map;
 static unsigned char pixels[64], original[64];
@@ -344,7 +345,7 @@ static void vcons_init_screen(struct vcons_data *v, struct vcons_screen *s,
 }
 static void vcons_redraw_screen(struct vcons_screen *s)
 {
-	if (!s->disabled) {
+	if (SCREEN_CAN_DRAW(s)) {
 		replays++;
 		erase(s, 0, 2, 0);
 	}
@@ -381,10 +382,18 @@ static void genfb_cnattach(void)
 static void config_found(device_t d, void *a, int p, int f)
 {
 	(void)d;
-	(void)a;
+	struct wsemuldisplaydev_attach_args *aa = a;
+	struct vcons_data *vd = aa->accesscookie;
+	long attr;
+
 	(void)p;
 	(void)f;
 	attaches++;
+	if (!aa->console) {
+		/* wsdisplay adds and shows VT 0 synchronously at attach. */
+		vcons_init_screen(vd, &first_vt, 0, &attr);
+		vcons_redraw_screen(&first_vt);
+	}
 }
 #define wsemuldisplaydevprint 0
 static void genfb_ioctl(void)
@@ -476,6 +485,7 @@ static struct simplefb_softc fb;
 static void reset(void)
 {
 	memset(&dev, 0, sizeof(dev));
+	memset(&first_vt, 0, sizeof(first_vt));
 	memset(&fb, 0, sizeof(fb));
 	memset(&private_state, 0, sizeof(private_state));
 	for (unsigned i = 0; i < sizeof(pixels); i++)
@@ -506,10 +516,15 @@ int main(void)
 	CHECK(simplefb_attach_genfb(&fb) == 0);
 	CHECK(attaches == 1);
 	if (preserve) {
+		vcons_redraw_screen(&first_vt); /* deferred text redraw */
 		CHECK(clears == 0 && splashes == 0 && replays == 0 &&
 		      palettes == 0);
 		CHECK(memcmp(pixels, original, sizeof(pixels)) == 0);
-		CHECK(private_state.sc_console_screen.disabled);
+		CHECK(!SCREEN_CAN_DRAW(&private_state.sc_console_screen));
+		struct vcons_screen other = {0};
+		long attr;
+		vcons_init_screen(&fb.sc_gen.vd, &other, 0, &attr);
+		CHECK(SCREEN_CAN_DRAW(&other));
 	} else {
 		CHECK(clears > 0);
 #ifdef SPLASHSCREEN
@@ -532,7 +547,7 @@ int main(void)
 		boothowto = flags[i];
 		CHECK(simplefb_attach_genfb(&fb) == 0);
 		CHECK(clears > 0 && splashes == 0 && replays > 0);
-		CHECK(!private_state.sc_console_screen.disabled);
+		CHECK(SCREEN_CAN_DRAW(&private_state.sc_console_screen));
 	}
 	for (unsigned i = 0; i < 7; i++) {
 		reset();

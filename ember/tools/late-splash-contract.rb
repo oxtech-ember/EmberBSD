@@ -18,6 +18,9 @@ Dir.mktmpdir('late-splash-', ENV.fetch('TMPDIR', '/tmp')) do |work|
     File.write(work + '/' + File.basename(path) + '.h', license + names.map { |n| function(text, n) }.join("\n"))
   end
   File.write(work + '/splash-mask.h', File.read(source + '/sys/dev/splash/splash.h').lines.drop_while { |l| !l.start_with?('#define SPLASH_BOOT_DISABLE_MASK') }.take(2).join)
+  flags_header = File.read(source + '/sys/dev/wscons/wsdisplay_vconsvar.h')
+  draw_flags = flags_header.gsub(/\\\n/, ' ').lines.grep(/^#define (?:VCONS_DONT_DRAW|VCONS_BOOT_SPLASH|SCREEN_CAN_DRAW)\b/)
+  File.write(work + '/draw-flags.h', draw_flags.join)
   cc = Shellwords.split(ENV.fetch('CC', 'cc'))
   flags = Shellwords.split(ENV.fetch('CFLAGS', ''))
   [[true, true, false], [true, false, false], [false, true, false], [true, true, true]].each do |splash, preserve, multi|
