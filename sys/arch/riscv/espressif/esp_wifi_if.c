@@ -1796,9 +1796,9 @@ espwifi_if_input(const void *buf, unsigned int len)
 }
 
 /*
- * Convert a vendor EAPOL-Key payload into an Ethernet frame for BPF.
- * Match the vendor callback contract: 1 consumed, 0 not a key frame,
- * -1 on malformed input or failure to enqueue.
+ * Convert a vendor EAPOL payload into an Ethernet frame for BPF.
+ * Match the vendor callback contract: 1 consumed, -1 on malformed input
+ * or failure to enqueue. The supplicant owns EAPOL type policy.
  */
 int
 espwifi_if_rx_eapol(const unsigned char *source, const void *buf, unsigned len)
@@ -1868,15 +1868,6 @@ espwifi_if_rx_eapol(const unsigned char *source, const void *buf, unsigned len)
 		return 1;
 	}
 #endif
-	if (eapol[1] != 3) { /* This profile accepts EAPOL-Key only. */
-#ifdef ESPWIFI_NET80211_WPA2
-		if (diagnose)
-			espwifi_os_log("espwifi: EAPOL first generation=%llu "
-			    "len=%u result=not-key\n",
-			    (unsigned long long)generation, len);
-#endif
-		return 1;
-	}
 	if (((unsigned)eapol[2] << 8 | eapol[3]) > len - 4) {
 #ifdef ESPWIFI_NET80211_WPA2
 		if (diagnose)

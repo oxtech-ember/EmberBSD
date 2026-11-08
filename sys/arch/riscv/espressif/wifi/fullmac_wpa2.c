@@ -309,20 +309,13 @@ espwifi_wpa2_register(void)
 static bool
 espwifi_wpa2_rsn(const uint8_t *ie, unsigned len)
 {
-	static const uint8_t ccmp[] = { 0x00, 0x0f, 0xac, 0x04 };
-	static const uint8_t psk[] = { 0x00, 0x0f, 0xac, 0x02 };
+	struct espwifi_wpa_ie parsed;
 
-	if (len < 20 || ie[0] != 48 || (unsigned)ie[1] + 2 != len ||
-	    ie[2] != 1 || ie[3] != 0 || memcmp(ie + 4, ccmp, 4) != 0 ||
-	    ie[8] != 1 || ie[9] != 0 || memcmp(ie + 10, ccmp, 4) != 0 ||
-	    ie[14] != 1 || ie[15] != 0 || memcmp(ie + 16, psk, 4) != 0)
+	if (!ieee80211_rsn_ccmp_valid(ie, len, 2, 0) ||
+	    espwifi_parse_wpa_ie(ie, len, &parsed) != 0 ||
+	    parsed.num_pmkid != 0)
 		return false;
-	/* PMF needs the IGTK and SA Query paths, not available yet. */
-	if (len == 21 || (len >= 22 && (ie[20] & 0xc0) != 0))
-		return false;
-	/* PMKSA lists and management ciphers need explicit support first. */
-	return len == 20 || len == 22 ||
-	    (len == 24 && ie[22] == 0 && ie[23] == 0);
+	return true;
 }
 
 void

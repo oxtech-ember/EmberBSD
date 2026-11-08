@@ -15,10 +15,17 @@ if not __debug__:
 
 p=argparse.ArgumentParser()
 p.add_argument('--cc',required=True)
+p.add_argument('--idf-driver-header',required=True)
+p.add_argument('--wpa-source',required=True)
+p.add_argument('--analyze',action='store_true')
 p.add_argument('--nm',help='symbol tool; defaults to llvm-nm or nm beside --cc')
 a=p.parse_args()
 arch=Path(__file__).resolve().parents[1]
 sysroot=arch.parents[1]
+wpa_source=Path(a.wpa_source).resolve(strict=True)
+idf_components=Path(a.idf_driver_header).resolve(strict=True).parents[4]/'components'
+sys.path.insert(0,str(arch/'espressif/wifi'))
+import mkblob
 s=(arch/'espressif/wifi/fullmac_wpa2.c').read_text()
 glue=(arch/'espressif/wifi/glue.c').read_text()
 files=(arch/'espressif/files.espressif').read_text()
@@ -105,7 +112,12 @@ code=r'''
 #include <string.h>
 #include <stddef.h>
 #include <net80211/ieee80211_rsn.h>
+#include "wpa_ie_bridge.h"
 #include "fullmac_debug.h"
+void wpa_printf(int level, const char *fmt, ...) { (void)level; (void)fmt; }
+void wpa_hexdump(int level, const char *title, const void *data, size_t len) {
+ (void)level; (void)title; (void)data; (void)len;
+}
 typedef int esp_err_t;
 typedef struct { struct { uint8_t ssid[32],bssid[6]; bool bssid_set;
  uint8_t password[64];
@@ -165,11 +177,35 @@ int main(void) {
  assert(cfgcalls==1 && rsncalls==1 && assoc_calls==0 && connects==1);
  assert(copied_rsn_len==sizeof(rsn) && !memcmp(copied_rsn,rsn,sizeof(rsn)));
  assert(unset_rsn==1 && unset_assoc==2);
+ uint8_t profiles[28];struct espwifi_wpa_ie parsed;
+ memcpy(profiles,rsn,sizeof(rsn));profiles[1]=18;
+ assert(espwifi_parse_wpa_ie(profiles,20,&parsed)==0 &&
+     parsed.mgmt_group_cipher==ESPWIFI_WPA_CIPHER_AES_CMAC128 &&
+     parsed.num_pmkid==0);
+ assert(!espwifi_ext_connect(ssid,4,bssid,profiles,20,0));
+ profiles[1]=20;
+ assert(espwifi_parse_wpa_ie(profiles,22,&parsed)==0 &&
+     parsed.mgmt_group_cipher==ESPWIFI_WPA_CIPHER_AES_CMAC128 &&
+     parsed.num_pmkid==0);
+ assert(!espwifi_ext_connect(ssid,4,bssid,profiles,22,0));
+ profiles[1]=22;profiles[22]=0;profiles[23]=0;
+ assert(espwifi_parse_wpa_ie(profiles,24,&parsed)==0 &&
+     parsed.mgmt_group_cipher==ESPWIFI_WPA_CIPHER_AES_CMAC128 &&
+     parsed.num_pmkid==0);
+ assert(!espwifi_ext_connect(ssid,4,bssid,profiles,24,0));
+ profiles[1]=26;profiles[24]=0;profiles[25]=15;
+ profiles[26]=172;profiles[27]=6;
+ assert(espwifi_parse_wpa_ie(profiles,28,&parsed)==0 &&
+     parsed.mgmt_group_cipher==ESPWIFI_WPA_CIPHER_AES_CMAC128 &&
+     parsed.capabilities==0 && parsed.num_pmkid==0);
+ assert(!espwifi_ext_connect(ssid,4,bssid,profiles,28,0));
  /* Both stale slots are cleared on entry; empty supplemental IEs are unset. */
  uint8_t zero_bssid[6]={0};
  assert(espwifi_ext_connect(ssid,4,zero_bssid,rsn,sizeof(rsn),0)==-1);
  rsn[19]=8;assert(espwifi_ext_connect(ssid,4,bssid,rsn,sizeof(rsn),0)==-1);rsn[19]=2;
  rsn[20]=0xc0;assert(espwifi_ext_connect(ssid,4,bssid,rsn,sizeof(rsn),0)==-1);rsn[20]=0;
+ rsn[7]=2;assert(espwifi_ext_connect(ssid,4,bssid,rsn,sizeof(rsn),0)==-1);rsn[7]=4;
+ rsn[13]=2;assert(espwifi_ext_connect(ssid,4,bssid,rsn,sizeof(rsn),0)==-1);rsn[13]=4;
  rsn[8]=2;assert(espwifi_ext_connect(ssid,4,bssid,rsn,sizeof(rsn),0)==-1);rsn[8]=1;
  assert(espwifi_ext_connect(ssid,4,bssid,rsn,21,0)==-1);
  bssid[0]=1;assert(espwifi_ext_connect(ssid,4,bssid,rsn,sizeof(rsn),0)==-1);bssid[0]=2;
@@ -214,8 +250,20 @@ code=code.replace('#define ESPWIFI_EXTERNAL_AUTH_PROFILE_MARKER "@external-auth-
                   '#define ESPWIFI_EXTERNAL_AUTH_PROFILE_MARKER "'+marker.group(1)+'"')
 with tempfile.TemporaryDirectory() as td:
  c=Path(td)/'wpa2.c';out=Path(td)/'wpa2';c.write_text(code)
- subprocess.run([a.cc,'-I',str(arch/'espressif/wifi'),'-idirafter',str(sysroot),'-Werror','-fsanitize=address,undefined',
-                 '-fno-sanitize-recover=all',str(c),'-o',str(out)],check=True)
+ common_flags=mkblob.common_wpa_flags(wpa_source,idf_components)
+ common_flags += ['-I'+str(arch/'espressif/wifi'),'-idirafter',str(sysroot),
+     '-ffunction-sections','-fdata-sections','-fsanitize=address,undefined',
+     '-fno-sanitize-recover=all']
+ linker_gc='-Wl,-dead_strip' if sys.platform=='darwin' else '-Wl,--gc-sections'
+ if a.analyze:
+  subprocess.run([a.cc,'-Werror',*common_flags,'--analyze',str(c),
+      '-o',str(Path(td)/'wpa2.plist')],check=True)
+ subprocess.run([a.cc,'-Werror',*common_flags,
+     str(wpa_source/'rsn_supp/wpa_ie.c'),
+     str(wpa_source/'common/wpa_common.c'),
+     str(wpa_source/'utils/common.c'),
+     str(arch/'espressif/wifi/wpa_ie_bridge.c'),str(c),linker_gc,
+     '-o',str(out)],check=True)
  subprocess.run([str(out)],check=True)
 print('actual WPA2/SAE parser, RSN/RSNXE appie split, validation and cleanup passed')
 

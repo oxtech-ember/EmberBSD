@@ -134,6 +134,22 @@ tests also cover Ethernet multicast-reset handling and controlled-port ingress
 and transmit behavior. Host tests do not establish kernel integration or radio
 behavior on hardware.
 
+The WPA2 adapter regression links the selected common WPA parser and checks
+20, 22, 24, and 28-byte PSK RSNEs, PMF and cipher policy, and app-IE cleanup
+under ASan/UBSan. EAPOL ingress checks that correctly framed EAP,
+Start, Logoff, and Key packets reach the common supplicant while malformed
+frames and controlled-port failures retain their bounds and fail-closed path:
+
+```sh
+"$HOST_PREFIX/bin/python3.15" -B sys/arch/riscv/tests/t_espwifi_wpa2.py \
+    --cc "$HOST_PREFIX/bin/clang" \
+    --idf-driver-header "$IDF_SOURCE/components/wpa_supplicant/esp_supplicant/src/esp_wifi_driver.h" \
+    --wpa-source "$WPA_SOURCE/src"
+
+"$HOST_PREFIX/bin/python3.15" -B sys/arch/riscv/tests/t_espwifi_eapol.py \
+    --cc "$HOST_PREFIX/bin/clang"
+```
+
 For one bounded vendor association trace, the radio producer accepts
 `--vendor-debug-once`. It raises the vendor Wi-Fi log level to VERBOSE
 immediately before the first validated external-WPA connect attempt, then

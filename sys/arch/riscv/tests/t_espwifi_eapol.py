@@ -10,7 +10,8 @@ import tempfile
 if not __debug__:
     sys.exit('this test requires Python assertions enabled')
 
-p=argparse.ArgumentParser();p.add_argument('--cc',required=True);a=p.parse_args()
+p=argparse.ArgumentParser();p.add_argument('--cc',required=True)
+p.add_argument('--analyze',action='store_true');a=p.parse_args()
 s=(Path(__file__).resolve().parents[1]/'espressif/esp_wifi_if.c').read_text()
 f=re.search(r'\nint\nespwifi_if_rx_eapol\(.*?\)\n\{.*?\n\}',s,re.S)
 closed_generation=re.search(r'\nstatic bool\nespwifi_if_fail_closed_generation\(.*?\)\n\{.*?\n\}',s,re.S)
@@ -84,11 +85,21 @@ int main(void) {
  assert(espwifi_if_rx_eapol(src,NULL,4)==-1);
  assert(espwifi_if_rx_eapol(src,msg,0)==-1);
  assert(espwifi_if_rx_eapol(src,msg,1501)==-1);
- uint8_t other[4]={2,0,0,0}, truncated[4]={2,3,0,1};
- assert(espwifi_if_rx_eapol(src,other,4)==1 && !queued);
+ uint8_t eap[8]={2,0,0,4,1,1,0,4};
+ uint8_t start[4]={2,1,0,0},logoff[4]={2,2,0,0};
+ uint8_t truncated[4]={2,3,0,1};
+ assert(espwifi_if_rx_eapol(src,eap,sizeof(eap))==1 && queued==1);
+ assert(copied_len==ETHER_HDR_LEN+sizeof(eap) && copied[13]==0x8e &&
+     copied[15]==0 && !memcmp(copied+ETHER_HDR_LEN,eap,sizeof(eap)));
+ assert(espwifi_if_rx_eapol(src,start,sizeof(start))==1 && queued==2);
+ assert(copied_len==ETHER_HDR_LEN+sizeof(start) && copied[15]==1 &&
+     !memcmp(copied+ETHER_HDR_LEN,start,sizeof(start)));
+ assert(espwifi_if_rx_eapol(src,logoff,sizeof(logoff))==1 && queued==3);
+ assert(copied_len==ETHER_HDR_LEN+sizeof(logoff) && copied[15]==2 &&
+     !memcmp(copied+ETHER_HDR_LEN,logoff,sizeof(logoff)));
  espwifi_sc.sc_radio_ready=true;espwifi_sc.sc_link=true;
  espwifi_sc.sc_port_authorized=1;
- assert(espwifi_if_rx_eapol(src,truncated,4)==-1 && !queued);
+ assert(espwifi_if_rx_eapol(src,truncated,4)==-1 && queued==3);
  assert(!espwifi_sc.sc_port_authorized && !espwifi_sc.sc_link &&
   espwifi_sc.sc_join_disconnect_pending);
  assert(espwifi_sc.sc_join_generation==1 && espwifi_sc.sc_join_active==0 &&
@@ -99,20 +110,25 @@ int main(void) {
   sae_cancels==1);
  espwifi_sc.sc_join_active=2;espwifi_sc.sc_joined=true;
  espwifi_sc.sc_link=true;espwifi_sc.sc_port_authorized=1;
- fail=1;assert(espwifi_if_rx_eapol(src,msg,4)==-1 && wiped==1 && !queued);
+ fail=1;assert(espwifi_if_rx_eapol(src,msg,4)==-1);
+ assert(wiped==4 && queued==3);
  assert(!espwifi_sc.sc_port_authorized && !espwifi_sc.sc_link &&
   espwifi_sc.sc_join_generation==2 && espwifi_sc.sc_join_active==0 &&
   signals==2 && leaves==2 && sae_cancels==2);
  espwifi_sc.sc_join_active=3;espwifi_sc.sc_joined=true;
  fail=0;assert(espwifi_if_rx_eapol(src,msg,4)==1);
- assert(queued==1 && wiped==2 && copied_len==18 && copied[0]==0xaa);
+ assert(queued==4 && wiped==5 && copied_len==18 && copied[0]==0xaa);
  assert(!memcmp(copied+6,src,6) && copied[12]==0x88 && copied[13]==0x8e);
  assert(!memcmp(copied+14,msg,4));return 0;
 }
 '''
 with tempfile.TemporaryDirectory() as td:
  c=Path(td)/'eapol.c';out=Path(td)/'eapol';c.write_text(code)
- subprocess.run([a.cc,'-Werror','-fsanitize=address,undefined',
-                 '-fno-sanitize-recover=all',str(c),'-o',str(out)],check=True)
+ flags=[a.cc,'-Werror','-fsanitize=address,undefined',
+        '-fno-sanitize-recover=all']
+ if a.analyze:
+  subprocess.run(flags+['--analyze',str(c),'-o',str(Path(td)/'eapol.plist')],
+      check=True)
+ subprocess.run(flags+[str(c),'-o',str(out)],check=True)
  subprocess.run([str(out)],check=True)
 print('actual EAPOL Ethernet ingress bounds and failure paths passed')
