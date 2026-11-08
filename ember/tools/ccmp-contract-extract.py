@@ -44,7 +44,8 @@ def macro(text, name):
 mbuf = read('sys/sys/mbuf.h')
 (out/'native-mbuf-headroom.inc').write_text(notices(mbuf) + '\n' + ''.join(
     macro(mbuf, name) for name in ['M_EXT', 'M_PKTHDR', 'M_EXT_ROMAP',
-        'M_EXT_RW', 'M_BUFADDR', 'M_READONLY', 'M_LEADINGSPACE']))
+        'M_EXT_RW', 'M_BUFADDR', 'M_READONLY', 'M_LEADINGSPACE',
+        'M_COPYFLAGS', 'M_PREPEND']))
 
 crypto = read('sys/net80211/ieee80211_crypto.h')
 (out/'native-key.inc').write_text(notices(crypto) + '\n' +

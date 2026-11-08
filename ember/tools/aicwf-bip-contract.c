@@ -149,7 +149,7 @@ cmac_tests(const struct cipher *c)
 		{ 0x51,0xf0,0xbe,0xbf,0x7e,0x3b,0x9d,0x92,
 		  0xfc,0x49,0x74,0x17,0x79,0x36,0x3c,0xfe }
 	};
-	struct ieee80211_bip_part parts[3];
+	struct ieee80211_bip_part parts[3] = { 0 };
 	uint8_t result[16], expected[16], saved[16];
 
 	for (unsigned n = 0; n < 4; n++) {

@@ -20,12 +20,13 @@ static int unit_schedule(struct ieee80211com *ic,uint64_t deadline,uint64_t toke
 { (void)ic;unit_deadline=deadline;unit_token=token;if(unit_schedule_profile_change){unit_schedule_profile_change=0;unit_profile_generation++;}return unit_schedule_error; }
 static void unit_cancel(struct ieee80211com *ic) { (void)ic;unit_deadline=unit_token=0; }
 static const struct ieee80211_rxba_ops unit_ops={unit_clock,unit_schedule,unit_cancel};
+static unsigned unit_mbuf_frees,unit_tag_frees;
 static void m_freem(struct mbuf *m) {
  while(m) {struct mbuf *n=m->m_next;
   if(m->m_flags&M_PKTHDR)while(!SLIST_EMPTY(&m->m_pkthdr.tags)) {
-   struct m_tag *tag=SLIST_FIRST(&m->m_pkthdr.tags);SLIST_REMOVE_HEAD(&m->m_pkthdr.tags,m_tag_link);free(tag);
+   struct m_tag *tag=SLIST_FIRST(&m->m_pkthdr.tags);SLIST_REMOVE_HEAD(&m->m_pkthdr.tags,m_tag_link);unit_tag_frees++;free(tag);
   }
-  free(m);m=n;
+  unit_mbuf_frees++;free(m);m=n;
  }
 }
 static int (*unit_state_hook)(struct ieee80211com *,int,int);
@@ -46,6 +47,7 @@ static unsigned ieee80211_chan2ieee(struct ieee80211com *ic,struct ieee80211_cha
 #define IEEE80211_M_MONITOR 8
 #define IEEE80211_NODE_STAT(...) ((void)0)
 #define M_DONTWAIT 0
+#define MHLEN 200
 #define IFQ_MAXLEN 256
 #ifndef htole16
 #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
@@ -58,21 +60,36 @@ static unsigned ieee80211_chan2ieee(struct ieee80211com *ic,struct ieee80211_cha
 #define IF_ENQUEUE(q,p) do { assert((q)->m==NULL);(q)->m=(p);(q)->ifq_len++; } while(0)
 #define IF_DROP(q) ((q)->ifq_drops++)
 static int unit_mgt_alloc_fail,unit_prepend_fail;
+static unsigned unit_mgt_headroom=64,unit_prepend_allocs;
 static struct mbuf *unit_mgtframe(uint8_t **p,int len)
 {
  if(unit_mgt_alloc_fail)return NULL;
  struct mbuf *m=calloc(1,sizeof(*m));assert(m);
- m->m_data=m->storage+64;m->m_len=m->m_pkthdr.len=len;m->m_flags=M_PKTHDR;
+ assert(len>=0 && (size_t)len+unit_mgt_headroom<=sizeof(m->storage));
+ m->m_data=m->storage+unit_mgt_headroom;m->m_len=m->m_pkthdr.len=len;m->m_flags=M_PKTHDR;
  *p=m->m_data;return m;
 }
 #define ieee80211_getmgtframe unit_mgtframe
-static struct mbuf *unit_prepend(struct mbuf *m,unsigned len)
+/* M_PREPEND is the actual kernel macro. Model only its allocation fallback:
+ * allocation failure consumes the complete chain; success adds a new head,
+ * moves packet-header/tag ownership, and leaves existing payload untouched.
+ * Packet length is updated once by M_PREPEND, not by this helper. */
+static struct mbuf *m_prepend(struct mbuf *m,int len,int how)
 {
- if(unit_prepend_fail){m_freem(m);return NULL;}
- assert(M_LEADINGSPACE(m)>=(int)len);
- m->m_data-=len;m->m_len+=len;m->m_pkthdr.len+=len;return m;
+ (void)how;
+ assert(len>=0 && len<=MHLEN);
+ unit_prepend_allocs++;
+ struct mbuf *head=unit_prepend_fail?NULL:calloc(1,sizeof(*head));
+ if(!head){m_freem(m);return NULL;}
+ if(m->m_flags&M_PKTHDR) {
+  head->m_pkthdr=m->m_pkthdr;head->m_flags=m->m_flags&M_COPYFLAGS;
+  m->m_flags&=~M_PKTHDR;
+ }
+ head->m_next=m;
+ head->m_data=head->storage+((sizeof(head->storage)-(size_t)len)&~(sizeof(long)-1));
+ head->m_len=len;
+ return head;
 }
-#define M_PREPEND(m,len,how) ((m)=unit_prepend((m),(len)))
 static unsigned unit_declined_posts,unit_txba_posts;
 static uint8_t unit_txba_req[9];
 static void if_start_lock(struct ifnet *ifp)
@@ -115,7 +132,6 @@ static void if_start_lock(struct ifnet *ifp)
 #define LLC_SNAP_LSAP 0xaa
 #define LLC_UI 3
 #define ETHER_ALIGN 2
-#define MHLEN 200
 #define MT_DATA 0
 #define MCLGET(m,how) do { \
  (m)->m_flags|=M_EXT|M_EXT_RW; \
@@ -216,7 +232,7 @@ static void unit_negotiate(struct unit_fixture *f)
 }
 static int unit_setup_mode(struct unit_fixture *f,unsigned head,unsigned window,unsigned timeout,int ba)
 {
- memset(f,0,sizeof(*f));rxba_kmem_fail_at=0;unit_mgt_alloc_fail=unit_prepend_fail=0;unit_schedule_error=unit_response_error=unit_schedule_profile_change=0;unit_positive_posts=0;unit_now=1000;unit_deadline=unit_token=0;
+ memset(f,0,sizeof(*f));rxba_kmem_fail_at=0;unit_mgt_alloc_fail=unit_prepend_fail=0;unit_mgt_headroom=64;unit_schedule_error=unit_response_error=unit_schedule_profile_change=0;unit_positive_posts=0;unit_now=1000;unit_deadline=unit_token=0;
  rxba_output_count=0;memset(rxba_output_seq,0,sizeof(rxba_output_seq));
  unit_key_alloc_fail=unit_key_set_fail=unit_key_delete_fail=unit_attach_fail=0;unit_key_calls=0;
  f->ic.ic_crypto.cs_key_alloc=unit_key_alloc;f->ic.ic_crypto.cs_key_set=unit_key_set;f->ic.ic_crypto.cs_key_delete=unit_key_delete;
@@ -820,11 +836,11 @@ static void test_actual_allocation_failures(void)
   struct ieee80211_rxba_tid *old=f.ni.ni_rxba.tid[0];unsigned posts=unit_positive_posts,live=rxba_kmem_live;
   if(kind<2)rxba_kmem_fail_at=rxba_kmem_calls+kind+1;
   else if(kind==2)unit_mgt_alloc_fail=1;
-  else unit_prepend_fail=1;
+  else {unit_mgt_headroom=0;unit_prepend_fail=1;}
   CHECK(unit_request(&f,20,1,2)==ENOMEM);
   CHECK(f.ni.ni_rxba.bytes==bytes && f.ni.ni_rxba.tid[0]==old && old->head==10);
   CHECK(rxba_kmem_live==live && f.ni.references==1 && unit_positive_posts==posts && unit_deadline==1100);
-  rxba_kmem_fail_at=0;unit_mgt_alloc_fail=unit_prepend_fail=0;unit_close(&f);
+  rxba_kmem_fail_at=0;unit_mgt_alloc_fail=unit_prepend_fail=0;unit_mgt_headroom=64;unit_close(&f);
  }
 }
 static void test_repeat_replace_and_tid_deadlines(void)
@@ -1045,8 +1061,71 @@ static void test_txba_originator(void)
 #ifndef RXBA_SHARED_MAIN
 #define RXBA_SHARED_MAIN main
 #endif
+static void test_prepend_fast_path_avoids_allocation(void)
+{
+ unit_mgt_alloc_fail=unit_prepend_fail=0;unit_mgt_headroom=64;
+ uint8_t *payload;
+ struct mbuf *m=unit_mgtframe(&payload,9),*original=m;
+ assert(m);
+ unsigned allocations=unit_prepend_allocs;
+ memset(payload,0x5a,9);
+ unit_prepend_fail=1;
+ M_PREPEND(m,24,M_NOWAIT);
+ CHECK(m==original && unit_prepend_allocs==allocations);
+ if(m) {
+  CHECK(m->m_len==33 && m->m_pkthdr.len==33);
+  CHECK(m->m_data+24==payload && m->m_data[24]==0x5a && m->m_data[32]==0x5a);
+  m_freem(m);
+ }
+ unit_prepend_fail=0;
+}
+static void test_prepend_fallback_ownership(void)
+{
+ unit_mgt_alloc_fail=unit_prepend_fail=0;unit_mgt_headroom=64;
+ for(unsigned kind=0;kind<3;kind++) {
+  uint8_t *payload,bytes[13];
+  struct mbuf *m=unit_mgtframe(&payload,9),*original=m;
+  assert(m);
+  struct mbuf *tail=calloc(1,sizeof(*tail));assert(tail);
+  struct m_tag *tag=calloc(1,sizeof(*tag));assert(tag);
+  struct ieee80211_node owner={0};
+  memset(payload,0x5a,9);
+  tail->m_data=tail->storage;tail->m_len=4;memset(tail->m_data,0xa5,4);
+  m->m_next=tail;m->m_pkthdr.len+=4;m->m_pkthdr.ctx=&owner;m->m_flags|=M_BCAST;
+  SLIST_INSERT_HEAD(&m->m_pkthdr.tags,tag,m_tag_link);
+  if(kind==1) {
+   m->m_flags|=M_EXT|M_EXT_RW;m->m_ext.ext_buf=m->storage;
+   m->m_ext.ext_size=sizeof(m->storage);m->m_ext.ext_refcnt=2;
+  } else {
+   memmove(m->storage,payload,9);m->m_data=m->storage;
+  }
+  CHECK(M_LEADINGSPACE(m)==0);
+  unsigned allocations=unit_prepend_allocs,freed=unit_mbuf_frees,tags=unit_tag_frees;
+  unit_prepend_fail=kind==2;
+  M_PREPEND(m,24,M_NOWAIT);
+  CHECK(unit_prepend_allocs==allocations+1);
+  if(kind==2) {
+   CHECK(m==NULL && unit_mbuf_frees==freed+2 && unit_tag_frees==tags+1);
+  } else {
+   CHECK(m!=NULL && m!=original && m->m_next==original);
+   if(m) {
+    CHECK(m->m_len==24 && m->m_pkthdr.len==37);
+    CHECK((m->m_flags&(M_PKTHDR|M_BCAST|M_EXT))==(M_PKTHDR|M_BCAST));
+    CHECK(!(original->m_flags&M_PKTHDR) && m->m_pkthdr.ctx==&owner);
+    CHECK(SLIST_FIRST(&m->m_pkthdr.tags)==tag);
+    m_copydata(m,24,13,bytes);
+    for(unsigned i=0;i<13;i++)CHECK(bytes[i]==(i<9?0x5a:0xa5));
+    m_freem(m);
+    CHECK(unit_mbuf_frees==freed+3 && unit_tag_frees==tags+1);
+   }
+  }
+  unit_prepend_fail=0;
+ }
+}
 int RXBA_SHARED_MAIN(void)
 {
+ test_prepend_fast_path_avoids_allocation();
+ test_prepend_fallback_ownership();
  test_txba_originator();
  test_csa_action_exit();test_absolute_deadline();test_window_and_wrap();test_key_and_mic_order();test_candidate_preflight();test_actual_key_lifecycle();test_actual_node_reuse();test_beacon_contract_purge();test_ht20_real_ccmp_budget();test_actual_bar_and_delba();test_clock_serial_quarantine();test_owned_storage_budget();test_null_crypto_order();test_owned_admission_withdrawal();test_premature_addba_declined();test_actual_allocation_failures();test_repeat_replace_and_tid_deadlines();test_invalid_queued_frames();test_negotiated_amsdu_crypto_order();test_storage_walk_bounds();test_amsdu_current_without_ba();
  printf("RX BA actual primitive/CCMP units: %u checks, %u failures\n",checks,failures);
