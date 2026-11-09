@@ -187,12 +187,16 @@ static int esp_wifi_unset_appie_internal(int type) {
  slot->record=NULL;slot->payload_len=0;slot->owned=false;
  return 0; }
 static int esp_wifi_sta_pmf_enabled(void) { return pmf_configured; }
+static int auth_done_result;
+static bool esp_wifi_auth_done_internal(void) { return auth_done_result != 0; }
 static unsigned esp_wifi_get_config_sae_pwe_h2e_internal(int ifx) {
  assert(ifx==WIFI_IF_STA);return 0; }
-''' + fn('espwifi_wpa2_rsn','bool') + fn('espwifi_ext_clear_assoc_appies','void') + fn('espwifi_ext_connect','int') + fn('espwifi_ext_sta_pmf_configured','int') + r'''
+''' + fn('espwifi_wpa2_rsn','bool') + fn('espwifi_ext_clear_assoc_appies','void') + fn('espwifi_ext_connect','int') + fn('espwifi_ext_sta_pmf_configured','int') + fn('espwifi_ext_auth_done','int') + r'''
 int main(void) {
  uint8_t ssid[4]={'t','e','s','t'},bssid[6]={2,3,4,5,6,7};
  uint8_t rsn[22]={48,20,1,0,0,15,172,4,1,0,0,15,172,4,1,0,0,15,172,2,0,0};
+ auth_done_result=1;assert(espwifi_ext_auth_done()==0);
+ auth_done_result=0;assert(espwifi_ext_auth_done()==-1);
  assert(!espwifi_ext_connect(ssid,4,bssid,rsn,sizeof(rsn),0));
  assert(cfgcalls==1 && rsncalls==1 && assoc_calls==0 && connects==1);
  assert(rsn_slot.owned && rsn_slot.record[0]==sizeof(rsn) &&

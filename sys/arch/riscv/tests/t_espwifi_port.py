@@ -211,8 +211,10 @@ typedef uint8_t u_int8_t;
 #define IEEE80211_CIPHER_AES_CCM 3
 #define ESPWIFI_KEY_REQUEST_CCMP 0
 #define ESPWIFI_KEY_REQUEST_IGTK 1
+#define ESPWIFI_KEY_REQUEST_AUTH_DONE 2
 #define NBBY 8
 #define LINK_STATE_DOWN 0
+#define atomic_load_acquire(p) (*(p))
 struct cipher { unsigned ic_cipher; };
 struct ieee80211_key { const struct cipher *wk_cipher; unsigned wk_keylen;
  unsigned wk_keyix,wk_flags; uint64_t wk_keyrsc; uint8_t wk_key[32]; };
@@ -229,6 +231,7 @@ struct espwifi_softc { struct ieee80211com sc_ic; struct espwifi_ec sc_ec; unsig
  sc_key_request_seq[6],sc_key_request_data[16];unsigned sc_key_request_index;
  unsigned sc_key_request_type;int sc_key_request_group,sc_key_request_xmit;
  uint64_t sc_join_generation,sc_join_active,sc_key_generation;
+ uint64_t sc_auth_done_generation,sc_port_revoke_generation;
  uint8_t sc_key_slots,sc_group_key_slots,sc_igtk_slots;
  bool sc_join_sae; };
 static struct espwifi_softc sc,espwifi_sc;static int calls,result,held,signals;static unsigned seq_seen;
@@ -237,9 +240,13 @@ static bool mutate_generation;
 static bool teardown_on_unlock;
 static bool stale_before_worker, force_timeout, delay_success, timeout_completion;
 static bool wait_only,reconnect_during_wait,reconnect_on_timeout;
-static int key_held,worker_context;
+static int key_held,worker_context,auth_done_calls,auth_done_result,port_logs;
+static bool revoke_during_auth_done;
+static struct ieee80211com *port_ic;
 static u_int tick_clock, wake_elapsed;
 static void espwifi_if_key_control(struct espwifi_softc *);
+static bool espwifi_if_auth_done_request(struct espwifi_softc *,uint64_t);
+static int espwifi_if_set_port(struct ieee80211com *,bool);
 static void mutex_enter(int *p) { (void)p;assert(!key_held);key_held=1; }
 static void mutex_exit(int *p) { (void)p;assert(key_held);key_held=0; }
 static void cv_broadcast(int *p) { (void)p; }
@@ -302,8 +309,19 @@ static int espwifi_ext_set_igtk(unsigned index,const uint8_t *seq,
 	assert(worker_context && (index==4 || index==5) && seq[0]==8 && key[0]==9);
 	igtk_calls++;igtk_index=index;igtk_seq_seen=seq[0];return result; }
 static void explicit_memset(void *p,int c,size_t n) { memset(p,c,n); }
-static void espwifi_os_log(const char *fmt, ...) { (void)fmt; }
-''' + fn('espwifi_if_set_port','int') + fn('espwifi_if_fail_closed_generation','bool') + fn('espwifi_if_fail_closed','void') + fn('espwifi_if_key_request_clear','void') + fn('espwifi_if_key_wait','bool') + fn('espwifi_if_key_request','bool') + fn('espwifi_if_key_control','void') + fn('espwifi_if_key_set','int') + fn('espwifi_if_key_delete','int') + fn('espwifi_if_radio_stopped','void') + r'''
+static void espwifi_os_log(const char *fmt, ...) {
+ if (strstr(fmt,"port authorization")!=NULL) port_logs++;
+}
+static int espwifi_ext_auth_done(void) {
+	assert(worker_context && !held && !key_held);
+ auth_done_calls++;
+ if (revoke_during_auth_done) {
+  revoke_during_auth_done=false;
+  assert(espwifi_if_set_port(port_ic,false)==0);
+ }
+ return auth_done_result;
+}
+''' + fn('espwifi_if_set_port','int') + fn('espwifi_if_fail_closed_generation','bool') + fn('espwifi_if_fail_closed','void') + fn('espwifi_if_key_request_clear','void') + fn('espwifi_if_key_wait','bool') + fn('espwifi_if_key_control','void') + fn('espwifi_if_key_request','bool') + fn('espwifi_if_auth_done_request','bool') + fn('espwifi_if_key_set','int') + fn('espwifi_if_key_delete','int') + fn('espwifi_if_radio_stopped','void') + r'''
 int main(void) {
  struct ifnet ifp={&sc};struct ieee80211com ic={&ifp};struct cipher c={3};
  struct ieee80211_key key={.wk_cipher=&c,.wk_keylen=16,.wk_keyix=0,.wk_flags=1,
@@ -340,7 +358,21 @@ int main(void) {
 	assert(igtk_calls==1 && igtk_index==4 && igtk_seq_seen==8 &&
 	    (sc.sc_igtk_slots & (1U<<4)) && sc.sc_key_generation==1);
 	sc.sc_join_sae=true;
+	port_ic=&ic;
+	unsigned auth_calls_before=auth_done_calls, auth_logs_before=port_logs;
+	revoke_during_auth_done=true;
+	assert(espwifi_if_set_port(&ic,true)==ESTALE && !sc.sc_port_authorized);
+	assert(auth_done_calls==auth_calls_before+1 &&
+	    sc.sc_join_active==1 && sc.sc_auth_done_generation==1 &&
+	    port_logs==auth_logs_before+1);
 	assert(espwifi_if_set_port(&ic,true)==0 && sc.sc_port_authorized);
+	assert(auth_done_calls==auth_calls_before+1 && port_logs==auth_logs_before+2);
+	assert(espwifi_if_set_port(&ic,true)==0 && sc.sc_port_authorized);
+	assert(auth_done_calls==auth_calls_before+1 && port_logs==auth_logs_before+2);
+	assert(espwifi_if_set_port(&ic,false)==0 && !sc.sc_port_authorized);
+	assert(port_logs==auth_logs_before+3);
+	assert(espwifi_if_set_port(&ic,true)==0 && sc.sc_port_authorized);
+	assert(auth_done_calls==auth_calls_before+1 && port_logs==auth_logs_before+4);
 	key.wk_flags=IEEE80211_KEY_GROUP;delay_success=true;
 	assert(espwifi_if_key_set(&ic,&key,mac)==1);
 	delay_success=false;
@@ -424,6 +456,23 @@ int main(void) {
 	assert(sc.sc_join_active==22 && sc.sc_join_generation==22 &&
 	    sc.sc_joined && sc.sc_link && sc.sc_radio_ready &&
 	    !sc.sc_join_disconnect_pending);
+	/* Vendor completion failure fails closed; stale generation never calls it. */
+	sc.sc_join_active=30;sc.sc_join_generation=30;sc.sc_joined=true;
+	sc.sc_link=true;sc.sc_radio_ready=true;sc.sc_sta_started=true;
+	sc.sc_join_stopped=false;sc.sc_ptk_installed=true;sc.sc_key_generation=30;
+	sc.sc_port_authorized=0;sc.sc_auth_done_generation=0;auth_done_result=-1;
+	auth_calls_before=auth_done_calls;
+	assert(espwifi_if_set_port(&ic,true)==EIO && !sc.sc_port_authorized);
+	assert(auth_done_calls==auth_calls_before+1 && !sc.sc_join_active &&
+	    !sc.sc_auth_done_generation);
+	sc.sc_join_active=31;sc.sc_join_generation=31;sc.sc_joined=true;
+	sc.sc_link=true;sc.sc_radio_ready=true;sc.sc_sta_started=true;
+	sc.sc_join_stopped=false;sc.sc_ptk_installed=true;sc.sc_key_generation=31;
+	sc.sc_port_authorized=0;sc.sc_auth_done_generation=0;auth_done_result=0;
+	stale_before_worker=true;auth_calls_before=auth_done_calls;
+	assert(espwifi_if_set_port(&ic,true)==EIO && !sc.sc_port_authorized);
+	assert(auth_done_calls==auth_calls_before && sc.sc_join_active==32 &&
+	    !sc.sc_auth_done_generation);
 	/* STOP invalidates an already queued key; its worker drains without install. */
 	sc.sc_attached=true;sc.sc_join_active=23;sc.sc_join_generation=23;
 	sc.sc_joined=true;sc.sc_link=true;sc.sc_radio_ready=true;

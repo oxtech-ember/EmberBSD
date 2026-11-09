@@ -128,6 +128,7 @@ int	espwifi_ext_set_key(const unsigned char *, unsigned int, int, int, int,
 	    const unsigned char *, unsigned int, const unsigned char *, unsigned int);
 int	espwifi_ext_set_igtk(unsigned int, const unsigned char *,
 	    const unsigned char *);
+int	espwifi_ext_auth_done(void);
 int	espwifi_tx(const void *, unsigned int);
 void	espwifi_get_mac(unsigned char *);
 

@@ -38,7 +38,7 @@ ENTRIES = '''espwifi_start_wpa2 espwifi_scan espwifi_seen espwifi_linked
 espwifi_connect espwifi_tx espwifi_get_mac espwifi_scan_capture
 espwifi_disconnect espwifi_ext_connect espwifi_ext_set_key
 espwifi_ext_clear_assoc_appies espwifi_ext_set_igtk
-espwifi_ext_sta_pmf_configured'''.split()
+espwifi_ext_sta_pmf_configured espwifi_ext_auth_done'''.split()
 NATIVE_WPA_SOURCES = ('wpa_supplicant/src/rsn_supp/wpa.c',
                       'wpa_supplicant/esp_supplicant/src/esp_wpa_main.c')
 NATIVE_WPA_SYMBOLS = frozenset(('wpa_set_profile', 'wpa_set_bss',

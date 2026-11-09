@@ -76,6 +76,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define ESPWIFI_SAE_REPLY_ANY 3
 #define ESPWIFI_KEY_REQUEST_CCMP 0
 #define ESPWIFI_KEY_REQUEST_IGTK 1
+#define ESPWIFI_KEY_REQUEST_AUTH_DONE 2
 #define ESPWIFI_SAE_CAPS \
 	(IEEE80211_SAE_CAP_EXTERNAL | IEEE80211_SAE_CAP_PMF)
 struct espwifi_scan_frame {
@@ -126,6 +127,9 @@ struct espwifi_softc {
 	unsigned	sc_key_request_index;
 	unsigned	sc_key_request_type;
 	int		sc_key_request_group, sc_key_request_xmit;
+	/* Completion survives a local port revoke within the same join. */
+	uint64_t	sc_auth_done_generation;
+	uint64_t	sc_port_revoke_generation;
 	void		*sc_scan_sem;
 	void		*sc_scan_ctl_sem;
 	unsigned	sc_scan_head, sc_scan_count;
@@ -167,6 +171,7 @@ static int espwifi_if_igtk_install(struct espwifi_softc *,
 	    const struct ieee80211req_sae *, uint64_t);
 static int espwifi_if_igtk_delete(struct espwifi_softc *,
 	    const struct ieee80211req_sae *, uint64_t);
+static bool espwifi_if_auth_done_request(struct espwifi_softc *, uint64_t);
 #endif
 
 #ifdef ESPWIFI_NET80211
@@ -1037,23 +1042,68 @@ static int
 espwifi_if_set_port(struct ieee80211com *ic, bool authorized)
 {
 	struct espwifi_softc * const sc = ic->ic_ifp->if_softc;
-	bool ready, allowed;
+	uint64_t generation, revoke_generation;
+	bool ready, completed, was_authorized;
 
 	mutex_spin_enter(&sc->sc_scan_lock);
+	generation = sc->sc_join_active;
+	/* Revocation also cancels an authorization waiting in the radio worker. */
+	if (!authorized)
+		sc->sc_port_revoke_generation++;
+	revoke_generation = sc->sc_port_revoke_generation;
 	ready = sc->sc_link && sc->sc_join_active != 0 && sc->sc_joined &&
 	    sc->sc_radio_ready && sc->sc_sta_started && !sc->sc_join_stopped &&
 	    sc->sc_ptk_installed &&
 	    sc->sc_key_generation == sc->sc_join_active &&
 	    (!sc->sc_join_sae || sc->sc_igtk_slots != 0);
-	allowed = !authorized || ready;
-	if (allowed)
-		atomic_store_release(&sc->sc_port_authorized, authorized);
+	was_authorized = atomic_load_acquire(&sc->sc_port_authorized) != 0;
+	completed = generation != 0 && sc->sc_auth_done_generation == generation;
+	if (!authorized || !ready)
+		atomic_store_release(&sc->sc_port_authorized, 0);
 	mutex_spin_exit(&sc->sc_scan_lock);
-	if (authorized)
-		espwifi_os_log("espwifi: port authorization request=%u ready=%u "
-		    "error=%d\n", (unsigned)authorized, (unsigned)ready,
-		    allowed ? 0 : EACCES);
-	return allowed ? 0 : EACCES;
+	if (authorized && !ready) {
+		espwifi_os_log("espwifi: port authorization request=1 ready=0 "
+		    "error=%d\n", EACCES);
+		return EACCES;
+	}
+	if (!authorized) {
+		if (was_authorized)
+			espwifi_os_log("espwifi: port authorization request=0 "
+			    "ready=%u error=0\n", (unsigned)ready);
+		return 0;
+	}
+	if (was_authorized && completed)
+		return 0;
+
+	/* The radio owns its connection-complete transition, not WPA policy. */
+	if (!completed && !espwifi_if_auth_done_request(sc, generation)) {
+		espwifi_os_log("espwifi: port authorization completion failed "
+		    "generation=%llu\n",
+		    (unsigned long long)generation);
+		return EIO;
+	}
+
+	mutex_spin_enter(&sc->sc_scan_lock);
+	ready = sc->sc_join_active == generation && generation != 0 &&
+	    sc->sc_port_revoke_generation == revoke_generation &&
+	    sc->sc_joined && sc->sc_link && sc->sc_radio_ready &&
+	    sc->sc_sta_started && !sc->sc_join_stopped &&
+	    sc->sc_ptk_installed && sc->sc_key_generation == generation &&
+	    (!sc->sc_join_sae || sc->sc_igtk_slots != 0) &&
+	    sc->sc_auth_done_generation == generation;
+	was_authorized = atomic_load_acquire(&sc->sc_port_authorized) != 0;
+	if (ready)
+		atomic_store_release(&sc->sc_port_authorized, 1);
+	mutex_spin_exit(&sc->sc_scan_lock);
+	if (!ready) {
+		espwifi_os_log("espwifi: port authorization request=1 ready=0 "
+		    "error=%d\n", ESTALE);
+		return ESTALE;
+	}
+	if (!was_authorized)
+		espwifi_os_log("espwifi: port authorization request=1 ready=1 "
+		    "error=0\n");
+	return 0;
 }
 
 static bool
@@ -1139,7 +1189,7 @@ espwifi_if_key_control(struct espwifi_softc *sc)
 {
 	uint8_t mac[ETHER_ADDR_LEN], seq[6], key[16];
 	uint64_t generation;
-	bool current;
+	bool current, completed;
 	unsigned index, type;
 	int group, xmit, error;
 
@@ -1163,10 +1213,29 @@ espwifi_if_key_control(struct espwifi_softc *sc)
 	mutex_spin_enter(&sc->sc_scan_lock);
 	current = sc->sc_join_active == generation && sc->sc_joined &&
 	    sc->sc_radio_ready && sc->sc_sta_started && !sc->sc_join_stopped;
+	if (type == ESPWIFI_KEY_REQUEST_AUTH_DONE)
+		current = current && sc->sc_link && sc->sc_ptk_installed &&
+		    sc->sc_key_generation == generation &&
+		    (!sc->sc_join_sae || sc->sc_igtk_slots != 0);
+	completed = sc->sc_auth_done_generation == generation;
 	mutex_spin_exit(&sc->sc_scan_lock);
 	if (!current)
 		error = ECANCELED;
-	else if (type == ESPWIFI_KEY_REQUEST_IGTK)
+	else if (type == ESPWIFI_KEY_REQUEST_AUTH_DONE) {
+		error = completed ? 0 : espwifi_ext_auth_done();
+		mutex_spin_enter(&sc->sc_scan_lock);
+		current = sc->sc_join_active == generation && sc->sc_joined &&
+		    sc->sc_link && sc->sc_radio_ready && sc->sc_sta_started &&
+		    !sc->sc_join_stopped && sc->sc_ptk_installed &&
+		    sc->sc_key_generation == generation &&
+		    (!sc->sc_join_sae || sc->sc_igtk_slots != 0);
+		/* Publish before waking callers or accepting another request. */
+		if (error == 0 && current)
+			sc->sc_auth_done_generation = generation;
+		else if (!current)
+			error = ECANCELED;
+		mutex_spin_exit(&sc->sc_scan_lock);
+	} else if (type == ESPWIFI_KEY_REQUEST_IGTK)
 		error = espwifi_ext_set_igtk(index, seq, key);
 	else
 		error = espwifi_ext_set_key(mac, index, group, xmit, 0, seq,
@@ -1260,7 +1329,7 @@ espwifi_if_key_request(struct espwifi_softc *sc, uint64_t generation,
 	mutex_exit(&sc->sc_key_lock);
 	mutex_spin_enter(&sc->sc_scan_lock);
 	current = sc->sc_join_active == generation && sc->sc_joined;
-	if (error == 0 && current) {
+	if (error == 0 && current && type != ESPWIFI_KEY_REQUEST_AUTH_DONE) {
 		if (sc->sc_key_generation != generation) {
 			sc->sc_key_slots = 0;
 			sc->sc_group_key_slots = 0;
@@ -1274,6 +1343,16 @@ espwifi_if_key_request(struct espwifi_softc *sc, uint64_t generation,
 	if (error != 0 && current)
 		(void)espwifi_if_fail_closed_generation(sc, generation);
 	return error == 0 && current;
+}
+
+static bool
+espwifi_if_auth_done_request(struct espwifi_softc *sc, uint64_t generation)
+{
+	static const uint8_t zero[16];
+
+	/* Reuse the bounded, FPU-owning radio worker used for key installation. */
+	return espwifi_if_key_request(sc, generation,
+	    ESPWIFI_KEY_REQUEST_AUTH_DONE, NULL, 0, 0, 0, zero, zero);
 }
 
 static int

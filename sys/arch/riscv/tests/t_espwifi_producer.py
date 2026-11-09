@@ -43,7 +43,8 @@ except ValueError as e:
     assert 'espwifi_disconnect' in str(e)
 else:
     raise AssertionError('kernel disconnect caller was not required by producer')
-for required in ('espwifi_ext_set_igtk', 'espwifi_ext_sta_pmf_configured'):
+for required in ('espwifi_ext_set_igtk', 'espwifi_ext_sta_pmf_configured',
+                 'espwifi_ext_auth_done'):
     try:
         m.check_consumer_boundary([e for e in m.ENTRIES if e != required],
             script.parent.parent/'esp_wifi_os.h',

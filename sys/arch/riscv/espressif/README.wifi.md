@@ -14,9 +14,8 @@ SC101IOT kit; its `EXTRA_OBJ` must be supplied through `ESPWIFI_OBJECT` from
 the output of `wifi/mkblob.py --external-wpa2`. Keep this profile out of other
 board configurations. The historical option name is retained, but the
 published source bridges WPA2-PSK and external SAE/PMF through the ordinary
-BSD supplicant and net80211 APIs. This is source support; association,
-protected-management behavior, and key lifecycle have not passed a hardware
-trial.
+BSD supplicant and net80211 APIs. Current board support and hardware limits
+are recorded in the [Mosaico Wi-Fi evidence](https://github.com/oxtech-ember/EmberBSD-DevBoards/blob/main/boards/esp-mosaico/evidence/wifi-association.json).
 
 The adapter accepts a WPA2-PSK/CCMP profile or SAE with PMF required. SAE
 commit/confirm construction and parsing are bridged through the version-pinned
@@ -30,7 +29,12 @@ memory. A version-pinned IDF
 responses before EAPOL; the adapter checks status and selected BSSID before
 publishing net80211 RUN. The later `WIFI_EVENT_STA_CONNECTED` is not treated
 as the association boundary. RX and TX allow only EAPOL until the supplicant
-authorizes the controlled port.
+authorizes the controlled port. After that authorization, the adapter submits
+IDF's connection-complete handoff through the bounded radio worker, after the
+current join's key readiness checks pass. Completion is recorded per join
+generation; a local port revoke closes traffic but does not submit duplicate
+completion if the same join is authorized again. WPA policy remains in the
+common supplicant.
 
 IDF's encrypted-profile selector rejects an empty STA password before it calls
 the external authentication callbacks. This producer therefore writes the

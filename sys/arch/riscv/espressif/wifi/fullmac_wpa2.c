@@ -481,3 +481,9 @@ espwifi_ext_set_igtk(unsigned int index, const unsigned char *sequence,
 	forced_memzero(&igtk, sizeof(igtk));
 	return error == ESP_OK ? 0 : -1;
 }
+
+int
+espwifi_ext_auth_done(void)
+{
+	return esp_wifi_auth_done_internal() ? 0 : -1;
+}
