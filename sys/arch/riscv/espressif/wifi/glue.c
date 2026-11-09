@@ -2122,16 +2122,32 @@ event_post_wrapper(const char *base, int32_t id, void *data, size_t size,
 		link_up = 0;
 		unsigned critical;
 
+#ifdef ESPWIFI_VENDOR_DEBUG_ONCE
+		espwifi_os_log("espwifi: vendor checkpoint "
+		    "stage=sta_start_callback_enter\n");
+#endif
 		espwifi_os_radio_started();
+#ifdef ESPWIFI_VENDOR_DEBUG_ONCE
+		espwifi_os_log("espwifi: vendor checkpoint "
+		    "stage=sta_start_callback_radio_started\n");
+#endif
 		critical = espwifi_os_critical_enter();
 		start_events++;
 		espwifi_os_critical_exit(critical);
 		espwifi_os_sem_give(link_change);
+#ifdef ESPWIFI_VENDOR_DEBUG_ONCE
+		espwifi_os_log("espwifi: vendor checkpoint "
+		    "stage=sta_start_callback_exit\n");
+#endif
 		break;
 	}
 	case WIFI_EVENT_STA_STOP: {
 		unsigned critical;
 
+#ifdef ESPWIFI_VENDOR_DEBUG_ONCE
+		espwifi_os_log("espwifi: vendor checkpoint "
+		    "stage=sta_stop_callback_enter\n");
+#endif
 #ifdef ESPWIFI_RX_CHAIN_ONCE
 		critical = espwifi_os_critical_enter();
 		espwifi_rx_chain_hw_ready = false;
@@ -2140,10 +2156,18 @@ event_post_wrapper(const char *base, int32_t id, void *data, size_t size,
 		espwifi_vendor_debug_once_end();
 		link_up = 0;
 		espwifi_os_radio_stopped();
+#ifdef ESPWIFI_VENDOR_DEBUG_ONCE
+		espwifi_os_log("espwifi: vendor checkpoint "
+		    "stage=sta_stop_callback_radio_stopped\n");
+#endif
 		critical = espwifi_os_critical_enter();
 		stop_events++;
 		espwifi_os_critical_exit(critical);
 		espwifi_os_sem_give(link_change);
+#ifdef ESPWIFI_VENDOR_DEBUG_ONCE
+		espwifi_os_log("espwifi: vendor checkpoint "
+		    "stage=sta_stop_callback_exit\n");
+#endif
 		break;
 	}
 	case WIFI_EVENT_STA_CONNECTED:
@@ -2648,7 +2672,15 @@ espwifi_disconnect(void)
 	stop_target = stop_events + 1;
 	espwifi_os_critical_exit(critical);
 	deadline = espwifi_os_time_us() + 2000000;
+#ifdef ESPWIFI_VENDOR_DEBUG_ONCE
+	espwifi_os_log("espwifi: vendor checkpoint "
+	    "stage=stop_call_enter\n");
+#endif
 	error = esp_wifi_stop();
+#ifdef ESPWIFI_VENDOR_DEBUG_ONCE
+	espwifi_os_log("espwifi: vendor checkpoint "
+	    "stage=stop_call_return rc=%d\n", (int)error);
+#endif
 	if (error != ESP_OK)
 		return error;
 	/* Require STA_STOP before restart. The public API does not promise an event
@@ -2668,7 +2700,15 @@ espwifi_disconnect(void)
 	critical = espwifi_os_critical_enter();
 	start_target = start_events + 1;
 	espwifi_os_critical_exit(critical);
+#ifdef ESPWIFI_VENDOR_DEBUG_ONCE
+	espwifi_os_log("espwifi: vendor checkpoint "
+	    "stage=start_call_enter\n");
+#endif
 	error = esp_wifi_start();
+#ifdef ESPWIFI_VENDOR_DEBUG_ONCE
+	espwifi_os_log("espwifi: vendor checkpoint "
+	    "stage=start_call_return rc=%d\n", (int)error);
+#endif
 	if (error != ESP_OK)
 		return error;
 	deadline = espwifi_os_time_us() + 2000000;
