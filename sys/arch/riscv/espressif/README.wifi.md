@@ -231,9 +231,12 @@ over-the-air DATA.
 For the same window, the probe records read-only interface-0 MAC and BSSID
 register words at begin, after an accepted successful association response,
 and at end, comparing them with the software STA MAC and expected BSSID where
-available. This is register readback only; it does not prove packet-filter
-configuration or packet reception. The diagnostic does not write these
-registers or alter radio policy.
+available. It also records a read-only word from S31 MAC RX-policy register
+`0x201040d8`; the pinned IDF `hal_mac_rx_set_policy` implementation performs
+read/modify/write operations on that register. These values are register
+readback only: they do not prove packet-filter configuration or packet
+reception. The diagnostic does not write these registers or alter radio
+policy.
 
 For an opt-in legacy-PHY comparison, add `--vendor-legacy-phy` together with
 `--vendor-rx-chain-once`. Before the radio starts, this diagnostic sets the
@@ -246,14 +249,21 @@ RX-count window closes, a permanent workaround, or a band-mode change.
 
 The probe also samples the S31 hardware RX statistics
 through the pinned IDF getter at successful radio start and at the window
-boundaries. It reports modulo-16-bit deltas for the fields `rx_mpdu`,
-`rx_end_cnt`, `rx_datasuc`, `rx_fcs_err`, `rx_abort`, `nrx_err_pwrdrop`,
-`rx_buf_fullcnt`, and `rx_fifo_ovfcnt`; it does not clear counters or change
-radio mode or filters. The pinned vendor header does not document the
-increment conditions or frame types for these fields. Treat a delta as
-hardware-stat activity only: it does not establish receipt of a particular
-802.11 frame or EAPOL. If the radio is stopped before a snapshot, the hardware
-delta is reported unavailable. Allocator output reports internal-pool request
-accounting, including initialization totals and window boundary totals; it
-does not identify whether a caller's field was `_internal` or `_wifi_*`. This
-option requires `--vendor-debug-once` and is off by default.
+boundaries. It reports modulo-16-bit deltas using the vendor field names:
+`rx_mpdu`, `rx_end_cnt`, `rx_datasuc`, `rx_fcs_err`, `rx_abort`,
+`nrx_err_pwrdrop`, `rx_buf_fullcnt`, `rx_fifo_ovfcnt`,
+`rx_abort_fcs_pass`, `rx_samebm_errcnt`, `rx_other_ucast`,
+`rx_lastunmatch_err`, `rx_tkip_errcnt`, `rx_btblock_err`, `rx_freqhop_err`,
+`rx_ack_int_cnt`, `rx_rts_int_cnt`, `brx_err_agc`, `brx_err`, `nrx_err`,
+`nrx_err_abort`, `nrx_err_agcexit`, `nrx_err_bboff`, `nrx_err_fdm_wdg`,
+`nrx_err_restart`, `nrx_err_serv`, `nrx_err_txover`, `nrx_err_unsupport`,
+`nrx_err_heformat`, `nrx_htsig_err`, `nrx_heunsupport`, and
+`nrx_hesiga_crc`. It does not clear counters or change radio mode or filters.
+The pinned vendor header does not document the increment conditions or frame
+types for these fields. Treat each delta as raw hardware-stat activity only:
+it does not establish receipt of a particular 802.11 frame or EAPOL. If the
+radio is stopped before a snapshot, the hardware delta is reported
+unavailable. Allocator output reports internal-pool request accounting,
+including initialization totals and window boundary totals; it does not
+identify whether a caller's field was `_internal` or `_wifi_*`. This option
+requires `--vendor-debug-once` and is off by default.

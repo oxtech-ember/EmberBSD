@@ -131,6 +131,16 @@ counter_delta = re.search(
     r'\nstatic uint16_t\nespwifi_rx_counter_delta\(uint16_t before, '
     r'uint16_t after\)\n\{.*?\n\}', source, re.S)
 assert counter_delta, 'wrap-aware RX hardware counter delta missing'
+hw_delta_macro = re.search(
+    r'^#define ESPWIFI_RX_HW_DELTA_FIELDS\(X\) \\\n(?:^\s*X\([^\n]+\\\n)*^\s*X\(nrx_hesiga_crc\)$',
+    source, re.M)
+assert hw_delta_macro, 'raw hardware RX statistic delta field list missing'
+hw_delta_struct = re.search(
+    r'\nstruct espwifi_rx_chain_hw_delta \{.*?\n\};', source, re.S)
+hw_delta_helper = re.search(
+    r'\nstatic void\nespwifi_rx_hw_delta\(.*?\n\}', source, re.S)
+assert hw_delta_struct and hw_delta_helper, \
+    'shared hardware RX delta helper missing'
 hw_snapshot = re.search(
     r'\nstatic esp_err_t\nespwifi_rx_hw_snapshot\('
     r'esp_test_hw_rx_statistics_t \*statistics\)\n\{.*?\n\}',
@@ -146,8 +156,19 @@ assert assoc_hook and 'espwifi_vendor_debug_assoc_snapshot(sender)' in \
     assoc_hook.group(), 'accepted association must capture register readback'
 assert 'espwifi_rx_chain_mac_readback' in source and \
     '0x2010405c' in source and '0x20104060' in source and \
-    '0x20104000' in source and '0x20104004' in source, \
-    'RX diagnostic must sample interface-0 MAC/BSSID registers'
+    '0x20104000' in source and '0x20104004' in source and \
+    'ESPWIFI_S31_MAC_RX_POLICY_REG 0x201040d8U' in source, \
+    'RX diagnostic must sample interface-0 MAC/BSSID/policy registers'
+for field in ('rx_abort_fcs_pass', 'rx_samebm_errcnt', 'rx_other_ucast',
+              'rx_lastunmatch_err', 'rx_tkip_errcnt', 'rx_btblock_err',
+              'rx_freqhop_err', 'rx_ack_int_cnt', 'rx_rts_int_cnt',
+              'brx_err_agc', 'brx_err', 'nrx_err', 'nrx_err_abort',
+              'nrx_err_agcexit', 'nrx_err_bboff', 'nrx_err_fdm_wdg',
+              'nrx_err_restart', 'nrx_err_serv', 'nrx_err_txover',
+              'nrx_err_unsupport', 'nrx_err_heformat', 'nrx_htsig_err',
+              'nrx_heunsupport', 'nrx_hesiga_crc'):
+    assert 'X(' + field + ')' in source, \
+        'hardware delta list missing vendor field ' + field
 assert 'wDev_ProcessRxSucData' in source and '0x1f4' in source, \
     'RX diagnostic must verify the selected ROM caller slot'
 
@@ -245,8 +266,9 @@ struct espwifi_alloc_diag {
  unsigned long fallback_requested_bytes, final_nulls;
 };
 typedef struct {
- uint16_t rx_fcs_err, rx_abort, rx_abort_fcs_pass, nrx_err_pwrdrop;
- uint16_t rx_mpdu, rx_end_cnt, rx_datasuc, rx_buf_fullcnt, rx_fifo_ovfcnt;
+#define ESPWIFI_RX_HW_DELTA_MEMBER(name) uint16_t name;
+ ESPWIFI_RX_HW_DELTA_FIELDS(ESPWIFI_RX_HW_DELTA_MEMBER)
+#undef ESPWIFI_RX_HW_DELTA_MEMBER
 } esp_test_hw_rx_statistics_t;
 typedef enum { WIFI_PS_NONE, WIFI_PS_MIN_MODEM, WIFI_PS_MAX_MODEM }
     wifi_ps_type_t;
@@ -270,14 +292,15 @@ static unsigned hw_snapshot_calls;
 static esp_err_t hw_snapshot_result = ESP_OK;
 static struct espwifi_alloc_diag alloc_samples[2];
 static esp_test_hw_rx_statistics_t hw_samples[3];
-static uint32_t fake_registers[4] = { 0x04030201, 0x00010605,
-    0x04030201, 0x80000605 };
+static uint32_t fake_registers[5] = { 0x04030201, 0x00010605,
+    0x04030201, 0x80000605, 0x00000512 };
 static uint32_t fake_reg_read(uint32_t addr) {
  switch (addr) {
  case 0x2010405c: return fake_registers[0];
  case 0x20104060: return fake_registers[1];
  case 0x20104000: return fake_registers[2];
  case 0x20104004: return fake_registers[3];
+ case ESPWIFI_S31_MAC_RX_POLICY_REG: return fake_registers[4];
  default: assert(0); return 0;
  }
 }
@@ -352,9 +375,15 @@ static void espwifi_os_log(const char *fmt, ...) {
  (void)vsnprintf(log_message + used, sizeof(log_message) - used, fmt, ap);
  va_end(ap);
 }
-''' + chain_state.group() + '\n' + state.group() + '\n' + \
+'''
+chain_code = chain_code.replace('#include \"fullmac_debug.h\"\n',
+    '#include \"fullmac_debug.h\"\n' + hw_delta_macro.group() + '\n')
+chain_code = chain_code.replace('#define __arraycount(a)',
+    '#define ESPWIFI_S31_MAC_RX_POLICY_REG 0x201040d8U\n#define __arraycount(a)')
+chain_code +=     chain_state.group() + '\n' + state.group() + '\n' + \
     rx_table_declarations.group() + '\n' + \
     counter_delta.group() + '\n' + \
+    hw_delta_helper.group() + '\n' + \
     hw_snapshot.group() + '\n' + \
     slot_function() + '\n' + \
     table_function('espwifi_rx_chain_table_snapshot') + '\n' + \
@@ -461,11 +490,13 @@ int main(void) {
  hw_samples[1] = (esp_test_hw_rx_statistics_t) {
      .rx_fcs_err=65534, .rx_abort=65535, .rx_abort_fcs_pass=7,
      .nrx_err_pwrdrop=10, .rx_mpdu=65533, .rx_end_cnt=65534,
-     .rx_datasuc=65534, .rx_buf_fullcnt=4, .rx_fifo_ovfcnt=8 };
+     .rx_datasuc=65534, .rx_buf_fullcnt=4, .rx_fifo_ovfcnt=8,
+     .rx_samebm_errcnt=65534, .rx_other_ucast=65534, .rx_lastunmatch_err=65534, .rx_tkip_errcnt=65534, .rx_btblock_err=65534, .rx_freqhop_err=65534, .rx_ack_int_cnt=65534, .rx_rts_int_cnt=65534, .brx_err_agc=65534, .brx_err=65534, .nrx_err=65534, .nrx_err_abort=65534, .nrx_err_agcexit=65534, .nrx_err_bboff=65534, .nrx_err_fdm_wdg=65534, .nrx_err_restart=65534, .nrx_err_serv=65534, .nrx_err_txover=65534, .nrx_err_unsupport=65534, .nrx_err_heformat=65534, .nrx_htsig_err=65534, .nrx_heunsupport=65534, .nrx_hesiga_crc=65534 };
  hw_samples[2] = (esp_test_hw_rx_statistics_t) {
      .rx_fcs_err=1, .rx_abort=2, .rx_abort_fcs_pass=9,
      .nrx_err_pwrdrop=12, .rx_mpdu=1, .rx_end_cnt=2,
-     .rx_datasuc=1, .rx_buf_fullcnt=7, .rx_fifo_ovfcnt=9 };
+     .rx_datasuc=1, .rx_buf_fullcnt=7, .rx_fifo_ovfcnt=9,
+     .rx_samebm_errcnt=1, .rx_other_ucast=1, .rx_lastunmatch_err=1, .rx_tkip_errcnt=1, .rx_btblock_err=1, .rx_freqhop_err=1, .rx_ack_int_cnt=1, .rx_rts_int_cnt=1, .brx_err_agc=1, .brx_err=1, .nrx_err=1, .nrx_err_abort=1, .nrx_err_agcexit=1, .nrx_err_bboff=1, .nrx_err_fdm_wdg=1, .nrx_err_restart=1, .nrx_err_serv=1, .nrx_err_txover=1, .nrx_err_unsupport=1, .nrx_err_heformat=1, .nrx_htsig_err=1, .nrx_heunsupport=1, .nrx_hesiga_crc=1 };
  espwifi_rx_chain_alloc_init = (struct espwifi_alloc_diag) {
      .pool_free=950, .pool_min_free=910, .pool_misses=4,
      .fallback_successes=2, .fallback_requested_bytes=32,
@@ -513,6 +544,14 @@ int main(void) {
      hw_snapshot_calls == 3);
  assert(strstr(log_message, "rx_mpdu=4 rx_end_cnt=4 rx_datasuc=3") != NULL);
  assert(strstr(log_message, "rx_fcs_err=3 rx_abort=3") != NULL);
+ assert(strstr(log_message, "rx_abort_fcs_pass=2 rx_samebm_errcnt=3") != NULL);
+ assert(strstr(log_message, "rx_other_ucast=3 rx_lastunmatch_err=3") != NULL);
+ assert(strstr(log_message, "rx_ack_int_cnt=3 rx_rts_int_cnt=3") != NULL);
+ assert(strstr(log_message, "nrx_err_unsupport=3 nrx_err_heformat=3") != NULL);
+ assert(strstr(log_message, "nrx_hesiga_crc=3") != NULL);
+ assert(strstr(log_message, "stage=begin") != NULL &&
+     strstr(log_message, "rx_policy=0x512") != NULL &&
+     strstr(log_message, "stage=end") != NULL);
  assert(strstr(log_message, "init_fallback=2 init_bytes=32") != NULL);
  assert(strstr(log_message, "miss=10->13 fallback=3->5") != NULL);
  assert(espwifi_rx_counter_delta(UINT16_MAX, 1) == 2);
@@ -546,6 +585,9 @@ int main(void) {
      espwifi_rx_chain_mac_assoc.sta_match);
  assert(espwifi_rx_chain_mac_assoc.expected_bssid_valid &&
      espwifi_rx_chain_mac_assoc.bssid_match);
+ assert(espwifi_rx_chain_mac_assoc.words[4] == 0x512);
+ assert(strstr(log_message, "stage=assoc") != NULL &&
+     strstr(log_message, "rx_policy=0x512") != NULL);
  espwifi_rx_chain_sublen_fc_match_count[4] = 2;
  espwifi_rx_chain_sublen_fc_match_count[5] = 3;
  espwifi_rx_chain_sublen_data_state_count[0] = 2;

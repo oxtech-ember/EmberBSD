@@ -143,7 +143,7 @@ struct espwifi_rx_chain_sublen_table_state {
 };
 
 struct espwifi_rx_chain_mac_readback {
-	uint32_t words[4];
+	uint32_t words[5];
 	uint32_t expected_sta[2];
 	uint32_t expected_bssid[2];
 	bool available;
@@ -151,6 +151,49 @@ struct espwifi_rx_chain_mac_readback {
 	bool expected_bssid_valid;
 	bool sta_match;
 	bool bssid_match;
+};
+
+/* S31 hal_mac_rx_set_policy RMW register; read-only diagnostic snapshot. */
+#define ESPWIFI_S31_MAC_RX_POLICY_REG 0x201040d8U
+
+#define ESPWIFI_RX_HW_DELTA_FIELDS(X) \
+	X(rx_mpdu) \
+	X(rx_end_cnt) \
+	X(rx_datasuc) \
+	X(rx_fcs_err) \
+	X(rx_abort) \
+	X(nrx_err_pwrdrop) \
+	X(rx_buf_fullcnt) \
+	X(rx_fifo_ovfcnt) \
+	X(rx_abort_fcs_pass) \
+	X(rx_samebm_errcnt) \
+	X(rx_other_ucast) \
+	X(rx_lastunmatch_err) \
+	X(rx_tkip_errcnt) \
+	X(rx_btblock_err) \
+	X(rx_freqhop_err) \
+	X(rx_ack_int_cnt) \
+	X(rx_rts_int_cnt) \
+	X(brx_err_agc) \
+	X(brx_err) \
+	X(nrx_err) \
+	X(nrx_err_abort) \
+	X(nrx_err_agcexit) \
+	X(nrx_err_bboff) \
+	X(nrx_err_fdm_wdg) \
+	X(nrx_err_restart) \
+	X(nrx_err_serv) \
+	X(nrx_err_txover) \
+	X(nrx_err_unsupport) \
+	X(nrx_err_heformat) \
+	X(nrx_htsig_err) \
+	X(nrx_heunsupport) \
+	X(nrx_hesiga_crc)
+
+struct espwifi_rx_chain_hw_delta {
+#define ESPWIFI_RX_HW_DELTA_MEMBER(name) uint16_t name;
+	ESPWIFI_RX_HW_DELTA_FIELDS(ESPWIFI_RX_HW_DELTA_MEMBER)
+#undef ESPWIFI_RX_HW_DELTA_MEMBER
 };
 
 static esp_err_t espwifi_rx_chain_hw_init_result = ESP_ERR_INVALID_STATE;
@@ -1499,6 +1542,17 @@ espwifi_rx_counter_delta(uint16_t before, uint16_t after)
 	return (uint16_t)(after - before);
 }
 
+static void
+espwifi_rx_hw_delta(const esp_test_hw_rx_statistics_t *before,
+	    const esp_test_hw_rx_statistics_t *after,
+	    struct espwifi_rx_chain_hw_delta *delta)
+{
+#define ESPWIFI_RX_HW_DELTA_CALC(name) \
+	delta->name = espwifi_rx_counter_delta(before->name, after->name);
+	ESPWIFI_RX_HW_DELTA_FIELDS(ESPWIFI_RX_HW_DELTA_CALC)
+#undef ESPWIFI_RX_HW_DELTA_CALC
+}
+
 static esp_err_t
 espwifi_rx_hw_snapshot(esp_test_hw_rx_statistics_t *statistics)
 {
@@ -1639,6 +1693,7 @@ espwifi_rx_chain_mac_readback(struct espwifi_rx_chain_mac_readback *state,
 	state->words[1] = REG_READ(0x20104060);
 	state->words[2] = REG_READ(0x20104000);
 	state->words[3] = REG_READ(0x20104004);
+	state->words[4] = REG_READ(ESPWIFI_S31_MAC_RX_POLICY_REG);
 	state->available = true;
 	state->sta_match = state->expected_sta_valid &&
 	    state->words[0] == state->expected_sta[0] &&
@@ -1656,7 +1711,8 @@ espwifi_rx_chain_mac_readback_log(const char *stage,
 {
 	espwifi_os_log("espwifi: vendor rx register readback stage=%s "
 	    "available=%u sta_valid=%u mac=%#x/%#x expected=%#x/%#x match=%u "
-	    "bssid_valid=%u bssid=%#x/%#x expected=%#x/%#x match=%u\n", stage,
+	    "bssid_valid=%u bssid=%#x/%#x expected=%#x/%#x match=%u "
+	    "rx_policy=%#x\n", stage,
 	    (unsigned)state->available, (unsigned)state->expected_sta_valid,
 	    (unsigned)state->words[0], (unsigned)state->words[1],
 	    (unsigned)state->expected_sta[0],
@@ -1665,7 +1721,7 @@ espwifi_rx_chain_mac_readback_log(const char *stage,
 	    (unsigned)state->words[2], (unsigned)state->words[3],
 	    (unsigned)state->expected_bssid[0],
 	    (unsigned)state->expected_bssid[1],
-	    (unsigned)state->bssid_match);
+	    (unsigned)state->bssid_match, (unsigned)state->words[4]);
 }
 #endif
 
@@ -1797,10 +1853,7 @@ espwifi_vendor_debug_once_end(void)
 	uint32_t sublen_fc_match_count[8], sublen_invalid_count, sublen_short_count;
 	bool assoc_snapshot_done;
 	bool hw_delta_valid;
-	uint16_t rx_mpdu_delta = 0, rx_end_cnt_delta = 0;
-	uint16_t rx_datasuc_delta = 0, rx_fcs_err_delta = 0;
-	uint16_t rx_abort_delta = 0, nrx_err_pwrdrop_delta = 0;
-	uint16_t rx_buf_fullcnt_delta = 0, rx_fifo_ovfcnt_delta = 0;
+	struct espwifi_rx_chain_hw_delta hw_delta = { 0 };
 #endif
 
 	critical = espwifi_os_critical_enter();
@@ -1869,32 +1922,9 @@ espwifi_vendor_debug_once_end(void)
 #endif
 	espwifi_os_critical_exit(critical);
 #ifdef ESPWIFI_RX_CHAIN_ONCE
-	if (hw_delta_valid) {
-		rx_mpdu_delta = espwifi_rx_counter_delta(
-		    espwifi_rx_chain_hw_begin.rx_mpdu,
-		    espwifi_rx_chain_hw_end.rx_mpdu);
-		rx_end_cnt_delta = espwifi_rx_counter_delta(
-		    espwifi_rx_chain_hw_begin.rx_end_cnt,
-		    espwifi_rx_chain_hw_end.rx_end_cnt);
-		rx_datasuc_delta = espwifi_rx_counter_delta(
-		    espwifi_rx_chain_hw_begin.rx_datasuc,
-		    espwifi_rx_chain_hw_end.rx_datasuc);
-		rx_fcs_err_delta = espwifi_rx_counter_delta(
-		    espwifi_rx_chain_hw_begin.rx_fcs_err,
-		    espwifi_rx_chain_hw_end.rx_fcs_err);
-		rx_abort_delta = espwifi_rx_counter_delta(
-		    espwifi_rx_chain_hw_begin.rx_abort,
-		    espwifi_rx_chain_hw_end.rx_abort);
-		nrx_err_pwrdrop_delta = espwifi_rx_counter_delta(
-		    espwifi_rx_chain_hw_begin.nrx_err_pwrdrop,
-		    espwifi_rx_chain_hw_end.nrx_err_pwrdrop);
-		rx_buf_fullcnt_delta = espwifi_rx_counter_delta(
-		    espwifi_rx_chain_hw_begin.rx_buf_fullcnt,
-		    espwifi_rx_chain_hw_end.rx_buf_fullcnt);
-		rx_fifo_ovfcnt_delta = espwifi_rx_counter_delta(
-		    espwifi_rx_chain_hw_begin.rx_fifo_ovfcnt,
-		    espwifi_rx_chain_hw_end.rx_fifo_ovfcnt);
-	}
+	if (hw_delta_valid)
+		espwifi_rx_hw_delta(&espwifi_rx_chain_hw_begin,
+		    &espwifi_rx_chain_hw_end, &hw_delta);
 #endif
 	critical = espwifi_os_critical_enter();
 	error = esp_wifi_internal_set_log_level(WIFI_LOG_WARNING);
@@ -2003,10 +2033,47 @@ espwifi_vendor_debug_once_end(void)
 		    (unsigned)espwifi_rx_chain_hw_end_result,
 		    (unsigned)espwifi_rx_chain_hw_init.rx_mpdu,
 		    (unsigned)espwifi_rx_chain_hw_init.rx_datasuc,
-		    (unsigned)rx_mpdu_delta, (unsigned)rx_end_cnt_delta,
-		    (unsigned)rx_datasuc_delta, (unsigned)rx_fcs_err_delta,
-		    (unsigned)rx_abort_delta, (unsigned)nrx_err_pwrdrop_delta,
-		    (unsigned)rx_buf_fullcnt_delta, (unsigned)rx_fifo_ovfcnt_delta);
+		    (unsigned)hw_delta.rx_mpdu, (unsigned)hw_delta.rx_end_cnt,
+		    (unsigned)hw_delta.rx_datasuc, (unsigned)hw_delta.rx_fcs_err,
+		    (unsigned)hw_delta.rx_abort, (unsigned)hw_delta.nrx_err_pwrdrop,
+		    (unsigned)hw_delta.rx_buf_fullcnt,
+		    (unsigned)hw_delta.rx_fifo_ovfcnt);
+		espwifi_os_log("espwifi: vendor rx hw detail once "
+		    "rx_abort_fcs_pass=%u rx_samebm_errcnt=%u "
+		    "rx_other_ucast=%u rx_lastunmatch_err=%u "
+		    "rx_tkip_errcnt=%u rx_btblock_err=%u rx_freqhop_err=%u "
+		    "rx_ack_int_cnt=%u rx_rts_int_cnt=%u\n",
+		    (unsigned)hw_delta.rx_abort_fcs_pass,
+		    (unsigned)hw_delta.rx_samebm_errcnt,
+		    (unsigned)hw_delta.rx_other_ucast,
+		    (unsigned)hw_delta.rx_lastunmatch_err,
+		    (unsigned)hw_delta.rx_tkip_errcnt,
+		    (unsigned)hw_delta.rx_btblock_err,
+		    (unsigned)hw_delta.rx_freqhop_err,
+		    (unsigned)hw_delta.rx_ack_int_cnt,
+		    (unsigned)hw_delta.rx_rts_int_cnt);
+		espwifi_os_log("espwifi: vendor rx hw error once brx_err_agc=%u "
+		    "brx_err=%u nrx_err=%u nrx_err_abort=%u "
+		    "nrx_err_agcexit=%u nrx_err_bboff=%u "
+		    "nrx_err_fdm_wdg=%u nrx_err_restart=%u "
+		    "nrx_err_serv=%u nrx_err_txover=%u\n",
+		    (unsigned)hw_delta.brx_err_agc, (unsigned)hw_delta.brx_err,
+		    (unsigned)hw_delta.nrx_err, (unsigned)hw_delta.nrx_err_abort,
+		    (unsigned)hw_delta.nrx_err_agcexit,
+		    (unsigned)hw_delta.nrx_err_bboff,
+		    (unsigned)hw_delta.nrx_err_fdm_wdg,
+		    (unsigned)hw_delta.nrx_err_restart,
+		    (unsigned)hw_delta.nrx_err_serv,
+		    (unsigned)hw_delta.nrx_err_txover);
+		espwifi_os_log("espwifi: vendor rx hw format once "
+		    "nrx_err_unsupport=%u nrx_err_heformat=%u "
+		    "nrx_htsig_err=%u nrx_heunsupport=%u "
+		    "nrx_hesiga_crc=%u\n",
+		    (unsigned)hw_delta.nrx_err_unsupport,
+		    (unsigned)hw_delta.nrx_err_heformat,
+		    (unsigned)hw_delta.nrx_htsig_err,
+		    (unsigned)hw_delta.nrx_heunsupport,
+		    (unsigned)hw_delta.nrx_hesiga_crc);
 	} else {
 		espwifi_os_log("espwifi: vendor rx hw once start_rc=%#x "
 		    "window_rc=%#x/%#x delta=unavailable\n",
