@@ -45,6 +45,7 @@ __KERNEL_RCSID(0, "$NetBSD: acpi_acad.c,v 1.52 2021/01/29 15:20:13 thorpej Exp $
 #include <sys/param.h>
 #include <sys/device.h>
 #include <sys/module.h>
+#include <sys/mutex.h>
 #include <sys/systm.h>
 
 #include <dev/acpi/acpireg.h>
@@ -61,6 +62,7 @@ struct acpiacad_softc {
 	struct sysmon_envsys	*sc_sme;
 	struct sysmon_pswitch	 sc_smpsw;
 	envsys_data_t		 sc_sensor;
+	kmutex_t		 sc_mtx;	/* serializes _PSR updates */
 	int			 sc_status;
 };
 
@@ -74,6 +76,7 @@ static void	acpiacad_attach(device_t, device_t, void *);
 static int	acpiacad_detach(device_t, int);
 static bool	acpiacad_resume(device_t, const pmf_qual_t *);
 static void	acpiacad_get_status(void *);
+static void	acpiacad_refresh(struct sysmon_envsys *, envsys_data_t *);
 static void	acpiacad_notify_handler(ACPI_HANDLE, uint32_t, void *);
 static void	acpiacad_init_envsys(device_t);
 
@@ -110,6 +113,7 @@ acpiacad_attach(device_t parent, device_t self, void *aux)
 	sc->sc_sme = NULL;
 	sc->sc_status = -1;
 	sc->sc_node = aa->aa_node;
+	mutex_init(&sc->sc_mtx, MUTEX_DEFAULT, IPL_NONE);
 
 	acpiacad_init_envsys(self);
 
@@ -119,6 +123,12 @@ acpiacad_attach(device_t parent, device_t self, void *aux)
 	(void)sysmon_pswitch_register(&sc->sc_smpsw);
 	(void)pmf_device_register(self, NULL, acpiacad_resume);
 	(void)acpi_register_notify(sc->sc_node, acpiacad_notify_handler);
+
+	/*
+	 * Firmware that never sends Notify() for the adapter still
+	 * answers _PSR; see acpi_register_poll().
+	 */
+	(void)acpi_register_poll(sc->sc_node, acpiacad_get_status, self);
 }
 
 /*
@@ -131,13 +141,15 @@ acpiacad_detach(device_t self, int flags)
 {
 	struct acpiacad_softc *sc = device_private(self);
 
+	pmf_device_deregister(self);
+	acpi_deregister_poll(sc->sc_node);
 	acpi_deregister_notify(sc->sc_node);
 
 	if (sc->sc_sme != NULL)
 		sysmon_envsys_unregister(sc->sc_sme);
 
-	pmf_device_deregister(self);
 	sysmon_pswitch_unregister(&sc->sc_smpsw);
+	mutex_destroy(&sc->sc_mtx);
 
 	return 0;
 }
@@ -160,6 +172,8 @@ acpiacad_resume(device_t dv, const pmf_qual_t *qual)
  * acpiacad_get_status:
  *
  *	Get, and possibly display, the current AC line status.
+ *	Runs from the ACPI task thread (notify, poll, resume) and from
+ *	envsys refresh; sc_mtx serializes the two.
  */
 static void
 acpiacad_get_status(void *arg)
@@ -168,6 +182,8 @@ acpiacad_get_status(void *arg)
 	struct acpiacad_softc *sc = device_private(dv);
 	ACPI_INTEGER status;
 	ACPI_STATUS rv;
+
+	mutex_enter(&sc->sc_mtx);
 
 	rv = acpi_eval_integer(sc->sc_node->ad_handle, "_PSR", &status);
 
@@ -198,14 +214,29 @@ acpiacad_get_status(void *arg)
 	sc->sc_sensor.state = ENVSYS_SVALID;
 	sc->sc_sensor.value_cur = sc->sc_status;
 
+	mutex_exit(&sc->sc_mtx);
 	return;
 
 fail:
-	sc->sc_status = -1;
+	/* Keep sc_status: a transient failure is not a state change. */
 	sc->sc_sensor.state = ENVSYS_SINVALID;
 
+	mutex_exit(&sc->sc_mtx);
 	aprint_debug_dev(dv, "failed to evaluate _PSR: %s\n",
 	    AcpiFormatException(rv));
+}
+
+/*
+ * acpiacad_refresh:
+ *
+ *	envsys(4) refresh: re-read _PSR when user space asks for the
+ *	sensor, so the value does not depend on Notify() alone.
+ */
+static void
+acpiacad_refresh(struct sysmon_envsys *sme, envsys_data_t *edata)
+{
+
+	acpiacad_get_status(sme->sme_cookie);
 }
 
 /*
@@ -266,7 +297,9 @@ acpiacad_init_envsys(device_t dv)
 
 	sc->sc_sme->sme_name = device_xname(dv);
 	sc->sc_sme->sme_class = SME_CLASS_ACADAPTER;
-	sc->sc_sme->sme_flags = SME_DISABLE_REFRESH;
+	sc->sc_sme->sme_cookie = dv;
+	sc->sc_sme->sme_refresh = acpiacad_refresh;
+	sc->sc_sme->sme_flags = SME_POLL_ONLY;
 
 	if (sysmon_envsys_register(sc->sc_sme) != 0)
 		goto fail;

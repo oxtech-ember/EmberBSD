@@ -132,6 +132,8 @@ struct acpi_devnode {
 	struct acpi_pci_info	*ad_pciinfo;	/* PCI info */
 	struct acpi_wakedev	*ad_wakedev;	/* Device wake */
 	ACPI_NOTIFY_HANDLER	 ad_notify;	/* Device notify */
+	void			(*ad_poll)(void *);	/* Status poll */
+	void			*ad_poll_arg;	/* Argument of ad_poll */
 	ACPI_DEVICE_INFO	*ad_devinfo;	/* Device info */
 	ACPI_HANDLE		 ad_handle;	/* Device handle */
 	char			 ad_name[5];	/* Device name */
@@ -349,6 +351,9 @@ ACPI_PHYSICAL_ADDRESS	acpi_OsGetRootPointer(void);
 bool		acpi_register_notify(struct acpi_devnode *,
 				     ACPI_NOTIFY_HANDLER);
 void		acpi_deregister_notify(struct acpi_devnode *);
+bool		acpi_register_poll(struct acpi_devnode *, void (*)(void *),
+				   void *);
+void		acpi_deregister_poll(struct acpi_devnode *);
 
 ACPI_STATUS	acpi_resource_parse(device_t, ACPI_HANDLE, const char *,
 		    void *, const struct acpi_resource_parse_ops *);

@@ -54,6 +54,7 @@ __KERNEL_RCSID(0, "$NetBSD: acpi_lid.c,v 1.45 2021/01/29 15:49:55 thorpej Exp $"
 ACPI_MODULE_NAME		 ("acpi_lid")
 
 #define ACPI_NOTIFY_LID		 0x80
+#define ACPILID_STATUS_UNKNOWN	 UINT64_MAX
 
 struct acpilid_softc {
 	struct acpi_devnode	*sc_node;
@@ -70,6 +71,7 @@ static int	acpilid_match(device_t, cfdata_t, void *);
 static void	acpilid_attach(device_t, device_t, void *);
 static int	acpilid_detach(device_t, int);
 static void	acpilid_status_changed(void *);
+static void	acpilid_poll(void *);
 static void	acpilid_notify_handler(ACPI_HANDLE, uint32_t, void *);
 
 CFATTACH_DECL_NEW(acpilid, sizeof(struct acpilid_softc),
@@ -103,6 +105,7 @@ acpilid_attach(device_t parent, device_t self, void *aux)
 	aprint_normal(": ACPI Lid Switch\n");
 
 	sc->sc_node = aa->aa_node;
+	sc->sc_status = ACPILID_STATUS_UNKNOWN;
 
 	sc->sc_smpsw.smpsw_name = device_xname(self);
 	sc->sc_smpsw.smpsw_type = PSWITCH_TYPE_LID;
@@ -110,6 +113,13 @@ acpilid_attach(device_t parent, device_t self, void *aux)
 	(void)pmf_device_register(self, NULL, NULL);
 	(void)sysmon_pswitch_register(&sc->sc_smpsw);
 	(void)acpi_register_notify(sc->sc_node, acpilid_notify_handler);
+
+	/*
+	 * Firmware that never sends Notify() for the lid still answers
+	 * _LID; see acpi_register_poll().  The first poll records the
+	 * initial state without an event.
+	 */
+	(void)acpi_register_poll(sc->sc_node, acpilid_poll, self);
 }
 
 static int
@@ -118,10 +128,24 @@ acpilid_detach(device_t self, int flags)
 	struct acpilid_softc *sc = device_private(self);
 
 	pmf_device_deregister(self);
+	acpi_deregister_poll(sc->sc_node);
 	acpi_deregister_notify(sc->sc_node);
 	sysmon_pswitch_unregister(&sc->sc_smpsw);
 
 	return 0;
+}
+
+/*
+ * acpilid_report:
+ *
+ *	Report the lid state in sc_status as a power switch event.
+ */
+static void
+acpilid_report(struct acpilid_softc *sc)
+{
+
+	sysmon_pswitch_event(&sc->sc_smpsw, (sc->sc_status == 0) ?
+	    PSWITCH_EVENT_PRESSED : PSWITCH_EVENT_RELEASED);
 }
 
 /*
@@ -141,8 +165,35 @@ acpilid_status_changed(void *arg)
 	if (ACPI_FAILURE(rv))
 		return;
 
-	sysmon_pswitch_event(&sc->sc_smpsw, (sc->sc_status == 0) ?
-	    PSWITCH_EVENT_PRESSED : PSWITCH_EVENT_RELEASED);
+	acpilid_report(sc);
+}
+
+/*
+ * acpilid_poll:
+ *
+ *	Periodic _LID read; report only a change of state.  Runs in the
+ *	ACPI task thread, serialized with acpilid_status_changed().
+ */
+static void
+acpilid_poll(void *arg)
+{
+	device_t dv = arg;
+	struct acpilid_softc *sc = device_private(dv);
+	uint64_t status;
+	ACPI_STATUS rv;
+
+	rv = acpi_eval_integer(sc->sc_node->ad_handle, "_LID", &status);
+
+	if (ACPI_FAILURE(rv))
+		return;
+
+	if (sc->sc_status != ACPILID_STATUS_UNKNOWN &&
+	    (sc->sc_status == 0) != (status == 0)) {
+		sc->sc_status = status;
+		acpilid_report(sc);
+	} else {
+		sc->sc_status = status;
+	}
 }
 
 /*

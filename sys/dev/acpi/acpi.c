@@ -108,6 +108,7 @@ __KERNEL_RCSID(0, "$NetBSD: acpi.c,v 1.303.2.1 2026/06/27 10:46:19 martin Exp $"
 
 #include <sys/param.h>
 #include <sys/atomic.h>
+#include <sys/callout.h>
 #include <sys/device.h>
 #include <sys/kernel.h>
 #include <sys/kmem.h>
@@ -144,6 +145,21 @@ int		acpi_active = 0;
 int		acpi_suspended = 0;
 int		acpi_force_load = 0;
 int		acpi_verbose_loaded = 0;
+
+/*
+ * Periodic status poll for drivers that register with
+ * acpi_register_poll().  Some firmware never raises the embedded
+ * controller query events that carry AC adapter and lid changes, so
+ * the drivers re-read the state at this interval.  Zero disables it.
+ */
+#define	ACPI_POLL_INTERVAL	5	/* seconds */
+
+static kmutex_t		acpi_poll_mtx;
+static callout_t	acpi_poll_callout;
+static int		acpi_poll_interval = ACPI_POLL_INTERVAL;
+static bool		acpi_poll_started;	/* a driver registered */
+static bool		acpi_poll_halted;	/* acpi0 detaching */
+static bool		acpi_poll_queued;	/* task queued or running */
 
 struct acpi_softc	*acpi_softc = NULL;
 static uint64_t		 acpi_root_pointer;
@@ -224,11 +240,16 @@ static void		acpi_deregister_fixed_button(struct acpi_softc *, int);
 static uint32_t		acpi_fixed_button_handler(void *);
 static void		acpi_fixed_button_pressed(void *);
 
+static void		acpi_poll(void *);
+static void		acpi_poll_task(void *);
+static void		acpi_poll_schedule(void);
+
 static void		acpi_sleep_init(struct acpi_softc *);
 
 static int		sysctl_hw_acpi_fixedstats(SYSCTLFN_PROTO);
 static int		sysctl_hw_acpi_sleepstate(SYSCTLFN_PROTO);
 static int		sysctl_hw_acpi_sleepstates(SYSCTLFN_PROTO);
+static int		sysctl_hw_acpi_poll_interval(SYSCTLFN_PROTO);
 
 static bool		  acpi_is_scope(struct acpi_devnode *);
 static ACPI_TABLE_HEADER *acpi_map_rsdt(void);
@@ -536,6 +557,10 @@ acpi_attach(device_t parent, device_t self, void *aux)
 	if (ACPI_FAILURE(rv))
 		goto fail;
 
+	mutex_init(&acpi_poll_mtx, MUTEX_DEFAULT, IPL_SOFTCLOCK);
+	callout_init(&acpi_poll_callout, CALLOUT_MPSAFE);
+	callout_setfunc(&acpi_poll_callout, acpi_poll, sc);
+
 	acpi_active = 1;
 
 	if (!AcpiGbl_ReducedHardware) {
@@ -635,6 +660,14 @@ acpi_detach(device_t self, int flags)
 
 	if ((rc = acpitimer_detach()) != 0)
 		return rc;
+
+	mutex_enter(&acpi_poll_mtx);
+	acpi_poll_halted = true;
+	mutex_exit(&acpi_poll_mtx);
+	callout_halt(&acpi_poll_callout, NULL);
+	AcpiOsWaitEventsComplete();
+	callout_destroy(&acpi_poll_callout);
+	mutex_destroy(&acpi_poll_mtx);
 
 	if (!AcpiGbl_ReducedHardware) {
 		acpi_deregister_fixed_button(sc, ACPI_EVENT_POWER_BUTTON);
@@ -1399,6 +1432,94 @@ acpi_deregister_notify(struct acpi_devnode *ad)
 }
 
 /*
+ * Periodic poll.  The callback runs in the ACPI task thread, like a
+ * notify handler, and may evaluate control methods.  The callout
+ * starts with the first registration and queues one task at a time;
+ * the task calls the handlers directly, so that
+ * acpi_deregister_poll() can wait for a call in progress.
+ */
+bool
+acpi_register_poll(struct acpi_devnode *ad, void (*poll)(void *), void *arg)
+{
+
+	KASSERT(acpi_active != 0);
+
+	if (ad == NULL || poll == NULL)
+		return false;
+
+	KASSERTMSG(ad->ad_poll == NULL,
+	    "%s: ACPI node %s already has poll handler: %p",
+	    ad->ad_device ? device_xname(ad->ad_device) : "(unknown)",
+	    ad->ad_name, ad->ad_poll);
+	ad->ad_poll_arg = arg;
+	atomic_store_release(&ad->ad_poll, poll);
+
+	mutex_enter(&acpi_poll_mtx);
+	if (!acpi_poll_started) {
+		acpi_poll_started = true;
+		acpi_poll_schedule();
+	}
+	mutex_exit(&acpi_poll_mtx);
+
+	return true;
+}
+
+void
+acpi_deregister_poll(struct acpi_devnode *ad)
+{
+
+	atomic_store_relaxed(&ad->ad_poll, NULL);
+
+	/* Wait for a call to the poll handler in progress to complete.  */
+	AcpiOsWaitEventsComplete();
+}
+
+static void
+acpi_poll_schedule(void)
+{
+
+	KASSERT(mutex_owned(&acpi_poll_mtx));
+
+	if (acpi_poll_started && !acpi_poll_halted && acpi_poll_interval > 0)
+		callout_schedule(&acpi_poll_callout, acpi_poll_interval * hz);
+}
+
+static void
+acpi_poll(void *aux)
+{
+	struct acpi_softc *sc = aux;
+
+	mutex_enter(&acpi_poll_mtx);
+	if (!acpi_poll_queued && !acpi_poll_halted && acpi_suspended == 0) {
+		if (AcpiOsExecute(OSL_NOTIFY_HANDLER, acpi_poll_task, sc) ==
+		    AE_OK)
+			acpi_poll_queued = true;
+	}
+	acpi_poll_schedule();
+	mutex_exit(&acpi_poll_mtx);
+}
+
+static void
+acpi_poll_task(void *aux)
+{
+	struct acpi_softc *sc = aux;
+	struct acpi_devnode *ad;
+	void (*poll)(void *);
+
+	if (acpi_suspended == 0) {
+		SIMPLEQ_FOREACH(ad, &sc->sc_head, ad_list) {
+			poll = atomic_load_acquire(&ad->ad_poll);
+			if (poll != NULL)
+				(*poll)(ad->ad_poll_arg);
+		}
+	}
+
+	mutex_enter(&acpi_poll_mtx);
+	acpi_poll_queued = false;
+	mutex_exit(&acpi_poll_mtx);
+}
+
+/*
  * Fixed buttons.
  */
 static void
@@ -1743,6 +1864,13 @@ SYSCTL_SETUP(sysctl_acpi_setup, "sysctl hw.acpi subtree setup")
 	    NULL, 0, &acpi_root_pointer, sizeof(acpi_root_pointer),
 	    CTL_CREATE, CTL_EOL);
 
+	(void)sysctl_createv(NULL, 0, &rnode, NULL,
+	    CTLFLAG_PERMANENT | CTLFLAG_READWRITE, CTLTYPE_INT,
+	    "poll_interval",
+	    SYSCTL_DESCR("Status poll interval in seconds, 0 disables"),
+	    sysctl_hw_acpi_poll_interval, 0, NULL, 0,
+	    CTL_CREATE, CTL_EOL);
+
 	err = sysctl_createv(clog, 0, &rnode, &snode,
 	    CTLFLAG_PERMANENT, CTLTYPE_NODE,
 	    "sleep", SYSCTL_DESCR("ACPI sleep"),
@@ -1799,6 +1927,35 @@ SYSCTL_SETUP(sysctl_acpi_setup, "sysctl hw.acpi subtree setup")
 
 	CTASSERT(sizeof(AcpiGpeCount) == sizeof(uint64_t));
 	CTASSERT(sizeof(AcpiSciCount) == sizeof(uint64_t));
+}
+
+static int
+sysctl_hw_acpi_poll_interval(SYSCTLFN_ARGS)
+{
+	struct sysctlnode node;
+	int err, interval;
+
+	node = *rnode;
+	interval = acpi_poll_interval;
+	node.sysctl_data = &interval;
+
+	err = sysctl_lookup(SYSCTLFN_CALL(&node));
+	if (err != 0 || newp == NULL)
+		return err;
+
+	if (interval < 0 || interval > 3600)
+		return EINVAL;
+
+	if (acpi_softc == NULL)
+		return ENXIO;
+
+	mutex_enter(&acpi_poll_mtx);
+	acpi_poll_interval = interval;
+	/* Restart the callout if polling was disabled.  */
+	acpi_poll_schedule();
+	mutex_exit(&acpi_poll_mtx);
+
+	return 0;
 }
 
 static int
