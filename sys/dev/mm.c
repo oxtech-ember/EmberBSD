@@ -49,6 +49,10 @@ __KERNEL_RCSID(0, "$NetBSD: mm.c,v 1.25.2.1 2026/06/29 20:08:40 martin Exp $");
 
 #include <uvm/uvm_extern.h>
 
+#ifdef __aarch64__
+#include <aarch64/machdep.h>
+#endif
+
 static void *		dev_zero_page	__read_mostly;
 static kmutex_t		dev_mem_lock	__cacheline_aligned;
 static vaddr_t		dev_mem_addr	__read_mostly;
@@ -420,6 +424,22 @@ mm_mmap(dev_t dev, off_t off, int acc)
 	if (mm_md_physacc(off, prot) != 0) {
 		return -1;
 	}
+#ifdef __aarch64__
+	/*
+	 * A cookie without flags maps as Normal write-back memory. For device
+	 * registers that gives stale reads, delayed writes and speculative
+	 * line fills, so map them Device-nGnRE. RAM the kernel does not map
+	 * itself (firmware and boot reservations, frame buffers) is mapped
+	 * Normal non-cacheable: no stale lines, and ordinary loads and copies
+	 * still work.
+	 */
+	vaddr_t va;
+	if (!mm_md_direct_mapped_phys(off, &va)) {
+		const paddr_t flag = off >= physical_start && off < physical_end ?
+		    AARCH64_MMAP_NOCACHE : AARCH64_MMAP_DEVICE;
+		return (off >> PGSHIFT) | (flag << AARCH64_MMAP_FLAG_SHIFT);
+	}
+#endif
 	return off >> PGSHIFT;
 }
 

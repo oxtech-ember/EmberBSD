@@ -322,6 +322,7 @@ static struct drm_driver pvr_driver = {
 	.mmap_object = pvr_mmap_object,
 	.prime_handle_to_fd = drm_gem_prime_handle_to_fd,
 	.prime_fd_to_handle = drm_gem_prime_fd_to_handle,
+	.gem_prime_import = pvr_gem_prime_import,
 	.gem_prime_mmap = pvr_prime_mmap,
 	.gem_uvm_ops = &pvr_bo_uvm_ops,
 	.name = "powervr",

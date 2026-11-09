@@ -35,6 +35,8 @@
 #include "sun50i_a100_r_ccu.h"
 
 #define SOC "/soc@03000000"
+/* Three 800x1280 XRGB8888 frames with slack; see A133_BO_BYTES. */
+#define A133_SCANOUT_POOL_BYTES (3 * (4096000 + 65536))
 #define PIO SOC "/pinctrl@0300b000"
 #define MMC SOC "/sdmmc@04022000"
 #define CCU SOC "/clock-controller@03001000"
@@ -298,6 +300,33 @@ a133_framebuffer(void *fdt)
 	A133_CELL(path, "stride", 3200);
 	A133_STRING(path, "format", "x8r8g8b8");
 	A133_STRING(path, "status", "okay");
+
+	/*
+	 * Page-flip buffers for the DSI KMS driver: three frames directly
+	 * below the boot frame, reserved before UVM. After boot, free pages
+	 * are spread over all of memory and a contiguous frame cannot be
+	 * allocated any more.
+	 */
+	if (fdt_path_offset(fdt, SOC "/disp@06000000") < 0)
+		return 0;
+	limit = start;
+	start = limit - A133_SCANOUT_POOL_BYTES;
+	for (i = 0; i < fdt_num_mem_rsv(fdt); i++) {
+		error = fdt_get_mem_rsv(fdt, i, &addr, &size);
+		if (error != 0)
+			return error;
+		if (addr < limit && addr + size > start)
+			return 0;	/* occupied: no KMS buffers */
+	}
+	error = fdt_add_mem_rsv(fdt, start, limit - start);
+	if (error != 0)
+		return error;
+	cells[0] = 0;
+	cells[1] = cpu_to_fdt32(start);
+	cells[2] = 0;
+	cells[3] = cpu_to_fdt32(limit - start);
+	A133_SET(SOC "/disp@06000000", "netbsd,scanout-pool", cells,
+	    sizeof(cells));
 	return 0;
 }
 

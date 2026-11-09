@@ -23,6 +23,7 @@
 #include <drm/drm_gem_cma_helper.h>
 #include <drm/drm_prime.h>
 #include <drm/drm_vma_manager.h>
+#include <linux/dma-buf.h>
 #include <uvm/uvm.h>
 #include <uvm/uvm_extern.h>
 #include <uvm/uvm_pdaemon.h>
@@ -43,6 +44,7 @@ struct pvr_bo {
 	uint64_t flags;
 	int dma_owned;
 	bool coherent;
+	struct dma_buf *import_buf;	/* pages belong to this dma-buf */
 	bool firmware_pinned;
 	unsigned int firmware_holds;
 };
@@ -77,8 +79,12 @@ pvr_bo_free(struct drm_gem_object *obj)
 		    BUS_DMASYNC_POSTREAD : 0));
 	bus_dmamap_unload(cma->dmat, cma->dmamap);
 	bus_dmamap_destroy(cma->dmat, cma->dmamap);
-	bus_dmamem_unmap(cma->dmat, cma->vaddr, cma->dmasize);
-	bus_dmamem_free(cma->dmat, bo->segments, bo->nsegments);
+	if (cma->vaddr != NULL)
+		bus_dmamem_unmap(cma->dmat, cma->vaddr, cma->dmasize);
+	if (bo->import_buf != NULL)
+		dma_buf_put(bo->import_buf);
+	else
+		bus_dmamem_free(cma->dmat, bo->segments, bo->nsegments);
 	if (bo->segments != cma->dmasegs)
 		kmem_free(bo->segments, bo->segment_bytes);
 	kmem_free(bo, sizeof(*bo));
@@ -236,7 +242,9 @@ static struct dma_buf *
 pvr_bo_export(struct drm_gem_object *obj, int flags)
 {
 
-	if ((pvr_to_bo(obj)->flags & (DRM_PVR_BO_PM_FW_PROTECT |
+	/* An import has no page list; its dma-buf is the exporter's. */
+	if (pvr_to_bo(obj)->import_buf != NULL ||
+	    (pvr_to_bo(obj)->flags & (DRM_PVR_BO_PM_FW_PROTECT |
 	    DRM_PVR_BO_EMBER_CPU_CACHED)) != 0)
 		return ERR_PTR(-EACCES);
 	return drm_gem_prime_export(obj, flags);
@@ -249,6 +257,8 @@ pvr_bo_get_sg_table(struct drm_gem_object *obj)
 	int error;
 
 	/* An exported page list must describe the original, complete BO. */
+	if (bo->import_buf != NULL)
+		return ERR_PTR(-EACCES);
 	error = pvr_bo_validate(bo);
 	if (error != 0)
 		return ERR_PTR(-error);
@@ -547,6 +557,74 @@ free_bo:
 	return ERR_PTR(-error);
 }
 
+/*
+ * Import a dma-buf exported by another DRM device from a CMA object, such
+ * as a display scanout buffer, so that the GPU can render or copy into it.
+ * The buffer may live in memory reserved before UVM, outside the kernel
+ * direct map and without vm_page, so it cannot travel as a page list and
+ * generic CPU mapping or cache maintenance would fault on it. The BO takes
+ * the exporter's physical segment for the GPU MMU only: no kernel mapping,
+ * no CPU access, no cache maintenance. It holds the dma-buf, and with it
+ * the exporter's object, until it is freed.
+ */
+struct drm_gem_object *
+pvr_gem_prime_import(struct drm_device *dev, struct dma_buf *dma_buf)
+{
+	struct drm_gem_object *src;
+	struct drm_gem_cma_object *from, *cma;
+	struct pvr_bo *bo;
+	size_t size;
+	int error;
+
+	if (dma_buf->ops->release != drm_gem_dmabuf_release)
+		return ERR_PTR(-EINVAL);
+	src = dma_buf->priv;
+	if (src->dev == dev) {
+		/* Our own export: hand back the original object. */
+		drm_gem_object_get(src);
+		return src;
+	}
+	if (src->dev->driver->gem_free_object != drm_gem_cma_free_object)
+		return ERR_PTR(-EINVAL);
+	from = to_drm_gem_cma_obj(src);
+	size = src->size;
+	if (size == 0 || (size & (PAGE_SIZE - 1)) != 0 ||
+	    from->dmasegs[0].ds_len < size)
+		return ERR_PTR(-EINVAL);
+	bo = kmem_zalloc(sizeof(*bo), KM_SLEEP);
+	cma = &bo->cma;
+	cma->dmat = dev->dmat;
+	cma->dmasize = size;
+	cma->dmasegs[0].ds_addr = from->dmasegs[0].ds_addr;
+	cma->dmasegs[0].ds_len = size;
+	bo->segments = cma->dmasegs;
+	bo->segment_capacity = 1;
+	bo->nsegments = 1;
+	bo->import_buf = dma_buf;
+	error = bus_dmamap_create(cma->dmat, size, 1, size, 0, BUS_DMA_WAITOK,
+	    &cma->dmamap);
+	if (error != 0)
+		goto free_bo;
+	error = bus_dmamap_load_raw(cma->dmat, cma->dmamap, bo->segments, 1,
+	    size, BUS_DMA_WAITOK);
+	if (error != 0)
+		goto destroy;
+	/* No CPU mapping exists, so there are no cache lines to maintain. */
+	bo->coherent = true;
+	get_dma_buf(dma_buf);
+	drm_dev_get(dev);
+	drm_gem_private_object_init(dev, &cma->base, size);
+	cma->base.funcs = &pvr_bo_funcs;
+	return &cma->base;
+
+destroy:
+	bus_dmamap_destroy(cma->dmat, cma->dmamap);
+free_bo:
+	pvr_bo_report_failure("prime_import", error, size, 0);
+	kmem_free(bo, sizeof(*bo));
+	return ERR_PTR(-error);
+}
+
 int
 pvr_create_bo(struct drm_device *dev, void *data, struct drm_file *file)
 {
@@ -657,7 +735,7 @@ pvr_bo_cpu(struct drm_gem_object *obj, uint64_t offset, size_t size,
 		return EINVAL;
 	bo = pvr_to_bo(obj);
 	/* Kernel users assume the coherent write-combined attributes. */
-	if ((bo->flags & flags) != flags ||
+	if (bo->import_buf != NULL || (bo->flags & flags) != flags ||
 	    (bo->flags & DRM_PVR_BO_EMBER_CPU_CACHED) != 0)
 		return EACCES;
 	*cpu = (uint8_t *)bo->cma.vaddr + offset;
@@ -679,6 +757,9 @@ pvr_bo_barrier(struct drm_gem_object *obj, int operations)
 	struct pvr_bo *bo = pvr_to_bo(obj);
 
 	KASSERT(obj->funcs == &pvr_bo_funcs && bo->coherent);
+	/* An import has no CPU mapping; its pages may lack a direct map. */
+	if (bo->import_buf != NULL)
+		return;
 	bus_dmamap_sync(bo->cma.dmat, bo->cma.dmamap, 0, bo->cma.dmasize,
 	    operations);
 }
@@ -691,7 +772,8 @@ pvr_bo_sync(struct drm_gem_object *obj, int operations)
 
 	KASSERT(obj->funcs == &pvr_bo_funcs);
 	/* Userspace maintains a cached BO; per-job syncs would only cost time. */
-	if ((bo->flags & DRM_PVR_BO_EMBER_CPU_CACHED) != 0)
+	if ((bo->flags & DRM_PVR_BO_EMBER_CPU_CACHED) != 0 ||
+	    bo->import_buf != NULL)
 		return;
 	/* A BO can have several VM mappings. Close each DMA direction once. */
 	if ((bo->dma_owned & BUS_DMASYNC_PREWRITE) == 0)

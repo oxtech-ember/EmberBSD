@@ -4,3 +4,5 @@ include "arch/evbarm/conf/EMBER64_A133_GPU_WARM"
 options PVR_GE8300_EXPERIMENTAL
 options PVR_GE8300_DRM
 sun50ia133gpu* at fdt?
+# Page-flipped scanout on the boot loader's DSI output path.
+sun50ia133drm*	at fdt?

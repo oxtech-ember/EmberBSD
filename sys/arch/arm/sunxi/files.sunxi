@@ -136,6 +136,12 @@ file	arch/arm/sunxi/sun60i_a733_drm_atomic.c	sun60i_a733_drm
 file	arch/arm/sunxi/sun60i_a733_drm_frame.c	sun60i_a733_drm
 makeoptions	sun60i_a733_drm	"CPPFLAGS.sun60i_a733_drm"+="${CPPFLAGS.drmkms}"
 
+# A133 MIPI DSI panel: fixed-mode KMS on the boot loader's output path.
+device	sun50ia133drm: drmkms
+attach	sun50ia133drm at fdt with sun50i_a133_drm
+file	arch/arm/sunxi/sun50i_a133_drm.c	sun50i_a133_drm
+makeoptions	sun50i_a133_drm	"CPPFLAGS.sun50i_a133_drm"+="${CPPFLAGS.drmkms}"
+
 # Native output dispatch remains unavailable until a hardware provider attaches.
 file	arch/arm/sunxi/sun60i_a733_output.c	sunxi_a733_ccu
 file	arch/arm/sunxi/sun60i_a733_output_provider.c	sunxi_a733_ccu
