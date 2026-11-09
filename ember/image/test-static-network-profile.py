@@ -25,6 +25,42 @@ def check(condition, message):
         raise SystemExit('FAIL: ' + message)
 
 
+def staged_rc_dependencies(root):
+    """Read provider/requirement metadata from the selected staged rc scripts."""
+    scripts = sorted((root / 'etc/rc.network.d').iterdir())
+    provides = {}
+    requirements = {}
+    for script in scripts:
+        if not script.is_file():
+            continue
+        metadata = {}
+        for line in script.read_text().splitlines():
+            if line.startswith('# PROVIDE:'):
+                metadata['PROVIDE'] = line.split(':', 1)[1].split()
+            elif line.startswith('# REQUIRE:'):
+                metadata['REQUIRE'] = line.split(':', 1)[1].split()
+        for name in metadata.get('PROVIDE', (script.name,)):
+            if name in provides:
+                raise SystemExit('FAIL: duplicate rc provider ' + name)
+            provides[name] = script.name
+        requirements[script.name] = metadata.get('REQUIRE', ())
+    missing = sorted({name for names in requirements.values() for name in names
+                      if name not in provides})
+    return provides, requirements, missing
+
+
+def has_multiuser_rc_dependencies(root):
+    provides, requirements, missing = staged_rc_dependencies(root)
+    return (not missing and
+            {'NETWORKING', 'mountcritremote', 'SERVERS', 'DAEMON', 'LOGIN'} <=
+            set(provides) and
+            {'NETWORKING', 'root', 'CRITLOCALMOUNTED'} <=
+            set(requirements['mountcritremote']) and
+            'mountcritremote' in requirements['SERVERS'] and
+            {'NETWORKING', 'SERVERS'} <= set(requirements['DAEMON']) and
+            'DAEMON' in requirements['LOGIN'])
+
+
 selected = profile.network('riscv32')
 littlefs = profile.network('riscv32', root_filesystem='littlefs')
 try:
@@ -531,6 +567,8 @@ with tempfile.TemporaryDirectory(prefix='static-network-') as temporary:
         (dhcp_dest / 'libexec/dhcpcd-hooks' / hook).write_text('# generated ' + hook + '\n')
     profile.stage_network(out, source, overlay, 'wifi0', pwd_mkdb, dhcp_dest,
                           'md0', 'a', mdns_enabled=True)
+    check(has_multiuser_rc_dependencies(out),
+          'mDNS profile stages a closed multiuser rcorder provider chain')
     check((out / 'etc/rc.conf').read_text().find('rc_configured=YES') >= 0 and
           'wpa_supplicant=YES' in (out / 'etc/rc.conf').read_text() and
           'dhcpcd=YES' in (out / 'etc/rc.conf').read_text() and
@@ -582,6 +620,8 @@ with tempfile.TemporaryDirectory(prefix='static-network-') as temporary:
     minimal.mkdir()
     profile.stage_network(minimal, source, overlay, 'wifi0', pwd_mkdb,
                           dhcp_dest, 'md0', 'a')
+    check(has_multiuser_rc_dependencies(minimal),
+          'normal profile stages a closed multiuser rcorder provider chain')
     minimal_rc = (minimal / 'etc/rc.network.d/network_tmpdirs').read_text()
     check(not (minimal / 'etc/rc.network.d/mdnsd').exists() and
           not (minimal / 'etc/rc.conf.d/mdnsd').exists() and

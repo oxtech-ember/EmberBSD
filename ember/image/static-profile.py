@@ -628,7 +628,8 @@ def stage_network(root, source, overlay, interface, pwd_mkdb, dhcpcd_dest,
     scripts = ('fsck_root', 'resize_root', 'root', 'devpubd', 'DISKS', 'swap1', 'fsck',
                'mountcritlocal', 'CRITLOCALMOUNTED', 'bootconf.sh', 'ttys', 'sysctl',
                'ipfilter', 'ipsec', 'network', 'staticroute', 'wpa_supplicant',
-               'dhcpcd', 'NETWORKING', 'DAEMON', 'LOGIN')
+               'dhcpcd', 'NETWORKING', 'mountcritremote', 'SERVERS', 'DAEMON',
+               'LOGIN')
     if mdns_enabled:
         scripts += ('mdnsd',)
     for name in scripts:
