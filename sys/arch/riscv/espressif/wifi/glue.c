@@ -92,6 +92,10 @@ volatile uint32_t espwifi_rx_chain_sta_rx_cb_type_count[4];
 volatile uint32_t espwifi_rx_chain_pp_proto_fc_match_count[8];
 volatile uint32_t espwifi_rx_chain_pp_proto_invalid_count;
 volatile uint32_t espwifi_rx_chain_pp_proto_short_count;
+volatile uint32_t espwifi_rx_chain_sublen_fc_match_count[8];
+volatile uint32_t espwifi_rx_chain_sublen_data_state_count[256];
+volatile uint32_t espwifi_rx_chain_sublen_invalid_count;
+volatile uint32_t espwifi_rx_chain_sublen_short_count;
 volatile uint32_t espwifi_rx_chain_crypto_decap_count;
 volatile uint32_t espwifi_rx_chain_decap_count;
 volatile uint32_t espwifi_rx_chain_eapol_count;
@@ -102,12 +106,15 @@ extern void * volatile net80211_funcs;
 extern void * volatile pTxRx;
 /* The ROM ppRxPkt entry calls this relocatable protocol callback table. */
 extern void * volatile pp_wdev_funcs;
+extern void * volatile wDevCtrl_ptr;
 extern void __wrap_sta_input(void);
 extern void __wrap_sta_rx_cb(void);
 extern void __wrap_ieee80211_crypto_decap(void);
 extern void __wrap_ieee80211_decap(void);
 extern void __wrap_sta_rx_eapol(void);
 extern void __wrap_ppRxProtoProc(void);
+extern void __wrap_get_sublen_offset(void);
+extern void wDev_ProcessRxSucData(void);
 
 struct espwifi_rx_chain_table_state {
 	void *table;
@@ -125,6 +132,25 @@ struct espwifi_rx_chain_proto_table_state {
 	void *table;
 	uint32_t entry;
 	uint8_t matches;
+};
+
+struct espwifi_rx_chain_sublen_table_state {
+	void *table;
+	uint32_t entry;
+	uint32_t caller_entry;
+	uint8_t matches;
+	uint8_t caller_matches;
+};
+
+struct espwifi_rx_chain_mac_readback {
+	uint32_t words[4];
+	uint32_t expected_sta[2];
+	uint32_t expected_bssid[2];
+	bool available;
+	bool expected_sta_valid;
+	bool expected_bssid_valid;
+	bool sta_match;
+	bool bssid_match;
 };
 
 static esp_err_t espwifi_rx_chain_hw_init_result = ESP_ERR_INVALID_STATE;
@@ -148,6 +174,16 @@ static struct espwifi_rx_chain_table_state espwifi_rx_chain_table_begin;
 static struct espwifi_rx_chain_pp_table_state espwifi_rx_chain_pp_begin;
 static struct espwifi_rx_chain_proto_table_state
 	espwifi_rx_chain_proto_begin;
+static struct espwifi_rx_chain_sublen_table_state
+	espwifi_rx_chain_sublen_begin;
+static struct espwifi_rx_chain_mac_readback espwifi_rx_chain_mac_begin;
+static struct espwifi_rx_chain_mac_readback espwifi_rx_chain_mac_assoc;
+static struct espwifi_rx_chain_mac_readback espwifi_rx_chain_mac_end;
+static unsigned char espwifi_rx_chain_expected_sta_mac[6];
+static bool espwifi_rx_chain_expected_sta_mac_valid;
+static unsigned char espwifi_rx_chain_expected_bssid[6];
+static bool espwifi_rx_chain_assoc_snapshot_done;
+static bool espwifi_rx_chain_expected_bssid_valid;
 #endif
 
 #if defined(ESPWIFI_EXTERNAL_WPA2)
@@ -1549,6 +1585,88 @@ espwifi_rx_chain_proto_table_snapshot(void)
 	    __wrap_ppRxProtoProc, &state.entry);
 	return state;
 }
+
+static struct espwifi_rx_chain_sublen_table_state
+espwifi_rx_chain_sublen_table_snapshot(void)
+{
+	struct espwifi_rx_chain_sublen_table_state state = { 0 };
+	const volatile unsigned char *table;
+
+	state.table = pp_wdev_funcs;
+	if (state.table == NULL)
+		return state;
+	table = state.table;
+	state.matches = espwifi_rx_chain_slot_matches(table, 0x414,
+	    __wrap_get_sublen_offset, &state.entry);
+	state.caller_matches = espwifi_rx_chain_slot_matches(table, 0x1f4,
+	    wDev_ProcessRxSucData, &state.caller_entry);
+	return state;
+}
+
+static uint32_t
+espwifi_rx_chain_mac_word(const unsigned char *mac)
+{
+	return (uint32_t)mac[0] | ((uint32_t)mac[1] << 8) |
+	    ((uint32_t)mac[2] << 16) | ((uint32_t)mac[3] << 24);
+}
+
+static uint32_t
+espwifi_rx_chain_mac_hi(const unsigned char *mac)
+{
+	return (uint32_t)mac[4] | ((uint32_t)mac[5] << 8);
+}
+
+/* Caller holds the diagnostic critical section; this only reads registers. */
+static void
+espwifi_rx_chain_mac_readback(struct espwifi_rx_chain_mac_readback *state,
+	    const unsigned char *sta_mac, bool sta_valid,
+	    const unsigned char *bssid)
+{
+	memset(state, 0, sizeof(*state));
+	state->expected_sta_valid = sta_valid;
+	if (sta_valid) {
+		state->expected_sta[0] = espwifi_rx_chain_mac_word(sta_mac);
+		state->expected_sta[1] = espwifi_rx_chain_mac_hi(sta_mac);
+	}
+	if (bssid != NULL) {
+		state->expected_bssid_valid = true;
+		state->expected_bssid[0] = espwifi_rx_chain_mac_word(bssid);
+		state->expected_bssid[1] = espwifi_rx_chain_mac_hi(bssid);
+	}
+	if (!espwifi_rx_chain_hw_ready)
+		return;
+	state->words[0] = REG_READ(0x2010405c);
+	state->words[1] = REG_READ(0x20104060);
+	state->words[2] = REG_READ(0x20104000);
+	state->words[3] = REG_READ(0x20104004);
+	state->available = true;
+	state->sta_match = state->expected_sta_valid &&
+	    state->words[0] == state->expected_sta[0] &&
+	    (state->words[1] & 0x1ffff) ==
+	    (state->expected_sta[1] | 0x10000);
+	state->bssid_match = state->expected_bssid_valid &&
+	    state->words[2] == state->expected_bssid[0] &&
+	    (state->words[3] & 0x8000ffff) ==
+	    (state->expected_bssid[1] | 0x80000000);
+}
+
+static void
+espwifi_rx_chain_mac_readback_log(const char *stage,
+	    const struct espwifi_rx_chain_mac_readback *state)
+{
+	espwifi_os_log("espwifi: vendor rx register readback stage=%s "
+	    "available=%u sta_valid=%u mac=%#x/%#x expected=%#x/%#x match=%u "
+	    "bssid_valid=%u bssid=%#x/%#x expected=%#x/%#x match=%u\n", stage,
+	    (unsigned)state->available, (unsigned)state->expected_sta_valid,
+	    (unsigned)state->words[0], (unsigned)state->words[1],
+	    (unsigned)state->expected_sta[0],
+	    (unsigned)state->expected_sta[1], (unsigned)state->sta_match,
+	    (unsigned)state->expected_bssid_valid,
+	    (unsigned)state->words[2], (unsigned)state->words[3],
+	    (unsigned)state->expected_bssid[0],
+	    (unsigned)state->expected_bssid[1],
+	    (unsigned)state->bssid_match);
+}
 #endif
 
 #ifdef ESPWIFI_VENDOR_DEBUG_ONCE
@@ -1561,6 +1679,9 @@ espwifi_vendor_debug_once_begin(const unsigned char *bssid)
 	esp_err_t error;
 #ifdef ESPWIFI_RX_CHAIN_ONCE
 	wifi_ps_type_t ps = (wifi_ps_type_t)0;
+	esp_err_t mac_error;
+	unsigned char sta_mac[6] = { 0 };
+	mac_error = esp_wifi_get_mac(WIFI_IF_STA, sta_mac);
 #endif
 
 	critical = espwifi_os_critical_enter();
@@ -1581,6 +1702,12 @@ espwifi_vendor_debug_once_begin(const unsigned char *bssid)
 		espwifi_rx_chain_pp_proto_fc_match_count[i] = 0;
 	espwifi_rx_chain_pp_proto_invalid_count = 0;
 	espwifi_rx_chain_pp_proto_short_count = 0;
+	memset((void *)espwifi_rx_chain_sublen_fc_match_count, 0,
+	    sizeof(espwifi_rx_chain_sublen_fc_match_count));
+	memset((void *)espwifi_rx_chain_sublen_data_state_count, 0,
+	    sizeof(espwifi_rx_chain_sublen_data_state_count));
+	espwifi_rx_chain_sublen_invalid_count = 0;
+	espwifi_rx_chain_sublen_short_count = 0;
 	espwifi_rx_chain_crypto_decap_count = 0;
 	espwifi_rx_chain_decap_count = 0;
 	espwifi_rx_chain_eapol_count = 0;
@@ -1588,6 +1715,20 @@ espwifi_vendor_debug_once_begin(const unsigned char *bssid)
 	espwifi_rx_chain_pp_begin = espwifi_rx_chain_pp_table_snapshot();
 	espwifi_rx_chain_proto_begin =
 	    espwifi_rx_chain_proto_table_snapshot();
+	espwifi_rx_chain_sublen_begin =
+	    espwifi_rx_chain_sublen_table_snapshot();
+	memcpy(espwifi_rx_chain_expected_sta_mac, sta_mac,
+	    sizeof(espwifi_rx_chain_expected_sta_mac));
+	espwifi_rx_chain_expected_sta_mac_valid = mac_error == ESP_OK;
+	espwifi_rx_chain_expected_bssid_valid = bssid != NULL;
+	if (bssid != NULL)
+		memcpy(espwifi_rx_chain_expected_bssid, bssid,
+		    sizeof(espwifi_rx_chain_expected_bssid));
+	espwifi_rx_chain_assoc_snapshot_done = false;
+	memset(&espwifi_rx_chain_mac_assoc, 0,
+	    sizeof(espwifi_rx_chain_mac_assoc));
+	espwifi_rx_chain_mac_readback(&espwifi_rx_chain_mac_begin, sta_mac,
+	    espwifi_rx_chain_expected_sta_mac_valid, bssid);
 	espwifi_os_alloc_diag_window_begin();
 	espwifi_os_alloc_diag_snapshot(&espwifi_rx_chain_alloc_begin);
 	espwifi_rx_chain_hw_begin_result =
@@ -1602,6 +1743,7 @@ espwifi_vendor_debug_once_begin(const unsigned char *bssid)
 	error = esp_wifi_get_ps(&ps);
 	espwifi_os_log("espwifi: vendor debug once ps result=%#x value=%u\n",
 	    (unsigned)error, (unsigned)ps);
+	espwifi_rx_chain_mac_readback_log("begin", &espwifi_rx_chain_mac_begin);
 #endif
 #ifdef ESPWIFI_RX_OBSERVE_ONCE
 	espwifi_rx_observe_begin(bssid);
@@ -1609,6 +1751,28 @@ espwifi_vendor_debug_once_begin(const unsigned char *bssid)
 	(void)bssid;
 #endif
 }
+
+#ifdef ESPWIFI_RX_CHAIN_ONCE
+void
+espwifi_vendor_debug_assoc_snapshot(const unsigned char *bssid)
+{
+	unsigned critical;
+	struct espwifi_rx_chain_mac_readback state;
+
+	critical = espwifi_os_critical_enter();
+	if (vendor_debug_once_state != 1 ||
+	    espwifi_rx_chain_assoc_snapshot_done) {
+		espwifi_os_critical_exit(critical);
+		return;
+	}
+	espwifi_rx_chain_mac_readback(&state,
+	    espwifi_rx_chain_expected_sta_mac,
+	    espwifi_rx_chain_expected_sta_mac_valid, bssid);
+	espwifi_rx_chain_mac_assoc = state;
+	espwifi_rx_chain_assoc_snapshot_done = true;
+	espwifi_os_critical_exit(critical);
+}
+#endif
 
 void
 espwifi_vendor_debug_once_end(void)
@@ -1621,11 +1785,17 @@ espwifi_vendor_debug_once_end(void)
 	struct espwifi_rx_chain_table_state table_begin, table_end;
 	struct espwifi_rx_chain_pp_table_state pp_begin, pp_end;
 	struct espwifi_rx_chain_proto_table_state proto_begin, proto_end;
+	struct espwifi_rx_chain_sublen_table_state sublen_begin, sublen_end;
+	struct espwifi_rx_chain_mac_readback mac_assoc, mac_end;
 	uint32_t sta_rx_cb_count;
 	bool table_changed, wrapper_match;
 	bool pp_table_changed, pp_wrapper_match;
 	bool proto_table_changed, proto_wrapper_match;
+	bool sublen_table_changed, sublen_wrapper_match;
+	bool sublen_caller_match;
 	uint32_t proto_fc_match_count[8], proto_invalid_count, proto_short_count;
+	uint32_t sublen_fc_match_count[8], sublen_invalid_count, sublen_short_count;
+	bool assoc_snapshot_done;
 	bool hw_delta_valid;
 	uint16_t rx_mpdu_delta = 0, rx_end_cnt_delta = 0;
 	uint16_t rx_datasuc_delta = 0, rx_fcs_err_delta = 0;
@@ -1653,6 +1823,12 @@ espwifi_vendor_debug_once_end(void)
 		    espwifi_rx_chain_pp_proto_fc_match_count[i];
 	proto_invalid_count = espwifi_rx_chain_pp_proto_invalid_count;
 	proto_short_count = espwifi_rx_chain_pp_proto_short_count;
+	for (unsigned i = 0; i < sizeof(sublen_fc_match_count) /
+	    sizeof(sublen_fc_match_count[0]); i++)
+		sublen_fc_match_count[i] =
+		    espwifi_rx_chain_sublen_fc_match_count[i];
+	sublen_invalid_count = espwifi_rx_chain_sublen_invalid_count;
+	sublen_short_count = espwifi_rx_chain_sublen_short_count;
 	crypto_decap_count = espwifi_rx_chain_crypto_decap_count;
 	decap_count = espwifi_rx_chain_decap_count;
 	eapol_count = espwifi_rx_chain_eapol_count;
@@ -1662,6 +1838,16 @@ espwifi_vendor_debug_once_end(void)
 	pp_end = espwifi_rx_chain_pp_table_snapshot();
 	proto_begin = espwifi_rx_chain_proto_begin;
 	proto_end = espwifi_rx_chain_proto_table_snapshot();
+	sublen_begin = espwifi_rx_chain_sublen_begin;
+	sublen_end = espwifi_rx_chain_sublen_table_snapshot();
+	mac_assoc = espwifi_rx_chain_mac_assoc;
+	assoc_snapshot_done = espwifi_rx_chain_assoc_snapshot_done;
+	espwifi_rx_chain_mac_readback(&espwifi_rx_chain_mac_end,
+	    espwifi_rx_chain_expected_sta_mac,
+	    espwifi_rx_chain_expected_sta_mac_valid,
+	    espwifi_rx_chain_expected_bssid_valid ?
+	    espwifi_rx_chain_expected_bssid : NULL);
+	mac_end = espwifi_rx_chain_mac_end;
 	table_changed = table_begin.table != table_end.table;
 	wrapper_match = table_begin.matches == 0x0f && table_end.matches == 0x0f;
 	pp_table_changed = pp_begin.table != pp_end.table;
@@ -1669,6 +1855,11 @@ espwifi_vendor_debug_once_end(void)
 	proto_table_changed = proto_begin.table != proto_end.table;
 	proto_wrapper_match = proto_begin.matches != 0 &&
 	    proto_end.matches != 0;
+	sublen_table_changed = sublen_begin.table != sublen_end.table;
+	sublen_wrapper_match = sublen_begin.matches != 0 &&
+	    sublen_end.matches != 0;
+	sublen_caller_match = sublen_begin.caller_matches != 0 &&
+	    sublen_end.caller_matches != 0;
 	espwifi_rx_chain_hw_end_result =
 	    espwifi_rx_hw_snapshot(&espwifi_rx_chain_hw_end);
 	espwifi_os_alloc_diag_window_end();
@@ -1754,6 +1945,25 @@ espwifi_vendor_debug_once_end(void)
 		espwifi_os_log("espwifi: vendor rx proto table entries "
 		    "begin=%#x end=%#x\n", (unsigned)proto_begin.entry,
 		    (unsigned)proto_end.entry);
+	espwifi_os_log("espwifi: vendor rx sublen table once table=%p/%p "
+	    "table_changed=%u wrapper_match=%u begin_slot=%#x end_slot=%#x "
+	    "caller_match=%u begin_caller=%#x end_caller=%#x\n",
+	    sublen_begin.table, sublen_end.table,
+	    (unsigned)sublen_table_changed, (unsigned)sublen_wrapper_match,
+	    (unsigned)sublen_begin.matches, (unsigned)sublen_end.matches,
+	    (unsigned)sublen_caller_match,
+	    (unsigned)sublen_begin.caller_entry,
+	    (unsigned)sublen_end.caller_entry);
+	if (!sublen_wrapper_match || !sublen_caller_match)
+		espwifi_os_log("espwifi: vendor rx sublen table entries "
+		    "begin=%#x end=%#x caller_begin=%#x caller_end=%#x\n",
+		    (unsigned)sublen_begin.entry, (unsigned)sublen_end.entry,
+		    (unsigned)sublen_begin.caller_entry,
+		    (unsigned)sublen_end.caller_entry);
+	espwifi_rx_chain_mac_readback_log("assoc", &mac_assoc);
+	espwifi_os_log("espwifi: vendor rx register readback assoc captured=%u\n",
+	    (unsigned)assoc_snapshot_done);
+	espwifi_rx_chain_mac_readback_log("end", &mac_end);
 	espwifi_os_log("espwifi: vendor rx proto once fc_match="
 	    "%u/%u,%u/%u,%u/%u,%u/%u invalid=%u short=%u\n",
 	    (unsigned)proto_fc_match_count[0],
@@ -1765,6 +1975,23 @@ espwifi_vendor_debug_once_end(void)
 	    (unsigned)proto_fc_match_count[6],
 	    (unsigned)proto_fc_match_count[7],
 	    (unsigned)proto_invalid_count, (unsigned)proto_short_count);
+	espwifi_os_log("espwifi: vendor rx sublen once fc_match="
+	    "%u/%u,%u/%u,%u/%u,%u/%u invalid=%u short=%u\n",
+	    (unsigned)sublen_fc_match_count[0],
+	    (unsigned)sublen_fc_match_count[1],
+	    (unsigned)sublen_fc_match_count[2],
+	    (unsigned)sublen_fc_match_count[3],
+	    (unsigned)sublen_fc_match_count[4],
+	    (unsigned)sublen_fc_match_count[5],
+	    (unsigned)sublen_fc_match_count[6],
+	    (unsigned)sublen_fc_match_count[7],
+	    (unsigned)sublen_invalid_count, (unsigned)sublen_short_count);
+	for (unsigned i = 0; i < 256; i++) {
+		uint32_t count = espwifi_rx_chain_sublen_data_state_count[i];
+		if (count != 0)
+			espwifi_os_log("espwifi: vendor rx sublen data state=%u "
+			    "count=%u\n", i, (unsigned)count);
+	}
 	if (hw_delta_valid) {
 		espwifi_os_log("espwifi: vendor rx hw once start_rc=%#x "
 		    "window_rc=%#x/%#x start_mpdu=%u start_data=%u "

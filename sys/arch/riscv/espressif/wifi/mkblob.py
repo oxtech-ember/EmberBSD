@@ -142,7 +142,8 @@ RX_CHAIN_WRAPS = {
     'sta_rx_eapol': ('net80211_funcs_init', 104, 0x2f800d00),
     'ppRxProtoProc': ('wdev_funcs_init', 0x198, 0x2f800fac),
 }
-RX_CHAIN_WRAP_SYMBOLS = tuple(RX_CHAIN_WRAPS) + ('sta_rx_cb',)
+RX_CHAIN_WRAP_SYMBOLS = tuple(RX_CHAIN_WRAPS) + (
+    'sta_rx_cb', 'get_sublen_offset', 'wdev_funcs_init')
 
 
 def check_rx_chain_wrappers(path, objdump, nm, env):
@@ -180,7 +181,7 @@ def check_rx_chain_wrappers(path, objdump, nm, env):
             relevant = [line for line in all_relocs.splitlines()
                 if re.search(rf'\b(?:__wrap_|__real_)?{re.escape(symbol)}\b', line)]
             excerpt = '\n'.join(relevant[:8])
-            raise ValueError('net80211_funcs_init has no relocation through ' +
+            raise ValueError(init_symbol + ' has no relocation through ' +
                 f'__wrap_{symbol} for table slot +{slot}' +
                 f'\nrelated relocations:\n{excerpt}')
         if symbol == 'ppRxProtoProc':
@@ -197,8 +198,8 @@ def check_rx_chain_wrappers(path, objdump, nm, env):
             raise ValueError(f'__wrap_{symbol} relocation is not followed by ' +
                              f'the table slot +{slot} store')
         if base is not None and not re.search(base, init):
-            raise ValueError('wdev_funcs_init does not establish the ' +
-                             'pinned +0x180 subtable base for +0x198')
+            raise ValueError('wdev_funcs_init does not establish the pinned ' +
+                             f'subtable base for +{slot:#x}')
 
         wrapper = disassemble('__wrap_' + symbol)
         real_reloc = re.compile(rf'R_RISCV_[A-Z0-9_]+\s+{re.escape(symbol)}\b')
@@ -233,6 +234,58 @@ def check_rx_chain_wrappers(path, objdump, nm, env):
                      r'espwifi_rx_chain_pp_proto_invalid_count\b',
                      proto_wrapper):
         raise ValueError('__wrap_ppRxProtoProc lacks the invalid-path counter')
+
+    wdev_init_wrapper = disassemble('__wrap_wdev_funcs_init')
+    if not re.search(r'R_RISCV_CALL(?:_PLT)?\s+wdev_funcs_init\b',
+                     wdev_init_wrapper):
+        raise ValueError('__wrap_wdev_funcs_init does not chain to ROM/vendor init')
+    for pattern, label in (
+            (r'R_RISCV_(?:PCREL_|GOT_)?HI20\s+pp_wdev_funcs\b',
+             'callback table pointer'),
+            (r'R_RISCV_(?:PCREL_|GOT_)?HI20\s+__wrap_get_sublen_offset\b',
+             'helper wrapper'),
+            (r'R_RISCV_(?:PCREL_|GOT_)?HI20\s+get_sublen_offset\b',
+             'original helper address')):
+        if not re.search(pattern, wdev_init_wrapper):
+            raise ValueError('__wrap_wdev_funcs_init lacks its ' + label)
+    if not re.search(r'\blw\s+t2,\s*(?:1044|0x414)\(t0\)',
+                     wdev_init_wrapper) or not re.search(
+            r'\bbne\s+t2,\s*t1\b', wdev_init_wrapper):
+        raise ValueError('__wrap_wdev_funcs_init does not verify the original '
+                         'helper slot before replacement')
+    if not re.search(r'\b(?:sw|c\.sw)\s+\w+,\s*(?:1044|0x414)\(t0\)',
+                     wdev_init_wrapper):
+        raise ValueError('__wrap_wdev_funcs_init does not install the helper '
+                         'in pp_wdev_funcs + 0x414')
+    if not re.search(r'R_RISCV_CALL(?:_PLT)?\s+__wrap_wdev_funcs_init\b',
+                     disassemble('esp_wifi_init_internal')):
+        raise ValueError('esp_wifi_init_internal does not invoke the wrapped '
+                         'wdev table initializer')
+
+    sublen_wrapper = disassemble('__wrap_get_sublen_offset')
+    if len(re.findall(r'R_RISCV_CALL(?:_PLT)?\s+get_sublen_offset\b',
+                      sublen_wrapper)) != 2:
+        raise ValueError('__wrap_get_sublen_offset must have one selected '
+                         'call and one bypass tail-chain relocation')
+    for pattern, label in (
+            (r'R_RISCV_(?:PCREL_|GOT_)?HI20\s+wDevCtrl_ptr\b',
+             'control pointer'),
+            (r'R_RISCV_(?:PCREL_|GOT_)?HI20\s+'
+             r'espwifi_rx_chain_sublen_fc_match_count\b', 'FC/match array'),
+            (r'R_RISCV_(?:PCREL_|GOT_)?HI20\s+'
+             r'espwifi_rx_chain_sublen_data_state_count\b', 'DATA-state array'),
+            (r'R_RISCV_(?:PCREL_|GOT_)?HI20\s+'
+             r'espwifi_rx_chain_sublen_invalid_count\b', 'invalid counter'),
+            (r'R_RISCV_(?:PCREL_|GOT_)?HI20\s+'
+             r'espwifi_rx_chain_sublen_short_count\b', 'short counter')):
+        if not re.search(pattern, sublen_wrapper):
+            raise ValueError('__wrap_get_sublen_offset lacks its ' + label)
+    if sizes.get('espwifi_rx_chain_sublen_fc_match_count') != 32 or \
+            sizes.get('espwifi_rx_chain_sublen_data_state_count') != 1024:
+        raise ValueError('sub-length counters are not 8x/256x uint32 arrays')
+    if addresses.get('get_sublen_offset') != 0x2f8011e0 or \
+            addresses.get('wDev_ProcessRxSucData') != 0x2f8010f4:
+        raise ValueError('pinned sub-length helper/caller ROM alias changed')
 
     # wifi_create_sta registers the normal callback through ifidx zero;
     # ppRegisterRxCallback stores it in pTxRx + 0x3f8 on this pinned ABI.

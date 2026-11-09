@@ -214,6 +214,27 @@ over-the-air receptions or prove EAPOL delivery. A DATA count with
 interface. No count cannot distinguish an earlier radio/driver drop from no
 on-air DATA frame.
 
+The one-shot probe also wraps `get_sublen_offset` in `pp_wdev_funcs + 0x414`.
+It calls the ROM helper once and observes only its call from the pinned
+`wDev_ProcessRxSucData` return address (`0x2f839462`); other callers tail-chain
+without instrumentation. At this earlier successful-RX processing boundary,
+the wrapper validates the current descriptor and raw-buffer identity, bounds
+the returned offset against the descriptor length, and reads only the metadata
+length/status and first frame-control byte. It reports FC type crossed with
+`rxmatch0`, DATA `rx_state` buckets, and invalid/short guards. The live
+`pp_wdev_funcs` snapshot includes both the helper slot and the
+`+0x1f4` `wDev_ProcessRxSucData` alias binding. These values locate frames that
+reached this helper call; a stable table binding alone does not prove that the
+selected caller executed, and zero counts do not establish absence of
+over-the-air DATA.
+
+For the same window, the probe records read-only interface-0 MAC and BSSID
+register words at begin, after an accepted successful association response,
+and at end, comparing them with the software STA MAC and expected BSSID where
+available. This is register readback only; it does not prove packet-filter
+configuration or packet reception. The diagnostic does not write these
+registers or alter radio policy.
+
 The probe also samples the S31 hardware RX statistics
 through the pinned IDF getter at successful radio start and at the window
 boundaries. It reports modulo-16-bit deltas for the fields `rx_mpdu`,

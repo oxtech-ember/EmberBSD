@@ -136,6 +136,124 @@ __wrap_ppRxProtoProc:
 
 RX_PP_RX_PROTO_PROC_WRAP
 
+	.globl __wrap_wdev_funcs_init
+	.type __wrap_wdev_funcs_init,@function
+__wrap_wdev_funcs_init:
+	addi sp, sp, -32
+	sw ra, 8(sp)
+	sw a0, 0(sp)
+	sw a1, 4(sp)
+	call __real_wdev_funcs_init
+	sw a0, 12(sp)
+	sw a1, 16(sp)
+	bnez a0, .Lrx_wdev_init_done
+	la t0, pp_wdev_funcs
+	lw t0, 0(t0)
+	beqz t0, .Lrx_wdev_init_done
+	lw t2, 0x414(t0)
+	la t1, __real_get_sublen_offset
+	bne t2, t1, .Lrx_wdev_init_done
+	la t1, __wrap_get_sublen_offset
+	sw t1, 0x414(t0)
+.Lrx_wdev_init_done:
+	lw a0, 12(sp)
+	lw a1, 16(sp)
+	lw ra, 8(sp)
+	addi sp, sp, 32
+	ret
+	.size __wrap_wdev_funcs_init, .-__wrap_wdev_funcs_init
+
+	.globl __wrap_get_sublen_offset
+	.type __wrap_get_sublen_offset,@function
+__wrap_get_sublen_offset:
+	la t0, espwifi_rx_chain_diag_active
+	lw t0, 0(t0)
+	beqz t0, .Lrx_sublen_tail
+	/* Only observe the call before wDev_ProcessRxSucData's status filter. */
+	li t0, 0x2f839462
+	bne ra, t0, .Lrx_sublen_tail
+	addi sp, sp, -16
+	sw ra, 12(sp)
+	sw a0, 8(sp)
+	call __real_get_sublen_offset
+	/*
+	 * Preserve the real helper's return registers and output parameter.
+	 * The pinned ROM (0x2f83940a..426) obtains the raw buffer through
+	 * wDevCtrl_ptr -> control+0 -> descriptor+4.  The descriptor's length
+	 * occupies bits 14..27, as used at 0x2f83923c..24e.  Check that this
+	 * still describes our saved input before inspecting the returned offset.
+	 */
+	lw t0, 8(sp)
+	beqz t0, .Lrx_sublen_invalid
+	la t1, wDevCtrl_ptr
+	lw t1, 0(t1)
+	beqz t1, .Lrx_sublen_invalid
+	lw t1, 0(t1)
+	beqz t1, .Lrx_sublen_invalid
+	lw t2, 4(t1)
+	bne t2, t0, .Lrx_sublen_invalid
+	lw t2, 0(t1)
+	srli t2, t2, 14
+	li t3, 0x3fff
+	and t2, t2, t3
+	li t3, 8
+	bgeu t3, t2, .Lrx_sublen_short
+	addi t2, t2, -8
+	bgeu a0, t2, .Lrx_sublen_short
+	/*
+	 * Metadata begins at raw+offset: a 14-bit length and status byte +4.
+	 * The frame begins eight bytes later (0x2f839462..488); the ROM reads
+	 * its FC at 0x2f8395a8 and tests its type at 0x2f83963c..64c.
+	 * Bounds above cover the metadata and the first frame byte without
+	 * adding to the returned offset before checking it.
+	 */
+	add t1, t0, a0
+	lw t2, 0(t1)
+	li t3, 0x3fff
+	and t2, t2, t3
+	beqz t2, .Lrx_sublen_short
+	lbu t2, 8(t1)
+	andi t2, t2, 0x0c
+	srli t2, t2, 2
+	lbu t3, 3(t0)
+	andi t3, t3, 0x10
+	srli t3, t3, 4
+	slli t4, t2, 1
+	add t4, t4, t3
+	slli t4, t4, 2
+	la t5, espwifi_rx_chain_sublen_fc_match_count
+	add t5, t5, t4
+	lw t6, 0(t5)
+	addi t6, t6, 1
+	sw t6, 0(t5)
+	li t3, 2
+	bne t2, t3, .Lrx_sublen_return
+	/* A failed reception's FC bits are observations, not valid DATA proof. */
+	lbu t2, 4(t1)
+	slli t2, t2, 2
+	la t3, espwifi_rx_chain_sublen_data_state_count
+	add t3, t3, t2
+	lw t4, 0(t3)
+	addi t4, t4, 1
+	sw t4, 0(t3)
+	j .Lrx_sublen_return
+.Lrx_sublen_invalid:
+	la t0, espwifi_rx_chain_sublen_invalid_count
+	j .Lrx_sublen_count_error
+.Lrx_sublen_short:
+	la t0, espwifi_rx_chain_sublen_short_count
+.Lrx_sublen_count_error:
+	lw t1, 0(t0)
+	addi t1, t1, 1
+	sw t1, 0(t0)
+.Lrx_sublen_return:
+	lw ra, 12(sp)
+	addi sp, sp, 16
+	ret
+.Lrx_sublen_tail:
+	tail __real_get_sublen_offset
+	.size __wrap_get_sublen_offset, .-__wrap_get_sublen_offset
+
 	RX_CHAIN_WRAP ieee80211_crypto_decap, espwifi_rx_chain_crypto_decap_count
 	RX_CHAIN_WRAP ieee80211_decap, espwifi_rx_chain_decap_count
 	RX_CHAIN_WRAP sta_rx_eapol, espwifi_rx_chain_eapol_count

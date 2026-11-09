@@ -28,16 +28,18 @@ chain_state = re.search(
     r'volatile uint32_t espwifi_rx_chain_pp_proto_fc_match_count\[8\];\n'
     r'volatile uint32_t espwifi_rx_chain_pp_proto_invalid_count;\n'
     r'volatile uint32_t espwifi_rx_chain_pp_proto_short_count;\n'
+    r'volatile uint32_t espwifi_rx_chain_sublen_fc_match_count\[8\];\n'
+    r'volatile uint32_t espwifi_rx_chain_sublen_data_state_count\[256\];\n'
+    r'volatile uint32_t espwifi_rx_chain_sublen_invalid_count;\n'
+    r'volatile uint32_t espwifi_rx_chain_sublen_short_count;\n'
     r'volatile uint32_t espwifi_rx_chain_crypto_decap_count;\n'
     r'volatile uint32_t espwifi_rx_chain_decap_count;\n'
     r'volatile uint32_t espwifi_rx_chain_eapol_count;$', source, re.M)
 assert chain_state, 'RX chain counters missing'
 rx_table_declarations = re.search(
     r'^extern void \* volatile net80211_funcs;\n.*?'
-    r'^static struct espwifi_rx_chain_pp_table_state '
-    r'espwifi_rx_chain_pp_begin;\n'
-    r'^static struct espwifi_rx_chain_proto_table_state\s+'
-    r'espwifi_rx_chain_proto_begin;$', source, re.M | re.S)
+    r'^static bool espwifi_rx_chain_expected_bssid_valid;$',
+    source, re.M | re.S)
 assert rx_table_declarations, \
     'net80211 and normal PP receive callback snapshot state missing'
 rx_chain_asm = (wifi / 'rx_chain_diag.S').read_text()
@@ -47,6 +49,28 @@ assert 'RX_STA_RX_CB_WRAP' in rx_chain_asm, \
     'normal RX callback classification wrapper missing'
 assert 'RX_PP_RX_PROTO_PROC_WRAP' in rx_chain_asm, \
     'pre-route PP RX protocol wrapper missing'
+assert '__wrap_get_sublen_offset:' in rx_chain_asm, \
+    'pre-success RX data wrapper missing'
+for fragment in ('__wrap_wdev_funcs_init:',
+                 'call __real_wdev_funcs_init',
+                 'lw t2, 0x414(t0)',
+                 'la t1, __real_get_sublen_offset',
+                 'sw t1, 0x414(t0)'):
+    assert fragment in rx_chain_asm, \
+        'diagnostic init interposition lacks its verified slot install: ' + fragment
+for fragment in ('call __real_get_sublen_offset',
+                 '0x2f839462', 'wDevCtrl_ptr',
+                 'espwifi_rx_chain_sublen_fc_match_count',
+                 'espwifi_rx_chain_sublen_data_state_count'):
+    assert fragment in rx_chain_asm, \
+        'pre-success RX reader lacks its caller guard/bounded counters: ' + fragment
+assert 'tail __real_get_sublen_offset' in rx_chain_asm, \
+    'unobserved get_sublen_offset callers must tail-chain unchanged'
+for fragment in ('wDevCtrl_ptr', 'bgeu t3, t2', 'bgeu a0, t2',
+                 'espwifi_rx_chain_sublen_invalid_count',
+                 'espwifi_rx_chain_sublen_short_count'):
+    assert fragment in rx_chain_asm, \
+        'pre-success RX reader misses descriptor/bounds guards: ' + fragment
 for fragment in ('lw t0, 4(a0)', 'lw t0, 4(t0)', 'lhu t1, 0x24(a0)',
                  'addi t0, t0, 8', 'lbu t2, 0(t0)',
                  'andi t2, t2, 0x0c',
@@ -86,10 +110,21 @@ stop_case = re.search(
     r'case WIFI_EVENT_STA_STOP: \{.*?espwifi_rx_chain_hw_ready = false;'
     r'.*?espwifi_vendor_debug_once_end\(\);', source, re.S)
 assert stop_case, 'STA_STOP must invalidate hardware reads before closing window'
+assoc_hook = re.search(r'case WLAN_FC_STYPE_ASSOC_RESP:.*?return accepted \? 0 : -1;',
+                       (wifi / 'fullmac_wpa2.c').read_text(), re.S)
+assert assoc_hook and 'espwifi_vendor_debug_assoc_snapshot(sender)' in \
+    assoc_hook.group(), 'accepted association must capture register readback'
+assert 'espwifi_rx_chain_mac_readback' in source and \
+    '0x2010405c' in source and '0x20104060' in source and \
+    '0x20104000' in source and '0x20104004' in source, \
+    'RX diagnostic must sample interface-0 MAC/BSSID registers'
+assert 'wDev_ProcessRxSucData' in source and '0x1f4' in source, \
+    'RX diagnostic must verify the selected ROM caller slot'
 
 
-def function(name, arguments):
-    match = re.search(r'\nvoid\n' + name + r'\(' + arguments +
+def function(name, arguments, return_type='void'):
+    match = re.search(r'\n' + re.escape(return_type) + r'\n' + name +
+                      r'\(' + arguments +
                       r'\)\n\{.*?\n\}', source, re.S)
     assert match, name
     return match.group()
@@ -187,17 +222,36 @@ typedef enum { WIFI_PS_NONE, WIFI_PS_MIN_MODEM, WIFI_PS_MAX_MODEM }
     wifi_ps_type_t;
 #define ESP_OK 0
 #define ESP_ERR_INVALID_STATE 0x103
+#define WIFI_IF_STA 0
 #define WIFI_LOG_VERBOSE 5
 #define WIFI_LOG_WARNING 2
 static unsigned critical_depth, level, set_calls, get_ps_calls, set_ps_calls;
 static wifi_ps_type_t current_ps = WIFI_PS_MAX_MODEM;
-static char log_message[4096];
+static char log_message[16384];
 static unsigned alloc_window_begin_calls;
 static unsigned alloc_window_end_calls, alloc_snapshot_calls;
 static unsigned hw_snapshot_calls;
 static esp_err_t hw_snapshot_result = ESP_OK;
 static struct espwifi_alloc_diag alloc_samples[2];
 static esp_test_hw_rx_statistics_t hw_samples[3];
+static uint32_t fake_registers[4] = { 0x04030201, 0x00010605,
+    0x04030201, 0x80000605 };
+static uint32_t fake_reg_read(uint32_t addr) {
+ switch (addr) {
+ case 0x2010405c: return fake_registers[0];
+ case 0x20104060: return fake_registers[1];
+ case 0x20104000: return fake_registers[2];
+ case 0x20104004: return fake_registers[3];
+ default: assert(0); return 0;
+ }
+}
+#define REG_READ(addr) fake_reg_read(addr)
+static esp_err_t esp_wifi_get_mac(int iface, unsigned char *mac) {
+ static const unsigned char expected[6] = { 1, 2, 3, 4, 5, 6 };
+ assert(iface == WIFI_IF_STA && mac != NULL && critical_depth == 0);
+ memcpy(mac, expected, sizeof(expected));
+ return ESP_OK;
+}
 static unsigned espwifi_os_critical_enter(void) { return ++critical_depth; }
 static void espwifi_os_critical_exit(unsigned token) {
  assert(token == critical_depth);
@@ -255,7 +309,20 @@ static void espwifi_os_log(const char *fmt, ...) {
     table_function('espwifi_rx_chain_table_snapshot') + '\n' + \
     pp_table_function() + '\n' + \
     proto_table_function() + '\n' + \
+    function('espwifi_rx_chain_sublen_table_snapshot', r'void',
+        'static struct espwifi_rx_chain_sublen_table_state') + '\n' + \
+    function('espwifi_rx_chain_mac_word', r'const unsigned char \*mac',
+        'static uint32_t') + '\n' + \
+    function('espwifi_rx_chain_mac_hi', r'const unsigned char \*mac',
+        'static uint32_t') + '\n' + \
+    function('espwifi_rx_chain_mac_readback',
+        r'struct espwifi_rx_chain_mac_readback \*state,.*?',
+        'static void') + '\n' + \
+    function('espwifi_rx_chain_mac_readback_log',
+        r'const char \*stage,.*?', 'static void') + '\n' + \
     function('espwifi_vendor_debug_once_begin',
+        r'const unsigned char \*bssid') + '\n' + \
+    function('espwifi_vendor_debug_assoc_snapshot',
         r'const unsigned char \*bssid') + '\n' + \
     function('espwifi_vendor_debug_once_end', r'void') + r'''
 static void wrap_sta_input(void) { }
@@ -268,13 +335,15 @@ void __wrap_ieee80211_decap(void) { wrap_decap(); }
 void __wrap_sta_rx_eapol(void) { wrap_sta_rx_eapol(); }
 static void real_pp_rx_proto_proc(void) { }
 void __wrap_ppRxProtoProc(void) { real_pp_rx_proto_proc(); }
+void __wrap_get_sublen_offset(void) { }
+void wDev_ProcessRxSucData(void) { }
 void __wrap_sta_rx_cb(void) { }
 void * volatile net80211_funcs;
 void * volatile pTxRx;
 void * volatile pp_wdev_funcs;
 static unsigned char table_a[0x14c], table_b[0x14c];
 static unsigned char pp_table_a[0x400], pp_table_b[0x400];
-static unsigned char proto_table_a[0x1a0], proto_table_b[0x1a0];
+static unsigned char proto_table_a[0x420], proto_table_b[0x420];
 static int fixture_fc_type(const unsigned char *packet) {
  return packet == NULL ? -1 : (packet[0] & 0x0c) >> 2;
 }
@@ -293,6 +362,10 @@ static void install_pp_wrapper(unsigned char *table, void (*entry)(void)) {
 }
 static void install_proto_wrapper(unsigned char *table, void (*entry)(void)) {
  set_table_entry(table, 0x198, entry);
+}
+static void install_sublen_wrapper(unsigned char *table, void (*entry)(void)) {
+ set_table_entry(table, 0x414, entry);
+ set_table_entry(table, 0x1f4, wDev_ProcessRxSucData);
 }
 int main(void) {
  static const unsigned char bssid[6] = { 1, 2, 3, 4, 5, 6 };
@@ -385,11 +458,25 @@ int main(void) {
  install_pp_wrapper(pp_table_b, __wrap_sta_rx_cb);
  install_proto_wrapper(proto_table_a, __wrap_ppRxProtoProc);
  install_proto_wrapper(proto_table_b, __wrap_ppRxProtoProc);
+ install_sublen_wrapper(proto_table_a, __wrap_get_sublen_offset);
+ install_sublen_wrapper(proto_table_b, __wrap_get_sublen_offset);
  pTxRx = pp_table_a;
  pp_wdev_funcs = proto_table_a;
  net80211_funcs = table_a;
  vendor_debug_once_state = 0;
  espwifi_vendor_debug_once_begin(bssid);
+ espwifi_vendor_debug_assoc_snapshot(bssid);
+ assert(espwifi_rx_chain_mac_assoc.available);
+ assert(espwifi_rx_chain_mac_assoc.expected_sta_valid &&
+     espwifi_rx_chain_mac_assoc.sta_match);
+ assert(espwifi_rx_chain_mac_assoc.expected_bssid_valid &&
+     espwifi_rx_chain_mac_assoc.bssid_match);
+ espwifi_rx_chain_sublen_fc_match_count[4] = 2;
+ espwifi_rx_chain_sublen_fc_match_count[5] = 3;
+ espwifi_rx_chain_sublen_data_state_count[0] = 2;
+ espwifi_rx_chain_sublen_data_state_count[0xc6] = 7;
+ espwifi_rx_chain_sublen_invalid_count = 1;
+ espwifi_rx_chain_sublen_short_count = 2;
  espwifi_vendor_debug_once_end();
  assert(strstr(log_message, "table_changed=0 wrapper_match=1 "
      "begin_slots=0xf end_slots=0xf") != NULL);
@@ -397,6 +484,18 @@ int main(void) {
      strstr(log_message, "begin_slot=0x1 end_slot=0x1") != NULL);
  assert(strstr(log_message, "vendor rx proto table once") != NULL &&
      strstr(log_message, "wrapper_match=1 begin_slot=0x1 end_slot=0x1") != NULL);
+ assert(strstr(log_message, "vendor rx sublen table once") != NULL &&
+     strstr(log_message, "wrapper_match=1 begin_slot=0x1 end_slot=0x1 "
+     "caller_match=1") != NULL);
+ assert(strstr(log_message, "stage=begin available=1 sta_valid=1") != NULL);
+ assert(strstr(log_message, "stage=assoc available=1 sta_valid=1") != NULL);
+ assert(strstr(log_message, "stage=end available=1 sta_valid=1") != NULL);
+ assert(strstr(log_message,
+     "vendor rx register readback assoc captured=1") != NULL);
+ assert(strstr(log_message,
+     "fc_match=0/0,0/0,2/3,0/0 invalid=1 short=2") != NULL);
+ assert(strstr(log_message, "sublen data state=0 count=2") != NULL &&
+     strstr(log_message, "sublen data state=198 count=7") != NULL);
  assert(strstr(log_message, "fc_match=0/0,0/0,0/0,0/0 invalid=0 short=0") != NULL);
  vendor_debug_once_state = 0;
  net80211_funcs = table_a;

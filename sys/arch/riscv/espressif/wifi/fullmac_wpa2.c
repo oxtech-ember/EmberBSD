@@ -189,6 +189,8 @@ espwifi_wpa2_sta_rx_mgmt(u8 subtype, u8 *body, size_t len, u8 *sender,
 		}
 		accepted = espwifi_os_assoc_response(subtype, body,
 		    (unsigned int)len, sender);
+		if (accepted && status_valid && status == 0)
+			espwifi_vendor_debug_assoc_snapshot(sender);
 		profile_authmode =
 		    esp_wifi_sta_get_prof_authmode_internal();
 		espwifi_os_log("espwifi: RX assoc subtype=%u len=%u "
