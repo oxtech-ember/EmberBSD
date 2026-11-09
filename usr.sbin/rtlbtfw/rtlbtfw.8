@@ -1,0 +1,150 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\" Copyright (c) 2026 EmberBSD contributors.
+.\" Origin: EmberBSD Realtek Bluetooth patch loader, AI-assisted.
+.Dd November 9, 2026
+.Dt RTLBTFW 8
+.Os
+.Sh NAME
+.Nm rtlbtfw
+.Nd load patch firmware into a Realtek Bluetooth controller
+.Sh SYNOPSIS
+.Nm
+.Op Fl nv
+.Op Fl c Ar config
+.Op Fl f Ar firmware
+.Ar device
+.Sh DESCRIPTION
+Realtek Bluetooth controllers such as the RTL8821CE start with ROM firmware.
+The RTL8821CE ROM reports HCI version 4.2 and the local name
+.Dq RTK_BT_4.1 .
+The vendor publishes a patch for the ROM through linux-firmware.
+The controller keeps the patch until its next power cycle.
+.Nm
+sends the patch to the controller with vendor HCI commands through the
+raw HCI socket of
+.Ar device ,
+for example
+.Li ubt0 .
+.Pp
+.Nm
+reads the local version of the controller.
+It stops with success when the controller is not a Realtek device or
+when the version is not a known ROM identity.
+Patched firmware reports its own version, so a second run makes no change.
+Otherwise it reads the ROM version, selects the matching patch from the
+firmware file, appends the config file, and downloads the image in
+fragments of 252 bytes.
+After the download it reads the version again and resets the controller
+in the same way as
+.Ql btconfig reset ,
+so the Bluetooth stack reads the patched features.
+.Pp
+The firmware files come from the
+.Pa rtl_bt
+directory of linux-firmware.
+.Nm
+searches each directory of the
+.Li hw.firmware.path
+sysctl for
+.Pa rtl_bt/ Ns Ao chip Ac Ns Pa _fw.bin
+and
+.Pa rtl_bt/ Ns Ao chip Ac Ns Pa _config.bin .
+The RTL8852C firmware file ends in
+.Pa _fw_v2.bin .
+The config file is optional, except for the RTL8723D and RTL8822B.
+The RTL8821C uses
+.Pa rtl8821c_fw.bin
+and
+.Pa rtl8821c_config.bin .
+.Pp
+The options are:
+.Bl -tag -width Fl
+.It Fl c Ar config
+Read the config file from
+.Ar config
+instead of the firmware search path.
+.It Fl f Ar firmware
+Read the firmware file from
+.Ar firmware
+instead of the firmware search path.
+.It Fl n
+Select the patch and print the image size, but do not download it.
+.It Fl v
+Print the controller version and the selected patch.
+.El
+.Pp
+If
+.Ar device
+is not enabled,
+.Nm
+enables it first, because HCI commands reach only an enabled unit.
+The device stays enabled afterwards, also with
+.Fl n
+and for controllers that need no patch.
+.Sh FILES
+.Bl -tag -width Pa -compact
+.It Pa rtl_bt/
+Firmware directory below each entry of the
+.Va hw.firmware.path
+sysctl.
+The
+.Li sysutils/rtl-bt-firmware
+package installs
+.Pa /usr/pkg/libdata/firmware/rtl_bt/ .
+.El
+.Sh EXIT STATUS
+.Ex -std
+.Nm
+exits 0 without a download when the controller is not a Realtek device
+or already runs patch firmware.
+.Sh EXAMPLES
+Load the patch into the RTL8821CE and show the result:
+.Bd -literal -offset indent
+# rtlbtfw -v ubt0
+ubt0: hci 8.000c lmp 8 manufacturer 0x005d subversion 0x8821
+ubt0: rtl8821c rom version 1
+ubt0: image 34926 bytes, 139 fragments
+ubt0: rtl8821c patch loaded, hci revision 0x000c -> 0x75b8, lmp subversion 0xf098
+.Ed
+.Pp
+The patched controller reports the firmware version 0x75b8f098 in its
+HCI revision and LMP subversion fields.
+.Pp
+The
+.Xr rc.conf 5
+variable
+.Va bluetooth_firmware
+makes
+.Pa /etc/rc.d/bluetooth
+run
+.Nm
+for each controller before it configures them.
+.Sh SEE ALSO
+.Xr ubt 4 ,
+.Xr rc.conf 5 ,
+.Xr btconfig 8
+.Sh HISTORY
+.Nm
+first appeared in EmberBSD.
+The download protocol follows the
+.Fx
+utility of the same name by Adrian Chadd and Vladimir Kondratyev.
+EmberBSD reimplements it over the
+.Nx
+HCI socket.
+.Sh BUGS
+Only the
+.Dq Realtech
+.Pq sic
+firmware format is supported.
+The raw image of the RTL8723A is rejected.
+Files in the
+.Dq RTBTCore
+format of newer chips are rejected.
+Only the RTL8821CE was tested on hardware.
+.Pp
+.Pa /etc/rc.d/bluetooth
+runs
+.Nm
+at boot.
+A controller attached later needs a manual run.

@@ -2995,6 +2995,7 @@
 ./usr/share/man/html8/rshd.html			man-netutil-htmlman	html
 ./usr/share/man/html8/rstatd.html		man-netutil-htmlman	html
 ./usr/share/man/html8/rtadvd.html		man-router-htmlman	use_inet6,html
+./usr/share/man/html8/rtlbtfw.html		man-sysutil-htmlman	html
 ./usr/share/man/html8/rtquery.html		man-netutil-htmlman	html
 ./usr/share/man/html8/rtsol.html		man-netutil-htmlman	inet6,html
 ./usr/share/man/html8/rtsold.html		man-netutil-htmlman	inet6,html

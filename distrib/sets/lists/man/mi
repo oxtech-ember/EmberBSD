@@ -3368,6 +3368,7 @@
 ./usr/share/man/cat8/rshd.0			man-netutil-catman	.cat
 ./usr/share/man/cat8/rstatd.0			man-netutil-catman	.cat
 ./usr/share/man/cat8/rtadvd.0			man-router-catman	use_inet6,.cat
+./usr/share/man/cat8/rtlbtfw.0			man-sysutil-catman	.cat
 ./usr/share/man/cat8/rtquery.0			man-netutil-catman	.cat
 ./usr/share/man/cat8/rtsol.0			man-netutil-catman	inet6,.cat
 ./usr/share/man/cat8/rtsold.0			man-netutil-catman	inet6,.cat
@@ -6974,6 +6975,7 @@
 ./usr/share/man/man8/rshd.8			man-netutil-man		.man
 ./usr/share/man/man8/rstatd.8			man-netutil-man		.man
 ./usr/share/man/man8/rtadvd.8			man-router-man		use_inet6,.man
+./usr/share/man/man8/rtlbtfw.8			man-sysutil-man		.man
 ./usr/share/man/man8/rtquery.8			man-netutil-man		.man
 ./usr/share/man/man8/rtsol.8			man-netutil-man		inet6,.man
 ./usr/share/man/man8/rtsold.8			man-netutil-man		inet6,.man

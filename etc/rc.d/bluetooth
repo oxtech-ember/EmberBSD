@@ -16,6 +16,7 @@ stop_cmd="bluetooth_stop"
 
 btattach_cmd="/usr/sbin/btattach"
 btconfig_cmd="/usr/sbin/btconfig"
+rtlbtfw_cmd="/usr/sbin/rtlbtfw"
 bthcid_cmd="/usr/sbin/bthcid"
 btdevctl_cmd="/usr/sbin/btdevctl"
 sdpd_cmd="/usr/sbin/sdpd"
@@ -40,6 +41,20 @@ bluetooth_start()
 		echo "attaching Bluetooth controller to $(basename ${tty})"
 		${btattach_cmd} ${flags} ${type} ${tty} ${speed}
 	done < ${btattach_conf}
+
+	#
+	# load vendor patch firmware.
+	#
+	# If ${bluetooth_firmware} is set, rtlbtfw(8) loads the patch into
+	# controllers that boot with ROM firmware. It leaves other controllers
+	# unchanged and prints one line for each loaded patch.
+	#
+	if checkyesno bluetooth_firmware; then
+		for dev in ${btconfig_devices:-$(${btconfig_cmd} -l)}; do
+			${rtlbtfw_cmd} ${dev} ||
+			    warn "${dev}: patch firmware not loaded"
+		done
+	fi
 
 	#
 	# enable Bluetooth controllers.

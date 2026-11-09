@@ -1297,6 +1297,7 @@
 ./usr/libdata/debug/usr/sbin/rpcapd.debug	comp-netutil-debug	debug
 ./usr/libdata/debug/usr/sbin/rpcbind.debug	comp-rpcbind-debug	debug
 ./usr/libdata/debug/usr/sbin/rtadvd.debug	comp-router-debug	use_inet6,debug
+./usr/libdata/debug/usr/sbin/rtlbtfw.debug	comp-sysutil-debug	debug
 ./usr/libdata/debug/usr/sbin/rtquery.debug	comp-netutil-debug	debug
 ./usr/libdata/debug/usr/sbin/rtsold.debug	comp-obsolete		obsolete
 ./usr/libdata/debug/usr/sbin/rump.arp.debug	comp-netutil-debug	debug,rump

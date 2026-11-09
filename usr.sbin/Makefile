@@ -23,7 +23,7 @@ SUBDIR=	ac accton acpitools altq apm apmd arp autofs \
 	powerd puffs \
 	quot quotacheck quotaon quotarestore \
 	rarpd rbootd rdate repquota rmt rpc.bootparamd rpc.lockd \
-	rpc.pcnfsd rpc.statd rpcbind rwhod \
+	rpc.pcnfsd rpc.statd rpcbind rtlbtfw rwhod \
 	sa screenblank sdpd service services_mkdb sesd schedctl \
 	sliplogin spray \
 	srtconfig sti sunlabel sysinst syslogd \
