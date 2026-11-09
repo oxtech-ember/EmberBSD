@@ -528,7 +528,14 @@ cpu_attach(device_t parent, device_t self, void *aux)
 		panic("unknown processor type??\n");
 	}
 
-	pat_init(ci);
+	/*
+	 * cpu_attach runs on the boot processor, so this call programs
+	 * only the boot processor.  i386 relies on it; amd64 already did
+	 * it in init_x86_64.  Each secondary processor programs its own
+	 * PAT in cpu_hatch.
+	 */
+	if (ci == &cpu_info_primary)
+		pat_init(ci);
 
 	if (!pmf_device_register1(self, cpu_suspend, cpu_resume, cpu_shutdown))
 		aprint_error_dev(self, "couldn't establish power handler\n");
@@ -943,6 +950,14 @@ cpu_hatch(void *v)
 	cpu_init_msrs(ci, true);
 
 	cpu_probe(ci);
+
+	/*
+	 * Program the PAT on this processor.  The power-on PAT maps
+	 * PTE_PWT (PGC_WC, PMAP_WRITE_COMBINE) to write-through, so
+	 * without this WC mappings used from a secondary processor are
+	 * not write-combined.
+	 */
+	pat_init(ci);
 	cpu_speculation_init(ci);
 #if NHYPERV > 0
 	hyperv_init_cpu(ci);
