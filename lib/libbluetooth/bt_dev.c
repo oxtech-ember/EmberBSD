@@ -650,11 +650,21 @@ bt_devinquiry(const char *name, time_t to, int max_rsp,
 
 	count = 0;
 
-	for (t_end = time(NULL) + to + 1; to > 0; to = t_end - time(NULL)) {
+	/*
+	 * Wait for the Inquiry Complete event. Some controllers, for
+	 * example the Realtek RTL8821CE, finish the inquiry up to half
+	 * as long again as the requested length.
+	 */
+	for (t_end = time(NULL) + to + to / 2 + 2; to > 0;
+	    to = t_end - time(NULL)) {
 		p = buf;
 		n = bt_devrecv(s, buf, sizeof(buf), to);
-		if (n == -1)
+		if (n == -1) {
+			if (errno == ETIMEDOUT)
+				break;
+
 			goto fail;
+		}
 
 		if (sizeof(ev) > (size_t)n) {
 			errno = EIO;
@@ -763,6 +773,11 @@ bt_devinquiry(const char *name, time_t to, int max_rsp,
 		}
 	}
 
+	/*
+	 * Cancel the inquiry so that its late events do not reach the
+	 * next inquiry on this device.
+	 */
+	(void)bt_devsend(s, HCI_CMD_INQUIRY_CANCEL, NULL, 0);
 	errno = ETIMEDOUT;
 
 fail:
