@@ -390,9 +390,9 @@ espwifi_ext_connect(const unsigned char *ssid, unsigned int ssid_len,
 		espwifi_os_log("espwifi: fullmac config pwe_internal=%u\n",
 		    (unsigned)esp_wifi_get_config_sae_pwe_h2e_internal(
 		    WIFI_IF_STA));
-	/* Match ESP-IDF's supplicant split: RSNE in RSN, remaining IEs in ASSOC_REQ. */
+	/* flag 0 copies raw IE bytes into vendor-owned length-prefixed storage. */
 	error = esp_wifi_set_appie_internal(WIFI_APPIE_RSN,
-	    rsn_ie, (uint16_t)rsn_len, 1);
+	    rsn_ie, (uint16_t)rsn_len, 0);
 	if (error != ESP_OK) {
 		espwifi_os_log("espwifi: fullmac set_rsn_appie error %#x\n", error);
 		(void)esp_wifi_unset_appie_internal(WIFI_APPIE_RSN);

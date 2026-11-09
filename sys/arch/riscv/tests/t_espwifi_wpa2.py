@@ -108,6 +108,7 @@ def fn(name,result):
 code=r'''
 #include <assert.h>
 #include <stdbool.h>
+#include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
 #include <stddef.h>
@@ -133,6 +134,9 @@ static int cfgcalls,rsncalls,assoc_calls,connects,fail,unset_rsn;
 static int unset_assoc,pmf_configured;
 static uint8_t copied_rsn[64],copied_assoc[64];
 static unsigned copied_rsn_len,copied_assoc_len;
+struct appie_slot { uint8_t *record; uint16_t payload_len; bool owned; };
+static struct appie_slot rsn_slot,assoc_slot;
+static unsigned appie_allocs,appie_frees;
 #define ESPWIFI_EXTERNAL_AUTH_PROFILE_MARKER "@external-auth-marker@"
 _Static_assert(sizeof(ESPWIFI_EXTERNAL_AUTH_PROFILE_MARKER) <=
  sizeof(((wifi_config_t *)0)->sta.password), "marker must fit vendor field");
@@ -154,17 +158,33 @@ static int esp_wifi_set_config(int ifx,wifi_config_t *c) {
  assert(!memcmp(c->sta.ssid,"test",4));cfgcalls++;return fail==1?9:0; }
 static int esp_wifi_set_appie_internal(int type,uint8_t *p,uint16_t n,int flag) {
  assert(n<=sizeof(copied_rsn));
- if (type==WIFI_APPIE_RSN) {
-  assert(flag==1);memcpy(copied_rsn,p,n);copied_rsn_len=n;rsncalls++;
-  return fail==2?9:0;
+ struct appie_slot *slot;
+ if (type==WIFI_APPIE_RSN) { slot=&rsn_slot;rsncalls++; }
+ else { assert(type==WIFI_APPIE_ASSOC_REQ);slot=&assoc_slot;assoc_calls++; }
+ assert(slot->record==NULL);
+ if (flag==0) {
+  slot->record=malloc((size_t)n+2);assert(slot->record!=NULL);
+  slot->record[0]=(uint8_t)n;slot->record[1]=(uint8_t)(n>>8);
+  memcpy(slot->record+2,p,n);slot->owned=true;appie_allocs++;
+ } else {
+  /* Vendor flag 1 borrows a caller-owned length-prefixed record. */
+  slot->record=p;slot->owned=false;p[0]=(uint8_t)n;p[1]=(uint8_t)(n>>8);
  }
- assert(type==WIFI_APPIE_ASSOC_REQ && flag==0);
- memcpy(copied_assoc,p,n);copied_assoc_len=n;assoc_calls++;
+ slot->payload_len=n;
+ if (type==WIFI_APPIE_RSN) {
+  if (flag==0) memcpy(copied_rsn,slot->record+2,n);
+  else memcpy(copied_rsn,p,n);
+  copied_rsn_len=n;return fail==2?9:0;
+ }
+ memcpy(copied_assoc,slot->record+2,n);copied_assoc_len=n;
  return fail==3?9:0; }
 static int esp_wifi_connect(void) { connects++;return fail==4?9:0; }
 static int esp_wifi_unset_appie_internal(int type) {
- if (type==WIFI_APPIE_RSN) unset_rsn++;
- else { assert(type==WIFI_APPIE_ASSOC_REQ);unset_assoc++; }
+ struct appie_slot *slot;
+ if (type==WIFI_APPIE_RSN) { unset_rsn++;slot=&rsn_slot; }
+ else { assert(type==WIFI_APPIE_ASSOC_REQ);unset_assoc++;slot=&assoc_slot; }
+ if (slot->owned) { free(slot->record);appie_frees++; }
+ slot->record=NULL;slot->payload_len=0;slot->owned=false;
  return 0; }
 static int esp_wifi_sta_pmf_enabled(void) { return pmf_configured; }
 static unsigned esp_wifi_get_config_sae_pwe_h2e_internal(int ifx) {
@@ -175,7 +195,11 @@ int main(void) {
  uint8_t rsn[22]={48,20,1,0,0,15,172,4,1,0,0,15,172,4,1,0,0,15,172,2,0,0};
  assert(!espwifi_ext_connect(ssid,4,bssid,rsn,sizeof(rsn),0));
  assert(cfgcalls==1 && rsncalls==1 && assoc_calls==0 && connects==1);
+ assert(rsn_slot.owned && rsn_slot.record[0]==sizeof(rsn) &&
+     rsn_slot.record[1]==0 && rsn_slot.payload_len==sizeof(rsn));
+ assert(!memcmp(rsn_slot.record+2,rsn,sizeof(rsn)));
  assert(copied_rsn_len==sizeof(rsn) && !memcmp(copied_rsn,rsn,sizeof(rsn)));
+ unsigned old_appie_frees=appie_frees;
  assert(unset_rsn==1 && unset_assoc==2);
  uint8_t profiles[28];struct espwifi_wpa_ie parsed;
  memcpy(profiles,rsn,sizeof(rsn));profiles[1]=18;
@@ -183,6 +207,7 @@ int main(void) {
      parsed.mgmt_group_cipher==ESPWIFI_WPA_CIPHER_AES_CMAC128 &&
      parsed.num_pmkid==0);
  assert(!espwifi_ext_connect(ssid,4,bssid,profiles,20,0));
+ assert(appie_frees==old_appie_frees+1);
  profiles[1]=20;
  assert(espwifi_parse_wpa_ie(profiles,22,&parsed)==0 &&
      parsed.mgmt_group_cipher==ESPWIFI_WPA_CIPHER_AES_CMAC128 &&
@@ -216,6 +241,10 @@ int main(void) {
  ies[22]=244;ies[23]=1;ies[24]=0x20; /* RSNXE: SAE H2E */
  ies[25]=221;ies[26]=2;ies[27]=0xaa;ies[28]=0xbb;
  assert(!espwifi_ext_connect(ssid,4,bssid,ies,29,1));
+ assert(rsn_slot.owned && rsn_slot.record[0]==sizeof(rsn) &&
+     rsn_slot.record[1]==0 && !memcmp(rsn_slot.record+2,rsn,sizeof(rsn)));
+ assert(assoc_slot.owned && assoc_slot.record[0]==7 &&
+     assoc_slot.record[1]==0 && !memcmp(assoc_slot.record+2,ies+22,7));
  assert(copied_rsn_len==sizeof(rsn) && !memcmp(copied_rsn,rsn,sizeof(rsn)));
  assert(copied_assoc_len==7 && !memcmp(copied_assoc,ies+22,7));
  int before_unset_rsn=unset_rsn, before_unset_assoc=unset_assoc;
@@ -243,6 +272,9 @@ int main(void) {
  pmf_configured=0;assert(espwifi_ext_sta_pmf_configured()==0);
  for (int i=1;i<=4;i++) { fail=i;assert(espwifi_ext_connect(ssid,4,bssid,ies,29,1)==-1); }
  assert(rsncalls>=4 && assoc_calls>=2 && connects>=2);
+ espwifi_ext_clear_assoc_appies();
+ assert(rsn_slot.record==NULL && assoc_slot.record==NULL &&
+     appie_allocs==appie_frees);
  return 0;
 }
 '''
