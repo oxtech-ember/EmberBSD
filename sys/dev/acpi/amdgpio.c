@@ -96,6 +96,8 @@ static int	amdgpio_acpi_translate(void *, ACPI_RESOURCE_GPIO *, void **);
 static void	amdgpio_register_event(void *, struct acpi_event *,
 		    ACPI_RESOURCE_GPIO *);
 static int	amdgpio_intr(void *);
+static struct amdgpio_intr_handler *
+		amdgpio_intr_lookup(struct amdgpio_softc *, int);
 
 CFATTACH_DECL_NEW(amdgpio, sizeof(struct amdgpio_softc),
     amdgpio_match, amdgpio_attach, NULL, NULL);
@@ -489,6 +491,20 @@ amdgpio_intr_unmask(void *priv, void *ih)
 	WR4(sc, AMDGPIO_PIN_REG(aih->ih_pin), val);
 }
 
+static struct amdgpio_intr_handler *
+amdgpio_intr_lookup(struct amdgpio_softc *sc, int pin)
+{
+	struct amdgpio_intr_handler *aih;
+
+	KASSERT(mutex_owned(&sc->sc_lock));
+
+	LIST_FOREACH(aih, &sc->sc_intrs, ih_list) {
+		if (aih->ih_pin == pin)
+			return aih;
+	}
+	return NULL;
+}
+
 static int
 amdgpio_intr(void *priv)
 {
@@ -505,29 +521,77 @@ amdgpio_intr(void *priv)
 	status |= RD4(sc, AMDGPIO_INTR_STATUS(0));
 	status &= __BITS(0, AMDGPIO_INTR_STATUS_NBITS - 1);
 
-	if (status == 0) {
+	/*
+	 * The controller asserts the line with no pin status, seen once
+	 * at attach on Raven Ridge.  Claim it and send EOI below so the
+	 * level interrupt deasserts.
+	 */
+	if (status == 0)
 		rv = 1;
-		goto out;
-	}
 
-	LIST_FOREACH(aih, &sc->sc_intrs, ih_list) {
-		const int pin = aih->ih_pin;
-
-		if ((status & __BIT(pin / 4)) == 0) {
+	/*
+	 * Each status bit covers AMDGPIO_INTR_NPINS consecutive pins.
+	 * Service every pin that reports an interrupt or wake status,
+	 * including pins the firmware left enabled without a consumer:
+	 * an unacknowledged status re-asserts the shared interrupt line
+	 * at once and causes an interrupt storm.
+	 */
+	for (int group = 0; group < AMDGPIO_INTR_STATUS_NBITS; group++) {
+		if ((status & __BIT(group)) == 0) {
 			continue;
 		}
+		for (int i = 0; i < AMDGPIO_INTR_NPINS; i++) {
+			const int pin = group * AMDGPIO_INTR_NPINS + i;
 
-		val = RD4(sc, AMDGPIO_PIN_REG(pin));
-		if ((val & AMDGPIO_CONF_INTR_STATUS) != 0) {
-			rv |= aih->ih_func(aih->ih_arg);
+			if (pin >= sc->sc_config->num_pins) {
+				break;
+			}
+			val = RD4(sc, AMDGPIO_PIN_REG(pin));
+			if ((val & AMDGPIO_CONF_PENDING) == 0) {
+				continue;
+			}
+
+			aih = amdgpio_intr_lookup(sc, pin);
+			if (aih != NULL) {
+				/*
+				 * A masked pin waits for deferred service
+				 * by its consumer; leave its status alone.
+				 */
+				if ((val & AMDGPIO_CONF_INTR_MASK_EN) == 0) {
+					continue;
+				}
+				if ((val & AMDGPIO_CONF_INTR_STATUS) != 0) {
+					rv |= aih->ih_func(aih->ih_arg);
+				} else {
+					rv = 1;
+				}
+
+				/*
+				 * Acknowledge the W1C status without
+				 * disabling the pin.  The child may have
+				 * masked it until deferred service;
+				 * preserve the current mask, not the
+				 * pre-callback value.
+				 */
+				val = RD4(sc, AMDGPIO_PIN_REG(pin));
+				WR4(sc, AMDGPIO_PIN_REG(pin), val);
+				continue;
+			}
 
 			/*
-			 * Acknowledge the W1C status without disabling the pin.
-			 * The child may have masked it until deferred service;
-			 * preserve the current mask, not the pre-callback value.
+			 * No consumer for this pin: mask its interrupt
+			 * and acknowledge the status, as pinctrl-amd
+			 * does on Linux.  Wake capability stays as the
+			 * firmware configured it.
 			 */
-			val = RD4(sc, AMDGPIO_PIN_REG(pin));
+			if ((val & AMDGPIO_CONF_INTR_MASK_EN) != 0) {
+				aprint_verbose_dev(sc->sc_dev,
+				    "pin %d: interrupt without a handler, "
+				    "masked (conf %#x)\n", pin, val);
+				val &= ~AMDGPIO_CONF_INTR_MASK_EN;
+			}
 			WR4(sc, AMDGPIO_PIN_REG(pin), val);
+			rv = 1;
 		}
 	}
 
@@ -536,7 +600,6 @@ amdgpio_intr(void *priv)
 	val |= AMDGPIO_INTR_MASTER_EIO;
 	WR4(sc, AMDGPIO_INTR_MASTER, val);
 
-out:
 	mutex_exit(&sc->sc_lock);
 
 	return rv;
