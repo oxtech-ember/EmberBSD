@@ -4,6 +4,13 @@
 
 include "arch/amd64/conf/GENERIC"
 
+# Desktop timer resolution.  All timeouts (poll, kevent, nanosleep,
+# timerfd) round up to ticks plus one.  At HZ=100 a 1 ms wait takes
+# 10 to 20 ms, which makes a 60 Hz compositor miss vblank.  HZ=1000
+# bounds the error to about 2 ms.  The cost is ten times more clock
+# interrupts; NetBSD has no tickless mode.
+options 	HZ=1000
+
 amdgpu* at pci? dev ? function ?
 amdgpufb* at amdgpufbbus?
 amdgpio* at acpi?
