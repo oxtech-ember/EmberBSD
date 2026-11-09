@@ -172,12 +172,22 @@ static const struct device_compatible_entry compat_data[] = {
 #define ACPIBAT_ST_CRITICAL	0x00000004  /* battery is critical */
 
 /*
- * A value used when _BST or _BIF is temporarily unknown.
+ * A value used when _BST or _BIF is temporarily unknown. A DSDT with
+ * 64-bit integers (revision 2 or later) returns Ones as all 64 bits set,
+ * so the unknown value is normalised to its 32-bit form first.
  */
 #define ACPIBAT_VAL_UNKNOWN	0xFFFFFFFF
 
 #define ACPIBAT_VAL_ISVALID(x)						      \
 	(((x) != ACPIBAT_VAL_UNKNOWN) ? ENVSYS_SVALID : ENVSYS_SINVALID)
+
+static inline void
+acpibat_normalize_unknown(ACPI_OBJECT *elm)
+{
+
+	if (elm->Integer.Value == UINT64_MAX)
+		elm->Integer.Value = ACPIBAT_VAL_UNKNOWN;
+}
 
 static int	    acpibat_match(device_t, cfdata_t, void *);
 static void	    acpibat_attach(device_t, device_t, void *);
@@ -373,6 +383,7 @@ acpibat_get_info(device_t dv)
 			rv = AE_TYPE;
 			goto out;
 		}
+		acpibat_normalize_unknown(&elm[i]);
 		if (elm[i].Integer.Value != ACPIBAT_VAL_UNKNOWN &&
 		    elm[i].Integer.Value >= INT_MAX) {
 			rv = AE_LIMIT;
@@ -535,21 +546,31 @@ acpibat_get_status(device_t dv)
 			rv = AE_TYPE;
 			goto out;
 		}
+		acpibat_normalize_unknown(&elm[i]);
 	}
 
 	state = elm[ACPIBAT_BST_STATE].Integer.Value;
 	if ((state & ACPIBAT_ST_CHARGING) != 0) {
-		/* XXX rate can be invalid */
-		rate = elm[ACPIBAT_BST_RATE].Integer.Value;
-		sc->sc_sensor[ACPIBAT_CHARGERATE].state = ENVSYS_SVALID;
-		sc->sc_sensor[ACPIBAT_CHARGERATE].value_cur = rate * 1000;
+		val = elm[ACPIBAT_BST_RATE].Integer.Value;
+		sc->sc_sensor[ACPIBAT_CHARGERATE].state =
+		    ACPIBAT_VAL_ISVALID(val);
+		if (val != ACPIBAT_VAL_UNKNOWN) {
+			rate = val;
+			sc->sc_sensor[ACPIBAT_CHARGERATE].value_cur =
+			    rate * 1000;
+		}
 		sc->sc_sensor[ACPIBAT_DISCHARGERATE].state = ENVSYS_SINVALID;
 		sc->sc_sensor[ACPIBAT_CHARGING].state = ENVSYS_SVALID;
 		sc->sc_sensor[ACPIBAT_CHARGING].value_cur = 1;
 	} else if ((state & ACPIBAT_ST_DISCHARGING) != 0) {
-		rate = elm[ACPIBAT_BST_RATE].Integer.Value;
-		sc->sc_sensor[ACPIBAT_DISCHARGERATE].state = ENVSYS_SVALID;
-		sc->sc_sensor[ACPIBAT_DISCHARGERATE].value_cur = rate * 1000;
+		val = elm[ACPIBAT_BST_RATE].Integer.Value;
+		sc->sc_sensor[ACPIBAT_DISCHARGERATE].state =
+		    ACPIBAT_VAL_ISVALID(val);
+		if (val != ACPIBAT_VAL_UNKNOWN) {
+			rate = val;
+			sc->sc_sensor[ACPIBAT_DISCHARGERATE].value_cur =
+			    rate * 1000;
+		}
 		sc->sc_sensor[ACPIBAT_CHARGERATE].state = ENVSYS_SINVALID;
 		sc->sc_sensor[ACPIBAT_CHARGING].state = ENVSYS_SVALID;
 		sc->sc_sensor[ACPIBAT_CHARGING].value_cur = 0;
