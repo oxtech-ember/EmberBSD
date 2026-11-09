@@ -203,8 +203,14 @@ void amdgpu_atombios_encoder_init_backlight(struct amdgpu_encoder *amdgpu_encode
 	props.type = BACKLIGHT_RAW;
 	snprintf(bl_name, sizeof(bl_name),
 		 "amdgpu_bl%d", dev->primary->index);
+#ifdef __NetBSD__
+	/* drmfb(4) finds the backlight by the DRM device. */
+	bd = backlight_device_register(bl_name, dev->dev,
+				       pdata, &amdgpu_atombios_encoder_backlight_ops, &props);
+#else
 	bd = backlight_device_register(bl_name, drm_connector->kdev,
 				       pdata, &amdgpu_atombios_encoder_backlight_ops, &props);
+#endif
 	if (IS_ERR(bd)) {
 		DRM_ERROR("Backlight registration failed\n");
 		goto error;
@@ -213,6 +219,7 @@ void amdgpu_atombios_encoder_init_backlight(struct amdgpu_encoder *amdgpu_encode
 	pdata->encoder = amdgpu_encoder;
 
 	backlight_level = amdgpu_atombios_encoder_get_backlight_level_from_reg(adev);
+	__USE(backlight_level);
 
 	dig = amdgpu_encoder->enc_priv;
 	dig->bl_dev = bd;

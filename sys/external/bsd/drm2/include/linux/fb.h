@@ -42,6 +42,13 @@
 #define	FBINFO_STATE_RUNNING	0
 #define	FBINFO_STATE_SUSPENDED	1
 
+/* Blank levels of the Linux framebuffer console, used by backlight props. */
+#define	FB_BLANK_UNBLANK	0
+#define	FB_BLANK_NORMAL		1
+#define	FB_BLANK_VSYNC_SUSPEND	2
+#define	FB_BLANK_HSYNC_SUSPEND	3
+#define	FB_BLANK_POWERDOWN	4
+
 static inline int
 fb_get_options(const char *name, char **options)
 {

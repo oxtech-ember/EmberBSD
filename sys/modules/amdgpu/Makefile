@@ -38,6 +38,9 @@ CPPFLAGS+=	-I${S}/external/bsd/drm2/dist/drm/amd/display/dc/clk_mgr
 CPPFLAGS+=	-I${S}/external/bsd/drm2/dist/drm/amd/display/modules/inc
 CPPFLAGS+=	-I${S}/external/bsd/drm2/dist/drm/amd/display/modules/hdcp
 CPPFLAGS+=	-I${S}/external/bsd/drm2/dist/drm/amd/display/amdgpu_dm
+
+# Panel backlight through drmfb(4); see files.amdgpu.
+CPPFLAGS+=	-UCONFIG_BACKLIGHT_CLASS_DEVICE -DCONFIG_BACKLIGHT_CLASS_DEVICE=1
 CPPFLAGS+=	-I${S}/external/bsd/drm2/dist/drm/amd/display/dmub/inc
 CPPFLAGS+=	-DCONFIG_DRM_AMD_ACP=1
 CPPFLAGS+=	-DCONFIG_DRM_AMD_DC=1

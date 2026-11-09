@@ -9,6 +9,9 @@ attach	amdgpu at pci
 # overflow is OK.
 makeoptions	amdgpu		"COPTS.amdgpu"+="-fwrapv"
 makeoptions	amdgpu		"CPPFLAGS.amdgpu"+="${CPPFLAGS.drmkms}"
+# The DM registers the eDP backlight with the Linux backlight class; drmfb
+# exposes it as the wsdisplay brightness parameter.
+makeoptions	amdgpu		"CPPFLAGS.amdgpu"+="-UCONFIG_BACKLIGHT_CLASS_DEVICE -DCONFIG_BACKLIGHT_CLASS_DEVICE=1"
 
 defflag	opt_amdgpu_cik.h	AMDGPU_CIK
 defflag	opt_amdgpu_si.h		AMDGPU_SI

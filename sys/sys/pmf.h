@@ -80,6 +80,7 @@ extern const device_suspensor_t
 void	pmf_init(void);
 
 bool	pmf_event_inject(device_t, pmf_generic_event_t);
+bool	pmf_event_has_handler(pmf_generic_event_t);
 bool	pmf_event_register(device_t, pmf_generic_event_t,
 			   void (*)(device_t), bool);
 void	pmf_event_deregister(device_t, pmf_generic_event_t,

@@ -29,19 +29,218 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
+/*
+ * Minimal Linux backlight class.  See <linux/backlight.h>.
+ *
+ * EmberBSD extension (AI-assisted).
+ */
+
 #include <sys/cdefs.h>
 __KERNEL_RCSID(0, "$NetBSD: linux_backlight.c,v 1.1 2021/12/19 10:46:55 riastradh Exp $");
 
-#include <linux/backlight.h>
+#include <sys/types.h>
+#include <sys/condvar.h>
+#include <sys/errno.h>
+#include <sys/kmem.h>
+#include <sys/mutex.h>
+#include <sys/once.h>
+#include <sys/queue.h>
 
-int
-backlight_enable(struct backlight_device *backlight)
+#include <linux/backlight.h>
+#include <linux/err.h>
+
+/*
+ * linux_backlight_lock protects the registry list, bd_refs and
+ * bd_dead.  bd_lock serializes the driver ops and props of one device.
+ */
+static kmutex_t linux_backlight_lock;
+static kcondvar_t linux_backlight_cv;
+static TAILQ_HEAD(, backlight_device) linux_backlight_list =
+    TAILQ_HEAD_INITIALIZER(linux_backlight_list);
+static ONCE_DECL(linux_backlight_once);
+
+static int
+linux_backlight_init(void)
 {
+
+	mutex_init(&linux_backlight_lock, MUTEX_DEFAULT, IPL_NONE);
+	cv_init(&linux_backlight_cv, "lxbklt");
 	return 0;
 }
 
-int
-backlight_disable(struct backlight_device *backlight)
+struct backlight_device *
+backlight_device_register(const char *name, struct device *dev, void *data,
+    const struct backlight_ops *ops, const struct backlight_properties *props)
 {
-	return 0;
+	struct backlight_device *bd;
+
+	if (ops == NULL || ops->update_status == NULL)
+		return ERR_PTR(-EINVAL);
+	RUN_ONCE(&linux_backlight_once, linux_backlight_init);
+
+	bd = kmem_zalloc(sizeof(*bd), KM_SLEEP);
+	if (props != NULL)
+		bd->props = *props;
+	bd->ops = ops;
+	bd->bd_data = data;
+	bd->bd_dev = dev;
+	strlcpy(bd->bd_name, name, sizeof(bd->bd_name));
+	mutex_init(&bd->bd_lock, MUTEX_DEFAULT, IPL_NONE);
+
+	mutex_enter(&linux_backlight_lock);
+	TAILQ_INSERT_TAIL(&linux_backlight_list, bd, bd_list);
+	mutex_exit(&linux_backlight_lock);
+
+	return bd;
+}
+
+/*
+ * Remove the device from the registry and wait for the users that
+ * found it through linux_backlight_lookup() to release it.
+ */
+void
+backlight_device_unregister(struct backlight_device *bd)
+{
+
+	if (bd == NULL)
+		return;
+	mutex_enter(&linux_backlight_lock);
+	TAILQ_REMOVE(&linux_backlight_list, bd, bd_list);
+	bd->bd_dead = true;
+	while (bd->bd_refs != 0)
+		cv_wait(&linux_backlight_cv, &linux_backlight_lock);
+	mutex_exit(&linux_backlight_lock);
+
+	mutex_destroy(&bd->bd_lock);
+	kmem_free(bd, sizeof(*bd));
+}
+
+/*
+ * Convert a driver result to an errno: Linux drivers return a
+ * negative errno; amdgpu_dm returns 1 on failure.
+ */
+static int
+linux_backlight_error(int ret)
+{
+
+	if (ret == 0)
+		return 0;
+	return ret < 0 ? -ret : EIO;
+}
+
+int
+backlight_update_status(struct backlight_device *bd)
+{
+	int ret;
+
+	mutex_enter(&bd->bd_lock);
+	ret = (*bd->ops->update_status)(bd);
+	mutex_exit(&bd->bd_lock);
+	return ret;
+}
+
+void
+backlight_force_update(struct backlight_device *bd,
+    enum backlight_update_reason reason)
+{
+	int level;
+
+	if (bd->ops->get_brightness == NULL)
+		return;
+	mutex_enter(&bd->bd_lock);
+	level = (*bd->ops->get_brightness)(bd);
+	if (level >= 0 && level <= bd->props.max_brightness)
+		bd->props.brightness = level;
+	mutex_exit(&bd->bd_lock);
+}
+
+int
+backlight_enable(struct backlight_device *bd)
+{
+
+	if (bd == NULL)
+		return 0;
+	bd->props.power = FB_BLANK_UNBLANK;
+	bd->props.state &= ~BL_CORE_FBBLANK;
+	return backlight_update_status(bd);
+}
+
+int
+backlight_disable(struct backlight_device *bd)
+{
+
+	if (bd == NULL)
+		return 0;
+	bd->props.power = FB_BLANK_POWERDOWN;
+	bd->props.state |= BL_CORE_FBBLANK;
+	return backlight_update_status(bd);
+}
+
+/*
+ * Return the first backlight registered for the DRM device dev with a
+ * reference held, or NULL.  The caller releases it with
+ * linux_backlight_release().
+ */
+struct backlight_device *
+linux_backlight_lookup(struct device *dev)
+{
+	struct backlight_device *bd;
+
+	RUN_ONCE(&linux_backlight_once, linux_backlight_init);
+	mutex_enter(&linux_backlight_lock);
+	TAILQ_FOREACH(bd, &linux_backlight_list, bd_list) {
+		if (bd->bd_dev == dev) {
+			bd->bd_refs++;
+			break;
+		}
+	}
+	mutex_exit(&linux_backlight_lock);
+	return bd;
+}
+
+void
+linux_backlight_release(struct backlight_device *bd)
+{
+
+	mutex_enter(&linux_backlight_lock);
+	KASSERT(bd->bd_refs > 0);
+	if (--bd->bd_refs == 0 && bd->bd_dead)
+		cv_broadcast(&linux_backlight_cv);
+	mutex_exit(&linux_backlight_lock);
+}
+
+/*
+ * Return the current brightness in the device range 0..max_brightness.
+ */
+int
+linux_backlight_get_brightness(struct backlight_device *bd)
+{
+	int level;
+
+	mutex_enter(&bd->bd_lock);
+	level = bd->props.brightness;
+	mutex_exit(&bd->bd_lock);
+	return level;
+}
+
+/*
+ * Set the brightness in the device range 0..max_brightness and push it
+ * to the hardware.  Returns 0 or an errno; on failure the previous
+ * brightness is kept.
+ */
+int
+linux_backlight_set_brightness(struct backlight_device *bd, int level)
+{
+	int old, ret;
+
+	if (level < 0 || level > bd->props.max_brightness)
+		return EINVAL;
+	mutex_enter(&bd->bd_lock);
+	old = bd->props.brightness;
+	bd->props.brightness = level;
+	ret = linux_backlight_error((*bd->ops->update_status)(bd));
+	if (ret != 0)
+		bd->props.brightness = old;
+	mutex_exit(&bd->bd_lock);
+	return ret;
 }

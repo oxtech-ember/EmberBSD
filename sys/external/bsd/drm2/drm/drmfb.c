@@ -73,6 +73,8 @@ __KERNEL_RCSID(0, "$NetBSD: drmfb.c,v 1.16 2022/09/01 17:54:47 riastradh Exp $")
 #include <dev/wscons/wsdisplayvar.h>
 #endif
 
+#include <linux/backlight.h>
+
 #include <drm/drm_device.h>
 #include <drm/drm_fb_helper.h>
 #include <drm/drmfb.h>
@@ -83,6 +85,9 @@ static paddr_t	drmfb_genfb_mmap(void *, void *, off_t, int);
 static int	drmfb_genfb_enable_polling(void *);
 static int	drmfb_genfb_disable_polling(void *);
 static bool	drmfb_genfb_setmode(struct genfb_softc *, int);
+static int	drmfb_brightness_get(void *, int *);
+static int	drmfb_brightness_set(void *, int);
+static int	drmfb_brightness_upd(void *, int);
 
 static void
 drmfb_genfb_damage(void *cookie)
@@ -110,6 +115,7 @@ drmfb_attach(struct drmfb_softc *sc, const struct drmfb_attach_args *da)
 #endif
 	static const struct genfb_ops zero_genfb_ops;
 	struct genfb_ops genfb_ops = zero_genfb_ops;
+	struct backlight_device *bd;
 	bool is_console;
 	int error __diagused;
 
@@ -130,6 +136,26 @@ drmfb_attach(struct drmfb_softc *sc, const struct drmfb_attach_args *da)
 
 	prop_dictionary_set_uint64(dict, "mode_callback",
 	    (uint64_t)(uintptr_t)&drmfb_genfb_mode_callback);
+
+	/*
+	 * If the DRM driver registered a backlight for this device,
+	 * hand it to genfb as the brightness parameter.  genfb owns
+	 * the wsdisplay ioctls and the pmf(9) brightness key events.
+	 */
+	sc->sc_backlight_dev = da->da_fb_helper->dev->dev;
+	bd = linux_backlight_lookup(sc->sc_backlight_dev);
+	if (bd != NULL) {
+		backlight_force_update(bd, BACKLIGHT_UPDATE_HOTKEY);
+		sc->sc_brightness.gpc_cookie = sc;
+		sc->sc_brightness.gpc_get_parameter = drmfb_brightness_get;
+		sc->sc_brightness.gpc_set_parameter = drmfb_brightness_set;
+		sc->sc_brightness.gpc_upd_parameter = drmfb_brightness_upd;
+		prop_dictionary_set_uint64(dict, "brightness_callback",
+		    (uint64_t)(uintptr_t)&sc->sc_brightness);
+		aprint_normal_dev(da->da_dev, "backlight %s, %d levels\n",
+		    bd->bd_name, bd->props.max_brightness + 1);
+		linux_backlight_release(bd);
+	}
 
 	/*
 	 * Determine whether MD firmware logic has set the console to
@@ -211,6 +237,108 @@ drmfb_detach(struct drmfb_softc *sc, int flags)
 
 	/* XXX genfb detach?  */
 	return 0;
+}
+
+/*
+ * genfb brightness parameter, 0..GENFB_BRIGHTNESS_MAX, mapped onto the
+ * backlight device levels 0..props.max_brightness.  The backlight is
+ * looked up on each call by the DRM device pointer saved at attach;
+ * the DRM driver may have unregistered it.
+ */
+#define	GENFB_BRIGHTNESS_MAX	255
+
+static struct backlight_device *
+drmfb_backlight(struct drmfb_softc *sc)
+{
+
+	return linux_backlight_lookup(sc->sc_backlight_dev);
+}
+
+static int
+drmfb_brightness_to_genfb(const struct backlight_device *bd, int level)
+{
+	const int64_t max = bd->props.max_brightness;
+	int64_t val;
+
+	level = MIN(MAX(level, 0), bd->props.max_brightness);
+	val = ((int64_t)level * GENFB_BRIGHTNESS_MAX + max / 2) / max;
+	return (int)val;
+}
+
+static int
+drmfb_brightness_from_genfb(const struct backlight_device *bd, int val)
+{
+	const int64_t max = bd->props.max_brightness;
+	int64_t level;
+
+	val = MIN(MAX(val, 0), GENFB_BRIGHTNESS_MAX);
+	level = ((int64_t)val * max + GENFB_BRIGHTNESS_MAX / 2) /
+	    GENFB_BRIGHTNESS_MAX;
+	return (int)level;
+}
+
+static int
+drmfb_brightness_get(void *cookie, int *valp)
+{
+	struct drmfb_softc *const sc = cookie;
+	struct backlight_device *const bd = drmfb_backlight(sc);
+	int error = 0;
+
+	if (bd == NULL)
+		return ENODEV;
+	if (bd->props.max_brightness <= 0)
+		error = ENODEV;
+	else
+		*valp = drmfb_brightness_to_genfb(bd,
+		    linux_backlight_get_brightness(bd));
+	linux_backlight_release(bd);
+	return error;
+}
+
+static int
+drmfb_brightness_set(void *cookie, int val)
+{
+	struct drmfb_softc *const sc = cookie;
+	struct backlight_device *const bd = drmfb_backlight(sc);
+	int error;
+
+	if (bd == NULL)
+		return ENODEV;
+	if (bd->props.max_brightness <= 0)
+		error = ENODEV;
+	else
+		error = linux_backlight_set_brightness(bd,
+		    drmfb_brightness_from_genfb(bd, val));
+	linux_backlight_release(bd);
+	return error;
+}
+
+/*
+ * Step by delta genfb units, at least one device level, so that keys
+ * move a coarse backlight too.
+ */
+static int
+drmfb_brightness_upd(void *cookie, int delta)
+{
+	struct drmfb_softc *const sc = cookie;
+	struct backlight_device *const bd = drmfb_backlight(sc);
+	int cur, next, error;
+
+	if (bd == NULL)
+		return ENODEV;
+	if (bd->props.max_brightness <= 0) {
+		error = ENODEV;
+		goto out;
+	}
+	cur = linux_backlight_get_brightness(bd);
+	next = drmfb_brightness_from_genfb(bd,
+	    drmfb_brightness_to_genfb(bd, cur) + delta);
+	if (next == cur && delta != 0)
+		next = cur + (delta > 0 ? 1 : -1);
+	next = MIN(MAX(next, 0), bd->props.max_brightness);
+	error = linux_backlight_set_brightness(bd, next);
+out:	linux_backlight_release(bd);
+	return error;
 }
 
 static int

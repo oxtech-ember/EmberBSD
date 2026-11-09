@@ -1089,8 +1089,11 @@ acpidisp_out_increase_brightness_callback(void *arg)
 	uint8_t max, lo, up;
 	int cur;
 
-	if (bc == NULL) {
-		/* Fallback to pmf(9). */
+	if (bc == NULL || pmf_event_has_handler(PMFE_DISPLAY_BRIGHTNESS_UP)) {
+		/*
+		 * No _BCM, or a panel driver owns the backlight: _BCM
+		 * does not reach the panel then.  Use pmf(9).
+		 */
 		pmf_event_inject(NULL, PMFE_DISPLAY_BRIGHTNESS_UP);
 		return;
 	}
@@ -1121,8 +1124,9 @@ acpidisp_out_decrease_brightness_callback(void *arg)
 	uint8_t min, lo, up;
 	int cur;
 
-	if (bc == NULL) {
-		/* Fallback to pmf(9). */
+	if (bc == NULL ||
+	    pmf_event_has_handler(PMFE_DISPLAY_BRIGHTNESS_DOWN)) {
+		/* See acpidisp_out_increase_brightness_callback(). */
 		pmf_event_inject(NULL, PMFE_DISPLAY_BRIGHTNESS_DOWN);
 		return;
 	}

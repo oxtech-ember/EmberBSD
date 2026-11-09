@@ -974,6 +974,23 @@ pmf_event_register(device_t dv, pmf_generic_event_t ev,
 	return true;
 }
 
+/*
+ * Return true when a global handler for the event exists, that is a
+ * driver takes events injected without a device.  acpi_display(4)
+ * uses this to leave brightness keys to the panel driver.
+ */
+bool
+pmf_event_has_handler(pmf_generic_event_t ev)
+{
+	pmf_event_handler_t *event;
+
+	TAILQ_FOREACH(event, &pmf_all_events, pmf_link) {
+		if (event->pmf_event == ev && event->pmf_global)
+			return true;
+	}
+	return false;
+}
+
 void
 pmf_event_deregister(device_t dv, pmf_generic_event_t ev,
     void (*handler)(device_t), bool global)

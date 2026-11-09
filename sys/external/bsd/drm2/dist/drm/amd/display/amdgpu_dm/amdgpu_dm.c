@@ -70,6 +70,9 @@ __KERNEL_RCSID(0, "$NetBSD: amdgpu_dm.c,v 1.5 2021/12/26 21:00:14 riastradh Exp 
 #include <linux/pci.h>
 #include <linux/firmware.h>
 #include <linux/component.h>
+#ifdef __NetBSD__
+#include <linux/backlight.h>
+#endif
 
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_uapi.h>
@@ -2568,6 +2571,26 @@ static int amdgpu_dm_backlight_get_brightness(struct backlight_device *bd)
 
 	if (ret == DC_ERROR_UNEXPECTED)
 		return bd->props.brightness;
+#ifdef __NetBSD__
+	/*
+	 * DC reports the 16-bit input signal.  Undo the scaling of
+	 * amdgpu_dm_backlight_update_status() so that the result is in
+	 * the 0..AMDGPU_MAX_BL_LEVEL range of the backlight device.
+	 */
+	{
+		struct amdgpu_dm_backlight_caps caps;
+		int span;
+
+		amdgpu_dm_update_backlight_caps(dm);
+		caps = dm->backlight_caps;
+		span = caps.max_input_signal - caps.min_input_signal;
+		if (span <= 0)
+			return bd->props.brightness;
+		ret = ((ret / 0x101 - caps.min_input_signal) *
+		    AMDGPU_MAX_BL_LEVEL + span / 2) / span;
+		ret = clamp(ret, 0, AMDGPU_MAX_BL_LEVEL);
+	}
+#endif
 	return ret;
 }
 
