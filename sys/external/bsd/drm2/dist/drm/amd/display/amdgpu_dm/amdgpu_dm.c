@@ -2539,6 +2539,15 @@ static int amdgpu_dm_backlight_update_status(struct backlight_device *bd)
 	struct amdgpu_dm_backlight_caps caps;
 	uint32_t brightness = bd->props.brightness;
 
+#ifdef __NetBSD__
+	/*
+	 * A blanked backlight is off: drive the PWM to zero instead of
+	 * the minimum input signal, which keeps the panel lit.
+	 */
+	if (backlight_is_blank(bd))
+		return dc_link_set_backlight_level(dm->backlight_link, 0, 0) ?
+		    0 : 1;
+#endif
 	amdgpu_dm_update_backlight_caps(dm);
 	caps = dm->backlight_caps;
 	/*

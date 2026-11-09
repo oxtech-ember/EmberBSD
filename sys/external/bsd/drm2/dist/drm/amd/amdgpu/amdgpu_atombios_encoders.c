@@ -130,6 +130,11 @@ static u8 amdgpu_atombios_encoder_backlight_level(struct backlight_device *bd)
 	u8 level;
 
 	/* Convert brightness to hardware level */
+#ifdef __NetBSD__
+	if (backlight_is_blank(bd))
+		level = 0;
+	else
+#endif
 	if (bd->props.brightness < 0)
 		level = 0;
 	else if (bd->props.brightness > AMDGPU_MAX_BL_LEVEL)

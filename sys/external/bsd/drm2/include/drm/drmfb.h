@@ -90,6 +90,7 @@ struct drmfb_softc {
 	struct drmfb_attach_args	sc_da;
 	struct device			*sc_backlight_dev;
 	struct genfb_parameter_callback	sc_brightness;
+	struct genfb_parameter_callback	sc_backlight;
 };
 
 int	drmfb_attach(struct drmfb_softc *, const struct drmfb_attach_args *);

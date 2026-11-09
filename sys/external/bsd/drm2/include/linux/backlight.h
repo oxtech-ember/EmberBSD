@@ -123,15 +123,27 @@ bl_get_data(struct backlight_device *bd)
 	return bd->bd_data;
 }
 
+static inline bool
+backlight_is_blank(const struct backlight_device *bd)
+{
+	return bd->props.power != FB_BLANK_UNBLANK ||
+	    bd->props.fb_blank != FB_BLANK_UNBLANK ||
+	    (bd->props.state & (BL_CORE_SUSPENDED | BL_CORE_FBBLANK)) != 0;
+}
+
 static inline int
 backlight_get_brightness(const struct backlight_device *bd)
 {
+	if (backlight_is_blank(bd))
+		return 0;
 	return bd->props.brightness;
 }
 
 /*
  * NetBSD side.  drmfb(4) uses these to find and drive the backlight of
- * the DRM device whose framebuffer it serves.  A lookup holds a
+ * the DRM device whose framebuffer it serves.  A driver that registers
+ * a backlight must honour backlight_is_blank() in update_status(), so
+ * that linux_backlight_set_power() turns the panel light off.  A lookup holds a
  * reference until the matching release; unregister waits for all
  * references.  Brightness is expressed in the device's own range
  * 0..max_brightness.
@@ -141,5 +153,7 @@ struct backlight_device *
 void	linux_backlight_release(struct backlight_device *);
 int	linux_backlight_get_brightness(struct backlight_device *);
 int	linux_backlight_set_brightness(struct backlight_device *, int);
+bool	linux_backlight_get_power(struct backlight_device *);
+int	linux_backlight_set_power(struct backlight_device *, bool);
 
 #endif  /* _LINUX_BACKLIGHT_H_ */

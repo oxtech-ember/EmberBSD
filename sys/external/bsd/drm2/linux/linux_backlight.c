@@ -148,9 +148,12 @@ backlight_force_update(struct backlight_device *bd,
 	if (bd->ops->get_brightness == NULL)
 		return;
 	mutex_enter(&bd->bd_lock);
-	level = (*bd->ops->get_brightness)(bd);
-	if (level >= 0 && level <= bd->props.max_brightness)
-		bd->props.brightness = level;
+	/* A blanked device reports 0; keep the level for power on. */
+	if (!backlight_is_blank(bd)) {
+		level = (*bd->ops->get_brightness)(bd);
+		if (level >= 0 && level <= bd->props.max_brightness)
+			bd->props.brightness = level;
+	}
 	mutex_exit(&bd->bd_lock);
 }
 
@@ -160,9 +163,7 @@ backlight_enable(struct backlight_device *bd)
 
 	if (bd == NULL)
 		return 0;
-	bd->props.power = FB_BLANK_UNBLANK;
-	bd->props.state &= ~BL_CORE_FBBLANK;
-	return backlight_update_status(bd);
+	return -linux_backlight_set_power(bd, true);
 }
 
 int
@@ -171,9 +172,7 @@ backlight_disable(struct backlight_device *bd)
 
 	if (bd == NULL)
 		return 0;
-	bd->props.power = FB_BLANK_POWERDOWN;
-	bd->props.state |= BL_CORE_FBBLANK;
-	return backlight_update_status(bd);
+	return -linux_backlight_set_power(bd, false);
 }
 
 /*
@@ -221,6 +220,50 @@ linux_backlight_get_brightness(struct backlight_device *bd)
 	level = bd->props.brightness;
 	mutex_exit(&bd->bd_lock);
 	return level;
+}
+
+/*
+ * Report whether the backlight is on.  Off means blanked by power
+ * state or by the FBBLANK/SUSPENDED core flags.
+ */
+bool
+linux_backlight_get_power(struct backlight_device *bd)
+{
+	bool on;
+
+	mutex_enter(&bd->bd_lock);
+	on = !backlight_is_blank(bd);
+	mutex_exit(&bd->bd_lock);
+	return on;
+}
+
+/*
+ * Turn the backlight on or off.  The brightness level is kept, so
+ * that power on restores it.  Returns an errno.
+ */
+int
+linux_backlight_set_power(struct backlight_device *bd, bool on)
+{
+	int old_power, ret;
+	unsigned old_state;
+
+	mutex_enter(&bd->bd_lock);
+	old_power = bd->props.power;
+	old_state = bd->props.state;
+	if (on) {
+		bd->props.power = FB_BLANK_UNBLANK;
+		bd->props.state &= ~BL_CORE_FBBLANK;
+	} else {
+		bd->props.power = FB_BLANK_POWERDOWN;
+		bd->props.state |= BL_CORE_FBBLANK;
+	}
+	ret = linux_backlight_error((*bd->ops->update_status)(bd));
+	if (ret != 0) {
+		bd->props.power = old_power;
+		bd->props.state = old_state;
+	}
+	mutex_exit(&bd->bd_lock);
+	return ret;
 }
 
 /*

@@ -88,6 +88,8 @@ static bool	drmfb_genfb_setmode(struct genfb_softc *, int);
 static int	drmfb_brightness_get(void *, int *);
 static int	drmfb_brightness_set(void *, int);
 static int	drmfb_brightness_upd(void *, int);
+static int	drmfb_backlight_get(void *, int *);
+static int	drmfb_backlight_set(void *, int);
 
 static void
 drmfb_genfb_damage(void *cookie)
@@ -152,6 +154,12 @@ drmfb_attach(struct drmfb_softc *sc, const struct drmfb_attach_args *da)
 		sc->sc_brightness.gpc_upd_parameter = drmfb_brightness_upd;
 		prop_dictionary_set_uint64(dict, "brightness_callback",
 		    (uint64_t)(uintptr_t)&sc->sc_brightness);
+		sc->sc_backlight.gpc_cookie = sc;
+		sc->sc_backlight.gpc_get_parameter = drmfb_backlight_get;
+		sc->sc_backlight.gpc_set_parameter = drmfb_backlight_set;
+		sc->sc_backlight.gpc_upd_parameter = NULL;
+		prop_dictionary_set_uint64(dict, "backlight_callback",
+		    (uint64_t)(uintptr_t)&sc->sc_backlight);
 		aprint_normal_dev(da->da_dev, "backlight %s, %d levels\n",
 		    bd->bd_name, bd->props.max_brightness + 1);
 		linux_backlight_release(bd);
@@ -338,6 +346,37 @@ drmfb_brightness_upd(void *cookie, int delta)
 	next = MIN(MAX(next, 0), bd->props.max_brightness);
 	error = linux_backlight_set_brightness(bd, next);
 out:	linux_backlight_release(bd);
+	return error;
+}
+
+/*
+ * genfb backlight parameter, 0 (off) or 1 (on).  The brightness level
+ * is kept while the backlight is off.
+ */
+static int
+drmfb_backlight_get(void *cookie, int *valp)
+{
+	struct drmfb_softc *const sc = cookie;
+	struct backlight_device *const bd = drmfb_backlight(sc);
+
+	if (bd == NULL)
+		return ENODEV;
+	*valp = linux_backlight_get_power(bd) ? 1 : 0;
+	linux_backlight_release(bd);
+	return 0;
+}
+
+static int
+drmfb_backlight_set(void *cookie, int val)
+{
+	struct drmfb_softc *const sc = cookie;
+	struct backlight_device *const bd = drmfb_backlight(sc);
+	int error;
+
+	if (bd == NULL)
+		return ENODEV;
+	error = linux_backlight_set_power(bd, val != 0);
+	linux_backlight_release(bd);
 	return error;
 }
 
