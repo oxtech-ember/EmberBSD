@@ -2270,6 +2270,29 @@ espwifi_trace(const char *name)
 	espwifi_os_log("espwifi: -> %s\n", name);
 }
 
+#ifdef ESPWIFI_VENDOR_LEGACY_PHY
+static esp_err_t
+espwifi_rx_legacy_phy_configure(void)
+{
+	const uint8_t protocol = WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G;
+	uint8_t actual = 0;
+	esp_err_t set_error, get_error;
+
+	set_error = esp_wifi_set_protocol(WIFI_IF_STA, protocol);
+	get_error = esp_wifi_get_protocol(WIFI_IF_STA, &actual);
+	espwifi_os_log("espwifi: vendor legacy PHY set_rc=%#x requested=%#x "
+	    "get_rc=%#x actual=%#x\n", (unsigned)set_error,
+	    (unsigned)protocol, (unsigned)get_error, (unsigned)actual);
+	if (set_error != ESP_OK)
+		return set_error;
+	if (get_error != ESP_OK)
+		return get_error;
+	if (actual != protocol)
+		return ESP_FAIL;
+	return ESP_OK;
+}
+#endif
+
 static int
 espwifi_start_impl(void)
 {
@@ -2367,6 +2390,14 @@ espwifi_start_impl(void)
 		espwifi_os_log("espwifi: station mode: error %#x\n", error);
 		return error;
 	}
+#ifdef ESPWIFI_VENDOR_LEGACY_PHY
+	error = espwifi_rx_legacy_phy_configure();
+	if (error != ESP_OK) {
+		espwifi_os_log("espwifi: legacy PHY setup failed: error %#x\n",
+		    (unsigned)error);
+		return error;
+	}
+#endif
 	error = esp_wifi_start();
 	if (error != ESP_OK) {
 		espwifi_os_log("espwifi: start: error %#x\n", error);

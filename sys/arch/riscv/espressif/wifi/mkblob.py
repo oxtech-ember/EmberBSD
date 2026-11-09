@@ -96,6 +96,26 @@ def absolute(value):
     return p
 
 
+def radio_diagnostic_flags(args):
+    """Return opt-in radio diagnostics after validating their dependencies."""
+    if args.vendor_rx_observe_once and not args.vendor_debug_once:
+        raise ValueError('--vendor-rx-observe-once requires --vendor-debug-once')
+    if args.vendor_rx_chain_once and not args.vendor_debug_once:
+        raise ValueError('--vendor-rx-chain-once requires --vendor-debug-once')
+    if args.vendor_legacy_phy and not args.vendor_rx_chain_once:
+        raise ValueError('--vendor-legacy-phy requires --vendor-rx-chain-once')
+    flags = []
+    if args.vendor_debug_once:
+        flags.append('-DESPWIFI_VENDOR_DEBUG_ONCE')
+    if args.vendor_rx_observe_once:
+        flags.append('-DESPWIFI_RX_OBSERVE_ONCE')
+    if args.vendor_rx_chain_once:
+        flags.append('-DESPWIFI_RX_CHAIN_ONCE')
+    if args.vendor_legacy_phy:
+        flags.append('-DESPWIFI_VENDOR_LEGACY_PHY')
+    return flags
+
+
 def run(cmd, env):
     subprocess.run([str(x) for x in cmd], env=env, check=True)
 
@@ -368,13 +388,15 @@ def main():
                    help='observe selected-peer RX metadata during the first debug attempt')
     p.add_argument('--vendor-rx-chain-once', action='store_true',
                    help='count net80211 RX entry points during the first debug attempt')
+    p.add_argument('--vendor-legacy-phy', action='store_true',
+                   help='temporarily restrict STA PHY to 802.11b/g for the RX-chain diagnostic')
     for opt in ('idf-source', 'wpa-source', 'sysroot', 'host-prefix', 'target-binutils-prefix', 'output'):
         p.add_argument('--'+opt, type=absolute, required=True)
     a = p.parse_args()
-    if a.vendor_rx_observe_once and not a.vendor_debug_once:
-        p.error('--vendor-rx-observe-once requires --vendor-debug-once')
-    if a.vendor_rx_chain_once and not a.vendor_debug_once:
-        p.error('--vendor-rx-chain-once requires --vendor-debug-once')
+    try:
+        diagnostic_flags = radio_diagnostic_flags(a)
+    except ValueError as error:
+        p.error(str(error))
     idf = a.idf_source / 'components'
     clang = (a.host_prefix / 'bin/clang').resolve(strict=True)
     if not clang.is_relative_to(a.host_prefix.resolve(strict=True)):
@@ -408,12 +430,7 @@ def main():
              '-Werror', '-I'+str(HERE/'shim'),
              '-I'+str(HERE.parents[3]),
              '-isystem', str(a.sysroot/'usr/include'), '-isystem', str(resource/'include')]
-    if a.vendor_debug_once:
-        flags.append('-DESPWIFI_VENDOR_DEBUG_ONCE')
-    if a.vendor_rx_observe_once:
-        flags.append('-DESPWIFI_RX_OBSERVE_ONCE')
-    if a.vendor_rx_chain_once:
-        flags.append('-DESPWIFI_RX_CHAIN_ONCE')
+    flags += diagnostic_flags
     for pattern in INCLUDES:
         for d in sorted(glob.glob(str(idf/pattern))):
             if Path(d).is_dir():

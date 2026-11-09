@@ -235,6 +235,15 @@ available. This is register readback only; it does not prove packet-filter
 configuration or packet reception. The diagnostic does not write these
 registers or alter radio policy.
 
+For an opt-in legacy-PHY comparison, add `--vendor-legacy-phy` together with
+`--vendor-rx-chain-once`. Before the radio starts, this diagnostic sets the
+station protocol bitmap to 802.11b/g (`WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G`),
+reads it back, and aborts initialization if the setter, getter, or bitmap
+check fails. The default producer output keeps the existing PHY selection.
+This diagnostic setting is runtime-only in the selected ESP32-S31
+configuration and remains in effect until reboot; it is not restored when the
+RX-count window closes, a permanent workaround, or a band-mode change.
+
 The probe also samples the S31 hardware RX statistics
 through the pinned IDF getter at successful radio start and at the window
 boundaries. It reports modulo-16-bit deltas for the fields `rx_mpdu`,

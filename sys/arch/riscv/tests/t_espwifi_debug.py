@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Exercise the opt-in one-attempt ESP vendor debug lifecycle."""
 import argparse
+import importlib.util
 from pathlib import Path
 import re
 import subprocess
 import tempfile
+from types import SimpleNamespace
 
 p = argparse.ArgumentParser()
 p.add_argument('--cc', required=True)
@@ -90,6 +92,34 @@ start_impl = re.search(r'\nstatic int\nespwifi_start_impl\(void\)\n\{.*?\n\}',
                        source, re.S)
 assert start_impl, 'Wi-Fi start implementation missing'
 start_body = start_impl.group()
+mode_pos = start_body.index('error = esp_wifi_set_mode(WIFI_MODE_STA);')
+legacy_pos = start_body.index('espwifi_rx_legacy_phy_configure();')
+start_pos = start_body.index('error = esp_wifi_start();')
+assert mode_pos < legacy_pos < start_pos, \
+    'legacy PHY protocol must be checked after station mode and before radio start'
+assert '#ifdef ESPWIFI_VENDOR_LEGACY_PHY\n\terror = ' in start_body, \
+    'legacy PHY setup must remain opt-in'
+producer = (wifi / 'mkblob.py').read_text()
+producer_spec = importlib.util.spec_from_file_location('espwifi_mkblob',
+    wifi / 'mkblob.py')
+producer_module = importlib.util.module_from_spec(producer_spec)
+producer_spec.loader.exec_module(producer_module)
+assert producer_module.radio_diagnostic_flags(SimpleNamespace(
+    vendor_debug_once=False, vendor_rx_observe_once=False,
+    vendor_rx_chain_once=False, vendor_legacy_phy=False)) == []
+assert producer_module.radio_diagnostic_flags(SimpleNamespace(
+    vendor_debug_once=True, vendor_rx_observe_once=False,
+    vendor_rx_chain_once=True, vendor_legacy_phy=True)) == [
+        '-DESPWIFI_VENDOR_DEBUG_ONCE', '-DESPWIFI_RX_CHAIN_ONCE',
+        '-DESPWIFI_VENDOR_LEGACY_PHY']
+try:
+    producer_module.radio_diagnostic_flags(SimpleNamespace(
+        vendor_debug_once=True, vendor_rx_observe_once=False,
+        vendor_rx_chain_once=False, vendor_legacy_phy=True))
+except ValueError as error:
+    assert 'requires --vendor-rx-chain-once' in str(error)
+else:
+    raise AssertionError('legacy PHY option must require RX-chain diagnostics')
 alloc_enable_pos = start_body.index('espwifi_os_alloc_diag_enable();')
 init_pos = start_body.index('esp_wifi_init_internal(&cfg)')
 alloc_init_pos = start_body.index(
@@ -222,10 +252,16 @@ typedef enum { WIFI_PS_NONE, WIFI_PS_MIN_MODEM, WIFI_PS_MAX_MODEM }
     wifi_ps_type_t;
 #define ESP_OK 0
 #define ESP_ERR_INVALID_STATE 0x103
+#define ESP_FAIL 0x101
 #define WIFI_IF_STA 0
+#define WIFI_PROTOCOL_11B 0x1
+#define WIFI_PROTOCOL_11G 0x2
 #define WIFI_LOG_VERBOSE 5
 #define WIFI_LOG_WARNING 2
 static unsigned critical_depth, level, set_calls, get_ps_calls, set_ps_calls;
+static unsigned legacy_set_calls, legacy_get_calls, legacy_phase;
+static esp_err_t legacy_set_result, legacy_get_result;
+static uint8_t legacy_requested, legacy_actual;
 static wifi_ps_type_t current_ps = WIFI_PS_MAX_MODEM;
 static char log_message[16384];
 static unsigned alloc_window_begin_calls;
@@ -251,6 +287,21 @@ static esp_err_t esp_wifi_get_mac(int iface, unsigned char *mac) {
  assert(iface == WIFI_IF_STA && mac != NULL && critical_depth == 0);
  memcpy(mac, expected, sizeof(expected));
  return ESP_OK;
+}
+static esp_err_t esp_wifi_set_protocol(int iface, uint8_t protocol) {
+ assert(iface == WIFI_IF_STA && critical_depth == 0 && legacy_phase == 2);
+ legacy_set_calls++;
+ legacy_requested = protocol;
+ legacy_phase = 3;
+ return legacy_set_result;
+}
+static esp_err_t esp_wifi_get_protocol(int iface, uint8_t *protocol) {
+ assert(iface == WIFI_IF_STA && protocol != NULL && critical_depth == 0 &&
+     legacy_phase == 3);
+ legacy_get_calls++;
+ *protocol = legacy_actual;
+ legacy_phase = 4;
+ return legacy_get_result;
 }
 static unsigned espwifi_os_critical_enter(void) { return ++critical_depth; }
 static void espwifi_os_critical_exit(unsigned token) {
@@ -309,6 +360,8 @@ static void espwifi_os_log(const char *fmt, ...) {
     table_function('espwifi_rx_chain_table_snapshot') + '\n' + \
     pp_table_function() + '\n' + \
     proto_table_function() + '\n' + \
+    function('espwifi_rx_legacy_phy_configure', r'void',
+        'static esp_err_t') + '\n' + \
     function('espwifi_rx_chain_sublen_table_snapshot', r'void',
         'static struct espwifi_rx_chain_sublen_table_state') + '\n' + \
     function('espwifi_rx_chain_mac_word', r'const unsigned char \*mac',
@@ -371,6 +424,28 @@ int main(void) {
  static const unsigned char bssid[6] = { 1, 2, 3, 4, 5, 6 };
  esp_test_hw_rx_statistics_t stopped_stats = { 0 };
  (void)&esp_wifi_set_ps;
+ legacy_phase = 2; /* station mode has been selected */
+ legacy_actual = WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G;
+ assert(espwifi_rx_legacy_phy_configure() == ESP_OK);
+ assert(legacy_set_calls == 1 && legacy_get_calls == 1 &&
+     legacy_requested == 0x3 && legacy_phase == 4);
+ legacy_phase = 2;
+ legacy_set_result = 0x201;
+ assert(espwifi_rx_legacy_phy_configure() == 0x201);
+ assert(legacy_set_calls == 2 && legacy_get_calls == 2 &&
+     legacy_requested == 0x3);
+ legacy_set_result = ESP_OK;
+ legacy_phase = 2;
+ legacy_get_result = 0x202;
+ assert(espwifi_rx_legacy_phy_configure() == 0x202);
+ assert(legacy_set_calls == 3 && legacy_get_calls == 3);
+ legacy_get_result = ESP_OK;
+ legacy_phase = 2;
+ legacy_actual = WIFI_PROTOCOL_11B;
+ assert(espwifi_rx_legacy_phy_configure() == ESP_FAIL);
+ assert(legacy_set_calls == 4 && legacy_get_calls == 4 &&
+     legacy_requested == 0x3);
+ legacy_actual = WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G;
  alloc_samples[0] = (struct espwifi_alloc_diag) {
      .pool_free=900, .pool_min_free=800, .window_min_free=900,
      .pool_misses=10, .fallback_successes=3,
@@ -616,7 +691,8 @@ with tempfile.TemporaryDirectory(prefix='espwifi-debug-test-') as td:
 
     chain_src = td / 'chain.c'
     chain_src.write_text(chain_code)
-    chain_flags = debug_flags + ['-DESPWIFI_RX_CHAIN_ONCE']
+    chain_flags = debug_flags + ['-DESPWIFI_RX_CHAIN_ONCE',
+                                 '-DESPWIFI_VENDOR_LEGACY_PHY']
     if a.cppcheck:
         subprocess.run([a.cppcheck, '--enable=warning,performance,portability',
                         '--error-exitcode=1', '--language=c', '--std=c11',
