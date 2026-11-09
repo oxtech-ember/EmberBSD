@@ -390,14 +390,19 @@ pvr_bo_report_failure(const char *stage, int error, size_t size, uint64_t flags)
 /*
  * NOWAIT page allocation counts only free pages, while NetBSD keeps most idle
  * RAM as reclaimable file cache. A WAITOK allocation may wait for the
- * pagedaemon without bound. Allocate scattered backing in small NOWAIT
- * chunks instead. Take a chunk only while free pages are at least freemin,
- * so they drop at most one chunk below it, other processes keep their margin
- * and a short supply always wakes the pagedaemon; otherwise sleep one tick.
+ * pagedaemon without bound. Allocate scattered backing with NOWAIT calls
+ * instead, each taking what the free margin allows: free pages stay at most
+ * PVR_BO_MARGIN_PAGES below freemin, so other processes keep their margin and
+ * a short supply always wakes the pagedaemon; otherwise sleep one tick.
+ * Each call pauses and resumes the per-CPU free page caches (a cross-call to
+ * every CPU), so calls must be few: with 64-page calls a 128 MB BO in
+ * fragmented memory took 1.3 s. A call holds the free list locks while it
+ * collects its pages, so it takes at most PVR_BO_CALL_PAGES.
  * Give up after a bounded total time. An allocation failure with enough free
  * pages is not a cache shortage: retry it once, then fail. No gate is held.
  */
-#define PVR_BO_CHUNK_PAGES	64
+#define PVR_BO_MARGIN_PAGES	64
+#define PVR_BO_CALL_PAGES	2048
 #define PVR_BO_RECLAIM_SECONDS	2
 
 static int
@@ -405,7 +410,7 @@ pvr_bo_alloc_pages(bus_dma_tag_t dmat, size_t size, bus_dma_segment_t *segs,
     int capacity, int *nsegsp, unsigned int *waitsp)
 {
 	const int reserve = uvmexp.reserve_pagedaemon + uvmexp.reserve_kernel;
-	const int floor = MAX(reserve, uvmexp.freemin - PVR_BO_CHUNK_PAGES - 1);
+	const int floor = MAX(reserve, uvmexp.freemin - PVR_BO_MARGIN_PAGES - 1);
 	struct timespec now, deadline;
 	size_t done = 0, chunk;
 	unsigned int waits = 0;
@@ -415,8 +420,14 @@ pvr_bo_alloc_pages(bus_dma_tag_t dmat, size_t size, bus_dma_segment_t *segs,
 	getnanouptime(&deadline);
 	deadline.tv_sec += PVR_BO_RECLAIM_SECONDS;
 	while (done < size) {
-		chunk = MIN(size - done, (size_t)PVR_BO_CHUNK_PAGES * PAGE_SIZE);
-		if (uvm_availmem(false) - floor > (int)(chunk / PAGE_SIZE)) {
+		const size_t want = MIN(size - done,
+		    (size_t)PVR_BO_CALL_PAGES * PAGE_SIZE);
+		const int room = uvm_availmem(false) - floor - 1;
+
+		/* Wait for a useful amount, not for whatever single pages the
+		 * pagedaemon has freed so far. */
+		chunk = MIN(want, (size_t)MAX(room, 0) * PAGE_SIZE);
+		if (chunk >= MIN(want, (size_t)PVR_BO_MARGIN_PAGES * PAGE_SIZE)) {
 			n = 0;
 			error = bus_dmamem_alloc(dmat, chunk, PAGE_SIZE, 0,
 			    segs + nsegs, capacity - nsegs, &n, BUS_DMA_NOWAIT);
