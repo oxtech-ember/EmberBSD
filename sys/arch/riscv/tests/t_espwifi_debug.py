@@ -129,12 +129,32 @@ assert alloc_enable_pos < init_pos < alloc_init_pos < hw_init_pos, \
     'allocator baseline must bracket init and hardware baseline follow start'
 counter_delta = re.search(
     r'\nstatic uint16_t\nespwifi_rx_counter_delta\(uint16_t before, '
-    r'uint16_t after\)\n\{.*?\n\}', source, re.S)
+    r'uint16_t after, unsigned bits\)\n\{.*?\n\}', source, re.S)
 assert counter_delta, 'wrap-aware RX hardware counter delta missing'
 hw_delta_macro = re.search(
-    r'^#define ESPWIFI_RX_HW_DELTA_FIELDS\(X\) \\\n(?:^\s*X\([^\n]+\\\n)*^\s*X\(nrx_hesiga_crc\)$',
+    r'^#define ESPWIFI_RX_HW_DELTA_FIELDS\(X\) \\\n(?:^\s*X\([^\n]+\\\n)*^\s*X\(nrx_hesiga_crc,\s*10\)$',
     source, re.M)
 assert hw_delta_macro, 'raw hardware RX statistic delta field list missing'
+expected_delta_widths = [
+    ('rx_mpdu', 16), ('rx_end_cnt', 16), ('rx_datasuc', 16),
+    ('rx_fcs_err', 16), ('rx_abort', 16), ('nrx_err_pwrdrop', 10),
+    ('rx_buf_fullcnt', 16), ('rx_fifo_ovfcnt', 16),
+    ('rx_abort_fcs_pass', 16), ('rx_samebm_errcnt', 16),
+    ('rx_other_ucast', 16), ('rx_lastunmatch_err', 16),
+    ('rx_tkip_errcnt', 16), ('rx_btblock_err', 16),
+    ('rx_freqhop_err', 16), ('rx_ack_int_cnt', 16),
+    ('rx_rts_int_cnt', 16), ('brx_err_agc', 10), ('brx_err', 10),
+    ('nrx_err', 10), ('nrx_err_abort', 10), ('nrx_err_agcexit', 10),
+    ('nrx_err_bboff', 10), ('nrx_err_fdm_wdg', 10),
+    ('nrx_err_restart', 10), ('nrx_err_serv', 10),
+    ('nrx_err_txover', 10), ('nrx_err_unsupport', 10),
+    ('nrx_err_heformat', 10), ('nrx_htsig_err', 10),
+    ('nrx_heunsupport', 10), ('nrx_hesiga_crc', 10),
+]
+actual_delta_widths = [(name, int(bits)) for name, bits in re.findall(
+    r'X\((\w+),\s*(10|16)\)', hw_delta_macro.group())]
+assert actual_delta_widths == expected_delta_widths, \
+    'RX counter widths must match the selected S31 getter register masks'
 hw_delta_struct = re.search(
     r'\nstruct espwifi_rx_chain_hw_delta \{.*?\n\};', source, re.S)
 hw_delta_helper = re.search(
@@ -167,7 +187,7 @@ for field in ('rx_abort_fcs_pass', 'rx_samebm_errcnt', 'rx_other_ucast',
               'nrx_err_restart', 'nrx_err_serv', 'nrx_err_txover',
               'nrx_err_unsupport', 'nrx_err_heformat', 'nrx_htsig_err',
               'nrx_heunsupport', 'nrx_hesiga_crc'):
-    assert 'X(' + field + ')' in source, \
+    assert field in dict(actual_delta_widths), \
         'hardware delta list missing vendor field ' + field
 assert 'wDev_ProcessRxSucData' in source and '0x1f4' in source, \
     'RX diagnostic must verify the selected ROM caller slot'
@@ -266,7 +286,7 @@ struct espwifi_alloc_diag {
  unsigned long fallback_requested_bytes, final_nulls;
 };
 typedef struct {
-#define ESPWIFI_RX_HW_DELTA_MEMBER(name) uint16_t name;
+#define ESPWIFI_RX_HW_DELTA_MEMBER(name, bits) uint16_t name;
  ESPWIFI_RX_HW_DELTA_FIELDS(ESPWIFI_RX_HW_DELTA_MEMBER)
 #undef ESPWIFI_RX_HW_DELTA_MEMBER
 } esp_test_hw_rx_statistics_t;
@@ -488,15 +508,31 @@ int main(void) {
      .rx_mpdu=100, .rx_end_cnt=100, .rx_datasuc=100,
      .rx_buf_fullcnt=100, .rx_fifo_ovfcnt=100 };
  hw_samples[1] = (esp_test_hw_rx_statistics_t) {
-     .rx_fcs_err=65534, .rx_abort=65535, .rx_abort_fcs_pass=7,
-     .nrx_err_pwrdrop=10, .rx_mpdu=65533, .rx_end_cnt=65534,
-     .rx_datasuc=65534, .rx_buf_fullcnt=4, .rx_fifo_ovfcnt=8,
-     .rx_samebm_errcnt=65534, .rx_other_ucast=65534, .rx_lastunmatch_err=65534, .rx_tkip_errcnt=65534, .rx_btblock_err=65534, .rx_freqhop_err=65534, .rx_ack_int_cnt=65534, .rx_rts_int_cnt=65534, .brx_err_agc=65534, .brx_err=65534, .nrx_err=65534, .nrx_err_abort=65534, .nrx_err_agcexit=65534, .nrx_err_bboff=65534, .nrx_err_fdm_wdg=65534, .nrx_err_restart=65534, .nrx_err_serv=65534, .nrx_err_txover=65534, .nrx_err_unsupport=65534, .nrx_err_heformat=65534, .nrx_htsig_err=65534, .nrx_heunsupport=65534, .nrx_hesiga_crc=65534 };
+     .rx_fcs_err=65534, .rx_abort=65535, .rx_abort_fcs_pass=65534,
+     .rx_mpdu=65533, .rx_end_cnt=65534, .rx_datasuc=65534,
+     .rx_buf_fullcnt=4, .rx_fifo_ovfcnt=8,
+     .rx_samebm_errcnt=65534,
+     .rx_other_ucast=65534,
+     .rx_lastunmatch_err=65534,
+     .rx_tkip_errcnt=65534,
+     .rx_btblock_err=65534,
+     .rx_freqhop_err=65534,
+     .rx_ack_int_cnt=65534,
+     .rx_rts_int_cnt=65534,
+     .nrx_err_pwrdrop=1023, .brx_err_agc=1023, .brx_err=1023, .nrx_err=1023, .nrx_err_abort=1023, .nrx_err_agcexit=1023, .nrx_err_bboff=1023, .nrx_err_fdm_wdg=1023, .nrx_err_restart=1023, .nrx_err_serv=1023, .nrx_err_txover=1023, .nrx_err_unsupport=1023, .nrx_err_heformat=1023, .nrx_htsig_err=1023, .nrx_heunsupport=1023, .nrx_hesiga_crc=1023 };
  hw_samples[2] = (esp_test_hw_rx_statistics_t) {
-     .rx_fcs_err=1, .rx_abort=2, .rx_abort_fcs_pass=9,
-     .nrx_err_pwrdrop=12, .rx_mpdu=1, .rx_end_cnt=2,
-     .rx_datasuc=1, .rx_buf_fullcnt=7, .rx_fifo_ovfcnt=9,
-     .rx_samebm_errcnt=1, .rx_other_ucast=1, .rx_lastunmatch_err=1, .rx_tkip_errcnt=1, .rx_btblock_err=1, .rx_freqhop_err=1, .rx_ack_int_cnt=1, .rx_rts_int_cnt=1, .brx_err_agc=1, .brx_err=1, .nrx_err=1, .nrx_err_abort=1, .nrx_err_agcexit=1, .nrx_err_bboff=1, .nrx_err_fdm_wdg=1, .nrx_err_restart=1, .nrx_err_serv=1, .nrx_err_txover=1, .nrx_err_unsupport=1, .nrx_err_heformat=1, .nrx_htsig_err=1, .nrx_heunsupport=1, .nrx_hesiga_crc=1 };
+     .rx_fcs_err=1, .rx_abort=2, .rx_abort_fcs_pass=1,
+     .rx_mpdu=1, .rx_end_cnt=2, .rx_datasuc=1,
+     .rx_buf_fullcnt=7, .rx_fifo_ovfcnt=9,
+     .rx_samebm_errcnt=1,
+     .rx_other_ucast=1,
+     .rx_lastunmatch_err=1,
+     .rx_tkip_errcnt=1,
+     .rx_btblock_err=1,
+     .rx_freqhop_err=1,
+     .rx_ack_int_cnt=1,
+     .rx_rts_int_cnt=1,
+     .nrx_err_pwrdrop=0, .brx_err_agc=0, .brx_err=0, .nrx_err=0, .nrx_err_abort=0, .nrx_err_agcexit=0, .nrx_err_bboff=0, .nrx_err_fdm_wdg=0, .nrx_err_restart=0, .nrx_err_serv=0, .nrx_err_txover=0, .nrx_err_unsupport=0, .nrx_err_heformat=0, .nrx_htsig_err=0, .nrx_heunsupport=0, .nrx_hesiga_crc=0 };
  espwifi_rx_chain_alloc_init = (struct espwifi_alloc_diag) {
      .pool_free=950, .pool_min_free=910, .pool_misses=4,
      .fallback_successes=2, .fallback_requested_bytes=32,
@@ -544,17 +580,20 @@ int main(void) {
      hw_snapshot_calls == 3);
  assert(strstr(log_message, "rx_mpdu=4 rx_end_cnt=4 rx_datasuc=3") != NULL);
  assert(strstr(log_message, "rx_fcs_err=3 rx_abort=3") != NULL);
- assert(strstr(log_message, "rx_abort_fcs_pass=2 rx_samebm_errcnt=3") != NULL);
+ assert(strstr(log_message, "rx_abort_fcs_pass=3 rx_samebm_errcnt=3") != NULL);
  assert(strstr(log_message, "rx_other_ucast=3 rx_lastunmatch_err=3") != NULL);
  assert(strstr(log_message, "rx_ack_int_cnt=3 rx_rts_int_cnt=3") != NULL);
- assert(strstr(log_message, "nrx_err_unsupport=3 nrx_err_heformat=3") != NULL);
- assert(strstr(log_message, "nrx_hesiga_crc=3") != NULL);
+ assert(strstr(log_message, "nrx_err_unsupport=1 nrx_err_heformat=1") != NULL);
+ assert(strstr(log_message, "nrx_hesiga_crc=1") != NULL);
  assert(strstr(log_message, "stage=begin") != NULL &&
      strstr(log_message, "rx_policy=0x512") != NULL &&
      strstr(log_message, "stage=end") != NULL);
  assert(strstr(log_message, "init_fallback=2 init_bytes=32") != NULL);
  assert(strstr(log_message, "miss=10->13 fallback=3->5") != NULL);
- assert(espwifi_rx_counter_delta(UINT16_MAX, 1) == 2);
+ assert(espwifi_rx_counter_delta(1023, 0, 10) == 1);
+ assert(espwifi_rx_counter_delta(UINT16_MAX, 0, 16) == 1);
+ assert(espwifi_rx_counter_delta(12, 42, 10) == 30);
+ assert(espwifi_rx_counter_delta(12, 42, 16) == 30);
  assert(fixture_fc_type(NULL) == -1);
  assert(fixture_fc_type((const unsigned char[]){ 0x00 }) == 0);
  assert(fixture_fc_type((const unsigned char[]){ 0x04 }) == 1);

@@ -249,7 +249,14 @@ RX-count window closes, a permanent workaround, or a band-mode change.
 
 The probe also samples the S31 hardware RX statistics
 through the pinned IDF getter at successful radio start and at the window
-boundaries. It reports modulo-16-bit deltas using the vendor field names:
+boundaries. It reports modulo deltas at the width used by the selected S31
+getter. The fields `nrx_err_pwrdrop`, `brx_err_agc`, `brx_err`, `nrx_err`,
+`nrx_err_abort`, `nrx_err_agcexit`, `nrx_err_bboff`, `nrx_err_fdm_wdg`,
+`nrx_err_restart`, `nrx_err_serv`, `nrx_err_txover`, `nrx_err_unsupport`,
+`nrx_err_heformat`, `nrx_htsig_err`, `nrx_heunsupport`, and
+`nrx_hesiga_crc` are masked to 10 bits by the getter, so their deltas wrap at
+1024. The other fields below are copied as 16-bit values and wrap at 65536.
+The output retains the vendor field names:
 `rx_mpdu`, `rx_end_cnt`, `rx_datasuc`, `rx_fcs_err`, `rx_abort`,
 `nrx_err_pwrdrop`, `rx_buf_fullcnt`, `rx_fifo_ovfcnt`,
 `rx_abort_fcs_pass`, `rx_samebm_errcnt`, `rx_other_ucast`,

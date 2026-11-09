@@ -157,41 +157,41 @@ struct espwifi_rx_chain_mac_readback {
 #define ESPWIFI_S31_MAC_RX_POLICY_REG 0x201040d8U
 
 #define ESPWIFI_RX_HW_DELTA_FIELDS(X) \
-	X(rx_mpdu) \
-	X(rx_end_cnt) \
-	X(rx_datasuc) \
-	X(rx_fcs_err) \
-	X(rx_abort) \
-	X(nrx_err_pwrdrop) \
-	X(rx_buf_fullcnt) \
-	X(rx_fifo_ovfcnt) \
-	X(rx_abort_fcs_pass) \
-	X(rx_samebm_errcnt) \
-	X(rx_other_ucast) \
-	X(rx_lastunmatch_err) \
-	X(rx_tkip_errcnt) \
-	X(rx_btblock_err) \
-	X(rx_freqhop_err) \
-	X(rx_ack_int_cnt) \
-	X(rx_rts_int_cnt) \
-	X(brx_err_agc) \
-	X(brx_err) \
-	X(nrx_err) \
-	X(nrx_err_abort) \
-	X(nrx_err_agcexit) \
-	X(nrx_err_bboff) \
-	X(nrx_err_fdm_wdg) \
-	X(nrx_err_restart) \
-	X(nrx_err_serv) \
-	X(nrx_err_txover) \
-	X(nrx_err_unsupport) \
-	X(nrx_err_heformat) \
-	X(nrx_htsig_err) \
-	X(nrx_heunsupport) \
-	X(nrx_hesiga_crc)
+	X(rx_mpdu, 16) \
+	X(rx_end_cnt, 16) \
+	X(rx_datasuc, 16) \
+	X(rx_fcs_err, 16) \
+	X(rx_abort, 16) \
+	X(nrx_err_pwrdrop, 10) \
+	X(rx_buf_fullcnt, 16) \
+	X(rx_fifo_ovfcnt, 16) \
+	X(rx_abort_fcs_pass, 16) \
+	X(rx_samebm_errcnt, 16) \
+	X(rx_other_ucast, 16) \
+	X(rx_lastunmatch_err, 16) \
+	X(rx_tkip_errcnt, 16) \
+	X(rx_btblock_err, 16) \
+	X(rx_freqhop_err, 16) \
+	X(rx_ack_int_cnt, 16) \
+	X(rx_rts_int_cnt, 16) \
+	X(brx_err_agc, 10) \
+	X(brx_err, 10) \
+	X(nrx_err, 10) \
+	X(nrx_err_abort, 10) \
+	X(nrx_err_agcexit, 10) \
+	X(nrx_err_bboff, 10) \
+	X(nrx_err_fdm_wdg, 10) \
+	X(nrx_err_restart, 10) \
+	X(nrx_err_serv, 10) \
+	X(nrx_err_txover, 10) \
+	X(nrx_err_unsupport, 10) \
+	X(nrx_err_heformat, 10) \
+	X(nrx_htsig_err, 10) \
+	X(nrx_heunsupport, 10) \
+	X(nrx_hesiga_crc, 10)
 
 struct espwifi_rx_chain_hw_delta {
-#define ESPWIFI_RX_HW_DELTA_MEMBER(name) uint16_t name;
+#define ESPWIFI_RX_HW_DELTA_MEMBER(name, bits) uint16_t name;
 	ESPWIFI_RX_HW_DELTA_FIELDS(ESPWIFI_RX_HW_DELTA_MEMBER)
 #undef ESPWIFI_RX_HW_DELTA_MEMBER
 };
@@ -1537,9 +1537,11 @@ done:
 
 #ifdef ESPWIFI_RX_CHAIN_ONCE
 static uint16_t
-espwifi_rx_counter_delta(uint16_t before, uint16_t after)
+espwifi_rx_counter_delta(uint16_t before, uint16_t after, unsigned bits)
 {
-	return (uint16_t)(after - before);
+	uint32_t mask = (1U << bits) - 1U;
+
+	return (uint16_t)((uint16_t)(after - before) & mask);
 }
 
 static void
@@ -1547,8 +1549,8 @@ espwifi_rx_hw_delta(const esp_test_hw_rx_statistics_t *before,
 	    const esp_test_hw_rx_statistics_t *after,
 	    struct espwifi_rx_chain_hw_delta *delta)
 {
-#define ESPWIFI_RX_HW_DELTA_CALC(name) \
-	delta->name = espwifi_rx_counter_delta(before->name, after->name);
+#define ESPWIFI_RX_HW_DELTA_CALC(name, bits) \
+	delta->name = espwifi_rx_counter_delta(before->name, after->name, bits);
 	ESPWIFI_RX_HW_DELTA_FIELDS(ESPWIFI_RX_HW_DELTA_CALC)
 #undef ESPWIFI_RX_HW_DELTA_CALC
 }
