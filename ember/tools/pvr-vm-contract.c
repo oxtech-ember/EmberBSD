@@ -432,6 +432,56 @@ published_tests(void)
 	vm->invalidate = NULL;
 	pvr_vm_collect(vm);
 	pvr_vm_destroy(vm); active_vm = NULL; vm = NULL; empty();
+
+	/* Work may run during a map or a deferred unmap. The next submission
+	 * invalidates only after a change; tables wait for reclaim. */
+	CHECK(pvr_vm_create((void *)1, &vm) == 0);
+	active_vm = vm;
+	state = (struct invalidate_test){ .vm = vm, .expected_memory = memory_count };
+	CHECK(pvr_vm_publish(vm, invalidate, &state) == 0 && state.calls == 1);
+	CHECK(pvr_vm_flush_changes(vm) == 0 && state.calls == 1);
+	CHECK(pvr_vm_map(vm, 4096, 0x30000000, 4096, 0) == 0);
+	state.expected_memory = memory_count;
+	CHECK(pvr_vm_flush_changes(vm) == 0 && state.calls == 2);
+	CHECK(pvr_vm_flush_changes(vm) == 0 && state.calls == 2);
+	count = memory_count;
+	CHECK(pvr_vm_unmap_deferred(vm, 4096, 4096) == 0 && state.calls == 2);
+	CHECK(vm->ranges == NULL && memory_count == count);
+	CHECK(vm->retired_tables != NULL && vm->retired_dirs != NULL);
+	CHECK(((uint32_t *)vm->catalogue.cpu)[0] == 0);
+	CHECK(pvr_vm_unmap_deferred(vm, 4096, 4096) == ENOENT);
+	state.expect_retired = true;
+	CHECK(pvr_vm_flush_changes(vm) == 0 && state.calls == 3);
+	CHECK(memory_count == count && vm->retired_tables != NULL);
+	state.expect_retired = false;
+	/* The same range maps again into new tables while the old ones wait. */
+	CHECK(pvr_vm_map(vm, 4096, 0x30000000, 4096, 0) == 0);
+	CHECK(memory_count == count + 2);
+	CHECK(pvr_vm_reclaim(vm) && memory_count == count);
+	CHECK(vm->retired_tables == NULL && vm->retired_dirs == NULL);
+	CHECK(pvr_vm_unmap_deferred(vm, 4096, 4096) == 0);
+	/* A full flush invalidates before it frees the detached tables. */
+	state.expected_memory = memory_count;
+	CHECK(pvr_vm_quiesce(vm) == 0 && state.calls == 4);
+	CHECK(memory_count == count - 2);
+	pvr_vm_destroy(vm); active_vm = NULL; vm = NULL; empty();
+
+	/* A failed VM keeps its detached tables. */
+	CHECK(pvr_vm_create((void *)1, &vm) == 0);
+	active_vm = vm;
+	CHECK(pvr_vm_map(vm, 4096, 0x30000000, 4096, 0) == 0);
+	state = (struct invalidate_test){ .vm = vm, .expected_memory = memory_count };
+	CHECK(pvr_vm_publish(vm, invalidate, &state) == 0);
+	count = memory_count;
+	CHECK(pvr_vm_unmap_deferred(vm, 4096, 4096) == 0);
+	state.fail = true;
+	CHECK(pvr_vm_flush_changes(vm) == ETIMEDOUT && vm->failed);
+	CHECK(pvr_vm_flush_changes(vm) == EIO && !pvr_vm_reclaim(vm));
+	CHECK(memory_count == count && vm->retired_tables != NULL);
+	vm->failed = false;
+	vm->invalidate = NULL;
+	pvr_vm_collect(vm);
+	pvr_vm_destroy(vm); active_vm = NULL; vm = NULL; empty();
 }
 
 int

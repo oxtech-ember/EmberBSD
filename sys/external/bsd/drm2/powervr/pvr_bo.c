@@ -775,6 +775,24 @@ pvr_bo_barrier(struct drm_gem_object *obj, int operations)
 	    operations);
 }
 
+bool
+pvr_bo_needs_sync(struct drm_gem_object *obj)
+{
+	struct pvr_bo *bo = pvr_to_bo(obj);
+
+	KASSERT(obj->funcs == &pvr_bo_funcs);
+	return !bo->coherent && bo->import_buf == NULL &&
+	    (bo->flags & DRM_PVR_BO_EMBER_CPU_CACHED) == 0;
+}
+
+bool
+pvr_bo_imported(struct drm_gem_object *obj)
+{
+
+	KASSERT(obj->funcs == &pvr_bo_funcs);
+	return pvr_to_bo(obj)->import_buf != NULL;
+}
+
 void
 pvr_bo_sync(struct drm_gem_object *obj, int operations)
 {

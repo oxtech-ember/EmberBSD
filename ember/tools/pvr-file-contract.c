@@ -122,7 +122,7 @@ uint64_t pvr_device_bvnc(struct drm_device *d) { (void)d; return selected_bvnc; 
 struct drm_gem_object { unsigned int refs; uint64_t size, pa, flags; bool pinned, coherent; unsigned holds; void *resv; };
 struct drm_file { void *driver_priv; struct drm_gem_object *handles[SLOTS]; };
 struct test_map { uint64_t va, pa, size, flags; };
-struct pvr_vm { struct test_map ranges[SLOTS]; int (*invalidate)(void *); void *cookie; bool failed; };
+struct pvr_vm { struct test_map ranges[SLOTS]; int (*invalidate)(void *); void *cookie; bool failed, dirty; unsigned detached; };
 static struct pvr_vm *all_vms[SLOTS];
 static struct drm_gem_object *all_objects[SLOTS];
 static void drm_gem_object_get(struct drm_gem_object *o)
@@ -196,7 +196,7 @@ static int pvr_vm_map(struct pvr_vm *vm, uint64_t va, uint64_t pa, uint64_t size
 		if (m->size != 0 && va < m->va + m->size && m->va < va + size) return EEXIST;
 	}
 	for (unsigned n = 0; n < SLOTS; n++) if (vm->ranges[n].size == 0) {
-		vm->ranges[n] = (struct test_map){ va, pa, size, flags }; return 0;
+		vm->ranges[n] = (struct test_map){ va, pa, size, flags }; vm->dirty = true; return 0;
 	}
 	return ENOMEM;
 }
@@ -209,14 +209,24 @@ static int pvr_vm_map_pages(struct pvr_vm *vm, uint64_t va, const uint64_t *page
 	scattered_maps++;
 	return pvr_vm_map(vm, va, pages[0], size, flags);
 }
-static int pvr_vm_unmap(struct pvr_vm *vm, uint64_t va, uint64_t size)
+static kmutex_t device_gate;
+/* Clears entries at once; the caller keeps the RAM until reclaim. */
+static int pvr_vm_unmap_deferred(struct pvr_vm *vm, uint64_t va, uint64_t size)
 {
+	CHECK(mutex_owned(&device_gate));
 	core_unmaps++;
 	if (unmap_error != 0) return unmap_error;
 	for (unsigned n = 0; n < SLOTS; n++) if (vm->ranges[n].va == va && vm->ranges[n].size == size) {
-		memset(&vm->ranges[n], 0, sizeof(vm->ranges[n])); return 0;
+		memset(&vm->ranges[n], 0, sizeof(vm->ranges[n])); vm->dirty = true; vm->detached++; return 0;
 	}
 	return ENOENT;
+}
+static unsigned reclaims;
+static bool pvr_vm_reclaim(struct pvr_vm *vm)
+{
+	CHECK(mutex_owned(&device_gate));
+	if (vm->failed) return false;
+	reclaims++; vm->detached = 0; return true;
 }
 static void pvr_vm_destroy(struct pvr_vm *vm)
 {
@@ -225,7 +235,6 @@ static void pvr_vm_destroy(struct pvr_vm *vm)
 	CHECK(atomic_fetch_sub(&vms, 1) != 0); free(vm);
 }
 
-static kmutex_t device_gate;
 static void *orphans[SLOTS];
 static unsigned orphan_count, fw_live, pre_syncs, post_syncs;
 static int fw_allocate_error, flush_error, free_error;
@@ -266,11 +275,24 @@ static bool pvr_vm_cpu_leaf(const struct pvr_vm *vm, uint64_t va, uint64_t *out)
 { (void)vm; (void)va; *out = 0; return true; }
 static uint64_t pvr_vm_root_pa(const struct pvr_vm *vm)
 { return 0x12000000; }
+static unsigned invalidations;
 static int pvr_vm_flush(struct pvr_vm *vm)
 {
 	int error = vm->failed ? EIO : vm->invalidate != NULL ? vm->invalidate(vm->cookie) : 0;
 	if (error != 0) vm->failed = true;
+	else { invalidations++; vm->dirty = false; vm->detached = 0; }
 	return error;
+}
+/* Invalidates only after a change and keeps detached tables. */
+static int pvr_vm_flush_changes(struct pvr_vm *vm)
+{
+	int error;
+	if (vm->failed) return EIO;
+	if (!vm->dirty) return 0;
+	error = vm->invalidate != NULL ? vm->invalidate(vm->cookie) : 0;
+	if (error != 0) { vm->failed = true; return error; }
+	invalidations++; vm->dirty = false;
+	return 0;
 }
 static int pvr_vm_publish(struct pvr_vm *vm, int (*invalidate)(void *), void *cookie)
 { CHECK(vm->invalidate == NULL); vm->invalidate = invalidate; vm->cookie = cookie; return pvr_vm_flush(vm); }
@@ -288,6 +310,10 @@ static bool pvr_bo_coherent(struct drm_gem_object *obj)
 { CHECK(obj->refs != 0); return obj->coherent; }
 static void pvr_bo_barrier(struct drm_gem_object *obj, int operations)
 { CHECK(obj->coherent); pvr_bo_sync(obj, operations); }
+static bool pvr_bo_needs_sync(struct drm_gem_object *obj)
+{ CHECK(obj->refs != 0); return !obj->coherent; }
+static bool pvr_bo_imported(struct drm_gem_object *obj)
+{ CHECK(obj->refs != 0); return false; }
 static int pvr_bo_pin(struct drm_gem_object *obj)
 { CHECK(obj->refs > 0); if (obj->pinned || obj->holds != 0) return EBUSY; obj->pinned = true; return 0; }
 static void pvr_bo_unpin(struct drm_gem_object *obj)
@@ -818,42 +844,72 @@ main(void)
 	unmap.device_addr++; CHECK(pvr_vm_unmap_ioctl(&dev, &unmap, &a) == -EINVAL); unmap.device_addr--;
 	unmap.vm_context_handle = UINT32_MAX; CHECK(pvr_vm_unmap_ioctl(&dev, &unmap, &a) == -EINVAL); unmap.vm_context_handle = first;
 	CHECK(pvr_vm_unmap_ioctl(&dev, &unmap, &b) == -ENOENT);
-	/* A queued/active submit retains the complete mapping set. Both mutation
-	 * paths leave the gates before waiting, and preserve the existing GEM ref. */
+	/* Queued or running work keeps an unmapped range's RAM: the entries clear
+	 * at once, the GEM ref stays until the work retires. A map never waits. */
 	(void)pvr_device_enter(&dev);
 	fvm->published = true;
 	CHECK(pvr_file_vm_submit_hold(fvm) == 0);
 	pvr_device_leave(&dev);
 	before = core_unmaps;
-	CHECK(pvr_vm_unmap_ioctl(&dev, &unmap, &a) == -EINTR);
-	CHECK(core_unmaps == before && bo->refs == 3 && submit_pauses == 1);
+	CHECK(pvr_vm_unmap_ioctl(&dev, &unmap, &a) == 0);
+	CHECK(core_unmaps == before + 1 && bo->refs == 3 && fvm->nretired == 1);
+	CHECK(fvm->tables->detached == 1 && submit_pauses == 0);
+	CHECK(pvr_vm_unmap_ioctl(&dev, &unmap, &a) == -ENOENT);
 	before = core_maps;
-	CHECK(pvr_vm_map_ioctl(&dev, &map, &a) == -EINTR);
-	CHECK(core_maps == before && bo->refs == 3 && submit_pauses == 2);
-	/* A waiting mutation bars new holds, so queued work drains and it runs. */
-	hook_dev = &dev; hook_vm = fvm; pause_hook = drain_while_barred; pause_result = EWOULDBLOCK;
-	barrier = map; barrier.device_addr = BASE + 8 * PAGE_SIZE;
-	before = core_maps;
-	CHECK(pvr_vm_map_ioctl(&dev, &barrier, &a) == 0 && core_maps == before + 1 && bo->refs == 4);
-	CHECK(barred_holds == 1 && submit_pauses == 3);
-	pause_hook = NULL; pause_result = EINTR;
+	CHECK(pvr_vm_map_ioctl(&dev, &map, &a) == 0 && core_maps == before + 1 && bo->refs == 4);
 	(void)pvr_device_enter(&dev);
-	CHECK(fvm->mutators == 0 && fvm->submissions == 0);
+	before = invalidations;
+	CHECK(pvr_file_vm_prepare(fvm) == 0 && invalidations == before + 1);
+	pvr_file_vm_complete(fvm);
+	CHECK(fvm->tables->detached == 1 && fvm->nretired == 1);
+	CHECK(pvr_file_vm_prepare(fvm) == 0 && invalidations == before + 1);
+	pvr_file_vm_complete(fvm);
+	pvr_file_vm_submit_drop(fvm);
+	CHECK(fvm->retired == NULL && fvm->nretired == 0 && bo->refs == 3);
+	CHECK(fvm->tables->detached == 0);
 	CHECK(pvr_file_vm_submit_hold(fvm) == 0);
 	pvr_device_leave(&dev);
+	/* Beyond the retained bound an unmap waits. A waiting unmap bars new holds,
+	 * so queued work drains and it runs. */
+	for (unsigned n = 0; n < PVR_FILE_RETIRED_MAX; n++) {
+		barrier = map; barrier.device_addr = BASE + (16 + n) * PAGE_SIZE;
+		CHECK(pvr_vm_map_ioctl(&dev, &barrier, &a) == 0);
+		unmap.device_addr = barrier.device_addr;
+		CHECK(pvr_vm_unmap_ioctl(&dev, &unmap, &a) == 0);
+	}
+	CHECK(fvm->nretired == PVR_FILE_RETIRED_MAX && bo->refs == 3 + PVR_FILE_RETIRED_MAX);
+	barrier = map; barrier.device_addr = BASE + 8 * PAGE_SIZE;
+	CHECK(pvr_vm_map_ioctl(&dev, &barrier, &a) == 0 && bo->refs == 4 + PVR_FILE_RETIRED_MAX);
 	unmap.device_addr = barrier.device_addr;
-	CHECK(pvr_vm_unmap_ioctl(&dev, &unmap, &a) == -EINTR && submit_pauses == 4);
-	(void)pvr_device_enter(&dev);
-	CHECK(fvm->mutators == 0);
-	pvr_file_vm_submit_drop(fvm);
-	pvr_device_leave(&dev);
+	CHECK(pvr_vm_unmap_ioctl(&dev, &unmap, &a) == -EINTR && submit_pauses == 1);
+	CHECK(bo->refs == 4 + PVR_FILE_RETIRED_MAX && fvm->mutators == 0);
+	hook_dev = &dev; hook_vm = fvm; pause_hook = drain_while_barred; pause_result = EWOULDBLOCK;
 	CHECK(pvr_vm_unmap_ioctl(&dev, &unmap, &a) == 0 && bo->refs == 3);
+	CHECK(barred_holds == 1 && submit_pauses == 2);
+	pause_hook = NULL; pause_result = EINTR;
+	(void)pvr_device_enter(&dev);
+	CHECK(fvm->mutators == 0 && fvm->submissions == 0 && fvm->retired == NULL);
+	/* A reset VM keeps unmapped RAM past retirement (quarantine). */
+	CHECK(pvr_file_vm_submit_hold(fvm) == 0);
+	fvm->lost = true;
+	pvr_device_leave(&dev);
+	CHECK(pvr_vm_map_ioctl(&dev, &barrier, &a) == 0 && bo->refs == 4);
+	CHECK(pvr_vm_unmap_ioctl(&dev, &unmap, &a) == 0 && bo->refs == 4);
+	(void)pvr_device_enter(&dev);
+	pvr_file_vm_submit_drop(fvm);
+	CHECK(fvm->nretired == 1 && fvm->tables->detached == 1 && bo->refs == 4);
+	before = reclaims;
+	fvm->lost = false;
+	pvr_device_leave(&dev);
 	unmap.device_addr = BASE;
 	(void)pvr_device_enter(&dev);
 	fvm->published = false;
 	pvr_device_leave(&dev);
-	unmap_error = EIO; CHECK(pvr_vm_unmap_ioctl(&dev, &unmap, &a) == -EIO && bo->refs == 3); unmap_error = 0;
+	unmap_error = EIO; CHECK(pvr_vm_unmap_ioctl(&dev, &unmap, &a) == -EIO && bo->refs == 4); unmap_error = 0;
+	CHECK(fvm->nretired == 1 && reclaims == before);
+	/* The next release without work frees both ranges. */
 	CHECK(pvr_vm_unmap_ioctl(&dev, &unmap, &a) == 0 && bo->refs == 2);
+	CHECK(fvm->retired == NULL && reclaims == before + 1);
 	CHECK(pvr_vm_unmap_ioctl(&dev, &unmap, &a) == -ENOENT);
 	close_bo(&a, 1); CHECK(bo->refs == 1);
 	destroy_vm(&dev, &a, second); CHECK(atomic_load(&objects) == 1);

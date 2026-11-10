@@ -14,8 +14,9 @@ struct pvr_vm;
  * retains the DMA tag and all mapped RAM until unmap or destruction.
  * The caller owns GEM references, heap policy and physical RAM ownership.
  * A new VM is CPU-owned. Before firmware receives its root address, install
- * the invalidate callback through publish(). The owner excludes concurrent
- * GPU jobs from every table mutation. Flush before each later GPU submission.
+ * the invalidate callback through publish(). Map adds entries and a deferred
+ * unmap clears them while jobs may run; a job never uses either range.
+ * Flush, or flush_changes, before each later GPU submission.
  * An invalidation failure poisons the VM and retains its tables and mappings.
  * The caller must then retain every GEM reference until a proven GPU reset.
  *
@@ -32,6 +33,15 @@ int pvr_vm_map(struct pvr_vm *, uint64_t, uint64_t, uint64_t, uint64_t);
 int pvr_vm_map_pages(struct pvr_vm *, uint64_t, const uint64_t *, uint64_t,
     uint64_t);
 int pvr_vm_unmap(struct pvr_vm *, uint64_t, uint64_t);
+/*
+ * Clear one mapped range without a device invalidation or table reclamation.
+ * The caller retains the range's RAM until reclaim, which it calls once no
+ * GPU job can still use this VM. The next flush or flush_changes, before any
+ * later job, invalidates the device.
+ */
+int pvr_vm_unmap_deferred(struct pvr_vm *, uint64_t, uint64_t);
+/* Free detached tables. False, and nothing freed, for a failed VM. */
+bool pvr_vm_reclaim(struct pvr_vm *);
 void pvr_vm_destroy(struct pvr_vm *);
 
 /*
@@ -44,6 +54,8 @@ void pvr_vm_destroy(struct pvr_vm *);
  */
 int pvr_vm_publish(struct pvr_vm *, int (*)(void *), void *);
 int pvr_vm_flush(struct pvr_vm *);
+/* Invalidate only after an entry change; detached tables stay retired. */
+int pvr_vm_flush_changes(struct pvr_vm *);
 int pvr_vm_quiesce(struct pvr_vm *);
 
 /* Kernel-only address accessor. It does not transfer or publish ownership. */

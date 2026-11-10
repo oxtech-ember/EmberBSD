@@ -26,11 +26,19 @@
 #include "pvr_exec.h"
 #include <arm/sunxi/powervr/pvr_rogue_fwif.h>
 
+/*
+ * An unmap during queued or running work keeps the BO reference, and with it
+ * the RAM, until the VM's work retires. Beyond these bounds it waits instead.
+ */
+#define PVR_FILE_RETIRED_MAX	256
+#define PVR_FILE_RETIRED_BYTES	(UINT64_C(64) << 20)
+
 struct pvr_file_mapping {
 	struct pvr_file_mapping *next;
 	struct drm_gem_object *object;
 	uint64_t address, size, offset;
 	unsigned int pins;
+	bool synced;	/* the BO has its own cache maintenance */
 };
 
 struct pvr_file_vm {
@@ -46,6 +54,11 @@ struct pvr_file_vm {
 	bool published, failed, lost;
 	struct pvr_vm *tables;
 	struct pvr_file_mapping *mappings;
+	unsigned int synced;	/* mappings with their own cache maintenance */
+	/* Unmapped ranges whose RAM queued or running work may still use. */
+	struct pvr_file_mapping *retired;
+	unsigned int nretired;
+	uint64_t retired_bytes;
 };
 
 struct pvr_file {
@@ -108,6 +121,11 @@ pvr_file_vm_put(struct pvr_file_vm *vm)
 		drm_gem_object_put_unlocked(mapping->object);
 		kmem_free(mapping, sizeof(*mapping));
 	}
+	while ((mapping = vm->retired) != NULL) {
+		vm->retired = mapping->next;
+		drm_gem_object_put_unlocked(mapping->object);
+		kmem_free(mapping, sizeof(*mapping));
+	}
 	pvr_file_put(vm->owner);
 	kmem_free(vm, sizeof(*vm));
 }
@@ -134,6 +152,29 @@ pvr_file_close_locked(struct drm_device *dev, struct drm_file *file)
 	mutex_destroy(&pf->lock);
 	file->driver_priv = NULL;
 	pvr_file_put(pf);
+}
+
+/*
+ * Release unmapped ranges once no queued or running work holds the VM. Their
+ * entries are already clear; the next submission invalidates the device
+ * before it runs. A failed or reset VM keeps them for quarantine.
+ */
+static void
+pvr_file_vm_reap(struct pvr_file_vm *vm)
+{
+	struct pvr_file_mapping *mapping;
+
+	KASSERT(vm->submissions == 0);
+	if (vm->retired == NULL || vm->failed || vm->lost ||
+	    !pvr_vm_reclaim(vm->tables))
+		return;
+	while ((mapping = vm->retired) != NULL) {
+		vm->retired = mapping->next;
+		drm_gem_object_put_unlocked(mapping->object);
+		kmem_free(mapping, sizeof(*mapping));
+	}
+	vm->nretired = 0;
+	vm->retired_bytes = 0;
 }
 
 static struct pvr_file_vm *
@@ -245,9 +286,8 @@ pvr_vm_map_ioctl_locked(struct drm_device *dev, void *data, struct drm_file *fil
 		error = EINVAL;
 	} else if (vm->failed) {
 		error = EIO;
-	} else if (vm->submissions != 0) {
-		error = EAGAIN;
 	} else {
+		/* Work cannot use a range it was submitted before; no wait. */
 		if (pages != NULL)
 			error = pvr_vm_map_pages(vm->tables, args->device_addr, pages,
 			    args->size, flags);
@@ -259,6 +299,9 @@ pvr_vm_map_ioctl_locked(struct drm_device *dev, void *data, struct drm_file *fil
 			mapping->address = args->device_addr;
 			mapping->size = args->size;
 			mapping->offset = args->offset;
+			mapping->synced = pvr_bo_needs_sync(obj);
+			if (mapping->synced)
+				vm->synced++;
 			mapping->next = vm->mappings;
 			vm->mappings = mapping;
 		}
@@ -286,6 +329,7 @@ pvr_vm_unmap_ioctl_locked(struct drm_device *dev, void *data, struct drm_file *f
 	struct pvr_file_vm *vm;
 	struct pvr_file_mapping *mapping, **link;
 	int error = ENOENT;
+	bool reap = false;
 
 	if (args->_padding_4 != 0 || args->size == 0 ||
 	    ((args->device_addr | args->size) & (PAGE_SIZE - 1)) != 0 ||
@@ -297,10 +341,9 @@ pvr_vm_unmap_ioctl_locked(struct drm_device *dev, void *data, struct drm_file *f
 		mutex_exit(&pf->lock);
 		return -EINVAL;
 	}
-	if (vm->failed || vm->submissions != 0) {
-		error = vm->failed ? EIO : EAGAIN;
+	if (vm->failed) {
 		mutex_exit(&pf->lock);
-		return -error;
+		return -EIO;
 	}
 	for (link = &vm->mappings; (mapping = *link) != NULL;
 	    link = &mapping->next) {
@@ -310,18 +353,38 @@ pvr_vm_unmap_ioctl_locked(struct drm_device *dev, void *data, struct drm_file *f
 				error = EBUSY;
 				break;
 			}
-			error = pvr_vm_unmap(vm->tables, args->device_addr,
-			    args->size);
-			if (error == 0)
-				*link = mapping->next;
+			if (vm->submissions != 0 &&
+			    (vm->nretired >= PVR_FILE_RETIRED_MAX ||
+			    mapping->size > PVR_FILE_RETIRED_BYTES -
+			    vm->retired_bytes)) {
+				error = EAGAIN;
+				break;
+			}
+			/*
+			 * Clear the entries now. The RAM and the detached
+			 * tables stay until no work can use them: at once
+			 * without work, else when the VM's work retires.
+			 */
+			error = pvr_vm_unmap_deferred(vm->tables,
+			    args->device_addr, args->size);
+			if (error != 0)
+				break;
+			*link = mapping->next;
+			if (mapping->synced)
+				vm->synced--;
+			mapping->next = vm->retired;
+			vm->retired = mapping;
+			vm->nretired++;
+			vm->retired_bytes += mapping->size;
+			reap = vm->submissions == 0;
 			break;
 		}
 	}
 	mutex_exit(&pf->lock);
-	if (error == 0) {
-		drm_gem_object_put_unlocked(mapping->object);
-		kmem_free(mapping, sizeof(*mapping));
-	}
+	/* GEM release may enter an exporter: not under the file lock. The
+	 * device gate still serializes this VM's lists and submissions. */
+	if (reap)
+		pvr_file_vm_reap(vm);
 	return -error;
 }
 
@@ -462,6 +525,18 @@ pvr_file_vm_sync(struct pvr_file_vm *vm, int operations)
 	struct pvr_file_mapping *mapping;
 	struct drm_gem_object *barrier = NULL;
 
+	if (vm->synced == 0) {
+		/* Only coherent BOs: one barrier, no walk of every mapping. */
+		for (mapping = vm->mappings; mapping != NULL;
+		    mapping = mapping->next) {
+			if (pvr_bo_coherent(mapping->object) &&
+			    !pvr_bo_imported(mapping->object)) {
+				pvr_bo_barrier(mapping->object, operations);
+				break;
+			}
+		}
+		return;
+	}
 	for (mapping = vm->mappings; mapping != NULL; mapping = mapping->next) {
 		if (pvr_bo_coherent(mapping->object))
 			barrier = mapping->object;
@@ -472,9 +547,10 @@ pvr_file_vm_sync(struct pvr_file_vm *vm, int operations)
 		pvr_bo_barrier(barrier, operations);
 }
 
-/* Freeze the mapping set, including its GEM references, through queue retirement.
- * Context references keep the VM alive. CPU stores still obey Vulkan ownership:
- * applications must not overwrite resources used by an unfinished submission. */
+/* Until queue retirement, unmapped ranges keep their GEM references (the RAM)
+ * and detached tables. Context references keep the VM alive. CPU stores still
+ * obey Vulkan ownership: applications must not overwrite resources used by an
+ * unfinished submission. */
 int
 pvr_file_vm_submit_hold(struct pvr_file_vm *vm)
 {
@@ -502,7 +578,8 @@ pvr_file_vm_submit_drop(struct pvr_file_vm *vm)
 {
 
 	KASSERT(vm->submissions != 0);
-	vm->submissions--;
+	if (--vm->submissions == 0)
+		pvr_file_vm_reap(vm);
 }
 
 int
@@ -512,7 +589,8 @@ pvr_file_vm_prepare(struct pvr_file_vm *vm)
 
 	if (vm->failed || vm->lost || !vm->published)
 		return EIO;
-	error = pvr_vm_flush(vm->tables);
+	/* Earlier work may still run: invalidate, but keep detached tables. */
+	error = pvr_vm_flush_changes(vm->tables);
 	if (error != 0) {
 		vm->failed = true;
 		return error;
@@ -662,9 +740,10 @@ pvr_vm_mutate_same(struct drm_file *file, uint32_t handle,
 }
 
 /*
- * A mapping change waits until its VM has no queued submission. A waiting
- * change bars new submissions on that VM, so the wait ends even while other
- * threads keep submitting. Never hold either gate while the worker retires.
+ * An unmap beyond the retained-RAM bounds waits until its VM has no queued
+ * submission. A waiting change bars new submissions on that VM, so the wait
+ * ends even while other threads keep submitting. Never hold either gate
+ * while the worker retires.
  */
 static int
 pvr_vm_mutate(struct drm_device *dev, struct drm_file *file, uint32_t handle,

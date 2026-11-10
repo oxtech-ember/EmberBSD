@@ -37,10 +37,14 @@ firmware execution, compute or rendering support.
 ## Queue failure diagnostics
 
 The native DRM submit ioctl returns after validation and bounded queue admission.
-The worker retains each context, VM mapping set, render target and dependency.
+The worker retains each context, render target and dependency. A range unmapped
+while work is queued loses its entries at once and keeps its RAM and detached
+tables until the VM's queued work retires; a map never waits for work.
 It signals completion only after firmware completion or a recorded error.
 Closing a file cancels its queued work, including VMs with removed handles.
-Waiting mapping changes prevent new holds until the queued work retires.
+An unmap beyond 256 retained ranges or 64 MiB waits instead, and prevents new
+holds until the queued work retires. The device MMU is invalidated before a job
+only after a table change.
 Completion waits and cleanup retries release the device gates between probes.
 
 Timeline transfers flatten AND dependencies with a bounded work list. OR arrays

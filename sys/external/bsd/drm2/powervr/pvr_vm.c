@@ -55,7 +55,8 @@ struct pvr_vm {
 	struct pvr_vm_pt *retired_tables;
 	int (*invalidate)(void *);
 	void *invalidate_cookie;
-	bool failed, direct;
+	/* dirty: an entry changed after the last device invalidation. */
+	bool failed, direct, dirty;
 };
 
 static void
@@ -244,8 +245,42 @@ pvr_vm_flush(struct pvr_vm *vm)
 			return error;
 		}
 	}
+	vm->dirty = false;
 	pvr_vm_collect(vm);
 	return 0;
+}
+
+/* A device invalidation costs a firmware round trip; skip it when clean. */
+int
+pvr_vm_flush_changes(struct pvr_vm *vm)
+{
+	int error;
+
+	if (vm == NULL)
+		return EINVAL;
+	if (vm->failed)
+		return EIO;
+	if (!vm->dirty)
+		return 0;
+	if (vm->invalidate != NULL) {
+		error = vm->invalidate(vm->invalidate_cookie);
+		if (error != 0) {
+			vm->failed = true;
+			return error;
+		}
+	}
+	vm->dirty = false;
+	return 0;
+}
+
+bool
+pvr_vm_reclaim(struct pvr_vm *vm)
+{
+
+	if (vm == NULL || vm->failed)
+		return false;
+	pvr_vm_collect(vm);
+	return true;
 }
 
 int
@@ -403,6 +438,7 @@ pvr_vm_map_internal(struct pvr_vm *vm, uint64_t va, uint64_t pa,
 		((uint32_t *)vm->catalogue.cpu)[pc] = htole32(pce);
 	}
 	pvr_vm_dma_sync(vm, &vm->catalogue);
+	vm->dirty = true;
 	range->next = *slot;
 	*slot = range;
 	return 0;
@@ -430,8 +466,9 @@ pvr_vm_map_pages(struct pvr_vm *vm, uint64_t va, const uint64_t *pages,
 	return pvr_vm_map_internal(vm, va, 0, pages, size, flags);
 }
 
-int
-pvr_vm_unmap(struct pvr_vm *vm, uint64_t va, uint64_t size)
+static int
+pvr_vm_unmap_internal(struct pvr_vm *vm, uint64_t va, uint64_t size,
+    bool flush)
 {
 	struct pvr_vm_range **slot, *range;
 	struct pvr_vm_pd *pd;
@@ -482,12 +519,29 @@ pvr_vm_unmap(struct pvr_vm *vm, uint64_t va, uint64_t size)
 		pd->retired_next = vm->retired_dirs;
 		vm->retired_dirs = pd;
 	}
-	error = pvr_vm_flush(vm);
-	if (error != 0)
-		return error;
+	vm->dirty = true;
+	if (flush) {
+		error = pvr_vm_flush(vm);
+		if (error != 0)
+			return error;
+	}
 	*slot = range->next;
 	kmem_free(range, sizeof(*range));
 	return 0;
+}
+
+int
+pvr_vm_unmap(struct pvr_vm *vm, uint64_t va, uint64_t size)
+{
+
+	return pvr_vm_unmap_internal(vm, va, size, true);
+}
+
+int
+pvr_vm_unmap_deferred(struct pvr_vm *vm, uint64_t va, uint64_t size)
+{
+
+	return pvr_vm_unmap_internal(vm, va, size, false);
 }
 
 void
@@ -502,6 +556,8 @@ pvr_vm_destroy(struct pvr_vm *vm)
 		error = pvr_vm_unmap(vm, vm->ranges->va, vm->ranges->size);
 		KASSERT(error == 0);
 	}
+	/* Deferred unmaps may have left detached tables. */
+	pvr_vm_collect(vm);
 	pvr_vm_dma_free(vm, &vm->catalogue);
 	kmem_free(vm, sizeof(*vm));
 }
