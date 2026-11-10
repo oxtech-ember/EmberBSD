@@ -14,8 +14,10 @@ CFLAGS='-fsanitize=undefined -fsanitize-undefined-trap-on-error -fno-sanitize-re
 ```
 
 The tests cover descriptor ranges and report IDs, short taps, long holds,
-pointer motion, contact order changes, disabled tapping, physical buttons,
-palms, invalid lengths, duplicate identifiers, and invalid coordinates.
+pointer motion, contact order changes, one- and two-finger taps, disabled
+tapping, physical buttons, palms, invalid lengths, duplicate identifiers,
+and invalid coordinates. One finger synthesizes left click; two fingers
+synthesize right click; three contacts are not a tap.
 Enabling tapping during an existing contact must not synthesize a click.
 
 The I2C transport must also compile against the selected kernel configuration.

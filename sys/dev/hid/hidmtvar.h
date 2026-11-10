@@ -33,7 +33,7 @@ struct hidmt_frame {
 
 struct hidmt_pointer {
 	bool active, tap_candidate;
-	unsigned id;
+	unsigned id, tap_fingers;
 	int x, y, startx, starty, remx, remy;
 	uint64_t started;
 };
@@ -42,6 +42,8 @@ struct hidmt_motion {
 	int dx, dy;
 	unsigned buttons;
 	bool tap;
+	/* wscons button bit: 1 = left, 4 = right */
+	unsigned tap_button;
 };
 
 int hidmt_parse(const void *, int, struct hidmt_config *);

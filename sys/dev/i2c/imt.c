@@ -95,7 +95,8 @@ imt_attach(device_t parent, device_t self, void *aux)
 	    SYSCTL_DESCR("Precision Touchpad settings"), NULL, 0, NULL, 0,
 	    CTL_HW, CTL_CREATE, CTL_EOL) == 0)
 		sysctl_createv(&sc->sc_sysctllog, 0, &node, NULL, CTLFLAG_READWRITE,
-		    CTLTYPE_INT, "tapping", SYSCTL_DESCR("Enable single finger tap"),
+		    CTLTYPE_INT, "tapping",
+		    SYSCTL_DESCR("Enable tap-to-click (1 finger left, 2 fingers right)"),
 		    NULL, 0, &sc->sc_tapping, 0, CTL_CREATE, CTL_EOL);
 
 	/* Resume can run with interrupts disabled. Allocate its buffer now. */
@@ -242,7 +243,8 @@ imt_intr(struct ihidev *hdev, void *buf, u_int len)
 	    (uint64_t)now.tv_sec * 1000000 + now.tv_nsec / 1000,
 	    sc->sc_tapping != 0, &motion);
 	s = spltty();
-	wsmouse_input(sc->sc_mouse, motion.buttons | (motion.tap ? 1 : 0),
+	wsmouse_input(sc->sc_mouse,
+	    motion.buttons | (motion.tap ? motion.tap_button : 0),
 	    motion.dx, motion.dy, 0, 0, WSMOUSE_INPUT_DELTA);
 	if (motion.tap)
 		wsmouse_input(sc->sc_mouse, motion.buttons, 0, 0, 0, 0,

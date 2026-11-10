@@ -232,7 +232,7 @@ hidmt_pointer_update(struct hidmt_pointer *ptr, const struct hidmt_frame *frame,
     uint64_t now, bool tapping, struct hidmt_motion *motion)
 {
 	const struct hidmt_contact *contact;
-	unsigned i;
+	unsigned i, tap_fingers;
 	int dx, dy;
 
 	memset(motion, 0, sizeof(*motion));
@@ -240,9 +240,12 @@ hidmt_pointer_update(struct hidmt_pointer *ptr, const struct hidmt_frame *frame,
 	if (frame->cancel_tap)
 		ptr->tap_candidate = false;
 	if (frame->ncontacts == 0) {
+		tap_fingers = ptr->tap_fingers;
 		motion->tap = ptr->active && ptr->tap_candidate && tapping &&
 		    !frame->buttons && now >= ptr->started &&
 		    now - ptr->started <= 180000;
+		if (motion->tap)
+			motion->tap_button = tap_fingers >= 2 ? 4u : 1u;
 		memset(ptr, 0, sizeof(*ptr));
 		return;
 	}
@@ -256,18 +259,26 @@ hidmt_pointer_update(struct hidmt_pointer *ptr, const struct hidmt_frame *frame,
 		bool was_active = ptr->active;
 		memset(ptr, 0, sizeof(*ptr));
 		ptr->active = true;
-		ptr->tap_candidate = tapping && !was_active && frame->ncontacts == 1 &&
+		/*
+		 * One finger synthesizes left click; two fingers synthesize
+		 * right click. More contacts are gestures, not taps.
+		 */
+		ptr->tap_candidate = tapping && !was_active &&
+		    frame->ncontacts >= 1 && frame->ncontacts <= 2 &&
 		    !frame->buttons && !frame->cancel_tap;
+		ptr->tap_fingers = frame->ncontacts;
 		ptr->id = contact->id;
 		ptr->x = ptr->startx = contact->x;
 		ptr->y = ptr->starty = contact->y;
 		ptr->started = now;
 		return;
 	}
-	if (frame->ncontacts != 1 || frame->buttons ||
+	if (frame->ncontacts > 2 || frame->buttons ||
 	    abs(contact->x - ptr->startx) > 50 ||
 	    abs(contact->y - ptr->starty) > 50)
 		ptr->tap_candidate = false;
+	else if (frame->ncontacts > ptr->tap_fingers)
+		ptr->tap_fingers = frame->ncontacts;
 	dx = contact->x - ptr->x + ptr->remx;
 	dy = ptr->y - contact->y + ptr->remy;
 	motion->dx = dx / 8;

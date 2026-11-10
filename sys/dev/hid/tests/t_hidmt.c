@@ -127,7 +127,7 @@ main(void)
 	assert(motion.dx == 0 && motion.dy == 0 && !motion.tap);
 	frame.ncontacts = 0;
 	hidmt_pointer_update(&ptr, &frame, 1100000, true, &motion);
-	assert(motion.tap && motion.buttons == 0);
+	assert(motion.tap && motion.tap_button == 1 && motion.buttons == 0);
 	/* A duplicate release cannot synthesize another click. */
 	hidmt_pointer_update(&ptr, &frame, 1101000, true, &motion);
 	assert(!motion.tap);
@@ -193,11 +193,38 @@ main(void)
 	frame.contacts[1] = (struct hidmt_contact){2000, 800, 3};
 	hidmt_pointer_update(&ptr, &frame, 7000000, true, &motion);
 	frame.contacts[0] = (struct hidmt_contact){2000, 800, 3};
-	frame.contacts[1] = (struct hidmt_contact){1016, 800, 2};
+	frame.contacts[1] = (struct hidmt_contact){1080, 800, 2};
 	hidmt_pointer_update(&ptr, &frame, 7020000, true, &motion);
-	assert(motion.dx == 2 && motion.dy == 0);
+	assert(motion.dx == 10 && motion.dy == 0);
 	frame.ncontacts = 0;
 	hidmt_pointer_update(&ptr, &frame, 7100000, true, &motion);
+	assert(!motion.tap);
+	/* Two-finger tap synthesizes a right click (wscons button bit 2). */
+	frame.ncontacts = 2; frame.buttons = 0; frame.cancel_tap = false;
+	frame.contacts[0] = (struct hidmt_contact){1000, 800, 2};
+	frame.contacts[1] = (struct hidmt_contact){1200, 800, 3};
+	hidmt_pointer_update(&ptr, &frame, 7200000, true, &motion);
+	frame.ncontacts = 0;
+	hidmt_pointer_update(&ptr, &frame, 7250000, true, &motion);
+	assert(motion.tap && motion.tap_button == 4);
+	/* A second finger may join a one-finger tap candidate. */
+	frame.ncontacts = 1;
+	frame.contacts[0] = (struct hidmt_contact){1000, 800, 2};
+	hidmt_pointer_update(&ptr, &frame, 7300000, true, &motion);
+	frame.ncontacts = 2;
+	frame.contacts[1] = (struct hidmt_contact){1200, 820, 3};
+	hidmt_pointer_update(&ptr, &frame, 7310000, true, &motion);
+	frame.ncontacts = 0;
+	hidmt_pointer_update(&ptr, &frame, 7350000, true, &motion);
+	assert(motion.tap && motion.tap_button == 4);
+	/* Three contacts are not a tap. */
+	frame.ncontacts = 3;
+	frame.contacts[0] = (struct hidmt_contact){1000, 800, 2};
+	frame.contacts[1] = (struct hidmt_contact){1200, 800, 3};
+	frame.contacts[2] = (struct hidmt_contact){1400, 800, 4};
+	hidmt_pointer_update(&ptr, &frame, 7400000, true, &motion);
+	frame.ncontacts = 0;
+	hidmt_pointer_update(&ptr, &frame, 7450000, true, &motion);
 	assert(!motion.tap);
 	/* Physical button activity cancels synthetic clicks. */
 	frame.ncontacts = 1; frame.buttons = 1;
