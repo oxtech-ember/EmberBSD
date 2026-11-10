@@ -160,8 +160,9 @@ hidmt_decode(const struct hidmt_config *c, const uint8_t *b, unsigned n, struct 
 	return 0;
 }
 void
-hidmt_pointer_update(struct hidmt_pointer *p, const struct hidmt_frame *f, uint64_t t, bool tap, struct hidmt_motion *m)
+hidmt_pointer_update(struct hidmt_pointer *p, const struct hidmt_frame *f, uint64_t t, unsigned tap_flags, struct hidmt_motion *m)
 {
+	(void)tap_flags;
 	*m = (struct hidmt_motion){.tap = p->tap_candidate};
 }
 static int

@@ -229,21 +229,34 @@ hidmt_decode(const struct hidmt_config *cfg, const uint8_t *data, unsigned len,
 
 void
 hidmt_pointer_update(struct hidmt_pointer *ptr, const struct hidmt_frame *frame,
-    uint64_t now, bool tapping, struct hidmt_motion *motion)
+    uint64_t now, unsigned tap_flags, struct hidmt_motion *motion)
 {
 	const struct hidmt_contact *contact;
-	unsigned i, tap_fingers;
+	unsigned i, tap_fingers, fingers, allowed;
 	int dx, dy;
+	bool same_contact, want_left, want_right;
 
+	want_left = (tap_flags & HIDMT_TAP_LEFT) != 0;
+	want_right = (tap_flags & HIDMT_TAP_RIGHT) != 0;
 	memset(motion, 0, sizeof(*motion));
+	/*
+	 * Clickfinger: a physical click with two contacts is right, with
+	 * three contacts is middle. One contact keeps the hardware button.
+	 * This path does not depend on tap synthesis flags.
+	 */
 	motion->buttons = frame->buttons;
+	if (frame->buttons && frame->ncontacts >= 3)
+		motion->buttons = 2u;
+	else if (frame->buttons && frame->ncontacts >= 2)
+		motion->buttons = 4u;
 	if (frame->cancel_tap)
 		ptr->tap_candidate = false;
 	if (frame->ncontacts == 0) {
 		tap_fingers = ptr->tap_fingers;
-		motion->tap = ptr->active && ptr->tap_candidate && tapping &&
-		    !frame->buttons && now >= ptr->started &&
-		    now - ptr->started <= 180000;
+		allowed = tap_fingers >= 2 ? HIDMT_TAP_RIGHT : HIDMT_TAP_LEFT;
+		motion->tap = ptr->active && ptr->tap_candidate &&
+		    (tap_flags & allowed) != 0 && !frame->buttons &&
+		    now >= ptr->started && now - ptr->started <= 250000;
 		if (motion->tap)
 			motion->tap_button = tap_fingers >= 2 ? 4u : 1u;
 		memset(ptr, 0, sizeof(*ptr));
@@ -255,17 +268,20 @@ hidmt_pointer_update(struct hidmt_pointer *ptr, const struct hidmt_frame *frame,
 			contact = &frame->contacts[i];
 			break;
 		}
-	if (!ptr->active || ptr->id != contact->id) {
-		bool was_active = ptr->active;
+	same_contact = ptr->active && ptr->id == contact->id;
+	if (!ptr->active) {
 		memset(ptr, 0, sizeof(*ptr));
 		ptr->active = true;
 		/*
-		 * One finger synthesizes left click; two fingers synthesize
-		 * right click. More contacts are gestures, not taps.
+		 * HIDMT_TAP_LEFT: one-finger tap → left.
+		 * HIDMT_TAP_RIGHT: two-finger tap → right. A right-only
+		 * candidate may start on one finger and grow to two.
+		 * More than two contacts are gestures, not taps.
 		 */
-		ptr->tap_candidate = tapping && !was_active &&
+		ptr->tap_candidate = !frame->buttons && !frame->cancel_tap &&
 		    frame->ncontacts >= 1 && frame->ncontacts <= 2 &&
-		    !frame->buttons && !frame->cancel_tap;
+		    ((want_left && frame->ncontacts == 1) ||
+			(want_right && frame->ncontacts <= 2));
 		ptr->tap_fingers = frame->ncontacts;
 		ptr->id = contact->id;
 		ptr->x = ptr->startx = contact->x;
@@ -273,12 +289,32 @@ hidmt_pointer_update(struct hidmt_pointer *ptr, const struct hidmt_frame *frame,
 		ptr->started = now;
 		return;
 	}
+	if (!same_contact) {
+		/*
+		 * Fingers leave the pad asynchronously. Keep the tap
+		 * candidate and finger count when the tracked contact ends
+		 * and another contact from the same gesture remains.
+		 */
+		ptr->id = contact->id;
+		ptr->x = contact->x;
+		ptr->y = contact->y;
+		ptr->startx = contact->x;
+		ptr->starty = contact->y;
+		ptr->remx = ptr->remy = 0;
+		if (frame->ncontacts > 2 || frame->buttons ||
+		    frame->cancel_tap)
+			ptr->tap_candidate = false;
+		else if (frame->ncontacts > ptr->tap_fingers)
+			ptr->tap_fingers = frame->ncontacts;
+		return;
+	}
+	fingers = frame->ncontacts;
 	if (frame->ncontacts > 2 || frame->buttons ||
 	    abs(contact->x - ptr->startx) > 50 ||
 	    abs(contact->y - ptr->starty) > 50)
 		ptr->tap_candidate = false;
-	else if (frame->ncontacts > ptr->tap_fingers)
-		ptr->tap_fingers = frame->ncontacts;
+	else if (fingers > ptr->tap_fingers)
+		ptr->tap_fingers = fingers;
 	dx = contact->x - ptr->x + ptr->remx;
 	dy = ptr->y - contact->y + ptr->remy;
 	motion->dx = dx / 8;

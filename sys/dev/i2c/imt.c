@@ -25,6 +25,7 @@ struct imt_softc {
 	uint8_t *sc_mode;
 	bool sc_ready, sc_enabled, sc_suspended;
 	int sc_tapping;
+	int sc_tapping_right;
 };
 
 static int imt_match(device_t, cfdata_t, void *);
@@ -90,14 +91,26 @@ imt_attach(device_t parent, device_t self, void *aux)
 	aprint_normal(": Precision Touchpad, %u parallel contacts\n",
 	    sc->sc_config.nslots);
 
+	/*
+	 * One-finger tap synthesizes left click and can confuse Plasma on
+	 * Nick (double left → black screen). Keep it off by default.
+	 * Two-finger tap → right is safe and on by default.
+	 */
+	sc->sc_tapping = 0;
+	sc->sc_tapping_right = 1;
 	if (sysctl_createv(&sc->sc_sysctllog, 0, NULL, &node, 0,
 	    CTLTYPE_NODE, device_xname(self),
 	    SYSCTL_DESCR("Precision Touchpad settings"), NULL, 0, NULL, 0,
-	    CTL_HW, CTL_CREATE, CTL_EOL) == 0)
-		sysctl_createv(&sc->sc_sysctllog, 0, &node, NULL, CTLFLAG_READWRITE,
-		    CTLTYPE_INT, "tapping",
-		    SYSCTL_DESCR("Enable tap-to-click (1 finger left, 2 fingers right)"),
+	    CTL_HW, CTL_CREATE, CTL_EOL) == 0) {
+		sysctl_createv(&sc->sc_sysctllog, 0, &node, NULL,
+		    CTLFLAG_READWRITE, CTLTYPE_INT, "tapping",
+		    SYSCTL_DESCR("Enable one-finger tap-to-click (left button)"),
 		    NULL, 0, &sc->sc_tapping, 0, CTL_CREATE, CTL_EOL);
+		sysctl_createv(&sc->sc_sysctllog, 0, &node, NULL,
+		    CTLFLAG_READWRITE, CTLTYPE_INT, "tapping_right",
+		    SYSCTL_DESCR("Enable two-finger tap (right button)"),
+		    NULL, 0, &sc->sc_tapping_right, 0, CTL_CREATE, CTL_EOL);
+	}
 
 	/* Resume can run with interrupts disabled. Allocate its buffer now. */
 	sc->sc_mode = kmem_zalloc(sc->sc_config.config_size, KM_SLEEP);
@@ -241,7 +254,8 @@ imt_intr(struct ihidev *hdev, void *buf, u_int len)
 	getnanouptime(&now);
 	hidmt_pointer_update(&sc->sc_pointer, &frame,
 	    (uint64_t)now.tv_sec * 1000000 + now.tv_nsec / 1000,
-	    sc->sc_tapping != 0, &motion);
+	    (sc->sc_tapping != 0 ? HIDMT_TAP_LEFT : 0) |
+	    (sc->sc_tapping_right != 0 ? HIDMT_TAP_RIGHT : 0), &motion);
 	s = spltty();
 	wsmouse_input(sc->sc_mouse,
 	    motion.buttons | (motion.tap ? motion.tap_button : 0),

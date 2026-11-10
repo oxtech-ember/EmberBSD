@@ -16,8 +16,13 @@ CFLAGS='-fsanitize=undefined -fsanitize-undefined-trap-on-error -fno-sanitize-re
 The tests cover descriptor ranges and report IDs, short taps, long holds,
 pointer motion, contact order changes, one- and two-finger taps, disabled
 tapping, physical buttons, palms, invalid lengths, duplicate identifiers,
-and invalid coordinates. One finger synthesizes left click; two fingers
-synthesize right click; three contacts are not a tap.
+and invalid coordinates. `HIDMT_TAP_LEFT` synthesizes left click from one
+finger; `HIDMT_TAP_RIGHT` synthesizes right click from two fingers; three
+contacts are not a tap. Right-only mode rejects one-finger taps and still
+accepts two-finger taps. An asynchronous release that drops the tracked
+contact while another contact remains still counts as a two-finger tap. A
+physical click with two contacts is right; with three contacts it is middle;
+clickfinger works with all tap flags off.
 Enabling tapping during an existing contact must not synthesize a click.
 
 The I2C transport must also compile against the selected kernel configuration.

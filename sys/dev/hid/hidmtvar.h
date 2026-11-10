@@ -46,10 +46,14 @@ struct hidmt_motion {
 	unsigned tap_button;
 };
 
+/* Tap synthesis flags for hidmt_pointer_update(). */
+#define HIDMT_TAP_LEFT	0x01u	/* one-finger tap → left button */
+#define HIDMT_TAP_RIGHT	0x02u	/* two-finger tap → right button */
+
 int hidmt_parse(const void *, int, struct hidmt_config *);
 int hidmt_decode(const struct hidmt_config *, const uint8_t *, unsigned,
     struct hidmt_frame *);
 void hidmt_pointer_update(struct hidmt_pointer *, const struct hidmt_frame *,
-    uint64_t, bool, struct hidmt_motion *);
+    uint64_t, unsigned, struct hidmt_motion *);
 
 #endif
