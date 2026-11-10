@@ -19,6 +19,7 @@
 #define PAGE_SIZE ((size_t)1 << PAGE_SHIFT)
 #define KM_SLEEP 0
 #define KM_NOSLEEP 1
+#define BUS_DMA_WAITOK 0
 #define BUS_DMA_NOWAIT 1
 #define BUS_DMA_PREFETCHABLE 2
 #define BUS_DMASYNC_PREWRITE 4
@@ -34,7 +35,9 @@
 #define MAP_PRIVATE 2
 #define DRIVER_GEM 1
 #define roundup2(x, a) (((x) + (a) - 1) & ~((a) - 1))
+#ifndef howmany
 #define howmany(x, y) (((x) + (y) - 1) / (y))
+#endif
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 #define EWOULDBLOCK EAGAIN
@@ -108,16 +111,24 @@ struct drm_vma_offset_manager {
 	unsigned long next;
 	struct drm_vma_offset_node *nodes[16];
 };
+struct drm_gem_object;
+struct drm_driver { void (*gem_free_object)(struct drm_gem_object *); };
 struct drm_device {
 	bus_dma_tag_t dmat;
 	unsigned int refs, features;
 	struct drm_vma_offset_manager *vma_offset_manager;
+	const struct drm_driver *driver;
 };
 static uint64_t selected_bvnc = UINT64_C(0x00240038006800b7);
 uint64_t pvr_device_bvnc(struct drm_device *d)
 { (void)d; return selected_bvnc; }
 struct drm_gem_object;
-struct dma_buf { struct drm_gem_object *obj; int flags; };
+struct dma_buf;
+struct dma_buf_ops { void (*release)(struct dma_buf *); };
+struct dma_buf {
+	struct drm_gem_object *obj; int flags;
+	const struct dma_buf_ops *ops; void *priv; unsigned int refs;
+};
 struct sg_table { struct drm_gem_object *obj; };
 struct drm_gem_object_funcs {
 	void (*free)(struct drm_gem_object *);
@@ -190,6 +201,7 @@ kpause(const char *wmesg, bool intr, int ticks, void *lock)
 }
 /* Chunk model: one contiguous arena, handed out in sequential segments. */
 static bool chunk_mode;
+static unsigned int chunk_calls;
 static unsigned char chunk_arena[130 * ((size_t)1 << PAGE_SHIFT)];
 static size_t chunk_used;
 
@@ -212,7 +224,8 @@ bus_dmamem_alloc(bus_dma_tag_t tag, size_t size, size_t align, size_t boundary,
 		/* Only chunks succeed, and each chunk takes its free pages. */
 		if (max == 1 && size > 64 * PAGE_SIZE)
 			return ENOMEM;
-		CHECK(max >= (int)(size / PAGE_SIZE) && size <= 64 * PAGE_SIZE);
+		CHECK(max >= (int)(size / PAGE_SIZE) && size <= 2048 * PAGE_SIZE);
+		chunk_calls++;
 		CHECK(available_pages >= (int)(size / PAGE_SIZE));
 		CHECK(chunk_used + size <= sizeof(chunk_arena));
 		segs->memory = chunk_arena + chunk_used;
@@ -431,7 +444,7 @@ drm_gem_prime_export(struct drm_gem_object *obj, int flags)
 {
 	exports++;
 	if (export_error) return ERR_PTR(export_error);
-	exported = (struct dma_buf){ obj, flags }; return &exported;
+	exported = (struct dma_buf){ .obj = obj, .flags = flags }; return &exported;
 }
 static struct sg_table *
 drm_prime_bus_dmamem_to_sg(bus_dma_tag_t tag, const bus_dma_segment_t *segs,
@@ -442,6 +455,15 @@ drm_prime_bus_dmamem_to_sg(bus_dma_tag_t tag, const bus_dma_segment_t *segs,
 	CHECK(nsegs == 1 || (scatter_mode && nsegs == 2));
 	exported_sg.obj = sg_owner; return &exported_sg;
 }
+
+/* Imports of scanout buffers have their own device contract. */
+static void drm_gem_dmabuf_release(struct dma_buf *b) { (void)b; abort(); }
+static void drm_gem_cma_free_object(struct drm_gem_object *o) { (void)o; abort(); }
+static void get_dma_buf(struct dma_buf *b) { b->refs++; }
+static void dma_buf_put(struct dma_buf *b) { CHECK(b->refs != 0); b->refs--; }
+static int bus_dmamap_load_raw(bus_dma_tag_t t, bus_dmamap_t map,
+    bus_dma_segment_t *segs, int nsegs, size_t size, int flags)
+{ (void)t; (void)map; (void)segs; (void)nsegs; (void)size; (void)flags; abort(); }
 
 static unsigned int diagnostic_count;
 static char diagnostic_stage[32];
@@ -974,14 +996,16 @@ main(void)
 	scatter_mode = false;
 	/* Large GPU-only BOs accumulate chunks while the pagedaemon reclaims;
 	 * a failure releases every chunk already taken. */
-	chunk_mode = true;
+	chunk_mode = true; chunk_calls = 0;
 	create = (struct drm_pvr_ioctl_create_bo_args){ .size = 130 * PAGE_SIZE, .flags = 0 };
 	available_pages = uvmexp.reserve_kernel + uvmexp.reserve_pagedaemon + 70;
 	pauses = 0; reclaim_per_pause = 8;
 	CHECK(pvr_create_bo(&dev, &create, &a) == 0);
 	obj = a.handles[create.handle];
-	CHECK(obj->size == 130 * PAGE_SIZE && pvr_to_bo(obj)->nsegments == 3);
-	CHECK(pauses != 0 && chunk_used == 130 * PAGE_SIZE);
+	/* Each call takes what the margin allows: 69 free pages, then the 61
+	 * the pagedaemon reclaims; it waits for a useful amount, not single pages. */
+	CHECK(obj->size == 130 * PAGE_SIZE && pvr_to_bo(obj)->nsegments == 2);
+	CHECK(chunk_calls == 2 && pauses == 8 && chunk_used == 130 * PAGE_SIZE);
 	close_args = (struct drm_gem_close){ create.handle, 0 };
 	CHECK(drm_gem_close_ioctl(&dev, &close_args, &a) == 0);
 	empty(&dev);

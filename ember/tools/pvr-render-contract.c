@@ -61,6 +61,7 @@ struct drm_ioctl_desc {
 #define DRM_IOCTL_DEF_DRV(n, f, flags_) \
 	[DRM_IOCTL_NR(DRM_IOCTL_##n) - DRM_COMMAND_BASE] = \
 	{ .cmd = DRM_IOCTL_##n, .func = f, .flags = flags_ }
+struct dma_buf;
 struct drm_driver {
 	unsigned int driver_features;
 	const struct drm_ioctl_desc *ioctls;
@@ -74,6 +75,7 @@ struct drm_driver {
 	int (*prime_fd_to_handle)(struct drm_device *, struct drm_file *, int, uint32_t *);
 	int (*gem_prime_mmap)(struct drm_gem_object *, off_t *, size_t, int, int *, int *,
 	    struct uvm_object **, int *);
+	struct drm_gem_object *(*gem_prime_import)(struct drm_device *, struct dma_buf *);
 	const void *gem_uvm_ops;
 	const char *name, *desc, *date;
 	unsigned int major, minor, patchlevel;
@@ -251,6 +253,8 @@ static int drm_gem_prime_fd_to_handle(struct drm_device *d, struct drm_file *f,
     int fd, uint32_t *handle) { abort(); }
 static int pvr_prime_mmap(struct drm_gem_object *o, off_t *off, size_t n, int prot,
     int *flags, int *advice, struct uvm_object **u, int *maxprot) { abort(); }
+static struct drm_gem_object *pvr_gem_prime_import(struct drm_device *d,
+    struct dma_buf *b) { abort(); }
 
 static int pvr_create_bo(struct drm_device *d, void *a, struct drm_file *f)
 { abort(); }
@@ -754,6 +758,7 @@ main(void)
 	CHECK(owner->driver->prime_handle_to_fd == drm_gem_prime_handle_to_fd);
 	CHECK(owner->driver->prime_fd_to_handle == drm_gem_prime_fd_to_handle);
 	CHECK(owner->driver->gem_prime_mmap == pvr_prime_mmap);
+	CHECK(owner->driver->gem_prime_import == pvr_gem_prime_import);
 	CHECK(owner->driver->gem_uvm_ops == &pvr_bo_uvm_ops);
 	CHECK(owner->driver->ioctls[0].flags == (DRM_RENDER_ALLOW | DRM_UNLOCKED));
 	calls = registered;
