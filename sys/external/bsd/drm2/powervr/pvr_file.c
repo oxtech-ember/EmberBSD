@@ -11,6 +11,7 @@
 #include <sys/kmem.h>
 #include <sys/atomic.h>
 #include <sys/mutex.h>
+#include <sys/rbtree.h>
 #include <sys/systm.h>
 #include <linux/idr.h>
 #include <drm/drm_device.h>
@@ -33,7 +34,10 @@
 #define PVR_FILE_RETIRED_MAX	256
 #define PVR_FILE_RETIRED_BYTES	(UINT64_C(64) << 20)
 
+/* Live mappings are disjoint and ordered by device address; retired ones
+ * form a list through next. */
 struct pvr_file_mapping {
+	struct rb_node node;
 	struct pvr_file_mapping *next;
 	struct drm_gem_object *object;
 	uint64_t address, size, offset;
@@ -53,7 +57,7 @@ struct pvr_file_vm {
 	/* lost: a context on this VM was reset by recovered firmware. */
 	bool published, failed, lost;
 	struct pvr_vm *tables;
-	struct pvr_file_mapping *mappings;
+	struct rb_tree mappings;
 	unsigned int synced;	/* mappings with their own cache maintenance */
 	/* Unmapped ranges whose RAM queued or running work may still use. */
 	struct pvr_file_mapping *retired;
@@ -94,6 +98,52 @@ pvr_file_put(struct pvr_file *pf)
 		kmem_free(pf, sizeof(*pf));
 }
 
+static int
+pvr_file_mapping_compare_nodes(void *context, const void *a, const void *b)
+{
+	const struct pvr_file_mapping *left = a, *right = b;
+
+	if (left->address < right->address)
+		return -1;
+	return left->address > right->address;
+}
+
+static int
+pvr_file_mapping_compare_key(void *context, const void *node, const void *key)
+{
+	const struct pvr_file_mapping *mapping = node;
+	const uint64_t address = *(const uint64_t *)key;
+
+	if (mapping->address < address)
+		return -1;
+	return mapping->address > address;
+}
+
+static const rb_tree_ops_t pvr_file_mapping_ops = {
+	.rbto_compare_nodes = pvr_file_mapping_compare_nodes,
+	.rbto_compare_key = pvr_file_mapping_compare_key,
+	.rbto_node_offset = offsetof(struct pvr_file_mapping, node),
+	.rbto_context = NULL,
+};
+
+/* The mapping that holds [address, address + size), if any. */
+static struct pvr_file_mapping *
+pvr_file_mapping_find(const struct pvr_file_vm *vm, uint64_t address,
+    uint64_t size)
+{
+	struct pvr_file_mapping *mapping;
+	uint64_t offset;
+
+	/* Lookup only: the tree is not modified. */
+	mapping = rb_tree_find_node_leq(__UNCONST(&vm->mappings), &address);
+	if (mapping == NULL)
+		return NULL;
+	offset = address - mapping->address;
+	if (offset >= mapping->size || size > mapping->size - offset)
+		return NULL;
+	return mapping;
+}
+
 void
 pvr_file_vm_put(struct pvr_file_vm *vm)
 {
@@ -115,9 +165,9 @@ pvr_file_vm_put(struct pvr_file_vm *vm)
 		return;
 	}
 	pvr_vm_destroy(vm->tables);
-	while ((mapping = vm->mappings) != NULL) {
+	while ((mapping = RB_TREE_MIN(&vm->mappings)) != NULL) {
 		KASSERT(mapping->pins == 0);
-		vm->mappings = mapping->next;
+		rb_tree_remove_node(&vm->mappings, mapping);
 		drm_gem_object_put_unlocked(mapping->object);
 		kmem_free(mapping, sizeof(*mapping));
 	}
@@ -203,6 +253,7 @@ pvr_create_vm_context_locked(struct drm_device *dev, void *data, struct drm_file
 	vm = kmem_zalloc(sizeof(*vm), KM_SLEEP);
 	vm->dev = dev;
 	vm->refs = 1;
+	rb_tree_init(&vm->mappings, &pvr_file_mapping_ops);
 	error = pvr_device_bvnc(dev) == UINT64_C(0x0016006600360026) ?
 	    pvr_vm_create_direct(dev->dmat, &vm->tables) :
 	    pvr_vm_create(dev->dmat, &vm->tables);
@@ -252,7 +303,7 @@ pvr_vm_map_ioctl_locked(struct drm_device *dev, void *data, struct drm_file *fil
 	struct drm_pvr_ioctl_vm_map_args *args = data;
 	struct pvr_file *pf = file->driver_priv;
 	struct pvr_file_vm *vm;
-	struct pvr_file_mapping *mapping;
+	struct pvr_file_mapping *mapping, *inserted __diagused;
 	struct drm_gem_object *obj;
 	uint64_t *pages = NULL;
 	size_t page_bytes = 0;
@@ -302,8 +353,8 @@ pvr_vm_map_ioctl_locked(struct drm_device *dev, void *data, struct drm_file *fil
 			mapping->synced = pvr_bo_needs_sync(obj);
 			if (mapping->synced)
 				vm->synced++;
-			mapping->next = vm->mappings;
-			vm->mappings = mapping;
+			inserted = rb_tree_insert_node(&vm->mappings, mapping);
+			KASSERT(inserted == mapping);
 		}
 	}
 	mutex_exit(&pf->lock);
@@ -327,7 +378,7 @@ pvr_vm_unmap_ioctl_locked(struct drm_device *dev, void *data, struct drm_file *f
 	struct drm_pvr_ioctl_vm_unmap_args *args = data;
 	struct pvr_file *pf = file->driver_priv;
 	struct pvr_file_vm *vm;
-	struct pvr_file_mapping *mapping, **link;
+	struct pvr_file_mapping *mapping;
 	int error = ENOENT;
 	bool reap = false;
 
@@ -345,31 +396,27 @@ pvr_vm_unmap_ioctl_locked(struct drm_device *dev, void *data, struct drm_file *f
 		mutex_exit(&pf->lock);
 		return -EIO;
 	}
-	for (link = &vm->mappings; (mapping = *link) != NULL;
-	    link = &mapping->next) {
-		if (mapping->address == args->device_addr &&
-		    mapping->size == args->size) {
-			if (mapping->pins != 0) {
-				error = EBUSY;
-				break;
-			}
-			if (vm->submissions != 0 &&
-			    (vm->nretired >= PVR_FILE_RETIRED_MAX ||
-			    mapping->size > PVR_FILE_RETIRED_BYTES -
-			    vm->retired_bytes)) {
-				error = EAGAIN;
-				break;
-			}
-			/*
-			 * Clear the entries now. The RAM and the detached
-			 * tables stay until no work can use them: at once
-			 * without work, else when the VM's work retires.
-			 */
-			error = pvr_vm_unmap_deferred(vm->tables,
-			    args->device_addr, args->size);
-			if (error != 0)
-				break;
-			*link = mapping->next;
+	mapping = rb_tree_find_node(&vm->mappings, &args->device_addr);
+	if (mapping != NULL && mapping->size != args->size)
+		mapping = NULL;
+	if (mapping == NULL) {
+		/* ENOENT */
+	} else if (mapping->pins != 0) {
+		error = EBUSY;
+	} else if (vm->submissions != 0 &&
+	    (vm->nretired >= PVR_FILE_RETIRED_MAX ||
+	    mapping->size > PVR_FILE_RETIRED_BYTES - vm->retired_bytes)) {
+		error = EAGAIN;
+	} else {
+		/*
+		 * Clear the entries now. The RAM and the detached tables stay
+		 * until no work can use them: at once without work, else when
+		 * the VM's work retires.
+		 */
+		error = pvr_vm_unmap_deferred(vm->tables, args->device_addr,
+		    args->size);
+		if (error == 0) {
+			rb_tree_remove_node(&vm->mappings, mapping);
 			if (mapping->synced)
 				vm->synced--;
 			mapping->next = vm->retired;
@@ -377,7 +424,6 @@ pvr_vm_unmap_ioctl_locked(struct drm_device *dev, void *data, struct drm_file *f
 			vm->nretired++;
 			vm->retired_bytes += mapping->size;
 			reap = vm->submissions == 0;
-			break;
 		}
 	}
 	mutex_exit(&pf->lock);
@@ -464,7 +510,7 @@ pvr_file_vm_objects(struct pvr_file_vm *vm, struct drm_gem_object ***out,
 		return EINVAL;
 	if (vm->failed)
 		return EIO;
-	for (mapping = vm->mappings; mapping != NULL; mapping = mapping->next) {
+	RB_TREE_FOREACH(mapping, &vm->mappings) {
 		if (count == INT_MAX || count == SIZE_MAX / sizeof(objects[0]))
 			return E2BIG;
 		count++;
@@ -476,7 +522,7 @@ pvr_file_vm_objects(struct pvr_file_vm *vm, struct drm_gem_object ***out,
 	objects = kmem_alloc(count * sizeof(objects[0]), KM_NOSLEEP);
 	if (objects == NULL)
 		return ENOMEM;
-	for (mapping = vm->mappings; mapping != NULL; mapping = mapping->next) {
+	RB_TREE_FOREACH(mapping, &vm->mappings) {
 		drm_gem_object_get(mapping->object);
 		objects[i++] = mapping->object;
 	}
@@ -497,7 +543,7 @@ pvr_file_vm_objects_cover(struct pvr_file_vm *vm,
 
 	if (vm == NULL || vm->failed || (objects == NULL && count != 0))
 		return false;
-	for (mapping = vm->mappings; mapping != NULL; mapping = mapping->next) {
+	RB_TREE_FOREACH(mapping, &vm->mappings) {
 		wanted = (uintptr_t)mapping->object->resv;
 		first = 0;
 		end = count;
@@ -527,8 +573,7 @@ pvr_file_vm_sync(struct pvr_file_vm *vm, int operations)
 
 	if (vm->synced == 0) {
 		/* Only coherent BOs: one barrier, no walk of every mapping. */
-		for (mapping = vm->mappings; mapping != NULL;
-		    mapping = mapping->next) {
+		RB_TREE_FOREACH(mapping, &vm->mappings) {
 			if (pvr_bo_coherent(mapping->object) &&
 			    !pvr_bo_imported(mapping->object)) {
 				pvr_bo_barrier(mapping->object, operations);
@@ -537,7 +582,9 @@ pvr_file_vm_sync(struct pvr_file_vm *vm, int operations)
 		}
 		return;
 	}
-	for (mapping = vm->mappings; mapping != NULL; mapping = mapping->next) {
+	RB_TREE_FOREACH(mapping, &vm->mappings) {
+		if (pvr_bo_imported(mapping->object))
+			continue;	/* no CPU mapping: nothing to maintain */
 		if (pvr_bo_coherent(mapping->object))
 			barrier = mapping->object;
 		else
@@ -620,9 +667,7 @@ pvr_file_vm_fault(const struct pvr_file_vm *vm, uint64_t va)
 	const struct pvr_file_mapping *map;
 	uint64_t pte;
 
-	for (map = vm->mappings; map != NULL; map = map->next)
-		if (va >= map->address && va - map->address < map->size)
-			break;
+	map = pvr_file_mapping_find(vm, va, 1);
 	if (map == NULL)
 		printf("PVR_HWR_VM: mapping=unmapped");
 	else
@@ -671,15 +716,12 @@ pvr_file_vm_buffer(struct pvr_file_vm *vm, uint64_t address, size_t size,
 
 	if (vm->failed || size == 0)
 		return EINVAL;
-	for (mapping = vm->mappings; mapping != NULL; mapping = mapping->next) {
-		if (address < mapping->address)
-			continue;
-		offset = address - mapping->address;
-		if (offset < mapping->size && size <= mapping->size - offset)
-			return pvr_bo_cpu(mapping->object, mapping->offset + offset,
-			    size, required_flags, cpu);
-	}
-	return ENOENT;
+	mapping = pvr_file_mapping_find(vm, address, size);
+	if (mapping == NULL)
+		return ENOENT;
+	offset = address - mapping->address;
+	return pvr_bo_cpu(mapping->object, mapping->offset + offset, size,
+	    required_flags, cpu);
 }
 
 void
@@ -814,12 +856,9 @@ pvr_file_vm_pin(struct pvr_file_vm *vm, uint64_t address, size_t size,
 
 	if (pin == NULL || pin->mapping != NULL || vm->failed || size == 0)
 		return EINVAL;
-	for (mapping = vm->mappings; mapping != NULL; mapping = mapping->next) {
-		if (address < mapping->address)
-			continue;
+	mapping = pvr_file_mapping_find(vm, address, size);
+	if (mapping != NULL) {
 		offset = address - mapping->address;
-		if (offset >= mapping->size || size > mapping->size - offset)
-			continue;
 		/* Firmware free-list arrays need exclusive backing storage. */
 		if (mapping->pins != 0)
 			return EBUSY;
@@ -875,12 +914,9 @@ pvr_file_vm_hold(struct pvr_file_vm *vm, uint64_t address, size_t size,
 
 	if (hold == NULL || hold->mapping != NULL || vm->failed || size == 0)
 		return EINVAL;
-	for (mapping = vm->mappings; mapping != NULL; mapping = mapping->next) {
-		if (address < mapping->address)
-			continue;
+	mapping = pvr_file_mapping_find(vm, address, size);
+	if (mapping != NULL) {
 		offset = address - mapping->address;
-		if (offset >= mapping->size || size > mapping->size - offset)
-			continue;
 		if (mapping->pins == UINT_MAX)
 			return EOVERFLOW;
 		error = pvr_bo_cpu(mapping->object, mapping->offset + offset,

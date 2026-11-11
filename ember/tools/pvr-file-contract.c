@@ -34,6 +34,7 @@ typedef uint16_t __u16;
 typedef uint32_t __u32;
 typedef uint64_t __u64;
 typedef void *bus_dma_tag_t;
+#include "rbtree.h"
 #include "pvr-uapi-body.h"
 #include "pvr_backend.h"
 #include "pvr_file.h"
@@ -49,6 +50,8 @@ static atomic_uint checks, allocations, objects, vms;
 	fprintf(stderr, "FAIL line %d: %s\n", __LINE__, #e); abort(); \
 } } while (0)
 #define KASSERT(e) CHECK(e)
+#define __diagused
+#define __UNCONST(p) ((void *)(uintptr_t)(const void *)(p))
 typedef struct {
 	pthread_mutex_t lock;
 	pthread_t owner;
@@ -346,6 +349,17 @@ static int kpause(const char *name, bool interruptible, int ticks, void *lock)
 /* Match the function-like macro shape from kernel sys/malloc.h. */
 #define free(a, b) unexpected_backend_free_macro(a, b)
 #include "pvr-file-body.h"
+
+/* The VM's single live mapping. */
+static struct pvr_file_mapping *
+only_mapping(struct pvr_file_vm *vm)
+{
+	struct pvr_file_mapping *mapping = RB_TREE_MIN(&vm->mappings);
+
+	CHECK(mapping != NULL &&
+	    rb_tree_iterate(&vm->mappings, mapping, RB_DIR_RIGHT) == NULL);
+	return mapping;
+}
 #undef free
 
 static struct drm_device *hook_dev;
@@ -527,7 +541,7 @@ pin_lifetime(struct drm_device *dev)
 	mapping_error = EIO;
 	CHECK(pvr_file_vm_pin(vm, BASE, 32, 0, &pin) == EIO);
 	mapping_error = 0;
-	CHECK(pin.mapping == NULL && vm->mappings->pins == 0 && !bo->pinned);
+	CHECK(pin.mapping == NULL && only_mapping(vm)->pins == 0 && !bo->pinned);
 	CHECK(pvr_file_vm_pin(vm, BASE + 64, 32, bo->flags, &pin) == 0);
 	CHECK(pin.cpu == (void *)(uintptr_t)(bo->pa + PAGE_SIZE + 64));
 	CHECK(pin.physical == bo->pa + PAGE_SIZE + 64);
@@ -538,7 +552,7 @@ pin_lifetime(struct drm_device *dev)
 	CHECK(second.mapping == NULL && mapping->pins == 1);
 	/* Different VM mappings still refer to one protected firmware array. */
 	CHECK(pvr_file_vm_pin(alias_vm, BASE, 32, bo->flags, &second) == EBUSY);
-	CHECK(second.mapping == NULL && alias_vm->mappings->pins == 0);
+	CHECK(second.mapping == NULL && only_mapping(alias_vm)->pins == 0);
 	pvr_file_pin_sync(&pin, BUS_DMASYNC_PREWRITE | BUS_DMASYNC_PREREAD);
 	pvr_file_pin_sync(&pin, BUS_DMASYNC_POSTWRITE | BUS_DMASYNC_POSTREAD);
 	CHECK(pre_syncs == post_syncs);
@@ -551,7 +565,7 @@ pin_lifetime(struct drm_device *dev)
 	CHECK(mapping->pins == 0 && !bo->pinned && pin.mapping == NULL);
 	CHECK(pin.cpu == NULL && pin.physical == 0);
 	CHECK(pvr_file_vm_pin(alias_vm, BASE, 32, bo->flags, &second) == 0);
-	CHECK(bo->pinned && alias_vm->mappings->pins == 1);
+	CHECK(bo->pinned && only_mapping(alias_vm)->pins == 1);
 	CHECK(pvr_file_vm_pin(vm, BASE, 32, bo->flags, &pin) == EBUSY);
 	pvr_file_unpin(&second);
 	CHECK(second.mapping == NULL && !bo->pinned);
@@ -611,22 +625,22 @@ hold_lifetime(struct drm_device *dev)
 	vm->failed = true;
 	CHECK(pvr_file_vm_hold(vm, BASE, 32, 0, &first) == EINVAL);
 	vm->failed = false;
-	vm->mappings->pins = UINT_MAX;
+	only_mapping(vm)->pins = UINT_MAX;
 	CHECK(pvr_file_vm_hold(vm, BASE, 32, 0, &first) == EOVERFLOW);
-	vm->mappings->pins = 0;
+	only_mapping(vm)->pins = 0;
 	bo->holds = UINT_MAX;
 	CHECK(pvr_file_vm_hold(vm, BASE, 32, 0, &first) == EOVERFLOW);
-	CHECK(first.mapping == NULL && vm->mappings->pins == 0);
+	CHECK(first.mapping == NULL && only_mapping(vm)->pins == 0);
 	bo->holds = 0;
 	CHECK(pvr_file_vm_pin(alias, BASE, 32, bo->flags, &pin) == 0);
 	CHECK(pvr_file_vm_hold(vm, BASE, 32, 0, &first) == EBUSY);
-	CHECK(first.mapping == NULL && vm->mappings->pins == 0 && bo->holds == 0);
+	CHECK(first.mapping == NULL && only_mapping(vm)->pins == 0 && bo->holds == 0);
 	pvr_file_unpin(&pin);
 	CHECK(pvr_file_vm_hold(vm, BASE + 64, 32, bo->flags, &first) == 0);
 	/* Mesa packs two target spans in one BO and mapping. */
 	CHECK(pvr_file_vm_hold(vm, BASE + 128, 32, bo->flags, &second) == 0);
 	CHECK(pvr_file_vm_hold(alias, BASE + 64, 32, bo->flags, &third) == 0);
-	CHECK(vm->mappings->pins == 2 && alias->mappings->pins == 1);
+	CHECK(only_mapping(vm)->pins == 2 && only_mapping(alias)->pins == 1);
 	CHECK(bo->holds == 3 && bo->refs == 3);
 	CHECK(pvr_file_vm_hold(vm, BASE, 32, 0, &first) == EINVAL);
 	CHECK(pvr_file_vm_pin(alias, BASE, 32, bo->flags, &pin) == EBUSY);
@@ -642,13 +656,13 @@ hold_lifetime(struct drm_device *dev)
 	CHECK(vm->refs == 1 && alias->refs == 1 && bo->refs == 2 && bo->holds == 3);
 	(void)pvr_device_enter(dev);
 	pvr_file_unhold(&first);
-	CHECK(first.mapping == NULL && vm->mappings->pins == 1 && bo->holds == 2);
+	CHECK(first.mapping == NULL && only_mapping(vm)->pins == 1 && bo->holds == 2);
 	pvr_file_unhold(&second);
-	CHECK(second.mapping == NULL && vm->mappings->pins == 0 && bo->holds == 1);
+	CHECK(second.mapping == NULL && only_mapping(vm)->pins == 0 && bo->holds == 1);
 	pvr_file_vm_put(vm);
 	CHECK(bo->refs == 1 && bo->holds == 1);
 	pvr_file_unhold(&third);
-	CHECK(third.mapping == NULL && alias->mappings->pins == 0 && bo->holds == 0);
+	CHECK(third.mapping == NULL && only_mapping(alias)->pins == 0 && bo->holds == 0);
 	pvr_file_vm_put(alias);
 	pvr_device_leave(dev);
 }
@@ -737,6 +751,102 @@ snapshot_lifetime(struct drm_device *dev)
 	for (size_t i = 0; i < count; i++) drm_gem_object_put_unlocked(snapshot[i]);
 	kmem_free(snapshot, count * sizeof(snapshot[0]));
 	CHECK(atomic_load(&allocations) == 0 && atomic_load(&objects) == 0);
+}
+
+/* Many mappings in scrambled order: address lookups and exact unmaps. */
+static void
+mapping_tree(struct drm_device *dev)
+{
+	enum { COUNT = 24 };
+	struct drm_file file = { 0 };
+	struct drm_pvr_ioctl_vm_map_args map;
+	struct drm_pvr_ioctl_vm_unmap_args unmap;
+	struct pvr_file_vm *vm;
+	struct pvr_file_mapping *mapping;
+	struct drm_gem_object *bo;
+	uint64_t va, previous;
+	uint32_t handle;
+	unsigned n, k, count;
+	void *cpu;
+
+	CHECK(pvr_file_open(dev, &file) == 0);
+	handle = create_vm(dev, &file);
+	bo = new_bo(&file, 1, 0x64000000);
+	bo->coherent = true;
+	/* 7 is coprime with 24: every slot once, out of address order. */
+	for (n = 0; n < COUNT; n++) {
+		k = (n * 7) % COUNT;
+		map = (struct drm_pvr_ioctl_vm_map_args){ .vm_context_handle = handle,
+		    .handle = 1, .device_addr = BASE + (uint64_t)k * 2 * PAGE_SIZE,
+		    .offset = (k % 4) * PAGE_SIZE, .size = PAGE_SIZE };
+		CHECK(pvr_vm_map_ioctl(dev, &map, &file) == 0);
+	}
+	/* Two adjacent mappings after the spaced ones. */
+	map.device_addr = BASE + (uint64_t)COUNT * 2 * PAGE_SIZE; map.offset = 0;
+	CHECK(pvr_vm_map_ioctl(dev, &map, &file) == 0);
+	map.device_addr += PAGE_SIZE; map.offset = PAGE_SIZE;
+	CHECK(pvr_vm_map_ioctl(dev, &map, &file) == 0);
+	(void)pvr_device_enter(dev);
+	vm = pvr_file_vm_get(&file, handle); CHECK(vm != NULL);
+	count = 0; previous = 0;
+	RB_TREE_FOREACH(mapping, &vm->mappings) {
+		CHECK(mapping->address > previous); previous = mapping->address; count++;
+	}
+	CHECK(count == COUNT + 2);
+	for (k = 0; k < COUNT; k++) {
+		va = BASE + (uint64_t)k * 2 * PAGE_SIZE;
+		CHECK(pvr_file_vm_buffer(vm, va + 64, 32, bo->flags, &cpu) == 0);
+		CHECK(cpu == (void *)(uintptr_t)(bo->pa + (k % 4) * PAGE_SIZE + 64));
+		CHECK(pvr_file_vm_buffer(vm, va, PAGE_SIZE, 0, &cpu) == 0);
+		/* The gap after it, and a range running into the gap. */
+		CHECK(pvr_file_vm_buffer(vm, va + PAGE_SIZE, 4, 0, &cpu) == ENOENT);
+		CHECK(pvr_file_vm_buffer(vm, va + PAGE_SIZE - 4, 8, 0, &cpu) == ENOENT);
+	}
+	CHECK(pvr_file_vm_buffer(vm, BASE - PAGE_SIZE, 4, 0, &cpu) == ENOENT);
+	/* Single bytes, as the GPU fault report looks them up. */
+	va = BASE + 6 * PAGE_SIZE;
+	CHECK(pvr_file_mapping_find(vm, va + 123, 1) != NULL &&
+	    pvr_file_mapping_find(vm, va + 123, 1)->address == va);
+	CHECK(pvr_file_mapping_find(vm, va + PAGE_SIZE - 1, 1)->address == va);
+	CHECK(pvr_file_mapping_find(vm, va + PAGE_SIZE, 1) == NULL);
+	CHECK(pvr_file_mapping_find(vm, va - 1, 1) == NULL);
+	CHECK(pvr_file_mapping_find(vm, 0, 1) == NULL);
+	/* Adjacent mappings are separate BO ranges: no lookup spans both. */
+	va = BASE + (uint64_t)COUNT * 2 * PAGE_SIZE;
+	CHECK(pvr_file_vm_buffer(vm, va + PAGE_SIZE - 4, 8, 0, &cpu) == ENOENT);
+	CHECK(pvr_file_vm_buffer(vm, va + PAGE_SIZE, 8, 0, &cpu) == 0);
+	CHECK(cpu == (void *)(uintptr_t)(bo->pa + PAGE_SIZE));
+	pvr_file_vm_put(vm);
+	pvr_device_leave(dev);
+	/* Unmap needs the exact start and size; remove in another order. */
+	unmap = (struct drm_pvr_ioctl_vm_unmap_args){ .vm_context_handle = handle,
+	    .device_addr = BASE + PAGE_SIZE, .size = PAGE_SIZE };
+	CHECK(pvr_vm_unmap_ioctl(dev, &unmap, &file) == -ENOENT);
+	unmap.device_addr = BASE; unmap.size = 2 * PAGE_SIZE;
+	CHECK(pvr_vm_unmap_ioctl(dev, &unmap, &file) == -ENOENT);
+	for (n = 0; n < COUNT; n += 2) {
+		k = (n * 5) % COUNT;
+		unmap.device_addr = BASE + (uint64_t)k * 2 * PAGE_SIZE; unmap.size = PAGE_SIZE;
+		CHECK(pvr_vm_unmap_ioctl(dev, &unmap, &file) == 0);
+		CHECK(pvr_vm_unmap_ioctl(dev, &unmap, &file) == -ENOENT);
+	}
+	(void)pvr_device_enter(dev);
+	vm = pvr_file_vm_get(&file, handle); CHECK(vm != NULL);
+	count = 0;
+	RB_TREE_FOREACH(mapping, &vm->mappings) {
+		CHECK(pvr_file_vm_buffer(vm, mapping->address, PAGE_SIZE, 0, &cpu) == 0);
+		count++;
+	}
+	CHECK(count == COUNT / 2 + 2);
+	for (n = 0; n < COUNT; n += 2) {
+		k = (n * 5) % COUNT;
+		CHECK(pvr_file_vm_buffer(vm, BASE + (uint64_t)k * 2 * PAGE_SIZE, 4, 0,
+		    &cpu) == ENOENT);
+	}
+	pvr_file_vm_put(vm);
+	pvr_device_leave(dev);
+	/* Teardown releases the remaining mappings. */
+	close_file(dev, &file);
 }
 
 int
@@ -947,7 +1057,7 @@ finish:
 	}
 	close_file(&dev, &a); close_file(&dev, &b);
 	CHECK(atomic_load(&allocations) == 0 && atomic_load(&objects) == 0 && atomic_load(&vms) == 0);
-	if (PAGE_SHIFT == 12) { snapshot_lifetime(&dev); firmware_lifetime(&dev); pin_lifetime(&dev); hold_lifetime(&dev); }
+	if (PAGE_SHIFT == 12) { snapshot_lifetime(&dev); firmware_lifetime(&dev); pin_lifetime(&dev); hold_lifetime(&dev); mapping_tree(&dev); }
 	CHECK(atomic_load(&allocations) == 0 && atomic_load(&objects) == 0 && atomic_load(&vms) == 0);
 	CHECK(exec_live == 0); mutex_destroy(&device_gate);
 	CHECK(pthread_cond_destroy(&changed) == 0 && pthread_mutex_destroy(&rendezvous) == 0);
