@@ -44,6 +44,16 @@
 #define IWX_HT_EID_VHTOP	192
 #define IWX_HT_EID_VENDOR	221
 
+/*
+ * Channel switch announcement elements (802.11-2020 9.4.2.18, 9.4.2.19,
+ * 9.4.2.52, 9.4.2.160, 9.4.2.162).
+ */
+#define IWX_HT_EID_CSA		37
+#define IWX_HT_EID_ECSA		60
+#define IWX_HT_EID_SCO		62
+#define IWX_HT_EID_WBCS		194
+#define IWX_HT_EID_CSWRAP	196
+
 #define IWX_HT_HTCAP_LEN	26
 #define IWX_HT_HTOP_LEN		22
 #define IWX_HT_VHTCAP_LEN	12
@@ -128,6 +138,20 @@ struct iwx_ht_chan {
 	uint8_t	vht80;		/* 80 MHz VHT operation */
 	uint8_t	width;		/* IWX_HT_WIDTH_* */
 	uint8_t	ctrl_pos;	/* IWX_HT_POS_* */
+};
+
+/* A channel switch announced by the AP. */
+struct iwx_ht_csa {
+	uint8_t	mode;		/* 1: no transmissions until the switch */
+	uint8_t	chan;		/* new primary channel */
+	uint8_t	count;		/* beacons left; 0: any time now */
+	uint8_t	opclass;	/* new operating class, 0 if not given */
+	uint8_t	have_sco;	/* secondary channel offset element seen */
+	uint8_t	sco;		/* IWX_HT_SCO_* */
+	uint8_t	have_wbcs;	/* wide bandwidth channel switch seen */
+	uint8_t	width;		/* as in the VHT operation element */
+	uint8_t	ccfs0;
+	uint8_t	ccfs1;
 };
 
 /* TLC_MNG_CONFIG fields that depend on the negotiation. */
@@ -416,6 +440,205 @@ iwx_ht_chan(const struct iwx_ht_peer *p, const struct iwx_ht_local *loc,
 	}
 	c->vht80 = 1;
 	c->width = IWX_HT_WIDTH_80;
+}
+
+/*
+ * Collect a channel switch announcement from elements.  `have' says that
+ * csa->chan is already known.  Returns 1 if the elements, or the caller,
+ * name a new channel, 0 if not, and -1 for elements that are malformed or
+ * disagree; the caller then keeps away from the announcement.
+ */
+static inline int
+iwx_ht_csa_elems(const uint8_t *ies, size_t len, struct iwx_ht_csa *csa,
+    int have)
+{
+	size_t off, sub;
+
+	if (!iwx_ht_ies_valid(ies, len))
+		return -1;
+	for (off = 0; off < len; off += 2 + ies[off + 1]) {
+		const uint8_t *e = ies + off + 2;
+		uint8_t elen = ies[off + 1];
+		uint8_t mode, chan, count;
+
+		switch (ies[off]) {
+		case IWX_HT_EID_CSA:
+		case IWX_HT_EID_ECSA:
+			if (ies[off] == IWX_HT_EID_CSA) {
+				if (elen < 3)
+					break;
+				mode = e[0];
+				chan = e[1];
+				count = e[2];
+			} else {
+				if (elen < 4)
+					break;
+				mode = e[0];
+				csa->opclass = e[1];
+				chan = e[2];
+				count = e[3];
+			}
+			if (have && csa->chan != chan)
+				return -1;
+			if (!have) {
+				csa->mode = mode;
+				csa->chan = chan;
+				csa->count = count;
+			}
+			have = 1;
+			break;
+		case IWX_HT_EID_SCO:
+			if (elen < 1)
+				break;
+			if (e[0] != IWX_HT_SCO_NONE &&
+			    e[0] != IWX_HT_SCO_ABOVE &&
+			    e[0] != IWX_HT_SCO_BELOW)
+				return -1;
+			csa->have_sco = 1;
+			csa->sco = e[0];
+			break;
+		case IWX_HT_EID_CSWRAP:
+			/* Beacons carry the new width inside the wrapper. */
+			if (!iwx_ht_ies_valid(e, elen))
+				return -1;
+			for (sub = 0; sub < elen; sub += 2 + e[sub + 1]) {
+				if (e[sub] != IWX_HT_EID_WBCS ||
+				    e[sub + 1] < 3)
+					continue;
+				csa->have_wbcs = 1;
+				csa->width = e[sub + 2];
+				csa->ccfs0 = e[sub + 3];
+				csa->ccfs1 = e[sub + 4];
+			}
+			break;
+		case IWX_HT_EID_WBCS:
+			if (elen < 3)
+				break;
+			csa->have_wbcs = 1;
+			csa->width = e[0];
+			csa->ccfs0 = e[1];
+			csa->ccfs1 = e[2];
+			break;
+		}
+	}
+	return have;
+}
+
+/*
+ * Look for a channel switch announcement among the elements of a beacon
+ * or probe response.  Returns 1 with *csa filled, 0 if there is none and
+ * -1 if the elements are malformed.
+ */
+static inline int
+iwx_ht_csa_parse(const uint8_t *ies, size_t len, struct iwx_ht_csa *csa)
+{
+	int i;
+
+	for (i = 0; i < (int)sizeof(*csa); i++)
+		((uint8_t *)csa)[i] = 0;
+	return iwx_ht_csa_elems(ies, len, csa, 0);
+}
+
+/*
+ * The same for an action frame body, which starts with the category.
+ * Channel Switch Announcement (spectrum management) carries elements;
+ * Extended Channel Switch Announcement (public, or its protected dual)
+ * carries the mode, operating class, channel and count as fixed fields.
+ * Returns 0 for any other action frame.
+ */
+static inline int
+iwx_ht_csa_action(const uint8_t *body, size_t len, struct iwx_ht_csa *csa)
+{
+	int i;
+
+	for (i = 0; i < (int)sizeof(*csa); i++)
+		((uint8_t *)csa)[i] = 0;
+	if (len < 2 || body[1] != 4)
+		return 0;
+	if (body[0] == 0)
+		return iwx_ht_csa_elems(body + 2, len - 2, csa, 0) == 1 ?
+		    1 : -1;
+	if (body[0] != 4 && body[0] != 9)
+		return 0;
+	if (len < 6)
+		return -1;
+	csa->mode = body[2];
+	csa->opclass = body[3];
+	csa->chan = body[4];
+	csa->count = body[5];
+	return iwx_ht_csa_elems(body + 6, len - 6, csa, 1) == 1 ? 1 : -1;
+}
+
+/*
+ * The announcement names a 6 GHz operating class (802.11-2020 Table E-4).
+ * Channel numbers there overlap those of 2.4 and 5 GHz, so such a switch
+ * is never taken for a channel of the current band.
+ */
+static inline int
+iwx_ht_csa_6ghz(const struct iwx_ht_csa *csa)
+{
+	return csa->opclass >= 131 && csa->opclass <= 137;
+}
+
+/*
+ * Where the secondary channel of a 40 MHz pair lies when `chan' is the
+ * primary channel in the 5 GHz band; IWX_HT_SCO_NONE if it has no pair.
+ */
+static inline int
+iwx_ht_sco5(int chan)
+{
+	int base;
+
+	if (chan >= 36 && chan <= 64)
+		base = 36;
+	else if (chan >= 100 && chan <= 144)
+		base = 100;
+	else if (chan >= 149 && chan <= 161)
+		base = 149;
+	else
+		return IWX_HT_SCO_NONE;
+	if ((chan - base) % 4 != 0)
+		return IWX_HT_SCO_NONE;
+	return (chan - base) % 8 == 0 ? IWX_HT_SCO_ABOVE : IWX_HT_SCO_BELOW;
+}
+
+/*
+ * The AP's operation after the announced switch: its capabilities stay,
+ * the HT and VHT operation follow the announcement.  Without a secondary
+ * channel offset or a new width the BSS is 20 MHz wide afterwards.
+ */
+static inline void
+iwx_ht_csa_peer(const struct iwx_ht_peer *old, const struct iwx_ht_csa *csa,
+    struct iwx_ht_peer *p)
+{
+	int sco = IWX_HT_SCO_NONE;
+
+	*p = *old;
+	if (csa->have_sco)
+		sco = csa->sco;
+	else if (csa->have_wbcs)
+		sco = iwx_ht_sco5(csa->chan);
+	p->primary = csa->chan;
+	p->htop0 = old->htop0 & ~(0x03 | IWX_HT_STA_CHAN_WIDTH);
+	if (sco != IWX_HT_SCO_NONE)
+		p->htop0 |= sco | IWX_HT_STA_CHAN_WIDTH;
+	p->vht_width = csa->have_wbcs ? csa->width : 0;
+	p->vht_ccfs0 = csa->have_wbcs ? csa->ccfs0 : 0;
+	p->vht_ccfs1 = csa->have_wbcs ? csa->ccfs1 : 0;
+}
+
+/*
+ * Channel layout on the announced channel `chan' in *nc.  Returns 1 if
+ * the association can move there as it is: the band and the width stay.
+ * Anything else needs a new negotiation with the AP.
+ */
+static inline int
+iwx_ht_csa_follow(const struct iwx_ht_peer *p, const struct iwx_ht_local *loc,
+    int band5, const struct iwx_ht_chan *cur, int chan,
+    struct iwx_ht_chan *nc)
+{
+	iwx_ht_chan(p, loc, chan, nc);
+	return (loc->band5 != 0) == (band5 != 0) && nc->width == cur->width;
 }
 
 /* TLC settings for the negotiated mode. */

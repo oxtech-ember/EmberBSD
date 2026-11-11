@@ -533,6 +533,13 @@ struct mbuf *iwx_ht_tx_assoc(struct iwx_softc *, struct mbuf *,
 	    struct ieee80211_node *);
 void	iwx_ht_rx_assoc(struct iwx_softc *, struct mbuf *);
 void	iwx_ht_rx_action(struct iwx_softc *, struct mbuf *);
+void	iwx_csa_rx(struct iwx_softc *, struct mbuf *);
+void	iwx_csa_task(void *);
+void	iwx_csa_timeout(void *);
+void	iwx_csa_clear(struct iwx_softc *);
+int	iwx_csa_switch(struct iwx_softc *, struct iwx_node *,
+	    struct ieee80211_channel *, uint8_t, uint8_t, uint8_t);
+int	iwx_mld_link_modify(struct iwx_softc *, struct iwx_node *, int, int);
 void	iwx_recv_mgmt(struct ieee80211com *, struct mbuf *,
 	    struct ieee80211_node *, int, int, uint32_t);
 void	iwx_ht_send_action(struct iwx_softc *, const uint8_t *, size_t);
@@ -5151,6 +5158,7 @@ iwx_recv_mgmt(struct ieee80211com *ic, struct mbuf *m,
 	/* Association capabilities must be available before the RUN request. */
 	iwx_ht_rx_assoc(sc, m);
 	iwx_ht_rx_action(sc, m);
+	iwx_csa_rx(sc, m);
 	sc->sc_recv_mgmt(ic, m, ni, subtype, rssi, rstamp);
 }
 
@@ -9550,6 +9558,291 @@ iwx_rx_ba_notif(struct iwx_softc *sc, struct iwx_rx_packet *pkt)
 	}
 }
 
+/*
+ * Remember a channel switch announced by our AP.  The firmware reports the
+ * moment of the switch (IWX_CHANNEL_SWITCH_START_NOTIF) but not where the
+ * AP goes; that is only in the AP's beacons and action frames.
+ */
+void
+iwx_csa_rx(struct iwx_softc *sc, struct mbuf *m)
+{
+	struct ieee80211com *ic = &sc->sc_ic;
+	struct ieee80211_frame *wh;
+	struct iwx_ht_csa csa;
+	const uint8_t *body;
+	size_t len;
+	uint8_t subtype;
+	int r;
+
+	if (ic->ic_opmode != IEEE80211_M_STA ||
+	    ic->ic_state != IEEE80211_S_RUN ||
+	    (size_t)m->m_len < sizeof(*wh) || m->m_len != m->m_pkthdr.len)
+		return;
+	wh = mtod(m, struct ieee80211_frame *);
+	if ((wh->i_fc[0] & IEEE80211_FC0_TYPE_MASK) != IEEE80211_FC0_TYPE_MGT ||
+	    !IEEE80211_ADDR_EQ(wh->i_addr2, ic->ic_bss->ni_bssid) ||
+	    !IEEE80211_ADDR_EQ(wh->i_addr3, ic->ic_bss->ni_bssid))
+		return;
+	body = (const uint8_t *)(wh + 1);
+	len = m->m_len - sizeof(*wh);
+	subtype = wh->i_fc[0] & IEEE80211_FC0_SUBTYPE_MASK;
+	switch (subtype) {
+	case IEEE80211_FC0_SUBTYPE_BEACON:
+		if (len < 12)	/* timestamp, interval, capabilities */
+			return;
+		r = iwx_ht_csa_parse(body + 12, len - 12, &csa);
+		break;
+	case IWX_HT_FC0_SUBTYPE_ACTION:
+		r = iwx_ht_csa_action(body, len, &csa);
+		if (r == 0)
+			return;		/* some other action frame */
+		break;
+	default:
+		return;
+	}
+	/*
+	 * The first beacon heard on the new channel confirms a switch that
+	 * was followed.  iwx_rx_frame() has set ni_chan to the channel this
+	 * frame arrived on, so a late beacon from the old channel does not.
+	 */
+	if (sc->sc_csa_wait && subtype == IEEE80211_FC0_SUBTYPE_BEACON &&
+	    ic->ic_bss->ni_chan == ic->ic_curchan) {
+		sc->sc_csa_wait = 0;
+		timeout_del(&sc->sc_csa_to);
+	}
+	if (r < 0)
+		return;
+	if (r == 0) {
+		/* A beacon without it: the switch is over or withdrawn. */
+		sc->sc_csa_valid = 0;
+		return;
+	}
+	if ((IC2IFP(ic)->if_flags & IFF_DEBUG) &&
+	    (!sc->sc_csa_valid || sc->sc_csa.chan != csa.chan))
+		printf("%s: AP announces a switch to channel %u in %u "
+		    "beacons (mode %u, offset %s, width %s)\n",
+		    device_xname(sc->sc_dev), csa.chan, csa.count, csa.mode,
+		    csa.have_sco ? (csa.sco == IWX_HT_SCO_ABOVE ? "above" :
+		    csa.sco == IWX_HT_SCO_BELOW ? "below" : "none") : "unset",
+		    !csa.have_wbcs ? "unset" : csa.width == 0 ? "40 MHz" :
+		    "80 MHz or more");
+	sc->sc_csa = csa;
+	sc->sc_csa_valid = 1;
+}
+
+int
+iwx_mld_link_modify(struct iwx_softc *sc, struct iwx_node *in, int changes,
+    int active)
+{
+	struct iwx_link_config_cmd link_cmd;
+
+	memset(&link_cmd, 0, sizeof(link_cmd));
+	iwx_mld_modify_link_fill(sc, in, &link_cmd, changes, active);
+	return iwx_send_cmd_pdu(sc,
+	    IWX_WIDE_ID(IWX_MAC_CONF_GROUP, IWX_LINK_CONFIG_CMD),
+	    0, sizeof(link_cmd), &link_cmd);
+}
+
+/*
+ * Move the link of our AP to channel `c'.  This is the order in which
+ * Linux iwlmld swaps the channel context under a link: the link goes
+ * inactive, the PHY context is replaced, then the link gets its rates and
+ * its rate scaling again and goes active.  The station and its keys are
+ * not touched.  in->in_htc already describes the new channel.
+ */
+int
+iwx_csa_switch(struct iwx_softc *sc, struct iwx_node *in,
+    struct ieee80211_channel *c, uint8_t chains, uint8_t sco,
+    uint8_t vht_chan_width)
+{
+	struct iwx_phy_ctxt *phyctxt = in->in_phyctxt;
+	int err = 0, step;
+
+	for (step = 0; step < 7 && err == 0; step++) {
+		/*
+		 * Every command sleeps; the association may end meanwhile.
+		 * ns_nstate changes as soon as a new state is requested.
+		 */
+		if (sc->sc_ic.ic_state != IEEE80211_S_RUN ||
+		    sc->ns_nstate != IEEE80211_S_RUN ||
+		    (sc->sc_flags & IWX_FLAG_SHUTDOWN))
+			return ENXIO;
+		switch (step) {
+		case 0:
+			err = iwx_mld_link_modify(sc, in,
+			    IWX_LINK_CONTEXT_MODIFY_ACTIVE, 0);
+			break;
+		case 1:
+			err = iwx_phy_ctxt_cmd(sc, phyctxt, chains, chains,
+			    IWX_FW_CTXT_ACTION_REMOVE, 0, sco, vht_chan_width);
+			break;
+		case 2:
+			phyctxt->channel = c;
+			err = iwx_phy_ctxt_cmd(sc, phyctxt, chains, chains,
+			    IWX_FW_CTXT_ACTION_ADD, 0, sco, vht_chan_width);
+			if (err == 0) {
+				phyctxt->sco = sco;
+				phyctxt->vht_chan_width = vht_chan_width;
+			}
+			break;
+		case 3:
+			if (iwx_lookup_cmd_ver(sc, IWX_DATA_PATH_GROUP,
+			    IWX_RLC_CONFIG_CMD) == 2)
+				err = iwx_phy_send_rlc(sc, phyctxt, chains,
+				    chains);
+			break;
+		case 4:
+			err = iwx_mld_link_modify(sc, in,
+			    IWX_LINK_CONTEXT_MODIFY_RATES_INFO, 0);
+			break;
+		case 5:
+			err = iwx_rs_init(sc, in);
+			break;
+		case 6:
+			err = iwx_mld_link_modify(sc, in,
+			    IWX_LINK_CONTEXT_MODIFY_ACTIVE, 1);
+			break;
+		}
+	}
+	return err;
+}
+
+/* Forget the announcement and stop waiting for the AP on a new channel. */
+void
+iwx_csa_clear(struct iwx_softc *sc)
+{
+	sc->sc_csa_valid = 0;
+	sc->sc_csa_wait = 0;
+	timeout_del(&sc->sc_csa_to);
+}
+
+/*
+ * A followed switch was not confirmed by a beacon: the AP is not where it
+ * said it would be.  Restart the interface, which scans for it.
+ */
+void
+iwx_csa_timeout(void *arg)
+{
+	struct iwx_softc *sc = arg;
+	int s = splnet();
+
+	if (sc->sc_csa_wait && sc->sc_ic.ic_state == IEEE80211_S_RUN &&
+	    (sc->sc_flags & IWX_FLAG_SHUTDOWN) == 0) {
+		sc->sc_csa_wait = 0;
+		printf("%s: no beacon from the AP on the new channel, "
+		    "restarting\n", device_xname(sc->sc_dev));
+		task_add(sc->sc_systq, &sc->init_task);
+	}
+	splx(s);
+}
+
+/*
+ * The firmware says that our AP is switching channels now.  Follow it
+ * when the announcement was seen and the association fits the new
+ * channel unchanged: the station, its keys and its queues stay.
+ * Otherwise restart the interface, which scans for the AP and associates
+ * again.
+ */
+void
+iwx_csa_task(void *arg)
+{
+	struct iwx_softc *sc = arg;
+	struct ieee80211com *ic = &sc->sc_ic;
+	struct iwx_node *in = (void *)ic->ic_bss;
+	struct ieee80211_channel *c;
+	struct iwx_ht_csa csa;
+	struct iwx_ht_peer peer;
+	struct iwx_ht_local loc;
+	struct iwx_ht_chan htc;
+	const char *why;
+	uint8_t chains, sco, vht_chan_width;
+	u_int chan;
+	int err, s = splnet();
+
+	if ((sc->sc_flags & IWX_FLAG_SHUTDOWN) ||
+	    ic->ic_opmode != IEEE80211_M_STA ||
+	    ic->ic_state != IEEE80211_S_RUN ||
+	    sc->ns_nstate != IEEE80211_S_RUN || in->in_phyctxt == NULL) {
+		refcnt_rele_wake(&sc->task_refs);
+		splx(s);
+		return;
+	}
+
+	csa = sc->sc_csa;
+	chan = csa.chan;
+	why = "no announcement seen";
+	if (!sc->sc_csa_valid) {
+		/* A repeated notification for the switch just followed. */
+		if (sc->sc_csa_wait) {
+			refcnt_rele_wake(&sc->task_refs);
+			splx(s);
+			return;
+		}
+		goto restart;
+	}
+	sc->sc_csa_valid = 0;
+
+	why = "this firmware API is not supported";
+	if (!sc->sc_use_mld_api)
+		goto restart;
+
+	why = "the channel is not available";
+	if (iwx_ht_csa_6ghz(&csa) || chan > IEEE80211_CHAN_MAX ||
+	    (sc->sc_chflags[chan] & IWX_NVM_CHANNEL_VALID) == 0 ||
+	    ic->ic_channels[chan].ic_flags == 0 ||
+	    isclr(ic->ic_chan_active, chan))
+		goto restart;
+	c = &ic->ic_channels[chan];
+
+	why = "the band or the width changes";
+	iwx_ht_local(sc, c, &loc);
+	memset(&peer, 0, sizeof(peer));
+	if (in->in_ht)
+		iwx_ht_csa_peer(&sc->sc_bss_ht, &csa, &peer);
+	if (!iwx_ht_csa_follow(&peer, &loc,
+	    IEEE80211_IS_CHAN_5GHZ(in->in_ni.ni_chan), &in->in_htc,
+	    (int)chan, &htc))
+		goto restart;
+
+	in->in_ni.ni_chan = c;
+	ic->ic_curchan = c;
+	if (in->in_ht) {
+		sc->sc_bss_ht = peer;
+		in->in_htc = htc;
+		iwx_ht_tlc(&sc->sc_bss_ht, &loc, &in->in_htc, &in->in_htt);
+	}
+	chains = iwx_mimo_enabled(sc) ? 2 : 1;
+	sco = in->in_ht ? in->in_htc.sco : IEEE80211_HTOP0_SCO_SCN;
+	vht_chan_width = (in->in_ht && in->in_htc.vht80) ?
+	    IEEE80211_VHTOP0_CHAN_WIDTH_80 : IEEE80211_VHTOP0_CHAN_WIDTH_HT;
+	err = iwx_csa_switch(sc, in, c, chains, sco, vht_chan_width);
+	why = err == ENXIO ? "the association ended meanwhile" :
+	    "the firmware refused the new channel";
+	if (err)
+		goto restart;
+
+	/* The AP must now be heard there; iwx_csa_rx() confirms it. */
+	if ((sc->sc_flags & IWX_FLAG_SHUTDOWN) == 0) {
+		sc->sc_csa_wait = 1;
+		timeout_add_msec(&sc->sc_csa_to,
+		    MAX(10 * (u_int)in->in_ni.ni_intval, 2000));
+	}
+	printf("%s: followed the AP to channel %u\n",
+	    device_xname(sc->sc_dev), chan);
+	refcnt_rele_wake(&sc->task_refs);
+	splx(s);
+	return;
+
+restart:
+	iwx_csa_clear(sc);
+	printf("%s: channel switch not followed (%s), restarting\n",
+	    device_xname(sc->sc_dev), why);
+	if ((sc->sc_flags & IWX_FLAG_SHUTDOWN) == 0)
+		task_add(sc->sc_systq, &sc->init_task);
+	refcnt_rele_wake(&sc->task_refs);
+	splx(s);
+}
+
 /* Decide HT/VHT for the BSS node once the association succeeded. */
 void
 iwx_ht_setup_node(struct iwx_softc *sc, struct iwx_node *in)
@@ -9891,6 +10184,7 @@ iwx_auth(struct iwx_softc *sc)
 
 	/* A new association negotiates HT/VHT from scratch. */
 	sc->sc_bss_ht_valid = 0;
+	iwx_csa_clear(sc);
 	in->in_ht = 0;
 	iwx_ba_reset(sc, 0);
 
@@ -10929,6 +11223,8 @@ iwx_newstate(struct ieee80211com *ic, enum ieee80211_state nstate, int arg)
 #endif
 	iwx_del_task(sc, sc->sc_systq, &sc->mac_ctxt_task);
 	iwx_del_task(sc, sc->sc_systq, &sc->phy_ctxt_task);
+	iwx_del_task(sc, sc->sc_systq, &sc->csa_task);
+	iwx_csa_clear(sc);
 	}
 
 	sc->ns_nstate = nstate;
@@ -11638,6 +11934,8 @@ iwx_stop(struct ifnet *ifp, int disable __unused)
 #endif
 	iwx_del_task(sc, sc->sc_systq, &sc->mac_ctxt_task);
 	iwx_del_task(sc, sc->sc_systq, &sc->phy_ctxt_task);
+	iwx_del_task(sc, sc->sc_systq, &sc->csa_task);
+	iwx_csa_clear(sc);
 	iwx_del_task(sc, sc->sc_systq, &sc->sc_ba_task);
 	iwx_del_task(sc, sc->sc_systq, &sc->sc_txq_task);
 	iwx_del_task(sc, sc->sc_systq, &sc->mcc_task);
@@ -12558,6 +12856,41 @@ iwx_rx_pkt(struct iwx_softc *sc, struct iwx_rx_data *data)
 				    "notification 0x%x\n",
 				    device_xname(sc->sc_dev), code);
 
+			/* Follows the AP, or restarts the interface. */
+			iwx_add_task(sc, sc->sc_systq, &sc->csa_task);
+			break;
+		}
+
+		case IWX_WIDE_ID(IWX_MAC_CONF_GROUP,
+		    IWX_CHANNEL_SWITCH_ERROR_NOTIF): {
+			uint32_t csa_err;
+
+			if (sc->sc_ic.ic_opmode != IEEE80211_M_STA ||
+			    sc->sc_ic.ic_state != IEEE80211_S_RUN)
+				break;
+
+			/* Without the mask assume the worst. */
+			csa_err = IWX_CS_ERR_COUNT_ERROR;
+			if (iwx_rx_packet_payload_len(pkt) >=
+			    sizeof(struct iwx_channel_switch_error_notif)) {
+				struct iwx_channel_switch_error_notif *notif;
+
+				SYNC_RESP_STRUCT(notif, pkt);
+				csa_err = le32toh(notif->csa_err_mask);
+			}
+			/* As in Linux, a long TX block alone is harmless. */
+			if ((csa_err & (IWX_CS_ERR_COUNT_ERROR |
+			    IWX_CS_ERR_LONG_DELAY_AFTER_CS |
+			    IWX_CS_ERR_TX_BLOCK_TIMER_EXPIRED)) == 0) {
+				printf("%s: firmware channel switch warning "
+				    "0x%x\n", device_xname(sc->sc_dev),
+				    csa_err);
+				break;
+			}
+			printf("%s: the firmware reports a failed channel "
+			    "switch (0x%x), restarting\n",
+			    device_xname(sc->sc_dev), csa_err);
+			iwx_csa_clear(sc);
 			if ((sc->sc_flags & IWX_FLAG_SHUTDOWN) == 0)
 				task_add(sc->sc_systq, &sc->init_task);
 			break;
@@ -13499,6 +13832,8 @@ iwx_config_complete(struct iwx_softc *sc)
 	task_set(&sc->mac_ctxt_task, iwx_mac_ctxt_task, sc);
 	task_set(&sc->phy_ctxt_task, iwx_phy_ctxt_task, sc);
 	task_set(&sc->mcc_task, iwx_mcc_task, sc);
+	task_set(&sc->csa_task, iwx_csa_task, sc);
+	timeout_set(&sc->sc_csa_to, iwx_csa_timeout, sc);
 	task_set(&sc->sc_ba_task, iwx_ba_task, sc);
 	task_set(&sc->sc_txq_task, iwx_txq_task, sc);
 #if defined(IWX_HT)

@@ -700,6 +700,10 @@ struct iwx_softc {
 	char			sc_mcc_cur[3];	/* domain applied to the firmware */
 	char			sc_mcc_new[3];	/* domain the firmware detected */
 
+	/* Task for following the AP to an announced channel. */
+	struct task		csa_task;
+	struct timeout		sc_csa_to;	/* beacon expected after it */
+
 	bus_space_tag_t sc_st;
 	bus_space_handle_t sc_sh;
 	bus_size_t sc_sz;
@@ -851,6 +855,9 @@ struct iwx_softc {
 	struct iwx_ht_peer sc_bss_ht;	/* last association response */
 	uint8_t sc_bss_ht_bssid[ETHER_ADDR_LEN];
 	int sc_bss_ht_valid;
+	struct iwx_ht_csa sc_csa;	/* switch announced by our AP */
+	int sc_csa_valid;
+	int sc_csa_wait;	/* no beacon on the new channel yet */
 	uint8_t sc_ht_buf[2][IWX_HT_ASSOC_MAX];
 
 	/* Link diagnostics printed with IFF_DEBUG (iwx_dbg_report()). */

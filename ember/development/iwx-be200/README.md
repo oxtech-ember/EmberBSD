@@ -6,6 +6,27 @@ for firmware evidence, software verification and remaining bench work.
 There is no new hardware acceptance result. The WPA2 measurements and
 stage descriptions below describe the earlier port.
 
+Status (2026-11-12): the mode report and the diagnostics below ran on
+the MSI (`VHT mode 11ac`, 80 MHz, two streams, MCS 9). New and **not yet
+run on hardware**: the driver follows the AP on an announced channel
+switch instead of restarting the interface. `iwx_csa_rx()` keeps the
+announcement from the AP's beacons and action frames (CSA, ECSA, secondary
+channel offset, wide bandwidth channel switch); on the firmware's
+`CHANNEL_SWITCH_START_NOTIF` `iwx_csa_task()` moves the link when the band
+and the channel width stay the same: link inactive, PHY context replaced,
+link rates and rate scaling sent again, link active, the order of Linux
+iwlmld. The station and its keys stay. It then expects a beacon on the
+new channel within two seconds. Anything else (no announcement seen, the
+width or band changes, a 6 GHz operating class, a firmware error, no
+beacon afterwards) restarts the interface as before and logs the reason.
+With the old behaviour a channel change of the AP cost 9 to 11 s of
+connectivity on the MSI, about half of it the DHCP client re-validating
+the address after the carrier loss. Contracts: `iwx_ht_csa_*()` in
+`ember/tools/iwx-ht-contract.sh`, the command order in
+`ember/tools/iwx-width-contract.sh`. `iwx_csa_task()` and `iwx_csa_rx()`
+themselves have no fixture yet. Run `ifconfig iwx0 debug` to log the
+announcement as it is received.
+
 Status (2026-11-11): `ifconfig iwx0` reports the negotiated mode
 (`VHT mode 11ac`, `HT mode 11na`/`11ng`) instead of the first legacy rate;
 net80211 has no HT or VHT mode, so the driver supplies the media word

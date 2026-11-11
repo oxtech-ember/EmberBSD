@@ -2079,7 +2079,19 @@ struct iwx_tx_queue_cfg_rsp {
 #define IWX_STA_REMOVE_CMD		0x0c
 #define IWX_SESSION_PROTECTION_NOTIF	0xfb
 #define IWX_MISSED_BEACONS_NOTIF	0xf6
+#define IWX_CHANNEL_SWITCH_ERROR_NOTIF	0xf9
 #define IWX_CHANNEL_SWITCH_START_NOTIF	0xff
+
+/* IWX_CHANNEL_SWITCH_ERROR_NOTIF: the firmware gave up on a switch. */
+struct iwx_channel_switch_error_notif {
+	uint32_t link_id;
+	uint32_t csa_err_mask;
+} __packed;
+
+#define IWX_CS_ERR_COUNT_ERROR			(1 << 0)
+#define IWX_CS_ERR_LONG_DELAY_AFTER_CS		(1 << 1)
+#define IWX_CS_ERR_LONG_TX_BLOCK		(1 << 2)
+#define IWX_CS_ERR_TX_BLOCK_TIMER_EXPIRED	(1 << 3)
 
 /* DATA_PATH group subcommand IDs */
 #define IWX_DQA_ENABLE_CMD	0x00

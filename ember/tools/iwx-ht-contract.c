@@ -554,6 +554,204 @@ test_media(void)
 	    ~(IWX_HT_IFM_TMASK | IWX_HT_IFM_MMASK)) == 0);
 }
 
+/* Our AP on channel 56 of a 160 MHz block: HT 40 below, VHT primary 80. */
+static void
+csa_peer56(struct iwx_ht_peer *p)
+{
+	memset(p, 0, sizeof(*p));
+	p->ht = p->htop = p->vht = p->vhtop = 1;
+	p->htcaps = IWX_HT_CAP_CW40;
+	p->primary = 56;
+	p->htop0 = IWX_HT_SCO_BELOW | IWX_HT_STA_CHAN_WIDTH;
+	p->vht_width = 1;
+	p->vht_ccfs0 = 58;
+	p->vht_ccfs1 = 50;
+}
+
+static void
+test_csa(void)
+{
+	/* Beacon tail: CSA to 36 in 5 beacons, wrapper with the new width. */
+	static const uint8_t wide[] = { 0, 3, 'a', 'b', 'c',
+	    37, 3, 1, 36, 5, 196, 5, 194, 3, 1, 42, 50, 221, 2, 0, 0 };
+	static const uint8_t plain[] = { 0, 3, 'a', 'b', 'c', 37, 3, 0, 36, 1 };
+	static const uint8_t none[] = { 0, 3, 'a', 'b', 'c', 3, 1, 56 };
+	static const uint8_t ecsa[] = { 60, 4, 0, 128, 100, 3 };
+	static const uint8_t both[] = { 37, 3, 1, 36, 5, 60, 4, 1, 115, 36, 5 };
+	static const uint8_t differ[] = { 37, 3, 1, 36, 5, 60, 4, 1, 115, 40,
+	    5 };
+	static const uint8_t with_sco[] = { 37, 3, 1, 44, 2, 62, 1, 1 };
+	static const uint8_t bad_sco[] = { 37, 3, 1, 44, 2, 62, 1, 2 };
+	static const uint8_t shortcsa[] = { 37, 2, 1, 36 };
+	static const uint8_t trunc[] = { 37, 3, 1, 36 };
+	static const uint8_t badwrap[] = { 37, 3, 1, 36, 5, 196, 4, 194, 3, 1,
+	    42 };
+	static const uint8_t old160[] = { 37, 3, 1, 36, 5, 196, 5, 194, 3, 2,
+	    50, 0 };
+	/* Action frames: category, action, then the announcement. */
+	static const uint8_t act_csa[] = { 0, 4, 37, 3, 1, 36, 5, 62, 1, 1 };
+	static const uint8_t act_ecsa[] = { 4, 4, 1, 128, 100, 7, 194, 3, 1,
+	    106, 0 };
+	static const uint8_t act_prot[] = { 9, 4, 0, 128, 149, 1 };
+	static const uint8_t act_other[] = { 3, 0, 1, 2, 3, 4 };
+	static const uint8_t act_short[] = { 4, 4, 1, 128, 100 };
+	struct iwx_ht_csa c;
+	struct iwx_ht_peer old, p;
+	struct iwx_ht_local loc = loc5;
+	struct iwx_ht_chan cur, nc;
+
+	CHECK(iwx_ht_csa_parse(wide, sizeof(wide), &c) == 1);
+	CHECK(c.mode == 1 && c.chan == 36 && c.count == 5);
+	CHECK(!c.have_sco && c.have_wbcs && c.width == 1 && c.ccfs0 == 42 &&
+	    c.ccfs1 == 50);
+	CHECK(iwx_ht_csa_parse(plain, sizeof(plain), &c) == 1);
+	CHECK(c.mode == 0 && c.chan == 36 && c.count == 1 && !c.have_wbcs &&
+	    !c.have_sco);
+	CHECK(iwx_ht_csa_parse(none, sizeof(none), &c) == 0);
+	CHECK(iwx_ht_csa_parse(none, 0, &c) == 0);
+	CHECK(iwx_ht_csa_parse(ecsa, sizeof(ecsa), &c) == 1);
+	CHECK(c.mode == 0 && c.chan == 100 && c.count == 3);
+	CHECK(iwx_ht_csa_parse(both, sizeof(both), &c) == 1 && c.chan == 36);
+	/* Two announcements naming different channels are not followed. */
+	CHECK(iwx_ht_csa_parse(differ, sizeof(differ), &c) == -1);
+	CHECK(iwx_ht_csa_parse(with_sco, sizeof(with_sco), &c) == 1);
+	CHECK(c.chan == 44 && c.have_sco && c.sco == IWX_HT_SCO_ABOVE);
+	CHECK(iwx_ht_csa_parse(bad_sco, sizeof(bad_sco), &c) == -1);
+	/* A short element is no announcement; a cut one is malformed. */
+	CHECK(iwx_ht_csa_parse(shortcsa, sizeof(shortcsa), &c) == 0);
+	CHECK(iwx_ht_csa_parse(trunc, sizeof(trunc), &c) == -1);
+	CHECK(iwx_ht_csa_parse(badwrap, sizeof(badwrap), &c) == -1);
+	CHECK(iwx_ht_csa_parse(old160, sizeof(old160), &c) == 1 &&
+	    c.width == 2 && c.ccfs0 == 50);
+
+	{
+		/* Sub-elements before the width; a short one is skipped. */
+		static const uint8_t wrap2[] = { 37, 3, 1, 36, 5, 196, 9,
+		    195, 2, 0, 0, 194, 3, 1, 42, 0 };
+		static const uint8_t wrap_short[] = { 37, 3, 1, 36, 5, 196, 4,
+		    194, 2, 1, 42 };
+		static const uint8_t ecsa_short[] = { 60, 3, 0, 128, 100 };
+		static const uint8_t sco_empty[] = { 37, 3, 1, 44, 2, 62, 0 };
+		static const uint8_t ecsa6[] = { 60, 4, 0, 131, 5, 3 };
+		static const uint8_t act_differ[] = { 4, 4, 1, 128, 100, 7,
+		    37, 3, 1, 104, 7 };
+
+		CHECK(iwx_ht_csa_parse(wrap2, sizeof(wrap2), &c) == 1 &&
+		    c.have_wbcs && c.ccfs0 == 42);
+		CHECK(iwx_ht_csa_parse(wrap_short, sizeof(wrap_short),
+		    &c) == 1 && !c.have_wbcs);
+		CHECK(iwx_ht_csa_parse(ecsa_short, sizeof(ecsa_short),
+		    &c) == 0);
+		CHECK(iwx_ht_csa_parse(sco_empty, sizeof(sco_empty),
+		    &c) == 1 && !c.have_sco);
+		/* The operating class tells a 6 GHz channel 5 from 2.4 GHz. */
+		CHECK(iwx_ht_csa_parse(ecsa6, sizeof(ecsa6), &c) == 1 &&
+		    c.chan == 5 && c.opclass == 131 && iwx_ht_csa_6ghz(&c));
+		CHECK(iwx_ht_csa_parse(ecsa, sizeof(ecsa), &c) == 1 &&
+		    c.opclass == 128 && !iwx_ht_csa_6ghz(&c));
+		CHECK(iwx_ht_csa_parse(plain, sizeof(plain), &c) == 1 &&
+		    c.opclass == 0 && !iwx_ht_csa_6ghz(&c));
+		CHECK(iwx_ht_csa_action(act_differ, sizeof(act_differ),
+		    &c) == -1);
+	}
+	CHECK(iwx_ht_csa_action(act_csa, sizeof(act_csa), &c) == 1);
+	CHECK(c.chan == 36 && c.count == 5 && c.have_sco &&
+	    c.sco == IWX_HT_SCO_ABOVE);
+	CHECK(iwx_ht_csa_action(act_ecsa, sizeof(act_ecsa), &c) == 1);
+	CHECK(c.mode == 1 && c.chan == 100 && c.count == 7 && c.have_wbcs &&
+	    c.width == 1 && c.ccfs0 == 106);
+	CHECK(iwx_ht_csa_action(act_prot, sizeof(act_prot), &c) == 1);
+	CHECK(c.chan == 149 && c.count == 1 && !c.have_wbcs);
+	CHECK(iwx_ht_csa_action(act_other, sizeof(act_other), &c) == 0);
+	CHECK(iwx_ht_csa_action(act_short, sizeof(act_short), &c) == -1);
+	CHECK(iwx_ht_csa_action(act_csa, 1, &c) == 0);
+	/* An announcement frame without the announcement is malformed. */
+	CHECK(iwx_ht_csa_action(act_csa, 2, &c) == -1);
+
+	/* 40 MHz pairs of the 5 GHz band. */
+	CHECK(iwx_ht_sco5(36) == IWX_HT_SCO_ABOVE);
+	CHECK(iwx_ht_sco5(40) == IWX_HT_SCO_BELOW);
+	CHECK(iwx_ht_sco5(64) == IWX_HT_SCO_BELOW);
+	CHECK(iwx_ht_sco5(100) == IWX_HT_SCO_ABOVE);
+	CHECK(iwx_ht_sco5(144) == IWX_HT_SCO_BELOW);
+	CHECK(iwx_ht_sco5(149) == IWX_HT_SCO_ABOVE);
+	CHECK(iwx_ht_sco5(161) == IWX_HT_SCO_BELOW);
+	CHECK(iwx_ht_sco5(165) == IWX_HT_SCO_NONE);
+	CHECK(iwx_ht_sco5(38) == IWX_HT_SCO_NONE);
+	CHECK(iwx_ht_sco5(68) == IWX_HT_SCO_NONE);
+	CHECK(iwx_ht_sco5(11) == IWX_HT_SCO_NONE);
+
+	/* 80 MHz on 56 follows to 36 inside the same 160 MHz block. */
+	csa_peer56(&old);
+	iwx_ht_chan(&old, &loc, 56, &cur);
+	CHECK(cur.width == IWX_HT_WIDTH_80 &&
+	    cur.ctrl_pos == IWX_HT_POS_1_BELOW);
+	CHECK(iwx_ht_csa_parse(wide, sizeof(wide), &c) == 1);
+	iwx_ht_csa_peer(&old, &c, &p);
+	CHECK(p.primary == 36 && p.vht_width == 1 && p.vht_ccfs0 == 42 &&
+	    p.vht_ccfs1 == 50);
+	CHECK((p.htop0 & 0x03) == IWX_HT_SCO_ABOVE &&
+	    (p.htop0 & IWX_HT_STA_CHAN_WIDTH));
+	CHECK(p.htcaps == old.htcaps && p.ht && p.vht);
+	CHECK(iwx_ht_csa_follow(&p, &loc, 1, &cur, 36, &nc) == 1);
+	CHECK(nc.width == IWX_HT_WIDTH_80 && nc.vht80 &&
+	    nc.sco == IWX_HT_SCO_ABOVE && nc.ctrl_pos == IWX_HT_POS_2_BELOW);
+	/* The deprecated 160 MHz encoding names the same primary 80. */
+	CHECK(iwx_ht_csa_parse(old160, sizeof(old160), &c) == 1);
+	iwx_ht_csa_peer(&old, &c, &p);
+	CHECK(iwx_ht_csa_follow(&p, &loc, 1, &cur, 36, &nc) == 1 &&
+	    nc.ctrl_pos == IWX_HT_POS_2_BELOW);
+	/* Without the new width the BSS narrows: not followed at 80 MHz. */
+	CHECK(iwx_ht_csa_parse(plain, sizeof(plain), &c) == 1);
+	iwx_ht_csa_peer(&old, &c, &p);
+	CHECK((p.htop0 & (0x03 | IWX_HT_STA_CHAN_WIDTH)) == 0 &&
+	    p.vht_width == 0);
+	CHECK(iwx_ht_csa_follow(&p, &loc, 1, &cur, 36, &nc) == 0);
+	CHECK(nc.width == IWX_HT_WIDTH_20);
+	/* A 40 MHz announcement: followed by a 40 MHz link only. */
+	CHECK(iwx_ht_csa_parse(with_sco, sizeof(with_sco), &c) == 1);
+	iwx_ht_csa_peer(&old, &c, &p);
+	CHECK(iwx_ht_csa_follow(&p, &loc, 1, &cur, 44, &nc) == 0);
+	cur.width = IWX_HT_WIDTH_40;
+	CHECK(iwx_ht_csa_follow(&p, &loc, 1, &cur, 44, &nc) == 1 &&
+	    nc.sco == IWX_HT_SCO_ABOVE && !nc.vht80);
+	/* An explicit "no secondary channel" wins over a width element. */
+	c.have_sco = 1;
+	c.sco = IWX_HT_SCO_NONE;
+	c.have_wbcs = 1;
+	c.width = 1;
+	c.ccfs0 = 42;
+	iwx_ht_csa_peer(&old, &c, &p);
+	cur.width = IWX_HT_WIDTH_80;
+	CHECK(iwx_ht_csa_follow(&p, &loc, 1, &cur, 44, &nc) == 0 &&
+	    nc.width == IWX_HT_WIDTH_20);
+	/* Regulatory limits of the new channel and a band change. */
+	iwx_ht_chan(&old, &loc, 56, &cur);
+	CHECK(iwx_ht_csa_parse(wide, sizeof(wide), &c) == 1);
+	iwx_ht_csa_peer(&old, &c, &p);
+	loc.allow80 = 0;
+	CHECK(iwx_ht_csa_follow(&p, &loc, 1, &cur, 36, &nc) == 0);
+	loc = loc5;
+	CHECK(iwx_ht_csa_follow(&p, &loc, 0, &cur, 36, &nc) == 0);
+	CHECK(iwx_ht_csa_follow(&p, &loc2, 1, &cur, 36, &nc) == 0);
+	/* A legacy 20 MHz link follows inside its band. */
+	memset(&old, 0, sizeof(old));
+	memset(&cur, 0, sizeof(cur));
+	CHECK(iwx_ht_csa_parse(plain, sizeof(plain), &c) == 1);
+	iwx_ht_csa_peer(&old, &c, &p);
+	CHECK(iwx_ht_csa_follow(&p, &loc, 1, &cur, 36, &nc) == 1 &&
+	    nc.width == IWX_HT_WIDTH_20);
+	CHECK(iwx_ht_csa_follow(&p, &loc2, 0, &cur, 6, &nc) == 1);
+	/* HT on 2.4 GHz is 20 MHz here and follows as such. */
+	csa_peer56(&old);
+	old.primary = 1;
+	iwx_ht_chan(&old, &loc2, 1, &cur);
+	CHECK(cur.width == IWX_HT_WIDTH_20);
+	iwx_ht_csa_peer(&old, &c, &p);
+	CHECK(iwx_ht_csa_follow(&p, &loc2, 0, &cur, 6, &nc) == 1 &&
+	    nc.width == IWX_HT_WIDTH_20);
+}
+
 int
 main(void)
 {
@@ -564,6 +762,7 @@ main(void)
 	test_parse_and_chan();
 	test_tlc();
 	test_media();
+	test_csa();
 	printf("iwx-ht-contract: %u checks, %u failures\n", checks, failures);
 	return failures != 0;
 }

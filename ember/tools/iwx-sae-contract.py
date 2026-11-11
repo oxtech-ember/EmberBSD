@@ -77,7 +77,7 @@ struct iwx_softc {
     uint8_t sc_ht_buf[2][IWX_HT_ASSOC_MAX];
 };
 struct ieee80211_rxinfo { int rxi_rssi; uint32_t rxi_tstamp; };
-static int admitted, assoc, action, ordinary, failalloc, failcluster, failtags;
+static int admitted, assoc, action, csa, ordinary, failalloc, failcluster, failtags;
 static int freed, iwx_ht_mode = 1;
 static struct ieee80211_node rxnode;
 static int splnet(void) { return 0; }
@@ -92,10 +92,12 @@ static void iwx_ht_rx_assoc(struct iwx_softc *sc, struct mbuf *m)
     { assert(sc && m); assoc++; }
 static void iwx_ht_rx_action(struct iwx_softc *sc, struct mbuf *m)
     { assert(sc && m); action++; }
+static void iwx_csa_rx(struct iwx_softc *sc, struct mbuf *m)
+    { assert(sc && m); assert(assoc == 1 && action == 1); csa++; }
 static void saved_recv(struct ieee80211com *ic, struct mbuf *m,
     struct ieee80211_node *ni, int subtype, int rssi, uint32_t stamp)
     { assert(ic && m && ni && subtype == 0 && rssi == -42 && stamp == 99);
-      assert(assoc == 1 && action == 1); ordinary++; }
+      assert(assoc == 1 && action == 1 && csa == 1); ordinary++; }
 static void ieee80211_input(struct ieee80211com *ic, struct mbuf *m,
     struct ieee80211_node *ni, int rssi, uint32_t stamp)
     { if (admitted) ic->ic_recv_mgmt(ic,m,ni,0,rssi,stamp); }

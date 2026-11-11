@@ -46,6 +46,8 @@
 #define IWX_FLAG_SHUTDOWN 16
 #define IWX_FLAG_SCANNING 32
 #define IWX_RLC_CONFIG_CMD 0x4e
+#define IWX_LINK_CONTEXT_MODIFY_ACTIVE 1
+#define IWX_LINK_CONTEXT_MODIFY_RATES_INFO 2
 #define IWX_MONITOR_STA_ID 1
 #define IWX_DQA_INJECT_MONITOR_QUEUE 1
 #define IWX_MGMT_TID 8
@@ -61,6 +63,7 @@ enum ieee80211_state {
 };
 
 struct ieee80211_rateset { int rs_nrates; uint8_t rs_rates[16]; };
+struct ieee80211_channel { int ic_freq; };
 struct ieee80211_node {
 	struct ieee80211_rateset ni_rates;
 	void *ni_chan;
@@ -98,6 +101,12 @@ static int sent_width, sent_mode, sequence, tlc_sequence, phy_sequence;
 static int physical_width, remove_sequence, phy_remove_sequence, phy_add_sequence;
 static int binding_remove_sequence, mac_remove_sequence, disassoc_sequence;
 static int remove_error, phy_add_error, recovery_count, task_releases;
+/* Firmware commands seen while a channel switch is followed. */
+enum { EV_LINK_OFF = 1, EV_PHY_REMOVE, EV_PHY_ADD, EV_RLC, EV_LINK_RATES,
+	EV_TLC, EV_LINK_ON };
+static int csa_mode, csa_events[16], csa_nevents, csa_fail_at, rlc_version;
+static int csa_added_sco, csa_added_width;
+static void *csa_removed_channel, *csa_added_channel;
 #define CHECK(c) do { checks++; if (!(c)) { failures++; \
 	fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #c); } } while (0)
 
@@ -106,8 +115,29 @@ iwx_lookup_cmd_ver(struct iwx_softc *sc, int group, int cmd)
 {
 	(void)sc; (void)group;
 	if (cmd == IWX_RLC_CONFIG_CMD)
-		return 0;
+		return rlc_version;
 	return command_version;
+}
+
+/* Record one command; the csa_fail_at'th command fails. */
+static int
+csa_event(int event)
+{
+	if (csa_nevents < (int)(sizeof(csa_events) / sizeof(csa_events[0])))
+		csa_events[csa_nevents] = event;
+	csa_nevents++;
+	return csa_nevents == csa_fail_at ? EIO : 0;
+}
+
+static int
+iwx_mld_link_modify(struct iwx_softc *sc, struct iwx_node *in, int changes,
+    int active)
+{
+	(void)sc; (void)in;
+	if (changes == IWX_LINK_CONTEXT_MODIFY_ACTIVE)
+		return csa_event(active ? EV_LINK_ON : EV_LINK_OFF);
+	CHECK(changes == IWX_LINK_CONTEXT_MODIFY_RATES_INFO && active == 0);
+	return csa_event(EV_LINK_RATES);
 }
 
 static int
@@ -135,6 +165,8 @@ iwx_send_cmd_pdu(struct iwx_softc *sc, uint32_t id, uint32_t flags,
 {
 	(void)sc;
 	CHECK(id == 0x050f && flags == IWX_CMD_ASYNC);
+	if (csa_mode)
+		return csa_event(EV_TLC);
 	if (command_version == 4) {
 		const struct iwx_tlc_config_cmd_v4 *cfg = data;
 		CHECK(len == sizeof(*cfg));
@@ -205,6 +237,20 @@ static int
 iwx_phy_ctxt_cmd(struct iwx_softc *sc, struct iwx_phy_ctxt *phy,
     int chains, int dynamic, int action, int time, int sco, int width)
 {
+	if (csa_mode) {
+		/* The station stays while the PHY context is replaced. */
+		CHECK(chains == dynamic && time == 0);
+		CHECK(sc->sc_flags & IWX_FLAG_STA_ACTIVE);
+		if (action == IWX_FW_CTXT_ACTION_REMOVE) {
+			csa_removed_channel = phy->channel;
+			return csa_event(EV_PHY_REMOVE);
+		}
+		CHECK(action == IWX_FW_CTXT_ACTION_ADD);
+		csa_added_channel = phy->channel;
+		csa_added_sco = sco;
+		csa_added_width = width;
+		return csa_event(EV_PHY_ADD);
+	}
 	(void)chains; (void)dynamic; (void)time;
 	CHECK((sc->sc_flags & IWX_FLAG_STA_ACTIVE) == 0);
 	CHECK(sco == 0 && width == 0);
@@ -232,13 +278,15 @@ static int iwx_binding_cmd(struct iwx_softc *sc, struct iwx_node *in, int action
 }
 static void iwx_ba_reset(struct iwx_softc *sc, int hw)
 { (void)sc; (void)hw; }
+static void iwx_csa_clear(struct iwx_softc *sc) { (void)sc; }
 static void iwx_unprotect_session(struct iwx_softc *sc, struct iwx_node *in)
 { (void)sc; (void)in; }
 static int iwx_rm_sta_cmd(struct iwx_softc *sc, struct iwx_node *in)
 { return iwx_rm_sta(sc, in); }
 static int iwx_phy_send_rlc(struct iwx_softc *sc, struct iwx_phy_ctxt *phy,
     int chains, int dynamic)
-{ (void)sc; (void)phy; (void)chains; (void)dynamic; return 0; }
+{ (void)sc; (void)phy; (void)chains; (void)dynamic;
+  return csa_mode ? csa_event(EV_RLC) : 0; }
 static int iwx_enable_txq(struct iwx_softc *sc, int sta, int queue, int tid, int size)
 { (void)sc; (void)sta; (void)queue; (void)tid; (void)size; return 0; }
 static int iwx_enable_mgmt_queue(struct iwx_softc *sc)
@@ -409,10 +457,80 @@ test_dynamic(int version, int old_width, int new_width)
 	CHECK(unsafe_width == 0);
 }
 
+/*
+ * Following an AP to a new channel: the link goes inactive, the PHY
+ * context is replaced, the link gets its rates and rate scaling again and
+ * only then goes active.  A failed command ends the sequence.
+ */
+static void
+test_csa(int version, int rlc, int fail_at)
+{
+	static const int order[] = { EV_LINK_OFF, EV_PHY_REMOVE, EV_PHY_ADD,
+	    EV_RLC, EV_LINK_RATES, EV_TLC, EV_LINK_ON };
+	struct ieee80211_channel oldchan, newchan;
+	struct iwx_softc sc;
+	struct iwx_node in;
+	int expected[8], i, n = 0, result;
+
+	for (i = 0; i < 7; i++)
+		if (order[i] != EV_RLC || rlc == 2)
+			expected[n++] = order[i];
+	reset_transport(version, 2);
+	setup(&sc, &in, 2, 0);
+	sc.ns_nstate = IEEE80211_S_RUN;
+	sc.sc_phyctxt[0].channel = &oldchan;
+	csa_nevents = 0;
+	csa_fail_at = fail_at;
+	csa_removed_channel = csa_added_channel = NULL;
+	rlc_version = rlc;
+	csa_mode = 1;
+	result = iwx_csa_switch(&sc, &in, &newchan, 2, 1, 1);
+	csa_mode = 0;
+	rlc_version = 0;
+
+	if (fail_at == 0 || fail_at > n) {
+		CHECK(result == 0);
+		CHECK(csa_nevents == n);
+		for (i = 0; i < n && i < csa_nevents; i++)
+			CHECK(csa_events[i] == expected[i]);
+		CHECK(csa_removed_channel == &oldchan);
+		CHECK(csa_added_channel == &newchan);
+		CHECK(csa_added_sco == 1 && csa_added_width == 1);
+		CHECK(sc.sc_phyctxt[0].channel == &newchan);
+		CHECK(sc.sc_phyctxt[0].sco == 1 &&
+		    sc.sc_phyctxt[0].vht_chan_width == 1);
+	} else {
+		CHECK(result == EIO);
+		CHECK(csa_nevents == fail_at);
+		for (i = 0; i < fail_at; i++)
+			CHECK(csa_events[i] == expected[i]);
+	}
+	/* Nothing is sent once the association is gone. */
+	if (fail_at == 0) {
+		csa_nevents = 0;
+		csa_mode = 1;
+		sc.sc_ic.ic_state = IEEE80211_S_AUTH;
+		CHECK(iwx_csa_switch(&sc, &in, &oldchan, 2, 1, 1) == ENXIO);
+		sc.sc_ic.ic_state = IEEE80211_S_RUN;
+		sc.sc_flags |= IWX_FLAG_SHUTDOWN;
+		CHECK(iwx_csa_switch(&sc, &in, &oldchan, 2, 1, 1) == ENXIO);
+		sc.sc_flags &= ~IWX_FLAG_SHUTDOWN;
+		/* A requested state change counts before it is carried out. */
+		sc.ns_nstate = IEEE80211_S_AUTH;
+		CHECK(iwx_csa_switch(&sc, &in, &oldchan, 2, 1, 1) == ENXIO);
+		sc.ns_nstate = IEEE80211_S_RUN;
+		csa_mode = 0;
+		CHECK(csa_nevents == 0);
+		CHECK(sc.sc_phyctxt[0].channel == &newchan);
+	}
+	/* The station is never removed on this path. */
+	CHECK(remove_sequence == 0 && (sc.sc_flags & IWX_FLAG_STA_ACTIVE));
+}
+
 int
 main(void)
 {
-	int version, width;
+	int version, width, fail;
 
 	for (width = 0; width <= 2; width++) {
 		test_stop(width, 0, 0);
@@ -432,6 +550,10 @@ main(void)
 		test_dynamic(version, 0, 1);
 		test_dynamic(version, 0, 2);
 		test_dynamic(version, 1, 1);
+		test_csa(version, 2, 0);
+		test_csa(version, 0, 0);
+		for (fail = 1; fail <= 7; fail++)
+			test_csa(version, 2, fail);
 	}
 	printf("iwx width contract: %u checks, %u failures\n", checks, failures);
 	return failures != 0;
