@@ -5,18 +5,21 @@
 #include <sys/types.h>
 #include <errno.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "sun60i_a733_gpu_mmu.h"
+#include "rbtree.h"
 
 static unsigned int checks;
 #define CHECK(e) do { checks++; if (!(e)) { \
 	fprintf(stderr, "FAIL line %d: %s\n", __LINE__, #e); abort(); \
 } } while (0)
 #define KASSERT(e) CHECK(e)
+#define __diagused
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 #define KM_SLEEP 1
 #define BUS_DMA_WAITOK 1
@@ -417,16 +420,16 @@ published_tests(void)
 	state.expect_retired = true;
 	count = memory_count;
 	CHECK(pvr_vm_unmap(vm, 4096, 4096) == ETIMEDOUT);
-	CHECK(memory_count == count && vm->ranges != NULL && vm->failed);
+	CHECK(memory_count == count && RB_TREE_MIN(&vm->ranges) != NULL && vm->failed);
 	CHECK(pvr_vm_map(vm, 8192, 0x40000000, 4096, 0) == EIO);
 	CHECK(pvr_vm_unmap(vm, 4096, 4096) == EIO);
 	CHECK(pvr_vm_flush(vm) == EIO && pvr_vm_quiesce(vm) == EIO);
 	CHECK(state.calls == 2 && memory_count == count);
 	/* Fixture teardown after the model disconnects its device. No reset API
 	 * is claimed. Production must retain these objects on this failure. */
-	range = vm->ranges;
-	CHECK(range->next == NULL);
-	vm->ranges = NULL;
+	range = RB_TREE_MIN(&vm->ranges);
+	CHECK(rb_tree_iterate(&vm->ranges, range, RB_DIR_RIGHT) == NULL);
+	rb_tree_remove_node(&vm->ranges, range);
 	kmem_free(range, sizeof(*range));
 	vm->failed = false;
 	vm->invalidate = NULL;
@@ -446,7 +449,7 @@ published_tests(void)
 	CHECK(pvr_vm_flush_changes(vm) == 0 && state.calls == 2);
 	count = memory_count;
 	CHECK(pvr_vm_unmap_deferred(vm, 4096, 4096) == 0 && state.calls == 2);
-	CHECK(vm->ranges == NULL && memory_count == count);
+	CHECK(RB_TREE_MIN(&vm->ranges) == NULL && memory_count == count);
 	CHECK(vm->retired_tables != NULL && vm->retired_dirs != NULL);
 	CHECK(((uint32_t *)vm->catalogue.cpu)[0] == 0);
 	CHECK(pvr_vm_unmap_deferred(vm, 4096, 4096) == ENOENT);
@@ -482,6 +485,76 @@ published_tests(void)
 	vm->invalidate = NULL;
 	pvr_vm_collect(vm);
 	pvr_vm_destroy(vm); active_vm = NULL; vm = NULL; empty();
+}
+
+/* Many ranges in scrambled order: overlap checks, exact unmap, and order. */
+static void
+tree_tests(void)
+{
+	enum { RANGES = 1024 };
+	struct pvr_vm *vm = NULL;
+	struct pvr_vm_range *range;
+	const uint64_t base = UINT64_C(0x10000000), stride = 8192;
+	uint64_t va, previous;
+	unsigned int n, k, count;
+
+	CHECK(pvr_vm_create((void *)1, &vm) == 0);
+	active_vm = vm;
+	/* 397 is coprime with 1024: every slot exactly once, out of order. */
+	for (n = 0; n < RANGES; n++) {
+		k = (n * 397) % RANGES;
+		va = base + (uint64_t)k * stride;
+		CHECK(pvr_vm_map(vm, va, 0x40000000 + (uint64_t)k * 4096,
+		    4096, 0) == 0);
+	}
+	count = 0;
+	previous = 0;
+	RB_TREE_FOREACH(range, &vm->ranges) {
+		CHECK(range->va > previous && range->size == 4096);
+		previous = range->va;
+		count++;
+	}
+	CHECK(count == RANGES);
+	for (k = 0; k < RANGES; k += 61) {
+		va = base + (uint64_t)k * stride;
+		/* Same start, inside, reaching into the next, and covering. */
+		CHECK(pvr_vm_map(vm, va, 0x50000000, 4096, 0) == EEXIST);
+		CHECK(pvr_vm_map(vm, va - 4096, 0x50000000, 8192, 0) == EEXIST);
+		if (k + 1 < RANGES)
+			CHECK(pvr_vm_map(vm, va + 4096, 0x50000000, 8192, 0) ==
+			    EEXIST);
+		CHECK(pvr_vm_map(vm, va - 4096, 0x50000000, 3 * 4096, 0) ==
+		    EEXIST);
+		/* The gap after a range is free and leaves it untouched. */
+		CHECK(pvr_vm_map(vm, va + 4096, 0x50000000, 4096, 0) == 0);
+		CHECK(pvr_vm_unmap(vm, va + 4096, 4096) == 0);
+		/* Unmap needs the exact start and size. */
+		CHECK(pvr_vm_unmap(vm, va, 8192) == ENOENT);
+		CHECK(pvr_vm_unmap(vm, va + 4096, 4096) == ENOENT);
+		CHECK(leaf(vm, va) == ((0x40000000 + (uint64_t)k * 4096) | 1));
+	}
+	CHECK(pvr_vm_map(vm, base - 4096, 0x50000000, 4096, 0) == 0);
+	CHECK(pvr_vm_unmap(vm, base - 4096, 4096) == 0);
+	/* The last page of the VA space, with ranges below it. */
+	va = (UINT64_C(1) << 40) - 4096;
+	CHECK(pvr_vm_map(vm, va, 0x50000000, 4096, 0) == 0);
+	CHECK(pvr_vm_map(vm, va - 4096, 0x50000000, 8192, 0) == EEXIST);
+	CHECK(pvr_vm_map(vm, va - 4096, 0x50000000, 4096, 0) == 0);
+	CHECK(pvr_vm_unmap(vm, va, 4096) == 0);
+	CHECK(pvr_vm_unmap(vm, va - 4096, 4096) == 0);
+	/* Unmap half in another order; destroy unmaps the rest. */
+	for (n = 0; n < RANGES; n += 2) {
+		k = (n * 211) % RANGES;
+		va = base + (uint64_t)k * stride;
+		CHECK(pvr_vm_unmap(vm, va, 4096) == 0);
+		CHECK(pvr_vm_unmap(vm, va, 4096) == ENOENT);
+		CHECK(leaf(vm, va) == 0);
+	}
+	count = 0;
+	RB_TREE_FOREACH(range, &vm->ranges)
+		count++;
+	CHECK(count == RANGES / 2);
+	pvr_vm_destroy(vm); active_vm = NULL; empty();
 }
 
 int
@@ -629,6 +702,7 @@ main(void)
 	}
 	pvr_vm_destroy(vm); active_vm = NULL; vm = NULL; empty();
 	published_tests();
+	tree_tests();
 	printf("PASS: %u native PowerVR VM checks\n", checks);
 	return 0;
 }

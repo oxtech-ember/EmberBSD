@@ -10,6 +10,7 @@
 #include <sys/endian.h>
 #include <sys/errno.h>
 #include <sys/kmem.h>
+#include <sys/rbtree.h>
 #include <sys/systm.h>
 
 #include <dev/powervr/pvr_mmu.h>
@@ -41,8 +42,9 @@ struct pvr_vm_pd {
 	unsigned int used;
 };
 
+/* Mapped ranges are disjoint; the tree orders them by start address. */
 struct pvr_vm_range {
-	struct pvr_vm_range *next;
+	struct rb_node node;
 	uint64_t va, size;
 };
 
@@ -50,7 +52,7 @@ struct pvr_vm {
 	bus_dma_tag_t dmat;
 	struct pvr_vm_dma catalogue;
 	struct pvr_vm_pd *dirs[PVR_MMU_PC_ENTRIES];
-	struct pvr_vm_range *ranges;
+	struct rb_tree ranges;
 	struct pvr_vm_pd *retired_dirs;
 	struct pvr_vm_pt *retired_tables;
 	int (*invalidate)(void *);
@@ -155,6 +157,34 @@ pvr_vm_range_valid(uint64_t va, uint64_t size)
 }
 
 static int
+pvr_vm_range_compare_nodes(void *context, const void *a, const void *b)
+{
+	const struct pvr_vm_range *left = a, *right = b;
+
+	if (left->va < right->va)
+		return -1;
+	return left->va > right->va;
+}
+
+static int
+pvr_vm_range_compare_key(void *context, const void *node, const void *key)
+{
+	const struct pvr_vm_range *range = node;
+	const uint64_t va = *(const uint64_t *)key;
+
+	if (range->va < va)
+		return -1;
+	return range->va > va;
+}
+
+static const rb_tree_ops_t pvr_vm_range_ops = {
+	.rbto_compare_nodes = pvr_vm_range_compare_nodes,
+	.rbto_compare_key = pvr_vm_range_compare_key,
+	.rbto_node_offset = offsetof(struct pvr_vm_range, node),
+	.rbto_context = NULL,
+};
+
+static int
 pvr_vm_create_internal(bus_dma_tag_t dmat, bool direct, struct pvr_vm **out)
 {
 	struct pvr_vm *vm;
@@ -165,6 +195,7 @@ pvr_vm_create_internal(bus_dma_tag_t dmat, bool direct, struct pvr_vm **out)
 	vm = kmem_zalloc(sizeof(*vm), KM_SLEEP);
 	vm->dmat = dmat;
 	vm->direct = direct;
+	rb_tree_init(&vm->ranges, &pvr_vm_range_ops);
 	error = pvr_vm_dma_alloc(vm, &vm->catalogue);
 	if (error != 0) {
 		kmem_free(vm, sizeof(*vm));
@@ -347,11 +378,11 @@ static int
 pvr_vm_map_internal(struct pvr_vm *vm, uint64_t va, uint64_t pa,
     const uint64_t *pages, uint64_t size, uint64_t flags)
 {
-	struct pvr_vm_range **slot, *range;
+	struct pvr_vm_range *range, *inserted __diagused;
 	struct pvr_vm_pd *pd;
 	struct pvr_vm_pt *pt;
 	struct pvr_mmu_indices idx;
-	uint64_t at, step, value, *entries;
+	uint64_t at, last, step, value, *entries;
 	uint32_t pce;
 	unsigned int n, count, pc;
 	int error;
@@ -370,12 +401,11 @@ pvr_vm_map_internal(struct pvr_vm *vm, uint64_t va, uint64_t pa,
 			if (pvr_mmu_pte(pages[at], flags, &value) != 0)
 				return EINVAL;
 	}
-	for (slot = &vm->ranges; *slot != NULL; slot = &(*slot)->next) {
-		if (va < (*slot)->va + (*slot)->size && (*slot)->va < va + size)
-			return EEXIST;
-		if ((*slot)->va >= va)
-			break;
-	}
+	/* Only the last range starting at or before our end can overlap us. */
+	last = va + size - 1;
+	range = rb_tree_find_node_leq(&vm->ranges, &last);
+	if (range != NULL && range->va + range->size > va)
+		return EEXIST;
 	range = kmem_zalloc(sizeof(*range), KM_SLEEP);
 	range->va = va;
 	range->size = size;
@@ -439,8 +469,8 @@ pvr_vm_map_internal(struct pvr_vm *vm, uint64_t va, uint64_t pa,
 	}
 	pvr_vm_dma_sync(vm, &vm->catalogue);
 	vm->dirty = true;
-	range->next = *slot;
-	*slot = range;
+	inserted = rb_tree_insert_node(&vm->ranges, range);
+	KASSERT(inserted == range);
 	return 0;
 fail:
 	pvr_vm_rollback(vm, va, size);
@@ -470,7 +500,7 @@ static int
 pvr_vm_unmap_internal(struct pvr_vm *vm, uint64_t va, uint64_t size,
     bool flush)
 {
-	struct pvr_vm_range **slot, *range;
+	struct pvr_vm_range *range;
 	struct pvr_vm_pd *pd;
 	struct pvr_vm_pt *pt;
 	struct pvr_mmu_indices idx;
@@ -482,12 +512,9 @@ pvr_vm_unmap_internal(struct pvr_vm *vm, uint64_t va, uint64_t size,
 		return EIO;
 	if (vm == NULL || !pvr_vm_range_valid(va, size))
 		return EINVAL;
-	for (slot = &vm->ranges; *slot != NULL; slot = &(*slot)->next)
-		if ((*slot)->va == va && (*slot)->size == size)
-			break;
-	if (*slot == NULL)
+	range = rb_tree_find_node(&vm->ranges, &va);
+	if (range == NULL || range->size != size)
 		return ENOENT;
-	range = *slot;
 	for (at = va; at < va + size; at += step) {
 		error = pvr_mmu_indices(at, &idx);
 		KASSERT(error == 0);
@@ -525,7 +552,7 @@ pvr_vm_unmap_internal(struct pvr_vm *vm, uint64_t va, uint64_t size,
 		if (error != 0)
 			return error;
 	}
-	*slot = range->next;
+	rb_tree_remove_node(&vm->ranges, range);
 	kmem_free(range, sizeof(*range));
 	return 0;
 }
@@ -547,13 +574,14 @@ pvr_vm_unmap_deferred(struct pvr_vm *vm, uint64_t va, uint64_t size)
 void
 pvr_vm_destroy(struct pvr_vm *vm)
 {
+	struct pvr_vm_range *range;
 	int error;
 
 	if (vm == NULL)
 		return;
 	KASSERT(vm->invalidate == NULL && !vm->failed);
-	while (vm->ranges != NULL) {
-		error = pvr_vm_unmap(vm, vm->ranges->va, vm->ranges->size);
+	while ((range = RB_TREE_MIN(&vm->ranges)) != NULL) {
+		error = pvr_vm_unmap(vm, range->va, range->size);
 		KASSERT(error == 0);
 	}
 	/* Deferred unmaps may have left detached tables. */
