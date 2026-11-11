@@ -752,6 +752,30 @@ test_csa(void)
 	    nc.width == IWX_HT_WIDTH_20);
 }
 
+/* Beacon loss is acted on once per IWX_HT_BMISS_STEP missed beacons. */
+static void
+test_bmiss(void)
+{
+	uint32_t level = 0, n;
+	int acts = 0;
+
+	for (n = 1; n < IWX_HT_BMISS_STEP; n++)
+		CHECK(iwx_ht_bmiss(n, &level) == 0);
+	CHECK(iwx_ht_bmiss(IWX_HT_BMISS_STEP, &level) == 1);
+	/* The firmware repeats and may skip counts. */
+	CHECK(iwx_ht_bmiss(IWX_HT_BMISS_STEP, &level) == 0);
+	CHECK(iwx_ht_bmiss(IWX_HT_BMISS_STEP + 3, &level) == 0);
+	CHECK(iwx_ht_bmiss(2 * IWX_HT_BMISS_STEP + 1, &level) == 1);
+	CHECK(iwx_ht_bmiss(2 * IWX_HT_BMISS_STEP + 2, &level) == 0);
+	/* A received beacon restarts the count. */
+	CHECK(iwx_ht_bmiss(1, &level) == 0 && level == 0);
+	CHECK(iwx_ht_bmiss(IWX_HT_BMISS_STEP, &level) == 1);
+	level = 0;
+	for (n = 1; n <= 5 * IWX_HT_BMISS_STEP; n++)
+		acts += iwx_ht_bmiss(n, &level);
+	CHECK(acts == 5);
+}
+
 int
 main(void)
 {
@@ -763,6 +787,7 @@ main(void)
 	test_tlc();
 	test_media();
 	test_csa();
+	test_bmiss();
 	printf("iwx-ht-contract: %u checks, %u failures\n", checks, failures);
 	return failures != 0;
 }

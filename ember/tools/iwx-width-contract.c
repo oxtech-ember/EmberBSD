@@ -88,6 +88,7 @@ struct iwx_softc {
 	struct ieee80211com sc_ic;
 	void *sc_dev;
 	int sc_flags, sc_generation, sc_bss_ht_valid, task_refs;
+	uint32_t sc_bmiss_level;
 	int sc_systq, init_task, ns_arg;
 	uint64_t sc_ns_sae_serial;
 	enum ieee80211_state ns_nstate;

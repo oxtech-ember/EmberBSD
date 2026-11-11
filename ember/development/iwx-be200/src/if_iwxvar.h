@@ -858,6 +858,7 @@ struct iwx_softc {
 	struct iwx_ht_csa sc_csa;	/* switch announced by our AP */
 	int sc_csa_valid;
 	int sc_csa_wait;	/* no beacon on the new channel yet */
+	uint32_t sc_bmiss_level;	/* beacon loss already acted on */
 	uint8_t sc_ht_buf[2][IWX_HT_ASSOC_MAX];
 
 	/* Link diagnostics printed with IFF_DEBUG (iwx_dbg_report()). */

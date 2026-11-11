@@ -641,6 +641,28 @@ iwx_ht_csa_follow(const struct iwx_ht_peer *p, const struct iwx_ht_local *loc,
 	return (loc->band5 != 0) == (band5 != 0) && nc->width == cur->width;
 }
 
+/*
+ * Beacon loss as the firmware counts it: `missed' consecutive beacons
+ * since the last one received.  Returns 1 each time the count passes
+ * another multiple of IWX_HT_BMISS_STEP, 0 otherwise; *level is the
+ * multiple acted on last and falls back when beacons arrive again.  The
+ * firmware repeats its notification and may skip counts.
+ */
+#define IWX_HT_BMISS_STEP	8
+
+static inline int
+iwx_ht_bmiss(uint32_t missed, uint32_t *level)
+{
+	uint32_t l = missed / IWX_HT_BMISS_STEP;
+
+	if (l <= *level) {
+		*level = l;
+		return 0;
+	}
+	*level = l;
+	return 1;
+}
+
 /* TLC settings for the negotiated mode. */
 static inline void
 iwx_ht_tlc(const struct iwx_ht_peer *p, const struct iwx_ht_local *loc,

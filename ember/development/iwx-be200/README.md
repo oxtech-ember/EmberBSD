@@ -27,6 +27,14 @@ the address after the carrier loss. Contracts: `iwx_ht_csa_*()` in
 themselves have no fixture yet. Run `ifconfig iwx0 debug` to log the
 announcement as it is received.
 
+Also new and not yet run on hardware: a lost AP is noticed. The driver
+used to answer the firmware's missed-beacons notification with a probe
+request through the legacy `ieee80211_send_mgmt()`, which has none, so
+nothing happened. `iwx_rx_bmiss()` now sends a directed probe request
+after 8 beacons missed in a row (`ieee80211_beacon_miss()`) and restarts
+the interface after 16 if the AP stayed silent, logging `lost the AP`.
+Contract: `iwx_ht_bmiss()` in `ember/tools/iwx-ht-contract.sh`.
+
 Status (2026-11-11): `ifconfig iwx0` reports the negotiated mode
 (`VHT mode 11ac`, `HT mode 11na`/`11ng`) instead of the first legacy rate;
 net80211 has no HT or VHT mode, so the driver supplies the media word

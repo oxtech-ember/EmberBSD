@@ -5831,28 +5831,57 @@ iwx_rx_bmiss(struct iwx_softc *sc, struct iwx_rx_packet *pkt,
     struct iwx_rx_data *data)
 {
 	struct ieee80211com *ic = &sc->sc_ic;
+	struct iwx_missed_beacons_notif *mbn = (void *)pkt->data;
+	uint32_t missed, level;
 
+	/* Only the first two words are used. */
 	if ((ic->ic_opmode != IEEE80211_M_STA) ||
-	    (ic->ic_state != IEEE80211_S_RUN))
+	    (ic->ic_state != IEEE80211_S_RUN) ||
+	    iwx_rx_packet_payload_len(pkt) < 2 * sizeof(uint32_t))
 		return;
 
 	bus_dmamap_sync(sc->sc_dmat, data->map, sizeof(*pkt),
 	    sizeof(struct iwx_missed_beacons_notif), BUS_DMASYNC_POSTREAD);
 
-	if (ic->ic_mgt_timer == 0) {
+	/*
+	 * The link ID or MAC ID comes first in every version of this
+	 * notification, then the beacons missed since the last one heard.
+	 */
+	missed = le32toh(mbn->consec_missed_beacons_since_last_rx);
+	level = sc->sc_bmiss_level;
+	if (!iwx_ht_bmiss(missed, &sc->sc_bmiss_level))
+		return;
+	/* After a followed channel switch its own timer decides. */
+	if (sc->sc_csa_wait)
+		return;
+	/* A count left over from an earlier run must not skip the probe. */
+	if (level == 0)
+		ic->ic_bmiss_count = 0;
+	if (ic->ic_bmiss_count == 0) {
 		if (ic->ic_ifp->if_flags & IFF_DEBUG)
-			printf("%s: receiving no beacons from %s; checking if "
-			    "this AP is still responding to probe requests\n",
-			    device_xname(sc->sc_dev), ether_sprintf(ic->ic_bss->ni_macaddr));
+			printf("%s: %u beacons missed from %s, probing\n",
+			    device_xname(sc->sc_dev), missed,
+			    ether_sprintf(ic->ic_bss->ni_macaddr));
 		/*
-		 * Rather than go directly to scan state, try to send a
-		 * directed probe request first. If that fails then the
-		 * state machine will drop us into scanning after timing
-		 * out waiting for a probe response.
+		 * Counts once and sends a directed probe request; a beacon
+		 * or probe response from the AP clears the count again.
+		 * The legacy ieee80211_send_mgmt() used here before has no
+		 * probe request and failed, so a lost AP went unnoticed.
 		 */
-		IEEE80211_SEND_MGMT(ic, ic->ic_bss,
-		    IEEE80211_FC0_SUBTYPE_PROBE_REQ, 0);
+		ieee80211_beacon_miss(ic);
+		return;
 	}
+	/*
+	 * The AP stayed silent after the probe.  Restart the interface,
+	 * which scans and associates again; leaving RUN for SCAN directly
+	 * is a path this driver has never run on hardware.
+	 */
+	printf("%s: lost the AP %s (%u beacons missed), restarting\n",
+	    device_xname(sc->sc_dev), ether_sprintf(ic->ic_bss->ni_macaddr),
+	    missed);
+	ic->ic_bmiss_count = 0;
+	if ((sc->sc_flags & IWX_FLAG_SHUTDOWN) == 0)
+		task_add(sc->sc_systq, &sc->init_task);
 
 }
 
@@ -10184,6 +10213,7 @@ iwx_auth(struct iwx_softc *sc)
 
 	/* A new association negotiates HT/VHT from scratch. */
 	sc->sc_bss_ht_valid = 0;
+	sc->sc_bmiss_level = 0;
 	iwx_csa_clear(sc);
 	in->in_ht = 0;
 	iwx_ba_reset(sc, 0);
