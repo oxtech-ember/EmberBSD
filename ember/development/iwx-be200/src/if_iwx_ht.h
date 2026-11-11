@@ -69,20 +69,29 @@
 #define IWX_HT_CAP_RXSTBC_1	0x0100
 
 /* VHT capability info bits (802.11-2020 9.4.2.157.2). */
+#define IWX_VHT_CAP_CW160	0x00000004	/* channel width set: 160 MHz */
 #define IWX_VHT_CAP_RXLDPC	0x00000010
 #define IWX_VHT_CAP_SGI80	0x00000020
+#define IWX_VHT_CAP_SGI160	0x00000040
 #define IWX_VHT_CAP_RXSTBC_MASK	0x00000700
 #define IWX_VHT_CAP_RXSTBC_1	0x00000100
 #define IWX_VHT_CAP_AMPDU_EXP7	(7U << 23)
+#define IWX_VHT_CAP_CWSET(caps)	(((caps) >> 2) & 3)	/* channel width set */
+#define IWX_VHT_CAP_EXTNSS(caps) (((caps) >> 30) & 3)	/* Extended NSS BW */
 
 /* Firmware values, checked against if_iwxreg.h by the driver. */
 #define IWX_HT_POS_1_BELOW	0
 #define IWX_HT_POS_2_BELOW	1
+#define IWX_HT_POS_3_BELOW	2
+#define IWX_HT_POS_4_BELOW	3
 #define IWX_HT_POS_1_ABOVE	4
 #define IWX_HT_POS_2_ABOVE	5
+#define IWX_HT_POS_3_ABOVE	6
+#define IWX_HT_POS_4_ABOVE	7
 #define IWX_HT_WIDTH_20		0
 #define IWX_HT_WIDTH_40		1
 #define IWX_HT_WIDTH_80		2
+#define IWX_HT_WIDTH_160	3
 #define IWX_HT_TLC_MODE_NON_HT	0
 #define IWX_HT_TLC_MODE_HT	1
 #define IWX_HT_TLC_MODE_VHT	2
@@ -111,6 +120,8 @@ struct iwx_ht_local {
 	int	vht;		/* offer VHT (used on 5 GHz only) */
 	int	allow40;	/* regulatory allows 40 MHz on this channel */
 	int	allow80;	/* regulatory allows 80 MHz on this channel */
+	int	vht160;		/* offer 160 MHz VHT operation */
+	int	allow160;	/* regulatory allows 160 MHz on this channel */
 };
 
 /* What the AP answered. */
@@ -135,7 +146,7 @@ struct iwx_ht_peer {
 /* Channel layout for the PHY context and TLC. */
 struct iwx_ht_chan {
 	uint8_t	sco;		/* IWX_HT_SCO_* in effect */
-	uint8_t	vht80;		/* 80 MHz VHT operation */
+	uint8_t	vht80;		/* VHT operation, 80 MHz or wider */
 	uint8_t	width;		/* IWX_HT_WIDTH_* */
 	uint8_t	ctrl_pos;	/* IWX_HT_POS_* */
 };
@@ -161,6 +172,7 @@ struct iwx_ht_tlc {
 	uint8_t		sgi;		/* bit per width with short GI */
 	uint16_t	flags;		/* IWX_HT_TLC_STBC | IWX_HT_TLC_LDPC */
 	uint16_t	rates[2];	/* MCS bitmap per spatial stream */
+	uint16_t	rates160[2];	/* the same at 160 MHz */
 	uint16_t	max_mpdu_len;
 };
 
@@ -261,7 +273,9 @@ iwx_ht_put_vhtcap(uint8_t *frm, const struct iwx_ht_local *loc)
 	frm[0] = IWX_HT_EID_VHTCAP;
 	frm[1] = IWX_HT_VHTCAP_LEN;
 	iwx_ht_put32(frm + 2, IWX_VHT_CAP_RXLDPC | IWX_VHT_CAP_SGI80 |
-	    IWX_VHT_CAP_RXSTBC_1 | IWX_VHT_CAP_AMPDU_EXP7);
+	    IWX_VHT_CAP_RXSTBC_1 | IWX_VHT_CAP_AMPDU_EXP7 |
+	    (loc->vht160 && loc->allow160 ?
+	    IWX_VHT_CAP_CW160 | IWX_VHT_CAP_SGI160 : 0));
 	/* MCS 0-9 for each supported stream, "not supported" for the rest. */
 	for (ss = 0; ss < 8; ss++)
 		map |= (uint16_t)((ss < loc->nss ? 2 : 3) << (2 * ss));
@@ -380,6 +394,44 @@ iwx_ht_parse(const uint8_t *body, size_t len, size_t fixed,
 }
 
 /*
+ * The second centre channel of an AP whose VHT operation has width 1.
+ * An AP that receives fewer streams at 160 MHz than at 80 MHz (Extended
+ * NSS BW) names it in HT operation instead (CCFS2); an AP with neither
+ * the 160 MHz capability nor Extended NSS BW has none (802.11-2020
+ * Table 9-274, read as Linux does).
+ */
+static inline int
+iwx_ht_vht_ccfs1(const struct iwx_ht_peer *p)
+{
+	int set = IWX_VHT_CAP_CWSET(p->vhtcaps);
+	int ext = IWX_VHT_CAP_EXTNSS(p->vhtcaps);
+	int ccfs2 = (p->htop1 >> 5) & 0xff;
+
+	if (set == 0)
+		return ext == 0 ? 0 : ccfs2;
+	if (set == 1 && (ext == 1 || ext == 2) && p->vht_ccfs1 == 0)
+		return ccfs2;
+	return p->vht_ccfs1;
+}
+
+/* Spatial streams the AP receives at 160 MHz (the same table). */
+static inline int
+iwx_ht_vht_nss160(const struct iwx_ht_peer *p)
+{
+	int ext = IWX_VHT_CAP_EXTNSS(p->vhtcaps);
+	int nss = 0, ss;
+
+	for (ss = 0; ss < 8; ss++)
+		if (((p->vht_rxmcs >> (2 * ss)) & 3) != 3)
+			nss = ss + 1;
+	if (IWX_VHT_CAP_CWSET(p->vhtcaps) != 0)
+		return nss;
+	if (ext == 3)
+		return nss * 3 / 4;
+	return ext == 0 ? 0 : nss / 2;
+}
+
+/*
  * Choose the channel layout.  `chan' is the IEEE number of the BSS
  * (primary) channel; HT operation must agree with it or 20 MHz is used.
  */
@@ -387,7 +439,7 @@ static inline void
 iwx_ht_chan(const struct iwx_ht_peer *p, const struct iwx_ht_local *loc,
     int chan, struct iwx_ht_chan *c)
 {
-	int center = 0, sco;
+	int center = 0, center160 = 0, ccfs1, sco;
 
 	c->sco = IWX_HT_SCO_NONE;
 	c->vht80 = 0;
@@ -412,12 +464,19 @@ iwx_ht_chan(const struct iwx_ht_peer *p, const struct iwx_ht_local *loc,
 		return;
 	switch (p->vht_width) {
 	case 1:	/* 80 MHz; with CCFS1 set, CCFS0 is the primary 80 */
+		center = p->vht_ccfs0;
+		/* A second centre 8 channels away is that of 160 MHz. */
+		ccfs1 = iwx_ht_vht_ccfs1(p);
+		if (ccfs1 == p->vht_ccfs0 + 8 || ccfs1 + 8 == p->vht_ccfs0)
+			center160 = ccfs1;
+		break;
 	case 3:	/* deprecated 80+80: CCFS0 is the primary 80 */
 		center = p->vht_ccfs0;
 		break;
 	case 2:	/* deprecated 160: CCFS0 is the 160 MHz centre */
 		center = chan < p->vht_ccfs0 ?
 		    p->vht_ccfs0 - 8 : p->vht_ccfs0 + 8;
+		center160 = p->vht_ccfs0;
 		break;
 	default:
 		return;
@@ -440,6 +499,40 @@ iwx_ht_chan(const struct iwx_ht_peer *p, const struct iwx_ht_local *loc,
 	}
 	c->vht80 = 1;
 	c->width = IWX_HT_WIDTH_80;
+
+	/* 160 MHz only on its three 5 GHz channels and only if offered. */
+	if (!loc->vht160 || !loc->allow160 ||
+	    (center160 != 50 && center160 != 114 && center160 != 163))
+		return;
+	switch (chan - center160) {
+	case -14:
+		c->ctrl_pos = IWX_HT_POS_4_BELOW;
+		break;
+	case -10:
+		c->ctrl_pos = IWX_HT_POS_3_BELOW;
+		break;
+	case -6:
+		c->ctrl_pos = IWX_HT_POS_2_BELOW;
+		break;
+	case -2:
+		c->ctrl_pos = IWX_HT_POS_1_BELOW;
+		break;
+	case 2:
+		c->ctrl_pos = IWX_HT_POS_1_ABOVE;
+		break;
+	case 6:
+		c->ctrl_pos = IWX_HT_POS_2_ABOVE;
+		break;
+	case 10:
+		c->ctrl_pos = IWX_HT_POS_3_ABOVE;
+		break;
+	case 14:
+		c->ctrl_pos = IWX_HT_POS_4_ABOVE;
+		break;
+	default:
+		return;		/* keep the consistent 80 MHz layout */
+	}
+	c->width = IWX_HT_WIDTH_160;
 }
 
 /*
@@ -675,6 +768,7 @@ iwx_ht_tlc(const struct iwx_ht_peer *p, const struct iwx_ht_local *loc,
 	t->sgi = 0;
 	t->flags = 0;
 	t->rates[0] = t->rates[1] = 0;
+	t->rates160[0] = t->rates160[1] = 0;
 	t->max_mpdu_len = 2346;		/* IEEE80211_MAX_LEN */
 	if (!p->ht)
 		return;
@@ -694,6 +788,9 @@ iwx_ht_tlc(const struct iwx_ht_peer *p, const struct iwx_ht_local *loc,
 		t->max_mpdu_len = 3895;
 		if ((p->vhtcaps & IWX_VHT_CAP_SGI80) && c->vht80)
 			t->sgi |= 1 << IWX_HT_WIDTH_80;
+		if ((p->vhtcaps & IWX_VHT_CAP_SGI160) &&
+		    c->width == IWX_HT_WIDTH_160)
+			t->sgi |= 1 << IWX_HT_WIDTH_160;
 		if (p->vhtcaps & IWX_VHT_CAP_RXLDPC)
 			t->flags |= IWX_HT_TLC_LDPC;
 		if (loc->nss >= 2 && (p->vhtcaps & IWX_VHT_CAP_RXSTBC_MASK))
@@ -714,6 +811,13 @@ iwx_ht_tlc(const struct iwx_ht_peer *p, const struct iwx_ht_local *loc,
 			default:
 				break;
 			}
+			/*
+			 * MCS 0-9 are all valid at 160 MHz with 1-2 SS, for
+			 * as many streams as the AP receives at that width.
+			 */
+			if (c->width == IWX_HT_WIDTH_160 &&
+			    ss < iwx_ht_vht_nss160(p))
+				t->rates160[ss] = t->rates[ss];
 		}
 		return;
 	}

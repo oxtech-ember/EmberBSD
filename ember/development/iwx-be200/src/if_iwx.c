@@ -158,12 +158,18 @@ CTASSERT(IWX_HT_POS_1_BELOW == IWX_PHY_VHT_CTRL_POS_1_BELOW);
 CTASSERT(IWX_HT_POS_2_BELOW == IWX_PHY_VHT_CTRL_POS_2_BELOW);
 CTASSERT(IWX_HT_POS_1_ABOVE == IWX_PHY_VHT_CTRL_POS_1_ABOVE);
 CTASSERT(IWX_HT_POS_2_ABOVE == IWX_PHY_VHT_CTRL_POS_2_ABOVE);
+CTASSERT(IWX_HT_POS_3_BELOW == IWX_PHY_VHT_CTRL_POS_3_BELOW);
+CTASSERT(IWX_HT_POS_4_BELOW == IWX_PHY_VHT_CTRL_POS_4_BELOW);
+CTASSERT(IWX_HT_POS_3_ABOVE == IWX_PHY_VHT_CTRL_POS_3_ABOVE);
+CTASSERT(IWX_HT_POS_4_ABOVE == IWX_PHY_VHT_CTRL_POS_4_ABOVE);
 CTASSERT(IWX_HT_WIDTH_20 == IWX_PHY_VHT_CHANNEL_MODE20);
 CTASSERT(IWX_HT_WIDTH_40 == IWX_PHY_VHT_CHANNEL_MODE40);
 CTASSERT(IWX_HT_WIDTH_80 == IWX_PHY_VHT_CHANNEL_MODE80);
+CTASSERT(IWX_HT_WIDTH_160 == IWX_PHY_VHT_CHANNEL_MODE160);
 CTASSERT(IWX_HT_WIDTH_20 == IWX_TLC_MNG_CH_WIDTH_20MHZ);
 CTASSERT(IWX_HT_WIDTH_40 == IWX_TLC_MNG_CH_WIDTH_40MHZ);
 CTASSERT(IWX_HT_WIDTH_80 == IWX_TLC_MNG_CH_WIDTH_80MHZ);
+CTASSERT(IWX_HT_WIDTH_160 == IWX_TLC_MNG_CH_WIDTH_160MHZ);
 CTASSERT(IWX_HT_TLC_MODE_NON_HT == IWX_TLC_MNG_MODE_NON_HT);
 CTASSERT(IWX_HT_TLC_MODE_HT == IWX_TLC_MNG_MODE_HT);
 CTASSERT(IWX_HT_TLC_MODE_VHT == IWX_TLC_MNG_MODE_VHT);
@@ -182,7 +188,8 @@ CTASSERT(IWX_HT_EID_HTCAP == IEEE80211_ELEMID_HTCAP);
 CTASSERT(IWX_HT_EID_HTOP == IEEE80211_ELEMID_HTINFO);
 
 /*
- * 0: legacy rates only; 1: HT (802.11n); 2: HT and VHT (802.11ac).
+ * 0: legacy rates only; 1: HT (802.11n); 2: HT and VHT (802.11ac) up to
+ * 80 MHz; 3: the same up to 160 MHz, not yet run on hardware.
  * Module property "ht" (modload -i ht=N).
  */
 static int iwx_ht_mode = 2;
@@ -9020,6 +9027,8 @@ iwx_ht_local(struct iwx_softc *sc, struct ieee80211_channel *c,
 	loc->vht = iwx_ht_mode >= 2;
 	loc->allow40 = (fl & IWX_NVM_CHANNEL_40MHZ) != 0;
 	loc->allow80 = (fl & IWX_NVM_CHANNEL_80MHZ) != 0;
+	loc->vht160 = iwx_ht_mode >= 3;
+	loc->allow160 = (fl & IWX_NVM_CHANNEL_160MHZ) != 0;
 }
 
 /*
@@ -9907,12 +9916,19 @@ iwx_ht_setup_node(struct iwx_softc *sc, struct iwx_node *in)
 	    in->in_htt.rates[1] ? "s" : "",
 	    (ni->ni_flags & IEEE80211_NODE_QOS) ? "" : ", no WMM");
 	/* Why the width is what it is: the AP's offer and the local limits. */
-	printf("%s: AP HT40 %s VHT %s width %u, channel %u allows 40 MHz %s "
-	    "80 MHz %s\n", device_xname(sc->sc_dev),
+	printf("%s: AP HT40 %s VHT %s width %u centres %u/%u/%u, 160 MHz "
+	    "capability %u/%u, channel %u allows 40 MHz %s 80 MHz %s "
+	    "160 MHz %s\n", device_xname(sc->sc_dev),
 	    (sc->sc_bss_ht.htop0 & IWX_HT_STA_CHAN_WIDTH) ? "yes" : "no",
 	    sc->sc_bss_ht.vht && sc->sc_bss_ht.vhtop ? "yes" : "no",
-	    sc->sc_bss_ht.vht_width, ieee80211_chan2ieee(ic, ni->ni_chan),
-	    loc.allow40 ? "yes" : "no", loc.allow80 ? "yes" : "no");
+	    sc->sc_bss_ht.vht_width, sc->sc_bss_ht.vht_ccfs0,
+	    sc->sc_bss_ht.vht_ccfs1, (sc->sc_bss_ht.htop1 >> 5) & 0xff,
+	    IWX_VHT_CAP_CWSET(sc->sc_bss_ht.vhtcaps),
+	    IWX_VHT_CAP_EXTNSS(sc->sc_bss_ht.vhtcaps),
+	    ieee80211_chan2ieee(ic, ni->ni_chan),
+	    loc.allow40 ? "yes" : "no", loc.allow80 ? "yes" : "no",
+	    loc.allow160 ? (loc.vht160 ? "yes" : "yes (ht=3 enables it)") :
+	    "no");
 }
 
 /* Firmware channel width and control channel position. */
@@ -9926,7 +9942,8 @@ iwx_phy_ctxt_layout(struct iwx_softc *sc, uint8_t sco,
 	*pos = IWX_PHY_VHT_CTRL_POS_1_BELOW;
 	if (vht_chan_width == IEEE80211_VHTOP0_CHAN_WIDTH_80 &&
 	    in != NULL && in->in_ht && in->in_htc.vht80) {
-		*width = IWX_PHY_VHT_CHANNEL_MODE80;
+		/* 80 or 160 MHz: the layout names both. */
+		*width = in->in_htc.width;
 		*pos = in->in_htc.ctrl_pos;
 	} else if (sco == IEEE80211_HTOP0_SCO_SCA) {
 		/* secondary channel above: control channel below */
@@ -9970,6 +9987,10 @@ iwx_rs_init_v3(struct iwx_softc *sc, struct iwx_node *in)
 		    htole16(t->rates[0]);
 		cfg_cmd.ht_rates[IWX_TLC_NSS_2][IWX_TLC_MCS_PER_BW_80] =
 		    htole16(t->rates[1]);
+		cfg_cmd.ht_rates[IWX_TLC_NSS_1][IWX_TLC_MCS_PER_BW_160] =
+		    htole16(t->rates160[0]);
+		cfg_cmd.ht_rates[IWX_TLC_NSS_2][IWX_TLC_MCS_PER_BW_160] =
+		    htole16(t->rates160[1]);
 		cfg_cmd.max_ch_width = t->width;
 		cfg_cmd.sgi_ch_width_supp = t->sgi;
 		cfg_cmd.flags = htole16(t->flags);
@@ -10015,6 +10036,10 @@ iwx_rs_init_v4(struct iwx_softc *sc, struct iwx_node *in)
 		    htole16(t->rates[0]);
 		cfg_cmd.ht_rates[IWX_TLC_NSS_2][IWX_TLC_MCS_PER_BW_80] =
 		    htole16(t->rates[1]);
+		cfg_cmd.ht_rates[IWX_TLC_NSS_1][IWX_TLC_MCS_PER_BW_160] =
+		    htole16(t->rates160[0]);
+		cfg_cmd.ht_rates[IWX_TLC_NSS_2][IWX_TLC_MCS_PER_BW_160] =
+		    htole16(t->rates160[1]);
 		cfg_cmd.max_ch_width = t->width;
 		cfg_cmd.sgi_ch_width_supp = t->sgi;
 		cfg_cmd.flags = htole16(t->flags);
@@ -14612,7 +14637,7 @@ if_iwx_modcmd(modcmd_t cmd, void *opaque)
 			}
 			int32_t ht;
 			if (prop_dictionary_get_int32((prop_dictionary_t)opaque,
-			    "ht", &ht) && ht >= 0 && ht <= 2)
+			    "ht", &ht) && ht >= 0 && ht <= 3)
 				iwx_ht_mode = ht;
 		}
 #ifdef _MODULE

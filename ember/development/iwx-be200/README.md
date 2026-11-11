@@ -27,6 +27,19 @@ the address after the carrier loss. Contracts: `iwx_ht_csa_*()` in
 themselves have no fixture yet. Run `ifconfig iwx0 debug` to log the
 announcement as it is received.
 
+160 MHz VHT is written but off by default and **not yet run on
+hardware**: with `ht=3` the driver offers 160 MHz and short GI at 160 MHz
+in its VHT capabilities where the channel allows it, takes the 160 MHz
+layout from the AP's VHT operation (CCFS1 next to CCFS0, CCFS2 of HT
+operation for an AP with Extended NSS BW, or the deprecated width 2;
+centres 50, 114 and 163 only), sets the PHY context to 160 MHz with the
+eight control channel positions and gives the rate scaling the 160 MHz
+rate set for as many streams as the AP receives at that width. With
+`ht=2` nothing changes. The association line in dmesg now shows the AP's
+three centre channels, its 160 MHz capability bits and whether 160 MHz
+is allowed and enabled. Contract: `test_width160()` in
+`ember/tools/iwx-ht-contract.sh`.
+
 Also new and not yet run on hardware: a lost AP is noticed. The driver
 used to answer the firmware's missed-beacons notification with a probe
 request through the legacy `ieee80211_send_mgmt()`, which has none, so
@@ -305,7 +318,7 @@ Boot setup used on the MSI:
 | WPA | `wpa_supplicant=YES`, `wpa_supplicant_flags="-B -s -i iwx0 -c /etc/wpa_supplicant.iwx0.conf"` |
 | DHCP | `dhcpcd_flags="-qM rge0 iwx0"` |
 | Country | `modload -s mcc=XX` (default `ZZ`); replaced by the country the firmware detects |
-| HT/VHT | `modload -i ht=N`: 0 legacy, 1 HT, 2 HT+VHT (default) |
+| HT/VHT | `modload -i ht=N`: 0 legacy, 1 HT, 2 HT+VHT up to 80 MHz (default), 3 HT+VHT up to 160 MHz (not yet run on hardware) |
 
 Bring-up fixes on NetBSD (commits 579e0ec..bcc5a61): raw `CSR_HW_REV` as
 prph scratch `mac_id` (the GL ROM ignored the converted value), 94

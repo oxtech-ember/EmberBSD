@@ -16,8 +16,8 @@ static unsigned int checks, failures;
 #define CHECK(c) do { checks++; if (!(c)) { failures++; \
     fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #c); } } while (0)
 
-static const struct iwx_ht_local loc5 = { 1, 2, 1, 1, 1 };
-static const struct iwx_ht_local loc2 = { 0, 2, 1, 1, 1 };
+static const struct iwx_ht_local loc5 = { 1, 2, 1, 1, 1, 0, 0 };
+static const struct iwx_ht_local loc2 = { 0, 2, 1, 1, 1, 0, 0 };
 
 /* Find element `id' in out[fixed..len); returns its offset or -1. */
 static int
@@ -776,6 +776,178 @@ test_bmiss(void)
 	CHECK(acts == 5);
 }
 
+/* As chan_for(), for an AP that has the 160 MHz capability bit. */
+static void
+chan160(int primary, uint8_t htop0, int vht, uint8_t vw, uint8_t c0,
+    uint8_t c1, const struct iwx_ht_local *loc, struct iwx_ht_peer *p,
+    struct iwx_ht_chan *c)
+{
+	chan_for(primary, htop0, vht, vw, c0, c1, loc, p, c);
+	p->vhtcaps |= IWX_VHT_CAP_CW160;
+	iwx_ht_chan(p, loc, primary, c);
+}
+
+/* 160 MHz: offered only on request and where the channel allows it. */
+static void
+test_width160(void)
+{
+	static const int pos[8] = { IWX_HT_POS_4_BELOW, IWX_HT_POS_3_BELOW,
+	    IWX_HT_POS_2_BELOW, IWX_HT_POS_1_BELOW, IWX_HT_POS_1_ABOVE,
+	    IWX_HT_POS_2_ABOVE, IWX_HT_POS_3_ABOVE, IWX_HT_POS_4_ABOVE };
+	struct iwx_ht_local l160 = loc5;
+	struct iwx_ht_peer p;
+	struct iwx_ht_chan c;
+	struct iwx_ht_tlc t;
+	uint8_t frm[16];
+	int i;
+
+	l160.vht160 = 1;
+	l160.allow160 = 1;
+
+	/* The capability element says so only when 160 MHz is offered. */
+	CHECK(iwx_ht_put_vhtcap(frm, &loc5) == 14);
+	CHECK((iwx_ht_le32(frm + 2) & (IWX_VHT_CAP_CW160 |
+	    IWX_VHT_CAP_SGI160)) == 0);
+	CHECK(iwx_ht_put_vhtcap(frm, &l160) == 14);
+	CHECK((iwx_ht_le32(frm + 2) & (IWX_VHT_CAP_CW160 |
+	    IWX_VHT_CAP_SGI160)) == (IWX_VHT_CAP_CW160 | IWX_VHT_CAP_SGI160));
+	CHECK(iwx_ht_le32(frm + 2) & IWX_VHT_CAP_SGI80);
+
+	/* Every primary channel of the block 36-64, centre 50. */
+	for (i = 0; i < 8; i++) {
+		int chan = 36 + 4 * i;
+		int sco = i % 2 == 0 ? 0x05 : 0x07;
+		int c80 = chan <= 48 ? 42 : 58;
+
+		chan160(chan, sco, 1, 1, c80, 50, &l160, &p, &c);
+		CHECK(c.width == IWX_HT_WIDTH_160 && c.vht80);
+		CHECK(c.ctrl_pos == pos[i]);
+		/* The deprecated encoding gives the same layout. */
+		chan160(chan, sco, 1, 2, 50, 0, &l160, &p, &c);
+		CHECK(c.width == IWX_HT_WIDTH_160 && c.ctrl_pos == pos[i]);
+		/* Not offered, or not allowed here: the primary 80 MHz. */
+		chan160(chan, sco, 1, 1, c80, 50, &loc5, &p, &c);
+		CHECK(c.width == IWX_HT_WIDTH_80 && c.vht80);
+		CHECK(c.ctrl_pos == pos[2 + i % 4]);
+	}
+	l160.allow160 = 0;
+	chan160(56, 0x07, 1, 1, 58, 50, &l160, &p, &c);
+	CHECK(c.width == IWX_HT_WIDTH_80 && c.ctrl_pos == IWX_HT_POS_1_BELOW);
+	l160.allow160 = 1;
+	/* A second segment that is not the 160 MHz centre is 80+80. */
+	chan160(56, 0x07, 1, 1, 58, 106, &l160, &p, &c);
+	CHECK(c.width == IWX_HT_WIDTH_80);
+	chan160(56, 0x07, 1, 1, 58, 0, &l160, &p, &c);
+	CHECK(c.width == IWX_HT_WIDTH_80);
+	/* A centre that is no 160 MHz channel keeps the 80 MHz layout. */
+	chan160(56, 0x07, 1, 1, 58, 66, &l160, &p, &c);
+	CHECK(c.width == IWX_HT_WIDTH_80 && c.ctrl_pos == IWX_HT_POS_1_BELOW);
+	chan160(56, 0x07, 1, 2, 66, 0, &l160, &p, &c);
+	CHECK(c.width != IWX_HT_WIDTH_160);
+	chan160(149, 0x05, 1, 1, 155, 163, &l160, &p, &c);
+	CHECK(c.width == IWX_HT_WIDTH_160 &&
+	    c.ctrl_pos == IWX_HT_POS_4_BELOW);
+	chan160(100, 0x05, 1, 1, 106, 114, &l160, &p, &c);
+	CHECK(c.width == IWX_HT_WIDTH_160 &&
+	    c.ctrl_pos == IWX_HT_POS_4_BELOW);
+
+	/* Rate scaling: 160 MHz has its own rate set and short GI bit. */
+	chan160(56, 0x07, 1, 1, 58, 50, &l160, &p, &c);
+	p.vhtcaps |= IWX_VHT_CAP_SGI160;
+	iwx_ht_tlc(&p, &l160, &c, &t);
+	CHECK(t.mode == IWX_HT_TLC_MODE_VHT && t.width == IWX_HT_WIDTH_160);
+	CHECK(t.rates[0] == 0x03ff && t.rates[1] == 0x03ff);
+	CHECK(t.rates160[0] == 0x03ff && t.rates160[1] == 0x03ff);
+	CHECK(t.sgi & (1 << IWX_HT_WIDTH_160));
+	p.vhtcaps &= ~IWX_VHT_CAP_SGI160;
+	iwx_ht_tlc(&p, &l160, &c, &t);
+	CHECK((t.sgi & (1 << IWX_HT_WIDTH_160)) == 0);
+	/* At 80 MHz the 160 MHz rate set stays empty. */
+	chan160(56, 0x07, 1, 1, 58, 50, &loc5, &p, &c);
+	iwx_ht_tlc(&p, &loc5, &c, &t);
+	CHECK(t.width == IWX_HT_WIDTH_80 && t.rates160[0] == 0 &&
+	    t.rates160[1] == 0 && (t.sgi & (1 << IWX_HT_WIDTH_160)) == 0);
+
+	/* Offered but not allowed on this channel: not in the element. */
+	l160.allow160 = 0;
+	CHECK(iwx_ht_put_vhtcap(frm, &l160) == 14);
+	CHECK((iwx_ht_le32(frm + 2) & (IWX_VHT_CAP_CW160 |
+	    IWX_VHT_CAP_SGI160)) == 0);
+	l160.allow160 = 1;
+	/* 80+80 in the deprecated encoding stays on the primary 80 MHz. */
+	chan160(56, 0x07, 1, 3, 58, 106, &l160, &p, &c);
+	CHECK(c.width == IWX_HT_WIDTH_80);
+
+	/*
+	 * An AP without the 160 MHz capability bit names the 160 MHz
+	 * centre in HT operation (CCFS2) when it supports Extended NSS BW;
+	 * without either its operation element is not believed.
+	 */
+	chan160(56, 0x07, 1, 1, 58, 50, &l160, &p, &c);
+	CHECK(IWX_VHT_CAP_CWSET(p.vhtcaps) == 1);
+	p.vhtcaps &= ~IWX_VHT_CAP_CW160;
+	iwx_ht_chan(&p, &l160, 56, &c);
+	CHECK(c.width == IWX_HT_WIDTH_80);
+	p.vht_ccfs1 = 0;
+	p.vhtcaps |= 1U << 30;			/* Extended NSS BW = 1 */
+	iwx_ht_chan(&p, &l160, 56, &c);
+	CHECK(c.width == IWX_HT_WIDTH_80);	/* no CCFS2 either */
+	p.htop1 |= 50 << 5;
+	iwx_ht_chan(&p, &l160, 56, &c);
+	CHECK(c.width == IWX_HT_WIDTH_160 &&
+	    c.ctrl_pos == IWX_HT_POS_2_ABOVE);
+	/* Such an AP receives half of its streams at 160 MHz. */
+	CHECK(iwx_ht_vht_nss160(&p) == 1);
+	iwx_ht_tlc(&p, &l160, &c, &t);
+	CHECK(t.rates[1] == 0x03ff && t.rates160[0] == 0x03ff &&
+	    t.rates160[1] == 0);
+	p.vht_rxmcs = 0xffaa;			/* four streams, MCS 0-9 */
+	CHECK(iwx_ht_vht_nss160(&p) == 2);
+	iwx_ht_tlc(&p, &l160, &c, &t);
+	CHECK(t.rates160[0] == 0x03ff && t.rates160[1] == 0x03ff);
+	p.vhtcaps |= 3U << 30;			/* three quarters */
+	CHECK(iwx_ht_vht_nss160(&p) == 3);
+	p.vht_rxmcs = 0xfffa;
+	CHECK(iwx_ht_vht_nss160(&p) == 1);
+	p.vhtcaps &= ~(3U << 30);
+	CHECK(iwx_ht_vht_nss160(&p) == 0);
+	/* With the capability bit CCFS1 wins; CCFS2 only fills a gap. */
+	p.vhtcaps |= IWX_VHT_CAP_CW160;
+	CHECK(iwx_ht_vht_nss160(&p) == 2);
+	p.vht_ccfs1 = 0;
+	iwx_ht_chan(&p, &l160, 56, &c);
+	CHECK(c.width == IWX_HT_WIDTH_80);	/* Extended NSS BW is 0 */
+	p.vhtcaps |= 1U << 30;
+	iwx_ht_chan(&p, &l160, 56, &c);
+	CHECK(c.width == IWX_HT_WIDTH_160);
+	/* One local stream: one rate set at 160 MHz. */
+	{
+		struct iwx_ht_local l1 = l160;
+
+		l1.nss = 1;
+		chan160(56, 0x07, 1, 1, 58, 50, &l1, &p, &c);
+		iwx_ht_tlc(&p, &l1, &c, &t);
+		CHECK(t.width == IWX_HT_WIDTH_160 &&
+		    t.rates160[0] == 0x03ff && t.rates160[1] == 0);
+	}
+
+	/* A switch inside the 160 MHz block keeps a 160 MHz link. */
+	{
+		static const uint8_t wide[] = { 37, 3, 1, 36, 5, 196, 5, 194,
+		    3, 1, 42, 50 };
+		struct iwx_ht_csa csa;
+		struct iwx_ht_peer np;
+		struct iwx_ht_chan cur, nc;
+
+		chan160(56, 0x07, 1, 1, 58, 50, &l160, &p, &cur);
+		CHECK(iwx_ht_csa_parse(wide, sizeof(wide), &csa) == 1);
+		iwx_ht_csa_peer(&p, &csa, &np);
+		CHECK(iwx_ht_csa_follow(&np, &l160, 1, &cur, 36, &nc) == 1);
+		CHECK(nc.width == IWX_HT_WIDTH_160 &&
+		    nc.ctrl_pos == IWX_HT_POS_4_BELOW);
+	}
+}
+
 int
 main(void)
 {
@@ -788,6 +960,7 @@ main(void)
 	test_media();
 	test_csa();
 	test_bmiss();
+	test_width160();
 	printf("iwx-ht-contract: %u checks, %u failures\n", checks, failures);
 	return failures != 0;
 }
