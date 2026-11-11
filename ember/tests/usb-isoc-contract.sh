@@ -30,9 +30,11 @@ if [ -s "$work/xhci_xfer_stalled.h" ]; then
 fi
 extract "$uvideo" uvideo_stream_recv_isoc_complete
 test -s "$work/uvideo_stream_recv_isoc_complete.h"
+# The extracted kernel source mixes signed and unsigned operands in ways the
+# kernel's own warning set accepts; -Wextra would reject it here.
 for unit in xhci-isoc-contract uvideo-isoc-contract; do
-    ${CC:-cc} ${CFLAGS:--O2 -g -Wall -Wextra -Werror} -I "$work" \
-        "$here/$unit.c" -o "$work/$unit"
+    ${CC:-cc} ${CFLAGS:--O2 -g -Wall -Wextra -Werror} -Wno-sign-compare \
+        -I "$work" "$here/$unit.c" -o "$work/$unit"
 done
 # TEST_RUNNER can wrap the checks, for example with Valgrind Memcheck.
 ${TEST_RUNNER:-} "$work/xhci-isoc-contract" "${USB_ISOC_TEST_CASE:-all}"
