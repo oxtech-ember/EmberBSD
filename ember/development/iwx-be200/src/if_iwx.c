@@ -167,6 +167,13 @@ CTASSERT(IWX_HT_WIDTH_80 == IWX_TLC_MNG_CH_WIDTH_80MHZ);
 CTASSERT(IWX_HT_TLC_MODE_NON_HT == IWX_TLC_MNG_MODE_NON_HT);
 CTASSERT(IWX_HT_TLC_MODE_HT == IWX_TLC_MNG_MODE_HT);
 CTASSERT(IWX_HT_TLC_MODE_VHT == IWX_TLC_MNG_MODE_VHT);
+CTASSERT(IWX_HT_IFM_TMASK == IFM_TMASK);
+CTASSERT(IWX_HT_IFM_MMASK == IFM_MMASK);
+CTASSERT(IWX_HT_IFM_MCS == IFM_IEEE80211_MCS);
+CTASSERT(IWX_HT_IFM_VHT == IFM_IEEE80211_VHT);
+CTASSERT(IWX_HT_IFM_11NA == IFM_IEEE80211_11NA);
+CTASSERT(IWX_HT_IFM_11NG == IFM_IEEE80211_11NG);
+CTASSERT(IWX_HT_IFM_11AC == IFM_IEEE80211_11AC);
 CTASSERT(IWX_HT_TLC_STBC == IWX_TLC_MNG_CFG_FLAGS_STBC_MSK);
 CTASSERT(IWX_HT_TLC_LDPC == IWX_TLC_MNG_CFG_FLAGS_LDPC_MSK);
 CTASSERT(IWX_HT_SCO_ABOVE == IEEE80211_HTOP0_SCO_SCA);
@@ -508,6 +515,7 @@ void	iwx_setkey_task(void *);
 void	iwx_delete_key(struct ieee80211com *,
 	    struct ieee80211_node *, struct ieee80211_key *);
 int	iwx_media_change(struct ifnet *);
+void	iwx_media_status(struct ifnet *, struct ifmediareq *);
 void	iwx_newstate_task(void *);
 int	iwx_newstate(struct ieee80211com *, enum ieee80211_state, int);
 void	iwx_endscan(struct iwx_softc *);
@@ -9555,8 +9563,15 @@ iwx_ht_setup_node(struct iwx_softc *sc, struct iwx_node *in)
 	memset(&in->in_htt, 0, sizeof(in->in_htt));
 	if (iwx_ht_mode == 0 || !sc->sc_bss_ht_valid ||
 	    !sc->sc_bss_ht.ht || ni->ni_chan == IEEE80211_CHAN_ANYC ||
-	    !IEEE80211_ADDR_EQ(sc->sc_bss_ht_bssid, ni->ni_bssid))
+	    !IEEE80211_ADDR_EQ(sc->sc_bss_ht_bssid, ni->ni_bssid)) {
+		printf("%s: legacy rates only (ht=%d, AP answer %s, HT %s, "
+		    "BSSID %s)\n", device_xname(sc->sc_dev), iwx_ht_mode,
+		    sc->sc_bss_ht_valid ? "parsed" : "missing",
+		    sc->sc_bss_ht_valid && sc->sc_bss_ht.ht ? "yes" : "no",
+		    IEEE80211_ADDR_EQ(sc->sc_bss_ht_bssid, ni->ni_bssid) ?
+		    "matches" : "differs");
 		return;
+	}
 
 	iwx_ht_local(sc, ni->ni_chan, &loc);
 	iwx_ht_chan(&sc->sc_bss_ht, &loc, ieee80211_chan2ieee(ic, ni->ni_chan),
@@ -9569,6 +9584,13 @@ iwx_ht_setup_node(struct iwx_softc *sc, struct iwx_node *in)
 	    20 << in->in_htc.width, in->in_htt.rates[1] ? 2 : 1,
 	    in->in_htt.rates[1] ? "s" : "",
 	    (ni->ni_flags & IEEE80211_NODE_QOS) ? "" : ", no WMM");
+	/* Why the width is what it is: the AP's offer and the local limits. */
+	printf("%s: AP HT40 %s VHT %s width %u, channel %u allows 40 MHz %s "
+	    "80 MHz %s\n", device_xname(sc->sc_dev),
+	    (sc->sc_bss_ht.htop0 & IWX_HT_STA_CHAN_WIDTH) ? "yes" : "no",
+	    sc->sc_bss_ht.vht && sc->sc_bss_ht.vhtop ? "yes" : "no",
+	    sc->sc_bss_ht.vht_width, ieee80211_chan2ieee(ic, ni->ni_chan),
+	    loc.allow40 ? "yes" : "no", loc.allow80 ? "yes" : "no");
 }
 
 /* Firmware channel width and control channel position. */
@@ -10757,6 +10779,31 @@ iwx_media_change(struct ifnet *ifp)
 	return err;
 }
 
+/*
+ * net80211 has no HT or VHT mode and would report the first legacy rate
+ * ("OFDM6 mode 11a") for a link the firmware runs at VHT rates.  Report
+ * the mode negotiated by iwx_ht_setup_node() instead.
+ */
+void
+iwx_media_status(struct ifnet *ifp, struct ifmediareq *imr)
+{
+	struct iwx_softc *sc = ifp->if_softc;
+	struct ieee80211com *ic = &sc->sc_ic;
+	struct iwx_node *in = (struct iwx_node *)ic->ic_bss;
+	int m;
+
+	ieee80211_media_status(ifp, imr);
+	if (ic->ic_opmode != IEEE80211_M_STA ||
+	    ic->ic_state != IEEE80211_S_RUN || in == NULL || !in->in_ht ||
+	    in->in_ni.ni_chan == IEEE80211_CHAN_ANYC)
+		return;
+	m = iwx_ht_media(in->in_htt.mode,
+	    IEEE80211_IS_CHAN_5GHZ(in->in_ni.ni_chan));
+	if (m != 0)
+		imr->ifm_active =
+		    (imr->ifm_active & ~(IFM_TMASK | IFM_MMASK)) | m;
+}
+
 void
 iwx_newstate_task(void *psc)
 {
@@ -11143,6 +11190,26 @@ iwx_send_update_mcc_cmd(struct iwx_softc *sc, const char *alpha2)
 		    le32toh(resp->n_channels) * sizeof(resp->channels[0])) {
 			err = EIO;
 			goto out;
+		}
+		/*
+		 * What the firmware allows in this country: the capability
+		 * word carries the 11ax/11be and 320 MHz permissions, and
+		 * the channels past 5 GHz are the 6 GHz band.
+		 */
+		{
+			uint32_t i, n = le32toh(resp->n_channels), n6 = 0;
+
+			for (i = IWX_NUM_2GHZ_CHANNELS + IWX_NUM_5GHZ_CHANNELS;
+			    i < n; i++)
+				if (le32toh(resp->channels[i]) &
+				    IWX_NVM_CHANNEL_VALID)
+					n6++;
+			printf("%s: MCC %c%c status %u cap 0x%08x geo 0x%04x, "
+			    "%u channels, %u valid in 6 GHz\n",
+			    device_xname(sc->sc_dev),
+			    (le16toh(resp->mcc) >> 8) & 0xff,
+			    le16toh(resp->mcc) & 0xff, le32toh(resp->status),
+			    le32toh(resp->cap), le16toh(resp->geo_info), n, n6);
 		}
 		/* Update channel map and our scan configuration. */
 		iwx_init_channel_map(sc, NULL, resp->channels,
@@ -13471,7 +13538,7 @@ iwx_config_complete(struct iwx_softc *sc)
 
 	mutex_init(&sc->sc_media_mtx, MUTEX_DEFAULT, IPL_SOFTNET);
 	ieee80211_media_init_with_lock(ic, iwx_media_change,
-	    ieee80211_media_status, &sc->sc_media_mtx);
+	    iwx_media_status, &sc->sc_media_mtx);
 
 	if (pmf_device_register(sc->sc_dev, NULL, NULL))
 		pmf_class_network_register(sc->sc_dev, ifp);

@@ -6,6 +6,17 @@ for firmware evidence, software verification and remaining bench work.
 There is no new hardware acceptance result. The WPA2 measurements and
 stage descriptions below describe the earlier port.
 
+Status (2026-11-11): `ifconfig iwx0` reports the negotiated mode
+(`VHT mode 11ac`, `HT mode 11na`/`11ng`) instead of the first legacy rate;
+net80211 has no HT or VHT mode, so the driver supplies the media word
+(`iwx_media_status()`, contract `iwx_ht_media()` in
+`ember/tools/iwx-ht-contract.sh`). The MCS and width stay in dmesg
+(`firmware TX rate ...`). At association the driver also logs why a link
+stays on legacy rates, or what the AP offered and whether the channel
+allows 40 and 80 MHz; each `MCC_UPDATE` answer logs the country, the
+capability word and the number of valid 6 GHz channels. The amd64 module
+builds with the SDK Clang without warnings; not yet run on hardware.
+
 Status (2026-10-20): **stage 1 works on the MSI, HT/VHT negotiates**.
 The module loads at boot, the BE200 runs firmware `100.3f3ef548.0` with
 PNVM `1464be58`, scans 2.4/5 GHz, associates with WPA2-PSK (CCMP)

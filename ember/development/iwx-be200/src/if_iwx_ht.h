@@ -79,6 +79,15 @@
 #define IWX_HT_TLC_STBC		0x0001
 #define IWX_HT_TLC_LDPC		0x0002
 
+/* <net/if_media.h> values, checked against it by the driver. */
+#define IWX_HT_IFM_TMASK	0x0000001f
+#define IWX_HT_IFM_MMASK	0x00070000
+#define IWX_HT_IFM_MCS		24
+#define IWX_HT_IFM_VHT		25
+#define IWX_HT_IFM_11NA		0x00050000
+#define IWX_HT_IFM_11NG		0x00060000
+#define IWX_HT_IFM_11AC		0x00070000
+
 /* Secondary channel offset (HT operation, byte 1 bits 0-1). */
 #define IWX_HT_SCO_NONE		0
 #define IWX_HT_SCO_ABOVE	1
@@ -130,6 +139,24 @@ struct iwx_ht_tlc {
 	uint16_t	rates[2];	/* MCS bitmap per spatial stream */
 	uint16_t	max_mpdu_len;
 };
+
+/*
+ * Media subtype and mode for the negotiated TLC mode, or 0 to keep the
+ * legacy word of net80211, which knows no HT or VHT mode.
+ */
+static inline int
+iwx_ht_media(int tlc_mode, int band5)
+{
+	switch (tlc_mode) {
+	case IWX_HT_TLC_MODE_VHT:
+		return IWX_HT_IFM_VHT | IWX_HT_IFM_11AC;
+	case IWX_HT_TLC_MODE_HT:
+		return IWX_HT_IFM_MCS |
+		    (band5 ? IWX_HT_IFM_11NA : IWX_HT_IFM_11NG);
+	default:
+		return 0;
+	}
+}
 
 static inline uint16_t
 iwx_ht_le16(const uint8_t *p)

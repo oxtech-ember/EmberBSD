@@ -535,6 +535,25 @@ test_reorder(void)
 	    !IWX_HT_SEQ_LT(7, 7));
 }
 
+/* ifconfig media word for the negotiated mode. */
+static void
+test_media(void)
+{
+	CHECK(iwx_ht_media(IWX_HT_TLC_MODE_VHT, 1) ==
+	    (IWX_HT_IFM_VHT | IWX_HT_IFM_11AC));
+	CHECK(iwx_ht_media(IWX_HT_TLC_MODE_HT, 1) ==
+	    (IWX_HT_IFM_MCS | IWX_HT_IFM_11NA));
+	CHECK(iwx_ht_media(IWX_HT_TLC_MODE_HT, 0) ==
+	    (IWX_HT_IFM_MCS | IWX_HT_IFM_11NG));
+	/* Legacy and unknown modes keep what net80211 reports. */
+	CHECK(iwx_ht_media(IWX_HT_TLC_MODE_NON_HT, 1) == 0);
+	CHECK(iwx_ht_media(IWX_HT_TLC_MODE_NON_HT, 0) == 0);
+	CHECK(iwx_ht_media(7, 1) == 0);
+	/* The word never touches bits outside subtype and mode. */
+	CHECK((iwx_ht_media(IWX_HT_TLC_MODE_VHT, 1) &
+	    ~(IWX_HT_IFM_TMASK | IWX_HT_IFM_MMASK)) == 0);
+}
+
 int
 main(void)
 {
@@ -544,6 +563,7 @@ main(void)
 	test_rewrite();
 	test_parse_and_chan();
 	test_tlc();
+	test_media();
 	printf("iwx-ht-contract: %u checks, %u failures\n", checks, failures);
 	return failures != 0;
 }
