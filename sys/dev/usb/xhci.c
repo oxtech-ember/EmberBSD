@@ -2413,7 +2413,9 @@ xhci_pipe_restart_async_task(void *cookie)
 		 * usbd_start_next call after the callback returns.
 		 */
 		if (xfer->ux_status == USBD_IN_PROGRESS) {
-			(*pipe->up_methods->upm_start)(xfer);
+			/* Isochronous pipes queue their TDs in upm_transfer. */
+			if (pipe->up_methods->upm_start != NULL)
+				(*pipe->up_methods->upm_start)(xfer);
 		} else {
 			DPRINTF("pipe restart race xfer=%#jx status=%jd",
 			    (uintptr_t)xfer, xfer->ux_status, 0, 0);
@@ -2443,6 +2445,32 @@ xhci_pipe_restart_async(struct usbd_pipe *pipe)
 	usb_add_task(pipe->up_dev, &xp->xp_async_task, USB_TASKQ_HC);
 
 	DPRINTFN(4, "ends", 0, 0, 0, 0);
+}
+
+/*
+ * A transfer that ended with a stall or a babble.  Control, bulk and
+ * interrupt endpoints halt and need their ring retired.  An isochronous
+ * endpoint does not halt (xHCI 4.10.2): the TD is retired and the ring
+ * keeps running.  Recovering it would stop the endpoint, drop every queued
+ * TD and then call the upm_start that isochronous pipes do not have, so
+ * the frame is reported as lost instead.
+ */
+static usbd_status
+xhci_xfer_stalled(struct xhci_softc * const sc, struct usbd_xfer * const xfer,
+    const u_int xfertype, const u_int trbcode, const u_int slot,
+    const u_int dci)
+{
+	static struct timeval last;
+	static const struct timeval interval = { 10, 0 };
+
+	if (xfertype != UE_ISOCHRONOUS) {
+		xhci_pipe_restart_async(xfer->ux_pipe);
+		return USBD_STALLED;
+	}
+	if (ratecheck(&last, &interval))
+		device_printf(sc->sc_dev, "isoc error %u slot %u dci %u\n",
+		    trbcode, slot, dci);
+	return USBD_IOERROR;
 }
 
 /* Process roothub port status/change events and notify to uhub_intr. */
@@ -2625,8 +2653,7 @@ xhci_event_transfer(struct xhci_softc * const sc,
 	case XHCI_TRB_ERROR_STALL:
 	case XHCI_TRB_ERROR_BABBLE:
 		DPRINTFN(1, "ERR %ju slot %ju dci %ju", trbcode, slot, dci, 0);
-		xhci_pipe_restart_async(xfer->ux_pipe);
-		err = USBD_STALLED;
+		err = xhci_xfer_stalled(sc, xfer, xfertype, trbcode, slot, dci);
 		break;
 	default:
 		DPRINTFN(1, "ERR %ju slot %ju dci %ju", trbcode, slot, dci, 0);
@@ -4730,6 +4757,7 @@ xhci_device_isoc_enter(struct usbd_xfer *xfer)
 	uint32_t control;
 	uint32_t offs;
 	int i, ival;
+	bool sia;
 	const bool polling = xhci_polling_p(sc);
 	const uint16_t MPS = UGETW(xfer->ux_pipe->up_endpoint->ue_edesc->wMaxPacketSize);
 	const uint16_t mps = UE_GET_SIZE(MPS);
@@ -4757,6 +4785,22 @@ xhci_device_isoc_enter(struct usbd_xfer *xfer)
 		ival = 1 << (ival - 1);
 	else
 		ival = 1; /* fake something up */
+
+	/*
+	 * At high speed and above bInterval counts microframes, while a
+	 * Frame ID counts frames.  Advancing the Frame ID once per TD for
+	 * an interval shorter than a frame runs ahead of real time: the
+	 * controller then serves one TD per frame instead of eight and the
+	 * device drops the rest.  Let the controller schedule such TDs as
+	 * soon as possible, and count longer intervals in frames.
+	 */
+	sia = !XHCI_HCC_CFC(sc->sc_hcc);
+	if (xfer->ux_pipe->up_dev->ud_speed >= USB_SPEED_HIGH) {
+		if (ival < USB_UFRAMES_PER_FRAME)
+			sia = true;
+		else
+			ival /= USB_UFRAMES_PER_FRAME;
+	}
 
 	if (xpipe->xp_isoc_next == -1) {
 		uint32_t mfindex = xhci_rt_read_4(sc, XHCI_MFINDEX);
@@ -4786,7 +4830,7 @@ xhci_device_isoc_enter(struct usbd_xfer *xfer)
 		    XHCI_TRB_3_TBC_SET(tbc) |
 		    XHCI_TRB_3_TLBPC_SET(tlbpc) |
 		    XHCI_TRB_3_IOC_BIT;
-		if (XHCI_HCC_CFC(sc->sc_hcc)) {
+		if (!sia) {
 			control |= XHCI_TRB_3_FRID_SET(xpipe->xp_isoc_next);
 #if 0
 		} else if (xpipe->xp_isoc_next == -1) {
