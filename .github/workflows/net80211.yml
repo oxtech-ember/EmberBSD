@@ -128,7 +128,9 @@ permissions:
 jobs:
   contracts:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    # The analyzer step alone takes 16-18 minutes, most of it the RX BA
+    # contract under GCC -fanalyzer, cppcheck and the Clang analyzer.
+    timeout-minutes: 40
     container:
       image: gcc@sha256:3f73339bf0d3d64081cac3f6d9fdafc6dd4cef2b9c49e0a09f91e97cb0eb139a
     steps:
