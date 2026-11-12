@@ -15,6 +15,4 @@ CPPFLAGS+=	-I${S}/sys/modules/drmkms
 # pmap_enter is only a weak alias on x86: the module loader does not resolve it
 CPPFLAGS+=	-Dpmap_enter=pmap_enter_default
 
-CWARNFLAGS+=	-Wno-unused-function -Wno-cast-qual -Wno-pointer-arith
-
 .include <bsd.kmodule.mk>

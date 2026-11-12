@@ -286,63 +286,7 @@ efidrm_plane_atomic_check(struct drm_plane *plane,
 	    false, true);
 }
 
-static inline uint64_t
-efidrm_ld64(const void *p)
-{
-	uint64_t v;
-
-	memcpy(&v, p, sizeof(v));
-	return v;
-}
-
-#define EFIDRM_SEG	256	/* compare granularity, bytes */
-#define EFIDRM_MASK64	UINT64_C(0x00ffffff00ffffff)	/* alpha/X byte is not visible */
-
-/* Do the visible bits of two pixel spans differ? n is a multiple of 4. */
-static bool
-efidrm_seg_differs(const uint8_t *a, const uint8_t *b, size_t n)
-{
-	uint64_t acc = 0;
-	size_t i = 0;
-
-	for (; i + 8 <= n; i += 8)
-		acc |= (efidrm_ld64(a + i) ^ efidrm_ld64(b + i)) & EFIDRM_MASK64;
-	for (; i < n; i += 4) {
-		uint32_t x, y;
-
-		memcpy(&x, a + i, 4);
-		memcpy(&y, b + i, 4);
-		acc |= (x ^ y) & 0x00ffffffu;
-	}
-	return acc != 0;
-}
-
-/* Copy the differing runs of one row to the GOP and the shadow; returns bytes written. */
-static size_t
-efidrm_row_diff(uint8_t *dst, uint8_t *sh, const uint8_t *src, size_t nbytes)
-{
-	size_t off = 0, start, n, written = 0;
-
-	while (off < nbytes) {
-		n = MIN((size_t)EFIDRM_SEG, nbytes - off);
-		if (!efidrm_seg_differs(src + off, sh + off, n)) {
-			off += n;
-			continue;
-		}
-		start = off;
-		off += n;
-		while (off < nbytes) {
-			n = MIN((size_t)EFIDRM_SEG, nbytes - off);
-			if (!efidrm_seg_differs(src + off, sh + off, n))
-				break;
-			off += n;
-		}
-		memcpy(dst + start, src + start, off - start);
-		memcpy(sh + start, src + start, off - start);
-		written += off - start;
-	}
-	return written;
-}
+#include "efidrm_shadow.h"
 
 static inline uint64_t
 efidrm_now_ns(void)
@@ -364,8 +308,7 @@ efidrm_copy_rect(struct efidrm_softc *sc, struct drm_framebuffer *fb,
     bool use_shadow, size_t *cmp_bytes)
 {
 	const int gw = (int)sc->sc_width, gh = (int)sc->sc_height;
-	size_t total = 0;
-	int row;
+	size_t total;
 
 	/* Clip to the GOP buffer; the plane check makes this a no-op. */
 	if (dx < 0 || dy < 0 || w <= 0 || h <= 0)
@@ -376,27 +319,13 @@ efidrm_copy_rect(struct efidrm_softc *sc, struct drm_framebuffer *fb,
 		w = gw - dx;
 	if (dy + h > gh)
 		h = gh - dy;
-	for (row = 0; row < h; row++) {
-		uint8_t *d = sc->sc_fb + (size_t)(dy + row) * sc->sc_stride +
-		    (size_t)dx * 4;
-		const uint8_t *s = src + (size_t)(sy + row) * fb->pitches[0] +
-		    fb->offsets[0] + (size_t)sx * 4;
-
-		if (use_shadow) {
-			uint8_t *sh = sc->sc_shadow +
-			    (size_t)(dy + row) * sc->sc_stride + (size_t)dx * 4;
-
-			total += efidrm_row_diff(d, sh, s, (size_t)w * 4);
-			*cmp_bytes += (size_t)w * 4;
-		} else {
-			memcpy(d, s, (size_t)w * 4);
-			if (sc->sc_shadow != NULL && !sc->sc_shadow_valid)
-				memcpy(sc->sc_shadow + (size_t)(dy + row) *
-				    sc->sc_stride + (size_t)dx * 4, s,
-				    (size_t)w * 4);
-			total += (size_t)w * 4;
-		}
-	}
+	total = efidrm_copy_rows(sc->sc_fb + (size_t)dy * sc->sc_stride +
+	    (size_t)dx * 4, sc->sc_stride,
+	    sc->sc_shadow != NULL ? sc->sc_shadow + (size_t)dy * sc->sc_stride +
+	    (size_t)dx * 4 : NULL,
+	    src + (size_t)sy * fb->pitches[0] + fb->offsets[0] + (size_t)sx * 4,
+	    fb->pitches[0], (size_t)w * 4, h, use_shadow,
+	    sc->sc_shadow != NULL && !sc->sc_shadow_valid, cmp_bytes);
 	return total;
 }
 
@@ -444,15 +373,15 @@ efidrm_plane_atomic_update(struct drm_plane *plane,
 		return;
 
 	t0 = efidrm_now_ns();
-	if (atomic_swap_uint(&sc->sc_shadow_inval, 0) != 0)
-		sc->sc_shadow_valid = false;
 	w = rect.x2 - rect.x1;
 	h = rect.y2 - rect.y1;
-	use_shadow = efidrm_tun.shadow && sc->sc_shadow != NULL &&
-	    sc->sc_shadow_valid && !full;
 	cover_all = dx + (rect.x1 - sx) == 0 && dy + (rect.y1 - sy) == 0 &&
 	    w >= (int)sc->sc_width && h >= (int)sc->sc_height;
 
+	use_shadow = efidrm_shadow_plan(sc->sc_shadow != NULL,
+	    efidrm_tun.shadow != 0,
+	    atomic_swap_uint(&sc->sc_shadow_inval, 0) != 0, full,
+	    efidrm_tun.nocopy != 0, &sc->sc_shadow_valid);
 	if (efidrm_tun.nocopy)
 		written = 0;
 	else
@@ -460,8 +389,8 @@ efidrm_plane_atomic_update(struct drm_plane *plane,
 		    dx + (rect.x1 - sx), dy + (rect.y1 - sy), w, h,
 		    use_shadow, &cmp_bytes);
 	/* The shadow is trustworthy once a whole-screen copy has filled it. */
-	if (sc->sc_shadow != NULL && !sc->sc_shadow_valid && cover_all)
-		sc->sc_shadow_valid = true;
+	efidrm_shadow_done(sc->sc_shadow != NULL, efidrm_tun.nocopy != 0,
+	    cover_all, &sc->sc_shadow_valid);
 
 	us = (efidrm_now_ns() - t0) / 1000;
 	area = (size_t)w * h * 4;
@@ -918,6 +847,23 @@ efidrm_sysctl_inval(SYSCTLFN_ARGS)
 	return 0;
 }
 
+/* Any change of hw.efidrm.shadow drops the copy: the screen may differ from it. */
+static int
+efidrm_sysctl_shadow(SYSCTLFN_ARGS)
+{
+	struct sysctlnode node = *rnode;
+	int v = efidrm_tun.shadow, error;
+
+	node.sysctl_data = &v;
+	error = sysctl_lookup(SYSCTLFN_CALL(&node));
+	if (error || newp == NULL)
+		return error;
+	efidrm_tun.shadow = v != 0;
+	if (efidrm_sc != NULL)
+		atomic_store_relaxed(&efidrm_sc->sc_shadow_inval, 1);
+	return 0;
+}
+
 static void
 efidrm_sysctl_setup(struct efidrm_softc *sc)
 {
@@ -937,8 +883,10 @@ efidrm_sysctl_setup(struct efidrm_softc *sc)
 	    NULL, 0, NULL, 0, CTL_HW, CTL_CREATE, CTL_EOL);
 	if (rv != 0)
 		return;
-	EFI_INT("shadow", &efidrm_tun.shadow, CTLFLAG_READWRITE,
-	    "copy only the parts that differ from the shadow frame");
+	(void)sysctl_createv(&sc->sc_log, 0, &root, NULL, CTLFLAG_READWRITE,
+	    CTLTYPE_INT, "shadow", SYSCTL_DESCR(
+	    "copy only the parts that differ from the shadow frame"),
+	    efidrm_sysctl_shadow, 0, NULL, 0, CTL_CREATE, CTL_EOL);
 	EFI_INT("evmode", &efidrm_tun.evmode, CTLFLAG_READWRITE,
 	    "flip event: 0 on the next vblank tick, 1 right after the copy");
 	EFI_INT("sync", &efidrm_tun.sync, CTLFLAG_READWRITE,
