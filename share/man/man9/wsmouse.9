@@ -198,6 +198,35 @@ the latter positive upwards),
 or
 .Dv WSMOUSE_GESTURE_CANCEL .
 Programs that do not know these event types ignore them.
+.Pp
+The function returns 0 when the events were queued or when nobody has the
+device open (no consumer can be inside a swipe then),
+.Er ENOSPC
+when the event queue had no room (nothing was queued for that call, so the
+consumer missed that phase) and
+.Er EINVAL
+for an unknown
+.Fa phase .
+The driver must not advance its gesture state as if the call had succeeded:
+after a lost
+.Dv WSMOUSE_GESTURE_END
+or
+.Dv WSMOUSE_GESTURE_CANCEL
+it has to send
+.Dv WSMOUSE_GESTURE_CANCEL
+at the next opportunity, after a lost
+.Dv WSMOUSE_GESTURE_BEGIN
+it sends nothing more of that swipe, and the deltas of a lost
+.Dv WSMOUSE_GESTURE_UPDATE
+are added to the next one.
+A driver also sends
+.Dv WSMOUSE_GESTURE_CANCEL
+when a swipe is in progress and the device is disabled, suspended or
+reconfigured.
+A driver that can report gestures answers
+.Dv WSMOUSEIO_GGESTURE
+(see
+.Xr wsmouse 4 ) .
 .It Fn wsmouse_precision_scroll "msdev" "x" "y"
 Callback from the mouse driver to the wsmouse interface driver.
 .Pp

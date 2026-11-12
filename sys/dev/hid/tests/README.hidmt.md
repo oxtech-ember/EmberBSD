@@ -32,3 +32,21 @@ Valgrind does not support the NetBSD target.
 The UBSan trap run is an arithmetic and bounds check, not a leak or race check.
 Physical acceptance must test attach, movement, taps, close/open, suspend,
 and persistence separately.
+
+## Review Dev Bots #472: lifecycle (`t_hidmt_lifecycle.c`)
+
+`hidmt_release()`, `hidmt_reset()`, `hidmt_live()` and `hidmt_stall()` (the
+timer rule: an incomplete hybrid frame is dropped after
+`HIDMT_HYBRID_TIMEOUT_US`, silent contacts are released after
+`HIDMT_STALL_US`, a swipe in progress gets CANCEL, no tap is synthesised),
+the release after a dropped frame (a Contact Count 0 report without a touching
+contact is a release, with one it is the tail of a hybrid frame) and
+`hidmt_gesture_update()` with gestures off. Run by `run-hidmt.sh`;
+`HIDMT_SRC_SYS=<old sys/>` plus `-DLEGACY_API` gives the red run against the
+pre-review sources.
+
+Assumption to confirm with a `hw.imt0.rawlog` capture on the hardware: only
+the first report of a frame carries Contact Count N, the following ones carry
+0 and the same Scan Time (Microsoft Precision Touchpad); a touchpad keeps
+reporting while a finger rests. Only the ELAN descriptor is available so
+far, no raw sequences with touches.

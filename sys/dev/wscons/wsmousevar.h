@@ -79,4 +79,4 @@ void	wsmouse_precision_scroll(device_t, int, int);
 #define WSMOUSE_GESTURE_UPDATE		1
 #define WSMOUSE_GESTURE_END		2
 #define WSMOUSE_GESTURE_CANCEL		3
-void	wsmouse_gesture(device_t, int, int, int, int);
+int	wsmouse_gesture(device_t, int, int, int, int);

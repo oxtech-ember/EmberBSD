@@ -194,6 +194,18 @@ fail:
 	return 1;
 }
 
+/* Is any contact slot of this report touching? */
+static bool
+hidmt_any_tip(const struct hidmt_config *cfg, const uint8_t *data)
+{
+	unsigned i;
+
+	for (i = 0; i < cfg->nslots; i++)
+		if (hid_get_udata(data, &cfg->slots[i].tip))
+			return true;
+	return false;
+}
+
 /*
  * Append contacts from slots 0..n-1 of one report. Returns non-zero for a
  * malformed contact.
@@ -263,8 +275,10 @@ hidmt_assemble(const struct hidmt_config *cfg, struct hidmt_assembler *as,
 	bool have_st, dropped = false;
 
 	if (len != cfg->input_size) {
-		if (as->pending)
+		if (as->pending) {
 			as->drops++;
+			as->lost = true;
+		}
 		as->pending = false;
 		memset(frame, 0, sizeof(*frame));
 		return HIDMT_ASM_ERROR;
@@ -279,6 +293,7 @@ hidmt_assemble(const struct hidmt_config *cfg, struct hidmt_assembler *as,
 	    (have_st && scantime != as->scantime))) {
 		as->pending = false;
 		as->drops++;
+		as->lost = true;
 		as->have_dropped = true;
 		as->dropped_scantime = as->scantime;
 		dropped = true;
@@ -292,6 +307,7 @@ hidmt_assemble(const struct hidmt_config *cfg, struct hidmt_assembler *as,
 		if (hidmt_decode_slots(cfg, data, n, &as->frame) != 0) {
 			as->pending = false;
 			as->drops++;
+			as->lost = true;
 			memset(frame, 0, sizeof(*frame));
 			return HIDMT_ASM_ERROR;
 		}
@@ -304,9 +320,19 @@ hidmt_assemble(const struct hidmt_config *cfg, struct hidmt_assembler *as,
 		return HIDMT_ASM_READY;
 	}
 
-	if (count == 0 && (dropped || (have_st && ((as->have_scantime &&
-	    scantime == as->last_scantime) || (as->have_dropped &&
-	    scantime == as->dropped_scantime))))) {
+	/*
+	 * Contact Count 0 is either the tail of a hybrid frame (Microsoft
+	 * Precision Touchpad: Contact Count only in the first report of a
+	 * frame, 0 in the following ones, the same Scan Time) or a release.
+	 * A tail always carries contacts that are still down; a report that
+	 * has none is a release even when a frame was just dropped or the
+	 * Scan Time changed (otherwise the release is swallowed and the
+	 * pointer and gesture stay active).  Confirm the layout with a
+	 * hw.imt0.rawlog capture on the hardware.
+	 */
+	if (count == 0 && (((dropped || (have_st && as->have_dropped &&
+	    scantime == as->dropped_scantime)) && hidmt_any_tip(cfg, data)) ||
+	    (have_st && as->have_scantime && scantime == as->last_scantime))) {
 		/* Orphan tail of a lost or dropped hybrid frame. */
 		as->last_scantime = scantime;
 		return HIDMT_ASM_MORE;
@@ -552,8 +578,17 @@ hidmt_gesture_update(struct hidmt_gstate *gs, const struct hidmt_gconf *gc,
 	unsigned i, n = frame->ncontacts;
 	int sumx = 0, sumy = 0, x, y, dx, dy, start;
 
-	if (gc == NULL || !gc->enable)
+	if (gc == NULL || !gc->enable) {
+		/*
+		 * Switched off: a started swipe is cancelled and a candidate
+		 * that has not started is forgotten too, so that re-enabling
+		 * does not resume from stale state.
+		 */
+		if (gs->started)
+			motion->gesture |= HIDMT_GESTURE_CANCEL;
+		memset(gs, 0, sizeof(*gs));
 		return;
+	}
 	if (n == 0) {
 		if (gs->started)
 			motion->gesture |= HIDMT_GESTURE_END;
@@ -608,4 +643,80 @@ hidmt_gesture_update(struct hidmt_gstate *gs, const struct hidmt_gconf *gc,
 	gs->remy = dy % 8;
 	if (motion->gesture_dx != 0 || motion->gesture_dy != 0)
 		motion->gesture |= HIDMT_GESTURE_UPDATE;
+}
+
+/*
+ * Common reset on lifecycle events (disable, suspend, resume, enable) and on
+ * a mode change (hybrid, scroll, gestures): pointer and gesture state are
+ * dropped.  Returns HIDMT_GESTURE_CANCEL when a swipe had begun, so the
+ * caller can tell the consumer.  hidmt_release() leaves the assembler alone
+ * (a frame may just have started in it); hidmt_reset() drops its frame in
+ * progress as well, keeping counters and Scan Time history.
+ */
+unsigned
+hidmt_release(struct hidmt_pointer *ptr, struct hidmt_gstate *gs)
+{
+	unsigned r = gs->started ? HIDMT_GESTURE_CANCEL : 0;
+
+	memset(ptr, 0, sizeof(*ptr));
+	memset(gs, 0, sizeof(*gs));
+	return r;
+}
+
+unsigned
+hidmt_reset(struct hidmt_pointer *ptr, struct hidmt_assembler *as,
+    struct hidmt_gstate *gs)
+{
+	/*
+	 * Forget the frame in progress only; the Scan Time history and the
+	 * counters stay, they classify late tails of dropped frames.
+	 */
+	as->pending = as->lost = false;
+	as->expected = as->have = 0;
+	as->started = 0;
+	memset(&as->frame, 0, sizeof(as->frame));
+	return hidmt_release(ptr, gs);
+}
+
+/* Is there state that a missing report would leave hanging? */
+bool
+hidmt_live(const struct hidmt_pointer *ptr, const struct hidmt_assembler *as,
+    const struct hidmt_gstate *gs)
+{
+	return ptr->active || ptr->tap_candidate || as->pending ||
+	    gs->latched || gs->started;
+}
+
+/*
+ * Timer rule for a device that has gone quiet.  now and last are the time
+ * of this check and of the last report (microseconds).  A hybrid frame that
+ * did not get its remaining reports within HIDMT_HYBRID_TIMEOUT_US is
+ * dropped, and a frame lost this way (or earlier, as->lost) means the
+ * contacts can no longer be tracked: everything is released.  Contacts that
+ * stay silent for HIDMT_STALL_US are released too.  A release never
+ * synthesises a tap.  Returns HIDMT_GESTURE_CANCEL when a swipe had begun
+ * and sets *released when anything was dropped.  A touchpad that reports
+ * continuously while a finger rests is assumed (Microsoft Precision
+ * Touchpad); to be confirmed by hw.imt0.rawlog on the hardware.
+ */
+unsigned
+hidmt_stall(struct hidmt_pointer *ptr, struct hidmt_assembler *as,
+    struct hidmt_gstate *gs, uint64_t now, uint64_t last, bool *released)
+{
+	bool silent = now >= last && now - last >= HIDMT_STALL_US;
+
+	*released = false;
+	if (as->pending && (now < as->started ||
+	    now - as->started > HIDMT_HYBRID_TIMEOUT_US)) {
+		as->pending = false;
+		as->drops++;
+		as->lost = true;
+		as->have_dropped = true;
+		as->dropped_scantime = as->scantime;
+	}
+	if (!as->lost && !(silent && hidmt_live(ptr, as, gs)))
+		return 0;
+	as->lost = false;
+	*released = true;
+	return hidmt_reset(ptr, as, gs);
 }

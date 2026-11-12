@@ -54,6 +54,7 @@ struct hidmt_pointer {
  */
 struct hidmt_assembler {
 	bool pending, have_scantime, have_dropped;
+	bool lost;			/* a pending frame was dropped; consumer clears */
 	unsigned expected, have;
 	unsigned scantime;		/* Scan Time of the pending frame */
 	unsigned last_scantime;		/* Scan Time of the previous report */
@@ -69,6 +70,9 @@ struct hidmt_assembler {
 
 /* An incomplete hybrid frame older than this (microseconds) is dropped. */
 #define HIDMT_HYBRID_TIMEOUT_US	50000
+
+/* Contacts silent for this long (microseconds) are released by hidmt_stall(). */
+#define HIDMT_STALL_US		250000
 
 /* Two-finger scroll parameters; all-zero means scrolling is off. */
 struct hidmt_scroll {
@@ -134,5 +138,12 @@ void hidmt_pointer_update_scroll(struct hidmt_pointer *,
     const struct hidmt_scroll *, struct hidmt_motion *);
 void hidmt_gesture_update(struct hidmt_gstate *, const struct hidmt_gconf *,
     const struct hidmt_frame *, struct hidmt_motion *);
+unsigned hidmt_release(struct hidmt_pointer *, struct hidmt_gstate *);
+unsigned hidmt_reset(struct hidmt_pointer *, struct hidmt_assembler *,
+    struct hidmt_gstate *);
+bool hidmt_live(const struct hidmt_pointer *, const struct hidmt_assembler *,
+    const struct hidmt_gstate *);
+unsigned hidmt_stall(struct hidmt_pointer *, struct hidmt_assembler *,
+    struct hidmt_gstate *, uint64_t, uint64_t, bool *);
 
 #endif

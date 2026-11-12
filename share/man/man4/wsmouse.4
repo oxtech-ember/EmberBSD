@@ -142,6 +142,18 @@ Set the automatic button repeating configuration.
 See
 .Dv WSMOUSEIO_GETREPEAT
 above for more details.
+.It Dv WSMOUSEIO_GGESTURE Pq Li "struct wsmouse_gesture_info"
+Report whether the device can produce multi-finger swipe gestures
+.Pq Dv WSCONS_EVENT_GESTURE_SWIPE_* .
+.Va wgi_supported
+is 1 when it can,
+.Va wgi_enabled
+is 1 when the driver setting that turns them on is set at the moment (it may
+change later, for example
+.Va hw.imt0.gestures ) .
+Devices that cannot produce gestures, such as an ordinary mouse, fail the
+request with
+.Er ENOTTY .
 .It Dv WSMOUSEIO_SETVERSION Pq Li "int"
 Set the wscons_event protocol version.
 The default is 0 for binary compatibility.

@@ -566,8 +566,11 @@ wsmouse_precision_scroll(device_t wsmousedev, int x, int y)
  * Report a multi-finger swipe gesture. phase is WSMOUSE_GESTURE_BEGIN
  * (fingers = number of fingers), _UPDATE (dx, dy, dy positive upwards),
  * _END or _CANCEL. The events are queued without touching the pointer.
+ * Returns 0 when queued or when nobody has the device open (no consumer can
+ * be inside a swipe then); ENOSPC when the event queue has no room (nothing
+ * was queued, the consumer missed the phase); EINVAL for an unknown phase.
  */
-void
+int
 wsmouse_gesture(device_t wsmousedev, int fingers, int phase, int dx, int dy)
 {
 	struct wsmouse_softc *sc = device_private(wsmousedev);
@@ -577,7 +580,7 @@ wsmouse_gesture(device_t wsmousedev, int fingers, int phase, int dx, int dy)
 
 	evar = sc->sc_base.me_evp;
 	if (evar == NULL)
-		return;
+		return 0;
 
 	switch (phase) {
 	case WSMOUSE_GESTURE_BEGIN:
@@ -610,11 +613,10 @@ wsmouse_gesture(device_t wsmousedev, int fingers, int phase, int dx, int dy)
 		nevents++;
 		break;
 	default:
-		return;
+		return EINVAL;
 	}
 
-	if (nevents > 0)
-		(void)wsevent_inject(evar, events, nevents);
+	return wsevent_inject(evar, events, nevents);
 }
 
 static void

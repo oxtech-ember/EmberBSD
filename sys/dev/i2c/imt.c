@@ -6,7 +6,9 @@
 #include <sys/cdefs.h>
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/callout.h>
 #include <sys/device.h>
+#include <sys/errno.h>
 #include <sys/kmem.h>
 #include <sys/sysctl.h>
 #include <sys/syslog.h>
@@ -29,6 +31,13 @@
  */
 #define IMT_SCROLL_SCALE	112
 #define IMT_SCROLL_SCALE_MAX	100000
+/*
+ * Period of the stall timer, milliseconds.  It runs only while hybrid
+ * assembly or gestures are on and something would hang if the reports
+ * stopped (an unfinished hybrid frame, a touching contact, a swipe, a
+ * consumer that still has to be sent CANCEL).
+ */
+#define IMT_TMO_MS		50
 
 struct imt_softc {
 	struct ihidev sc_hdev;
@@ -37,6 +46,18 @@ struct imt_softc {
 	struct hidmt_pointer sc_pointer;
 	struct hidmt_assembler sc_asm;
 	struct hidmt_gstate sc_gstate;
+	struct callout sc_tmo;
+	uint64_t sc_last_usec;	/* time of the last report */
+	/*
+	 * What the wscons consumer has been told (wsmouse_gesture() can fail
+	 * when the event queue is full): sc_g_need_cancel - it may still be
+	 * in a swipe and CANCEL has to be sent as soon as possible;
+	 * sc_g_begin_lost - BEGIN of the running swipe did not get through, so
+	 * nothing else of it is sent; sc_g_dx/dy - UPDATE not delivered yet.
+	 */
+	bool sc_g_need_cancel, sc_g_begin_lost;
+	int sc_g_dx, sc_g_dy;
+	unsigned sc_g_lost;	/* wsmouse_gesture() failures */
 	struct sysctllog *sc_sysctllog;
 	uint8_t *sc_mode;
 	bool sc_ready, sc_enabled, sc_suspended;
@@ -66,6 +87,11 @@ static int imt_sysctl_dump_desc(SYSCTLFN_PROTO);
 static int imt_sysctl_rawlog(SYSCTLFN_PROTO);
 static int imt_sysctl_scale(SYSCTLFN_PROTO);
 static int imt_sysctl_drops(SYSCTLFN_PROTO);
+static void imt_reset_state(struct imt_softc *, bool);
+static int imt_sysctl_hybrid(SYSCTLFN_PROTO);
+static int imt_sysctl_scroll(SYSCTLFN_PROTO);
+static int imt_sysctl_gestures(SYSCTLFN_PROTO);
+static void imt_tmo(void *);
 
 CFATTACH_DECL2_NEW(imt, sizeof(struct imt_softc), imt_match, imt_attach,
     imt_detach, NULL, NULL, imt_childdet);
@@ -132,6 +158,8 @@ imt_attach(device_t parent, device_t self, void *aux)
 	sc->sc_scroll_scale = IMT_SCROLL_SCALE;
 	sc->sc_gestures = 0;
 	sc->sc_rawlog = 0;
+	callout_init(&sc->sc_tmo, 0);
+	callout_setfunc(&sc->sc_tmo, imt_tmo, sc);
 	if (sysctl_createv(&sc->sc_sysctllog, 0, NULL, &node, 0,
 	    CTLTYPE_NODE, device_xname(self),
 	    SYSCTL_DESCR("Precision Touchpad settings"), NULL, 0, NULL, 0,
@@ -147,15 +175,15 @@ imt_attach(device_t parent, device_t self, void *aux)
 		sysctl_createv(&sc->sc_sysctllog, 0, &node, NULL,
 		    CTLFLAG_READWRITE, CTLTYPE_INT, "hybrid",
 		    SYSCTL_DESCR("Assemble frames from several hybrid reports"),
-		    NULL, 0, &sc->sc_hybrid, 0, CTL_CREATE, CTL_EOL);
+		    imt_sysctl_hybrid, 0, (void *)sc, 0, CTL_CREATE, CTL_EOL);
 		sysctl_createv(&sc->sc_sysctllog, 0, &node, NULL,
 		    CTLFLAG_READWRITE, CTLTYPE_INT, "scroll",
 		    SYSCTL_DESCR("Two-finger scrolling"),
-		    NULL, 0, &sc->sc_scroll, 0, CTL_CREATE, CTL_EOL);
+		    imt_sysctl_scroll, 0, (void *)sc, 0, CTL_CREATE, CTL_EOL);
 		sysctl_createv(&sc->sc_sysctllog, 0, &node, NULL,
 		    CTLFLAG_READWRITE, CTLTYPE_INT, "gestures",
 		    SYSCTL_DESCR("Three- and four-finger swipe gestures"),
-		    NULL, 0, &sc->sc_gestures, 0, CTL_CREATE, CTL_EOL);
+		    imt_sysctl_gestures, 0, (void *)sc, 0, CTL_CREATE, CTL_EOL);
 		sysctl_createv(&sc->sc_sysctllog, 0, &node, NULL,
 		    CTLFLAG_READWRITE, CTLTYPE_INT, "scroll_natural",
 		    SYSCTL_DESCR("Natural (content follows fingers) scrolling"),
@@ -210,9 +238,11 @@ imt_enable(void *arg)
 		    "could not enable Precision Touchpad mode\n");
 		return EIO;
 	}
-	memset(&sc->sc_pointer, 0, sizeof(sc->sc_pointer));
-	memset(&sc->sc_asm, 0, sizeof(sc->sc_asm));
-	memset(&sc->sc_gstate, 0, sizeof(sc->sc_gstate));
+	/* A fresh open: nothing is running and the consumer is new. */
+	(void)hidmt_reset(&sc->sc_pointer, &sc->sc_asm, &sc->sc_gstate);
+	sc->sc_g_need_cancel = sc->sc_g_begin_lost = false;
+	sc->sc_g_dx = sc->sc_g_dy = 0;
+	callout_stop(&sc->sc_tmo);
 	sc->sc_enabled = true;
 	return 0;
 }
@@ -254,18 +284,12 @@ static bool
 imt_suspend(device_t self, const pmf_qual_t *q)
 {
 	struct imt_softc *sc = device_private(self);
-	int s;
 
 	/* Serialize with the non-MPSAFE ihidev worker and wscons callbacks. */
 	KERNEL_LOCK(1, NULL);
 	sc->sc_suspended = true;
-	memset(&sc->sc_pointer, 0, sizeof(sc->sc_pointer));
-	if (sc->sc_enabled && sc->sc_mouse != NULL) {
-		/* wsmouse has no suspend handler to release held buttons. */
-		s = spltty();
-		wsmouse_input(sc->sc_mouse, 0, 0, 0, 0, 0, WSMOUSE_INPUT_DELTA);
-		splx(s);
-	}
+	/* wsmouse has no suspend handler to release held buttons or swipes. */
+	imt_reset_state(sc, sc->sc_enabled);
 	KERNEL_UNLOCK_ONE(NULL);
 	return true;
 }
@@ -279,7 +303,7 @@ imt_resume(device_t self, const pmf_qual_t *q)
 	KERNEL_LOCK(1, NULL);
 	/* PMF resumes ihidev first. Its reset restores the mouse report mode. */
 	sc->sc_suspended = true;
-	memset(&sc->sc_pointer, 0, sizeof(sc->sc_pointer));
+	imt_reset_state(sc, false);
 	if (sc->sc_enabled && imt_set_mode(sc, true) != 0) {
 		aprint_error_dev(self, "could not restore Precision Touchpad mode\n");
 		ok = false;
@@ -296,11 +320,12 @@ imt_disable(void *arg)
 {
 	struct imt_softc *sc = arg;
 
+	/* Tell the consumer before the device goes away. */
+	imt_reset_state(sc, sc->sc_enabled);
 	if (sc->sc_enabled) {
 		sc->sc_enabled = false;
 		ihidev_close(&sc->sc_hdev);
 	}
-	memset(&sc->sc_pointer, 0, sizeof(sc->sc_pointer));
 }
 
 static void
@@ -322,18 +347,128 @@ imt_log_raw(struct imt_softc *sc, const uint8_t *buf, u_int len,
 	    len > n ? " ..." : "");
 }
 
-/* A malformed frame in the middle of a gesture cancels it. */
+/*
+ * Deliver the gesture phases of one step to the consumer.  Call at spltty.
+ * wsmouse_gesture() fails when the event queue is full; the consumer must
+ * not be left in a swipe, so a lost END/CANCEL becomes a pending CANCEL
+ * that is retried on the next report or timer tick, a lost BEGIN silences
+ * the rest of that swipe, and lost UPDATE deltas are carried to the next
+ * UPDATE.  The order is END/CANCEL, BEGIN, UPDATE as in hidmt_motion.
+ */
 static void
-imt_gesture_abort(struct imt_softc *sc)
+imt_gesture_emit(struct imt_softc *sc, unsigned mask, unsigned fingers,
+    int dx, int dy)
 {
+	if (sc->sc_mouse == NULL)
+		return;
+	if (sc->sc_g_need_cancel) {
+		/* An earlier END/CANCEL was lost; the consumer may be in a swipe. */
+		if (wsmouse_gesture(sc->sc_mouse, 0, WSMOUSE_GESTURE_CANCEL, 0,
+		    0) == 0)
+			sc->sc_g_need_cancel = false;
+		else
+			sc->sc_g_lost++;
+	}
+	if ((mask & (HIDMT_GESTURE_END | HIDMT_GESTURE_CANCEL)) != 0) {
+		if (sc->sc_g_begin_lost)
+			/* The consumer never saw this swipe. */
+			sc->sc_g_begin_lost = false;
+		else if (!sc->sc_g_need_cancel &&
+		    wsmouse_gesture(sc->sc_mouse, 0,
+		    (mask & HIDMT_GESTURE_CANCEL) != 0 ?
+		    WSMOUSE_GESTURE_CANCEL : WSMOUSE_GESTURE_END, 0, 0) != 0) {
+			sc->sc_g_need_cancel = true;
+			sc->sc_g_lost++;
+		}
+		sc->sc_g_dx = sc->sc_g_dy = 0;
+	}
+	if ((mask & HIDMT_GESTURE_BEGIN) != 0) {
+		/* BEGIN cannot nest in a swipe the consumer still has open. */
+		if (sc->sc_g_need_cancel ||
+		    wsmouse_gesture(sc->sc_mouse, fingers,
+		    WSMOUSE_GESTURE_BEGIN, 0, 0) != 0) {
+			sc->sc_g_begin_lost = true;
+			sc->sc_g_lost++;
+		}
+	}
+	if ((mask & HIDMT_GESTURE_UPDATE) != 0) {
+		sc->sc_g_dx += dx;
+		sc->sc_g_dy += dy;
+		if (!sc->sc_g_begin_lost && !sc->sc_g_need_cancel) {
+			if (wsmouse_gesture(sc->sc_mouse, 0,
+			    WSMOUSE_GESTURE_UPDATE, sc->sc_g_dx,
+			    sc->sc_g_dy) == 0)
+				sc->sc_g_dx = sc->sc_g_dy = 0;
+			else
+				sc->sc_g_lost++;
+		}
+	}
+}
+
+/* Is something waiting for the timer? Only with hybrid or gestures on. */
+static bool
+imt_tmo_wanted(struct imt_softc *sc)
+{
+	if (sc->sc_hybrid == 0 && sc->sc_gestures == 0 && !sc->sc_g_need_cancel)
+		return false;
+	return sc->sc_g_need_cancel ||
+	    hidmt_live(&sc->sc_pointer, &sc->sc_asm, &sc->sc_gstate);
+}
+
+static void
+imt_tmo_arm(struct imt_softc *sc)
+{
+	if (imt_tmo_wanted(sc))
+		callout_schedule(&sc->sc_tmo, mstohz(IMT_TMO_MS));
+}
+
+/*
+ * Common reset: lifecycle events (enable, disable, suspend, resume) and
+ * mode changes.  Pointer, assembler and gesture state are dropped; a swipe
+ * that had begun gets CANCEL.  release: also release held buttons.
+ */
+static void
+imt_reset_state(struct imt_softc *sc, bool release)
+{
+	unsigned g;
 	int s;
 
-	if (!sc->sc_gstate.started)
-		return;
-	memset(&sc->sc_gstate, 0, sizeof(sc->sc_gstate));
+	callout_stop(&sc->sc_tmo);
+	g = hidmt_reset(&sc->sc_pointer, &sc->sc_asm, &sc->sc_gstate);
 	s = spltty();
-	wsmouse_gesture(sc->sc_mouse, 0, WSMOUSE_GESTURE_CANCEL, 0, 0);
+	imt_gesture_emit(sc, g, 0, 0, 0);
+	if (release && sc->sc_mouse != NULL)
+		wsmouse_input(sc->sc_mouse, 0, 0, 0, 0, 0, WSMOUSE_INPUT_DELTA);
 	splx(s);
+	imt_tmo_arm(sc);
+}
+
+/* The device has gone quiet (see hidmt_stall()): release what hangs. */
+static void
+imt_tmo(void *arg)
+{
+	struct imt_softc *sc = arg;
+	struct timespec now;
+	uint64_t usec;
+	unsigned g;
+	bool released;
+	int s;
+
+	if (!sc->sc_enabled || sc->sc_suspended || sc->sc_mouse == NULL)
+		return;
+	/* Default behaviour (everything off): no timer rules. */
+	if (sc->sc_hybrid == 0 && sc->sc_gestures == 0 && !sc->sc_g_need_cancel)
+		return;
+	getnanouptime(&now);
+	usec = (uint64_t)now.tv_sec * 1000000 + now.tv_nsec / 1000;
+	g = hidmt_stall(&sc->sc_pointer, &sc->sc_asm, &sc->sc_gstate, usec,
+	    sc->sc_last_usec, &released);
+	s = spltty();
+	imt_gesture_emit(sc, g, 0, 0, 0);
+	if (released)
+		wsmouse_input(sc->sc_mouse, 0, 0, 0, 0, 0, WSMOUSE_INPUT_DELTA);
+	splx(s);
+	imt_tmo_arm(sc);
 }
 
 static void
@@ -346,12 +481,14 @@ imt_intr(struct ihidev *hdev, void *buf, u_int len)
 	struct hidmt_gconf gconf;
 	struct timespec now;
 	uint64_t usec;
+	unsigned g;
 	int s, r;
 
 	if (!sc->sc_enabled || sc->sc_suspended || sc->sc_mouse == NULL)
 		return;
 	getnanouptime(&now);
 	usec = (uint64_t)now.tv_sec * 1000000 + now.tv_nsec / 1000;
+	sc->sc_last_usec = usec;
 	if (sc->sc_rawlog > 0) {
 		sc->sc_rawlog--;
 		imt_log_raw(sc, buf, len, &now);
@@ -359,18 +496,30 @@ imt_intr(struct ihidev *hdev, void *buf, u_int len)
 	if (sc->sc_hybrid != 0) {
 		r = hidmt_assemble(&sc->sc_config, &sc->sc_asm, buf, len, usec,
 		    &frame);
-		if (r == HIDMT_ASM_MORE)
-			return;
+		if (sc->sc_asm.lost || (r != HIDMT_ASM_MORE &&
+		    r != HIDMT_ASM_READY)) {
+			/*
+			 * A frame was lost: the contacts cannot be tracked
+			 * across the gap.  Release them (no tap) and tell the
+			 * consumer; the new report below starts afresh.
+			 */
+			sc->sc_asm.lost = false;
+			g = hidmt_release(&sc->sc_pointer, &sc->sc_gstate);
+			s = spltty();
+			imt_gesture_emit(sc, g, 0, 0, 0);
+			splx(s);
+		}
 		if (r != HIDMT_ASM_READY) {
-			memset(&sc->sc_pointer, 0, sizeof(sc->sc_pointer));
-			imt_gesture_abort(sc);
+			imt_tmo_arm(sc);
 			return;
 		}
 	} else if (hidmt_decode(&sc->sc_config, buf, len, &frame) != 0) {
 		/* Reject malformed frames without retaining a possible tap. */
 		sc->sc_drops++;
-		memset(&sc->sc_pointer, 0, sizeof(sc->sc_pointer));
-		imt_gesture_abort(sc);
+		g = hidmt_release(&sc->sc_pointer, &sc->sc_gstate);
+		s = spltty();
+		imt_gesture_emit(sc, g, 0, 0, 0);
+		splx(s);
 		return;
 	}
 	if (sc->sc_scroll != 0) {
@@ -387,26 +536,13 @@ imt_intr(struct ihidev *hdev, void *buf, u_int len)
 		    (sc->sc_tapping != 0 ? HIDMT_TAP_LEFT : 0) |
 		    (sc->sc_tapping_right != 0 ? HIDMT_TAP_RIGHT : 0),
 		    &motion);
-	if (sc->sc_gestures != 0) {
-		gconf.enable = true;
-		gconf.start = 0;
-		hidmt_gesture_update(&sc->sc_gstate, &gconf, &frame, &motion);
-	} else if (sc->sc_gstate.started) {
-		/* Switched off in the middle of a gesture. */
-		memset(&sc->sc_gstate, 0, sizeof(sc->sc_gstate));
-		motion.gesture = HIDMT_GESTURE_CANCEL;
-	}
+	/* Also when off: a switch-off cancels a swipe and drops a candidate. */
+	gconf.enable = sc->sc_gestures != 0;
+	gconf.start = 0;
+	hidmt_gesture_update(&sc->sc_gstate, &gconf, &frame, &motion);
 	s = spltty();
-	if ((motion.gesture & HIDMT_GESTURE_END) != 0)
-		wsmouse_gesture(sc->sc_mouse, 0, WSMOUSE_GESTURE_END, 0, 0);
-	if ((motion.gesture & HIDMT_GESTURE_CANCEL) != 0)
-		wsmouse_gesture(sc->sc_mouse, 0, WSMOUSE_GESTURE_CANCEL, 0, 0);
-	if ((motion.gesture & HIDMT_GESTURE_BEGIN) != 0)
-		wsmouse_gesture(sc->sc_mouse, motion.gesture_fingers,
-		    WSMOUSE_GESTURE_BEGIN, 0, 0);
-	if ((motion.gesture & HIDMT_GESTURE_UPDATE) != 0)
-		wsmouse_gesture(sc->sc_mouse, 0, WSMOUSE_GESTURE_UPDATE,
-		    motion.gesture_dx, motion.gesture_dy);
+	imt_gesture_emit(sc, motion.gesture, motion.gesture_fingers,
+	    motion.gesture_dx, motion.gesture_dy);
 	if (motion.scroll_x != 0 || motion.scroll_y != 0)
 		wsmouse_precision_scroll(sc->sc_mouse, motion.scroll_x,
 		    motion.scroll_y);
@@ -417,6 +553,7 @@ imt_intr(struct ihidev *hdev, void *buf, u_int len)
 		wsmouse_input(sc->sc_mouse, motion.buttons, 0, 0, 0, 0,
 		    WSMOUSE_INPUT_DELTA);
 	splx(s);
+	imt_tmo_arm(sc);
 }
 
 static void
@@ -528,10 +665,69 @@ imt_sysctl_drops(SYSCTLFN_ARGS)
 	return sysctl_lookup(SYSCTLFN_CALL(&node));
 }
 
+/*
+ * Switching hybrid, scroll or gestures drops the running state: an active
+ * swipe is cancelled, a candidate and an unfinished frame are forgotten, so
+ * the next switch-on starts clean.
+ */
+static int
+imt_sysctl_flag(SYSCTLFN_ARGS, struct imt_softc *sc, int *field)
+{
+	struct sysctlnode node = *rnode;
+	int v = *field, error;
+
+	node.sysctl_data = &v;
+	error = sysctl_lookup(SYSCTLFN_CALL(&node));
+	if (error || newp == NULL)
+		return error;
+	v = v != 0;
+	if (v == (*field != 0))
+		return 0;
+	/* Serialize with the non-MPSAFE ihidev worker. */
+	KERNEL_LOCK(1, NULL);
+	*field = v;
+	imt_reset_state(sc, false);
+	KERNEL_UNLOCK_ONE(NULL);
+	return 0;
+}
+
+static int
+imt_sysctl_hybrid(SYSCTLFN_ARGS)
+{
+	struct imt_softc *sc = rnode->sysctl_data;
+
+	return imt_sysctl_flag(SYSCTLFN_CALL(rnode), sc, &sc->sc_hybrid);
+}
+
+static int
+imt_sysctl_scroll(SYSCTLFN_ARGS)
+{
+	struct imt_softc *sc = rnode->sysctl_data;
+
+	return imt_sysctl_flag(SYSCTLFN_CALL(rnode), sc, &sc->sc_scroll);
+}
+
+static int
+imt_sysctl_gestures(SYSCTLFN_ARGS)
+{
+	struct imt_softc *sc = rnode->sysctl_data;
+
+	return imt_sysctl_flag(SYSCTLFN_CALL(rnode), sc, &sc->sc_gestures);
+}
+
 static int
 imt_ioctl(void *arg, u_long cmd, void *data, int flag, struct lwp *l)
 {
+	struct imt_softc *sc = arg;
+	struct wsmouse_gesture_info *gi;
+
 	switch (cmd) {
+	case WSMOUSEIO_GGESTURE:
+		/* This device can report swipes; hw.imt0.gestures turns them on. */
+		gi = data;
+		gi->wgi_supported = 1;
+		gi->wgi_enabled = sc->sc_gestures != 0;
+		return 0;
 	case WSMOUSEIO_GTYPE:
 		/* NetBSD wscons consumes pointer events from the contact policy. */
 		*(u_int *)data = WSMOUSE_TYPE_USB;
@@ -552,6 +748,8 @@ imt_detach(device_t self, int flags)
 		return error;
 	sysctl_teardown(&sc->sc_sysctllog);
 	pmf_device_deregister(self);
+	callout_halt(&sc->sc_tmo, NULL);
+	callout_destroy(&sc->sc_tmo);
 	if (sc->sc_mode != NULL)
 		kmem_free(sc->sc_mode, sc->sc_config.config_size);
 	return 0;

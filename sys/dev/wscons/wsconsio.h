@@ -305,6 +305,19 @@ struct wsmouse_parameters {
 #define WSMOUSEIO_SETPARAMS	_IOW('W', 43, struct wsmouse_parameters)
 
 /*
+ * Multi-finger swipe gestures (WSCONS_EVENT_GESTURE_SWIPE_*).  wgi_supported:
+ * the device can produce them; wgi_enabled: they are switched on at the
+ * moment (a driver setting that may change later).  Drivers that do not
+ * know the request return EPASSTHROUGH, which user space sees as ENOTTY:
+ * the device has no gestures.
+ */
+struct wsmouse_gesture_info {
+	u_int wgi_supported;
+	u_int wgi_enabled;
+};
+#define WSMOUSEIO_GGESTURE	_IOR('W', 44, struct wsmouse_gesture_info)
+
+/*
  * Display ioctls (64 - 95)
  */
 

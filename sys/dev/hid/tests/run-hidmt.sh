@@ -4,11 +4,17 @@ set -eu
 tests=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 hid=$(dirname -- "$tests")
 sys=$(CDPATH= cd -- "$hid/../.." && pwd)
+# HIDMT_SRC_SYS: use hid.c, hidmt.c and hidmtvar.h of another sys/ tree (the
+# red run of the review regressions against the pre-review sources).
+if [ -n "${HIDMT_SRC_SYS:-}" ]; then
+    hid=$HIDMT_SRC_SYS/dev/hid
+    sys=$HIDMT_SRC_SYS
+fi
 cc=${CC:-cc}
 build=${BUILD_DIR:-$(mktemp -d)}
 mkdir -p "$build"
 if [ -z "${BUILD_DIR:-}" ]; then
-    trap 'rm -f "$build/hid.o" "$build/baseline.o" "$build/t_hidmt" "$build/t_hidmt_hybrid" "$build/t_hidmt_gesture"; rmdir "$build"' EXIT HUP INT TERM
+    trap 'rm -f "$build/hid.o" "$build/baseline.o" "$build/t_hidmt" "$build/t_hidmt_hybrid" "$build/t_hidmt_gesture" "$build/t_hidmt_lifecycle"; rmdir "$build"' EXIT HUP INT TERM
 fi
 # The existing HID parser retains its native warning policy.
 "$cc" -std=c23 ${CFLAGS:-} -I"$tests/include" -idirafter "$sys" \
@@ -32,3 +38,8 @@ fi
     -I"$tests/include" -idirafter "$sys" "$build/hid.o" "$hid/hidmt.c" \
     "$tests/t_hidmt_gesture.c" -o "$build/t_hidmt_gesture"
 "$build/t_hidmt_gesture"
+# Review Dev Bots #472: lifecycle reset, lost frames, timer rule.
+"$cc" -std=c23 -Wall -Wextra -Werror ${CFLAGS:-} ${LIFECYCLE_CFLAGS:-} \
+    -I"$tests/include" -idirafter "$sys" "$build/hid.o" "$hid/hidmt.c" \
+    "$tests/t_hidmt_lifecycle.c" -o "$build/t_hidmt_lifecycle"
+"$build/t_hidmt_lifecycle"
