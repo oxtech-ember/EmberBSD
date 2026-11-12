@@ -25,7 +25,19 @@ typedef void *cfdata_t;
 typedef int pmf_qual_t;
 struct lwp;
 struct sysctllog;
-struct sysctlnode;
+struct sysctlnode {
+	void *sysctl_data;
+};
+#define SYSCTLFN_PROTO const int *, u_int, void *, size_t *, const void *, \
+    size_t, const int *, struct lwp *, const struct sysctlnode *
+#define SYSCTLFN_ARGS const int *name, u_int namelen, void *oldp, \
+    size_t *oldlenp, const void *newp, size_t newlen, const int *oname, \
+    struct lwp *l, const struct sysctlnode *rnode
+#define SYSCTLFN_CALL(node) name, namelen, oldp, oldlenp, newp, newlen, \
+    oname, l, node
+#define CTLFLAG_READONLY 0
+#define LOG_INFO 6
+#define log test_log
 struct ihidev_softc {
 	device_t sc_dev;
 	unsigned refs, mode;
@@ -123,6 +135,19 @@ static void
 splx(int s)
 {
 }
+static void __attribute__((format(printf, 2, 3)))
+test_log(int pri, const char *fmt, ...)
+{
+}
+static int
+sysctl_lookup(SYSCTLFN_ARGS)
+{
+	return 0;
+}
+static void
+wsmouse_precision_scroll(device_t d, int x, int y)
+{
+}
 static void
 getnanouptime(struct timespec *t)
 {
@@ -158,6 +183,21 @@ hidmt_decode(const struct hidmt_config *c, const uint8_t *b, unsigned n, struct 
 {
 	*f = (struct hidmt_frame){0};
 	return 0;
+}
+int
+hidmt_assemble(const struct hidmt_config *c, struct hidmt_assembler *a,
+    const uint8_t *b, unsigned n, uint64_t t, struct hidmt_frame *f)
+{
+	*f = (struct hidmt_frame){0};
+	return HIDMT_ASM_READY;
+}
+void
+hidmt_pointer_update_scroll(struct hidmt_pointer *p,
+    const struct hidmt_frame *f, uint64_t t, unsigned tap_flags,
+    const struct hidmt_scroll *sc, struct hidmt_motion *m)
+{
+	(void)tap_flags;
+	*m = (struct hidmt_motion){.tap = p->tap_candidate};
 }
 void
 hidmt_pointer_update(struct hidmt_pointer *p, const struct hidmt_frame *f, uint64_t t, unsigned tap_flags, struct hidmt_motion *m)

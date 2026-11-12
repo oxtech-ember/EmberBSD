@@ -113,6 +113,8 @@ hidmt_parse(const void *desc, int len, struct hidmt_config *cfg)
 				cfg->count = h.loc;
 			if (h.usage == HID_USAGE2(HUP_BUTTON, 1))
 				cfg->button = h.loc;
+			if (h.usage == HID_USAGE2(HUP_DIGITIZERS, HUD_SCAN_TIME))
+				cfg->scantime = h.loc;
 		}
 	}
 	hid_end_parse(hd);
@@ -146,6 +148,10 @@ hidmt_parse(const void *desc, int len, struct hidmt_config *cfg)
 	if (cfg->button.size &&
 	    !hidmt_location_valid(&cfg->button, cfg->input_size))
 		return 1;
+	/* Scan Time only refines hybrid frames; an unusable one is ignored. */
+	if (cfg->scantime.size &&
+	    !hidmt_location_valid(&cfg->scantime, cfg->input_size))
+		memset(&cfg->scantime, 0, sizeof(cfg->scantime));
 	for (i = 0; i < cfg->nslots; i++) {
 		slot = &cfg->slots[i];
 		if (!hidmt_location_valid(&slot->x, cfg->input_size) ||
@@ -188,23 +194,19 @@ fail:
 	return 1;
 }
 
-int
-hidmt_decode(const struct hidmt_config *cfg, const uint8_t *data, unsigned len,
-    struct hidmt_frame *frame)
+/*
+ * Append contacts from slots 0..n-1 of one report. Returns non-zero for a
+ * malformed contact.
+ */
+static int
+hidmt_decode_slots(const struct hidmt_config *cfg, const uint8_t *data,
+    unsigned n, struct hidmt_frame *frame)
 {
-	unsigned i, j, count;
+	unsigned i, j;
 	const struct hidmt_slot *slot;
 	struct hidmt_contact *contact;
 
-	memset(frame, 0, sizeof(*frame));
-	if (len != cfg->input_size)
-		return 1;
-	count = hid_get_udata(data, &cfg->count);
-	/* This transport accepts complete parallel frames, not hybrid frames. */
-	if (count > cfg->nslots)
-		return 1;
-	frame->buttons = cfg->button.size && hid_get_udata(data, &cfg->button);
-	for (i = 0; i < count; i++) {
+	for (i = 0; i < n; i++) {
 		slot = &cfg->slots[i];
 		if (!hid_get_udata(data, &slot->tip))
 			continue;
@@ -227,8 +229,120 @@ hidmt_decode(const struct hidmt_config *cfg, const uint8_t *data, unsigned len,
 	return 0;
 }
 
-void
-hidmt_pointer_update(struct hidmt_pointer *ptr, const struct hidmt_frame *frame,
+int
+hidmt_decode(const struct hidmt_config *cfg, const uint8_t *data, unsigned len,
+    struct hidmt_frame *frame)
+{
+	unsigned count;
+
+	memset(frame, 0, sizeof(*frame));
+	if (len != cfg->input_size)
+		return 1;
+	count = hid_get_udata(data, &cfg->count);
+	/* This transport accepts complete parallel frames, not hybrid frames. */
+	if (count > cfg->nslots)
+		return 1;
+	frame->buttons = cfg->button.size && hid_get_udata(data, &cfg->button);
+	return hidmt_decode_slots(cfg, data, count, frame);
+}
+
+/*
+ * Feed one input report to the hybrid frame assembler. A report whose
+ * Contact Count fits the parallel slots is a complete frame, exactly as for
+ * hidmt_decode(). A larger count starts a hybrid frame: the contacts of
+ * this and of the following reports (Contact Count 0) are collected until
+ * the announced number is reached. An unfinished frame is dropped when a new
+ * frame starts, when the Scan Time changes, or when it is older than
+ * HIDMT_HYBRID_TIMEOUT_US; a dropped frame never yields contacts.
+ */
+int
+hidmt_assemble(const struct hidmt_config *cfg, struct hidmt_assembler *as,
+    const uint8_t *data, unsigned len, uint64_t now, struct hidmt_frame *frame)
+{
+	unsigned count, scantime = 0, n;
+	bool have_st, dropped = false;
+
+	if (len != cfg->input_size) {
+		if (as->pending)
+			as->drops++;
+		as->pending = false;
+		memset(frame, 0, sizeof(*frame));
+		return HIDMT_ASM_ERROR;
+	}
+	count = hid_get_udata(data, &cfg->count);
+	have_st = cfg->scantime.size != 0;
+	if (have_st)
+		scantime = hid_get_udata(data, &cfg->scantime);
+
+	if (as->pending && (count != 0 || now < as->started ||
+	    now - as->started > HIDMT_HYBRID_TIMEOUT_US ||
+	    (have_st && scantime != as->scantime))) {
+		as->pending = false;
+		as->drops++;
+		as->have_dropped = true;
+		as->dropped_scantime = as->scantime;
+		dropped = true;
+	}
+
+	if (as->pending) {
+		/* Continuation report (Contact Count 0) of the same frame. */
+		n = cfg->nslots;
+		if (n > as->expected - as->have)
+			n = as->expected - as->have;
+		if (hidmt_decode_slots(cfg, data, n, &as->frame) != 0) {
+			as->pending = false;
+			as->drops++;
+			memset(frame, 0, sizeof(*frame));
+			return HIDMT_ASM_ERROR;
+		}
+		as->have += n;
+		if (as->have < as->expected)
+			return HIDMT_ASM_MORE;
+		as->pending = false;
+		*frame = as->frame;
+		as->last_scantime = scantime;
+		return HIDMT_ASM_READY;
+	}
+
+	if (count == 0 && (dropped || (have_st && ((as->have_scantime &&
+	    scantime == as->last_scantime) || (as->have_dropped &&
+	    scantime == as->dropped_scantime))))) {
+		/* Orphan tail of a lost or dropped hybrid frame. */
+		as->last_scantime = scantime;
+		return HIDMT_ASM_MORE;
+	}
+	as->have_scantime = have_st;
+	as->last_scantime = scantime;
+	if (count == 0)
+		as->have_dropped = false;
+	if (count <= cfg->nslots) {
+		if (hidmt_decode(cfg, data, len, frame) != 0)
+			return HIDMT_ASM_ERROR;
+		return HIDMT_ASM_READY;
+	}
+	if (count > HIDMT_MAX_CONTACTS) {
+		memset(frame, 0, sizeof(*frame));
+		return HIDMT_ASM_ERROR;
+	}
+	/* First report of a hybrid frame. */
+	memset(&as->frame, 0, sizeof(as->frame));
+	as->frame.buttons = cfg->button.size &&
+	    hid_get_udata(data, &cfg->button);
+	if (hidmt_decode_slots(cfg, data, cfg->nslots, &as->frame) != 0) {
+		as->drops++;
+		memset(frame, 0, sizeof(*frame));
+		return HIDMT_ASM_ERROR;
+	}
+	as->pending = true;
+	as->expected = count;
+	as->have = cfg->nslots;
+	as->scantime = scantime;
+	as->started = now;
+	return HIDMT_ASM_MORE;
+}
+
+static void
+hidmt_pointer_base(struct hidmt_pointer *ptr, const struct hidmt_frame *frame,
     uint64_t now, unsigned tap_flags, struct hidmt_motion *motion)
 {
 	const struct hidmt_contact *contact;
@@ -323,4 +437,90 @@ hidmt_pointer_update(struct hidmt_pointer *ptr, const struct hidmt_frame *frame,
 	ptr->remy = dy % 8;
 	ptr->x = contact->x;
 	ptr->y = contact->y;
+}
+
+/* Contact distance (sum of two contacts, i.e. twice the mean) to start. */
+#define HIDMT_SCROLL_START	40
+
+void
+hidmt_pointer_update(struct hidmt_pointer *ptr, const struct hidmt_frame *frame,
+    uint64_t now, unsigned tap_flags, struct hidmt_motion *motion)
+{
+	hidmt_pointer_base(ptr, frame, now, tap_flags, motion);
+}
+
+/*
+ * Pointer policy with two-finger scrolling. With exactly two contacts the
+ * pointer does not move; once the mean position has travelled
+ * HIDMT_SCROLL_START the gesture becomes a scroll and stops being a tap
+ * candidate. The scroll stays latched until every finger is lifted, so the
+ * remaining finger does not jerk the pointer.
+ */
+void
+hidmt_pointer_update_scroll(struct hidmt_pointer *ptr,
+    const struct hidmt_frame *frame, uint64_t now, unsigned tap_flags,
+    const struct hidmt_scroll *sc, struct hidmt_motion *motion)
+{
+	const struct hidmt_contact *a, *b;
+	int sumx, sumy, dx, dy, den;
+	int64_t acc;
+	bool same;
+
+	hidmt_pointer_base(ptr, frame, now, tap_flags, motion);
+	if (sc == NULL || !sc->enable || sc->scale == 0 || sc->range <= 0 ||
+	    frame->ncontacts == 0)
+		return;
+	if (frame->ncontacts != 2) {
+		if (frame->ncontacts == 1 && ptr->scrolling)
+			motion->dx = motion->dy = 0;
+		ptr->scroll_valid = false;
+		return;
+	}
+	motion->dx = motion->dy = 0;
+	ptr->remx = ptr->remy = 0;
+	if (frame->buttons)
+		return;
+	a = &frame->contacts[0];
+	b = &frame->contacts[1];
+	sumx = a->x + b->x;
+	sumy = a->y + b->y;
+	same = ptr->scroll_valid &&
+	    ((ptr->scroll_id[0] == a->id && ptr->scroll_id[1] == b->id) ||
+	    (ptr->scroll_id[0] == b->id && ptr->scroll_id[1] == a->id));
+	if (!same) {
+		ptr->scroll_valid = true;
+		ptr->scroll_id[0] = a->id;
+		ptr->scroll_id[1] = b->id;
+		ptr->scroll_x = ptr->scroll_startx = sumx;
+		ptr->scroll_y = ptr->scroll_starty = sumy;
+		ptr->scroll_remx = ptr->scroll_remy = 0;
+		return;
+	}
+	if (!ptr->scrolling) {
+		if (abs(sumx - ptr->scroll_startx) < HIDMT_SCROLL_START &&
+		    abs(sumy - ptr->scroll_starty) < HIDMT_SCROLL_START)
+			return;
+		ptr->scrolling = true;
+		ptr->tap_candidate = false;
+		ptr->scroll_x = sumx;
+		ptr->scroll_y = sumy;
+		return;
+	}
+	/* Touch Y grows downwards; positive output means fingers moved up. */
+	dx = sumx - ptr->scroll_x;
+	dy = ptr->scroll_y - sumy;
+	ptr->scroll_x = sumx;
+	ptr->scroll_y = sumy;
+	if (sc->natural) {
+		dx = -dx;
+		dy = -dy;
+	}
+	/* The sums are twice the mean, hence the factor two in the divisor. */
+	den = 2 * sc->range;
+	acc = (int64_t)dx * sc->scale + ptr->scroll_remx;
+	motion->scroll_x = (int)(acc / den);
+	ptr->scroll_remx = (int)(acc % den);
+	acc = (int64_t)dy * sc->scale + ptr->scroll_remy;
+	motion->scroll_y = (int)(acc / den);
+	ptr->scroll_remy = (int)(acc % den);
 }
