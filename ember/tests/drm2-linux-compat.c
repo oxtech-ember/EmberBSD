@@ -22,21 +22,31 @@
 #include <sys/systm.h>
 #endif
 
+#include <linux/kdev_t.h>
 #include <linux/string_choices.h>
 #include <linux/string_helpers.h>
+#include <linux/swab.h>
 #include <linux/types.h>
 #include <linux/units.h>
 #include <linux/util_macros.h>
 
 #ifndef DRM2_COMPAT_HOST
 #include <linux/array_size.h>
+#include <linux/bsearch.h>
 #include <linux/container_of.h>
+#include <linux/dma-direction.h>
+#include <linux/hrtimer_types.h>
 #include <linux/limits.h>
 #include <linux/math.h>
 #include <linux/minmax.h>
 #include <linux/sprintf.h>
+#include <linux/nmi.h>
 #include <linux/stdarg.h>
+#include <linux/time64.h>
+#include <linux/timekeeping.h>
+#include <linux/unaligned.h>
 #include <linux/wordpart.h>
+#include <xen/xen.h>
 #endif
 
 static int t_run, t_fail;
@@ -317,6 +327,144 @@ test_kernel_forwarders(void)
 #endif
 
 static void
+test_kdev_swab(void)
+{
+	u16 v16 = 0x1234;
+	u32 v32 = 0x12345678;
+	u64 v64 = 0x0123456789abcdefULL;
+
+	CHECK(MINORBITS == 20);
+	CHECK(MINORMASK == 0xfffff);
+	CHECK(MKDEV(226, 3) == (226u << 20 | 3u));
+	CHECK(MAJOR(MKDEV(226, 3)) == 226);
+	CHECK(MINOR(MKDEV(226, 3)) == 3);
+	CHECK(MAJOR(MKDEV(4095, 0xfffff)) == 4095);
+	CHECK(MINOR(MKDEV(4095, 0xfffff)) == 0xfffff);
+
+	CHECK(swab16(0x1234) == 0x3412);
+	CHECK(swab32(0x12345678U) == 0x78563412U);
+	CHECK(swab64(0x0123456789abcdefULL) == 0xefcdab8967452301ULL);
+	CHECK(__swab16(0x00ff) == 0xff00);
+	CHECK(__swab32(1U) == 0x01000000U);
+	CHECK(__swab64(1ULL) == 0x0100000000000000ULL);
+	CHECK(swab16p(&v16) == 0x3412);
+	CHECK(swab32p(&v32) == 0x78563412U);
+	CHECK(swab64p(&v64) == 0xefcdab8967452301ULL);
+	swab16s(&v16);
+	swab32s(&v32);
+	swab64s(&v64);
+	CHECK(v16 == 0x3412 && v32 == 0x78563412U);
+	CHECK(v64 == 0xefcdab8967452301ULL);
+	CHECK(swahw32(0x12345678U) == 0x56781234U);
+	CHECK(swahb32(0x12345678U) == 0x34127856U);
+	CHECK(swab16(swab16(0xbeef)) == 0xbeef);
+	/* Constant expressions work for static initialisers. */
+	{
+		static const u32 k = swab32(0x11223344U);
+
+		CHECK(k == 0x44332211U);
+	}
+}
+
+#ifndef DRM2_COMPAT_HOST
+static int
+t_cmp_int(const void *a, const void *b)
+{
+	int x = *(const int *)a, y = *(const int *)b;
+
+	return (x > y) - (x < y);
+}
+
+static void
+test_kernel_misc(void)
+{
+	static const int sorted[] = { 1, 3, 5, 7, 9, 11 };
+	unsigned char b[9] = { 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+	    0x09 };
+	unsigned char o[9];
+	int key, i;
+	int *hit;
+	ktime_t t0, t1, b0;
+	struct hrtimer ht;
+	struct timespec64 ts;
+
+	/* bsearch */
+	for (i = 0; i < (int)ARRAY_SIZE(sorted); i++) {
+		key = sorted[i];
+		hit = bsearch(&key, sorted, ARRAY_SIZE(sorted), sizeof(int),
+		    t_cmp_int);
+		CHECK(hit == &sorted[i]);
+	}
+	key = 4;
+	CHECK(bsearch(&key, sorted, ARRAY_SIZE(sorted), sizeof(int),
+	    t_cmp_int) == NULL);
+	key = 1;
+	CHECK(bsearch(&key, sorted, 0, sizeof(int), t_cmp_int) == NULL);
+
+	/* unaligned access at an odd offset */
+	CHECK(get_unaligned_le16(&b[1]) == 0x0302);
+	CHECK(get_unaligned_be16(&b[1]) == 0x0203);
+	CHECK(get_unaligned_le32(&b[1]) == 0x05040302U);
+	CHECK(get_unaligned_be32(&b[1]) == 0x02030405U);
+	CHECK(get_unaligned_le64(&b[1]) == 0x0908070605040302ULL);
+	CHECK(get_unaligned_be64(&b[1]) == 0x0203040506070809ULL);
+	memset(o, 0, sizeof(o));
+	put_unaligned_le16(0xa1b2, &o[1]);
+	CHECK(o[0] == 0 && o[1] == 0xb2 && o[2] == 0xa1 && o[3] == 0);
+	memset(o, 0, sizeof(o));
+	put_unaligned_be16(0xa1b2, &o[1]);
+	CHECK(o[1] == 0xa1 && o[2] == 0xb2);
+	memset(o, 0, sizeof(o));
+	put_unaligned_le32(0xa1b2c3d4U, &o[1]);
+	CHECK(o[1] == 0xd4 && o[4] == 0xa1 && o[5] == 0);
+	memset(o, 0, sizeof(o));
+	put_unaligned_be32(0xa1b2c3d4U, &o[1]);
+	CHECK(o[1] == 0xa1 && o[4] == 0xd4 && o[5] == 0);
+	memset(o, 0, sizeof(o));
+	put_unaligned_le64(0x1122334455667788ULL, &o[1]);
+	CHECK(o[0] == 0 && o[1] == 0x88 && o[8] == 0x11);
+	memset(o, 0, sizeof(o));
+	put_unaligned_be64(0x1122334455667788ULL, &o[1]);
+	CHECK(o[0] == 0 && o[1] == 0x11 && o[8] == 0x88);
+	CHECK(get_unaligned((const u32 *)&b[1]) ==
+	    get_unaligned_le32(&b[1]) || get_unaligned((const u32 *)&b[1]) ==
+	    get_unaligned_be32(&b[1]));
+	memset(o, 0, sizeof(o));
+	put_unaligned(0xdeadbeefU, (u32 *)&o[1]);
+	CHECK(get_unaligned((u32 *)&o[1]) == 0xdeadbeefU);
+
+	/* dma-direction.h, hrtimer_types.h, nmi.h, xen/xen.h */
+	CHECK(DMA_NONE == 0 && DMA_TO_DEVICE == 1);
+	CHECK(DMA_FROM_DEVICE == 2 && DMA_BIDIRECTIONAL == 3);
+	CHECK(HRTIMER_NORESTART != HRTIMER_RESTART);
+	CHECK(sizeof(ht) > 0);
+	touch_nmi_watchdog();
+	CHECK(!xen_domain());
+
+	/* time64.h */
+	CHECK(MSEC_PER_SEC == 1000L && USEC_PER_SEC == 1000000L);
+	CHECK(NSEC_PER_SEC == 1000000000L && NSEC_PER_MSEC == 1000000L);
+	CHECK(NSEC_PER_USEC == 1000L && USEC_PER_MSEC == 1000L);
+	CHECK(PSEC_PER_NSEC == 1000L);
+	CHECK(sizeof(time64_t) == 8);
+	ts = ns_to_timespec64(5 * NSEC_PER_SEC + 7);
+	CHECK(ts.tv_sec == 5 && ts.tv_nsec == 7);
+	CHECK(timespec64_to_ns(&ts) == 5 * NSEC_PER_SEC + 7);
+
+	/* timekeeping.h */
+	t0 = ktime_get();
+	b0 = ns_to_ktime((int64_t)ktime_get_boottime_ns());
+	t1 = ktime_get();
+	CHECK(ktime_to_ns(t1) >= ktime_to_ns(t0));
+	CHECK(ktime_get_ns() >= (uint64_t)ktime_to_ns(t0));
+	CHECK(ktime_get_raw_fast_ns() > 0);
+	CHECK(ktime_get_raw_ns() >= (uint64_t)ktime_to_ns(t0) - 1000000000ULL);
+	CHECK(ktime_to_ns(b0) > 0);
+	CHECK(ktime_get_real_ns() > 1000000000ULL * 1000000000ULL);
+}
+#endif
+
+static void
 test_harness(void)
 {
 
@@ -335,8 +483,10 @@ drm2_linux_compat_run(void)
 	test_string_choices();
 	test_units();
 	test_util_macros();
+	test_kdev_swab();
 #ifndef DRM2_COMPAT_HOST
 	test_kernel_forwarders();
+	test_kernel_misc();
 #endif
 #ifdef DRM2_COMPAT_SELFTEST_FAIL
 	test_selftest_fail();
