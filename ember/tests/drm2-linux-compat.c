@@ -23,6 +23,7 @@
 #endif
 
 #include <linux/cleanup.h>
+#include <linux/int_log.h>
 #include <linux/iosys-map.h>
 #include <linux/seq_buf.h>
 #include <linux/kdev_t.h>
@@ -59,6 +60,11 @@
 #include <video/nomodeset.h>
 #include <linux/wordpart.h>
 #include <xen/xen.h>
+#endif
+
+#ifdef DRM2_COMPAT_HOST
+/* In the kernel the implementation is part of drmkms_linux. */
+#include "linux_int_log.c"
 #endif
 
 static int t_run, t_fail;
@@ -1021,6 +1027,72 @@ test_kernel_stubs(void)
 #endif
 
 static void
+test_int_log(void)
+{
+	/* log2 in Q8.24: result = log2(value) * 2^24, rounded down. */
+	__unused static const u32 vals[] = {
+		1, 2, 3, 4, 5, 7, 8, 9, 10, 15, 16, 17, 100, 255, 256, 1000,
+		1023, 1024, 1025, 65535, 65536, 1000000, 0x7fffffff,
+		0x80000000U, 0xfffffffeU, 0xffffffffU,
+	};
+	u32 v;
+	unsigned int i;
+#ifdef DRM2_COMPAT_HOST
+	long long worst2 = 0, worst10 = 0;
+#endif
+
+	CHECK(intlog2(0) == 0);
+	CHECK(intlog2(1) == 0);
+	CHECK(intlog2(2) == 1U << 24);
+	CHECK(intlog2(8) == 3U << 24);
+	CHECK(intlog2(1U << 31) == 31U << 24);
+	CHECK(intlog2(3) == 26591258U);		/* 1.58496250... * 2^24 */
+	CHECK(intlog2(9) == 53182516U);		/* 3.16992500... * 2^24 */
+	CHECK(intlog10(0) == 0);
+	CHECK(intlog10(1) == 0);
+
+#ifdef DRM2_COMPAT_HOST
+	/* Compare with a double-precision reference on a spread of values. */
+	for (i = 0; i < sizeof(vals) / sizeof(vals[0]); i++) {
+		double r2 = __builtin_log2((double)vals[i]) * 16777216.0;
+		double r10 = __builtin_log10((double)vals[i]) * 16777216.0;
+		long long d2 = (long long)intlog2(vals[i]) - (long long)r2;
+		long long d10 = (long long)intlog10(vals[i]) - (long long)r10;
+
+		if (d2 < 0)
+			d2 = -d2;
+		if (d10 < 0)
+			d10 = -d10;
+		if (d2 > worst2)
+			worst2 = d2;
+		if (d10 > worst10)
+			worst10 = d10;
+	}
+	CHECK(worst2 <= 1);
+	CHECK(worst10 <= 8);
+
+#endif
+
+	/* Monotonic and exact on powers of two, over a stride of values. */
+	{
+		unsigned int prev = 0;
+
+		for (v = 1; v < 0x10000000U; v += 977 + (v >> 8)) {
+			unsigned int cur = intlog2(v);
+
+			CHECK(cur >= prev);
+			prev = cur;
+		}
+	}
+	for (i = 0; i < 32; i++)
+		CHECK(intlog2(1U << i) == i << 24);
+	CHECK(intlog10(1000) >= (3U << 24) - 8 &&
+	    intlog10(1000) <= (3U << 24) + 8);
+	CHECK(intlog10(1000000) >= (6U << 24) - 8 &&
+	    intlog10(1000000) <= (6U << 24) + 8);
+}
+
+static void
 test_harness(void)
 {
 
@@ -1043,6 +1115,7 @@ drm2_linux_compat_run(void)
 	test_cleanup();
 	test_iosys_map();
 	test_seq_buf();
+	test_int_log();
 #ifndef DRM2_COMPAT_HOST
 	test_kernel_forwarders();
 	test_kernel_misc();
