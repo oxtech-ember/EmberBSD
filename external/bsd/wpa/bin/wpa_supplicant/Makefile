@@ -118,6 +118,11 @@ CPPFLAGS+=-DCONFIG_SMARTCARD
 CPPFLAGS+=-DCONFIG_DEBUG_FILE
 CPPFLAGS+=-DCONFIG_DEBUG_SYSLOG
 
+# Periodic scans while associated, for roaming; used only by a network
+# block that sets bgscan="simple:...".
+CPPFLAGS+=-DCONFIG_BGSCAN -DCONFIG_BGSCAN_SIMPLE
+SRCS+=	bgscan.c bgscan_simple.c
+
 #CPPFLAGS+=-DCONFIG_FST
 #SRCS+=fst.c \
 #fst_ctrl_aux.c \
