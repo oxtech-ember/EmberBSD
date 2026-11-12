@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# GENERIC_ARL_TOUCHPAD with a 1000 Hz clock. With the efidrm software vblank
+# the flip event and the KWin frame timers then reach 60 frames/s; at
+# hz=100 KWin settles at 25.
+
+include "arch/amd64/conf/GENERIC_ARL_TOUCHPAD"
+
+options 	HZ=1000
