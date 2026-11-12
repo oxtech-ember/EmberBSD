@@ -25,6 +25,8 @@
 #include <linux/string_choices.h>
 #include <linux/string_helpers.h>
 #include <linux/types.h>
+#include <linux/units.h>
+#include <linux/util_macros.h>
 
 static int t_run, t_fail;
 
@@ -111,6 +113,95 @@ test_string_choices(void)
 }
 
 static void
+test_units(void)
+{
+
+	CHECK(HZ_PER_KHZ == 1000UL);
+	CHECK(HZ_PER_MHZ == 1000000UL);
+	CHECK(HZ_PER_GHZ == 1000000000UL);
+	CHECK(KHZ_PER_MHZ == 1000UL);
+	CHECK(KHZ_PER_GHZ == 1000000UL);
+	CHECK(MILLIHZ_PER_HZ == 1000UL);
+	CHECK(MICROHZ_PER_HZ == 1000000UL);
+	CHECK(NANOHZ_PER_HZ == 1000000000UL);
+	CHECK(MILLIWATT_PER_WATT == 1000UL);
+	CHECK(MICROWATT_PER_MILLIWATT == 1000UL);
+	CHECK(MICROWATT_PER_WATT == 1000000UL);
+	CHECK(KILO == 1000UL && MEGA == 1000000UL && GIGA == 1000000000UL);
+	CHECK(TERA == 1000000000000ULL && PETA == 1000000000000000ULL);
+	CHECK(MILLI == 1000UL && MICRO == 1000000UL && NANO == 1000000000UL);
+	CHECK(PICO == 1000000000000ULL && FEMTO == 1000000000000000ULL);
+	CHECK(BYTES_PER_KBIT == 125UL);
+	CHECK(BYTES_PER_MBIT == 125000UL);
+	CHECK(BYTES_PER_GBIT == 125000000UL);
+	CHECK(ABSOLUTE_ZERO_MILLICELSIUS == -273150);
+	CHECK(MILLIDEGREE_PER_DEGREE == 1000);
+	CHECK(MILLIDEGREE_PER_DECIDEGREE == 100);
+	CHECK(milli_kelvin_to_millicelsius(273150) == 0);
+	CHECK(millicelsius_to_milli_kelvin(0) == 273150);
+	CHECK(kelvin_to_millicelsius(300) == 26850);
+	CHECK(millicelsius_to_kelvin(26850) == 300);
+	CHECK(millicelsius_to_kelvin(0) == 273);		/* 273.15 rounds down */
+	CHECK(millicelsius_to_kelvin(25000) == 298);		/* 298.15 */
+	CHECK(kelvin_to_celsius(300) == 27);			/* 26.85 rounds up */
+	CHECK(celsius_to_kelvin(25) == 298);
+	CHECK(deci_kelvin_to_millicelsius(3000) == 26850);
+	CHECK(deci_kelvin_to_millicelsius_with_offset(3000, 0) == 300000);
+	CHECK(millicelsius_to_deci_kelvin(26850) == 3000);
+	CHECK(millicelsius_to_deci_kelvin(0) == 2732);		/* 2731.5 */
+	CHECK(deci_kelvin_to_celsius(3000) == 27);
+	CHECK(celsius_to_deci_kelvin(25) == 2982);		/* 2981.5 */
+}
+
+static void
+test_util_macros(void)
+{
+	static const int asc[] = { 10, 20, 30, 50 };
+	static const int desc[] = { 50, 30, 20, 10 };
+	static const int odd[] = { 0, 3 };
+	static const int neg[] = { -30, -20, -5, 0, 3 };
+	int var[4], cnt = 0, i;
+	static const char buf[8];
+
+	CHECK(find_closest(0, asc, 4) == 0);
+	CHECK(find_closest(10, asc, 4) == 0);
+	CHECK(find_closest(14, asc, 4) == 0);
+	CHECK(find_closest(16, asc, 4) == 1);
+	CHECK(find_closest(26, asc, 4) == 2);
+	CHECK(find_closest(39, asc, 4) == 2);
+	CHECK(find_closest(41, asc, 4) == 3);
+	CHECK(find_closest(1000, asc, 4) == 3);
+	/* Midpoint of 20 and 30 is 25: x <= 25 picks the lower index. */
+	CHECK(find_closest(25, asc, 4) == 1);
+	/* Descending: on the boundary 25 the smaller element (index 2) wins. */
+	CHECK(find_closest_descending(25, desc, 4) == 2);
+	CHECK(find_closest_descending(15, desc, 4) == 3);
+	CHECK(find_closest_descending(40, desc, 4) == 1);
+	CHECK(find_closest_descending(1000, desc, 4) == 0);
+	CHECK(find_closest_descending(41, desc, 4) == 0);
+	CHECK(find_closest_descending(39, desc, 4) == 1);
+	CHECK(find_closest_descending(26, desc, 4) == 1);
+	CHECK(find_closest_descending(24, desc, 4) == 2);
+	CHECK(find_closest_descending(0, desc, 4) == 3);
+	CHECK(find_closest(5, asc, 1) == 0);
+	/* Odd sum 0 + 3: 2 is nearer to 3, 1 is nearer to 0; no rounding. */
+	CHECK(find_closest(1, odd, 2) == 0);
+	CHECK(find_closest(2, odd, 2) == 1);
+	CHECK(find_closest(2, neg, 5) == 4);
+	CHECK(find_closest(-3, neg, 5) == 2);
+	for (i = 0; i < 6; i++)
+		for_each_if(i % 2 == 0)
+			cnt++;
+	CHECK(cnt == 3);
+	CHECK(PTR_IF(true, buf) == buf);
+	CHECK(PTR_IF(false, buf) == NULL);
+	CHECK(is_insidevar(&var[0], var));
+	CHECK(is_insidevar(&var[3], var));
+	CHECK(!is_insidevar(&var[4], var));
+	CHECK(!is_insidevar(&cnt, var));
+}
+
+static void
 test_harness(void)
 {
 
@@ -127,6 +218,8 @@ drm2_linux_compat_run(void)
 	t_run = t_fail = 0;
 	test_harness();
 	test_string_choices();
+	test_units();
+	test_util_macros();
 #ifdef DRM2_COMPAT_SELFTEST_FAIL
 	test_selftest_fail();
 #endif
