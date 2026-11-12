@@ -46,7 +46,8 @@ struct model_softc {
 	struct ath_hal *sc_ah;
 	int sc_dev, sc_write_mtx;
 	unsigned sc_flags, sc_use_mld_api, sc_device_family;
-	struct { unsigned htop1, ampdu_param, vhtcaps; } sc_bss_ht;
+	struct { unsigned htop1, ampdu_param, vhtcaps; uint8_t he_mac[6]; }
+	    sc_bss_ht;
 };
 #define ath_softc model_softc
 #define rt2860_softc model_softc

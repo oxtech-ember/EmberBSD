@@ -48,12 +48,14 @@ struct iwx_link_config_cmd {
 	uint32_t link_id, mac_id, phy_id, active, cck_rates, ofdm_rates;
 	uint32_t cck_short_preamble, short_slot, qos_flags, protection_flags;
 	uint32_t bi, dtim_interval, modify_mask, flags, flags_mask, action;
-	uint8_t local_link_addr[6], spec_link_id, listen_lmac;
+	uint8_t local_link_addr[6], spec_link_id, listen_lmac, bss_color;
 	struct iwx_ac_qos ac[5];
 };
 struct iwx_sta_cfg_cmd_v2 {
 	uint32_t sta_id, station_type, link_id, assoc_id;
 	uint32_t mimo, tx_ampdu_spacing, tx_ampdu_max_size, mfp;
+	uint32_t ack_enabled, htc_flags;
+	struct { uint8_t pkt_ext_qam_th[2][5][2]; } pkt_ext;
 	uint8_t peer_mld_address[6], peer_link_address[6];
 };
 struct iwx_mvm_sta_cfg_cmd { unsigned dummy; };
@@ -68,6 +70,8 @@ enum { IWM_FW_CTXT_ACTION_STUB, IWM_FW_CTXT_ACTION_ADD,
 #define IWX_LINK_CONTEXT_MODIFY_PROTECT_FLAGS (1 << 2)
 #define IWX_LINK_CONTEXT_MODIFY_QOS_PARAMS (1 << 3)
 #define IWX_LINK_CONTEXT_MODIFY_BEACON_TIMING (1 << 4)
+#define IWX_LINK_CONTEXT_MODIFY_HE_PARAMS (1 << 5)
+#define IWX_LINK_FLG_BSS_COLOR_DIS (1 << 0)
 #define IWM_FW_CMD_ID_AND_COLOR(id, color) ((id) | (color) << 8)
 #define IWX_FW_CMD_ID_AND_COLOR IWM_FW_CMD_ID_AND_COLOR
 #define IWM_FW_MAC_TYPE_BSS_STA 1
@@ -98,7 +102,9 @@ enum { IWM_FW_CTXT_ACTION_STUB, IWM_FW_CTXT_ACTION_ADD,
 #define IWX_FLAG_MAC_ACTIVE 8
 #define IWX_DEVICE_FAMILY_BZ 3
 #define IWX_HT_WIDTH_40 1
-#define IWX_HT_TLC_MODE_VHT 1
+#define IWX_HT_TLC_MODE_HT 1
+#define IWX_HT_TLC_MODE_VHT 2
+#define IWX_HT_TLC_MODE_HE 3
 #define IWX_FW_CTXT_INVALID 0xff
 #define IWX_FW_CMD_VER_UNKNOWN 0xff
 #define IWX_STATION_ID 0
@@ -119,6 +125,12 @@ static const uint8_t etherbroadcastaddr[6] = {255,255,255,255,255,255};
 static const unsigned iwm_ac_to_tx_fifo[4] = {1,0,2,3};
 static const unsigned iwx_ac_to_tx_fifo[4] = {1,0,2,3};
 static const unsigned iwx_ac_to_bz_tx_fifo[4] = {1,0,2,3};
+/* HE is outside TXOP coverage: the model station does not negotiate it. */
+static uint8_t iwx_ht_he_color(const void *peer) { (void)peer; return 0; }
+static int iwx_ht_he_color_disabled(const void *peer)
+{ (void)peer; return 0; }
+static void iwx_ht_he_pkt_ext(const void *peer, uint8_t ext[2][5][2])
+{ (void)peer; memset(ext, 7, 2 * 5 * 2); }
 static struct model_mac saved_mac;
 static struct iwx_link_config_cmd saved_link;
 static int
