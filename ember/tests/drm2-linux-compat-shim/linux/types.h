@@ -20,6 +20,9 @@ typedef int64_t s64;
 #ifndef __unused
 #define __unused __attribute__((__unused__))
 #endif
+#ifndef __always_inline
+#define __always_inline inline __attribute__((__always_inline__))
+#endif
 #ifndef __printflike
 #define __printflike(a, b) __attribute__((__format__(__printf__, a, b)))
 #endif
