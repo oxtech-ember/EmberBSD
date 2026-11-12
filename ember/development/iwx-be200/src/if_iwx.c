@@ -526,6 +526,8 @@ void	iwx_scan_assoc_timeout(void *);
 void	iwx_scan_assoc_task(void *);
 int	iwx_scan_assoc_rx(struct iwx_softc *, struct mbuf *, int,
 	    struct ieee80211_rxinfo *);
+void	iwx_scan_assoc_drop(struct iwx_softc *,
+	    const struct ieee80211_frame *, int, const char *);
 int	iwx_scan_assoc_req(struct iwx_softc *, u_long, void *, int *);
 int	iwx_bgscan(struct ieee80211com *);
 void	iwx_bgscan_done(struct ieee80211com *,
@@ -5096,11 +5098,20 @@ iwx_rx_frame(struct iwx_softc *sc, struct mbuf *m, int chanidx,
 	struct ieee80211com *ic = &sc->sc_ic;
 	struct ieee80211_frame *wh;
 	struct ieee80211_node *ni;
+	int offchan;
 
 	if (chanidx < 0 || chanidx >= (int)nitems(ic->ic_channels))
 		chanidx = ieee80211_chan2ieee(ic, ic->ic_ibss_chan);
 
 	wh = mtod(m, struct ieee80211_frame *);
+
+	/*
+	 * A beacon or probe response naming another channel than the one
+	 * the firmware reports was heard off its channel, or reported late.
+	 * net80211 drops it only by the DS element, which 5 GHz beacons
+	 * usually lack, and would file it under the wrong channel.
+	 */
+	offchan = iwx_ht_scan_offchan(mtod(m, uint8_t *), m->m_len, chanidx);
 
 	/*
 	 * The firmware scans all channels on its own.  NetBSD net80211
@@ -5110,7 +5121,7 @@ iwx_rx_frame(struct iwx_softc *sc, struct mbuf *m, int chanidx,
 	 * sleeps, and enters SCAN state after it; the firmware reports
 	 * results meanwhile, and net80211 files them from that mark on.
 	 */
-	if ((ic->ic_state == IEEE80211_S_SCAN ||
+	if (!offchan && (ic->ic_state == IEEE80211_S_SCAN ||
 	    (ic->ic_state == IEEE80211_S_INIT &&
 	    (ic->ic_flags & IEEE80211_F_SCAN))) &&
 	    (wh->i_fc[0] & IEEE80211_FC0_TYPE_MASK) == IEEE80211_FC0_TYPE_MGT) {
@@ -5129,10 +5140,10 @@ iwx_rx_frame(struct iwx_softc *sc, struct mbuf *m, int chanidx,
 	 * during a join.  During such a scan even its own frames may be
 	 * heard on a neighbouring channel.
 	 */
-	if (ni != ic->ic_bss || ic->ic_state <= IEEE80211_S_SCAN ||
+	if (!offchan && (ni != ic->ic_bss || ic->ic_state <= IEEE80211_S_SCAN ||
 	    ((sc->sc_flags & IWX_FLAG_BGSCAN) == 0 &&
 	    (size_t)m->m_len >= sizeof(struct ieee80211_frame_min) &&
-	    IEEE80211_ADDR_EQ(wh->i_addr2, ni->ni_bssid)))
+	    IEEE80211_ADDR_EQ(wh->i_addr2, ni->ni_bssid))))
 		ni->ni_chan = &ic->ic_channels[chanidx];
 
 #if NBPFILTER > 0
@@ -5213,6 +5224,14 @@ iwx_rx_frame(struct iwx_softc *sc, struct mbuf *m, int chanidx,
 		    m, BPF_DIRECTION_IN);
 	}
 #endif
+	if (offchan) {
+		ic->ic_stats.is_rx_chanmismatch++;
+		iwx_scan_assoc_drop(sc, wh, chanidx, "names another channel");
+		ieee80211_free_node(ni);
+		m_freem(m);
+		return;
+	}
+
 	/*
 	 * During a scan while associated, what other BSSes send is a scan
 	 * result and bypasses net80211 input.
@@ -8960,6 +8979,20 @@ iwx_scan_assoc_task(void *arg)
 }
 
 /*
+ * With IFF_DEBUG, say why a beacon or probe response was not filed as a
+ * scan result: nothing else records it.
+ */
+void
+iwx_scan_assoc_drop(struct iwx_softc *sc, const struct ieee80211_frame *wh,
+    int chan, const char *why)
+{
+	if ((IC2IFP(&sc->sc_ic)->if_flags & IFF_DEBUG) == 0)
+		return;
+	printf("%s: scan result from %s on channel %d not filed: %s\n",
+	    device_xname(sc->sc_dev), ether_sprintf(wh->i_addr2), chan, why);
+}
+
+/*
  * File a beacon or probe response of another BSS, heard during a scan
  * while associated, in the scan table of net80211.  Returns nonzero for
  * such a frame, filed or not; the caller frees it.
@@ -8998,6 +9031,7 @@ iwx_scan_assoc_rx(struct iwx_softc *sc, struct mbuf *m, int chanidx,
 
 	if (ieee80211_beacon_ies_parse(&ies, frm, efrm - frm) != 0) {
 		ic->ic_stats.is_rx_elem_toosmall++;
+		iwx_scan_assoc_drop(sc, wh, chanidx, "malformed elements");
 		return 1;
 	}
 	scan.sp_ssid = __UNCONST(ies.ssid);
@@ -9019,11 +9053,13 @@ iwx_scan_assoc_rx(struct iwx_softc *sc, struct mbuf *m, int chanidx,
 
 	if (scan.sp_rates == NULL || scan.sp_ssid == NULL) {
 		ic->ic_stats.is_rx_elem_missing++;
+		iwx_scan_assoc_drop(sc, wh, chanidx, "no SSID or rates");
 		return 1;
 	}
 	if (scan.sp_rates[1] > IEEE80211_RATE_MAXSIZE ||
 	    scan.sp_ssid[1] > IEEE80211_NWID_LEN) {
 		ic->ic_stats.is_rx_elem_toobig++;
+		iwx_scan_assoc_drop(sc, wh, chanidx, "SSID or rates too long");
 		return 1;
 	}
 	if (
@@ -9032,16 +9068,20 @@ iwx_scan_assoc_rx(struct iwx_softc *sc, struct mbuf *m, int chanidx,
 #endif
 	    isclr(ic->ic_chan_active, scan.sp_chan)) {
 		ic->ic_stats.is_rx_badchan++;
+		iwx_scan_assoc_drop(sc, wh, scan.sp_chan, "channel not active");
 		return 1;
 	}
 	/* Heard on a channel other than its own: signal leakage. */
 	if (scan.sp_chan != scan.sp_bchan) {
 		ic->ic_stats.is_rx_chanmismatch++;
+		iwx_scan_assoc_drop(sc, wh, chanidx, scan.sp_chan == 0 ?
+		    "no channel" : "heard off its channel");
 		return 1;
 	}
 	if (scan.sp_bintval < IEEE80211_BINTVAL_MIN ||
 	    scan.sp_bintval > IEEE80211_BINTVAL_MAX) {
 		ic->ic_stats.is_rx_badbintval++;
+		iwx_scan_assoc_drop(sc, wh, chanidx, "bad beacon interval");
 		return 1;
 	}
 

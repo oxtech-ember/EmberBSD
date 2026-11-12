@@ -168,6 +168,17 @@ overrun and the state dispatcher in `ember/tools/iwx-width-contract.sh`;
 the receive path in `ember/tests/iwx-sae.sh`. `iwx_scan_assoc_rx()` has
 no fixture.
 
+A beacon or probe response is filed under the channel it names for its
+BSS: the DS Parameter Set, or, as 5 GHz beacons usually carry no DS
+element, the primary channel of HT Operation. net80211 checks only the DS
+element, so the firmware's receive channel used to decide; on hardware
+`wpa_supplicant` then tried one 5 GHz BSS at three frequencies and timed
+out on the wrong ones. `iwx_rx_frame()` now drops such a frame when the
+two disagree, counts it in `is_rx_chanmismatch` and, with `IFF_DEBUG`,
+logs it like the other scan results it does not file. Contracts:
+`test_scan_chan()` in `ember/tools/iwx-ht-contract.sh` and the `offchan`
+case in `ember/tests/iwx-sae.sh`.
+
 Status (2026-11-11): `ifconfig iwx0` reports the negotiated mode
 (`VHT mode 11ac`, `HT mode 11na`/`11ng`) instead of the first legacy rate;
 net80211 has no HT or VHT mode, so the driver supplies the media word

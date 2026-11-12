@@ -1331,6 +1331,42 @@ iwx_ht_scan_foreign(const uint8_t *frame, size_t len, const uint8_t *bssid)
 	return !same2 && !same3;
 }
 
+/*
+ * The channel a beacon or probe response names for its BSS: the DS
+ * Parameter Set, else the primary channel of HT Operation; 0 if it names
+ * none.  On 5 GHz the DS element is usually absent, so net80211, which
+ * checks only that one, files a frame the firmware reports on another
+ * channel under that channel.
+ */
+static inline unsigned
+iwx_ht_scan_chan(const uint8_t *frame, size_t len)
+{
+	size_t off = 24 + 12;
+	unsigned ht = 0;
+
+	if (!iwx_ht_scan_result(frame, len))
+		return 0;
+	while (off + 2 <= len && off + 2 + frame[off + 1] <= len) {
+		uint8_t id = frame[off], elen = frame[off + 1];
+
+		if (id == 3 && elen == 1)
+			return frame[off + 2];
+		if (id == 61 && elen >= 22 && ht == 0)
+			ht = frame[off + 2];
+		off += 2 + elen;
+	}
+	return ht;
+}
+
+/* Whether such a frame names a channel other than the receive channel. */
+static inline int
+iwx_ht_scan_offchan(const uint8_t *frame, size_t len, unsigned chan)
+{
+	unsigned own = iwx_ht_scan_chan(frame, len);
+
+	return own != 0 && own != chan;
+}
+
 /* What to do with a scan request from user space. */
 #define IWX_HT_SCANREQ_NET80211	0	/* not associated: the usual scan */
 #define IWX_HT_SCANREQ_START	1	/* scan and stay associated */

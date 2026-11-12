@@ -804,6 +804,81 @@ test_dbm(void)
 }
 
 /* A scan while associated: frames, requests and leaving the BSS. */
+/* Build a beacon with the given elements after the fixed fields. */
+static size_t
+scan_frame(uint8_t *f, size_t cap, const uint8_t *ies, size_t ieslen)
+{
+	memset(f, 0, cap);
+	f[0] = 0x80;
+	memcpy(f + 24 + 12, ies, ieslen);
+	return 24 + 12 + ieslen;
+}
+
+static void
+test_scan_chan(void)
+{
+	uint8_t f[128], ies[64];
+	size_t n;
+
+	/* 5 GHz beacons often carry no DS element: HT Operation tells. */
+	memset(ies, 0, sizeof(ies));
+	ies[0] = 0; ies[1] = 2; ies[2] = 'O'; ies[3] = 'x';
+	ies[4] = 61; ies[5] = 22; ies[6] = 64; ies[7] = 3;
+	n = scan_frame(f, sizeof(f), ies, 4 + 24);
+	CHECK(iwx_ht_scan_chan(f, n) == 64);
+	CHECK(iwx_ht_scan_offchan(f, n, 64) == 0);
+	CHECK(iwx_ht_scan_offchan(f, n, 44) == 1);
+	CHECK(iwx_ht_scan_offchan(f, n, 157) == 1);
+	/* A probe response is checked the same way. */
+	f[0] = 0x50;
+	CHECK(iwx_ht_scan_offchan(f, n, 44) == 1);
+	/* DS Parameter Set wins over HT Operation wherever it stands. */
+	ies[28] = 3; ies[29] = 1; ies[30] = 1;
+	n = scan_frame(f, sizeof(f), ies, 4 + 24 + 3);
+	CHECK(iwx_ht_scan_chan(f, n) == 1);
+	CHECK(iwx_ht_scan_offchan(f, n, 1) == 0);
+	CHECK(iwx_ht_scan_offchan(f, n, 64) == 1);
+	/* A short HT Operation or DS element tells nothing. */
+	memset(ies, 0, sizeof(ies));
+	ies[0] = 61; ies[1] = 21; ies[2] = 64;
+	n = scan_frame(f, sizeof(f), ies, 2 + 21);
+	CHECK(iwx_ht_scan_chan(f, n) == 0);
+	CHECK(iwx_ht_scan_offchan(f, n, 44) == 0);
+	memset(ies, 0, sizeof(ies));
+	ies[0] = 3; ies[1] = 0;
+	n = scan_frame(f, sizeof(f), ies, 2);
+	CHECK(iwx_ht_scan_chan(f, n) == 0);
+	/* No channel element: net80211 keeps the receive channel. */
+	memset(ies, 0, sizeof(ies));
+	ies[0] = 0; ies[1] = 0;
+	n = scan_frame(f, sizeof(f), ies, 2);
+	CHECK(iwx_ht_scan_chan(f, n) == 0);
+	CHECK(iwx_ht_scan_offchan(f, n, 44) == 0);
+	/* An element running past the frame stops the walk. */
+	memset(ies, 0, sizeof(ies));
+	ies[0] = 61; ies[1] = 22; ies[2] = 64;
+	n = scan_frame(f, sizeof(f), ies, 2 + 10);
+	CHECK(iwx_ht_scan_chan(f, n) == 0);
+	/* What was found before a broken element still counts. */
+	memset(ies, 0, sizeof(ies));
+	ies[0] = 3; ies[1] = 1; ies[2] = 36;
+	ies[3] = 221; ies[4] = 40;
+	n = scan_frame(f, sizeof(f), ies, 3 + 2 + 5);
+	CHECK(iwx_ht_scan_chan(f, n) == 36);
+	/* Not a beacon or probe response, or too short: no channel. */
+	f[0] = 0xd0;
+	CHECK(iwx_ht_scan_chan(f, n) == 0);
+	CHECK(iwx_ht_scan_offchan(f, n, 44) == 0);
+	f[0] = 0x80;
+	CHECK(iwx_ht_scan_chan(f, 24 + 11) == 0);
+	CHECK(iwx_ht_scan_chan(f, 24 + 12) == 0);
+	/* Channel 0 from the descriptor is never matched. */
+	memset(ies, 0, sizeof(ies));
+	ies[0] = 61; ies[1] = 22; ies[2] = 64;
+	n = scan_frame(f, sizeof(f), ies, 2 + 22);
+	CHECK(iwx_ht_scan_offchan(f, n, 0) == 1);
+}
+
 static void
 test_scan(void)
 {
@@ -1693,6 +1768,7 @@ main(void)
 	test_mode();
 	test_eht();
 	test_scan();
+	test_scan_chan();
 	test_dbm();
 	printf("iwx-ht-contract: %u checks, %u failures\n", checks, failures);
 	return failures != 0;
