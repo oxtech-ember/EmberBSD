@@ -37,6 +37,7 @@
 #include <linux/container_of.h>
 #include <linux/dma-direction.h>
 #include <linux/hrtimer_types.h>
+#include <linux/iopoll.h>
 #include <linux/limits.h>
 #include <linux/mutex.h>
 #include <linux/rwsem.h>
@@ -708,6 +709,109 @@ test_kernel_xarray(void)
 }
 #endif
 
+#ifndef DRM2_COMPAT_HOST
+static int t_poll_calls;
+
+static int
+t_poll_op(int *counter)
+{
+
+	t_poll_calls++;
+	return ++*counter;
+}
+
+static unsigned
+t_readl_fn(const volatile void *addr)
+{
+
+	t_poll_calls++;
+	return *(const volatile unsigned *)addr;
+}
+#define	readl	t_readl_fn
+
+static void
+test_kernel_iopoll(void)
+{
+	int cnt, v, ret;
+	ktime_t t0;
+	int64_t us;
+	volatile unsigned reg = 0xa5;
+
+	/* The condition holds on the first read: one call, no delay. */
+	cnt = 9; t_poll_calls = 0;
+	ret = read_poll_timeout(t_poll_op, v, v >= 10, 100, 5000, false, &cnt);
+	CHECK(ret == 0 && v == 10 && t_poll_calls == 1);
+
+	/* It holds after several reads. */
+	cnt = 0; t_poll_calls = 0;
+	ret = read_poll_timeout(t_poll_op, v, v >= 5, 10, 100000, false, &cnt);
+	CHECK(ret == 0 && v == 5 && t_poll_calls == 5);
+
+	/* Zero timeout means wait forever, zero sleep means spin. */
+	cnt = 0; t_poll_calls = 0;
+	ret = read_poll_timeout(t_poll_op, v, v >= 200, 0, 0, false, &cnt);
+	CHECK(ret == 0 && v == 200 && t_poll_calls == 200);
+
+	/* The condition never holds: -ETIMEDOUT after about timeout_us. */
+	cnt = 0; t_poll_calls = 0;
+	t0 = ktime_get();
+	ret = read_poll_timeout(t_poll_op, v, v < 0, 100, 3000, false, &cnt);
+	us = ktime_us_delta(ktime_get(), t0);
+	CHECK(ret == -ETIMEDOUT);
+	CHECK(us >= 3000 && us < 1000000);
+	CHECK(v == cnt && v == t_poll_calls && v > 1);	/* val is the last read */
+
+	/* sleep_before_read delays the first read. */
+	cnt = 0; t_poll_calls = 0;
+	t0 = ktime_get();
+	ret = read_poll_timeout(t_poll_op, v, v >= 1, 2000, 100000, true, &cnt);
+	us = ktime_us_delta(ktime_get(), t0);
+	CHECK(ret == 0 && t_poll_calls == 1 && us >= 500 && us < 1000000);
+
+	/* Atomic variant. */
+	cnt = 0; t_poll_calls = 0;
+	ret = read_poll_timeout_atomic(t_poll_op, v, v >= 4, 5, 100000, false,
+	    &cnt);
+	CHECK(ret == 0 && v == 4 && t_poll_calls == 4);
+	cnt = 0;
+	t0 = ktime_get();
+	ret = read_poll_timeout_atomic(t_poll_op, v, v < 0, 10, 2000, false,
+	    &cnt);
+	us = ktime_us_delta(ktime_get(), t0);
+	CHECK(ret == -ETIMEDOUT && us >= 2000 && us < 1000000);
+
+	/* readx_poll_timeout: the op takes the "address" argument. */
+	cnt = 0; t_poll_calls = 0;
+	ret = readx_poll_timeout(t_poll_op, &cnt, v, v >= 3, 10, 100000);
+	CHECK(ret == 0 && v == 3 && t_poll_calls == 3);
+	cnt = 0; t_poll_calls = 0;
+	ret = readx_poll_timeout_atomic(t_poll_op, &cnt, v, v >= 3, 10, 100000);
+	CHECK(ret == 0 && v == 3 && t_poll_calls == 3);
+
+	/* readl_poll_timeout and friends call readl() on the address. */
+	{
+		unsigned r;
+
+		t_poll_calls = 0;
+		ret = readl_poll_timeout(&reg, r, r == 0xa5, 10, 1000);
+		CHECK(ret == 0 && r == 0xa5 && t_poll_calls == 1);
+		ret = readl_poll_timeout_atomic(&reg, r, r == 0x00, 10, 500);
+		CHECK(ret == -ETIMEDOUT && r == 0xa5);
+	}
+
+	/* poll_timeout_us: an arbitrary statement as the operation. */
+	cnt = 0; t_poll_calls = 0;
+	ret = poll_timeout_us(v = t_poll_op(&cnt), v >= 7, 10, 100000, false);
+	CHECK(ret == 0 && v == 7);
+	ret = poll_timeout_us_atomic(v = t_poll_op(&cnt), v >= 9, 10, 100000,
+	    false);
+	CHECK(ret == 0 && v == 9);
+	ret = poll_timeout_us(v = t_poll_op(&cnt), v < 0, 100, 1500, false);
+	CHECK(ret == -ETIMEDOUT);
+}
+#undef readl
+#endif
+
 static void
 test_harness(void)
 {
@@ -734,6 +838,7 @@ drm2_linux_compat_run(void)
 	test_kernel_misc();
 	test_kernel_lock_guards();
 	test_kernel_xarray();
+	test_kernel_iopoll();
 #endif
 #ifdef DRM2_COMPAT_SELFTEST_FAIL
 	test_selftest_fail();
