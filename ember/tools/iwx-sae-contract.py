@@ -117,7 +117,7 @@ static int iwx_scan_assoc_rx(struct iwx_softc *sc, struct mbuf *m, int chanidx,
     struct ieee80211_rxinfo *rxi)
     { assert(sc && m && rxi && chanidx == 1); scanrx_calls++; return scanrx; }
 /* Only the offchan case lets the channel rule drop a frame: the other
- * cases reuse their mbuf, which the analyzer must know is never freed. */
+ * cases reuse one mbuf, which the analyzer must know is never freed. */
 static int offchan_cases;
 static int fixture_offchan(const uint8_t *f, size_t len, unsigned chan)
     { return offchan_cases && iwx_ht_scan_offchan(f, len, chan); }
@@ -144,7 +144,10 @@ static struct mbuf *m_gethdr(int how, int type)
 static void m_cluster(struct mbuf *m, int how)
     { assert(how == 0); if (!failcluster) m->m_flags |= M_EXT; }
 #define MCLGET(m,how) m_cluster(m,how)
-static void m_freem(struct mbuf *m) { freed++; free(m); }
+/* The offchan case uses static frames: a drop counts, frees nothing. */
+static struct mbuf offchan_mbuf[2];
+static void m_freem(struct mbuf *m)
+    { freed++; if (m != &offchan_mbuf[0] && m != &offchan_mbuf[1]) free(m); }
 static void m_copydata(struct mbuf *m, size_t off, size_t len, void *out)
     { assert(off+len <= (size_t)m->m_pkthdr.len); memcpy(out,m->data+off,len); }
 int m_tag_copy_chain(struct mbuf *n, const struct mbuf *m)
@@ -326,15 +329,13 @@ int main(int argc, char **argv)
          * dropped before net80211 and moves no channel; 5 GHz beacons
          * name it in HT Operation only. */
         struct ieee80211_channel *cur = &sc.sc_ic.ic_channels[3];
-        /* The driver may free them; kept reachable, never freed here. */
-        static struct mbuf *volatile kept[2];
         struct mbuf *off, *on;
         int before = ordinary;
         offchan_cases = 1;
         admitted = 1; sc.sc_flags = 0; sc.sc_ic.ic_bss = &rxnode;
         sc.sc_ic.ic_state = IEEE80211_S_SCAN; sc.sc_ic.ic_curchan = cur;
         rxnode.ni_chan = &sc.sc_ic.ic_channels[7];
-        off = kept[0] = calloc(1,sizeof(*off)); assert(off != NULL);
+        off = &offchan_mbuf[0];
         off->data[0] = 0x80; memset(off->data + 10, 0x05, 6);
         off->data[36] = 61; off->data[37] = 22; off->data[38] = 9;
         off->m_len = off->m_pkthdr.len = 36 + 24;
@@ -345,7 +346,7 @@ int main(int argc, char **argv)
         assert(sc.sc_ic.ic_curchan == cur);
         assert(rxnode.ni_chan == &sc.sc_ic.ic_channels[7]);
         /* Naming the receive channel, it goes on as before. */
-        on = kept[1] = calloc(1,sizeof(*on)); assert(on != NULL);
+        on = &offchan_mbuf[1];
         on->data[0] = 0x80; memset(on->data + 10, 0x05, 6);
         on->data[36] = 61; on->data[37] = 22; on->data[38] = 1;
         on->m_len = on->m_pkthdr.len = 36 + 24;
