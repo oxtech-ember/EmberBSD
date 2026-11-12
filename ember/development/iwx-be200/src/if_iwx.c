@@ -512,6 +512,10 @@ void	iwx_add_task(struct iwx_softc *, struct taskq *, struct task *);
 void	iwx_del_task(struct iwx_softc *, struct taskq *, struct task *);
 int	iwx_initiate_scan(struct iwx_softc *, int);
 int	iwx_scan(struct iwx_softc *);
+void	iwx_bss_own(struct iwx_softc *, struct iwx_node *);
+struct iwx_node *iwx_bss_owner(struct iwx_softc *);
+int	iwx_bss_joined(struct iwx_softc *);
+void	iwx_bss_disown(struct iwx_softc *, int);
 int	iwx_scan_assoc_start(struct iwx_softc *);
 void	iwx_scan_assoc_timeout(void *);
 void	iwx_scan_assoc_task(void *);
@@ -3768,8 +3772,10 @@ iwx_mac_ctxt_task(void *arg)
 	struct iwx_node *in = (void *)ic->ic_bss;
 	int err, s = splnet();
 
+	/* ns_nstate changes as soon as a new state is requested. */
 	if ((sc->sc_flags & IWX_FLAG_SHUTDOWN) ||
-	    ic->ic_state != IEEE80211_S_RUN) {
+	    ic->ic_state != IEEE80211_S_RUN ||
+	    sc->ns_nstate != IEEE80211_S_RUN) {
 		refcnt_rele_wake(&sc->task_refs);
 		splx(s);
 		return;
@@ -5092,12 +5098,16 @@ iwx_rx_frame(struct iwx_softc *sc, struct mbuf *m, int chanidx,
 
 	ni = ieee80211_find_rxnode(ic, (struct ieee80211_frame_min *)wh);
 	/*
-	 * net80211 takes an unknown sender for the BSS in use.  A frame
-	 * heard on another channel during a scan while associated must not
-	 * move the channel of that BSS.
+	 * net80211 takes an unknown sender for the BSS in use.  Once that
+	 * BSS is chosen, only its own frames tell its channel: not what a
+	 * scan while associated hears elsewhere, nor the BSS being left
+	 * during a join.  During such a scan even its own frames may be
+	 * heard on a neighbouring channel.
 	 */
-	if ((sc->sc_flags & IWX_FLAG_BGSCAN) == 0 ||
-	    ic->ic_state != IEEE80211_S_RUN || ni != ic->ic_bss)
+	if (ni != ic->ic_bss || ic->ic_state <= IEEE80211_S_SCAN ||
+	    ((sc->sc_flags & IWX_FLAG_BGSCAN) == 0 &&
+	    (size_t)m->m_len >= sizeof(struct ieee80211_frame_min) &&
+	    IEEE80211_ADDR_EQ(wh->i_addr2, ni->ni_bssid)))
 		ni->ni_chan = &ic->ic_channels[chanidx];
 
 #if NBPFILTER > 0
@@ -8389,7 +8399,7 @@ iwx_mac_ctxt_cmd_common(struct iwx_softc *sc, struct iwx_node *in,
 {
 #define IWX_EXP2(x)	((1 << (x)) - 1)	/* CWmin = 2^ECWmin - 1 */
 	struct ieee80211com *ic = &sc->sc_ic;
-	struct ieee80211_node *ni = ic->ic_bss;
+	struct ieee80211_node *ni = &in->in_ni;
 	int cck_ack_rates, ofdm_ack_rates;
 	int i;
 
@@ -10528,6 +10538,71 @@ iwx_phy_ctxt_update(struct iwx_softc *sc, struct iwx_phy_ctxt *phyctxt,
 	return 0;
 }
 
+/*
+ * The firmware contexts (PHY, MAC, link or binding, station) belong to
+ * one BSS.  What the driver needs to change and remove them is kept in
+ * the node of that BSS: in_phyctxt, in_macaddr, in_flags and the
+ * negotiated HT state.
+ *
+ * net80211 here makes the node of a newly joined BSS the new ic_bss
+ * before the driver is asked for anything, so during a join ic_bss is no
+ * longer the node the contexts belong to.  OpenBSD's net80211, where
+ * this driver comes from, has one ic_bss and copies the new BSS into it.
+ * Here the driver remembers the owner of the contexts instead, with a
+ * reference, and takes the association down through that node.
+ */
+
+/* The firmware contexts made from here on belong to `in'. */
+void
+iwx_bss_own(struct iwx_softc *sc, struct iwx_node *in)
+{
+	if (sc->sc_fw_in == in)
+		return;
+	iwx_bss_disown(sc, 0);
+	sc->sc_fw_in = (struct iwx_node *)ieee80211_ref_node(&in->in_ni);
+}
+
+/* The node the firmware contexts belong to. */
+struct iwx_node *
+iwx_bss_owner(struct iwx_softc *sc)
+{
+	if (sc->sc_fw_in != NULL)
+		return sc->sc_fw_in;
+	return (struct iwx_node *)sc->sc_ic.ic_bss;
+}
+
+/* Whether net80211 has joined a BSS other than the one in the firmware. */
+int
+iwx_bss_joined(struct iwx_softc *sc)
+{
+	return sc->sc_fw_in != NULL &&
+	    &sc->sc_fw_in->in_ni != sc->sc_ic.ic_bss &&
+	    (sc->sc_flags & (IWX_FLAG_STA_ACTIVE | IWX_FLAG_BINDING_ACTIVE |
+	    IWX_FLAG_MAC_ACTIVE | IWX_FLAG_PHY_ACTIVE)) != 0;
+}
+
+/*
+ * No firmware context belongs to the owner any more.  With `cleanup'
+ * net80211 forgets its association state and pairwise key, as
+ * ieee80211_sta_leave() does for a BSS left the usual way, but without
+ * telling user space of a disassociation: for a BSS left by a join.
+ */
+void
+iwx_bss_disown(struct iwx_softc *sc, int cleanup)
+{
+	struct iwx_node *old = sc->sc_fw_in;
+
+	if (old == NULL)
+		return;
+	sc->sc_fw_in = NULL;
+	old->in_phyctxt = NULL;
+	old->in_flags = 0;
+	old->in_ht = 0;
+	if (cleanup)
+		sc->sc_ic.ic_node_cleanup(&old->in_ni);
+	ieee80211_free_node(&old->in_ni);
+}
+
 int
 iwx_auth(struct iwx_softc *sc)
 {
@@ -10542,6 +10617,7 @@ iwx_auth(struct iwx_softc *sc)
 	iwx_csa_clear(sc);
 	in->in_ht = 0;
 	iwx_ba_reset(sc, 0);
+	iwx_bss_own(sc, in);
 
 	splassert(IPL_NET);
 
@@ -10654,8 +10730,7 @@ rm_phy_ctxt:
 int
 iwx_deauth(struct iwx_softc *sc)
 {
-	struct ieee80211com *ic = &sc->sc_ic;
-	struct iwx_node *in = (void *)ic->ic_bss;
+	struct iwx_node *in = iwx_bss_owner(sc);
 	int err;
 
 	splassert(IPL_NET);
@@ -10829,8 +10904,7 @@ iwx_run(struct iwx_softc *sc)
 int
 iwx_run_stop(struct iwx_softc *sc)
 {
-	struct ieee80211com *ic = &sc->sc_ic;
-	struct iwx_node *in = (void *)ic->ic_bss;
+	struct iwx_node *in = iwx_bss_owner(sc);
 	int err;
 
 	splassert(IPL_NET);
@@ -10846,10 +10920,8 @@ iwx_run_stop(struct iwx_softc *sc)
 	 * Stop Rx BA sessions now. We cannot rely on the BA task
 	 * for this when moving out of RUN state since it runs in a
 	 * separate thread.
-	 * Note that in->in_ni (struct ieee80211_node) already represents
-	 * our new access point in case we are roaming between APs.
-	 * This means we cannot rely on struct ieee802111_node to tell
-	 * us which BA sessions exist.
+	 * `in' is the node the firmware contexts belong to: while another
+	 * BSS is joined it is the BSS being left, not ic_bss.
 	 */
 #if defined(IWX_HT)
 	for (i = 0; i < nitems(sc->sc_rxba_data); i++) {
@@ -11474,7 +11546,7 @@ iwx_newstate_task(void *psc)
 	enum ieee80211_state ostate = ic->ic_state;
 	int arg = sc->ns_arg;
 	uint64_t serial = sc->sc_ns_sae_serial;
-	int err = 0, s = splnet();
+	int err = 0, join, s = splnet();
 
 	if ((sc->sc_flags & IWX_FLAG_SHUTDOWN) ||
 	    serial != ieee80211_sae_serial(ic)) {
@@ -11483,6 +11555,9 @@ iwx_newstate_task(void *psc)
 		splx(s);
 		return;
 	}
+
+	/* Another BSS was joined: ic_bss is its node already. */
+	join = iwx_bss_joined(sc);
 
 	if (ostate == IEEE80211_S_SCAN) {
 		if (nstate == ostate) {
@@ -11500,19 +11575,17 @@ iwx_newstate_task(void *psc)
 		switch (ostate) {
 		case IEEE80211_S_RUN:
 			/*
-			 * A request to authenticate with no frame behind it
-			 * comes from a join.  If ic_bss is a node this driver
-			 * has not set up, another BSS is to be joined and
-			 * the state of the old one is out of reach.  Neither
-			 * that nor a scan in flight is taken down in place.
+			 * With native SAE the keys of the BSS being left
+			 * live in the firmware under an owner of their own:
+			 * a join of another BSS is not taken down in place
+			 * then.  Nor is anything while a scan is in flight.
 			 */
 			switch (iwx_ht_leave_run(nstate == IEEE80211_S_INIT,
-			    nstate == IEEE80211_S_AUTH && arg == -1 &&
-			    ((struct iwx_node *)ic->ic_bss)->in_phyctxt == NULL,
+			    join && ieee80211_sae_active(ic),
 			    (sc->sc_flags & IWX_FLAG_BGSCAN) != 0)) {
 			case IWX_HT_LEAVE_JOIN:
 				printf("%s: asked to join another BSS while "
-				    "associated, restarting\n",
+				    "associated with SAE, restarting\n",
 				    device_xname(sc->sc_dev));
 				err = EBUSY;
 				goto out;
@@ -11548,6 +11621,15 @@ iwx_newstate_task(void *psc)
 			splx(s);
 			return;
 		}
+
+		/*
+		 * Once its contexts are gone the node owns nothing.  For a
+		 * BSS left by a join net80211 has not cleaned up either.
+		 */
+		if ((sc->sc_flags & (IWX_FLAG_STA_ACTIVE |
+		    IWX_FLAG_BINDING_ACTIVE | IWX_FLAG_MAC_ACTIVE |
+		    IWX_FLAG_PHY_ACTIVE)) == 0)
+			iwx_bss_disown(sc, join);
 	}
 
 	switch (nstate) {
@@ -11582,8 +11664,20 @@ out:
 		if (err) {
 			ieee80211_sae_retire(ic);
 			task_add(sc->sc_systq, &sc->init_task);
-		} else
+		} else {
+			/*
+			 * net80211 sends the first authentication frame only
+			 * on the way up from a scan.  A join, of another BSS
+			 * or of this one again, arrives from a later state
+			 * with no frame behind it and nothing to send.  The
+			 * association is gone by now: start as from a scan.
+			 */
+			if (nstate == IEEE80211_S_AUTH && arg == -1 &&
+			    ostate >= IEEE80211_S_AUTH &&
+			    !ieee80211_sae_active(ic))
+				ic->ic_state = IEEE80211_S_SCAN;
 			sc->sc_newstate(ic, nstate, arg);
+		}
 	}
 	refcnt_rele_wake(&sc->task_refs);
 	splx(s);
@@ -12225,7 +12319,13 @@ iwx_start(struct ifnet *ifp)
 			goto sendit;
 		}
 
-		if (ic->ic_state != IEEE80211_S_RUN)
+		/*
+		 * No data once another state is requested: during a join
+		 * ic_bss is the new BSS already, which has no key yet, while
+		 * the firmware still talks to the old one.
+		 */
+		if (ic->ic_state != IEEE80211_S_RUN ||
+		    sc->ns_nstate != IEEE80211_S_RUN)
 			break;
 
 		IFQ_DEQUEUE(&ifp->if_snd, m);
@@ -12394,6 +12494,9 @@ iwx_stop(struct ifnet *ifp, int disable __unused)
 
 	sc->sc_newstate(ic, IEEE80211_S_INIT, -1);
 	sc->ns_nstate = IEEE80211_S_INIT;
+
+	/* No firmware context is left, so no node owns any. */
+	iwx_bss_disown(sc, 0);
 
 #if defined(IWX_HT)
 	for (i = 0; i < nitems(sc->sc_rxba_data); i++) {

@@ -1053,8 +1053,8 @@ iwx_ht_scan_request(int associated, int scanning, int csa)
 
 /*
  * Whether the association can be taken down in place when net80211 asks
- * for another state.  Joining another BSS and leaving in the middle of a
- * scan are not done in place: the device is restarted instead.
+ * for another state.  A join the caller cannot do in place (`join') and
+ * leaving in the middle of a scan restart the device instead.
  */
 #define IWX_HT_LEAVE_OK		0
 #define IWX_HT_LEAVE_JOIN	1	/* another BSS is to be joined */

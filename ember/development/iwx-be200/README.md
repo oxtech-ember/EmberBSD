@@ -71,6 +71,30 @@ after 8 beacons missed in a row (`ieee80211_beacon_miss()`) and restarts
 the interface after 16 if the AP stayed silent, logging `lost the AP`.
 Contract: `iwx_ht_bmiss()` in `ember/tools/iwx-ht-contract.sh`.
 
+New and **not yet run on hardware**: joining another BSS while
+associated (roaming, `IEEE80211_MLME_ASSOC` from `wpa_supplicant`) is
+done in place. net80211 makes the node of the new BSS `ic_bss` before the
+driver is asked for anything, while the firmware contexts and the state
+needed to remove them (`in_phyctxt`, `in_macaddr`, the HT state) belong
+to the node being left. OpenBSD's net80211 keeps one `ic_bss` and copies
+the new BSS into it; here the driver remembers the node that owns the
+contexts (`sc_fw_in`, with a reference) and `iwx_run_stop()` and
+`iwx_deauth()` work through it. The usual teardown then removes the old
+station, link, MAC and PHY contexts, `iwx_auth()` creates the new ones,
+and net80211 is entered as from a scan so that it sends the first
+authentication frame, which it otherwise sends only on the way up; the
+same holds for a join of the BSS already in use. The node left behind
+gets the net80211 cleanup of `ieee80211_sta_leave()` (association state,
+pairwise key) without the disassociation event, so user space sees one
+association follow another and the link state stays up. From the moment
+another state is requested no data frames are sent: `ic_bss` has no key
+yet, and the firmware still talks to the old BSS. Limits: the AP left
+behind gets no deauthentication frame; with native SAE the join still
+restarts the interface; a failed join leaves the station without a BSS
+until `wpa_supplicant` picks one. Contracts: the state dispatcher and
+the owner of the contexts in `ember/tools/iwx-width-contract.sh`, the
+receive channel rule in `ember/tests/iwx-sae.sh`.
+
 New and **not yet run on hardware**: a scan while associated keeps the
 association. net80211 leaves the BSS before any scan it is asked for, so
 `iwx_ioctl()` takes the scan request (`IEEE80211_IOC_SCAN_REQ`) of an
@@ -83,12 +107,10 @@ reported as a finished scan (`RTM_IEEE80211_SCAN`), without
 requests `wpa_supplicant` makes before a scan (manual roaming, the WPA
 setting, the SSID) restart nothing: net80211 asks for no reset while
 roaming is manual. If the firmware reports no end within 30 s the driver
-says so, aborts the scan and reports what was found. Not done in place, with a
-restart of the interface and a log line instead: joining another BSS
-while associated (roaming proper is the next step; the AP left behind
-gets no deauthentication) and leaving the BSS while such a scan runs. A
-scan is refused while the AP announces a channel switch, and a switch
-that starts during a scan is not followed. `wpa_supplicant` here is
+says so, aborts the scan and reports what was found. Leaving the BSS while such
+a scan runs restarts the interface, with a log line. A scan is refused
+while the AP announces a channel switch, and a switch that starts during
+a scan is not followed. `wpa_supplicant` here is
 built without its periodic background scan, so such a scan starts on
 request only (`wpa_cli scan`). Contracts: `test_scan()` in
 `ember/tools/iwx-ht-contract.sh`; the request, the end of the scan, the

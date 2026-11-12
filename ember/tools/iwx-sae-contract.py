@@ -59,10 +59,13 @@ def main():
 #define IC2IFP(ic) ((ic)->ic_ifp)
 struct ifnet { void *if_softc; unsigned if_oerrors; };
 #define if_statinc(ifp,field) ((ifp)->field++)
-struct ieee80211_frame { uint8_t i_fc[2], rest[22]; };
-struct ieee80211_frame_min { uint8_t bytes[24]; };
+struct ieee80211_frame { uint8_t i_fc[2], i_dur[2], i_addr1[6], i_addr2[6],
+    rest[8]; };
+#define IEEE80211_ADDR_EQ(a,b) (memcmp((a),(b),6) == 0)
+struct ieee80211_frame_min { uint8_t bytes[16]; };
 struct ieee80211_channel { int number; };
-struct ieee80211_node { struct ieee80211_channel *ni_chan; unsigned refs; };
+struct ieee80211_node { struct ieee80211_channel *ni_chan; unsigned refs;
+    uint8_t ni_bssid[6]; };
 struct mbuf { int m_len, m_flags; struct { int len; } m_pkthdr;
     uint64_t tag; uint8_t data[4096]; };
 struct ieee80211com {
@@ -179,12 +182,36 @@ int main(int argc, char **argv)
          * the channel of that BSS; a result of another BSS is consumed. */
         sc.sc_flags = IWX_FLAG_BGSCAN; scanrx = 0;
         sc.sc_ic.ic_bss = &rxnode; rxnode.ni_chan = &sc.sc_ic.ic_channels[7];
+        memset(rxnode.ni_bssid, 0x02, 6);
         RX();
         assert(scanrx_calls == 1 && ordinary == 4);
         assert(rxnode.ni_chan == &sc.sc_ic.ic_channels[7]);
         scanrx = 1; freed = 0; RX();
         assert(scanrx_calls == 2 && ordinary == 4 && freed == 1);
         assert(rxnode.ni_chan == &sc.sc_ic.ic_channels[7]);
+        /* Without a scan too: a frame of another BSS, such as the one
+         * being left during a join, does not move the channel; a frame
+         * of the BSS itself does, and so does a frame too short to tell
+         * only before the BSS is chosen. */
+        m = calloc(1,sizeof(*m)); assert(m != NULL);
+        m->m_len=m->m_pkthdr.len=24;
+        sc.sc_flags = 0; scanrx = 0; RX();
+        assert(scanrx_calls == 2 && ordinary == 5);
+        assert(rxnode.ni_chan == &sc.sc_ic.ic_channels[7]);
+        memset(m->data + 10, 0x02, 6); RX();
+        assert(rxnode.ni_chan == &sc.sc_ic.ic_channels[1]);
+        rxnode.ni_chan = &sc.sc_ic.ic_channels[7];
+        m->m_len=m->m_pkthdr.len=10; RX();
+        assert(rxnode.ni_chan == &sc.sc_ic.ic_channels[7]);
+        sc.sc_ic.ic_state = IEEE80211_S_SCAN; RX();
+        assert(rxnode.ni_chan == &sc.sc_ic.ic_channels[1]);
+        sc.sc_ic.ic_state = IEEE80211_S_RUN;
+        rxnode.ni_chan = &sc.sc_ic.ic_channels[7];
+        /* During a scan while associated not even a frame of the BSS
+         * itself: it may be heard on a neighbouring channel. */
+        m->m_len=m->m_pkthdr.len=24; sc.sc_flags = IWX_FLAG_BGSCAN; RX();
+        assert(rxnode.ni_chan == &sc.sc_ic.ic_channels[7]);
+        sc.sc_flags = 0; free(m);
 #undef RX
         freed = 0; scanrx = 0; sc.sc_flags = 0;
         assoc = action = csa = 1; ordinary = 1;

@@ -42,7 +42,10 @@ def main():
                  ("int", "iwx_csa_switch"),
                  ("void", "iwx_endscan"), ("int", "iwx_scan_assoc_start"),
                  ("void", "iwx_scan_assoc_task"),
-                 ("int", "iwx_scan_assoc_req"))
+                 ("int", "iwx_scan_assoc_req"),
+                 ("void", "iwx_bss_own"),
+                 (r"struct iwx_node \*", "iwx_bss_owner"),
+                 ("int", "iwx_bss_joined"), ("void", "iwx_bss_disown"))
     bodies = [declaration(driver, rf"^{kind}\n{name}\(")
               for kind, name in functions]
     wire = [declaration(registers, rf"^enum {name} \{{") + ";" for name in

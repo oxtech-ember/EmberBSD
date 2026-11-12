@@ -90,12 +90,14 @@ struct iwx_node {
 	struct iwx_ht_tlc in_htt;
 	struct iwx_ht_chan in_htc;
 	uint8_t in_macaddr[6];
+	int in_id, in_color, in_flags, dup_data;
 };
 struct ieee80211req { int i_type; };
 struct ieee80211com {
 	void *ic_bss, *ic_ibss_chan;
 	int ic_opmode, ic_roaming;
 	enum ieee80211_state ic_state;
+	void (*ic_node_cleanup)(struct ieee80211_node *);
 };
 struct iwx_softc {
 	struct ieee80211com sc_ic;
@@ -104,6 +106,7 @@ struct iwx_softc {
 	uint32_t sc_bmiss_level;
 	int sc_systq, init_task, ns_arg;
 	int sc_csa_valid, sc_csa_wait, sc_scan_assoc_to, scan_assoc_task;
+	struct iwx_node *sc_fw_in;
 	uint64_t sc_ns_sae_serial;
 	enum ieee80211_state ns_nstate;
 	struct iwx_phy_ctxt sc_phyctxt[1];
@@ -221,8 +224,10 @@ iwx_phy_ctxt_update(struct iwx_softc *sc, struct iwx_phy_ctxt *phy,
 	return 0;
 }
 
+/* The node each teardown command was given. */
+static struct iwx_node *flush_in, *disassoc_in, *rm_in, *binding_in, *mac_in;
 static int iwx_flush_sta(struct iwx_softc *sc, struct iwx_node *in)
-{ (void)sc; (void)in; return flush_error; }
+{ (void)sc; flush_in = in; return flush_error; }
 static void iwx_ba_stop(struct iwx_softc *sc, int tid, int force)
 { (void)sc; (void)tid; (void)force; }
 static int iwx_sf_config(struct iwx_softc *sc, int state)
@@ -232,18 +237,22 @@ static int iwx_disable_beacon_filter(struct iwx_softc *sc)
 static int iwx_mac_ctxt_cmd(struct iwx_softc *sc, struct iwx_node *in,
     int action, int assoc)
 {
-	(void)sc; (void)in; (void)assoc;
-	if (action == IWX_FW_CTXT_ACTION_MODIFY)
+	(void)sc; (void)assoc;
+	if (action == IWX_FW_CTXT_ACTION_MODIFY) {
 		disassoc_sequence = ++sequence;
-	else if (action == IWX_FW_CTXT_ACTION_REMOVE)
+		disassoc_in = in;
+	} else if (action == IWX_FW_CTXT_ACTION_REMOVE) {
 		mac_remove_sequence = ++sequence;
+		mac_in = in;
+	}
 	return 0;
 }
 
 static int
 iwx_rm_sta(struct iwx_softc *sc, struct iwx_node *in)
 {
-	(void)sc; (void)in;
+	(void)sc;
+	rm_in = in;
 	remove_sequence = ++sequence;
 	return remove_error;
 }
@@ -286,9 +295,11 @@ iwx_phy_ctxt_cmd(struct iwx_softc *sc, struct iwx_phy_ctxt *phy,
 
 static int iwx_binding_cmd(struct iwx_softc *sc, struct iwx_node *in, int action)
 {
-	(void)sc; (void)in;
-	if (action == IWX_FW_CTXT_ACTION_REMOVE)
+	(void)sc;
+	if (action == IWX_FW_CTXT_ACTION_REMOVE) {
 		binding_remove_sequence = ++sequence;
+		binding_in = in;
+	}
 	return 0;
 }
 static void iwx_ba_reset(struct iwx_softc *sc, int hw)
@@ -327,13 +338,31 @@ static uint64_t ieee80211_sae_serial(struct ieee80211com *ic)
 { (void)ic; return 0; }
 static void ieee80211_sae_retire(struct ieee80211com *ic) { (void)ic; }
 
+static enum ieee80211_state newstate_from;
 static int
 record_newstate(struct ieee80211com *ic, enum ieee80211_state state, int arg)
 {
 	(void)arg;
+	newstate_from = ic->ic_state;
 	ic->ic_state = state;
 	return 0;
 }
+
+/* Node references and the cleanup net80211 does for a BSS that is left. */
+static int node_refs, node_frees, node_cleanups, sae_active;
+static struct ieee80211_node *node_cleaned;
+static struct ieee80211_node *
+ieee80211_ref_node(struct ieee80211_node *ni) { node_refs++; return ni; }
+static void ieee80211_free_node(struct ieee80211_node *ni)
+{ (void)ni; node_frees++; }
+static void record_cleanup(struct ieee80211_node *ni)
+{ node_cleaned = ni; node_cleanups++; }
+static int ieee80211_sae_active(struct ieee80211com *ic)
+{ (void)ic; return sae_active; }
+void iwx_bss_own(struct iwx_softc *, struct iwx_node *);
+struct iwx_node *iwx_bss_owner(struct iwx_softc *);
+int iwx_bss_joined(struct iwx_softc *);
+void iwx_bss_disown(struct iwx_softc *, int);
 
 /* A scan while associated: what the driver asks of its surroundings. */
 static int scan_mode, scan_error, scan_starts, scan_aborts, scan_notified;
@@ -394,6 +423,10 @@ setup(struct iwx_softc *sc, struct iwx_node *in, int width, int monitor)
 	sc->sc_ic.ic_opmode = monitor ? IEEE80211_M_MONITOR : IEEE80211_M_STA;
 	sc->sc_ic.ic_state = IEEE80211_S_RUN;
 	sc->sc_newstate = record_newstate;
+	sc->sc_ic.ic_node_cleanup = record_cleanup;
+	sc->sc_fw_in = in;
+	node_refs = node_frees = node_cleanups = sae_active = 0;
+	node_cleaned = NULL;
 	sc->sc_flags = IWX_FLAG_STA_ACTIVE | IWX_FLAG_BINDING_ACTIVE |
 	    IWX_FLAG_MAC_ACTIVE | IWX_FLAG_PHY_ACTIVE;
 	sc->sc_phyctxt[0].sco = width == 1 ? 1 : 0;
@@ -428,13 +461,14 @@ test_stop(int width, int monitor, int flush_fail)
 }
 
 /*
- * Joining another BSS and leaving the BSS during a scan restart the
- * device; every other way out of RUN is still taken down in place.
- * `fresh' puts a node the driver has not set up in ic_bss, as a join of
- * another BSS does.
+ * Ways out of RUN.  `join' makes another node ic_bss, as net80211 does
+ * when it joins another BSS.  A join is taken down in place like any
+ * other way out, through the node the firmware contexts belong to,
+ * unless native SAE owns the keys; a scan in flight always restarts the
+ * device.
  */
 static void
-test_leave(enum ieee80211_state next, int arg, int bgscan, int fresh,
+test_leave(enum ieee80211_state next, int arg, int bgscan, int join, int sae,
     int restart)
 {
 	struct iwx_softc sc;
@@ -442,13 +476,19 @@ test_leave(enum ieee80211_state next, int arg, int bgscan, int fresh,
 
 	setup(&sc, &in, 2, 0);
 	reset_transport(4, 2);
+	flush_in = disassoc_in = rm_in = binding_in = mac_in = NULL;
+	newstate_from = IEEE80211_S_INIT;
 	sc.ns_nstate = next;
 	sc.ns_arg = arg;
+	sae_active = sae;
 	if (bgscan)
 		sc.sc_flags |= IWX_FLAG_BGSCAN;
-	if (fresh) {
+	CHECK(iwx_bss_owner(&sc) == &in && !iwx_bss_joined(&sc));
+	if (join) {
 		memset(&other, 0, sizeof(other));
 		sc.sc_ic.ic_bss = &other;
+		/* The contexts still belong to the BSS being left. */
+		CHECK(iwx_bss_owner(&sc) == &in && iwx_bss_joined(&sc));
 	}
 	iwx_newstate_task(&sc);
 	CHECK(task_releases == 1);
@@ -458,11 +498,88 @@ test_leave(enum ieee80211_state next, int arg, int bgscan, int fresh,
 		CHECK(binding_remove_sequence == 0 && mac_remove_sequence == 0);
 		CHECK(phy_remove_sequence == 0 && phy_add_sequence == 0);
 		CHECK(sc.sc_flags & IWX_FLAG_STA_ACTIVE);
-		CHECK(in.in_ht == 1);
-	} else {
-		CHECK(recovery_count == 0);
-		CHECK(disassoc_sequence > 0);
+		CHECK(node_cleanups == 0 && sc.sc_fw_in == &in);
+		CHECK(in.in_phyctxt == &sc.sc_phyctxt[0] && in.in_ht == 1);
+		return;
 	}
+	CHECK(recovery_count == 0);
+	/* The association is taken down through the node that owns it. */
+	CHECK(disassoc_sequence > 0);
+	CHECK(flush_in == &in && disassoc_in == &in);
+	if (next == IEEE80211_S_ASSOC) {
+		/* The contexts stay, and so does their owner. */
+		CHECK(remove_sequence == 0 && sc.sc_fw_in == &in);
+		CHECK(node_cleanups == 0 && node_frees == 0);
+		return;
+	}
+	CHECK(remove_sequence > disassoc_sequence);
+	CHECK(binding_remove_sequence > remove_sequence);
+	CHECK(mac_remove_sequence > binding_remove_sequence);
+	CHECK(phy_remove_sequence > mac_remove_sequence);
+	CHECK(rm_in == &in && binding_in == &in && mac_in == &in);
+	/* Its node then owns nothing. */
+	CHECK(node_frees == 1);
+	CHECK(in.in_phyctxt == NULL || sc.sc_fw_in == &in);
+	/* Only a BSS left by a join needs the net80211 cleanup here. */
+	CHECK(node_cleanups == (join ? 1 : 0));
+	if (join)
+		CHECK(node_cleaned == &in.in_ni);
+	if (next != IEEE80211_S_AUTH) {
+		CHECK(sc.sc_fw_in == NULL && phy_add_sequence == 0);
+		return;
+	}
+	/* The BSS to authenticate with gets contexts of its own. */
+	CHECK(phy_add_sequence > phy_remove_sequence);
+	CHECK(sc.sc_fw_in == (join ? &other : &in) && node_refs == 1);
+	CHECK(iwx_bss_owner(&sc)->in_phyctxt == &sc.sc_phyctxt[0]);
+	CHECK(!iwx_bss_joined(&sc));
+	CHECK(sc.sc_ic.ic_state == IEEE80211_S_AUTH);
+	/*
+	 * A join has no frame behind it: net80211 is entered as from a
+	 * scan, so that it sends the first authentication frame.
+	 */
+	CHECK(newstate_from ==
+	    (arg == -1 && !sae ? IEEE80211_S_SCAN : IEEE80211_S_RUN));
+}
+
+/* Who owns the firmware contexts. */
+static void
+test_owner(void)
+{
+	struct iwx_softc sc;
+	struct iwx_node in, other;
+
+	setup(&sc, &in, 2, 0);
+	memset(&other, 0, sizeof(other));
+	/* Without an owner on record it is ic_bss. */
+	sc.sc_fw_in = NULL;
+	CHECK(iwx_bss_owner(&sc) == &in && !iwx_bss_joined(&sc));
+	iwx_bss_disown(&sc, 1);
+	CHECK(node_frees == 0 && node_cleanups == 0);
+	/* The contexts made for a node make it the owner, once. */
+	iwx_bss_own(&sc, &in);
+	CHECK(sc.sc_fw_in == &in && node_refs == 1 && node_frees == 0);
+	iwx_bss_own(&sc, &in);
+	CHECK(node_refs == 1);
+	/* Another ic_bss is a join only while contexts exist. */
+	sc.sc_ic.ic_bss = &other;
+	CHECK(iwx_bss_owner(&sc) == &in && iwx_bss_joined(&sc));
+	sc.sc_flags = 0;
+	CHECK(iwx_bss_owner(&sc) == &in && !iwx_bss_joined(&sc));
+	/* A new owner lets the old one go without the net80211 cleanup. */
+	iwx_bss_own(&sc, &other);
+	CHECK(sc.sc_fw_in == &other && node_refs == 2 && node_frees == 1);
+	CHECK(node_cleanups == 0);
+	CHECK(in.in_phyctxt == NULL && in.in_ht == 0);
+	/* Letting go with the cleanup. */
+	other.in_phyctxt = &sc.sc_phyctxt[0];
+	other.in_ht = 1;
+	other.in_flags = 3;
+	iwx_bss_disown(&sc, 1);
+	CHECK(sc.sc_fw_in == NULL && node_frees == 2 && node_cleanups == 1);
+	CHECK(node_cleaned == &other.in_ni);
+	CHECK(other.in_phyctxt == NULL && other.in_ht == 0 &&
+	    other.in_flags == 0);
 }
 
 /* A scan requested by user space while associated. */
@@ -759,19 +876,25 @@ main(void)
 		test_transition(width, IEEE80211_S_AUTH, 0, EIO);
 	}
 
-	/* A join of another BSS arrives as AUTH with no frame behind it. */
-	test_leave(IEEE80211_S_AUTH, -1, 0, 1, 1);
-	/* The same request for the BSS in use is taken down in place. */
-	test_leave(IEEE80211_S_AUTH, -1, 0, 0, 0);
-	test_leave(IEEE80211_S_AUTH, 0xc0, 0, 0, 0);
-	test_leave(IEEE80211_S_ASSOC, -1, 0, 0, 0);
-	test_leave(IEEE80211_S_SCAN, -1, 0, 0, 0);
-	test_leave(IEEE80211_S_INIT, -1, 0, 0, 0);
+	/* A join of another BSS is taken down in place. */
+	test_leave(IEEE80211_S_AUTH, -1, 0, 1, 0, 0);
+	/* Not with native SAE, whose keys live in the firmware. */
+	test_leave(IEEE80211_S_AUTH, -1, 0, 1, 1, 1);
+	/* The same request for the BSS in use. */
+	test_leave(IEEE80211_S_AUTH, -1, 0, 0, 0, 0);
+	test_leave(IEEE80211_S_AUTH, 0xc0, 0, 0, 0, 0);
+	test_leave(IEEE80211_S_ASSOC, -1, 0, 0, 0, 0);
+	test_leave(IEEE80211_S_SCAN, -1, 0, 0, 0, 0);
+	test_leave(IEEE80211_S_INIT, -1, 0, 0, 0, 0);
+	/* A join followed by a deauthentication request from user space. */
+	test_leave(IEEE80211_S_INIT, -1, 0, 1, 0, 0);
 	/* A scan in flight. */
-	test_leave(IEEE80211_S_AUTH, 0xc0, 1, 0, 1);
-	test_leave(IEEE80211_S_ASSOC, 0, 1, 0, 1);
-	test_leave(IEEE80211_S_SCAN, 0, 1, 0, 1);
-	test_leave(IEEE80211_S_INIT, -1, 1, 0, 0);
+	test_leave(IEEE80211_S_AUTH, 0xc0, 1, 0, 0, 1);
+	test_leave(IEEE80211_S_AUTH, -1, 1, 1, 0, 1);
+	test_leave(IEEE80211_S_ASSOC, 0, 1, 0, 0, 1);
+	test_leave(IEEE80211_S_SCAN, 0, 1, 0, 0, 1);
+	test_leave(IEEE80211_S_INIT, -1, 1, 0, 0, 0);
+	test_owner();
 	test_scan_assoc();
 	for (version = 3; version <= 4; version++) {
 		test_dynamic(version, 1, 0);
