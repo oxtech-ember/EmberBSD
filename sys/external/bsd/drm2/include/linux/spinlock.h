@@ -38,6 +38,7 @@
 #include <machine/limits.h>
 
 #include <linux/atomic.h>
+#include <linux/cleanup.h>
 #include <linux/irqflags.h>
 #include <linux/lockdep.h>
 #include <linux/preempt.h>
@@ -240,5 +241,19 @@ _atomic_dec_and_lock_irqsave(atomic_t *atomic, spinlock_t *lock,
 	KASSERT(new != 0);
 	return false;
 }
+
+/* guard(spinlock)(&l), scoped_guard(spinlock_irqsave, &l) and the like */
+DEFINE_LOCK_GUARD_1(spinlock, spinlock_t,
+    spin_lock(_T->lock),
+    spin_unlock(_T->lock))
+
+DEFINE_LOCK_GUARD_1(spinlock_irq, spinlock_t,
+    spin_lock_irq(_T->lock),
+    spin_unlock_irq(_T->lock))
+
+DEFINE_LOCK_GUARD_1(spinlock_irqsave, spinlock_t,
+    spin_lock_irqsave(_T->lock, _T->flags),
+    spin_unlock_irqrestore(_T->lock, _T->flags),
+    unsigned long flags)
 
 #endif  /* _LINUX_SPINLOCK_H_ */
