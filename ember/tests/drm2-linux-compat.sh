@@ -9,13 +9,14 @@ cc=${1:-$(command -v clang || command -v cc)}
 work=$(mktemp -d "${TMPDIR:-/tmp}/drm2-linux-compat.XXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 flags="-std=gnu11 -Wall -Wextra -Wno-unused-parameter -Werror -DDRM2_COMPAT_HOST \
-    -I$here/drm2-linux-compat-shim -I$root/sys/external/bsd/drm2/include"
+    -I$here/drm2-linux-compat-shim -I$root/sys/external/bsd/drm2/include \
+    -I$root/sys/external/bsd/drm2/linux"
 # shellcheck disable=SC2086
-$cc $flags -o "$work/ok" "$here/drm2-linux-compat.c"
+$cc $flags -o "$work/ok" "$here/drm2-linux-compat.c" -lm
 "$work/ok"
 # Negative control: a failing check must fail the runner.
 # shellcheck disable=SC2086
-$cc $flags -DDRM2_COMPAT_SELFTEST_FAIL -o "$work/bad" "$here/drm2-linux-compat.c"
+$cc $flags -DDRM2_COMPAT_SELFTEST_FAIL -o "$work/bad" "$here/drm2-linux-compat.c" -lm
 if "$work/bad" >"$work/bad.log" 2>&1; then
     echo 'negative control unexpectedly passed' >&2
     exit 1
