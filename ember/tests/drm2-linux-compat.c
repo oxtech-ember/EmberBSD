@@ -28,6 +28,17 @@
 #include <linux/units.h>
 #include <linux/util_macros.h>
 
+#ifndef DRM2_COMPAT_HOST
+#include <linux/array_size.h>
+#include <linux/container_of.h>
+#include <linux/limits.h>
+#include <linux/math.h>
+#include <linux/minmax.h>
+#include <linux/sprintf.h>
+#include <linux/stdarg.h>
+#include <linux/wordpart.h>
+#endif
+
 static int t_run, t_fail;
 
 #define	CHECK(cond)	do {						\
@@ -201,6 +212,110 @@ test_util_macros(void)
 	CHECK(!is_insidevar(&cnt, var));
 }
 
+#ifndef DRM2_COMPAT_HOST
+struct t_cof {
+	int	a;
+	long	b;
+};
+
+static int __printflike(3, 4)
+t_scnprintf(char *buf, size_t size, const char *fmt, ...)
+{
+	va_list va;
+	int n;
+
+	va_start(va, fmt);
+	n = vscnprintf(buf, size, fmt, va);
+	va_end(va);
+	return n;
+}
+
+static void
+test_kernel_forwarders(void)
+{
+	int arr[7] = { 4, 9, 2, 7, 1, 8, 3 };
+	struct t_cof s0;
+	const long *cp = &s0.b;
+	char buf[8];
+	int x = 3, y = 5, n;
+
+	CHECK(ARRAY_SIZE(arr) == 7);
+
+	CHECK(container_of(&s0.b, struct t_cof, b) == &s0);
+	CHECK(container_of_const(cp, struct t_cof, b) == &s0);
+	CHECK(container_of_const(&s0.b, struct t_cof, b) == &s0);
+
+	CHECK(U8_MAX == 255 && S8_MAX == 127 && S8_MIN == -128);
+	CHECK(U16_MAX == 65535 && S16_MAX == 32767 && S16_MIN == -32768);
+	CHECK(U32_MAX == 0xffffffffU && S32_MAX == 2147483647);
+	CHECK(S32_MIN == -2147483647 - 1);
+	CHECK(U64_MAX == 0xffffffffffffffffULL);
+	CHECK(S64_MAX == 0x7fffffffffffffffLL);
+	CHECK(S64_MIN == -0x7fffffffffffffffLL - 1);
+	CHECK(INT_MAX == 2147483647 && UINT_MAX == 0xffffffffU);
+	CHECK(LONG_MAX > 0 && ULONG_MAX > LONG_MAX);
+	CHECK(USHRT_MAX == 65535 && SHRT_MAX == 32767);
+
+	CHECK(DIV_ROUND_UP(7, 2) == 4 && DIV_ROUND_UP(8, 2) == 4);
+	CHECK(DIV_ROUND_UP_ULL(0xffffffffffULL, 0x10) == 0x1000000000ULL);
+	CHECK(DIV_ROUND_DOWN_ULL(7, 2) == 3);
+	CHECK(DIV_ROUND_CLOSEST(7, 2) == 4 && DIV_ROUND_CLOSEST(-7, 2) == -4);
+	CHECK(DIV_ROUND_CLOSEST(6, 4) == 2 && DIV_ROUND_CLOSEST(5, 4) == 1);
+	CHECK(round_up(5, 4) == 8 && round_up(8, 4) == 8);
+	CHECK(round_down(7, 4) == 4 && round_down(8, 4) == 8);
+	CHECK(roundup(5, 3) == 6 && rounddown(7, 3) == 6);
+	CHECK(abs(-3) == 3 && abs(3) == 3 && abs(0) == 0);
+	CHECK(abs(-5000000000LL) == 5000000000LL);
+	CHECK(abs(-3000000000L) == 3000000000L || sizeof(long) == 4);
+	CHECK(abs_diff(3, 10) == 7 && abs_diff(10, 3) == 7);
+	CHECK(abs_diff(3u, 4000000000u) == 3999999997u);
+	CHECK(mult_frac(10, 3, 4) == 7);
+	CHECK(int_sqrt(0) == 0 && int_sqrt(1) == 1 && int_sqrt(15) == 3);
+	CHECK(int_sqrt(16) == 4 && int_sqrt(1000000) == 1000);
+	CHECK(int_sqrt(0xffffffffUL) == 65535);
+	for (n = 0; n < 70000; n += 37) {
+		unsigned long r = (unsigned long)n;
+
+		CHECK(int_sqrt(r * r) == r);
+		if (r > 0)
+			CHECK(int_sqrt(r * r - 1) == r - 1);
+	}
+	CHECK(reciprocal_scale(0x80000000U, 10) == 5);
+	CHECK(reciprocal_scale(0xffffffffU, 10) == 9);
+
+	CHECK(min(3, 5) == 3 && max(3, 5) == 5);
+	CHECK(min3(4, 2, 6) == 2 && max3(4, 2, 6) == 6);
+	CHECK(clamp(7, 1, 5) == 5 && clamp(-1, 1, 5) == 1 && clamp(3, 1, 5) == 3);
+	CHECK(min_t(u8, 300, 7) == 7 && max_t(u8, 300, 7) == 44);
+	CHECK(clamp_t(int, 9, 0, 4) == 4);
+	CHECK(clamp_val(9, 0, 4) == 4);
+	CHECK(min_not_zero(0, 5) == 5 && min_not_zero(3, 0) == 3);
+	CHECK(min_not_zero(3, 5) == 3 && min_not_zero(0, 0) == 0);
+	CHECK(umin(3, 5) == 3 && umax(3, 5) == 5);
+	CHECK(umin(-1, 5u) == 5u && umax(-1, 5u) == 0xffffffffffffffffULL);
+	CHECK(min_array(arr, ARRAY_SIZE(arr)) == 1);
+	CHECK(max_array(arr, ARRAY_SIZE(arr)) == 9);
+	swap(x, y);
+	CHECK(x == 5 && y == 3);
+
+	CHECK(upper_32_bits(0x123456789abcdef0ULL) == 0x12345678U);
+	CHECK(lower_32_bits(0x123456789abcdef0ULL) == 0x9abcdef0U);
+	CHECK(upper_16_bits(0x12345678U) == 0x1234);
+	CHECK(lower_16_bits(0x12345678U) == 0x5678);
+	CHECK(REPEAT_BYTE(0xab) == (unsigned long)0xabababababababab ||
+	    sizeof(long) == 4);
+	CHECK(REPEAT_BYTE_U32(0xab) == 0xababababU);
+
+	n = t_scnprintf(buf, sizeof(buf), "%d-%s", 42, "abcdefgh");
+	CHECK(n == 7);			/* truncated, returns bytes stored */
+	CHECK_STR(buf, "42-abcd");
+	n = scnprintf(buf, sizeof(buf), "%x", 255);
+	CHECK(n == 2);
+	CHECK_STR(buf, "ff");
+	CHECK(scnprintf(buf, 0, "x") == 0);
+}
+#endif
+
 static void
 test_harness(void)
 {
@@ -220,6 +335,9 @@ drm2_linux_compat_run(void)
 	test_string_choices();
 	test_units();
 	test_util_macros();
+#ifndef DRM2_COMPAT_HOST
+	test_kernel_forwarders();
+#endif
 #ifdef DRM2_COMPAT_SELFTEST_FAIL
 	test_selftest_fail();
 #endif
