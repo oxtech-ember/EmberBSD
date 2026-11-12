@@ -71,9 +71,9 @@ after 8 beacons missed in a row (`ieee80211_beacon_miss()`) and restarts
 the interface after 16 if the AP stayed silent, logging `lost the AP`.
 Contract: `iwx_ht_bmiss()` in `ember/tools/iwx-ht-contract.sh`.
 
-New and **not yet run on hardware**: joining another BSS while
-associated (roaming, `IEEE80211_MLME_ASSOC` from `wpa_supplicant`) is
-done in place. net80211 makes the node of the new BSS `ic_bss` before the
+Joining another BSS while associated (roaming,
+`IEEE80211_MLME_ASSOC` from `wpa_supplicant`) is done in place.
+net80211 makes the node of the new BSS `ic_bss` before the
 driver is asked for anything, while the firmware contexts and the state
 needed to remove them (`in_phyctxt`, `in_macaddr`, the HT state) belong
 to the node being left. OpenBSD's net80211 keeps one `ic_bss` and copies
@@ -91,12 +91,21 @@ another state is requested no data frames are sent: `ic_bss` has no key
 yet, and the firmware still talks to the old BSS. Limits: the AP left
 behind gets no deauthentication frame; with native SAE the join still
 restarts the interface; a failed join leaves the station without a BSS
-until `wpa_supplicant` picks one. Contracts: the state dispatcher and
+until `wpa_supplicant` picks one. Ran on the MSI between the 5 GHz and
+2.4 GHz BSS of one AP: under a second each way, one ping of five per
+second lost, no disassociation event, no DHCP exchange. One join
+requested 0.9 s after the previous association ended in a firmware
+error: the task that answers ADDBA requests was adding an RX Block Ack
+session while the station was being removed. The teardown now cancels
+what that task and the TX queue task have pending and waits for the one
+at work, and neither starts anything once another state is requested;
+that fix has not run on hardware. Contracts: the state dispatcher and
 the owner of the contexts in `ember/tools/iwx-width-contract.sh`, the
 receive channel rule in `ember/tests/iwx-sae.sh`.
 
-New and **not yet run on hardware**: a scan while associated keeps the
-association. net80211 leaves the BSS before any scan it is asked for, so
+A scan while associated keeps the association (ran on the MSI: 30
+networks on both bands in the results, no ping lost, nothing logged).
+net80211 leaves the BSS before any scan it is asked for, so
 `iwx_ioctl()` takes the scan request (`IEEE80211_IOC_SCAN_REQ`) of an
 associated station itself: the firmware scans with the timing OpenBSD
 uses for a background scan (at most 120 TU away from the channel of the

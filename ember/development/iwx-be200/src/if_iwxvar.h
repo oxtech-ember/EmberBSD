@@ -906,6 +906,7 @@ struct iwx_softc {
 	struct task sc_ba_task;
 	/* TX aggregation: per-TID queues; the firmware runs the BA session. */
 	uint8_t sc_txq_want;		/* TIDs waiting for a queue */
+	int sc_agg_busy;		/* the BA or queue task is at work */
 	struct task sc_txq_task;
 	int sc_umac_prph_offset;
 	int sc_imr_enabled;

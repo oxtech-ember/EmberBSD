@@ -9470,7 +9470,9 @@ iwx_ht_rx_action(struct iwx_softc *sc, struct mbuf *m)
 	size_t len, rlen;
 	int tid, initiator;
 
+	/* ns_nstate changes as soon as a new state is requested. */
 	if (ic->ic_state != IEEE80211_S_RUN ||
+	    sc->ns_nstate != IEEE80211_S_RUN ||
 	    (size_t)m->m_len < sizeof(*wh) + 2 || m->m_len != m->m_pkthdr.len)
 		return;
 	wh = mtod(m, struct ieee80211_frame *);
@@ -9698,16 +9700,28 @@ iwx_ba_task(void *arg)
 	uint64_t serial = sc->sc_ba_sae_serial;
 	int tid, s = splnet();
 
+	/*
+	 * Once another state is requested the association is going away,
+	 * while ic_state is still RUN until the state task has taken it
+	 * down.  iwx_run_stop() waits for sc_agg_busy, so claim it before
+	 * looking at the state.
+	 */
+	sc->sc_agg_busy = 1;
 	if ((sc->sc_flags & IWX_FLAG_SHUTDOWN) ||
 	    ic->ic_state != IEEE80211_S_RUN ||
+	    sc->ns_nstate != IEEE80211_S_RUN ||
 	    serial != ieee80211_sae_serial(ic)) {
 		sc->sc_ba_start = sc->sc_ba_stop = 0;
+		sc->sc_agg_busy = 0;
+		wakeup(&sc->sc_agg_busy);
 		refcnt_rele_wake(&sc->task_refs);
 		splx(s);
 		return;
 	}
 
 	for (tid = 0; tid < 8; tid++) {
+		if (sc->ns_nstate != IEEE80211_S_RUN)
+			break;
 		if (sc->sc_ba_stop & (1 << tid)) {
 			sc->sc_ba_stop &= ~(1 << tid);
 			iwx_ba_stop(sc, tid, 1);
@@ -9718,11 +9732,14 @@ iwx_ba_task(void *arg)
 		const struct iwx_ht_addba *a = &request;
 		uint16_t size;
 
+		if (sc->ns_nstate != IEEE80211_S_RUN)
+			break;
 		if ((sc->sc_ba_start & (1 << tid)) == 0)
 			continue;
 		sc->sc_ba_start &= ~(1 << tid);
 		iwx_ba_stop(sc, tid, 1);	/* a repeated ADDBA restarts */
-		if (serial != ieee80211_sae_serial(ic))
+		if (serial != ieee80211_sae_serial(ic) ||
+		    sc->ns_nstate != IEEE80211_S_RUN)
 			break;
 
 		size = (a->bufsize == 0 || a->bufsize > IWX_HT_RO_MAX) ?
@@ -9740,6 +9757,25 @@ iwx_ba_task(void *arg)
 		if (serial != ieee80211_sae_serial(ic)) {
 			/* A sleeping command may have allocated a now-stale BAID. */
 			task_add(sc->sc_systq, &sc->init_task);
+			break;
+		}
+		if (sc->ns_nstate != IEEE80211_S_RUN) {
+			/*
+			 * The association is going away.  Keep the session
+			 * on record for the teardown to remove and answer
+			 * nothing.
+			 */
+			if (!error && baid < IWX_MAX_BAID &&
+			    !sc->sc_ba[baid].active) {
+				sc->sc_ba[baid].tid = tid;
+				iwx_ht_reorder_init(&sc->sc_ba[baid].ro,
+				    a->ssn, size);
+				sc->sc_ba[baid].active = 1;
+				sc->sc_ba_sessions++;
+			} else if (!error)
+				printf("%s: RX Block Ack for TID %d left "
+				    "in the firmware (BAID %u)\n",
+				    device_xname(sc->sc_dev), tid, baid);
 			break;
 		}
 		if (error ||
@@ -9764,6 +9800,8 @@ iwx_ba_task(void *arg)
 		    device_xname(sc->sc_dev), tid, size);
 	}
 
+	sc->sc_agg_busy = 0;
+	wakeup(&sc->sc_agg_busy);
 	refcnt_rele_wake(&sc->task_refs);
 	splx(s);
 }
@@ -9834,11 +9872,14 @@ iwx_txq_task(void *arg)
 	struct ieee80211com *ic = &sc->sc_ic;
 	int tid, qid, err, s = splnet();
 
+	/* As in iwx_ba_task(): not while the association is going away. */
+	sc->sc_agg_busy = 1;
 	for (tid = 0; tid < IWX_MAX_TID_COUNT; tid++) {
 		if ((sc->sc_txq_want & (1 << tid)) == 0)
 			continue;
 		if ((sc->sc_flags & IWX_FLAG_SHUTDOWN) ||
-		    ic->ic_state != IEEE80211_S_RUN || sc->aggqid[tid] != 0 ||
+		    ic->ic_state != IEEE80211_S_RUN ||
+		    sc->ns_nstate != IEEE80211_S_RUN || sc->aggqid[tid] != 0 ||
 		    ieee80211_sae_active(ic)) {
 			sc->sc_txq_want &= ~(1 << tid);
 			continue;
@@ -9864,6 +9905,8 @@ iwx_txq_task(void *arg)
 		    device_xname(sc->sc_dev), qid, tid);
 	}
 
+	sc->sc_agg_busy = 0;
+	wakeup(&sc->sc_agg_busy);
 	refcnt_rele_wake(&sc->task_refs);
 	splx(s);
 }
@@ -10905,9 +10948,23 @@ int
 iwx_run_stop(struct iwx_softc *sc)
 {
 	struct iwx_node *in = iwx_bss_owner(sc);
-	int err;
+	int err, n;
 
 	splassert(IPL_NET);
+
+	/*
+	 * The Block Ack and queue tasks run on another queue and sleep in
+	 * firmware commands.  Start nothing more and let the one in flight
+	 * finish: a session added behind the teardown outlives the station
+	 * in the firmware, and the firmware does not survive that.
+	 */
+	sc->sc_ba_start = sc->sc_ba_stop = sc->sc_txq_want = 0;
+	for (n = 0; sc->sc_agg_busy && n < 30; n++)
+		tsleep_nsec(&sc->sc_agg_busy, 0, "iwxagg",
+		    SEC_TO_NSEC(1) / 10);
+	if (sc->sc_agg_busy)
+		printf("%s: Block Ack setup still in flight\n",
+		    device_xname(sc->sc_dev));
 
 	err = iwx_flush_sta(sc, in);
 	if (err) {

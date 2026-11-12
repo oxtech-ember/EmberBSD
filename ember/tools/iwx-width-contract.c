@@ -107,6 +107,8 @@ struct iwx_softc {
 	int sc_systq, init_task, ns_arg;
 	int sc_csa_valid, sc_csa_wait, sc_scan_assoc_to, scan_assoc_task;
 	struct iwx_node *sc_fw_in;
+	uint8_t sc_ba_start, sc_ba_stop, sc_txq_want;
+	int sc_agg_busy;
 	uint64_t sc_ns_sae_serial;
 	enum ieee80211_state ns_nstate;
 	struct iwx_phy_ctxt sc_phyctxt[1];
@@ -224,10 +226,24 @@ iwx_phy_ctxt_update(struct iwx_softc *sc, struct iwx_phy_ctxt *phy,
 	return 0;
 }
 
+/* Sleeping for the aggregation tasks: the sleep lets them finish. */
+#define SEC_TO_NSEC(s) ((s) * 1000000000ULL)
+static int agg_sleeps, agg_busy_at_flush = -1;
+static struct iwx_softc *agg_sc;
+static int
+tsleep_nsec(void *ident, int prio, const char *msg, unsigned long long ns)
+{
+	(void)ident; (void)prio; (void)msg; (void)ns;
+	/* The task records the session it was adding, then finishes. */
+	if (++agg_sleeps >= 2 && agg_sc != NULL)
+		agg_sc->sc_agg_busy = 0;
+	return 0;
+}
+
 /* The node each teardown command was given. */
 static struct iwx_node *flush_in, *disassoc_in, *rm_in, *binding_in, *mac_in;
 static int iwx_flush_sta(struct iwx_softc *sc, struct iwx_node *in)
-{ (void)sc; flush_in = in; return flush_error; }
+{ agg_busy_at_flush = sc->sc_agg_busy; flush_in = in; return flush_error; }
 static void iwx_ba_stop(struct iwx_softc *sc, int tid, int force)
 { (void)sc; (void)tid; (void)force; }
 static int iwx_sf_config(struct iwx_softc *sc, int state)
@@ -458,6 +474,39 @@ test_stop(int width, int monitor, int flush_fail)
 	CHECK(sc.sc_phyctxt[0].sco == (width == 1 ? 1 : 0));
 	CHECK(sc.sc_phyctxt[0].vht_chan_width == (width == 2 ? 1 : 0));
 	CHECK((disassoc_sequence > 0) == (flush_fail == 0));
+}
+
+/*
+ * The teardown does not overtake the tasks that set up Block Ack sessions
+ * and aggregation queues: a session added behind its back would outlive
+ * the station in the firmware.
+ */
+static void
+test_stop_waits(void)
+{
+	struct iwx_softc sc;
+	struct iwx_node in;
+
+	setup(&sc, &in, 2, 0);
+	reset_transport(4, 2);
+	agg_sc = &sc;
+	agg_sleeps = 0;
+	agg_busy_at_flush = -1;
+	sc.sc_agg_busy = 1;
+	sc.sc_ba_start = 0x21;
+	sc.sc_ba_stop = 0x80;
+	sc.sc_txq_want = 0x01;
+	CHECK(iwx_run_stop(&sc) == 0);
+	/* Nothing more is started, and the task in flight was waited for. */
+	CHECK(sc.sc_ba_start == 0 && sc.sc_ba_stop == 0 && sc.sc_txq_want == 0);
+	CHECK(agg_sleeps == 2 && agg_busy_at_flush == 0);
+	CHECK(disassoc_sequence > 0);
+	/* No task in flight: no sleep. */
+	setup(&sc, &in, 2, 0);
+	reset_transport(4, 2);
+	agg_sleeps = 0;
+	CHECK(iwx_run_stop(&sc) == 0 && agg_sleeps == 0);
+	agg_sc = NULL;
 }
 
 /*
@@ -895,6 +944,7 @@ main(void)
 	test_leave(IEEE80211_S_SCAN, 0, 1, 0, 0, 1);
 	test_leave(IEEE80211_S_INIT, -1, 1, 0, 0, 0);
 	test_owner();
+	test_stop_waits();
 	test_scan_assoc();
 	for (version = 3; version <= 4; version++) {
 		test_dynamic(version, 1, 0);
