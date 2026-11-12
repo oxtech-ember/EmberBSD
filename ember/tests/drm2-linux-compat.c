@@ -23,6 +23,7 @@
 #endif
 
 #include <linux/cleanup.h>
+#include <linux/iosys-map.h>
 #include <linux/kdev_t.h>
 #include <linux/string_choices.h>
 #include <linux/string_helpers.h>
@@ -812,6 +813,106 @@ test_kernel_iopoll(void)
 #undef readl
 #endif
 
+struct t_hdr {
+	u8	kind;
+	u16	count;
+	u32	flags;
+	u64	cookie;
+};
+
+static void
+t_iosys_map_one(bool iomem)
+{
+	u8 buf[64], cmp[64];
+	struct iosys_map m, n;
+	struct t_hdr h;
+	u8 out[16];
+	int i;
+
+	memset(buf, 0xee, sizeof(buf));
+	if (iomem)
+		iosys_map_set_vaddr_iomem(&m, buf);
+	else
+		iosys_map_set_vaddr(&m, buf);
+	CHECK(m.is_iomem == iomem);
+	CHECK(iosys_map_is_set(&m) && !iosys_map_is_null(&m));
+	CHECK(m.vaddr == (void *)buf);
+
+	/* copy in at an offset, copy out, neighbours untouched */
+	for (i = 0; i < 16; i++)
+		out[i] = (u8)i;
+	iosys_map_memcpy_to(&m, 5, out, 16);
+	CHECK(buf[4] == 0xee && buf[5] == 0 && buf[20] == 15 && buf[21] == 0xee);
+	memset(cmp, 0, sizeof(cmp));
+	iosys_map_memcpy_from(cmp, &m, 5, 16);
+	CHECK(memcmp(cmp, out, 16) == 0);
+	CHECK(cmp[16] == 0);
+
+	iosys_map_memset(&m, 40, 0x5a, 7);
+	CHECK(buf[39] == 0xee && buf[40] == 0x5a && buf[46] == 0x5a &&
+	    buf[47] == 0xee);
+
+	/* typed access, sizes 1, 2, 4, 8 */
+	iosys_map_wr(&m, 0, u8, 0x12);
+	iosys_map_wr(&m, 2, u16, 0x3456);
+	iosys_map_wr(&m, 4, u32, 0x789abcdeU);
+	iosys_map_wr(&m, 8, u64, 0x0123456789abcdefULL);
+	CHECK(iosys_map_rd(&m, 0, u8) == 0x12);
+	CHECK(iosys_map_rd(&m, 2, u16) == 0x3456);
+	CHECK(iosys_map_rd(&m, 4, u32) == 0x789abcdeU);
+	CHECK(iosys_map_rd(&m, 8, u64) == 0x0123456789abcdefULL);
+	CHECK(*(u32 *)(buf + 4) == 0x789abcdeU);
+
+	/* struct fields at a base offset */
+	memset(&h, 0, sizeof(h));
+	iosys_map_wr_field(&m, 16, struct t_hdr, kind, 7);
+	iosys_map_wr_field(&m, 16, struct t_hdr, count, 513);
+	iosys_map_wr_field(&m, 16, struct t_hdr, flags, 0xdeadbeefU);
+	iosys_map_wr_field(&m, 16, struct t_hdr, cookie, 0x1122334455667788ULL);
+	memcpy(&h, buf + 16, sizeof(h));
+	CHECK(h.kind == 7 && h.count == 513 && h.flags == 0xdeadbeefU);
+	CHECK(h.cookie == 0x1122334455667788ULL);
+	CHECK(iosys_map_rd_field(&m, 16, struct t_hdr, count) == 513);
+	CHECK(iosys_map_rd_field(&m, 16, struct t_hdr, cookie) ==
+	    0x1122334455667788ULL);
+
+	/* increment and sub-maps */
+	n = m;
+	iosys_map_incr(&n, 4);
+	CHECK(n.vaddr == (void *)(buf + 4) && n.is_iomem == iomem);
+	CHECK(iosys_map_rd(&n, 0, u32) == 0x789abcdeU);
+	CHECK(!iosys_map_is_equal(&m, &n));
+	{
+		struct iosys_map sub = IOSYS_MAP_INIT_OFFSET(&m, 4);
+
+		CHECK(iosys_map_is_equal(&sub, &n));
+	}
+
+	/* null maps */
+	iosys_map_clear(&n);
+	CHECK(iosys_map_is_null(&n) && !iosys_map_is_set(&n));
+	CHECK(!n.is_iomem && n.vaddr == NULL);
+}
+
+static void
+test_iosys_map(void)
+{
+	struct iosys_map a = IOSYS_MAP_INIT_VADDR(NULL);
+	struct iosys_map b = IOSYS_MAP_INIT_VADDR_IOMEM(NULL);
+	u8 x;
+	struct iosys_map c = IOSYS_MAP_INIT_VADDR(&x);
+	struct iosys_map d = IOSYS_MAP_INIT_VADDR_IOMEM(&x);
+
+	CHECK(iosys_map_is_null(&a) && iosys_map_is_null(&b));
+	CHECK(!a.is_iomem && b.is_iomem);
+	CHECK(iosys_map_is_set(&c) && iosys_map_is_set(&d));
+	/* Same address in different address spaces is not the same map. */
+	CHECK(!iosys_map_is_equal(&c, &d));
+	CHECK(iosys_map_is_equal(&c, &c));
+	t_iosys_map_one(false);
+	t_iosys_map_one(true);
+}
+
 static void
 test_harness(void)
 {
@@ -833,6 +934,7 @@ drm2_linux_compat_run(void)
 	test_util_macros();
 	test_kdev_swab();
 	test_cleanup();
+	test_iosys_map();
 #ifndef DRM2_COMPAT_HOST
 	test_kernel_forwarders();
 	test_kernel_misc();
