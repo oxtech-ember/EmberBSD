@@ -38,6 +38,7 @@
 
 #include <asm/processor.h>
 
+#include <linux/cleanup.h>
 #include <linux/list.h>
 #include <linux/spinlock.h>
 
@@ -140,5 +141,8 @@ mutex_trylock_recursive(struct mutex *mutex)
 	else
 		return MUTEX_TRYLOCK_FAILED;
 }
+
+/* guard(mutex)(&m), scoped_guard(mutex, &m) */
+DEFINE_GUARD(mutex, struct mutex *, mutex_lock(_T), mutex_unlock(_T))
 
 #endif  /* _LINUX_MUTEX_H_ */

@@ -38,6 +38,9 @@
 #include <linux/dma-direction.h>
 #include <linux/hrtimer_types.h>
 #include <linux/limits.h>
+#include <linux/mutex.h>
+#include <linux/rwsem.h>
+#include <linux/spinlock.h>
 #include <linux/math.h>
 #include <linux/minmax.h>
 #include <linux/sprintf.h>
@@ -611,6 +614,59 @@ test_cleanup(void)
 	CHECK(lvl == 0);
 }
 
+#ifndef DRM2_COMPAT_HOST
+static void
+test_kernel_lock_guards(void)
+{
+	struct mutex m;
+	spinlock_t sl;
+	struct rw_semaphore rw;
+	int n;
+
+	linux_mutex_init(&m);
+	spin_lock_init(&sl);
+	init_rwsem(&rw);
+
+	{
+		guard(mutex)(&m);
+		CHECK(mutex_is_locked(&m));
+	}
+	CHECK(!mutex_is_locked(&m));
+	n = 0;
+	scoped_guard(mutex, &m) {
+		CHECK(mutex_is_locked(&m));
+		n++;
+	}
+	CHECK(!mutex_is_locked(&m) && n == 1);
+
+	scoped_guard(spinlock, &sl)
+		CHECK(spin_is_locked(&sl));
+	CHECK(!spin_is_locked(&sl));
+	scoped_guard(spinlock_irq, &sl)
+		CHECK(spin_is_locked(&sl));
+	CHECK(!spin_is_locked(&sl));
+	scoped_guard(spinlock_irqsave, &sl)
+		CHECK(spin_is_locked(&sl));
+	CHECK(!spin_is_locked(&sl));
+	{
+		guard(spinlock_irqsave)(&sl);
+		CHECK(spin_is_locked(&sl));
+	}
+	CHECK(!spin_is_locked(&sl));
+
+	scoped_guard(rwsem_read, &rw)
+		CHECK(rw.rws_readers == 1);
+	CHECK(rw.rws_readers == 0);
+	scoped_guard(rwsem_write, &rw)
+		CHECK(rw.rws_writer != NULL);
+	CHECK(rw.rws_writer == NULL);
+
+	destroy_rwsem(&rw);
+	spin_lock_destroy(&sl);
+	linux_mutex_destroy(&m);
+}
+#endif
+
 static void
 test_harness(void)
 {
@@ -635,6 +691,7 @@ drm2_linux_compat_run(void)
 #ifndef DRM2_COMPAT_HOST
 	test_kernel_forwarders();
 	test_kernel_misc();
+	test_kernel_lock_guards();
 #endif
 #ifdef DRM2_COMPAT_SELFTEST_FAIL
 	test_selftest_fail();

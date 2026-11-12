@@ -24,9 +24,11 @@
 #define	__cleanup(FN)	__attribute__((__cleanup__(FN)))
 #endif
 
-#ifndef __always_inline
-#define	__always_inline	inline __attribute__((__always_inline__))
-#endif
+/*
+ * NetBSD's __always_inline lacks the inline keyword, so an unused static
+ * helper would trigger -Wunused-function; spell out both.
+ */
+#define	__cleanup_inline	static inline __attribute__((__always_inline__))
 
 #define	__cleanup_cat_(A, B)	A##B
 #define	__cleanup_cat(A, B)	__cleanup_cat_(A, B)
@@ -37,7 +39,7 @@
  * declared "type v __free(name) = ...".  stmt sees the value as _T.
  */
 #define	DEFINE_FREE(_name, _type, _free)				\
-static __always_inline void						\
+__cleanup_inline void						\
 __free_##_name(void *_p)						\
 {									\
 	_type _T = *(_type *)_p;					\
@@ -65,13 +67,13 @@ __free_##_name(void *_p)						\
  */
 #define	DEFINE_CLASS(_name, _type, _exit, _init, _init_args...)		\
 typedef _type class_##_name##_t;					\
-static __always_inline void						\
+__cleanup_inline void						\
 class_##_name##_destructor(class_##_name##_t *_p)			\
 {									\
 	class_##_name##_t _T = *_p;					\
 	_exit;								\
 }									\
-static __always_inline class_##_name##_t				\
+__cleanup_inline class_##_name##_t				\
 class_##_name##_constructor(_init_args)					\
 {									\
 	class_##_name##_t _t = _init;					\
@@ -98,14 +100,14 @@ typedef struct {							\
 	_type *lock;							\
 	__VA_ARGS__;							\
 } class_##_name##_t;							\
-static __always_inline void						\
+__cleanup_inline void						\
 class_##_name##_destructor(class_##_name##_t *_T)			\
 {									\
 	if (_T->lock) {							\
 		_unlock;						\
 	}								\
 }									\
-static __always_inline class_##_name##_t				\
+__cleanup_inline class_##_name##_t				\
 class_##_name##_constructor(_type *_l)					\
 {									\
 	class_##_name##_t _t = { .lock = _l }, *_T = &_t;		\
@@ -119,12 +121,12 @@ typedef struct {							\
 	void *lock;							\
 	__VA_ARGS__;							\
 } class_##_name##_t;							\
-static __always_inline void						\
+__cleanup_inline void						\
 class_##_name##_destructor(class_##_name##_t *_T)			\
 {									\
 	_unlock;							\
 }									\
-static __always_inline class_##_name##_t				\
+__cleanup_inline class_##_name##_t				\
 class_##_name##_constructor(void)					\
 {									\
 	class_##_name##_t _t = { .lock = NULL }, *_T = &_t;		\
