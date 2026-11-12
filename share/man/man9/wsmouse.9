@@ -171,6 +171,33 @@ Absolute mode in
 axis.
 .El
 .El
+.It Fn wsmouse_gesture "msdev" "fingers" "phase" "dx" "dy"
+Callback from the mouse driver to the wsmouse interface driver.
+.Pp
+Reports a multi-finger swipe gesture of a touchpad without moving the
+pointer.
+.Fa phase
+is one of
+.Dv WSMOUSE_GESTURE_BEGIN
+(generates
+.Dv WSCONS_EVENT_GESTURE_SWIPE_BEGIN
+with the number of
+.Fa fingers
+as value),
+.Dv WSMOUSE_GESTURE_UPDATE
+(generates
+.Dv WSCONS_EVENT_GESTURE_SWIPE_UPDATE_X
+and
+.Dv WSCONS_EVENT_GESTURE_SWIPE_UPDATE_Y
+from
+.Fa dx
+and
+.Fa dy ,
+the latter positive upwards),
+.Dv WSMOUSE_GESTURE_END
+or
+.Dv WSMOUSE_GESTURE_CANCEL .
+Programs that do not know these event types ignore them.
 .It Fn wsmouse_precision_scroll "msdev" "x" "y"
 Callback from the mouse driver to the wsmouse interface driver.
 .Pp

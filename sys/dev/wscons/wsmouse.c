@@ -562,6 +562,61 @@ wsmouse_precision_scroll(device_t wsmousedev, int x, int y)
 	(void)wsevent_inject(evar, events, nevents);
 }
 
+/*
+ * Report a multi-finger swipe gesture. phase is WSMOUSE_GESTURE_BEGIN
+ * (fingers = number of fingers), _UPDATE (dx, dy, dy positive upwards),
+ * _END or _CANCEL. The events are queued without touching the pointer.
+ */
+void
+wsmouse_gesture(device_t wsmousedev, int fingers, int phase, int dx, int dy)
+{
+	struct wsmouse_softc *sc = device_private(wsmousedev);
+	struct wseventvar *evar;
+	struct wscons_event events[2];
+	int nevents = 0;
+
+	evar = sc->sc_base.me_evp;
+	if (evar == NULL)
+		return;
+
+	switch (phase) {
+	case WSMOUSE_GESTURE_BEGIN:
+		events[nevents].type = WSCONS_EVENT_GESTURE_SWIPE_BEGIN;
+		events[nevents].value = fingers;
+		nevents++;
+		break;
+	case WSMOUSE_GESTURE_UPDATE:
+		if (dx != 0) {
+			events[nevents].type =
+			    WSCONS_EVENT_GESTURE_SWIPE_UPDATE_X;
+			events[nevents].value = dx;
+			nevents++;
+		}
+		if (dy != 0) {
+			events[nevents].type =
+			    WSCONS_EVENT_GESTURE_SWIPE_UPDATE_Y;
+			events[nevents].value = dy;
+			nevents++;
+		}
+		break;
+	case WSMOUSE_GESTURE_END:
+		events[nevents].type = WSCONS_EVENT_GESTURE_SWIPE_END;
+		events[nevents].value = 0;
+		nevents++;
+		break;
+	case WSMOUSE_GESTURE_CANCEL:
+		events[nevents].type = WSCONS_EVENT_GESTURE_SWIPE_CANCEL;
+		events[nevents].value = 0;
+		nevents++;
+		break;
+	default:
+		return;
+	}
+
+	if (nevents > 0)
+		(void)wsevent_inject(evar, events, nevents);
+}
+
 static void
 wsmouse_repeat(void *v)
 {

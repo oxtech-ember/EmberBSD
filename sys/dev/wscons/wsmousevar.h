@@ -75,3 +75,8 @@ int	wsmousedevprint(void *, const char *);
 void	wsmouse_input(device_t, u_int, int, int, int, int, u_int);
 #define WSMOUSE_DEFAULT_SCROLL_DIST	(12)
 void	wsmouse_precision_scroll(device_t, int, int);
+#define WSMOUSE_GESTURE_BEGIN		0
+#define WSMOUSE_GESTURE_UPDATE		1
+#define WSMOUSE_GESTURE_END		2
+#define WSMOUSE_GESTURE_CANCEL		3
+void	wsmouse_gesture(device_t, int, int, int, int);

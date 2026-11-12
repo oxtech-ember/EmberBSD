@@ -524,3 +524,88 @@ hidmt_pointer_update_scroll(struct hidmt_pointer *ptr,
 	motion->scroll_y = (int)(acc / den);
 	ptr->scroll_remy = (int)(acc % den);
 }
+
+static void
+hidmt_gesture_quiet(struct hidmt_motion *motion)
+{
+	motion->dx = motion->dy = 0;
+	motion->scroll_x = motion->scroll_y = 0;
+	motion->tap = false;
+	motion->tap_button = 0;
+}
+
+/*
+ * Three- and four-finger gesture stage; call after the pointer policy with
+ * the same frame. Contacts 3 and 4 never move the pointer or synthesise a
+ * tap, and the pointer stays still until every finger is lifted, so the
+ * last finger does not jerk it. A gesture begins once the mean of the
+ * contacts has travelled gc->start; BEGIN and the first UPDATE come in one
+ * frame, so the start distance is not lost. Fewer fingers or all lifted end
+ * the gesture (END); more fingers cancel it (CANCEL), a new candidate then
+ * starts from the new position. A gesture that never reached the threshold
+ * produces no events.
+ */
+void
+hidmt_gesture_update(struct hidmt_gstate *gs, const struct hidmt_gconf *gc,
+    const struct hidmt_frame *frame, struct hidmt_motion *motion)
+{
+	unsigned i, n = frame->ncontacts;
+	int sumx = 0, sumy = 0, x, y, dx, dy, start;
+
+	if (gc == NULL || !gc->enable)
+		return;
+	if (n == 0) {
+		if (gs->started)
+			motion->gesture |= HIDMT_GESTURE_END;
+		memset(gs, 0, sizeof(*gs));
+		return;
+	}
+	if (n < 3 || n > 4) {
+		if (!gs->latched)
+			return;
+		if (gs->started)
+			motion->gesture |= n < 3 ? HIDMT_GESTURE_END :
+			    HIDMT_GESTURE_CANCEL;
+		gs->started = false;
+		gs->fingers = 0;
+		hidmt_gesture_quiet(motion);
+		return;
+	}
+	for (i = 0; i < n; i++) {
+		sumx += frame->contacts[i].x;
+		sumy += frame->contacts[i].y;
+	}
+	x = sumx / (int)n;
+	y = sumy / (int)n;
+	gs->latched = true;
+	hidmt_gesture_quiet(motion);
+	if (gs->fingers != n) {
+		if (gs->started)
+			motion->gesture |= HIDMT_GESTURE_CANCEL;
+		gs->started = false;
+		gs->fingers = n;
+		gs->startx = gs->lastx = x;
+		gs->starty = gs->lasty = y;
+		gs->remx = gs->remy = 0;
+		return;
+	}
+	if (!gs->started) {
+		start = gc->start > 0 ? gc->start : HIDMT_GESTURE_START;
+		if (abs(x - gs->startx) < start && abs(y - gs->starty) < start)
+			return;
+		gs->started = true;
+		motion->gesture |= HIDMT_GESTURE_BEGIN;
+		motion->gesture_fingers = n;
+	}
+	/* Contact Y grows downwards; positive output means fingers moved up. */
+	dx = x - gs->lastx + gs->remx;
+	dy = gs->lasty - y + gs->remy;
+	gs->lastx = x;
+	gs->lasty = y;
+	motion->gesture_dx = dx / 8;
+	motion->gesture_dy = dy / 8;
+	gs->remx = dx % 8;
+	gs->remy = dy % 8;
+	if (motion->gesture_dx != 0 || motion->gesture_dy != 0)
+		motion->gesture |= HIDMT_GESTURE_UPDATE;
+}

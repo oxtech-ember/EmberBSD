@@ -36,6 +36,7 @@ struct imt_softc {
 	struct hidmt_config sc_config;
 	struct hidmt_pointer sc_pointer;
 	struct hidmt_assembler sc_asm;
+	struct hidmt_gstate sc_gstate;
 	struct sysctllog *sc_sysctllog;
 	uint8_t *sc_mode;
 	bool sc_ready, sc_enabled, sc_suspended;
@@ -45,6 +46,7 @@ struct imt_softc {
 	int sc_scroll;		/* two-finger scrolling */
 	int sc_scroll_natural;
 	int sc_scroll_scale;
+	int sc_gestures;	/* 3/4-finger swipe gestures to wscons */
 	int sc_rawlog;		/* raw reports still to be logged */
 	unsigned sc_drops;	/* frames rejected by hidmt_decode() */
 };
@@ -128,6 +130,7 @@ imt_attach(device_t parent, device_t self, void *aux)
 	sc->sc_scroll = 0;
 	sc->sc_scroll_natural = 0;
 	sc->sc_scroll_scale = IMT_SCROLL_SCALE;
+	sc->sc_gestures = 0;
 	sc->sc_rawlog = 0;
 	if (sysctl_createv(&sc->sc_sysctllog, 0, NULL, &node, 0,
 	    CTLTYPE_NODE, device_xname(self),
@@ -149,6 +152,10 @@ imt_attach(device_t parent, device_t self, void *aux)
 		    CTLFLAG_READWRITE, CTLTYPE_INT, "scroll",
 		    SYSCTL_DESCR("Two-finger scrolling"),
 		    NULL, 0, &sc->sc_scroll, 0, CTL_CREATE, CTL_EOL);
+		sysctl_createv(&sc->sc_sysctllog, 0, &node, NULL,
+		    CTLFLAG_READWRITE, CTLTYPE_INT, "gestures",
+		    SYSCTL_DESCR("Three- and four-finger swipe gestures"),
+		    NULL, 0, &sc->sc_gestures, 0, CTL_CREATE, CTL_EOL);
 		sysctl_createv(&sc->sc_sysctllog, 0, &node, NULL,
 		    CTLFLAG_READWRITE, CTLTYPE_INT, "scroll_natural",
 		    SYSCTL_DESCR("Natural (content follows fingers) scrolling"),
@@ -205,6 +212,7 @@ imt_enable(void *arg)
 	}
 	memset(&sc->sc_pointer, 0, sizeof(sc->sc_pointer));
 	memset(&sc->sc_asm, 0, sizeof(sc->sc_asm));
+	memset(&sc->sc_gstate, 0, sizeof(sc->sc_gstate));
 	sc->sc_enabled = true;
 	return 0;
 }
@@ -314,6 +322,20 @@ imt_log_raw(struct imt_softc *sc, const uint8_t *buf, u_int len,
 	    len > n ? " ..." : "");
 }
 
+/* A malformed frame in the middle of a gesture cancels it. */
+static void
+imt_gesture_abort(struct imt_softc *sc)
+{
+	int s;
+
+	if (!sc->sc_gstate.started)
+		return;
+	memset(&sc->sc_gstate, 0, sizeof(sc->sc_gstate));
+	s = spltty();
+	wsmouse_gesture(sc->sc_mouse, 0, WSMOUSE_GESTURE_CANCEL, 0, 0);
+	splx(s);
+}
+
 static void
 imt_intr(struct ihidev *hdev, void *buf, u_int len)
 {
@@ -321,6 +343,7 @@ imt_intr(struct ihidev *hdev, void *buf, u_int len)
 	struct hidmt_frame frame;
 	struct hidmt_motion motion;
 	struct hidmt_scroll scroll;
+	struct hidmt_gconf gconf;
 	struct timespec now;
 	uint64_t usec;
 	int s, r;
@@ -340,12 +363,14 @@ imt_intr(struct ihidev *hdev, void *buf, u_int len)
 			return;
 		if (r != HIDMT_ASM_READY) {
 			memset(&sc->sc_pointer, 0, sizeof(sc->sc_pointer));
+			imt_gesture_abort(sc);
 			return;
 		}
 	} else if (hidmt_decode(&sc->sc_config, buf, len, &frame) != 0) {
 		/* Reject malformed frames without retaining a possible tap. */
 		sc->sc_drops++;
 		memset(&sc->sc_pointer, 0, sizeof(sc->sc_pointer));
+		imt_gesture_abort(sc);
 		return;
 	}
 	if (sc->sc_scroll != 0) {
@@ -362,7 +387,26 @@ imt_intr(struct ihidev *hdev, void *buf, u_int len)
 		    (sc->sc_tapping != 0 ? HIDMT_TAP_LEFT : 0) |
 		    (sc->sc_tapping_right != 0 ? HIDMT_TAP_RIGHT : 0),
 		    &motion);
+	if (sc->sc_gestures != 0) {
+		gconf.enable = true;
+		gconf.start = 0;
+		hidmt_gesture_update(&sc->sc_gstate, &gconf, &frame, &motion);
+	} else if (sc->sc_gstate.started) {
+		/* Switched off in the middle of a gesture. */
+		memset(&sc->sc_gstate, 0, sizeof(sc->sc_gstate));
+		motion.gesture = HIDMT_GESTURE_CANCEL;
+	}
 	s = spltty();
+	if ((motion.gesture & HIDMT_GESTURE_END) != 0)
+		wsmouse_gesture(sc->sc_mouse, 0, WSMOUSE_GESTURE_END, 0, 0);
+	if ((motion.gesture & HIDMT_GESTURE_CANCEL) != 0)
+		wsmouse_gesture(sc->sc_mouse, 0, WSMOUSE_GESTURE_CANCEL, 0, 0);
+	if ((motion.gesture & HIDMT_GESTURE_BEGIN) != 0)
+		wsmouse_gesture(sc->sc_mouse, motion.gesture_fingers,
+		    WSMOUSE_GESTURE_BEGIN, 0, 0);
+	if ((motion.gesture & HIDMT_GESTURE_UPDATE) != 0)
+		wsmouse_gesture(sc->sc_mouse, 0, WSMOUSE_GESTURE_UPDATE,
+		    motion.gesture_dx, motion.gesture_dy);
 	if (motion.scroll_x != 0 || motion.scroll_y != 0)
 		wsmouse_precision_scroll(sc->sc_mouse, motion.scroll_x,
 		    motion.scroll_y);

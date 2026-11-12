@@ -128,6 +128,16 @@ test_golden(void)
 		    mc.tap_button == mb.tap_button);
 		CHECK(ma.scroll_x == 0 && ma.scroll_y == 0 &&
 		    mc.scroll_x == 0 && mc.scroll_y == 0);
+		/* gestures=0: the gesture stage changes nothing at all. */
+		{
+			struct hidmt_gstate gs = {0};
+			struct hidmt_gconf off_g = {0};
+			struct hidmt_motion md = mc;
+
+			hidmt_gesture_update(&gs, &off_g, &fa, &md);
+			CHECK(memcmp(&md, &mc, sizeof(md)) == 0);
+			CHECK(mc.gesture == 0 && ma.gesture == 0);
+		}
 		CHECK(pa.active == pb.active && pa.id == pb.id &&
 		    pa.x == pb.x && pa.y == pb.y && pa.remx == pb.remx &&
 		    pa.remy == pb.remy && pa.tap_candidate == pb.tap_candidate &&

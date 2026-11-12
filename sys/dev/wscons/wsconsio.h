@@ -79,6 +79,16 @@ struct wscons_event {
 #define	WSCONS_EVENT_MOUSE_ABSOLUTE_W	15	/* W location */
 #define	WSCONS_EVENT_HSCROLL		16	/* X axis precision scrolling */
 #define	WSCONS_EVENT_VSCROLL		17	/* Y axis precision scrolling */
+/*
+ * Multi-finger touchpad swipe gestures (wsmouse_gesture()). Programs that
+ * do not know them must ignore events of these types: struct wscons_event
+ * is unchanged, only new type numbers are used.
+ */
+#define	WSCONS_EVENT_GESTURE_SWIPE_BEGIN	18	/* number of fingers */
+#define	WSCONS_EVENT_GESTURE_SWIPE_UPDATE_X	19	/* X delta, pointer units */
+#define	WSCONS_EVENT_GESTURE_SWIPE_UPDATE_Y	20	/* Y delta, up is positive */
+#define	WSCONS_EVENT_GESTURE_SWIPE_END		21	/* void, finished */
+#define	WSCONS_EVENT_GESTURE_SWIPE_CANCEL	22	/* void, aborted */
 
 /*
  * Keyboard ioctls (0 - 31)

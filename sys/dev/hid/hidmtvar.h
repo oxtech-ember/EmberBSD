@@ -87,6 +87,35 @@ struct hidmt_motion {
 	unsigned tap_button;
 	/* Precision scroll units for wsmouse_precision_scroll(). */
 	int scroll_x, scroll_y;
+	/*
+	 * Three/four-finger gesture (hidmt_gesture_update()): a mask of
+	 * HIDMT_GESTURE_* phases in the order END/CANCEL, BEGIN, UPDATE;
+	 * gesture_fingers is valid with BEGIN, gesture_dx/dy (pointer units,
+	 * dy positive upwards) with UPDATE.
+	 */
+	unsigned gesture;
+	unsigned gesture_fingers;
+	int gesture_dx, gesture_dy;
+};
+
+#define HIDMT_GESTURE_BEGIN	0x01u
+#define HIDMT_GESTURE_UPDATE	0x02u
+#define HIDMT_GESTURE_END	0x04u
+#define HIDMT_GESTURE_CANCEL	0x08u
+
+/* Mean contact travel (contact units) before a gesture begins. */
+#define HIDMT_GESTURE_START	100
+
+struct hidmt_gconf {
+	bool enable;
+	int start;			/* 0 means HIDMT_GESTURE_START */
+};
+
+struct hidmt_gstate {
+	bool latched;			/* 3+ contacts seen, until all lift */
+	bool started;			/* BEGIN has been sent */
+	unsigned fingers;		/* 3 or 4 while a candidate exists */
+	int startx, starty, lastx, lasty, remx, remy;
 };
 
 /* Tap synthesis flags for hidmt_pointer_update(). */
@@ -103,5 +132,7 @@ void hidmt_pointer_update(struct hidmt_pointer *, const struct hidmt_frame *,
 void hidmt_pointer_update_scroll(struct hidmt_pointer *,
     const struct hidmt_frame *, uint64_t, unsigned,
     const struct hidmt_scroll *, struct hidmt_motion *);
+void hidmt_gesture_update(struct hidmt_gstate *, const struct hidmt_gconf *,
+    const struct hidmt_frame *, struct hidmt_motion *);
 
 #endif
