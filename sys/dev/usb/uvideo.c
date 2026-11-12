@@ -1925,10 +1925,19 @@ uvideo_stream_recv_isoc_complete(struct usbd_xfer *xfer,
 		DPRINTF(("uvideo_stream_recv_isoc_complete: status=%s (%d)\n",
 			usbd_errstr(status), status));
 
-		if (status == USBD_STALLED)
-			usbd_clear_endpoint_stall_async(ix->ix_pipe);
-		else
+		/*
+		 * The pipe is being aborted: the stream is stopping or
+		 * the device is gone.
+		 */
+		if (status == USBD_CANCELLED)
 			return;
+		/*
+		 * Any other error costs the frames of this transfer only.
+		 * Keep the transfer queued: once all UVIDEO_NXFERS have
+		 * returned without being resubmitted the stream is dead.
+		 * An isochronous endpoint has no halt to clear.
+		 */
+		goto next;
 	} else {
 		usbd_get_xfer_status(xfer, NULL, NULL, &count, NULL);
 

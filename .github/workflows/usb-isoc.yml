@@ -1,0 +1,64 @@
+name: USB isochronous transfer actual source contract
+
+'on':
+  pull_request:
+    paths:
+      - '.github/workflows/usb-isoc.yml'
+      - 'sys/dev/usb/xhci.c'
+      - 'sys/dev/usb/uvideo.c'
+      - 'ember/tests/usb-isoc-contract.sh'
+      - 'ember/tests/xhci-isoc-contract.c'
+      - 'ember/tests/uvideo-isoc-contract.c'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/usb-isoc.yml'
+      - 'sys/dev/usb/xhci.c'
+      - 'sys/dev/usb/uvideo.c'
+      - 'ember/tests/usb-isoc-contract.sh'
+      - 'ember/tests/xhci-isoc-contract.c'
+      - 'ember/tests/uvideo-isoc-contract.c'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contracts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    container:
+      image: gcc@sha256:3f73339bf0d3d64081cac3f6d9fdafc6dd4cef2b9c49e0a09f91e97cb0eb139a
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /sys/dev/usb/xhci.c
+            /sys/dev/usb/uvideo.c
+            /ember/tests/usb-isoc-contract.sh
+            /ember/tests/xhci-isoc-contract.c
+            /ember/tests/uvideo-isoc-contract.c
+      - name: Prepare analysis tools
+        run: |
+          test "$(gcc -dumpfullversion)" = 16.2.0
+          apt-get update
+          apt-get install -y --no-install-recommends valgrind libc6-dbg
+      - name: Run GCC16 source and path checks
+        env:
+          CC: gcc
+          CFLAGS: -O2 -g -Wall -Wextra -Werror -fanalyzer
+        run: sh ember/tests/usb-isoc-contract.sh sys/dev/usb/xhci.c sys/dev/usb/uvideo.c "$RUNNER_TEMP/usb-isoc-analyzer"
+      - name: Run ASan and UBSan
+        env:
+          CC: gcc
+          CFLAGS: -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=all
+        run: sh ember/tests/usb-isoc-contract.sh sys/dev/usb/xhci.c sys/dev/usb/uvideo.c "$RUNNER_TEMP/usb-isoc-sanitize"
+      - name: Run Memcheck
+        env:
+          CC: gcc
+          CFLAGS: -O1 -gdwarf-4 -Wall -Wextra -Werror
+          TEST_RUNNER: valgrind --tool=memcheck --error-exitcode=97 --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=all --track-origins=yes
+        run: sh ember/tests/usb-isoc-contract.sh sys/dev/usb/xhci.c sys/dev/usb/uvideo.c "$RUNNER_TEMP/usb-isoc-memcheck"
