@@ -228,9 +228,25 @@ main(void)
 	frame.ncontacts = 1;
 	frame.contacts[0] = (struct hidmt_contact){1200, 800, 3};
 	hidmt_pointer_update(&ptr, &frame, 7510000, HIDMT_TAP_LEFT | HIDMT_TAP_RIGHT, &motion);
+	assert(!motion.tap);
 	frame.ncontacts = 0;
 	hidmt_pointer_update(&ptr, &frame, 7550000, HIDMT_TAP_LEFT | HIDMT_TAP_RIGHT, &motion);
 	assert(motion.tap && motion.tap_button == 4);
+	hidmt_pointer_update(&ptr, &frame, 7551000, HIDMT_TAP_LEFT | HIDMT_TAP_RIGHT, &motion);
+	assert(!motion.tap);
+	/* The other release order also yields exactly one right click. */
+	frame.ncontacts = 2;
+	frame.contacts[0] = (struct hidmt_contact){1000, 800, 2};
+	frame.contacts[1] = (struct hidmt_contact){1200, 800, 3};
+	hidmt_pointer_update(&ptr, &frame, 7560000, HIDMT_TAP_LEFT | HIDMT_TAP_RIGHT, &motion);
+	frame.ncontacts = 1;
+	hidmt_pointer_update(&ptr, &frame, 7570000, HIDMT_TAP_LEFT | HIDMT_TAP_RIGHT, &motion);
+	assert(!motion.tap);
+	frame.ncontacts = 0;
+	hidmt_pointer_update(&ptr, &frame, 7580000, HIDMT_TAP_LEFT | HIDMT_TAP_RIGHT, &motion);
+	assert(motion.tap && motion.tap_button == 4);
+	hidmt_pointer_update(&ptr, &frame, 7581000, HIDMT_TAP_LEFT | HIDMT_TAP_RIGHT, &motion);
+	assert(!motion.tap);
 	/* Three contacts are not a tap. */
 	frame.ncontacts = 3;
 	frame.contacts[0] = (struct hidmt_contact){1000, 800, 2};
