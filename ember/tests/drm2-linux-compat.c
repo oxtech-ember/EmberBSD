@@ -41,6 +41,7 @@
 #include <linux/mutex.h>
 #include <linux/rwsem.h>
 #include <linux/spinlock.h>
+#include <linux/xarray.h>
 #include <linux/math.h>
 #include <linux/minmax.h>
 #include <linux/sprintf.h>
@@ -667,6 +668,46 @@ test_kernel_lock_guards(void)
 }
 #endif
 
+#ifndef DRM2_COMPAT_HOST
+static void
+test_kernel_xarray(void)
+{
+	struct xarray xa;
+	unsigned long flags = 0xdead;
+	int item = 1;
+
+	xa_init_flags(&xa, GFP_KERNEL);
+
+	xa_lock(&xa);
+	CHECK(mutex_owned(&xa.xa_lock));
+	xa_unlock(&xa);
+	CHECK(!mutex_owned(&xa.xa_lock));
+	xa_lock_irq(&xa);
+	CHECK(mutex_owned(&xa.xa_lock));
+	xa_unlock_irq(&xa);
+	xa_lock_bh(&xa);
+	CHECK(mutex_owned(&xa.xa_lock));
+	xa_unlock_bh(&xa);
+	xa_lock_irqsave(&xa, flags);
+	CHECK(mutex_owned(&xa.xa_lock));
+	xa_unlock_irqrestore(&xa, flags);
+	CHECK(!mutex_owned(&xa.xa_lock));
+
+	/* The unlocked entry points still work after locked sections. */
+	/*
+	 * Known layer deviation, left as is: for a fresh key xa_store() returns
+	 * the stored datum, Linux returns the previous entry (NULL).  Only the
+	 * absence of an error is checked.
+	 */
+	CHECK(xa_err(xa_store(&xa, 5, &item, GFP_KERNEL)) == 0);
+	CHECK(xa_load(&xa, 5) == &item);
+	CHECK(xa_erase(&xa, 5) == &item);
+	CHECK(xa_load(&xa, 5) == NULL);
+
+	xa_destroy(&xa);
+}
+#endif
+
 static void
 test_harness(void)
 {
@@ -692,6 +733,7 @@ drm2_linux_compat_run(void)
 	test_kernel_forwarders();
 	test_kernel_misc();
 	test_kernel_lock_guards();
+	test_kernel_xarray();
 #endif
 #ifdef DRM2_COMPAT_SELFTEST_FAIL
 	test_selftest_fail();

@@ -66,6 +66,26 @@ xa_err(void *cookie)
 
 #define	XA_FLAGS_ALLOC	0
 
+/*
+ * Locking of the tree by the caller.  xa_lock is an IPL_VM spin mutex
+ * (see xa_init_flags), so the _irq, _bh and _irqsave forms are the same
+ * operation; flags is only set so that callers do not use it uninitialised.
+ */
+#define	xa_lock(XA)		mutex_enter(&(XA)->xa_lock)
+#define	xa_unlock(XA)		mutex_exit(&(XA)->xa_lock)
+#define	xa_lock_irq(XA)		xa_lock(XA)
+#define	xa_unlock_irq(XA)	xa_unlock(XA)
+#define	xa_lock_bh(XA)		xa_lock(XA)
+#define	xa_unlock_bh(XA)	xa_unlock(XA)
+#define	xa_lock_irqsave(XA, FLAGS) do {					      \
+	(FLAGS) = 0;							      \
+	xa_lock(XA);							      \
+} while (0)
+#define	xa_unlock_irqrestore(XA, FLAGS) do {				      \
+	(void)(FLAGS);							      \
+	xa_unlock(XA);							      \
+} while (0)
+
 #define	xa_alloc	linux_xa_alloc
 #define	xa_destroy	linux_xa_destroy
 #define	xa_erase	linux_xa_erase
