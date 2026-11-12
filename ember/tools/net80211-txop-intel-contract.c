@@ -105,6 +105,7 @@ enum { IWM_FW_CTXT_ACTION_STUB, IWM_FW_CTXT_ACTION_ADD,
 #define IWX_HT_TLC_MODE_HT 1
 #define IWX_HT_TLC_MODE_VHT 2
 #define IWX_HT_TLC_MODE_HE 3
+#define IWX_HT_TLC_MODE_EHT 4
 #define IWX_FW_CTXT_INVALID 0xff
 #define IWX_FW_CMD_VER_UNKNOWN 0xff
 #define IWX_STATION_ID 0
@@ -130,6 +131,8 @@ static uint8_t iwx_ht_he_color(const void *peer) { (void)peer; return 0; }
 static int iwx_ht_he_color_disabled(const void *peer)
 { (void)peer; return 0; }
 static void iwx_ht_he_pkt_ext(const void *peer, uint8_t ext[2][5][2])
+{ (void)peer; memset(ext, 7, 2 * 5 * 2); }
+static void iwx_ht_eht_pkt_ext(const void *peer, uint8_t ext[2][5][2])
 { (void)peer; memset(ext, 7, 2 * 5 * 2); }
 static struct model_mac saved_mac;
 static struct iwx_link_config_cmd saved_link;

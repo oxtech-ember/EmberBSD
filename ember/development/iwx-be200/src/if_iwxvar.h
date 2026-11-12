@@ -863,6 +863,7 @@ struct iwx_softc {
 	struct iwx_node *sc_fw_in;	/* owns the firmware contexts */
 	int sc_fw_assoc;	/* they are set up for an association */
 	int sc_11ax_disabled;	/* by the firmware for the current country */
+	int sc_11be_disabled;	/* the same for 11be */
 	int sc_ht_mode;		/* IWX_HT_MODE_* of this association */
 	uint32_t sc_bmiss_level;	/* beacon loss already acted on */
 	uint8_t sc_ht_buf[2][IWX_HT_ASSOC_MAX];

@@ -103,6 +103,27 @@ that fix has not run on hardware. Contracts: the state dispatcher and
 the owner of the contexts in `ember/tools/iwx-width-contract.sh`, the
 receive channel rule in `ember/tests/iwx-sae.sh`.
 
+New and **not yet run on hardware**: 802.11be (EHT) on 5 GHz, up to
+160 MHz, without MLO, punctured channels or 6 GHz, with `hw.iwx.ht=6`
+(80 MHz) or `7` (160 MHz). Following Linux iwlwifi/iwlmld: the
+association request carries an EHT Capabilities element right after the
+HE one (the bytes Linux sends for a two-antenna FM radio on 5 GHz, less
+EHT OM control, since our HE element has no +HTC-HE) and no ESS bit; the
+AP's EHT Capabilities and Operation are parsed, and EHT is used when
+both are there, HE is, the channel is 80 MHz or wider, the AP's EHT
+layout is not narrower or 320 MHz, no subchannel is punctured and its
+basic EHT-MCS set is within reach. Then the MAC context gets
+`eht_support` (in the version-3/4 byte layout of this firmware), the
+station the EHT packet extension and, in EHT mode only, the HE and EHT
+A-MPDU exponents,
+and the rate scaling EHT mode with MCS 0-13, LDPC and the extra EHT-LTF.
+The link gets no EHT parameters (none exist there in this firmware's
+version); the PHY context keeps no puncturing. Only with MAC_CONFIG
+version 2-4 and TLC_MNG_CONFIG version 4, and not where the firmware
+forbids 11be in the current country (bit 8 of the `MCC_UPDATE`
+capability word). dmesg says `802.11be`, or why EHT was offered but not
+used. Contract: `test_eht()` in `ember/tools/iwx-ht-contract.c`.
+
 New and **not yet run on hardware**, found on the MSI: net80211 can
 leave a BSS without the driver. Before a scan it sets its own state back
 by hand (`ieee80211_setupscan()`). After a deauthentication by the AP
@@ -417,7 +438,7 @@ Boot setup used on the MSI:
 | WPA | `wpa_supplicant=YES`, `wpa_supplicant_flags="-B -s -i iwx0 -c /etc/wpa_supplicant.iwx0.conf"` |
 | DHCP | `dhcpcd_flags="-qM rge0 iwx0"` |
 | Country | `modload -s mcc=XX` (default `ZZ`); replaced by the country the firmware detects |
-| HT/VHT/HE | `modload -i ht=N` or, at run time, `sysctl -w hw.iwx.ht=N`: 0 legacy, 1 HT, 2 HT+VHT up to 80 MHz (default), 3 HT+VHT up to 160 MHz, 4 with HE up to 80 MHz, 5 HE up to 160 MHz (4 and above not yet run on hardware). A sysctl change applies from the next association: `ifconfig iwx0 down`, then `up`. For a module loaded by the boot loader, put `hw.iwx.ht=N` in `/etc/sysctl.conf`. A module loaded with `ht=0` attaches without QoS and accepts only 0; mode 0 chosen by sysctl keeps WMM and only stops offering HT |
+| HT/VHT/HE | `modload -i ht=N` or, at run time, `sysctl -w hw.iwx.ht=N`: 0 legacy, 1 HT, 2 HT+VHT up to 80 MHz (default), 3 HT+VHT up to 160 MHz, 4 with HE up to 80 MHz, 5 HE up to 160 MHz, 6 with EHT up to 80 MHz, 7 EHT up to 160 MHz (6 and 7 not yet run on hardware). A sysctl change applies from the next association: `ifconfig iwx0 down`, then `up`. For a module loaded by the boot loader, put `hw.iwx.ht=N` in `/etc/sysctl.conf`. A module loaded with `ht=0` attaches without QoS and accepts only 0; mode 0 chosen by sysctl keeps WMM and only stops offering HT |
 
 Bring-up fixes on NetBSD (commits 579e0ec..bcc5a61): raw `CSR_HW_REV` as
 prph scratch `mac_id` (the GL ROM ignored the converted value), 94

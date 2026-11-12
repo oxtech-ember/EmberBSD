@@ -177,6 +177,8 @@ CTASSERT(IWX_HT_TLC_MODE_NON_HT == IWX_TLC_MNG_MODE_NON_HT);
 CTASSERT(IWX_HT_TLC_MODE_HT == IWX_TLC_MNG_MODE_HT);
 CTASSERT(IWX_HT_TLC_MODE_VHT == IWX_TLC_MNG_MODE_VHT);
 CTASSERT(IWX_HT_TLC_MODE_HE == IWX_TLC_MNG_MODE_HE);
+CTASSERT(IWX_HT_TLC_MODE_EHT == IWX_TLC_MNG_MODE_EHT);
+CTASSERT(IWX_HT_TLC_EHT_EXTRA_LTF == IWX_TLC_MNG_CFG_FLAGS_EHT_EXTRA_LTF_MSK);
 CTASSERT(IWX_HT_TLC_STBC == IWX_TLC_MNG_CFG_FLAGS_STBC_MSK);
 CTASSERT(IWX_HT_TLC_LDPC == IWX_TLC_MNG_CFG_FLAGS_LDPC_MSK);
 CTASSERT(IWX_HT_TLC_HE_DCM_NSS_1 == IWX_TLC_MNG_CFG_FLAGS_HE_DCM_NSS_1_MSK);
@@ -200,8 +202,9 @@ CTASSERT(IWX_HT_MIN_DBM == IWX_MIN_DBM);
 /*
  * Operating mode, IWX_HT_MODE_*.  0: legacy rates only; 1: HT (802.11n);
  * 2: HT and VHT (802.11ac) up to 80 MHz; 3: the same up to 160 MHz;
- * 4: with HE (802.11ax) up to 80 MHz; 5: HE up to 160 MHz.  4 and above
- * have not yet run on hardware.
+ * 4: with HE (802.11ax) up to 80 MHz; 5: HE up to 160 MHz; 6: with EHT
+ * (802.11be) up to 80 MHz; 7: EHT up to 160 MHz.  6 and 7 have not yet
+ * run on hardware.
  * Set by the module property "ht" (modload -i ht=N) and, at run time, by
  * sysctl hw.iwx.ht.  A device takes the value over when it builds an
  * association request, so a change waits for the next association.
@@ -377,6 +380,7 @@ int	iwx_schedule_session_protection(struct iwx_softc *, struct iwx_node *,
 void	iwx_unprotect_session(struct iwx_softc *, struct iwx_node *);
 void	iwx_init_channel_map(struct iwx_softc *, uint16_t *, uint32_t *, int);
 int	iwx_mimo_enabled(struct iwx_softc *);
+int	iwx_eht_cmds_known(struct iwx_softc *);
 void	iwx_mac_ctxt_task(void *);
 void	iwx_phy_ctxt_task(void *);
 #if defined(IWX_HT)
@@ -3380,6 +3384,21 @@ iwx_mimo_enabled(struct iwx_softc *sc)
 {
 	/* OpenBSD also honours IEEE80211_F_NOMIMO; NetBSD has no such flag. */
 	return !sc->sc_nvm.sku_cap_mimo_disable;
+}
+
+/*
+ * Whether the firmware's MAC and rate scaling commands are versions whose
+ * EHT fields this driver knows: MAC_CONFIG 2 to 4, TLC_MNG_CONFIG 4.
+ */
+int
+iwx_eht_cmds_known(struct iwx_softc *sc)
+{
+	int mac = iwx_lookup_cmd_ver(sc, IWX_MAC_CONF_GROUP,
+	    IWX_MAC_CONFIG_CMD);
+
+	return mac >= 2 && mac <= 4 &&
+	    iwx_lookup_cmd_ver(sc, IWX_DATA_PATH_GROUP,
+	    IWX_TLC_MNG_CONFIG_CMD) == 4;
 }
 #if defined(IWX_HT) /* iwx_setup_ht_rates */
 
@@ -7607,13 +7626,24 @@ iwx_mld_add_sta_cmd(struct iwx_softc *sc, struct iwx_node *in, int update)
 		else
 			sta_cmd.tx_ampdu_max_size =
 			    htole32(sc->sc_bss_ht.ampdu_param & 0x3);
-		if (in->in_htt.mode == IWX_HT_TLC_MODE_HE) {
-			/*
-			 * Packet extension as the AP asks for it.  No HT
-			 * control field features: we did not offer +HTC-HE.
-			 */
+		if (in->in_htt.mode == IWX_HT_TLC_MODE_EHT) {
+			uint32_t agg = ((sc->sc_bss_ht.vhtcaps >> 23) & 0x7) +
+			    ((sc->sc_bss_ht.he_mac[3] >> 3) & 0x3) +
+			    (sc->sc_bss_ht.eht_mac[1] & 0x1);
+
+			/* As Linux: the HE and EHT A-MPDU exponents add up. */
+			sta_cmd.tx_ampdu_max_size = htole32(agg < 9 ? agg : 9);
+			iwx_ht_eht_pkt_ext(&sc->sc_bss_ht,
+			    sta_cmd.pkt_ext.pkt_ext_qam_th);
+		} else if (in->in_htt.mode == IWX_HT_TLC_MODE_HE)
 			iwx_ht_he_pkt_ext(&sc->sc_bss_ht,
 			    sta_cmd.pkt_ext.pkt_ext_qam_th);
+		if (in->in_htt.mode >= IWX_HT_TLC_MODE_HE) {
+			/*
+			 * Packet extension as the AP asks for it (above).  No
+			 * HT control field features: we did not offer
+			 * +HTC-HE.
+			 */
 			sta_cmd.htc_flags = 0;
 			if (sc->sc_bss_ht.he_mac[2] & 0x80)
 				sta_cmd.ack_enabled = htole32(1);
@@ -8629,10 +8659,23 @@ iwx_mld_mac_ctxt_cmd(struct iwx_softc *sc, struct iwx_node *in,
 	IEEE80211_ADDR_COPY(cmd.local_mld_addr, ic->ic_myaddr);
 	cmd.client.assoc_id = htole32(IEEE80211_AID(ni->ni_associd));
 	cmd.client.is_assoc = assoc ? 1 : 0;
-	if (assoc && in->in_ht && in->in_htt.mode == IWX_HT_TLC_MODE_HE) {
+	if (assoc && in->in_ht && in->in_htt.mode >= IWX_HT_TLC_MODE_HE) {
 		/* As Linux: HE once associated; no ACK-enabled A-MPDUs. */
 		cmd.he_support = htole16(1);
 		cmd.nic_not_ack_enabled = htole32(1);
+	}
+	if (assoc && in->in_ht && in->in_htt.mode == IWX_HT_TLC_MODE_EHT) {
+		/*
+		 * Version 2 has a 32-bit eht_support after two 16-bit
+		 * fields; versions 3 and 4 have one byte each for HE, HE AP,
+		 * EHT and UHR there instead, so EHT is the low byte of
+		 * he_ap_support and the 32-bit field must stay zero.
+		 */
+		if (iwx_lookup_cmd_ver(sc, IWX_MAC_CONF_GROUP,
+		    IWX_MAC_CONFIG_CMD) == 2)
+			cmd.eht_support = htole32(1);
+		else
+			cmd.he_ap_support = htole16(1);
 	}
 
 	cmd.filter_flags = htole32(IWX_MAC_CFG_FILTER_ACCEPT_GRP);
@@ -9356,6 +9399,14 @@ iwx_ht_local(struct iwx_softc *sc, struct ieee80211_channel *c,
 	 */
 	loc->he = loc->he && sc->sc_use_mld_api &&
 	    sc->sc_nvm.sku_cap_11ax_enable && !sc->sc_11ax_disabled;
+	/*
+	 * EHT on top of HE, unless the firmware forbids 11be in the
+	 * current country.  As Linux, no NVM bit for it.  Only with the
+	 * MAC and rate scaling command versions whose EHT fields are
+	 * known here.
+	 */
+	loc->eht = loc->eht && loc->he && !sc->sc_11be_disabled &&
+	    iwx_eht_cmds_known(sc);
 	loc->allow160 = (fl & IWX_NVM_CHANNEL_160MHZ) != 0;
 }
 
@@ -9884,10 +9935,11 @@ iwx_dbg_report(struct iwx_softc *sc)
 	    device_xname(sc->sc_dev), sc->sc_dbg_ba_baid, sc->sc_dbg_ba_rx,
 	    sc->sc_dbg_ba_rel, sc->sc_ba_sessions);
 	sc->sc_dbg_ba_baid = sc->sc_dbg_ba_rx = sc->sc_dbg_ba_rel = 0;
-	printf("%s: rx %u (cck %u ofdm %u ht %u vht %u he %u) last %s\n",
-	    device_xname(sc->sc_dev), sc->sc_dbg_rx_frames,
+	printf("%s: rx %u (cck %u ofdm %u ht %u vht %u he %u eht %u) "
+	    "last %s\n", device_xname(sc->sc_dev), sc->sc_dbg_rx_frames,
 	    sc->sc_dbg_rx_mod[0], sc->sc_dbg_rx_mod[1], sc->sc_dbg_rx_mod[2],
-	    sc->sc_dbg_rx_mod[3], sc->sc_dbg_rx_mod[4], rxr);
+	    sc->sc_dbg_rx_mod[3], sc->sc_dbg_rx_mod[4], sc->sc_dbg_rx_mod[5],
+	    rxr);
 	n = MIN(sc->sc_dbg_tx_nstatus, nitems(sc->sc_dbg_tx_status));
 	if (n > 0) {
 		printf("%s: tx failure status:", device_xname(sc->sc_dev));
@@ -10294,17 +10346,36 @@ iwx_ht_setup_node(struct iwx_softc *sc, struct iwx_node *in)
 	in->in_ht = 1;
 	printf("%s: %s, %d MHz, %d spatial stream%s%s\n",
 	    device_xname(sc->sc_dev),
+	    in->in_htt.mode == IWX_HT_TLC_MODE_EHT ? "802.11be" :
 	    in->in_htt.mode == IWX_HT_TLC_MODE_HE ? "802.11ax" :
 	    in->in_htt.mode == IWX_HT_TLC_MODE_VHT ? "802.11ac" : "802.11n",
 	    20 << in->in_htc.width, in->in_htt.rates[1] ? 2 : 1,
 	    in->in_htt.rates[1] ? "s" : "",
 	    (ni->ni_flags & IEEE80211_NODE_QOS) ? "" : ", no WMM");
-	if (loc.he && in->in_htt.mode != IWX_HT_TLC_MODE_HE)
+	if (loc.he && in->in_htt.mode < IWX_HT_TLC_MODE_HE)
 		printf("%s: HE offered but not used: AP HE capabilities %s, "
 		    "operation %s, basic set 0x%04x\n",
 		    device_xname(sc->sc_dev),
 		    sc->sc_bss_ht.he ? "yes" : "no",
 		    sc->sc_bss_ht.heop ? "yes" : "no", sc->sc_bss_ht.he_basic);
+	if (sc->sc_ht_mode >= IWX_HT_MODE_EHT80 && !loc.eht)
+		printf("%s: EHT not offered: %s\n", device_xname(sc->sc_dev),
+		    !loc.he ? "no HE" : sc->sc_11be_disabled ?
+		    "the firmware forbids 11be in this country" :
+		    !iwx_eht_cmds_known(sc) ?
+		    "unknown MAC or rate scaling command version" :
+		    "not on this band");
+	if (loc.eht && in->in_htt.mode != IWX_HT_TLC_MODE_EHT)
+		printf("%s: EHT offered but not used: AP EHT capabilities %s, "
+		    "operation %s (params 0x%02x, width %u, punctured "
+		    "0x%04x, basic %02x %02x %02x %02x), our width %u\n",
+		    device_xname(sc->sc_dev),
+		    sc->sc_bss_ht.eht ? "yes" : "no",
+		    sc->sc_bss_ht.ehtop ? "yes" : "no",
+		    sc->sc_bss_ht.ehtop_params, sc->sc_bss_ht.ehtop_width,
+		    sc->sc_bss_ht.ehtop_punct, sc->sc_bss_ht.eht_basic[0],
+		    sc->sc_bss_ht.eht_basic[1], sc->sc_bss_ht.eht_basic[2],
+		    sc->sc_bss_ht.eht_basic[3], in->in_htc.width);
 	/* Why the width is what it is: the AP's offer and the local limits. */
 	printf("%s: AP HT40 %s VHT %s width %u centres %u/%u/%u, 160 MHz "
 	    "capability %u/%u, channel %u allows 40 MHz %s 80 MHz %s "
@@ -10922,8 +10993,11 @@ iwx_run(struct iwx_softc *sc)
 		return err;
 	}
 
-	/* The link learns the HE parameters once the MAC is in HE mode. */
-	if (in->in_ht && in->in_htt.mode == IWX_HT_TLC_MODE_HE) {
+	/*
+	 * The link learns the HE parameters once the MAC is in HE mode;
+	 * EHT has none of its own there.
+	 */
+	if (in->in_ht && in->in_htt.mode >= IWX_HT_TLC_MODE_HE) {
 		err = iwx_mld_link_modify(sc, in,
 		    IWX_LINK_CONTEXT_MODIFY_HE_PARAMS |
 		    IWX_LINK_CONTEXT_MODIFY_BSS_COLOR_DISABLE, 1);
@@ -12133,6 +12207,8 @@ iwx_send_update_mcc_cmd(struct iwx_softc *sc, const char *alpha2)
 			    le32toh(resp->cap), le16toh(resp->geo_info), n, n6);
 			sc->sc_11ax_disabled = (le32toh(resp->cap) &
 			    IWX_MCC_CAP_V8_11AX_DISABLED) != 0;
+			sc->sc_11be_disabled = (le32toh(resp->cap) &
+			    IWX_MCC_CAP_V8_11BE_DISABLED) != 0;
 		}
 		/* Update channel map and our scan configuration. */
 		iwx_init_channel_map(sc, NULL, resp->channels,
@@ -15248,7 +15324,7 @@ iwx_sysctl_setup(void)
 		    CTLFLAG_READWRITE, CTLTYPE_INT, "ht",
 		    SYSCTL_DESCR("Operating mode from the next association: "
 		    "0 legacy, 1 HT, 2 VHT 80 MHz, 3 VHT 160 MHz, "
-		    "4 HE 80 MHz, 5 HE 160 MHz"),
+		    "4 HE 80 MHz, 5 HE 160 MHz, 6 EHT 80 MHz, 7 EHT 160 MHz"),
 		    iwx_sysctl_ht, 0, NULL, 0, CTL_CREATE, CTL_EOL);
 	if (error != 0)
 		printf("if_iwx: cannot create sysctl hw.iwx.ht (error %d); "

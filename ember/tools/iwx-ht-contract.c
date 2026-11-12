@@ -16,8 +16,8 @@ static unsigned int checks, failures;
 #define CHECK(c) do { checks++; if (!(c)) { failures++; \
     fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #c); } } while (0)
 
-static const struct iwx_ht_local loc5 = { 1, 2, 1, 1, 1, 0, 0, 0 };
-static const struct iwx_ht_local loc2 = { 0, 2, 1, 1, 1, 0, 0, 0 };
+static const struct iwx_ht_local loc5 = { 1, 2, 1, 1, 1, 0, 0, 0, 0 };
+static const struct iwx_ht_local loc2 = { 0, 2, 1, 1, 1, 0, 0, 0, 0 };
 
 /* Find element `id' in out[fixed..len); returns its offset or -1. */
 static int
@@ -882,19 +882,21 @@ test_scan(void)
 static void
 test_mode(void)
 {
-	static const struct { int vht, vht160, he; } want[] = {
-		[IWX_HT_MODE_LEGACY] = { 0, 0, 0 },
-		[IWX_HT_MODE_HT] = { 0, 0, 0 },
-		[IWX_HT_MODE_VHT80] = { 1, 0, 0 },
-		[IWX_HT_MODE_VHT160] = { 1, 1, 0 },
-		[IWX_HT_MODE_HE80] = { 1, 0, 1 },
-		[IWX_HT_MODE_HE160] = { 1, 1, 1 },
+	static const struct { int vht, vht160, he, eht; } want[] = {
+		[IWX_HT_MODE_LEGACY] = { 0, 0, 0, 0 },
+		[IWX_HT_MODE_HT] = { 0, 0, 0, 0 },
+		[IWX_HT_MODE_VHT80] = { 1, 0, 0, 0 },
+		[IWX_HT_MODE_VHT160] = { 1, 1, 0, 0 },
+		[IWX_HT_MODE_HE80] = { 1, 0, 1, 0 },
+		[IWX_HT_MODE_HE160] = { 1, 1, 1, 0 },
+		[IWX_HT_MODE_EHT80] = { 1, 0, 1, 1 },
+		[IWX_HT_MODE_EHT160] = { 1, 1, 1, 1 },
 	};
 	struct iwx_ht_local loc;
 	int m;
 
 	/* Only the documented modes exist. */
-	CHECK(IWX_HT_MODE_MAX == IWX_HT_MODE_HE160);
+	CHECK(IWX_HT_MODE_MAX == IWX_HT_MODE_EHT160);
 	CHECK(!iwx_ht_mode_ok(-1, 1));
 	CHECK(!iwx_ht_mode_ok(IWX_HT_MODE_MAX + 1, 1));
 	for (m = 0; m <= IWX_HT_MODE_MAX; m++)
@@ -907,7 +909,7 @@ test_mode(void)
 	/* What each mode offers; the other fields belong to the caller. */
 	for (m = 0; m <= IWX_HT_MODE_MAX; m++) {
 		memset(&loc, 0, sizeof(loc));
-		loc.vht = loc.vht160 = loc.he = !want[m].vht;
+		loc.vht = loc.vht160 = loc.he = loc.eht = !want[m].vht;
 		loc.band5 = 1;
 		loc.nss = 2;
 		loc.allow40 = loc.allow80 = loc.allow160 = 1;
@@ -915,6 +917,7 @@ test_mode(void)
 		CHECK(loc.vht == want[m].vht);
 		CHECK(loc.vht160 == want[m].vht160);
 		CHECK(loc.he == want[m].he);
+		CHECK(loc.eht == want[m].eht);
 		CHECK(loc.band5 == 1 && loc.nss == 2 && loc.allow40 == 1 &&
 		    loc.allow80 == 1 && loc.allow160 == 1);
 	}
@@ -1104,6 +1107,369 @@ he_resp(uint8_t *b, int with_cap, int with_op)
 		n += sizeof(ap_heop);
 	}
 	return n;
+}
+
+/* 802.11be (EHT) on 5 GHz, up to 160 MHz, without MLO. */
+static const uint8_t ap_ehtcap[] = { 255, 18, 108,
+    0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x60, 0x00, 0x00, 0x00,
+    0x22, 0x22, 0x22, 0x22, 0x22, 0x11 };
+static const uint8_t ap_ehtop[] = { 255, 9, 106, 0x01,
+    0x11, 0x11, 0x11, 0x11, 0x03, 58, 50 };
+static const uint8_t ap_ehtop_punct[] = { 255, 11, 106, 0x03,
+    0x11, 0x11, 0x11, 0x11, 0x03, 58, 50, 0x80, 0x00 };
+
+static size_t
+eht_resp(uint8_t *b, const uint8_t *cap, size_t caplen, const uint8_t *op,
+    size_t oplen, int cap_first)
+{
+	size_t n = assoc_resp(b, 56, 0x07, 1, 1, 58, 50);
+
+	if (cap_first && cap) {
+		memcpy(b + n, cap, caplen);
+		n += caplen;
+	}
+	memcpy(b + n, ap_hecap, sizeof(ap_hecap));
+	n += sizeof(ap_hecap);
+	memcpy(b + n, ap_heop, sizeof(ap_heop));
+	n += sizeof(ap_heop);
+	if (!cap_first && cap) {
+		memcpy(b + n, cap, caplen);
+		n += caplen;
+	}
+	if (op) {
+		memcpy(b + n, op, oplen);
+		n += oplen;
+	}
+	return n;
+}
+
+static void
+test_eht(void)
+{
+	/* As Linux for a 2x2 FM radio on 5 GHz, without OM control. */
+	static const uint8_t own160[] = { 255, 18, 108, 0x00, 0x00,
+	    0xcc, 0x1f, 0x09, 0x20, 0x18, 0x66, 0x00, 0x00, 0x03,
+	    0x22, 0x22, 0x22, 0x22, 0x22, 0x22 };
+	static const uint8_t own80[] = { 255, 15, 108, 0x00, 0x00,
+	    0xcc, 0x03, 0x01, 0x20, 0x18, 0x66, 0x00, 0x00, 0x03,
+	    0x22, 0x22, 0x22 };
+	static const uint8_t own1ss160[] = { 255, 18, 108, 0x00, 0x00,
+	    0xcc, 0x1f, 0x00, 0x20, 0x08, 0x66, 0x00, 0x00, 0x03,
+	    0x11, 0x11, 0x11, 0x11, 0x11, 0x11 };
+	static const uint8_t own1ss80[] = { 255, 15, 108, 0x00, 0x00,
+	    0xcc, 0x03, 0x00, 0x20, 0x08, 0x66, 0x00, 0x00, 0x03,
+	    0x11, 0x11, 0x11 };
+	uint8_t cut[sizeof(ap_ehtcap)], op[sizeof(ap_ehtop)];
+	struct iwx_ht_local leht = loc5, l;
+	struct iwx_ht_peer p;
+	struct iwx_ht_chan c;
+	struct iwx_ht_tlc t;
+	uint8_t b[512], out[512], in[256], ext[2][5][2];
+	size_t n, len;
+	int he, eht, wme, i, j;
+
+	leht.he = leht.eht = 1;
+	leht.vht160 = leht.allow160 = 1;
+
+	/* Our element: the 160 MHz parts only with 160 MHz. */
+	CHECK(iwx_ht_put_ehtcap(out, &loc5) == 0);
+	CHECK(iwx_ht_put_ehtcap(out, &leht) == sizeof(own160));
+	CHECK(memcmp(out, own160, sizeof(own160)) == 0);
+	l = leht;
+	l.vht160 = 0;
+	CHECK(iwx_ht_put_ehtcap(out, &l) == sizeof(own80));
+	CHECK(memcmp(out, own80, sizeof(own80)) == 0);
+	l.vht160 = 1;
+	l.allow160 = 0;
+	CHECK(iwx_ht_put_ehtcap(out, &l) == sizeof(own80));
+	l = leht;
+	l.nss = 1;
+	CHECK(iwx_ht_put_ehtcap(out, &l) == sizeof(own1ss160));
+	CHECK(memcmp(out, own1ss160, sizeof(own1ss160)) == 0);
+	l.vht160 = 0;
+	CHECK(iwx_ht_put_ehtcap(out, &l) == sizeof(own1ss80));
+	CHECK(memcmp(out, own1ss80, sizeof(own1ss80)) == 0);
+	/* EHT only on top of HE, VHT and the 5 GHz band. */
+	l = leht;
+	l.he = 0;
+	CHECK(iwx_ht_put_ehtcap(out, &l) == 0);
+	l = leht;
+	l.band5 = 0;
+	CHECK(iwx_ht_put_ehtcap(out, &l) == 0);
+
+	/* The request: EHT right after HE, and no ESS bit, as Linux. */
+	len = assoc_req(in, 0, 0);
+	n = iwx_ht_rewrite_assoc(in, len, 4, &leht, out, sizeof(out));
+	CHECK(n > len);
+	he = find_ie(out, n, 4, IWX_HT_EID_EXT);
+	CHECK(he > 0 && out[he + 2] == IWX_HE_EXT_CAP);
+	eht = he + 2 + out[he + 1];
+	CHECK(out[eht] == IWX_HT_EID_EXT && out[eht + 2] == IWX_EHT_EXT_CAP);
+	CHECK(memcmp(out + eht, own160, sizeof(own160)) == 0);
+	wme = find_ie(out, n, 4, 221);
+	CHECK(eht < wme);
+	CHECK((out[0] & 0x01) == 0 && out[1] == in[1]);
+	CHECK(iwx_ht_ies_valid(out + 4, n - 4));
+	/* Without EHT the ESS bit stays. */
+	l = leht;
+	l.eht = 0;
+	n = iwx_ht_rewrite_assoc(in, len, 4, &l, out, sizeof(out));
+	CHECK(out[0] == in[0]);
+	/* An EHT element already in the request is replaced. */
+	memcpy(in + len, own80, sizeof(own80));
+	CHECK(iwx_ht_rewrite_assoc(in, len + sizeof(own80), 4, &leht, out,
+	    sizeof(out)) == iwx_ht_rewrite_assoc(in, len, 4, &leht, b,
+	    sizeof(b)));
+
+	/* The AP's answer, with EHT before or after HE. */
+	for (i = 0; i < 2; i++) {
+		n = eht_resp(b, ap_ehtcap, sizeof(ap_ehtcap), ap_ehtop,
+		    sizeof(ap_ehtop), i);
+		CHECK(iwx_ht_parse(b, n, 6, &p) == 0);
+		CHECK(p.he && p.heop && p.eht && p.ehtop);
+		CHECK(p.eht_phy[5] == 0x60);
+		CHECK(p.eht_mcs80[0] == 0x22 && p.eht_mcs80[2] == 0x22);
+		CHECK(p.eht_mcs160[1] == 0x22 && p.eht_mcs160[2] == 0x11);
+		CHECK(p.ehtop_params == 0x01 && p.eht_basic[0] == 0x11);
+		CHECK(p.ehtop_width == 3 && p.ehtop_ccfs0 == 58 &&
+		    p.ehtop_ccfs1 == 50 && p.ehtop_punct == 0);
+	}
+	/* A cut capabilities element is no EHT. */
+	memcpy(cut, ap_ehtcap, sizeof(cut));
+	cut[1] = 14;
+	n = eht_resp(b, cut, 16, ap_ehtop, sizeof(ap_ehtop), 0);
+	CHECK(iwx_ht_parse(b, n, 6, &p) == 0);
+	CHECK(p.he && !p.eht && p.ehtop);
+	/* Operation information announced but cut. */
+	memcpy(op, ap_ehtop, sizeof(op));
+	op[1] = 6;
+	n = eht_resp(b, ap_ehtcap, sizeof(ap_ehtcap), op, 8, 0);
+	CHECK(iwx_ht_parse(b, n, 6, &p) == 0);
+	CHECK(p.eht && !p.ehtop);
+	/* Punctured subchannels. */
+	n = eht_resp(b, ap_ehtcap, sizeof(ap_ehtcap), ap_ehtop_punct,
+	    sizeof(ap_ehtop_punct), 0);
+	CHECK(iwx_ht_parse(b, n, 6, &p) == 0);
+	CHECK(p.ehtop && p.ehtop_params == 0x03 && p.ehtop_punct == 0x0080);
+	/* An AP with HE phy0 0x08 alone has one block, read as 80 MHz. */
+	{
+		uint8_t hec[sizeof(ap_hecap)];
+		static const uint8_t one[] = { 255, 15, 108, 0x00, 0x00,
+		    0x00, 0x00, 0x00, 0x00, 0x00, 0x60, 0x00, 0x00, 0x00,
+		    0x22, 0x21, 0x11 };
+
+		memcpy(hec, ap_hecap, sizeof(hec));
+		hec[9] = 0x08;		/* HE phy0: 160 MHz, not 40/80 */
+		n = assoc_resp(b, 56, 0x07, 1, 1, 58, 50);
+		memcpy(b + n, hec, sizeof(hec));
+		n += sizeof(hec);
+		memcpy(b + n, ap_heop, sizeof(ap_heop));
+		n += sizeof(ap_heop);
+		memcpy(b + n, one, sizeof(one));
+		n += sizeof(one);
+		CHECK(iwx_ht_parse(b, n, 6, &p) == 0);
+		CHECK(p.eht && p.eht_mcs80[1] == 0x21);
+		CHECK(p.eht_mcs160[0] == 0 && p.eht_mcs160[2] == 0);
+	}
+	/* EHT without HE is not taken. */
+	n = assoc_resp(b, 56, 0x07, 1, 1, 58, 50);
+	memcpy(b + n, ap_ehtcap, sizeof(ap_ehtcap));
+	n += sizeof(ap_ehtcap);
+	memcpy(b + n, ap_ehtop, sizeof(ap_ehtop));
+	n += sizeof(ap_ehtop);
+	CHECK(iwx_ht_parse(b, n, 6, &p) == 0);
+	CHECK(!p.he && !p.eht && !p.ehtop);
+
+	/* When EHT is used. */
+	n = eht_resp(b, ap_ehtcap, sizeof(ap_ehtcap), ap_ehtop,
+	    sizeof(ap_ehtop), 0);
+	CHECK(iwx_ht_parse(b, n, 6, &p) == 0);
+	/* This AP's VHT capabilities give 80 MHz; EHT works there too. */
+	iwx_ht_chan(&p, &leht, 56, &c);
+	CHECK(c.width == IWX_HT_WIDTH_80);
+	CHECK(iwx_ht_eht_usable(&p, &leht, &c));
+	/* The rules below on a 160 MHz layout. */
+	c.width = IWX_HT_WIDTH_160;
+	CHECK(iwx_ht_eht_usable(&p, &leht, &c));
+	l = leht;
+	l.eht = 0;
+	CHECK(!iwx_ht_eht_usable(&p, &l, &c));
+	l = leht;
+	l.he = 0;
+	CHECK(!iwx_ht_eht_usable(&p, &l, &c));
+	{
+		struct iwx_ht_peer q = p;
+		struct iwx_ht_chan c40 = c;
+
+		/* Not on 20 or 40 MHz. */
+		c40.width = IWX_HT_WIDTH_40;
+		CHECK(!iwx_ht_eht_usable(&q, &leht, &c40));
+		/* Not with punctured subchannels. */
+		q.ehtop_params |= 0x02;
+		q.ehtop_punct = 0x0001;
+		CHECK(!iwx_ht_eht_usable(&q, &leht, &c));
+		q.ehtop_punct = 0;
+		CHECK(iwx_ht_eht_usable(&q, &leht, &c));
+		/* Not 320 MHz, nor narrower than the HT/VHT/HE layout. */
+		q = p;
+		q.ehtop_width = 4;
+		CHECK(!iwx_ht_eht_usable(&q, &leht, &c));
+		q.ehtop_width = 2;
+		CHECK(!iwx_ht_eht_usable(&q, &leht, &c));
+		/* A wider EHT layout around ours is fine. */
+		c40 = c;
+		c40.width = IWX_HT_WIDTH_80;
+		q.ehtop_width = 3;
+		CHECK(iwx_ht_eht_usable(&q, &leht, &c40));
+		/* Without operation information the HT/VHT layout holds. */
+		q = p;
+		q.ehtop_params = 0;
+		CHECK(iwx_ht_eht_usable(&q, &leht, &c));
+		/* The basic EHT-MCS and NSS set must be within reach. */
+		q = p;
+		q.eht_basic[3] = 0x22;
+		CHECK(iwx_ht_eht_usable(&q, &leht, &c));
+		q.eht_basic[3] = 0x33;
+		CHECK(!iwx_ht_eht_usable(&q, &leht, &c));
+		l = leht;
+		l.nss = 1;
+		q.eht_basic[3] = 0x22;
+		CHECK(!iwx_ht_eht_usable(&q, &l, &c));
+		q.eht_basic[3] = 0x11;
+		CHECK(iwx_ht_eht_usable(&q, &l, &c));
+		/* Both elements are needed. */
+		q = p;
+		q.ehtop = 0;
+		CHECK(!iwx_ht_eht_usable(&q, &leht, &c));
+		q = p;
+		q.eht = 0;
+		CHECK(!iwx_ht_eht_usable(&q, &leht, &c));
+	}
+
+	/* Rate scaling: EHT mode, MCS 0-13 where the AP receives them. */
+	iwx_ht_tlc(&p, &leht, &c, &t);
+	CHECK(t.mode == IWX_HT_TLC_MODE_EHT);
+	CHECK(t.flags == (IWX_HT_TLC_LDPC | IWX_HT_TLC_EHT_EXTRA_LTF));
+	CHECK(t.sgi == 0 && t.max_mpdu_len == 3895);
+	CHECK(t.rates[0] == 0x3fff && t.rates[1] == 0x3fff);
+	CHECK(t.rates160[0] == 0x3fff && t.rates160[1] == 0x0fff);
+	CHECK(t.width == IWX_HT_WIDTH_160);
+	{
+		struct iwx_ht_peer q = p;
+
+		/* No MCS 12-13 from the AP; no extra LTF. */
+		q.eht_mcs80[2] = 0x00;
+		q.eht_phy[5] = 0x20;
+		iwx_ht_tlc(&q, &leht, &c, &t);
+		CHECK(t.rates[0] == 0x0fff && t.rates[1] == 0x0fff);
+		CHECK(t.flags == IWX_HT_TLC_LDPC);
+		/* One stream here. */
+		l = leht;
+		l.nss = 1;
+		q = p;
+		q.eht_basic[0] = q.eht_basic[1] = q.eht_basic[2] =
+		    q.eht_basic[3] = 0x11;
+		iwx_ht_tlc(&q, &l, &c, &t);
+		CHECK(t.mode == IWX_HT_TLC_MODE_EHT);
+		CHECK(t.rates[0] == 0x3fff && t.rates[1] == 0);
+		CHECK(t.rates160[1] == 0);
+		/* Not usable: back to HE. */
+		q = p;
+		q.ehtop_width = 4;
+		iwx_ht_tlc(&q, &leht, &c, &t);
+		CHECK(t.mode == IWX_HT_TLC_MODE_HE);
+		/* At 80 MHz the 160 MHz rates stay empty. */
+		l = leht;
+		l.vht160 = 0;
+		iwx_ht_chan(&p, &l, 56, &c);
+		CHECK(c.width == IWX_HT_WIDTH_80);
+		iwx_ht_tlc(&p, &l, &c, &t);
+		CHECK(t.mode == IWX_HT_TLC_MODE_EHT);
+		CHECK(t.rates160[0] == 0 && t.rates160[1] == 0);
+	}
+	CHECK(iwx_ht_media(IWX_HT_TLC_MODE_EHT, 1) ==
+	    iwx_ht_media(IWX_HT_TLC_MODE_HE, 1));
+
+	/* Packet extension: nominal padding of 16 us without thresholds. */
+	{
+		struct iwx_ht_peer q = p;
+
+		q.he_phy[6] &= ~0x80;
+		iwx_ht_eht_pkt_ext(&q, ext);
+		for (i = 0; i < 2; i++)
+			for (j = 0; j < 5; j++)
+				CHECK(ext[i][j][0] == 7 && ext[i][j][1] == 0);
+		/* 8 us. */
+		q.eht_phy[5] = 0x50;
+		iwx_ht_eht_pkt_ext(&q, ext);
+		CHECK(ext[0][0][0] == 0 && ext[0][0][1] == 7);
+		CHECK(ext[1][4][0] == 0 && ext[1][4][1] == 7);
+		/* None. */
+		q.eht_phy[5] = 0x40;
+		iwx_ht_eht_pkt_ext(&q, ext);
+		CHECK(ext[0][0][0] == 7 && ext[1][4][1] == 7);
+		/* HE thresholds, completed with 4096-QAM for 16 us. */
+		q = p;
+		iwx_ht_he_pkt_ext(&q, ext);
+		{
+			uint8_t he_ext[2][5][2];
+
+			memcpy(he_ext, ext, sizeof(he_ext));
+			iwx_ht_eht_pkt_ext(&q, ext);
+			for (i = 0; i < 2; i++)
+				for (j = 0; j < 5; j++) {
+					CHECK(ext[i][j][0] == he_ext[i][j][0]);
+					CHECK(ext[i][j][1] == (he_ext[i][j][1] ==
+					    7 ? 6 : he_ext[i][j][1]));
+				}
+		}
+		/* EHT thresholds win: one stream, RU 242 and 996. */
+		q = p;
+		q.eht_phy[5] |= 0x08;
+		q.eht_ppe_len = 3;
+		/* NSS-1 = 0, RU bitmap 0x5 (bits 4-8), then (PPET16, PPET8)
+		 * pairs of 3 bits from bit 9: (1, 2) for 242, (3, 4) for 996. */
+		{
+			uint32_t v = 0 | (0x5u << 4) | (1u << 9) | (2u << 12) |
+			    (3u << 15) | (4u << 18);
+
+			q.eht_ppe[0] = v & 0xff;
+			q.eht_ppe[1] = (v >> 8) & 0xff;
+			q.eht_ppe[2] = (v >> 16) & 0xff;
+		}
+		iwx_ht_eht_pkt_ext(&q, ext);
+		CHECK(ext[0][0][1] == 1 && ext[0][0][0] == 2);
+		/* 484 inherits from 242, 996 has its own, the rest inherit. */
+		CHECK(ext[0][1][1] == 1 && ext[0][1][0] == 2);
+		CHECK(ext[0][2][1] == 3 && ext[0][2][0] == 4);
+		CHECK(ext[0][3][1] == 3 && ext[0][4][0] == 4);
+		CHECK(ext[1][0][0] == 7 && ext[1][4][1] == 7);
+		/* Two streams, the second with RU 996 only: its 242 and 484
+		 * get no extension instead of the first stream's values. */
+		{
+			uint32_t v = 1 | (0x5u << 4) | (1u << 9) | (2u << 12) |
+			    (3u << 15) | (4u << 18) | (5u << 21) | (6u << 24) |
+			    (1u << 27) | (0u << 30);
+
+			/* Stream 2 has thresholds for 242 and 996 as well;
+			 * check its own values, not the first stream's. */
+			q.eht_ppe_len = 5;	/* 9 + 2 x 2 x 6 = 33 bits */
+			q.eht_ppe[0] = v & 0xff;
+			q.eht_ppe[1] = (v >> 8) & 0xff;
+			q.eht_ppe[2] = (v >> 16) & 0xff;
+			q.eht_ppe[3] = (v >> 24) & 0xff;
+			q.eht_ppe[4] = 0;
+		}
+		iwx_ht_eht_pkt_ext(&q, ext);
+		CHECK(ext[0][0][1] == 1 && ext[0][2][1] == 3);
+		CHECK(ext[1][0][1] == 5 && ext[1][0][0] == 6);
+		CHECK(ext[1][1][1] == 5 && ext[1][2][1] == 1);
+		/* A short threshold field is not read past its end. */
+		q.eht_ppe_len = 1;
+		iwx_ht_eht_pkt_ext(&q, ext);
+		CHECK(ext[0][0][0] == 7 && ext[0][0][1] == 7);
+	}
 }
 
 /* 802.11ax: offered on request, used when the AP has both elements. */
@@ -1325,6 +1691,7 @@ main(void)
 	test_width160();
 	test_he();
 	test_mode();
+	test_eht();
 	test_scan();
 	test_dbm();
 	printf("iwx-ht-contract: %u checks, %u failures\n", checks, failures);

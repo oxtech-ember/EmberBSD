@@ -5135,6 +5135,7 @@ struct iwx_link_config_cmd {
 
 /* iwx_mcc_update_resp_v8::cap: 11ax is not allowed in this country. */
 #define IWX_MCC_CAP_V8_11AX_DISABLED	(1 << 13)
+#define IWX_MCC_CAP_V8_11BE_DISABLED	(1 << 8)
 
 /* iwx_link_config_cmd::flags */
 #define IWX_LINK_FLG_BSS_COLOR_DIS	(1 << 0)
@@ -6434,6 +6435,7 @@ struct iwx_sec_key_cmd {
 #define IWX_TLC_MNG_CFG_FLAGS_HE_STBC_160MHZ_MSK	(1 << 2)
 #define IWX_TLC_MNG_CFG_FLAGS_HE_DCM_NSS_1_MSK		(1 << 3)
 #define IWX_TLC_MNG_CFG_FLAGS_HE_DCM_NSS_2_MSK		(1 << 4)
+#define IWX_TLC_MNG_CFG_FLAGS_EHT_EXTRA_LTF_MSK		(1 << 6)
 
 /**
  * enum iwx_tlc_mng_cfg_cw - channel width options

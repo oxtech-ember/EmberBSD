@@ -46,6 +46,8 @@
 #define IWX_HT_EID_EXT		255	/* then the element ID extension */
 #define IWX_HE_EXT_CAP		35	/* HE capabilities */
 #define IWX_HE_EXT_OP		36	/* HE operation */
+#define IWX_EHT_EXT_OP		106	/* EHT operation */
+#define IWX_EHT_EXT_CAP		108	/* EHT capabilities */
 
 /*
  * Channel switch announcement elements (802.11-2020 9.4.2.18, 9.4.2.19,
@@ -99,9 +101,11 @@
 #define IWX_HT_TLC_MODE_HT	1
 #define IWX_HT_TLC_MODE_VHT	2
 #define IWX_HT_TLC_MODE_HE	3
+#define IWX_HT_TLC_MODE_EHT	4
 #define IWX_HT_TLC_STBC		0x0001
 #define IWX_HT_TLC_LDPC		0x0002
 #define IWX_HT_TLC_HE_DCM_NSS_1	0x0008
+#define IWX_HT_TLC_EHT_EXTRA_LTF	0x0040
 
 /* <net/if_media.h> values, checked against it by the driver. */
 #define IWX_HT_IFM_TMASK	0x0000001f
@@ -128,6 +132,7 @@ struct iwx_ht_local {
 	int	vht160;		/* offer 160 MHz VHT operation */
 	int	allow160;	/* regulatory allows 160 MHz on this channel */
 	int	he;		/* offer HE (802.11ax); needs VHT and 5 GHz */
+	int	eht;		/* offer EHT (802.11be); needs HE */
 };
 
 /*
@@ -140,7 +145,9 @@ struct iwx_ht_local {
 #define IWX_HT_MODE_VHT160	3	/* the same up to 160 MHz */
 #define IWX_HT_MODE_HE80	4	/* with HE (802.11ax) up to 80 MHz */
 #define IWX_HT_MODE_HE160	5	/* HE up to 160 MHz */
-#define IWX_HT_MODE_MAX		IWX_HT_MODE_HE160
+#define IWX_HT_MODE_EHT80	6	/* with EHT (802.11be) up to 80 MHz */
+#define IWX_HT_MODE_EHT160	7	/* EHT up to 160 MHz */
+#define IWX_HT_MODE_MAX		IWX_HT_MODE_EHT160
 
 /*
  * Whether `mode' can be selected.  Every mode above legacy needs QoS,
@@ -163,8 +170,10 @@ static inline void
 iwx_ht_mode_offer(int mode, struct iwx_ht_local *loc)
 {
 	loc->vht = mode >= IWX_HT_MODE_VHT80;
-	loc->vht160 = mode == IWX_HT_MODE_VHT160 || mode == IWX_HT_MODE_HE160;
+	loc->vht160 = mode == IWX_HT_MODE_VHT160 ||
+	    mode == IWX_HT_MODE_HE160 || mode == IWX_HT_MODE_EHT160;
 	loc->he = mode >= IWX_HT_MODE_HE80;
+	loc->eht = mode >= IWX_HT_MODE_EHT80;
 }
 
 /* What the AP answered. */
@@ -196,6 +205,20 @@ struct iwx_ht_peer {
 	uint8_t		he_ppe_len;
 	uint32_t	heop_params;	/* with the BSS colour byte on top */
 	uint16_t	he_basic;	/* basic HE-MCS and NSS set */
+	int		eht;		/* EHT capabilities present (with HE) */
+	int		ehtop;		/* EHT operation present */
+	uint8_t		eht_mac[2];
+	uint8_t		eht_phy[9];
+	uint8_t		eht_mcs80[3];	/* streams for MCS 0-9, 10-11, 12-13 */
+	uint8_t		eht_mcs160[3];	/* the same at 160 MHz */
+	uint8_t		eht_ppe[32];	/* PPE thresholds */
+	uint8_t		eht_ppe_len;
+	uint8_t		ehtop_params;
+	uint8_t		eht_basic[4];	/* MCS 0-7, 8-9, 10-11, 12-13 */
+	uint8_t		ehtop_width;	/* with ehtop_params & 0x01: 0-4 */
+	uint8_t		ehtop_ccfs0;
+	uint8_t		ehtop_ccfs1;
+	uint16_t	ehtop_punct;	/* disabled subchannels */
 };
 
 /* Channel layout for the PHY context and TLC. */
@@ -241,6 +264,7 @@ iwx_ht_media(int tlc_mode, int band5)
 	switch (tlc_mode) {
 	case IWX_HT_TLC_MODE_VHT:
 	case IWX_HT_TLC_MODE_HE:	/* <net/if_media.h> has no 11ax word */
+	case IWX_HT_TLC_MODE_EHT:	/* nor an 11be one */
 		return IWX_HT_IFM_VHT | IWX_HT_IFM_11AC;
 	case IWX_HT_TLC_MODE_HT:
 		return IWX_HT_IFM_MCS |
@@ -393,6 +417,46 @@ iwx_ht_put_hecap(uint8_t *frm, const struct iwx_ht_local *loc)
 }
 
 /*
+ * EHT Capabilities element for 5 GHz, as Linux iwlwifi/mld sends it for
+ * a two-antenna FM radio in station mode (iwl-nvm-parse.c, the EHT part
+ * of the iftype data, with the 320 MHz bits mac80211 drops on 5 GHz),
+ * less EHT OM control: our HE element offers no +HTC-HE.  No PPE
+ * thresholds: a nominal packet padding of 16 us instead.  The MCS and
+ * NSS set has one block per width the HE element offers.
+ */
+static inline size_t
+iwx_ht_put_ehtcap(uint8_t *frm, const struct iwx_ht_local *loc)
+{
+	uint8_t phy[9] = { 0xcc, 0x1f, 0x09, 0x20, 0x18, 0x66, 0x00, 0x00,
+	    0x03 };
+	int two = loc->nss >= 2, w160 = loc->vht160 && loc->allow160;
+	uint8_t map = two ? 0x22 : 0x11;
+	size_t n = 0, i;
+
+	if (!loc->eht || !loc->he || !loc->vht || !loc->band5)
+		return 0;
+	if (!w160) {
+		phy[1] = 0x03;		/* beamformee SS up to 80 MHz */
+		phy[2] = 0x01;		/* sounding dimensions up to 80 */
+	}
+	if (!two) {
+		phy[2] = 0x00;		/* one sounding dimension */
+		phy[4] = 0x08;		/* Nc 1 */
+	}
+	frm[n++] = IWX_HT_EID_EXT;
+	frm[n++] = 0;			/* length, set below */
+	frm[n++] = IWX_EHT_EXT_CAP;
+	frm[n++] = 0x00;		/* MAC: no OM control */
+	frm[n++] = 0x00;
+	for (i = 0; i < sizeof(phy); i++)
+		frm[n++] = phy[i];
+	for (i = 0; i < (w160 ? 6U : 3U); i++)
+		frm[n++] = map;		/* MCS 0-9, 10-11, 12-13 */
+	frm[1] = (uint8_t)(n - 2);
+	return n;
+}
+
+/*
  * Rebuild a (re)association request body with our HT/VHT capabilities.
  * `fixed' is the length of the fixed fields (4, or 10 for a reassociation).
  * Elements are emitted in the order 802.11 expects: the existing
@@ -405,20 +469,27 @@ static inline size_t
 iwx_ht_rewrite_assoc(const uint8_t *body, size_t len, size_t fixed,
     const struct iwx_ht_local *loc, uint8_t *out, size_t outmax)
 {
-	uint8_t he[40];
-	size_t off, n, need;
+	uint8_t he[40], eht[24];
+	size_t off, n, need, nheht;
 	int pass, i;
 
 	if (len < fixed || !iwx_ht_ies_valid(body + fixed, len - fixed))
 		return 0;
+	nheht = iwx_ht_put_ehtcap(eht, loc);
 	need = len + 2 + IWX_HT_HTCAP_LEN +
 	    ((loc->band5 && loc->vht) ? 2 + IWX_HT_VHTCAP_LEN : 0) +
-	    iwx_ht_put_hecap(he, loc);
+	    iwx_ht_put_hecap(he, loc) + nheht;
 	if (need > outmax)
 		return 0;
 
 	for (i = 0; i < (int)fixed; i++)
 		out[i] = body[i];
+	/*
+	 * As Linux: no ESS bit in the capability information with EHT;
+	 * the bit is reserved there and some EHT APs check it.
+	 */
+	if (nheht != 0 && fixed > 0)
+		out[0] &= ~0x01;
 	n = fixed;
 	for (pass = 0; pass < 2; pass++) {
 		for (off = fixed; off < len; off += 2 + body[off + 1]) {
@@ -426,7 +497,8 @@ iwx_ht_rewrite_assoc(const uint8_t *body, size_t len, size_t fixed,
 
 			if (id == IWX_HT_EID_HTCAP || id == IWX_HT_EID_VHTCAP ||
 			    (id == IWX_HT_EID_EXT && elen >= 1 &&
-			    body[off + 2] == IWX_HE_EXT_CAP))
+			    (body[off + 2] == IWX_HE_EXT_CAP ||
+			    body[off + 2] == IWX_EHT_EXT_CAP)))
 				continue;
 			if ((id == IWX_HT_EID_VENDOR) != (pass == 1))
 				continue;
@@ -439,6 +511,7 @@ iwx_ht_rewrite_assoc(const uint8_t *body, size_t len, size_t fixed,
 			if (loc->band5 && loc->vht)
 				n += iwx_ht_put_vhtcap(out + n, loc);
 			n += iwx_ht_put_hecap(out + n, loc);
+			n += iwx_ht_put_ehtcap(out + n, loc);
 		}
 	}
 	return n;
@@ -592,6 +665,189 @@ iwx_ht_he_pkt_ext(const struct iwx_ht_peer *p, uint8_t ext[2][5][2])
 		}
 }
 
+/* Whether the AP's EHT offer can be taken up on channel layout `c'. */
+static inline int
+iwx_ht_eht_usable(const struct iwx_ht_peer *p, const struct iwx_ht_local *loc,
+    const struct iwx_ht_chan *c)
+{
+	int i, nss = loc->nss < 2 ? loc->nss : 2;
+
+	if (!loc->eht || !iwx_ht_he_usable(p, loc) || !p->eht || !p->ehtop)
+		return 0;
+	/* As Linux on 5 GHz, nothing narrower than 80 MHz. */
+	if (c->width < IWX_HT_WIDTH_80)
+		return 0;
+	if (p->ehtop_params & 0x01) {
+		/* No 320 MHz on 5 GHz, and nothing narrower than ours. */
+		if (p->ehtop_width > IWX_HT_WIDTH_160 ||
+		    p->ehtop_width < c->width)
+			return 0;
+		/* Punctured subchannels are not supported here. */
+		if ((p->ehtop_params & 0x02) && p->ehtop_punct != 0)
+			return 0;
+	}
+	/* The basic EHT-MCS and NSS set must be within reach. */
+	for (i = 0; i < 4; i++)
+		if ((p->eht_basic[i] & 0x0f) > nss ||
+		    (p->eht_basic[i] >> 4) > nss)
+			return 0;
+	return 1;
+}
+
+/* Bits `pos' to `pos' + 2 of a PPE thresholds field of `len' bytes. */
+static inline unsigned
+iwx_ht_ppe_bits(const uint8_t *ppe, size_t len, unsigned pos)
+{
+	unsigned v = ppe[pos / 8];
+
+	if (pos / 8 + 1 < len)
+		v |= (unsigned)ppe[pos / 8 + 1] << 8;
+	return (v >> (pos % 8)) & 7;
+}
+
+/*
+ * Packet extension for an EHT AP, after Linux iwlmld: its EHT PPE
+ * thresholds if it has them, else its HE thresholds with 4096-QAM
+ * completed from the nominal padding, else the nominal padding.  Values
+ * are constellations, 0 BPSK to 6 4096-QAM, 7 none; [0] is the low
+ * threshold (PPET8), [1] the high one (PPET16).  Unlike Linux, HE
+ * thresholds are not carried over to wider channels that have none:
+ * those stay without extension beyond the nominal padding.
+ */
+static inline void
+iwx_ht_eht_pkt_ext(const struct iwx_ht_peer *p, uint8_t ext[2][5][2])
+{
+	unsigned pad = (p->eht_phy[5] >> 4) & 3, nss, ru, pos = 9;
+	uint8_t low = 7, high = 7;
+	int i, bw;
+
+	for (i = 0; i < 2; i++)
+		for (bw = 0; bw < 5; bw++)
+			ext[i][bw][0] = ext[i][bw][1] = 7;
+	if ((p->eht_phy[5] & 0x08) && p->eht_ppe_len > 0) {
+		nss = (p->eht_ppe[0] & 0x0f) + 1;
+		/* As Linux: the RU bits of the first byte only. */
+		ru = (p->eht_ppe[0] >> 4) & 0x0f;
+		for (i = 0; i < (int)nss && i < 2; i++) {
+			low = high = 7;
+			for (bw = 0; bw < 5; bw++) {
+				/* Without its own, the narrower one holds. */
+				if ((ru >> bw) & 1) {
+					if (pos + 6 > 8U * p->eht_ppe_len)
+						return;
+					high = iwx_ht_ppe_bits(p->eht_ppe,
+					    p->eht_ppe_len, pos);
+					low = iwx_ht_ppe_bits(p->eht_ppe,
+					    p->eht_ppe_len, pos + 3);
+					pos += 6;
+				}
+				ext[i][bw][0] = low;
+				ext[i][bw][1] = high;
+			}
+		}
+		return;
+	}
+	if ((p->he_phy[6] & 0x80) && p->he_ppe_len > 0) {
+		iwx_ht_he_pkt_ext(p, ext);
+		for (i = 0; i < 2; i++)
+			for (bw = 0; bw < 5; bw++) {
+				if (pad > 1 && ext[i][bw][1] == 7)
+					ext[i][bw][1] = 6;
+				else if (pad == 1 && ext[i][bw][0] == 7 &&
+				    ext[i][bw][1] == 7)
+					ext[i][bw][0] = 6;
+			}
+		return;
+	}
+	if (pad == 1)
+		low = 0;		/* 8 us from BPSK up */
+	else if (pad >= 2)
+		high = 0;		/* 16 us from BPSK up */
+	else
+		return;
+	for (i = 0; i < 2; i++)
+		for (bw = 0; bw < 5; bw++) {
+			ext[i][bw][0] = low;
+			ext[i][bw][1] = high;
+		}
+}
+
+/*
+ * The AP's EHT Capabilities element, after the extension ID.  The size
+ * of its MCS and NSS set follows the widths of the AP's HE element.
+ */
+static inline void
+iwx_ht_parse_ehtcap(const uint8_t *e, size_t len, struct iwx_ht_peer *p)
+{
+	size_t mcs, ppe = 0, i;
+
+	if (!p->he || len < 2 + 9)
+		return;
+	mcs = ((p->he_phy[0] & 0x04) ? 3 : 0) +
+	    ((p->he_phy[0] & 0x08) ? 3 : 0) + ((e[2] & 0x02) ? 3 : 0);
+	if (mcs == 0)
+		mcs = 3;
+	if (len < 11 + mcs)
+		return;
+	if (e[2 + 5] & 0x08) {
+		unsigned nss, ru, k;
+
+		if (len < 11 + mcs + 2)
+			return;
+		nss = (e[11 + mcs] & 0x0f) + 1;
+		ru = ((e[11 + mcs] >> 4) | (e[12 + mcs] << 4)) & 0x1f;
+		for (k = 0; ru != 0; ru >>= 1)
+			k += ru & 1;
+		ppe = (9 + 6 * nss * k + 7) / 8;
+		if (len < 11 + mcs + ppe || ppe > sizeof(p->eht_ppe))
+			return;
+	}
+	for (i = 0; i < 2; i++)
+		p->eht_mac[i] = e[i];
+	for (i = 0; i < 9; i++)
+		p->eht_phy[i] = e[2 + i];
+	/*
+	 * The 160 MHz block follows the 80 MHz one; an AP with HE phy0
+	 * 0x08 but not 0x04 has a single block, read as the 80 MHz one.
+	 */
+	for (i = 0; i < 3; i++) {
+		p->eht_mcs80[i] = e[11 + i];
+		p->eht_mcs160[i] = (p->he_phy[0] & 0x08) && mcs >= 6 ?
+		    e[14 + i] : 0;
+	}
+	for (i = 0; i < ppe; i++)
+		p->eht_ppe[i] = e[11 + mcs + i];
+	p->eht_ppe_len = (uint8_t)ppe;
+	p->eht = 1;
+}
+
+/* The AP's EHT Operation element, after the extension ID. */
+static inline void
+iwx_ht_parse_ehtop(const uint8_t *e, size_t len, struct iwx_ht_peer *p)
+{
+	size_t need = 5, i;
+
+	if (len < need)
+		return;
+	if (e[0] & 0x01)
+		need += 3;
+	if ((e[0] & 0x03) == 0x03)
+		need += 2;
+	if (len < need)
+		return;
+	p->ehtop_params = e[0];
+	for (i = 0; i < 4; i++)
+		p->eht_basic[i] = e[1 + i];
+	if (e[0] & 0x01) {
+		p->ehtop_width = e[5] & 0x07;
+		p->ehtop_ccfs0 = e[6];
+		p->ehtop_ccfs1 = e[7];
+		if (e[0] & 0x02)
+			p->ehtop_punct = iwx_ht_le16(e + 8);
+	}
+	p->ehtop = 1;
+}
+
 /*
  * Read HT/VHT elements from a (re)association response body.
  * `fixed' is 6 (capabilities, status, AID).  Returns 0 on success.
@@ -600,7 +856,8 @@ static inline int
 iwx_ht_parse(const uint8_t *body, size_t len, size_t fixed,
     struct iwx_ht_peer *p)
 {
-	size_t off;
+	const uint8_t *ehtcap = NULL, *ehtop = NULL;
+	size_t off, ehtcap_len = 0, ehtop_len = 0;
 	int i;
 
 	for (i = 0; i < (int)sizeof(*p); i++)
@@ -651,16 +908,29 @@ iwx_ht_parse(const uint8_t *body, size_t len, size_t fixed,
 				p->heop = 1;
 				p->heop_params = iwx_ht_le32(e + 1);
 				p->he_basic = iwx_ht_le16(e + 5);
+			} else if (elen >= 1 && e[0] == IWX_EHT_EXT_CAP) {
+				ehtcap = e + 1;
+				ehtcap_len = elen - 1;
+			} else if (elen >= 1 && e[0] == IWX_EHT_EXT_OP) {
+				ehtop = e + 1;
+				ehtop_len = elen - 1;
 			}
 			break;
 		}
 	}
+	/* The EHT element sizes depend on the HE element, in any order. */
+	if (ehtcap != NULL)
+		iwx_ht_parse_ehtcap(ehtcap, ehtcap_len, p);
+	if (ehtop != NULL)
+		iwx_ht_parse_ehtop(ehtop, ehtop_len, p);
 	/* VHT without HT is not a valid 802.11ac association. */
 	if (!p->ht)
 		p->vht = p->vhtop = 0;
-	/* HE on 5 GHz comes with VHT. */
+	/* HE on 5 GHz comes with VHT, EHT with HE. */
 	if (!p->vht)
 		p->he = p->heop = 0;
+	if (!p->he)
+		p->eht = p->ehtop = 0;
 	return 0;
 }
 
@@ -1118,6 +1388,25 @@ iwx_ht_bmiss(uint32_t missed, uint32_t *level)
 	return 1;
 }
 
+/*
+ * EHT MCS bitmap for spatial stream `ss' (0 or 1) from an AP's EHT-MCS
+ * and NSS set: the low nibble of each byte is how many streams the AP
+ * receives for MCS 0-9, 10-11 and 12-13.
+ */
+static inline uint16_t
+iwx_ht_eht_rates(const uint8_t map[3], int ss)
+{
+	uint16_t r = 0;
+
+	if ((map[0] & 0x0f) > ss)
+		r |= 0x03ff;
+	if ((map[1] & 0x0f) > ss)
+		r |= 0x0c00;
+	if ((map[2] & 0x0f) > ss)
+		r |= 0x3000;
+	return r;
+}
+
 /* TLC settings for the negotiated mode. */
 static inline void
 iwx_ht_tlc(const struct iwx_ht_peer *p, const struct iwx_ht_local *loc,
@@ -1144,6 +1433,27 @@ iwx_ht_tlc(const struct iwx_ht_peer *p, const struct iwx_ht_local *loc,
 		t->flags |= IWX_HT_TLC_LDPC;
 	if (loc->nss >= 2 && (p->htcaps & IWX_HT_CAP_RXSTBC_MASK))
 		t->flags |= IWX_HT_TLC_STBC;
+
+	if (iwx_ht_eht_usable(p, loc, c)) {
+		/*
+		 * EHT rates, MCS 0-13, as far as the AP receives them;
+		 * LDPC, as wider channels imply it; no STBC, no DCM.
+		 */
+		t->mode = IWX_HT_TLC_MODE_EHT;
+		t->max_mpdu_len = 3895;
+		t->sgi = 0;
+		t->flags = IWX_HT_TLC_LDPC;
+		if (p->eht_phy[5] & 0x40)
+			t->flags |= IWX_HT_TLC_EHT_EXTRA_LTF;
+		for (ss = 0; ss < 2 && ss < loc->nss; ss++) {
+			t->rates[ss] = iwx_ht_eht_rates(p->eht_mcs80, ss);
+			if (c->width == IWX_HT_WIDTH_160 &&
+			    (p->he_phy[0] & 0x08))
+				t->rates160[ss] =
+				    iwx_ht_eht_rates(p->eht_mcs160, ss);
+		}
+		return;
+	}
 
 	if (iwx_ht_he_usable(p, loc)) {
 		/* HE rates only: no HT or VHT short GI, HE flags. */
