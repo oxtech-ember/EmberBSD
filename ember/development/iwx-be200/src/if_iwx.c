@@ -115,6 +115,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/cpu.h>
 #include <sys/bus.h>
 #include <sys/intr.h>
+#include <sys/kauth.h>
 
 #include <dev/pci/pcireg.h>
 #include <dev/pci/pcivar.h>
@@ -131,6 +132,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <net80211/ieee80211_var.h>
 #include <net80211/ieee80211_radiotap.h>
 #include <net80211/ieee80211_sae.h>
+#include <net80211/ieee80211_beacon_ies.h>
 
 #include <dev/pci/if_iwx_compat.h>
 
@@ -197,7 +199,7 @@ CTASSERT(IWX_HT_EID_HTOP == IEEE80211_ELEMID_HTINFO);
 /*
  * Operating mode, IWX_HT_MODE_*.  0: legacy rates only; 1: HT (802.11n);
  * 2: HT and VHT (802.11ac) up to 80 MHz; 3: the same up to 160 MHz;
- * 4: with HE (802.11ax) up to 80 MHz; 5: HE up to 160 MHz.  3 and above
+ * 4: with HE (802.11ax) up to 80 MHz; 5: HE up to 160 MHz.  4 and above
  * have not yet run on hardware.
  * Set by the module property "ht" (modload -i ht=N) and, at run time, by
  * sysctl hw.iwx.ht.  A device takes the value over when it builds an
@@ -510,6 +512,12 @@ void	iwx_add_task(struct iwx_softc *, struct taskq *, struct task *);
 void	iwx_del_task(struct iwx_softc *, struct taskq *, struct task *);
 int	iwx_initiate_scan(struct iwx_softc *, int);
 int	iwx_scan(struct iwx_softc *);
+int	iwx_scan_assoc_start(struct iwx_softc *);
+void	iwx_scan_assoc_timeout(void *);
+void	iwx_scan_assoc_task(void *);
+int	iwx_scan_assoc_rx(struct iwx_softc *, struct mbuf *, int,
+	    struct ieee80211_rxinfo *);
+int	iwx_scan_assoc_req(struct iwx_softc *, u_long, void *, int *);
 int	iwx_bgscan(struct ieee80211com *);
 void	iwx_bgscan_done(struct ieee80211com *,
 	    struct ieee80211_node_switch_bss_arg *, size_t);
@@ -5083,7 +5091,14 @@ iwx_rx_frame(struct iwx_softc *sc, struct mbuf *m, int chanidx,
 	}
 
 	ni = ieee80211_find_rxnode(ic, (struct ieee80211_frame_min *)wh);
-	ni->ni_chan = &ic->ic_channels[chanidx];
+	/*
+	 * net80211 takes an unknown sender for the BSS in use.  A frame
+	 * heard on another channel during a scan while associated must not
+	 * move the channel of that BSS.
+	 */
+	if ((sc->sc_flags & IWX_FLAG_BGSCAN) == 0 ||
+	    ic->ic_state != IEEE80211_S_RUN || ni != ic->ic_bss)
+		ni->ni_chan = &ic->ic_channels[chanidx];
 
 #if NBPFILTER > 0
 	if (sc->sc_drvbpf != NULL) {
@@ -5163,6 +5178,17 @@ iwx_rx_frame(struct iwx_softc *sc, struct mbuf *m, int chanidx,
 		    m, BPF_DIRECTION_IN);
 	}
 #endif
+	/*
+	 * During a scan while associated, what other BSSes send is a scan
+	 * result and bypasses net80211 input.
+	 */
+	if ((sc->sc_flags & IWX_FLAG_BGSCAN) &&
+	    ic->ic_state == IEEE80211_S_RUN &&
+	    iwx_scan_assoc_rx(sc, m, chanidx, rxi)) {
+		ieee80211_free_node(ni);
+		m_freem(m);
+		return;
+	}
 {
 		int s = splnet();
 
@@ -7892,6 +7918,11 @@ iwx_scan_umac_flags_v2(struct iwx_softc *sc, int bgscan)
 	return flags;
 }
 
+/* The `bgscan' argument of the scan functions. */
+#define IWX_SCAN_FOREGROUND	0
+#define IWX_SCAN_BACKGROUND	1	/* asynchronous command */
+#define IWX_SCAN_ASSOCIATED	2	/* the same timing, the caller may sleep */
+
 #define IWX_SCAN_DWELL_ACTIVE		10
 #define IWX_SCAN_DWELL_PASSIVE		110
 
@@ -8071,7 +8102,7 @@ iwx_umac_scan_v14(struct iwx_softc *sc, int bgscan)
 	};
 	struct iwx_scan_req_umac_v14 *cmd;
 	struct iwx_scan_req_params_v14 *scan_p;
-	int err, async = bgscan, n_ssid = 0;
+	int err, async = (bgscan == IWX_SCAN_BACKGROUND), n_ssid = 0;
 	uint16_t gen_flags;
 	uint32_t bitmap_ssid = 0;
 
@@ -8131,7 +8162,7 @@ iwx_umac_scan_v17(struct iwx_softc *sc, int bgscan)
 	};
 	struct iwx_scan_req_umac_v17 *cmd;
 	struct iwx_scan_req_params_v17 *scan_p;
-	int err, async = bgscan, n_ssid = 0;
+	int err, async = (bgscan == IWX_SCAN_BACKGROUND), n_ssid = 0;
 	uint16_t gen_flags;
 	uint32_t bitmap_ssid = 0;
 
@@ -8765,6 +8796,208 @@ iwx_scan(struct iwx_softc *sc)
 
 	return 0;
 }
+
+/*
+ * A scan while associated.  A scan request through net80211 first leaves
+ * the BSS.  Here the association stays: the firmware visits the other
+ * channels between the beacons of the BSS.  No net80211 state changes:
+ * iwx_scan_assoc_rx() files the results in its scan table and
+ * iwx_endscan() reports the scan as finished.
+ */
+#define IWX_SCAN_ASSOC_TIMEOUT	30	/* seconds */
+
+int
+iwx_scan_assoc_start(struct iwx_softc *sc)
+{
+	int err;
+
+	/*
+	 * The command sleeps until the firmware answers, and the firmware
+	 * may report results, and even the end of the scan, before that.
+	 */
+	sc->sc_flags |= IWX_FLAG_SCANNING | IWX_FLAG_BGSCAN;
+	timeout_add_sec(&sc->sc_scan_assoc_to, IWX_SCAN_ASSOC_TIMEOUT);
+	err = iwx_initiate_scan(sc, IWX_SCAN_ASSOCIATED);
+	if (err) {
+		sc->sc_flags &= ~(IWX_FLAG_SCANNING | IWX_FLAG_BGSCAN);
+		timeout_del(&sc->sc_scan_assoc_to);
+		printf("%s: could not start a scan while associated "
+		    "(error %d)\n", device_xname(sc->sc_dev), err);
+	}
+	return err;
+}
+
+/* The firmware has not reported the end of a scan while associated. */
+void
+iwx_scan_assoc_timeout(void *arg)
+{
+	struct iwx_softc *sc = arg;
+
+	/* The abort is a command that sleeps. */
+	iwx_add_task(sc, sc->sc_systq, &sc->scan_assoc_task);
+}
+
+void
+iwx_scan_assoc_task(void *arg)
+{
+	struct iwx_softc *sc = arg;
+	struct ieee80211com *ic = &sc->sc_ic;
+	int err, s = splnet();
+
+	/*
+	 * A pending timeout belongs to a later scan: the one this task was
+	 * queued for has ended meanwhile.
+	 */
+	if ((sc->sc_flags & (IWX_FLAG_SHUTDOWN | IWX_FLAG_BGSCAN)) ==
+	    IWX_FLAG_BGSCAN && !timeout_pending(&sc->sc_scan_assoc_to)) {
+		printf("%s: the scan did not finish in %d seconds, "
+		    "aborting it\n", device_xname(sc->sc_dev),
+		    IWX_SCAN_ASSOC_TIMEOUT);
+		err = iwx_umac_scan_abort(sc);
+		if (err)
+			printf("%s: could not abort the scan (error %d)\n",
+			    device_xname(sc->sc_dev), err);
+		if (sc->sc_flags & IWX_FLAG_SHUTDOWN) {
+			/* iwx_stop() ran while the command slept. */
+		} else if (ic->ic_state == IEEE80211_S_RUN ||
+		    ic->ic_state == IEEE80211_S_SCAN) {
+			/* Report what was found. */
+			iwx_endscan(sc);
+		} else
+			sc->sc_flags &=
+			    ~(IWX_FLAG_SCANNING | IWX_FLAG_BGSCAN);
+	}
+	refcnt_rele_wake(&sc->task_refs);
+	splx(s);
+}
+
+/*
+ * File a beacon or probe response of another BSS, heard during a scan
+ * while associated, in the scan table of net80211.  Returns nonzero for
+ * such a frame, filed or not; the caller frees it.
+ *
+ * ieee80211_input() cannot take these frames: it files scan results only
+ * while net80211 itself scans, and only from the channel it believes
+ * current.  The checks below are those of ieee80211_recv_mgmt_beacon(),
+ * with the receive channel in place of the current one.
+ */
+int
+iwx_scan_assoc_rx(struct iwx_softc *sc, struct mbuf *m, int chanidx,
+    struct ieee80211_rxinfo *rxi)
+{
+	struct ieee80211com *ic = &sc->sc_ic;
+	struct ieee80211_frame *wh = mtod(m, struct ieee80211_frame *);
+	struct ieee80211_scanparams scan;
+	struct ieee80211_beacon_ies ies;
+	uint8_t *frm, *efrm;
+	int s;
+
+	if (!iwx_ht_scan_foreign(mtod(m, uint8_t *), m->m_len,
+	    ic->ic_bss->ni_bssid))
+		return 0;
+
+	frm = (uint8_t *)(wh + 1);
+	efrm = mtod(m, uint8_t *) + m->m_len;
+	memset(&scan, 0, sizeof(scan));
+	scan.sp_tstamp = frm;
+	scan.sp_bintval = le16dec(frm + 8);
+	scan.sp_capinfo = le16dec(frm + 10);
+	frm += 12;
+	scan.sp_bchan = chanidx;
+	scan.sp_chan = scan.sp_bchan;
+
+	if (ieee80211_beacon_ies_parse(&ies, frm, efrm - frm) != 0) {
+		ic->ic_stats.is_rx_elem_toosmall++;
+		return 1;
+	}
+	scan.sp_ssid = __UNCONST(ies.ssid);
+	scan.sp_rates = __UNCONST(ies.rates);
+	scan.sp_country = __UNCONST(ies.country);
+	scan.sp_tim = __UNCONST(ies.tim);
+	scan.sp_xrates = __UNCONST(ies.xrates);
+	scan.sp_wpa = __UNCONST(ies.security);
+	scan.sp_rrm = __UNCONST(ies.rrm);
+	scan.sp_extcap = __UNCONST(ies.extcap);
+	scan.sp_rsnx = __UNCONST(ies.rsnx);
+	scan.sp_erp = ies.erp != NULL ? ies.erp[2] : 0;
+	scan.sp_phy_ies = ies.phy;
+	scan.sp_wme = __UNCONST(ies.wme);
+	scan.sp_timoff = ies.tim != NULL ?
+	    frm - mtod(m, uint8_t *) + ies.timoff : 0;
+	if (ies.ds != NULL)
+		scan.sp_chan = ies.ds[2];
+
+	if (scan.sp_rates == NULL || scan.sp_ssid == NULL) {
+		ic->ic_stats.is_rx_elem_missing++;
+		return 1;
+	}
+	if (scan.sp_rates[1] > IEEE80211_RATE_MAXSIZE ||
+	    scan.sp_ssid[1] > IEEE80211_NWID_LEN) {
+		ic->ic_stats.is_rx_elem_toobig++;
+		return 1;
+	}
+	if (
+#if IEEE80211_CHAN_MAX < 255
+	    scan.sp_chan > IEEE80211_CHAN_MAX ||
+#endif
+	    isclr(ic->ic_chan_active, scan.sp_chan)) {
+		ic->ic_stats.is_rx_badchan++;
+		return 1;
+	}
+	/* Heard on a channel other than its own: signal leakage. */
+	if (scan.sp_chan != scan.sp_bchan) {
+		ic->ic_stats.is_rx_chanmismatch++;
+		return 1;
+	}
+	if (scan.sp_bintval < IEEE80211_BINTVAL_MIN ||
+	    scan.sp_bintval > IEEE80211_BINTVAL_MAX) {
+		ic->ic_stats.is_rx_badbintval++;
+		return 1;
+	}
+
+	s = splnet();
+	ieee80211_add_scan(ic, &scan, wh,
+	    wh->i_fc[0] & IEEE80211_FC0_SUBTYPE_MASK, rxi->rxi_rssi,
+	    rxi->rxi_tstamp);
+	splx(s);
+	return 1;
+}
+
+/*
+ * A scan request from user space.  Returns nonzero if it was handled
+ * here, with the result in *errp: an associated station scans without
+ * leaving its BSS.  Otherwise net80211 runs the scan as usual.
+ */
+int
+iwx_scan_assoc_req(struct iwx_softc *sc, u_long cmd, void *data, int *errp)
+{
+	struct ieee80211com *ic = &sc->sc_ic;
+	struct ieee80211req *ireq = data;
+	int what;
+
+	if (ireq->i_type != IEEE80211_IOC_SCAN_REQ)
+		return 0;
+	what = iwx_ht_scan_request(ic->ic_opmode == IEEE80211_M_STA &&
+	    ic->ic_state == IEEE80211_S_RUN &&
+	    sc->ns_nstate == IEEE80211_S_RUN &&
+	    (sc->sc_flags & IWX_FLAG_SHUTDOWN) == 0,
+	    (sc->sc_flags & IWX_FLAG_SCANNING) != 0,
+	    sc->sc_csa_valid || sc->sc_csa_wait);
+	if (what == IWX_HT_SCANREQ_NET80211)
+		return 0;
+
+	/* The same privilege net80211 asks for. */
+	*errp = kauth_authorize_network(kauth_cred_get(),
+	    KAUTH_NETWORK_INTERFACE, KAUTH_REQ_NETWORK_INTERFACE_SETPRIV,
+	    IC2IFP(ic), (void *)cmd, NULL);
+	if (*errp != 0)
+		return 1;
+	if (what == IWX_HT_SCANREQ_BUSY)
+		*errp = EBUSY;
+	else if (what == IWX_HT_SCANREQ_START)
+		*errp = iwx_scan_assoc_start(sc);
+	return 1;
+}
 #if defined(IWX_HT) /* iwx_bgscan */
 
 int
@@ -8920,8 +9153,10 @@ iwx_scan_abort(struct iwx_softc *sc)
 	int err;
 
 	err = iwx_umac_scan_abort(sc);
-	if (err == 0)
+	if (err == 0) {
 		sc->sc_flags &= ~(IWX_FLAG_SCANNING | IWX_FLAG_BGSCAN);
+		timeout_del(&sc->sc_scan_assoc_to);
+	}
 	return err;
 }
 
@@ -9873,6 +10108,10 @@ iwx_csa_task(void *arg)
 		goto restart;
 	}
 	sc->sc_csa_valid = 0;
+
+	why = "a scan is in progress";
+	if (sc->sc_flags & IWX_FLAG_SCANNING)
+		goto restart;
 
 	why = "this firmware API is not supported";
 	if (!sc->sc_use_mld_api)
@@ -11260,6 +11499,31 @@ iwx_newstate_task(void *psc)
 	if (nstate <= ostate) {
 		switch (ostate) {
 		case IEEE80211_S_RUN:
+			/*
+			 * A request to authenticate with no frame behind it
+			 * comes from a join.  If ic_bss is a node this driver
+			 * has not set up, another BSS is to be joined and
+			 * the state of the old one is out of reach.  Neither
+			 * that nor a scan in flight is taken down in place.
+			 */
+			switch (iwx_ht_leave_run(nstate == IEEE80211_S_INIT,
+			    nstate == IEEE80211_S_AUTH && arg == -1 &&
+			    ((struct iwx_node *)ic->ic_bss)->in_phyctxt == NULL,
+			    (sc->sc_flags & IWX_FLAG_BGSCAN) != 0)) {
+			case IWX_HT_LEAVE_JOIN:
+				printf("%s: asked to join another BSS while "
+				    "associated, restarting\n",
+				    device_xname(sc->sc_dev));
+				err = EBUSY;
+				goto out;
+			case IWX_HT_LEAVE_SCAN:
+				printf("%s: leaving the BSS during a scan, "
+				    "restarting\n", device_xname(sc->sc_dev));
+				err = EBUSY;
+				goto out;
+			default:
+				break;
+			}
 			err = iwx_run_stop(sc);
 			if (err)
 				goto out;
@@ -11352,6 +11616,7 @@ iwx_newstate(struct ieee80211com *ic, enum ieee80211_state nstate, int arg)
 	iwx_del_task(sc, sc->sc_systq, &sc->mac_ctxt_task);
 	iwx_del_task(sc, sc->sc_systq, &sc->phy_ctxt_task);
 	iwx_del_task(sc, sc->sc_systq, &sc->csa_task);
+	iwx_del_task(sc, sc->sc_systq, &sc->scan_assoc_task);
 	iwx_csa_clear(sc);
 	}
 
@@ -11368,12 +11633,25 @@ void
 iwx_endscan(struct iwx_softc *sc)
 {
 	struct ieee80211com *ic = &sc->sc_ic;
+	int assoc;
 
 	if ((sc->sc_flags & (IWX_FLAG_SCANNING | IWX_FLAG_BGSCAN)) == 0)
 		return;
 
+	/*
+	 * A scan while associated ends with the news that the results are
+	 * ready.  ieee80211_end_scan() is for a scan by net80211: it would
+	 * pick a BSS and join it.
+	 */
+	assoc = (sc->sc_flags & IWX_FLAG_BGSCAN) &&
+	    ic->ic_opmode == IEEE80211_M_STA &&
+	    ic->ic_state == IEEE80211_S_RUN;
 	sc->sc_flags &= ~(IWX_FLAG_SCANNING | IWX_FLAG_BGSCAN);
-	ieee80211_end_scan(ic);
+	timeout_del(&sc->sc_scan_assoc_to);
+	if (assoc)
+		ieee80211_notify_scan_done(ic);
+	else
+		ieee80211_end_scan(ic);
 }
 
 /*
@@ -12065,6 +12343,7 @@ iwx_stop(struct ifnet *ifp, int disable __unused)
 	iwx_del_task(sc, sc->sc_systq, &sc->mac_ctxt_task);
 	iwx_del_task(sc, sc->sc_systq, &sc->phy_ctxt_task);
 	iwx_del_task(sc, sc->sc_systq, &sc->csa_task);
+	iwx_del_task(sc, sc->sc_systq, &sc->scan_assoc_task);
 	iwx_csa_clear(sc);
 	iwx_del_task(sc, sc->sc_systq, &sc->sc_ba_task);
 	iwx_del_task(sc, sc->sc_systq, &sc->sc_txq_task);
@@ -12099,6 +12378,7 @@ iwx_stop(struct ifnet *ifp, int disable __unused)
 	IEEE80211_ADDR_COPY(in->in_macaddr, etheranyaddr);
 
 	sc->sc_flags &= ~(IWX_FLAG_SCANNING | IWX_FLAG_BGSCAN);
+	timeout_del(&sc->sc_scan_assoc_to);
 	sc->sc_flags &= ~IWX_FLAG_MAC_ACTIVE;
 	sc->sc_flags &= ~IWX_FLAG_BINDING_ACTIVE;
 	sc->sc_flags &= ~IWX_FLAG_STA_ACTIVE;
@@ -12233,6 +12513,12 @@ iwx_ioctl(struct ifnet *ifp, u_long cmd, void *data)
 			err = 0;
 		break;
 	}
+
+	case SIOCS80211:
+		if (iwx_scan_assoc_req(sc, cmd, data, &err))
+			break;
+		err = ieee80211_ioctl(ic, cmd, data);
+		break;
 
 	default:
 		err = ieee80211_ioctl(ic, cmd, data);
@@ -12900,7 +13186,12 @@ iwx_rx_pkt(struct iwx_softc *sc, struct iwx_rx_data *data)
 		case IWX_SCAN_ITERATION_COMPLETE_UMAC: {
 			struct iwx_umac_scan_iter_complete_notif *notif;
 			SYNC_RESP_STRUCT(notif, pkt);
-			iwx_endscan(sc);
+			/*
+			 * A scan while associated ends with the scan itself:
+			 * a late end of an earlier one must not end it.
+			 */
+			if ((sc->sc_flags & IWX_FLAG_BGSCAN) == 0)
+				iwx_endscan(sc);
 			break;
 		}
 
@@ -13963,7 +14254,9 @@ iwx_config_complete(struct iwx_softc *sc)
 	task_set(&sc->phy_ctxt_task, iwx_phy_ctxt_task, sc);
 	task_set(&sc->mcc_task, iwx_mcc_task, sc);
 	task_set(&sc->csa_task, iwx_csa_task, sc);
+	task_set(&sc->scan_assoc_task, iwx_scan_assoc_task, sc);
 	timeout_set(&sc->sc_csa_to, iwx_csa_timeout, sc);
+	timeout_set(&sc->sc_scan_assoc_to, iwx_scan_assoc_timeout, sc);
 	task_set(&sc->sc_ba_task, iwx_ba_task, sc);
 	task_set(&sc->sc_txq_task, iwx_txq_task, sc);
 #if defined(IWX_HT)

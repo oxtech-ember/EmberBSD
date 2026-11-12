@@ -7,9 +7,10 @@ There is no new hardware acceptance result. The WPA2 measurements and
 stage descriptions below describe the earlier port.
 
 Status (2026-11-12): the mode report and the diagnostics below ran on
-the MSI (`VHT mode 11ac`, 80 MHz, two streams, MCS 9). New and **not yet
-run on hardware**: the driver follows the AP on an announced channel
-switch instead of restarting the interface. `iwx_csa_rx()` keeps the
+the MSI (`VHT mode 11ac`, 80 MHz, two streams, MCS 9). Also run there:
+the driver follows the AP on an announced channel switch instead of
+restarting the interface (one switch within a 160 MHz block, 1.0 s from
+the announcement to the new channel, no ping lost). `iwx_csa_rx()` keeps the
 announcement from the AP's beacons and action frames (CSA, ECSA, secondary
 channel offset, wide bandwidth channel switch); on the firmware's
 `CHANNEL_SWITCH_START_NOTIF` `iwx_csa_task()` moves the link when the band
@@ -27,8 +28,10 @@ the address after the carrier loss. Contracts: `iwx_ht_csa_*()` in
 themselves have no fixture yet. Run `ifconfig iwx0 debug` to log the
 announcement as it is received.
 
-160 MHz VHT is written but off by default and **not yet run on
-hardware**: with `ht=3` the driver offers 160 MHz and short GI at 160 MHz
+160 MHz VHT is off by default and ran on the MSI with `hw.iwx.ht=3`
+(`802.11ac, 160 MHz, 2 spatial streams`, firmware rates VHT MCS 8-9, two
+streams, 160 MHz; no throughput figure yet, the measuring peer shared the
+same AP): with `ht=3` the driver offers 160 MHz and short GI at 160 MHz
 in its VHT capabilities where the channel allows it, takes the 160 MHz
 layout from the AP's VHT operation (CCFS1 next to CCFS0, CCFS2 of HT
 operation for an AP with Extended NSS BW, or the deprecated width 2;
@@ -58,13 +61,40 @@ Ack window (64 stays), HE on 2.4 GHz, 6 GHz. `ifconfig` keeps the 11ac
 media word, dmesg says `802.11ax`. Contract: `test_he()` in
 `ember/tools/iwx-ht-contract.sh`.
 
-Also new and not yet run on hardware: a lost AP is noticed. The driver
+A lost AP is noticed (ran on the MSI: an AP that changed channel
+without an announcement was found again by the restart, 12.5 s without
+connectivity, about 5 s of it scanning and 5 s the DHCP client). The driver
 used to answer the firmware's missed-beacons notification with a probe
 request through the legacy `ieee80211_send_mgmt()`, which has none, so
 nothing happened. `iwx_rx_bmiss()` now sends a directed probe request
 after 8 beacons missed in a row (`ieee80211_beacon_miss()`) and restarts
 the interface after 16 if the AP stayed silent, logging `lost the AP`.
 Contract: `iwx_ht_bmiss()` in `ember/tools/iwx-ht-contract.sh`.
+
+New and **not yet run on hardware**: a scan while associated keeps the
+association. net80211 leaves the BSS before any scan it is asked for, so
+`iwx_ioctl()` takes the scan request (`IEEE80211_IOC_SCAN_REQ`) of an
+associated station itself: the firmware scans with the timing OpenBSD
+uses for a background scan (at most 120 TU away from the channel of the
+BSS at a time), beacons and probe responses of other BSSes go straight
+to the net80211 scan table (`iwx_scan_assoc_rx()`), and the end is
+reported as a finished scan (`RTM_IEEE80211_SCAN`), without
+`ieee80211_end_scan()`. No net80211 state changes meanwhile. The other
+requests `wpa_supplicant` makes before a scan (manual roaming, the WPA
+setting, the SSID) restart nothing: net80211 asks for no reset while
+roaming is manual. If the firmware reports no end within 30 s the driver
+says so, aborts the scan and reports what was found. Not done in place, with a
+restart of the interface and a log line instead: joining another BSS
+while associated (roaming proper is the next step; the AP left behind
+gets no deauthentication) and leaving the BSS while such a scan runs. A
+scan is refused while the AP announces a channel switch, and a switch
+that starts during a scan is not followed. `wpa_supplicant` here is
+built without its periodic background scan, so such a scan starts on
+request only (`wpa_cli scan`). Contracts: `test_scan()` in
+`ember/tools/iwx-ht-contract.sh`; the request, the end of the scan, the
+overrun and the state dispatcher in `ember/tools/iwx-width-contract.sh`;
+the receive path in `ember/tests/iwx-sae.sh`. `iwx_scan_assoc_rx()` has
+no fixture.
 
 Status (2026-11-11): `ifconfig iwx0` reports the negotiated mode
 (`VHT mode 11ac`, `HT mode 11na`/`11ng`) instead of the first legacy rate;
@@ -336,7 +366,7 @@ Boot setup used on the MSI:
 | WPA | `wpa_supplicant=YES`, `wpa_supplicant_flags="-B -s -i iwx0 -c /etc/wpa_supplicant.iwx0.conf"` |
 | DHCP | `dhcpcd_flags="-qM rge0 iwx0"` |
 | Country | `modload -s mcc=XX` (default `ZZ`); replaced by the country the firmware detects |
-| HT/VHT/HE | `modload -i ht=N` or, at run time, `sysctl -w hw.iwx.ht=N`: 0 legacy, 1 HT, 2 HT+VHT up to 80 MHz (default), 3 HT+VHT up to 160 MHz, 4 with HE up to 80 MHz, 5 HE up to 160 MHz (3 and above not yet run on hardware). A sysctl change applies from the next association: `ifconfig iwx0 down`, then `up`. For a module loaded by the boot loader, put `hw.iwx.ht=N` in `/etc/sysctl.conf`. A module loaded with `ht=0` attaches without QoS and accepts only 0; mode 0 chosen by sysctl keeps WMM and only stops offering HT |
+| HT/VHT/HE | `modload -i ht=N` or, at run time, `sysctl -w hw.iwx.ht=N`: 0 legacy, 1 HT, 2 HT+VHT up to 80 MHz (default), 3 HT+VHT up to 160 MHz, 4 with HE up to 80 MHz, 5 HE up to 160 MHz (4 and above not yet run on hardware). A sysctl change applies from the next association: `ifconfig iwx0 down`, then `up`. For a module loaded by the boot loader, put `hw.iwx.ht=N` in `/etc/sysctl.conf`. A module loaded with `ht=0` attaches without QoS and accepts only 0; mode 0 chosen by sysctl keeps WMM and only stops offering HT |
 
 Bring-up fixes on NetBSD (commits 579e0ec..bcc5a61): raw `CSR_HW_REV` as
 prph scratch `mac_id` (the GL ROM ignored the converted value), 94

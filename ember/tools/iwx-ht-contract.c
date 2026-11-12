@@ -787,6 +787,65 @@ chan160(int primary, uint8_t htop0, int vht, uint8_t vw, uint8_t c0,
 	iwx_ht_chan(p, loc, primary, c);
 }
 
+/* A scan while associated: frames, requests and leaving the BSS. */
+static void
+test_scan(void)
+{
+	static const uint8_t bssid[6] = { 0x02, 0, 0, 0, 0, 0x01 };
+	static const uint8_t other[6] = { 0x02, 0, 0, 0, 0, 0x02 };
+	uint8_t f[64];
+
+	/* A beacon of another BSS is filed without net80211 input. */
+	memset(f, 0, sizeof(f));
+	f[0] = 0x80;
+	memcpy(f + 10, other, 6);
+	memcpy(f + 16, other, 6);
+	CHECK(iwx_ht_scan_foreign(f, sizeof(f), bssid) == 1);
+	/* So is its probe response. */
+	f[0] = 0x50;
+	CHECK(iwx_ht_scan_foreign(f, sizeof(f), bssid) == 1);
+	/* The fixed beacon fields must be present. */
+	CHECK(iwx_ht_scan_foreign(f, 24 + 12, bssid) == 1);
+	CHECK(iwx_ht_scan_foreign(f, 24 + 11, bssid) == 0);
+	CHECK(iwx_ht_scan_foreign(f, 0, bssid) == 0);
+	/* Frames of the BSS in use keep the usual path. */
+	memcpy(f + 16, bssid, 6);
+	CHECK(iwx_ht_scan_foreign(f, sizeof(f), bssid) == 0);
+	memcpy(f + 16, other, 6);
+	memcpy(f + 10, bssid, 6);
+	CHECK(iwx_ht_scan_foreign(f, sizeof(f), bssid) == 0);
+	memcpy(f + 10, other, 6);
+	/* Other management, control and data frames are not scan results. */
+	f[0] = 0xd0;
+	CHECK(iwx_ht_scan_foreign(f, sizeof(f), bssid) == 0);
+	f[0] = 0x84;
+	CHECK(iwx_ht_scan_foreign(f, sizeof(f), bssid) == 0);
+	f[0] = 0x88;
+	CHECK(iwx_ht_scan_foreign(f, sizeof(f), bssid) == 0);
+	/* An unknown protocol version is not parsed. */
+	f[0] = 0x81;
+	CHECK(iwx_ht_scan_foreign(f, sizeof(f), bssid) == 0);
+
+	/* A scan request: only an associated station scans in place. */
+	CHECK(iwx_ht_scan_request(0, 0, 0) == IWX_HT_SCANREQ_NET80211);
+	CHECK(iwx_ht_scan_request(0, 1, 0) == IWX_HT_SCANREQ_NET80211);
+	CHECK(iwx_ht_scan_request(0, 0, 1) == IWX_HT_SCANREQ_NET80211);
+	CHECK(iwx_ht_scan_request(1, 0, 0) == IWX_HT_SCANREQ_START);
+	/* A scan in flight answers the request. */
+	CHECK(iwx_ht_scan_request(1, 1, 0) == IWX_HT_SCANREQ_RUNNING);
+	/* Not while the AP is moving to another channel. */
+	CHECK(iwx_ht_scan_request(1, 0, 1) == IWX_HT_SCANREQ_BUSY);
+	CHECK(iwx_ht_scan_request(1, 1, 1) == IWX_HT_SCANREQ_BUSY);
+
+	/* Leaving the BSS in place: not to join another, not mid-scan. */
+	CHECK(iwx_ht_leave_run(1, 0, 0) == IWX_HT_LEAVE_OK);
+	CHECK(iwx_ht_leave_run(1, 1, 1) == IWX_HT_LEAVE_OK);
+	CHECK(iwx_ht_leave_run(0, 0, 0) == IWX_HT_LEAVE_OK);
+	CHECK(iwx_ht_leave_run(0, 1, 0) == IWX_HT_LEAVE_JOIN);
+	CHECK(iwx_ht_leave_run(0, 0, 1) == IWX_HT_LEAVE_SCAN);
+	CHECK(iwx_ht_leave_run(0, 1, 1) == IWX_HT_LEAVE_JOIN);
+}
+
 /* The operating mode: which values exist and what each one offers. */
 static void
 test_mode(void)
@@ -1234,6 +1293,7 @@ main(void)
 	test_width160();
 	test_he();
 	test_mode();
+	test_scan();
 	printf("iwx-ht-contract: %u checks, %u failures\n", checks, failures);
 	return failures != 0;
 }

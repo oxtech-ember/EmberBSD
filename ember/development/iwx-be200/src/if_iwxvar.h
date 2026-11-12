@@ -702,7 +702,9 @@ struct iwx_softc {
 
 	/* Task for following the AP to an announced channel. */
 	struct task		csa_task;
+	struct task		scan_assoc_task; /* a scan that overran */
 	struct timeout		sc_csa_to;	/* beacon expected after it */
+	struct timeout		sc_scan_assoc_to; /* a scan while associated */
 
 	bus_space_tag_t sc_st;
 	bus_space_handle_t sc_sh;

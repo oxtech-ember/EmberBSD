@@ -1006,6 +1006,71 @@ iwx_ht_csa_follow(const struct iwx_ht_peer *p, const struct iwx_ht_local *loc,
 }
 
 /*
+ * A scan while associated.  The firmware leaves the channel of the BSS
+ * for a moment at a time and reports what it hears elsewhere.
+ */
+
+/*
+ * Whether a received frame is a beacon or a probe response of another
+ * BSS.  Such a frame is filed in the scan table directly: net80211 input
+ * would take it for a frame of the BSS in use, whose address is `bssid'.
+ */
+static inline int
+iwx_ht_scan_foreign(const uint8_t *frame, size_t len, const uint8_t *bssid)
+{
+	int i, same2 = 1, same3 = 1;
+
+	/* The 802.11 header and the fixed fields of a beacon. */
+	if (len < 24 + 12)
+		return 0;
+	/* Protocol version 0, a management frame. */
+	if ((frame[0] & 0x0f) != 0x00)
+		return 0;
+	if ((frame[0] & 0xf0) != 0x80 && (frame[0] & 0xf0) != 0x50)
+		return 0;
+	for (i = 0; i < 6; i++) {
+		same2 &= frame[10 + i] == bssid[i];
+		same3 &= frame[16 + i] == bssid[i];
+	}
+	return !same2 && !same3;
+}
+
+/* What to do with a scan request from user space. */
+#define IWX_HT_SCANREQ_NET80211	0	/* not associated: the usual scan */
+#define IWX_HT_SCANREQ_START	1	/* scan and stay associated */
+#define IWX_HT_SCANREQ_RUNNING	2	/* such a scan is already in flight */
+#define IWX_HT_SCANREQ_BUSY	3	/* the AP is switching channels */
+
+static inline int
+iwx_ht_scan_request(int associated, int scanning, int csa)
+{
+	if (!associated)
+		return IWX_HT_SCANREQ_NET80211;
+	if (csa)
+		return IWX_HT_SCANREQ_BUSY;
+	return scanning ? IWX_HT_SCANREQ_RUNNING : IWX_HT_SCANREQ_START;
+}
+
+/*
+ * Whether the association can be taken down in place when net80211 asks
+ * for another state.  Joining another BSS and leaving in the middle of a
+ * scan are not done in place: the device is restarted instead.
+ */
+#define IWX_HT_LEAVE_OK		0
+#define IWX_HT_LEAVE_JOIN	1	/* another BSS is to be joined */
+#define IWX_HT_LEAVE_SCAN	2	/* a scan is in flight */
+
+static inline int
+iwx_ht_leave_run(int to_init, int join, int scanning)
+{
+	if (to_init)
+		return IWX_HT_LEAVE_OK;
+	if (join)
+		return IWX_HT_LEAVE_JOIN;
+	return scanning ? IWX_HT_LEAVE_SCAN : IWX_HT_LEAVE_OK;
+}
+
+/*
  * Beacon loss as the firmware counts it: `missed' consecutive beacons
  * since the last one received.  Returns 1 each time the count passes
  * another multiple of IWX_HT_BMISS_STEP, 0 otherwise; *level is the

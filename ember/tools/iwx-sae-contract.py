@@ -36,6 +36,8 @@ def main():
 #include "if_iwx_ht.h"
 #define NBPFILTER 0
 #define IEEE80211_S_SCAN 1
+#define IEEE80211_S_RUN 4
+#define IWX_FLAG_BGSCAN 0x200
 #define IEEE80211_FC0_TYPE_MASK 0x0c
 #define IEEE80211_FC0_TYPE_MGT 0
 #define IEEE80211_FC0_SUBTYPE_MASK 0xf0
@@ -76,7 +78,7 @@ struct iwx_softc {
     void (*sc_recv_mgmt)(struct ieee80211com *, struct mbuf *,
         struct ieee80211_node *, int, int, uint32_t);
     uint8_t sc_ht_buf[2][IWX_HT_ASSOC_MAX];
-    int sc_ht_mode;
+    int sc_ht_mode, sc_flags;
 };
 struct ieee80211_rxinfo { int rxi_rssi; uint32_t rxi_tstamp; };
 static int admitted, assoc, action, csa, ordinary, failalloc, failcluster, failtags;
@@ -94,6 +96,10 @@ static void iwx_ht_rx_assoc(struct iwx_softc *sc, struct mbuf *m)
     { assert(sc && m); assoc++; }
 static void iwx_ht_rx_action(struct iwx_softc *sc, struct mbuf *m)
     { assert(sc && m); action++; }
+static int scanrx, scanrx_calls;
+static int iwx_scan_assoc_rx(struct iwx_softc *sc, struct mbuf *m, int chanidx,
+    struct ieee80211_rxinfo *rxi)
+    { assert(sc && m && rxi && chanidx == 1); scanrx_calls++; return scanrx; }
 static void iwx_csa_rx(struct iwx_softc *sc, struct mbuf *m)
     { assert(sc && m); assert(assoc == 1 && action == 1); csa++; }
 static void saved_recv(struct ieee80211com *ic, struct mbuf *m,
@@ -160,7 +166,29 @@ int main(int argc, char **argv)
         iwx_rx_frame(&sc,m,1,0,0,0,0,&rxi);
         assert(assoc == 0 && action == 0 && ordinary == 0);
         admitted=1; iwx_rx_frame(&sc,m,1,0,0,0,0,&rxi);
-        assert(assoc == 1 && action == 1 && ordinary == 1); free(m);
+        assert(assoc == 1 && action == 1 && ordinary == 1);
+        /* Only a scan while associated diverts frames. */
+#define RX() do { assoc = action = csa = 0; \
+    iwx_rx_frame(&sc,m,1,0,0,0,0,&rxi); } while (0)
+        assert(scanrx_calls == 0 && rxnode.ni_chan == &sc.sc_ic.ic_channels[1]);
+        sc.sc_flags = IWX_FLAG_BGSCAN; scanrx = 1; RX();
+        assert(scanrx_calls == 0 && ordinary == 2);
+        sc.sc_flags = 0; sc.sc_ic.ic_state = IEEE80211_S_RUN; RX();
+        assert(scanrx_calls == 0 && ordinary == 3);
+        /* A frame of the BSS in use takes the usual path and keeps
+         * the channel of that BSS; a result of another BSS is consumed. */
+        sc.sc_flags = IWX_FLAG_BGSCAN; scanrx = 0;
+        sc.sc_ic.ic_bss = &rxnode; rxnode.ni_chan = &sc.sc_ic.ic_channels[7];
+        RX();
+        assert(scanrx_calls == 1 && ordinary == 4);
+        assert(rxnode.ni_chan == &sc.sc_ic.ic_channels[7]);
+        scanrx = 1; freed = 0; RX();
+        assert(scanrx_calls == 2 && ordinary == 4 && freed == 1);
+        assert(rxnode.ni_chan == &sc.sc_ic.ic_channels[7]);
+#undef RX
+        freed = 0; scanrx = 0; sc.sc_flags = 0;
+        assoc = action = csa = 1; ordinary = 1;
+        sc.sc_ic.ic_state = 0; sc.sc_ic.ic_bss = NULL;
     }
     if (argc == 1 || strcmp(argv[1], "tags") == 0) {
         node.ni_chan=&sc.sc_ic.ic_channels[1];

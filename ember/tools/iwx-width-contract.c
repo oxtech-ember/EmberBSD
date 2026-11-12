@@ -45,6 +45,7 @@
 #define IWX_FLAG_PHY_ACTIVE 8
 #define IWX_FLAG_SHUTDOWN 16
 #define IWX_FLAG_SCANNING 32
+#define IWX_FLAG_BGSCAN 64
 #define IWX_RLC_CONFIG_CMD 0x4e
 #define IWX_LINK_CONTEXT_MODIFY_ACTIVE 1
 #define IWX_LINK_CONTEXT_MODIFY_RATES_INFO 2
@@ -52,6 +53,17 @@
 #define IWX_DQA_INJECT_MONITOR_QUEUE 1
 #define IWX_MGMT_TID 8
 #define IWX_TX_RING_COUNT 256
+#define IWX_SCAN_ASSOCIATED 2
+#define IWX_SCAN_ASSOC_TIMEOUT 30
+#define IEEE80211_IOC_WPA 26
+#define IEEE80211_IOC_SCAN_REQ 23
+#define IEEE80211_ROAMING_AUTO 1
+#define IEEE80211_ROAMING_MANUAL 2
+#define KAUTH_NETWORK_INTERFACE 0
+#define KAUTH_REQ_NETWORK_INTERFACE_SETPRIV 0
+#define kauth_cred_get() 0
+#define IC2IFP(ic) ((void)(ic), (void *)0)
+#define u_long unsigned long
 #define IPL_NET 0
 #define splassert(ipl) ((void)(ipl))
 #define device_xname(dev) ((void)(dev), "iwx-test")
@@ -79,9 +91,10 @@ struct iwx_node {
 	struct iwx_ht_chan in_htc;
 	uint8_t in_macaddr[6];
 };
+struct ieee80211req { int i_type; };
 struct ieee80211com {
 	void *ic_bss, *ic_ibss_chan;
-	int ic_opmode;
+	int ic_opmode, ic_roaming;
 	enum ieee80211_state ic_state;
 };
 struct iwx_softc {
@@ -90,6 +103,7 @@ struct iwx_softc {
 	int sc_flags, sc_generation, sc_bss_ht_valid, task_refs;
 	uint32_t sc_bmiss_level;
 	int sc_systq, init_task, ns_arg;
+	int sc_csa_valid, sc_csa_wait, sc_scan_assoc_to, scan_assoc_task;
 	uint64_t sc_ns_sae_serial;
 	enum ieee80211_state ns_nstate;
 	struct iwx_phy_ctxt sc_phyctxt[1];
@@ -321,6 +335,40 @@ record_newstate(struct ieee80211com *ic, enum ieee80211_state state, int arg)
 	return 0;
 }
 
+/* A scan while associated: what the driver asks of its surroundings. */
+static int scan_mode, scan_error, scan_starts, scan_aborts, scan_notified;
+static int scan_ended, scan_timer, kauth_error, kauth_calls;
+static int scan_flags_at_send, scan_timer_at_send;
+static int
+iwx_initiate_scan(struct iwx_softc *sc, int bgscan)
+{
+	scan_mode = bgscan;
+	scan_starts++;
+	/* The command sleeps: what the receive path sees meanwhile. */
+	scan_flags_at_send = sc->sc_flags;
+	scan_timer_at_send = scan_timer;
+	return scan_error;
+}
+static int iwx_umac_scan_abort(struct iwx_softc *sc)
+{ (void)sc; scan_aborts++; return 0; }
+static void ieee80211_notify_scan_done(struct ieee80211com *ic)
+{ (void)ic; scan_notified++; }
+static void ieee80211_end_scan(struct ieee80211com *ic)
+{ (void)ic; scan_ended++; }
+static void timeout_add_sec(int *to, int sec)
+{ (void)to; scan_timer = sec; }
+static void timeout_del(int *to) { (void)to; scan_timer = 0; }
+static int timeout_pending(int *to) { (void)to; return scan_timer != 0; }
+static int
+kauth_authorize_network(int cred, int action, int req, void *ifp, void *cmd,
+    void *arg)
+{
+	(void)cred; (void)action; (void)req; (void)ifp; (void)cmd; (void)arg;
+	kauth_calls++;
+	return kauth_error;
+}
+void iwx_endscan(struct iwx_softc *);
+
 /* DRIVER_FUNCTIONS */
 
 static void
@@ -377,6 +425,172 @@ test_stop(int width, int monitor, int flush_fail)
 	CHECK(sc.sc_phyctxt[0].sco == (width == 1 ? 1 : 0));
 	CHECK(sc.sc_phyctxt[0].vht_chan_width == (width == 2 ? 1 : 0));
 	CHECK((disassoc_sequence > 0) == (flush_fail == 0));
+}
+
+/*
+ * Joining another BSS and leaving the BSS during a scan restart the
+ * device; every other way out of RUN is still taken down in place.
+ * `fresh' puts a node the driver has not set up in ic_bss, as a join of
+ * another BSS does.
+ */
+static void
+test_leave(enum ieee80211_state next, int arg, int bgscan, int fresh,
+    int restart)
+{
+	struct iwx_softc sc;
+	struct iwx_node in, other;
+
+	setup(&sc, &in, 2, 0);
+	reset_transport(4, 2);
+	sc.ns_nstate = next;
+	sc.ns_arg = arg;
+	if (bgscan)
+		sc.sc_flags |= IWX_FLAG_BGSCAN;
+	if (fresh) {
+		memset(&other, 0, sizeof(other));
+		sc.sc_ic.ic_bss = &other;
+	}
+	iwx_newstate_task(&sc);
+	CHECK(task_releases == 1);
+	if (restart) {
+		CHECK(recovery_count == 1);
+		CHECK(disassoc_sequence == 0 && remove_sequence == 0);
+		CHECK(binding_remove_sequence == 0 && mac_remove_sequence == 0);
+		CHECK(phy_remove_sequence == 0 && phy_add_sequence == 0);
+		CHECK(sc.sc_flags & IWX_FLAG_STA_ACTIVE);
+		CHECK(in.in_ht == 1);
+	} else {
+		CHECK(recovery_count == 0);
+		CHECK(disassoc_sequence > 0);
+	}
+}
+
+/* A scan requested by user space while associated. */
+static void
+test_scan_assoc(void)
+{
+	struct iwx_softc sc;
+	struct iwx_node in;
+	struct ieee80211req scan = { IEEE80211_IOC_SCAN_REQ };
+	struct ieee80211req other = { IEEE80211_IOC_WPA };
+	const int active = IWX_FLAG_STA_ACTIVE | IWX_FLAG_BINDING_ACTIVE |
+	    IWX_FLAG_MAC_ACTIVE | IWX_FLAG_PHY_ACTIVE;
+	int err;
+
+	setup(&sc, &in, 2, 0);
+	sc.ns_nstate = IEEE80211_S_RUN;
+	scan_starts = scan_notified = scan_ended = scan_aborts = 0;
+	scan_error = kauth_error = kauth_calls = scan_timer = 0;
+
+	/* Only a scan request is taken from net80211. */
+	err = -1;
+	CHECK(iwx_scan_assoc_req(&sc, 0, &other, &err) == 0);
+	CHECK(err == -1 && kauth_calls == 0 && scan_starts == 0);
+
+	/* Not associated, or about to leave: net80211 runs the scan. */
+	sc.sc_ic.ic_state = IEEE80211_S_SCAN;
+	CHECK(iwx_scan_assoc_req(&sc, 0, &scan, &err) == 0);
+	sc.sc_ic.ic_state = IEEE80211_S_RUN;
+	sc.ns_nstate = IEEE80211_S_AUTH;
+	CHECK(iwx_scan_assoc_req(&sc, 0, &scan, &err) == 0);
+	sc.ns_nstate = IEEE80211_S_RUN;
+	sc.sc_flags |= IWX_FLAG_SHUTDOWN;
+	CHECK(iwx_scan_assoc_req(&sc, 0, &scan, &err) == 0);
+	sc.sc_flags &= ~IWX_FLAG_SHUTDOWN;
+	sc.sc_ic.ic_opmode = IEEE80211_M_MONITOR;
+	CHECK(iwx_scan_assoc_req(&sc, 0, &scan, &err) == 0);
+	sc.sc_ic.ic_opmode = IEEE80211_M_STA;
+	CHECK(err == -1 && kauth_calls == 0 && scan_starts == 0);
+
+	/* The privilege check comes first. */
+	kauth_error = EPERM;
+	CHECK(iwx_scan_assoc_req(&sc, 0, &scan, &err) == 1);
+	CHECK(err == EPERM && kauth_calls == 1 && scan_starts == 0);
+	CHECK(sc.sc_flags == active);
+	kauth_error = 0;
+
+	/* A channel switch of the AP is announced or under way. */
+	sc.sc_csa_valid = 1;
+	CHECK(iwx_scan_assoc_req(&sc, 0, &scan, &err) == 1);
+	CHECK(err == EBUSY && scan_starts == 0);
+	sc.sc_csa_valid = 0;
+	sc.sc_csa_wait = 1;
+	CHECK(iwx_scan_assoc_req(&sc, 0, &scan, &err) == 1);
+	CHECK(err == EBUSY && scan_starts == 0);
+	sc.sc_csa_wait = 0;
+
+	/* The firmware refuses the scan: nothing is left behind. */
+	scan_error = EIO;
+	CHECK(iwx_scan_assoc_req(&sc, 0, &scan, &err) == 1);
+	CHECK(err == EIO && scan_starts == 1 && scan_timer == 0);
+	CHECK(sc.sc_flags == active);
+	scan_error = 0;
+	/* The scan was marked before the command went out. */
+	CHECK(scan_flags_at_send ==
+	    (active | IWX_FLAG_SCANNING | IWX_FLAG_BGSCAN));
+	CHECK(scan_timer_at_send == IWX_SCAN_ASSOC_TIMEOUT);
+
+	/* The scan starts with a command that reports its failure. */
+	CHECK(iwx_scan_assoc_req(&sc, 0, &scan, &err) == 1);
+	CHECK(err == 0 && scan_starts == 2);
+	CHECK(scan_mode == IWX_SCAN_ASSOCIATED);
+	CHECK(sc.sc_flags ==
+	    (active | IWX_FLAG_SCANNING | IWX_FLAG_BGSCAN));
+	CHECK(scan_timer == IWX_SCAN_ASSOC_TIMEOUT);
+	/* A second request joins the scan in flight. */
+	CHECK(iwx_scan_assoc_req(&sc, 0, &scan, &err) == 1);
+	CHECK(err == 0 && scan_starts == 2);
+
+	/* Its end is reported; net80211 picks no BSS. */
+	iwx_endscan(&sc);
+	CHECK(scan_notified == 1 && scan_ended == 0 && scan_timer == 0);
+	CHECK(sc.sc_flags == active);
+	iwx_endscan(&sc);
+	CHECK(scan_notified == 1 && scan_ended == 0);
+
+	/* A scan by net80211 still ends through net80211. */
+	sc.sc_ic.ic_state = IEEE80211_S_SCAN;
+	sc.sc_flags |= IWX_FLAG_SCANNING;
+	iwx_endscan(&sc);
+	CHECK(scan_notified == 1 && scan_ended == 1);
+	/* So does one that net80211 took over after the BSS was left. */
+	sc.sc_flags |= IWX_FLAG_SCANNING | IWX_FLAG_BGSCAN;
+	iwx_endscan(&sc);
+	CHECK(scan_notified == 1 && scan_ended == 2);
+	CHECK(sc.sc_flags == active);
+	sc.sc_ic.ic_state = IEEE80211_S_RUN;
+
+	/* A scan that overran is aborted and its results reported. */
+	CHECK(iwx_scan_assoc_req(&sc, 0, &scan, &err) == 1 && err == 0);
+	task_releases = 0;
+	/* A pending timeout: the task was queued for an earlier scan. */
+	iwx_scan_assoc_task(&sc);
+	CHECK(scan_aborts == 0 && scan_notified == 1 && task_releases == 1);
+	CHECK(sc.sc_flags ==
+	    (active | IWX_FLAG_SCANNING | IWX_FLAG_BGSCAN));
+	scan_timer = 0;		/* the timeout has fired */
+	iwx_scan_assoc_task(&sc);
+	CHECK(scan_aborts == 1 && scan_notified == 2 && task_releases == 2);
+	CHECK(sc.sc_flags == active && scan_timer == 0);
+	/* The task finds nothing to do once the scan has ended. */
+	iwx_scan_assoc_task(&sc);
+	CHECK(scan_aborts == 1 && scan_notified == 2 && task_releases == 3);
+	/* Nor during a shutdown. */
+	sc.sc_flags |= IWX_FLAG_SCANNING | IWX_FLAG_BGSCAN | IWX_FLAG_SHUTDOWN;
+	iwx_scan_assoc_task(&sc);
+	CHECK(scan_aborts == 1 && scan_notified == 2 && task_releases == 4);
+	sc.sc_flags = active;
+	/* An overrun after the BSS was left: net80211 scans, or nobody. */
+	sc.sc_flags |= IWX_FLAG_SCANNING | IWX_FLAG_BGSCAN;
+	sc.sc_ic.ic_state = IEEE80211_S_SCAN;
+	iwx_scan_assoc_task(&sc);
+	CHECK(scan_aborts == 2 && scan_notified == 2 && scan_ended == 3);
+	CHECK(sc.sc_flags == active);
+	sc.sc_flags |= IWX_FLAG_SCANNING | IWX_FLAG_BGSCAN;
+	sc.sc_ic.ic_state = IEEE80211_S_INIT;
+	iwx_scan_assoc_task(&sc);
+	CHECK(scan_aborts == 3 && scan_notified == 2 && scan_ended == 3);
+	CHECK(sc.sc_flags == active);
 }
 
 /* Execute the real state dispatcher and its teardown/auth callees. */
@@ -544,6 +758,21 @@ main(void)
 		test_transition(width, IEEE80211_S_AUTH, EIO, 0);
 		test_transition(width, IEEE80211_S_AUTH, 0, EIO);
 	}
+
+	/* A join of another BSS arrives as AUTH with no frame behind it. */
+	test_leave(IEEE80211_S_AUTH, -1, 0, 1, 1);
+	/* The same request for the BSS in use is taken down in place. */
+	test_leave(IEEE80211_S_AUTH, -1, 0, 0, 0);
+	test_leave(IEEE80211_S_AUTH, 0xc0, 0, 0, 0);
+	test_leave(IEEE80211_S_ASSOC, -1, 0, 0, 0);
+	test_leave(IEEE80211_S_SCAN, -1, 0, 0, 0);
+	test_leave(IEEE80211_S_INIT, -1, 0, 0, 0);
+	/* A scan in flight. */
+	test_leave(IEEE80211_S_AUTH, 0xc0, 1, 0, 1);
+	test_leave(IEEE80211_S_ASSOC, 0, 1, 0, 1);
+	test_leave(IEEE80211_S_SCAN, 0, 1, 0, 1);
+	test_leave(IEEE80211_S_INIT, -1, 1, 0, 0);
+	test_scan_assoc();
 	for (version = 3; version <= 4; version++) {
 		test_dynamic(version, 1, 0);
 		test_dynamic(version, 2, 0);
