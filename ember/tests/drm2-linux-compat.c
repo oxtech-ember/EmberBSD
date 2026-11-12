@@ -24,6 +24,7 @@
 
 #include <linux/cleanup.h>
 #include <linux/iosys-map.h>
+#include <linux/seq_buf.h>
 #include <linux/kdev_t.h>
 #include <linux/string_choices.h>
 #include <linux/string_helpers.h>
@@ -40,6 +41,7 @@
 #include <linux/hrtimer_types.h>
 #include <linux/iopoll.h>
 #include <linux/limits.h>
+#include <linux/ref_tracker.h>
 #include <linux/mutex.h>
 #include <linux/rwsem.h>
 #include <linux/spinlock.h>
@@ -48,10 +50,13 @@
 #include <linux/minmax.h>
 #include <linux/sprintf.h>
 #include <linux/nmi.h>
+#include <linux/aperture.h>
 #include <linux/stdarg.h>
 #include <linux/time64.h>
 #include <linux/timekeeping.h>
 #include <linux/unaligned.h>
+#include <linux/utsname.h>
+#include <video/nomodeset.h>
 #include <linux/wordpart.h>
 #include <xen/xen.h>
 #endif
@@ -914,6 +919,108 @@ test_iosys_map(void)
 }
 
 static void
+test_seq_buf(void)
+{
+	char b[16];
+	struct seq_buf s;
+	char *p;
+
+	seq_buf_init(&s, b, sizeof(b));
+	CHECK(seq_buf_used(&s) == 0 && !seq_buf_has_overflowed(&s));
+	CHECK(seq_buf_buffer_left(&s) == 16);
+	CHECK(seq_buf_printf(&s, "ab%d", 12) == 0);
+	CHECK(seq_buf_used(&s) == 4);
+	CHECK(seq_buf_putc(&s, '-') == 0);
+	CHECK(seq_buf_puts(&s, "xyz") == 0);
+	CHECK(seq_buf_used(&s) == 8 && seq_buf_buffer_left(&s) == 8);
+	CHECK_STR(seq_buf_str(&s), "ab12-xyz");
+	CHECK(seq_buf_putmem(&s, "QQ", 2) == 0);
+	CHECK_STR(seq_buf_str(&s), "ab12-xyzQQ");
+
+	/* vprintf wrapper */
+	seq_buf_clear(&s);
+	CHECK(seq_buf_used(&s) == 0);
+	CHECK(seq_buf_printf(&s, "%s=%x", "k", 255) == 0);
+	CHECK_STR(seq_buf_str(&s), "k=ff");
+
+	/* get_buf / commit: write directly into the free space */
+	seq_buf_clear(&s);
+	CHECK(seq_buf_printf(&s, "<") == 0);
+	CHECK(seq_buf_get_buf(&s, &p) == 15);
+	memcpy(p, "raw", 3);
+	seq_buf_commit(&s, 3);
+	CHECK_STR(seq_buf_str(&s), "<raw");
+
+	/*
+	 * Overflow.  Raw writers may fill the buffer to its size; printf also
+	 * needs the NUL.  A write that does not fit returns -1, marks the
+	 * buffer overflowed, and later writes keep failing.
+	 */
+	seq_buf_clear(&s);
+	CHECK(seq_buf_puts(&s, "0123456789abcde") == 0);	/* 15 chars */
+	CHECK(!seq_buf_has_overflowed(&s) && seq_buf_buffer_left(&s) == 1);
+	CHECK(seq_buf_putc(&s, 'x') == 0);			/* fills it */
+	CHECK(!seq_buf_has_overflowed(&s) && seq_buf_buffer_left(&s) == 0);
+	CHECK(seq_buf_used(&s) == 16);
+	CHECK_STR(seq_buf_str(&s), "0123456789abcde");	/* NUL at size - 1 */
+	CHECK(seq_buf_putc(&s, 'y') == -1);
+	CHECK(seq_buf_has_overflowed(&s));
+	CHECK(seq_buf_used(&s) == 16 && seq_buf_buffer_left(&s) == 0);
+	CHECK(seq_buf_puts(&s, "") == -1);
+	seq_buf_clear(&s);
+	CHECK(!seq_buf_has_overflowed(&s));
+	CHECK(seq_buf_printf(&s, "%s", "0123456789abcdef") == -1);	/* no NUL room */
+	CHECK(seq_buf_has_overflowed(&s));
+	seq_buf_clear(&s);
+	CHECK(seq_buf_printf(&s, "%s", "0123456789abcde") == 0);
+	CHECK(seq_buf_printf(&s, "z") == -1);
+	seq_buf_clear(&s);
+	CHECK(seq_buf_putmem(&s, "0123456789abcdef", 16) == 0);
+	CHECK(seq_buf_putmem(&s, "0", 1) == -1);
+	seq_buf_clear(&s);
+	CHECK(seq_buf_putmem(&s, "0123456789abcdefg", 17) == -1);
+	CHECK(seq_buf_has_overflowed(&s));
+
+	/* size 0 buffer */
+	seq_buf_init(&s, b, 0);
+	CHECK(seq_buf_putc(&s, 'a') == -1);
+	CHECK_STR(seq_buf_str(&s), "");
+}
+
+#ifndef DRM2_COMPAT_HOST
+static void
+test_kernel_stubs(void)
+{
+	struct ref_tracker_dir dir;
+	struct ref_tracker *tracker = NULL;
+	char buf[8];
+
+	/* ref_tracker.h: tracking is off, every call is accepted. */
+	ref_tracker_dir_init(&dir, 4, "t");
+	CHECK(ref_tracker_alloc(&dir, &tracker, GFP_KERNEL) == 0);
+	CHECK(ref_tracker_free(&dir, &tracker) == 0);
+	ref_tracker_dir_print(&dir, 1);
+	CHECK(ref_tracker_dir_snprint(&dir, buf, sizeof(buf)) == 0);
+	ref_tracker_dir_exit(&dir);
+
+	/* aperture.h: nothing to evict. */
+	CHECK(aperture_remove_conflicting_devices(0xe0000000UL, 0x1000000UL,
+	    "t") == 0);
+	CHECK(aperture_remove_all_conflicting_devices("t") == 0);
+
+	/* video/nomodeset.h */
+	CHECK(!video_firmware_drivers_only());
+
+	/* utsname.h */
+	CHECK(strlen(init_utsname()->sysname) > 0);
+	CHECK(strlen(init_utsname()->release) > 0);
+	CHECK(strlen(init_utsname()->machine) > 0);
+	CHECK(strcmp(init_utsname()->release, osrelease) == 0);
+	CHECK(strcmp(init_utsname()->sysname, ostype) == 0);
+}
+#endif
+
+static void
 test_harness(void)
 {
 
@@ -935,12 +1042,14 @@ drm2_linux_compat_run(void)
 	test_kdev_swab();
 	test_cleanup();
 	test_iosys_map();
+	test_seq_buf();
 #ifndef DRM2_COMPAT_HOST
 	test_kernel_forwarders();
 	test_kernel_misc();
 	test_kernel_lock_guards();
 	test_kernel_xarray();
 	test_kernel_iopoll();
+	test_kernel_stubs();
 #endif
 #ifdef DRM2_COMPAT_SELFTEST_FAIL
 	test_selftest_fail();
