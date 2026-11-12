@@ -173,6 +173,12 @@ CTASSERT(IWX_HT_WIDTH_160 == IWX_TLC_MNG_CH_WIDTH_160MHZ);
 CTASSERT(IWX_HT_TLC_MODE_NON_HT == IWX_TLC_MNG_MODE_NON_HT);
 CTASSERT(IWX_HT_TLC_MODE_HT == IWX_TLC_MNG_MODE_HT);
 CTASSERT(IWX_HT_TLC_MODE_VHT == IWX_TLC_MNG_MODE_VHT);
+CTASSERT(IWX_HT_TLC_MODE_HE == IWX_TLC_MNG_MODE_HE);
+CTASSERT(IWX_HT_TLC_STBC == IWX_TLC_MNG_CFG_FLAGS_STBC_MSK);
+CTASSERT(IWX_HT_TLC_LDPC == IWX_TLC_MNG_CFG_FLAGS_LDPC_MSK);
+CTASSERT(IWX_HT_TLC_HE_DCM_NSS_1 == IWX_TLC_MNG_CFG_FLAGS_HE_DCM_NSS_1_MSK);
+CTASSERT(sizeof(((struct iwx_he_pkt_ext_v2 *)0)->pkt_ext_qam_th) ==
+    2 * 5 * 2);
 CTASSERT(IWX_HT_IFM_TMASK == IFM_TMASK);
 CTASSERT(IWX_HT_IFM_MMASK == IFM_MMASK);
 CTASSERT(IWX_HT_IFM_MCS == IFM_IEEE80211_MCS);
@@ -189,7 +195,8 @@ CTASSERT(IWX_HT_EID_HTOP == IEEE80211_ELEMID_HTINFO);
 
 /*
  * 0: legacy rates only; 1: HT (802.11n); 2: HT and VHT (802.11ac) up to
- * 80 MHz; 3: the same up to 160 MHz, not yet run on hardware.
+ * 80 MHz; 3: the same up to 160 MHz; 4: with HE (802.11ax) up to 80 MHz;
+ * 5: HE up to 160 MHz.  3 and above have not yet run on hardware.
  * Module property "ht" (modload -i ht=N).
  */
 static int iwx_ht_mode = 2;
@@ -7374,6 +7381,12 @@ iwx_mld_modify_link_fill(struct iwx_softc *sc, struct iwx_node *in,
 	cmd->modify_mask = htole32(changes);
 	cmd->flags = 0;
 	cmd->flags_mask = 0;
+	if (changes & IWX_LINK_CONTEXT_MODIFY_HE_PARAMS) {
+		/* Linux sends the BSS colour and leaves the rest zero. */
+		cmd->bss_color = iwx_ht_he_color(&sc->sc_bss_ht);
+		if (iwx_ht_he_color_disabled(&sc->sc_bss_ht))
+			cmd->flags = htole32(IWX_LINK_FLG_BSS_COLOR_DIS);
+	}
 	cmd->spec_link_id = 0;
 	cmd->listen_lmac = 0;
 	cmd->action = IWX_FW_CTXT_ACTION_MODIFY;
@@ -7509,12 +7522,23 @@ iwx_mld_add_sta_cmd(struct iwx_softc *sc, struct iwx_node *in, int update)
 			sta_cmd.mimo = htole32(1);
 		sta_cmd.tx_ampdu_spacing =
 		    htole32((sc->sc_bss_ht.ampdu_param >> 2) & 0x7);
-		if (in->in_htt.mode == IWX_HT_TLC_MODE_VHT)
+		if (in->in_htt.mode != IWX_HT_TLC_MODE_HT)
 			sta_cmd.tx_ampdu_max_size =
 			    htole32((sc->sc_bss_ht.vhtcaps >> 23) & 0x7);
 		else
 			sta_cmd.tx_ampdu_max_size =
 			    htole32(sc->sc_bss_ht.ampdu_param & 0x3);
+		if (in->in_htt.mode == IWX_HT_TLC_MODE_HE) {
+			/*
+			 * Packet extension as the AP asks for it.  No HT
+			 * control field features: we did not offer +HTC-HE.
+			 */
+			iwx_ht_he_pkt_ext(&sc->sc_bss_ht,
+			    sta_cmd.pkt_ext.pkt_ext_qam_th);
+			sta_cmd.htc_flags = 0;
+			if (sc->sc_bss_ht.he_mac[2] & 0x80)
+				sta_cmd.ack_enabled = htole32(1);
+		}
 	}
 
 	if (ieee80211_sae_active(ic))
@@ -8521,6 +8545,11 @@ iwx_mld_mac_ctxt_cmd(struct iwx_softc *sc, struct iwx_node *in,
 	IEEE80211_ADDR_COPY(cmd.local_mld_addr, ic->ic_myaddr);
 	cmd.client.assoc_id = htole32(IEEE80211_AID(ni->ni_associd));
 	cmd.client.is_assoc = assoc ? 1 : 0;
+	if (assoc && in->in_ht && in->in_htt.mode == IWX_HT_TLC_MODE_HE) {
+		/* As Linux: HE once associated; no ACK-enabled A-MPDUs. */
+		cmd.he_support = htole16(1);
+		cmd.nic_not_ack_enabled = htole32(1);
+	}
 
 	cmd.filter_flags = htole32(IWX_MAC_CFG_FILTER_ACCEPT_GRP);
 	if (ic->ic_opmode == IEEE80211_M_MONITOR) {
@@ -9027,7 +9056,14 @@ iwx_ht_local(struct iwx_softc *sc, struct ieee80211_channel *c,
 	loc->vht = iwx_ht_mode >= 2;
 	loc->allow40 = (fl & IWX_NVM_CHANNEL_40MHZ) != 0;
 	loc->allow80 = (fl & IWX_NVM_CHANNEL_80MHZ) != 0;
-	loc->vht160 = iwx_ht_mode >= 3;
+	loc->vht160 = iwx_ht_mode == 3 || iwx_ht_mode >= 5;
+	/*
+	 * The HE settings below exist for the MLD firmware API only.  As
+	 * in Linux, HE is not offered when the NVM lacks it or the firmware
+	 * forbids 11ax in the current country.
+	 */
+	loc->he = iwx_ht_mode >= 4 && sc->sc_use_mld_api &&
+	    sc->sc_nvm.sku_cap_11ax_enable && !sc->sc_11ax_disabled;
 	loc->allow160 = (fl & IWX_NVM_CHANNEL_160MHZ) != 0;
 }
 
@@ -9911,10 +9947,17 @@ iwx_ht_setup_node(struct iwx_softc *sc, struct iwx_node *in)
 	in->in_ht = 1;
 	printf("%s: %s, %d MHz, %d spatial stream%s%s\n",
 	    device_xname(sc->sc_dev),
+	    in->in_htt.mode == IWX_HT_TLC_MODE_HE ? "802.11ax" :
 	    in->in_htt.mode == IWX_HT_TLC_MODE_VHT ? "802.11ac" : "802.11n",
 	    20 << in->in_htc.width, in->in_htt.rates[1] ? 2 : 1,
 	    in->in_htt.rates[1] ? "s" : "",
 	    (ni->ni_flags & IEEE80211_NODE_QOS) ? "" : ", no WMM");
+	if (loc.he && in->in_htt.mode != IWX_HT_TLC_MODE_HE)
+		printf("%s: HE offered but not used: AP HE capabilities %s, "
+		    "operation %s, basic set 0x%04x\n",
+		    device_xname(sc->sc_dev),
+		    sc->sc_bss_ht.he ? "yes" : "no",
+		    sc->sc_bss_ht.heop ? "yes" : "no", sc->sc_bss_ht.he_basic);
 	/* Why the width is what it is: the AP's offer and the local limits. */
 	printf("%s: AP HT40 %s VHT %s width %u centres %u/%u/%u, 160 MHz "
 	    "capability %u/%u, channel %u allows 40 MHz %s 80 MHz %s "
@@ -10462,6 +10505,18 @@ iwx_run(struct iwx_softc *sc)
 	if (err) {
 		printf("%s: failed to update MAC\n", device_xname(sc->sc_dev));
 		return err;
+	}
+
+	/* The link learns the HE parameters once the MAC is in HE mode. */
+	if (in->in_ht && in->in_htt.mode == IWX_HT_TLC_MODE_HE) {
+		err = iwx_mld_link_modify(sc, in,
+		    IWX_LINK_CONTEXT_MODIFY_HE_PARAMS |
+		    IWX_LINK_CONTEXT_MODIFY_BSS_COLOR_DISABLE, 1);
+		if (err) {
+			printf("%s: could not set HE link parameters "
+			    "(error %d)\n", device_xname(sc->sc_dev), err);
+			return err;
+		}
 	}
 
 	err = iwx_sf_config(sc, IWX_SF_FULL_ON);
@@ -11561,6 +11616,8 @@ iwx_send_update_mcc_cmd(struct iwx_softc *sc, const char *alpha2)
 			    (le16toh(resp->mcc) >> 8) & 0xff,
 			    le16toh(resp->mcc) & 0xff, le32toh(resp->status),
 			    le32toh(resp->cap), le16toh(resp->geo_info), n, n6);
+			sc->sc_11ax_disabled = (le32toh(resp->cap) &
+			    IWX_MCC_CAP_V8_11AX_DISABLED) != 0;
 		}
 		/* Update channel map and our scan configuration. */
 		iwx_init_channel_map(sc, NULL, resp->channels,
@@ -14637,7 +14694,7 @@ if_iwx_modcmd(modcmd_t cmd, void *opaque)
 			}
 			int32_t ht;
 			if (prop_dictionary_get_int32((prop_dictionary_t)opaque,
-			    "ht", &ht) && ht >= 0 && ht <= 3)
+			    "ht", &ht) && ht >= 0 && ht <= 5)
 				iwx_ht_mode = ht;
 		}
 #ifdef _MODULE

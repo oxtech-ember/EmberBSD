@@ -5133,6 +5133,13 @@ struct iwx_link_config_cmd {
 	uint32_t reserved1[8];
 } __packed; /* LINK_CONTEXT_CONFIG_CMD_API_S_VER_1 */
 
+/* iwx_mcc_update_resp_v8::cap: 11ax is not allowed in this country. */
+#define IWX_MCC_CAP_V8_11AX_DISABLED	(1 << 13)
+
+/* iwx_link_config_cmd::flags */
+#define IWX_LINK_FLG_BSS_COLOR_DIS	(1 << 0)
+#define IWX_LINK_FLG_MU_EDCA_CW		(1 << 1)
+
 #define MAX_HE_SUPP_NSS	2
 #define MAX_CHANNEL_BW_INDX_API_D_VER_2	4
 #define MAX_CHANNEL_BW_INDX_API_D_VER_3	5

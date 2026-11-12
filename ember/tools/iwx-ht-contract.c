@@ -16,8 +16,8 @@ static unsigned int checks, failures;
 #define CHECK(c) do { checks++; if (!(c)) { failures++; \
     fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #c); } } while (0)
 
-static const struct iwx_ht_local loc5 = { 1, 2, 1, 1, 1, 0, 0 };
-static const struct iwx_ht_local loc2 = { 0, 2, 1, 1, 1, 0, 0 };
+static const struct iwx_ht_local loc5 = { 1, 2, 1, 1, 1, 0, 0, 0 };
+static const struct iwx_ht_local loc2 = { 0, 2, 1, 1, 1, 0, 0, 0 };
 
 /* Find element `id' in out[fixed..len); returns its offset or -1. */
 static int
@@ -948,6 +948,235 @@ test_width160(void)
 	}
 }
 
+/* HE elements of an AP: capabilities with 160 MHz and PPE, operation. */
+static const uint8_t ap_hecap[] = { 255, 30, 35,
+    0x05, 0x00, 0x88, 0x02, 0x00, 0x10,
+    0x0c, 0x20, 0x08, 0x18, 0x00, 0x00, 0x80, 0x80, 0x00, 0x00, 0x00,
+    0xfa, 0xff, 0xfa, 0xff, 0xf6, 0xff, 0xfa, 0xff,
+    0x61, 0x1c, 0xc7, 0x71 };
+static const uint8_t ap_heop[] = { 255, 7, 36, 0xf4, 0x3f, 0x00, 0x05,
+    0xfc, 0xff };
+
+static size_t
+he_resp(uint8_t *b, int with_cap, int with_op)
+{
+	size_t n = assoc_resp(b, 56, 0x07, 1, 1, 58, 50);
+
+	if (with_cap) {
+		memcpy(b + n, ap_hecap, sizeof(ap_hecap));
+		n += sizeof(ap_hecap);
+	}
+	if (with_op) {
+		memcpy(b + n, ap_heop, sizeof(ap_heop));
+		n += sizeof(ap_heop);
+	}
+	return n;
+}
+
+/* 802.11ax: offered on request, used when the AP has both elements. */
+static void
+test_he(void)
+{
+	static const uint8_t own80[] = { 255, 26, 35,
+	    0x00, 0x78, 0x20, 0x80, 0x80, 0xab,
+	    0x04, 0x3f, 0x4e, 0x09, 0xfd, 0x01, 0x8c, 0x16, 0x0e, 0xfc, 0x01,
+	    0xfa, 0xff, 0xfa, 0xff, 0x61, 0x1c, 0xc7, 0x71 };
+	static const uint8_t own160[] = { 255, 30, 35,
+	    0x00, 0x78, 0x20, 0x80, 0x80, 0xab,
+	    0x0c, 0x3f, 0x4e, 0x09, 0xfd, 0x09, 0x8c, 0x16, 0x0e, 0xfc, 0x01,
+	    0xfa, 0xff, 0xfa, 0xff, 0xfa, 0xff, 0xfa, 0xff,
+	    0x61, 0x1c, 0xc7, 0x71 };
+	static const uint8_t own1ss[] = { 255, 25, 35,
+	    0x00, 0x78, 0x20, 0x80, 0x80, 0xab,
+	    0x04, 0x3f, 0x4a, 0x09, 0xfd, 0x00, 0x8c, 0x0e, 0x0e, 0xfc, 0x01,
+	    0xfe, 0xff, 0xfe, 0xff, 0x60, 0x1c, 0x07 };
+	struct iwx_ht_local lhe = loc5, l;
+	struct iwx_ht_peer p;
+	struct iwx_ht_chan c;
+	struct iwx_ht_tlc t;
+	uint8_t b[512], out[512], in[256], ext[2][5][2];
+	size_t n, len;
+	int ht, vht, he, wme, i, j;
+
+	lhe.he = 1;
+
+	/* Our element: no +HTC, no A-MSDU in A-MPDU, VHT-sized A-MPDUs. */
+	CHECK(iwx_ht_put_hecap(out, &loc5) == 0);
+	CHECK(iwx_ht_put_hecap(out, &lhe) == sizeof(own80));
+	CHECK(memcmp(out, own80, sizeof(own80)) == 0);
+	l = lhe;
+	l.vht160 = l.allow160 = 1;
+	CHECK(iwx_ht_put_hecap(out, &l) == sizeof(own160));
+	CHECK(memcmp(out, own160, sizeof(own160)) == 0);
+	l = lhe;
+	l.nss = 1;
+	CHECK(iwx_ht_put_hecap(out, &l) == sizeof(own1ss));
+	CHECK(memcmp(out, own1ss, sizeof(own1ss)) == 0);
+	/* HE needs VHT and the 5 GHz band in this driver. */
+	l = lhe;
+	l.vht = 0;
+	CHECK(iwx_ht_put_hecap(out, &l) == 0);
+	l = lhe;
+	l.band5 = 0;
+	CHECK(iwx_ht_put_hecap(out, &l) == 0);
+
+	/* The association request gets it after VHT, before WMM. */
+	len = assoc_req(in, 0, 0);
+	n = iwx_ht_rewrite_assoc(in, len, 4, &lhe, out, sizeof(out));
+	CHECK(n == len + 28 + 14 + sizeof(own80));
+	ht = find_ie(out, n, 4, IWX_HT_EID_HTCAP);
+	vht = find_ie(out, n, 4, IWX_HT_EID_VHTCAP);
+	he = find_ie(out, n, 4, IWX_HT_EID_EXT);
+	wme = find_ie(out, n, 4, 221);
+	CHECK(ht > 0 && ht < vht && vht < he && he < wme);
+	CHECK(memcmp(out + he, own80, sizeof(own80)) == 0);
+	CHECK(iwx_ht_ies_valid(out + 4, n - 4));
+	CHECK(iwx_ht_rewrite_assoc(in, len, 4, &lhe, out,
+	    len + 28 + 14 + sizeof(own80) - 1) == 0);
+	/* An HE element already in the request is replaced, not doubled. */
+	memcpy(in + len, own160, sizeof(own160));
+	n = iwx_ht_rewrite_assoc(in, len + sizeof(own160), 4, &lhe, out,
+	    sizeof(out));
+	CHECK(n == len + 28 + 14 + sizeof(own80));
+
+	/* The AP's answer. */
+	n = he_resp(b, 1, 1);
+	CHECK(iwx_ht_parse(b, n, 6, &p) == 0);
+	CHECK(p.ht && p.vht && p.he && p.heop);
+	CHECK(p.he_mac[0] == 0x05 && p.he_mac[2] == 0x88 &&
+	    p.he_phy[0] == 0x0c && p.he_phy[6] == 0x80);
+	CHECK(p.he_rxmcs80 == 0xfffa && p.he_txmcs80 == 0xfffa &&
+	    p.he_rxmcs160 == 0xfff6 && p.he_txmcs160 == 0xfffa);
+	CHECK(p.he_ppe_len == 4 && p.he_ppe[0] == 0x61 &&
+	    p.he_ppe[3] == 0x71);
+	CHECK(p.heop_params == 0x05003ff4 && p.he_basic == 0xfffc);
+	CHECK(iwx_ht_he_color(&p) == 5 && !iwx_ht_he_color_disabled(&p));
+	p.heop_params |= 0x80000000;
+	CHECK(iwx_ht_he_color_disabled(&p));
+	/* One element alone, or a cut one, is no HE; the rest stays. */
+	n = he_resp(b, 1, 0);
+	CHECK(iwx_ht_parse(b, n, 6, &p) == 0 && p.he && !p.heop && p.vht);
+	n = he_resp(b, 1, 1);
+	b[n - sizeof(ap_heop) - sizeof(ap_hecap) + 1] = 20;	/* too short */
+	b[n - sizeof(ap_heop) - sizeof(ap_hecap) + 22] = 221;
+	b[n - sizeof(ap_heop) - sizeof(ap_hecap) + 23] = 8;
+	CHECK(iwx_ht_parse(b, n, 6, &p) == 0 && !p.he && p.vht);
+
+	/* Rate scaling: HE mode, MCS 0-11, no HT/VHT short GI. */
+	n = he_resp(b, 1, 1);
+	CHECK(iwx_ht_parse(b, n, 6, &p) == 0);
+	iwx_ht_chan(&p, &lhe, 56, &c);
+	CHECK(c.width == IWX_HT_WIDTH_80);
+	iwx_ht_tlc(&p, &lhe, &c, &t);
+	CHECK(t.mode == IWX_HT_TLC_MODE_HE && t.width == IWX_HT_WIDTH_80);
+	CHECK(t.rates[0] == 0x0fff && t.rates[1] == 0x0fff);
+	CHECK(t.rates160[0] == 0 && t.rates160[1] == 0 && t.sgi == 0);
+	CHECK(t.flags == (IWX_HT_TLC_LDPC | IWX_HT_TLC_STBC |
+	    IWX_HT_TLC_HE_DCM_NSS_1));
+	CHECK(t.max_mpdu_len == 3895);
+	/* Without the request, or without HE operation, it stays VHT. */
+	iwx_ht_tlc(&p, &loc5, &c, &t);
+	CHECK(t.mode == IWX_HT_TLC_MODE_VHT && t.rates[0] == 0x03ff);
+	p.heop = 0;
+	iwx_ht_tlc(&p, &lhe, &c, &t);
+	CHECK(t.mode == IWX_HT_TLC_MODE_VHT);
+	p.heop = 1;
+	/* The AP's own limits per stream. */
+	p.he_rxmcs80 = 0xfff4;		/* SS1 MCS 0-7, SS2 MCS 0-9 */
+	iwx_ht_tlc(&p, &lhe, &c, &t);
+	CHECK(t.rates[0] == 0x00ff && t.rates[1] == 0x03ff);
+	p.he_rxmcs80 = 0xfffe;		/* one stream */
+	iwx_ht_tlc(&p, &lhe, &c, &t);
+	CHECK(t.mode == IWX_HT_TLC_MODE_HE && t.rates[0] == 0x0fff &&
+	    t.rates[1] == 0);
+	p.he_rxmcs80 = 0xfffa;
+	p.he_phy[1] = 0;		/* no LDPC */
+	p.he_phy[2] = 0;		/* no STBC */
+	p.he_phy[3] = 0;		/* no DCM */
+	iwx_ht_tlc(&p, &lhe, &c, &t);
+	CHECK(t.flags == 0);
+	/* A BSS that requires three streams is joined as VHT. */
+	p.he_basic = 0xffc0;
+	iwx_ht_tlc(&p, &lhe, &c, &t);
+	CHECK(t.mode == IWX_HT_TLC_MODE_VHT);
+	/* An all-zero basic set is taken as no demand, as Linux does. */
+	p.he_basic = 0;
+	iwx_ht_tlc(&p, &lhe, &c, &t);
+	CHECK(t.mode == IWX_HT_TLC_MODE_HE);
+	p.he_basic = 0xfffc;
+	/* An 80+80 map moves the PPE field; a cut PPE field is no HE. */
+	{
+		static const uint8_t cap8080[] = { 255, 34, 35,
+		    0x05, 0x00, 0x88, 0x02, 0x00, 0x10,
+		    0x1c, 0x20, 0x08, 0x18, 0x00, 0x00, 0x80, 0x80, 0, 0, 0,
+		    0xfa, 0xff, 0xfa, 0xff, 0xf6, 0xff, 0xfa, 0xff,
+		    0xfe, 0xff, 0xfe, 0xff, 0x61, 0x1c, 0xc7, 0x71 };
+		struct iwx_ht_peer q;
+
+		n = he_resp(b, 0, 1);
+		memcpy(b + n, cap8080, sizeof(cap8080));
+		CHECK(iwx_ht_parse(b, n + sizeof(cap8080), 6, &q) == 0);
+		CHECK(q.he && q.he_rxmcs160 == 0xfff6 && q.he_ppe_len == 4 &&
+		    q.he_ppe[0] == 0x61 && q.he_ppe[3] == 0x71);
+		b[n + 1] = 33;			/* PPE one byte short */
+		CHECK(iwx_ht_parse(b, n + sizeof(cap8080) - 1, 6, &q) == 0);
+		CHECK(!q.he && q.heop && q.vht);
+	}
+	/* 160 MHz HE rates come from the AP's 160 MHz map. */
+	n = he_resp(b, 1, 1);
+	CHECK(iwx_ht_parse(b, n, 6, &p) == 0);
+	p.vhtcaps |= IWX_VHT_CAP_CW160;
+	l = lhe;
+	l.vht160 = l.allow160 = 1;
+	iwx_ht_chan(&p, &l, 56, &c);
+	CHECK(c.width == IWX_HT_WIDTH_160);
+	iwx_ht_tlc(&p, &l, &c, &t);
+	CHECK(t.mode == IWX_HT_TLC_MODE_HE && t.width == IWX_HT_WIDTH_160);
+	CHECK(t.rates[0] == 0x0fff && t.rates[1] == 0x0fff);
+	CHECK(t.rates160[0] == 0x0fff && t.rates160[1] == 0x03ff);
+	CHECK(t.flags & IWX_HT_TLC_STBC);	/* phy[7] has RX above 80 */
+	p.he_phy[0] &= ~0x08;			/* no 160 MHz in HE */
+	iwx_ht_tlc(&p, &l, &c, &t);
+	CHECK(t.rates160[0] == 0 && t.rates160[1] == 0);
+
+	/* Packet extension thresholds from the AP's PPE field. */
+	n = he_resp(b, 1, 1);
+	CHECK(iwx_ht_parse(b, n, 6, &p) == 0);
+	iwx_ht_he_pkt_ext(&p, ext);
+	for (i = 0; i < 2; i++)
+		for (j = 0; j < 5; j++) {
+			CHECK(ext[i][j][0] == 7);
+			CHECK(ext[i][j][1] == (j == 2 || j == 3 ? 0 : 7));
+		}
+	/* One stream and one RU with 16-QAM and 64-QAM thresholds. */
+	p.he_ppe[0] = 0x20;		/* NSS 1, RU 996 */
+	p.he_ppe[1] = 0x0d;		/* PPET16 = 2 (bits 7-9), PPET8 = 3 */
+	p.he_ppe[0] |= 0x00;
+	p.he_ppe_len = 2;
+	iwx_ht_he_pkt_ext(&p, ext);
+	CHECK(ext[0][2][0] == 3 && ext[0][2][1] == 2);
+	CHECK(ext[0][0][0] == 7 && ext[1][2][0] == 7 && ext[1][2][1] == 7);
+	/* Without PPE the nominal padding applies to every width. */
+	p.he_phy[6] &= ~0x80;
+	p.he_ppe_len = 0;
+	p.he_phy[9] = 2 << 6;		/* 16 us */
+	iwx_ht_he_pkt_ext(&p, ext);
+	CHECK(ext[0][0][0] == 7 && ext[0][0][1] == 0 && ext[1][4][1] == 0);
+	p.he_phy[9] = 1 << 6;		/* 8 us */
+	iwx_ht_he_pkt_ext(&p, ext);
+	CHECK(ext[1][3][0] == 0 && ext[1][3][1] == 7);
+	p.he_phy[9] = 0;		/* none */
+	iwx_ht_he_pkt_ext(&p, ext);
+	CHECK(ext[0][2][0] == 7 && ext[0][2][1] == 7);
+	p.he_phy[9] = 3 << 6;		/* reserved: see PPE, which is absent */
+	iwx_ht_he_pkt_ext(&p, ext);
+	CHECK(ext[1][1][0] == 7 && ext[1][1][1] == 7);
+
+	/* ifconfig keeps the 11ac word: net80211 has none for 11ax. */
+	CHECK(iwx_ht_media(IWX_HT_TLC_MODE_HE, 1) ==
+	    (IWX_HT_IFM_VHT | IWX_HT_IFM_11AC));
+}
+
 int
 main(void)
 {
@@ -961,6 +1190,7 @@ main(void)
 	test_csa();
 	test_bmiss();
 	test_width160();
+	test_he();
 	printf("iwx-ht-contract: %u checks, %u failures\n", checks, failures);
 	return failures != 0;
 }

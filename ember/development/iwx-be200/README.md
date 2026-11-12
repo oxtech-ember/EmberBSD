@@ -40,6 +40,24 @@ three centre channels, its 160 MHz capability bits and whether 160 MHz
 is allowed and enabled. Contract: `test_width160()` in
 `ember/tools/iwx-ht-contract.sh`.
 
+802.11ax (HE) is written but off by default and **not yet run on
+hardware**: with `ht=4` (80 MHz) or `ht=5` (160 MHz), on the MLD firmware
+API and the 5 GHz band, the association request carries an HE
+capabilities element, unless the NVM lacks 11ax or the firmware forbids
+it in the current country (bit 13 of the `MCC_UPDATE` capability word). Its values are those of Linux iwlwifi for a
+two-antenna FM radio in station mode, less what the host side does not
+do here: no +HTC-HE and OM control (received frames carry no HT control
+field), no A-MSDU inside A-MPDU, A-MPDUs no longer than with VHT.
+Triggered transmissions and sounding feedback are the firmware's. If the
+AP answers with HE capabilities and HE operation and its basic HE-MCS
+set fits, the driver sets `he_support` in the MAC context, the packet
+extension thresholds and `ack_enabled` in the station, the BSS colour in
+the link, and HE mode with MCS 0-11 in the rate scaling, following
+Linux iwlmld. Not done: MU EDCA, TWT, spatial reuse, the 256-frame Block
+Ack window (64 stays), HE on 2.4 GHz, 6 GHz. `ifconfig` keeps the 11ac
+media word, dmesg says `802.11ax`. Contract: `test_he()` in
+`ember/tools/iwx-ht-contract.sh`.
+
 Also new and not yet run on hardware: a lost AP is noticed. The driver
 used to answer the firmware's missed-beacons notification with a probe
 request through the legacy `ieee80211_send_mgmt()`, which has none, so
@@ -318,7 +336,7 @@ Boot setup used on the MSI:
 | WPA | `wpa_supplicant=YES`, `wpa_supplicant_flags="-B -s -i iwx0 -c /etc/wpa_supplicant.iwx0.conf"` |
 | DHCP | `dhcpcd_flags="-qM rge0 iwx0"` |
 | Country | `modload -s mcc=XX` (default `ZZ`); replaced by the country the firmware detects |
-| HT/VHT | `modload -i ht=N`: 0 legacy, 1 HT, 2 HT+VHT up to 80 MHz (default), 3 HT+VHT up to 160 MHz (not yet run on hardware) |
+| HT/VHT/HE | `modload -i ht=N`: 0 legacy, 1 HT, 2 HT+VHT up to 80 MHz (default), 3 HT+VHT up to 160 MHz, 4 with HE up to 80 MHz, 5 HE up to 160 MHz (3 and above not yet run on hardware) |
 
 Bring-up fixes on NetBSD (commits 579e0ec..bcc5a61): raw `CSR_HW_REV` as
 prph scratch `mac_id` (the GL ROM ignored the converted value), 94
