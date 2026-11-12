@@ -1006,9 +1006,41 @@ iwx_ht_csa_follow(const struct iwx_ht_peer *p, const struct iwx_ht_local *loc,
 }
 
 /*
+ * The signal level of a received frame in dBm, for scan results.  The
+ * receive path carries it as dBm above IWX_HT_MIN_DBM.  The result is
+ * always negative, as user space expects of a level in dBm.
+ */
+#define IWX_HT_MIN_DBM	(-100)
+
+static inline int8_t
+iwx_ht_dbm(int rssi)
+{
+	int dbm = rssi + IWX_HT_MIN_DBM;
+
+	if (dbm > -1)
+		dbm = -1;
+	if (dbm < -127)
+		dbm = -127;
+	return (int8_t)dbm;
+}
+
+/*
  * A scan while associated.  The firmware leaves the channel of the BSS
  * for a moment at a time and reports what it hears elsewhere.
  */
+
+/* Whether a received frame is a beacon or a probe response. */
+static inline int
+iwx_ht_scan_result(const uint8_t *frame, size_t len)
+{
+	/* The 802.11 header and the fixed fields of a beacon. */
+	if (len < 24 + 12)
+		return 0;
+	/* Protocol version 0, a management frame. */
+	if ((frame[0] & 0x0f) != 0x00)
+		return 0;
+	return (frame[0] & 0xf0) == 0x80 || (frame[0] & 0xf0) == 0x50;
+}
 
 /*
  * Whether a received frame is a beacon or a probe response of another
@@ -1020,13 +1052,7 @@ iwx_ht_scan_foreign(const uint8_t *frame, size_t len, const uint8_t *bssid)
 {
 	int i, same2 = 1, same3 = 1;
 
-	/* The 802.11 header and the fixed fields of a beacon. */
-	if (len < 24 + 12)
-		return 0;
-	/* Protocol version 0, a management frame. */
-	if ((frame[0] & 0x0f) != 0x00)
-		return 0;
-	if ((frame[0] & 0xf0) != 0x80 && (frame[0] & 0xf0) != 0x50)
+	if (!iwx_ht_scan_result(frame, len))
 		return 0;
 	for (i = 0; i < 6; i++) {
 		same2 &= frame[10 + i] == bssid[i];

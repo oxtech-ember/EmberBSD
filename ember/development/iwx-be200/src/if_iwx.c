@@ -195,6 +195,7 @@ CTASSERT(IWX_HT_SCO_ABOVE == IEEE80211_HTOP0_SCO_SCA);
 CTASSERT(IWX_HT_SCO_BELOW == IEEE80211_HTOP0_SCO_SCB);
 CTASSERT(IWX_HT_EID_HTCAP == IEEE80211_ELEMID_HTCAP);
 CTASSERT(IWX_HT_EID_HTOP == IEEE80211_ELEMID_HTINFO);
+CTASSERT(IWX_HT_MIN_DBM == IWX_MIN_DBM);
 
 /*
  * Operating mode, IWX_HT_MODE_*.  0: legacy rates only; 1: HT (802.11n);
@@ -5086,8 +5087,13 @@ iwx_rx_frame(struct iwx_softc *sc, struct mbuf *m, int chanidx,
 	 * The firmware scans all channels on its own.  NetBSD net80211
 	 * drops beacons whose DS channel differs from ic_curchan, so follow
 	 * the receive channel while scanning, as iwm_fix_channel() does.
+	 * iwx_scan() marks the scan in ic_flags before its command, which
+	 * sleeps, and enters SCAN state after it; the firmware reports
+	 * results meanwhile, and net80211 files them from that mark on.
 	 */
-	if (ic->ic_state == IEEE80211_S_SCAN &&
+	if ((ic->ic_state == IEEE80211_S_SCAN ||
+	    (ic->ic_state == IEEE80211_S_INIT &&
+	    (ic->ic_flags & IEEE80211_F_SCAN))) &&
 	    (wh->i_fc[0] & IEEE80211_FC0_TYPE_MASK) == IEEE80211_FC0_TYPE_MGT) {
 		uint8_t subtype = wh->i_fc[0] & IEEE80211_FC0_SUBTYPE_MASK;
 
@@ -5200,11 +5206,37 @@ iwx_rx_frame(struct iwx_softc *sc, struct mbuf *m, int chanidx,
 		return;
 	}
 {
-		int s = splnet();
+		struct ieee80211_node *sni;
+		uint8_t sa[IEEE80211_ADDR_LEN];
+		int s = splnet(), scanres, own;
+
+		/*
+		 * net80211 files beacons and probe responses in its scan
+		 * table with a level in driver units.  User space decides
+		 * about roaming by levels in dBm, so add that to the entry
+		 * once net80211 is done with the frame: to the BSS in use
+		 * from its own frames, to the others while net80211 files
+		 * scan results.
+		 */
+		scanres = iwx_ht_scan_result(mtod(m, uint8_t *), m->m_len);
+		if (scanres)
+			IEEE80211_ADDR_COPY(sa, wh->i_addr2);
+		own = scanres && ni == ic->ic_bss &&
+		    IEEE80211_ADDR_EQ(sa, ni->ni_bssid);
 
 		m_set_rcvif(m, IC2IFP(ic));
 		ieee80211_input(ic, m, ni, rxi->rxi_rssi, rxi->rxi_tstamp);
+		if (own) {
+			ni->ni_rssi_dbm = iwx_ht_dbm(rxi->rxi_rssi);
+			ni->ni_rssi_dbm_valid = true;
+		}
 		ieee80211_free_node(ni);
+		if (scanres && !own && (ic->ic_flags & IEEE80211_F_SCAN) &&
+		    (sni = ieee80211_find_node(&ic->ic_scan, sa)) != NULL) {
+			sni->ni_rssi_dbm = iwx_ht_dbm(rxi->rxi_rssi);
+			sni->ni_rssi_dbm_valid = true;
+			ieee80211_free_node(sni);
+		}
 		splx(s);
 	}
 }
@@ -8777,6 +8809,8 @@ iwx_scan(struct iwx_softc *sc)
 		if (err) {
 			printf("%s: could not abort background scan\n",
 			    device_xname(sc->sc_dev));
+			ic->ic_flags &=
+			    ~(IEEE80211_F_SCAN | IEEE80211_F_ASCAN);
 			return err;
 		}
 	}
@@ -8784,6 +8818,7 @@ iwx_scan(struct iwx_softc *sc)
 	err = iwx_initiate_scan(sc, 0);
 	if (err) {
 		printf("%s: could not initiate scan\n", device_xname(sc->sc_dev));
+		ic->ic_flags &= ~(IEEE80211_F_SCAN | IEEE80211_F_ASCAN);
 		return err;
 	}
 
@@ -8915,6 +8950,8 @@ iwx_scan_assoc_rx(struct iwx_softc *sc, struct mbuf *m, int chanidx,
 	frm += 12;
 	scan.sp_bchan = chanidx;
 	scan.sp_chan = scan.sp_bchan;
+	scan.sp_rssi_dbm = iwx_ht_dbm(rxi->rxi_rssi);
+	scan.sp_rssi_dbm_valid = true;
 
 	if (ieee80211_beacon_ies_parse(&ies, frm, efrm - frm) != 0) {
 		ic->ic_stats.is_rx_elem_toosmall++;
@@ -10838,6 +10875,9 @@ iwx_run(struct iwx_softc *sc)
 			return err;
 	}
 
+	/* From here on iwx_run_stop() has something to undo. */
+	sc->sc_fw_assoc = 1;
+
 	/* Configure Rx chains for MIMO and configure 40 MHz channel. */
 	if (ic->ic_opmode == IEEE80211_M_MONITOR) {
 		uint8_t chains = iwx_mimo_enabled(sc) ? 2 : 1;
@@ -10951,6 +10991,8 @@ iwx_run_stop(struct iwx_softc *sc)
 	int err, n;
 
 	splassert(IPL_NET);
+
+	sc->sc_fw_assoc = 0;
 
 	/*
 	 * The Block Ack and queue tasks run on another queue and sleep in
@@ -11687,6 +11729,32 @@ iwx_newstate_task(void *psc)
 		    IWX_FLAG_BINDING_ACTIVE | IWX_FLAG_MAC_ACTIVE |
 		    IWX_FLAG_PHY_ACTIVE)) == 0)
 			iwx_bss_disown(sc, join);
+	}
+
+	/*
+	 * net80211 can leave a BSS without asking: before a scan it sets its
+	 * own state back by hand, and the teardown above does not happen.
+	 * The contexts made for that BSS, by an association or by the
+	 * authentication the driver starts again after a deauthentication,
+	 * are then still in the firmware.  A scan has no use for them, and
+	 * the firmware fails when an authentication adds them again.
+	 */
+	if ((nstate == IEEE80211_S_SCAN || nstate == IEEE80211_S_AUTH) &&
+	    (sc->sc_flags & (IWX_FLAG_STA_ACTIVE | IWX_FLAG_BINDING_ACTIVE |
+	    IWX_FLAG_MAC_ACTIVE | IWX_FLAG_PHY_ACTIVE))) {
+		if (sc->sc_fw_assoc)
+			err = iwx_run_stop(sc);
+		if (err == 0)
+			err = iwx_deauth(sc);
+		if (err)
+			goto out;
+		if ((sc->sc_flags & IWX_FLAG_SHUTDOWN) ||
+		    serial != ieee80211_sae_serial(ic)) {
+			refcnt_rele_wake(&sc->task_refs);
+			splx(s);
+			return;
+		}
+		iwx_bss_disown(sc, 0);
 	}
 
 	switch (nstate) {
@@ -12554,6 +12622,7 @@ iwx_stop(struct ifnet *ifp, int disable __unused)
 
 	/* No firmware context is left, so no node owns any. */
 	iwx_bss_disown(sc, 0);
+	sc->sc_fw_assoc = 0;
 
 #if defined(IWX_HT)
 	for (i = 0; i < nitems(sc->sc_rxba_data); i++) {

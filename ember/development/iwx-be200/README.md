@@ -103,6 +103,26 @@ that fix has not run on hardware. Contracts: the state dispatcher and
 the owner of the contexts in `ember/tools/iwx-width-contract.sh`, the
 receive channel rule in `ember/tests/iwx-sae.sh`.
 
+New and **not yet run on hardware**, found on the MSI: net80211 can
+leave a BSS without the driver. Before a scan it sets its own state back
+by hand (`ieee80211_setupscan()`). After a deauthentication by the AP
+the driver takes the association down and starts the authentication
+again, which makes contexts for that BSS anew; these stayed in the
+firmware across the scan, and the next authentication added them again: `fatal firmware error`,
+`could not add phy context`, a restart, and with it most of a minute
+without the network. `iwx_newstate_task()` now removes what is left,
+through the node that owns it, before it scans or authenticates.
+Also: the current channel follows scan results from the moment
+`iwx_scan()` marks the scan, not only in SCAN state, because the scan
+command sleeps while the firmware already reports; one association was
+attempted on a channel the BSS was not on. And scan results carry the
+signal level in dBm (`IEEE80211_SCAN_RSSI_DBM`), so that `wpa_supplicant`
+applies its dBm rules when it compares BSSes; before, it took the
+driver's units for an unknown scale and would roam on a difference of
+two. Contracts: `test_stale()` in `ember/tools/iwx-width-contract.sh`,
+`test_dbm()` in `ember/tools/iwx-ht-contract.sh`, the receive path in
+`ember/tests/iwx-sae.sh`.
+
 A scan while associated keeps the association (ran on the MSI: 30
 networks on both bands in the results, no ping lost, nothing logged).
 net80211 leaves the BSS before any scan it is asked for, so

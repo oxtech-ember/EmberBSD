@@ -107,6 +107,7 @@ struct iwx_softc {
 	int sc_systq, init_task, ns_arg;
 	int sc_csa_valid, sc_csa_wait, sc_scan_assoc_to, scan_assoc_task;
 	struct iwx_node *sc_fw_in;
+	int sc_fw_assoc;
 	uint8_t sc_ba_start, sc_ba_stop, sc_txq_want;
 	int sc_agg_busy;
 	uint64_t sc_ns_sae_serial;
@@ -591,6 +592,82 @@ test_leave(enum ieee80211_state next, int arg, int bgscan, int join, int sae,
 	    (arg == -1 && !sae ? IEEE80211_S_SCAN : IEEE80211_S_RUN));
 }
 
+/*
+ * net80211 sets its state back by hand before a scan, without the driver.
+ * The contexts it left in the firmware are removed before those of the
+ * next BSS are made: adding a context twice is a firmware error.
+ */
+static void
+test_stale(int assoc, int join)
+{
+	struct iwx_softc sc;
+	struct iwx_node in, other;
+
+	setup(&sc, &in, 2, 0);
+	reset_transport(4, 2);
+	flush_in = disassoc_in = rm_in = binding_in = mac_in = NULL;
+	sc.sc_fw_assoc = assoc;
+	sc.sc_ic.ic_state = IEEE80211_S_SCAN;
+	sc.ns_nstate = IEEE80211_S_AUTH;
+	sc.ns_arg = -1;
+	if (join) {
+		memset(&other, 0, sizeof(other));
+		sc.sc_ic.ic_bss = &other;
+	}
+	iwx_newstate_task(&sc);
+	CHECK(task_releases == 1 && recovery_count == 0);
+	/* An association is first taken down as one. */
+	CHECK((disassoc_sequence > 0) == (assoc != 0));
+	if (assoc)
+		CHECK(disassoc_in == &in && remove_sequence > disassoc_sequence);
+	CHECK(sc.sc_fw_assoc == 0);
+	/* Every context goes, through the node it was made for. */
+	CHECK(remove_sequence > 0);
+	CHECK(binding_remove_sequence > remove_sequence);
+	CHECK(mac_remove_sequence > binding_remove_sequence);
+	CHECK(phy_remove_sequence > mac_remove_sequence);
+	CHECK(rm_in == &in && binding_in == &in && mac_in == &in);
+	/* net80211 has cleaned that node up itself. */
+	CHECK(node_cleanups == 0 && node_frees == 1);
+	/* Only then the new ones are made. */
+	CHECK(phy_add_sequence > phy_remove_sequence);
+	CHECK(sc.sc_fw_in == (join ? &other : &in) && node_refs == 1);
+	CHECK(iwx_bss_owner(&sc)->in_phyctxt == &sc.sc_phyctxt[0]);
+	CHECK(newstate_from == IEEE80211_S_SCAN);
+	CHECK(sc.sc_ic.ic_state == IEEE80211_S_AUTH);
+
+	/* Nothing left behind: nothing to remove. */
+	setup(&sc, &in, 2, 0);
+	reset_transport(4, 2);
+	sc.sc_flags = 0;
+	sc.sc_fw_in = NULL;
+	sc.sc_ic.ic_state = IEEE80211_S_SCAN;
+	sc.ns_nstate = IEEE80211_S_AUTH;
+	sc.ns_arg = -1;
+	iwx_newstate_task(&sc);
+	CHECK(recovery_count == 0 && remove_sequence == 0);
+	CHECK(phy_remove_sequence == 0 && phy_add_sequence > 0);
+	CHECK(sc.sc_fw_in == &in);
+
+	/* The scan that follows the hand-set INIT removes them as well. */
+	setup(&sc, &in, 2, 0);
+	reset_transport(4, 2);
+	rm_in = mac_in = NULL;
+	sc.sc_fw_assoc = assoc;
+	sc.sc_ic.ic_state = IEEE80211_S_INIT;
+	sc.ns_nstate = IEEE80211_S_SCAN;
+	sc.ns_arg = -1;
+	iwx_newstate_task(&sc);
+	CHECK(task_releases == 1 && recovery_count == 0);
+	CHECK((disassoc_sequence > 0) == (assoc != 0));
+	CHECK(remove_sequence > 0 && phy_remove_sequence > mac_remove_sequence);
+	CHECK(rm_in == &in && mac_in == &in);
+	CHECK(phy_add_sequence == 0 && sc.sc_fw_in == NULL);
+	CHECK(sc.sc_fw_assoc == 0 && node_frees == 1 && node_cleanups == 0);
+	CHECK((sc.sc_flags & (IWX_FLAG_STA_ACTIVE | IWX_FLAG_BINDING_ACTIVE |
+	    IWX_FLAG_MAC_ACTIVE | IWX_FLAG_PHY_ACTIVE)) == 0);
+}
+
 /* Who owns the firmware contexts. */
 static void
 test_owner(void)
@@ -945,6 +1022,10 @@ main(void)
 	test_leave(IEEE80211_S_INIT, -1, 1, 0, 0, 0);
 	test_owner();
 	test_stop_waits();
+	test_stale(0, 0);
+	test_stale(1, 0);
+	test_stale(1, 1);
+	test_stale(0, 1);
 	test_scan_assoc();
 	for (version = 3; version <= 4; version++) {
 		test_dynamic(version, 1, 0);

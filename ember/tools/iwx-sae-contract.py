@@ -35,7 +35,9 @@ def main():
 #include <string.h>
 #include "if_iwx_ht.h"
 #define NBPFILTER 0
+#define IEEE80211_S_INIT 0
 #define IEEE80211_S_SCAN 1
+#define IEEE80211_F_SCAN 0x10
 #define IEEE80211_S_RUN 4
 #define IWX_FLAG_BGSCAN 0x200
 #define IEEE80211_FC0_TYPE_MASK 0x0c
@@ -62,10 +64,12 @@ struct ifnet { void *if_softc; unsigned if_oerrors; };
 struct ieee80211_frame { uint8_t i_fc[2], i_dur[2], i_addr1[6], i_addr2[6],
     rest[8]; };
 #define IEEE80211_ADDR_EQ(a,b) (memcmp((a),(b),6) == 0)
+#define IEEE80211_ADDR_LEN 6
+#define IEEE80211_ADDR_COPY(d,s) memcpy((d),(s),6)
 struct ieee80211_frame_min { uint8_t bytes[16]; };
 struct ieee80211_channel { int number; };
 struct ieee80211_node { struct ieee80211_channel *ni_chan; unsigned refs;
-    uint8_t ni_bssid[6]; };
+    uint8_t ni_bssid[6]; int8_t ni_rssi_dbm; bool ni_rssi_dbm_valid; };
 struct mbuf { int m_len, m_flags; struct { int len; } m_pkthdr;
     uint64_t tag; uint8_t data[4096]; };
 struct ieee80211com {
@@ -75,6 +79,7 @@ struct ieee80211com {
         struct ieee80211_node *, int, int, uint32_t);
     struct ifnet *ic_ifp;
     struct ieee80211_node *ic_bss;
+    int ic_scan, ic_flags;
 };
 struct iwx_softc {
     struct ieee80211com sc_ic;
@@ -86,19 +91,26 @@ struct iwx_softc {
 struct ieee80211_rxinfo { int rxi_rssi; uint32_t rxi_tstamp; };
 static int admitted, assoc, action, csa, ordinary, failalloc, failcluster, failtags;
 static int freed, iwx_ht_mode = 1;
-static struct ieee80211_node rxnode;
+static struct ieee80211_node rxnode, scannode;
 static int splnet(void) { return 0; }
 static void splx(int s) { assert(s == 0); }
 static int ieee80211_chan2ieee(struct ieee80211com *ic,
     struct ieee80211_channel *c) { assert(ic != NULL); return c->number; }
 static struct ieee80211_node *ieee80211_find_rxnode(struct ieee80211com *ic,
     struct ieee80211_frame_min *wh) { assert(ic && wh); return &rxnode; }
-static void ieee80211_free_node(struct ieee80211_node *ni) { assert(ni == &rxnode); }
+static void ieee80211_free_node(struct ieee80211_node *ni)
+    { if (ni == &scannode) return; assert(ni == &rxnode); }
 static void m_set_rcvif(struct mbuf *m, void *ifp) { assert(m && ifp); }
 static void iwx_ht_rx_assoc(struct iwx_softc *sc, struct mbuf *m)
     { assert(sc && m); assoc++; }
 static void iwx_ht_rx_action(struct iwx_softc *sc, struct mbuf *m)
     { assert(sc && m); action++; }
+static int scanfind, scanfound;
+static uint8_t scanaddr[6];
+static struct ieee80211_node *ieee80211_find_node(void *table,
+    const uint8_t *addr)
+    { assert(table); scanfind++; memcpy(scanaddr, addr, 6);
+      return scanfound ? &scannode : NULL; }
 static int scanrx, scanrx_calls;
 static int iwx_scan_assoc_rx(struct iwx_softc *sc, struct mbuf *m, int chanidx,
     struct ieee80211_rxinfo *rxi)
@@ -212,6 +224,43 @@ int main(int argc, char **argv)
         m->m_len=m->m_pkthdr.len=24; sc.sc_flags = IWX_FLAG_BGSCAN; RX();
         assert(rxnode.ni_chan == &sc.sc_ic.ic_channels[7]);
         sc.sc_flags = 0; free(m);
+        /* A beacon gets its level in dBm added to its scan entry once
+         * net80211 has filed it; other frames are not looked up. */
+        m = calloc(1,sizeof(*m)); assert(m != NULL);
+        m->m_len=m->m_pkthdr.len=64; m->data[0]=0x80;
+        memset(m->data + 10, 0x07, 6);
+        scanfind = 0; scanfound = 1; RX();
+        /* Not unless net80211 is filing scan results. */
+        assert(scanfind == 0 && !scannode.ni_rssi_dbm_valid);
+        sc.sc_ic.ic_flags = IEEE80211_F_SCAN; RX();
+        assert(scanfind == 1 && scanaddr[0] == 0x07 && scanaddr[5] == 0x07);
+        assert(scannode.ni_rssi_dbm == iwx_ht_dbm(rxi.rxi_rssi));
+        assert(scannode.ni_rssi_dbm < 0 && scannode.ni_rssi_dbm_valid);
+        scannode.ni_rssi_dbm = 0; scannode.ni_rssi_dbm_valid = false;
+        scanfound = 0; RX();
+        assert(scanfind == 2 && !scannode.ni_rssi_dbm_valid);
+        scanfound = 1; m->data[0]=0x40; RX();
+        assert(scanfind == 2 && !scannode.ni_rssi_dbm_valid);
+        /* The BSS in use gets its level from its own beacons, with
+         * no lookup and without a scan. */
+        sc.sc_ic.ic_flags = 0; m->data[0]=0x80;
+        sc.sc_ic.ic_bss = &rxnode; memset(rxnode.ni_bssid, 0x07, 6);
+        rxnode.ni_rssi_dbm_valid = false; RX();
+        assert(scanfind == 2 && rxnode.ni_rssi_dbm_valid);
+        assert(rxnode.ni_rssi_dbm == iwx_ht_dbm(rxi.rxi_rssi));
+        rxnode.ni_rssi_dbm_valid = false; sc.sc_ic.ic_bss = NULL;
+        /* The current channel follows the receive channel while
+         * net80211 files scan results, also before SCAN state. */
+        sc.sc_ic.ic_state = IEEE80211_S_INIT;
+        sc.sc_ic.ic_curchan = &sc.sc_ic.ic_channels[7]; RX();
+        assert(sc.sc_ic.ic_curchan == &sc.sc_ic.ic_channels[7]);
+        sc.sc_ic.ic_flags = IEEE80211_F_SCAN; RX();
+        assert(sc.sc_ic.ic_curchan == &sc.sc_ic.ic_channels[1]);
+        sc.sc_ic.ic_curchan = &sc.sc_ic.ic_channels[7];
+        sc.sc_ic.ic_state = IEEE80211_S_RUN; RX();
+        assert(sc.sc_ic.ic_curchan == &sc.sc_ic.ic_channels[7]);
+        sc.sc_ic.ic_flags = 0; sc.sc_ic.ic_curchan = NULL;
+        free(m);
 #undef RX
         freed = 0; scanrx = 0; sc.sc_flags = 0;
         assoc = action = csa = 1; ordinary = 1;

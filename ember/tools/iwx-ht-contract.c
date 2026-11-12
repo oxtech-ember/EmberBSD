@@ -787,6 +787,22 @@ chan160(int primary, uint8_t htop0, int vht, uint8_t vw, uint8_t c0,
 	iwx_ht_chan(p, loc, primary, c);
 }
 
+/* The signal level user space gets with scan results, in dBm. */
+static void
+test_dbm(void)
+{
+	/* The receive path carries the level as dBm above -100. */
+	CHECK(iwx_ht_dbm(56) == -44);
+	CHECK(iwx_ht_dbm(67) == -33);
+	CHECK(iwx_ht_dbm(0) == -100);
+	CHECK(iwx_ht_dbm(99) == -1);
+	/* Out of range values stay a valid, negative level. */
+	CHECK(iwx_ht_dbm(100) == -1);
+	CHECK(iwx_ht_dbm(200) == -1);
+	CHECK(iwx_ht_dbm(-27) == -127);
+	CHECK(iwx_ht_dbm(-500) == -127);
+}
+
 /* A scan while associated: frames, requests and leaving the BSS. */
 static void
 test_scan(void)
@@ -825,6 +841,22 @@ test_scan(void)
 	/* An unknown protocol version is not parsed. */
 	f[0] = 0x81;
 	CHECK(iwx_ht_scan_foreign(f, sizeof(f), bssid) == 0);
+
+	/* A scan result of any BSS, the one in use included. */
+	f[0] = 0x80;
+	CHECK(iwx_ht_scan_result(f, sizeof(f)) == 1);
+	memcpy(f + 10, bssid, 6);
+	memcpy(f + 16, bssid, 6);
+	CHECK(iwx_ht_scan_result(f, sizeof(f)) == 1);
+	f[0] = 0x50;
+	CHECK(iwx_ht_scan_result(f, 24 + 12) == 1);
+	CHECK(iwx_ht_scan_result(f, 24 + 11) == 0);
+	f[0] = 0xd0;
+	CHECK(iwx_ht_scan_result(f, sizeof(f)) == 0);
+	f[0] = 0x88;
+	CHECK(iwx_ht_scan_result(f, sizeof(f)) == 0);
+	memcpy(f + 10, other, 6);
+	memcpy(f + 16, other, 6);
 
 	/* A scan request: only an associated station scans in place. */
 	CHECK(iwx_ht_scan_request(0, 0, 0) == IWX_HT_SCANREQ_NET80211);
@@ -1294,6 +1326,7 @@ main(void)
 	test_he();
 	test_mode();
 	test_scan();
+	test_dbm();
 	printf("iwx-ht-contract: %u checks, %u failures\n", checks, failures);
 	return failures != 0;
 }
