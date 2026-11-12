@@ -116,6 +116,12 @@ static int scanrx, scanrx_calls;
 static int iwx_scan_assoc_rx(struct iwx_softc *sc, struct mbuf *m, int chanidx,
     struct ieee80211_rxinfo *rxi)
     { assert(sc && m && rxi && chanidx == 1); scanrx_calls++; return scanrx; }
+/* Only the offchan case lets the channel rule drop a frame: the other
+ * cases reuse their mbuf, which the analyzer must know is never freed. */
+static int offchan_cases;
+static int fixture_offchan(const uint8_t *f, size_t len, unsigned chan)
+    { return offchan_cases && iwx_ht_scan_offchan(f, len, chan); }
+#define iwx_ht_scan_offchan fixture_offchan
 static int scandrop;
 static void iwx_scan_assoc_drop(struct iwx_softc *sc,
     const struct ieee80211_frame *wh, int chan, const char *why)
@@ -320,32 +326,35 @@ int main(int argc, char **argv)
          * dropped before net80211 and moves no channel; 5 GHz beacons
          * name it in HT Operation only. */
         struct ieee80211_channel *cur = &sc.sc_ic.ic_channels[3];
+        /* The driver may free them; kept reachable, never freed here. */
+        static struct mbuf *volatile kept[2];
+        struct mbuf *off, *on;
         int before = ordinary;
+        offchan_cases = 1;
         admitted = 1; sc.sc_flags = 0; sc.sc_ic.ic_bss = &rxnode;
         sc.sc_ic.ic_state = IEEE80211_S_SCAN; sc.sc_ic.ic_curchan = cur;
         rxnode.ni_chan = &sc.sc_ic.ic_channels[7];
-        m = calloc(1,sizeof(*m)); assert(m != NULL);
-        m->data[0] = 0x80; memset(m->data + 10, 0x05, 6);
-        m->data[36] = 61; m->data[37] = 22; m->data[38] = 9;
-        m->m_len = m->m_pkthdr.len = 36 + 24;
+        off = kept[0] = calloc(1,sizeof(*off)); assert(off != NULL);
+        off->data[0] = 0x80; memset(off->data + 10, 0x05, 6);
+        off->data[36] = 61; off->data[37] = 22; off->data[38] = 9;
+        off->m_len = off->m_pkthdr.len = 36 + 24;
         freed = 0; assoc = action = csa = 0;
-        iwx_rx_frame(&sc,m,1,0,0,0,0,&rxi);
+        iwx_rx_frame(&sc,off,1,0,0,0,0,&rxi);
         assert(freed == 1 && ordinary == before && scandrop == 1);
         assert(sc.sc_ic.ic_stats.is_rx_chanmismatch == 1);
         assert(sc.sc_ic.ic_curchan == cur);
         assert(rxnode.ni_chan == &sc.sc_ic.ic_channels[7]);
         /* Naming the receive channel, it goes on as before. */
-        m = calloc(1,sizeof(*m)); assert(m != NULL);
-        m->data[0] = 0x80; memset(m->data + 10, 0x05, 6);
-        m->data[36] = 61; m->data[37] = 22; m->data[38] = 1;
-        m->m_len = m->m_pkthdr.len = 36 + 24;
+        on = kept[1] = calloc(1,sizeof(*on)); assert(on != NULL);
+        on->data[0] = 0x80; memset(on->data + 10, 0x05, 6);
+        on->data[36] = 61; on->data[37] = 22; on->data[38] = 1;
+        on->m_len = on->m_pkthdr.len = 36 + 24;
         freed = 0; assoc = action = csa = 0;
-        iwx_rx_frame(&sc,m,1,0,0,0,0,&rxi);
+        iwx_rx_frame(&sc,on,1,0,0,0,0,&rxi);
         assert(freed == 0 && ordinary == before + 1 && scandrop == 1);
         assert(sc.sc_ic.ic_curchan == &sc.sc_ic.ic_channels[1]);
         assert(rxnode.ni_chan == &sc.sc_ic.ic_channels[1]);
-        free(m);
-        sc.sc_ic.ic_state = IEEE80211_S_RUN;
+        sc.sc_ic.ic_state = IEEE80211_S_RUN; offchan_cases = 0;
     }
     rxnode.ni_chan = NULL;
     puts("PASS: iwx management admission, tag ownership and common action output");
