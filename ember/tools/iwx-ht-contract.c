@@ -787,6 +787,48 @@ chan160(int primary, uint8_t htop0, int vht, uint8_t vw, uint8_t c0,
 	iwx_ht_chan(p, loc, primary, c);
 }
 
+/* The operating mode: which values exist and what each one offers. */
+static void
+test_mode(void)
+{
+	static const struct { int vht, vht160, he; } want[] = {
+		[IWX_HT_MODE_LEGACY] = { 0, 0, 0 },
+		[IWX_HT_MODE_HT] = { 0, 0, 0 },
+		[IWX_HT_MODE_VHT80] = { 1, 0, 0 },
+		[IWX_HT_MODE_VHT160] = { 1, 1, 0 },
+		[IWX_HT_MODE_HE80] = { 1, 0, 1 },
+		[IWX_HT_MODE_HE160] = { 1, 1, 1 },
+	};
+	struct iwx_ht_local loc;
+	int m;
+
+	/* Only the documented modes exist. */
+	CHECK(IWX_HT_MODE_MAX == IWX_HT_MODE_HE160);
+	CHECK(!iwx_ht_mode_ok(-1, 1));
+	CHECK(!iwx_ht_mode_ok(IWX_HT_MODE_MAX + 1, 1));
+	for (m = 0; m <= IWX_HT_MODE_MAX; m++)
+		CHECK(iwx_ht_mode_ok(m, 1));
+	/* Without QoS from attach only legacy operation can be selected. */
+	CHECK(iwx_ht_mode_ok(IWX_HT_MODE_LEGACY, 0));
+	for (m = IWX_HT_MODE_HT; m <= IWX_HT_MODE_MAX; m++)
+		CHECK(!iwx_ht_mode_ok(m, 0));
+
+	/* What each mode offers; the other fields belong to the caller. */
+	for (m = 0; m <= IWX_HT_MODE_MAX; m++) {
+		memset(&loc, 0, sizeof(loc));
+		loc.vht = loc.vht160 = loc.he = !want[m].vht;
+		loc.band5 = 1;
+		loc.nss = 2;
+		loc.allow40 = loc.allow80 = loc.allow160 = 1;
+		iwx_ht_mode_offer(m, &loc);
+		CHECK(loc.vht == want[m].vht);
+		CHECK(loc.vht160 == want[m].vht160);
+		CHECK(loc.he == want[m].he);
+		CHECK(loc.band5 == 1 && loc.nss == 2 && loc.allow40 == 1 &&
+		    loc.allow80 == 1 && loc.allow160 == 1);
+	}
+}
+
 /* 160 MHz: offered only on request and where the channel allows it. */
 static void
 test_width160(void)
@@ -1191,6 +1233,7 @@ main(void)
 	test_bmiss();
 	test_width160();
 	test_he();
+	test_mode();
 	printf("iwx-ht-contract: %u checks, %u failures\n", checks, failures);
 	return failures != 0;
 }

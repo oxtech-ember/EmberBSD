@@ -109,6 +109,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/proc.h>
 #include <sys/socket.h>
 #include <sys/sockio.h>
+#include <sys/sysctl.h>
 #include <sys/systm.h>
 #include <sys/endian.h>
 #include <sys/cpu.h>
@@ -194,12 +195,22 @@ CTASSERT(IWX_HT_EID_HTCAP == IEEE80211_ELEMID_HTCAP);
 CTASSERT(IWX_HT_EID_HTOP == IEEE80211_ELEMID_HTINFO);
 
 /*
- * 0: legacy rates only; 1: HT (802.11n); 2: HT and VHT (802.11ac) up to
- * 80 MHz; 3: the same up to 160 MHz; 4: with HE (802.11ax) up to 80 MHz;
- * 5: HE up to 160 MHz.  3 and above have not yet run on hardware.
- * Module property "ht" (modload -i ht=N).
+ * Operating mode, IWX_HT_MODE_*.  0: legacy rates only; 1: HT (802.11n);
+ * 2: HT and VHT (802.11ac) up to 80 MHz; 3: the same up to 160 MHz;
+ * 4: with HE (802.11ax) up to 80 MHz; 5: HE up to 160 MHz.  3 and above
+ * have not yet run on hardware.
+ * Set by the module property "ht" (modload -i ht=N) and, at run time, by
+ * sysctl hw.iwx.ht.  A device takes the value over when it builds an
+ * association request, so a change waits for the next association.
  */
-static int iwx_ht_mode = 2;
+static int iwx_ht_mode = IWX_HT_MODE_VHT80;
+/*
+ * The module was loaded with ht=0: devices attach without QoS, which
+ * every other mode needs, so the mode stays 0.  Mode 0 chosen later by
+ * sysctl keeps QoS and only stops offering HT.
+ */
+static int iwx_ht_noqos;
+static struct sysctllog *iwx_sysctllog;
 
 const uint8_t iwx_nvm_channels_8000[] = {
 	/* 2.4 GHz */
@@ -9053,16 +9064,15 @@ iwx_ht_local(struct iwx_softc *sc, struct ieee80211_channel *c,
 	memset(loc, 0, sizeof(*loc));
 	loc->band5 = IEEE80211_IS_CHAN_5GHZ(c);
 	loc->nss = iwx_mimo_enabled(sc) ? 2 : 1;
-	loc->vht = iwx_ht_mode >= 2;
+	iwx_ht_mode_offer(sc->sc_ht_mode, loc);
 	loc->allow40 = (fl & IWX_NVM_CHANNEL_40MHZ) != 0;
 	loc->allow80 = (fl & IWX_NVM_CHANNEL_80MHZ) != 0;
-	loc->vht160 = iwx_ht_mode == 3 || iwx_ht_mode >= 5;
 	/*
 	 * The HE settings below exist for the MLD firmware API only.  As
 	 * in Linux, HE is not offered when the NVM lacks it or the firmware
 	 * forbids 11ax in the current country.
 	 */
-	loc->he = iwx_ht_mode >= 4 && sc->sc_use_mld_api &&
+	loc->he = loc->he && sc->sc_use_mld_api &&
 	    sc->sc_nvm.sku_cap_11ax_enable && !sc->sc_11ax_disabled;
 	loc->allow160 = (fl & IWX_NVM_CHANNEL_160MHZ) != 0;
 }
@@ -9082,8 +9092,7 @@ iwx_ht_tx_assoc(struct iwx_softc *sc, struct mbuf *m,
 	size_t len, fixed, newlen;
 	uint8_t subtype;
 
-	if (iwx_ht_mode == 0 || ni == NULL ||
-	    ni->ni_chan == IEEE80211_CHAN_ANYC ||
+	if (ni == NULL || ni->ni_chan == IEEE80211_CHAN_ANYC ||
 	    (size_t)m->m_len < hdrlen)
 		return m;
 	subtype = mtod(m, struct ieee80211_frame *)->i_fc[0];
@@ -9095,6 +9104,15 @@ iwx_ht_tx_assoc(struct iwx_softc *sc, struct mbuf *m,
 	else if (subtype == IEEE80211_FC0_SUBTYPE_REASSOC_REQ)
 		fixed = 10;
 	else
+		return m;
+	/*
+	 * The mode in force now holds for the whole association: what is
+	 * offered here is what iwx_ht_setup_node() later configures.  A
+	 * request that leaves below unchanged gets an answer without HT,
+	 * and that gives legacy operation in any mode.
+	 */
+	sc->sc_ht_mode = atomic_load_relaxed(&iwx_ht_mode);
+	if (sc->sc_ht_mode == IWX_HT_MODE_LEGACY)
 		return m;
 	len = m->m_pkthdr.len - hdrlen;
 	if (len > IWX_HT_ASSOC_MAX)
@@ -9928,11 +9946,11 @@ iwx_ht_setup_node(struct iwx_softc *sc, struct iwx_node *in)
 	in->in_ht = 0;
 	memset(&in->in_htc, 0, sizeof(in->in_htc));
 	memset(&in->in_htt, 0, sizeof(in->in_htt));
-	if (iwx_ht_mode == 0 || !sc->sc_bss_ht_valid ||
+	if (sc->sc_ht_mode == IWX_HT_MODE_LEGACY || !sc->sc_bss_ht_valid ||
 	    !sc->sc_bss_ht.ht || ni->ni_chan == IEEE80211_CHAN_ANYC ||
 	    !IEEE80211_ADDR_EQ(sc->sc_bss_ht_bssid, ni->ni_bssid)) {
 		printf("%s: legacy rates only (ht=%d, AP answer %s, HT %s, "
-		    "BSSID %s)\n", device_xname(sc->sc_dev), iwx_ht_mode,
+		    "BSSID %s)\n", device_xname(sc->sc_dev), sc->sc_ht_mode,
 		    sc->sc_bss_ht_valid ? "parsed" : "missing",
 		    sc->sc_bss_ht_valid && sc->sc_bss_ht.ht ? "yes" : "no",
 		    IEEE80211_ADDR_EQ(sc->sc_bss_ht_bssid, ni->ni_bssid) ?
@@ -14485,7 +14503,8 @@ iwx_attach(struct device *parent, struct device *self, void *aux)
 	    IEEE80211_C_WPA |		/* 802.11i */
 	    IEEE80211_C_SHSLOT |	/* short slot time supported */
 	    IEEE80211_C_SHPREAMBLE;	/* short preamble supported */
-	if (iwx_ht_mode > 0) {
+	sc->sc_ht_mode = atomic_load_relaxed(&iwx_ht_mode);
+	if (!iwx_ht_noqos) {
 		ic->ic_caps |= IEEE80211_C_WME;	/* HT needs QoS (WMM) */
 		ic->ic_wme.wme_update = iwx_wme_update;
 	}
@@ -14675,6 +14694,45 @@ extern const struct cfattachinit cfattach_ioconf_if_iwx[];
 extern struct cfdata cfdata_ioconf_if_iwx[];
 #endif
 
+/* hw.iwx.ht: the operating mode from the next association on. */
+static int
+iwx_sysctl_ht(SYSCTLFN_ARGS)
+{
+	struct sysctlnode node = *rnode;
+	int error, mode = atomic_load_relaxed(&iwx_ht_mode);
+
+	node.sysctl_data = &mode;
+	error = sysctl_lookup(SYSCTLFN_CALL(&node));
+	if (error != 0 || newp == NULL)
+		return error;
+	if (!iwx_ht_mode_ok(mode, !iwx_ht_noqos))
+		return EINVAL;
+	atomic_store_relaxed(&iwx_ht_mode, mode);
+	return 0;
+}
+
+static void
+iwx_sysctl_setup(void)
+{
+	const struct sysctlnode *rnode;
+	int error;
+
+	error = sysctl_createv(&iwx_sysctllog, 0, NULL, &rnode,
+	    0, CTLTYPE_NODE, "iwx",
+	    SYSCTL_DESCR("iwx(4) driver settings"),
+	    NULL, 0, NULL, 0, CTL_HW, CTL_CREATE, CTL_EOL);
+	if (error == 0)
+		error = sysctl_createv(&iwx_sysctllog, 0, &rnode, NULL,
+		    CTLFLAG_READWRITE, CTLTYPE_INT, "ht",
+		    SYSCTL_DESCR("Operating mode from the next association: "
+		    "0 legacy, 1 HT, 2 VHT 80 MHz, 3 VHT 160 MHz, "
+		    "4 HE 80 MHz, 5 HE 160 MHz"),
+		    iwx_sysctl_ht, 0, NULL, 0, CTL_CREATE, CTL_EOL);
+	if (error != 0)
+		printf("if_iwx: cannot create sysctl hw.iwx.ht (error %d); "
+		    "the mode stays %d\n", error, iwx_ht_mode);
+}
+
 static int
 if_iwx_modcmd(modcmd_t cmd, void *opaque)
 {
@@ -14694,19 +14752,24 @@ if_iwx_modcmd(modcmd_t cmd, void *opaque)
 			}
 			int32_t ht;
 			if (prop_dictionary_get_int32((prop_dictionary_t)opaque,
-			    "ht", &ht) && ht >= 0 && ht <= 5)
+			    "ht", &ht) && iwx_ht_mode_ok(ht, 1))
 				iwx_ht_mode = ht;
 		}
+		iwx_ht_noqos = iwx_ht_mode == IWX_HT_MODE_LEGACY;
 #ifdef _MODULE
 		error = config_init_component(cfdriver_ioconf_if_iwx,
 		    cfattach_ioconf_if_iwx, cfdata_ioconf_if_iwx);
 #endif
+		if (error == 0)
+			iwx_sysctl_setup();
 		return error;
 	case MODULE_CMD_FINI:
 #ifdef _MODULE
 		error = config_fini_component(cfdriver_ioconf_if_iwx,
 		    cfattach_ioconf_if_iwx, cfdata_ioconf_if_iwx);
 #endif
+		if (error == 0)
+			sysctl_teardown(&iwx_sysctllog);
 		return error;
 	default:
 		return ENOTTY;

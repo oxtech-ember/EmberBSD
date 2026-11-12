@@ -52,6 +52,7 @@ def main():
 #define MHLEN 128
 #define IWX_HT_ASSOC_MAX 512
 #define nitems(a) (sizeof(a)/sizeof((a)[0]))
+#define atomic_load_relaxed(p) (*(p))
 #define mtod(m,t) ((t)(m)->data)
 #define IC2IFP(ic) ((ic)->ic_ifp)
 struct ifnet { void *if_softc; unsigned if_oerrors; };
@@ -75,6 +76,7 @@ struct iwx_softc {
     void (*sc_recv_mgmt)(struct ieee80211com *, struct mbuf *,
         struct ieee80211_node *, int, int, uint32_t);
     uint8_t sc_ht_buf[2][IWX_HT_ASSOC_MAX];
+    int sc_ht_mode;
 };
 struct ieee80211_rxinfo { int rxi_rssi; uint32_t rxi_tstamp; };
 static int admitted, assoc, action, csa, ordinary, failalloc, failcluster, failtags;
@@ -174,6 +176,20 @@ int main(int argc, char **argv)
             assert(failure ? n==m : n!=m); free(n);
         }
         assert(freed == 3);
+        /* The mode is taken over by association requests only. */
+        assert(sc.sc_ht_mode == 1);
+        m=calloc(1,sizeof(*m)); assert(m != NULL);
+        m->m_len=m->m_pkthdr.len=128; iwx_ht_mode=3;
+        m->data[0]=0x40; n=iwx_ht_tx_assoc(&sc,m,&node);
+        assert(n == m && sc.sc_ht_mode == 1);
+        m->data[0]=0x20; n=iwx_ht_tx_assoc(&sc,m,&node);
+        assert(sc.sc_ht_mode == 3); free(n);
+        /* Legacy mode sends the request as net80211 built it. */
+        m=calloc(1,sizeof(*m)); assert(m != NULL);
+        m->m_len=m->m_pkthdr.len=128; iwx_ht_mode=0;
+        n=iwx_ht_tx_assoc(&sc,m,&node);
+        assert(n == m && sc.sc_ht_mode == 0); free(m);
+        iwx_ht_mode=1;
     }
     if (argc == 1 || strcmp(argv[1], "action") == 0) {
         const uint8_t body[9]={3,1,7}; sc.sc_ic.ic_bss=&rxnode;

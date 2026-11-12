@@ -130,6 +130,43 @@ struct iwx_ht_local {
 	int	he;		/* offer HE (802.11ax); needs VHT and 5 GHz */
 };
 
+/*
+ * Operating mode chosen by the administrator (module property "ht" and
+ * sysctl hw.iwx.ht).
+ */
+#define IWX_HT_MODE_LEGACY	0	/* legacy rates only */
+#define IWX_HT_MODE_HT		1	/* HT (802.11n) */
+#define IWX_HT_MODE_VHT80	2	/* HT and VHT (802.11ac) up to 80 MHz */
+#define IWX_HT_MODE_VHT160	3	/* the same up to 160 MHz */
+#define IWX_HT_MODE_HE80	4	/* with HE (802.11ax) up to 80 MHz */
+#define IWX_HT_MODE_HE160	5	/* HE up to 160 MHz */
+#define IWX_HT_MODE_MAX		IWX_HT_MODE_HE160
+
+/*
+ * Whether `mode' can be selected.  Every mode above legacy needs QoS,
+ * which net80211 takes from the capabilities set at attach: `qos' says
+ * whether they include it.  Legacy mode itself runs with or without.
+ */
+static inline int
+iwx_ht_mode_ok(int mode, int qos)
+{
+	if (mode < IWX_HT_MODE_LEGACY || mode > IWX_HT_MODE_MAX)
+		return 0;
+	return mode == IWX_HT_MODE_LEGACY || qos;
+}
+
+/*
+ * What `mode' lets this station offer.  The limits of the hardware, the
+ * firmware and the regulatory domain are the caller's.
+ */
+static inline void
+iwx_ht_mode_offer(int mode, struct iwx_ht_local *loc)
+{
+	loc->vht = mode >= IWX_HT_MODE_VHT80;
+	loc->vht160 = mode == IWX_HT_MODE_VHT160 || mode == IWX_HT_MODE_HE160;
+	loc->he = mode >= IWX_HT_MODE_HE80;
+}
+
 /* What the AP answered. */
 struct iwx_ht_peer {
 	int		ht;		/* HT capabilities present */

@@ -859,6 +859,7 @@ struct iwx_softc {
 	int sc_csa_valid;
 	int sc_csa_wait;	/* no beacon on the new channel yet */
 	int sc_11ax_disabled;	/* by the firmware for the current country */
+	int sc_ht_mode;		/* IWX_HT_MODE_* of this association */
 	uint32_t sc_bmiss_level;	/* beacon loss already acted on */
 	uint8_t sc_ht_buf[2][IWX_HT_ASSOC_MAX];
 

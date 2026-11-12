@@ -336,7 +336,7 @@ Boot setup used on the MSI:
 | WPA | `wpa_supplicant=YES`, `wpa_supplicant_flags="-B -s -i iwx0 -c /etc/wpa_supplicant.iwx0.conf"` |
 | DHCP | `dhcpcd_flags="-qM rge0 iwx0"` |
 | Country | `modload -s mcc=XX` (default `ZZ`); replaced by the country the firmware detects |
-| HT/VHT/HE | `modload -i ht=N`: 0 legacy, 1 HT, 2 HT+VHT up to 80 MHz (default), 3 HT+VHT up to 160 MHz, 4 with HE up to 80 MHz, 5 HE up to 160 MHz (3 and above not yet run on hardware) |
+| HT/VHT/HE | `modload -i ht=N` or, at run time, `sysctl -w hw.iwx.ht=N`: 0 legacy, 1 HT, 2 HT+VHT up to 80 MHz (default), 3 HT+VHT up to 160 MHz, 4 with HE up to 80 MHz, 5 HE up to 160 MHz (3 and above not yet run on hardware). A sysctl change applies from the next association: `ifconfig iwx0 down`, then `up`. For a module loaded by the boot loader, put `hw.iwx.ht=N` in `/etc/sysctl.conf`. A module loaded with `ht=0` attaches without QoS and accepts only 0; mode 0 chosen by sysctl keeps WMM and only stops offering HT |
 
 Bring-up fixes on NetBSD (commits 579e0ec..bcc5a61): raw `CSR_HW_REV` as
 prph scratch `mac_id` (the GL ROM ignored the converted value), 94
