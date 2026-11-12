@@ -22,6 +22,7 @@
 #include <sys/systm.h>
 #endif
 
+#include <linux/cleanup.h>
 #include <linux/kdev_t.h>
 #include <linux/string_choices.h>
 #include <linux/string_helpers.h>
@@ -464,6 +465,152 @@ test_kernel_misc(void)
 }
 #endif
 
+static int t_freed, t_cls_dtor, t_cls_ctor;
+
+DEFINE_FREE(t_free, int *, if (_T != NULL) t_freed++)
+
+DEFINE_CLASS(t_cls, int, t_cls_dtor += _T, ({ t_cls_ctor++; v; }), int v)
+
+DEFINE_GUARD(t_lock, int *, (*_T)++, (*_T)--)
+
+DEFINE_LOCK_GUARD_1(t_irq, int, _T->flags = ++(*_T->lock) * 10, (*_T->lock)--,
+    unsigned long flags)
+
+static int t_depth;
+DEFINE_LOCK_GUARD_0(t_none, t_depth++, t_depth--)
+
+static int *
+t_return_ptr(int *src, bool fail)
+{
+	int *p __free(t_free) = src;
+
+	if (fail)
+		return NULL;		/* p is released */
+	return_ptr(p);			/* ownership moves to the caller */
+}
+
+static int
+t_early_return(int *lvl)
+{
+
+	guard(t_lock)(lvl);
+	if (*lvl == 1)
+		return 100 + *lvl;
+	return -1;
+}
+
+static void
+test_cleanup(void)
+{
+	int x = 0, lvl = 0, i, n;
+	int *q;
+
+	/* __free() runs at scope exit. */
+	{
+		int *p __free(t_free) = &x;
+
+		CHECK(p == &x);
+		CHECK(t_freed == 0);
+	}
+	CHECK(t_freed == 1);
+
+	/* no_free_ptr() hands over the pointer and disarms the cleanup. */
+	{
+		int *p __free(t_free) = &x;
+
+		q = no_free_ptr(p);
+		CHECK(p == NULL && q == &x);
+	}
+	CHECK(t_freed == 1);
+
+	/* retain_and_null_ptr() only disarms. */
+	{
+		int *p __free(t_free) = &x;
+
+		retain_and_null_ptr(p);
+		CHECK(p == NULL);
+	}
+	CHECK(t_freed == 1);
+
+	/* return_ptr(): success keeps the object, failure releases it. */
+	CHECK(t_return_ptr(&x, false) == &x);
+	CHECK(t_freed == 1);
+	CHECK(t_return_ptr(&x, true) == NULL);
+	CHECK(t_freed == 2);
+
+	/* Loop exit paths run the cleanup once per iteration. */
+	for (i = 0; i < 3; i++) {
+		int *p __free(t_free) = &x;
+
+		if (i == 1)
+			continue;
+		(void)p;
+	}
+	CHECK(t_freed == 5);
+
+	/* DEFINE_CLASS / CLASS */
+	{
+		CLASS(t_cls, c)(7);
+
+		CHECK(c == 7 && t_cls_ctor == 1 && t_cls_dtor == 0);
+	}
+	CHECK(t_cls_dtor == 7 && t_cls_ctor == 1);
+
+	/* DEFINE_GUARD / guard() */
+	{
+		guard(t_lock)(&lvl);
+		CHECK(lvl == 1);
+		{
+			guard(t_lock)(&lvl);
+			CHECK(lvl == 2);
+		}
+		CHECK(lvl == 1);
+	}
+	CHECK(lvl == 0);
+	CHECK(t_early_return(&lvl) == 101);
+	CHECK(lvl == 0);
+
+	/* scoped_guard(): body once, released after it, break and nesting */
+	n = 0;
+	scoped_guard(t_lock, &lvl) {
+		CHECK(lvl == 1);
+		n++;
+	}
+	CHECK(lvl == 0 && n == 1);
+	n = 0;
+	scoped_guard(t_lock, &lvl) {
+		n++;
+		if (n == 1)
+			break;
+		n += 100;
+	}
+	CHECK(lvl == 0 && n == 1);
+	scoped_guard(t_lock, &lvl)
+		scoped_guard(t_lock, &lvl)
+			CHECK(lvl == 2);
+	CHECK(lvl == 0);
+
+	/* DEFINE_LOCK_GUARD_1 with extra state; DEFINE_LOCK_GUARD_0 */
+	{
+		guard(t_irq)(&lvl);
+		CHECK(lvl == 1);
+	}
+	CHECK(lvl == 0);
+	scoped_guard(t_irq, &lvl) {
+		CHECK(lvl == 1);
+	}
+	CHECK(lvl == 0);
+	{
+		guard(t_none)();
+		CHECK(t_depth == 1);
+		scoped_guard(t_none)
+			CHECK(t_depth == 2);
+		CHECK(t_depth == 1);
+	}
+	CHECK(t_depth == 0);
+	CHECK(lvl == 0);
+}
+
 static void
 test_harness(void)
 {
@@ -484,6 +631,7 @@ drm2_linux_compat_run(void)
 	test_units();
 	test_util_macros();
 	test_kdev_swab();
+	test_cleanup();
 #ifndef DRM2_COMPAT_HOST
 	test_kernel_forwarders();
 	test_kernel_misc();
