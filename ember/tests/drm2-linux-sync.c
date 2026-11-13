@@ -17,7 +17,9 @@
 
 #include <linux/completion.h>
 #include <linux/errno.h>
+#include <linux/err.h>
 #include <linux/jiffies.h>
+#include <linux/kthread.h>
 #include <linux/spinlock.h>
 #include <linux/wait.h>
 
@@ -265,6 +267,140 @@ test_completion_618(void)
 	destroy_completion(&c);
 }
 
+/*
+ * kthread_worker: one thread that runs queued works in order.
+ */
+
+struct tw {
+	struct kthread_work	work;
+	struct tw_log		*log;
+	int			id;
+	int			sleep_ticks;	/* sleep inside the work */
+	volatile int		started;
+	volatile int		runs;
+	int			requeue;	/* queue itself again this often */
+	struct kthread_worker	*worker;
+};
+
+struct tw_log {
+	volatile unsigned	n;
+	int			order[16];
+};
+
+static void
+tw_func(struct kthread_work *work)
+{
+	struct tw *w = container_of(work, struct tw, work);
+
+	w->started = 1;
+	if (w->sleep_ticks != 0)
+		kpause("drm2twk", false, w->sleep_ticks, NULL);
+	if (w->log != NULL && w->log->n < 16)
+		w->log->order[w->log->n++] = w->id;
+	w->runs++;
+	if (w->requeue > 0) {
+		w->requeue--;
+		(void)kthread_queue_work(w->worker, &w->work);
+	}
+}
+
+static void
+tw_init(struct tw *w, struct tw_log *log, int id, struct kthread_worker *kw)
+{
+
+	memset(w, 0, sizeof(*w));
+	kthread_init_work(&w->work, tw_func);
+	w->log = log;
+	w->id = id;
+	w->worker = kw;
+}
+
+static void
+test_kthread_worker(void)
+{
+	struct kthread_worker *kw;
+	struct tw a, b, c;
+	struct tw_log log;
+
+	memset(&log, 0, sizeof(log));
+	kw = kthread_run_worker(0, "drm2tw%d", 7);
+	CHECK(!IS_ERR(kw) && kw != NULL);
+	if (IS_ERR(kw) || kw == NULL)
+		return;
+	tw_init(&a, &log, 1, kw);
+	tw_init(&b, &log, 2, kw);
+	tw_init(&c, &log, 3, kw);
+
+	/* Works run in the order queued, once each. */
+	CHECK(kthread_queue_work(kw, &a.work));
+	CHECK(kthread_queue_work(kw, &b.work));
+	CHECK(kthread_queue_work(kw, &c.work));
+	kthread_flush_worker(kw);
+	CHECK(log.n == 3 && log.order[0] == 1 && log.order[1] == 2 &&
+	    log.order[2] == 3);
+	CHECK(a.runs == 1 && b.runs == 1 && c.runs == 1);
+
+	/* Queueing a work that is queued already does nothing (false). */
+	a.sleep_ticks = hz / 5 + 1;
+	CHECK(kthread_queue_work(kw, &a.work));	/* runs and sleeps */
+	while (!a.started)
+		kpause("drm2tws", false, 1, NULL);
+	CHECK(kthread_queue_work(kw, &b.work));
+	CHECK(!kthread_queue_work(kw, &b.work));	/* b waits behind a */
+	kthread_flush_work(&b.work);
+	CHECK(a.runs == 2 && b.runs == 2);	/* a ran before b */
+
+	/* A work running can be queued again (it runs twice, not at once). */
+	a.sleep_ticks = 0;
+	a.requeue = 2;
+	a.runs = 0;
+	CHECK(kthread_queue_work(kw, &a.work));
+	kthread_flush_worker(kw);
+	CHECK(a.runs == 3);
+
+	/* flush_work waits for a running work and returns when it is done. */
+	c.sleep_ticks = hz / 5 + 1;
+	c.started = 0;
+	c.runs = 0;
+	CHECK(kthread_queue_work(kw, &c.work));
+	while (!c.started)
+		kpause("drm2twf", false, 1, NULL);
+	kthread_flush_work(&c.work);
+	CHECK(c.runs == 1);
+	kthread_flush_work(&c.work);	/* idle: returns at once */
+
+	/* cancel_work_sync: pending work is removed (true), idle one is not (false). */
+	b.sleep_ticks = 0;
+	b.runs = 0;
+	c.sleep_ticks = hz / 5 + 1;
+	c.started = 0;
+	c.runs = 0;
+	CHECK(kthread_queue_work(kw, &c.work));
+	while (!c.started)
+		kpause("drm2twc", false, 1, NULL);
+	CHECK(kthread_queue_work(kw, &b.work));	/* waits behind c */
+	CHECK(kthread_cancel_work_sync(&b.work));	/* was pending */
+	CHECK(!kthread_cancel_work_sync(&b.work));	/* not any more */
+	kthread_flush_worker(kw);
+	CHECK(b.runs == 0 && c.runs == 1);
+
+	/* cancel_work_sync of a running work waits for it, returns false. */
+	c.started = 0;
+	c.runs = 0;
+	CHECK(kthread_queue_work(kw, &c.work));
+	while (!c.started)
+		kpause("drm2twr", false, 1, NULL);
+	CHECK(!kthread_cancel_work_sync(&c.work));
+	CHECK(c.runs == 1);			/* done by the time it returns */
+
+	/* The worker is still usable, and goes away with its works done. */
+	b.runs = 0;
+	CHECK(kthread_queue_work(kw, &b.work));
+	kthread_flush_worker(kw);
+	CHECK(b.runs == 1);
+	kthread_destroy_worker(kw);
+}
+
 int	drm2_linux_sync_run(void);
 
 int
@@ -276,6 +412,7 @@ drm2_linux_sync_run(void)
 	test_wait_event_basic();
 	test_wait_event_wake();
 	test_completion_618();
+	test_kthread_worker();
 	printf("drm2-linux-sync: %d checks, %d failed\n", t_run, t_fail);
 	return t_fail;
 }

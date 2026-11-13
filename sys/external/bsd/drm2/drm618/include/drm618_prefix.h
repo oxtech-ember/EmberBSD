@@ -17,6 +17,24 @@
 #ifndef _DRM618_PREFIX_H_
 #define _DRM618_PREFIX_H_
 
+/*
+ * struct rb_node: NetBSD's <sys/rbtree.h> (also pulled in by the layer's idr.h
+ * and ww_mutex.h) and the rb_node of the 6.18 sources, drm618/include/linux/
+ * rbtree.h, are two different structures of the same size.  NetBSD's is
+ * renamed while its header is read, its macros rb_left and rb_right (which
+ * are member names in Linux) are dropped, and Linux's takes the name before
+ * any other header can embed one: the layer headers that do keep the layout.
+ */
+#define	rb_node	netbsd_rb_node
+#include <sys/rbtree.h>
+#undef rb_node
+#undef rb_left
+#undef rb_right
+/* <sys/tree.h> has RB_ROOT(head) (and is read once), Linux has RB_ROOT. */
+#include <sys/tree.h>
+#undef RB_ROOT
+#include <linux/rbtree.h>
+
 #include <sys/types.h>
 
 /* types of Linux's asm/posix_types.h and linux/types.h (uapi/drm/drm.h, drm_file.h) */
@@ -36,6 +54,7 @@ typedef unsigned int __poll_t;
 #include <linux/kernel.h>
 #include <linux/instruction_pointer.h>	/* kernel.h upstream: _THIS_IP_ (drm_print.h) */
 #include <linux/err.h>			/* ERR_PTR, IS_ERR (many) */
+#include <linux/module.h>		/* THIS_MODULE (drm_client, drm_gem fops) */
 #include <linux/mutex.h>
 #include <linux/workqueue.h>		/* struct work_struct (drm_dp_helper.h) */
 #include <linux/completion.h>		/* struct completion (drm_atomic.h) */
@@ -43,5 +62,7 @@ typedef unsigned int __poll_t;
 #include <linux/idr.h>
 #include <linux/llist.h>
 #include <linux/string_choices.h>
+
+#include <drm618_layer.h>		/* list_last_entry_or_null, ALIGN(x, a), LIST_HEAD(name), ... */
 
 #endif

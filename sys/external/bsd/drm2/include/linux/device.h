@@ -85,6 +85,22 @@
 } while (0)
 
 #define	dev_name	device_xname
+
+/*
+ * dev_driver_string(dev)
+ *
+ *	The name of the driver bound to dev (NetBSD: the autoconf driver
+ *	name, as in "i915drmkms"), or "" if there is no device.
+ *	EmberBSD addition, AI-assisted.
+ */
+static inline const char *
+dev_driver_string(const struct device *dev)
+{
+
+	if (dev == NULL)
+		return "";
+	return device_cfdriver(__UNCONST(dev))->cd_name;
+}
 #define	get_device(x)	(x)
 
 #define	DPM_FLAG_NEVER_SKIP	0

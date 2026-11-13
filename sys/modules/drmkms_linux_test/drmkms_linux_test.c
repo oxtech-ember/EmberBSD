@@ -16,6 +16,7 @@ int	drm2_linux_compat_run(void);
 int	drm2_dma_resv_run(void);
 int	drm2_linux_idr_run(void);
 int	drm2_linux_sync_run(void);
+int	drm2_linux_618_run(void);
 
 static int
 drmkms_linux_test_modcmd(modcmd_t cmd, void *arg __unused)
@@ -28,6 +29,7 @@ drmkms_linux_test_modcmd(modcmd_t cmd, void *arg __unused)
 		failed += drm2_dma_resv_run();
 		failed += drm2_linux_idr_run();
 		failed += drm2_linux_sync_run();
+		failed += drm2_linux_618_run();
 		return failed == 0 ? 0 : EIO;
 	case MODULE_CMD_FINI:
 		return 0;

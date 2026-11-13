@@ -10,6 +10,9 @@
 
 .PATH: ${S}/../ember/tests
 
+# The 6.18-only headers first: drm618/include/linux/wait.h shadows the empty
+# <linux/wait.h> of the shared layer (see there), drm618_prefix.h is under test.
+CPPFLAGS+=	-I${S}/external/bsd/drm2/drm618/include
 CPPFLAGS+=	-I${S}/external/bsd/common/include
 CPPFLAGS+=	-I${S}/external/bsd/drm2/include
 CPPFLAGS+=	-DDIAGNOSTIC
@@ -26,10 +29,12 @@ SRCS+=	drm2-linux-compat.c
 SRCS+=	drm2-dma-resv.c
 SRCS+=	drm2-linux-idr.c
 SRCS+=	drm2-linux-sync.c
+SRCS+=	drm2-linux-618.c
 
-# The wait queue API under test lives in the 6.18-only header directory; the
-# shared layer has an empty <linux/wait.h> that comes first in the path.
-CPPFLAGS.drm2-linux-sync.c+=	-include ${S}/external/bsd/drm2/drm618/include/linux/wait.h
+# The 6.18-only code under test is compiled into the module (the kernel has no
+# drmkms618).
+.PATH: ${S}/external/bsd/drm2/drm618
+SRCS+=	drm618_kthread_worker.c
 
 WARNS=	3
 

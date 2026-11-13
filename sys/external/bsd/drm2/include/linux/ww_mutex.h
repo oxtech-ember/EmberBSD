@@ -95,6 +95,7 @@ struct ww_mutex {
 #define	ww_mutex_lock_slow_interruptible linux_ww_mutex_lock_slow_interruptible
 #define	ww_mutex_locking_ctx	linux_ww_mutex_locking_ctx
 #define	ww_mutex_trylock	linux_ww_mutex_trylock
+#define	ww_mutex_trylock_ctx	linux_ww_mutex_trylock_ctx
 #define	ww_mutex_unlock		linux_ww_mutex_unlock
 
 void	ww_acquire_init(struct ww_acquire_ctx *, struct ww_class *);
@@ -118,6 +119,7 @@ void	ww_mutex_lock_slow(struct ww_mutex *, struct ww_acquire_ctx *);
 int	ww_mutex_lock_slow_interruptible(struct ww_mutex *,
 	    struct ww_acquire_ctx *);
 int	ww_mutex_trylock(struct ww_mutex *);
+int	ww_mutex_trylock_ctx(struct ww_mutex *, struct ww_acquire_ctx *);
 void	ww_mutex_unlock(struct ww_mutex *);
 
 struct ww_acquire_ctx *
