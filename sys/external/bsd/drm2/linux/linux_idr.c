@@ -228,6 +228,10 @@ idr_get_next(struct idr *idr, int *idp)
 
 	mutex_spin_enter(&idr->idr_lock);
 	node = rb_tree_find_node_geq(&idr->idr_tree, idp);
+	/* Like Linux, skip entries replaced by NULL (idr_replace).  */
+	while (node != NULL && node->in_data == NULL)
+		node = rb_tree_iterate(&idr->idr_tree, __UNCONST(node),
+		    RB_DIR_RIGHT);
 	if (node == NULL) {
 		data = NULL;
 	} else {
@@ -427,8 +431,13 @@ idr_for_each(struct idr *idr, int (*proc)(int, void *, void *), void *arg)
 	struct idr_node *node;
 	int error = 0;
 
-	/* XXX Caller must exclude modifications.  */
+	/*
+	 * XXX Caller must exclude modifications.  Like Linux, skip
+	 * entries replaced by NULL (idr_replace).
+	 */
 	RB_TREE_FOREACH(node, &idr->idr_tree) {
+		if (node->in_data == NULL)
+			continue;
 		error = (*proc)(node->in_index, node->in_data, arg);
 		if (error)
 			break;

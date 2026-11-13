@@ -24,6 +24,7 @@ KMOD=	drmkms_linux_test
 SRCS+=	drmkms_linux_test.c
 SRCS+=	drm2-linux-compat.c
 SRCS+=	drm2-dma-resv.c
+SRCS+=	drm2-linux-idr.c
 
 WARNS=	3
 

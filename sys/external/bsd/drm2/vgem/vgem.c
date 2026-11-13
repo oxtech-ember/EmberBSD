@@ -249,12 +249,6 @@ vgem_open(struct drm_device *dev, struct drm_file *file)
 static int
 vgem_fence_idr_fini(int id, void *p, void *data)
 {
-	/*
-	 * Signalled fences leave a NULL entry (idr_replace in the signal
-	 * ioctl).  Linux idr_for_each skips those, linux_idr_for_each does not.
-	 */
-	if (p == NULL)
-		return 0;
 	dma_fence_signal(p);
 	dma_fence_put(p);
 	return 0;
