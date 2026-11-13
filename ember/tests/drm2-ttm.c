@@ -43,6 +43,7 @@ extern struct x86_bus_dma_tag pci_bus_dma_tag;
 
 void	drm618_ttm_set_dmat(const struct device *, bus_dma_tag_t);
 unsigned long	drm618_ttm_pool_pages(void);
+struct uvm_object	*ttm_bo_uvm_create(struct ttm_buffer_object *);
 
 static int t_run, t_fail;
 
@@ -410,6 +411,71 @@ drm2_ttm_run(void)
 	}
 	dma_resv_lock(a->base.base.resv, NULL);
 	t_bo_free(a);
+
+	/* ---- 5b. the uvm mapping of a BO: a fault enters the pages ----------------------- */
+	{
+		enum ttm_caching c2[2] = { ttm_cached, ttm_write_combined };
+		int i;
+
+		for (i = 0; i < 2; i++) {
+			struct uvm_object *uo;
+			vaddr_t va = 0;
+			unsigned before = t_destroyed;
+			size_t len = 8 << PAGE_SHIFT;
+
+			a = t_bo_create(8, &t_sys_place, c2[i]);
+			CHECK(a != NULL);
+			if (a == NULL)
+				continue;
+			CHECK(t_bo_write(a, 60 + i) == 0);
+			uo = ttm_bo_uvm_create(&a->base);
+			dma_resv_unlock(a->base.base.resv);
+			CHECK(uvm_map(kernel_map, &va, len, uo, 0, 0,
+			    UVM_MAPFLAG(UVM_PROT_RW, UVM_PROT_RW, UVM_INH_NONE,
+			    UVM_ADV_RANDOM, 0)) == 0);
+			if (va != 0) {
+				CHECK(t_check((void *)va, len, 60 + i));	/* the faults read the pages */
+				((uint32_t *)va)[PAGE_SIZE / 4 + 1] = 0x600d0000 + i;	/* and a write goes to them */
+				uvm_unmap(kernel_map, va, va + len);
+			}
+			/* the mapping dropped its reference; the object holds the BO until its own is gone */
+			uo->pgops->pgo_detach(uo);
+			dma_resv_lock(a->base.base.resv, NULL);
+			CHECK(t_bo_verify(a, 60 + i, &ok) == 0 && !ok);	/* the write changed one word */
+			{
+				struct ttm_bo_kmap_obj km;
+				bool io;
+
+				CHECK(ttm_bo_kmap(&a->base, 1, 1, &km) == 0);
+				CHECK(((uint32_t *)ttm_kmap_obj_virtual(&km, &io))[1] == 0x600d0000u + i);
+				ttm_bo_kunmap(&km);
+			}
+			t_bo_free(a);
+			CHECK(t_destroyed == before + 1);	/* nothing holds the BO any more */
+		}
+		/* an object in the fake VRAM: the fault enters the physical addresses of the aperture */
+		a = t_bo_create(4, &t_sys_place, ttm_cached);
+		CHECK(a != NULL);
+		if (a != NULL) {
+			struct uvm_object *uo;
+			vaddr_t va = 0;
+
+			CHECK(t_bo_write(a, 70) == 0);
+			CHECK(t_validate(a, &t_vram_place) == 0);
+			uo = ttm_bo_uvm_create(&a->base);
+			dma_resv_unlock(a->base.base.resv);
+			CHECK(uvm_map(kernel_map, &va, 4 << PAGE_SHIFT, uo, 0, 0,
+			    UVM_MAPFLAG(UVM_PROT_RW, UVM_PROT_RW, UVM_INH_NONE,
+			    UVM_ADV_RANDOM, 0)) == 0);
+			if (va != 0) {
+				CHECK(t_check((void *)va, 4 << PAGE_SHIFT, 70));
+				uvm_unmap(kernel_map, va, va + (4 << PAGE_SHIFT));
+			}
+			uo->pgops->pgo_detach(uo);
+			dma_resv_lock(a->base.base.resv, NULL);
+			t_bo_free(a);
+		}
+	}
 
 	/* ---- 6. evict all, release, no pages left --------------------------------- */
 	c = t_bo_create(10, &t_tt_place, ttm_cached);
