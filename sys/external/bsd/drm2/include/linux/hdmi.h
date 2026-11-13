@@ -237,6 +237,9 @@ struct hdr_sink_metadata {
 	struct hdmi_type1		hdmi_type1;
 };
 
+/* EmberBSD addition (value of Linux 6.18). */
+#define	HDMI_MAX_INFOFRAME_SIZE	27
+
 #define	HDMI_INFOFRAME_SIZE(TYPE)					      \
 	(HDMI_INFOFRAME_HEADER_SIZE + HDMI_##TYPE##_INFOFRAME_SIZE)
 

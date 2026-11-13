@@ -1044,6 +1044,55 @@ ww_mutex_trylock(struct ww_mutex *mutex)
 }
 
 /*
+ * ww_mutex_trylock_ctx(mutex, ctx)
+ *
+ *	The two-argument trylock of Linux 6.x: try to acquire mutex on
+ *	behalf of ctx and return 1, or return 0 if it can't be done
+ *	immediately.  With ctx == NULL this is ww_mutex_trylock(mutex).
+ *	On success the lock is held by ctx and counted in it, like
+ *	ww_mutex_lock does.
+ *
+ *	EmberBSD addition, AI-assisted.
+ */
+int
+ww_mutex_trylock_ctx(struct ww_mutex *mutex, struct ww_acquire_ctx *ctx)
+{
+	int ret;
+
+	if (ctx == NULL)
+		return ww_mutex_trylock(mutex);
+
+	KASSERTMSG((ctx->wwx_owner == curlwp),
+	    "ctx %p is owned by %p, not by me (%p)", ctx, ctx->wwx_owner,
+	    curlwp);
+	KASSERTMSG((ctx->wwx_acquired != ~0U),
+	    "ctx %p finished, can't be used any more", ctx);
+	KASSERTMSG((ctx->wwx_class == mutex->wwm_class),
+	    "ctx %p in class %p, mutex %p in class %p",
+	    ctx, ctx->wwx_class, mutex, mutex->wwm_class);
+
+	mutex_enter(&mutex->wwm_lock);
+	if (mutex->wwm_state == WW_UNLOCKED) {
+		mutex->wwm_state = WW_CTX;
+		mutex->wwm_u.ctx = ctx;
+		WW_WANTLOCK(mutex);
+		WW_LOCKED(mutex);
+		ctx->wwx_acquired++;
+		ret = 1;
+	} else {
+		/*
+		 * No self-deadlock assertion: a concurrent caller without
+		 * a context can change WW_CTX to WW_WANTOWN while this
+		 * thread owns the mutex (see ww_mutex_trylock).
+		 */
+		ret = 0;
+	}
+	mutex_exit(&mutex->wwm_lock);
+
+	return ret;
+}
+
+/*
  * ww_mutex_unlock_release(mutex)
  *
  *	Decrement the number of mutexes acquired in the current locking
