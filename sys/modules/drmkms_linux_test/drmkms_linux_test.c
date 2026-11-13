@@ -17,6 +17,7 @@ int	drm2_dma_resv_run(void);
 int	drm2_linux_idr_run(void);
 int	drm2_linux_sync_run(void);
 int	drm2_linux_618_run(void);
+int	drm2_linux_618_layer_run(void);
 int	drm2_drm618_managed_run(void);
 int	drm2_drm618_statics_run(void);
 
@@ -32,6 +33,7 @@ drmkms_linux_test_modcmd(modcmd_t cmd, void *arg __unused)
 		failed += drm2_linux_idr_run();
 		failed += drm2_linux_sync_run();
 		failed += drm2_linux_618_run();
+		failed += drm2_linux_618_layer_run();
 		failed += drm2_drm618_managed_run();
 		failed += drm2_drm618_statics_run();
 		return failed == 0 ? 0 : EIO;
