@@ -12,7 +12,9 @@
 # headers found only there are the ones that need a BSD rewrite.
 # KOBJDIR: a kernel build directory that holds the generated opt_*.h headers.
 # Environment: CC, SYSROOT, S (the sys/ directory), J (parallel jobs, default 16),
-# EXTRA (more compiler flags, e.g. -include of a shim header).
+# EXTRA (more compiler flags, e.g. -include of a shim header).  The prefix header
+# drm618/include/drm618_prefix.h is included as in files.drmkms618; NOPREFIX=1
+# leaves it out to see what the sources need without it.
 set -u
 
 if [ "${1:-}" = --one ]; then
@@ -34,6 +36,8 @@ CC=${CC:-clang}
 SYSROOT=${SYSROOT:?set SYSROOT to a destination directory with the target headers}
 J=${J:-16}
 D=$S/external/bsd/drm2
+PFX="-include $D/drm618/include/drm618_prefix.h"
+[ -n "${NOPREFIX:-}" ] && PFX=
 FLAGS="--target=x86_64--netbsd -B$S/../ember/tools/no-external-as/ -O2 -std=gnu11 -w -ferror-limit=0
  -ffreestanding -fwrapv -fno-strict-aliasing -mno-red-zone -mno-mmx -mno-sse -mno-avx -msoft-float -mcmodel=kernel
  -fno-omit-frame-pointer --sysroot=$SYSROOT -Damd64 -Dx86_64 -I$KOBJ -I$S/external/mit/xen-include-public/dist/
@@ -41,7 +45,7 @@ FLAGS="--target=x86_64--netbsd -B$S/../ember/tools/no-external-as/ -O2 -std=gnu1
  -I$S/arch -I$S -nostdinc -D__XEN_INTERFACE_VERSION__=0x3020a -DCOMPAT_44
  -D_KERNEL -D_KERNEL_OPT -D__KERNEL__ -DCONFIG_X86 -DCONFIG_X86_64 -DCONFIG_X86_PAT -DCONFIG_PCI=1
  -DCONFIG_DRM_FBDEV_EMULATION=1 -DCONFIG_DRM_FBDEV_OVERALLOC=100 -DCONFIG_FB=0 -DCONFIG_LOCKDEP=0
- -DCONFIG_BACKLIGHT_CLASS_DEVICE=0 -DCONFIG_BACKLIGHT_CLASS_DEVICE_MODULE=0 ${EXTRA:-}"
+ -DCONFIG_BACKLIGHT_CLASS_DEVICE=0 -DCONFIG_BACKLIGHT_CLASS_DEVICE_MODULE=0 ${PFX} ${EXTRA:-}"
 export S CC FLAGS REF OUT
 mkdir -p "$OUT/log"
 if [ $# -gt 0 ]; then
