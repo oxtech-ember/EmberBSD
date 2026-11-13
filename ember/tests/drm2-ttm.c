@@ -29,6 +29,8 @@
 
 #include <drm/drm_drv.h>
 #include <drm/drm_gem.h>
+#include <drm/drm_gem_ttm_helper.h>
+#include <drm/drm_print.h>
 #include <drm/drm_vma_manager.h>
 #include <drm/ttm/ttm_bo.h>
 #include <drm/ttm/ttm_backup.h>
@@ -44,6 +46,16 @@ extern struct x86_bus_dma_tag pci_bus_dma_tag;
 void	drm618_ttm_set_dmat(const struct device *, bus_dma_tag_t);
 unsigned long	drm618_ttm_pool_pages(void);
 struct uvm_object	*ttm_bo_uvm_create(struct ttm_buffer_object *);
+
+static char t_pbuf[256];
+
+static void
+t_printfn(struct drm_printer *p __unused, struct va_format *vaf)
+{
+	size_t n = strlen(t_pbuf);
+
+	vsnprintf(t_pbuf + n, sizeof(t_pbuf) - n, vaf->fmt, *vaf->va);
+}
 
 static int t_run, t_fail;
 
@@ -339,6 +351,27 @@ drm2_ttm_run(void)
 	}
 	t_bo_free(a);
 	CHECK(t_destroyed == 1);
+
+	/* ---- 3a. the GEM helpers of a TTM driver ------------------------------------------ */
+	a = t_bo_create(4, &t_sys_place, ttm_write_combined);
+	CHECK(a != NULL);
+	if (a != NULL) {
+		struct iosys_map map;
+		struct drm_printer pr = { .printfn = t_printfn };
+
+		CHECK(drm_gem_ttm_of_gem(&a->base.base) == &a->base);
+		CHECK(drm_gem_ttm_vmap(&a->base.base, &map) == 0);
+		CHECK(!map.is_iomem && map.vaddr != NULL);
+		t_fill(map.vaddr, 4 << PAGE_SHIFT, 80);
+		drm_gem_ttm_vunmap(&a->base.base, &map);
+		CHECK(t_bo_verify(a, 80, &ok) == 0 && ok);
+		t_pbuf[0] = '\0';
+		drm_gem_ttm_print_info(&pr, 2, &a->base.base);
+		CHECK(strstr(t_pbuf, "\t\tplacement=system") != NULL);
+		CHECK(strstr(t_pbuf, "\t\tcaching=write-combined") != NULL);
+		CHECK(drm_gem_ttm_mmap(&a->base.base, NULL) == -EOPNOTSUPP);
+		t_bo_free(a);
+	}
 
 	/* ---- 3b. a tt with DMA addresses (ttm_sg_tt_init): filled when it is populated --- */
 	t_sg = true;
