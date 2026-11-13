@@ -23,6 +23,7 @@ struct device;
 #define	debugfs_remove(dentry)		((void)0)
 #define	debugfs_remove_recursive(d)	((void)0)
 #define	debugfs_lookup(...)		((struct dentry *)NULL)
+#define	debugfs_create_atomic_t(...)	((void)0)
 
 struct debugfs_reg32 {
 	const char	*name;

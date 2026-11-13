@@ -471,6 +471,48 @@ atomic_long_add_unless(struct atomic_long *a, long addend, long zero)
 	return value != zero;
 }
 
+static inline void
+atomic_long_add(long v, struct atomic_long *a)
+{
+
+	atomic_add_long(&a->al_v, v);
+}
+
+static inline void
+atomic_long_sub(long v, struct atomic_long *a)
+{
+
+	atomic_add_long(&a->al_v, -v);
+}
+
+static inline long
+atomic_long_add_return(long v, struct atomic_long *a)
+{
+
+	return (long)atomic_add_long_nv(&a->al_v, v);
+}
+
+static inline long
+atomic_long_sub_return(long v, struct atomic_long *a)
+{
+
+	return (long)atomic_add_long_nv(&a->al_v, -v);
+}
+
+static inline void
+atomic_long_inc(struct atomic_long *a)
+{
+
+	atomic_inc_ulong(&a->al_v);
+}
+
+static inline void
+atomic_long_dec(struct atomic_long *a)
+{
+
+	atomic_dec_ulong(&a->al_v);
+}
+
 static inline long
 atomic_long_inc_not_zero(struct atomic_long *a)
 {

@@ -5,4 +5,5 @@
 #define _DRM618_LINUX_MM_H_
 #include_next <linux/mm.h>
 #include <drm618_mm.h>
+#include <drm618_page.h>
 #endif

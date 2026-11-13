@@ -14,7 +14,9 @@
 #include <sys/proc.h>
 #include <sys/systm.h>
 
+#include <linux/atomic.h>
 #include <linux/compiler.h>
+#include <linux/device.h>
 #include <linux/overflow.h>
 #include <linux/rcupdate.h>
 #include <linux/sched.h>
@@ -92,7 +94,7 @@ drm2_p4_layer_run(void)
 
 		rcu_assign_pointer(p, &o);
 		CHECK(rcu_dereference_check(p, true) == &o);
-		CHECK(rcu_dereference_check(p, p != NULL) == &o);
+		CHECK(rcu_dereference_check(p, lockdep_is_held(&o)) == &o);
 	}
 
 	/* wait_event_killable: a true condition returns 0 at once, a wake-up ends the wait */
@@ -144,6 +146,32 @@ drm2_p4_layer_run(void)
 		CHECK(t->group_leader == current->group_leader);
 		CHECK((t->flags & PF_EXITING) == 0);
 		CHECK(t->exit_code == 0);
+	}
+
+	/* atomic_long arithmetic (ttm_tt.c counts pages with it) */
+	{
+		atomic_long_t a;
+
+		atomic_long_set(&a, 5);
+		atomic_long_add(10, &a);
+		CHECK(atomic_long_read(&a) == 15);
+		atomic_long_sub(20, &a);
+		CHECK(atomic_long_read(&a) == -5);
+		CHECK(atomic_long_add_return(8, &a) == 3);
+		CHECK(atomic_long_sub_return(1, &a) == 2);
+		atomic_long_inc(&a);
+		atomic_long_dec(&a);
+		atomic_long_dec(&a);
+		CHECK(atomic_long_read(&a) == 1);
+	}
+
+	/* dev_info_once names the message once (the second call must not print again) */
+	{
+		int i;
+
+		for (i = 0; i < 2; i++)
+			dev_info_once(NULL, "drm2-p4-layer: dev_info_once, printed once\n");
+		CHECK(i == 2);
 	}
 
 	printf("drm2-p4-layer: %d checks, %d failed\n", t_run, t_fail);

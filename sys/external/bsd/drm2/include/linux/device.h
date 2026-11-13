@@ -79,6 +79,12 @@
 		aprint_normal(FMT, ##__VA_ARGS__);			      \
 } while (0)
 
+#define	dev_info_once(DEV, FMT, ...)	do {				      \
+	static volatile unsigned __dev_info_once;			      \
+	if (atomic_swap_uint(&__dev_info_once, 1) == 0)			      \
+		dev_info((DEV), FMT, ##__VA_ARGS__);			      \
+} while (0)
+
 #define	dev_dbg(DEV, FMT, ...)	do {					      \
 	if (DEV)							      \
 		aprint_debug_dev((DEV), "debug: " FMT, ##__VA_ARGS__);	      \

@@ -18,6 +18,7 @@ KMOD=	drmkms618_test
 
 SRCS+=	drmkms618_test.c
 SRCS+=	drm2-sched.c
+SRCS+=	drm2-ttm.c
 
 WARNS=	3
 
