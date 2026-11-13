@@ -36,6 +36,7 @@ SRCS+=	drm618_kthread_worker.c
 SRCS+=	drm618_lease.c
 SRCS+=	drm618_managed.c
 SRCS+=	drm618_module.c
+SRCS+=	drm618_page.c
 SRCS+=	drm618_prime_stub.c
 SRCS+=	drm618_rbtree.c
 SRCS+=	drm618_shmem.c

@@ -10,9 +10,10 @@
 #include <sys/module.h>
 #include <sys/systm.h>
 
-MODULE(MODULE_CLASS_MISC, drmkms618_test, "drmkms618,drmkms618_sched");
+MODULE(MODULE_CLASS_MISC, drmkms618_test, "drmkms618,drmkms618_sched,drmkms618_ttm");
 
 int	drm2_sched_run(void);
+int	drm2_ttm_run(void);
 
 static int
 drmkms618_test_modcmd(modcmd_t cmd, void *arg __unused)
@@ -22,6 +23,7 @@ drmkms618_test_modcmd(modcmd_t cmd, void *arg __unused)
 	switch (cmd) {
 	case MODULE_CMD_INIT:
 		failed = drm2_sched_run();
+		failed += drm2_ttm_run();
 		return failed != 0 ? EIO : 0;
 	case MODULE_CMD_FINI:
 		return 0;
