@@ -33,6 +33,7 @@ SRCS+=	drm2-linux-idr.c
 SRCS+=	drm2-linux-sync.c
 SRCS+=	drm2-linux-618.c
 SRCS+=	drm2-drm618-managed.c
+SRCS+=	drm2-drm618-statics.c
 
 # The 6.18-only code under test is compiled into the module (the kernel has no
 # drmkms618).
@@ -43,6 +44,7 @@ SRCS+=	drm618_managed.c
 # These two read struct drm_device, so they get the includes the 6.18 core
 # expects (files.drmkms618).
 CPPFLAGS.drm618_managed.c+=	-D__KERNEL__ -include ${S}/external/bsd/drm2/drm618/include/drm618_prefix.h
+CPPFLAGS.drm2-drm618-statics.c+=	-D__KERNEL__ -include ${S}/external/bsd/drm2/drm618/include/drm618_prefix.h
 CPPFLAGS.drm2-drm618-managed.c+=	-D__KERNEL__ -include ${S}/external/bsd/drm2/drm618/include/drm618_prefix.h
 
 WARNS=	3

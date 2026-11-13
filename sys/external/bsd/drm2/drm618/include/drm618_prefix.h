@@ -67,6 +67,24 @@ typedef unsigned int __poll_t;
 #include <linux/idr.h>
 #include <linux/llist.h>
 #include <linux/string_choices.h>
+#include <linux/init.h>			/* __init, __initconst */
+#include <linux/spinlock.h>		/* DEFINE_SPINLOCK (drm618_statics.h) */
+#include <linux/srcu.h>			/* DEFINE_STATIC_SRCU (drm_drv.c) */
+#include <linux/xarray.h>		/* DEFINE_XARRAY_ALLOC (drm_drv.c) */
+#include <drm618_statics.h>		/* DEFINE_MUTEX and the other static objects */
+
+/* Kconfig: DRM_CLIENT and DRM_CLIENT_SETUP are on (drm_client*.h), fbdev emulation is off */
+#ifndef CONFIG_DRM_CLIENT
+#define	CONFIG_DRM_CLIENT	1
+#endif
+#ifndef CONFIG_DRM_CLIENT_SETUP
+#define	CONFIG_DRM_CLIENT_SETUP	1
+#endif
+
+/* Kconfig: no in-kernel DRM client is chosen by default (drm_client_setup.c) */
+#ifndef CONFIG_DRM_CLIENT_DEFAULT
+#define	CONFIG_DRM_CLIENT_DEFAULT	""
+#endif
 
 /*
  * Structures the headers name in prototypes without declaring them (Linux's
