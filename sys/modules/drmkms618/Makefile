@@ -56,7 +56,6 @@ CPPFLAGS.drm618_file.c+=	-DDRM618_NBSD_FILE
 
 # Own code of the 6.18 core, and the module glue.
 SRCS+=	drm618_cache.c
-SRCS+=	drm618_module.c
 SRCS+=	drm618_file.c
 SRCS+=	drm618_gem_atomic_helper.c
 SRCS+=	drm618_kthread_worker.c

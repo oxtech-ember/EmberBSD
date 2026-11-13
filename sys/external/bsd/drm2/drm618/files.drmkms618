@@ -8,7 +8,7 @@
 # (see tools/compile-map618.sh).  Do not add the include before the
 # first kernel with drmkms618 builds.
 
-define	drmkms618: drmkms_linux, drmkms_i2c, linux, sysmon_power
+define	drmkms618: drmkms_linux, drmkms_i2c, linux, sysmon_power, drm_nostub
 
 # Same as drmkms: Linux code assumes signed overflow is fine.
 makeoptions	drmkms618	"COPTS.drmkms618"+="-fwrapv"

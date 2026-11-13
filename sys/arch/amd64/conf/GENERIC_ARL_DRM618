@@ -20,3 +20,4 @@ select drmkms_linux
 select drmkms_i2c
 select linux
 select sysmon_power
+select drm_nostub
