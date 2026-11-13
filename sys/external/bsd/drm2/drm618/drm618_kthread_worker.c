@@ -88,7 +88,25 @@ kthread_run_worker(unsigned int flags, const char *fmt, ...)
 		kmem_free(kw, sizeof(*kw));
 		return ERR_PTR(-error);
 	}
+	/* The task of the worker is its lwp, for sched_set_fifo() only. */
+	kw->task = (struct task_struct *)kw->lwp;
 	return kw;
+}
+
+/*
+ * The thread of a worker runs at the lowest kernel real time priority
+ * (Linux: SCHED_FIFO).  NULL: nothing to do.
+ */
+void
+sched_set_fifo(struct task_struct *task)
+{
+	struct lwp *l = (struct lwp *)task;
+
+	if (l == NULL)
+		return;
+	lwp_lock(l);
+	lwp_changepri(l, PRI_KERNEL_RT);
+	lwp_unlock(l);
 }
 
 bool
