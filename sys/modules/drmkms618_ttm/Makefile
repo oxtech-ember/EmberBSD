@@ -24,6 +24,7 @@ SRCS+=	drm618_ttm_module.c
 SRCS+=	ttm_pool_bsd.c
 SRCS+=	ttm_backup_bsd.c
 SRCS+=	ttm_bo_vm_bsd.c
+SRCS+=	drm_gem_ttm_helper.c
 
 # Linux 6.18 files (dist618).
 SRCS+=	ttm_bo.c
