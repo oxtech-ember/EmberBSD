@@ -192,6 +192,25 @@ ktime_mono_to_real(ktime_t kt)
 	return timespec_to_ktime(ts);
 }
 
+/* Linux 6.x: three-way comparison and ktime_before (ktime_after is below). */
+static inline int
+ktime_compare(ktime_t a, ktime_t b)
+{
+
+	if (a < b)
+		return -1;
+	if (a > b)
+		return 1;
+	return 0;
+}
+
+static inline bool
+ktime_before(ktime_t a, ktime_t b)
+{
+
+	return ktime_compare(a, b) < 0;
+}
+
 static inline int64_t
 ktime_us_delta(ktime_t a, ktime_t b)
 {

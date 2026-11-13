@@ -74,6 +74,18 @@ dma_fence_chain_init(struct dma_fence_chain *chain, struct dma_fence *prev,
 	    context, seqno);
 }
 
+/*
+ * dma_fence_is_chain(fence)
+ *
+ *	True if fence is a fence chain node (Linux 6.x interface).
+ */
+bool
+dma_fence_is_chain(struct dma_fence *fence)
+{
+
+	return fence->ops == &dma_fence_chain_ops;
+}
+
 static const char *
 dma_fence_chain_driver_name(struct dma_fence *fence)
 {

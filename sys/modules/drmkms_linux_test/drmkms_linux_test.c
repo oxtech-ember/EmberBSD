@@ -13,6 +13,7 @@
 MODULE(MODULE_CLASS_MISC, drmkms_linux_test, "drmkms_linux");
 
 int	drm2_linux_compat_run(void);
+int	drm2_dma_resv_run(void);
 
 static int
 drmkms_linux_test_modcmd(modcmd_t cmd, void *arg __unused)
@@ -22,6 +23,7 @@ drmkms_linux_test_modcmd(modcmd_t cmd, void *arg __unused)
 	switch (cmd) {
 	case MODULE_CMD_INIT:
 		failed = drm2_linux_compat_run();
+		failed += drm2_dma_resv_run();
 		return failed == 0 ? 0 : EIO;
 	case MODULE_CMD_FINI:
 		return 0;
