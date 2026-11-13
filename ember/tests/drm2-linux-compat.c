@@ -60,6 +60,15 @@
 #include <video/nomodeset.h>
 #include <linux/wordpart.h>
 #include <xen/xen.h>
+#include <asm/video.h>
+#include <linux/cc_platform.h>
+#include <linux/cgroup_dmem.h>
+#include <linux/dynamic_debug.h>
+#include <linux/err.h>
+#include <linux/eventfd.h>
+#include <linux/kmsg_dump.h>
+#include <linux/mmzone.h>
+#include <video/cmdline.h>
 #endif
 
 #ifdef DRM2_COMPAT_HOST
@@ -1092,6 +1101,65 @@ test_int_log(void)
 	    intlog10(1000000) <= (6U << 24) + 8);
 }
 
+#ifndef DRM2_COMPAT_HOST
+static void
+test_kernel_core_stubs(void)
+{
+	struct dmem_cgroup_pool_state *pool = (void *)1, *limit = (void *)1;
+	struct dmem_cgroup_region *region;
+	struct kmsg_dumper dumper;
+	struct _ddebug dd;
+
+	/* cc_platform.h: no confidential computing on this layer. */
+	CHECK(!cc_platform_has(CC_ATTR_MEM_ENCRYPT));
+	CHECK(!cc_platform_has(CC_ATTR_HOST_MEM_ENCRYPT));
+	CHECK(!cc_platform_has(CC_ATTR_GUEST_MEM_ENCRYPT));
+	CHECK(!cc_platform_has(CC_ATTR_GUEST_STATE_ENCRYPT));
+
+	/* cgroup_dmem.h: accounting disabled, every charge succeeds. */
+	region = dmem_cgroup_register_region(4096, "drm/%s/%s", "t", "vram");
+	CHECK(region == NULL);
+	CHECK(dmem_cgroup_try_charge(region, 4096, &pool, &limit) == 0);
+	CHECK(pool == NULL);
+	CHECK(limit == NULL);
+	pool = (void *)1;
+	CHECK(dmem_cgroup_try_charge(region, 4096, &pool, NULL) == 0);
+	CHECK(pool == NULL);
+	CHECK(dmem_cgroup_state_evict_valuable(NULL, NULL, false, NULL));
+	dmem_cgroup_uncharge(NULL, 4096);
+	dmem_cgroup_pool_state_put(NULL);
+	dmem_cgroup_unregister_region(NULL);
+
+	/* dynamic_debug.h: only the types are needed; no dynamic control. */
+	memset(&dd, 0, sizeof(dd));
+	dd.lineno = 7;
+	CHECK(dd.lineno == 7);
+	CHECK(DD_CLASS_TYPE_DISJOINT_BITS != DD_CLASS_TYPE_LEVEL_NUM);
+
+	/* eventfd.h: not implemented; fails loudly instead of succeeding. */
+	CHECK(IS_ERR(eventfd_ctx_fdget(3)));
+	CHECK(PTR_ERR(eventfd_ctx_fdget(3)) == -ENOSYS);
+	eventfd_ctx_put(NULL);
+
+	/* mmzone.h */
+	CHECK(MAX_PAGE_ORDER == 10);
+	CHECK(NR_PAGE_ORDERS == MAX_PAGE_ORDER + 1);
+	CHECK(PAGE_ALLOC_COSTLY_ORDER == 3);
+
+	/* kmsg_dump.h: panic dumper registration is not supported. */
+	memset(&dumper, 0, sizeof(dumper));
+	CHECK(kmsg_dump_register(&dumper) == -EINVAL);
+	CHECK(kmsg_dump_unregister(&dumper) == -EINVAL);
+	CHECK(KMSG_DUMP_PANIC != KMSG_DUMP_OOPS);
+
+	/* video/cmdline.h: no video= command line support. */
+	CHECK(video_get_options("eDP-1") == NULL);
+
+	/* asm/video.h */
+	CHECK(!video_is_primary_device(NULL));
+}
+#endif
+
 static void
 test_harness(void)
 {
@@ -1123,6 +1191,7 @@ drm2_linux_compat_run(void)
 	test_kernel_xarray();
 	test_kernel_iopoll();
 	test_kernel_stubs();
+	test_kernel_core_stubs();
 #endif
 #ifdef DRM2_COMPAT_SELFTEST_FAIL
 	test_selftest_fail();

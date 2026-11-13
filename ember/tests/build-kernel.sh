@@ -115,13 +115,13 @@ if [ "${FAIL_AT:-}" = pvr-query-contract.sh ]; then
 fi
 SH
 for contract in cemac-stop bwfm-link-events bwfm-link-check bwfm-sta aicwf-sta aicwf-vht \
-    bwfm-scan-padding bwfm-key-epoch; do
+    bwfm-scan-padding bwfm-key-epoch drm2-linux-compat; do
 cat > "$work/src/ember/tests/$contract.sh" <<'SH'
 #!/bin/sh
 set -eu
 echo "network-contract ${0##*/} $*" >> "$TEST_LOG"
 case ${0##*/} in
-    aicwf-sta.sh|aicwf-vht.sh) test "$#" -eq 0;;
+    aicwf-sta.sh|aicwf-vht.sh|drm2-linux-compat.sh) test "$#" -eq 0;;
     *) test "$#" -eq 1; test "$1" = "$TEST_ROOT/src";;
 esac
 if [ "${FAIL_AT:-}" = network-contract ] || [ "${FAIL_AT:-}" = "${0##*/}" ]; then
@@ -491,7 +491,7 @@ check_contract_counts() {
     test "$(grep -c '^a733-contract ' "$TEST_LOG")" -eq 24
     test "$(grep -c '^gpu-contract ' "$TEST_LOG")" -eq 40
     test "$(grep -c '^ruby-contract ' "$TEST_LOG")" -eq 15
-    test "$(grep -c '^network-contract ' "$TEST_LOG")" -eq 8
+    test "$(grep -c '^network-contract ' "$TEST_LOG")" -eq 9
 }
 export TEST_OUT="$work/cross"
 sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1
@@ -623,7 +623,7 @@ for failure in $root_argument_failures tools module cpp dtb diagnostic-dtb contr
     drm-scheduler-contract.sh gpu-contract drm-syncobj-flatten-contract.sh bcm2712-display-contract.sh \
     bcm2712-display-irq-contract.sh bcm2712-display-hsm-contract.sh bcm2712-display-dvp-contract.sh dmabuf-map dmabuf-lifetime dmabuf-array dmabuf-sync ruby-contract simplefb-contract.rb drm-hotplug-contract.rb \
     bcm2712-v3d-prime-contract.rb bcm2712-v3d-bo-stats-contract.rb network-contract cemac-stop.sh bwfm-link-check.sh \
-    aicwf-sta.sh aicwf-vht.sh publish; do
+    aicwf-sta.sh aicwf-vht.sh drm2-linux-compat.sh publish; do
     : > "$TEST_LOG"
     for output in $outputs; do
         printf stale > "$TEST_OUT/$output"
@@ -656,6 +656,10 @@ for failure in $root_argument_failures tools module cpp dtb diagnostic-dtb contr
         grep -Fq "network-contract $failure " "$TEST_LOG"
         grep -Fq "injected contract failure: $failure" "$TEST_OUT/contracts.log"
         ! grep -q '^network-contract bwfm-link-events.sh ' "$TEST_LOG"
+        ;;
+    drm2-linux-compat.sh)
+        grep -Fq "network-contract $failure " "$TEST_LOG"
+        grep -Fq "injected contract failure: $failure" "$TEST_OUT/contracts.log"
         ;;
     aicwf-sta.sh|aicwf-vht.sh)
         grep -Fq "network-contract $failure " "$TEST_LOG"
