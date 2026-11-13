@@ -58,7 +58,9 @@ CPPFLAGS.drm618_file.c+=	-DDRM618_NBSD_FILE
 SRCS+=	drm618_cache.c
 SRCS+=	drm618_module.c
 SRCS+=	drm618_file.c
+SRCS+=	drm618_gem_atomic_helper.c
 SRCS+=	drm618_kthread_worker.c
+SRCS+=	drm618_lease.c
 SRCS+=	drm618_managed.c
 SRCS+=	drm618_module.c
 SRCS+=	drm618_prime_stub.c
@@ -68,6 +70,7 @@ SRCS+=	drm618_sleep.c
 SRCS+=	drm618_statics.c
 SRCS+=	drm618_sync_file.c
 SRCS+=	drm618_sysfs.c
+SRCS+=	drm618_unsupported.c
 
 # Linux 6.18 files (dist618).
 SRCS+=	drm_client_setup.c
