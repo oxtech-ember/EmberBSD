@@ -38,6 +38,7 @@
 
 #define	check_mul_overflow(a, b, res)	__builtin_mul_overflow(a, b, res)
 #define	check_add_overflow(a, b, res)	__builtin_add_overflow(a, b, res)
+#define	check_sub_overflow(a, b, res)	__builtin_sub_overflow(a, b, res)
 
 /* return x*y saturated at SIZE_MAX */
 static inline size_t

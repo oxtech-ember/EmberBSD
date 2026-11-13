@@ -176,6 +176,14 @@ wake_up_all(wait_queue_head_t *wq)
 
 #define	wait_event(WQ, COND)						      \
 	((void)__lnx_wait_event(WQ, COND, -1, false, NULL))
+/*
+ * Killable: Linux wakes a killable sleep for SIGKILL only.  NetBSD's
+ * cv_wait_sig wakes for any signal, so a killable wait here is as
+ * interruptible as wait_event_interruptible (a superset: callers handle the
+ * error as a kill).
+ */
+#define	wait_event_killable(WQ, COND)					      \
+	((int)__lnx_wait_event(WQ, COND, -1, true, NULL))
 #define	wait_event_interruptible(WQ, COND)				      \
 	((int)__lnx_wait_event(WQ, COND, -1, true, NULL))
 #define	wait_event_timeout(WQ, COND, TICKS)				      \

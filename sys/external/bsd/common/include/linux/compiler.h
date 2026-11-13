@@ -82,9 +82,15 @@
 } while (0)
 
 #define	smp_store_release(X, V)	do {					      \
-	typeof(X) __smp_store_release_tmp = (V);			      \
+	typeof(*(X)) __smp_store_release_tmp = (V);			      \
 	membar_release();						      \
-	(X) = __write_once_tmp;						      \
+	*(X) = __smp_store_release_tmp;					      \
 } while (0)
+
+#define	smp_load_acquire(X)	({					      \
+	typeof(*(X)) __smp_load_acquire_tmp = *(volatile typeof(X))(X);	      \
+	membar_acquire();						      \
+	__smp_load_acquire_tmp;						      \
+})
 
 #endif	/* _LINUX_COMPILER_H_ */

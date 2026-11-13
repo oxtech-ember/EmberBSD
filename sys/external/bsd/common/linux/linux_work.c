@@ -38,6 +38,7 @@ __KERNEL_RCSID(0, "$NetBSD: linux_work.c,v 1.61 2022/04/09 23:43:31 riastradh Ex
 #include <sys/condvar.h>
 #include <sys/errno.h>
 #include <sys/kmem.h>
+#include <sys/kernel.h>
 #include <sys/kthread.h>
 #include <sys/lwp.h>
 #include <sys/mutex.h>
@@ -1028,6 +1029,8 @@ queue_delayed_work(struct workqueue_struct *wq, struct delayed_work *dw,
 			    dw->dw_state);
 		}
 	}
+	if (newly_queued)
+		dw->timer.expires = (unsigned long)getticks() + MIN(INT_MAX, ticks);
 	mutex_exit(&wq->wq_lock);
 
 	return newly_queued;
@@ -1049,6 +1052,8 @@ mod_delayed_work(struct workqueue_struct *wq, struct delayed_work *dw,
 	bool timer_modified;
 
 	mutex_enter(&wq->wq_lock);
+	/* mod_delayed_work always arms the timer anew */
+	dw->timer.expires = (unsigned long)getticks() + MIN(INT_MAX, ticks);
 	if (acquire_work(&dw->work, wq)) {
 		/*
 		 * It wasn't on any workqueue at all.  Schedule it to
