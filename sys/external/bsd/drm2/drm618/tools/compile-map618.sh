@@ -1,0 +1,71 @@
+#!/bin/sh
+# SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 EmberBSD contributors.
+#
+# compile-map618.sh KOBJDIR REFDIR OUTDIR [dist618-relative .c files...]
+#
+# Compile every imported .c of dist618 on its own (clang -c, no link, not
+# attached to any kernel) with the include path of the drmkms618 attribute and
+# write OUTDIR/map.tsv: file, status (ok|error), number of errors, first error
+# and its class (header|name|conflict|type|other).  The reference tree of the
+# GPL-only files (prepare-import618.sh) is the last include directory; the
+# headers found only there are the ones that need a BSD rewrite.
+# KOBJDIR: a kernel build directory that holds the generated opt_*.h headers.
+# Environment: CC, SYSROOT, S (the sys/ directory), J (parallel jobs, default 16),
+# EXTRA (more compiler flags, e.g. -include of a shim header).
+set -u
+
+if [ "${1:-}" = --one ]; then
+	f=$2
+	D=$S/external/bsd/drm2
+	log=$OUT/log/$(echo "$f" | tr / _).log
+	dd=$(dirname "$D/dist618/$f"); rd=$(dirname "$REF/$f")
+	# shellcheck disable=SC2086
+	$CC $FLAGS -I$D/drm618/include -I$D/dist618/include -I$D/dist618/include/uapi \
+	    -I$D/include -I$S/external/bsd/common/include -I$dd -I$rd \
+	    -I$REF/include -I$REF/include/uapi -c -o /dev/null "$D/dist618/$f" > "$log" 2>&1
+	echo $? > "$log.rc"
+	exit 0
+fi
+
+KOBJ=$1; REF=$2; OUT=$3; shift 3
+S=${S:-$PWD/sys}
+CC=${CC:-clang}
+SYSROOT=${SYSROOT:?set SYSROOT to a destination directory with the target headers}
+J=${J:-16}
+D=$S/external/bsd/drm2
+FLAGS="--target=x86_64--netbsd -B$S/../ember/tools/no-external-as/ -O2 -std=gnu11 -w -ferror-limit=0
+ -ffreestanding -fwrapv -fno-strict-aliasing -mno-red-zone -mno-mmx -mno-sse -mno-avx -msoft-float -mcmodel=kernel
+ -fno-omit-frame-pointer --sysroot=$SYSROOT -Damd64 -Dx86_64 -I$KOBJ -I$S/external/mit/xen-include-public/dist/
+ -I$S/external/bsd/libnv/dist -I$S/external/bsd/acpica/dist -I$S/external/bsd/acpica/dist/include -I$S/../common/include
+ -I$S/arch -I$S -nostdinc -D__XEN_INTERFACE_VERSION__=0x3020a -DCOMPAT_44
+ -D_KERNEL -D_KERNEL_OPT -D__KERNEL__ -DCONFIG_X86 -DCONFIG_X86_64 -DCONFIG_X86_PAT -DCONFIG_PCI=1
+ -DCONFIG_DRM_FBDEV_EMULATION=1 -DCONFIG_DRM_FBDEV_OVERALLOC=100 -DCONFIG_FB=0 -DCONFIG_LOCKDEP=0
+ -DCONFIG_BACKLIGHT_CLASS_DEVICE=0 -DCONFIG_BACKLIGHT_CLASS_DEVICE_MODULE=0 ${EXTRA:-}"
+export S CC FLAGS REF OUT
+mkdir -p "$OUT/log"
+if [ $# -gt 0 ]; then
+	list=$*
+else
+	list=$(cd "$D/dist618" && grep -E '^(drm|gpu)/.*\.c	' MANIFEST.tsv | cut -f1 | sort)
+fi
+for f in $list; do echo "$f"; done | xargs -P "$J" -I{} sh "$0" --one {}
+printf 'file\tstatus\tnerr\tfirst-error\tclass\n' > "$OUT/map.tsv"
+for f in $list; do
+	log=$OUT/log/$(echo "$f" | tr / _).log
+	rc=$(cat "$log.rc")
+	if [ "$rc" = 0 ]; then
+		printf '%s\tok\t0\t\t\n' "$f"
+		continue
+	fi
+	n=$(grep -c 'error: ' "$log")
+	e=$(grep -m1 'error: ' "$log" | sed "s|^[^ ]*/dist618/||;s|^[^ ]*/drm618/||;s|^[^ ]*/sys/||" | cut -c1-220)
+	c=other
+	case "$e" in
+	*"file not found"*) c=header ;;
+	*"undeclared identifier"*|*"undeclared function"*|*"implicit declaration"*|*"no member named"*|*"unknown type name"*|*"has no member"*) c=name ;;
+	*"redefinition"*|*"conflicting types"*|*"redeclared"*) c=conflict ;;
+	*"incompatible"*|*"too few"*|*"too many"*|*"invalid operands"*) c=type ;;
+	esac
+	printf '%s\terror\t%s\t%s\t%s\n' "$f" "$n" "$e" "$c"
+done >> "$OUT/map.tsv"

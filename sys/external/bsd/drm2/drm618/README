@@ -1,0 +1,44 @@
+Origin: EmberBSD.
+
+Linux 6.18 DRM core next to the Linux 5.6 core
+==============================================
+
+A kernel has one DRM core: the 5.6 one (attribute drmkms, files in dist/, own
+code in drm/) or the 6.18 one (attribute drmkms618, files in dist618/, own code
+in drm618/).  Both export the same drm_* symbols with different layouts.  Both
+use the same Linux compatibility layer (attributes drmkms_linux, drmkms_i2c;
+directories linux/, include/linux, include/asm), so work on the layer serves
+both cores.
+
+	dist618/	Linux 6.18.x files, MIT or "GPL-2.0 OR MIT" only, byte for
+			byte as upstream (MANIFEST.tsv: sha256, licence class,
+			upstream path; LINUX_VERSION)
+	drm618/		files.drmkms618, own headers (include/), own rewrites of
+			the GPL-only files, gpl-only.tsv, tools/
+	prepare-import618.sh	(re)import of dist618, "--verify" checks it
+
+drm618/gpl-only.tsv lists what is not imported and why: GPL-only files, files
+without a licence text, uapi headers under "GPL-2.0 WITH Linux-syscall-note".
+The last column names the existing BSD rewrite in drm/ (a Linux 5.6 level one
+that has to be brought to 6.18), or "-" when there is none.
+
+Selecting a core
+----------------
+Not yet connected: files.drmkms618 is not included from sys/conf/files, and no
+kernel configuration selects drmkms618, because the 6.18 sources do not
+compile yet (drm618/tools/compile-map618.sh makes the map).  When the first
+kernel builds, sys/conf/files gets the include line and a configuration such
+as GENERIC_ARL_DRM618 (the ARL configuration without the 5.6 drivers).
+Selecting both cores fails the build on purpose: drm618_exclusive.c is built
+for "drmkms618 & drmkms" and contains an #error.  At run time a module of one
+core cannot load into a kernel with the other: the module loader refuses
+symbols that already exist (kobj_checksyms).  Modules get their own names
+(drmkms618, ...) and depend on "drmkms_linux,sysmon_power" like drmkms; a
+driver module built for 6.18 depends on "drmkms618" and is not interchangeable
+with the 5.6 build of the same driver (the efidrm kernel version guard
+already covers that).
+
+Local changes to dist618 are made in separate commits after the pristine
+import commit, so that "git diff" against the import shows exactly what
+EmberBSD changed; BSD-only hooks that can live outside the Linux files go to
+drm618/include (it comes first in the include path) or to the layer.
