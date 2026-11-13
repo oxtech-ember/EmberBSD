@@ -36,6 +36,8 @@
 #include <sys/param.h>
 #include <sys/condvar.h>
 #include <sys/kernel.h>
+#include <sys/select.h>
+#include <sys/selinfo.h>
 #include <sys/systm.h>
 
 #include <linux/errno.h>
@@ -46,6 +48,7 @@ typedef struct wait_queue_head {
 	spinlock_t	lock;
 	kcondvar_t	cv;
 	unsigned long	seq;
+	struct selinfo	wq_sel;		/* poll_wait (linux/poll.h) */
 } wait_queue_head_t;
 
 static inline void
@@ -54,6 +57,7 @@ init_waitqueue_head(wait_queue_head_t *wq)
 
 	spin_lock_init(&wq->lock);
 	cv_init(&wq->cv, "lnxwq");
+	selinit(&wq->wq_sel);
 	wq->seq = 0;
 }
 
@@ -61,6 +65,7 @@ static inline void
 destroy_waitqueue_head(wait_queue_head_t *wq)
 {
 
+	seldestroy(&wq->wq_sel);
 	cv_destroy(&wq->cv);
 	spin_lock_destroy(&wq->lock);
 }
@@ -80,6 +85,7 @@ wake_up_all_locked(wait_queue_head_t *wq)
 	KASSERT(spin_is_locked(&wq->lock));
 	wq->seq++;
 	cv_broadcast(&wq->cv);
+	selnotify(&wq->wq_sel, 0, 0);
 }
 #define	wake_up_locked		wake_up_all_locked
 
