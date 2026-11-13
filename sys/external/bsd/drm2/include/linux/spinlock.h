@@ -185,6 +185,21 @@ write_unlock_irq(rwlock_t *rw)
 	mutex_spin_exit(&rw->rw_lock);
 }
 
+/* The spin lock is taken at IPL_VM either way: the plain forms are the same. */
+static inline void
+write_lock(rwlock_t *rw)
+{
+
+	write_lock_irq(rw);
+}
+
+static inline void
+write_unlock(rwlock_t *rw)
+{
+
+	write_unlock_irq(rw);
+}
+
 static inline void
 read_lock(rwlock_t *rw)
 {

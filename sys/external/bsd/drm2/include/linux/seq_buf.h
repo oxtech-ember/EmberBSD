@@ -25,6 +25,14 @@ struct seq_buf {
 	size_t	len;
 };
 
+/* A seq_buf with its own storage on the stack. */
+#define DECLARE_SEQ_BUF(NAME, SIZE)					\
+	char __##NAME##_buffer[SIZE] = "";				\
+	struct seq_buf NAME = {						\
+		.buffer = __##NAME##_buffer,				\
+		.size = SIZE,						\
+	}
+
 static inline void
 seq_buf_clear(struct seq_buf *s)
 {

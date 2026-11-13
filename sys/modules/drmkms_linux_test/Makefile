@@ -32,6 +32,7 @@ SRCS+=	drm2-dma-resv.c
 SRCS+=	drm2-linux-idr.c
 SRCS+=	drm2-linux-sync.c
 SRCS+=	drm2-linux-618.c
+SRCS+=	drm2-linux-618-layer.c
 SRCS+=	drm2-drm618-managed.c
 SRCS+=	drm2-drm618-statics.c
 

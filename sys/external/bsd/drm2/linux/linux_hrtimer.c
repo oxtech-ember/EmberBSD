@@ -138,6 +138,25 @@ hrtimer_cancel(struct hrtimer *hrt)
 	return active;
 }
 
+/*
+ * Like hrtimer_cancel but never waits: 1 if the timer was pending and is
+ * stopped, -1 if its function is running now (the caller tries again),
+ * 0 if it was not active.
+ */
+int
+hrtimer_try_to_cancel(struct hrtimer *hrt)
+{
+	bool pending = callout_pending(&hrt->hrt_ch);
+
+	/*
+	 * callout_stop returns true if the callout had already expired:
+	 * it has run, or its function is running now.
+	 */
+	if (callout_stop(&hrt->hrt_ch))
+		return callout_invoking(&hrt->hrt_ch) ? -1 : 0;
+	return pending ? 1 : 0;
+}
+
 bool
 hrtimer_active(struct hrtimer *hrt)
 {

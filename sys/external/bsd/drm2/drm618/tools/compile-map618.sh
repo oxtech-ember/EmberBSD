@@ -14,7 +14,8 @@
 # Environment: CC, SYSROOT, S (the sys/ directory), J (parallel jobs, default 16),
 # EXTRA (more compiler flags, e.g. -include of a shim header).  The prefix header
 # drm618/include/drm618_prefix.h is included as in files.drmkms618; NOPREFIX=1
-# leaves it out to see what the sources need without it.
+# leaves it out to see what the sources need without it.  NOREF=1 leaves the
+# reference tree (GPL headers) out, so a header only found there is reported as missing.
 set -u
 
 if [ "${1:-}" = --one ]; then
@@ -25,7 +26,7 @@ if [ "${1:-}" = --one ]; then
 	# shellcheck disable=SC2086
 	$CC $FLAGS -I$D/drm618/include -I$D/dist618/include -I$D/dist618/include/uapi \
 	    -I$D/include -I$S/external/bsd/common/include -I$dd -I$rd \
-	    -I$REF/include -I$REF/include/uapi -c -o /dev/null "$D/dist618/$f" > "$log" 2>&1
+	    ${REFINC} -c -o /dev/null "$D/dist618/$f" > "$log" 2>&1
 	echo $? > "$log.rc"
 	exit 0
 fi
@@ -46,7 +47,9 @@ FLAGS="--target=x86_64--netbsd -B$S/../ember/tools/no-external-as/ -O2 -std=gnu1
  -D_KERNEL -D_KERNEL_OPT -D__KERNEL__ -DCONFIG_X86 -DCONFIG_X86_64 -DCONFIG_X86_PAT -DCONFIG_PCI=1
  -DCONFIG_FB=0 -DCONFIG_LOCKDEP=0
  -DCONFIG_BACKLIGHT_CLASS_DEVICE=0 -DCONFIG_BACKLIGHT_CLASS_DEVICE_MODULE=0 ${PFX} ${EXTRA:-}"
-export S CC FLAGS REF OUT
+REFINC="-I$REF/include -I$REF/include/uapi"
+[ -n "${NOREF:-}" ] && REFINC=
+export S CC FLAGS REF OUT REFINC
 mkdir -p "$OUT/log"
 if [ $# -gt 0 ]; then
 	list=$*
