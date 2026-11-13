@@ -1329,6 +1329,10 @@ include "external/bsd/common/conf/files.linux"
 # DRM/KMS - Newer direct rendering manager with kernel mode-switching
 include "external/bsd/drm2/drm/files.drmkms"
 
+# The Linux 6.18 DRM core: only a definition (attribute drmkms618) until a
+# configuration selects it; no default kernel does.
+include "external/bsd/drm2/drm618/files.drmkms618"
+
 
 # Definitions for wscons
 # device attributes: display, display with emulator, keyboard, and mouse
