@@ -32,7 +32,7 @@ if [ "${1:-}" = --one ]; then
 	case $f in drm618/drm618_file.c) fx=-DDRM618_NBSD_FILE ;; esac
 	# shellcheck disable=SC2086
 	$CC $FLAGS $fx -I$D/drm618/include -I$D/dist618/include -I$D/dist618/include/uapi \
-	    -I$D/include -I$S/external/bsd/common/include -I$dd -I$rd \
+	    -I$D/include -I$S/external/bsd/common/include -I$dd ${REFINC:+-I$rd} \
 	    ${REFINC} -c -o "${OBJDIR:-/dev/null}$([ -n "${OBJDIR:-}" ] && echo /$(echo "$f" | tr / _).o)" "$src" > "$log" 2>&1
 	echo $? > "$log.rc"
 	exit 0

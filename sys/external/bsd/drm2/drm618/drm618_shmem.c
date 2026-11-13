@@ -83,3 +83,14 @@ __folio_batch_release(struct folio_batch *fbatch)
 	}
 	fbatch->nr = 0;
 }
+
+/*
+ * Remove the user mappings of a range of the file.  No user mapping of a Linux
+ * file exists here (drm618_file.c: mmap is EOPNOTSUPP), so there is nothing to
+ * remove; this changes when the mmap of GEM objects does.
+ */
+void
+unmap_mapping_range(struct address_space *mapping __unused,
+    loff_t holebegin __unused, loff_t holelen __unused, int even_cows __unused)
+{
+}
