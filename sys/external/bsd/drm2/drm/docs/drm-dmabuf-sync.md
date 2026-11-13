@@ -26,6 +26,48 @@ failure and owned references. Checks remain active with `NDEBUG`.
 The host primitives model kernel locks, callback registration and queued
 work. This is not a kernel execution or physical DMA test.
 
+## Reservation locking
+
+The common `linux_ww_mutex.c` implementation owns reservation-lock ordering.
+`WW_WANTOWN` still belongs to its acquire context; it also records a waiting
+caller without a context. A repeated acquisition by that context returns
+`-EALREADY`, including after `ww_acquire_done()`. Other contexts retain the
+same ticket ordering and `-EDEADLK` behavior as `WW_CTX`.
+
+When a non-context caller causes release without a direct context handoff,
+the oldest queued context can acquire the unlocked mutex after waking.
+An interruptible waiter accepts an available handoff or acquisition before
+returning an interruption. Both paths remove its waiter node exactly once;
+only the successful acquisition increments the context's held-lock count.
+This does not guarantee starvation freedom under an unbounded stream of
+competing callers.
+
+Run the actual-source host regression through the SDK native-check runner:
+
+```sh
+"$HOST_PREFIX/bin/python3.15" "$SDK/scripts/run-native-check.py" \
+  --host-prefix "$HOST_PREFIX" --compiler-family clang --tool sh \
+  --cwd "$SOURCE" --log "$OUTPUT/ww-mutex.log" \
+  --bindings "$OUTPUT/ww-mutex-tools" -- \
+  "$SOURCE/ember/tools/ww-mutex-contract.sh" "$SOURCE"
+```
+
+The runner compiles the real `ww_mutex` implementation and header together
+with the real NetBSD red-black tree. A pthread bridge checks mutex ownership
+and controls wakeup order and interruption results. The scenarios cover
+repeat acquisition, completed acquire contexts, trylock, ticket ordering,
+multiple waiters, both context/non-context wakeup orders, interruption before
+handoff, successful acquisition despite interruption, and resource cleanup.
+A second script argument selects a previous `linux_ww_mutex.c` for the causal
+negative control. Each scenario runs in its own bounded host child process.
+These checks do not execute the kernel scheduler, LOCKDEBUG, or real kernel
+signal delivery and do not establish physical GPU acceptance.
+
+The trylock behavior incorporates the semantic change from NetBSD commit
+[`9667e7c425bac450b243ebe79655f73271fc0cea`](https://github.com/NetBSD/src/commit/9667e7c425bac450b243ebe79655f73271fc0cea)
+by Taylor R. Campbell, for PR kern/60926. The additional waiter fixes and
+regression are AI-assisted EmberBSD work under the retained BSD license.
+
 ## Sync-file descriptors
 
 `<sys/dmabuf.h>` defines two native ioctls. Both arguments contain a 32-bit
