@@ -603,6 +603,61 @@ test_resv_shared_cow(void)
 	CHECK(tf_live == 0);
 }
 
+/*
+ * dma_resv_add_excl_fence on a list that a 5.6 reader holds: the reader
+ * walks list->shared[i] over a count it read earlier, so the entries of
+ * the list it holds must stay valid; the object gets a fresh empty list
+ * of the same capacity instead (copy on write).
+ */
+static void
+test_resv_excl_cow(void)
+{
+	struct dma_resv r;
+	struct dma_resv_list *snap, *cur;
+	struct dma_fence *a, *b, *c, *x, *y, *all[5];
+
+	dma_resv_init(&r);
+	dma_resv_lock(&r, NULL);
+	CHECK(dma_resv_reserve_shared(&r, 3) == 0);
+	a = tr_ctx_new(1);
+	b = tr_ctx_new(1);
+	c = tr_ctx_new(1);
+	dma_resv_add_shared_fence(&r, a);
+	dma_resv_add_shared_fence(&r, b);
+	dma_resv_add_shared_fence(&r, c);
+
+	rcu_read_lock();
+	snap = dma_resv_get_list(&r);
+	CHECK(snap != NULL && snap->shared_count == 3);
+	x = tr_ctx_new(1);
+	dma_resv_add_excl_fence(&r, x);
+	CHECK(snap->shared_count == 3);
+	CHECK(snap->shared[0] == a && snap->shared[1] == b &&
+	    snap->shared[2] == c);
+	cur = dma_resv_get_list(&r);
+	CHECK(cur != NULL && cur != snap && cur->shared_count == 0);
+	CHECK(cur != NULL && cur->shared_max == snap->shared_max);
+	rcu_read_unlock();
+
+	/* The reserved capacity survives: a shared add needs no reserve. */
+	y = tr_ctx_new(1);
+	dma_resv_add_shared_fence(&r, y);
+	cur = dma_resv_get_list(&r);
+	CHECK(cur != NULL && cur->shared_count == 1 && cur->shared[0] == y);
+	CHECK(dma_resv_get_excl(&r) == x);
+
+	/* Clearing the exclusive fence with an empty list changes nothing. */
+	dma_resv_add_excl_fence(&r, NULL);
+	CHECK(dma_resv_get_excl(&r) == NULL);
+	cur = dma_resv_get_list(&r);
+	CHECK(cur != NULL && cur->shared_count == 0);
+	dma_resv_unlock(&r);
+
+	all[0] = a; all[1] = b; all[2] = c; all[3] = x; all[4] = y;
+	tr_free(&r, all, 5);
+	CHECK(tf_live == 0);
+}
+
 static void
 test_resv_unlocked_iter(void)
 {
@@ -1421,6 +1476,107 @@ test_resv_stress(void)
 	CHECK(tf_live == 0);
 }
 
+/*
+ * Stress for the 5.6 write path: dma_resv_add_excl_fence empties a shared
+ * list while readers of the 5.6 API walk it.  Same checks as above.
+ */
+static volatile unsigned xs_iters[3], xs_added;
+
+static void
+xs_writer(void *arg __unused)
+{
+	struct dma_fence *f1, *f2, *e;
+	unsigned i = 0;
+
+	while (!st_stop) {
+		f1 = tf_new(st_ctx[0], i + 1);
+		f2 = tf_new(st_ctx[1], i + 1);
+		e = tf_new(st_ctx[2], i + 1);
+		dma_resv_lock(&st_r, NULL);
+		if (dma_resv_reserve_shared(&st_r, 2) == 0) {
+			dma_resv_add_shared_fence(&st_r, f1);
+			dma_resv_add_shared_fence(&st_r, f2);
+		}
+		if (i % 5 == 4)
+			dma_resv_add_excl_fence(&st_r, e);
+		else
+			dma_resv_add_excl_fence(&st_r, NULL);
+		dma_resv_unlock(&st_r);
+		dma_fence_signal(f1);
+		dma_fence_signal(f2);
+		dma_fence_put(f1);
+		dma_fence_put(f2);
+		dma_fence_put(e);
+		xs_added++;
+		i++;
+		if (i % 16 == 0)
+			kpause("drm2xsw", false, 1, NULL);
+	}
+	atomic_inc_uint(&st_done);
+	kthread_exit(0);
+}
+
+static void
+xs_reader(void *arg)
+{
+	unsigned id = (unsigned)(uintptr_t)arg - 1, round = 0, i, nsh;
+	struct dma_fence *excl, **sh;
+
+	KASSERT(id < 3);
+	while (!st_stop) {
+		if (id == 1) {
+			(void)dma_resv_test_signaled_rcu(&st_r, true);
+		} else if (dma_resv_get_fences_rcu(&st_r, &excl, &nsh, &sh)
+		    == 0) {
+			for (i = 0; i < nsh; i++)
+				dma_fence_put(sh[i]);
+			kfree(sh);
+			dma_fence_put(excl);
+		}
+		xs_iters[id]++;
+		if (++round % 256 == 0)
+			kpause("drm2xsr", false, 1, NULL);
+	}
+	atomic_inc_uint(&st_done);
+	kthread_exit(0);
+}
+
+static void
+test_resv_excl_stress(void)
+{
+	lwp_t *l[4];
+	unsigned i;
+	int error;
+
+	for (i = 0; i < 8; i++)
+		st_ctx[i] = dma_fence_context_alloc(1);
+	st_stop = st_done = 0;
+	xs_added = 0;
+	for (i = 0; i < 3; i++)
+		xs_iters[i] = 0;
+	dma_resv_init(&st_r);
+	error = kthread_create(PRI_NONE, KTHREAD_MPSAFE | KTHREAD_MUSTJOIN,
+	    NULL, xs_writer, NULL, &l[0], "drm2xsw");
+	CHECK(error == 0);
+	for (i = 0; i < 3; i++) {
+		error = kthread_create(PRI_NONE,
+		    KTHREAD_MPSAFE | KTHREAD_MUSTJOIN, NULL, xs_reader,
+		    (void *)(uintptr_t)(i + 1), &l[i + 1], "drm2xsr");
+		CHECK(error == 0);
+	}
+	kpause("drm2xstress", false, hz * 3, NULL);
+	st_stop = 1;
+	for (i = 0; i < 4; i++)
+		kthread_join(l[i]);
+	CHECK(st_done == 4);
+	CHECK(xs_added > 100);
+	CHECK(xs_iters[0] > 50 && xs_iters[1] > 50 && xs_iters[2] > 50);
+	printf("drm2-dma-resv excl stress: %u rounds, reader rounds %u/%u/%u\n",
+	    xs_added, xs_iters[0], xs_iters[1], xs_iters[2]);
+	dma_resv_fini(&st_r);
+	CHECK(tf_live == 0);
+}
+
 int	drm2_dma_resv_run(void);
 
 int
@@ -1438,6 +1594,7 @@ drm2_dma_resv_run(void)
 	test_resv_reserve();
 	test_resv_replace_rules();
 	test_resv_shared_cow();
+	test_resv_excl_cow();
 	test_resv_unlocked_iter();
 	test_resv_get_fences();
 	test_resv_singleton();
@@ -1448,6 +1605,7 @@ drm2_dma_resv_run(void)
 	test_chain();
 	test_array_unwrap();
 	test_resv_stress();
+	test_resv_excl_stress();
 	printf("drm2-dma-resv: %d checks, %d failed\n", t_run, t_fail);
 	return t_fail;
 }
