@@ -224,6 +224,9 @@ void	iput(struct inode *);
  * major, or a negative errno.  The Linux major is ignored (a NetBSD one is
  * assigned).
  */
+int	drm618_file_fini(void);
+void	drm618_sleep_fini(void);
+
 int	register_chrdev(unsigned int, const char *, const struct file_operations *);
 void	unregister_chrdev(unsigned int, const char *);
 

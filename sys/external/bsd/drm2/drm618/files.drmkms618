@@ -58,6 +58,9 @@ file	external/bsd/drm2/drm618/drm618_file.c		drmkms618
 file	external/bsd/drm2/drm618/drm618_kthread_worker.c	drmkms618
 file	external/bsd/drm2/drm618/drm618_managed.c	drmkms618
 file	external/bsd/drm2/drm618/drm618_rbtree.c	drmkms618
+file	external/bsd/drm2/drm618/drm618_shmem.c	drmkms618
+file	external/bsd/drm2/drm618/drm618_sleep.c	drmkms618
+file	external/bsd/drm2/drm618/drm618_sync_file.c	drmkms618
 file	external/bsd/drm2/drm618/drm618_sysfs.c	drmkms618
 file	external/bsd/drm2/drm618/drm618_statics.c	drmkms618
 

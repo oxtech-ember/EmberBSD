@@ -22,6 +22,10 @@ int	drm2_drm618_managed_run(void);
 int	drm2_drm618_statics_run(void);
 int	drm2_drm618_file_run(void);
 int	drm2_drm618_kdev_run(void);
+int	drm2_drm618_task_run(void);
+int	drm2_drm618_gem_run(void);
+int	drm618_file_fini(void);
+void	drm618_sleep_fini(void);
 
 static int
 drmkms_linux_test_modcmd(modcmd_t cmd, void *arg __unused)
@@ -40,9 +44,13 @@ drmkms_linux_test_modcmd(modcmd_t cmd, void *arg __unused)
 		failed += drm2_drm618_statics_run();
 		failed += drm2_drm618_file_run();
 		failed += drm2_drm618_kdev_run();
+		failed += drm2_drm618_task_run();
+		failed += drm2_drm618_gem_run();
 		return failed == 0 ? 0 : EIO;
 	case MODULE_CMD_FINI:
-		return 0;
+		/* the per lwp keys of the layer (and their destructors) live in this module */
+		drm618_sleep_fini();
+		return drm618_file_fini();
 	default:
 		return ENOTTY;
 	}
