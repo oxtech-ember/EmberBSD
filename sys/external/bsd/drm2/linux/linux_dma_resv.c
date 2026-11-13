@@ -939,21 +939,53 @@ resv_nth_locked(const struct dma_resv *robj, unsigned n,
 }
 
 /*
- * resv_remove_nth_ws(robj, n)
+ * resv_victim_spare(robj, n)
+ *
+ *	If removing the n-th fence changes the shared list, return a
+ *	new list with the same capacity to replace it (copy on write),
+ *	else NULL.  Readers of the 5.6 API (dma_resv_do_poll,
+ *	dma_resv_get_fences_rcu, the *_rcu waits) walk list->shared[i]
+ *	over a snapshot of the count without revalidating each entry,
+ *	so a shared list may only grow in place, never shift or clear
+ *	entries.  May sleep; call before dma_resv_write_begin.
+ */
+static struct dma_resv_list *
+resv_victim_spare(struct dma_resv *robj, unsigned n)
+{
+	struct dma_resv_list *sl = robj->fence;
+	unsigned sc = sl != NULL ? sl->shared_count : 0;
+
+	if (robj->fence_excl != NULL) {
+		if (n == 0)
+			return NULL;
+		n--;
+	}
+	if (n >= sc)
+		return NULL;
+	return objlist_alloc(sl->shared_max);
+}
+
+/*
+ * resv_remove_nth_ws(robj, n, spare, oldlistp)
  *
  *	Remove the n-th fence; return it with its reference (the caller
  *	puts it after the write section).  Caller holds the lock and is
- *	inside a write section.
+ *	inside a write section.  If the fence was in the shared list,
+ *	spare (from resv_victim_spare) becomes the new list and the old
+ *	one is returned in *oldlistp for objlist_defer_free after the
+ *	write section.
  */
 static struct dma_fence *
-resv_remove_nth_ws(struct dma_resv *robj, unsigned n)
+resv_remove_nth_ws(struct dma_resv *robj, unsigned n,
+    struct dma_resv_list *spare, struct dma_resv_list **oldlistp)
 {
 	struct dma_resv_list *sl = robj->fence;
 	struct dma_resv_xlist *xl = robj->xfence;
 	unsigned sc = sl != NULL ? sl->shared_count : 0;
 	struct dma_fence *fence;
-	unsigned i;
+	unsigned i, j;
 
+	*oldlistp = NULL;
 	if (robj->fence_excl != NULL) {
 		if (n == 0) {
 			fence = robj->fence_excl;
@@ -963,11 +995,15 @@ resv_remove_nth_ws(struct dma_resv *robj, unsigned n)
 		n--;
 	}
 	if (n < sc) {
+		KASSERT(spare != NULL);
 		fence = sl->shared[n];
-		for (i = n + 1; i < sc; i++)
-			atomic_store_relaxed(&sl->shared[i - 1], sl->shared[i]);
-		atomic_store_relaxed(&sl->shared[sc - 1], NULL);
-		atomic_store_relaxed(&sl->shared_count, sc - 1);
+		for (i = j = 0; i < sc; i++) {
+			if (i != n)
+				spare->shared[j++] = sl->shared[i];
+		}
+		spare->shared_count = sc - 1;
+		atomic_store_relaxed(&robj->fence, spare);
+		*oldlistp = sl;
 		return fence;
 	}
 	n -= sc;
@@ -998,6 +1034,7 @@ dma_resv_add_fence(struct dma_resv *robj, struct dma_fence *fence,
 {
 	struct dma_resv_write_ticket ticket;
 	struct dma_resv_list *list, *prealloc, *old_list = NULL;
+	struct dma_resv_list *spare = NULL, *removed_list = NULL;
 	struct dma_resv_xlist *xl;
 	struct dma_fence *old = NULL, *f;
 	enum dma_resv_usage old_usage;
@@ -1065,9 +1102,12 @@ dma_resv_add_fence(struct dma_resv *robj, struct dma_fence *fence,
 			(void)dma_resv_reserve_shared(robj, 1);
 	}
 
+	if (victim)
+		spare = resv_victim_spare(robj, victim_n);
+
 	dma_resv_write_begin(robj, &ticket);
 	if (victim)
-		old = resv_remove_nth_ws(robj, victim_n);
+		old = resv_remove_nth_ws(robj, victim_n, spare, &removed_list);
 
 	switch (usage) {
 	case DMA_RESV_USAGE_READ:
@@ -1112,6 +1152,8 @@ dma_resv_add_fence(struct dma_resv *robj, struct dma_fence *fence,
 	}
 	dma_resv_write_commit(robj, &ticket);
 
+	if (removed_list != NULL)
+		objlist_defer_free(removed_list);
 	if (old_list != NULL)
 		objlist_defer_free(old_list);
 	dma_fence_put(old);	/* NULL is fine */
@@ -1142,6 +1184,7 @@ dma_resv_replace_fences(struct dma_resv *robj, uint64_t context,
 {
 	struct dma_resv_write_ticket ticket;
 	struct dma_fence *f, *old;
+	struct dma_resv_list *spare, *removed;
 	enum dma_resv_usage u;
 	unsigned n;
 	bool found = false;
@@ -1152,9 +1195,12 @@ restart:
 	for (n = 0; (f = resv_nth_locked(robj, n, &u)) != NULL; n++) {
 		if (f->context != context)
 			continue;
+		spare = resv_victim_spare(robj, n);
 		dma_resv_write_begin(robj, &ticket);
-		old = resv_remove_nth_ws(robj, n);
+		old = resv_remove_nth_ws(robj, n, spare, &removed);
 		dma_resv_write_commit(robj, &ticket);
+		if (removed != NULL)
+			objlist_defer_free(removed);
 		dma_fence_put(old);
 		found = true;
 		goto restart;

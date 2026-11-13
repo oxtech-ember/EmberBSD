@@ -26,6 +26,7 @@
 #include <linux/err.h>
 #include <linux/errno.h>
 #include <linux/ktime.h>
+#include <linux/rcupdate.h>
 #include <linux/slab.h>
 #include <linux/spinlock.h>
 
@@ -537,6 +538,68 @@ test_resv_replace_rules(void)
 	all[0] = a1; all[1] = a2; all[2] = a0; all[3] = b1;
 	all[4] = s1; all[5] = s2; all[6] = w1; all[7] = w2;
 	tr_free(&r, all, 7);
+	CHECK(tf_live == 0);
+}
+
+/*
+ * Readers of the 5.6 API (dma_resv_do_poll, get_fences_rcu, the *_rcu
+ * waits) walk list->shared[i] over a snapshot of the count without
+ * revalidating each entry.  So removing a shared fence must replace the
+ * list (copy on write): the old list, still held by a reader, keeps its
+ * entries and its count.  Found by the vgem stress (a poller crashed on a
+ * NULL entry written by an in-place removal).
+ */
+static void
+test_resv_shared_cow(void)
+{
+	struct dma_resv r;
+	struct dma_resv_list *snap, *cur;
+	struct dma_fence *a1, *b1, *c1, *a2, *x, *all[5];
+	uint64_t ca = dma_fence_context_alloc(1);
+	uint64_t cb = dma_fence_context_alloc(1);
+	uint64_t cc = dma_fence_context_alloc(1);
+
+	dma_resv_init(&r);
+	dma_resv_lock(&r, NULL);
+	CHECK(dma_resv_reserve_fences(&r, 4) == 0);
+	a1 = tf_new(ca, 1);
+	b1 = tf_new(cb, 1);
+	c1 = tf_new(cc, 1);
+	dma_resv_add_fence(&r, a1, DMA_RESV_USAGE_READ);
+	dma_resv_add_fence(&r, b1, DMA_RESV_USAGE_READ);
+	dma_resv_add_fence(&r, c1, DMA_RESV_USAGE_READ);
+
+	/* A later fence of context a replaces a1. */
+	rcu_read_lock();
+	snap = dma_resv_get_list(&r);
+	CHECK(snap != NULL && snap->shared_count == 3);
+	a2 = tf_new(ca, 2);
+	dma_resv_add_fence(&r, a2, DMA_RESV_USAGE_READ);
+	CHECK(snap->shared_count == 3);
+	CHECK(snap->shared[0] == a1 && snap->shared[1] == b1 &&
+	    snap->shared[2] == c1);
+	cur = dma_resv_get_list(&r);
+	CHECK(cur != snap && cur != NULL && cur->shared_count == 3);
+	CHECK(cur->shared[0] != a1 && cur->shared[1] != a1 &&
+	    cur->shared[2] != a1);
+	rcu_read_unlock();
+
+	/* dma_resv_replace_fences (context b) goes the same way. */
+	rcu_read_lock();
+	snap = dma_resv_get_list(&r);
+	CHECK(snap != NULL && snap->shared_count == 3);
+	x = tf_new(cb, 2);
+	dma_resv_replace_fences(&r, cb, x, DMA_RESV_USAGE_READ);
+	CHECK(snap->shared_count == 3);
+	CHECK(snap->shared[0] != NULL && snap->shared[1] != NULL &&
+	    snap->shared[2] != NULL);
+	cur = dma_resv_get_list(&r);
+	CHECK(cur != snap && cur != NULL && cur->shared_count == 3);
+	rcu_read_unlock();
+	dma_resv_unlock(&r);
+
+	all[0] = a1; all[1] = b1; all[2] = c1; all[3] = a2; all[4] = x;
+	tr_free(&r, all, 5);
 	CHECK(tf_live == 0);
 }
 
@@ -1374,6 +1437,7 @@ drm2_dma_resv_run(void)
 	test_resv_usage_filter();
 	test_resv_reserve();
 	test_resv_replace_rules();
+	test_resv_shared_cow();
 	test_resv_unlocked_iter();
 	test_resv_get_fences();
 	test_resv_singleton();
