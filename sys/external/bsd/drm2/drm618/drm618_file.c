@@ -647,3 +647,38 @@ iput(struct inode *inode)
 	if (atomic_dec_uint_nv(&inode->i_refcnt) == 0)
 		kmem_free(inode, sizeof(*inode));
 }
+
+/*
+ * Before the module goes: the key of the ioctl window, the locks.  EBUSY while
+ * the character device is registered or a descriptor is reserved.
+ */
+int
+drm618_file_fini(void)
+{
+
+	if (stub_once.o_status) {
+		mutex_enter(&stub_lock);
+		if (stub_fops != NULL) {
+			mutex_exit(&stub_lock);
+			return EBUSY;
+		}
+		mutex_exit(&stub_lock);
+	}
+	if (pending_once.o_status) {
+		mutex_enter(&pending_lock);
+		if (!LIST_EMPTY(&pending_list)) {
+			mutex_exit(&pending_lock);
+			return EBUSY;
+		}
+		mutex_exit(&pending_lock);
+	}
+	if (kw_once.o_status)
+		lwp_specific_key_delete(kw_key);
+	if (stub_once.o_status)
+		mutex_destroy(&stub_lock);
+	if (pending_once.o_status)
+		mutex_destroy(&pending_lock);
+	if (pseudofs_once.o_status)
+		mutex_destroy(&pseudofs_lock);
+	return 0;
+}

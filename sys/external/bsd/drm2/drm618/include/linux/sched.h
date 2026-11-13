@@ -116,4 +116,22 @@ pid_task(struct pid *pid, enum pid_type type)
 /* The id user space sees for a user id that does not map (65534). */
 #define	overflowuid	65534
 
+/*
+ * The sleeping protocol (drm618_sleep.c): the state is set, the condition
+ * tested, then schedule_timeout sleeps unless wake_up_process came in
+ * between.  schedule_timeout returns the time left (MAX_SCHEDULE_TIMEOUT for
+ * an unbounded sleep).
+ */
+#define	TASK_RUNNING	0
+
+void	drm618_set_current_state(int);
+long	schedule_timeout(long);
+int	wake_up_process(struct task_struct *);
+
+#define	set_current_state(state)	drm618_set_current_state(state)
+#define	__set_current_state(state)	drm618_set_current_state(state)
+
+/* No lock validator here. */
+#define	lockdep_assert_none_held_once()	((void)0)
+
 #endif	/* _DRM618_LINUX_SCHED_H_ */
