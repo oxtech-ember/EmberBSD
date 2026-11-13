@@ -47,6 +47,9 @@
 #include <sys/errno.h>
 
 #define	ERESTARTSYS	(ELAST+1)	/* XXX */
+#ifndef EPROBE_DEFER
+#define	EPROBE_DEFER	517	/* the driver is not ready yet (Linux value) */
+#endif
 #define	ENOTSUPP	ENOTSUP	/* XXX ???  */
 #define	EREMOTEIO	EIO	/* XXX Urk...  */
 #define	ECHRNG		ERANGE	/* XXX ??? */

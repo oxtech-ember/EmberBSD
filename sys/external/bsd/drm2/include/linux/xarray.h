@@ -52,6 +52,9 @@ struct xarray {
 		(ENTRY) != NULL;					      \
 		(ENTRY) = xa_find_after((XA), &(INDEX), ULONG_MAX, -1))
 
+/* A range of ids for xa_alloc: [min, max]. */
+#define	XA_LIMIT(MIN, MAX)	((struct xa_limit){ .min = (MIN), .max = (MAX) })
+
 #define	XA_ERROR(error)	((void *)(((uintptr_t)error << 2) | 2))
 
 static inline int
@@ -62,6 +65,13 @@ xa_err(void *cookie)
 		return 0;
 
 	return (uintptr_t)cookie >> 2;
+}
+
+static inline bool
+xa_is_err(const void *entry)
+{
+
+	return xa_err(__UNCONST(entry)) != 0;
 }
 
 #define	XA_FLAGS_ALLOC	0
@@ -109,5 +119,14 @@ void *	xa_find_after(struct xarray *, unsigned long *, unsigned long,
 	    unsigned);
 
 extern const struct xa_limit xa_limit_32b;
+
+/* True if nothing is stored. */
+static inline bool
+xa_empty(struct xarray *xa)
+{
+	unsigned long index = 0;
+
+	return xa_find(xa, &index, ULONG_MAX, -1) == NULL;
+}
 
 #endif	/* _LINUX_XARRAY_H_ */
