@@ -15,6 +15,9 @@
 #include <drm618_prefix.h>
 
 #include <linux/device.h>
+#include <linux/err.h>
+#include <linux/slab.h>
+#include <linux/timer.h>
 #include <linux/errno.h>
 #include <linux/list.h>
 #include <linux/mutex.h>
@@ -186,6 +189,92 @@ test_dev_driver_string(void)
 	}
 }
 
+static int
+fall(int v)
+{
+	int r = 0;
+
+	switch (v) {
+	case 1:
+		r += 1;
+		fallthrough;
+	case 2:
+		r += 10;
+		break;
+	default:
+		r = -1;
+	}
+	return r;
+}
+
+static void
+test_helpers(void)
+{
+	char *p, *q;
+	const char *s = "a=b,c";
+	unsigned char z[16];
+	void *v;
+
+	/* krealloc_array: grows, keeps the data, refuses an overflow. */
+	p = krealloc_array(NULL, 4, sizeof(int), GFP_KERNEL);
+	CHECK(p != NULL);
+	if (p != NULL) {
+		memset(p, 7, 4 * sizeof(int));
+		q = krealloc_array(p, 64, sizeof(int), GFP_KERNEL);
+		CHECK(q != NULL && q[0] == 7 && q[4 * sizeof(int) - 1] == 7);
+		p = q != NULL ? q : p;
+		CHECK(krealloc_array(p, SIZE_MAX / 2, 4, GFP_KERNEL) == NULL);
+		q = kvrealloc(p, 8, GFP_KERNEL);
+		CHECK(q != NULL && q[0] == 7);
+		kfree(q != NULL ? q : p);
+	}
+
+	/* mem_is_zero */
+	memset(z, 0, sizeof(z));
+	CHECK(mem_is_zero(z, sizeof(z)));
+	CHECK(mem_is_zero(z, 0));
+	z[15] = 1;
+	CHECK(!mem_is_zero(z, sizeof(z)));
+	CHECK(mem_is_zero(z, 15));
+	z[0] = 1;
+	CHECK(!mem_is_zero(z, 1));
+
+	/* strnchr: bounded by the count and by the NUL */
+	CHECK(strnchr(s, 5, '=') == s + 1);
+	CHECK(strnchr(s, 5, 'c') == s + 4);
+	CHECK(strnchr(s, 4, 'c') == NULL);
+	CHECK(strnchr(s, 100, 'x') == NULL);
+	CHECK(strnchr(s, 0, 'a') == NULL);
+	CHECK(strnchr("", 4, '\0') == NULL);	/* stops at the NUL itself */
+
+	/* range_overflows */
+	CHECK(!range_overflows(0, 10, 10));
+	CHECK(!range_overflows(4u, 6u, 10u));
+	CHECK(range_overflows(4u, 7u, 10u));
+	CHECK(range_overflows(10u, 0u, 10u));	/* start at the end */
+	CHECK(range_overflows(11u, 0u, 10u));
+	CHECK(range_overflows(1ULL, ~0ULL, 10ULL));	/* no wrap-around */
+	CHECK(!range_overflows_t(unsigned int, 0, 0, 1));
+
+	/* timer_container_of */
+	{
+		struct tt { int a; struct timer_list t; } x;
+		struct tt *y;
+
+		y = timer_container_of(y, &x.t, t);
+		CHECK(y == &x);
+	}
+
+	/* fallthrough */
+	CHECK(fall(1) == 11 && fall(2) == 10 && fall(3) == -1);
+
+	/* memdup_user_nul: a kernel address is not a user address */
+	v = memdup_user_nul(s, 3);
+	CHECK(IS_ERR(v) && PTR_ERR(v) == -EFAULT);
+	if (!IS_ERR(v))
+		kfree(v);
+}
+
 int	drm2_linux_618_run(void);
 
 int
@@ -198,6 +287,7 @@ drm2_linux_618_run(void)
 	test_ww_trylock();
 	test_strscpy_pad();
 	test_dev_driver_string();
+	test_helpers();
 	printf("drm2-linux-618: %d checks, %d failed\n", t_run, t_fail);
 	return t_fail;
 }
