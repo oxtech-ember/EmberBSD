@@ -13,7 +13,14 @@
 
 #include <drm618_prefix.h>
 
+#include <linux/bitfield.h>
+#include <linux/bitops.h>
+#include <linux/device.h>
 #include <linux/errno.h>
+#include <linux/pci.h>
+#include <linux/property.h>
+#include <linux/units.h>
+#include <linux/xarray.h>
 #include <linux/hrtimer.h>
 #include <linux/random.h>
 #include <linux/seq_buf.h>
@@ -156,6 +163,91 @@ test_rwlock(void)
 	CHECK(1);
 }
 
+static int dorder[8];
+static unsigned ndorder;
+
+static void
+dact(void *p)
+{
+	if (ndorder < 8)
+		dorder[ndorder] = *(int *)p;
+	ndorder++;
+}
+
+static void
+test_devres(void)
+{
+	static char da, db;
+	struct device *d1 = (struct device *)&da, *d2 = (struct device *)&db;
+	int a = 1, b = 2, c = 3, e = 4;
+	char *m;
+
+	ndorder = 0;
+	CHECK(devm_add_action(d1, dact, &a) == 0);
+	CHECK(devm_add_action(d2, dact, &b) == 0);
+	CHECK(devm_add_action_or_reset(d1, dact, &c) == 0);
+	CHECK(devm_add_action(d1, dact, &e) == 0);
+	m = devm_kzalloc(d1, 50, GFP_KERNEL);
+	CHECK(m != NULL && m[0] == 0 && m[49] == 0);
+
+	/* One action runs now; the others stay. */
+	devm_release_action(d1, dact, &c);
+	CHECK(ndorder == 1 && dorder[0] == 3);
+	/* Unknown action: nothing happens. */
+	devm_release_action(d1, dact, &b);
+	CHECK(ndorder == 1);
+	devm_kfree(d1, NULL);
+
+	/* Everything of d1, newest first; d2's stays. */
+	devres_release_all(d1);
+	CHECK(ndorder == 3 && dorder[1] == 4 && dorder[2] == 1);
+	devres_release_all(d1);
+	CHECK(ndorder == 3);
+	devres_release_all(d2);
+	CHECK(ndorder == 4 && dorder[3] == 2);
+
+	/* Memory freed early is not freed again. */
+	m = devm_kmalloc(d2, 16, GFP_KERNEL);
+	CHECK(m != NULL);
+	devm_kfree(d2, m);
+	devres_release_all(d2);
+	CHECK(ndorder == 4);
+}
+
+static void
+test_misc(void)
+{
+	struct xarray xa;
+	struct xa_limit lim = XA_LIMIT(5, 7);
+	uint32_t id;
+	static int v;
+	char *p = (char *)0;
+
+	CHECK(lim.min == 5 && lim.max == 7);
+	xa_init_flags(&xa, XA_FLAGS_ALLOC);
+	CHECK(xa_empty(&xa));
+	CHECK(xa_alloc(&xa, &id, &v, lim, GFP_KERNEL) == 0 && id == 5);
+	CHECK(!xa_empty(&xa));
+	CHECK(xa_alloc(&xa, &id, &v, lim, GFP_KERNEL) == 0 && id == 6);
+	CHECK(xa_alloc(&xa, &id, &v, lim, GFP_KERNEL) == 0 && id == 7);
+	CHECK(xa_alloc(&xa, &id, &v, lim, GFP_KERNEL) != 0);
+	CHECK(xa_is_err(XA_ERROR(-ENOMEM)) && !xa_is_err(&v) && !xa_is_err(NULL));
+	xa_destroy(&xa);
+
+	CHECK(FIELD_PREP(0xf0, 0x3) == 0x30);
+	CHECK(FIELD_PREP(0xff00, 0x12) == 0x1200);
+	CHECK(FIELD_PREP(0x0f, 0x1f) == 0x0f);
+	CHECK(ffz(0x0fUL) == 4 && ffz(0UL) == 0 && ffz(0x7UL) == 3);
+	CHECK(KHZ2PICOS(148500) == 6734);	/* 148.5 MHz: 6.734 ns */
+	(void)p;
+
+	/* No pci_dev for a device nobody made one for; no firmware node. */
+	CHECK(to_pci_dev((struct device *)&v) == NULL);
+	CHECK(dev_fwnode((struct device *)&v) == NULL);
+	CHECK(!device_property_present((struct device *)&v, "x"));
+	CHECK(dev_err_probe((struct device *)NULL, -EPROBE_DEFER, "quiet\n") == -EPROBE_DEFER);
+}
+
 int	drm2_linux_618_layer_run(void);
 
 int
@@ -168,6 +260,8 @@ drm2_linux_618_layer_run(void)
 	test_guid();
 	test_hrtimer();
 	test_rwlock();
+	test_devres();
+	test_misc();
 	printf("drm2-linux-618-layer: %d checks, %d failed\n", t_run, t_fail);
 	return t_fail;
 }

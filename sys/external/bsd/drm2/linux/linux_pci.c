@@ -42,6 +42,9 @@ __KERNEL_RCSID(0, "$NetBSD: linux_pci.c,v 1.30 2024/06/24 21:23:53 riastradh Exp
 #include <dev/acpi/acpi_pci.h>
 #endif
 
+#include <sys/mutex.h>
+#include <sys/once.h>
+
 #include <linux/pci.h>
 
 #include <drm/drm_agp_netbsd.h>
@@ -141,6 +144,36 @@ alloc_fake_parent_device(device_t parent, const struct pci_attach_args *pa)
 	return parentdev;
 }
 
+static struct {
+	kmutex_t		lock;
+	LIST_HEAD(, pci_dev)	list;
+} pci_reg;
+static ONCE_DECL(pci_reg_once);
+
+static int
+pci_reg_init(void)
+{
+
+	mutex_init(&pci_reg.lock, MUTEX_DEFAULT, IPL_NONE);
+	LIST_INIT(&pci_reg.list);
+	return 0;
+}
+
+struct pci_dev *
+linux_to_pci_dev(struct device *dev)
+{
+	struct pci_dev *pdev;
+
+	(void)RUN_ONCE(&pci_reg_once, &pci_reg_init);
+	mutex_enter(&pci_reg.lock);
+	LIST_FOREACH(pdev, &pci_reg.list, pd_regentry) {
+		if (pdev->pd_dev == dev)
+			break;
+	}
+	mutex_exit(&pci_reg.lock);
+	return pdev;
+}
+
 void
 linux_pci_dev_init(struct pci_dev *pdev, device_t dev, device_t parent,
     const struct pci_attach_args *pa, int kludges)
@@ -155,6 +188,10 @@ linux_pci_dev_init(struct pci_dev *pdev, device_t dev, device_t parent,
 	pdev->pd_kludges = kludges;
 	pdev->pd_rom_vaddr = NULL;
 	pdev->pd_dev = dev;
+	(void)RUN_ONCE(&pci_reg_once, &pci_reg_init);
+	mutex_enter(&pci_reg.lock);
+	LIST_INSERT_HEAD(&pci_reg.list, pdev, pd_regentry);
+	mutex_exit(&pci_reg.lock);
 #if (NACPICA > 0)
 	const int seg = pci_get_segment(pa->pa_pc);
 	pdev->pd_ad = acpi_pcidev_find(seg, pa->pa_bus,
@@ -995,6 +1032,10 @@ void
 linux_pci_dev_destroy(struct pci_dev *pdev)
 {
 	unsigned i;
+
+	mutex_enter(&pci_reg.lock);
+	LIST_REMOVE(pdev, pd_regentry);
+	mutex_exit(&pci_reg.lock);
 
 	if (pdev->bus->self != NULL) {
 		kmem_free(pdev->bus->self, sizeof(*pdev->bus->self));

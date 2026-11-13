@@ -50,6 +50,9 @@
  * Linux __ffs/__ffs64 is zero-based; zero input is undefined.  Our
  * ffs/ffs64 is one-based; zero input yields zero.
  */
+/* The first zero bit, zero based; the word must not be all ones. */
+#define	ffz(x)		__ffs(~(unsigned long)(x))
+
 static inline unsigned long
 __ffs(unsigned long x)
 {

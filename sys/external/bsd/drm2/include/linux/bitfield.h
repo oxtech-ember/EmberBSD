@@ -35,4 +35,7 @@
 
 #define	__bf_shf(X)		(__builtin_ffsll(X) - 1)
 
+/* Put VAL in the bits of MASK (the inverse of FIELD_GET). */
+#define	FIELD_PREP(MASK, VAR)	(((__typeof__(MASK))(VAR) << __bf_shf(MASK)) & (MASK))
+
 #endif  /* _LINUX_BITFIELD_H_ */

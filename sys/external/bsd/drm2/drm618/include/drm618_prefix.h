@@ -51,12 +51,22 @@ typedef unsigned int __poll_t;
 #define	__malloc	__attribute__((__malloc__))
 #endif
 
+/* linux/kernel.h: debugging annotation that a user copy may fault (drm_mode_config.c) */
+#ifndef might_fault
+#define	might_fault()	((void)0)
+#endif
+
 /* linux/kconfig.h: no tristate options are modules here (drm_dp_helper.h) */
 #ifndef IS_MODULE
 #define	IS_MODULE(option)	(0)
 #endif
 
 #include <linux/kernel.h>
+/* The layer's IS_BUILTIN is always true; here an option is built in when it is defined (drm_dp_helper.c) */
+#undef	IS_BUILTIN
+#define	IS_BUILTIN(option)	(option)
+#undef	IS_REACHABLE
+#define	IS_REACHABLE(option)	(option)
 #include <linux/instruction_pointer.h>	/* kernel.h upstream: _THIS_IP_ (drm_print.h) */
 #include <linux/err.h>			/* ERR_PTR, IS_ERR (many) */
 #include <linux/module.h>		/* THIS_MODULE (drm_client, drm_gem fops) */
@@ -67,10 +77,22 @@ typedef unsigned int __poll_t;
 #include <linux/idr.h>
 #include <linux/llist.h>
 #include <linux/string_choices.h>
+#include <linux/uuid.h>			/* guid_t (drm_dp_mst_helper.h) */
+#include <linux/errno.h>
 #include <linux/init.h>			/* __init, __initconst */
 #include <linux/spinlock.h>		/* DEFINE_SPINLOCK (drm618_statics.h) */
 #include <linux/srcu.h>			/* DEFINE_STATIC_SRCU (drm_drv.c) */
 #include <linux/xarray.h>		/* DEFINE_XARRAY_ALLOC (drm_drv.c) */
+/* linux/sprintf.h: unbounded, as upstream (drm_edid.c) */
+#ifndef sprintf
+#define	sprintf(buf, ...)	snprintf((buf), (size_t)INT_MAX, __VA_ARGS__)
+#endif
+
+/* linux/io.h: MMIO read of a mapped register (drm_print.c); mappings here are direct kva */
+#ifndef readl
+#define	readl(addr)	(*(volatile uint32_t *)(addr))
+#endif
+
 #include <drm618_statics.h>		/* DEFINE_MUTEX and the other static objects */
 
 /* Kconfig: DRM_CLIENT and DRM_CLIENT_SETUP are on (drm_client*.h), fbdev emulation is off */

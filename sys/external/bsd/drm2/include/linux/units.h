@@ -25,6 +25,9 @@
 #define	MICRO	1000000UL
 #define	NANO	1000000000UL
 #define	PICO	1000000000000ULL
+
+/* Pixel clock in kHz to the period in picoseconds. */
+#define	KHZ2PICOS(freq)		(1000000000UL / (freq))
 #define	FEMTO	1000000000000000ULL
 
 #define	NANOHZ_PER_HZ		1000000000UL

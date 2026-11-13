@@ -40,8 +40,6 @@ elifdef aarch64
 makeoptions	drmkms618	"CPPFLAGS.drmkms618"+="-DCONFIG_ARM64"
 endif
 
-makeoptions	drmkms618	"CPPFLAGS.drmkms618"+="-DCONFIG_BACKLIGHT_CLASS_DEVICE=0"
-makeoptions	drmkms618	"CPPFLAGS.drmkms618"+="-DCONFIG_BACKLIGHT_CLASS_DEVICE_MODULE=0"
 # CONFIG_DRM_FBDEV_EMULATION is off: no Linux fb_info here; the files that need it
 # (listed in tools/not-built.txt) are not built.  The console of a 6.18 driver
 # is a drm client of its own (later phase).
