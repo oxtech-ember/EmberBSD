@@ -126,6 +126,35 @@ test_idr_for_each_null(void)
 	idr_destroy(&idr);
 }
 
+static void
+test_idr_remove_missing(void)
+{
+	struct idr idr;
+	static int o[2];
+	int id0, id1;
+
+	idr_init(&idr);
+	id0 = t_alloc(&idr, &o[0]);
+	id1 = t_alloc(&idr, &o[1]);
+	CHECK(id0 == 1 && id1 == 2);
+
+	/* An id that was never allocated: nothing found, nothing freed. */
+	CHECK(idr_remove(&idr, 99) == NULL);
+	CHECK(idr_find(&idr, id0) == &o[0] && idr_find(&idr, id1) == &o[1]);
+
+	/* Removal returns the entry once; the second time the id is gone. */
+	CHECK(idr_remove(&idr, id0) == &o[0]);
+	CHECK(idr_remove(&idr, id0) == NULL);
+	CHECK(idr_find(&idr, id0) == NULL && idr_find(&idr, id1) == &o[1]);
+
+	/* An entry replaced by NULL still holds its id and is removable. */
+	CHECK(idr_replace(&idr, NULL, id1) == &o[1]);
+	CHECK(idr_remove(&idr, id1) == NULL);
+	CHECK(idr_remove(&idr, id1) == NULL);
+
+	idr_destroy(&idr);
+}
+
 int	drm2_linux_idr_run(void);
 
 int
@@ -134,6 +163,7 @@ drm2_linux_idr_run(void)
 
 	t_run = t_fail = 0;
 	test_idr_for_each_null();
+	test_idr_remove_missing();
 	printf("drm2-linux-idr: %d checks, %d failed\n", t_run, t_fail);
 	return t_fail;
 }
