@@ -100,6 +100,8 @@ struct hidmt_motion {
 	unsigned gesture;
 	unsigned gesture_fingers;
 	int gesture_dx, gesture_dy;
+	/* Absolute pinch scale since candidate start, unsigned 16.16. */
+	int gesture_scale;
 };
 
 #define HIDMT_GESTURE_BEGIN	0x01u
@@ -120,6 +122,12 @@ struct hidmt_gstate {
 	bool started;			/* BEGIN has been sent */
 	unsigned fingers;		/* 3 or 4 while a candidate exists */
 	int startx, starty, lastx, lasty, remx, remy;
+	/* Two-contact candidates arbitrate pinch against centroid scrolling. */
+	bool two_valid, two_scroll;
+	unsigned two_id[2];
+	int64_t two_x, two_y;
+	uint64_t two_distance;
+	int pinch_scale;
 };
 
 /* Tap synthesis flags for hidmt_pointer_update(). */

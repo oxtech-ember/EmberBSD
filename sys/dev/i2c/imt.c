@@ -55,7 +55,7 @@ struct imt_softc {
 	 * sc_g_begin_lost - BEGIN of the running swipe did not get through, so
 	 * nothing else of it is sent; sc_g_dx/dy - UPDATE not delivered yet.
 	 */
-	bool sc_g_need_cancel, sc_g_begin_lost;
+	bool sc_g_need_cancel, sc_g_begin_lost, sc_g_pinch;
 	int sc_g_dx, sc_g_dy;
 	unsigned sc_g_lost;	/* wsmouse_gesture() failures */
 	struct sysctllog *sc_sysctllog;
@@ -182,7 +182,7 @@ imt_attach(device_t parent, device_t self, void *aux)
 		    imt_sysctl_scroll, 0, (void *)sc, 0, CTL_CREATE, CTL_EOL);
 		sysctl_createv(&sc->sc_sysctllog, 0, &node, NULL,
 		    CTLFLAG_READWRITE, CTLTYPE_INT, "gestures",
-		    SYSCTL_DESCR("Three- and four-finger swipe gestures"),
+		    SYSCTL_DESCR("Two-finger pinch and three/four-finger swipes"),
 		    imt_sysctl_gestures, 0, (void *)sc, 0, CTL_CREATE, CTL_EOL);
 		sysctl_createv(&sc->sc_sysctllog, 0, &node, NULL,
 		    CTLFLAG_READWRITE, CTLTYPE_INT, "scroll_natural",
@@ -347,6 +347,14 @@ imt_log_raw(struct imt_softc *sc, const uint8_t *buf, u_int len,
 	    len > n ? " ..." : "");
 }
 
+static int
+imt_gesture_send(struct imt_softc *sc, int fingers, int phase, int dx, int dy)
+{
+	if (sc->sc_g_pinch)
+		return wsmouse_pinch(sc->sc_mouse, phase, dx);
+	return wsmouse_gesture(sc->sc_mouse, fingers, phase, dx, dy);
+}
+
 /*
  * Deliver the gesture phases of one step to the consumer.  Call at spltty.
  * wsmouse_gesture() fails when the event queue is full; the consumer must
@@ -357,24 +365,35 @@ imt_log_raw(struct imt_softc *sc, const uint8_t *buf, u_int len,
  */
 static void
 imt_gesture_emit(struct imt_softc *sc, unsigned mask, unsigned fingers,
-    int dx, int dy)
+    int dx, int dy, int scale)
 {
 	if (sc->sc_mouse == NULL)
 		return;
 	if (sc->sc_g_need_cancel) {
 		/* An earlier END/CANCEL was lost; the consumer may be in a swipe. */
-		if (wsmouse_gesture(sc->sc_mouse, 0, WSMOUSE_GESTURE_CANCEL, 0,
+		if (imt_gesture_send(sc, 0, WSMOUSE_GESTURE_CANCEL, 0,
 		    0) == 0)
 			sc->sc_g_need_cancel = false;
 		else
 			sc->sc_g_lost++;
+	}
+	/* Deliver a pending final scale before a normal pinch END. */
+	if ((mask & HIDMT_GESTURE_END) != 0 && sc->sc_g_pinch &&
+	    sc->sc_g_dx != 0 && !sc->sc_g_begin_lost &&
+	    !sc->sc_g_need_cancel) {
+		if (imt_gesture_send(sc, 0, WSMOUSE_GESTURE_UPDATE,
+		    sc->sc_g_dx, 0) != 0) {
+			/* Do not claim a complete gesture after losing its final scale. */
+			mask |= HIDMT_GESTURE_CANCEL;
+			sc->sc_g_lost++;
+		}
 	}
 	if ((mask & (HIDMT_GESTURE_END | HIDMT_GESTURE_CANCEL)) != 0) {
 		if (sc->sc_g_begin_lost)
 			/* The consumer never saw this swipe. */
 			sc->sc_g_begin_lost = false;
 		else if (!sc->sc_g_need_cancel &&
-		    wsmouse_gesture(sc->sc_mouse, 0,
+		    imt_gesture_send(sc, 0,
 		    (mask & HIDMT_GESTURE_CANCEL) != 0 ?
 		    WSMOUSE_GESTURE_CANCEL : WSMOUSE_GESTURE_END, 0, 0) != 0) {
 			sc->sc_g_need_cancel = true;
@@ -383,25 +402,35 @@ imt_gesture_emit(struct imt_softc *sc, unsigned mask, unsigned fingers,
 		sc->sc_g_dx = sc->sc_g_dy = 0;
 	}
 	if ((mask & HIDMT_GESTURE_BEGIN) != 0) {
-		/* BEGIN cannot nest in a swipe the consumer still has open. */
+		/* Keep the old event family until a pending CANCEL is delivered. */
+		if (!sc->sc_g_need_cancel)
+			sc->sc_g_pinch = fingers == 2;
 		if (sc->sc_g_need_cancel ||
-		    wsmouse_gesture(sc->sc_mouse, fingers,
+		    imt_gesture_send(sc, fingers,
 		    WSMOUSE_GESTURE_BEGIN, 0, 0) != 0) {
 			sc->sc_g_begin_lost = true;
 			sc->sc_g_lost++;
 		}
 	}
 	if ((mask & HIDMT_GESTURE_UPDATE) != 0) {
-		sc->sc_g_dx += dx;
-		sc->sc_g_dy += dy;
-		if (!sc->sc_g_begin_lost && !sc->sc_g_need_cancel) {
-			if (wsmouse_gesture(sc->sc_mouse, 0,
-			    WSMOUSE_GESTURE_UPDATE, sc->sc_g_dx,
-			    sc->sc_g_dy) == 0)
-				sc->sc_g_dx = sc->sc_g_dy = 0;
-			else
-				sc->sc_g_lost++;
+		if (sc->sc_g_pinch) {
+			/* Scale is absolute: replace, rather than accumulate. */
+			sc->sc_g_dx = scale;
+			sc->sc_g_dy = 0;
+		} else {
+			sc->sc_g_dx += dx;
+			sc->sc_g_dy += dy;
 		}
+	}
+	/* Retry pending updates on stationary reports and watchdog ticks too. */
+	if ((sc->sc_g_dx != 0 || sc->sc_g_dy != 0) &&
+	    !sc->sc_g_begin_lost && !sc->sc_g_need_cancel) {
+		if (imt_gesture_send(sc, 0,
+		    WSMOUSE_GESTURE_UPDATE, sc->sc_g_dx,
+		    sc->sc_g_dy) == 0)
+			sc->sc_g_dx = sc->sc_g_dy = 0;
+		else
+			sc->sc_g_lost++;
 	}
 }
 
@@ -436,7 +465,7 @@ imt_reset_state(struct imt_softc *sc, bool release)
 	callout_stop(&sc->sc_tmo);
 	g = hidmt_reset(&sc->sc_pointer, &sc->sc_asm, &sc->sc_gstate);
 	s = spltty();
-	imt_gesture_emit(sc, g, 0, 0, 0);
+	imt_gesture_emit(sc, g, 0, 0, 0, 0);
 	if (release && sc->sc_mouse != NULL)
 		wsmouse_input(sc->sc_mouse, 0, 0, 0, 0, 0, WSMOUSE_INPUT_DELTA);
 	splx(s);
@@ -464,7 +493,7 @@ imt_tmo(void *arg)
 	g = hidmt_stall(&sc->sc_pointer, &sc->sc_asm, &sc->sc_gstate, usec,
 	    sc->sc_last_usec, &released);
 	s = spltty();
-	imt_gesture_emit(sc, g, 0, 0, 0);
+	imt_gesture_emit(sc, g, 0, 0, 0, 0);
 	if (released)
 		wsmouse_input(sc->sc_mouse, 0, 0, 0, 0, 0, WSMOUSE_INPUT_DELTA);
 	splx(s);
@@ -506,7 +535,7 @@ imt_intr(struct ihidev *hdev, void *buf, u_int len)
 			sc->sc_asm.lost = false;
 			g = hidmt_release(&sc->sc_pointer, &sc->sc_gstate);
 			s = spltty();
-			imt_gesture_emit(sc, g, 0, 0, 0);
+			imt_gesture_emit(sc, g, 0, 0, 0, 0);
 			splx(s);
 		}
 		if (r != HIDMT_ASM_READY) {
@@ -518,7 +547,7 @@ imt_intr(struct ihidev *hdev, void *buf, u_int len)
 		sc->sc_drops++;
 		g = hidmt_release(&sc->sc_pointer, &sc->sc_gstate);
 		s = spltty();
-		imt_gesture_emit(sc, g, 0, 0, 0);
+		imt_gesture_emit(sc, g, 0, 0, 0, 0);
 		splx(s);
 		return;
 	}
@@ -542,7 +571,7 @@ imt_intr(struct ihidev *hdev, void *buf, u_int len)
 	hidmt_gesture_update(&sc->sc_gstate, &gconf, &frame, &motion);
 	s = spltty();
 	imt_gesture_emit(sc, motion.gesture, motion.gesture_fingers,
-	    motion.gesture_dx, motion.gesture_dy);
+	    motion.gesture_dx, motion.gesture_dy, motion.gesture_scale);
 	if (motion.scroll_x != 0 || motion.scroll_y != 0)
 		wsmouse_precision_scroll(sc->sc_mouse, motion.scroll_x,
 		    motion.scroll_y);
@@ -722,6 +751,7 @@ imt_ioctl(void *arg, u_long cmd, void *data, int flag, struct lwp *l)
 	struct wsmouse_gesture_info *gi;
 
 	switch (cmd) {
+	case WSMOUSEIO_GPINCH:
 	case WSMOUSEIO_GGESTURE:
 		/* This device can report swipes; hw.imt0.gestures turns them on. */
 		gi = data;

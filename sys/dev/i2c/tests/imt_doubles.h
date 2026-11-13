@@ -84,6 +84,7 @@ struct wsmousedev_attach_args {
 #define WSMOUSE_INPUT_DELTA 0
 #define WSMOUSEIO_GTYPE 1
 #define WSMOUSEIO_GGESTURE 2
+#define WSMOUSEIO_GPINCH 3
 struct wsmouse_gesture_info {
 	unsigned wgi_supported, wgi_enabled;
 };
@@ -178,6 +179,7 @@ sysctl_lookup(SYSCTLFN_ARGS)
 }
 /* Gesture delivery log; a phase listed in gesture_fail fails with ENOSPC. */
 static unsigned gesture_phases[256], ngesture;
+static bool gesture_pinch[256];
 static int gesture_args[256][3];
 static unsigned gesture_fail;		/* bit mask of phases that fail */
 static unsigned gesture_fail_count;	/* how many times it still fails */
@@ -189,12 +191,20 @@ wsmouse_gesture(device_t d, int fingers, int phase, int dx, int dy)
 		return ENOSPC;
 	}
 	assert(ngesture < 256);
+	gesture_pinch[ngesture] = false;
 	gesture_phases[ngesture] = (unsigned)phase;
 	gesture_args[ngesture][0] = fingers;
 	gesture_args[ngesture][1] = dx;
 	gesture_args[ngesture][2] = dy;
 	ngesture++;
 	return 0;
+}
+static int
+wsmouse_pinch(device_t d, int phase, int scale)
+{
+ int error = wsmouse_gesture(d, 2, phase, scale, 0);
+ if (!error) gesture_pinch[ngesture - 1] = true;
+ return error;
 }
 static void
 wsmouse_precision_scroll(device_t d, int x, int y)

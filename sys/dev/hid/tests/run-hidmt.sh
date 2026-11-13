@@ -14,7 +14,7 @@ cc=${CC:-cc}
 build=${BUILD_DIR:-$(mktemp -d)}
 mkdir -p "$build"
 if [ -z "${BUILD_DIR:-}" ]; then
-    trap 'rm -f "$build/hid.o" "$build/baseline.o" "$build/t_hidmt" "$build/t_hidmt_hybrid" "$build/t_hidmt_gesture" "$build/t_hidmt_lifecycle"; rmdir "$build"' EXIT HUP INT TERM
+    trap 'rm -f "$build/hid.o" "$build/baseline.o" "$build/t_hidmt" "$build/t_hidmt_hybrid" "$build/t_hidmt_gesture" "$build/t_hidmt_lifecycle" "$build/t_hidmt_pinch"; rmdir "$build"' EXIT HUP INT TERM
 fi
 # The existing HID parser retains its native warning policy.
 "$cc" -std=c23 ${CFLAGS:-} -I"$tests/include" -idirafter "$sys" \
@@ -43,3 +43,9 @@ fi
     -I"$tests/include" -idirafter "$sys" "$build/hid.o" "$hid/hidmt.c" \
     "$tests/t_hidmt_lifecycle.c" -o "$build/t_hidmt_lifecycle"
 "$build/t_hidmt_lifecycle"
+
+# Native two-finger pinch, arbitration and lifecycle contracts.
+"$cc" -std=c23 -Wall -Wextra -Werror ${CFLAGS:-} \
+    -I"$tests/include" -idirafter "$sys" "$build/hid.o" "$hid/hidmt.c" \
+    "$tests/t_hidmt_pinch.c" -o "$build/t_hidmt_pinch"
+"$build/t_hidmt_pinch"

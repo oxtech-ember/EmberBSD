@@ -376,6 +376,8 @@ test_ioctl(void)
 	sc.sc_gestures = 1;
 	CHECK(imt_ioctl(&sc, WSMOUSEIO_GGESTURE, &gi, 0, NULL) == 0);
 	CHECK(gi.wgi_supported == 1 && gi.wgi_enabled == 1);
+	CHECK(imt_ioctl(&sc, WSMOUSEIO_GPINCH, &gi, 0, NULL) == 0);
+	CHECK(gi.wgi_supported == 1 && gi.wgi_enabled == 1);
 	CHECK(imt_ioctl(&sc, WSMOUSEIO_GTYPE, &type, 0, NULL) == 0 && type == 1);
 	CHECK(imt_ioctl(&sc, 12345, &gi, 0, NULL) == EPASSTHROUGH);
 }
@@ -413,9 +415,68 @@ test_defaults(void)
 }
 #endif
 
+static void
+pinch_frame(int left, int right, int tip)
+{
+ uint8_t b[11];
+ set_time(t_us + 8000); scan++;
+ erep(b, 1, tip, left, 1000, scan, 2);
+ imt_intr(&sc.sc_hdev, b, 11);
+ erep(b, 2, tip, right, 1000, scan, 0);
+ imt_intr(&sc.sc_hdev, b, 11);
+}
+
+static void
+test_pinch(void)
+{
+ puts("pinch: native phases and absolute scale, queue loss and cancel");
+ setup();
+ pinch_frame(1000,2000,1);pinch_frame(800,2200,1);
+ CHECK(ngesture==2 && gesture_pinch[0] && gesture_pinch[1]);
+ CHECK(gesture_phases[0]==WSMOUSE_GESTURE_BEGIN);
+ CHECK(gesture_args[1][1]==91750);
+ pinch_frame(800,2200,0);
+ CHECK(ngesture==3 && gesture_pinch[2] && gesture_phases[2]==WSMOUSE_GESTURE_END);
+ /* An undelivered scale is replaced by the latest absolute scale. */
+ setup();pinch_frame(1000,2000,1);pinch_frame(800,2200,1);
+ gesture_fail=1u<<WSMOUSE_GESTURE_UPDATE;gesture_fail_count=1;
+ pinch_frame(700,2300,1);CHECK(ngesture==2);
+ pinch_frame(600,2400,1);CHECK(ngesture==3 && gesture_args[2][1]==117964);
+ /* Queue recovery without further movement must retry the absolute scale. */
+ setup();pinch_frame(1000,2000,1);pinch_frame(800,2200,1);
+ gesture_fail=1u<<WSMOUSE_GESTURE_UPDATE;gesture_fail_count=1;
+ pinch_frame(700,2300,1);CHECK(ngesture==2);
+ pinch_frame(700,2300,1);CHECK(ngesture==3 && gesture_args[2][1]==104857);
+ setup();pinch_frame(1000,2000,1);pinch_frame(800,2200,1);
+ gesture_fail=1u<<WSMOUSE_GESTURE_UPDATE;gesture_fail_count=1;
+ pinch_frame(700,2300,1);CHECK(ngesture==2);
+ set_time(t_us+50000);imt_tmo(&sc);
+ CHECK(ngesture==3 && gesture_args[2][1]==104857);
+ /* Immediate release flushes the final scale before END. */
+ setup();pinch_frame(1000,2000,1);pinch_frame(800,2200,1);
+ gesture_fail=1u<<WSMOUSE_GESTURE_UPDATE;gesture_fail_count=1;
+ pinch_frame(700,2300,1);pinch_frame(700,2300,0);
+ CHECK(ngesture==4 && gesture_args[2][1]==104857 && gesture_phases[3]==WSMOUSE_GESTURE_END);
+ /* A lost BEGIN suppresses its UPDATE and END. */
+ setup();pinch_frame(1000,2000,1);
+ gesture_fail=1u<<WSMOUSE_GESTURE_BEGIN;gesture_fail_count=1;
+ pinch_frame(800,2200,1);pinch_frame(700,2300,1);pinch_frame(700,2300,0);
+ CHECK(ngesture==0);
+ /* A lost END is retried as pinch CANCEL by the watchdog. */
+ setup();pinch_frame(1000,2000,1);pinch_frame(800,2200,1);
+ gesture_fail=1u<<WSMOUSE_GESTURE_END;gesture_fail_count=1;
+ pinch_frame(800,2200,0);CHECK(ngesture==2 && sc.sc_tmo.armed);
+ set_time(t_us+300000);imt_tmo(&sc);
+ CHECK(ngesture==3 && gesture_pinch[2] && gesture_phases[2]==WSMOUSE_GESTURE_CANCEL);
+ setup();pinch_frame(1000,2000,1);pinch_frame(800,2200,1);
+ CHECK(imt_suspend(&child,NULL));
+ CHECK(ngesture==3 && gesture_pinch[2] && gesture_phases[2]==WSMOUSE_GESTURE_CANCEL);
+}
+
 int
 main(void)
 {
+	test_pinch();
 	test_baseline_swipe();
 	test_lifecycle_cancel();
 	test_mode_change();
