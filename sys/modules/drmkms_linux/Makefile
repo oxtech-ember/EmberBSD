@@ -32,6 +32,7 @@ SRCS+=	linux_dma_buf.c
 SRCS+=	linux_dma_fence.c
 SRCS+=	linux_dma_fence_array.c
 SRCS+=	linux_dma_fence_chain.c
+SRCS+=	linux_dma_fence_unwrap.c
 SRCS+=	linux_dma_resv.c
 SRCS+=	linux_dmi.c
 SRCS+=	linux_firmware.c

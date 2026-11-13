@@ -21,6 +21,7 @@
 #include <linux/dma-fence.h>
 #include <linux/dma-fence-array.h>
 #include <linux/dma-fence-chain.h>
+#include <linux/dma-fence-unwrap.h>
 #include <linux/dma-resv.h>
 #include <linux/err.h>
 #include <linux/errno.h>
@@ -940,6 +941,281 @@ test_resv_legacy(void)
 	CHECK(tf_live == 0);
 }
 
+/* ---- dma_fence_chain, dma_fence_array, dma_fence_unwrap (6.18) ---- */
+
+static void
+tc_settle(void)
+{
+
+	/* Chain and array releases run from irq_work. */
+	kpause("drm2set", false, hz / 10, NULL);
+}
+
+static struct dma_fence_chain *
+tc_node(struct dma_fence *prev, struct dma_fence *payload, uint64_t seqno)
+{
+	struct dma_fence_chain *c = dma_fence_chain_alloc();
+
+	dma_fence_chain_init(c, prev, payload, seqno);
+	return c;
+}
+
+static void
+test_chain(void)
+{
+	struct dma_fence *p1, *p2, *p3, *plain, *f, *it;
+	struct dma_fence_chain *c1, *c2, *c3;
+	uint64_t seq[4];
+	unsigned n;
+	int r;
+
+	p1 = tr_ctx_new(1);
+	p2 = tr_ctx_new(1);
+	p3 = tr_ctx_new(1);
+	plain = tr_ctx_new(1);
+	/* Each init consumes a reference to the payload and to prev. */
+	c1 = tc_node(NULL, dma_fence_get(p1), 1);
+	c2 = tc_node(dma_fence_get(&c1->base), dma_fence_get(p2), 2);
+	c3 = tc_node(dma_fence_get(&c2->base), dma_fence_get(p3), 3);
+	CHECK(c1->base.context == c2->base.context &&
+	    c2->base.context == c3->base.context);
+	CHECK(c1->base.seqno == 1 && c2->base.seqno == 2 && c3->base.seqno == 3);
+	CHECK(c1->prev_seqno == 0 && c2->prev_seqno == 1 && c3->prev_seqno == 2);
+
+	/* Predicates and the contained fence. */
+	CHECK(dma_fence_is_chain(&c3->base) && !dma_fence_is_chain(p1));
+	CHECK(to_dma_fence_chain(&c3->base) == c3);
+	CHECK(to_dma_fence_chain(p1) == NULL);
+	CHECK(to_dma_fence_chain(NULL) == NULL);
+	CHECK(dma_fence_chain_contained(&c3->base) == p3);
+	CHECK(dma_fence_chain_contained(plain) == plain);
+
+	/* Walk from the head: newest to oldest. */
+	n = 0;
+	dma_fence_chain_for_each(it, &c3->base) {
+		if (n < 4)
+			seq[n] = it->seqno;
+		n++;
+	}
+	CHECK(n == 3 && seq[0] == 3 && seq[1] == 2 && seq[2] == 1);
+
+	/* find_seqno: the node that will signal the requested point. */
+	f = dma_fence_get(&c3->base);
+	CHECK(dma_fence_chain_find_seqno(&f, 0) == 0 && f == &c3->base);
+	CHECK(dma_fence_chain_find_seqno(&f, 3) == 0 && f == &c3->base);
+	CHECK(dma_fence_chain_find_seqno(&f, 2) == 0 && f == &c2->base);
+	dma_fence_put(f);
+	f = dma_fence_get(&c3->base);
+	CHECK(dma_fence_chain_find_seqno(&f, 1) == 0 && f == &c1->base);
+	dma_fence_put(f);
+	/* Not far enough yet: error, pointer untouched. */
+	f = dma_fence_get(&c3->base);
+	r = dma_fence_chain_find_seqno(&f, 4);
+	CHECK(r == -EINVAL && f == &c3->base);
+	dma_fence_put(f);
+	/* Not a chain: only seqno 0 is a no-op. */
+	f = dma_fence_get(plain);
+	CHECK(dma_fence_chain_find_seqno(&f, 0) == 0 && f == plain);
+	CHECK(dma_fence_chain_find_seqno(&f, 1) == -EINVAL && f == plain);
+	dma_fence_put(f);
+
+	/* The walk skips nodes whose payload has signalled. */
+	dma_fence_signal(p2);
+	n = 0;
+	dma_fence_chain_for_each(it, &c3->base) {
+		if (n < 4)
+			seq[n] = it->seqno;
+		n++;
+	}
+	CHECK(n == 2 && seq[0] == 3 && seq[1] == 1);
+
+	/* A new head on a chain continues its context; unrelated starts one. */
+	{
+		struct dma_fence_chain *c4, *x;
+		struct dma_fence *p4 = tr_ctx_new(1), *px = tr_ctx_new(1);
+
+		c4 = tc_node(dma_fence_get(&c3->base), dma_fence_get(p4), 4);
+		CHECK(c4->base.context == c3->base.context);
+		x = tc_node(dma_fence_get(&c3->base), dma_fence_get(px), 3);
+		/* seqno not later than prev: a new context. */
+		CHECK(x->base.context != c3->base.context);
+		dma_fence_signal(p4);
+		dma_fence_signal(px);
+		dma_fence_put(&c4->base);
+		dma_fence_put(&x->base);
+		dma_fence_put(p4);
+		dma_fence_put(px);
+	}
+
+	dma_fence_signal(p1);
+	dma_fence_signal(p3);
+	dma_fence_signal(plain);
+	dma_fence_put(&c1->base);
+	dma_fence_put(&c2->base);
+	dma_fence_put(&c3->base);
+	dma_fence_put(p1);
+	dma_fence_put(p2);
+	dma_fence_put(p3);
+	dma_fence_put(plain);
+	tc_settle();
+	CHECK(tf_live == 0);
+
+	/* alloc/free pair. */
+	c1 = dma_fence_chain_alloc();
+	CHECK(c1 != NULL);
+	dma_fence_chain_free(c1);
+}
+
+static struct dma_fence_array *
+tc_array(struct dma_fence *a, struct dma_fence *b)
+{
+	struct dma_fence **v = kmalloc_array(2, sizeof(*v), GFP_KERNEL);
+
+	v[0] = a;
+	v[1] = b;
+	return dma_fence_array_create(2, v, dma_fence_context_alloc(1), 1,
+	    false);
+}
+
+static void
+test_array_unwrap(void)
+{
+	struct dma_fence *a, *b, *c, *f, *h;
+	struct dma_fence_array *arr, *arr2;
+	struct dma_fence_chain *c1, *c2;
+	struct dma_fence_unwrap cur;
+	unsigned idx, n;
+	struct dma_fence *got[8];
+
+	a = tr_ctx_new(1);
+	b = tr_ctx_new(1);
+	c = tr_ctx_new(1);
+
+	/* 6.x array accessors; to_dma_fence_array is NULL for non-arrays. */
+	arr = tc_array(dma_fence_get(a), dma_fence_get(b));
+	CHECK(to_dma_fence_array(&arr->base) == arr);
+	CHECK(to_dma_fence_array(a) == NULL);
+	CHECK(to_dma_fence_array(NULL) == NULL);
+	n = 0;
+	dma_fence_array_for_each(f, idx, &arr->base) {
+		CHECK(idx == n);
+		got[n++] = f;
+	}
+	CHECK(n == 2 && got[0] == a && got[1] == b);
+	n = 0;
+	dma_fence_array_for_each(f, idx, a)
+		got[n++] = f;
+	CHECK(n == 1 && got[0] == a);
+	CHECK(dma_fence_array_first(NULL) == NULL);
+	CHECK(dma_fence_array_next(&arr->base, 2) == NULL);
+
+	/* Unwrap: plain fence, array. */
+	n = 0;
+	dma_fence_unwrap_for_each(f, &cur, c)
+		got[n++] = f;
+	CHECK(n == 1 && got[0] == c);
+	n = 0;
+	dma_fence_unwrap_for_each(f, &cur, &arr->base)
+		got[n++] = f;
+	CHECK(n == 2 && got[0] == a && got[1] == b);
+
+	/* A chain of arrays and plain fences, head first. */
+	arr2 = tc_array(dma_fence_get(b), dma_fence_get(c));
+	c1 = tc_node(NULL, dma_fence_get(&arr->base), 1);
+	c2 = tc_node(dma_fence_get(&c1->base), dma_fence_get(&arr2->base), 2);
+	n = 0;
+	dma_fence_unwrap_for_each(f, &cur, &c2->base) {
+		if (n < 8)
+			got[n] = f;
+		n++;
+	}
+	CHECK(n == 4);
+	CHECK(got[0] == b && got[1] == c && got[2] == a && got[3] == b);
+
+	/* Merge: a single unsignalled fence comes back as itself. */
+	h = dma_fence_unwrap_merge(a);
+	CHECK(h == a);
+	dma_fence_put(h);
+
+	/* Signalled ones drop out; with nothing left, a stub. */
+	{
+		struct dma_fence *s1 = tr_ctx_new(1), *s2 = tr_ctx_new(1);
+
+		dma_fence_signal_timestamp(s1, 1000);
+		dma_fence_signal_timestamp(s2, 5000);
+		h = dma_fence_unwrap_merge(s1, s2);
+		CHECK(h != NULL && dma_fence_is_signaled(h));
+		if (h != NULL) {
+			CHECK(dma_fence_timestamp(h) == 5000);
+			dma_fence_put(h);
+		}
+		h = dma_fence_unwrap_merge(s1, a);
+		CHECK(h == a);
+		dma_fence_put(h);
+		dma_fence_put(s1);
+		dma_fence_put(s2);
+	}
+
+	/* One context: the latest wins, so one fence comes back. */
+	{
+		uint64_t ctx = dma_fence_context_alloc(1);
+		struct dma_fence *x1 = tf_new(ctx, 1), *x2 = tf_new(ctx, 2);
+
+		h = dma_fence_unwrap_merge(x1, x2);
+		CHECK(h == x2);
+		dma_fence_put(h);
+		h = dma_fence_unwrap_merge(x2, x1);
+		CHECK(h == x2);
+		dma_fence_put(h);
+
+		/* Several contexts: an array of the latest per context. */
+		h = dma_fence_unwrap_merge(x1, b, x2);
+		CHECK(h != NULL && dma_fence_is_array(h));
+		if (h != NULL && dma_fence_is_array(h)) {
+			struct dma_fence_array *m = to_dma_fence_array(h);
+
+			CHECK(m->num_fences == 2);
+			CHECK((m->fences[0] == x2 && m->fences[1] == b) ||
+			    (m->fences[0] == b && m->fences[1] == x2));
+			/* ascending context order */
+			CHECK(m->fences[0]->context < m->fences[1]->context);
+			CHECK(!dma_fence_is_signaled(h));
+			dma_fence_signal(x2);
+			dma_fence_signal(b);
+			CHECK(dma_fence_wait_timeout(h, false, hz) > 0);
+		}
+		dma_fence_put(h);
+		dma_fence_signal(x1);
+		dma_fence_put(x1);
+		dma_fence_put(x2);
+	}
+
+	/* Containers are flattened into their leaf fences. */
+	h = dma_fence_unwrap_merge(&c2->base, c);
+	CHECK(h != NULL && dma_fence_is_array(h));
+	if (h != NULL && dma_fence_is_array(h)) {
+		/*
+		 * Leaves: b, c (arr2), a, b (arr), c.  b has signalled by
+		 * now and drops out; a and c are in one context each.
+		 */
+		CHECK(to_dma_fence_array(h)->num_fences == 2);
+	}
+	dma_fence_put(h);
+
+	dma_fence_signal(a);
+	dma_fence_signal(b);
+	dma_fence_signal(c);
+	dma_fence_put(&c2->base);
+	dma_fence_put(&c1->base);
+	dma_fence_put(&arr2->base);
+	dma_fence_put(&arr->base);
+	dma_fence_put(a);
+	dma_fence_put(b);
+	dma_fence_put(c);
+	tc_settle();
+	CHECK(tf_live == 0);
+}
+
 /*
  * Stress: one writer adds fences of every usage (and signals some) while
  * readers walk the object without the lock, with the 6.x iterators, the
@@ -1089,6 +1365,8 @@ drm2_dma_resv_run(void)
 	test_resv_deadline();
 	test_resv_replace_fences();
 	test_resv_legacy();
+	test_chain();
+	test_array_unwrap();
 	test_resv_stress();
 	printf("drm2-dma-resv: %d checks, %d failed\n", t_run, t_fail);
 	return t_fail;

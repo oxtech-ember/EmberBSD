@@ -208,6 +208,31 @@ struct dma_fence_array *
 to_dma_fence_array(struct dma_fence *fence)
 {
 
-	KASSERT(dma_fence_is_array(fence));
+	if (fence == NULL || !dma_fence_is_array(fence))
+		return NULL;
 	return container_of(fence, struct dma_fence_array, base);
+}
+
+struct dma_fence *
+dma_fence_array_first(struct dma_fence *head)
+{
+	struct dma_fence_array *array;
+
+	if (head == NULL)
+		return NULL;
+	if ((array = to_dma_fence_array(head)) == NULL)
+		return head;
+	if (array->num_fences == 0)
+		return NULL;
+	return array->fences[0];
+}
+
+struct dma_fence *
+dma_fence_array_next(struct dma_fence *head, unsigned int index)
+{
+	struct dma_fence_array *array = to_dma_fence_array(head);
+
+	if (array == NULL || index >= array->num_fences)
+		return NULL;
+	return array->fences[index];
 }
