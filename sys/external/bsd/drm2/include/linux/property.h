@@ -18,7 +18,10 @@
 #include <linux/errno.h>
 
 struct device;
-struct fwnode_handle;
+/* The one member the DRM core reads: the node a device was merged into. */
+struct fwnode_handle {
+	struct fwnode_handle	*secondary;
+};
 
 static inline struct fwnode_handle *
 dev_fwnode(const struct device *dev)

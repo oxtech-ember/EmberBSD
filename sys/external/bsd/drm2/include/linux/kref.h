@@ -42,7 +42,11 @@
 #include <linux/spinlock.h>
 
 struct kref {
-	unsigned int kr_count;
+	union {
+		unsigned int	kr_count;
+		/* the name 6.x code reads (refcount_read(&kref.refcount)) */
+		struct refcount	refcount;
+	};
 };
 
 static inline void

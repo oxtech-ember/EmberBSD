@@ -43,8 +43,6 @@ endif
 # CONFIG_DRM_FBDEV_EMULATION is off: no Linux fb_info here; the files that need it
 # (listed in tools/not-built.txt) are not built.  The console of a 6.18 driver
 # is a drm client of its own (later phase).
-makeoptions	drmkms618	"CPPFLAGS.drmkms618"+="-DCONFIG_FB=0"
-makeoptions	drmkms618	"CPPFLAGS.drmkms618"+="-DCONFIG_LOCKDEP=0"
 makeoptions	drmkms618	"CPPFLAGS.drmkms618"+="-DCONFIG_PCI=1"
 
 makeoptions	drmkms618	"CWARNFLAGS.drmkms618"+="-Wno-missing-field-initializers"
@@ -53,6 +51,7 @@ makeoptions	drmkms618	"CWARNFLAGS.drmkms618"+="-Wno-missing-field-initializers"
 file	external/bsd/drm2/drm618/drm618_exclusive.c	drmkms618 & drmkms
 
 # Own code of the 6.18 core (BSD-2-Clause, written to the Linux interface).
+file	external/bsd/drm2/drm618/drm618_cache.c		drmkms618
 file	external/bsd/drm2/drm618/drm618_kthread_worker.c	drmkms618
 file	external/bsd/drm2/drm618/drm618_managed.c	drmkms618
 file	external/bsd/drm2/drm618/drm618_rbtree.c	drmkms618
@@ -68,7 +67,7 @@ file	external/bsd/drm2/dist618/drm/display/drm_dp_dual_mode_helper.c		drmkms618
 file	external/bsd/drm2/dist618/drm/display/drm_dp_helper.c		drmkms618
 file	external/bsd/drm2/dist618/drm/display/drm_dp_mst_topology.c		drmkms618
 file	external/bsd/drm2/dist618/drm/display/drm_dsc_helper.c		drmkms618
-file	external/bsd/drm2/dist618/drm/display/drm_hdmi_audio_helper.c		drmkms618
+#file	external/bsd/drm2/dist618/drm/display/drm_hdmi_audio_helper.c		drmkms618  (CONFIG_DRM_DISPLAY_HDMI_AUDIO_HELPER off (needs ALSA hdmi-codec))
 file	external/bsd/drm2/dist618/drm/display/drm_hdmi_helper.c		drmkms618
 file	external/bsd/drm2/dist618/drm/display/drm_hdmi_state_helper.c		drmkms618
 file	external/bsd/drm2/dist618/drm/display/drm_scdc_helper.c		drmkms618
@@ -80,7 +79,8 @@ file	external/bsd/drm2/dist618/drm/drm_auth.c		drmkms618
 file	external/bsd/drm2/dist618/drm/drm_blend.c		drmkms618
 file	external/bsd/drm2/dist618/drm/drm_bridge.c		drmkms618
 file	external/bsd/drm2/dist618/drm/drm_buddy.c		drmkms618
-file	external/bsd/drm2/dist618/drm/drm_cache.c		drmkms618
+# drm_cache.c: replaced by drm618/drm618_cache.c (NetBSD cache primitives)
+#file	external/bsd/drm2/dist618/drm/drm_cache.c		drmkms618
 file	external/bsd/drm2/dist618/drm/drm_client.c		drmkms618
 file	external/bsd/drm2/dist618/drm/drm_client_event.c		drmkms618
 file	external/bsd/drm2/dist618/drm/drm_client_modeset.c		drmkms618
@@ -106,7 +106,7 @@ file	external/bsd/drm2/dist618/drm/drm_fourcc.c		drmkms618
 file	external/bsd/drm2/dist618/drm/drm_framebuffer.c		drmkms618
 file	external/bsd/drm2/dist618/drm/drm_gem.c		drmkms618
 file	external/bsd/drm2/dist618/drm/drm_gpuvm.c		drmkms618
-file	external/bsd/drm2/dist618/drm/drm_ioc32.c		drmkms618
+#file	external/bsd/drm2/dist618/drm/drm_ioc32.c		drmkms618  (CONFIG_COMPAT off)
 file	external/bsd/drm2/dist618/drm/drm_ioctl.c		drmkms618
 file	external/bsd/drm2/dist618/drm/drm_kms_helper_common.c		drmkms618
 file	external/bsd/drm2/dist618/drm/drm_mm.c		drmkms618
@@ -122,8 +122,8 @@ file	external/bsd/drm2/dist618/drm/drm_plane.c		drmkms618
 file	external/bsd/drm2/dist618/drm/drm_plane_helper.c		drmkms618
 file	external/bsd/drm2/dist618/drm/drm_prime.c		drmkms618
 file	external/bsd/drm2/dist618/drm/drm_print.c		drmkms618
-file	external/bsd/drm2/dist618/drm/drm_privacy_screen.c		drmkms618
-file	external/bsd/drm2/dist618/drm/drm_privacy_screen_x86.c		drmkms618
+#file	external/bsd/drm2/dist618/drm/drm_privacy_screen.c		drmkms618  (CONFIG_DRM_PRIVACY_SCREEN off)
+#file	external/bsd/drm2/dist618/drm/drm_privacy_screen_x86.c		drmkms618  (CONFIG_DRM_PRIVACY_SCREEN off)
 file	external/bsd/drm2/dist618/drm/drm_probe_helper.c		drmkms618
 file	external/bsd/drm2/dist618/drm/drm_property.c		drmkms618
 file	external/bsd/drm2/dist618/drm/drm_rect.c		drmkms618

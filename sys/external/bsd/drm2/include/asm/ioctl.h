@@ -32,4 +32,20 @@
 #ifndef _ASM_IOCTL_H_
 #define _ASM_IOCTL_H_
 
+#include <sys/ioccom.h>
+
+/*
+ * Decoding of the request numbers made by _IO/_IOR/_IOW/_IOWR, with the
+ * encoding of NetBSD's <sys/ioccom.h> (number in bits 0-7, group in 8-15,
+ * parameter size above, direction in the top three bits).  Integer
+ * constant expressions, as they are used as array designators.
+ * EmberBSD.
+ */
+#ifndef _IOC_NR
+#define	_IOC_NR(x)	((x) & 0xff)
+#define	_IOC_TYPE(x)	(((x) >> 8) & 0xff)
+#define	_IOC_SIZE(x)	IOCPARM_LEN(x)
+#define	_IOC_DIR(x)	((x) & IOC_DIRMASK)
+#endif
+
 #endif  /* _ASM_IOCTL_H_ */

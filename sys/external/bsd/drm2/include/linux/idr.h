@@ -126,6 +126,28 @@ ida_alloc_max(struct ida *ida, unsigned max, gfp_t gfp)
 	return ida_simple_get(ida, 0, max + 1, gfp);
 }
 
+/* ida_alloc*: the 6.x names; ids of [min, max], max 0 meaning no limit. */
+static inline int
+ida_alloc_range(struct ida *ida, unsigned min, unsigned max, gfp_t gfp)
+{
+
+	return ida_simple_get(ida, min, max == UINT_MAX ? 0 : max + 1, gfp);
+}
+
+static inline int
+ida_alloc(struct ida *ida, gfp_t gfp)
+{
+
+	return ida_simple_get(ida, 0, 0, gfp);
+}
+
+static inline int
+ida_alloc_min(struct ida *ida, unsigned min, gfp_t gfp)
+{
+
+	return ida_simple_get(ida, min, 0, gfp);
+}
+
 static inline void
 ida_simple_remove(struct ida *ida, unsigned int id)
 {
