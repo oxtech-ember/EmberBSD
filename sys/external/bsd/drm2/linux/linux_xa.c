@@ -87,6 +87,7 @@ xa_init_flags(struct xarray *xa, gfp_t gfp)
 {
 
 	mutex_init(&xa->xa_lock, MUTEX_DEFAULT, IPL_VM);
+	xa->xa_owner = NULL;
 	rb_tree_init(&xa->xa_tree, &xa_rb_ops);
 	xa->xa_gfp = gfp;
 }
@@ -114,9 +115,13 @@ xa_load(struct xarray *xa, unsigned long key)
 	struct node *n;
 
 	/* XXX pserialize */
-	mutex_enter(&xa->xa_lock);
-	n = rb_tree_find_node(&xa->xa_tree, &key64);
-	mutex_exit(&xa->xa_lock);
+	if (xa->xa_owner == curcpu()) {	/* the caller holds xa_lock */
+		n = rb_tree_find_node(&xa->xa_tree, &key64);
+	} else {
+		mutex_enter(&xa->xa_lock);
+		n = rb_tree_find_node(&xa->xa_tree, &key64);
+		mutex_exit(&xa->xa_lock);
+	}
 
 	return n ? n->n_datum : NULL;
 }
@@ -125,6 +130,7 @@ void *
 xa_store(struct xarray *xa, unsigned long key, void *datum, gfp_t gfp)
 {
 	struct node *n, *collision, *recollision;
+	void *old = NULL;
 
 	KASSERT(datum != NULL);
 	KASSERT(((uintptr_t)datum & 0x3) == 0);
@@ -138,17 +144,19 @@ xa_store(struct xarray *xa, unsigned long key, void *datum, gfp_t gfp)
 	mutex_enter(&xa->xa_lock);
 	collision = rb_tree_insert_node(&xa->xa_tree, n);
 	if (collision != n) {
-		rb_tree_remove_node(&xa->xa_tree, n);
+		/* The key is stored already: n was not inserted; take the old node out and put n in its place. */
+		rb_tree_remove_node(&xa->xa_tree, collision);
 		recollision = rb_tree_insert_node(&xa->xa_tree, n);
 		KASSERT(recollision == n);
 	}
 	mutex_exit(&xa->xa_lock);
 
+	/* Linux: the entry that was there before (NULL if none). */
 	if (collision != n) {
-		datum = collision->n_datum;
+		old = collision->n_datum;
 		kmem_free(collision, sizeof(*collision));
 	}
-	return datum;
+	return old;
 }
 
 int
@@ -200,9 +208,13 @@ xa_find(struct xarray *xa, unsigned long *startp, unsigned long max,
 
 	KASSERT(tagmask == -1);	/* not yet supported */
 
-	mutex_enter(&xa->xa_lock);
-	n = rb_tree_find_node_geq(&xa->xa_tree, &key64);
-	mutex_exit(&xa->xa_lock);
+	if (xa->xa_owner == curcpu()) {	/* the caller holds xa_lock */
+		n = rb_tree_find_node_geq(&xa->xa_tree, &key64);
+	} else {
+		mutex_enter(&xa->xa_lock);
+		n = rb_tree_find_node_geq(&xa->xa_tree, &key64);
+		mutex_exit(&xa->xa_lock);
+	}
 
 	if (n == NULL || n->n_key > max)
 		return NULL;

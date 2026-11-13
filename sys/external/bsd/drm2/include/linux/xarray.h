@@ -43,6 +43,7 @@ struct xa_limit {
 
 struct xarray {
 	kmutex_t		xa_lock;
+	struct cpu_info		*xa_owner;	/* the cpu that holds xa_lock (a spin mutex), or NULL */
 	struct rb_tree		xa_tree;
 	gfp_t			xa_gfp;
 };
@@ -77,12 +78,21 @@ xa_is_err(const void *entry)
 #define	XA_FLAGS_ALLOC	0
 
 /*
- * Locking of the tree by the caller.  xa_lock is an IPL_VM spin mutex
+ * Locking of the tree by the caller.  The readers (xa_load, xa_find,
+ * xa_find_after) work with the lock held by the caller, as in Linux, where they
+ * are lockless: the owner field says that the lock is held by this cpu.
+ * xa_lock is an IPL_VM spin mutex
  * (see xa_init_flags), so the _irq, _bh and _irqsave forms are the same
  * operation; flags is only set so that callers do not use it uninitialised.
  */
-#define	xa_lock(XA)		mutex_enter(&(XA)->xa_lock)
-#define	xa_unlock(XA)		mutex_exit(&(XA)->xa_lock)
+#define	xa_lock(XA)		do {					      \
+	mutex_enter(&(XA)->xa_lock);					      \
+	(XA)->xa_owner = curcpu();					      \
+} while (0)
+#define	xa_unlock(XA)		do {					      \
+	(XA)->xa_owner = NULL;						      \
+	mutex_exit(&(XA)->xa_lock);					      \
+} while (0)
 #define	xa_lock_irq(XA)		xa_lock(XA)
 #define	xa_unlock_irq(XA)	xa_unlock(XA)
 #define	xa_lock_bh(XA)		xa_lock(XA)

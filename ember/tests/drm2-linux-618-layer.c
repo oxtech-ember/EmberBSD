@@ -283,6 +283,55 @@ test_strscpy(void)
 	CHECK(strscpy(big, "0123456789") == -E2BIG && strcmp(big, "012") == 0);
 }
 
+/*
+ * The readers of an xarray (xa_load, xa_find, xa_find_after, xa_for_each) may be
+ * called with xa_lock held: Linux's are lockless, and drm_minor_acquire reads
+ * under the lock.  The writers lock by themselves.
+ */
+static void
+test_xa_under_lock(void)
+{
+	struct xarray xa;
+	unsigned long idx;
+	int v1, v2, n = 0;
+	void *entry;
+
+	xa_init_flags(&xa, XA_FLAGS_ALLOC);
+	CHECK(xa_store(&xa, 4, &v1, GFP_KERNEL) == NULL);
+	CHECK(xa_store(&xa, 9, &v2, GFP_KERNEL) == NULL);
+	/* replace: the old entry comes back, the new one is found; none before gives NULL */
+	CHECK(xa_store(&xa, 4, &v2, GFP_KERNEL) == &v1);
+	CHECK(xa_load(&xa, 4) == &v2);
+	CHECK(xa_store(&xa, 4, &v1, GFP_KERNEL) == &v2);
+	CHECK(xa_load(&xa, 4) == &v1);
+	{
+		/* a slot reserved with a NULL entry and filled later (drm_minor_alloc/register) */
+		uint32_t id;
+
+		CHECK(xa_alloc(&xa, &id, NULL, XA_LIMIT(20, 30), GFP_KERNEL) == 0);
+		CHECK(xa_load(&xa, id) == NULL);
+		CHECK(xa_store(&xa, id, &v1, GFP_KERNEL) == NULL);
+		CHECK(xa_load(&xa, id) == &v1);
+		CHECK(xa_erase(&xa, id) == &v1);
+	}
+	xa_lock(&xa);
+	CHECK(xa_load(&xa, 4) == &v1);
+	CHECK(xa_load(&xa, 5) == NULL);
+	idx = 0;
+	CHECK(xa_find(&xa, &idx, ULONG_MAX, -1) == &v1 && idx == 4);
+	CHECK(xa_find_after(&xa, &idx, ULONG_MAX, -1) == &v2 && idx == 9);
+	xa_for_each(&xa, idx, entry)
+		n++;
+	CHECK(n == 2);
+	xa_unlock(&xa);
+	/* and again outside the lock, with the lock free for others */
+	CHECK(xa_load(&xa, 9) == &v2);
+	xa_lock_irqsave(&xa, idx);
+	CHECK(xa_load(&xa, 9) == &v2);
+	xa_unlock_irqrestore(&xa, idx);
+	xa_destroy(&xa);
+}
+
 int	drm2_linux_618_layer_run(void);
 
 int
@@ -299,6 +348,7 @@ drm2_linux_618_layer_run(void)
 	test_misc();
 	test_task();
 	test_strscpy();
+	test_xa_under_lock();
 	printf("drm2-linux-618-layer: %d checks, %d failed\n", t_run, t_fail);
 	return t_fail;
 }
