@@ -120,6 +120,7 @@ sh "$src/ember/tests/aicwf-sta.sh"
 sh "$src/ember/tests/aicwf-vht.sh"
 sh "$src/ember/tests/bwfm-scan-padding.sh" "$src"
 sh "$src/ember/tests/bwfm-key-epoch.sh" "$src"
+sh "$src/ember/tests/drm2-linux-compat.sh"
 if [ "$mode" = all ]; then
     "$python" "$src/ember/tools/btuart-contract.py" "$src/sys/dev/bluetooth/btuart.c"
     "$python" "$src/ember/tools/bluetooth-control-contract.py" "$src/ember/tools/bluetooth-control.c"
