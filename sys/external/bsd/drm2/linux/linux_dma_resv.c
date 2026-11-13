@@ -37,24 +37,14 @@ __KERNEL_RCSID(0, "$NetBSD: linux_dma_resv.c,v 1.22 2022/02/15 22:51:03 riastrad
 #include <sys/select.h>
 
 #include <linux/dma-fence.h>
+#include <linux/dma-fence-array.h>
 #include <linux/dma-resv.h>
+#include <linux/errno.h>
+#include <linux/slab.h>
 #include <linux/seqlock.h>
 #include <linux/ww_mutex.h>
 
 DEFINE_WW_CLASS(reservation_ww_class __cacheline_aligned);
-
-static struct dma_resv_list *
-objlist_tryalloc(uint32_t n)
-{
-	struct dma_resv_list *list;
-
-	list = kmem_alloc(offsetof(typeof(*list), shared[n]), KM_NOSLEEP);
-	if (list == NULL)
-		return NULL;
-	list->shared_max = n;
-
-	return list;
-}
 
 static struct dma_resv_list *
 objlist_alloc(uint32_t n)
@@ -91,6 +81,51 @@ objlist_defer_free(struct dma_resv_list *list)
 	call_rcu(&list->rol_rcu, objlist_free_cb);
 }
 
+struct dma_resv_xent {
+	struct dma_fence	*fence;
+	uint32_t		usage;
+};
+
+struct dma_resv_xlist {
+	struct rcu_head		rxl_rcu;
+	uint32_t		count;
+	uint32_t		max;
+	struct dma_resv_xent	ent[];
+};
+
+static struct dma_resv_xlist *
+xlist_alloc(uint32_t n)
+{
+	struct dma_resv_xlist *list;
+
+	list = kmem_alloc(offsetof(struct dma_resv_xlist, ent[n]), KM_SLEEP);
+	list->count = 0;
+	list->max = n;
+
+	return list;
+}
+
+static void
+xlist_free(struct dma_resv_xlist *list)
+{
+
+	kmem_free(list, offsetof(struct dma_resv_xlist, ent[list->max]));
+}
+
+static void
+xlist_free_cb(struct rcu_head *rcu)
+{
+
+	xlist_free(container_of(rcu, struct dma_resv_xlist, rxl_rcu));
+}
+
+static void
+xlist_defer_free(struct dma_resv_xlist *list)
+{
+
+	call_rcu(&list->rxl_rcu, xlist_free_cb);
+}
+
 /*
  * dma_resv_init(robj)
  *
@@ -106,6 +141,7 @@ dma_resv_init(struct dma_resv *robj)
 	robj->fence_excl = NULL;
 	robj->fence = NULL;
 	robj->robj_prealloc = NULL;
+	robj->xfence = NULL;
 }
 
 /*
@@ -134,6 +170,14 @@ dma_resv_fini(struct dma_resv *robj)
 	if (robj->fence_excl) {
 		dma_fence_put(robj->fence_excl);
 		robj->fence_excl = NULL; /* paranoia */
+	}
+	if (robj->xfence) {
+		for (i = 0; i < robj->xfence->count; i++) {
+			dma_fence_put(robj->xfence->ent[i].fence);
+			robj->xfence->ent[i].fence = NULL; /* paranoia */
+		}
+		xlist_free(robj->xfence);
+		robj->xfence = NULL; /* paranoia */
 	}
 	ww_mutex_destroy(&robj->lock);
 }
@@ -632,125 +676,6 @@ dma_resv_replace_excl_fence(struct dma_resv *robj, struct dma_fence *fence)
 }
 
 /*
- * dma_resv_add_shared_fence(robj, fence)
- *
- *	Acquire a reference to fence and add it to robj's shared list.
- *	If any fence was already added with the same context number,
- *	release it and replace it by this one.
- *
- *	Caller must have robj locked, and must have preceded with a
- *	call to dma_resv_reserve_shared for each shared fence
- *	added.
- */
-void
-dma_resv_add_shared_fence(struct dma_resv *robj,
-    struct dma_fence *fence)
-{
-	struct dma_resv_list *list = robj->fence;
-	struct dma_resv_list *prealloc = robj->robj_prealloc;
-	struct dma_resv_write_ticket ticket;
-	struct dma_fence *replace = NULL;
-	uint32_t i;
-
-	KASSERT(dma_resv_held(robj));
-
-	/* Acquire a reference to the fence.  */
-	KASSERT(fence != NULL);
-	(void)dma_fence_get(fence);
-
-	/* Check for a preallocated replacement list.  */
-	if (prealloc == NULL) {
-		/*
-		 * If there is no preallocated replacement list, then
-		 * there must be room in the current list.
-		 */
-		KASSERT(list != NULL);
-		KASSERT(list->shared_count < list->shared_max);
-
-		/* Begin an update.  Implies membar_producer for fence.  */
-		dma_resv_write_begin(robj, &ticket);
-
-		/* Find a fence with the same context number.  */
-		for (i = 0; i < list->shared_count; i++) {
-			if (list->shared[i]->context == fence->context) {
-				replace = list->shared[i];
-				atomic_store_relaxed(&list->shared[i], fence);
-				break;
-			}
-		}
-
-		/* If we didn't find one, add it at the end.  */
-		if (i == list->shared_count) {
-			atomic_store_relaxed(&list->shared[list->shared_count],
-			    fence);
-			atomic_store_relaxed(&list->shared_count,
-			    list->shared_count + 1);
-		}
-
-		/* Commit the update.  */
-		dma_resv_write_commit(robj, &ticket);
-	} else {
-		/*
-		 * There is a preallocated replacement list.  There may
-		 * not be a current list.  If not, treat it as a zero-
-		 * length list.
-		 */
-		uint32_t shared_count = (list == NULL? 0 : list->shared_count);
-
-		/* There had better be room in the preallocated list.  */
-		KASSERT(shared_count < prealloc->shared_max);
-
-		/*
-		 * Copy the fences over, but replace if we find one
-		 * with the same context number.
-		 */
-		for (i = 0; i < shared_count; i++) {
-			if (replace == NULL &&
-			    list->shared[i]->context == fence->context) {
-				replace = list->shared[i];
-				prealloc->shared[i] = fence;
-			} else {
-				prealloc->shared[i] = list->shared[i];
-			}
-		}
-		prealloc->shared_count = shared_count;
-
-		/* If we didn't find one, add it at the end.  */
-		if (replace == NULL) {
-			KASSERT(prealloc->shared_count < prealloc->shared_max);
-			prealloc->shared[prealloc->shared_count++] = fence;
-		}
-
-		/*
-		 * Now ready to replace the list.  Begin an update.
-		 * Implies membar_producer for fence and prealloc.
-		 */
-		dma_resv_write_begin(robj, &ticket);
-
-		/* Replace the list.  */
-		atomic_store_relaxed(&robj->fence, prealloc);
-		robj->robj_prealloc = NULL;
-
-		/* Commit the update.  */
-		dma_resv_write_commit(robj, &ticket);
-
-		/*
-		 * If there is an old list, free it when convenient.
-		 * (We are not in a position at this point to sleep
-		 * waiting for activity on all CPUs.)
-		 */
-		if (list)
-			objlist_defer_free(list);
-	}
-
-	/* Release a fence if we replaced it.  */
-	if (replace) {
-		dma_fence_put(replace);
-		replace = NULL;	/* paranoia */
-	}
-}
-
-/*
  * dma_resv_get_excl_rcu(robj)
  *
  *	Note: Caller need not call this from an RCU read section.
@@ -916,327 +841,749 @@ restart:
 }
 
 /*
- * dma_resv_copy_fences(dst, src)
+ * Linux 6.x usage-tagged API (EmberBSD addition, AI-assisted).
  *
- *	Copy the exclusive fence and all the shared fences from src to
- *	dst.
+ * The 5.6 storage (fence_excl and the shared list) is kept, see struct
+ * dma_resv.  Fences that need their own usage tag live in xfence.  All
+ * changes happen under the object lock inside one write section of the
+ * seqcount; lockless readers validate against the seqcount and restart.
+ */
+
+/*
+ * dma_resv_xlist_reserve(robj, n)
  *
- *	Caller must have dst locked.
+ *	Make room for n more tagged entries.  Caller holds the lock.
+ */
+static int
+dma_resv_xlist_reserve(struct dma_resv *robj, uint32_t n)
+{
+	struct dma_resv_xlist *old = robj->xfence, *new;
+	struct dma_resv_write_ticket ticket;
+	uint32_t count = old != NULL ? old->count : 0, max, i;
+
+	if (count > UINT32_MAX - n)
+		return -ENOMEM;
+	if (old != NULL && count + n <= old->max)
+		return 0;
+
+	max = count + n;
+	max = max > UINT32_MAX/2 ? UINT32_MAX : MAX(2*max, 4);
+	new = xlist_alloc(max);
+	for (i = 0; i < count; i++)
+		new->ent[i] = old->ent[i];	/* the references move over */
+	new->count = count;
+
+	dma_resv_write_begin(robj, &ticket);
+	atomic_store_relaxed(&robj->xfence, new);
+	dma_resv_write_commit(robj, &ticket);
+
+	if (old != NULL)
+		xlist_defer_free(old);
+	return 0;
+}
+
+/*
+ * dma_resv_reserve_fences(robj, num_fences)
+ *
+ *	Reserve slots for num_fences more fences of any usage.  Caller
+ *	holds the lock.  -EINVAL for zero, like Linux.
  */
 int
-dma_resv_copy_fences(struct dma_resv *dst_robj,
-    const struct dma_resv *src_robj)
+dma_resv_reserve_fences(struct dma_resv *robj, unsigned int num_fences)
 {
-	const struct dma_resv_list *src_list;
-	struct dma_resv_list *dst_list = NULL;
-	struct dma_resv_list *old_list;
-	struct dma_fence *fence = NULL;
-	struct dma_fence *old_fence;
-	uint32_t shared_count, i;
-	struct dma_resv_read_ticket read_ticket;
-	struct dma_resv_write_ticket write_ticket;
+	int error;
 
-	KASSERT(dma_resv_held(dst_robj));
+	KASSERT(dma_resv_held(robj));
 
-top:	KASSERT(fence == NULL);
-
-	/* Enter an RCU read section and get a read ticket.  */
-	rcu_read_lock();
-	dma_resv_read_begin(src_robj, &read_ticket);
-
-	/* Get the shared list.  */
-	if (!dma_resv_get_shared_reader(src_robj, &src_list, &shared_count,
-		&read_ticket))
-		goto restart;
-	if (src_list) {
-		/* Allocate a new list, if necessary.  */
-		if (dst_list == NULL)
-			dst_list = objlist_tryalloc(shared_count);
-		if (dst_list == NULL || dst_list->shared_max < shared_count) {
-			rcu_read_unlock();
-			if (dst_list) {
-				objlist_free(dst_list);
-				dst_list = NULL;
-			}
-			dst_list = objlist_alloc(shared_count);
-			dst_list->shared_count = 0; /* paranoia */
-			goto top;
-		}
-
-		/* Copy over all fences that are not yet signalled.  */
-		dst_list->shared_count = 0;
-		for (i = 0; i < shared_count; i++) {
-			KASSERT(fence == NULL);
-			fence = atomic_load_relaxed(&src_list->shared[i]);
-			if ((fence = dma_fence_get_rcu(fence)) == NULL)
-				goto restart;
-			if (dma_fence_is_signaled(fence)) {
-				dma_fence_put(fence);
-				fence = NULL;
-				continue;
-			}
-			dst_list->shared[dst_list->shared_count++] = fence;
-			fence = NULL;
-		}
-
-		/* If anything changed while we were copying, restart.  */
-		if (!dma_resv_read_valid(src_robj, &read_ticket))
-			goto restart;
-	}
-
-	/* Get the exclusive fence.  */
-	KASSERT(fence == NULL);
-	if (!dma_resv_get_excl_reader(src_robj, &fence, &read_ticket))
-		goto restart;
-
-	/* All done with src; exit the RCU read section.  */
-	rcu_read_unlock();
-
-	/*
-	 * We now have a snapshot of the shared and exclusive fences of
-	 * src_robj and we have acquired references to them so they
-	 * won't go away.  Transfer them over to dst_robj, releasing
-	 * references to any that were there.
-	 */
-
-	/* Get the old shared and exclusive fences, if any.  */
-	old_list = dst_robj->fence;
-	old_fence = dst_robj->fence_excl;
-
-	/*
-	 * Begin an update.  Implies membar_producer for dst_list and
-	 * fence.
-	 */
-	dma_resv_write_begin(dst_robj, &write_ticket);
-
-	/* Replace the fences.  */
-	atomic_store_relaxed(&dst_robj->fence, dst_list);
-	atomic_store_relaxed(&dst_robj->fence_excl, fence);
-
-	/* Commit the update.  */
-	dma_resv_write_commit(dst_robj, &write_ticket);
-
-	/* Release the old exclusive fence, if any.  */
-	if (old_fence) {
-		dma_fence_put(old_fence);
-		old_fence = NULL; /* paranoia */
-	}
-
-	/* Release any old shared fences.  */
-	if (old_list) {
-		for (i = old_list->shared_count; i --> 0;) {
-			dma_fence_put(old_list->shared[i]);
-			old_list->shared[i] = NULL; /* paranoia */
-		}
-		objlist_free(old_list);
-		old_list = NULL; /* paranoia */
-	}
-
-	/* Success!  */
-	return 0;
-
-restart:
-	KASSERT(fence == NULL);
-	rcu_read_unlock();
-	if (dst_list) {
-		for (i = dst_list->shared_count; i --> 0;) {
-			dma_fence_put(dst_list->shared[i]);
-			dst_list->shared[i] = NULL; /* paranoia */
-		}
-		/* reuse dst_list allocation for the next attempt */
-	}
-	goto top;
+	if (num_fences == 0)
+		return -EINVAL;
+	error = dma_resv_reserve_shared(robj, num_fences);
+	if (error)
+		return error;
+	return dma_resv_xlist_reserve(robj, num_fences);
 }
 
 /*
- * dma_resv_test_signaled_rcu(robj, shared)
+ * resv_nth_locked(robj, n, usagep)
  *
- *	If shared is true, test whether all of the shared fences are
- *	signalled, or if there are none, test whether the exclusive
- *	fence is signalled.  If shared is false, test only whether the
- *	exclusive fence is signalled.
- *
- *	XXX Why does this _not_ test the exclusive fence if shared is
- *	true only if there are no shared fences?  This makes no sense.
+ *	The n-th fence in iteration order (excl, shared list, tagged
+ *	list) and its usage, or NULL past the end.  Caller holds the
+ *	lock.
  */
-bool
-dma_resv_test_signaled_rcu(const struct dma_resv *robj,
-    bool shared)
+static struct dma_fence *
+resv_nth_locked(const struct dma_resv *robj, unsigned n,
+    enum dma_resv_usage *usagep)
 {
-	struct dma_resv_read_ticket ticket;
-	const struct dma_resv_list *list;
-	struct dma_fence *fence = NULL;
-	uint32_t i, shared_count;
-	bool signaled = true;
+	const struct dma_resv_list *sl = robj->fence;
+	const struct dma_resv_xlist *xl = robj->xfence;
+	unsigned sc = sl != NULL ? sl->shared_count : 0;
+	unsigned xc = xl != NULL ? xl->count : 0;
 
-top:	KASSERT(fence == NULL);
-
-	/* Enter an RCU read section and get a read ticket.  */
-	rcu_read_lock();
-	dma_resv_read_begin(robj, &ticket);
-
-	/* If shared is requested and there is a shared list, test it.  */
-	if (shared) {
-		if (!dma_resv_get_shared_reader(robj, &list, &shared_count,
-			&ticket))
-			goto restart;
-	} else {
-		list = NULL;
-		shared_count = 0;
-	}
-	if (list != NULL) {
-		/*
-		 * For each fence, if it is going away, restart.
-		 * Otherwise, acquire a reference to it to test whether
-		 * it is signalled.  Stop if we find any that is not
-		 * signalled.
-		 */
-		for (i = 0; i < shared_count; i++) {
-			KASSERT(fence == NULL);
-			fence = atomic_load_relaxed(&list->shared[i]);
-			if ((fence = dma_fence_get_rcu(fence)) == NULL)
-				goto restart;
-			signaled &= dma_fence_is_signaled(fence);
-			dma_fence_put(fence);
-			fence = NULL;
-			if (!signaled)
-				goto out;
+	if (robj->fence_excl != NULL) {
+		if (n == 0) {
+			*usagep = DMA_RESV_USAGE_WRITE;
+			return robj->fence_excl;
 		}
-
-		/* If anything changed while we were testing, restart.  */
-		if (!dma_resv_read_valid(robj, &ticket))
-			goto restart;
+		n--;
 	}
-	if (shared_count)
-		goto out;
-
-	/* If there is an exclusive fence, test it.  */
-	KASSERT(fence == NULL);
-	if (!dma_resv_get_excl_reader(robj, &fence, &ticket))
-		goto restart;
-	if (fence != NULL) {
-		/* Test whether it is signalled.  If no, stop.  */
-		signaled &= dma_fence_is_signaled(fence);
-		dma_fence_put(fence);
-		fence = NULL;
-		if (!signaled)
-			goto out;
+	if (n < sc) {
+		*usagep = DMA_RESV_USAGE_READ;
+		return sl->shared[n];
 	}
-
-out:	KASSERT(fence == NULL);
-	rcu_read_unlock();
-	return signaled;
-
-restart:
-	KASSERT(fence == NULL);
-	rcu_read_unlock();
-	goto top;
+	n -= sc;
+	if (n < xc) {
+		*usagep = xl->ent[n].usage;
+		return xl->ent[n].fence;
+	}
+	return NULL;
 }
 
 /*
- * dma_resv_wait_timeout_rcu(robj, shared, intr, timeout)
+ * resv_remove_nth_ws(robj, n)
  *
- *	If shared is true, wait for all of the shared fences to be
- *	signalled, or if there are none, wait for the exclusive fence
- *	to be signalled.  If shared is false, wait only for the
- *	exclusive fence to be signalled.  If timeout is zero, don't
- *	wait, only test.
+ *	Remove the n-th fence; return it with its reference (the caller
+ *	puts it after the write section).  Caller holds the lock and is
+ *	inside a write section.
+ */
+static struct dma_fence *
+resv_remove_nth_ws(struct dma_resv *robj, unsigned n)
+{
+	struct dma_resv_list *sl = robj->fence;
+	struct dma_resv_xlist *xl = robj->xfence;
+	unsigned sc = sl != NULL ? sl->shared_count : 0;
+	struct dma_fence *fence;
+	unsigned i;
+
+	if (robj->fence_excl != NULL) {
+		if (n == 0) {
+			fence = robj->fence_excl;
+			atomic_store_relaxed(&robj->fence_excl, NULL);
+			return fence;
+		}
+		n--;
+	}
+	if (n < sc) {
+		fence = sl->shared[n];
+		for (i = n + 1; i < sc; i++)
+			atomic_store_relaxed(&sl->shared[i - 1], sl->shared[i]);
+		atomic_store_relaxed(&sl->shared[sc - 1], NULL);
+		atomic_store_relaxed(&sl->shared_count, sc - 1);
+		return fence;
+	}
+	n -= sc;
+	KASSERT(xl != NULL && n < xl->count);
+	fence = xl->ent[n].fence;
+	for (i = n + 1; i < xl->count; i++) {
+		atomic_store_relaxed(&xl->ent[i - 1].fence, xl->ent[i].fence);
+		atomic_store_relaxed(&xl->ent[i - 1].usage, xl->ent[i].usage);
+	}
+	atomic_store_relaxed(&xl->count, xl->count - 1);
+	return fence;
+}
+
+/*
+ * dma_resv_add_fence(robj, fence, usage)
  *
- *	XXX Why does this _not_ wait for the exclusive fence if shared
- *	is true only if there are no shared fences?  This makes no
- *	sense.
+ *	Add fence with the given usage, taking a reference.  Like
+ *	Linux, an existing fence of the same context that is not
+ *	stronger (usage not lower than the new one) and not later is
+ *	replaced, and so is any fence that has already signalled.
+ *	Caller holds the lock and has reserved a slot with
+ *	dma_resv_reserve_fences; if it did not, a slot is allocated
+ *	here (this may sleep).
+ */
+void
+dma_resv_add_fence(struct dma_resv *robj, struct dma_fence *fence,
+    enum dma_resv_usage usage)
+{
+	struct dma_resv_write_ticket ticket;
+	struct dma_resv_list *list, *prealloc, *old_list = NULL;
+	struct dma_resv_xlist *xl;
+	struct dma_fence *old = NULL, *f;
+	enum dma_resv_usage old_usage;
+	bool victim = false, victim_shared = false, victim_x = false;
+	bool need_x, need_shared;
+	unsigned n = 0, victim_n = 0, i, sc;
+
+	KASSERT(dma_resv_held(robj));
+	KASSERT(fence != NULL);
+	KASSERT(usage <= DMA_RESV_USAGE_BOOKKEEP);
+
+	(void)dma_fence_get(fence);
+
+	/* Find the one entry the new fence replaces, if any.  */
+	while ((f = resv_nth_locked(robj, n, &old_usage)) != NULL) {
+		if ((f->context == fence->context && old_usage >= usage &&
+			dma_fence_is_later_or_same(fence, f)) ||
+		    dma_fence_is_signaled(f)) {
+			victim = true;
+			victim_n = n;
+			break;
+		}
+		n++;
+	}
+	if (victim) {
+		/* Which storage does the victim free a slot in?  */
+		sc = robj->fence != NULL ? robj->fence->shared_count : 0;
+		i = victim_n - (robj->fence_excl != NULL ? 1 : 0);
+		if (robj->fence_excl != NULL && victim_n == 0) {
+			victim_shared = false;
+			victim_x = false;
+		} else if (i < sc) {
+			victim_shared = true;
+			victim_x = false;
+		} else {
+			victim_shared = false;
+			victim_x = true;
+		}
+	}
+
+	/* Make sure the destination has room, before the write section.  */
+	need_x = need_shared = false;
+	switch (usage) {
+	case DMA_RESV_USAGE_READ:
+		need_shared = true;
+		break;
+	case DMA_RESV_USAGE_WRITE:
+		/* The previous latest writer moves to the tagged list.  */
+		need_x = robj->fence_excl != NULL &&
+		    !(victim && victim_n == 0);
+		break;
+	default:
+		need_x = true;
+		break;
+	}
+	if (need_x) {
+		xl = robj->xfence;
+		if ((xl == NULL || xl->count >= xl->max) && !victim_x)
+			(void)dma_resv_xlist_reserve(robj, 1);
+	}
+	if (need_shared) {
+		list = robj->fence;
+		if ((list == NULL || list->shared_count >= list->shared_max) &&
+		    robj->robj_prealloc == NULL && !victim_shared)
+			(void)dma_resv_reserve_shared(robj, 1);
+	}
+
+	dma_resv_write_begin(robj, &ticket);
+	if (victim)
+		old = resv_remove_nth_ws(robj, victim_n);
+
+	switch (usage) {
+	case DMA_RESV_USAGE_READ:
+		list = robj->fence;
+		prealloc = robj->robj_prealloc;
+		if (prealloc == NULL) {
+			KASSERT(list != NULL);
+			KASSERT(list->shared_count < list->shared_max);
+			atomic_store_relaxed(&list->shared[list->shared_count],
+			    fence);
+			atomic_store_relaxed(&list->shared_count,
+			    list->shared_count + 1);
+		} else {
+			sc = list != NULL ? list->shared_count : 0;
+			KASSERT(sc < prealloc->shared_max);
+			for (i = 0; i < sc; i++)
+				prealloc->shared[i] = list->shared[i];
+			prealloc->shared[sc] = fence;
+			prealloc->shared_count = sc + 1;
+			atomic_store_relaxed(&robj->fence, prealloc);
+			robj->robj_prealloc = NULL;
+			old_list = list;
+		}
+		break;
+	case DMA_RESV_USAGE_WRITE:
+		if (robj->fence_excl != NULL) {
+			xl = robj->xfence;
+			KASSERT(xl != NULL && xl->count < xl->max);
+			xl->ent[xl->count].fence = robj->fence_excl;
+			xl->ent[xl->count].usage = DMA_RESV_USAGE_WRITE;
+			atomic_store_relaxed(&xl->count, xl->count + 1);
+		}
+		atomic_store_relaxed(&robj->fence_excl, fence);
+		break;
+	default:
+		xl = robj->xfence;
+		KASSERT(xl != NULL && xl->count < xl->max);
+		xl->ent[xl->count].fence = fence;
+		xl->ent[xl->count].usage = usage;
+		atomic_store_relaxed(&xl->count, xl->count + 1);
+		break;
+	}
+	dma_resv_write_commit(robj, &ticket);
+
+	if (old_list != NULL)
+		objlist_defer_free(old_list);
+	dma_fence_put(old);	/* NULL is fine */
+}
+
+/*
+ * dma_resv_add_shared_fence(robj, fence)
+ *
+ *	5.6 name: add fence as a reader.  Caller holds the lock and has
+ *	called dma_resv_reserve_shared.
+ */
+void
+dma_resv_add_shared_fence(struct dma_resv *robj, struct dma_fence *fence)
+{
+
+	dma_resv_add_fence(robj, fence, DMA_RESV_USAGE_READ);
+}
+
+/*
+ * dma_resv_replace_fences(robj, context, replacement, usage)
+ *
+ *	Replace every fence of the given context by replacement with
+ *	the given usage.  Caller holds the lock.
+ */
+void
+dma_resv_replace_fences(struct dma_resv *robj, uint64_t context,
+    struct dma_fence *replacement, enum dma_resv_usage usage)
+{
+	struct dma_resv_write_ticket ticket;
+	struct dma_fence *f, *old;
+	enum dma_resv_usage u;
+	unsigned n;
+	bool found = false;
+
+	KASSERT(dma_resv_held(robj));
+
+restart:
+	for (n = 0; (f = resv_nth_locked(robj, n, &u)) != NULL; n++) {
+		if (f->context != context)
+			continue;
+		dma_resv_write_begin(robj, &ticket);
+		old = resv_remove_nth_ws(robj, n);
+		dma_resv_write_commit(robj, &ticket);
+		dma_fence_put(old);
+		found = true;
+		goto restart;
+	}
+	if (found)
+		dma_resv_add_fence(robj, replacement, usage);
+}
+
+/*
+ * Iterators.
+ */
+
+struct dma_fence *
+dma_resv_iter_first(struct dma_resv_iter *cursor)
+{
+	struct dma_fence *fence;
+
+	KASSERT(dma_resv_held(cursor->obj));
+
+	cursor->index = 0;
+	fence = dma_resv_iter_next(cursor);
+	cursor->is_restarted = true;
+	return fence;
+}
+
+struct dma_fence *
+dma_resv_iter_next(struct dma_resv_iter *cursor)
+{
+	struct dma_fence *fence;
+	enum dma_resv_usage usage;
+
+	KASSERT(dma_resv_held(cursor->obj));
+
+	cursor->is_restarted = false;
+	while ((fence = resv_nth_locked(cursor->obj, cursor->index++,
+		    &usage)) != NULL) {
+		if (usage <= cursor->usage) {
+			cursor->fence_usage = usage;
+			return fence;
+		}
+	}
+	cursor->index--;	/* stay at the end */
+	return NULL;
+}
+
+/*
+ * dma_resv_iter_restart_unlocked(cursor)
+ *
+ *	Take a new snapshot of the object for the lockless walk.
+ *	Caller is in an RCU read section.
+ */
+static void
+dma_resv_iter_restart_unlocked(struct dma_resv_iter *cursor)
+{
+	struct dma_resv *robj = cursor->obj;
+	const struct dma_resv_list *sl;
+	const struct dma_resv_xlist *xl;
+
+	cursor->rs_version = read_seqcount_begin(&robj->seq);
+	cursor->rs_excl = atomic_load_consume(&robj->fence_excl);
+	sl = atomic_load_consume(&robj->fence);
+	xl = atomic_load_consume(&robj->xfence);
+	cursor->rs_slist = sl;
+	cursor->rs_xlist = xl;
+	cursor->rs_nshared = sl != NULL ? atomic_load_relaxed(&sl->shared_count) : 0;
+	cursor->rs_nx = xl != NULL ? atomic_load_relaxed(&xl->count) : 0;
+	cursor->index = 0;
+	cursor->num_fences = (cursor->rs_excl != NULL ? 1 : 0) +
+	    cursor->rs_nshared + cursor->rs_nx;
+	cursor->is_restarted = true;
+}
+
+/*
+ * dma_resv_iter_walk_unlocked(cursor)
+ *
+ *	Advance to the next unsignalled fence whose usage is within the
+ *	cursor's, take a reference to it and leave it in cursor->fence,
+ *	or leave NULL there at the end.  Restart when the object
+ *	changed.  Caller is in an RCU read section.
+ */
+static void
+dma_resv_iter_walk_unlocked(struct dma_resv_iter *cursor)
+{
+	struct dma_resv *robj = cursor->obj;
+	struct dma_fence *fence;
+	enum dma_resv_usage usage;
+	unsigned n;
+
+	for (;;) {
+		/* Drop the reference from the previous round.  */
+		dma_fence_put(cursor->fence);
+		cursor->fence = NULL;
+
+		/* The snapshot is only good while the object is unchanged.  */
+		if (read_seqcount_retry(&robj->seq, cursor->rs_version)) {
+			dma_resv_iter_restart_unlocked(cursor);
+			continue;
+		}
+		if (cursor->index >= cursor->num_fences)
+			return;
+
+		n = cursor->index;
+		if (cursor->rs_excl != NULL) {
+			if (n == 0) {
+				fence = cursor->rs_excl;
+				usage = DMA_RESV_USAGE_WRITE;
+				goto got;
+			}
+			n--;
+		}
+		if (n < cursor->rs_nshared) {
+			fence = atomic_load_relaxed(&cursor->rs_slist->shared[n]);
+			usage = DMA_RESV_USAGE_READ;
+		} else {
+			n -= cursor->rs_nshared;
+			fence = atomic_load_relaxed(&cursor->rs_xlist->ent[n].fence);
+			usage = atomic_load_relaxed(&cursor->rs_xlist->ent[n].usage);
+		}
+got:		fence = fence != NULL ? dma_fence_get_rcu(fence) : NULL;
+		if (fence == NULL ||
+		    read_seqcount_retry(&robj->seq, cursor->rs_version)) {
+			dma_fence_put(fence);
+			dma_resv_iter_restart_unlocked(cursor);
+			continue;
+		}
+		cursor->index++;
+		cursor->fence = fence;
+		cursor->fence_usage = usage;
+		if (!dma_fence_is_signaled(fence) && usage <= cursor->usage)
+			return;
+	}
+}
+
+struct dma_fence *
+dma_resv_iter_first_unlocked(struct dma_resv_iter *cursor)
+{
+
+	rcu_read_lock();
+	dma_resv_iter_restart_unlocked(cursor);
+	dma_resv_iter_walk_unlocked(cursor);
+	rcu_read_unlock();
+
+	return cursor->fence;
+}
+
+struct dma_fence *
+dma_resv_iter_next_unlocked(struct dma_resv_iter *cursor)
+{
+
+	rcu_read_lock();
+	cursor->is_restarted = false;
+	dma_resv_iter_walk_unlocked(cursor);
+	rcu_read_unlock();
+
+	return cursor->fence;
+}
+
+/*
+ * dma_resv_get_fences(robj, usage, nfencesp, fencesp)
+ *
+ *	Without the lock, collect referenced fences of the given usage
+ *	or lower that have not signalled.  *fencesp is a kmalloc'ed
+ *	array of *nfencesp fences (NULL if none); caller puts each
+ *	fence and kfrees the array.  Returns 0 or -ENOMEM.
+ */
+int
+dma_resv_get_fences(struct dma_resv *robj, enum dma_resv_usage usage,
+    unsigned int *nfencesp, struct dma_fence ***fencesp)
+{
+	struct dma_resv_iter cursor;
+	struct dma_fence *fence, **fences = NULL;
+	unsigned int n = 0, cap = 0;
+
+	dma_resv_iter_begin(&cursor, robj, usage);
+	dma_resv_for_each_fence_unlocked(&cursor, fence) {
+		if (dma_resv_iter_is_restarted(&cursor)) {
+			while (n)
+				dma_fence_put(fences[--n]);
+			if (cursor.num_fences + 1 > cap) {
+				kfree(fences);
+				cap = cursor.num_fences + 1;
+				fences = kmalloc_array(cap, sizeof(*fences),
+				    GFP_KERNEL);
+				if (fences == NULL) {
+					dma_resv_iter_end(&cursor);
+					*fencesp = NULL;
+					*nfencesp = 0;
+					return -ENOMEM;
+				}
+			}
+		}
+		KASSERT(n < cap);
+		fences[n++] = dma_fence_get(fence);
+	}
+	dma_resv_iter_end(&cursor);
+
+	if (n == 0) {
+		kfree(fences);
+		fences = NULL;
+	}
+	*fencesp = fences;
+	*nfencesp = n;
+	return 0;
+}
+
+/*
+ * dma_resv_get_singleton(robj, usage, fencep)
+ *
+ *	One referenced fence that stands for all the unsignalled
+ *	fences of the given usage or lower: NULL if there are none,
+ *	the fence itself if one, otherwise a fence array.  Returns 0 or
+ *	-ENOMEM.
+ */
+int
+dma_resv_get_singleton(struct dma_resv *robj, enum dma_resv_usage usage,
+    struct dma_fence **fencep)
+{
+	struct dma_fence_array *array;
+	struct dma_fence **fences;
+	unsigned int count;
+	int error;
+
+	error = dma_resv_get_fences(robj, usage, &count, &fences);
+	if (error)
+		return error;
+	if (count == 0) {
+		*fencep = NULL;
+		return 0;
+	}
+	if (count == 1) {
+		*fencep = fences[0];
+		kfree(fences);
+		return 0;
+	}
+	array = dma_fence_array_create(count, fences,
+	    dma_fence_context_alloc(1), 1, false);
+	if (array == NULL) {
+		while (count--)
+			dma_fence_put(fences[count]);
+		kfree(fences);
+		return -ENOMEM;
+	}
+	*fencep = &array->base;
+	return 0;
+}
+
+/*
+ * dma_resv_wait_timeout(robj, usage, intr, timeout)
+ *
+ *	Wait for the fences of the given usage or lower.  Returns
+ *	-ERESTARTSYS if interrupted, 0 on timeout, otherwise the time
+ *	left (1 for a zero timeout, which only tests).
  */
 long
-dma_resv_wait_timeout_rcu(const struct dma_resv *robj,
-    bool shared, bool intr, unsigned long timeout)
+dma_resv_wait_timeout(struct dma_resv *robj, enum dma_resv_usage usage,
+    bool intr, unsigned long timeout)
 {
-	struct dma_resv_read_ticket ticket;
-	const struct dma_resv_list *list;
-	struct dma_fence *fence = NULL;
-	uint32_t i, shared_count;
-	long ret;
+	struct dma_resv_iter cursor;
+	struct dma_fence *fence;
+	long ret = timeout ? timeout : 1;
 
-	if (timeout == 0)
-		return dma_resv_test_signaled_rcu(robj, shared);
-
-top:	KASSERT(fence == NULL);
-
-	/* Enter an RCU read section and get a read ticket.  */
-	rcu_read_lock();
-	dma_resv_read_begin(robj, &ticket);
-
-	/* If shared is requested and there is a shared list, wait on it.  */
-	if (shared) {
-		if (!dma_resv_get_shared_reader(robj, &list, &shared_count,
-			&ticket))
-			goto restart;
-	} else {
-		list = NULL;
-		shared_count = 0;
+	dma_resv_iter_begin(&cursor, robj, usage);
+	dma_resv_for_each_fence_unlocked(&cursor, fence) {
+		ret = dma_fence_wait_timeout(fence, intr, timeout);
+		if (ret <= 0)
+			break;
+		/* Even for a zero timeout the return value is 1.  */
+		if (timeout)
+			timeout = ret;
 	}
-	if (list != NULL) {
-		/*
-		 * For each fence, if it is going away, restart.
-		 * Otherwise, acquire a reference to it to test whether
-		 * it is signalled.  Stop and wait if we find any that
-		 * is not signalled.
-		 */
-		for (i = 0; i < shared_count; i++) {
-			KASSERT(fence == NULL);
-			fence = atomic_load_relaxed(&list->shared[i]);
-			if ((fence = dma_fence_get_rcu(fence)) == NULL)
-				goto restart;
-			if (!dma_fence_is_signaled(fence))
-				goto wait;
-			dma_fence_put(fence);
-			fence = NULL;
+	dma_resv_iter_end(&cursor);
+
+	return ret;
+}
+
+bool
+dma_resv_test_signaled(struct dma_resv *robj, enum dma_resv_usage usage)
+{
+	struct dma_resv_iter cursor;
+	struct dma_fence *fence;
+
+	dma_resv_iter_begin(&cursor, robj, usage);
+	dma_resv_for_each_fence_unlocked(&cursor, fence) {
+		dma_resv_iter_end(&cursor);
+		return false;
+	}
+	dma_resv_iter_end(&cursor);
+	return true;
+}
+
+void
+dma_resv_set_deadline(struct dma_resv *robj, enum dma_resv_usage usage,
+    ktime_t deadline)
+{
+	struct dma_resv_iter cursor;
+	struct dma_fence *fence;
+
+	dma_resv_iter_begin(&cursor, robj, usage);
+	dma_resv_for_each_fence_unlocked(&cursor, fence)
+		dma_fence_set_deadline(fence, deadline);
+	dma_resv_iter_end(&cursor);
+}
+
+/*
+ * 5.6 names over the functions above.  The 5.6 "shared" flag selects
+ * every fence (READ); without it only writers (WRITE).  Unlike 5.6 this
+ * also waits for the exclusive fence when shared fences are present.
+ */
+bool
+dma_resv_test_signaled_rcu(const struct dma_resv *robj, bool shared)
+{
+
+	return dma_resv_test_signaled(__UNCONST(robj),
+	    shared ? DMA_RESV_USAGE_READ : DMA_RESV_USAGE_WRITE);
+}
+
+long
+dma_resv_wait_timeout_rcu(const struct dma_resv *robj, bool shared,
+    bool intr, unsigned long timeout)
+{
+
+	return dma_resv_wait_timeout(__UNCONST(robj),
+	    shared ? DMA_RESV_USAGE_READ : DMA_RESV_USAGE_WRITE, intr, timeout);
+}
+
+/*
+ * dma_resv_copy_fences(dst, src)
+ *
+ *	Replace the fences of dst by the unsignalled fences of src,
+ *	with their usage.  Caller holds dst's lock; src need not be
+ *	locked.  Returns 0 or -ENOMEM.
+ */
+int
+dma_resv_copy_fences(struct dma_resv *dst, struct dma_resv *src)
+{
+	struct dma_resv_iter cursor;
+	struct dma_resv_write_ticket ticket;
+	struct dma_fence *fence, **fv = NULL;
+	enum dma_resv_usage *uv = NULL;
+	struct dma_resv_list *nlist = NULL, *olist;
+	struct dma_resv_xlist *nx = NULL, *ox;
+	struct dma_fence *oexcl, *nexcl = NULL;
+	unsigned cap = 0, n = 0, i, nshared = 0, nxn = 0, osc;
+	bool have_excl = false;
+
+	KASSERT(dma_resv_held(dst));
+
+	dma_resv_iter_begin(&cursor, src, DMA_RESV_USAGE_BOOKKEEP);
+	dma_resv_for_each_fence_unlocked(&cursor, fence) {
+		if (dma_resv_iter_is_restarted(&cursor)) {
+			while (n)
+				dma_fence_put(fv[--n]);
+			if (cursor.num_fences + 1 > cap) {
+				kfree(fv);
+				kfree(uv);
+				cap = cursor.num_fences + 1;
+				fv = kmalloc_array(cap, sizeof(*fv),
+				    GFP_KERNEL);
+				uv = kmalloc_array(cap, sizeof(*uv),
+				    GFP_KERNEL);
+				if (fv == NULL || uv == NULL) {
+					dma_resv_iter_end(&cursor);
+					kfree(fv);
+					kfree(uv);
+					return -ENOMEM;
+				}
+			}
 		}
-
-		/* If anything changed while we were testing, restart.  */
-		if (!dma_resv_read_valid(robj, &ticket))
-			goto restart;
+		fv[n] = dma_fence_get(fence);
+		uv[n] = dma_resv_iter_usage(&cursor);
+		n++;
 	}
-	if (shared_count)
-		goto out;
+	dma_resv_iter_end(&cursor);
 
-	/* If there is an exclusive fence, test it.  */
-	KASSERT(fence == NULL);
-	if (!dma_resv_get_excl_reader(robj, &fence, &ticket))
-		goto restart;
-	if (fence != NULL) {
-		/* Test whether it is signalled.  If no, wait.  */
-		if (!dma_fence_is_signaled(fence))
-			goto wait;
-		dma_fence_put(fence);
-		fence = NULL;
+	/* Sort the copies into the three storages: first writer is excl.  */
+	for (i = 0; i < n; i++) {
+		if (uv[i] == DMA_RESV_USAGE_READ)
+			nshared++;
+		else if (uv[i] == DMA_RESV_USAGE_WRITE && !have_excl)
+			have_excl = true;
+		else
+			nxn++;
 	}
+	if (nshared) {
+		nlist = objlist_alloc(nshared);
+		nlist->shared_count = 0;
+	}
+	if (nxn)
+		nx = xlist_alloc(nxn);
+	have_excl = false;
+	for (i = 0; i < n; i++) {
+		if (uv[i] == DMA_RESV_USAGE_READ) {
+			nlist->shared[nlist->shared_count++] = fv[i];
+		} else if (uv[i] == DMA_RESV_USAGE_WRITE && !have_excl) {
+			have_excl = true;
+			nexcl = fv[i];
+		} else {
+			nx->ent[nx->count].fence = fv[i];
+			nx->ent[nx->count].usage = uv[i];
+			nx->count++;
+		}
+	}
+	kfree(fv);
+	kfree(uv);
 
-out:	/* Success!  Return the number of ticks left.  */
-	rcu_read_unlock();
-	KASSERT(fence == NULL);
-	return timeout;
+	oexcl = dst->fence_excl;
+	olist = dst->fence;
+	ox = dst->xfence;
+	osc = olist != NULL ? olist->shared_count : 0;
 
-restart:
-	KASSERT(fence == NULL);
-	rcu_read_unlock();
-	goto top;
+	dma_resv_write_begin(dst, &ticket);
+	atomic_store_relaxed(&dst->fence_excl, nexcl);
+	atomic_store_relaxed(&dst->fence, nlist);
+	atomic_store_relaxed(&dst->xfence, nx);
+	dma_resv_write_commit(dst, &ticket);
 
-wait:
-	/*
-	 * Exit the RCU read section, wait for it, and release the
-	 * fence when we're done.  If we time out or fail, bail.
-	 * Otherwise, go back to the top.
-	 */
-	KASSERT(fence != NULL);
-	rcu_read_unlock();
-	ret = dma_fence_wait_timeout(fence, intr, timeout);
-	dma_fence_put(fence);
-	fence = NULL;
-	if (ret <= 0)
-		return ret;
-	KASSERT(ret <= timeout);
-	timeout = ret;
-	goto top;
+	/* Release what dst had.  */
+	dma_fence_put(oexcl);
+	if (olist != NULL) {
+		for (i = 0; i < osc; i++)
+			dma_fence_put(olist->shared[i]);
+		objlist_defer_free(olist);
+	}
+	if (ox != NULL) {
+		for (i = 0; i < ox->count; i++)
+			dma_fence_put(ox->ent[i].fence);
+		xlist_defer_free(ox);
+	}
+	return 0;
 }
 
 /*
