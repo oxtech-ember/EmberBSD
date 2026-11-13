@@ -25,6 +25,10 @@ makeoptions	drmkms618	"CPPFLAGS.drmkms618"+="-I$S/external/bsd/common/include"
 
 makeoptions	drmkms618	"CPPFLAGS.drmkms618"+="-D__KERNEL__"
 
+# Includes the Linux 6.18 sources expect from Linux's own include chains,
+# see the header.
+makeoptions	drmkms618	"CPPFLAGS.drmkms618"+="-include $S/external/bsd/drm2/drm618/include/drm618_prefix.h"
+
 ifdef i386
 makeoptions	drmkms618	"CPPFLAGS.drmkms618"+="-DCONFIG_X86"
 makeoptions	drmkms618	"CPPFLAGS.drmkms618"+="-DCONFIG_X86_PAT"
