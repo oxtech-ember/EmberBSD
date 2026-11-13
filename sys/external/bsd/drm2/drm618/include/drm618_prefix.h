@@ -182,6 +182,7 @@ struct vm_area_struct;		/* drm_prime.h */
  * descriptors.  User copies of an ioctl's own data go through the window of
  * drm618_file.c (kernel memory NetBSD already copied), all others as before.
  */
+#include <drm618_kdev.h>
 #include <linux/fs.h>
 #include <linux/file.h>
 #include <linux/poll.h>

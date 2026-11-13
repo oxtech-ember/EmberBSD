@@ -69,7 +69,7 @@ struct inode {
 	struct address_space	i_data;
 	struct super_block	*i_sb;
 	void			*i_private;
-	unsigned		i_refcnt;
+	volatile unsigned	i_refcnt;
 };
 
 /* The Linux number of a device node is major << 20 | minor; here the minor is the NetBSD minor. */
@@ -179,6 +179,43 @@ struct DRM618_FILE_TAG *fget(unsigned int);
 int	drm618_file_open(const struct file_operations *, dev_t, unsigned int,
     struct DRM618_FILE_TAG **);
 int	drm618_file_ioctl(struct DRM618_FILE_TAG *, unsigned long, void *);
+
+/*
+ * Pseudo file system for anonymous inodes (drm_drv.c: the inode whose mapping
+ * every DRM file shares).  A file system type here is only a name and the
+ * functions the 6.18 core gives it; "mounting" one makes a super block with
+ * the magic number init_pseudo recorded.
+ */
+struct fs_context {
+	struct file_system_type	*fs_type;
+	unsigned long		magic;
+};
+
+struct super_block {
+	unsigned long		s_magic;
+};
+
+struct vfsmount {
+	struct super_block	*mnt_sb;
+};
+
+struct file_system_type {
+	const char	*name;
+	struct module	*owner;
+	int		(*init_fs_context)(struct fs_context *);
+	void		(*kill_sb)(struct super_block *);
+};
+
+struct pseudo_fs_context {
+	unsigned long	magic;
+};
+
+struct pseudo_fs_context *init_pseudo(struct fs_context *, unsigned long);
+void	kill_anon_super(struct super_block *);
+int	simple_pin_fs(struct file_system_type *, struct vfsmount **, int *);
+void	simple_release_fs(struct vfsmount **, int *);
+struct inode *alloc_anon_inode(struct super_block *);
+void	iput(struct inode *);
 
 /*
  * Character devices.  register_chrdev(0, name, fops) makes a cdevsw whose

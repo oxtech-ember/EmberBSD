@@ -300,4 +300,27 @@ struct name {								\
 	(0 * sizeof(struct { int __e[__builtin_types_compatible_p(	\
 	    __typeof__(a), char[sizeof(a)]) ? 1 : -1]; }))
 
+/* linux/vga_switcheroo.h: no hybrid graphics switching here (drm_file.c, last close) */
+static inline void
+vga_switcheroo_process_delayed_switch(void)
+{
+}
+
+/*
+ * linux/atomic.h: decrement and, if that reaches zero, return true with the
+ * mutex held; otherwise the mutex is not held on return (drm_file.c, release).
+ */
+static inline bool
+atomic_dec_and_mutex_lock(atomic_t *cnt, struct mutex *lock)
+{
+
+	if (atomic_add_unless(cnt, -1, 1))
+		return false;
+	mutex_lock(lock);
+	if (atomic_dec_return(cnt) == 0)
+		return true;
+	mutex_unlock(lock);
+	return false;
+}
+
 #endif
