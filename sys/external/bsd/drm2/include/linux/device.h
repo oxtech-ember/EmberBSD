@@ -110,14 +110,14 @@ devm_kzalloc(struct device *dev, size_t size, gfp_t gfp)
 #define	put_device(x)	((void)(x))
 
 /*
- * dev_printk(LEVEL, dev, fmt, ...): LEVEL is one of the KERN_ strings, which
- * carry the severity as a prefix of the text.
+ * dev_printk(level, dev, fmt, ...): level is one of the KERN_ strings (they
+ * carry the severity as a prefix of the text), a literal or a variable.
  */
 #define	dev_printk(LEVEL, DEV, FMT, ...)	do {			      \
 	if (DEV)							      \
-		aprint_normal_dev((DEV), LEVEL FMT, ##__VA_ARGS__);	      \
+		aprint_normal_dev((DEV), "%s" FMT, (LEVEL), ##__VA_ARGS__);   \
 	else								      \
-		aprint_normal(LEVEL FMT, ##__VA_ARGS__);		      \
+		aprint_normal("%s" FMT, (LEVEL), ##__VA_ARGS__);	      \
 } while (0)
 
 /*

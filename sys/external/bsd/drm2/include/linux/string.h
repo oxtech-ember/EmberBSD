@@ -131,6 +131,17 @@ strscpy_pad(char *dst, const char *src, size_t dstsize)
 	return n;
 }
 
+/*
+ * strtomem_pad(dest, src, pad): copy a string into a fixed char array
+ * without the terminator, the rest filled with pad (EmberBSD addition).
+ */
+#define	strtomem_pad(dest, src, pad)	do {				      \
+	const size_t __dsz = sizeof(dest);				      \
+	const size_t __ssz = strnlen((src), __dsz);			      \
+	memcpy((dest), (src), __ssz);					      \
+	memset((char *)(dest) + __ssz, (pad), __dsz - __ssz);		      \
+} while (0)
+
 static inline void *
 memset32(uint32_t *buf, uint32_t v, size_t n)
 {
