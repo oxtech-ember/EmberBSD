@@ -195,6 +195,7 @@ process_one(const char *name, uint32_t add_flags, uint32_t del_flags,
 		uint32_t flags;
 	} pax_tag;
 	int fd, size, ok = 0, flagged = 0, swap, error = 1;
+	ssize_t written;
 	size_t i;
 
 	fd = open(name, list ? O_RDONLY: O_RDWR, 0);
@@ -293,9 +294,16 @@ process_one(const char *name, uint32_t add_flags, uint32_t del_flags,
 			goto out;
 		}
 
-		if (pwrite(fd, &pax_tag, sizeof(pax_tag),
-		    (off_t)SH(sh_offset) + NHSIZE) != sizeof(pax_tag))
+		written = pwrite(fd, &pax_tag, sizeof(pax_tag),
+		    (off_t)SH(sh_offset) + NHSIZE);
+		if (written == -1) {
 			warn("Can't modify flags on `%s'", name);
+			goto out;
+		}
+		if ((size_t)written != sizeof(pax_tag)) {
+			warnx("Short write modifying flags on `%s'", name);
+			goto out;
+		}
 		break;
 	}
 
