@@ -6,6 +6,7 @@ drm/drm_gem_atomic_helper.c	c	GPL	GPL-2.0-or-later	-
 drm/drm_gem_dma_helper.c	c	GPL	GPL-2.0-or-later	drm/drm_gem_cma_helper.c
 drm/drm_gem_framebuffer_helper.c	c	GPL	GPL-2.0-or-later	drm/drm_gem_framebuffer_helper.c
 drm/drm_gem_shmem_helper.c	c	GPL	GPL-2.0	drm/drm_gem_shmem_helper.c
+drm/drm_gem_ttm_helper.c	c	GPL	GPL-2.0-or-later	-
 drm/drm_lease.c	c	GPL	GPL-2.0-or-later	drm/drm_lease.c
 drm/drm_managed.c	c	GPL	GPL-2.0	-
 drm/drm_panel_backlight_quirks.c	c	GPL	GPL-2.0	-
