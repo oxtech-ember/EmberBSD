@@ -46,6 +46,11 @@ typedef unsigned int __poll_t;
 #define	__nonstring	__attribute__((__nonstring__))
 #endif
 
+/* linux/compiler_attributes.h (drm_managed.h) */
+#ifndef __malloc
+#define	__malloc	__attribute__((__malloc__))
+#endif
+
 /* linux/kconfig.h: no tristate options are modules here (drm_dp_helper.h) */
 #ifndef IS_MODULE
 #define	IS_MODULE(option)	(0)
@@ -62,6 +67,15 @@ typedef unsigned int __poll_t;
 #include <linux/idr.h>
 #include <linux/llist.h>
 #include <linux/string_choices.h>
+
+/*
+ * Structures the headers name in prototypes without declaring them (Linux's
+ * include chains declare them on the way); needed as tags so that the
+ * declarations are not local to the prototype (-Wvisibility is an error).
+ */
+struct poll_table_struct;	/* drm_file.h */
+struct device_node;		/* drm_modes.h */
+struct vm_area_struct;		/* drm_prime.h */
 
 #include <drm618_layer.h>		/* list_last_entry_or_null, ALIGN(x, a), LIST_HEAD(name), ... */
 
