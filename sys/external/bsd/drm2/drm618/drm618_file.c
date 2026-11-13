@@ -555,3 +555,95 @@ unregister_chrdev(unsigned int major __unused, const char *name __unused)
 	}
 	mutex_exit(&stub_lock);
 }
+
+/* ---- pseudo file system ---------------------------------------------- */
+
+static kmutex_t pseudofs_lock;
+static ONCE_DECL(pseudofs_once);
+
+static int
+pseudofs_init(void)
+{
+
+	mutex_init(&pseudofs_lock, MUTEX_DEFAULT, IPL_NONE);
+	return 0;
+}
+
+struct pseudo_fs_context *
+init_pseudo(struct fs_context *fc, unsigned long magic)
+{
+
+	fc->magic = magic;
+	return (struct pseudo_fs_context *)fc;	/* the context is its first member */
+}
+
+void
+kill_anon_super(struct super_block *sb __unused)
+{
+
+	/* The super block is freed by simple_release_fs. */
+}
+
+int
+simple_pin_fs(struct file_system_type *type, struct vfsmount **mntp, int *countp)
+{
+	struct fs_context fc = { .fs_type = type };
+	struct vfsmount *mnt;
+	int error;
+
+	(void)RUN_ONCE(&pseudofs_once, pseudofs_init);
+	mutex_enter(&pseudofs_lock);
+	if (*mntp == NULL) {
+		error = (*type->init_fs_context)(&fc);
+		if (error) {
+			mutex_exit(&pseudofs_lock);
+			return error;
+		}
+		mnt = kmem_zalloc(sizeof(*mnt), KM_SLEEP);
+		mnt->mnt_sb = kmem_zalloc(sizeof(*mnt->mnt_sb), KM_SLEEP);
+		mnt->mnt_sb->s_magic = fc.magic;
+		*mntp = mnt;
+	}
+	(*countp)++;
+	mutex_exit(&pseudofs_lock);
+	return 0;
+}
+
+void
+simple_release_fs(struct vfsmount **mntp, int *countp)
+{
+	struct vfsmount *mnt = NULL;
+	struct super_block *sb = NULL;
+
+	mutex_enter(&pseudofs_lock);
+	KASSERT(*countp > 0);
+	if (--(*countp) == 0) {
+		mnt = *mntp;
+		*mntp = NULL;
+		sb = mnt->mnt_sb;
+	}
+	mutex_exit(&pseudofs_lock);
+	if (mnt != NULL) {
+		kmem_free(sb, sizeof(*sb));
+		kmem_free(mnt, sizeof(*mnt));
+	}
+}
+
+struct inode *
+alloc_anon_inode(struct super_block *sb)
+{
+	struct inode *inode = inode_alloc(NODEV, 0);
+
+	inode->i_sb = sb;
+	return inode;
+}
+
+void
+iput(struct inode *inode)
+{
+
+	if (inode == NULL)
+		return;
+	if (atomic_dec_uint_nv(&inode->i_refcnt) == 0)
+		kmem_free(inode, sizeof(*inode));
+}

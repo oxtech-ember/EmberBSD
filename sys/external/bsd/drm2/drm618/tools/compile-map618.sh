@@ -27,8 +27,11 @@ if [ "${1:-}" = --one ]; then
 	src=$D/dist618/$f
 	case $f in drm618/*) src=$D/$f ;; esac
 	dd=$(dirname "$src"); rd=$(dirname "$REF/$f")
+	# the one source that sees both kinds of struct file (drm618_file.h), as in files.drmkms618
+	fx=
+	case $f in drm618/drm618_file.c) fx=-DDRM618_NBSD_FILE ;; esac
 	# shellcheck disable=SC2086
-	$CC $FLAGS -I$D/drm618/include -I$D/dist618/include -I$D/dist618/include/uapi \
+	$CC $FLAGS $fx -I$D/drm618/include -I$D/dist618/include -I$D/dist618/include/uapi \
 	    -I$D/include -I$S/external/bsd/common/include -I$dd -I$rd \
 	    ${REFINC} -c -o "${OBJDIR:-/dev/null}$([ -n "${OBJDIR:-}" ] && echo /$(echo "$f" | tr / _).o)" "$src" > "$log" 2>&1
 	echo $? > "$log.rc"

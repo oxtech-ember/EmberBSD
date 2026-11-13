@@ -36,6 +36,7 @@ SRCS+=	drm2-linux-618-layer.c
 SRCS+=	drm2-drm618-managed.c
 SRCS+=	drm2-drm618-statics.c
 SRCS+=	drm2-drm618-file.c
+SRCS+=	drm2-drm618-kdev.c
 
 # The 6.18-only code under test is compiled into the module (the kernel has no
 # drmkms618).
@@ -43,6 +44,7 @@ SRCS+=	drm2-drm618-file.c
 SRCS+=	drm618_kthread_worker.c
 SRCS+=	drm618_managed.c
 SRCS+=	drm618_file.c
+SRCS+=	drm618_sysfs.c
 
 # These two read struct drm_device, so they get the includes the 6.18 core
 # expects (files.drmkms618).
@@ -50,8 +52,17 @@ CPPFLAGS.drm618_managed.c+=	-D__KERNEL__ -include ${S}/external/bsd/drm2/drm618/
 CPPFLAGS.drm2-drm618-statics.c+=	-D__KERNEL__ -include ${S}/external/bsd/drm2/drm618/include/drm618_prefix.h
 CPPFLAGS.drm2-drm618-managed.c+=	-D__KERNEL__ -include ${S}/external/bsd/drm2/drm618/include/drm618_prefix.h
 
+# The kernel of the test VM has the 5.6 core built in: the three names of the
+# 6.18 drm_sysfs functions that it defines too are renamed in the two sources
+# that have them (the 6.18 core itself is not loaded here).
+DRM618_T_RENAME=	-Ddrm_sysfs_connector_add=t618_drm_sysfs_connector_add \
+		-Ddrm_sysfs_connector_remove=t618_drm_sysfs_connector_remove \
+		-Ddrm_sysfs_hotplug_event=t618_drm_sysfs_hotplug_event
+
 # drm618_file.c sees both kinds of file (see drm618_file.h).
 CPPFLAGS.drm618_file.c+=	-D__KERNEL__ -DDRM618_NBSD_FILE -include ${S}/external/bsd/drm2/drm618/include/drm618_prefix.h
+CPPFLAGS.drm618_sysfs.c+=	${DRM618_T_RENAME} -D__KERNEL__ -include ${S}/external/bsd/drm2/drm618/include/drm618_prefix.h
+CPPFLAGS.drm2-drm618-kdev.c+=	${DRM618_T_RENAME} -D__KERNEL__ -include ${S}/external/bsd/drm2/drm618/include/drm618_prefix.h
 CPPFLAGS.drm2-drm618-file.c+=	-D__KERNEL__ -include ${S}/external/bsd/drm2/drm618/include/drm618_prefix.h
 
 WARNS=	3
