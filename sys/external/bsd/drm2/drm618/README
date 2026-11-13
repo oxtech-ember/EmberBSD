@@ -38,6 +38,19 @@ driver module built for 6.18 depends on "drmkms618" and is not interchangeable
 with the 5.6 build of the same driver (the efidrm kernel version guard
 already covers that).
 
+Includes the 6.18 sources expect
+-------------------------------
+dist618 is byte for byte upstream, so what Linux include chains bring in for
+it has to come from somewhere else.  Every drmkms618 file is compiled with
+-include include/drm618_prefix.h (files.drmkms618; the compile map does the
+same, NOPREFIX=1 leaves it out): the includes the sources expect, the renaming
+of the NetBSD struct rb_node and of the names both systems define differently
+(ALIGN, LIST_HEAD, mutex_init, RB_ROOT, ... see include/drm618_layer.h, chosen
+by the number or the type of the arguments).  Headers that exist in the shared
+layer with another meaning (linux/wait.h, rbtree.h, kthread.h,
+interval_tree_generic.h) are shadowed in include/linux/; the 5.6 core never
+sees them.  New names without a clash go into the shared layer.
+
 Local changes to dist618 are made in separate commits after the pristine
 import commit, so that "git diff" against the import shows exactly what
 EmberBSD changed; BSD-only hooks that can live outside the Linux files go to

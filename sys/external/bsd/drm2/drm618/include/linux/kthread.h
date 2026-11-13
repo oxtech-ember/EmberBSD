@@ -38,6 +38,12 @@ struct kthread_worker {
 	struct kthread_work	*current_work;
 	bool			stop;
 	struct lwp		*lwp;
+	/*
+	 * Linux's thread of the worker.  There is no task_struct for it here:
+	 * always NULL, and sched_set_fifo(NULL) is not defined (see
+	 * drm618_layer.h).
+	 */
+	struct task_struct	*task;
 };
 
 #define	kthread_init_work(work, fn)	do {				\
