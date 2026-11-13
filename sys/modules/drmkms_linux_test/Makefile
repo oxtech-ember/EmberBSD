@@ -40,6 +40,7 @@ SRCS+=	drm2-drm618-kdev.c
 SRCS+=	drm2-drm618-task.c
 SRCS+=	drm2-drm618-gem.c
 SRCS+=	drm2-drm618-kms.c
+SRCS+=	drm2-drm618-hdr.c
 
 # The 6.18-only code under test is compiled into the module (the kernel has no
 # drmkms618).
@@ -75,6 +76,7 @@ CPPFLAGS.drm618_sleep.c+=	-D__KERNEL__ -include ${S}/external/bsd/drm2/drm618/in
 CPPFLAGS.drm618_sync_file.c+=	-D__KERNEL__ -include ${S}/external/bsd/drm2/drm618/include/drm618_prefix.h
 CPPFLAGS.drm618_shmem.c+=	-D__KERNEL__ -include ${S}/external/bsd/drm2/drm618/include/drm618_prefix.h
 CPPFLAGS.drm2-drm618-kms.c+=	-D__KERNEL__ -include ${S}/external/bsd/drm2/drm618/include/drm618_prefix.h
+CPPFLAGS.drm2-drm618-hdr.c+=	-D__KERNEL__ -include ${S}/external/bsd/drm2/drm618/include/drm618_prefix.h
 CPPFLAGS.drm618_lease.c+=	-D__KERNEL__ -include ${S}/external/bsd/drm2/drm618/include/drm618_prefix.h
 CPPFLAGS.drm618_gem_atomic_helper.c+=	-D__KERNEL__ -include ${S}/external/bsd/drm2/drm618/include/drm618_prefix.h
 CPPFLAGS.drm618_unsupported.c+=	-D__KERNEL__ -include ${S}/external/bsd/drm2/drm618/include/drm618_prefix.h
