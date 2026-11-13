@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 EmberBSD contributors.
+#
+# The ARL kernel without the 5.6 DRM core and its
+# drivers, with the layer (drmkms_linux, drmkms_i2c) built in, so that the
+# module drmkms618 (sys/modules/drmkms618) can be loaded: both cores export
+# the same names.  Not a default configuration.
+include "arch/amd64/conf/GENERIC_ARL_TOUCHPAD_HZ1000"
+
+no i915drmkms*
+no intelfb*	at intelfbbus?
+no radeon*
+no radeondrmkmsfb* at radeonfbbus?
+no nouveau*
+no nouveaufb*	at nouveaufbbus?
+no viogpu*
+no options DRM_LEGACY
+
+select drmkms_linux
+select drmkms_i2c
+select linux
+select sysmon_power

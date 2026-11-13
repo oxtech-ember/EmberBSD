@@ -7,3 +7,4 @@ drm/drm_ioc32.c
 drm/drm_privacy_screen.c
 drm/drm_privacy_screen_x86.c
 drm/display/drm_hdmi_audio_helper.c
+drm/drm_prime.c

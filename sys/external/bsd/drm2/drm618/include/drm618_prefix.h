@@ -95,6 +95,15 @@ typedef unsigned int __poll_t;
 #include <linux/instruction_pointer.h>	/* kernel.h upstream: _THIS_IP_ (drm_print.h) */
 #include <linux/err.h>			/* ERR_PTR, IS_ERR (many) */
 #include <linux/module.h>		/* THIS_MODULE (drm_client, drm_gem fops) */
+/*
+ * module_init/module_exit: the layer ignores them.  Here each becomes a
+ * function with a name of its own that drm618_module.c calls (and that keeps
+ * the static init and exit functions of the sources used).
+ */
+#undef	module_init
+#undef	module_exit
+#define	module_init(fn)	int drm618_modinit_##fn(void); int drm618_modinit_##fn(void) { return fn(); }
+#define	module_exit(fn)	void drm618_modexit_##fn(void); void drm618_modexit_##fn(void) { fn(); }
 #include <linux/mutex.h>
 #include <linux/workqueue.h>		/* struct work_struct (drm_dp_helper.h) */
 #include <linux/completion.h>		/* struct completion (drm_atomic.h) */
