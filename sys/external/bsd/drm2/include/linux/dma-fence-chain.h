@@ -42,7 +42,10 @@ struct dma_fence_chain {
 
 	spinlock_t		dfc_lock;
 	struct dma_fence	*volatile dfc_prev;
-	struct dma_fence	*dfc_fence;
+	union {
+		struct dma_fence	*dfc_fence;
+		struct dma_fence	*fence;	/* Linux 6.x name */
+	};
 	struct dma_fence_cb	dfc_callback;
 	struct irq_work		dfc_irq_work;
 };

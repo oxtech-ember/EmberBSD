@@ -251,6 +251,28 @@ __dma_fence_might_wait(void)
 {
 }
 
+/*
+ * Driver and timeline names for diagnostics; a fence that has signalled
+ * may belong to a driver that is gone, so it reports a fixed name.
+ */
+static inline const char *
+dma_fence_driver_name(struct dma_fence *fence)
+{
+
+	if (test_bit(DMA_FENCE_FLAG_SIGNALED_BIT, &fence->flags))
+		return "detached-driver";
+	return fence->ops->get_driver_name(fence);
+}
+
+static inline const char *
+dma_fence_timeline_name(struct dma_fence *fence)
+{
+
+	if (test_bit(DMA_FENCE_FLAG_SIGNALED_BIT, &fence->flags))
+		return "signaled-timeline";
+	return fence->ops->get_timeline_name(fence);
+}
+
 static inline bool
 dma_fence_is_container(struct dma_fence *fence)
 {

@@ -236,6 +236,20 @@ test_fence_status_timestamp(void)
 }
 
 static void
+test_fence_names(void)
+{
+	struct dma_fence *f = tf_new(dma_fence_context_alloc(1), 1);
+
+	CHECK(strcmp(dma_fence_driver_name(f), "drm2test") == 0);
+	CHECK(strcmp(dma_fence_timeline_name(f), "drm2test") == 0);
+	dma_fence_signal(f);
+	CHECK(strcmp(dma_fence_driver_name(f), "detached-driver") == 0);
+	CHECK(strcmp(dma_fence_timeline_name(f), "signaled-timeline") == 0);
+	dma_fence_put(f);
+	CHECK(tf_live == 0);
+}
+
+static void
 test_fence_deadline(void)
 {
 	struct dma_fence *f, *g;
@@ -988,6 +1002,7 @@ test_chain(void)
 	CHECK(to_dma_fence_chain(p1) == NULL);
 	CHECK(to_dma_fence_chain(NULL) == NULL);
 	CHECK(dma_fence_chain_contained(&c3->base) == p3);
+	CHECK(c3->fence == p3 && c3->dfc_fence == p3);
 	CHECK(dma_fence_chain_contained(plain) == plain);
 
 	/* Walk from the head: newest to oldest. */
@@ -1353,6 +1368,7 @@ drm2_dma_resv_run(void)
 	spin_lock_init(&tf_lock);
 	test_fence_order();
 	test_fence_status_timestamp();
+	test_fence_names();
 	test_fence_deadline();
 	test_fence_container();
 	test_resv_usage_filter();
