@@ -282,4 +282,22 @@ struct name {								\
 	__drm618_WWTRY_SEL(__VA_ARGS__, linux_ww_mutex_trylock_ctx,	\
 	    linux_ww_mutex_trylock)(__VA_ARGS__)
 
+/*
+ * strscpy(dst, src): since Linux 6.x the size may be left out, then it is the
+ * size of the destination array.  The layer's function has three arguments;
+ * the two argument form is made here by the number of arguments (the parentheses
+ * around the name call the function and not this macro).
+ */
+#define	__drm618_strscpy3(dst, src, size)	(strscpy)((dst), (src), (size))
+#define	__drm618_strscpy2(dst, src)					\
+	(strscpy)((dst), (src), sizeof(dst) + __must_be_array_of_char(dst))
+#define	__drm618_strscpy_SEL(_1, _2, _3, NAME, ...)	NAME
+#define	strscpy(...)							\
+	__drm618_strscpy_SEL(__VA_ARGS__, __drm618_strscpy3,		\
+	    __drm618_strscpy2)(__VA_ARGS__)
+/* 0 for an array of char, a compile error for anything else (a pointer). */
+#define	__must_be_array_of_char(a)					\
+	(0 * sizeof(struct { int __e[__builtin_types_compatible_p(	\
+	    __typeof__(a), char[sizeof(a)]) ? 1 : -1]; }))
+
 #endif

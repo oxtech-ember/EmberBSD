@@ -23,6 +23,7 @@
 #include <linux/xarray.h>
 #include <linux/hrtimer.h>
 #include <linux/random.h>
+#include <linux/sched.h>
 #include <linux/seq_buf.h>
 #include <linux/seq_file.h>
 #include <linux/spinlock.h>
@@ -248,6 +249,40 @@ test_misc(void)
 	CHECK(dev_err_probe((struct device *)NULL, -EPROBE_DEFER, "quiet\n") == -EPROBE_DEFER);
 }
 
+static void
+test_task(void)
+{
+	struct task_struct *t = current;
+	struct pid *pid = task_tgid(t);
+
+	/* comm is the process's name, p_comm */
+	CHECK(strcmp(t->comm, curproc->p_comm) == 0);
+	CHECK(task_pid_vnr(t) == curproc->p_pid && task_tgid_nr(t) == curproc->p_pid);
+	CHECK(pid_nr(pid) == curproc->p_pid);
+	CHECK(get_pid(pid) == pid);
+	put_pid(pid);
+	CHECK(pid_task(pid, PIDTYPE_TGID) == t);
+	/* another process's pid does not name a task here */
+	CHECK(pid_task((struct pid *)(uintptr_t)(curproc->p_pid + 1000), PIDTYPE_TGID) == NULL);
+	CHECK(pid_task(NULL, PIDTYPE_TGID) == NULL);
+	CHECK(overflowuid == 65534);
+	CHECK(t->pid == curproc->p_pid && t->tgid == curproc->p_pid);
+	CHECK(task_pid_nr(t) == curproc->p_pid);
+}
+
+static void
+test_strscpy(void)
+{
+	char d[8];
+	char big[4];
+
+	/* both forms: with the size, and without (the size of the array) */
+	CHECK(strscpy(d, "abc", sizeof(d)) == 3 && strcmp(d, "abc") == 0);
+	CHECK(strscpy(d, "xyz") == 3 && strcmp(d, "xyz") == 0);
+	CHECK(strscpy(d, "0123456789") == -E2BIG && strcmp(d, "0123456") == 0);
+	CHECK(strscpy(big, "0123456789") == -E2BIG && strcmp(big, "012") == 0);
+}
+
 int	drm2_linux_618_layer_run(void);
 
 int
@@ -262,6 +297,8 @@ drm2_linux_618_layer_run(void)
 	test_rwlock();
 	test_devres();
 	test_misc();
+	test_task();
+	test_strscpy();
 	printf("drm2-linux-618-layer: %d checks, %d failed\n", t_run, t_fail);
 	return t_fail;
 }

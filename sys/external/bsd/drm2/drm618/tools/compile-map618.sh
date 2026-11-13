@@ -12,7 +12,9 @@
 # headers found only there are the ones that need a BSD rewrite.
 # KOBJDIR: a kernel build directory that holds the generated opt_*.h headers.
 # Environment: CC, SYSROOT, S (the sys/ directory), J (parallel jobs, default 16),
-# EXTRA (more compiler flags, e.g. -include of a shim header).  The prefix header
+# WARNFLAGS (default -w: warnings are not looked at; e.g. the kernel's
+# "-Wall -Wextra -Wno-unused-parameter ..." to count them), OBJDIR (also keep the
+# object files there, for the symbol list), EXTRA (more compiler flags, e.g. -include of a shim header).  The prefix header
 # drm618/include/drm618_prefix.h is included as in files.drmkms618; NOPREFIX=1
 # leaves it out to see what the sources need without it.  NOREF=1 leaves the
 # reference tree (GPL headers) out, so a header only found there is reported as missing.
@@ -28,7 +30,7 @@ if [ "${1:-}" = --one ]; then
 	# shellcheck disable=SC2086
 	$CC $FLAGS -I$D/drm618/include -I$D/dist618/include -I$D/dist618/include/uapi \
 	    -I$D/include -I$S/external/bsd/common/include -I$dd -I$rd \
-	    ${REFINC} -c -o /dev/null "$src" > "$log" 2>&1
+	    ${REFINC} -c -o "${OBJDIR:-/dev/null}$([ -n "${OBJDIR:-}" ] && echo /$(echo "$f" | tr / _).o)" "$src" > "$log" 2>&1
 	echo $? > "$log.rc"
 	exit 0
 fi
@@ -41,7 +43,7 @@ J=${J:-16}
 D=$S/external/bsd/drm2
 PFX="-include $D/drm618/include/drm618_prefix.h"
 [ -n "${NOPREFIX:-}" ] && PFX=
-FLAGS="--target=x86_64--netbsd -B$S/../ember/tools/no-external-as/ -O2 -std=gnu11 -w -ferror-limit=0
+FLAGS="--target=x86_64--netbsd -B$S/../ember/tools/no-external-as/ -O2 -std=gnu11 ${WARNFLAGS:--w} -ferror-limit=0
  -ffreestanding -fwrapv -fno-strict-aliasing -mno-red-zone -mno-mmx -mno-sse -mno-avx -msoft-float -mcmodel=kernel
  -fno-omit-frame-pointer --sysroot=$SYSROOT -Damd64 -Dx86_64 -I$KOBJ -I$S/external/mit/xen-include-public/dist/
  -I$S/external/bsd/libnv/dist -I$S/external/bsd/acpica/dist -I$S/external/bsd/acpica/dist/include -I$S/../common/include
