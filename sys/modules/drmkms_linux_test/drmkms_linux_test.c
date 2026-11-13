@@ -26,6 +26,7 @@ int	drm2_drm618_task_run(void);
 int	drm2_drm618_gem_run(void);
 int	drm2_drm618_kms_run(void);
 int	drm2_drm618_hdr_run(void);
+int	drm2_p4_layer_run(void);
 int	drm618_file_fini(void);
 void	drm618_sleep_fini(void);
 
@@ -50,6 +51,7 @@ drmkms_linux_test_modcmd(modcmd_t cmd, void *arg __unused)
 		failed += drm2_drm618_gem_run();
 		failed += drm2_drm618_kms_run();
 		failed += drm2_drm618_hdr_run();
+		failed += drm2_p4_layer_run();
 		if (failed != 0) {
 			/*
 			 * A module whose init fails is unloaded without its fini:

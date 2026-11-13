@@ -41,8 +41,32 @@ struct task_struct {
 				pid_t	tgid;	/* a task is a process here */
 			};
 		};
+		/*
+		 * Identity of the thread group (the process).  It is only
+		 * compared (drm_sched_entity: who queued last), never
+		 * dereferenced, so the address of the process's vmspace
+		 * stands for it: one per process, stable while the process
+		 * runs (an exec gives the process a new one, which only
+		 * makes a flush see "another user", as after a fork).
+		 */
+		struct {
+			char	__proc_before_gl[offsetof(struct proc, p_vmspace)];
+			struct task_struct *group_leader;
+		};
+		/* PF_EXITING: the process is exiting (PS_WEXIT of p_sflag). */
+		struct {
+			char	__proc_before_flags[offsetof(struct proc, p_sflag)];
+			unsigned int flags;
+		};
+		/* exit_code: the signal that ends the process (p_xsig), 0 while it runs. */
+		struct {
+			char	__proc_before_xsig[offsetof(struct proc, p_xsig)];
+			int	exit_code;
+		};
 	};
 };
+
+#define	PF_EXITING	PS_WEXIT
 
 #undef	current
 #define	current	((struct task_struct *)curproc)

@@ -32,7 +32,8 @@
 #include <sys/types.h>
 
 #define	TRACE_EVENT(NAME, PROTOTYPE, ARGS, FIELDS, TRACE, PRINT)	      \
-	static inline void trace_##NAME PROTOTYPE {}
+	static inline void trace_##NAME PROTOTYPE {}			      \
+	static inline bool trace_##NAME##_enabled(void) { return false; }
 
 #define	TP_PROTO(ARGS...)	(ARGS)
 
