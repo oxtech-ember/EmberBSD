@@ -862,7 +862,7 @@ long drm_ioctl(struct file *filp,
 
 	drm_dbg_core(dev, "comm=\"%s\" pid=%d, dev=0x%lx, auth=%d, %s\n",
 		     current->comm, task_pid_nr(current),
-		     (long)old_encode_dev(file_priv->minor->kdev->devt),
+		     (long)old_encode_dev(drm618_kdev_devt(file_priv->minor->kdev)),
 		     file_priv->authenticated, ioctl->name);
 
 	/* Do not trust userspace, use our own definition */
@@ -901,7 +901,7 @@ long drm_ioctl(struct file *filp,
 		drm_dbg_core(dev,
 			     "invalid ioctl: comm=\"%s\", pid=%d, dev=0x%lx, auth=%d, cmd=0x%02x, nr=0x%02x\n",
 			     current->comm, task_pid_nr(current),
-			     (long)old_encode_dev(file_priv->minor->kdev->devt),
+			     (long)old_encode_dev(drm618_kdev_devt(file_priv->minor->kdev)),
 			     file_priv->authenticated, cmd, nr);
 
 	if (kdata != stack_kdata)

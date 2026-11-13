@@ -2246,7 +2246,7 @@ int drm_dp_mst_connector_late_register(struct drm_connector *connector,
 				       struct drm_dp_mst_port *port)
 {
 	drm_dbg_kms(port->mgr->dev, "registering %s remote bus for %s\n",
-		    port->aux.name, connector->kdev->kobj.name);
+		    port->aux.name, drm618_kdev_name(connector->kdev));
 
 	port->aux.dev = connector->kdev;
 	return drm_dp_aux_register_devnode(&port->aux);
@@ -2266,7 +2266,7 @@ void drm_dp_mst_connector_early_unregister(struct drm_connector *connector,
 					   struct drm_dp_mst_port *port)
 {
 	drm_dbg_kms(port->mgr->dev, "unregistering %s remote bus for %s\n",
-		    port->aux.name, connector->kdev->kobj.name);
+		    port->aux.name, drm618_kdev_name(connector->kdev));
 	drm_dp_aux_unregister_devnode(&port->aux);
 }
 EXPORT_SYMBOL(drm_dp_mst_connector_early_unregister);
@@ -5981,7 +5981,7 @@ static int drm_dp_mst_register_i2c_bus(struct drm_dp_mst_port *port)
 	aux->ddc.owner = THIS_MODULE;
 	/* FIXME: set the kdev of the port's connector as parent */
 	aux->ddc.dev.parent = parent_dev;
-	aux->ddc.dev.of_node = parent_dev->of_node;
+	/* EmberBSD: parent_dev is a device_t, there is no of_node */
 
 	strscpy(aux->ddc.name, aux->name ? aux->name : dev_name(parent_dev),
 		sizeof(aux->ddc.name));

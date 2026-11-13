@@ -120,7 +120,7 @@ static void drm_minor_alloc_release(struct drm_device *dev, void *data)
 
 	WARN_ON(dev != minor->dev);
 
-	put_device(minor->kdev);
+	drm618_kdev_put(minor->kdev);
 
 	xa_erase(drm_minor_get_xa(minor->type), minor->index);
 }
@@ -603,7 +603,7 @@ int drm_dev_wedged_event(struct drm_device *dev, unsigned long method,
 		envp[2] = comm_string;
 	}
 
-	return kobject_uevent_env(&dev->primary->kdev->kobj, KOBJ_CHANGE, envp);
+	return drm618_kdev_uevent(dev->primary->kdev, envp);
 }
 EXPORT_SYMBOL(drm_dev_wedged_event);
 
@@ -1010,9 +1010,7 @@ static int create_compat_control_link(struct drm_device *dev)
 	if (!name)
 		return -ENOMEM;
 
-	ret = sysfs_create_link(minor->kdev->kobj.parent,
-				&minor->kdev->kobj,
-				name);
+	ret = drm618_kdev_create_link(minor->kdev, name);
 
 	kfree(name);
 
@@ -1035,7 +1033,7 @@ static void remove_compat_control_link(struct drm_device *dev)
 	if (!name)
 		return;
 
-	sysfs_remove_link(minor->kdev->kobj.parent, name);
+	drm618_kdev_remove_link(minor->kdev, name);
 
 	kfree(name);
 }
