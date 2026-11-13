@@ -38,13 +38,38 @@ tools=$D/drm618/tools
 if [ "${1:-}" = --verify ]; then
 	lt=$2
 	bad=0
+	patched=0
+	pt=$D/drm618/patches.tsv
 	while IFS="	" read -r path sha cls spdx src; do
 		[ "$path" = path ] && continue
 		s=$(sha256sum "$lt/$src" | cut -d' ' -f1)
 		[ "$s" = "$sha" ] || { echo "MISMATCH $path" >&2; bad=1; }
 		d=$(sha256sum "$D/dist618/$path" | cut -d' ' -f1)
-		[ "$d" = "$sha" ] || { echo "MODIFIED $path" >&2; bad=1; }
+		if [ "$d" = "$sha" ]; then
+			# Pristine.  A listed patch whose result is not in the file is not applied.
+			if grep -q "^$path	" "$pt" 2>/dev/null; then
+				echo "UNAPPLIED $path (listed in patches.tsv, file is pristine)" >&2
+				bad=1
+			fi
+		else
+			# Modified: allowed only as the listed local patch of exactly this Linux file.
+			row=$(grep "^$path	" "$pt" 2>/dev/null || true)
+			before=$(echo "$row" | cut -f2)
+			after=$(echo "$row" | cut -f3)
+			if [ -n "$row" ] && [ "$before" = "$sha" ] && [ "$after" = "$d" ]; then
+				patched=$((patched + 1))
+				echo "PATCHED $path: $(echo "$row" | cut -f4)"
+			else
+				echo "MODIFIED $path (not a listed local patch)" >&2
+				bad=1
+			fi
+		fi
 	done < $D/dist618/MANIFEST.tsv
+	# every row of patches.tsv must name a file of the manifest
+	tail -n +2 "$pt" 2>/dev/null | while IFS="	" read -r path rest; do
+		grep -q "^$path	" $D/dist618/MANIFEST.tsv || echo "patches.tsv: $path is not imported" >&2
+	done
+	echo "verify: $patched file(s) of Linux 6.18 with a local patch (drm618/patches.tsv), rest pristine" >&2
 	exit $bad
 fi
 

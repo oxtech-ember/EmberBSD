@@ -241,7 +241,7 @@ void drm_file_free(struct drm_file *file)
 
 	drm_dbg_core(dev, "comm=\"%s\", pid=%d, dev=0x%lx, open_count=%d\n",
 		     current->comm, task_pid_nr(current),
-		     (long)old_encode_dev(file->minor->kdev->devt),
+		     (long)old_encode_dev(drm618_kdev_devt(file->minor->kdev)),
 		     atomic_read(&dev->open_count));
 
 	if (!drm_core_check_feature(dev, DRIVER_COMPUTE_ACCEL))
