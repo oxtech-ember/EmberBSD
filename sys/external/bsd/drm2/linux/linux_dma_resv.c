@@ -612,8 +612,8 @@ dma_resv_add_excl_fence(struct dma_resv *robj,
     struct dma_fence *fence)
 {
 	struct dma_fence *old_fence = robj->fence_excl;
-	struct dma_resv_list *old_list = robj->fence;
-	uint32_t old_shared_count;
+	struct dma_resv_list *old_list = robj->fence, *spare = NULL;
+	uint32_t old_shared_count = 0;
 	struct dma_resv_write_ticket ticket;
 
 	KASSERT(dma_resv_held(robj));
@@ -625,17 +625,30 @@ dma_resv_add_excl_fence(struct dma_resv *robj,
 	if (fence)
 		(void)dma_fence_get(fence);
 
-	/* If there are any shared fences, remember how many.  */
-	if (old_list)
+	/*
+	 * If there are any shared fences, remember how many.  Readers
+	 * of the 5.6 API walk list->shared[i] over a snapshot of the
+	 * count without revalidating each entry, so the list they hold
+	 * must keep its count and entries: the object gets a fresh
+	 * empty list of the same capacity (copy on write) and the old
+	 * one is freed after a grace period.  May sleep, so allocate
+	 * before the write section.
+	 */
+	if (old_list != NULL) {
 		old_shared_count = old_list->shared_count;
+		if (old_shared_count != 0) {
+			spare = objlist_alloc(old_list->shared_max);
+			spare->shared_count = 0;
+		}
+	}
 
 	/* Begin an update.  Implies membar_producer for fence.  */
 	dma_resv_write_begin(robj, &ticket);
 
-	/* Replace the fence and zero the shared count.  */
+	/* Replace the fence and the shared list.  */
 	atomic_store_relaxed(&robj->fence_excl, fence);
-	if (old_list)
-		old_list->shared_count = 0;
+	if (spare != NULL)
+		atomic_store_relaxed(&robj->fence, spare);
 
 	/* Commit the update.  */
 	dma_resv_write_commit(robj, &ticket);
@@ -646,13 +659,15 @@ dma_resv_add_excl_fence(struct dma_resv *robj,
 		old_fence = NULL; /* paranoia */
 	}
 
-	/* Release any old shared fences.  */
-	if (old_list) {
-		while (old_shared_count--) {
+	/*
+	 * Release any old shared fences.  The entries stay in the old
+	 * list for readers that still hold it; fences are freed only
+	 * after a grace period.
+	 */
+	if (spare != NULL) {
+		while (old_shared_count--)
 			dma_fence_put(old_list->shared[old_shared_count]);
-			/* paranoia */
-			old_list->shared[old_shared_count] = NULL;
-		}
+		objlist_defer_free(old_list);
 	}
 }
 
