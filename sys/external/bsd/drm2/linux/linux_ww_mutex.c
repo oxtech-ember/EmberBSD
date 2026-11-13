@@ -118,7 +118,9 @@ ww_acquire_done_check(struct ww_mutex *mutex, struct ww_acquire_ctx *ctx)
 	 */
 	KASSERT(mutex_owned(&mutex->wwm_lock));
 	KASSERTMSG((!ctx->wwx_acquire_done ||
-		(mutex->wwm_state == WW_CTX && mutex->wwm_u.ctx == ctx)),
+		((mutex->wwm_state == WW_CTX ||
+		  mutex->wwm_state == WW_WANTOWN) &&
+		 mutex->wwm_u.ctx == ctx)),
 	    "ctx %p done acquiring locks, refusing to acquire %p",
 	    ctx, mutex);
 }
@@ -340,6 +342,28 @@ ww_mutex_state_wait_sig(struct ww_mutex *mutex, enum ww_mutex_state state)
 }
 
 /*
+ * ww_mutex_waiter_acquire(mutex, ctx)
+ *
+ * Accept a context handoff or acquire an unowned mutex as the first
+ * context waiter.  A non-context waiter may have changed WW_CTX to
+ * WW_WANTOWN, in which case unlock wakes waiters without a handoff.
+ * Caller holds the internal lock and ctx is in the waiter tree.
+ */
+static bool
+ww_mutex_waiter_acquire(struct ww_mutex *mutex, struct ww_acquire_ctx *ctx)
+{
+
+	KASSERT(mutex_owned(&mutex->wwm_lock));
+	if (mutex->wwm_state == WW_UNLOCKED &&
+	    RB_TREE_MIN(&mutex->wwm_waiters) == ctx) {
+		mutex->wwm_state = WW_CTX;
+		mutex->wwm_u.ctx = ctx;
+	}
+	return (mutex->wwm_state == WW_CTX ||
+	    mutex->wwm_state == WW_WANTOWN) && mutex->wwm_u.ctx == ctx;
+}
+
+/*
  * ww_mutex_lock_wait(mutex, ctx)
  *
  *	With mutex locked and in the WW_CTX or WW_WANTOWN state, owned
@@ -379,9 +403,7 @@ ww_mutex_lock_wait(struct ww_mutex *mutex, struct ww_acquire_ctx *ctx)
 
 	for (;;) {
 		cv_wait(&mutex->wwm_cv, &mutex->wwm_lock);
-		if ((mutex->wwm_state == WW_CTX ||
-			mutex->wwm_state == WW_WANTOWN) &&
-		    mutex->wwm_u.ctx == ctx)
+		if (ww_mutex_waiter_acquire(mutex, ctx))
 			break;
 	}
 
@@ -434,9 +456,7 @@ ww_mutex_lock_wait_sig(struct ww_mutex *mutex, struct ww_acquire_ctx *ctx)
 	for (;;) {
 		/* XXX errno NetBSD->Linux */
 		ret = -cv_wait_sig(&mutex->wwm_cv, &mutex->wwm_lock);
-		if ((mutex->wwm_state == WW_CTX ||
-			mutex->wwm_state == WW_WANTOWN) &&
-		    mutex->wwm_u.ctx == ctx) {
+		if (ww_mutex_waiter_acquire(mutex, ctx)) {
 			ret = 0;
 			break;
 		}
@@ -616,16 +636,15 @@ retry:	switch (mutex->wwm_state) {
 		ww_mutex_state_wait(mutex, WW_OWNED);
 		goto retry;
 	case WW_CTX:
-		break;
 	case WW_WANTOWN:
-		ww_mutex_state_wait(mutex, WW_WANTOWN);
-		goto retry;
+		break;
 	default:
 		panic("wait/wound mutex %p in bad state: %d",
 		    mutex, (int)mutex->wwm_state);
 	}
 
-	KASSERT(mutex->wwm_state == WW_CTX);
+	KASSERT(mutex->wwm_state == WW_CTX ||
+	    mutex->wwm_state == WW_WANTOWN);
 	KASSERT(mutex->wwm_u.ctx != NULL);
 	KASSERT((mutex->wwm_u.ctx == ctx) ||
 	    (mutex->wwm_u.ctx->wwx_owner != curlwp));
@@ -740,20 +759,15 @@ retry:	switch (mutex->wwm_state) {
 		}
 		goto retry;
 	case WW_CTX:
-		break;
 	case WW_WANTOWN:
-		ret = ww_mutex_state_wait_sig(mutex, WW_WANTOWN);
-		if (ret) {
-			KASSERTMSG(ret == -EINTR, "ret=%d", ret);
-			goto out_unlock;
-		}
-		goto retry;
+		break;
 	default:
 		panic("wait/wound mutex %p in bad state: %d",
 		    mutex, (int)mutex->wwm_state);
 	}
 
-	KASSERT(mutex->wwm_state == WW_CTX);
+	KASSERT(mutex->wwm_state == WW_CTX ||
+	    mutex->wwm_state == WW_WANTOWN);
 	KASSERT(mutex->wwm_u.ctx != NULL);
 	KASSERT((mutex->wwm_u.ctx == ctx) ||
 	    (mutex->wwm_u.ctx->wwx_owner != curlwp));
@@ -1007,10 +1021,9 @@ ww_mutex_trylock(struct ww_mutex *mutex)
 		 * this deep in ttm buffer reservation logic, so these
 		 * assertions are disabled until we find another way to
 		 * work around that or fix the bug that leads to it.
-		 *
-		 * That said: we should not be in the WW_WANTOWN state,
-		 * which happens only while we're in the ww mutex logic
-		 * waiting to acquire the lock.
+		 * This also applies in WW_WANTOWN: a concurrent caller
+		 * without a context can change WW_CTX to WW_WANTOWN while
+		 * the current thread continues to own the mutex.
 		 */
 #if 0
 		KASSERTMSG(((mutex->wwm_state != WW_OWNED) ||
@@ -1019,10 +1032,10 @@ ww_mutex_trylock(struct ww_mutex *mutex)
 		KASSERTMSG(((mutex->wwm_state != WW_CTX) ||
 		    (mutex->wwm_u.ctx->wwx_owner != curlwp)),
 		    "locking %p against myself: %p", mutex, curlwp);
-#endif
 		KASSERTMSG(((mutex->wwm_state != WW_WANTOWN) ||
 		    (mutex->wwm_u.ctx->wwx_owner != curlwp)),
 		    "locking %p against myself: %p", mutex, curlwp);
+#endif
 		ret = 0;
 	}
 	mutex_exit(&mutex->wwm_lock);
