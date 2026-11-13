@@ -35,7 +35,9 @@ root, out = sys.argv[1], sys.argv[2]
 os.makedirs(out, exist_ok=True)
 DRM = 'drivers/gpu/drm'
 
-# x86 PCI configuration, no OF/DT, no bridge/panel/MIPI, no TTM/sched.
+# x86 PCI configuration, no OF/DT, no bridge/panel/MIPI; TTM and the scheduler
+# are included (their Makefiles are not read: the lists below are fixed,
+# without kunit tests and without ttm_agp_backend.c, CONFIG_AGP is off).
 CONFIG = {
  'DRM': 'y', 'PCI': 'y', 'COMPAT': 'y', 'DRM_KMS_HELPER': 'y',
  'DRM_CLIENT': 'y', 'DRM_CLIENT_LIB': 'y', 'DRM_FBDEV_EMULATION': 'y',
@@ -44,6 +46,7 @@ CONFIG = {
  'DRM_EXEC': 'y', 'DRM_GPUVM': 'y', 'DRM_BUDDY': 'y',
  'DRM_GEM_DMA_HELPER': 'y', 'DRM_GEM_SHMEM_HELPER': 'y',
  'DRM_SUBALLOC_HELPER': 'y',
+ 'DRM_TTM': 'y', 'DRM_TTM_HELPER': 'y', 'DRM_SCHED': 'y',
  'DRM_DISPLAY_HELPER': 'y', 'DRM_DISPLAY_DP_HELPER': 'y',
  'DRM_DISPLAY_DSC_HELPER': 'y', 'DRM_DISPLAY_HDCP_HELPER': 'y',
  'DRM_DISPLAY_HDMI_HELPER': 'y', 'DRM_DISPLAY_HDMI_STATE_HELPER': 'y',
@@ -56,7 +59,6 @@ OFF = {
  'DRM_DRAW': 'only for DRM_PANIC', 'DRM_PANIC_SCREEN_QR_CODE': 'Rust',
  'DRM_LOAD_EDID_FIRMWARE': 'GPL-only helper, firmware EDID not needed',
  'DRM_VRAM_HELPER': 'VRAM helper for simple PCI devices, GPL-only',
- 'DRM_TTM_HELPER': 'imported later', 'DRM_TTM': 'imported later', 'DRM_SCHED': 'imported later',
  'DRM_MIPI_DBI': 'SPI panels', 'DRM_MIPI_DSI': 'DSI panels',
  'DRM_GPUSVM': 'SVM, nouveau staging only', 'ZONE_DEVICE': 'no',
  'DRM_PANEL_BRIDGE': 'bridges', 'DRM_BRIDGE_CONNECTOR': 'bridges',
@@ -130,6 +132,11 @@ def objects(makefile, topvars):
         pass
     return res
 
+P4_TTM = ['ttm_backup.c', 'ttm_bo.c', 'ttm_bo_util.c', 'ttm_bo_vm.c', 'ttm_device.c',
+          'ttm_execbuf_util.c', 'ttm_module.c', 'ttm_pool.c', 'ttm_range_manager.c',
+          'ttm_resource.c', 'ttm_sys_manager.c', 'ttm_tt.c']
+P4_SCHED = ['sched_entity.c', 'sched_fence.c', 'sched_main.c']
+
 def build_set():
     items = []   # (path, reason-if-skip or None)
     # root: composite 'drm' (drm-y) and 'drm_kms_helper' etc come through obj-y
@@ -147,6 +154,12 @@ def build_set():
                 continue
             items.append(os.path.join(DRM, sub, o))
     items.append('drivers/gpu/buddy.c')
+    # TTM, the GPU scheduler, the TTM GEM helper.
+    for f in P4_TTM:
+        items.append(DRM + '/ttm/' + f)
+    for f in P4_SCHED:
+        items.append(DRM + '/scheduler/' + f)
+    items.append(DRM + '/drm_gem_ttm_helper.c')
     return sorted(set(items))
 
 spdx = re.compile(r'SPDX-License-Identifier:\s*(.*?)\s*(?:\*/)?\s*$', re.M)
@@ -202,6 +215,9 @@ hdrs += list(headers(DRM + '/clients', 'h'))
 hdrs += list(headers('include/drm', 'h'))
 hdrs += list(headers('include/drm/display', 'h'))
 hdrs += list(headers('include/drm/clients', 'h'))
+hdrs += list(headers('include/drm/ttm', 'h'))
+hdrs += list(headers(DRM + '/ttm', 'h'))
+hdrs += list(headers(DRM + '/scheduler', 'h'))
 hdrs += list(headers('include/uapi/drm', 'uapi'))
 if os.path.exists(os.path.join(root, 'include/linux/gpu_buddy.h')):
     hdrs.append(('include/linux/gpu_buddy.h', 'h'))

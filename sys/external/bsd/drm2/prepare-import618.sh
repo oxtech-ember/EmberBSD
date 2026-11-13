@@ -110,8 +110,12 @@ tail -n +2 "$tmp/select.tsv" | while IFS="	" read -r p kind cls spdx action reas
 		    >> $D/dist618/MANIFEST.tsv
 		;;
 	ref)
-		mkdir -p "$ref/$(dirname "$d")"
-		cp "$lt/$p" "$ref/$d"
+		# NOREFCOPY=1: do not copy the GPL file anywhere, only list it
+		# (clean-room work: nobody needs its text).
+		if [ -z "${NOREFCOPY:-}" ]; then
+			mkdir -p "$ref/$(dirname "$d")"
+			cp "$lt/$p" "$ref/$d"
+		fi
 		b=$(basename "$d")
 		old=-
 		# An existing BSD rewrite has the same name, or the 5.6 name (gem_dma was gem_cma).
