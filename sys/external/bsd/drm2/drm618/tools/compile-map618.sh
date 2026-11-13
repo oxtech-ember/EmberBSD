@@ -44,7 +44,7 @@ FLAGS="--target=x86_64--netbsd -B$S/../ember/tools/no-external-as/ -O2 -std=gnu1
  -I$S/external/bsd/libnv/dist -I$S/external/bsd/acpica/dist -I$S/external/bsd/acpica/dist/include -I$S/../common/include
  -I$S/arch -I$S -nostdinc -D__XEN_INTERFACE_VERSION__=0x3020a -DCOMPAT_44
  -D_KERNEL -D_KERNEL_OPT -D__KERNEL__ -DCONFIG_X86 -DCONFIG_X86_64 -DCONFIG_X86_PAT -DCONFIG_PCI=1
- -DCONFIG_DRM_FBDEV_EMULATION=1 -DCONFIG_DRM_FBDEV_OVERALLOC=100 -DCONFIG_FB=0 -DCONFIG_LOCKDEP=0
+ -DCONFIG_FB=0 -DCONFIG_LOCKDEP=0
  -DCONFIG_BACKLIGHT_CLASS_DEVICE=0 -DCONFIG_BACKLIGHT_CLASS_DEVICE_MODULE=0 ${PFX} ${EXTRA:-}"
 export S CC FLAGS REF OUT
 mkdir -p "$OUT/log"
@@ -52,6 +52,11 @@ if [ $# -gt 0 ]; then
 	list=$*
 else
 	list=$(cd "$D/dist618" && grep -E '^(drm|gpu)/.*\.c	' MANIFEST.tsv | cut -f1 | sort)
+	# Not built with CONFIG_DRM_FBDEV_EMULATION off (see files.drmkms618): listed in
+	# drm618/tools/not-built.txt, "NOTBUILT=0" compiles them anyway.
+	if [ "${NOTBUILT:-1}" = 1 ]; then
+		list=$(for f in $list; do grep -qx "$f" "$D/drm618/tools/not-built.txt" || echo "$f"; done)
+	fi
 fi
 for f in $list; do echo "$f"; done | xargs -P "$J" -I{} sh "$0" --one {}
 printf 'file\tstatus\tnerr\tfirst-error\tclass\n' > "$OUT/map.tsv"

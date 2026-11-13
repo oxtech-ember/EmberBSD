@@ -46,6 +46,10 @@ struct linux_module_param_info {
 #define MTYPE_bool	1
 #define MTYPE_charp	2
 #define MTYPE_uint	3
+#define MTYPE_ulong	4
+#define MTYPE_long	5
+#define MTYPE_ushort	6
+#define MTYPE_short	7
 
 /*
  * In case of accidental cpp expansion, break glass to raise alarm and

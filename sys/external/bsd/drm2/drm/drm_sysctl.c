@@ -112,6 +112,12 @@ drm_sysctl_get_type(const struct linux_module_param_info *p)
 		return CTLTYPE_STRING;
 	case MTYPE_uint:
 		return CTLTYPE_INT; /* XXX */
+	case MTYPE_ulong:
+#ifdef _LP64
+		return CTLTYPE_QUAD;
+#else
+		return CTLTYPE_INT;
+#endif
 	default:
 		aprint_error("unhandled module param type %d for %s\n",
 		    p->type, p->name);
