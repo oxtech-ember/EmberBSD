@@ -18,6 +18,15 @@
 #define _DRM618_PREFIX_H_
 
 /*
+ * struct file is the Linux object here (drm618_file.h), not NetBSD's: keep
+ * <sys/file.h> from being read.  drm618_file.c, which also needs NetBSD's,
+ * is built with -DDRM618_NBSD_FILE.
+ */
+#ifndef DRM618_NBSD_FILE
+#define	_SYS_FILE_H_
+#endif
+
+/*
  * struct rb_node: NetBSD's <sys/rbtree.h> (also pulled in by the layer's idr.h
  * and ww_mutex.h) and the rb_node of the 6.18 sources, drm618/include/linux/
  * rbtree.h, are two different structures of the same size.  NetBSD's is
@@ -167,6 +176,19 @@ platform_device_unregister(struct platform_device *pdev)
 struct poll_table_struct;	/* drm_file.h */
 struct device_node;		/* drm_modes.h */
 struct vm_area_struct;		/* drm_prime.h */
+
+/*
+ * The Linux file model (drm618_file.h): struct file, struct inode, file_operations,
+ * descriptors.  User copies of an ioctl's own data go through the window of
+ * drm618_file.c (kernel memory NetBSD already copied), all others as before.
+ */
+#include <linux/fs.h>
+#include <linux/file.h>
+#include <linux/poll.h>
+#include <linux/kdev_t.h>
+#include <linux/uaccess.h>
+#define	copy_from_user	drm618_copy_from_user
+#define	copy_to_user	drm618_copy_to_user
 
 #include <drm618_layer.h>		/* list_last_entry_or_null, ALIGN(x, a), LIST_HEAD(name), ... */
 

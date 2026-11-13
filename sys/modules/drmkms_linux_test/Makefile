@@ -35,18 +35,24 @@ SRCS+=	drm2-linux-618.c
 SRCS+=	drm2-linux-618-layer.c
 SRCS+=	drm2-drm618-managed.c
 SRCS+=	drm2-drm618-statics.c
+SRCS+=	drm2-drm618-file.c
 
 # The 6.18-only code under test is compiled into the module (the kernel has no
 # drmkms618).
 .PATH: ${S}/external/bsd/drm2/drm618
 SRCS+=	drm618_kthread_worker.c
 SRCS+=	drm618_managed.c
+SRCS+=	drm618_file.c
 
 # These two read struct drm_device, so they get the includes the 6.18 core
 # expects (files.drmkms618).
 CPPFLAGS.drm618_managed.c+=	-D__KERNEL__ -include ${S}/external/bsd/drm2/drm618/include/drm618_prefix.h
 CPPFLAGS.drm2-drm618-statics.c+=	-D__KERNEL__ -include ${S}/external/bsd/drm2/drm618/include/drm618_prefix.h
 CPPFLAGS.drm2-drm618-managed.c+=	-D__KERNEL__ -include ${S}/external/bsd/drm2/drm618/include/drm618_prefix.h
+
+# drm618_file.c sees both kinds of file (see drm618_file.h).
+CPPFLAGS.drm618_file.c+=	-D__KERNEL__ -DDRM618_NBSD_FILE -include ${S}/external/bsd/drm2/drm618/include/drm618_prefix.h
+CPPFLAGS.drm2-drm618-file.c+=	-D__KERNEL__ -include ${S}/external/bsd/drm2/drm618/include/drm618_prefix.h
 
 WARNS=	3
 
