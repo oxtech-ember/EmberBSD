@@ -327,6 +327,24 @@ test_kthread_worker(void)
 	CHECK(!IS_ERR(kw) && kw != NULL);
 	if (IS_ERR(kw) || kw == NULL)
 		return;
+	/* sched_set_fifo: the worker's thread gets a kernel real time priority. */
+	sched_set_fifo(NULL);
+	CHECK(kw->task != NULL);
+	{
+		struct lwp *l = (struct lwp *)kw->task;
+		pri_t before, after;
+
+		lwp_lock(l);
+		before = l->l_priority;
+		lwp_unlock(l);
+		sched_set_fifo(kw->task);
+		lwp_lock(l);
+		after = l->l_priority;
+		lwp_unlock(l);
+		CHECK(before < PRI_KERNEL_RT);
+		CHECK(after == PRI_KERNEL_RT);
+	}
+
 	tw_init(&a, &log, 1, kw);
 	tw_init(&b, &log, 2, kw);
 	tw_init(&c, &log, 3, kw);

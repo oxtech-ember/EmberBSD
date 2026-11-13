@@ -37,7 +37,9 @@
 #include <linux/init.h>
 
 #define	PICOS2KHZ(PICOS)	(1000000000ul / (PICOS))
+#ifndef KHZ2PICOS
 #define	KHZ2PICOS(KHZ)		(1000000000ul / (KHZ))
+#endif
 
 #define	FBINFO_STATE_RUNNING	0
 #define	FBINFO_STATE_SUSPENDED	1

@@ -40,8 +40,7 @@ struct kthread_worker {
 	struct lwp		*lwp;
 	/*
 	 * Linux's thread of the worker.  There is no task_struct for it here:
-	 * always NULL, and sched_set_fifo(NULL) is not defined (see
-	 * drm618_layer.h).
+	 * it is the worker's lwp, and only sched_set_fifo() takes it.
 	 */
 	struct task_struct	*task;
 };
@@ -52,6 +51,10 @@ struct kthread_worker {
 	(work)->worker = NULL;						\
 	(work)->canceling = 0;						\
 } while (0)
+
+/* The thread of a kthread_worker at a kernel real time priority. */
+struct task_struct;
+void	sched_set_fifo(struct task_struct *);
 
 struct kthread_worker *kthread_run_worker(unsigned int, const char *, ...)
     __printflike(2, 3);

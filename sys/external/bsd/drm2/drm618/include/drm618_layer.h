@@ -154,14 +154,14 @@ memdup_user_nul(const void *src, size_t len)
 } while (0)
 
 /*
- * Declared, not defined: they belong to the file, memory mapping and
- * scheduler parts of the port (GEM mmap, drm_vblank_work) that come with
- * their users; a call that is linked before then fails to link.
+ * unmap_mapping_range: declared, not defined: it belongs to the memory
+ * mapping part of the port (GEM mmap) that comes with its users; a call
+ * that is linked before then fails to link.  sched_set_fifo is in
+ * drm618_kthread_worker.c.
  */
 struct address_space;
 struct task_struct;
 void	unmap_mapping_range(struct address_space *, loff_t, loff_t, int);
-void	sched_set_fifo(struct task_struct *);
 
 /*
  * mutex_init and mutex_destroy: Linux struct mutex against NetBSD kmutex_t.

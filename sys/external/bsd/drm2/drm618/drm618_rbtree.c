@@ -20,6 +20,9 @@
 #endif
 #include <linux/rbtree_augmented.h>
 
+/* sys/tree.h has these names with another meaning */
+#undef	RB_RED
+#undef	RB_BLACK
 #define	RB_RED		0UL
 #define	RB_BLACK	1UL
 

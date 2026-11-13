@@ -23,9 +23,7 @@
 	X(drm_unplug_srcu)		/* drm_drv.c */			\
 	X(connector_list_lock)		/* drm_connector.c */		\
 	X(bridge_lock)			/* drm_bridge.c */		\
-	X(panel_lock)			/* drm_panel.c */		\
-	X(drm_privacy_screen_lookup_lock) /* drm_privacy_screen.c */	\
-	X(drm_privacy_screen_devs_lock)	/* drm_privacy_screen.c */
+	X(panel_lock)			/* drm_panel.c */
 /* drm618-static-objects: end */
 
 #define	DECLARE(NAME)							\
@@ -48,8 +46,6 @@ drm618_static_fini(void)
 {
 
 	/* Reverse order: a list, written out in reverse. */
-	drm618_static_fini_drm_privacy_screen_devs_lock();
-	drm618_static_fini_drm_privacy_screen_lookup_lock();
 	drm618_static_fini_panel_lock();
 	drm618_static_fini_bridge_lock();
 	drm618_static_fini_connector_list_lock();
