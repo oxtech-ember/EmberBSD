@@ -43,6 +43,8 @@
 "int x" "int y" "int z" "int w" "u_int flags"
 .Ft int
 .Fn wsmousedevprint "void *aux" "const char *pnp"
+.Ft int
+.Fn wsmouse_pinch "device_t msdev" "int phase" "int scale"
 .Sh DESCRIPTION
 The
 .Nm
@@ -52,6 +54,22 @@ framework to provide machine-independent mouse support.
 Most of the support is provided by the
 .Xr wsmouse 4
 device driver, which must be a child of the hardware device driver.
+.Pp
+.Fn wsmouse_pinch
+queues one pinch event atomically.
+The phase is
+.Dv WSMOUSE_GESTURE_BEGIN ,
+.Dv WSMOUSE_GESTURE_UPDATE ,
+.Dv WSMOUSE_GESTURE_END ,
+or
+.Dv WSMOUSE_GESTURE_CANCEL .
+For UPDATE, scale is a positive absolute 16.16 ratio.
+It returns zero after delivery or when no consumer is open,
+.Er ENOSPC
+if the queue is full, or
+.Er EINVAL
+for an invalid phase or scale.
+A producer must retry a lost END as CANCEL.
 .Sh DATA TYPES
 Mouse drivers providing support for wscons pointer devices will make use
 of the following data types:

@@ -560,6 +560,116 @@ hidmt_gesture_quiet(struct hidmt_motion *motion)
 	motion->tap_button = 0;
 }
 
+/* Integer Euclidean distance. Clamp hostile coordinates before squaring. */
+static uint64_t
+hidmt_distance(const struct hidmt_contact *a, const struct hidmt_contact *b)
+{
+	int64_t x = (int64_t)a->x - b->x, y = (int64_t)a->y - b->y;
+	uint64_t n, root = 0, bit = (uint64_t)1 << 62;
+
+	if (x < -INT_MAX)
+		x = -INT_MAX;
+	if (x > INT_MAX)
+		x = INT_MAX;
+	if (y < -INT_MAX)
+		y = -INT_MAX;
+	if (y > INT_MAX)
+		y = INT_MAX;
+	n = (uint64_t)(x * x) + (uint64_t)(y * y);
+	while (bit > n)
+		bit >>= 2;
+	while (bit != 0) {
+		if (n >= root + bit) {
+			n -= root + bit;
+			root = (root >> 1) + bit;
+		} else
+			root >>= 1;
+		bit >>= 2;
+	}
+	return root;
+}
+
+/* Called only for two contacts, before a gesture has been latched. */
+static void
+hidmt_pinch_candidate(struct hidmt_gstate *gs,
+    const struct hidmt_frame *frame, struct hidmt_motion *motion)
+{
+	const struct hidmt_contact *a = &frame->contacts[0];
+	const struct hidmt_contact *b = &frame->contacts[1];
+	int64_t x = (int64_t)a->x + b->x, y = (int64_t)a->y + b->y;
+	uint64_t distance = hidmt_distance(a, b), change, travel;
+	bool same;
+
+	if (gs->two_scroll)
+		return;
+	same = gs->two_valid &&
+     ((gs->two_id[0] == a->id && gs->two_id[1] == b->id) ||
+      (gs->two_id[0] == b->id && gs->two_id[1] == a->id));
+	if (frame->buttons || frame->cancel_tap || (gs->two_valid && !same)) {
+		gs->two_scroll = true;
+		return;
+	}
+	if (!gs->two_valid) {
+		gs->two_valid = true;
+		gs->two_id[0] = a->id;
+		gs->two_id[1] = b->id;
+		gs->two_x = x;
+		gs->two_y = y;
+		gs->two_distance = distance;
+		return;
+	}
+	/* Zero separation is not a usable scale origin. */
+	if (gs->two_distance == 0) {
+		gs->two_scroll = true;
+		return;
+	}
+	change = distance > gs->two_distance ? distance - gs->two_distance :
+     gs->two_distance - distance;
+	travel = (uint64_t)(x > gs->two_x ? x - gs->two_x : gs->two_x - x);
+	travel += (uint64_t)(y > gs->two_y ? y - gs->two_y : gs->two_y - y);
+	if (change >= HIDMT_SCROLL_START && change * 2 > travel) {
+		gs->latched = gs->started = true;
+		gs->fingers = 2;
+		gs->pinch_scale = 65536;
+		motion->gesture |= HIDMT_GESTURE_BEGIN;
+		motion->gesture_fingers = 2;
+	} else if (travel >= HIDMT_SCROLL_START)
+		gs->two_scroll = true;
+}
+
+static void
+hidmt_pinch_update(struct hidmt_gstate *gs,
+    const struct hidmt_frame *frame, struct hidmt_motion *motion)
+{
+	const struct hidmt_contact *a = &frame->contacts[0];
+	const struct hidmt_contact *b = &frame->contacts[1];
+	uint64_t scale;
+	bool same;
+
+	hidmt_gesture_quiet(motion);
+	if (!gs->started)
+		return;
+	same = frame->ncontacts == 2 &&
+     ((gs->two_id[0] == a->id && gs->two_id[1] == b->id) ||
+      (gs->two_id[0] == b->id && gs->two_id[1] == a->id));
+	if (!same || frame->buttons || frame->cancel_tap) {
+		motion->gesture |= frame->ncontacts < 2 ? HIDMT_GESTURE_END :
+      HIDMT_GESTURE_CANCEL;
+		gs->started = false;
+		return;
+	}
+	scale = hidmt_distance(a, b) * 65536 / gs->two_distance;
+	if (scale == 0)
+		scale = 1;
+	if (scale > INT_MAX)
+		scale = INT_MAX;
+	if ((int)scale != gs->pinch_scale) {
+		gs->pinch_scale = (int)scale;
+		motion->gesture_scale = (int)scale;
+		motion->gesture |= HIDMT_GESTURE_UPDATE;
+	}
+}
+
 /*
  * Three- and four-finger gesture stage; call after the pointer policy with
  * the same frame. Contacts 3 and 4 never move the pointer or synthesise a
@@ -592,8 +702,23 @@ hidmt_gesture_update(struct hidmt_gstate *gs, const struct hidmt_gconf *gc,
 	if (n == 0) {
 		if (gs->started)
 			motion->gesture |= HIDMT_GESTURE_END;
+		if (gs->latched)
+			hidmt_gesture_quiet(motion);
 		memset(gs, 0, sizeof(*gs));
 		return;
+	}
+	if (gs->latched && gs->fingers == 2) {
+		hidmt_pinch_update(gs, frame, motion);
+		return;
+	}
+	if (n == 2 && !gs->latched) {
+		hidmt_pinch_candidate(gs, frame, motion);
+		if (gs->started)
+			hidmt_pinch_update(gs, frame, motion);
+		return;
+	}
+	if (n != 2) {
+		gs->two_valid = false;
 	}
 	if (n < 3 || n > 4) {
 		if (!gs->latched)

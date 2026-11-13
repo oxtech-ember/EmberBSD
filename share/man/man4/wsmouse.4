@@ -154,6 +154,19 @@ change later, for example
 Devices that cannot produce gestures, such as an ordinary mouse, fail the
 request with
 .Er ENOTTY .
+.It Dv WSMOUSEIO_GPINCH Pq Li "struct wsmouse_gesture_info"
+Report pinch support and its current setting with the same boolean fields.
+A separate request preserves the swipe capability ABI.
+Pinch uses
+.Dv WSCONS_EVENT_GESTURE_PINCH_BEGIN
+with value 2, followed by
+.Dv WSCONS_EVENT_GESTURE_PINCH_SCALE
+with a positive absolute 16.16 scale from the start position.
+The sequence ends with
+.Dv WSCONS_EVENT_GESTURE_PINCH_END
+or
+.Dv WSCONS_EVENT_GESTURE_PINCH_CANCEL .
+No pointer motion or scroll is emitted for a pinch.
 .It Dv WSMOUSEIO_SETVERSION Pq Li "int"
 Set the wscons_event protocol version.
 The default is 0 for binary compatibility.

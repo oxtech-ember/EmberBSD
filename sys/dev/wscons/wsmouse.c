@@ -619,6 +619,40 @@ wsmouse_gesture(device_t wsmousedev, int fingers, int phase, int dx, int dy)
 	return wsevent_inject(evar, events, nevents);
 }
 
+/* Pinch phases use one atomic event each and do not alter pointer state. */
+int
+wsmouse_pinch(device_t wsmousedev, int phase, int scale)
+{
+	struct wsmouse_softc *sc = device_private(wsmousedev);
+	struct wscons_event event;
+
+	switch (phase) {
+	case WSMOUSE_GESTURE_BEGIN:
+		event.type = WSCONS_EVENT_GESTURE_PINCH_BEGIN;
+		event.value = 2;
+		break;
+	case WSMOUSE_GESTURE_UPDATE:
+		if (scale <= 0)
+			return EINVAL;
+		event.type = WSCONS_EVENT_GESTURE_PINCH_SCALE;
+		event.value = scale;
+		break;
+	case WSMOUSE_GESTURE_END:
+		event.type = WSCONS_EVENT_GESTURE_PINCH_END;
+		event.value = 0;
+		break;
+	case WSMOUSE_GESTURE_CANCEL:
+		event.type = WSCONS_EVENT_GESTURE_PINCH_CANCEL;
+		event.value = 0;
+		break;
+	default:
+		return EINVAL;
+	}
+	if (sc->sc_base.me_evp == NULL)
+		return 0;
+	return wsevent_inject(sc->sc_base.me_evp, &event, 1);
+}
+
 static void
 wsmouse_repeat(void *v)
 {

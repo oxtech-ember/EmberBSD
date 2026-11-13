@@ -89,6 +89,11 @@ struct wscons_event {
 #define	WSCONS_EVENT_GESTURE_SWIPE_UPDATE_Y	20	/* Y delta, up is positive */
 #define	WSCONS_EVENT_GESTURE_SWIPE_END		21	/* void, finished */
 #define	WSCONS_EVENT_GESTURE_SWIPE_CANCEL	22	/* void, aborted */
+/* Two-finger pinch, with absolute 16.16 scale from its start. */
+#define WSCONS_EVENT_GESTURE_PINCH_BEGIN 23 /* two fingers */
+#define WSCONS_EVENT_GESTURE_PINCH_SCALE 24 /* positive absolute 16.16 scale */
+#define WSCONS_EVENT_GESTURE_PINCH_END 25 /* void, finished */
+#define WSCONS_EVENT_GESTURE_PINCH_CANCEL 26 /* void, aborted */
 
 /*
  * Keyboard ioctls (0 - 31)
@@ -316,6 +321,8 @@ struct wsmouse_gesture_info {
 	u_int wgi_enabled;
 };
 #define WSMOUSEIO_GGESTURE	_IOR('W', 44, struct wsmouse_gesture_info)
+/* Same boolean layout as GGESTURE; queried separately for pinch support. */
+#define WSMOUSEIO_GPINCH _IOR('W', 45, struct wsmouse_gesture_info)
 
 /*
  * Display ioctls (64 - 95)
