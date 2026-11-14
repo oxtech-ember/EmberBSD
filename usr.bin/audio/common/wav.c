@@ -173,7 +173,7 @@ audio_wav_parse_hdr(void *hdr, size_t sz, u_int *enc, u_int *prec,
 	ADJUST(4);
 	if (memcmp(where, strWAVE, RIFFNAMELEN) != 0)
 		return (AUDIO_ENOENT);
-	ADJUST(sizeof strWAVE);
+	ADJUST(RIFFNAMELEN);
 
 	found = find_riff_chunk(strfmt, &remain, &where, &len);
 
