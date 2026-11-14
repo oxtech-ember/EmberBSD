@@ -502,6 +502,129 @@ order_interruptible(void)
 	order_case(1);
 }
 
+
+/*
+ * Wait-die: a waiter that holds another lock must not go on waiting when the
+ * mutex it waits for is handed to an older context, which may want the lock
+ * the waiter holds.  Contexts A (oldest), B, Y (youngest): B holds L, Y holds
+ * M, B and A wait for M, Y lets go, M goes to A, and A wants L: B has to
+ * give L up (-EDEADLK), or A and B wait for each other.
+ */
+struct die_fixture {
+	struct ww_class cls;
+	struct ww_mutex m, l;
+	atomic_int a_phase, b_phase, b_result, done;
+	int irq;
+};
+static void *
+die_a(void *arg)
+{
+	struct die_fixture *f = arg;
+	struct ww_acquire_ctx c;
+
+	ww_acquire_init(&c, &f->cls);
+	atomic_store(&f->a_phase, 1);
+	wait_atomic(&f->a_phase, 2);
+	CHECK((f->irq ? ww_mutex_lock_interruptible(&f->m, &c) : ww_mutex_lock(&f->m, &c)) == 0);
+	/* A has M and wants L, which B holds: A is older and waits for B */
+	CHECK((f->irq ? ww_mutex_lock_interruptible(&f->l, &c) : ww_mutex_lock(&f->l, &c)) == 0);
+	ww_mutex_unlock(&f->l);
+	ww_mutex_unlock(&f->m);
+	ww_acquire_fini(&c);
+	atomic_fetch_add(&f->done, 1);
+	return NULL;
+}
+static void *
+die_b(void *arg)
+{
+	struct die_fixture *f = arg;
+	struct ww_acquire_ctx c;
+	int r;
+
+	ww_acquire_init(&c, &f->cls);
+	CHECK(ww_mutex_lock(&f->l, &c) == 0);
+	atomic_store(&f->b_phase, 1);
+	wait_atomic(&f->b_phase, 2);
+	r = f->irq ? ww_mutex_lock_interruptible(&f->m, &c) : ww_mutex_lock(&f->m, &c);
+	atomic_store(&f->b_result, r);
+	if (r == -EDEADLK) {
+		ww_mutex_unlock(&f->l);
+		if (f->irq)
+			CHECK(ww_mutex_lock_slow_interruptible(&f->m, &c) == 0);
+		else
+			ww_mutex_lock_slow(&f->m, &c);
+		ww_mutex_unlock(&f->m);
+	} else {
+		CHECK(r == 0);
+		ww_mutex_unlock(&f->m);
+		ww_mutex_unlock(&f->l);
+	}
+	ww_acquire_fini(&c);
+	atomic_fetch_add(&f->done, 1);
+	return NULL;
+}
+static void
+die_case(int irq)
+{
+	struct die_fixture f;
+	struct ww_acquire_ctx y;
+	pthread_t a, b;
+
+	atomic_init(&f.cls.wwc_ticket, 0);
+	atomic_init(&f.a_phase, 0);
+	atomic_init(&f.b_phase, 0);
+	atomic_init(&f.b_result, 999);
+	atomic_init(&f.done, 0);
+	f.irq = irq;
+	ww_mutex_init(&f.m, &f.cls);
+	ww_mutex_init(&f.l, &f.cls);
+	CHECK(!pthread_create(&a, NULL, die_a, &f));
+	wait_atomic(&f.a_phase, 1);			/* ticket 1 */
+	CHECK(!pthread_create(&b, NULL, die_b, &f));
+	wait_atomic(&f.b_phase, 1);			/* ticket 2, holds L */
+	ww_acquire_init(&y, &f.cls);			/* ticket 3 */
+	CHECK(ww_mutex_lock(&f.m, &y) == 0);
+	atomic_store(&f.b_phase, 2);
+	for (;;) {					/* B waits for M */
+		mutex_enter(&f.m.wwm_lock);
+		bool ready = RB_TREE_MIN(&f.m.wwm_waiters) != NULL;
+		mutex_exit(&f.m.wwm_lock);
+		if (ready)
+			break;
+		sched_yield();
+	}
+	atomic_store(&f.a_phase, 2);
+	for (;;) {					/* and A too */
+		mutex_enter(&f.m.wwm_lock);
+		struct ww_acquire_ctx *min = RB_TREE_MIN(&f.m.wwm_waiters);
+		struct ww_acquire_ctx *max = RB_TREE_MAX(&f.m.wwm_waiters);
+		bool ready = min && min != max;
+		mutex_exit(&f.m.wwm_lock);
+		if (ready)
+			break;
+		sched_yield();
+	}
+	ww_mutex_unlock(&f.m);				/* M goes to A, the oldest waiter */
+	ww_acquire_fini(&y);
+	CHECK(!pthread_join(a, NULL));
+	CHECK(!pthread_join(b, NULL));
+	CHECK(atomic_load(&f.done) == 2);
+	CHECK(atomic_load(&f.b_result) == -EDEADLK);
+	CHECK(RB_TREE_MIN(&f.m.wwm_waiters) == NULL);
+	ww_mutex_destroy(&f.l);
+	ww_mutex_destroy(&f.m);
+}
+static void
+die_normal(void)
+{
+	die_case(0);
+}
+static void
+die_interruptible(void)
+{
+	die_case(1);
+}
+
 static int failures;
 static void
 run_case(const char *name, void (*fn)(void))
@@ -587,5 +710,7 @@ main(void)
 	run_case("multiple waiters interruptible", order_interruptible);
 	run_case("signal before handoff", signal_before);
 	run_case("signal with handoff", signal_handoff);
+	run_case("waiter with locks dies for an older owner", die_normal);
+	run_case("waiter with locks dies for an older owner interruptible", die_interruptible);
 	return failures ? 1 : 0;
 }

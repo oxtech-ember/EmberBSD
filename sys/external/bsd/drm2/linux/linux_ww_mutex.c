@@ -364,6 +364,27 @@ ww_mutex_waiter_acquire(struct ww_mutex *mutex, struct ww_acquire_ctx *ctx)
 }
 
 /*
+ * ww_mutex_waiter_must_die(mutex, ctx)
+ *
+ * Wait-die: ctx waits for a mutex that has gone to an acquire context
+ * older than ctx while ctx holds other locks.  The older context may want
+ * what ctx holds, and then neither goes on.  ctx has to back off (-EDEADLK).
+ * The mutex went to the older context after ctx started to wait (a handoff of
+ * the oldest waiter); a context that came to a mutex of an older owner got
+ * -EDEADLK at once.  A context that holds nothing has nobody to deadlock with
+ * and may wait.  Caller holds the internal lock.
+ */
+static bool
+ww_mutex_waiter_must_die(struct ww_mutex *mutex, struct ww_acquire_ctx *ctx)
+{
+
+	KASSERT(mutex_owned(&mutex->wwm_lock));
+	return ctx->wwx_acquired > 0 &&
+	    (mutex->wwm_state == WW_CTX || mutex->wwm_state == WW_WANTOWN) &&
+	    mutex->wwm_u.ctx->wwx_ticket < ctx->wwx_ticket;
+}
+
+/*
  * ww_mutex_lock_wait(mutex, ctx)
  *
  *	With mutex locked and in the WW_CTX or WW_WANTOWN state, owned
@@ -372,16 +393,19 @@ ww_mutex_waiter_acquire(struct ww_mutex *mutex, struct ww_acquire_ctx *ctx)
  *	not update the mutex state otherwise.
  *
  *	Caller must not already hold mutex.  Caller must hold mutex's
- *	internal lock.  Uninterruptible; never fails.
+ *	internal lock.  Uninterruptible.  Returns 0, or -EDEADLK if die and
+ *	ctx has to back off (ww_mutex_waiter_must_die).
  *
  *	May sleep.
  *
  *	Internal subroutine.
  */
-static void
-ww_mutex_lock_wait(struct ww_mutex *mutex, struct ww_acquire_ctx *ctx)
+static int
+ww_mutex_lock_wait(struct ww_mutex *mutex, struct ww_acquire_ctx *ctx,
+    bool die)
 {
 	struct ww_acquire_ctx *collision __diagused;
+	int ret = 0;
 
 	KASSERT(mutex_owned(&mutex->wwm_lock));
 
@@ -405,12 +429,18 @@ ww_mutex_lock_wait(struct ww_mutex *mutex, struct ww_acquire_ctx *ctx)
 		cv_wait(&mutex->wwm_cv, &mutex->wwm_lock);
 		if (ww_mutex_waiter_acquire(mutex, ctx))
 			break;
+		if (die && ww_mutex_waiter_must_die(mutex, ctx)) {
+			ret = -EDEADLK;
+			break;
+		}
 	}
 
 	rb_tree_remove_node(&mutex->wwm_waiters, ctx);
 
-	KASSERT(mutex->wwm_state == WW_CTX || mutex->wwm_state == WW_WANTOWN);
-	KASSERT(mutex->wwm_u.ctx == ctx);
+	KASSERT(ret != 0 || mutex->wwm_state == WW_CTX ||
+	    mutex->wwm_state == WW_WANTOWN);
+	KASSERT(ret != 0 || mutex->wwm_u.ctx == ctx);
+	return ret;
 }
 
 /*
@@ -419,7 +449,8 @@ ww_mutex_lock_wait(struct ww_mutex *mutex, struct ww_acquire_ctx *ctx)
  *	With mutex locked and in the WW_CTX or WW_WANTOWN state, owned
  *	by another thread with an acquire context, wait to acquire
  *	mutex and return 0, or return -EINTR if interrupted by a
- *	signal.  While waiting, record ctx in the tree of waiters.
+ *	signal, or -EDEADLK if die and ctx has to back off.  While
+ *	waiting, record ctx in the tree of waiters.
  *	Does not update the mutex state otherwise.
  *
  *	Caller must not already hold mutex.  Caller must hold mutex's
@@ -430,7 +461,8 @@ ww_mutex_lock_wait(struct ww_mutex *mutex, struct ww_acquire_ctx *ctx)
  *	Internal subroutine.
  */
 static int
-ww_mutex_lock_wait_sig(struct ww_mutex *mutex, struct ww_acquire_ctx *ctx)
+ww_mutex_lock_wait_sig(struct ww_mutex *mutex, struct ww_acquire_ctx *ctx,
+    bool die)
 {
 	struct ww_acquire_ctx *collision __diagused;
 	int ret;
@@ -460,6 +492,10 @@ ww_mutex_lock_wait_sig(struct ww_mutex *mutex, struct ww_acquire_ctx *ctx)
 			ret = 0;
 			break;
 		}
+		if (die && ww_mutex_waiter_must_die(mutex, ctx)) {
+			ret = -EDEADLK;
+			break;
+		}
 		if (ret) {
 			KASSERTMSG((ret == -EINTR || ret == -ERESTART),
 			    "ret=%d", ret);
@@ -470,7 +506,8 @@ ww_mutex_lock_wait_sig(struct ww_mutex *mutex, struct ww_acquire_ctx *ctx)
 
 	rb_tree_remove_node(&mutex->wwm_waiters, ctx);
 
-	KASSERTMSG((ret == 0 || ret == -EINTR), "ret=%d", ret);
+	KASSERTMSG((ret == 0 || ret == -EINTR || ret == -EDEADLK), "ret=%d",
+	    ret);
 	KASSERT(ret != 0 ||
 	    mutex->wwm_state == WW_CTX || mutex->wwm_state == WW_WANTOWN);
 	KASSERT(ret != 0 || mutex->wwm_u.ctx == ctx);
@@ -681,7 +718,11 @@ retry:	switch (mutex->wwm_state) {
 	 * Owned by a lower-priority party.  Ask that party to wake us
 	 * when it is done or it realizes it needs to back off.
 	 */
-	ww_mutex_lock_wait(mutex, ctx);
+	ret = ww_mutex_lock_wait(mutex, ctx, true);
+	if (ret) {
+		KASSERTMSG(ret == -EDEADLK, "ret=%d", ret);
+		goto out_unlock;
+	}
 
 locked:	KASSERT((mutex->wwm_state == WW_CTX) ||
 	    (mutex->wwm_state == WW_WANTOWN));
@@ -804,9 +845,9 @@ retry:	switch (mutex->wwm_state) {
 	 * Owned by a lower-priority party.  Ask that party to wake us
 	 * when it is done or it realizes it needs to back off.
 	 */
-	ret = ww_mutex_lock_wait_sig(mutex, ctx);
+	ret = ww_mutex_lock_wait_sig(mutex, ctx, true);
 	if (ret) {
-		KASSERTMSG(ret == -EINTR, "ret=%d", ret);
+		KASSERTMSG(ret == -EINTR || ret == -EDEADLK, "ret=%d", ret);
 		goto out_unlock;
 	}
 
@@ -890,7 +931,7 @@ retry:	switch (mutex->wwm_state) {
 	 * Owned by another party, of any priority.  Ask that party to
 	 * wake us when it's done.
 	 */
-	ww_mutex_lock_wait(mutex, ctx);
+	(void)ww_mutex_lock_wait(mutex, ctx, false);
 
 locked:	KASSERT((mutex->wwm_state == WW_CTX) ||
 	    (mutex->wwm_state == WW_WANTOWN));
@@ -976,7 +1017,7 @@ retry:	switch (mutex->wwm_state) {
 	 * Owned by another party, of any priority.  Ask that party to
 	 * wake us when it's done.
 	 */
-	ret = ww_mutex_lock_wait_sig(mutex, ctx);
+	ret = ww_mutex_lock_wait_sig(mutex, ctx, false);
 	if (ret) {
 		KASSERTMSG(ret == -EINTR, "ret=%d", ret);
 		goto out_unlock;
