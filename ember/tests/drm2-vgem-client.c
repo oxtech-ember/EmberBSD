@@ -900,11 +900,11 @@ main(int argc, char **argv)
 		if (!quick)
 			test_expiry(ha, fa);
 		test_close_pending();
-		test_mmap();
-		test_prime();
 		test_stress(ha, fa, iters);
-		test_gem_stress(giters);
 	}
+	test_mmap();
+	test_prime();
+	test_gem_stress(giters);
 	printf("vgem-client: %d checks, %d failed\n", nchecks, nfail);
 	return nfail ? 1 : 0;
 }

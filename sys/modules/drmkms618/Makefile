@@ -45,6 +45,7 @@ SRCS+=	drm618_statics.c
 SRCS+=	drm618_sync_file.c
 SRCS+=	drm618_sysfs.c
 SRCS+=	drm618_unsupported.c
+SRCS+=	drm618_vma.c
 
 # Linux 6.18 files (dist618).
 SRCS+=	drm_client_setup.c

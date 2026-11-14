@@ -320,19 +320,12 @@ drm618_fo_kqfilter(struct file *fp __unused, struct knote *kn __unused)
 }
 
 static int
-drm618_fo_mmap(struct file *fp, off_t *offp __unused, size_t len __unused,
-    int prot __unused, int *flagsp __unused, int *advicep __unused,
-    struct uvm_object **uobjp __unused, int *maxprotp __unused)
+drm618_fo_mmap(struct file *fp, off_t *offp, size_t len, int prot, int *flagsp,
+    int *advicep, struct uvm_object **uobjp, int *maxprotp)
 {
-	static bool warned;
 
-	/* Not provided yet: GEM mappings need the vm_area_struct to uvm model. */
-	if (!warned) {
-		warned = true;
-		printf("drm618: mmap of a Linux file is not implemented\n");
-	}
-	(void)fp;
-	return EOPNOTSUPP;
+	return drm618_vma_mmap(LF(fp), offp, len, prot, flagsp, advicep, uobjp,
+	    maxprotp);
 }
 
 static const struct fileops drm618_fileops = {
