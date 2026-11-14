@@ -7,8 +7,9 @@
  * Foundation, BSD-2-Clause) that did the same for the old TTM.
  *
  * Linux's ttm_bo_vm.c answers a fault with vmf_insert_pfn_prot on a
- * vm_area_struct; the 6.18 core here has no user mapping of a Linux file
- * (drm618_file.c: mmap is EOPNOTSUPP), so the fault is a uvm pager:
+ * vm_area_struct; the user mapping of a Linux file in this core
+ * (drm618_vma.c) does not carry a TTM object yet, so the fault is a uvm
+ * pager of its own:
  *
  *   ttm_bo_uvm_create(bo)  a uvm_object that maps the object; the reference of
  *                          the uvm_object holds one of the buffer object

@@ -8,8 +8,11 @@
 # Build:
 #	nbmake-amd64 -C sys/modules/vgem dependall                 5.6 dma_resv calls
 #	nbmake-amd64 -C sys/modules/vgem VGEM_NEWAPI=1 dependall   6.18 dma_resv calls
+#	nbmake-amd64 -C sys/modules/vgem618 dependall              6.18 core (kernel GENERIC_ARL_DRM618):
+#		modload drmkms618.kmod first, then pass vgem618.kmod here
 # and cross-compile the client with the target compiler, -Isys/external/bsd/drm2/dist/include/uapi.
 # The module cannot be unloaded: reboot the guest to run the other variant.
+# The client takes -g N for the iterations of its threaded mapping stress.
 # Prints the client output; exit status 0 if the module loaded and every check passed.
 
 set -u

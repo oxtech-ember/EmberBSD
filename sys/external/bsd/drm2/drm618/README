@@ -57,3 +57,28 @@ Local changes to dist618 are made in separate commits after the pristine
 import commit, so that "git diff" against the import shows exactly what
 EmberBSD changed; BSD-only hooks that can live outside the Linux files go to
 drm618/include (it comes first in the include path) or to the layer.
+
+User mappings and PRIME
+-----------------------
+mmap(2) on a Linux file of the layer (drm618_vma.c) runs the mmap handler of the
+file once and keeps the vm_area_struct it leaves as a uvm object: the pager
+runs vm_ops open/close for the references (fork, split, unmap) and vm_ops->fault
+for the faults, vmf_insert_page/pfn enter the page, remap_pfn_range is entered
+lazily.  A mapping holds its file.  Only shared mappings exist; a handler that
+needs anything else (a second remap_pfn_range range, zap of single pages)
+fails with EOPNOTSUPP.  The TTM objects are not mapped through it yet:
+drm_gem_ttm_mmap says EOPNOTSUPP (the uvm pager of a TTM object,
+ttm_bo_vm_bsd.c, is not connected to the mapping of a file).
+
+The dma-buf of the 6.18 core (drm618_dma_buf.c, include/linux/dma-buf.h) is a
+Linux file too, with its own names (drm618_dma_buf_*): the dma-buf of the shared
+layer (linux_dma_buf.c) serves the 5.6 core and has another interface.  The
+dma-buf of this core: export, descriptor, import, attach, mmap, poll against
+the reservation, llseek.  Not provided: the ioctls of the descriptor (ENOTTY),
+kqueue (EINVAL), the DMA mapping of a table for another device
+(dma_map_sgtable: EOPNOTSUPP), so a dma-buf of this core cannot be imported by
+a driver that needs a mapped table.  drm_prime.c is built from dist618.
+
+Test driver: sys/modules/vgem618 (same source as vgem, VGEM_CORE618), client
+ember/tests/drm2-vgem-client.c, kernel checks drm2-drm618-gem and
+drm2-drm618-dmabuf in drmkms_linux_test.
