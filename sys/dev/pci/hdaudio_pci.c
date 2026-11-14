@@ -97,6 +97,12 @@ static const struct device_compatible_entry compat_data[] = {
 	{ .id = PCI_ID_CODE(PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_5HS_LP_HDA) },
 	{ .id = PCI_ID_CODE(PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_6HS_LP_HDA) },
 	{ .id = PCI_ID_CODE(PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_JSL_CAVS) },
+	/*
+	 * Arrow Lake-S: the BIOS reports this controller with the audio
+	 * class (0x0401, DSP mode), so the HD Audio class match (0x0403)
+	 * does not succeed and the controller is matched by ID instead.
+	 */
+	{ .id = PCI_ID_CODE(PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_ARL_S_HDA) },
 
 	PCI_COMPAT_EOL
 };
