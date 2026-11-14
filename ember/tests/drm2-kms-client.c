@@ -289,6 +289,25 @@ drain_events(int f)
 	return n;
 }
 
+/*
+ * The event with this user_data, or the error if it does not come: a commit
+ * that a killed process had under way can still deliver its event to a
+ * descriptor that is shared, so earlier events may come first.
+ */
+static int
+wait_event_user(int f, uint64_t user, int timeout_ms, struct drm_event_vblank *ev)
+{
+	double end = now_ms() + timeout_ms;
+	int r, left;
+
+	for (;;) {
+		left = (int)(end - now_ms());
+		r = read_event(f, left > 0 ? left : 0, ev);
+		if (r != 0 || ev->user_data == user)
+			return r;
+	}
+}
+
 /* ------------------------------------------------------------ objects */
 
 static uint32_t crtc_id, conn_id, enc_id, plane_id;
@@ -1467,7 +1486,7 @@ test_stress(int nthreads)
 	{
 		struct drm_event_vblank ev;
 
-		CHECK(read_event(fd, 2000, &ev) == 0 && ev.user_data == 9, "its event");
+		CHECK(wait_event_user(fd, 9, 2000, &ev) == 0, "its event");
 	}
 	CHECK(flip_on(fd, fbA.fb_id, 0, 0) == 0, "flip back to A");
 }
@@ -1555,7 +1574,7 @@ kill_child_on_fd(int rounds)
 		{
 			struct drm_event_vblank ev;
 
-			if (read_event(fd, 2000, &ev) != 0)
+			if (wait_event_user(fd, 3, 2000, &ev) != 0)
 				bad++;
 		}
 	}
@@ -1640,7 +1659,7 @@ kill_child_own_fd(int rounds)
 	{
 		struct drm_event_vblank ev;
 
-		CHECK(read_event(fd, 2000, &ev) == 0 && ev.user_data == 11, "its event");
+		CHECK(wait_event_user(fd, 11, 2000, &ev) == 0, "its event");
 	}
 	CHECK(flip_on(fd, fbA.fb_id, 0, 0) == 0, "flip back to A");
 }
