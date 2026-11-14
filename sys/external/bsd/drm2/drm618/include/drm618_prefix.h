@@ -95,6 +95,9 @@ typedef unsigned int __poll_t;
 #include <linux/instruction_pointer.h>	/* kernel.h upstream: _THIS_IP_ (drm_print.h) */
 #include <linux/err.h>			/* ERR_PTR, IS_ERR (many) */
 #include <linux/module.h>		/* THIS_MODULE (drm_client, drm_gem fops) */
+/* The layer's KBUILD_MODNAME is the undefined name __file__; drm_prime.c names its dma-bufs with it. */
+#undef	KBUILD_MODNAME
+#define	KBUILD_MODNAME	"drmkms618"
 /*
  * module_init/module_exit: the layer ignores them.  Here each becomes a
  * function with a name of its own that drm618_module.c calls (and that keeps
