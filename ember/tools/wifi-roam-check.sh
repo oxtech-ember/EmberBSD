@@ -118,13 +118,13 @@ while before "$candidate_end"; do
         [ "$ssid" = "$network_ssid" ] && [ "$key_mgmt" = "$network_key" ]; then
         ctl scan-results scan_results || finish FAIL cache_read
         while IFS="$tab" read -r ap freq signal flags name; do
-            before "$candidate_end" || break
             case "$ap" in
             ??:??:??:??:??:??) ;;
             *) continue ;;
             esac
             [ "$ap" != "$bssid" ] && [ "$name" = "$network_ssid" ] || continue
             case "$security:$flags" in SAE:*SAE*|PSK:*PSK*) ;; *) continue ;; esac
+            before "$candidate_end" || break
             ctl candidate bss "$ap" || finish FAIL bss_control
             record_bssid= record_ssid= record_age=
             while IFS='=' read -r key value; do
