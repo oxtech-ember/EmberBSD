@@ -244,27 +244,38 @@ buf_free(struct buf *b)
 	memset(b, 0, sizeof *b);
 }
 
-/* the event of a flip or a vblank */
+/*
+ * The event of a flip or a vblank: one event per read (the buffer holds one
+ * struct drm_event_vblank, and the driver hands out whole events only).  The
+ * descriptor is non-blocking: with several threads reading, the event that poll
+ * reported may be gone when the read comes.
+ */
 static int
 read_event(int f, int timeout_ms, struct drm_event_vblank *ev)
 {
 	struct pollfd p;
-	char buf[256];
+	double end = now_ms() + timeout_ms;
 	ssize_t n;
-	int r;
+	int r, left;
 
-	p.fd = f; p.events = POLLIN; p.revents = 0;
-	r = poll(&p, 1, timeout_ms);
-	if (r < 0)
-		return -errno;
-	if (r == 0)
-		return -ETIMEDOUT;
-	n = read(f, buf, sizeof buf);
-	if (n < (ssize_t)sizeof(struct drm_event))
+	for (;;) {
+		left = (int)(end - now_ms());
+		if (left < 0)
+			left = 0;
+		p.fd = f; p.events = POLLIN; p.revents = 0;
+		r = poll(&p, 1, left);
+		if (r < 0)
+			return -errno;
+		if (r == 0)
+			return -ETIMEDOUT;
+		memset(ev, 0, sizeof *ev);
+		n = read(f, ev, sizeof *ev);
+		if (n == (ssize_t)sizeof *ev)
+			return 0;
+		if (n < 0 && errno == EAGAIN)
+			continue;
 		return n < 0 ? -errno : -EIO;
-	memset(ev, 0, sizeof *ev);
-	memcpy(ev, buf, (size_t)n < sizeof *ev ? (size_t)n : sizeof *ev);
-	return 0;
+	}
 }
 
 static int
@@ -451,7 +462,7 @@ mkblob(int f, const void *data, uint32_t len, uint32_t *id)
 /* --------------------------------------------------------- the checks */
 
 static int
-open_card(void)
+open_card_mode(int nonblock)
 {
 	char path[64], name[32];
 	int i, f;
@@ -467,11 +478,21 @@ open_card(void)
 		v.name = name;
 		v.name_len = sizeof name - 1;
 		if (ioctl(f, DRM_IOCTL_VERSION, &v) == 0 &&
-		    strcmp(name, "efidrm") == 0)
+		    strcmp(name, "efidrm") == 0) {
+			if (nonblock)
+				fcntl(f, F_SETFL, fcntl(f, F_GETFL) | O_NONBLOCK);
 			return f;
+		}
 		close(f);
 	}
 	return -1;
+}
+
+static int
+open_card(void)
+{
+
+	return open_card_mode(1);
 }
 
 static void
@@ -1231,6 +1252,68 @@ test_vblank(void)
 }
 
 static void
+sigalrm_nop(int sig)
+{
+
+	(void)sig;
+}
+
+/*
+ * A blocking read of events on an empty queue: a signal ends it (EINTR) and
+ * SIGKILL ends the process that sleeps in it.
+ */
+static void
+test_read_signal(void)
+{
+	struct sigaction sa;
+	struct itimerval it;
+	struct drm_event_vblank ev;
+	ssize_t n;
+	int f, e, i, st = 0, died = 0;
+	pid_t p;
+
+	f = open_card_mode(0);
+	CHECK(f >= 0, "blocking descriptor for the signal checks");
+	if (f < 0)
+		return;
+	drain_events(f);
+	memset(&sa, 0, sizeof sa);
+	sa.sa_handler = sigalrm_nop;		/* no SA_RESTART */
+	sigaction(SIGALRM, &sa, NULL);
+	memset(&it, 0, sizeof it);
+	it.it_value.tv_usec = 200000;
+	setitimer(ITIMER_REAL, &it, NULL);
+	n = read(f, &ev, sizeof ev);
+	e = errno;
+	memset(&it, 0, sizeof it);
+	setitimer(ITIMER_REAL, &it, NULL);
+	CHECK(n < 0 && e == EINTR, "a blocking read of events is ended by a signal: EINTR (n %zd errno %d)", n, e);
+	close(f);
+
+	p = fork();
+	if (p == 0) {
+		f = open_card_mode(0);
+		if (f < 0)
+			_exit(2);
+		for (;;)
+			(void)read(f, &ev, sizeof ev);
+	}
+	CHECK(p > 0, "child for the SIGKILL check");
+	if (p > 0) {
+		usleep(300000);
+		kill(p, SIGKILL);
+		for (i = 0; i < 60 && !died; i++) {
+			if (waitpid(p, &st, WNOHANG) == p)
+				died = 1;
+			else
+				usleep(50000);
+		}
+		CHECK(died && WIFSIGNALED(st) && WTERMSIG(st) == SIGKILL,
+		    "SIGKILL ends a process sleeping in a blocking read of events");
+	}
+}
+
+static void
 test_prime(void)
 {
 	struct drm_prime_handle ph, ph2;
@@ -1686,6 +1769,7 @@ main(int argc, char **argv)
 		test_atomic();
 		test_vblank();
 		test_prime();
+		test_read_signal();
 		test_stress(nthreads);
 		test_churn();
 		kill_child_on_fd(kills);
