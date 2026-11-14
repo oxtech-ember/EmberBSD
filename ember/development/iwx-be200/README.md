@@ -492,6 +492,32 @@ Porting state relative to the original 782-error snapshot:
 - The running kernel cannot `modunload` (no FINI): each hardware probe
   needs an MSI reboot.
 
+Leaving a BSS. net80211 sends its disassociation frame from
+`ieee80211_newstate()`, which the driver enters only after the station,
+link and MAC contexts are gone from the firmware; `iwx_stop()` stops the
+device without any frame. The AP therefore never heard that the station
+left. The frame net80211 sent afterwards went to the firmware with no
+station behind it and ended in a firmware assertion
+(`ADVANCED_SYSASSERT 0x20101E08`, last command `TX_CMD`) on every
+`wpa_cli disconnect`. `iwx_leave_notify()` now sends a deauthentication
+frame (reason 3) while the station is still in the firmware and waits up
+to 300 ms for the transmit ring to drain: before `iwx_run_stop()` when
+net80211 goes from RUN to INIT, which it does only by this station's own
+decision, and in `iwx_stop()`. `iwx_start()` drops management frames
+when the firmware has no station. A join of another BSS still sends no
+frame, as in Linux. Why it matters beyond tidiness: an AP with a
+MediaTek radio kept the association entry across every reassociation and
+reboot of the station (its log showed associations only, never a
+departure, and the entry outlived seven minutes of absence) and went on
+applying what it had learned from an earlier EHT association. A later
+VHT-only association then got 6 Mbit/s OFDM on the downlink while the
+uplink ran VHT MCS 9, and an HE-only one was sent EHT frames. Ran on the
+MSI: the AP logs the deauthentication and drops the entry, no firmware
+error, and `hw.iwx.ht` 2 to 7 each get the mode they ask for in both
+directions (VHT MCS 9 at 80 and 160 MHz, HE MCS 11, EHT MCS 11 at
+160 MHz). Not done: a protected deauthentication for an association with
+management frame protection has not been run.
+
 ## Target
 
 | Item | Value |

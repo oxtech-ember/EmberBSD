@@ -552,6 +552,7 @@ int	iwx_phy_ctxt_update(struct iwx_softc *, struct iwx_phy_ctxt *,
 int	iwx_auth(struct iwx_softc *);
 int	iwx_deauth(struct iwx_softc *);
 int	iwx_run(struct iwx_softc *);
+void	iwx_leave_notify(struct iwx_softc *, int);
 int	iwx_run_stop(struct iwx_softc *);
 struct ieee80211_node *iwx_node_alloc(struct ieee80211_node_table *);
 int	iwx_set_key(struct ieee80211com *, struct ieee80211_node *,
@@ -11103,6 +11104,37 @@ iwx_run(struct iwx_softc *sc)
 	return 0;
 }
 
+/*
+ * Tell the AP that this station leaves, while the firmware still has the
+ * station to send through; see iwx_ht_leave_notify().  Waits a short time
+ * for the frame to go out: the teardown that follows drops what is queued.
+ */
+void
+iwx_leave_notify(struct iwx_softc *sc, int to_init)
+{
+	struct ieee80211com *ic = &sc->sc_ic;
+	struct iwx_tx_ring *ring = &sc->txq[sc->first_data_qid];
+	int n;
+
+	if (!iwx_ht_leave_notify(ic->ic_opmode == IEEE80211_M_STA,
+	    ic->ic_state == IEEE80211_S_RUN, to_init,
+	    (sc->sc_flags & IWX_FLAG_STA_ACTIVE) != 0,
+	    (sc->sc_flags & (IWX_FLAG_HW_ERR | IWX_FLAG_RFKILL)) != 0))
+		return;
+
+	if (IEEE80211_SEND_MGMT(ic, ic->ic_bss, IEEE80211_FC0_SUBTYPE_DEAUTH,
+	    IEEE80211_REASON_AUTH_LEAVE) != 0)
+		return;
+
+	for (n = 0; iwx_ht_leave_wait(!IF_IS_EMPTY(&ic->ic_mgtq),
+	    ring->queued > 0, n); n++)
+		tsleep_nsec(ring, 0, "iwxlv",
+		    MSEC_TO_NSEC(IWX_HT_LEAVE_STEP_MS));
+	if (IC2IFP(ic)->if_flags & IFF_DEBUG)
+		printf("%s: told the AP that the station leaves (%d ms)\n",
+		    device_xname(sc->sc_dev), n * IWX_HT_LEAVE_STEP_MS);
+}
+
 int
 iwx_run_stop(struct iwx_softc *sc)
 {
@@ -11815,6 +11847,7 @@ iwx_newstate_task(void *psc)
 			default:
 				break;
 			}
+			iwx_leave_notify(sc, nstate == IEEE80211_S_INIT);
 			err = iwx_run_stop(sc);
 			if (err)
 				goto out;
@@ -12561,6 +12594,13 @@ iwx_start(struct ifnet *ifp)
 		if (m) {
 			ni = M_GETCTX(m, struct ieee80211_node *);
 			M_CLEARCTX(m);
+			if (iwx_ht_tx_drop((sc->sc_flags &
+			    IWX_FLAG_STA_ACTIVE) != 0)) {
+				m_freem(m);
+				ieee80211_release_node(ic, ni);
+				if_statinc(ifp, if_oerrors);
+				continue;
+			}
 			m = iwx_ht_tx_assoc(sc, m, ni);
 			goto sendit;
 		}
@@ -12703,6 +12743,8 @@ iwx_stop(struct ifnet *ifp, int disable __unused)
 	    (ic->ic_bss->ni_flags & IEEE80211_NODE_MFP))
 		iwx_mfp_leave(sc);
 #endif
+	/* The interface goes down: the station leaves by its own decision. */
+	iwx_leave_notify(sc, 1);
 	iwx_stop_device(sc);
 	sc->sc_sae_keys = 0;
 	sc->sc_sae_rx_pending = false;

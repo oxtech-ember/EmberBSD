@@ -122,6 +122,8 @@ static int sent_width, sent_mode, sequence, tlc_sequence, phy_sequence;
 static int physical_width, remove_sequence, phy_remove_sequence, phy_add_sequence;
 static int binding_remove_sequence, mac_remove_sequence, disassoc_sequence;
 static int remove_error, phy_add_error, recovery_count, task_releases;
+/* The frame that tells the AP the station leaves, and what it was told. */
+static int leave_sequence, leave_to_init;
 /* Firmware commands seen while a channel switch is followed. */
 enum { EV_LINK_OFF = 1, EV_PHY_REMOVE, EV_PHY_ADD, EV_RLC, EV_LINK_RATES,
 	EV_TLC, EV_LINK_ON };
@@ -130,6 +132,14 @@ static int csa_added_sco, csa_added_width;
 static void *csa_removed_channel, *csa_added_channel;
 #define CHECK(c) do { checks++; if (!(c)) { failures++; \
 	fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #c); } } while (0)
+
+static void
+iwx_leave_notify(struct iwx_softc *sc, int to_init)
+{
+	(void)sc;
+	leave_sequence = ++sequence;
+	leave_to_init = to_init;
+}
 
 static int
 iwx_lookup_cmd_ver(struct iwx_softc *sc, int group, int cmd)
@@ -427,6 +437,7 @@ reset_transport(int version, int width)
 	sequence = tlc_sequence = phy_sequence = 0;
 	remove_sequence = phy_remove_sequence = phy_add_sequence = 0;
 	binding_remove_sequence = mac_remove_sequence = disassoc_sequence = 0;
+	leave_sequence = leave_to_init = 0;
 	recovery_count = task_releases = 0;
 	sent_width = sent_mode = -1;
 }
@@ -550,9 +561,17 @@ test_leave(enum ieee80211_state next, int arg, int bgscan, int join, int sae,
 		CHECK(sc.sc_flags & IWX_FLAG_STA_ACTIVE);
 		CHECK(node_cleanups == 0 && sc.sc_fw_in == &in);
 		CHECK(in.in_phyctxt == &sc.sc_phyctxt[0] && in.in_ht == 1);
+		/* A restart tells the AP from iwx_stop(), not from here. */
+		CHECK(leave_sequence == 0);
 		return;
 	}
 	CHECK(recovery_count == 0);
+	/*
+	 * The AP is told before anything is taken down, and only on the
+	 * way to INIT is it this station's own decision.
+	 */
+	CHECK(leave_sequence > 0 && leave_sequence < disassoc_sequence);
+	CHECK(leave_to_init == (next == IEEE80211_S_INIT));
 	/* The association is taken down through the node that owns it. */
 	CHECK(disassoc_sequence > 0);
 	CHECK(flush_in == &in && disassoc_in == &in);

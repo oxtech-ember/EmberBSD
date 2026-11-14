@@ -980,6 +980,33 @@ test_scan(void)
 	CHECK(iwx_ht_leave_run(0, 1, 1) == IWX_HT_LEAVE_JOIN);
 }
 
+/* Telling the AP that the station leaves, and frames with no station. */
+static void
+test_leave_notify(void)
+{
+	/* A station leaving its BSS by its own decision tells the AP. */
+	CHECK(iwx_ht_leave_notify(1, 1, 1, 1, 0));
+	/* Not another operating mode, not before the association. */
+	CHECK(!iwx_ht_leave_notify(0, 1, 1, 1, 0));
+	CHECK(!iwx_ht_leave_notify(1, 0, 1, 1, 0));
+	/* Not when the AP ended it or the BSS was lost: no INIT then. */
+	CHECK(!iwx_ht_leave_notify(1, 1, 0, 1, 0));
+	/* Nothing to send through: no station, or the firmware is dead. */
+	CHECK(!iwx_ht_leave_notify(1, 1, 1, 0, 0));
+	CHECK(!iwx_ht_leave_notify(1, 1, 1, 1, 1));
+
+	/* The wait for the frame ends with the queues, or with the time. */
+	CHECK(iwx_ht_leave_wait(1, 0, 0));
+	CHECK(iwx_ht_leave_wait(0, 1, 0));
+	CHECK(iwx_ht_leave_wait(1, 1, IWX_HT_LEAVE_TRIES - 1));
+	CHECK(!iwx_ht_leave_wait(0, 0, 0));
+	CHECK(!iwx_ht_leave_wait(1, 1, IWX_HT_LEAVE_TRIES));
+
+	/* A frame goes to the firmware only through a station it knows. */
+	CHECK(iwx_ht_tx_drop(0));
+	CHECK(!iwx_ht_tx_drop(1));
+}
+
 /* The operating mode: which values exist and what each one offers. */
 static void
 test_mode(void)
@@ -1798,6 +1825,7 @@ main(void)
 	test_scan_chan();
 	test_dbm();
 	test_mcc();
+	test_leave_notify();
 	printf("iwx-ht-contract: %u checks, %u failures\n", checks, failures);
 	return failures != 0;
 }

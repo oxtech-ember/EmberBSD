@@ -1430,6 +1430,47 @@ iwx_ht_leave_run(int to_init, int join, int scanning)
 }
 
 /*
+ * Whether to tell the AP that this station leaves its BSS.  net80211 sends
+ * its own frame only after the state change, when the firmware has no
+ * station left to send it through; an AP that hears nothing keeps the
+ * association, and with it what it learned from earlier ones.  The frame
+ * is for a station that leaves by its own decision (`to_init': the only
+ * way net80211 goes to INIT), is associated (`run'), and has a station in
+ * a working firmware.  A join of another BSS sends none, as in Linux.
+ */
+static inline int
+iwx_ht_leave_notify(int sta_mode, int run, int to_init, int fw_sta,
+    int fw_dead)
+{
+	return sta_mode && run && to_init && fw_sta && !fw_dead;
+}
+
+/*
+ * The wait for that frame: while it is still queued in net80211
+ * (`mgt_queued') or in the transmit ring (`ring_queued'), for at most
+ * IWX_HT_LEAVE_TRIES steps of IWX_HT_LEAVE_STEP_MS.
+ */
+#define IWX_HT_LEAVE_TRIES	30
+#define IWX_HT_LEAVE_STEP_MS	10
+
+static inline int
+iwx_ht_leave_wait(int mgt_queued, int ring_queued, int tries)
+{
+	return (mgt_queued || ring_queued) && tries < IWX_HT_LEAVE_TRIES;
+}
+
+/*
+ * A frame goes to the firmware only through a station it knows.  One
+ * sent after the station is removed, as the frame net80211 sends on its
+ * way to INIT, ends in a firmware assertion.
+ */
+static inline int
+iwx_ht_tx_drop(int fw_sta)
+{
+	return !fw_sta;
+}
+
+/*
  * Beacon loss as the firmware counts it: `missed' consecutive beacons
  * since the last one received.  Returns 1 each time the count passes
  * another multiple of IWX_HT_BMISS_STEP, 0 otherwise; *level is the
