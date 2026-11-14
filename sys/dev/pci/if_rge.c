@@ -39,6 +39,8 @@ __KERNEL_RCSID(0, "$NetBSD: if_rge.c,v 1.34.2.2 2026/02/02 17:51:58 martin Exp $
 #include <sys/workqueue.h>
 #include <sys/module.h>
 #include <sys/pool.h>
+#include <sys/reboot.h>
+#include <sys/sysctl.h>
 
 #include <net/if.h>
 
@@ -177,6 +179,7 @@ int rge_debug = 0;
 static int	rge_match(device_t, cfdata_t, void *);
 static void	rge_attach(device_t, device_t, void *);
 static int	rge_detach(device_t, int);
+static bool	rge_shutdown(device_t, int);
 static int	rge_intr(void *);
 static int	rge_encap(struct rge_softc *, struct rge_queues *,
     struct mbuf *, int);
@@ -234,6 +237,10 @@ static void	rge_setup_sim_im(struct rge_softc *);
 static void	rge_setup_intr(struct rge_softc *, int);
 static void	rge_switch_mcu_ram_page(struct rge_softc *, int);
 static int	rge_exit_oob(struct rge_softc *);
+static int	rge_wol_enable(struct rge_softc *);
+static void	rge_wol_power(struct rge_softc *);
+static int	rge_sysctl_wol(SYSCTLFN_PROTO);
+static void	rge_sysctl_attach(struct rge_softc *);
 static void	rge_write_csi(struct rge_softc *, uint32_t, uint32_t);
 static uint32_t	rge_read_csi(struct rge_softc *, uint32_t);
 static void	rge_write_mac_ocp(struct rge_softc *, uint16_t, uint16_t);
@@ -485,10 +492,12 @@ rge_attach(device_t parent, device_t self, void *aux)
 	if_deferred_start_init(ifp, NULL);
 	ether_ifattach(ifp, eaddr);
 
-	if (pmf_device_register(self, NULL, NULL))
+	if (pmf_device_register1(self, NULL, NULL, rge_shutdown))
 		pmf_class_network_register(self, ifp);
 	else
 		aprint_error_dev(self, "couldn't establish power handler\n");
+
+	rge_sysctl_attach(sc);
 }
 
 static int
@@ -499,6 +508,8 @@ rge_detach(device_t self, int flags)
 	pci_chipset_tag_t pc = sc->sc_pc;
 
 	rge_stop(ifp, 1);
+
+	sysctl_teardown(&sc->sc_sysctllog);
 
 	pmf_device_deregister(self);
 
@@ -4028,6 +4039,131 @@ rge_link_state(struct rge_softc *sc)
 	if (ifp->if_link_state != link) { /* XXX not safe to access */
 		if_link_state_change(ifp, link);
 	}
+}
+
+/*
+ * Wake-on-LAN (magic packet).  The chip is armed only at system power-down,
+ * and only when the hw.<xname>.wol sysctl is set; the register sequence
+ * follows OpenBSD rge_wol() and rge_wol_power().
+ */
+static int
+rge_wol_enable(struct rge_softc *sc)
+{
+
+	if (!(RGE_READ_1(sc, RGE_CFG1) & RGE_CFG1_PM_EN)) {
+		device_printf(sc->sc_dev,
+		    "power management is disabled, cannot do WOL\n");
+		return ENOTSUP;
+	}
+
+	/* Keep the receiver filter open so the chip sees the frame. */
+	rge_iff(sc);
+
+	/* Enable magic packet wakeup. */
+	RGE_MAC_SETBIT(sc, 0xc0b6, 0x0001);
+
+	RGE_SETBIT_1(sc, RGE_EECMD, RGE_EECMD_WRITECFG);
+	RGE_CLRBIT_1(sc, RGE_CFG5, RGE_CFG5_WOL_LANWAKE | RGE_CFG5_WOL_UCAST |
+	    RGE_CFG5_WOL_MCAST | RGE_CFG5_WOL_BCAST);
+	RGE_CLRBIT_1(sc, RGE_CFG3, RGE_CFG3_WOL_LINK | RGE_CFG3_WOL_MAGIC);
+	RGE_SETBIT_1(sc, RGE_CFG5, RGE_CFG5_WOL_LANWAKE);
+	RGE_CLRBIT_1(sc, RGE_EECMD, RGE_EECMD_WRITECFG);
+
+	return 0;
+}
+
+static void
+rge_wol_power(struct rge_softc *sc)
+{
+
+	/* Disable RXDV gate. */
+	RGE_CLRBIT_1(sc, RGE_PPSW, 0x08);
+
+	/* CFG1 and CFG2 latch only while the configuration lock is open. */
+	RGE_SETBIT_1(sc, RGE_EECMD, RGE_EECMD_WRITECFG);
+	RGE_SETBIT_1(sc, RGE_CFG1, RGE_CFG1_PM_EN);
+	RGE_SETBIT_1(sc, RGE_CFG2, RGE_CFG2_PMSTS_EN);
+	RGE_CLRBIT_1(sc, RGE_EECMD, RGE_EECMD_WRITECFG);
+}
+
+static bool
+rge_shutdown(device_t self, int howto)
+{
+	struct rge_softc *sc = device_private(self);
+	pcireg_t reg;
+	int off;
+
+	if (sc->sc_wol == 0 || (howto & RB_POWERDOWN) != RB_POWERDOWN)
+		return true;
+
+	/* Check before touching the chip so a refusal leaves it alone. */
+	if (!pci_get_capability(sc->sc_pc, sc->sc_tag, PCI_CAP_PWRMGMT,
+	    &off, NULL)) {
+		device_printf(self,
+		    "no PCI power management capability, cannot do WOL\n");
+		return true;
+	}
+
+	if (rge_wol_enable(sc) != 0)
+		return true;
+	rge_wol_power(sc);
+
+	/* Let the device raise PME; PME_STS is write-one-to-clear. */
+	reg = pci_conf_read(sc->sc_pc, sc->sc_tag, off + PCI_PMCSR);
+	reg |= PCI_PMCSR_PME_STS | PCI_PMCSR_PME_EN;
+	pci_conf_write(sc->sc_pc, sc->sc_tag, off + PCI_PMCSR, reg);
+
+	return true;
+}
+
+static int
+rge_sysctl_wol(SYSCTLFN_ARGS)
+{
+	struct sysctlnode node;
+	struct rge_softc *sc;
+	int error, wol;
+
+	node = *rnode;
+	sc = node.sysctl_data;
+	wol = sc->sc_wol;
+	node.sysctl_data = &wol;
+	error = sysctl_lookup(SYSCTLFN_CALL(&node));
+	if (error || newp == NULL)
+		return error;
+
+	if (wol != 0 && wol != 1)
+		return EINVAL;
+	sc->sc_wol = wol;
+
+	return 0;
+}
+
+static void
+rge_sysctl_attach(struct rge_softc *sc)
+{
+	const struct sysctlnode *rnode, *cnode;
+	int error;
+
+	error = sysctl_createv(&sc->sc_sysctllog, 0, NULL, &rnode,
+	    0, CTLTYPE_NODE, device_xname(sc->sc_dev),
+	    SYSCTL_DESCR("rge information and settings"),
+	    NULL, 0, NULL, 0, CTL_HW, CTL_CREATE, CTL_EOL);
+	if (error != 0)
+		goto fail;
+
+	error = sysctl_createv(&sc->sc_sysctllog, 0, &rnode, &cnode,
+	    CTLFLAG_READWRITE, CTLTYPE_INT, "wol",
+	    SYSCTL_DESCR("Arm Wake-on-LAN (magic packet) at power-down"),
+	    rge_sysctl_wol, 0, (void *)sc, 0, CTL_CREATE, CTL_EOL);
+	if (error != 0)
+		goto fail;
+
+	return;
+
+fail:
+	aprint_error_dev(sc->sc_dev, "couldn't create sysctl nodes (%d)\n",
+	    error);
+	sysctl_teardown(&sc->sc_sysctllog);
 }
 
 /* Module interface */

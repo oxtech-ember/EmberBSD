@@ -15,7 +15,7 @@
 .\" ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 .\" OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 .\"
-.Dd November 20, 2025
+.Dd November 15, 2026
 .Dt RGE 4
 .Os
 .Sh NAME
@@ -51,6 +51,47 @@ NICs based on the 8126 are also capable of 5000Mbps operation, while
 NICs based on the 8127 are additionally capable of 10000Mbps operation.
 All NICs support off-loading of checksum calculations for IPv4, TCPv4,
 and UDPv4, but not for xxxv6.
+.Sh WAKE-ON-LAN
+The
+.Nm
+driver can arm the controller to wake the machine on a magic packet when
+the system is powered down.
+It is controlled by the sysctl node
+.Va hw.rgeN.wol ,
+where
+.Ar N
+is the unit number:
+.Bl -tag -width indent
+.It Li 0
+The default.
+Wake-on-LAN is not armed and the driver behaves as without this feature.
+.It Li 1
+At power-down the driver enables the magic packet wakeup in the
+controller, opens the receive filter to unicast, broadcast and multicast
+frames, and sets the PCI power management PME enable bit.
+.El
+.Pp
+Any other value is rejected with
+.Er EINVAL .
+.Pp
+The controller is armed only when the system is powered off, for example by
+.Xr shutdown 8
+.Fl p
+or
+.Xr halt 8
+.Fl p ;
+a plain reboot or halt leaves it unarmed.
+It is not armed on suspend.
+If the device has no PCI power management capability, or power management
+is disabled in the controller, the driver prints one message at power-down
+and leaves the controller alone.
+.Pp
+Waking the machine also requires standby power on the port and support in
+the board firmware, which may have its own setting for waking from the
+network.
+Neither can be checked by the driver.
+.Pp
+The Wake-on-LAN code has not been verified on real hardware yet.
 .Sh SEE ALSO
 .Xr arp 4 ,
 .Xr ifmedia 4 ,
@@ -58,7 +99,10 @@ and UDPv4, but not for xxxv6.
 .Xr netintro 4 ,
 .Xr pci 4 ,
 .\".Xr hostname.if 5 ,
-.Xr ifconfig 8
+.Xr halt 8 ,
+.Xr ifconfig 8 ,
+.Xr shutdown 8 ,
+.Xr sysctl 8
 .Sh CAVEATS
 The
 .Nm
