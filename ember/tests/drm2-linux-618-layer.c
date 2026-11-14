@@ -146,6 +146,65 @@ test_hrtimer(void)
 	hrtimer_cancel(&t);
 }
 
+/*
+ * The periodic use of the 6.18 vblank timer: the function moves the expiry
+ * with hrtimer_forward_now and returns HRTIMER_RESTART, and the next run comes
+ * one period after the previous expiry (not one period after it ran).
+ */
+static unsigned per_count;
+static int64_t per_first_ns, per_last_ns;
+#define	PER_PERIOD_NS	20000000LL
+#define	PER_RUNS	10
+
+static enum hrtimer_restart
+periodic_fn(struct hrtimer *t)
+{
+	int64_t now = ktime_to_ns(ktime_get());
+
+	if (per_count == 0)
+		per_first_ns = now;
+	per_last_ns = now;
+	per_count++;
+	if (per_count >= PER_RUNS)
+		return HRTIMER_NORESTART;
+	hrtimer_forward_now(t, ns_to_ktime(PER_PERIOD_NS));
+	return HRTIMER_RESTART;
+}
+
+static void
+test_hrtimer_periodic(void)
+{
+	struct hrtimer t;
+	int64_t now, span;
+	uint64_t n;
+	int i;
+
+	/* forward: not expired yet, no periods; expired for 50 ms, three periods of 20 ms */
+	hrtimer_setup(&t, timer_fn, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+	now = ktime_to_ns(ktime_get());
+	hrtimer_set_expires(&t, ns_to_ktime(now + 100000000LL));
+	CHECK(hrtimer_forward(&t, ns_to_ktime(now), ns_to_ktime(PER_PERIOD_NS)) == 0);
+	CHECK(ktime_to_ns(t.node.expires) == now + 100000000LL);
+	hrtimer_set_expires(&t, ns_to_ktime(now - 50000000LL));
+	n = hrtimer_forward(&t, ns_to_ktime(now), ns_to_ktime(PER_PERIOD_NS));
+	CHECK(n == 3);
+	CHECK(ktime_to_ns(t.node.expires) == now - 50000000LL + 3 * PER_PERIOD_NS);
+	CHECK(ktime_to_ns(t.node.expires) > now);
+
+	/* the function moves the expiry and asks for a restart: ten runs one period apart */
+	per_count = 0;
+	hrtimer_setup(&t, periodic_fn, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+	hrtimer_start(&t, ns_to_ktime(PER_PERIOD_NS), HRTIMER_MODE_REL);
+	for (i = 0; i < 40 && per_count < PER_RUNS; i++)
+		kpause("hrtper", false, mstohz(20), NULL);
+	CHECK(per_count == PER_RUNS);
+	span = per_last_ns - per_first_ns;
+	/* nine periods of 20 ms: the tick of the clock can only move single runs */
+	CHECK(span > 8 * PER_PERIOD_NS && span < 12 * PER_PERIOD_NS);
+	CHECK(!hrtimer_active(&t));
+	hrtimer_cancel(&t);
+}
+
 static void
 test_rwlock(void)
 {
@@ -343,6 +402,7 @@ drm2_linux_618_layer_run(void)
 	test_seq_buf();
 	test_guid();
 	test_hrtimer();
+	test_hrtimer_periodic();
 	test_rwlock();
 	test_devres();
 	test_misc();
