@@ -283,8 +283,6 @@ idr_remove(struct idr *idr, int id)
 
 	/* An id that is not allocated has no node: nothing to free. */
 	if (node != NULL)
-		/* An id that is not allocated has no node: nothing to free. */
-	if (node != NULL)
 		kmem_free(node, sizeof(*node));
 
 	return data;
