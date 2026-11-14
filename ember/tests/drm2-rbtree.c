@@ -9,7 +9,8 @@
  * with child links, the in-order walk is sorted and matches rb_first/
  * rb_next/rb_last/rb_prev and the cached leftmost; the per-node subtree
  * maximum of an augmented tree is right; interval queries agree with a
- * brute-force scan.
+ * brute-force scan, also with two interval tree instantiations in one file,
+ * a nested node member, and hand-linked augmented trees.
  * usage: drm2-rbtree.sh   (compiles and runs this file with the host cc)
  */
 
@@ -372,6 +373,237 @@ test_interval(void)
 	CHECK(bad_q == 0);
 }
 
+
+/*
+ * A second instantiation in the same file, on a node with the tree node
+ * and the subtree maximum nested in a member, as drm_gpuvm does; the
+ * interval tree of the first instantiation must not be disturbed.
+ */
+struct gva {
+	struct {
+		struct rb_node		node;
+		unsigned long long	__subtree_last;
+	} rb;
+	unsigned long long	addr, range;
+	int			in;
+};
+
+#define	GSTART(n)	((n)->addr)
+#define	GLAST(n)	((n)->addr + (n)->range - 1)
+
+INTERVAL_TREE_DEFINE(struct gva, rb.node, unsigned long long,
+    rb.__subtree_last, GSTART, GLAST, static inline __attribute__((unused)),
+    gvt)
+
+static int
+gva_max_ok(const struct rb_node *node, unsigned long long *max)
+{
+	const struct gva *g;
+	unsigned long long m, c;
+	int ok = 1;
+
+	if (node == NULL) {
+		*max = 0;
+		return 1;
+	}
+	g = rb_entry(node, struct gva, rb.node);
+	m = GLAST(g);
+	if (node->rb_left != NULL) {
+		ok &= gva_max_ok(node->rb_left, &c);
+		if (c > m)
+			m = c;
+	}
+	if (node->rb_right != NULL) {
+		ok &= gva_max_ok(node->rb_right, &c);
+		if (c > m)
+			m = c;
+	}
+	*max = m;
+	return ok && g->rb.__subtree_last == m;
+}
+
+static void
+test_two_instances(void)
+{
+	enum { N = 200 };
+	static struct gva gv[N];
+	static struct item it[N];
+	struct rb_root_cached groot = RB_ROOT_CACHED, iroot = RB_ROOT_CACHED;
+	unsigned i, gcount = 0, icount = 0, bad_aug = 0, bad_valid = 0, bad_q = 0;
+	int round;
+
+	for (round = 0; round < 5000; round++) {
+		i = rnd(N);
+		if (!gv[i].in) {
+			gv[i].addr = rnd(500);
+			gv[i].range = 1 + rnd(40);	/* many equal starts */
+			gvt_insert(&gv[i], &groot);
+			gv[i].in = 1;
+			gcount++;
+		} else if (rnd(100) < 60) {
+			gvt_remove(&gv[i], &groot);
+			gv[i].in = 0;
+			gcount--;
+		}
+		i = rnd(N);
+		if (!it[i].in) {
+			it[i].key = rnd(300);
+			it[i].last = it[i].key + rnd(30);
+			itest_insert(&it[i], &iroot);
+			it[i].in = 1;
+			icount++;
+		} else if (rnd(100) < 60) {
+			itest_remove(&it[i], &iroot);
+			it[i].in = 0;
+			icount--;
+		}
+		{
+			unsigned long long gm;
+			unsigned long im;
+
+			if (!gva_max_ok(groot.rb_root.rb_node, &gm) ||
+			    !sub_max_ok(iroot.rb_root.rb_node, &im))
+				bad_aug++;
+			if (!valid_tree(&groot.rb_root, gcount) ||
+			    !valid_tree(&iroot.rb_root, icount) ||
+			    rb_first_cached(&groot) != rb_first(&groot.rb_root) ||
+			    rb_first_cached(&iroot) != rb_first(&iroot.rb_root))
+				bad_valid++;
+		}
+		if (round % 20 == 0) {
+			unsigned long long s = rnd(560), l = s + rnd(50);
+			struct gva *f;
+			unsigned expect = 0, got = 0;
+			unsigned long long prev = 0;
+
+			for (i = 0; i < N; i++)
+				if (gv[i].in && gv[i].addr <= l &&
+				    s <= GLAST(&gv[i]))
+					expect++;
+			for (f = gvt_iter_first(&groot, s, l); f != NULL;
+			    f = gvt_iter_next(f, s, l)) {
+				got++;
+				if (!(f->addr <= l && s <= GLAST(f)) ||
+				    f->addr < prev)
+					bad_q++;
+				prev = f->addr;
+				if (got > N)
+					break;
+			}
+			if (got != expect)
+				bad_q++;
+		}
+	}
+	CHECK(bad_aug == 0);
+	CHECK(bad_valid == 0);
+	CHECK(bad_q == 0);
+	/* an empty tree has no match */
+	{
+		struct rb_root_cached empty = RB_ROOT_CACHED;
+
+		CHECK(gvt_iter_first(&empty, 0, ~0ULL) == NULL);
+	}
+}
+
+/*
+ * Callbacks of a maximum, built by hand as drm_mm does for the holes: the
+ * caller links nodes itself and raises the maxima on the way down, and
+ * removal goes through rb_erase_augmented.
+ */
+struct hole {
+	struct rb_node		rb;
+	unsigned long		addr;
+	unsigned long		size;
+	unsigned long		max;
+	int			in;
+};
+
+#define	HOLE_SIZE(h)	((h)->size)
+
+RB_DECLARE_CALLBACKS_MAX(static, hole_cb, struct hole, rb, unsigned long,
+    max, HOLE_SIZE)
+
+static int
+hole_max_ok(const struct rb_node *node, unsigned long *max)
+{
+	const struct hole *h;
+	unsigned long m, c;
+	int ok = 1;
+
+	if (node == NULL) {
+		*max = 0;
+		return 1;
+	}
+	h = rb_entry(node, struct hole, rb);
+	m = h->size;
+	if (node->rb_left != NULL) {
+		ok &= hole_max_ok(node->rb_left, &c);
+		if (c > m)
+			m = c;
+	}
+	if (node->rb_right != NULL) {
+		ok &= hole_max_ok(node->rb_right, &c);
+		if (c > m)
+			m = c;
+	}
+	*max = m;
+	return ok && h->max == m;
+}
+
+static void
+hole_insert(struct hole *h, struct rb_root *root)
+{
+	struct rb_node **link = &root->rb_node, *parent = NULL;
+
+	h->max = h->size;
+	while (*link != NULL) {
+		struct hole *p;
+
+		parent = *link;
+		p = rb_entry(parent, struct hole, rb);
+		if (p->max < h->max)
+			p->max = h->max;
+		link = h->addr < p->addr ? &parent->rb_left : &parent->rb_right;
+	}
+	rb_link_node(&h->rb, parent, link);
+	rb_insert_augmented(&h->rb, root, &hole_cb);
+}
+
+static void
+test_hand_linked_augmented(void)
+{
+	enum { N = 300 };
+	static struct hole hs[N];
+	struct rb_root root = RB_ROOT;
+	unsigned i, count = 0, bad_aug = 0, bad_valid = 0;
+	int round;
+
+	for (round = 0; round < 8000; round++) {
+		i = rnd(N);
+		if (!hs[i].in) {
+			hs[i].addr = rnd(1000);
+			hs[i].size = 1 + rnd(5000);
+			hole_insert(&hs[i], &root);
+			hs[i].in = 1;
+			count++;
+		} else if (rnd(100) < 55) {
+			rb_erase_augmented(&hs[i].rb, &root, &hole_cb);
+			hs[i].in = 0;
+			count--;
+		}
+		{
+			unsigned long m;
+
+			if (!hole_max_ok(root.rb_node, &m))
+				bad_aug++;
+			if (!valid_tree(&root, count))
+				bad_valid++;
+		}
+	}
+	CHECK(bad_aug == 0);
+	CHECK(bad_valid == 0);
+}
+
 int
 main(void)
 {
@@ -380,6 +612,8 @@ main(void)
 	test_stable_equal();
 	test_cached_and_replace();
 	test_interval();
+	test_two_instances();
+	test_hand_linked_augmented();
 #ifdef DRM2_RBTREE_SELFTEST_FAIL
 	CHECK(0 && "negative control");
 #endif

@@ -1,121 +1,130 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Copyright (c) 2026 EmberBSD contributors. */
 /*
- * Origin: EmberBSD; written to the Linux
- * interface, no Linux code.
+ * Own implementation of the Linux rbtree_augmented.h interface as used by
+ * the MIT-licensed consumers in dist618; written without access to the GPL
+ * original and to the earlier version of this file.  Sources read: drm_mm.c
+ * and drm_gpuvm.c of dist618 (the users of augmented trees), drm618_rbtree.c
+ * (the algorithms and the points where they call the callbacks), the host
+ * contract ember/tests/drm2-rbtree.c.
  *
- * Red-black trees that keep a value per node computed from its subtree
- * (interval trees, drm_mm holes).  The caller supplies callbacks:
- *
- *	propagate(node, stop)	recompute the value of node and of its
- *				ancestors up to, not including, stop (NULL:
- *				the root); may end early at a node whose value
- *				did not change
- *	copy(old, new)		new takes the value of old (new is about to
- *				replace old in the tree)
- *	rotate(old, new)	a rotation made new the root of the subtree
- *				that old headed: new takes old's value, then
- *				the value of old is recomputed
+ * An augmented tree keeps a value in each node that is a function of the
+ * node's whole subtree (the largest interval end, the largest hole).  The
+ * tree code calls three callbacks to keep it right:
+ *   propagate(node, stop)  recompute node and its ancestors up to, not
+ *                          including, stop (NULL: up to the root), and stop
+ *                          early once a value comes out unchanged;
+ *   copy(old, new)         new takes the subtree value of old;
+ *   rotate(old, new)       after a rotation: new is where old was and has
+ *                          the same set of nodes below it, so it takes old's
+ *                          value, and old is recomputed from its new children.
+ * On insertion the caller has already put the node's own value in and raised
+ * the values of the ancestors; on erasure the callbacks do all the work.
  */
-#ifndef _DRM618_LINUX_RBTREE_AUGMENTED_H_
-#define _DRM618_LINUX_RBTREE_AUGMENTED_H_
+#ifndef _LINUX_RBTREE_AUGMENTED_H_
+#define _LINUX_RBTREE_AUGMENTED_H_
 
 #include <linux/rbtree.h>
 
 struct rb_augment_callbacks {
-	void (*propagate)(struct rb_node *node, struct rb_node *stop);
-	void (*copy)(struct rb_node *old, struct rb_node *new);
-	void (*rotate)(struct rb_node *old, struct rb_node *new);
+	void (*propagate)(struct rb_node *, struct rb_node *);
+	void (*copy)(struct rb_node *, struct rb_node *);
+	void (*rotate)(struct rb_node *, struct rb_node *);
 };
 
-void	rb_insert_augmented(struct rb_node *node, struct rb_root *root,
-	    const struct rb_augment_callbacks *augment);
-void	rb_erase_augmented(struct rb_node *node, struct rb_root *root,
-	    const struct rb_augment_callbacks *augment);
+void rb_insert_augmented(struct rb_node *, struct rb_root *,
+    const struct rb_augment_callbacks *);
+void rb_erase_augmented(struct rb_node *, struct rb_root *,
+    const struct rb_augment_callbacks *);
 
 static inline void
 rb_insert_augmented_cached(struct rb_node *node, struct rb_root_cached *root,
-    bool newleft, const struct rb_augment_callbacks *augment)
+    bool leftmost, const struct rb_augment_callbacks *augment)
 {
 
-	if (newleft)
+	if (leftmost)
 		root->rb_leftmost = node;
 	rb_insert_augmented(node, &root->rb_root, augment);
 }
 
-static inline struct rb_node *
+static inline void
 rb_erase_augmented_cached(struct rb_node *node, struct rb_root_cached *root,
     const struct rb_augment_callbacks *augment)
 {
-	struct rb_node *leftmost = NULL;
 
 	if (root->rb_leftmost == node)
-		leftmost = root->rb_leftmost = rb_next(node);
+		root->rb_leftmost = rb_next(node);
 	rb_erase_augmented(node, &root->rb_root, augment);
-	return leftmost;
 }
 
 /*
- * RB_DECLARE_CALLBACKS_MAX(rbstatic, rbname, rbstruct, rbfield,
- *     rbtype, rbaugmented, rbcompute)
- *
- *	Callbacks for the common case: the value rbaugmented of a node is
- *	the maximum of rbcompute(node) and the values of its children.
+ * Callbacks for a value that is the maximum of a per-node quantity over the
+ * subtree: node->RBAUGMENTED = max(RBCOMPUTE(node), the value of the left
+ * child, the value of the right child).  RBSTRUCT is the type that embeds
+ * the rb_node member RBFIELD (which may be a nested member path), RBTYPE the
+ * type of the value and of RBCOMPUTE's result.  The callbacks are the object
+ * RBNAME, declared with the storage class RBSTATIC.
  */
-#define	RB_DECLARE_CALLBACKS_MAX(rbstatic, rbname, rbstruct, rbfield,	\
-    rbtype, rbaugmented, rbcompute)					\
-static inline bool							\
-rbname ## _compute_max(rbstruct *node)					\
-{									\
-	rbtype max = rbcompute(node), child;				\
+#define	RB_DECLARE_CALLBACKS_MAX(RBSTATIC, RBNAME, RBSTRUCT, RBFIELD,	\
+    RBTYPE, RBAUGMENTED, RBCOMPUTE)					\
 									\
-	if (node->rbfield.rb_left) {					\
-		child = rb_entry(node->rbfield.rb_left, rbstruct,	\
-		    rbfield)->rbaugmented;				\
-		if (child > max)					\
-			max = child;					\
+/* Recompute the value of node; true when it changed. */		\
+static inline bool							\
+RBNAME##_recompute(RBSTRUCT *__node)					\
+{									\
+	RBTYPE __max = RBCOMPUTE(__node), __sub;			\
+									\
+	if (__node->RBFIELD.rb_left != NULL) {				\
+		__sub = rb_entry(__node->RBFIELD.rb_left, RBSTRUCT,	\
+		    RBFIELD)->RBAUGMENTED;				\
+		if (__sub > __max)					\
+			__max = __sub;					\
 	}								\
-	if (node->rbfield.rb_right) {					\
-		child = rb_entry(node->rbfield.rb_right, rbstruct,	\
-		    rbfield)->rbaugmented;				\
-		if (child > max)					\
-			max = child;					\
+	if (__node->RBFIELD.rb_right != NULL) {				\
+		__sub = rb_entry(__node->RBFIELD.rb_right, RBSTRUCT,	\
+		    RBFIELD)->RBAUGMENTED;				\
+		if (__sub > __max)					\
+			__max = __sub;					\
 	}								\
-	if (node->rbaugmented == max)					\
+	if (__node->RBAUGMENTED == __max)				\
 		return false;						\
-	node->rbaugmented = max;					\
+	__node->RBAUGMENTED = __max;					\
 	return true;							\
 }									\
-static void								\
-rbname ## _propagate(struct rb_node *rb, struct rb_node *stop)		\
+									\
+static inline void							\
+RBNAME##_propagate(struct rb_node *__rb, struct rb_node *__stop)	\
 {									\
-	while (rb != stop) {						\
-		rbstruct *node = rb_entry(rb, rbstruct, rbfield);	\
-		if (!rbname ## _compute_max(node))			\
+									\
+	while (__rb != __stop) {					\
+		RBSTRUCT *__node = rb_entry(__rb, RBSTRUCT, RBFIELD);	\
+									\
+		if (!RBNAME##_recompute(__node))			\
 			break;						\
-		rb = rb_parent(&node->rbfield);				\
+		__rb = rb_parent(&__node->RBFIELD);			\
 	}								\
 }									\
-static void								\
-rbname ## _copy(struct rb_node *rb_old, struct rb_node *rb_new)	\
+									\
+static inline void							\
+RBNAME##_copy(struct rb_node *__old, struct rb_node *__new)		\
 {									\
-	rbstruct *old = rb_entry(rb_old, rbstruct, rbfield);		\
-	rbstruct *new = rb_entry(rb_new, rbstruct, rbfield);		\
-	new->rbaugmented = old->rbaugmented;				\
+									\
+	rb_entry(__new, RBSTRUCT, RBFIELD)->RBAUGMENTED =		\
+	    rb_entry(__old, RBSTRUCT, RBFIELD)->RBAUGMENTED;		\
 }									\
-static void								\
-rbname ## _rotate(struct rb_node *rb_old, struct rb_node *rb_new)	\
+									\
+static inline void							\
+RBNAME##_rotate(struct rb_node *__old, struct rb_node *__new)		\
 {									\
-	rbstruct *old = rb_entry(rb_old, rbstruct, rbfield);		\
-	rbstruct *new = rb_entry(rb_new, rbstruct, rbfield);		\
-	new->rbaugmented = old->rbaugmented;				\
-	old->rbaugmented = rbcompute(old);				\
-	(void)rbname ## _compute_max(old);				\
+									\
+	RBNAME##_copy(__old, __new);					\
+	(void)RBNAME##_recompute(rb_entry(__old, RBSTRUCT, RBFIELD));	\
 }									\
-rbstatic const struct rb_augment_callbacks rbname = {			\
-	.propagate = rbname ## _propagate,				\
-	.copy = rbname ## _copy,					\
-	.rotate = rbname ## _rotate					\
+									\
+RBSTATIC const struct rb_augment_callbacks RBNAME = {			\
+	.propagate = RBNAME##_propagate,				\
+	.copy = RBNAME##_copy,						\
+	.rotate = RBNAME##_rotate,					\
 };
 
-#endif
+#endif	/* _LINUX_RBTREE_AUGMENTED_H_ */
