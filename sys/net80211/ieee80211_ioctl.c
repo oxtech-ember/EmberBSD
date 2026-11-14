@@ -491,6 +491,11 @@ ieee80211_setupscan(struct ieee80211com *ic, const u_int8_t chanlist[])
 	 */
 	if (!IS_UP(ic))
 		return EINVAL;
+	/* Do not disturb an association that is authenticating or associating. */
+	if (ic->ic_opmode == IEEE80211_M_STA &&
+	    (ic->ic_state == IEEE80211_S_AUTH ||
+	    ic->ic_state == IEEE80211_S_ASSOC))
+		return EBUSY;
 	/* A scan request can retain the active set in place. */
 	if (chanlist != ic->ic_chan_active)
 		memmove(ic->ic_chan_active, chanlist,
@@ -510,6 +515,25 @@ ieee80211_setupscan(struct ieee80211com *ic, const u_int8_t chanlist[])
 	/* XXX handle proberequest case */
 	ic->ic_state = IEEE80211_S_INIT;	/* XXX bypass state machine */
 	return 0;
+}
+
+static int
+ieee80211_startscan(struct ieee80211com *ic, const u_int8_t chanlist[])
+{
+	int error;
+
+	error = ieee80211_setupscan(ic, chanlist);
+	if (error == 0)
+		error = ieee80211_new_state(ic, IEEE80211_S_SCAN, -1);
+	return error;
+}
+
+static int
+ieee80211_cfgset_channel_list(struct ieee80211com *ic,
+	    const u_int8_t chanlist[])
+{
+	memmove(ic->ic_chan_active, chanlist, sizeof(ic->ic_chan_active));
+	return ENETRESET;
 }
 
 int
@@ -815,9 +839,7 @@ ieee80211_cfgset(struct ieee80211com *ic, u_long cmd, void *data)
 	case WI_RID_SCAN_REQ:			/* XXX wicontrol */
 		if (ic->ic_opmode == IEEE80211_M_HOSTAP)
 			break;
-		error = ieee80211_setupscan(ic, ic->ic_chan_avail);
-		if (error == 0)
-			error = ieee80211_new_state(ic, IEEE80211_S_SCAN, -1);
+		error = ieee80211_startscan(ic, ic->ic_chan_avail);
 		break;
 	case WI_RID_SCAN_APS:
 		if (ic->ic_opmode == IEEE80211_M_HOSTAP)
@@ -849,12 +871,10 @@ ieee80211_cfgset(struct ieee80211com *ic, u_long cmd, void *data)
 			}
 			setbit(chanlist, i);
 		}
-		error = ieee80211_setupscan(ic, chanlist);
 		if (wreq->wi_type == WI_RID_CHANNEL_LIST) {
-			/* NB: ignore error from ieee80211_setupscan */
-			error = ENETRESET;
-		} else if (error == 0)
-			error = ieee80211_new_state(ic, IEEE80211_S_SCAN, -1);
+			error = ieee80211_cfgset_channel_list(ic, chanlist);
+		} else
+			error = ieee80211_startscan(ic, chanlist);
 		break;
 	default:
 		goto invalid;
@@ -2688,9 +2708,7 @@ ieee80211_ioctl_set80211(struct ieee80211com *ic, u_long cmd,
 		if (ic->ic_opmode == IEEE80211_M_HOSTAP)	/* XXX ignore */
 			break;
 		/* Preserve the selected PHY mode and configured channel list. */
-		error = ieee80211_setupscan(ic, ic->ic_chan_active);
-		if (error == 0)		/* XXX background scan */
-			error = ieee80211_new_state(ic, IEEE80211_S_SCAN, -1);
+		error = ieee80211_startscan(ic, ic->ic_chan_active);
 		break;
 	case IEEE80211_IOC_ADDMAC:
 	case IEEE80211_IOC_DELMAC:

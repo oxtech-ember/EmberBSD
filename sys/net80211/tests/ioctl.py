@@ -58,6 +58,20 @@ def main():
     subprocess.run(command, check=True)
     subprocess.run([str(output.resolve())], check=True)
 
+    scan_fixture = (owner / "tests/scan-setup-contract.c").read_text()
+    scan_functions = "\n\n".join(function(source, name) for name in (
+        "ieee80211_setupscan", "ieee80211_startscan",
+        "ieee80211_cfgset_channel_list"))
+    scan_fixture = scan_fixture.replace("/* SETUPSCAN */", scan_functions)
+    scan_check = args.build_dir / "scan-setup-contract.c"
+    scan_check.write_text(scan_fixture)
+    scan_output = args.build_dir / "scan-setup-contract"
+    scan_command = shlex.split(args.cc) + ["-std=c99", "-Wall", "-Wextra",
+        "-Werror"] + shlex.split(args.cflags) + [str(scan_check), "-o",
+        str(scan_output)]
+    subprocess.run(scan_command, check=True)
+    subprocess.run([str(scan_output.resolve())], check=True)
+
 
 if __name__ == "__main__":
     main()
