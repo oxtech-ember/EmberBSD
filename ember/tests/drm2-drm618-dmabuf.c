@@ -159,11 +159,13 @@ drm2_drm618_dmabuf_run(void)
 	CHECK(released == 0);
 
 	/* export: the object */
+	CHECK(drm618_dma_buf_busy() == 0);
 	info.ops = &t_ops;
 	info.size = 4 * PAGE_SIZE;
 	info.flags = O_RDWR | O_CLOEXEC;
 	buf = dma_buf_export(&info);
 	CHECK(!IS_ERR(buf));
+	CHECK(drm618_dma_buf_busy() == EBUSY);	/* the module cannot go now */
 	CHECK(buf->size == 4 * PAGE_SIZE);
 	CHECK(buf->priv == &token);
 	CHECK(buf->ops == &t_ops);
@@ -282,6 +284,7 @@ drm2_drm618_dmabuf_run(void)
 	CHECK(!IS_ERR(buf) && buf->resv == &resv);
 	dma_buf_put(buf);
 	CHECK(released == 3);
+	CHECK(drm618_dma_buf_busy() == 0);	/* all released */
 	dma_resv_fini(&resv);
 
 	/* tables: pages, the iterators and the one segment */
