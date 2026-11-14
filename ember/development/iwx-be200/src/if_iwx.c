@@ -157,6 +157,7 @@ int iwx_debug = 1;
 #include <dev/pci/if_iwxvar.h>
 
 /* if_iwx_ht.h mirrors these firmware and net80211 values. */
+CTASSERT(IWX_HT_MCC_SOURCE_WIFI == IWX_MCC_SOURCE_WIFI);
 CTASSERT(IWX_HT_POS_1_BELOW == IWX_PHY_VHT_CTRL_POS_1_BELOW);
 CTASSERT(IWX_HT_POS_2_BELOW == IWX_PHY_VHT_CTRL_POS_2_BELOW);
 CTASSERT(IWX_HT_POS_1_ABOVE == IWX_PHY_VHT_CTRL_POS_1_ABOVE);
@@ -8320,12 +8321,16 @@ iwx_mcc_update(struct iwx_softc *sc, struct iwx_mcc_chub_notif *notif)
 	 * Under LAR the firmware starts in the world domain, where every
 	 * 5 GHz channel is passive.  Ask for the detected country's channel
 	 * profile, as Linux does, so that active scans and the 40/80 MHz
-	 * flags of that country apply.
+	 * flags of that country apply.  Not under a connection: see
+	 * iwx_ht_mcc_follow().
 	 */
-	if (!isalpha((unsigned char)alpha2[0]) ||
-	    !isalpha((unsigned char)alpha2[1]) ||
-	    memcmp(alpha2, sc->sc_mcc_cur, 2) == 0)
+	if (!iwx_ht_mcc_follow(alpha2, sc->sc_mcc_cur, notif->source_id,
+	    ic->ic_state > IEEE80211_S_SCAN)) {
+		if (ifp->if_flags & IFF_DEBUG)
+			printf("%s: regulatory domain stays %.2s\n",
+			    device_xname(sc->sc_dev), sc->sc_mcc_cur);
 		return;
+	}
 	memcpy(sc->sc_mcc_new, alpha2, 3);
 	iwx_add_task(sc, sc->sc_systq, &sc->mcc_task);
 }

@@ -1367,6 +1367,33 @@ iwx_ht_scan_offchan(const uint8_t *frame, size_t len, unsigned chan)
 	return own != 0 && own != chan;
 }
 
+/* The firmware learnt the country from the beacons of networks around. */
+#define IWX_HT_MCC_SOURCE_WIFI	5
+
+/*
+ * Whether to take over the country `mcc' the firmware reports, with `cur'
+ * in force.  As Linux: once a BSS is chosen, a country taken from other
+ * networks' beacons is ignored.  Neighbours that announce different
+ * countries would otherwise change the regulatory profile under the
+ * connection at every scan.
+ */
+static inline int
+iwx_ht_mcc_follow(const char *mcc, const char *cur, int source,
+    int bss_chosen)
+{
+	int i;
+
+	for (i = 0; i < 2; i++) {
+		char c = mcc[i] | 0x20;
+
+		if (c < 'a' || c > 'z')
+			return 0;
+	}
+	if (mcc[0] == cur[0] && mcc[1] == cur[1])
+		return 0;
+	return !(bss_chosen && source == IWX_HT_MCC_SOURCE_WIFI);
+}
+
 /* What to do with a scan request from user space. */
 #define IWX_HT_SCANREQ_NET80211	0	/* not associated: the usual scan */
 #define IWX_HT_SCANREQ_START	1	/* scan and stay associated */

@@ -179,6 +179,14 @@ logs it like the other scan results it does not file. Contracts:
 `test_scan_chan()` in `ember/tools/iwx-ht-contract.sh` and the `offchan`
 case in `ember/tests/iwx-sae.sh`.
 
+The country the firmware reports (`MCC_UPDATE` notification) is taken over
+only before a BSS is chosen. As Linux does, a country the firmware made of
+other networks' beacons is ignored from authentication on: with neighbours
+announcing different countries, every scan while associated used to switch
+the regulatory profile under the connection (GB, RU and CN in turn on
+hardware). With `IFF_DEBUG` the driver logs that the domain stays. Contract:
+`test_mcc()` in `ember/tools/iwx-ht-contract.sh`.
+
 Status (2026-11-11): `ifconfig iwx0` reports the negotiated mode
 (`VHT mode 11ac`, `HT mode 11na`/`11ng`) instead of the first legacy rate;
 net80211 has no HT or VHT mode, so the driver supplies the media word

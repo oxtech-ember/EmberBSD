@@ -789,6 +789,33 @@ chan160(int primary, uint8_t htop0, int vht, uint8_t vw, uint8_t c0,
 
 /* The signal level user space gets with scan results, in dBm. */
 static void
+test_mcc(void)
+{
+	/* Before a BSS is chosen the country the firmware reports is taken. */
+	CHECK(iwx_ht_mcc_follow("RU", "ZZ", IWX_HT_MCC_SOURCE_WIFI, 0) == 1);
+	CHECK(iwx_ht_mcc_follow("GB", "RU", IWX_HT_MCC_SOURCE_WIFI, 0) == 1);
+	/* The country in force is not asked for again. */
+	CHECK(iwx_ht_mcc_follow("RU", "RU", IWX_HT_MCC_SOURCE_WIFI, 0) == 0);
+	CHECK(iwx_ht_mcc_follow("RU", "RU", 0, 1) == 0);
+	/* Only two letters name a country: not the world domain "00". */
+	CHECK(iwx_ht_mcc_follow("00", "RU", IWX_HT_MCC_SOURCE_WIFI, 0) == 0);
+	CHECK(iwx_ht_mcc_follow("R1", "ZZ", IWX_HT_MCC_SOURCE_WIFI, 0) == 0);
+	CHECK(iwx_ht_mcc_follow("\0\0", "ZZ", IWX_HT_MCC_SOURCE_WIFI, 0) == 0);
+	CHECK(iwx_ht_mcc_follow("ru", "ZZ", IWX_HT_MCC_SOURCE_WIFI, 0) == 1);
+	/*
+	 * As Linux: with a BSS chosen, what the firmware made of other
+	 * networks' beacons does not change the regulatory profile under
+	 * the connection.
+	 */
+	CHECK(iwx_ht_mcc_follow("GB", "RU", IWX_HT_MCC_SOURCE_WIFI, 1) == 0);
+	CHECK(iwx_ht_mcc_follow("CN", "RU", IWX_HT_MCC_SOURCE_WIFI, 1) == 0);
+	/* Other sources, such as the platform, are still followed. */
+	CHECK(iwx_ht_mcc_follow("GB", "RU", 0, 1) == 1);
+	CHECK(iwx_ht_mcc_follow("GB", "RU", 2, 1) == 1);
+	CHECK(iwx_ht_mcc_follow("GB", "RU", 7, 1) == 1);
+}
+
+static void
 test_dbm(void)
 {
 	/* The receive path carries the level as dBm above -100. */
@@ -1770,6 +1797,7 @@ main(void)
 	test_scan();
 	test_scan_chan();
 	test_dbm();
+	test_mcc();
 	printf("iwx-ht-contract: %u checks, %u failures\n", checks, failures);
 	return failures != 0;
 }
