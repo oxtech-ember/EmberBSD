@@ -155,6 +155,42 @@ test_idr_remove_missing(void)
 	idr_destroy(&idr);
 }
 
+/*
+ * Linux lets idr_alloc(GFP_KERNEL) work without idr_preload, and the 6.18 core
+ * relies on it (the modeset objects).  Without a preloaded node the layer
+ * allocates the node itself when the flags allow it.
+ */
+static void
+test_idr_alloc_no_preload(void)
+{
+	struct idr idr;
+	static int o[4];
+	int id0, id1, id2;
+
+	idr_init(&idr);
+	id0 = idr_alloc(&idr, &o[0], 1, 0, GFP_KERNEL);
+	id1 = idr_alloc(&idr, &o[1], 1, 0, GFP_KERNEL);
+	CHECK(id0 == 1 && id1 == 2);
+	CHECK(idr_find(&idr, id0) == &o[0] && idr_find(&idr, id1) == &o[1]);
+	/* a range that is full: the error, and nothing is leaked or kept */
+	id2 = idr_alloc(&idr, &o[2], 1, 3, GFP_KERNEL);
+	CHECK(id2 == -ENOSPC);
+	id2 = idr_alloc(&idr, &o[2], 1, 4, GFP_KERNEL);
+	CHECK(id2 == 3);
+	/* the flags that do not sleep work too, the node comes from the layer */
+	CHECK(idr_alloc(&idr, &o[3], 10, 0, GFP_NOWAIT) == 10);
+	/* a preloaded node is used first and an unused one is given back */
+	idr_preload(GFP_KERNEL);
+	CHECK(idr_alloc(&idr, &o[3], 20, 0, GFP_NOWAIT) == 20);
+	idr_preload_end();
+	CHECK(idr_remove(&idr, 20) == &o[3]);
+	CHECK(idr_remove(&idr, 10) == &o[3]);
+	CHECK(idr_remove(&idr, id2) == &o[2]);
+	CHECK(idr_remove(&idr, id1) == &o[1]);
+	CHECK(idr_remove(&idr, id0) == &o[0]);
+	idr_destroy(&idr);
+}
+
 int	drm2_linux_idr_run(void);
 
 int
@@ -164,6 +200,7 @@ drm2_linux_idr_run(void)
 	t_run = t_fail = 0;
 	test_idr_for_each_null();
 	test_idr_remove_missing();
+	test_idr_alloc_no_preload();
 	printf("drm2-linux-idr: %d checks, %d failed\n", t_run, t_fail);
 	return t_fail;
 }
