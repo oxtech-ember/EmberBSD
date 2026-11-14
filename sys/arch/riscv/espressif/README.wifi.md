@@ -53,6 +53,12 @@ drained by the control worker and rejected by their generation before a new
 join can install keys. Each event wait is bounded at two seconds; failure leaves
 the radio fenced without an automatic retry.
 
+The teardown barrier also covers publication of the final net80211 state;
+only then may a waiting SAE configuration admit the next join. Accepting AUTH
+retires the preceding scan generation and queued scan work. A native scan
+already running finishes in the serialized radio worker before the new connect
+call, while its stale results and completion cannot update the new session.
+
 The BSD `cs_key_set` callback runs in ioctl process context. It copies the
 key material into a serialized request and waits for the existing radio
 control kthread to call IDF's key API; that kthread owns the required FPU/PCU

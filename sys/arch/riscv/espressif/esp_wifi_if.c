@@ -920,6 +920,10 @@ espwifi_if_newstate(struct ieee80211com *ic, enum ieee80211_state state, int arg
 			error = ESTALE;
 			goto auth_rejected;
 		}
+		/* Retire scan work before handing the radio to this join. */
+		if (++sc->sc_scan_generation == 0)
+			sc->sc_scan_generation++;
+		sc->sc_scan_pending = false;
 		if (++sc->sc_join_generation == 0)
 			sc->sc_join_generation++;
 		sc->sc_join_active = sc->sc_join_generation;
@@ -943,6 +947,7 @@ espwifi_if_newstate(struct ieee80211com *ic, enum ieee80211_state state, int arg
 		/* FullMAC owns 802.11 authentication and association frames. */
 		ic->ic_state = IEEE80211_S_AUTH;
 		mutex_spin_exit(&sc->sc_scan_lock);
+		ieee80211_cancel_scan(ic);
 		espwifi_os_log("espwifi: AUTH decision=queued generation=%llu sae=%u\n",
 		    (unsigned long long)generation, (unsigned)sae);
 		espwifi_os_sem_give(sc->sc_scan_ctl_sem);
@@ -1535,9 +1540,7 @@ espwifi_if_join_control(struct espwifi_softc *sc)
 		    (unsigned)rescan);
 		error = espwifi_disconnect();
 		mutex_spin_enter(&sc->sc_scan_lock);
-		if (error == 0)
-			sc->sc_join_barrier_busy = false;
-		else
+		if (error != 0)
 			sc->sc_radio_ready = false;
 		mutex_spin_exit(&sc->sc_scan_lock);
 		espwifi_os_log("espwifi: join worker teardown result generation=%llu "
@@ -1547,15 +1550,19 @@ espwifi_if_join_control(struct espwifi_softc *sc)
 			printf("espwifi0: radio teardown barrier failed\n");
 			return;
 		}
-#ifdef ESPWIFI_NET80211_WPA2
-		espwifi_if_sae_teardown_complete(sc);
-#endif
 		if (rescan && (sc->sc_ec.ec_if.if_flags & IFF_RUNNING) != 0) {
 			int s = splnet();
 			(void)ieee80211_new_state(&sc->sc_ic,
 			    IEEE80211_S_SCAN, -1);
 			splx(s);
 		}
+		/* Publish the final state before admitting the next SAE configure. */
+		mutex_spin_enter(&sc->sc_scan_lock);
+		sc->sc_join_barrier_busy = false;
+		mutex_spin_exit(&sc->sc_scan_lock);
+#ifdef ESPWIFI_NET80211_WPA2
+		espwifi_if_sae_teardown_complete(sc);
+#endif
 		return;
 	}
 
