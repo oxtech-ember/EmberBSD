@@ -82,3 +82,26 @@ a driver that needs a mapped table.  drm_prime.c is built from dist618.
 Test driver: sys/modules/vgem618 (same source as vgem, VGEM_CORE618), client
 ember/tests/drm2-vgem-client.c, kernel checks drm2-drm618-gem and
 drm2-drm618-dmabuf in drmkms_linux_test.
+
+KMS drivers
+-----------
+A KMS driver for this core is a loadable module that depends on drmkms618 and
+uses the atomic helpers of dist618 with
+drm618/drm618_gem_framebuffer_helper.c (the framebuffers of ADDFB2 over GEM
+objects) and drm618_gem_atomic_helper.c (the implicit fence of a plane); a
+buffer is a GEM object over a shmem file as in vgem.  drm_simple_kms_helper.c
+and drm_gem_shmem_helper.c are GPL-only and not here.  Without a vblank
+interrupt the CRTC uses the vblank timer of drm_vblank.c
+(DRM_CRTC_VBLANK_TIMER_FUNCS), which needs the hrtimer of the layer to run
+periodically (hrtimer_forward_now and HRTIMER_RESTART), and a driver may
+leave out the wait for the vblank in its commit tail when the frame is final
+when the plane update returns.  The modeset objects need idr_alloc without
+idr_preload (drm_mode_object_add): the layer allocates the node itself.
+
+A signal that ends a wait in a file operation (read of events, ioctl, open) is
+EINTR, never ERESTART: the restart of a system call does not look at SA_RESTART.
+
+Test driver for KMS: efidrm618 (outside of this tree: KMS over the UEFI GOP
+framebuffer, the module of the 5.6 core brought to this one); client
+ember/tests/drm2-kms-client.c on raw ioctls, ember/tests/kms-shot-compare.py
+for the comparison of a QEMU screendump with the pattern the client draws.
