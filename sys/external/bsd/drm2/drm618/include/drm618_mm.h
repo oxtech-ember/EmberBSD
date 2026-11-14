@@ -13,8 +13,11 @@
  *     object (it stays resident, as pages held by the GEM object must), and
  *     releasing the batch that holds it unwires it.
  *   - struct vm_area_struct carries what a mmap handler of the core reads and
- *     sets; the mmap of a Linux file by user space is not provided yet
- *     (drm618_file.c: fo_mmap says EOPNOTSUPP).
+ *     sets.  The mmap of a Linux file by user space (drm618_vma.c) is a uvm
+ *     object per mapping: the mmap handler of the file runs once on a vma, and
+ *     a fault of the user mapping runs vm_ops->fault on a copy of that vma
+ *     whose vm_start is the address of the first page; vmf_insert_page and
+ *     vmf_insert_pfn enter the page into the faulting map.
  */
 
 #ifndef _DRM618_MM_H_
@@ -27,6 +30,7 @@
 #include <uvm/uvm_object.h>
 
 #include <drm618_file.h>
+#include <drm618_page.h>
 #include <linux/err.h>
 #include <linux/gfp.h>
 #include <linux/mm_types.h>
@@ -52,11 +56,19 @@ typedef unsigned long vm_flags_t;
 #define	VM_NORESERVE	0x00200000UL	/* shmem_file_setup: do not account the memory */
 
 struct vm_operations_struct {
-	void	(*open)(struct vm_area_struct *);
-	void	(*close)(struct vm_area_struct *);
-	int	(*fault)(struct vm_fault *);
+	void		(*open)(struct vm_area_struct *);
+	void		(*close)(struct vm_area_struct *);
+	vm_fault_t	(*fault)(struct vm_fault *);
 };
 
+struct vma_uobj;
+struct uvm_faultinfo;
+
+/*
+ * The mapping is a uvm object (drm618_vma.c).  The bsd members are the
+ * state of the layer: during a fault the faulting map, so that vmf_insert_*
+ * can enter pages, and the range that remap_pfn_range recorded.
+ */
 struct vm_area_struct {
 	unsigned long			vm_start;
 	unsigned long			vm_end;
@@ -66,6 +78,13 @@ struct vm_area_struct {
 	const struct vm_operations_struct *vm_ops;
 	void				*vm_private_data;
 	struct DRM618_FILE_TAG		*vm_file;
+	struct vma_uobj			*vm_bsd_uobj;	/* the mapping, when there is one */
+	struct uvm_faultinfo		*vm_bsd_ufi;	/* the fault being served, or NULL */
+	unsigned int			vm_bsd_access;	/* VM_PROT_* of that fault */
+	bool				vm_bsd_remap;	/* remap_pfn_range was called */
+	unsigned long			vm_bsd_pfn;	/* first frame of the remapped range */
+	unsigned long			vm_bsd_npages;	/* its length in pages */
+	pgprot_t			vm_bsd_remap_prot;
 };
 
 static inline void
@@ -222,6 +241,19 @@ void	__folio_batch_release(struct folio_batch *);
 
 /* The page of index of the file, wired; ERR_PTR(-errno) if there is none. */
 struct folio *shmem_read_folio_gfp(struct address_space *, unsigned long, gfp_t);
+
+/*
+ * Entering pages into the user mapping, from vm_ops->fault (vma is the copy of
+ * the fault): the result is VM_FAULT_NOPAGE when the page is in, VM_FAULT_OOM
+ * when the page tables could not grow, VM_FAULT_SIGBUS for a call that is not
+ * from a fault or an address outside the mapping.
+ */
+vm_fault_t vmf_insert_page(struct vm_area_struct *, unsigned long, struct page *);
+vm_fault_t vmf_insert_pfn(struct vm_area_struct *, unsigned long, unsigned long);
+vm_fault_t vmf_insert_pfn_prot(struct vm_area_struct *, unsigned long, unsigned long, pgprot_t);
+/* From the mmap handler: the whole range is entered lazily by the faults. */
+int	remap_pfn_range(struct vm_area_struct *, unsigned long, unsigned long, unsigned long, pgprot_t);
+#define	io_remap_pfn_range	remap_pfn_range
 
 struct DRM618_FILE_TAG *shmem_file_setup(const char *, loff_t, unsigned long);
 struct DRM618_FILE_TAG *shmem_file_setup_with_mnt(struct vfsmount *, const char *,

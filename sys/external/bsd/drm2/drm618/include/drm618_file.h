@@ -181,6 +181,13 @@ int	drm618_file_open(const struct file_operations *, dev_t, unsigned int,
 int	drm618_file_ioctl(struct DRM618_FILE_TAG *, unsigned long, void *);
 
 /*
+ * The user mapping of a Linux file by mmap(2), the fo_mmap of the NetBSD file
+ * (drm618_vma.c): the arguments of fo_mmap; 0 or a NetBSD errno.
+ */
+int	drm618_vma_mmap(struct DRM618_FILE_TAG *, off_t *, size_t, int, int *,
+    int *, struct uvm_object **, int *);
+
+/*
  * Pseudo file system for anonymous inodes (drm_drv.c: the inode whose mapping
  * every DRM file shares).  A file system type here is only a name and the
  * functions the 6.18 core gives it; "mounting" one makes a super block with

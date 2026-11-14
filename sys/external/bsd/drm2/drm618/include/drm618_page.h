@@ -40,8 +40,11 @@
 typedef unsigned int vm_fault_t;
 #define	VM_FAULT_OOM		0x000001
 #define	VM_FAULT_SIGBUS		0x000002
+#define	VM_FAULT_SIGSEGV	0x000040
 #define	VM_FAULT_NOPAGE		0x000100
 #define	VM_FAULT_RETRY		0x000400
+
+#define	FAULT_FLAG_WRITE	0x01	/* the access that faulted is a write */
 
 struct vm_area_struct;
 

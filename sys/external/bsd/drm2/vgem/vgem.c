@@ -12,6 +12,13 @@
  * the Linux 5.6 calls (excl/shared) so the same source runs on a kernel that
  * has only the old layer.
  *
+ * Two cores can host it.  Without VGEM_CORE618 it is written for the 5.6 core
+ * (drm_gem_shmem helpers, uvm pager of the GEM object); with VGEM_CORE618 for
+ * the 6.18 core (module vgem618): a buffer is a GEM object over a shmem file
+ * whose pages are pinned while the object is mapped, the pages enter the user
+ * mapping through the fault handler of vm_ops, and the dma-buf is the one of
+ * drm_prime.c.  The fence code is the same for both.
+ *
  * Loadable module, one pseudo-device, no hot unload.
  */
 #include <sys/cdefs.h>
@@ -38,14 +45,21 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <drm/drm_drv.h>
 #include <drm/drm_file.h>
 #include <drm/drm_gem.h>
+#ifndef VGEM_CORE618
 #include <drm/drm_gem_shmem_helper.h>
+#endif
 #include <drm/drm_ioctl.h>
 #include <drm/drm_prime.h>
 #include <drm/vgem_drm.h>
 
+#ifdef VGEM_CORE618
+#define	vgem_obj_put(obj)	drm_gem_object_put(obj)
+#else
+#define	vgem_obj_put(obj)	drm_gem_object_put_unlocked(obj)
 extern int drm_guarantee_initialized(void);
 #ifdef __x86_64__
 extern struct x86_bus_dma_tag pci_bus_dma64_tag;
+#endif
 #endif
 
 #define VGEM_NAME		"vgem"
@@ -200,7 +214,7 @@ err_fence:
 		dma_fence_put(fence);
 	}
 err:
-	drm_gem_object_put_unlocked(obj);
+	vgem_obj_put(obj);
 	return ret;
 }
 
@@ -267,6 +281,214 @@ vgem_postclose(struct drm_device *dev, struct drm_file *file)
 
 /* --------------------------------------------------------------- GEM */
 
+#ifdef VGEM_CORE618
+
+/*
+ * A buffer: a shmem file (drm_gem_object_init) whose pages are pinned while
+ * something needs them: a mapping (pinned when it is made, once more for every
+ * vm_ops open, released by close) or a PRIME importer (pin and unpin of the
+ * object functions).  The fault handler therefore never allocates.
+ */
+struct vgem_bo {
+	struct drm_gem_object	base;
+	struct mutex		pages_lock;
+	struct page		**pages;
+	unsigned int		pin_count;
+};
+
+/* base is the first member: also for a vm_private_data, which is a void pointer */
+#define	to_vgem_bo(o)	((struct vgem_bo *)(o))
+
+static int
+vgem_pin_pages(struct vgem_bo *bo)
+{
+	struct page **pages;
+
+	mutex_lock(&bo->pages_lock);
+	if (bo->pin_count == 0) {
+		pages = drm_gem_get_pages(&bo->base);
+		if (IS_ERR(pages)) {
+			mutex_unlock(&bo->pages_lock);
+			return PTR_ERR(pages);
+		}
+		bo->pages = pages;
+	}
+	bo->pin_count++;
+	mutex_unlock(&bo->pages_lock);
+	return 0;
+}
+
+static void
+vgem_unpin_pages(struct vgem_bo *bo)
+{
+
+	mutex_lock(&bo->pages_lock);
+	KASSERT(bo->pin_count > 0);
+	if (--bo->pin_count == 0) {
+		drm_gem_put_pages(&bo->base, bo->pages, true, true);
+		bo->pages = NULL;
+	}
+	mutex_unlock(&bo->pages_lock);
+}
+
+static vm_fault_t
+vgem_gem_fault(struct vm_fault *vmf)
+{
+	struct vm_area_struct *vma = vmf->vma;
+	struct vgem_bo *bo = to_vgem_bo(vma->vm_private_data);
+	pgoff_t page_offset = (vmf->address - vma->vm_start) >> PAGE_SHIFT;
+	struct page *page = NULL;
+
+	mutex_lock(&bo->pages_lock);
+	if (bo->pages != NULL && page_offset < (bo->base.size >> PAGE_SHIFT))
+		page = bo->pages[page_offset];
+	mutex_unlock(&bo->pages_lock);
+	if (page == NULL)
+		return VM_FAULT_SIGBUS;
+	return vmf_insert_page(vma, vmf->address, page);
+}
+
+/* Another reference of the mapping (fork, split): one more pin, one more object reference. */
+static void
+vgem_vm_open(struct vm_area_struct *vma)
+{
+	struct vgem_bo *bo = to_vgem_bo(vma->vm_private_data);
+
+	drm_gem_vm_open(vma);
+	mutex_lock(&bo->pages_lock);
+	KASSERT(bo->pin_count > 0);
+	bo->pin_count++;
+	mutex_unlock(&bo->pages_lock);
+}
+
+static void
+vgem_vm_close(struct vm_area_struct *vma)
+{
+	struct vgem_bo *bo = to_vgem_bo(vma->vm_private_data);
+
+	vgem_unpin_pages(bo);
+	drm_gem_vm_close(vma);
+}
+
+static const struct vm_operations_struct vgem_gem_vm_ops = {
+	.fault	= vgem_gem_fault,
+	.open	= vgem_vm_open,
+	.close	= vgem_vm_close,
+};
+
+static int
+vgem_gem_mmap(struct drm_gem_object *obj, struct vm_area_struct *vma)
+{
+	int ret;
+
+	ret = vgem_pin_pages(to_vgem_bo(obj));
+	if (ret)
+		return ret;
+	vm_flags_set(vma, VM_DONTEXPAND | VM_DONTDUMP | VM_IO | VM_PFNMAP);
+	/* ordinary cached memory: no write combining for pages of the page cache */
+	vma->vm_page_prot = vm_get_page_prot(vma->vm_flags);
+	return 0;
+}
+
+static int
+vgem_gem_pin(struct drm_gem_object *obj)
+{
+
+	return vgem_pin_pages(to_vgem_bo(obj));
+}
+
+static void
+vgem_gem_unpin(struct drm_gem_object *obj)
+{
+
+	vgem_unpin_pages(to_vgem_bo(obj));
+}
+
+static struct sg_table *
+vgem_gem_get_sg_table(struct drm_gem_object *obj)
+{
+	struct vgem_bo *bo = to_vgem_bo(obj);
+
+	/* the caller holds a pin (drm_gem_pin of drm_gem_map_attach) */
+	return drm_prime_pages_to_sg(obj->dev, bo->pages,
+	    obj->size >> PAGE_SHIFT);
+}
+
+static void
+vgem_gem_free(struct drm_gem_object *obj)
+{
+	struct vgem_bo *bo = to_vgem_bo(obj);
+
+	KASSERT(bo->pin_count == 0);
+	drm_gem_object_release(obj);
+	mutex_destroy(&bo->pages_lock);
+	kfree(bo);
+}
+
+static const struct drm_gem_object_funcs vgem_gem_funcs = {
+	.free		= vgem_gem_free,
+	.pin		= vgem_gem_pin,
+	.unpin		= vgem_gem_unpin,
+	.get_sg_table	= vgem_gem_get_sg_table,
+	.mmap		= vgem_gem_mmap,
+	.vm_ops		= &vgem_gem_vm_ops,
+};
+
+static struct vgem_bo *
+vgem_bo_create(struct drm_device *dev, size_t size)
+{
+	struct vgem_bo *bo;
+	int ret;
+
+	bo = kzalloc(sizeof(*bo), GFP_KERNEL);
+	if (bo == NULL)
+		return ERR_PTR(-ENOMEM);
+	bo->base.funcs = &vgem_gem_funcs;
+	ret = drm_gem_object_init(dev, &bo->base, size);
+	if (ret) {
+		kfree(bo);
+		return ERR_PTR(ret);
+	}
+	mutex_init(&bo->pages_lock);
+	return bo;
+}
+
+static int
+vgem_dumb_create(struct drm_file *file, struct drm_device *dev,
+    struct drm_mode_create_dumb *args)
+{
+	struct vgem_bo *bo;
+	uint64_t pitch, size;
+	uint32_t handle;
+	int ret;
+
+	if (args->bpp != 32 || args->flags != 0)
+		return -EINVAL;
+	if (args->width == 0 || args->height == 0 ||
+	    args->width > 8192 || args->height > 8192)
+		return -EINVAL;
+	pitch = (uint64_t)args->width * 4;
+	size = pitch * args->height;
+	if (size > VGEM_MAX_DUMB)
+		return -EINVAL;
+	size = roundup(size, PAGE_SIZE);
+
+	bo = vgem_bo_create(dev, size);
+	if (IS_ERR(bo))
+		return PTR_ERR(bo);
+	ret = drm_gem_handle_create(file, &bo->base, &handle);
+	/* The handle (if any) holds the reference now. */
+	vgem_obj_put(&bo->base);
+	if (ret)
+		return ret;
+	args->pitch = (uint32_t)pitch;
+	args->size = size;
+	args->handle = handle;
+	return 0;
+}
+
+#else	/* 5.6 core */
+
 static const struct drm_gem_object_funcs vgem_gem_funcs = {
 	.free		= drm_gem_shmem_free_object,
 	.print_info	= drm_gem_shmem_print_info,
@@ -314,7 +536,7 @@ vgem_dumb_create(struct drm_file *file, struct drm_device *dev,
 		return PTR_ERR(shmem);
 	ret = drm_gem_handle_create(file, &shmem->base, &handle);
 	/* The handle (if any) holds the reference now. */
-	drm_gem_object_put_unlocked(&shmem->base);
+	vgem_obj_put(&shmem->base);
 	if (ret)
 		return ret;
 	args->pitch = (uint32_t)pitch;
@@ -322,6 +544,8 @@ vgem_dumb_create(struct drm_file *file, struct drm_device *dev,
 	args->handle = handle;
 	return 0;
 }
+
+#endif	/* VGEM_CORE618 */
 
 /* ------------------------------------------------------- DRM driver */
 
@@ -331,6 +555,27 @@ static const struct drm_ioctl_desc vgem_ioctls[] = {
 	DRM_IOCTL_DEF_DRV(VGEM_FENCE_SIGNAL, vgem_fence_signal_ioctl,
 	    DRM_RENDER_ALLOW),
 };
+
+#ifdef VGEM_CORE618
+
+DEFINE_DRM_GEM_FOPS(vgem_driver_fops);
+
+static const struct drm_driver vgem_driver = {
+	.driver_features	= DRIVER_GEM | DRIVER_RENDER,
+	.open			= vgem_open,
+	.postclose		= vgem_postclose,
+	.ioctls			= vgem_ioctls,
+	.num_ioctls		= ARRAY_SIZE(vgem_ioctls),
+	.fops			= &vgem_driver_fops,
+	.dumb_create		= vgem_dumb_create,
+	.name			= __UNCONST(VGEM_NAME),
+	.desc			= __UNCONST("Virtual GEM provider"),
+	.major			= 1,
+	.minor			= 0,
+	.patchlevel		= 0,
+};
+
+#else
 
 static struct drm_driver vgem_driver = {
 	.driver_features	= DRIVER_GEM | DRIVER_RENDER,
@@ -354,6 +599,8 @@ static struct drm_driver vgem_driver = {
 	.minor	= 0,
 	.patchlevel = 0,
 };
+
+#endif
 
 /* ----------------------------------------------------------- autoconf */
 
@@ -379,20 +626,30 @@ vgem_attach(device_t parent, device_t self, void *aux)
 
 	sc->sc_dev = self;
 	aprint_naive("\n");
-	aprint_normal_dev(self, "virtual GEM provider (%s dma_resv API)\n",
+	aprint_normal_dev(self, "virtual GEM provider (%s dma_resv API, %s core)\n",
 #ifdef VGEM_NEWAPI
+	    "6.18",
+#else
+	    "5.6",
+#endif
+#ifdef VGEM_CORE618
 	    "6.18"
 #else
 	    "5.6"
 #endif
 	    );
+#ifdef VGEM_CORE618
+	ret = 0;
+#else
 	ret = -drm_guarantee_initialized();
+#endif
 	if (ret == 0) {
 		dev = drm_dev_alloc(&vgem_driver, self);
 		if (IS_ERR(dev)) {
 			ret = PTR_ERR(dev);
 		} else {
 			sc->sc_drm = dev;
+#ifndef VGEM_CORE618
 			dev->dev_private = sc;
 #ifdef __x86_64__
 			dev->bus_dmat = dev->bus_dmat32 = dev->dmat =
@@ -400,6 +657,7 @@ vgem_attach(device_t parent, device_t self, void *aux)
 			dev->dmat_subregion_p = false;
 #endif
 			ret = drm_dev_set_unique(dev, device_xname(self));
+#endif
 			if (ret == 0)
 				ret = drm_dev_register(dev, 0);
 			if (ret) {
@@ -432,7 +690,12 @@ vgem_detach(device_t self, int flags)
 
 /* ----------------------------------------------------------- module */
 
+#ifdef VGEM_CORE618
+MODULE(MODULE_CLASS_DRIVER, vgem618, "drmkms618");
+#define	vgem_modcmd	vgem618_modcmd
+#else
 MODULE(MODULE_CLASS_DRIVER, vgem, "drmkms");
+#endif
 
 CFDRIVER_DECL(vgem, DV_DULL, NULL);
 extern struct cfattach vgem_ca;
