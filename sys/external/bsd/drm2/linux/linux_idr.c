@@ -346,6 +346,7 @@ idr_alloc(struct idr *idr, void *data, int start, int end, gfp_t gfp)
 	int maximum = (end <= 0? INT_MAX : (end - 1));
 	struct idr_cache *cache;
 	struct idr_node *node, *search, *collision __diagused;
+	bool preloaded;
 	int id;
 
 	/* Sanity-check inputs.  */
@@ -362,13 +363,23 @@ idr_alloc(struct idr *idr, void *data, int start, int end, gfp_t gfp)
 
 	/*
 	 * Grab a node allocated by idr_preload, if we have a cache and
-	 * it is populated.
+	 * it is populated.  Linux does not need idr_preload when the
+	 * flags allow the allocation (the 6.18 core calls idr_alloc with
+	 * GFP_KERNEL under a mutex and no preload), so without a node the
+	 * allocation is made here, sleeping or not as the flags say.
 	 */
 	cache = lwp_getspecific(idr_cache_key);
-	if (cache == NULL || cache->ic_node == NULL)
-		return -ENOMEM;
-	node = cache->ic_node;
-	cache->ic_node = NULL;
+	if (cache != NULL && cache->ic_node != NULL) {
+		node = cache->ic_node;
+		cache->ic_node = NULL;
+		preloaded = true;
+	} else {
+		node = kmem_alloc(sizeof(*node),
+		    ISSET(gfp, __GFP_WAIT) ? KM_SLEEP : KM_NOSLEEP);
+		if (node == NULL)
+			return -ENOMEM;
+		preloaded = false;
+	}
 
 	/* Find an id.  */
 	mutex_spin_enter(&idr->idr_lock);
@@ -389,7 +400,10 @@ out:	mutex_spin_exit(&idr->idr_lock);
 
 	/* Discard the node on failure.  */
 	if (id < 0) {
-		cache->ic_node = node;
+		if (preloaded)
+			cache->ic_node = node;
+		else
+			kmem_free(node, sizeof(*node));
 	} else {
 		SDT_PROBE3(sdt, linux, idr, alloc,  idr, id, data);
 	}
