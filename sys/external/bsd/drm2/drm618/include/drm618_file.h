@@ -45,6 +45,7 @@ struct DRM618_FILE_TAG;
 struct inode;
 struct vm_area_struct;
 struct poll_table_struct;
+struct knote;
 struct seq_file;
 struct super_block;
 struct uvm_object;
@@ -115,6 +116,11 @@ struct file_operations {
 	unsigned long	(*get_unmapped_area)(struct DRM618_FILE_TAG *,
 			    unsigned long, unsigned long, unsigned long,
 			    unsigned long);
+	/*
+	 * Not a Linux member: kqueue(2) on the descriptor (Linux has none).
+	 * Returns a NetBSD errno; without it kevent says EOPNOTSUPP.
+	 */
+	int		(*bsd_kqfilter)(struct DRM618_FILE_TAG *, struct knote *);
 };
 
 struct DRM618_FILE_TAG {
@@ -174,6 +180,8 @@ int	get_unused_fd_flags(unsigned int);
 void	put_unused_fd(unsigned int);
 void	fd_install(unsigned int, struct DRM618_FILE_TAG *);
 struct DRM618_FILE_TAG *fget(unsigned int);
+/* As fget, and says why not: *error is EBADF (not open) or EINVAL (not a file of the layer). */
+struct DRM618_FILE_TAG *drm618_fget(unsigned int, int *error);
 
 /* The file of a device node opened with fops (what the cdevsw does); 0 or a negative errno. */
 int	drm618_file_open(const struct file_operations *, dev_t, unsigned int,
