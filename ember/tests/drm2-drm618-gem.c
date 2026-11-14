@@ -46,6 +46,15 @@ drm2_drm618_gem_run(void)
 	CHECK(file_inode(filp)->i_size == 4 * PAGE_SIZE);
 	CHECK(mapping->a_uobj != NULL);
 
+	/*
+	 * The pages of a shmem file are not restricted to the low 4 GiB: the
+	 * constraint of the mapping against __GFP_DMA32 is empty (drm_gem_get_pages
+	 * has a BUG_ON on a page above 4 GiB when it is not), and against the
+	 * flags it does hold, the flags themselves.
+	 */
+	CHECK(mapping_gfp_constraint(mapping, __GFP_DMA32) == 0);
+	CHECK(mapping_gfp_constraint(mapping, GFP_KERNEL) == GFP_KERNEL);
+
 	/* a page of the object: wired while held, the same page every time */
 	folio = shmem_read_folio_gfp(mapping, 1, mapping_gfp_mask(mapping));
 	CHECK(!IS_ERR(folio));
