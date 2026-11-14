@@ -18,7 +18,7 @@ begin
  end
  File.write(d+'/gem-lock-body.h',gem.split(/^#include /,2).first+functions.join("\n"))
  text=read.call('sys/external/bsd/drm2/linux/linux_dma_resv.c')
- body=%w[dma_resv_add_shared_fence dma_resv_add_excl_fence].map{|n|a=text.scan(/^void\n#{n}\(.*?^}/m);abort 'fence function boundary '+n unless a.size==1;a.first}
+ body=%w[objlist_alloc dma_resv_add_shared_fence dma_resv_add_excl_fence].map{|n|a=text.scan(/^(?:static struct dma_resv_list \*|void)\n#{n}\(.*?^}/m);abort 'fence function boundary '+n unless a.size==1;a.first}
  File.write(d+'/shared-body.h',text.split(/^#include /,2).first+body.join("\n"))
  %w[c rb].each{|e|read.call('ember/tools/bcmv3d-read-contract.'+e)}
  argv=Shellwords.split(ENV.fetch('CC','cc'))+%w[-std=c11 -Wall -Wextra -Werror -Wno-unused-function -Wno-unused-parameter]+Shellwords.split(ENV.fetch('CFLAGS',''))+['-I'+d,src+'/ember/tools/bcmv3d-read-contract.c','-o',d+'/contract']

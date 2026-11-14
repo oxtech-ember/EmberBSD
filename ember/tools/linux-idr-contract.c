@@ -35,6 +35,7 @@ static unsigned checks;
 #define SDT_PROBE3(...) do { } while (0)
 #define SDT_PROBE4(...) do { } while (0)
 #define ERR_PTR(e) ((void *)(intptr_t)(e))
+#define __UNCONST(a) ((void *)(uintptr_t)(const void *)(a))
 
 typedef unsigned gfp_t;
 #define __GFP_WAIT 1u
@@ -257,6 +258,38 @@ destroy_populated(void)
 	CHECK(a == 17 && b == 29);
 }
 
+static int
+count_entries(int id, void *data, void *cookie)
+{
+	(void)id;
+	CHECK(data != NULL);
+	(*(int *)cookie)++;
+	return 0;
+}
+
+static void
+skip_null_entries(void)
+{
+	struct idr idr;
+	int a = 1, b = 2, id, n = 0;
+
+	/* Like Linux, iteration skips entries whose pointer is NULL. */
+	idr_init(&idr);
+	CHECK(alloc1(&idr, &a, 0, 0) == 0);
+	CHECK(alloc1(&idr, NULL, 0, 0) == 1);
+	CHECK(alloc1(&idr, &b, 0, 0) == 2);
+	id = 1;
+	CHECK(idr_get_next(&idr, &id) == &b && id == 2);
+	id = 3;
+	CHECK(idr_get_next(&idr, &id) == NULL);
+	CHECK(idr_for_each(&idr, count_entries, &n) == 0 && n == 2);
+	CHECK(idr_remove(&idr, 1) == NULL);
+	/* An unknown id is not an error and frees nothing. */
+	CHECK(idr_remove(&idr, 77) == NULL);
+	drain(&idr);
+	idr_destroy(&idr);
+}
+
 int
 main(void)
 {
@@ -299,6 +332,7 @@ main(void)
 	idr_destroy(&base5);
 
 	destroy_populated();
+	skip_null_entries();
 
 	linux_idr_module_fini();
 	CHECK(live_allocs == 0);

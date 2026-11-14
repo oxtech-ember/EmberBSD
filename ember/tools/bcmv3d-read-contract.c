@@ -124,6 +124,83 @@ static int dma_resv_get_fences_rcu(const struct dma_resv *r,struct dma_fence **e
 	if(*n){*shared=malloc(*n*sizeof(**shared));CHECK(*shared);snapshot_array=*shared;for(unsigned i=0;i<*n;i++)(*shared)[i]=dma_fence_get(r->fence->shared[i]);}
 	return 0;
 }
+#define typeof __typeof__
+#define KM_SLEEP 0
+static void *kmem_alloc(size_t n, int flags)
+{ CHECK(flags==KM_SLEEP);void *p=calloc(1,n);CHECK(p);return p; }
+enum dma_resv_usage {
+	DMA_RESV_USAGE_KERNEL,
+	DMA_RESV_USAGE_WRITE,
+	DMA_RESV_USAGE_READ,
+	DMA_RESV_USAGE_BOOKKEEP
+};
+/*
+ * Fixture double of the shared-fence publication of the 5.6 API.  The
+ * production dma_resv_add_shared_fence is now a wrapper of
+ * dma_resv_add_fence (usage model of Linux 6.18), which this fixture does
+ * not model; the production function is covered by drm2-dma-resv in the
+ * kernel test module.
+ */
+static void
+dma_resv_add_fence(struct dma_resv *robj, struct dma_fence *fence,
+    enum dma_resv_usage usage)
+{
+	struct dma_resv_list *list = robj->fence;
+	struct dma_resv_list *prealloc = robj->robj_prealloc;
+	struct dma_resv_write_ticket ticket;
+	struct dma_fence *replace = NULL;
+	uint32_t i;
+
+	CHECK(usage == DMA_RESV_USAGE_READ);
+	CHECK(dma_resv_held(robj));
+	CHECK(fence != NULL);
+	(void)dma_fence_get(fence);
+	if (prealloc == NULL) {
+		CHECK(list != NULL);
+		CHECK(list->shared_count < list->shared_max);
+		dma_resv_write_begin(robj, &ticket);
+		for (i = 0; i < list->shared_count; i++) {
+			if (list->shared[i]->context == fence->context) {
+				replace = list->shared[i];
+				atomic_store_relaxed(&list->shared[i], fence);
+				break;
+			}
+		}
+		if (i == list->shared_count) {
+			atomic_store_relaxed(&list->shared[list->shared_count],
+			    fence);
+			atomic_store_relaxed(&list->shared_count,
+			    list->shared_count + 1);
+		}
+		dma_resv_write_commit(robj, &ticket);
+	} else {
+		uint32_t shared_count = (list == NULL ? 0 : list->shared_count);
+
+		CHECK(shared_count < prealloc->shared_max);
+		for (i = 0; i < shared_count; i++) {
+			if (replace == NULL &&
+			    list->shared[i]->context == fence->context) {
+				replace = list->shared[i];
+				prealloc->shared[i] = fence;
+			} else {
+				prealloc->shared[i] = list->shared[i];
+			}
+		}
+		prealloc->shared_count = shared_count;
+		if (replace == NULL) {
+			CHECK(prealloc->shared_count < prealloc->shared_max);
+			prealloc->shared[prealloc->shared_count++] = fence;
+		}
+		dma_resv_write_begin(robj, &ticket);
+		atomic_store_relaxed(&robj->fence, prealloc);
+		robj->robj_prealloc = NULL;
+		dma_resv_write_commit(robj, &ticket);
+		if (list != NULL)
+			objlist_defer_free(list);
+	}
+	if (replace != NULL)
+		dma_fence_put(replace);
+}
 #include "gem-lock-body.h"
 #include "shared-body.h"
 #include "read-types.h"
