@@ -44,7 +44,22 @@ ctl()
     output=$1
     shift
     before "$deadline" || finish FAIL deadline
-    wpa_cli -i "$interface" "$@" > "$logs/$output" 2>&1 || return 1
+    if wpa_cli -i "$interface" "$@" > "$logs/$output.raw" 2>&1; then
+        ctl_status=0
+    else
+        ctl_status=$?
+    fi
+    # wpa_cli prefixes each message, including a multiline reply, with time.
+    # Keep the original response and parse its fields without that prefix.
+    cli_line=
+    while IFS= read -r cli_line || [ -n "$cli_line" ]; do
+        case "$cli_line" in
+        [0-9][0-9]:[0-9][0-9]:[0-9][0-9].[0-9][0-9][0-9]:\ *)
+            cli_line=${cli_line#*: } ;;
+        esac
+        printf '%s\n' "$cli_line"
+    done < "$logs/$output.raw" > "$logs/$output" || return 1
+    [ "$ctl_status" -eq 0 ] || return 1
     # wpa_cli can exit zero when the control reply is FAIL.
     ! grep -Eq '^(FAIL|UNKNOWN COMMAND)' "$logs/$output"
 }

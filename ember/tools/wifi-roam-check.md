@@ -41,6 +41,9 @@ Stdout contains compact `WIFI_ROAM_CHECK` phase and result lines. The result
 directory is private (umask 077) and contains the control replies, original and
 final status, requested BSSID, and network checks. These files include network
 identifiers; retain them as local diagnostics rather than public evidence.
+Each control response also has a `.raw` copy. The parser removes the optional
+`HH:MM:SS.mmm: ` message prefix emitted by `wpa_cli` from its working copy.
+This applies to status fields and control replies such as `OK` and `FAIL`.
 
 The time budget is checked between commands. An in-flight control request can
 add the selected supplicant client's send/reply timeout (up to 15 seconds for

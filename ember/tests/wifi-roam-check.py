@@ -27,7 +27,7 @@ def check(condition, message):
         raise SystemExit('FAIL: ' + message)
 
 
-def run_case(mode, expected, expected_roams, limit=80):
+def run_case(mode, expected, expected_roams, limit=80, timestamp=False):
     with tempfile.TemporaryDirectory(prefix='wifi-roam-check-') as temporary:
         root = Path(temporary)
         bindir = root / 'bin'
@@ -50,10 +50,13 @@ def run_case(mode, expected, expected_roams, limit=80):
                 'echo "$((now + n))" > "$TEST_ROOT/clock"\n')
         wpa = f'''op=$3
 arg=$4
+if [ "$TEST_TIMESTAMP" = 1 ]; then
+    printf '12:02:56.490: '
+fi
 case "$op" in
 status)
     bssid=$(cat "$TEST_ROOT/current-bssid")
-    printf 'wpa_state=COMPLETED\\nbssid=%s\\nssid=%s\\n' \\
+    printf 'bssid=%s\\nfreq=2412\\nssid=%s\\nwpa_state=COMPLETED\\n' \\
         "$bssid" '{ssid}'
     if [ "{mode}" = pass-psk ]; then
         printf 'key_mgmt=WPA2-PSK\\nip_address=192.0.2.10\\n'
@@ -114,6 +117,7 @@ esac
         logs = root / 'logs'
         env = os.environ.copy()
         env.update(TEST_MODE=mode, TEST_ROOT=str(root),
+                   TEST_TIMESTAMP='1' if timestamp else '0',
                    PATH=str(bindir) + ':' + env['PATH'])
         proc = subprocess.run([str(shell), '--posix', str(script), 'wlan0',
                                str(logs), str(limit), 'example.test'],
@@ -131,6 +135,11 @@ esac
               mode + ': private log permissions were not retained')
         check(int((root / 'roam-count').read_text()) == expected_roams,
               mode + ': unexpected number of ROAM requests')
+        if timestamp:
+            check((logs / 'status.raw').read_text().startswith('12:02:56.490: '),
+                  mode + ': original timestamped reply was not retained')
+            check((logs / 'status').read_text().startswith('bssid='),
+                  mode + ': timestamp was not removed from the first field')
         if mode == 'switch-after-results':
             check((logs / 'requested-bssid').read_text().strip() == ap_b,
                   'automatic move after scan results must be rechecked before ROAM')
@@ -147,4 +156,10 @@ run_case('global-deadline', (1, 'FAIL', 'deadline'), expected_roams=0, limit=1)
 run_case('roam-fail', (1, 'FAIL', 'roam_control'), expected_roams=1)
 run_case('roam-no-transition', (1, 'FAIL', 'roam_not_completed'),
          expected_roams=1, limit=1)
+run_case('pass', (0, 'PASS', 'roam_and_connectivity'), expected_roams=1,
+         timestamp=True)
+run_case('control-fail', (1, 'FAIL', 'cache_flush'), expected_roams=0,
+         timestamp=True)
+run_case('roam-fail', (1, 'FAIL', 'roam_control'), expected_roams=1,
+         timestamp=True)
 print('wifi roam check mock scenarios: PASS')
