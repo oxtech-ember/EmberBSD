@@ -68,10 +68,11 @@ drm_gem_ttm_vunmap(struct drm_gem_object *gem, struct iosys_map *map)
 }
 
 /*
- * A user mapping of a Linux file is not provided by the 6.18 core yet
- * (drm618_file.c: mmap is EOPNOTSUPP); the fault path of the object is
- * ttm_bo_uvm_create (ttm_bo_vm_bsd.c) and the mmap of the GEM layer will take
- * it from here.
+ * The user mapping of a TTM object is not provided: drm618_vma.c maps objects
+ * whose mmap handler leaves vm_ops (or a remap_pfn_range) in the vma, and the
+ * fault path of a TTM object is the uvm pager of ttm_bo_vm_bsd.c
+ * (ttm_bo_uvm_create), which is not connected to it.  The call fails, it does
+ * not map something else.
  */
 int
 drm_gem_ttm_mmap(struct drm_gem_object *gem __unused,
