@@ -148,6 +148,22 @@ static const struct fileops drm618_fileops;
 
 #define	LF(fp)	((struct linux_file *)(fp)->f_data)
 
+/*
+ * The error of a Linux operation as an errno of NetBSD.  -ERESTARTSYS, a wait
+ * that a signal ended, is EINTR: ERESTART would run the system call again even
+ * when the handler of the signal did not ask for that (no SA_RESTART), and a
+ * process that only wants its wait to end by a signal would sleep again.
+ * Callers of the system calls that want a retry have the loop for EINTR.
+ */
+static int
+drm618_errno(long error)
+{
+
+	if (error == -ERESTARTSYS)
+		return EINTR;
+	return (int)-error;
+}
+
 static int
 drm618_fo_read(struct file *fp, off_t *offp, struct uio *uio, kauth_cred_t cred,
     int flags)
@@ -167,7 +183,7 @@ drm618_fo_read(struct file *fp, off_t *offp, struct uio *uio, kauth_cred_t cred,
 	n = (*lf->f_op->read)(lf, uio->uio_iov->iov_base, uio->uio_iov->iov_len,
 	    &pos);
 	if (n < 0)
-		return (int)-n;
+		return drm618_errno(n);
 	uio->uio_iov->iov_base = (char *)uio->uio_iov->iov_base + n;
 	uio->uio_iov->iov_len -= n;
 	uio->uio_resid -= n;
@@ -258,11 +274,8 @@ drm618_file_ioctl(struct linux_file *lf, u_long cmd, void *data)
 	lwp_setspecific(kw_key, &kw);
 	ret = (*lf->f_op->unlocked_ioctl)(lf, (unsigned int)cmd, arg);
 	lwp_setspecific(kw_key, old);
-	if (ret < 0) {
-		if (ret == -ERESTARTSYS)
-			return ERESTART;
-		return (int)-ret;
-	}
+	if (ret < 0)
+		return drm618_errno(ret);
 	return 0;
 }
 
@@ -550,9 +563,7 @@ drm618_cd_open(dev_t dev, int flags, int fmt __unused, struct lwp *l __unused)
 	error = drm618_file_open(fops, dev, lflags, &lf);
 	if (error) {
 		fd_abort(curproc, fp, fd);
-		if (error == -ERESTARTSYS)
-			return ERESTART;
-		return -error;
+		return drm618_errno(error);
 	}
 	lf->f_nbsd = fp;
 	error = fd_clone(fp, fd, flags, &drm618_fileops, lf);
