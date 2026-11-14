@@ -4,9 +4,10 @@
 # selects either drmkms (dist, 5.6) or drmkms618 (dist618, 6.18); both use
 # the same Linux compatibility layer (drmkms_linux, drmkms_i2c).  See README.
 #
-# NOT included from sys/conf/files yet: the 6.18 sources do not compile
-# (see tools/compile-map618.sh).  Do not add the include before the
-# first kernel with drmkms618 builds.
+# Included from sys/conf/files as a definition only: no default kernel
+# configuration selects drmkms618.  The tested route is the loadable module
+# sys/modules/drmkms618 (configuration GENERIC_ARL_DRM618); a kernel with the
+# attribute selected and the core built in has not been built or tested.
 
 define	drmkms618: drmkms_linux, drmkms_i2c, linux, sysmon_power, drm_nostub
 

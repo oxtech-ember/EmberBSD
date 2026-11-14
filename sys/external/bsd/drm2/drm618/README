@@ -24,11 +24,13 @@ that has to be brought to 6.18), or "-" when there is none.
 
 Selecting a core
 ----------------
-Not yet connected: files.drmkms618 is not included from sys/conf/files, and no
-kernel configuration selects drmkms618, because the 6.18 sources do not
-compile yet (drm618/tools/compile-map618.sh makes the map).  When the first
-kernel builds, sys/conf/files gets the include line and a configuration such
-as GENERIC_ARL_DRM618 (the ARL configuration without the 5.6 drivers).
+files.drmkms618 is included from sys/conf/files, but only as a definition of
+the attribute drmkms618: no default kernel configuration selects it.  The
+tested way to run the 6.18 core is the loadable module sys/modules/drmkms618
+(with drmkms618_sched and drmkms618_ttm) in a kernel without the 5.6 core:
+configuration GENERIC_ARL_DRM618 (the ARL configuration without the 5.6
+drivers).  A kernel with the attribute selected and the core built in has not
+been built or tested.
 Selecting both cores fails the build on purpose: drm618_exclusive.c is built
 for "drmkms618 & drmkms" and contains an #error.  At run time a module of one
 core cannot load into a kernel with the other: the module loader refuses
