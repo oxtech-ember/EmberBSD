@@ -50,6 +50,7 @@ struct hrtimer {
 
 	struct callout		hrt_ch;
 	enum hrtimer_mode	hrt_mode;
+	int64_t			hrt_deadline;	/* when it fires: nanoseconds of the monotonic clock */
 	union {
 		ktime_t		hrt_expires;
 		struct {
