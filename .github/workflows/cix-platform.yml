@@ -28,6 +28,7 @@ name: CIX platform resource contracts
       - 'sys/kern/uipc_mbuf.c'
       - 'ember/tools/rge-rx-contract.*'
       - 'ember/tools/rge-wire-probe*'
+      - 'ember/tools/rge-wol-contract.*'
       - 'sys/net/bpf.h'
       - 'sys/net/bpf_filter.c'
       - 'sys/sys/queue.h'
@@ -108,6 +109,7 @@ name: CIX platform resource contracts
       - 'sys/kern/uipc_mbuf.c'
       - 'ember/tools/rge-rx-contract.*'
       - 'ember/tools/rge-wire-probe*'
+      - 'ember/tools/rge-wol-contract.*'
       - 'sys/net/bpf.h'
       - 'sys/net/bpf_filter.c'
       - 'sys/sys/queue.h'
@@ -210,6 +212,9 @@ jobs:
             /sys/arch/evbarm/conf/EMBER64_CIXVPU_NATIVE_PROBE
             /sys/kern/kern_sysctl.c
             /sys/sys/sysctl.h
+            /sys/sys/reboot.h
+            /sys/net/if.h
+            /sys/dev/pci/pcireg.h
             /sys/arch/evbarm/conf/EMBER64_CIXSCMI_QUERY
             /sys/arch/evbarm/conf/EMBER64_CIXSCMI_UART_RATE_QUERY
             /sys/arch/evbarm/conf/EMBER64_CIXUART_NATIVE
@@ -239,6 +244,7 @@ jobs:
             /sys/kern/uipc_mbuf.c
             /ember/tools/rge-rx-contract.*
             /ember/tools/rge-wire-probe*
+            /ember/tools/rge-wol-contract.*
             /sys/net/bpf.h
             /sys/net/bpf_filter.c
             /sys/sys/queue.h
@@ -267,6 +273,7 @@ jobs:
           CIX_PLCOM_ANALYZE: '1'
           RGE_RX_ANALYZE: '1'
           RGE_WIRE_ANALYZE: '1'
+          RGE_WOL_ANALYZE: '1'
           IFCONFIG_MTU_ANALYZE: '1'
         run: |
           sh ember/tools/cixclk-contract.sh
@@ -284,6 +291,7 @@ jobs:
           sh ember/tools/cix-uart2-console-contract.sh
           sh ember/tools/rge-rx-contract.sh
           sh ember/tools/rge-wire-probe-contract.sh
+          sh ember/tools/rge-wol-contract.sh
           sh ember/tools/ifconfig-mtu-contract.sh
       - name: Run ASan and UBSan
         env:
@@ -306,6 +314,7 @@ jobs:
           sh ember/tools/cix-uart2-console-contract.sh
           sh ember/tools/rge-rx-contract.sh
           sh ember/tools/rge-wire-probe-contract.sh
+          sh ember/tools/rge-wol-contract.sh
           sh ember/tools/ifconfig-mtu-contract.sh
       - name: Run complete contracts under Memcheck
         env:
@@ -336,4 +345,5 @@ jobs:
           sh ember/tools/cix-uart2-console-contract.sh
           sh ember/tools/rge-rx-contract.sh
           sh ember/tools/rge-wire-probe-contract.sh
+          sh ember/tools/rge-wol-contract.sh
           sh ember/tools/ifconfig-mtu-contract.sh
