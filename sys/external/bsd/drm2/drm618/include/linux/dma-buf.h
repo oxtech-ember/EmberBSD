@@ -111,6 +111,8 @@ struct dma_buf_export_info {
 #define	dma_buf_map_attachment_unlocked	drm618_dma_buf_map_attachment_unlocked
 #define	dma_buf_unmap_attachment_unlocked drm618_dma_buf_unmap_attachment_unlocked
 
+int	drm618_dma_buf_busy(void);	/* EBUSY while a dma-buf exists */
+
 /* The dma-buf, or ERR_PTR(-EINVAL) for a bad argument; the file (and its descriptor) holds one reference. */
 struct dma_buf *dma_buf_export(const struct dma_buf_export_info *);
 /* A new reference of the dma-buf of a descriptor: ERR_PTR(-EBADF) if the descriptor is not open, ERR_PTR(-EINVAL) if it is no dma-buf. */

@@ -16,6 +16,8 @@
 #include <sys/systm.h>
 
 #include <drm618_file.h>
+
+int	drm618_dma_buf_busy(void);
 #include <drm618_statics.h>
 
 MODULE(MODULE_CLASS_DRIVER, drmkms618, "drmkms_linux,sysmon_power");
@@ -54,6 +56,9 @@ fail0:		drm618_static_fini();
 	case MODULE_CMD_FINI:
 		/* No driver of the core may be bound: they depend on this module. */
 		error = drm618_vma_busy();
+		if (error)
+			return error;
+		error = drm618_dma_buf_busy();
 		if (error)
 			return error;
 		drm618_modexit_drm_core_exit();

@@ -26,6 +26,9 @@
 #include <drm618_mm.h>
 #include <linux/dma-buf.h>
 
+/* dma-bufs that exist: their file operations are in this module. */
+static volatile unsigned dma_buf_live;
+
 static void
 drm618_dma_buf_said(const char *what)
 {
@@ -50,6 +53,7 @@ dma_buf_release_file(struct inode *inode __unused, struct file *file)
 	if (dmabuf->resv == &dmabuf->db_resv_int)
 		dma_resv_fini(dmabuf->resv);
 	kmem_free(dmabuf, sizeof(*dmabuf));
+	atomic_dec_uint(&dma_buf_live);
 	return 0;
 }
 
@@ -161,6 +165,7 @@ dma_buf_export(const struct dma_buf_export_info *info)
 		return ERR_CAST(file);
 	}
 	dmabuf->file = file;
+	atomic_inc_uint(&dma_buf_live);
 	return dmabuf;
 }
 
@@ -209,6 +214,14 @@ dma_buf_fd(struct dma_buf *dmabuf, int flags)
 		return fd;
 	fd_install(fd, dmabuf->file);
 	return fd;
+}
+
+/* EBUSY while a dma-buf exists: the module must not go with their operations. */
+int
+drm618_dma_buf_busy(void)
+{
+
+	return dma_buf_live != 0 ? EBUSY : 0;
 }
 
 /* ---- attachments ------------------------------------------------------ */
