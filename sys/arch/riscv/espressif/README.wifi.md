@@ -72,8 +72,16 @@ failure contained.
 
 General software AUTH and ACTION management-frame forwarding is not supported;
 SAE uses the dedicated vendor callback path. The adapter does not advertise
-RRM/BTM roaming support. Ordinary reconnect remains the responsibility of
-the common BSD supplicant path; 802.11k/v roaming is not integrated or tested.
+RRM/BTM roaming support. It advertises the independent STA connected-scan
+capability. The common net80211 scan lifecycle validates the operation and
+owns its cache epoch, cookie, cancellation and completion event. The adapter
+submits a 2.4 GHz channel bitmap through the existing radio worker while
+retaining RUN, the association and its keys. Cancelling an accepted scan reports
+an aborted completion; an in-flight blocking vendor call keeps radio ownership
+until its frame queue drains. Scan frames temporarily supply their receive
+channel to net80211 and preserve the associated interface channel afterward.
+Ordinary reconnect and AP selection remain the responsibility of the common
+BSD supplicant path; 802.11k/v roaming is not integrated or tested.
 Do not lower a profile's security requirements to make it match this path.
 
 The selected producer uses a version-pinned `wpa_funcs` table without
@@ -135,6 +143,9 @@ tests valid WPA, valid RSN, and malformed IEs under ASan/UBSan:
     --cc "$HOST_PREFIX/bin/clang"
 
 "$HOST_PREFIX/bin/python3.15" -B sys/arch/riscv/tests/t_espwifi_port.py \
+    --cc "$HOST_PREFIX/bin/clang"
+
+"$HOST_PREFIX/bin/python3.15" -B sys/arch/riscv/tests/t_espwifi_sta_scan.py \
     --cc "$HOST_PREFIX/bin/clang"
 ```
 

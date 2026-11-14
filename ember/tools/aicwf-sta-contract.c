@@ -105,6 +105,12 @@ struct ieee80211_node {
 	uint8_t ni_essid[32], ni_esslen;
 	struct ieee80211_chan *ni_chan;
 };
+struct ieee80211_sta_scan_state {
+	bool active, reported;
+	uint32_t cookie, generation;
+	uint16_t freq;
+	uint8_t bssid[6];
+};
 struct ieee80211com {
 	int ic_state, ic_opmode, ic_flags;
 	unsigned ic_des_esslen; uint8_t ic_des_essid[32];
@@ -112,6 +118,7 @@ struct ieee80211com {
 	struct ieee80211_chan ic_channels[256];
 	uint8_t ic_chan_active[32];
 	struct { unsigned nt_scan_epoch; } ic_scan;
+	struct ieee80211_sta_scan_state ic_sta_scan;
 	uint8_t ic_myaddr[6];
 	struct ieee80211_node *ic_bss;
 	struct ifnet *ic_ifp;
@@ -199,6 +206,56 @@ static void rt_ieee80211msg(struct ifnet *ifp, int code, void *p, size_t n)
 	memset(event_data, 0, sizeof(event_data));
 	memcpy(event_data, p, n);
 }
+static void ieee80211_cancel_scan(struct ieee80211com *);
+static bool ieee80211_sta_scan_match(struct ieee80211com *ic,
+    const struct ieee80211req_sta_mgmt *r)
+{
+	return ic->ic_sta_scan.active && r != NULL &&
+	    r->cookie == ic->ic_sta_scan.cookie &&
+	    r->generation == ic->ic_sta_scan.generation &&
+	    (r->op == IEEE80211_STA_CANCEL_SCAN ? r->freq == 0 :
+	    r->freq == ic->ic_sta_scan.freq) &&
+	    IEEE80211_ADDR_EQ(r->bssid,ic->ic_sta_scan.bssid);
+}
+static int ieee80211_sta_scan_begin(struct ieee80211com *ic,
+    const struct ieee80211req_sta_mgmt *r, uint32_t generation)
+{
+	if (ic->ic_sta_scan.active || (ic->ic_flags & IEEE80211_F_SCAN)) return EBUSY;
+	if (r->generation != generation || r->op != IEEE80211_STA_SCAN ||
+	    r->cookie == 0 || ic->ic_state != IEEE80211_S_RUN || ic->ic_bss == NULL ||
+	    r->freq != ic->ic_bss->ni_chan->ic_freq ||
+	    !IEEE80211_ADDR_EQ(r->bssid,ic->ic_bss->ni_bssid)) return ESTALE;
+	ic->ic_sta_scan.active = true; ic->ic_sta_scan.reported = false;
+	ic->ic_sta_scan.cookie = r->cookie; ic->ic_sta_scan.generation = r->generation;
+	ic->ic_sta_scan.freq = r->freq; IEEE80211_ADDR_COPY(ic->ic_sta_scan.bssid,r->bssid);
+	ic->ic_scan.nt_scan_epoch++; ic->ic_flags |= IEEE80211_F_SCAN;
+	return 0;
+}
+static bool ieee80211_sta_scan_report(struct ieee80211com *ic,
+    const struct ieee80211req_sta_mgmt *r, bool aborted)
+{
+	struct ieee80211req_sta_mgmt event = {0};
+	if (!ieee80211_sta_scan_match(ic,r) || ic->ic_sta_scan.reported) return false;
+	ic->ic_sta_scan.reported = true;
+	if (aborted) ic->ic_scan.nt_scan_epoch++;
+	ieee80211_cancel_scan(ic);
+	event.version = IEEE80211_STA_VERSION; event.op = IEEE80211_STA_SCAN;
+	event.cookie = ic->ic_sta_scan.cookie; event.generation = ic->ic_sta_scan.generation;
+	event.freq = ic->ic_sta_scan.freq; event.flags = aborted ? IEEE80211_STA_SCAN_ABORTED : 0;
+	IEEE80211_ADDR_COPY(event.bssid,ic->ic_sta_scan.bssid);
+	rt_ieee80211msg(ic->ic_ifp,RTM_IEEE80211_STA_SCAN,&event,
+	    offsetof(struct ieee80211req_sta_mgmt,data));
+	return true;
+}
+static bool ieee80211_sta_scan_release(struct ieee80211com *ic,
+    const struct ieee80211req_sta_mgmt *r)
+{
+	if (!ieee80211_sta_scan_match(ic,r)) return false;
+	if (!ic->ic_sta_scan.reported) {
+		ieee80211_cancel_scan(ic); ic->ic_scan.nt_scan_epoch++;
+	}
+	memset(&ic->ic_sta_scan,0,sizeof(ic->ic_sta_scan)); return true;
+}
 static void aicwf_alive_lost(struct aicwf_softc *s)
 {
 	assert(s == &sc && !s->sc_lock);
@@ -246,7 +303,7 @@ static int getticks(void) { return ticks; }
 static int mstohz(int n) { return n; }
 static unsigned ieee80211_mhz2ieee(unsigned f, int flags)
 { (void)flags; return f < 3000 ? (f-2407)/5 : (f-5000)/5; }
-static void ieee80211_cancel_scan(struct ieee80211com *ic)
+static void __attribute__((unused)) ieee80211_cancel_scan(struct ieee80211com *ic)
 { scans_cancelled++; ic->ic_flags &= ~IEEE80211_F_SCAN; }
 static void ieee80211_end_scan(struct ieee80211com *ic)
 { (void)ic; scans_ended++; }
@@ -261,6 +318,7 @@ static void aicwf_rx_retire(struct aicwf_softc *s)
 { (void)s; }
 static void *pool_cache_get(void *pool, int flags)
 { (void)pool;assert(flags==PR_NOWAIT);return failtask?NULL:calloc(1,sizeof(struct aicwf_task)); }
+static void pool_cache_put(void *pool, void *ptr) { (void)pool; free(ptr); }
 static void workqueue_enqueue(void *q, struct work *w, void *arg)
 { (void)q;(void)arg;assert(tasks_count<__arraycount(tasks));tasks[tasks_count++]=(void *)w; }
 static uint8_t aicwf_crc8(const void *p, size_t n)
@@ -313,7 +371,7 @@ static void aicwf_rx_msg(struct aicwf_softc *s, const uint8_t *msg, size_t len)
 
 
 struct bsd_driver_data {
-	int sta_btm, sta_rrm;
+	int sta_btm, sta_rrm, sta_scan;
 	uint8_t sta_addr[6], sta_extcap[4], sta_extcap_mask[4];
 	struct {
 		uint8_t *extended_capa, *extended_capa_mask;
@@ -383,7 +441,8 @@ abi_checks(void)
 {
     struct ieee80211req_sta_mgmt req;
     struct bsd_driver_data drv={0};
-    const unsigned caps=IEEE80211_STA_CAP_BTM|IEEE80211_STA_CAP_RRM;
+	const unsigned caps=IEEE80211_STA_CAP_BTM|IEEE80211_STA_CAP_RRM|
+	    IEEE80211_STA_CAP_SCAN;
     reset();
     CHECK(bsd_sta_info(&drv,&req)==0 && req.len==14 && req.generation==39);
     CHECK(memcmp(req.data,sc.sc_ic.ic_myaddr,6)==0);
@@ -391,7 +450,7 @@ abi_checks(void)
     CHECK(req.freq==5180 && memcmp(req.bssid,ni.ni_bssid,6)==0);
     CHECK(le16dec(req.data+6)==2 && le16dec(req.data+8)==2);
     bsd_sta_init(&drv);
-    CHECK(drv.sta_btm && drv.sta_rrm && drv.capa.rrm_flags);
+	CHECK(drv.sta_btm && drv.sta_rrm && drv.sta_scan && drv.capa.rrm_flags);
     CHECK(memcmp(drv.sta_addr,sc.sc_ic.ic_myaddr,6)==0);
     memset(&req,0,sizeof(req));req.version=IEEE80211_STA_VERSION;req.op=IEEE80211_STA_ENABLE;
     CHECK(aicwf_sta_mgmt(&sc.sc_ic,&req)==0 && sc.sc_sta_enabled);
@@ -413,7 +472,9 @@ abi_checks(void)
     req.flags=1;CHECK(aicwf_sta_mgmt(&sc.sc_ic,&req)==EINVAL);
     CHECK(writes==0 && tasks_count==0 && deliveries==0 && !sc.sc_sta_enabled);
     reset();sc.sc_ic.ic_opt_ie=NULL;sc.sc_ic.ic_opt_ie_len=0;
-    CHECK(bsd_sta_info(&drv,&req)==0 && !(req.flags&caps));
+	CHECK(bsd_sta_info(&drv,&req)==0 &&
+	    (req.flags & IEEE80211_STA_CAP_SCAN) != 0 &&
+	    (req.flags & (IEEE80211_STA_CAP_BTM | IEEE80211_STA_CAP_RRM)) == 0);
 }
 
 static void
@@ -653,7 +714,7 @@ request_make(unsigned op, unsigned cookie)
 	req.op = op;
 	req.generation = (uint32_t)sc.sc_sae_epoch;
 	req.cookie = cookie;
-	req.freq = ni.ni_chan->ic_freq;
+	req.freq = op == IEEE80211_STA_CANCEL_SCAN ? 0 : ni.ni_chan->ic_freq;
 	memcpy(req.bssid, ni.ni_bssid, 6);
 	if (op == IEEE80211_STA_TX) {
 		req.len = 3;
@@ -711,6 +772,12 @@ ioctl_rejection_checks(void)
 	    sc.sc_sae_epoch == 39);
 	/* A valid scan cookie must still reject a nonempty cancellation. */
 	sc.sc_sta_scan_pending = true; sc.sc_sta_scan.cookie = 1; req.cookie = 1;
+	sc.sc_sta_scan.generation = req.generation;
+	memcpy(sc.sc_sta_scan.bssid, req.bssid, sizeof(req.bssid));
+	sc.sc_ic.ic_sta_scan.active = true;
+	sc.sc_ic.ic_sta_scan.cookie = req.cookie;
+	sc.sc_ic.ic_sta_scan.generation = req.generation;
+	memcpy(sc.sc_ic.ic_sta_scan.bssid, req.bssid, sizeof(req.bssid));
 	CHECK(aicwf_sta_mgmt(&sc.sc_ic, &req) == EINVAL);
 	CHECK(sc.sc_sta_scan_pending && deliveries == 0 && tasks_count == 0);
 }
@@ -831,6 +898,7 @@ static void
 scan_checks(void)
 {
 	struct ieee80211req_sta_mgmt req, cancel, ev;
+	struct aicwf_task stale;
 	uint16_t frequency = 5200;
 	reset(); sc.sc_sta_enabled = true;
 	req = request_make(IEEE80211_STA_SCAN, 81);
@@ -897,6 +965,17 @@ scan_checks(void)
 	CHECK(aicwf_sta_mgmt(&sc.sc_ic, &cancel) == 0);
 	sc.sc_cmd_busy = true; wait_hook = complete_wait_hook; run_task();
 	CHECK(writes == 1 && !sc.sc_scanning && !sc.sc_sta_cancel_queued);
+	/* A returned old start callback must not release a newer queued scan. */
+	reset(); sc.sc_sta_enabled = true; req = request_make(IEEE80211_STA_SCAN, 82);
+	CHECK(aicwf_sta_mgmt(&sc.sc_ic, &req) == 0 && tasks_count == 1);
+	stale = *tasks[0]; run_task(); CHECK(sc.sc_scanning);
+	scan_complete(1, 0, 3);
+	CHECK(!sc.sc_scanning && !sc.sc_ic.ic_sta_scan.active);
+	req.cookie++;
+	CHECK(aicwf_sta_mgmt(&sc.sc_ic, &req) == 0 && sc.sc_ic.ic_sta_scan.active);
+	aicwf_sta_mgmt_cb(&sc, &stale);
+	CHECK(sc.sc_ic.ic_sta_scan.active &&
+	    sc.sc_ic.ic_sta_scan.cookie == req.cookie && sc.sc_sta_scan_pending);
 	/* Invalid and inactive frequencies never reach firmware. */
 	reset(); sc.sc_sta_enabled = true; req = request_make(IEEE80211_STA_SCAN, 81);
 	req.len = 1; CHECK(aicwf_sta_mgmt(&sc.sc_ic, &req) == EINVAL);
@@ -918,14 +997,14 @@ scan_checks(void)
 static void
 retirement_checks(void)
 {
-	uint8_t tx[AICWF_STA_NOTICE_LEN], scan[AICWF_STA_NOTICE_LEN];
+	uint8_t tx[AICWF_STA_NOTICE_LEN];
 	bool tx_event, scan_event;
-	struct ieee80211req_sta_mgmt req;
+	struct ieee80211req_sta_mgmt req, cancel, ev;
 	reset(); sc.sc_sta_enabled = true;
 	req = request_make(IEEE80211_STA_TX, 91);
 	CHECK(aicwf_sta_mgmt(&sc.sc_ic, &req) == 0);
 	mutex_enter(&sc.sc_lock);
-	aicwf_sta_retire_locked(&sc, tx, &tx_event, scan, &scan_event);
+	aicwf_sta_retire_locked(&sc, tx, &tx_event, &scan_event);
 	sc.sc_sae_epoch++;
 	mutex_exit(&sc.sc_lock);
 	CHECK(tx_event && !scan_event && sc.sc_sta_assoc_len == 0);
@@ -933,12 +1012,21 @@ retirement_checks(void)
 	reset(); sc.sc_sta_enabled = true; req = request_make(IEEE80211_STA_SCAN, 92);
 	CHECK(aicwf_sta_mgmt(&sc.sc_ic, &req) == 0); run_task();
 	mutex_enter(&sc.sc_lock);
-	aicwf_sta_retire_locked(&sc, tx, &tx_event, scan, &scan_event);
+	aicwf_sta_retire_locked(&sc, tx, &tx_event, &scan_event);
 	sc.sc_sae_epoch++;
 	mutex_exit(&sc.sc_lock);
 	CHECK(!tx_event && scan_event && sc.sc_sta_scan_draining && sc.sc_scanning);
+	CHECK(ieee80211_sta_scan_report(&sc.sc_ic, &sc.sc_sta_scan, true));
+	cancel = req;
+	cancel.op = IEEE80211_STA_CANCEL_SCAN;
+	cancel.freq = 0;
+	sc.sc_sae_epoch = (uint64_t)UINT32_MAX + 1;
+	CHECK(aicwf_sta_mgmt(&sc.sc_ic, &cancel) == 0 && deliveries == 1);
 	run_task(); CHECK(sc.sc_scanning);
-	scan_complete(1, 0, 3); CHECK(!sc.sc_scanning && deliveries == 0);
+	scan_complete(1, 0, 3);
+	memcpy(&ev, event_data, sizeof(ev));
+	CHECK(!sc.sc_scanning && deliveries == 1 &&
+	    ev.flags == IEEE80211_STA_SCAN_ABORTED);
 	reset(); sc.sc_sta_enabled = true; req = request_make(IEEE80211_STA_TX, 93);
 	CHECK(aicwf_sta_mgmt(&sc.sc_ic, &req) == 0);
 	aicwf_sae_advance(&sc);

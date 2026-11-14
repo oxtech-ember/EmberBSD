@@ -46,6 +46,12 @@ enum { IEEE80211_S_INIT, IEEE80211_S_SCAN, IEEE80211_S_AUTH,
 struct ifnet { void *if_softc; unsigned if_flags; };
 struct ieee80211_channel { uint16_t ic_freq; };
 struct ieee80211_node { uint8_t ni_bssid[6]; struct ieee80211_channel *ni_chan; };
+struct ieee80211_sta_scan_state {
+    bool active, reported;
+    uint32_t cookie, generation;
+    uint16_t freq;
+    uint8_t bssid[6];
+};
 struct ieee80211com {
     struct ifnet *ic_ifp;
     struct ieee80211_node *ic_bss;
@@ -54,6 +60,7 @@ struct ieee80211com {
     uint16_t ic_opt_ie_len;
     int ic_state, ic_opmode;
     struct { unsigned nt_scan_epoch; } ic_scan;
+    struct ieee80211_sta_scan_state ic_sta_scan;
     uint8_t ic_myaddr[6];
 };
 struct bwfm_softc;
@@ -64,6 +71,7 @@ struct bwfm_softc {
     struct { unsigned ch_chip; } sc_chip;
     bool sc_detaching, sc_sae_enabled, sc_sta_enabled;
     bool sc_sta_wnm_maybe_enabled, sc_sta_tx_pending, sc_sta_bgscan;
+    bool sc_sta_scan_started, sc_sta_scan_draining, sc_sta_legacy_scan_pending;
     uint32_t sc_sta_generation, sc_sta_scan_generation, sc_sta_packetid;
     uint16_t sc_scan_id, sc_sta_assoc_len;
     uint8_t sc_sta_assoc[1018];
@@ -107,6 +115,7 @@ static void *pool_cache_get(void *p, int flags)
     if (allocated == 64) abort();
     return &jobs[allocated++];
 }
+static void pool_cache_put(void *p, void *v) { (void)p; (void)v; }
 static void workqueue_enqueue(void *q, struct work *w, void *arg)
 { (void)q; (void)arg; if (tail == 64) abort(); queued[tail++] = (void *)w; }
 static void *kmem_zalloc(size_t n, int flags)
@@ -143,7 +152,55 @@ static void rt_ieee80211msg(struct ifnet *ifp, int type, const void *v, size_t n
     check(n == offsetof(struct ieee80211req_sta_mgmt,data), "TX event has no uninitialized payload");
     if (type == RTM_IEEE80211_STA_TX) { memcpy(&last_tx,v,n); tx_events++; } else { memcpy(&last_scan,v,n); scan_events++; }
 }
-static void ieee80211_cancel_scan(struct ieee80211com *ic) { ic->ic_flags &= ~IEEE80211_F_SCAN; }
+static bool ieee80211_sta_scan_match(struct ieee80211com *ic,
+    const struct ieee80211req_sta_mgmt *r)
+{
+    return ic->ic_sta_scan.active && r != NULL &&
+        r->cookie == ic->ic_sta_scan.cookie &&
+        r->generation == ic->ic_sta_scan.generation &&
+        (r->op == IEEE80211_STA_CANCEL_SCAN ? r->freq == 0 :
+        r->freq == ic->ic_sta_scan.freq) &&
+        IEEE80211_ADDR_EQ(r->bssid,ic->ic_sta_scan.bssid);
+}
+static int ieee80211_sta_scan_begin(struct ieee80211com *ic,
+    const struct ieee80211req_sta_mgmt *r, uint32_t generation)
+{
+    if (ic->ic_sta_scan.active || (ic->ic_flags & IEEE80211_F_SCAN)) return EBUSY;
+    if (r->generation != generation || r->op != IEEE80211_STA_SCAN ||
+        r->cookie == 0 || ic->ic_state != IEEE80211_S_RUN ||
+        ic->ic_bss == NULL || r->freq != ic->ic_bss->ni_chan->ic_freq ||
+        !IEEE80211_ADDR_EQ(r->bssid,ic->ic_bss->ni_bssid)) return ESTALE;
+    ic->ic_sta_scan.active = true; ic->ic_sta_scan.reported = false;
+    ic->ic_sta_scan.cookie = r->cookie; ic->ic_sta_scan.generation = r->generation;
+    ic->ic_sta_scan.freq = r->freq; IEEE80211_ADDR_COPY(ic->ic_sta_scan.bssid,r->bssid);
+    ic->ic_scan.nt_scan_epoch++; ic->ic_flags |= IEEE80211_F_SCAN;
+    return 0;
+}
+static bool ieee80211_sta_scan_report(struct ieee80211com *ic,
+    const struct ieee80211req_sta_mgmt *r, bool aborted)
+{
+    struct ieee80211req_sta_mgmt event = {0};
+    if (!ieee80211_sta_scan_match(ic,r) || ic->ic_sta_scan.reported) return false;
+    ic->ic_sta_scan.reported = true;
+    if (aborted) ic->ic_scan.nt_scan_epoch++;
+    ic->ic_flags &= ~IEEE80211_F_SCAN;
+    event.version = IEEE80211_STA_VERSION; event.op = IEEE80211_STA_SCAN;
+    event.cookie = ic->ic_sta_scan.cookie; event.generation = ic->ic_sta_scan.generation;
+    event.freq = ic->ic_sta_scan.freq; event.flags = aborted ? IEEE80211_STA_SCAN_ABORTED : 0;
+    IEEE80211_ADDR_COPY(event.bssid,ic->ic_sta_scan.bssid);
+    rt_ieee80211msg(ic->ic_ifp,RTM_IEEE80211_STA_SCAN,&event,
+        offsetof(struct ieee80211req_sta_mgmt,data));
+    return true;
+}
+static bool ieee80211_sta_scan_release(struct ieee80211com *ic,
+    const struct ieee80211req_sta_mgmt *r)
+{
+    if (!ieee80211_sta_scan_match(ic,r)) return false;
+    if (!ic->ic_sta_scan.reported) {
+        ic->ic_flags &= ~IEEE80211_F_SCAN; ic->ic_scan.nt_scan_epoch++;
+    }
+    memset(&ic->ic_sta_scan,0,sizeof(ic->ic_sta_scan)); return true;
+}
 static void bwfm_stop(struct ifnet *ifp, int disable)
 { (void)disable; stops++; ifp->if_flags &= ~IFF_RUNNING; }
 static int bwfm_fwvar_var_set_int(const struct bwfm_softc *sc, const char *name, uint32_t v)
@@ -221,6 +278,7 @@ static int bwfm_fwvar_var_set_data
 static int bwfm_scan(struct bwfm_softc *sc, const uint16_t *freqs, size_t n)
 {
     (void)freqs; (void)n; scans++;
+    if (sc->sc_sta_bgscan) { sc->sc_sta_scan_started = true; sc->sc_scan_id++; }
     if (scan_mutation) { sc->sc_sta_scan_generation++; sc->sc_sta_bgscan = true; }
     return fw_error;
 }
@@ -242,6 +300,10 @@ static void
 #include "bwfm_sta_scan_done.h"
 static void
 #include "bwfm_sta_scan_cancel.h"
+static bool
+#include "bwfm_sta_scan_defer_legacy.h"
+static void
+#include "bwfm_sta_scan_reset.h"
 static int
 #include "bwfm_sta_mgmt.h"
 static void
@@ -270,7 +332,8 @@ static struct ieee80211req_sta_mgmt request(struct bwfm_softc *sc, unsigned op)
     struct ieee80211req_sta_mgmt r;
     memset(&r,0,sizeof(r)); r.version = IEEE80211_STA_VERSION; r.op = (uint16_t)op;
     r.generation = sc->sc_sta_generation; r.cookie = 42;
-    r.freq = sc->sc_ic.ic_bss->ni_chan->ic_freq;
+    r.freq = op == IEEE80211_STA_CANCEL_SCAN ? 0 :
+        sc->sc_ic.ic_bss->ni_chan->ic_freq;
     memcpy(r.bssid,sc->sc_ic.ic_bss->ni_bssid,6);
     if (op == IEEE80211_STA_TX) {
         r.len = 5; r.data[0] = 10; r.data[1] = 8; r.data[2] = 1;
@@ -515,18 +578,74 @@ int main(void)
     check(last_scan.cookie == 42 && last_scan.generation == 40 &&
         last_scan.flags == IEEE80211_STA_SCAN_ABORTED, "cancel completion retains the request identity");
     r = request(&sc,IEEE80211_STA_SCAN); r.cookie++;
-    check(!sc.sc_sta_bgscan
- && aborts == 1 && sc.sc_scan_id == 1, "cancel invalidates queue epoch and firmware scan ID");
+    check(!sc.sc_sta_bgscan && !sc.sc_sta_scan_draining &&
+        aborts == 0 && sc.sc_scan_id == 0,
+        "cancel before firmware start releases only the queued operation");
     check(bwfm_sta_mgmt(&sc.sc_ic,&r) == 0, "queue replacement scan");
     bwfm_sta_mgmt_cb(&sc,&old);
     check(scans == 0 && sc.sc_sta_bgscan, "cancelled scan cannot execute or clear replacement");
-    drain(); check(scans == 1 && sc.sc_ic.ic_scan.nt_scan_epoch == 1 &&
+    drain(); check(scans == 1 && sc.sc_ic.ic_scan.nt_scan_epoch == 3 &&
         sc.sc_ic.ic_state == IEEE80211_S_RUN, "one fresh connected scan preserves RUN state");
     bwfm_sta_scan_done(&sc,false);
     check(scan_events == 2 && last_scan.cookie == 43 && last_scan.generation == 40 &&
         last_scan.flags == 0 && !(sc.sc_ic.ic_flags & IEEE80211_F_SCAN),
         "successful scan completion carries independent cookie and clears scan state");
     bwfm_sta_scan_done(&sc,false); check(scan_events == 2, "scan completion is emitted once");
+
+    fixture(&sc,&bss,&chan); r = request(&sc,IEEE80211_STA_SCAN);
+    check(bwfm_sta_mgmt(&sc.sc_ic,&r) == 0, "queue scan for firmware drain cancellation");
+    drain(); check(sc.sc_sta_scan_started && sc.sc_sta_bgscan, "firmware scan owns radio after start");
+	old = r; old.op = IEEE80211_STA_CANCEL_SCAN; old.len = 0; old.freq = 0;
+    check(bwfm_sta_mgmt(&sc.sc_ic,&old) == 0 && sc.sc_sta_scan_draining,
+        "accepted cancellation reports abort but holds firmware drain");
+    r.cookie++;
+    check(bwfm_sta_mgmt(&sc.sc_ic,&r) == EBUSY,
+        "new scan cannot overlap the cancelled firmware operation");
+    bwfm_sta_scan_done(&sc,true);
+    check(!sc.sc_sta_scan_draining && !sc.sc_ic.ic_sta_scan.active,
+        "real firmware terminal event releases cancelled scan epoch");
+
+    fixture(&sc,&bss,&chan); r = request(&sc,IEEE80211_STA_SCAN);
+    check(bwfm_sta_mgmt(&sc.sc_ic,&r) == 0, "queue connected scan before legacy transition");
+    drain(); old = r; old.op = IEEE80211_STA_CANCEL_SCAN; old.len = 0; old.freq = 0;
+    check(bwfm_sta_mgmt(&sc.sc_ic,&old) == 0 && sc.sc_sta_scan_draining,
+        "connected scan cancellation retains radio ownership");
+    sc.sc_ic.ic_state = IEEE80211_S_SCAN;
+    unsigned prior_scans = scans;
+    check(bwfm_sta_scan_defer_legacy(&sc) && sc.sc_sta_legacy_scan_pending &&
+        scans == prior_scans,
+        "legacy scan waits without replacing the draining sync id");
+    bwfm_sta_scan_done(&sc,true);
+    check(!sc.sc_sta_scan_draining && !sc.sc_sta_legacy_scan_pending &&
+        scans == prior_scans + 1,
+        "legacy scan starts after connected scan reaches terminal event");
+
+    fixture(&sc,&bss,&chan); r = request(&sc,IEEE80211_STA_SCAN);
+    check(bwfm_sta_mgmt(&sc.sc_ic,&r) == 0, "queue connected scan before stopped transition");
+    drain(); old = r; old.op = IEEE80211_STA_CANCEL_SCAN; old.len = 0; old.freq = 0;
+    check(bwfm_sta_mgmt(&sc.sc_ic,&old) == 0 && sc.sc_sta_scan_draining,
+        "stopped transition retains scan until terminal event");
+    sc.sc_ic.ic_state = IEEE80211_S_SCAN;
+    check(bwfm_sta_scan_defer_legacy(&sc), "defer legacy scan while old scan drains");
+    sc.sc_if.if_flags &= ~IFF_RUNNING;
+    prior_scans = scans;
+    bwfm_sta_scan_done(&sc,true);
+    check(scans == prior_scans && !sc.sc_sta_legacy_scan_pending,
+        "stopped interface does not restart deferred legacy scan");
+
+    fixture(&sc,&bss,&chan); r = request(&sc,IEEE80211_STA_SCAN);
+    check(bwfm_sta_mgmt(&sc.sc_ic,&r) == 0, "queue connected scan before reset");
+    drain(); old = r; old.op = IEEE80211_STA_CANCEL_SCAN; old.len = 0; old.freq = 0;
+    check(bwfm_sta_mgmt(&sc.sc_ic,&old) == 0 && sc.sc_sta_scan_draining,
+        "cancelled scan remains owned until reset acknowledgement");
+    unsigned old_scan_id = sc.sc_scan_id;
+    bwfm_sta_scan_reset(&sc);
+    check(!sc.sc_sta_scan_draining && !sc.sc_ic.ic_sta_scan.active &&
+        sc.sc_scan_id != old_scan_id,
+        "reset acknowledgement retires tuple and invalidates stale firmware id");
+    bwfm_sta_scan_done(&sc,true);
+    check(scan_events == 1,
+        "late scan terminal after reset cannot report the retired tuple twice");
 
     fixture(&sc,&bss,&chan); r = request(&sc,IEEE80211_STA_SCAN);
     check(bwfm_sta_mgmt(&sc.sc_ic,&r) == 0, "queue scan before association replacement");

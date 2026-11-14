@@ -2555,15 +2555,21 @@ espwifi_seen(const char *ssid)
 }
 
 int
-espwifi_scan(void)
+espwifi_scan(unsigned int channels)
 {
+	wifi_scan_config_t config = WIFI_SCAN_PARAMS_DEFAULT_CONFIG();
 	uint16_t n = 16;
 	esp_err_t error;
 
+	/* Bits 1..14 are the selected IDF ABI's 2.4 GHz channel bitmap. */
+	if ((channels & ~0x7ffeU) != 0)
+		return -1;
+	config.channel_bitmap.ghz_2_channels = (uint16_t)channels;
+	config.channel_bitmap.ghz_5_channels = 1; /* Bypass the unused band. */
 	naps = 0;
 
 	/* The vendor's blocking API has its own timeout and result status. */
-	error = esp_wifi_scan_start(NULL, true);
+	error = esp_wifi_scan_start(channels != 0 ? &config : NULL, true);
 	if (error != ESP_OK) {
 		espwifi_os_log("espwifi: scan: error %#x\n", error);
 		(void)esp_wifi_clear_ap_list();

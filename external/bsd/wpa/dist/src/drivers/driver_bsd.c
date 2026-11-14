@@ -88,11 +88,13 @@ struct bsd_driver_data {
 #if !defined(HOSTAPD) && defined(__NetBSD__) && defined(IEEE80211_IOC_STA_MGMT)
 	int sta_btm;
 	int sta_rrm;
+	int sta_scan;
 	int sta_enabled;
 	int sta_scan_pending;
 	uintptr_t sta_scan_generation;
 	u32 sta_scan_epoch;
 	u32 sta_scan_cookie;
+	u16 sta_scan_freq;
 	u8 sta_scan_bssid[ETH_ALEN];
 	struct os_reltime sta_scan_completed;
 	u8 sta_addr[ETH_ALEN];
@@ -1040,8 +1042,7 @@ bsd_sta_abort_scan(void *priv, u64 scan_cookie)
 	struct ieee80211req_sta_mgmt req;
 
 	/* BSD uses its stored operation cookie, not a vendor scan cookie. */
-	if (scan_cookie || (!drv->sta_btm && !drv->sta_rrm) ||
-	    !drv->sta_scan_pending)
+	if (scan_cookie || !drv->sta_scan || !drv->sta_scan_pending)
 		return -1;
 	os_memset(&req, 0, sizeof(req));
 	req.generation = drv->sta_scan_epoch;
@@ -1224,23 +1225,28 @@ bsd_sta_event(struct bsd_driver_data *drv, unsigned int what,
 	union wpa_event_data event;
 	u8 frame[24 + IEEE80211_STA_MAX_BODY];
 
-	if ((!drv->sta_btm && !drv->sta_rrm) ||
+	if ((what == RTM_IEEE80211_STA_SCAN && !drv->sta_scan) ||
+	    ((what == RTM_IEEE80211_STA_RX || what == RTM_IEEE80211_STA_TX) &&
+	    !drv->sta_btm && !drv->sta_rrm) ||
 	    len < offsetof(struct ieee80211req_sta_mgmt, data) ||
 	    req->version != IEEE80211_STA_VERSION || req->reserved ||
 	    req->len > IEEE80211_STA_MAX_BODY ||
 	    req->len != len - offsetof(struct ieee80211req_sta_mgmt, data))
 		return;
-	if (bsd_sta_info(drv, &info) < 0 ||
-	    !(info.flags & IEEE80211_STA_ASSOCIATED) ||
-	    info.generation != req->generation || info.freq != req->freq ||
-	    os_memcmp(info.bssid, req->bssid, ETH_ALEN))
-		return;
 	if (what == RTM_IEEE80211_STA_SCAN) {
-		if (req->op != IEEE80211_STA_SCAN || req->len ||
+		if (!drv->sta_scan || !drv->sta_scan_pending ||
+		    req->op != IEEE80211_STA_SCAN || req->len ||
 		    (req->flags & ~IEEE80211_STA_SCAN_ABORTED) ||
-		    !drv->sta_scan_pending || req->cookie != drv->sta_scan_cookie ||
+		    req->cookie != drv->sta_scan_cookie ||
 		    req->generation != drv->sta_scan_epoch ||
+		    req->freq != drv->sta_scan_freq ||
 		    os_memcmp(req->bssid, drv->sta_scan_bssid, ETH_ALEN))
+			return;
+		if (!(req->flags & IEEE80211_STA_SCAN_ABORTED) &&
+		    (bsd_sta_info(drv, &info) < 0 ||
+		    !(info.flags & IEEE80211_STA_ASSOCIATED) ||
+		    info.generation != req->generation || info.freq != req->freq ||
+		    os_memcmp(info.bssid, req->bssid, ETH_ALEN)))
 			return;
 		bsd_sta_scan_clear(drv);
 		os_get_reltime(&drv->sta_scan_completed);
@@ -1249,6 +1255,11 @@ bsd_sta_event(struct bsd_driver_data *drv, unsigned int what,
 		wpa_supplicant_event(drv->ctx, EVENT_SCAN_RESULTS, &event);
 		return;
 	}
+	if (bsd_sta_info(drv, &info) < 0 ||
+	    !(info.flags & IEEE80211_STA_ASSOCIATED) ||
+	    info.generation != req->generation || info.freq != req->freq ||
+	    os_memcmp(info.bssid, req->bssid, ETH_ALEN))
+		return;
 	if (what == RTM_IEEE80211_STA_TX) {
 		if (req->op == IEEE80211_STA_TX && !req->len &&
 		    !(req->flags & ~IEEE80211_STA_TX_ACK) && drv->sta_tx_frame &&
@@ -1292,6 +1303,10 @@ bsd_sta_init(struct bsd_driver_data *drv)
 	if (bsd_sta_info(drv, &info) < 0 || info.len < ETH_ALEN)
 		return;
 	os_memcpy(drv->sta_addr, info.data, ETH_ALEN);
+	if (info.flags & IEEE80211_STA_CAP_SCAN) {
+		drv->sta_scan = 1;
+		wpa_printf(MSG_DEBUG, "BSD: connected STA scan available");
+	}
 	if (info.flags & IEEE80211_STA_CAP_BTM) {
 		drv->sta_btm = 1;
 		drv->sta_extcap_mask[2] = 0x02;
@@ -1329,7 +1344,7 @@ bsd_sta_associate(struct bsd_driver_data *drv,
 	size_t left = params->wpa_ie_len;
 	int btm = 0, enabled;
 
-	if (!drv->sta_btm && !drv->sta_rrm)
+	if (!drv->sta_scan && !drv->sta_btm && !drv->sta_rrm)
 		return 0;
 	while (left >= 2 && pos[1] <= left - 2) {
 		if (pos[0] == WLAN_EID_EXT_CAPAB && pos[1] >= 3)
@@ -1337,8 +1352,9 @@ bsd_sta_associate(struct bsd_driver_data *drv,
 		left -= pos[1] + 2;
 		pos += pos[1] + 2;
 	}
-	enabled = !left && ((drv->sta_btm && btm) ||
-	    (drv->sta_rrm && params->rrm_used)) && params->wpa_ie_len &&
+	enabled = !left && (drv->sta_scan ||
+	    (drv->sta_btm && btm) || (drv->sta_rrm && params->rrm_used)) &&
+	    params->wpa_ie_len &&
 	    params->wpa_ie[0] == WLAN_EID_RSN &&
 	    params->pairwise_suite == WPA_CIPHER_CCMP &&
 	    params->group_suite == WPA_CIPHER_CCMP &&
@@ -2156,11 +2172,11 @@ wpa_driver_bsd_scan(void *priv, struct wpa_driver_scan_params *params)
 #endif /* IEEE80211_IOC_SCAN_MAX_SSID */
 
 #if !defined(HOSTAPD) && defined(__NetBSD__) && defined(IEEE80211_IOC_STA_MGMT)
-	if (drv->sta_enabled && (drv->sta_btm || drv->sta_rrm)) {
+	if (drv->sta_enabled && drv->sta_scan) {
 		struct ieee80211req_sta_mgmt req;
-		if (bsd_sta_info(drv, &req) == 0 &&
-		    (req.flags & IEEE80211_STA_ASSOCIATED) &&
-		    (req.flags & (IEEE80211_STA_CAP_BTM | IEEE80211_STA_CAP_RRM))) {
+		if (bsd_sta_info(drv, &req) == 0 && drv->sta_enabled &&
+		    drv->sta_scan && (req.flags & IEEE80211_STA_ASSOCIATED) &&
+		    (req.flags & IEEE80211_STA_CAP_SCAN)) {
 			size_t nfreq = 0;
 			req.len = 0;
 			if (params->freqs) {
@@ -2185,10 +2201,12 @@ wpa_driver_bsd_scan(void *priv, struct wpa_driver_scan_params *params)
 			bsd_sta_scan_clear(drv);
 			drv->sta_scan_pending = 1;
 			drv->sta_scan_epoch = req.generation;
+			drv->sta_scan_freq = req.freq;
 			os_memcpy(drv->sta_scan_bssid, req.bssid, ETH_ALEN);
 			if (eloop_register_timeout(15, 0, bsd_sta_scan_timeout, drv,
 			    (void *) drv->sta_scan_generation) < 0) {
 				req.len = 0;
+				req.freq = 0;
 				bsd_sta_set(drv, &req, IEEE80211_STA_CANCEL_SCAN);
 				bsd_sta_scan_clear(drv);
 				return -1;
@@ -2294,7 +2312,7 @@ wpa_driver_bsd_add_scan_entry(struct bsd_driver_data *drv, struct wpa_scan_resul
 	 */
 	result->level = sr->isr_rssi / 2 + sr->isr_noise;
 #elif defined(__NetBSD__) && defined(IEEE80211_IOC_STA_MGMT)
-	if (drv->sta_btm || drv->sta_rrm) {
+	if (drv->sta_scan) {
 		struct os_reltime now, elapsed;
 		result->level = sr->isr_rssi;
 		os_get_reltime(&now);
@@ -2603,7 +2621,8 @@ wpa_driver_bsd_deinit(void *priv)
 #if !defined(HOSTAPD) && defined(__NetBSD__) && defined(IEEE80211_IOC_STA_MGMT)
 	bsd_sta_scan_clear(drv);
 	bsd_sta_tx_status(drv, 0, 0);
-	if ((drv->sta_btm || drv->sta_rrm) && drv->ifindex != 0 && !drv->if_removed) {
+	if ((drv->sta_scan || drv->sta_btm || drv->sta_rrm) &&
+	    drv->ifindex != 0 && !drv->if_removed) {
 		struct ieee80211req_sta_mgmt req;
 		os_memset(&req, 0, sizeof(req));
 		bsd_sta_set(drv, &req, IEEE80211_STA_DISABLE);

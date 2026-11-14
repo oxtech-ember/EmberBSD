@@ -656,6 +656,131 @@ ieee80211_notify_scan_done(struct ieee80211com *ic)
 	rt_ieee80211msg(ifp, RTM_IEEE80211_SCAN, NULL, 0);
 }
 
+/* The STA scan route carries only the fixed header of the v2 request. */
+static void
+ieee80211_notify_sta_scan(struct ieee80211com *ic,
+	const struct ieee80211_sta_scan_state *scan, bool aborted)
+{
+	struct ieee80211_sta_scan_notice {
+		uint16_t version, op;
+		uint32_t cookie, generation, flags;
+		uint16_t freq, len;
+		uint8_t bssid[IEEE80211_ADDR_LEN];
+		uint16_t reserved;
+	} notice;
+
+	CTASSERT(sizeof(notice) == offsetof(struct ieee80211req_sta_mgmt, data));
+	memset(&notice, 0, sizeof(notice));
+	notice.version = IEEE80211_STA_VERSION;
+	notice.op = IEEE80211_STA_SCAN;
+	notice.cookie = scan->cookie;
+	notice.generation = scan->generation;
+	notice.flags = aborted ? IEEE80211_STA_SCAN_ABORTED : 0;
+	notice.freq = scan->freq;
+	IEEE80211_ADDR_COPY(notice.bssid, scan->bssid);
+	rt_ieee80211msg(ic->ic_ifp, RTM_IEEE80211_STA_SCAN, &notice,
+	    sizeof(notice));
+}
+
+int
+ieee80211_sta_scan_begin(struct ieee80211com *ic,
+    const struct ieee80211req_sta_mgmt *req, uint32_t generation)
+{
+	uint16_t freq, seen[IEEE80211_STA_MAX_CHANNELS];
+	u_int channel;
+	size_t i, j, nfreq;
+
+	if (req == NULL || ieee80211_sta_request_validate(req) != 0 ||
+	    req->op != IEEE80211_STA_SCAN || req->cookie == 0 ||
+	    req->len > IEEE80211_STA_MAX_CHANNELS * sizeof(freq) ||
+	    (req->len % sizeof(freq)) != 0)
+		return EINVAL;
+	if (ic->ic_sta_scan.active || (ic->ic_flags & IEEE80211_F_SCAN) != 0)
+		return EBUSY;
+	if (ic->ic_opmode != IEEE80211_M_STA || ic->ic_state != IEEE80211_S_RUN ||
+	    ic->ic_bss == NULL || ic->ic_bss->ni_chan == IEEE80211_CHAN_ANYC ||
+	    ic->ic_bss->ni_chan == NULL)
+		return ENOTCONN;
+	if (req->generation != generation ||
+	    !IEEE80211_ADDR_EQ(req->bssid, ic->ic_bss->ni_bssid) ||
+	    req->freq != ic->ic_bss->ni_chan->ic_freq)
+		return ESTALE;
+
+	nfreq = req->len / sizeof(freq);
+	for (i = 0; i < nfreq; i++) {
+		memcpy(&freq, req->data + i * sizeof(freq), sizeof(freq));
+		channel = ieee80211_mhz2ieee(freq, 0);
+		if (channel == 0 || channel > IEEE80211_CHAN_MAX ||
+		    ic->ic_channels[channel].ic_freq != freq ||
+		    !isset(ic->ic_chan_active, channel))
+			return EINVAL;
+		for (j = 0; j < i; j++)
+			if (seen[j] == freq)
+				return EINVAL;
+		seen[i] = freq;
+	}
+
+	ic->ic_scan.nt_scan_epoch++;
+	if (ic->ic_scan.nt_scan_epoch == 0)
+		ic->ic_scan.nt_scan_epoch++;
+	ic->ic_flags |= IEEE80211_F_SCAN;
+	ic->ic_sta_scan.active = true;
+	ic->ic_sta_scan.reported = false;
+	ic->ic_sta_scan.cookie = req->cookie;
+	ic->ic_sta_scan.generation = req->generation;
+	ic->ic_sta_scan.freq = req->freq;
+	IEEE80211_ADDR_COPY(ic->ic_sta_scan.bssid, req->bssid);
+	return 0;
+}
+
+bool
+ieee80211_sta_scan_match(struct ieee80211com *ic,
+    const struct ieee80211req_sta_mgmt *req)
+{
+	return req != NULL && ic->ic_sta_scan.active &&
+	    (req->op == IEEE80211_STA_SCAN ||
+	    req->op == IEEE80211_STA_CANCEL_SCAN) &&
+	    req->cookie == ic->ic_sta_scan.cookie &&
+	    req->generation == ic->ic_sta_scan.generation &&
+	    (req->op == IEEE80211_STA_CANCEL_SCAN ? req->freq == 0 :
+	    req->freq == ic->ic_sta_scan.freq) &&
+	    IEEE80211_ADDR_EQ(req->bssid, ic->ic_sta_scan.bssid);
+}
+
+bool
+ieee80211_sta_scan_report(struct ieee80211com *ic,
+    const struct ieee80211req_sta_mgmt *req, bool aborted)
+{
+	if (!ieee80211_sta_scan_match(ic, req) || ic->ic_sta_scan.reported)
+		return false;
+	ic->ic_sta_scan.reported = true;
+	if (aborted) {
+		ic->ic_scan.nt_scan_epoch++;
+		if (ic->ic_scan.nt_scan_epoch == 0)
+			ic->ic_scan.nt_scan_epoch++;
+	}
+	ieee80211_cancel_scan(ic);
+	ieee80211_notify_sta_scan(ic, &ic->ic_sta_scan, aborted);
+	return true;
+}
+
+bool
+ieee80211_sta_scan_release(struct ieee80211com *ic,
+    const struct ieee80211req_sta_mgmt *req)
+{
+	if (!ieee80211_sta_scan_match(ic, req))
+		return false;
+	/* An admitted scan can be rolled back before hardware ownership begins. */
+	if (!ic->ic_sta_scan.reported) {
+		ieee80211_cancel_scan(ic);
+		ic->ic_scan.nt_scan_epoch++;
+		if (ic->ic_scan.nt_scan_epoch == 0)
+			ic->ic_scan.nt_scan_epoch++;
+	}
+	memset(&ic->ic_sta_scan, 0, sizeof(ic->ic_sta_scan));
+	return true;
+}
+
 void
 ieee80211_notify_replay_failure_rsc(struct ieee80211com *ic,
 	const struct ieee80211_frame *wh, const struct ieee80211_key *k,

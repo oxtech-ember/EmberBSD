@@ -1252,7 +1252,7 @@ espwifi_join(void)
 	const char *list = chosen < 0 ? NULL :
 	    fdtbus_get_prop(chosen, "netbsd,wifi-networks", &len);
 
-	if (espwifi_scan() <= 0 || list == NULL)
+	if (espwifi_scan(0) <= 0 || list == NULL)
 		return false;
 	for (const char *p = list; p < list + len; ) {
 		const char * const ssid = p;

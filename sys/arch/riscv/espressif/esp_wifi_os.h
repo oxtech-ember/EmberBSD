@@ -114,7 +114,8 @@ void	espwifi_os_radio_stopped(void);
 /* Entry points of the radio code; the caller is a thread made for it. */
 int	espwifi_start(void);
 int	espwifi_start_wpa2(void);
-int	espwifi_scan(void);
+/* Zero selects defaults; bits 1..14 select the native 2.4 GHz channels. */
+int	espwifi_scan(unsigned int channels);
 int	espwifi_scan_capture(int);
 int	espwifi_seen(const char *);
 int	espwifi_linked(void);

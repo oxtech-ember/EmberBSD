@@ -99,6 +99,19 @@ struct ieee80211_vht_channel;
 struct ieee80211req_sta_mgmt;
 struct ieee80211_sae;
 
+/*
+ * Common connected-scan tuple.  Hardware operation/drain state stays in the
+ * adapter; active remains set until its old radio operation is quiescent.
+ */
+struct ieee80211_sta_scan_state {
+	bool active;
+	bool reported;
+	uint32_t cookie;
+	uint32_t generation;
+	uint16_t freq;
+	u_int8_t bssid[IEEE80211_ADDR_LEN];
+};
+
 struct ieee80211com {
 	struct ieee80211_sae *ic_sae;
 	/* Published lifetime cookie, readable by a provider whose ic is alive. */
@@ -141,6 +154,7 @@ struct ieee80211com {
 				    enum ieee80211_state, int);
 	int			(*ic_sta_mgmt)(struct ieee80211com *,
 				    struct ieee80211req_sta_mgmt *);
+	struct ieee80211_sta_scan_state ic_sta_scan;
 	void			(*ic_newassoc)(struct ieee80211_node *, int);
 	void			(*ic_updateslot)(struct ifnet *);
 	void			(*ic_set_tim)(struct ieee80211_node *, int);

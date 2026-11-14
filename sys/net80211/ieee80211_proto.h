@@ -58,6 +58,7 @@ void	ieee80211_proto_attach(struct ieee80211com *);
 void	ieee80211_proto_detach(struct ieee80211com *);
 
 struct ieee80211_node;
+struct ieee80211req_sta_mgmt;
 int	ieee80211_input(struct ieee80211com *, struct mbuf *,
 		struct ieee80211_node *, int, u_int32_t);
 int	ieee80211_setup_rates(struct ieee80211_node *ni,
@@ -282,5 +283,13 @@ void	ieee80211_notify_node_join(struct ieee80211com *,
 void	ieee80211_notify_node_leave(struct ieee80211com *,
 		struct ieee80211_node *);
 void	ieee80211_notify_scan_done(struct ieee80211com *);
+int	ieee80211_sta_scan_begin(struct ieee80211com *,
+		const struct ieee80211req_sta_mgmt *, uint32_t);
+bool	ieee80211_sta_scan_match(struct ieee80211com *,
+		const struct ieee80211req_sta_mgmt *);
+bool	ieee80211_sta_scan_report(struct ieee80211com *,
+		const struct ieee80211req_sta_mgmt *, bool);
+bool	ieee80211_sta_scan_release(struct ieee80211com *,
+		const struct ieee80211req_sta_mgmt *);
 
 #endif /* !_NET80211_IEEE80211_PROTO_H_ */

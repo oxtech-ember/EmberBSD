@@ -115,6 +115,9 @@ static int splnet(void) { return 0; } static void splx(int s) { (void)s; }
 static void mutex_enter(int *p) { (void)p;assert(!sae_locked && !locked);sae_locked=1; }
 static void mutex_exit(int *p) { (void)p;assert(sae_locked);sae_locked=0; }
 static int espwifi_if_newstate(struct ieee80211com *,enum ieee80211_state,int);
+#define KERNEL_LOCK(a,b) ((void)(a),(void)(b))
+#define KERNEL_UNLOCK_ONE(a) ((void)(a))
+static void espwifi_if_sta_scan_abort(struct espwifi_softc *sc) { (void)sc; }
 static void cv_broadcast(void *p) {
  (void)p;assert(sae_locked);
  teardown_wakes++;

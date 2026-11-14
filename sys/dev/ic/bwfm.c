@@ -137,6 +137,8 @@ static void bwfm_sta_tx_done(struct bwfm_softc *, bool);
 static bool bwfm_sta_ready(struct bwfm_softc *);
 static void bwfm_sta_scan_cancel(struct bwfm_softc *);
 static void bwfm_sta_scan_done(struct bwfm_softc *, bool);
+static bool bwfm_sta_scan_defer_legacy(struct bwfm_softc *);
+static void bwfm_sta_scan_reset(struct bwfm_softc *);
 int	 bwfm_connect(struct bwfm_softc *);
 static int bwfm_sta_wnm(struct bwfm_softc *, bool);
 static void bwfm_sta_assoc_ies(struct bwfm_softc *);
@@ -791,6 +793,7 @@ bwfm_stop(struct ifnet *ifp, int disable)
 	struct bwfm_softc *sc = ifp->if_softc;
 	struct ieee80211com *ic = &sc->sc_ic;
 	struct bwfm_join_params join;
+	int error, s;
 
 	sc->sc_sae_enabled = false;
 	sc->sc_sae_generation++;
@@ -805,7 +808,12 @@ bwfm_stop(struct ifnet *ifp, int disable)
 	memset(&join, 0, sizeof(join));
 	bwfm_fwvar_cmd_set_data(sc, BWFM_C_SET_SSID, &join, sizeof(join));
 	bwfm_fwvar_cmd_set_int(sc, BWFM_C_SET_PM, 0);
-	bwfm_fwvar_cmd_set_int(sc, BWFM_C_DOWN, 1);
+	error = bwfm_fwvar_cmd_set_int(sc, BWFM_C_DOWN, 1);
+	if (error == 0) {
+		s = splnet();
+		bwfm_sta_scan_reset(sc);
+		splx(s);
+	}
 	bwfm_fwvar_cmd_set_int(sc, BWFM_C_SET_AP, 0);
 	bwfm_fwvar_cmd_set_int(sc, BWFM_C_SET_INFRA, 0);
 	bwfm_fwvar_cmd_set_int(sc, BWFM_C_UP, 1);
@@ -2517,31 +2525,69 @@ bwfm_sta_tx_done(struct bwfm_softc *sc, bool ack)
 static void
 bwfm_sta_scan_done(struct bwfm_softc *sc, bool aborted)
 {
-	if (!sc->sc_sta_bgscan)
+	bool legacy;
+	struct ieee80211com *ic = &sc->sc_ic;
+
+	if (!sc->sc_sta_bgscan && !sc->sc_sta_scan_draining)
 		return;
 	sc->sc_sta_bgscan = false;
-	ieee80211_cancel_scan(&sc->sc_ic);
-	sc->sc_sta_scan.flags = aborted ? IEEE80211_STA_SCAN_ABORTED : 0;
-	sc->sc_sta_scan.len = 0;
-	rt_ieee80211msg(&sc->sc_if, RTM_IEEE80211_STA_SCAN, &sc->sc_sta_scan,
-	    offsetof(struct ieee80211req_sta_mgmt, data));
+	sc->sc_sta_scan_started = false;
+	(void)ieee80211_sta_scan_report(&sc->sc_ic, &sc->sc_sta_scan, aborted);
+	(void)ieee80211_sta_scan_release(&sc->sc_ic, &sc->sc_sta_scan);
+	sc->sc_sta_scan_draining = false;
+	legacy = sc->sc_sta_legacy_scan_pending;
+	sc->sc_sta_legacy_scan_pending = false;
+	if (legacy && !sc->sc_detaching &&
+	    (sc->sc_if.if_flags & IFF_RUNNING) != 0 &&
+	    ic->ic_state == IEEE80211_S_SCAN)
+		(void)bwfm_scan(sc, NULL, 0);
+}
+
+static bool
+bwfm_sta_scan_defer_legacy(struct bwfm_softc *sc)
+{
+	if (!sc->sc_sta_scan_draining)
+		return false;
+	sc->sc_sta_legacy_scan_pending = true;
+	return true;
+}
+
+/* A successful firmware DOWN is the physical reset/drain acknowledgement. */
+static void
+bwfm_sta_scan_reset(struct bwfm_softc *sc)
+{
+	if (!sc->sc_sta_bgscan && !sc->sc_sta_scan_draining) {
+		sc->sc_sta_legacy_scan_pending = false;
+		return;
+	}
+	sc->sc_sta_legacy_scan_pending = false;
+	if (++sc->sc_scan_id == 0)
+		sc->sc_scan_id++;
+	bwfm_sta_scan_done(sc, true);
 }
 
 static void
 bwfm_sta_scan_cancel(struct bwfm_softc *sc)
 {
 	struct bwfm_escan_params params;
+	bool started;
 
 	if (!sc->sc_sta_bgscan)
 		return;
+	started = sc->sc_sta_scan_started;
+	sc->sc_sta_bgscan = false;
+	sc->sc_sta_scan_generation++;
+	(void)ieee80211_sta_scan_report(&sc->sc_ic, &sc->sc_sta_scan, true);
+	if (!started) {
+		(void)ieee80211_sta_scan_release(&sc->sc_ic, &sc->sc_sta_scan);
+		return;
+	}
+	sc->sc_sta_scan_draining = true;
 	memset(&params, 0, sizeof(params));
 	params.version = htole32(BWFM_ESCAN_REQ_VERSION);
 	params.action = htole16(WL_ESCAN_ACTION_ABORT);
 	params.sync_id = htole16(sc->sc_scan_id);
-	/* Invalidate queued work before the firmware command can sleep. */
-	sc->sc_sta_scan_generation++;
-	bwfm_sta_scan_done(sc, true);
-	sc->sc_scan_id++; /* Ignore the completion of the cancelled operation. */
+	/* Keep the old sync ID until its completion releases radio ownership. */
 	bwfm_fwvar_var_set_data(sc, "escan", &params, sizeof(params));
 }
 
@@ -2554,7 +2600,7 @@ bwfm_sta_mgmt(struct ieee80211com *ic, struct ieee80211req_sta_mgmt *req)
 
 	if (sc->sc_detaching)
 		return ENXIO;
-	if (req->op >= IEEE80211_STA_TX &&
+	if (req->op >= IEEE80211_STA_TX && req->op != IEEE80211_STA_CANCEL_SCAN &&
 	    (req->generation != sc->sc_sta_generation ||
 	    ic->ic_bss == NULL ||
 	    !IEEE80211_ADDR_EQ(req->bssid, ic->ic_bss->ni_bssid)))
@@ -2566,7 +2612,8 @@ bwfm_sta_mgmt(struct ieee80211com *ic, struct ieee80211req_sta_mgmt *req)
 	s = splnet();
 	switch (req->op) {
 	case IEEE80211_STA_GET:
-		req->flags = IEEE80211_STA_CAP_BTM | IEEE80211_STA_CAP_RRM;
+		req->flags = IEEE80211_STA_CAP_BTM | IEEE80211_STA_CAP_RRM |
+		    IEEE80211_STA_CAP_SCAN;
 		req->generation = sc->sc_sta_generation;
 		req->len = IEEE80211_ADDR_LEN;
 		IEEE80211_ADDR_COPY(req->data, ic->ic_myaddr);
@@ -2601,6 +2648,10 @@ bwfm_sta_mgmt(struct ieee80211com *ic, struct ieee80211req_sta_mgmt *req)
 			error = ESTALE;
 			goto out;
 		}
+		if (!ieee80211_sta_scan_match(ic, req)) {
+			error = ESTALE;
+			goto out;
+		}
 		if (req->len != 0) {
 			error = EINVAL;
 			goto out;
@@ -2630,7 +2681,8 @@ bwfm_sta_mgmt(struct ieee80211com *ic, struct ieee80211req_sta_mgmt *req)
 			error = EINVAL;
 			goto out;
 		}
-		if (ic->ic_flags & IEEE80211_F_SCAN || sc->sc_sta_bgscan) {
+		if ((ic->ic_flags & IEEE80211_F_SCAN) || sc->sc_sta_bgscan ||
+		    sc->sc_sta_scan_draining) {
 			error = EBUSY;
 			goto out;
 		}
@@ -2649,6 +2701,13 @@ bwfm_sta_mgmt(struct ieee80211com *ic, struct ieee80211req_sta_mgmt *req)
 		error = ENOBUFS;
 		goto out;
 	}
+	if (req->op == IEEE80211_STA_SCAN) {
+		error = ieee80211_sta_scan_begin(ic, req, sc->sc_sta_generation);
+		if (error != 0) {
+			pool_cache_put(sc->sc_freetask, t);
+			goto out;
+		}
+	}
 	t->t_sc = sc;
 	t->t_cmd = BWFM_TASK_STA_MGMT;
 	t->t_sta = *req;
@@ -2660,6 +2719,8 @@ bwfm_sta_mgmt(struct ieee80211com *ic, struct ieee80211req_sta_mgmt *req)
 		t->t_sta.flags = sc->sc_sta_packetid;
 	} else {
 		sc->sc_sta_bgscan = true;
+		sc->sc_sta_scan_started = false;
+		sc->sc_sta_scan_draining = false;
 		t->t_sta.flags = ++sc->sc_sta_scan_generation;
 		sc->sc_sta_scan = *req;
 	}
@@ -2713,8 +2774,6 @@ bwfm_sta_mgmt_cb(struct bwfm_softc *sc, struct ieee80211req_sta_mgmt *req)
 			goto out;
 		}
 		/* Preserve ic_state, ic_bss and traffic while updating the scan cache. */
-		ic->ic_scan.nt_scan_epoch++;
-		ic->ic_flags |= IEEE80211_F_SCAN;
 		error = bwfm_scan(sc, (const uint16_t *)req->data, req->len / 2);
 		if (error && req->flags == sc->sc_sta_scan_generation) {
 			bwfm_sta_scan_done(sc, true);
@@ -2734,6 +2793,9 @@ bwfm_scan(struct bwfm_softc *sc, const uint16_t *freqs, size_t nchannel)
 	int error, chan;
 	uint32_t epoch = sc->sc_sta_generation, scan = sc->sc_sta_scan_generation;
 	bool background = sc->sc_sta_bgscan;
+
+	if (!background && bwfm_sta_scan_defer_legacy(sc))
+		return 0;
 
 	params_size = sizeof(*params) + sizeof(uint16_t) * ((nchannel + 1) & ~1);
 	params = kmem_zalloc(params_size, KM_SLEEP);
@@ -2769,8 +2831,11 @@ bwfm_scan(struct bwfm_softc *sc, const uint16_t *freqs, size_t nchannel)
 	    epoch != sc->sc_sta_generation || scan != sc->sc_sta_scan_generation ||
 	    !bwfm_sta_ready(sc)))
 		error = ECANCELED;
-	if (!error)
+	if (!error) {
+		if (background)
+			sc->sc_sta_scan_started = true;
 		error = bwfm_fwvar_var_set_data(sc, "escan", params, params_size);
+	}
 	kmem_free(params, params_size);
 	return error ? EIO : 0;
 }
@@ -3344,7 +3409,7 @@ bwfm_rx_event_cb(struct bwfm_softc *sc, struct mbuf *m, uint32_t generation)
 			break;
 		if (ntohl(e->msg.status) != BWFM_E_STATUS_PARTIAL) {
 			s = splnet();
-			if (sc->sc_sta_bgscan) {
+			if (sc->sc_sta_bgscan || sc->sc_sta_scan_draining) {
 				bwfm_sta_scan_done(sc, ntohl(e->msg.status) != BWFM_E_STATUS_SUCCESS);
 			} else if (ic->ic_opmode != IEEE80211_M_MONITOR &&
 			    ic->ic_state == IEEE80211_S_SCAN) {
@@ -3353,6 +3418,8 @@ bwfm_rx_event_cb(struct bwfm_softc *sc, struct mbuf *m, uint32_t generation)
 			splx(s);
 			break;
 		}
+		if (sc->sc_sta_scan_draining)
+			break;
 		remaining = le32toh(res->buflen);
 		if (remaining < sizeof(*res) || remaining > len - sizeof(*e))
 			break;

@@ -247,6 +247,7 @@ static u_int tick_clock, wake_elapsed;
 static void espwifi_if_key_control(struct espwifi_softc *);
 static bool espwifi_if_auth_done_request(struct espwifi_softc *,uint64_t);
 static int espwifi_if_set_port(struct ieee80211com *,bool);
+static void espwifi_if_sta_scan_abort(struct espwifi_softc *sc) { (void)sc; }
 static void mutex_enter(int *p) { (void)p;assert(!key_held);key_held=1; }
 static void mutex_exit(int *p) { (void)p;assert(key_held);key_held=0; }
 static void cv_broadcast(int *p) { (void)p; }

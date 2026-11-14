@@ -274,6 +274,9 @@ struct bwfm_softc {
 	bool			 sc_sta_wnm_maybe_enabled;
 	bool			 sc_sta_tx_pending;
 	bool			 sc_sta_bgscan;
+	bool			 sc_sta_scan_started;
+	bool			 sc_sta_scan_draining;
+	bool			 sc_sta_legacy_scan_pending;
 	uint32_t		 sc_sta_packetid;
 	uint32_t		 sc_sta_generation;
 	uint32_t		 sc_sta_scan_generation;

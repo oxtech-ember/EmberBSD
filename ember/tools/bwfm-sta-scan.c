@@ -13,7 +13,7 @@
 typedef uint16_t u16;
 struct os_reltime { unsigned sec, usec; };
 struct bsd_driver_data {
-	int sta_btm, sta_rrm;
+	int sta_scan, sta_btm, sta_rrm;
 	struct os_reltime sta_scan_completed;
 };
 struct ieee80211req_scan_result {
@@ -60,7 +60,7 @@ scan_metadata(struct bsd_driver_data *drv, struct wpa_scan_res *result,
 int
 main(void)
 {
-	struct bsd_driver_data drv = { .sta_btm = 1 };
+	struct bsd_driver_data drv = { .sta_scan = 1 };
 	struct ieee80211req_scan_result sr = {
 		.isr_rssi = 183, .isr_capinfo = 0x11,
 		.isr_pad = { 0x10, 0, (uint8_t)-42, 0, 0 }

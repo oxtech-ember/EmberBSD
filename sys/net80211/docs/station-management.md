@@ -50,6 +50,43 @@ The adapters still enforce peer addresses, association generation, key state,
 PMF authentication, replay protection, and the existing ioctl authorization.
 Firmware command formats, status handling and lifecycle stay in each driver.
 
+## Connected scan offload
+
+`IEEE80211_STA_CAP_SCAN` advertises scans that run while the station stays
+associated. A driver reserves its own bounded work item before calling
+`ieee80211_sta_scan_begin`; the common helper then validates the RUN association,
+association generation, BSSID, current frequency and requested active channels,
+sets `IEEE80211_F_SCAN`, and advances the common scan-cache epoch. The driver
+owns the firmware command and the point at which its operation is physically
+drained.
+
+The helpers mutate common scan state and must be called in the interface's
+serialized net80211 context (for example, under `splnet` where required by the
+platform). They do not take driver locks or call firmware. Adapters snapshot
+their request while holding their own lock, drop that lock, then call common
+report/release in the serialized context; this avoids lock inversion through
+route-event delivery.
+
+The common scan tuple owns cookie, generation, original frequency and BSSID for
+completion delivery. `ieee80211_sta_scan_report` emits at most one scan event
+from that saved tuple, even after the association has left RUN. An aborted
+report invalidates the cache epoch and clears the foreground scan flag, while
+the common operation remains active until the adapter calls
+`ieee80211_sta_scan_release` after its work can no longer touch hardware. A
+failed admission before hardware ownership uses release as a silent rollback;
+after an ioctl has been accepted, launch failures must report an aborted event
+before release. A failed firmware abort does not end the drain.
+
+`CANCEL_SCAN` identifies the saved request with its nonzero cookie, association
+generation and BSSID; its v2 `freq` field is zero. The completion event still
+contains the original SCAN frequency. A cancelled operation cannot be replaced
+until its adapter has drained it. Both bwfm and aicwf advertise the capability
+and use these common validation and event-lifetime helpers.
+The bwfm adapter preserves the old firmware sync ID through cancellation, queues
+the legacy S_SCAN transition behind that drain, and retires it at a terminal
+event or successful firmware DOWN acknowledgement. The aicwf adapter keeps its
+single native scan busy until the firmware completion indication.
+
 ## Software checks
 
 Use the selected native SDK compiler and shell:

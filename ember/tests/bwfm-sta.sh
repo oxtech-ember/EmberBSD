@@ -10,7 +10,8 @@ else
     printf 'Test sources: %s\n' "$work"
 fi
 for fn in bwfm_sta_action_valid bwfm_sta_security bwfm_sta_wnm bwfm_sta_ready bwfm_sta_tx_done \
-    bwfm_sta_scan_cancel bwfm_sta_mgmt bwfm_sta_mgmt_cb bwfm_sta_assoc_ies \
+    bwfm_sta_scan_cancel bwfm_sta_scan_defer_legacy bwfm_sta_scan_reset \
+    bwfm_sta_mgmt bwfm_sta_mgmt_cb bwfm_sta_assoc_ies \
     bwfm_sta_scan_done bwfm_fwvar_var_get_checked; do
     awk -v fn="$fn" '$0 ~ "^" fn "\\(" {copy=1}
         copy {print} copy && /^}/ {exit}' "$src/sys/dev/ic/bwfm.c" > "$work/$fn.h"

@@ -27,9 +27,12 @@
 struct bsd_driver_data {
 	void *ctx, *sock_xmit;
 	char ifname[16];
-	int is_ap, flags, sta_btm, sta_rrm, sta_enabled, sta_scan_pending;
+	int is_ap, flags, sta_btm, sta_rrm, sta_scan, sta_enabled;
+	int sta_scan_pending;
+	int sae_blocked, sae_key_epoch, sae_configured;
 	struct wpa_driver_capa capa;
 	u32 sae_generation, sta_scan_cookie, sta_scan_epoch;
+	u16 sta_scan_freq;
 	uintptr_t sta_scan_generation;
 	u8 sae_bssid[ETH_ALEN], sta_scan_bssid[ETH_ALEN];
 	int sae_active;
@@ -209,6 +212,40 @@ bsd_sae_request(struct bsd_driver_data *drv, u16 op, const void *data,
 }
 
 static int
+bsd_sae_disable(struct bsd_driver_data *drv)
+{
+	drv->sae_active = 0;
+	return 0;
+}
+
+static int
+bsd_sae_prepare_iface(struct bsd_driver_data *drv)
+{
+	(void)drv;
+	return 0;
+}
+
+static int
+bsd_sae_enable(struct bsd_driver_data *drv, const u8 *bssid)
+{
+	u32 generation = drv->sae_generation + 1;
+	u8 enabled = 1;
+
+	if (generation == 0)
+		generation++;
+	drv->sae_generation = generation;
+	memcpy(drv->sae_bssid, bssid, ETH_ALEN);
+	if (bsd_sae_request(drv, IEEE80211_SAE_CONFIGURE, &enabled,
+	    sizeof(enabled)) < 0) {
+		memset(drv->sae_bssid, 0, ETH_ALEN);
+		return -1;
+	}
+	drv->sae_configured = 1;
+	drv->sae_active = 1;
+	return 0;
+}
+
+static int
 wpa_driver_bsd_set_wpa(struct bsd_driver_data *drv, int enabled)
 {
 	return 0;
@@ -378,6 +415,30 @@ association_requests(void)
 }
 
 static void
+scan_only_association(void)
+{
+	struct bsd_driver_data drv;
+	struct wpa_driver_associate_params p;
+	u8 rsn[] = { WLAN_EID_RSN, 2, 1, 0 };
+
+	fixture(&drv);
+	drv.sta_btm = drv.sta_rrm = 0;
+	drv.sta_scan = 1;
+	p = parameters(rsn, sizeof(rsn));
+	check(bsd_sta_associate(&drv, &p) == 0 && set_calls == 1 &&
+	    submitted[0].op == IEEE80211_STA_ENABLE && drv.sta_enabled,
+	    "scan-only capability enables the existing secured STA transport");
+	fixture(&drv);
+	drv.sta_btm = drv.sta_rrm = 0;
+	drv.sta_scan = 1;
+	p = parameters(rsn, sizeof(rsn));
+	p.pairwise_suite = WPA_CIPHER_TKIP;
+	check(bsd_sta_associate(&drv, &p) == 0 && set_calls == 1 &&
+	    submitted[0].op == IEEE80211_STA_DISABLE && !drv.sta_enabled,
+	    "scan-only capability preserves the existing cipher restriction");
+}
+
+static void
 directed_association(void)
 {
 	struct bsd_driver_data drv;
@@ -496,6 +557,8 @@ connected_scans(void)
 	freqs[0] = 2412; freqs[1] = 5180; freqs[2] = 0;
 	p.freqs = freqs;
 	fixture(&drv);
+	drv.sta_scan = 1;
+	current.flags |= IEEE80211_STA_CAP_SCAN;
 	check(wpa_driver_bsd_scan(&drv, &p) == 0 && set_calls == 1 &&
 	    submitted[0].op == IEEE80211_STA_SCAN && submitted[0].len == 4 &&
 	    submitted[0].generation == current.generation &&
@@ -506,6 +569,7 @@ connected_scans(void)
 	memcpy(&decoded, submitted[0].data + 2, sizeof(decoded));
 	check(decoded == 5180 && drv.sta_scan_pending &&
 	    drv.sta_scan_epoch == current.generation && drv.sta_scan_cookie == 41 &&
+	    drv.sta_scan_freq == current.freq &&
 	    !memcmp(drv.sta_scan_bssid, current.bssid, ETH_ALEN),
 	    "pending scan owns its cookie and association snapshot");
 	check(timer_calls == 1 && timer_sec == 15 && timer_fn == bsd_sta_scan_timeout &&
@@ -513,6 +577,8 @@ connected_scans(void)
 	    legacy_scans == 0 && mlme_calls == 0,
 	    "connected scan arms its timer without resetting association or media");
 	fixture(&drv);
+	drv.sta_scan = 1;
+	current.flags |= IEEE80211_STA_CAP_SCAN;
 	drv.sta_scan_cookie = UINT32_MAX;
 	p.freqs = NULL;
 	check(wpa_driver_bsd_scan(&drv, &p) == 0 && submitted[0].len == 0 &&
@@ -522,11 +588,15 @@ connected_scans(void)
 	freqs[IEEE80211_STA_MAX_CHANNELS] = 0;
 	p.freqs = freqs;
 	fixture(&drv);
+	drv.sta_scan = 1;
+	current.flags |= IEEE80211_STA_CAP_SCAN;
 	check(wpa_driver_bsd_scan(&drv, &p) == 0 &&
 	    submitted[0].len == IEEE80211_STA_MAX_CHANNELS * sizeof(u16),
 	    "maximum representable scan frequency list is accepted");
 	for (i = 0; i < 3; i++) {
 		fixture(&drv);
+		drv.sta_scan = 1;
+		current.flags |= IEEE80211_STA_CAP_SCAN;
 		freqs[0] = i == 0 ? -1 : i == 1 ? 65536 : 2412;
 		freqs[IEEE80211_STA_MAX_CHANNELS] = 5200;
 		freqs[IEEE80211_STA_MAX_CHANNELS + 1] = 0;
@@ -535,17 +605,24 @@ connected_scans(void)
 	}
 	p.freqs = NULL;
 	fixture(&drv);
+	drv.sta_scan = 1;
+	current.flags |= IEEE80211_STA_CAP_SCAN;
 	drv.sta_scan_pending = 1;
 	check(wpa_driver_bsd_scan(&drv, &p) == -1 && set_calls == 0,
 	    "a pending connected scan cannot be overwritten");
 	fixture(&drv);
+	drv.sta_scan = 1;
+	current.flags |= IEEE80211_STA_CAP_SCAN;
 	set_error = -1;
 	check(wpa_driver_bsd_scan(&drv, &p) == -1 && !drv.sta_scan_pending &&
 	    timer_calls == 0, "failed scan ioctl creates no pending scan or timer");
 	fixture(&drv);
+	drv.sta_scan = 1;
+	current.flags |= IEEE80211_STA_CAP_SCAN;
 	timer_error = -1;
 	check(wpa_driver_bsd_scan(&drv, &p) == -1 && !drv.sta_scan_pending &&
 	    set_calls == 2 && submitted[1].op == IEEE80211_STA_CANCEL_SCAN &&
+	    submitted[0].freq == current.freq && submitted[1].freq == 0 &&
 	    submitted[1].len == 0 && submitted[1].cookie == submitted[0].cookie &&
 	    submitted[1].generation == submitted[0].generation &&
 	    !memcmp(submitted[1].bssid, submitted[0].bssid, ETH_ALEN),
@@ -560,12 +637,21 @@ connected_scans(void)
 	    set_calls == 0, "old drivers retain their ordinary scan path");
 	for (i = 0; i < 2; i++) {
 		fixture(&drv);
+		drv.sta_btm = i == 0;
+		drv.sta_rrm = i == 1;
 		current.flags = IEEE80211_STA_ASSOCIATED |
 		    (i == 0 ? IEEE80211_STA_CAP_BTM : IEEE80211_STA_CAP_RRM);
-		check(wpa_driver_bsd_scan(&drv, &p) == 0 && set_calls == 1 &&
-		    submitted[0].op == IEEE80211_STA_SCAN && legacy_scans == 0,
-		    "either current station capability permits a connected scan");
+		check(wpa_driver_bsd_scan(&drv, &p) == 0 && set_calls == 0 &&
+		    legacy_scans == 1,
+		    "BTM or RRM alone does not imply connected-scan support");
 	}
+	fixture(&drv);
+	drv.sta_btm = drv.sta_rrm = 0;
+	drv.sta_scan = 1;
+	current.flags = IEEE80211_STA_ASSOCIATED | IEEE80211_STA_CAP_SCAN;
+	check(wpa_driver_bsd_scan(&drv, &p) == 0 && set_calls == 1 &&
+	    submitted[0].op == IEEE80211_STA_SCAN && legacy_scans == 0,
+	    "the independent scan capability enables the actual connected-scan path");
 }
 
 static void
@@ -638,6 +724,7 @@ int
 main(void)
 {
 	association_requests();
+	scan_only_association();
 	directed_association();
 	association_payloads();
 	connected_scans();

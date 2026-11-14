@@ -35,10 +35,10 @@ enum { EVENT_SCAN_RESULTS, EVENT_TX_STATUS, EVENT_DISASSOC, EVENT_RX_MGMT };
 struct os_reltime { unsigned sec, usec; };
 struct bsd_driver_data {
     void *ctx;
-    int sta_btm, sta_rrm, sta_scan_pending;
+    int sta_btm, sta_rrm, sta_scan, sta_scan_pending;
     uintptr_t sta_scan_generation;
     uint32_t sta_scan_cookie, sta_scan_epoch, sta_cookie, sta_tx_generation;
-    uint16_t sta_tx_freq;
+    uint16_t sta_scan_freq, sta_tx_freq;
     uint8_t sta_addr[6], sta_scan_bssid[6];
     uint8_t *sta_tx_frame;
     size_t sta_tx_len;
@@ -121,9 +121,10 @@ static void fixture(struct bsd_driver_data *drv)
     memset(&cancelled,0,sizeof(cancelled));
     current.version = IEEE80211_STA_VERSION; current.generation = 40;
     current.freq = 5300; current.bssid[0] = 2; current.flags = IEEE80211_STA_ASSOCIATED;
-    drv->sta_btm = drv->sta_rrm = 1; drv->sta_cookie = 42;
+    drv->sta_btm = drv->sta_rrm = drv->sta_scan = 1; drv->sta_cookie = 42;
     drv->sta_tx_generation = current.generation; drv->sta_tx_freq = current.freq;
     drv->sta_scan_cookie = 50; drv->sta_scan_epoch = current.generation;
+    drv->sta_scan_freq = current.freq;
     drv->sta_scan_generation = 100;
     memcpy(drv->sta_scan_bssid,current.bssid,6);
     rx = tx = scans = disconnects = cancellations = 0; info_error = set_error = 0;
@@ -221,7 +222,7 @@ int main(void)
         "TX timeout cancels original epoch and cookie and reports failure");
     check(strstr(debug_log,"token=7 ack=0") != NULL,
         "TX diagnostic distinguishes timeout from ACK");
-    for (i = 0; i < 7; i++) {
+    for (i = 0; i < 8; i++) {
         fixture(&drv); drv.sta_scan_pending = 1; req = event_request();
         req.len = 0; req.op = IEEE80211_STA_SCAN; req.cookie = drv.sta_scan_cookie;
         switch (i) {
@@ -232,6 +233,7 @@ int main(void)
         case 4: req.flags = IEEE80211_STA_TX_ACK; break;
         case 5: req.len = 1; break;
         case 6: drv.sta_scan_epoch--; break;
+        case 7: drv.sta_scan = 0; break;
         }
         bsd_sta_event(&drv,RTM_IEEE80211_STA_SCAN,&req,header+req.len);
         check(scans == 0 && drv.sta_scan_pending,"old or malformed scan completion cannot release current scan work");
@@ -252,19 +254,28 @@ int main(void)
 fixture(&drv);
 check(bsd_scan_ops.abort_scan(&drv,0) == -1 && cancellations == 0,
     "no pending station scan remains unsupported");
-drv.sta_scan_pending = 1; drv.sta_btm = drv.sta_rrm = 0;
+drv.sta_scan_pending = 1; drv.sta_btm = drv.sta_rrm = drv.sta_scan = 0;
 check(bsd_scan_ops.abort_scan(&drv,0) == -1 && cancellations == 0 && drv.sta_scan_pending,
     "legacy drivers cannot issue station scan cancellation");
-drv.sta_rrm = 1;
+fixture(&drv); drv.sta_scan_pending = 1; drv.sta_btm = drv.sta_rrm = 0;
 check(bsd_scan_ops.abort_scan(&drv,1) == -1 && cancellations == 0 && drv.sta_scan_pending,
     "a vendor scan cookie cannot cancel the BSD operation");
+drv.sta_scan = 1;
+check(bsd_scan_ops.abort_scan(&drv,0) == 0 && cancellations == 1 &&
+    cancelled.op == IEEE80211_STA_CANCEL_SCAN && cancelled.freq == 0 &&
+    cancelled.cookie == drv.sta_scan_cookie &&
+    cancelled.generation == drv.sta_scan_epoch,
+    "scan-only capability can cancel with the common unspecified-frequency tuple");
+fixture(&drv); drv.sta_scan_pending = 1; drv.sta_btm = drv.sta_rrm = 0;
+drv.sta_scan = 1;
 set_error = -1; current.generation++;
 check(bsd_scan_ops.abort_scan(&drv,0) == -1 && drv.sta_scan_pending &&
     drv.sta_scan_generation == 100 && scans == 0,
     "failed cancellation retains pending state and its watchdog");
 check(cancelled.op == IEEE80211_STA_CANCEL_SCAN && cancelled.cookie == 50 &&
     cancelled.generation == 40 && memcmp(cancelled.bssid,drv.sta_scan_bssid,6) == 0 &&
-    cancelled.len == 0 && cancelled.flags == 0 && cancelled.reserved == 0,
+    cancelled.freq == 0 && cancelled.len == 0 && cancelled.flags == 0 &&
+    cancelled.reserved == 0,
     "cancellation is bound to the original operation rather than a newer association");
 current.generation--; set_error = 0;
 check(bsd_scan_ops.abort_scan(&drv,0) == 0 && cancellations == 2 &&
@@ -291,11 +302,35 @@ req.cookie = 51; req.flags = 0;
 bsd_sta_event(&drv,RTM_IEEE80211_STA_SCAN,&req,header);
 check(scans == 2 && !last_aborted && !drv.sta_scan_pending,
     "a replacement scan completes normally after cancellation");
-fixture(&drv); drv.sta_scan_pending = 1; set_error = -1;
+fixture(&drv); drv.sta_scan_pending = 1; drv.sta_scan = 1; set_error = -1;
 check(bsd_scan_ops.abort_scan(&drv,0) == -1,"ioctl failure is returned to the caller");
 bsd_sta_scan_timeout(&drv,(void *)(uintptr_t)100);
 check(scans == 1 && last_aborted && !drv.sta_scan_pending && cancellations == 2,
     "watchdog still releases scan work if cancellation ioctl fails");
+    fixture(&drv); drv.sta_scan_pending = 1; pending_tx(&drv);
+    req = event_request(); req.len = 0; req.op = IEEE80211_STA_SCAN;
+    req.cookie = drv.sta_scan_cookie; req.flags = IEEE80211_STA_SCAN_ABORTED;
+    current.flags = 0; current.generation++;
+    bsd_sta_event(&drv,RTM_IEEE80211_STA_SCAN,&req,header);
+    check(scans == 1 && last_aborted && !drv.sta_scan_pending,
+        "retired abort completion releases the saved scan despite stale live GET");
+    bsd_sta_event(&drv,RTM_IEEE80211_STA_SCAN,&req,header);
+    bsd_sta_disconnected(&drv);
+    check(scans == 1 && disconnects == 1,
+        "duplicate aborted completion after disconnect is ignored");
+
+    fixture(&drv); drv.sta_scan_pending = 1; pending_tx(&drv);
+    req = event_request(); req.len = 0; req.op = IEEE80211_STA_SCAN;
+    req.cookie = drv.sta_scan_cookie; req.flags = IEEE80211_STA_SCAN_ABORTED;
+    current.flags = 0; current.generation++;
+    bsd_sta_disconnected(&drv);
+    bsd_sta_event(&drv,RTM_IEEE80211_STA_SCAN,&req,header);
+    check(scans == 1 && last_aborted && disconnects == 1 &&
+        !drv.sta_scan_pending,
+        "disconnect releases scan once and later abort completion is ignored");
+    bsd_sta_scan_timeout(&drv,(void *)(uintptr_t)100);
+    check(scans == 1,"disconnect invalidates queued timeout");
+
     fixture(&drv); drv.sta_scan_pending = 1; pending_tx(&drv);
     bsd_sta_disconnected(&drv);
     check(disconnects == 1 && scans == 1 && last_aborted && tx == 0 && drv.sta_tx_frame == NULL,

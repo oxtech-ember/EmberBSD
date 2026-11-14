@@ -574,7 +574,9 @@ int ieee80211_sae_auth_frame_validate(const uint8_t *, size_t,
  * An association epoch changes across disconnect, including same-BSSID joins.
  * TX accepts an action body on the current channel. Cookies identify completion.
  * SCAN and CANCEL_SCAN use a nonzero scan cookie, independent of TX cookies.
- * SCAN data contains uint16_t frequencies (MHz); an empty list means all channels.
+ * CANCEL_SCAN has freq 0; its completion reports the original SCAN frequency.
+ * SCAN data contains uint16_t frequencies (MHz); an empty list means all
+ * channels.
  */
 #define IEEE80211_IOC_STA_MGMT           75
 /*
@@ -599,6 +601,7 @@ int ieee80211_sae_auth_frame_validate(const uint8_t *, size_t,
 #define IEEE80211_STA_CAP_RRM           0x0008
 #define IEEE80211_STA_ASSOC_IES         0x0010
 #define IEEE80211_STA_SCAN_ABORTED      0x0020
+#define IEEE80211_STA_CAP_SCAN           0x0040
 struct ieee80211req_sta_mgmt {
 	uint16_t version;
 	uint16_t op;

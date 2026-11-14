@@ -24,6 +24,14 @@ beside the OS adapter cannot shadow the selected API. This permits OS ioctl
 changes to reach native builds without modifying a prepared source receipt
 or maintaining another copy of WPA protocol algorithms.
 
+On NetBSD interfaces, the adapter reads connected-scan, BTM and RRM support
+from separate `IEEE80211_STA_CAP_*` flags. Connected scans use the versioned
+scan request and completion contract independently of BTM/RRM; management
+frame events and capability advertisement remain gated by their own flags.
+The `ember/tests/bwfm-sta.sh` fixture exercises this OS-selected path,
+including scan-only dispatch, matching completions, cancellation and the
+existing WPA profile restrictions.
+
 The target interface and driver must independently support association, key
 installation, SAE external authentication and protected management frames.
 Building this profile does not establish that a particular driver supports

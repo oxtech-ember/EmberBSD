@@ -68,9 +68,14 @@ code = r'''
 #include <stddef.h>
 typedef int esp_err_t;
 struct ap { unsigned char ssid[33]; unsigned primary; int rssi,authmode; };
+typedef struct { struct { uint16_t ghz_2_channels,ghz_5_channels; } channel_bitmap; } wifi_scan_config_t;
+#define WIFI_SCAN_PARAMS_DEFAULT_CONFIG() ((wifi_scan_config_t){0})
 static struct ap aps[16];static int naps,start_error,records_error,clear_calls,too_many;
+static unsigned passed_channels;static int configured_scan;
 #define ESP_OK 0
-static int esp_wifi_scan_start(void *p,bool block) { assert(!p && block);return start_error; }
+static int esp_wifi_scan_start(void *p,bool block) { assert(block);configured_scan=p!=NULL;
+ if(p){wifi_scan_config_t *c=p;passed_channels=c->channel_bitmap.ghz_2_channels;
+ assert(c->channel_bitmap.ghz_5_channels==1);}else passed_channels=0;return start_error; }
 static int esp_wifi_scan_get_ap_records(uint16_t *n,struct ap *p) {
  assert(*n==16 && p==aps);*n=too_many?17:0;return records_error; }
 static int esp_wifi_clear_ap_list(void) { clear_calls++;return 0; }
@@ -78,10 +83,11 @@ static void espwifi_os_log(const char *fmt,...) { (void)fmt; }
 static unsigned espwifi_os_free_heap(void) { return 100; }
 ''' + function('espwifi_scan', 'int') + r'''
 int main(void) {
- start_error=3;assert(espwifi_scan()==-1 && clear_calls==1);
- start_error=0;records_error=4;assert(espwifi_scan()==-1 && clear_calls==2);
- records_error=0;too_many=1;assert(espwifi_scan()==-1);
- too_many=0;assert(espwifi_scan()==0);return 0;
+ start_error=3;assert(espwifi_scan(1U<<6)==-1 && clear_calls==1 && configured_scan && passed_channels==(1U<<6));
+ start_error=0;records_error=4;assert(espwifi_scan(1U<<11)==-1 && clear_calls==2 && passed_channels==(1U<<11));
+ records_error=0;too_many=1;assert(espwifi_scan(0)==-1 && !configured_scan);
+ too_many=0;assert(espwifi_scan(0x7ffe)==0 && configured_scan && passed_channels==0x7ffe);
+ assert(espwifi_scan(1U<<15)==-1);return 0;
 }
 '''
 with tempfile.TemporaryDirectory() as td:
@@ -109,12 +115,14 @@ enum ieee80211_state { IEEE80211_S_INIT, IEEE80211_S_SCAN, IEEE80211_S_AUTH,
 struct ifnet { void *if_softc; int if_flags; };
 struct espwifi_ec { struct ifnet ec_if; };
 struct ieee80211_node { uint8_t ni_bssid[6],ni_essid[32]; unsigned ni_esslen; };
+struct ieee80211req_sta_mgmt { uint8_t opaque[1100]; };
 struct ieee80211com { struct ifnet *ic_ifp; int ic_flags; enum ieee80211_state ic_state;
  struct ieee80211_node *ic_bss; const uint8_t *ic_opt_ie; unsigned ic_opt_ie_len; };
 struct espwifi_softc { struct ieee80211com sc_ic; struct espwifi_ec sc_ec; int sc_scan_lock;
 	int sc_key_lock;bool sc_key_pending;
  void *sc_scan_ctl_sem; unsigned sc_scan_count; bool sc_scan_enabled,sc_scan_pending,
  sc_scan_busy,sc_radio_ready,sc_attached,sc_sta_started,sc_join_stopped;
+ bool sc_sta_scan;uint16_t sc_sta_scan_channels;struct ieee80211req_sta_mgmt sc_sta_scan_req;
  bool sc_sae_selection,sc_join_sae;
  uint64_t sc_sae_selection_generation;uint8_t sc_sae_selection_bssid[6];
  uint64_t sc_scan_generation,sc_scan_active;
@@ -139,6 +147,7 @@ static struct espwifi_softc espwifi_sc; static int held, keyheld, key_controls, 
 static bool auth_during_scan;
 static jmp_buf done;
 static int espwifi_if_newstate(struct ieee80211com *,enum ieee80211_state,int);
+static void espwifi_if_sta_scan_abort(struct espwifi_softc *sc) { (void)sc; }
 static void mutex_spin_enter(int *p) { (void)p;assert(!held);held=1; }
 static void mutex_spin_exit(int *p) { (void)p;assert(held);held=0; }
 static void mutex_enter(int *p) { (void)p;assert(!keyheld);keyheld=1; }
@@ -152,7 +161,7 @@ static void ieee80211_sta_leave(struct ieee80211com *ic,struct ieee80211_node *n
 static void espwifi_os_sem_take(void *p,int t) { (void)p;(void)t;if (++waits==2) longjmp(done,1); }
 static void espwifi_os_task_delay(unsigned t) { (void)t;assert(0); }
 static int espwifi_scan_capture(int on) { if(on){starts++;return fail?9:0;} stops++;return 0; }
-static int espwifi_scan(void) {
+static int espwifi_scan(unsigned channels) { assert(channels==0);
 	if (auth_during_scan) {
 		auth_during_scan=false;
 		assert(espwifi_sc.sc_scan_active!=0 &&
@@ -164,6 +173,12 @@ static int espwifi_scan(void) {
 	if(stale) espwifi_sc.sc_scan_generation++;
 	return 1;
 }
+static int ieee80211_sta_scan_report(struct ieee80211com *ic,
+ const struct ieee80211req_sta_mgmt *r,bool aborted) { (void)ic;(void)r;(void)aborted;return 1; }
+static int ieee80211_sta_scan_release(struct ieee80211com *ic,
+ const struct ieee80211req_sta_mgmt *r) { (void)ic;(void)r;return 1; }
+#define KERNEL_LOCK(a,b) ((void)(a),(void)(b))
+#define KERNEL_UNLOCK_ONE(a) ((void)(a))
 static int splnet(void) { return 0; } static void splx(int s) { (void)s; }
 static void ieee80211_begin_scan(struct ieee80211com *ic,int reset) { assert(reset==1);begins++;ic->ic_flags|=IEEE80211_F_SCAN; }
 static void ieee80211_end_scan(struct ieee80211com *ic) { ends++;ic->ic_flags=autoretry ? IEEE80211_F_SCAN : 0; }
@@ -322,6 +337,8 @@ code=r'''
 #include <string.h>
 #define __UNCONST(p) ((void *)(uintptr_t)(p))
 #define ESPWIFI_WAIT_FOREVER 0
+#define KERNEL_LOCK(a,b) ((void)(a),(void)(b))
+#define KERNEL_UNLOCK_ONE(a) ((void)(a))
 #define ESPWIFI_SCAN_RING 8
 #define ESPWIFI_SCAN_FRAME_MAX 2304
 #define IEEE80211_F_SCAN 1
