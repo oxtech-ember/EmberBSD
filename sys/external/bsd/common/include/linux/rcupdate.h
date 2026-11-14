@@ -48,6 +48,9 @@
 
 #define	rcu_dereference_raw	rcu_dereference
 
+/* The condition only documents the lock that protects the access (lockdep is not here). */
+#define	rcu_dereference_check(P, C)	((void)(C), rcu_dereference(P))
+
 #define	rcu_dereference_protected(P, C) ({				      \
 	WARN_ON(!(C));							      \
 	(P);								      \

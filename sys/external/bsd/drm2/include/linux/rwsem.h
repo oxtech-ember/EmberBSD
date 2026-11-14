@@ -45,6 +45,8 @@
 
 #include <sys/mutex.h>
 
+#include <linux/cleanup.h>
+
 #define	destroy_rwsem		linux_destroy_rwsem
 #define	down_read		linux_down_read
 #define	down_read_trylock	linux_down_read_trylock
@@ -75,5 +77,9 @@ void down_write(struct rw_semaphore *);
 void up_read(struct rw_semaphore *);
 void up_write(struct rw_semaphore *);
 void downgrade_write(struct rw_semaphore *);
+
+/* guard(rwsem_read)(&rw), guard(rwsem_write)(&rw) */
+DEFINE_GUARD(rwsem_read, struct rw_semaphore *, down_read(_T), up_read(_T))
+DEFINE_GUARD(rwsem_write, struct rw_semaphore *, down_write(_T), up_write(_T))
 
 #endif  /* _LINUX_RWSEM_H_ */

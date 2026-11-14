@@ -41,6 +41,7 @@
 #include <sys/bus.h>
 #include <sys/cdefs.h>
 #include <sys/kmem.h>
+#include <sys/queue.h>
 #include <sys/systm.h>
 
 #include <machine/limits.h>
@@ -197,7 +198,17 @@ struct pci_dev {
 	uint32_t		class;
 	bool			msi_enabled;
 	bool			no_64bit_msi;
+
+	/* Registry of devices with a pci_dev: to_pci_dev() (linux_pci.c). */
+	LIST_ENTRY(pci_dev)	pd_regentry;
 };
+
+/*
+ * to_pci_dev(dev): the pci_dev made for device_t dev by linux_pci_dev_init,
+ * or NULL if the device has none (it was not made by a Linux style driver).
+ */
+struct pci_dev	*linux_to_pci_dev(struct device *);
+#define	to_pci_dev(dev)	linux_to_pci_dev(dev)
 
 enum pci_bus_speed {
 	PCI_SPEED_UNKNOWN,

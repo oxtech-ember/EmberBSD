@@ -79,6 +79,10 @@ struct work_struct {
 
 struct delayed_work {
 	struct work_struct		work; /* Linux API name */
+	/* Linux API name: the jiffies at which the work was last armed to run. */
+	struct {
+		unsigned long		expires;
+	}				timer;
 	struct callout			dw_callout;
 	TAILQ_ENTRY(delayed_work)	dw_entry;
 	int				dw_resched;

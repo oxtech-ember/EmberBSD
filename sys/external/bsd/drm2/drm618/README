@@ -1,0 +1,84 @@
+Origin: EmberBSD.
+
+Linux 6.18 DRM core next to the Linux 5.6 core
+==============================================
+
+A kernel has one DRM core: the 5.6 one (attribute drmkms, files in dist/, own
+code in drm/) or the 6.18 one (attribute drmkms618, files in dist618/, own code
+in drm618/).  Both export the same drm_* symbols with different layouts.  Both
+use the same Linux compatibility layer (attributes drmkms_linux, drmkms_i2c;
+directories linux/, include/linux, include/asm), so work on the layer serves
+both cores.
+
+	dist618/	Linux 6.18.x files, MIT or "GPL-2.0 OR MIT" only, byte for
+			byte as upstream (MANIFEST.tsv: sha256, licence class,
+			upstream path; LINUX_VERSION)
+	drm618/		files.drmkms618, own headers (include/), own rewrites of
+			the GPL-only files, gpl-only.tsv, tools/
+	prepare-import618.sh	(re)import of dist618, "--verify" checks it
+
+drm618/gpl-only.tsv lists what is not imported and why: GPL-only files, files
+without a licence text, uapi headers under "GPL-2.0 WITH Linux-syscall-note".
+The last column names the existing BSD rewrite in drm/ (a Linux 5.6 level one
+that has to be brought to 6.18), or "-" when there is none.
+
+Selecting a core
+----------------
+files.drmkms618 is included from sys/conf/files, but only as a definition of
+the attribute drmkms618: no default kernel configuration selects it.  The
+tested way to run the 6.18 core is the loadable module sys/modules/drmkms618
+(with drmkms618_sched and drmkms618_ttm) in a kernel without the 5.6 core:
+configuration GENERIC_ARL_DRM618 (the ARL configuration without the 5.6
+drivers).  A kernel with the attribute selected and the core built in has not
+been built or tested.
+Selecting both cores fails the build on purpose: drm618_exclusive.c is built
+for "drmkms618 & drmkms" and contains an #error.  At run time a module of one
+core cannot load into a kernel with the other: the module loader refuses
+symbols that already exist (kobj_checksyms).  Modules get their own names
+(drmkms618, ...) and depend on "drmkms_linux,sysmon_power" like drmkms; a
+driver module built for 6.18 depends on "drmkms618" and is not interchangeable
+with the 5.6 build of the same driver (the efidrm kernel version guard
+already covers that).
+
+Includes the 6.18 sources expect
+-------------------------------
+dist618 is byte for byte upstream, so what Linux include chains bring in for
+it has to come from somewhere else.  Every drmkms618 file is compiled with
+-include include/drm618_prefix.h (files.drmkms618; the compile map does the
+same, NOPREFIX=1 leaves it out): the includes the sources expect, the renaming
+of the NetBSD struct rb_node and of the names both systems define differently
+(ALIGN, LIST_HEAD, mutex_init, RB_ROOT, ... see include/drm618_layer.h, chosen
+by the number or the type of the arguments).  Headers that exist in the shared
+layer with another meaning (linux/wait.h, rbtree.h, kthread.h,
+interval_tree_generic.h) are shadowed in include/linux/; the 5.6 core never
+sees them.  New names without a clash go into the shared layer.
+
+Local changes to dist618 are made in separate commits after the pristine
+import commit, so that "git diff" against the import shows exactly what
+EmberBSD changed; BSD-only hooks that can live outside the Linux files go to
+drm618/include (it comes first in the include path) or to the layer.
+
+User mappings and PRIME
+-----------------------
+mmap(2) on a Linux file of the layer (drm618_vma.c) runs the mmap handler of the
+file once and keeps the vm_area_struct it leaves as a uvm object: the pager
+runs vm_ops open/close for the references (fork, split, unmap) and vm_ops->fault
+for the faults, vmf_insert_page/pfn enter the page, remap_pfn_range is entered
+lazily.  A mapping holds its file.  Only shared mappings exist; a handler that
+needs anything else (a second remap_pfn_range range, zap of single pages)
+fails with EOPNOTSUPP.  The TTM objects are not mapped through it yet:
+drm_gem_ttm_mmap says EOPNOTSUPP (the uvm pager of a TTM object,
+ttm_bo_vm_bsd.c, is not connected to the mapping of a file).
+
+The dma-buf of the 6.18 core (drm618_dma_buf.c, include/linux/dma-buf.h) is a
+Linux file too, with its own names (drm618_dma_buf_*): the dma-buf of the shared
+layer (linux_dma_buf.c) serves the 5.6 core and has another interface.  The
+dma-buf of this core: export, descriptor, import, attach, mmap, poll against
+the reservation, llseek.  Not provided: the ioctls of the descriptor (ENOTTY),
+kqueue (EINVAL), the DMA mapping of a table for another device
+(dma_map_sgtable: EOPNOTSUPP), so a dma-buf of this core cannot be imported by
+a driver that needs a mapped table.  drm_prime.c is built from dist618.
+
+Test driver: sys/modules/vgem618 (same source as vgem, VGEM_CORE618), client
+ember/tests/drm2-vgem-client.c, kernel checks drm2-drm618-gem and
+drm2-drm618-dmabuf in drmkms_linux_test.

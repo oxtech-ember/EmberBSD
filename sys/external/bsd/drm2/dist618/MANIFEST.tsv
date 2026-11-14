@@ -1,0 +1,227 @@
+path	sha256	class	spdx	linux-path
+gpu/buddy.c	1b17dc62b5c9f9b9fa38345a115f7fa48a4896e5b8a4349ecd33dba60e829d81	MIT	MIT	drivers/gpu/buddy.c
+drm/clients/drm_client_setup.c	be6ba3e38eb53e2dc66ac26692dbabb78d79d45e9e41aa71fff132a3cc243cfb	MIT	MIT	drivers/gpu/drm/clients/drm_client_setup.c
+drm/clients/drm_fbdev_client.c	7a85ec172240e48eaa0c717e4bf7c5f7f649a8979467e54a4a53f1c48bdb794e	MIT	MIT	drivers/gpu/drm/clients/drm_fbdev_client.c
+drm/display/drm_display_helper_mod.c	3b0935abf7d6d92312c54bb4e7f29bf3544666b4d80befec432eb256f275e42c	MIT	MIT	drivers/gpu/drm/display/drm_display_helper_mod.c
+drm/display/drm_dp_dual_mode_helper.c	3c58c370830fbf2e3565deb0d1effed291aed1e52547af406e21f6fdb8a46a1a	MIT	text	drivers/gpu/drm/display/drm_dp_dual_mode_helper.c
+drm/display/drm_dp_helper.c	358b51a4509605357bc6a25bf472861750cd0f92874874567ad83f0bff7ca4f7	MIT	text	drivers/gpu/drm/display/drm_dp_helper.c
+drm/display/drm_dp_mst_topology.c	eaf06ec833a9c95cd84b731cfc620396505486b5c3984a8c39d59cb53f7df73c	MIT	text	drivers/gpu/drm/display/drm_dp_mst_topology.c
+drm/display/drm_dsc_helper.c	a4d0df3f61fff2846a94f95928e2267e76f3b2c4c6cd57d2920f7b0dc7367fef	MIT	MIT	drivers/gpu/drm/display/drm_dsc_helper.c
+drm/display/drm_hdmi_audio_helper.c	b980718b199c11a1db4c2bf4c8b060da3db63b5c1dca0ed1546721f22bf1ad49	MIT	MIT	drivers/gpu/drm/display/drm_hdmi_audio_helper.c
+drm/display/drm_hdmi_helper.c	accc69736e64c58fc853238e41266f5c68ce1f72f8a73de58d700fd9674ddace	MIT	MIT	drivers/gpu/drm/display/drm_hdmi_helper.c
+drm/display/drm_hdmi_state_helper.c	402e430d778f77f0d69e41b9c5d676d31038669a3205d83ee453e30f6a5d101c	MIT	MIT	drivers/gpu/drm/display/drm_hdmi_state_helper.c
+drm/display/drm_scdc_helper.c	788982dabccf73591cbc18a0ef7aa8e46c36e64b70589ccfca5071517d608de9	MIT	text	drivers/gpu/drm/display/drm_scdc_helper.c
+drm/drm_atomic.c	35b4259fe48107c9bd1a8b012931e79abf5f0c088b8f8a6d29115cde205bb210	MIT	text	drivers/gpu/drm/drm_atomic.c
+drm/drm_atomic_helper.c	3dba1fd87a54aad79c4ac15685a3678195728f5467bddfed5cbeb6c5c74f261f	MIT	text	drivers/gpu/drm/drm_atomic_helper.c
+drm/drm_atomic_state_helper.c	546367cd8d0306832b091dbb20e3ec3d0a50d623657049832a50a5228948c2a8	MIT	text	drivers/gpu/drm/drm_atomic_state_helper.c
+drm/drm_atomic_uapi.c	8e3357e19fea9747e03fef3b85d1493ac60b5cf5f50c0700a9ee0b6d895d0a2a	MIT	text	drivers/gpu/drm/drm_atomic_uapi.c
+drm/drm_auth.c	cd7fe742cd880dda62b19073c97e9199f23197df02a82518bc9914f139933970	MIT	text	drivers/gpu/drm/drm_auth.c
+drm/drm_blend.c	a313553047d8f5fa7588b9658026bc8d15290de0167ddac5423a33a0008a6b7a	MIT	text	drivers/gpu/drm/drm_blend.c
+drm/drm_bridge.c	362d80220269e2a570599271f0c1df52c942152d794c3a30c106ee80615c8220	MIT	text	drivers/gpu/drm/drm_bridge.c
+drm/drm_buddy.c	55c293b4f6f6f905eca1c0fe546054900276c9294d00f2614c72eaa2a259437b	MIT	MIT	drivers/gpu/drm/drm_buddy.c
+drm/drm_cache.c	510ffa7f075630669f8c011b486c6a3683881dbd10aa6f0e502de9821681d337	MIT	text	drivers/gpu/drm/drm_cache.c
+drm/drm_client.c	93e79f96cf75697e912da1cc437ebb16cde45e18220f0a26d1829b591126ae1b	DUAL	GPL-2.0 or MIT	drivers/gpu/drm/drm_client.c
+drm/drm_client_event.c	f30bc08a111b3880c636618b2e6c9eeca02b65b0bb4d4c134e135b2f02581a54	DUAL	GPL-2.0 or MIT	drivers/gpu/drm/drm_client_event.c
+drm/drm_client_modeset.c	96baa5c525d8de99f9aa5018edf06912c8f8317b58e91d5247729ddf94e3d26b	MIT	MIT	drivers/gpu/drm/drm_client_modeset.c
+drm/drm_color_mgmt.c	cec79f2e8d452685b8f11c8df24cb237bd5312d970667c30fee28172ff39e6a9	MIT	text	drivers/gpu/drm/drm_color_mgmt.c
+drm/drm_connector.c	2167b9a6190552a21abcfbba179a78751ae85f16affd4fb22e2eeea4c483636a	MIT	text	drivers/gpu/drm/drm_connector.c
+drm/drm_crtc.c	4d4171d74e68980f6d2134fff85c8ff418d44994b8a6b3fdf572c596d2757786	MIT	text	drivers/gpu/drm/drm_crtc.c
+drm/drm_crtc_helper.c	4071919da6876850a4f23b6b324e88c4b3ae1d1bfb29a201586566b34aef5acd	MIT	text	drivers/gpu/drm/drm_crtc_helper.c
+drm/drm_damage_helper.c	7be57d1fb76a75869fb44575eafc8f3bd17a31ddd43dac89ac3e85e2b7b327ce	DUAL	GPL-2.0 OR MIT	drivers/gpu/drm/drm_damage_helper.c
+drm/drm_displayid.c	0d9f59ede6769080d80ebd7bef8ff9779bf4c082c487fb8751e47b67f8721f27	MIT	MIT	drivers/gpu/drm/drm_displayid.c
+drm/drm_drv.c	0eb87048943f2cb1aff063374b6849a0e508d263538c426a90ae0a39540413d2	MIT	text	drivers/gpu/drm/drm_drv.c
+drm/drm_dumb_buffers.c	7cdce8236b56e17538294d0132f71fd2d7d8f506e5ae3f7951c0eb539cb3c5db	MIT	text	drivers/gpu/drm/drm_dumb_buffers.c
+drm/drm_edid.c	7d4582478f3379a305f3722bc646cbfa03c52fb40eb813ffae9d2f19091669ab	MIT	text	drivers/gpu/drm/drm_edid.c
+drm/drm_eld.c	5284adfd06376cf1fe10a1122a6acdd75f0ce238028a64327a6acd0d7becd9b2	MIT	MIT	drivers/gpu/drm/drm_eld.c
+drm/drm_encoder.c	844ed39fceaa828ad9974eb0b598fe957ae12ea65191fb6f15a65576c459cb9a	MIT	text	drivers/gpu/drm/drm_encoder.c
+drm/drm_exec.c	0e1e121dd161594f6290b72890cf81906b9461e240019fa01bc11597cb36cc8d	DUAL	GPL-2.0 OR MIT	drivers/gpu/drm/drm_exec.c
+drm/drm_fb_helper.c	209d742a32f574bcf84a86c9ce65270aa4f7a12d332f0d2b0ed3503ea8314899	MIT	text	drivers/gpu/drm/drm_fb_helper.c
+drm/drm_fbdev_dma.c	bb7d09032656e6055fa82e0bf816d4604a71f7fedd1b5642daca33d6e5d64048	MIT	MIT	drivers/gpu/drm/drm_fbdev_dma.c
+drm/drm_fbdev_shmem.c	c369e35aef49e6064039e84739a46d93d01a388c0db1f855e033cc395f0b2264	MIT	MIT	drivers/gpu/drm/drm_fbdev_shmem.c
+drm/drm_fbdev_ttm.c	4aec39da4e04655c199044bd3913f21d3a9ff32da6551223363f561162c1b48c	MIT	MIT	drivers/gpu/drm/drm_fbdev_ttm.c
+drm/drm_file.c	9c7c9d77f38383d3c9a140cd5a50a27abad8fa6603b3521a109e028673bf6017	MIT	text	drivers/gpu/drm/drm_file.c
+drm/drm_flip_work.c	3a795b22873bd0c172508ad648499f3fe3cd702d66a49311618dfb2501b9f1e4	MIT	text	drivers/gpu/drm/drm_flip_work.c
+drm/drm_format_helper.c	95ccdb514ecbcd8ed2d9cb25c5ce502d29f84e4ce3ab234c542bd019a21f6446	DUAL	GPL-2.0 or MIT	drivers/gpu/drm/drm_format_helper.c
+drm/drm_fourcc.c	3b1e087ae94a0c85eb8bb8952ccdd82f98ae2061244e5406e829f82738d18121	MIT	text	drivers/gpu/drm/drm_fourcc.c
+drm/drm_framebuffer.c	b9eb2a8522019865463612821a6ba3be199e2ed1f7a32b8ab5976cd8d287c61d	MIT	text	drivers/gpu/drm/drm_framebuffer.c
+drm/drm_gem.c	89bef63a14c7d23f2d4ec7a3f2c0f1ea1065ee1ecd5895bf5865d3a923453190	MIT	text	drivers/gpu/drm/drm_gem.c
+drm/drm_gpuvm.c	1cf58c3dc874081d8cfc9604df20825e3fce92da7037d955ba48fd977545dff8	DUAL	GPL-2.0-only OR MIT	drivers/gpu/drm/drm_gpuvm.c
+drm/drm_ioc32.c	ce53482515436752dd1f92312dd94255552b0e10a72d0cda30d8b1ef5417334d	MIT	text	drivers/gpu/drm/drm_ioc32.c
+drm/drm_ioctl.c	7ce739ea39669ec58b8bfc28f817d3ccd5f0fcc3b1bc7ff8b7ed845c38fd682b	MIT	text	drivers/gpu/drm/drm_ioctl.c
+drm/drm_kms_helper_common.c	5e7030ceb612d89d21a2fb49e81a379a29f0c84360d01051698b297b5ea286fe	MIT	text	drivers/gpu/drm/drm_kms_helper_common.c
+drm/drm_mm.c	0e62cb8481c2373a10a0260dc9e2a6ba48c37b654fc472725d26447f13271e42	MIT	text	drivers/gpu/drm/drm_mm.c
+drm/drm_mode_config.c	b6e7d4dad42c61c24fb7b81a1d9c10fbd8f31bf1b9cd889c35644b69445b6813	MIT	text	drivers/gpu/drm/drm_mode_config.c
+drm/drm_mode_object.c	2eafe9f9dd6a33d5ddf06b29e735ce42897c66b7e20f05e35518e774f22b6ca8	MIT	text	drivers/gpu/drm/drm_mode_object.c
+drm/drm_modes.c	139fb56a44fd4b2bc7b8979a834a5134c4aad38bbdfeb16552efba649ac9f849	MIT	text	drivers/gpu/drm/drm_modes.c
+drm/drm_modeset_helper.c	e07c458665fdd2724107b9533ab904d89c28bf603061646eab92b3ceac53e313	MIT	text	drivers/gpu/drm/drm_modeset_helper.c
+drm/drm_modeset_lock.c	19ea8d303d87cc8ce19ea842ed2cdc193a6ad5791ffa1c2c20e04d09a5dde6df	MIT	text	drivers/gpu/drm/drm_modeset_lock.c
+drm/drm_panel.c	384d6629b2bca1c1e7667c51f3f153820d627d69029df61f794cdbf73d4381d9	MIT	text	drivers/gpu/drm/drm_panel.c
+drm/drm_panel_orientation_quirks.c	0b48bac28609bcd7e7a939bc9ec91e0ef6f9e116070196d4d8c82987cbaaf5ac	MIT	MIT	drivers/gpu/drm/drm_panel_orientation_quirks.c
+drm/drm_pci.c	52b434d38a0d1e0b91fba9bfb5f5510fc1996db23fbc686173ddf44dbf54d355	MIT	text	drivers/gpu/drm/drm_pci.c
+drm/drm_plane.c	c48bb5967842f96fd78296ec6e2ea36e57754085e1ec1fd7923538435bcf4470	MIT	text	drivers/gpu/drm/drm_plane.c
+drm/drm_plane_helper.c	c3a8ccd2fa53e548b0e10ef2e2c25a3749f4aa336234998ce0134d291258663f	MIT	text	drivers/gpu/drm/drm_plane_helper.c
+drm/drm_prime.c	29ddb71feea2055d2dcec46635a2265c62fe3fc621625a67f6875f931b2f9a68	MIT	text	drivers/gpu/drm/drm_prime.c
+drm/drm_print.c	5816e3579f5612612e6f373b8db0e3cc70ddc2a3096cb041c6f50fec154f4ebc	MIT	text	drivers/gpu/drm/drm_print.c
+drm/drm_privacy_screen.c	ff7858f95055808e251ce77f4fed453d3c6269ad8fcc16f6dd02f9620443ff4c	MIT	MIT	drivers/gpu/drm/drm_privacy_screen.c
+drm/drm_privacy_screen_x86.c	b66925efd1ffa54090ce5fc2089eb511c4f5a1c9b8e6f9d1424da3e277417ca6	MIT	MIT	drivers/gpu/drm/drm_privacy_screen_x86.c
+drm/drm_probe_helper.c	07cf50ac2ca1c653265c5778e53a0dff96b4c5269e1345440e4806517962693e	MIT	text	drivers/gpu/drm/drm_probe_helper.c
+drm/drm_property.c	00546353964d9b50435224fb3076e22c49df49ff391742e2a2d8708f721b2975	MIT	text	drivers/gpu/drm/drm_property.c
+drm/drm_rect.c	2fce0089dc7475a796dbc809aeb078dc859f13fdb1e8113fa483f37f7e73c44a	MIT	text	drivers/gpu/drm/drm_rect.c
+drm/drm_self_refresh_helper.c	bae807c1c0d349b39263ac7fa7e9680b45b7527746d59feef5eaaa3ba3ec715d	MIT	MIT	drivers/gpu/drm/drm_self_refresh_helper.c
+drm/drm_suballoc.c	bb01fd942a03e318c55a2e69583651880ea3ae549254a105d0215430ae258be0	DUAL	GPL-2.0 OR MIT	drivers/gpu/drm/drm_suballoc.c
+drm/drm_syncobj.c	d4bf2dd4a31465c1c06a0edcb352f168e5d4e82d02840ca4245ce4bf931a7380	MIT	text	drivers/gpu/drm/drm_syncobj.c
+drm/drm_vblank.c	c6edb115c1457be17d9a9aa44972694c67ffbb6b331cd858f21a51f39895868e	MIT	text	drivers/gpu/drm/drm_vblank.c
+drm/drm_vblank_helper.c	933a617cda827a9b55d84803d2f2cdbcdc2e81c0305f27188d2c97d8ca7f8dce	MIT	MIT	drivers/gpu/drm/drm_vblank_helper.c
+drm/drm_vblank_work.c	8d87eaad8e7a21029c8eee2252978da1c23b2ac58820f0bb9ee86e0a91825671	MIT	MIT	drivers/gpu/drm/drm_vblank_work.c
+drm/drm_vma_manager.c	01b94890c38f00e71bc6b71536b460fa855c13d8da204e5414f83085c6c6a210	DUAL	GPL-2.0 OR MIT	drivers/gpu/drm/drm_vma_manager.c
+drm/scheduler/sched_entity.c	121407affa81f18ae28166786ac3231ae37e54bf138cfbf81f35e4dedbe65a46	MIT	text	drivers/gpu/drm/scheduler/sched_entity.c
+drm/scheduler/sched_fence.c	76f7cbc1dd8e964ecbe630cde9a477d88d3adef3464bf510b0811f4fdc1792b9	MIT	text	drivers/gpu/drm/scheduler/sched_fence.c
+drm/scheduler/sched_main.c	ef311406e735c22955d093f27b69929e66f31d354d9c82151e989785d6b7ca05	MIT	text	drivers/gpu/drm/scheduler/sched_main.c
+drm/ttm/ttm_backup.c	5160fd5a1b7022034c17eac0b75f060797b16f287689f9787b3114ae236fc4f0	MIT	MIT	drivers/gpu/drm/ttm/ttm_backup.c
+drm/ttm/ttm_bo.c	68e65ce1c013cb209cb7ebb385ce03526c6b0156df3ee8fbf81721d47b0d42ff	DUAL	GPL-2.0 OR MIT	drivers/gpu/drm/ttm/ttm_bo.c
+drm/ttm/ttm_bo_util.c	6fe098c5da6977071d6a4f8bb3ac7fa521cfbe8a14eed27ce66e24c07d670bbf	DUAL	GPL-2.0 OR MIT	drivers/gpu/drm/ttm/ttm_bo_util.c
+drm/ttm/ttm_bo_vm.c	eb53e22198015794f9238171779aa7981e556f1e72637d26ba778a0aeb082d8f	DUAL	GPL-2.0 OR MIT	drivers/gpu/drm/ttm/ttm_bo_vm.c
+drm/ttm/ttm_device.c	e4cc5af60ba53d7f9c617c108643bcd6234b396e41083cf9a3d4dff3f4974f01	DUAL	GPL-2.0 OR MIT	drivers/gpu/drm/ttm/ttm_device.c
+drm/ttm/ttm_execbuf_util.c	ed9837d93fb986ac7f2aae6f4ea4621fd815686f0040aa71767473b9e2dd6269	DUAL	GPL-2.0 OR MIT	drivers/gpu/drm/ttm/ttm_execbuf_util.c
+drm/ttm/ttm_module.c	8637badcd3396e8fb4e4b0858737a85abd5544b877e0840290172a1dd0d18798	DUAL	GPL-2.0 OR MIT	drivers/gpu/drm/ttm/ttm_module.c
+drm/ttm/ttm_pool.c	4a71a63a3e984c9b5c7b4f6f07b9c2d9e9cd0424f53731bcfd67a52a5f1a1599	DUAL	GPL-2.0 OR MIT	drivers/gpu/drm/ttm/ttm_pool.c
+drm/ttm/ttm_range_manager.c	7c4be972cc5beb7a9627f7f6b13794c0ac987431bac98c393292c58a8dcd4973	DUAL	GPL-2.0 OR MIT	drivers/gpu/drm/ttm/ttm_range_manager.c
+drm/ttm/ttm_resource.c	a3c19d5c768c550335d0fa92ec0379ff9b2746980fccd806dfe175d0353d50ac	MIT	text	drivers/gpu/drm/ttm/ttm_resource.c
+drm/ttm/ttm_sys_manager.c	10270531dcb3082e7451f344c1951ce46f42ff269624b1f722911e8e05d7c16e	DUAL	GPL-2.0 OR MIT	drivers/gpu/drm/ttm/ttm_sys_manager.c
+drm/ttm/ttm_tt.c	fad2c3d2412a36a18096b74f5792559d4240524c83c7fea2ad59ec7296f34337	DUAL	GPL-2.0 OR MIT	drivers/gpu/drm/ttm/ttm_tt.c
+drm/clients/drm_client_internal.h	6f10fa33172e87667b6561eb60845c8c0af9350fd07b475d6a8e07f0cef085fb	MIT	MIT	drivers/gpu/drm/clients/drm_client_internal.h
+drm/display/drm_dp_helper_internal.h	caf04f4863f2688450bd613b8f0526e4d498f80ef39904ae99e34a654bd28fa3	MIT	MIT	drivers/gpu/drm/display/drm_dp_helper_internal.h
+drm/drm_crtc_helper_internal.h	11d2d48b8295f120628526ef2dd39a5a7e578bd5ff6212e44f9c7531cd1a2fc0	MIT	text	drivers/gpu/drm/drm_crtc_helper_internal.h
+drm/drm_crtc_internal.h	fbb9e5fc67af6477f2b73d0953b02eb80d3131268a84bbdc9260b7148b556d0d	MIT	text	drivers/gpu/drm/drm_crtc_internal.h
+drm/drm_displayid_internal.h	f41091f89c6c30c3657ed3c60db7a6322253d18fee29f73e22e32bdf0ff6c3ea	MIT	text	drivers/gpu/drm/drm_displayid_internal.h
+drm/drm_draw_internal.h	027a21f277589483e0765a6431da3c4d6462b3cd095b63d17209d755dc1822c7	DUAL	GPL-2.0 or MIT	drivers/gpu/drm/drm_draw_internal.h
+drm/drm_format_internal.h	99c81dd8f607d18411384e30bce3c5ce26d5788dd708eb9d737eb5b1638e9adc	DUAL	GPL-2.0 or MIT	drivers/gpu/drm/drm_format_internal.h
+drm/drm_internal.h	687f4c6cd8f2ef019cc52e4cd145d0300475ef5a2bf9e713e6caf94f31826f8a	MIT	text	drivers/gpu/drm/drm_internal.h
+drm/scheduler/gpu_scheduler_trace.h	18bc9a42c94c222b712fa9c903b91305ce80b4a887d8c452560d07903fb3fae8	MIT	text	drivers/gpu/drm/scheduler/gpu_scheduler_trace.h
+drm/scheduler/sched_internal.h	da791c7039e9f9df009cecf8d51de71edf4c83148e616cd059ed877b96e12d71	MIT	MIT	drivers/gpu/drm/scheduler/sched_internal.h
+drm/ttm/ttm_bo_internal.h	cba9ff607daa1a4ab0c92344efc4bc3ba58f8f3b6ab5f506333a459c920d4754	MIT	text	drivers/gpu/drm/ttm/ttm_bo_internal.h
+drm/ttm/ttm_module.h	bb517301d23c5c06f6188173ba52a07ec9e44208c6a8e9a0cfe9550ae94886dd	MIT	text	drivers/gpu/drm/ttm/ttm_module.h
+include/drm/amd_asic_type.h	cea577df48a684246ef00d887350d42b9fa5048b9135ae5e8e93dc9eb94a7809	MIT	text	include/drm/amd_asic_type.h
+include/drm/clients/drm_client_setup.h	43105064511faa076c0b3a217e886d8babb8ce45c73c198f7f498d579fcf99c8	MIT	MIT	include/drm/clients/drm_client_setup.h
+include/drm/display/drm_dp.h	0ca5de15b87b9cf91a021a8ae275a305bcd8d914337ce422f6ea738fa5728537	MIT	text	include/drm/display/drm_dp.h
+include/drm/display/drm_dp_dual_mode_helper.h	94a8d42bc7149ce26a43a681267656b7b45c7eb37f25a7c6c5452eb2e89fc8d8	MIT	text	include/drm/display/drm_dp_dual_mode_helper.h
+include/drm/display/drm_dp_helper.h	440e306a611f08badba8596791cf3e479acb734c39efc117a99873c39632168e	MIT	text	include/drm/display/drm_dp_helper.h
+include/drm/display/drm_dp_mst_helper.h	9e05d5c0af9e815d02693eae57f34488894485ec35b6d29e10306310cb2b0bf9	MIT	text	include/drm/display/drm_dp_mst_helper.h
+include/drm/display/drm_dp_tunnel.h	606c18570b1112253905cd7a9047d6a0ad6e05824c43f04ea4720b997b3d00ae	MIT	MIT	include/drm/display/drm_dp_tunnel.h
+include/drm/display/drm_dsc.h	f57cf45be321cdf4def25491ef54e2adfef9627c18cebc53bd9e2acd0fd2a394	MIT	MIT	include/drm/display/drm_dsc.h
+include/drm/display/drm_dsc_helper.h	dd0a8f30ee0c78d5ff61081f7dd928e85fd58436f6f41367e8d927ed36014f08	MIT	MIT	include/drm/display/drm_dsc_helper.h
+include/drm/display/drm_hdcp.h	d865ee282171ac2888d90dff2b3232558b03fd66286268dba399b34821080943	MIT	MIT	include/drm/display/drm_hdcp.h
+include/drm/display/drm_hdcp_helper.h	858d8c34bc50af8dfa978c38341d818844e7989701be588f8ad464af638f4f15	MIT	MIT	include/drm/display/drm_hdcp_helper.h
+include/drm/display/drm_hdmi_audio_helper.h	23adb192a7bc107c3db4f470bcd4059cdf24479fd68f2c6d7ddb04335509d344	MIT	MIT	include/drm/display/drm_hdmi_audio_helper.h
+include/drm/display/drm_hdmi_cec_helper.h	0cf6e4655bc8c3c01c91a632b211529e5e52453f2a97346f0df36daa9c4a85d7	MIT	MIT	include/drm/display/drm_hdmi_cec_helper.h
+include/drm/display/drm_hdmi_helper.h	c485ef6fe4284048e8f80341f12a7c6f1a8677424b50aae1d0410e5f356b87df	MIT	MIT	include/drm/display/drm_hdmi_helper.h
+include/drm/display/drm_hdmi_state_helper.h	0c7c19c0ed3206049784f2091f5033561d4877709a9700ab3c65ce4c0bb7f20c	MIT	MIT	include/drm/display/drm_hdmi_state_helper.h
+include/drm/display/drm_scdc.h	e94fd10ddc89309ac635005b707f7e2ec4bad6914032dcfd307dd0e1a52b2d13	MIT	text	include/drm/display/drm_scdc.h
+include/drm/display/drm_scdc_helper.h	06426dd67bc4c289ec70c5c5d81be26187e7725588d8eefe78523609708b7f8e	MIT	text	include/drm/display/drm_scdc_helper.h
+include/drm/drm_atomic.h	26ca0368628739a74e413518822ac92c2dbe369eec42b53d3eefff28e4f5675c	MIT	text	include/drm/drm_atomic.h
+include/drm/drm_atomic_helper.h	defd9e744bb190b42c0fc0bf3ced4bbea840fff3d5e078e21381e8fe4eb3878c	MIT	text	include/drm/drm_atomic_helper.h
+include/drm/drm_atomic_state_helper.h	165ed56511b0b1c45640aea35ee60b4728335a7c264526deeca7967d90cea45c	MIT	text	include/drm/drm_atomic_state_helper.h
+include/drm/drm_atomic_uapi.h	0fabc1d74c02a65b37b3d9ac505ec85362cbcb427e297227e3f3e059bec361fe	MIT	text	include/drm/drm_atomic_uapi.h
+include/drm/drm_audio_component.h	6d59e60cbb84b118da265c0250d0f52b5ded63f2c7ff87de61a6023c228b30d6	MIT	MIT	include/drm/drm_audio_component.h
+include/drm/drm_auth.h	3c4f8759e905141c9128260f185e7c9a0289b7aff9bacbb5bb4ee4f292f2b726	MIT	text	include/drm/drm_auth.h
+include/drm/drm_blend.h	46a47b37fcb9dbb1da3f98d58db0075d21b1a0cde21290c5d627d4ace05f044f	MIT	text	include/drm/drm_blend.h
+include/drm/drm_bridge.h	b89d12dade74a7a9e58869ce35d70037dbec4877f9da665aa81ff81785996f0c	MIT	text	include/drm/drm_bridge.h
+include/drm/drm_buddy.h	dc13df33330e1b2ea27e623cee8be533c1fe2a63552b3e46651f312bd7eaa1e0	MIT	MIT	include/drm/drm_buddy.h
+include/drm/drm_cache.h	2626120d1dd4222c14779b71a352e239aa80536aeebc1e742cf552abb77598ed	MIT	text	include/drm/drm_cache.h
+include/drm/drm_client.h	169bf2c35df070adaccec1a1bf35f8d582b62e3ff7016905ae19ae4dcf515758	DUAL	GPL-2.0 or MIT	include/drm/drm_client.h
+include/drm/drm_client_event.h	ded8cfb90be305ff3cf26ffa91913b3bad50d281309ae9798301d0db59afe5ab	DUAL	GPL-2.0 or MIT	include/drm/drm_client_event.h
+include/drm/drm_color_mgmt.h	2d9ef9b280ee72734e9ef65fd6b6c33c636ab481080b7defc411fe0c23aff0c2	MIT	text	include/drm/drm_color_mgmt.h
+include/drm/drm_connector.h	e5d4137b60b9c9e13e9a37642bc36a81eca00d459cfad059536a0e53ad481d5e	MIT	text	include/drm/drm_connector.h
+include/drm/drm_crtc.h	5256a74b6b1d614bd8410c01c0c9c654d38355af660ba4b6928ea96ad183ac27	MIT	text	include/drm/drm_crtc.h
+include/drm/drm_crtc_helper.h	c81f00db30ddb11af48f7f6497141ef9e2513b00ac51731880d0cbe606dcf46d	MIT	text	include/drm/drm_crtc_helper.h
+include/drm/drm_damage_helper.h	9cdfef500b856dfa83ec743bd379c0e05a07718a80252f818cf05a704226fd26	DUAL	GPL-2.0 OR MIT	include/drm/drm_damage_helper.h
+include/drm/drm_debugfs.h	f3f4c6d7765e4f36c03aef98c17912ff9cec01534a0d7c20aa8375d6cb8fee88	MIT	text	include/drm/drm_debugfs.h
+include/drm/drm_debugfs_crc.h	fca5a1b50b80cc6b3bd120175e10c657bf47a75a9a6313f9e7a6bf146a73885d	MIT	text	include/drm/drm_debugfs_crc.h
+include/drm/drm_drv.h	66242b7bb8c93671e3b23791daac0d521d8cccac37370b7dd046748798bde47e	MIT	text	include/drm/drm_drv.h
+include/drm/drm_edid.h	62d60d78c2bbb1f25668fc3af4719f61b88cf8622b3914e91c997b005eccfc20	MIT	text	include/drm/drm_edid.h
+include/drm/drm_eld.h	c727bcb398db53d5f774e39363dc4ffbf8ef7832ef0d1d2570a618e10937b507	MIT	MIT	include/drm/drm_eld.h
+include/drm/drm_encoder.h	445f36154601a1618d971afcf2f8fa9000e0a828b86d65a16aab26a89745474b	MIT	text	include/drm/drm_encoder.h
+include/drm/drm_exec.h	98ec19aabea147b2c62f264a02bdbdad498ce0d8294d6628c27f710c7833bff0	DUAL	GPL-2.0 OR MIT	include/drm/drm_exec.h
+include/drm/drm_fb_helper.h	414e6c7bb2bb05e47c540bf37b463517d893401644edbb2c8f4b959a9d1a491c	MIT	text	include/drm/drm_fb_helper.h
+include/drm/drm_fbdev_dma.h	752ffda34636bbf952fa34caf94ee9e12ca0010464c61d131e99fd333255e443	MIT	MIT	include/drm/drm_fbdev_dma.h
+include/drm/drm_fbdev_shmem.h	1f05cfb9a274be7e7208f29478b23777d00a90f18119236b4a5b40fb6418604c	MIT	MIT	include/drm/drm_fbdev_shmem.h
+include/drm/drm_fbdev_ttm.h	88bc8bf825b2c3d75c8e4569481179f060bf9c761fed81680037a847bab9c098	MIT	MIT	include/drm/drm_fbdev_ttm.h
+include/drm/drm_file.h	a3798138a06092678a091617183e4be65eee8becbef0f25452c08556f4b5b38b	MIT	text	include/drm/drm_file.h
+include/drm/drm_fixed.h	c62fbb9cd17416f7921964f14f39e45d5e3df3e61e49ea213a3aa1ae27d60051	MIT	text	include/drm/drm_fixed.h
+include/drm/drm_flip_work.h	d20dcd1362a2227cf3b161e78edd8d2c08672d54e161eceb13844043bfd472f3	MIT	text	include/drm/drm_flip_work.h
+include/drm/drm_fourcc.h	96caef825e036aeb4736fec6614b39ea5d4d7fa0e8eb81f7d10fc8e40be5338c	MIT	text	include/drm/drm_fourcc.h
+include/drm/drm_framebuffer.h	2434559e427dc128a7b45fb4c36d9ba37f8c822aaa72d920a4045ca9ca4eed0a	MIT	text	include/drm/drm_framebuffer.h
+include/drm/drm_gem.h	5cec5762deae8f5e2f2a559b2b9d233f545422e7f9aac3570d5568c2e894db8e	MIT	text	include/drm/drm_gem.h
+include/drm/drm_gpusvm.h	b466d65756125d75f3c07bbbaa0ad957ee913b93ff25b48f7918b1ef413381f2	DUAL	GPL-2.0-only OR MIT	include/drm/drm_gpusvm.h
+include/drm/drm_gpuvm.h	04e1e16c4e77ca813ad41c304580b6f39e0a822ab8e48ff5e01dc3c3e978e294	DUAL	GPL-2.0-only OR MIT	include/drm/drm_gpuvm.h
+include/drm/drm_ioctl.h	19e9387b68cc066bf98ff22add414855d82084486ddcd5344594c883e415d4ac	MIT	text	include/drm/drm_ioctl.h
+include/drm/drm_mm.h	f77781d73fc713fa76b60972cde2d6684c88fdee7b7eea5ded9348f723c1a03a	MIT	text	include/drm/drm_mm.h
+include/drm/drm_mode_config.h	06161bd3e29e68f5d81f32620571cc45df9762902d013185c2b4b5a717a3457e	MIT	text	include/drm/drm_mode_config.h
+include/drm/drm_mode_object.h	65bfb936e94ccb2fbfca867538cd03c329688574e5dce9305ddd967db93ce0f2	MIT	text	include/drm/drm_mode_object.h
+include/drm/drm_modes.h	d2502e077f292cffda4ca98d8c83df610397cb62637bb932d3b4256c9ce73759	MIT	text	include/drm/drm_modes.h
+include/drm/drm_modeset_helper.h	5cb81097fd0b29a7152ecc823cca988d55cc974f9a92948adedd00afb8dd4eae	MIT	text	include/drm/drm_modeset_helper.h
+include/drm/drm_modeset_helper_vtables.h	b299e4fad16a31b5d8ab6a84defaa87034dd9bad3b46dcc6006a64b7e586efd0	MIT	text	include/drm/drm_modeset_helper_vtables.h
+include/drm/drm_modeset_lock.h	c41c21cd102a3a5a42ffa2be8599308fdb962bc7fc5ea15fbda7cbc1e2958244	MIT	text	include/drm/drm_modeset_lock.h
+include/drm/drm_module.h	dc6892ad6b8dc42b1500134f318561fe8543cb89f28693fdd8ca54a28b806207	MIT	MIT	include/drm/drm_module.h
+include/drm/drm_pagemap.h	5f688c6e9e4c8fa4801b7f1a9f5ea5cdfd2925bcb2031ea41bbd4b56aa677f79	MIT	MIT	include/drm/drm_pagemap.h
+include/drm/drm_panel.h	bdf2a6559ca06d773068f39154cd4d3badc1dfcfeee0151ee97c151a7e8dd6d4	MIT	text	include/drm/drm_panel.h
+include/drm/drm_panic.h	cd28be77003893282ef7108a50ec572ad6d2b33b3a26a4ab0c366c291e5156cb	DUAL	GPL-2.0 or MIT	include/drm/drm_panic.h
+include/drm/drm_pciids.h	ba5fec67c26231cee37716519d6ef5f240881ea12b7005094dbb0f4cf14d9f3f	MIT	MIT	include/drm/drm_pciids.h
+include/drm/drm_plane.h	effbea193575e3c2734c5baea585e93acf1987a45e46458f7153e53c7c234d48	MIT	text	include/drm/drm_plane.h
+include/drm/drm_plane_helper.h	81995b67aea55f88f0d57a98c3672e8a3ea18ea00d0243ee21e8a3a2541d644e	MIT	text	include/drm/drm_plane_helper.h
+include/drm/drm_prime.h	4b3362896d4752b57c5d9ffffd905080193292c15443e01e173b23c77a869c5f	MIT	text	include/drm/drm_prime.h
+include/drm/drm_print.h	00c6b2883e81ed9a986b7226861cef2922473e5e3cb48b0b2c551269d11dcb95	MIT	text	include/drm/drm_print.h
+include/drm/drm_privacy_screen_consumer.h	43f310e92522933f889e2f65ee2cd18a2e4dcf30b9e078a9d549e6d36289f521	MIT	MIT	include/drm/drm_privacy_screen_consumer.h
+include/drm/drm_privacy_screen_driver.h	0f9d08b01050cfc867a5691f6667b25a548f9e50516404ba18ce060e89fb7671	MIT	MIT	include/drm/drm_privacy_screen_driver.h
+include/drm/drm_privacy_screen_machine.h	41bf104768bc24bb34e3aa207d8a1ae267f0a3679f1dae7b189a36b41082a36f	MIT	MIT	include/drm/drm_privacy_screen_machine.h
+include/drm/drm_probe_helper.h	bcafa5e1b9751c3518348f8deee0de9532f7d70f8eb88233583bbfd7784a842f	DUAL	GPL-2.0 OR MIT	include/drm/drm_probe_helper.h
+include/drm/drm_property.h	e32b29da2ddd823ebe51d4a0e4221517214be4d901a46b498ec2a36211c561eb	MIT	text	include/drm/drm_property.h
+include/drm/drm_rect.h	9faf2644c273934c05e4dbc788afe2dec58aac2b22b6eb31a29a9a39821ed353	MIT	text	include/drm/drm_rect.h
+include/drm/drm_self_refresh_helper.h	3c21220a5da75301faa25b4cd4d72036a25c6278c131b046b2afe54ce099f9ed	MIT	MIT	include/drm/drm_self_refresh_helper.h
+include/drm/drm_suballoc.h	0bff90c3c8cf041158fba0e8508da15cb958e7155990b40fa9e2078fd357e1f6	DUAL	GPL-2.0 OR MIT	include/drm/drm_suballoc.h
+include/drm/drm_syncobj.h	fb97882ee3220ff6a99d60d2332d7b0afa473d569500cf1042c05dd16534c3da	MIT	text	include/drm/drm_syncobj.h
+include/drm/drm_util.h	263cc418eee6cbbd34a4cfe36f6d9a18933704b22024fd627ff921a195f72ff4	MIT	text	include/drm/drm_util.h
+include/drm/drm_utils.h	31cfdcefedf3e8ba4ab1982ec42242b8a268ae7998aa0fbbd4c2eb0b8c58e6da	MIT	MIT	include/drm/drm_utils.h
+include/drm/drm_vblank.h	6a46c358b601d132d6f32109e7d3e9da7f19ad6b4469e488026718c5fd8f071a	MIT	text	include/drm/drm_vblank.h
+include/drm/drm_vblank_work.h	7449e01915ddd1e389da5106eb40c0809341c2ce110aef2437e6064c15156c40	MIT	MIT	include/drm/drm_vblank_work.h
+include/drm/drm_vma_manager.h	76497508aeee275b309dd61c2480adf6086dab998fd52e5f30ecb735923418d8	MIT	text	include/drm/drm_vma_manager.h
+include/drm/gpu_scheduler.h	09af50ea3ecd5e89e1fc9bfbb514cb46055977c4f9ab33293785df889da629db	MIT	text	include/drm/gpu_scheduler.h
+include/drm/gud.h	7ea644a846dd6a3c6427ed45877a8b5d1e87da0ca558ece8c82d3a5d044f549a	MIT	MIT	include/drm/gud.h
+include/drm/spsc_queue.h	03568821bb8df6ba41b652b96f90617c81ddf9e18b297961b6e733d5c5bfd6f0	MIT	text	include/drm/spsc_queue.h
+include/drm/task_barrier.h	86b2f299f54a7069ba3ddbcdbe7a25f2f64a19501ff7254bdaf75419b21c41b6	MIT	text	include/drm/task_barrier.h
+include/drm/ttm/ttm_backup.h	dbb77d542cde3e62a21bf90b74785324550d0c97e6db2e6f92f729c35cc02260	MIT	MIT	include/drm/ttm/ttm_backup.h
+include/drm/ttm/ttm_bo.h	6b9a775c401c975c221f6fb4f78cc5408c47316c68ea48117b7dc1b33f5da005	MIT	text	include/drm/ttm/ttm_bo.h
+include/drm/ttm/ttm_caching.h	4004c637257a1147149649f0db21d0cabbdbe07c137409ef5ba698a8d0a40f65	MIT	text	include/drm/ttm/ttm_caching.h
+include/drm/ttm/ttm_device.h	116666244fc37b04448b145732b2328666fd0fad8f8aef796de377c180667b8a	MIT	text	include/drm/ttm/ttm_device.h
+include/drm/ttm/ttm_execbuf_util.h	6393e8fb5c9dbeae4c98dc494ba05f882f40f007be437c1dd6a0fe7e3770b039	MIT	text	include/drm/ttm/ttm_execbuf_util.h
+include/drm/ttm/ttm_kmap_iter.h	61c83bc1e9d69a4a0c4acc9947682232ae7f80ce28a5797b366eae773d262290	MIT	MIT	include/drm/ttm/ttm_kmap_iter.h
+include/drm/ttm/ttm_placement.h	7fa52416e77115810c57300847b20f10fe1d801df4ada75df05bc706500fdff5	MIT	text	include/drm/ttm/ttm_placement.h
+include/drm/ttm/ttm_pool.h	f80b5fcb8f012f7d3a4df82504048ce3f38c0d76b799505dddf6354b2f59a6a7	DUAL	GPL-2.0 OR MIT	include/drm/ttm/ttm_pool.h
+include/drm/ttm/ttm_range_manager.h	d90df16986805e8249569ee5e2da3dfb1fef2be1ed8bf798b913417ad7ae4f4a	DUAL	GPL-2.0 OR MIT	include/drm/ttm/ttm_range_manager.h
+include/drm/ttm/ttm_resource.h	8dd476edd81f5a633e4d10717ce462535060b7aaa89688bb2256013774d6a852	MIT	text	include/drm/ttm/ttm_resource.h
+include/drm/ttm/ttm_tt.h	864935c6b7adf5b2ef93d8b2fe2d0d94251b11c3b6bc11a0b7ae37006f3e9ec7	MIT	text	include/drm/ttm/ttm_tt.h
+include/linux/gpu_buddy.h	3990f0add555674d5a387a0604254c63688e7033dc27e40200784f0644a9f13c	MIT	MIT	include/linux/gpu_buddy.h
+include/uapi/drm/amdgpu_drm.h	04c85d726c2dbe428de856b0ac98e762d0f454e0e75b8afa59548dec7488373e	MIT	text	include/uapi/drm/amdgpu_drm.h
+include/uapi/drm/asahi_drm.h	69fe416b7294dfec4794217bd11379effd53caff4e86010bb803f1b34bdf5e89	MIT	MIT	include/uapi/drm/asahi_drm.h
+include/uapi/drm/drm.h	9adac9567a18a234770d98a31c6c505a18e2db02fb0eca596730314d86a46549	MIT	text	include/uapi/drm/drm.h
+include/uapi/drm/drm_fourcc.h	d521522ed871d67578e0eb9682541d49041e3dc3f5b1aafac6f3ba9e6cf9c566	MIT	text	include/uapi/drm/drm_fourcc.h
+include/uapi/drm/drm_mode.h	40b502fee0f74fe46366afd7a744e7e125580d55a86167dca3592a7cef009754	MIT	text	include/uapi/drm/drm_mode.h
+include/uapi/drm/drm_sarea.h	3d7813647d95ee1a82d241dab60a47141ac84bd8d694f07ff0398404921988d6	MIT	text	include/uapi/drm/drm_sarea.h
+include/uapi/drm/i915_drm.h	6a6c165125a03132fc6f616cd0dc7938b7d8a81b01073e19f8b9fd4bcbc19e0e	MIT	text	include/uapi/drm/i915_drm.h
+include/uapi/drm/lima_drm.h	118eafe604a7811402ab4d254a23038beac454e97d3ea03a7f96bc2382becf4e	DUAL	(GPL-2.0 WITH Linux-syscall-note) OR MIT	include/uapi/drm/lima_drm.h
+include/uapi/drm/msm_drm.h	3a09c8ec494ef2554ec2d75e02ada555231a3b4bf2bc4b609102e2cfd7972325	MIT	text	include/uapi/drm/msm_drm.h
+include/uapi/drm/nouveau_drm.h	2758ed28465a923c5a0eb1c2d2a4af7b43a7fc52e98b38723924a3fae48ccc39	MIT	text	include/uapi/drm/nouveau_drm.h
+include/uapi/drm/nova_drm.h	ebef6f38ae7fe744c1e913ab07c4396c16a501741127481c7c7ac86f9e6741d0	MIT	MIT	include/uapi/drm/nova_drm.h
+include/uapi/drm/panfrost_drm.h	0d66aa7da0a9a6aeb00c120bc5b59643d7952eaf02c38d8f3e01311a78e6b73d	MIT	MIT	include/uapi/drm/panfrost_drm.h
+include/uapi/drm/panthor_drm.h	6165ac93338d2a41f56404a0afc8c6822058c8612f7c8eebb69168044a54ed74	MIT	MIT	include/uapi/drm/panthor_drm.h
+include/uapi/drm/pvr_drm.h	29ba017ceed95d4f023bc76c349f4dabbff361f3afdacdcea07087342f445a4a	DUAL	(GPL-2.0-only WITH Linux-syscall-note) OR MIT	include/uapi/drm/pvr_drm.h
+include/uapi/drm/qxl_drm.h	548e963e52309e741c413a2d1918e6f8e31399a350f98b5fd46c38155546ba6e	MIT	text	include/uapi/drm/qxl_drm.h
+include/uapi/drm/radeon_drm.h	4d1d189cab7ab4cf256d011f62ec43985fadcc16a995e0acb84e70b3ac8ff52f	MIT	text	include/uapi/drm/radeon_drm.h
+include/uapi/drm/rocket_accel.h	ad4535557bead4c118495dbfdfa7b88fa5666d0883b365ec388ed60300491ccc	MIT	MIT	include/uapi/drm/rocket_accel.h
+include/uapi/drm/tegra_drm.h	84969d7efe2d983090d0b4b0f47f0dcf0f5853b830808677005b1af9d1f954c9	MIT	MIT	include/uapi/drm/tegra_drm.h
+include/uapi/drm/v3d_drm.h	eafcaa1f22beedd040baa27912b506732bc32fed01b23a4b581148a267afbac3	MIT	text	include/uapi/drm/v3d_drm.h
+include/uapi/drm/vc4_drm.h	753ab260b706d1840e4b1c2887bdababbe7341de2e3460c9ace4ace4a161f889	MIT	text	include/uapi/drm/vc4_drm.h
+include/uapi/drm/vgem_drm.h	91e71d11375134aff8b981eea11bf7d3eca9d7f528fbdbd351ec5fb9cac076e3	MIT	text	include/uapi/drm/vgem_drm.h
+include/uapi/drm/virtgpu_drm.h	3fb60f5131574dd1fb4aff3e10a45448fa67fe10796e0cf21c6ee583eb996cbd	MIT	text	include/uapi/drm/virtgpu_drm.h
+include/uapi/drm/vmwgfx_drm.h	b1601123d2701092a0add1bd76ce64dbbc44072cdf56be99b346423838ccbb76	DUAL	(GPL-2.0 WITH Linux-syscall-note) OR MIT	include/uapi/drm/vmwgfx_drm.h
+include/uapi/drm/xe_drm.h	0183a48af575f0786a0e6be996900e874f89edb2158879b47671ad6367b6e74a	MIT	MIT	include/uapi/drm/xe_drm.h

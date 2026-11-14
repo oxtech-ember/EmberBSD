@@ -59,7 +59,10 @@ file	external/bsd/drm2/drm/drm_agp_hook.c		drmkms
 file	external/bsd/drm2/drm/drm_cdevsw.c		drmkms
 file	external/bsd/drm2/drm/drm_gem_vm.c		drmkms
 file	external/bsd/drm2/drm/drm_module.c		drmkms
-file	external/bsd/drm2/drm/drm_stub.c		!drmkms & !drmbase
+# A kernel with the 6.18 core (files.drmkms618) or the module of it has no
+# use for the userland-style drm_ioctl stub: it would clash with drm_ioctl.
+define	drm_nostub
+file	external/bsd/drm2/drm/drm_stub.c		!drmkms & !drmbase & !drm_nostub
 file	external/bsd/drm2/drm/drm_sysctl.c		drmkms
 
 # pci bus ids -- doesn't depend on all of pci, just the header files

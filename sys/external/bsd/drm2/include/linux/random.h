@@ -34,6 +34,13 @@
 
 #include <sys/cprng.h>
 
+static inline void
+get_random_bytes(void *buf, size_t len)
+{
+
+	cprng_strong(kern_cprng, buf, len, 0);
+}
+
 static inline int
 get_random_int(void)
 {

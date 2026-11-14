@@ -32,9 +32,17 @@
 #ifndef _LINUX_UUID_H_
 #define _LINUX_UUID_H_
 
+#include <sys/systm.h>
+
+#include <linux/random.h>
+#include <linux/types.h>
+
 typedef struct {
 	unsigned char guid_bytes[16];
 } guid_t;
+
+#define	UUID_SIZE	16
+#define	GUID_SIZE	16
 
 #define	GUID_INIT(x, y, z, v0, v1, v2, v3, v4, v5, v6, v7) ((guid_t)	      \
 {									      \
@@ -86,6 +94,54 @@ uuid_is_valid(const char uuid[static 36])
 	}
 
 	return 1;
+}
+
+/* guid_t and uuid_t are 16 bytes, compared and copied as such. */
+static inline void
+guid_copy(guid_t *dst, const guid_t *src)
+{
+
+	memcpy(dst, src, sizeof(*dst));
+}
+
+static inline bool
+guid_equal(const guid_t *a, const guid_t *b)
+{
+
+	return memcmp(a, b, sizeof(*a)) == 0;
+}
+
+static inline bool
+guid_is_null(const guid_t *g)
+{
+	static const guid_t null;
+
+	return guid_equal(g, &null);
+}
+
+static inline void
+import_guid(guid_t *g, const unsigned char *buf)
+{
+
+	memcpy(g, buf, sizeof(*g));
+}
+
+static inline void
+export_guid(unsigned char *buf, const guid_t *g)
+{
+
+	memcpy(buf, g, sizeof(*g));
+}
+
+/* A random (version 4) GUID. */
+static inline void
+guid_gen(guid_t *g)
+{
+
+	get_random_bytes(g, sizeof(*g));
+	/* version 4 in byte 7, variant 10xx in byte 8 */
+	g->guid_bytes[7] = (g->guid_bytes[7] & 0x0f) | 0x40;
+	g->guid_bytes[8] = (g->guid_bytes[8] & 0x3f) | 0x80;
 }
 
 #endif  /* _LINUX_UUID_H_ */

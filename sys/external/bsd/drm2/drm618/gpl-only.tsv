@@ -1,0 +1,49 @@
+path	kind	class	spdx	bsd-rewrite-in-drm2
+drm/display/drm_hdcp_helper.c	c	GPL	GPL-2.0	drm/drm_hdcp.c
+drm/drm_bridge_helper.c	c	GPL	GPL-2.0-or-later	-
+drm/drm_fb_dma_helper.c	c	GPL	GPL-2.0-or-later	-
+drm/drm_gem_atomic_helper.c	c	GPL	GPL-2.0-or-later	-
+drm/drm_gem_dma_helper.c	c	GPL	GPL-2.0-or-later	drm/drm_gem_cma_helper.c
+drm/drm_gem_framebuffer_helper.c	c	GPL	GPL-2.0-or-later	drm/drm_gem_framebuffer_helper.c
+drm/drm_gem_shmem_helper.c	c	GPL	GPL-2.0	drm/drm_gem_shmem_helper.c
+drm/drm_gem_ttm_helper.c	c	GPL	GPL-2.0-or-later	-
+drm/drm_lease.c	c	GPL	GPL-2.0-or-later	drm/drm_lease.c
+drm/drm_managed.c	c	GPL	GPL-2.0	-
+drm/drm_panel_backlight_quirks.c	c	GPL	GPL-2.0	-
+drm/drm_simple_kms_helper.c	c	GPL	GPL-2.0-or-later	-
+drm/drm_sysfs.c	c	GPL	GPL-2.0-only	drm/drm_sysfs.c
+drm/drm_trace_points.c	c	NONE	-	-
+drm/drm_writeback.c	c	GPL	GPL-2.0	drm/drm_writeback.c
+drm/display/drm_dp_mst_topology_internal.h	h	GPL	GPL-2.0-only	-
+drm/drm_trace.h	h	GPL	GPL-2.0	-
+include/drm/display/drm_dp_aux_bus.h	h	GPL	GPL-2.0	-
+include/drm/drm_accel.h	h	GPL	GPL-2.0	-
+include/drm/drm_bridge_connector.h	h	GPL	GPL-2.0+	-
+include/drm/drm_bridge_helper.h	h	GPL	GPL-2.0-or-later	-
+include/drm/drm_device.h	h	NONE	-	-
+include/drm/drm_fb_dma_helper.h	h	GPL	GPL-2.0	-
+include/drm/drm_format_helper.h	h	GPL	GPL-2.0-or-later	-
+include/drm/drm_gem_atomic_helper.h	h	GPL	GPL-2.0-or-later	-
+include/drm/drm_gem_dma_helper.h	h	GPL	GPL-2.0	-
+include/drm/drm_gem_framebuffer_helper.h	h	NONE	-	-
+include/drm/drm_gem_shmem_helper.h	h	GPL	GPL-2.0	-
+include/drm/drm_gem_ttm_helper.h	h	GPL	GPL-2.0-or-later	-
+include/drm/drm_gem_vram_helper.h	h	GPL	GPL-2.0-or-later	-
+include/drm/drm_kunit_helpers.h	h	GPL	GPL-2.0	-
+include/drm/drm_lease.h	h	GPL	GPL-2.0-or-later	-
+include/drm/drm_managed.h	h	GPL	GPL-2.0	-
+include/drm/drm_mipi_dbi.h	h	GPL	GPL-2.0-or-later	-
+include/drm/drm_mipi_dsi.h	h	GPL	GPL-2.0-only	-
+include/drm/drm_of.h	h	GPL	GPL-2.0	-
+include/drm/drm_simple_kms_helper.h	h	GPL	GPL-2.0-or-later	-
+include/drm/drm_sysfs.h	h	GPL	GPL-2.0	-
+include/drm/drm_vblank_helper.h	h	GPL	GPL-2.0+	-
+include/drm/drm_writeback.h	h	GPL	GPL-2.0	-
+include/uapi/drm/amdxdna_accel.h	uapi	UAPI-NOTE	GPL-2.0 WITH Linux-syscall-note	-
+include/uapi/drm/armada_drm.h	uapi	UAPI-NOTE	GPL-2.0 WITH Linux-syscall-note	-
+include/uapi/drm/etnaviv_drm.h	uapi	UAPI-NOTE	GPL-2.0 WITH Linux-syscall-note	-
+include/uapi/drm/exynos_drm.h	uapi	UAPI-NOTE	GPL-2.0+ WITH Linux-syscall-note	-
+include/uapi/drm/habanalabs_accel.h	uapi	UAPI-NOTE	GPL-2.0 WITH Linux-syscall-note	-
+include/uapi/drm/ivpu_accel.h	uapi	UAPI-NOTE	GPL-2.0-only WITH Linux-syscall-note	-
+include/uapi/drm/omap_drm.h	uapi	UAPI-NOTE	GPL-2.0 WITH Linux-syscall-note	-
+include/uapi/drm/qaic_accel.h	uapi	UAPI-NOTE	GPL-2.0 WITH Linux-syscall-note	-

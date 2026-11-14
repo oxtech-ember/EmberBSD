@@ -115,6 +115,33 @@ strscpy(char *dst, const char *src, size_t dstsize)
 	return dstsize - n;
 }
 
+/*
+ * strscpy_pad(dst, src, dstsize)
+ *
+ *	Like strscpy, and the rest of dst is zeroed, also when src
+ *	did not fit.  EmberBSD addition, AI-assisted.
+ */
+static inline ssize_t
+strscpy_pad(char *dst, const char *src, size_t dstsize)
+{
+	ssize_t n = strscpy(dst, src, dstsize);
+
+	if (n >= 0 && (size_t)n < dstsize)
+		memset(dst + n, 0, dstsize - n);
+	return n;
+}
+
+/*
+ * strtomem_pad(dest, src, pad): copy a string into a fixed char array
+ * without the terminator, the rest filled with pad (EmberBSD addition).
+ */
+#define	strtomem_pad(dest, src, pad)	do {				      \
+	const size_t __dsz = sizeof(dest);				      \
+	const size_t __ssz = strnlen((src), __dsz);			      \
+	memcpy((dest), (src), __ssz);					      \
+	memset((char *)(dest) + __ssz, (pad), __dsz - __ssz);		      \
+} while (0)
+
 static inline void *
 memset32(uint32_t *buf, uint32_t v, size_t n)
 {

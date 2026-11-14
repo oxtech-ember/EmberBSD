@@ -43,6 +43,7 @@ struct xa_limit {
 
 struct xarray {
 	kmutex_t		xa_lock;
+	struct cpu_info		*xa_owner;	/* the cpu that holds xa_lock (a spin mutex), or NULL */
 	struct rb_tree		xa_tree;
 	gfp_t			xa_gfp;
 };
@@ -51,6 +52,9 @@ struct xarray {
 	for ((INDEX) = 0, (ENTRY) = xa_find((XA), &(INDEX), ULONG_MAX, -1);   \
 		(ENTRY) != NULL;					      \
 		(ENTRY) = xa_find_after((XA), &(INDEX), ULONG_MAX, -1))
+
+/* A range of ids for xa_alloc: [min, max]. */
+#define	XA_LIMIT(MIN, MAX)	((struct xa_limit){ .min = (MIN), .max = (MAX) })
 
 #define	XA_ERROR(error)	((void *)(((uintptr_t)error << 2) | 2))
 
@@ -64,7 +68,43 @@ xa_err(void *cookie)
 	return (uintptr_t)cookie >> 2;
 }
 
+static inline bool
+xa_is_err(const void *entry)
+{
+
+	return xa_err(__UNCONST(entry)) != 0;
+}
+
 #define	XA_FLAGS_ALLOC	0
+
+/*
+ * Locking of the tree by the caller.  The readers (xa_load, xa_find,
+ * xa_find_after) work with the lock held by the caller, as in Linux, where they
+ * are lockless: the owner field says that the lock is held by this cpu.
+ * xa_lock is an IPL_VM spin mutex
+ * (see xa_init_flags), so the _irq, _bh and _irqsave forms are the same
+ * operation; flags is only set so that callers do not use it uninitialised.
+ */
+#define	xa_lock(XA)		do {					      \
+	mutex_enter(&(XA)->xa_lock);					      \
+	(XA)->xa_owner = curcpu();					      \
+} while (0)
+#define	xa_unlock(XA)		do {					      \
+	(XA)->xa_owner = NULL;						      \
+	mutex_exit(&(XA)->xa_lock);					      \
+} while (0)
+#define	xa_lock_irq(XA)		xa_lock(XA)
+#define	xa_unlock_irq(XA)	xa_unlock(XA)
+#define	xa_lock_bh(XA)		xa_lock(XA)
+#define	xa_unlock_bh(XA)	xa_unlock(XA)
+#define	xa_lock_irqsave(XA, FLAGS) do {					      \
+	(FLAGS) = 0;							      \
+	xa_lock(XA);							      \
+} while (0)
+#define	xa_unlock_irqrestore(XA, FLAGS) do {				      \
+	(void)(FLAGS);							      \
+	xa_unlock(XA);							      \
+} while (0)
 
 #define	xa_alloc	linux_xa_alloc
 #define	xa_destroy	linux_xa_destroy
@@ -89,5 +129,14 @@ void *	xa_find_after(struct xarray *, unsigned long *, unsigned long,
 	    unsigned);
 
 extern const struct xa_limit xa_limit_32b;
+
+/* True if nothing is stored. */
+static inline bool
+xa_empty(struct xarray *xa)
+{
+	unsigned long index = 0;
+
+	return xa_find(xa, &index, ULONG_MAX, -1) == NULL;
+}
 
 #endif	/* _LINUX_XARRAY_H_ */

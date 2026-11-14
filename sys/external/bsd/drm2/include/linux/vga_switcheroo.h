@@ -37,7 +37,23 @@
 #include <sys/cdefs.h>
 #include <sys/device_if.h>
 
+struct pci_dev;
+
 #define	VGA_SWITCHEROO_CAN_SWITCH_DDC	__BIT(0)
+
+/*
+ * Without vga_switcheroo nothing owns the DDC lines: locking is a no-op
+ * (EmberBSD).
+ */
+static inline void
+vga_switcheroo_lock_ddc(struct pci_dev *pdev)
+{
+}
+
+static inline void
+vga_switcheroo_unlock_ddc(struct pci_dev *pdev)
+{
+}
 
 static inline int
 vga_switcheroo_handler_flags(void)

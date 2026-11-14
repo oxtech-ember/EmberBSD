@@ -41,6 +41,8 @@
 #define	dma_fence_array_create		linux_dma_fence_array_create
 #define	dma_fence_is_array		linux_dma_fence_is_array
 #define	to_dma_fence_array		linux_to_dma_fence_array
+#define	dma_fence_array_first		linux_dma_fence_array_first
+#define	dma_fence_array_next		linux_dma_fence_array_next
 
 struct dma_fence_array_cb {
 	struct dma_fence_array	*dfac_array;
@@ -67,5 +69,17 @@ struct dma_fence_array *
 bool	dma_fence_is_array(struct dma_fence *);
 struct dma_fence_array *
 	to_dma_fence_array(struct dma_fence *);
+
+/*
+ * Linux 6.x: the member fences of head if it is an array, head itself
+ * otherwise (first), then the members by index (next, NULL past the end
+ * and for a head that is not an array).
+ */
+struct dma_fence *
+	dma_fence_array_first(struct dma_fence *);
+struct dma_fence *
+	dma_fence_array_next(struct dma_fence *, unsigned int);
+
+#define	dma_fence_array_for_each(fence, index, head)				for (index = 0, fence = dma_fence_array_first(head);			     fence != NULL;							     ++(index), fence = dma_fence_array_next(head, index))
 
 #endif	/* _LINUX_DMA_FENCE_ARRAY_H_ */

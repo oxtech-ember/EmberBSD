@@ -225,17 +225,24 @@ enum hdmi_metadata_type {
 	HDMI_STATIC_METADATA_TYPE1		= 1,
 };
 
-struct hdmi_type1 {
-	enum hdmi_eotf			eotf;
-	enum hdmi_metadata_type		metadata_type;
-	uint16_t			min_cll;
-	uint16_t			max_cll;
-	uint16_t			max_fall;
+/* HDR metadata of the sink (CTA-861-G), the layout of Linux 6.x. */
+struct hdr_static_metadata {
+	uint8_t		eotf;
+	uint8_t		metadata_type;
+	uint16_t	max_cll;
+	uint16_t	max_fall;
+	uint16_t	min_cll;
 };
 
 struct hdr_sink_metadata {
-	struct hdmi_type1		hdmi_type1;
+	uint32_t	metadata_type;
+	union {
+		struct hdr_static_metadata hdmi_type1;
+	};
 };
+
+/* EmberBSD addition (value of Linux 6.18). */
+#define	HDMI_MAX_INFOFRAME_SIZE	27
 
 #define	HDMI_INFOFRAME_SIZE(TYPE)					      \
 	(HDMI_INFOFRAME_HEADER_SIZE + HDMI_##TYPE##_INFOFRAME_SIZE)

@@ -33,10 +33,14 @@
 #define	_LINUX_DMA_FENCE_H_
 
 #include <sys/types.h>
+#include <sys/atomic.h>
 #include <sys/condvar.h>
 #include <sys/kernel.h>
+#include <sys/lock.h>
 #include <sys/queue.h>
+#include <sys/systm.h>
 
+#include <linux/bitops.h>
 #include <linux/err.h>
 #include <linux/kref.h>
 #include <linux/ktime.h>
@@ -65,7 +69,8 @@ struct dma_fence {
 #define	DMA_FENCE_FLAG_ENABLE_SIGNAL_BIT	0
 #define	DMA_FENCE_FLAG_SIGNALED_BIT		1
 #define	DMA_FENCE_FLAG_TIMESTAMP_BIT		2
-#define	DMA_FENCE_FLAG_USER_BITS		3
+#define	DMA_FENCE_FLAG_SEQNO64_BIT		3
+#define	DMA_FENCE_FLAG_USER_BITS		4
 
 struct dma_fence_ops {
 	bool		use_64bit_seqno;
@@ -75,6 +80,8 @@ struct dma_fence_ops {
 	bool		(*signaled)(struct dma_fence *);
 	long		(*wait)(struct dma_fence *, bool, long);
 	void		(*release)(struct dma_fence *);
+	/* Linux 6.x: optional hint, called without the fence lock. */
+	void		(*set_deadline)(struct dma_fence *, ktime_t);
 };
 
 typedef void (*dma_fence_func_t)(struct dma_fence *, struct dma_fence_cb *);
@@ -100,6 +107,13 @@ struct dma_fence_cb {
 #define	dma_fence_get_status		linux_dma_fence_get_status
 #define	dma_fence_get_stub		linux_dma_fence_get_stub
 #define	dma_fence_init			linux_dma_fence_init
+#define	dma_fence_init64		linux_dma_fence_init64
+#define	dma_fence_allocate_private_stub	linux_dma_fence_allocate_private_stub
+#define	dma_fence_is_array		linux_dma_fence_is_array
+#define	dma_fence_is_chain		linux_dma_fence_is_chain
+#define	dma_fence_set_deadline		linux_dma_fence_set_deadline
+#define	dma_fence_signal_timestamp	linux_dma_fence_signal_timestamp
+#define	dma_fence_signal_timestamp_locked linux_dma_fence_signal_timestamp_locked
 #define	dma_fence_is_later		linux_dma_fence_is_later
 #define	dma_fence_is_signaled		linux_dma_fence_is_signaled
 #define	dma_fence_is_signaled_locked	linux_dma_fence_is_signaled_locked
@@ -120,6 +134,8 @@ void	linux_dma_fences_fini(void);
 
 void	dma_fence_init(struct dma_fence *, const struct dma_fence_ops *,
 	    spinlock_t *, uint64_t, uint64_t);
+void	dma_fence_init64(struct dma_fence *, const struct dma_fence_ops *,
+	    spinlock_t *, uint64_t, uint64_t);
 void	dma_fence_reset(struct dma_fence *, const struct dma_fence_ops *,
 	    spinlock_t *, uint64_t, uint64_t); /* XXX extension */
 void	dma_fence_destroy(struct dma_fence *);
@@ -132,6 +148,8 @@ bool	dma_fence_is_later(struct dma_fence *, struct dma_fence *);
 
 struct dma_fence *
 	dma_fence_get_stub(void);
+struct dma_fence *
+	dma_fence_allocate_private_stub(ktime_t);
 
 struct dma_fence *
 	dma_fence_get(struct dma_fence *);
@@ -152,11 +170,115 @@ void	dma_fence_set_error(struct dma_fence *, int);
 int	dma_fence_get_status(struct dma_fence *);
 int	dma_fence_signal(struct dma_fence *);
 int	dma_fence_signal_locked(struct dma_fence *);
+int	dma_fence_signal_timestamp(struct dma_fence *, ktime_t);
+int	dma_fence_signal_timestamp_locked(struct dma_fence *, ktime_t);
+void	dma_fence_set_deadline(struct dma_fence *, ktime_t);
+bool	dma_fence_is_array(struct dma_fence *);
+bool	dma_fence_is_chain(struct dma_fence *);
 long	dma_fence_default_wait(struct dma_fence *, bool, long);
 long	dma_fence_wait(struct dma_fence *, bool);
 long	dma_fence_wait_any_timeout(struct dma_fence **, uint32_t, bool, long,
 	    uint32_t *);
 long	dma_fence_wait_timeout(struct dma_fence *, bool, long);
+
+/*
+ * Linux 6.x inline helpers.  Written from the interface (dma-fence.h is
+ * GPL-2.0-only; no source copied).
+ */
+
+static inline bool
+dma_fence_is_later_or_same(struct dma_fence *f1, struct dma_fence *f2)
+{
+
+	return f1 == f2 || dma_fence_is_later(f1, f2);
+}
+
+/*
+ * The later of two fences of one context, or NULL if that one has
+ * already signalled (nothing left to wait for).
+ */
+static inline struct dma_fence *
+dma_fence_later(struct dma_fence *f1, struct dma_fence *f2)
+{
+
+	if (f1->context != f2->context)
+		return NULL;
+	if (dma_fence_is_later(f1, f2))
+		return dma_fence_is_signaled(f1) ? NULL : f1;
+	return dma_fence_is_signaled(f2) ? NULL : f2;
+}
+
+/* Like dma_fence_get_status, for callers that hold fence->lock. */
+static inline int
+dma_fence_get_status_locked(struct dma_fence *fence)
+{
+
+	if (!dma_fence_is_signaled_locked(fence))
+		return 0;
+	return fence->error ? fence->error : 1;
+}
+
+/* Time the fence signalled; only valid after it has signalled. */
+static inline ktime_t
+dma_fence_timestamp(struct dma_fence *fence)
+{
+
+	KASSERT(test_bit(DMA_FENCE_FLAG_SIGNALED_BIT, &fence->flags));
+	while (!test_bit(DMA_FENCE_FLAG_TIMESTAMP_BIT, &fence->flags))
+		SPINLOCK_BACKOFF_HOOK;
+	membar_acquire();
+	return fence->timestamp;
+}
+
+/*
+ * Signalling critical section annotations (lockdep in Linux).  There is no
+ * checker here, so they only keep the calls balanced.
+ */
+static inline bool
+dma_fence_begin_signalling(void)
+{
+
+	return true;
+}
+
+static inline void
+dma_fence_end_signalling(bool cookie __unused)
+{
+}
+
+static inline void
+__dma_fence_might_wait(void)
+{
+}
+
+/*
+ * Driver and timeline names for diagnostics; a fence that has signalled
+ * may belong to a driver that is gone, so it reports a fixed name.
+ */
+static inline const char *
+dma_fence_driver_name(struct dma_fence *fence)
+{
+
+	if (test_bit(DMA_FENCE_FLAG_SIGNALED_BIT, &fence->flags))
+		return "detached-driver";
+	return fence->ops->get_driver_name(fence);
+}
+
+static inline const char *
+dma_fence_timeline_name(struct dma_fence *fence)
+{
+
+	if (test_bit(DMA_FENCE_FLAG_SIGNALED_BIT, &fence->flags))
+		return "signaled-timeline";
+	return fence->ops->get_timeline_name(fence);
+}
+
+static inline bool
+dma_fence_is_container(struct dma_fence *fence)
+{
+
+	return dma_fence_is_array(fence) || dma_fence_is_chain(fence);
+}
 
 /* i915 hacks */
 bool	__dma_fence_signal(struct dma_fence *);

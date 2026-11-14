@@ -38,6 +38,7 @@
 #include <machine/limits.h>
 
 #include <linux/atomic.h>
+#include <linux/cleanup.h>
 #include <linux/irqflags.h>
 #include <linux/lockdep.h>
 #include <linux/preempt.h>
@@ -184,6 +185,21 @@ write_unlock_irq(rwlock_t *rw)
 	mutex_spin_exit(&rw->rw_lock);
 }
 
+/* The spin lock is taken at IPL_VM either way: the plain forms are the same. */
+static inline void
+write_lock(rwlock_t *rw)
+{
+
+	write_lock_irq(rw);
+}
+
+static inline void
+write_unlock(rwlock_t *rw)
+{
+
+	write_unlock_irq(rw);
+}
+
 static inline void
 read_lock(rwlock_t *rw)
 {
@@ -240,5 +256,89 @@ _atomic_dec_and_lock_irqsave(atomic_t *atomic, spinlock_t *lock,
 	KASSERT(new != 0);
 	return false;
 }
+
+/* guard(spinlock)(&l), scoped_guard(spinlock_irqsave, &l) and the like */
+DEFINE_LOCK_GUARD_1(spinlock, spinlock_t,
+    spin_lock(_T->lock),
+    spin_unlock(_T->lock))
+
+DEFINE_LOCK_GUARD_1(spinlock_irq, spinlock_t,
+    spin_lock_irq(_T->lock),
+    spin_unlock_irq(_T->lock))
+
+DEFINE_LOCK_GUARD_1(spinlock_irqsave, spinlock_t,
+    spin_lock_irqsave(_T->lock, _T->flags),
+    spin_unlock_irqrestore(_T->lock, _T->flags),
+    unsigned long flags)
+
+/*
+ * EmberBSD addition, AI-assisted.  raw_spinlock_t for
+ * the Linux 6.18 DRM core (drm_mode_config.panic_lock): a spin lock that
+ * may be taken from any context, hence IPL_HIGH.
+ */
+
+struct raw_spinlock {
+	kmutex_t rsl_lock;
+};
+typedef struct raw_spinlock raw_spinlock_t;
+
+static inline void
+raw_spin_lock_init(raw_spinlock_t *l)
+{
+	mutex_init(&l->rsl_lock, MUTEX_DEFAULT, IPL_HIGH);
+}
+
+static inline void
+raw_spin_lock_destroy(raw_spinlock_t *l)
+{
+	mutex_destroy(&l->rsl_lock);
+}
+
+static inline void
+raw_spin_lock(raw_spinlock_t *l)
+{
+	mutex_enter(&l->rsl_lock);
+}
+
+static inline int
+raw_spin_trylock(raw_spinlock_t *l)
+{
+	return mutex_tryenter(&l->rsl_lock);
+}
+
+static inline void
+raw_spin_unlock(raw_spinlock_t *l)
+{
+	mutex_exit(&l->rsl_lock);
+}
+
+static inline void
+raw_spin_lock_irq(raw_spinlock_t *l)
+{
+	mutex_enter(&l->rsl_lock);
+}
+
+static inline void
+raw_spin_unlock_irq(raw_spinlock_t *l)
+{
+	mutex_exit(&l->rsl_lock);
+}
+
+#define	raw_spin_lock_irqsave(LOCK, FLAGS)				\
+	do {								\
+		(FLAGS) = 0;						\
+		mutex_enter(&((raw_spinlock_t *)(LOCK))->rsl_lock);	\
+	} while (0)
+
+#define	raw_spin_trylock_irqsave(LOCK, FLAGS)				\
+	( (FLAGS) = 0,							\
+	  mutex_tryenter(&((raw_spinlock_t *)(LOCK))->rsl_lock) )
+
+static inline void
+raw_spin_unlock_irqrestore(raw_spinlock_t *l, unsigned long __unused flags)
+{
+	mutex_exit(&l->rsl_lock);
+}
+
 
 #endif  /* _LINUX_SPINLOCK_H_ */

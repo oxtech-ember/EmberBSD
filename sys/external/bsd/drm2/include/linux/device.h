@@ -36,6 +36,8 @@
 #include <sys/device.h>
 #include <sys/systm.h>
 
+#include <linux/errno.h>
+#include <linux/gfp.h>
 #include <linux/hrtimer.h>
 #include <linux/ratelimit.h>
 
@@ -77,6 +79,12 @@
 		aprint_normal(FMT, ##__VA_ARGS__);			      \
 } while (0)
 
+#define	dev_info_once(DEV, FMT, ...)	do {				      \
+	static volatile unsigned __dev_info_once;			      \
+	if (atomic_swap_uint(&__dev_info_once, 1) == 0)			      \
+		dev_info((DEV), FMT, ##__VA_ARGS__);			      \
+} while (0)
+
 #define	dev_dbg(DEV, FMT, ...)	do {					      \
 	if (DEV)							      \
 		aprint_debug_dev((DEV), "debug: " FMT, ##__VA_ARGS__);	      \
@@ -85,6 +93,65 @@
 } while (0)
 
 #define	dev_name	device_xname
+
+/*
+ * Device-managed resources (linux_devres.c): released newest first by
+ * devres_release_all(dev), which the owner of the device calls when it goes
+ * away.  devm_kmalloc memory is zeroed whatever the flags.
+ */
+int	devm_add_action(struct device *, void (*)(void *), void *);
+int	devm_add_action_or_reset(struct device *, void (*)(void *), void *);
+void	devm_release_action(struct device *, void (*)(void *), void *);
+void	*devm_kmalloc(struct device *, size_t, gfp_t);
+void	devm_kfree(struct device *, void *);
+void	devres_release_all(struct device *);
+
+static inline void *
+devm_kzalloc(struct device *dev, size_t size, gfp_t gfp)
+{
+	return devm_kmalloc(dev, size, gfp);
+}
+
+/* The device is a NetBSD device_t: no reference count to drop. */
+#define	put_device(x)	((void)(x))
+
+/*
+ * dev_printk(level, dev, fmt, ...): level is one of the KERN_ strings (they
+ * carry the severity as a prefix of the text), a literal or a variable.
+ */
+#define	dev_printk(LEVEL, DEV, FMT, ...)	do {			      \
+	if (DEV)							      \
+		aprint_normal_dev((DEV), "%s" FMT, (LEVEL), ##__VA_ARGS__);   \
+	else								      \
+		aprint_normal("%s" FMT, (LEVEL), ##__VA_ARGS__);	      \
+} while (0)
+
+/*
+ * Report an error unless the driver is only not ready yet (-EPROBE_DEFER,
+ * which is quiet) and return it.
+ */
+#define	dev_err_probe(DEV, ERR, FMT, ...)	({			      \
+	int __err = (ERR);						      \
+	if (__err != -EPROBE_DEFER)						      \
+		dev_err((DEV), FMT, ##__VA_ARGS__);			      \
+	__err;								      \
+})
+
+/*
+ * dev_driver_string(dev)
+ *
+ *	The name of the driver bound to dev (NetBSD: the autoconf driver
+ *	name, as in "i915drmkms"), or "" if there is no device.
+ *	EmberBSD addition, AI-assisted.
+ */
+static inline const char *
+dev_driver_string(const struct device *dev)
+{
+
+	if (dev == NULL)
+		return "";
+	return device_cfdriver(__UNCONST(dev))->cd_name;
+}
 #define	get_device(x)	(x)
 
 #define	DPM_FLAG_NEVER_SKIP	0
