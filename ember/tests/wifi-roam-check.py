@@ -56,8 +56,13 @@ fi
 case "$op" in
 status)
     bssid=$(cat "$TEST_ROOT/current-bssid")
-    printf 'bssid=%s\\nfreq=2412\\nssid=%s\\nwpa_state=COMPLETED\\n' \\
-        "$bssid" '{ssid}'
+    state=COMPLETED
+    if [ "{mode}" = disconnected-during-scan ] &&
+        [ -f "$TEST_ROOT/scan-started" ]; then
+        state=DISCONNECTED
+    fi
+    printf 'bssid=%s\\nfreq=2412\\nssid=%s\\nwpa_state=%s\\n' \\
+        "$bssid" '{ssid}' "$state"
     if [ "{mode}" = pass-psk ]; then
         printf 'key_mgmt=WPA2-PSK\\nip_address=192.0.2.10\\n'
     else
@@ -84,6 +89,7 @@ scan_results)
     fi
     ;;
 scan)
+    : > "$TEST_ROOT/scan-started"
     if [ "{mode}" = switch-after-results ]; then
         echo {ap_b} > "$TEST_ROOT/current-bssid"
     fi
@@ -141,17 +147,28 @@ esac
             check((logs / 'status').read_text().startswith('bssid='),
                   mode + ': timestamp was not removed from the first field')
         if mode == 'switch-after-results':
+            check(not (logs / 'requested-bssid').exists(),
+                  'a BSSID change during the scan must stop before ROAM')
+        if mode == 'pass':
             check((logs / 'requested-bssid').read_text().strip() == ap_b,
-                  'automatic move after scan results must be rechecked before ROAM')
+                  'the baseline BSSID must not be selected for ROAM')
+            check(f'bssid={ap_a}\n' in (logs / 'scan-end').read_text(),
+                  'the scan-end snapshot must retain the baseline BSSID')
+            check(proc.stdout.index('WIFI_ROAM_CHECK phase=scan_start\n') <
+                  proc.stdout.index('WIFI_ROAM_CHECK phase=scan_end\n') <
+                  proc.stdout.index('WIFI_ROAM_CHECK phase=roam\n'),
+                  'scan phase markers must bracket the candidate scan')
 
 
+run_case('switch-after-results', (1, 'FAIL', 'scan_bssid_changed'),
+         expected_roams=0)
+run_case('disconnected-during-scan', (1, 'FAIL', 'scan_disconnected'),
+         expected_roams=0)
 run_case('pass', (0, 'PASS', 'roam_and_connectivity'), expected_roams=1)
 run_case('pass-psk', (0, 'PASS', 'roam_and_connectivity'), expected_roams=1)
 run_case('control-fail', (1, 'FAIL', 'cache_flush'), expected_roams=0)
 run_case('no-candidate', (77, 'SKIP', 'no_fresh_compatible_candidate'),
          expected_roams=0)
-run_case('switch-after-results', (0, 'PASS', 'roam_and_connectivity'),
-         expected_roams=1)
 run_case('global-deadline', (1, 'FAIL', 'deadline'), expected_roams=0, limit=1)
 run_case('roam-fail', (1, 'FAIL', 'roam_control'), expected_roams=1)
 run_case('roam-no-transition', (1, 'FAIL', 'roam_not_completed'),

@@ -14,18 +14,20 @@ in seconds (default 75, maximum 300), and an optional DNS lookup name. The
 parent of the result directory must exist. The script uses the target's base
 `sh`, `date`, `sleep`, `cp`, `grep`, `wpa_cli`, `route`, `getent`, and `ping`.
 
-The check waits for an authorized connection and an IP address, flushes unused
-BSS cache entries, and requests one scan. It selects a different BSSID with
-the same encoded SSID and compatible SAE or PSK capability, confirms the BSS
-record, and immediately requests one ROAM. Cache freshness is the readiness
-condition; the script does not claim to observe a scan-completion event.
-An in-use BSS preserved by the flush is eligible when its age is consistent
-with the scan window, allowing one second for age granularity. Thus a scan
-that reconnects to the other AP can be followed by a move back. The current
-BSSID is checked again before ROAM; this is an observation, not an atomic
-reservation against automatic roaming by the supplicant.
+The check waits for an authorized connection and an IP address, saves the
+current BSSID, flushes unused BSS cache entries, and requests one scan. Every
+status sample from `scan_start` through `scan_end`, and again immediately
+before ROAM, must remain `COMPLETED` on that baseline BSSID with the same SSID
+and key management. The baseline BSSID is never eligible as the roam target.
+Cache freshness is the readiness condition; the script does not claim to
+observe a scan-completion event. A cached alternate is eligible only when its
+BSS age is consistent with the scan window, allowing one second for age
+granularity. The phase markers let a platform trace correlate driver
+generation and SAE counters around the scan; a transient event between status
+polls is not independently detected by this script.
 
-PASS requires `COMPLETED` on the requested BSSID with the same SSID and key
+PASS requires sampled continuity on the baseline BSSID through the scan, then
+`COMPLETED` on the requested alternate BSSID with the same SSID and key
 management, an IP address, DNS resolution, and a gateway echo reply. A control
 reply of `OK` alone is insufficient. Saved profiles remain in use, and the
 script leaves the final association to the normal supplicant policy.
@@ -38,9 +40,10 @@ script leaves the final association to the normal supplicant policy.
 | 77 | SKIP | Unsupported test profile or no fresh compatible alternate BSS |
 
 Stdout contains compact `WIFI_ROAM_CHECK` phase and result lines. The result
-directory is private (umask 077) and contains the control replies, original and
-final status, requested BSSID, and network checks. These files include network
-identifiers; retain them as local diagnostics rather than public evidence.
+directory is private (umask 077) and contains the control replies, baseline,
+scan-end and final status, requested BSSID, and network checks. These files
+include network identifiers; retain them as local diagnostics rather than
+public evidence.
 Each control response also has a `.raw` copy. The parser removes the optional
 `HH:MM:SS.mmm: ` message prefix emitted by `wpa_cli` from its working copy.
 This applies to status fields and control replies such as `OK` and `FAIL`.

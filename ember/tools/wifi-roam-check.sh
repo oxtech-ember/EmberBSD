@@ -94,6 +94,7 @@ done
 cp "$logs/status" "$logs/baseline" || finish FAIL log_write
 network_ssid=$ssid
 network_key=$key_mgmt
+baseline_bssid=$bssid
 case "$network_key" in
 SAE) security=SAE ;;
 WPA2-PSK) security=PSK ;;
@@ -106,6 +107,7 @@ ctl flush bss_flush 0 || finish FAIL cache_flush
 grep -qx OK "$logs/flush" || finish FAIL cache_flush
 ctl baseline-cache scan_results || finish FAIL cache_read
 scan_started=$(date +%s) || finish FAIL clock
+printf 'WIFI_ROAM_CHECK phase=scan_start\n'
 ctl scan scan || finish FAIL scan_request
 grep -qx OK "$logs/scan" || finish FAIL scan_request
 printf 'WIFI_ROAM_CHECK phase=fresh_candidate\n'
@@ -114,57 +116,72 @@ candidate_end=$((now + 25))
 candidate=
 tab=$(printf '\t')
 while before "$candidate_end"; do
-    if status && [ "$state" = COMPLETED ] &&
-        [ "$ssid" = "$network_ssid" ] && [ "$key_mgmt" = "$network_key" ]; then
-        ctl scan-results scan_results || finish FAIL cache_read
-        while IFS="$tab" read -r ap freq signal flags name; do
-            case "$ap" in
-            ??:??:??:??:??:??) ;;
-            *) continue ;;
+    status || finish FAIL scan_status
+    [ "$state" = COMPLETED ] || finish FAIL scan_disconnected
+    [ "$bssid" = "$baseline_bssid" ] || finish FAIL scan_bssid_changed
+    [ "$ssid" = "$network_ssid" ] && [ "$key_mgmt" = "$network_key" ] ||
+        finish FAIL scan_profile_changed
+    ctl scan-results scan_results || finish FAIL cache_read
+    while IFS="$tab" read -r ap freq signal flags name; do
+        case "$ap" in
+        ??:??:??:??:??:??) ;;
+        *) continue ;;
+        esac
+        [ "$ap" != "$baseline_bssid" ] &&
+            [ "$name" = "$network_ssid" ] || continue
+        case "$security:$flags" in SAE:*SAE*|PSK:*PSK*) ;; *) continue ;; esac
+        before "$candidate_end" || break
+        ctl candidate bss "$ap" || finish FAIL bss_control
+        record_bssid= record_ssid= record_age=
+        while IFS='=' read -r key value; do
+            case "$key" in
+            bssid) record_bssid=$value ;;
+            ssid) record_ssid=$value ;;
+            age) record_age=$value ;;
             esac
-            [ "$ap" != "$bssid" ] && [ "$name" = "$network_ssid" ] || continue
-            case "$security:$flags" in SAE:*SAE*|PSK:*PSK*) ;; *) continue ;; esac
-            before "$candidate_end" || break
-            ctl candidate bss "$ap" || finish FAIL bss_control
-            record_bssid= record_ssid= record_age=
-            while IFS='=' read -r key value; do
-                case "$key" in
-                bssid) record_bssid=$value ;;
-                ssid) record_ssid=$value ;;
-                age) record_age=$value ;;
-                esac
-            done < "$logs/candidate"
-            [ "$record_bssid" = "$ap" ] &&
-                [ "$record_ssid" = "$network_ssid" ] || continue
-            if grep -q "^$ap$tab" "$logs/baseline-cache"; then
-                # Scan may reconnect to the other AP. Accept the former
-                # current BSS only after its preserved record is refreshed.
-                case "$record_age" in ''|*[!0-9]*) continue ;; esac
-                now=$(date +%s) || finish FAIL clock
-                # BSS age has whole-second resolution.
-                [ "$record_age" -le "$((now - scan_started + 1))" ] || continue
-            fi
-            candidate=$ap
-            break
-        done < "$logs/scan-results"
-        if [ -n "$candidate" ]; then
-            status || finish FAIL status_before_roam
-            [ "$ssid" = "$network_ssid" ] && [ "$key_mgmt" = "$network_key" ] ||
-                finish FAIL profile_changed
-            if [ "$state" = COMPLETED ] && [ "$bssid" != "$candidate" ]; then
-                break
-            fi
-            # Selection itself may have coincided with an automatic move.
-            candidate=
+        done < "$logs/candidate"
+        [ "$record_bssid" = "$ap" ] &&
+            [ "$record_ssid" = "$network_ssid" ] || continue
+        if grep -q "^$ap$tab" "$logs/baseline-cache"; then
+            # A cached alternative is eligible only if this scan refreshed it.
+            case "$record_age" in ''|*[!0-9]*) continue ;; esac
+            now=$(date +%s) || finish FAIL clock
+            # BSS age has whole-second resolution.
+            [ "$record_age" -le "$((now - scan_started + 1))" ] || continue
         fi
+        candidate=$ap
+        break
+    done < "$logs/scan-results"
+    if [ -n "$candidate" ]; then
+        status || finish FAIL scan_status
+        [ "$state" = COMPLETED ] || finish FAIL scan_disconnected
+        [ "$bssid" = "$baseline_bssid" ] || finish FAIL scan_bssid_changed
+        [ "$ssid" = "$network_ssid" ] && [ "$key_mgmt" = "$network_key" ] ||
+            finish FAIL scan_profile_changed
+        [ "$candidate" != "$baseline_bssid" ] ||
+            finish FAIL candidate_is_baseline
+        break
     fi
     sleep 1
 done
 before "$deadline" || finish FAIL deadline
+status || finish FAIL scan_status
+[ "$state" = COMPLETED ] || finish FAIL scan_disconnected
+[ "$bssid" = "$baseline_bssid" ] || finish FAIL scan_bssid_changed
+[ "$ssid" = "$network_ssid" ] && [ "$key_mgmt" = "$network_key" ] ||
+    finish FAIL scan_profile_changed
+cp "$logs/status" "$logs/scan-end" || finish FAIL log_write
+printf 'WIFI_ROAM_CHECK phase=scan_end\n'
 if [ -z "$candidate" ]; then
-    [ "${state:-}" = COMPLETED ] || finish FAIL scan_connection_not_ready
     finish SKIP no_fresh_compatible_candidate
 fi
+status || finish FAIL status_before_roam
+[ "$state" = COMPLETED ] || finish FAIL scan_disconnected
+[ "$bssid" = "$baseline_bssid" ] || finish FAIL scan_bssid_changed
+[ "$ssid" = "$network_ssid" ] && [ "$key_mgmt" = "$network_key" ] ||
+    finish FAIL scan_profile_changed
+[ "$candidate" != "$baseline_bssid" ] ||
+    finish FAIL candidate_is_baseline
 cp "$logs/status" "$logs/before-roam" || finish FAIL log_write
 
 # The cache/status checks and single ROAM request run locally without a host gap.
