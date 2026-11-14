@@ -33,6 +33,7 @@ SRCS+=	drm618_cache.c
 SRCS+=	drm618_dma_buf.c
 SRCS+=	drm618_file.c
 SRCS+=	drm618_gem_atomic_helper.c
+SRCS+=	drm618_gem_framebuffer_helper.c
 SRCS+=	drm618_kthread_worker.c
 SRCS+=	drm618_lease.c
 SRCS+=	drm618_managed.c
