@@ -241,6 +241,8 @@ static int config_finalize_done;
 static struct devicelist alldevs = TAILQ_HEAD_INITIALIZER(alldevs);
 static kmutex_t alldevs_lock __cacheline_aligned;
 static devgen_t alldevs_gen = 1;
+/* Monotonic per-attach identity, independent of iterator generations. */
+static uint64_t device_instance_counter;
 static int alldevs_nread = 0;
 static int alldevs_nwrite = 0;
 static bool alldevs_garbage = false;
@@ -1593,7 +1595,9 @@ config_devalloc(const device_t parent, const cfdata_t cf,
 	void *dev_private;
 	const struct cfiattrdata *ia;
 	device_lock_t dvl;
+	uint64_t instance_id;
 
+	KASSERT(KERNEL_LOCKED_P());
 	cd = config_cfdriver_lookup(cf->cf_name);
 	if (cd == NULL)
 		return NULL;
@@ -1660,6 +1664,13 @@ config_devalloc(const device_t parent, const cfdata_t cf,
 	}
 	dev->dv_properties = prop_dictionary_create();
 	KASSERT(dev->dv_properties != NULL);
+
+	if (device_instance_counter == UINT64_MAX)
+		panic("device instance ID exhausted");
+	instance_id = ++device_instance_counter;
+	if (!prop_dictionary_set_uint64(dev->dv_properties,
+	    "device-instance-id", instance_id))
+		panic("cannot allocate device instance ID property");
 
 	prop_dictionary_set_string_nocopy(dev->dv_properties,
 	    "device-driver", dev->dv_cfdriver->cd_name);

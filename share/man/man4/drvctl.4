@@ -156,6 +156,20 @@ which corresponds to an
 value, and the dictionary
 .Dv drvctl-result-data .
 The contents of the dictionary depends on the queried driver.
+Every attached device has a numeric unsigned 64-bit
+.Dq device-instance-id
+property assigned before publication.
+This property is reserved for the device framework and must not be modified
+by drivers.
+It is nonzero and unique among device attachments during the current boot;
+detach and reattach receive a different value, even when the device name,
+parent, or hardware serial number is reused.
+The value is not persistent across boots and must not be used as an
+identity across reboot.
+If the ID space is exhausted or the property cannot be allocated, the kernel
+fails closed rather than publish a device without an identity.
+A lookup may race device removal; consumers must treat a missing device or
+property as failure and revalidate the instance before use.
 .Pp
 .It DRVGETEVENT
 Return the next queued autoconfig event formatted as a property list.
