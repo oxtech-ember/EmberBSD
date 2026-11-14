@@ -97,6 +97,12 @@ static const struct device_compatible_entry compat_data[] = {
 	{ .id = PCI_ID_CODE(PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_5HS_LP_HDA) },
 	{ .id = PCI_ID_CODE(PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_6HS_LP_HDA) },
 	{ .id = PCI_ID_CODE(PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_JSL_CAVS) },
+	/*
+	 * Arrow Lake-S: firmware may report this controller with the audio
+	 * subclass (0x0401, DSP mode); the HD Audio subclass match (0x0403)
+	 * then fails and the controller is matched by ID instead.
+	 */
+	{ .id = PCI_ID_CODE(PCI_VENDOR_INTEL, PCI_PRODUCT_INTEL_ARL_S_HDA) },
 
 	PCI_COMPAT_EOL
 };
