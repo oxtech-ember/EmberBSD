@@ -277,12 +277,12 @@ static int
 drm618_fo_poll(struct file *fp, int events)
 {
 	struct linux_file *lf = LF(fp);
-	struct poll_table_struct *pt = NULL;
+	struct poll_table_struct pt = { .pt_events = events };
 	unsigned int revents;
 
 	if (lf->f_op->poll == NULL)
 		return events & (POLLIN | POLLOUT | POLLRDNORM | POLLWRNORM);
-	revents = (*lf->f_op->poll)(lf, pt);
+	revents = (*lf->f_op->poll)(lf, &pt);
 	return revents & (events | POLLERR | POLLHUP);
 }
 
@@ -312,11 +312,35 @@ drm618_fo_close(struct file *fp)
 }
 
 static int
-drm618_fo_kqfilter(struct file *fp __unused, struct knote *kn __unused)
+drm618_fo_kqfilter(struct file *fp, struct knote *kn)
 {
+	struct linux_file *lf = LF(fp);
 
-	/* poll(2) works; kqueue on a Linux file is not provided. */
-	return EOPNOTSUPP;
+	/* Only the files that have a kqfilter of their own (a dma-buf) offer it. */
+	if (lf->f_op->bsd_kqfilter == NULL)
+		return EOPNOTSUPP;
+	return (*lf->f_op->bsd_kqfilter)(lf, kn);
+}
+
+/* lseek(2) is the llseek of the Linux file; the position is the one NetBSD keeps. */
+static int
+drm618_fo_seek(struct file *fp, off_t delta, int whence, off_t *newoffp,
+    int flags)
+{
+	struct linux_file *lf = LF(fp);
+	loff_t pos;
+
+	if (lf->f_op->llseek == NULL)
+		return ESPIPE;
+	lf->f_pos = fp->f_offset;
+	pos = (*lf->f_op->llseek)(lf, delta, whence);
+	if (pos < 0)
+		return (int)-pos;
+	if (newoffp != NULL)
+		*newoffp = pos;
+	if (flags & FOF_UPDATE_OFFSET)
+		fp->f_offset = pos;
+	return 0;
 }
 
 static int
@@ -340,6 +364,7 @@ static const struct fileops drm618_fileops = {
 	.fo_kqfilter = drm618_fo_kqfilter,
 	.fo_restart = fnullop_restart,
 	.fo_mmap = drm618_fo_mmap,
+	.fo_seek = drm618_fo_seek,
 };
 
 /* ---- descriptors ---------------------------------------------------- */
@@ -444,6 +469,26 @@ fget(unsigned int fd)
 	if (fp->f_ops == &drm618_fileops) {
 		lf = LF(fp);
 		atomic_inc_uint(&lf->f_refcnt);
+	}
+	fd_putfile(fd);
+	return lf;
+}
+
+struct linux_file *
+drm618_fget(unsigned int fd, int *error)
+{
+	struct file *fp = fd_getfile(fd);
+	struct linux_file *lf = NULL;
+
+	if (fp == NULL) {
+		*error = EBADF;
+		return NULL;
+	}
+	if (fp->f_ops == &drm618_fileops) {
+		lf = LF(fp);
+		atomic_inc_uint(&lf->f_refcnt);
+	} else {
+		*error = EINVAL;
 	}
 	fd_putfile(fd);
 	return lf;

@@ -8,8 +8,9 @@
 #include <linux/wait.h>
 #include <linux/uaccess.h>
 
+/* pt_events: what the caller of poll(2) asks for (the file operations of drm618_file.c fill it). */
 typedef struct poll_table_struct {
-	int	pt_unused;
+	int	pt_events;
 } poll_table;
 
 static inline void
