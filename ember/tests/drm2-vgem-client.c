@@ -599,8 +599,41 @@ test_mmap(void)
 	if (pa != (void *)MAP_FAILED)
 		munmap((void *)(uintptr_t)pa, PG);
 	CHECK(verify(pv, size / 4, 31) == 0, "mmap: no refused mapping changed the object");
-	munmap((void *)(uintptr_t)pv, size);
+
+	/* unmapping the middle page splits the mapping into two that share the object */
+	CHECK(munmap((void *)((uintptr_t)pv + PG), PG) == 0, "mmap: munmap of one page in the middle");
+	CHECK(verify(pv, PG / 4, 31) == 0 &&
+	    verify(pv + 3 * PG / 4, PG / 4, 31 + 3 * (PG / 4) * 0x9e3779b9u) == 0,
+	    "mmap: both ends of the split mapping keep their data");
+	pv[0] = 1;
+	pv[3 * PG / 4] = 2;
+	CHECK(pv[0] == 1 && pv[3 * PG / 4] == 2, "mmap: both ends of the split mapping are writable");
+	CHECK(munmap((void *)(uintptr_t)pv, PG) == 0, "mmap: munmap of the first piece");
 	CHECK(gemclose(fd, h2) == 0, "mmap: GEM_CLOSE of the second buffer");
+	CHECK(pv[3 * PG / 4] == 2, "mmap: the last piece still holds the object");
+	CHECK(munmap((void *)((uintptr_t)pv + 3 * PG), PG) == 0, "mmap: munmap of the last piece");
+
+	/* the mapping holds the file: closing the DRM file does not break it */
+	{
+		int f4 = open_vgem();
+		uint32_t h4 = 0;
+		volatile uint32_t *p4 = NULL;
+
+		CHECK(f4 >= 0 && mkdumb_on(f4, 64, 64, 32, &h4, &size) == 0, "mmap: a buffer on another open");
+		if (f4 >= 0) {
+			p4 = map_handle(f4, h4, size, &err);
+			CHECK(p4 != NULL, "mmap: map it");
+			if (p4 != NULL)
+				fill(p4, size / 4, 51);
+			close(f4);
+			if (p4 != NULL) {
+				CHECK(verify(p4, size / 4, 51) == 0, "mmap: the mapping survives the close of its DRM file");
+				fill(p4, size / 4, 52);
+				CHECK(verify(p4, size / 4, 52) == 0, "mmap: and is still writable");
+				CHECK(munmap((void *)(uintptr_t)p4, size) == 0, "mmap: munmap releases the file and the object");
+			}
+		}
+	}
 }
 
 /* PRIME between open files: the contents seen through the mappings of both. */
