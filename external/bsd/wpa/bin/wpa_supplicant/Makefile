@@ -237,8 +237,8 @@ aes-omac1.c \
 DPADD+= ${LIBSSL} ${LIBCRYPTO} ${LIBDES}
 LDADD+= -lssl -lcrypto -ldes
 .elif ${EMBER_WPA_CRYPTO_BACKEND} == "wolfssl"
-DPADD+= ${EMBER_WOLFSSL_PREFIX}/lib/libwolfssl.a
-LDADD+= -L${EMBER_WOLFSSL_PREFIX}/lib -lwolfssl -lm
+DPADD+= ${EMBER_WOLFSSL_PREFIX}/lib/libwolfssl.a ${LIBPTHREAD}
+LDADD+= -L${EMBER_WOLFSSL_PREFIX}/lib -lwolfssl -lm -lpthread
 .else
 DPADD+= ${LIBCRYPTO}
 LDADD+= -lcrypto
