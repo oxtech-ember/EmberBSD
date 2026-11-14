@@ -186,6 +186,8 @@ int	drm618_file_ioctl(struct DRM618_FILE_TAG *, unsigned long, void *);
  */
 int	drm618_vma_mmap(struct DRM618_FILE_TAG *, off_t *, size_t, int, int *,
     int *, struct uvm_object **, int *);
+int	drm618_vma_busy(void);	/* EBUSY while a user mapping exists */
+void	drm618_vma_fini(void);
 
 /*
  * Pseudo file system for anonymous inodes (drm_drv.c: the inode whose mapping
