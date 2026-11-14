@@ -151,4 +151,12 @@ struct drm_device {
 /* Name the device that does the DMA when it is not the parent; NULL clears. */
 void drm_dev_set_dma_dev(struct drm_device *dev, struct device *dma_dev);
 
+/* The device that does the DMA: the one set, else the parent. */
+static inline struct device *
+drm_dev_dma_dev(struct drm_device *dev)
+{
+
+	return dev->dma_dev != NULL ? dev->dma_dev : dev->dev;
+}
+
 #endif	/* _DRM618_DRM_DEVICE_H_ */

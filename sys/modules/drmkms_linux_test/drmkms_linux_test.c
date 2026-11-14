@@ -24,6 +24,7 @@ int	drm2_drm618_file_run(void);
 int	drm2_drm618_kdev_run(void);
 int	drm2_drm618_task_run(void);
 int	drm2_drm618_gem_run(void);
+int	drm2_drm618_dmabuf_run(void);
 int	drm2_drm618_kms_run(void);
 int	drm2_drm618_hdr_run(void);
 int	drm2_p4_layer_run(void);
@@ -49,6 +50,7 @@ drmkms_linux_test_modcmd(modcmd_t cmd, void *arg __unused)
 		failed += drm2_drm618_kdev_run();
 		failed += drm2_drm618_task_run();
 		failed += drm2_drm618_gem_run();
+		failed += drm2_drm618_dmabuf_run();
 		failed += drm2_drm618_kms_run();
 		failed += drm2_drm618_hdr_run();
 		failed += drm2_p4_layer_run();

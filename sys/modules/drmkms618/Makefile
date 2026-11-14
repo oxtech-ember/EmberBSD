@@ -30,6 +30,7 @@ CPPFLAGS.drm618_file.c+=	-DDRM618_NBSD_FILE
 
 # Own code of the 6.18 core, and the module glue.
 SRCS+=	drm618_cache.c
+SRCS+=	drm618_dma_buf.c
 SRCS+=	drm618_file.c
 SRCS+=	drm618_gem_atomic_helper.c
 SRCS+=	drm618_kthread_worker.c
@@ -37,7 +38,6 @@ SRCS+=	drm618_lease.c
 SRCS+=	drm618_managed.c
 SRCS+=	drm618_module.c
 SRCS+=	drm618_page.c
-SRCS+=	drm618_prime_stub.c
 SRCS+=	drm618_rbtree.c
 SRCS+=	drm618_shmem.c
 SRCS+=	drm618_sleep.c
@@ -100,6 +100,7 @@ SRCS+=	drm_panel_orientation_quirks.c
 SRCS+=	drm_pci.c
 SRCS+=	drm_plane.c
 SRCS+=	drm_plane_helper.c
+SRCS+=	drm_prime.c
 SRCS+=	drm_print.c
 SRCS+=	drm_probe_helper.c
 SRCS+=	drm_property.c

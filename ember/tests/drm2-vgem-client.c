@@ -593,7 +593,9 @@ test_mmap(void)
 	}
 	/* the first page alone is fine, read only too */
 	pa = mmap(NULL, PG, PROT_READ, MAP_SHARED, fd, (off_t)off);
-	CHECK(pa != (void *)MAP_FAILED && count_nonzero(pa, PG / 4) == 0, "mmap: the first page alone, read only");
+	/* the 6.18 core maps the first page of the object; the 5.6 layer takes a shorter mapping for no object */
+	CHECK(pa != (void *)MAP_FAILED && (verify(pa, PG / 4, 31) == 0 || count_nonzero(pa, PG / 4) == 0),
+	    "mmap: the first page alone, read only");
 	if (pa != (void *)MAP_FAILED)
 		munmap((void *)(uintptr_t)pa, PG);
 	CHECK(verify(pv, size / 4, 31) == 0, "mmap: no refused mapping changed the object");

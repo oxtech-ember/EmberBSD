@@ -53,6 +53,7 @@ file	external/bsd/drm2/drm618/drm618_exclusive.c	drmkms618 & drmkms
 
 # Own code of the 6.18 core (BSD-2-Clause, written to the Linux interface).
 file	external/bsd/drm2/drm618/drm618_cache.c		drmkms618
+file	external/bsd/drm2/drm618/drm618_dma_buf.c	drmkms618
 # The one source that sees both NetBSD's struct file and the Linux one.
 makeoptions	drmkms618	"CPPFLAGS.drm618_file.c"+="-DDRM618_NBSD_FILE"
 file	external/bsd/drm2/drm618/drm618_file.c		drmkms618
@@ -61,7 +62,6 @@ file	external/bsd/drm2/drm618/drm618_kthread_worker.c	drmkms618
 file	external/bsd/drm2/drm618/drm618_lease.c	drmkms618
 file	external/bsd/drm2/drm618/drm618_managed.c	drmkms618
 file	external/bsd/drm2/drm618/drm618_page.c	drmkms618
-file	external/bsd/drm2/drm618/drm618_prime_stub.c	drmkms618
 file	external/bsd/drm2/drm618/drm618_rbtree.c	drmkms618
 file	external/bsd/drm2/drm618/drm618_shmem.c	drmkms618
 file	external/bsd/drm2/drm618/drm618_sleep.c	drmkms618
@@ -134,7 +134,7 @@ file	external/bsd/drm2/dist618/drm/drm_panel_orientation_quirks.c		drmkms618
 file	external/bsd/drm2/dist618/drm/drm_pci.c		drmkms618
 file	external/bsd/drm2/dist618/drm/drm_plane.c		drmkms618
 file	external/bsd/drm2/dist618/drm/drm_plane_helper.c		drmkms618
-#file	external/bsd/drm2/dist618/drm/drm_prime.c		drmkms618  (needs the 6.18 dma-buf: stand-in drm618_prime_stub.c)
+file	external/bsd/drm2/dist618/drm/drm_prime.c		drmkms618
 file	external/bsd/drm2/dist618/drm/drm_print.c		drmkms618
 #file	external/bsd/drm2/dist618/drm/drm_privacy_screen.c		drmkms618  (CONFIG_DRM_PRIVACY_SCREEN off)
 #file	external/bsd/drm2/dist618/drm/drm_privacy_screen_x86.c		drmkms618  (CONFIG_DRM_PRIVACY_SCREEN off)
