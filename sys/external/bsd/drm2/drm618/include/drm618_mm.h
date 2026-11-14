@@ -137,11 +137,12 @@ pgprot_decrypted(pgprot_t prot)
 
 #define	mapping_gfp_mask(mapping)	((void)(mapping), GFP_KERNEL)
 
+/* The flags of gfp that the mapping allocates with: the pages of a shmem file are not below 4 GiB. */
 static inline gfp_t
-mapping_gfp_constraint(struct address_space *mapping __unused, gfp_t gfp)
+mapping_gfp_constraint(struct address_space *mapping, gfp_t gfp)
 {
 
-	return gfp;
+	return mapping_gfp_mask(mapping) & gfp;
 }
 
 /* The pages of a shared memory file are wired while held: nothing to pin. */
