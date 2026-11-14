@@ -63,6 +63,9 @@ def has_multiuser_rc_dependencies(root):
 
 selected = profile.network('riscv32')
 littlefs = profile.network('riscv32', root_filesystem='littlefs')
+check('sys/net80211' in selected['headers'] and
+      'sys/net80211' in littlefs['headers'],
+      'network profile stages the current net80211 userland ABI headers')
 try:
     mdns_toolset = profile.network('riscv32', ('mdns',))
 except ValueError:

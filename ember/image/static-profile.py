@@ -462,7 +462,7 @@ def network(target, toolsets=(), spi_units=(), root_filesystem='ffs',
     selected = console(target)
     selected['root_filesystem'] = root_filesystem
     selected.update(profile='network', compact=False)
-    selected['headers'] = ('lib/libcurses',)
+    selected['headers'] = ('lib/libcurses', 'sys/net80211')
     selected['libraries'] = ('lib/libcrypt', 'lib/libterminfo', 'lib/libedit',
                              'lib/libm', 'lib/libutil', 'lib/libprop',
                              'lib/libkvm', 'lib/libipsec',
