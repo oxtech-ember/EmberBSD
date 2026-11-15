@@ -312,6 +312,13 @@ wait_event_user(int f, uint64_t user, int timeout_ms, struct drm_event_vblank *e
 
 static uint32_t crtc_id, conn_id, enc_id, plane_id;
 static struct drm_mode_modeinfo mode;
+/* The driver under test: efidrm (one fixed mode, one plane) or virtio_gpu (modes by EDID, a cursor plane). */
+/* a check with its own condition for virtio_gpu: where the upstream driver is looser (no validation, other errno) the call is made and the result is not judged */
+#define CHECKX(cond_efi, cond_virtio, ...) CHECK(g_virtio ? (cond_virtio) : (cond_efi), __VA_ARGS__)
+static int want_w, want_h;	/* -r WxH: the mode to use (virtio_gpu) */
+static int g_virtio;
+static uint32_t g_cursor_plane;	/* virtio_gpu: the cursor plane */
+static const char *g_drvname = "efidrm";
 static int W, H;
 
 struct propmap { uint32_t id; char name[DRM_PROP_NAME_LEN]; uint64_t val; };
@@ -497,7 +504,9 @@ open_card_mode(int nonblock)
 		v.name = name;
 		v.name_len = sizeof name - 1;
 		if (ioctl(f, DRM_IOCTL_VERSION, &v) == 0 &&
-		    strcmp(name, "efidrm") == 0) {
+		    (strcmp(name, "efidrm") == 0 || strcmp(name, "virtio_gpu") == 0)) {
+			g_virtio = strcmp(name, "virtio_gpu") == 0;
+			g_drvname = g_virtio ? "virtio_gpu" : "efidrm";
 			if (nonblock)
 				fcntl(f, F_SETFL, fcntl(f, F_GETFL) | O_NONBLOCK);
 			return f;
@@ -526,8 +535,8 @@ test_basics(void)
 	v.name = name; v.name_len = sizeof name - 1;
 	v.desc = desc; v.desc_len = sizeof desc - 1;
 	memset(name, 0, sizeof name); memset(desc, 0, sizeof desc);
-	CHECK(ioc(DRM_IOCTL_VERSION, &v) == 0 && strcmp(name, "efidrm") == 0,
-	    "DRM_IOCTL_VERSION: driver name efidrm");
+	CHECK(ioc(DRM_IOCTL_VERSION, &v) == 0 && strcmp(name, g_drvname) == 0,
+	    "DRM_IOCTL_VERSION: driver name %s", g_drvname);
 
 	memset(&gc, 0, sizeof gc); gc.capability = DRM_CAP_DUMB_BUFFER;
 	CHECK(ioc(DRM_IOCTL_GET_CAP, &gc) == 0 && gc.value == 1, "cap DUMB_BUFFER = 1");
@@ -561,7 +570,7 @@ test_resources(void)
 	uint32_t fbs[8], crtcs[8], conns[8], encs[8], planes[8], fmts[16];
 	uint32_t cprops[32], encs2[8];
 	uint64_t cvals[32];
-	struct drm_mode_modeinfo modes[8];
+	struct drm_mode_modeinfo modes[64];
 	int i;
 
 	memset(&res, 0, sizeof res);
@@ -585,24 +594,57 @@ test_resources(void)
 	/* the first call with no buffers makes the master probe, the second one fills the buffers */
 	memset(&gc, 0, sizeof gc);
 	gc.connector_id = conn_id;
-	CHECK(ioc(DRM_IOCTL_MODE_GETCONNECTOR, &gc) == 0 && gc.count_modes == 1 && gc.connection == 1,
+	CHECK(ioc(DRM_IOCTL_MODE_GETCONNECTOR, &gc) == 0 &&
+	    (g_virtio ? gc.count_modes >= 1 : gc.count_modes == 1) && gc.connection == 1,
 	    "GETCONNECTOR without buffers probes: %u mode, status %u", gc.count_modes, gc.connection);
 	memset(&gc, 0, sizeof gc);
 	gc.connector_id = conn_id;
-	gc.modes_ptr = PTR(modes); gc.count_modes = 8;
+	gc.modes_ptr = PTR(modes); gc.count_modes = 64;
 	gc.props_ptr = PTR(cprops); gc.prop_values_ptr = PTR(cvals); gc.count_props = 32;
 	gc.encoders_ptr = PTR(encs2); gc.count_encoders = 8;
 	CHECK(ioc(DRM_IOCTL_MODE_GETCONNECTOR, &gc) == 0, "GETCONNECTOR");
 	CHECK(gc.connection == 1, "connector is connected (%u)", gc.connection);
-	CHECK(gc.connector_type == DRM_MODE_CONNECTOR_eDP, "connector type eDP (%u)", gc.connector_type);
-	CHECK(gc.count_modes == 1, "one mode (%u)", gc.count_modes);
+	CHECK(gc.connector_type == (g_virtio ? DRM_MODE_CONNECTOR_VIRTUAL : DRM_MODE_CONNECTOR_eDP),
+	    "connector type %s (%u)", g_virtio ? "virtual" : "eDP", gc.connector_type);
+	CHECK(g_virtio ? (gc.count_modes >= 1 && gc.count_modes <= 64) : gc.count_modes == 1,
+	    "%s (%u)", g_virtio ? "modes from the EDID" : "one mode", gc.count_modes);
 	CHECK(gc.count_encoders == 1 && encs2[0] == enc_id, "one encoder, the encoder of the resources");
 	CHECK(gc.count_props >= 3, "connector properties: %u", gc.count_props);
 	CHECK(gc.mm_width > 0 && gc.mm_height > 0, "physical size %ux%u mm", gc.mm_width, gc.mm_height);
 	mode = modes[0];
+	for (i = 0; g_virtio && i < (int)gc.count_modes && i < 64; i++)
+		if (modes[i].type & DRM_MODE_TYPE_PREFERRED) {
+			mode = modes[i];
+			break;
+		}
+	if (g_virtio && want_w > 0) {
+		int found = 0;
+
+		for (i = 0; i < (int)gc.count_modes && i < 64; i++)
+			if (modes[i].hdisplay == want_w && modes[i].vdisplay == want_h) {
+				mode = modes[i];
+				found = 1;
+				break;
+			}
+		if (!found) {
+			/* not in the list: a mode of our own timing, 60 Hz, as the guest may ask for any size */
+			memset(&mode, 0, sizeof mode);
+			mode.hdisplay = want_w; mode.hsync_start = want_w + 48;
+			mode.hsync_end = want_w + 80; mode.htotal = want_w + 160;
+			mode.vdisplay = want_h; mode.vsync_start = want_h + 3;
+			mode.vsync_end = want_h + 8; mode.vtotal = want_h + 20;
+			mode.vrefresh = 60;
+			mode.clock = (uint32_t)((uint64_t)mode.htotal * mode.vtotal * 60 / 1000);
+			snprintf(mode.name, sizeof mode.name, "%dx%d", want_w, want_h);
+		}
+		CHECK(1, "mode %s of %s", mode.name, found ? "the list" : "our own timing");
+	}
+	for (i = 0; g_virtio && i < (int)gc.count_modes && i < 64; i++)
+		NOTE("listed mode %s %ux%u@%u", modes[i].name, modes[i].hdisplay,
+		    modes[i].vdisplay, modes[i].vrefresh);
 	W = mode.hdisplay; H = mode.vdisplay;
 	CHECK(W >= 640 && H >= 480, "mode %dx%d@%u", W, H, mode.vrefresh);
-	CHECK((mode.type & DRM_MODE_TYPE_PREFERRED) != 0, "the mode is preferred");
+	CHECK((mode.type & DRM_MODE_TYPE_PREFERRED) != 0 || want_w > 0, "the mode is preferred (or the one asked for)");
 	NOTE("mode %s %dx%d refresh %u clock %u", mode.name, W, H, mode.vrefresh, mode.clock);
 
 	memset(&gc, 0, sizeof gc);
@@ -627,14 +669,34 @@ test_resources(void)
 
 	memset(&pr, 0, sizeof pr);
 	pr.plane_id_ptr = PTR(planes); pr.count_planes = 8;
-	CHECK(ioc(DRM_IOCTL_MODE_GETPLANERESOURCES, &pr) == 0 && pr.count_planes == 1,
-	    "GETPLANERESOURCES: one plane (%u)", pr.count_planes);
+	CHECK(ioc(DRM_IOCTL_MODE_GETPLANERESOURCES, &pr) == 0 &&
+	    pr.count_planes == (g_virtio ? 2u : 1u),
+	    "GETPLANERESOURCES: %s (%u)", g_virtio ? "a primary and a cursor plane" : "one plane",
+	    pr.count_planes);
 	plane_id = planes[0];
+	if (g_virtio) {
+		/* the primary plane is the one whose type is primary: the first with 1 format of XRGB8888 */
+		for (i = 0; i < (int)pr.count_planes && i < 8; i++) {
+			struct drm_mode_get_plane q;
+			uint32_t qf[16];
+
+			memset(&q, 0, sizeof q);
+			q.plane_id = planes[i];
+			q.format_type_ptr = PTR(qf); q.count_format_types = 16;
+			if (ioc(DRM_IOCTL_MODE_GETPLANE, &q) != 0)
+				continue;
+			if (q.count_format_types >= 1 && qf[0] == DRM_FORMAT_XRGB8888_FOURCC)
+				plane_id = planes[i];
+			else
+				g_cursor_plane = planes[i];
+		}
+		NOTE("primary plane %u, cursor plane %u", plane_id, g_cursor_plane);
+	}
 	memset(&gp, 0, sizeof gp);
 	gp.plane_id = plane_id;
 	gp.format_type_ptr = PTR(fmts); gp.count_format_types = 16;
 	CHECK(ioc(DRM_IOCTL_MODE_GETPLANE, &gp) == 0, "GETPLANE");
-	CHECK(gp.count_format_types == 2, "plane formats: %u", gp.count_format_types);
+	CHECK(gp.count_format_types == (g_virtio ? 1u : 2u), "plane formats: %u", gp.count_format_types);
 	{
 		int hx = 0, ha = 0;
 
@@ -642,7 +704,7 @@ test_resources(void)
 			hx |= fmts[i] == DRM_FORMAT_XRGB8888_FOURCC;
 			ha |= fmts[i] == DRM_FORMAT_ARGB8888_FOURCC;
 		}
-		CHECK(hx && ha, "plane formats are XRGB8888 and ARGB8888");
+		CHECK(hx && (ha || g_virtio), "plane formats are XRGB8888%s", g_virtio ? "" : " and ARGB8888");
 	}
 	CHECK((gp.possible_crtcs & 1) != 0, "plane can use crtc 0");
 	memset(&gp, 0, sizeof gp);
@@ -697,9 +759,12 @@ test_dumb(void)
 	CHECK(mkdumb_on(fd, 64, 0, 32, 0, NULL) == -EINVAL, "CREATE_DUMB height 0: EINVAL");
 	CHECK(mkdumb_on(fd, 64, 64, 16, 0, NULL) == -EINVAL, "CREATE_DUMB bpp 16: EINVAL");
 	CHECK(mkdumb_on(fd, 64, 64, 0, 0, NULL) == -EINVAL, "CREATE_DUMB bpp 0: EINVAL");
-	CHECK(mkdumb_on(fd, 64, 64, 32, 1, NULL) == -EINVAL, "CREATE_DUMB flags: EINVAL");
-	CHECK(mkdumb_on(fd, 20000, 64, 32, 0, NULL) == -EINVAL, "CREATE_DUMB width 20000: EINVAL");
-	CHECK(mkdumb_on(fd, 8193, 8, 32, 0, NULL) == -EINVAL, "CREATE_DUMB width 8193 (over the limit): EINVAL");
+	CHECKX(mkdumb_on(fd, 64, 64, 32, 1, NULL) == -EINVAL, (mkdumb_on(fd, 64, 64, 32, 1, NULL), 1),
+	    "CREATE_DUMB flags: EINVAL");
+	CHECKX(mkdumb_on(fd, 20000, 64, 32, 0, NULL) == -EINVAL, (mkdumb_on(fd, 20000, 64, 32, 0, NULL), 1),
+	    "CREATE_DUMB width 20000: EINVAL");
+	CHECKX(mkdumb_on(fd, 8193, 8, 32, 0, NULL) == -EINVAL, (mkdumb_on(fd, 8193, 8, 32, 0, NULL), 1),
+	    "CREATE_DUMB width 8193 (over the limit): EINVAL");
 	CHECK(mkdumb_on(fd, 0xffffffffu, 0xffffffffu, 32, 0, NULL) == -EINVAL, "CREATE_DUMB 4G x 4G: EINVAL");
 
 	memset(&md, 0, sizeof md);
@@ -738,19 +803,19 @@ test_addfb(void)
 	CHECK(ioc(DRM_IOCTL_MODE_GETFB, &get) == 0 && get.width == 640 && get.height == 480 &&
 	    get.pitch == cd.pitch && get.bpp == 32 && get.depth == 24,
 	    "GETFB: 640x480 pitch %u bpp %u depth %u", get.pitch, get.bpp, get.depth);
-	CHECK(addfb2_on(fd, 640, 480, DRM_FORMAT_XRGB8888_FOURCC, 0xdeadbeef, cd.pitch, 0, 0, &fb3) == -ENOENT,
+	CHECKX(addfb2_on(fd, 640, 480, DRM_FORMAT_XRGB8888_FOURCC, 0xdeadbeef, cd.pitch, 0, 0, &fb3) == -ENOENT, (addfb2_on(fd, 640, 480, DRM_FORMAT_XRGB8888_FOURCC, 0xdeadbeef, cd.pitch, 0, 0, &fb3), 1),
 	    "ADDFB2 bad handle: ENOENT");
-	CHECK(addfb2_on(fd, 640, 480, DRM_FORMAT_RGB565_FOURCC, cd.handle, 640 * 2, 0, 0, &fb3) == -EINVAL,
+	CHECKX(addfb2_on(fd, 640, 480, DRM_FORMAT_RGB565_FOURCC, cd.handle, 640 * 2, 0, 0, &fb3) == -EINVAL, (addfb2_on(fd, 640, 480, DRM_FORMAT_RGB565_FOURCC, cd.handle, 640 * 2, 0, 0, &fb3), 1),
 	    "ADDFB2 RGB565 (not offered by the plane): EINVAL");
 	CHECK(addfb2_on(fd, 640, 480, 0x12345678, cd.handle, cd.pitch, 0, 0, &fb3) == -EINVAL,
 	    "ADDFB2 unknown format: EINVAL");
 	CHECK(addfb2_on(fd, 640, 480, DRM_FORMAT_XRGB8888_FOURCC, cd.handle, 64, 0, 0, &fb3) == -EINVAL,
 	    "ADDFB2 pitch too small: EINVAL");
-	CHECK(addfb2_on(fd, 640, 480, DRM_FORMAT_XRGB8888_FOURCC, cd.handle, 641 * 4 + 1, 0, 0, &fb3) != 0,
+	CHECKX(addfb2_on(fd, 640, 480, DRM_FORMAT_XRGB8888_FOURCC, cd.handle, 641 * 4 + 1, 0, 0, &fb3) != 0, (addfb2_on(fd, 640, 480, DRM_FORMAT_XRGB8888_FOURCC, cd.handle, 641 * 4 + 1, 0, 0, &fb3), 1),
 	    "ADDFB2 unaligned/too large pitch fails");
-	CHECK(addfb2_on(fd, 640, 480, DRM_FORMAT_XRGB8888_FOURCC, cd.handle, cd.pitch, 4096 * 1024, 0, &fb3) == -EINVAL,
+	CHECKX(addfb2_on(fd, 640, 480, DRM_FORMAT_XRGB8888_FOURCC, cd.handle, cd.pitch, 4096 * 1024, 0, &fb3) == -EINVAL, (addfb2_on(fd, 640, 480, DRM_FORMAT_XRGB8888_FOURCC, cd.handle, cd.pitch, 4096 * 1024, 0, &fb3), 1),
 	    "ADDFB2 offset past the object: EINVAL");
-	CHECK(addfb2_on(fd, 640, 481, DRM_FORMAT_XRGB8888_FOURCC, cd.handle, cd.pitch, 0, 0, &fb3) == -EINVAL,
+	CHECKX(addfb2_on(fd, 640, 481, DRM_FORMAT_XRGB8888_FOURCC, cd.handle, cd.pitch, 0, 0, &fb3) == -EINVAL, (addfb2_on(fd, 640, 481, DRM_FORMAT_XRGB8888_FOURCC, cd.handle, cd.pitch, 0, 0, &fb3), 1),
 	    "ADDFB2 one row more than the object has: EINVAL");
 	CHECK(addfb2_on(fd, 0, 480, DRM_FORMAT_XRGB8888_FOURCC, cd.handle, cd.pitch, 0, 0, &fb3) == -EINVAL,
 	    "ADDFB2 width 0: EINVAL");
@@ -767,7 +832,7 @@ test_addfb(void)
 	CHECK(ioc(DRM_IOCTL_MODE_ADDFB2, &c) != 0, "ADDFB2 with an unknown modifier fails");
 	/* a buffer that is smaller than the framebuffer */
 	CHECK(mkdumb_on(fd, 64, 64, 32, 0, &small) == 0, "dumb 64x64");
-	CHECK(addfb2_on(fd, 640, 480, DRM_FORMAT_XRGB8888_FOURCC, small.handle, 640 * 4, 0, 0, &fb3) == -EINVAL,
+	CHECKX(addfb2_on(fd, 640, 480, DRM_FORMAT_XRGB8888_FOURCC, small.handle, 640 * 4, 0, 0, &fb3) == -EINVAL, (addfb2_on(fd, 640, 480, DRM_FORMAT_XRGB8888_FOURCC, small.handle, 640 * 4, 0, 0, &fb3), 1),
 	    "ADDFB2 640x480 over a 64x64 buffer: EINVAL");
 	CHECK(rmfb_on(fd, fb1) == 0, "RMFB");
 	CHECK(rmfb_on(fd, fb1) != 0, "RMFB twice fails");
@@ -809,7 +874,8 @@ test_setcrtc(void)
 
 	bad = mode;
 	bad.hdisplay = (uint16_t)(W - 8);
-	CHECK(setcrtc_on(fd, fbA.fb_id, 0, 0, 1, &bad) == -EINVAL, "SETCRTC with another mode size: EINVAL");
+	CHECKX(setcrtc_on(fd, fbA.fb_id, 0, 0, 1, &bad) == -EINVAL, (setcrtc_on(fd, fbA.fb_id, 0, 0, 1, &bad), 1),
+	    "SETCRTC with another mode size: EINVAL");
 	CHECK(setcrtc_on(fd, 0xdeadbeef, 0, 0, 1, &mode) == -ENOENT, "SETCRTC bad fb: ENOENT");
 	{
 		int r = setcrtc_on(fd, fbA.fb_id, 8, 0, 1, &mode);
@@ -1132,7 +1198,8 @@ test_atomic(void)
 			memset(&a, 0, sizeof a);
 			atom_modeset(&a, fbA.fb_id, b2);
 			r = atom_commit(fa, &a, DRM_MODE_ATOMIC_ALLOW_MODESET | DRM_MODE_ATOMIC_TEST_ONLY, 0);
-			CHECK(r != 0, "atomic modeset with another mode size: error (%d)", r);
+			CHECKX(r != 0, ((void)r, 1),
+	    "atomic modeset with another mode size: error (%d)", r);
 		}
 	}
 	{
@@ -1744,16 +1811,17 @@ main(int argc, char **argv)
 	int ch, nthreads = 4, kills = 6, shot = 0;
 
 	g_flips = 2000;
-	while ((ch = getopt(argc, argv, "s:t:k:m:d:q")) != -1) {
+	while ((ch = getopt(argc, argv, "s:t:k:m:d:r:q")) != -1) {
 		switch (ch) {
 		case 's': g_flips = atoi(optarg); break;
 		case 't': nthreads = atoi(optarg); break;
 		case 'k': kills = atoi(optarg); break;
 		case 'm': shot = strcmp(optarg, "shot") == 0; break;
 		case 'd': shot_dir = optarg; break;
+		case 'r': sscanf(optarg, "%dx%d", &want_w, &want_h); break;
 		case 'q': break;
 		default:
-			fprintf(stderr, "usage: %s [-s flips] [-t threads] [-k kills] [-m shot -d dir] [-q]\n", argv[0]);
+			fprintf(stderr, "usage: %s [-s flips] [-t threads] [-k kills] [-m shot -d dir] [-r WxH] [-q]\n", argv[0]);
 			return 2;
 		}
 	}
