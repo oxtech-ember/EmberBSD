@@ -5,7 +5,7 @@ set -eu
 # An ambient product version must not replace the selected source version.
 export EMBER_VERSION=9.9
 # Fixtures select their own build mode and toolchain, independent of the shell.
-unset EMBER_HOST_BFD_CONFIG EMBERBSD_SDK_SOURCE EMBER_HOST_PREFIX EMBER_HOST_COMPILER_FAMILY EMBER_BUILD_MODE EMBER_EXTERNAL_TOOLCHAIN EMBER_COMPILER_FAMILY EMBER_LLVM_SOURCE EMBER_BYACC_SOURCE EMBER_HEIMDAL_SOURCE PVR_QUERY_FIRMWARE
+unset EMBER_HOST_BFD_CONFIG EMBERBSD_SDK_SOURCE EMBER_HOST_PREFIX EMBER_HOST_COMPILER_FAMILY EMBER_BUILD_MODE EMBER_EXTERNAL_TOOLCHAIN EMBER_COMPILER_FAMILY EMBER_LLVM_SOURCE EMBER_BYACC_SOURCE EMBER_HEIMDAL_SOURCE EMBER_ZLIB_SOURCE PVR_QUERY_FIRMWARE
 repo=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 TEST_SHELL=${EMBER_TEST_SHELL:-$(command -v sh)}
 TEST_PYTHON=${EMBER_TEST_PYTHON:-$(command -v python3)}
@@ -48,6 +48,11 @@ export EMBER_BYACC_SOURCE="$work/byacc"
 mkdir -p "$work/heimdal/lib/asn1"
 : > "$work/heimdal/emberbsd-prepared-source.json"
 export EMBER_HEIMDAL_SOURCE="$work/heimdal"
+mkdir -p "$work/zlib"
+for input in zlib.h zconf.h zutil.h inflate.c inftrees.c emberbsd-prepared-source.json; do
+    : > "$work/zlib/$input"
+done
+export EMBER_ZLIB_SOURCE="$work/zlib"
 cp "$repo/ember/build-kernel.sh" "$work/src/ember/"
 cp "$repo/ember/tools/kernel-contracts.sh" "$work/src/ember/tools/"
 cp "$repo/sys/arch/evbarm/conf/EMBER64" "$work/src/sys/arch/evbarm/conf/"
@@ -87,7 +92,7 @@ for contract in bcm2712-display bcm2712-display-irq bcm2712-display-hsm bcm2712-
     bcm2712-v3d-uapi bcm2712-v3d-bo bcm2712-v3d-sg bcm2712-v3d-job bcm2712-v3d-csd \
     bcm2712-v3d-cl bcm2712-v3d-wait bcm2712-v3d-sync drm-syncobj-wait \
     drm-syncobj-dispatch drm-syncobj-find drm-syncobj-flatten dma-fence-chain drm-jiffies \
-    linux-idr i915-elsq-desc i915-rps-lifetime drm-pci-identity linux-rcu-replace \
+    linux-idr ww-mutex i915-elsq-desc i915-rps-lifetime drm-pci-identity linux-rcu-replace \
     pvr-render pvr-heap pvr-bo pvr-vm pvr-file pvr-stream pvr-context pvr-hwrt drm-scheduler pvr-submit pvr-render-attach; do
     cat > "$work/src/ember/tools/$contract-contract.sh" <<'SH'
 #!/bin/sh
@@ -195,6 +200,9 @@ echo "build.sh $*" >> "$TEST_LOG"
 [ -z "${CC:-}" ] && [ -z "${CFLAGS:-}" ]
 case " $* " in *" -V HOST_CC=$TEST_ROOT/bin/host-cc "*) ;; *) exit 83;; esac
 case " $* " in *" -V HOST_CFLAGS=-Dfixture_host "*) ;; *) exit 84;; esac
+# The SDK discards arbitrary environment variables; zlib must be make data.
+case " $* " in *" -V EMBER_ZLIB_SOURCE=$TEST_ROOT/zlib "*) ;; *)
+    echo 'missing explicit prepared zlib source' >&2; exit 87;; esac
 for argument do case $argument in BUILDINFO=*) BUILDINFO=${argument#BUILDINFO=};; esac; done
 [ "${FAIL_AT:-}" != tools ]
 config=
@@ -445,7 +453,7 @@ env.update(HOST_CC=root + "/bin/host-cc", HOST_CXX=root + "/bin/host-cxx",
            HOST_CFLAGS="-Dfixture_host", HOST_CXXFLAGS="-Dfixture_cxx",
            HOST_LDFLAGS="-Lfixture-host", EMBER_NATIVE_TOOLS=routing,
            EMBER_HOST_COMPILER_FAMILY=values["--compiler-family"], MAKECONF="/dev/null")
-for name in ("CC", "CXX", "CPP", "CFLAGS", "CXXFLAGS", "CPPFLAGS", "LDFLAGS", "BUILDINFO"):
+for name in ("CC", "CXX", "CPP", "CFLAGS", "CXXFLAGS", "CPPFLAGS", "LDFLAGS", "BUILDINFO", "EMBER_ZLIB_SOURCE"):
     env.pop(name, None)
 env["PATH"] = routing + ":" + root + "/bin:" + root + "/sbin:" + root + "/gnu/bin"
 with open(os.environ["TEST_LOG"], "a") as stream:
@@ -489,7 +497,7 @@ export CC=/target/compiler CXX=/target/compiler-cxx CFLAGS=-Dwrong_target CXXFLA
 check_contract_counts() {
     test "$(grep -c '^contract ' "$TEST_LOG")" -eq "$1"
     test "$(grep -c '^a733-contract ' "$TEST_LOG")" -eq 24
-    test "$(grep -c '^gpu-contract ' "$TEST_LOG")" -eq 40
+    test "$(grep -c '^gpu-contract ' "$TEST_LOG")" -eq 41
     test "$(grep -c '^ruby-contract ' "$TEST_LOG")" -eq 15
     test "$(grep -c '^network-contract ' "$TEST_LOG")" -eq 8
 }
@@ -508,6 +516,7 @@ grep -q ' -c clang ' "$TEST_LOG"
 grep -Fq -- "-V EMBER_LLVM_SOURCE=$EMBER_LLVM_SOURCE" "$TEST_LOG"
 grep -Fq -- "-V EMBER_BYACC_SOURCE=$EMBER_BYACC_SOURCE" "$TEST_LOG"
 grep -Fq -- "-V EMBER_HEIMDAL_SOURCE=$EMBER_HEIMDAL_SOURCE" "$TEST_LOG"
+grep -Fq -- "-V EMBER_ZLIB_SOURCE=$EMBER_ZLIB_SOURCE" "$TEST_LOG"
 grep -q 'cpp .*/target-cpp --target=aarch64--netbsd -E ' "$TEST_LOG"
 grep -q 'EMBER_KERNEL_OBJDIR=.*/obj/kernels/EMBER64' "$TEST_LOG"
 grep -q 'cpp .*/tools/bin/target-cpp ' "$TEST_LOG"
@@ -728,6 +737,27 @@ for heimdal in '' relative "$work/missing-heimdal" "$work/bad source" \
     grep -q EMBER_HEIMDAL_SOURCE "$work/run.log"
     ! grep -q '^build.sh ' "$TEST_LOG"
     test ! -e "$TEST_OUT/netbsd-EMBER64"
+done
+for zlib in '' relative "$work/missing-zlib" "$work/bad source"; do
+    : > "$TEST_LOG"
+    if EMBER_ZLIB_SOURCE="$zlib" sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1; then
+        echo 'accepted missing or invalid common zlib source' >&2; exit 1
+    fi
+    grep -q EMBER_ZLIB_SOURCE "$work/run.log"
+    ! grep -q '^build.sh ' "$TEST_LOG"
+    test ! -e "$TEST_OUT/netbsd-EMBER64"
+done
+# Every required input must be present before starting the tools build.
+for input in zlib.h zconf.h zutil.h inflate.c inftrees.c emberbsd-prepared-source.json; do
+    rm "$work/zlib/$input"
+    : > "$TEST_LOG"
+    if sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1; then
+        echo "accepted prepared zlib source without $input" >&2; exit 1
+    fi
+    grep -q EMBER_ZLIB_SOURCE "$work/run.log"
+    ! grep -q '^build.sh ' "$TEST_LOG"
+    test ! -e "$TEST_OUT/netbsd-EMBER64"
+    : > "$work/zlib/$input"
 done
 # An explicit common BFD input reaches build.sh as ordinary make data.
 : > "$work/host-bfd.mk"

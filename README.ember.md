@@ -72,6 +72,7 @@ EMBER_BUILD_MODE=cross EMBER_EXTERNAL_TOOLCHAIN=/absolute/llvm \
     EMBER_LLVM_SOURCE=/absolute/prepared-llvm \
     EMBER_BYACC_SOURCE=/absolute/prepared-byacc \
     EMBER_HEIMDAL_SOURCE=/absolute/prepared-heimdal \
+    EMBER_ZLIB_SOURCE=/absolute/prepared-zlib \
     EMBERBSD_SDK_SOURCE=/absolute/sdk-source EMBER_HOST_PREFIX=/absolute/native-prefix \
     sh ember/build-kernel.sh /absolute/output EMBER64
 ```

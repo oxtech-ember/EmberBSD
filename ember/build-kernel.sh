@@ -74,6 +74,16 @@ case "$heimdal_source" in
 esac
 [ -f "$heimdal_source/emberbsd-prepared-source.json" ] && [ -d "$heimdal_source/lib/asn1" ] ||
     fail 'EMBER_HEIMDAL_SOURCE does not contain the prepared Heimdal source'
+# Kernel libz uses the same prepared common source as the base system.
+zlib_source=${EMBER_ZLIB_SOURCE:-}
+case "$zlib_source" in
+/*) case "$zlib_source" in *[!A-Za-z0-9_./+@%=-]*) fail 'invalid EMBER_ZLIB_SOURCE path';; esac;;
+*) fail 'set EMBER_ZLIB_SOURCE to the absolute Ports-prepared zlib source';;
+esac
+for input in zlib.h zconf.h zutil.h inflate.c inftrees.c emberbsd-prepared-source.json; do
+    [ -f "$zlib_source/$input" ] ||
+        fail "EMBER_ZLIB_SOURCE is missing prepared zlib input: $input"
+done
 mode=${EMBER_BUILD_MODE:-cross}
 compiler_family=${EMBER_COMPILER_FAMILY:-clang}
 case "$compiler_family" in
@@ -162,7 +172,7 @@ set -- -U -u -j"$jobs" -c "$compiler_family" -m evbarm -a aarch64 \
     -O "$out/obj" -T "$out/tools" -D "$out/dest" \
     -V "KERNOBJDIR=$out/obj/kernels" -V MKCROSSGDB=no \
     -V "EMBER_LLVM_SOURCE=$llvm_source" -V "EMBER_BYACC_SOURCE=$byacc_source" \
-    -V "EMBER_HEIMDAL_SOURCE=$heimdal_source" \
+    -V "EMBER_HEIMDAL_SOURCE=$heimdal_source" -V "EMBER_ZLIB_SOURCE=$zlib_source" \
     -V "EXTERNAL_TOOLCHAIN=$EMBER_EXTERNAL_TOOLCHAIN" -V TOOLCHAIN_MISSING=yes
 case ${EMBER_HOST_BFD_CONFIG:-} in
 /*) [ -f "$EMBER_HOST_BFD_CONFIG" ] || fail 'common host BFD configuration missing';;

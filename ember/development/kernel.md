@@ -43,7 +43,9 @@ an application sysroot or supply a complete application runtime. Both families
 consume the common Ports-prepared LLVM sources through `EMBER_LLVM_SOURCE`.
 The tools phase also needs Ports-prepared byacc and Heimdal sources through
 `EMBER_BYACC_SOURCE` and `EMBER_HEIMDAL_SOURCE`; the latter supplies the host
-ASN.1 compiler even for a kernel-only build. The wrapper forwards all three
+ASN.1 compiler even for a kernel-only build. Kernel libz also requires
+the common Ports-prepared zlib source through `EMBER_ZLIB_SOURCE`; see the
+[base zlib contract](../../lib/libz/README.md). The wrapper forwards all four
 source paths explicitly to `build.sh`, including on Linux where the SDK runner
 does not inherit arbitrary source variables from the environment.
 Host contracts use the shared SDK native-check runner and independent
