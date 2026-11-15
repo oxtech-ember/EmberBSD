@@ -235,6 +235,18 @@ The selected `EMBER_*_SOURCE` roots, including OpenSSL, Heimdal, OpenSSH,
 WPA and the other prepared base dependencies, go to `/usr/src/external/NAME`.
 This covers diagnostic `__FILE__` strings as well as debug information;
 adding a prepared dependency requires its map and a two-root regression.
+Heimdal's native generation rules apply the same canonical roots to installed
+ASN.1 and error-table headers and generated C. The generator still receives
+the real source path, so private build logs and parse-error diagnostics retain
+the selected input; reproducible public artifacts retain canonical provenance.
+Exercise the real configured OS targets, including parallel clean regeneration:
+
+```sh
+python3 crypto/external/bsd/heimdal/share/mk/tests/generated-paths.py \
+    --nbmake /absolute/tools/bin/nbmake-evbarm \
+    --source /absolute/prepared-heimdal --work-dir /absolute/test-work
+```
+
 `EMBER_EXTERNAL_LLVM_RUNTIME`
 goes to `/usr/pkg/llvm` and `EMBER_EXTERNAL_GCC_RUNTIME` to `/usr/pkg/gcc16`.
 The `lib/libc` tags use the same list. Each root must be an absolute path

@@ -2,15 +2,34 @@
 
 SRCS+= ${HEIMSRCS:N*.et:N*.in:N*.asn1}
 
+# Text artifacts need the same source identities as compiler-generated output.
+# Keep this recursive: bsd.sys.mk supplies REPRO_EXTERNAL_ROOTS later.
+# Map external inputs first, including sources nested below NETBSDSRCDIR.
+NORMALIZE_SRC= -e ''
+.if ${MKREPRO:Uno} == "yes"
+_HEIMDAL_REPRO_SPECIALS=[][)(^$$.?*+{}\\;]
+NORMALIZE_SRC= ${REPRO_EXTERNAL_ROOTS:@_r@-e 's;${_r:C/=.*//:C/${_HEIMDAL_REPRO_SPECIALS}/\\\\&/g};${_r:C/^[^=]*=//};g'@}
+NORMALIZE_SRC+= -e 's;${NETBSDSRCDIR:C/${_HEIMDAL_REPRO_SPECIALS}/\\\\&/g};/usr/src;g'
+.endif
+
 .for et_src in ${HEIMSRCS:M*.et}
 CLEANFILES+=		${et_src:.et=.c} ${et_src:.et=.h}
+CLEANFILES+=		${et_src:.et=.c.repro} ${et_src:.et=.h.repro}
 DPSRCS+=		${et_src:.et=.c} ${et_src:.et=.h}
 COMPILE_ET_INCS+=	${et_src:.et=.h}
 OBJS+=			${et_src:.et=.o}
 
+# Both targets write the pair; serialize them when requested together.
+.ORDER: ${et_src:.et=.c} ${et_src:.et=.h}
 ${et_src:.et=.c} ${et_src:.et=.h}: ${et_src} ${TOOL_COMPILE_ET}
 	${_MKTARGET_CREATE}
 	${TOOL_COMPILE_ET} ${.ALLSRC:[1]}
+.if ${MKREPRO:Uno} == "yes"
+.for _et_out in ${et_src:.et=.c} ${et_src:.et=.h}
+	${TOOL_SED} -E ${NORMALIZE_SRC} < ${_et_out} > ${_et_out}.repro
+	mv -f ${_et_out}.repro ${_et_out}
+.endfor
+.endif
 
 .endfor
 
@@ -42,7 +61,7 @@ ${ASN1_FILES.${src}}: ${src:.asn1=.ts}
 
 ${src:.asn1=_asn1.h}: ${src:.asn1=.ts}
 	${_MKTARGET_CREATE}
-	@${TOOL_SED} -E 						\
+	@${TOOL_SED} -E ${NORMALIZE_SRC}				\
 	    -e 's,#include <(.*)_asn1\.h>,#include <krb5/\1_asn1.h>,'	\
 	    2> /dev/null < ${src:.asn1=_asn1.hx} > ${src:.asn1=_asn1.h}
 
@@ -69,14 +88,10 @@ ${src:.asn1=.ts}: ${src} ${TOOL_ASN1_COMPILE}
 	@touch $@
 .endif
 
-.if ${MKREPRO:Uno} == "yes"
-NORMALIZE_SRC=-e "s@${NETBSDSRCDIR}@/usr/src@g" 
-.endif
-
 .for x2c in ${ASN1_FILES.${src}}
 ${x2c:.x=.c}: ${x2c}
 	${_MKTARGET_CREATE}
-	@${TOOL_SED} ${NORMALIZE_SRC} < ${.ALLSRC} > ${x2c}.r
+	@${TOOL_SED} -E ${NORMALIZE_SRC} < ${.ALLSRC} > ${x2c}.r
 	@cmp -s ${x2c}.r ${x2c:.x=.c} 2> /dev/null || cp ${x2c}.r ${x2c:.x=.c}
 	@rm -f ${x2c}.r
 .endfor
