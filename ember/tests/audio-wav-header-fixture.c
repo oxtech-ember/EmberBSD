@@ -35,7 +35,7 @@ static int verbose;
 
 static unsigned char file[128];
 static size_t filelen;
-static int failures;
+static int cases, failures;
 
 static void
 put(const void *p, size_t n)
@@ -112,6 +112,7 @@ check(const char *name, const struct result *want)
 	struct result got = { .datasize = -1 };
 	void *copy;
 
+	cases++;
 	/* An exact heap copy lets a memory checker see reads past the end. */
 	if ((copy = malloc(filelen)) == NULL)
 		abort();
@@ -172,6 +173,27 @@ main(void)
 	check("extensible", &(struct result){ 68, AUDIO_ENCODING_SLINEAR_LE,
 	    24, 96000, 2, 12 });
 
+	/* A chunk ahead of the format is skipped by the first walk. */
+	riff();
+	put("JUNK", 4);
+	put32(6);
+	put("filler", 6);
+	fmt(WAVE_FORMAT_PCM, 2, 48000, 16, 16);
+	data(8);
+	check("junk", &(struct result){ 58, AUDIO_ENCODING_SLINEAR_LE, 16,
+	    48000, 2, 8 });
+
+	/* The non-PCM header of audiorecord: an 18-byte format and a fact. */
+	riff();
+	fmt(WAVE_FORMAT_MULAW, 1, 8000, 8, 18);
+	put16(0);
+	put("fact", 4);
+	put32(4);
+	put32(4);
+	data(4);
+	check("mulaw", &(struct result){ 58, AUDIO_ENCODING_ULAW, 8, 8000, 1,
+	    4 });
+
 	riff();
 	fmt(WAVE_FORMAT_PCM, 2, 48000, 16, 16);
 	put("LIST", 4);
@@ -195,8 +217,15 @@ main(void)
 	data(8);
 	check("notriff", &(struct result){ .hdrlen = AUDIO_ENOENT });
 
+	/* A RIFF container of another form type is not a WAV file. */
+	riff();
+	memcpy(file + 8, "AVI ", 4);
+	fmt(WAVE_FORMAT_PCM, 2, 48000, 16, 16);
+	data(8);
+	check("notwave", &(struct result){ .hdrlen = AUDIO_ENOENT });
+
 	if (failures != 0)
 		return EXIT_FAILURE;
-	printf("audio WAV header: 8 cases passed\n");
+	printf("audio WAV header: %d cases passed\n", cases);
 	return EXIT_SUCCESS;
 }
