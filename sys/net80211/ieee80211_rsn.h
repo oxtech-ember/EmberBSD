@@ -29,7 +29,8 @@ static inline bool
 ieee80211_assoc_rsn_parse(const uint8_t *p, size_t len,
     const uint8_t **rsn, size_t *rsn_len, size_t *rsn_offset)
 {
-	size_t pos = 0;
+	const uint8_t *cursor = p;
+	size_t remaining = len, pos = 0;
 	const uint8_t *found_rsn = NULL;
 	size_t found_rsn_len = 0, found_rsn_offset = 0;
 	bool seen_rsn = false, seen_rsnx = false;
@@ -40,31 +41,31 @@ ieee80211_assoc_rsn_parse(const uint8_t *p, size_t len,
 		*rsn_len = 0;
 	if (rsn_offset != NULL)
 		*rsn_offset = 0;
-	if (p == NULL || len == 0 || rsn == NULL || rsn_len == NULL ||
+	if (cursor == NULL || remaining == 0 || rsn == NULL || rsn_len == NULL ||
 	    rsn_offset == NULL)
 		return false;
 
-	while (pos < len) {
+	while (remaining != 0) {
 		size_t element_len, payload_len;
 
-		if (len - pos < 2)
+		if (remaining < 2)
 			return false;
-		payload_len = p[pos + 1];
+		payload_len = cursor[1];
+		if (payload_len > remaining - 2)
+			return false;
 		element_len = payload_len + 2;
-		if (element_len > len - pos)
-			return false;
 
-		switch (p[pos]) {
+		switch (cursor[0]) {
 		case 48: /* IEEE80211_ELEMID_RSN */
 			if (seen_rsn)
 				return false;
 			seen_rsn = true;
-			found_rsn = p + pos;
+			found_rsn = cursor;
 			found_rsn_len = element_len;
 			found_rsn_offset = pos;
 			break;
 		case 244: /* IEEE80211_ELEMID_RSNX */
-			if (seen_rsnx || !ieee80211_rsnxe_parse(p + pos,
+			if (seen_rsnx || !ieee80211_rsnxe_parse(cursor,
 			    element_len, NULL))
 				return false;
 			seen_rsnx = true;
@@ -72,6 +73,8 @@ ieee80211_assoc_rsn_parse(const uint8_t *p, size_t len,
 		default:
 			break;
 		}
+		cursor += element_len;
+		remaining -= element_len;
 		pos += element_len;
 	}
 

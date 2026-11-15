@@ -65,6 +65,18 @@ main(void)
 		check(!ieee80211_rsnxe_parse(oversized, sizeof(oversized), NULL),
 		    "oversized RSNXE rejected");
 	}
+	check(ieee80211_assoc_rsn_parse(good, sizeof(good), &rsn, &rsn_len,
+	    &rsn_offset), "exact-sized RSN element stream");
+	check(rsn == good && rsn_len == sizeof(good) && rsn_offset == 0,
+	    "exact-sized parser returns borrowed RSN view");
+	assoc[0] = 221;
+	assoc[1] = 1;
+	assoc[2] = 0x7f;
+	memcpy(assoc + 3, good, sizeof(good));
+	check(ieee80211_assoc_rsn_parse(assoc, 3 + sizeof(good), &rsn,
+	    &rsn_len, &rsn_offset), "RSN after another complete element");
+	check(rsn == assoc + 3 && rsn_len == sizeof(good) && rsn_offset == 3,
+	    "parser preserves borrowed view and original offset");
 	memcpy(assoc, good, sizeof(good));
 	assoc[22] = 244;
 	assoc[23] = 1;
