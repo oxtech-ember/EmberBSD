@@ -62,6 +62,59 @@ shmem_put_pages(struct drm_gem_shmem_object *shmem)
 	mutex_unlock(&shmem->pages_lock);
 }
 
+/*
+ * The largest object of a device whose driver cannot handle more (the ring of
+ * the virtio-gpu takes the list of backing pages of an object of this size in
+ * one command): set by the driver's layer, 0 clears it.  The table is small:
+ * few devices have a limit.
+ */
+void	drm618_gem_set_limit(device_t, size_t);
+
+static struct {
+	device_t	dev;
+	size_t		bytes;
+} shmem_limits[4];
+static kmutex_t shmem_limits_lock;
+static bool shmem_limits_init;
+
+void
+drm618_gem_set_limit(device_t dev, size_t bytes)
+{
+	unsigned int i;
+
+	if (!shmem_limits_init) {
+		mutex_init(&shmem_limits_lock, MUTEX_DEFAULT, IPL_NONE);
+		shmem_limits_init = true;
+	}
+	mutex_enter(&shmem_limits_lock);
+	for (i = 0; i < __arraycount(shmem_limits); i++)
+		if (shmem_limits[i].dev == dev || shmem_limits[i].dev == NULL) {
+			shmem_limits[i].dev = bytes != 0 ? dev : NULL;
+			shmem_limits[i].bytes = bytes;
+			if (shmem_limits[i].dev == dev || bytes == 0)
+				break;
+		}
+	if (i == __arraycount(shmem_limits) && bytes != 0)
+		printf("gem shmem: no room for the limit of a device\n");
+	mutex_exit(&shmem_limits_lock);
+}
+
+static size_t
+shmem_limit(device_t dev)
+{
+	size_t bytes = 0;
+	unsigned int i;
+
+	if (!shmem_limits_init)
+		return 0;
+	mutex_enter(&shmem_limits_lock);
+	for (i = 0; i < __arraycount(shmem_limits); i++)
+		if (shmem_limits[i].dev == dev && dev != NULL)
+			bytes = shmem_limits[i].bytes;
+	mutex_exit(&shmem_limits_lock);
+	return bytes;
+}
+
 /* ---- the object ---------------------------------------------------------- */
 
 static const struct drm_gem_object_funcs drm_gem_shmem_funcs;
@@ -71,11 +124,18 @@ drm_gem_shmem_create(struct drm_device *dev, size_t size)
 {
 	struct drm_gem_shmem_object *shmem;
 	struct drm_gem_object *obj;
+	size_t limit;
 	int ret;
 
 	size = PAGE_ALIGN(size);
 	if (size == 0 || size > (size_t)UINT_MAX << PAGE_SHIFT)
 		return ERR_PTR(-EINVAL);
+	limit = shmem_limit(dev->dev);
+	if (limit != 0 && size > limit) {
+		DRM_DEV_ERROR(dev->dev, "gem shmem: an object of %zu bytes is"
+		    " refused, the limit of the device is %zu\n", size, limit);
+		return ERR_PTR(-EFBIG);
+	}
 	if (dev->driver->gem_create_object) {
 		obj = dev->driver->gem_create_object(dev, size);
 		if (IS_ERR(obj))
