@@ -64,9 +64,12 @@ status)
     printf 'bssid=%s\\nfreq=2412\\nssid=%s\\nwpa_state=%s\\n' \\
         "$bssid" '{ssid}' "$state"
     if [ "{mode}" = pass-psk ]; then
-        printf 'key_mgmt=WPA2-PSK\\nip_address=192.0.2.10\\n'
+        printf 'key_mgmt=WPA2-PSK\\naddress=02:00:00:00:00:0a\\n'
     else
-        printf 'key_mgmt=SAE\\nip_address=192.0.2.10\\n'
+        printf 'key_mgmt=SAE\\naddress=02:00:00:00:00:0a\\n'
+    fi
+    if [ "{mode}" = ip-address-only ]; then
+        printf 'ip_address=192.0.2.10\\n'
     fi
     ;;
 bss_flush)
@@ -116,6 +119,22 @@ roam)
 esac
 '''
         command('wpa_cli', wpa)
+        ifconfig = f'''if [ "$1" != wlan0 ]; then
+    exit 1
+fi
+echo "$1" > "$TEST_ROOT/ifconfig-interface"
+case "{mode}" in
+inet6-only|ip-address-only)
+    printf 'wlan0: flags=0x8843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST>\\n'
+    printf '\\tinet6 fe80::1%%wlan0 prefixlen 64\\n'
+    ;;
+*)
+    printf 'wlan0: flags=0x8843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST>\\n'
+    printf '\\tinet 192.0.2.10/24 broadcast 192.0.2.255\\n'
+    ;;
+esac
+'''
+        command('ifconfig', ifconfig)
         command('getent', 'echo "192.0.2.53 $2"\n')
         command('route', 'echo "gateway: 192.0.2.1"\n')
         command('ping', 'exit 0\n')
@@ -152,6 +171,19 @@ esac
         if mode == 'pass':
             check((logs / 'requested-bssid').read_text().strip() == ap_b,
                   'the baseline BSSID must not be selected for ROAM')
+            check((root / 'ifconfig-interface').read_text().strip() == 'wlan0',
+                  'IPv4 must be read from the selected interface')
+            check('inet 192.0.2.10/24' in
+                  (logs / 'baseline-ifconfig').read_text(),
+                  'the baseline interface address snapshot must be saved')
+            check('inet 192.0.2.10/24' in
+                  (logs / 'after-roam-ifconfig').read_text(),
+                  'the post-roam interface address snapshot must be saved')
+            check((logs / 'baseline-ipv4').read_text().strip() ==
+                  '192.0.2.10' and
+                  (logs / 'after-roam-ipv4').read_text().strip() ==
+                  '192.0.2.10',
+                  'baseline and final IPv4 must come from ifconfig')
             check(f'bssid={ap_a}\n' in (logs / 'scan-end').read_text(),
                   'the scan-end snapshot must retain the baseline BSSID')
             check(proc.stdout.index('WIFI_ROAM_CHECK phase=scan_start\n') <
@@ -179,4 +211,7 @@ run_case('control-fail', (1, 'FAIL', 'cache_flush'), expected_roams=0,
          timestamp=True)
 run_case('roam-fail', (1, 'FAIL', 'roam_control'), expected_roams=1,
          timestamp=True)
+run_case('ip-address-only', (1, 'FAIL', 'baseline_not_ready'),
+         expected_roams=0)
+run_case('inet6-only', (1, 'FAIL', 'baseline_not_ready'), expected_roams=0)
 print('wifi roam check mock scenarios: PASS')

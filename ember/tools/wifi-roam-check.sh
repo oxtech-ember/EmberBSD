@@ -74,22 +74,42 @@ status()
         bssid) bssid=$value ;;
         ssid) ssid=$value ;;
         key_mgmt) key_mgmt=$value ;;
-        ip_address) address=$value ;;
         esac
     done < "$logs/status"
+}
+
+interface_ipv4()
+{
+    address=
+    ifconfig "$interface" > "$logs/ifconfig.raw" 2>&1 || return 1
+    while read -r family value rest; do
+        [ "$family" = inet ] || continue
+        value=${value%%/*}
+        case "$value" in
+        ''|0.0.0.0|*[!0-9.]*) continue ;;
+        esac
+        address=$value
+        break
+    done < "$logs/ifconfig.raw"
+    [ -n "$address" ] && [ "$address" != 0.0.0.0 ]
 }
 
 printf 'WIFI_ROAM_CHECK phase=baseline\n'
 baseline_end=$((start + 25))
 while before "$baseline_end"; do
     if status && [ "$state" = COMPLETED ] && [ -n "$bssid" ] &&
-        [ -n "$ssid" ] && [ -n "$address" ] && [ "$address" != 0.0.0.0 ]; then
+        [ -n "$ssid" ] && interface_ipv4; then
+        cp "$logs/ifconfig.raw" "$logs/baseline-ifconfig" ||
+            finish FAIL log_write
+        printf '%s\n' "$address" > "$logs/baseline-ipv4" ||
+            finish FAIL log_write
         break
     fi
     sleep 1
 done
 [ "${state:-}" = COMPLETED ] && [ -n "${bssid:-}" ] &&
-    [ -n "${ssid:-}" ] && [ -n "${address:-}" ] && [ "$address" != 0.0.0.0 ] ||
+    [ -n "${ssid:-}" ] && [ -n "${address:-}" ] &&
+    [ "$address" != 0.0.0.0 ] ||
     finish FAIL baseline_not_ready
 cp "$logs/status" "$logs/baseline" || finish FAIL log_write
 network_ssid=$ssid
@@ -192,16 +212,20 @@ ctl roam roam "$candidate" || finish FAIL roam_control
 grep -qx OK "$logs/roam" || finish FAIL roam_control
 while before "$deadline"; do
     if status && [ "$state" = COMPLETED ] && [ "$bssid" = "$candidate" ] &&
-        [ "$ssid" = "$network_ssid" ] && [ "$key_mgmt" = "$network_key" ] &&
-        [ -n "$address" ]; then
+        [ "$ssid" = "$network_ssid" ] &&
+        [ "$key_mgmt" = "$network_key" ] && interface_ipv4; then
         break
     fi
     sleep 1
 done
 [ "${state:-}" = COMPLETED ] && [ "${bssid:-}" = "$candidate" ] &&
     [ "${ssid:-}" = "$network_ssid" ] && [ "${key_mgmt:-}" = "$network_key" ] &&
-    [ -n "${address:-}" ] || finish FAIL roam_not_completed
+    [ -n "${address:-}" ] && [ "$address" != 0.0.0.0 ] ||
+    finish FAIL roam_not_completed
 cp "$logs/status" "$logs/after-roam" || finish FAIL log_write
+cp "$logs/ifconfig.raw" "$logs/after-roam-ifconfig" ||
+    finish FAIL log_write
+printf '%s\n' "$address" > "$logs/after-roam-ipv4" || finish FAIL log_write
 printf 'WIFI_ROAM_CHECK phase=connectivity\n'
 before "$deadline" || finish FAIL deadline
 RES_OPTIONS='attempts:1 timeout:2' getent hosts "$dns_name" > "$logs/dns" 2>&1 ||

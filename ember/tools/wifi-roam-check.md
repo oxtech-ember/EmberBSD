@@ -12,10 +12,13 @@ diagnostic; image recipes select it explicitly.
 Arguments are the interface, a new result directory, an optional time budget
 in seconds (default 75, maximum 300), and an optional DNS lookup name. The
 parent of the result directory must exist. The script uses the target's base
-`sh`, `date`, `sleep`, `cp`, `grep`, `wpa_cli`, `route`, `getent`, and `ping`.
+`sh`, `date`, `sleep`, `cp`, `grep`, `ifconfig`, `wpa_cli`, `route`, `getent`,
+and `ping`.
 
-The check waits for an authorized connection and an IP address, saves the
-current BSSID, flushes unused BSS cache entries, and requests one scan. Every
+The check waits for an authorized connection and reads IPv4 from
+`ifconfig interface`; `wpa_cli status` supplies link state, BSSID, SSID, and
+key management. It saves the current BSSID, flushes unused BSS cache entries,
+and requests one scan. Every
 status sample from `scan_start` through `scan_end`, and again immediately
 before ROAM, must remain `COMPLETED` on that baseline BSSID with the same SSID
 and key management. The baseline BSSID is never eligible as the roam target.
@@ -41,7 +44,8 @@ script leaves the final association to the normal supplicant policy.
 
 Stdout contains compact `WIFI_ROAM_CHECK` phase and result lines. The result
 directory is private (umask 077) and contains the control replies, baseline,
-scan-end and final status, requested BSSID, and network checks. These files
+scan-end and final status, baseline and post-roam `ifconfig` snapshots and
+extracted IPv4 values, requested BSSID, and network checks. These files
 include network identifiers; retain them as local diagnostics rather than
 public evidence.
 Each control response also has a `.raw` copy. The parser removes the optional
