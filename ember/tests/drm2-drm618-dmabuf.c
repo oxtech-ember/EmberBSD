@@ -272,6 +272,67 @@ drm2_drm618_dmabuf_run(void)
 	CHECK(buf->file->f_op->poll(buf->file, &pt) == (POLLIN | POLLOUT));
 	dma_fence_put(fence);
 
+	/* every usage counts, not only the latest writer and the readers */
+	{
+		struct dma_fence *w1, *w2, *k, *b, *r;
+
+#define	T_NEWFENCE(f)	do {						\
+	(f) = kzalloc(sizeof(*(f)), GFP_KERNEL);			\
+	dma_fence_init((f), &t_fence_ops, &lock,			\
+	    dma_fence_context_alloc(1), 1);				\
+} while (0)
+		T_NEWFENCE(w1);
+		T_NEWFENCE(w2);
+		T_NEWFENCE(k);
+		T_NEWFENCE(b);
+		T_NEWFENCE(r);
+		dma_resv_lock(buf->resv, NULL);
+		CHECK(dma_resv_reserve_fences(buf->resv, 5) == 0);
+		dma_resv_add_fence(buf->resv, w1, DMA_RESV_USAGE_WRITE);
+		dma_resv_add_fence(buf->resv, w2, DMA_RESV_USAGE_WRITE);
+		dma_resv_unlock(buf->resv);
+		/* the latest writer is done, the one before it is not */
+		dma_fence_signal(w2);
+		pt.pt_events = POLLIN;
+		CHECK(buf->file->f_op->poll(buf->file, &pt) == 0);
+		pt.pt_events = POLLOUT;
+		CHECK(buf->file->f_op->poll(buf->file, &pt) == 0);
+		dma_fence_signal(w1);
+		pt.pt_events = POLLIN | POLLOUT;
+		CHECK(buf->file->f_op->poll(buf->file, &pt) == (POLLIN | POLLOUT));
+		/* a kernel fence (a move) holds both */
+		dma_resv_lock(buf->resv, NULL);
+		CHECK(dma_resv_reserve_fences(buf->resv, 3) == 0);
+		dma_resv_add_fence(buf->resv, k, DMA_RESV_USAGE_KERNEL);
+		dma_resv_unlock(buf->resv);
+		pt.pt_events = POLLIN;
+		CHECK(buf->file->f_op->poll(buf->file, &pt) == 0);
+		pt.pt_events = POLLOUT;
+		CHECK(buf->file->f_op->poll(buf->file, &pt) == 0);
+		dma_fence_signal(k);
+		/* a bookkeeping fence holds neither */
+		dma_resv_lock(buf->resv, NULL);
+		dma_resv_add_fence(buf->resv, b, DMA_RESV_USAGE_BOOKKEEP);
+		dma_resv_unlock(buf->resv);
+		pt.pt_events = POLLIN | POLLOUT;
+		CHECK(buf->file->f_op->poll(buf->file, &pt) == (POLLIN | POLLOUT));
+		/* a reader holds writing but not reading */
+		dma_resv_lock(buf->resv, NULL);
+		dma_resv_add_fence(buf->resv, r, DMA_RESV_USAGE_READ);
+		dma_resv_unlock(buf->resv);
+		pt.pt_events = POLLIN | POLLOUT;
+		CHECK(buf->file->f_op->poll(buf->file, &pt) == POLLIN);
+		dma_fence_signal(r);
+		dma_fence_signal(b);
+		CHECK(buf->file->f_op->poll(buf->file, &pt) == (POLLIN | POLLOUT));
+		dma_fence_put(w1);
+		dma_fence_put(w2);
+		dma_fence_put(k);
+		dma_fence_put(b);
+		dma_fence_put(r);
+	}
+	dma_fence_put(fence);
+
 	/* the last reference: release runs once, with the attachments gone */
 	dma_buf_put(buf);
 	CHECK(released == 2);

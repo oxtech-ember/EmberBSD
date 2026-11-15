@@ -1747,13 +1747,36 @@ dma_resv_poll_cb(struct dma_fence *fence, struct dma_fence_cb *fcb)
 }
 
 /*
+ * resv_first_pending(robj, usage)
+ *
+ *	The first fence of robj of the given usage or stronger that has
+ *	not signalled, with a reference, or NULL if there is none.
+ *	Looks at all three storages of the object.  No lock needed.
+ */
+static struct dma_fence *
+resv_first_pending(const struct dma_resv *robj, enum dma_resv_usage usage)
+{
+	struct dma_resv_iter cursor;
+	struct dma_fence *fence;
+
+	dma_resv_iter_begin(&cursor, __UNCONST(robj), usage);
+	fence = dma_resv_iter_first_unlocked(&cursor);
+	if (fence != NULL)
+		(void)dma_fence_get(fence);
+	dma_resv_iter_end(&cursor);
+	return fence;
+}
+
+/*
  * dma_resv_do_poll(robj, events, rpoll)
  *
  *	Poll for reservation object events using the reservation poll
- *	state in rpoll:
+ *	state in rpoll, like dma_buf_poll in Linux:
  *
- *	- POLLOUT	wait for all fences shared and exclusive
- *	- POLLIN	wait for the exclusive fence
+ *	- POLLOUT	wait for every fence of usage KERNEL, WRITE and
+ *			READ (bookkeeping fences do not count)
+ *	- POLLIN	wait for the fences of usage KERNEL and WRITE:
+ *			every writer, not only the latest
  *
  *	Return the subset of events in events that are ready.  If any
  *	are requested but not ready, arrange to be notified with
@@ -1763,10 +1786,7 @@ int
 dma_resv_do_poll(const struct dma_resv *robj, int events,
     struct dma_resv_poll *rpoll)
 {
-	struct dma_resv_read_ticket ticket;
-	const struct dma_resv_list *list;
-	struct dma_fence *fence = NULL;
-	uint32_t i, shared_count;
+	struct dma_fence *fence, *writer;
 	int revents;
 	bool recorded = false;	/* curlwp is on the selq */
 	bool claimed = false;	/* we claimed the callback */
@@ -1782,134 +1802,43 @@ dma_resv_do_poll(const struct dma_resv *robj, int events,
 	if (revents == 0)
 		return 0;
 
-top:	KASSERT(fence == NULL);
-
-	/* Enter an RCU read section and get a read ticket.  */
-	rcu_read_lock();
-	dma_resv_read_begin(robj, &ticket);
-
-	/* If we want to wait for all fences, get the shared list.  */
-	if (events & POLLOUT) {
-		if (!dma_resv_get_shared_reader(robj, &list, &shared_count,
-			&ticket))
-			goto restart;
-	} else {
-		list = NULL;
-		shared_count = 0;
-	}
-	if (list != NULL) do {
-		/*
-		 * For each fence, if it is going away, restart.
-		 * Otherwise, acquire a reference to it to test whether
-		 * it is signalled.  Stop and request a callback if we
-		 * find any that is not signalled.
-		 */
-		for (i = 0; i < shared_count; i++) {
-			KASSERT(fence == NULL);
-			fence = atomic_load_relaxed(&list->shared[i]);
-			if ((fence = dma_fence_get_rcu(fence)) == NULL)
-				goto restart;
-			if (!dma_fence_is_signaled(fence)) {
-				dma_fence_put(fence);
-				fence = NULL;
-				break;
-			}
-			dma_fence_put(fence);
-			fence = NULL;
-		}
-
-		/* If all shared fences have been signalled, move on.  */
-		if (i == shared_count)
-			break;
-
-		/* Put ourselves on the selq if we haven't already.  */
-		if (!recorded)
-			goto record;
-
-		/*
-		 * If someone else claimed the callback, or we already
-		 * requested it, we're guaranteed to be notified, so
-		 * assume the event is not ready.
-		 */
-		if (!claimed || callback) {
-			revents &= ~POLLOUT;
-			break;
-		}
-
-		/*
-		 * Otherwise, find the first fence that is not
-		 * signalled, request the callback, and clear POLLOUT
-		 * from the possible ready events.  If they are all
-		 * signalled, leave POLLOUT set; we will simulate the
-		 * callback later.
-		 */
-		for (i = 0; i < shared_count; i++) {
-			KASSERT(fence == NULL);
-			fence = atomic_load_relaxed(&list->shared[i]);
-			if ((fence = dma_fence_get_rcu(fence)) == NULL)
-				goto restart;
-			if (!dma_fence_add_callback(fence, &rpoll->rp_fcb,
-				dma_resv_poll_cb)) {
-				dma_fence_put(fence);
-				fence = NULL;
-				revents &= ~POLLOUT;
-				callback = true;
-				break;
-			}
-			dma_fence_put(fence);
-			fence = NULL;
-		}
-	} while (0);
-
-	/* We always wait for at least the exclusive fence, so get it.  */
-	KASSERT(fence == NULL);
-	if (!dma_resv_get_excl_reader(robj, &fence, &ticket))
-		goto restart;
-	if (fence != NULL) do {
-		/*
-		 * Test whether it is signalled.  If not, stop and
-		 * request a callback.
-		 */
-		if (dma_fence_is_signaled(fence))
-			break;
-
+top:	/* A pending writer holds both events; a pending reader only POLLOUT.  */
+	fence = writer = resv_first_pending(robj, DMA_RESV_USAGE_WRITE);
+	if (fence == NULL && (events & POLLOUT))
+		fence = resv_first_pending(robj, DMA_RESV_USAGE_READ);
+	if (fence != NULL) {
 		/* Put ourselves on the selq if we haven't already.  */
 		if (!recorded) {
 			dma_fence_put(fence);
-			fence = NULL;
-			goto record;
+			mutex_enter(&rpoll->rp_lock);
+			selrecord(curlwp, &rpoll->rp_selq);
+			if (!rpoll->rp_claimed)
+				claimed = rpoll->rp_claimed = true;
+			mutex_exit(&rpoll->rp_lock);
+			recorded = true;
+			goto top;
 		}
 
 		/*
 		 * If someone else claimed the callback, or we already
 		 * requested it, we're guaranteed to be notified, so
-		 * assume the event is not ready.
+		 * assume the events are not ready.
 		 */
 		if (!claimed || callback) {
-			revents = 0;
-			break;
-		}
-
-		/*
-		 * Otherwise, try to request the callback, and clear
-		 * all possible ready events.  If the fence has been
-		 * signalled in the interim, leave the events set; we
-		 * will simulate the callback later.
-		 */
-		if (!dma_fence_add_callback(fence, &rpoll->rp_fcb,
+			revents &= writer != NULL ? 0 : ~POLLOUT;
+		} else if (!dma_fence_add_callback(fence, &rpoll->rp_fcb,
 			dma_resv_poll_cb)) {
-			revents = 0;
+			/*
+			 * We requested the callback.  If the fence has
+			 * been signalled in the interim, leave the
+			 * events set; we will simulate the callback
+			 * below.
+			 */
+			revents &= writer != NULL ? 0 : ~POLLOUT;
 			callback = true;
-			break;
 		}
-	} while (0);
-	if (fence != NULL) {
 		dma_fence_put(fence);
-		fence = NULL;
 	}
-
-	/* All done reading the fences.  */
-	rcu_read_unlock();
 
 	if (claimed && !callback) {
 		/*
@@ -1922,22 +1851,6 @@ top:	KASSERT(fence == NULL);
 		dma_resv_poll_cb(NULL, &rpoll->rp_fcb);
 	}
 	return revents;
-
-restart:
-	KASSERT(fence == NULL);
-	rcu_read_unlock();
-	goto top;
-
-record:
-	KASSERT(fence == NULL);
-	rcu_read_unlock();
-	mutex_enter(&rpoll->rp_lock);
-	selrecord(curlwp, &rpoll->rp_selq);
-	if (!rpoll->rp_claimed)
-		claimed = rpoll->rp_claimed = true;
-	mutex_exit(&rpoll->rp_lock);
-	recorded = true;
-	goto top;
 }
 
 /*
