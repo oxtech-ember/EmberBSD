@@ -147,3 +147,47 @@ set-up.  The upstream driver does not check a framebuffer against the size of
 its object and takes any cursor image up to the cursor size; the client
 (ember/tests/drm2-kms-client.c) has the expectations of both drivers.
 
+Limits of the virtio-gpu driver, fault injection, import
+--------------------------------------------------------
+Memory.  The pages of a GEM object (shmem file of drm618_shmem.c) are wired
+and there is no swap.  An object larger than half of the physical memory is
+refused when it is made (ENOMEM), and a page that is not there yet is not
+taken when the free memory is down to the reserve, a sixteenth of the memory
+(at least 16 MiB): the pin fails with ENOMEM and the pages already taken go
+back, where it used to wait for ever until the system killed init and sshd.
+This is in the shared code of the 6.18 core, so vgem618 and efidrm618 have it
+too.  The reserve and the half are a choice, not a measurement: the machine
+must stay usable for its own processes, and one object of more than half of
+the memory cannot be mapped and used besides.
+
+Size.  The ring of the device takes a command of at most as many pieces as it
+has entries (the native ring asserts it), and the list of backing pages of an
+object is 16 bytes per page.  The layer sets, per virtio-gpu device, the
+largest object it can take in one command: (entries - 6) MiB (58 MiB for the
+64 entries of QEMU's control queue); larger objects are refused at their
+creation with EFBIG, before memory is taken (drm618_gem_set_limit).  A
+command that cannot be queued any more is an error with a line in the log, but
+the driver does not pass it on to its ioctl, hence the limit.
+
+Fault injection.  A build for the tests only: nbmake -C sys/modules/virtiogpu618
+VIRTIO_TEST=1 defines DRM618_VIRTIO_FAULT_INJECT and DRM618_VIRTIO_STATS:
+sysctl hw.virtiogpudrm.drop_notify (the device is not told of commands, so it
+never answers) and read only counters of commands and DMA maps.  The ordinary
+build has neither the flag nor a sysctl node.  A command that waits more than
+five seconds is named in the log with a growing interval (1, 2, 4 ... 60 s),
+one line says when the device answers again; after two seconds the device is
+told again.  Known limitation, as with Linux: a process that waits in the
+driver for a device that does not answer cannot be killed until it does.
+
+Not changed, as upstream: RESOURCE_CREATE of 0x0 is taken, a cursor image
+larger than its buffer is taken.  Not done: hotplug of the display size,
+virgl and 3D, a pixel check of the cursor.
+
+Import.  select618.py selects drivers/gpu/drm/virtio; a full re-import
+(sh prepare-import618.sh LINUX_TREE REFDIR, from the top of the tree) leaves
+the tree unchanged except that the five files of patches.tsv are pristine
+again (git diff shows exactly their local patches: apply them as before) and
+that drm618/gpl-only.tsv gains the rows of the two files that are not
+imported, virtgpu_vram.c and virtgpu_trace.h.  prepare-import618.sh --verify
+exits 1 when patches.tsv names a file that is not imported.
+
