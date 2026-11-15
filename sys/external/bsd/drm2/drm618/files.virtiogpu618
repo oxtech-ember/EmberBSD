@@ -1,0 +1,11 @@
+#	Origin: EmberBSD (Linux 6.18 virtio-gpu driver)
+#
+# The device of the virtio-gpu driver of Linux 6.18: attached at virtio(4)
+# by drm618_virtio.c.  Not included from sys/conf/files: no kernel
+# configuration selects it, the module sys/modules/virtiogpu618 reads this
+# file for its ioconf.  The configuration of the kernel must not have viogpu
+# (GENERIC_ARL_DRM618 has none), or the 5.6 virtiodrm.
+
+# (the name has no digits at its end: config would take them for a unit)
+device	virtiogpudrm
+attach	virtiogpudrm at virtio
