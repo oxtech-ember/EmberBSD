@@ -55,7 +55,7 @@ wireless networking, graphics and accelerator interfaces. Read the owning implem
 | Small-memory RISC-V | [Espressif port](sys/arch/riscv/espressif) |
 | Optional flash filesystems | [littlefs VFS and image tools](sys/fs/littlefs/README.md) |
 | Wireless | [net80211](sys/net80211), [SDIO](sys/dev/sdmmc/docs), [drivers](sys/dev/ic/docs) |
-| Display and synchronization | [DRM](sys/external/bsd/drm2/drm/docs), [VirtIO GPU](sys/external/bsd/drm2/virtio/docs) |
+| GPU, display and synchronization | [Architecture and standards](https://github.com/oxtech-ember/EmberBSD-Docs/blob/main/modules/graphics-and-compute.md), [driver interface map](sys/external/bsd/drm2/drm/docs/README.md), [VirtIO GPU](sys/external/bsd/drm2/virtio/README.md) |
 | Installation | [sysinst](usr.sbin/sysinst/docs), [SDK release tooling](https://github.com/oxtech-ember/EmberBSD-SDK/blob/main/docs/os-release.md) |
 | Debugging and tracing | [OS tracing](external/cddl/osnet/docs/dtrace-dwarf.md), [Ports toolchain](https://github.com/oxtech-ember/EmberBSD-Ports/tree/main/profiles/development-toolchain) |
 | AI, computer vision and robotics | [Ports](https://github.com/oxtech-ember/EmberBSD-Ports), [Examples](https://github.com/oxtech-ember/EmberBSD-Examples) |
