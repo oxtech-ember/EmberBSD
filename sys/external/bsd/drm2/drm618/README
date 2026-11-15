@@ -349,3 +349,81 @@ the GEM mmap, fs_context for the shmem mount, linux/uio.h, zlib for the error
 capture, the shrinker registration, i915 files whose own headers are cut off by
 the first error of a file.  Linking, autoconfiguration, interrupts, MMIO,
 GGTT, firmware loading and intel_acpi/opregion are for the next step.
+
+The i915 working set after the second pass
+-------------------------------------------
+
+The working set is 279 sources: the 303 of the first pass without the files
+that the Kconfig options above leave out (the list with the reason of each is
+at the end of files.i915drm618).  Where the header of a file has static inline
+stubs under the disabled option, the file itself is a Linux build with that
+option on only; the 5.6 port of this tree left the same files out.  Left out:
+debugfs (13 files; CONFIG_DEBUG_FS), hwmon, perf PMU, GVT (2), error capture
+(i915_gpu_error.c), the DP tunnel, the opregion (CONFIG_ACPI), pipe CRC
+(debugfs), and three files that are included, not compiled (a self test
+helper and two data files).  Old platforms (DVO, GMCH, VLV/CHV DSI, the
+pre-Gen6 paths) stay in.
+
+Error capture.  Without i915_gpu_error.c the driver cannot write the state of
+the GPU at a hang to the log or to userland (the error state of
+/sys/class/drm/cardN/error, the debug information of a bug report).  Hangs
+are still detected and the GPU is reset.  Recommended: leave it off until
+rendering starts (the next task), then turn CAPTURE_ERROR on; it needs zlib
+(linux/zlib.h) and a sysfs node or a sysctl, so it is a small separate step.
+
+Compile status: 220 of 279 compile; 202 of those without a warning under the
+flags of the drmkms618 and virtiogpu618 modules (-Wall -Wextra, the waivers of
+virtiogpu618: -Wno-pointer-arith -Wno-shadow -Wno-format -Wno-write-strings
+-Wno-cast-qual, -Wno-sign-compare).  The 18 with warnings: unused statics left
+by the stubbed debugfs code (9 files), discarded const qualifiers (8, in the
+layer's calls that take a non-const pointer), packed member addresses
+(intel_guc_capture.c, as the module flags already demote them), one macro
+redefinition (i915_gem_internal.c).  No new -W option is needed for the 202;
+the remaining ones need either a waiver per file or a fix in the layer, to be
+decided with the module.
+
+Added to the layer in this pass (checked by drm2-i915-layer unless said):
+  castable_to_type of a constant as a constant expression; order_base_2 as a
+  constant (earlier); x86_match_cpu and asm/cpu_device_id.h, intel-family.h (the
+  model numbers of the Intel CPUs i915 asks for); bitmap_shift_right,
+  bitmap_from_arr32, list_empty_careful, sg_assign_page, pat_enabled, sort_r,
+  __fls, ioread/iowrite, spin_trylock_irq, compound literal DEFINE_RES_MEM and
+  IOSYS_MAP_INIT_OFFSET, DEFINE_SHOW_ATTRIBUTE and DEFINE_SIMPLE_ATTRIBUTE
+  (objects that keep the function referenced), DECLARE_FLEX_ARRAY,
+  noinline_for_stack, the 6.18 io_mapping_unmap, a __always_inline that includes
+  inline; the trace headers include the driver headers the real ones bring in.
+  A fixed 64 stands for x86_clflush_size.
+
+Declared, not defined (added): component_add_typed, component_del,
+vga_switcheroo_register_client, vga_switcheroo_unregister_client,
+vga_switcheroo_client_probe_defer, cpu_latency_qos_add_request, _update_request,
+_remove_request, _request_active, pnp_range_reserved, device_iommu_mapped,
+wake_up_var and the wait_var_event family (drm618_var_waitqueue),
+memcpy_from_page, __free_pages, alloc_pages, pci_iomap_range, pci_enable_device,
+pci_disable_device, pci_release_resource, pci_resize_resource,
+pci_set_power_state, pci_rebar_bytes_to_size, dma_set_mask,
+dma_set_coherent_mask, dma_alloc_coherent, dma_free_coherent,
+devm_request_mem_region, __copy_to_user_inatomic, __copy_from_user_inatomic,
+user_write_access_begin, user_write_access_end, kernel_fpu_begin,
+kernel_fpu_end, ratelimit_state_get_miss, perfmon_capable, device_link_add,
+device_link_remove, drm618_pfn_to_page (pfn_to_page), drm618_kdev_kobj,
+drm618_timer_expires.
+
+Local patches of imported files (twenty rows of patches.tsv for i915): the PCI
+device through pd_dev (7 files), the class device through drm618_kdev_kobj and
+drm618_kdev_name (8), no runtime PM (1), the timer through drm618_timer_expires
+(1), two static helpers renamed (2), the flags of a vma through a_u.au_int (1).
+
+Not compiling yet (59, first errors in files.i915drm618): the MIPI DSI core
+(drm_mipi_dsi is not imported: icl_dsi, intel_dsi, intel_dsi_dcs_backlight,
+vlv_dsi, vlv_dsi_pll, intel_dsi_vbt need its types and calls), the MEI/auxiliary
+components (intel_gsc.c, intel_huc.c, the HDCP GSC messages), fbdev (2), the
+dma_fence internals of Linux (cb node and cb_list: i915_active.c,
+i915_request.c via irq_work, intel_engine_pm.c; the layer's fence uses queues),
+the memory management glue (struct task_struct.mm, address_space.host, VMA
+iterators, PAGE_KERNEL_IO, pte_t, shmem_read_mapping_page,
+mapping_set_gfp_mask, fs_context, uio, vfs_mmap, get_task_pid, the shrinker
+registration), the interrupt handler type (i915_irq.c), module parameter types
+(kernel_param_ops), bin_attribute.mmap, X86_FEATURE_XMM4_1 and kernel_fpu,
+perf and relay, __xa_store, DMI_PRODUCT_SKU, hdmi_drm_infoframe.type and a few
+cascades of the same.

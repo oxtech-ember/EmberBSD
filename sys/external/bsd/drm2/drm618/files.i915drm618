@@ -1,18 +1,18 @@
 #	Origin: EmberBSD (Linux 6.18 i915 driver)
 #
 # DRAFT of the file list of the i915 driver of Linux 6.18 (dist618/drm/i915)
-# for config(1): the 303 sources of the working set for Arrow Lake 8086:7d67
-# (everything of the directory except gvt, the self tests, pxp and the files
-# that need a GPL-licensed source: intel_acpi.c, the trace points).  Not
-# included from sys/conf/files and not used by any module yet: the driver has
-# no autoconfiguration glue and does not link.
+# for config(1): the 279 sources of the working set for Arrow Lake 8086:7d67 after
+# the files that the chosen Kconfig options leave out are taken away (the
+# block at the end says which and why).  Not included from sys/conf/files and not
+# used by any module yet: the driver has no autoconfiguration glue and does not link.
 #
 # The first block compiles against the layer (clang -c, the flags of the
-# drmkms618 module); the second is not yet there, the reason in the comment is
-# the first compiler error.  The count is in drm618/README.
+# drmkms618 module, the warning waivers of the virtiogpu618 module); the second
+# is not yet there, the reason in the comment is the first compiler error.
+# Counts are in drm618/README.
 #
-# Written by hand from the measurement of the compile progress; regenerate
-# with the measurement script when the layer grows.
+# Written from the measurement of the compile progress; regenerate it with the
+# measurement script when the layer grows.
 
 file	external/bsd/drm2/dist618/drm/i915/display/dvo_ch7017.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/dvo_ch7xxx.c	i915drm618
@@ -20,9 +20,16 @@ file	external/bsd/drm2/dist618/drm/i915/display/dvo_ivch.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/dvo_ns2501.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/dvo_sil164.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/dvo_tfp410.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/display/g4x_dp.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/display/g4x_hdmi.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/display/hsw_ips.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/i9xx_display_sr.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/display/i9xx_plane.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/display/i9xx_wm.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_alpm.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_atomic.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/display/intel_audio.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/display/intel_backlight.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_bios.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_bo.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_bw.c	i915drm618
@@ -31,37 +38,54 @@ file	external/bsd/drm2/dist618/drm/i915/display/intel_cmtg.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_color.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_combo_phy.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_connector.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/display/intel_crt.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/display/intel_crtc.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_crtc_state_dump.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_cursor.c	i915drm618
-file	external/bsd/drm2/dist618/drm/i915/display/intel_ddi_buf_trans.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/display/intel_cx0_phy.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_ddi.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/display/intel_ddi_buf_trans.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_display.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_display_conversion.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/display/intel_display_driver.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_display_irq.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_display_params.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_display_power.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_display_power_map.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/display/intel_display_power_well.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_display_reset.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_display_rpm.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/display/intel_display_rps.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_display_snapshot.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_display_wa.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_dkl_phy.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_dmc.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/display/intel_dmc_wl.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/display/intel_dp_aux.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_dp_aux_backlight.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_dp_hdcp.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/display/intel_dp_mst.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/display/intel_dpio_phy.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_dpll.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_dpll_mgr.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_dpt.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_dpt_common.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_drrs.c	i915drm618
-file	external/bsd/drm2/dist618/drm/i915/display/intel_dsb_buffer.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_dsb.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/display/intel_dsb_buffer.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/display/intel_dvo.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_encoder.c	i915drm618
-file	external/bsd/drm2/dist618/drm/i915/display/intel_fb_bo.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_fb.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/display/intel_fb_bo.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/display/intel_fb_pin.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/display/intel_fbc.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_fdi.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/display/intel_fifo_underrun.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_flipq.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/display/intel_frontbuffer.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_global_state.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/display/intel_gmbus.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/display/intel_hdcp.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_hdcp_gsc.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_hotplug.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_hotplug_irq.c	i915drm618
@@ -69,31 +93,44 @@ file	external/bsd/drm2/dist618/drm/i915/display/intel_hti.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_link_bw.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_load_detect.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_lspcon.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/display/intel_lvds.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_modeset_lock.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_modeset_setup.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_modeset_verify.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/display/intel_overlay.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_panel.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_panic.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_pch.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/display/intel_pch_display.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/display/intel_pch_refclk.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_pfit.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/display/intel_plane.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_plane_initial.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/display/intel_pmdemand.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_pps.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_psr.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_qp_tables.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_sbi.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/display/intel_sdvo.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_snps_hdmi_pll.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_snps_phy.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/display/intel_sprite.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_sprite_uapi.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_tc.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/display/intel_tv.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_vdsc.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_vrr.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/intel_wm.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/skl_scaler.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/skl_universal_plane.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/display/skl_watermark.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/display/vlv_sideband.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gem/i915_gem_busy.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gem/i915_gem_clflush.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gem/i915_gem_create.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gem/i915_gem_domain.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/gem/i915_gem_internal.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/gem/i915_gem_object.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gem/i915_gem_pm.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gem/i915_gem_region.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gem/i915_gem_throttle.c	i915drm618
@@ -103,53 +140,64 @@ file	external/bsd/drm2/dist618/drm/i915/gem/i915_gem_ttm_pm.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gem/i915_gem_wait.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gt/gen2_engine_cs.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gt/gen6_engine_cs.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/gt/gen6_ppgtt.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gt/gen6_renderstate.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gt/gen7_renderclear.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gt/gen7_renderstate.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gt/gen8_engine_cs.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/gt/gen8_ppgtt.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gt/gen8_renderstate.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gt/gen9_renderstate.c	i915drm618
-file	external/bsd/drm2/dist618/drm/i915/gt/hsw_clear_kernel.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gt/intel_context.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gt/intel_context_sseu.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gt/intel_engine_heartbeat.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gt/intel_engine_user.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/gt/intel_execlists_submission.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/gt/intel_ggtt_fencing.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/gt/intel_ggtt_gmch.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/gt/intel_gt.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/gt/intel_gt_buffer_pool.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gt/intel_gt_ccs_mode.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gt/intel_gt_clock_utils.c	i915drm618
-file	external/bsd/drm2/dist618/drm/i915/gt/intel_gt_engines_debugfs.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gt/intel_gt_irq.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gt/intel_gt_mcr.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/gt/intel_gt_pm.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gt/intel_gt_pm_irq.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gt/intel_gt_requests.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/gt/intel_gt_sysfs.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/gt/intel_gtt.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gt/intel_llc.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gt/intel_lrc.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gt/intel_migrate.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gt/intel_mocs.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/gt/intel_ppgtt.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gt/intel_rc6.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gt/intel_renderstate.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/gt/intel_reset.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gt/intel_ring.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/gt/intel_ring_submission.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gt/intel_sa_media.c	i915drm618
-file	external/bsd/drm2/dist618/drm/i915/gt/intel_sseu_debugfs.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/gt/intel_sseu.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gt/intel_timeline.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gt/intel_tlb.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gt/intel_wopcm.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gt/intel_workarounds.c	i915drm618
-file	external/bsd/drm2/dist618/drm/i915/gt/ivb_clear_kernel.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/gt/sysfs_engines.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gt/uc/intel_gsc_fw.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/gt/uc/intel_gsc_proxy.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gt/uc/intel_gsc_uc.c	i915drm618
-file	external/bsd/drm2/dist618/drm/i915/gt/uc/intel_gsc_uc_debugfs.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gt/uc/intel_gsc_uc_heci_cmd_submit.c	i915drm618
-file	external/bsd/drm2/dist618/drm/i915/gt/uc/intel_guc_capture.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gt/uc/intel_guc.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/gt/uc/intel_guc_ads.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/gt/uc/intel_guc_capture.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gt/uc/intel_guc_ct.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gt/uc/intel_guc_fw.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gt/uc/intel_guc_hwconfig.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gt/uc/intel_guc_rc.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gt/uc/intel_guc_slpc.c	i915drm618
-file	external/bsd/drm2/dist618/drm/i915/gt/uc/intel_huc_debugfs.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gt/uc/intel_huc_fw.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gt/uc/intel_uc.c	i915drm618
-file	external/bsd/drm2/dist618/drm/i915/gt/uc/intel_uc_debugfs.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/gt/uc/intel_uc_fw.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/i915_config.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/i915_deps.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/i915_drm_client.c	i915drm618
@@ -159,163 +207,102 @@ file	external/bsd/drm2/dist618/drm/i915/i915_getparam.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/i915_ioctl.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/i915_module.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/i915_params.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/i915_query.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/i915_scatterlist.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/i915_scheduler.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/i915_sw_fence.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/i915_sw_fence_work.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/i915_switcheroo.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/i915_syncmap.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/i915_ttm_buddy_manager.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/i915_user_extensions.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/i915_utils.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/i915_vgpu.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/i915_vma_resource.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/intel_clock_gating.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/intel_cpu_info.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/intel_device_info.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/intel_memory_region.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/intel_pcode.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/intel_region_ttm.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/intel_runtime_pm.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/intel_step.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/intel_uncore.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/intel_wakeref.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/soc/intel_dram.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/soc/intel_gmch.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/soc/intel_rom.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/vlv_iosf_sb.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/vlv_suspend.c	i915drm618
 
 # Not compiling yet (first error):
-#file	external/bsd/drm2/dist618/drm/i915/display/g4x_dp.c	i915drm618	# redefinition of 'vlv_get_dpll'
-#file	external/bsd/drm2/dist618/drm/i915/display/g4x_hdmi.c	i915drm618	# redefinition of 'g4x_hdmi_connector_atomic_check'
-#file	external/bsd/drm2/dist618/drm/i915/display/hsw_ips.c	i915drm618	# redefinition of 'hsw_ips_disable'
-#file	external/bsd/drm2/dist618/drm/i915/display/i9xx_plane.c	i915drm618	# redefinition of 'i9xx_check_plane_surface'
-#file	external/bsd/drm2/dist618/drm/i915/display/i9xx_wm.c	i915drm618	# redefinition of 'intel_set_memory_cxsr'
 #file	external/bsd/drm2/dist618/drm/i915/display/icl_dsi.c	i915drm618	# incomplete definition of type 'struct mipi_dsi_device'
-#file	external/bsd/drm2/dist618/drm/i915/display/intel_audio.c	i915drm618	# call to undeclared function 'device_link_add'; ISO C99 and later do not support implicit f
-#file	external/bsd/drm2/dist618/drm/i915/display/intel_backlight.c	i915drm618	# use of undeclared identifier 'BACKLIGHT_POWER_OFF'
-#file	external/bsd/drm2/dist618/drm/i915/display/intel_crtc.c	i915drm618	# incomplete definition of type 'struct intel_display'
-#file	external/bsd/drm2/dist618/drm/i915/display/intel_crt.c	i915drm618	# redefinition of 'intel_crt_port_enabled'
-#file	external/bsd/drm2/dist618/drm/i915/display/intel_cx0_phy.c	i915drm618	# use of undeclared identifier 'PCI_CLASS_BRIDGE_HOST'
-#file	external/bsd/drm2/dist618/drm/i915/display/intel_display_debugfs.c	i915drm618	# redefinition of 'intel_display_debugfs_register'
-#file	external/bsd/drm2/dist618/drm/i915/display/intel_display_debugfs_params.c	i915drm618	# use of undeclared identifier 'debugfs_create_bool'
-#file	external/bsd/drm2/dist618/drm/i915/display/intel_display_device.c	i915drm618	# type specifier missing, defaults to 'int'; ISO C99 and later do not support implicit int [
-#file	external/bsd/drm2/dist618/drm/i915/display/intel_display_driver.c	i915drm618	# call to undeclared function 'vga_switcheroo_client_probe_defer'; ISO C99 and later do not 
-#file	external/bsd/drm2/dist618/drm/i915/display/intel_display_power_well.c	i915drm618	# incomplete definition of type 'struct device'
-#file	external/bsd/drm2/dist618/drm/i915/display/intel_display_rps.c	i915drm618	# redefinition of 'intel_display_rps_boost_after_vblank'
-#file	external/bsd/drm2/dist618/drm/i915/display/intel_dmc_wl.c	i915drm618	# call to undeclared function 'WARN_RATELIMIT'; ISO C99 and later do not support implicit fu
-#file	external/bsd/drm2/dist618/drm/i915/display/intel_dp_aux.c	i915drm618	# call to undeclared function 'cpu_latency_qos_update_request'; ISO C99 and later do not sup
-#file	external/bsd/drm2/dist618/drm/i915/display/intel_dp.c	i915drm618	# call to undeclared function 'sort_r'; ISO C99 and later do not support implicit function d
-#file	external/bsd/drm2/dist618/drm/i915/display/intel_dpio_phy.c	i915drm618	# redefinition of 'bxt_port_to_phy_channel'
+#file	external/bsd/drm2/dist618/drm/i915/display/intel_display_device.c	i915drm618	# call to undeclared function 'pci_match_id'; 
+#file	external/bsd/drm2/dist618/drm/i915/display/intel_dp.c	i915drm618	# no member named 'type' in 'struct hdmi_drm_infoframe'
 #file	external/bsd/drm2/dist618/drm/i915/display/intel_dp_link_training.c	i915drm618	# 'void *' and 'struct drm_connector *' are not pointers to compatible types
-#file	external/bsd/drm2/dist618/drm/i915/display/intel_dp_mst.c	i915drm618	# call to undeclared function 'min_array'; ISO C99 and later do not support implicit functio
-#file	external/bsd/drm2/dist618/drm/i915/display/intel_dp_test.c	i915drm618	# use of undeclared identifier 'i915_displayport_test_data_fops'; did you mean 'i915_display
-#file	external/bsd/drm2/dist618/drm/i915/display/intel_dp_tunnel.c	i915drm618	# redefinition of 'intel_dp_tunnel_disconnect'
-#file	external/bsd/drm2/dist618/drm/i915/display/intel_dsi.c	i915drm618	# call to undeclared function 'mipi_dsi_pixel_format_to_bpp'; ISO C99 and later do not suppo
+#file	external/bsd/drm2/dist618/drm/i915/display/intel_dp_test.c	i915drm618	# incompatible pointer types initializing 'const struct file_operations *' with an expressio
+#file	external/bsd/drm2/dist618/drm/i915/display/intel_dsi.c	i915drm618	# call to undeclared function 'mipi_dsi_pixel_format_to_bpp'; 
 #file	external/bsd/drm2/dist618/drm/i915/display/intel_dsi_dcs_backlight.c	i915drm618	# call to undeclared function 'mipi_dsi_dcs_read'; ISO C99 and later do not support implicit
 #file	external/bsd/drm2/dist618/drm/i915/display/intel_dsi_vbt.c	i915drm618	# unknown type name 'acpi_handle'
-#file	external/bsd/drm2/dist618/drm/i915/display/intel_dvo.c	i915drm618	# redefinition of 'intel_dvo_init'
-#file	external/bsd/drm2/dist618/drm/i915/display/intel_fbc.c	i915drm618	# call to undeclared function 'intel_crtc_wait_for_next_vblank'; ISO C99 and later do not su
 #file	external/bsd/drm2/dist618/drm/i915/display/intel_fbdev.c	i915drm618	# invalid storage class specifier in function declarator
 #file	external/bsd/drm2/dist618/drm/i915/display/intel_fbdev_fb.c	i915drm618	# incomplete definition of type 'struct fb_info'
-#file	external/bsd/drm2/dist618/drm/i915/display/intel_fb_pin.c	i915drm618	# expression is not an integer constant expression
-#file	external/bsd/drm2/dist618/drm/i915/display/intel_fifo_underrun.c	i915drm618	# call to undeclared function 'intel_crtc_for_pipe'; ISO C99 and later do not support implic
-#file	external/bsd/drm2/dist618/drm/i915/display/intel_frontbuffer.c	i915drm618	# incomplete definition of type 'struct intel_display'
-#file	external/bsd/drm2/dist618/drm/i915/display/intel_gmbus.c	i915drm618	# no member named 'dev' in 'struct pci_dev'
-#file	external/bsd/drm2/dist618/drm/i915/display/intel_hdcp.c	i915drm618	# variable has incomplete type 'const struct component_ops'
 #file	external/bsd/drm2/dist618/drm/i915/display/intel_hdcp_gsc_message.c	i915drm618	# variable has incomplete type 'struct wired_cmd_initiate_hdcp2_session_in'
-#file	external/bsd/drm2/dist618/drm/i915/display/intel_hdmi.c	i915drm618	# call to undeclared function 'cec_notifier_set_phys_addr'; ISO C99 and later do not support
+#file	external/bsd/drm2/dist618/drm/i915/display/intel_hdmi.c	i915drm618	# call to undeclared function 'cec_notifier_set_phys_addr'; 
 #file	external/bsd/drm2/dist618/drm/i915/display/intel_lpe_audio.c	i915drm618	# variable has incomplete type 'struct platform_device_info'
-#file	external/bsd/drm2/dist618/drm/i915/display/intel_lvds.c	i915drm618	# redefinition of 'intel_lvds_port_enabled'
-#file	external/bsd/drm2/dist618/drm/i915/display/intel_opregion.c	i915drm618	# redefinition of 'intel_opregion_notify_encoder'
-#file	external/bsd/drm2/dist618/drm/i915/display/intel_overlay.c	i915drm618	# redefinition of 'intel_overlay_reset'
-#file	external/bsd/drm2/dist618/drm/i915/display/intel_pch_display.c	i915drm618	# redefinition of 'intel_has_pch_trancoder'
-#file	external/bsd/drm2/dist618/drm/i915/display/intel_pch_refclk.c	i915drm618	# redefinition of 'lpt_disable_iclkip'
-#file	external/bsd/drm2/dist618/drm/i915/display/intel_pipe_crc.c	i915drm618	# redefinition of 'intel_crtc_crc_init'
-#file	external/bsd/drm2/dist618/drm/i915/display/intel_plane.c	i915drm618	# call to undeclared function 'pci_get_drvdata'; ISO C99 and later do not support implicit f
-#file	external/bsd/drm2/dist618/drm/i915/display/intel_pmdemand.c	i915drm618	# call to undeclared function 'to_intel_display'; ISO C99 and later do not support implicit 
 #file	external/bsd/drm2/dist618/drm/i915/display/intel_quirks.c	i915drm618	# use of undeclared identifier 'DMI_PRODUCT_SKU'
-#file	external/bsd/drm2/dist618/drm/i915/display/intel_sdvo.c	i915drm618	# redefinition of 'intel_sdvo_port_enabled'
-#file	external/bsd/drm2/dist618/drm/i915/display/intel_sprite.c	i915drm618	# redefinition of 'intel_sprite_plane_create'
-#file	external/bsd/drm2/dist618/drm/i915/display/intel_tv.c	i915drm618	# redefinition of 'intel_tv_init'
-#file	external/bsd/drm2/dist618/drm/i915/display/intel_vblank.c	i915drm618	# call to undeclared function 'prepare_to_wait'; ISO C99 and later do not support implicit f
-#file	external/bsd/drm2/dist618/drm/i915/display/intel_vga.c	i915drm618	# call to undeclared function 'vga_get_uninterruptible'; ISO C99 and later do not support im
-#file	external/bsd/drm2/dist618/drm/i915/display/skl_watermark.c	i915drm618	# unknown type name 'noinline_for_stack'
+#file	external/bsd/drm2/dist618/drm/i915/display/intel_vblank.c	i915drm618	# call to undeclared function 'prepare_to_wait'; 
+#file	external/bsd/drm2/dist618/drm/i915/display/intel_vga.c	i915drm618	# call to undeclared function 'vga_get_uninterruptible'; 
 #file	external/bsd/drm2/dist618/drm/i915/display/vlv_dsi.c	i915drm618	# use of undeclared identifier 'MIPI_DSI_FMT_RGB888'
 #file	external/bsd/drm2/dist618/drm/i915/display/vlv_dsi_pll.c	i915drm618	# call to undeclared function 'mipi_dsi_pixel_format_to_bpp'; ISO C99 and later do not suppo
-#file	external/bsd/drm2/dist618/drm/i915/display/vlv_sideband.c	i915drm618	# conflicting types for 'vlv_dpio_read'
-#file	external/bsd/drm2/dist618/drm/i915/gem/i915_gem_context.c	i915drm618	# call to undeclared function 'get_task_pid'; ISO C99 and later do not support implicit func
-#file	external/bsd/drm2/dist618/drm/i915/gem/i915_gem_dmabuf.c	i915drm618	# call to undeclared function 'vfs_mmap'; ISO C99 and later do not support implicit function
-#file	external/bsd/drm2/dist618/drm/i915/gem/i915_gem_execbuffer.c	i915drm618	# too few arguments to function call, expected 2, have 1
-#file	external/bsd/drm2/dist618/drm/i915/gem/i915_gemfs.c	i915drm618	# 'linux/fs_context.h' file not found
-#file	external/bsd/drm2/dist618/drm/i915/gem/i915_gem_internal.c	i915drm618	# call to undeclared function '__free_pages'; ISO C99 and later do not support implicit func
+#file	external/bsd/drm2/dist618/drm/i915/gem/i915_gem_context.c	i915drm618	# call to undeclared function 'get_task_pid'; 
+#file	external/bsd/drm2/dist618/drm/i915/gem/i915_gem_dmabuf.c	i915drm618	# call to undeclared function 'vfs_mmap'; 
+#file	external/bsd/drm2/dist618/drm/i915/gem/i915_gem_execbuffer.c	i915drm618	# bit-field '__ctassert68' has negative width (-1)
 #file	external/bsd/drm2/dist618/drm/i915/gem/i915_gem_lmem.c	i915drm618	# bit-field '__ctassert66' has negative width (-1)
-#file	external/bsd/drm2/dist618/drm/i915/gem/i915_gem_mman.c	i915drm618	# call to undeclared function 'pat_enabled'; ISO C99 and later do not support implicit funct
-#file	external/bsd/drm2/dist618/drm/i915/gem/i915_gem_object.c	i915drm618	# too few arguments to function call, expected 3, have 1
+#file	external/bsd/drm2/dist618/drm/i915/gem/i915_gem_mman.c	i915drm618	# no member named 'mm' in 'struct task_struct'
 #file	external/bsd/drm2/dist618/drm/i915/gem/i915_gem_pages.c	i915drm618	# use of undeclared identifier 'PAGE_KERNEL_IO'
-#file	external/bsd/drm2/dist618/drm/i915/gem/i915_gem_phys.c	i915drm618	# call to undeclared function 'sg_assign_page'; ISO C99 and later do not support implicit fu
-#file	external/bsd/drm2/dist618/drm/i915/gem/i915_gem_shmem.c	i915drm618	# 'linux/uio.h' file not found
-#file	external/bsd/drm2/dist618/drm/i915/gem/i915_gem_shrinker.c	i915drm618	# use of undeclared identifier 'I915_SHRINK_ACTIVE'
-#file	external/bsd/drm2/dist618/drm/i915/gem/i915_gem_stolen.c	i915drm618	# expected expression
-#file	external/bsd/drm2/dist618/drm/i915/gem/i915_gem_ttm.c	i915drm618	# call to undeclared function 'mapping_set_gfp_mask'; ISO C99 and later do not support impli
-#file	external/bsd/drm2/dist618/drm/i915/gem/i915_gem_userptr.c	i915drm618	# call to undeclared function 'VMA_ITERATOR'; ISO C99 and later do not support implicit func
-#file	external/bsd/drm2/dist618/drm/i915/gt/gen6_ppgtt.c	i915drm618	# call to undeclared function 'iowrite32'; ISO C99 and later do not support implicit functio
-#file	external/bsd/drm2/dist618/drm/i915/gt/gen8_ppgtt.c	i915drm618	# use of undeclared identifier '_PAGE_PWT'
-#file	external/bsd/drm2/dist618/drm/i915/gt/intel_breadcrumbs.c	i915drm618	# static declaration of 'linux___dma_fence_signal' follows non-static declaration
-#file	external/bsd/drm2/dist618/drm/i915/gt/intel_engine_cs.c	i915drm618	# call to undeclared function 'lockdep_set_class_and_name'; ISO C99 and later do not support
+#file	external/bsd/drm2/dist618/drm/i915/gem/i915_gem_phys.c	i915drm618	# call to undeclared function 'shmem_read_mapping_page'; 
+#file	external/bsd/drm2/dist618/drm/i915/gem/i915_gem_shmem.c	i915drm618	# fatal 'linux/uio.h' file not found
+#file	external/bsd/drm2/dist618/drm/i915/gem/i915_gem_shrinker.c	i915drm618	# no member named 'private_data' in 'struct shrinker'
+#file	external/bsd/drm2/dist618/drm/i915/gem/i915_gem_stolen.c	i915drm618	# call to undeclared function 'io_mapping_init_wc'; 
+#file	external/bsd/drm2/dist618/drm/i915/gem/i915_gem_ttm.c	i915drm618	# call to undeclared function 'mapping_set_gfp_mask'; 
+#file	external/bsd/drm2/dist618/drm/i915/gem/i915_gem_userptr.c	i915drm618	# call to undeclared function 'VMA_ITERATOR'; 
+#file	external/bsd/drm2/dist618/drm/i915/gem/i915_gemfs.c	i915drm618	# fatal 'linux/fs_context.h' file not found
+#file	external/bsd/drm2/dist618/drm/i915/gt/intel_breadcrumbs.c	i915drm618	# call to undeclared function 'trace_dma_fence_signaled'; 
+#file	external/bsd/drm2/dist618/drm/i915/gt/intel_engine_cs.c	i915drm618	# no member named 'expires' in 'struct timer_list'
 #file	external/bsd/drm2/dist618/drm/i915/gt/intel_engine_pm.c	i915drm618	# no member named 'node' in 'dma_fence_cb'
-#file	external/bsd/drm2/dist618/drm/i915/gt/intel_execlists_submission.c	i915drm618	# no member named 'expires' in 'struct timer_list'
-#file	external/bsd/drm2/dist618/drm/i915/gt/intel_ggtt.c	i915drm618	# call to undeclared function 'io_mapping_init_wc'; ISO C99 and later do not support implici
-#file	external/bsd/drm2/dist618/drm/i915/gt/intel_ggtt_fencing.c	i915drm618	# call to undeclared function 'pfn_to_page'; ISO C99 and later do not support implicit funct
-#file	external/bsd/drm2/dist618/drm/i915/gt/intel_ggtt_gmch.c	i915drm618	# expected expression
-#file	external/bsd/drm2/dist618/drm/i915/gt/intel_gsc.c	i915drm618	# 'linux/mei_aux.h' file not found
-#file	external/bsd/drm2/dist618/drm/i915/gt/intel_gt_buffer_pool.c	i915drm618	# call to undeclared function 'spin_trylock_irq'; ISO C99 and later do not support implicit 
-#file	external/bsd/drm2/dist618/drm/i915/gt/intel_gt.c	i915drm618	# call to undeclared function 'signal_pending'; ISO C99 and later do not support implicit fu
-#file	external/bsd/drm2/dist618/drm/i915/gt/intel_gt_debugfs.c	i915drm618	# incompatible pointer types initializing 'const struct file_operations *' with an expressio
-#file	external/bsd/drm2/dist618/drm/i915/gt/intel_gt_pm.c	i915drm618	# unknown type name 'suspend_state_t'
-#file	external/bsd/drm2/dist618/drm/i915/gt/intel_gt_pm_debugfs.c	i915drm618	# incompatible pointer types initializing 'const struct file_operations *' with an expressio
-#file	external/bsd/drm2/dist618/drm/i915/gt/intel_gt_sysfs.c	i915drm618	# incomplete definition of type 'struct device'
-#file	external/bsd/drm2/dist618/drm/i915/gt/intel_gt_sysfs_pm.c	i915drm618	# incomplete definition of type 'struct device'
-#file	external/bsd/drm2/dist618/drm/i915/gt/intel_gtt.c	i915drm618	# call to undeclared function 'MEDIA_VER_FULL'; ISO C99 and later do not support implicit fu
-#file	external/bsd/drm2/dist618/drm/i915/gt/intel_ppgtt.c	i915drm618	# call to undeclared function 'drm_clflush_virt_range'; ISO C99 and later do not support imp
-#file	external/bsd/drm2/dist618/drm/i915/gt/intel_region_lmem.c	i915drm618	# use of undeclared identifier 'PCI_STD_RESOURCES'
-#file	external/bsd/drm2/dist618/drm/i915/gt/intel_reset.c	i915drm618	# use of undeclared identifier '_RET_IP_'
-#file	external/bsd/drm2/dist618/drm/i915/gt/intel_ring_submission.c	i915drm618	# call to undeclared function 'PFN_PHYS'; ISO C99 and later do not support implicit function
-#file	external/bsd/drm2/dist618/drm/i915/gt/intel_rps.c	i915drm618	# '../../../platform/x86/intel_ips.h' file not found
-#file	external/bsd/drm2/dist618/drm/i915/gt/intel_sseu.c	i915drm618	# call to undeclared function '__fls'; ISO C99 and later do not support implicit function de
+#file	external/bsd/drm2/dist618/drm/i915/gt/intel_ggtt.c	i915drm618	# call to undeclared function 'io_mapping_init_wc'; 
+#file	external/bsd/drm2/dist618/drm/i915/gt/intel_gsc.c	i915drm618	# fatal 'linux/mei_aux.h' file not found
+#file	external/bsd/drm2/dist618/drm/i915/gt/intel_gt_sysfs_pm.c	i915drm618	# incomplete definition of type 'struct device_attribute'
+#file	external/bsd/drm2/dist618/drm/i915/gt/intel_region_lmem.c	i915drm618	# too many arguments to function call, expected 3, have 4
+#file	external/bsd/drm2/dist618/drm/i915/gt/intel_rps.c	i915drm618	# '../../../platform/x86/intel_ips.h' file not found, did you mean 'platform/x86/intel_ips.h
 #file	external/bsd/drm2/dist618/drm/i915/gt/shmem_utils.c	i915drm618	# no member named 'host' in 'struct address_space'
-#file	external/bsd/drm2/dist618/drm/i915/gt/st_shmem_utils.c	i915drm618	# call to undeclared function 'shmem_create_from_data'; ISO C99 and later do not support imp
-#file	external/bsd/drm2/dist618/drm/i915/gt/sysfs_engines.c	i915drm618	# no member named 'expires' in 'struct timer_list'
-#file	external/bsd/drm2/dist618/drm/i915/gt/uc/intel_gsc_proxy.c	i915drm618	# variable has incomplete type 'const struct component_ops'
-#file	external/bsd/drm2/dist618/drm/i915/gt/uc/intel_guc_ads.c	i915drm618	# expected expression
-#file	external/bsd/drm2/dist618/drm/i915/gt/uc/intel_guc_debugfs.c	i915drm618	# incompatible pointer types initializing 'const struct file_operations *' with an expressio
-#file	external/bsd/drm2/dist618/drm/i915/gt/uc/intel_guc_log.c	i915drm618	# call to undeclared function 'relay_buf_full'; ISO C99 and later do not support implicit fu
-#file	external/bsd/drm2/dist618/drm/i915/gt/uc/intel_guc_log_debugfs.c	i915drm618	# incompatible pointer types initializing 'const struct file_operations *' with an expressio
-#file	external/bsd/drm2/dist618/drm/i915/gt/uc/intel_guc_submission.c	i915drm618	# call to undeclared function '__xa_store'; ISO C99 and later do not support implicit functi
-#file	external/bsd/drm2/dist618/drm/i915/gt/uc/intel_huc.c	i915drm618	# 'linux/device/bus.h' file not found
-#file	external/bsd/drm2/dist618/drm/i915/gt/uc/intel_uc_fw.c	i915drm618	# call to undeclared function 'pfn_to_page'; ISO C99 and later do not support implicit funct
+#file	external/bsd/drm2/dist618/drm/i915/gt/uc/intel_guc_log.c	i915drm618	# call to undeclared function 'relay_buf_full'; 
+#file	external/bsd/drm2/dist618/drm/i915/gt/uc/intel_guc_submission.c	i915drm618	# call to undeclared function '__xa_store'; 
+#file	external/bsd/drm2/dist618/drm/i915/gt/uc/intel_huc.c	i915drm618	# fatal 'linux/mei_aux.h' file not found
 #file	external/bsd/drm2/dist618/drm/i915/i915_active.c	i915drm618	# no member named 'node' in 'struct dma_fence_cb'
-#file	external/bsd/drm2/dist618/drm/i915/i915_cmd_parser.c	i915drm618	# no member named 'x86_clflush_size' in 'struct drm618_cpuinfo'
-#file	external/bsd/drm2/dist618/drm/i915/i915_debugfs.c	i915drm618	# redefinition of 'i915_debugfs_describe_obj'
-#file	external/bsd/drm2/dist618/drm/i915/i915_debugfs_params.c	i915drm618	# no member named 'f_path' in 'struct file'
-#file	external/bsd/drm2/dist618/drm/i915/i915_driver.c	i915drm618	# call to undeclared function 'dma_set_mask'; ISO C99 and later do not support implicit func
-#file	external/bsd/drm2/dist618/drm/i915/i915_gem.c	i915drm618	# call to undeclared function '__copy_to_user_inatomic'; ISO C99 and later do not support im
-#file	external/bsd/drm2/dist618/drm/i915/i915_gem_gtt.c	i915drm618	# call to undeclared function 'dma_map_sg_attrs'; ISO C99 and later do not support implicit 
-#file	external/bsd/drm2/dist618/drm/i915/i915_gpu_error.c	i915drm618	# 'linux/zlib.h' file not found
-#file	external/bsd/drm2/dist618/drm/i915/i915_hwmon.c	i915drm618	# expected identifier
-#file	external/bsd/drm2/dist618/drm/i915/i915_ioc32.c	i915drm618	# call to undeclared function 'compat_ptr'; ISO C99 and later do not support implicit functi
-#file	external/bsd/drm2/dist618/drm/i915/i915_irq.c	i915drm618	# incomplete definition of type 'struct device'
-#file	external/bsd/drm2/dist618/drm/i915/i915_memcpy.c	i915drm618	# call to undeclared function 'kernel_fpu_begin'; ISO C99 and later do not support implicit 
+#file	external/bsd/drm2/dist618/drm/i915/i915_cmd_parser.c	i915drm618	# bit-field '__ctassert66' has negative width (-1)
+#file	external/bsd/drm2/dist618/drm/i915/i915_driver.c	i915drm618	# call to undeclared function 'pcie_find_root_port'; 
+#file	external/bsd/drm2/dist618/drm/i915/i915_gem.c	i915drm618	# bit-field '__ctassert76' has negative width (-1)
+#file	external/bsd/drm2/dist618/drm/i915/i915_gem_gtt.c	i915drm618	# call to undeclared function 'dma_map_sg_attrs'; 
+#file	external/bsd/drm2/dist618/drm/i915/i915_ioc32.c	i915drm618	# expected identifier or '('
+#file	external/bsd/drm2/dist618/drm/i915/i915_irq.c	i915drm618	# incompatible function pointer types returning 'irqreturn_t (int, void *)' (aka 'int (int, 
+#file	external/bsd/drm2/dist618/drm/i915/i915_memcpy.c	i915drm618	# use of undeclared identifier 'X86_FEATURE_XMM4_1'
 #file	external/bsd/drm2/dist618/drm/i915/i915_mitigations.c	i915drm618	# variable has incomplete type 'const struct kernel_param_ops'
 #file	external/bsd/drm2/dist618/drm/i915/i915_mm.c	i915drm618	# unknown type name 'pte_t'
-#file	external/bsd/drm2/dist618/drm/i915/i915_pci.c	i915drm618	# type specifier missing, defaults to 'int'; ISO C99 and later do not support implicit int [
-#file	external/bsd/drm2/dist618/drm/i915/i915_perf.c	i915drm618	# call to undeclared function 'ratelimit_state_get_miss'; ISO C99 and later do not support i
-#file	external/bsd/drm2/dist618/drm/i915/i915_pmu.c	i915drm618	# incomplete definition of type 'struct perf_event'
-#file	external/bsd/drm2/dist618/drm/i915/i915_query.c	i915drm618	# call to undeclared function 'user_write_access_begin'; ISO C99 and later do not support im
+#file	external/bsd/drm2/dist618/drm/i915/i915_pci.c	i915drm618	# use of undeclared identifier 'TAINT_USER'
+#file	external/bsd/drm2/dist618/drm/i915/i915_perf.c	i915drm618	# call to undeclared function 'anon_inode_getfd'; 
 #file	external/bsd/drm2/dist618/drm/i915/i915_request.c	i915drm618	# no member named 'node' in 'irq_work'
-#file	external/bsd/drm2/dist618/drm/i915/i915_sw_fence.c	i915drm618	# use of undeclared identifier 'TASK_NORMAL'
-#file	external/bsd/drm2/dist618/drm/i915/i915_switcheroo.c	i915drm618	# variable has incomplete type 'enum vga_switcheroo_state'
-#file	external/bsd/drm2/dist618/drm/i915/i915_syncmap.c	i915drm618	# type name requires a specifier or qualifier
 #file	external/bsd/drm2/dist618/drm/i915/i915_sysfs.c	i915drm618	# field designator 'mmap' does not refer to any field in type 'const struct bin_attribute'
 #file	external/bsd/drm2/dist618/drm/i915/i915_timer_util.c	i915drm618	# no member named 'expires' in 'struct timer_list'
-#file	external/bsd/drm2/dist618/drm/i915/i915_utils.c	i915drm618	# call to undeclared function 'device_iommu_mapped'; ISO C99 and later do not support implic
-#file	external/bsd/drm2/dist618/drm/i915/i915_vgpu.c	i915drm618	# call to undeclared function 'pci_iomap_range'; ISO C99 and later do not support implicit f
-#file	external/bsd/drm2/dist618/drm/i915/i915_vma.c	i915drm618	# call to undeclared function 'IOMEM_ERR_PTR'; ISO C99 and later do not support implicit fun
-#file	external/bsd/drm2/dist618/drm/i915/intel_cpu_info.c	i915drm618	# 'asm/cpu_device_id.h' file not found
-#file	external/bsd/drm2/dist618/drm/i915/intel_device_info.c	i915drm618	# call to undeclared function 'pci_iomap_range'; ISO C99 and later do not support implicit f
-#file	external/bsd/drm2/dist618/drm/i915/intel_gvt.c	i915drm618	# no member named 'i915' in 'struct intel_gvt_mmio_table_iter'
-#file	external/bsd/drm2/dist618/drm/i915/intel_gvt_mmio_table.c	i915drm618	# 'gvt/reg.h' file not found
-#file	external/bsd/drm2/dist618/drm/i915/intel_memory_region.c	i915drm618	# 'linux/prandom.h' file not found
-#file	external/bsd/drm2/dist618/drm/i915/intel_runtime_pm.c	i915drm618	# call to undeclared function 'pm_runtime_get_if_active'; ISO C99 and later do not support i
-#file	external/bsd/drm2/dist618/drm/i915/intel_wakeref.c	i915drm618	# call to undeclared function 'wake_up_var'; ISO C99 and later do not support implicit funct
-#file	external/bsd/drm2/dist618/drm/i915/soc/intel_gmch.c	i915drm618	# call to undeclared function 'pnp_range_reserved'; ISO C99 and later do not support implici
-#file	external/bsd/drm2/dist618/drm/i915/soc/intel_rom.c	i915drm618	# call to undeclared function 'ioread32'; ISO C99 and later do not support implicit function
-#file	external/bsd/drm2/dist618/drm/i915/vlv_iosf_sb.c	i915drm618	# call to undeclared function 'cpu_latency_qos_update_request'; ISO C99 and later do not sup
+#file	external/bsd/drm2/dist618/drm/i915/i915_vma.c	i915drm618	# bit-field '__ctassert76' has negative width (-1)
+
+# Left out of the set (the Kconfig options of drm618/README leave them out):
+#   display/intel_display_debugfs.c, display/intel_display_debugfs_params.c, gt/intel_gt_debugfs.c, gt/intel_gt_engines_debugfs.c, gt/intel_gt_pm_debugfs.c, gt/intel_sseu_debugfs.c, gt/uc/intel_gsc_uc_debugfs.c, gt/uc/intel_guc_debugfs.c, gt/uc/intel_guc_log_debugfs.c, gt/uc/intel_huc_debugfs.c, gt/uc/intel_uc_debugfs.c, i915_debugfs.c, i915_debugfs_params.c: debugfs only (no debugfs in the layer; the 5.6 port left them out); CONFIG_DEBUG_FS is off
+#   i915_hwmon.c: CONFIG_HWMON is off (the header has static inline stubs under IS_REACHABLE)
+#   i915_pmu.c: CONFIG_PERF_EVENTS is off (stubs in i915_pmu.h)
+#   intel_gvt.c, intel_gvt_mmio_table.c: CONFIG_DRM_I915_GVT is off (stubs in intel_gvt.h; the second needs gvt/reg.h)
+#   i915_gpu_error.c: CONFIG_DRM_I915_CAPTURE_ERROR is off (stubs in i915_gpu_error.h): GPU hang diagnostics are lost, see README
+#   gt/st_shmem_utils.c, gt/hsw_clear_kernel.c, gt/ivb_clear_kernel.c: not translation units: included by shmem_utils.c (self test) and gen7_renderclear.c (data)
+#   display/intel_dp_tunnel.c: CONFIG_DRM_I915_DP_TUNNEL is off (static inline stubs in the header)
+#   display/intel_opregion.c: CONFIG_ACPI is off (stubs in the header); the opregion and the VBT from it return with intel_acpi
+#   display/intel_pipe_crc.c: CONFIG_DEBUG_FS is off (the header stubs the whole interface)
