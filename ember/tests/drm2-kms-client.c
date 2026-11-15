@@ -1615,6 +1615,55 @@ test_render(void)
 		gc.handle = cd.handle;
 		CHECK(ioc_fd(rf, DRM_IOCTL_GEM_CLOSE, &gc) == 0, "render node: GEM_CLOSE");
 	}
+	/* a large resource: it works through to its last byte (48 MiB), and one the ring cannot take is refused, not accepted without backing */
+	{
+		struct drm_virtgpu_resource_create rc;
+		struct drm_virtgpu_map vm;
+		struct drm_gem_close gc;
+		volatile uint32_t *q;
+		size_t words;
+		int ok = 1;
+
+		memset(&rc, 0, sizeof rc);
+		rc.target = 2; rc.format = 1; rc.bind = 2;
+		rc.width = 4096; rc.height = 3072; rc.depth = 1; rc.array_size = 1;
+		rc.size = 4096u * 3072u * 4u;
+		r = ioc_fd(rf, DRM_IOCTL_VIRTGPU_RESOURCE_CREATE, &rc);
+		CHECK(r == 0 && rc.bo_handle != 0, "render node: a 48 MiB resource (%d)", r);
+		if (r == 0) {
+			memset(&vm, 0, sizeof vm);
+			vm.handle = rc.bo_handle;
+			r = ioc_fd(rf, DRM_IOCTL_VIRTGPU_MAP, &vm);
+			m = r == 0 ? mmap(NULL, rc.size, PROT_READ | PROT_WRITE, MAP_SHARED, rf, (off_t)vm.offset) : MAP_FAILED;
+			CHECK(m != MAP_FAILED, "render node: mapping of the 48 MiB resource");
+			if (m != MAP_FAILED) {
+				q = m;
+				words = rc.size / 4;
+				for (r = 0; r < (int)words; r += 1021)
+					q[r] = 0x9e3779b9u * (uint32_t)(r + 1);
+				q[words - 1] = 0xfeedf00du;
+				for (r = 0; r < (int)words; r += 1021)
+					if (q[r] != 0x9e3779b9u * (uint32_t)(r + 1))
+						ok = 0;
+				CHECK(ok && q[words - 1] == 0xfeedf00du, "render node: the pattern over 48 MiB reads back, to the last word");
+				munmap(m, rc.size);
+			}
+			memset(&gc, 0, sizeof gc);
+			gc.handle = rc.bo_handle;
+			CHECK(ioc_fd(rf, DRM_IOCTL_GEM_CLOSE, &gc) == 0, "render node: GEM_CLOSE of the 48 MiB resource");
+		}
+		memset(&rc, 0, sizeof rc);
+		rc.target = 2; rc.format = 1; rc.bind = 2;
+		rc.width = 16384; rc.height = 16384; rc.depth = 1; rc.array_size = 1;
+		rc.size = 0x40000000u;			/* 1 GiB */
+		r = ioc_fd(rf, DRM_IOCTL_VIRTGPU_RESOURCE_CREATE, &rc);
+		CHECK(r != 0, "render node: a 1 GiB resource is refused (%d), not accepted without backing", r);
+		if (r == 0) {
+			memset(&gc, 0, sizeof gc);
+			gc.handle = rc.bo_handle;
+			ioc_fd(rf, DRM_IOCTL_GEM_CLOSE, &gc);
+		}
+	}
 out:
 	close(rf);
 }

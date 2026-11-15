@@ -26,6 +26,13 @@ CPPFLAGS+=	-I${S}/external/bsd/drm2/dist618/drm/virtio
 # Kconfig of the driver: the display part is on, debugfs is not.
 CPPFLAGS+=	-DCONFIG_DRM_VIRTIO_GPU_KMS=1
 
+# A test build (nbmake ... VIRTIO_TEST=1): the fault injection of the layer
+# (sysctl hw.virtiogpudrm.drop_notify) and read only counters of commands and
+# DMA maps.  Without it the module has neither the flag nor a sysctl node.
+.if defined(VIRTIO_TEST)
+CPPFLAGS+=	-DDRM618_VIRTIO_FAULT_INJECT -DDRM618_VIRTIO_STATS
+.endif
+
 WARNS=	3
 
 # Own code.
