@@ -55,6 +55,7 @@ wireless networking, graphics and accelerator interfaces. Read the owning implem
 | Small-memory RISC-V | [Espressif port](sys/arch/riscv/espressif) |
 | Optional flash filesystems | [littlefs VFS and image tools](sys/fs/littlefs/README.md) |
 | Wireless | [net80211](sys/net80211), [SDIO](sys/dev/sdmmc/docs), [drivers](sys/dev/ic/docs) |
+| Bluetooth | [Architecture and profiles](https://github.com/oxtech-ember/EmberBSD-Docs/blob/main/modules/bluetooth.md), [controller and profile interface map](sys/netbt/docs/README.md) |
 | Ethernet | [Architecture and standards](https://github.com/oxtech-ember/EmberBSD-Docs/blob/main/modules/ethernet.md), [controller, PHY and USB interface map](sys/net/docs/ethernet.md) |
 | GPU, display and synchronization | [Architecture and standards](https://github.com/oxtech-ember/EmberBSD-Docs/blob/main/modules/graphics-and-compute.md), [driver interface map](sys/external/bsd/drm2/drm/docs/README.md), [VirtIO GPU](sys/external/bsd/drm2/virtio/README.md) |
 | NPU and inference | [Architecture and technologies](https://github.com/oxtech-ember/EmberBSD-Docs/blob/main/modules/npu.md), [native and runtime interface map](sys/arch/arm/sunxi/docs/npu-integration.md) |
