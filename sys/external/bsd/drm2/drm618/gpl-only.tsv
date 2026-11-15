@@ -14,10 +14,17 @@ drm/drm_simple_kms_helper.c	c	GPL	GPL-2.0-or-later	-
 drm/drm_sysfs.c	c	GPL	GPL-2.0-only	drm/drm_sysfs.c
 drm/drm_trace_points.c	c	NONE	-	-
 drm/drm_writeback.c	c	GPL	GPL-2.0	drm/drm_writeback.c
+drm/i915/display/intel_acpi.c	c	GPL	GPL-2.0	-
+drm/i915/display/intel_display_trace.c	c	GPL	GPL-2.0	-
+drm/i915/i915_trace_points.c	c	GPL	GPL-2.0	-
+drm/i915/intel_uncore_trace.c	c	GPL	GPL-2.0	-
 drm/virtio/virtgpu_trace_points.c	c	GPL	GPL-2.0	-
 drm/virtio/virtgpu_vram.c	c	GPL	GPL-2.0	-
 drm/display/drm_dp_mst_topology_internal.h	h	GPL	GPL-2.0-only	-
 drm/drm_trace.h	h	GPL	GPL-2.0	-
+drm/i915/display/intel_display_trace.h	h	GPL	GPL-2.0	-
+drm/i915/i915_trace.h	h	GPL	GPL-2.0	-
+drm/i915/intel_uncore_trace.h	h	GPL	GPL-2.0	-
 drm/virtio/virtgpu_trace.h	h	GPL	GPL-2.0	-
 include/drm/display/drm_dp_aux_bus.h	h	GPL	GPL-2.0	-
 include/drm/drm_accel.h	h	GPL	GPL-2.0	-
@@ -42,6 +49,8 @@ include/drm/drm_simple_kms_helper.h	h	GPL	GPL-2.0-or-later	-
 include/drm/drm_sysfs.h	h	GPL	GPL-2.0	-
 include/drm/drm_vblank_helper.h	h	GPL	GPL-2.0+	-
 include/drm/drm_writeback.h	h	GPL	GPL-2.0	-
+include/drm/intel/i915_hdcp_interface.h	h	GPL	(GPL-2.0+)	-
+include/drm/intel/intel-gtt.h	h	GPL	GPL-2.0	-
 include/uapi/drm/amdxdna_accel.h	uapi	UAPI-NOTE	GPL-2.0 WITH Linux-syscall-note	-
 include/uapi/drm/armada_drm.h	uapi	UAPI-NOTE	GPL-2.0 WITH Linux-syscall-note	-
 include/uapi/drm/etnaviv_drm.h	uapi	UAPI-NOTE	GPL-2.0 WITH Linux-syscall-note	-
@@ -50,3 +59,14 @@ include/uapi/drm/habanalabs_accel.h	uapi	UAPI-NOTE	GPL-2.0 WITH Linux-syscall-no
 include/uapi/drm/ivpu_accel.h	uapi	UAPI-NOTE	GPL-2.0-only WITH Linux-syscall-note	-
 include/uapi/drm/omap_drm.h	uapi	UAPI-NOTE	GPL-2.0 WITH Linux-syscall-note	-
 include/uapi/drm/qaic_accel.h	uapi	UAPI-NOTE	GPL-2.0 WITH Linux-syscall-note	-
+drm/i915/gt/selftest_context.c	c	GPL	GPL-2.0	excluded
+drm/i915/gt/selftest_engine.c	c	GPL	GPL-2.0	excluded
+drm/i915/gt/selftest_engine.h	h	GPL	GPL-2.0	excluded
+drm/i915/gt/selftest_engine_cs.c	c	GPL	GPL-2.0	excluded
+drm/i915/gt/selftest_engine_pm.c	c	GPL	GPL-2.0	excluded
+drm/i915/gt/selftest_ring.c	c	GPL	GPL-2.0	excluded
+drm/i915/selftests/i915_live_selftests.h	h	GPL	GPL-2.0	excluded
+drm/i915/selftests/i915_mock_selftests.h	h	GPL	GPL-2.0	excluded
+drm/i915/selftests/i915_perf_selftests.h	h	GPL	GPL-2.0	excluded
+drm/i915/selftests/lib_sw_fence.h	h	GPL	GPL-2.0-only	excluded
+drm/i915/selftests/mock_gem_device.h	h	GPL	GPL-2.0	excluded
