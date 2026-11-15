@@ -88,7 +88,7 @@
 } while (0)
 
 #define	smp_load_acquire(X)	({					      \
-	typeof(*(X)) __smp_load_acquire_tmp = *(volatile typeof(X))(X);	      \
+	typeof(*(X)) __smp_load_acquire_tmp = *(volatile typeof(*(X)) *)(X);	      \
 	membar_acquire();						      \
 	__smp_load_acquire_tmp;						      \
 })
