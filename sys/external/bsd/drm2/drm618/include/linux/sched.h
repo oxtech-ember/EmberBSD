@@ -33,6 +33,8 @@
 #include <sys/lwp.h>
 #include <sys/signalvar.h>
 
+struct mm_struct;
+
 struct task_struct {
 	union {
 		struct {
@@ -57,6 +59,11 @@ struct task_struct {
 		struct {
 			char	__proc_before_gl[offsetof(struct proc, p_vmspace)];
 			struct task_struct *group_leader;
+		};
+		/* The address space of the process: its vmspace (an identity here, the user map is not reached through it). */
+		struct {
+			char	__proc_before_mm[offsetof(struct proc, p_vmspace)];
+			struct mm_struct *mm;
 		};
 		/* PF_EXITING: the process is exiting (PS_WEXIT of p_sflag). */
 		struct {
@@ -127,6 +134,19 @@ pid_nr(struct pid *pid)
 
 	return (pid_t)(uintptr_t)pid;
 }
+/*
+ * The pid of a task: the process id, for the id of the task and of its thread
+ * group (the same here).  The ids of the process group and the session are not
+ * kept.
+ */
+static inline struct pid *
+get_task_pid(struct task_struct *task, enum pid_type type)
+{
+
+	KASSERT(type == PIDTYPE_PID || type == PIDTYPE_TGID);
+	return get_pid(task_tgid(task));
+}
+
 
 /*
  * The task of a pid: only the caller's own is found (a lookup of another

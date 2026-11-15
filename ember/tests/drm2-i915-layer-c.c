@@ -20,6 +20,10 @@
 #include <linux/interrupt.h>
 #include <linux/overflow.h>
 #include <linux/pci.h>
+#include <linux/shmem_fs.h>
+#include <linux/slab.h>
+#include <linux/xarray.h>
+#include <linux/shrinker.h>
 #include <linux/sched.h>
 #include <linux/wait.h>
 
@@ -27,6 +31,11 @@
 #include <i915drm618_dev.h>
 
 /* a Linux interrupt handler takes the number and the cookie */
+static unsigned long t_cnt(struct shrinker *s __unused, struct shrink_control *c __unused) { return 0; }
+static int t_pset(const char *v __unused, const struct kernel_param *kp __unused) { return 0; }
+static int t_pget(char *b __unused, const struct kernel_param *kp __unused) { return 0; }
+static const struct kernel_param_ops t_pops = { .set = t_pset, .get = t_pget };
+module_param_cb_unsafe(t618, &t_pops, NULL, 0600);
 static_assert(__builtin_types_compatible_p(irq_handler_t, irqreturn_t (*)(int, void *)));
 
 static int t_run, t_fail;
@@ -300,6 +309,108 @@ drm2_i915_layer_c_run(void)
 
 	/* DMI_PRODUCT_SKU is a field of its own, beyond the known ones */
 	CHECK(DMI_PRODUCT_SKU > DMI_STRING_MAX);
+
+
+	/* xarray value entries do not collide with pointers */
+	{
+		int obj = 0;
+
+		CHECK(xa_is_value(xa_mk_value(0)) && xa_is_value(xa_mk_value(12345)));
+		CHECK(xa_to_value(xa_mk_value(12345)) == 12345 && xa_to_value(xa_mk_value(0)) == 0);
+		CHECK(!xa_is_value(&obj) && !xa_is_value(NULL));
+		CHECK(xa_to_value(xa_mk_value(~0ul >> 1)) == (~0ul >> 1));
+	}
+
+	/* xa_alloc_cyclic_irq: ids go on from the last one, wrap to the start, the limit can be full */
+	{
+		struct xarray xa;
+		uint32_t id = 99, next = 0;
+		int a, b, c, d, e;
+
+		xa_init_flags(&xa, XA_FLAGS_ALLOC);
+		a = xa_alloc_cyclic_irq(&xa, &id, &a, XA_LIMIT(1, 3), &next, GFP_KERNEL);
+		CHECK(a == 0 && id == 1 && next == 2);
+		b = xa_alloc_cyclic_irq(&xa, &id, &b, XA_LIMIT(1, 3), &next, GFP_KERNEL);
+		CHECK(b == 0 && id == 2 && next == 3);
+		c = xa_alloc_cyclic_irq(&xa, &id, &c, XA_LIMIT(1, 3), &next, GFP_KERNEL);
+		CHECK(c == 1 && id == 3 && next == 1);		/* the last of the limit: wrapped */
+		d = xa_alloc_cyclic_irq(&xa, &id, &d, XA_LIMIT(1, 3), &next, GFP_KERNEL);
+		CHECK(d < 0);					/* full */
+		xa_erase(&xa, 2);
+		e = xa_alloc_cyclic_irq(&xa, &id, &e, XA_LIMIT(1, 3), &next, GFP_KERNEL);
+		CHECK(e == 0 && id == 2 && next == 3);
+		xa_erase(&xa, 1);
+		xa_erase(&xa, 2);
+		xa_erase(&xa, 3);
+		xa_destroy(&xa);
+	}
+
+	/* bitmap regions: aligned runs of 2^order, first fit, release */
+	{
+		unsigned long map[1] = { 0 };
+		int r1, r2, r3;
+
+		r1 = bitmap_find_free_region(map, 16, 2);
+		CHECK(r1 == 0 && map[0] == 0xf);
+		r2 = bitmap_find_free_region(map, 16, 1);
+		CHECK(r2 == 4 && map[0] == 0x3f);
+		r3 = bitmap_find_free_region(map, 16, 3);
+		CHECK(r3 == 8 && map[0] == 0xff3f);
+		CHECK(bitmap_find_free_region(map, 16, 4) == -ENOMEM && map[0] == 0xff3f);
+		bitmap_release_region(map, 0, 2);
+		CHECK(map[0] == 0xff30);
+		CHECK(bitmap_find_free_region(map, 16, 0) == 0 && map[0] == 0xff31);
+		map[0] = 0xffff;
+		CHECK(bitmap_find_free_region(map, 16, 0) == -ENOMEM);
+		map[0] = 0x00ff;
+		CHECK(bitmap_find_free_region(map, 12, 2) == 8 && map[0] == 0x0fff);
+		CHECK(bitmap_find_free_region(map, 14, 2) == -ENOMEM);		/* 12..15 does not fit in 14 bits */
+	}
+
+	/* shmem: the mapping names the inode, pages read through it, memcpy to and from a page */
+	{
+		struct file *f = shmem_file_setup("t618", 2 * PAGE_SIZE, 0);
+		struct page *pg;
+		char in[16] = "i915 page copy", out[16];
+
+		CHECK(!IS_ERR(f));
+		if (!IS_ERR(f)) {
+			CHECK(f->f_mapping->host == f->f_inode && f->f_mapping->host->i_size == 2 * PAGE_SIZE);
+			pg = shmem_read_mapping_page(f->f_mapping, 1);
+			CHECK(!IS_ERR(pg));
+			if (!IS_ERR(pg)) {
+				memcpy_to_page(pg, 100, in, sizeof(in));
+				memset(out, 0, sizeof(out));
+				memcpy_from_page(out, pg, 100, sizeof(out));
+				CHECK(memcmp(in, out, sizeof(in)) == 0);
+				CHECK(memcmp((char *)page_address(pg) + 100, in, sizeof(in)) == 0);
+				CHECK(pg == shmem_read_mapping_page_gfp(f->f_mapping, 1, GFP_KERNEL));
+			}
+			fput(f);
+		}
+	}
+
+	/* get_task_pid: the id of the process, as task_tgid; PGID and SID are not kept */
+	{
+		struct pid *p = get_task_pid(current, PIDTYPE_PID);
+
+		CHECK(pid_nr(p) == curproc->p_pid && p == task_tgid(current));
+		CHECK(get_task_pid(current, PIDTYPE_TGID) == p);
+		put_pid(p);
+	}
+
+	/* the shrinker of 6.18 has the fields the driver fills in */
+	{
+		struct shrinker sh = { .count_objects = t_cnt, .seeks = 2, .batch = 4096, .private_data = &t_run };
+
+		CHECK(sh.count_objects(&sh, NULL) == 0 && sh.private_data == &t_run && sh.batch == 4096);
+	}
+
+	/* vm flags and a vma that names its mapping */
+	CHECK(VM_MAYWRITE == 0x20 && (VM_MAYREAD | VM_MAYEXEC | VM_MAYSHARE) == 0xd0);
+	CHECK(FAULT_FLAG_RETRY_NOWAIT == 0x08 && (FAULT_FLAG_ALLOW_RETRY & FAULT_FLAG_WRITE) == 0);
+	CHECK(offsetof(struct vm_area_struct, vm_mm) > offsetof(struct vm_area_struct, vm_private_data));
+	CHECK(current->mm == (struct mm_struct *)curproc->p_vmspace);
 
 	destroy_waitqueue_head(&q1);
 	destroy_waitqueue_head(&t_vq);

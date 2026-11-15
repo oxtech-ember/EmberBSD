@@ -29,6 +29,7 @@
 #include <linux/sysfs.h>
 #include <linux/refcount.h>
 #include <linux/scatterlist.h>
+#include <linux/sched.h>
 #include <linux/seqlock.h>
 #include <linux/stddef.h>
 #include <linux/wait.h>
@@ -231,6 +232,8 @@ drm2_i915_layer_run(void)
 		add_wait_queue(&wq, &e1.e);
 		add_wait_queue(&wq, &w);
 		CHECK(wq.head.next == &w.entry && !list_empty(&w.entry));
+		/* an entry that names the task takes it off only if the wake-up wakes a sleeper */
+		set_current_state(TASK_UNINTERRUPTIBLE);
 		wake_up_all(&wq);
 		CHECK(list_empty(&w.entry) && e1.calls == 1);
 		remove_wait_queue(&wq, &e1.e);

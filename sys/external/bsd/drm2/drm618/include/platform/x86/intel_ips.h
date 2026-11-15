@@ -17,7 +17,7 @@ bool i915_gpu_raise(void);
 bool i915_gpu_lower(void);
 bool i915_gpu_busy(void);
 bool i915_gpu_turbo_disable(void);
-bool ips_link_to_i915_driver(void);
+void ips_link_to_i915_driver(void);
 
 /* there is no module symbol table: a symbol is never found */
 #define	symbol_get(sym)		((__typeof__(&(sym)))NULL)

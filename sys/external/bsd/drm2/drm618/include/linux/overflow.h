@@ -47,19 +47,20 @@
 	    (unsigned long long)(N) > __drm618_tmax(T))
 /*
  * pgoff_t is a signed type here (uvm's), Linux's is unsigned long: for it a
- * variable must be an unsigned long long enough value, as for unsigned long.
+ * variable is castable when it is a pgoff_t or an unsigned long wide value, as
+ * for unsigned long.  Other targets: the same width and signedness.
  */
-#define	__drm618_castable_tgt(T)					\
-	__typeof__(__builtin_choose_expr(				\
-	    __builtin_types_compatible_p(__typeof__(T), pgoff_t),	\
-	    (unsigned long)0, (__typeof__(T))0))
+#define	__drm618_is_pgoff(T)						\
+	__builtin_types_compatible_p(__typeof__(T), pgoff_t)
 #ifndef castable_to_type
 #define	castable_to_type(N, T)						\
 	__builtin_choose_expr(__builtin_constant_p(N),			\
 	    !__drm618_overflows_const((N), T),				\
-	    (sizeof(N) == sizeof(__drm618_castable_tgt(T)) &&		\
-	    __drm618_uns(__typeof__(N)) ==				\
-	    __drm618_uns(__drm618_castable_tgt(T))))
+	    (__builtin_types_compatible_p(__typeof__(N), __typeof__(T)) || \
+	    (sizeof(N) == sizeof(__typeof__(T)) &&			\
+	    __drm618_uns(__typeof__(N)) == __drm618_uns(T)) ||		\
+	    (__drm618_is_pgoff(T) && sizeof(N) == sizeof(unsigned long) && \
+	    __drm618_uns(__typeof__(N)))))
 #endif
 
 #endif

@@ -814,7 +814,6 @@ bool	cpu_latency_qos_request_active(struct pm_qos_request *);
 int	pnp_range_reserved(resource_size_t, resource_size_t);
 bool	device_iommu_mapped(struct device *);
 void	wake_up_var(void *);
-void	memcpy_from_page(char *, struct page *, size_t, size_t);
 void	__free_pages(struct page *, unsigned int);
 
 
@@ -878,7 +877,7 @@ wait_queue_head_t *drm618_var_waitqueue(void *);
 int	pci_enable_device(struct pci_dev *);
 void	pci_disable_device(struct pci_dev *);
 int	pci_release_resource(struct pci_dev *, int);
-int	pci_resize_resource(struct pci_dev *, int, int);
+int	pci_resize_resource(struct pci_dev *, int, int, int);
 struct scatterlist;
 enum dma_data_direction;
 void	*dma_alloc_coherent(struct device *, size_t, dma_addr_t *, gfp_t);

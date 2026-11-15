@@ -52,7 +52,10 @@ struct bin_attribute {
 	ssize_t		(*write)(struct file *, struct kobject *,
 			    const struct bin_attribute *, char *, off_t,
 			    size_t);
+	int		(*mmap)(struct file *, struct kobject *,
+			    const struct bin_attribute *, struct vm_area_struct *);
 };
+struct vm_area_struct;
 
 struct attribute_group {
 	const char	*name;

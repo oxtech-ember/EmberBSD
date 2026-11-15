@@ -13,7 +13,9 @@
 #ifndef _DRM618_LINUX_VGAARB_H_
 #define _DRM618_LINUX_VGAARB_H_
 
+#define	vga_client_register	drm618_shared_vga_client_register
 #include_next <linux/vgaarb.h>
+#undef	vga_client_register
 
 #define	VGA_RSRC_NONE		0x00
 #define	VGA_RSRC_LEGACY_IO	0x01
@@ -30,5 +32,8 @@ static inline void
 vga_put(struct pci_dev *pdev __unused, unsigned int rsrc __unused)
 {
 }
+
+/* the client of 6.18 gives the arbiter one function: the decode of the legacy resources (declared, not defined: no arbiter) */
+int	vga_client_register(struct pci_dev *, unsigned int (*)(struct pci_dev *, bool));
 
 #endif	/* _DRM618_LINUX_VGAARB_H_ */

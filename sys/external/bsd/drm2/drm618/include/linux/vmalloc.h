@@ -35,9 +35,12 @@ is_vmalloc_addr(const void *addr __unused)
 #include <drm618_page.h>
 
 static inline void *
-vmap(struct page **pages, unsigned int npages, unsigned long flags __unused,
+vmap(struct page **pages, unsigned int npages, unsigned long flags,
     pgprot_t prot)
 {
+
+	/* a flag that is not implemented (VM_MAP_PUT_PAGES) must not pass unseen */
+	KASSERT(flags == 0);
 
 	return drm618_vmap(pages, npages, prot & ~(pgprot_t)UVM_PROT_ALL,
 	    (prot & UVM_PROT_ALL) != 0 ? (prot & UVM_PROT_ALL) : UVM_PROT_RW);

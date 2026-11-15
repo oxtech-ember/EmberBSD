@@ -53,13 +53,21 @@ typedef unsigned long vm_flags_t;
 #define	VM_PFNMAP	0x00000400UL
 #define	VM_MIXEDMAP	0x10000000UL
 #define	VM_DONTDUMP	0x04000000UL
+#define	VM_MAYREAD	0x00000010UL
+#define	VM_MAYWRITE	0x00000020UL
+#define	VM_MAYEXEC	0x00000040UL
+#define	VM_MAYSHARE	0x00000080UL
+#define	VM_MAP_PUT_PAGES	0x00000020UL	/* vmap: the pages go back at vunmap (not implemented: vmap asserts it is not asked for) */
 #define	VM_NORESERVE	0x00200000UL	/* shmem_file_setup: do not account the memory */
 
 struct vm_operations_struct {
 	void		(*open)(struct vm_area_struct *);
 	void		(*close)(struct vm_area_struct *);
 	vm_fault_t	(*fault)(struct vm_fault *);
+	int		(*access)(struct vm_area_struct *, unsigned long, void *, int, int);
 };
+
+struct mm_struct;
 
 struct vma_uobj;
 struct uvm_faultinfo;
@@ -85,6 +93,7 @@ struct vm_area_struct {
 	unsigned long			vm_bsd_pfn;	/* first frame of the remapped range */
 	unsigned long			vm_bsd_npages;	/* its length in pages */
 	pgprot_t			vm_bsd_remap_prot;
+	struct mm_struct		*vm_mm;		/* the address space of the mapping (declared only: no user address space here) */
 };
 
 static inline void

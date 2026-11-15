@@ -67,6 +67,7 @@ inode_alloc(dev_t rdev, mode_t mode)
 	inode->i_rdev = rdev;
 	inode->i_mode = mode;
 	inode->i_mapping = &inode->i_data;
+	inode->i_data.host = inode;
 	inode->i_refcnt = 1;
 	return inode;
 }

@@ -60,6 +60,7 @@ typedef unsigned int	fmode_t;
  */
 struct address_space {
 	struct uvm_object	*a_uobj;
+	struct inode		*host;		/* the inode whose pages these are */
 };
 
 struct inode {
@@ -93,6 +94,9 @@ imajor(const struct inode *inode)
 
 struct module;
 
+struct kiocb;
+struct iov_iter;
+
 struct file_operations {
 	struct module	*owner;
 	unsigned int	fop_flags;
@@ -107,6 +111,7 @@ struct file_operations {
 			    unsigned long);
 	long		(*compat_ioctl)(struct DRM618_FILE_TAG *, unsigned int,
 			    unsigned long);
+	ssize_t		(*write_iter)(struct kiocb *, struct iov_iter *);
 	int		(*mmap)(struct DRM618_FILE_TAG *,
 			    struct vm_area_struct *);
 	int		(*open)(struct inode *, struct DRM618_FILE_TAG *);
