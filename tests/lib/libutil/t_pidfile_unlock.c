@@ -57,7 +57,59 @@ run_tests(void)
 	return 0;
 }
 
+/* A daemon child takes over the inherited lock before its launcher exits. */
+static int
+run_handoff(void)
+{
+	char dir[] = "/tmp/pidfile-handoff.XXXXXXXX";
+	char path[sizeof(dir) + 8], byte;
+	int ready[2], done[2], result, saved_errno, status;
+	pid_t child;
+
+	if (mkdtemp(dir) == NULL ||
+	    snprintf(path, sizeof(path), "%s/pid", dir) >= (int)sizeof(path))
+		return 20;
+	if (pidfile_lock(path) != 0 || pipe(ready) == -1 || pipe(done) == -1)
+		return 21;
+	pidfile_unremoveable();
+	child = fork();
+	if (child == -1)
+		return 22;
+	if (child == 0) {
+		close(ready[0]);
+		close(done[1]);
+		if (pidfile_lock(path) != 0 || write(ready[1], "R", 1) != 1)
+			_exit(23);
+		if (read(done[0], &byte, 1) != 1 || pidfile_read(path) != getpid())
+			_exit(24);
+		exit(0);
+	}
+	close(ready[1]);
+	close(done[0]);
+	if (read(ready[0], &byte, 1) != 1)
+		return 25;
+	result = pidfile_clean();
+	saved_errno = errno;
+	if (write(done[1], "D", 1) != 1 || waitpid(child, &status, 0) != child)
+		return 26;
+	close(ready[0]);
+	close(done[1]);
+	if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
+		return 27;
+	if (result != -1 || saved_errno != EPERM)
+		return 28;
+	if (unlink(path) != 0 || rmdir(dir) != 0)
+		return 29;
+	return 0;
+}
+
 #ifdef PIDFILE_ATF
+ATF_TC_WITHOUT_HEAD(handoff);
+ATF_TC_BODY(handoff, tc)
+{
+	ATF_REQUIRE_EQ(run_handoff(), 0);
+}
+
 ATF_TC_WITHOUT_HEAD(unlock);
 ATF_TC_BODY(unlock, tc)
 {
@@ -67,12 +119,16 @@ ATF_TC_BODY(unlock, tc)
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, unlock);
+	ATF_TP_ADD_TC(tp, handoff);
 	return atf_no_error();
 }
 #else
 int
 main(void)
 {
-	return run_tests();
+	int result;
+
+	result = run_tests();
+	return result != 0 ? result : run_handoff();
 }
 #endif

@@ -98,6 +98,8 @@ will remove the old pid file.
 .Pp
 The pid file is truncated, so these functions can be called multiple times and
 allow a child process to take over the lock.
+Cleanup checks the PID currently stored in the open file, so a parent exiting
+after that handoff does not truncate or remove the child's pid file.
 .Pp
 .Fn pidfile_read
 will read the last pid file created, or specified by

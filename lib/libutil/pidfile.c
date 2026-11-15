@@ -1,7 +1,7 @@
 /*	$NetBSD: pidfile.c,v 1.16 2021/08/01 15:29:29 andvar Exp $	*/
 
 /*-
- * Copyright (c) 1999, 2016 The NetBSD Foundation, Inc.
+ * Copyright (c) 1999, 2016, 2026 The NetBSD Foundation, Inc.
  * All rights reserved.
  *
  * This code is derived from software contributed to The NetBSD Foundation
@@ -47,10 +47,35 @@ __RCSID("$NetBSD: pidfile.c,v 1.16 2021/08/01 15:29:29 andvar Exp $");
 #include <unistd.h>
 #include <util.h>
 
-static pid_t pidfile_pid;
 static char pidfile_path[PATH_MAX];
 static int pidfile_fd = -1;
 static bool pidfile_removeable = true;
+
+/*
+ * Read the current owner after a fork may have transferred the lock.
+ * Adapted from NetBSD pidfile.c 1.20 (Roy Marples, 2026).
+ */
+static pid_t
+pidfile_readfd(int fd)
+{
+	char buf[16], *eptr;
+	int error;
+	ssize_t n;
+	pid_t pid;
+
+	if (lseek(fd, 0, SEEK_SET) == -1)
+		return -1;
+	n = read(fd, buf, sizeof(buf) - 1);
+	if (n == -1)
+		return -1;
+	buf[n] = '\0';
+	pid = (pid_t)strtoi(buf, &eptr, 10, 1, INT_MAX, &error);
+	if (error != 0 && !(error == ENOTSUP && *eptr == '\n')) {
+		errno = error;
+		return -1;
+	}
+	return pid;
+}
 
 /* Closes pidfile resources.
  *
@@ -60,7 +85,6 @@ pidfile_close(void)
 {
 	int error;
 
-	pidfile_pid = 0;
 	error = close(pidfile_fd);
 	pidfile_fd = -1;
 	pidfile_path[0] = '\0';
@@ -97,13 +121,17 @@ int
 pidfile_clean(void)
 {
 	int error;
+	pid_t pid;
 
 	if (pidfile_fd == -1) {
 		errno = EBADF;
 		return -1;
 	}
 
-	if (pidfile_pid != getpid())
+	pid = pidfile_readfd(pidfile_fd);
+	if (pid == -1)
+		error = errno;
+	else if (pid != getpid())
 		error = EPERM;
 	else if (ftruncate(pidfile_fd, 0) == -1)
 		error = errno;
@@ -156,9 +184,8 @@ pidfile_varrun_path(char *path, size_t len, const char *bname)
 pid_t
 pidfile_read(const char *path)
 {
-	char dpath[PATH_MAX], buf[16], *eptr;
+	char dpath[PATH_MAX];
 	int fd, error;
-	ssize_t n;
 	pid_t pid;
 
 	if (path == NULL && pidfile_path[0] != '\0')
@@ -171,19 +198,12 @@ pidfile_read(const char *path)
 
 	if ((fd = open(path, O_RDONLY | O_CLOEXEC | O_NONBLOCK)) == -1)
 		return  -1;
-	n = read(fd, buf, sizeof(buf) - 1);
+	pid = pidfile_readfd(fd);
 	error = errno;
-	(void) close(fd);
-	if (n == -1) {
+	(void)close(fd);
+	if (pid == -1)
 		errno = error;
-		return -1;
-	}
-	buf[n] = '\0';
-	pid = (pid_t)strtoi(buf, &eptr, 10, 1, INT_MAX, &error);
-	if (error && !(error == ENOTSUP && *eptr == '\n')) {
-		errno = error;
-		return -1;
-	}
+
 	return pid;
 }
 
@@ -219,7 +239,7 @@ pidfile_lock(const char *path)
 
 	if (pidfile_fd == -1) {
 		pidfile_fd = open(path,
-		    O_WRONLY | O_CREAT | O_CLOEXEC | O_NONBLOCK | O_EXLOCK,
+		    O_RDWR | O_CREAT | O_CLOEXEC | O_NONBLOCK | O_EXLOCK,
 		    0644);
 		if (pidfile_fd == -1) {
 			pid_t pid;
@@ -238,13 +258,11 @@ pidfile_lock(const char *path)
 		strlcpy(pidfile_path, path, sizeof(pidfile_path));
 	}
 
-	pidfile_pid = getpid();
-
 	/* Truncate the file, as we could be re-writing it.
 	 * Then write the process ID. */
 	if (ftruncate(pidfile_fd, 0) == -1 ||
 	    lseek(pidfile_fd, 0, SEEK_SET) == -1 ||
-	    dprintf(pidfile_fd, "%d\n", pidfile_pid) == -1)
+	    dprintf(pidfile_fd, "%d\n", getpid()) == -1)
 	{
 		int error = errno;
 
