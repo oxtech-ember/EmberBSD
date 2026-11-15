@@ -409,6 +409,11 @@ vreq_flush(struct vreq_walk *w)
 	w->pieces++;
 	if (w->req == NULL)
 		return 0;
+	/* The second walk must make the pieces the first one counted.  */
+	if (w->req->nmaps >= w->req->capacity) {
+		w->error = -EINVAL;
+		return w->error;
+	}
 	m = &w->req->maps[w->req->nmaps];
 	m->readable = w->pend_readable;
 	error = bus_dmamap_create(sc->sc_dmat, w->pend_len, 1, w->pend_len, 0,
@@ -703,6 +708,13 @@ virtqueue_add_sgs(struct linux_virtqueue *lvq, struct scatterlist *sgs[],
 		    vq->pub.name, error);
 		goto fail;
 	}
+	if (req->nmaps != req->capacity) {
+		/* The buffers changed between the two walks.  */
+		VQLOG(sc, "%s: the command changed while it was mapped\n",
+		    vq->pub.name);
+		error = -EINVAL;
+		goto fail;
+	}
 	req->descriptors = req->nmaps;
 
 	mutex_enter(&sc->sc_lock);
@@ -776,6 +788,17 @@ virtqueue_get_buf(struct linux_virtqueue *lvq, unsigned int *len)
 	if (sc->sc_state != VS_READY ||
 	    !virtio_vq_is_enqueued(sc->sc_vsc, vq->nvq) ||
 	    virtio_dequeue(sc->sc_vsc, vq->nvq, &slot, &length) != 0) {
+		mutex_exit(&sc->sc_lock);
+		return NULL;
+	}
+	if (slot < 0 || (unsigned int)slot >= vq->size) {
+		/*
+		 * The index comes from the device.  Do not use it, and do
+		 * not give it back to the ring either: it names no
+		 * descriptor of ours.
+		 */
+		VQLOG(sc, "%s: the device returned slot %d of a queue of %u\n",
+		    vq->pub.name, slot, vq->size);
 		mutex_exit(&sc->sc_lock);
 		return NULL;
 	}
