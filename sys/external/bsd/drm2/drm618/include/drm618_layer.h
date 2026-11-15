@@ -124,6 +124,30 @@ memdup_user_nul(const void *src, size_t len)
 	return p;
 }
 
+/* A copy of len bytes from user space: a kmalloc'ed buffer, or ERR_PTR(-ENOMEM) and ERR_PTR(-EFAULT). */
+static inline void *
+memdup_user(const void *src, size_t len)
+{
+	void *p;
+
+	p = kmalloc(len, GFP_KERNEL);
+	if (p == NULL)
+		return ERR_PTR(-ENOMEM);
+	if (copy_from_user(p, src, len) != 0) {
+		kfree(p);
+		return ERR_PTR(-EFAULT);
+	}
+	return p;
+}
+
+/* The same for a copy that may be large: the heap here is one (kvmalloc is kmalloc). */
+static inline void *
+vmemdup_user(const void *src, size_t len)
+{
+
+	return memdup_user(src, len);
+}
+
 /*
  * linux/minmax.h: true if the range [start, start + size) does not fit in
  * [0, max).  Overflow-free: no sum is formed.

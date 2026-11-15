@@ -6,4 +6,7 @@
 #include_next <linux/mm.h>
 #include <drm618_mm.h>
 #include <drm618_page.h>
+
+/* linux/mm.h: is the address the start of a page. */
+#define	PAGE_ALIGNED(addr)	(((unsigned long)(addr) & (PAGE_SIZE - 1)) == 0)
 #endif

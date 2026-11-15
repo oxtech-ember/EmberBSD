@@ -46,6 +46,14 @@ dma_sync_sgtable_for_device(struct device *dev __unused,
 #error "dma_sync_sgtable_*: no cache maintenance for this architecture"
 #endif
 
+/* The largest segment a device takes: no table is mapped for a device here, nothing to limit. */
+static inline int
+dma_set_max_seg_size(struct device *dev __unused, unsigned int size __unused)
+{
+
+	return 0;
+}
+
 /* 0, or a negative errno: -EOPNOTSUPP, a device here carries no DMA tag. */
 int	dma_map_sgtable(struct device *, struct sg_table *,
 	    enum dma_data_direction, unsigned long);

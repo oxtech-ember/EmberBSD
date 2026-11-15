@@ -227,7 +227,8 @@ drm618_dma_buf_busy(void)
 /* ---- attachments ------------------------------------------------------ */
 
 struct dma_buf_attachment *
-dma_buf_attach(struct dma_buf *dmabuf, struct device *dev)
+dma_buf_dynamic_attach(struct dma_buf *dmabuf, struct device *dev,
+    const struct dma_buf_attach_ops *importer_ops, void *importer_priv)
 {
 	struct dma_buf_attachment *attach;
 	int ret = 0;
@@ -235,6 +236,9 @@ dma_buf_attach(struct dma_buf *dmabuf, struct device *dev)
 	attach = kmem_zalloc(sizeof(*attach), KM_SLEEP);
 	attach->dmabuf = dmabuf;
 	attach->dev = dev;
+	attach->importer_ops = importer_ops;
+	attach->importer_priv = importer_priv;
+	attach->peer2peer = importer_ops != NULL && importer_ops->allow_peer2peer;
 	mutex_lock(&dmabuf->lock);
 	if (dmabuf->ops->attach)
 		ret = dmabuf->ops->attach(dmabuf, attach);
@@ -246,6 +250,32 @@ dma_buf_attach(struct dma_buf *dmabuf, struct device *dev)
 		return ERR_PTR(ret);
 	}
 	return attach;
+}
+
+struct dma_buf_attachment *
+dma_buf_attach(struct dma_buf *dmabuf, struct device *dev)
+{
+
+	return dma_buf_dynamic_attach(dmabuf, dev, NULL, NULL);
+}
+
+int
+dma_buf_pin(struct dma_buf_attachment *attach)
+{
+	const struct dma_buf_ops *ops = attach->dmabuf->ops;
+
+	dma_resv_assert_held(attach->dmabuf->resv);
+	return ops->pin != NULL ? ops->pin(attach) : 0;
+}
+
+void
+dma_buf_unpin(struct dma_buf_attachment *attach)
+{
+	const struct dma_buf_ops *ops = attach->dmabuf->ops;
+
+	dma_resv_assert_held(attach->dmabuf->resv);
+	if (ops->unpin != NULL)
+		ops->unpin(attach);
 }
 
 void
