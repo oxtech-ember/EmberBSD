@@ -223,7 +223,7 @@ struct kernel_param {
 	    { #name, (ops), (arg), (perm) }
 #define	module_param_cb(name, ops, arg, perm)	module_param_cb_unsafe(name, ops, arg, perm)
 
-/* ---- the PCI driver, sysctl, the device attribute, VGA, DMA mapping (declared, not defined: phase 2) ---- */
+/* ---- the PCI driver, sysctl, the device attribute, VGA, DMA mapping (declared, not defined: the device attach) ---- */
 
 #include <linux/dma-fence-array.h>
 #include <linux/sysfs.h>
@@ -387,7 +387,7 @@ struct rchan *relay_open(const char *, struct dentry *, size_t, size_t, const st
 void	relay_close(struct rchan *);
 extern const struct file_operations relay_file_operations;
 
-/* a page for the driver's own use (declared, not defined: the allocation of pages is phase 2) */
+/* a page for the driver's own use (declared, not defined: the allocation of pages comes with the attach) */
 unsigned long __get_free_page(gfp_t);
 void	free_page(unsigned long);
 
