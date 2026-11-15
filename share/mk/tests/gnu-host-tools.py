@@ -22,10 +22,16 @@ with tempfile.TemporaryDirectory(prefix='gnu-host-tools-', dir=a.work_dir) as te
     work = Path(temporary)
     source = work / 'source'
     source.mkdir()
+    runtime = work / 'runtime'
+    (runtime / 'lib').mkdir(parents=True)
+    (runtime / 'lib/libunwind.a').write_bytes(b'fixture runtime archive')
+    resource = work / 'resource'
+    resource.mkdir()
     (source / 'host.c').write_text('#ifndef HOST_SELECTED\n#error missing host flags\n#endif\n#ifndef HOST_LOCAL_APPEND\n#error local host += flags were lost\n#endif\n#ifndef HOST_CFLAGS_LOCAL\n#error local host C flags were lost\n#endif\n#ifndef ABI_HOST_SELECTED\n#error selected native ABI flags were lost\n#endif\n#ifndef ABI_C_SELECTED\n#error selected native ABI C flags were lost\n#endif\n#ifdef TARGET_SELECTED\n#error target flags reached host\n#endif\nint main(void) { return 0; }\n')
     (source / 'target.c').write_text('#ifndef TARGET_SELECTED\n#error missing target flags\n#endif\n#ifdef HOST_SELECTED\n#error host flags reached target\n#endif\nint target(void) { return 1; }\n')
     (source / 'configure').write_text('''set -eu
 mkdir -p tools/gnulib/lib tools/info target
+printf '%s\\n' "$CC" "$CPPFLAGS" "$LDFLAGS" "$CFLAGS" > selected.env
 cat > Makefile <<'END'
 distclean:
 \trm -f Makefile tools/gnulib/lib/Makefile tools/info/Makefile target/Makefile tools/gnulib/lib/native.o tools/info/makedoc target/target.o
@@ -38,6 +44,7 @@ END
 cat > tools/info/Makefile <<'END'
 makedoc:
 \tcase '$(LDFLAGS)' in *-Wl,-dead_strip*) ;; *) exit 1;; esac
+\tprintf '%s\\n' '$(LDFLAGS)' > host-link-flags
 \tprintf '#!/bin/sh\\nexit 0\\n' > $@
 \tchmod +x $@
 END
@@ -65,6 +72,15 @@ HOST_CPPFLAGS+= -DHOST_LOCAL_APPEND
 HOST_CFLAGS= -O1
 HOST_CFLAGS+= -DHOST_CFLAGS_LOCAL
 HOST_LDFLAGS= -isysroot %s --ld-path=%s
+ACTIVE_CC= clang
+EMBER_COMPILER_FAMILY= clang
+EXTERNAL_TOOLCHAIN= %s
+USETOOLS= yes
+MKCXX= no
+MKLIBCXX= no
+EMBER_LLVM_RUNTIME_PHASE= bootstrap
+EMBER_EXTERNAL_LLVM_RUNTIME= %s
+EMBER_LLVM_RESOURCE_DIR= %s
 CC= %s --target=aarch64--netbsd
 CPPFLAGS= -DTARGET_SELECTED
 CFLAGS= -O2
@@ -78,8 +94,8 @@ GNU_MAKE_ENV= SOURCE=%s
 all: gnu-target-build
 ''' % (source, work / 'build', host / 'bin/mksh', host / 'bin/gmake',
        host / 'bin/clang', host / 'bin/llvm-ar', host / 'bin/llvm-ranlib',
-       host / 'bin/ld64.lld', a.host_sysroot, a.host_sysroot, host / 'bin/ld64.lld',
-       host / 'bin/clang', source, source, root / 'share/mk/bsd.gnutarget.mk'))
+       host / 'bin/ld64.lld', a.host_sysroot, a.host_sysroot, host / 'bin/ld64.lld', host,
+       runtime, resource, host / 'bin/clang', source, source, root / 'share/mk/bsd.gnutarget.mk'))
     env = dict(os.environ, PATH=str(host / 'bin') + ':' + str(host / 'gnu/bin'), TMPDIR=str(a.work_dir))
     abi_args = ['EMBER_HOST_ABI_CPPFLAGS=-DABI_HOST_SELECTED',
         'EMBER_HOST_ABI_CFLAGS=-DABI_C_SELECTED',
@@ -98,6 +114,14 @@ all: gnu-target-build
         raise SystemExit(result.stdout + result.stderr)
     native = work / 'build/tools/info/makedoc'
     target = work / 'build/target/target.o'
+    target_ldflags = (work / 'build/selected.env').read_text().splitlines()[2].split()
+    for option in ('--rtlib=compiler-rt', '--unwindlib=libunwind',
+                   '-resource-dir=' + str(resource), '-L' + str(runtime / 'lib')):
+        if option not in target_ldflags:
+            raise SystemExit('target GNU configure link lost selected runtime flag: ' + option)
+    host_ldflags = (work / 'build/tools/info/host-link-flags').read_text().split()
+    if any(flag.startswith(('--rtlib=', '--unwindlib=', '-resource-dir=')) for flag in host_ldflags):
+        raise SystemExit('target compiler runtime flags leaked into host generator')
     result = subprocess.run([str(native)], env=env)
     if result.returncode:
         raise SystemExit('native GNU build tool failed to run')

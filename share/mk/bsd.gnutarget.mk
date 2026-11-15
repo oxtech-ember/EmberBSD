@@ -11,6 +11,10 @@
 .error GNU target build requires source, objdir, build/host triples and selected host shell/gmake
 .endif
 
+# Configured target links use the same selected compiler runtime as native
+# BSD program/library links.  Host generators retain their separate flags.
+.include <bsd.llvm-runtime.mk>
+
 # Override GNU_MAKE_TARGETS.<directory> when a target directory needs a
 # narrower prerequisite than the default all target.
 GNU_MAKE_TARGETS?= all
