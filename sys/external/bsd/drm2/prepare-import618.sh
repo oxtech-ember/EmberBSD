@@ -84,6 +84,27 @@ fi
 lt=$1
 ref=$2
 [ -f "$lt/drivers/gpu/drm/drm_drv.c" ] || { echo "not a Linux tree: $lt" >&2; exit 2; }
+# The reference directory is emptied below: it must be a place of its own,
+# not the Linux tree, a parent or a child of it, the current directory or a
+# parent of it, or the root.
+ref_abs=$(mkdir -p "$ref" && cd "$ref" && pwd -P)
+lt_abs=$(cd "$lt" && pwd -P)
+cwd_abs=$(pwd -P)
+case "$ref_abs" in
+/) echo "refusing to use / as the reference directory" >&2; exit 2 ;;
+esac
+for other in "$lt_abs" "$cwd_abs"; do
+	case "$other/" in
+	"$ref_abs"/*)
+		echo "refusing: reference directory $ref_abs holds or is $other" >&2
+		exit 2 ;;
+	esac
+	case "$ref_abs/" in
+	"$other"/*)
+		echo "refusing: reference directory $ref_abs is inside $other" >&2
+		exit 2 ;;
+	esac
+done
 # The version is the name of the tree directory (linux-6.18.63).
 ver=$(basename "$(cd "$lt" && pwd)" | sed 's/^linux-//')
 tmp=$(mktemp -d)
