@@ -164,20 +164,7 @@ memunmap(void *va)
 /* vmap/vunmap of 6.18: unmap takes no size, the range is recorded (drm618_io.c style). */
 void	*drm618_vmap(struct page **, unsigned int, int /* PMAP_* */, int /* VM_PROT_* */);
 
-/* ---- single-segment scatter lists -------------------------------------- */
-
-/*
- * A table of the layer (linux/scatterlist.h) is one entry that holds all
- * pages: sg_next of the one entry is the end of the list.  A walk over the
- * segments of a table that has several (ttm_kmap_iter_iomap_init) is not
- * supported.
- */
-static inline struct scatterlist *
-sg_next(struct scatterlist *sg __unused)
-{
-
-	return NULL;
-}
+/* The scatterlist is linux/scatterlist.h (drm618_scatterlist.c): several entries, sg_next walks them. */
 
 /* ---- more of what TTM calls ------------------------------------------------- */
 

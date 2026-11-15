@@ -15,6 +15,7 @@ MODULE(MODULE_CLASS_MISC, drmkms618_test, "drmkms618,drmkms618_sched,drmkms618_t
 int	drm2_sched_run(void);
 int	drm2_ttm_run(void);
 int	drm2_gemfb_run(void);
+int	drm2_sg_run(void);
 
 static int
 drmkms618_test_modcmd(modcmd_t cmd, void *arg __unused)
@@ -26,6 +27,7 @@ drmkms618_test_modcmd(modcmd_t cmd, void *arg __unused)
 		failed = drm2_sched_run();
 		failed += drm2_ttm_run();
 		failed += drm2_gemfb_run();
+		failed += drm2_sg_run();
 		return failed != 0 ? EIO : 0;
 	case MODULE_CMD_FINI:
 		return 0;

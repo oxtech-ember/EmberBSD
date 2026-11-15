@@ -40,6 +40,7 @@ SRCS+=	drm618_managed.c
 SRCS+=	drm618_module.c
 SRCS+=	drm618_page.c
 SRCS+=	drm618_rbtree.c
+SRCS+=	drm618_scatterlist.c
 SRCS+=	drm618_shmem.c
 SRCS+=	drm618_sleep.c
 SRCS+=	drm618_statics.c

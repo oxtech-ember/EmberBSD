@@ -53,6 +53,7 @@ file	external/bsd/drm2/drm618/drm618_exclusive.c	drmkms618 & drmkms
 
 # Own code of the 6.18 core (BSD-2-Clause, written to the Linux interface).
 file	external/bsd/drm2/drm618/drm618_cache.c		drmkms618
+file	external/bsd/drm2/drm618/drm618_scatterlist.c	drmkms618
 file	external/bsd/drm2/drm618/drm618_dma_buf.c	drmkms618
 # The one source that sees both NetBSD's struct file and the Linux one.
 makeoptions	drmkms618	"CPPFLAGS.drm618_file.c"+="-DDRM618_NBSD_FILE"

@@ -25,6 +25,27 @@ dma_max_mapping_size(struct device *dev __unused)
 	return 0;
 }
 
+/*
+ * The CPU and the device see the same memory on this machine (x86 DMA is
+ * cache coherent): nothing to flush or invalidate for a table.  Another
+ * architecture needs the cache operations of its bus_dma here.
+ */
+#if defined(__x86_64__) || defined(__i386__)
+static inline void
+dma_sync_sgtable_for_cpu(struct device *dev __unused,
+    struct sg_table *sgt __unused, enum dma_data_direction dir __unused)
+{
+}
+
+static inline void
+dma_sync_sgtable_for_device(struct device *dev __unused,
+    struct sg_table *sgt __unused, enum dma_data_direction dir __unused)
+{
+}
+#else
+#error "dma_sync_sgtable_*: no cache maintenance for this architecture"
+#endif
+
 /* 0, or a negative errno: -EOPNOTSUPP, a device here carries no DMA tag. */
 int	dma_map_sgtable(struct device *, struct sg_table *,
 	    enum dma_data_direction, unsigned long);
