@@ -743,7 +743,7 @@ DEFINE_SHOW_ATTRIBUTE(i915_displayport_test_type);
 
 static const struct {
 	const char *name;
-	const struct file_operations *fops;
+	const void *fops;
 } intel_display_debugfs_files[] = {
 	{"i915_dp_test_data", &i915_displayport_test_data_fops},
 	{"i915_dp_test_type", &i915_displayport_test_type_fops},
