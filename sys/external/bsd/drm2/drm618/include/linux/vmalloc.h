@@ -11,9 +11,26 @@
 
 #define	vmap	layer_vmap
 #define	vunmap	layer_vunmap
+#define	is_vmalloc_addr	layer_is_vmalloc_addr
 #include_next <linux/vmalloc.h>
 #undef	vmap
 #undef	vunmap
+#undef	is_vmalloc_addr
+
+/*
+ * No address is a vmalloc one here: vmalloc and kvmalloc are the heap (the
+ * shared layer says yes for every address so that kvfree works on both).  The
+ * 6.18 sources use the answer to tell memory that is physically contiguous and
+ * page aligned from memory that must be walked by pages (virtgpu_vq.c): the
+ * heap is neither, and is handled as a kernel address range by the scatter
+ * list walk (drm618_sg_walk).
+ */
+static inline bool
+is_vmalloc_addr(const void *addr __unused)
+{
+
+	return false;
+}
 
 #include <drm618_page.h>
 

@@ -18,6 +18,7 @@
 
 #include <linux/err.h>
 #include <linux/scatterlist.h>
+#include <linux/vmalloc.h>
 #include <drm618_page.h>
 
 static int t_run, t_fail;
@@ -191,6 +192,8 @@ drm2_sg_run(void)
 
 	/* a range of kernel memory over three pages and a half, walked */
 	buf = kmem_alloc(4 * PAGE_SIZE, KM_SLEEP);
+	/* the heap is not vmalloc memory: the 6.18 sources would take it for page aligned */
+	CHECK(!is_vmalloc_addr(buf + 20));
 	sg_init_one(&one, buf + 20, 3 * PAGE_SIZE + 100);
 	CHECK(one.length == 3 * PAGE_SIZE + 100 && one.va == buf + 20);
 	CHECK(sg_is_last(&one) && sg_next(&one) == NULL);
