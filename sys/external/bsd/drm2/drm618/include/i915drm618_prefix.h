@@ -43,5 +43,8 @@
 #include <linux/io.h>		/* readb, writel, ... (intel_uncore.h) */
 #include <linux/timekeeping.h>	/* ktime_get_raw_fast_ns */
 #include <linux/interrupt.h>	/* struct tasklet_struct (i915_scheduler_types.h) */
+#include <linux/kobject.h>	/* struct attribute_group, struct kobject (i915_pmu.h, i915_perf_types.h, gt) */
+#include <linux/sysfs.h>
+#include <linux/pwm.h>		/* struct pwm_state (intel_display_types.h) */
 
 #endif

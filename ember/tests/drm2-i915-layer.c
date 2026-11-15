@@ -21,9 +21,12 @@
 #include <linux/io.h>
 #include <linux/ktime.h>
 #include <linux/timekeeping.h>
+#include <linux/log2.h>
 #include <linux/mutex.h>
 #include <linux/overflow.h>
 #include <linux/pm_runtime.h>
+#include <linux/pwm.h>
+#include <linux/sysfs.h>
 #include <linux/refcount.h>
 #include <linux/scatterlist.h>
 #include <linux/seqlock.h>
@@ -79,6 +82,8 @@ t_ent_init(struct t_ent *t, int ret)
 }
 
 struct t_s { int a; char b[7]; };
+static char t_page[PAGE_SIZE];
+struct t_width { unsigned int x:order_base_2(16); unsigned int y:order_base_2(3); };
 
 int	drm2_i915_layer_run(void);
 
@@ -283,6 +288,40 @@ drm2_i915_layer_run(void)
 	trace_i915_reg_rw(xside++);
 	CHECK(xside == 0);
 	CHECK(!trace_i915_request_add_enabled() && !trace_intel_pipe_enable_enabled());
+
+	/* order_base_2: a constant in a bit-field width and an array size, a variable at run time */
+	{
+		unsigned long v = 5;
+		struct t_width w;
+		char arr[order_base_2(1024)];
+
+		w.x = 15;
+		w.y = 3;
+		CHECK(w.x == 15 && w.y == 3 && sizeof(arr) == 10);
+		CHECK(order_base_2(1) == 0 && order_base_2(2) == 1 && order_base_2(3) == 2);
+		CHECK(order_base_2(4) == 2 && order_base_2(5) == 3 && order_base_2(1024) == 10);
+		CHECK(order_base_2(v) == 3 && order_base_2(v - 4) == 0 && order_base_2(v + 11) == 4);
+	}
+
+	/* sysfs_emit: the text of a node, the length without the end */
+	CHECK(sysfs_emit(t_page, "%d\n", 42) == 3 && strcmp(t_page, "42\n") == 0);
+	CHECK(sysfs_emit_at(t_page, 3, "%s", "ab") == 2 && strcmp(t_page, "42\nab") == 0);
+	CHECK(sysfs_emit(t_page, "%*d", (int)PAGE_SIZE + 10, 1) == (int)PAGE_SIZE - 1);
+
+	/* pwm: no device, and the relative duty cycle of a state */
+	{
+		struct pwm_state st;
+
+		CHECK(IS_ERR(pwm_get(NULL, "backlight")) && PTR_ERR(pwm_get(NULL, NULL)) == -ENODEV);
+		memset(&st, 0, sizeof(st));
+		st.period = 1000000;
+		pwm_set_relative_duty_cycle(&st, 25, 100);
+		CHECK(st.duty_cycle == 250000 && pwm_get_relative_duty_cycle(&st, 100) == 25);
+		pwm_set_relative_duty_cycle(&st, 100, 100);
+		CHECK(st.duty_cycle == st.period && pwm_get_relative_duty_cycle(&st, 255) == 255);
+		st.period = 0;
+		CHECK(pwm_get_relative_duty_cycle(&st, 100) == 0);
+	}
 
 	if (t_fail != 0)
 		printf("drm2-i915-layer: %d of %d checks FAILED\n", t_fail, t_run);
