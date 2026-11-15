@@ -56,6 +56,7 @@ copyout(const void *src, void *dst, size_t len)
 {
 	if (copyout_error != 0)
 		return copyout_error;
+	CHECK(src != dst);
 	memcpy(dst, src, len);
 	return 0;
 }
@@ -85,7 +86,8 @@ main(void)
 	struct ieee80211req_mlme mlme = {
 		.im_version = IEEE80211_MLME_VERSION
 	};
-	struct ieee80211req ireq = { .i_data = &mlme };
+	struct ieee80211req_mlme user_result;
+	struct ieee80211req ireq = { .i_data = &user_result };
 	struct ieee80211_node newer = { .ni_bssid = { 0x02, 6, 7, 8, 9, 10 } };
 	ic.ic_bss = &node;
 
@@ -139,19 +141,25 @@ main(void)
 	ic.ic_opmode = IEEE80211_M_STA;
 	CHECK(ieee80211_assoc_epoch_assign(&ic, &node) == 0);
 	ic.ic_bss = &node;
+	memset(&user_result, 0, sizeof(user_result));
 	CHECK(ieee80211_ioctl_assoc_result(&ic, &ireq, &mlme, &node) == 0);
 	CHECK(mlme.im_assoc_epoch == node.ni_assoc_epoch);
 	CHECK(memcmp(mlme.im_macaddr, node.ni_bssid, 6) == 0);
+	CHECK(user_result.im_version == IEEE80211_MLME_VERSION &&
+	    user_result.im_assoc_epoch == node.ni_assoc_epoch &&
+	    memcmp(user_result.im_macaddr, node.ni_bssid, 6) == 0);
 
 	/* Copyout failure cancels only the still-current selection. */
 	copyout_error = EFAULT;
 	CHECK(ieee80211_ioctl_assoc_result(&ic, &ireq, &mlme, &node) == EFAULT);
-	CHECK(new_state_count == 1);
+	CHECK(new_state_count == 1 &&
+	    user_result.im_assoc_epoch == node.ni_assoc_epoch);
 
 	/* A now-stale node result cannot cancel a newer association. */
 	CHECK(ieee80211_assoc_epoch_assign(&ic, &newer) == 0);
 	ic.ic_bss = &newer;
 	CHECK(ieee80211_ioctl_assoc_result(&ic, &ireq, &mlme, &node) == ESTALE);
-	CHECK(new_state_count == 1);
+	CHECK(new_state_count == 1 &&
+	    user_result.im_assoc_epoch == node.ni_assoc_epoch);
 	return 0;
 }
