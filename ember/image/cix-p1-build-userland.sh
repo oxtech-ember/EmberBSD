@@ -29,6 +29,35 @@ component_make()
             "EMBER_LIBPCAP_SOURCE=$libpcap_source" "EMBER_WPA_SOURCE=$wpa_source" \
             $network_auth_flags
         case "$part" in
+            crypto/external/apache2/openssl)
+                [ -z "$openssl_source" ] || set -- "$@" \
+                    "EMBER_OPENSSL_SOURCE=$openssl_source" \
+                    "EMBER_OPENSSL_GENERATED=$openssl_generated" \
+                    "HOST_PYTHON=$python" \
+                    "HOST_PERL=$host_prefix/bin/perl" \
+                    "HOST_GMAKE=$host_prefix/bin/gmake" \
+                    "HOST_SH=$HOST_SH" \
+                    "MAKE_JOBS=$jobs" ;;
+            crypto/external/apache2/openssl/lib/*|crypto/external/bsd/openssh/*)
+                [ -z "$openssl_source" ] || set -- "$@" "EMBER_OPENSSL_SOURCE=$openssl_source"
+                [ -z "$openssl_source" ] || set -- "$@" "EMBER_OPENSSL_GENERATED=$openssl_generated"
+                case "$part" in
+                    crypto/external/bsd/openssh/*)
+                        [ -z "$openssh_crypto" ] || set -- "$@" "EMBER_OPENSSH_CRYPTO=$openssh_crypto"
+                        [ -z "$openssh_source" ] || set -- "$@" "EMBER_OPENSSH_SOURCE=$openssh_source"
+                        [ -z "$tcp_wrappers_source" ] || set -- "$@" "EMBER_TCP_WRAPPERS_SOURCE=$tcp_wrappers_source"
+                        [ -z "$zlib_source" ] || set -- "$@" "EMBER_ZLIB_SOURCE=$zlib_source" ;;
+                esac ;;
+            usr.sbin/syslogd)
+                set -- "$@" SYSLOGD_TLS=no SYSLOGD_SIGN=no ;;
+            external/bsd/libevent/*)
+                [ -z "$libevent_source" ] || set -- "$@" "EMBER_LIBEVENT_SOURCE=$libevent_source" ;;
+            lib/libwrap)
+                [ -z "$tcp_wrappers_source" ] || set -- "$@" "EMBER_TCP_WRAPPERS_SOURCE=$tcp_wrappers_source" ;;
+            lib/libz)
+                [ -z "$zlib_source" ] || set -- "$@" "EMBER_ZLIB_SOURCE=$zlib_source" ;;
+        esac
+        case "$part" in
             external/bsd/wpa/bin/wpa_supplicant|external/bsd/wpa/bin/wpa_cli)
                 set -- "$@" EMBER_WPA_PROFILE=personal
                 if [ -n "$wpa_backend" ]; then
@@ -66,13 +95,15 @@ if [ "${1:-}" = --console-selected ]; then
     runtime_prefix=$1 resource=$2 unwinder=$3 compiler_resource=$4 jobs=$5 timestamp=$6 revision=$7
     shift 7
     headers=$1 libraries=$2 programs=$3 python=$4 profile=${5:-console} overlay=${6:-} extra=${7:-} selected_awk=${8:-$host_prefix/bin/nawk}
-    wolfssl_prefix=${9:-} network_interface=${10:-} mdns_source=${11:-} dhcpcd_source=${12:-} install_map=${13:-} wpa_backend=${14:-} crunch_programs=${15:-} device_nodes=${16:-} device_links=${17:-} libpcap_source=${18:-} device_make=${19:-} wpa_source=${20:-} device_block_nodes=${21:-} network_root_device=${22:-} network_root_partition=${23-a} network_root_stage=${24:-} data_components=${25:-} console_root_size=${26:-4194304} network_root_filesystem=${27:-ffs}
+    wolfssl_prefix=${9:-} network_interface=${10:-} mdns_source=${11:-} dhcpcd_source=${12:-} install_map=${13:-} wpa_backend=${14:-} crunch_programs=${15:-} device_nodes=${16:-} device_links=${17:-} libpcap_source=${18:-} device_make=${19:-} wpa_source=${20:-} device_block_nodes=${21:-} network_root_device=${22:-} network_root_partition=${23-a} network_root_stage=${24:-} data_components=${25:-} console_root_size=${26:-4194304} network_root_filesystem=${27:-ffs} openssl_source=${28:-} openssh_source=${29:-} libevent_source=${30:-} tcp_wrappers_source=${31:-} zlib_source=${32:-} openssh_crypto=${33:-}
     if [ "$profile" = network ]; then
         COPTS="${COPTS:+$COPTS }-Oz -ffunction-sections -fdata-sections"
-        network_auth_flags='MKPAM=no USE_PAM=no MKKERBEROS=no USE_KERBEROS=no MKLDAP=no USE_LDAP=no MKYP=no USE_YP=no MKSKEY=no USE_SKEY=no MKHESIOD=no USE_HESIOD=no'
+        network_auth_flags=$("$python" -B "$here/static-profile.py" \
+            network-crunch-makeflags "$crunch_programs")
         export COPTS
     fi
     wrapper=$out/nbmake-$machine
+    openssl_generated=$out/obj/crypto/external/apache2/openssl/generated
     wrapper_log=$out/logs/wrapper.log
     if [ "$profile" = network ]; then
         wrapper_log=$out/logs/wrapper-network-$$.log
@@ -107,6 +138,10 @@ if [ "${1:-}" = --console-selected ]; then
         component_make "$label-obj" "$part" obj
         component_make "$label-includes" "$part" includes
     done
+    if [ "$profile" = network ] && [ -n "$openssl_source" ]; then
+        component_make openssl-generated-obj crypto/external/apache2/openssl obj
+        component_make openssl-generated crypto/external/apache2/openssl openssl-generated
+    fi
     for part in $libraries; do
         label=$(printf '%s' "$part" | tr / _)
         component_make "$label-obj" "$part" obj
@@ -133,30 +168,9 @@ if [ "${1:-}" = --console-selected ]; then
         )
     elif [ "$profile" = network ]; then
         mkdir -p "$out/crunch"
-        {
-            printf 'srcdirs bin sbin usr.bin usr.sbin usr.bin/videoctl libexec external/bsd/dhcpcd/sbin external/bsd/wpa/bin external/apache2/mDNSResponder/usr.sbin\nprogs'
-            for part in $crunch_programs; do printf ' %s' "${part##*/}"; done
-            printf '\nln sh -sh\nln reboot halt\n'
-            for part in $crunch_programs; do
-                case "$part" in
-                    usr.bin/audio/ctl/*|usr.bin/audio/play/*|usr.bin/audio/record/*|usr.bin/mixerctl/*)
-                        printf 'special %s srcdir %s\n' "${part##*/}" "${part%/*}" ;;
-                esac
-            done
-            printf 'libs -ledit -lterminfo -lutil -lkvm -lprop -lcrypt -lpcap -lipsec -lm'
-            case " $crunch_programs " in
-                *" usr.bin/audio/ctl/audioctl "*) printf ' -laudio' ;;
-            esac
-            case " $crunch_programs " in
-                *" usr.sbin/envstat/envstat "*) printf ' -lmj' ;;
-            esac
-            case "$wpa_backend" in
-                wolfssl) printf ' -lwolfssl -lpthread' ;;
-                openssl|'') printf ' -lcrypto' ;;
-                *) echo "Unsupported WPA backend for network crunch: $wpa_backend" >&2; exit 2 ;;
-            esac
-            printf '\n'
-        } > "$out/crunch/console-tools.conf"
+        run crunch-config "$python" -B "$here/static-profile.py" \
+            network-crunch-config "$out/crunch/console-tools.conf" \
+            "$wpa_backend" "$crunch_programs"
         (
             cd "$out/crunch"
             export MAKE="$HOST_SH $wrapper $network_auth_flags"
@@ -173,6 +187,11 @@ if [ "${1:-}" = --console-selected ]; then
                 "EMBER_LIBPCAP_SOURCE=$libpcap_source"; do
                 set -- "$@" -v "$assignment" -V "$assignment"
             done
+            case " $crunch_programs " in
+                *" usr.sbin/syslogd/syslogd "*)
+                    set -- "$@" -v SYSLOGD_TLS=no -V SYSLOGD_TLS=no \
+                        -v SYSLOGD_SIGN=no -V SYSLOGD_SIGN=no ;;
+            esac
             if [ -n "$mdns_source" ]; then
                 set -- "$@" -v "EMBER_MDNS_SOURCE=$mdns_source" \
                     -V "EMBER_MDNS_SOURCE=$mdns_source"
@@ -196,7 +215,7 @@ if [ "${1:-}" = --console-selected ]; then
             fi
             run crunchgen "$tools/bin/nbcrunchgen" "$@" console-tools.conf
             run crunch-build "$wrapper" -j"$jobs" -f console-tools.mk \
-                "MAKE=$HOST_SH $wrapper" "NM=$host_prefix/bin/llvm-nm" \
+                "MAKE=$HOST_SH $wrapper $network_auth_flags" "NM=$host_prefix/bin/llvm-nm" \
                 "OBJCOPY=$host_prefix/bin/llvm-objcopy" "AWK=$selected_awk" \
                 console-tools.crunched
         )
@@ -286,6 +305,18 @@ if [ "${1:-}" = --console-selected ]; then
         case " $crunch_programs " in
             *" external/apache2/mDNSResponder/usr.sbin/mdnsd "*) mdns_enabled=yes ;;
         esac
+        ssh_enabled=no
+        case " $install_map " in
+            *"=usr/sbin/sshd "*) ssh_enabled=yes ;;
+        esac
+        sftp_enabled=no
+        case " $install_map " in
+            *"=usr/libexec/sftp-server "*) sftp_enabled=yes ;;
+        esac
+        logging_enabled=no
+        case " $crunch_programs " in
+            *" usr.sbin/syslogd/syslogd "*) logging_enabled=yes ;;
+        esac
         [ -n "$overlay" ] && [ -n "$network_interface" ] && [ -n "$dhcpcd_source" ] && [ -n "$wpa_source" ] || {
             echo 'Network profile inputs are incomplete.' >&2; exit 1
         }
@@ -305,7 +336,7 @@ if [ "${1:-}" = --console-selected ]; then
         [ -x "$root/bin/console-tools" ] || { echo 'Missing network console-tools.' >&2; exit 1; }
         run network-config "$python" -B "$here/static-profile.py" stage-network \
             "$root" "$src" "$overlay" "$network_interface" \
-            "$tools/bin/nbpwd_mkdb" "$out/dest" "$network_root_device" "$network_root_partition" "$network_root_filesystem" "$mdns_enabled"
+            "$tools/bin/nbpwd_mkdb" "$out/dest" "$network_root_device" "$network_root_partition" "$network_root_filesystem" "$mdns_enabled" "$ssh_enabled" "$logging_enabled" "$openssh_crypto" "$sftp_enabled"
         MACHINE="$machine" MACHINE_ARCH="$arch" "$HOST_SH" "$out/obj/etc/MAKEDEV" -s std $device_make > "$out/devices-all.spec"
         devices=$device_nodes
         device_link_nodes=$device_links

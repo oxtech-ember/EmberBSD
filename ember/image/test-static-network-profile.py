@@ -6,6 +6,7 @@
 import importlib.util
 import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 
@@ -77,12 +78,115 @@ optional_programs = {
     'usr.bin/timeout', 'usr.bin/wc', 'usr.bin/videoctl/videoctl',
     'usr.sbin/envstat/envstat', 'usr.sbin/spinandctl/spinandctl',
     'usr.bin/cksum/cksum', 'usr.bin/uuencode/uuencode',
-    'usr.bin/uudecode/uudecode', 'external/apache2/mDNSResponder/usr.sbin/mdnsd',
+    'usr.bin/uudecode/uudecode', 'usr.bin/logger', 'usr.bin/tail',
+    'external/apache2/mDNSResponder/usr.sbin/mdnsd',
 }
 check(not optional_programs.intersection(selected['crunch_programs']) and
       mdns_toolset and
       'external/apache2/mDNSResponder/usr.sbin/mdnsd' in mdns_toolset['crunch_programs'],
       'network defaults omit optional tools and explicit mdns selection adds mdnsd')
+ssh_toolset = profile.network('riscv32', ('ssh',))
+ssh_builtin = profile.network('riscv32', ('ssh',), wpa_backend='wolfssl',
+                              openssh_crypto='builtin')
+sftp_toolset = profile.network('riscv32', ('ssh', 'sftp'))
+logging_toolset = profile.network('riscv32', ('logging',))
+logging_wolfssl = profile.network('riscv32', ('logging',), wpa_backend='wolfssl')
+combined_services = profile.network('riscv32', ('ssh', 'logging'))
+try:
+    profile.network('riscv32', ('sftp',))
+except ValueError:
+    sftp_requires_ssh = True
+else:
+    sftp_requires_ssh = False
+ssh_install_paths = {dest for _, dest in ssh_toolset['install_map']}
+ssh_nodes = profile.network_device_selection(ssh_toolset, 'md0', 'a')[0]
+check(not {'usr/sbin/sshd', 'usr/sbin/syslogd', 'usr/bin/newsyslog'} &
+      {dest for _, dest in selected['install_map']} and
+      {'usr/sbin/sshd', 'usr/libexec/sshd-auth', 'usr/libexec/sshd-session',
+       'usr/bin/ssh-keygen'} <= ssh_install_paths and
+      'usr/libexec/sftp-server' not in ssh_install_paths and
+      'usr/libexec/sftp-server' in
+      {dest for _, dest in sftp_toolset['install_map']} and
+      'sbin/mount_ptyfs' in ssh_toolset['crunch_programs'] and
+      {'ptm', 'ptmx'} <= set(ssh_toolset['device_nodes']) and
+      not any('openssh/bin/ssh' == item or item.endswith('/scp')
+              for item in ssh_toolset['programs']) and
+      'sbin/mount_ptyfs' not in ssh_install_paths and
+      ssh_toolset['openssh_crypto'] == 'openssl' and
+      ssh_toolset['libraries'].index('lib/libpthread') <
+      ssh_toolset['libraries'].index('crypto/external/apache2/openssl/lib/libcrypto') and
+      max(ssh_toolset['libraries'].index('crypto/external/apache2/openssl/lib/libcrypto'),
+          ssh_toolset['libraries'].index('lib/libz')) <
+      ssh_toolset['libraries'].index('crypto/external/bsd/openssh/lib') and
+      'crypto/external/apache2/openssl/lib/libssl' not in ssh_toolset['libraries'] and
+      len(combined_services['libraries']) == len(set(combined_services['libraries'])),
+      'SSH server and SFTP are opt-in, with no client/scp and deduplicated library closure')
+check('crypto/external/bsd/openssh/bin/sftp-server' not in ssh_toolset['programs'] and
+      'crypto/external/bsd/openssh/bin/sftp-server' in sftp_toolset['programs'],
+      'SFTP subsystem is a separate opt-in toolset')
+check('external/bsd/blocklist/include' in ssh_toolset['headers'] and
+      'external/bsd/blocklist/include' in logging_toolset['headers'] and
+      'external/bsd/blocklist/include' not in profile.network('riscv32')['headers'] and
+      'external/bsd/libevent/include' in logging_toolset['headers'] and
+      'external/bsd/libevent/include' not in profile.network('riscv32')['headers'] and
+      ssh_toolset['libraries'].index('external/bsd/blocklist/lib') <
+      ssh_toolset['libraries'].index('lib/libwrap') and
+      logging_toolset['libraries'].index('external/bsd/blocklist/lib') <
+      logging_toolset['libraries'].index('lib/libwrap'),
+      'blocklist header and library providers precede selected libwrap consumers')
+check(ssh_builtin['openssh_crypto'] == 'builtin' and
+      'crypto/external/apache2/openssl/lib/libcrypto' not in ssh_builtin['libraries'] and
+      'crypto/external/apache2/openssl/lib/libssl' not in ssh_builtin['libraries'] and
+      'crypto/external/bsd/openssh/lib' in ssh_builtin['libraries'] and
+      'lib/libpthread' in ssh_builtin['libraries'],
+      'built-in SSH crypto avoids OpenSSL while the selected WolfSSL Wi-Fi backend keeps pthread')
+check({'ptm', 'ptmx'} <= set(ssh_nodes) and
+      'makedev std fd ptm' in (source / 'etc/MAKEDEV.tmpl').read_text() and
+      'sbin/mount_ptyfs' in ssh_toolset['crunch_programs'],
+      'SSH reuses standard ptm devices and crunches the ptyfs mount helper')
+check(not {'usr/sbin/syslogd', 'usr/bin/newsyslog'} &
+      {dest for _, dest in logging_toolset['install_map']} and
+      {'usr.sbin/syslogd/syslogd', 'usr.bin/newsyslog/newsyslog',
+       'usr.bin/logger', 'usr.bin/tail'} <= set(logging_toolset['crunch_programs']) and
+      'external/bsd/libevent/lib/libevent' in logging_toolset['libraries'] and
+      'crypto/external/apache2/openssl/lib/libcrypto' in logging_toolset['libraries'] and
+      'crypto/external/apache2/openssl/lib/libssl' not in logging_toolset['libraries'] and
+      logging_toolset['libraries'].index('lib/libpthread') <
+      logging_toolset['libraries'].index('crypto/external/apache2/openssl/lib/libcrypto'),
+      'logging crunches syslogd, bounded rotation, logger and tail')
+check(sftp_requires_ssh and
+      'crypto/external/bsd/openssh/bin/sftp-server' not in ssh_toolset['programs'] and
+      'crypto/external/bsd/openssh/bin/sftp-server' in sftp_toolset['programs'],
+      'SFTP is separately selectable and requires the SSH server')
+check(logging_wolfssl['syslogd_tls'] == 'no' and
+      logging_wolfssl['syslogd_sign'] == 'no' and
+      'external/bsd/libevent/lib/libevent' in logging_wolfssl['libraries'] and
+      'crypto/external/apache2/openssl/lib/libcrypto' not in logging_wolfssl['libraries'] and
+      'crypto/external/apache2/openssl/lib/libssl' not in logging_wolfssl['libraries'],
+      'local diagnostic logging disables TLS/signing and retains no OpenSSL closure')
+with tempfile.TemporaryDirectory(prefix='network-crunch-config-') as temporary:
+    config = Path(temporary) / 'console-tools.conf'
+    generated = subprocess.run(
+        [sys.executable, '-B', str(path), 'network-crunch-config', str(config),
+         'wolfssl', ' '.join(logging_toolset['crunch_programs'])],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+    lines = config.read_text().splitlines() if config.is_file() else []
+    flags = subprocess.run(
+        [sys.executable, '-B', str(path), 'network-crunch-makeflags',
+         ' '.join(logging_toolset['crunch_programs'])],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, check=False)
+    no_logging_flags = subprocess.run(
+        [sys.executable, '-B', str(path), 'network-crunch-makeflags',
+         ' '.join(ssh_toolset['crunch_programs'])],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, check=False)
+    check(generated.returncode == 0 and
+          'libs -ledit -lterminfo -lutil -lkvm -lprop -lcrypt -lpcap -lipsec -lm -lwolfssl -lpthread -levent -lwrap -lblocklist' in lines and
+          'special syslogd keepsymbols allow_severity deny_severity' in lines and
+          flags.returncode == 0 and
+          {'SYSLOGD_TLS=no', 'SYSLOGD_SIGN=no'} <= set(flags.stdout.split()) and
+          no_logging_flags.returncode == 0 and
+          not {'SYSLOGD_TLS=no', 'SYSLOGD_SIGN=no'} & set(no_logging_flags.stdout.split()),
+          'the emitted crunch config separates syslogd symbol directives and forwards only selected flags')
 check('sbin/mount_littlefs' in littlefs['crunch_programs'] and
       'sys/sys' in littlefs['headers'] and
       'sys/fs/littlefs' in littlefs['headers'] and
@@ -134,24 +238,39 @@ with tempfile.TemporaryDirectory(prefix='network-modes-') as temporary:
     root = Path(temporary) / 'root'
     dest = Path(temporary) / 'dest'
     (root / 'usr/bin').mkdir(parents=True)
+    (root / 'usr/libexec').mkdir(parents=True)
     (dest / 'usr/bin').mkdir(parents=True)
+    (dest / 'usr/libexec').mkdir(parents=True)
     root_login = root / 'usr/bin/login'
     dest_login = dest / 'usr/bin/login'
+    root_auth = root / 'usr/libexec/sshd-auth'
+    dest_auth = dest / 'usr/libexec/sshd-auth'
     root_login.write_bytes(b'stripped login')
     dest_login.write_bytes(b'login executable')
+    root_auth.write_bytes(b'stripped auth')
+    dest_auth.write_bytes(b'auth executable')
     root_login.chmod(0o555)
     dest_login.chmod(0o555)
+    root_auth.chmod(0o555)
+    dest_auth.chmod(0o555)
     root_spec = Path(temporary) / 'root.spec'
-    root_spec.write_text('# ./usr/bin\nusr/bin type=dir\n    login mode=0555\n# ./usr/bin\n..\n')
+    root_spec.write_text('/set type=file mode=0755\n'
+                         '# ./usr/bin\nusr/bin type=dir\n    login mode=0555\n'
+                         '# ./usr/libexec\nusr/libexec type=dir\n    sshd-auth\n')
     metalog = Path(temporary) / 'METALOG'
     metalog.write_text('./usr/bin/login type=file uname=root gname=wheel mode=04555 size=16\n'
-                       './usr/bin/login type=file uname=root gname=wheel mode=04555 size=16\n')
+                       './usr/bin/login type=file uname=root gname=wheel mode=04555 size=16\n'
+                       './usr/libexec/sshd-auth type=file uname=root gname=wheel mode=0555 size=13\n')
     profile.apply_metalog_modes(root_spec, root, dest, metalog,
-                                (('usr.bin/login', 'usr/bin/login'),))
+                                (('usr.bin/login', 'usr/bin/login'),
+                                 ('sshd-auth', 'usr/libexec/sshd-auth')))
     check('mode=04555' in root_spec.read_text() and
+          'sshd-auth mode=0555' in root_spec.read_text() and
           root_login.stat().st_mode & 0o7777 == 0o555 and
-          dest_login.stat().st_mode & 0o7777 == 0o555,
-          'root spec restores target setuid mode from METALOG without changing host copies')
+          dest_login.stat().st_mode & 0o7777 == 0o555 and
+          root_auth.stat().st_mode & 0o7777 == 0o555 and
+          dest_auth.stat().st_mode & 0o7777 == 0o555,
+          'root spec expands inherited modes and restores setuid mode from METALOG without changing host copies')
 
 with tempfile.TemporaryDirectory(prefix='network-rc-mode-') as temporary:
     temporary = Path(temporary)
@@ -230,10 +349,11 @@ check('BINMODE=4555' in (source / 'sbin/ping/Makefile').read_text() and
       'sbin/ping' not in dict(selected['install_map']),
       'root-only ping uses normal socket ops in the 0555 crunch binary with IPsec support')
 check('external/bsd/libpcap/lib' in selected['libraries'] and
-      'lib/libpthread' not in selected['libraries'] and
-      'lib/libpthread' not in profile.network('riscv32', wpa_backend='openssl')['libraries'] and
+      'lib/libpthread' in selected['libraries'] and
+      'crypto/external/apache2/openssl/lib/libcrypto' in selected['libraries'] and
+      'lib/libpthread' in profile.network('riscv32', wpa_backend='openssl')['libraries'] and
       'lib/libpthread' in profile.network('riscv32', wpa_backend='wolfssl')['libraries'],
-      'network profile selects pthread only for the WolfSSL WPA backend')
+      'OpenSSL and WolfSSL network crypto closures both select pthread')
 check(all(path in transfer['crunch_programs'] for path in (
           'usr.bin/cksum/cksum', 'usr.bin/uuencode/uuencode',
           'usr.bin/uudecode/uudecode')) and
@@ -244,15 +364,18 @@ check(all(path in transfer['crunch_programs'] for path in (
 check('lib/libz' not in selected['libraries'] and 'lib/libbz2' not in selected['libraries'],
       'compact network profile omits optional grep compression libraries')
 crunch_source = (Path(__file__).with_name('cix-p1-build-userland.sh')).read_text()
-check("printf 'libs -ledit -lterminfo -lutil -lkvm -lprop -lcrypt -lpcap -lipsec -lm'" in crunch_source and
-      "*\" usr.bin/audio/ctl/audioctl \"*) printf ' -laudio'" in crunch_source and
-      "*\" usr.sbin/envstat/envstat \"*) printf ' -lmj'" in crunch_source and
+peripheral_crunch_conf = profile.network_crunch_configuration(
+    ' '.join(peripheral['crunch_programs']), 'wolfssl').splitlines()
+peripheral_libs = next((line for line in peripheral_crunch_conf
+                        if line.startswith('libs ')), '')
+check('-ledit -lterminfo -lutil -lkvm -lprop -lcrypt -lpcap -lipsec -lm' in peripheral_libs and
+      '-laudio' in peripheral_libs and '-lmj' in peripheral_libs and
       '-V EMBER_GREP_UNCOMPRESSED_ONLY=yes' in crunch_source,
       'network crunch includes service dependencies and compact grep option')
-check("wolfssl) printf ' -lwolfssl -lpthread' ;;" in crunch_source,
+check('-lwolfssl' in peripheral_libs and '-lpthread' in peripheral_libs,
       'WolfSSL static consumers link the OS semaphore provider')
-check("usr.sbin usr.bin/videoctl" in crunch_source and
-      'special %s srcdir %s' in crunch_source and
+check('usr.sbin usr.bin/videoctl' in peripheral_crunch_conf[0] and
+      any(line.startswith('special audioctl srcdir ') for line in peripheral_crunch_conf) and
       'obj/usr.bin/audio/common' in crunch_source and
       all(flag in crunch_source for flag in
           ('-V MKPAM=no', '-V USE_PAM=no', '-V MKKERBEROS=no',
@@ -294,11 +417,13 @@ with tempfile.TemporaryDirectory(prefix='network-reuse-') as temporary:
                'machine_arch': 'riscv32', 'elf_machine': 243,
                'prefix': 'usr/pkg/llvm', 'source': {'sha512': 'ignored'}}
     compatibility = profile.network_build_compatibility(
-        'riscv32', selected, {'arch': 'riscv32'}, compiler, runtime, 'wolfssl')
+        'riscv32', profile.network('riscv32'), {'arch': 'riscv32'}, compiler,
+        runtime, 'wolfssl')
     check(not any(key in compatibility for key in
-                  ('programs', 'libraries', 'overlay', 'source', 'worktree')) and
+                  ('programs', 'libraries', 'overlay', 'source', 'worktree',
+                   'openssh_crypto', 'syslogd_tls', 'syslogd_sign')) and
           compatibility['wpa_backend'] == 'wolfssl',
-          'compatibility is independent of source provenance, app selection and overlays')
+          'compatibility excludes optional service selections and source provenance')
     check(profile.network_output_action(output, compatibility, []) == 'new',
           'a missing network output starts a new build')
     output.mkdir()
@@ -417,12 +542,23 @@ check("package == 'wpa' and ('EMBER_WPA_ARCHIVE'" in profile_source and
       'WPA archive comparison requires both WPA and hostapd archives' in profile_source,
       'legacy WPA prepared receipts can be compared against both pinned upstream archives')
 network_stage = component_runner.split('if [ "$profile" = network ]; then', 1)[1].split('exit 0', 1)[0]
+console_crunch_branch = component_runner.split('if [ "$profile" = console-tools ]', 1)[1].split(
+    'elif [ "$profile" = network ]', 1)[0]
+network_crunch_branch = component_runner.split('elif [ "$profile" = network ]', 1)[1].split(
+    'else\n', 1)[0]
 check('for node in $device_block_nodes' in network_stage and
       'type=block' in network_stage and 'nbmakefs' not in network_stage,
       'network root stages the selected block device in its manifest without building an image')
 check('component_make "$label-build" "$part" -j"$jobs" "$@" dependall' in component_runner and
       'component_make "$label-install" "$part" "$@" install' in component_runner,
       'direct obj, build and install calls share the network assignment path')
+check('network-crunch-makeflags "$crunch_programs"' in component_runner and
+      'network-crunch-config "$out/crunch/console-tools.conf"' in component_runner and
+      '"MAKE=$HOST_SH $wrapper"' in console_crunch_branch and
+      'network_auth_flags' not in console_crunch_branch and
+      '"MAKE=$HOST_SH $wrapper $network_auth_flags"' in network_crunch_branch and
+      '*" usr.sbin/syslogd/syslogd "*) logging_enabled=yes ;;' in component_runner,
+      'the crunch producer consumes rendered link config and forwards selected make flags')
 check(all((source / library / 'Makefile').is_file() for library in selected['libraries']),
       'network profile library closure has native OS make targets')
 destinations = dict(selected['install_map'])
@@ -470,6 +606,9 @@ network_devices = profile.network_device_selection(selected, 'md0')
 peripheral_devices = profile.network_device_selection(peripheral, 'md0')
 gui_network_devices = profile.network_device_selection(selected, 'md0', application=True)
 check(network_devices[2] == ('bpf', 'md0') and
+      'ptm' not in network_devices[2] and 'ptm' in ssh_nodes and
+      profile.network_device_selection(ssh_toolset, 'md0')[2] ==
+      ('bpf', 'md0', 'ptm') and
       peripheral_devices[2] == ('bpf', 'md0', 'audio', 'video', 'sysmon', 'spi1') and
       set(gui_network_devices[0]) >= {'ttyE0', 'wsmouse0', 'iic0'} and
       gui_network_devices[2] ==
@@ -619,6 +758,123 @@ with tempfile.TemporaryDirectory(prefix='static-network-') as temporary:
           'host-from-overlay.local' in (out / 'etc/rc.conf.d/mdnsd').read_text() and
           (out / 'etc/custom-network.conf').is_file(),
           'OS accounts remain default and overlay identity/service settings are staged')
+    services = temporary / 'root-ssh-logging'
+    services.mkdir()
+    profile.stage_network(services, source, overlay, 'wifi0', pwd_mkdb, dhcp_dest,
+                          'md0', 'a', mdns_enabled=True,
+                          ssh_enabled=True, logging_enabled=True,
+                          openssh_crypto='builtin')
+    service_scripts = services / 'etc/rc.network.d'
+    service_provides, service_requires, service_missing = staged_rc_dependencies(services)
+    sshd_config = (services / 'etc/ssh/sshd_config').read_text()
+    check(not service_missing and
+          {'sshd', 'sysdb', 'wscons', 'newsyslog', 'syslogd', 'network_logfs'} <=
+          set(service_provides) and
+          'LOGIN' in service_requires['sshd'] and
+          {'mountcritremote', 'sysdb', 'wscons'} <= set(service_requires['syslogd']) and
+          {'CRITLOCALMOUNTED'} <= set(service_requires['network_logfs']) and
+          'newsyslog syslogd' in (service_scripts / 'network_logfs').read_text(),
+          'SSH/logging stock rc services have a closed provider/dependency graph')
+    check('Subsystem sftp' not in sshd_config,
+          'SSH command service does not advertise an uninstalled SFTP subsystem')
+    check((services / 'dev/log').is_symlink() and
+          __import__('os').readlink(services / 'dev/log') == '/var/run/log',
+          'crunched syslogd keeps the standard /dev/log socket path')
+    profile.stage_network(services, source, overlay, 'wifi0', pwd_mkdb,
+                          dhcp_dest, 'md0', 'a', mdns_enabled=True,
+                          ssh_enabled=True, logging_enabled=True,
+                          openssh_crypto='builtin')
+    check((services / 'dev/log').is_symlink() and
+          __import__('os').readlink(services / 'dev/log') == '/var/run/log',
+          'repeating network staging accepts the same syslog socket link')
+    sftp_services = temporary / 'root-ssh-sftp'
+    sftp_services.mkdir()
+    profile.stage_network(sftp_services, source, overlay, 'wifi0', pwd_mkdb,
+                          dhcp_dest, 'md0', 'a', mdns_enabled=True,
+                          ssh_enabled=True, logging_enabled=True,
+                          openssh_crypto='builtin', sftp_enabled=True)
+    check('Subsystem sftp /usr/libexec/sftp-server' in
+          (sftp_services / 'etc/ssh/sshd_config').read_text(),
+          'selected SFTP service advertises its staged subsystem')
+    syslogd_source = (source / 'etc/rc.d/syslogd').read_text()
+    check('for _rd in ${rc_directories:-/etc/rc.d}; do' in syslogd_source and
+          'rcorder -k chrootdir "${_rd}"/*' in syslogd_source and
+          'rcorder -k chrootdir /etc/rc.d/*' not in syslogd_source,
+          'syslogd discovers chroot services from the configured rc directories')
+    check('sshd=YES' in (services / 'etc/rc.conf').read_text() and
+          'syslogd=YES' in (services / 'etc/rc.conf').read_text() and
+          'newsyslog=YES' in (services / 'etc/rc.conf').read_text() and
+          'network_logfs_size=1m' in (services / 'etc/rc.conf').read_text() and
+          'sshd_key_types="ed25519"' in (services / 'etc/rc.conf').read_text() and
+          'wpa_supplicant_flags="-s -Dbsd -i wifi0 -c /etc/wpa_supplicant.conf"' in
+          (services / 'etc/rc.conf').read_text() and
+          'sysdb=NO' in (services / 'etc/rc.conf').read_text() and
+          'wscons=NO' in (services / 'etc/rc.conf').read_text() and
+          'critical_filesystems_local="/tmp /var/run /dev/pts"' in
+          (services / 'etc/rc.conf').read_text() and
+          'ptyfs /dev/pts ptyfs rw' in (services / 'etc/fstab').read_text() and
+          (services / 'dev/pts').is_dir() and
+          (services / 'etc/rc.network.d/sshd').is_file() and
+          (services / 'etc/rc.network.d/syslogd').is_file() and
+          (services / 'etc/rc.network.d/newsyslog').is_file(),
+          'selected SSH and logging startup is enabled while unrelated rc providers stay disabled')
+    log_mount_text = (service_scripts / 'network_logfs').read_text()
+    newsyslog_conf = (services / 'etc/newsyslog.conf').read_text()
+    syslog_conf = (services / 'etc/syslog.conf').read_text()
+    check('tmpfs /var/log' not in (services / 'etc/fstab').read_text() and
+          'network_logfs_size:=1m' in log_mount_text and
+          '-s "$network_logfs_size"' in log_mount_text and
+          ': >> /var/log/messages\n' in log_mount_text and
+          ': >> /var/log/authlog\n' in log_mount_text,
+          'logging creates a capped volatile log filesystem without truncating existing logs')
+    check('/var/log/messages 0644 3 64 * -' in newsyslog_conf and
+          '/var/log/authlog 0600 3 64 * -' in newsyslog_conf and
+          '*.info;auth,authpriv.none /var/log/messages' in syslog_conf and
+          'auth,authpriv.info /var/log/authlog' in syslog_conf and
+          (services / 'etc/syslog.conf').is_file() and
+          (services / 'etc/newsyslog.conf').is_file(),
+          'logging configures bounded stock rotation and standard selectors')
+    check('-DCONFIG_DEBUG_SYSLOG' in
+          (source / 'external/bsd/wpa/bin/wpa_supplicant/Makefile').read_text() and
+          '  -s = log output to syslog instead of stdout' in
+          (source / 'external/bsd/wpa/dist/wpa_supplicant/main.c').read_text() and
+          'tmpfs /tmp tmpfs rw' in (services / 'etc/fstab').read_text() and
+          'tmpfs /var/run tmpfs rw' in (services / 'etc/fstab').read_text(),
+          'selected wpa_supplicant supports routing normal and debug logs to syslog')
+    check('PermitRootLogin prohibit-password' in sshd_config and
+          'HostKey /etc/ssh/ssh_host_ed25519_key' in sshd_config and
+          'PasswordAuthentication no' in sshd_config and
+          'KbdInteractiveAuthentication no' in sshd_config and
+          'AuthenticationMethods publickey' in sshd_config and
+          'UsePAM' not in sshd_config and
+          'Subsystem sftp' not in sshd_config and
+          (services / 'var/chroot/sshd').is_dir() and
+          (services / 'etc/master.passwd').read_text().find('sshd:*:16:16:') >= 0,
+          'stock SSH staging is key-only without SFTP and has the OS privsep account path')
+    openssl_services = temporary / 'root-ssh-openssl'
+    openssl_services.mkdir()
+    profile.stage_network(openssl_services, source, overlay, 'wifi0', pwd_mkdb,
+                          dhcp_dest, 'md0', 'a', ssh_enabled=True)
+    check('sshd_key_types="ecdsa ed25519 rsa"' in
+          (openssl_services / 'etc/rc.conf').read_text() and
+          'HostKey /etc/ssh/ssh_host_ed25519_key' not in
+          (openssl_services / 'etc/ssh/sshd_config').read_text(),
+          'OpenSSL-mode SSH retains the generic host-key algorithm selection')
+    cli_minimal = temporary / 'root-cli-minimal'
+    cli_minimal.mkdir()
+    cli_result = subprocess.run(
+        [sys.executable, '-B', str(path), 'stage-network', str(cli_minimal),
+         str(source), str(overlay), 'wifi0', str(pwd_mkdb), str(dhcp_dest),
+         'md0', 'a', 'ffs', 'no', 'no', 'no', 'builtin', 'no'],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+    check(cli_result.returncode == 0 and
+          'sshd=NO' in (cli_minimal / 'etc/rc.conf').read_text(),
+          'network staging CLI accepts the resolved no-SSH builtin-mode default')
+    check(not (services / 'etc/ssh/ssh_host_ed25519_key').exists() and
+          not (services / 'root/.ssh/authorized_keys').exists() and
+          not (services / 'etc/rc.d').exists() and
+          (services / 'etc/rc.network.d/network_logfs').stat().st_mode & 0o777 == 0o555,
+          'host keys and user authorized keys stay out of the generic image')
     minimal = temporary / 'root-minimal-network'
     minimal.mkdir()
     profile.stage_network(minimal, source, overlay, 'wifi0', pwd_mkdb,
@@ -627,8 +883,23 @@ with tempfile.TemporaryDirectory(prefix='static-network-') as temporary:
           'normal profile stages a closed multiuser rcorder provider chain')
     minimal_rc = (minimal / 'etc/rc.network.d/network_tmpdirs').read_text()
     check(not (minimal / 'etc/rc.network.d/mdnsd').exists() and
+          not (minimal / 'etc/rc.network.d/sshd').exists() and
+          not (minimal / 'etc/rc.network.d/syslogd').exists() and
+          not (minimal / 'etc/rc.network.d/network_logfs').exists() and
+          not (minimal / 'etc/ssh/sshd_config').exists() and
+          not (minimal / 'etc/syslog.conf').exists() and
           not (minimal / 'etc/rc.conf.d/mdnsd').exists() and
           'mdnsd=NO' in (minimal / 'etc/rc.conf').read_text() and
+          'sshd=NO' in (minimal / 'etc/rc.conf').read_text() and
+          'syslogd=NO' in (minimal / 'etc/rc.conf').read_text() and
+          'newsyslog=NO' in (minimal / 'etc/rc.conf').read_text() and
+          '/dev/pts' not in (minimal / 'etc/fstab').read_text() and
+          'ptm' not in (minimal / 'etc/rc.conf').read_text() and
+          'sysdb=NO' not in (minimal / 'etc/rc.conf').read_text() and
+          'wscons=NO' not in (minimal / 'etc/rc.conf').read_text() and
+          'wpa_supplicant_flags="-Dbsd -i wifi0 -c /etc/wpa_supplicant.conf"' in
+          (minimal / 'etc/rc.conf').read_text() and
+          not (minimal / 'etc/rc.d').exists() and
           'BEFORE: wpa_supplicant dhcpcd' in minimal_rc and
           'mdnsd' not in minimal_rc,
           'default network staging omits optional mDNS service and overlay override')

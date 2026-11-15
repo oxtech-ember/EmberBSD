@@ -17,6 +17,21 @@ SYMLINKS=	/var/run/log /dev/log
 .PATH.c: ${NETBSDSRCDIR}/usr.bin/who
 CPPFLAGS+=-I${NETBSDSRCDIR}/usr.bin/who -DSUPPORT_UTMPX -DSUPPORT_UTMP -Wredundant-decls
 
+SYSLOGD_TLS?=	yes
+SYSLOGD_SIGN?=	yes
+.if ${SYSLOGD_TLS} != "yes" && ${SYSLOGD_TLS} != "no"
+.error SYSLOGD_TLS must be yes or no
+.endif
+.if ${SYSLOGD_SIGN} != "yes" && ${SYSLOGD_SIGN} != "no"
+.error SYSLOGD_SIGN must be yes or no
+.endif
+.if ${SYSLOGD_TLS} == "no"
+CPPFLAGS+=	-DDISABLE_TLS
+.endif
+.if ${SYSLOGD_SIGN} == "no"
+CPPFLAGS+=	-DDISABLE_SIGN
+.endif
+
 .if (${USE_INET6} != "no")
 CPPFLAGS+=-DINET6
 .endif
@@ -28,8 +43,10 @@ CPPFLAGS+=-DOPENSSL_API_COMPAT=0x10100000L
 LDADD+=	-lwrap -lblocklist 
 DPADD+=	${LIBWRAP} ${LIBBLOCKLIST} 
 
+.if ${SYSLOGD_TLS} == "yes" || ${SYSLOGD_SIGN} == "yes"
 LDADD+=	-lssl -lcrypto
 DPADD+= ${LIBSSL} ${LIBCRYPTO}
+.endif
 
 # Overflow that appears impossible
 COPTS.syslogd.c+=        ${CC_WNO_FORMAT_TRUNCATION} ${CC_WNO_STRINGOP_TRUNCATION}

@@ -244,6 +244,35 @@ including the block and raw nodes used by the standard root/fsck path. When
 `mdns` is selected, `EMBER_MDNS_SOURCE` is required. The selected mDNS,
 DHCP, libpcap and WPA sources are checked against the selected Ports recipes
 and shared export.
+The optional `ssh` toolset adds the OpenSSH server, authentication and session
+helpers, and host-key generator. The separate optional `sftp` toolset adds the
+OpenSSH SFTP server and requires `ssh`. This separation lets a constrained
+root use authenticated SSH commands and streams without the additional SFTP
+binary. SSH requires prepared
+OpenSSH, TCP wrappers and zlib source inputs. The default
+`EMBER_OPENSSH_CRYPTO=openssl` mode also requires prepared OpenSSL; `builtin`
+uses OpenSSH's built-in crypto and does not select OpenSSL. The generated
+server configuration accepts public-key authentication only; put
+`authorized_keys` and any preseeded host keys in a private overlay. The target kernel must provide
+the `pty` pseudo-device and `PTYFS`; the profile stages the `ptm`/`ptmx` nodes,
+`/sbin/mount_ptyfs`, and mounts `/dev/pts` from `fstab`. The SSH profile
+requires those kernel facilities to boot; noninteractive SSH commands and SFTP
+do not themselves allocate a PTY. The optional `logging` toolset adds
+syslogd, newsyslog, logger and tail to the shared `console-tools` binary, and
+requires prepared libevent and TCP wrappers sources. The crunch link preserves
+libwrap's public severity symbols and the standard `/dev/log` socket path.
+This profile disables syslogd TLS and signing for its local
+diagnostic log sink; other syslogd builds retain the default features. It mounts
+a 1 MiB tmpfs at `/var/log` by default; the
+`network_logfs_size` rc setting can select another size. It configures
+three 64 KiB rotations for messages and authentication logs. WPA supplicant
+uses its supported `-s` option with this toolset; add `-d` or `-dd` through the
+existing rc flags override when a bounded diagnostic session needs debug
+priority, and provide a private `/etc/syslog.conf` that includes the needed
+debug priority. Log rotation runs when the operator or host collector invokes
+`newsyslog`; no scheduled rotation service is selected. Both toolsets are
+independent and leave the default network profile
+unchanged.
 libpcap is built from its shared OS target for the WPA link. WPA uses the shared
 personal profile selector; the common crypto backend remains at its normal default unless
 `EMBER_WPA_CRYPTO_BACKEND` is explicitly selected. Interface names and local
@@ -260,8 +289,14 @@ export EMBER_NETWORK_INTERFACE=wifi0
 export EMBER_NETWORK_ROOT_DEVICE=md0
 export EMBER_NETWORK_ROOT_PARTITION=a
 export EMBER_NETWORK_OVERLAY=/absolute/private/network-overlay
-# Optional: export EMBER_NETWORK_TOOLSETS=mdns
+# Optional: export EMBER_NETWORK_TOOLSETS=mdns,ssh,logging
 # Optional: export EMBER_MDNS_SOURCE=/absolute/prepared-mdns
+# With OpenSSL WPA or OpenSSH mode: export EMBER_OPENSSL_SOURCE=/absolute/prepared-openssl
+# Optional for ssh: export EMBER_OPENSSH_CRYPTO=builtin
+# With ssh: export EMBER_OPENSSH_SOURCE=/absolute/prepared-openssh
+# With logging: export EMBER_LIBEVENT_SOURCE=/absolute/prepared-libevent
+# With ssh or logging: export EMBER_TCP_WRAPPERS_SOURCE=/absolute/prepared-tcp-wrappers
+# With ssh: export EMBER_ZLIB_SOURCE=/absolute/prepared-zlib
 # Optional diagnostics: export EMBER_NETWORK_TOOLSETS=spi,transfer
 # Optional with spi: export EMBER_NETWORK_SPI_UNITS=1
 # Optional: export EMBER_CONSOLE_PROGRAM=/absolute/target/lvgl-wscons
@@ -275,7 +310,8 @@ image. `MAKEDEV` supplies the standard entropy devices and BPF node used by
 the selected WPA/DHCP paths; the staged resolver, DHCP state and runtime
 directories remain writable on the root filesystem or under `/var/run`.
 Optional `EMBER_NETWORK_TOOLSETS` is a comma-separated selection of `system`,
-`audio`, `video`, `envsys`, `spi`, `transfer`, and `mdns`. These choices add the corresponding standard
+`audio`, `video`, `envsys`, `spi`, `transfer`, `mdns`, `ssh`, `sftp`, and
+`logging`. Select `sftp` together with `ssh`. These choices add the corresponding standard
 tools to the shared `console-tools` executable and ask target `MAKEDEV` for
 their device nodes. `system` includes `env`, `uname`, and `df`; `audio` includes `audioctl`, `audioplay`, `audiorecord`,
 `mixerctl`, `timeout`, and `wc`; `video` includes `videoctl`; `envsys` includes
@@ -292,6 +328,20 @@ the normal network profile remains unchanged.
 `mdns` adds `mdnsd` to `console-tools` and stages its standard service script,
 service account, and enabled rc configuration. Without `mdns`, the service
 program and its staged service configuration are omitted.
+`ssh` selects the stock OpenSSH server, its authentication/session helpers and
+host-key generator. It enables the stock `sshd` rc script with public-key-only
+authentication; it does not select SSH client programs or the external SFTP
+subsystem. The `sftp` toolset adds that subsystem when selected with `ssh`.
+The generic root has no authorized user key or host key. Supply
+`/root/.ssh/authorized_keys` in a private overlay; the standard rc script
+generates host keys on the device in its writable private root.
+`logging` adds stock `syslogd`, `logger`, `tail`, and `newsyslog` to
+`console-tools`. Its profile-owned rc hook mounts `/var/log` as a 1 MiB tmpfs before the logging
+services start, creates only `messages` and private `authlog`, and applies
+newsyslog limits of 64 KiB per file with three retained generations. Logs
+remain volatile and can be inspected with `tail` or rotated with
+`/usr/bin/newsyslog` during a diagnostic session. Neither optional toolset
+changes the default network profile.
 When the producer strips an optional program or standalone install-map
 executable, it strips only the staged root copy. The original installed file
 under `dest/` remains available for incremental builds and debugging; target

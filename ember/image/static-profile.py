@@ -317,8 +317,16 @@ def apply_metalog_modes(spec, root, destdir, metalog, install_map):
             raise ValueError('staged root specification lacks a unique target entry for ' + target)
         index = matching[0]
         mode_re = re.compile(r'(?<!\S)mode=[0-7]{3,5}(?=\s|$)')
-        updated, count = mode_re.subn('mode=' + next(iter(modes)), spec_lines[index])
-        if count != 1:
+        line = spec_lines[index]
+        mode_tokens = re.findall(r'(?<!\S)mode=([^\s]+)', line)
+        if not mode_tokens:
+            ending = '\n' if line.endswith('\n') else ''
+            updated = line.rstrip('\n').rstrip() + ' mode=' + next(iter(modes)) + ending
+        elif len(mode_tokens) == 1 and re.fullmatch(r'[0-7]{3,5}', mode_tokens[0]):
+            updated, count = mode_re.subn('mode=' + next(iter(modes)), line)
+            if count != 1:
+                raise ValueError('staged root specification has no unique mode for ' + target)
+        else:
             raise ValueError('staged root specification has no unique mode for ' + target)
         spec_lines[index] = updated
     spec.write_text(''.join(spec_lines))
@@ -443,11 +451,12 @@ def console(target, compact=False, toolsets=()):
 
 
 def network(target, toolsets=(), spi_units=(), root_filesystem='ffs',
-            wpa_backend=''):
+            wpa_backend='', openssh_crypto='openssl'):
     """Select the ordinary-init network userland from the same C foundation."""
     import re
 
-    allowed_toolsets = {'system', 'audio', 'video', 'envsys', 'spi', 'transfer', 'mdns'}
+    allowed_toolsets = {'system', 'audio', 'video', 'envsys', 'spi', 'transfer',
+                        'mdns', 'ssh', 'sftp', 'logging'}
     if (len(set(toolsets)) != len(toolsets) or
             any(not re.fullmatch(r'[a-z]+', item) or item not in allowed_toolsets
                 for item in toolsets)):
@@ -457,18 +466,34 @@ def network(target, toolsets=(), spi_units=(), root_filesystem='ffs',
         raise ValueError('SPI units must be unique nonnegative unit numbers')
     if spi_units and 'spi' not in toolsets:
         raise ValueError('SPI units require the spi toolset')
+    if 'sftp' in toolsets and 'ssh' not in toolsets:
+        raise ValueError('SFTP requires the ssh toolset')
     if root_filesystem not in ('ffs', 'littlefs'):
         raise ValueError('network root filesystem must be ffs or littlefs')
+    if openssh_crypto not in ('openssl', 'builtin'):
+        raise ValueError('OpenSSH crypto mode must be openssl or builtin')
+    if 'ssh' not in toolsets:
+        openssh_crypto = 'not-selected'
+    needs_openssl = wpa_backend != 'wolfssl' or openssh_crypto == 'openssl'
     selected = console(target)
     selected['root_filesystem'] = root_filesystem
-    selected.update(profile='network', compact=False)
+    selected.update(profile='network', compact=False,
+                    openssh_crypto=openssh_crypto,
+                    syslogd_tls='no' if 'logging' in toolsets else 'not-selected',
+                    syslogd_sign='no' if 'logging' in toolsets else 'not-selected')
     selected['headers'] = ('lib/libcurses', 'sys/net80211')
+    if 'ssh' in toolsets or 'logging' in toolsets:
+        selected['headers'] += ('external/bsd/blocklist/include',)
+    if 'logging' in toolsets:
+        selected['headers'] += ('external/bsd/libevent/include',)
     selected['libraries'] = ('lib/libcrypt', 'lib/libterminfo', 'lib/libedit',
                              'lib/libm', 'lib/libutil', 'lib/libprop',
                              'lib/libkvm', 'lib/libipsec',
                              'external/bsd/libpcap/lib')
-    if wpa_backend == 'wolfssl':
+    if wpa_backend == 'wolfssl' or needs_openssl:
         selected['libraries'] += ('lib/libpthread',)
+    if needs_openssl:
+        selected['libraries'] += ('crypto/external/apache2/openssl/lib/libcrypto',)
     selected['crunch_programs'] = (
         'bin/sh', 'bin/cat', 'bin/chmod', 'bin/cp', 'bin/date', 'bin/echo', 'bin/expr',
         'bin/hostname', 'bin/kill', 'bin/ln', 'bin/ls', 'bin/mkdir', 'bin/mv',
@@ -525,6 +550,37 @@ def network(target, toolsets=(), spi_units=(), root_filesystem='ffs',
         selected['crunch_programs'] += (
             'external/apache2/mDNSResponder/usr.sbin/mdnsd',)
     install_map = [('usr.bin/login', 'usr/bin/login')]
+    if 'ssh' in toolsets:
+        selected['libraries'] += (
+            'lib/libz',
+            'external/bsd/blocklist/lib',
+            'lib/libwrap',
+            'crypto/external/bsd/openssh/lib',
+            'lib/libcrypt')
+        selected['device_nodes'] += ('ptm', 'ptmx')
+        selected['crunch_programs'] += ('usr.bin/cmp/cmp', 'sbin/mount_ptyfs')
+        selected['programs'] += (
+            'crypto/external/bsd/openssh/bin/sshd',
+            'crypto/external/bsd/openssh/libexec/sshd-auth',
+            'crypto/external/bsd/openssh/libexec/sshd-session',
+            'crypto/external/bsd/openssh/bin/ssh-keygen')
+        install_map += [
+            ('crypto/external/bsd/openssh/bin/sshd', 'usr/sbin/sshd'),
+            ('crypto/external/bsd/openssh/libexec/sshd-auth', 'usr/libexec/sshd-auth'),
+            ('crypto/external/bsd/openssh/libexec/sshd-session', 'usr/libexec/sshd-session'),
+            ('crypto/external/bsd/openssh/bin/ssh-keygen', 'usr/bin/ssh-keygen')]
+    if 'sftp' in toolsets:
+        selected['programs'] += ('crypto/external/bsd/openssh/bin/sftp-server',)
+        install_map.append(('crypto/external/bsd/openssh/bin/sftp-server',
+                            'usr/libexec/sftp-server'))
+    if 'logging' in toolsets:
+        selected['libraries'] += (
+            'external/bsd/libevent/lib/libevent',
+            'external/bsd/blocklist/lib', 'lib/libwrap')
+        selected['crunch_programs'] += (
+            'usr.sbin/syslogd/syslogd', 'usr.bin/newsyslog/newsyslog',
+            'usr.bin/logger', 'usr.bin/tail')
+    selected['libraries'] = tuple(dict.fromkeys(selected['libraries']))
     selected['install_map'] = tuple(install_map)
     return selected
 
@@ -551,6 +607,8 @@ def network_device_selection(settings, root_device, root_partition='a', applicat
     root_partitioned = root_device + root_partition
     nodes += ('r' + root_partitioned,)
     make_devices = ('bpf', root_device, *settings.get('device_make_groups', ()))
+    if 'ptm' in nodes:
+        make_devices += ('ptm',)
     block_nodes = (root_partitioned,)
     if application:
         nodes += ('ttyE0', 'wsmouse0', 'iic0')
@@ -558,10 +616,68 @@ def network_device_selection(settings, root_device, root_partition='a', applicat
     return nodes, settings['device_links'], make_devices, block_nodes
 
 
+def network_crunch_configuration(crunch_programs, wpa_backend):
+    """Render the network crunchgen input, keeping directives line-separated."""
+    import re
+
+    programs = tuple(crunch_programs.split())
+    if (not programs or len(set(programs)) != len(programs) or
+            any(not re.fullmatch(r'[A-Za-z0-9_./+-]+', program) for program in programs)):
+        raise ValueError('network crunch programs must be unique source paths')
+    if wpa_backend not in ('wolfssl', 'openssl', ''):
+        raise ValueError('unsupported WPA backend for network crunch')
+    names = tuple(program.rsplit('/', 1)[-1] for program in programs)
+    if len(set(names)) != len(names):
+        raise ValueError('network crunch program names must be unique')
+
+    lines = [
+        'srcdirs bin sbin usr.bin usr.sbin usr.bin/videoctl libexec '
+        'external/bsd/dhcpcd/sbin external/bsd/wpa/bin '
+        'external/apache2/mDNSResponder/usr.sbin',
+        'progs ' + ' '.join(names),
+        'ln sh -sh',
+        'ln reboot halt',
+    ]
+    for program in programs:
+        if program.startswith(('usr.bin/audio/ctl/', 'usr.bin/audio/play/',
+                               'usr.bin/audio/record/', 'usr.bin/mixerctl/')):
+            lines.append('special {} srcdir {}'.format(
+                program.rsplit('/', 1)[-1], program.rsplit('/', 1)[0]))
+    libraries = ['-ledit', '-lterminfo', '-lutil', '-lkvm', '-lprop', '-lcrypt',
+                 '-lpcap', '-lipsec', '-lm']
+    if 'audioctl' in names:
+        libraries.append('-laudio')
+    if 'envstat' in names:
+        libraries.append('-lmj')
+    if wpa_backend == 'wolfssl':
+        libraries.extend(('-lwolfssl', '-lpthread'))
+    elif wpa_backend in ('openssl', ''):
+        libraries.append('-lcrypto')
+    if 'syslogd' in names:
+        libraries.extend(('-levent', '-lwrap', '-lblocklist'))
+    lines.append('libs ' + ' '.join(libraries))
+    if 'syslogd' in names:
+        lines.append('special syslogd keepsymbols allow_severity deny_severity')
+    return '\n'.join(lines) + '\n'
+
+
+def network_crunch_make_assignments(crunch_programs):
+    """Return native make assignments passed to network crunch submakes."""
+    programs = set(crunch_programs.split())
+    assignments = ['MKPAM=no', 'USE_PAM=no', 'MKKERBEROS=no', 'USE_KERBEROS=no',
+                   'MKLDAP=no', 'USE_LDAP=no', 'MKYP=no', 'USE_YP=no',
+                   'MKSKEY=no', 'USE_SKEY=no', 'MKHESIOD=no', 'USE_HESIOD=no']
+    if 'usr.sbin/syslogd/syslogd' in programs:
+        assignments.extend(('SYSLOGD_TLS=no', 'SYSLOGD_SIGN=no'))
+    return ' '.join(assignments)
+
+
 def stage_network(root, source, overlay, interface, pwd_mkdb, dhcpcd_dest,
                   root_device, root_partition='a', root_filesystem='ffs',
-                  mdns_enabled=False):
+                  mdns_enabled=False, ssh_enabled=False, logging_enabled=False,
+                  openssh_crypto='openssl', sftp_enabled=False):
     """Stage standard init/rc network services over the normal OS defaults."""
+    import os
     import shutil
     import subprocess
     from pathlib import Path
@@ -579,11 +695,18 @@ def stage_network(root, source, overlay, interface, pwd_mkdb, dhcpcd_dest,
         raise ValueError('network root partition must be a disk partition letter or empty')
     if root_filesystem not in ('ffs', 'littlefs'):
         raise ValueError('network root filesystem must be ffs or littlefs')
+    if openssh_crypto not in ('openssl', 'builtin'):
+        raise ValueError('OpenSSH crypto mode must be openssl or builtin')
+    if sftp_enabled and not ssh_enabled:
+        raise ValueError('SFTP requires SSH to be enabled')
+    critical_filesystems = '/tmp /var/run' + (' /dev/pts' if ssh_enabled else '')
     for name in ('bin', 'sbin', 'usr/bin', 'usr/sbin', 'usr/libexec', 'etc/defaults',
                  'etc/rc.network.d', 'tmp', 'var/run', 'var/run/dhcpcd',
                  'var/db/dhcpcd', 'var/log', 'var/tmp', 'root',
                  'libexec/dhcpcd-hooks'):
         (root / name).mkdir(parents=True, exist_ok=True)
+    if ssh_enabled:
+        (root / 'dev/pts').mkdir(parents=True, exist_ok=True)
     (root / 'var/tmp').chmod(0o1777)
     for name in ('rc', 'rc.subr'):
         copy_if_different(source / 'etc' / name, root / 'etc' / name)
@@ -606,12 +729,13 @@ def stage_network(root, source, overlay, interface, pwd_mkdb, dhcpcd_dest,
     fsck_pass = 1 if root_filesystem == 'ffs' else 0
     write_if_different(root / 'etc/fstab',
         f'{root_spec} / {root_filesystem} rw {fsck_pass} {fsck_pass}\n'
-        'tmpfs /tmp tmpfs rw\n'
-        'tmpfs /var/run tmpfs rw\n')
+        + ('ptyfs /dev/pts ptyfs rw\n' if ssh_enabled else '')
+        + 'tmpfs /tmp tmpfs rw\n'
+        + 'tmpfs /var/run tmpfs rw\n')
     write_if_different(root / 'etc/rc.conf',
         'rc_configured=YES\n'
         'rc_directories=/etc/rc.network.d\n'
-        'critical_filesystems_local="/tmp /var/run"\n'
+        f'critical_filesystems_local="{critical_filesystems}"\n'
         'hostname=\n'
         'auto_ifconfig=NO\n'
         f'net_interfaces="{interface}"\n'
@@ -621,10 +745,18 @@ def stage_network(root, source, overlay, interface, pwd_mkdb, dhcpcd_dest,
         'no_swap=YES\n'
         'network_tmpdirs=YES\n'
         'wpa_supplicant=YES\n'
-        f'wpa_supplicant_flags="-Dbsd -i {interface} -c /etc/wpa_supplicant.conf"\n'
+        f'wpa_supplicant_flags="{"-s " if logging_enabled else ""}-Dbsd -i {interface} -c /etc/wpa_supplicant.conf"\n'
         'dhcpcd=YES\n'
         f'dhcpcd_flags="-b -C wpa_supplicant {interface}"\n'
-        'mdnsd=' + ('YES' if mdns_enabled else 'NO') + '\n')
+        'mdnsd=' + ('YES' if mdns_enabled else 'NO') + '\n'
+        'sshd=' + ('YES' if ssh_enabled else 'NO') + '\n'
+        + ('sshd_key_types="' + ('ed25519' if openssh_crypto == 'builtin' else
+                                 'ecdsa ed25519 rsa') + '"\n' if ssh_enabled else '') +
+        'syslogd=' + ('YES' if logging_enabled else 'NO') + '\n'
+        'newsyslog=' + ('YES' if logging_enabled else 'NO') + '\n'
+        'network_logfs=' + ('YES' if logging_enabled else 'NO') + '\n'
+        + ('network_logfs_size=1m\n' if logging_enabled else '')
+        + ('sysdb=NO\nwscons=NO\n' if logging_enabled else ''))
     scripts = ('fsck_root', 'resize_root', 'root', 'devpubd', 'DISKS', 'swap1', 'fsck',
                'mountcritlocal', 'CRITLOCALMOUNTED', 'bootconf.sh', 'ttys', 'sysctl',
                'ipfilter', 'ipsec', 'network', 'staticroute', 'wpa_supplicant',
@@ -632,6 +764,10 @@ def stage_network(root, source, overlay, interface, pwd_mkdb, dhcpcd_dest,
                'LOGIN')
     if mdns_enabled:
         scripts += ('mdnsd',)
+    if ssh_enabled:
+        scripts += ('sshd',)
+    if logging_enabled:
+        scripts += ('sysdb', 'wscons', 'newsyslog', 'syslogd')
     for name in scripts:
         stage_rc_script(source / 'etc/rc.d' / name, root / 'etc/rc.network.d' / name)
     runtime_dirs = root / 'etc/rc.network.d/network_tmpdirs'
@@ -653,9 +789,103 @@ def stage_network(root, source, overlay, interface, pwd_mkdb, dhcpcd_dest,
         write_if_different(runtime_dirs, runtime_dirs_text, mode=0o555)
     else:
         write_if_different(runtime_dirs, runtime_dirs_text, mode=0o555)
+    if ssh_enabled:
+        (root / 'etc/ssh').mkdir(parents=True, exist_ok=True)
+        write_if_different(root / 'etc/ssh/sshd_config',
+            'Port 22\n'
+            'PermitRootLogin prohibit-password\n'
+            + ('HostKey /etc/ssh/ssh_host_ed25519_key\n' if openssh_crypto == 'builtin' else '') +
+            'PubkeyAuthentication yes\n'
+            'AuthenticationMethods publickey\n'
+            'PasswordAuthentication no\n'
+            'KbdInteractiveAuthentication no\n'
+            'AuthorizedKeysFile .ssh/authorized_keys\n'
+            + ('Subsystem sftp /usr/libexec/sftp-server\n' if sftp_enabled else '') +
+            'AllowAgentForwarding no\n'
+            'AllowTcpForwarding no\n'
+            'X11Forwarding no\n'
+            'PermitTunnel no\n')
+        motd = source / 'etc/motd'
+        if motd.is_file():
+            copy_if_different(motd, root / 'etc/motd')
+        elif not (root / 'etc/motd').exists():
+            write_if_different(root / 'etc/motd', '\n')
+        (root / 'var/chroot/sshd').mkdir(parents=True, exist_ok=True)
+    if logging_enabled:
+        log_socket = root / 'dev/log'
+        if log_socket.is_symlink():
+            if os.readlink(log_socket) != '/var/run/log':
+                raise ValueError('network /dev/log has a conflicting symlink')
+        elif log_socket.exists():
+            raise ValueError('network /dev/log conflicts with an existing path')
+        else:
+            log_socket.symlink_to('/var/run/log')
+        write_if_different(root / 'etc/syslog.conf',
+            '*.info;auth,authpriv.none /var/log/messages\n'
+            'auth,authpriv.info /var/log/authlog\n')
+        write_if_different(root / 'etc/newsyslog.conf',
+            '/var/log/messages 0644 3 64 * -\n'
+            '/var/log/authlog 0600 3 64 * -\n')
+        log_mount = root / 'etc/rc.network.d/network_logfs'
+        log_mount_text = (
+            '#!/bin/sh\n'
+            '# PROVIDE: network_logfs\n'
+            '# REQUIRE: CRITLOCALMOUNTED\n'
+            '# BEFORE: newsyslog syslogd\n'
+            '$_rc_subr_loaded . /etc/rc.subr\n'
+            'name=network_logfs\n'
+            'rcvar=$name\n'
+            'start_cmd=network_logfs_start\n'
+            'network_logfs_start() {\n'
+            '  : ${network_logfs_size:=1m}\n'
+            '  /sbin/mount | /usr/bin/grep -q " on /var/log type tmpfs" || \\\n'
+            '    /sbin/mount_tmpfs -s "$network_logfs_size" tmpfs /var/log || return $?\n'
+            '  : >> /var/log/messages\n'
+            '  : >> /var/log/authlog\n'
+            '  chmod 0644 /var/log/messages\n'
+            '  chmod 0600 /var/log/authlog\n'
+            '}\n'
+            'load_rc_config $name\n'
+            'run_rc_command "$1"\n')
+        write_if_different(log_mount, log_mount_text, mode=0o555)
     stage_overlay(overlay, root, allow_identical=True,
                   allow_suffixes={'etc/ifconfig.' + interface: b'up\n'},
                   replace_regular=True)
+    if not ssh_enabled:
+        ssh_script = root / 'etc/rc.network.d/sshd'
+        if ssh_script.exists() or ssh_script.is_symlink():
+            if ssh_script.is_symlink() or not ssh_script.is_file():
+                raise ValueError('disabled ssh script must be a regular staged file')
+            ssh_script.unlink()
+        ssh_config = root / 'etc/ssh/sshd_config'
+        if ssh_config.exists() or ssh_config.is_symlink():
+            if ssh_config.is_symlink() or not ssh_config.is_file():
+                raise ValueError('disabled ssh config must be a regular staged file')
+            ssh_config.unlink()
+        ssh_override = root / 'etc/rc.conf.d/sshd'
+        if ssh_override.exists() or ssh_override.is_symlink():
+            if ssh_override.is_symlink() or not ssh_override.is_file():
+                raise ValueError('disabled ssh rc override must be a regular file')
+            ssh_override.unlink()
+    if not logging_enabled:
+        for name in ('sysdb', 'wscons', 'newsyslog', 'syslogd', 'network_logfs'):
+            script = root / 'etc/rc.network.d' / name
+            if script.exists() or script.is_symlink():
+                if script.is_symlink() or not script.is_file():
+                    raise ValueError('disabled logging script must be a regular staged file')
+                script.unlink()
+        for name in ('syslog.conf', 'newsyslog.conf'):
+            config = root / 'etc' / name
+            if config.exists() or config.is_symlink():
+                if config.is_symlink() or not config.is_file():
+                    raise ValueError('disabled logging config must be a regular staged file')
+                config.unlink()
+        for name in ('syslogd', 'newsyslog'):
+            override = root / 'etc/rc.conf.d' / name
+            if override.exists() or override.is_symlink():
+                if override.is_symlink() or not override.is_file():
+                    raise ValueError('disabled logging rc override must be a regular file')
+                override.unlink()
     if not mdns_enabled:
         mdns_script = root / 'etc/rc.network.d/mdnsd'
         if mdns_script.exists() or mdns_script.is_symlink():
@@ -842,16 +1072,21 @@ def run_console(arguments):
     profile = os.environ.get('EMBER_USERLAND_PROFILE', 'console')
     is_network = profile == 'network'
     wpa_backend = os.environ.get('EMBER_WPA_CRYPTO_BACKEND', '') if is_network else ''
+    openssh_crypto = 'builtin'
     selected_toolsets = ()
     if is_network:
         selected_toolsets = tuple(filter(None,
             os.environ.get('EMBER_NETWORK_TOOLSETS', '').split(',')))
+        if 'ssh' in selected_toolsets:
+            openssh_crypto = os.environ.get('EMBER_OPENSSH_CRYPTO', 'openssl')
+            if openssh_crypto not in ('openssl', 'builtin'):
+                raise SystemExit('EMBER_OPENSSH_CRYPTO must be openssl or builtin')
         selected_spi_units = tuple(filter(None,
             os.environ.get('EMBER_NETWORK_SPI_UNITS', '').split(',')))
         try:
             settings = network(target, selected_toolsets, selected_spi_units,
                                os.environ.get('EMBER_NETWORK_ROOT_FILESYSTEM', 'ffs'),
-                               wpa_backend)
+                               wpa_backend, openssh_crypto)
         except ValueError as exc:
             raise SystemExit('static-console: ' + str(exc)) from exc
     else:
@@ -890,11 +1125,23 @@ def run_console(arguments):
             output = Path(paths.canonical_new(output))
         extra_path_names = ['EMBER_HOST_PREFIX', 'EMBER_LIBEDIT_SOURCE', 'EMBER_HOST_BFD_CONFIG',
                             'EMBER_LLVM_SOURCE', 'EMBER_PORTS_SOURCE', 'EMBER_BYACC_SOURCE']
+        network_service_sources = []
         if is_network:
             extra_path_names.extend(('EMBER_LIBPCAP_SOURCE', 'EMBER_WPA_SOURCE',
                                      'EMBER_PKGSRC_EXPORT'))
             if 'mdns' in selected_toolsets:
                 extra_path_names.append('EMBER_MDNS_SOURCE')
+            needs_openssl = wpa_backend != 'wolfssl' or openssh_crypto == 'openssl'
+            if needs_openssl:
+                network_service_sources.append('EMBER_OPENSSL_SOURCE')
+            if 'ssh' in selected_toolsets:
+                network_service_sources.extend((
+                    'EMBER_OPENSSH_SOURCE', 'EMBER_TCP_WRAPPERS_SOURCE', 'EMBER_ZLIB_SOURCE'))
+            if 'logging' in selected_toolsets:
+                network_service_sources.extend((
+                    'EMBER_LIBEVENT_SOURCE', 'EMBER_TCP_WRAPPERS_SOURCE'))
+            network_service_sources = list(dict.fromkeys(network_service_sources))
+            extra_path_names.extend(network_service_sources)
             if os.environ.get('EMBER_LIBPCAP_ARCHIVE'):
                 extra_path_names.append('EMBER_LIBPCAP_ARCHIVE')
             if os.environ.get('EMBER_WPA_ARCHIVE'):
@@ -977,6 +1224,7 @@ def run_console(arguments):
                                 'EMBER_WPA_SOURCE']
             if 'mdns' in selected_toolsets:
                 source_variables.insert(0, 'EMBER_MDNS_SOURCE')
+            source_variables.extend(network_service_sources)
             for variable in source_variables:
                 if not os.environ.get(variable):
                     raise SDKError('missing required network source: ' + variable)
@@ -990,6 +1238,16 @@ def run_console(arguments):
                     entry, package = 'scripts/source-inputs/dhcpcd/source.py', 'dhcpcd'
                 elif variable == 'EMBER_WPA_SOURCE':
                     entry, package = 'scripts/source-inputs/wpa/source.py', 'wpa'
+                elif variable == 'EMBER_OPENSSL_SOURCE':
+                    entry, package = 'scripts/source-inputs/openssl/source.py', 'openssl'
+                elif variable == 'EMBER_OPENSSH_SOURCE':
+                    entry, package = 'scripts/source-inputs/openssh/source.py', 'openssh'
+                elif variable == 'EMBER_LIBEVENT_SOURCE':
+                    entry, package = 'scripts/source-inputs/libevent/source.py', 'libevent'
+                elif variable == 'EMBER_TCP_WRAPPERS_SOURCE':
+                    entry, package = 'scripts/source-inputs/tcp_wrappers/source.py', 'tcp-wrappers'
+                elif variable == 'EMBER_ZLIB_SOURCE':
+                    entry, package = 'scripts/source-inputs/zlib/source.py', 'zlib'
                 else:
                     entry, package = 'scripts/source-inputs/libpcap/source.py', 'libpcap'
                 verifier_source = str(Path(os.environ['EMBER_PORTS_SOURCE']) / entry)
@@ -1121,6 +1379,13 @@ def run_console(arguments):
                    str(network_root_stage) if network_root_stage is not None else '',
                    ' '.join(settings.get('data_components', ())) if is_network else '',
                    selected_root_size, settings.get('root_filesystem', 'ffs')]
+        if is_network:
+            command.extend(os.environ.get(name, '')
+                           if name in network_service_sources else '' for name in (
+                               'EMBER_OPENSSL_SOURCE', 'EMBER_OPENSSH_SOURCE',
+                               'EMBER_LIBEVENT_SOURCE', 'EMBER_TCP_WRAPPERS_SOURCE',
+                               'EMBER_ZLIB_SOURCE'))
+            command.append(openssh_crypto)
         orchestrator_log = network_orchestrator_log(output) if is_network else output / 'logs/orchestrator.log'
         native_os.run_native_os(native, source=str(source), routing=str(output / 'routing'), cwd=str(source),
                                 arguments=command, shell=True, log=str(orchestrator_log))
@@ -1163,6 +1428,9 @@ def run_console(arguments):
             (f'network-interface={network_interface}\nwpa-crypto-backend={wpa_backend or "default"}\n' +
              f'root-filesystem={settings["root_filesystem"]}\n' +
              'network-toolsets=' + ' '.join(selected_toolsets) + '\n' +
+             f'openssh-crypto={settings["openssh_crypto"]}\n' +
+             f'syslogd-tls={settings["syslogd_tls"]}\n' +
+             f'syslogd-sign={settings["syslogd_sign"]}\n' +
              (f'wolfssl-sha256={wolfssl_hash}\n' if wolfssl_hash else '') +
              (f'libpcap-archive-sha256={libpcap_archive_hash}\n' if libpcap_archive_hash else '') +
              ''.join(f'{name}-source-record-sha256={digest}\n' for name, digest in sorted(network_sources.items()))
@@ -1211,11 +1479,23 @@ if __name__ == '__main__':
         link_if_same(sys.argv[2], sys.argv[3])
     elif len(sys.argv) == 7 and sys.argv[1] == 'apply-metalog-modes':
         apply_metalog_modes(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6])
-    elif len(sys.argv) == 12 and sys.argv[1] == 'stage-network':
-        if sys.argv[11] not in ('yes', 'no'):
-            raise SystemExit('stage-network MDNS_ENABLED must be yes or no')
+    elif len(sys.argv) == 5 and sys.argv[1] == 'network-crunch-config':
+        write_if_different(sys.argv[2], network_crunch_configuration(sys.argv[4], sys.argv[3]))
+    elif len(sys.argv) == 3 and sys.argv[1] == 'network-crunch-makeflags':
+        print(network_crunch_make_assignments(sys.argv[2]))
+    elif len(sys.argv) == 16 and sys.argv[1] == 'stage-network':
+        if any(value not in ('yes', 'no') for value in sys.argv[11:14]):
+            raise SystemExit('stage-network feature switches must be yes or no')
+        if sys.argv[14] not in ('openssl', 'builtin'):
+            raise SystemExit('stage-network OpenSSH crypto mode must be openssl or builtin')
+        if sys.argv[15] not in ('yes', 'no'):
+            raise SystemExit('stage-network SFTP switch must be yes or no')
         stage_network(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6],
                       sys.argv[7], sys.argv[8], sys.argv[9], sys.argv[10],
-                      mdns_enabled=sys.argv[11] == 'yes')
+                      mdns_enabled=sys.argv[11] == 'yes',
+                      ssh_enabled=sys.argv[12] == 'yes',
+                      logging_enabled=sys.argv[13] == 'yes',
+                      openssh_crypto=sys.argv[14],
+                      sftp_enabled=sys.argv[15] == 'yes')
     else:
-        raise SystemExit('usage: static-profile.py stage-overlay DIRECTORY ROOT | link-if-same TARGET LINK | stage-network ROOT SOURCE OVERLAY INTERFACE PWD_MKDB DHCPCD_SOURCE ROOT_DEVICE ROOT_PARTITION ROOT_FILESYSTEM MDNS_ENABLED')
+        raise SystemExit('usage: static-profile.py stage-overlay DIRECTORY ROOT | link-if-same TARGET LINK | stage-network ROOT SOURCE OVERLAY INTERFACE PWD_MKDB DHCPCD_SOURCE ROOT_DEVICE ROOT_PARTITION ROOT_FILESYSTEM MDNS_ENABLED SSH_ENABLED LOGGING_ENABLED OPENSSH_CRYPTO SFTP_ENABLED')

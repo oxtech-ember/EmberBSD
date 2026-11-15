@@ -31,19 +31,22 @@ syslogd_precmd()
 	#
 	( umask 022 ; > $_sockfile )
 
-	#	Find /etc/rc.d scripts with "chrootdir" rcorder(8) keyword,
+	#	Find configured rc scripts with "chrootdir" rcorder(8) keyword,
 	#	and if $${app}_chrootdir is a directory, add appropriate
 	#	syslog socket to list of sockets to watch.
 	#
-	for _lr in $(rcorder -k chrootdir /etc/rc.d/*); do
-	    (
-		_l=${_lr##*/}
-		load_rc_config ${_l}
-		eval _ldir=\$${_l}_chrootdir
-		if checkyesno $_l && [ -n "$_ldir" ]; then
-			echo "${_ldir}/var/run/log" >> $_sockfile
-		fi
-	    )
+	for _rd in ${rc_directories:-/etc/rc.d}; do
+	    [ -d "${_rd}" ] || continue
+	    for _lr in $(rcorder -k chrootdir "${_rd}"/*); do
+		(
+			_l=${_lr##*/}
+			load_rc_config ${_l}
+			eval _ldir=\$${_l}_chrootdir
+			if checkyesno $_l && [ -n "$_ldir" ]; then
+				echo "${_ldir}/var/run/log" >> $_sockfile
+			fi
+		)
+	    done
 	done
 
 	#	If other sockets have been provided, change run_rc_command()'s
