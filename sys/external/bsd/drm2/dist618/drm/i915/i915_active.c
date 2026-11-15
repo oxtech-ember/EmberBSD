@@ -27,6 +27,7 @@ struct active_node {
 	struct rb_node node;
 	struct i915_active_fence base;
 	struct i915_active *ref;
+	struct intel_engine_cs *engine;
 	u64 timeline;
 };
 
@@ -48,13 +49,13 @@ static inline bool is_barrier(const struct i915_active_fence *active)
 static inline struct llist_node *barrier_to_ll(struct active_node *node)
 {
 	GEM_BUG_ON(!is_barrier(&node->base));
-	return (struct llist_node *)&node->base.cb.node;
+	return &node->base.llist;
 }
 
 static inline struct intel_engine_cs *
 __barrier_to_engine(struct active_node *node)
 {
-	return (struct intel_engine_cs *)READ_ONCE(node->base.cb.node.prev);
+	return READ_ONCE(node->engine);
 }
 
 static inline struct intel_engine_cs *
@@ -66,8 +67,7 @@ barrier_to_engine(struct active_node *node)
 
 static inline struct active_node *barrier_from_ll(struct llist_node *x)
 {
-	return container_of((struct list_head *)x,
-			    struct active_node, base.cb.node);
+	return container_of(x, struct active_node, base.llist);
 }
 
 #if IS_ENABLED(CONFIG_DRM_I915_DEBUG_GEM) && IS_ENABLED(CONFIG_DEBUG_OBJECTS)
@@ -890,7 +890,7 @@ int i915_active_acquire_preallocate_barrier(struct i915_active *ref,
 			 * for our tracking of the pending barrier.
 			 */
 			RCU_INIT_POINTER(node->base.fence, ERR_PTR(-EAGAIN));
-			node->base.cb.node.prev = (void *)engine;
+			node->engine = engine;
 			__i915_active_acquire(ref);
 		}
 		GEM_BUG_ON(rcu_access_pointer(node->base.fence) != ERR_PTR(-EAGAIN));
@@ -992,7 +992,12 @@ void i915_request_add_active_barriers(struct i915_request *rq)
 	llist_for_each_safe(node, next, node) {
 		/* serialise with reuse_idle_barrier */
 		smp_store_mb(*ll_to_fence_slot(node), &rq->fence);
-		list_add_tail((struct list_head *)node, &rq->fence.cb_list);
+		struct i915_active_fence *active =
+			container_of(node, struct i915_active_fence, llist);
+
+		KASSERT(!active->cb.fcb_onqueue);
+		active->cb.fcb_onqueue = true;
+		TAILQ_INSERT_TAIL(&rq->fence.f_callbacks, &active->cb, fcb_entry);
 	}
 	spin_unlock_irqrestore(&rq->lock, flags);
 }
@@ -1092,10 +1097,15 @@ __i915_active_fence_set(struct i915_active_fence *active,
 	 * itself -- remembering that it needs to wait on A before executing.
 	 */
 	if (prev) {
-		__list_del_entry(&active->cb.node);
+		if (active->cb.fcb_onqueue) {
+			TAILQ_REMOVE(&prev->f_callbacks, &active->cb, fcb_entry);
+			active->cb.fcb_onqueue = false;
+		}
 		spin_unlock(prev->lock); /* serialise with prev->cb_list */
 	}
-	list_add_tail(&active->cb.node, &fence->cb_list);
+	KASSERT(!active->cb.fcb_onqueue);
+	active->cb.fcb_onqueue = true;
+	TAILQ_INSERT_TAIL(&fence->f_callbacks, &active->cb, fcb_entry);
 	spin_unlock_irqrestore(fence->lock, flags);
 
 	return prev;

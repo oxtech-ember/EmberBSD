@@ -18,6 +18,7 @@
 struct i915_active_fence {
 	struct dma_fence __rcu *fence;
 	struct dma_fence_cb cb;
+	struct llist_node llist;
 };
 
 struct active_node;

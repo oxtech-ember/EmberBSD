@@ -51,6 +51,7 @@
 
 struct execute_cb {
 	struct irq_work work;
+	struct llist_node node;
 	struct i915_sw_fence *fence;
 };
 
@@ -197,7 +198,7 @@ __notify_execute_cb(struct i915_request *rq, bool (*fn)(struct irq_work *wrk))
 
 	llist_for_each_entry_safe(cb, cn,
 				  llist_del_all(&rq->execute_cb),
-				  work.node.llist)
+				  node)
 		fn(&cb->work);
 }
 
@@ -528,7 +529,7 @@ __await_execution(struct i915_request *rq,
 	 * callback first, then checking the ACTIVE bit, we serialise with
 	 * the completed/retired request.
 	 */
-	if (llist_add(&cb->work.node.llist, &signal->execute_cb)) {
+	if (llist_add(&cb->node, &signal->execute_cb)) {
 		if (i915_request_is_active(signal) ||
 		    __request_in_flight(signal))
 			i915_request_notify_execute_cb_imm(signal);
@@ -709,7 +710,7 @@ void i915_request_submit(struct i915_request *request)
 
 void __i915_request_unsubmit(struct i915_request *request)
 {
-	struct intel_engine_cs *engine = request->engine;
+	struct intel_engine_cs *engine __maybe_unused = request->engine;
 
 	/*
 	 * Only unwind in reverse order, required so that the per-context list
@@ -2090,7 +2091,7 @@ long i915_request_wait_timeout(struct i915_request *rq,
 
 	if (READ_ONCE(wait.tsk))
 		dma_fence_remove_callback(&rq->fence, &wait.cb);
-	GEM_BUG_ON(!list_empty(&wait.cb.node));
+	GEM_BUG_ON(wait.cb.fcb_onqueue);
 
 out:
 	mutex_release(&rq->engine->gt->reset.mutex.dep_map, _THIS_IP_);

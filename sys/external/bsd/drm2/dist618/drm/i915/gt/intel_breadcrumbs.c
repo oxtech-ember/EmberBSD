@@ -132,28 +132,6 @@ i915_dma_fence_signal(struct dma_fence *fence)
 	return !test_and_set_bit(DMA_FENCE_FLAG_SIGNALED_BIT, &fence->flags);
 }
 
-static void
-__dma_fence_signal__timestamp(struct dma_fence *fence, ktime_t timestamp)
-{
-	fence->timestamp = timestamp;
-	set_bit(DMA_FENCE_FLAG_TIMESTAMP_BIT, &fence->flags);
-	trace_dma_fence_signaled(fence);
-}
-
-static void
-__dma_fence_signal__notify(struct dma_fence *fence,
-			   const struct list_head *list)
-{
-	struct dma_fence_cb *cur, *tmp;
-
-	lockdep_assert_held(fence->lock);
-
-	list_for_each_entry_safe(cur, tmp, list, node) {
-		INIT_LIST_HEAD(&cur->node);
-		cur->func(fence, cur);
-	}
-}
-
 static void add_retire(struct intel_breadcrumbs *b, struct intel_timeline *tl)
 {
 	if (b->irq_engine)
@@ -249,16 +227,11 @@ static void signal_irq_work(struct irq_work *work)
 	llist_for_each_safe(signal, sn, signal) {
 		struct i915_request *rq =
 			llist_entry(signal, typeof(*rq), signal_node);
-		struct list_head cb_list;
 
 		if (rq->engine->sched_engine->retire_inflight_request_prio)
 			rq->engine->sched_engine->retire_inflight_request_prio(rq);
 
-		spin_lock(&rq->lock);
-		list_replace(&rq->fence.cb_list, &cb_list);
-		__dma_fence_signal__timestamp(&rq->fence, timestamp);
-		__dma_fence_signal__notify(&rq->fence, &cb_list);
-		spin_unlock(&rq->lock);
+		__dma_fence_signal_wake(&rq->fence, timestamp);
 
 		i915_request_put(rq);
 	}
