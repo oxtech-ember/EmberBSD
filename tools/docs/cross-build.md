@@ -247,6 +247,11 @@ python3 crypto/external/bsd/heimdal/share/mk/tests/generated-paths.py \
     --source /absolute/prepared-heimdal --work-dir /absolute/test-work
 ```
 
+The public generated artifacts depend on the normalization rule and canonical
+map inputs, so a normal retained-object build refreshes them without cleaning
+or rerunning unchanged ASN.1 generation. Pass `--previous-rules` with an older
+`Makefile.rules.inc` to exercise this upgrade in private retained objects.
+
 `EMBER_EXTERNAL_LLVM_RUNTIME`
 goes to `/usr/pkg/llvm` and `EMBER_EXTERNAL_GCC_RUNTIME` to `/usr/pkg/gcc16`.
 The `lib/libc` tags use the same list. Each root must be an absolute path
