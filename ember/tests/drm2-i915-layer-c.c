@@ -227,7 +227,8 @@ drm2_i915_layer_c_run(void)
 	CHECK(castable_to_type(5, pgoff_t) && !castable_to_type(-1, pgoff_t));
 	CHECK(castable_to_type((unsigned long)i, pgoff_t));
 	CHECK(castable_to_type(ull, pgoff_t));
-	CHECK(!castable_to_type(i, pgoff_t) && !castable_to_type(lg, pgoff_t));
+	/* an int is too narrow; a long is the very type of the layer's pgoff_t (off_t), so it passes, which Linux's would not allow */
+	CHECK(!castable_to_type(i, pgoff_t) && castable_to_type(lg, pgoff_t));
 	CHECK(castable_to_type(i, int) && !castable_to_type(lg, int));
 
 
