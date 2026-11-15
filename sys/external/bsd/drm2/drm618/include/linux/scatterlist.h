@@ -188,6 +188,15 @@ sg_set_page(struct scatterlist *sg, struct page *page, unsigned int len,
 }
 
 /* One range of kernel memory: the page of its first byte and the address. */
+/* the page of an entry, its length and offset kept */
+static inline void
+sg_assign_page(struct scatterlist *sg, struct page *page)
+{
+
+	sg->page_link = (sg->page_link & SG_END_BIT) | (unsigned long)page;
+	sg->va = NULL;
+}
+
 void	sg_set_buf(struct scatterlist *, const void *, unsigned int);
 
 static inline void

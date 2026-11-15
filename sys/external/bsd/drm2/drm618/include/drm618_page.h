@@ -203,6 +203,7 @@ void	io_mapping_unmap_local(void *);
 /* ttm_prot_from_caching tests x86 family > 3 before it asks for uncached. */
 struct drm618_cpuinfo {
 	int	x86;
+	int	x86_clflush_size;	/* bytes of a cache line, as the CPUs this layer targets have it: 64 (read from CPUID once the driver links) */
 };
 extern const struct drm618_cpuinfo drm618_boot_cpu_data;
 #define	boot_cpu_data	drm618_boot_cpu_data

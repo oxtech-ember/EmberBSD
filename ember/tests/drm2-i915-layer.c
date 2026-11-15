@@ -452,6 +452,41 @@ drm2_i915_layer_run(void)
 		CHECK(pm_runtime_get_if_active(NULL) == pm_runtime_get_if_in_use(NULL));
 	}
 
+	/* third group */
+	{
+		struct list_head lh;
+		struct scatterlist one;
+		struct page *pg;
+		unsigned long bmp[2] = { ~0ul, ~0ul };
+		static const uint32_t w32[3] = { 0x11111111u, 0x22222222u, 0xffffffffu };
+		wait_queue_head_t wh;
+
+		INIT_LIST_HEAD(&lh);
+		CHECK(list_empty_careful(&lh));
+		lh.next = &lh;
+		lh.prev = (struct list_head *)&one;
+		CHECK(!list_empty_careful(&lh));
+		INIT_LIST_HEAD(&lh);
+		bitmap_from_arr32(bmp, w32, 80);
+		CHECK(bmp[0] == 0x2222222211111111ul && bmp[1] == 0xfffful);
+		bitmap_from_arr32(bmp, w32, 40);
+		CHECK(bmp[0] == 0x2222222211111111ul && bmp[1] == 0);
+		CHECK(pat_enabled() == (cpu_has_pat != 0));
+		pg = alloc_page(GFP_KERNEL);
+		CHECK(pg != NULL);
+		if (pg != NULL) {
+			sg_init_table(&one, 1);
+			sg_set_page(&one, NULL, 40, 8);
+			sg_assign_page(&one, pg);
+			CHECK(sg_page(&one) == pg && one.length == 40 && one.offset == 8 && sg_is_last(&one));
+			__free_page(pg);
+		}
+		__init_waitqueue_head(&wh, "x", NULL);
+		CHECK(list_empty(&wh.head));
+		destroy_waitqueue_head(&wh);
+		CHECK(boot_cpu_data.x86_clflush_size == 64);
+	}
+
 	/* strings, memory */
 	{
 		char s1[] = "  hi there \n", s2[] = "a-b-c";

@@ -42,7 +42,7 @@ extern vaddr_t pmap_direct_base;
 #define	DRM618_TRUNC(x)	((x) & ~((__typeof__(x))PAGE_SIZE - 1))
 #define	DRM618_ROUND(x)	(((x) + PAGE_SIZE - 1) & ~((__typeof__(x))PAGE_SIZE - 1))
 
-const struct drm618_cpuinfo drm618_boot_cpu_data = { .x86 = 6 };
+const struct drm618_cpuinfo drm618_boot_cpu_data = { .x86 = 6, .x86_clflush_size = 64 };
 
 /* ---- the direct map ----------------------------------------------------------- */
 

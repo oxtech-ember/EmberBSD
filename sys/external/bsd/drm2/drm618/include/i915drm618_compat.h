@@ -709,4 +709,105 @@ void	component_del(struct device *, const struct component_ops *);
 struct timer_list;
 unsigned long	drm618_timer_expires(const struct timer_list *);
 
+
+/* ---- batch 3 ---- */
+
+#include <linux/device.h>
+#include <linux/pm_qos.h>
+#include <linux/ioport.h>
+#include <linux/wait.h>
+#include <linux/timer.h>
+#include <asm/cpufeature.h>
+
+/* the list is empty and nobody is in the middle of taking its last entry off */
+static inline int
+list_empty_careful(const struct list_head *head)
+{
+	const struct list_head *next = head->next;
+
+	return next == head && next == head->prev;
+}
+
+/* LE 32 bit words into a bitmap of longs (little endian x86: the low word first) */
+static inline void
+bitmap_from_arr32(unsigned long *bitmap, const uint32_t *buf,
+    unsigned int nbits)
+{
+	unsigned int i, words = DIV_ROUND_UP(nbits, 32);
+
+	for (i = 0; i < DIV_ROUND_UP(nbits, BITS_PER_LONG); i++)
+		bitmap[i] = 0;
+	for (i = 0; i < words; i++)
+		bitmap[i / 2] |= (unsigned long)buf[i] << ((i % 2) * 32);
+	if (nbits % BITS_PER_LONG != 0)
+		bitmap[(nbits - 1) / BITS_PER_LONG] &=
+		    (1ul << (nbits % BITS_PER_LONG)) - 1;
+}
+
+/* PAT is enabled when the CPU has it (the layer programs it at boot) */
+static inline bool
+pat_enabled(void)
+{
+
+	return cpu_has_pat;
+}
+
+/* init_waitqueue_head with the lock class arguments Linux passes; they are not used here */
+static inline void
+__init_waitqueue_head(wait_queue_head_t *wq, const char *name __unused,
+    void *key __unused)
+{
+
+	init_waitqueue_head(wq);
+}
+
+#define	timer_delete(t)			del_timer(t)
+#define	timer_shutdown_sync(t)		del_timer_sync(t)
+
+/* the reclaim flags say nothing to the layer's allocator */
+#ifndef __GFP_KSWAPD_RECLAIM
+#define	__GFP_KSWAPD_RECLAIM	0
+#endif
+#ifndef __GFP_RECLAIM
+#define	__GFP_RECLAIM		0
+#endif
+#ifndef DPM_FLAG_NO_DIRECT_COMPLETE
+#define	DPM_FLAG_NO_DIRECT_COMPLETE	(1 << 1)
+#endif
+
+/* a show attribute also has the table of operations the debugfs file would use; there is no debugfs, an unused object stands for it */
+#undef	DEFINE_SHOW_ATTRIBUTE
+#define	DEFINE_SHOW_ATTRIBUTE(name)					\
+	static const struct { int unused; } name##_fops __unused = { 0 }
+#undef	DEFINE_SHOW_STORE_ATTRIBUTE
+#define	DEFINE_SHOW_STORE_ATTRIBUTE(name)	DEFINE_SHOW_ATTRIBUTE(name)
+
+/* vga_switcheroo: the states and the client operations (declared, not defined: no hybrid graphics here) */
+enum vga_switcheroo_state {
+	VGA_SWITCHEROO_OFF,
+	VGA_SWITCHEROO_ON,
+	VGA_SWITCHEROO_NOT_FOUND,
+};
+struct vga_switcheroo_client_ops {
+	void	(*set_gpu_state)(struct pci_dev *, enum vga_switcheroo_state);
+	void	(*reprobe)(struct pci_dev *);
+	bool	(*can_switch)(struct pci_dev *);
+	void	(*gpu_bound)(struct pci_dev *, int);
+};
+int	vga_switcheroo_register_client(struct pci_dev *,
+	    const struct vga_switcheroo_client_ops *, bool);
+void	vga_switcheroo_unregister_client(struct pci_dev *);
+int	vga_switcheroo_client_probe_defer(struct pci_dev *);
+
+/* CPU latency requests and a few device calls (declared, not defined) */
+void	cpu_latency_qos_add_request(struct pm_qos_request *, int);
+void	cpu_latency_qos_update_request(struct pm_qos_request *, int);
+void	cpu_latency_qos_remove_request(struct pm_qos_request *);
+bool	cpu_latency_qos_request_active(struct pm_qos_request *);
+int	pnp_range_reserved(resource_size_t, resource_size_t);
+bool	device_iommu_mapped(struct device *);
+void	wake_up_var(void *);
+void	memcpy_from_page(char *, struct page *, size_t, size_t);
+void	__free_pages(struct page *, unsigned int);
+
 #endif
