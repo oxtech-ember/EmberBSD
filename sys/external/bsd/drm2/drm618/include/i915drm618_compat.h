@@ -434,6 +434,68 @@ strreplace(char *s, char old, char new)
 	return s;
 }
 
+/* ---- ranges, errors, files that need no debugfs ---- */
+
+#ifndef range_overflows
+#define	range_overflows(start, size, max) ({				\
+	__typeof__(start) __start = (start);				\
+	__typeof__(size) __size = (size);				\
+	__typeof__(max) __max = (max);					\
+	(void)(&__start == &__size);					\
+	(void)(&__start == &__max);					\
+	__start >= __max || __size > __max - __start;			\
+})
+#define	range_overflows_t(type, start, size, max)			\
+	range_overflows((type)(start), (type)(size), (type)(max))
+#endif
+#ifndef range_end_overflows
+#define	range_end_overflows(start, size, max) ({			\
+	__typeof__(start) __start = (start);				\
+	__typeof__(size) __size = (size);				\
+	__typeof__(max) __max = (max);					\
+	(void)(&__start == &__size);					\
+	(void)(&__start == &__max);					\
+	__start > __max || __size > __max - __start;			\
+})
+#define	range_end_overflows_t(type, start, size, max)			\
+	range_end_overflows((type)(start), (type)(size), (type)(max))
+#endif
+
+/* errors Linux has and NetBSD lacks; not Linux's numbers, above the layer's */
+#ifndef ENOKEY
+#define	ENOKEY		520
+#endif
+#ifndef EBADSLT
+#define	EBADSLT		521
+#endif
+
+/*
+ * Files of debugfs and seq_file: there is no debugfs (the layer's calls make
+ * nothing), but the sources name these functions in file operations tables.
+ * Declared, not defined.
+ */
+struct dentry;
+struct file;
+struct inode;
+struct seq_file;
+int	single_open(struct file *, int (*)(struct seq_file *, void *), void *);
+int	single_open_size(struct file *, int (*)(struct seq_file *, void *),
+	    void *, size_t);
+int	single_release(struct inode *, struct file *);
+ssize_t	seq_read(struct file *, char *, size_t, off_t *);
+off_t	seq_lseek(struct file *, off_t, int);
+off_t	default_llseek(struct file *, off_t, int);
+int	simple_open(struct inode *, struct file *);
+/* the table of operations of a debugfs attribute has no user without debugfs: an unused object of the name */
+#define	DEFINE_SIMPLE_ATTRIBUTE(name, get, set, fmt)			\
+	static const struct { int unused; } name __unused = { 0 }
+#define	DEFINE_DEBUGFS_ATTRIBUTE(name, get, set, fmt)			\
+	DEFINE_SIMPLE_ATTRIBUTE(name, get, set, fmt)
+#define	debugfs_create_file_unsafe(...)	((struct dentry *)NULL)
+#define	debugfs_create_bool(...)	((void)0)
+#define	debugfs_create_u32(...)		((void)0)
+#define	debugfs_create_u64(...)		((void)0)
+
 /* ---- debugging aids, interrupts ---- */
 
 #define	might_alloc(gfp)		((void)(gfp))

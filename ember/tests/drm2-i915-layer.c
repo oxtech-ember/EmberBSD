@@ -398,6 +398,13 @@ drm2_i915_layer_run(void)
 		fsleep(100);
 	}
 
+	/* ranges: the start must be below the limit, the end of it at the limit at most */
+	CHECK(!range_overflows(0u, 10u, 10u) && range_overflows(10u, 0u, 10u));
+	CHECK(range_overflows(3u, 8u, 10u) && !range_overflows(3u, 7u, 10u));
+	CHECK(!range_end_overflows(10u, 0u, 10u) && range_end_overflows(11u, 0u, 10u));
+	CHECK(!range_end_overflows(3u, 7u, 10u) && range_end_overflows_t(uint8_t, 3, 8, 10));
+	CHECK(range_overflows_t(uint8_t, 300, 1, 255));
+
 	/* strings, memory */
 	{
 		char s1[] = "  hi there \n", s2[] = "a-b-c";
