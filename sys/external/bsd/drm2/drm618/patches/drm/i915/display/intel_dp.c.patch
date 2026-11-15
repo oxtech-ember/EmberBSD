@@ -1,0 +1,32 @@
+--- a/drm/i915/display/intel_dp.c
++++ b/drm/i915/display/intel_dp.c
+@@ -4776,7 +4776,7 @@
+ 	 * - InfoFrame Type: 0x07
+ 	 *    [CTA-861-G Table-42 Dynamic Range and Mastering InfoFrame]
+ 	 */
+-	sdp->sdp_header.HB1 = drm_infoframe->type;
++	sdp->sdp_header.HB1 = drm_infoframe->header.type;
+ 	/*
+ 	 * Least Significant Eight Bits of (Data Byte Count – 1)
+ 	 * infoframe_size - 1
+@@ -4785,9 +4785,9 @@
+ 	/* INFOFRAME SDP Version Number */
+ 	sdp->sdp_header.HB3 = (0x13 << 2);
+ 	/* CTA Header Byte 2 (INFOFRAME Version Number) */
+-	sdp->db[0] = drm_infoframe->version;
++	sdp->db[0] = drm_infoframe->header.version;
+ 	/* CTA Header Byte 3 (Length of INFOFRAME): HDMI_DRM_INFOFRAME_SIZE */
+-	sdp->db[1] = drm_infoframe->length;
++	sdp->db[1] = drm_infoframe->header.length;
+ 	/*
+ 	 * Copy HDMI_DRM_INFOFRAME_SIZE size from a buffer after
+ 	 * HDMI_INFOFRAME_HEADER_SIZE
+@@ -6131,7 +6131,7 @@
+ 		return ret;
+ 
+ 	drm_dbg_kms(display->drm, "registering %s bus for %s\n",
+-		    intel_dp->aux.name, connector->base.kdev->kobj.name);
++		    intel_dp->aux.name, drm618_kdev_name(connector->base.kdev));
+ 
+ 	intel_dp->aux.dev = connector->base.kdev;
+ 	ret = drm_dp_aux_register(&intel_dp->aux);

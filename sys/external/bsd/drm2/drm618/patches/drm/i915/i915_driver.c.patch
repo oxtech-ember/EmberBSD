@@ -1,0 +1,11 @@
+--- a/drm/i915/i915_driver.c
++++ b/drm/i915/i915_driver.c
+@@ -745,7 +745,7 @@
+ 	struct drm_i915_private *i915;
+ 	struct intel_display *display;
+ 
+-	i915 = devm_drm_dev_alloc(&pdev->dev, &i915_drm_driver,
++	i915 = devm_drm_dev_alloc(pdev->pd_dev, &i915_drm_driver,
+ 				  struct drm_i915_private, drm);
+ 	if (IS_ERR(i915))
+ 		return i915;

@@ -25,7 +25,11 @@
 #    with "excluded" in the last column);
 #  - files are byte-identical to Linux 6.18.x; no RCS ids are inserted.  The
 #    provenance is dist618/MANIFEST.tsv (sha256 of every file, licence class).
-#    "sh prepare-import618.sh --verify LINUX_TREE" checks it.
+#    "sh prepare-import618.sh --verify LINUX_TREE" checks it;
+#  - the local changes of imported files are drm618/patches/<path>.patch (one
+#    unified diff of the Linux file per row of drm618/patches.tsv): they are
+#    applied after the copy, and the import stops with a non-zero status if one
+#    does not apply or does not give the sha256 recorded in patches.tsv.
 #
 # Layout of dist618 (the same relative layout as dist):
 #   drm/*.c drm/*.h drm/display drm/clients   <- drivers/gpu/drm
@@ -62,6 +66,22 @@ if [ "${1:-}" = --verify ]; then
 			before=$(echo "$row" | cut -f2)
 			after=$(echo "$row" | cut -f3)
 			if [ -n "$row" ] && [ "$before" = "$sha" ] && [ "$after" = "$d" ]; then
+				# the patch file applied to the Linux file must give exactly the tree file
+				pf=$D/drm618/patches/$path.patch
+				if [ ! -f "$pf" ]; then
+					echo "ROW WITHOUT PATCH $path (drm618/patches/$path.patch is missing)" >&2
+					bad=1
+				else
+					vtmp=$(mktemp)
+					if patch -s -o "$vtmp" "$lt/$src" "$pf" >/dev/null 2>&1 && \
+					    [ "$(sha256sum "$vtmp" | cut -d' ' -f1)" = "$d" ]; then
+						:
+					else
+						echo "PATCH MISMATCH $path (original + patch is not the file of the tree)" >&2
+						bad=1
+					fi
+					rm -f "$vtmp" "$vtmp.orig" "$vtmp.rej"
+				fi
 				patched=$((patched + 1))
 				echo "PATCHED $path: $(echo "$row" | cut -f4)"
 			else
@@ -82,6 +102,19 @@ if [ "${1:-}" = --verify ]; then
 		fi
 	done < "$ptmp"
 	rm -f "$ptmp"
+	# every patch file must have a row of patches.tsv
+	if [ -d $D/drm618/patches ]; then
+		ptmp=$(mktemp)
+		( cd $D/drm618/patches && find . -name '*.patch' | sed 's|^\./||;s|\.patch$||' ) >| "$ptmp"
+		while IFS= read -r path; do
+			[ -n "$path" ] || continue
+			if ! grep -q "^$path	" "$pt" 2>/dev/null; then
+				echo "PATCH WITHOUT ROW drm618/patches/$path.patch (no row in patches.tsv)" >&2
+				bad=1
+			fi
+		done < "$ptmp"
+		rm -f "$ptmp"
+	fi
 	echo "verify: $patched file(s) of Linux 6.18 with a local patch (drm618/patches.tsv), rest pristine" >&2
 	exit $bad
 fi
@@ -182,6 +215,26 @@ tail -n +2 "$tmp/select.tsv" | while IFS="	" read -r p kind cls spdx action reas
 		;;
 	esac
 done
+
+# The local patches of imported files.
+pt=$D/drm618/patches.tsv
+ptmp=$tmp/patch-rows
+tail -n +2 "$pt" > "$ptmp"
+applied=0
+while IFS="	" read -r path sha_linux sha_patched purpose; do
+	[ -n "$path" ] || continue
+	pf=$D/drm618/patches/$path.patch
+	[ -f "$pf" ] || { echo "no patch file $pf for $path (patches.tsv)" >&2; exit 3; }
+	[ "$(sha256sum "$D/dist618/$path" | cut -d' ' -f1)" = "$sha_linux" ] || \
+	    { echo "$path: the Linux file is not the one the patch was made for" >&2; exit 3; }
+	patch -s -p1 -d $D/dist618 < "$pf" >| "$tmp/patch.out" 2>&1 || \
+	    { echo "patch of $path does not apply:" >&2; cat "$tmp/patch.out" >&2; exit 3; }
+	[ "$(sha256sum "$D/dist618/$path" | cut -d' ' -f1)" = "$sha_patched" ] || \
+	    { echo "$path: the patched file is not the one recorded in patches.tsv" >&2; exit 3; }
+	applied=$((applied + 1))
+done < "$ptmp"
+find $D/dist618 \( -name '*.orig' -o -name '*.rej' \) -delete
+echo "applied $applied local patches (drm618/patches)" >&2
 
 # Draft of the files list for config(1), next to the reference tree.
 {

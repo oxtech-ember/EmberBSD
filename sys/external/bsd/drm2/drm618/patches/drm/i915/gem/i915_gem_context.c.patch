@@ -1,0 +1,51 @@
+--- a/drm/i915/gem/i915_gem_context.c
++++ b/drm/i915/gem/i915_gem_context.c
+@@ -321,7 +321,7 @@
+ 
+ 	lockdep_assert_held(&fpriv->proto_context_lock);
+ 
+-	ret = xa_alloc(&fpriv->context_xa, id, NULL, xa_limit_32b, GFP_KERNEL);
++	ret = xa_alloc(&fpriv->context_xa, id, NULL, XA_LIMIT(1, UINT_MAX), GFP_KERNEL);
+ 	if (ret)
+ 		return ret;
+ 
+@@ -1759,10 +1759,10 @@
+ 	xa_init_flags(&file_priv->proto_context_xa, XA_FLAGS_ALLOC);
+ 
+ 	/* 0 reserved for the default context */
+-	xa_init_flags(&file_priv->context_xa, XA_FLAGS_ALLOC1);
++	xa_init_flags(&file_priv->context_xa, XA_FLAGS_ALLOC);
+ 
+ 	/* 0 reserved for invalid/unassigned ppgtt */
+-	xa_init_flags(&file_priv->vm_xa, XA_FLAGS_ALLOC1);
++	xa_init_flags(&file_priv->vm_xa, XA_FLAGS_ALLOC);
+ 
+ 	pc = proto_context_create(file_priv, i915, 0);
+ 	if (IS_ERR(pc)) {
+@@ -1840,7 +1840,7 @@
+ 	}
+ 
+ 	err = xa_alloc(&file_priv->vm_xa, &id, &ppgtt->vm,
+-		       xa_limit_32b, GFP_KERNEL);
++		       XA_LIMIT(1, UINT_MAX), GFP_KERNEL);
+ 	if (err)
+ 		goto err_put;
+ 
+@@ -1897,7 +1897,7 @@
+ 	 */
+ 	i915_vm_get(vm);
+ 
+-	err = xa_alloc(&file_priv->vm_xa, &id, vm, xa_limit_32b, GFP_KERNEL);
++	err = xa_alloc(&file_priv->vm_xa, &id, vm, XA_LIMIT(1, UINT_MAX), GFP_KERNEL);
+ 	if (err) {
+ 		i915_vm_put(vm);
+ 		return err;
+@@ -2415,7 +2415,7 @@
+ 
+ 		/* Get ourselves a context ID */
+ 		ret = xa_alloc(&ext_data.fpriv->context_xa, &id, NULL,
+-			       xa_limit_32b, GFP_KERNEL);
++			       XA_LIMIT(1, UINT_MAX), GFP_KERNEL);
+ 		if (ret)
+ 			goto err_pc;
+ 

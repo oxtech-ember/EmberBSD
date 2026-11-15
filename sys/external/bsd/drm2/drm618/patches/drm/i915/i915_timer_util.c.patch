@@ -1,0 +1,11 @@
+--- a/drm/i915/i915_timer_util.c
++++ b/drm/i915/i915_timer_util.c
+@@ -11,7 +11,7 @@
+ 		return;
+ 
+ 	timer_delete(t);
+-	WRITE_ONCE(t->expires, 0);
++	drm618_timer_clear_expires(t);
+ }
+ 
+ void set_timer_ms(struct timer_list *t, unsigned long timeout)

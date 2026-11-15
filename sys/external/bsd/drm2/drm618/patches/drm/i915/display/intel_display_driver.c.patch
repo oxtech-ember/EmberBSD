@@ -1,0 +1,11 @@
+--- a/drm/i915/display/intel_display_driver.c
++++ b/drm/i915/display/intel_display_driver.c
+@@ -75,7 +75,7 @@
+ 		return true;
+ 
+ 	/* If the LCD panel has a privacy-screen, wait for it */
+-	privacy_screen = drm_privacy_screen_get(&pdev->dev, NULL);
++	privacy_screen = drm_privacy_screen_get(pdev->pd_dev, NULL);
+ 	if (IS_ERR(privacy_screen) && PTR_ERR(privacy_screen) == -EPROBE_DEFER)
+ 		return true;
+ 

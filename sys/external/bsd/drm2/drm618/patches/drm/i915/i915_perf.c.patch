@@ -1,0 +1,20 @@
+--- a/drm/i915/i915_perf.c
++++ b/drm/i915/i915_perf.c
+@@ -2689,7 +2689,7 @@
+ {
+ 	struct drm_i915_private *i915 = stream->perf->i915;
+ 	struct intel_engine_cs *engine;
+-	struct intel_gt *gt = stream->engine->gt;
++	struct intel_gt *gt __maybe_unused = stream->engine->gt;
+ 	struct i915_gem_context *ctx, *cn;
+ 	int err;
+ 
+@@ -4275,7 +4275,7 @@
+ 
+ 	perf->metrics_kobj =
+ 		kobject_create_and_add("metrics",
+-				       &i915->drm.primary->kdev->kobj);
++				       drm618_kdev_kobj(i915->drm.primary->kdev));
+ 
+ 	mutex_unlock(&gt->perf.lock);
+ }

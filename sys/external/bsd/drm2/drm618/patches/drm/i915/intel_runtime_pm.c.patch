@@ -1,0 +1,11 @@
+--- a/drm/i915/intel_runtime_pm.c
++++ b/drm/i915/intel_runtime_pm.c
+@@ -458,7 +458,7 @@
+ {
+ 	struct drm_i915_private *i915 = rpm_to_i915(rpm);
+ 	struct pci_dev *pdev = to_pci_dev(i915->drm.dev);
+-	struct device *kdev = &pdev->dev;
++	struct device *kdev = pdev->pd_dev;
+ 
+ 	rpm->kdev = kdev;
+ 	rpm->available = HAS_RUNTIME_PM(i915);

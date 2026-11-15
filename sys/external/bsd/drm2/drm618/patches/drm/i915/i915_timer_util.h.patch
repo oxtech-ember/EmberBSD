@@ -1,0 +1,11 @@
+--- a/drm/i915/i915_timer_util.h
++++ b/drm/i915/i915_timer_util.h
+@@ -12,7 +12,7 @@
+ 
+ static inline bool timer_active(const struct timer_list *t)
+ {
+-	return READ_ONCE(t->expires);
++	return drm618_timer_expires(t);
+ }
+ 
+ static inline bool timer_expired(const struct timer_list *t)

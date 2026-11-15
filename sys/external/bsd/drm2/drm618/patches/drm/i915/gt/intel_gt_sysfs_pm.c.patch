@@ -1,0 +1,29 @@
+--- a/drm/i915/gt/intel_gt_sysfs_pm.c
++++ b/drm/i915/gt/intel_gt_sysfs_pm.c
+@@ -112,7 +112,7 @@
+ 	static ssize_t _name##_dev_show(struct device *dev,					\
+ 					struct device_attribute *attr, char *buff)		\
+ 	{											\
+-		return _name##_show_common(&dev->kobj, &attr->attr, buff);			\
++		return _name##_show_common(drm618_kdev_kobj(dev), &attr->attr, buff);			\
+ 	}
+ 
+ #define INTEL_GT_SYSFS_STORE(_name, _func)						\
+@@ -141,7 +141,7 @@
+ 					 struct device_attribute *attr,			\
+ 					 const char *buff, size_t count)		\
+ 	{										\
+-		return _name##_store_common(&dev->kobj, &attr->attr, buff, count);	\
++		return _name##_store_common(drm618_kdev_kobj(dev), &attr->attr, buff, count);	\
+ 	}
+ 
+ #define INTEL_GT_SYSFS_SHOW_MAX(_name) INTEL_GT_SYSFS_SHOW(_name, max)
+@@ -189,7 +189,7 @@
+ 				   struct device_attribute *attr,
+ 				   char *buff)
+ {
+-	struct intel_gt *gt = intel_gt_sysfs_get_drvdata(&dev->kobj, attr->attr.name);
++	struct intel_gt *gt = intel_gt_sysfs_get_drvdata(drm618_kdev_kobj(dev), attr->attr.name);
+ 
+ 	return sysfs_emit(buff, "%x\n", gt->rc6.enabled);
+ }

@@ -1,0 +1,11 @@
+--- a/drm/i915/gt/sysfs_engines.c
++++ b/drm/i915/gt/sysfs_engines.c
+@@ -503,7 +503,7 @@
+ 	struct intel_engine_cs *engine;
+ 	struct kobject *dir;
+ 
+-	dir = kobject_create_and_add("engine", &kdev->kobj);
++	dir = kobject_create_and_add("engine", drm618_kdev_kobj(kdev));
+ 	if (!dir)
+ 		return;
+ 

@@ -1,0 +1,11 @@
+--- a/drm/i915/i915_vma.h
++++ b/drm/i915/i915_vma.h
+@@ -68,7 +68,7 @@
+ 	return _i915_vma_move_to_active(vma, rq, &rq->fence, flags);
+ }
+ 
+-#define __i915_vma_flags(v) ((unsigned long *)&(v)->flags.counter)
++#define __i915_vma_flags(v) ((unsigned long *)&(v)->flags.a_u.au_int)
+ 
+ static inline bool i915_vma_is_ggtt(const struct i915_vma *vma)
+ {

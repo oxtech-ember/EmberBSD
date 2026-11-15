@@ -1,0 +1,11 @@
+--- a/drm/i915/display/intel_gmbus.c
++++ b/drm/i915/display/intel_gmbus.c
+@@ -939,7 +939,7 @@
+ 			 sizeof(bus->adapter.name),
+ 			 "i915 gmbus %s", gmbus_pin->name);
+ 
+-		bus->adapter.dev.parent = &pdev->dev;
++		bus->adapter.dev.parent = pdev->pd_dev;
+ 		bus->display = display;
+ 
+ 		bus->adapter.algo = &gmbus_algorithm;
