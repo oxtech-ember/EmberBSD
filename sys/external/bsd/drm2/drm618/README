@@ -409,7 +409,7 @@ kernel_fpu_end, ratelimit_state_get_miss, perfmon_capable, device_link_add,
 device_link_remove, drm618_pfn_to_page (pfn_to_page), drm618_kdev_kobj,
 drm618_timer_expires.
 
-Local patches of imported files (twenty rows of patches.tsv for i915): the PCI
+Local patches of imported files (32 rows of patches.tsv for i915, one per file): the PCI
 device through pd_dev (7 files), the class device through drm618_kdev_kobj and
 drm618_kdev_name (8), no runtime PM (1), the timer through drm618_timer_expires
 (1), two static helpers renamed (2), the flags of a vma through a_u.au_int (1).
@@ -427,3 +427,40 @@ registration), the interrupt handler type (i915_irq.c), module parameter types
 (kernel_param_ops), bin_attribute.mmap, X86_FEATURE_XMM4_1 and kernel_fpu,
 perf and relay, __xa_store, DMI_PRODUCT_SKU, hdmi_drm_infoframe.type and a few
 cascades of the same.
+
+The i915 working set after the third pass
+------------------------------------------
+
+The working set is 271 sources (eight more than the second pass left out: the fbdev client, the 32 bit
+ioctls, i915_mm.c, the Valleyview and Cherryview audio and DSI tablet code, the local memory of discrete
+cards and the MEI auxiliary devices of the GSC; the reason of each is at the end of files.i915drm618).
+269 compile under the flags of the drmkms618 module with -Werror (and -Wno-error=address-of-packed-member
+as the modules have it); the i915 module will also need -Wno-initializer-overrides, which the driver's own
+build has (intel_display_device.c and i915_pci.c: tables with designated initializers that override).  Not
+compiling: intel_dsi_vbt.c (the GPIO, pinctrl, I2C adapter and ACPI handle interfaces of the VBT sequences)
+and intel_hdcp_gsc_message.c (the message structures and codes of the HDCP firmware of the GSC: an ABI
+that is in the GPL interface header and must not be guessed from the uses).  The MIPI DSI core
+(drm_mipi_dsi.c) is not imported: drm/drm_mipi_dsi.h is written from the uses; the messages, packets, pixel
+sizes and the short and long classes have behaviour (drm2-i915-layer-c), the calls to a panel are declared.
+
+Local patches of imported files: 32 rows (files) for i915.  Fence callbacks of the layer are queue entries,
+so i915_active*, i915_request.c, intel_breadcrumbs.c and intel_engine_pm.c keep llist nodes of their own
+and use the queue and __dma_fence_signal_wake; contexts count ids from one because the layer's xarray has
+no ALLOC1 flag; the PCI irq, the timer expiry, the aux device and the pm_runtime stand-ins go through
+declared functions; the rest are unused-variable marks for assertions the layer does not evaluate.
+
+Added to the layer in this pass (checked by drm2-i915-layer-c): prepare_to_wait and finish_wait with
+entries that name a task, schedule, io_schedule_timeout, signal_pending_state for a task, ___wait_var_event;
+cmpxchg64 and try_cmpxchg64; castable_to_type for the layer's pgoff_t; irq_handler_t of 6.18; static_cpu_has
+for SSE4.1 and the hypervisor bit; pci_match_id; hdmi_drm_infoframe_unpack_only; xa_mk_value, xa_to_value,
+xa_is_value, xa_alloc_cyclic_irq; bitmap_find_free_region and bitmap_release_region; memcpy_to_page and
+memcpy_from_page; shmem_read_mapping_page; get_task_pid; address_space.host; const pointers for kfree,
+resource_size, resource_contains and timer_pending; the DSI helpers above.  A wake-up of an entry that
+names a task now wakes the task out of schedule_timeout (the wait queue test of drm2-i915-layer was changed
+to set the task state first).  vmap asserts that no unimplemented flag (VM_MAP_PUT_PAGES) is passed.
+
+Not defined, declared only (the list for linking is evidence/unresolved-symbols: 161 names, 66 files use
+them): the groups are PCI and autoconfiguration, interrupts and MMIO, DMA and the GGTT, pages and user
+memory, firmware and the MEI, power, timers and queues, sysfs and sysctl, and a rest.  The shrinker
+(shrinker_alloc, _register, _free) is declared only on purpose: the kernel's call for memory must reach
+the driver, as the 5.6 port arranged it.
