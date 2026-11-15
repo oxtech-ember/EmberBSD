@@ -31,9 +31,13 @@
 
 MODULE(MODULE_CLASS_DRIVER, virtiogpu618, "drmkms618");
 
-extern int drm618_virtio_drop_notify;
-extern u_int drm618_virtio_n_reqs, drm618_virtio_n_reqs_freed;
-extern u_int drm618_virtio_n_maps, drm618_virtio_n_maps_freed;
+int	drm618_modinit_virtio_gpu_driver_init(void);
+void	drm618_modexit_virtio_gpu_driver_exit(void);
+
+extern u_int drm618_virtio_leaked;
+
+#if defined(DRM618_VIRTIO_FAULT_INJECT) || defined(DRM618_VIRTIO_STATS)
+/* A test build only (make VIRTIO_TEST=1): fault injection and counters as sysctl nodes. */
 static struct sysctllog *virtiogpu618_log;
 
 static void
@@ -45,26 +49,41 @@ virtiogpu618_sysctl(void)
 	    CTLTYPE_NODE, "virtiogpudrm", NULL, NULL, 0, NULL, 0, CTL_HW,
 	    CTL_CREATE, CTL_EOL) != 0)
 		return;
-	/* Fault injection: the device is not told of new commands (drm618_virtio.c). */
-	sysctl_createv(&virtiogpu618_log, 0, &node, NULL, CTLFLAG_READWRITE,
-	    CTLTYPE_INT, "drop_notify", SYSCTL_DESCR("do not notify the device of commands"),
-	    NULL, 0, &drm618_virtio_drop_notify, 0, CTL_CREATE, CTL_EOL);
-	sysctl_createv(&virtiogpu618_log, 0, &node, NULL, CTLFLAG_READONLY,
-	    CTLTYPE_INT, "commands", SYSCTL_DESCR("commands queued"),
-	    NULL, 0, (int *)&drm618_virtio_n_reqs, 0, CTL_CREATE, CTL_EOL);
-	sysctl_createv(&virtiogpu618_log, 0, &node, NULL, CTLFLAG_READONLY,
-	    CTLTYPE_INT, "commands_done", SYSCTL_DESCR("commands completed or dropped"),
-	    NULL, 0, (int *)&drm618_virtio_n_reqs_freed, 0, CTL_CREATE, CTL_EOL);
-	sysctl_createv(&virtiogpu618_log, 0, &node, NULL, CTLFLAG_READONLY,
-	    CTLTYPE_INT, "dmamaps", SYSCTL_DESCR("DMA maps made"),
-	    NULL, 0, (int *)&drm618_virtio_n_maps, 0, CTL_CREATE, CTL_EOL);
-	sysctl_createv(&virtiogpu618_log, 0, &node, NULL, CTLFLAG_READONLY,
-	    CTLTYPE_INT, "dmamaps_freed", SYSCTL_DESCR("DMA maps destroyed"),
-	    NULL, 0, (int *)&drm618_virtio_n_maps_freed, 0, CTL_CREATE, CTL_EOL);
-}
+#ifdef DRM618_VIRTIO_FAULT_INJECT
+	{
+		extern int drm618_virtio_drop_notify;
 
-int	drm618_modinit_virtio_gpu_driver_init(void);
-void	drm618_modexit_virtio_gpu_driver_exit(void);
+		sysctl_createv(&virtiogpu618_log, 0, &node, NULL, CTLFLAG_READWRITE,
+		    CTLTYPE_INT, "drop_notify", SYSCTL_DESCR("do not notify the device of commands"),
+		    NULL, 0, &drm618_virtio_drop_notify, 0, CTL_CREATE, CTL_EOL);
+	}
+#endif
+#ifdef DRM618_VIRTIO_STATS
+	{
+		extern u_int drm618_virtio_n_reqs, drm618_virtio_n_reqs_freed;
+		extern u_int drm618_virtio_n_maps, drm618_virtio_n_maps_freed;
+
+		sysctl_createv(&virtiogpu618_log, 0, &node, NULL, CTLFLAG_READONLY,
+		    CTLTYPE_INT, "commands", SYSCTL_DESCR("commands queued"),
+		    NULL, 0, (int *)&drm618_virtio_n_reqs, 0, CTL_CREATE, CTL_EOL);
+		sysctl_createv(&virtiogpu618_log, 0, &node, NULL, CTLFLAG_READONLY,
+		    CTLTYPE_INT, "commands_done", SYSCTL_DESCR("commands completed or dropped"),
+		    NULL, 0, (int *)&drm618_virtio_n_reqs_freed, 0, CTL_CREATE, CTL_EOL);
+		sysctl_createv(&virtiogpu618_log, 0, &node, NULL, CTLFLAG_READONLY,
+		    CTLTYPE_INT, "dmamaps", SYSCTL_DESCR("DMA maps made"),
+		    NULL, 0, (int *)&drm618_virtio_n_maps, 0, CTL_CREATE, CTL_EOL);
+		sysctl_createv(&virtiogpu618_log, 0, &node, NULL, CTLFLAG_READONLY,
+		    CTLTYPE_INT, "dmamaps_freed", SYSCTL_DESCR("DMA maps destroyed"),
+		    NULL, 0, (int *)&drm618_virtio_n_maps_freed, 0, CTL_CREATE, CTL_EOL);
+	}
+#endif
+}
+#define	VGPU_SYSCTL_SETUP()		virtiogpu618_sysctl()
+#define	VGPU_SYSCTL_TEARDOWN()	sysctl_teardown(&virtiogpu618_log)
+#else
+#define	VGPU_SYSCTL_SETUP()		((void)0)
+#define	VGPU_SYSCTL_TEARDOWN()	((void)0)
+#endif
 
 /* A device whose DRM device has a client is busy. */
 static int
@@ -90,15 +109,20 @@ virtiogpu618_modcmd(modcmd_t cmd, void *arg __unused)
 		error = drm618_modinit_virtio_gpu_driver_init();
 		if (error != 0)
 			return -error;
-		virtiogpu618_sysctl();
+		VGPU_SYSCTL_SETUP();
 		error = config_init_component(cfdriver_ioconf_virtiogpu618,
 		    cfattach_ioconf_virtiogpu618, cfdata_ioconf_virtiogpu618);
 		if (error != 0) {
 			drm618_modexit_virtio_gpu_driver_exit();
-			sysctl_teardown(&virtiogpu618_log);
+			VGPU_SYSCTL_TEARDOWN();
 		}
 		return error;
 	case MODULE_CMD_FINI:
+		if (drm618_virtio_leaked != 0) {
+			printf("virtiogpu618: %u queue(s) could not be freed, the"
+			    " module stays\n", drm618_virtio_leaked);
+			return EBUSY;
+		}
 		error = drm618_virtio_busy(virtiogpu618_busy, NULL);
 		if (error != 0)
 			return error;
@@ -107,7 +131,7 @@ virtiogpu618_modcmd(modcmd_t cmd, void *arg __unused)
 		if (error != 0)
 			return error;
 		drm618_modexit_virtio_gpu_driver_exit();
-		sysctl_teardown(&virtiogpu618_log);
+		VGPU_SYSCTL_TEARDOWN();
 		return 0;
 	default:
 		return ENOTTY;

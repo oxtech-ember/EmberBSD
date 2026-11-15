@@ -47,28 +47,50 @@
 
 #include <drm618_virtio.h>
 
-#define	DRM618_VIRTIO_MAXQ	4
-/* The most pieces one command may have (the segments of an indirect table). */
-#define	DRM618_VIRTIO_MAXSEG	128
-#define	DRM618_VIRTIO_MAXREQ	(1024 * 1024)
+/* drm618_gem_shmem_helper.c (drmkms618): the largest object of a device, 0 for no limit */
+void	drm618_gem_set_limit(device_t, size_t);
 
+#define	DRM618_VIRTIO_MAXQ	4
+/* The most bytes of the buffers of one command (the list of backing pages of a large object). */
+#define	DRM618_VIRTIO_MAXREQ	(16 * 1024 * 1024)
+/* One DMA piece: a descriptor length is 32 bit; stay far below. */
+#define	DRM618_VIRTIO_MAXPIECE	(256 * 1024 * 1024)
+
+#ifdef DRM618_VIRTIO_FAULT_INJECT
 /*
- * Fault injection, set by sysctl hw.virtiogpudrm.drop_notify: commands are
- * published to the ring but the device is not told, so it never answers
- * (until the flag is cleared and the next command notifies).
+ * Fault injection (a build for the tests only, make VIRTIO_TEST=1): the flag
+ * set by sysctl hw.virtiogpudrm.drop_notify makes commands go into the ring
+ * without the device being told, so it never answers (until the flag is
+ * cleared and the queue is looked at again).
  */
 int drm618_virtio_drop_notify;
+#define	NOTIFY_OK()	(drm618_virtio_drop_notify == 0)
+#else
+#define	NOTIFY_OK()	(true)
+#endif
 
-/* Counters (sysctl hw.virtiogpudrm.*, read only): what was made and what was given back. */
+#ifdef DRM618_VIRTIO_STATS
+/* Counters (sysctl hw.virtiogpudrm.*, read only; a test build): what was made and what was given back. */
 u_int drm618_virtio_n_reqs, drm618_virtio_n_reqs_freed;
 u_int drm618_virtio_n_maps, drm618_virtio_n_maps_freed;
+#define	STAT_INC(v)	atomic_inc_uint(&(v))
+#else
+#define	STAT_INC(v)	((void)0)
+#endif
+
+/* Queues freed with an error: their memory is lost and the module must not go. */
+u_int drm618_virtio_leaked;
 
 /* A command that waits this long for its answer is named in the log. */
 #define	DRM618_VIRTIO_WATCH_SECS	5
 
-/* The log says what failed, rate limited by the caller's own rarity. */
+/*
+ * The log says what failed: an ordinary message of the device (not an
+ * autoconfiguration one: these come at any time).
+ */
 #define	VQLOG(sc, ...)	do {						\
-	aprint_error_dev((sc)->sc_dev, __VA_ARGS__);			\
+	printf("%s: ", device_xname((sc)->sc_dev));			\
+	printf(__VA_ARGS__);						\
 } while (0)
 
 struct drm618_vmap {
@@ -80,6 +102,8 @@ struct drm618_vmap {
 struct drm618_vreq {
 	void		*cookie;
 	time_t		when;		/* queued at (time_uptime) */
+	int		slot;
+	TAILQ_ENTRY(drm618_vreq) link;	/* in the pending list of the queue, oldest first */
 	unsigned int	capacity;	/* maps allocated */
 	unsigned int	nmaps;		/* maps made */
 	unsigned int	descriptors;
@@ -94,8 +118,13 @@ struct drm618_vq {
 	struct drm618_vreq	**requests;	/* by slot */
 	unsigned int		size;
 	bool			callbacks;
-	time_t			last_watch;	/* the last look for a command that waits */
+	TAILQ_HEAD(, drm618_vreq) pending;	/* queued, no answer yet, oldest first */
+	time_t			wlog_next;	/* no line about a waiting command before */
+	unsigned int		wlog_int;	/* seconds to the next line: 1, 2, 4 ... 60 */
+	bool			wlog_active;	/* a line was written, the answer is due */
+#ifdef DRM618_VIRTIO_FAULT_INJECT
 	bool			dropped_said;
+#endif
 };
 
 enum drm618_vstate { VS_INIT, VS_QUEUES, VS_READY, VS_STOPPED };
@@ -341,58 +370,90 @@ vreq_free(struct drm618_vdev *sc, struct drm618_vreq *req)
 			bus_dmamap_unload(sc->sc_dmat, m->map);
 		}
 		bus_dmamap_destroy(sc->sc_dmat, m->map);
-		atomic_inc_uint(&drm618_virtio_n_maps_freed);
+		STAT_INC(drm618_virtio_n_maps_freed);
 	}
-	atomic_inc_uint(&drm618_virtio_n_reqs_freed);
+	STAT_INC(drm618_virtio_n_reqs_freed);
 	kmem_intr_free(req, vreq_size(req->capacity));
 }
 
 struct vreq_walk {
 	struct drm618_vdev	*sc;
-	struct drm618_vreq	*req;	/* NULL while counting */
-	unsigned int		pieces;
+	struct drm618_vreq	*req;		/* NULL while counting */
+	unsigned int		pieces;		/* pieces closed so far */
+	unsigned int		maxpieces;	/* the ring takes no more per command */
 	size_t			bytes;
-	bool			readable;
+	bool			readable;	/* direction of the piece being added */
+	bool			pend;		/* a piece is open: merged while adjacent */
+	paddr_t			pend_pa;
+	size_t			pend_len;
+	bool			pend_readable;
 	int			error;
 };
 
+/* Close the open piece: count it, and make its DMA map when mapping. */
 static int
-vreq_piece(void *arg, paddr_t pa, size_t len)
+vreq_flush(struct vreq_walk *w)
 {
-	struct vreq_walk *w = arg;
 	struct drm618_vdev *sc = w->sc;
 	struct drm618_vmap *m;
 	bus_dma_segment_t seg;
 	int error;
 
-	if (w->pieces == DRM618_VIRTIO_MAXSEG ||
-	    len > DRM618_VIRTIO_MAXREQ - w->bytes) {
-		w->error = -EINVAL;
-		return -EINVAL;
+	if (!w->pend)
+		return 0;
+	w->pend = false;
+	if (w->pieces == w->maxpieces) {
+		w->error = -EMSGSIZE;
+		return w->error;
 	}
 	w->pieces++;
-	w->bytes += len;
 	if (w->req == NULL)
 		return 0;
 	m = &w->req->maps[w->req->nmaps];
-	m->readable = w->readable;
-	error = bus_dmamap_create(sc->sc_dmat, len, 1, len, 0, BUS_DMA_NOWAIT,
-	    &m->map);
+	m->readable = w->pend_readable;
+	error = bus_dmamap_create(sc->sc_dmat, w->pend_len, 1, w->pend_len, 0,
+	    BUS_DMA_NOWAIT, &m->map);
 	if (error != 0) {
 		w->error = -error;
 		return w->error;
 	}
 	w->req->nmaps++;
-	atomic_inc_uint(&drm618_virtio_n_maps);
-	seg.ds_addr = pa;
-	seg.ds_len = len;
-	error = bus_dmamap_load_raw(sc->sc_dmat, m->map, &seg, 1, len,
+	STAT_INC(drm618_virtio_n_maps);
+	seg.ds_addr = w->pend_pa;
+	seg.ds_len = w->pend_len;
+	error = bus_dmamap_load_raw(sc->sc_dmat, m->map, &seg, 1, w->pend_len,
 	    BUS_DMA_NOWAIT | (m->readable ? BUS_DMA_WRITE : BUS_DMA_READ));
 	if (error != 0) {
 		w->error = -error;
 		return w->error;
 	}
 	m->loaded = true;
+	return 0;
+}
+
+static int
+vreq_piece(void *arg, paddr_t pa, size_t len)
+{
+	struct vreq_walk *w = arg;
+
+	if (len > DRM618_VIRTIO_MAXREQ - w->bytes) {
+		w->error = -EMSGSIZE;
+		return w->error;
+	}
+	w->bytes += len;
+	/* pieces that follow each other in memory and in direction are one descriptor */
+	if (w->pend && w->pend_readable == w->readable &&
+	    w->pend_pa + w->pend_len == pa &&
+	    w->pend_len + len <= DRM618_VIRTIO_MAXPIECE) {
+		w->pend_len += len;
+		return 0;
+	}
+	if (vreq_flush(w) != 0)
+		return w->error;
+	w->pend = true;
+	w->pend_pa = pa;
+	w->pend_len = len;
+	w->pend_readable = w->readable;
 	return 0;
 }
 
@@ -417,7 +478,7 @@ vreq_pieces(struct vreq_walk *w, struct scatterlist *sgs[],
 			}
 		}
 	}
-	return 0;
+	return vreq_flush(w);
 }
 
 /* ---- queues ------------------------------------------------------------- */
@@ -489,7 +550,7 @@ virtio_find_vqs(struct virtio_device *vd, unsigned int nvqs,
 		}
 		vq->size = vq->nvq->vq_num;
 		error = virtio_alloc_vq(sc->sc_vsc, vq->nvq, DRM618_VIRTIO_MAXREQ,
-		    MIN(vq->size, DRM618_VIRTIO_MAXSEG), info[i].name);
+		    vq->size, info[i].name);
 		if (error != 0) {
 			VQLOG(sc, "queue %u (%s): no memory for the ring\n", i,
 			    info[i].name);
@@ -498,6 +559,8 @@ virtio_find_vqs(struct virtio_device *vd, unsigned int nvqs,
 		}
 		vq->requests = kmem_zalloc(vq->size * sizeof(*vq->requests),
 		    KM_SLEEP);
+		TAILQ_INIT(&vq->pending);
+		vq->wlog_int = 1;
 		vq->pub.num_free = vq->pub.num_max = vq->size;
 		vq->callbacks = true;
 	}
@@ -514,6 +577,14 @@ virtio_find_vqs(struct virtio_device *vd, unsigned int nvqs,
 	}
 	for (i = 0; i < nvqs; i++)
 		vqs[i] = &sc->sc_vq[i].pub;
+	/*
+	 * The largest object whose list of backing pages the ring can take in
+	 * one command: the list has 16 bytes per page, a piece of it is a page of
+	 * the heap, and the command and its answer take up to six more of the
+	 * descriptors (the native ring takes no more than it has entries).
+	 */
+	drm618_gem_set_limit(sc->sc_dev,
+	    (size_t)(sc->sc_vq[0].size > 6 ? sc->sc_vq[0].size - 6 : 1) << 20);
 	return 0;
 fail:
 	vdev_del_vqs(vd);
@@ -555,36 +626,30 @@ static void
 vq_watch(struct drm618_vq *vq)
 {
 	struct drm618_vdev *sc = vq->sc;
-	time_t oldest = 0;
-	unsigned int slot;
+	struct drm618_vreq *req = TAILQ_FIRST(&vq->pending);
+	time_t age;
 
-	if (time_uptime - vq->last_watch < 1)
+	if (req == NULL)
 		return;
-	vq->last_watch = time_uptime;
-	for (slot = 0; slot < vq->size; slot++) {
-		struct drm618_vreq *req = vq->requests[slot];
-
-		if (req != NULL && (oldest == 0 || req->when < oldest))
-			oldest = req->when;
-	}
-	if (oldest != 0 && time_uptime - oldest >= DRM618_VIRTIO_WATCH_SECS)
+	age = time_uptime - req->when;
+	if (age >= DRM618_VIRTIO_WATCH_SECS && time_uptime >= vq->wlog_next) {
 		VQLOG(sc, "%s: a command has waited %ld s for the device and"
-		    " has no answer\n", vq->pub.name, (long)(time_uptime - oldest));
+		    " has no answer\n", vq->pub.name, (long)age);
+		vq->wlog_active = true;
+		vq->wlog_next = time_uptime + vq->wlog_int;
+		vq->wlog_int = MIN(vq->wlog_int * 2, 60);
+	}
 	/*
 	 * A notification that was lost (or held back) is made up for: after two
 	 * seconds without an answer the device is told again.
 	 */
-	if (oldest != 0 && time_uptime - oldest >= 2 &&
-	    drm618_virtio_drop_notify == 0) {
-		if (vq->dropped_said) {
-			vq->dropped_said = false;
-			VQLOG(sc, "%s: the device is told of the waiting commands"
-			    " again\n", vq->pub.name);
-		}
+	if (age >= 2 && NOTIFY_OK()) {
+#ifdef DRM618_VIRTIO_FAULT_INJECT
+		vq->dropped_said = false;
+#endif
 		virtio_enqueue_commit(sc->sc_vsc, vq->nvq, -1, true);
 	}
 }
-
 int
 virtqueue_add_sgs(struct linux_virtqueue *lvq, struct scatterlist *sgs[],
     unsigned int out, unsigned int in, void *cookie, gfp_t gfp __unused)
@@ -592,7 +657,7 @@ virtqueue_add_sgs(struct linux_virtqueue *lvq, struct scatterlist *sgs[],
 	struct drm618_vq *vq = (struct drm618_vq *)lvq;
 	struct drm618_vdev *sc = vq->sc;
 	struct drm618_vreq *req = NULL;
-	struct vreq_walk w;
+	struct vreq_walk w, w2;
 	unsigned int j;
 	int error, slot;
 
@@ -601,57 +666,64 @@ virtqueue_add_sgs(struct linux_virtqueue *lvq, struct scatterlist *sgs[],
 		    vq->pub.name);
 		return -EINVAL;
 	}
+	/*
+	 * Everything that allocates, creates and loads DMA maps is done before
+	 * the lock of the device: under it the command is only put into the ring.
+	 * The native ring takes at most as many descriptors as it has entries.
+	 */
 	memset(&w, 0, sizeof(w));
 	w.sc = sc;
+	w.maxpieces = vq->size;
 	error = vreq_pieces(&w, sgs, out, in);	/* count, validate */
 	if (error != 0) {
-		VQLOG(sc, "%s: a command that cannot be queued (%u pieces,"
-		    " %zu bytes): %d\n", vq->pub.name, w.pieces, w.bytes, error);
+		VQLOG(sc, "%s: a command that cannot be queued (%u pieces of at"
+		    " most %u, %zu bytes): %d\n", vq->pub.name, w.pieces,
+		    vq->size, w.bytes, error);
 		return error;
 	}
 	if (w.pieces == 0) {
 		VQLOG(sc, "%s: an empty command\n", vq->pub.name);
 		return -EINVAL;
 	}
-	mutex_enter(&sc->sc_lock);
-	if (sc->sc_state != VS_READY) {
-		error = -ENODEV;
-		goto unlock;
-	}
 	req = kmem_intr_zalloc(vreq_size(w.pieces), KM_NOSLEEP);
 	if (req == NULL) {
-		error = -ENOMEM;
 		VQLOG(sc, "%s: no memory for a command\n", vq->pub.name);
-		goto unlock;
+		return -ENOMEM;
 	}
 	req->capacity = w.pieces;
 	req->cookie = cookie;
-	atomic_inc_uint(&drm618_virtio_n_reqs);
-	{
-		struct vreq_walk w2;
+	STAT_INC(drm618_virtio_n_reqs);
+	memset(&w2, 0, sizeof(w2));
+	w2.sc = sc;
+	w2.req = req;
+	w2.maxpieces = vq->size;
+	error = vreq_pieces(&w2, sgs, out, in);
+	if (error != 0) {
+		VQLOG(sc, "%s: the command cannot be mapped: %d\n",
+		    vq->pub.name, error);
+		goto fail;
+	}
+	req->descriptors = req->nmaps;
 
-		memset(&w2, 0, sizeof(w2));
-		w2.sc = sc;
-		w2.req = req;
-		error = vreq_pieces(&w2, sgs, out, in);
-		if (error != 0) {
-			VQLOG(sc, "%s: the command cannot be mapped: %d\n",
-			    vq->pub.name, error);
-			goto free_req;
-		}
-		req->descriptors = req->nmaps;
+	mutex_enter(&sc->sc_lock);
+	if (sc->sc_state != VS_READY) {
+		mutex_exit(&sc->sc_lock);
+		error = -ENODEV;
+		goto fail;
 	}
 	error = virtio_enqueue_prep(sc->sc_vsc, vq->nvq, &slot);
 	if (error != 0) {
+		mutex_exit(&sc->sc_lock);
 		error = error == EAGAIN ? -ENOSPC : -error;
-		goto free_req;
+		goto fail;
 	}
 	error = virtio_enqueue_reserve(sc->sc_vsc, vq->nvq, slot,
 	    req->descriptors);
 	if (error != 0) {
 		/* The reserve gives the head back itself. */
+		mutex_exit(&sc->sc_lock);
 		error = error == EAGAIN ? -ENOSPC : -error;
-		goto free_req;
+		goto fail;
 	}
 	req->cost = vq->nvq->vq_descx[slot].use_indirect ? 1 : req->descriptors;
 	KASSERT(vq->requests[slot] == NULL);
@@ -663,34 +735,32 @@ virtqueue_add_sgs(struct linux_virtqueue *lvq, struct scatterlist *sgs[],
 		/* Native "write" is memory to device: what the device reads. */
 		virtio_enqueue(sc->sc_vsc, vq->nvq, slot, m->map, m->readable);
 	}
+	req->slot = slot;
+	req->when = time_uptime;
 	vq->requests[slot] = req;
+	TAILQ_INSERT_TAIL(&vq->pending, req, link);
 	KASSERT(req->cost <= vq->pub.num_free);
 	vq->pub.num_free -= req->cost;
 	/*
 	 * Publish now: the driver may wait for room before it kicks.  The
 	 * notification follows the event suppression of the native ring.
 	 */
-	req->when = time_uptime;
-	virtio_enqueue_commit(sc->sc_vsc, vq->nvq, slot,
-	    drm618_virtio_drop_notify == 0);
-	if (drm618_virtio_drop_notify != 0 && !vq->dropped_said) {
+	virtio_enqueue_commit(sc->sc_vsc, vq->nvq, slot, NOTIFY_OK());
+#ifdef DRM618_VIRTIO_FAULT_INJECT
+	if (!NOTIFY_OK() && !vq->dropped_said) {
 		vq->dropped_said = true;
 		VQLOG(sc, "%s: the device is not told of new commands"
 		    " (fault injection, sysctl hw.virtiogpudrm.drop_notify)\n",
 		    vq->pub.name);
 	}
-	vq_watch(vq);
+#endif
 	mutex_exit(&sc->sc_lock);
 	return 0;
 
-free_req:
-	if (req != NULL)
-		vreq_free(sc, req);
-unlock:
-	mutex_exit(&sc->sc_lock);
+fail:
+	vreq_free(sc, req);
 	return error;
 }
-
 void *
 virtqueue_get_buf(struct linux_virtqueue *lvq, unsigned int *len)
 {
@@ -699,32 +769,46 @@ virtqueue_get_buf(struct linux_virtqueue *lvq, unsigned int *len)
 	struct drm618_vreq *req;
 	void *cookie = NULL;
 	int slot, length;
+	bool answered = false;
+	time_t waited = 0;
 
 	mutex_enter(&sc->sc_lock);
 	if (sc->sc_state != VS_READY ||
 	    !virtio_vq_is_enqueued(sc->sc_vsc, vq->nvq) ||
-	    virtio_dequeue(sc->sc_vsc, vq->nvq, &slot, &length) != 0)
-		goto out;
+	    virtio_dequeue(sc->sc_vsc, vq->nvq, &slot, &length) != 0) {
+		mutex_exit(&sc->sc_lock);
+		return NULL;
+	}
 	req = vq->requests[slot];
 	if (req == NULL) {
 		VQLOG(sc, "%s: the device returned slot %d that holds no"
 		    " command\n", vq->pub.name, slot);
 		virtio_dequeue_commit(sc->sc_vsc, vq->nvq, slot);
-		goto out;
+		mutex_exit(&sc->sc_lock);
+		return NULL;
 	}
 	cookie = req->cookie;
 	if (len != NULL)
 		*len = (unsigned int)length;
 	vq->pub.num_free += req->cost;
 	vq->requests[slot] = NULL;
+	TAILQ_REMOVE(&vq->pending, req, link);
+	virtio_dequeue_commit(sc->sc_vsc, vq->nvq, slot);
+	if (vq->wlog_active) {
+		vq->wlog_active = false;
+		vq->wlog_int = 1;
+		vq->wlog_next = 0;
+		answered = true;
+		waited = time_uptime - req->when;
+	}
+	mutex_exit(&sc->sc_lock);
 	/* The memory of the response is the driver's again before it sees the token. */
 	vreq_free(sc, req);
-	virtio_dequeue_commit(sc->sc_vsc, vq->nvq, slot);
-out:
-	mutex_exit(&sc->sc_lock);
+	if (answered)
+		VQLOG(sc, "%s: the device answers again (a command waited %ld s)\n",
+		    vq->pub.name, (long)waited);
 	return cookie;
 }
-
 void
 virtqueue_disable_cb(struct linux_virtqueue *lvq)
 {
@@ -777,14 +861,11 @@ virtqueue_notify(struct linux_virtqueue *lvq)
 
 	mutex_enter(&sc->sc_lock);
 	ready = sc->sc_state == VS_READY;
-	if (ready && drm618_virtio_drop_notify == 0)
+	if (ready && NOTIFY_OK())
 		virtio_enqueue_commit(sc->sc_vsc, vq->nvq, -1, true);
-	if (ready)
-		vq_watch(vq);
 	mutex_exit(&sc->sc_lock);
 	return ready;
 }
-
 /* A command still queued after the device was reset: its token, the slots given back. */
 void *
 virtqueue_detach_unused_buf(struct linux_virtqueue *lvq)
@@ -792,30 +873,24 @@ virtqueue_detach_unused_buf(struct linux_virtqueue *lvq)
 	struct drm618_vq *vq = (struct drm618_vq *)lvq;
 	struct drm618_vdev *sc = vq->sc;
 	struct drm618_vreq *req;
-	void *cookie = NULL;
-	unsigned int slot;
+	void *cookie;
 
 	mutex_enter(&sc->sc_lock);
-	if (sc->sc_state != VS_STOPPED) {
+	req = TAILQ_FIRST(&vq->pending);
+	if (sc->sc_state != VS_STOPPED || req == NULL) {
 		/* A live device may still own it: only after the reset. */
 		mutex_exit(&sc->sc_lock);
 		return NULL;
 	}
-	for (slot = 0; slot < vq->size && vq->requests != NULL; slot++) {
-		req = vq->requests[slot];
-		if (req == NULL)
-			continue;
-		vq->requests[slot] = NULL;
-		cookie = req->cookie;
-		vq->pub.num_free += req->cost;
-		vreq_free(sc, req);
-		virtio_dequeue_commit(sc->sc_vsc, vq->nvq, slot);
-		break;
-	}
+	TAILQ_REMOVE(&vq->pending, req, link);
+	vq->requests[req->slot] = NULL;
+	vq->pub.num_free += req->cost;
+	virtio_dequeue_commit(sc->sc_vsc, vq->nvq, req->slot);
 	mutex_exit(&sc->sc_lock);
+	cookie = req->cookie;
+	vreq_free(sc, req);
 	return cookie;
 }
-
 /* ---- reset and teardown -------------------------------------------------- */
 
 static void
@@ -851,9 +926,10 @@ vdev_del_vqs(struct virtio_device *vd)
 	struct drm618_vdev *sc = to_vdev(vd);
 	struct drm618_vq *vq;
 	struct drm618_vreq *req;
-	unsigned int i, slot;
+	unsigned int i;
 	int error;
 
+	drm618_gem_set_limit(sc->sc_dev, 0);
 	vdev_reset(vd);
 	/* Disestablish and drain the interrupts before a ring goes. */
 	if (sc->sc_attached) {
@@ -865,23 +941,24 @@ vdev_del_vqs(struct virtio_device *vd)
 		if (vq->nvq == NULL)
 			continue;
 		if (vq->requests != NULL) {
-			for (slot = 0; slot < vq->size; slot++) {
-				req = vq->requests[slot];
-				if (req == NULL)
-					continue;
+			while ((req = TAILQ_FIRST(&vq->pending)) != NULL) {
 				VQLOG(sc, "%s: a command still queued at the"
 				    " end, dropped\n", vq->pub.name);
-				vq->requests[slot] = NULL;
-				virtio_dequeue_commit(sc->sc_vsc, vq->nvq, slot);
+				TAILQ_REMOVE(&vq->pending, req, link);
+				vq->requests[req->slot] = NULL;
+				virtio_dequeue_commit(sc->sc_vsc, vq->nvq, req->slot);
 				vreq_free(sc, req);
 			}
 			kmem_free(vq->requests, vq->size * sizeof(*vq->requests));
 			vq->requests = NULL;
 		}
 		error = virtio_free_vq(sc->sc_vsc, vq->nvq);
-		if (error != 0)
-			panic("%s: cannot free queue %u: %d",
-			    device_xname(sc->sc_dev), i, error);
+		if (error != 0) {
+			/* The ring stays where it is: its memory is lost, the module does not unload. */
+			VQLOG(sc, "%s: the queue could not be freed (%d): its memory"
+			    " is lost, the module stays\n", vq->pub.name, error);
+			atomic_inc_uint(&drm618_virtio_leaked);
+		}
 		vq->nvq = NULL;
 		vq->pub.num_free = 0;
 	}
