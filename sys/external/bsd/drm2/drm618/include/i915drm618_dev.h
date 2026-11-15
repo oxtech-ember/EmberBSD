@@ -415,4 +415,27 @@ ms_to_ktime(u64 ms)
 	((void)(name), (void)(mode), (void)(parent), (void)(data), (void)(fops), \
 	    (struct dentry *)NULL)
 
+/* GPIO descriptors of a platform (declared, not defined: no GPIO subsystem; the panel code of the VBT asks for them) */
+struct gpio_desc;
+enum gpio_lookup_flags { GPIO_ACTIVE_HIGH = 0, GPIO_ACTIVE_LOW = 1 };
+enum gpiod_flags { GPIOD_ASIS = 0, GPIOD_IN = 1, GPIOD_OUT_LOW = 3, GPIOD_OUT_HIGH = 7 };
+struct gpiod_lookup {
+	const char		*key;
+	unsigned int		chip_hwnum;
+	const char		*con_id;
+	unsigned int		idx;
+	unsigned long		flags;
+};
+struct gpiod_lookup_table {
+	struct list_head	list;
+	const char		*dev_id;
+	struct gpiod_lookup	table[];
+};
+#define	GPIO_LOOKUP_IDX(_key, _chip_hwnum, _con_id, _idx, _flags)	\
+	{ .key = (_key), .chip_hwnum = (_chip_hwnum), .con_id = (_con_id), .idx = (_idx), .flags = (_flags) }
+void	gpiod_add_lookup_table(struct gpiod_lookup_table *);
+void	gpiod_remove_lookup_table(struct gpiod_lookup_table *);
+struct gpio_desc *devm_gpiod_get_index(struct device *, const char *, unsigned int, enum gpiod_flags);
+void	gpiod_set_value(struct gpio_desc *, int);
+
 #endif

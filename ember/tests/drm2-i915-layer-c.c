@@ -19,6 +19,7 @@
 #include <linux/hdmi.h>
 #include <linux/interrupt.h>
 #include <linux/overflow.h>
+#include <drm/drm_mipi_dsi.h>
 #include <linux/ioport.h>
 #include <linux/pci.h>
 #include <linux/timer.h>
@@ -429,6 +430,66 @@ drm2_i915_layer_c_run(void)
 		CHECK(resource_contains(&r1, &r2) && !resource_contains(&r1, &r3) && !resource_contains(&r2, &r1));
 		timer_setup(&tm, NULL, 0);
 		CHECK(!timer_pending(ctm));
+	}
+
+	/* MIPI DSI: pixel sizes, packet classes, the packet of a message */
+	{
+		struct mipi_dsi_packet pk;
+		struct mipi_dsi_msg m;
+		static const u8 two[2] = { 0x11, 0x22 };
+		static const u8 five[5] = { 1, 2, 3, 4, 5 };
+		int t;
+
+		CHECK(mipi_dsi_pixel_format_to_bpp(MIPI_DSI_FMT_RGB888) == 24);
+		CHECK(mipi_dsi_pixel_format_to_bpp(MIPI_DSI_FMT_RGB666) == 18 &&
+		    mipi_dsi_pixel_format_to_bpp(MIPI_DSI_FMT_RGB666_PACKED) == 18);
+		CHECK(mipi_dsi_pixel_format_to_bpp(MIPI_DSI_FMT_RGB565) == 16);
+		CHECK(mipi_dsi_pixel_format_to_bpp((enum mipi_dsi_pixel_format)99) == -EINVAL);
+		CHECK(mipi_dsi_packet_format_is_short(MIPI_DSI_DCS_SHORT_WRITE) && !mipi_dsi_packet_format_is_long(MIPI_DSI_DCS_SHORT_WRITE));
+		CHECK(mipi_dsi_packet_format_is_long(MIPI_DSI_DCS_LONG_WRITE) && !mipi_dsi_packet_format_is_short(MIPI_DSI_DCS_LONG_WRITE));
+		CHECK(mipi_dsi_packet_format_is_short(MIPI_DSI_SET_MAXIMUM_RETURN_PACKET_SIZE));
+		CHECK(!mipi_dsi_packet_format_is_short(0x00) && !mipi_dsi_packet_format_is_long(0x00));
+		for (t = 0; t < 256; t++)
+			if (mipi_dsi_packet_format_is_short(t) && mipi_dsi_packet_format_is_long(t))
+				break;
+		CHECK(t == 256);
+		/* a short packet: channel above the type, the data in the header, no payload */
+		memset(&m, 0, sizeof(m));
+		m.channel = 2;
+		m.type = MIPI_DSI_GENERIC_SHORT_WRITE_2_PARAM;
+		m.tx_buf = two;
+		m.tx_len = 2;
+		memset(&pk, 0xa5, sizeof(pk));
+		CHECK(mipi_dsi_create_packet(&pk, &m) == 0);
+		CHECK(pk.header[0] == ((2 << 6) | 0x23) && pk.header[1] == 0x11 && pk.header[2] == 0x22 && pk.header[3] == 0);
+		CHECK(pk.payload_length == 0 && pk.payload == NULL && pk.size == 4);
+		m.tx_len = 1;
+		m.type = MIPI_DSI_DCS_SHORT_WRITE_PARAM;
+		CHECK(mipi_dsi_create_packet(&pk, &m) == 0 && pk.header[1] == 0x11 && pk.header[2] == 0);
+		m.tx_len = 0;
+		m.type = MIPI_DSI_TURN_ON_PERIPHERAL;
+		CHECK(mipi_dsi_create_packet(&pk, &m) == 0 && pk.header[0] == ((2 << 6) | 0x32) && pk.header[1] == 0 && pk.size == 4);
+		m.tx_len = 3;
+		CHECK(mipi_dsi_create_packet(&pk, &m) == -EINVAL);		/* too long for a short packet */
+		/* a long packet: the length in bytes 1 and 2, the payload follows */
+		m.type = MIPI_DSI_DCS_LONG_WRITE;
+		m.tx_buf = five;
+		m.tx_len = 5;
+		m.channel = 3;
+		CHECK(mipi_dsi_create_packet(&pk, &m) == 0);
+		CHECK(pk.header[0] == (0xc0 | 0x39) && pk.header[1] == 5 && pk.header[2] == 0);
+		CHECK(pk.payload == five && pk.payload_length == 5 && pk.size == 9);
+		m.tx_len = 0x1234;
+		CHECK(mipi_dsi_create_packet(&pk, &m) == 0 && pk.header[1] == 0x34 && pk.header[2] == 0x12);
+		m.tx_len = 0x10000;
+		CHECK(mipi_dsi_create_packet(&pk, &m) == -EINVAL);
+		m.tx_len = 5;
+		m.channel = 4;
+		CHECK(mipi_dsi_create_packet(&pk, &m) == -EINVAL);		/* only four virtual channels */
+		m.channel = 0;
+		m.type = 0x00;
+		CHECK(mipi_dsi_create_packet(&pk, &m) == -EINVAL);		/* a type that is neither */
+		CHECK(MIPI_DCS_SET_DISPLAY_BRIGHTNESS == 0x51 && MIPI_DCS_WRITE_POWER_SAVE == 0x55);
 	}
 
 	destroy_waitqueue_head(&q1);
