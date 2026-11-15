@@ -40,6 +40,7 @@ SRCS+=	drm618_lease.c
 SRCS+=	drm618_managed.c
 SRCS+=	drm618_module.c
 SRCS+=	drm618_page.c
+SRCS+=	drm618_printf.c
 SRCS+=	drm618_rbtree.c
 SRCS+=	drm618_scatterlist.c
 SRCS+=	drm618_shmem.c
@@ -50,6 +51,9 @@ SRCS+=	drm618_sync_file.c
 SRCS+=	drm618_sysfs.c
 SRCS+=	drm618_unsupported.c
 SRCS+=	drm618_vma.c
+
+# drm_print.c formats %pV and %ps through drm618_printf.c.
+CPPFLAGS.drm_print.c+=	-include ${S}/external/bsd/drm2/drm618/include/drm618_print_prefix.h
 
 # Linux 6.18 files (dist618).
 SRCS+=	drm_client_setup.c

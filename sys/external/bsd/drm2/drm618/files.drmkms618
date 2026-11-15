@@ -66,6 +66,7 @@ file	external/bsd/drm2/drm618/drm618_kthread_worker.c	drmkms618
 file	external/bsd/drm2/drm618/drm618_lease.c	drmkms618
 file	external/bsd/drm2/drm618/drm618_managed.c	drmkms618
 file	external/bsd/drm2/drm618/drm618_page.c	drmkms618
+file	external/bsd/drm2/drm618/drm618_printf.c	drmkms618
 file	external/bsd/drm2/drm618/drm618_rbtree.c	drmkms618
 file	external/bsd/drm2/drm618/drm618_shmem.c	drmkms618
 file	external/bsd/drm2/drm618/drm618_sleep.c	drmkms618
@@ -139,6 +140,7 @@ file	external/bsd/drm2/dist618/drm/drm_pci.c		drmkms618
 file	external/bsd/drm2/dist618/drm/drm_plane.c		drmkms618
 file	external/bsd/drm2/dist618/drm/drm_plane_helper.c		drmkms618
 file	external/bsd/drm2/dist618/drm/drm_prime.c		drmkms618
+makeoptions	drmkms618	"CPPFLAGS.drm_print.c"+="-include $S/external/bsd/drm2/drm618/include/drm618_print_prefix.h"
 file	external/bsd/drm2/dist618/drm/drm_print.c		drmkms618
 #file	external/bsd/drm2/dist618/drm/drm_privacy_screen.c		drmkms618  (CONFIG_DRM_PRIVACY_SCREEN off)
 #file	external/bsd/drm2/dist618/drm/drm_privacy_screen_x86.c		drmkms618  (CONFIG_DRM_PRIVACY_SCREEN off)
