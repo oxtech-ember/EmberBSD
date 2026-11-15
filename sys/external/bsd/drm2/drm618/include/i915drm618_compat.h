@@ -783,7 +783,11 @@ __init_waitqueue_head(wait_queue_head_t *wq, const char *name __unused,
 	static const struct { int (*show)(struct seq_file *, void *); }	\
 	    name##_fops __unused = { .show = name##_show }
 #undef	DEFINE_SHOW_STORE_ATTRIBUTE
-#define	DEFINE_SHOW_STORE_ATTRIBUTE(name)	DEFINE_SHOW_ATTRIBUTE(name)
+#define	DEFINE_SHOW_STORE_ATTRIBUTE(name)				\
+	static const struct {						\
+		int (*show)(struct seq_file *, void *);			\
+		ssize_t (*write)(struct file *, const char __user *, size_t, loff_t *); \
+	} name##_fops __unused = { .show = name##_show, .write = name##_write }
 
 /* vga_switcheroo: the states and the client operations (declared, not defined: no hybrid graphics here) */
 enum vga_switcheroo_state {

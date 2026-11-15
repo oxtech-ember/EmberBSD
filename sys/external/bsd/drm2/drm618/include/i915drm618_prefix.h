@@ -66,5 +66,20 @@
 #include <linux/moduleparam.h>
 #include <linux/dma-mapping.h>
 #include <i915drm618_compat.h>	/* small helpers the layer lacks */
+#include <i915drm618_dev.h>	/* device interfaces (PCI, CEC, DMI): small, declared or tested */
+
+/*
+ * Linux's container_of takes a void pointer too (a debugfs file's private data);
+ * the NetBSD one checks the type of the pointer against the member's.
+ */
+#undef	container_of
+#define	__i915_cof_ptr(PTR, TYPE, FIELD)				\
+	_Generic((PTR),							\
+	    void *: (__typeof__(&((TYPE *)0)->FIELD))(PTR),		\
+	    const void *: (__typeof__(&((TYPE *)0)->FIELD))(PTR),	\
+	    default: (PTR))
+#define	container_of(PTR, TYPE, FIELD)					\
+    ((TYPE *)(((char *)__i915_cof_ptr(PTR, TYPE, FIELD)) - offsetof(TYPE, FIELD))	\
+	+ __validate_container_of(__i915_cof_ptr(PTR, TYPE, FIELD), TYPE, FIELD))
 
 #endif

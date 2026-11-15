@@ -36,4 +36,39 @@ pci_get_device(unsigned int vendor __unused, unsigned int device __unused,
 	return NULL;
 }
 
+/*
+ * The first entry of a table of ids (ended by an entry of zeros: no vendor, no
+ * subvendor, no class mask) that matches the device: vendor, device, subsystem
+ * vendor and device are equal or PCI_ANY_ID, the class agrees under the mask.
+ */
+static inline const struct pci_device_id *
+pci_match_id(const struct pci_device_id *ids, struct pci_dev *pdev)
+{
+
+	if (ids == NULL)
+		return NULL;
+	for (; ids->vendor != 0 || ids->subvendor != 0 || ids->class_mask != 0;
+	    ids++) {
+		if ((ids->vendor == (uint32_t)PCI_ANY_ID ||
+			ids->vendor == pdev->vendor) &&
+		    (ids->device == (uint32_t)PCI_ANY_ID ||
+			ids->device == pdev->device) &&
+		    (ids->subvendor == (uint32_t)PCI_ANY_ID ||
+			ids->subvendor == pdev->subsystem_vendor) &&
+		    (ids->subdevice == (uint32_t)PCI_ANY_ID ||
+			ids->subdevice == pdev->subsystem_device) &&
+		    !((ids->class ^ pdev->class) & ids->class_mask))
+			return ids;
+	}
+	return NULL;
+}
+
+/* Registers and bits of the PCI configuration header (the PCI specification). */
+#ifndef PCI_COMMAND
+#define	PCI_COMMAND		0x04
+#define	PCI_COMMAND_IO		0x1
+#define	PCI_COMMAND_MEMORY	0x2
+#define	PCI_COMMAND_MASTER	0x4
+#endif
+
 #endif	/* _DRM618_LINUX_PCI_H_ */

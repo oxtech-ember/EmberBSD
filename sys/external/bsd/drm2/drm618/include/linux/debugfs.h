@@ -18,8 +18,12 @@
 struct dentry;
 struct device;
 
-#define	debugfs_create_file(...)	((struct dentry *)NULL)
-#define	debugfs_create_dir(...)		((struct dentry *)NULL)
+/* nothing is created, the arguments are still evaluated (a variable only a creation reads is used; the table of operations is not named: the DRM core defines none) */
+#define	debugfs_create_file(name, mode, parent, data, fops)		\
+	((void)(name), (void)(mode), (void)(parent), (void)(data), \
+	    (struct dentry *)NULL)
+#define	debugfs_create_dir(name, parent)				\
+	((void)(name), (void)(parent), (struct dentry *)NULL)
 #define	debugfs_remove(dentry)		((void)0)
 #define	debugfs_remove_recursive(d)	((void)0)
 #define	debugfs_lookup(...)		((struct dentry *)NULL)

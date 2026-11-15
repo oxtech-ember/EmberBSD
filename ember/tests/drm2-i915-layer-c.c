@@ -14,11 +14,20 @@
 #include <sys/kthread.h>
 #include <sys/systm.h>
 
+#include <asm/cpufeature.h>
+#include <linux/dmi.h>
+#include <linux/hdmi.h>
+#include <linux/interrupt.h>
 #include <linux/overflow.h>
+#include <linux/pci.h>
 #include <linux/sched.h>
 #include <linux/wait.h>
 
 #include <i915drm618_compat.h>
+#include <i915drm618_dev.h>
+
+/* a Linux interrupt handler takes the number and the cookie */
+static_assert(__builtin_types_compatible_p(irq_handler_t, irqreturn_t (*)(int, void *)));
 
 static int t_run, t_fail;
 
@@ -208,6 +217,89 @@ drm2_i915_layer_c_run(void)
 	CHECK(castable_to_type(ull, pgoff_t));
 	CHECK(!castable_to_type(i, pgoff_t) && !castable_to_type(lg, pgoff_t));
 	CHECK(castable_to_type(i, int) && !castable_to_type(lg, int));
+
+
+	/* static_cpu_has: the two features of the 6.18 sources are the CPUID bits, the old ones are kept, others are absent */
+	CHECK(static_cpu_has(X86_FEATURE_XMM4_1) == ((cpu_info_primary.ci_feat_val[1] & CPUID2_SSE41) != 0));
+	CHECK(boot_cpu_has(X86_FEATURE_HYPERVISOR) == ((cpu_info_primary.ci_feat_val[1] & CPUID2_RAZ) != 0));
+	CHECK(static_cpu_has(X86_FEATURE_CLFLUSH) == cpu_has_clflush && static_cpu_has(X86_FEATURE_PAT) == cpu_has_pat);
+	CHECK(!static_cpu_has(1000));
+
+	/* static_branch_enable / disable switch a layer key */
+	{
+		bool key = false;
+
+		static_branch_enable(&key);
+		CHECK(key && static_branch_likely(&key));
+		static_branch_disable(&key);
+		CHECK(!key && !static_branch_likely(&key));
+	}
+
+	/* pci_match_id: first entry that matches, any-id entries, the class under its mask, the end of the table */
+	{
+		struct pci_dev pd;
+		static const struct pci_device_id ids[] = {
+			{ .vendor = 0x8086, .device = 0x1234, .subvendor = PCI_ANY_ID, .subdevice = PCI_ANY_ID },
+			{ .vendor = 0x8086, .device = PCI_ANY_ID, .subvendor = PCI_ANY_ID, .subdevice = PCI_ANY_ID,
+			  .class = 0x030000, .class_mask = 0xff0000, .driver_data = 7 },
+			{ .vendor = 0x1002, .device = 0x7d67, .subvendor = 0x17aa, .subdevice = 0x5001, .driver_data = 9 },
+			{ 0 }
+		};
+
+		memset(&pd, 0, sizeof(pd));
+		pd.vendor = 0x8086;
+		pd.device = 0x7d67;
+		pd.class = 0x030000;
+		CHECK(pci_match_id(ids, &pd) == &ids[1] && pci_match_id(ids, &pd)->driver_data == 7);
+		pd.device = 0x1234;
+		CHECK(pci_match_id(ids, &pd) == &ids[0]);
+		pd.class = 0x020000;			/* a network device: the class mask rejects entry 1 */
+		pd.device = 0x7d67;
+		CHECK(pci_match_id(ids, &pd) == NULL);
+		pd.vendor = 0x1002;
+		CHECK(pci_match_id(ids, &pd) == NULL);	/* the subsystem ids differ */
+		pd.subsystem_vendor = 0x17aa;
+		pd.subsystem_device = 0x5001;
+		CHECK(pci_match_id(ids, &pd) == &ids[2]);
+		CHECK(pci_match_id(NULL, &pd) == NULL);
+	}
+	CHECK(PCI_COMMAND == 4 && PCI_COMMAND_MEMORY == 2);
+
+	/* hdmi_drm_infoframe_unpack_only reads what hdmi_drm_infoframe_pack_only wrote */
+	{
+		struct hdmi_drm_infoframe a, b;
+		uint8_t buf[HDMI_INFOFRAME_HEADER_SIZE + HDMI_DRM_INFOFRAME_SIZE];
+
+		CHECK(hdmi_drm_infoframe_init(&a) == 0);
+		a.eotf = HDMI_EOTF_SMPTE_ST2084;
+		a.metadata_type = HDMI_STATIC_METADATA_TYPE1;
+		a.display_primaries[0].x = 0x1111;
+		a.display_primaries[0].y = 0x2222;
+		a.display_primaries[2].x = 0x3333;
+		a.display_primaries[2].y = 0x4444;
+		a.white_point.x = 0x5555;
+		a.white_point.y = 0x6666;
+		a.max_display_mastering_luminance = 1000;
+		a.min_display_mastering_luminance = 50;
+		a.max_cll = 800;
+		a.max_fall = 400;
+		CHECK(hdmi_drm_infoframe_pack_only(&a, buf, sizeof(buf)) == (int)sizeof(buf));
+		memset(&b, 0xa5, sizeof(b));
+		CHECK(hdmi_drm_infoframe_unpack_only(&b, buf + HDMI_INFOFRAME_HEADER_SIZE, HDMI_DRM_INFOFRAME_SIZE) == 0);
+		CHECK(b.header.type == HDMI_INFOFRAME_TYPE_DRM && b.header.version == 1 &&
+		    b.header.length == HDMI_DRM_INFOFRAME_SIZE);
+		CHECK(b.eotf == a.eotf && b.metadata_type == a.metadata_type);
+		CHECK(b.display_primaries[0].x == 0x1111 && b.display_primaries[0].y == 0x2222);
+		CHECK(b.display_primaries[2].x == 0x3333 && b.display_primaries[2].y == 0x4444);
+		CHECK(b.white_point.x == 0x5555 && b.white_point.y == 0x6666);
+		CHECK(b.max_display_mastering_luminance == 1000 && b.min_display_mastering_luminance == 50);
+		CHECK(b.max_cll == 800 && b.max_fall == 400);
+		CHECK(hdmi_drm_infoframe_unpack_only(&b, buf + HDMI_INFOFRAME_HEADER_SIZE,
+		    HDMI_DRM_INFOFRAME_SIZE - 1) == -EINVAL);
+	}
+
+	/* DMI_PRODUCT_SKU is a field of its own, beyond the known ones */
+	CHECK(DMI_PRODUCT_SKU > DMI_STRING_MAX);
 
 	destroy_waitqueue_head(&q1);
 	destroy_waitqueue_head(&t_vq);
