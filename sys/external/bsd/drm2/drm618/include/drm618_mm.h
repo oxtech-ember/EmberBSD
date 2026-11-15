@@ -57,7 +57,7 @@ typedef unsigned long vm_flags_t;
 #define	VM_MAYWRITE	0x00000020UL
 #define	VM_MAYEXEC	0x00000040UL
 #define	VM_MAYSHARE	0x00000080UL
-#define	VM_MAP_PUT_PAGES	0x00000020UL	/* vmap: the pages go back at vunmap (not implemented: vmap asserts it is not asked for) */
+#define	VM_MAP_PUT_PAGES	0x00000200UL	/* vmap: the pages go back at vunmap (not implemented: vmap asserts it is not asked for) */
 #define	VM_NORESERVE	0x00200000UL	/* shmem_file_setup: do not account the memory */
 
 struct vm_operations_struct {

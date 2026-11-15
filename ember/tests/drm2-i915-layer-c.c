@@ -1,6 +1,9 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Copyright (c) 2026 EmberBSD contributors. */
 /*
+ * Own implementation.  Sources read: the uses of the tested names in the MIT files of dist618/drm/i915, the
+ * documented behaviour of the Linux interfaces, and the layer headers under test; the GPL original was not read.
+ *
  * Kernel-side checks of the parts of the Linux layer that the second batch of
  * i915 files of Linux 6.18 needs and that have behaviour of their own: the
  * sleeping protocol with wait queue entries (prepare_to_wait, finish_wait,
@@ -338,6 +341,22 @@ drm2_i915_layer_c_run(void)
 	CHECK(try_cmpxchg64(&v, &o, 0xffffffff00000001ull) && v == 0xffffffff00000001ull);
 	CHECK(cmpxchg64(&v, 0xffffffff00000001ull, 3) == 0xffffffff00000001ull && v == 3);
 
+	/* wait_event_timeout evaluates its time once; overflows_type counts pgoff_t as unsigned long */
+	{
+		static int calls;
+		wait_queue_head_t wq2;
+		long rr;
+
+		init_waitqueue_head(&wq2);
+		rr = wait_event_timeout(wq2, 1, (calls++, 5));
+		CHECK(calls == 1 && rr >= 1);
+		rr = wait_event_interruptible_timeout(wq2, 1, (calls++, 5));
+		CHECK(calls == 2 && rr >= 1);
+		destroy_waitqueue_head(&wq2);
+		CHECK(overflows_type(-1, pgoff_t) && !overflows_type(0x8000000000000000ull, pgoff_t));
+		CHECK(!overflows_type((unsigned long)5, pgoff_t) && overflows_type((long)-5, pgoff_t));
+	}
+
 	/* castable_to_type with pgoff_t: unsigned long wide, as Linux's pgoff_t */
 	CHECK(castable_to_type(5, pgoff_t) && !castable_to_type(-1, pgoff_t));
 	CHECK(castable_to_type((unsigned long)i, pgoff_t));
@@ -452,12 +471,12 @@ drm2_i915_layer_c_run(void)
 		b = xa_alloc_cyclic_irq(&xa, &id, &b, XA_LIMIT(1, 3), &next, GFP_KERNEL);
 		CHECK(b == 0 && id == 2 && next == 3);
 		c = xa_alloc_cyclic_irq(&xa, &id, &c, XA_LIMIT(1, 3), &next, GFP_KERNEL);
-		CHECK(c == 1 && id == 3 && next == 1);		/* the last of the limit: wrapped */
+		CHECK(c == 0 && id == 3 && next == 4);		/* the last of the limit: no wrap yet, next is beyond the limit */
 		d = xa_alloc_cyclic_irq(&xa, &id, &d, XA_LIMIT(1, 3), &next, GFP_KERNEL);
 		CHECK(d < 0);					/* full */
 		xa_erase(&xa, 2);
 		e = xa_alloc_cyclic_irq(&xa, &id, &e, XA_LIMIT(1, 3), &next, GFP_KERNEL);
-		CHECK(e == 0 && id == 2 && next == 3);
+		CHECK(e == 1 && id == 2 && next == 3);		/* the second try, from the start of the limit: 1 */
 		xa_erase(&xa, 1);
 		xa_erase(&xa, 2);
 		xa_erase(&xa, 3);

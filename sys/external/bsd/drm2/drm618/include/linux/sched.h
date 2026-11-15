@@ -204,7 +204,7 @@ io_schedule(void)
 	schedule();
 }
 
-/* A signal ends a sleep in the interruptible states only. */
+/* A signal ends a sleep in the interruptible states only; a killable sleep is not told from an interruptible one. */
 static inline bool
 signal_pending_state(int state, struct task_struct *task)
 {

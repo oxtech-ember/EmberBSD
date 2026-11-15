@@ -16,11 +16,6 @@
  * name).  The sum 0 + N is formed in that type, and the builtin says whether
  * the result is the true sum.
  */
-#define	__drm618_overflows_type(N, T)					\
-	({								\
-		__typeof__(T) __drm618_v = 0;				\
-		__builtin_add_overflow(0, (N), &__drm618_v);		\
-	})
 #ifndef overflows_type
 #define	overflows_type(N, T)	__drm618_overflows_type(N, T)
 #endif
@@ -51,6 +46,12 @@
 #define	__drm618_castable_tgt(T)					\
 	__typeof__(__builtin_choose_expr(__drm618_is_pgoff(T),		\
 	    (unsigned long)0, (__typeof__(T))0))
+/* for overflows_type too: the layer's pgoff_t counts as unsigned long (a negative number overflows it, a value above 2^63 does not) */
+#define	__drm618_overflows_type(N, T)					\
+	({								\
+		__drm618_castable_tgt(T) __drm618_v = 0;				\
+		__builtin_add_overflow(0, (N), &__drm618_v);		\
+	})
 #ifndef castable_to_type
 #define	castable_to_type(N, T)						\
 	__builtin_choose_expr(__builtin_constant_p(N),			\

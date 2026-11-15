@@ -66,6 +66,7 @@ __i915_active_fence_init(struct i915_active_fence *active,
 {
 	RCU_INIT_POINTER(active->fence, fence);
 	active->cb.func = fn ?: i915_active_noop;
+	active->cb.fcb_onqueue = false;
 }
 
 #define INIT_ACTIVE_FENCE(A) \

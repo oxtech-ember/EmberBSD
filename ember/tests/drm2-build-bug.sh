@@ -1,4 +1,8 @@
 #!/bin/sh
+# SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 EmberBSD contributors.
+# Own implementation.  Sources read: drm618/include/linux/build_bug.h and drm618_build_bug.h (the contract it checks:
+# BUILD_BUG_ON decided after inlining, with the attribute error of clang and gcc); the GPL original was not read.
 # Host contract for drm618_build_bug.h (BUILD_BUG_ON decided after inlining).
 # usage: drm2-build-bug.sh [CC]   (default: $CC, then clang, then cc)
 set -eu

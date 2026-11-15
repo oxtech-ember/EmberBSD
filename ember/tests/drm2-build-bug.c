@@ -1,6 +1,9 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Copyright (c) 2026 EmberBSD contributors. */
 /*
+ * Own implementation.  Sources read: the uses of the tested names in the MIT files of dist618/drm/i915, the
+ * documented behaviour of the Linux interfaces, and the layer headers under test; the GPL original was not read.
+ *
  * Host contract for drm618/include/drm618_build_bug.h: a BUILD_BUG_ON on a
  * parameter of an always-inline function is judged for each caller, after
  * inlining.  Built with -O2.  -DBUILD_BUG_NEGATIVE adds a caller whose

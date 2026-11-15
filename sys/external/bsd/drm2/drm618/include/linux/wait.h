@@ -431,9 +431,15 @@ wake_up_all(wait_queue_head_t *wq)
 #define	wait_event_interruptible(WQ, COND)				      \
 	((int)__lnx_wait_event(WQ, COND, -1, true, NULL))
 #define	wait_event_timeout(WQ, COND, TICKS)				      \
-	__lnx_wait_event(WQ, COND, ((TICKS) < 0 ? 0 : (TICKS)), false, NULL)
+({									      \
+	long __wet = (TICKS);						      \
+	__lnx_wait_event(WQ, COND, (__wet < 0 ? 0 : __wet), false, NULL);     \
+})
 #define	wait_event_interruptible_timeout(WQ, COND, TICKS)		      \
-	__lnx_wait_event(WQ, COND, ((TICKS) < 0 ? 0 : (TICKS)), true, NULL)
+({									      \
+	long __wit = (TICKS);						      \
+	__lnx_wait_event(WQ, COND, (__wit < 0 ? 0 : __wit), true, NULL);      \
+})
 
 /*
  * The caller holds LOCK (a spinlock_t, named as in Linux) and the condition

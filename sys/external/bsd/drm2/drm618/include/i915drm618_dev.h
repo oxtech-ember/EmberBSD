@@ -85,33 +85,30 @@ xa_is_value(const void *entry)
 #define	XA_FLAGS_LOCK_IRQ	0
 
 /*
- * Allocate an index from *next up to the limit, or from the start of the limit
- * if there is none left; *next goes to the one after.  0 or 1 (wrapped), -EBUSY if the
- * limit is full.
+ * Allocate an index from *next (or the start of the limit if that is later) up to the
+ * limit; if there is none, from the start of the limit.  0, or 1 when the second try was
+ * needed; -EBUSY if the limit is full.  *next goes to the index after the one given, which
+ * can be beyond the limit (the next call then wraps).  Linux also reports a wrap when the
+ * index after the one given overflows 32 bits; the layer keeps no flag for it.
  */
 static inline int
 xa_alloc_cyclic_irq(struct xarray *xa, uint32_t *id, void *entry,
     struct xa_limit limit, uint32_t *next, gfp_t gfp)
 {
 	struct xa_limit tail = limit;
-	int wrapped = 0, err;
+	int err;
 
-	if (*next < limit.min)
-		*next = limit.min;
-	tail.min = *next;
-	err = xa_alloc(xa, id, entry, tail, gfp);
-	if (err == -EBUSY && *next > limit.min) {
-		tail.min = limit.min;
-		tail.max = *next - 1;
-		err = xa_alloc(xa, id, entry, tail, gfp);
-		wrapped = 1;
+	if (tail.min < *next)
+		tail.min = *next;
+	err = tail.min > tail.max ? -EBUSY : xa_alloc(xa, id, entry, tail, gfp);
+	if (err < 0 && tail.min > limit.min) {
+		err = xa_alloc(xa, id, entry, limit, gfp);
+		if (err == 0)
+			err = 1;
 	}
-	if (err)
-		return err;
-	*next = (*id == limit.max) ? limit.min : *id + 1;
-	if (*id == limit.max)
-		wrapped = 1;
-	return wrapped;
+	if (err >= 0)
+		*next = *id + 1;
+	return err;
 }
 
 /* __xa_store and __xa_erase want the caller to hold the lock; the layer's xa_store takes it itself (declared, not defined). */

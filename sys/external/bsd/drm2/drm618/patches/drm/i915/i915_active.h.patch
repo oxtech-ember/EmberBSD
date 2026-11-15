@@ -1,0 +1,10 @@
+--- a/drm/i915/i915_active.h
++++ b/drm/i915/i915_active.h
+@@ -66,6 +66,7 @@
+ {
+ 	RCU_INIT_POINTER(active->fence, fence);
+ 	active->cb.func = fn ?: i915_active_noop;
++	active->cb.fcb_onqueue = false;
+ }
+ 
+ #define INIT_ACTIVE_FENCE(A) \

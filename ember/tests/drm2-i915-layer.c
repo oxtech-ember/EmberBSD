@@ -1,6 +1,9 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Copyright (c) 2026 EmberBSD contributors. */
 /*
+ * Own implementation.  Sources read: the uses of the tested names in the MIT files of dist618/drm/i915, the
+ * documented behaviour of the Linux interfaces, and the layer headers under test; the GPL original was not read.
+ *
  * Kernel-side checks of the parts of the Linux layer that the i915 driver of
  * Linux 6.18 needs and that have behaviour of their own: fixed width bit masks,
  * FIELD_FIT, overflows_type, MMIO accessors, the seqcount with a mutex, the
@@ -409,7 +412,7 @@ drm2_i915_layer_run(void)
 		CHECK(int_pow(3, 4) == 81 && int_pow(2, 0) == 1 && int_pow(10, 9) == 1000000000);
 		CHECK(DIV64_U64_ROUND_CLOSEST(7, 2) == 4 && DIV64_U64_ROUND_CLOSEST(5, 2) == 3);
 		CHECK((uintptr_t)PTR_ALIGN(base, 16) == 0x1010 && (uintptr_t)PTR_ALIGN(base - 1, 16) == 0x1000);
-		CHECK(jiffies_to_nsecs(1) == 1000000000ul / hz && jiffies_delta_to_msecs(-hz) == -1000);
+		CHECK(jiffies_to_nsecs(1) == 1000000000ul / hz && jiffies_delta_to_msecs(-hz) == 0 && jiffies_delta_to_msecs(-1) == 0);
 		CHECK(ktime_set(1, 5) == 1000000005 && ktime_set(INT64_MAX / 1000000000 + 1, 0) == KTIME_MAX);
 		CHECK(ktime_add_ms(0, 3) == 3000000);
 		fsleep(100);

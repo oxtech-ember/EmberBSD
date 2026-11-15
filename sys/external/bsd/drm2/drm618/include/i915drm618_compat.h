@@ -348,12 +348,14 @@ jiffies_to_nsecs(const unsigned long j)
 	return j * (1000000000ul / hz);
 }
 
-/* signed: a deadline already passed gives a negative number */
-static inline long
+/* a delta in jiffies as milliseconds; a negative delta (a deadline that has passed) is 0, as in Linux */
+static inline unsigned int
 jiffies_delta_to_msecs(long delta)
 {
 
-	return delta * 1000 / hz;
+	if (delta < 0)
+		return 0;
+	return (unsigned int)(delta * 1000 / hz);
 }
 
 #define	KTIME_MAX	((ktime_t)INT64_MAX)

@@ -1,4 +1,6 @@
-#	Origin: EmberBSD (Linux 6.18 i915 driver)
+# SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 EmberBSD contributors.
+#	Origin: EmberBSD (Linux 6.18 i915 driver).  Own file list; the names are those of the files imported into dist618.
 #
 # DRAFT of the file list of the i915 driver of Linux 6.18 (dist618/drm/i915) for config(1):
 # the 271 sources of the working set for Arrow Lake 8086:7d67 after the files that the chosen

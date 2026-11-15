@@ -34,12 +34,16 @@ action:  import     goes to dist618 (MIT, DUAL)
 """
 import os, re, sys, json, collections
 
+if len(sys.argv) < 3:
+    sys.exit('usage: select618.py [--i915-only] LINUX_TREE OUTDIR')
 I915_ONLY = sys.argv[1] == '--i915-only'
 if I915_ONLY:
     # select618.py --i915-only LINUX_TREE OUTDIR: the rows of the i915 part
     # only (a tree without the Makefiles of the core, e.g. the MIT-licensed
     # subset of Linux, is enough); writes OUTDIR/select-i915.tsv.
     del sys.argv[1]
+if len(sys.argv) < 3:
+    sys.exit('usage: select618.py [--i915-only] LINUX_TREE OUTDIR')
 root, out = sys.argv[1], sys.argv[2]
 os.makedirs(out, exist_ok=True)
 DRM = 'drivers/gpu/drm'
