@@ -21,7 +21,7 @@ Loader applicability and recovery procedures belong to
 
 `ember/build-kernel.sh` exports the normal and diagnostic DTBs together.
 An existing configured kernel object directory can build only the DTBs.
-Use the matching GCC16 build wrapper and its source tree:
+Use the matching selected-toolchain build wrapper and its source tree:
 
 ```sh
 "$nbmake" -C "$kernel_obj" DTSGNUARCH=arm64 DTSSUBDIR=allwinner \
