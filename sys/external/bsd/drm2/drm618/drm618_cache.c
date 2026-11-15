@@ -84,7 +84,13 @@ drm_clflush_pages(struct page **pages, unsigned long npages)
 void
 drm_clflush_sg(struct sg_table *sgt)
 {
-	drm_clflush_pages(sgt->sgl->sg_pgs, sgt->sgl->sg_npgs);
+	struct sg_page_iter iter;
+
+	for_each_sgtable_page(sgt, &iter, 0) {
+		struct page *page = sg_page_iter_page(&iter);
+
+		drm_clflush_pages(&page, 1);
+	}
 }
 
 void

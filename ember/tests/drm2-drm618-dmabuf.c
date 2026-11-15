@@ -311,12 +311,13 @@ drm2_drm618_dmabuf_run(void)
 		n++;
 	CHECK(n == 2);				/* starting at the second page */
 	n = 0;
-	for_each_sgtable_dma_sg(&tbl, sg, i)
+	for_each_sgtable_dma_sg(&tbl, sg, i) {
+		CHECK(sg_dma_len(sg) == 0);	/* not mapped: no bus address */
 		n++;
-	CHECK(n == 1);
-	CHECK(drm618_sg_dma_page_address(tbl.sgl, 0) == 0);	/* not mapped */
+	}
+	CHECK(n == tbl.orig_nents && n >= 1 && n <= 3);
 	CHECK(dma_map_sgtable(NULL, &tbl, DMA_BIDIRECTIONAL, 0) == -EOPNOTSUPP);
-	CHECK(drm618_sg_dma_page_address(tbl.sgl, 0) == 0);
+	CHECK(sg_dma_len(tbl.sgl) == 0);
 	dma_unmap_sgtable(NULL, &tbl, DMA_BIDIRECTIONAL, 0);	/* nothing to undo */
 	sg_free_table(&tbl);
 	__folio_batch_release(&fbatch);

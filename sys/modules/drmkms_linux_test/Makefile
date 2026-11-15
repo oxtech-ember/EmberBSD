@@ -60,6 +60,7 @@ SRCS+=	drm618_unsupported.c
 SRCS+=	drm618_sync_file.c
 SRCS+=	drm618_vma.c
 SRCS+=	drm618_dma_buf.c
+SRCS+=	drm618_scatterlist.c
 
 # These two read struct drm_device, so they get the includes the 6.18 core
 # expects (files.drmkms618).
@@ -79,6 +80,7 @@ CPPFLAGS.drm618_file.c+=	-D__KERNEL__ -DDRM618_NBSD_FILE -include ${S}/external/
 CPPFLAGS.drm618_sysfs.c+=	${DRM618_T_RENAME} -D__KERNEL__ -include ${S}/external/bsd/drm2/drm618/include/drm618_prefix.h
 CPPFLAGS.drm618_sleep.c+=	-D__KERNEL__ -include ${S}/external/bsd/drm2/drm618/include/drm618_prefix.h
 CPPFLAGS.drm618_sync_file.c+=	-D__KERNEL__ -include ${S}/external/bsd/drm2/drm618/include/drm618_prefix.h
+CPPFLAGS.drm618_scatterlist.c+=	-D__KERNEL__ -include ${S}/external/bsd/drm2/drm618/include/drm618_prefix.h
 CPPFLAGS.drm618_dma_buf.c+=	-D__KERNEL__ -include ${S}/external/bsd/drm2/drm618/include/drm618_prefix.h
 CPPFLAGS.drm2-drm618-vma.c+=	-D__KERNEL__ -include ${S}/external/bsd/drm2/drm618/include/drm618_prefix.h
 CPPFLAGS.drm2-drm618-dmabuf.c+=	-D__KERNEL__ -include ${S}/external/bsd/drm2/drm618/include/drm618_prefix.h

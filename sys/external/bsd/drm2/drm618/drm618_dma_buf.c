@@ -315,33 +315,9 @@ dma_map_sgtable(struct device *dev __unused, struct sg_table *sgt __unused,
 	return -EOPNOTSUPP;
 }
 
-/* Only a table that dma_map_sgtable mapped can be unmapped, and none is. */
+/* A table is only ever mapped by drm618_sgt_dma_physical: nothing to undo. */
 void
-dma_unmap_sgtable(struct device *dev __unused, struct sg_table *sgt,
+dma_unmap_sgtable(struct device *dev __unused, struct sg_table *sgt __unused,
     enum dma_data_direction dir __unused, unsigned long attrs __unused)
 {
-
-	KASSERT(sgt == NULL || sgt->sgl->sg_dmamap == NULL);
-}
-
-/*
- * The bus address of page idx of the one entry of a table, from the segments
- * of its DMA map; 0 for a table that is not mapped.
- */
-bus_addr_t
-drm618_sg_dma_page_address(const struct scatterlist *sg, unsigned int idx)
-{
-	bus_size_t off = (bus_size_t)idx << PAGE_SHIFT;
-	int i;
-
-	if (sg->sg_dmamap == NULL)
-		return 0;
-	for (i = 0; i < sg->sg_dmamap->dm_nsegs; i++) {
-		const bus_dma_segment_t *seg = &sg->sg_dmamap->dm_segs[i];
-
-		if (off < seg->ds_len)
-			return seg->ds_addr + off;
-		off -= seg->ds_len;
-	}
-	return 0;
 }
