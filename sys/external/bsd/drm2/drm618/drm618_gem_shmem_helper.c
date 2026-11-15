@@ -87,15 +87,21 @@ drm618_gem_set_limit(device_t dev, size_t bytes)
 		shmem_limits_init = true;
 	}
 	mutex_enter(&shmem_limits_lock);
+	/* The slot of this device first, wherever it is, then a free one.  */
 	for (i = 0; i < __arraycount(shmem_limits); i++)
-		if (shmem_limits[i].dev == dev || shmem_limits[i].dev == NULL) {
-			shmem_limits[i].dev = bytes != 0 ? dev : NULL;
-			shmem_limits[i].bytes = bytes;
-			if (shmem_limits[i].dev == dev || bytes == 0)
+		if (dev != NULL && shmem_limits[i].dev == dev)
+			break;
+	if (i == __arraycount(shmem_limits) && bytes != 0) {
+		for (i = 0; i < __arraycount(shmem_limits); i++)
+			if (shmem_limits[i].dev == NULL)
 				break;
-		}
-	if (i == __arraycount(shmem_limits) && bytes != 0)
+	}
+	if (i < __arraycount(shmem_limits)) {
+		shmem_limits[i].dev = bytes != 0 ? dev : NULL;
+		shmem_limits[i].bytes = bytes;
+	} else if (bytes != 0) {
 		printf("gem shmem: no room for the limit of a device\n");
+	}
 	mutex_exit(&shmem_limits_lock);
 }
 

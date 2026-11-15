@@ -228,6 +228,27 @@ drm2_shmem_run(void)
 	CHECK(!IS_ERR(s));
 	if (!IS_ERR(s))
 		drm_gem_object_put(&s->base);
+	/*
+	 * Several devices: a limit is cleared for the device that owns it,
+	 * whatever slots before it are free, and setting it again does not
+	 * make a second entry.
+	 */
+	{
+		static char fake_a, fake_b;
+
+		drm618_gem_set_limit((device_t)&fake_a, 1 << 20);
+		drm618_gem_set_limit(root_device, 3 << 20);
+		drm618_gem_set_limit((device_t)&fake_b, 1 << 20);
+		drm618_gem_set_limit((device_t)&fake_a, 0);	/* a free slot in front */
+		drm618_gem_set_limit(root_device, 2 << 20);	/* the same device again */
+		CHECK(PTR_ERR(drm_gem_shmem_create(dev, 3 << 20)) == -EFBIG);
+		drm618_gem_set_limit(root_device, 0);
+		s = drm_gem_shmem_create(dev, 4 << 20);
+		CHECK(!IS_ERR(s));	/* no stale limit for the device */
+		if (!IS_ERR(s))
+			drm_gem_object_put(&s->base);
+		drm618_gem_set_limit((device_t)&fake_b, 0);
+	}
 	/* memory: pages are not taken from the last of it, the pin says no instead of waiting */
 	s = drm_gem_shmem_create(dev, 64 * PAGE_SIZE);
 	CHECK(!IS_ERR(s));
