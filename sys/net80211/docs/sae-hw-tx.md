@@ -3,11 +3,22 @@
 Status: design requirements, reviewed against EmberBSD
 `f49cf06683492c867e36c6d1e29ff763a4efc609` on 2026-11-15.
 Firmware encryption and TX packet-number (PN) allocation are an approved
-direction. The shared TX API and its adapter implementation do not exist yet.
-The first intended consumer is the BZ/MLD path in `iwx`; other native providers
-retain software TX until they implement the same common contract.
+direction. The first consumer is the BZ/MLD path in `iwx`; other native
+providers retain software TX until they implement the same common contract.
 
-## What exists
+Implementation status: the shared TX API and the `iwx` adapter exist.
+[Firmware TX providers](sae.md#firmware-tx-providers) describes the API, and
+host contracts cover the checks below that need no radio. The radio checks
+are not done: firmware encryption of data and robust management, protected
+ADDBA/DELBA on the air, PN continuity, replay rejection and throughput.
+Until they are done, `iwx` registers its software-TX profile by default; the
+[firmware TX profiles](../../../ember/development/iwx-be200/README.md#management-and-aggregation)
+are an explicit setting for that acceptance. The host has no view of the
+firmware PN: the owner counts the frames of one pairwise instance and
+retires the session before the counter can wrap. The sections below keep
+the requirements and the state before the implementation.
+
+## What existed before the implementation
 
 - [ieee80211_sae.h](../ieee80211_sae.h) defines an **RX-only** provider:
   `fence`, full-set `replace`, and authenticated RX metadata. It has no TX PN

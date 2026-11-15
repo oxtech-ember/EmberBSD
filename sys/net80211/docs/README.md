@@ -41,7 +41,7 @@ Register only providers whose prerequisites the adapter can meet.
 | Feature | Integration interface | Contract |
 | --- | --- | --- |
 | Native SAE and software PMF | `ieee80211_sae_attach`, `ieee80211_sae_state_request`, `ieee80211_sae_retire`, `ieee80211_sae_tx_current` | [SAE](sae.md#opt-in-native-owner): raw management transport, software CCMP, synchronous queue fences, and supported atomic serial publication |
-| Native authenticated hardware RX | `ieee80211_sae_attach_hw`, `ieee80211_sae_hw_ops`, RX tagging in [ieee80211_sae.h](../ieee80211_sae.h) | RX-only key replacement and drain, hardware-key generation on received frames; shared replay checks and software TX remain active |
+| Native authenticated hardware RX | `ieee80211_sae_attach_hw`, `ieee80211_sae_hw_ops`, RX tagging in [ieee80211_sae.h](../ieee80211_sae.h) | Key replacement by instance and RX drain, hardware-key generation on received frames; shared replay checks remain active. TX stays in software, or firmware owns pairwise TX with the `IEEE80211_SAE_HW_TX_*` capabilities |
 | FullMAC external SAE | `ieee80211_ioctl_sae` with probed capabilities and a chip callback | [SAE ioctl boundary](sae.md#external-sae-ioctl-boundary): shared authorization/copyin/clearing; adapter state checks and firmware key/association operations |
 | Station actions and connected scans | `ic_sta_mgmt`; `ieee80211_sta_scan_begin`, `ieee80211_sta_scan_report`, `ieee80211_sta_scan_release` | [Station management](station-management.md): selected security, action directions, peer/generation/cookie checks, and physical drain before scan replacement |
 | Strict STA QoS | `ic_wme.wme_sta_apply` | [WME](net80211-wme.md#synchronous-sta-apply), [TXOP](net80211-txop.md): validate all queues, apply synchronously, commit shared state only after success |
@@ -53,8 +53,9 @@ Register only providers whose prerequisites the adapter can meet.
 No optional row is enabled merely by registering the base network interface.
 For HT/VHT, follow the current provider and source contracts; the basic native HT profile and experimental wider-channel profile differ.
 An RX-only crypto provider is not a general TX encryption-offload API.
-The [approved TX-offload direction](sae-hw-tx.md) specifies the proposed common
-key/PN lifetime and protected-BlockAck prerequisites; it is not an implemented API.
+The [TX-offload requirements](sae-hw-tx.md) specify the common key/PN lifetime
+and protected-BlockAck prerequisites. [Firmware TX providers](sae.md#firmware-tx-providers)
+describes the implemented API; on-air acceptance is not done.
 
 ## Association, work, and buffer lifetime
 

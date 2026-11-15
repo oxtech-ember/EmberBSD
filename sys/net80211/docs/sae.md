@@ -159,6 +159,82 @@ retirement. Bytes already handed to a device remain ciphertext under their
 original key. Native non-EAPOL data additionally requires current association,
 controlled-port authorization and CCMP regardless of legacy privacy flags.
 
+### Firmware TX providers
+
+A hardware adapter declares TX capabilities in its operations:
+
+| Capability | Meaning |
+| --- | --- |
+| `IEEE80211_SAE_HW_KEEP_KEYS` | The adapter retains a slot whose key instance did not change |
+| `IEEE80211_SAE_HW_TX_DATA` | Firmware encrypts pairwise data and allocates the pairwise TX PN |
+| `IEEE80211_SAE_HW_TX_MGMT` | Firmware encrypts unicast robust management with the same counter |
+| `IEEE80211_SAE_HW_TX_BA` | Firmware protects the Block Ack actions that it originates |
+
+CCMP has one TX PN for a pairwise key. Thus `TX_DATA` and `TX_MGMT` are valid
+only together, and both need `KEEP_KEYS`. A TX provider sets `TX_BA`, or it
+sets `IEEE80211_SAE_HW_NO_QOS_TX` and keeps the non-QoS path; never both.
+`ieee80211_sae_attach_hw()` rejects each other combination. An adapter
+without TX capabilities keeps software TX. The TX owner of a pairwise key
+does not change during the life of that key.
+
+With a TX provider, firmware encrypts each frame that uses the pairwise key.
+Firmware is the only owner of the pairwise TX PN for data, unicast robust
+management and the action frames that firmware originates. The host has no
+view of the firmware counter. The owner thus counts the frames that it gives
+to firmware for one pairwise instance, and retires the session at 2^47
+frames, long before the 48-bit PN can wrap.
+
+| State | Owner |
+| --- | --- |
+| Pairwise TX PN | Firmware, for the life of one key instance |
+| Pairwise and group RX replay, IGTK IPN | Common net80211 |
+| Key lifetime, key instances, controlled port, set epoch | Native SAE owner |
+| TX Block Ack negotiation | Firmware, with permission from the owner |
+| Firmware commands, RX drain, aggregation queues | Adapter |
+
+Each key in a `replace` set has an instance. The owner assigns the instance
+when it accepts new key material, and never uses that value again. An
+instance is never zero. A key that did not change keeps its instance in each
+later set. The adapter must not
+remove or program a slot whose instance is equal to the programmed instance.
+It removes a slot that is absent or has a different instance. It programs
+only new instances, and the TX PN starts at zero one time for each instance.
+Thus a GTK change, an IGTK change, a port reopen and a repeated key do not
+program the pairwise key again.
+
+The owner refuses software CCMP with the pairwise key for a TX provider:
+`ieee80211_crypto_encap()` returns `NULL`. The adapter calls
+`ieee80211_sae_hw_tx()` for each tagged frame:
+
+| Result | Frame |
+| --- | --- |
+| 1, firmware encrypts | The Protected bit is set and the pairwise instance is programmed |
+| 0, encryption disabled | EAPOL without the Protected bit before the pairwise key, a data frame without a frame body, non-robust management, a tagged control frame |
+| -1, drop | A fenced set, a protected frame without a programmed key, other plain data, plain robust management |
+
+`ieee80211_sae_agg_tx_allowed()` is true during SAE only for a TX provider
+with `TX_BA`, a programmed pairwise key and an open controlled port. The adapter
+creates aggregation queues only while it is true. The adapter removes these
+queues before it removes the pairwise instance. Thus firmware cannot send a
+Block Ack action without the key that protects it.
+
+A failed `replace` of a TX provider leaves the set fenced and the port
+closed, and the owner retires the session: firmware key state is uncertain,
+thus no counter continues. The owner never selects software encryption or a
+key without PMF as a replacement. A key that changed outside the owner ends
+its instance; the owner gives no later set with it to the adapter. A
+software-TX provider has no firmware counter: its failed replacement leaves
+the set fenced, and the supplicant can do the replacement again, as before.
+A firmware reset loses the TX PN. The adapter must call
+`ieee80211_sae_retire()`; the session ends, and a new SAE exchange supplies a
+new pairwise key.
+
+The owner refuses pairwise material that firmware used as a new instance. It
+keeps check values of the last eight such keys: replaced, removed, lost in a
+reset, or programmed by a failed command. A check value is one AES block of a
+constant label; it is not key material. Limit: the owner does not remember a
+ninth older key.
+
 Run the actual native owner and common ioctl fixtures with a selected compiler:
 
 ```sh
@@ -177,6 +253,8 @@ controlled ports, rekey/reinstall and failure behavior, PMF replay, malformed
 management, queue retirement and allocation/serial exhaustion. These fixtures
 are host evidence, not target-kernel or hardware acceptance.
 
-For the existing RX-only hardware provider and the approved direction for TX,
-read [hardware TX ownership and key lifetime](sae-hw-tx.md). Its proposed TX
-contract does not change the implemented software-TX behavior described here.
+For the requirements on firmware TX, read
+[hardware TX ownership and key lifetime](sae-hw-tx.md). The section
+[Firmware TX providers](#firmware-tx-providers) describes the implemented
+contract. Providers without TX capabilities keep the software-TX behavior
+described here.

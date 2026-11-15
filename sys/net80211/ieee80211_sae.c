@@ -22,6 +22,10 @@
 /* The host contract compiles the actual implementation below this marker. */
 enum sae_phase { SAE_OFF, SAE_CONFIGURED, SAE_AUTH, SAE_AUTHENTICATED,
     SAE_ASSOC, SAE_RUN, SAE_RETIRED };
+#define SAE_SPENT 8
+/* The firmware PN has 48 bits. Stop long before it can wrap: firmware also
+ * uses the counter for the frames that it originates. */
+#define SAE_HW_TX_LIMIT ((uint64_t)1 << 47)
 struct sae_igtk {
 	uint8_t key[16];
 	uint64_t ipn;
@@ -38,6 +42,14 @@ struct ieee80211_sae {
 	uint64_t hw_epoch;
 	const struct ieee80211_sae_hw_ops *hw;
 	struct sae_igtk igtk[2];
+	/* Hardware key instances: pairwise, group 0..3, IGTK 4..5. */
+	uint64_t instance[7];
+	/* TX provider only: check values of the programmed pairwise instance
+	 * and of the last SAE_SPENT instances that firmware may have used. */
+	uint8_t ptk_check[16], spent[SAE_SPENT][16];
+	uint8_t spent_count, spent_next;
+	/* Frames given to firmware for the programmed pairwise instance. */
+	uint64_t tx_count;
 };
 /* Private kernel provenance; users cannot create mbuf tags. */
 #define SAE_PACKET_TAG 0x5345
@@ -71,6 +83,13 @@ ieee80211_sae_qos_tx_allowed(const struct ieee80211com *ic)
 	    !(ic->ic_sae->hw->flags & IEEE80211_SAE_HW_NO_QOS_TX);
 }
 
+static bool
+sae_tx_provider(const struct ieee80211_sae *s)
+{
+	return s != NULL && s->hw != NULL &&
+	    (s->hw->flags & IEEE80211_SAE_HW_TX_DATA) != 0;
+}
+
 bool
 ieee80211_sae_port_allowed(const struct ieee80211com *ic)
 {
@@ -92,6 +111,56 @@ sae_advance(struct ieee80211_sae *s)
 }
 
 static void sae_hw_fence(struct ieee80211_sae *);
+static void sae_aes(const void *, const uint8_t [16], uint8_t [16]);
+
+/* A check value identifies pairwise material; it is not key material.
+ * It is one AES block of a constant that no cipher mode uses. */
+static void
+sae_key_check(const uint8_t key[16], uint8_t check[16])
+{
+	static const uint8_t label[16] = { 'S', 'A', 'E', ' ', 'p', 'a', 'i',
+	    'r', 'w', 'i', 's', 'e', ' ', 'c', 'h', 'k' };
+	struct aesenc aes;
+
+	aes_setenckey128(&aes, key);
+	sae_aes(&aes, label, check);
+	explicit_memset(&aes, 0, sizeof(aes));
+}
+
+static bool
+sae_check_spent(const struct ieee80211_sae *s, const uint8_t check[16])
+{
+	for (unsigned i = 0; i < s->spent_count; i++)
+		if (memcmp(s->spent[i], check, 16) == 0)
+			return true;
+	return false;
+}
+
+/* Firmware owned the TX PN of this pairwise material and the counter is
+ * lost. The material must not become a new instance with a zero counter. */
+static void
+sae_check_spend(struct ieee80211_sae *s, const uint8_t check[16])
+{
+	if (!sae_tx_provider(s) || sae_check_spent(s, check))
+		return;
+	memcpy(s->spent[s->spent_next], check, 16);
+	if (s->spent_count < SAE_SPENT)
+		s->spent_count++;
+	s->spent_next = (s->spent_next + 1) % SAE_SPENT;
+}
+
+static void
+sae_ptk_spend(struct ieee80211_sae *s)
+{
+	/* A software-TX provider has no firmware counter to lose. */
+	if (!sae_tx_provider(s))
+		return;
+	if (s->instance[0] != 0)
+		sae_check_spend(s, s->ptk_check);
+	s->instance[0] = 0;
+	s->tx_count = 0;
+	explicit_memset(s->ptk_check, 0, sizeof(s->ptk_check));
+}
 
 static void
 sae_close(struct ieee80211com *ic)
@@ -180,13 +249,33 @@ ieee80211_sae_attach(struct ieee80211com *ic)
 	return sae_attach(ic, false);
 }
 
+/* One authority allocates the pairwise TX PN: firmware TX covers data and
+ * robust management together, and needs retained keys. QoS queues need
+ * protected firmware Block Ack actions. */
+static bool
+sae_hw_flags_valid(unsigned flags)
+{
+	const unsigned tx = IEEE80211_SAE_HW_TX_DATA | IEEE80211_SAE_HW_TX_MGMT;
+	const bool noqos = (flags & IEEE80211_SAE_HW_NO_QOS_TX) != 0;
+	const bool ba = (flags & IEEE80211_SAE_HW_TX_BA) != 0;
+
+	if ((flags & ~(IEEE80211_SAE_HW_NO_QOS_TX | IEEE80211_SAE_HW_KEEP_KEYS |
+	    tx | IEEE80211_SAE_HW_TX_BA)) != 0)
+		return false;
+	if ((flags & tx) == 0)
+		return !ba;
+	return (flags & tx) == tx &&
+	    (flags & IEEE80211_SAE_HW_KEEP_KEYS) != 0 && ba != noqos;
+}
+
 int
 ieee80211_sae_attach_hw(struct ieee80211com *ic,
     const struct ieee80211_sae_hw_ops *ops)
 {
 	int error;
 
-	if (ops == NULL || ops->fence == NULL || ops->replace == NULL)
+	if (ops == NULL || ops->fence == NULL || ops->replace == NULL ||
+	    !sae_hw_flags_valid(ops->flags))
 		return EINVAL;
 	/* The explicit RX contract supersedes the legacy hardware capability. */
 	error = sae_attach(ic, true);
@@ -206,13 +295,17 @@ sae_hw_fence(struct ieee80211_sae *s)
 	}
 }
 
-/* Build a bounded complete snapshot, overriding one slot transactionally. */
+/* Build a bounded complete snapshot, overriding one slot transactionally.
+ * Each unchanged key keeps its instance; the replacement gets a new one. */
 static int
 sae_hw_replace(struct ieee80211com *ic, uint16_t id,
     const struct ieee80211_sae_hw_key *replacement)
 {
 	struct ieee80211_sae *s = ic->ic_sae;
 	struct ieee80211_sae_hw_key keys[7];
+	const unsigned target = id == IEEE80211_SAE_HW_PTK ? 0 :
+	    id < 6 ? id + 1U : 7;
+	uint8_t check[16];
 	size_t n = 0;
 	uint64_t serial;
 	int error;
@@ -221,12 +314,20 @@ sae_hw_replace(struct ieee80211com *ic, uint16_t id,
 		return 0;
 	if (s->hw_busy || s->exhausted)
 		return EBUSY;
+	/* This call removes the programmed pairwise instance. */
+	if (target == 0)
+		sae_ptk_spend(s);
+	sae_hw_fence(s);
+	sae_advance(s);
+	serial = s->serial;
 	memset(keys, 0, sizeof(keys));
 	for (unsigned i = 0; i < 7; i++) {
 		uint16_t slot = i == 0 ? IEEE80211_SAE_HW_PTK : i - 1;
 		if (slot == id) {
-			if (replacement != NULL)
-				keys[n++] = *replacement;
+			if (replacement != NULL) {
+				keys[n] = *replacement;
+				keys[n++].instance = serial;
+			}
 			continue;
 		}
 		if (i < 5) {
@@ -248,11 +349,19 @@ sae_hw_replace(struct ieee80211com *ic, uint16_t id,
 			keys[n].rsc = k->ipn;
 			memcpy(keys[n].key, k->key, 16);
 		}
+		/* The hardware instance of this key ended: the set is not
+		 * usable. Only a new session gives a new key. */
+		if (s->instance[i] == 0 && sae_tx_provider(s)) {
+			explicit_memset(keys, 0, sizeof(keys));
+			return EINVAL;
+		}
+		keys[n].instance = s->instance[i];
 		keys[n++].id = slot;
 	}
-	sae_hw_fence(s);
-	sae_advance(s);
-	serial = s->serial;
+	if (target == 0 && replacement != NULL && sae_tx_provider(s))
+		sae_key_check(replacement->key, check);
+	else
+		memset(check, 0, sizeof(check));
 	s->hw_busy = true;
 	error = s->hw->replace(ic, serial, keys, n);
 	explicit_memset(keys, 0, sizeof(keys));
@@ -260,14 +369,31 @@ sae_hw_replace(struct ieee80211com *ic, uint16_t id,
 		if (ic->ic_sae == s) {
 			s->hw_busy = false;
 			sae_hw_fence(s);
+			/* Firmware may have used the new pairwise key. */
+			if (target == 0 && replacement != NULL)
+				sae_check_spend(s, check);
+			if (sae_tx_provider(s))
+				ieee80211_sae_retire(ic);
 		}
+		explicit_memset(check, 0, sizeof(check));
 		return ESTALE;
 	}
 	s->hw_busy = false;
 	if (error != 0 || s->exhausted) {
 		sae_hw_fence(s);
+		if (target == 0 && replacement != NULL)
+			sae_check_spend(s, check);
+		explicit_memset(check, 0, sizeof(check));
+		/* Firmware key state is uncertain: no counter continues. */
+		if (sae_tx_provider(s))
+			ieee80211_sae_retire(ic);
 		return error != 0 ? error : EOVERFLOW;
 	}
+	if (target < 7)
+		s->instance[target] = replacement != NULL ? serial : 0;
+	if (target == 0)
+		memcpy(s->ptk_check, check, sizeof(check));
+	explicit_memset(check, 0, sizeof(check));
 	s->hw_epoch = serial;
 	s->hw_blocked = false;
 	return 0;
@@ -415,6 +541,9 @@ ieee80211_sae_retire(struct ieee80211com *ic)
 		return;
 	sae_hw_fence(s);
 	sae_advance(s);
+	/* Hardware state is lost or unusable: no instance continues. */
+	sae_ptk_spend(s);
+	memset(s->instance, 0, sizeof(s->instance));
 	if (!s->enabled)
 		return;
 	sae_close(ic);
@@ -458,6 +587,11 @@ ieee80211_sae_key_changed(struct ieee80211com *ic, const struct ieee80211_key *k
 	if ((ic->ic_bss != NULL && key == &ic->ic_bss->ni_ucastkey) ||
 	    key == &ic->ic_nw_keys[0] || key == &ic->ic_nw_keys[1] ||
 	    key == &ic->ic_nw_keys[2] || key == &ic->ic_nw_keys[3]) {
+		/* The key changed outside the owner: its instance ends. */
+		if (ic->ic_bss != NULL && key == &ic->ic_bss->ni_ucastkey)
+			sae_ptk_spend(ic->ic_sae);
+		else if (sae_tx_provider(ic->ic_sae))
+			ic->ic_sae->instance[1 + (key - ic->ic_nw_keys)] = 0;
 		sae_hw_fence(ic->ic_sae);
 		sae_close(ic);
 		sae_advance(ic->ic_sae);
@@ -650,10 +784,70 @@ ieee80211_sae_crypto_tx(const struct ieee80211com *ic, const struct ieee80211_no
 {
 	const struct sae_packet *tag = sae_tag(m);
 
+	/* Firmware is the only owner of the pairwise TX PN. */
+	if (sae_tx_provider(ic->ic_sae))
+		return -1;
 	if (!ieee80211_sae_tx_current(ic, ni, m) || !sae_ptk(ic) ||
 	    ic->ic_sae->phase != SAE_RUN || tag == NULL)
 		return -1;
 	return tag->encrypted ? 1 : 0;
+}
+
+bool
+ieee80211_sae_agg_tx_allowed(const struct ieee80211com *ic)
+{
+	if (!ieee80211_sae_active(ic))
+		return true;
+	/* Firmware protects its Block Ack actions only with a programmed
+	 * pairwise key. The open port implies the key and PMF are in place. */
+	return sae_tx_provider(ic->ic_sae) &&
+	    (ic->ic_sae->hw->flags & IEEE80211_SAE_HW_TX_BA) != 0 &&
+	    ieee80211_sae_port_allowed(ic) && sae_ptk(ic) &&
+	    ic->ic_sae->instance[0] != 0;
+}
+
+int
+ieee80211_sae_hw_tx(struct ieee80211com *ic,
+    const struct ieee80211_node *ni, struct mbuf *m)
+{
+	struct ieee80211_sae *s = ic->ic_sae;
+	const struct sae_packet *tag = sae_tag(m);
+	uint8_t frame[26];
+	size_t len;
+
+	if (!ieee80211_sae_tx_current(ic, ni, m))
+		return -1;
+	if (!ieee80211_sae_active(ic) || !sae_tx_provider(s))
+		return 0;
+	len = MIN((size_t)m->m_pkthdr.len, sizeof(frame));
+	if (len < 2)
+		return -1;
+	m_copydata(m, 0, len, frame);
+	if (frame[1] & IEEE80211_FC1_WEP) {
+		/* Only the programmed pairwise instance encrypts. */
+		if (tag == NULL || s->phase != SAE_RUN || !sae_ptk(ic) ||
+		    s->instance[0] == 0)
+			return -1;
+		/* Never let the firmware PN of one instance wrap. */
+		if (s->tx_count >= SAE_HW_TX_LIMIT) {
+			ieee80211_sae_retire(ic);
+			return -1;
+		}
+		s->tx_count++;
+		return 1;
+	}
+	switch (frame[0] & IEEE80211_FC0_TYPE_MASK) {
+	case IEEE80211_FC0_TYPE_DATA:
+		/* Plain data is EAPOL before the pairwise key, or a frame
+		 * that has no frame body. */
+		if ((frame[0] & IEEE80211_FC0_SUBTYPE_NODATA) != 0)
+			return 0;
+		return tag != NULL && tag->eapol && !sae_ptk(ic) ? 0 : -1;
+	case IEEE80211_FC0_TYPE_MGT:
+		return ieee80211_is_robust_mgmt(frame, len) ? -1 : 0;
+	default:
+		return 0;
+	}
 }
 
 void
@@ -707,7 +901,7 @@ sae_set_key(struct ieee80211com *ic, const struct ieee80211req_sae *req)
 	struct ieee80211req_key ik;
 	struct ieee80211_key staged, *key;
 	struct ieee80211_sae *s = ic->ic_sae;
-	unsigned flags;
+	unsigned flags, slot;
 	int error = 0;
 
 	if (req->len != sizeof(ik))
@@ -728,6 +922,7 @@ sae_set_key(struct ieee80211com *ic, const struct ieee80211req_sae *req)
 			goto out;
 		}
 		key = &ic->ic_bss->ni_ucastkey;
+		slot = 0;
 	} else {
 		if (ik.ik_keyix >= IEEE80211_WEP_NKID ||
 		    !(flags & IEEE80211_KEY_RECV) || !(flags & IEEE80211_KEY_GROUP)) {
@@ -735,6 +930,7 @@ sae_set_key(struct ieee80211com *ic, const struct ieee80211req_sae *req)
 			goto out;
 		}
 		key = &ic->ic_nw_keys[ik.ik_keyix];
+		slot = 1 + ik.ik_keyix;
 		/* A key moved between slots must not acquire fresh replay state. */
 		for (unsigned i = 0; i < IEEE80211_WEP_NKID; i++) {
 			const struct ieee80211_key *other = &ic->ic_nw_keys[i];
@@ -748,10 +944,24 @@ sae_set_key(struct ieee80211com *ic, const struct ieee80211req_sae *req)
 	}
 	if (key->wk_cipher->ic_cipher == IEEE80211_CIPHER_AES_CCM && key->wk_keylen == 16 &&
 	    memcmp(key->wk_key, ik.ik_keydata, 16) == 0) {
-		/* Never call setkey: it resets per-TID and management replay. */
-		if ((key->wk_flags & IEEE80211_KEY_COMMON) != flags)
+		/* Never call setkey: it resets per-TID and management replay.
+		 * A key whose hardware instance ended is not usable again. */
+		if ((key->wk_flags & IEEE80211_KEY_COMMON) != flags ||
+		    (sae_tx_provider(s) && s->instance[slot] == 0))
 			error = EINVAL;
 		goto out;
+	}
+	if (key == &ic->ic_bss->ni_ucastkey && sae_tx_provider(s)) {
+		uint8_t check[16];
+		bool spent;
+
+		sae_key_check(ik.ik_keydata, check);
+		spent = sae_check_spent(s, check);
+		explicit_memset(check, 0, sizeof(check));
+		if (spent) {
+			error = EINVAL;
+			goto out;
+		}
 	}
 	/* Keep an authorized old key usable until atomic replacement.
 	 * A successful rekey preserves authorization; it never grants it. */
@@ -874,10 +1084,16 @@ ieee80211_sae_request(struct ieee80211com *ic, const struct ieee80211req_sae *re
 		if (req->len != 1 || req->data[0] > 1)
 			return EINVAL;
 		if (!req->data[0]) {
+			const bool enabled = s->enabled;
+
 			if (req->generation != s->generation ||
 			    !IEEE80211_ADDR_EQ(req->bssid, s->bssid))
 				return ESTALE;
 			ieee80211_sae_retire(ic);
+			/* A repeated disable has no hardware keys to remove,
+			 * and firmware gets no key of another security mode. */
+			if (!enabled)
+				return 0;
 			error = sae_hw_replace(ic, IEEE80211_SAE_HW_PTK, NULL);
 			if (error != 0)
 				return error;

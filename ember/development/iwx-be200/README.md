@@ -294,14 +294,17 @@ audit was prepared with OpenAI Codex assistance.
 ## Native SAE/PMF integration (2026-11-08)
 
 The [common TX-offload design](../../../sys/net80211/docs/sae-hw-tx.md)
-records the approved direction and prerequisites for replacing software TX.
-The implementation below remains RX-only; enabling firmware TX requires that
-common contract, unchanged-key retention and protected-BlockAck verification.
+records the requirements for firmware TX. The implementation below follows
+it: a common contract, unchanged-key retention and firmware TX ownership.
+Firmware TX and protected Block Ack actions are not yet verified on the
+air, thus software TX stays the default.
 
-The driver is an RX hardware adapter to the common owner. SAE exchange,
-association admission, controlled-port policy, software CCMP transmit,
-CCMP replay, BIP/MMIE verification and SA Query remain in net80211 and its
-existing supplicant interface. The adapter is enabled for BZ devices using
+The driver is a hardware adapter to the common owner. SAE exchange,
+association admission, controlled-port policy, key lifetime, CCMP replay,
+BIP/MMIE verification and SA Query remain in net80211 and its existing
+supplicant interface. Firmware decrypts with all keys; with a firmware TX
+profile it also encrypts with the pairwise key.
+The adapter is enabled for BZ devices using
 the MLD firmware API; it does not enable the dormant `IWX_HT` implementation.
 
 ### Firmware receive and key contract
@@ -313,9 +316,10 @@ The implementation uses the authenticated receive contract in pinned
 [RX descriptors](https://github.com/torvalds/linux/blob/7d0a66e4bb9081d75c82ec4957c50034cb0ea449/drivers/net/wireless/intel/iwlwifi/fw/api/rx.h)
 and [RX queue synchronization ABI](https://github.com/torvalds/linux/blob/7d0a66e4bb9081d75c82ec4957c50034cb0ea449/drivers/net/wireless/intel/iwlwifi/fw/api/datapath.h).
 
-- `STA_CONFIG.mfp` and RX-only `SEC_KEY` snapshots install the PTK, GTKs
-  and IGTKs. `NO_TX` preserves common software encryption. Firmware gets
-  the correct unicast/multicast and MFP flags; common per-TID replay remains
+- `STA_CONFIG.mfp` and `SEC_KEY` snapshots install the PTK, GTKs and
+  IGTKs. With a firmware TX profile the PTK is a TX and RX key with the MFP
+  flag; in the software profile it keeps `NO_TX`. Group keys always keep
+  `NO_TX`: a station never transmits with them. Common per-TID replay remains
   authoritative instead of copying one PN into every firmware TID.
 - Only a protected CCMP MPDU with `SEC_CCM`, `MIC_OK`, a retained eight-byte
   IV, a known installed key and the published hardware epoch receives
@@ -327,16 +331,19 @@ and [RX queue synchronization ABI](https://github.com/torvalds/linux/blob/7d0a66
   Descriptor versions, actual notification length and optional header padding
   are checked before extraction. Monitor mode retains the descriptor FCS tail.
   Group robust management frames retain MMIE for common BIP verification.
-- Key replacement first fences host RX/TX and queued reorder frames, removes
-  the previous keys, waits for an opaque-cookie RX queue drain, then installs
-  the complete new set. Exact command identity and response bounds are checked.
-  Timeout, wrong acknowledgements and ownership changes fail closed. A stale
-  notification cannot publish a new epoch or complete a newer drain.
+- Key replacement first fences host RX/TX and queued reorder frames. It
+  removes only the keys whose instance changed, waits for an opaque-cookie RX
+  queue drain, then programs only the new instances. A key with an equal
+  instance stays in firmware, and its counters continue. Exact command
+  identity and response bounds are checked. Timeout, wrong acknowledgements
+  and ownership changes fail closed. A stale notification cannot publish a
+  new epoch or complete a newer drain.
 
 `ieee80211_sae_attach_hw()` defines this shared snapshot/metadata interface.
 Its callbacks specify non-sleeping retirement and serialized, potentially
 sleeping replacement; failure never makes a partial set usable. The driver
 stores no second SAE state machine and no persistent copy of key material.
+It stores the instance of each programmed key.
 
 ### Management and aggregation
 
@@ -348,10 +355,43 @@ ownership and PMF tagging. Deferred state work, TX submission, stop,
 RFkill and fatal interrupts check or retire the common generation; combined
 RX/error interrupts fence native admission before processing RX.
 
-Native BE200 transmit uses the firmware non-QoS queue and the common
-`IEEE80211_SAE_HW_NO_QOS_TX` producer policy. It therefore does not trigger
-firmware-originated TX Block Ack actions whose PMF protection is unproven.
-This limits native TX aggregation performance, not SAE or PMF security.
+Native BE200 transmit has three profiles, selected by `sysctl hw.iwx.sae_tx`.
+A change applies when the interface starts again: the driver registers the
+adapter again, which retires the native session.
+
+| `hw.iwx.sae_tx` | Pairwise TX | Capabilities | Hardware acceptance |
+| --- | --- | --- | --- |
+| 0 (default) | Common software CCMP, non-QoS queue | `KEEP_KEYS`, `NO_QOS_TX` | The same TX path associated and carried data before key replacement by instance; this revision has not run on hardware |
+| 1 | Firmware, non-QoS queue | `KEEP_KEYS`, `TX_DATA`, `TX_MGMT`, `NO_QOS_TX` | Not done |
+| 2 | Firmware, QoS and TX aggregation | `KEEP_KEYS`, `TX_DATA`, `TX_MGMT`, `TX_BA` | Not done; needs the air capture below |
+
+Profiles 1 and 2 use the common
+[TX provider contract](../../../sys/net80211/docs/sae.md#firmware-tx-providers).
+Firmware is then the only owner of the pairwise TX PN. Profile 2 becomes the
+default only after an air capture shows protected Block Ack actions.
+
+- `iwx_tx_crypto()` selects who encrypts a frame. With a firmware TX
+  profile, `iwx_sae_tx()` asks the common owner for the disposition. For a
+  protected frame the driver does not set `IWX_TX_FLAGS_ENCRYPT_DIS` and
+  does not call software CCMP; firmware adds the CCMP header and the MIC. A
+  protected frame without the programmed pairwise key is dropped. Profile 0
+  and other security modes keep software CCMP with firmware encryption
+  disabled; the pairwise key is then receive-only in firmware.
+- Firmware originates the TX Block Ack actions of its aggregation queues.
+  With PMF these are protected management frames. `iwx_agg_tx_allowed()`
+  permits a TID queue only in profile 2, when the pairwise key with the MFP
+  flag is in firmware and the controlled port is open.
+- Each key replacement waits for a queue task in flight, checks the epoch
+  again and flushes the station. A pairwise rekey also removes the TID
+  queues, then removes the old key. The queues return after the port opens
+  again.
+- A GTK change, an IGTK change and a port reopen do not touch the pairwise
+  key or the TID queues.
+- A fatal firmware error, RF-kill and interface stop retire the native
+  session. The firmware TX PN is lost, thus the next session needs a new
+  SAE exchange and a new pairwise key. Station removal also clears the
+  driver's record of programmed keys.
+
 Host-authenticated RX Block Ack and HT/VHT rates remain available.
 A-MSDU within A-MPDU is explicitly declined in ADDBA responses and rejected
 if received with an active BAID. Standalone firmware-deaggregated A-MSDU is
@@ -401,17 +441,21 @@ Bench acceptance still needs the matching kernel and module, recorded
 firmware/PNVM versions, WPA3-only and transition-mode association, SAE retries,
 protected/unprotected SA Query/deauth/action injection, CCMP/BIP replay and
 PTK/GTK/IGTK replacement, interface stop/restart, RFkill/reset and sustained
-traffic including RX aggregation. Capture descriptor/notification traces and
+traffic including RX and TX aggregation. An over-the-air capture must show
+that the station's ADDBA request is protected, that no plain Block Ack action
+leaves the station, and that the station's CCMP PN never repeats. Capture descriptor/notification traces and
 over-the-air frames to verify retained IV/MMIE, firmware key acknowledgements,
 drain ordering and protected management transmission on the deployed firmware.
 No physical session, flash, deployment or radio test was performed for this change.
 
 A raw software-only PMF receive path without hardware keys remains unproven:
 the combined tail field does not identify the MIC/FCS split. Enabling that
-alternative, or firmware-originated protected TX BA, requires an explicit
-firmware ABI guarantee or correlated descriptor/air captures. This is a
-firmware-contract uncertainty, not evidence of a BE200 hardware limitation;
-the implemented authenticated RX/non-QoS TX path does not depend on it.
+alternative requires an explicit firmware ABI guarantee or correlated
+descriptor/air captures. This is a firmware-contract uncertainty, not
+evidence of a BE200 hardware limitation; the implemented authenticated RX
+path does not depend on it. Firmware-originated protected TX Block Ack
+follows the Linux iwlmld key programming; the air capture above is its
+physical acceptance.
 Implementation and regression work was assisted by OpenAI Codex.
 
 ## Channel width and station lifecycle

@@ -59,7 +59,10 @@ def main():
              'IWX_RX_MPDU_AMSDU_LAST_SUBFRAME',
              'IWX_RX_MPDU_RES_STATUS_CRC_OK', 'IWX_RX_MPDU_RES_STATUS_OVERRUN_OK',
              'IWX_RX_MPDU_MFLG1_MIC_CRC_LEN_MASK', 'IWX_RX_MPDU_MFLG1_MIC_CRC_LEN_SHIFT',
-             'IWX_RX_MPDU_MFLG2_PAD')
+             'IWX_RX_MPDU_MFLG2_PAD', 'IWX_MAX_TID_COUNT',
+             'IWX_DQA_MGMT_QUEUE', 'IWX_FIRST_AGG_TX_QUEUE',
+             'IWX_LAST_AGG_TX_QUEUE', 'IWX_FW_CMD_VER_UNKNOWN',
+             'IWX_SCD_QUEUE_CONFIG_CMD', 'IWX_TX_FLAGS_ENCRYPT_DIS')
     abi = '\n'.join(re.search(r'^#define\s+' + name + r'\b[^\n]*',
                               register, re.M).group() for name in names)
     abi += '\n' + re.search(r'^#define IWX_RX_DESC_SIZE_V1[^\n]*\n[^\n]*', register, re.M).group()
@@ -134,6 +137,7 @@ typedef uint8_t u_int8_t;
 #define IEEE80211_CCMP_HDRLEN 8
 #define IEEE80211_M_MONITOR 6
 #define IEEE80211_FC1_WEP 64
+#define IEEE80211_FC1_PROTECTED 64
 #define IEEE80211_IS_MULTICAST(a) ((a)[0]&1)
 #define IWX_STATION_ID 0
 #define IWX_MAX_BAID 4
@@ -145,15 +149,22 @@ typedef uint8_t u_int8_t;
 #define IC2IFP(ic) ((ic)->ic_ifp)
 #define mtod(m,t) ((t)((m)->m_data ? (m)->m_data : (m)->data))
 struct ifnet { void *if_softc; unsigned if_flags; };
+struct ieee80211_node;
 struct ieee80211com { struct ifnet *ic_ifp; void *ic_bss;
-    int ic_opmode; bool active; uint64_t serial; };
+    int ic_opmode; bool active; uint64_t serial; int hw_tx; bool agg, current; };
+struct ieee80211_key;
+struct iwx_tx_ring { int qid, tid; };
+struct iwx_node { unsigned in_flags; };
 struct ieee80211_frame { uint8_t i_fc[2], duration[2], i_addr1[6],
     i_addr2[6], i_addr3[6], seq[2]; };
 struct mbuf { int m_len; uint8_t *m_data; struct { int len; } m_pkthdr; uint8_t data[256]; };
 struct iwx_softc {
     struct ieee80211com sc_ic;
-    uint64_t sc_sae_epoch, sc_sae_rx_cookie;
+    uint64_t sc_sae_epoch, sc_sae_rx_cookie, sc_sae_inst[7];
     unsigned sc_sae_keys, sc_flags, sc_ba_start, sc_ba_stop, sc_txq_want;
+    int aggqid[8], sc_agg_busy, sc_use_mld_api;
+    const struct ieee80211_sae_hw_ops *sc_sae_ops;
+    struct iwx_tx_ring txq[32]; unsigned qenablemsk;
     int sc_generation, init_task; void *sc_systq;
     bool sc_sae_replacing, sc_sae_rx_pending;
     struct { void *vaddr; } ict_dma;
@@ -200,6 +211,49 @@ static void wakeup(void *p) { (void)p; wakes++; }
 static int iwx_flush_sta(struct iwx_softc *sc, void *node) {
     (void)node; event('F'); return boundary(sc);
 }
+/* Removing an aggregation queue is a sleeping firmware command. */
+static unsigned queue_fail_at, queues_removed;
+static int iwx_disable_txq(struct iwx_softc *sc, int sta, int qid, uint8_t tid) {
+    CHECK(sta==IWX_STATION_ID && qid==sc->aggqid[tid] && qid!=0);
+    event('Q'); queues_removed++;
+    int error=boundary(sc);
+    return error ? error : queues_removed==queue_fail_at ? EIO : 0;
+}
+int ieee80211_sae_hw_tx(struct ieee80211com *ic,
+    const struct ieee80211_node *ni, struct mbuf *m) {
+    (void)ni; (void)m; return ic->hw_tx;
+}
+bool ieee80211_sae_agg_tx_allowed(const struct ieee80211com *ic) { return ic->agg; }
+bool ieee80211_sae_tx_current(const struct ieee80211com *ic,
+    const struct ieee80211_node *ni, struct mbuf *m) {
+    (void)ni; (void)m; return ic->current;
+}
+/* Software CCMP: the fixture counts each call. */
+static unsigned encaps; static bool encap_fails;
+static struct ieee80211_key *ieee80211_crypto_encap(struct ieee80211com *ic,
+    struct ieee80211_node *ni, struct mbuf *m) {
+    (void)ic; (void)ni; encaps++; return encap_fails ? NULL : (void *)m;
+}
+static int rm_error;
+/* The common owner: the fixture records each registration. */
+#define atomic_load_relaxed(p) (*(p))
+static int iwx_sae_tx_mode;
+static unsigned detaches, attaches; static int attach_error;
+static const struct ieee80211_sae_hw_ops *attached;
+void ieee80211_sae_detach(struct ieee80211com *ic) { (void)ic; detaches++; attached=NULL; }
+int ieee80211_sae_attach_hw(struct ieee80211com *ic,
+    const struct ieee80211_sae_hw_ops *ops) {
+    (void)ic; attaches++;
+    if (attach_error) return attach_error;
+    attached=ops; return 0;
+}
+static int iwx_lookup_cmd_ver(struct iwx_softc *sc, unsigned group, unsigned cmd) {
+    (void)sc; (void)group; (void)cmd; return 0;
+}
+static int iwx_disable_mgmt_queue(struct iwx_softc *sc) { (void)sc; return 0; }
+static int iwx_rm_sta_cmd(struct iwx_softc *sc, struct iwx_node *in) {
+    (void)sc; (void)in; event('S'); return rm_error;
+}
 int ieee80211_sae_tag_rx(struct ieee80211com *ic, struct mbuf *m,
     uint64_t epoch, uint16_t id, uint8_t cipher, unsigned flags) {
     (void)ic; (void)m; CHECK(cipher==3);
@@ -226,7 +280,18 @@ static void notification(struct iwx_softc *sc, uint64_t cookie, unsigned count,
     iwx_sae_rx_synced(sc,p);
 }
 static struct iwx_softc *sleeping_sc;
+static bool agg_finishes, agg_drops_station;
+static unsigned agg_waits;
 static int tsleep_nsec(void *p, int flags, const char *label, uint64_t time) {
+    if (strcmp(label,"iwxagg")==0) {
+        /* A queue task in flight finishes, or it stays in a command. */
+        CHECK(flags==0 && time==100000000ULL && p==&sleeping_sc->sc_agg_busy);
+        event('B'); agg_waits++;
+        if (agg_finishes) sleeping_sc->sc_agg_busy=0;
+        if (agg_drops_station) sleeping_sc->sc_flags&=~IWX_FLAG_STA_ACTIVE;
+        (void)boundary(sleeping_sc);
+        return 0;
+    }
     (void)p; CHECK(flags==PCATCH); CHECK(strcmp(label,"iwxrxsync")==0);
     CHECK(time==1000000000ULL); event('W');
     int error=boundary(sleeping_sc);
@@ -322,60 +387,79 @@ static void iwx_dump_driver_status(struct iwx_softc *sc) { (void)sc; }
 static const char *device_xname(void *device) { (void)device; return "fixture-iwx"; }
 '''
     implementation = '\n'.join(result + '\n' + function(source, name)
-        for name, result in (('iwx_sae_fence','void'), ('iwx_sae_send_cmd','int'), ('iwx_sae_sync_rx','int'),
+        for name, result in (('iwx_sae_fw_tx','int'),
+            ('iwx_sae_fence','void'), ('iwx_sae_send_cmd','int'), ('iwx_sae_sync_rx','int'),
             ('iwx_sae_rx_synced','void'), ('iwx_sae_key_cmd','int'),
-            ('iwx_sae_replace','int'), ('iwx_sae_rx','int'),
+            ('iwx_sae_forget','void'), ('iwx_sae_agg_stop','int'),
+            ('iwx_sae_replace','int'), ('iwx_sae_tx','int'),
+            ('iwx_tx_crypto','int'), ('iwx_rm_sta','int'),
+            ('iwx_agg_tx_allowed','int'), ('iwx_sae_rx','int'),
             ('iwx_rx_mpdu_prepare','int'), ('iwx_check_rfkill','int'),
             ('iwx_intr','int'), ('iwx_intr_msix','int')))
+    implementation += '\n' + re.search(
+        r'^static const struct ieee80211_sae_hw_ops iwx_sae_ops\[\] = \{.*?^\};',
+        source, re.M | re.S).group()
+    implementation += '\nvoid\n' + function(source, 'iwx_sae_select')
     tests = r'''
 static void setup(struct iwx_softc *sc, struct ifnet *ifp) {
     memset(sc,0,sizeof(*sc)); memset(ifp,0,sizeof(*ifp));
     ifp->if_softc=sc; ifp->if_flags=IFF_RUNNING;
     sc->sc_ic.ic_ifp=ifp; sc->sc_ic.serial=42; sc->sc_ic.active=true;
     sc->sc_flags=IWX_FLAG_STA_ACTIVE; sc->sc_generation=3; sleeping_sc=sc;
+    sc->sc_sae_ops=&iwx_sae_ops[2];
     CHECK(replies == freed_replies);
     boundaries=inject_at=fail_at=ack_fail_at=missing_at=resets=drops=wakes=nevents=ncommands=0;
     replies=freed_replies=0;
+    queue_fail_at=queues_removed=agg_waits=encaps=0;
+    agg_finishes=agg_drops_station=encap_fails=false; rm_error=0;
+    detaches=attaches=0; attach_error=0; attached=NULL; iwx_sae_tx_mode=0;
     immediate_sync=true; sleep_error=tag_error=0; response_shape=0;
     irq_legacy=irq_fh=irq_msix_fh=irq_msix_hw=irq_gp=0;
     irq_retired=irq_accepted=irq_blocked=irq_restored=0;
     sc->sc_intmask=sc->sc_fh_mask=sc->sc_hw_mask=UINT32_MAX;
 }
+/* Firmware holds the pairwise key, group key 1 and IGTK 4 of an older set. */
+static void program(struct iwx_softc *sc) {
+    sc->sc_sae_keys=0x25;
+    sc->sc_sae_inst[0]=sc->sc_sae_inst[2]=sc->sc_sae_inst[5]=41;
+}
 static void transactions(void) {
     struct iwx_softc sc; struct ifnet ifp;
     struct ieee80211_sae_hw_key keys[3] = {
-        {.id=IEEE80211_SAE_HW_PTK,.cipher=3,.key={0x11}},
-        {.id=1,.cipher=3,.key={0x22}},
-        {.id=4,.cipher=IEEE80211_SAE_HW_BIP,.key={0x33}}};
-    setup(&sc,&ifp); sc.sc_sae_keys=0x25;
+        {.id=IEEE80211_SAE_HW_PTK,.cipher=3,.key={0x11},.instance=42},
+        {.id=1,.cipher=3,.key={0x22},.instance=42},
+        {.id=4,.cipher=IEEE80211_SAE_HW_BIP,.key={0x33},.instance=42}};
+    setup(&sc,&ifp); program(&sc);
     sc.sc_ba[0].active=true; sc.sc_ba_start=sc.sc_ba_stop=sc.sc_txq_want=7;
     CHECK(iwx_sae_replace(&sc.sc_ic,42,keys,3)==0);
     CHECK(nevents==8 && memcmp(events,"FRRRDAAA",8)==0);
     CHECK(sc.sc_sae_keys==0x25 && sc.sc_sae_epoch==42 && !sc.sc_sae_replacing);
+    CHECK(sc.sc_sae_inst[0]==42 && sc.sc_sae_inst[2]==42 && sc.sc_sae_inst[5]==42);
     CHECK(drops==1 && sc.sc_ba_start==0 && sc.sc_ba_stop==0 && sc.sc_txq_want==0);
     for(unsigned i=0;i<3;i++) {
         const struct iwx_sec_key_cmd *cmd=&commands[i+3];
         CHECK(le32toh(cmd->action)==1 && le32toh(cmd->u.add.sta_mask)==1);
         CHECK(le32toh(cmd->u.add.key_id)==(i==0?0:i==1?1:4));
-        CHECK(le32toh(cmd->u.add.key_flags)==(i==0?0x2a:i==1?0x4a:0x6a));
+        /* Firmware owns pairwise TX; group keys stay receive-only. */
+        CHECK(le32toh(cmd->u.add.key_flags)==(i==0?0x22:i==1?0x4a:0x6a));
         CHECK(memcmp(cmd->u.add.key,keys[i].key,16)==0);
         CHECK(cmd->u.add.rx_seq==0 && cmd->u.add.tx_seq==0);
         for(unsigned j=16;j<32;j++) CHECK(cmd->u.add.key[j]==0);
     }
     /* Every sleeping command boundary must reject a changed lifetime. */
     for(unsigned change=0;change<2;change++) for(unsigned at=1;at<=8;at++) {
-        setup(&sc,&ifp); sc.sc_sae_keys=0x25;
+        setup(&sc,&ifp); program(&sc);
         inject_at=at; inject_generation=change!=0;
         CHECK(iwx_sae_replace(&sc.sc_ic,42,keys,3)!=0);
         CHECK(sc.sc_sae_epoch==0 && !sc.sc_sae_replacing && resets==1);
     }
     for(unsigned at=1;at<=8;at++) {
-        setup(&sc,&ifp); sc.sc_sae_keys=0x25; fail_at=at;
+        setup(&sc,&ifp); program(&sc); fail_at=at;
         CHECK(iwx_sae_replace(&sc.sc_ic,42,keys,3)==EIO);
         CHECK(sc.sc_sae_epoch==0 && resets==1);
     }
     for(unsigned at=2;at<=8;at++) for(unsigned missing=0;missing<2;missing++) {
-        setup(&sc,&ifp); sc.sc_sae_keys=0x25;
+        setup(&sc,&ifp); program(&sc);
         if (missing) missing_at=at; else ack_fail_at=at;
         CHECK(iwx_sae_replace(&sc.sc_ic,42,keys,3)==EIO);
         CHECK(sc.sc_sae_epoch==0 && resets==1 && replies==freed_replies);
@@ -383,7 +467,7 @@ static void transactions(void) {
         if (at==6) CHECK(sc.sc_sae_keys==0);
     }
     for(unsigned shape=1;shape<5;shape++) {
-        setup(&sc,&ifp); sc.sc_sae_keys=0x25; ack_fail_at=2; response_shape=shape;
+        setup(&sc,&ifp); program(&sc); ack_fail_at=2; response_shape=shape;
         CHECK(iwx_sae_replace(&sc.sc_ic,42,keys,3)==EIO);
         CHECK(sc.sc_sae_epoch==0 && sc.sc_sae_keys==0x25 && replies==freed_replies);
     }
@@ -404,6 +488,231 @@ static void transactions(void) {
     keys[1].id=1; keys[1].cipher=IEEE80211_SAE_HW_BIP;
     CHECK(iwx_sae_replace(&sc.sc_ic,42,keys,3)==EINVAL);
     CHECK(iwx_sae_key_cmd(&sc,7,NULL)==EINVAL && nevents==0);
+    keys[1].cipher=3; keys[1].instance=0;
+    CHECK(iwx_sae_replace(&sc.sc_ic,42,keys,3)==EINVAL && nevents==0);
+    sleeping_sc=NULL;
+}
+/* Firmware owns the pairwise TX PN: an equal instance stays programmed. */
+static void instances(void) {
+    struct iwx_softc sc; struct ifnet ifp;
+    struct ieee80211_sae_hw_key keys[3] = {
+        {.id=IEEE80211_SAE_HW_PTK,.cipher=3,.key={0x11},.instance=41},
+        {.id=1,.cipher=3,.key={0x22},.instance=42},
+        {.id=4,.cipher=IEEE80211_SAE_HW_BIP,.key={0x33},.instance=41}};
+    /* Group rekey: one removal and one program command, both for the GTK. */
+    setup(&sc,&ifp); program(&sc); sc.aggqid[0]=5; sc.aggqid[5]=6;
+    CHECK(iwx_sae_replace(&sc.sc_ic,42,keys,3)==0);
+    CHECK(nevents==4 && memcmp(events,"FRDA",4)==0 && ncommands==2);
+    CHECK(le32toh(commands[0].action)==IWX_FW_CTXT_ACTION_REMOVE &&
+        le32toh(commands[0].u.remove.key_id)==1);
+    CHECK(le32toh(commands[1].action)==IWX_FW_CTXT_ACTION_ADD &&
+        le32toh(commands[1].u.add.key_id)==1 &&
+        le32toh(commands[1].u.add.key_flags)==0x4a);
+    CHECK(sc.sc_sae_inst[0]==41 && sc.sc_sae_inst[2]==42 && sc.sc_sae_inst[5]==41);
+    CHECK(sc.sc_sae_keys==0x25 && sc.sc_sae_epoch==42);
+    CHECK(sc.aggqid[0]==5 && sc.aggqid[5]==6 && queues_removed==0);
+    /* IGTK rekey to the other index. */
+    keys[2].id=5; keys[2].instance=43; sc.sc_ic.serial=43; nevents=ncommands=0;
+    CHECK(iwx_sae_replace(&sc.sc_ic,43,keys,3)==0);
+    CHECK(nevents==4 && memcmp(events,"FRDA",4)==0);
+    CHECK(le32toh(commands[0].u.remove.key_id)==4 &&
+        le32toh(commands[1].u.add.key_id)==5 &&
+        le32toh(commands[1].u.add.key_flags)==0x6a);
+    CHECK(sc.sc_sae_inst[0]==41 && sc.sc_sae_inst[5]==0 && sc.sc_sae_inst[6]==43);
+    CHECK(sc.sc_sae_keys==0x45);
+    /* Port reopen: the same set needs no key command at all. */
+    sc.sc_ic.serial=44; nevents=ncommands=0;
+    CHECK(iwx_sae_replace(&sc.sc_ic,44,keys,3)==0);
+    CHECK(nevents==2 && memcmp(events,"FD",2)==0 && ncommands==0);
+    CHECK(sc.sc_sae_epoch==44 && sc.sc_sae_inst[0]==41 && sc.aggqid[0]==5);
+    /* A new slot is programmed without a removal. */
+    struct ieee80211_sae_hw_key more[4] = {keys[0], keys[1], keys[2],
+        {.id=2,.cipher=3,.key={0x44},.instance=45}};
+    sc.sc_ic.serial=45; nevents=ncommands=0;
+    CHECK(iwx_sae_replace(&sc.sc_ic,45,more,4)==0);
+    CHECK(nevents==3 && memcmp(events,"FDA",3)==0 && sc.sc_sae_inst[3]==45);
+    /* Pairwise rekey: aggregation queues go before the key they depend on. */
+    more[0].instance=46; sc.sc_ic.serial=46; nevents=ncommands=0;
+    sc.sc_txq_want=3;
+    CHECK(iwx_sae_replace(&sc.sc_ic,46,more,4)==0);
+    CHECK(nevents==6 && memcmp(events,"FQQRDA",6)==0);
+    CHECK(le32toh(commands[0].action)==IWX_FW_CTXT_ACTION_REMOVE &&
+        le32toh(commands[0].u.remove.key_id)==0 &&
+        le32toh(commands[0].u.remove.key_flags)==0x22);
+    CHECK(le32toh(commands[1].u.add.key_flags)==0x22 && commands[1].u.add.tx_seq==0);
+    CHECK(sc.aggqid[0]==0 && sc.aggqid[5]==0 && sc.sc_txq_want==0);
+    CHECK(sc.sc_sae_inst[0]==46 && sc.sc_sae_inst[2]==42 && sc.sc_sae_epoch==46);
+    /* Pairwise removal alone also removes the queues first. */
+    sc.aggqid[3]=7; sc.sc_ic.serial=47; nevents=ncommands=0;
+    CHECK(iwx_sae_replace(&sc.sc_ic,47,more+1,3)==0);
+    CHECK(nevents==4 && memcmp(events,"FQRD",4)==0);
+    CHECK(sc.sc_sae_inst[0]==0 && !(sc.sc_sae_keys&1) && sc.aggqid[3]==0);
+    /* A queue task in flight finishes before its queues are removed. */
+    setup(&sc,&ifp); program(&sc); sc.aggqid[1]=5; sc.sc_agg_busy=1;
+    agg_finishes=true; keys[0].instance=42; keys[2].id=4; keys[2].instance=41;
+    CHECK(iwx_sae_replace(&sc.sc_ic,42,keys,3)==0);
+    CHECK(agg_waits==1 && memcmp(events,"BFQRRDAA",8)==0 && nevents==8);
+    /* The lifetime changed while the queue task finished its command. */
+    for(unsigned change=0;change<3;change++) {
+        setup(&sc,&ifp); program(&sc); sc.aggqid[1]=5; sc.sc_agg_busy=1;
+        agg_finishes=true;
+        if (change==2) agg_drops_station=true;
+        else { inject_at=1; inject_generation=change!=0; }
+        /* A station that left has no keys in firmware any more. */
+        CHECK(iwx_sae_replace(&sc.sc_ic,42,keys,3)==(change==2?ENOTCONN:ESTALE));
+        CHECK(nevents==1 && events[0]=='B' && ncommands==0);
+        CHECK(sc.sc_sae_epoch==0 && resets==1);
+        CHECK(sc.sc_sae_inst[0]==(change==2?0U:41U));
+    }
+    /* An empty set after the station left needs no key command. */
+    setup(&sc,&ifp); program(&sc); sc.sc_agg_busy=1;
+    agg_finishes=agg_drops_station=true;
+    CHECK(iwx_sae_replace(&sc.sc_ic,42,NULL,0)==0);
+    CHECK(nevents==2 && memcmp(events,"BD",2)==0 && resets==0);
+    CHECK(sc.sc_sae_keys==0 && sc.sc_sae_inst[0]==0 && sc.sc_sae_epoch==42);
+    /* A group rekey waits for the queue task too. */
+    setup(&sc,&ifp); program(&sc); sc.sc_agg_busy=1; agg_finishes=true;
+    keys[0].instance=41;
+    CHECK(iwx_sae_replace(&sc.sc_ic,42,keys,3)==0);
+    CHECK(nevents==5 && memcmp(events,"BFRDA",5)==0 && sc.sc_sae_inst[0]==41);
+    keys[0].instance=42;
+    /* A task that does not finish fails the transaction closed. */
+    setup(&sc,&ifp); program(&sc); sc.aggqid[1]=5; sc.sc_agg_busy=1;
+    CHECK(iwx_sae_replace(&sc.sc_ic,42,keys,3)==EBUSY);
+    CHECK(agg_waits==30 && ncommands==0 && sc.sc_sae_epoch==0 && resets==1);
+    CHECK(sc.sc_sae_inst[0]==41 && sc.aggqid[1]==5);
+    /* A failed queue removal keeps the old pairwise instance and resets. */
+    setup(&sc,&ifp); program(&sc); sc.aggqid[1]=5; sc.aggqid[2]=6; queue_fail_at=2;
+    CHECK(iwx_sae_replace(&sc.sc_ic,42,keys,3)==EIO);
+    CHECK(ncommands==0 && sc.sc_sae_epoch==0 && resets==1 && sc.sc_sae_inst[0]==41);
+    /* Every sleeping boundary of a pairwise rekey rejects a changed lifetime. */
+    for(unsigned change=0;change<2;change++) for(unsigned at=1;at<=7;at++) {
+        setup(&sc,&ifp); program(&sc); sc.aggqid[1]=5;
+        inject_at=at; inject_generation=change!=0;
+        CHECK(iwx_sae_replace(&sc.sc_ic,42,keys,3)!=0);
+        CHECK(sc.sc_sae_epoch==0 && !sc.sc_sae_replacing && resets==1);
+    }
+    /* Firmware state is gone: no instance survives. */
+    setup(&sc,&ifp); program(&sc);
+    iwx_sae_forget(&sc);
+    CHECK(sc.sc_sae_keys==0);
+    for(unsigned slot=0;slot<7;slot++) CHECK(sc.sc_sae_inst[slot]==0);
+    setup(&sc,&ifp); program(&sc); ifp.if_flags=0;
+    CHECK(iwx_sae_replace(&sc.sc_ic,42,NULL,0)==0 && sc.sc_sae_inst[0]==0);
+    sleeping_sc=NULL;
+}
+/* The owner selects the disposition; the adapter adds its firmware state. */
+static void transmit(void) {
+    struct iwx_softc sc; struct ifnet ifp; setup(&sc,&ifp);
+    struct mbuf m={.m_len=32}; m.data[0]=8; m.data[1]=0x41;
+    sc.sc_sae_epoch=42; sc.sc_sae_keys=1; sc.sc_sae_inst[0]=42;
+    sc.sc_ic.hw_tx=1;
+    CHECK(iwx_sae_tx(&sc,NULL,&m)==1);
+    sc.sc_sae_replacing=true; CHECK(iwx_sae_tx(&sc,NULL,&m)==-1);
+    sc.sc_sae_replacing=false;
+    sc.sc_sae_epoch=0; CHECK(iwx_sae_tx(&sc,NULL,&m)==-1); sc.sc_sae_epoch=42;
+    sc.sc_sae_inst[0]=0; CHECK(iwx_sae_tx(&sc,NULL,&m)==-1); sc.sc_sae_inst[0]=42;
+    sc.sc_ic.hw_tx=-1; CHECK(iwx_sae_tx(&sc,NULL,&m)==-1);
+    /* A protected frame never leaves with firmware encryption disabled. */
+    sc.sc_ic.hw_tx=0; CHECK(iwx_sae_tx(&sc,NULL,&m)==-1);
+    m.data[1]=1; CHECK(iwx_sae_tx(&sc,NULL,&m)==0);
+    sc.sc_sae_epoch=0; sc.sc_sae_inst[0]=0; CHECK(iwx_sae_tx(&sc,NULL,&m)==0);
+    /* Aggregation queues need the owner's permission and the firmware key. */
+    setup(&sc,&ifp); sc.sc_sae_epoch=42; sc.sc_sae_inst[0]=42; sc.sc_ic.agg=true;
+    CHECK(iwx_agg_tx_allowed(&sc));
+    sc.sc_ic.agg=false; CHECK(!iwx_agg_tx_allowed(&sc)); sc.sc_ic.agg=true;
+    sc.sc_sae_replacing=true; CHECK(!iwx_agg_tx_allowed(&sc)); sc.sc_sae_replacing=false;
+    sc.sc_sae_epoch=0; CHECK(!iwx_agg_tx_allowed(&sc)); sc.sc_sae_epoch=42;
+    sc.sc_sae_inst[0]=0; CHECK(!iwx_agg_tx_allowed(&sc));
+    /* Without native SAE aggregation queues are free. */
+    sc.sc_ic.active=false; sc.sc_sae_epoch=0;
+    CHECK(iwx_agg_tx_allowed(&sc));
+    sleeping_sc=NULL;
+}
+/* Who encrypts: firmware under native SAE, common software CCMP otherwise. */
+static void crypto(void) {
+    struct iwx_softc sc; struct ifnet ifp; setup(&sc,&ifp);
+    struct mbuf m={.m_len=32}; m.data[0]=8; m.data[1]=0x41;
+    uint16_t flags=0x100;
+    sc.sc_sae_epoch=42; sc.sc_sae_inst[0]=42; sc.sc_ic.hw_tx=1; sc.sc_ic.current=true;
+    CHECK(iwx_tx_crypto(&sc,NULL,&m,&flags)==0 && flags==0x100 && encaps==0);
+    sc.sc_ic.hw_tx=0; m.data[1]=1;
+    CHECK(iwx_tx_crypto(&sc,NULL,&m,&flags)==0 && encaps==0);
+    CHECK(flags==(0x100|IWX_TX_FLAGS_ENCRYPT_DIS));
+    sc.sc_ic.hw_tx=-1; flags=0;
+    CHECK(iwx_tx_crypto(&sc,NULL,&m,&flags)==ESTALE && flags==0 && encaps==0);
+    sc.sc_ic.hw_tx=1; m.data[1]=0x41; sc.sc_sae_inst[0]=0;
+    CHECK(iwx_tx_crypto(&sc,NULL,&m,&flags)==ESTALE && flags==0 && encaps==0);
+    /* A protected frame with a plain disposition is never transmitted. */
+    sc.sc_sae_inst[0]=42; sc.sc_ic.hw_tx=0;
+    CHECK(iwx_tx_crypto(&sc,NULL,&m,&flags)==ESTALE && flags==0 && encaps==0);
+    /* Other security modes: software CCMP, firmware encryption disabled. */
+    sc.sc_ic.active=false;
+    CHECK(iwx_tx_crypto(&sc,NULL,&m,&flags)==0 && encaps==1);
+    CHECK(flags==IWX_TX_FLAGS_ENCRYPT_DIS);
+    m.data[1]=1; flags=0;
+    CHECK(iwx_tx_crypto(&sc,NULL,&m,&flags)==0 && encaps==1);
+    CHECK(flags==IWX_TX_FLAGS_ENCRYPT_DIS);
+    m.data[1]=0x41; flags=0; encap_fails=true;
+    CHECK(iwx_tx_crypto(&sc,NULL,&m,&flags)==ENOBUFS && encaps==2 && flags==0);
+    encap_fails=false; sc.sc_ic.current=false;
+    CHECK(iwx_tx_crypto(&sc,NULL,&m,&flags)==ESTALE && flags==0);
+    sc.sc_ic.current=true; sc.sc_sae_replacing=true;
+    CHECK(iwx_tx_crypto(&sc,NULL,&m,&flags)==ESTALE && flags==0);
+    sleeping_sc=NULL;
+}
+/* The TX profile selects the pairwise key flags and who encrypts. */
+static void profiles(void) {
+    struct iwx_softc sc; struct ifnet ifp;
+    struct ieee80211_sae_hw_key keys[1] = {
+        {.id=IEEE80211_SAE_HW_PTK,.cipher=3,.key={0x11},.instance=42}};
+    const unsigned keep=IEEE80211_SAE_HW_KEEP_KEYS;
+    const unsigned tx=IEEE80211_SAE_HW_TX_DATA|IEEE80211_SAE_HW_TX_MGMT;
+    CHECK(sizeof(iwx_sae_ops)/sizeof(iwx_sae_ops[0])==3);
+    /* The default profile is software TX on the non-QoS path. */
+    CHECK(iwx_sae_ops[0].flags==(keep|IEEE80211_SAE_HW_NO_QOS_TX));
+    CHECK(iwx_sae_ops[1].flags==(keep|tx|IEEE80211_SAE_HW_NO_QOS_TX));
+    CHECK(iwx_sae_ops[2].flags==(keep|tx|IEEE80211_SAE_HW_TX_BA));
+    for(unsigned mode=0;mode<3;mode++) {
+        setup(&sc,&ifp); sc.sc_sae_ops=&iwx_sae_ops[mode];
+        CHECK(iwx_sae_ops[mode].fence==iwx_sae_fence && iwx_sae_ops[mode].replace==iwx_sae_replace);
+        CHECK(iwx_sae_fw_tx(&sc)==(mode!=0));
+        CHECK(iwx_sae_replace(&sc.sc_ic,42,keys,1)==0 && ncommands==1);
+        CHECK(le32toh(commands[0].u.add.key_flags)==(mode==0?0x2aU:0x22U));
+        struct mbuf m={.m_len=32}; m.data[0]=8; m.data[1]=0x41;
+        uint16_t flags=0;
+        sc.sc_ic.hw_tx=1; sc.sc_ic.current=true;
+        CHECK(iwx_tx_crypto(&sc,NULL,&m,&flags)==0);
+        CHECK(encaps==(mode==0?1U:0U));
+        CHECK(flags==(mode==0?IWX_TX_FLAGS_ENCRYPT_DIS:0));
+    }
+    setup(&sc,&ifp); sc.sc_sae_ops=NULL; CHECK(!iwx_sae_fw_tx(&sc));
+    /* A new profile replaces the adapter; the same profile does nothing. */
+    sc.sc_device_family=IWX_DEVICE_FAMILY_BZ; sc.sc_use_mld_api=1;
+    iwx_sae_select(&sc);
+    CHECK(attaches==1 && detaches==1 && attached==&iwx_sae_ops[0]);
+    CHECK(sc.sc_sae_ops==&iwx_sae_ops[0]);
+    iwx_sae_select(&sc); CHECK(attaches==1 && detaches==1);
+    iwx_sae_tx_mode=2; iwx_sae_select(&sc);
+    CHECK(attaches==2 && detaches==2 && sc.sc_sae_ops==&iwx_sae_ops[2]);
+    iwx_sae_tx_mode=1; attach_error=EOPNOTSUPP; iwx_sae_select(&sc);
+    CHECK(attaches==3 && detaches==3 && sc.sc_sae_ops==NULL && !iwx_sae_fw_tx(&sc));
+    attach_error=0; iwx_sae_select(&sc);
+    CHECK(attaches==4 && sc.sc_sae_ops==&iwx_sae_ops[1] && attached==&iwx_sae_ops[1]);
+    sc.sc_use_mld_api=0; iwx_sae_tx_mode=2; iwx_sae_select(&sc); CHECK(attaches==4);
+    sc.sc_use_mld_api=1; sc.sc_device_family=0; iwx_sae_select(&sc); CHECK(attaches==4);
+    iwx_sae_tx_mode=0; sleeping_sc=NULL;
+}
+/* Firmware removes the keys with the station: the adapter forgets them. */
+static void station(void) {
+    struct iwx_softc sc; struct ifnet ifp; struct iwx_node in={.in_flags=3};
+    setup(&sc,&ifp); program(&sc); sc.sc_txq_want=5;
+    rm_error=EIO;
+    CHECK(iwx_rm_sta(&sc,&in)==EIO && sc.sc_sae_keys==0x25 && sc.sc_sae_inst[0]==41);
+    rm_error=0; nevents=0;
+    CHECK(iwx_rm_sta(&sc,&in)==0 && memcmp(events,"FS",2)==0);
+    CHECK(sc.sc_sae_keys==0 && in.in_flags==0 && sc.sc_txq_want==0);
+    for(unsigned slot=0;slot<7;slot++) CHECK(sc.sc_sae_inst[slot]==0);
     sleeping_sc=NULL;
 }
 static void cookies(void) {
@@ -543,7 +852,7 @@ static void interrupts(void) {
     CHECK(irq_retired==1 && irq_accepted==0 && irq_blocked==1);
     sleeping_sc=NULL;
 }
-int main(void) { transactions(); cookies(); receive(); normalization(); interrupts();
+int main(void) { transactions(); instances(); transmit(); crypto(); profiles(); station(); cookies(); receive(); normalization(); interrupts();
     printf("iwx SAE firmware: %u checks passed\n",checks); return 0; }
 '''
     args.build_dir.mkdir(parents=True, exist_ok=True)
@@ -559,8 +868,33 @@ int main(void) { transactions(); cookies(); receive(); normalization(); interrup
     subprocess.run(runner + [str(binary.resolve())], check=True)
     if args.mutations:
         replacements = {
-            'tx-key': ('IWX_SEC_KEY_FLAG_CIPHER_CCMP | IWX_SEC_KEY_FLAG_NO_TX',
-                       'IWX_SEC_KEY_FLAG_CIPHER_CCMP'),
+            'group-tx-key': ('flags |= IWX_SEC_KEY_FLAG_MCAST_KEY | IWX_SEC_KEY_FLAG_NO_TX;',
+                             'flags |= IWX_SEC_KEY_FLAG_MCAST_KEY;'),
+            'pairwise-rx-only': ('uint32_t flags = IWX_SEC_KEY_FLAG_CIPHER_CCMP;',
+                                 'uint32_t flags = IWX_SEC_KEY_FLAG_CIPHER_CCMP | IWX_SEC_KEY_FLAG_NO_TX;'),
+            'pairwise-reinstall': ('sc->sc_sae_inst[slot] == wanted[slot]', 'false'),
+            'queues-outlive-key': ('error = iwx_sae_agg_stop(sc);', 'error = 0;'),
+            'no-queue-task-wait': ('n < 30; n++)', 'n < 0; n++)'),
+            'tx-without-firmware-key': ('sc->sc_sae_epoch == 0 || sc->sc_sae_inst[0] == 0)',
+                                        'sc->sc_sae_epoch == 0)'),
+            'firmware-crypto-disabled': ('\t\tcase 1:\n\t\t\treturn 0;\n\t\tcase 0:',
+                                         '\t\tcase 1:\n\t\tcase 0:'),
+            'software-ccmp-under-sae': ('\tif (ieee80211_sae_active(ic) && iwx_sae_fw_tx(sc)) {',
+                                        '\tif (ieee80211_sae_active(ic) && sc == NULL) {'),
+            'firmware-crypto-in-software-profile': ('\tif (ieee80211_sae_active(ic) && iwx_sae_fw_tx(sc)) {',
+                                                    '\tif (ieee80211_sae_active(ic)) {'),
+            'software-profile-tx-key': ('\telse if (!iwx_sae_fw_tx(sc))\n\t\tflags |= IWX_SEC_KEY_FLAG_NO_TX;',
+                                        '\telse if (sc == NULL)\n\t\tflags |= IWX_SEC_KEY_FLAG_NO_TX;'),
+            'profile-not-replaced': ('\tif (sc->sc_sae_ops == ops)\n\t\treturn;',
+                                     '\tif (sc->sc_sae_ops != NULL)\n\t\treturn;'),
+            'failed-profile-kept': ('\tieee80211_sae_detach(ic);\n\tsc->sc_sae_ops = NULL;',
+                                    '\tieee80211_sae_detach(ic);'),
+            'no-recheck-after-wait': ('\tif (epoch != ieee80211_sae_serial(ic) ||\n\t    generation != sc->sc_generation ||\n\t    (sc->sc_flags & IWX_FLAG_SHUTDOWN)) {',
+                                      '\tif ((sc->sc_flags & IWX_FLAG_SHUTDOWN)) {'),
+            'station-keeps-key-state': ('with the station. */\n\tiwx_sae_forget(sc);',
+                                        'with the station. */\n\t(void)0;'),
+            'protected-in-clear': ('return (fc[1] & IEEE80211_FC1_PROTECTED) ? -1 : 0;',
+                                   'return (fc[1] & IEEE80211_FC1_PROTECTED) ? 0 : 0;'),
             'stale-owner': ('epoch != ieee80211_sae_serial(ic)', 'false'),
             'no-rx-drain': ('error = iwx_sae_sync_rx(sc);', 'error = 0;'),
             'failed-ack': ('cmd.resp_pkt->hdr.flags != iwx_cmd_groupid(id)', 'false'),

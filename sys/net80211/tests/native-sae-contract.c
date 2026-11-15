@@ -37,6 +37,7 @@ typedef uint64_t u_int64_t;
 #define IEEE80211_FC0_TYPE_MASK 12
 #define IEEE80211_FC0_TYPE_MGT 0
 #define IEEE80211_FC0_TYPE_DATA 8
+#define IEEE80211_FC0_SUBTYPE_NODATA 0x40
 #define IEEE80211_FC1_DIR_MASK 3
 #define IEEE80211_FC1_MORE_FRAG 4
 #define IEEE80211_FC1_WEP 64
@@ -290,9 +291,11 @@ static int hw_replace(struct ieee80211com *ic, uint64_t epoch,
 {
     CHECK(epoch == ieee80211_sae_serial(ic));
     CHECK(count <= 7);
-    for (size_t i = 0; i < count; i++)
+    for (size_t i = 0; i < count; i++) {
         CHECK(keys[i].cipher == ((keys[i].id == 4 || keys[i].id == 5) ?
             IEEE80211_SAE_HW_BIP : IEEE80211_CIPHER_AES_CCM));
+        CHECK(keys[i].instance != 0 && keys[i].instance <= epoch);
+    }
     struct mbuf *m = frame(ic, 0xc0, 40);
     CHECK(ieee80211_sae_tag_tx(ic, ic->ic_bss, m) != 0);
     CHECK(!ieee80211_sae_tx_current(ic, ic->ic_bss, m));
@@ -441,6 +444,424 @@ static void hardware_contract(struct ieee80211com *ic)
     prior_fences = hw_fences;
     ieee80211_sae_key_changed(ic, &ic->ic_bss->ni_ucastkey);
     CHECK(hw_fences > prior_fences && ic->ic_sae->hw_blocked);
+    ieee80211_sae_retire(ic);
+}
+/* Firmware model for a TX provider. It keeps one TX counter for each key
+ * instance, as firmware does. A slot with an equal instance stays programmed. */
+struct fw_slot { uint64_t instance, last, tx_pn; unsigned adds, removes; bool installed; };
+static struct fw_slot fw[7];
+static unsigned hwtx_calls;
+static int hwtx_error;
+static bool hwtx_retire;
+static int hwtx_replace(struct ieee80211com *ic, uint64_t epoch,
+    const struct ieee80211_sae_hw_key *keys, size_t count)
+{
+    uint64_t wanted[7] = {0};
+    CHECK(epoch == ieee80211_sae_serial(ic));
+    CHECK(count <= 7);
+    hwtx_calls++;
+    for (size_t i = 0; i < count; i++) {
+        unsigned slot = keys[i].id == IEEE80211_SAE_HW_PTK ? 0 : keys[i].id + 1U;
+        CHECK(slot < 7 && wanted[slot] == 0);
+        CHECK(keys[i].instance != 0 && keys[i].instance <= epoch);
+        wanted[slot] = keys[i].instance;
+    }
+    for (unsigned slot = 0; slot < 7; slot++)
+        if (fw[slot].installed && fw[slot].instance != wanted[slot]) {
+            fw[slot].installed = false;
+            fw[slot].removes++;
+        }
+    if (hwtx_error != 0)
+        return hwtx_error;
+    for (unsigned slot = 0; slot < 7; slot++)
+        if (wanted[slot] != 0 && !fw[slot].installed) {
+            /* A new instance never reuses an earlier identity. */
+            CHECK(wanted[slot] > fw[slot].last);
+            fw[slot].instance = fw[slot].last = wanted[slot];
+            fw[slot].tx_pn = 0;
+            fw[slot].installed = true;
+            fw[slot].adds++;
+        }
+    if (hwtx_retire) ieee80211_sae_retire(ic);
+    return 0;
+}
+#define HWTX (IEEE80211_SAE_HW_KEEP_KEYS | IEEE80211_SAE_HW_TX_DATA | \
+    IEEE80211_SAE_HW_TX_MGMT)
+static const struct ieee80211_sae_hw_ops hwtx_ops = {
+    .fence = hw_fence, .replace = hwtx_replace,
+    .flags = HWTX | IEEE80211_SAE_HW_TX_BA
+};
+static const struct ieee80211_sae_hw_ops hwtx_noqos_ops = {
+    .fence = hw_fence, .replace = hwtx_replace,
+    .flags = HWTX | IEEE80211_SAE_HW_NO_QOS_TX
+};
+static struct ieee80211_sae_hw_ops hw_probe_ops = {
+    .fence = hw_fence, .replace = hwtx_replace
+};
+/* A TX frame with crypto headroom. EAPOL selects the 802.1X LLC header. */
+static struct mbuf *txframe(struct ieee80211com *ic, uint8_t fc0, uint8_t fc1,
+    size_t len, bool eapol)
+{
+    assert(ic->ic_sae != NULL);
+    struct mbuf *m = mbuf_new();
+    if (m == NULL)
+        abort();
+    assert(len >= 24 && len <= sizeof(m->storage) - 32);
+    m->m_data = m->storage + 32;
+    m->m_len = m->m_pkthdr.len = len;
+    memset(m->m_data, 0, len);
+    m->m_data[0] = fc0;
+    m->m_data[1] = fc1;
+    memcpy(m->m_data + 4, ic->ic_sae->bssid, 6);
+    memcpy(m->m_data + 10, ic->ic_myaddr, 6);
+    memcpy(m->m_data + 16, ic->ic_sae->bssid, 6);
+    if (eapol)
+        memcpy(m->m_data + 24, "\xaa\xaa\x03\0\0\0\x88\x8e", 8);
+    return m;
+}
+/* Tag a frame as common output does, then return the owner's disposition. */
+static int tx_decision(struct ieee80211com *ic, uint8_t fc0, uint8_t fc1,
+    size_t len, bool eapol)
+{
+    struct mbuf *m = txframe(ic, fc0, fc1, len, eapol);
+    int result = -2;
+    if (ieee80211_sae_tag_tx(ic, ic->ic_bss, m) == 0)
+        result = ieee80211_sae_hw_tx(ic, ic->ic_bss, m);
+    m_freem(m);
+    return result;
+}
+static int set_port(struct ieee80211com *ic, bool open)
+{
+    struct ieee80211req_sae r = request(ic, IEEE80211_SAE_SET_PORT, 1);
+    r.data[0] = open;
+    return ieee80211_sae_request(ic, &r);
+}
+static int set_igtk(struct ieee80211com *ic, unsigned id, uint8_t material)
+{
+    struct ieee80211req_sae r = request(ic, IEEE80211_SAE_SET_IGTK, 24);
+    r.data[0] = id; memset(r.data + 8, material, 16);
+    return ieee80211_sae_request(ic, &r);
+}
+static int delete_ptk(struct ieee80211com *ic)
+{
+    struct ieee80211req_del_key dk = {0};
+    dk.idk_keyix = 255; memcpy(dk.idk_macaddr, ic->ic_sae->bssid, 6);
+    struct ieee80211req_sae r = request(ic, IEEE80211_SAE_DELETE_KEY, sizeof(dk));
+    memcpy(r.data, &dk, sizeof(dk));
+    return ieee80211_sae_request(ic, &r);
+}
+static bool material_spent(const struct ieee80211com *ic, uint8_t material)
+{
+    uint8_t key[16], check[16];
+    memset(key, material, sizeof(key));
+    sae_key_check(key, check);
+    return sae_check_spent(ic->ic_sae, check);
+}
+static void hardware_tx_contract(struct ieee80211com *ic)
+{
+    struct ieee80211_key *ptk = &ic->ic_bss->ni_ucastkey;
+    ieee80211_sae_detach(ic);
+    /* One authority allocates the pairwise TX PN, retained keys are a
+     * prerequisite, and QoS queues need protected firmware Block Ack. */
+    const unsigned invalid[] = {
+        IEEE80211_SAE_HW_TX_DATA, IEEE80211_SAE_HW_TX_MGMT,
+        IEEE80211_SAE_HW_TX_DATA | IEEE80211_SAE_HW_TX_MGMT | IEEE80211_SAE_HW_TX_BA,
+        IEEE80211_SAE_HW_KEEP_KEYS | IEEE80211_SAE_HW_TX_DATA | IEEE80211_SAE_HW_TX_BA,
+        IEEE80211_SAE_HW_KEEP_KEYS | IEEE80211_SAE_HW_TX_MGMT | IEEE80211_SAE_HW_TX_BA,
+        IEEE80211_SAE_HW_KEEP_KEYS | IEEE80211_SAE_HW_TX_BA,
+        IEEE80211_SAE_HW_TX_BA, HWTX,
+        HWTX | IEEE80211_SAE_HW_TX_BA | IEEE80211_SAE_HW_NO_QOS_TX,
+        HWTX | IEEE80211_SAE_HW_TX_BA | 0x20, 0x20 };
+    for (unsigned i = 0; i < sizeof(invalid) / sizeof(invalid[0]); i++) {
+        hw_probe_ops.flags = invalid[i];
+        CHECK(ieee80211_sae_attach_hw(ic, &hw_probe_ops) == EINVAL && ic->ic_sae == NULL);
+    }
+    hw_probe_ops.flags = IEEE80211_SAE_HW_KEEP_KEYS;
+    CHECK(ieee80211_sae_attach_hw(ic, &hw_probe_ops) == 0);
+    ieee80211_sae_detach(ic);
+    CHECK(ieee80211_sae_attach_hw(ic, &hwtx_ops) == 0);
+    memset(fw, 0, sizeof(fw)); hwtx_calls = 0;
+    CHECK(ieee80211_sae_agg_tx_allowed(ic));
+    connect(ic, 200);
+    CHECK(ieee80211_sae_qos_tx_allowed(ic));
+    CHECK(!ieee80211_sae_agg_tx_allowed(ic));
+    /* Before the pairwise key only EAPOL and non-robust management are plain. */
+    CHECK(tx_decision(ic, 0x08, 1, 60, true) == 0);
+    CHECK(tx_decision(ic, 0x08, 1, 60, false) == -1);
+    CHECK(tx_decision(ic, 0x08, 0x41, 60, false) == -1);
+    CHECK(install(ic, 65535, 0x81) == 0);
+    CHECK(fw[0].installed && fw[0].adds == 1 && fw[0].removes == 0);
+    uint64_t first = fw[0].instance;
+    CHECK(first != 0 && first == ieee80211_sae_serial(ic));
+    CHECK(!ieee80211_sae_agg_tx_allowed(ic));
+    fw[0].tx_pn = 1000;
+    /* IGTK and GTK changes keep the programmed pairwise instance. */
+    CHECK(set_igtk(ic, 4, 0x55) == 0);
+    CHECK(fw[5].installed && fw[5].instance > first);
+    CHECK(fw[0].installed && fw[0].instance == first && fw[0].adds == 1 &&
+        fw[0].removes == 0 && fw[0].tx_pn == 1000);
+    CHECK(set_port(ic, true) == 0);
+    CHECK(ieee80211_sae_port_allowed(ic) && ieee80211_sae_agg_tx_allowed(ic));
+    CHECK(install(ic, 1, 0x33) == 0 && fw[2].installed);
+    fw[0].tx_pn = 2000;
+    CHECK(install(ic, 1, 0x35) == 0 && fw[2].adds == 2 && fw[2].removes == 1);
+    CHECK(install(ic, 2, 0x36) == 0 && fw[3].installed);
+    CHECK(set_igtk(ic, 5, 0x56) == 0 && fw[6].installed);
+    CHECK(set_igtk(ic, 4, 0x57) == 0 && fw[5].adds == 2);
+    CHECK(fw[0].installed && fw[0].instance == first && fw[0].adds == 1 &&
+        fw[0].removes == 0 && fw[0].tx_pn == 2000);
+    CHECK(ieee80211_sae_port_allowed(ic) && ieee80211_sae_agg_tx_allowed(ic));
+    /* Firmware owns pairwise TX: the owner selects it for each frame. */
+    CHECK(tx_decision(ic, 0x08, 0x41, 60, false) == 1);
+    CHECK(tx_decision(ic, 0x88, 0x41, 60, false) == 1);
+    CHECK(tx_decision(ic, 0x08, 0x41, 60, true) == 1);
+    /* With the pairwise key in place plain EAPOL is not transmitted. */
+    CHECK(tx_decision(ic, 0x08, 1, 60, true) == -1);
+    CHECK(tx_decision(ic, 0x08, 1, 60, false) == -1);
+    CHECK(tx_decision(ic, 0x48, 1, 24, false) == 0);
+    CHECK(tx_decision(ic, 0xa4, 0, 24, false) == 0);
+    CHECK(tx_decision(ic, 0xc0, 0, 26, false) == 1);
+    CHECK(tx_decision(ic, 0x40, 0, 40, false) == 0);
+    struct mbuf *m = txframe(ic, 0xc0, 0, 26, false);
+    CHECK(ieee80211_sae_tag_tx(ic, ic->ic_bss, m) == 0);
+    CHECK(m->m_data[1] & IEEE80211_FC1_WEP);
+    /* The protected disposition needs the run phase, the key and no fence. */
+    CHECK(ieee80211_sae_hw_tx(ic, ic->ic_bss, m) == 1);
+    ic->ic_sae->phase = SAE_ASSOC;
+    CHECK(ieee80211_sae_hw_tx(ic, ic->ic_bss, m) == -1);
+    ic->ic_sae->phase = SAE_RUN;
+    ptk->wk_keylen = 0;
+    CHECK(ieee80211_sae_hw_tx(ic, ic->ic_bss, m) == -1);
+    ptk->wk_keylen = 16;
+    ic->ic_sae->hw_blocked = true;
+    CHECK(ieee80211_sae_hw_tx(ic, ic->ic_bss, m) == -1);
+    ic->ic_sae->hw_blocked = false;
+    CHECK(ieee80211_sae_hw_tx(ic, ic->ic_bss, m) == 1);
+    /* Software CCMP cannot use the pairwise key: one TX PN owner. */
+    unsigned encrypted = encryptions;
+    CHECK(ieee80211_crypto_encap(ic, ic->ic_bss, m) == NULL);
+    CHECK(encryptions == encrypted && key_counters(ptk, 0, 0));
+    /* A robust frame that lost its Protected bit is not transmitted. */
+    m->m_data[1] &= ~IEEE80211_FC1_WEP;
+    CHECK(ieee80211_sae_hw_tx(ic, ic->ic_bss, m) == -1);
+    m_freem(m);
+    m = txframe(ic, 0x08, 0x41, 60, false);
+    CHECK(ieee80211_sae_tag_tx(ic, ic->ic_bss, m) == 0);
+    CHECK(ieee80211_crypto_encap(ic, ic->ic_bss, m) == NULL);
+    CHECK(encryptions == encrypted && !prepend_replacements && !pullup_replacements);
+    m_freem(m);
+    /* Without a programmed pairwise instance firmware cannot encrypt. */
+    ic->ic_sae->instance[0] = 0;
+    CHECK(tx_decision(ic, 0x08, 0x41, 60, false) == -1);
+    CHECK(!ieee80211_sae_agg_tx_allowed(ic));
+    ic->ic_sae->instance[0] = first;
+    CHECK(tx_decision(ic, 0x08, 0x41, 60, false) == 1);
+    /* Port close and reopen republish the set without touching any key. */
+    unsigned calls = hwtx_calls;
+    CHECK(set_port(ic, false) == 0);
+    CHECK(!ieee80211_sae_agg_tx_allowed(ic));
+    CHECK(tx_decision(ic, 0x08, 0x41, 60, false) < 0);
+    CHECK(set_port(ic, true) == 0 && hwtx_calls == calls + 1);
+    CHECK(ieee80211_sae_agg_tx_allowed(ic));
+    for (unsigned slot = 0; slot < 7; slot++)
+        CHECK(fw[slot].removes == (slot == 2 || slot == 5 ? 1U : 0U));
+    CHECK(fw[0].adds == 1 && fw[0].instance == first && fw[0].tx_pn == 2000);
+    /* The same pairwise key again is a no-op for owner and firmware. */
+    calls = hwtx_calls;
+    CHECK(install(ic, 65535, 0x81) == 0 && hwtx_calls == calls);
+    /* A pairwise rekey creates a new instance with a new counter. */
+    CHECK(ic->ic_sae->tx_count > 0);
+    CHECK(install(ic, 65535, 0x82) == 0 && ic->ic_sae->tx_count == 0);
+    CHECK(fw[0].installed && fw[0].removes == 1 && fw[0].adds == 2 &&
+        fw[0].instance > first && fw[0].tx_pn == 0);
+    CHECK(ieee80211_sae_port_allowed(ic) && ieee80211_sae_agg_tx_allowed(ic));
+    uint64_t second = fw[0].instance;
+    fw[0].tx_pn = 300;
+    /* Retired pairwise material cannot become a new instance. */
+    calls = hwtx_calls;
+    CHECK(install(ic, 65535, 0x81) == EINVAL && hwtx_calls == calls);
+    CHECK(fw[0].instance == second && fw[0].tx_pn == 300);
+    CHECK(ieee80211_sae_port_allowed(ic));
+    CHECK(delete_ptk(ic) == 0 && !fw[0].installed);
+    CHECK(!ieee80211_sae_port_allowed(ic) && !ieee80211_sae_agg_tx_allowed(ic));
+    CHECK(install(ic, 65535, 0x82) == EINVAL && !fw[0].installed);
+    CHECK(install(ic, 65535, 0x81) == EINVAL && !fw[0].installed);
+    CHECK(install(ic, 65535, 0x83) == 0 && fw[0].installed &&
+        fw[0].instance > second && fw[0].tx_pn == 0);
+    CHECK(set_port(ic, true) == 0 && ieee80211_sae_agg_tx_allowed(ic));
+    /* A firmware error during a group rekey never opens the port. */
+    hwtx_error = EIO;
+    CHECK(install(ic, 1, 0x37) == EIO);
+    CHECK(!ieee80211_sae_port_allowed(ic) && ic->ic_sae->hw_blocked);
+    /* Firmware key state is uncertain: the owner retires the session. */
+    CHECK(ic->ic_sae->phase == SAE_RETIRED && ptk->wk_keylen == 0);
+    CHECK(material_spent(ic, 0x83));
+    CHECK(!ieee80211_sae_agg_tx_allowed(ic));
+    CHECK(set_port(ic, true) != 0 && !ieee80211_sae_port_allowed(ic));
+    CHECK(tx_decision(ic, 0x08, 0x41, 60, false) < 0);
+    CHECK(tx_decision(ic, 0x08, 1, 60, false) < 0);
+    CHECK(tx_decision(ic, 0xc0, 0, 26, false) < 0);
+    m = txframe(ic, 0x08, 0x41, 60, false);
+    CHECK(ieee80211_sae_hw_tx(ic, ic->ic_bss, m) == -1);
+    CHECK(ieee80211_crypto_encap(ic, ic->ic_bss, m) == NULL);
+    m_freem(m);
+    hwtx_error = 0;
+    /* Firmware reset: the session ends and the lost counter is never reused. */
+    ieee80211_sae_retire(ic); memset(fw, 0, sizeof(fw));
+    CHECK(ptk->wk_keylen == 0 && !ieee80211_sae_port_allowed(ic));
+    CHECK(!ieee80211_sae_agg_tx_allowed(ic));
+    CHECK(install(ic, 65535, 0x84) == ESTALE && !fw[0].installed);
+    CHECK(set_port(ic, true) == ESTALE);
+    connect(ic, 201);
+    CHECK(install(ic, 65535, 0x83) == EINVAL && !fw[0].installed);
+    CHECK(install(ic, 65535, 0x91) == 0 && fw[0].installed && fw[0].tx_pn == 0);
+    CHECK(set_igtk(ic, 4, 0x58) == 0 && set_port(ic, true) == 0);
+    CHECK(ieee80211_sae_agg_tx_allowed(ic));
+    fw[0].tx_pn = 500;
+    CHECK(!material_spent(ic, 0x91) && ic->ic_sae->instance[0] != 0 &&
+        ic->ic_sae->instance[5] != 0);
+    ieee80211_sae_retire(ic); memset(fw, 0, sizeof(fw));
+    CHECK(material_spent(ic, 0x91));
+    for (unsigned slot = 0; slot < 7; slot++)
+        CHECK(ic->ic_sae->instance[slot] == 0);
+    connect(ic, 202);
+    CHECK(install(ic, 65535, 0x91) == EINVAL && !fw[0].installed);
+    /* A failed pairwise install leaves no usable key and a closed port.
+     * Firmware may have used the key, so it is not accepted again. */
+    hwtx_error = EIO;
+    CHECK(install(ic, 65535, 0xa1) == EIO);
+    CHECK(ptk->wk_keylen == 0 && ic->ic_sae->hw_blocked);
+    CHECK(ic->ic_sae->phase == SAE_RETIRED);
+    CHECK(set_igtk(ic, 4, 0x59) == ESTALE);
+    CHECK(set_port(ic, true) != 0 && !ieee80211_sae_port_allowed(ic));
+    CHECK(!ieee80211_sae_agg_tx_allowed(ic));
+    CHECK(tx_decision(ic, 0x08, 0x41, 60, false) < 0);
+    hwtx_error = 0;
+    CHECK(install(ic, 65535, 0xa1) == ESTALE);
+    connect(ic, 208);
+    CHECK(install(ic, 65535, 0xa1) == EINVAL && !fw[0].installed);
+    CHECK(install(ic, 65535, 0xa2) == 0 && fw[0].installed);
+    CHECK(set_igtk(ic, 4, 0x59) == 0 && set_port(ic, true) == 0);
+    CHECK(ieee80211_sae_agg_tx_allowed(ic));
+    /* A key removed outside the owner also fences firmware and ends TX. */
+    CHECK(install(ic, 1, 0x38) == 0 && ic->ic_sae->instance[2] != 0);
+    ieee80211_sae_key_changed(ic, &ic->ic_nw_keys[1]);
+    CHECK(ic->ic_sae->instance[2] == 0 && ic->ic_sae->instance[0] != 0);
+    CHECK(!material_spent(ic, 0xa2));
+    ieee80211_sae_key_changed(ic, ptk);
+    CHECK(material_spent(ic, 0xa2) && ic->ic_sae->instance[0] == 0);
+    CHECK(ic->ic_sae->hw_blocked && !ieee80211_sae_agg_tx_allowed(ic));
+    /* The ended instance is not usable again, and the owner gives no
+     * later set with it to the provider. */
+    calls = hwtx_calls;
+    CHECK(install(ic, 65535, 0xa2) == EINVAL);
+    CHECK(set_igtk(ic, 5, 0x5d) == EINVAL && hwtx_calls == calls);
+    CHECK(tx_decision(ic, 0x08, 0x41, 60, false) < 0);
+    ieee80211_sae_retire(ic);
+    connect(ic, 203);
+    CHECK(install(ic, 65535, 0xa2) == EINVAL);
+    ieee80211_sae_retire(ic);
+    /* A failed pairwise rekey ends the old instance too. The owner never
+     * gives a set with an ended instance to the provider. */
+    connect(ic, 205);
+    CHECK(install(ic, 65535, 0xb1) == 0 && set_igtk(ic, 4, 0x5b) == 0);
+    CHECK(set_port(ic, true) == 0);
+    hwtx_error = EIO;
+    CHECK(install(ic, 65535, 0xb2) == EIO);
+    hwtx_error = 0;
+    CHECK(ic->ic_sae->phase == SAE_RETIRED && ptk->wk_keylen == 0);
+    CHECK(ic->ic_sae->instance[0] == 0);
+    CHECK(material_spent(ic, 0xb1) && material_spent(ic, 0xb2));
+    calls = hwtx_calls;
+    CHECK(install(ic, 65535, 0xb1) == ESTALE);
+    CHECK(set_igtk(ic, 5, 0x5c) == ESTALE && hwtx_calls == calls);
+    CHECK(set_port(ic, true) != 0 && !ieee80211_sae_port_allowed(ic));
+    CHECK(ic->ic_sae->hw_blocked && !ieee80211_sae_agg_tx_allowed(ic));
+    connect(ic, 209);
+    CHECK(install(ic, 65535, 0xb1) == EINVAL && install(ic, 65535, 0xb2) == EINVAL);
+    ieee80211_sae_retire(ic);
+    /* A failed pairwise removal also ends the instance. */
+    connect(ic, 206);
+    CHECK(install(ic, 65535, 0xb3) == 0);
+    hwtx_error = EIO;
+    CHECK(delete_ptk(ic) == EIO);
+    hwtx_error = 0;
+    CHECK(material_spent(ic, 0xb3) && ic->ic_sae->instance[0] == 0);
+    CHECK(ic->ic_sae->phase == SAE_RETIRED && install(ic, 65535, 0xb3) == ESTALE);
+    connect(ic, 211);
+    CHECK(install(ic, 65535, 0xb3) == EINVAL);
+    ieee80211_sae_retire(ic);
+    /* The session ended while firmware programmed a new pairwise key. */
+    connect(ic, 207);
+    hwtx_retire = true;
+    CHECK(install(ic, 65535, 0xb4) == ESTALE);
+    hwtx_retire = false;
+    CHECK(material_spent(ic, 0xb4) && ptk->wk_keylen == 0);
+    memset(fw, 0, sizeof(fw));
+    /* The owner remembers the last eight pairwise keys that firmware used. */
+    for (unsigned i = 0; i < 9; i++) {
+        connect(ic, 240 + i);
+        CHECK(install(ic, 65535, 0xc0 + i) == 0);
+        ieee80211_sae_retire(ic); memset(fw, 0, sizeof(fw));
+    }
+    CHECK(!material_spent(ic, 0xc0));
+    for (unsigned i = 1; i < 9; i++)
+        CHECK(material_spent(ic, 0xc0 + i));
+    /* A repeated disable does not give keys of another mode to firmware. */
+    connect(ic, 260);
+    struct ieee80211req_sae off = request(ic, IEEE80211_SAE_CONFIGURE, 1);
+    off.data[0] = 0;
+    calls = hwtx_calls;
+    CHECK(ieee80211_sae_request(ic, &off) == 0 && hwtx_calls == calls + 1);
+    CHECK(!ieee80211_sae_active(ic));
+    ic->ic_nw_keys[1].wk_keylen = 16;
+    ic->ic_nw_keys[1].wk_cipher = &ieee80211_cipher_ccmp;
+    CHECK(ieee80211_sae_request(ic, &off) == 0 && hwtx_calls == calls + 1);
+    ic->ic_nw_keys[1].wk_keylen = 0;
+    ic->ic_nw_keys[1].wk_cipher = &none;
+    /* Firmware TX without protected firmware Block Ack keeps the non-QoS
+     * path: no aggregation, and firmware still owns the pairwise TX PN. */
+    ieee80211_sae_detach(ic);
+    CHECK(ieee80211_sae_attach_hw(ic, &hwtx_noqos_ops) == 0);
+    memset(fw, 0, sizeof(fw));
+    connect(ic, 270);
+    CHECK(install(ic, 65535, 0xd1) == 0 && set_igtk(ic, 4, 0x5e) == 0);
+    CHECK(set_port(ic, true) == 0 && ieee80211_sae_port_allowed(ic));
+    CHECK(!ieee80211_sae_qos_tx_allowed(ic) && !ieee80211_sae_agg_tx_allowed(ic));
+    CHECK(tx_decision(ic, 0x08, 0x41, 60, false) == 1);
+    m = txframe(ic, 0x08, 0x41, 60, false);
+    CHECK(ieee80211_sae_tag_tx(ic, ic->ic_bss, m) == 0);
+    CHECK(ieee80211_crypto_encap(ic, ic->ic_bss, m) == NULL);
+    m_freem(m);
+    /* The owner counts the frames of one instance and ends the session
+     * before the firmware PN can wrap. */
+    uint64_t counted = ic->ic_sae->tx_count;
+    CHECK(tx_decision(ic, 0x08, 0x41, 60, false) == 1);
+    CHECK(tx_decision(ic, 0x40, 0, 40, false) == 0);
+    CHECK(ic->ic_sae->tx_count == counted + 1);
+    ic->ic_sae->tx_count = SAE_HW_TX_LIMIT - 1;
+    CHECK(tx_decision(ic, 0x08, 0x41, 60, false) == 1);
+    CHECK(ieee80211_sae_port_allowed(ic));
+    CHECK(tx_decision(ic, 0x08, 0x41, 60, false) == -1);
+    CHECK(ic->ic_sae->phase == SAE_RETIRED && ptk->wk_keylen == 0);
+    CHECK(material_spent(ic, 0xd1) && ic->ic_sae->tx_count == 0);
+    /* A provider without firmware TX has no firmware disposition. It
+     * keeps its behavior: a failed pairwise rekey can be done again. */
+    ieee80211_sae_detach(ic);
+    CHECK(ieee80211_sae_attach_hw(ic, &hw_ops) == 0);
+    connect(ic, 204);
+    CHECK(install(ic, 65535, 0xa2) == 0 && set_igtk(ic, 4, 0x5a) == 0);
+    CHECK(set_port(ic, true) == 0 && !ieee80211_sae_agg_tx_allowed(ic));
+    CHECK(tx_decision(ic, 0x08, 0x41, 60, false) == 0);
+    CHECK(ic->ic_sae->tx_count == 0);
+    hw_error = EIO;
+    CHECK(install(ic, 65535, 0xa3) == EIO && ic->ic_sae->phase == SAE_RUN);
+    hw_error = 0;
+    CHECK(ptk->wk_keylen == 16 && !material_spent(ic, 0xa3));
+    CHECK(install(ic, 65535, 0xa2) == 0);
+    CHECK(set_igtk(ic, 5, 0x5f) == 0 && !ic->ic_sae->hw_blocked);
+    CHECK(install(ic, 65535, 0xa3) == 0);
+    ieee80211_sae_key_changed(ic, &ic->ic_nw_keys[1]);
     ieee80211_sae_retire(ic);
 }
 int main(void){
@@ -611,6 +1032,7 @@ int main(void){
     CHECK(ieee80211_sae_attach(&ic)==0);CHECK(ieee80211_sae_serial(&ic)>serial);
     CHECK(config(&ic,13)==0);ieee80211_sae_retire(&ic);
     hardware_contract(&ic);
+    hardware_tx_contract(&ic);
     ic.ic_sae->generation=13;
     ic.ic_sae->serial=UINT64_MAX;CHECK(config(&ic,14)==EINVAL);CHECK(ic.ic_sae->generation==13);
     CHECK(fences==unfences);ieee80211_sae_detach(&ic);CHECK(ic.ic_sae==NULL);

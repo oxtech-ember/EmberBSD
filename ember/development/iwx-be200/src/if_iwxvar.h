@@ -658,6 +658,8 @@ struct iwx_softc {
 	uint64_t sc_sae_epoch;
 	uint64_t sc_sae_rx_cookie;
 	uint8_t sc_sae_keys;
+	uint64_t sc_sae_inst[7];	/* programmed key instances */
+	const struct ieee80211_sae_hw_ops *sc_sae_ops;	/* TX profile */
 	bool sc_sae_replacing;
 	bool sc_sae_rx_pending;
 	int attached;

@@ -17,6 +17,14 @@ struct mbuf;
  * sleep and must immediately block host admission, including queued TX.
  * The ops object must outlive detach. All callbacks run under serialization;
  * detach must wait for any sleeping request to return before freeing ic.
+ *
+ * Each key has an instance. The owner assigns it when it accepts new key
+ * material, and never uses that value again. An instance is never zero. A
+ * key that did not change keeps its instance in each later set. A provider
+ * with KEEP_KEYS must not remove or program a slot whose instance is equal
+ * to the programmed instance, because firmware counters must continue. It
+ * removes a slot that is absent or has a different instance, and programs
+ * only new instances.
  */
 #define IEEE80211_SAE_HW_PTK 0xffff
 #define IEEE80211_SAE_HW_BIP 0x80
@@ -27,8 +35,31 @@ struct ieee80211_sae_hw_key {
 	/* CCMP non-QoS counter, or BIP IPN. Shared replay is authoritative;
 	 * do not seed every firmware QoS domain from this scalar. */
 	uint64_t rsc;
+	uint64_t instance;
 };
 #define IEEE80211_SAE_HW_NO_QOS_TX 0x01
+/* Hardware TX capabilities. Without them the provider keeps software TX.
+ * KEEP_KEYS: the provider retains a slot whose instance did not change.
+ * TX_DATA: firmware encrypts pairwise data and allocates the pairwise TX PN.
+ * TX_MGMT: firmware encrypts unicast robust management, host-submitted and
+ * firmware-originated, with the same counter.
+ * TX_BA: firmware protects the Block Ack actions that it originates.
+ * CCMP has one TX PN for a pairwise key, thus TX_DATA and TX_MGMT are valid
+ * only together, and both need KEEP_KEYS. A TX provider sets TX_BA, or it
+ * sets IEEE80211_SAE_HW_NO_QOS_TX and keeps the non-QoS path; never both.
+ * ieee80211_sae_attach_hw() rejects each other combination.
+ *
+ * A TX provider is the only owner of the pairwise TX PN, which starts at
+ * zero one time for each pairwise instance. It calls ieee80211_sae_hw_tx()
+ * for each frame and never encrypts in software. It creates aggregation
+ * queues only while ieee80211_sae_agg_tx_allowed() is true and removes them
+ * before it removes the pairwise instance. A firmware reset loses the
+ * counter: the provider must call ieee80211_sae_retire(). A failed replace
+ * retires the session of a TX provider. */
+#define IEEE80211_SAE_HW_KEEP_KEYS 0x02
+#define IEEE80211_SAE_HW_TX_DATA 0x04
+#define IEEE80211_SAE_HW_TX_MGMT 0x08
+#define IEEE80211_SAE_HW_TX_BA 0x10
 struct ieee80211_sae_hw_ops {
 	void (*fence)(struct ieee80211com *);
 	int (*replace)(struct ieee80211com *, uint64_t,
@@ -77,6 +108,16 @@ void ieee80211_sae_leave(struct ieee80211com *);
 void ieee80211_sae_state_request(struct ieee80211com *, int);
 bool ieee80211_sae_active(const struct ieee80211com *);
 bool ieee80211_sae_qos_tx_allowed(const struct ieee80211com *);
+/* False during SAE unless a TX provider has the pairwise key programmed
+ * and the controlled port is open. */
+bool ieee80211_sae_agg_tx_allowed(const struct ieee80211com *);
+/* TX provider disposition after tagging: -1 drop the frame, 0 transmit with
+ * firmware encryption disabled, 1 firmware encrypts with the pairwise key.
+ * Without SAE or without a TX provider the result is 0 for a current frame.
+ * The owner counts the frames of one pairwise instance and retires the
+ * session before the firmware PN can wrap. */
+int ieee80211_sae_hw_tx(struct ieee80211com *,
+    const struct ieee80211_node *, struct mbuf *);
 bool ieee80211_sae_port_allowed(const struct ieee80211com *);
 bool ieee80211_sae_data_allowed(const struct ieee80211com *,
     const struct ieee80211_node *, const struct ieee80211_key *, bool);

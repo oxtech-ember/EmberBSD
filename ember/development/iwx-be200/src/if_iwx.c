@@ -217,6 +217,15 @@ static int iwx_ht_mode = IWX_HT_MODE_VHT80;
  * sysctl keeps QoS and only stops offering HT.
  */
 static int iwx_ht_noqos;
+/*
+ * Who encrypts pairwise TX under native SAE.  0: common software CCMP on
+ * the non-QoS path; 1: the firmware, on the non-QoS path; 2: the firmware,
+ * with QoS and TX aggregation.  1 and 2 have not yet run on hardware; 2
+ * needs an air capture that shows protected Block Ack actions.
+ * Set at run time by sysctl hw.iwx.sae_tx.  A device takes the value over
+ * when the interface starts.
+ */
+static int iwx_sae_tx_mode;
 static struct sysctllog *iwx_sysctllog;
 
 const uint8_t iwx_nvm_channels_8000[] = {
@@ -601,6 +610,14 @@ int	iwx_sae_replace(struct ieee80211com *, uint64_t,
 	    const struct ieee80211_sae_hw_key *, size_t);
 int	iwx_sae_key_cmd(struct iwx_softc *, unsigned,
 	    const struct ieee80211_sae_hw_key *);
+void	iwx_sae_forget(struct iwx_softc *);
+int	iwx_sae_fw_tx(struct iwx_softc *);
+void	iwx_sae_select(struct iwx_softc *);
+int	iwx_sae_agg_stop(struct iwx_softc *);
+int	iwx_sae_tx(struct iwx_softc *, struct ieee80211_node *, struct mbuf *);
+int	iwx_tx_crypto(struct iwx_softc *, struct ieee80211_node *,
+	    struct mbuf *, uint16_t *);
+int	iwx_agg_tx_allowed(struct iwx_softc *);
 int	iwx_sae_send_cmd(struct iwx_softc *, uint32_t, uint16_t, const void *);
 int	iwx_sae_sync_rx(struct iwx_softc *);
 void	iwx_sae_rx_synced(struct iwx_softc *, struct iwx_rx_packet *);
@@ -6690,7 +6707,6 @@ iwx_tx(struct iwx_softc *sc, struct mbuf *m, struct ieee80211_node *ni)
 	struct iwx_tfh_tfd *desc;
 	struct iwx_device_cmd *cmd;
 	struct ieee80211_frame *wh;
-	struct ieee80211_key *k = NULL;
 	uint64_t paddr, sae_serial = ieee80211_sae_serial(ic);
 	u_int hdrlen;
 	bus_dma_segment_t *seg;
@@ -6714,9 +6730,11 @@ iwx_tx(struct iwx_softc *sc, struct mbuf *m, struct ieee80211_node *ni)
 	 * sets up the Block Ack session and aggregates by itself (as Linux
 	 * iwlmld with TX_AMPDU_SETUP_IN_HW).  Until that queue exists, the
 	 * frame uses the default data queue and the queue is requested.
+	 * With native SAE the firmware needs the pairwise key first: its
+	 * Block Ack action frames are protected management frames.
 	 */
 	if (type == IEEE80211_FC0_TYPE_DATA &&
-	    !ieee80211_sae_active(ic) &&
+	    iwx_agg_tx_allowed(sc) &&
 	    (wh->i_fc[0] & (0x80 | 0x40)) == 0x80 &&	/* QoS, not null */
 	    !IEEE80211_IS_MULTICAST(wh->i_addr1) &&
 	    hdrlen >= sizeof(struct ieee80211_qosframe) &&
@@ -6777,22 +6795,15 @@ iwx_tx(struct iwx_softc *sc, struct mbuf *m, struct ieee80211_node *ni)
 	}
 #endif
 
-	/* Native hardware keys are RX-only; TX encryption remains common. */
-	if (wh->i_fc[1] & IEEE80211_FC1_PROTECTED) {
-		k = ieee80211_crypto_encap(ic, ni, m);
-		if (k == NULL) {
-			m_freem(m);
-			return ENOBUFS;
-		}
-		/* 802.11 header may have moved. */
-		wh = mtod(m, struct ieee80211_frame *);
-		hdrlen = ieee80211_anyhdrsize(wh);
-	}
-	flags |= IWX_TX_FLAGS_ENCRYPT_DIS;
-	if (sc->sc_sae_replacing || !ieee80211_sae_tx_current(ic, ni, m)) {
+	err = iwx_tx_crypto(sc, ni, m, &flags);
+	if (err) {
 		m_freem(m);
-		return ESTALE;
+		return err;
 	}
+	/* Software encryption may move the 802.11 header. */
+	wh = mtod(m, struct ieee80211_frame *);
+	if (type != IEEE80211_FC0_TYPE_CTL)
+		hdrlen = ieee80211_anyhdrsize(wh);
 
 	totlen = m->m_pkthdr.len;
 
@@ -7749,6 +7760,8 @@ iwx_rm_sta(struct iwx_softc *sc, struct iwx_node *in)
 	}
 
 	in->in_flags = 0;
+	/* The firmware removed the keys with the station. */
+	iwx_sae_forget(sc);
 
 	memset(sc->aggqid, 0, sizeof(sc->aggqid));
 	for (i = IWX_FIRST_AGG_TX_QUEUE; i <= IWX_LAST_AGG_TX_QUEUE; i++)
@@ -10015,7 +10028,7 @@ iwx_txq_task(void *arg)
 		if ((sc->sc_flags & IWX_FLAG_SHUTDOWN) ||
 		    ic->ic_state != IEEE80211_S_RUN ||
 		    sc->ns_nstate != IEEE80211_S_RUN || sc->aggqid[tid] != 0 ||
-		    ieee80211_sae_active(ic)) {
+		    !iwx_agg_tx_allowed(sc)) {
 			sc->sc_txq_want &= ~(1 << tid);
 			continue;
 		}
@@ -11212,9 +11225,13 @@ iwx_node_alloc(struct ieee80211_node_table *nt __unused)
 	    M_NOWAIT | M_ZERO);
 }
 /*
- * Native SAE keeps protocol, replay and all TX encryption in net80211.
+ * Native SAE keeps protocol, key lifetime and replay in net80211.  The
+ * firmware decrypts with all keys.  In a firmware TX profile it also
+ * encrypts with the pairwise key and is the only owner of its TX PN;
+ * group keys are always receive-only.
  * The MLD firmware's CCMP RX contract retains the IV and removes the MIC.
- * Epoch publication therefore requires removing old keys and draining RX.
+ * Epoch publication therefore requires removing the replaced keys and
+ * draining RX.
  */
 void
 iwx_sae_fence(struct ieee80211com *ic)
@@ -11305,13 +11322,19 @@ iwx_sae_key_cmd(struct iwx_softc *sc, unsigned slot,
     const struct ieee80211_sae_hw_key *key)
 {
 	struct iwx_sec_key_cmd cmd;
-	uint32_t flags = IWX_SEC_KEY_FLAG_CIPHER_CCMP | IWX_SEC_KEY_FLAG_NO_TX;
+	uint32_t flags = IWX_SEC_KEY_FLAG_CIPHER_CCMP;
 	int error;
 
 	if (slot >= 7)
 		return EINVAL;
+	/*
+	 * A station never transmits with a group key.  Without a firmware
+	 * TX profile the pairwise key is receive-only too.
+	 */
 	if (slot != 0)
-		flags |= IWX_SEC_KEY_FLAG_MCAST_KEY;
+		flags |= IWX_SEC_KEY_FLAG_MCAST_KEY | IWX_SEC_KEY_FLAG_NO_TX;
+	else if (!iwx_sae_fw_tx(sc))
+		flags |= IWX_SEC_KEY_FLAG_NO_TX;
 	if (slot == 0 || slot >= 5)
 		flags |= IWX_SEC_KEY_FLAG_MFP;
 	memset(&cmd, 0, sizeof(cmd));
@@ -11324,6 +11347,7 @@ iwx_sae_key_cmd(struct iwx_softc *sc, unsigned slot,
 		memcpy(cmd.u.add.key, key->key, sizeof(key->key));
 		/* Replay remains in net80211, including separate TID/PMF spaces. */
 		cmd.u.add.rx_seq = 0;
+		/* tx_seq stays zero: a new instance starts its TX PN once. */
 	}
 	error = iwx_sae_send_cmd(sc,
 	    IWX_WIDE_ID(IWX_DATA_PATH_GROUP, IWX_SEC_KEY_CMD),
@@ -11332,23 +11356,70 @@ iwx_sae_key_cmd(struct iwx_softc *sc, unsigned slot,
 	return error;
 }
 
+/* Does the firmware own pairwise TX in the registered profile? */
+int
+iwx_sae_fw_tx(struct iwx_softc *sc)
+{
+	return sc->sc_sae_ops != NULL &&
+	    (sc->sc_sae_ops->flags & IEEE80211_SAE_HW_TX_DATA) != 0;
+}
+
+/* The firmware key state is gone. */
+void
+iwx_sae_forget(struct iwx_softc *sc)
+{
+	sc->sc_sae_keys = 0;
+	memset(sc->sc_sae_inst, 0, sizeof(sc->sc_sae_inst));
+}
+
+/*
+ * The firmware originates Block Ack action frames for its aggregation
+ * queues.  It protects them with the pairwise key, so the queues go
+ * before that key instance does.
+ */
+int
+iwx_sae_agg_stop(struct iwx_softc *sc)
+{
+	int tid, qid, error;
+
+	sc->sc_txq_want = 0;
+	for (tid = 0; tid < IWX_MAX_TID_COUNT; tid++) {
+		qid = sc->aggqid[tid];
+		if (qid == 0)
+			continue;
+		error = iwx_disable_txq(sc, IWX_STATION_ID, qid, tid);
+		if (error != 0)
+			return error;
+		sc->aggqid[tid] = 0;
+	}
+	return 0;
+}
+
+/*
+ * A slot whose instance is equal to the programmed instance is not
+ * touched: its firmware counters continue.  Only a new instance is
+ * programmed, and its TX PN starts at zero one time.
+ */
 int
 iwx_sae_replace(struct ieee80211com *ic, uint64_t epoch,
     const struct ieee80211_sae_hw_key *keys, size_t count)
 {
 	struct iwx_softc *sc = IC2IFP(ic)->if_softc;
-	unsigned i, slot, mask = 0;
-	int error = 0, generation = sc->sc_generation;
+	uint64_t wanted[7];
+	unsigned i, slot;
+	int error = 0, generation = sc->sc_generation, n;
+	bool pairwise;
 
 	if (sc->sc_sae_replacing || count > 7)
 		return EBUSY;
+	memset(wanted, 0, sizeof(wanted));
 	for (i = 0; i < count; i++) {
 		slot = keys[i].id == IEEE80211_SAE_HW_PTK ? 0 : keys[i].id + 1;
-		if (slot >= 7 || (mask & (1 << slot)) ||
+		if (slot >= 7 || wanted[slot] != 0 || keys[i].instance == 0 ||
 		    keys[i].cipher != (slot >= 5 ? IEEE80211_SAE_HW_BIP :
 		    IEEE80211_CIPHER_AES_CCM))
 			return EINVAL;
-		mask |= 1 << slot;
+		wanted[slot] = keys[i].instance;
 	}
 	iwx_sae_fence(ic);
 	sc->sc_sae_replacing = true;
@@ -11357,28 +11428,52 @@ iwx_sae_replace(struct ieee80211com *ic, uint64_t epoch,
 		if (count != 0)
 			error = ENETDOWN;
 		else
-			sc->sc_sae_keys = 0;
+			iwx_sae_forget(sc);
+		goto done;
+	}
+	/* Let a queue task in flight finish its command. */
+	for (n = 0; sc->sc_agg_busy && n < 30; n++)
+		tsleep_nsec(&sc->sc_agg_busy, 0, "iwxagg", SEC_TO_NSEC(1) / 10);
+	if (sc->sc_agg_busy) {
+		error = EBUSY;
+		goto done;
+	}
+	/* The session or the device can change during that sleep. */
+	if (epoch != ieee80211_sae_serial(ic) ||
+	    generation != sc->sc_generation ||
+	    (sc->sc_flags & IWX_FLAG_SHUTDOWN)) {
+		error = ESTALE;
 		goto done;
 	}
 	if (sc->sc_flags & IWX_FLAG_STA_ACTIVE) {
+		/* The programmed pairwise instance goes away. */
+		pairwise = sc->sc_sae_inst[0] != 0 &&
+		    sc->sc_sae_inst[0] != wanted[0];
 		error = iwx_flush_sta(sc, (void *)ic->ic_bss);
 		if (error != 0)
 			goto done;
+		if (pairwise) {
+			error = iwx_sae_agg_stop(sc);
+			if (error != 0)
+				goto done;
+		}
 		for (slot = 0; slot < 7; slot++) {
 			if (epoch != ieee80211_sae_serial(ic) ||
 			    generation != sc->sc_generation) {
 				error = ESTALE;
 				goto done;
 			}
-			if (!(sc->sc_sae_keys & (1 << slot)))
+			if (!(sc->sc_sae_keys & (1 << slot)) ||
+			    sc->sc_sae_inst[slot] == wanted[slot])
 				continue;
 			error = iwx_sae_key_cmd(sc, slot, NULL);
 			if (error != 0)
 				goto done;
 			sc->sc_sae_keys &= ~(1 << slot);
+			sc->sc_sae_inst[slot] = 0;
 		}
 	} else {
-		sc->sc_sae_keys = 0;
+		iwx_sae_forget(sc);
 		if (count != 0) {
 			error = ENOTCONN;
 			goto done;
@@ -11392,9 +11487,13 @@ iwx_sae_replace(struct ieee80211com *ic, uint64_t epoch,
 			break;
 		}
 		slot = keys[i].id == IEEE80211_SAE_HW_PTK ? 0 : keys[i].id + 1;
+		if (sc->sc_sae_keys & (1 << slot))
+			continue;
 		error = iwx_sae_key_cmd(sc, slot, &keys[i]);
-		if (error == 0)
+		if (error == 0) {
 			sc->sc_sae_keys |= 1 << slot;
+			sc->sc_sae_inst[slot] = keys[i].instance;
+		}
 	}
 done:
 	if (error == 0 && (epoch != ieee80211_sae_serial(ic) ||
@@ -11408,11 +11507,119 @@ done:
 	return error;
 }
 
-static const struct ieee80211_sae_hw_ops iwx_sae_ops = {
-	.fence = iwx_sae_fence,
-	.replace = iwx_sae_replace,
-	.flags = IEEE80211_SAE_HW_NO_QOS_TX
+/*
+ * TX disposition of a native SAE frame: 1 the firmware encrypts with the
+ * pairwise key, 0 firmware encryption is disabled, -1 drop the frame.
+ * The common owner selects it; the adapter adds its firmware key state.
+ */
+int
+iwx_sae_tx(struct iwx_softc *sc, struct ieee80211_node *ni, struct mbuf *m)
+{
+	const uint8_t *fc = mtod(m, const uint8_t *);
+	int result;
+
+	if (sc->sc_sae_replacing)
+		return -1;
+	result = ieee80211_sae_hw_tx(&sc->sc_ic, ni, m);
+	if (result < 0)
+		return -1;
+	if (result > 0) {
+		/* The published set must have the pairwise key in firmware. */
+		if (sc->sc_sae_epoch == 0 || sc->sc_sae_inst[0] == 0)
+			return -1;
+		return 1;
+	}
+	/* A protected frame never leaves with encryption disabled. */
+	return (fc[1] & IEEE80211_FC1_PROTECTED) ? -1 : 0;
+}
+
+/*
+ * Select who encrypts a frame.  Native SAE with a firmware TX profile:
+ * the firmware does, and the host never runs software CCMP with the
+ * pairwise key.  Otherwise: common software encryption, with firmware
+ * encryption disabled.
+ * Software encryption may move the 802.11 header.
+ */
+int
+iwx_tx_crypto(struct iwx_softc *sc, struct ieee80211_node *ni, struct mbuf *m,
+    uint16_t *flags)
+{
+	struct ieee80211com *ic = &sc->sc_ic;
+	const uint8_t *fc = mtod(m, const uint8_t *);
+
+	if (ieee80211_sae_active(ic) && iwx_sae_fw_tx(sc)) {
+		switch (iwx_sae_tx(sc, ni, m)) {
+		case 1:
+			return 0;
+		case 0:
+			*flags |= IWX_TX_FLAGS_ENCRYPT_DIS;
+			return 0;
+		default:
+			return ESTALE;
+		}
+	}
+	if ((fc[1] & IEEE80211_FC1_PROTECTED) &&
+	    ieee80211_crypto_encap(ic, ni, m) == NULL)
+		return ENOBUFS;
+	if (sc->sc_sae_replacing || !ieee80211_sae_tx_current(ic, ni, m))
+		return ESTALE;
+	*flags |= IWX_TX_FLAGS_ENCRYPT_DIS;
+	return 0;
+}
+
+/* Aggregation queues need the owner's permission and the firmware key. */
+int
+iwx_agg_tx_allowed(struct iwx_softc *sc)
+{
+	struct ieee80211com *ic = &sc->sc_ic;
+
+	if (sc->sc_sae_replacing || !ieee80211_sae_agg_tx_allowed(ic))
+		return 0;
+	return !ieee80211_sae_active(ic) ||
+	    (sc->sc_sae_epoch != 0 && sc->sc_sae_inst[0] != 0);
+}
+
+/* Indexed by hw.iwx.sae_tx. */
+static const struct ieee80211_sae_hw_ops iwx_sae_ops[] = {
+	{ iwx_sae_fence, iwx_sae_replace,
+	    IEEE80211_SAE_HW_KEEP_KEYS | IEEE80211_SAE_HW_NO_QOS_TX },
+	{ iwx_sae_fence, iwx_sae_replace,
+	    IEEE80211_SAE_HW_KEEP_KEYS | IEEE80211_SAE_HW_TX_DATA |
+	    IEEE80211_SAE_HW_TX_MGMT | IEEE80211_SAE_HW_NO_QOS_TX },
+	{ iwx_sae_fence, iwx_sae_replace,
+	    IEEE80211_SAE_HW_KEEP_KEYS | IEEE80211_SAE_HW_TX_DATA |
+	    IEEE80211_SAE_HW_TX_MGMT | IEEE80211_SAE_HW_TX_BA },
 };
+
+/*
+ * Register the native SAE adapter with the selected TX profile.  The TX
+ * owner of a pairwise key never changes during the life of that key: a
+ * new profile replaces the adapter, which retires the session.
+ */
+void
+iwx_sae_select(struct iwx_softc *sc)
+{
+	struct ieee80211com *ic = &sc->sc_ic;
+	const struct ieee80211_sae_hw_ops *ops;
+	int error;
+
+	/* This contract is the BZ MLD RX/key ABI, not the older MVM path. */
+	if (sc->sc_device_family != IWX_DEVICE_FAMILY_BZ ||
+	    !sc->sc_use_mld_api)
+		return;
+	ops = &iwx_sae_ops[atomic_load_relaxed(&iwx_sae_tx_mode)];
+	if (sc->sc_sae_ops == ops)
+		return;
+	ieee80211_sae_detach(ic);
+	sc->sc_sae_ops = NULL;
+	error = ieee80211_sae_attach_hw(ic, ops);
+	if (error != 0) {
+		printf("%s: native SAE/PMF unavailable (error %d)\n",
+		    device_xname(sc->sc_dev), error);
+		return;
+	}
+	sc->sc_sae_ops = ops;
+}
 
 #if defined(IWX_HT) /* iwx_set_key */
 
@@ -12515,6 +12722,9 @@ iwx_init(struct ifnet *ifp)
 	if (err)
 		return err;
 
+	/* The interface was stopped: no native SAE session is in use. */
+	iwx_sae_select(sc);
+
 	err = iwx_start_hw(sc);
 	if (err) {
 		printf("%s: could not initialize hardware\n", device_xname(sc->sc_dev));
@@ -12746,7 +12956,7 @@ iwx_stop(struct ifnet *ifp, int disable __unused)
 	/* The interface goes down: the station leaves by its own decision. */
 	iwx_leave_notify(sc, 1);
 	iwx_stop_device(sc);
-	sc->sc_sae_keys = 0;
+	iwx_sae_forget(sc);
 	sc->sc_sae_rx_pending = false;
 	wakeup(&sc->sc_sae_rx_pending);
 
@@ -14670,13 +14880,7 @@ iwx_config_complete(struct iwx_softc *sc)
 	ic->ic_newstate = iwx_newstate;
 	sc->sc_recv_mgmt = ic->ic_recv_mgmt;
 	ic->ic_recv_mgmt = iwx_recv_mgmt;
-	/* This contract is the BZ MLD RX/key ABI, not the older MVM path. */
-	if (sc->sc_device_family == IWX_DEVICE_FAMILY_BZ && sc->sc_use_mld_api) {
-		int error = ieee80211_sae_attach_hw(ic, &iwx_sae_ops);
-		if (error != 0)
-			printf("%s: native SAE/PMF unavailable (error %d)\n",
-			    device_xname(sc->sc_dev), error);
-	}
+	iwx_sae_select(sc);
 	sc->sc_ns_sae_serial = ieee80211_sae_serial(ic);
 	ic->ic_updateslot = iwx_updateslot;
 #if defined(IWX_HT)
@@ -15396,6 +15600,23 @@ iwx_sysctl_ht(SYSCTLFN_ARGS)
 	return 0;
 }
 
+/* hw.iwx.sae_tx: the native SAE TX profile from the next interface start. */
+static int
+iwx_sysctl_sae_tx(SYSCTLFN_ARGS)
+{
+	struct sysctlnode node = *rnode;
+	int error, mode = atomic_load_relaxed(&iwx_sae_tx_mode);
+
+	node.sysctl_data = &mode;
+	error = sysctl_lookup(SYSCTLFN_CALL(&node));
+	if (error != 0 || newp == NULL)
+		return error;
+	if (mode < 0 || mode >= (int)__arraycount(iwx_sae_ops))
+		return EINVAL;
+	atomic_store_relaxed(&iwx_sae_tx_mode, mode);
+	return 0;
+}
+
 static void
 iwx_sysctl_setup(void)
 {
@@ -15416,6 +15637,18 @@ iwx_sysctl_setup(void)
 	if (error != 0)
 		printf("if_iwx: cannot create sysctl hw.iwx.ht (error %d); "
 		    "the mode stays %d\n", error, iwx_ht_mode);
+	if (error == 0) {
+		error = sysctl_createv(&iwx_sysctllog, 0, &rnode, NULL,
+		    CTLFLAG_READWRITE, CTLTYPE_INT, "sae_tx",
+		    SYSCTL_DESCR("Native SAE pairwise TX from the next "
+		    "interface start: 0 software, 1 firmware, "
+		    "2 firmware with TX aggregation"),
+		    iwx_sysctl_sae_tx, 0, NULL, 0, CTL_CREATE, CTL_EOL);
+		if (error != 0)
+			printf("if_iwx: cannot create sysctl hw.iwx.sae_tx "
+			    "(error %d); the profile stays %d\n", error,
+			    iwx_sae_tx_mode);
+	}
 }
 
 static int
