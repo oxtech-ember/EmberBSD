@@ -16,6 +16,7 @@
 #define memmove __builtin_memmove
 #endif
 #include <sys/types.h>
+#include "opmode.h"
 
 #define SIOCSIFMEDIA 1
 #define SIOCGIFMEDIA 2
@@ -35,8 +36,6 @@
 #define IEEE80211_ROAMING_DEVICE 0
 #define IEEE80211_ROAMING_AUTO 1
 #define IEEE80211_ROAMING_MANUAL 2
-#define IEEE80211_M_STA 1
-#define IEEE80211_M_HOSTAP 2
 #define IEEE80211_S_INIT 0
 #define IEEE80211_S_SCAN 1
 #define IEEE80211_S_AUTH 2
@@ -105,6 +104,7 @@ struct bsd_driver_data {
 	char ifname[16];
 	int ifindex, if_removed;
 	unsigned flags;
+	enum ieee80211_opmode opmode;
 };
 struct scan_ssid {
 	const unsigned char *ssid;
@@ -308,7 +308,8 @@ check_scan_channels(struct bsd_driver_data *drv,
 int main(void)
 {
 	struct bsd_global global = {0};
-	struct bsd_driver_data drv = {&global, "test0", 1, 0, IFF_UP};
+	struct bsd_driver_data drv = {&global, "test0", 1, 0, IFF_UP,
+	    IEEE80211_M_STA};
 	static const unsigned char ssid[] = {0x61, 0, 0x62};
 	struct wpa_driver_scan_params scan = {1, {{ssid, sizeof(ssid)}}};
 	struct ieee80211_nwid nwid = {3, {0x61, 0, 0x62}};

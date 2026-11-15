@@ -35,8 +35,14 @@ def arm(source, name):
 bsd = (ROOT / 'external/bsd/wpa/dist/src/drivers/driver_bsd.c').read_text()
 stack = (ROOT / 'sys/net80211/ieee80211_ioctl.c').read_text()
 net = (ROOT / 'sys/dev/ic/rtw88_net.c').read_text()
+net80211 = (ROOT / 'sys/net80211/_ieee80211.h').read_text()
+opmode = re.search(r'^enum ieee80211_opmode\s*\{.*?^\};', net80211,
+                   re.M | re.S)
+if opmode is None:
+    raise RuntimeError('missing enum ieee80211_opmode')
 with tempfile.TemporaryDirectory(prefix='manual-scan-') as directory:
     work = Path(directory)
+    (work / 'opmode.h').write_text(opmode.group() + '\n')
     generated = ['static int ' + function(stack, name) for name in (
         'ieee80211_setupscan', 'ieee80211_startscan')]
     # Both selected dispatcher arms come verbatim from their owning functions.
@@ -51,7 +57,9 @@ with tempfile.TemporaryDirectory(prefix='manual-scan-') as directory:
                   setter[setter.rindex('\tif (error == ENETRESET && !IS_UP_AUTO(ic))'):]]
     generated += ['static int ' + function(net, 'rtw88_net_ioctl')]
     for name in ('bsd_set80211', 'set80211param', 'bsd_set_ssid', 'bsd_get_if_media',
-                 'bsd_set_if_media', 'bsd_set_mediaopt', 'wpa_driver_bsd_set_wpa_internal', 'wpa_driver_bsd_set_wpa', 'wpa_driver_bsd_scan'):
+                 'bsd_set_if_media', 'bsd_set_mediaopt', 'bsd_set_opmode',
+                 'wpa_driver_bsd_set_wpa_internal', 'wpa_driver_bsd_set_wpa',
+                 'wpa_driver_bsd_scan'):
         generated += ['static int ' + function(bsd, name)]
     (work / 'actual.inc').write_text('\n\n'.join(generated) + '\n')
     compiler = [os.environ['CC']]

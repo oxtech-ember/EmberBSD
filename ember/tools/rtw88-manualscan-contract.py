@@ -132,6 +132,7 @@ parts.append(notice(wpa)+'''static void manualscan_bsd_route(struct bsd_driver_d
 #define IEEE80211_IOC_STA_MGMT 1
 struct manualscan_ifan { unsigned char pad[8]; };
 unsigned char message[sizeof(struct manualscan_ifan)+sizeof(struct ieee80211_assoc_event)];
+memset(message, 0, sizeof(message));
 struct manualscan_ifan *ifan=(struct manualscan_ifan *)message;
 int n=(int)(sizeof(*ifan)+payload_len);
 (void)n;

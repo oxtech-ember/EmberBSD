@@ -25,6 +25,10 @@ test -s "$work/abi.h"
 awk '/^#define[[:space:]]+IEEE80211_F_(WPA|WPA1|WPA2|SCAN)[[:space:]]/ {print}' \
     "$src/sys/net80211/ieee80211_var.h" > "$work/flags.h"
 cp "$src/sys/net80211/ieee80211_rsn.h" "$src/sys/net80211/ieee80211_sta.h" "$work/"
+awk '/^enum ieee80211_opmode[[:space:]]*{/ {copy=1}
+    copy {print} copy && /^};/ {exit}' \
+    "$src/sys/net80211/_ieee80211.h" > "$work/bsd-opmode.h"
+test -s "$work/bsd-opmode.h"
 cp "$src/ember/tools/bwfm-sta-contract.c" "$work/check.c"
 ${CC:-cc} -std=c99 -Wall -Wextra -Werror -Wno-unused-parameter ${CFLAGS:-} \
     -I"$work" "$work/check.c" -o "$work/check"
@@ -62,7 +66,8 @@ ${CC:-cc} -std=c99 -Wall -Wextra -Werror ${CFLAGS:-} \
 
 # Use the upstream driver parameter types and the production association and
 # scan callbacks. The fixture replaces only the ioctl, timer and event edges.
-for fn in bsd_sta_associate wpa_driver_bsd_associate wpa_driver_bsd_scan; do
+for fn in bsd_set_mlme bsd_set_opmode bsd_sta_associate \
+    wpa_driver_bsd_associate wpa_driver_bsd_scan; do
     awk -v fn="$fn" '$0 ~ "^" fn "\\(" {copy=1}
         copy {print} copy && /^}/ {exit}' \
         "$src/external/bsd/wpa/dist/src/drivers/driver_bsd.c" > "$work/$fn.h"

@@ -13,6 +13,7 @@
 #define IEEE80211_NWID_LEN SSID_MAX_LEN
 #include "assoc-abi.h"
 #include "assoc-routes.h"
+#include "bsd-opmode.h"
 
 /* These flags reach fixture media/legacy-ioctl endpoints, not an OS device. */
 #define IFM_OMASK 0x0000ff00
@@ -27,7 +28,7 @@
 struct bsd_driver_data {
 	void *ctx, *sock_xmit;
 	char ifname[16];
-	int is_ap, flags, sta_btm, sta_rrm, sta_scan, sta_enabled;
+	int is_ap, flags, opmode, sta_btm, sta_rrm, sta_scan, sta_enabled;
 	int sta_scan_pending;
 	int sae_blocked, sae_key_epoch, sae_configured;
 	struct wpa_driver_capa capa;
@@ -200,6 +201,14 @@ set80211var(struct bsd_driver_data *drv, int op, const void *data, size_t len)
 }
 
 static int
+bsd_set80211(struct bsd_driver_data *drv, int op, int value,
+    const void *data, int len)
+{
+	(void)value;
+	return set80211var(drv, op, data, len);
+}
+
+static int
 bsd_sae_request(struct bsd_driver_data *drv, u16 op, const void *data,
     size_t len)
 {
@@ -278,6 +287,10 @@ wpa_supplicant_event(void *ctx, enum wpa_event_type event,
 		memcpy(received_resp, data->assoc_info.resp_ies, received_resp_len);
 }
 
+static int
+#include "bsd_set_mlme.h"
+static int
+#include "bsd_set_opmode.h"
 static void
 #include "bsd_sta_scan_clear.h"
 static int
