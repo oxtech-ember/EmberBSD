@@ -39,6 +39,8 @@
 #define IEEE80211_M_HOSTAP 2
 #define IEEE80211_S_INIT 0
 #define IEEE80211_S_SCAN 1
+#define IEEE80211_S_AUTH 2
+#define IEEE80211_S_ASSOC 3
 #define IEEE80211_S_RUN 4
 #define IEEE80211_CHAN_BYTES 32
 #define IEEE80211_NWID_LEN 32
@@ -115,7 +117,7 @@ struct wpa_driver_scan_params {
 static struct rtw88_net net;
 static struct ifnet interface;
 static unsigned checks, failures, cold_starts, state_requests, media_sets,
-    media_gets, nwid_calls, scan_calls;
+    media_gets, nwid_calls, scan_calls, leave_calls;
 static int configured_media, get_error, set_error, copy_error, state_error,
     saw_init;
 #define CHECK(expr)                                                            \
@@ -156,7 +158,7 @@ static int ieee80211_new_state(struct ieee80211com *ic, int state, int arg)
 /* Association cleanup is an external service in this ioctl transport model.
  * rtw88-manualscan-contract executes its actual leave/notification consumers. */
 static void ieee80211_sta_leave(struct ieee80211com *ic, void *ni)
-{ (void)ic; (void)ni; }
+{ (void)ic; (void)ni; leave_calls++; }
 static int ifioctl_common(struct ifnet *ifp, u_long cmd, void *data)
 {
 	(void)ifp;
@@ -237,7 +239,7 @@ static void reset(void)
 	configured_media = 0;
 	get_error = set_error = copy_error = state_error = saw_init = 0;
 	cold_starts = state_requests = media_sets = media_gets = nwid_calls =
-	    scan_calls = 0;
+	    scan_calls = leave_calls = 0;
 }
 /* Consume mode/channel-policy output without widening it during a scan. */
 static void
@@ -358,6 +360,29 @@ int main(void)
 		}
 	}
 	check_scan_channels(&drv, &scan);
+	/* The actual SCAN_REQ dispatcher must preserve AUTH/ASSOC on EBUSY. */
+	for (int state = IEEE80211_S_AUTH; state <= IEEE80211_S_ASSOC;
+	    state++) {
+		struct ieee80211req request = {
+		    .i_type = IEEE80211_IOC_SCAN_REQ};
+		static const unsigned char replacement[IEEE80211_CHAN_BYTES] = {
+		    0x12, 0x34};
+		static const unsigned char original[IEEE80211_CHAN_BYTES] = {
+		    0x56, 0x78};
+
+		reset();
+		net.ic.ic_opmode = IEEE80211_M_STA;
+		net.ic.ic_state = state;
+		memcpy(net.ic.ic_chan_active, original, sizeof(original));
+		CHECK(ieee80211_setupscan(&net.ic, replacement) == EBUSY);
+		CHECK(memcmp(net.ic.ic_chan_active, original,
+		    sizeof(original)) == 0);
+		CHECK(ieee80211_ioctl(&net.ic, SIOCS80211, &request) == EBUSY);
+		CHECK(net.ic.ic_state == state);
+		CHECK(memcmp(net.ic.ic_chan_active, original,
+		    sizeof(original)) == 0);
+		CHECK(state_requests == 0 && leave_calls == 0 && scan_calls == 1);
+	}
 	reset();
 	CHECK(wpa_driver_bsd_scan(&drv, &scan) == 0);
 	CHECK(media_gets == 1 && media_sets == 0);

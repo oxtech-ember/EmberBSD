@@ -37,7 +37,8 @@ stack = (ROOT / 'sys/net80211/ieee80211_ioctl.c').read_text()
 net = (ROOT / 'sys/dev/ic/rtw88_net.c').read_text()
 with tempfile.TemporaryDirectory(prefix='manual-scan-') as directory:
     work = Path(directory)
-    generated = ['static int ' + function(stack, 'ieee80211_setupscan')]
+    generated = ['static int ' + function(stack, name) for name in (
+        'ieee80211_setupscan', 'ieee80211_startscan')]
     # Both selected dispatcher arms come verbatim from their owning functions.
     native = stack[stack.index('#ifdef __NetBSD__\n\nint\nieee80211_ioctl('):]
     generated += ['static int kernel_nwid(struct ieee80211com *ic, void *data) {\n'
