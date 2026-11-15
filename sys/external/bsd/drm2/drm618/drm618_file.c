@@ -698,12 +698,35 @@ iput(struct inode *inode)
 }
 
 /*
- * Before the module goes: the key of the ioctl window, the locks.  EBUSY while
- * the character device is registered or a descriptor is reserved.
+ * EBUSY while a descriptor is reserved (get_unused_fd_flags without
+ * fd_install or put_unused_fd): asked before anything of the module is
+ * taken down.  The character device of the core is not asked here: the
+ * core unregisters it when it exits, drm618_file_fini asks afterwards.
+ */
+int
+drm618_file_busy(void)
+{
+
+	if (pending_once.o_status) {
+		mutex_enter(&pending_lock);
+		if (!LIST_EMPTY(&pending_list)) {
+			mutex_exit(&pending_lock);
+			return EBUSY;
+		}
+		mutex_exit(&pending_lock);
+	}
+	return 0;
+}
+
+/*
+ * Before the module goes: the key of the ioctl window, the locks.  EBUSY
+ * while the character device is still registered or a descriptor is
+ * reserved.
  */
 int
 drm618_file_fini(void)
 {
+	int error;
 
 	if (stub_once.o_status) {
 		mutex_enter(&stub_lock);
@@ -713,14 +736,9 @@ drm618_file_fini(void)
 		}
 		mutex_exit(&stub_lock);
 	}
-	if (pending_once.o_status) {
-		mutex_enter(&pending_lock);
-		if (!LIST_EMPTY(&pending_list)) {
-			mutex_exit(&pending_lock);
-			return EBUSY;
-		}
-		mutex_exit(&pending_lock);
-	}
+	error = drm618_file_busy();
+	if (error)
+		return error;
 	if (kw_once.o_status)
 		lwp_specific_key_delete(kw_key);
 	if (stub_once.o_status)

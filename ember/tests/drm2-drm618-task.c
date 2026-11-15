@@ -204,8 +204,23 @@ drm2_drm618_task_run(void)
 	}
 	CHECK(sync_file_get_fence(fd + 1000) == NULL);
 	CHECK(fd_getfile(fd) != NULL);
+	CHECK(drm618_sync_file_busy() == EBUSY);	/* a live sync file keeps the module */
 	CHECK(fd_close(fd) == 0);	/* release drops the sync file's fence reference */
 	CHECK(kref_read(&fence.refcount) == 1);
+	CHECK(drm618_sync_file_busy() == 0);
+
+	/* a reserved descriptor keeps the module as well */
+	{
+		int fd3 = get_unused_fd_flags(0);
+		struct file *g3 = anon_inode_getfile("x", &t_other_fops, NULL, O_RDWR);
+
+		CHECK(fd3 >= 0);
+		CHECK(drm618_file_busy() == EBUSY);
+		fd_install(fd3, g3);
+		CHECK(drm618_file_busy() == 0);
+		CHECK(fd_getfile(fd3) != NULL);
+		CHECK(fd_close(fd3) == 0);
+	}
 
 	/* a file that is not a sync file */
 	{

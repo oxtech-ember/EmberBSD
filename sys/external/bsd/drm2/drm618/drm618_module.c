@@ -61,6 +61,12 @@ fail0:		drm618_static_fini();
 		error = drm618_dma_buf_busy();
 		if (error)
 			return error;
+		error = drm618_sync_file_busy();
+		if (error)
+			return error;
+		error = drm618_file_busy();
+		if (error)
+			return error;
 		drm618_modexit_drm_core_exit();
 		drm618_modexit_drm_display_helper_module_exit();
 		drm618_modexit_gpu_buddy_module_exit();

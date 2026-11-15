@@ -21,6 +21,16 @@
 #include <linux/sync_file.h>
 #include <linux/wait.h>
 
+/* Sync files whose file_operations are in the text of this module.  */
+static volatile unsigned sync_file_live;
+
+int
+drm618_sync_file_busy(void)
+{
+
+	return sync_file_live != 0 ? EBUSY : 0;
+}
+
 static void
 sync_file_cb(struct dma_fence *fence __unused, struct dma_fence_cb *cb)
 {
@@ -57,6 +67,7 @@ sync_file_release(struct inode *inode __unused, struct file *filp)
 	dma_fence_put(sf->fence);
 	destroy_waitqueue_head(&sf->wq);
 	kmem_free(sf, sizeof(*sf));
+	atomic_dec_uint(&sync_file_live);
 	return 0;
 }
 
@@ -71,6 +82,7 @@ sync_file_create(struct dma_fence *fence)
 	struct sync_file *sf;
 
 	sf = kmem_zalloc(sizeof(*sf), KM_SLEEP);
+	atomic_inc_uint(&sync_file_live);
 	init_waitqueue_head(&sf->wq);
 	sf->fence = dma_fence_get(fence);
 	sf->file = anon_inode_getfile("sync_file", &sync_file_fops, sf, O_RDWR);
