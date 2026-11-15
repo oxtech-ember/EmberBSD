@@ -20,9 +20,27 @@ The selected symbol inventory is shared across dynamic targets; current build
 and symbol validation has been performed on AArch64. Static platforms retain
 their native selection and are not covered by that dynamic-library result.
 
+When `EMBER_OPENSSH_SOURCE` changes to a different prepared directory in an
+existing object tree, generated `.depend` and compiler `.d` files may still
+name the old absolute source path. This change is not automatically
+invalidated. Run the selected NetBSD make wrapper's `cleandir` target from
+`crypto/external/bsd/openssh`, then rebuild the selected OpenSSH components.
+This cleans the OpenSSH object subtrees; it does not clean the whole userland
+or installed `DESTDIR`.
+
 OpenSSH 10.6p1 still uses OpenSSL's legacy `EC_KEY`/ECDH APIs in both
 `kexecdh.c` and `kexmlkem768ecdh.c`. The native build keeps deprecation
 warnings visible for these paths without turning them into build failures.
+
+`EMBER_OPENSSH_CRYPTO=openssl|builtin` selects the prepared source's crypto
+backend; when unset, the historical default remains OpenSSL except on m68000.
+The explicit `builtin` selection is currently supported only with `MKPIC=no`:
+the prepared-source export inventory is OpenSSL-specific, so dynamic/PIC
+built-in builds are rejected until a separate built-in ABI inventory is
+maintained. The small static diagnostic profile uses this supported boundary.
+Run `tests/sha2-adapter.py` with the selected native Ports Clang and Cppcheck
+to check the actual adapter against the libc SHA2 implementation using
+known-answer vectors, static analysis, and ASan/UBSan.
 
 With LDAP enabled, the listener parses the same LPK configuration as the
 privileged authentication process; LDAP key lookup remains in the monitor.

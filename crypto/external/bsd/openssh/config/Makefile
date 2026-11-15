@@ -1,6 +1,7 @@
 # Configure the prepared common OpenSSH source for the selected target.
 .include <bsd.own.mk>
 .include "${NETBSDSRCDIR}/crypto/external/bsd/openssh/source.mk"
+.include "${NETBSDSRCDIR}/crypto/external/bsd/openssh/crypto.mk"
 OPENSSH_CONFIG_ROLE?= os
 OPENSSH_OS_CONFIG_OBJECT?= ${.OBJDIR}/generated
 OPENSSH_PRIVATE_LIBSSH_CONFIG_OBJECT?= ${.OBJDIR}/private-libssh
@@ -31,7 +32,7 @@ GNU_CONFIGURE_ARGS= --prefix=/usr --sysconfdir=/etc/ssh --without-rpath \
 .if defined(EMBER_OPENSSH_SOURCE) && !empty(EMBER_OPENSSH_SOURCE)
 GNU_CONFIGURE_ARGS+= --with-sandbox=rlimit
 .endif
-.if ${MACHINE_ARCH} == "m68000"
+.if ${OPENSSH_CRYPTO_MODE} == "builtin"
 GNU_CONFIGURE_ARGS+= --without-openssl
 .else
 GNU_CONFIGURE_ARGS+= --with-ssl-dir=${DESTDIR}/usr
@@ -51,6 +52,7 @@ all depend dependall: .PHONY
 	    --source ${EMBER_OPENSSH_SOURCE:Q} --os-source ${NETBSDSRCDIR:Q} \
 	    --object ${OPENSSH_CONFIG_OBJECT:Q} --autoconf ${HOST_AUTOCONF:Q} \
 	    --role ${OPENSSH_CONFIG_ROLE:Q} \
+	    --crypto-mode ${OPENSSH_CRYPTO_MODE:Q} \
 	    --make ${MAKE:Q} --makefile-dir ${NETBSDSRCDIR:Q}/crypto/external/bsd/openssh/config
 .PHONY: openssh-target-config
 openssh-target-config: ${GNU_OBJDIR}/Makefile

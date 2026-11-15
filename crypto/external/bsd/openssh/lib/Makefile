@@ -111,11 +111,12 @@ SHLIB_MINOR=	0
 LIB_EXPSYM=	${.CURDIR}/ssh-selected.expsym
 SRCS+=	bsd-getpeereid.c bsd-malloc.c bsd-misc.c bsd-setres_id.c \
 	glob.c \
-	cipher-chachapoly-libcrypto.c ed25519-openssl.c entropy.c \
+	entropy.c \
 	explicit_bzero.c mktemp.c \
 	openssl-compat.c platform-misc.c platform-pledge.c platform-tracing.c \
 	port-net.c timingsafe_bcmp.c vis.c
 .ifdef WITH_OPENSSL
+SRCS+=	cipher-chachapoly-libcrypto.c ed25519-openssl.c
 OPENSSL_SRCS+=	cipher-aes.c
 .endif
 .endif

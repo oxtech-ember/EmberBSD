@@ -11,6 +11,22 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--work-dir', type=Path, required=True)
 args = parser.parse_args()
 helper = Path(__file__).resolve().parents[1] / 'tools/configure-source.py'
+openssh_root = helper.parents[1]
+makefile_inc = (openssh_root / 'Makefile.inc').read_text()
+crypto_makefile = (openssh_root / 'crypto.mk').read_text()
+config_makefile = (openssh_root / 'config/Makefile').read_text()
+config_mk = (openssh_root / 'config.mk').read_text()
+lib_makefile = (openssh_root / 'lib/Makefile').read_text()
+sshd_rc = (openssh_root.parents[3] / 'etc/rc.d/sshd').read_text()
+rc_defaults = (openssh_root.parents[3] / 'etc/defaults/rc.conf').read_text()
+assert 'crypto.mk' in makefile_inc and 'm68000' in crypto_makefile
+assert ('OPENSSH_CRYPTO_MODE' in config_makefile and '--without-openssl' in config_makefile and
+        '--crypto-mode ${OPENSSH_CRYPTO_MODE:Q}' in config_makefile)
+assert '--crypto-mode ${OPENSSH_CRYPTO_MODE:Q}' in config_mk
+assert 'cipher-chachapoly-libcrypto.c ed25519-openssl.c' in lib_makefile
+assert lib_makefile.index('cipher-chachapoly-libcrypto.c') > lib_makefile.index('.ifdef WITH_OPENSSL')
+assert 'sshd_key_types' in sshd_rc and 'ed25519' in sshd_rc
+assert 'sshd_key_types="ecdsa ed25519 rsa"' in rc_defaults
 with tempfile.TemporaryDirectory(dir=args.work_dir) as tmp:
     root = Path(tmp)
     source = root / 'source'
@@ -51,8 +67,11 @@ pathlib.Path(sys.argv[-1]).write_text('generated configure\\n')
 import os, pathlib, sys, time
 obj = pathlib.Path(next(a.split('=',1)[1] for a in sys.argv if a.startswith('OPENSSH_CONFIG_OBJECT=')))
 role = next(a.split('=',1)[1] for a in sys.argv if a.startswith('OPENSSH_CONFIG_ROLE='))
+crypto_mode = next(a.split('=',1)[1] for a in sys.argv if a.startswith('EMBER_OPENSSH_CRYPTO='))
 assert role in ('os', 'private-libssh')
+assert crypto_mode in ('openssl', 'builtin')
 with pathlib.Path(os.environ['TEST_ROLE_LOG']).open('a') as f: f.write(role + '\\n')
+with pathlib.Path(os.environ['TEST_CRYPTO_LOG']).open('a') as f: f.write(crypto_mode + '\\n')
 build = obj / 'build'
 build.mkdir(exist_ok=True)
 flags = os.environ.get('MAKEFLAGS', '')
@@ -74,15 +93,19 @@ finally:
     make.chmod(0o755)
     command = [sys.executable, '-B', str(helper), '--source', str(source),
                '--os-source', str(os_source), '--object', str(obj),
-               '--autoconf', str(autoconf), '--make', str(make), '--makefile-dir', str(root)]
+               '--autoconf', str(autoconf), '--make', str(make), '--makefile-dir', str(root),
+               '--crypto-mode', 'builtin']
     role_log = root / 'roles'
-    env = dict(os.environ, TEST_LOG=str(log), TEST_ROLE_LOG=str(role_log), MAKEFLAGS='-j 10 -J 15,16 TEST_OVERRIDE=yes',
+    crypto_log = root / 'crypto-modes'
+    env = dict(os.environ, TEST_LOG=str(log), TEST_ROLE_LOG=str(role_log),
+               TEST_CRYPTO_LOG=str(crypto_log), MAKEFLAGS='-j 10 -J 15,16 TEST_OVERRIDE=yes',
                AUTOM4TE='/external/autom4te', M4='/external/m4', PERL5LIB='/external/lib')
     first = subprocess.Popen(command, env=env)
     second = subprocess.Popen(command, env=env)
     assert first.wait() == 0 and second.wait() == 0
     assert log.read_text().splitlines() == ['autoconf', 'make-cold', 'make-warm']
     assert role_log.read_text().splitlines() == ['os', 'os']
+    assert crypto_log.read_text().splitlines() == ['builtin', 'builtin']
     os_role_inputs = (obj / '.configure-source-inputs').read_text()
     private_role = command + ['--role', 'private-libssh']
     subprocess.run(private_role, env=env, check=True)
@@ -92,6 +115,16 @@ finally:
     subprocess.run(command, env=env, check=True)
     assert (obj / '.configure-source-inputs').read_text() == os_role_inputs
     assert role_log.read_text().splitlines()[-1] == 'os'
+    builtin_inputs = (obj / '.configure-source-inputs').read_text()
+    openssl_mode = command.copy()
+    openssl_mode[openssl_mode.index('--crypto-mode') + 1] = 'openssl'
+    subprocess.run(openssl_mode, env=env, check=True)
+    openssl_inputs = (obj / '.configure-source-inputs').read_text()
+    assert openssl_inputs != builtin_inputs
+    assert crypto_log.read_text().splitlines()[-1] == 'openssl'
+    invalid_mode = command.copy()
+    invalid_mode[invalid_mode.index('--crypto-mode') + 1] = 'automatic'
+    assert subprocess.run(invalid_mode, env=env, capture_output=True).returncode != 0
     assert not (obj / 'source-view' / 'configure.new').is_symlink()
     assert not (obj / 'source-view' / 'autom4te.cache').is_symlink()
     (source / 'new-source.c').write_text('new\n')

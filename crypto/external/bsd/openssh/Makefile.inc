@@ -6,9 +6,15 @@ WARNS?=	4
 
 USE_FORT?= yes	# network client/server
 
-# Avoid increasing the binary size by not linking with libcrypto
-# on static platforms.
-.if ${MACHINE_ARCH} != "m68000"
+# Preserve the platform default while allowing a profile to select the
+# upstream built-in implementation on other static targets.
+.include "${NETBSDSRCDIR}/crypto/external/bsd/openssh/crypto.mk"
+.if ${OPENSSH_CRYPTO_MODE} == "builtin" && \
+    defined(EMBER_OPENSSH_SOURCE) && !empty(EMBER_OPENSSH_SOURCE)
+# Prepared OpenSSH's SHA2_CTX differs from libc's contexts; use typed wrappers.
+DPSRCS+= ${NETBSDSRCDIR}/crypto/external/bsd/openssh/include/emberbsd-openssh-sha2.h
+CPPFLAGS+= -include ${NETBSDSRCDIR}/crypto/external/bsd/openssh/include/emberbsd-openssh-sha2.h
+.elif ${OPENSSH_CRYPTO_MODE} == "openssl"
 WITH_OPENSSL=1
 .endif
 

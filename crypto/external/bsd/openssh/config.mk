@@ -1,6 +1,7 @@
 .if !defined(_EMBER_OPENSSH_CONFIG_MK_)
 _EMBER_OPENSSH_CONFIG_MK_= 1
 # Shared target-generated OpenSSH config for native OS consumers.
+.include "${NETBSDSRCDIR}/crypto/external/bsd/openssh/crypto.mk"
 .if defined(EMBER_OPENSSH_SOURCE) && !empty(EMBER_OPENSSH_SOURCE)
 .if empty(.MAKEFLAGS:M-V*) && \
     !(!empty(.TARGETS) && empty(.TARGETS:Nobj:Nclean:Ncleandir:Nincludes:Ninstall)) && \
@@ -38,6 +39,7 @@ ${OPENSSH_CONFIG_HEADER}: openssh-config-check
 	    --source ${EMBER_OPENSSH_SOURCE:Q} --os-source ${NETBSDSRCDIR:Q} \
 	    --object ${OPENSSH_CONFIG_OBJECT:Q} --autoconf ${HOST_AUTOCONF:Q} \
 	    --role ${OPENSSH_CONFIG_ROLE:Q} \
+	    --crypto-mode ${OPENSSH_CRYPTO_MODE:Q} \
 	    ${_OPENSSH_KRB5_CONFIG_LIBS} \
 	    --make ${MAKE:Q} --makefile-dir ${NETBSDSRCDIR:Q}/crypto/external/bsd/openssh/config
 .endif

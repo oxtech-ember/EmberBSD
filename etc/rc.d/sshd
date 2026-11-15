@@ -51,6 +51,10 @@ sshd_keygen()
 		if [ "$1" != "force" ] && [ -f "$f" ]; then
 			continue
 		fi
+		case " ${sshd_key_types} " in
+		*" ${type} "*) ;;
+		*) continue ;;
+		esac
 		rm -f "$f"
 		case "${bits}" in
 		-1)	bitarg=;;

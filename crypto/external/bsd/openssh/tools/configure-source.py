@@ -17,6 +17,7 @@ def main():
     parser.add_argument('--source', type=Path)
     parser.add_argument('--target-lib', type=Path, action='append', default=[])
     parser.add_argument('--role', choices=('os', 'private-libssh'), default='os')
+    parser.add_argument('--crypto-mode', choices=('openssl', 'builtin'), default='openssl')
     parser.add_argument('--object', type=Path, required=True)
     parser.add_argument('--objdir', type=Path)
     parser.add_argument('--clean-helper', type=Path)
@@ -122,6 +123,9 @@ def main():
         role = os.fsencode('OPENSSH_CONFIG_ROLE=' + args.role)
         configured.update(len(role).to_bytes(8, 'big'))
         configured.update(role)
+        crypto_mode = os.fsencode('EMBER_OPENSSH_CRYPTO=' + args.crypto_mode)
+        configured.update(len(crypto_mode).to_bytes(8, 'big'))
+        configured.update(crypto_mode)
         for name in config_inputs:
             for value in (os.fsencode(name), (source / name).read_bytes()):
                 configured.update(len(value).to_bytes(8, 'big'))
@@ -159,7 +163,9 @@ def main():
         env['MAKEFLAGS'] = flags
         subprocess.run([str(make), '-j1', '-C', str(args.makefile_dir),
                         'OPENSSH_CONFIG_OBJECT=' + str(obj),
-                        'OPENSSH_CONFIG_ROLE=' + args.role, 'openssh-target-config'],
+                        'OPENSSH_CONFIG_ROLE=' + args.role,
+                        'EMBER_OPENSSH_CRYPTO=' + args.crypto_mode,
+                        'openssh-target-config'],
                        env=env, check=True)
 
 
