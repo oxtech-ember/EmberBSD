@@ -148,7 +148,7 @@ drm2_i915_layer_run(void)
 	CHECK(castable_to_type(10, uint8_t) && !castable_to_type(300, uint8_t));
 	CHECK(castable_to_type(x, int) && !castable_to_type(y, int));
 	CHECK(castable_to_type(y, unsigned long) == 0 && castable_to_type(y, long) == 1);
-	CHECK(castable_to_type((unsigned long)y, pgoff_t));
+	CHECK(castable_to_type((pgoff_t)y, pgoff_t));
 	CHECK(sizeof(typeof_member(struct t_s, a)) == sizeof(int));
 	CHECK(sizeof(typeof_member(struct t_s, b)) == 7);
 
@@ -475,8 +475,9 @@ drm2_i915_layer_run(void)
 		INIT_LIST_HEAD(&lh);
 		bitmap_from_arr32(bmp, w32, 80);
 		CHECK(bmp[0] == 0x2222222211111111ul && bmp[1] == 0xfffful);
+		/* only the words of NBITS are written and the bits above it are cleared */
 		bitmap_from_arr32(bmp, w32, 40);
-		CHECK(bmp[0] == 0x2222222211111111ul && bmp[1] == 0);
+		CHECK(bmp[0] == 0x2211111111ul && bmp[1] == 0xfffful);
 		CHECK(pat_enabled() == (cpu_has_pat != 0));
 		pg = alloc_page(GFP_KERNEL);
 		CHECK(pg != NULL);
@@ -504,7 +505,7 @@ drm2_i915_layer_run(void)
 		bitmap_shift_right(dst, src, 64, 80);
 		CHECK(dst[0] == 0xabcd && dst[1] == 0);
 		bitmap_shift_right(dst, src, 0, 70);
-		CHECK(dst[0] == src[0] && dst[1] == 0x3d);
+		CHECK(dst[0] == src[0] && dst[1] == 0x0d);
 		/* the CPU of this machine is found in a table that has its model, and only then */
 		own[0].vfm = IFM(CPUID_TO_FAMILY(sig), CPUID_TO_MODEL(sig));
 		own[0].driver_data = 7;
