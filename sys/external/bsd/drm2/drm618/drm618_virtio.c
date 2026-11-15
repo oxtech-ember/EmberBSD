@@ -36,6 +36,7 @@
 #include <sys/mutex.h>
 #include <sys/queue.h>
 #include <sys/systm.h>
+#include <sys/atomic.h>
 
 #include <dev/pci/virtiovar.h>
 #include <dev/pci/virtioreg.h>
@@ -50,6 +51,20 @@
 #define	DRM618_VIRTIO_MAXSEG	128
 #define	DRM618_VIRTIO_MAXREQ	(1024 * 1024)
 
+/*
+ * Fault injection, set by sysctl hw.virtiogpudrm.drop_notify: commands are
+ * published to the ring but the device is not told, so it never answers
+ * (until the flag is cleared and the next command notifies).
+ */
+int drm618_virtio_drop_notify;
+
+/* Counters (sysctl hw.virtiogpudrm.*, read only): what was made and what was given back. */
+u_int drm618_virtio_n_reqs, drm618_virtio_n_reqs_freed;
+u_int drm618_virtio_n_maps, drm618_virtio_n_maps_freed;
+
+/* A command that waits this long for its answer is named in the log. */
+#define	DRM618_VIRTIO_WATCH_SECS	5
+
 /* The log says what failed, rate limited by the caller's own rarity. */
 #define	VQLOG(sc, ...)	do {						\
 	aprint_error_dev((sc)->sc_dev, __VA_ARGS__);			\
@@ -63,6 +78,7 @@ struct drm618_vmap {
 
 struct drm618_vreq {
 	void		*cookie;
+	time_t		when;		/* queued at (time_uptime) */
 	unsigned int	capacity;	/* maps allocated */
 	unsigned int	nmaps;		/* maps made */
 	unsigned int	descriptors;
@@ -77,6 +93,8 @@ struct drm618_vq {
 	struct drm618_vreq	**requests;	/* by slot */
 	unsigned int		size;
 	bool			callbacks;
+	time_t			last_watch;	/* the last look for a command that waits */
+	bool			dropped_said;
 };
 
 enum drm618_vstate { VS_INIT, VS_QUEUES, VS_READY, VS_STOPPED };
@@ -320,7 +338,9 @@ vreq_free(struct drm618_vdev *sc, struct drm618_vreq *req)
 			bus_dmamap_unload(sc->sc_dmat, m->map);
 		}
 		bus_dmamap_destroy(sc->sc_dmat, m->map);
+		atomic_inc_uint(&drm618_virtio_n_maps_freed);
 	}
+	atomic_inc_uint(&drm618_virtio_n_reqs_freed);
 	kmem_intr_free(req, vreq_size(req->capacity));
 }
 
@@ -360,6 +380,7 @@ vreq_piece(void *arg, paddr_t pa, size_t len)
 		return w->error;
 	}
 	w->req->nmaps++;
+	atomic_inc_uint(&drm618_virtio_n_maps);
 	seg.ds_addr = pa;
 	seg.ds_len = len;
 	error = bus_dmamap_load_raw(sc->sc_dmat, m->map, &seg, 1, len,
@@ -506,6 +527,28 @@ virtio_device_ready(struct virtio_device *vd)
 	mutex_exit(&sc->sc_lock);
 }
 
+/* The oldest command of the queue has waited for the device too long: say so (once a second at most). */
+static void
+vq_watch(struct drm618_vq *vq)
+{
+	struct drm618_vdev *sc = vq->sc;
+	time_t oldest = 0;
+	unsigned int slot;
+
+	if (time_uptime - vq->last_watch < 1)
+		return;
+	vq->last_watch = time_uptime;
+	for (slot = 0; slot < vq->size; slot++) {
+		struct drm618_vreq *req = vq->requests[slot];
+
+		if (req != NULL && (oldest == 0 || req->when < oldest))
+			oldest = req->when;
+	}
+	if (oldest != 0 && time_uptime - oldest >= DRM618_VIRTIO_WATCH_SECS)
+		VQLOG(sc, "%s: a command has waited %ld s for the device and"
+		    " has no answer\n", vq->pub.name, (long)(time_uptime - oldest));
+}
+
 int
 virtqueue_add_sgs(struct linux_virtqueue *lvq, struct scatterlist *sgs[],
     unsigned int out, unsigned int in, void *cookie, gfp_t gfp __unused)
@@ -547,6 +590,7 @@ virtqueue_add_sgs(struct linux_virtqueue *lvq, struct scatterlist *sgs[],
 	}
 	req->capacity = w.pieces;
 	req->cookie = cookie;
+	atomic_inc_uint(&drm618_virtio_n_reqs);
 	{
 		struct vreq_walk w2;
 
@@ -590,7 +634,16 @@ virtqueue_add_sgs(struct linux_virtqueue *lvq, struct scatterlist *sgs[],
 	 * Publish now: the driver may wait for room before it kicks.  The
 	 * notification follows the event suppression of the native ring.
 	 */
-	virtio_enqueue_commit(sc->sc_vsc, vq->nvq, slot, true);
+	req->when = time_uptime;
+	virtio_enqueue_commit(sc->sc_vsc, vq->nvq, slot,
+	    drm618_virtio_drop_notify == 0);
+	if (drm618_virtio_drop_notify != 0 && !vq->dropped_said) {
+		vq->dropped_said = true;
+		VQLOG(sc, "%s: the device is not told of new commands"
+		    " (fault injection, sysctl hw.virtiogpudrm.drop_notify)\n",
+		    vq->pub.name);
+	}
+	vq_watch(vq);
 	mutex_exit(&sc->sc_lock);
 	return 0;
 
@@ -688,8 +741,10 @@ virtqueue_notify(struct linux_virtqueue *lvq)
 
 	mutex_enter(&sc->sc_lock);
 	ready = sc->sc_state == VS_READY;
-	if (ready)
+	if (ready && drm618_virtio_drop_notify == 0)
 		virtio_enqueue_commit(sc->sc_vsc, vq->nvq, -1, true);
+	if (ready)
+		vq_watch(vq);
 	mutex_exit(&sc->sc_lock);
 	return ready;
 }
