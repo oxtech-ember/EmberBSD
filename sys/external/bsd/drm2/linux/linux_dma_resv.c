@@ -561,7 +561,7 @@ dma_resv_get_shared_reader(const struct dma_resv *robj,
 	 * pairs with the membar_producer in dma_resv_write_begin.
 	 */
 	list = atomic_load_consume(&robj->fence);
-	shared_count = list ? atomic_load_relaxed(&list->shared_count) : 0;
+	shared_count = list ? atomic_load_acquire(&list->shared_count) : 0;
 
 	/*
 	 * We are done reading from robj and list.  Validate our
@@ -678,7 +678,7 @@ dma_resv_add_excl_fence(struct dma_resv *robj,
 	/* Replace the fence and zero the shared count.  */
 	atomic_store_relaxed(&robj->fence_excl, fence);
 	if (old_list)
-		atomic_store_relaxed(&old_list->shared_count, 0);
+		atomic_store_release(&old_list->shared_count, 0);
 
 	/* Commit the update.  */
 	dma_resv_write_commit(robj, &ticket);
@@ -975,6 +975,21 @@ resv_nth_locked(const struct dma_resv *robj, unsigned n,
 }
 
 /*
+ * Memory order of the lists (the same on every architecture; aarch64 is the
+ * one that needs it).  A slot is written first and the count after it with
+ * release; readers without the lock load the count with acquire before they
+ * read any slot, so a reader that sees a count also sees the slots below it.
+ * A slot above the count keeps a stale pointer to a fence that may already
+ * be freed (after a removal or a clear): no reader reads it, because the
+ * count it loaded with acquire does not cover it, and a reader that started
+ * its RCU section before the removal can only meet that fence while it is
+ * still protected by that section.  A reader that overlaps a writer finds
+ * the sequence count changed at the end of its walk (or when it takes a
+ * reference through dma_fence_get_rcu, which fails for a fence on its way
+ * out) and starts over.
+ */
+
+/*
  * resv_remove_nth_ws(robj, n)
  *
  *	Remove the n-th fence and return it with its reference (the
@@ -1005,7 +1020,7 @@ resv_remove_nth_ws(struct dma_resv *robj, unsigned n)
 	if (n < sc) {
 		fence = sl->shared[n];
 		atomic_store_relaxed(&sl->shared[n], sl->shared[sc - 1]);
-		atomic_store_relaxed(&sl->shared_count, sc - 1);
+		atomic_store_release(&sl->shared_count, sc - 1);
 		return fence;
 	}
 	n -= sc;
@@ -1015,7 +1030,7 @@ resv_remove_nth_ws(struct dma_resv *robj, unsigned n)
 		atomic_store_relaxed(&xl->ent[i - 1].fence, xl->ent[i].fence);
 		atomic_store_relaxed(&xl->ent[i - 1].usage, xl->ent[i].usage);
 	}
-	atomic_store_relaxed(&xl->count, xl->count - 1);
+	atomic_store_release(&xl->count, xl->count - 1);
 	return fence;
 }
 
@@ -1179,7 +1194,7 @@ dma_resv_add_fence(struct dma_resv *robj, struct dma_fence *fence,
 			KASSERT(list->shared_count < list->shared_max);
 			atomic_store_relaxed(&list->shared[list->shared_count],
 			    fence);
-			atomic_store_relaxed(&list->shared_count,
+			atomic_store_release(&list->shared_count,
 			    list->shared_count + 1);
 		} else {
 			sc = list != NULL ? list->shared_count : 0;
@@ -1188,7 +1203,7 @@ dma_resv_add_fence(struct dma_resv *robj, struct dma_fence *fence,
 				prealloc->shared[i] = list->shared[i];
 			prealloc->shared[sc] = fence;
 			prealloc->shared_count = sc + 1;
-			atomic_store_relaxed(&robj->fence, prealloc);
+			atomic_store_release(&robj->fence, prealloc);
 			robj->robj_prealloc = NULL;
 			old_list = list;
 		}
@@ -1199,7 +1214,7 @@ dma_resv_add_fence(struct dma_resv *robj, struct dma_fence *fence,
 			KASSERT(xl != NULL && xl->count < xl->max);
 			xl->ent[xl->count].fence = robj->fence_excl;
 			xl->ent[xl->count].usage = DMA_RESV_USAGE_WRITE;
-			atomic_store_relaxed(&xl->count, xl->count + 1);
+			atomic_store_release(&xl->count, xl->count + 1);
 		}
 		atomic_store_relaxed(&robj->fence_excl, fence);
 		break;
@@ -1208,7 +1223,7 @@ dma_resv_add_fence(struct dma_resv *robj, struct dma_fence *fence,
 		KASSERT(xl != NULL && xl->count < xl->max);
 		xl->ent[xl->count].fence = fence;
 		xl->ent[xl->count].usage = usage;
-		atomic_store_relaxed(&xl->count, xl->count + 1);
+		atomic_store_release(&xl->count, xl->count + 1);
 		break;
 	}
 	dma_resv_write_commit(robj, &ticket);
@@ -1329,8 +1344,8 @@ dma_resv_iter_restart_unlocked(struct dma_resv_iter *cursor)
 	xl = atomic_load_consume(&robj->xfence);
 	cursor->rs_slist = sl;
 	cursor->rs_xlist = xl;
-	cursor->rs_nshared = sl != NULL ? atomic_load_relaxed(&sl->shared_count) : 0;
-	cursor->rs_nx = xl != NULL ? atomic_load_relaxed(&xl->count) : 0;
+	cursor->rs_nshared = sl != NULL ? atomic_load_acquire(&sl->shared_count) : 0;
+	cursor->rs_nx = xl != NULL ? atomic_load_acquire(&xl->count) : 0;
 	cursor->index = 0;
 	cursor->num_fences = (cursor->rs_excl != NULL ? 1 : 0) +
 	    cursor->rs_nshared + cursor->rs_nx;

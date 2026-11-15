@@ -1754,6 +1754,211 @@ test_resv_excl_stress(void)
 	CHECK(tf_live == 0);
 }
 
+/*
+ * Stress with poison: the fences of this test overwrite their context and
+ * sequence number when they are released, so a reader that was handed a
+ * fence it did not hold a reference to (a stale slot, a freed fence) sees
+ * the poison.  One writer adds, replaces, removes and clears fences of
+ * every usage through the 5.6 and the 6.x calls and signals them; readers
+ * walk the object without the lock through the iterators, the snapshots
+ * and the 5.6 snapshot.  Every fence a reader gets must be sound and every
+ * reference must come back (tf_live == 0).  On x86 this cannot show a
+ * missing barrier (the stores are not reordered); it checks the scheme:
+ * counts, slots, swap-last removal and the release of the fences.
+ */
+#define	TP_POISON	0xdeadbeefdeadbeefULL
+
+static void
+tp_release(struct dma_fence *f)
+{
+
+	f->context = TP_POISON;
+	f->seqno = TP_POISON;
+	atomic_dec_uint(&tf_live);
+	dma_fence_free(f);
+}
+
+static const struct dma_fence_ops tp_ops = {
+	.get_driver_name = tf_name,
+	.get_timeline_name = tf_name,
+	.release = tp_release,
+};
+
+static struct dma_resv tp_r;
+static volatile unsigned tp_stop, tp_done, tp_bad, tp_added;
+static volatile unsigned tp_iters[4];
+static uint64_t tp_ctx[4];
+
+static struct dma_fence *
+tp_new(uint64_t ctx, uint64_t seqno)
+{
+	struct dma_fence *f = kzalloc(sizeof(*f), GFP_KERNEL);
+
+	if (f == NULL)
+		return NULL;
+	dma_fence_init(f, &tp_ops, &tf_lock, ctx, seqno);
+	atomic_inc_uint(&tf_live);
+	return f;
+}
+
+/* A fence a reader holds a reference to must be sound.  */
+static void
+tp_check(struct dma_fence *f)
+{
+	unsigned i;
+
+	if (f == NULL)
+		return;
+	for (i = 0; i < 4; i++)
+		if (f->context == tp_ctx[i] && f->seqno != TP_POISON &&
+		    kref_read(&f->refcount) >= 1)
+			return;
+	atomic_inc_uint(&tp_bad);
+}
+
+static void
+tp_writer(void *arg __unused)
+{
+	struct dma_fence *f;
+	unsigned i = 0;
+
+	while (!tp_stop) {
+		f = tp_new(tp_ctx[i % 4], i / 4 + 1);
+		dma_resv_lock(&tp_r, NULL);
+		if (dma_resv_reserve_fences(&tp_r, 2) == 0) {
+			switch (i % 9) {
+			case 0: case 1: case 2:
+				dma_resv_add_shared_fence(&tp_r, f);
+				break;
+			case 3:
+				dma_resv_add_fence(&tp_r, f,
+				    DMA_RESV_USAGE_WRITE);
+				break;
+			case 4:
+				dma_resv_add_fence(&tp_r, f,
+				    DMA_RESV_USAGE_KERNEL);
+				break;
+			case 5:
+				dma_resv_add_fence(&tp_r, f,
+				    DMA_RESV_USAGE_BOOKKEEP);
+				break;
+			case 6:
+				dma_resv_add_excl_fence(&tp_r, f);
+				break;
+			case 7:
+				dma_resv_replace_fences(&tp_r,
+				    tp_ctx[i % 4], f, DMA_RESV_USAGE_READ);
+				break;
+			default:
+				dma_resv_add_excl_fence(&tp_r, NULL);
+				break;
+			}
+		}
+		dma_resv_unlock(&tp_r);
+		if (i % 3 == 0)
+			dma_fence_signal(f);
+		dma_fence_put(f);
+		tp_added++;
+		i++;
+		if (i % 5 == 0)
+			kpause("drm2tpw", false, 1, NULL);
+	}
+	atomic_inc_uint(&tp_done);
+	kthread_exit(0);
+}
+
+static void
+tp_reader(void *arg)
+{
+	unsigned id = (unsigned)(uintptr_t)arg - 1, round = 0, n, i, nsh;
+	struct dma_resv_iter c;
+	struct dma_fence *f, *excl, **v;
+
+	KASSERT(id < 4);
+	while (!tp_stop) {
+		switch (id) {
+		case 0:
+			dma_resv_iter_begin(&c, &tp_r, DMA_RESV_USAGE_BOOKKEEP);
+			dma_resv_for_each_fence_unlocked(&c, f)
+				tp_check(f);
+			dma_resv_iter_end(&c);
+			break;
+		case 1:
+			if (dma_resv_get_fences(&tp_r, DMA_RESV_USAGE_BOOKKEEP,
+				&n, &v) == 0) {
+				for (i = 0; i < n; i++) {
+					tp_check(v[i]);
+					dma_fence_put(v[i]);
+				}
+				kfree(v);
+			}
+			break;
+		case 2:
+			if (dma_resv_get_fences_rcu(&tp_r, &excl, &nsh, &v)
+			    == 0) {
+				for (i = 0; i < nsh; i++) {
+					tp_check(v[i]);
+					dma_fence_put(v[i]);
+				}
+				kfree(v);
+				tp_check(excl);
+				dma_fence_put(excl);
+			}
+			break;
+		default:
+			(void)dma_resv_test_signaled(&tp_r,
+			    DMA_RESV_USAGE_READ);
+			(void)dma_resv_test_signaled_rcu(&tp_r, true);
+			(void)dma_resv_wait_timeout(&tp_r,
+			    DMA_RESV_USAGE_BOOKKEEP, false, 1);
+			break;
+		}
+		tp_iters[id]++;
+		if (++round % 64 == 0)
+			kpause("drm2tpr", false, 1, NULL);
+	}
+	atomic_inc_uint(&tp_done);
+	kthread_exit(0);
+}
+
+static void
+test_resv_poison_stress(void)
+{
+	lwp_t *l[5];
+	unsigned i;
+	int error;
+
+	for (i = 0; i < 4; i++)
+		tp_ctx[i] = dma_fence_context_alloc(1);
+	tp_stop = tp_done = tp_bad = tp_added = 0;
+	for (i = 0; i < 4; i++)
+		tp_iters[i] = 0;
+	dma_resv_init(&tp_r);
+	error = kthread_create(PRI_NONE, KTHREAD_MPSAFE | KTHREAD_MUSTJOIN,
+	    NULL, tp_writer, NULL, &l[0], "drm2tpw");
+	CHECK(error == 0);
+	for (i = 0; i < 4; i++) {
+		error = kthread_create(PRI_NONE,
+		    KTHREAD_MPSAFE | KTHREAD_MUSTJOIN, NULL, tp_reader,
+		    (void *)(uintptr_t)(i + 1), &l[i + 1], "drm2tpr");
+		CHECK(error == 0);
+	}
+	kpause("drm2tpstress", false, hz * 3, NULL);
+	tp_stop = 1;
+	for (i = 0; i < 5; i++)
+		kthread_join(l[i]);
+	CHECK(tp_done == 5);
+	CHECK(tp_added > 100);
+	CHECK(tp_bad == 0);
+	CHECK(tp_iters[0] > 50 && tp_iters[1] > 50 && tp_iters[2] > 50 &&
+	    tp_iters[3] > 50);
+	printf("drm2-dma-resv poison stress: %u fences, reader rounds "
+	    "%u/%u/%u/%u, %u bad\n", tp_added, tp_iters[0], tp_iters[1],
+	    tp_iters[2], tp_iters[3], tp_bad);
+	dma_resv_fini(&tp_r);
+	CHECK(tf_live == 0);
+}
+
 int	drm2_dma_resv_run(void);
 
 int
@@ -1785,6 +1990,7 @@ drm2_dma_resv_run(void)
 	test_array_unwrap();
 	test_resv_stress();
 	test_resv_excl_stress();
+	test_resv_poison_stress();
 	printf("drm2-dma-resv: %d checks, %d failed\n", t_run, t_fail);
 	return t_fail;
 }
