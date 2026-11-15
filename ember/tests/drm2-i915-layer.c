@@ -34,12 +34,11 @@
 #include <linux/wait.h>
 #include <asm/hypervisor.h>
 #include <xen/xen.h>
+#include <asm/intel-family.h>
 
 #include <machine/psl.h>
 #include <i915drm618_compat.h>
-#include "i915_trace.h"
-#include "intel_display_trace.h"
-#include "intel_uncore_trace.h"
+#include "drm618_trace_nop.h"
 
 static int t_run, t_fail;
 
@@ -84,6 +83,13 @@ t_ent_init(struct t_ent *t, int ret)
 }
 
 struct t_s { int a; char b[7]; };
+
+/* castable_to_type of a constant is a constant expression */
+static_assert(castable_to_type(255, uint8_t));
+static_assert(!castable_to_type(256, uint8_t));
+static_assert(!castable_to_type(-1, uint8_t));
+static_assert(castable_to_type(-128, int8_t) && !castable_to_type(-129, int8_t));
+static_assert(castable_to_type(0, unsigned long) && castable_to_type(127, int8_t) && !castable_to_type(128, int8_t));
 
 static int
 t_cmp_int(const void *x, const void *y, const void *priv)
@@ -292,12 +298,10 @@ drm2_i915_layer_run(void)
 	CHECK(!hypervisor_is_type(X86_HYPER_KVM) && !xen_pv_domain() && !xen_domain());
 	CHECK(!pm_runtime_suspended(NULL));
 
-	/* trace points: arguments type checked, never evaluated, never enabled */
-	trace_i915_request_add(xside++);
-	trace_intel_pipe_enable(xside++, xside++);
-	trace_i915_reg_rw(xside++);
+	/* trace points: the arguments are type checked, never evaluated (the points themselves are in the i915 headers) */
+	DRM618_TRACE_NOP(xside++);
+	DRM618_TRACE_NOP(xside++, xside++);
 	CHECK(xside == 0);
-	CHECK(!trace_i915_request_add_enabled() && !trace_intel_pipe_enable_enabled());
 
 	/* order_base_2: a constant in a bit-field width and an array size, a variable at run time */
 	{
@@ -485,6 +489,30 @@ drm2_i915_layer_run(void)
 		CHECK(list_empty(&wh.head));
 		destroy_waitqueue_head(&wh);
 		CHECK(boot_cpu_data.x86_clflush_size == 64);
+	}
+
+	/* fourth group */
+	{
+		unsigned long src[2] = { 0xf0f0f0f0f0f0f0f0ul, 0x000000000000abcdul }, dst[2];
+		struct x86_cpu_id own[2], none[2];
+		uint32_t sig = curcpu()->ci_signature;
+
+		bitmap_shift_right(dst, src, 4, 80);
+		CHECK(dst[0] == 0xdf0f0f0f0f0f0f0ful && dst[1] == 0xabc);
+		bitmap_shift_right(dst, src, 64, 80);
+		CHECK(dst[0] == 0xabcd && dst[1] == 0);
+		bitmap_shift_right(dst, src, 0, 70);
+		CHECK(dst[0] == src[0] && dst[1] == 0x3d);
+		/* the CPU of this machine is found in a table that has its model, and only then */
+		own[0].vfm = IFM(CPUID_TO_FAMILY(sig), CPUID_TO_MODEL(sig));
+		own[0].driver_data = 7;
+		own[1].vfm = 0;
+		none[0].vfm = IFM(CPUID_TO_FAMILY(sig), (CPUID_TO_MODEL(sig) + 1) & 0xff);
+		none[1].vfm = 0;
+		CHECK(x86_match_cpu(none) == NULL);
+		CHECK(cpu_vendor != CPUVENDOR_INTEL || x86_match_cpu(own) == &own[0]);
+		CHECK(VFM_MODEL(INTEL_ALDERLAKE) == 0x97 && VFM_FAMILY(INTEL_ALDERLAKE) == 6);
+		CHECK(x86_match_cpu(&own[1]) == NULL);
 	}
 
 	/* strings, memory */

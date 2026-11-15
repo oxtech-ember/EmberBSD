@@ -29,10 +29,25 @@
  * castable_to_type(N, T): N can be assigned to T without loss: for a
  * constant when it fits, otherwise when it already has the type of T.
  */
+/*
+ * The test for a constant N is an integer constant expression (static_assert
+ * and bit-field widths need one): N is compared with the range of T in the
+ * widest types, the sign first.
+ */
+#define	__drm618_uns(T)		((__typeof__(T))-1 > (__typeof__(T))0)
+#define	__drm618_tmax(T)						\
+	(__drm618_uns(T) ? (unsigned long long)(__typeof__(T))~(__typeof__(T))0 : \
+	    (unsigned long long)(((((__typeof__(T))1 <<			\
+	    (sizeof(__typeof__(T)) * 8 - 2)) - 1) * 2) + 1))
+#define	__drm618_overflows_const(N, T)					\
+	((N) < 0 ?							\
+	    (__drm618_uns(T) ||						\
+	        (long long)(N) < -(long long)__drm618_tmax(T) - 1) :	\
+	    (unsigned long long)(N) > __drm618_tmax(T))
 #ifndef castable_to_type
 #define	castable_to_type(N, T)						\
 	__builtin_choose_expr(__builtin_constant_p(N),			\
-	    !__drm618_overflows_type((N), T), __same_type((N), (T)0))
+	    !__drm618_overflows_const((N), T), __same_type((N), (T)0))
 #endif
 
 #endif

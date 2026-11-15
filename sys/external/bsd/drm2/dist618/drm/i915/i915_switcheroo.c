@@ -19,11 +19,11 @@ static void i915_switcheroo_set_state(struct pci_dev *pdev,
 	pm_message_t pmm = { .event = PM_EVENT_SUSPEND };
 
 	if (!i915) {
-		dev_err(&pdev->dev, "DRM not initialized, aborting switch.\n");
+		dev_err(pdev->pd_dev, "DRM not initialized, aborting switch.\n");
 		return;
 	}
 	if (!intel_display_device_present(display)) {
-		dev_err(&pdev->dev, "Device state not initialized, aborting switch.\n");
+		dev_err(pdev->pd_dev, "Device state not initialized, aborting switch.\n");
 		return;
 	}
 

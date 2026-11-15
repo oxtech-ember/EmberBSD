@@ -6,6 +6,11 @@
 
 #include "drm618_trace_nop.h"
 
+/* the sources rely on this header for the display structures (found by the errors of the files that include it) */
+#include "intel_display_core.h"
+#include "intel_display_types.h"
+#include "intel_crtc.h"
+
 #ifndef trace_intel_cpu_fifo_underrun
 #define trace_intel_cpu_fifo_underrun(...)	DRM618_TRACE_NOP(__VA_ARGS__)
 #endif

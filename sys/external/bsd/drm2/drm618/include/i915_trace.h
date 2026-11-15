@@ -6,6 +6,9 @@
 
 #include "drm618_trace_nop.h"
 
+/* the sources rely on this header for the driver structures and macros (found through the errors of the files that include it) */
+#include "i915_drv.h"
+
 #ifndef trace_i915_request_in
 #define trace_i915_request_in(...)	DRM618_TRACE_NOP(__VA_ARGS__)
 #endif

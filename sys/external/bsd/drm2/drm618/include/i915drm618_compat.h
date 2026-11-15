@@ -810,4 +810,81 @@ void	wake_up_var(void *);
 void	memcpy_from_page(char *, struct page *, size_t, size_t);
 void	__free_pages(struct page *, unsigned int);
 
+
+/* ---- batch 4 ---- */
+
+/* compiler diagnostics control: the layer's compiler flags decide, the markers do nothing */
+#define	__diag_push()
+#define	__diag_pop()
+#define	__diag_ignore_all(option, comment)
+
+/* an array of unknown length at the end of a structure, with an empty member in front as Linux has it */
+#ifndef DECLARE_FLEX_ARRAY
+#define	DECLARE_FLEX_ARRAY(TYPE, NAME)					\
+	struct { struct { } __empty_##NAME; TYPE NAME[]; }
+#endif
+
+/* the 6.18 io_mapping unmap calls take the address alone: the mappings are the layer's local ones */
+#undef	io_mapping_unmap
+#undef	io_mapping_unmap_atomic
+#define	io_mapping_unmap(addr)		io_mapping_unmap_local(addr)
+#define	io_mapping_unmap_atomic(addr)	io_mapping_unmap_local(addr)
+
+/* bits shifted down; the bits above NBITS stay clear */
+static inline void
+bitmap_shift_right(unsigned long *dst, const unsigned long *src,
+    unsigned int shift, unsigned int nbits)
+{
+	unsigned int i, n = DIV_ROUND_UP(nbits, BITS_PER_LONG);
+	unsigned int ws = shift / BITS_PER_LONG, bs = shift % BITS_PER_LONG;
+
+	for (i = 0; i < n; i++) {
+		unsigned long lo = (i + ws < n) ? src[i + ws] : 0;
+		unsigned long hi = (i + ws + 1 < n) ? src[i + ws + 1] : 0;
+
+		if (i + ws == n - 1 && nbits % BITS_PER_LONG != 0)
+			lo &= (1ul << (nbits % BITS_PER_LONG)) - 1;
+		if (i + ws + 1 == n - 1 && nbits % BITS_PER_LONG != 0)
+			hi &= (1ul << (nbits % BITS_PER_LONG)) - 1;
+		dst[i] = bs == 0 ? lo : (lo >> bs) | (hi << (BITS_PER_LONG - bs));
+	}
+	if (nbits % BITS_PER_LONG != 0)
+		dst[n - 1] &= (1ul << (nbits % BITS_PER_LONG)) - 1;
+}
+
+/* variables to wait on: one wait queue per hash bucket (the queue itself is declared, not defined) */
+wait_queue_head_t *drm618_var_waitqueue(void *);
+#define	wake_up_var(var)	wake_up_all(drm618_var_waitqueue(var))
+#define	wait_var_event(var, cond)					\
+	wait_event(*drm618_var_waitqueue(var), cond)
+#define	wait_var_event_killable(var, cond)				\
+	wait_event_killable(*drm618_var_waitqueue(var), cond)
+#define	wait_var_event_timeout(var, cond, timeout)			\
+	wait_event_timeout(*drm618_var_waitqueue(var), cond, timeout)
+
+#ifndef VGA_RSRC_NORMAL_IO
+#define	VGA_RSRC_NORMAL_IO	0x04
+#define	VGA_RSRC_NORMAL_MEM	0x08
+#endif
+
+/* PCI, DMA, memory and user access calls (declared, not defined) */
+int	pci_enable_device(struct pci_dev *);
+void	pci_disable_device(struct pci_dev *);
+int	pci_release_resource(struct pci_dev *, int);
+int	pci_resize_resource(struct pci_dev *, int, int);
+struct scatterlist;
+enum dma_data_direction;
+void	*dma_alloc_coherent(struct device *, size_t, dma_addr_t *, gfp_t);
+void	dma_free_coherent(struct device *, size_t, void *, dma_addr_t);
+struct page *alloc_pages(gfp_t, unsigned int);
+void	*devm_request_mem_region(struct device *, resource_size_t,
+	    resource_size_t, const char *);
+int	__copy_to_user_inatomic(void *, const void *, unsigned long);
+int	__copy_from_user_inatomic(void *, const void *, unsigned long);
+bool	user_write_access_begin(const void *, size_t);
+void	user_write_access_end(void);
+void	kernel_fpu_begin(void);
+void	kernel_fpu_end(void);
+int	ratelimit_state_get_miss(struct ratelimit_state *);
+
 #endif
