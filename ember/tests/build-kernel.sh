@@ -355,13 +355,17 @@ args = sys.argv[1:]
 values = {"--host-prefix": "", "--compiler-family": "", "--cwd": "",
           "--bindings": "", "--log": ""}
 roles = []
+flags = {"--cppflag": [], "--ldflag": []}
 role = None
 while args:
     item = args.pop(0)
     if item == "--":
         command = args
         break
-    if item == "--required-role":
+    if item.startswith(("--cppflag=", "--ldflag=")):
+        option, value = item.split("=", 1)
+        flags[option].append(value)
+    elif item == "--required-role":
         if not args or args[0] not in ("ruby", "awk"):
             raise SystemExit(81)
         roles.append(args.pop(0))
@@ -374,6 +378,12 @@ while args:
 else:
     raise SystemExit(81)
 root = os.environ["TEST_ROOT"]
+# Selected native libraries must be reachable through compiler bindings even
+# when a source-owner contract does not consume CPPFLAGS or LDFLAGS itself.
+if flags != {"--cppflag": ["-I" + root + "/include"],
+             "--ldflag": ["-L" + root + "/lib", "-Wl,-rpath," + root + "/lib"]}:
+    print("missing selected native include/library search flags", file=sys.stderr)
+    raise SystemExit(88)
 if (values["--host-prefix"] != root or
         values["--compiler-family"] != os.environ.get("EMBER_HOST_COMPILER_FAMILY", "clang") or
         values["--cwd"] != root + "/src" or

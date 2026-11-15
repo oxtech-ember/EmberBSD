@@ -160,9 +160,13 @@ Retain the old kernel and its matching module tree for recovery.
 
 Follow the native order in [BUILDING](../../../BUILDING): install the kernel
 and matching modules, reboot and verify the loaded build information,
-then install the completed userland. A temporary build filesystem must be
-unmounted before reboot. Reattach its recorded backing file afterwards;
-do not recreate or format the image.
+then install the completed userland. For the
+[station association lifecycle v1 MLME ABI transition](../../../sys/net80211/association-lifecycle.md),
+install the matched `wpa_supplicant` and its required base and libraries before
+the first boot of the new kernel. Do not restart networking between these
+installation stages. A temporary build filesystem must be unmounted before
+reboot. Reattach its recorded backing file afterwards; do not recreate or
+format the image.
 
 Before replacing userland, verify the candidate's loader, shell, OpenSSL
 and SSH in a chroot. An unprivileged build does not create device nodes:

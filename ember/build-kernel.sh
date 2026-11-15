@@ -136,6 +136,8 @@ run_native_check() {
     rm -f "$log"
     "$python" "$native_check" --host-prefix "$host_prefix" \
         --compiler-family "$host_family" --required-role ruby --required-role awk \
+        --cppflag="-I$host_prefix/include" --ldflag="-L$host_prefix/lib" \
+        --ldflag="-Wl,-rpath,$host_prefix/lib" \
         --tool "$role" --cwd "$src" --bindings "$out/native-check-commands" \
         --log "$log" -- "$@"
 }
