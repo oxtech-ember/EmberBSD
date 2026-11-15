@@ -1079,10 +1079,25 @@ virtiogpu618_attach(device_t parent, device_t self, void *aux)
 	mutex_exit(&drm618_vdrv_lock);
 }
 
+int (*drm618_virtio_busy_fn)(struct virtio_device *, void *);
+
 static int
-virtiogpu618_detach(device_t self, int flags __unused)
+virtiogpu618_detach(device_t self, int flags)
 {
 	struct drm618_vdev *sc = device_private(self);
+	int error;
+
+	/*
+	 * A device with a client is not taken away unless the detach is
+	 * forced (which cannot be refused).  This also closes the window
+	 * between the check of the module and the detach.
+	 */
+	if (sc->sc_probed && drm618_virtio_busy_fn != NULL &&
+	    (flags & DETACH_FORCE) == 0) {
+		error = (*drm618_virtio_busy_fn)(&sc->sc_vdev, NULL);
+		if (error != 0)
+			return error;
+	}
 
 	if (sc->sc_listed) {
 		mutex_enter(&drm618_vdrv_lock);

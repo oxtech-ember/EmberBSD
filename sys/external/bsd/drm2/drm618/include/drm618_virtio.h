@@ -20,4 +20,10 @@ struct virtio_device;
  */
 int	drm618_virtio_busy(int (*)(struct virtio_device *, void *), void *);
 
+/*
+ * Set by the driver module: asked by the detach of a device (not forced)
+ * whether it has clients; non-zero refuses the detach.
+ */
+extern int (*drm618_virtio_busy_fn)(struct virtio_device *, void *);
+
 #endif	/* _DRM618_VIRTIO_H_ */

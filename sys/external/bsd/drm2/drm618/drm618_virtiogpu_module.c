@@ -110,9 +110,11 @@ virtiogpu618_modcmd(modcmd_t cmd, void *arg __unused)
 		if (error != 0)
 			return -error;
 		VGPU_SYSCTL_SETUP();
+		drm618_virtio_busy_fn = virtiogpu618_busy;
 		error = config_init_component(cfdriver_ioconf_virtiogpu618,
 		    cfattach_ioconf_virtiogpu618, cfdata_ioconf_virtiogpu618);
 		if (error != 0) {
+			drm618_virtio_busy_fn = NULL;
 			drm618_modexit_virtio_gpu_driver_exit();
 			VGPU_SYSCTL_TEARDOWN();
 		}
@@ -130,6 +132,7 @@ virtiogpu618_modcmd(modcmd_t cmd, void *arg __unused)
 		    cfattach_ioconf_virtiogpu618, cfdata_ioconf_virtiogpu618);
 		if (error != 0)
 			return error;
+		drm618_virtio_busy_fn = NULL;
 		drm618_modexit_virtio_gpu_driver_exit();
 		VGPU_SYSCTL_TEARDOWN();
 		return 0;
