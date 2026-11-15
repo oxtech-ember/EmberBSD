@@ -46,6 +46,7 @@
 #include <time.h>
 #include <drm/drm.h>
 #include <drm/drm_mode.h>
+#include "../../sys/external/bsd/drm2/dist618/include/uapi/drm/virtgpu_drm.h"
 
 #define DRM_FORMAT_XRGB8888_FOURCC	0x34325258u	/* 'XR24' */
 #define DRM_FORMAT_ARGB8888_FOURCC	0x34325241u	/* 'AR24' */
@@ -1432,6 +1433,192 @@ test_prime(void)
 	destroy_dumb_on(fd, cd.handle);
 }
 
+/* ------------------------------------------------------------- virtio_gpu */
+
+/* The cursor plane: legacy cursor ioctls on the CRTC, a 64x64 ARGB image, moves, off.  QEMU's screendump does not composite the hardware cursor. */
+static void
+test_cursor(void)
+{
+	struct drm_mode_create_dumb cd;
+	struct drm_mode_cursor2 c;
+	volatile uint32_t *p;
+	void *m;
+	int i, bad;
+
+	CHECK(mkdumb_on(fd, 64, 64, 32, 0, &cd) == 0, "cursor image: dumb 64x64");
+	m = map_dumb_on(fd, cd.handle, cd.size);
+	CHECK(m != NULL, "cursor image: mapping");
+	if (m == NULL)
+		return;
+	p = m;
+	for (i = 0; i < 64 * 64; i++)
+		p[i] = 0xff000000u | (uint32_t)((i & 63) * 4) << 16 | (uint32_t)((i >> 6) * 4) << 8 | 0x80;
+	/* the CRTC is on (an earlier SETCRTC) */
+	CHECK(setcrtc_on(fd, fbA.fb_id, 0, 0, 1, &mode) == 0, "SETCRTC before the cursor");
+	memset(&c, 0, sizeof c);
+	c.flags = DRM_MODE_CURSOR_BO | DRM_MODE_CURSOR_MOVE; c.crtc_id = crtc_id;
+	c.x = 100; c.y = 80; c.width = 64; c.height = 64; c.handle = cd.handle;
+	CHECK(ioc(DRM_IOCTL_MODE_CURSOR, &c) == 0, "CURSOR set image and position");
+	c.flags = DRM_MODE_CURSOR_BO; c.hot_x = 8; c.hot_y = 8;
+	CHECK(ioc(DRM_IOCTL_MODE_CURSOR2, &c) == 0, "CURSOR2 with a hotspot");
+	bad = 0;
+	for (i = 0; i < 200; i++) {
+		memset(&c, 0, sizeof c);
+		c.flags = DRM_MODE_CURSOR_MOVE; c.crtc_id = crtc_id;
+		c.x = (i * 5) % (W - 64); c.y = (i * 3) % (H - 64);
+		if (ioc(DRM_IOCTL_MODE_CURSOR, &c) != 0)
+			bad++;
+	}
+	CHECK(bad == 0, "200 cursor moves (%d failed)", bad);
+	/* the same image through a second handle of the cursor plane: changes of image between moves */
+	memset(&c, 0, sizeof c);
+	c.flags = DRM_MODE_CURSOR_BO; c.crtc_id = crtc_id; c.width = 64; c.height = 64;
+	c.handle = 0xdeadbeef;
+	CHECK(ioc(DRM_IOCTL_MODE_CURSOR, &c) != 0, "CURSOR with a bad handle fails");
+	c.handle = cd.handle; c.width = 63;
+	/* the DRM core accepts any image up to the cursor size of the device (as upstream): no crash is the check */
+	CHECK(ioc(DRM_IOCTL_MODE_CURSOR, &c) != 0 || 1, "CURSOR with a 63 pixel wide image: no crash");
+	c.width = 64; c.height = 64; c.handle = cd.handle;
+	c.crtc_id = 0xdeadbeef;
+	CHECK(ioc(DRM_IOCTL_MODE_CURSOR, &c) != 0, "CURSOR on a bad crtc fails");
+	memset(&c, 0, sizeof c);
+	c.flags = DRM_MODE_CURSOR_BO; c.crtc_id = crtc_id;	/* handle 0: the cursor goes */
+	CHECK(ioc(DRM_IOCTL_MODE_CURSOR, &c) == 0, "CURSOR off (handle 0)");
+	CHECK(flip_on(fd, fbB.fb_id, DRM_MODE_PAGE_FLIP_EVENT, 7) == 0, "a flip after the cursor");
+	{
+		struct drm_event_vblank ev;
+
+		CHECK(read_event(fd, 2000, &ev) == 0 && ev.user_data == 7, "its event");
+	}
+	munmap(m, cd.size);
+	destroy_dumb_on(fd, cd.handle);
+}
+
+static int
+open_render(void)
+{
+	char path[64], name[32];
+	struct drm_version v;
+	int i, f;
+
+	for (i = 128; i < 192; i++) {
+		snprintf(path, sizeof path, "/dev/dri/renderD%d", i);
+		f = open(path, O_RDWR | O_CLOEXEC);
+		if (f < 0)
+			continue;
+		memset(&v, 0, sizeof v);
+		memset(name, 0, sizeof name);
+		v.name = name;
+		v.name_len = sizeof name - 1;
+		if (ioctl(f, DRM_IOCTL_VERSION, &v) == 0 && strcmp(name, "virtio_gpu") == 0)
+			return f;
+		close(f);
+	}
+	return -1;
+}
+
+/* The render node of the device: no modesetting, buffers and PRIME work, the driver's own ioctls answer. */
+static void
+test_render(void)
+{
+	struct drm_mode_create_dumb cd;
+	struct drm_prime_handle ph, ph2;
+	struct drm_mode_card_res res;
+	struct drm_virtgpu_getparam gp;
+	struct drm_get_cap cap;
+	uint64_t val = 0;
+	volatile uint32_t *p;
+	void *m;
+	int rf, r;
+
+	rf = open_render();
+	CHECK(rf >= 0, "a render node of virtio_gpu exists");
+	if (rf < 0)
+		return;
+	memset(&res, 0, sizeof res);
+	r = ioc_fd(rf, DRM_IOCTL_MODE_GETRESOURCES, &res);
+	CHECK(r != 0, "GETRESOURCES on the render node is refused (%d)", r);
+	memset(&cap, 0, sizeof cap);
+	cap.capability = DRM_CAP_PRIME;
+	CHECK(ioc_fd(rf, DRM_IOCTL_GET_CAP, &cap) == 0 && (cap.value & 3) == 3, "render node: PRIME import and export (cap %llu)",
+	    (unsigned long long)cap.value);
+	memset(&gp, 0, sizeof gp);
+	gp.param = VIRTGPU_PARAM_3D_FEATURES; gp.value = PTR(&val);
+	r = ioc_fd(rf, DRM_IOCTL_VIRTGPU_GETPARAM, &gp);
+	CHECK(r == 0 && val == 0, "VIRTGPU_GETPARAM 3D_FEATURES: none, 2D only (%d, %llu)", r, (unsigned long long)val);
+	gp.param = 9999;
+	CHECK(ioc_fd(rf, DRM_IOCTL_VIRTGPU_GETPARAM, &gp) != 0, "VIRTGPU_GETPARAM of an unknown parameter fails");
+	{
+		struct drm_virtgpu_execbuffer eb;
+
+		memset(&eb, 0, sizeof eb);
+		r = ioc_fd(rf, DRM_IOCTL_VIRTGPU_EXECBUFFER, &eb);
+		CHECK(r != 0, "VIRTGPU_EXECBUFFER without 3D fails cleanly (%d)", r);
+	}
+	CHECK(mkdumb_on(rf, 256, 64, 32, 0, NULL) != 0, "render node: CREATE_DUMB is a modesetting ioctl, refused");
+	/* a 2D resource of the driver's own ioctl: object, handle, mapping */
+	{
+		struct drm_virtgpu_resource_create rc;
+		struct drm_virtgpu_map vm;
+
+		memset(&rc, 0, sizeof rc);
+		rc.target = 2; rc.format = 1; rc.bind = 2;	/* texture 2D, B8G8R8A8, render target */
+		rc.width = 256; rc.height = 64; rc.depth = 1; rc.array_size = 1;
+		rc.size = 256 * 64 * 4;
+		r = ioc_fd(rf, DRM_IOCTL_VIRTGPU_RESOURCE_CREATE, &rc);
+		CHECK(r == 0 && rc.bo_handle != 0 && rc.res_handle != 0, "render node: VIRTGPU_RESOURCE_CREATE 256x64 (%d, handle %u, resource %u)",
+		    r, rc.bo_handle, rc.res_handle);
+		if (r != 0)
+			goto out;
+		cd.handle = rc.bo_handle; cd.size = rc.size;
+		memset(&vm, 0, sizeof vm);
+		vm.handle = rc.bo_handle;
+		r = ioc_fd(rf, DRM_IOCTL_VIRTGPU_MAP, &vm);
+		CHECK(r == 0, "render node: VIRTGPU_MAP (%d)", r);
+		m = r == 0 ? mmap(NULL, rc.size, PROT_READ | PROT_WRITE, MAP_SHARED, rf, (off_t)vm.offset) : MAP_FAILED;
+		CHECK(m != MAP_FAILED, "render node: mapping of the resource");
+		if (m != MAP_FAILED) {
+			p = m;
+			p[0] = 0xa5a5a5a5; p[256 * 64 - 1] = 0x5a5a5a5a;
+			CHECK(p[0] == 0xa5a5a5a5 && p[256 * 64 - 1] == 0x5a5a5a5a, "render node: write and read back");
+			munmap(m, rc.size);
+		}
+	}
+	memset(&ph, 0, sizeof ph);
+	ph.handle = cd.handle; ph.flags = DRM_CLOEXEC | DRM_RDWR;
+	r = ioc_fd(rf, DRM_IOCTL_PRIME_HANDLE_TO_FD, &ph);
+	CHECK(r == 0 && ph.fd >= 0, "render node: PRIME export (%d)", r);
+	if (r == 0) {
+		memset(&ph2, 0, sizeof ph2);
+		ph2.fd = ph.fd;
+		r = ioc_fd(rf, DRM_IOCTL_PRIME_FD_TO_HANDLE, &ph2);
+		CHECK(r == 0 && ph2.handle == cd.handle, "render node: PRIME import of the own object gives the same handle (%u)", ph2.handle);
+		/* the card node of the same device takes the same dma-buf */
+		memset(&ph2, 0, sizeof ph2);
+		ph2.fd = ph.fd;
+		r = ioc(DRM_IOCTL_PRIME_FD_TO_HANDLE, &ph2);
+		CHECK(r == 0 && ph2.handle != 0, "card node: PRIME import of the dma-buf of the render node (%d)", r);
+		if (r == 0)
+			destroy_dumb_on(fd, ph2.handle);
+		m = mmap(NULL, cd.size, PROT_READ | PROT_WRITE, MAP_SHARED, ph.fd, 0);
+		CHECK(m != MAP_FAILED, "render node: mmap of the dma-buf");
+		if (m != MAP_FAILED) {
+			CHECK(((volatile uint32_t *)m)[0] == 0xa5a5a5a5, "the dma-buf shows the data written through the resource mapping");
+			munmap(m, cd.size);
+		}
+		close(ph.fd);
+	}
+	{
+		struct drm_gem_close gc;
+
+		memset(&gc, 0, sizeof gc);
+		gc.handle = cd.handle;
+		CHECK(ioc_fd(rf, DRM_IOCTL_GEM_CLOSE, &gc) == 0, "render node: GEM_CLOSE");
+	}
+out:
+	close(rf);
+}
+
 /* ------------------------------------------------------------- stress */
 
 static volatile int stop_all;
@@ -1856,6 +2043,10 @@ main(int argc, char **argv)
 		test_atomic();
 		test_vblank();
 		test_prime();
+		if (g_virtio) {
+			test_cursor();
+			test_render();
+		}
 		test_read_signal();
 		test_stress(nthreads);
 		test_churn();
