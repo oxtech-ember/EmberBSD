@@ -28,6 +28,7 @@ SRCS+=	linux_work.c
 # drm2/linux
 SRCS+=	linux_atomic64.c
 SRCS+=	linux_backlight.c
+SRCS+=	linux_devres.c
 SRCS+=	linux_dma_buf.c
 SRCS+=	linux_dma_fence.c
 SRCS+=	linux_dma_fence_array.c
