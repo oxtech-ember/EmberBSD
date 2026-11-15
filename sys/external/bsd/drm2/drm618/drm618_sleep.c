@@ -28,6 +28,7 @@
 #include <sys/kernel.h>
 #include <sys/kmem.h>
 #include <sys/lwp.h>
+#include <sys/atomic.h>
 #include <sys/mutex.h>
 #include <sys/once.h>
 #include <sys/proc.h>
@@ -65,7 +66,13 @@ sleep_init(void)
 {
 	int error;
 
-	mutex_init(&sleep_lock, MUTEX_DEFAULT, IPL_NONE);
+	/*
+	 * A spin mutex: a wake-up (wake_up_process) comes from interrupt handlers,
+	 * softints and callbacks that hold spin locks of the layer, where an adaptive
+	 * mutex may not be taken (it may sleep).  Nothing here sleeps with it held:
+	 * cv_wait gives it up, and memory is allocated and freed outside of it.
+	 */
+	mutex_init(&sleep_lock, MUTEX_DEFAULT, IPL_VM);
 	cv_init(&sleep_cv, "lnxslp");
 	error = lwp_specific_key_create(&sleep_key, sleeper_dtor);
 	if (error) {
@@ -155,7 +162,11 @@ wake_up_process(struct task_struct *task)
 	struct sleeper *s;
 	int woke = 0;
 
-	if (RUN_ONCE(&sleep_once, sleep_init) != 0)
+	/*
+	 * Callable from interrupt context: it does not initialise (RUN_ONCE takes an
+	 * adaptive mutex).  Before the first sleeper there is nobody to wake.
+	 */
+	if (atomic_load_acquire(&sleep_once.o_status) != ONCE_DONE)
 		return 0;
 	mutex_enter(&sleep_lock);
 	LIST_FOREACH(s, &sleepers, s_entry) {

@@ -9,6 +9,8 @@
  */
 
 #include <sys/cdefs.h>
+#include <sys/callout.h>
+#include <sys/intr.h>
 #include <sys/param.h>
 #include <sys/kernel.h>
 #include <sys/kthread.h>
@@ -105,6 +107,53 @@ t_start(void (*fn)(void *), const char *name, struct lwp **lp)
 		kpause("t618w", false, 1, NULL);
 	kpause("t618w", false, hz / 20 + 1, NULL);	/* let it get to the sleep */
 	return 0;
+}
+
+
+/* wake the waiters of t_q from other contexts: under a spin lock of the layer, from a softint, from a callout */
+static spinlock_t t_wsl;
+static void *t_sih;
+static struct callout t_co;
+
+static void
+t_softint(void *cookie __unused)
+{
+
+	t_flag = 1;
+	wake_up(&t_q);
+}
+
+static void
+t_callout(void *cookie __unused)
+{
+
+	t_flag = 1;
+	wake_up_all(&t_q);
+}
+
+/* eight waiters of the same queue, many rounds: a wake-up that is lost makes a waiter sleep the full time */
+#define	T_NW	8
+static volatile int t_stop, t_ready[T_NW], t_woken[T_NW];
+
+static void
+t_racer(void *cookie)
+{
+	const int me = (int)(uintptr_t)cookie - 1;	/* the argument is the index plus one: kthread_create passes the lwp for a null argument */
+	DEFINE_WAIT(w);
+	long left = 0;
+
+	t_ready[me] = 1;
+	for (;;) {
+		prepare_to_wait(&t_q, &w, TASK_UNINTERRUPTIBLE);
+		if (t_flag || t_stop)
+			break;
+		left = schedule_timeout(3 * hz);
+		if (left == 0)
+			break;		/* slept the whole time: the wake-up was lost */
+	}
+	finish_wait(&t_q, &w);
+	t_woken[me] = (left == 0 && !t_flag && !t_stop) ? -1 : 1;
+	kthread_exit(0);
 }
 
 int	drm2_i915_layer_c_run(void);
@@ -211,6 +260,72 @@ drm2_i915_layer_c_run(void)
 	kthread_join(l);
 	CHECK(t_done == 1 && t_vret == 0 && t_left > 8 * hz && getticks() - start < (unsigned)hz);
 	CHECK(list_empty(&t_vq.head));
+
+	/* a wake-up from under a spin lock of the layer reaches a sleeper */
+	CHECK(t_start(t_waiter, "t618b", &l) == 0);
+	spin_lock_init(&t_wsl);
+	t_flag = 1;
+	start = getticks();
+	spin_lock(&t_wsl);
+	wake_up(&t_q);
+	spin_unlock(&t_wsl);
+	kthread_join(l);
+	CHECK(t_done == 1 && t_left > 8 * hz && getticks() - start < (unsigned)hz);
+	spin_lock_destroy(&t_wsl);
+
+	/* from a softint */
+	t_sih = softint_establish(SOFTINT_CLOCK | SOFTINT_MPSAFE, t_softint, NULL);
+	CHECK(t_sih != NULL);
+	CHECK(t_start(t_waiter, "t618c", &l) == 0);
+	start = getticks();
+	softint_schedule(t_sih);
+	kthread_join(l);
+	CHECK(t_done == 1 && t_left > 8 * hz && getticks() - start < (unsigned)hz);
+	softint_disestablish(t_sih);
+
+	/* from a callout (runs in a softint) */
+	callout_init(&t_co, CALLOUT_MPSAFE);
+	callout_setfunc(&t_co, t_callout, NULL);
+	CHECK(t_start(t_waiter, "t618d", &l) == 0);
+	start = getticks();
+	callout_schedule(&t_co, 1);
+	kthread_join(l);
+	CHECK(t_done == 1 && t_left > 8 * hz && getticks() - start < (unsigned)hz);
+	callout_halt(&t_co, NULL);
+	callout_destroy(&t_co);
+
+	/* the race: 8 waiters, 100 rounds, the wake-up comes while they may be on the way to sleep */
+	{
+		struct lwp *lw[T_NW];
+		int round, k, lost = 0, started = 0;
+
+		start = getticks();
+		for (round = 0; round < 100; round++) {
+			t_flag = 0;
+			t_stop = 0;
+			for (k = 0; k < T_NW; k++) {
+				t_ready[k] = 0;
+				t_woken[k] = 0;
+				if (kthread_create(PRI_NONE, KTHREAD_MPSAFE | KTHREAD_MUSTJOIN, NULL,
+				    t_racer, (void *)(uintptr_t)(k + 1), &lw[k], "t618r%d", k) != 0)
+					break;
+			}
+			started += k;
+			if (round % 2)
+				kpause("t618x", false, 1, NULL);
+			t_flag = 1;
+			wake_up_all(&t_q);
+			while (k-- > 0) {
+				kthread_join(lw[k]);
+				if (t_woken[k] < 0)
+					lost++;
+			}
+		}
+		CHECK(started == 100 * T_NW);
+		CHECK(lost == 0);
+		CHECK(getticks() - start < (unsigned)(30 * hz));
+		t_flag = 0;
+	}
 
 	/* try_cmpxchg64: stores when equal, else reports what it found */
 	v = 10;
