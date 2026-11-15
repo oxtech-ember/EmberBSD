@@ -84,6 +84,14 @@ t_ent_init(struct t_ent *t, int ret)
 }
 
 struct t_s { int a; char b[7]; };
+
+static int
+t_cmp_int(const void *x, const void *y, const void *priv)
+{
+	int d = *(const int *)x - *(const int *)y;
+
+	return *(const int *)priv ? -d : d;
+}
 static char t_page[PAGE_SIZE];
 struct t_width { unsigned int x:order_base_2(16); unsigned int y:order_base_2(3); };
 
@@ -405,6 +413,44 @@ drm2_i915_layer_run(void)
 	CHECK(!range_end_overflows(3u, 7u, 10u) && range_end_overflows_t(uint8_t, 3, 8, 10));
 	/* the arguments are cut to the type first: 300 is 44 in a byte */
 	CHECK(!range_overflows_t(uint8_t, 300, 1, 255) && range_overflows_t(uint8_t, 250, 10, 255));
+
+	/* constants and small helpers of the second group */
+	{
+		static const int in[5] = { 5, 3, 9, 1, 7 };
+		int ar[5], desc = 1, k;
+		uint8_t io[8];
+		spinlock_t sl;
+
+		memcpy(ar, in, sizeof(ar));
+		sort_r(ar, 5, sizeof(int), t_cmp_int, NULL, &desc);
+		CHECK(ar[0] == 9 && ar[1] == 7 && ar[2] == 5 && ar[3] == 3 && ar[4] == 1);
+		memcpy(ar, in, sizeof(ar));
+		desc = 0;
+		sort_r(ar, 5, sizeof(int), t_cmp_int, NULL, &desc);
+		for (k = 1; k < 5; k++)
+			CHECK(ar[k - 1] <= ar[k]);
+		sort_r(ar, 0, sizeof(int), t_cmp_int, NULL, &desc);	/* nothing to do */
+		CHECK(__fls(1) == 0 && __fls(0x80) == 7 && __fls(1ul << 63) == 63);
+		CHECK(PFN_PHYS(3) == (paddr_t)3 << PAGE_SHIFT);
+		CHECK(TASK_NORMAL == 3 && BACKLIGHT_POWER_OFF == 4 && _PAGE_CACHE_MASK == 0x98);
+		CHECK(compat_ptr(0xfffffff0u) == (void *)(uintptr_t)0xfffffff0u);
+		memset(io, 0, sizeof(io));
+		iowrite32(0xa1b2c3d4u, io);
+		iowrite16(0x1234, io + 4);
+		iowrite8(0x56, io + 6);
+		CHECK(ioread32(io) == 0xa1b2c3d4u && ioread16(io + 4) == 0x1234 && ioread8(io + 6) == 0x56);
+		CHECK(IS_ERR(IOMEM_ERR_PTR(-ENOMEM)) && PTR_ERR(IOMEM_ERR_PTR(-ENOMEM)) == -ENOMEM);
+		spin_lock_init(&sl);
+		if ((x86_read_psl() & PSL_I) != 0) {
+			CHECK(spin_trylock_irq(&sl) == 1);
+			CHECK((x86_read_psl() & PSL_I) == 0);
+			spin_unlock(&sl);
+			local_irq_enable();
+		}
+		spin_lock_destroy(&sl);
+		CHECK(WARN_RATELIMIT(0, "never %d\n", 1) == 0);
+		CHECK(pm_runtime_get_if_active(NULL) == pm_runtime_get_if_in_use(NULL));
+	}
 
 	/* strings, memory */
 	{

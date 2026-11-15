@@ -1407,7 +1407,7 @@ static void intel_gt_reset_global(struct intel_gt *gt,
 				  u32 engine_mask,
 				  const char *reason)
 {
-	struct kobject *kobj = &gt->i915->drm.primary->kdev->kobj;
+	struct kobject *kobj = drm618_kdev_kobj(gt->i915->drm.primary->kdev);
 	char *error_event[] = { I915_ERROR_UEVENT "=1", NULL };
 	char *reset_event[] = { I915_RESET_UEVENT "=1", NULL };
 	char *reset_done_event[] = { I915_ERROR_UEVENT "=0", NULL };

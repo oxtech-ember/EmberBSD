@@ -48,7 +48,7 @@ struct intel_gt *intel_gt_sysfs_get_drvdata(struct kobject *kobj,
 
 static struct kobject *gt_get_parent_obj(struct intel_gt *gt)
 {
-	return &gt->i915->drm.primary->kdev->kobj;
+	return drm618_kdev_kobj(gt->i915->drm.primary->kdev);
 }
 
 static ssize_t id_show(struct kobject *kobj,

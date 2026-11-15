@@ -12,7 +12,7 @@ void set_timer_ms(struct timer_list *t, unsigned long timeout);
 
 static inline bool timer_active(const struct timer_list *t)
 {
-	return READ_ONCE(t->expires);
+	return drm618_timer_expires(t);
 }
 
 static inline bool timer_expired(const struct timer_list *t)

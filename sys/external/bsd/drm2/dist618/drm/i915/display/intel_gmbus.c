@@ -939,7 +939,7 @@ int intel_gmbus_setup(struct intel_display *display)
 			 sizeof(bus->adapter.name),
 			 "i915 gmbus %s", gmbus_pin->name);
 
-		bus->adapter.dev.parent = &pdev->dev;
+		bus->adapter.dev.parent = pdev->pd_dev;
 		bus->display = display;
 
 		bus->adapter.algo = &gmbus_algorithm;

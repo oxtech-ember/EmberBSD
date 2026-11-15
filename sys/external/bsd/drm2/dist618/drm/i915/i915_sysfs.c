@@ -175,7 +175,7 @@ void i915_setup_sysfs(struct drm_i915_private *dev_priv)
 		}
 	}
 
-	dev_priv->sysfs_gt = kobject_create_and_add("gt", &kdev->kobj);
+	dev_priv->sysfs_gt = kobject_create_and_add("gt", drm618_kdev_kobj(kdev));
 	if (!dev_priv->sysfs_gt)
 		drm_warn(&dev_priv->drm,
 			 "failed to register GT sysfs directory\n");

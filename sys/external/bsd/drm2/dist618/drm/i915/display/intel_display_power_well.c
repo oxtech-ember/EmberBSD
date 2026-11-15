@@ -1289,7 +1289,7 @@ static void vlv_display_power_well_deinit(struct intel_display *display)
 	vlv_pps_reset_all(display);
 
 	/* Prevent us from re-enabling polling on accident in late suspend */
-	if (!display->drm->dev->power.is_suspended)
+	if (!pm_runtime_suspended(display->drm->dev))
 		intel_hpd_poll_enable(display);
 }
 

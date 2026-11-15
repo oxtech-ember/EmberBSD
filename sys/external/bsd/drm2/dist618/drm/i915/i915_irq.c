@@ -199,7 +199,7 @@ static void ivb_parity_work(struct work_struct *work)
 		parity_event[4] = kasprintf(GFP_KERNEL, "SLICE=%d", slice);
 		parity_event[5] = NULL;
 
-		kobject_uevent_env(&dev_priv->drm.primary->kdev->kobj,
+		kobject_uevent_env(drm618_kdev_kobj(dev_priv->drm.primary->kdev),
 				   KOBJ_CHANGE, parity_event);
 
 		drm_dbg(&dev_priv->drm,

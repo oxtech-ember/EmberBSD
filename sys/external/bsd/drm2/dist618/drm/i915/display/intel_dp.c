@@ -6131,7 +6131,7 @@ intel_dp_connector_register(struct drm_connector *_connector)
 		return ret;
 
 	drm_dbg_kms(display->drm, "registering %s bus for %s\n",
-		    intel_dp->aux.name, connector->base.kdev->kobj.name);
+		    intel_dp->aux.name, drm618_kdev_name(connector->base.kdev));
 
 	intel_dp->aux.dev = connector->base.kdev;
 	ret = drm_dp_aux_register(&intel_dp->aux);

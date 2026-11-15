@@ -59,6 +59,7 @@ void	kobject_del(struct kobject *);
 int	kobject_uevent_env(struct kobject *, enum kobject_action, char *[]);
 
 struct device	*drm618_kobj_to_dev(struct kobject *);
+struct kobject	*drm618_kdev_kobj(struct device *);
 #define	kobj_to_dev(kobj)	drm618_kobj_to_dev(kobj)
 
 #endif

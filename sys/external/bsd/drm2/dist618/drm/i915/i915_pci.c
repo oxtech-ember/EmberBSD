@@ -962,7 +962,7 @@ static int i915_pci_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 		return -ENODEV;
 
 	if (intel_info->require_force_probe && !id_forced(pdev->device)) {
-		dev_info(&pdev->dev,
+		dev_info(pdev->pd_dev,
 			 "Your graphics device %04x is not properly supported by i915 in this\n"
 			 "kernel version. To force driver probe anyway, use i915.force_probe=%04x\n"
 			 "module parameter or CONFIG_DRM_I915_FORCE_PROBE=%04x configuration option,\n"
@@ -972,13 +972,13 @@ static int i915_pci_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	}
 
 	if (id_blocked(pdev->device)) {
-		dev_info(&pdev->dev, "I915 probe blocked for Device ID %04x.\n",
+		dev_info(pdev->pd_dev, "I915 probe blocked for Device ID %04x.\n",
 			 pdev->device);
 		return -ENODEV;
 	}
 
 	if (intel_info->require_force_probe) {
-		dev_info(&pdev->dev, "Force probing unsupported Device ID %04x, tainting kernel\n",
+		dev_info(pdev->pd_dev, "Force probing unsupported Device ID %04x, tainting kernel\n",
 			 pdev->device);
 		add_taint(TAINT_USER, LOCKDEP_STILL_OK);
 	}

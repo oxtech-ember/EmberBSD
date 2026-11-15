@@ -503,7 +503,7 @@ void intel_engines_add_sysfs(struct drm_i915_private *i915)
 	struct intel_engine_cs *engine;
 	struct kobject *dir;
 
-	dir = kobject_create_and_add("engine", &kdev->kobj);
+	dir = kobject_create_and_add("engine", drm618_kdev_kobj(kdev));
 	if (!dir)
 		return;
 

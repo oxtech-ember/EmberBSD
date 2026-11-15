@@ -531,4 +531,182 @@ int	simple_open(struct inode *, struct file *);
 			dev_notice((dev), fmt, ##__VA_ARGS__);		\
 	} while (0)
 
+
+/* ---- batch 2: constants, pure helpers ---- */
+
+#include <linux/sched.h>
+#include <linux/sched/signal.h>
+#include <linux/minmax.h>
+#include <linux/pm_runtime.h>
+
+#define	noinline_for_stack	__attribute__((__noinline__))
+#define	_RET_IP_		((unsigned long)__builtin_return_address(0))
+
+#ifndef TASK_NORMAL
+#define	TASK_NORMAL		(TASK_INTERRUPTIBLE | TASK_UNINTERRUPTIBLE)
+#endif
+
+/* PCI: the class code of a host bridge, the standard BARs (the configuration space registers are the layer's) */
+#ifndef PCI_CLASS_BRIDGE_HOST
+#define	PCI_CLASS_BRIDGE_HOST	0x0600
+#endif
+#ifndef PCI_STD_RESOURCES
+#define	PCI_STD_RESOURCES	0
+#define	PCI_STD_RESOURCE_END	5
+#endif
+
+/* backlight power states: the values of the blank levels they stand for (unblank 0, powerdown 4) */
+#ifndef BACKLIGHT_POWER_ON
+#define	BACKLIGHT_POWER_ON	0
+#define	BACKLIGHT_POWER_OFF	4
+#endif
+
+/* x86 page table bits: write through, cache disable, PAT */
+#define	_PAGE_PWT		0x008ul
+#define	_PAGE_PCD		0x010ul
+#define	_PAGE_PAT		0x080ul
+#define	_PAGE_CACHE_MASK	(_PAGE_PAT | _PAGE_PCD | _PAGE_PWT)
+
+/* suspend states of the kernel sleep interface (a numbering of the levels, not a state of this machine) */
+typedef int suspend_state_t;
+#define	PM_SUSPEND_ON		0
+#define	PM_SUSPEND_TO_IDLE	1
+#define	PM_SUSPEND_STANDBY	2
+#define	PM_SUSPEND_MEM		3
+
+#define	PFN_PHYS(pfn)		((paddr_t)(pfn) << PAGE_SHIFT)
+
+/* index of the highest set bit; the argument is not zero */
+static inline unsigned long
+__fls(unsigned long word)
+{
+
+	return (BITS_PER_LONG - 1) - (unsigned long)__builtin_clzl(word);
+}
+
+/* the lock with interrupts of this CPU off, kept off when the lock is taken */
+static inline int
+spin_trylock_irq(spinlock_t *lock)
+{
+
+	local_irq_disable();
+	if (mutex_tryenter(&lock->sl_lock))
+		return 1;
+	local_irq_enable();
+	return 0;
+}
+
+/* a 32 bit user pointer of a compat process */
+#define	compat_ptr(uptr)	((void *)(uintptr_t)(uint32_t)(uptr))
+
+#define	lockdep_set_class_and_name(l, k, n)	((void)(l), (void)(k), (void)(n))
+#define	WARN_RATELIMIT(cond, fmt, ...)					\
+	({ static struct ratelimit_state __rs;				\
+	   static bool __rs_init;					\
+	   bool __c = !!(cond);						\
+	   if (!__rs_init) {						\
+		ratelimit_state_init(&__rs, 5 * hz, 10);		\
+		__rs_init = true;					\
+	   }								\
+	   if (__c && __ratelimit(&__rs))				\
+		printf("WARNING: " fmt, ##__VA_ARGS__);			\
+	   __c; })
+
+/* port and memory mapped register access under the names of the pci_iomap family: the same loads and stores */
+#define	ioread8(addr)		readb(addr)
+#define	ioread16(addr)		readw(addr)
+#define	ioread32(addr)		readl(addr)
+#define	iowrite8(v, addr)	writeb((v), (addr))
+#define	iowrite16(v, addr)	writew((v), (addr))
+#define	iowrite32(v, addr)	writel((v), (addr))
+#define	IOMEM_ERR_PTR(err)	((void *)ERR_PTR(err))
+
+/* a device without runtime power management is active: the count is not kept, so "taken" */
+static inline int
+pm_runtime_get_if_active(struct device *dev)
+{
+
+	return pm_runtime_get_if_in_use(dev);
+}
+
+/*
+ * sort with a third argument; the elements are exchanged by SWAPFN, or bytewise
+ * when it is NULL.  Insertion sort: the tables the driver sorts have a few
+ * dozen entries, and it is stable.
+ */
+static inline void
+sort_r(void *base, size_t num, size_t size,
+    int (*cmp)(const void *, const void *, const void *),
+    void (*swapfn)(void *, void *, int), const void *priv)
+{
+	char *b = base;
+	size_t i, j;
+
+	for (i = 1; i < num; i++) {
+		for (j = i; j > 0 &&
+		    cmp(b + (j - 1) * size, b + j * size, priv) > 0; j--) {
+			if (swapfn != NULL) {
+				swapfn(b + (j - 1) * size, b + j * size, (int)size);
+			} else {
+				char *x = b + (j - 1) * size, *y = b + j * size;
+				size_t k;
+
+				for (k = 0; k < size; k++) {
+					char t = x[k];
+
+					x[k] = y[k];
+					y[k] = t;
+				}
+			}
+		}
+	}
+}
+
+/* ---- batch 2: declared, not defined ---- */
+
+struct device;
+struct pci_dev;
+struct page;
+void __iomem *pci_iomap_range(struct pci_dev *, int, unsigned long,
+	    unsigned long);
+int	dma_set_mask(struct device *, uint64_t);
+int	dma_set_coherent_mask(struct device *, uint64_t);
+struct page *drm618_pfn_to_page(unsigned long);
+#define	pfn_to_page(pfn)	drm618_pfn_to_page(pfn)
+struct device_link;
+struct device_link *device_link_add(struct device *, struct device *, u32);
+void	device_link_remove(void *, struct device *);
+#define	DL_FLAG_STATELESS	(1 << 0)
+
+
+/*
+ * The Linux forms of two macros the layer has as braced initialisers: they
+ * are expressions (compound literals) here, so they work in an assignment as
+ * well as in a declaration.
+ */
+#include <linux/ioport.h>
+#include <linux/iosys-map.h>
+#undef	DEFINE_RES_MEM
+#define	DEFINE_RES_MEM(START, SIZE)					\
+	((struct resource){ .start = (START),				\
+	    .end = (START) + ((SIZE) - 1), .flags = IORESOURCE_MEM })
+#undef	IOSYS_MAP_INIT_OFFSET
+#define	IOSYS_MAP_INIT_OFFSET(MAP, OFFSET)				\
+	((struct iosys_map){						\
+		.vaddr = (char *)(MAP)->vaddr + (OFFSET),		\
+		.is_iomem = (MAP)->is_iomem,				\
+	})
+
+/* the component framework: the operations of a component that binds to a master (declared, not defined) */
+struct component_ops {
+	int	(*bind)(struct device *, struct device *, void *);
+	void	(*unbind)(struct device *, struct device *, void *);
+};
+int	component_add_typed(struct device *, const struct component_ops *, int);
+void	component_del(struct device *, const struct component_ops *);
+
+/* a timer is armed when its expiry is not zero: the layer's timer has no such member (declared, not defined) */
+struct timer_list;
+unsigned long	drm618_timer_expires(const struct timer_list *);
+
 #endif

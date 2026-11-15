@@ -3354,7 +3354,7 @@ intel_sdvo_init_ddc_proxy(struct intel_sdvo_ddc *ddc,
 	ddc->ddc.owner = THIS_MODULE;
 	snprintf(ddc->ddc.name, I2C_NAME_SIZE, "SDVO %c DDC%d",
 		 port_name(sdvo->base.port), ddc_bus);
-	ddc->ddc.dev.parent = &pdev->dev;
+	ddc->ddc.dev.parent = pdev->pd_dev;
 	ddc->ddc.algo_data = ddc;
 	ddc->ddc.algo = &intel_sdvo_ddc_proxy;
 	ddc->ddc.lock_ops = &proxy_lock_ops;

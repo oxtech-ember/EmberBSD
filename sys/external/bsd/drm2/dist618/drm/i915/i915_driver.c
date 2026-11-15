@@ -745,7 +745,7 @@ i915_driver_create(struct pci_dev *pdev, const struct pci_device_id *ent)
 	struct drm_i915_private *i915;
 	struct intel_display *display;
 
-	i915 = devm_drm_dev_alloc(&pdev->dev, &i915_drm_driver,
+	i915 = devm_drm_dev_alloc(pdev->pd_dev, &i915_drm_driver,
 				  struct drm_i915_private, drm);
 	if (IS_ERR(i915))
 		return i915;

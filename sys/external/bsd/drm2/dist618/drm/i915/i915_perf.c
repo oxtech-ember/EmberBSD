@@ -4275,7 +4275,7 @@ void i915_perf_register(struct drm_i915_private *i915)
 
 	perf->metrics_kobj =
 		kobject_create_and_add("metrics",
-				       &i915->drm.primary->kdev->kobj);
+				       drm618_kdev_kobj(i915->drm.primary->kdev));
 
 	mutex_unlock(&gt->perf.lock);
 }

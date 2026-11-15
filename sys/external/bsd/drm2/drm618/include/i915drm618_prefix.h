@@ -35,6 +35,9 @@
 #define	CONFIG_DRM_I915_TIMESLICE_DURATION	1
 #define	CONFIG_DRM_I915_USERFAULT_AUTOSUSPEND	250
 
+/* The display files are shared with the xe driver; this is the i915 side of their #ifdef I915 */
+#define	I915	1
+
 /* Options that are on. */
 #define	CONFIG_PM			1	/* runtime pm calls compile; the layer has none */
 #define	CONFIG_64BIT			1
@@ -46,6 +49,14 @@
 #include <linux/kobject.h>	/* struct attribute_group, struct kobject (i915_pmu.h, i915_perf_types.h, gt) */
 #include <linux/sysfs.h>
 #include <linux/pwm.h>		/* struct pwm_state (intel_display_types.h) */
+#include <linux/io-mapping.h>
+#include <linux/pm_qos.h>
+#include <linux/vga_switcheroo.h>
+#include <linux/relay.h>
+#include <linux/cec.h>
+#include <linux/component.h>
+#include <linux/moduleparam.h>
+#include <linux/dma-mapping.h>
 #include <i915drm618_compat.h>	/* small helpers the layer lacks */
 
 #endif
