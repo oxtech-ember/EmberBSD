@@ -359,4 +359,60 @@ sg_set_folio(struct scatterlist *sg, struct folio *folio, size_t len, size_t off
 	sg_set_page(sg, &folio->page, len, offset);
 }
 
+/* x86-64 Linux values for the large file checks and the queued I/O result of the shmem write */
+#ifndef EIOCBQUEUED
+#define	EIOCBQUEUED		529
+#endif
+#define	MAX_LFS_FILESIZE	((loff_t)LLONG_MAX)
+#define	O_LARGEFILE		0
+#define	force_o_largefile()	(sizeof(long) != 4)
+
+/* relay: a channel of sub buffers to a user space reader (declared, not defined: no relay, no debugfs) */
+struct rchan_buf;
+struct rchan {
+	size_t	subbuf_size;	/* the size of one sub buffer */
+	size_t	n_subbufs;
+	void	*private_data;
+};
+struct dentry;
+struct rchan_callbacks {
+	int	(*subbuf_start)(struct rchan_buf *, void *, void *);
+	struct dentry *(*create_buf_file)(const char *, struct dentry *, umode_t, struct rchan_buf *, int *);
+	int	(*remove_buf_file)(struct dentry *);
+};
+bool	relay_buf_full(struct rchan_buf *);
+void	*relay_reserve(struct rchan *, size_t);
+void	relay_flush(struct rchan *);
+struct rchan *relay_open(const char *, struct dentry *, size_t, size_t, const struct rchan_callbacks *, void *);
+void	relay_close(struct rchan *);
+extern const struct file_operations relay_file_operations;
+
+/* a page for the driver's own use (declared, not defined: the allocation of pages is phase 2) */
+unsigned long __get_free_page(gfp_t);
+void	free_page(unsigned long);
+
+/* a time in milliseconds as a ktime (nanoseconds); the number is not range checked, as Linux's */
+static inline ktime_t
+ms_to_ktime(u64 ms)
+{
+
+	return (ktime_t)(ms * 1000000ull);
+}
+
+/* "package not installed": the layer's own number (Linux's collides with a NetBSD one) */
+#ifndef ENOPKG
+#define	ENOPKG	523
+#endif
+
+/* NetBSD's autoconfiguration has a QUIET flag; i915 defines its own */
+#include <sys/device.h>
+#undef	QUIET
+
+/* The i915 files name their table of operations in debugfs_create_file: it stays referenced (the DRM core defines none) */
+#include <linux/debugfs.h>
+#undef	debugfs_create_file
+#define	debugfs_create_file(name, mode, parent, data, fops)		\
+	((void)(name), (void)(mode), (void)(parent), (void)(data), (void)(fops), \
+	    (struct dentry *)NULL)
+
 #endif

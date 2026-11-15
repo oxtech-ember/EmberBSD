@@ -27,10 +27,11 @@
 
 /*
  * castable_to_type(N, T): N can be assigned to T without loss: for a
- * constant when it fits, otherwise when it has the width and signedness of T
- * (not necessarily the same type: the layer's pgoff_t is not unsigned long).
- */
-/*
+ * constant when it fits, otherwise when it has the type of T or the width and
+ * signedness of T.  pgoff_t is a signed type here (uvm's), Linux's is unsigned
+ * long: for it the target is unsigned long (a constant must fit that, a variable
+ * must be a pgoff_t or an unsigned long wide value).
+ *
  * The test for a constant N is an integer constant expression (static_assert
  * and bit-field widths need one): N is compared with the range of T in the
  * widest types, the sign first.
@@ -45,22 +46,19 @@
 	    (__drm618_uns(T) ||						\
 	        (long long)(N) < -(long long)__drm618_tmax(T) - 1) :	\
 	    (unsigned long long)(N) > __drm618_tmax(T))
-/*
- * pgoff_t is a signed type here (uvm's), Linux's is unsigned long: for it a
- * variable is castable when it is a pgoff_t or an unsigned long wide value, as
- * for unsigned long.  Other targets: the same width and signedness.
- */
 #define	__drm618_is_pgoff(T)						\
 	__builtin_types_compatible_p(__typeof__(T), pgoff_t)
+#define	__drm618_castable_tgt(T)					\
+	__typeof__(__builtin_choose_expr(__drm618_is_pgoff(T),		\
+	    (unsigned long)0, (__typeof__(T))0))
 #ifndef castable_to_type
 #define	castable_to_type(N, T)						\
 	__builtin_choose_expr(__builtin_constant_p(N),			\
-	    !__drm618_overflows_const((N), T),				\
+	    !__drm618_overflows_const((N), __drm618_castable_tgt(T)),	\
 	    (__builtin_types_compatible_p(__typeof__(N), __typeof__(T)) || \
-	    (sizeof(N) == sizeof(__typeof__(T)) &&			\
-	    __drm618_uns(__typeof__(N)) == __drm618_uns(T)) ||		\
-	    (__drm618_is_pgoff(T) && sizeof(N) == sizeof(unsigned long) && \
-	    __drm618_uns(__typeof__(N)))))
+	    (sizeof(N) == sizeof(__drm618_castable_tgt(T)) &&		\
+	    __drm618_uns(__typeof__(N)) ==				\
+	    __drm618_uns(__drm618_castable_tgt(T)))))
 #endif
 
 #endif

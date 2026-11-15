@@ -19,7 +19,9 @@
 #include <linux/hdmi.h>
 #include <linux/interrupt.h>
 #include <linux/overflow.h>
+#include <linux/ioport.h>
 #include <linux/pci.h>
+#include <linux/timer.h>
 #include <linux/shmem_fs.h>
 #include <linux/slab.h>
 #include <linux/xarray.h>
@@ -411,6 +413,23 @@ drm2_i915_layer_c_run(void)
 	CHECK(FAULT_FLAG_RETRY_NOWAIT == 0x08 && (FAULT_FLAG_ALLOW_RETRY & FAULT_FLAG_WRITE) == 0);
 	CHECK(offsetof(struct vm_area_struct, vm_mm) > offsetof(struct vm_area_struct, vm_private_data));
 	CHECK(current->mm == (struct mm_struct *)curproc->p_vmspace);
+
+	/* kfree takes a const pointer, resource_size and resource_contains too, timer_pending a const timer */
+	{
+		const char *cp = kstrdup("const text", GFP_KERNEL);
+		const struct resource r1 = DEFINE_RES_MEM(0x1000, 0x1000), r2 = DEFINE_RES_MEM(0x1800, 0x100);
+		const struct resource r3 = DEFINE_RES_MEM(0x1f80, 0x100);
+		struct timer_list tm;
+		const struct timer_list *ctm = &tm;
+
+		CHECK(cp != NULL && strcmp(cp, "const text") == 0);
+		kfree(cp);
+		kfree((const void *)NULL);
+		CHECK(resource_size(&r1) == 0x1000 && resource_size(&r2) == 0x100);
+		CHECK(resource_contains(&r1, &r2) && !resource_contains(&r1, &r3) && !resource_contains(&r2, &r1));
+		timer_setup(&tm, NULL, 0);
+		CHECK(!timer_pending(ctm));
+	}
 
 	destroy_waitqueue_head(&q1);
 	destroy_waitqueue_head(&t_vq);
