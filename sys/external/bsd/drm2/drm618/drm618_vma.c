@@ -41,7 +41,9 @@
 #include <sys/mutex.h>
 #include <sys/once.h>
 #include <sys/queue.h>
+#include <sys/proc.h>
 #include <sys/rwlock.h>
+#include <sys/signalvar.h>
 #include <sys/systm.h>
 
 #include <uvm/uvm.h>
@@ -301,11 +303,21 @@ vma_fault(struct uvm_faultinfo *ufi, vaddr_t vaddr, struct vm_page **pps __unuse
 
 	if (res & VM_FAULT_NOPAGE)
 		error = 0;
-	else if (res & VM_FAULT_RETRY)
-		error = ERESTART;
-	else if (res & VM_FAULT_OOM) {
+	else if (res & (VM_FAULT_RETRY | VM_FAULT_OOM)) {
+		/*
+		 * Try again, but not for ever: a signal that is pending ends
+		 * the wait with SIGBUS (the signal of a refusal), so that a
+		 * process in a shortage of memory can still be killed.  A
+		 * retry that nothing waits for sleeps a tick instead of
+		 * spinning.
+		 */
 		uvmfault_unlockall(ufi, ufi->entry->aref.ar_amap, NULL);
-		uvm_wait("drm618vma");
+		if (sigispending(curlwp, 0))
+			return EINVAL;
+		if (res & VM_FAULT_OOM)
+			uvm_wait("drm618vma");
+		else
+			kpause("drm618rt", false, 1, NULL);
 		return ERESTART;
 	} else
 		error = EINVAL;
