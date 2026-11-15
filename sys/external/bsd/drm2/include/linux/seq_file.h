@@ -95,7 +95,7 @@ seq_puts(struct seq_file *m, const char *s)
 	(void)seq_write(m, s, strlen(s));
 }
 
-static inline void
+static inline void __printflike(2, 0)
 seq_vprintf(struct seq_file *m, const char *fmt, va_list ap)
 {
 	int len;
