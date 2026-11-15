@@ -250,3 +250,102 @@ that drm618/gpl-only.tsv gains the rows of the two files that are not
 imported, virtgpu_vram.c and virtgpu_trace.h.  prepare-import618.sh --verify
 exits 1 when patches.tsv names a file that is not imported.
 
+
+The i915 driver of Linux 6.18 (dist618/drm/i915, include/drm/intel)
+--------------------------------------------------------------------
+
+Import.  select618.py selects drivers/gpu/drm/i915 and include/drm/intel by
+directory, not by Makefile (a Makefile is not part of the MIT-licensed files).
+Left out on purpose, listed in drm618/i915-excluded.tsv: gvt/, the self tests
+(selftests/ at every level, selftest_*, mock_*, *_selftest*, except
+i915_selftest.h, which the sources include for its stubs).  pxp/ is imported
+whole: its headers hold the stubs for CONFIG_DRM_I915_PXP off, the .c files
+are not part of the working set.  The GPL-licensed files of the directory
+(intel_acpi.c, i915_trace.h and i915_trace_points.c, intel_uncore_trace.{c,h},
+display/intel_display_trace.{c,h}, include/drm/intel/i915_hdcp_interface.h,
+include/drm/intel/intel-gtt.h) are in gpl-only.tsv; the self test files among
+them carry "excluded" in the last column.  726 files are imported byte for
+byte (MANIFEST.tsv).  A full re-import (sh prepare-import618.sh
+linux-6.18.63 REFDIR) must leave git status empty except that the six files of
+patches.tsv are pristine again (apply their local patches as before).
+
+Working set.  files.i915drm618 is a DRAFT of the 303 sources for Arrow Lake
+8086:7d67 (everything but gvt, self tests, pxp and the GPL-only sources).  It is
+not included from sys/conf/files and no module uses it: the driver has no
+autoconfiguration glue and does not link.  The first block of the file
+compiles against the layer, the second does not yet (first error as comment).
+Compile progress is measured with clang -c, the flags of the drmkms618
+module without -Werror and with the waivers the Linux files get in the
+modules (-Wno-pointer-arith -Wno-shadow -Wno-format -Wno-write-strings
+-Wno-cast-qual -Wno-sign-compare), plus -include
+drm618/include/i915drm618_prefix.h.
+
+Prefix.  drm618/include/i915drm618_prefix.h is compiled into every i915 file.
+It sets the Kconfig options and brings in the headers that Linux's include
+chain gives every i915 file (linux/io.h, interrupt.h, kobject.h, sysfs.h,
+pwm.h, timekeeping.h) and i915drm618_compat.h (small helpers: kstrtox, RCU
+list forms, bitmaps, strim, ...).  Options that are off stay undefined (the
+sources test #ifdef as well as IS_ENABLED()).
+
+  CONFIG_DRM_I915_REQUEST_TIMEOUT 20000 ms, FENCE_TIMEOUT 10000,
+  HEARTBEAT_INTERVAL 2500, PREEMPT_TIMEOUT 640 (COMPUTE 7500),
+  STOP_TIMEOUT 100, MAX_REQUEST_BUSYWAIT 8000 (ns), TIMESLICE_DURATION 1,
+  USERFAULT_AUTOSUSPEND 250: the defaults of the i915 profile.
+  CONFIG_PM 1, CONFIG_64BIT 1; CONFIG_DRM_I915_FORCE_PROBE "".
+  Off (undefined): ACPI (until an intel_acpi of this tree exists: the opregion
+  and the VBT from it are off), DRM_I915_PXP, DRM_I915_GVT, DRM_I915_SELFTEST,
+  DRM_I915_CAPTURE_ERROR, all DRM_I915_DEBUG*, DEBUG_FS, PERF_EVENTS, HWMON,
+  DRM_FBDEV_EMULATION, INTEL_MEI_*, DRM_I915_DP_TUNNEL.
+
+Layer files written for it (shadow headers: only the 6.18 include directory
+sees them; behaviour is checked by the group drm2-i915-layer of
+drmkms618_test, the host contract ember/tests/drm2-build-bug.sh):
+  linux/bits.h BIT_Un, GENMASK_Un; linux/bitfield.h FIELD_FIT;
+  linux/overflow.h overflows_type, castable_to_type; linux/stddef.h
+  typeof_member; linux/refcount.h refcount_read; linux/io.h readb..writeq;
+  linux/seqlock.h seqcount_mutex_t; linux/wait.h wait queue entries and
+  __wake_up (an entry's function is called by a wake-up; a sleeper in
+  wait_event* is not an entry); linux/scatterlist.h chains (sg_chain,
+  sg_is_chain, sg_next follows a link); linux/tasklet.h the 6.18 tasklet
+  structure and bit operations; linux/delay.h msleep_interruptible;
+  linux/log2.h order_base_2 as a constant; linux/build_bug.h BUILD_BUG_ON decided
+  after inlining (error attribute); linux/ascii85.h; asm/hypervisor.h;
+  linux/sysfs.h, kobject.h (types, sysfs_emit); linux/pwm.h; trace points that
+  evaluate nothing (i915_trace.h, intel_display_trace.h,
+  intel_uncore_trace.h); drm/intel/i915_hdcp_interface.h, intel-gtt.h; video/vga.h;
+  asm/cacheflush.h, rwonce.h, tsc.h and linux/cpufeature.h route to the layer's
+  own headers.  Local patch of an imported file: drm/i915/i915_vma.h reads the
+  flags through a_u.au_int (the layer's atomic_t has no member counter).
+
+Not defined (declared only: a module that calls them does not link; the fate
+of each is decided when the driver is linked):
+  tasklet_setup, tasklet_init, tasklet_schedule, tasklet_hi_schedule,
+  tasklet_kill, tasklet_disable (softint queue);
+  sysfs_create_group/file/files/bin_file and the remove forms, sysfs_merge_group,
+  kobject_init, kobject_add, kobject_init_and_add, kobject_create_and_add,
+  kobject_get, kobject_put, kobject_del, kobject_uevent_env, kobj_sysfs_ops,
+  drm618_kobj_to_dev (no sysfs: replace by sysctl or leave the callers out);
+  intel_gmch_probe, remove, enable_gtt, gtt_get, gtt_flush, gtt_insert_page,
+  gtt_insert_sg_entries, gtt_clear_range, gtt_read_entry (AGP glue, Gen2-5);
+  single_open, single_open_size, single_release, seq_read, seq_lseek,
+  default_llseek, simple_open (only named in file operation tables; no
+  debugfs).
+Stand-ins that are true to the layer: pm_runtime_suspended is false (the layer
+has no runtime power management); pwm_get finds no device (an error pointer) and
+the other pwm calls panic if reached; cond_resched_lock is 0 (kernel
+preemption never needs the lock dropped); the trace points and
+might_alloc/lockdep_assert_not_held do nothing; debugfs creation makes
+nothing (as before).  The numbers of the HDCP enumerations of i915_hdcp_interface.h
+(DDI and transcoder codes) are not checked against the firmware interface and
+matter only with HDCP firmware, which this build does not use.  Values of
+ENOKEY and EBADSLT are the layer's own, not Linux's.
+
+Not yet compiling (see files.i915drm618): the device model (the sources read
+struct device members that a NetBSD device_t lacks), PCI helpers
+(pci_iomap_range, pci_set_power_state, ...), MIPI DSI, GPIO and pinctrl for the
+DSI panels, hwmon, relay, perf PMU, MEI/auxiliary bus, the page table calls
+(pfn_to_page, set_pte_at, apply_to_page_range, vmap_pfn), the VM interfaces of
+the GEM mmap, fs_context for the shmem mount, linux/uio.h, zlib for the error
+capture, the shrinker registration, i915 files whose own headers are cut off by
+the first error of a file.  Linking, autoconfiguration, interrupts, MMIO,
+GGTT, firmware loading and intel_acpi/opregion are for the next step.
