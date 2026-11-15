@@ -231,8 +231,11 @@ policy separately normalizes `__FILE__` values.
 
 Prepared external sources and staged runtimes are outside `NETBSDSRCDIR`.
 `share/mk/bsd.sys.mk` maps each selected root with `-ffile-prefix-map`:
-`EMBER_LIBEDIT_SOURCE`, `EMBER_LIBEVENT_SOURCE`, `EMBER_LIBARCHIVE_SOURCE`,
-`EMBER_BYACC_SOURCE` and `EMBER_LLVM_SOURCE` go to `/usr/src/external/NAME`. `EMBER_EXTERNAL_LLVM_RUNTIME`
+The selected `EMBER_*_SOURCE` roots, including OpenSSL, Heimdal, OpenSSH,
+WPA and the other prepared base dependencies, go to `/usr/src/external/NAME`.
+This covers diagnostic `__FILE__` strings as well as debug information;
+adding a prepared dependency requires its map and a two-root regression.
+`EMBER_EXTERNAL_LLVM_RUNTIME`
 goes to `/usr/pkg/llvm` and `EMBER_EXTERNAL_GCC_RUNTIME` to `/usr/pkg/gcc16`.
 The `lib/libc` tags use the same list. Each root must be an absolute path
 without special characters; otherwise the build stops.

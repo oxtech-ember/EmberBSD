@@ -82,6 +82,20 @@ REPROFLAGS+=	-fdebug-regex-map='/usr/src/(.*)/obj\..*/(.*)=/usr/obj/\1/\2'
 .for _var _path in EMBER_LIBEDIT_SOURCE /usr/src/external/libedit \
     EMBER_LIBEVENT_SOURCE /usr/src/external/libevent \
     EMBER_LIBARCHIVE_SOURCE /usr/src/external/libarchive \
+    EMBER_OPENSSL_SOURCE /usr/src/external/openssl \
+    EMBER_LIBFIDO2_SOURCE /usr/src/external/libfido2 \
+    EMBER_LIBCBOR_SOURCE /usr/src/external/libcbor \
+    EMBER_LIBFETCH_SOURCE /usr/src/external/libfetch \
+    EMBER_OPENLDAP_SOURCE /usr/src/external/openldap \
+    EMBER_UNBOUND_SOURCE /usr/src/external/unbound \
+    EMBER_WPA_SOURCE /usr/src/external/wpa \
+    EMBER_MDNS_SOURCE /usr/src/external/mdns \
+    EMBER_DHCPCD_SOURCE /usr/src/external/dhcpcd \
+    EMBER_HEIMDAL_SOURCE /usr/src/external/heimdal \
+    EMBER_OPENSSH_SOURCE /usr/src/external/openssh \
+    EMBER_EKERMIT_SOURCE /usr/src/external/ekermit \
+    EMBER_ZLIB_SOURCE /usr/src/external/zlib \
+    EMBER_EXPAT_SOURCE /usr/src/external/expat \
     EMBER_BYACC_SOURCE /usr/src/external/byacc \
     EMBER_TEXINFO_SOURCE /usr/src/external/texinfo \
     EMBER_RCS_SOURCE /usr/src/external/rcs \
