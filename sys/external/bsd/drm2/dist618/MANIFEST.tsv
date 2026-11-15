@@ -225,3 +225,16 @@ include/uapi/drm/vgem_drm.h	91e71d11375134aff8b981eea11bf7d3eca9d7f528fbdbd351ec
 include/uapi/drm/virtgpu_drm.h	3fb60f5131574dd1fb4aff3e10a45448fa67fe10796e0cf21c6ee583eb996cbd	MIT	text	include/uapi/drm/virtgpu_drm.h
 include/uapi/drm/vmwgfx_drm.h	b1601123d2701092a0add1bd76ce64dbbc44072cdf56be99b346423838ccbb76	DUAL	(GPL-2.0 WITH Linux-syscall-note) OR MIT	include/uapi/drm/vmwgfx_drm.h
 include/uapi/drm/xe_drm.h	0183a48af575f0786a0e6be996900e874f89edb2158879b47671ad6367b6e74a	MIT	MIT	include/uapi/drm/xe_drm.h
+drm/virtio/virtgpu_debugfs.c	dff7ba80109b2e8e5b16a7e0879aaab546b48d0a326f19c4ac2f8b16c82ce1f7	MIT	text	drivers/gpu/drm/virtio/virtgpu_debugfs.c
+drm/virtio/virtgpu_display.c	bbdd93c69e6e40b4de94c40f08d06333adaebeaba8b7ec75ffd87a4cf2623177	MIT	text	drivers/gpu/drm/virtio/virtgpu_display.c
+drm/virtio/virtgpu_drv.c	3762e5ac3c8fb221fd59391cebdb8fcb90de1d807960e5fd4250bb6e86dee026	MIT	text	drivers/gpu/drm/virtio/virtgpu_drv.c
+drm/virtio/virtgpu_drv.h	649f9770e03d047ab4a0c51b3096e68e0d6856bda8e7076c431bd73dd186ec5d	MIT	text	drivers/gpu/drm/virtio/virtgpu_drv.h
+drm/virtio/virtgpu_fence.c	307141a298e767a0df453763e84ba05ec29331424bf4e1753808fc7040391f74	MIT	text	drivers/gpu/drm/virtio/virtgpu_fence.c
+drm/virtio/virtgpu_gem.c	5d484035d1363149c20ce2fed7b8f745af359c98bb81a2be215e9871c00dec1a	MIT	text	drivers/gpu/drm/virtio/virtgpu_gem.c
+drm/virtio/virtgpu_ioctl.c	bd436c957c3c02209a6fc479317ba41af82a7b0599df8dc2e6d8c58de70c03fb	MIT	text	drivers/gpu/drm/virtio/virtgpu_ioctl.c
+drm/virtio/virtgpu_kms.c	496972487c56c8ff54e4cf0d1f33d875bc1546123f8f6f6d9acc3f6e99fc7473	MIT	text	drivers/gpu/drm/virtio/virtgpu_kms.c
+drm/virtio/virtgpu_object.c	0da51d8a7f0ab5065fb010a0cba2c41f1e8d12da49c53e5b4bc25e7158a542e3	MIT	text	drivers/gpu/drm/virtio/virtgpu_object.c
+drm/virtio/virtgpu_plane.c	0f403831c65082f1a16696dabcf5a9224b11a8a3f6a93f9b2371ff89dce58753	MIT	text	drivers/gpu/drm/virtio/virtgpu_plane.c
+drm/virtio/virtgpu_prime.c	b1e415c76226e97f86703c38153041179ad2970255ebbcd157d1d9a00e8c8c37	MIT	text	drivers/gpu/drm/virtio/virtgpu_prime.c
+drm/virtio/virtgpu_submit.c	f04e5896e853851931377c8dd1262fa19b44206b678c6a7cc26be9a63ae4a1db	MIT	text	drivers/gpu/drm/virtio/virtgpu_submit.c
+drm/virtio/virtgpu_vq.c	51751a196b043410921284175fe017df35761d05abe6bfa8528660840e263973	MIT	text	drivers/gpu/drm/virtio/virtgpu_vq.c
