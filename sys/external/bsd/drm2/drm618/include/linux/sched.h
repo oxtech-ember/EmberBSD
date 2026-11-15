@@ -23,10 +23,15 @@
 #ifndef _DRM618_LINUX_SCHED_H_
 #define _DRM618_LINUX_SCHED_H_
 
+/* the shared one takes a struct proc; this header has one for a task below */
+#define	signal_pending_state	drm618_shared_signal_pending_state
 #include_next <linux/sched.h>
+#undef	signal_pending_state
 
 #include <sys/stddef.h>
 #include <sys/proc.h>
+#include <sys/lwp.h>
+#include <sys/signalvar.h>
 
 struct task_struct {
 	union {
@@ -157,6 +162,38 @@ pid_task(struct pid *pid, enum pid_type type)
 void	drm618_set_current_state(int);
 long	schedule_timeout(long);
 int	wake_up_process(struct task_struct *);
+
+static inline void
+schedule(void)
+{
+
+	(void)schedule_timeout(MAX_SCHEDULE_TIMEOUT);
+}
+
+static inline long
+io_schedule_timeout(long timeout)
+{
+
+	return schedule_timeout(timeout);
+}
+
+static inline void
+io_schedule(void)
+{
+
+	schedule();
+}
+
+/* A signal ends a sleep in the interruptible states only. */
+static inline bool
+signal_pending_state(int state, struct task_struct *task)
+{
+
+	KASSERT((struct proc *)task == curproc);
+	if (state & TASK_UNINTERRUPTIBLE)
+		return false;
+	return sigispending(curlwp, 0);
+}
 
 #define	set_current_state(state)	drm618_set_current_state(state)
 #define	__set_current_state(state)	drm618_set_current_state(state)

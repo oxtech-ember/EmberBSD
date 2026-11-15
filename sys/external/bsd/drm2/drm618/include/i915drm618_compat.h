@@ -447,6 +447,7 @@ strreplace(char *s, char old, char new)
 })
 #define	range_overflows_t(type, start, size, max)			\
 	range_overflows((type)(start), (type)(size), (type)(max))
+
 #endif
 #ifndef range_end_overflows
 #define	range_end_overflows(start, size, max) ({			\
@@ -904,4 +905,46 @@ bool	perfmon_capable(void);
 int	pci_set_power_state(struct pci_dev *, int);
 int	pci_rebar_bytes_to_size(u64);
 
+/* ---- sleeping and 64 bit compare and swap (tests: drm2-i915-layer-c.c) ---- */
+#ifndef cmpxchg64
+#define	cmpxchg64(P, O, N)	__sync_val_compare_and_swap((P), (O), (N))
+#endif
+/* store N if *P is *V; else V gets the value found: true when stored */
+#define	try_cmpxchg64(P, V, N)						\
+({									\
+	__typeof__(*(V)) __tc_exp = *(V);				\
+	__typeof__(*(V)) __tc_old = cmpxchg64((P), __tc_exp, (N));	\
+	bool __tc_ok = (__tc_old == __tc_exp);				\
+	if (!__tc_ok)							\
+		*(V) = __tc_old;					\
+	__tc_ok;							\
+})
+
+/*
+ * Wait for a condition on a variable.  Every wait uses one queue of the pool
+ * that drm618_var_waitqueue picks from the address of the variable (declared,
+ * not defined: the pool is created with the module).
+ */
+#define	__var_waitqueue(var)	drm618_var_waitqueue(var)
+#define	___wait_var_event(var, cond, state, exclusive, ret, cmd)	\
+({									\
+	long __wve_ret = (ret);						\
+	wait_queue_head_t *__wve_q = __var_waitqueue(var);		\
+	DEFINE_WAIT(__wve_w);						\
+	for (;;) {							\
+		if (exclusive)						\
+			prepare_to_wait_exclusive(__wve_q, &__wve_w, state); \
+		else							\
+			prepare_to_wait(__wve_q, &__wve_w, state);	\
+		if (cond)						\
+			break;						\
+		if (signal_pending_state(state, current)) {		\
+			__wve_ret = -ERESTARTSYS;			\
+			break;						\
+		}							\
+		cmd;							\
+	}								\
+	finish_wait(__wve_q, &__wve_w);					\
+	__wve_ret;							\
+})
 #endif

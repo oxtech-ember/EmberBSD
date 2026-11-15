@@ -36,6 +36,7 @@
 #include <sys/param.h>
 #include <sys/condvar.h>
 #include <sys/kernel.h>
+#include <sys/proc.h>
 #include <sys/select.h>
 #include <sys/selinfo.h>
 #include <sys/systm.h>
@@ -105,12 +106,23 @@ waitqueue_active(wait_queue_head_t *wq)
 	return cv_has_waiters(&wq->cv);
 }
 
+struct task_struct;
+int	wake_up_process(struct task_struct *);
+void	drm618_set_current_state(int);
+
+/*
+ * An entry that names a task (DEFINE_WAIT, init_wait, init_waitqueue_entry)
+ * wakes it out of schedule_timeout (drm618_sleep.c); the result says whether a
+ * sleeper was woken, as try_to_wake_up does.  An entry without a task sleeps on
+ * the condition variable of the queue: the broadcast wakes it.
+ */
 static inline int
-default_wake_function(struct wait_queue_entry *entry __unused,
+default_wake_function(struct wait_queue_entry *entry,
     unsigned int mode __unused, int flags __unused, void *key __unused)
 {
 
-	/* the task of an entry sleeps on the condition variable: the broadcast wakes it */
+	if (entry->private != NULL)
+		return wake_up_process(entry->private);
 	return 1;
 }
 
@@ -155,11 +167,22 @@ init_waitqueue_entry(struct wait_queue_entry *entry, void *task)
 
 #define	DEFINE_WAIT_FUNC(name, function)				      \
 	struct wait_queue_entry name = {				      \
-		.private = NULL,					      \
+		.private = current,					      \
 		.func = (function),					      \
 		.entry = LIST_HEAD_INIT((name).entry),			      \
 	}
 #define	DEFINE_WAIT(name)	DEFINE_WAIT_FUNC(name, autoremove_wake_function)
+
+static inline void
+init_wait_entry(struct wait_queue_entry *entry, int flags)
+{
+
+	entry->flags = flags;
+	entry->private = (struct task_struct *)curproc;
+	entry->func = autoremove_wake_function;
+	INIT_LIST_HEAD(&entry->entry);
+}
+#define	init_wait(entry)	init_wait_entry(entry, 0)
 
 /* the caller holds the lock of the queue */
 static inline void
@@ -220,6 +243,53 @@ remove_wait_queue(wait_queue_head_t *wq, struct wait_queue_entry *entry)
 	spin_lock(&wq->lock);
 	__remove_wait_queue(wq, entry);
 	spin_unlock(&wq->lock);
+}
+
+/*
+ * The entry goes on the queue (once) and the task's state is set; the caller
+ * tests its condition next and sleeps in schedule().  The state is set after
+ * the queue lock is dropped (the state lock of drm618_sleep.c is an adaptive
+ * mutex): a wake-up in between is not lost, because the condition is tested
+ * after this returns and the waker changes it before it wakes.
+ */
+static inline void
+prepare_to_wait(wait_queue_head_t *wq, struct wait_queue_entry *entry,
+    int state)
+{
+
+	entry->flags &= ~WQ_FLAG_EXCLUSIVE;
+	spin_lock(&wq->lock);
+	if (list_empty(&entry->entry))
+		__add_wait_queue(wq, entry);
+	spin_unlock(&wq->lock);
+	drm618_set_current_state(state);
+}
+
+static inline void
+prepare_to_wait_exclusive(wait_queue_head_t *wq,
+    struct wait_queue_entry *entry, int state)
+{
+
+	entry->flags |= WQ_FLAG_EXCLUSIVE;
+	spin_lock(&wq->lock);
+	if (list_empty(&entry->entry))
+		__add_wait_queue_entry_tail(wq, entry);
+	spin_unlock(&wq->lock);
+	drm618_set_current_state(state);
+}
+
+static inline void
+finish_wait(wait_queue_head_t *wq, struct wait_queue_entry *entry)
+{
+
+	drm618_set_current_state(0);	/* TASK_RUNNING */
+	/* off the queue when it points at itself (list_empty_careful) */
+	if (entry->entry.next != &entry->entry ||
+	    entry->entry.prev != &entry->entry) {
+		spin_lock(&wq->lock);
+		list_del_init(&entry->entry);
+		spin_unlock(&wq->lock);
+	}
 }
 
 /*

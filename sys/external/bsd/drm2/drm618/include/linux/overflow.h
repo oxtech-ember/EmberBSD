@@ -45,12 +45,21 @@
 	    (__drm618_uns(T) ||						\
 	        (long long)(N) < -(long long)__drm618_tmax(T) - 1) :	\
 	    (unsigned long long)(N) > __drm618_tmax(T))
+/*
+ * pgoff_t is a signed type here (uvm's), Linux's is unsigned long: for it a
+ * variable must be an unsigned long long enough value, as for unsigned long.
+ */
+#define	__drm618_castable_tgt(T)					\
+	__typeof__(__builtin_choose_expr(				\
+	    __builtin_types_compatible_p(__typeof__(T), pgoff_t),	\
+	    (unsigned long)0, (__typeof__(T))0))
 #ifndef castable_to_type
 #define	castable_to_type(N, T)						\
 	__builtin_choose_expr(__builtin_constant_p(N),			\
 	    !__drm618_overflows_const((N), T),				\
-	    (sizeof(N) == sizeof(__typeof__(T)) &&			\
-	    __drm618_uns(__typeof__(N)) == __drm618_uns(T)))
+	    (sizeof(N) == sizeof(__drm618_castable_tgt(T)) &&		\
+	    __drm618_uns(__typeof__(N)) ==				\
+	    __drm618_uns(__drm618_castable_tgt(T))))
 #endif
 
 #endif

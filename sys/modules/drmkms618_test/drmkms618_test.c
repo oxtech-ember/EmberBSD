@@ -21,6 +21,7 @@ int	drm2_simplekms_run(void);
 int	drm2_printf_run(void);
 int	drm2_memfill_run(void);
 int	drm2_i915_layer_run(void);
+int	drm2_i915_layer_c_run(void);
 
 static int
 drmkms618_test_modcmd(modcmd_t cmd, void *arg __unused)
@@ -38,6 +39,7 @@ drmkms618_test_modcmd(modcmd_t cmd, void *arg __unused)
 		failed += drm2_printf_run();
 		failed += drm2_memfill_run();
 		failed += drm2_i915_layer_run();
+		failed += drm2_i915_layer_c_run();
 		return failed != 0 ? EIO : 0;
 	case MODULE_CMD_FINI:
 		return 0;
