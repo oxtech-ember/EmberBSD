@@ -60,6 +60,7 @@ makeoptions	drmkms618	"CPPFLAGS.drm618_file.c"+="-DDRM618_NBSD_FILE"
 file	external/bsd/drm2/drm618/drm618_file.c		drmkms618
 file	external/bsd/drm2/drm618/drm618_gem_atomic_helper.c	drmkms618
 file	external/bsd/drm2/drm618/drm618_gem_framebuffer_helper.c	drmkms618
+file	external/bsd/drm2/drm618/drm618_gem_shmem_helper.c	drmkms618
 file	external/bsd/drm2/drm618/drm618_kthread_worker.c	drmkms618
 file	external/bsd/drm2/drm618/drm618_lease.c	drmkms618
 file	external/bsd/drm2/drm618/drm618_managed.c	drmkms618

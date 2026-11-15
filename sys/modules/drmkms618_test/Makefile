@@ -21,6 +21,7 @@ SRCS+=	drm2-sched.c
 SRCS+=	drm2-ttm.c
 SRCS+=	drm2-gemfb.c
 SRCS+=	drm2-sg.c
+SRCS+=	drm2-shmem.c
 
 WARNS=	3
 
