@@ -13,6 +13,7 @@ import subprocess
 import shutil
 import sys
 import shlex
+import re
 
 TOOLS = Path(__file__).resolve().parent
 TARGETS = {'aarch64': 'BSD-aarch64', 'x86_64': 'BSD-x86_64',
@@ -34,6 +35,21 @@ def compiler_command(cc, family, triplet, sysroot, flags=()):
         args.append('--target=' + triplet)
     args.append('--sysroot=' + sysroot)
     return shlex.join(args)
+
+
+def public_buildinfo(family, version, triplet, target):
+    """Display compiler identity, not the host command or a wall-clock date.
+
+    Like the NetBSD libcrypto Makefile, keep toolchain paths out of the image.
+    The full upstream header remains in the private generation receipt.
+    """
+    if not re.fullmatch(r'[0-9]+(?:\.[0-9]+)*', version):
+        raise ValueError('invalid selected compiler version')
+    compiler = 'compiler: ' + family + ' ' + version + '; target: ' + triplet
+    return ('/* EmberBSD reproducible display metadata; generated, do not edit. */\n'
+            '#define PLATFORM ' + json.dumps('platform: ' + target) + '\n'
+            '#define DATE "built on: date not recorded"\n'
+            'static const char compiler_flags[] = ' + json.dumps(compiler) + ';\n')
 
 
 GENERATOR_FILES = ('prepare-generated.py', 'generated-sources.pl',
@@ -191,7 +207,8 @@ def main():
     required = ('crypto.mk', 'crypto-shared.mk', 'default.mk', 'common.mk', 'ssl.mk',
                 'ssl-shared.mk', 'apps.mk', 'legacy.mk', 'legacy-module.mk', 'test.mk', 'cli.mk',
                 'libcrypto.ld', 'libssl.ld', 'crypto.expsym', 'ssl.expsym', 'providers/legacy.ld',
-                'include/openssl/configuration.h', 'include/openssl/opensslv.h', 'configdata.pm')
+                'include/openssl/configuration.h', 'include/openssl/opensslv.h', 'configdata.pm',
+                'crypto/buildinf.h')
     preserved = {}
     if output.exists():
         try:
@@ -234,6 +251,14 @@ def main():
     listed = run([args.perl, '-I.', str(TOOLS / 'generated-sources.pl')], capture_output=True, text=True).stdout.splitlines()
     if listed:
         run([args.gmake, 'SHELL=' + args.shell, '-j' + str(args.jobs), *listed])
+    buildinfo = output / 'crypto/buildinf.h'
+    upstream_buildinfo = buildinfo.read_text()
+    version_option = '-dumpfullversion' if args.family == 'gcc' else '-dumpversion'
+    version = run([args.cc, version_option], capture_output=True, text=True).stdout.strip()
+    display = public_buildinfo(args.family, version, triplet, target)
+    # Upstream file-from-stdout.pl makes generated headers read-only.
+    buildinfo.unlink()
+    buildinfo.write_text(display)
     run([args.gmake, 'SHELL=' + args.shell, 'libcrypto.ld', 'libssl.ld', 'providers/legacy.ld'])
     for library in ('crypto', 'ssl'):
         run([sys.executable, '-B', str(TOOLS / 'map-exports.py'), 'lib' + library + '.ld', library + '.expsym'])
@@ -245,7 +270,8 @@ def main():
         if path.is_file() and not path.is_symlink() and hashlib.sha256(path.read_bytes()).digest() == contents:
             os.utime(path, ns=(atime, mtime))
     temporary = output / '.complete.tmp'
-    temporary.write_text(json.dumps({'key': key}, sort_keys=True) + '\n')
+    temporary.write_text(json.dumps({'key': key, 'buildinfo': {'upstream_header': upstream_buildinfo}},
+                                    sort_keys=True) + '\n')
     os.replace(temporary, marker)
     os.close(lock_fd)
 

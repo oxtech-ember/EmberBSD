@@ -25,6 +25,7 @@ module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 assert module.compiler_command('/prefix/bin/gcc', 'gcc', 'aarch64--netbsd', '/sysroot') == '/prefix/bin/gcc --sysroot=/sysroot'
 assert module.compiler_command('/prefix/bin/clang', 'clang', 'aarch64--netbsd', '/sysroot') == '/prefix/bin/clang --target=aarch64--netbsd --sysroot=/sysroot'
+assert 'compiler: gcc 16.2.0; target: aarch64--netbsd' in module.public_buildinfo('gcc', '16.2.0', 'aarch64--netbsd', 'BSD-aarch64')
 with tempfile.TemporaryDirectory(dir=args.work_dir) as directory:
     root = Path(directory).resolve()
     sysroot = root / 'sysroot'
@@ -67,11 +68,43 @@ runpy.run_path(sys.argv[0], run_name='__main__')
 '''
             scope = f'ROOTS={roots!r}\nALLOWED={allowed!r}\nEXECUTABLES={executables!r}\n'
             command = [sys.executable, '-B', '-c', scope + guard, *cmd[2:]]
-        return subprocess.run(command, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if result.returncode:
+            raise AssertionError(result.stderr)
+        return result
+    # Selected real compiler flags remain private even when they name host roots.
+    cc_flags = '-O2 -ffile-prefix-map=' + str(root) + '=/usr/src/external/openssl'
+    cmd += ['--cc-flags=' + cc_flags]
     run()
     config = (output / 'configdata.pm').read_text()
     assert '--target=aarch64--netbsd --sysroot=' + str(sysroot) in config
     first = json.loads((output / '.complete').read_text())
+    buildinfo = (output / 'crypto/buildinf.h').read_text()
+    probe = root / 'buildinfo.c'
+    probe.write_text('#include "buildinf.h"\n'
+                     'const char *compiler(void) { return compiler_flags; }\n'
+                     'const char *platform(void) { return PLATFORM; }\n'
+                     'const char *date(void) { return DATE; }\n')
+    probe_object = root / 'buildinfo.o'
+    subprocess.run([args.cc, '--target=aarch64--netbsd', '-ffreestanding', '-nostdinc',
+                    '-I' + str(output / 'crypto'), '-c', str(probe), '-o', str(probe_object)], check=True)
+    compiled = probe_object.read_bytes()
+    assert str(root).encode() not in compiled and args.cc.encode() not in compiled, 'compiled buildinfo leaks host compiler flags'
+    assert str(root) not in buildinfo and args.cc not in buildinfo, 'public buildinfo leaks host compiler flags'
+    version = subprocess.run([args.cc, '-dumpversion'], check=True, capture_output=True,
+                             text=True).stdout.strip()
+    assert 'compiler: clang ' + version + '; target: aarch64--netbsd' in buildinfo
+    assert 'platform: BSD-aarch64' in buildinfo
+    assert 'built on: date not recorded' in buildinfo
+    assert first['key']['cc_args'] == ['-O2', '-ffile-prefix-map=' + str(root) + '=/usr/src/external/openssl']
+    private_buildinfo = first['buildinfo']['upstream_header']
+    # Upstream emits CC/flags as a character array, not a string literal.
+    for argument in (args.cc, '--target=aarch64--netbsd', '--sysroot=' + str(sysroot),
+                     '-ffile-prefix-map=' + str(root) + '=/usr/src/external/openssl'):
+        encoded = ''.join("'" + c.replace('\\', '\\\\').replace("'", "\\'") + "'," for c in argument)
+        assert encoded in ''.join(private_buildinfo.split()), 'private receipt loses configured compiler flags'
+    assert ('compiler: clang ' + version + '; target: aarch64--netbsd').encode() in compiled
+    assert b'built on: date not recorded' in compiled
     header = output / 'include/openssl/opensslv.h'
     old_bytes, old_mtime = header.read_bytes(), header.stat().st_mtime_ns
     assert not run(reuse=True).stdout
@@ -79,6 +112,7 @@ runpy.run_path(sys.argv[0], run_name='__main__')
     (output / 'crypto.mk').unlink()
     assert 'Configuring OpenSSL' in run().stdout
     assert header.read_bytes() == old_bytes and (output / 'crypto.mk').is_file()
+    assert (output / 'crypto/buildinf.h').read_text() == buildinfo
     assert json.loads((output / '.complete').read_text())['key'] == first['key']
     old_mtime = header.stat().st_mtime_ns
     assert not run(reuse=True).stdout
@@ -94,6 +128,7 @@ runpy.run_path(sys.argv[0], run_name='__main__')
     second = json.loads((output / '.complete').read_text())
     assert first['key']['inputs'] != second['key']['inputs']
     assert header.read_bytes() == old_bytes and header.stat().st_mtime_ns == old_mtime
+    assert (output / 'crypto/buildinf.h').read_text() == buildinfo
 
 # Git blob identities are stable when already-tested dirty bytes are committed.
 with tempfile.TemporaryDirectory(dir=args.work_dir) as directory:

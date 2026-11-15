@@ -66,7 +66,8 @@ with tempfile.TemporaryDirectory(dir=args.work_dir) as directory:
     required = ('crypto.mk', 'crypto-shared.mk', 'default.mk', 'common.mk', 'ssl.mk',
                 'ssl-shared.mk', 'apps.mk', 'legacy.mk', 'legacy-module.mk', 'test.mk', 'cli.mk',
                 'libcrypto.ld', 'libssl.ld', 'crypto.expsym', 'ssl.expsym', 'providers/legacy.ld',
-                'include/openssl/configuration.h', 'include/openssl/opensslv.h', 'configdata.pm')
+                'include/openssl/configuration.h', 'include/openssl/opensslv.h', 'configdata.pm',
+                'crypto/buildinf.h')
     for name in required:
         path = output / name
         path.parent.mkdir(parents=True, exist_ok=True)

@@ -18,6 +18,15 @@ reuse the generated output after checking that required output files exist,
 without reading source trees, headers, executables or generated contents again.
 Direct invocations without these identities generate afresh. Unchanged generated file timestamps survive regeneration for a new key.
 
+The generated `crypto/buildinf.h` displays the selected compiler family,
+numeric version, target triplet and OpenSSL platform. Like the native NetBSD
+libcrypto Makefile, it omits host toolchain paths and flags from the installed
+library. Its build date is explicitly not recorded, so regeneration never embeds
+wall-clock time. Configure and compilation still use the full selected compiler
+command and flags. The private `generated/.complete` receipt retains upstream's
+original build-info header, including all configured compiler flags, alongside
+the complete caller arguments in its input key; it is not installed.
+
 The OpenSSL 4 libraries use base ABI major 17. Their symbol version is supplied
 by upstream OpenSSL, independently of the base shared-library major. AArch64 library and program cross-builds have been exercised; target runtime
 and other architectures require their own checks.
