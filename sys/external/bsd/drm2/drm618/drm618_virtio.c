@@ -37,6 +37,7 @@
 #include <sys/queue.h>
 #include <sys/systm.h>
 #include <sys/atomic.h>
+#include <sys/callout.h>
 
 #include <dev/pci/virtiovar.h>
 #include <dev/pci/virtioreg.h>
@@ -113,6 +114,8 @@ struct drm618_vdev {
 	bool			sc_attached;	/* child attach finished */
 	bool			sc_probed;	/* the driver's probe succeeded */
 	bool			sc_lock_init;
+	callout_t		sc_watch;	/* looks for commands that wait */
+	bool			sc_watch_init;
 	LIST_ENTRY(drm618_vdev)	sc_entry;
 	bool			sc_listed;
 };
@@ -437,6 +440,7 @@ vq_intr(void *arg)
 	return handled;
 }
 
+static void vq_watch(struct drm618_vq *);
 static void vdev_del_vqs(struct virtio_device *);
 static void vdev_reset(struct virtio_device *);
 static int vdev_config_change(struct virtio_softc *);
@@ -516,14 +520,33 @@ fail:
 	return error;
 }
 
+/* Once a second: a command that has no answer after DRM618_VIRTIO_WATCH_SECS is named in the log. */
+static void
+vdev_watch(void *arg)
+{
+	struct drm618_vdev *sc = arg;
+	unsigned int i;
+
+	mutex_enter(&sc->sc_lock);
+	if (sc->sc_state == VS_READY) {
+		for (i = 0; i < sc->sc_nvqs; i++)
+			if (sc->sc_vq[i].requests != NULL)
+				vq_watch(&sc->sc_vq[i]);
+		callout_schedule(&sc->sc_watch, hz);
+	}
+	mutex_exit(&sc->sc_lock);
+}
+
 void
 virtio_device_ready(struct virtio_device *vd)
 {
 	struct drm618_vdev *sc = to_vdev(vd);
 
 	mutex_enter(&sc->sc_lock);
-	if (sc->sc_state == VS_QUEUES)
+	if (sc->sc_state == VS_QUEUES) {
 		sc->sc_state = VS_READY;
+		callout_schedule(&sc->sc_watch, hz);
+	}
 	mutex_exit(&sc->sc_lock);
 }
 
@@ -547,6 +570,19 @@ vq_watch(struct drm618_vq *vq)
 	if (oldest != 0 && time_uptime - oldest >= DRM618_VIRTIO_WATCH_SECS)
 		VQLOG(sc, "%s: a command has waited %ld s for the device and"
 		    " has no answer\n", vq->pub.name, (long)(time_uptime - oldest));
+	/*
+	 * A notification that was lost (or held back) is made up for: after two
+	 * seconds without an answer the device is told again.
+	 */
+	if (oldest != 0 && time_uptime - oldest >= 2 &&
+	    drm618_virtio_drop_notify == 0) {
+		if (vq->dropped_said) {
+			vq->dropped_said = false;
+			VQLOG(sc, "%s: the device is told of the waiting commands"
+			    " again\n", vq->pub.name);
+		}
+		virtio_enqueue_commit(sc->sc_vsc, vq->nvq, -1, true);
+	}
 }
 
 int
@@ -797,6 +833,9 @@ vdev_reset(struct virtio_device *vd)
 		virtio_reset(sc->sc_vsc);
 	}
 	mutex_exit(&sc->sc_lock);
+	/* The watch sees the state and does not run again; wait for one that runs. */
+	if (sc->sc_watch_init)
+		callout_halt(&sc->sc_watch, NULL);
 }
 
 void
@@ -907,6 +946,9 @@ virtiogpu618_attach(device_t parent, device_t self, void *aux)
 	sc->sc_dmat = virtio_dmat(vsc);
 	mutex_init(&sc->sc_lock, MUTEX_SPIN, IPL_VM);
 	sc->sc_lock_init = true;
+	callout_init(&sc->sc_watch, CALLOUT_MPSAFE);
+	callout_setfunc(&sc->sc_watch, vdev_watch, sc);
+	sc->sc_watch_init = true;
 	sc->sc_state = VS_INIT;
 	for (i = 0; i < drv->feature_table_size; i++)
 		req |= (uint64_t)1 << drv->feature_table[i];
@@ -955,6 +997,10 @@ virtiogpu618_detach(device_t self, int flags __unused)
 	}
 	if (sc->sc_nvqs != 0 || sc->sc_attached)
 		vdev_del_vqs(&sc->sc_vdev);
+	if (sc->sc_watch_init) {
+		callout_destroy(&sc->sc_watch);
+		sc->sc_watch_init = false;
+	}
 	if (sc->sc_lock_init) {
 		mutex_destroy(&sc->sc_lock);
 		sc->sc_lock_init = false;
