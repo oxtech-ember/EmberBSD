@@ -66,7 +66,7 @@ ${CC:-cc} -std=c99 -Wall -Wextra -Werror ${CFLAGS:-} \
 
 # Use the upstream driver parameter types and the production association and
 # scan callbacks. The fixture replaces only the ioctl, timer and event edges.
-for fn in bsd_set_mlme bsd_set_opmode bsd_sta_associate \
+for fn in bsd_set_mlme bsd_set_opmode bsd_sta_assoc_event bsd_sta_associate \
     wpa_driver_bsd_associate wpa_driver_bsd_scan; do
     awk -v fn="$fn" '$0 ~ "^" fn "\\(" {copy=1}
         copy {print} copy && /^}/ {exit}' \
@@ -82,7 +82,9 @@ awk '/^#define[[:space:]]+IEEE80211_(STA|SAE|IOC_(STA_MGMT|SAE|MLME|PRIVACY|WPA|
     /^struct ieee80211req_(sta_mgmt|mlme) / {copy=1}
     copy {print} copy && /^};/ {copy=0}' \
     "$src/sys/net80211/ieee80211_ioctl.h" > "$work/assoc-abi.h"
-awk '/^#define[[:space:]]+RTM_IEEE80211_(ASSOC|REASSOC)[[:space:]]/ {print}' \
+awk '/^#define[[:space:]]+(RTM_IEEE80211_(ASSOC|REASSOC)|IEEE80211_ASSOC_EVENT_VERSION)[[:space:]]/ {print}
+    /^struct ieee80211_assoc_event / {copy=1}
+    copy {print} copy && /^};/ {copy=0}' \
     "$src/sys/net80211/ieee80211_netbsd.h" > "$work/assoc-routes.h"
 cp "$src/ember/tools/bwfm-sta-bsd-assoc.c" "$work/assoc-check.c"
 ${CC:-cc} -std=c99 -Wall -Wextra -Werror -Wno-unused-parameter ${CFLAGS:-} \

@@ -14,6 +14,9 @@
 #include "assoc-abi.h"
 #include "assoc-routes.h"
 #include "bsd-opmode.h"
+#if !defined(IEEE80211_MLME_VERSION) || !defined(IEEE80211_ASSOC_EVENT_VERSION)
+#error This fixture requires the current EmberBSD station association ABI
+#endif
 
 /* These flags reach fixture media/legacy-ioctl endpoints, not an OS device. */
 #define IFM_OMASK 0x0000ff00
@@ -37,11 +40,15 @@ struct bsd_driver_data {
 	uintptr_t sta_scan_generation;
 	u8 sae_bssid[ETH_ALEN], sta_scan_bssid[ETH_ALEN];
 	int sae_active;
+	uint64_t sta_assoc_epoch, sta_assoc_retired_epoch;
+	u8 sta_assoc_bssid[ETH_ALEN];
+	int sta_assoc_versioned;
 };
 
 static unsigned checks, failures, set_calls, mlme_calls, assoc_events;
 static unsigned clear_tx_calls, cancel_calls, timer_calls, media_calls;
 static unsigned legacy_scans, sae_calls;
+static uint64_t accepted_epoch;
 static int info_error, set_error, mlme_error, timer_error, sae_error;
 static int media_error, privacy_error, wpa_error, ie_error, drop_error;
 static unsigned timer_sec;
@@ -190,22 +197,29 @@ set80211param(struct bsd_driver_data *drv, int op, int value)
 }
 
 static int
-set80211var(struct bsd_driver_data *drv, int op, const void *data, size_t len)
-{
-	check(op == IEEE80211_IOC_MLME && len == sizeof(selected),
-	    "directed association uses the native MLME payload");
-	memcpy(&selected, data, sizeof(selected));
-	mlme_calls++;
-	step('A');
-	return mlme_error;
-}
-
-static int
 bsd_set80211(struct bsd_driver_data *drv, int op, int value,
     const void *data, int len)
 {
-	(void)value;
-	return set80211var(drv, op, data, len);
+	struct ieee80211req_mlme reply;
+
+	check(op == IEEE80211_IOC_MLME && value == 0 &&
+	    len == sizeof(selected),
+	    "directed association uses the native MLME payload");
+	memcpy(&selected, data, sizeof(selected));
+	check(selected.im_version == IEEE80211_MLME_VERSION &&
+	    selected.im_assoc_epoch == 0,
+	    "MLME copyin has the current version and no caller-assigned epoch");
+	mlme_calls++;
+	step('A');
+	if (mlme_error)
+		return mlme_error;
+	/* SIOCS80211 copies the accepted selection back into this same request. */
+	reply = selected;
+	reply.im_assoc_epoch = accepted_epoch;
+	if (is_zero_ether_addr(reply.im_macaddr))
+		memcpy(reply.im_macaddr, current.bssid, ETH_ALEN);
+	memcpy((void *)data, &reply, sizeof(reply));
+	return 0;
 }
 
 static int
@@ -291,6 +305,8 @@ static int
 #include "bsd_set_mlme.h"
 static int
 #include "bsd_set_opmode.h"
+static int
+#include "bsd_sta_assoc_event.h"
 static void
 #include "bsd_sta_scan_clear.h"
 static int
@@ -300,17 +316,45 @@ static int
 static int
 #include "wpa_driver_bsd_scan.h"
 
+/* The route header is an opaque I/O edge; the production case reads only its
+ * following payload and length. Keep that payload's real extracted ABI. */
+struct route_header { uint64_t reserved; };
+
 static void
-association_event(struct bsd_driver_data *drv, unsigned type)
+association_route(struct bsd_driver_data *drv, unsigned type,
+    const struct ieee80211_assoc_event *payload, size_t len)
 {
+	union {
+		uint64_t alignment;
+		u8 bytes[sizeof(struct route_header) +
+		    sizeof(struct ieee80211_assoc_event)];
+	} storage;
+	struct route_header *ifan = (void *)storage.bytes;
+	int n = sizeof(*ifan) + len;
 	union wpa_event_data event;
 
+	if (len > sizeof(*payload))
+		abort();
+	memset(&storage, 0, sizeof(storage));
+	memcpy(ifan + 1, payload, len);
 	memset(&event, 0, sizeof(event));
 	switch (type) {
 #include "bsd-assoc-event.h"
 	default:
 		abort();
 	}
+}
+
+static void
+association_event(struct bsd_driver_data *drv, unsigned type)
+{
+	struct ieee80211_assoc_event payload;
+
+	memset(&payload, 0, sizeof(payload));
+	payload.iae_version = IEEE80211_ASSOC_EVENT_VERSION;
+	payload.iae_assoc_epoch = current.generation;
+	memcpy(payload.iae_bssid, current.bssid, ETH_ALEN);
+	association_route(drv, type, &payload, sizeof(payload));
 }
 
 static void
@@ -323,12 +367,14 @@ fixture(struct bsd_driver_data *drv)
 	drv->sta_btm = drv->sta_rrm = 1;
 	drv->sta_enabled = 1;
 	drv->flags = IFF_UP;
+	drv->opmode = IEEE80211_M_STA;
 	drv->sta_scan_cookie = 40;
 	drv->sta_scan_generation = 50;
 	current.version = IEEE80211_STA_VERSION;
 	current.flags = IEEE80211_STA_ASSOCIATED |
 	    IEEE80211_STA_CAP_BTM | IEEE80211_STA_CAP_RRM;
 	current.generation = 60;
+	accepted_epoch = 61;
 	current.freq = 5180;
 	current.bssid[0] = 2;
 	current.bssid[5] = 9;
@@ -464,6 +510,10 @@ directed_association(void)
 	check(wpa_driver_bsd_associate(&drv, &p) == 0,
 	    "selected WPA2 candidate reaches the directed association callback");
 	check(mlme_calls == 1 && selected.im_op == IEEE80211_MLME_ASSOC &&
+	    selected.im_version == IEEE80211_MLME_VERSION &&
+	    selected.im_assoc_epoch == 0 && drv.sta_assoc_epoch == accepted_epoch &&
+	    drv.sta_assoc_versioned &&
+	    !memcmp(drv.sta_assoc_bssid, p.bssid, ETH_ALEN) &&
 	    selected.im_ssid_len == p.ssid_len &&
 	    !memcmp(selected.im_ssid, p.ssid, p.ssid_len) &&
 	    !memcmp(selected.im_macaddr, p.bssid, ETH_ALEN),
@@ -472,6 +522,14 @@ directed_association(void)
 	    !memcmp(supplied_ies, ies, sizeof(ies)) && !strcmp(order, "MEA"),
 	    "association IEs and station enable precede directed MLME");
 	fixture(&drv);
+	p.bssid = NULL;
+	check(wpa_driver_bsd_associate(&drv, &p) == 0 &&
+	    is_zero_ether_addr(selected.im_macaddr) &&
+	    drv.sta_assoc_epoch == accepted_epoch &&
+	    !memcmp(drv.sta_assoc_bssid, current.bssid, ETH_ALEN),
+	    "kernel-selected peer and epoch are taken from MLME copyout");
+	fixture(&drv);
+	p = parameters(ies, sizeof(ies));
 	drv.capa.key_mgmt = WPA_DRIVER_CAPA_KEY_MGMT_SAE;
 	drv.sae_generation = UINT32_MAX;
 	p.key_mgmt_suite = WPA_KEY_MGMT_SAE;
@@ -508,6 +566,64 @@ directed_association(void)
 	mlme_error = -1;
 	check(wpa_driver_bsd_associate(&drv, &p) == -1 && mlme_calls == 1,
 	    "directed MLME failure is not reported as success");
+	check(drv.sta_assoc_epoch == 0 && !drv.sta_assoc_versioned,
+	    "failed MLME cannot publish an accepted association identity");
+	for (i = 0; i < 2; i++) {
+		fixture(&drv);
+		p = parameters(ies, sizeof(ies));
+		if (i == 0)
+			accepted_epoch = 0;
+		else
+			drv.sta_assoc_retired_epoch = accepted_epoch;
+		check(wpa_driver_bsd_associate(&drv, &p) == -1 &&
+		    drv.sta_assoc_epoch == 0 && !drv.sta_assoc_versioned,
+		    "zero or retired copyout epoch cannot publish an association");
+	}
+}
+
+static void
+association_identities(void)
+{
+	struct bsd_driver_data drv;
+	struct ieee80211_assoc_event payload;
+	uint64_t previous_epoch;
+	u8 previous_bssid[ETH_ALEN];
+	unsigned i;
+
+	for (i = 0; i < 8; i++) {
+		fixture(&drv);
+		memset(&payload, 0, sizeof(payload));
+		payload.iae_version = IEEE80211_ASSOC_EVENT_VERSION;
+		payload.iae_assoc_epoch = current.generation;
+		memcpy(payload.iae_bssid, current.bssid, ETH_ALEN);
+		switch (i) {
+		case 1: payload.iae_version++; break;
+		case 2: payload.iae_assoc_epoch = 0; break;
+		case 3: drv.sta_assoc_retired_epoch = payload.iae_assoc_epoch; break;
+		case 4: drv.sta_assoc_epoch = payload.iae_assoc_epoch + 1; break;
+		case 5:
+			drv.sta_assoc_epoch = payload.iae_assoc_epoch;
+			memcpy(drv.sta_assoc_bssid, payload.iae_bssid, ETH_ALEN);
+			payload.iae_bssid[5]++;
+			break;
+		case 6: payload.iae_reserved2[1] = 1; break;
+		}
+		previous_epoch = drv.sta_assoc_epoch;
+		memcpy(previous_bssid, drv.sta_assoc_bssid, ETH_ALEN);
+		association_route(&drv, RTM_IEEE80211_ASSOC, &payload,
+		    sizeof(payload) - (i == 7));
+		check(assoc_events == (i == 0),
+		    "only a valid current association identity reaches the client");
+		if (i == 0)
+			check(drv.sta_assoc_versioned &&
+			    drv.sta_assoc_epoch == payload.iae_assoc_epoch &&
+			    !memcmp(drv.sta_assoc_bssid, payload.iae_bssid, ETH_ALEN),
+			    "accepted route event retains its epoch and peer");
+		else
+			check(drv.sta_assoc_epoch == previous_epoch &&
+			    !memcmp(drv.sta_assoc_bssid, previous_bssid, ETH_ALEN),
+			    "rejected route event preserves the current association");
+	}
 }
 
 static void
@@ -739,6 +855,7 @@ main(void)
 	association_requests();
 	scan_only_association();
 	directed_association();
+	association_identities();
 	association_payloads();
 	connected_scans();
 	restricted_association_scans();
