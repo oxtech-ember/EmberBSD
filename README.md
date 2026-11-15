@@ -16,6 +16,7 @@ The OS does not require an AI agent, a model provider or a particular graphical 
 ## Purpose and getting started
 
 - Visit the [EmberBSD official website](https://oxtech-ember.github.io/EmberBSD-Website/) for an introduction to the OS and project.
+- Read the [Developer Guide](https://github.com/oxtech-ember/EmberBSD-Docs) for architecture, modularity, component boundaries and configuration.
 - Select hardware and check its limits in [DevBoards](https://github.com/oxtech-ember/EmberBSD-DevBoards).
 - Install and configure the OS with [Quick Start](doc/guide/quick-start.md) and the [User Guide](doc/guide/user-guide.md).
 - Build components with the [build guide](README.ember.md). Use [SDK](https://github.com/oxtech-ember/EmberBSD-SDK) for shared workspaces and release tooling.
@@ -27,6 +28,7 @@ The OS does not require an AI agent, a model provider or a particular graphical 
 | Repository | Responsibility |
 | --- | --- |
 | [EmberBSD](https://github.com/oxtech-ember/EmberBSD) | OS mechanisms, native build targets and executable OS checks |
+| [Developer Guide](https://github.com/oxtech-ember/EmberBSD-Docs) | Cross-project concepts, architecture, modules, configuration and developer navigation |
 | [DevBoards](https://github.com/oxtech-ember/EmberBSD-DevBoards) | Hardware, SoCs, loaders, installation applicability and current scoped support |
 | [Ports](https://github.com/oxtech-ember/EmberBSD-Ports) | Package recipes, common dependencies, toolchains and portability patches |
 | [SDK](https://github.com/oxtech-ember/EmberBSD-SDK) | Host workspaces, cross-build orchestration, sysroots and release kits |

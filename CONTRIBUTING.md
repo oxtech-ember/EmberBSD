@@ -12,6 +12,7 @@ Publication is required only when you submit it as a shared contribution.
 | Change | Accepting repository |
 | --- | --- |
 | Kernel, drivers, OS boot or firmware integration | [EmberBSD](https://github.com/oxtech-ember/EmberBSD) |
+| Cross-project architecture, module explanations or configuration overview | [Developer Guide](https://github.com/oxtech-ember/EmberBSD-Docs) |
 | Hardware profiles, SoCs, loader requirements and scoped support | [DevBoards](https://github.com/oxtech-ember/EmberBSD-DevBoards) |
 | Shared host builds, sysroots and release publication | [SDK](https://github.com/oxtech-ember/EmberBSD-SDK) |
 | Third-party recipes, portability patches or shared toolchains | [EmberBSD-Ports](https://github.com/oxtech-ember/EmberBSD-Ports) |

@@ -7,6 +7,7 @@ The OS repository is not an umbrella documentation repository for the ecosystem.
 | --- | --- |
 | Kernel, base userland, drivers, loader code and native build targets | EmberBSD, in the existing subsystem |
 | Software API, resource lifetime, errors and executable regression | Beside that implementation; link the test entry point |
+| Cross-project concepts, modularity, component explanations and configuration overview | [Developer Guide](https://github.com/oxtech-ember/EmberBSD-Docs), with links to detailed owner contracts |
 | Boards, SoCs, carriers, power, wiring, loader requirements and media layouts | [DevBoards](https://github.com/oxtech-ember/EmberBSD-DevBoards) |
 | Current hardware support, installation applicability and scoped physical evidence | The existing DevBoards profile, with source pins and limits |
 | Shared host orchestration, sysroots, release composition and publication | [SDK](https://github.com/oxtech-ember/EmberBSD-SDK) |
