@@ -11,6 +11,7 @@
 
 #include <sys/cdefs.h>
 #include <sys/param.h>
+#include <sys/atomic.h>
 #include <sys/kmem.h>
 #include <sys/systm.h>
 
@@ -25,7 +26,12 @@ sync_file_cb(struct dma_fence *fence __unused, struct dma_fence_cb *cb)
 {
 	struct sync_file *sf = container_of(cb, struct sync_file, cb);
 
-	sf->signalled = true;
+	/*
+	 * The fence lock is held for the whole callback; the release
+	 * takes it in dma_fence_remove_callback, so the file cannot go
+	 * away under the wake-up.
+	 */
+	atomic_store_release(&sf->signalled, true);
 	wake_up_all(&sf->wq);
 }
 
@@ -35,7 +41,7 @@ sync_file_poll(struct file *filp, struct poll_table_struct *pt)
 	struct sync_file *sf = filp->private_data;
 
 	poll_wait(filp, &sf->wq, pt);
-	return sf->signalled ? EPOLLIN : 0;
+	return atomic_load_acquire(&sf->signalled) ? EPOLLIN : 0;
 }
 
 static int
@@ -43,8 +49,11 @@ sync_file_release(struct inode *inode __unused, struct file *filp)
 {
 	struct sync_file *sf = filp->private_data;
 
-	if (!sf->signalled)
-		dma_fence_remove_callback(sf->fence, &sf->cb);
+	/*
+	 * Always remove the callback, signalled or not: it waits for a
+	 * callback that is running on another CPU.
+	 */
+	(void)dma_fence_remove_callback(sf->fence, &sf->cb);
 	dma_fence_put(sf->fence);
 	destroy_waitqueue_head(&sf->wq);
 	kmem_free(sf, sizeof(*sf));
@@ -67,7 +76,7 @@ sync_file_create(struct dma_fence *fence)
 	sf->file = anon_inode_getfile("sync_file", &sync_file_fops, sf, O_RDWR);
 	/* A fence that is signalled already gives no callback: the file is readable. */
 	if (dma_fence_add_callback(sf->fence, &sf->cb, sync_file_cb) != 0)
-		sf->signalled = true;
+		atomic_store_release(&sf->signalled, true);
 	return sf;
 }
 

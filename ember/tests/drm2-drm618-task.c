@@ -80,6 +80,59 @@ static const struct dma_fence_ops t_fence_ops = {
 
 static const struct file_operations t_other_fops;
 
+/*
+ * A fence callback runs with the fence lock held.  The release of a sync
+ * file must synchronise with that lock even when the callback has already
+ * set the signalled flag, otherwise the file is freed while the callback
+ * still uses its wait queue.  The helper thread plays the callback: it
+ * holds the fence lock for a while.
+ */
+static spinlock_t t_hold_lock;
+static volatile int t_hold_taken, t_hold_released;
+
+static void
+t_holder(void *cookie __unused)
+{
+
+	spin_lock(&t_hold_lock);
+	t_hold_taken = 1;
+	DELAY(200000);
+	t_hold_released = 1;
+	spin_unlock(&t_hold_lock);
+	kthread_exit(0);
+}
+
+static void
+t_release_sync(void)
+{
+	struct dma_fence fence;
+	struct sync_file *sf;
+	struct lwp *l;
+	int fd, i;
+
+	spin_lock_init(&t_hold_lock);
+	dma_fence_init(&fence, &t_fence_ops, &t_hold_lock, 2, 1);
+	sf = sync_file_create(&fence);
+	CHECK(sf != NULL);
+	dma_fence_signal(&fence);	/* the callback has run */
+	CHECK((sf->file->f_op->poll(sf->file, NULL) & EPOLLIN) != 0);
+	fd = get_unused_fd_flags(O_CLOEXEC);
+	CHECK(fd >= 0);
+	fd_install(fd, sf->file);
+	t_hold_taken = t_hold_released = 0;
+	CHECK(kthread_create(PRI_NONE, KTHREAD_MPSAFE | KTHREAD_MUSTJOIN,
+	    NULL, t_holder, NULL, &l, "drm2hold") == 0);
+	for (i = 0; i < 1000 && !t_hold_taken; i++)
+		kpause("drm2hw", false, 1, NULL);
+	CHECK(t_hold_taken);
+	CHECK(fd_getfile(fd) != NULL);
+	CHECK(fd_close(fd) == 0);
+	/* The close had to wait for the lock holder. */
+	CHECK(t_hold_released);
+	kthread_join(l);
+	CHECK(kref_read(&fence.refcount) == 1);
+}
+
 int	drm2_drm618_task_run(void);
 
 int
@@ -164,6 +217,8 @@ drm2_drm618_task_run(void)
 		CHECK(fd_getfile(fd2) != NULL);
 		CHECK(fd_close(fd2) == 0);
 	}
+
+	t_release_sync();
 
 	if (t_fail != 0)
 		printf("drm2-drm618-task: %d of %d checks FAILED\n", t_fail, t_run);
