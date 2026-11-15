@@ -50,6 +50,17 @@ def staged_rc_dependencies(root):
     return provides, requirements, missing
 
 
+def syslog_has_forward_action(config):
+    for raw in config.splitlines():
+        line = raw.split('#', 1)[0].strip()
+        fields = line.split()
+        if len(fields) < 2 or fields[0].startswith(('!', '+', '-')):
+            continue
+        if fields[-1].startswith('@'):
+            return True
+    return False
+
+
 def has_multiuser_rc_dependencies(root):
     provides, requirements, missing = staged_rc_dependencies(root)
     return (not missing and
@@ -771,10 +782,39 @@ with tempfile.TemporaryDirectory(prefix='static-network-') as temporary:
           {'sshd', 'sysdb', 'wscons', 'newsyslog', 'syslogd', 'network_logfs'} <=
           set(service_provides) and
           'LOGIN' in service_requires['sshd'] and
-          {'mountcritremote', 'sysdb', 'wscons'} <= set(service_requires['syslogd']) and
-          {'CRITLOCALMOUNTED'} <= set(service_requires['network_logfs']) and
-          'newsyslog syslogd' in (service_scripts / 'network_logfs').read_text(),
-          'SSH/logging stock rc services have a closed provider/dependency graph')
+          set(service_requires['syslogd']) == {'network_logfs'} and
+          set(service_requires['newsyslog']) == {'network_logfs'} and
+          'wpa_supplicant mdnsd SERVERS' in
+          (service_scripts / 'syslogd').read_text() and
+          'syslogd SERVERS' in (service_scripts / 'newsyslog').read_text() and
+          {'network', 'CRITLOCALMOUNTED'} <=
+          set(service_requires['network_logfs']) and
+          'newsyslog syslogd wpa_supplicant mdnsd' in
+          (service_scripts / 'network_logfs').read_text(),
+          'logging profile starts hostname, log storage and syslog before clients')
+    rcorder_path = os.environ.get('RCORDER_PATH')
+    if rcorder_path:
+        rc_scripts = sorted(service_scripts.iterdir())
+        rc_result = subprocess.run(
+            [rcorder_path, '-s', 'nostart', *map(str, rc_scripts)],
+            text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            check=False)
+        check(rc_result.returncode == 0,
+              'actual rcorder accepts the logging profile: ' + rc_result.stderr)
+        rc_names = [Path(item).name for item in rc_result.stdout.splitlines()]
+        rc_order = {name: index for index, name in enumerate(rc_names)}
+        constraints = (('network', 'network_logfs'),
+                       ('network_logfs', 'newsyslog'),
+                       ('newsyslog', 'syslogd'),
+                       ('syslogd', 'wpa_supplicant'),
+                       ('syslogd', 'mdnsd'),
+                       ('wpa_supplicant', 'NETWORKING'),
+                       ('mdnsd', 'NETWORKING'),
+                       ('NETWORKING', 'mountcritremote'))
+        check(all(left in rc_order and right in rc_order and
+                  rc_order[left] < rc_order[right]
+                  for left, right in constraints),
+              'actual rcorder starts network/hostname and local logging before WPA and mDNS')
     check('Subsystem sftp' not in sshd_config,
           'SSH command service does not advertise an uninstalled SFTP subsystem')
     check((services / 'dev/log').is_symlink() and
@@ -803,6 +843,7 @@ with tempfile.TemporaryDirectory(prefix='static-network-') as temporary:
           'syslogd discovers chroot services from the configured rc directories')
     check('sshd=YES' in (services / 'etc/rc.conf').read_text() and
           'syslogd=YES' in (services / 'etc/rc.conf').read_text() and
+          'syslogd_flags="-s"' in (services / 'etc/rc.conf').read_text() and
           'newsyslog=YES' in (services / 'etc/rc.conf').read_text() and
           'network_logfs_size=1m' in (services / 'etc/rc.conf').read_text() and
           'sshd_key_types="ed25519"' in (services / 'etc/rc.conf').read_text() and
@@ -831,9 +872,13 @@ with tempfile.TemporaryDirectory(prefix='static-network-') as temporary:
           '/var/log/authlog 0600 3 64 * -' in newsyslog_conf and
           '*.info;auth,authpriv.none /var/log/messages' in syslog_conf and
           'auth,authpriv.info /var/log/authlog' in syslog_conf and
+          not syslog_has_forward_action(syslog_conf) and
+          syslog_has_forward_action('*.info @logserver\n') and
+          syslog_has_forward_action('*.info @[logserver]\n') and
+          not (services / 'etc/services').exists() and
           (services / 'etc/syslog.conf').is_file() and
           (services / 'etc/newsyslog.conf').is_file(),
-          'logging configures bounded stock rotation and standard selectors')
+          'forwarding detection reads action fields; local-only logging needs no services file')
     check('-DCONFIG_DEBUG_SYSLOG' in
           (source / 'external/bsd/wpa/bin/wpa_supplicant/Makefile').read_text() and
           '  -s = log output to syslog instead of stdout' in
@@ -892,6 +937,7 @@ with tempfile.TemporaryDirectory(prefix='static-network-') as temporary:
           'mdnsd=NO' in (minimal / 'etc/rc.conf').read_text() and
           'sshd=NO' in (minimal / 'etc/rc.conf').read_text() and
           'syslogd=NO' in (minimal / 'etc/rc.conf').read_text() and
+          'syslogd_flags=' not in (minimal / 'etc/rc.conf').read_text() and
           'newsyslog=NO' in (minimal / 'etc/rc.conf').read_text() and
           '/dev/pts' not in (minimal / 'etc/fstab').read_text() and
           'ptm' not in (minimal / 'etc/rc.conf').read_text() and
@@ -903,6 +949,9 @@ with tempfile.TemporaryDirectory(prefix='static-network-') as temporary:
           'BEFORE: wpa_supplicant dhcpcd' in minimal_rc and
           'mdnsd' not in minimal_rc,
           'default network staging omits optional mDNS service and overlay override')
+    check((minimal / 'etc/rc.network.d/wpa_supplicant').read_text() ==
+          (source / 'etc/rc.d/wpa_supplicant').read_text(),
+          'profiles without logging retain the standard WPA rc dependency')
     (overlay / 'etc/custom-network.conf').write_text('updated setting\n')
     profile.stage_network(out, source, overlay, 'wifi0', pwd_mkdb, dhcp_dest, 'md0', 'a')
     check(sum(line.startswith('_mdnsd:') for line in

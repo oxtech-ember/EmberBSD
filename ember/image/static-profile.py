@@ -678,6 +678,7 @@ def stage_network(root, source, overlay, interface, pwd_mkdb, dhcpcd_dest,
                   openssh_crypto='openssl', sftp_enabled=False):
     """Stage standard init/rc network services over the normal OS defaults."""
     import os
+    import re
     import shutil
     import subprocess
     from pathlib import Path
@@ -753,8 +754,9 @@ def stage_network(root, source, overlay, interface, pwd_mkdb, dhcpcd_dest,
         + ('sshd_key_types="' + ('ed25519' if openssh_crypto == 'builtin' else
                                  'ecdsa ed25519 rsa') + '"\n' if ssh_enabled else '') +
         'syslogd=' + ('YES' if logging_enabled else 'NO') + '\n'
-        'newsyslog=' + ('YES' if logging_enabled else 'NO') + '\n'
-        'network_logfs=' + ('YES' if logging_enabled else 'NO') + '\n'
+        + ('syslogd_flags="-s"\n' if logging_enabled else '')
+        + 'newsyslog=' + ('YES' if logging_enabled else 'NO') + '\n'
+        + 'network_logfs=' + ('YES' if logging_enabled else 'NO') + '\n'
         + ('network_logfs_size=1m\n' if logging_enabled else '')
         + ('sysdb=NO\nwscons=NO\n' if logging_enabled else ''))
     scripts = ('fsck_root', 'resize_root', 'root', 'devpubd', 'DISKS', 'swap1', 'fsck',
@@ -812,6 +814,21 @@ def stage_network(root, source, overlay, interface, pwd_mkdb, dhcpcd_dest,
             write_if_different(root / 'etc/motd', '\n')
         (root / 'var/chroot/sshd').mkdir(parents=True, exist_ok=True)
     if logging_enabled:
+        syslogd_script = root / 'etc/rc.network.d/syslogd'
+        newsyslog_script = root / 'etc/rc.network.d/newsyslog'
+        syslogd_before = 'wpa_supplicant' + (' mdnsd' if mdns_enabled else '') + ' SERVERS'
+        for script, requirements, before in (
+                (syslogd_script, 'network_logfs', syslogd_before),
+                (newsyslog_script, 'network_logfs', 'syslogd SERVERS')):
+            text = script.read_text()
+            for tag, value in (('REQUIRE', requirements), ('BEFORE', before)):
+                pattern = r'(?m)^# ' + tag + r':[^\n]*$'
+                text, count = re.subn(
+                    pattern, '# ' + tag + ': ' + value, text)
+                if count != 1:
+                    raise ValueError('expected one rcorder ' + tag +
+                                     ' tag in ' + str(script))
+            write_if_different(script, text, mode=0o555)
         log_socket = root / 'dev/log'
         if log_socket.is_symlink():
             if os.readlink(log_socket) != '/var/run/log':
@@ -830,8 +847,9 @@ def stage_network(root, source, overlay, interface, pwd_mkdb, dhcpcd_dest,
         log_mount_text = (
             '#!/bin/sh\n'
             '# PROVIDE: network_logfs\n'
-            '# REQUIRE: CRITLOCALMOUNTED\n'
-            '# BEFORE: newsyslog syslogd\n'
+            '# REQUIRE: network CRITLOCALMOUNTED\n'
+            '# BEFORE: newsyslog syslogd wpa_supplicant' +
+            (' mdnsd' if mdns_enabled else '') + '\n'
             '$_rc_subr_loaded . /etc/rc.subr\n'
             'name=network_logfs\n'
             'rcvar=$name\n'

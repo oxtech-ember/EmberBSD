@@ -269,7 +269,13 @@ three 64 KiB rotations for messages and authentication logs. WPA supplicant
 uses its supported `-s` option with this toolset; add `-d` or `-dd` through the
 existing rc flags override when a bounded diagnostic session needs debug
 priority, and provide a private `/etc/syslog.conf` that includes the needed
-debug priority. Log rotation runs when the operator or host collector invokes
+debug priority. The profile explicitly sets `syslogd_flags="-s"` and keeps
+`/etc/syslog.conf` local-only, so syslogd does not need `/etc/services` to
+resolve a UDP port. In this profile, rcorder sets the hostname, mounts the
+local log filesystem, and starts newsyslog/syslogd before WPA and mDNS;
+`/usr` is on the image's local root, so this does not wait for
+`mountcritremote`. Other profiles retain the stock syslogd ordering. Log
+rotation runs when the operator or host collector invokes
 `newsyslog`; no scheduled rotation service is selected. Both toolsets are
 independent and leave the default network profile
 unchanged.
