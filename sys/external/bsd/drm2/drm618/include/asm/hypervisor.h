@@ -4,6 +4,10 @@
  * Own implementation.  Sources read: dist618/drm/i915/i915_utils.h (i915_run_as_guest); NetBSD
  * sys/arch/x86/include/cpu.h (vm_guest); the GPL original was not read.
  */
+/*
+ * Note: hypervisor_is_type is true only for X86_HYPER_NATIVE on bare metal; any other type
+ * answers false, also in a guest (the only use, i915_utils.h, asks for the native case).
+ */
 #ifndef _DRM618_ASM_HYPERVISOR_H_
 #define _DRM618_ASM_HYPERVISOR_H_
 

@@ -12,7 +12,7 @@
 # driver's own build has it); the second does not yet, the reason is the first compiler error.
 # Counts are in drm618/README.
 #
-# Regenerate it with the measurement script when the layer grows.
+# Regenerate it by compiling every file of the set when the layer grows.
 
 file	external/bsd/drm2/dist618/drm/i915/display/dvo_ch7017.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/display/dvo_ch7xxx.c	i915drm618
