@@ -1219,7 +1219,7 @@ static void intel_irq_postinstall(struct drm_i915_private *dev_priv)
  */
 int intel_irq_install(struct drm_i915_private *dev_priv)
 {
-	int irq = to_pci_dev(dev_priv->drm.dev)->irq;
+	int irq = drm618_pci_irq(to_pci_dev(dev_priv->drm.dev));
 	int ret;
 
 	/*
@@ -1253,7 +1253,7 @@ int intel_irq_install(struct drm_i915_private *dev_priv)
 void intel_irq_uninstall(struct drm_i915_private *dev_priv)
 {
 	struct intel_display *display = dev_priv->display;
-	int irq = to_pci_dev(dev_priv->drm.dev)->irq;
+	int irq = drm618_pci_irq(to_pci_dev(dev_priv->drm.dev));
 
 	if (drm_WARN_ON(&dev_priv->drm, !dev_priv->irqs_enabled))
 		return;
@@ -1299,10 +1299,10 @@ bool intel_irqs_enabled(struct drm_i915_private *dev_priv)
 
 void intel_synchronize_irq(struct drm_i915_private *i915)
 {
-	synchronize_irq(to_pci_dev(i915->drm.dev)->irq);
+	synchronize_irq(drm618_pci_irq(to_pci_dev(i915->drm.dev)));
 }
 
 void intel_synchronize_hardirq(struct drm_i915_private *i915)
 {
-	synchronize_hardirq(to_pci_dev(i915->drm.dev)->irq);
+	synchronize_hardirq(drm618_pci_irq(to_pci_dev(i915->drm.dev)));
 }

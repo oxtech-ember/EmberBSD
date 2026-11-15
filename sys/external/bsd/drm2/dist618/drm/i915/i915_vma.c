@@ -1696,7 +1696,7 @@ int i915_ggtt_pin(struct i915_vma *vma, struct i915_gem_ww_ctx *ww,
 	if (ww)
 		return __i915_ggtt_pin(vma, ww, align, flags);
 
-	lockdep_assert_not_held(&vma->obj->base.resv->lock.base);
+	lockdep_assert_not_held(&vma->obj->base.resv->lock);
 
 	for_i915_gem_ww(&_ww, err, true) {
 		err = i915_gem_object_lock(vma->obj, &_ww);

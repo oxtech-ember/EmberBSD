@@ -4994,9 +4994,11 @@ static int guc_send_invalidate_tlb(struct intel_guc *guc,
 		/* Under severe memory pressure? Serialise TLB allocations */
 		xa_lock_irq(&guc->tlb_lookup);
 		wq = xa_load(&guc->tlb_lookup, guc->serial_slot);
-		wait_event_lock_irq(wq->wq,
-				    !READ_ONCE(wq->busy),
-				    guc->tlb_lookup.xa_lock);
+		while (READ_ONCE(wq->busy)) {
+			xa_unlock_irq(&guc->tlb_lookup);
+			wait_event(wq->wq, !READ_ONCE(wq->busy));
+			xa_lock_irq(&guc->tlb_lookup);
+		}
 		/*
 		 * Update wq->busy under lock to ensure only one waiter can
 		 * issue the TLB invalidation command using the serial slot at a

@@ -2065,7 +2065,7 @@ static void i915_hexdump(struct drm_printer *m, const void *buf, size_t len)
 
 static const char *repr_timer(const struct timer_list *t)
 {
-	if (!READ_ONCE(t->expires))
+	if (!drm618_timer_expires(t))
 		return "inactive";
 
 	if (timer_pending(t))

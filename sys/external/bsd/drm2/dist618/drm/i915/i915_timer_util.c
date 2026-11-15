@@ -11,7 +11,7 @@ void cancel_timer(struct timer_list *t)
 		return;
 
 	timer_delete(t);
-	WRITE_ONCE(t->expires, 0);
+	drm618_timer_clear_expires(t);
 }
 
 void set_timer_ms(struct timer_list *t, unsigned long timeout)
