@@ -63,6 +63,10 @@ If no
 are provided, the default checks or fixes are applied.
 Those which are disabled by default must be provided explicitly.
 .Pp
+ATF configuration is checked when the target contains ATF runtime or
+configuration files, or the source supplies ATF configuration.
+Empty ATF directories alone do not enable this check.
+.Pp
 Supported options:
 .Bl -tag -width XsXsrcdirXXX -offset indent
 .It Fl a Ar arch

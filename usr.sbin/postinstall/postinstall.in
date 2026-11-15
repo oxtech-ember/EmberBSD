@@ -887,6 +887,29 @@ do_atf()
 	local atfdir="${DEST_DIR}/etc/atf"
 	local op="$1"
 	local failed=0
+	local file
+	local required=no
+
+	# mtree installs empty ATF directories even with MKATF=no.  Check
+	# actual ATF files, including partial installations and source sets.
+	# atf-run alone can be supplied by Kyua without ATF configuration.
+	for file in "${DEST_DIR}/usr/libexec/atf-check" \
+	    "${DEST_DIR}/usr/bin/atf-sh" \
+	    "${DEST_DIR}/usr/share/atf/libatf-sh.subr" \
+	    "${atfdir}/NetBSD.conf" "${atfdir}/common.conf" \
+	    "${atfdir}/atf-run.hooks" \
+	    "${SRC_DIR}/external/bsd/atf/etc/atf/NetBSD.conf" \
+	    "${SRC_DIR}/external/bsd/atf/etc/atf/common.conf" \
+	    "${SRC_DIR}/external/bsd/atf/dist/tools/sample/atf-run.hooks" \
+	    "${SRC_DIR}/etc/atf/NetBSD.conf" \
+	    "${SRC_DIR}/etc/atf/common.conf" \
+	    "${SRC_DIR}/etc/atf/atf-run.hooks"; do
+		if [ -e "${file}" ] || [ -L "${file}" ]; then
+			required=yes
+			break
+		fi
+	done
+	[ "${required}" = yes ] || return 0
 
 	# Ensure atf configuration files are in place.
 	if find_file_in_dirlist NetBSD.conf "NetBSD.conf" \
