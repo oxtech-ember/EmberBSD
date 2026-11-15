@@ -105,3 +105,45 @@ Test driver for KMS: efidrm618 (outside of this tree: KMS over the UEFI GOP
 framebuffer, the module of the 5.6 core brought to this one); client
 ember/tests/drm2-kms-client.c on raw ioctls, ember/tests/kms-shot-compare.py
 for the comparison of a QEMU screendump with the pattern the client draws.
+
+The virtio-gpu driver (sys/modules/virtiogpu618)
+------------------------------------------------
+The virtio-gpu driver of Linux 6.18 (dist618/drm/virtio, thirteen MIT files,
+one local patch, patches.tsv) runs on this core in a QEMU guest: the module
+virtiogpu618 attaches to a virtio(4) device of type 16 (the device is called
+virtiogpudrm; the kernel configuration must not have viogpu or the 5.6
+virtiodrm: GENERIC_ARL_DRM618 has none).  What it needs from the layer and
+how it is provided:
+
+ - Scatter lists as Linux defines them (include/linux/scatterlist.h shadow,
+   drm618_scatterlist.c): an array of entries, one per run of physically
+   contiguous pages, bus address and length after a mapping.  The shared
+   layer's one-entry table is read under other names and never meets this
+   one.  Tables carry the physical address as the bus address (no IOMMU);
+   dma_map_sgtable stays EOPNOTSUPP, so a dma-buf of another device cannot be
+   imported.  PAGE_MASK is not used (opposite meanings in NetBSD and in the
+   layer's <linux/mm.h>).  is_vmalloc_addr says no on this core: the heap is
+   walked by pages.
+ - drm_gem_shmem_helper (drm618_gem_shmem_helper.c) and the encoder of
+   drm_simple_kms_helper (drm618_simple_kms.c), own code: create, free, pin,
+   vmap, mmap, sg table; no madvise, no import of an sg table, no dumb
+   buffers, no write-combined mappings.
+ - The Linux virtio device interface (drm618_virtio.c, linux/virtio*.h): a
+   driver registry, probe from the attach with the features of the driver's
+   table, queues as handles, commands as scatter lists (every physically
+   contiguous piece becomes a DMA map of its own), reset, unused buffers,
+   the virtio dma-buf operations.  Not provided: shared memory regions of a
+   device (host visible blobs; drm618_virtio_vram.c refuses them with a
+   message), queue contexts, interrupt affinity.  A command that waits more
+   than five seconds is named in the log once a second; after two seconds the
+   device is told again.  sysctl hw.virtiogpudrm: drop_notify (fault
+   injection) and read only counters of commands and DMA maps.
+ - Linux formatting of the log (drm618_printf.c): %pV and %ps for drm_print.c,
+   without which the DRM messages were unreadable.
+
+2D works; virgl, blob resources, context init and EXECBUFFER compile as in
+Linux but were not run: the device is given no such feature in the tested
+set-up.  The upstream driver does not check a framebuffer against the size of
+its object and takes any cursor image up to the cursor size; the client
+(ember/tests/drm2-kms-client.c) has the expectations of both drivers.
+
