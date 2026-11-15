@@ -85,7 +85,15 @@ module requirements before using that reduced module tree.
 
 Use a separate destination tree for the reduced base. The following flags
 keep C/C++ support and omit new compiler commands, debuggers, tests,
-manuals, X11 and additional modules. The explicit build targets reuse the
+manuals, X11, LDAP and additional modules. The minimal profile selects
+`MKLDAP=no` for either compiler family; `bsd.own.mk` also sets `USE_LDAP=no`
+for consumers such as OpenSSH, Postfix, racoon and amd. Local SSH keys in
+`authorized_keys` remain supported. A full base can keep LDAP enabled.
+The generic SDK `aarch64-sysroot` profile is a complete base/comp producer;
+apply this reduced profile through the OS build variables when preparing a
+minimal device installation. When changing an existing build's LDAP setting,
+rebuild its consumers with that setting before creating the selected sets.
+The explicit build targets reuse the
 already completed tools and object directories; use them only after the
 preceding toolchain/kernel build from this same revision succeeds.
 Create the complete object-directory layout once if it does not already
@@ -101,7 +109,7 @@ sh ./build.sh -U -u -j"$jobs" -m evbarm -a aarch64 \
     -V MKKMOD=no -V MKGCCCMDS=no -V MKGDB=no -V MKBINUTILS=no \
     -V MKATF=no -V MKKYUA=no -V MKMAN=no -V MKDOC=no -V MKINFO=no \
     -V MKHTML=no -V MKLINT=no -V MKPROFILE=no -V MKCVS=no \
-    -V MKGROFF=no -V MKRUMP=no -V MKOBJDIRS=no \
+    -V MKGROFF=no -V MKRUMP=no -V MKLDAP=no -V MKOBJDIRS=no \
     -V INSTALLSETS=base -V 'MAKETARSETS=base etc' \
     -V "BUILDINFO=EmberBSD:$revision" \
     -V "KERNOBJDIR=$src/sys/arch/evbarm/compile" \
