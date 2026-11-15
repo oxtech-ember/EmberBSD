@@ -488,7 +488,8 @@ off_t	default_llseek(struct file *, off_t, int);
 int	simple_open(struct inode *, struct file *);
 /* the table of operations of a debugfs attribute has no user without debugfs: an unused object of the name */
 #define	DEFINE_SIMPLE_ATTRIBUTE(name, get, set, fmt)			\
-	static const struct { int unused; } name __unused = { 0 }
+	static const struct { const void *getter; const void *setter; } name __unused = \
+	    { (const void *)(get), (const void *)(set) }
 #define	DEFINE_DEBUGFS_ATTRIBUTE(name, get, set, fmt)			\
 	DEFINE_SIMPLE_ATTRIBUTE(name, get, set, fmt)
 #define	debugfs_create_file_unsafe(...)	((struct dentry *)NULL)
@@ -778,7 +779,8 @@ __init_waitqueue_head(wait_queue_head_t *wq, const char *name __unused,
 /* a show attribute also has the table of operations the debugfs file would use; there is no debugfs, an unused object stands for it */
 #undef	DEFINE_SHOW_ATTRIBUTE
 #define	DEFINE_SHOW_ATTRIBUTE(name)					\
-	static const struct { int unused; } name##_fops __unused = { 0 }
+	static const struct { int (*show)(struct seq_file *, void *); }	\
+	    name##_fops __unused = { .show = name##_show }
 #undef	DEFINE_SHOW_STORE_ATTRIBUTE
 #define	DEFINE_SHOW_STORE_ATTRIBUTE(name)	DEFINE_SHOW_ATTRIBUTE(name)
 
@@ -886,5 +888,15 @@ void	user_write_access_end(void);
 void	kernel_fpu_begin(void);
 void	kernel_fpu_end(void);
 int	ratelimit_state_get_miss(struct ratelimit_state *);
+
+
+/* ---- batch 5 ---- */
+#define	POISON_FREE		0x6b
+#define	ZERO_SIZE_PTR		((void *)16)
+typedef unsigned long kernel_ulong_t;
+/* the rights to use the performance counters: the privileged user (declared, not defined) */
+bool	perfmon_capable(void);
+int	pci_set_power_state(struct pci_dev *, int);
+int	pci_rebar_bytes_to_size(u64);
 
 #endif

@@ -147,6 +147,8 @@ drm2_i915_layer_run(void)
 	CHECK(!overflows_type(y, int) && !overflows_type(y, y));
 	CHECK(castable_to_type(10, uint8_t) && !castable_to_type(300, uint8_t));
 	CHECK(castable_to_type(x, int) && !castable_to_type(y, int));
+	CHECK(castable_to_type(y, unsigned long) == 0 && castable_to_type(y, long) == 1);
+	CHECK(castable_to_type((unsigned long)y, pgoff_t));
 	CHECK(sizeof(typeof_member(struct t_s, a)) == sizeof(int));
 	CHECK(sizeof(typeof_member(struct t_s, b)) == 7);
 

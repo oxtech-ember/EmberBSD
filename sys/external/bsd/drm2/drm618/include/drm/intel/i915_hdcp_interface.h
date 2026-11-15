@@ -51,7 +51,7 @@ enum hdcp_ddi {
 	HDCP_DDI_RANGE_END	= HDCP_DDI_A,
 };
 
-enum hdcp_tc {
+enum hdcp_transcoder {
 	HDCP_INVALID_TRANSCODER	= 0x00,
 	HDCP_TRANSCODER_EDP	= 0x01,
 	HDCP_TRANSCODER_DSI0	= 0x02,
@@ -65,7 +65,7 @@ enum hdcp_tc {
 /* the state of one port for the firmware calls */
 struct hdcp_port_data {
 	enum hdcp_ddi hdcp_ddi;
-	enum hdcp_tc hdcp_transcoder;
+	enum hdcp_transcoder hdcp_transcoder;
 	u8 port_type;
 	u8 protocol;
 	u16 k;

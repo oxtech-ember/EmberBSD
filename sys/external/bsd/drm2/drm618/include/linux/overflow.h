@@ -27,7 +27,8 @@
 
 /*
  * castable_to_type(N, T): N can be assigned to T without loss: for a
- * constant when it fits, otherwise when it already has the type of T.
+ * constant when it fits, otherwise when it has the width and signedness of T
+ * (not necessarily the same type: the layer's pgoff_t is not unsigned long).
  */
 /*
  * The test for a constant N is an integer constant expression (static_assert
@@ -47,7 +48,9 @@
 #ifndef castable_to_type
 #define	castable_to_type(N, T)						\
 	__builtin_choose_expr(__builtin_constant_p(N),			\
-	    !__drm618_overflows_const((N), T), __same_type((N), (T)0))
+	    !__drm618_overflows_const((N), T),				\
+	    (sizeof(N) == sizeof(__typeof__(T)) &&			\
+	    __drm618_uns(__typeof__(N)) == __drm618_uns(T)))
 #endif
 
 #endif

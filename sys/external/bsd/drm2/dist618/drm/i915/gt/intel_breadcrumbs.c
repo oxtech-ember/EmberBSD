@@ -127,7 +127,7 @@ check_signal_order(struct intel_context *ce, struct i915_request *rq)
 }
 
 static bool
-__dma_fence_signal(struct dma_fence *fence)
+i915_dma_fence_signal(struct dma_fence *fence)
 {
 	return !test_and_set_bit(DMA_FENCE_FLAG_SIGNALED_BIT, &fence->flags);
 }
@@ -236,7 +236,7 @@ static void signal_irq_work(struct irq_work *work)
 				intel_context_put(ce);
 			}
 
-			if (__dma_fence_signal(&rq->fence))
+			if (i915_dma_fence_signal(&rq->fence))
 				/* We own signal_node now, xfer to local list */
 				signal = slist_add(&rq->signal_node, signal);
 			else
@@ -337,7 +337,7 @@ void intel_breadcrumbs_free(struct kref *kref)
 static void irq_signal_request(struct i915_request *rq,
 			       struct intel_breadcrumbs *b)
 {
-	if (!__dma_fence_signal(&rq->fence))
+	if (!i915_dma_fence_signal(&rq->fence))
 		return;
 
 	i915_request_get(rq);
