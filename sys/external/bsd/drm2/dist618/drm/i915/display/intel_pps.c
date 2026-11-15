@@ -1476,7 +1476,7 @@ static int pps_units_to_msecs(int val)
 static void pps_init_delays_bios(struct intel_dp *intel_dp,
 				 struct intel_pps_delays *bios)
 {
-	struct intel_display *display = to_intel_display(intel_dp);
+	struct intel_display *display __maybe_unused = to_intel_display(intel_dp);
 
 	lockdep_assert_held(&display->pps.mutex);
 
@@ -1518,7 +1518,7 @@ static void pps_init_delays_vbt(struct intel_dp *intel_dp,
 static void pps_init_delays_spec(struct intel_dp *intel_dp,
 				 struct intel_pps_delays *spec)
 {
-	struct intel_display *display = to_intel_display(intel_dp);
+	struct intel_display *display __maybe_unused = to_intel_display(intel_dp);
 
 	lockdep_assert_held(&display->pps.mutex);
 

@@ -176,7 +176,7 @@ static int gsc_notifier(struct notifier_block *nb, unsigned long action, void *d
 	struct intel_huc *huc = container_of(nb, struct intel_huc, delayed_load.nb);
 	struct intel_gsc_intf *intf = &huc_to_gt(huc)->gsc.intf[0];
 
-	if (!intf->adev || &intf->adev->aux_dev.dev != dev)
+	if (!intf->adev || drm618_aux_device_of(intf->adev) != dev)
 		return 0;
 
 	switch (action) {
