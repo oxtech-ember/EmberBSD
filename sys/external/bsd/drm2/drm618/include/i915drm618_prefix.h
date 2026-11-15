@@ -44,6 +44,12 @@
 #define	CONFIG_DRM_I915_FORCE_PROBE	""	/* no platform is forced; i915.force_probe sets it at run time */
 
 /*
+ * Left undefined on purpose (see README): ACPI, BACKLIGHT_CLASS_DEVICE (no backlight class
+ * device; the driver drives the panel backlight itself), the debug, self test and
+ * optional subsystem options.
+ */
+
+/*
  * Linux's __always_inline includes inline; NetBSD's attribute alone makes
  * every unused "static __always_inline" function of the i915 headers a
  * -Wunused-function warning.
