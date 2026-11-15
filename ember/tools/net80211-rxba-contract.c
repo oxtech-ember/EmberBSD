@@ -195,6 +195,14 @@ static void *unit_key_attach(struct ieee80211com *ic,struct ieee80211_key *key)
 #define IEEE80211_NODE_IS_LOCKED(nt) ((nt)->locked)
 #define IEEE80211_NODE_SAVEQ_DRAIN(ni,qlen) do { (void)(ni);(qlen)=0; } while(0)
 #define free(p,type) free(p)
+/* Epoch behavior is exercised by the actual common lifecycle fixture. */
+static void
+ieee80211_assoc_epoch_clear(struct ieee80211com *ic,
+	struct ieee80211_node *ni)
+{
+	(void)ic;
+	(void)ni;
+}
 #include "native-rxba-node.inc"
 #undef free
 struct unit_fixture {

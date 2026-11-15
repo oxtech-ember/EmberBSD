@@ -186,6 +186,14 @@ m_freem(void *p)
 	if(p!=NULL)phy_ba_frees++;
 	free(p);
 }
+/* Association epoch semantics are covered by assoc-lifecycle-contract.c. */
+static void
+ieee80211_assoc_epoch_clear(struct ieee80211com *ic,
+	struct ieee80211_node *ni)
+{
+	(void)ic;
+	(void)ni;
+}
 #include "native-rxba-lifecycle.inc"
 #define malloc(n, t, f) test_allocate((n), (f))
 #define free(p, t) free(p)

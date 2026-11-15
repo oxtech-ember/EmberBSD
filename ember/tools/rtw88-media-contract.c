@@ -35,6 +35,7 @@ media_isset(const uint8_t *bits, unsigned index)
 #define IASSERT(c,m) assert(c)
 #define IEEE80211_DPRINTF(...) ((void)0)
 #define IEEE80211_BEACON_LOCK_INIT(...) ((void)0)
+#define IEEE80211_ASSOC_EPOCH_LOCK_INIT(ic) ((void)(ic))
 #define LIST_INSERT_HEAD(...) ((void)0)
 #define IF_Mbps(a) ((uint64_t)(a)*1000000)
 #define DLT_IEEE802_11 105
@@ -51,6 +52,7 @@ typedef void (*ifm_stat_cb_t)(struct ifnet *,struct ifmediareq *);
 typedef int ieee80211_media_lock_t;
 struct ieee80211_node { struct ieee80211_rateset ni_rates; };
 struct ieee80211com {
+	uint64_t ic_assoc_epoch;
  int (*ic_sta_set_port)(struct ieee80211com *, bool);
  struct ifnet *ic_ifp;
  struct ieee80211_node *ic_bss;

@@ -85,7 +85,9 @@ for name in ('sys/net80211/_ieee80211.h','sys/net/if_media.h','sys/net80211/ieee
    if re.match(r'^#define\s+IEEE80211_IS_CHAN_(?:2GHZ|FHSS)\(',line):continue
    parts.append(line)
 parts.append(re.search(r'^#define\s+CALLOUT_MPSAFE\s+.*$',read('sys/sys/callout.h'),re.M).group())
-parts+=['#define IEEE80211_BEACON_LOCK_INIT(...) ((void)0)','#define LIST_INSERT_HEAD(...) ((void)0)']
+parts+=['#define IEEE80211_BEACON_LOCK_INIT(...) ((void)0)',
+        '#define IEEE80211_ASSOC_EPOCH_LOCK_INIT(ic) ((void)(ic))',
+        '#define LIST_INSERT_HEAD(...) ((void)0)']
 (out/'enable-constants.inc').write_text('\n'.join(parts)+'\n')
 # Keep complete actual shared ifattach and setmode, including its disabled default.
 ieee=read('sys/net80211/ieee80211.c');proto=read('sys/net80211/ieee80211_proto.c');net=read('sys/dev/ic/rtw88_net.c')
