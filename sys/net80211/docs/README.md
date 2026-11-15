@@ -53,6 +53,8 @@ Register only providers whose prerequisites the adapter can meet.
 No optional row is enabled merely by registering the base network interface.
 For HT/VHT, follow the current provider and source contracts; the basic native HT profile and experimental wider-channel profile differ.
 An RX-only crypto provider is not a general TX encryption-offload API.
+The [approved TX-offload direction](sae-hw-tx.md) specifies the proposed common
+key/PN lifetime and protected-BlockAck prerequisites; it is not an implemented API.
 
 ## Association, work, and buffer lifetime
 

@@ -43,8 +43,8 @@ three centre channels, its 160 MHz capability bits and whether 160 MHz
 is allowed and enabled. Contract: `test_width160()` in
 `ember/tools/iwx-ht-contract.sh`.
 
-802.11ax (HE) is written but off by default and **not yet run on
-hardware**: with `ht=4` (80 MHz) or `ht=5` (160 MHz), on the MLD firmware
+802.11ax (HE) is experimental and off by default: with `ht=4` (80 MHz)
+or `ht=5` (160 MHz), on the MLD firmware
 API and the 5 GHz band, the association request carries an HE
 capabilities element, unless the NVM lacks 11ax or the firmware forbids
 it in the current country (bit 13 of the `MCC_UPDATE` capability word). Its values are those of Linux iwlwifi for a
@@ -103,8 +103,8 @@ that fix has not run on hardware. Contracts: the state dispatcher and
 the owner of the contexts in `ember/tools/iwx-width-contract.sh`, the
 receive channel rule in `ember/tests/iwx-sae.sh`.
 
-New and **not yet run on hardware**: 802.11be (EHT) on 5 GHz, up to
-160 MHz, without MLO, punctured channels or 6 GHz, with `hw.iwx.ht=6`
+Experimental 802.11be (EHT) on 5 GHz, up to 160 MHz, without MLO,
+punctured channels or 6 GHz, with `hw.iwx.ht=6`
 (80 MHz) or `7` (160 MHz). Following Linux iwlwifi/iwlmld: the
 association request carries an EHT Capabilities element right after the
 HE one (the bytes Linux sends for a two-antenna FM radio on 5 GHz, less
@@ -293,6 +293,11 @@ audit was prepared with OpenAI Codex assistance.
 
 ## Native SAE/PMF integration (2026-11-08)
 
+The [common TX-offload design](../../../sys/net80211/docs/sae-hw-tx.md)
+records the approved direction and prerequisites for replacing software TX.
+The implementation below remains RX-only; enabling firmware TX requires that
+common contract, unchanged-key retention and protected-BlockAck verification.
+
 The driver is an RX hardware adapter to the common owner. SAE exchange,
 association admission, controlled-port policy, software CCMP transmit,
 CCMP replay, BIP/MMIE verification and SA Query remain in net80211 and its
@@ -457,7 +462,7 @@ Boot setup used on the MSI:
 | WPA | `wpa_supplicant=YES`, `wpa_supplicant_flags="-B -s -i iwx0 -c /etc/wpa_supplicant.iwx0.conf"` |
 | DHCP | `dhcpcd_flags="-qM rge0 iwx0"` |
 | Country | `modload -s mcc=XX` (default `ZZ`); replaced by the country the firmware detects |
-| HT/VHT/HE | `modload -i ht=N` or, at run time, `sysctl -w hw.iwx.ht=N`: 0 legacy, 1 HT, 2 HT+VHT up to 80 MHz (default), 3 HT+VHT up to 160 MHz, 4 with HE up to 80 MHz, 5 HE up to 160 MHz, 6 with EHT up to 80 MHz, 7 EHT up to 160 MHz (6 and 7 not yet run on hardware). A sysctl change applies from the next association: `ifconfig iwx0 down`, then `up`. For a module loaded by the boot loader, put `hw.iwx.ht=N` in `/etc/sysctl.conf`. A module loaded with `ht=0` attaches without QoS and accepts only 0; mode 0 chosen by sysctl keeps WMM and only stops offering HT |
+| HT/VHT/HE | `modload -i ht=N` or, at run time, `sysctl -w hw.iwx.ht=N`: 0 legacy, 1 HT, 2 HT+VHT up to 80 MHz (default), 3 HT+VHT up to 160 MHz, 4 with HE up to 80 MHz, 5 HE up to 160 MHz, 6 with EHT up to 80 MHz, 7 EHT up to 160 MHz. A sysctl change applies from the next association: `ifconfig iwx0 down`, then `up`. For a module loaded by the boot loader, put `hw.iwx.ht=N` in `/etc/sysctl.conf`. A module loaded with `ht=0` attaches without QoS and accepts only 0; mode 0 chosen by sysctl keeps WMM and only stops offering HT |
 
 Bring-up fixes on NetBSD (commits 579e0ec..bcc5a61): raw `CSR_HW_REV` as
 prph scratch `mac_id` (the GL ROM ignored the converted value), 94

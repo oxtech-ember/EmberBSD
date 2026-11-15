@@ -176,3 +176,7 @@ configuration/retry, current-peer and generation admission, delayed copyin,
 controlled ports, rekey/reinstall and failure behavior, PMF replay, malformed
 management, queue retirement and allocation/serial exhaustion. These fixtures
 are host evidence, not target-kernel or hardware acceptance.
+
+For the existing RX-only hardware provider and the approved direction for TX,
+read [hardware TX ownership and key lifetime](sae-hw-tx.md). Its proposed TX
+contract does not change the implemented software-TX behavior described here.
