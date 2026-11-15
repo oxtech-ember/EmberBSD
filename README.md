@@ -86,6 +86,8 @@ An assistant follows the same validation requirements as a human contributor.
 
 ## Wi-Fi status and remaining work
 
+Start with the [Wi-Fi architecture and standards guide](https://github.com/oxtech-ember/EmberBSD-Docs/blob/main/modules/wifi.md).
+Driver authors use the [net80211 integration map](sys/net80211/docs/README.md) for interfaces and contract checks.
 Use DevBoards for radio hardware, firmware applicability and physical limits.
 Use driver and net80211 guides for protocol behavior and executable checks.
 Claim results for the tested board and configuration. Establish separate evidence for another board, including when radio or SoC names match.

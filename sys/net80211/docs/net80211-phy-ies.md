@@ -10,7 +10,8 @@ This is observation storage and scan export. Beacon and probe-response
 observations are unauthenticated. They are not negotiated peer state.
 The change adds no local capability advertisement, HT/VHT rates, WME flag,
 A-MSDU enablement, block acknowledgement, channel-width policy or PHY programming.
-Association-response negotiation remains separate work.
+Association-response negotiation has separate [HT provider](../ieee80211_ht20.h)
+and [VHT](net80211-vht-ies.md) contracts; it must not use scan storage as authorization.
 
 ## Native consumers and lifetime
 
@@ -30,8 +31,9 @@ with an empty snapshot and `copy_bss` does not copy observations from an old BSS
 
 Rekey does not clear observations. The data describes a received advertisement,
 not a key or authenticated association. No crypto or key-install path reads or
-writes this storage. Future negotiated HT/VHT state needs its own association,
-key, reorder and teardown rules. It must not use this snapshot as authorization.
+writes this storage. Negotiated HT/VHT state follows its separate
+[association contract](../ieee80211_ht20.h), key, reorder and teardown rules.
+It must not use this snapshot as authorization.
 
 The existing `SIOCG80211` ioctl with `IEEE80211_IOC_SCAN_RESULTS` exports
 these raw IEs through its unchanged scan-result layout. Its IE length field remains eight bits. The serializer

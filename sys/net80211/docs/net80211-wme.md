@@ -1,8 +1,9 @@
 # Native STA WME negotiation prerequisite
 
-This change tightens shared net80211 negotiation and sequence bookkeeping.
-The RTL8822CE wrapper retains its legacy producer and capability settings.
-It does not enable WME, HT/VHT, aggregation or block acknowledgement.
+Shared net80211 owns WME negotiation and sequence bookkeeping.
+Native providers opt into strict STA apply before advertising WME.
+HT/VHT and aggregation require their own admission and provider contracts;
+see the [driver integration map](README.md#optional-provider-contracts).
 
 A STA may authorize QoS only after its native ASSOC_REQ or REASSOC_REQ actually
 contains one valid WME information IE. The management output path records
@@ -157,7 +158,8 @@ hardware queues before it clears the watchdog.
 These paths support native legacy WME advertisement. Physical radio QoS
 acceptance remains separate. The changed WME and node structures are an internal
 kernel ABI change: rebuild the kernel and affected modules together; do not mix
-old modules with the new layout. HT/VHT, aggregation and BA remain disabled.
+old modules with the new layout. WME alone does not enable HT/VHT, aggregation,
+or BA; their separate provider and admission contracts still apply.
 
 ## Host source contracts
 

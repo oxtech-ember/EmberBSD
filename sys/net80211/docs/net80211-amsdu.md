@@ -3,8 +3,9 @@
 The parser alone does not enable HT, VHT, WME or block acknowledgement.
 The native STA path can admit bounded one-stream 5 GHz HT20 only when the
 RTL8822CE provider publishes all six readiness bits and the peer passes HT
-association checks. Missing readiness keeps the legacy profile. VHT and
-channel widths above 20 MHz remain unsupported. This is source-level support;
+association checks. Missing readiness keeps the legacy profile.
+Wider-channel VHT requires the separate [experimental provider](../../dev/ic/docs/rtl8822ce-wifi5-experiment.md).
+The A-MSDU parser does not grant that capability. This is source-level support;
 no physical radio acceptance is implied.
 Unsolicited A-MSDU frames are rejected by default.
 
@@ -136,7 +137,7 @@ They do check that no subframe read/delivery precedes modeled successful MIC ver
 Valgrind is unavailable for this macOS arm64 execution platform.
 No Valgrind, target kernel build, VM, radio or timing acceptance is claimed.
 A coherent GCC16 target build and native legacy regression remain integration gates.
-HT negotiation, reorder, interoperability and physical acceptance remain separate work.
+These parser checks do not qualify HT negotiation, reorder integration, interoperability, or physical operation.
 
 ## Capture analyzer diagnostics
 
