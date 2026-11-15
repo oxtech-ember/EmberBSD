@@ -147,6 +147,58 @@ set-up.  The upstream driver does not check a framebuffer against the size of
 its object and takes any cursor image up to the cursor size; the client
 (ember/tests/drm2-kms-client.c) has the expectations of both drivers.
 
+Unloading
+---------
+drmkms618 refuses to unload (EBUSY, before anything is taken down) while a
+user mapping, a dma-buf, a sync file or a reserved file descriptor exists:
+their operations live in the module text.  The character device of the core
+is unregistered by the core's own exit and checked after it.
+virtiogpu618 refuses while its DRM device has clients, in the unload command
+and in the detach of the device (a forced detach cannot be refused; drvctl -d
+does not reach virtio children, the kernel says ENOTSUP).  Files of other
+kinds made by anon_inode_getfile are not counted, and between the check and
+the teardown a new open is possible: unloading is for root on a machine
+without clients.
+
+Effect on the 5.6 core
+----------------------
+The series changes the shared layer (sys/external/bsd/drm2/linux,
+.../include/linux, common/linux), so the kernel with the 5.6 core, i915,
+radeon, amdgpu, nouveau and vmwgfx behave differently in these points:
+
+ - dma_fence_is_later: for equal sequence numbers the answer is now "no" (as
+   in Linux; it was "yes").  Users: amdgpu_ids.c, amdgpu_sync.c, drm_gem.c,
+   ttm_bo_util.c, linux_dma_fence_chain.c.
+ - dma_resv: the storage has a tagged list (usage) besides the exclusive
+   fence and the shared list.  dma_resv_test_signaled_rcu and
+   dma_resv_wait_timeout_rcu with shared=true now also wait for the exclusive
+   fence when shared fences exist (longer waits are possible); dma_resv_copy_fences
+   does not copy fences that have signalled and takes a non-const source;
+   dma_resv_do_poll looks at every fence of the object.  dma_resv_add_*_fence
+   never allocate and never sleep (TTM calls them under a spin lock); room is
+   made in dma_resv_reserve_shared and dma_resv_reserve_fences, and a fence
+   added without a reservation needs a non-sleeping allocation or the kernel
+   panics rather than lose it.
+ - ww_mutex_lock with an acquire context can return -EDEADLK from the wait
+   (the Linux contract); callers of the 5.6 core were not all re-read.
+ - idr_alloc without idr_preload allocates itself (sleeping when __GFP_WAIT
+   is set): a caller that used to get -ENOMEM under a spin lock now may sleep
+   there.  xa_store returns the previous entry; xa_load without the lock is
+   valid only while the xarray lock is an IPL_VM spin mutex.
+ - hrtimer: periodic timers (hrtimer_forward_now, HRTIMER_RESTART) work and
+   HRTIMER_MODE_REL_PINNED no longer panics.
+ - common/linux/linux_work.c: delayed_work is larger.
+
+These structures have another size or layout than before: struct hrtimer,
+struct delayed_work, struct dma_resv, struct xarray, struct pci_dev,
+struct kref (a union now), struct hdr_sink_metadata (hdmi_type1).  The kernel
+and ALL modules of the 5.6 core and of the shared layer (drmkms, drmkms_linux,
+drmkms_ttm, i915drmkms, radeon, amdgpu, nouveau, vmwgfx, vgem, efidrm, ...)
+must be rebuilt together; an old module with a new kernel corrupts memory
+instead of failing to load.  The 5.6 core with real graphics (i915, amdgpu)
+is built but has not been run on hardware with these changes: only vgem and
+the old efidrm ran on it in a VM (the layer tests do not load on that kernel).
+
 Limits of the virtio-gpu driver, fault injection, import
 --------------------------------------------------------
 Memory.  The pages of a GEM object (shmem file of drm618_shmem.c) are wired
@@ -155,10 +207,17 @@ refused when it is made (ENOMEM), and a page that is not there yet is not
 taken when the free memory is down to the reserve, a sixteenth of the memory
 (at least 16 MiB): the pin fails with ENOMEM and the pages already taken go
 back, where it used to wait for ever until the system killed init and sshd.
-This is in the shared code of the 6.18 core, so vgem618 and efidrm618 have it
-too.  The reserve and the half are a choice, not a measurement: the machine
-must stay usable for its own processes, and one object of more than half of
-the memory cannot be mapped and used besides.
+This is in the GEM shmem objects of the 6.18 core (drm618_shmem.c), so
+vgem618, efidrm618 and virtio-gpu have it.  It does NOT cover the TTM page
+pool (ttm_pool_bsd.c): uvm_pglistalloc there still waits without a reserve,
+so the first driver on the 6.18 TTM needs the same check.  A user mapping
+fault that finds no memory waits and tries again, but a pending signal ends
+it with SIGBUS.  The reserve and the half are a choice, not a measurement:
+the machine must stay usable for its own processes, and one object of more
+than half of the memory cannot be mapped and used besides.  There is no
+limit per user or process and no RLIMIT_MEMLOCK accounting: whoever may open
+a DRM node may wire memory up to the reserve, so the nodes are trusted
+(device node permissions decide).
 
 Size.  The ring of the device takes a command of at most as many pieces as it
 has entries (the native ring asserts it), and the list of backing pages of an
