@@ -226,8 +226,8 @@ virtio_get_shm_region(struct virtio_device *vd, struct virtio_shm_region *r,
 
 	/* The shared memory windows of a device (host visible blobs) are not mapped here. */
 	(void)r;
-	VQLOG(to_vdev(vd), "no shared memory region %u: host visible"
-	    " resources are not supported\n", id);
+	aprint_debug_dev(to_vdev(vd)->sc_dev, "no shared memory region %u: host"
+	    " visible resources are not supported\n", id);
 	return false;
 }
 
