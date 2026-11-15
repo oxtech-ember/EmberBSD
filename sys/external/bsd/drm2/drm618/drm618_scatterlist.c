@@ -36,6 +36,18 @@ drm618_kva_to_pa(const void *va)
 }
 
 struct page *
+drm618_kva_to_page(const void *va)
+{
+	paddr_t pa = drm618_kva_to_pa(va);
+	struct vm_page *pg;
+
+	if (pa == 0)
+		return NULL;
+	pg = PHYS_TO_VM_PAGE(pa & ~(paddr_t)(PAGE_SIZE - 1));
+	return pg == NULL ? NULL : container_of(pg, struct page, p_vmp);
+}
+
+struct page *
 drm618_nth_page(struct page *page, unsigned long n)
 {
 	struct vm_page *pg;

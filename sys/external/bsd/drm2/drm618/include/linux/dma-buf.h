@@ -73,7 +73,11 @@ struct dma_buf {
 	struct dma_resv			db_resv_int;
 };
 
-struct dma_buf_attach_ops;
+/* The importer's side of a dynamic attachment. */
+struct dma_buf_attach_ops {
+	bool	allow_peer2peer;
+	void	(*move_notify)(struct dma_buf_attachment *);
+};
 
 struct dma_buf_attachment {
 	struct dma_buf			*dmabuf;
@@ -99,6 +103,9 @@ struct dma_buf_export_info {
 	struct dma_buf_export_info name = { .exp_name = KBUILD_MODNAME,	\
 					    .owner = THIS_MODULE }
 
+#define	dma_buf_dynamic_attach		drm618_dma_buf_dynamic_attach
+#define	dma_buf_pin			drm618_dma_buf_pin
+#define	dma_buf_unpin			drm618_dma_buf_unpin
 #define	dma_buf_export			drm618_dma_buf_export
 #define	dma_buf_get			drm618_dma_buf_get
 #define	dma_buf_put			drm618_dma_buf_put
@@ -123,6 +130,12 @@ int	dma_buf_fd(struct dma_buf *, int);
 
 struct dma_buf_attachment *dma_buf_attach(struct dma_buf *, struct device *);
 void	dma_buf_detach(struct dma_buf *, struct dma_buf_attachment *);
+/* An attachment of an importer that may be told to give up the mapping (move_notify is never called: nothing moves). */
+struct dma_buf_attachment *dma_buf_dynamic_attach(struct dma_buf *,
+	    struct device *, const struct dma_buf_attach_ops *, void *);
+/* The exporter's pin and unpin (none: nothing to do); the reservation is held. */
+int	dma_buf_pin(struct dma_buf_attachment *);
+void	dma_buf_unpin(struct dma_buf_attachment *);
 struct sg_table *dma_buf_map_attachment(struct dma_buf_attachment *,
 	    enum dma_data_direction);
 void	dma_buf_unmap_attachment(struct dma_buf_attachment *, struct sg_table *,

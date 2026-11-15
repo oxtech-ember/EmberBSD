@@ -33,4 +33,8 @@ vunmap(const void *addr)
 	drm618_iounmap(__UNCONST(addr));
 }
 
+/* The page behind an address of the kernel (mapped memory: the heap or a vmap range). */
+struct page	*drm618_kva_to_page(const void *);
+#define	vmalloc_to_page(addr)	drm618_kva_to_page(addr)
+
 #endif

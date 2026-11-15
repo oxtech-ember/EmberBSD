@@ -137,6 +137,12 @@ pid_task(struct pid *pid, enum pid_type type)
 	return NULL;
 }
 
+/* The name of the process into buf (an array); buf. */
+#define	get_task_comm(buf, tsk)	({					\
+	strlcpy((buf), (tsk)->comm, sizeof(buf));			\
+	(buf);								\
+})
+
 /* The id user space sees for a user id that does not map (65534). */
 #define	overflowuid	65534
 

@@ -27,6 +27,7 @@
 #include <linux/mutex.h>
 #include <linux/scatterlist.h>
 
+#include <drm/drm_file.h>
 #include <drm/drm_gem.h>
 #include <drm/drm_print.h>
 

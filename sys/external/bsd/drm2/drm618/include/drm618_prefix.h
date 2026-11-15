@@ -60,6 +60,11 @@ typedef unsigned int __poll_t;
 #define	__iomem
 #endif
 
+/* linux/compiler_attributes.h: bounds annotation of a flexible array (virtgpu_drv.h); not used by the compiler here */
+#ifndef __counted_by
+#define	__counted_by(member)
+#endif
+
 /* linux/compiler_attributes.h (drm_managed.h) */
 #ifndef __malloc
 #define	__malloc	__attribute__((__malloc__))
