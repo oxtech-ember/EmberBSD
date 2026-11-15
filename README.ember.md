@@ -21,9 +21,9 @@ The [CIX P1 root builder](ember/image/cix-p1.md) describes the reduced userland
 and startup contract. Physical applicability belongs to
 [DevBoards](https://github.com/oxtech-ember/EmberBSD-DevBoards/blob/main/boards/cix-p1-orangepi6plus/README.md).
 
-For target selection and installation, follow [Quick Start](doc/guide/quick-start.md).
-Use the [User Guide](doc/guide/user-guide.md) for first login, network access, applications, updates and recovery.
-The [amd64 VM walkthrough](doc/guide/amd64-vm-install.md) describes a full local-set development ISO.
+For target selection and installation, follow [Installation and updates](https://github.com/oxtech-ember/EmberBSD-Docs/blob/main/configuration/installation-and-updates.md).
+Use the [Service and application configuration](https://github.com/oxtech-ember/EmberBSD-Docs/blob/main/configuration/services-and-applications.md) for first login, network access, applications, updates and recovery.
+The [amd64 VM walkthrough](usr.sbin/sysinst/docs/vm-installation.md) describes a full local-set development ISO.
 
 ## Hardware support and validation
 
@@ -31,7 +31,7 @@ The [amd64 VM walkthrough](doc/guide/amd64-vm-install.md) describes a full local
 loader requirements, media layout and installation applicability.
 Use [adding a board](ember/development/adding-a-board.md) for OS integration and executable checks.
 Run [native net80211 and CCMP contracts](ember/tools/native-net80211-checks.md) with the selected SDK host tools.
-Document software mechanisms beside their subsystem. See [ownership](doc/emberbsd-ownership.md).
+Document software mechanisms beside their subsystem. See [ownership](CONTRIBUTING.md#documentation-ownership).
 
 The experimental [A133 GE8300 native firmware and compute path](sys/arch/arm/sunxi/docs/a133-gpu-fwboot.md)
 supports compute and bounded offscreen Vulkan rendering through

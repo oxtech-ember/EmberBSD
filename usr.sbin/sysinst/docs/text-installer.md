@@ -178,7 +178,7 @@ They do not establish a booted image or physical installation.
 Build a clean committed source export, then test the resulting image in a disposable amd64 VM.
 Record the image hashes, kernel identity, source failures, review, completion and disk-only boot.
 The image build uses the tree's GCC 12.5 bootstrap profile; GCC16 migration is separate.
-The general [VM walkthrough](../../../doc/guide/amd64-vm-install.md) describes the surrounding build and boot setup.
+The general [VM walkthrough](vm-installation.md) describes the surrounding build and boot setup.
 
 The complete candidate at `56046a492ea498bfe2a38ae635a60bba7551c574` passes amd64 UEFI VM acceptance.
 Standard/XFCE installs from the full USB image and starts an installed XFCE session after cold boot.

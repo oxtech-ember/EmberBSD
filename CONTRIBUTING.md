@@ -30,8 +30,8 @@ SDK and Runtime names do not establish released APIs.
 
 ### Documentation ownership
 
-Read the [Developer Guide's documentation rules](https://github.com/oxtech-ember/EmberBSD-Docs/blob/main/CONTRIBUTING.md#separate-concepts-from-implementation)
-for content boundaries. Keep exact software contracts and checks beside the subsystem that implements them.
+Read the [Developer Guide's documentation map and migration rules](https://github.com/oxtech-ember/EmberBSD-Docs/blob/main/development/README.md#documentation-ownership)
+for ownership and moves. Keep exact software contracts and checks beside the subsystem that implements them.
 The root README provides navigation; it does not duplicate guides or hardware catalogs.
 
 In this source tree, `ember/boot` holds consumed boot assets, `ember/image` holds

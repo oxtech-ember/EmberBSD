@@ -103,7 +103,7 @@ These examples show integration patterns, not a hardware support matrix.
 | Bridge and STP | [if_bridge.c](../if_bridge.c), [bridgestp.c](../bridgestp.c), [bridge(4)](../../../share/man/man4/bridge.4) |
 | Aggregation and LACP | [lagg implementation](../lagg), [lagg(4)](../../../share/man/man4/lagg.4), including its administrative limitations |
 | Wired 802.1X | [Enabled supplicant backend](../../../external/bsd/wpa/bin/wpa_supplicant/Makefile), [wired driver](../../../external/bsd/wpa/dist/src/drivers/driver_wired.c), [common wired operations](../../../external/bsd/wpa/dist/src/drivers/driver_wired_common.c) |
-| Userland configuration | [ifconfig(8)](../../../sbin/ifconfig/ifconfig.8), [network setup](../../../doc/guide/user-guide.md) |
+| Userland configuration | [ifconfig(8)](../../../sbin/ifconfig/ifconfig.8), [interface startup](../../../share/man/man5/ifconfig.if.5) |
 
 ## Validate the selected path
 

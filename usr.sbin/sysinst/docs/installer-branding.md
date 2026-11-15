@@ -35,7 +35,7 @@ https://github.com/oxtech-ember/EmberBSD/releases/download/build-a0674c0d2c1b067
 ```
 
 This flat directory contains matching binary sets and their manifests.
-See the [VM installation guide](../../../doc/guide/amd64-vm-install.md) for the selected 13-set profile.
+See the [VM installation guide](vm-installation.md) for the selected 13-set profile.
 Generic amd64 defaults select the first accepted GitHub candidate. Other architectures
 retain their own `cdn.emberbsd.oxteam.me` directory; that domain is not connected.
 Pinned builders override these defaults with their candidate's own source directory.
@@ -43,7 +43,8 @@ A newly built guided installer requires its matching BUILDID and complete select
 The main source menu offers `Bootable USB / image` and `EmberBSD CDN`.
 Use a complete USB image for installation without a network connection.
 Identify the target disk by its model and capacity before confirming the layout.
-The boot USB device can also appear in the disk selection list.
+The current guided installer excludes the boot USB device from its target list.
+The expert interface has its own disk selection and confirmation path.
 ISO files remain available for virtual machines. Screens use the term installation image.
 The CDN submenu offers HTTPS where the installation environment supports it.
 HTTP remains an explicit transport choice for environments without TLS support.
@@ -105,8 +106,8 @@ VM acceptance does not establish physical-device acceptance.
 
 ## Checked 1.0 image
 
-This is a historical development-image receipt. The current published candidate
-has its own [uniform-source VM acceptance](../../../doc/guide/amd64-vm-install.md#checked-boundary).
+This is a historical development-image receipt. The pinned no-X11 candidate
+has its own [uniform-source VM acceptance](vm-installation.md#historical-evidence).
 
 The amd64 image from source `e7d3b9f994a4f0992b7bba4e545076edece45eef`
 passed a complete UEFI USB installation in QEMU 11.1.1 on an arm64 Mac.
@@ -144,5 +145,5 @@ Generic getty and motd remain outside the loader/sysinst branding scope.
 Their upstream greeting and diagnostic `uname` still identify the NetBSD base.
 No physical device or general release is accepted by these VM checks.
 
-The [VM walkthrough](../../../doc/guide/amd64-vm-install.md#checked-boundary) records the development ISO's separate kernel identity and hash.
+The [VM walkthrough](vm-installation.md#historical-evidence) records the development ISO's separate kernel identity and hash.
 Compare installed files and reported component identities with the build record during first boot.
