@@ -43,6 +43,14 @@
 #define	CONFIG_64BIT			1
 #define	CONFIG_DRM_I915_FORCE_PROBE	""	/* no platform is forced; i915.force_probe sets it at run time */
 
+/*
+ * Linux's __always_inline includes inline; NetBSD's attribute alone makes
+ * every unused "static __always_inline" function of the i915 headers a
+ * -Wunused-function warning.
+ */
+#undef	__always_inline
+#define	__always_inline	inline __attribute__((__always_inline__))
+
 #include <linux/io.h>		/* readb, writel, ... (intel_uncore.h) */
 #include <linux/timekeeping.h>	/* ktime_get_raw_fast_ns */
 #include <linux/interrupt.h>	/* struct tasklet_struct (i915_scheduler_types.h) */
