@@ -7,7 +7,9 @@
 # tables of the modules:
 #   - drmkms618: the table of drm618/drm618_statics.c, against the built
 #     files of dist618 (not drm/ttm, not tools/not-built.txt) and the own
-#     sources drm618/drm618_*.c;
+#     sources drm618/drm618_*.c; the i915 driver (dist618/drm/i915) is not
+#     part of drmkms618: its static objects (i915_sw_fence_lock, mchdev_lock,
+#     capture_mutex, intel_gvt_mutex, ...) need a table of the i915 module;
 #   - drmkms618_ttm: the drm618_static_init_* declarations of
 #     drm618/drm618_ttm_module.c, against dist618/drm/ttm.
 # See include/drm618_statics.h.  Exit 0 and "ok" if they agree.
@@ -21,7 +23,7 @@ want=$(sed -n '/drm618-static-objects: begin/,/drm618-static-objects: end/p' "$D
 have=$( (cd "$D/dist618" &&
     for f in $(grep -E '^(drm|gpu)/.*\.c	' MANIFEST.tsv | cut -f1); do
 	grep -qx "$f" "$D/drm618/tools/not-built.txt" && continue
-	case $f in drm/ttm/*) continue;; esac
+	case $f in drm/ttm/*|drm/i915/*) continue;; esac
 	objects "$f"
     done
     cd "$D/drm618" &&

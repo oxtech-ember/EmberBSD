@@ -61,7 +61,7 @@ mkdir -p "$OUT/log"
 if [ $# -gt 0 ]; then
 	list=$*
 else
-	list=$(cd "$D/dist618" && grep -E '^(drm|gpu)/.*\.c	' MANIFEST.tsv | cut -f1 | sort)
+	list=$(cd "$D/dist618" && grep -E '^(drm|gpu)/.*\.c	' MANIFEST.tsv | cut -f1 | grep -v '^drm/i915/' | sort)
 	# the own sources of the core (drm618/*.c except the exclusion guard)
 	list="$list $(cd "$D" && ls drm618/drm618_*.c | grep -v drm618_exclusive.c)"
 	# Not built with CONFIG_DRM_FBDEV_EMULATION off (see files.drmkms618): listed in
