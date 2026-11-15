@@ -54,7 +54,7 @@ module_param_named(modeset, virtio_gpu_modeset, int, 0400);
 static int virtio_gpu_pci_quirk(struct drm_device *dev)
 {
 	struct pci_dev *pdev = to_pci_dev(dev->dev);
-	const char *pname = dev_name(&pdev->dev);
+	const char *pname = pci_name(pdev);
 	bool vga = pci_is_vga(pdev);
 	int ret;
 
