@@ -371,10 +371,10 @@ are still detected and the GPU is reset.  Recommended: leave it off until
 rendering starts (the next task), then turn CAPTURE_ERROR on; it needs zlib
 (linux/zlib.h) and a sysfs node or a sysctl, so it is a small separate step.
 
-Compile status: 220 of 279 compile; 202 of those without a warning under the
+Compile status: 222 of 279 compile; 203 of those without a warning under the
 flags of the drmkms618 and virtiogpu618 modules (-Wall -Wextra, the waivers of
 virtiogpu618: -Wno-pointer-arith -Wno-shadow -Wno-format -Wno-write-strings
--Wno-cast-qual, -Wno-sign-compare).  The 18 with warnings: unused statics left
+-Wno-cast-qual, -Wno-sign-compare).  The 19 with warnings: unused statics left
 by the stubbed debugfs code (9 files), discarded const qualifiers (8, in the
 layer's calls that take a non-const pointer), packed member addresses
 (intel_guc_capture.c, as the module flags already demote them), one macro
@@ -414,7 +414,7 @@ device through pd_dev (7 files), the class device through drm618_kdev_kobj and
 drm618_kdev_name (8), no runtime PM (1), the timer through drm618_timer_expires
 (1), two static helpers renamed (2), the flags of a vma through a_u.au_int (1).
 
-Not compiling yet (59, first errors in files.i915drm618): the MIPI DSI core
+Not compiling yet (57, first errors in files.i915drm618): the MIPI DSI core
 (drm_mipi_dsi is not imported: icl_dsi, intel_dsi, intel_dsi_dcs_backlight,
 vlv_dsi, vlv_dsi_pll, intel_dsi_vbt need its types and calls), the MEI/auxiliary
 components (intel_gsc.c, intel_huc.c, the HDCP GSC messages), fbdev (2), the

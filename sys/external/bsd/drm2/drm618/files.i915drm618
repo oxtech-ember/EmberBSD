@@ -133,6 +133,7 @@ file	external/bsd/drm2/dist618/drm/i915/gem/i915_gem_internal.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gem/i915_gem_object.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gem/i915_gem_pm.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gem/i915_gem_region.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/gem/i915_gem_stolen.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gem/i915_gem_throttle.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gem/i915_gem_tiling.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gem/i915_gem_ttm_move.c	i915drm618
@@ -153,6 +154,7 @@ file	external/bsd/drm2/dist618/drm/i915/gt/intel_context_sseu.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gt/intel_engine_heartbeat.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gt/intel_engine_user.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gt/intel_execlists_submission.c	i915drm618
+file	external/bsd/drm2/dist618/drm/i915/gt/intel_ggtt.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gt/intel_ggtt_fencing.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gt/intel_ggtt_gmch.c	i915drm618
 file	external/bsd/drm2/dist618/drm/i915/gt/intel_gt.c	i915drm618
@@ -263,18 +265,16 @@ file	external/bsd/drm2/dist618/drm/i915/vlv_suspend.c	i915drm618
 #file	external/bsd/drm2/dist618/drm/i915/gem/i915_gem_phys.c	i915drm618	# call to undeclared function 'shmem_read_mapping_page'; 
 #file	external/bsd/drm2/dist618/drm/i915/gem/i915_gem_shmem.c	i915drm618	# fatal 'linux/uio.h' file not found
 #file	external/bsd/drm2/dist618/drm/i915/gem/i915_gem_shrinker.c	i915drm618	# no member named 'private_data' in 'struct shrinker'
-#file	external/bsd/drm2/dist618/drm/i915/gem/i915_gem_stolen.c	i915drm618	# call to undeclared function 'io_mapping_init_wc'; 
 #file	external/bsd/drm2/dist618/drm/i915/gem/i915_gem_ttm.c	i915drm618	# call to undeclared function 'mapping_set_gfp_mask'; 
 #file	external/bsd/drm2/dist618/drm/i915/gem/i915_gem_userptr.c	i915drm618	# call to undeclared function 'VMA_ITERATOR'; 
 #file	external/bsd/drm2/dist618/drm/i915/gem/i915_gemfs.c	i915drm618	# fatal 'linux/fs_context.h' file not found
 #file	external/bsd/drm2/dist618/drm/i915/gt/intel_breadcrumbs.c	i915drm618	# call to undeclared function 'trace_dma_fence_signaled'; 
 #file	external/bsd/drm2/dist618/drm/i915/gt/intel_engine_cs.c	i915drm618	# no member named 'expires' in 'struct timer_list'
 #file	external/bsd/drm2/dist618/drm/i915/gt/intel_engine_pm.c	i915drm618	# no member named 'node' in 'dma_fence_cb'
-#file	external/bsd/drm2/dist618/drm/i915/gt/intel_ggtt.c	i915drm618	# call to undeclared function 'io_mapping_init_wc'; 
 #file	external/bsd/drm2/dist618/drm/i915/gt/intel_gsc.c	i915drm618	# fatal 'linux/mei_aux.h' file not found
 #file	external/bsd/drm2/dist618/drm/i915/gt/intel_gt_sysfs_pm.c	i915drm618	# incomplete definition of type 'struct device_attribute'
 #file	external/bsd/drm2/dist618/drm/i915/gt/intel_region_lmem.c	i915drm618	# too many arguments to function call, expected 3, have 4
-#file	external/bsd/drm2/dist618/drm/i915/gt/intel_rps.c	i915drm618	# '../../../platform/x86/intel_ips.h' file not found, did you mean 'platform/x86/intel_ips.h
+#file	external/bsd/drm2/dist618/drm/i915/gt/intel_rps.c	i915drm618	# incompatible function pointer types assigning to 'void (*)(void)' from 'typeof (&(ips_link
 #file	external/bsd/drm2/dist618/drm/i915/gt/shmem_utils.c	i915drm618	# no member named 'host' in 'struct address_space'
 #file	external/bsd/drm2/dist618/drm/i915/gt/uc/intel_guc_log.c	i915drm618	# call to undeclared function 'relay_buf_full'; 
 #file	external/bsd/drm2/dist618/drm/i915/gt/uc/intel_guc_submission.c	i915drm618	# call to undeclared function '__xa_store'; 
@@ -289,7 +289,7 @@ file	external/bsd/drm2/dist618/drm/i915/vlv_suspend.c	i915drm618
 #file	external/bsd/drm2/dist618/drm/i915/i915_memcpy.c	i915drm618	# use of undeclared identifier 'X86_FEATURE_XMM4_1'
 #file	external/bsd/drm2/dist618/drm/i915/i915_mitigations.c	i915drm618	# variable has incomplete type 'const struct kernel_param_ops'
 #file	external/bsd/drm2/dist618/drm/i915/i915_mm.c	i915drm618	# unknown type name 'pte_t'
-#file	external/bsd/drm2/dist618/drm/i915/i915_pci.c	i915drm618	# use of undeclared identifier 'TAINT_USER'
+#file	external/bsd/drm2/dist618/drm/i915/i915_pci.c	i915drm618	# variable has incomplete type 'struct pci_driver'
 #file	external/bsd/drm2/dist618/drm/i915/i915_perf.c	i915drm618	# call to undeclared function 'anon_inode_getfd'; 
 #file	external/bsd/drm2/dist618/drm/i915/i915_request.c	i915drm618	# no member named 'node' in 'irq_work'
 #file	external/bsd/drm2/dist618/drm/i915/i915_sysfs.c	i915drm618	# field designator 'mmap' does not refer to any field in type 'const struct bin_attribute'

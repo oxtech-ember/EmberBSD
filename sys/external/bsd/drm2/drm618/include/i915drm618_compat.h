@@ -891,6 +891,11 @@ int	ratelimit_state_get_miss(struct ratelimit_state *);
 
 
 /* ---- batch 5 ---- */
+#ifndef TAINT_USER
+#define	TAINT_USER	6
+#endif
+struct io_mapping;
+struct io_mapping *io_mapping_init_wc(struct io_mapping *, resource_size_t, unsigned long);
 #define	POISON_FREE		0x6b
 #define	ZERO_SIZE_PTR		((void *)16)
 typedef unsigned long kernel_ulong_t;
