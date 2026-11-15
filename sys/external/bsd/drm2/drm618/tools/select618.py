@@ -8,7 +8,7 @@ Select the files of Linux 6.18 that make up the DRM core import for EmberBSD
 (sys/external/bsd/drm2/dist618) and classify the licence of each.
 
 Sources: drivers/gpu/drm/*.c, drivers/gpu/drm/display, drivers/gpu/drm/clients,
-drivers/gpu/buddy.c, and the headers include/drm/*.h (+ display, clients),
+drivers/gpu/buddy.c, drivers/gpu/drm/virtio (the virtio-gpu driver), and the headers include/drm/*.h (+ display, clients),
 include/uapi/drm, include/linux/gpu_buddy.h.  The set of object files is
 computed from the Linux Makefiles for the configuration in CONFIG below
 (an x86 PCI machine without device tree, bridges, panels, MIPI, kunit).
@@ -160,6 +160,13 @@ def build_set():
     for f in P4_SCHED:
         items.append(DRM + '/scheduler/' + f)
     items.append(DRM + '/drm_gem_ttm_helper.c')
+    # The virtio-gpu driver (sys/modules/virtiogpu618): every .c of its
+    # directory, no Makefile read (the driver is built by its own module).
+    vd = os.path.join(root, DRM, 'virtio')
+    if os.path.isdir(vd):
+        for f in sorted(os.listdir(vd)):
+            if f.endswith('.c'):
+                items.append(DRM + '/virtio/' + f)
     return sorted(set(items))
 
 spdx = re.compile(r'SPDX-License-Identifier:\s*(.*?)\s*(?:\*/)?\s*$', re.M)
@@ -218,6 +225,7 @@ hdrs += list(headers('include/drm/clients', 'h'))
 hdrs += list(headers('include/drm/ttm', 'h'))
 hdrs += list(headers(DRM + '/ttm', 'h'))
 hdrs += list(headers(DRM + '/scheduler', 'h'))
+hdrs += list(headers(DRM + '/virtio', 'h'))
 hdrs += list(headers('include/uapi/drm', 'uapi'))
 if os.path.exists(os.path.join(root, 'include/linux/gpu_buddy.h')):
     hdrs.append(('include/linux/gpu_buddy.h', 'h'))
