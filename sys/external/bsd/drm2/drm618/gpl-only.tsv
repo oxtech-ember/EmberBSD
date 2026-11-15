@@ -14,8 +14,11 @@ drm/drm_simple_kms_helper.c	c	GPL	GPL-2.0-or-later	-
 drm/drm_sysfs.c	c	GPL	GPL-2.0-only	drm/drm_sysfs.c
 drm/drm_trace_points.c	c	NONE	-	-
 drm/drm_writeback.c	c	GPL	GPL-2.0	drm/drm_writeback.c
+drm/virtio/virtgpu_trace_points.c	c	GPL	GPL-2.0	-
+drm/virtio/virtgpu_vram.c	c	GPL	GPL-2.0	-
 drm/display/drm_dp_mst_topology_internal.h	h	GPL	GPL-2.0-only	-
 drm/drm_trace.h	h	GPL	GPL-2.0	-
+drm/virtio/virtgpu_trace.h	h	GPL	GPL-2.0	-
 include/drm/display/drm_dp_aux_bus.h	h	GPL	GPL-2.0	-
 include/drm/drm_accel.h	h	GPL	GPL-2.0	-
 include/drm/drm_bridge_connector.h	h	GPL	GPL-2.0+	-
