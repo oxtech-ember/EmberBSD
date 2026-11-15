@@ -151,6 +151,10 @@ except SDKError as exc:
     print(exc, file=sys.stderr)
     sys.exit(2)
 ') || fail 'cannot select build parallelism; set NETBSD2_JOBS if CPU capacity is unavailable'
+# These caller-owned bindings contain generated routing, not build objects.
+# Refresh them once under .build-lock for this invocation's selected flags;
+# the SDK still validates their reuse between checks within this invocation.
+rm -rf "$out/native-check-commands"
 stage=$(mktemp -d "$out/.artifacts.XXXXXX")
 : > "$out/build.log"
 kernel_obj="$out/obj/kernels/$config"

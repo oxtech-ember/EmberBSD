@@ -347,6 +347,8 @@ def resolve_jobs(override=None, *, option='--jobs'):
     return count
 PY
 cat > "$work/sdk/scripts/run-native-check.py" <<'PY'
+import json
+from pathlib import Path
 import os
 import subprocess
 import sys
@@ -390,6 +392,15 @@ if (values["--host-prefix"] != root or
         values["--bindings"] != os.environ["TEST_OUT"] + "/native-check-commands" or
         sorted(roles) != ["awk", "ruby"]):
     raise SystemExit(81)
+# Model the SDK's strict reuse contract for caller-owned compiler bindings.
+bindings = Path(values["--bindings"])
+bindings.mkdir(exist_ok=True)
+selection_path = bindings / "selection.json"
+selection = json.dumps({"family": values["--compiler-family"], "flags": flags}, sort_keys=True)
+if selection_path.exists() and selection_path.read_text() != selection:
+    print("compiler binding differs from selected commands", file=sys.stderr)
+    raise SystemExit(89)
+selection_path.write_text(selection)
 with open(os.environ["TEST_LOG"], "a") as stream:
     stream.write("native-check {} {} {}\n".format(
         values["--compiler-family"], role, values["--bindings"]))
@@ -406,6 +417,8 @@ else:
 with open(values["--log"], "x") as log:
     result = subprocess.run(invocation, env=env, cwd=values["--cwd"],
                             stdout=log, stderr=subprocess.STDOUT, check=False)
+if result.returncode == 0 and role == "python" and os.environ.get("TEST_BINDING_TAMPER") == "yes":
+    selection_path.write_text("tampered during current build")
 raise SystemExit(result.returncode)
 PY
 cat > "$work/sdk/scripts/run-native-os.py" <<'PY'
@@ -533,6 +546,9 @@ grep -q 'cpp .*/tools/bin/target-cpp ' "$TEST_LOG"
 grep -q 'dtc .*/tools/bin/nbdtc ' "$TEST_LOG"
 ! grep -q native-make "$TEST_LOG"
 check_contract_counts 16
+# A previous invocation's generated bindings may select older flag arguments.
+# Only this caller-owned routing directory is refreshed; objects stay reusable.
+printf 'previous compiler flags\n' > "$TEST_OUT/native-check-commands/selection.json"
 # An unchanged BUILDINFO must retain the incremental version object.
 printf 'same-buildinfo-source\n' > "$TEST_OUT/obj/kernels/EMBER64/vers.c"
 printf 'same-buildinfo-object\n' > "$TEST_OUT/obj/kernels/EMBER64/vers.o"
@@ -540,6 +556,13 @@ printf 'same-buildinfo-object\n' > "$TEST_OUT/obj/kernels/EMBER64/vers.o"
 sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1
 test "$(cat "$TEST_OUT/obj/kernels/EMBER64/vers.c")" = same-buildinfo-source
 test "$(cat "$TEST_OUT/obj/kernels/EMBER64/vers.o")" = same-buildinfo-object
+# Once refreshed, bindings remain subject to SDK validation within this build.
+if TEST_BINDING_TAMPER=yes sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1; then
+    echo 'accepted compiler bindings changed between checks' >&2; exit 1
+fi
+grep -q 'compiler binding differs from selected commands' "$work/run.log"
+test ! -e "$TEST_OUT/netbsd-EMBER64"
+test ! -e "$TEST_OUT/.build-lock"
 # The A133 WLAN profile adds its DTB; PCI keeps its selected kernel identity.
 export TEST_OUT="$work/wlan"
 "$TEST_SHELL" "$work/src/ember/build-kernel.sh" "$TEST_OUT" EMBER64_A133_WLAN > "$work/run.log" 2>&1

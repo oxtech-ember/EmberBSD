@@ -51,7 +51,9 @@ does not inherit arbitrary source variables from the environment.
 Host contracts use the shared SDK native-check runner and independent
 `EMBER_HOST_PREFIX`/`EMBER_HOST_COMPILER_FAMILY` selection. The wrapper passes
 that prefix's include, library and runtime-library search paths to the runner's
-compiler bindings, including for contracts that use only `CC`.
+compiler bindings, including for contracts that use only `CC`. These generated
+bindings refresh under the output lock at each wrapper invocation; the SDK
+validates their reuse between checks within that invocation.
 Keep historical GCC build results separate from Clang build and boot checks.
 
 Inspect the selected builder before choosing a configuration.
