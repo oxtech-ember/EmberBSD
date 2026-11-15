@@ -1,5 +1,6 @@
 /*	$NetBSD: drm_cache.c,v 1.19 2022/07/19 23:19:27 riastradh Exp $	*/
 /*
+ * SPDX-License-Identifier: BSD-2-Clause
  * Origin: EmberBSD.  The NetBSD (BSD-2-Clause)
  * drm_cache.c of the 5.6 core, used for the 6.18 core instead of the
  * imported drm/drm_cache.c: that one clflushes through x86 cpu feature
