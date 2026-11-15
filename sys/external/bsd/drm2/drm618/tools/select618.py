@@ -8,7 +8,8 @@ Select the files of Linux 6.18 that make up the DRM core import for EmberBSD
 (sys/external/bsd/drm2/dist618) and classify the licence of each.
 
 Sources: drivers/gpu/drm/*.c, drivers/gpu/drm/display, drivers/gpu/drm/clients,
-drivers/gpu/buddy.c, drivers/gpu/drm/virtio (the virtio-gpu driver), and the headers include/drm/*.h (+ display, clients),
+drivers/gpu/buddy.c, drivers/gpu/drm/virtio (the virtio-gpu driver), the i915 driver
+(drivers/gpu/drm/i915 and include/drm/intel, see I915 below), and the headers include/drm/*.h (+ display, clients),
 include/uapi/drm, include/linux/gpu_buddy.h.  The set of object files is
 computed from the Linux Makefiles for the configuration in CONFIG below
 (an x86 PCI machine without device tree, bridges, panels, MIPI, kunit).
@@ -17,6 +18,8 @@ Writes into OUTDIR:
   select.tsv    path  kind(c|h|uapi)  class  spdx  action  reason
   objs.txt      the .c files of the selected configuration, one per line
   summary.txt   counts per class and action
+  (action skip with reason "excluded: ..." marks the files of the i915 tree
+   that are left out on purpose, see I915)
 
 class:   MIT        MIT or BSD/ISC text or SPDX
          DUAL       SPDX with "OR MIT"/"OR BSD"
@@ -31,9 +34,50 @@ action:  import     goes to dist618 (MIT, DUAL)
 """
 import os, re, sys, json, collections
 
+I915_ONLY = sys.argv[1] == '--i915-only'
+if I915_ONLY:
+    # select618.py --i915-only LINUX_TREE OUTDIR: the rows of the i915 part
+    # only (a tree without the Makefiles of the core, e.g. the MIT-licensed
+    # subset of Linux, is enough); writes OUTDIR/select-i915.tsv.
+    del sys.argv[1]
 root, out = sys.argv[1], sys.argv[2]
 os.makedirs(out, exist_ok=True)
 DRM = 'drivers/gpu/drm'
+
+# I915: the whole directory drivers/gpu/drm/i915 is selected by directory and
+# by the exclusion rules below, not by reading its Makefile (a Makefile is not
+# part of the MIT-licensed files).  Left out (action skip, "excluded: why"):
+#   gvt/                  GVT-g (a hypervisor feature, CONFIG_DRM_I915_GVT off)
+#   selftests/ dirs       self tests at every level (CONFIG_DRM_I915_SELFTEST off)
+#   selftest_*, mock_*    self test and mock device files next to the sources
+#   *_selftest*           the same, except i915_selftest.h: the sources include
+#                         it, it holds the stubs for the disabled self tests
+# Kept on purpose: pxp/ (its headers hold the stubs for CONFIG_DRM_I915_PXP
+# off; the .c files are not built), soc/, gem/, gt/, gt/uc/, display/.
+I915 = 'drivers/gpu/drm/i915'
+I915_KEEP = ('i915_selftest.h',)
+
+def i915_exclusion(rel):
+    """rel: path relative to the i915 directory; reason or None."""
+    parts = rel.split('/')
+    if parts[0] == 'gvt':
+        return 'excluded: gvt'
+    if 'selftests' in parts[:-1]:
+        return 'excluded: selftest'
+    b = parts[-1]
+    if b.startswith('selftest_') or (b.startswith('mock_') ) or ('_selftest' in b and b not in I915_KEEP):
+        return 'excluded: selftest'
+    return None
+
+def i915_files():
+    base = os.path.join(root, I915)
+    res = []
+    for d, ds, fs in os.walk(base):
+        ds.sort()
+        for f in sorted(fs):
+            if f.endswith(('.c', '.h')):
+                res.append(os.path.relpath(os.path.join(d, f), root))
+    return sorted(res)
 
 # x86 PCI configuration, no OF/DT, no bridge/panel/MIPI; TTM and the scheduler
 # are included (their Makefiles are not read: the lists below are fixed,
@@ -167,6 +211,11 @@ def build_set():
         for f in sorted(os.listdir(vd)):
             if f.endswith('.c'):
                 items.append(DRM + '/virtio/' + f)
+    # The i915 driver: every .c not excluded (the 4 GPL ones among them are
+    # classified below and become action ref).
+    for p in i915_files():
+        if p.endswith('.c') and not i915_exclusion(p[len(I915) + 1:]):
+            items.append(p)
     return sorted(set(items))
 
 spdx = re.compile(r'SPDX-License-Identifier:\s*(.*?)\s*(?:\*/)?\s*$', re.M)
@@ -195,13 +244,19 @@ def action_of(cls):
     return 'import' if cls in ('MIT', 'DUAL') else 'ref'
 
 rows = []
-srcs = build_set()
+if I915_ONLY:
+    srcs = [p for p in i915_files() if p.endswith('.c') and not i915_exclusion(p[len(I915) + 1:])]
+else:
+    srcs = build_set()
 objs = []
 for p in srcs:
     if not os.path.exists(os.path.join(root, p)):
         rows.append((p, 'c', 'MISSING', '-', 'skip', 'listed by the Makefile, not present'))
         continue
     cls, sp = classify(read(p))
+    if p.startswith(I915 + '/'):
+        rows.append((p, 'c', cls, sp, action_of(cls), 'i915'))
+        continue
     rows.append((p, 'c', cls, sp, action_of(cls), 'objs'))
     objs.append(p)
 
@@ -216,6 +271,8 @@ def headers(rel, kind, recurse=False):
                 yield p, kind
 
 hdrs = []
+if I915_ONLY:
+    srcs = []
 hdrs += list(headers(DRM, 'h'))                       # root-local headers
 hdrs += list(headers(DRM + '/display', 'h'))
 hdrs += list(headers(DRM + '/clients', 'h'))
@@ -227,12 +284,31 @@ hdrs += list(headers(DRM + '/ttm', 'h'))
 hdrs += list(headers(DRM + '/scheduler', 'h'))
 hdrs += list(headers(DRM + '/virtio', 'h'))
 hdrs += list(headers('include/uapi/drm', 'uapi'))
+hdrs += list(headers('include/drm/intel', 'h'))
+excl = []     # the .c and .h files of the i915 tree that are left out
+for p in i915_files():
+    why = i915_exclusion(p[len(I915) + 1:])
+    if why:
+        excl.append((p, p[-1], why))
+    elif p.endswith('.h'):
+        hdrs.append((p, 'h'))
 if os.path.exists(os.path.join(root, 'include/linux/gpu_buddy.h')):
     hdrs.append(('include/linux/gpu_buddy.h', 'h'))
 # headers excluded on purpose: other-vendor subtrees are not scanned (no recursion)
 for p, kind in sorted(set(hdrs)):
     cls, sp = classify(read(p))
     rows.append((p, kind, cls, sp, action_of(cls), '-'))
+
+for p, k, why in excl:
+    cls, sp = classify(read(p))
+    rows.append((p, p[-1], cls, sp, 'skip', why))
+if I915_ONLY:
+    rows = [r for r in rows if r[0].startswith(I915 + '/') or r[0].startswith('include/drm/intel/')]
+    with open(os.path.join(out, 'select-i915.tsv'), 'w') as f:
+        f.write('path\tkind\tclass\tspdx\taction\treason\n')
+        for r in rows:
+            f.write('\t'.join(r) + '\n')
+    sys.exit(0)
 
 with open(os.path.join(out, 'select.tsv'), 'w') as f:
     f.write('path\tkind\tclass\tspdx\taction\treason\n')
