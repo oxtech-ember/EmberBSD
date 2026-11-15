@@ -44,6 +44,7 @@ SRCS+=	drm618_rbtree.c
 SRCS+=	drm618_scatterlist.c
 SRCS+=	drm618_shmem.c
 SRCS+=	drm618_sleep.c
+SRCS+=	drm618_simple_kms.c
 SRCS+=	drm618_statics.c
 SRCS+=	drm618_sync_file.c
 SRCS+=	drm618_sysfs.c
