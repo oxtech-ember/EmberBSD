@@ -43,12 +43,37 @@
 #include <linux/errno.h>
 #include <linux/spinlock.h>
 #include <linux/types.h>
+#include <linux/list.h>
+
+/*
+ * Entries with a function that a wake-up calls (the i915 sw fence puts its
+ * own function on a queue, and a waiter may use autoremove_wake_function).
+ * A sleeper in wait_event* is not an entry: it waits on the condition
+ * variable of the queue, which every wake-up broadcasts.
+ */
+#define	WQ_FLAG_EXCLUSIVE	0x01
+#define	WQ_FLAG_WOKEN		0x02
+#define	WQ_FLAG_CUSTOM		0x04
+#define	WQ_FLAG_DONE		0x08
+
+struct wait_queue_entry;
+typedef int (*wait_queue_func_t)(struct wait_queue_entry *, unsigned int,
+    int, void *);
+
+struct wait_queue_entry {
+	unsigned int		flags;
+	void			*private;
+	wait_queue_func_t	func;
+	struct list_head	entry;
+};
+typedef struct wait_queue_entry wait_queue_entry_t;
 
 typedef struct wait_queue_head {
 	spinlock_t	lock;
 	kcondvar_t	cv;
 	unsigned long	seq;
 	struct selinfo	wq_sel;		/* poll_wait (linux/poll.h) */
+	struct list_head head;		/* the entries (wait_queue_entry.entry) */
 } wait_queue_head_t;
 
 static inline void
@@ -59,12 +84,14 @@ init_waitqueue_head(wait_queue_head_t *wq)
 	cv_init(&wq->cv, "lnxwq");
 	selinit(&wq->wq_sel);
 	wq->seq = 0;
+	INIT_LIST_HEAD(&wq->head);
 }
 
 static inline void
 destroy_waitqueue_head(wait_queue_head_t *wq)
 {
 
+	KASSERT(list_empty(&wq->head));
 	seldestroy(&wq->wq_sel);
 	cv_destroy(&wq->cv);
 	spin_lock_destroy(&wq->lock);
@@ -78,6 +105,147 @@ waitqueue_active(wait_queue_head_t *wq)
 	return cv_has_waiters(&wq->cv);
 }
 
+static inline int
+default_wake_function(struct wait_queue_entry *entry __unused,
+    unsigned int mode __unused, int flags __unused, void *key __unused)
+{
+
+	/* the task of an entry sleeps on the condition variable: the broadcast wakes it */
+	return 1;
+}
+
+static inline int
+autoremove_wake_function(struct wait_queue_entry *entry, unsigned int mode,
+    int flags, void *key)
+{
+	int ret = default_wake_function(entry, mode, flags, key);
+
+	if (ret)
+		list_del_init(&entry->entry);
+	return ret;
+}
+
+static inline int
+woken_wake_function(struct wait_queue_entry *entry, unsigned int mode,
+    int flags, void *key)
+{
+
+	entry->flags |= WQ_FLAG_WOKEN;
+	return default_wake_function(entry, mode, flags, key);
+}
+
+static inline void
+init_waitqueue_func_entry(struct wait_queue_entry *entry,
+    wait_queue_func_t func)
+{
+
+	entry->flags = 0;
+	entry->private = NULL;
+	entry->func = func;
+}
+
+static inline void
+init_waitqueue_entry(struct wait_queue_entry *entry, void *task)
+{
+
+	entry->flags = 0;
+	entry->private = task;
+	entry->func = default_wake_function;
+}
+
+#define	DEFINE_WAIT_FUNC(name, function)				      \
+	struct wait_queue_entry name = {				      \
+		.private = NULL,					      \
+		.func = (function),					      \
+		.entry = LIST_HEAD_INIT((name).entry),			      \
+	}
+#define	DEFINE_WAIT(name)	DEFINE_WAIT_FUNC(name, autoremove_wake_function)
+
+/* the caller holds the lock of the queue */
+static inline void
+__add_wait_queue(wait_queue_head_t *wq, struct wait_queue_entry *entry)
+{
+
+	list_add(&entry->entry, &wq->head);
+}
+
+static inline void
+__add_wait_queue_entry_tail(wait_queue_head_t *wq,
+    struct wait_queue_entry *entry)
+{
+
+	list_add_tail(&entry->entry, &wq->head);
+}
+
+static inline void
+__add_wait_queue_exclusive(wait_queue_head_t *wq,
+    struct wait_queue_entry *entry)
+{
+
+	entry->flags |= WQ_FLAG_EXCLUSIVE;
+	__add_wait_queue_entry_tail(wq, entry);
+}
+
+static inline void
+__remove_wait_queue(wait_queue_head_t *wq __unused,
+    struct wait_queue_entry *entry)
+{
+
+	list_del(&entry->entry);
+}
+
+static inline void
+add_wait_queue(wait_queue_head_t *wq, struct wait_queue_entry *entry)
+{
+
+	entry->flags &= ~WQ_FLAG_EXCLUSIVE;
+	spin_lock(&wq->lock);
+	__add_wait_queue(wq, entry);
+	spin_unlock(&wq->lock);
+}
+
+static inline void
+add_wait_queue_exclusive(wait_queue_head_t *wq, struct wait_queue_entry *entry)
+{
+
+	spin_lock(&wq->lock);
+	__add_wait_queue_exclusive(wq, entry);
+	spin_unlock(&wq->lock);
+}
+
+static inline void
+remove_wait_queue(wait_queue_head_t *wq, struct wait_queue_entry *entry)
+{
+
+	spin_lock(&wq->lock);
+	__remove_wait_queue(wq, entry);
+	spin_unlock(&wq->lock);
+}
+
+/*
+ * Call the functions of the entries in order.  An entry may remove itself.
+ * A function that returns a negative number stops the walk; an exclusive
+ * entry whose function says it woke its task counts against NR_EXCLUSIVE
+ * (0 wakes every entry).  The caller holds the lock of the queue.
+ */
+static inline void
+__wake_up_common(wait_queue_head_t *wq, unsigned int mode, int nr_exclusive,
+    int wake_flags, void *key)
+{
+	struct wait_queue_entry *curr, *next;
+
+	KASSERT(spin_is_locked(&wq->lock));
+	list_for_each_entry_safe(curr, next, &wq->head, entry) {
+		unsigned int flags = curr->flags;
+		int ret = curr->func(curr, mode, wake_flags, key);
+
+		if (ret < 0)
+			break;
+		if (ret && (flags & WQ_FLAG_EXCLUSIVE) && !--nr_exclusive)
+			break;
+	}
+}
+
 static inline void
 wake_up_all_locked(wait_queue_head_t *wq)
 {
@@ -86,30 +254,36 @@ wake_up_all_locked(wait_queue_head_t *wq)
 	wq->seq++;
 	cv_broadcast(&wq->cv);
 	selnotify(&wq->wq_sel, 0, 0);
+	__wake_up_common(wq, 0, 0, 0, NULL);
 }
 #define	wake_up_locked		wake_up_all_locked
+
+/* wake the sleepers, and call the entries: NR_EXCLUSIVE exclusive ones at most (0: all) */
+static inline void
+__wake_up(wait_queue_head_t *wq, unsigned int mode, int nr_exclusive,
+    void *key)
+{
+
+	spin_lock(&wq->lock);
+	wq->seq++;
+	cv_broadcast(&wq->cv);
+	selnotify(&wq->wq_sel, 0, 0);
+	__wake_up_common(wq, mode, nr_exclusive, 0, key);
+	spin_unlock(&wq->lock);
+}
 
 static inline void
 wake_up_all(wait_queue_head_t *wq)
 {
 
-	spin_lock(&wq->lock);
-	wake_up_all_locked(wq);
-	spin_unlock(&wq->lock);
+	__wake_up(wq, 0, 0, NULL);
 }
-#define	wake_up			wake_up_all
-#define	wake_up_interruptible	wake_up_all
+#define	wake_up(wq)			__wake_up(wq, 0, 1, NULL)
+#define	wake_up_interruptible(wq)	__wake_up(wq, 0, 1, NULL)
 #define	wake_up_interruptible_all	wake_up_all
 #define	wake_up_poll(wq, key)			wake_up_all(wq)
 #define	wake_up_interruptible_poll(wq, key)	wake_up_all(wq)
 
-/*
- * __lnx_wait_event(WQ, COND, TICKS, SIG, ULOCK)
- *
- *	TICKS < 0: no timeout, result 0 or -ERESTARTSYS.  Otherwise the
- *	result is as for wait_event_timeout.  SIG: sleep interruptibly.
- *	ULOCK: spinlock_t * the caller holds (dropped while asleep) or NULL.
- */
 #define	__lnx_wait_event(WQ, COND, TICKS, SIG, ULOCK)			      \
 ({									      \
 	wait_queue_head_t *__lw_wq = &(WQ);				      \

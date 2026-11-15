@@ -66,6 +66,7 @@ struct sg_table {
 };
 
 #define	SG_END_BIT	0x02UL
+#define	SG_CHAIN_BIT	0x01UL	/* the entry is a link to the next array, not data */
 
 /* Out of line: they need the physical address of a page (uvm). */
 int	sg_alloc_table(struct sg_table *, unsigned int, gfp_t);
@@ -127,18 +128,52 @@ sg_is_last(const struct scatterlist *sg)
 }
 
 /* No chains: the next entry is the next one of the array. */
+static inline bool
+sg_is_chain(const struct scatterlist *sg)
+{
+
+	return (sg->page_link & SG_CHAIN_BIT) != 0;
+}
+
+static inline struct scatterlist *
+sg_chain_ptr(const struct scatterlist *sg)
+{
+
+	return (struct scatterlist *)(sg->page_link &
+	    ~(unsigned long)(SG_END_BIT | SG_CHAIN_BIT));
+}
+
+/* the last entry of PRV (PRV_NENTS entries) becomes a link to the array SGL; it no longer holds data */
+static inline void
+sg_chain(struct scatterlist *prv, unsigned int prv_nents,
+    struct scatterlist *sgl)
+{
+	struct scatterlist *link = &prv[prv_nents - 1];
+
+	link->offset = 0;
+	link->length = 0;
+	link->va = NULL;
+	link->page_link = ((unsigned long)sgl | SG_CHAIN_BIT) & ~SG_END_BIT;
+}
+
 static inline struct scatterlist *
 sg_next(struct scatterlist *sg)
 {
 
-	return sg_is_last(sg) ? NULL : sg + 1;
+	if (sg_is_last(sg))
+		return NULL;
+	sg++;
+	if (sg_is_chain(sg))
+		sg = sg_chain_ptr(sg);
+	return sg;
 }
 
 static inline struct page *
 sg_page(const struct scatterlist *sg)
 {
 
-	return (struct page *)(sg->page_link & ~(unsigned long)(SG_END_BIT | 1));
+	return (struct page *)(sg->page_link &
+	    ~(unsigned long)(SG_END_BIT | SG_CHAIN_BIT));
 }
 
 static inline void

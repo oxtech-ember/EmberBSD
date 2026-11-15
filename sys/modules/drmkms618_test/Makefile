@@ -25,6 +25,7 @@ SRCS+=	drm2-shmem.c
 SRCS+=	drm2-simplekms.c
 SRCS+=	drm2-printf.c
 SRCS+=	drm2-memfill.c
+SRCS+=	drm2-i915-layer.c
 
 WARNS=	3
 

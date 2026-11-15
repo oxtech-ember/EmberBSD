@@ -12,5 +12,8 @@
 #define _DRM618_XEN_XEN_H_
 
 #define	xen_domain()	(0)
+#define	xen_pv_domain()	(0)
+#define	xen_hvm_domain()	(0)
+#define	xen_pvh_domain()	(0)
 
 #endif	/* _DRM618_XEN_XEN_H_ */
