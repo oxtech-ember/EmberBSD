@@ -46,14 +46,35 @@ __KERNEL_RCSID(0, "$NetBSD: linux_dma_resv.c,v 1.22 2022/02/15 22:51:03 riastrad
 
 DEFINE_WW_CLASS(reservation_ww_class __cacheline_aligned);
 
+/*
+ * Number of lists allocated for reservation objects since boot.  The
+ * layer tests sample it around the paths that add a fence while the
+ * caller holds a spin lock: those must not allocate.
+ */
+volatile unsigned dma_resv_nalloc;
+
 static struct dma_resv_list *
 objlist_alloc(uint32_t n)
 {
 	struct dma_resv_list *list;
 
+	atomic_inc_uint(&dma_resv_nalloc);
 	list = kmem_alloc(offsetof(typeof(*list), shared[n]), KM_SLEEP);
 	list->shared_max = n;
 
+	return list;
+}
+
+/* For the add paths when a caller did not reserve: never sleeps.  */
+static struct dma_resv_list *
+objlist_alloc_nosleep(uint32_t n)
+{
+	struct dma_resv_list *list;
+
+	atomic_inc_uint(&dma_resv_nalloc);
+	list = kmem_alloc(offsetof(typeof(*list), shared[n]), KM_NOSLEEP);
+	if (list != NULL)
+		list->shared_max = n;
 	return list;
 }
 
@@ -98,10 +119,25 @@ xlist_alloc(uint32_t n)
 {
 	struct dma_resv_xlist *list;
 
+	atomic_inc_uint(&dma_resv_nalloc);
 	list = kmem_alloc(offsetof(struct dma_resv_xlist, ent[n]), KM_SLEEP);
 	list->count = 0;
 	list->max = n;
 
+	return list;
+}
+
+static struct dma_resv_xlist *
+xlist_alloc_nosleep(uint32_t n)
+{
+	struct dma_resv_xlist *list;
+
+	atomic_inc_uint(&dma_resv_nalloc);
+	list = kmem_alloc(offsetof(struct dma_resv_xlist, ent[n]), KM_NOSLEEP);
+	if (list != NULL) {
+		list->count = 0;
+		list->max = n;
+	}
 	return list;
 }
 
@@ -605,14 +641,21 @@ fail:	*fencep = NULL;
  *	release its exclusive fence.  If fence is nonnull, acquire a
  *	reference to it and save it as robj's exclusive fence.
  *
- *	Caller must have robj locked.
+ *	Caller must have robj locked.  Does not allocate and does not
+ *	sleep: TTM calls it under a spin lock.  The shared list keeps its
+ *	storage; only the count drops to zero.  Lockless readers of the
+ *	5.6 API walk list->shared[i] over a snapshot of the count, so the
+ *	slots are never overwritten with NULL: a reader that overlaps
+ *	finds either a fence it can still try to reference (the memory of
+ *	a released fence lives until a grace period has passed) or none
+ *	that is still referenced, and starts over.
  */
 void
 dma_resv_add_excl_fence(struct dma_resv *robj,
     struct dma_fence *fence)
 {
 	struct dma_fence *old_fence = robj->fence_excl;
-	struct dma_resv_list *old_list = robj->fence, *spare = NULL;
+	struct dma_resv_list *old_list = robj->fence;
 	uint32_t old_shared_count = 0;
 	struct dma_resv_write_ticket ticket;
 
@@ -625,50 +668,28 @@ dma_resv_add_excl_fence(struct dma_resv *robj,
 	if (fence)
 		(void)dma_fence_get(fence);
 
-	/*
-	 * If there are any shared fences, remember how many.  Readers
-	 * of the 5.6 API walk list->shared[i] over a snapshot of the
-	 * count without revalidating each entry, so the list they hold
-	 * must keep its count and entries: the object gets a fresh
-	 * empty list of the same capacity (copy on write) and the old
-	 * one is freed after a grace period.  May sleep, so allocate
-	 * before the write section.
-	 */
-	if (old_list != NULL) {
+	/* If there are any shared fences, remember how many.  */
+	if (old_list)
 		old_shared_count = old_list->shared_count;
-		if (old_shared_count != 0) {
-			spare = objlist_alloc(old_list->shared_max);
-			spare->shared_count = 0;
-		}
-	}
 
 	/* Begin an update.  Implies membar_producer for fence.  */
 	dma_resv_write_begin(robj, &ticket);
 
-	/* Replace the fence and the shared list.  */
+	/* Replace the fence and zero the shared count.  */
 	atomic_store_relaxed(&robj->fence_excl, fence);
-	if (spare != NULL)
-		atomic_store_relaxed(&robj->fence, spare);
+	if (old_list)
+		atomic_store_relaxed(&old_list->shared_count, 0);
 
 	/* Commit the update.  */
 	dma_resv_write_commit(robj, &ticket);
 
 	/* Release the old exclusive fence, if any.  */
-	if (old_fence) {
+	if (old_fence)
 		dma_fence_put(old_fence);
-		old_fence = NULL; /* paranoia */
-	}
 
-	/*
-	 * Release any old shared fences.  The entries stay in the old
-	 * list for readers that still hold it; fences are freed only
-	 * after a grace period.
-	 */
-	if (spare != NULL) {
-		while (old_shared_count--)
-			dma_fence_put(old_list->shared[old_shared_count]);
-		objlist_defer_free(old_list);
-	}
+	/* Release any old shared fences; the slots keep their pointers.  */
+	while (old_shared_count--)
+		dma_fence_put(old_list->shared[old_shared_count]);
 }
 
 /*
@@ -954,53 +975,25 @@ resv_nth_locked(const struct dma_resv *robj, unsigned n,
 }
 
 /*
- * resv_victim_spare(robj, n)
+ * resv_remove_nth_ws(robj, n)
  *
- *	If removing the n-th fence changes the shared list, return a
- *	new list with the same capacity to replace it (copy on write),
- *	else NULL.  Readers of the 5.6 API (dma_resv_do_poll,
- *	dma_resv_get_fences_rcu, the *_rcu waits) walk list->shared[i]
- *	over a snapshot of the count without revalidating each entry,
- *	so a shared list may only grow in place, never shift or clear
- *	entries.  May sleep; call before dma_resv_write_begin.
- */
-static struct dma_resv_list *
-resv_victim_spare(struct dma_resv *robj, unsigned n)
-{
-	struct dma_resv_list *sl = robj->fence;
-	unsigned sc = sl != NULL ? sl->shared_count : 0;
-
-	if (robj->fence_excl != NULL) {
-		if (n == 0)
-			return NULL;
-		n--;
-	}
-	if (n >= sc)
-		return NULL;
-	return objlist_alloc(sl->shared_max);
-}
-
-/*
- * resv_remove_nth_ws(robj, n, spare, oldlistp)
- *
- *	Remove the n-th fence; return it with its reference (the caller
- *	puts it after the write section).  Caller holds the lock and is
- *	inside a write section.  If the fence was in the shared list,
- *	spare (from resv_victim_spare) becomes the new list and the old
- *	one is returned in *oldlistp for objlist_defer_free after the
- *	write section.
+ *	Remove the n-th fence and return it with its reference (the
+ *	caller puts it after the write section).  Caller holds the lock
+ *	and is inside a write section.  Nothing is allocated.  Readers
+ *	of the 5.6 API walk list->shared[i] over a snapshot of the count
+ *	without revalidating each entry, so a removed shared entry is
+ *	replaced by the last one and the count drops; no slot is ever
+ *	set to NULL.
  */
 static struct dma_fence *
-resv_remove_nth_ws(struct dma_resv *robj, unsigned n,
-    struct dma_resv_list *spare, struct dma_resv_list **oldlistp)
+resv_remove_nth_ws(struct dma_resv *robj, unsigned n)
 {
 	struct dma_resv_list *sl = robj->fence;
 	struct dma_resv_xlist *xl = robj->xfence;
 	unsigned sc = sl != NULL ? sl->shared_count : 0;
 	struct dma_fence *fence;
-	unsigned i, j;
+	unsigned i;
 
-	*oldlistp = NULL;
 	if (robj->fence_excl != NULL) {
 		if (n == 0) {
 			fence = robj->fence_excl;
@@ -1010,15 +1003,9 @@ resv_remove_nth_ws(struct dma_resv *robj, unsigned n,
 		n--;
 	}
 	if (n < sc) {
-		KASSERT(spare != NULL);
 		fence = sl->shared[n];
-		for (i = j = 0; i < sc; i++) {
-			if (i != n)
-				spare->shared[j++] = sl->shared[i];
-		}
-		spare->shared_count = sc - 1;
-		atomic_store_relaxed(&robj->fence, spare);
-		*oldlistp = sl;
+		atomic_store_relaxed(&sl->shared[n], sl->shared[sc - 1]);
+		atomic_store_relaxed(&sl->shared_count, sc - 1);
 		return fence;
 	}
 	n -= sc;
@@ -1033,6 +1020,74 @@ resv_remove_nth_ws(struct dma_resv *robj, unsigned n,
 }
 
 /*
+ * resv_shared_room(robj, victim_shared)
+ *
+ *	Make sure one more shared fence fits without the add having to
+ *	allocate.  The caller reserved room with dma_resv_reserve_shared
+ *	or dma_resv_reserve_fences, which allocates where sleeping is
+ *	allowed; this only checks.  If a caller broke that contract, try
+ *	a non-sleeping allocation, and if that fails too there is no way
+ *	to keep the fence and the caller is told loudly.
+ */
+static void
+resv_shared_room(struct dma_resv *robj, bool victim_shared)
+{
+	struct dma_resv_list *list = robj->fence, *prealloc = robj->robj_prealloc;
+	uint32_t sc = list != NULL ? list->shared_count : 0;
+	uint32_t nalloc;
+
+	if (victim_shared)
+		return;		/* the victim's slot is reused */
+	if (prealloc != NULL) {
+		if (sc < prealloc->shared_max)
+			return;
+	} else if (list != NULL && sc < list->shared_max) {
+		return;
+	}
+	if (prealloc != NULL) {
+		robj->robj_prealloc = NULL;
+		objlist_free(prealloc);
+	}
+	nalloc = MAX(2*(sc + 1), 4);
+	prealloc = objlist_alloc_nosleep(nalloc);
+	if (prealloc == NULL)
+		panic("dma_resv: no room for a fence that was not reserved,"
+		    " and no memory to make room");
+	robj->robj_prealloc = prealloc;
+}
+
+/*
+ * resv_x_room(robj, victim_x)
+ *
+ *	Same for the tagged list.
+ */
+static void
+resv_x_room(struct dma_resv *robj, bool victim_x)
+{
+	struct dma_resv_xlist *old = robj->xfence, *new;
+	struct dma_resv_write_ticket ticket;
+	uint32_t count = old != NULL ? old->count : 0, max, i;
+
+	if (victim_x)
+		return;
+	if (old != NULL && count < old->max)
+		return;
+	max = MAX(2*(count + 1), 4);
+	new = xlist_alloc_nosleep(max);
+	if (new == NULL)
+		panic("dma_resv: no room for a fence that was not reserved,"
+		    " and no memory to make room");
+	for (i = 0; i < count; i++)
+		new->ent[i] = old->ent[i];
+	new->count = count;
+	dma_resv_write_begin(robj, &ticket);
+	atomic_store_relaxed(&robj->xfence, new);
+	dma_resv_write_commit(robj, &ticket);
+	if (old != NULL)
+		xlist_defer_free(old);
+}
+
+/*
  * dma_resv_add_fence(robj, fence, usage)
  *
  *	Add fence with the given usage, taking a reference.  Like
@@ -1040,8 +1095,12 @@ resv_remove_nth_ws(struct dma_resv *robj, unsigned n,
  *	stronger (usage not lower than the new one) and not later is
  *	replaced, and so is any fence that has already signalled.
  *	Caller holds the lock and has reserved a slot with
- *	dma_resv_reserve_fences; if it did not, a slot is allocated
- *	here (this may sleep).
+ *	dma_resv_reserve_fences (or dma_resv_reserve_shared for READ).
+ *
+ *	Does not sleep and does not allocate on the normal path, so it
+ *	may be called under a spin lock.  Without a reservation a
+ *	non-sleeping allocation is tried; failing that, panic rather
+ *	than lose the fence.
  */
 void
 dma_resv_add_fence(struct dma_resv *robj, struct dma_fence *fence,
@@ -1049,12 +1108,11 @@ dma_resv_add_fence(struct dma_resv *robj, struct dma_fence *fence,
 {
 	struct dma_resv_write_ticket ticket;
 	struct dma_resv_list *list, *prealloc, *old_list = NULL;
-	struct dma_resv_list *spare = NULL, *removed_list = NULL;
 	struct dma_resv_xlist *xl;
 	struct dma_fence *old = NULL, *f;
 	enum dma_resv_usage old_usage;
 	bool victim = false, victim_shared = false, victim_x = false;
-	bool need_x, need_shared;
+	bool need_x;
 	unsigned n = 0, victim_n = 0, i, sc;
 
 	KASSERT(dma_resv_held(robj));
@@ -1091,10 +1149,10 @@ dma_resv_add_fence(struct dma_resv *robj, struct dma_fence *fence,
 	}
 
 	/* Make sure the destination has room, before the write section.  */
-	need_x = need_shared = false;
+	need_x = false;
 	switch (usage) {
 	case DMA_RESV_USAGE_READ:
-		need_shared = true;
+		resv_shared_room(robj, victim_shared);
 		break;
 	case DMA_RESV_USAGE_WRITE:
 		/* The previous latest writer moves to the tagged list.  */
@@ -1105,24 +1163,12 @@ dma_resv_add_fence(struct dma_resv *robj, struct dma_fence *fence,
 		need_x = true;
 		break;
 	}
-	if (need_x) {
-		xl = robj->xfence;
-		if ((xl == NULL || xl->count >= xl->max) && !victim_x)
-			(void)dma_resv_xlist_reserve(robj, 1);
-	}
-	if (need_shared) {
-		list = robj->fence;
-		if ((list == NULL || list->shared_count >= list->shared_max) &&
-		    robj->robj_prealloc == NULL && !victim_shared)
-			(void)dma_resv_reserve_shared(robj, 1);
-	}
-
-	if (victim)
-		spare = resv_victim_spare(robj, victim_n);
+	if (need_x)
+		resv_x_room(robj, victim_x);
 
 	dma_resv_write_begin(robj, &ticket);
 	if (victim)
-		old = resv_remove_nth_ws(robj, victim_n, spare, &removed_list);
+		old = resv_remove_nth_ws(robj, victim_n);
 
 	switch (usage) {
 	case DMA_RESV_USAGE_READ:
@@ -1167,8 +1213,6 @@ dma_resv_add_fence(struct dma_resv *robj, struct dma_fence *fence,
 	}
 	dma_resv_write_commit(robj, &ticket);
 
-	if (removed_list != NULL)
-		objlist_defer_free(removed_list);
 	if (old_list != NULL)
 		objlist_defer_free(old_list);
 	dma_fence_put(old);	/* NULL is fine */
@@ -1191,7 +1235,8 @@ dma_resv_add_shared_fence(struct dma_resv *robj, struct dma_fence *fence)
  * dma_resv_replace_fences(robj, context, replacement, usage)
  *
  *	Replace every fence of the given context by replacement with
- *	the given usage.  Caller holds the lock.
+ *	the given usage.  Caller holds the lock.  May sleep: room for
+ *	the replacement is reserved first.
  */
 void
 dma_resv_replace_fences(struct dma_resv *robj, uint64_t context,
@@ -1199,29 +1244,33 @@ dma_resv_replace_fences(struct dma_resv *robj, uint64_t context,
 {
 	struct dma_resv_write_ticket ticket;
 	struct dma_fence *f, *old;
-	struct dma_resv_list *spare, *removed;
 	enum dma_resv_usage u;
 	unsigned n;
 	bool found = false;
 
 	KASSERT(dma_resv_held(robj));
 
+	for (n = 0; (f = resv_nth_locked(robj, n, &u)) != NULL; n++) {
+		if (f->context == context) {
+			found = true;
+			break;
+		}
+	}
+	if (!found)
+		return;
+	(void)dma_resv_reserve_fences(robj, 1);
+
 restart:
 	for (n = 0; (f = resv_nth_locked(robj, n, &u)) != NULL; n++) {
 		if (f->context != context)
 			continue;
-		spare = resv_victim_spare(robj, n);
 		dma_resv_write_begin(robj, &ticket);
-		old = resv_remove_nth_ws(robj, n, spare, &removed);
+		old = resv_remove_nth_ws(robj, n);
 		dma_resv_write_commit(robj, &ticket);
-		if (removed != NULL)
-			objlist_defer_free(removed);
 		dma_fence_put(old);
-		found = true;
 		goto restart;
 	}
-	if (found)
-		dma_resv_add_fence(robj, replacement, usage);
+	dma_resv_add_fence(robj, replacement, usage);
 }
 
 /*

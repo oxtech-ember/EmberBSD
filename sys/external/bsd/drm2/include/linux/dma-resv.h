@@ -119,6 +119,8 @@ struct dma_resv_xlist;
  * see all three.  Iteration order is fence_excl, the shared list, then
  * xfence; no order between fences is promised.
  */
+extern volatile unsigned dma_resv_nalloc;
+
 struct dma_resv {
 	struct ww_mutex				lock;
 	struct seqcount				seq;

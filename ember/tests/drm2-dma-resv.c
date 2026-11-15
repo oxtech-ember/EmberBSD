@@ -542,22 +542,205 @@ test_resv_replace_rules(void)
 }
 
 /*
+ * Adding a fence must neither sleep nor allocate: ttm_eu_fence_buffer_objects
+ * adds fences to many objects under the spin lock of the LRU lists.  Memory
+ * for a later add is prepared where sleeping is allowed (init, reserve).
+ * Each case reserves outside the spin lock, then adds with a spin lock held
+ * and checks that the allocation counter of the layer did not move and that
+ * the fence is where it belongs.
+ */
+static spinlock_t ts_lock;
+static unsigned ts_allocs;
+
+#define	SPINADD(stmt)	do {						\
+	unsigned a0_;							\
+	spin_lock(&ts_lock);						\
+	a0_ = dma_resv_nalloc;						\
+	stmt;								\
+	ts_allocs += dma_resv_nalloc - a0_;				\
+	spin_unlock(&ts_lock);						\
+} while (0)
+
+struct ts_set {
+	struct dma_fence	*f[24];
+	unsigned		n;
+};
+
+static struct dma_fence *
+ts_new(struct ts_set *ts, uint64_t ctx, uint64_t seqno)
+{
+	struct dma_fence *f = tf_new(ctx, seqno);
+
+	ts->f[ts->n++] = f;
+	return f;
+}
+
+static void
+ts_done(struct dma_resv *r, struct ts_set *ts)
+{
+	unsigned i;
+
+	dma_resv_unlock(r);
+	dma_resv_fini(r);
+	for (i = 0; i < ts->n; i++)
+		dma_fence_put(ts->f[i]);
+	ts->n = 0;
+	CHECK(tf_live == 0);
+}
+
+static void
+test_resv_add_spin(void)
+{
+	struct dma_resv r;
+	struct ts_set ts;
+	struct dma_fence *out[NF], *a1, *a2, *a3, *b1, *c1, *x, *y, *z, *w;
+	enum dma_resv_usage u[NF];
+	uint64_t ca = dma_fence_context_alloc(1);
+	uint64_t cb = dma_fence_context_alloc(1);
+	uint64_t cc = dma_fence_context_alloc(1);
+	uint64_t cd = dma_fence_context_alloc(1);
+	unsigned i;
+
+	ts.n = 0;
+	ts_allocs = 0;
+
+	/* 5.6 shared add after one reservation, no list yet. */
+	dma_resv_init(&r);
+	dma_resv_lock(&r, NULL);
+	a1 = ts_new(&ts, ca, 1);
+	CHECK(dma_resv_reserve_shared(&r, 1) == 0);
+	SPINADD(dma_resv_add_shared_fence(&r, a1));
+	CHECK(tr_collect(&r, DMA_RESV_USAGE_BOOKKEEP, out, u) == 1);
+
+	/* A later fence of the same context replaces it. */
+	a2 = ts_new(&ts, ca, 2);
+	CHECK(dma_resv_reserve_shared(&r, 1) == 0);
+	SPINADD(dma_resv_add_shared_fence(&r, a2));
+	CHECK(tr_collect(&r, DMA_RESV_USAGE_BOOKKEEP, out, u) == 1);
+	CHECK(tr_find(out, 1, a2) == 0);
+
+	/* A signalled fence is replaced by a fence of another context. */
+	b1 = ts_new(&ts, cb, 1);
+	CHECK(dma_resv_reserve_shared(&r, 1) == 0);
+	SPINADD(dma_resv_add_shared_fence(&r, b1));
+	CHECK(tr_collect(&r, DMA_RESV_USAGE_BOOKKEEP, out, u) == 2);
+	dma_fence_signal(a2);
+	c1 = ts_new(&ts, cc, 1);
+	CHECK(dma_resv_reserve_shared(&r, 1) == 0);
+	SPINADD(dma_resv_add_shared_fence(&r, c1));
+	CHECK(tr_collect(&r, DMA_RESV_USAGE_BOOKKEEP, out, u) == 2);
+	CHECK(tr_find(out, 2, a2) < 0 && tr_find(out, 2, b1) >= 0 &&
+	    tr_find(out, 2, c1) >= 0);
+
+	/* Exclusive fence with shared fences present, twice, then clear. */
+	x = ts_new(&ts, cd, 1);
+	SPINADD(dma_resv_add_excl_fence(&r, x));
+	CHECK(dma_resv_get_excl(&r) == x);
+	CHECK(dma_resv_reserve_shared(&r, 1) == 0);
+	a3 = ts_new(&ts, ca, 3);
+	SPINADD(dma_resv_add_shared_fence(&r, a3));
+	y = ts_new(&ts, cd, 2);
+	SPINADD(dma_resv_add_excl_fence(&r, y));
+	CHECK(tr_collect(&r, DMA_RESV_USAGE_BOOKKEEP, out, u) == 1);
+	CHECK(dma_resv_get_excl(&r) == y);
+	SPINADD(dma_resv_add_excl_fence(&r, NULL));
+	CHECK(tr_collect(&r, DMA_RESV_USAGE_BOOKKEEP, out, u) == 0);
+	ts_done(&r, &ts);
+
+	/* Exclusive fence on a list that grew through a spare. */
+	dma_resv_init(&r);
+	dma_resv_lock(&r, NULL);
+	for (i = 0; i < 6; i++) {
+		CHECK(dma_resv_reserve_shared(&r, 1) == 0);
+		SPINADD(dma_resv_add_shared_fence(&r,
+		    ts_new(&ts, dma_fence_context_alloc(1), 1)));
+	}
+	CHECK(tr_collect(&r, DMA_RESV_USAGE_BOOKKEEP, out, u) == 6);
+	x = ts_new(&ts, cd, 3);
+	SPINADD(dma_resv_add_excl_fence(&r, x));
+	CHECK(tr_collect(&r, DMA_RESV_USAGE_BOOKKEEP, out, u) == 1);
+	ts_done(&r, &ts);
+
+	/* The 6.x call with every usage, with and without a victim. */
+	dma_resv_init(&r);
+	dma_resv_lock(&r, NULL);
+	for (i = 0; i < 4; i++) {
+		CHECK(dma_resv_reserve_fences(&r, 1) == 0);
+		SPINADD(dma_resv_add_fence(&r,
+		    ts_new(&ts, dma_fence_context_alloc(1), 1),
+		    (enum dma_resv_usage)i));
+	}
+	CHECK(tr_collect(&r, DMA_RESV_USAGE_BOOKKEEP, out, u) == 4);
+	/* A second writer pushes the first into the tagged list. */
+	CHECK(dma_resv_reserve_fences(&r, 1) == 0);
+	w = ts_new(&ts, dma_fence_context_alloc(1), 1);
+	SPINADD(dma_resv_add_fence(&r, w, DMA_RESV_USAGE_WRITE));
+	CHECK(tr_collect(&r, DMA_RESV_USAGE_BOOKKEEP, out, u) == 5);
+	CHECK(tr_find(out, 5, w) >= 0);
+	/* Same context, later, stronger: a kernel fence replaces a shared one. */
+	CHECK(dma_resv_reserve_fences(&r, 1) == 0);
+	z = ts_new(&ts, ts.f[2]->context, 2);
+	SPINADD(dma_resv_add_fence(&r, z, DMA_RESV_USAGE_KERNEL));
+	CHECK(tr_collect(&r, DMA_RESV_USAGE_BOOKKEEP, out, u) == 5);
+	CHECK(tr_find(out, 5, z) >= 0 && tr_find(out, 5, ts.f[2]) < 0);
+	/* Same context, later: a bookkeeping fence replaces its own kind. */
+	CHECK(dma_resv_reserve_fences(&r, 1) == 0);
+	z = ts_new(&ts, ts.f[3]->context, 2);
+	SPINADD(dma_resv_add_fence(&r, z, DMA_RESV_USAGE_BOOKKEEP));
+	CHECK(tr_collect(&r, DMA_RESV_USAGE_BOOKKEEP, out, u) == 5);
+	CHECK(tr_find(out, 5, z) >= 0 && tr_find(out, 5, ts.f[3]) < 0);
+	/* A signalled fence of any usage gives its slot away. */
+	dma_fence_signal(ts.f[0]);
+	CHECK(dma_resv_reserve_fences(&r, 1) == 0);
+	z = ts_new(&ts, dma_fence_context_alloc(1), 1);
+	SPINADD(dma_resv_add_fence(&r, z, DMA_RESV_USAGE_READ));
+	CHECK(tr_collect(&r, DMA_RESV_USAGE_BOOKKEEP, out, u) == 5);
+	CHECK(tr_find(out, 5, z) >= 0 && tr_find(out, 5, ts.f[0]) < 0);
+	ts_done(&r, &ts);
+
+	/* 5.6 pattern: exclusive adds are never reserved for. */
+	dma_resv_init(&r);
+	dma_resv_lock(&r, NULL);
+	CHECK(dma_resv_reserve_shared(&r, 2) == 0);
+	SPINADD(dma_resv_add_shared_fence(&r,
+	    ts_new(&ts, dma_fence_context_alloc(1), 1)));
+	SPINADD(dma_resv_add_shared_fence(&r,
+	    ts_new(&ts, dma_fence_context_alloc(1), 1)));
+	for (i = 0; i < 5; i++) {
+		SPINADD(dma_resv_add_excl_fence(&r,
+		    ts_new(&ts, dma_fence_context_alloc(1), 1)));
+		CHECK(dma_resv_reserve_shared(&r, 1) == 0);
+		SPINADD(dma_resv_add_shared_fence(&r,
+		    ts_new(&ts, dma_fence_context_alloc(1), 1)));
+	}
+	CHECK(tr_collect(&r, DMA_RESV_USAGE_BOOKKEEP, out, u) == 2);
+	ts_done(&r, &ts);
+
+	CHECK(ts_allocs == 0);
+	if (ts_allocs != 0)
+		printf("drm2-dma-resv: %u allocations in the add paths\n",
+		    ts_allocs);
+}
+
+/*
  * Readers of the 5.6 API (dma_resv_do_poll, get_fences_rcu, the *_rcu
  * waits) walk list->shared[i] over a snapshot of the count without
- * revalidating each entry.  So removing a shared fence must replace the
- * list (copy on write): the old list, still held by a reader, keeps its
- * entries and its count.  Found by the vgem stress (a poller crashed on a
- * NULL entry written by an in-place removal).
+ * revalidating each entry.  Removals and clears must not allocate (they
+ * run under spin locks), so they work in place; the entries of a list a
+ * reader holds must stay non-NULL: a removed entry is replaced by the last
+ * one and no slot is set to NULL.  Found by the vgem stress (a poller
+ * crashed on a NULL entry written by a removal).
  */
 static void
 test_resv_shared_cow(void)
 {
 	struct dma_resv r;
-	struct dma_resv_list *snap, *cur;
+	struct dma_resv_list *snap;
 	struct dma_fence *a1, *b1, *c1, *a2, *x, *all[5];
 	uint64_t ca = dma_fence_context_alloc(1);
 	uint64_t cb = dma_fence_context_alloc(1);
 	uint64_t cc = dma_fence_context_alloc(1);
+	unsigned i, n;
 
 	dma_resv_init(&r);
 	dma_resv_lock(&r, NULL);
@@ -575,13 +758,11 @@ test_resv_shared_cow(void)
 	CHECK(snap != NULL && snap->shared_count == 3);
 	a2 = tf_new(ca, 2);
 	dma_resv_add_fence(&r, a2, DMA_RESV_USAGE_READ);
-	CHECK(snap->shared_count == 3);
-	CHECK(snap->shared[0] == a1 && snap->shared[1] == b1 &&
-	    snap->shared[2] == c1);
-	cur = dma_resv_get_list(&r);
-	CHECK(cur != snap && cur != NULL && cur->shared_count == 3);
-	CHECK(cur->shared[0] != a1 && cur->shared[1] != a1 &&
-	    cur->shared[2] != a1);
+	CHECK(dma_resv_get_list(&r) == snap);
+	n = snap->shared_count;
+	CHECK(n == 3);
+	for (i = 0; i < 3; i++)
+		CHECK(snap->shared[i] != NULL && snap->shared[i] != a1);
 	rcu_read_unlock();
 
 	/* dma_resv_replace_fences (context b) goes the same way. */
@@ -591,10 +772,8 @@ test_resv_shared_cow(void)
 	x = tf_new(cb, 2);
 	dma_resv_replace_fences(&r, cb, x, DMA_RESV_USAGE_READ);
 	CHECK(snap->shared_count == 3);
-	CHECK(snap->shared[0] != NULL && snap->shared[1] != NULL &&
-	    snap->shared[2] != NULL);
-	cur = dma_resv_get_list(&r);
-	CHECK(cur != snap && cur != NULL && cur->shared_count == 3);
+	for (i = 0; i < 3; i++)
+		CHECK(snap->shared[i] != NULL);
 	rcu_read_unlock();
 	dma_resv_unlock(&r);
 
@@ -604,10 +783,9 @@ test_resv_shared_cow(void)
 }
 
 /*
- * dma_resv_add_excl_fence on a list that a 5.6 reader holds: the reader
- * walks list->shared[i] over a count it read earlier, so the entries of
- * the list it holds must stay valid; the object gets a fresh empty list
- * of the same capacity instead (copy on write).
+ * dma_resv_add_excl_fence on a list that a 5.6 reader holds: the count of
+ * the list drops to zero, the slots keep valid pointers, and the capacity
+ * stays for later shared adds.
  */
 static void
 test_resv_excl_cow(void)
@@ -615,6 +793,7 @@ test_resv_excl_cow(void)
 	struct dma_resv r;
 	struct dma_resv_list *snap, *cur;
 	struct dma_fence *a, *b, *c, *x, *y, *all[5];
+	unsigned i;
 
 	dma_resv_init(&r);
 	dma_resv_lock(&r, NULL);
@@ -631,12 +810,10 @@ test_resv_excl_cow(void)
 	CHECK(snap != NULL && snap->shared_count == 3);
 	x = tr_ctx_new(1);
 	dma_resv_add_excl_fence(&r, x);
-	CHECK(snap->shared_count == 3);
-	CHECK(snap->shared[0] == a && snap->shared[1] == b &&
-	    snap->shared[2] == c);
 	cur = dma_resv_get_list(&r);
-	CHECK(cur != NULL && cur != snap && cur->shared_count == 0);
-	CHECK(cur != NULL && cur->shared_max == snap->shared_max);
+	CHECK(cur == snap && cur->shared_count == 0);
+	for (i = 0; i < 3; i++)
+		CHECK(snap->shared[i] != NULL);
 	rcu_read_unlock();
 
 	/* The reserved capacity survives: a shared add needs no reserve. */
@@ -1585,6 +1762,7 @@ drm2_dma_resv_run(void)
 
 	t_run = t_fail = 0;
 	spin_lock_init(&tf_lock);
+	spin_lock_init(&ts_lock);
 	test_fence_order();
 	test_fence_status_timestamp();
 	test_fence_names();
@@ -1593,6 +1771,7 @@ drm2_dma_resv_run(void)
 	test_resv_usage_filter();
 	test_resv_reserve();
 	test_resv_replace_rules();
+	test_resv_add_spin();
 	test_resv_shared_cow();
 	test_resv_excl_cow();
 	test_resv_unlocked_iter();
