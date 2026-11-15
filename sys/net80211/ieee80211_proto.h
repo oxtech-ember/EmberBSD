@@ -280,7 +280,15 @@ int	ieee80211_beacon_update(struct ieee80211com *,
  */
 void	ieee80211_notify_node_join(struct ieee80211com *,
 		struct ieee80211_node *, int newassoc);
+/* bss is captured before cleanup; assoc is the committed STA identity. */
 void	ieee80211_notify_node_leave(struct ieee80211com *,
+		struct ieee80211_node *, bool,
+		const struct ieee80211_assoc_event *);
+int	ieee80211_assoc_epoch_assign(struct ieee80211com *,
+		struct ieee80211_node *);
+bool	ieee80211_assoc_event_snapshot(struct ieee80211com *,
+		const struct ieee80211_node *, struct ieee80211_assoc_event *);
+void	ieee80211_assoc_epoch_clear(struct ieee80211com *,
 		struct ieee80211_node *);
 void	ieee80211_notify_scan_done(struct ieee80211com *);
 int	ieee80211_sta_scan_begin(struct ieee80211com *,

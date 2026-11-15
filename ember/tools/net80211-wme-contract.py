@@ -53,6 +53,9 @@ for path, names in ((proto, ("wmeParams", "chanAccParams", "ieee80211_wme_state"
     for name in names:
         parts.append(structure(path, name))
 parts.append(structure("sys/net80211/ieee80211_node.h", "ieee80211_scanparams"))
+parts.append(structure("sys/net80211/ieee80211_netbsd.h", "ieee80211_assoc_event"))
+parts.append(re.search(r"^#define\s+IEEE80211_ASSOC_EVENT_VERSION\s+.*$",
+                       read("sys/net80211/ieee80211_netbsd.h"), re.M).group())
 parts.append(re.sub(r"^#include.*$", "", read("sys/net80211/ieee80211_beacon_ies.h"), flags=re.M))
 for name in ("IEEE80211_BINTVAL_MIN", "IEEE80211_BINTVAL_MAX"):
     parts.append(re.search(r"^#define\s+" + name + r"\s+.*$",
@@ -70,6 +73,14 @@ for path, pattern in (("sys/net80211/ieee80211_var.h", r"IEEE80211_[FC]_[A-Z0-9_
 crypto_header = read("sys/net80211/ieee80211_crypto.h")
 for name in ("IEEE80211_KEY_UNDEFINED", "IEEE80211_KEY_SWCRYPT", "IEEE80211_CIPHER_NONE"):
     parts.append(re.search(r"^#define\s+" + name + r"(?:\([^)]*\))?\s+.*$", crypto_header, re.M).group())
+parts.extend([
+    "#ifndef IEEE80211_ASSOC_EPOCH_LOCK_INIT",
+    "#define IEEE80211_ASSOC_EPOCH_LOCK_INIT(ic) ((void)(ic))",
+    "#define IEEE80211_ASSOC_EPOCH_LOCK_DESTROY(ic) ((void)(ic))",
+    "#define IEEE80211_ASSOC_EPOCH_LOCK(ic) ((void)(ic))",
+    "#define IEEE80211_ASSOC_EPOCH_UNLOCK(ic) ((void)(ic))",
+    "#endif",
+])
 (out / "native-wme-types.inc").write_text("\n".join(parts))
 
 ht = read("sys/net80211/ieee80211_ht20.c")
@@ -148,6 +159,8 @@ for line in read("sys/net80211/ieee80211_ioctl.h").splitlines():
         parts.append(line)
 parts.append(function("sys/net80211/ieee80211_ioctl.c", "ieee80211_ioctl_setwmeparam", "static int"))
 parts.append(function(node, "copy_bss", "static inline void"))
+parts.append(function(node, "ieee80211_assoc_epoch_assign", "int"))
+parts.append(function(node, "ieee80211_assoc_event_snapshot", "bool"))
 parts.append(function(node, "ieee80211_sta_join", "int"))
 parts.append(function(node, "ieee80211_sta_leave", "void"))
 # This driver's narrow sequence consumer precedes unrelated DMA construction.

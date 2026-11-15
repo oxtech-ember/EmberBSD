@@ -1994,6 +1994,43 @@ domlme(void *arg, struct ieee80211_node *ni)
 }
 #endif /* !IEEE80211_NO_HOSTAP */
 
+static bool
+ieee80211_mlme_request_valid(const struct ieee80211req_mlme *mlme)
+{
+	return mlme->im_version == IEEE80211_MLME_VERSION &&
+	    mlme->im_assoc_epoch == 0;
+}
+
+static int
+ieee80211_ioctl_assoc_result(struct ieee80211com *ic,
+	struct ieee80211req *ireq, struct ieee80211req_mlme *mlme,
+	struct ieee80211_node *ni)
+{
+	struct ieee80211_assoc_event event;
+	bool current;
+	int error;
+
+	if (!ieee80211_assoc_event_snapshot(ic, ni, &event))
+		return ESTALE;
+	mlme->im_assoc_epoch = event.iae_assoc_epoch;
+	IEEE80211_ADDR_COPY(mlme->im_macaddr, event.iae_bssid);
+	error = copyout(mlme, ireq->i_data, sizeof(*mlme));
+	if (error == 0)
+		return 0;
+
+	/*
+	 * The ioctl path and common association selection share the network
+	 * serialization.  Check under the short metadata lock, then cancel
+	 * outside it; never restore the selection that preceded this epoch.
+	 */
+	IEEE80211_ASSOC_EPOCH_LOCK(ic);
+	current = ic->ic_bss == ni && ni->ni_assoc_epoch == event.iae_assoc_epoch;
+	IEEE80211_ASSOC_EPOCH_UNLOCK(ic);
+	if (current)
+		(void)ieee80211_new_state(ic, IEEE80211_S_INIT, -1);
+	return error;
+}
+
 static int
 ieee80211_ioctl_setmlme(struct ieee80211com *ic, struct ieee80211req *ireq)
 {
@@ -2006,6 +2043,8 @@ ieee80211_ioctl_setmlme(struct ieee80211com *ic, struct ieee80211req *ireq)
 	error = copyin(ireq->i_data, &mlme, sizeof(mlme));
 	if (error)
 		return error;
+	if (!ieee80211_mlme_request_valid(&mlme))
+		return EINVAL;
 	switch (mlme.im_op) {
 	case IEEE80211_MLME_ASSOC:
 		if (ic->ic_opmode != IEEE80211_M_STA)
@@ -2028,11 +2067,16 @@ ieee80211_ioctl_setmlme(struct ieee80211com *ic, struct ieee80211req *ireq)
 		}
 		if (ni == NULL)
 			return EINVAL;
+		/* Keep a local reference across synchronous driver state callbacks. */
+		(void)ieee80211_ref_node(ni);
 		if (!ieee80211_sta_join(ic, ni)) {
+			ieee80211_free_node(ni);
 			ieee80211_free_node(ni);
 			return EINVAL;
 		}
-		break;
+		error = ieee80211_ioctl_assoc_result(ic, ireq, &mlme, ni);
+		ieee80211_free_node(ni);
+		return error;
 	case IEEE80211_MLME_DISASSOC:
 	case IEEE80211_MLME_DEAUTH:
 		switch (ic->ic_opmode) {

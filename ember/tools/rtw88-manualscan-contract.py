@@ -38,11 +38,20 @@ s = replace(s, 'struct ieee80211_node {', """struct ieee80211_node_table {
     unsigned nt_scangen, nt_scan_epoch;
 };
 struct ieee80211_node {
-    int key_live;""")
+    int key_live;
+    uint64_t ni_assoc_epoch;""")
 s = replace(s, 'struct ieee80211com {', """struct ieee80211com {
     void (*ic_node_cleanup)(struct ieee80211_node *);""")
 s = replace(s, '\tstruct { unsigned nt_scangen,nt_scan_epoch; } ic_scan,ic_sta;',
             '\tstruct ieee80211_node_table ic_scan, ic_sta;')
+assoc_header = read('sys/net80211/ieee80211_netbsd.h')
+assoc_struct = re.search(r'^struct ieee80211_assoc_event \{.*?^\};',
+                         assoc_header, re.M | re.S).group()
+assoc_version = re.search(r'^#define\s+IEEE80211_ASSOC_EVENT_VERSION\s+.*$',
+                          assoc_header, re.M).group()
+s = replace(s, '#include "native-state-types.inc"',
+            '#include "native-state-types.inc"\n' + assoc_struct + '\n' +
+            assoc_version)
 # This consumer defines the one ANY sentinel after its included base suite.
 s = replace(s, 'const struct ieee80211_channel ieee80211_channel_anyc={0,0};',
             'extern const struct ieee80211_channel ieee80211_channel_anyc;')
@@ -75,11 +84,14 @@ proto = 'sys/net80211/ieee80211_proto.c'
 parts = []
 parts.append(re.search(r'^#define\s+IEEE80211_IOC_SCAN_REQ\s+.*$',
                       read('sys/net80211/ieee80211_ioctl.h'),re.M).group()+'\n')
+parts.append(re.search(r'^#define\s+IEEE80211_MLME_VERSION\s+.*$',
+                      read('sys/net80211/ieee80211_ioctl.h'),re.M).group()+'\n')
 for p, names in [(nbsd.replace('.c','.h'), ['RTM_IEEE80211_DISASSOC', 'RTM_IEEE80211_LEAVE', 'RTM_IEEE80211_SCAN']),
                  ('sys/net80211/ieee80211_var.h', ['IEEE80211_F_SCAN', 'IEEE80211_F_ASCAN', 'IEEE80211_F_SIBSS'])]:
     for name in names:
         parts.append(re.search(r'^#define\s+'+name+r'\s+.*$',read(p),re.M).group()+'\n')
 parts.append(function(nbsd, 'ieee80211_notify_node_leave', 'static void'))
+parts.append(function(node, 'ieee80211_assoc_event_snapshot', 'bool'))
 parts.append(function(nbsd, 'ieee80211_notify_scan_done', 'static void'))
 parts.append(function(node, 'ieee80211_sta_leave', 'static void'))
 parts.append(function(ioctl, 'ieee80211_setupscan', 'static int'))
@@ -106,16 +118,25 @@ wpa = 'external/bsd/wpa/dist/src/drivers/driver_bsd.c'
 events = 'external/bsd/wpa/dist/wpa_supplicant/events.c'
 parts = [function(events, 'wpa_supplicant_mark_disassoc', 'static void'),
          function(events, 'wpa_supplicant_connect', 'static int'),
-         function(wpa, 'bsd_sta_disconnected', 'static void')]
+         function(wpa, 'bsd_sta_disconnected', 'static void'),
+         function(wpa, 'bsd_sta_disassoc_event', 'static int')]
 s = read(wpa)
 a = s.index('\t\tcase RTM_IEEE80211_DISASSOC:')
 b = s.index('\t\tcase RTM_IEEE80211_LEAVE:', a)
-parts.append(notice(wpa)+'''static void manualscan_bsd_route(struct bsd_driver_data *drv, int what) {
+parts.append(notice(wpa)+'''static void manualscan_bsd_route(struct bsd_driver_data *drv, int what,
+    const void *payload, size_t payload_len) {
 #ifndef __NetBSD__
 #define MANUALSCAN_NETBSD 1
 #define __NetBSD__ 1
 #endif
 #define IEEE80211_IOC_STA_MGMT 1
+struct manualscan_ifan { unsigned char pad[8]; };
+unsigned char message[sizeof(struct manualscan_ifan)+sizeof(struct ieee80211_assoc_event)];
+struct manualscan_ifan *ifan=(struct manualscan_ifan *)message;
+int n=(int)(sizeof(*ifan)+payload_len);
+(void)n;
+if(payload_len>sizeof(message)-sizeof(*ifan)) CHECK(0);
+else if(payload_len) memcpy(ifan+1,payload,payload_len);
 switch (what) {
 '''+s[a:b]+'''default: CHECK(0);break;
 }

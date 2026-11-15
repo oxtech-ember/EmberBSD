@@ -34,7 +34,7 @@ static uint32_t ticks;
 static int giant, pci, pci_token, probe_scan;
 static struct ieee80211com *probe_ic;
 struct ieee80211com;
-struct ieee80211_node { struct ieee80211com *ni_ic; unsigned ni_flags; struct ieee80211_rxba_state ni_rxba; uint8_t ni_bssid[6], ni_essid[32], ni_macaddr[6]; unsigned ni_esslen, ni_fails; struct ieee80211_ht20_node ni_ht20; };
+struct ieee80211_node { struct ieee80211com *ni_ic; unsigned ni_flags; uint64_t ni_assoc_epoch; struct ieee80211_rxba_state ni_rxba; uint8_t ni_bssid[6], ni_essid[32], ni_macaddr[6]; unsigned ni_esslen, ni_fails; struct ieee80211_ht20_node ni_ht20; };
 struct ieee80211_sae { enum sae_phase phase; bool enabled; };
 struct ieee80211_node_table { int nt_inact_timer; void (*nt_timeout)(struct ieee80211_node_table *); };
 struct ifnet { void *if_softc; int if_timer; unsigned if_oerrors; };
@@ -42,6 +42,7 @@ struct work { unsigned unused; };
 struct ieee80211com {
     const struct ieee80211_rxba_ops *ic_rxba_ops;
     uint64_t ic_rxba_serial;
+    uint64_t ic_assoc_epoch;
     struct ieee80211_sae *ic_sae;
     uint64_t ic_sae_serial;
     struct ifnet *ic_ifp;
@@ -124,6 +125,8 @@ static unsigned probes, requests, cleanup, events, link_down, begin_scans;
 static int expect_dfs_closed_probe;
 static unsigned user_disconnects, user_aborts, user_tx_clear, user_scan_clear;
 static int queued_event;
+static struct ieee80211_assoc_event queued_assoc;
+static unsigned queued_assoc_len;
 static void mutex_enter(int *lock) { CHECK(lock==&pci_token && giant && !pci); pci=1; }
 static void mutex_exit(int *lock) { CHECK(lock==&pci_token && giant && pci); pci=0; }
 static void callout_stop(int *ch) { (void)ch; CHECK(giant && !pci); }
@@ -160,13 +163,15 @@ static void ieee80211_send_probereq(struct ieee80211_node *ni,const uint8_t *src
     if(probe_scan) { probe_scan=0; assert(probe_ic != NULL); (void)ieee80211_new_state(probe_ic,IEEE80211_S_SCAN,0); }
 }
 static void rt_ieee80211msg(struct ifnet *ifp,int type,void *data,unsigned len) {
-    (void)ifp;(void)data;CHECK(giant && !pci);CHECK(len==0 && type==RTM_IEEE80211_DISASSOC);
+    (void)ifp;CHECK(giant && !pci);CHECK(type==RTM_IEEE80211_DISASSOC);
+    queued_assoc_len=len;memset(&queued_assoc,0,sizeof(queued_assoc));
+    if(data!=NULL && len<=sizeof(queued_assoc))memcpy(&queued_assoc,data,len);
     events++;queued_event=type;
 }
 static void if_link_state_change(struct ifnet *ifp,int state) { (void)ifp;CHECK(state==LINK_STATE_DOWN);link_down++; }
 #define IEEE80211_ADDR_COPY(d,s) memcpy(d,s,6)
 static void ieee80211_wme_reset(struct ieee80211_node *ni) { (void)ni;CHECK(giant && !pci); }
-static void model_node_cleanup(struct ieee80211_node *ni) { (void)ni;CHECK(giant && !pci);cleanup++; }
+static void model_node_cleanup(struct ieee80211_node *ni) { CHECK(giant && !pci);cleanup++;ni->ni_assoc_epoch=0;memset(ni->ni_bssid,0,6); }
 static struct ieee80211_node *ieee80211_find_node(struct ieee80211_node_table *nt,const uint8_t *addr) { (void)nt;(void)addr;return NULL; }
 static void ieee80211_unref_node(struct ieee80211_node **ni) { (void)ni; }
 static void ieee80211_begin_scan(struct ieee80211com *ic,int arg) { (void)ic;(void)arg;CHECK(giant && !pci);begin_scans++; }
@@ -182,18 +187,26 @@ static int aploss_checked_ht20_request(struct ieee80211com *ic,int state) {
     return ieee80211_ht20_state_request(ic,state);
 }
 static void ieee80211_beacon_miss(struct ieee80211com *);
-static void ieee80211_notify_node_leave(struct ieee80211com *,struct ieee80211_node *);
+static void ieee80211_notify_node_leave(struct ieee80211com *,struct ieee80211_node *,bool,const struct ieee80211_assoc_event *);
 static void ieee80211_sta_leave(struct ieee80211com *,struct ieee80211_node *);
+#define IEEE80211_ASSOC_EPOCH_LOCK(ic) ((void)(ic))
+#define IEEE80211_ASSOC_EPOCH_UNLOCK(ic) ((void)(ic))
 /* BA payloads are outside this default-OFF AP-loss fixture. Actual shared
  * storage destruction is retained; reaching a held mbuf is an explicit error. */
 static void m_freem(struct mbuf *m) { (void)m;abort(); }
 #include "native-rxba-lifecycle.inc"
 #include "aploss-native.inc"
 
-struct bsd_driver_data { int sta_scan_pending,is_ap; void *ctx; };
+struct bsd_driver_data { int sta_scan_pending,is_ap,sta_assoc_versioned,opmode; uint64_t sta_assoc_epoch,sta_assoc_retired_epoch; uint8_t sta_assoc_bssid[6]; void *ctx; };
 union wpa_event_data { struct { int aborted; } scan_info; };
 enum { EVENT_DISASSOC=1,EVENT_SCAN_RESULTS=2 };
 #define os_memset memset
+#define os_memcpy memcpy
+#define os_memcmp memcmp
+typedef uint8_t u8;
+#define ETH_ALEN 6
+#define is_multicast_ether_addr(a) (((const uint8_t *)(a))[0] & 1)
+static int is_zero_ether_addr(const uint8_t *a) { return memcmp(a,"\0\0\0\0\0\0",6)==0; }
 static void bsd_sta_tx_status(struct bsd_driver_data *drv,int a,int b) { (void)drv;(void)a;(void)b;user_tx_clear++; }
 static void bsd_sta_scan_clear(struct bsd_driver_data *drv) { drv->sta_scan_pending=0;user_scan_clear++; }
 /* Event queue is the actual consumer boundary, not a fake successful scan. */
@@ -216,10 +229,10 @@ static void setup(struct fixture *f) {
     f->net.ic.ic_node_cleanup=model_node_cleanup;
     f->core.sc_linked=1;f->core.sc_ra.active=f->core.sc_ra.configured=1;
     f->net.policy.epoch=7;f->net.policy.accepting=1;
-    f->ni.ni_bssid[0]=2;f->ni.ni_macaddr[0]=2;
+    f->ni.ni_bssid[0]=2;f->ni.ni_macaddr[0]=2;f->ni.ni_assoc_epoch=7;
     probes=requests=cleanup=events=link_down=begin_scans=0;
     sae_retirements=0;
-    queued_event=0;expect_dfs_closed_probe=0;
+    queued_event=0;queued_assoc_len=0;memset(&queued_assoc,0,sizeof(queued_assoc));expect_dfs_closed_probe=0;
     user_disconnects=user_aborts=user_tx_clear=user_scan_clear=0;
     native_run_supervision(&f->net);CHECK(f->ifp.if_timer==1);giant=0;
 }
@@ -301,7 +314,26 @@ static void test_silent_idle_chain(void) {
     CHECK(f.net.requested==IEEE80211_S_SCAN && !f.net.policy.accepting);
     flush_scan(&f);CHECK(cleanup==1 && events==1 && link_down==1 && begin_scans==0);
     CHECK(queued_event==RTM_IEEE80211_DISASSOC);
-    struct bsd_driver_data drv={0};bsd_disconnect_route(&drv,queued_event);
+    CHECK(queued_assoc_len==sizeof(struct ieee80211_assoc_event) &&
+        queued_assoc.iae_version==IEEE80211_ASSOC_EVENT_VERSION &&
+        queued_assoc.iae_reserved==0 && queued_assoc.iae_reserved2[0]==0 &&
+        queued_assoc.iae_reserved2[1]==0 && queued_assoc.iae_assoc_epoch==7 &&
+        memcmp(queued_assoc.iae_bssid,"\2\0\0\0\0\0",6)==0);
+    struct bsd_driver_data drv={.sta_assoc_versioned=1,.sta_assoc_epoch=7,
+        .opmode=IEEE80211_M_STA};
+    memcpy(drv.sta_assoc_bssid,queued_assoc.iae_bssid,6);
+    struct ieee80211_assoc_event malformed=queued_assoc;
+    malformed.iae_reserved=1;
+    bsd_disconnect_route(&drv,queued_event,&malformed,queued_assoc_len);
+    CHECK(user_disconnects==0 && drv.sta_assoc_epoch==7 &&
+        drv.sta_assoc_retired_epoch==0);
+    bsd_disconnect_route(&drv,queued_event,&queued_assoc,queued_assoc_len-1);
+    CHECK(user_disconnects==0 && drv.sta_assoc_epoch==7);
+    bsd_disconnect_route(&drv,queued_event,&queued_assoc,queued_assoc_len);
+    CHECK(drv.sta_assoc_retired_epoch==7 && drv.sta_assoc_versioned &&
+        drv.sta_assoc_epoch==0);
+    bsd_disconnect_route(&drv,queued_event,&queued_assoc,queued_assoc_len);
+    CHECK(user_disconnects==1 && drv.sta_assoc_retired_epoch==7);
     CHECK(user_disconnects==1 && user_aborts==0 && user_tx_clear==1 && user_scan_clear==1);
     seconds(&f,20);CHECK(events==1 && requests==1);
 }
@@ -358,9 +390,12 @@ static void test_ht_off_request_reset(void) {
 static void test_roaming_and_userland_boundaries(void) {
     struct fixture f;setup(&f);seconds(&f,10);f.net.ic.ic_roaming=IEEE80211_ROAMING_AUTO;
     flush_scan(&f);CHECK(begin_scans==1 && events==1);
-    struct bsd_driver_data drv={.sta_scan_pending=1};bsd_disconnect_route(&drv,queued_event);
+    struct bsd_driver_data drv={.sta_scan_pending=1,.sta_assoc_versioned=1,
+        .sta_assoc_epoch=7,.opmode=IEEE80211_M_STA};
+    memcpy(drv.sta_assoc_bssid,queued_assoc.iae_bssid,6);
+    bsd_disconnect_route(&drv,queued_event,&queued_assoc,queued_assoc_len);
     CHECK(user_disconnects==1 && user_aborts==1 && !drv.sta_scan_pending);
-    drv.is_ap=1;bsd_disconnect_route(&drv,RTM_IEEE80211_DISASSOC);CHECK(user_disconnects==1);
+    drv.is_ap=1;bsd_disconnect_route(&drv,RTM_IEEE80211_DISASSOC,&queued_assoc,queued_assoc_len);CHECK(user_disconnects==1);
     /* No running consumer: kernel queues the event, but no fabricated autojoin. */
     setup(&f);seconds(&f,10);flush_scan(&f);CHECK(events==1 && user_disconnects==0);
 }

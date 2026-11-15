@@ -49,6 +49,13 @@ for path, names in [('sys/net80211/ieee80211_var.h', ['IEEE80211_BMISS_MAX', 'IE
     for name in names:
         constants.append(re.search(r'^#define\s+'+name+r'\s+.*$', read(path), re.M).group()+'\n')
 constants.append(re.search(r'^#define\s+IEEE80211_NODE_AMSDU_RX\s+.*$',read('sys/net80211/ieee80211_node.h'),re.M).group()+'\n')
+assoc_header = read(nbsd.replace('.c','.h'))
+constants.append(re.search(r'^struct ieee80211_assoc_event \{.*?^};',
+                           assoc_header,re.M|re.S).group()+'\n')
+constants.append(re.search(r'^#define\s+IEEE80211_ASSOC_EVENT_VERSION\s+.*$',
+                           assoc_header,re.M).group()+'\n')
+constants.append(re.search(r'^#define\s+IEEE80211_MLME_VERSION\s+.*$',
+                           read('sys/net80211/ieee80211_ioctl.h'),re.M).group()+'\n')
 (out/'aploss-constants.inc').write_text(''.join(constants))
 (out/'ieee80211_ht20.h').write_text(read('sys/net80211/ieee80211_ht20.h'))
 watchdog = body(net, 'rtw88_net_watchdog', 'static void')
@@ -75,6 +82,7 @@ parts = [body(sae, 'ieee80211_sae_serial', 'static uint64_t'),
          watchdog,
          body('sys/net/if.c', 'if_slowtimo_countdown', 'static bool'),
          body(nbsd, 'ieee80211_notify_node_leave', 'static void'),
+         body(node, 'ieee80211_assoc_event_snapshot', 'bool'),
          body(node, 'ieee80211_sta_leave', 'static void')]
 # These two exact owning branches have a deliberately narrow service boundary.
 # Full RF restart/scan selection is covered elsewhere; this is AP-loss ownership.
@@ -109,20 +117,29 @@ if mutant == 'ra':
     assert text.count(old)==1
     text=text.replace(old, '\t(void)sc; /* Causal mutant: stale RA remains active. */')
 if mutant == 'notification':
-    old='\t\trt_ieee80211msg(ifp, RTM_IEEE80211_DISASSOC, NULL, 0);'
+    old='\t\t\trt_ieee80211msg(ifp, RTM_IEEE80211_DISASSOC,\n\t\t\t    &assoc_event, sizeof(assoc_event));'
     assert text.count(old)==1
-    text=text.replace(old, '\t\t/* Causal mutant: disconnect event removed. */')
+    text=text.replace(old, '\t\t\t(void)assoc_event; /* Causal mutant: event removed. */')
 (out/'aploss-native.inc').write_text(text)
-parts=[body(wpa, 'bsd_sta_disconnected', 'static void')]
+parts=[body(wpa, 'bsd_sta_disconnected', 'static void'),
+       body(wpa, 'bsd_sta_disassoc_event', 'static int')]
 # Keep the entire real dispatch case, including its target-specific guard.
 s=read(wpa);a=s.index('\t\tcase RTM_IEEE80211_DISASSOC:');b=s.index('\t\tcase RTM_IEEE80211_SCAN:',a)
-parts += [notice(wpa), '''static void bsd_disconnect_route(struct bsd_driver_data *drv, int what) {
+parts += [notice(wpa), '''static void bsd_disconnect_route(struct bsd_driver_data *drv, int what,
+    const void *payload, size_t payload_len) {
 /* Headers are already included; select the actual NetBSD driver branch only. */
 #ifndef __NetBSD__
 #define APLOSS_DEFINED_NETBSD 1
 #define __NetBSD__ 1
 #endif
 #define IEEE80211_IOC_STA_MGMT 1
+struct aploss_ifan { unsigned char pad[8]; };
+unsigned char message[sizeof(struct aploss_ifan)+sizeof(struct ieee80211_assoc_event)];
+struct aploss_ifan *ifan=(struct aploss_ifan *)message;
+int n=(int)(sizeof(*ifan)+payload_len);
+(void)n;
+if(payload_len>sizeof(message)-sizeof(*ifan)) CHECK(0);
+else if(payload_len) memcpy(ifan+1,payload,payload_len);
 switch (what) {
 ''',s[a:b],'''default: break;
 }

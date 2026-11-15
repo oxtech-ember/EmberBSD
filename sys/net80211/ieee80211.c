@@ -182,6 +182,8 @@ ieee80211_ifattach(struct ieee80211com *ic)
 	struct ieee80211_channel *c;
 	int i;
 
+	IEEE80211_ASSOC_EPOCH_LOCK_INIT(ic);
+	ic->ic_assoc_epoch = 0;
 	ic->ic_sta_set_port = NULL;
 
 #ifdef __NetBSD__
@@ -293,6 +295,7 @@ ieee80211_ifdetach(struct ieee80211com *ic)
 	ifmedia_fini(&ic->ic_media);
 
 	IEEE80211_BEACON_LOCK_DESTROY(ic);
+	IEEE80211_ASSOC_EPOCH_LOCK_DESTROY(ic);
 
 	bpf_detach(ifp);
 	ether_ifdetach(ifp);

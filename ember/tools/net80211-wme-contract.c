@@ -115,6 +115,7 @@ struct ieee80211_node {
 	struct ieee80211_rateset ni_rates;
 	uint16_t ni_flags, ni_associd, ni_vlan, ni_capinfo, ni_txseqs[17];
 	unsigned ni_wme_attempt, ni_wme_offer_attempt;
+	uint64_t ni_assoc_epoch;
 	uint8_t ni_macaddr[6], ni_bssid[6], ni_wme_offer_bssid[6];
 	uint8_t ni_wme_offer_type, ni_essid[32], ni_esslen, ni_erp;
 	uint8_t ni_authmode, ni_fhindex, ni_dtim_count, ni_dtim_period;
@@ -169,6 +170,7 @@ struct ieee80211com {
 	int ic_fixed_rate;
 	int (*ic_test_newstate)(struct ieee80211com *, int, int);
 	struct ieee80211_node_table ic_sta;
+	volatile uint64_t ic_assoc_epoch;
 	unsigned ic_inact_run;
 	struct ieee80211_wme_state ic_wme;
 	struct ieee80211_node *ic_bss;
@@ -224,7 +226,21 @@ struct llc {
 #define ieee80211_add_erp(frm, ...) (frm)
 #define ieee80211_add_ath(frm, ...) (frm)
 
-#define ieee80211_notify_node_leave(...) ((void)0)
+static bool notified_bss, notified_event_present;
+static struct ieee80211_assoc_event notified_assoc_event;
+static void
+ieee80211_notify_node_leave(struct ieee80211com *ic,
+	struct ieee80211_node *ni, bool bss,
+	const struct ieee80211_assoc_event *event)
+{
+	(void)ic;
+	(void)ni;
+	notified_bss = bss;
+	notified_event_present = event != NULL;
+	if (event != NULL)
+		memcpy(&notified_assoc_event, event, sizeof(*event));
+}
+
 static unsigned checks, failures, allocations, fail_allocation, prepends,
     fail_prepend;
 static unsigned node_refs = 1, applies, adjust_failure;
@@ -503,6 +519,8 @@ void ieee80211_rxba_age(struct ieee80211com *ic,struct ieee80211_node *ni,uint64
 { (void)ic;(void)ni;(void)token;abort(); }
 int ieee80211_rxba_action(struct ieee80211com *ic,struct ieee80211_node *ni,const uint8_t *p,size_t len)
 { (void)ic;(void)ni;(void)p;(void)len;abort(); }
+#define IEEE80211_ASSOC_EPOCH_LOCK(ic) ((void)(ic))
+#define IEEE80211_ASSOC_EPOCH_UNLOCK(ic) ((void)(ic))
 #include "native-wme.inc"
 
 static struct ieee80211com test_ic;
@@ -526,6 +544,12 @@ cleanup_node(struct ieee80211_node *ni)
 	(void)ni;
 }
 static void
+cleanup_epoch_node(struct ieee80211_node *ni)
+{
+	ni->ni_assoc_epoch = 0;
+	memset(ni->ni_bssid, 0, sizeof(ni->ni_bssid));
+}
+static void
 setup(void)
 {
 	int ac;
@@ -533,6 +557,8 @@ setup(void)
 	assert(node_refs == 1);
 	memset(&test_ic, 0, sizeof(test_ic));
 	memset(&test_node, 0, sizeof(test_node));
+	notified_bss = notified_event_present = false;
+	memset(&notified_assoc_event, 0, sizeof(notified_assoc_event));
 	test_node.ni_ucastkey.wk_cipher = &ieee80211_cipher_none;
 	test_ic.ic_def_txkey = IEEE80211_KEYIX_NONE;
 	for (unsigned i = 0; i < 4; i++)
@@ -2467,6 +2493,8 @@ static void
 test_strict_join_ownership(void)
 {
 	struct ieee80211_node old;
+	uint8_t joined_bssid[sizeof(test_node.ni_bssid)];
+	uint64_t joined_epoch;
 	setup();
 	install_strict();
 	old = test_node;
@@ -2479,7 +2507,18 @@ test_strict_join_ownership(void)
 	CHECK(test_ic.ic_bss == &test_node && last_freed == &old);
 	CHECK(node_refs == 1);
 	CHECK(test_node.ni_vlan == 7 && test_ic.ic_state == IEEE80211_S_AUTH);
+	CHECK(test_ic.ic_assoc_epoch == 1 && test_node.ni_assoc_epoch == 1);
 	CHECK(applies == 0);
+	joined_epoch = test_node.ni_assoc_epoch;
+	memcpy(joined_bssid, test_node.ni_bssid, sizeof(joined_bssid));
+	test_ic.ic_node_cleanup = cleanup_epoch_node;
+	ieee80211_sta_leave(&test_ic, &test_node);
+	CHECK(notified_bss && notified_event_present);
+	CHECK(notified_assoc_event.iae_version == IEEE80211_ASSOC_EVENT_VERSION);
+	CHECK(notified_assoc_event.iae_assoc_epoch == joined_epoch);
+	CHECK(IEEE80211_ADDR_EQ(notified_assoc_event.iae_bssid, joined_bssid));
+	CHECK(test_node.ni_assoc_epoch == 0 &&
+	    IEEE80211_ADDR_EQ(test_node.ni_bssid, "\0\0\0\0\0\0"));
 	last_freed = NULL;
 }
 static void

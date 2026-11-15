@@ -69,6 +69,17 @@ typedef kmutex_t ieee80211_beacon_lock_t;
 #define	IEEE80211_BEACON_LOCK_ASSERT(_ic)		\
 	IEEE80211_LOCK_ASSERT_IMPL(_ic, ic_beaconlock)
 
+/* Protect RV32-safe reads and writes of the 64-bit association identity. */
+typedef kmutex_t ieee80211_assoc_epoch_lock_t;
+#define	IEEE80211_ASSOC_EPOCH_LOCK_INIT(_ic)		\
+	IEEE80211_LOCK_INIT_IMPL(_ic, "assoc epoch", ic_assoc_epoch_lock)
+#define	IEEE80211_ASSOC_EPOCH_LOCK_DESTROY(_ic)	\
+	IEEE80211_LOCK_DESTROY_IMPL(_ic, ic_assoc_epoch_lock)
+#define	IEEE80211_ASSOC_EPOCH_LOCK(_ic)			\
+	IEEE80211_LOCK_IMPL(_ic, ic_assoc_epoch_lock)
+#define	IEEE80211_ASSOC_EPOCH_UNLOCK(_ic)		\
+	IEEE80211_UNLOCK_IMPL(_ic, ic_assoc_epoch_lock)
+
 /*
  * Node locking definitions.
  * NB: MTX_DUPOK is because we don't generate per-interface strings.
@@ -207,6 +218,16 @@ struct ieee80211_join_event {
 struct ieee80211_leave_event {
 	uint8_t		iev_addr[6];
 };
+
+/* Versioned identity shared by BSS ASSOC, REASSOC, and DISASSOC events. */
+struct ieee80211_assoc_event {
+	uint32_t	iae_version;
+	uint32_t	iae_reserved;
+	uint64_t	iae_assoc_epoch;
+	uint8_t		iae_bssid[6];
+	uint8_t		iae_reserved2[2];
+};
+#define	IEEE80211_ASSOC_EVENT_VERSION	1
 
 struct ieee80211_replay_event {
 	uint8_t		iev_src[6];	/* src MAC */

@@ -3056,6 +3056,7 @@ aicwf_newstate_cb(struct aicwf_softc *sc, enum ieee80211_state nstate,
     int arg)
 {
 	struct ieee80211com * const ic = &sc->sc_ic;
+	struct ieee80211_assoc_event assoc;
 	const enum ieee80211_state ostate = ic->ic_state;
 	int s;
 
@@ -3068,12 +3069,13 @@ aicwf_newstate_cb(struct aicwf_softc *sc, enum ieee80211_state nstate,
 		/*
 		 * A user scan forces ic_state to INIT in setupscan(),
 		 * bypassing RUN's normal station departure.  The radio
-		 * still has that association: notify the supplicant and
-		 * clear the old keys before disconnecting it.  Without
-		 * this event the client can remain COMPLETED after the
-		 * scan, with no firmware connection to carry traffic.
+		 * may still have the association if this path arrived
+		 * without the common setupscan retirement.  Retire only a
+		 * still-current common BSS identity; setupscan has already
+		 * emitted the old DISASSOC and cleared its epoch.
 		 */
-		if (ostate == IEEE80211_S_INIT && sc->sc_connected) {
+		if (ostate == IEEE80211_S_INIT && sc->sc_connected &&
+		    ieee80211_assoc_event_snapshot(ic, ic->ic_bss, &assoc)) {
 			s = splnet();
 			ieee80211_sta_leave(ic, ic->ic_bss);
 			splx(s);

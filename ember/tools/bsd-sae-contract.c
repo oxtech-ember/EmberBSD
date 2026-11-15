@@ -25,7 +25,9 @@
 
 #define IEEE80211_ADDR_LEN 6
 #define IEEE80211_NWID_LEN 32
-enum ieee80211_opmode { IEEE80211_M_STA, IEEE80211_M_IBSS, IEEE80211_M_AHDEMO };
+enum ieee80211_opmode {
+	IEEE80211_M_STA, IEEE80211_M_IBSS, IEEE80211_M_AHDEMO, IEEE80211_M_HOSTAP
+};
 #define IEEE80211_AUTH_OPEN 1
 #define IEEE80211_AUTH_SHARED 2
 #define IEEE80211_AUTH_AUTO 4
@@ -35,7 +37,10 @@ enum ieee80211_opmode { IEEE80211_M_STA, IEEE80211_M_IBSS, IEEE80211_M_AHDEMO };
 #define SIOCG80211 1
 #define SIOCGIFFLAGS 2
 #define SIOCSIFFLAGS 3
+#define SIOCS80211 4
 #define RTM_IEEE80211_DISASSOC 1
+#define RTM_IEEE80211_SAE 2
+struct if_announcemsghdr { u32 type, what, index, len; };
 typedef u_int16_t ieee80211_keyix;
 /* ABI */
 #undef IEEE80211_KEY_COMMON
@@ -57,24 +62,29 @@ typedef u_int16_t ieee80211_keyix;
 struct request { int op, value, len; unsigned char data[2048]; };
 static struct request requests[64];
 static unsigned calls, checks, failures;
+#if defined(CONFIG_SAE) && !defined(HOSTAPD) && !defined(BSD_TEST_OLD_ABI)
+static unsigned external_auth_starts, disassoc_events;
+#endif
 static int fail_op, fail_sae_op, fail_configure_off, caps, entropy_error;
 static int iface_flags;
-#ifndef HOSTAPD
+static const u8 mock_selected_bssid[6] = { 2, 1, 2, 3, 4, 5 };
 static int fail_get_flags, fail_set_flags, ignore_set_flags, async_init;
 #ifdef IEEE80211_IOC_STA_PORT
 static int port_supported;
-#endif
 #endif
 #ifdef CONFIG_SAE
 static int native_configured;
 #endif
 static unsigned random_value = 0x23456789;
+static uint64_t next_assoc_epoch = 1;
 
 static void check(bool ok, const char *why)
 {
 	checks++;
 	if (!ok) { fprintf(stderr, "FAIL: %s\n", why); failures++; }
 }
+static int bsd_set_mediaopt(void *priv, unsigned mask, unsigned mode)
+{ (void)priv; (void)mask; (void)mode; return fail_op == -4 ? -1 : 0; }
 #ifndef HOSTAPD
 static void *test_alloc(size_t size)
 {
@@ -85,7 +95,18 @@ static void *test_alloc(size_t size)
 #endif
 void wpa_printf(int level, const char *fmt, ...) { (void)level; (void)fmt; }
 void wpa_supplicant_event(void *ctx, enum wpa_event_type event, union wpa_event_data *data)
-{ (void)ctx; (void)event; (void)data; }
+{
+	(void)ctx;
+#if defined(CONFIG_SAE) && !defined(HOSTAPD) && !defined(BSD_TEST_OLD_ABI)
+	if (event == EVENT_DISASSOC)
+		disassoc_events++;
+	if (event == EVENT_EXTERNAL_AUTH && data &&
+	    data->external_auth.action == EXT_AUTH_START)
+		external_auth_starts++;
+#else
+	(void)event; (void)data;
+#endif
+}
 void forced_memzero(void *p, size_t n) { memset(p, 0, n); }
 size_t os_strlcpy(char *dst, const char *src, size_t n)
 {
@@ -101,7 +122,6 @@ int os_get_random(unsigned char *buf, size_t len)
 	random_value++;
 	return 0;
 }
-#ifndef HOSTAPD
 static int ioctl(int fd, unsigned long cmd, void *data)
 {
 	(void)fd;
@@ -136,9 +156,31 @@ static int ioctl(int fd, unsigned long cmd, void *data)
 		if (req->i_type == IEEE80211_IOC_STA_PORT) { req->i_val = port_supported; return port_supported < 0 ? -1 : 0; }
 #endif
 	}
+	if (cmd == SIOCS80211) {
+		struct ieee80211req *ireq = data;
+		struct request *out;
+		if (ireq->i_type != IEEE80211_IOC_MLME ||
+		    ireq->i_len != sizeof(struct ieee80211req_mlme) ||
+		    !ireq->i_data || calls == 64)
+			return -1;
+		out = &requests[calls++];
+		out->op = ireq->i_type; out->len = ireq->i_len;
+		memcpy(out->data, ireq->i_data, ireq->i_len);
+		if (fail_op == IEEE80211_IOC_MLME)
+			return -1;
+		if (((struct ieee80211req_mlme *)ireq->i_data)->im_op ==
+		    IEEE80211_MLME_ASSOC) {
+			struct ieee80211req_mlme *mlme = ireq->i_data;
+			static const u8 zero_bssid[ETH_ALEN];
+			if (memcmp(mlme->im_macaddr, zero_bssid, ETH_ALEN) == 0)
+				memcpy(mlme->im_macaddr, mock_selected_bssid, ETH_ALEN);
+			((struct ieee80211req_mlme *)ireq->i_data)->im_assoc_epoch =
+			    next_assoc_epoch++;
+		}
+		return 0;
+	}
 	return -1;
 }
-#endif
 static int set80211var(void *priv, int op, const void *data, int len)
 {
 	struct request *out;
@@ -190,8 +232,6 @@ static int set80211param(void *priv, int op, int value)
 		requests[recorded].value = value;
 	return ret;
 }
-static int bsd_set_mediaopt(void *priv, unsigned mask, unsigned mode)
-{ (void)priv; (void)mask; (void)mode; return fail_op == -4 ? -1 : 0; }
 static void handle_read(void *ctx, const u8 *src, const u8 *buf, size_t len)
 { (void)ctx; (void)src; (void)buf; (void)len; }
 static void *l2_packet_init(const char *name, const u8 *addr, unsigned short proto,
@@ -343,6 +383,7 @@ static struct bsd_driver_data fixture(int capability)
 	memset(&drv, 0, sizeof(drv)); drv.global = &global; drv.ifindex = 1;
 	strcpy(drv.ifname, "test0"); caps = capability; port_supported = -1;
 	iface_flags = IFF_UP | IFF_RUNNING;
+    next_assoc_epoch = 1;
 #ifdef CONFIG_SAE
 	native_configured = 0;
 #endif
@@ -365,6 +406,18 @@ static struct wpa_driver_associate_params association(int akm)
 	p.wpa_ie = rsn; p.wpa_ie_len = sizeof(rsn);
 	return p;
 }
+#ifdef BSD_TEST_NETBSD
+static struct ieee80211_assoc_event assoc_identity(uint64_t epoch,
+						    const u8 *bssid)
+{
+	struct ieee80211_assoc_event event;
+	memset(&event, 0, sizeof(event));
+	event.iae_version = IEEE80211_ASSOC_EVENT_VERSION;
+	event.iae_assoc_epoch = epoch;
+	memcpy(event.iae_bssid, bssid, ETH_ALEN);
+	return event;
+}
+#endif
 #ifdef CONFIG_SAE
 static const struct ieee80211req_sae *last_sae(unsigned op)
 {
@@ -388,10 +441,27 @@ int main(void)
 	struct wpa_driver_associate_params p = association(WPA_KEY_MGMT_PSK);
 	u8 key[32] = { 7 }, seq[8] = { 1, 2, 3, 4, 5, 6 };
 	struct wpa_driver_set_key_params k;
+#if defined(CONFIG_SAE) && !defined(HOSTAPD) && !defined(BSD_TEST_OLD_ABI)
+	(void) external_auth_starts;
+#endif
 	memset(&k, 0, sizeof(k)); k.alg = WPA_ALG_CCMP; k.addr = test_bssid;
 	k.link_id = -1;
 	k.key = key; k.key_len = 16; k.seq = seq; k.seq_len = 6; k.set_tx = 1;
 	test_ioctl_boundaries();
+	check(bsd_set_opmode(&drv, 0, IEEE80211_M_STA) == 0 &&
+	    drv.opmode == IEEE80211_M_STA,
+	    "successful infrastructure selection records STA event mode");
+	check(bsd_set_opmode(&drv, IFM_IEEE80211_IBSS, IEEE80211_M_IBSS) == 0 &&
+	    drv.opmode == IEEE80211_M_IBSS,
+	    "successful IBSS selection switches route interpretation to non-STA");
+	check(bsd_set_opmode(&drv, 0, IEEE80211_M_STA) == 0 &&
+	    drv.opmode == IEEE80211_M_STA,
+	    "switching back to infrastructure restores versioned STA events");
+	fail_op = -4;
+	check(bsd_set_opmode(&drv, IFM_IEEE80211_IBSS, IEEE80211_M_IBSS) == -1 &&
+	    drv.opmode == IEEE80211_M_STA,
+	    "failed media mode change preserves the last selected event mode");
+	fail_op = 0;
 	test_payload_copy_boundaries();
 	check(wpa_driver_bsd_associate(&drv, &p) == 0, "PSK selection remains available on transition-capable provider");
 	clear_calls();
@@ -401,6 +471,9 @@ int main(void)
 	{
 		const struct ieee80211req_sae *s;
 		unsigned generation;
+#ifdef BSD_TEST_NETBSD
+		static const u8 next_bssid[6] = { 2, 6, 5, 4, 3, 2 };
+#endif
 		drv = fixture(15); p = association(WPA_KEY_MGMT_SAE); iface_flags = IFF_BROADCAST;
 		check(wpa_driver_bsd_associate(&drv, &p) == 0 && native_configured && drv.sae_active,
 		    "native down-to-up initialization completes before SAE configuration survives MLME");
@@ -452,6 +525,221 @@ int main(void)
 		drv = fixture(15); p = association(WPA_KEY_MGMT_SAE);
 		check(wpa_driver_bsd_associate(&drv, &p) == 0 && drv.sae_active, "SAE selected from WPA3 or transition profile enters external authentication");
 		generation = drv.sae_generation;
+#ifdef BSD_TEST_NETBSD
+		{
+			struct bsd_driver_data event_drv = fixture(15);
+			struct ieee80211req_sae start;
+			struct ieee80211_assoc_event old_event;
+			struct wpa_driver_associate_params next = association(WPA_KEY_MGMT_SAE);
+			unsigned old_generation;
+			unsigned prior_auth_starts = external_auth_starts;
+			check(wpa_driver_bsd_associate(&event_drv, &next) == 0 && event_drv.sae_active,
+			    "old SAE generation starts before its disassociation is queued");
+			old_generation = event_drv.sae_generation;
+			old_event = assoc_identity(event_drv.sta_assoc_epoch, test_bssid);
+			next.bssid = next_bssid;
+			check(wpa_driver_bsd_associate(&event_drv, &next) == 0 && event_drv.sae_active &&
+			    event_drv.sae_generation != old_generation &&
+			    memcmp(event_drv.sae_bssid, next_bssid, sizeof(next_bssid)) == 0,
+			    "new SAE generation is configured while an old disassociation is queued");
+			clear_calls();
+			route_disassoc(&event_drv, &old_event, sizeof(old_event));
+			memset(&start, 0, sizeof(start));
+			start.version = IEEE80211_SAE_VERSION;
+			start.generation = event_drv.sae_generation;
+			start.op = IEEE80211_SAE_START;
+			start.len = 4;
+			memcpy(start.bssid, next_bssid, sizeof(next_bssid));
+			memcpy(start.data, "test", 4);
+			route_sae_start(&event_drv, &start);
+			check(external_auth_starts == prior_auth_starts + 1,
+			    "stale queued disassociation does not suppress matching new SAE_START");
+		}
+#endif
+		{
+			unsigned prior_disassoc = disassoc_events;
+			struct bsd_driver_data event_drv = fixture(15);
+			struct wpa_driver_associate_params event_params = association(WPA_KEY_MGMT_SAE);
+#ifdef BSD_TEST_NETBSD
+			struct ieee80211_assoc_event current_event;
+#endif
+			check(wpa_driver_bsd_associate(&event_drv, &event_params) == 0 && event_drv.sae_active,
+			    "current-session disassociation fixture starts SAE");
+#ifdef BSD_TEST_NETBSD
+			current_event = assoc_identity(event_drv.sta_assoc_epoch, test_bssid);
+			route_disassoc(&event_drv, &current_event, sizeof(current_event));
+			route_disassoc(&event_drv, &current_event, sizeof(current_event));
+			check(disassoc_events == prior_disassoc + 1 &&
+			    event_drv.sta_assoc_epoch == 0,
+			    "duplicate current retirement closes the versioned session once");
+#else
+			route_disassoc(&event_drv, NULL, 0);
+#endif
+			check(disassoc_events == prior_disassoc + 1 && !event_drv.sae_active,
+			    "current-session disassociation is delivered once and retires SAE callbacks");
+		}
+#ifdef BSD_TEST_NETBSD
+		{
+			struct bsd_driver_data event_drv = fixture(15);
+			struct ieee80211req_sae start;
+			struct wpa_driver_associate_params same = association(WPA_KEY_MGMT_SAE);
+			unsigned old_generation, prior_auth_starts = external_auth_starts;
+			struct ieee80211_assoc_event old_event;
+			check(wpa_driver_bsd_associate(&event_drv, &same) == 0 && event_drv.sae_active,
+			    "same-BSSID stale-event fixture starts old SAE generation");
+			old_generation = event_drv.sae_generation;
+			old_event = assoc_identity(event_drv.sta_assoc_epoch, test_bssid);
+			check(wpa_driver_bsd_associate(&event_drv, &same) == 0 && event_drv.sae_active &&
+			    event_drv.sae_generation != old_generation &&
+			    memcmp(event_drv.sae_bssid, test_bssid, sizeof(test_bssid)) == 0,
+			    "same-BSSID reconnect has a fresh SAE generation");
+			clear_calls();
+			route_disassoc(&event_drv, &old_event, sizeof(old_event));
+			memset(&start, 0, sizeof(start));
+			start.version = IEEE80211_SAE_VERSION;
+			start.generation = event_drv.sae_generation;
+			start.op = IEEE80211_SAE_START;
+			start.len = 4;
+			memcpy(start.bssid, test_bssid, sizeof(test_bssid));
+			memcpy(start.data, "test", 4);
+			route_sae_start(&event_drv, &start);
+			check(external_auth_starts == prior_auth_starts + 1,
+			    "same-BSSID stale disassociation does not suppress matching new SAE_START");
+		}
+		{
+			struct bsd_driver_data event_drv = fixture(15);
+			struct wpa_driver_associate_params current = association(WPA_KEY_MGMT_PSK);
+			struct ieee80211_assoc_event stale_event;
+			unsigned prior_disassoc = disassoc_events;
+			check(wpa_driver_bsd_associate(&event_drv, &current) == 0,
+			    "WPA2 association records the accepted common epoch");
+			stale_event = assoc_identity(event_drv.sta_assoc_epoch, test_bssid);
+			check(wpa_driver_bsd_associate(&event_drv, &current) == 0 &&
+			    event_drv.sta_assoc_epoch != stale_event.iae_assoc_epoch,
+			    "new WPA2 selection advances its common epoch");
+			route_disassoc(&event_drv, &stale_event, sizeof(stale_event));
+			check(disassoc_events == prior_disassoc &&
+			    event_drv.sta_assoc_epoch != 0,
+			    "stale versioned DISASSOC cannot disconnect current WPA2 selection");
+		}
+		{
+			struct bsd_driver_data event_drv = fixture(15);
+			struct ieee80211_assoc_event event;
+			u8 unaligned[sizeof(event) + 1];
+			unsigned prior_disassoc = disassoc_events;
+			struct wpa_driver_associate_params current = association(WPA_KEY_MGMT_PSK);
+			check(wpa_driver_bsd_associate(&event_drv, &current) == 0,
+			    "malformed-event fixture has a current association");
+			event = assoc_identity(event_drv.sta_assoc_epoch, test_bssid);
+			memcpy(unaligned + 1, &event, sizeof(event));
+			check(bsd_sta_assoc_event(&event_drv, unaligned + 1,
+			    sizeof(event)) == 1 && bsd_sta_assoc_event(&event_drv,
+			    unaligned + 1, sizeof(event)) == 1,
+			    "same-epoch reassociation remains valid and unaligned data is copied safely");
+			event.iae_version++;
+			check(bsd_sta_disassoc_event(&event_drv, &event, sizeof(event)) == 0 &&
+			    event_drv.sta_assoc_epoch != 0,
+			    "wrong-version DISASSOC cannot retire a current association");
+			route_disassoc(&event_drv, &event, sizeof(event));
+			check(event_drv.sta_assoc_epoch != 0 &&
+			    disassoc_events == prior_disassoc,
+			    "malformed versioned DISASSOC is not treated as a legacy event");
+			event.iae_version = IEEE80211_ASSOC_EVENT_VERSION;
+			event.iae_reserved = 1;
+			check(bsd_sta_disassoc_event(&event_drv, &event, sizeof(event)) == 0 &&
+			    event_drv.sta_assoc_epoch != 0,
+			    "nonzero reserved field cannot retire a current association");
+			event.iae_reserved = 0;
+			event.iae_reserved2[1] = 1;
+			check(bsd_sta_disassoc_event(&event_drv, &event, sizeof(event)) == 0 &&
+			    event_drv.sta_assoc_epoch != 0,
+			    "nonzero trailing reserved field cannot retire a current association");
+			event.iae_reserved2[1] = 0;
+			memcpy(event.iae_bssid, next_bssid, ETH_ALEN);
+			check(bsd_sta_disassoc_event(&event_drv, &event, sizeof(event)) == 0 &&
+			    event_drv.sta_assoc_epoch != 0,
+			    "same-epoch BSSID mismatch cannot retire a current selection");
+			memcpy(event.iae_bssid, test_bssid, ETH_ALEN);
+			event.iae_assoc_epoch = 0;
+			check(bsd_sta_disassoc_event(&event_drv, &event, sizeof(event)) == 0 &&
+			    event_drv.sta_assoc_epoch != 0,
+			    "zero epoch cannot retire a current association");
+			check(bsd_sta_disassoc_event(&event_drv, &event,
+			    sizeof(event) - 1) == 0 && event_drv.sta_assoc_epoch != 0,
+			    "short event payload cannot retire a current association");
+			event = assoc_identity(event_drv.sta_assoc_epoch, test_bssid);
+			check(bsd_sta_disassoc_event(&event_drv, unaligned + 1,
+			    sizeof(event)) == 1 && event_drv.sta_assoc_epoch == 0,
+			    "unaligned valid event is copied and retires the matching session");
+		}
+		{
+			struct bsd_driver_data event_drv = fixture(15);
+			struct ieee80211_assoc_event event;
+			struct wpa_driver_associate_params current = association(WPA_KEY_MGMT_PSK);
+			current.bssid = NULL;
+			check(wpa_driver_bsd_associate(&event_drv, &current) == 0 &&
+			    memcmp(event_drv.sta_assoc_bssid, mock_selected_bssid, ETH_ALEN) == 0,
+			    "mutable MLME result binds the selected BSSID when request was wildcard");
+			event = assoc_identity(event_drv.sta_assoc_epoch, mock_selected_bssid);
+			check(bsd_sta_disassoc_event(&event_drv, &event, sizeof(event)) == 1 &&
+			    event_drv.sta_assoc_epoch == 0,
+			    "DISASSOC before ASSOC route still retires accepted MLME selection");
+		}
+		{
+			struct bsd_driver_data event_drv = fixture(15);
+			struct ieee80211_assoc_event autonomous;
+			unsigned prior_disassoc = disassoc_events;
+			autonomous = assoc_identity(8, test_bssid);
+			route_disassoc(&event_drv, &autonomous, sizeof(autonomous));
+			check(event_drv.sta_assoc_retired_epoch == 8 &&
+			    event_drv.sta_assoc_epoch == 0,
+			    "autonomous newer DISASSOC retires an unreported selection watermark");
+			check(bsd_sta_assoc_event(&event_drv, &autonomous,
+			    sizeof(autonomous)) == 0 && disassoc_events == prior_disassoc,
+			    "late autonomous ASSOC cannot resurrect or duplicate a no-current retirement");
+		}
+		{
+			struct bsd_driver_data event_drv = fixture(15);
+			struct wpa_driver_associate_params current = association(WPA_KEY_MGMT_PSK);
+			struct ieee80211_assoc_event retired, late_current, late_older;
+			check(wpa_driver_bsd_associate(&event_drv, &current) == 0 &&
+			    wpa_driver_bsd_associate(&event_drv, &current) == 0,
+			    "late-association fixture accepts two monotonically increasing epochs");
+			late_older = assoc_identity(event_drv.sta_assoc_epoch - 1,
+			    test_bssid);
+			late_current = assoc_identity(event_drv.sta_assoc_epoch,
+			    test_bssid);
+			retired = late_current;
+			route_disassoc(&event_drv, &retired, sizeof(retired));
+			check(event_drv.sta_assoc_epoch == 0 &&
+			    event_drv.sta_assoc_retired_epoch == retired.iae_assoc_epoch,
+			    "current retirement advances the association-event watermark");
+			check(bsd_sta_assoc_event(&event_drv, &late_current,
+			    sizeof(late_current)) == 0 &&
+			    bsd_sta_assoc_event(&event_drv, &late_older,
+			    sizeof(late_older)) == 0 && event_drv.sta_assoc_epoch == 0,
+			    "late ASSOC events cannot resurrect a retired or older epoch");
+			bsd_sta_epoch_reset(&event_drv);
+			late_older = assoc_identity(1, test_bssid);
+			check(bsd_sta_assoc_event(&event_drv, &late_older,
+			    sizeof(late_older)) == 1 && event_drv.sta_assoc_epoch == 1,
+			    "new interface lifetime resets the epoch watermark");
+		}
+		{
+			struct bsd_driver_data event_drv = fixture(15);
+			struct wpa_driver_associate_params current = association(WPA_KEY_MGMT_PSK);
+			struct ieee80211_assoc_event newer;
+			unsigned prior_disassoc = disassoc_events;
+			check(wpa_driver_bsd_associate(&event_drv, &current) == 0,
+			    "newer autonomous retirement fixture has a current selection");
+			newer = assoc_identity(event_drv.sta_assoc_epoch + 1, next_bssid);
+			route_disassoc(&event_drv, &newer, sizeof(newer));
+			check(event_drv.sta_assoc_retired_epoch == newer.iae_assoc_epoch &&
+			    event_drv.sta_assoc_epoch == 0 &&
+			    disassoc_events == prior_disassoc + 1,
+			    "newer DISASSOC retires the old selection across a BSSID change");
+		}
+#endif
 		check(generation != 0 && generation != 1, "restart does not deterministically reuse generation one");
 		check(port_ops.send_action != NULL, "SA Query callback matches the public action callback type");
 #ifdef WPA_DRIVER_FLAGS2_P2P_FEATURE_V2
@@ -509,62 +797,37 @@ int main(void)
 		check(bsd_set_key(&drv, &k) == -1 && calls == 0,
 		    "native SAE rejects link-specific IGTK installation");
 		k.link_id = -1;
-		clear_calls();
 		if (port_ops.set_supp_port) {
-			check(port_ops.set_supp_port(&drv, 1) == 0, "explicit completion authorizes native port");
-			s = last_sae(IEEE80211_SAE_SET_PORT);
-			check(s && s->len == 1 && s->data[0] == 1 && s->generation == generation &&
-			    !has_op(IEEE80211_IOC_STA_PORT), "native port completion carries epoch and bypasses plain ioctl");
 			clear_calls(); fail_sae_op = IEEE80211_SAE_SET_PORT;
-			check(port_ops.set_supp_port(&drv, 1) == -1 && !has_op(IEEE80211_IOC_STA_PORT),
-			    "failed native port completion never falls back");
-			clear_calls();
-			check(port_ops.set_supp_port(&drv, 0) == 0 && last_sae(IEEE80211_SAE_SET_PORT)->data[0] == 0,
-			    "port closure is explicit and epoch tagged");
-			/* The EAPOL machine authorizes on the pairwise key; the kernel
-			 * opens the port only once an IGTK is installed. */
-			clear_calls(); fail_sae_op = IEEE80211_SAE_SET_PORT;
-			check(port_ops.set_supp_port(&drv, 1) == -1, "port request before the IGTK is refused");
-			clear_calls(); k.alg = WPA_ALG_BIP_CMAC_128; k.key_idx = 4; k.link_id = -1;
-			check(bsd_set_key(&drv, &k) == 0 && calls == 2 && requests[0].op == IEEE80211_IOC_SAE &&
-			    ((const struct ieee80211req_sae *)(const void *)requests[0].data)->op == IEEE80211_SAE_SET_IGTK,
-			    "the IGTK goes in first");
-			s = last_sae(IEEE80211_SAE_SET_PORT);
-			check(s && s == (const void *)requests[1].data && s->len == 1 && s->data[0] == 1 &&
-			    s->generation == generation && !has_op(IEEE80211_IOC_STA_PORT),
-			    "a refused port request is repeated after the IGTK, epoch tagged");
-			clear_calls();
-			check(bsd_set_key(&drv, &k) == 0 && !last_sae(IEEE80211_SAE_SET_PORT),
-			    "an IGTK rekey leaves an open port alone");
-			clear_calls(); fail_sae_op = IEEE80211_SAE_SET_PORT;
-			check(port_ops.set_supp_port(&drv, 1) == -1, "refused again");
+			check(port_ops.set_supp_port(&drv, 1) == -1 &&
+			    !has_op(IEEE80211_IOC_STA_PORT),
+			    "port authorization refusal does not fall back to the untagged ioctl");
 			clear_calls(); fail_sae_op = IEEE80211_SAE_SET_IGTK;
-			check(bsd_set_key(&drv, &k) == -1 && !last_sae(IEEE80211_SAE_SET_PORT),
-			    "no port request without the IGTK");
-			clear_calls(); fail_sae_op = IEEE80211_SAE_SET_PORT;
-			check(bsd_set_key(&drv, &k) == -1 && last_sae(IEEE80211_SAE_SET_IGTK) &&
-			    last_sae(IEEE80211_SAE_SET_PORT),
-			    "a port the kernel still refuses fails the IGTK installation");
+			check(bsd_set_key(&drv, &k) == -1 &&
+			    !last_sae(IEEE80211_SAE_SET_PORT),
+			    "failed IGTK installation never opens the native port");
 			clear_calls();
-			check(port_ops.set_supp_port(&drv, 0) == 0, "closure");
+			check(bsd_set_key(&drv, &k) == 0 &&
+			    last_sae(IEEE80211_SAE_SET_IGTK) &&
+			    !last_sae(IEEE80211_SAE_SET_PORT),
+			    "IGTK installation does not implicitly open the native port");
 			clear_calls();
-			check(bsd_set_key(&drv, &k) == 0 && !last_sae(IEEE80211_SAE_SET_PORT),
-			    "port closure cancels the repeat");
+			check(port_ops.set_supp_port(&drv, 1) == 0,
+			    "explicit completion opens the port after IGTK installation");
+			s = last_sae(IEEE80211_SAE_SET_PORT);
+			check(s && s->data[0] == 1 && s->generation == generation &&
+			    !has_op(IEEE80211_IOC_STA_PORT),
+			    "explicit port opening carries the SAE epoch without plain ioctl fallback");
 			clear_calls(); fail_sae_op = IEEE80211_SAE_SET_PORT;
-			check(port_ops.set_supp_port(&drv, 1) == -1, "refused once more");
-			clear_calls(); k.alg = WPA_ALG_NONE; k.addr = test_bssid; k.key_idx = 0;
-			check(bsd_set_key(&drv, &k) == 0 && last_sae(IEEE80211_SAE_DELETE_KEY),
-			    "pairwise key removed while a port request is pending");
-			clear_calls(); k.alg = WPA_ALG_BIP_CMAC_128; k.addr = broadcast; k.key_idx = 4;
-			check(bsd_set_key(&drv, &k) == 0 && !last_sae(IEEE80211_SAE_SET_PORT),
-			    "pairwise key deletion cancels the repeat");
-			clear_calls(); fail_sae_op = IEEE80211_SAE_SET_PORT;
-			check(port_ops.set_supp_port(&drv, 1) == -1 && drv.sae_port_wanted,
-			    "a refused request stays pending");
+			check(port_ops.set_supp_port(&drv, 0) == -1,
+			    "failed port closure reports the error");
+			clear_calls();
+			check(port_ops.set_supp_port(&drv, 0) == 0 &&
+			    last_sae(IEEE80211_SAE_SET_PORT)->data[0] == 0,
+			    "explicit port closure succeeds after an error");
 		}
 		clear_calls(); fail_op = IEEE80211_IOC_MLME;
 		check(wpa_driver_bsd_associate(&drv, &p) == -1 && !drv.sae_active, "failed MLME retires SAE state");
-		check(!drv.sae_port_wanted, "a retired SAE session drops the pending port request");
 		s = last_sae(IEEE80211_SAE_CONFIGURE);
 		check(s && s->data[0] == 0, "failed association disables configured kernel session");
 		drv = fixture(15); fail_op = IEEE80211_IOC_PRIVACY;
@@ -589,7 +852,15 @@ int main(void)
 		drv = fixture(15); p = association(WPA_KEY_MGMT_SAE);
 		check(wpa_driver_bsd_associate(&drv, &p) == 0, "disconnect event fixture starts SAE");
 		generation = drv.sae_generation; clear_calls();
-		route_disassoc(&drv);
+#ifdef BSD_TEST_NETBSD
+		{
+			struct ieee80211_assoc_event event =
+			    assoc_identity(drv.sta_assoc_epoch, test_bssid);
+			route_disassoc(&drv, &event, sizeof(event));
+		}
+#else
+		route_disassoc(&drv, NULL, 0);
+#endif
 		check(!drv.sae_active && drv.sae_generation == generation && calls == 0,
 		    "disconnect event suppresses old auth callbacks without an untagged kernel mutation");
 		check(bsd_set_key(&drv, &k) == -1 && calls == 0,
@@ -662,7 +933,7 @@ int main(void)
 	clear_calls();
 	check(wpa_driver_bsd_deauthenticate(&drv, test_bssid, 3) == 0 && has_op(IEEE80211_IOC_MLME),
 	    "build without SAE retains local deauthentication");
-	clear_calls(); route_disassoc(&drv);
+	clear_calls(); route_disassoc(&drv, NULL, 0);
 	check(calls == 0, "build without SAE retains notification-only disconnect event");
 	{
 		struct bsd_driver_data *heap = test_alloc(sizeof(*heap));
@@ -693,6 +964,12 @@ int main(void)
 	struct wpa_driver_set_key_params key;
 	u8 material[16] = { 1 };
 	memset(&drv, 0, sizeof(drv)); memset(&key, 0, sizeof(key));
+	check(bsd_set_opmode(&drv, IFM_IEEE80211_HOSTAP, IEEE80211_M_HOSTAP) == 0 &&
+	    drv.opmode == IEEE80211_M_HOSTAP,
+	    "hostapd mode selection updates the tracked operation mode");
+	check(bsd_set_opmode(&drv, 0, IEEE80211_M_STA) == 0 &&
+	    drv.opmode == IEEE80211_M_STA,
+	    "legacy scan mode selection restores tracked STA operation mode");
 	test_ioctl_boundaries();
 	test_payload_copy_boundaries();
 	key.alg = WPA_ALG_CCMP; key.key = material; key.key_len = sizeof(material); key.link_id = -1;
@@ -700,7 +977,11 @@ int main(void)
 	    "hostapd and old-header builds retain legacy key installation");
 #ifdef HOSTAPD
 	{
+		struct bsd_driver_global global;
 		const u8 peer[6] = { 2, 1, 2, 3, 4, 5 };
+		memset(&global, 0, sizeof(global));
+		drv.global = &global; drv.ifindex = 1;
+		strcpy(drv.ifname, "test0");
 		check(key_ops.sta_disassoc && key_ops.sta_disassoc(&drv, NULL, peer, 3 BSD_TEST_LINK_ARG) == 0 &&
 		    calls == 2 && requests[1].op == IEEE80211_IOC_MLME,
 		    "hostapd disassociation matches the public callback and preserves MLME");
@@ -731,7 +1012,7 @@ int main(void)
 		    "old headers retain FullMAC external SAE configuration");
 		check(bsd_set_supp_port(&drv, 1) == 0,
 		    "old headers retain port compatibility without the optional ioctl");
-		route_disassoc(&drv);
+		route_disassoc(&drv, NULL, 0);
 		check(!drv.sae_active, "old headers retire local callbacks on disconnect");
 		check(wpa_driver_bsd_deauthenticate(&drv, peer, 3) == 0,
 		    "old headers retain explicit SAE retirement");

@@ -100,9 +100,16 @@ static void device_printf(void *dev, const char *fmt, ...)
 
 struct ifnet { void *if_softc; int if_flags, ioctl_locked; };
 struct ieee80211_chan { uint16_t ic_freq; };
+struct ieee80211_assoc_event {
+	uint32_t iae_version, iae_reserved;
+	uint64_t iae_assoc_epoch;
+	uint8_t iae_bssid[6], iae_reserved2[2];
+};
+#define IEEE80211_ASSOC_EVENT_VERSION 1
 struct ieee80211_node {
 	uint8_t ni_bssid[6];
 	uint8_t ni_essid[32], ni_esslen;
+	uint64_t ni_assoc_epoch;
 	struct ieee80211_chan *ni_chan;
 };
 struct ieee80211_sta_scan_state {
@@ -311,7 +318,19 @@ static int aicwf_newstate(struct ieee80211com *, enum ieee80211_state, int);
 static int net80211_state(struct ieee80211com *ic, enum ieee80211_state state, int arg)
 { (void)arg; assert(sc.sc_if.ioctl_locked); state_calls++; ic->ic_state = state; return 0; }
 static void ieee80211_sta_leave(struct ieee80211com *ic, struct ieee80211_node *node)
-{ assert(ic->ic_bss == node); }
+{ assert(ic->ic_bss == node); node->ni_assoc_epoch=0; }
+static bool ieee80211_assoc_event_snapshot(struct ieee80211com *ic,
+	const struct ieee80211_node *node, struct ieee80211_assoc_event *event)
+{
+	if (ic->ic_opmode != IEEE80211_M_STA || ic->ic_bss != node ||
+	    node->ni_assoc_epoch == 0)
+		return false;
+	memset(event, 0, sizeof(*event));
+	event->iae_version=IEEE80211_ASSOC_EVENT_VERSION;
+	event->iae_assoc_epoch=node->ni_assoc_epoch;
+	memcpy(event->iae_bssid,node->ni_bssid,sizeof(event->iae_bssid));
+	return true;
+}
 static void kpause(const char *name, bool intr, int delay, void *lock)
 { (void)name; (void)intr; (void)delay; (void)lock; }
 static void aicwf_rx_retire(struct aicwf_softc *s)
@@ -420,6 +439,7 @@ reset(void)
 	ni.ni_esslen = 4; memcpy(ni.ni_essid, "test", 4);
 	sc.sc_newstate = net80211_state;
 	memcpy(ni.ni_bssid, "\x02\x01\x02\x03\x04\x05", 6);
+	ni.ni_assoc_epoch=39;
 	sc.sc_if.if_softc = &sc;
 	sc.sc_ic.ic_ifp = &sc.sc_if;
 	sc.sc_ic.ic_bss = &ni;

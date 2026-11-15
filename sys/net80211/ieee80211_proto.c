@@ -1038,6 +1038,7 @@ ieee80211_newstate(struct ieee80211com *ic, enum ieee80211_state nstate, int arg
 	struct ifnet *ifp = ic->ic_ifp;
 	struct ieee80211_node *ni;
 	enum ieee80211_state ostate;
+	int error;
 
 	KASSERT(!cpu_intr_p());
 
@@ -1184,6 +1185,12 @@ ieee80211_newstate(struct ieee80211com *ic, enum ieee80211_state nstate, int arg
 			case IEEE80211_FC0_SUBTYPE_DEAUTH:
 				ieee80211_sta_leave(ic, ni);
 				if (ic->ic_roaming == IEEE80211_ROAMING_AUTO) {
+					if (ic->ic_opmode == IEEE80211_M_STA &&
+					    (error = ieee80211_assoc_epoch_assign(ic,
+					    ni)) != 0) {
+						ic->ic_state = IEEE80211_S_INIT;
+						return error;
+					}
 					/* try to reauth */
 					IEEE80211_SEND_MGMT(ic, ni,
 					    IEEE80211_FC0_SUBTYPE_AUTH, 1);
@@ -1208,6 +1215,12 @@ ieee80211_newstate(struct ieee80211com *ic, enum ieee80211_state nstate, int arg
 		case IEEE80211_S_RUN:
 			ieee80211_sta_leave(ic, ni);
 			if (ic->ic_roaming == IEEE80211_ROAMING_AUTO) {
+				if (ic->ic_opmode == IEEE80211_M_STA &&
+				    (error = ieee80211_assoc_epoch_assign(ic,
+				    ni)) != 0) {
+					ic->ic_state = IEEE80211_S_INIT;
+					return error;
+				}
 				IEEE80211_SEND_MGMT(ic, ni,
 				    IEEE80211_FC0_SUBTYPE_ASSOC_REQ, 1);
 			}

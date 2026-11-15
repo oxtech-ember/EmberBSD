@@ -87,6 +87,12 @@ the legacy S_SCAN transition behind that drain, and retires it at a terminal
 event or successful firmware DOWN acknowledgement. The aicwf adapter keeps its
 single native scan busy until the firmware completion indication.
 
+## Association lifecycle ABI
+
+The versioned MLME request and BSS ASSOC/REASSOC/DISASSOC epoch payload are
+specified in [association-lifecycle.md](../association-lifecycle.md). Kernel
+and userland consumers must be upgraded together to use this ABI.
+
 ## Software checks
 
 Use the selected native SDK compiler and shell:

@@ -834,9 +834,68 @@ ieee80211_ibss_merge(struct ieee80211_node *ni)
  * be passed in with a held reference.
  */
 int
+ieee80211_assoc_epoch_assign(struct ieee80211com *ic,
+	struct ieee80211_node *ni)
+{
+	int error = 0;
+
+	if (ic == NULL || ni == NULL)
+		return EINVAL;
+	IEEE80211_ASSOC_EPOCH_LOCK(ic);
+	if (ic->ic_opmode != IEEE80211_M_STA) {
+		ni->ni_assoc_epoch = 0;
+	} else if (ic->ic_assoc_epoch == UINT64_MAX) {
+		error = EOVERFLOW;
+	} else {
+		ni->ni_assoc_epoch = ++ic->ic_assoc_epoch;
+	}
+	IEEE80211_ASSOC_EPOCH_UNLOCK(ic);
+	return error;
+}
+
+void
+ieee80211_assoc_epoch_clear(struct ieee80211com *ic,
+	struct ieee80211_node *ni)
+{
+	if (ic == NULL || ni == NULL)
+		return;
+	IEEE80211_ASSOC_EPOCH_LOCK(ic);
+	ni->ni_assoc_epoch = 0;
+	IEEE80211_ASSOC_EPOCH_UNLOCK(ic);
+}
+
+bool
+ieee80211_assoc_event_snapshot(struct ieee80211com *ic,
+	const struct ieee80211_node *ni, struct ieee80211_assoc_event *event)
+{
+	if (event == NULL)
+		return false;
+	memset(event, 0, sizeof(*event));
+	if (ic == NULL || ni == NULL)
+		return false;
+	IEEE80211_ASSOC_EPOCH_LOCK(ic);
+	if (ic->ic_opmode != IEEE80211_M_STA || ic->ic_bss != ni ||
+	    ni->ni_assoc_epoch == 0) {
+		IEEE80211_ASSOC_EPOCH_UNLOCK(ic);
+		return false;
+	}
+	event->iae_version = IEEE80211_ASSOC_EVENT_VERSION;
+	event->iae_assoc_epoch = ni->ni_assoc_epoch;
+	IEEE80211_ADDR_COPY(event->iae_bssid, ni->ni_bssid);
+	IEEE80211_ASSOC_EPOCH_UNLOCK(ic);
+	return true;
+}
+
+int
 ieee80211_sta_join(struct ieee80211com *ic, struct ieee80211_node *selbs)
 {
 	struct ieee80211_node *obss;
+	int error;
+
+	/* Stamp before replacing ic_bss so exhaustion cannot mutate selection. */
+	error = ieee80211_assoc_epoch_assign(ic, selbs);
+	if (error != 0)
+		return 0;
 
 	if (ic->ic_opmode == IEEE80211_M_IBSS) {
 		struct ieee80211_node_table *nt;
@@ -868,7 +927,6 @@ ieee80211_sta_join(struct ieee80211com *ic, struct ieee80211_node *selbs)
 		copy_bss(selbs, obss);
 		ieee80211_free_node(obss);
 	}
-
 	/*
 	 * Set the erp state (mostly the slot time) to deal with
 	 * the auto-select case; this should be redundant if the
@@ -893,10 +951,14 @@ ieee80211_sta_join(struct ieee80211com *ic, struct ieee80211_node *selbs)
 void
 ieee80211_sta_leave(struct ieee80211com *ic, struct ieee80211_node *ni)
 {
+	struct ieee80211_assoc_event event;
+	bool bss = ni == ic->ic_bss;
+	bool tagged = bss && ieee80211_assoc_event_snapshot(ic, ni, &event);
+
 	ieee80211_sae_leave(ic);
 	ieee80211_wme_reset(ni);
 	ic->ic_node_cleanup(ni);
-	ieee80211_notify_node_leave(ic, ni);
+	ieee80211_notify_node_leave(ic, ni, bss, tagged ? &event : NULL);
 }
 
 int
@@ -981,6 +1043,7 @@ node_cleanup(struct ieee80211_node *ni)
 	 * do it just in case.
 	 */
 	ni->ni_flags &= ~IEEE80211_NODE_AREF;
+	ieee80211_assoc_epoch_clear(ic, ni);
 
 	/*
 	 * Drain power save queue and, if needed, clear TIM.
@@ -1064,6 +1127,7 @@ ieee80211_setup_node(struct ieee80211_node_table *nt,
 		ether_sprintf(macaddr), nt->nt_name);
 
 	IEEE80211_ADDR_COPY(ni->ni_macaddr, macaddr);
+	ieee80211_assoc_epoch_clear(ic, ni);
 	hash = IEEE80211_NODE_HASH(macaddr);
 	ieee80211_node_initref(ni);		/* mark referenced */
 	ni->ni_chan = IEEE80211_CHAN_ANYC;

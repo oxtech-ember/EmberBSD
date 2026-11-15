@@ -128,6 +128,9 @@ callbacks. It also compiles the selected shared WPA/RSN parser sources and
 tests valid WPA, valid RSN, and malformed IEs under ASan/UBSan:
 
 ```sh
+SDKROOT=$(xcrun --show-sdk-path)
+export SDKROOT
+
 "$HOST_PREFIX/bin/python3.15" -B sys/arch/riscv/tests/t_espwifi_mgmt.py \
     --cc "$HOST_PREFIX/bin/clang" \
     --idf-driver-header "$IDF_SOURCE/components/wpa_supplicant/esp_supplicant/src/esp_wifi_driver.h" \
@@ -146,6 +149,12 @@ tests valid WPA, valid RSN, and malformed IEs under ASan/UBSan:
     --cc "$HOST_PREFIX/bin/clang"
 
 "$HOST_PREFIX/bin/python3.15" -B sys/arch/riscv/tests/t_espwifi_sta_scan.py \
+    --cc "$HOST_PREFIX/bin/clang"
+
+"$HOST_PREFIX/bin/python3.15" -B sys/arch/riscv/tests/t_espwifi_join.py \
+    --cc "$HOST_PREFIX/bin/clang"
+
+"$HOST_PREFIX/bin/python3.15" -B sys/arch/riscv/tests/t_espwifi_scan.py \
     --cc "$HOST_PREFIX/bin/clang"
 ```
 

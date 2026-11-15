@@ -22,19 +22,29 @@ enum ieee80211_state {
     IEEE80211_S_INIT, IEEE80211_S_SCAN, IEEE80211_S_AUTH,
     IEEE80211_S_ASSOC, IEEE80211_S_RUN
 };
+enum ieee80211_opmode { IEEE80211_M_STA };
 #define IEEE80211_F_SCAN 1
 #define AICWF_SCAN_INTERVAL_MS 3000
 #define IS_UP(ic) ((ic)->up)
+struct ieee80211_assoc_event {
+    uint32_t iae_version, iae_reserved;
+    uint64_t iae_assoc_epoch;
+    uint8_t iae_bssid[6], iae_reserved2[2];
+};
+#define IEEE80211_ASSOC_EVENT_VERSION 1
+struct ieee80211_node { uint64_t ni_assoc_epoch; uint8_t ni_bssid[6]; };
 struct ieee80211com {
     enum ieee80211_state ic_state;
+    enum ieee80211_opmode ic_opmode;
     int ic_flags, up;
     u_int8_t ic_chan_active[32];
-    void *ic_bss;
+    struct ieee80211_node *ic_bss;
 };
 struct aicwf_softc {
     struct ieee80211com sc_ic;
     bool sc_connected, sc_connecting, sc_scanning;
     int sc_scan_ticks;
+    struct ieee80211_node sc_bss;
     int (*sc_newstate)(struct ieee80211com *, enum ieee80211_state, int);
 };
 static int leaves, scans, disconnects;
@@ -45,7 +55,19 @@ static int getticks(void) { return 10000; }
 static void kpause(const char *w, bool intr, int ticks, void *lock)
 { (void)w; (void)intr; (void)ticks; (void)lock; }
 static void ieee80211_sta_leave(struct ieee80211com *ic, void *node)
-{ assert(ic->ic_bss == node); leaves++; }
+{ assert(ic->ic_bss == node); leaves++; ic->ic_bss->ni_assoc_epoch=0; }
+static bool ieee80211_assoc_event_snapshot(struct ieee80211com *ic,
+    const struct ieee80211_node *node, struct ieee80211_assoc_event *event)
+{
+    if (ic->ic_opmode != IEEE80211_M_STA || ic->ic_bss != node ||
+        node->ni_assoc_epoch == 0)
+        return false;
+    memset(event, 0, sizeof(*event));
+    event->iae_version=IEEE80211_ASSOC_EVENT_VERSION;
+    event->iae_assoc_epoch=node->ni_assoc_epoch;
+    memcpy(event->iae_bssid,node->ni_bssid,sizeof(event->iae_bssid));
+    return true;
+}
 static void aicwf_disconnect(struct aicwf_softc *sc)
 {
     if (sc->sc_connected || sc->sc_connecting) disconnects++;
@@ -73,9 +95,12 @@ static void check(bool user_scan, bool connected, enum ieee80211_state old,
     u_int8_t channels[32] = {1};
     leaves = scans = disconnects = 0;
     sc.sc_ic.ic_state = old;
+    sc.sc_ic.ic_opmode = IEEE80211_M_STA;
     sc.sc_ic.ic_flags = IEEE80211_F_SCAN;
     sc.sc_ic.up = 1;
-    sc.sc_ic.ic_bss = &sc;
+    sc.sc_ic.ic_bss = &sc.sc_bss;
+    sc.sc_bss.ni_assoc_epoch = 1;
+    sc.sc_bss.ni_bssid[0] = 2;
     sc.sc_connected = connected;
     sc.sc_newstate = net80211_state;
     if (user_scan) {
@@ -99,5 +124,10 @@ int main(void)
     return 0;
 }
 C
-${CC:-cc} -std=c99 -Wall -Wextra -Werror "$work/check.c" -o "$work/check"
-"$work/check"
+${CC:-cc} -std=c99 -Wall -Wextra -Werror ${AICWF_SCAN_CFLAGS:-} \
+    "$work/check.c" -o "$work/check"
+if [ -n "${TEST_RUNNER:-}" ]; then
+    "$TEST_RUNNER" "$work/check"
+else
+    "$work/check"
+fi

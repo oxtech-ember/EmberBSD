@@ -101,6 +101,7 @@ struct ieee80211_node {
 	u_int			ni_refcnt;
 	u_int			ni_scangen;	/* gen# for timeout scan */
 	u_int			ni_scan_epoch;	/* last actual radio scan */
+	uint64_t		ni_assoc_epoch __aligned(8);	/* common STA lifetime */
 	struct ieee80211_ht20_node ni_ht20;
 	struct ieee80211_rxba_state ni_rxba;
 	struct ieee80211_phy_ies ni_phy_ies; /* observed, not negotiated */

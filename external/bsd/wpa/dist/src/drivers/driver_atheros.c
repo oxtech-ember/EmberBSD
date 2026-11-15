@@ -237,6 +237,17 @@ set80211priv(struct atheros_driver_data *drv, int op, void *data, int len)
 }
 
 static int
+atheros_set_mlme(struct atheros_driver_data *drv,
+		 struct ieee80211req_mlme *mlme)
+{
+#if defined(__NetBSD__) && defined(IEEE80211_MLME_VERSION)
+	mlme->im_version = IEEE80211_MLME_VERSION;
+	mlme->im_assoc_epoch = 0;
+#endif
+	return set80211priv(drv, IEEE80211_IOCTL_SETMLME, mlme, sizeof(*mlme));
+}
+
+static int
 set80211param(struct atheros_driver_data *drv, int op, int arg)
 {
 	struct iwreq iwr;
@@ -440,7 +451,7 @@ atheros_set_sta_authorized(void *priv, const u8 *addr, int authorized)
 		mlme.im_op = IEEE80211_MLME_UNAUTHORIZE;
 	mlme.im_reason = 0;
 	os_memcpy(mlme.im_macaddr, addr, IEEE80211_ADDR_LEN);
-	ret = set80211priv(drv, IEEE80211_IOCTL_SETMLME, &mlme, sizeof(mlme));
+	ret = atheros_set_mlme(drv, &mlme);
 	if (ret < 0) {
 		wpa_printf(MSG_DEBUG, "%s: Failed to %sauthorize STA " MACSTR,
 			   __func__, authorized ? "" : "un", MAC2STR(addr));
@@ -688,8 +699,7 @@ atheros_sta_clear_stats(void *priv, const u8 *addr)
 
 	mlme.im_op = IEEE80211_MLME_CLEAR_STATS;
 	os_memcpy(mlme.im_macaddr, addr, IEEE80211_ADDR_LEN);
-	ret = set80211priv(drv, IEEE80211_IOCTL_SETMLME, &mlme,
-			   sizeof(mlme));
+	ret = atheros_set_mlme(drv, &mlme);
 	if (ret < 0) {
 		wpa_printf(MSG_DEBUG, "%s: Failed to clear STA stats (addr "
 			   MACSTR ")", __func__, MAC2STR(addr));
@@ -768,7 +778,7 @@ atheros_sta_deauth(void *priv, const u8 *own_addr, const u8 *addr,
 	mlme.im_op = IEEE80211_MLME_DEAUTH;
 	mlme.im_reason = reason_code;
 	os_memcpy(mlme.im_macaddr, addr, IEEE80211_ADDR_LEN);
-	ret = set80211priv(drv, IEEE80211_IOCTL_SETMLME, &mlme, sizeof(mlme));
+	ret = atheros_set_mlme(drv, &mlme);
 	if (ret < 0) {
 		wpa_printf(MSG_DEBUG, "%s: Failed to deauth STA (addr " MACSTR
 			   " reason %d)",
@@ -792,7 +802,7 @@ atheros_sta_disassoc(void *priv, const u8 *own_addr, const u8 *addr,
 	mlme.im_op = IEEE80211_MLME_DISASSOC;
 	mlme.im_reason = reason_code;
 	os_memcpy(mlme.im_macaddr, addr, IEEE80211_ADDR_LEN);
-	ret = set80211priv(drv, IEEE80211_IOCTL_SETMLME, &mlme, sizeof(mlme));
+	ret = atheros_set_mlme(drv, &mlme);
 	if (ret < 0) {
 		wpa_printf(MSG_DEBUG, "%s: Failed to disassoc STA (addr "
 			   MACSTR " reason %d)",
@@ -1116,7 +1126,7 @@ atheros_sta_auth(void *priv, struct wpa_driver_sta_auth_params *params)
 			return -1;
 		}
 	}
-	ret = set80211priv(drv, IEEE80211_IOCTL_SETMLME, &mlme, sizeof(mlme));
+	ret = atheros_set_mlme(drv, &mlme);
 	if (ret < 0) {
 		wpa_printf(MSG_DEBUG, "%s: Failed to auth STA (addr " MACSTR
 			   " reason %d)",
@@ -1155,7 +1165,7 @@ atheros_sta_assoc(void *priv, const u8 *own_addr, const u8 *addr,
 			return -1;
 		}
 	}
-	ret = set80211priv(drv, IEEE80211_IOCTL_SETMLME, &mlme, sizeof(mlme));
+	ret = atheros_set_mlme(drv, &mlme);
 	if (ret < 0) {
 		wpa_printf(MSG_DEBUG, "%s: Failed to assoc STA (addr " MACSTR
 			   " reason %d)",

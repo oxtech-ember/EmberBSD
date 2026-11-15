@@ -603,6 +603,7 @@ ieee80211_notify_node_join(struct ieee80211com *ic, struct ieee80211_node *ni,
 {
 	struct ifnet *ifp = ic->ic_ifp;
 	struct ieee80211_join_event iev;
+	struct ieee80211_assoc_event assoc;
 
 	IEEE80211_DPRINTF(ic, IEEE80211_MSG_NODE, "%snode %s join\n",
 	    (ni == ic->ic_bss) ? "bss " : "",
@@ -610,10 +611,21 @@ ieee80211_notify_node_join(struct ieee80211com *ic, struct ieee80211_node *ni,
 
 	memset(&iev, 0, sizeof(iev));
 	if (ni == ic->ic_bss) {
-		IEEE80211_ADDR_COPY(iev.iev_addr, ni->ni_bssid);
-		rt_ieee80211msg(ifp, newassoc ?
-		    RTM_IEEE80211_ASSOC : RTM_IEEE80211_REASSOC,
-		    &iev, sizeof(iev));
+		if (ic->ic_opmode == IEEE80211_M_STA) {
+			if (ieee80211_assoc_event_snapshot(ic, ni, &assoc))
+				rt_ieee80211msg(ifp, newassoc ?
+				    RTM_IEEE80211_ASSOC : RTM_IEEE80211_REASSOC,
+				    &assoc, sizeof(assoc));
+			else
+				rt_ieee80211msg(ifp, newassoc ?
+				    RTM_IEEE80211_ASSOC : RTM_IEEE80211_REASSOC,
+				    NULL, 0);
+		} else {
+			IEEE80211_ADDR_COPY(iev.iev_addr, ni->ni_bssid);
+			rt_ieee80211msg(ifp, newassoc ?
+			    RTM_IEEE80211_ASSOC : RTM_IEEE80211_REASSOC,
+			    &iev, sizeof(iev));
+		}
 		if_link_state_change(ifp, LINK_STATE_UP);
 	} else {
 		IEEE80211_ADDR_COPY(iev.iev_addr, ni->ni_macaddr);
@@ -624,18 +636,36 @@ ieee80211_notify_node_join(struct ieee80211com *ic, struct ieee80211_node *ni,
 }
 
 void
-ieee80211_notify_node_leave(struct ieee80211com *ic, struct ieee80211_node *ni)
+ieee80211_notify_node_leave(struct ieee80211com *ic, struct ieee80211_node *ni,
+	bool bss, const struct ieee80211_assoc_event *assoc)
 {
 	struct ifnet *ifp = ic->ic_ifp;
 	struct ieee80211_leave_event iev;
+	struct ieee80211_assoc_event assoc_event;
+	bool current;
 
 	IEEE80211_DPRINTF(ic, IEEE80211_MSG_NODE, "%snode %s leave\n",
-	    (ni == ic->ic_bss) ? "bss " : "",
+	    bss ? "bss " : "",
 	    ether_sprintf(ni->ni_macaddr));
 
-	if (ni == ic->ic_bss) {
-		rt_ieee80211msg(ifp, RTM_IEEE80211_DISASSOC, NULL, 0);
-		if_link_state_change(ifp, LINK_STATE_DOWN);
+	if (bss) {
+		if (assoc != NULL) {
+			assoc_event = *assoc;
+			rt_ieee80211msg(ifp, RTM_IEEE80211_DISASSOC,
+			    &assoc_event, sizeof(assoc_event));
+		} else
+			rt_ieee80211msg(ifp, RTM_IEEE80211_DISASSOC, NULL, 0);
+		/* A late old epoch must not lower a replacement association. */
+		current = ic->ic_bss == ni;
+		if (current && assoc != NULL) {
+			IEEE80211_ASSOC_EPOCH_LOCK(ic);
+			current = ic->ic_bss == ni &&
+			    (ni->ni_assoc_epoch == 0 ||
+			    ni->ni_assoc_epoch == assoc->iae_assoc_epoch);
+			IEEE80211_ASSOC_EPOCH_UNLOCK(ic);
+		}
+		if (current)
+			if_link_state_change(ifp, LINK_STATE_DOWN);
 	} else {
 		/* fire off wireless event station leaving */
 		memset(&iev, 0, sizeof(iev));

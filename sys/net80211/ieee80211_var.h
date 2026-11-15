@@ -116,6 +116,9 @@ struct ieee80211com {
 	struct ieee80211_sae *ic_sae;
 	/* Published lifetime cookie, readable by a provider whose ic is alive. */
 	uint64_t ic_sae_serial __aligned(8);
+	/* 64-bit identity and node stamps are accessed under the IPL_NET lock. */
+	uint64_t ic_assoc_epoch __aligned(8);
+	ieee80211_assoc_epoch_lock_t ic_assoc_epoch_lock;
 	/* Optional STA stop: close all TX synchronously under Giant, without a
 	 * driver lock. Must not sleep. Called before the shared INIT request. */
 	void (*ic_sta_quiet)(struct ieee80211com *);

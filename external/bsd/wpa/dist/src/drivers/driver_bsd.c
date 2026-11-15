@@ -78,13 +78,19 @@ struct bsd_driver_data {
 	int sae_active;
 	int sae_configured;
 	int sae_blocked;
-	int sae_port_wanted;	/* port request refused before the IGTK */
 #ifdef IEEE80211_SAE_CAP_KEY_EPOCH
 	int sae_key_epoch;
 #endif
 #ifdef IEEE80211_SAE_CAP_SA_QUERY
 	int sae_query;
 #endif
+#endif
+#if defined(__NetBSD__) && defined(IEEE80211_MLME_VERSION) && \
+    defined(IEEE80211_ASSOC_EVENT_VERSION)
+	uint64_t sta_assoc_epoch;
+	uint64_t sta_assoc_retired_epoch;
+	u8 sta_assoc_bssid[ETH_ALEN];
+	int sta_assoc_versioned;
 #endif
 #if !defined(HOSTAPD) && defined(__NetBSD__) && defined(IEEE80211_IOC_STA_MGMT)
 	int sta_btm;
@@ -112,6 +118,10 @@ struct bsd_driver_data {
 #if !defined(HOSTAPD) && defined(__NetBSD__) && defined(IEEE80211_IOC_STA_MGMT)
 static void bsd_sta_scan_clear(struct bsd_driver_data *);
 static void bsd_sta_tx_status(struct bsd_driver_data *, int, int);
+#endif
+#if defined(__NetBSD__) && defined(IEEE80211_MLME_VERSION) && \
+    defined(IEEE80211_ASSOC_EVENT_VERSION)
+static void bsd_sta_epoch_reset(struct bsd_driver_data *);
 #endif
 
 /* Generic functions for hostapd and wpa_supplicant */
@@ -203,6 +213,16 @@ static int
 set80211var(struct bsd_driver_data *drv, int op, const void *arg, int arg_len)
 {
 	return bsd_set80211(drv, op, 0, arg, arg_len);
+}
+
+static int
+bsd_set_mlme(struct bsd_driver_data *drv, struct ieee80211req_mlme *mlme)
+{
+#if defined(__NetBSD__) && defined(IEEE80211_MLME_VERSION)
+	mlme->im_version = IEEE80211_MLME_VERSION;
+	mlme->im_assoc_epoch = 0;
+#endif
+	return bsd_set80211(drv, IEEE80211_IOC_MLME, 0, mlme, sizeof(*mlme));
 }
 
 static int
@@ -306,6 +326,16 @@ bsd_set_mediaopt(void *priv, uint32_t mask, uint32_t mode)
 	return 0;
 }
 
+static int
+bsd_set_opmode(struct bsd_driver_data *drv, uint32_t media_mode,
+	    enum ieee80211_opmode opmode)
+{
+	if (bsd_set_mediaopt(drv, IFM_OMASK, media_mode) < 0)
+		return -1;
+	drv->opmode = opmode;
+	return 0;
+}
+
 #if defined(IEEE80211_IOC_SAE) && defined(CONFIG_SAE)
 static int
 bsd_sae_request(struct bsd_driver_data *drv, u16 op, const void *data, size_t len)
@@ -336,7 +366,6 @@ bsd_sae_disable(struct bsd_driver_data *drv)
 	u8 disabled = 0;
 
 	drv->sae_active = 0;
-	drv->sae_port_wanted = 0;
 	if (!drv->sae_configured)
 		return 0;
 	drv->sae_blocked = 1;
@@ -375,7 +404,6 @@ bsd_sae_enable(struct bsd_driver_data *drv, const u8 *bssid)
 	}
 	drv->sae_configured = 1;
 	drv->sae_active = 1;
-	drv->sae_port_wanted = 0;
 	return 0;
 }
 
@@ -479,9 +507,6 @@ bsd_del_key(void *priv, const u8 *addr, int key_idx)
 #if defined(IEEE80211_IOC_SAE) && defined(CONFIG_SAE) && \
     defined(IEEE80211_SAE_CAP_KEY_EPOCH)
 	if (drv->sae_active && drv->sae_key_epoch) {
-		/* A pairwise key (addr != NULL) gone: no port is pending either. */
-		if (addr != NULL)
-			drv->sae_port_wanted = 0;
 		return bsd_sae_request(drv, IEEE80211_SAE_DELETE_KEY, &wk, sizeof(wk));
 	}
 #endif
@@ -499,7 +524,7 @@ bsd_send_mlme_param(void *priv, const u8 op, const u16 reason, const u8 *addr)
 	os_memcpy(mlme.im_macaddr, addr, IEEE80211_ADDR_LEN);
 	wpa_printf(MSG_DEBUG, "%s: op=%d reason=%d addr=" MACSTR, __func__,
 	    op, reason, MAC2STR(addr));
-	return set80211var(priv, IEEE80211_IOC_MLME, &mlme, sizeof(mlme));
+	return bsd_set_mlme(priv, &mlme);
 }
 
 static int
@@ -578,23 +603,6 @@ bsd_set_key(void *priv, struct wpa_driver_set_key_params *params)
 		os_memcpy(material + 8, key, 16);
 		ret = bsd_sae_request(sae_drv, IEEE80211_SAE_SET_IGTK, material, sizeof(material));
 		forced_memzero(material, sizeof(material));
-#ifdef IEEE80211_SAE_CAP_KEY_EPOCH
-		/*
-		 * The EAPOL state machine authorizes the port as soon as the
-		 * pairwise key is in place (with a cached PMK, at message 3
-		 * of 4), and never again.  The kernel opens the port only with
-		 * an IGTK installed, so that request was refused: repeat it
-		 * now.  A port that still does not open fails the key
-		 * installation instead of leaving a silent, closed link.
-		 */
-		if (ret == 0 && sae_drv->sae_port_wanted) {
-			u8 on = 1;
-
-			ret = bsd_sae_request(sae_drv, IEEE80211_SAE_SET_PORT, &on, 1);
-			if (ret == 0)
-				sae_drv->sae_port_wanted = 0;
-		}
-#endif
 		return ret;
 	}
 #endif
@@ -925,6 +933,10 @@ bsd_route_overflow(int sock, void *ctx, struct bsd_driver_global *global)
 			wpa_printf(MSG_DEBUG,
 				   "RTM_IFANNOUNCE: Interface '%s' added",
 				   drv->ifname);
+#if defined(__NetBSD__) && defined(IEEE80211_MLME_VERSION) && \
+    defined(IEEE80211_ASSOC_EVENT_VERSION)
+			bsd_sta_epoch_reset(drv);
+#endif
 			drv->ifindex = sdl->sdl_index;
 			drv->if_removed = 0;
 			event.interface_status.ievent = EVENT_INTERFACE_ADDED;
@@ -1397,6 +1409,85 @@ bsd_sta_associate(struct bsd_driver_data *drv,
 }
 #endif /* __NetBSD__ && IEEE80211_IOC_STA_MGMT */
 
+#if defined(__NetBSD__) && defined(IEEE80211_MLME_VERSION) && \
+    defined(IEEE80211_ASSOC_EVENT_VERSION)
+static void
+bsd_sta_epoch_reset(struct bsd_driver_data *drv)
+{
+	drv->sta_assoc_epoch = 0;
+	drv->sta_assoc_retired_epoch = 0;
+	drv->sta_assoc_versioned = 0;
+	os_memset(drv->sta_assoc_bssid, 0, sizeof(drv->sta_assoc_bssid));
+}
+
+static int
+bsd_sta_assoc_event(struct bsd_driver_data *drv, const void *data, size_t len)
+{
+	struct ieee80211_assoc_event event;
+	const struct ieee80211_assoc_event *assoc = &event;
+	static const u8 zero_bssid[ETH_ALEN];
+
+	if (data == NULL || len != sizeof(event))
+		return 0;
+	os_memcpy(&event, data, sizeof(event));
+	if (assoc->iae_version != IEEE80211_ASSOC_EVENT_VERSION ||
+	    assoc->iae_reserved != 0 || assoc->iae_reserved2[0] != 0 ||
+	    assoc->iae_reserved2[1] != 0 || assoc->iae_assoc_epoch == 0 ||
+	    os_memcmp(assoc->iae_bssid, zero_bssid, ETH_ALEN) == 0 ||
+	    is_multicast_ether_addr(assoc->iae_bssid) ||
+	    assoc->iae_assoc_epoch <= drv->sta_assoc_retired_epoch ||
+	    assoc->iae_assoc_epoch < drv->sta_assoc_epoch ||
+	    (assoc->iae_assoc_epoch == drv->sta_assoc_epoch &&
+	     !is_zero_ether_addr(drv->sta_assoc_bssid) &&
+	     os_memcmp(assoc->iae_bssid, drv->sta_assoc_bssid, ETH_ALEN) != 0))
+		return 0;
+
+	drv->sta_assoc_versioned = 1;
+	drv->sta_assoc_epoch = assoc->iae_assoc_epoch;
+	os_memcpy(drv->sta_assoc_bssid, assoc->iae_bssid, ETH_ALEN);
+	return 1;
+}
+
+static int
+bsd_sta_disassoc_event(struct bsd_driver_data *drv, const void *data, size_t len)
+{
+	struct ieee80211_assoc_event event;
+	const struct ieee80211_assoc_event *disassoc = &event;
+	static const u8 zero_bssid[ETH_ALEN];
+	int had_current;
+
+	if (data == NULL || len != sizeof(event))
+		return 0;
+	os_memcpy(&event, data, sizeof(event));
+	if (disassoc->iae_version != IEEE80211_ASSOC_EVENT_VERSION ||
+	    disassoc->iae_reserved != 0 || disassoc->iae_reserved2[0] != 0 ||
+	    disassoc->iae_reserved2[1] != 0 || disassoc->iae_assoc_epoch == 0 ||
+	    os_memcmp(disassoc->iae_bssid, zero_bssid, ETH_ALEN) == 0 ||
+	    is_multicast_ether_addr(disassoc->iae_bssid) ||
+	    disassoc->iae_assoc_epoch <= drv->sta_assoc_retired_epoch ||
+	    disassoc->iae_assoc_epoch < drv->sta_assoc_epoch ||
+	    (disassoc->iae_assoc_epoch == drv->sta_assoc_epoch &&
+	     !is_zero_ether_addr(drv->sta_assoc_bssid) &&
+	     os_memcmp(disassoc->iae_bssid, drv->sta_assoc_bssid,
+		       ETH_ALEN) != 0))
+		return 0;
+
+	had_current = drv->sta_assoc_epoch != 0;
+	/* Retire before notifying the supplicant, which may reenter. */
+	drv->sta_assoc_retired_epoch = disassoc->iae_assoc_epoch;
+	drv->sta_assoc_versioned = 1;
+	drv->sta_assoc_epoch = 0;
+	os_memset(drv->sta_assoc_bssid, 0, sizeof(drv->sta_assoc_bssid));
+#if defined(IEEE80211_IOC_SAE) && defined(CONFIG_SAE)
+	if (drv->sae_configured) {
+		drv->sae_active = 0;
+		drv->sae_blocked = 1;
+	}
+#endif
+	return had_current ? 1 : 2;
+}
+#endif
+
 static void
 bsd_wireless_event_receive(int sock, void *ctx, void *sock_ctx)
 {
@@ -1504,6 +1595,13 @@ bsd_wireless_event_receive(int sock, void *ctx, void *sock_ctx)
 		case RTM_IEEE80211_REASSOC:
 			if (drv->is_ap)
 				break;
+#if defined(__NetBSD__) && defined(IEEE80211_MLME_VERSION) && \
+    defined(IEEE80211_ASSOC_EVENT_VERSION)
+			if (drv->opmode == IEEE80211_M_STA &&
+			    !bsd_sta_assoc_event(drv, ifan + 1,
+			    n - sizeof(*ifan)))
+				break;
+#endif
 #if !defined(HOSTAPD) && defined(__NetBSD__) && defined(IEEE80211_IOC_STA_MGMT)
 			{
 				struct ieee80211req_sta_mgmt info;
@@ -1534,13 +1632,23 @@ bsd_wireless_event_receive(int sock, void *ctx, void *sock_ctx)
 		case RTM_IEEE80211_DISASSOC:
 			if (drv->is_ap)
 				break;
+#if defined(__NetBSD__) && defined(IEEE80211_MLME_VERSION) && \
+    defined(IEEE80211_ASSOC_EVENT_VERSION)
+			if (drv->opmode == IEEE80211_M_STA) {
+				if (n == (int)sizeof(*ifan)) {
+					if (drv->sta_assoc_versioned)
+						break;
+				} else if (bsd_sta_disassoc_event(drv, ifan + 1,
+				    n - sizeof(*ifan)) != 1)
+					break;
+			}
+#endif
 #if !defined(HOSTAPD) && defined(IEEE80211_IOC_SAE) && defined(CONFIG_SAE)
 			/* The legacy event has no generation. Suppress local callbacks,
 			 * but only a later tagged retirement may change kernel state. */
 			if (drv->sae_configured) {
 				drv->sae_active = 0;
 				drv->sae_blocked = 1;
-				drv->sae_port_wanted = 0;
 			}
 #endif
 #if !defined(HOSTAPD) && defined(__NetBSD__) && defined(IEEE80211_IOC_STA_MGMT)
@@ -1602,6 +1710,11 @@ bsd_wireless_event_receive(int sock, void *ctx, void *sock_ctx)
 		case IFAN_ARRIVAL:
 			drv = bsd_get_drvname(global, ifan->ifan_name);
 			if (drv) {
+#if defined(__NetBSD__) && defined(IEEE80211_MLME_VERSION) && \
+    defined(IEEE80211_ASSOC_EVENT_VERSION)
+				if (drv->ifindex != ifan->ifan_index || drv->if_removed)
+					bsd_sta_epoch_reset(drv);
+#endif
 				drv->ifindex = ifan->ifan_index;
 				drv->if_removed = 0;
 			}
@@ -1827,7 +1940,8 @@ bsd_init(struct hostapd_data *hapd, struct wpa_init_params *params)
 	if (bsd_get_iface_flags(drv) < 0)
 		goto bad;
 
-	if (bsd_set_mediaopt(drv, IFM_OMASK, IFM_IEEE80211_HOSTAP) < 0) {
+	if (bsd_set_opmode(drv, IFM_IEEE80211_HOSTAP,
+	    IEEE80211_M_HOSTAP) < 0) {
 		wpa_printf(MSG_ERROR, "%s: failed to set operation mode",
 			   __func__);
 		goto bad;
@@ -2039,11 +2153,7 @@ bsd_set_supp_port(void *priv, int authorized)
 #ifdef IEEE80211_SAE_CAP_KEY_EPOCH
 	if (drv->sae_active && drv->sae_key_epoch) {
 		u8 value = authorized;
-		int ret = bsd_sae_request(drv, IEEE80211_SAE_SET_PORT, &value, 1);
-
-		/* Refused before the group keys: see bsd_set_key(). */
-		drv->sae_port_wanted = authorized && ret < 0;
-		return ret;
+		return bsd_sae_request(drv, IEEE80211_SAE_SET_PORT, &value, 1);
 	}
 #endif
 #endif
@@ -2069,6 +2179,7 @@ wpa_driver_bsd_associate(void *priv, struct wpa_driver_associate_params *params)
 {
 	struct bsd_driver_data *drv = priv;
 	struct ieee80211req_mlme mlme;
+	enum ieee80211_opmode opmode;
 	u32 mode;
 	int privacy;
 	int ret = 0;
@@ -2110,18 +2221,21 @@ wpa_driver_bsd_associate(void *priv, struct wpa_driver_associate_params *params)
 	switch (params->mode) {
 	case IEEE80211_MODE_INFRA:
 		mode = 0 /* STA */;
+		opmode = IEEE80211_M_STA;
 		break;
 	case IEEE80211_MODE_IBSS:
 		mode = IFM_IEEE80211_IBSS;
+		opmode = IEEE80211_M_IBSS;
 		break;
 	case IEEE80211_MODE_AP:
 		mode = IFM_IEEE80211_HOSTAP;
+		opmode = IEEE80211_M_HOSTAP;
 		break;
 	default:
 		wpa_printf(MSG_ERROR, "%s: unknown operation mode", __func__);
 		return -1;
 	}
-	if (bsd_set_mediaopt(drv, IFM_OMASK, mode) < 0) {
+	if (bsd_set_opmode(drv, mode, opmode) < 0) {
 		wpa_printf(MSG_ERROR, "%s: failed to set operation mode",
 			   __func__);
 		return -1;
@@ -2177,8 +2291,19 @@ wpa_driver_bsd_associate(void *priv, struct wpa_driver_associate_params *params)
 	mlme.im_ssid_len = params->ssid_len;
 	if (params->bssid != NULL)
 		os_memcpy(mlme.im_macaddr, params->bssid, IEEE80211_ADDR_LEN);
-	if (set80211var(drv, IEEE80211_IOC_MLME, &mlme, sizeof(mlme)) < 0)
+	if (bsd_set_mlme(drv, &mlme) < 0)
 		goto fail;
+#if defined(__NetBSD__) && defined(IEEE80211_MLME_VERSION) && \
+    defined(IEEE80211_ASSOC_EVENT_VERSION)
+	if (params->mode == IEEE80211_MODE_INFRA) {
+		if (mlme.im_assoc_epoch == 0 ||
+		    mlme.im_assoc_epoch <= drv->sta_assoc_retired_epoch)
+			goto fail;
+		drv->sta_assoc_epoch = mlme.im_assoc_epoch;
+		drv->sta_assoc_versioned = 1;
+		os_memcpy(drv->sta_assoc_bssid, mlme.im_macaddr, ETH_ALEN);
+	}
+#endif
 #if defined(IEEE80211_IOC_SAE) && defined(CONFIG_SAE)
 	if (!sae)
 		drv->sae_blocked = 0;
@@ -2245,7 +2370,7 @@ wpa_driver_bsd_scan(void *priv, struct wpa_driver_scan_params *params)
 	}
 #endif
 
-	if (bsd_set_mediaopt(drv, IFM_OMASK, 0 /* STA */) < 0) {
+	if (bsd_set_opmode(drv, 0 /* STA */, IEEE80211_M_STA) < 0) {
 		wpa_printf(MSG_ERROR, "%s: failed to set operation mode",
 			   __func__);
 		return -1;

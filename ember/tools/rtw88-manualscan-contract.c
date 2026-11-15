@@ -11,6 +11,8 @@ const struct ieee80211_channel ieee80211_channel_anyc = {0};
 static unsigned leave_events, key_deletes, scan_starts, auth_posts;
 static unsigned associations, disconnections, scan_results;
 static int route_events[8];
+static struct ieee80211_assoc_event route_assoc[8];
+static unsigned route_assoc_len[8];
 static unsigned route_count;
 static int auth_full;
 /* Arm only after supplicant same-BSSID selection. This bus service changes
@@ -43,12 +45,19 @@ static const uint8_t manualscan_auth[30] = {
 #define LINK_STATE_DOWN 0
 #define IEEE80211_NO_HOSTAP 1
 #define IS_UP(ic) (((ic)->ic_ifp->if_flags & (IFF_UP|IFF_RUNNING)) == (IFF_UP|IFF_RUNNING))
+#define IEEE80211_ASSOC_EPOCH_LOCK(ic) ((void)(ic))
+#define IEEE80211_ASSOC_EPOCH_UNLOCK(ic) ((void)(ic))
 struct ieee80211_leave_event { uint8_t iev_addr[6]; };
 static void rt_ieee80211msg(struct ifnet *ifp,int what,void *p,unsigned len)
 {
-    (void)ifp;CHECK(!state_lock.held);CHECK(p==NULL && len==0);
+    (void)ifp;CHECK(!state_lock.held);
     CHECK(route_count<__arraycount(route_events));
-    if(route_count<__arraycount(route_events))route_events[route_count++]=what;
+    if(route_count<__arraycount(route_events)) {
+        unsigned i=route_count++;
+        route_events[i]=what;route_assoc_len[i]=len;
+        memset(&route_assoc[i],0,sizeof(route_assoc[i]));
+        if(p!=NULL && len<=sizeof(route_assoc[i]))memcpy(&route_assoc[i],p,len);
+    }
 }
 static void if_link_state_change(struct ifnet *ifp,int state)
 { (void)ifp;CHECK(!state_lock.held && state==LINK_STATE_DOWN);leave_events++; }
@@ -58,7 +67,8 @@ static void manualscan_node_cleanup(struct ieee80211_node *ni)
 {
     CHECK(!state_lock.held);
     if(ni->key_live)key_deletes++;
-    ni->key_live=0;ni->ni_associd=0;
+    ni->key_live=0;ni->ni_associd=0;ni->ni_assoc_epoch=0;
+    memset(ni->ni_bssid,0,sizeof(ni->ni_bssid));
     ni->ni_flags&=~(IEEE80211_NODE_QOS|IEEE80211_NODE_WME_OFFER|IEEE80211_NODE_WME_VALID|IEEE80211_NODE_ASSOC_PENDING);
     ieee80211_ht20_reset(ni);
 }
@@ -128,7 +138,18 @@ static void wpa_supplicant_associate(struct wpa_supplicant *s,struct wpa_bss *b,
 }
 enum { EVENT_DISASSOC=1,EVENT_SCAN_RESULTS=2 };
 union wpa_event_data { struct { int aborted; } scan_info; };
-struct bsd_driver_data { int is_ap,sta_scan_pending; struct reltime sta_scan_completed; struct wpa_supplicant *ctx; };
+struct bsd_driver_data {
+    int is_ap,sta_scan_pending,sta_assoc_versioned,opmode;
+    uint64_t sta_assoc_epoch,sta_assoc_retired_epoch;
+    uint8_t sta_assoc_bssid[6];
+    struct reltime sta_scan_completed;
+    struct wpa_supplicant *ctx;
+};
+#define os_memcpy memcpy
+#define os_memset memset
+#define os_memcmp memcmp
+#define is_multicast_ether_addr(a) (((const uint8_t *)(a))[0] & 1)
+typedef uint8_t u8;
 static void wpa_supplicant_mark_disassoc(struct wpa_supplicant *);
 static void bsd_sta_tx_status(struct bsd_driver_data *drv,int ack,int notify) { (void)drv;(void)ack;(void)notify; }
 static void bsd_sta_scan_clear(struct bsd_driver_data *drv) { drv->sta_scan_pending=0; }
@@ -173,7 +194,9 @@ static int manualscan_parent(struct ieee80211com *ic,enum ieee80211_state state,
 }
 static void route_pending(struct bsd_driver_data *drv)
 {
-    for(unsigned i=0;i<route_count;i++)manualscan_bsd_route(drv,route_events[i]);
+    for(unsigned i=0;i<route_count;i++)
+        manualscan_bsd_route(drv,route_events[i],
+            route_assoc_len[i]?&route_assoc[i]:NULL,route_assoc_len[i]);
     route_count=0;
 }
 static void test_running_manual_scan(unsigned channel,int fail_auth)
@@ -182,7 +205,8 @@ static void test_running_manual_scan(unsigned channel,int fail_auth)
     if(!state_fixture_start(&s,channel,channel>14?9:20))return;
     manualscan_current=&s;
     state_legacy_peer(&s.net,&s.ni,channel);
-    s.ni.ni_associd=0xc001;s.ni.ni_bssid[0]=2;
+    s.ni.ni_associd=0xc001;s.ni.ni_bssid[0]=2;s.ni.ni_assoc_epoch=42;
+    s.net.ic.ic_opmode=IEEE80211_M_STA;
     s.net.parent_state=manualscan_parent;
     CHECK(rtw88_net_newstate(&s.net.ic,IEEE80211_S_RUN,-1)==0);
     rtw88_net_state_work(&s.net.state_work,&s.net);
@@ -200,11 +224,19 @@ static void test_running_manual_scan(unsigned channel,int fail_auth)
     struct wpa_ssid ssid={0};struct wpa_bss selected={{2,0,0,0,0,0}};
     struct wpa_supplicant supp={.wpa_state=WPA_COMPLETED,.current_ssid=&ssid,.current_bss=&selected};
     memcpy(supp.bssid,selected.bssid,6);
-    struct bsd_driver_data drv={.ctx=&supp};
+    struct bsd_driver_data drv={.ctx=&supp,.sta_assoc_versioned=1,
+        .sta_assoc_epoch=42,.opmode=IEEE80211_M_STA};
+    memcpy(drv.sta_assoc_bssid,s.ni.ni_bssid,6);
     leave_events=key_deletes=scan_starts=route_count=auth_posts=associations=disconnections=scan_results=0;
     CHECK(manualscan_request(&s.net.ic)==0);
     CHECK(s.net.ic.ic_state==IEEE80211_S_INIT && s.net.requested==IEEE80211_S_SCAN);
     CHECK(leave_events==1 && key_deletes==1 && !s.ni.key_live && s.ni.ni_associd==0);
+    CHECK(route_count==1 && route_events[0]==RTM_IEEE80211_DISASSOC);
+    CHECK(route_assoc_len[0]==sizeof(struct ieee80211_assoc_event));
+    CHECK(route_assoc[0].iae_version==IEEE80211_ASSOC_EVENT_VERSION &&
+        route_assoc[0].iae_reserved==0 && route_assoc[0].iae_reserved2[0]==0 &&
+        route_assoc[0].iae_reserved2[1]==0 && route_assoc[0].iae_assoc_epoch==42 &&
+        memcmp(route_assoc[0].iae_bssid,"\2\0\0\0\0\0",6)==0);
     CHECK(s.net.reset_required && !s.sc.sc_ra.active && !s.net.policy.accepting);
     rtw88_net_state_work(&s.net.state_work,&s.net);
     CHECK(s.sc.sc_generation>gen && !s.sc.sc_ra.active && !s.sc.sc_linked);

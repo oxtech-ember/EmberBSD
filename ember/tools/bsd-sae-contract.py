@@ -19,7 +19,7 @@ def structure(text, name):
 
 def function(text, name):
     found = re.search(r"(?m)^static (?:int|void)[ \n]+" + name +
-                      r"\([\s\S]+?^}", text)
+                      r"\([^;]*?\)\n\{[\s\S]+?^}", text)
     return found[0] if found else ""
 
 
@@ -38,25 +38,34 @@ def main():
     wpa_source = (args.wpa_source or root / "external/bsd/wpa/dist").resolve()
     source = (args.source or root / "external/bsd/wpa/dist/src/drivers/driver_bsd.c").read_text()
     abi = (root / "sys/net80211/ieee80211_ioctl.h").read_text()
+    netbsd_abi = (root / "sys/net80211/ieee80211_netbsd.h").read_text()
     crypto = (root / "sys/net80211/ieee80211_crypto.h").read_text()
     definitions = "\n".join(line for line in re.findall(
-        r"(?m)^#define[ \t]+IEEE80211_(?:IOC_|SAE_|STA_|CIPHER_|KEY_|KEYIX_|KEYBUF_|MICBUF_)[^\n]+", abi + crypto)
+        r"(?m)^#define[ \t]+IEEE80211_(?:IOC_|MLME_VERSION|ASSOC_EVENT_VERSION|SAE_|STA_|CIPHER_|KEY_|KEYIX_|KEYBUF_|MICBUF_)[^\n]+", abi + crypto + netbsd_abi)
         if not line.rstrip().endswith("\\"))
     definitions += "\n" + "\n".join(structure(abi, name) for name in (
         "ieee80211req", "ieee80211req_key", "ieee80211req_del_key",
         "ieee80211req_mlme", "ieee80211req_sae", "ieee80211req_sta_mgmt"))
+    definitions += "\n" + structure(netbsd_abi, "ieee80211_assoc_event")
     # Host and target use the real driver state and WPA public parameter types.
     state = structure(source, "bsd_driver_global") + "\n" + structure(source, "bsd_driver_data")
     sae = source[source.index("#if defined(IEEE80211_IOC_SAE) && defined(CONFIG_SAE)",
                               source.index("bsd_set_mediaopt(")):
                  source.index("\nstatic int\nbsd_del_key(")]
-    shared = ("bsd_del_key", "bsd_set_key", "bsd_send_mlme_param")
+    shared = ("bsd_set80211", "bsd_set_mlme",
+              "bsd_del_key", "bsd_set_key",
+              "bsd_send_mlme_param")
     names = ("wpa_driver_bsd_set_wpa_ie", "wpa_driver_bsd_set_wpa_internal",
              "wpa_driver_bsd_set_wpa", "wpa_driver_bsd_set_drop_unencrypted",
              "wpa_driver_bsd_deauthenticate", "wpa_driver_bsd_set_auth_alg",
              "bsd_set_supp_port", "wpa_driver_bsd_associate", "wpa_driver_bsd_capa",
              "wpa_driver_bsd_deinit")
     functions = sae + "\n" + "\n".join(function(source, name) for name in shared)
+    functions += "\n" + function(source, "bsd_set_opmode") + "\n"
+    functions += "\n#if defined(__NetBSD__) && defined(IEEE80211_MLME_VERSION) && defined(IEEE80211_ASSOC_EVENT_VERSION)\n"
+    functions += function(source, "bsd_sta_epoch_reset") + "\n"
+    functions += function(source, "bsd_sta_assoc_event") + "\n"
+    functions += function(source, "bsd_sta_disassoc_event") + "\n#endif\n"
     functions += "\n#ifdef HOSTAPD\n" + function(source, "bsd_sta_disassoc") + "\n#endif\n"
     functions += "\n#ifndef HOSTAPD\n"
     functions += "\n#if defined(CONFIG_SAE) && defined(IEEE80211_SAE_CAP_KEY_EPOCH)\n"
@@ -65,9 +74,27 @@ def main():
     functions += "\n".join(function(source, name) for name in names) + "\n#endif\n"
     disconnected = function(source, "bsd_sta_disconnected")
     functions += "\n#if !defined(HOSTAPD) && defined(__NetBSD__)\n" + disconnected + "\n#endif\n"
+    sae_start = source.index("\t\tcase RTM_IEEE80211_SAE: {")
+    sae_start = source.rfind("#if defined(IEEE80211_IOC_SAE) && defined(CONFIG_SAE)", 0, sae_start)
+    sae_end = source.index("\t\tcase RTM_IEEE80211_ASSOC:", sae_start)
+    functions += "\n#if !defined(HOSTAPD) && !defined(BSD_TEST_OLD_ABI) && defined(__NetBSD__) && defined(CONFIG_SAE) && defined(IEEE80211_IOC_SAE)\nstatic void route_sae_start(struct bsd_driver_data *drv, "
+    functions += "const struct ieee80211req_sae *input) {\n"
+    functions += "union { struct { struct if_announcemsghdr header; "
+    functions += "struct ieee80211req_sae payload; } msg; uint64_t alignment; } storage;\n"
+    functions += "struct if_announcemsghdr *ifan = &storage.msg.header;\n"
+    functions += "union wpa_event_data event;\n"
+    functions += "int n = sizeof(*ifan) + offsetof(struct ieee80211req_sae, data) + input->len;\n"
+    functions += "memset(&storage, 0, sizeof(storage)); memcpy(ifan + 1, input, sizeof(*input));\n"
+    functions += "switch (RTM_IEEE80211_SAE) {\n" + source[sae_start:sae_end] + "}\n}\n#endif\n"
     start = source.index("\t\tcase RTM_IEEE80211_DISASSOC:")
     end = source.index("\t\tcase RTM_IEEE80211_SCAN:", start)
-    functions += "\n#ifndef HOSTAPD\nstatic void route_disassoc(struct bsd_driver_data *drv) {\n"
+    functions += "\n#ifndef HOSTAPD\nstatic void route_disassoc(struct bsd_driver_data *drv, const void *payload, size_t payload_len) {\n"
+    functions += "union { uint64_t alignment; u8 bytes[sizeof(struct if_announcemsghdr) + sizeof(struct ieee80211_assoc_event) + 1]; } storage;\n"
+    functions += "struct if_announcemsghdr *ifan = (void *)storage.bytes;\n"
+    functions += "union wpa_event_data event; int n = sizeof(*ifan) + payload_len; (void)n;\n"
+    functions += "memset(&storage, 0, sizeof(storage)); memset(&event, 0, sizeof(event));\n"
+    functions += "if (payload_len > sizeof(struct ieee80211_assoc_event)) abort();\n"
+    functions += "if (payload_len) memcpy(ifan + 1, payload, payload_len);\n"
     functions += "switch (RTM_IEEE80211_DISASSOC) {\n" + source[start:end] + "}\n}\n#endif\n"
     port = re.search(r"(?m)^\s*\.set_supp_port\s*=\s*\w+,", source)
     key = re.search(r"(?m)^\s*\.set_key\s*=\s*\w+,", source)
