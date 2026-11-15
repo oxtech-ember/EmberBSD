@@ -23,10 +23,29 @@ Publication is required only when you submit it as a shared contribution.
 | Device-operation and personal-change skills | [EmberBSD-User-Skills](https://github.com/oxtech-ember/EmberBSD-User-Skills) |
 
 Use the accepting repository's current instructions and license.
-Follow [documentation ownership](doc/emberbsd-ownership.md). Keep hardware matrices and scoped evidence in their canonical owner documents; link them here.
+Follow [documentation ownership](#documentation-ownership). Keep hardware matrices and scoped evidence in their canonical owner documents; link them here.
 Keep a shared library fix in Ports rather than each application.
 Split changes across owners and state the required commits or interface between them.
 SDK and Runtime names do not establish released APIs.
+
+### Documentation ownership
+
+Read the [Developer Guide's documentation rules](https://github.com/oxtech-ember/EmberBSD-Docs/blob/main/CONTRIBUTING.md#separate-concepts-from-implementation)
+for content boundaries. Keep exact software contracts and checks beside the subsystem that implements them.
+The root README provides navigation; it does not duplicate guides or hardware catalogs.
+
+In this source tree, `ember/boot` holds consumed boot assets, `ember/image` holds
+OS root assembly and startup integration, and `ember/firmware` holds firmware
+adaptations and their build contract. `ember/tools` and `ember/tests` contain
+OS-specific tools and checks. Shared SDK orchestration and standalone applications
+belong to their own repositories. `ember/source.json` and `ember/patches` retain
+adaptation provenance; the patches are already applied, not a second implementation.
+Kernel configurations remain in `sys/arch/*/conf`.
+
+The inherited `doc/` files are source-tree build, import and historical metadata.
+For example, `doc/Makefile` regenerates `BUILDING` from `BUILDING.mdoc`, distribution
+logic reads release changes, and code refers to `HACKS`. These stay with their
+consumers; the public conceptual guide lives in EmberBSD-Docs.
 
 ## 2. Describe the change before implementation
 
