@@ -31,3 +31,8 @@ if [ -n "${TEST_RUNNER:-}" ]; then
 else
     "$work/sta-scan"
 fi
+
+# Compile the production Action lifetime helpers and exercise tuple/cancel/report
+# behavior, alongside the connected-scan state fixture above.
+python3 "$src/sys/net80211/tests/sta-action.py" --cc "${CC:-cc}" \
+    --cflags="${STA_TEST_CFLAGS:-${CFLAGS:-}}"

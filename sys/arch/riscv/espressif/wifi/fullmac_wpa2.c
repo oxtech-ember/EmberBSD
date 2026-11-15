@@ -4,6 +4,7 @@
 #error "fullmac_wpa2 requires the external BSD WPA interface"
 #endif
 #include <stdbool.h>
+#include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
@@ -177,7 +178,6 @@ espwifi_wpa2_sta_rx_mgmt(u8 subtype, u8 *body, size_t len, u8 *sender,
 	unsigned int profile_authmode;
 
 	(void)rssi;
-	(void)channel;
 	(void)current_tsf;
 	switch (subtype) {
 	case WLAN_FC_STYPE_ASSOC_RESP:
@@ -199,10 +199,17 @@ espwifi_wpa2_sta_rx_mgmt(u8 subtype, u8 *body, size_t len, u8 *sender,
 		    status, (unsigned)(accepted != 0), profile_authmode);
 		return accepted ? 0 : -1;
 	case WLAN_FC_STYPE_AUTH:
-	case WLAN_FC_STYPE_ACTION:
 		espwifi_os_log("espwifi: RX mgmt rejected subtype=%u len=%u "
 		    "status_valid=0\n", (unsigned)subtype, (unsigned)len);
 		return -1;
+	case WLAN_FC_STYPE_ACTION:
+		/* IDF has already applied its management-frame receive path. */
+		/* Forward only Radio Measurement (5) and WNM (10) categories. */
+		if (body == NULL || sender == NULL || len < 2 ||
+		    len > UINT_MAX || (body[0] != 5 && body[0] != 10))
+			return -1;
+		return espwifi_if_action_rx(body, (unsigned int)len, sender,
+		    channel) == 0 ? 0 : -1;
 	default:
 		/* Beacon/probe callbacks are normal scan traffic. */
 		if (subtype != 5 && subtype != 8)
@@ -292,9 +299,11 @@ espwifi_wpa2_register(void)
 	callbacks->wpa3_build_sae_msg = espwifi_wpa3_build_sae_msg;
 	callbacks->wpa3_parse_sae_msg = espwifi_wpa3_parse_sae_msg;
 	/* Match esp_supplicant_init ordering: install filter before callback table. */
+	/* The second mask selects RRM (5) and WNM (10) Action categories. */
 	error = esp_wifi_register_mgmt_frame_internal(
 	    (1U << WLAN_FC_STYPE_ASSOC_RESP) |
-	    (1U << WLAN_FC_STYPE_REASSOC_RESP), 0);
+	    (1U << WLAN_FC_STYPE_REASSOC_RESP) |
+	    (1U << WLAN_FC_STYPE_ACTION), (1U << 5) | (1U << 10));
 	if (error != ESP_OK) {
 		espwifi_os_free(callbacks);
 		return -1;
@@ -486,4 +495,41 @@ int
 espwifi_ext_auth_done(void)
 {
 	return esp_wifi_auth_done_internal() ? 0 : -1;
+}
+
+int
+espwifi_ext_action_tx(const unsigned char *bssid, const void *body,
+	    unsigned int len, uint32_t cookie, uint32_t generation)
+{
+	wifi_mgmt_frm_req_t *req;
+	unsigned long size;
+	int error;
+
+	if (bssid == NULL || body == NULL || len < 2 || len > 1024 ||
+	    cookie == 0 || generation == 0)
+		return ESP_ERR_INVALID_ARG;
+	size = offsetof(wifi_mgmt_frm_req_t, data) + len;
+	req = espwifi_os_malloc(size);
+	if (req == NULL)
+		return ESP_ERR_NO_MEM;
+	memset(req, 0, offsetof(wifi_mgmt_frm_req_t, data));
+	req->ifx = WIFI_IF_STA;
+	/* IDF S31 wifi_mgmt_frm_req_t.subtype is the FC byte (0xd0). */
+	req->subtype = WLAN_FC_STYPE_ACTION << 4;
+	req->data_len = len;
+	memcpy(req->da, bssid, 6);
+	memcpy(req->data, body, len);
+	error = espwifi_vendor_action_tx_submit(req, size, cookie, generation,
+	    bssid);
+	if (error != ESP_OK) {
+		forced_memzero(req, size);
+		espwifi_os_free(req);
+	}
+	return error;
+}
+
+int
+espwifi_ext_action_tx_enabled(void)
+{
+	return 1;
 }

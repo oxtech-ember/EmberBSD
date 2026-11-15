@@ -41,6 +41,7 @@ def function(name, result):
 code = r'''
 #include <assert.h>
 #include <stdbool.h>
+#include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -120,6 +121,11 @@ static int filter_calls, callback_calls;
 static struct wpa_funcs *registered;
 static uint8_t espwifi_sae_body[ESPWIFI_SAE_BODY_MAX];
 static unsigned assoc_calls;
+static unsigned action_calls;
+static int action_result;
+static const void *action_body_seen;
+static unsigned action_len_seen, action_channel_seen;
+static uint8_t action_sender_seen[6];
 static int parser_result, parser_calls;
 struct wpa_ie_data { int proto, pairwise_cipher, has_pairwise, group_cipher,
  has_group, key_mgmt, capabilities; size_t num_pmkid; const uint8_t *pmkid;
@@ -167,6 +173,12 @@ static int espwifi_os_assoc_response(unsigned int subtype,const void *body,
  assert(subtype==WLAN_FC_STYPE_ASSOC_RESP && body!=NULL && len==6 && sender[0]==2);
  assoc_calls++; return 1;
 }
+#define espwifi_vendor_debug_assoc_snapshot(bssid) ((void)(bssid))
+static int espwifi_if_action_rx(const void *body, unsigned len,
+ const unsigned char *sender, unsigned channel) {
+ action_calls++; action_body_seen=body; action_len_seen=len;
+ action_channel_seen=channel; memcpy(action_sender_seen,sender,6); return action_result;
+}
 ''' + re.search(r'\nstatic enum espwifi_wpa_cipher\nespwifi_common_cipher\(.*?\n\}',
                parser_source, re.S).group() + \
     re.search(r'\nint\nespwifi_parse_wpa_ie\(.*?\n\}', parser_source, re.S).group() + \
@@ -186,21 +198,35 @@ static int espwifi_os_assoc_response(unsigned int subtype,const void *body,
     function('espwifi_wpa2_register', 'int') + r'''
 int main(void) {
  uint8_t body[6]={1,2,3,4,5,6}, sender[6]={2};
+ uint8_t rrm_action[3]={5,4,0x71}, wnm_action[3]={10,7,0x72};
  const unsigned expected=(1U<<WLAN_FC_STYPE_ASSOC_RESP) |
-     (1U<<WLAN_FC_STYPE_REASSOC_RESP);
+     (1U<<WLAN_FC_STYPE_REASSOC_RESP) | (1U<<WLAN_FC_STYPE_ACTION);
+ const unsigned expected_categories=(1U<<5) | (1U<<10);
  assert(espwifi_wpa2_register()==0 && filter_calls==1 && callback_calls==1);
- assert(filter_type==expected && filter_subtype==0 && registered!=NULL);
+ assert(filter_type==expected && filter_subtype==expected_categories && registered!=NULL);
  assert(registered->wpa_config_done==espwifi_wpa2_config_done);
  registered->wpa_config_done();
  assert(registered->wpa_sta_rx_mgmt(WLAN_FC_STYPE_ASSOC_RESP,body,6,sender,-35,6,99)==0);
  assert(assoc_calls==1);
+ assert(registered->wpa_sta_rx_mgmt(WLAN_FC_STYPE_ACTION,rrm_action,3,sender,-35,6,99)==0);
+ assert(action_calls==1 && action_body_seen==rrm_action && action_len_seen==3 &&
+     action_channel_seen==6 && memcmp(action_sender_seen,sender,6)==0);
+ assert(registered->wpa_sta_rx_mgmt(WLAN_FC_STYPE_ACTION,wnm_action,3,sender,-35,11,99)==0);
+ assert(action_calls==2 && action_body_seen==wnm_action && action_channel_seen==11);
+ action_result=-1;
+ assert(registered->wpa_sta_rx_mgmt(WLAN_FC_STYPE_ACTION,rrm_action,3,sender,-35,6,99)==-1);
+ assert(action_calls==3);
+ action_result=0;
+ assert(registered->wpa_sta_rx_mgmt(WLAN_FC_STYPE_ACTION,rrm_action,1,sender,-35,6,99)==-1);
+ assert(registered->wpa_sta_rx_mgmt(WLAN_FC_STYPE_ACTION,rrm_action,3,NULL,-35,6,99)==-1);
  assert(registered->wpa_sta_rx_mgmt(WLAN_FC_STYPE_AUTH,body,6,sender,-35,6,99)==-1);
- assert(registered->wpa_sta_rx_mgmt(WLAN_FC_STYPE_ACTION,body,6,sender,-35,6,99)==-1);
+ uint8_t other_action[2]={4,1};
+ assert(registered->wpa_sta_rx_mgmt(WLAN_FC_STYPE_ACTION,other_action,2,sender,-35,6,99)==-1);
  assert(registered->wpa_sta_rx_mgmt(8,body,6,sender,-35,6,99)==-1);
- assert(unhandled_mgmt_logs==2);
+ assert(unhandled_mgmt_logs==1);
  assert(registered->wpa_sta_rx_mgmt(0x10,body,6,sender,-35,6,99)==-1);
- assert(unhandled_mgmt_logs==3);
- assert(assoc_calls==1);
+ assert(unhandled_mgmt_logs==2);
+ assert(assoc_calls==1 && action_calls==3);
  wifi_wpa_ie_t parsed; uint8_t ie[3]={48,1,0};
  assert(registered->wpa_parse_wpa_ie==espwifi_wpa2_parse_ie);
  assert(registered->wpa_parse_wpa_ie(ie,sizeof(ie),&parsed)==0);
@@ -227,7 +253,7 @@ with tempfile.TemporaryDirectory() as td:
                     '-fno-sanitize-recover=all', str(c), '-o', str(out)],
                    check=True)
     subprocess.run([str(out)], check=True)
-print('IDF callback layout, association forwarding, and unsupported AUTH/ACTION rejection passed')
+print('IDF callback layout, association and RRM/WNM Action forwarding passed')
 
 # Exercise the selected common parser implementation itself. Only its logging
 # hooks are stubbed; WPA/RSN IE parsing and bridge field conversion are real.

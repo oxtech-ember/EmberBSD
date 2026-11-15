@@ -10,6 +10,7 @@ name: Native net80211 crypto, scan, aggregation and WME contracts
       - 'sys/dev/sdmmc/if_aicwf_*.h'
       - 'ember/tests/aicwf-vht.sh'
       - 'ember/tests/aicwf-sta.sh'
+      - 'ember/tests/bwfm-sta.sh'
       - 'ember/tests/aicwf-scan.sh'
       - 'ember/tests/net80211-sta.sh'
       - 'ember/tests/net80211-sae.sh'
@@ -22,6 +23,10 @@ name: Native net80211 crypto, scan, aggregation and WME contracts
       - 'sys/dev/pci/rtw89/if_rtw89.c'
       - 'ember/tools/aicwf-vht-test.c'
       - 'ember/tools/aicwf-sta-contract.c'
+      - 'ember/tools/bwfm-sta-contract.c'
+      - 'ember/tools/bwfm-sta-bsd.c'
+      - 'ember/tools/bwfm-sta-scan.c'
+      - 'ember/tools/bwfm-sta-bsd-assoc.c'
       - 'ember/tools/aicwf-rxba-*'
       - 'external/bsd/wpa/dist/src/**'
       - 'sys/crypto/aes/**'
@@ -70,6 +75,7 @@ name: Native net80211 crypto, scan, aggregation and WME contracts
       - 'sys/dev/sdmmc/if_aicwf_*.h'
       - 'ember/tests/aicwf-vht.sh'
       - 'ember/tests/aicwf-sta.sh'
+      - 'ember/tests/bwfm-sta.sh'
       - 'ember/tests/aicwf-scan.sh'
       - 'ember/tests/net80211-sta.sh'
       - 'ember/tests/net80211-sae.sh'
@@ -82,6 +88,10 @@ name: Native net80211 crypto, scan, aggregation and WME contracts
       - 'sys/dev/pci/rtw89/if_rtw89.c'
       - 'ember/tools/aicwf-vht-test.c'
       - 'ember/tools/aicwf-sta-contract.c'
+      - 'ember/tools/bwfm-sta-contract.c'
+      - 'ember/tools/bwfm-sta-bsd.c'
+      - 'ember/tools/bwfm-sta-scan.c'
+      - 'ember/tools/bwfm-sta-bsd-assoc.c'
       - 'ember/tools/aicwf-rxba-*'
       - 'external/bsd/wpa/dist/src/**'
       - 'sys/crypto/aes/**'
@@ -149,6 +159,7 @@ jobs:
             /sys/dev/sdmmc/if_aicwf_*.h
             /ember/tests/aicwf-vht.sh
             /ember/tests/aicwf-sta.sh
+            /ember/tests/bwfm-sta.sh
             /ember/tests/aicwf-scan.sh
             /ember/tests/net80211-sta.sh
             /ember/tests/net80211-sae.sh
@@ -161,6 +172,10 @@ jobs:
             /sys/dev/pci/rtw89/if_rtw89.c
             /ember/tools/aicwf-vht-test.c
             /ember/tools/aicwf-sta-contract.c
+            /ember/tools/bwfm-sta-contract.c
+            /ember/tools/bwfm-sta-bsd.c
+            /ember/tools/bwfm-sta-scan.c
+            /ember/tools/bwfm-sta-bsd-assoc.c
             /ember/tools/aicwf-rxba-*
             /external/bsd/wpa/dist/src/
             /sys/crypto/aes/
@@ -215,6 +230,7 @@ jobs:
           VHT_IES_TEST_CFLAGS: -O2 -g -gdwarf-4
           AICWF_VHT_CFLAGS: -O2 -g -gdwarf-4
           AICWF_STA_CFLAGS: -O2 -g -gdwarf-4
+          BWFM_TEST_CFLAGS: -O2 -g -gdwarf-4
           AICWF_SCAN_CFLAGS: -O2 -g -gdwarf-4
           STA_TEST_CFLAGS: -O2 -g -gdwarf-4
           SAE_TEST_CFLAGS: -O2 -g -gdwarf-4
@@ -246,6 +262,7 @@ jobs:
           sh ember/tools/net80211-vht-ies-contract.sh
           sh ember/tests/aicwf-vht.sh
           sh ember/tests/aicwf-sta.sh
+          sh ember/tests/bwfm-sta.sh
           sh ember/tests/aicwf-scan.sh
           sh ember/tests/net80211-sta.sh
           python3 ember/tools/net80211-manual-scan-contract.py
@@ -274,6 +291,8 @@ jobs:
           MANUAL_SCAN_CFLAGS: -O0 -g -gdwarf-4
           AICWF_SCAN_CFLAGS: -O0 -g -gdwarf-4 -fanalyzer
           MANUAL_SCAN_ANALYZE: '1'
+          BWFM_TEST_CFLAGS: -O0 -g -gdwarf-4 -fanalyzer
+          STA_TEST_CFLAGS: -O0 -g -gdwarf-4 -fanalyzer
         run: |
           python3 ember/tools/net80211-beacon-ies-contract.py --work-dir "$RUNNER_TEMP" --cc gcc --cflags="$WME_TEST_CFLAGS"
           sh ember/tools/ccmp-contract.sh
@@ -287,6 +306,8 @@ jobs:
           sh ember/tools/net80211-vht-ies-analysis.sh
           python3 ember/tools/net80211-manual-scan-contract.py
           sh ember/tests/aicwf-scan.sh
+          sh ember/tests/bwfm-sta.sh
+          sh ember/tests/net80211-sta.sh
           sh ember/tools/net80211-txop-contract.sh
           sh ember/tools/net80211-wme-contract.sh
           sh ember/tools/net80211-rxba-contract.sh
@@ -305,6 +326,7 @@ jobs:
           VHT_IES_TEST_CFLAGS: -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
           AICWF_VHT_CFLAGS: -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
           AICWF_STA_CFLAGS: -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
+          BWFM_TEST_CFLAGS: -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
           AICWF_SCAN_CFLAGS: -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
           STA_TEST_CFLAGS: -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
           SAE_TEST_CFLAGS: -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer
@@ -330,6 +352,7 @@ jobs:
           sh ember/tools/net80211-vht-ies-contract.sh
           sh ember/tests/aicwf-vht.sh
           sh ember/tests/aicwf-sta.sh
+          sh ember/tests/bwfm-sta.sh
           sh ember/tests/aicwf-scan.sh
           sh ember/tests/net80211-sta.sh
           python3 ember/tools/net80211-manual-scan-contract.py

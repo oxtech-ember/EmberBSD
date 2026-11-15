@@ -35,8 +35,9 @@ The caller selects supported action kinds and the firmware body-size limit.
 | `IEEE80211_STA_ACTION_RM_REPORT` | Measurement report | None |
 | `IEEE80211_STA_ACTION_RM_REQUEST` | None | Measurement request |
 
-Both current adapters select BTM, neighbor reports and measurement reports.
-Only the AIC adapter selects measurement request reception.
+The AIC and BWFM adapters select BTM, neighbor reports and measurement reports.
+Only AIC selects measurement request reception. ESP selects BTM and neighbor
+reports; its capability selection leaves measurement exchanges disabled.
 The shared code has no chip names or firmware-version tests.
 
 BTM termination duration and URL fields must fit when their request flags are set.
@@ -48,7 +49,36 @@ Unknown IEs are preserved for the station client if their framing is valid.
 Syntax validation does not authorize a frame or prove firmware support.
 The adapters still enforce peer addresses, association generation, key state,
 PMF authentication, replay protection, and the existing ioctl authorization.
-Firmware command formats, status handling and lifecycle stay in each driver.
+Firmware command formats, status decoding and physical resource lifetime stay
+in each driver.
+
+## Action request lifetime
+
+`ieee80211_sta_action.h` owns the logical lifetime shared by ESP, AIC and BWFM.
+Its compact state holds the accepted cookie, association generation, BSSID and
+frequency, plus cancellation and completion state. The adapter retains the
+body, firmware token and any resources borrowed by its transport.
+
+Call the helpers under the interface's existing serialization. `begin` admits
+one operation; `match` checks its full identity. `report` prepares at most one
+fixed STA_TX notice, with ACK set only when the adapter supplies a confirmed
+acknowledgement. Deliver that notice after dropping driver locks. Syntax,
+capabilities and current association authorization are checked before
+admission through the existing common validators and adapter state.
+
+`CANCEL_TX` matches cookie, generation and BSSID. The BSD supplicant supplies
+zero frequency; a supplied nonzero frequency must match the original request.
+Cancellation and invalidation suppress later completion delivery. The
+supplicant's timeout supplies its own failure notification. A cancelled
+operation keeps its state until the adapter can safely call `release`; a
+stale tuple cannot release its replacement.
+
+Transport retirement depends on the adapter's firmware contract. ESP retains
+its slot until the ordinary management output buffer drains or submission
+proves that no buffer was accepted. AIC and BWFM correlate independent command
+buffers with firmware tokens. Each adapter keeps that correlation across late
+events and admits reuse only when its own resources are safe. The common
+helper does not call firmware, acquire driver locks or deliver route events.
 
 ## Connected scan offload
 

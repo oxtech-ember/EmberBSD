@@ -2245,15 +2245,24 @@ aicwf_sta_ready(struct aicwf_softc *sc)
 static bool
 aicwf_sta_tx_finish_locked(struct aicwf_softc *sc, bool ack, void *event)
 {
+	struct ieee80211req_sta_mgmt notice;
+	bool notify;
+	int s;
+
 	KASSERT(mutex_owned(&sc->sc_lock));
 	if (!sc->sc_sta_tx_pending)
 		return false;
 	sc->sc_sta_tx_pending = false;
 	sc->sc_sta_tx_sent = false;
-	sc->sc_sta_tx.flags = ack ? IEEE80211_STA_TX_ACK : 0;
-	sc->sc_sta_tx.len = 0;
-	memcpy(event, &sc->sc_sta_tx, AICWF_STA_NOTICE_LEN);
-	return true;
+	s = splnet();
+	notify = ieee80211_sta_action_report(&sc->sc_ic.ic_sta_action,
+	    &sc->sc_sta_tx, ack, &notice);
+	(void)ieee80211_sta_action_release(&sc->sc_ic.ic_sta_action,
+	    &sc->sc_sta_tx);
+	splx(s);
+	if (notify)
+		memcpy(event, &notice, AICWF_STA_NOTICE_LEN);
+	return notify;
 }
 
 static bool
@@ -2294,7 +2303,12 @@ static void
 aicwf_sta_retire_locked(struct aicwf_softc *sc, uint8_t *tx, bool *tx_event,
     bool *scan_event)
 {
+	int s;
+
 	KASSERT(mutex_owned(&sc->sc_lock));
+	s = splnet();
+	ieee80211_sta_action_invalidate(&sc->sc_ic.ic_sta_action);
+	splx(s);
 	*tx_event = aicwf_sta_tx_finish_locked(sc, false, tx);
 	*scan_event = aicwf_sta_scan_finish_locked(sc);
 	if (sc->sc_sta_scan_draining)
@@ -2443,6 +2457,9 @@ aicwf_sta_mgmt(struct ieee80211com *ic, struct ieee80211req_sta_mgmt *req)
 		}
 		sc->sc_sta_enabled = req->op == IEEE80211_STA_ENABLE;
 		if (!sc->sc_sta_enabled) {
+			int s = splnet();
+			ieee80211_sta_action_invalidate(&ic->ic_sta_action);
+			splx(s);
 			tx_notify = aicwf_sta_tx_finish_locked(sc, false, event);
 			scan_notify = aicwf_sta_scan_finish_locked(sc);
 			if (sc->sc_sta_scan_draining)
@@ -2454,10 +2471,21 @@ aicwf_sta_mgmt(struct ieee80211com *ic, struct ieee80211req_sta_mgmt *req)
 			error = EINVAL;
 			break;
 		}
-		if (sc->sc_sta_tx_pending && req->cookie == sc->sc_sta_tx.cookie)
-			tx_notify = aicwf_sta_tx_finish_locked(sc, false, event);
-		else
+		if (!sc->sc_sta_tx_pending) {
 			error = ESTALE;
+			break;
+		}
+		{
+			int s = splnet();
+			bool cancelled = ieee80211_sta_action_cancel(
+			    &ic->ic_sta_action, req);
+			splx(s);
+			if (!cancelled) {
+				error = ESTALE;
+				break;
+			}
+		}
+		tx_notify = aicwf_sta_tx_finish_locked(sc, false, event);
 		break;
 	case IEEE80211_STA_CANCEL_SCAN:
 		if (req->cookie == 0 || req->cookie != sc->sc_sta_scan.cookie) {
@@ -2488,7 +2516,8 @@ aicwf_sta_mgmt(struct ieee80211com *ic, struct ieee80211req_sta_mgmt *req)
 			break;
 		}
 		if (req->op == IEEE80211_STA_TX) {
-			if (sc->sc_sta_tx_pending || sc->sc_scanning || sc->sc_sta_scan_pending) {
+			if (sc->sc_sta_tx_pending || sc->sc_scanning ||
+			    sc->sc_sta_scan_pending || ic->ic_sta_scan.active) {
 				error = EBUSY;
 				break;
 			}
@@ -2498,7 +2527,8 @@ aicwf_sta_mgmt(struct ieee80211com *ic, struct ieee80211req_sta_mgmt *req)
 			}
 		} else {
 			if (sc->sc_scanning || sc->sc_sta_scan_pending || sc->sc_sta_cancel_queued ||
-			    sc->sc_sta_tx_pending || (ic->ic_flags & IEEE80211_F_SCAN) != 0) {
+			    sc->sc_sta_tx_pending || ic->ic_sta_action.active ||
+			    (ic->ic_flags & IEEE80211_F_SCAN) != 0) {
 				error = EBUSY;
 				break;
 			}
@@ -2519,6 +2549,14 @@ aicwf_sta_mgmt(struct ieee80211com *ic, struct ieee80211req_sta_mgmt *req)
 			int s = splnet();
 			error = ieee80211_sta_scan_begin(ic, req,
 			    (uint32_t)sc->sc_sae_epoch);
+			splx(s);
+			if (error != 0) {
+				pool_cache_put(sc->sc_taskpool, t);
+				break;
+			}
+		} else {
+			int s = splnet();
+			error = ieee80211_sta_action_begin(&ic->ic_sta_action, req);
 			splx(s);
 			if (error != 0) {
 				pool_cache_put(sc->sc_taskpool, t);

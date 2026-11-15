@@ -38,11 +38,14 @@ ENTRIES = '''espwifi_start_wpa2 espwifi_scan espwifi_seen espwifi_linked
 espwifi_connect espwifi_tx espwifi_get_mac espwifi_scan_capture
 espwifi_disconnect espwifi_ext_connect espwifi_ext_set_key
 espwifi_ext_clear_assoc_appies espwifi_ext_set_igtk
-espwifi_ext_sta_pmf_configured espwifi_ext_auth_done'''.split()
+espwifi_ext_sta_pmf_configured espwifi_ext_auth_done
+espwifi_ext_action_tx espwifi_ext_action_tx_enabled'''.split()
 NATIVE_WPA_SOURCES = ('wpa_supplicant/src/rsn_supp/wpa.c',
                       'wpa_supplicant/esp_supplicant/src/esp_wpa_main.c')
 NATIVE_WPA_SYMBOLS = frozenset(('wpa_set_profile', 'wpa_set_bss',
                                 'wpa_set_passphrase', 'esp_supplicant_init'))
+KERNEL_CALLBACKS = frozenset(('espwifi_if_action_rx',
+                              'espwifi_if_action_tx_done'))
 
 
 def check_consumer_boundary(entries, header, consumers):
@@ -57,7 +60,9 @@ def check_consumer_boundary(entries, header, consumers):
             r'\b(espwifi_[a-z0-9_]+)\s*\(', Path(source).read_text()))
     # espwifi_start is only the legacy branch; the experimental producer
     # selects espwifi_start_wpa2 in espwifi_main (the kernel's #ifdef).
-    required = (called & declared) - {'espwifi_start'}
+    # These are implementations in the kernel called back by the radio;
+    # their declarations share the ABI header but are not radio exports.
+    required = (called & declared) - {'espwifi_start'} - KERNEL_CALLBACKS
     missing = required - set(entries)
     if missing:
         raise ValueError('radio producer omits kernel consumer entries: ' +
@@ -164,6 +169,10 @@ RX_CHAIN_WRAPS = {
 }
 RX_CHAIN_WRAP_SYMBOLS = tuple(RX_CHAIN_WRAPS) + (
     'sta_rx_cb', 'get_sublen_offset', 'wdev_funcs_init')
+ACTION_TX_WRAP_SYMBOLS = (
+    'esp_wifi_send_mgmt_frm_internal', 'ieee80211_ioctl',
+    'wifi_send_mgmt_frame', 'ieee80211_mgmt_output',
+    'ieee80211_tx_mgt_cb')
 
 
 def check_rx_chain_wrappers(path, objdump, nm, env):
@@ -365,6 +374,27 @@ def check_rx_chain_wrappers(path, objdump, nm, env):
                              match.group(2).strip())
 
 
+def check_action_tx_wrappers(path, objdump, nm, env):
+    """Check pinned cross-object Action send, callback, and TX-done wraps."""
+    symbols = subprocess.check_output([str(nm), '--defined-only',
+        '--format=posix', str(path)], env=env, text=True)
+    defined = {line.split()[0] for line in symbols.splitlines() if line.split()}
+    relocs = subprocess.check_output([str(objdump), '-r', str(path)],
+        env=env, text=True)
+    for symbol in ACTION_TX_WRAP_SYMBOLS:
+        wrapper = '__wrap_' + symbol
+        if wrapper not in defined:
+            raise ValueError('missing linked Action TX wrapper ' + wrapper)
+        if not re.search(r'R_RISCV_[A-Z0-9_]+\s+' +
+                         re.escape(wrapper) + r'\b', relocs):
+            raise ValueError('no linked relocation through ' + wrapper +
+                             ' for pinned symbol ' + symbol)
+        if not re.search(r'R_RISCV_[A-Z0-9_]+\s+' +
+                         re.escape(symbol) + r'\b', relocs):
+            raise ValueError(wrapper + ' has no relocation chaining to the '
+                             'original ' + symbol)
+
+
 def common_wpa_flags(common, idf):
     return ['-I'+str(common), '-I'+str(common/'utils'), '-I'+str(common/'crypto'),
         '-D__ets__', '-DESP_PLATFORM', '-DESP_SUPPLICANT', '-DIEEE8021X_EAPOL',
@@ -441,6 +471,7 @@ def main():
                 '-I'+str(a.wpa_source/'src/rsn_supp')])]
     if a.vendor_rx_chain_once:
         units.append((HERE/'rx_chain_diag.S', []))
+    units.append((HERE/'action_tx.c', []))
     units += [(idf/s, ['-DCONFIG_ESP_WIFI_FTM_ENABLE=1'] if s.endswith('ftm_load_calibration.c') else []) for s in CORE]
     common = a.wpa_source / 'src'
     common_flags = common_wpa_flags(common, idf)
@@ -473,6 +504,7 @@ def main():
             args += ['-u', sym]
         if a.vendor_rx_chain_once:
             args += ['--wrap='+sym for sym in RX_CHAIN_WRAP_SYMBOLS]
+        args += ['--wrap='+sym for sym in ACTION_TX_WRAP_SYMBOLS]
         args += ['-o', output] + objects + ['--start-group'] + libs + ['--end-group', '-T', HERE/'espwifi.lds']
         for f in ROM:
             args += ['-T', idf/'esp_rom/esp32s31/ld'/f]
@@ -490,6 +522,7 @@ def main():
                     failed_object = Path(saved.name)
                 raise ValueError(f'{error}; failed checker input saved at '
                                  f'{failed_object}') from error
+        check_action_tx_wrappers(output, objdump, nm, env)
         disassembly = subprocess.check_output([str(objdump), '-d',
             '--disassemble-symbols=espwifi_get_mac', str(output)], env=env, text=True)
         if '<espwifi_get_mac>:' not in disassembly:

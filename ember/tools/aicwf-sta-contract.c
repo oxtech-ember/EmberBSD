@@ -95,6 +95,7 @@ static void device_printf(void *dev, const char *fmt, ...)
 #include "abi.h"
 #include "routes.h"
 #include "actions.h"
+#include "net80211/ieee80211_sta_action.h"
 #include "aicwf-defs.h"
 #include "if_aicwf_sae.h"
 
@@ -126,6 +127,7 @@ struct ieee80211com {
 	uint8_t ic_chan_active[32];
 	struct { unsigned nt_scan_epoch; } ic_scan;
 	struct ieee80211_sta_scan_state ic_sta_scan;
+	struct ieee80211_sta_action_state ic_sta_action;
 	uint8_t ic_myaddr[6];
 	struct ieee80211_node *ic_bss;
 	struct ifnet *ic_ifp;
@@ -227,7 +229,8 @@ static bool ieee80211_sta_scan_match(struct ieee80211com *ic,
 static int ieee80211_sta_scan_begin(struct ieee80211com *ic,
     const struct ieee80211req_sta_mgmt *r, uint32_t generation)
 {
-	if (ic->ic_sta_scan.active || (ic->ic_flags & IEEE80211_F_SCAN)) return EBUSY;
+	if (ic->ic_sta_scan.active || ic->ic_sta_action.active ||
+	    (ic->ic_flags & IEEE80211_F_SCAN)) return EBUSY;
 	if (r->generation != generation || r->op != IEEE80211_STA_SCAN ||
 	    r->cookie == 0 || ic->ic_state != IEEE80211_S_RUN || ic->ic_bss == NULL ||
 	    r->freq != ic->ic_bss->ni_chan->ic_freq ||
@@ -846,7 +849,12 @@ tx_checks(void)
 		reset(); sc.sc_sta_enabled = true;
 		req = request_make(IEEE80211_STA_TX, 71);
 		CHECK(aicwf_sta_mgmt(&sc.sc_ic, &req) == 0);
-		CHECK(writes == 0 && deliveries == 0 && sc.sc_sta_tx_pending);
+		CHECK(writes == 0 && deliveries == 0 && sc.sc_sta_tx_pending &&
+		    sc.sc_ic.ic_sta_action.active);
+	cancel = request_make(IEEE80211_STA_SCAN, 70);
+	CHECK(ieee80211_sta_scan_begin(&sc.sc_ic, &cancel,
+	    cancel.generation) == EBUSY);
+	cancel = request_make(IEEE80211_STA_CANCEL_TX, 99);
 		CHECK(aicwf_sta_mgmt(&sc.sc_ic, &req) == EBUSY);
 		cfm_receive(statuses[i], 1, 8);
 		CHECK(deliveries == 0); /* An unsent task cannot complete. */
@@ -865,6 +873,7 @@ tx_checks(void)
 		memcpy(&ev, event_data, sizeof(ev));
 		CHECK(event_type == RTM_IEEE80211_STA_TX && ev.cookie == 71 && ev.generation == 39);
 		CHECK(ev.len == 0 && ev.flags == ((statuses[i] & 8) ? IEEE80211_STA_TX_ACK : 0));
+		CHECK(ev.freq == req.freq && !sc.sc_ic.ic_sta_action.active);
 		cfm_receive(statuses[i], 1, 8);
 		CHECK(deliveries == 1);
 	}
@@ -875,16 +884,28 @@ tx_checks(void)
 	cancel = request_make(IEEE80211_STA_CANCEL_TX, 99);
 	CHECK(aicwf_sta_mgmt(&sc.sc_ic, &cancel) == ESTALE);
 	cancel.cookie = 72;
-	CHECK(aicwf_sta_mgmt(&sc.sc_ic, &cancel) == 0 && deliveries == 1);
+		cancel.generation--;
+		CHECK(aicwf_sta_mgmt(&sc.sc_ic, &cancel) == ESTALE);
+		cancel.generation++;
+		cancel.bssid[5]++;
+		CHECK(aicwf_sta_mgmt(&sc.sc_ic, &cancel) == ESTALE);
+		cancel.bssid[5]--;
+		cancel.freq++;
+		CHECK(aicwf_sta_mgmt(&sc.sc_ic, &cancel) == ESTALE);
+		cancel.freq = 0; /* WPA timeout path carries no frequency. */
+	CHECK(aicwf_sta_mgmt(&sc.sc_ic, &cancel) == 0 && deliveries == 0 &&
+	    !sc.sc_ic.ic_sta_action.active);
 	CHECK(aicwf_sta_mgmt(&sc.sc_ic, &req) == 0 && sc.sc_sta_token == 2);
 	run_task(); CHECK(writes == 0);
 	run_task(); CHECK(writes == 1);
-	cfm_receive(9, 1, 8); CHECK(deliveries == 1);
-	cfm_receive(9, 2, 8); CHECK(deliveries == 2);
+	cfm_receive(9, 1, 8); CHECK(deliveries == 0 && sc.sc_sta_tx_pending);
+	cfm_receive(9, 2, 8); CHECK(deliveries == 1 &&
+	    !sc.sc_ic.ic_sta_action.active);
 	/* Cancel after publication and ignore the later firmware ACK. */
 	CHECK(aicwf_sta_mgmt(&sc.sc_ic, &req) == 0); run_task();
-	CHECK(aicwf_sta_mgmt(&sc.sc_ic, &cancel) == 0 && deliveries == 3);
-	cfm_receive(9, 3, 8); CHECK(deliveries == 3);
+	CHECK(aicwf_sta_mgmt(&sc.sc_ic, &cancel) == 0 && deliveries == 1 &&
+	    !sc.sc_ic.ic_sta_action.active);
+	cfm_receive(9, 3, 8); CHECK(deliveries == 1);
 	sc.sc_sta_token = AICWF_STA_TOKEN_MAX;
 	CHECK(aicwf_sta_mgmt(&sc.sc_ic, &req) == EOVERFLOW);
 	reset(); sc.sc_sta_enabled = true;
@@ -1027,7 +1048,8 @@ retirement_checks(void)
 	aicwf_sta_retire_locked(&sc, tx, &tx_event, &scan_event);
 	sc.sc_sae_epoch++;
 	mutex_exit(&sc.sc_lock);
-	CHECK(tx_event && !scan_event && sc.sc_sta_assoc_len == 0);
+	CHECK(!tx_event && !scan_event && sc.sc_sta_assoc_len == 0 &&
+	    !sc.sc_ic.ic_sta_action.active);
 	run_task(); CHECK(writes == 0 && !sc.sc_sta_tx_pending);
 	reset(); sc.sc_sta_enabled = true; req = request_make(IEEE80211_STA_SCAN, 92);
 	CHECK(aicwf_sta_mgmt(&sc.sc_ic, &req) == 0); run_task();
@@ -1050,7 +1072,8 @@ retirement_checks(void)
 	reset(); sc.sc_sta_enabled = true; req = request_make(IEEE80211_STA_TX, 93);
 	CHECK(aicwf_sta_mgmt(&sc.sc_ic, &req) == 0);
 	aicwf_sae_advance(&sc);
-	CHECK(sc.sc_sae_epoch == 40 && deliveries == 1 && !sc.sc_ptk_valid);
+	CHECK(sc.sc_sae_epoch == 40 && deliveries == 0 && !sc.sc_ptk_valid &&
+	    !sc.sc_ic.ic_sta_action.active);
 	CHECK(sc.sc_sta_assoc_len == 0 && !sc.sc_sta_tx_pending);
 	run_task(); CHECK(writes == 0);
 }

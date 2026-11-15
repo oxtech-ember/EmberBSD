@@ -43,6 +43,7 @@ struct ieee80211req_sta_mgmt {
 	uint16_t reserved;
 	uint8_t data[IEEE80211_STA_MAX_CHANNELS * 2];
 };
+struct ieee80211_sta_action_state { bool active; };
 struct ieee80211_sta_scan_state {
 	bool active, reported;
 	uint32_t cookie, generation;
@@ -58,6 +59,7 @@ struct ieee80211com {
 	struct ieee80211_node *ic_bss;
 	struct ieee80211_node_table ic_scan;
 	struct ieee80211_sta_scan_state ic_sta_scan;
+	struct ieee80211_sta_action_state ic_sta_action;
 };
 
 static unsigned notices;
@@ -131,6 +133,11 @@ reset_fixture(void)
 int
 main(void)
 {
+	reset_fixture();
+	ic.ic_sta_action.active = true;
+	/* Generic net80211 preserves prior scan/Action concurrency semantics. */
+	assert(ieee80211_sta_scan_begin(&ic, &req, 23) == 0);
+	assert(ic.ic_sta_scan.active && (ic.ic_flags & IEEE80211_F_SCAN));
 	reset_fixture();
 	assert(ieee80211_sta_scan_begin(&ic, &req, 23) == 0);
 	assert(ic.ic_sta_scan.active && !ic.ic_sta_scan.reported);

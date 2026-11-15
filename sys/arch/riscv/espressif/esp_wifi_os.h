@@ -14,6 +14,11 @@
 #define _RISCV_ESPRESSIF_ESP_WIFI_OS_H_
 
 #include <sys/cdefs.h>
+#ifdef _KERNEL
+#include <sys/types.h>
+#else
+#include <stdint.h>
+#endif
 
 /* IDF 6.1 WPA SAE callbacks use the common COMMIT/CONFIRM transaction IDs. */
 #define	ESPWIFI_SAE_COMMIT	1
@@ -110,6 +115,8 @@ int	espwifi_os_sae_parse(const unsigned char *, unsigned int, unsigned int,
 	    unsigned int);
 void	espwifi_os_radio_started(void);
 void	espwifi_os_radio_stopped(void);
+/* Asynchronous TX-done identity from the pinned vendor wrapper. */
+void	espwifi_if_action_tx_done(uint32_t, uint32_t, const uint8_t *);
 
 /* Entry points of the radio code; the caller is a thread made for it. */
 int	espwifi_start(void);
@@ -130,6 +137,11 @@ int	espwifi_ext_set_key(const unsigned char *, unsigned int, int, int, int,
 int	espwifi_ext_set_igtk(unsigned int, const unsigned char *,
 	    const unsigned char *);
 int	espwifi_ext_auth_done(void);
+int	espwifi_ext_action_tx(const unsigned char *, const void *, unsigned int,
+	    uint32_t, uint32_t);
+int	espwifi_ext_action_tx_enabled(void);
+int	espwifi_if_action_rx(const void *, unsigned int,
+	    const unsigned char *, unsigned int);
 int	espwifi_tx(const void *, unsigned int);
 void	espwifi_get_mac(unsigned char *);
 

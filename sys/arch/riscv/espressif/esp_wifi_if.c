@@ -61,6 +61,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <net80211/ieee80211_ioctl.h>
 #include <net80211/ieee80211_proto.h>
 #include <net80211/ieee80211_rsn.h>
+#include <net80211/ieee80211_sta.h>
 #define ESPWIFI_SCAN_RING 8
 #define ESPWIFI_SCAN_FRAME_MAX 2304
 #define ESPWIFI_SAE_WAIT_SECONDS 5
@@ -80,11 +81,13 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define ESPWIFI_SAE_CAPS \
 	(IEEE80211_SAE_CAP_EXTERNAL | IEEE80211_SAE_CAP_PMF)
 struct espwifi_scan_frame {
+	bool action;
 	unsigned len;
 	unsigned channel;
 	uint32_t timestamp;
 	uint64_t generation;
 	int rssi;
+	uint8_t sender[ETHER_ADDR_LEN];
 	uint8_t data[ESPWIFI_SCAN_FRAME_MAX];
 };
 #endif
@@ -104,6 +107,13 @@ struct espwifi_softc {
 	kcondvar_t	sc_key_cv;
 	kmutex_t	sc_sae_lock;
 	kcondvar_t	sc_sae_cv;
+	/* Physical TX ownership; logical identity/cancel state is in ic_sta_action. */
+	bool		sc_action_tx_owned, sc_action_tx_pending, sc_action_tx_started;
+	bool		sc_action_tx_send_done, sc_action_tx_send_ok;
+	bool		sc_action_tx_cb_seen;
+	uint16_t	sc_action_tx_len;
+	uint64_t	sc_action_tx_serial;
+	uint8_t		sc_action_tx_data[IEEE80211_STA_MAX_BODY];
 	bool		sc_sae_enabled, sc_sae_start_sent;
 	bool		sc_sae_igtk_busy;
 	bool		sc_sae_selection;
@@ -745,6 +755,7 @@ espwifi_if_scan_frame(const void *data, unsigned len, unsigned channel, int rssi
 	    ESPWIFI_SCAN_RING];
 	frame->len = len;
 	frame->channel = channel;
+	frame->action = false;
 	frame->generation = sc->sc_scan_active;
 	frame->rssi = rssi;
 	frame->timestamp = timestamp;
@@ -752,6 +763,94 @@ espwifi_if_scan_frame(const void *data, unsigned len, unsigned channel, int rssi
 	sc->sc_scan_count++;
 	mutex_spin_exit(&sc->sc_scan_lock);
 	espwifi_os_sem_give(sc->sc_scan_sem);
+}
+
+int
+espwifi_if_action_rx(const void *body, unsigned len,
+    const unsigned char *sender, unsigned channel)
+{
+	struct espwifi_softc * const sc = &espwifi_sc;
+	struct espwifi_scan_frame *frame;
+	uint64_t generation;
+
+	if (!sc->sc_attached || !sc->sc_scan_enabled || body == NULL ||
+	    sender == NULL || len > IEEE80211_STA_MAX_BODY ||
+	    channel == 0 || channel > 14 ||
+	    !ieee80211_sta_action_valid(body, len, false,
+	    IEEE80211_STA_ACTION_BTM | IEEE80211_STA_ACTION_NR,
+	    IEEE80211_STA_MAX_BODY))
+		return -1;
+	mutex_spin_enter(&sc->sc_scan_lock);
+	generation = sc->sc_join_active;
+	if (sc->sc_scan_shutdown || !sc->sc_sta_enabled || generation == 0 ||
+	    generation > UINT32_MAX || !sc->sc_radio_ready ||
+	    !sc->sc_sta_started || sc->sc_join_stopped || !sc->sc_joined ||
+	    !sc->sc_link || atomic_load_acquire(&sc->sc_port_authorized) == 0 ||
+	    memcmp(sender, sc->sc_join_bssid, ETHER_ADDR_LEN) != 0 ||
+	    sc->sc_scan_count == ESPWIFI_SCAN_RING) {
+		mutex_spin_exit(&sc->sc_scan_lock);
+		return -1;
+	}
+	frame = &sc->sc_scan_ring[(sc->sc_scan_head + sc->sc_scan_count) %
+	    ESPWIFI_SCAN_RING];
+	frame->action = true;
+	frame->len = len;
+	frame->channel = channel;
+	frame->generation = generation;
+	frame->rssi = 0;
+	frame->timestamp = 0;
+	memcpy(frame->sender, sender, ETHER_ADDR_LEN);
+	memcpy(frame->data, body, len);
+	sc->sc_scan_count++;
+	mutex_spin_exit(&sc->sc_scan_lock);
+	espwifi_os_sem_give(sc->sc_scan_sem);
+	return 0;
+}
+
+/* Called by the scan thread with the net80211 context serialized. */
+static void
+espwifi_if_action_rx_process(struct espwifi_softc *sc,
+	    const struct espwifi_scan_frame *frame)
+{
+	struct ieee80211req_sta_mgmt event;
+	struct ieee80211_node *ni;
+	bool current;
+	int s;
+
+	KERNEL_LOCK(1, NULL);
+	s = splnet();
+	mutex_spin_enter(&sc->sc_scan_lock);
+	ni = sc->sc_ic.ic_bss;
+	current = frame->action && frame->generation != 0 &&
+	    frame->generation == sc->sc_join_active &&
+	    frame->generation <= UINT32_MAX && sc->sc_sta_enabled &&
+	    sc->sc_radio_ready && sc->sc_sta_started && !sc->sc_join_stopped &&
+	    sc->sc_joined && sc->sc_link &&
+	    atomic_load_acquire(&sc->sc_port_authorized) != 0 &&
+	    sc->sc_ic.ic_opmode == IEEE80211_M_STA &&
+	    sc->sc_ic.ic_state == IEEE80211_S_RUN && ni != NULL &&
+	    ni->ni_chan != NULL && ni->ni_chan != IEEE80211_CHAN_ANYC &&
+	    frame->channel == ieee80211_chan2ieee(&sc->sc_ic, ni->ni_chan) &&
+	    memcmp(frame->sender, sc->sc_join_bssid, ETHER_ADDR_LEN) == 0 &&
+	    memcmp(frame->sender, ni->ni_bssid, ETHER_ADDR_LEN) == 0;
+	mutex_spin_exit(&sc->sc_scan_lock);
+	if (current && ieee80211_sta_action_valid(frame->data, frame->len,
+	    false, IEEE80211_STA_ACTION_BTM | IEEE80211_STA_ACTION_NR,
+	    IEEE80211_STA_MAX_BODY)) {
+		memset(&event, 0, sizeof(event));
+		event.version = IEEE80211_STA_VERSION;
+		event.op = IEEE80211_STA_GET;
+		event.generation = (uint32_t)frame->generation;
+		event.freq = ni->ni_chan->ic_freq;
+		event.len = frame->len;
+		memcpy(event.bssid, frame->sender, ETHER_ADDR_LEN);
+		memcpy(event.data, frame->data, frame->len);
+		rt_ieee80211msg(&sc->sc_ec.ec_if, RTM_IEEE80211_STA_RX,
+		    &event, offsetof(struct ieee80211req_sta_mgmt, data) +
+		    frame->len);
+	}
+	splx(s);
+	KERNEL_UNLOCK_ONE(NULL);
 }
 
 static void
@@ -779,6 +878,10 @@ espwifi_if_scanthread(void *v)
 			sc->sc_scan_count--;
 			sc->sc_scan_busy = true;
 			mutex_spin_exit(&sc->sc_scan_lock);
+			if (frame.action) {
+				espwifi_if_action_rx_process(sc, &frame);
+				goto done;
+			}
 
 			struct mbuf *m = m_devget(__UNCONST(frame.data), frame.len, 0,
 			    &sc->sc_ec.ec_if);
@@ -852,6 +955,245 @@ espwifi_if_sta_scan_abort(struct espwifi_softc *sc)
 	KERNEL_UNLOCK_ONE(NULL);
 }
 
+static void
+espwifi_if_action_tx_snapshot(struct espwifi_softc *sc,
+    struct ieee80211req_sta_mgmt *req)
+{
+	memset(req, 0, offsetof(struct ieee80211req_sta_mgmt, data));
+	req->version = IEEE80211_STA_VERSION;
+	req->op = IEEE80211_STA_TX;
+	req->cookie = sc->sc_ic.ic_sta_action.cookie;
+	req->generation = sc->sc_ic.ic_sta_action.generation;
+	req->freq = sc->sc_ic.ic_sta_action.freq;
+	memcpy(req->bssid, sc->sc_ic.ic_sta_action.bssid, ETHER_ADDR_LEN);
+}
+
+static void
+espwifi_if_action_tx_clear(struct espwifi_softc *sc)
+{
+	sc->sc_action_tx_owned = false;
+	sc->sc_action_tx_pending = false;
+	sc->sc_action_tx_started = false;
+	sc->sc_action_tx_send_done = false;
+	sc->sc_action_tx_send_ok = false;
+	sc->sc_action_tx_cb_seen = false;
+	sc->sc_action_tx_len = 0;
+	explicit_memset(sc->sc_action_tx_data, 0,
+	    sizeof(sc->sc_action_tx_data));
+}
+
+static void
+espwifi_if_action_tx_report(struct espwifi_softc *sc)
+{
+	struct ieee80211req_sta_mgmt req, notice;
+	uint64_t serial;
+	bool drained, same_operation, current, report = false, release = false;
+	int s;
+
+	mutex_spin_enter(&sc->sc_scan_lock);
+	drained = sc->sc_action_tx_owned && sc->sc_action_tx_send_done &&
+	    (!sc->sc_action_tx_send_ok || sc->sc_action_tx_cb_seen);
+	if (drained) {
+		espwifi_if_action_tx_snapshot(sc, &req);
+		serial = sc->sc_action_tx_serial;
+	}
+	mutex_spin_exit(&sc->sc_scan_lock);
+	if (!drained)
+		return;
+
+	KERNEL_LOCK(1, NULL);
+	s = splnet();
+	mutex_spin_enter(&sc->sc_scan_lock);
+	drained = sc->sc_action_tx_owned && sc->sc_action_tx_send_done &&
+	    (!sc->sc_action_tx_send_ok || sc->sc_action_tx_cb_seen);
+	same_operation = drained && serial == sc->sc_action_tx_serial &&
+	    ieee80211_sta_action_match(&sc->sc_ic.ic_sta_action, &req);
+	if (same_operation) {
+		current = req.generation == sc->sc_join_active &&
+		    sc->sc_join_active != 0 && sc->sc_joined && sc->sc_link &&
+		    sc->sc_radio_ready && sc->sc_sta_started && !sc->sc_join_stopped &&
+		    atomic_load_acquire(&sc->sc_port_authorized) != 0 &&
+		    memcmp(req.bssid, sc->sc_join_bssid, ETHER_ADDR_LEN) == 0;
+		if (!current)
+			ieee80211_sta_action_invalidate(&sc->sc_ic.ic_sta_action);
+		report = current && ieee80211_sta_action_report(
+		    &sc->sc_ic.ic_sta_action, &req, false, &notice);
+		release = ieee80211_sta_action_release(
+		    &sc->sc_ic.ic_sta_action, &req);
+		if (release)
+			espwifi_if_action_tx_clear(sc);
+	}
+	mutex_spin_exit(&sc->sc_scan_lock);
+	if (report)
+		rt_ieee80211msg(&sc->sc_ec.ec_if, RTM_IEEE80211_STA_TX,
+		    &notice, offsetof(struct ieee80211req_sta_mgmt, data));
+	splx(s);
+	KERNEL_UNLOCK_ONE(NULL);
+}
+
+void
+espwifi_if_action_tx_done(uint32_t cookie, uint32_t generation,
+    const uint8_t *bssid)
+{
+	struct espwifi_softc * const sc = &espwifi_sc;
+	struct ieee80211req_sta_mgmt req;
+	bool match = false;
+
+	if (!sc->sc_attached || bssid == NULL)
+		return;
+	mutex_spin_enter(&sc->sc_scan_lock);
+	if (sc->sc_action_tx_owned && sc->sc_action_tx_started) {
+		espwifi_if_action_tx_snapshot(sc, &req);
+		match = req.cookie == cookie && req.generation == generation &&
+		    memcmp(req.bssid, bssid, ETHER_ADDR_LEN) == 0 &&
+		    ieee80211_sta_action_match(&sc->sc_ic.ic_sta_action, &req);
+		if (match)
+			sc->sc_action_tx_cb_seen = true;
+	}
+	mutex_spin_exit(&sc->sc_scan_lock);
+	if (match)
+		espwifi_os_sem_give(sc->sc_scan_ctl_sem);
+}
+
+static int
+espwifi_if_action_tx_request(struct espwifi_softc *sc,
+    const struct ieee80211req_sta_mgmt *req)
+{
+	int error;
+
+	mutex_spin_enter(&sc->sc_scan_lock);
+	if (sc->sc_action_tx_owned || sc->sc_sta_scan ||
+	    sc->sc_ic.ic_sta_scan.active || sc->sc_scan_pending ||
+	    sc->sc_scan_active != 0 || sc->sc_join_pending ||
+	    sc->sc_join_disconnect_pending || sc->sc_join_barrier_busy) {
+		mutex_spin_exit(&sc->sc_scan_lock);
+		return EBUSY;
+	}
+	if (req->generation != sc->sc_join_active || !sc->sc_joined ||
+	    !sc->sc_link || !sc->sc_radio_ready || !sc->sc_sta_started ||
+	    sc->sc_join_stopped || !sc->sc_sta_enabled ||
+	    atomic_load_acquire(&sc->sc_port_authorized) == 0 ||
+	    memcmp(req->bssid, sc->sc_join_bssid, ETHER_ADDR_LEN) != 0) {
+		mutex_spin_exit(&sc->sc_scan_lock);
+		return ESTALE;
+	}
+	error = ieee80211_sta_action_begin(&sc->sc_ic.ic_sta_action, req);
+	if (error == 0) {
+		sc->sc_action_tx_owned = true;
+		sc->sc_action_tx_pending = true;
+		sc->sc_action_tx_started = false;
+		sc->sc_action_tx_send_done = false;
+		sc->sc_action_tx_send_ok = false;
+		sc->sc_action_tx_cb_seen = false;
+		if (++sc->sc_action_tx_serial == 0)
+			sc->sc_action_tx_serial++;
+		sc->sc_action_tx_len = req->len;
+		memcpy(sc->sc_action_tx_data, req->data, req->len);
+	}
+	mutex_spin_exit(&sc->sc_scan_lock);
+	if (error == 0)
+		espwifi_os_sem_give(sc->sc_scan_ctl_sem);
+	return error;
+}
+
+static int
+espwifi_if_action_tx_cancel(struct espwifi_softc *sc,
+    const struct ieee80211req_sta_mgmt *req)
+{
+	struct ieee80211req_sta_mgmt original;
+	bool match;
+
+	mutex_spin_enter(&sc->sc_scan_lock);
+	match = sc->sc_action_tx_owned && ieee80211_sta_action_cancel(
+	    &sc->sc_ic.ic_sta_action, req);
+	if (match) {
+		espwifi_if_action_tx_snapshot(sc, &original);
+		if (sc->sc_action_tx_pending && !sc->sc_action_tx_started) {
+			(void)ieee80211_sta_action_release(
+			    &sc->sc_ic.ic_sta_action, &original);
+			espwifi_if_action_tx_clear(sc);
+		} else if (sc->sc_action_tx_send_done &&
+		    (!sc->sc_action_tx_send_ok || sc->sc_action_tx_cb_seen)) {
+			(void)ieee80211_sta_action_release(
+			    &sc->sc_ic.ic_sta_action, &original);
+			espwifi_if_action_tx_clear(sc);
+		}
+	}
+	mutex_spin_exit(&sc->sc_scan_lock);
+	return match ? 0 : ESTALE;
+}
+
+static void
+espwifi_if_action_tx_invalidate(struct espwifi_softc *sc)
+{
+	struct ieee80211req_sta_mgmt original;
+
+	mutex_spin_enter(&sc->sc_scan_lock);
+	if (sc->sc_action_tx_owned) {
+		ieee80211_sta_action_invalidate(&sc->sc_ic.ic_sta_action);
+		if (sc->sc_action_tx_pending && !sc->sc_action_tx_started) {
+			espwifi_if_action_tx_snapshot(sc, &original);
+			(void)ieee80211_sta_action_release(
+			    &sc->sc_ic.ic_sta_action, &original);
+			espwifi_if_action_tx_clear(sc);
+		} else if (sc->sc_action_tx_send_done &&
+		    (!sc->sc_action_tx_send_ok || sc->sc_action_tx_cb_seen)) {
+			espwifi_if_action_tx_snapshot(sc, &original);
+			(void)ieee80211_sta_action_release(
+			    &sc->sc_ic.ic_sta_action, &original);
+			espwifi_if_action_tx_clear(sc);
+		}
+	}
+	mutex_spin_exit(&sc->sc_scan_lock);
+}
+
+static void
+espwifi_if_action_tx_control(struct espwifi_softc *sc)
+{
+	struct ieee80211req_sta_mgmt req;
+	const uint8_t *data;
+	unsigned len;
+	bool current;
+	int error;
+
+	mutex_spin_enter(&sc->sc_scan_lock);
+	if (!sc->sc_action_tx_pending || !sc->sc_action_tx_owned) {
+		mutex_spin_exit(&sc->sc_scan_lock);
+		return;
+	}
+	espwifi_if_action_tx_snapshot(sc, &req);
+	data = sc->sc_action_tx_data;
+	len = sc->sc_action_tx_len;
+	sc->sc_action_tx_pending = false;
+	sc->sc_action_tx_started = true;
+	current = !sc->sc_ic.ic_sta_action.cancelled &&
+	    req.generation == sc->sc_join_active && sc->sc_joined &&
+	    sc->sc_link && sc->sc_radio_ready && sc->sc_sta_started &&
+	    !sc->sc_join_stopped && sc->sc_sta_enabled &&
+	    atomic_load_acquire(&sc->sc_port_authorized) != 0 &&
+	    memcmp(req.bssid, sc->sc_join_bssid, ETHER_ADDR_LEN) == 0;
+	mutex_spin_exit(&sc->sc_scan_lock);
+
+	/* Recheck cancellation immediately before entering the firmware API. */
+	mutex_spin_enter(&sc->sc_scan_lock);
+	current = current && !sc->sc_ic.ic_sta_action.cancelled &&
+	    sc->sc_action_tx_owned;
+	mutex_spin_exit(&sc->sc_scan_lock);
+	if (current)
+		error = espwifi_ext_action_tx(req.bssid, data, len,
+		    req.cookie, req.generation);
+	else
+		error = ECANCELED;
+	mutex_spin_enter(&sc->sc_scan_lock);
+	sc->sc_action_tx_send_done = true;
+	sc->sc_action_tx_send_ok = error == 0;
+	if (error != 0)
+		sc->sc_action_tx_cb_seen = true; /* No firmware ownership was taken. */
+	mutex_spin_exit(&sc->sc_scan_lock);
+	explicit_memset(&req, 0, offsetof(struct ieee80211req_sta_mgmt, data));
+	espwifi_if_action_tx_report(sc);
+}
+
 #ifdef ESPWIFI_NET80211_WPA2
 static int
 espwifi_if_sta_mgmt(struct ieee80211com *ic,
@@ -876,13 +1218,16 @@ espwifi_if_sta_mgmt(struct ieee80211com *ic,
 	busy = sc->sc_scan_pending || sc->sc_scan_active != 0 ||
 	    sc->sc_join_pending || sc->sc_join_disconnect_pending ||
 	    sc->sc_join_barrier_busy;
+	busy |= sc->sc_action_tx_owned || ic->ic_sta_action.active;
 	enabled = sc->sc_sta_enabled;
 	mutex_spin_exit(&sc->sc_scan_lock);
 	switch (req->op) {
 	case IEEE80211_STA_GET:
 		if (generation > UINT32_MAX)
 			return EOVERFLOW;
-		req->flags = IEEE80211_STA_CAP_SCAN;
+		/* RRM is neighbor-report only; measurement exchange is not exposed. */
+		req->flags = IEEE80211_STA_CAP_SCAN | IEEE80211_STA_CAP_BTM |
+		    IEEE80211_STA_CAP_RRM;
 		req->generation = (uint32_t)generation;
 		req->freq = 0;
 		memset(req->bssid, 0, sizeof(req->bssid));
@@ -904,8 +1249,10 @@ espwifi_if_sta_mgmt(struct ieee80211com *ic,
 		mutex_spin_enter(&sc->sc_scan_lock);
 		sc->sc_sta_enabled = req->op == IEEE80211_STA_ENABLE;
 		mutex_spin_exit(&sc->sc_scan_lock);
-		if (req->op == IEEE80211_STA_DISABLE)
+		if (req->op == IEEE80211_STA_DISABLE) {
+			espwifi_if_action_tx_invalidate(sc);
 			espwifi_if_sta_scan_abort(sc);
+		}
 		return 0;
 	case IEEE80211_STA_CANCEL_SCAN:
 		if (req->len != 0)
@@ -914,6 +1261,33 @@ espwifi_if_sta_mgmt(struct ieee80211com *ic,
 			return ESTALE;
 		espwifi_if_sta_scan_abort(sc);
 		return 0;
+	case IEEE80211_STA_CANCEL_TX:
+		if (req->len != 0 || req->cookie == 0)
+			return EINVAL;
+		return espwifi_if_action_tx_cancel(sc, req);
+	case IEEE80211_STA_TX:
+		if (!espwifi_ext_action_tx_enabled())
+			return EOPNOTSUPP;
+		if (generation > UINT32_MAX)
+			return EOVERFLOW;
+		if (req->cookie == 0 ||
+		    !ieee80211_sta_action_valid(req->data, req->len, true,
+		    IEEE80211_STA_ACTION_BTM | IEEE80211_STA_ACTION_NR,
+		    IEEE80211_STA_MAX_BODY))
+			return EINVAL;
+		if (!enabled || !ready || ic->ic_opmode != IEEE80211_M_STA ||
+		    ic->ic_state != IEEE80211_S_RUN || ic->ic_bss == NULL ||
+		    ic->ic_bss->ni_chan == NULL ||
+		    ic->ic_bss->ni_chan == IEEE80211_CHAN_ANYC)
+			return ENOTCONN;
+		if (busy)
+			return EBUSY;
+		if (req->generation != generation ||
+		    req->freq != ic->ic_bss->ni_chan->ic_freq ||
+		    memcmp(req->bssid, ic->ic_bss->ni_bssid,
+		    ETHER_ADDR_LEN) != 0)
+			return ESTALE;
+		return espwifi_if_action_tx_request(sc, req);
 	case IEEE80211_STA_SCAN:
 		if (generation > UINT32_MAX)
 			return EOVERFLOW;
@@ -976,6 +1350,8 @@ espwifi_if_newstate(struct ieee80211com *ic, enum ieee80211_state state, int arg
 	bool ready, was_link = false, radio_ready, queue_teardown = false;
 
 	if (state == IEEE80211_S_AUTH) {
+		/* A transition invalidates completion delivery, not firmware ownership. */
+		espwifi_if_action_tx_invalidate(sc);
 #ifndef ESPWIFI_NET80211_WPA2
 		return EOPNOTSUPP;
 #else
@@ -1123,6 +1499,7 @@ auth_rejected:
 		return EOPNOTSUPP;
 	if (state == IEEE80211_S_SCAN && !sc->sc_scan_enabled)
 		return EOPNOTSUPP;
+	espwifi_if_action_tx_invalidate(sc);
 	espwifi_if_sta_scan_abort(sc);
 	if (state == IEEE80211_S_INIT) {
 		bool teardown;
@@ -1231,6 +1608,7 @@ espwifi_if_set_port(struct ieee80211com *ic, bool authorized)
 		return EACCES;
 	}
 	if (!authorized) {
+		espwifi_if_action_tx_invalidate(sc);
 		if (was_authorized)
 			espwifi_os_log("espwifi: port authorization request=0 "
 			    "ready=%u error=0\n", (unsigned)ready);
@@ -1302,6 +1680,7 @@ espwifi_if_fail_closed_generation(struct espwifi_softc *sc,
 		sc->sc_join_rescan_pending = true;
 	}
 	mutex_spin_exit(&sc->sc_scan_lock);
+	espwifi_if_action_tx_invalidate(sc);
 	espwifi_if_sta_scan_abort(sc);
 #ifdef ESPWIFI_NET80211_WPA2
 	espwifi_if_sae_cancel(sc);
@@ -1802,6 +2181,7 @@ espwifi_if_radio_stopped(void)
 	sc->sc_igtk_slots = 0;
 	sc->sc_key_generation = 0;
 	mutex_spin_exit(&sc->sc_scan_lock);
+	espwifi_if_action_tx_invalidate(sc);
 	espwifi_if_sta_scan_abort(sc);
 #ifdef ESPWIFI_NET80211_WPA2
 	espwifi_if_sae_cancel(sc);
@@ -1845,6 +2225,7 @@ espwifi_if_scan_control(void *v)
 		/* Drain coalesced control notifications before consuming scan work. */
 		for (;;) {
 			bool control_pending;
+			espwifi_if_action_tx_report(sc);
 
 			mutex_spin_enter(&sc->sc_scan_lock);
 			control_pending = sc->sc_join_disconnect_pending ||
@@ -1863,6 +2244,13 @@ espwifi_if_scan_control(void *v)
 				continue;
 			}
 #endif
+			mutex_spin_enter(&sc->sc_scan_lock);
+			bool action_tx_pending = sc->sc_action_tx_pending;
+			mutex_spin_exit(&sc->sc_scan_lock);
+			if (action_tx_pending) {
+				espwifi_if_action_tx_control(sc);
+				continue;
+			}
 			break;
 		}
 		mutex_spin_enter(&sc->sc_scan_lock);

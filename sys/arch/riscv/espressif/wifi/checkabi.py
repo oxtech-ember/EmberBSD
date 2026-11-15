@@ -37,6 +37,17 @@ __attribute__((noinline)) void g(unsigned char *p) { espwifi_get_mac(p); }
 /* A float argument really is different and must never cross this boundary. */
 __attribute__((noinline)) float h(float x) { return x + 1.0f; }
 __attribute__((noinline)) void i(struct espwifi_alloc_diag *p) { espwifi_os_alloc_diag_snapshot(p); }
+__attribute__((noinline)) int j(const unsigned char *b, const void *d,
+    unsigned int n, uint32_t c, uint32_t g) {
+    return espwifi_ext_action_tx(b, d, n, c, g);
+}
+__attribute__((noinline)) void k(uint32_t c, uint32_t g, const uint8_t *b) {
+    espwifi_if_action_tx_done(c, g, b);
+}
+__attribute__((noinline)) int l(const void *p, unsigned int n,
+    const unsigned char *s, unsigned int c) {
+    return espwifi_if_action_rx(p, n, s, c);
+}
 '''
 with tempfile.TemporaryDirectory() as td:
     path = Path(td) / 'abi.c'
@@ -50,7 +61,7 @@ with tempfile.TemporaryDirectory() as td:
                '-ffreestanding', '-O2', '-S', str(path), '-o', '-']
         asm = subprocess.check_output(cmd, text=True)
         bodies = []
-        for name in 'abcdefghi':
+        for name in 'abcdefghijkl':
             match = re.search(r'^'+name+r':.*?^\s*\.size\s+'+name+r',', asm, re.M | re.S)
             if not match:
                 raise SystemExit('missing function '+name)
@@ -60,7 +71,7 @@ with tempfile.TemporaryDirectory() as td:
                     if line.strip() and not line.lstrip().startswith(('.', '#'))]
             bodies.append(body)
         results.append(bodies)
-    if results[0][:7] != results[1][:7] or results[0][8] != results[1][8]:
+    if results[0][:7] != results[1][:7] or results[0][8:] != results[1][8:]:
         raise SystemExit('soft and single-float call sequences differ: '+repr(results))
     if results[0][7] == results[1][7]:
         raise SystemExit('float ABI negative control did not differ')
@@ -83,7 +94,8 @@ with tempfile.TemporaryDirectory() as td:
                     raise SystemExit('unverified allocator diagnostic boundary: '+qual)
             else:
                 allowed = {'void','int','long','unsigned','char','const','restrict',
-                       '__size_t','__builtin_va_list','__attribute__','noreturn'}
+                       '__size_t','uint8_t','uint32_t','__builtin_va_list',
+                       '__attribute__','noreturn'}
                 if words - allowed:
                     raise SystemExit('unverified boundary type '+name+': '+qual)
             found[name] = qual

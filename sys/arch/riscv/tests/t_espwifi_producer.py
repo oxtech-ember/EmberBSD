@@ -31,8 +31,16 @@ with tempfile.TemporaryDirectory() as td:
  assert r.returncode != 0
  assert output.read_bytes()==b'previous artifact'
 print('explicit input contract passed')
+assert '--vendor-action-tx-once' not in script.read_text()
+assert (script.parent / 'action_tx.c').is_file()
+assert not (script.parent / 'action_tx_diag.c').exists()
 spec=importlib.util.spec_from_file_location('radio_producer',script)
 m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+assert set(m.ACTION_TX_WRAP_SYMBOLS) == {
+    'esp_wifi_send_mgmt_frm_internal', 'ieee80211_ioctl',
+    'wifi_send_mgmt_frame', 'ieee80211_mgmt_output',
+    'ieee80211_tx_mgt_cb'}
+print('reusable Action TX producer wiring passed')
 m.check_consumer_boundary(m.ENTRIES, script.parent.parent/'esp_wifi_os.h',
     [script.parent.parent/'esp_wifi_if.c', script.parent.parent/'esp_wifi_os.c'])
 try:

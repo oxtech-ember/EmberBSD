@@ -70,19 +70,49 @@ cleanup when it returns. A vendor call that never returns can still wedge the
 radio control kthread, while the closed data port and ioctl timeout keep the
 failure contained.
 
-General software AUTH and ACTION management-frame forwarding is not supported;
-SAE uses the dedicated vendor callback path. The adapter does not advertise
-RRM/BTM roaming support. It advertises the independent STA connected-scan
-capability. The common net80211 scan lifecycle validates the operation and
+Software AUTH forwarding uses the dedicated SAE vendor callback path.
+Station Action transport supports BTM and neighbor reports through the common
+STA management ABI; measurement requests and reports remain unsupported.
+The adapter also advertises the independent STA connected-scan capability.
+The common net80211 scan lifecycle validates the operation and
 owns its cache epoch, cookie, cancellation and completion event. The adapter
 submits a 2.4 GHz channel bitmap through the existing radio worker while
 retaining RUN, the association and its keys. Cancelling an accepted scan reports
 an aborted completion; an in-flight blocking vendor call keeps radio ownership
 until its frame queue drains. Scan frames temporarily supply their receive
 channel to net80211 and preserve the associated interface channel afterward.
-Ordinary reconnect and AP selection remain the responsibility of the common
-BSD supplicant path; 802.11k/v roaming is not integrated or tested.
+Reconnect, AP selection and RRM/WNM policy belong to the common BSD supplicant.
+Action transport integration alone does not establish successful 802.11k/v
+exchange with a physical access point.
 Do not lower a profile's security requirements to make it match this path.
+
+The external-WPA radio object includes Action TX correlation in its ordinary
+management output path. The selected IDF request and output ABI use the encoded
+frame-control subtype `0xd0`, which selects its robust Action handling; the
+ordinary subtype number `13` is not interchangeable at this boundary.
+The ioctl copies one bounded request for the existing
+radio worker and returns without waiting for firmware. The shared net80211
+Action lifecycle owns the request identity, cancellation and completion;
+the adapter retains firmware ownership until the correlated ID2 callback
+drains, or submission proves that no buffer was accepted. Cancellation
+suppresses a later event while physical ownership remains held. A successful
+send without an observed output stays quarantined instead of allowing unsafe
+buffer reuse. The selected callback has no ACK result, so completion always
+leaves `IEEE80211_STA_TX_ACK` clear.
+
+Action RX uses the same `wpa_sta_rx_mgmt` subscription as the selected IDF
+supplicant, registering categories 5 and 10. Firmware owns PMF authentication
+and replay validation. The adapter copies the borrowed body into its bounded
+management ring, then rechecks the association generation, BSSID, channel and
+controlled port before delivering it through net80211. The selected software
+decrypt path checks MIC and packet number; hardware decrypt remains part of
+the firmware trust boundary. Host fixtures establish neither protected-frame
+reception on hardware nor access-point behavior.
+
+The optional `ember/tools/wifi-sta-action-once` utility sends one supplied
+Action body per invocation through this same interface. It requires no special
+radio build flag. Completion without ACK is local transport evidence only;
+RRM/BTM acceptance requires the corresponding peer exchange.
 
 The selected producer uses a version-pinned `wpa_funcs` table without
 `esp_supplicant_init()`, `wpa_sm`, or `eloop`. The table hands association to
@@ -149,6 +179,15 @@ export SDKROOT
     --cc "$HOST_PREFIX/bin/clang"
 
 "$HOST_PREFIX/bin/python3.15" -B sys/arch/riscv/tests/t_espwifi_sta_scan.py \
+    --cc "$HOST_PREFIX/bin/clang"
+
+"$HOST_PREFIX/bin/python3.15" -B sys/arch/riscv/tests/t_espwifi_action_request.py \
+    --cc "$HOST_PREFIX/bin/clang"
+
+"$HOST_PREFIX/bin/python3.15" -B sys/arch/riscv/tests/t_espwifi_action_tx.py \
+    --cc "$HOST_PREFIX/bin/clang" --analyze
+
+"$HOST_PREFIX/bin/python3.15" -B sys/arch/riscv/tests/t_espwifi_action_bridge.py \
     --cc "$HOST_PREFIX/bin/clang"
 
 "$HOST_PREFIX/bin/python3.15" -B sys/arch/riscv/tests/t_espwifi_join.py \

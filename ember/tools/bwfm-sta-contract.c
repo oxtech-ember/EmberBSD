@@ -40,6 +40,7 @@ static void le32enc(void *p, uint32_t v)
 #include "flags.h"
 #include "ieee80211_rsn.h"
 #include "ieee80211_sta.h"
+#include "net80211/ieee80211_sta_action.h"
 enum { IEEE80211_M_STA, IEEE80211_M_HOSTAP };
 enum { IEEE80211_S_INIT, IEEE80211_S_SCAN, IEEE80211_S_AUTH,
     IEEE80211_S_ASSOC, IEEE80211_S_RUN };
@@ -61,6 +62,7 @@ struct ieee80211com {
     int ic_state, ic_opmode;
     struct { unsigned nt_scan_epoch; } ic_scan;
     struct ieee80211_sta_scan_state ic_sta_scan;
+    struct ieee80211_sta_action_state ic_sta_action;
     uint8_t ic_myaddr[6];
 };
 struct bwfm_softc;
@@ -296,6 +298,8 @@ static bool
 #include "bwfm_sta_ready.h"
 static void
 #include "bwfm_sta_tx_done.h"
+static bool
+#include "bwfm_sta_tx_event_match.h"
 static void
 #include "bwfm_sta_scan_done.h"
 static void
@@ -479,8 +483,8 @@ static void action_tests(void)
 int main(void)
 {
     struct bwfm_softc sc; struct ieee80211_node bss;
-    struct ieee80211_channel chan; struct ieee80211req_sta_mgmt r, old;
-    unsigned i; uint8_t readback[28];
+    struct ieee80211_channel chan; struct ieee80211req_sta_mgmt r, old, scanreq;
+    unsigned i; uint32_t old_packetid; uint8_t readback[28];
     fixture(&sc,&bss,&chan); security_tests(&sc); action_tests(); association_tests(&sc,&bss,&chan);
         fixture(&sc,&bss,&chan); reply_name = "wnm"; reply_delta = -1;
     memset(readback,0xa5,sizeof(readback));
@@ -535,21 +539,44 @@ int main(void)
     check(bwfm_sta_mgmt(&sc.sc_ic,&r) == ENOBUFS && !sc.sc_sta_tx_pending, "queue allocation failure leaves no TX pending");
     fail_task = false; sc.sc_sta_packetid = UINT32_MAX;
     check(bwfm_sta_mgmt(&sc.sc_ic,&r) == 0 && sc.sc_sta_packetid == 1, "zero packet ID is skipped on wrap");
+    check(sc.sc_ic.ic_sta_action.active, "common Action tuple is reserved with transport request");
+    scanreq = request(&sc,IEEE80211_STA_SCAN);
+    check(ieee80211_sta_scan_begin(&sc.sc_ic,&scanreq,scanreq.generation) == 0,
+        "firmware connected scan may overlap Action TX");
     check(bwfm_sta_mgmt(&sc.sc_ic,&r) == EBUSY, "second TX cannot overwrite current cookie");
     drain(); check(tx_commands == 1 && tx_events == 0, "firmware submission is not reported as ACK");
     bwfm_sta_tx_done(&sc,true);
     check(tx_events == 1 && last_tx.cookie == 42 && last_tx.generation == 40 &&
-        (last_tx.flags & IEEE80211_STA_TX_ACK), "completion preserves caller cookie and association generation");
+        (last_tx.flags & IEEE80211_STA_TX_ACK) && last_tx.freq == 5300 &&
+        !sc.sc_ic.ic_sta_action.active, "completion preserves tuple and firmware ACK");
     bwfm_sta_tx_done(&sc,true); check(tx_events == 1, "TX completion is emitted once");
     fixture(&sc,&bss,&chan); r = request(&sc,IEEE80211_STA_TX);
     check(bwfm_sta_mgmt(&sc.sc_ic,&r) == 0, "queue TX before cancellation");
+    old_packetid = sc.sc_sta_packetid;
     r = request(&sc,IEEE80211_STA_CANCEL_TX); r.cookie--;
-    check(bwfm_sta_mgmt(&sc.sc_ic,&r) == 0 && sc.sc_sta_tx_pending, "foreign cookie cannot cancel TX");
+    check(bwfm_sta_mgmt(&sc.sc_ic,&r) == ESTALE && sc.sc_sta_tx_pending, "foreign cookie cannot cancel TX");
     r.cookie++; r.generation--;
     check(bwfm_sta_mgmt(&sc.sc_ic,&r) == ESTALE && sc.sc_sta_tx_pending, "old association cannot cancel TX");
-    r.generation++;
-    check(bwfm_sta_mgmt(&sc.sc_ic,&r) == 0 && !sc.sc_sta_tx_pending && tx_events == 1, "matching cancellation completes without ACK");
-    drain(); check(tx_commands == 0 && !(last_tx.flags & IEEE80211_STA_TX_ACK), "cancelled queued TX is never sent");
+    r.generation++; r.bssid[5]++;
+    check(bwfm_sta_mgmt(&sc.sc_ic,&r) == ESTALE && sc.sc_sta_tx_pending, "foreign BSSID cannot cancel TX");
+    r.bssid[5]--; r.freq = 5180;
+    check(bwfm_sta_mgmt(&sc.sc_ic,&r) == ESTALE && sc.sc_sta_tx_pending, "foreign frequency cannot cancel TX");
+    r.freq = 0;
+    check(bwfm_sta_mgmt(&sc.sc_ic,&r) == 0 && !sc.sc_sta_tx_pending &&
+        tx_events == 0 && !sc.sc_ic.ic_sta_action.active,
+        "matching timeout cancellation suppresses route and releases logical tuple");
+    drain(); check(tx_commands == 0 && !bwfm_sta_tx_event_match(&sc,old_packetid),
+        "cancelled queued TX is not sent or matched by its stale event");
+    r = request(&sc,IEEE80211_STA_TX);
+    check(bwfm_sta_mgmt(&sc.sc_ic,&r) == 0 && sc.sc_sta_packetid != old_packetid,
+        "same WPA cookie can be reused after logical cancellation with new firmware token");
+    check(!bwfm_sta_tx_event_match(&sc,old_packetid) &&
+        bwfm_sta_tx_event_match(&sc,sc.sc_sta_packetid),
+        "old firmware completion cannot match replacement");
+    drain(); check(tx_commands == 1, "replacement transport request reaches firmware");
+    bwfm_sta_tx_done(&sc,true);
+    check(tx_events == 1 && (last_tx.flags & IEEE80211_STA_TX_ACK),
+        "replacement receives its own ACK completion");
     for (i = 1; i <= 4; i++) {
         fixture(&sc,&bss,&chan); r = request(&sc,IEEE80211_STA_TX);
         check(bwfm_sta_mgmt(&sc.sc_ic,&r) == 0, "queue TX for sleeping allocation fixture");

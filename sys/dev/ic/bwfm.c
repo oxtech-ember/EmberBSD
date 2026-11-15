@@ -1233,6 +1233,7 @@ bwfm_newstate(struct ieee80211com *ic, enum ieee80211_state nstate, int arg)
 	if (nstate != IEEE80211_S_RUN && nstate != IEEE80211_S_ASSOC) {
 		if (++sc->sc_sta_generation == 0)
 			sc->sc_sta_generation++;
+		ieee80211_sta_action_invalidate(&ic->ic_sta_action);
 		bwfm_sta_tx_done(sc, false);
 		sc->sc_sta_assoc_len = 0;
 	}
@@ -2513,13 +2514,27 @@ bwfm_sta_ready(struct bwfm_softc *sc)
 static void
 bwfm_sta_tx_done(struct bwfm_softc *sc, bool ack)
 {
+	struct ieee80211req_sta_mgmt notice;
+	struct ieee80211com *ic = &sc->sc_ic;
+	bool notify;
+
 	if (!sc->sc_sta_tx_pending)
 		return;
 	sc->sc_sta_tx_pending = false;
-	sc->sc_sta_tx.flags = ack ? IEEE80211_STA_TX_ACK : 0;
-	sc->sc_sta_tx.len = 0;
-	rt_ieee80211msg(&sc->sc_if, RTM_IEEE80211_STA_TX, &sc->sc_sta_tx,
-	    offsetof(struct ieee80211req_sta_mgmt, data));
+	notify = ieee80211_sta_action_report(&ic->ic_sta_action,
+	    &sc->sc_sta_tx, ack, &notice);
+	(void)ieee80211_sta_action_release(&ic->ic_sta_action, &sc->sc_sta_tx);
+	if (notify)
+		rt_ieee80211msg(&sc->sc_if, RTM_IEEE80211_STA_TX, &notice,
+		    offsetof(struct ieee80211req_sta_mgmt, data));
+}
+
+/* The firmware completion carries this transport ID, not the WPA cookie. */
+static bool
+bwfm_sta_tx_event_match(struct bwfm_softc *sc, uint32_t packetid)
+{
+	return sc->sc_sta_tx_pending && packetid != 0 &&
+	    packetid == sc->sc_sta_packetid;
 }
 
 static void
@@ -2636,6 +2651,7 @@ bwfm_sta_mgmt(struct ieee80211com *ic, struct ieee80211req_sta_mgmt *req)
 		}
 		sc->sc_sta_enabled = req->op == IEEE80211_STA_ENABLE;
 		if (!sc->sc_sta_enabled) {
+			ieee80211_sta_action_invalidate(&ic->ic_sta_action);
 			bwfm_sta_tx_done(sc, false);
 			bwfm_sta_scan_cancel(sc);
 			error = bwfm_sta_wnm(sc, false);
@@ -2663,8 +2679,12 @@ bwfm_sta_mgmt(struct ieee80211com *ic, struct ieee80211req_sta_mgmt *req)
 			error = EINVAL;
 			goto out;
 		}
-		if (sc->sc_sta_tx_pending && req->cookie == sc->sc_sta_tx.cookie)
-			bwfm_sta_tx_done(sc, false);
+		if (!sc->sc_sta_tx_pending ||
+		    !ieee80211_sta_action_cancel(&ic->ic_sta_action, req)) {
+			error = ESTALE;
+			goto out;
+		}
+		bwfm_sta_tx_done(sc, false);
 		goto out;
 	case IEEE80211_STA_TX:
 		if (req->cookie == 0 || !bwfm_sta_action_valid(req->data, req->len, false)) {
@@ -2703,6 +2723,12 @@ bwfm_sta_mgmt(struct ieee80211com *ic, struct ieee80211req_sta_mgmt *req)
 	}
 	if (req->op == IEEE80211_STA_SCAN) {
 		error = ieee80211_sta_scan_begin(ic, req, sc->sc_sta_generation);
+		if (error != 0) {
+			pool_cache_put(sc->sc_freetask, t);
+			goto out;
+		}
+	} else {
+		error = ieee80211_sta_action_begin(&ic->ic_sta_action, req);
 		if (error != 0) {
 			pool_cache_put(sc->sc_freetask, t);
 			goto out;
@@ -3394,8 +3420,8 @@ bwfm_rx_event_cb(struct bwfm_softc *sc, struct mbuf *m, uint32_t generation)
 	}
 	case BWFM_E_ACTION_FRAME_COMPLETE:
 		/* Firmware echoes the little-endian packet ID, not the user cookie. */
-		if (sc->sc_sta_tx_pending && len - sizeof(*e) >= 4 &&
-		    le32dec(&e[1]) == sc->sc_sta_packetid)
+		if (len - sizeof(*e) >= 4 &&
+		    bwfm_sta_tx_event_match(sc, le32dec(&e[1])))
 			bwfm_sta_tx_done(sc, ntohl(e->msg.status) == BWFM_E_STATUS_SUCCESS);
 		break;
 	case BWFM_E_ESCAN_RESULT: {

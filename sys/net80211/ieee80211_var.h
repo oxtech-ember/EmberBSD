@@ -59,6 +59,7 @@
 #include <net80211/ieee80211.h>
 #include <net80211/ieee80211_crypto.h>
 #include <net80211/ieee80211_ioctl.h>		/* for ieee80211_stats */
+#include <net80211/ieee80211_sta_action.h>
 #include <net80211/ieee80211_node.h>
 #include <net80211/ieee80211_proto.h>
 
@@ -158,6 +159,7 @@ struct ieee80211com {
 	int			(*ic_sta_mgmt)(struct ieee80211com *,
 				    struct ieee80211req_sta_mgmt *);
 	struct ieee80211_sta_scan_state ic_sta_scan;
+	struct ieee80211_sta_action_state ic_sta_action;
 	void			(*ic_newassoc)(struct ieee80211_node *, int);
 	void			(*ic_updateslot)(struct ifnet *);
 	void			(*ic_set_tim)(struct ieee80211_node *, int);
