@@ -78,6 +78,7 @@ struct bsd_driver_data {
 	int sae_active;
 	int sae_configured;
 	int sae_blocked;
+	int sae_port_wanted;	/* port request refused before the IGTK */
 #ifdef IEEE80211_SAE_CAP_KEY_EPOCH
 	int sae_key_epoch;
 #endif
@@ -335,6 +336,7 @@ bsd_sae_disable(struct bsd_driver_data *drv)
 	u8 disabled = 0;
 
 	drv->sae_active = 0;
+	drv->sae_port_wanted = 0;
 	if (!drv->sae_configured)
 		return 0;
 	drv->sae_blocked = 1;
@@ -373,6 +375,7 @@ bsd_sae_enable(struct bsd_driver_data *drv, const u8 *bssid)
 	}
 	drv->sae_configured = 1;
 	drv->sae_active = 1;
+	drv->sae_port_wanted = 0;
 	return 0;
 }
 
@@ -475,8 +478,12 @@ bsd_del_key(void *priv, const u8 *addr, int key_idx)
 
 #if defined(IEEE80211_IOC_SAE) && defined(CONFIG_SAE) && \
     defined(IEEE80211_SAE_CAP_KEY_EPOCH)
-	if (drv->sae_active && drv->sae_key_epoch)
+	if (drv->sae_active && drv->sae_key_epoch) {
+		/* A pairwise key (addr != NULL) gone: no port is pending either. */
+		if (addr != NULL)
+			drv->sae_port_wanted = 0;
 		return bsd_sae_request(drv, IEEE80211_SAE_DELETE_KEY, &wk, sizeof(wk));
+	}
 #endif
 	return set80211var(priv, IEEE80211_IOC_DELKEY, &wk, sizeof(wk));
 }
@@ -571,6 +578,23 @@ bsd_set_key(void *priv, struct wpa_driver_set_key_params *params)
 		os_memcpy(material + 8, key, 16);
 		ret = bsd_sae_request(sae_drv, IEEE80211_SAE_SET_IGTK, material, sizeof(material));
 		forced_memzero(material, sizeof(material));
+#ifdef IEEE80211_SAE_CAP_KEY_EPOCH
+		/*
+		 * The EAPOL state machine authorizes the port as soon as the
+		 * pairwise key is in place (with a cached PMK, at message 3
+		 * of 4), and never again.  The kernel opens the port only with
+		 * an IGTK installed, so that request was refused: repeat it
+		 * now.  A port that still does not open fails the key
+		 * installation instead of leaving a silent, closed link.
+		 */
+		if (ret == 0 && sae_drv->sae_port_wanted) {
+			u8 on = 1;
+
+			ret = bsd_sae_request(sae_drv, IEEE80211_SAE_SET_PORT, &on, 1);
+			if (ret == 0)
+				sae_drv->sae_port_wanted = 0;
+		}
+#endif
 		return ret;
 	}
 #endif
@@ -1516,6 +1540,7 @@ bsd_wireless_event_receive(int sock, void *ctx, void *sock_ctx)
 			if (drv->sae_configured) {
 				drv->sae_active = 0;
 				drv->sae_blocked = 1;
+				drv->sae_port_wanted = 0;
 			}
 #endif
 #if !defined(HOSTAPD) && defined(__NetBSD__) && defined(IEEE80211_IOC_STA_MGMT)
@@ -2014,7 +2039,11 @@ bsd_set_supp_port(void *priv, int authorized)
 #ifdef IEEE80211_SAE_CAP_KEY_EPOCH
 	if (drv->sae_active && drv->sae_key_epoch) {
 		u8 value = authorized;
-		return bsd_sae_request(drv, IEEE80211_SAE_SET_PORT, &value, 1);
+		int ret = bsd_sae_request(drv, IEEE80211_SAE_SET_PORT, &value, 1);
+
+		/* Refused before the group keys: see bsd_set_key(). */
+		drv->sae_port_wanted = authorized && ret < 0;
+		return ret;
 	}
 #endif
 #endif

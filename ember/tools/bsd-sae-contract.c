@@ -521,9 +521,50 @@ int main(void)
 			clear_calls();
 			check(port_ops.set_supp_port(&drv, 0) == 0 && last_sae(IEEE80211_SAE_SET_PORT)->data[0] == 0,
 			    "port closure is explicit and epoch tagged");
+			/* The EAPOL machine authorizes on the pairwise key; the kernel
+			 * opens the port only once an IGTK is installed. */
+			clear_calls(); fail_sae_op = IEEE80211_SAE_SET_PORT;
+			check(port_ops.set_supp_port(&drv, 1) == -1, "port request before the IGTK is refused");
+			clear_calls(); k.alg = WPA_ALG_BIP_CMAC_128; k.key_idx = 4; k.link_id = -1;
+			check(bsd_set_key(&drv, &k) == 0 && calls == 2 && requests[0].op == IEEE80211_IOC_SAE &&
+			    ((const struct ieee80211req_sae *)(const void *)requests[0].data)->op == IEEE80211_SAE_SET_IGTK,
+			    "the IGTK goes in first");
+			s = last_sae(IEEE80211_SAE_SET_PORT);
+			check(s && s == (const void *)requests[1].data && s->len == 1 && s->data[0] == 1 &&
+			    s->generation == generation && !has_op(IEEE80211_IOC_STA_PORT),
+			    "a refused port request is repeated after the IGTK, epoch tagged");
+			clear_calls();
+			check(bsd_set_key(&drv, &k) == 0 && !last_sae(IEEE80211_SAE_SET_PORT),
+			    "an IGTK rekey leaves an open port alone");
+			clear_calls(); fail_sae_op = IEEE80211_SAE_SET_PORT;
+			check(port_ops.set_supp_port(&drv, 1) == -1, "refused again");
+			clear_calls(); fail_sae_op = IEEE80211_SAE_SET_IGTK;
+			check(bsd_set_key(&drv, &k) == -1 && !last_sae(IEEE80211_SAE_SET_PORT),
+			    "no port request without the IGTK");
+			clear_calls(); fail_sae_op = IEEE80211_SAE_SET_PORT;
+			check(bsd_set_key(&drv, &k) == -1 && last_sae(IEEE80211_SAE_SET_IGTK) &&
+			    last_sae(IEEE80211_SAE_SET_PORT),
+			    "a port the kernel still refuses fails the IGTK installation");
+			clear_calls();
+			check(port_ops.set_supp_port(&drv, 0) == 0, "closure");
+			clear_calls();
+			check(bsd_set_key(&drv, &k) == 0 && !last_sae(IEEE80211_SAE_SET_PORT),
+			    "port closure cancels the repeat");
+			clear_calls(); fail_sae_op = IEEE80211_SAE_SET_PORT;
+			check(port_ops.set_supp_port(&drv, 1) == -1, "refused once more");
+			clear_calls(); k.alg = WPA_ALG_NONE; k.addr = test_bssid; k.key_idx = 0;
+			check(bsd_set_key(&drv, &k) == 0 && last_sae(IEEE80211_SAE_DELETE_KEY),
+			    "pairwise key removed while a port request is pending");
+			clear_calls(); k.alg = WPA_ALG_BIP_CMAC_128; k.addr = broadcast; k.key_idx = 4;
+			check(bsd_set_key(&drv, &k) == 0 && !last_sae(IEEE80211_SAE_SET_PORT),
+			    "pairwise key deletion cancels the repeat");
+			clear_calls(); fail_sae_op = IEEE80211_SAE_SET_PORT;
+			check(port_ops.set_supp_port(&drv, 1) == -1 && drv.sae_port_wanted,
+			    "a refused request stays pending");
 		}
 		clear_calls(); fail_op = IEEE80211_IOC_MLME;
 		check(wpa_driver_bsd_associate(&drv, &p) == -1 && !drv.sae_active, "failed MLME retires SAE state");
+		check(!drv.sae_port_wanted, "a retired SAE session drops the pending port request");
 		s = last_sae(IEEE80211_SAE_CONFIGURE);
 		check(s && s->data[0] == 0, "failed association disables configured kernel session");
 		drv = fixture(15); fail_op = IEEE80211_IOC_PRIVACY;
