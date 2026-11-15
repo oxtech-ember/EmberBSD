@@ -11,6 +11,26 @@
 
 #include <drm618_mm.h>
 
+/*
+ * Memory for the objects of the DRM core.  The pages of an object are wired
+ * and there is no swap: a request that wires more than there is would wait for
+ * memory for ever and the system would kill its own processes.  So an object
+ * is refused when it is larger than half of the memory, and a page that is
+ * not there yet is not taken when the free memory is down to the reserve
+ * (a sixteenth of the memory, at least 16 MiB; drm618_shmem_reserve, in
+ * pages, overrides it for the tests).
+ */
+u_int drm618_shmem_reserve;
+
+static u_int
+shmem_reserve_pages(void)
+{
+
+	if (drm618_shmem_reserve != 0)
+		return drm618_shmem_reserve;
+	return MAX((u_int)(physmem / 16), (u_int)(16 * 1024 * 1024 / PAGE_SIZE));
+}
+
 static int
 shmem_release(struct inode *inode, struct file *filp __unused)
 {
@@ -33,6 +53,11 @@ shmem_file_setup(const char *name __unused, loff_t size,
 
 	if (size < 0)
 		return ERR_PTR(-EINVAL);
+	if ((uint64_t)size > (uint64_t)physmem * PAGE_SIZE / 2) {
+		printf("shmem: an object of %lld bytes is refused: more than half"
+		    " of the memory\n", (long long)size);
+		return ERR_PTR(-ENOMEM);
+	}
 	filp = anon_inode_getfile("shmem", &shmem_fops, NULL, O_RDWR);
 	filp->f_inode->i_size = size;
 	filp->f_inode->i_data.a_uobj = uao_create(PAGE_ALIGN(size), 0);
@@ -57,6 +82,20 @@ shmem_read_folio_gfp(struct address_space *mapping, unsigned long index,
 
 	if (uobj == NULL)
 		return ERR_PTR(-EINVAL);
+	rw_enter(uobj->vmobjlock, RW_READER);
+	pg = uvm_pagelookup(uobj, (off_t)index << PAGE_SHIFT);
+	rw_exit(uobj->vmobjlock);
+	if (pg == NULL && (u_int)uvm_availmem(true) < shmem_reserve_pages()) {
+		static time_t said;
+
+		if (time_uptime != said) {
+			said = time_uptime;
+			printf("shmem: no page for an object: %d pages free, the"
+			    " reserve is %u\n", uvm_availmem(true),
+			    shmem_reserve_pages());
+		}
+		return ERR_PTR(-ENOMEM);
+	}
 	error = uvm_obj_wirepages(uobj, (off_t)index << PAGE_SHIFT,
 	    (off_t)(index + 1) << PAGE_SHIFT, NULL);
 	if (error)

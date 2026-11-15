@@ -15,6 +15,7 @@
 
 #include <linux/err.h>
 #include <linux/slab.h>
+#include <linux/shmem_fs.h>
 #include <linux/scatterlist.h>
 
 #include <drm/drm_device.h>
@@ -79,6 +80,10 @@ static const struct drm_driver t_driver_plain = {
 	.driver_features = DRIVER_GEM,
 	.name = __UNCONST("t-shmem2"), .desc = __UNCONST("shmem helper test"), .major = 1,
 };
+
+/* drm618_gem_shmem_helper.c, drm618_shmem.c (drmkms618) */
+void	drm618_gem_set_limit(device_t, size_t);
+extern u_int drm618_shmem_reserve;
 
 int	drm2_shmem_run(void);
 
@@ -203,6 +208,38 @@ drm2_shmem_run(void)
 	CHECK(((const char *)page_address(s2->pages[1]))[5] == 42);
 	drm_gem_object_put(&s2->base);		/* the mapping and the pages go with it */
 
+	/* limits: an object of the size of all memory, of 2^40 bytes, above the limit of the device */
+	{
+		struct file *f = shmem_file_setup("t", (loff_t)physmem * PAGE_SIZE, 0);
+
+		CHECK(IS_ERR(f) && PTR_ERR(f) == -ENOMEM);
+		if (!IS_ERR(f))
+			fput(f);
+	}
+	CHECK(IS_ERR(drm_gem_shmem_create(dev, (size_t)1 << 40)));
+	drm618_gem_set_limit(root_device, 3 << 20);
+	CHECK(PTR_ERR(drm_gem_shmem_create(dev, 4 << 20)) == -EFBIG);
+	s = drm_gem_shmem_create(dev, 2 << 20);
+	CHECK(!IS_ERR(s));
+	if (!IS_ERR(s))
+		drm_gem_object_put(&s->base);
+	drm618_gem_set_limit(root_device, 0);
+	s = drm_gem_shmem_create(dev, 4 << 20);
+	CHECK(!IS_ERR(s));
+	if (!IS_ERR(s))
+		drm_gem_object_put(&s->base);
+	/* memory: pages are not taken from the last of it, the pin says no instead of waiting */
+	s = drm_gem_shmem_create(dev, 64 * PAGE_SIZE);
+	CHECK(!IS_ERR(s));
+	if (!IS_ERR(s)) {
+		drm618_shmem_reserve = physmem;		/* nothing counts as free */
+		CHECK(drm_gem_shmem_pin(s) == -ENOMEM);
+		CHECK(s->pages == NULL && s->pages_use_count == 0);
+		drm618_shmem_reserve = 0;
+		CHECK(drm_gem_shmem_pin(s) == 0 && s->pages != NULL);
+		drm_gem_shmem_unpin(s);
+		drm_gem_object_put(&s->base);
+	}
 out:
 	if (!IS_ERR_OR_NULL(dev))
 		drm_dev_put(dev);
