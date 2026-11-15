@@ -46,5 +46,6 @@
 #include <linux/kobject.h>	/* struct attribute_group, struct kobject (i915_pmu.h, i915_perf_types.h, gt) */
 #include <linux/sysfs.h>
 #include <linux/pwm.h>		/* struct pwm_state (intel_display_types.h) */
+#include <i915drm618_compat.h>	/* small helpers the layer lacks */
 
 #endif

@@ -35,6 +35,8 @@
 #include <asm/hypervisor.h>
 #include <xen/xen.h>
 
+#include <machine/psl.h>
+#include <i915drm618_compat.h>
 #include "i915_trace.h"
 #include "intel_display_trace.h"
 #include "intel_uncore_trace.h"
@@ -301,6 +303,122 @@ drm2_i915_layer_run(void)
 		CHECK(order_base_2(1) == 0 && order_base_2(2) == 1 && order_base_2(3) == 2);
 		CHECK(order_base_2(4) == 2 && order_base_2(5) == 3 && order_base_2(1024) == 10);
 		CHECK(order_base_2(v) == 3 && order_base_2(v - 4) == 0 && order_base_2(v + 11) == 4);
+	}
+
+	/* kstrtox */
+	{
+		unsigned long long ull;
+		unsigned int u;
+		long long ll;
+		uint8_t u8;
+		bool bl;
+		int iv;
+
+		CHECK(kstrtouint("123", 10, &u) == 0 && u == 123);
+		CHECK(kstrtouint("0x1f", 0, &u) == 0 && u == 31);
+		CHECK(kstrtouint("017", 0, &u) == 0 && u == 15);
+		CHECK(kstrtouint("17", 16, &u) == 0 && u == 23);
+		CHECK(kstrtouint("0x1f", 16, &u) == 0 && u == 31);
+		CHECK(kstrtouint("12\n", 10, &u) == 0 && u == 12);
+		CHECK(kstrtouint("+5", 10, &u) == 0 && u == 5);
+		CHECK(kstrtouint("0", 0, &u) == 0 && u == 0);
+		CHECK(kstrtouint("12\n\n", 10, &u) == -EINVAL && kstrtouint("", 10, &u) == -EINVAL);
+		CHECK(kstrtouint("12a", 10, &u) == -EINVAL && kstrtouint("-5", 10, &u) == -EINVAL);
+		CHECK(kstrtouint("\n", 10, &u) == -EINVAL && kstrtouint("0x", 0, &u) == -EINVAL);
+		CHECK(kstrtouint("4294967295", 10, &u) == 0 && u == 4294967295u);
+		CHECK(kstrtouint("4294967296", 10, &u) == -ERANGE);
+		CHECK(kstrtoull("18446744073709551615", 10, &ull) == 0 && ull == ~0ull);
+		CHECK(kstrtoull("18446744073709551616", 10, &ull) == -ERANGE);
+		CHECK(kstrtoint("-2147483648", 10, &iv) == 0 && iv == INT_MIN);
+		CHECK(kstrtoint("-2147483649", 10, &iv) == -ERANGE && kstrtoint("2147483648", 10, &iv) == -ERANGE);
+		CHECK(kstrtoll("-9223372036854775808", 10, &ll) == 0 && ll == LLONG_MIN);
+		CHECK(kstrtou8("255", 10, &u8) == 0 && u8 == 255 && kstrtou8("256", 10, &u8) == -ERANGE);
+		CHECK(kstrtobool("y", &bl) == 0 && bl && kstrtobool("N", &bl) == 0 && !bl);
+		CHECK(kstrtobool("1", &bl) == 0 && bl && kstrtobool("0", &bl) == 0 && !bl);
+		CHECK(kstrtobool("on", &bl) == 0 && bl && kstrtobool("OFF", &bl) == 0 && !bl);
+		CHECK(kstrtobool("x", &bl) == -EINVAL && kstrtobool("o", &bl) == -EINVAL);
+	}
+
+	/* lists, bitmaps, bits */
+	{
+		struct t_node { int v; struct list_head l; } nd[3], *p;
+		struct list_head head;
+		unsigned long bm[2], a1[1] = { 0x5 }, b1[1] = { 0xd };
+		unsigned long flags0 = 0;
+		int tot = 0, ord[3], k = 0;
+		atomic_t at;
+
+		INIT_LIST_HEAD(&head);
+		CHECK(list_count_nodes(&head) == 0);
+		nd[0].v = 1; nd[1].v = 2; nd[2].v = 3;
+		list_add_tail_rcu(&nd[0].l, &head);
+		list_add_tail_rcu(&nd[1].l, &head);
+		list_add_rcu(&nd[2].l, &head);
+		CHECK(list_count_nodes(&head) == 3);
+		list_for_each_entry_rcu(p, &head, l)
+			ord[k++] = p->v;
+		CHECK(ord[0] == 3 && ord[1] == 1 && ord[2] == 2);
+		list_del_rcu(&nd[0].l);
+		list_for_each_entry_rcu(p, &head, l)
+			tot += p->v;
+		CHECK(tot == 5 && list_count_nodes(&head) == 2);
+		bitmap_fill(bm, 70);
+		CHECK(bm[0] == ~0ul && bm[1] == 0x3ful);
+		CHECK(bitmap_subset(a1, b1, 4) && !bitmap_subset(b1, a1, 4));
+		CHECK(bitmap_subset(b1, a1, 1) && bitmap_intersects(a1, b1, 4));
+		a1[0] = 0x2;
+		CHECK(!bitmap_intersects(a1, b1, 4) && !bitmap_intersects(b1, b1, 0));
+		__assign_bit(3, &flags0, 1);
+		CHECK(flags0 == 8);
+		__assign_bit(3, &flags0, 0);
+		CHECK(flags0 == 0);
+		atomic_set(&at, 3);
+		CHECK(!atomic_sub_and_test(1, &at) && atomic_sub_and_test(2, &at));
+	}
+
+	/* numbers */
+	{
+		unsigned int ix, ok = 0, seen = 0;
+		char *base = (char *)(uintptr_t)0x1001;
+
+		for (ix = 0; ix < 1000; ix++) {
+			uint32_t r = get_random_u32_below(10);
+
+			ok += r < 10;
+			seen |= 1u << r;
+		}
+		CHECK(ok == 1000 && seen == 0x3ff && get_random_u32_below(1) == 0);
+		CHECK(get_random_u64() != get_random_u64());
+		CHECK(int_pow(3, 4) == 81 && int_pow(2, 0) == 1 && int_pow(10, 9) == 1000000000);
+		CHECK(DIV64_U64_ROUND_CLOSEST(7, 2) == 4 && DIV64_U64_ROUND_CLOSEST(5, 2) == 3);
+		CHECK((uintptr_t)PTR_ALIGN(base, 16) == 0x1010 && (uintptr_t)PTR_ALIGN(base - 1, 16) == 0x1000);
+		CHECK(jiffies_to_nsecs(1) == 1000000000ul / hz && jiffies_delta_to_msecs(-hz) == -1000);
+		CHECK(ktime_set(1, 5) == 1000000005 && ktime_set(INT64_MAX / 1000000000 + 1, 0) == KTIME_MAX);
+		CHECK(ktime_add_ms(0, 3) == 3000000);
+		fsleep(100);
+	}
+
+	/* strings, memory */
+	{
+		char s1[] = "  hi there \n", s2[] = "a-b-c";
+		static const char arr[3][4] = { "abc", "def", "ghi" };
+		void *dup;
+
+		CHECK(strcmp(strim(s1), "hi there") == 0);
+		CHECK(strcmp(strreplace(s2, '-', '_'), "a_b_c") == 0);
+		CHECK(strchrnul("abc", 'z')[0] == '\0' && strchrnul("abc", 'b')[0] == 'b');
+		dup = kmemdup_array(arr, 3, 4, GFP_KERNEL);
+		CHECK(dup != NULL && memcmp(dup, arr, sizeof(arr)) == 0);
+		kfree(dup);
+		CHECK(kmemdup_array(arr, SIZE_MAX / 2, 4, GFP_KERNEL) == NULL);
+	}
+
+	/* the interrupts of this CPU */
+	if ((x86_read_psl() & PSL_I) != 0) {
+		local_irq_disable();
+		CHECK((x86_read_psl() & PSL_I) == 0);
+		local_irq_enable();
+		CHECK((x86_read_psl() & PSL_I) != 0);
 	}
 
 	/* sysfs_emit: the text of a node, the length without the end */
