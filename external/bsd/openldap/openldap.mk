@@ -2,6 +2,13 @@
 
 .include <bsd.own.mk>
 
+# Upstream mkversion and the compiler share this reproducible-build input.
+# mkversion omits user/host/object paths; __DATE__/__TIME__ use the same epoch.
+.if ${MKREPRO:Uno} == "yes"
+SOURCE_DATE_EPOCH= ${MKREPRO_TIMESTAMP:U0}
+.export SOURCE_DATE_EPOCH
+.endif
+
 # EmberBSD: OpenLDAP ac/*.h K&R () conflict with libc under Clang -Werror.
 CWARNFLAGS.clang+=	-Wno-error=deprecated-non-prototype
 

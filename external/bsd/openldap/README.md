@@ -4,6 +4,28 @@ The base build selects `EMBER_OPENLDAP_SOURCE`, the prepared common
 `databases/openldap` source from Ports. Its version and feature header come
 from that source; generated headers stay in the object tree.
 
+With `MKREPRO=yes`, the native integration exports `SOURCE_DATE_EPOCH` from
+`MKREPRO_TIMESTAMP` (zero if unspecified). Upstream `mkversion` then omits the
+build user, host and directory, and the selected Clang/GCC compiler uses the
+same epoch for its date/time macros. Application and prepared-source versions
+remain in the banner. Private build commands and SDK receipts are unchanged.
+Each command's object directory records its effective version policy; a changed
+policy invalidates only retained `version.c`/`version.o` before make traverses
+timestamps, including rapid epoch transitions. Generator and rule files remain
+ordinary prerequisites. Unchanged policy inputs retain output timestamps;
+variable-only queries and object/cleanup targets do not run the policy check.
+The policy file is not installed.
+
+Exercise real native generation and target compilation with a configured OS
+wrapper and an existing matching destination:
+
+```sh
+python3 external/bsd/openldap/tests/version-repro.py \
+    --nbmake /absolute/tools/bin/nbmake-evbarm \
+    --source /absolute/prepared-openldap --dest /absolute/dest \
+    --work-dir /absolute/test-work
+```
+
 OpenLDAP 2.7 uses one thread-capable library. This integration installs
 `libldap.so.7` and keeps `liblber.so.5`. The unversioned `-lldap_r` shared and
 static link names point to the corresponding `libldap` library; a consumer
