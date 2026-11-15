@@ -280,11 +280,16 @@ static void test_scan_request_guards(void)
         s.net.ic.ic_chan_active[0]=0x42;
         leave_events=key_deletes=route_count=0;
         int error=manualscan_request(&s.net.ic);
-        CHECK(error==(cases[i].up?0:EINVAL));
+        int expected_error=!cases[i].up?EINVAL:
+            (cases[i].mode==IEEE80211_M_STA &&
+            (cases[i].state==IEEE80211_S_AUTH ||
+            cases[i].state==IEEE80211_S_ASSOC)?EBUSY:0);
+        CHECK(error==expected_error);
         CHECK(leave_events==0 && key_deletes==0 && route_count==0);
         CHECK(s.ni.key_live && s.ni.ni_associd==7);
         CHECK(s.net.ic.ic_chan_active[0]==0x42);
-        if(!cases[i].up || cases[i].mode==IEEE80211_M_HOSTAP)
+        if(!cases[i].up || cases[i].mode==IEEE80211_M_HOSTAP ||
+            expected_error==EBUSY)
             CHECK(s.net.ic.ic_state==(int)cases[i].state);
         else CHECK(s.net.ic.ic_state==IEEE80211_S_INIT);
         state_fixture_finish(&s);

@@ -76,6 +76,7 @@ with tempfile.TemporaryDirectory(prefix='rtw88-media-') as directory:
     wrapper = [net[:net.index('#include')], ioctl[:ioctl.index('#include')],
                function(net, 'rtw88_net_media_change', 'static int'),
                function(ioctl, 'ieee80211_setupscan', 'static int'),
+               function(ioctl, 'ieee80211_startscan', 'static int'),
                'static int native_scan_req(struct ieee80211com *ic) {\n'
                'int error=0; switch (IEEE80211_IOC_SCAN_REQ) {\n' + scan +
                '\n} return error;\n}']

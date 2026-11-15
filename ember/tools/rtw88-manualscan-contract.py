@@ -83,6 +83,7 @@ parts.append(function(nbsd, 'ieee80211_notify_node_leave', 'static void'))
 parts.append(function(nbsd, 'ieee80211_notify_scan_done', 'static void'))
 parts.append(function(node, 'ieee80211_sta_leave', 'static void'))
 parts.append(function(ioctl, 'ieee80211_setupscan', 'static int'))
+parts.append(function(ioctl, 'ieee80211_startscan', 'static int'))
 s = read(ioctl)
 arm = re.search(r'^\tcase IEEE80211_IOC_SCAN_REQ:.*?(?=^\tcase )',s,re.M|re.S).group()
 parts.append('static int manualscan_request(struct ieee80211com *ic) { int error=0;\n'

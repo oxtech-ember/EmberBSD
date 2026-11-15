@@ -167,10 +167,11 @@ scan = read('sys/net80211/ieee80211_ioctl.c')
 up = scan[scan.index('#ifdef __NetBSD__\n#define\tIS_UP'):]
 up = up[:up.index('#endif')]
 setup = re.search(r'^ieee80211_setupscan\(.*?^}',scan,re.M|re.S).group()
+start = re.search(r'^ieee80211_startscan\(.*?^}',scan,re.M|re.S).group()
 arm = re.search(r'^\tcase IEEE80211_IOC_SCAN_REQ:.*?(?=^\tcase )',scan,re.M|re.S).group()
 request = re.search(r'^#define\s+IEEE80211_IOC_SCAN_REQ\s+.*$',read('sys/net80211/ieee80211_ioctl.h'),re.M).group()
 (out/'native-reconnect-scan.inc').write_text(scan[:scan.index('#include')] + up.replace('#ifdef __NetBSD__\n','') +
-    '\n'+request+'\nstatic int\n'+setup+'\n' +
+    '\n'+request+'\nstatic int\n'+setup+'\nstatic int\n'+start+'\n' +
     'static int reconnect_scan_request(struct ieee80211com *ic) { int error=0;\n' +
     'switch (IEEE80211_IOC_SCAN_REQ) {\n'+arm+'}\nreturn error; }\n')
 
