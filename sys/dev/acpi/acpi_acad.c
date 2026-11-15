@@ -57,6 +57,16 @@ ACPI_MODULE_NAME		 ("acpi_acad")
 #define ACPI_NOTIFY_ACAD	 0x80
 #define ACPI_NOTIFY_ACAD_2	 0x81 /* XXX. */
 
+/*
+ * envsys(4) refreshes the sensor on every dictionary request, and _PSR
+ * can be a slow embedded controller transaction.  A refresh reuses a
+ * sample that is at most this many seconds old.  Notify() and the poll
+ * (acpi_register_poll(), 5 seconds by default) normally keep the sample
+ * younger than that, so a refresh evaluates _PSR only when neither has
+ * run in time; a late poll costs one extra evaluation.
+ */
+#define ACPIACAD_REFRESH_SECS	5
+
 struct acpiacad_softc {
 	struct acpi_devnode	*sc_node;
 	struct sysmon_envsys	*sc_sme;
@@ -64,6 +74,8 @@ struct acpiacad_softc {
 	envsys_data_t		 sc_sensor;
 	kmutex_t		 sc_mtx;	/* serializes _PSR updates */
 	int			 sc_status;
+	time_t			 sc_stamp;	/* uptime of last _PSR read */
+	bool			 sc_sampled;	/* sc_stamp is valid */
 };
 
 static const struct device_compatible_entry compat_data[] = {
@@ -112,6 +124,7 @@ acpiacad_attach(device_t parent, device_t self, void *aux)
 
 	sc->sc_sme = NULL;
 	sc->sc_status = -1;
+	sc->sc_sampled = false;
 	sc->sc_node = aa->aa_node;
 	mutex_init(&sc->sc_mtx, MUTEX_DEFAULT, IPL_NONE);
 
@@ -187,6 +200,10 @@ acpiacad_get_status(void *arg)
 
 	rv = acpi_eval_integer(sc->sc_node->ad_handle, "_PSR", &status);
 
+	/* A failed read counts too: a refresh must not retry it at once. */
+	sc->sc_stamp = time_uptime;
+	sc->sc_sampled = true;
+
 	if (ACPI_FAILURE(rv))
 		goto fail;
 
@@ -230,13 +247,24 @@ fail:
  * acpiacad_refresh:
  *
  *	envsys(4) refresh: re-read _PSR when user space asks for the
- *	sensor, so the value does not depend on Notify() alone.
+ *	sensor and the last read is older than ACPIACAD_REFRESH_SECS,
+ *	so the value does not depend on Notify() alone and a burst of
+ *	requests does not run the control method each time.
  */
 static void
 acpiacad_refresh(struct sysmon_envsys *sme, envsys_data_t *edata)
 {
+	device_t dv = sme->sme_cookie;
+	struct acpiacad_softc *sc = device_private(dv);
+	bool fresh;
 
-	acpiacad_get_status(sme->sme_cookie);
+	mutex_enter(&sc->sc_mtx);
+	fresh = sc->sc_sampled &&
+	    time_uptime - sc->sc_stamp <= ACPIACAD_REFRESH_SECS;
+	mutex_exit(&sc->sc_mtx);
+
+	if (!fresh)
+		acpiacad_get_status(dv);
 }
 
 /*
