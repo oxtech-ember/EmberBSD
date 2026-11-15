@@ -87,7 +87,13 @@ ref=$2
 # The reference directory is emptied below: it must be a place of its own,
 # not the Linux tree, a parent or a child of it, the current directory or a
 # parent of it, or the root.
-ref_abs=$(mkdir -p "$ref" && cd "$ref" && pwd -P)
+# (a reference directory that does not exist yet is resolved through its
+# first existing parent, and created only after these checks)
+p=$ref; tail=
+while [ ! -e "$p" ]; do tail=/$(basename "$p")$tail; p=$(dirname "$p"); done
+ref_abs=$(cd "$p" && pwd -P)
+ref_abs=${ref_abs%/}$tail
+[ -n "$ref_abs" ] || ref_abs=/
 lt_abs=$(cd "$lt" && pwd -P)
 cwd_abs=$(pwd -P)
 case "$ref_abs" in
