@@ -151,6 +151,97 @@
         "libunbound.a"
       ]
     },
+    "EMBER_LIBEVENT_SOURCE": {
+      "producer_dirs": [
+        "external/bsd/libevent/lib/libevent",
+        "external/bsd/libevent/lib/libevent_openssl",
+        "external/bsd/libevent/lib/libevent_pthreads"
+      ],
+      "header_prefixes": [
+        "usr/include/event.h",
+        "usr/include/evdns.h",
+        "usr/include/evhttp.h",
+        "usr/include/evrpc.h",
+        "usr/include/evutil.h",
+        "usr/include/event2/"
+      ],
+      "consumer_dirs": [
+        "external/bsd/ntp/bin/sntp",
+        "external/bsd/nsd/lib/libnsd",
+        "external/bsd/nsd/lib/libxfrd",
+        "external/bsd/nsd/sbin/nsd",
+        "external/bsd/nsd/sbin/nsd-checkconf",
+        "external/bsd/nsd/sbin/nsd-checkzone",
+        "external/bsd/nsd/sbin/nsd-control",
+        "external/bsd/nsd/sbin/nsd-control-setup",
+        "external/bsd/tmux/usr.bin/tmux",
+        "tests/lib/libevent",
+        "usr.bin/bthset",
+        "usr.sbin/bta2dpd/bta2dpd",
+        "usr.sbin/bthcid",
+        "usr.sbin/btpand",
+        "usr.sbin/pf/ftp-proxy",
+        "usr.sbin/syslogd"
+      ],
+      "linked_names": [
+        "libevent.a",
+        "libevent.so",
+        "libevent_openssl.a",
+        "libevent_openssl.so",
+        "libevent_pthreads.a",
+        "libevent_pthreads.so"
+      ]
+    },
+    "EMBER_LIBPCAP_SOURCE": {
+      "producer_dirs": [
+        "external/bsd/libpcap/bin",
+        "external/bsd/libpcap/lib",
+        "external/bsd/libpcap/sbin/rpcapd"
+      ],
+      "header_prefixes": [
+        "usr/include/pcap/",
+        "usr/include/pcap.h",
+        "usr/include/pcap-namedb.h"
+      ],
+      "consumer_dirs": [
+        "external/bsd/ppp/usr.sbin/pppd",
+        "external/bsd/tcpdump/bin",
+        "external/bsd/wpa/bin/hostapd",
+        "external/bsd/wpa/bin/wpa_supplicant",
+        "tests/lib/libbpfjit",
+        "usr.sbin/npf/npfctl",
+        "usr.sbin/npf/npfd",
+        "usr.sbin/pf/pflogd"
+      ],
+      "linked_names": [
+        "libpcap.a",
+        "libpcap.so"
+      ]
+    },
+    "EMBER_TCP_WRAPPERS_SOURCE": {
+      "producer_dirs": [
+        "lib/libwrap",
+        "usr.sbin/tcpdchk",
+        "usr.sbin/tcpdmatch"
+      ],
+      "header_prefixes": [
+        "usr/include/tcpd.h"
+      ],
+      "consumer_dirs": [
+        "crypto/external/bsd/openssh/libexec/sshd-auth",
+        "crypto/external/bsd/openssh/libexec/sshd-session",
+        "tests/fs/nfs/nfsservice",
+        "usr.sbin/inetd",
+        "usr.sbin/lpr/lpd",
+        "usr.sbin/rpcbind",
+        "usr.sbin/syslogd",
+        "usr.sbin/ypserv/ypserv"
+      ],
+      "linked_names": [
+        "libwrap.a",
+        "libwrap.so"
+      ]
+    },
     "EMBER_WPA_SOURCE": {
       "producer_dirs": [
         "external/bsd/wpa/bin/hostapd",

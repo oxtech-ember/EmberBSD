@@ -661,6 +661,20 @@ def network_crunch_configuration(crunch_programs, wpa_backend):
     return '\n'.join(lines) + '\n'
 
 
+def network_crunch_owners(source, programs):
+    """Map crunchgen output directories to their native OS Makefile owners."""
+    from pathlib import Path
+    owners = {}
+    for program in programs:
+        path = Path(program)
+        owner = path if (Path(source) / path / 'Makefile').is_file() else path.parent
+        name = path.name
+        if name in owners or not (Path(source) / owner / 'Makefile').is_file():
+            raise ValueError('invalid network crunch source owner: ' + program)
+        owners[name] = owner.as_posix()
+    return owners
+
+
 def network_crunch_make_assignments(crunch_programs):
     """Return native make assignments passed to network crunch submakes."""
     programs = set(crunch_programs.split())
@@ -1064,6 +1078,7 @@ def source_worktree_state(git, source):
 def run_console(arguments):
     """Extend a verified C foundation with the shared native console targets."""
     import hashlib
+    import importlib.util
     import json
     import os
     import re
@@ -1123,10 +1138,11 @@ def run_console(arguments):
         raise SystemExit('static-console: ' + str(exc)) from exc
     sdk = Path(os.environ['EMBERBSD_SDK_SOURCE']).resolve(strict=True)
     sys.path.insert(0, str(sdk / 'src'))
-    from emberbsd_sdk import cpu_capacity, elf, host_prefix, inventory, jsonio, libedit, llvm_runtime, native_os, paths, process, sourceprep, target_toolchain
+    from emberbsd_sdk import cpu_capacity, elf, host_prefix, inventory, jsonio, libedit, llvm_runtime, native_os, paths, prepared_refresh, process, sourceprep, target_toolchain
     from emberbsd_sdk.errors import SDKError
     network_root_stage = None
     network_receipt_pending = None
+    network_lock = None
     try:
         source = Path(paths.canonical_existing(source))
         foundation = Path(paths.canonical_existing(os.environ['EMBER_C_FOUNDATION']))
@@ -1211,6 +1227,7 @@ def run_console(arguments):
                        if 'mdns' in selected_toolsets else '')
         wolfssl_prefix = os.environ.get('EMBER_WOLFSSL_PREFIX', '') if is_network else ''
         network_sources = {}
+        network_source_inputs = {}
         wolfssl_hash = ''
         libpcap_archive_hash = ''
         if is_network:
@@ -1286,15 +1303,17 @@ def run_console(arguments):
                     if not (os.environ.get('EMBER_WPA_ARCHIVE') and
                             os.environ.get('EMBER_WPA_HOSTAPD_ARCHIVE')):
                         raise SDKError('WPA archive comparison requires both WPA and hostapd archives')
-                    for variable in ('EMBER_WPA_ARCHIVE', 'EMBER_WPA_HOSTAPD_ARCHIVE'):
-                        archive = Path(paths.canonical_existing(os.environ[variable]))
+                    for archive_variable in ('EMBER_WPA_ARCHIVE', 'EMBER_WPA_HOSTAPD_ARCHIVE'):
+                        archive = Path(paths.canonical_existing(os.environ[archive_variable]))
                         if not archive.is_file() or not re.fullmatch(r'/[A-Za-z0-9_./-]+', str(archive)):
-                            raise SDKError(variable + ' must name an absolute archive file')
+                            raise SDKError(archive_variable + ' must name an absolute archive file')
                         paths.reject_overlap(str(output), str(archive))
-                        verify_command.extend((('--archive' if variable == 'EMBER_WPA_ARCHIVE'
+                        verify_command.extend((('--archive' if archive_variable == 'EMBER_WPA_ARCHIVE'
                                                  else '--hostapd-archive'), str(archive)))
                 verified = process.capture(verify_command, env=env).stdout
                 network_sources[package] = hashlib.sha256(verified).hexdigest()
+                network_source_inputs[package] = {
+                    'record': network_sources[package], 'path': selected_source}
                 os.environ[variable] = selected_source
         extra = os.environ.get('EMBER_CONSOLE_PROGRAM', '') if settings['compact'] or is_network else ''
         network_devices = network_device_selection(settings, network_root_device,
@@ -1344,6 +1363,7 @@ def run_console(arguments):
         jobs = str(cpu_capacity.resolve_jobs(os.environ.get('BUILD_JOBS'), option='BUILD_JOBS'))
         output_action = 'new'
         if is_network:
+            network_lock = process.ContextLocks([str(output)], str(output.parent)).acquire()
             compatibility = network_build_compatibility(
                 target, settings, receipt['signature']['target'], identity, record,
                 wpa_backend)
@@ -1371,6 +1391,48 @@ def run_console(arguments):
         else:
             (output / 'logs').mkdir(exist_ok=True)
         if is_network:
+            refresh_spec = importlib.util.spec_from_file_location('network_source_refresh',
+                Path(__file__).with_name('network-source-refresh.py'))
+            refresh_module = importlib.util.module_from_spec(refresh_spec)
+            refresh_spec.loader.exec_module(refresh_module)
+            owners = network_crunch_owners(source, settings['crunch_programs'])
+            refresh_flags = [name + '=' + os.environ[name] for name in source_variables]
+            refresh_flags.extend((
+                'EMBER_WPA_PROFILE=personal', 'EMBER_OPENSSH_CRYPTO=' + openssh_crypto,
+                'SYSLOGD_TLS=no', 'SYSLOGD_SIGN=no',
+                'EMBER_OPENSSL_GENERATED=' + str(output / 'obj/crypto/external/apache2/openssl/generated')))
+            refresh_flags.extend(network_crunch_make_assignments(
+                ' '.join(settings['crunch_programs'])).split())
+            if wpa_backend:
+                refresh_flags.append('EMBER_WPA_CRYPTO_BACKEND=' + wpa_backend)
+            if wolfssl_prefix:
+                refresh_flags.append('EMBER_WOLFSSL_PREFIX=' + wolfssl_prefix)
+
+            def clean_native(directory):
+                base = [str(output / ('nbmake-' + settings['machine'])),
+                        '-C', str(source / directory), 'DESTDIR=' + str(output / 'dest'),
+                        *refresh_flags]
+                def run(arguments, **kwargs):
+                    return native_os.run_native_os(native, source=str(source),
+                        routing=str(output / 'routing'), cwd=str(source),
+                        arguments=base + arguments, shell=True, **kwargs)
+                actual = run(['-V', '${.OBJDIR}'], capture=True).stdout.decode().strip()
+                expected = output / 'obj' / directory
+                if actual != str(expected) or Path(actual).resolve() != expected:
+                    raise SDKError('network source refresh selected the wrong objects: ' + directory)
+                run(['MKCLEANSRC=no', 'cleandir'], log=str(output / 'logs/source-refresh.log'),
+                    append=True)
+
+            def archive_members(path):
+                return process.capture([native.tool('ar'), 't', str(path)],
+                                       env=env).stdout.decode().splitlines()
+
+            changed = refresh_module.refresh(source, output, network_source_inputs, owners,
+                prepared_refresh, clean_native, archive_members=archive_members,
+                allowed_source_roots=[*extra_paths, stage,
+                    *(value['path'] for value in network_source_inputs.values())])
+            if changed:
+                print('Refreshing network source objects: ' + ', '.join(changed), flush=True)
             network_root_stage = new_network_root(output)
         shell = str(Path(__file__).with_name('cix-p1-build-userland.sh'))
         command = [shell, '--console-selected', str(source), str(output), str(tools), str(compiler), str(sdk),
@@ -1487,6 +1549,9 @@ def run_console(arguments):
         if network_receipt_pending is not None and network_receipt_pending.is_file() and not network_receipt_pending.is_symlink():
             network_receipt_pending.unlink()
         raise SystemExit('static-console: ' + str(exc)) from exc
+    finally:
+        if network_lock is not None:
+            network_lock.close()
 
 
 if __name__ == '__main__':

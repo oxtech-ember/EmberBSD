@@ -214,6 +214,20 @@ peripheral = profile.network('riscv32', ('system', 'audio', 'video', 'envsys', '
                              ('1',))
 transfer = profile.network('riscv32', ('transfer',))
 spi_toolset = profile.network('riscv32', ('spi',))
+all_network_toolsets = ('system', 'audio', 'video', 'envsys', 'spi',
+                        'transfer', 'mdns', 'ssh', 'sftp', 'logging')
+owner_profiles = (
+    selected,
+    profile.network('riscv32', all_network_toolsets, ('1',)),
+    profile.network('riscv32', all_network_toolsets, ('1',),
+                    root_filesystem='littlefs'))
+for owner_profile in owner_profiles:
+    crunch_owners = profile.network_crunch_owners(
+        source, owner_profile['crunch_programs'])
+    check(len(crunch_owners) == len(owner_profile['crunch_programs']) and
+          all((source / owner).joinpath('Makefile').is_file()
+              for owner in crunch_owners.values()),
+          'selected network crunch owners resolve to actual OS Makefiles')
 try:
     profile.network('riscv32', ('audio', 'audio'))
 except ValueError:

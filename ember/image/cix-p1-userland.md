@@ -243,7 +243,15 @@ prepared sources need no archive. The selected root device group and partition a
 including the block and raw nodes used by the standard root/fsck path. When
 `mdns` is selected, `EMBER_MDNS_SOURCE` is required. The selected mDNS,
 DHCP, libpcap and WPA sources are checked against the selected Ports recipes
-and shared export.
+and shared export. For an existing output, source-record identity and canonical
+prepared-source path select only the affected normal object producers and
+mapped `crunch/` program objects from
+`share/mk/prepared-source-refresh.json`. The refresh removes stale dependency
+files before rebuilding those scopes; unrelated compatible object directories
+remain available. If an output has no `NETWORK-OBJECT-SOURCES.json`, the
+completed-root receipt cannot establish which source paths produced its
+objects. The first refresh cleans only the selected imported-source owners;
+foundation and unrelated object directories remain available.
 The optional `ssh` toolset adds the OpenSSH server, authentication and session
 helpers, and host-key generator. The separate optional `sftp` toolset adds the
 OpenSSH SFTP server and requires `ssh`. This separation lets a constrained
@@ -354,11 +362,15 @@ under `dest/` remains available for incremental builds and debugging; target
 ownership and mode (including setuid bits) continue to come from `METALOG`.
 Repeated runs reuse the same compatible `obj/` and `dest/` trees, including a
 completed output. A small compatibility record protects target, ABI, runtime
-and compile configuration; source and overlay edits flow through the normal
-incremental build. The producer stages a fresh root and `root.spec` beside the
-previous pair, validates the selected executables, then replaces both. A failed
-build or check leaves the prior pair and its `BUILD-INPUTS.txt` intact.
-`BUILD-INPUTS.txt` records the latest provenance but does not prevent reuse.
+and compile configuration. `NETWORK-OBJECT-SOURCES.json` records which
+verified source records and canonical paths own the current object tree. It is
+updated after scoped cleanup and before compilation, so a failed build can
+resume with compatible partial outputs without cleaning them again.
+`BUILD-INPUTS.txt` remains the provenance for the last completed root. The
+producer stages a fresh root and `root.spec` beside the previous pair, validates
+the selected executables, then replaces the root pair and publishes its new
+`BUILD-INPUTS.txt`. A failed build or check leaves the prior pair and its
+`BUILD-INPUTS.txt` intact.
 
 The selected overlay may add or replace regular configuration files in the
 fresh staged root; symlinks remain rejected. It can supply `/etc/myname`, `/etc/wpa_supplicant.conf` and

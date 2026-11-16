@@ -7,6 +7,9 @@ name: CIX P1 startup contracts
       - '.github/workflows/cix-p1-startup.yml'
       - 'ember/image/cix-p1-*'
       - 'ember/image/test-cix-p1-*'
+      - 'ember/image/test-static-network-profile.py'
+      - 'ember/image/network-source-refresh.py'
+      - 'ember/image/test-network-source-refresh.py'
       - 'ember/image/static-profile.py'
       - 'ember/image/test-static-console.py'
       - 'ember/image/fixtures/cix-*'
@@ -16,6 +19,7 @@ name: CIX P1 startup contracts
       - 'etc/etc.aarch64/MAKEDEV.conf'
       - 'etc/group'
       - 'etc/master.passwd'
+      - 'share/mk/prepared-source-refresh.json'
       - 'sys/conf/majors'
       - 'sys/arch/aarch64/conf/majors.aarch64'
   pull_request:
@@ -23,6 +27,9 @@ name: CIX P1 startup contracts
       - '.github/workflows/cix-p1-startup.yml'
       - 'ember/image/cix-p1-*'
       - 'ember/image/test-cix-p1-*'
+      - 'ember/image/test-static-network-profile.py'
+      - 'ember/image/network-source-refresh.py'
+      - 'ember/image/test-network-source-refresh.py'
       - 'ember/image/static-profile.py'
       - 'ember/image/test-static-console.py'
       - 'ember/image/fixtures/cix-*'
@@ -32,6 +39,7 @@ name: CIX P1 startup contracts
       - 'etc/etc.aarch64/MAKEDEV.conf'
       - 'etc/group'
       - 'etc/master.passwd'
+      - 'share/mk/prepared-source-refresh.json'
       - 'sys/conf/majors'
       - 'sys/arch/aarch64/conf/majors.aarch64'
   workflow_dispatch:
@@ -47,6 +55,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: oxtech-ember/EmberBSD-SDK
+          ref: main
+          path: EmberBSD-SDK
           persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         id: python
@@ -95,8 +109,12 @@ jobs:
           export PATH="$EMBER_TEST_NATIVE_PREFIX/bin:$EMBER_TEST_NATIVE_PREFIX/gnu/bin"
           export TEST_SH="$EMBER_TEST_NATIVE_PREFIX/bin/bash"
           export TEST_AWK="$EMBER_TEST_NATIVE_PREFIX/bin/nawk"
+          export EMBERBSD_SDK_SOURCE="$GITHUB_WORKSPACE/EmberBSD-SDK"
+          export PYTHONPATH="$EMBERBSD_SDK_SOURCE/src${PYTHONPATH:+:$PYTHONPATH}"
           "$EMBER_TEST_NATIVE_PREFIX/bin/python3.15" -B ember/image/test-cix-p1-native.py
           "$EMBER_TEST_NATIVE_PREFIX/bin/python3.15" -B ember/image/test-static-console.py
+          "$EMBER_TEST_NATIVE_PREFIX/bin/python3.15" -B ember/image/test-static-network-profile.py
+          "$EMBER_TEST_NATIVE_PREFIX/bin/python3.15" -B ember/image/test-network-source-refresh.py
           "$EMBER_TEST_NATIVE_PREFIX/bin/python3.15" -B ember/image/test-cix-p1-i18n.py
           "$EMBER_TEST_NATIVE_PREFIX/bin/python3.15" -B ember/image/test-cix-p1-ssh.py
           "$EMBER_TEST_NATIVE_PREFIX/bin/python3.15" -B ember/image/test-cix-p1-userland.py
