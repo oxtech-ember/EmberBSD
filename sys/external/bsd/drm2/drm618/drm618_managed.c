@@ -101,7 +101,12 @@ drm_managed_release(struct drm_device *dev)
 		drmres_release(dev, dr);
 	}
 
-	/* The structure that contains the device goes last. */
+	/*
+	 * The structure that contains the device goes last.  Its lock of the
+	 * list of resources is destroyed here: Linux never destroys it, and
+	 * memory freed with an initialised lock stops a kernel with LOCKDEBUG.
+	 */
+	spin_lock_destroy(&dev->managed.lock);
 	kfree(dev->managed.final_kfree);
 	dev->managed.final_kfree = NULL;
 }

@@ -59,7 +59,7 @@ test_array_alloc(void)
 	(void)p;
 	drm_managed_release(dev);
 	CHECK(list_empty(&dev->managed.resources));
-	spin_lock_destroy(&dev->managed.lock);
+	/* drm_managed_release has destroyed managed.lock */
 	kfree(dev);
 }
 

@@ -51,6 +51,10 @@ void __drm_crtc_commit_free(struct kref *kref)
 	struct drm_crtc_commit *commit =
 		container_of(kref, struct drm_crtc_commit, ref);
 
+	/* the completions are initialised by the creator of the commit; Linux never destroys them */
+	destroy_completion(&commit->flip_done);
+	destroy_completion(&commit->hw_done);
+	destroy_completion(&commit->cleanup_done);
 	kfree(commit);
 }
 EXPORT_SYMBOL(__drm_crtc_commit_free);

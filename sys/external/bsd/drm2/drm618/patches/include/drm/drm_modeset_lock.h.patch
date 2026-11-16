@@ -1,0 +1,11 @@
+--- a/include/drm/drm_modeset_lock.h
++++ b/include/drm/drm_modeset_lock.h
+@@ -112,6 +112,8 @@
+ static inline void drm_modeset_lock_fini(struct drm_modeset_lock *lock)
+ {
+ 	WARN_ON(!list_empty(&lock->head));
++	/* Linux never destroys the lock; the object that holds it is freed or reused */
++	ww_mutex_destroy(&lock->mutex);
+ }
+ 
+ /**

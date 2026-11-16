@@ -1,0 +1,66 @@
+--- a/drm/drm_vblank.c
++++ b/drm/drm_vblank.c
+@@ -517,11 +517,25 @@
+ 	drm_WARN_ON(dev, READ_ONCE(vblank->enabled) &&
+ 		    drm_core_check_feature(dev, DRIVER_MODESET));
+ 
+-	if (vblank->vblank_timer.crtc)
++	if (vblank->vblank_timer.crtc) {
+ 		hrtimer_cancel(&vblank->vblank_timer.timer);
++		/* set up by drm_crtc_vblank_start_timer, which Linux does not undo */
++		spin_lock_destroy(&vblank->vblank_timer.interval_lock);
++	}
+ 
+ 	drm_vblank_destroy_worker(vblank);
+ 	timer_delete_sync(&vblank->disable_timer);
++	/* Linux never destroys the queues and the seqlock; the array that holds them is freed afterwards */
++	destroy_waitqueue_head(&vblank->work_wait_queue);
++	seqlock_destroy(&vblank->seqlock);
++	destroy_waitqueue_head(&vblank->queue);
++}
++
++/* Runs after the release of every crtc (the actions run newest first) */
++static void drm_vblank_locks_release(struct drm_device *dev, void *ptr)
++{
++	spin_lock_destroy(&dev->vblank_time_lock);
++	spin_lock_destroy(&dev->vbl_lock);
+ }
+ 
+ /**
+@@ -543,6 +557,9 @@
+ 
+ 	spin_lock_init(&dev->vbl_lock);
+ 	spin_lock_init(&dev->vblank_time_lock);
++	ret = drmm_add_action_or_reset(dev, drm_vblank_locks_release, NULL);
++	if (ret)
++		return ret;
+ 
+ 	dev->vblank = drmm_kcalloc(dev, num_crtcs, sizeof(*dev->vblank), GFP_KERNEL);
+ 	if (!dev->vblank)
+@@ -559,12 +576,22 @@
+ 		timer_setup(&vblank->disable_timer, vblank_disable_fn, 0);
+ 		seqlock_init(&vblank->seqlock);
+ 
+-		ret = drmm_add_action_or_reset(dev, drm_vblank_init_release,
+-					       vblank);
+-		if (ret)
++		/*
++		 * The worker first: the release of the action takes the queue
++		 * of the worker down, so it must be set up when the action runs
++		 * (it runs at once when it cannot be registered).
++		 */
++		ret = drm_vblank_worker_init(vblank);
++		if (ret) {
++			/* the release is not registered yet; the queue of the worker is set up */
++			destroy_waitqueue_head(&vblank->work_wait_queue);
++			seqlock_destroy(&vblank->seqlock);
++			destroy_waitqueue_head(&vblank->queue);
+ 			return ret;
++		}
+ 
+-		ret = drm_vblank_worker_init(vblank);
++		ret = drmm_add_action_or_reset(dev, drm_vblank_init_release,
++					       vblank);
+ 		if (ret)
+ 			return ret;
+ 	}

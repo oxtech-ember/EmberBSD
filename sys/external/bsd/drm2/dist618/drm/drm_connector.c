@@ -801,6 +801,10 @@ void drm_connector_cleanup(struct drm_connector *connector)
 
 	mutex_destroy(&connector->hdmi_audio.lock);
 	mutex_destroy(&connector->hdmi.infoframes.lock);
+	/* the other locks of drm_connector_init, which Linux does not destroy */
+	mutex_destroy(&connector->edid_override_mutex);
+	mutex_destroy(&connector->eld_mutex);
+	mutex_destroy(&connector->cec.mutex);
 	mutex_destroy(&connector->mutex);
 
 	memset(connector, 0, sizeof(*connector));

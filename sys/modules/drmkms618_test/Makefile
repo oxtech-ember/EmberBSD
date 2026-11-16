@@ -17,6 +17,7 @@ KMOD=	drmkms618_test
 .include "../drmkms618/Makefile.inc"
 
 SRCS+=	drmkms618_test.c
+SRCS+=	drm2-lockfix.c
 SRCS+=	drm2-sched.c
 SRCS+=	drm2-ttm.c
 SRCS+=	drm2-gemfb.c

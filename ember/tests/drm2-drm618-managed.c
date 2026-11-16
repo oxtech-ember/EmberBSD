@@ -44,7 +44,7 @@ t_dev(void)
 static void
 t_dev_free(struct drm_device *dev)
 {
-	spin_lock_destroy(&dev->managed.lock);
+	/* drm_managed_release has destroyed managed.lock */
 	kfree(dev);
 }
 

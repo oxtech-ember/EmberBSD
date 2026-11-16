@@ -12,6 +12,7 @@
 
 MODULE(MODULE_CLASS_MISC, drmkms618_test, "drmkms618,drmkms618_sched,drmkms618_ttm");
 
+int	drm2_lockfix_run(void);
 int	drm2_sched_run(void);
 int	drm2_ttm_run(void);
 int	drm2_gemfb_run(void);
@@ -30,7 +31,8 @@ drmkms618_test_modcmd(modcmd_t cmd, void *arg __unused)
 
 	switch (cmd) {
 	case MODULE_CMD_INIT:
-		failed = drm2_sched_run();
+		failed = drm2_lockfix_run();
+		failed += drm2_sched_run();
 		failed += drm2_ttm_run();
 		failed += drm2_gemfb_run();
 		failed += drm2_sg_run();

@@ -18,7 +18,37 @@
  }
  EXPORT_SYMBOL(drm_dev_wedged_event);
  
-@@ -1010,9 +1010,7 @@
+@@ -704,6 +704,9 @@
+ 	mutex_destroy(&dev->master_mutex);
+ 	mutex_destroy(&dev->clientlist_mutex);
+ 	mutex_destroy(&dev->filelist_mutex);
++	/* Linux never destroys these locks; the device is part of a structure that is freed */
++	raw_spin_lock_destroy(&dev->mode_config.panic_lock);
++	spin_lock_destroy(&dev->event_lock);
+ }
+ 
+ static int drm_dev_init(struct drm_device *dev,
+@@ -735,6 +738,7 @@
+ 				(drm_core_check_feature(dev, DRIVER_RENDER) ||
+ 				drm_core_check_feature(dev, DRIVER_MODESET))) {
+ 		DRM_ERROR("DRM driver can't be both a compute acceleration and graphics driver\n");
++		spin_lock_destroy(&dev->managed.lock);	/* the caller frees the device */
+ 		return -EINVAL;
+ 	}
+ 
+@@ -750,8 +754,10 @@
+ 	raw_spin_lock_init(&dev->mode_config.panic_lock);
+ 
+ 	ret = drmm_add_action_or_reset(dev, drm_dev_init_release, NULL);
+-	if (ret)
++	if (ret) {
++		spin_lock_destroy(&dev->managed.lock);	/* the action has run, the caller frees the device */
+ 		return ret;
++	}
+ 
+ 	inode = drm_fs_inode_new();
+ 	if (IS_ERR(inode)) {
+@@ -1010,9 +1016,7 @@
  	if (!name)
  		return -ENOMEM;
  
@@ -29,7 +59,7 @@
  
  	kfree(name);
  
-@@ -1035,7 +1033,7 @@
+@@ -1035,7 +1039,7 @@
  	if (!name)
  		return;
  

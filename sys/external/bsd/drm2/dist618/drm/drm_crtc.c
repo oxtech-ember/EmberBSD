@@ -151,6 +151,8 @@ static void drm_crtc_crc_fini(struct drm_crtc *crtc)
 {
 #ifdef CONFIG_DEBUG_FS
 	kfree(crtc->crc.source);
+	spin_lock_destroy(&crtc->crc.lock);
+	destroy_waitqueue_head(&crtc->crc.wq);
 #endif
 }
 
@@ -260,8 +262,12 @@ static int __drm_crtc_init_with_planes(struct drm_device *dev, struct drm_crtc *
 
 	drm_modeset_lock_init(&crtc->mutex);
 	ret = drm_mode_object_add(dev, &crtc->base, DRM_MODE_OBJECT_CRTC);
-	if (ret)
+	if (ret) {
+		/* the failure leaves the crtc to its caller, which frees it; Linux leaves the locks set up */
+		drm_modeset_lock_fini(&crtc->mutex);
+		spin_lock_destroy(&crtc->commit_lock);
 		return ret;
+	}
 
 	if (name) {
 		crtc->name = kvasprintf(GFP_KERNEL, name, ap);
@@ -270,6 +276,8 @@ static int __drm_crtc_init_with_planes(struct drm_device *dev, struct drm_crtc *
 	}
 	if (!crtc->name) {
 		drm_mode_object_unregister(dev, &crtc->base);
+		drm_modeset_lock_fini(&crtc->mutex);
+		spin_lock_destroy(&crtc->commit_lock);
 		return -ENOMEM;
 	}
 
@@ -293,6 +301,9 @@ static int __drm_crtc_init_with_planes(struct drm_device *dev, struct drm_crtc *
 	ret = drm_crtc_crc_init(crtc);
 	if (ret) {
 		drm_mode_object_unregister(dev, &crtc->base);
+		drm_modeset_lock_fini(&crtc->mutex);
+		spin_lock_destroy(&crtc->commit_lock);
+		spin_lock_destroy(&crtc->fence_lock);
 		return ret;
 	}
 
@@ -505,6 +516,10 @@ void drm_crtc_cleanup(struct drm_crtc *crtc)
 		crtc->funcs->atomic_destroy_state(crtc, crtc->state);
 
 	kfree(crtc->name);
+
+	/* Linux never destroys these locks; the crtc is part of a structure that is freed */
+	spin_lock_destroy(&crtc->commit_lock);
+	spin_lock_destroy(&crtc->fence_lock);
 
 	memset(crtc, 0, sizeof(*crtc));
 }
