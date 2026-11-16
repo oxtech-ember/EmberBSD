@@ -51,8 +51,13 @@ enum { BWFM_TASK_NEWSTATE, BWFM_TASK_LINK_CHECK, BWFM_TASK_BARRIER,
     BWFM_TASK_KEY_SET, BWFM_TASK_KEY_DELETE, BWFM_TASK_RX_EVENT, BWFM_TASK_REPORT, BWFM_TASK_STA_MGMT };
 struct ifnet { void *if_softc; int if_timer, if_flags; };
 struct ieee80211_node { uint8_t ni_bssid[6], ni_macaddr[6]; };
+/* Only the lifetime flags that bwfm_newstate invalidates. */
+struct ieee80211_sta_action_state { bool active, cancelled; };
+static void ieee80211_sta_action_invalidate(struct ieee80211_sta_action_state *state)
+{ if (state != NULL && state->active) state->cancelled = true; }
 struct ieee80211com { struct ifnet *ic_ifp; struct ieee80211_node *ic_bss;
-    enum ieee80211_state ic_state; int ic_opmode; };
+    enum ieee80211_state ic_state; int ic_opmode;
+    struct ieee80211_sta_action_state ic_sta_action; };
 struct bwfm_cmd_newstate { enum ieee80211_state state; int arg; };
 struct work { int unused; };
 struct bwfm_softc {
@@ -254,6 +259,12 @@ int main(void)
     fixture(&sc, &bss); ticks(&sc, 5);
     ieee80211_new_state(&sc.sc_ic, IEEE80211_S_INIT, -1); drain();
     check(queries == 0 && !sc.sc_link_pending, "queued poll invalidated before stop is applied");
+    fixture(&sc, &bss); sc.sc_ic.ic_sta_action.active = true;
+    ieee80211_new_state(&sc.sc_ic, IEEE80211_S_RUN, -1);
+    check(!sc.sc_ic.ic_sta_action.cancelled, "staying in RUN keeps the station Action");
+    ieee80211_new_state(&sc.sc_ic, IEEE80211_S_SCAN, -1);
+    check(sc.sc_ic.ic_sta_action.cancelled, "leaving RUN invalidates the station Action before the worker runs");
+    drain();
     fixture(&sc, &bss); response.flags = 0; sample(&sc); ticks(&sc, 5);
     fail_alloc = true; drain();
     check(sc.sc_link_recoveries == 0 && sc.sc_ic.ic_state == IEEE80211_S_RUN,
