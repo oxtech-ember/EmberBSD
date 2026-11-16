@@ -31,6 +31,29 @@ tested way to run the 6.18 core is the loadable module sys/modules/drmkms618
 configuration GENERIC_ARL_DRM618 (the ARL configuration without the 5.6
 drivers).  A kernel with the attribute selected and the core built in has not
 been built or tested.
+
+Checking with LOCKDEBUG and DIAGNOSTIC: configuration GENERIC_ARL_DRM618_DEBUG
+(GENERIC_ARL_DRM618 with options LOCKDEBUG and DIAGNOSTIC).  Build the modules
+for it (EMBER_KERNEL_CONFIG=GENERIC_ARL_DRM618_DEBUG, its own object tree: a
+module of an ordinary kernel is not loaded by it) and run the groups of the
+test modules, vgem618 and virtiogpu618 with the clients, and efidrm618, as for
+the ordinary kernel.  Linux never destroys a spin lock, a wait queue, a
+completion or most mutexes; the layer does not forget a lock either, so a lock
+that is set up in an object which is then freed or set up again has to be
+destroyed, or the kernel stops (kmem_intr_free: allocation contains active
+lock; _mutex_init: already initialised).  The imported files get the destroy
+calls as local patches (patches.tsv), the code of the layer and the tests get
+them in place.  A new test, driver or patch has to pass on this configuration.
+
+Work queues.  A queue of the layer has one thread whatever the limit
+max_active of alloc_workqueue says (Linux 6.18 TTM asks for 16): its items run
+one after another, and the layer says so in the log at each such call.  An
+item that waits without a timeout (ttm_bo_delayed_delete waits for the fences
+of a buffer object) holds up every other item of the queue: one object with a
+fence that never signals delays the deferred delete of all the others of the
+device, and the drain of the queue in ttm_device_fini waits for it.  A pool of
+threads is not done.
+
 Selecting both cores fails the build on purpose: drm618_exclusive.c is built
 for "drmkms618 & drmkms" and contains an #error.  At run time a module of one
 core cannot load into a kernel with the other: the module loader refuses
@@ -273,8 +296,9 @@ written here (drm618/include).  726 files are imported byte for byte
 prepare-import618.sh (BSD-2-Clause, no room for a comment line: the scripts read
 them as plain TSV).
 
-Local patches.  38 imported files carry a local patch: 5 of the DRM core and 33
-of i915.  Each is a unified diff of the Linux file in
+Local patches.  55 imported files carry a local patch: 22 of the DRM core, the
+scheduler, TTM and virtio-gpu, and 33 of i915 (19 of the 22 destroy locks that
+Linux leaves set up, see the section on LOCKDEBUG above).  Each is a unified diff of the Linux file in
 drm618/patches/<path>.patch, with its row in patches.tsv (sha256 before and
 after, the reason).  prepare-import618.sh applies them after the copy and stops
 with status 3 if one does not apply or does not give the recorded sha256;
@@ -291,7 +315,7 @@ differ in that emulation.  Command for a full import and its expected result:
     (empty: nothing changed, the patches are applied again)
 The patches count against the limit that was set for this way of keeping the
 tree: more than 60 files would make a tree with local changes (as dist for the
-5.6 core) cheaper to keep.
+5.6 core) cheaper to keep; 55 are used.
 
 Working set.  files.i915drm618 lists the 271 sources for Arrow Lake 8086:7d67
 that the chosen options leave in (everything but gvt, self tests, pxp, the
