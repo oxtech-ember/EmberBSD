@@ -397,6 +397,20 @@ wsevent_intr(void *cookie)
  * all, returns ENOSPC and the queue is left intact; otherwise returns 0
  * and wakes up all listeners.
  */
+/* wsevent-room begin: no kernel dependencies, tested on the host. */
+/*
+ * Free slots of the circular queue.  put == get means "empty", so one slot
+ * always stays unused.  A queue filled to WSEVENT_QSIZE would look empty:
+ * the reader would lose all queued events (a button or key release among
+ * them) while the driver believes that they were delivered.
+ */
+static inline size_t
+wsevent_room(unsigned get, unsigned put)
+{
+	return (get + WSEVENT_QSIZE - put - 1) % WSEVENT_QSIZE;
+}
+/* wsevent-room end */
+
 int
 wsevent_inject(struct wseventvar *ev, struct wscons_event *events,
     size_t nevents)
@@ -405,11 +419,8 @@ wsevent_inject(struct wseventvar *ev, struct wscons_event *events,
 	struct timespec t;
 
 	/* Calculate number of free slots in the queue. */
-	if (ev->put < ev->get)
-		avail = ev->get - ev->put;
-	else
-		avail = WSEVENT_QSIZE - (ev->put - ev->get);
-	KASSERT(avail <= WSEVENT_QSIZE);
+	avail = wsevent_room(ev->get, ev->put);
+	KASSERT(avail < WSEVENT_QSIZE);
 
 	/* Fail if there is all events will not fit in the queue. */
 	if (avail < nevents)
