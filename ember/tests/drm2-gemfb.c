@@ -120,6 +120,7 @@ drm2_gemfb_run(void)
 
 	idr_remove(&file.object_idr, 1);
 	idr_destroy(&file.object_idr);
+	spin_lock_destroy(&file.table_lock);
 	kmem_free(dev, sizeof(*dev));
 	if (t_fail != 0)
 		printf("drm2-gemfb: %d of %d checks FAILED\n", t_fail, t_run);

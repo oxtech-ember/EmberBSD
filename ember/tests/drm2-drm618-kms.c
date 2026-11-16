@@ -137,6 +137,7 @@ drm2_drm618_kms_run(void)
 	CHECK(drm_writeback_get_out_fence(NULL) == NULL);
 	drm_writeback_cleanup_job(NULL);
 
+	spin_lock_destroy(&lock);
 	if (t_fail != 0)
 		printf("drm2-drm618-kms: %d of %d checks FAILED\n", t_fail, t_run);
 	else

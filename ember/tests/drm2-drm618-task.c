@@ -131,6 +131,7 @@ t_release_sync(void)
 	CHECK(t_hold_released);
 	kthread_join(l);
 	CHECK(kref_read(&fence.refcount) == 1);
+	spin_lock_destroy(&t_hold_lock);
 }
 
 int	drm2_drm618_task_run(void);
@@ -235,6 +236,7 @@ drm2_drm618_task_run(void)
 
 	t_release_sync();
 
+	spin_lock_destroy(&lock);
 	if (t_fail != 0)
 		printf("drm2-drm618-task: %d of %d checks FAILED\n", t_fail, t_run);
 	else
