@@ -46,6 +46,7 @@ struct xarray {
 	struct cpu_info		*xa_owner;	/* the cpu that holds xa_lock (a spin mutex), or NULL */
 	struct rb_tree		xa_tree;
 	gfp_t			xa_gfp;
+	bool			xa_isalloc;	/* XA_FLAGS_ALLOC */
 };
 
 #define	xa_for_each(XA, INDEX, ENTRY)					      \
@@ -75,7 +76,12 @@ xa_is_err(const void *entry)
 	return xa_err(__UNCONST(entry)) != 0;
 }
 
-#define	XA_FLAGS_ALLOC	0
+/*
+ * An allocating array (xa_alloc): storing NULL there keeps the index taken,
+ * as in Linux; in another array it erases the entry.  A flag of xa_init_flags,
+ * apart from the bits of gfp_t.
+ */
+#define	XA_FLAGS_ALLOC	__BIT(30)
 
 /*
  * Locking of the tree by the caller.  The readers (xa_load, xa_find,
@@ -130,13 +136,8 @@ void *	xa_find_after(struct xarray *, unsigned long *, unsigned long,
 
 extern const struct xa_limit xa_limit_32b;
 
-/* True if nothing is stored. */
-static inline bool
-xa_empty(struct xarray *xa)
-{
-	unsigned long index = 0;
-
-	return xa_find(xa, &index, ULONG_MAX, -1) == NULL;
-}
+/* True if nothing is stored: an index that is reserved (NULL stored in an allocating array) is not nothing. */
+#define	xa_empty	linux_xa_empty
+bool	xa_empty(struct xarray *);
 
 #endif	/* _LINUX_XARRAY_H_ */

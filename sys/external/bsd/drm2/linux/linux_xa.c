@@ -89,7 +89,8 @@ xa_init_flags(struct xarray *xa, gfp_t gfp)
 	mutex_init(&xa->xa_lock, MUTEX_DEFAULT, IPL_VM);
 	xa->xa_owner = NULL;
 	rb_tree_init(&xa->xa_tree, &xa_rb_ops);
-	xa->xa_gfp = gfp;
+	xa->xa_gfp = gfp & ~XA_FLAGS_ALLOC;
+	xa->xa_isalloc = (gfp & XA_FLAGS_ALLOC) != 0;
 }
 
 void
@@ -132,7 +133,16 @@ xa_store(struct xarray *xa, unsigned long key, void *datum, gfp_t gfp)
 	struct node *n, *collision, *recollision;
 	void *old = NULL;
 
-	KASSERT(datum != NULL);
+	/*
+	 * As in Linux, storing NULL erases the entry and returns the old one;
+	 * in an allocating array the entry stays (as NULL) and the index
+	 * stays taken until xa_erase (drm_minor_unregister relies on it: the
+	 * index of a device that is gone but still referenced must not go to
+	 * the next device).
+	 */
+	if (datum == NULL && !xa->xa_isalloc)
+		return xa_erase(xa, key);
+
 	KASSERT(((uintptr_t)datum & 0x3) == 0);
 
 	n = kmem_zalloc(sizeof(*n), gfp & __GFP_WAIT ? KM_SLEEP : KM_NOSLEEP);
@@ -159,15 +169,37 @@ xa_store(struct xarray *xa, unsigned long key, void *datum, gfp_t gfp)
 	return old;
 }
 
+bool
+xa_empty(struct xarray *xa)
+{
+	bool empty;
+
+	if (xa->xa_owner == curcpu()) {	/* the caller holds xa_lock */
+		empty = RB_TREE_MIN(&xa->xa_tree) == NULL;
+	} else {
+		mutex_enter(&xa->xa_lock);
+		empty = RB_TREE_MIN(&xa->xa_tree) == NULL;
+		mutex_exit(&xa->xa_lock);
+	}
+	return empty;
+}
+
 int
 xa_alloc(struct xarray *xa, uint32_t *idp, void *datum, struct xa_limit limit,
     gfp_t gfp)
 {
+	/* as in Linux, an array that was not set up for allocation has no free indexes to hand out */
+	if (!xa->xa_isalloc) {
+		printf("xa_alloc: the array was not initialised with XA_FLAGS_ALLOC\n");
+		return -EINVAL;
+	}
+
 	uint64_t key64 = limit.min;
 	struct node *n, *n1, *collision __diagused;
 	int error;
 
-	KASSERTMSG(limit.min < limit.max, "min=%"PRIu32" max=%"PRIu32,
+	/* the limit is inclusive in Linux: XA_LIMIT(n, n) allows the one id n */
+	KASSERTMSG(limit.min <= limit.max, "min=%"PRIu32" max=%"PRIu32,
 	    limit.min, limit.max);
 
 	n = kmem_zalloc(sizeof(*n), gfp & __GFP_WAIT ? KM_SLEEP : KM_NOSLEEP);
@@ -208,11 +240,16 @@ xa_find(struct xarray *xa, unsigned long *startp, unsigned long max,
 
 	KASSERT(tagmask == -1);	/* not yet supported */
 
+	/* an entry that holds NULL (a reserved index) is not found */
 	if (xa->xa_owner == curcpu()) {	/* the caller holds xa_lock */
 		n = rb_tree_find_node_geq(&xa->xa_tree, &key64);
+		while (n != NULL && n->n_datum == NULL)
+			n = rb_tree_iterate(&xa->xa_tree, n, RB_DIR_RIGHT);
 	} else {
 		mutex_enter(&xa->xa_lock);
 		n = rb_tree_find_node_geq(&xa->xa_tree, &key64);
+		while (n != NULL && n->n_datum == NULL)
+			n = rb_tree_iterate(&xa->xa_tree, n, RB_DIR_RIGHT);
 		mutex_exit(&xa->xa_lock);
 	}
 

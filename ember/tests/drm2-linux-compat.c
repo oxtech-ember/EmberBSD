@@ -726,6 +726,74 @@ test_kernel_xarray(void)
 	CHECK(xa_erase(&xa, 5) == &item);
 	CHECK(xa_load(&xa, 5) == NULL);
 
+	/* xa_store of NULL erases, as in Linux (drm_dev_unregister relies on it): the old entry comes back */
+	(void)xa_store(&xa, 6, &item, GFP_KERNEL);
+	CHECK(xa_store(&xa, 6, NULL, GFP_KERNEL) == &item);
+	CHECK(xa_load(&xa, 6) == NULL);
+	CHECK(xa_empty(&xa));
+	CHECK(xa_store(&xa, 7, NULL, GFP_KERNEL) == NULL);	/* nothing there: still nothing */
+	CHECK(xa_empty(&xa));
+
+	/* the limit of xa_alloc is inclusive: XA_LIMIT(n, n) allows exactly the id n */
+	{
+		struct xarray ay;
+		uint32_t id = 0;
+
+		xa_init_flags(&ay, XA_FLAGS_ALLOC);
+		CHECK(xa_alloc(&ay, &id, &item, XA_LIMIT(9, 9), GFP_KERNEL) == 0 && id == 9);
+		CHECK(xa_alloc(&ay, &id, &item, XA_LIMIT(9, 9), GFP_KERNEL) == -EBUSY);
+		CHECK(xa_erase(&ay, 9) == &item);
+		xa_destroy(&ay);
+		/* an array that was not set up for allocation is refused, not served by chance */
+		CHECK(xa_alloc(&xa, &id, &item, XA_LIMIT(1, 8), GFP_KERNEL) == -EINVAL);
+		CHECK(xa_empty(&xa));
+	}
+
+	/* a reserved index is not nothing: xa_empty is false until xa_erase */
+	{
+		struct xarray rx;
+
+		xa_init_flags(&rx, XA_FLAGS_ALLOC);
+		CHECK(xa_empty(&rx));
+		CHECK(xa_store(&rx, 3, NULL, GFP_KERNEL) == NULL);
+		CHECK(xa_load(&rx, 3) == NULL);
+		CHECK(!xa_empty(&rx));
+		CHECK(xa_erase(&rx, 3) == NULL);
+		CHECK(xa_empty(&rx));
+		xa_destroy(&rx);
+	}
+
+	/*
+	 * An allocating array (XA_FLAGS_ALLOC): xa_store of NULL keeps the index
+	 * taken, as in Linux (drm_minor_unregister: the minor of a device that is
+	 * gone but still referenced must not go to the next device, and the free
+	 * of the first must not erase the entry of the second).
+	 */
+	{
+		struct xarray ax;
+		uint32_t a = 0, b = 0, c = 0;
+		unsigned long idx;
+
+		xa_init_flags(&ax, XA_FLAGS_ALLOC);
+		CHECK(xa_alloc(&ax, &a, &item, XA_LIMIT(1, 8), GFP_KERNEL) == 0);	/* device A registers */
+		CHECK(xa_store(&ax, a, NULL, GFP_KERNEL) == &item);			/* A is unregistered */
+		CHECK(xa_load(&ax, a) == NULL);						/* lookups fail */
+		CHECK(xa_alloc(&ax, &b, &item, XA_LIMIT(1, 8), GFP_KERNEL) == 0);	/* device B */
+		CHECK(b != a);								/* not the index of A */
+		CHECK(xa_erase(&ax, a) == NULL);					/* the free of A */
+		CHECK(xa_load(&ax, b) == &item);					/* B is still there */
+		idx = 0;
+		CHECK(xa_find(&ax, &idx, ULONG_MAX, -1) == &item && idx == b);
+		CHECK(xa_alloc(&ax, &c, &item, XA_LIMIT(1, 8), GFP_KERNEL) == 0 && c == a);	/* A's index is free now */
+		/* a reserved entry is not found by xa_find */
+		CHECK(xa_store(&ax, 7, NULL, GFP_KERNEL) == NULL);
+		idx = c;	/* c = 1, b = 2, then the reserved 7 */
+		CHECK(xa_find_after(&ax, &idx, ULONG_MAX, -1) == &item && idx == b);
+		idx = b;
+		CHECK(xa_find_after(&ax, &idx, ULONG_MAX, -1) == NULL);
+		xa_destroy(&ax);
+	}
+
 	xa_destroy(&xa);
 }
 #endif
