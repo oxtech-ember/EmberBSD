@@ -161,6 +161,8 @@ drm_gem_shmem_create(struct drm_device *dev, size_t size)
 		DRM_DEV_ERROR(dev->dev, "gem shmem: the file of %zu bytes: %d\n",
 		    size, ret);
 		mutex_destroy(&shmem->pages_lock);
+		/* drm_gem_object_init leaves the object initialised when it fails, as in Linux */
+		drm_gem_private_object_fini(obj);
 		kfree(obj);
 		return ERR_PTR(ret);
 	}
