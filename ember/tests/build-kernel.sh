@@ -31,7 +31,7 @@ cleanup() {
     exit "$status"
 }
 trap cleanup EXIT
-trap 'exit 1' HUP INT TERM
+trap 'trap - EXIT; rm -rf "$work"; exit 1' HUP INT TERM
 export TEST_ROOT="$work" TEST_LOG="$work/commands"
 mkdir -p "$work/src/ember/tools" "$work/bin" "$work/src/tools" \
     "$work/src/ember/tests" \
@@ -205,6 +205,11 @@ case " $* " in *" -V EMBER_ZLIB_SOURCE=$TEST_ROOT/zlib "*) ;; *)
     echo 'missing explicit prepared zlib source' >&2; exit 87;; esac
 for argument do case $argument in BUILDINFO=*) BUILDINFO=${argument#BUILDINFO=};; esac; done
 [ "${FAIL_AT:-}" != tools ]
+if [ "${FAIL_AT:-}" = interrupt ]; then
+    trap 'exit 1' INT
+    : > "$TEST_ROOT/interrupt-ready"
+    "$TEST_PYTHON" -c "import time; time.sleep(60)"
+fi
 config=
 for argument do case $argument in kernel=*) config=${argument#kernel=};; esac; done
 [ -n "$config" ]
@@ -563,6 +568,32 @@ fi
 grep -q 'compiler binding differs from selected commands' "$work/run.log"
 test ! -e "$TEST_OUT/netbsd-EMBER64"
 test ! -e "$TEST_OUT/.build-lock"
+# Ctrl-C reaches the whole build. The SDK runner then exits with an error
+# status, and the interrupted wrapper must still release its output.
+export TEST_OUT="$work/interrupt"
+FAIL_AT=interrupt "$TEST_PYTHON" -c 'import os, signal, sys
+signal.signal(signal.SIGINT, signal.SIG_DFL)
+os.setsid()
+os.execv(sys.argv[1], sys.argv[1:])' \
+    "$TEST_SHELL" "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1 &
+interrupted=$!
+tries=0
+while [ ! -e "$TEST_ROOT/interrupt-ready" ]; do
+    tries=$((tries + 1))
+    if [ "$tries" -gt 300 ] || ! kill -0 "$interrupted" 2>/dev/null; then
+        kill -KILL -"$interrupted" 2>/dev/null || :
+        echo 'interrupt fixture did not start' >&2; exit 1
+    fi
+    sleep 0.1
+done
+kill -INT -"$interrupted"
+if wait "$interrupted"; then
+    echo 'accepted an interrupted build' >&2; exit 1
+fi
+if [ -e "$TEST_OUT/.build-lock" ]; then
+    echo 'interrupted build left .build-lock' >&2; exit 1
+fi
+test ! -e "$TEST_OUT/netbsd-EMBER64"
 # The A133 WLAN profile adds its DTB; PCI keeps its selected kernel identity.
 export TEST_OUT="$work/wlan"
 "$TEST_SHELL" "$work/src/ember/build-kernel.sh" "$TEST_OUT" EMBER64_A133_WLAN > "$work/run.log" 2>&1

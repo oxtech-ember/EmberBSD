@@ -46,7 +46,8 @@ cleanup() {
     rmdir "$out/.build-lock"
 }
 trap cleanup EXIT
-trap 'exit 1' HUP INT TERM
+# mksh can skip the EXIT trap after a signal trap. Clean up here.
+trap 'cleanup; trap - EXIT; exit 1' HUP INT TERM
 # Never expose an earlier candidate or a partially copied result after failure.
 clear_outputs
 llvm_source=${EMBER_LLVM_SOURCE:-}

@@ -8,7 +8,7 @@ tools=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 src=${RTLBTFW_SOURCE_ROOT:-$(CDPATH= cd -- "$tools/../.." && pwd)}
 work=$(mktemp -d "${TMPDIR:-/tmp}/rtlbtfw-contract.XXXXXXXX")
 trap 'rm -rf "$work"' EXIT
-trap 'exit 1' HUP INT TERM
+trap 'rm -rf "$work"; trap - EXIT; exit 1' HUP INT TERM
 ${HOST_CC:-cc} ${HOST_CFLAGS:--O1 -g -std=c11 -Wall -Wextra -Werror} \
     ${RTLBTFW_TEST_CFLAGS:-} -I"$src/usr.sbin/rtlbtfw" \
     "$src/usr.sbin/rtlbtfw/rtlbt_fw.c" "$tools/rtlbtfw-contract.c" \
