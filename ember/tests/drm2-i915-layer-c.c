@@ -127,6 +127,11 @@ t_softint(void *cookie __unused)
 }
 
 static void
+t_timer_noop(struct timer_list *t __unused)
+{
+}
+
+static void
 t_callout(void *cookie __unused)
 {
 
@@ -281,7 +286,9 @@ drm2_i915_layer_c_run(void)
 	CHECK(t_sih != NULL);
 	CHECK(t_start(t_waiter, "t618c", &l) == 0);
 	start = getticks();
+	kpreempt_disable();		/* softint_schedule needs it (the layer has it through percpu_getref) */
 	softint_schedule(t_sih);
+	kpreempt_enable();
 	kthread_join(l);
 	CHECK(t_done == 1 && t_left > 8 * hz && getticks() - start < (unsigned)hz);
 	softint_disestablish(t_sih);
@@ -563,8 +570,9 @@ drm2_i915_layer_c_run(void)
 		kfree((const void *)NULL);
 		CHECK(resource_size(&r1) == 0x1000 && resource_size(&r2) == 0x100);
 		CHECK(resource_contains(&r1, &r2) && !resource_contains(&r1, &r3) && !resource_contains(&r2, &r1));
-		timer_setup(&tm, NULL, 0);
+		timer_setup(&tm, t_timer_noop, 0);	/* callout_setfunc takes no NULL function */
 		CHECK(!timer_pending(ctm));
+		callout_destroy(&tm.tl_callout);
 	}
 
 	/* MIPI DSI: pixel sizes, packet classes, the packet of a message */
