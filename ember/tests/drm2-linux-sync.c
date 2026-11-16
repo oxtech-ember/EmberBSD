@@ -100,6 +100,9 @@ test_wait_event_basic(void)
 	spin_lock(&wq.lock);
 	wake_up_all_locked(&wq);
 	spin_unlock(&wq.lock);
+
+	/* Linux never destroys a queue; this is what a NetBSD kernel with lock checking needs. */
+	destroy_waitqueue_head(&wq);
 }
 
 struct wk {
@@ -165,6 +168,15 @@ wk_start(struct wk *w)
 	w->ready = 0;
 }
 
+/* Undo wk_start once the waiters are gone: the structure is on the stack of the test. */
+static void
+wk_end(struct wk *w)
+{
+
+	spin_lock_destroy(&w->lock);
+	destroy_waitqueue_head(&w->wq);
+}
+
 static void
 wk_wait_ready(struct wk *w, unsigned n)
 {
@@ -203,6 +215,7 @@ test_wait_event_wake(void)
 	CHECK(w.woken == 3);
 	CHECK(getticks() - t0 < hz);	/* woken, not timed out */
 	CHECK(!waitqueue_active(&w.wq));
+	wk_end(&w);
 
 	/* wait_event_lock_irq: the caller's lock is dropped while asleep. */
 	wk_start(&w);
@@ -216,6 +229,7 @@ test_wait_event_wake(void)
 	spin_unlock(&w.lock);
 	kthread_join(l[0]);
 	CHECK(w.woken == 1);
+	wk_end(&w);
 
 	/* wait_event_interruptible_locked: wq.lock held by caller. */
 	wk_start(&w);
@@ -229,6 +243,7 @@ test_wait_event_wake(void)
 	spin_unlock(&w.wq.lock);
 	kthread_join(l[0]);
 	CHECK(w.woken == 1);
+	wk_end(&w);
 
 	/* A wake-up with the condition still false does not end the wait. */
 	wk_start(&w);
@@ -243,6 +258,7 @@ test_wait_event_wake(void)
 	wake_up(&w.wq);
 	kthread_join(l[0]);
 	CHECK(w.woken == 1);
+	wk_end(&w);
 }
 
 static void
