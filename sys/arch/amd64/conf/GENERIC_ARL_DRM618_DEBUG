@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 EmberBSD contributors.
+#
+# GENERIC_ARL_DRM618 with lock and consistency checking (LOCKDEBUG and
+# DIAGNOSTIC), for the tests of the 6.18 core and of the Linux layer: a lock
+# that is used without being set up, set up twice, or freed with the memory
+# that holds it, and the assertions of the layer, stop the kernel here and not
+# only on a kernel that someone builds with these options.  Not a default
+# configuration; modules built for it are not loaded by another one.
+include "arch/amd64/conf/GENERIC_ARL_DRM618"
+
+options 	DIAGNOSTIC
+options 	LOCKDEBUG
