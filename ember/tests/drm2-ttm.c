@@ -47,6 +47,23 @@ void	drm618_ttm_set_dmat(const struct device *, bus_dma_tag_t);
 unsigned long	drm618_ttm_pool_pages(void);
 struct uvm_object	*ttm_bo_uvm_create(struct ttm_buffer_object *);
 
+#ifndef LOCKFIX_ONLY
+#define	LOCKFIX_ONLY	0
+#endif
+#define	SEL(n)		(LOCKFIX_ONLY == 0 || LOCKFIX_ONLY == (n))
+
+static const char *
+t_gfence_name(struct dma_fence *f __unused)
+{
+
+	return "t618g";
+}
+
+static const struct dma_fence_ops t_gfence_ops = {
+	.get_driver_name = t_gfence_name,
+	.get_timeline_name = t_gfence_name,
+};
+
 static char t_pbuf[256];
 
 static void
@@ -169,6 +186,8 @@ t_bo_destroy(struct ttm_buffer_object *bo)
 	struct t_bo *b = container_of(bo, struct t_bo, base);
 
 	atomic_inc_uint(&t_destroyed);
+	/* what a driver does before it frees a BO (drm_gem_object_release in a driver of a real device) */
+	drm_gem_private_object_fini(&b->base.base);
 	kfree(b);
 }
 
@@ -463,16 +482,23 @@ drm2_ttm_run(void)
 			CHECK(t_bo_write(a, 60 + i) == 0);
 			uo = ttm_bo_uvm_create(&a->base);
 			dma_resv_unlock(a->base.base.resv);
-			CHECK(uvm_map(kernel_map, &va, len, uo, 0, 0,
+			error = uvm_map(kernel_map, &va, len, uo, 0, 0,
 			    UVM_MAPFLAG(UVM_PROT_RW, UVM_PROT_RW, UVM_INH_NONE,
-			    UVM_ADV_RANDOM, 0)) == 0);
-			if (va != 0) {
+			    UVM_ADV_RANDOM, 0));
+			CHECK(error == 0);
+			if (error == 0) {
 				CHECK(t_check((void *)va, len, 60 + i));	/* the faults read the pages */
 				((uint32_t *)va)[PAGE_SIZE / 4 + 1] = 0x600d0000 + i;	/* and a write goes to them */
 				uvm_unmap(kernel_map, va, va + len);
+			} else {
+				/* a failed uvm_map leaves the reference to the caller (as in uvm_mmap) */
+				uo->pgops->pgo_detach(uo);
 			}
-			/* the mapping dropped its reference; the object holds the BO until its own is gone */
-			uo->pgops->pgo_detach(uo);
+			/*
+			 * uvm_map takes over the one reference of the object when it
+			 * succeeds and the unmap dropped it: the object is gone and so
+			 * is its hold on the BO.  A detach here would drop it once more.
+			 */
 			dma_resv_lock(a->base.base.resv, NULL);
 			CHECK(t_bo_verify(a, 60 + i, &ok) == 0 && !ok);	/* the write changed one word */
 			{
@@ -497,14 +523,17 @@ drm2_ttm_run(void)
 			CHECK(t_validate(a, &t_vram_place) == 0);
 			uo = ttm_bo_uvm_create(&a->base);
 			dma_resv_unlock(a->base.base.resv);
-			CHECK(uvm_map(kernel_map, &va, 4 << PAGE_SHIFT, uo, 0, 0,
+			error = uvm_map(kernel_map, &va, 4 << PAGE_SHIFT, uo, 0, 0,
 			    UVM_MAPFLAG(UVM_PROT_RW, UVM_PROT_RW, UVM_INH_NONE,
-			    UVM_ADV_RANDOM, 0)) == 0);
-			if (va != 0) {
+			    UVM_ADV_RANDOM, 0));
+			CHECK(error == 0);
+			if (error == 0) {
 				CHECK(t_check((void *)va, 4 << PAGE_SHIFT, 70));
 				uvm_unmap(kernel_map, va, va + (4 << PAGE_SHIFT));
+			} else {
+				uo->pgops->pgo_detach(uo);
 			}
-			uo->pgops->pgo_detach(uo);
+			/* the object and its hold on the BO went with the unmap (see above) */
 			dma_resv_lock(a->base.base.resv, NULL);
 			t_bo_free(a);
 		}
@@ -548,6 +577,62 @@ drm2_ttm_run(void)
 		CHECK((int)after >= (int)before - 8);	/* a leak would be 128 pages a round */
 		if ((int)after < (int)before - 8)
 			printf("drm2-ttm: leak check: free pages before %u after %u\n", before, after);
+	}
+
+	/* ---- 6c. cleanup of a manager twice, with its lock used in between (i915 does it) ---- */
+	if (SEL(3)) {
+		struct ttm_resource_manager m;
+
+		ttm_resource_manager_init(&m, &t_bdev, 1);
+		ttm_resource_manager_cleanup(&m);
+		spin_lock(&m.move_lock);	/* ttm_resource_manager_evict_all takes it after the first cleanup */
+		spin_unlock(&m.move_lock);
+		ttm_resource_manager_cleanup(&m);
+		spin_lock_destroy(&m.move_lock);	/* where the manager is freed */
+	}
+
+	/* ---- 6d. a pipelined move: the ghost object that holds the old placement ---- */
+	if (SEL(4)) {
+		static spinlock_t gl;
+		struct dma_fence *f;
+		struct ttm_resource *res = NULL;
+		unsigned before = t_destroyed;
+		int i;
+
+		a = t_bo_create(4, &t_sys_place, ttm_cached);
+		CHECK(a != NULL);
+		if (a != NULL) {
+			CHECK(t_bo_write(a, 80) == 0);
+			CHECK(t_validate(a, &t_vram_place) == 0);	/* in the VRAM, which has no tt */
+			spin_lock_init(&gl);
+			f = kzalloc(sizeof(*f), GFP_KERNEL);
+			dma_fence_init(f, &t_gfence_ops, &gl, dma_fence_context_alloc(1), 1);
+			CHECK(ttm_resource_alloc(&a->base, &t_tt_place, &res, NULL) == 0);
+			if (res != NULL) {
+				CHECK(ttm_bo_move_accel_cleanup(&a->base, f, false, false, res) == 0);
+				dma_fence_signal(f);
+				t_bo_free(a);
+				/*
+				 * The ghost and the buffer go through the delayed delete of
+				 * the device: wait for the buffer to be destroyed (at most
+				 * 20 s, then FAIL), then for the queue to be idle, and only
+				 * then give up the fence and its lock.
+				 */
+				for (i = 0; i < 200 && t_destroyed != before + 1; i++)
+					kpause("t618g", false, hz / 10, NULL);
+				CHECK(t_destroyed == before + 1);
+				if (t_destroyed == before + 1) {
+					drain_workqueue(t_bdev.wq);
+					dma_fence_put(f);
+					spin_lock_destroy(&gl);
+				}	/* else the fence and its lock stay: the delayed delete may still use them */
+			} else {
+				dma_fence_signal(f);
+				t_bo_free(a);
+				dma_fence_put(f);
+				spin_lock_destroy(&gl);
+			}
+		}
 	}
 
 	ttm_range_man_fini(&t_bdev, TTM_PL_TT);
