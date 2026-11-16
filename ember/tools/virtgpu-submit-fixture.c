@@ -163,6 +163,8 @@ struct dma_resv_write_ticket { int unused; };
 #define dma_resv_write_begin(r,t) ((void)(r), (void)(t))
 #define dma_resv_write_commit(r,t) ((void)(r), (void)(t))
 #define atomic_store_relaxed(p,v) (*(p)=(v))
+#define atomic_store_release(p,v) __atomic_store_n((p),(v),__ATOMIC_RELEASE)
+#define atomic_load_acquire(p) __atomic_load_n((p),__ATOMIC_ACQUIRE)
 #define atomic64_inc_return(p) (++*(p))
 struct drm_gem_object { size_t size; unsigned refs; struct reservation *resv; };
 
@@ -322,7 +324,7 @@ static void drm_gem_object_put_unlocked(struct drm_gem_object *o) {
 #endif
 }
 
-static unsigned int ww_calls, ww_slow_calls, ww_deadlock_at;
+static unsigned int ww_calls, ww_deadlock_at;
 static int ww_slow_error;
 static int dma_resv_lock_interruptible(struct reservation *r,struct ww_acquire_ctx *ctx) {
 	ww_calls++;
@@ -339,7 +341,7 @@ static void dma_resv_unlock(struct reservation *r) {
 	r->owner=NULL;
 }
 static int dma_resv_lock_slow_interruptible(struct reservation *r,struct ww_acquire_ctx *ctx) {
-	ww_slow_calls++; assert(!ctx->wwx_acquired);
+	assert(!ctx->wwx_acquired);
 	return ww_slow_error ? ww_slow_error : dma_resv_lock_interruptible(r,ctx);
 }
 static void virtio_gpu_array_put_free_work(struct work_struct *);

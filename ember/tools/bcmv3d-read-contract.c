@@ -15,6 +15,11 @@
 #define GFP_KERNEL 0
 #define container_of(p,t,m) ((t *)((char *)(p)-offsetof(t,m)))
 #define atomic_store_relaxed(p,v) (*(p)=(v))
+#define atomic_store_release(p,v) __atomic_store_n((p),(v),__ATOMIC_RELEASE)
+#define atomic_load_acquire(p) __atomic_load_n((p),__ATOMIC_ACQUIRE)
+#define atomic_inc_uint(p) ((void)__atomic_add_fetch((p),1,__ATOMIC_RELAXED))
+/* The extracted linux_dma_resv.c bodies increment this counter. */
+static volatile unsigned dma_resv_nalloc;
 static unsigned checks;
 #define CHECK(x) do { if (!(x)) { fprintf(stderr,"CHECK %d: %s\n",__LINE__,#x); exit(1); } checks++; } while(0)
 #define KASSERT CHECK
