@@ -245,15 +245,7 @@ for module in if_cemac_acpi bcm2712btcom bcmexpgpio rp1wmcodec rpi5button; do
     module_obj=$(run_make -V .OBJDIR)
     cp "$module_obj/$module.kmod" "$stage/"
 done
-contracts=all
-if [ "$(uname -s)" != NetBSD ]; then
-    contracts=portable
-fi
-# The common SDK runner binds native compiler and ABI arguments even for
-# existing contracts that accept only an executable CC and ignore CFLAGS.
-run_native_check sh "$out/contracts.log" "$src/ember/tools/kernel-contracts.sh" \
-    "$src" "$contracts" "${PVR_QUERY_FIRMWARE:-}"
 cp "$stage/"* "$out/"
 success=yes
 echo "kernel and five modules built ($mode): $out"
-cat "$out/contracts.log"
+echo "check the kernel sources: ember/check-kernel.sh $out [BASE_COMMIT]"

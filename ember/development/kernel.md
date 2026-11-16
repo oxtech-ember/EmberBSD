@@ -79,12 +79,18 @@ Account for kernel/userland interfaces and each dependent consumer when an ABI c
 5. Review the entire diff and the evidence limits before integration.
 
 The portable kernel suite has one owner: `ember/tools/kernel-contracts.sh`.
+`ember/check-kernel.sh OUTPUT [BASE_COMMIT]` runs it; `ember/build-kernel.sh` does not.
+With `BASE_COMMIT`, it runs only the contracts that the changes can affect.
+`ember/tools/kernel-contracts-inputs.txt` records the source inputs of each contract.
+A contract without an entry runs on each change.
+When a contract reads other files, run `ember/tools/kernel-contracts-trace.py` again.
+Run all contracts before a release.
 Native-only contracts remain separate when the host cannot execute them.
 The source-encoding regression is `python3 ember/tests/contract-source-encoding.py`;
 it exercises the owning PRIME and DMA-BUF runners with UTF-8 source comments
 under an ASCII locale.
 The build orchestration regression is `sh ember/tests/build-kernel.sh`.
-Its controlled fixtures test routing, version refresh and failure cleanup.
+Its controlled fixtures test routing, version refresh, failure cleanup and contract selection.
 The stale-`BUILDINFO` case keeps unrelated objects and another configuration.
 These fixtures do not build a kernel or validate its embedded version string.
 Follow the selected subsystem's commands rather than rerunning unrelated full builds.

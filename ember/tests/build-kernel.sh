@@ -56,7 +56,9 @@ for input in zlib.h zconf.h zutil.h inflate.c inftrees.c emberbsd-prepared-sourc
 done
 export EMBER_ZLIB_SOURCE="$work/zlib"
 cp "$repo/ember/build-kernel.sh" "$work/src/ember/"
-cp "$repo/ember/tools/kernel-contracts.sh" "$work/src/ember/tools/"
+cp "$repo/ember/check-kernel.sh" "$work/src/ember/"
+cp "$repo/ember/tools/kernel-contracts.sh" "$repo/ember/tools/kernel-contracts-select.py" \
+    "$repo/ember/tools/kernel-contracts-inputs.txt" "$work/src/ember/tools/"
 cp "$repo/sys/arch/evbarm/conf/EMBER64" "$work/src/sys/arch/evbarm/conf/"
 cp "$repo/sys/arch/evbarm/conf/EMBER64_A133_AUDIO" "$work/src/sys/arch/evbarm/conf/"
 cp "$repo/sys/arch/evbarm/conf/EMBER64_A133_SDIO" "$work/src/sys/arch/evbarm/conf/"
@@ -425,8 +427,6 @@ else:
 with open(values["--log"], "x") as log:
     result = subprocess.run(invocation, env=env, cwd=values["--cwd"],
                             stdout=log, stderr=subprocess.STDOUT, check=False)
-if result.returncode == 0 and role == "python" and os.environ.get("TEST_BINDING_TAMPER") == "yes":
-    selection_path.write_text("tampered during current build")
 raise SystemExit(result.returncode)
 PY
 cat > "$work/sdk/scripts/run-native-os.py" <<'PY'
@@ -525,12 +525,23 @@ export PATH="$work/bin:$PATH" NETBSD2_PYTHON="$work/bin/python3" TEST_CPU_CAPACI
 export RUBY="$work/bin/ruby"
 # Deliberately invalid target commands must not be used by host contracts.
 export CC=/target/compiler CXX=/target/compiler-cxx CFLAGS=-Dwrong_target CXXFLAGS=-Dwrong_target LDFLAGS=-Lwrong-target
-check_contract_counts() {
+count_contracts() {
     test "$(grep -c '^contract ' "$TEST_LOG")" -eq "$1"
     test "$(grep -c '^a733-contract ' "$TEST_LOG")" -eq 25
     test "$(grep -c '^gpu-contract ' "$TEST_LOG")" -eq 41
     test "$(grep -c '^ruby-contract ' "$TEST_LOG")" -eq 15
     test "$(grep -c '^network-contract ' "$TEST_LOG")" -eq 9
+}
+# The build runs only its DTB boot-mode contract. check-kernel.sh then runs
+# the source contracts: $1 Python contracts on host ${2:-Darwin}.
+check_contract_counts() {
+    test "$(grep -c '^contract ' "$TEST_LOG")" -eq 1
+    grep -q '^contract .*/a733-boot-modes-contract.py ' "$TEST_LOG"
+    ! grep -Eq '^(a733|gpu|ruby|network)-contract ' "$TEST_LOG"
+    : > "$TEST_LOG"
+    TEST_HOST=${2:-Darwin} sh "$work/src/ember/check-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1
+    grep -q '^native-check clang sh ' "$TEST_LOG"
+    count_contracts "$1"
 }
 export TEST_OUT="$work/cross"
 sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1
@@ -554,7 +565,7 @@ grep -q 'EMBER_KERNEL_OBJDIR=.*/obj/kernels/EMBER64' "$TEST_LOG"
 grep -q 'cpp .*/tools/bin/target-cpp ' "$TEST_LOG"
 grep -q 'dtc .*/tools/bin/nbdtc ' "$TEST_LOG"
 ! grep -q native-make "$TEST_LOG"
-check_contract_counts 17
+check_contract_counts 16
 # A previous invocation's generated bindings may select older flag arguments.
 # Only this caller-owned routing directory is refreshed; objects stay reusable.
 printf 'previous compiler flags\n' > "$TEST_OUT/native-check-commands/selection.json"
@@ -565,13 +576,6 @@ printf 'same-buildinfo-object\n' > "$TEST_OUT/obj/kernels/EMBER64/vers.o"
 sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1
 test "$(cat "$TEST_OUT/obj/kernels/EMBER64/vers.c")" = same-buildinfo-source
 test "$(cat "$TEST_OUT/obj/kernels/EMBER64/vers.o")" = same-buildinfo-object
-# Once refreshed, bindings remain subject to SDK validation within this build.
-if TEST_BINDING_TAMPER=yes sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1; then
-    echo 'accepted compiler bindings changed between checks' >&2; exit 1
-fi
-grep -q 'compiler binding differs from selected commands' "$work/run.log"
-test ! -e "$TEST_OUT/netbsd-EMBER64"
-test ! -e "$TEST_OUT/.build-lock"
 # Ctrl-C reaches the whole build. The SDK runner then exits with an error
 # status, and the interrupted wrapper must still release its output.
 export TEST_OUT="$work/interrupt"
@@ -644,7 +648,7 @@ test "$(cat "$TEST_OUT/obj/kernels/EMBER64/vers.o")" = new-source-id
 test "$(cat "$TEST_OUT/obj/kernels/EMBER64/keep.o")" = keep-object
 test "$(cat "$TEST_OUT/obj/kernels/OTHER/vers.c")" = other-source-id
 test "$(cat "$TEST_OUT/obj/kernels/OTHER/vers.o")" = other-object-id
-check_contract_counts 17
+check_contract_counts 16
 # A firmware-dependent contract is pending by default, never silently passed.
 ! grep -q '^pvr-query-contract ' "$TEST_LOG"
 grep -q 'PowerVR metadata query contract pending:' "$TEST_OUT/contracts.log"
@@ -679,7 +683,7 @@ if (unset MKREPRO_TIMESTAMP; exec sh "$work/src/ember/build-kernel.sh" "$work/no
     echo 'accepted a kernel build without a reproducible timestamp' >&2; exit 1
 fi
 grep -q 'set MKREPRO_TIMESTAMP or build from a Git checkout' "$work/run.log"
-check_contract_counts 17
+check_contract_counts 16
 # Preserve the existing single-executable CPP spelling, including spaces.
 : > "$TEST_LOG"
 TEST_CPP_SINGLE=yes sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1
@@ -724,15 +728,7 @@ bcmv3d-vblank-contract.rb bcmv3d-vblank-native-contract.rb bcmv3d-flip-contract.
 bcmv3d-scanout-contract.rb bcmv3d-job-resv-contract.rb serial-console-ready-contract.rb
 bootfb-serial-handoff-contract.rb late-splash-contract.rb'
 root_argument_failures_checked=0
-for failure in $root_argument_failures tools module cpp dtb diagnostic-dtb contract a733-contract \
-    a733-gpu-vm-contract.sh a733-gpu-fwcompute-vm-contract.sh \
-    a733-gpu-fwheap-observe-contract.sh a733-gpu-fwbridge-contract.sh \
-    a733-gpu-fwservice-contract.sh pvr-exec-contract.sh \
-    pvr-render-contract.sh pvr-heap-contract.sh pvr-bo-contract.sh pvr-vm-contract.sh pvr-file-contract.sh pvr-stream-contract.sh pvr-context-contract.sh pvr-hwrt-contract.sh pvr-submit-contract.sh pvr-render-attach-contract.sh \
-    drm-scheduler-contract.sh gpu-contract drm-syncobj-flatten-contract.sh bcm2712-display-contract.sh \
-    bcm2712-display-irq-contract.sh bcm2712-display-hsm-contract.sh bcm2712-display-dvp-contract.sh dmabuf-map dmabuf-lifetime dmabuf-array dmabuf-sync ruby-contract simplefb-contract.rb drm-hotplug-contract.rb \
-    bcm2712-v3d-prime-contract.rb bcm2712-v3d-bo-stats-contract.rb network-contract cemac-stop.sh bwfm-link-check.sh \
-    aicwf-sta.sh aicwf-vht.sh drm2-linux-compat.sh publish; do
+for failure in tools module cpp dtb diagnostic-dtb contract publish; do
     : > "$TEST_LOG"
     for output in $outputs; do
         printf stale > "$TEST_OUT/$output"
@@ -743,6 +739,25 @@ for failure in $root_argument_failures tools module cpp dtb diagnostic-dtb contr
     for output in $outputs; do
         test ! -e "$TEST_OUT/$output"
     done
+done
+echo 'PASS: build failures clear outputs'
+sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1
+for failure in $root_argument_failures contract a733-contract \
+    a733-gpu-vm-contract.sh a733-gpu-fwcompute-vm-contract.sh \
+    a733-gpu-fwheap-observe-contract.sh a733-gpu-fwbridge-contract.sh \
+    a733-gpu-fwservice-contract.sh pvr-exec-contract.sh \
+    pvr-render-contract.sh pvr-heap-contract.sh pvr-bo-contract.sh pvr-vm-contract.sh pvr-file-contract.sh pvr-stream-contract.sh pvr-context-contract.sh pvr-hwrt-contract.sh pvr-submit-contract.sh pvr-render-attach-contract.sh \
+    drm-scheduler-contract.sh gpu-contract drm-syncobj-flatten-contract.sh bcm2712-display-contract.sh \
+    bcm2712-display-irq-contract.sh bcm2712-display-hsm-contract.sh bcm2712-display-dvp-contract.sh dmabuf-map dmabuf-lifetime dmabuf-array dmabuf-sync ruby-contract simplefb-contract.rb drm-hotplug-contract.rb \
+    bcm2712-v3d-prime-contract.rb bcm2712-v3d-bo-stats-contract.rb network-contract cemac-stop.sh bwfm-link-check.sh \
+    aicwf-sta.sh aicwf-vht.sh drm2-linux-compat.sh; do
+    : > "$TEST_LOG"
+    if FAIL_AT=$failure sh "$work/src/ember/check-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1; then
+        echo "accepted contract failure: $failure" >&2; exit 1
+    fi
+    # A contract failure does not remove the kernel build outputs.
+    test -s "$TEST_OUT/netbsd-EMBER64"
+    test ! -e "$TEST_OUT/.build-lock"
     case "$failure" in
     a733-contract|a733-gpu-vm-contract.sh)
         grep -Fq 'injected contract failure: a733-' "$TEST_OUT/contracts.log"
@@ -788,7 +803,7 @@ for failure in $root_argument_failures tools module cpp dtb diagnostic-dtb contr
     done
 done
 test "$root_argument_failures_checked" -eq 16
-echo "PASS: $root_argument_failures_checked explicit-root contract failures stop dispatch and clear outputs"
+echo "PASS: $root_argument_failures_checked explicit-root contract failures stop dispatch"
 : > "$TEST_LOG"
 TEST_HOST=NetBSD EMBER_COMPILER_FAMILY=gcc EMBER_EXTERNAL_TOOLCHAIN=/cross/gcc16 \
     sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1
@@ -796,14 +811,14 @@ grep -q 'EXTERNAL_TOOLCHAIN=/cross/gcc16' "$TEST_LOG"
 grep -q ' -c gcc ' "$TEST_LOG"
 grep -q 'TOOLCHAIN_MISSING=yes' "$TEST_LOG"
 ! grep -q native-make "$TEST_LOG"
-check_contract_counts 21
+check_contract_counts 20 NetBSD
 export TEST_OUT="$work/native"
 : > "$TEST_LOG"
 TEST_HOST=NetBSD EMBER_BUILD_MODE=native sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1
 ! grep -q native-make "$TEST_LOG"
 grep -q build.sh "$TEST_LOG"
 test -s "$TEST_OUT/bcm2712btcom.kmod"
-check_contract_counts 21
+check_contract_counts 20 NetBSD
 if EMBER_BUILD_MODE=native sh "$work/src/ember/build-kernel.sh" "$work/wrong-host" > "$work/run.log" 2>&1; then
     echo 'accepted native tools on Darwin' >&2; exit 1
 fi
@@ -898,13 +913,17 @@ for invalid in sdk prefix family target bfd; do
 done
 export TEST_OUT="$work/host-gcc"
 : > "$TEST_LOG"
-NETBSD2_PYTHON=/outside/bin/python3 PVR_QUERY_FIRMWARE="$work/pinned firmware" EMBER_HOST_COMPILER_FAMILY=gcc \
+NETBSD2_PYTHON=/outside/bin/python3 EMBER_HOST_COMPILER_FAMILY=gcc \
     NETBSD2_JOBS=72 sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1
 grep -q '^build.sh .* -j72 ' "$TEST_LOG"
-grep -q '^native-check gcc sh ' "$TEST_LOG"
+grep -q '^native-check gcc python ' "$TEST_LOG"
 grep -q ' -c clang ' "$TEST_LOG"
+: > "$TEST_LOG"
+NETBSD2_PYTHON=/outside/bin/python3 PVR_QUERY_FIRMWARE="$work/pinned firmware" EMBER_HOST_COMPILER_FAMILY=gcc \
+    sh "$work/src/ember/check-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1
+grep -q '^native-check gcc sh ' "$TEST_LOG"
 grep -q '^pvr-query-contract ' "$TEST_LOG"
-check_contract_counts 17
+count_contracts 16
 for invalid in '' 00 -1 x; do
     if NETBSD2_JOBS=$invalid sh "$work/src/ember/build-kernel.sh" "$work/invalid-jobs" > "$work/run.log" 2>&1; then
         echo "accepted invalid NETBSD2_JOBS: $invalid" >&2; exit 1
@@ -922,5 +941,65 @@ fi
 grep -q 'full source' "$work/run.log"
 test ! -e "$TEST_OUT/netbsd-EMBER64"
 test ! -e "$TEST_OUT/bcm2712btcom.kmod"
-echo 'PASS: cross/native routing, refreshed kernel identity, retained objects, matched module headers, external tools, base/A733/GPU/Ruby/CEMAC/Wi-Fi contract dispatch, failure cleanup'
+# The check target refuses a relative output and an output in use.
+if sh "$work/src/ember/check-kernel.sh" relative > "$work/run.log" 2>&1; then
+    echo 'accepted a relative check output' >&2; exit 1
+fi
+mkdir -p "$work/busy/.build-lock"
+if sh "$work/src/ember/check-kernel.sh" "$work/busy" > "$work/run.log" 2>&1; then
+    echo 'accepted a check output in use' >&2; exit 1
+fi
+test -d "$work/busy/.build-lock"
+# A base commit selects the contracts whose recorded inputs changed.
+mkdir -p "$work/src/sys/arch/x86/x86"
+printf 'source\n' > "$work/src/sys/arch/x86/x86/efi_machdep.c"
+git -C "$work/src" init -q
+git -C "$work/src" add -A
+git -C "$work/src" -c user.name=fixture -c user.email=fixture@example.invalid \
+    -c commit.gpgsign=false commit -q -m fixture
+export TEST_OUT="$work/selected"
+if sh "$work/src/ember/check-kernel.sh" "$TEST_OUT" no-such-commit > "$work/run.log" 2>&1; then
+    echo 'accepted an unknown base commit' >&2; exit 1
+fi
+grep -q 'unknown base commit: no-such-commit' "$work/run.log"
+contract_lines() { grep -Ec '^(contract|a733-contract|gpu-contract|ruby-contract|network-contract|pvr-query-contract) ' "$TEST_LOG" || :; }
+# No contract reads a change outside the recorded inputs.
+printf 'note\n' > "$work/src/NOTES"
+: > "$TEST_LOG"
+sh "$work/src/ember/check-kernel.sh" "$TEST_OUT" HEAD > "$work/run.log" 2>&1
+test "$(contract_lines)" -eq 0
+grep -q '^selected [0-9]* of [0-9]* kernel contracts for 1 changed files$' "$work/run.log"
+# A move out of a recorded directory selects the contracts that read it.
+git -C "$work/src" mv sys/arch/x86/x86/efi_machdep.c sys/moved.c
+: > "$TEST_LOG"
+sh "$work/src/ember/check-kernel.sh" "$TEST_OUT" HEAD > "$work/run.log" 2>&1
+test "$(contract_lines)" -eq 1
+grep -q '^contract .*/ember/tests/efi-runtime-copy-contract.py ' "$TEST_LOG"
+git -C "$work/src" mv sys/moved.c sys/arch/x86/x86/efi_machdep.c
+# A change in a recorded directory selects only the contracts that read it.
+printf 'change\n' >> "$work/src/sys/arch/x86/x86/efi_machdep.c"
+: > "$TEST_LOG"
+sh "$work/src/ember/check-kernel.sh" "$TEST_OUT" HEAD > "$work/run.log" 2>&1
+test "$(contract_lines)" -eq 1
+grep -q '^contract .*/ember/tests/efi-runtime-copy-contract.py ' "$TEST_LOG"
+# A new subdirectory below a recursive input selects its contract.
+display=sys/external/bsd/drm2/dist/drm/amd/display
+mkdir -p "$work/src/$display/new"
+printf 'change\n' > "$work/src/$display/new/format.h"
+: > "$TEST_LOG"
+sh "$work/src/ember/check-kernel.sh" "$TEST_OUT" HEAD > "$work/run.log" 2>&1
+test "$(contract_lines)" -eq 2
+grep -q '^contract .*/ember/tests/amdgpu-display-format-contract.py ' "$TEST_LOG"
+# A change to a stub contract selects that contract.
+printf '# changed\n' >> "$work/src/ember/tools/a733-power-contract.sh"
+: > "$TEST_LOG"
+sh "$work/src/ember/check-kernel.sh" "$TEST_OUT" HEAD > "$work/run.log" 2>&1
+test "$(contract_lines)" -eq 3
+grep -q '^a733-contract a733-power-contract.sh' "$TEST_LOG"
+# A change to the dispatcher selects all contracts.
+printf '# changed\n' >> "$work/src/ember/tools/kernel-contracts.sh"
+: > "$TEST_LOG"
+sh "$work/src/ember/check-kernel.sh" "$TEST_OUT" HEAD > "$work/run.log" 2>&1
+count_contracts 16
+echo 'PASS: cross/native routing, refreshed kernel identity, retained objects, matched module headers, external tools, base/A733/GPU/Ruby/CEMAC/Wi-Fi contract dispatch and selection, failure cleanup'
 echo 'MODEL ONLY: SDK build and check boundaries used controlled fixtures; no production kernel, module, CPP, or DTC build ran.'
