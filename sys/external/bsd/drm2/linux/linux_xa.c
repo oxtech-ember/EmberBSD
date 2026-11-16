@@ -199,8 +199,9 @@ xa_alloc(struct xarray *xa, uint32_t *idp, void *datum, struct xa_limit limit,
 	int error;
 
 	/* the limit is inclusive in Linux: XA_LIMIT(n, n) allows the one id n */
-	KASSERTMSG(limit.min <= limit.max, "min=%"PRIu32" max=%"PRIu32,
-	    limit.min, limit.max);
+	/* an empty range has no id (Linux: -EBUSY) */
+	if (limit.min > limit.max)
+		return -EBUSY;
 
 	n = kmem_zalloc(sizeof(*n), gfp & __GFP_WAIT ? KM_SLEEP : KM_NOSLEEP);
 	if (n == NULL)
@@ -264,11 +265,13 @@ void *
 xa_find_after(struct xarray *xa, unsigned long *startp, unsigned long max,
     unsigned tagmask)
 {
-	unsigned long start = *startp + 1;
+	unsigned long start;
 	void *found;
 
-	if (start == max)
+	/* the range is inclusive: the entry at max is found */
+	if (*startp >= max)
 		return NULL;
+	start = *startp + 1;
 	found = xa_find(xa, &start, max, tagmask);
 	if (found)
 		*startp = start;

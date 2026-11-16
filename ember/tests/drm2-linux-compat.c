@@ -794,6 +794,29 @@ test_kernel_xarray(void)
 		xa_destroy(&ax);
 	}
 
+	/* xa_find_after: the range is inclusive, the entry at max is found */
+	{
+		struct xarray fx;
+		unsigned long idx = 4;
+
+		xa_init_flags(&fx, GFP_KERNEL);
+		(void)xa_store(&fx, 5, &item, GFP_KERNEL);
+		CHECK(xa_find_after(&fx, &idx, 5, -1) == &item && idx == 5);
+		idx = 5;
+		CHECK(xa_find_after(&fx, &idx, 5, -1) == NULL);
+		xa_destroy(&fx);
+	}
+
+	/* xa_alloc: an empty range has no id and is not a fault (Linux: -EBUSY) */
+	{
+		struct xarray ex;
+		uint32_t id = 0;
+
+		xa_init_flags(&ex, XA_FLAGS_ALLOC);
+		CHECK(xa_alloc(&ex, &id, &item, XA_LIMIT(5, 4), GFP_KERNEL) == -EBUSY);
+		xa_destroy(&ex);
+	}
+
 	xa_destroy(&xa);
 }
 #endif
