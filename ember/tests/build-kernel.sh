@@ -554,7 +554,7 @@ grep -q 'EMBER_KERNEL_OBJDIR=.*/obj/kernels/EMBER64' "$TEST_LOG"
 grep -q 'cpp .*/tools/bin/target-cpp ' "$TEST_LOG"
 grep -q 'dtc .*/tools/bin/nbdtc ' "$TEST_LOG"
 ! grep -q native-make "$TEST_LOG"
-check_contract_counts 16
+check_contract_counts 17
 # A previous invocation's generated bindings may select older flag arguments.
 # Only this caller-owned routing directory is refreshed; objects stay reusable.
 printf 'previous compiler flags\n' > "$TEST_OUT/native-check-commands/selection.json"
@@ -644,7 +644,7 @@ test "$(cat "$TEST_OUT/obj/kernels/EMBER64/vers.o")" = new-source-id
 test "$(cat "$TEST_OUT/obj/kernels/EMBER64/keep.o")" = keep-object
 test "$(cat "$TEST_OUT/obj/kernels/OTHER/vers.c")" = other-source-id
 test "$(cat "$TEST_OUT/obj/kernels/OTHER/vers.o")" = other-object-id
-check_contract_counts 16
+check_contract_counts 17
 # A firmware-dependent contract is pending by default, never silently passed.
 ! grep -q '^pvr-query-contract ' "$TEST_LOG"
 grep -q 'PowerVR metadata query contract pending:' "$TEST_OUT/contracts.log"
@@ -679,7 +679,7 @@ if (unset MKREPRO_TIMESTAMP; exec sh "$work/src/ember/build-kernel.sh" "$work/no
     echo 'accepted a kernel build without a reproducible timestamp' >&2; exit 1
 fi
 grep -q 'set MKREPRO_TIMESTAMP or build from a Git checkout' "$work/run.log"
-check_contract_counts 16
+check_contract_counts 17
 # Preserve the existing single-executable CPP spelling, including spaces.
 : > "$TEST_LOG"
 TEST_CPP_SINGLE=yes sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1
@@ -796,14 +796,14 @@ grep -q 'EXTERNAL_TOOLCHAIN=/cross/gcc16' "$TEST_LOG"
 grep -q ' -c gcc ' "$TEST_LOG"
 grep -q 'TOOLCHAIN_MISSING=yes' "$TEST_LOG"
 ! grep -q native-make "$TEST_LOG"
-check_contract_counts 20
+check_contract_counts 21
 export TEST_OUT="$work/native"
 : > "$TEST_LOG"
 TEST_HOST=NetBSD EMBER_BUILD_MODE=native sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1
 ! grep -q native-make "$TEST_LOG"
 grep -q build.sh "$TEST_LOG"
 test -s "$TEST_OUT/bcm2712btcom.kmod"
-check_contract_counts 20
+check_contract_counts 21
 if EMBER_BUILD_MODE=native sh "$work/src/ember/build-kernel.sh" "$work/wrong-host" > "$work/run.log" 2>&1; then
     echo 'accepted native tools on Darwin' >&2; exit 1
 fi
@@ -904,7 +904,7 @@ grep -q '^build.sh .* -j72 ' "$TEST_LOG"
 grep -q '^native-check gcc sh ' "$TEST_LOG"
 grep -q ' -c clang ' "$TEST_LOG"
 grep -q '^pvr-query-contract ' "$TEST_LOG"
-check_contract_counts 16
+check_contract_counts 17
 for invalid in '' 00 -1 x; do
     if NETBSD2_JOBS=$invalid sh "$work/src/ember/build-kernel.sh" "$work/invalid-jobs" > "$work/run.log" 2>&1; then
         echo "accepted invalid NETBSD2_JOBS: $invalid" >&2; exit 1
