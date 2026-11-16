@@ -537,6 +537,7 @@ void drm_syncobj_free(struct kref *kref)
 	list_for_each_entry_safe(ev_fd_cur, ev_fd_tmp, &syncobj->ev_fd_list, node)
 		syncobj_eventfd_entry_free(ev_fd_cur);
 
+	spin_lock_destroy(&syncobj->lock);
 	kfree(syncobj);
 }
 EXPORT_SYMBOL(drm_syncobj_free);
@@ -843,6 +844,7 @@ drm_syncobj_release(struct drm_file *file_private)
 	idr_for_each(&file_private->syncobj_idr,
 		     &drm_syncobj_release_handle, file_private);
 	idr_destroy(&file_private->syncobj_idr);
+	spin_lock_destroy(&file_private->syncobj_table_lock);
 }
 
 int

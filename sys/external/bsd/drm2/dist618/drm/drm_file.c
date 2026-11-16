@@ -191,6 +191,14 @@ out_prime_destroy:
 		drm_debugfs_clients_remove(file);
 
 	put_pid(rcu_access_pointer(file->pid));
+
+	/* the locks that drm_file_free destroys; Linux does not */
+	mutex_destroy(&file->client_name_lock);
+	spin_lock_destroy(&file->master_lookup_lock);
+	mutex_destroy(&file->event_read_lock);
+	mutex_destroy(&file->fbs_lock);
+	destroy_waitqueue_head(&file->event_wait);
+
 	kfree(file);
 
 	return ERR_PTR(ret);
@@ -274,6 +282,12 @@ void drm_file_free(struct drm_file *file)
 
 	mutex_destroy(&file->client_name_lock);
 	kfree(file->client_name);
+
+	/* Linux never destroys these locks; a kernel with LOCKDEBUG stops at the free below */
+	spin_lock_destroy(&file->master_lookup_lock);
+	mutex_destroy(&file->event_read_lock);
+	mutex_destroy(&file->fbs_lock);
+	destroy_waitqueue_head(&file->event_wait);
 
 	kfree(file);
 }

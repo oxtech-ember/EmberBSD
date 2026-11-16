@@ -105,6 +105,8 @@ EXPORT_SYMBOL(drm_vma_offset_manager_init);
 void drm_vma_offset_manager_destroy(struct drm_vma_offset_manager *mgr)
 {
 	drm_mm_takedown(&mgr->vm_addr_space_mm);
+	/* Linux never destroys the lock; the manager is freed afterwards */
+	rwlock_destroy(&mgr->vm_lock);
 }
 EXPORT_SYMBOL(drm_vma_offset_manager_destroy);
 

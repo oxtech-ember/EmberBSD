@@ -85,6 +85,9 @@ static void
 drm_gem_init_release(struct drm_device *dev, void *ptr)
 {
 	drm_vma_offset_manager_destroy(dev->vma_offset_manager);
+	/* Linux never destroys these; the device is part of a structure that is freed */
+	idr_destroy(&dev->object_name_idr);
+	mutex_destroy(&dev->object_name_lock);
 }
 
 /**
@@ -95,6 +98,7 @@ int
 drm_gem_init(struct drm_device *dev)
 {
 	struct drm_vma_offset_manager *vma_offset_manager;
+	int ret;
 
 	mutex_init(&dev->object_name_lock);
 	idr_init_base(&dev->object_name_idr, 1);
@@ -103,6 +107,8 @@ drm_gem_init(struct drm_device *dev)
 					  GFP_KERNEL);
 	if (!vma_offset_manager) {
 		DRM_ERROR("out of memory\n");
+		idr_destroy(&dev->object_name_idr);
+		mutex_destroy(&dev->object_name_lock);
 		return -ENOMEM;
 	}
 
@@ -111,7 +117,13 @@ drm_gem_init(struct drm_device *dev)
 				    DRM_FILE_PAGE_OFFSET_START,
 				    DRM_FILE_PAGE_OFFSET_SIZE);
 
-	return drmm_add_action(dev, drm_gem_init_release, NULL);
+	ret = drmm_add_action(dev, drm_gem_init_release, NULL);
+	if (ret) {
+		drm_vma_offset_manager_destroy(vma_offset_manager);
+		idr_destroy(&dev->object_name_idr);
+		mutex_destroy(&dev->object_name_lock);
+	}
+	return ret;
 }
 
 /**
@@ -212,6 +224,11 @@ void drm_gem_private_object_fini(struct drm_gem_object *obj)
 
 	dma_resv_fini(&obj->_resv);
 	mutex_destroy(&obj->gpuva.lock);
+	/*
+	 * Linux never destroys the lock of a vma node, but memory freed with
+	 * an initialised lock in it stops a NetBSD kernel with LOCKDEBUG.
+	 */
+	rwlock_destroy(&obj->vma_node.vm_lock);
 }
 EXPORT_SYMBOL(drm_gem_private_object_fini);
 
@@ -1073,6 +1090,7 @@ drm_gem_release(struct drm_device *dev, struct drm_file *file_private)
 	idr_for_each(&file_private->object_idr,
 		     &drm_gem_object_release_handle, file_private);
 	idr_destroy(&file_private->object_idr);
+	spin_lock_destroy(&file_private->table_lock);
 }
 
 /**

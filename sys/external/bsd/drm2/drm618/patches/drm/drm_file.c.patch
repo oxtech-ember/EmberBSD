@@ -1,6 +1,21 @@
 --- a/drm/drm_file.c
 +++ b/drm/drm_file.c
-@@ -241,7 +241,7 @@
+@@ -191,6 +191,14 @@
+ 		drm_debugfs_clients_remove(file);
+ 
+ 	put_pid(rcu_access_pointer(file->pid));
++
++	/* the locks that drm_file_free destroys; Linux does not */
++	mutex_destroy(&file->client_name_lock);
++	spin_lock_destroy(&file->master_lookup_lock);
++	mutex_destroy(&file->event_read_lock);
++	mutex_destroy(&file->fbs_lock);
++	destroy_waitqueue_head(&file->event_wait);
++
+ 	kfree(file);
+ 
+ 	return ERR_PTR(ret);
+@@ -241,7 +249,7 @@
  
  	drm_dbg_core(dev, "comm=\"%s\", pid=%d, dev=0x%lx, open_count=%d\n",
  		     current->comm, task_pid_nr(current),
@@ -9,3 +24,16 @@
  		     atomic_read(&dev->open_count));
  
  	if (!drm_core_check_feature(dev, DRIVER_COMPUTE_ACCEL))
+@@ -275,6 +283,12 @@
+ 	mutex_destroy(&file->client_name_lock);
+ 	kfree(file->client_name);
+ 
++	/* Linux never destroys these locks; a kernel with LOCKDEBUG stops at the free below */
++	spin_lock_destroy(&file->master_lookup_lock);
++	mutex_destroy(&file->event_read_lock);
++	mutex_destroy(&file->fbs_lock);
++	destroy_waitqueue_head(&file->event_wait);
++
+ 	kfree(file);
+ }
+ 

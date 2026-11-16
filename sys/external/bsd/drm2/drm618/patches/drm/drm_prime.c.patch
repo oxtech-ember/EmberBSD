@@ -1,0 +1,10 @@
+--- a/drm/drm_prime.c
++++ b/drm/drm_prime.c
+@@ -221,6 +221,7 @@
+ {
+ 	/* by now drm_gem_release should've made sure the list is empty */
+ 	WARN_ON(!RB_EMPTY_ROOT(&prime_fpriv->dmabufs));
++	mutex_destroy(&prime_fpriv->lock);
+ }
+ 
+ /**
