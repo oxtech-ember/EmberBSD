@@ -117,6 +117,27 @@ static void virtio_gpu_get_capsets(struct virtio_gpu_device *vgdev,
 	vgdev->num_capsets = num_capsets;
 }
 
+/*
+ * The locks and queues of virtio_gpu_init: Linux never destroys them, but the
+ * structure is freed with the device (or at once when the initialisation
+ * fails) and a kernel with LOCKDEBUG stops at memory freed with a set-up lock.
+ */
+static void virtio_gpu_destroy_locks(struct virtio_gpu_device *vgdev)
+{
+	ida_destroy(&vgdev->resource_ida);
+	ida_destroy(&vgdev->ctx_id_ida);
+	spin_lock_destroy(&vgdev->obj_free_lock);
+	spin_lock_destroy(&vgdev->fence_drv.lock);
+	destroy_waitqueue_head(&vgdev->resp_wq);
+	spin_lock_destroy(&vgdev->host_visible_lock);
+	spin_lock_destroy(&vgdev->resource_export_lock);
+	spin_lock_destroy(&vgdev->display_info_lock);
+	destroy_waitqueue_head(&vgdev->cursorq.ack_queue);
+	spin_lock_destroy(&vgdev->cursorq.qlock);
+	destroy_waitqueue_head(&vgdev->ctrlq.ack_queue);
+	spin_lock_destroy(&vgdev->ctrlq.qlock);
+}
+
 int virtio_gpu_init(struct virtio_device *vdev, struct drm_device *dev)
 {
 	struct virtqueue_info vqs_info[] = {
@@ -266,6 +287,7 @@ err_scanouts:
 err_vbufs:
 	vgdev->vdev->config->del_vqs(vgdev->vdev);
 err_vqs:
+	virtio_gpu_destroy_locks(vgdev);
 	dev->dev_private = NULL;
 	return ret;
 }
@@ -306,6 +328,8 @@ void virtio_gpu_release(struct drm_device *dev)
 
 	if (vgdev->has_host_visible)
 		drm_mm_takedown(&vgdev->host_visible_mm);
+
+	virtio_gpu_destroy_locks(vgdev);
 }
 
 int virtio_gpu_driver_open(struct drm_device *dev, struct drm_file *file)
