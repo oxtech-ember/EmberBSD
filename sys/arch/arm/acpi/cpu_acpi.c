@@ -77,6 +77,37 @@ CFATTACH_DECL2_NEW(cpu_acpi, 0,
     cpu_acpi_match, cpu_acpi_attach, NULL, NULL,
     cpu_rescan, cpu_childdetached);
 
+/*
+ * Relative capacity of a core for arm_cpu_do_topology(); only the order
+ * of the values matters.  The MADT processor power efficiency class
+ * leads: less efficient processors are assumed to be faster.  Firmware
+ * may leave the class equal on every core of an asymmetric system (CIX
+ * Sky1 reports zero for Cortex-A720 and Cortex-A520 alike), so within
+ * one class a known efficiency core ranks below any other core.  A
+ * system whose cores all share the class and the kind stays symmetric.
+ */
+static uint32_t
+cpu_acpi_capacity(uint8_t efficiency_class, uint64_t midr)
+{
+	static const uint32_t efficiency_cores[] = {
+		0x4100d030,	/* Arm Cortex-A53 */
+		0x4100d040,	/* Arm Cortex-A35 */
+		0x4100d050,	/* Arm Cortex-A55 */
+		0x4100d460,	/* Arm Cortex-A510 */
+		0x4100d800,	/* Arm Cortex-A520 */
+	};
+	const uint32_t part = midr & 0xff00fff0;
+	uint32_t performance_core = 1;
+	size_t i;
+
+	for (i = 0; i < __arraycount(efficiency_cores); i++) {
+		if (part == efficiency_cores[i])
+			performance_core = 0;
+	}
+
+	return ((uint32_t)efficiency_class << 1) | performance_core;
+}
+
 #ifdef MULTIPROCESSOR
 static register_t
 cpu_acpi_mpstart_pa(void)
@@ -135,9 +166,12 @@ cpu_acpi_attach(device_t parent, device_t self, void *aux)
 	}
 #endif /* MULTIPROCESSOR */
 
-	/* Assume that less efficient processors are faster. */
+	/*
+	 * The secondary has stored its MIDR by now; the boot processor
+	 * did so before autoconfiguration.
+	 */
 	prop_dictionary_set_uint32(dict, "capacity_dmips_mhz",
-	    gicc->EfficiencyClass);
+	    cpu_acpi_capacity(gicc->EfficiencyClass, ci->ci_midr));
 
 	/* Store the ACPI Processor UID in cpu_info */
 	ci->ci_acpiid = gicc->Uid;
@@ -158,6 +192,10 @@ cpu_acpi_attach(device_t parent, device_t self, void *aux)
 		/* Not configured */
 		return;
 	}
+
+	aprint_verbose_dev(self, "efficiency class %u, capacity rank %u\n",
+	    gicc->EfficiencyClass,
+	    cpu_acpi_capacity(gicc->EfficiencyClass, ci->ci_midr));
 
 	/* Probe for low-power idle states. */
 	cpu_acpi_probe_lpi(self, ci);
