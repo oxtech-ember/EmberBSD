@@ -13,10 +13,18 @@ typedef struct poll_table_struct {
 	int	pt_events;
 } poll_table;
 
+/*
+ * selrecord of the kernel needs the lock of the object that selnotify is
+ * called under (here wq->lock, see __wake_up): several threads that poll the
+ * same queue would otherwise corrupt the record, which a kernel with
+ * DIAGNOSTIC finds in selclear.
+ */
 static inline void
 poll_wait(struct DRM618_FILE_TAG *filp, wait_queue_head_t *wq, poll_table *pt)
 {
 
+	spin_lock(&wq->lock);
 	selrecord(curlwp, &wq->wq_sel);
+	spin_unlock(&wq->lock);
 }
 #endif
