@@ -693,6 +693,42 @@ efidrm_atomic_commit(struct drm_device *dev, struct drm_atomic_state *state,
 	    nonblock && !efidrm_tun.sync);
 }
 
+/*
+ * The default commit tail without the vblank wait in evmode 1.
+ *
+ * efidrm_plane_atomic_update copies the frame into the GOP buffer, so the
+ * old framebuffer is not in use after commit_planes.  In evmode 1 the flip
+ * event also goes out at that time.  The vblank wait of the default tail
+ * then delays cleanup_done by up to one vblank period.  NetBSD runs
+ * system_unbound_wq on one thread, so the work of the next nonblocking
+ * commit waits behind this delay.  Its flip_done is late, and a nonblocking
+ * commit after it gets EBUSY from drm_atomic_helper_setup_commit.
+ *
+ * Without the wait, the vblank does not limit the rate of commits in
+ * evmode 1, as with Linux simpledrm.  efidrm has no WAIT_VBLANK.  A client
+ * that needs a fixed pace plans its frames from the event time and the
+ * refresh rate of the mode (as KWin does); else set evmode 0.  In evmode 0
+ * the event comes on the vblank tick; keep the wait there.
+ */
+static void
+efidrm_commit_tail(struct drm_atomic_state *state)
+{
+	struct drm_device *dev = state->dev;
+
+	drm_atomic_helper_commit_modeset_disables(dev, state);
+	drm_atomic_helper_commit_planes(dev, state, 0);
+	drm_atomic_helper_commit_modeset_enables(dev, state);
+	drm_atomic_helper_fake_vblank(state);
+	drm_atomic_helper_commit_hw_done(state);
+	if (efidrm_tun.evmode != 1)
+		drm_atomic_helper_wait_for_vblanks(dev, state);
+	drm_atomic_helper_cleanup_planes(dev, state);
+}
+
+static const struct drm_mode_config_helper_funcs efidrm_mode_helpers = {
+	.atomic_commit_tail	= efidrm_commit_tail,
+};
+
 static const struct drm_mode_config_funcs efidrm_mode_funcs = {
 	.fb_create	= efidrm_fb_create,
 	.atomic_check	= drm_atomic_helper_check,
@@ -764,6 +800,7 @@ efidrm_drm_init(struct efidrm_softc *sc, device_t self)
 
 	drm_mode_config_init(dev);
 	dev->mode_config.funcs = &efidrm_mode_funcs;
+	dev->mode_config.helper_private = &efidrm_mode_helpers;
 	dev->mode_config.min_width = 32;
 	dev->mode_config.min_height = 32;
 	dev->mode_config.max_width = EFIDRM_MAX_DIM;
