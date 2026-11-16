@@ -193,6 +193,11 @@ drm2_sched_run(void)
 	struct t_job *j1, *j2, *j3;
 	long tmo;
 
+	/*
+	 * DEFINE_SPINLOCK of the layer is not a constant initialiser: the lock
+	 * the fake hardware fences point at is set up here and torn down at the end.
+	 */
+	spin_lock_init(&t_hw_lock);
 	t_hw_ctx = dma_fence_context_alloc(1);
 	memset(&e1, 0, sizeof(e1));
 	memset(&e2, 0, sizeof(e2));
@@ -385,6 +390,7 @@ drm2_sched_run(void)
 	CHECK(t_cancelled == 1);
 	CHECK(t_freed == 1);
 
+	spin_lock_destroy(&t_hw_lock);
 	printf("drm2-sched: %d checks, %d failed\n", t_run, t_fail);
 	return t_fail;
 }
