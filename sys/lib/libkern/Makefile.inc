@@ -19,6 +19,9 @@
 
 # Default values:
 KERNDST?=	${.OBJDIR}/lib/kern
+# The kernel passes its CFLAGS to the libkern build, and libkern compiles
+# compiler-rt from the prepared LLVM source. Declare that source here too.
+.include <bsd.llvm-source.mk>
 .if !empty(OPT_MODULAR)
 KERN_AS?=	obj
 .else

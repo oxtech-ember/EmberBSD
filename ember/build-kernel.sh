@@ -159,20 +159,17 @@ rm -rf "$out/native-check-commands"
 stage=$(mktemp -d "$out/.artifacts.XXXXXX")
 : > "$out/build.log"
 kernel_obj="$out/obj/kernels/$config"
-# newvers.mk does not track BUILDINFO as a dependency under -u. Remember the
-# value accepted by the previous successful kernel build and invalidate only
-# the version object when that input changes (or its outputs are missing).
-buildinfo=${BUILDINFO:-}
-buildinfo_record="$kernel_obj/.ember-buildinfo"
-previous_buildinfo=
-if [ -f "$buildinfo_record" ]; then
-    previous_buildinfo=$(cat "$buildinfo_record"; printf 'x')
+# MKREPRO removes host paths, user, host, build number and build time.
+# Use MKREPRO_TIMESTAMP if set. Else use the time of the source commit.
+repro_timestamp=${MKREPRO_TIMESTAMP:-}
+if [ -z "$repro_timestamp" ]; then
+    git_top=$(git -C "$src" rev-parse --show-toplevel) || git_top=
+    [ "$git_top" = "$src" ] ||
+        fail 'set MKREPRO_TIMESTAMP or build from a Git checkout'
+    repro_timestamp=$(git -c log.showSignature=false -C "$src" log -1 --format=%ct HEAD) ||
+        fail 'cannot read the source commit time; set MKREPRO_TIMESTAMP'
 fi
-current_buildinfo=$(printf '%s' "$buildinfo"; printf 'x')
-if [ ! -f "$buildinfo_record" ] || [ "$previous_buildinfo" != "$current_buildinfo" ] ||
-    [ ! -f "$kernel_obj/vers.c" ] || [ ! -f "$kernel_obj/vers.o" ]; then
-    rm -f "$kernel_obj/vers.c" "$kernel_obj/vers.o"
-fi
+case $repro_timestamp in ''|*[!0-9]*) fail 'invalid MKREPRO_TIMESTAMP';; esac
 # build.sh handles both a native build host and cross compilation. Its generated
 # wrapper retains target settings and the shared runner's native HOST_* flags.
 set -- -U -u -j"$jobs" -c "$compiler_family" -m evbarm -a aarch64 \
@@ -180,16 +177,39 @@ set -- -U -u -j"$jobs" -c "$compiler_family" -m evbarm -a aarch64 \
     -V "KERNOBJDIR=$out/obj/kernels" -V MKCROSSGDB=no \
     -V "EMBER_LLVM_SOURCE=$llvm_source" -V "EMBER_BYACC_SOURCE=$byacc_source" \
     -V "EMBER_HEIMDAL_SOURCE=$heimdal_source" -V "EMBER_ZLIB_SOURCE=$zlib_source" \
-    -V "EXTERNAL_TOOLCHAIN=$EMBER_EXTERNAL_TOOLCHAIN" -V TOOLCHAIN_MISSING=yes
+    -V "EXTERNAL_TOOLCHAIN=$EMBER_EXTERNAL_TOOLCHAIN" -V TOOLCHAIN_MISSING=yes \
+    -V MKREPRO=yes -V "MKREPRO_TIMESTAMP=$repro_timestamp"
 case ${EMBER_HOST_BFD_CONFIG:-} in
 /*) [ -f "$EMBER_HOST_BFD_CONFIG" ] || fail 'common host BFD configuration missing';;
 *) fail 'EMBER_HOST_BFD_CONFIG must be an absolute file path';;
 esac
 set -- "$@" -V "EMBER_HOST_BFD_CONFIG=$EMBER_HOST_BFD_CONFIG"
 if [ -n "${BUILDINFO:-}" ]; then set -- "$@" -V "BUILDINFO=$BUILDINFO"; fi
+# newvers.mk does not track BUILDINFO or MKREPRO_TIMESTAMP under -u. Remember
+# the values accepted by the previous successful kernel build and invalidate
+# only the version object when they change (or its outputs are missing).
+buildinfo=${BUILDINFO:-}
+version_record="$kernel_obj/.ember-version-inputs"
+# Objects of a build without this record can hold host paths, and make -u
+# does not rebuild objects for new flags. Remove the object directory one
+# time. An empty record prevents a second removal after a failed build.
+if [ ! -f "$version_record" ]; then
+    rm -rf "$kernel_obj"
+    mkdir -p "$kernel_obj"
+    : > "$version_record"
+fi
+previous_version=
+if [ -f "$version_record" ]; then
+    previous_version=$(cat "$version_record"; printf 'x')
+fi
+current_version=$(printf '%s\n%s' "$repro_timestamp" "$buildinfo"; printf 'x')
+if [ ! -f "$version_record" ] || [ "$previous_version" != "$current_version" ] ||
+    [ ! -f "$kernel_obj/vers.c" ] || [ ! -f "$kernel_obj/vers.o" ]; then
+    rm -f "$kernel_obj/vers.c" "$kernel_obj/vers.o"
+fi
 (cd "$src"; run_native_os --log "$out/build.log" --append-log --build-sh -- "$@" tools "kernel=$config")
-printf '%s' "$buildinfo" > "$buildinfo_record.new"
-mv -f "$buildinfo_record.new" "$buildinfo_record"
+printf '%s\n%s' "$repro_timestamp" "$buildinfo" > "$version_record.new"
+mv -f "$version_record.new" "$version_record"
 # Use the same selected command mapping for subsequent orchestration utilities.
 PATH="$out/native-build-tools:$host_prefix/bin:$host_prefix/sbin:$host_prefix/gnu/bin"
 export PATH

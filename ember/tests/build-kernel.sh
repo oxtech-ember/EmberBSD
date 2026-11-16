@@ -5,7 +5,9 @@ set -eu
 # An ambient product version must not replace the selected source version.
 export EMBER_VERSION=9.9
 # Fixtures select their own build mode and toolchain, independent of the shell.
-unset EMBER_HOST_BFD_CONFIG EMBERBSD_SDK_SOURCE EMBER_HOST_PREFIX EMBER_HOST_COMPILER_FAMILY EMBER_BUILD_MODE EMBER_EXTERNAL_TOOLCHAIN EMBER_COMPILER_FAMILY EMBER_LLVM_SOURCE EMBER_BYACC_SOURCE EMBER_HEIMDAL_SOURCE EMBER_ZLIB_SOURCE PVR_QUERY_FIRMWARE
+unset EMBER_HOST_BFD_CONFIG EMBERBSD_SDK_SOURCE EMBER_HOST_PREFIX EMBER_HOST_COMPILER_FAMILY EMBER_BUILD_MODE EMBER_EXTERNAL_TOOLCHAIN EMBER_COMPILER_FAMILY EMBER_LLVM_SOURCE EMBER_BYACC_SOURCE EMBER_HEIMDAL_SOURCE EMBER_ZLIB_SOURCE PVR_QUERY_FIRMWARE MKREPRO_TIMESTAMP
+# A fixed source timestamp keeps the fixture kernels reproducible.
+export MKREPRO_TIMESTAMP=1700000000
 repo=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 TEST_SHELL=${EMBER_TEST_SHELL:-$(command -v sh)}
 TEST_PYTHON=${EMBER_TEST_PYTHON:-$(command -v python3)}
@@ -538,7 +540,8 @@ test -s "$TEST_OUT/rpi5button.kmod"
 test -s "$TEST_OUT/bcmexpgpio.kmod"
 test -s "$TEST_OUT/sun60i-a733-orangepi-zero3w.dtb"
 test -s "$TEST_OUT/sun60i-a733-orangepi-zero3w-diagnostic.dtb"
-test -f "$TEST_OUT/obj/kernels/EMBER64/.ember-buildinfo"
+test -f "$TEST_OUT/obj/kernels/EMBER64/.ember-version-inputs"
+grep -Fq -- "-V MKREPRO=yes -V MKREPRO_TIMESTAMP=1700000000" "$TEST_LOG"
 grep -q 'build.sh .* -m evbarm -a aarch64 ' "$TEST_LOG"
 grep -q ' -u ' "$TEST_LOG"
 grep -q ' -c clang ' "$TEST_LOG"
@@ -645,6 +648,38 @@ check_contract_counts 16
 # A firmware-dependent contract is pending by default, never silently passed.
 ! grep -q '^pvr-query-contract ' "$TEST_LOG"
 grep -q 'PowerVR metadata query contract pending:' "$TEST_OUT/contracts.log"
+# A new source timestamp regenerates only the version object.
+: > "$TEST_LOG"
+printf 'old-object-id\n' > "$TEST_OUT/obj/kernels/EMBER64/vers.o"
+MKREPRO_TIMESTAMP=1700000001 BUILDINFO=new-source-id sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1
+if [ "$(cat "$TEST_OUT/obj/kernels/EMBER64/vers.o")" = old-object-id ]; then
+    echo 'stale kernel timestamp survived the incremental rebuild' >&2
+    exit 1
+fi
+test "$(cat "$TEST_OUT/obj/kernels/EMBER64/keep.o")" = keep-object
+grep -Fq -- "-V MKREPRO_TIMESTAMP=1700000001" "$TEST_LOG"
+# Objects of a build before the version record may hold host paths.
+rm "$TEST_OUT/obj/kernels/EMBER64/.ember-version-inputs"
+printf 'legacy-object\n' > "$TEST_OUT/obj/kernels/EMBER64/legacy.o"
+: > "$TEST_LOG"
+MKREPRO_TIMESTAMP=1700000001 BUILDINFO=new-source-id sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1
+test ! -e "$TEST_OUT/obj/kernels/EMBER64/legacy.o"
+# A failed build after the cleanup does not remove the objects again.
+rm "$TEST_OUT/obj/kernels/EMBER64/.ember-version-inputs"
+printf 'survivor\n' > "$TEST_OUT/obj/kernels/EMBER64/survivor.o"
+if EMBER_HOST_BFD_CONFIG=relative MKREPRO_TIMESTAMP=1700000001 sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1; then
+    echo 'accepted a relative BFD configuration' >&2; exit 1
+fi
+test -f "$TEST_OUT/obj/kernels/EMBER64/survivor.o"
+: > "$TEST_LOG"
+MKREPRO_TIMESTAMP=1700000001 BUILDINFO=new-source-id sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1
+test -f "$TEST_OUT/obj/kernels/EMBER64/.ember-version-inputs"
+# Without a selected timestamp, a non-Git source tree cannot be reproducible.
+if (unset MKREPRO_TIMESTAMP; exec sh "$work/src/ember/build-kernel.sh" "$work/no-timestamp") > "$work/run.log" 2>&1; then
+    echo 'accepted a kernel build without a reproducible timestamp' >&2; exit 1
+fi
+grep -q 'set MKREPRO_TIMESTAMP or build from a Git checkout' "$work/run.log"
+check_contract_counts 16
 # Preserve the existing single-executable CPP spelling, including spaces.
 : > "$TEST_LOG"
 TEST_CPP_SINGLE=yes sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1
