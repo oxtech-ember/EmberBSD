@@ -53,6 +53,15 @@ p4_noop(struct work_struct *w __unused)
 {
 }
 
+static volatile int p4_ran;
+
+static void
+p4_set(struct work_struct *w __unused)
+{
+
+	p4_ran = 1;
+}
+
 int	drm2_p4_layer_run(void);
 
 int
@@ -111,6 +120,23 @@ drm2_p4_layer_run(void)
 	{
 		trace_p4_test_event(3);
 		CHECK(!trace_p4_test_event_enabled());
+	}
+
+	/* max_active above one is an upper bound, not a requirement (TTM asks for 16) */
+	{
+		struct workqueue_struct *wq = alloc_workqueue("p4mx", 0, 16);
+		struct work_struct w;
+
+		CHECK(wq != NULL);
+		if (wq != NULL) {
+			p4_ran = 0;
+			INIT_WORK(&w, p4_set);
+			CHECK(queue_work(wq, &w));
+			flush_work(&w);
+			CHECK(!work_pending(&w));
+			CHECK(p4_ran == 1);	/* the work was done, by the one thread of the queue */
+			destroy_workqueue(wq);
+		}
 	}
 
 	/* delayed_work.timer.expires: the jiffies at which the work runs */

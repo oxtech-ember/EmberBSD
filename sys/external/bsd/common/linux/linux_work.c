@@ -250,6 +250,9 @@ linux_workqueue_fini(void)
  *
  *	Create a workqueue of the given name.  max_active is the
  *	maximum number of work items in flight, or 0 for the default.
+ *	Every queue has one thread, so at most one item is in flight
+ *	whatever the limit is: a limit above one (the TTM of Linux 6.18
+ *	asks for 16) is an upper bound that this queue keeps.
  *	Return NULL on failure, pointer to struct workqueue_struct
  *	object on success.
  */
@@ -259,7 +262,16 @@ alloc_workqueue(const char *name, int flags, unsigned max_active)
 	struct workqueue_struct *wq;
 	int error;
 
-	KASSERT(max_active == 0 || max_active == 1);
+	/*
+	 * The deviation is said at each call, not hidden: a queue that Linux
+	 * runs with several threads runs its items one after another here, so
+	 * an item that waits for something that a later item of the same queue
+	 * does (or that waits without a timeout) holds up all the rest.
+	 */
+	if (max_active > 1)
+		printf("linux_workqueue: %s: max_active %u asked, but the queue"
+		    " has one thread: its items run one at a time\n",
+		    name, max_active);
 
 	wq = kmem_zalloc(sizeof(*wq), KM_SLEEP);
 
