@@ -203,7 +203,7 @@ extern void boot_fixture_frame_tick(void);
 #define IST_MPSAFE 0x100
 #define BUS_SPACE_BARRIER_WRITE 2
 static unsigned int boot_masks, boot_unmasks, boot_intrs, boot_disestablish;
-static unsigned int boot_irq_count, boot_writes, boot_delays;
+static unsigned int boot_term_reads, boot_writes, boot_delays;
 static unsigned int boot_fault;
 static bool boot_rpc_test;
 static unsigned int boot_rpc_commit_events, boot_rpc_notify_events;
@@ -262,7 +262,7 @@ static uint32_t bus_space_read_4(bus_space_tag_t t, bus_space_handle_t h, bus_si
 {
     (void)t; CHECK((h == 1 || h == 2) && offset < 0x400 && offset % 4 == 0);
     if (h == 1 && offset == 0x218) {
-        boot_irq_count++;
+        boot_term_reads++;
         if (!boot_term_issued || boot_fault==4 || boot_fault==11 || boot_fault==12)
             return boot_regs[1][offset / 4];
         return 0;
@@ -502,7 +502,7 @@ static void boot_fixture(void)
     profile_fixture(); cold = 0;
     boot_core_bad=0; boot_core_on_fail=boot_core_off_fail=boot_core_no_lease=-1; memset(boot_core_live,0,sizeof(boot_core_live));
     boot_masks = boot_unmasks = boot_intrs = boot_disestablish = 0;
-    boot_irq_count = boot_writes = boot_delays = boot_barriers = 0; boot_now = 0; boot_fault = 0;
+    boot_term_reads = boot_writes = boot_delays = boot_barriers = 0; boot_now = 0; boot_fault = 0;
     boot_handler = NULL; boot_handler_arg = NULL; boot_pic_mask_count = 0;
     boot_term_issued=false;
     boot_rpc_test=false; boot_rpc_commit_events=boot_rpc_notify_events=0;
@@ -1073,6 +1073,9 @@ static void boot_matrix_tests(void)
         if(mode==4) CHECK(r.terminate_reads>0 && r.terminate_reads<=10001 && error==ETIMEDOUT);
         if(mode==12) CHECK(r.terminate_reads==10001 && error==ETIMEDOUT && boot_now==0);
         if(mode==11) CHECK(r.terminate_reads==1 && error==EIO);
+        /* One idle-gate read precedes the reported bounded terminate polls. */
+        if(mode==4 || mode==11 || mode==12)
+            CHECK(boot_term_reads==r.terminate_reads+1);
         if(mode==10) CHECK(boot_regs[1][1]==0 && error==EBUSY);
         boot_discard_fixture(ctx);
     }
