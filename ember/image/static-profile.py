@@ -1420,8 +1420,9 @@ def run_console(arguments):
                 expected = output / 'obj' / directory
                 if actual != str(expected) or Path(actual).resolve() != expected:
                     raise SDKError('network source refresh selected the wrong objects: ' + directory)
-                run(['MKCLEANSRC=no', 'cleandir'], log=str(output / 'logs/source-refresh.log'),
-                    append=True)
+                refresh_log = output / 'logs/source-refresh.log'
+                run(['MKCLEANSRC=no', 'cleandir'], log=str(refresh_log),
+                    append=refresh_log.exists())
 
             def archive_members(path):
                 return process.capture([native.tool('ar'), 't', str(path)],
