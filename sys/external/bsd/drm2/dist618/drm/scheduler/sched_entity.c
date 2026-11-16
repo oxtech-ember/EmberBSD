@@ -343,6 +343,10 @@ void drm_sched_entity_fini(struct drm_sched_entity *entity)
 
 	dma_fence_put(rcu_dereference_check(entity->last_scheduled, true));
 	RCU_INIT_POINTER(entity->last_scheduled, NULL);
+
+	/* the entity is part of a driver structure that is freed or initialised again */
+	destroy_completion(&entity->entity_idle);
+	spin_lock_destroy(&entity->lock);
 }
 EXPORT_SYMBOL(drm_sched_entity_fini);
 

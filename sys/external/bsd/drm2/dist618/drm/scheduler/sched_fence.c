@@ -100,8 +100,11 @@ static void drm_sched_fence_free_rcu(struct rcu_head *rcu)
 	struct dma_fence *f = container_of(rcu, struct dma_fence, rcu);
 	struct drm_sched_fence *fence = to_drm_sched_fence(f);
 
-	if (!WARN_ON_ONCE(!fence))
+	if (!WARN_ON_ONCE(!fence)) {
+		/* the lock is part of the object (see drm_sched_fence_alloc) */
+		spin_lock_destroy(&fence->lock);
 		kmem_cache_free(sched_fence_slab, fence);
+	}
 }
 
 /**
@@ -115,8 +118,10 @@ static void drm_sched_fence_free_rcu(struct rcu_head *rcu)
 void drm_sched_fence_free(struct drm_sched_fence *fence)
 {
 	/* This function should not be called if the fence has been initialized. */
-	if (!WARN_ON_ONCE(fence->sched))
+	if (!WARN_ON_ONCE(fence->sched)) {
+		spin_lock_destroy(&fence->lock);
 		kmem_cache_free(sched_fence_slab, fence);
+	}
 }
 
 /**

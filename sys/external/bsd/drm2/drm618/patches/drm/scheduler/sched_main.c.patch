@@ -1,0 +1,37 @@
+--- a/drm/scheduler/sched_main.c
++++ b/drm/scheduler/sched_main.c
+@@ -1372,8 +1372,10 @@
+ 	sched->ready = true;
+ 	return 0;
+ Out_unroll:
+-	for (--i ; i >= DRM_SCHED_PRIORITY_KERNEL; i--)
++	for (--i ; i >= DRM_SCHED_PRIORITY_KERNEL; i--) {
++		spin_lock_destroy(&sched->sched_rq[i]->lock);
+ 		kfree(sched->sched_rq[i]);
++	}
+ 
+ 	kfree(sched->sched_rq);
+ 	sched->sched_rq = NULL;
+@@ -1445,6 +1447,7 @@
+ 			 */
+ 			s_entity->stopped = true;
+ 		spin_unlock(&rq->lock);
++		spin_lock_destroy(&rq->lock);
+ 		kfree(sched->sched_rq[i]);
+ 	}
+ 
+@@ -1466,6 +1469,14 @@
+ 
+ 	if (!list_empty(&sched->pending_list))
+ 		dev_warn(sched->dev, "Tearing down scheduler while jobs are pending!\n");
++
++	/*
++	 * The scheduler is part of a driver structure that is freed or
++	 * initialised again after this call: Linux never destroys these
++	 * locks, a kernel with LOCKDEBUG needs it.
++	 */
++	spin_lock_destroy(&sched->job_list_lock);
++	destroy_waitqueue_head(&sched->job_scheduled);
+ }
+ EXPORT_SYMBOL(drm_sched_fini);
+ 
