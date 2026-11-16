@@ -17,9 +17,11 @@ typedef uint64_t u64;
 #include "wpa_ie_bridge.h"
 
 #include <net80211/ieee80211_rsn.h>
+#include <net80211/ieee80211_assoc_caps.h>
 
 #include "../esp_wifi_os.h"
 #include "fullmac_debug.h"
+#include "assoc_caps.h"
 
 #define WLAN_FC_STYPE_ASSOC_RESP 1
 #define WLAN_FC_STYPE_REASSOC_RESP 3
@@ -332,6 +334,7 @@ espwifi_wpa2_rsn(const uint8_t *ie, unsigned len)
 void
 espwifi_ext_clear_assoc_appies(void)
 {
+	espwifi_vendor_assoc_caps_clear();
 	/* Internal app-IE slots survive a failed or completed station attempt. */
 	(void)esp_wifi_unset_appie_internal(WIFI_APPIE_RSN);
 	(void)esp_wifi_unset_appie_internal(WIFI_APPIE_ASSOC_REQ);
@@ -347,6 +350,9 @@ espwifi_ext_connect(const unsigned char *ssid, unsigned int ssid_len,
 	wifi_config_t config;
 	uint8_t rsn_ie[257];
 	uint8_t assoc_ie[257];
+	uint8_t extcap[ESPWIFI_EXTCAP_LEN];
+	size_t extcap_len;
+	bool rrm;
 	const uint8_t *rsn;
 	size_t rsn_len, rsn_offset, assoc_len;
 	esp_err_t error;
@@ -374,6 +380,11 @@ espwifi_ext_connect(const unsigned char *ssid, unsigned int ssid_len,
 	if (ies_len - (rsn_offset + rsn_len) != 0)
 		memcpy(assoc_ie + rsn_offset, ies + rsn_offset + rsn_len,
 		    ies_len - (rsn_offset + rsn_len));
+	if (!ieee80211_assoc_caps_extract(assoc_ie, &assoc_len, extcap,
+	    sizeof(extcap), &extcap_len, &rrm)) {
+		espwifi_os_log("espwifi: unsupported association capabilities\n");
+		return -1;
+	}
 	memset(&config, 0, sizeof(config));
 	memcpy(config.sta.ssid, ssid, ssid_len);
 	memcpy(config.sta.password, ESPWIFI_EXTERNAL_AUTH_PROFILE_MARKER,
@@ -384,6 +395,8 @@ espwifi_ext_connect(const unsigned char *ssid, unsigned int ssid_len,
 	    WIFI_AUTH_WPA2_PSK;
 	config.sta.pmf_cfg.capable = sae != 0;
 	config.sta.pmf_cfg.required = sae != 0;
+	/* Map the host's RRM declaration to the hardware Capability field. */
+	config.sta.rm_enabled = rrm;
 	espwifi_os_log("espwifi: fullmac config auth=%u pmf=%u/%u pwe_cfg=%u\n",
 	    (unsigned)config.sta.threshold.authmode,
 	    (unsigned)config.sta.pmf_cfg.capable,
@@ -421,10 +434,12 @@ espwifi_ext_connect(const unsigned char *ssid, unsigned int ssid_len,
 		(void)esp_wifi_unset_appie_internal(WIFI_APPIE_ASSOC_REQ);
 		return -1;
 	}
+	espwifi_vendor_assoc_caps_set(extcap, extcap_len);
 	espwifi_vendor_debug_once_begin(bssid);
 	error = esp_wifi_connect();
 	if (error != ESP_OK) {
 		espwifi_vendor_debug_once_end();
+		espwifi_vendor_assoc_caps_clear();
 		espwifi_os_log("espwifi: fullmac connect error %#x\n", error);
 		(void)esp_wifi_unset_appie_internal(WIFI_APPIE_RSN);
 		(void)esp_wifi_unset_appie_internal(WIFI_APPIE_ASSOC_REQ);

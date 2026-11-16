@@ -13,7 +13,7 @@ if not __debug__:
 
 p=argparse.ArgumentParser();p.add_argument('--python',required=True)
 p.add_argument('--host-prefix',required=True);p.add_argument('--sysroot',required=True)
-p.add_argument('--target-binutils-prefix',required=True);a=p.parse_args()
+a=p.parse_args()
 script=Path(__file__).resolve().parents[1]/'espressif/wifi/mkblob.py'
 with tempfile.TemporaryDirectory() as td:
  output=Path(td)/'radio.o'
@@ -26,7 +26,6 @@ with tempfile.TemporaryDirectory() as td:
  r=subprocess.run([a.python,'-B',str(script),'--external-wpa2',
                    '--idf-source',td,'--wpa-source',td,
                    '--sysroot',a.sysroot,'--host-prefix',a.host_prefix,
-                   '--target-binutils-prefix',a.target_binutils_prefix,
                    '--output',str(output)],text=True,capture_output=True)
  assert r.returncode != 0
  assert output.read_bytes()==b'previous artifact'

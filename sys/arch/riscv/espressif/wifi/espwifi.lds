@@ -3,6 +3,9 @@
 SECTIONS
 {
 	.text : {
+		espwifi_assoc_req_text_start = .;
+		*(.text.ieee80211_assoc_req_construct)
+		espwifi_assoc_req_text_end = .;
 		*(.text .text.* .iram1 .iram1.* .wifi0iram .wifi0iram.*
 		  .wifirxiram .wifirxiram.* .wifislpiram .wifislpiram.*
 		  .wifislprxiram .wifislprxiram.* .wifiextrairam

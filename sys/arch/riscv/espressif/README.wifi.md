@@ -129,8 +129,8 @@ also remain unverified on hardware.
 `wifi/mkblob.py` builds into an explicitly selected output path. Supply the
 ESP-IDF source package as `IDF_SOURCE`, the current common Ports
 `wpa_supplicant` source package as `WPA_SOURCE`, the selected RV32 C sysroot,
-the native LLVM prefix, and the target Binutils executable prefix. For
-example:
+and the native LLVM prefix, including Clang, LLD, and the LLVM object tools.
+For example:
 
 ```sh
 "$HOST_PREFIX/bin/python3.15" sys/arch/riscv/espressif/wifi/mkblob.py \
@@ -139,7 +139,6 @@ example:
     --wpa-source "$WPA_SOURCE" \
     --sysroot "$RV32_SYSROOT" \
     --host-prefix "$HOST_PREFIX" \
-    --target-binutils-prefix "$BINUTILS_PREFIX/bin/riscv32--netbsd-" \
     --output "$WIFI_BUILD/espwifi.o"
 ```
 
@@ -151,6 +150,14 @@ integration and physical trial. A kernel configuration must explicitly
 include that object through `EXTRA_OBJ`; this does not enable
 `ESPWIFI_NET80211_WPA2` by itself. Keep build inputs and outputs outside the
 source tree and use the tool prefixes selected by the SDK.
+
+Station association capabilities have one owner in the host stack. The radio
+adapter retains the host RRM element and maps it to the fixed RRM capability.
+It merges host Extended Capabilities into the firmware's single element.
+The pinned builder supports a 12-byte payload; longer host input is rejected.
+The adapter keeps firmware BTM policy disabled and retains the selected BSSID.
+LLD and the producer's relocation check ensure that the association builder
+calls the capability wrapper. AP responses and beacons retain vendor behavior.
 
 The management adapter regression checks callback-table field offsets against
 the selected `esp_wifi_driver.h`, then exercises the adapter with modeled OS
@@ -193,6 +200,10 @@ export SDKROOT
 "$HOST_PREFIX/bin/python3.15" -B sys/arch/riscv/tests/t_espwifi_join.py \
     --cc "$HOST_PREFIX/bin/clang"
 
+"$HOST_PREFIX/bin/python3.15" -B sys/arch/riscv/tests/t_espwifi_assoc_caps.py \
+    --cc "$HOST_PREFIX/bin/clang" --analyze \
+    --cppcheck "$HOST_PREFIX/bin/cppcheck"
+
 "$HOST_PREFIX/bin/python3.15" -B sys/arch/riscv/tests/t_espwifi_scan.py \
     --cc "$HOST_PREFIX/bin/clang"
 ```
@@ -203,6 +214,13 @@ tests also cover Ethernet multicast-reset handling and controlled-port ingress
 and transmit behavior. Host tests do not establish kernel integration or radio
 behavior on hardware.
 
+The association-capability fixture executes the shared IE extraction/merge
+and the actual radio wrapper with a modeled vendor builder and caller address.
+It checks one Extended Capabilities element, retained RRM information,
+host-owned bits, malformed-input rejection, retry cleanup and AP isolation.
+The producer separately checks the selected archive's real call relocations
+and builder capacity; neither check establishes over-the-air advertisement.
+
 The WPA2 adapter regression links the selected common WPA parser and checks
 20, 22, 24, and 28-byte PSK RSNEs, PMF and cipher policy, and app-IE cleanup
 under ASan/UBSan. EAPOL ingress checks that correctly framed EAP,
@@ -212,6 +230,7 @@ frames and controlled-port failures retain their bounds and fail-closed path:
 ```sh
 "$HOST_PREFIX/bin/python3.15" -B sys/arch/riscv/tests/t_espwifi_wpa2.py \
     --cc "$HOST_PREFIX/bin/clang" \
+    --analyze --cppcheck "$HOST_PREFIX/bin/cppcheck" \
     --idf-driver-header "$IDF_SOURCE/components/wpa_supplicant/esp_supplicant/src/esp_wifi_driver.h" \
     --wpa-source "$WPA_SOURCE/src"
 

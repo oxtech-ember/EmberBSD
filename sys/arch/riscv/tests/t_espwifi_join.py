@@ -43,6 +43,7 @@ code = r'''
 #include <stddef.h>
 #include <string.h>
 #include <errno.h>
+#include <limits.h>
 typedef unsigned int u_int;
 typedef uint8_t u8;
 typedef uint64_t u64;
@@ -92,6 +93,10 @@ struct espwifi_softc { struct { struct ifnet ec_if; } sc_ec; struct ieee80211com
  int (*sc_newstate)(struct ieee80211com *,enum ieee80211_state,int); };
 static struct espwifi_softc espwifi_sc;
 static int locked,sae_locked,signals,link_changes,disconnects,connects,fail_disconnect,fail_connect;
+static unsigned assoc_caps_clears;
+void espwifi_vendor_assoc_caps_clear(void) { assoc_caps_clears++; }
+static void espwifi_if_action_tx_invalidate(struct espwifi_softc *sc) { (void)sc; }
+static int espwifi_if_action_rx(const void *b,unsigned n,const unsigned char *s,unsigned c) { (void)b;(void)n;(void)s;(void)c;return -1; }
 static uint32_t stop_events,start_events;
 static bool pending_stop,pending_start,defer_stop,defer_start,stale_signal;
 static bool drop_start;

@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -18,6 +19,7 @@ p.add_argument('--cc',required=True)
 p.add_argument('--idf-driver-header',required=True)
 p.add_argument('--wpa-source',required=True)
 p.add_argument('--analyze',action='store_true')
+p.add_argument('--cppcheck', help='optional Cppcheck executable')
 p.add_argument('--nm',help='symbol tool; defaults to llvm-nm or nm beside --cc')
 a=p.parse_args()
 arch=Path(__file__).resolve().parents[1]
@@ -113,6 +115,8 @@ code=r'''
 #include <string.h>
 #include <stddef.h>
 #include <net80211/ieee80211_rsn.h>
+#include <net80211/ieee80211_assoc_caps.h>
+#include "assoc_caps.h"
 #include "wpa_ie_bridge.h"
 #include "fullmac_debug.h"
 void wpa_printf(int level, const char *fmt, ...) { (void)level; (void)fmt; }
@@ -123,7 +127,7 @@ typedef int esp_err_t;
 typedef struct { struct { uint8_t ssid[32],bssid[6]; bool bssid_set;
  uint8_t password[64];
  struct {int authmode;} threshold; struct {bool capable,required;} pmf_cfg;
- uint8_t sae_pwe_h2e; } sta; } wifi_config_t;
+ bool rm_enabled,btm_enabled,mbo_enabled; uint8_t sae_pwe_h2e; } sta; } wifi_config_t;
 #define WIFI_IF_STA 0
 #define WIFI_AUTH_WPA2_PSK 3
 #define WIFI_AUTH_WPA3_PSK 6
@@ -131,9 +135,12 @@ typedef struct { struct { uint8_t ssid[32],bssid[6]; bool bssid_set;
 #define WIFI_APPIE_RSN 4
 #define ESP_OK 0
 static int cfgcalls,rsncalls,assoc_calls,connects,fail,unset_rsn;
+static wifi_config_t captured_config;
+static uint8_t saved_caps[12]; static size_t saved_caps_len; static unsigned cap_clears,cap_sets;
 static int unset_assoc,pmf_configured;
 static uint8_t copied_rsn[64],copied_assoc[64];
 static unsigned copied_rsn_len,copied_assoc_len;
+static size_t ie_count(const uint8_t *p,size_t n,uint8_t id) { size_t off=0,count=0; while(off<n) { assert(n-off>=2 && p[off+1]<=n-off-2); if(p[off]==id) count++; off+=(size_t)p[off+1]+2; } assert(off==n); return count; }
 struct appie_slot { uint8_t *record; uint16_t payload_len; bool owned; };
 static struct appie_slot rsn_slot,assoc_slot;
 static unsigned appie_allocs,appie_frees;
@@ -146,7 +153,7 @@ static bool vendor_accepts_encrypted_profile(const wifi_config_t *c) {
 }
 static void espwifi_os_log(const char *fmt, ...) { (void)fmt; }
 static int esp_wifi_set_config(int ifx,wifi_config_t *c) {
- assert(ifx==0 && c->sta.bssid_set);
+ assert(ifx==0 && c->sta.bssid_set); captured_config=*c;
  assert(c->sta.threshold.authmode==3 || c->sta.threshold.authmode==6);
  if (c->sta.threshold.authmode==3)
   assert(!c->sta.pmf_cfg.capable && !c->sta.pmf_cfg.required);
@@ -186,6 +193,8 @@ static int esp_wifi_unset_appie_internal(int type) {
  if (slot->owned) { free(slot->record);appie_frees++; }
  slot->record=NULL;slot->payload_len=0;slot->owned=false;
  return 0; }
+void espwifi_vendor_assoc_caps_clear(void) { cap_clears++; saved_caps_len=0; memset(saved_caps,0,sizeof(saved_caps)); }
+void espwifi_vendor_assoc_caps_set(const uint8_t *p,size_t n) { assert(n<=sizeof(saved_caps)); cap_sets++; saved_caps_len=n; memset(saved_caps,0,sizeof(saved_caps)); if(n) memcpy(saved_caps,p,n); }
 static int esp_wifi_sta_pmf_enabled(void) { return pmf_configured; }
 static int auth_done_result;
 static bool esp_wifi_auth_done_internal(void) { return auth_done_result != 0; }
@@ -199,6 +208,7 @@ int main(void) {
  auth_done_result=0;assert(espwifi_ext_auth_done()==-1);
  assert(!espwifi_ext_connect(ssid,4,bssid,rsn,sizeof(rsn),0));
  assert(cfgcalls==1 && rsncalls==1 && assoc_calls==0 && connects==1);
+ assert(!captured_config.sta.rm_enabled && !captured_config.sta.btm_enabled && captured_config.sta.bssid_set);
  assert(rsn_slot.owned && rsn_slot.record[0]==sizeof(rsn) &&
      rsn_slot.record[1]==0 && rsn_slot.payload_len==sizeof(rsn));
  assert(!memcmp(rsn_slot.record+2,rsn,sizeof(rsn)));
@@ -251,6 +261,30 @@ int main(void) {
      assoc_slot.record[1]==0 && !memcmp(assoc_slot.record+2,ies+22,7));
  assert(copied_rsn_len==sizeof(rsn) && !memcmp(copied_rsn,rsn,sizeof(rsn)));
  assert(copied_assoc_len==7 && !memcmp(copied_assoc,ies+22,7));
+ /* Common host RRM/ExtCap input is split: keep IE70 in the raw APPIE,
+  * move the unique 12-byte ExtCap payload to vendor capability state. */
+ uint8_t caps_ies[64]; memcpy(caps_ies,rsn,sizeof(rsn));
+ size_t ci=sizeof(rsn);
+ uint8_t rrm_ie[]={70,5,1,2,3,4,5}; memcpy(caps_ies+ci,rrm_ie,sizeof(rrm_ie));ci+=sizeof(rrm_ie);
+ uint8_t ext_ie[]={127,12,0x41,0x20,0x0a,0x02,0x80,0x01,0x55,0xaa,0x10,0x20,0x40,0x08};
+ memcpy(caps_ies+ci,ext_ie,sizeof(ext_ie));ci+=sizeof(ext_ie);
+ memcpy(caps_ies+ci,ies+22,7);ci+=7;
+ unsigned old_cap_sets=cap_sets, old_cap_clears=cap_clears;
+ assert(!espwifi_ext_connect(ssid,4,bssid,caps_ies,(unsigned)ci,1));
+ assert(captured_config.sta.rm_enabled && !captured_config.sta.btm_enabled &&
+     !captured_config.sta.mbo_enabled && captured_config.sta.bssid_set &&
+     !memcmp(captured_config.sta.bssid,bssid,6));
+ assert(cap_sets==old_cap_sets+1 && cap_clears>old_cap_clears &&
+     saved_caps_len==12 && !memcmp(saved_caps,ext_ie+2,12));
+ assert(rsn_slot.owned && rsn_slot.payload_len==sizeof(rsn) &&
+     !memcmp(rsn_slot.record+2,rsn,sizeof(rsn)));
+ assert(assoc_slot.owned && assoc_slot.payload_len==14 &&
+     !memcmp(assoc_slot.record+2,rrm_ie,sizeof(rrm_ie)) &&
+     !memcmp(assoc_slot.record+9,ies+22,7));
+ assert(copied_assoc_len==14 && copied_assoc[0]==70 && copied_assoc[1]==5 &&
+     copied_assoc[7]==244 && copied_assoc[10]==221);
+ assert(ie_count(copied_assoc,copied_assoc_len,70)==1 &&
+     ie_count(copied_assoc,copied_assoc_len,127)==0 && caps_ies[29]==127);
  int before_unset_rsn=unset_rsn, before_unset_assoc=unset_assoc;
  fail=1; /* set_config failure after a prior attempt must still clear both */
  assert(espwifi_ext_connect(ssid,4,bssid,ies,29,1)==-1);
@@ -294,6 +328,21 @@ with tempfile.TemporaryDirectory() as td:
  if a.analyze:
   subprocess.run([a.cc,'-Werror',*common_flags,'--analyze',str(c),
       '-o',str(Path(td)/'wpa2.plist')],check=True)
+ if a.cppcheck:
+  # This is a test harness: calls inside assert intentionally drive the test.
+  cppcheck_flags=[]
+  i=0
+  while i<len(common_flags):
+   flag=common_flags[i]
+   if flag in ('-I','-idirafter') and i+1<len(common_flags):
+    cppcheck_flags.append('-I'+common_flags[i+1]);i+=2;continue
+   if flag.startswith('-I') or flag.startswith('-D'):
+    cppcheck_flags.append(flag)
+   i+=1
+  subprocess.run([a.cppcheck,'--enable=warning,performance,portability',
+      '--suppress=missingIncludeSystem','--suppress=assertWithSideEffect',
+      '--error-exitcode=1','--std=c11',
+      *cppcheck_flags,str(c)],check=True)
  subprocess.run([a.cc,'-Werror',*common_flags,
      str(wpa_source/'rsn_supp/wpa_ie.c'),
      str(wpa_source/'common/wpa_common.c'),

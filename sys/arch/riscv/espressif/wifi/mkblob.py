@@ -395,6 +395,59 @@ def check_action_tx_wrappers(path, objdump, nm, env):
                              'original ' + symbol)
 
 
+def check_assoc_caps_wrapper(path, objdump, nm, env):
+    """Verify the association-only ExtCap wrapper and its bounded vendor ABI."""
+    listing = subprocess.check_output([str(nm), '--defined-only',
+        '--print-size', '--format=posix', str(path)], env=env, text=True)
+    symbols = {}
+    for line in listing.splitlines():
+        fields = line.split()
+        if len(fields) >= 3:
+            symbols[fields[0]] = (int(fields[2], 16),
+                                  int(fields[3], 16) if len(fields) > 3 else 0)
+    names = ('ieee80211_assoc_req_construct',
+             'espwifi_assoc_req_text_start', 'espwifi_assoc_req_text_end',
+             'ieee80211_add_extcap', '__wrap_ieee80211_add_extcap')
+    missing = [name for name in names if name not in symbols]
+    if missing:
+        raise ValueError('missing association capability ABI symbols: ' +
+                         ', '.join(missing))
+    start, size = symbols[names[0]]
+    if size == 0 or symbols[names[1]][0] != start or \
+            symbols[names[2]][0] != start + size:
+        raise ValueError('association caller boundaries do not match its code')
+    relocs = subprocess.check_output([str(objdump), '-r', str(path)],
+                                    env=env, text=True)
+    calls = []
+    for line in relocs.splitlines():
+        match = re.match(r'^\s*([0-9a-f]+)\s+R_RISCV_CALL(?:_PLT)?\s+(\S+)', line)
+        if match:
+            calls.append((int(match[1], 16), match[2]))
+    inside = [name for offset, name in calls if start <= offset < start + size]
+    if inside.count('__wrap_ieee80211_add_extcap') != 1 or \
+            'ieee80211_add_extcap' in inside or \
+            'ieee80211_add_assoc_req_ies' not in inside or \
+            inside.index('ieee80211_add_assoc_req_ies') >= \
+            inside.index('__wrap_ieee80211_add_extcap'):
+        raise ValueError('association builder bypasses the ExtCap wrapper')
+    wrapper, wrapper_size = symbols[names[4]]
+    if not any(wrapper <= offset < wrapper + wrapper_size and
+               name == 'ieee80211_add_extcap' for offset, name in calls):
+        raise ValueError('ExtCap wrapper does not chain to the vendor builder')
+    vendor, vendor_size = symbols[names[3]]
+    # Local labels inside the linked vendor function can terminate objdump's
+    # --disassemble-symbols selection. Use its ELF function extent instead.
+    body = subprocess.check_output([str(objdump), '-d', '--no-show-raw-insn',
+        '--start-address=' + str(vendor),
+        '--stop-address=' + str(vendor + vendor_size), str(path)],
+        env=env, text=True)
+    # The selected S31 generator copies a 14-byte IE and advances the cursor
+    # by 14. An upstream ABI change requires review, rather than truncation.
+    if not re.search(r'\bli\s+a2,\s*(?:0xe|14)\b', body) or \
+            not re.search(r'\baddi\s+s2,\s*s2,\s*(?:0xe|14)\b', body):
+        raise ValueError('vendor ExtCap output capacity changed')
+
+
 def common_wpa_flags(common, idf):
     return ['-I'+str(common), '-I'+str(common/'utils'), '-I'+str(common/'crypto'),
         '-D__ets__', '-DESP_PLATFORM', '-DESP_SUPPLICANT', '-DIEEE8021X_EAPOL',
@@ -420,7 +473,7 @@ def main():
                    help='count net80211 RX entry points during the first debug attempt')
     p.add_argument('--vendor-legacy-phy', action='store_true',
                    help='temporarily restrict STA PHY to 802.11b/g for the RX-chain diagnostic')
-    for opt in ('idf-source', 'wpa-source', 'sysroot', 'host-prefix', 'target-binutils-prefix', 'output'):
+    for opt in ('idf-source', 'wpa-source', 'sysroot', 'host-prefix', 'output'):
         p.add_argument('--'+opt, type=absolute, required=True)
     a = p.parse_args()
     try:
@@ -431,7 +484,9 @@ def main():
     clang = (a.host_prefix / 'bin/clang').resolve(strict=True)
     if not clang.is_relative_to(a.host_prefix.resolve(strict=True)):
         raise SystemExit('clang resolves outside the selected host prefix')
-    linker = Path(str(a.target_binutils_prefix) + 'ld').resolve(strict=True)
+    # LLD also interposes calls to a definition in the same vendor member.
+    # BFD leaves those calls direct, bypassing the association capability ABI.
+    linker = (a.host_prefix / 'bin/ld.lld').resolve(strict=True)
     objdump = (a.host_prefix / 'bin/llvm-objdump').resolve(strict=True)
     objcopy = (a.host_prefix / 'bin/llvm-objcopy').resolve(strict=True)
     nm = (a.host_prefix / 'bin/llvm-nm').resolve(strict=True)
@@ -440,7 +495,7 @@ def main():
     python = Path(sys.executable).resolve(strict=True)
     if not objdump.is_relative_to(a.host_prefix.resolve(strict=True)):
         raise SystemExit('objdump resolves outside the selected host prefix')
-    for tool in (objcopy, nm, readelf, python):
+    for tool in (linker, objcopy, nm, readelf, python):
         if not tool.resolve(strict=True).is_relative_to(a.host_prefix.resolve(strict=True)):
             raise SystemExit('LLVM tool resolves outside the selected host prefix')
     if not a.sysroot.is_dir() or not idf.is_dir():
@@ -472,6 +527,7 @@ def main():
     if a.vendor_rx_chain_once:
         units.append((HERE/'rx_chain_diag.S', []))
     units.append((HERE/'action_tx.c', []))
+    units.append((HERE/'assoc_caps.c', []))
     units += [(idf/s, ['-DCONFIG_ESP_WIFI_FTM_ENABLE=1'] if s.endswith('ftm_load_calibration.c') else []) for s in CORE]
     common = a.wpa_source / 'src'
     common_flags = common_wpa_flags(common, idf)
@@ -505,6 +561,7 @@ def main():
         if a.vendor_rx_chain_once:
             args += ['--wrap='+sym for sym in RX_CHAIN_WRAP_SYMBOLS]
         args += ['--wrap='+sym for sym in ACTION_TX_WRAP_SYMBOLS]
+        args += ['--wrap=ieee80211_add_extcap']
         args += ['-o', output] + objects + ['--start-group'] + libs + ['--end-group', '-T', HERE/'espwifi.lds']
         for f in ROM:
             args += ['-T', idf/'esp_rom/esp32s31/ld'/f]
@@ -523,6 +580,16 @@ def main():
                 raise ValueError(f'{error}; failed checker input saved at '
                                  f'{failed_object}') from error
         check_action_tx_wrappers(output, objdump, nm, env)
+        try:
+            check_assoc_caps_wrapper(output, objdump, nm, env)
+        except ValueError as error:
+            with tempfile.NamedTemporaryFile(
+                    prefix=a.output.name + '.assoc-caps-check-failed-',
+                    suffix='.o', dir=a.output.parent, delete=False) as saved:
+                saved.write(output.read_bytes())
+                failed_object = Path(saved.name)
+            raise ValueError(f'{error}; failed checker input saved at '
+                             f'{failed_object}') from error
         disassembly = subprocess.check_output([str(objdump), '-d',
             '--disassemble-symbols=espwifi_get_mac', str(output)], env=env, text=True)
         if '<espwifi_get_mac>:' not in disassembly:
