@@ -571,12 +571,16 @@ cfgvxmsg(const char *file, int line, const char *msgclass, const char *fmt,
 void
 autogen_comment(FILE *fp, const char *targetfile)
 {
+	const char *name;
 
+	/* Name the source by its base name to keep the output reproducible. */
+	name = strrchr(conffile, '/');
+	name = name == NULL ? conffile : name + 1;
 	(void)fprintf(fp,
 	    "/*\n"
 	    " * MACHINE GENERATED: DO NOT EDIT\n"
 	    " *\n"
 	    " * %s, from \"%s\"\n"
 	    " */\n\n",
-	    targetfile, conffile);
+	    targetfile, name);
 }

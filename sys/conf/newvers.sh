@@ -246,7 +246,7 @@ emptyq='""'
 
 cat << _EOF > vers.c
 /*
- * Automatically generated file from $0
+ * Automatically generated file from ${0##*/}
  * Do not edit.
  */
 #include <sys/cdefs.h>
