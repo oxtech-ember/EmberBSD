@@ -105,6 +105,8 @@ vgem_fence_release(struct dma_fence *base)
 	struct vgem_fence *fence = container_of(base, typeof(*fence), base);
 
 	del_timer_sync(&fence->timer);
+	/* the lock lives in the fence and the fence is freed: LOCKDEBUG wants it destroyed */
+	spin_lock_destroy(&fence->lock);
 	dma_fence_free(&fence->base);
 }
 
@@ -446,6 +448,10 @@ vgem_bo_create(struct drm_device *dev, size_t size)
 	bo->base.funcs = &vgem_gem_funcs;
 	ret = drm_gem_object_init(dev, &bo->base, size);
 	if (ret) {
+#ifdef VGEM_CORE618
+		/* the 6.18 drm_gem_object_init leaves the object initialised when it fails, as in Linux */
+		drm_gem_private_object_fini(&bo->base);
+#endif
 		kfree(bo);
 		return ERR_PTR(ret);
 	}
