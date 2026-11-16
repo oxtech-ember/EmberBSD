@@ -274,6 +274,14 @@ void ttm_device_fini(struct ttm_device *bdev)
 
 	ttm_pool_fini(&bdev->pool);
 	ttm_global_release();
+
+	/*
+	 * Linux never destroys these locks; the device is part of a driver
+	 * structure that is freed or initialised again, which a kernel with
+	 * LOCKDEBUG does not accept.
+	 */
+	spin_lock_destroy(&man->move_lock);
+	spin_lock_destroy(&bdev->lru_lock);
 }
 EXPORT_SYMBOL(ttm_device_fini);
 

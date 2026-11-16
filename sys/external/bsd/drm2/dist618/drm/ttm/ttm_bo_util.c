@@ -208,6 +208,8 @@ static void ttm_transfered_destroy(struct ttm_buffer_object *bo)
 
 	fbo = container_of(bo, struct ttm_transfer_obj, base);
 	dma_resv_fini(&fbo->base.base._resv);
+	/* drm_vma_node_reset set up the lock of the node; Linux never destroys it */
+	rwlock_destroy(&fbo->base.base.vma_node.vm_lock);
 	ttm_bo_put(fbo->bo);
 	kfree(fbo);
 }
@@ -261,6 +263,8 @@ static int ttm_buffer_object_transfer(struct ttm_buffer_object *bo,
 	ret = dma_resv_reserve_fences(&fbo->base.base._resv, 1);
 	if (ret) {
 		dma_resv_unlock(&fbo->base.base._resv);
+		dma_resv_fini(&fbo->base.base._resv);
+		rwlock_destroy(&fbo->base.base.vma_node.vm_lock);
 		kfree(fbo);
 		return ret;
 	}

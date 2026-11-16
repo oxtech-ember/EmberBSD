@@ -236,6 +236,9 @@ int ttm_range_man_fini_nocheck(struct ttm_device *bdev,
 
 	ttm_resource_manager_cleanup(man);
 	ttm_set_driver_manager(bdev, type, NULL);
+	/* Linux never destroys these locks; a kernel with LOCKDEBUG stops at the free */
+	spin_lock_destroy(&rman->lock);
+	spin_lock_destroy(&man->move_lock);
 	kfree(rman);
 	return 0;
 }
