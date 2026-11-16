@@ -331,7 +331,6 @@ drm2_drm618_dmabuf_run(void)
 		dma_fence_put(b);
 		dma_fence_put(r);
 	}
-	dma_fence_put(fence);
 
 	/* the last reference: release runs once, with the attachments gone */
 	dma_buf_put(buf);
@@ -384,6 +383,7 @@ drm2_drm618_dmabuf_run(void)
 	__folio_batch_release(&fbatch);
 	fput(shm);
 
+	spin_lock_destroy(&lock);
 	if (t_fail != 0)
 		printf("drm2-drm618-dmabuf: %d of %d checks FAILED\n", t_fail, t_run);
 	else
