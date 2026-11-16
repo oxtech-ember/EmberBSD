@@ -1991,6 +1991,9 @@ drm2_dma_resv_run(void)
 	test_resv_stress();
 	test_resv_excl_stress();
 	test_resv_poison_stress();
+	/* the locks are part of the module: a kernel with LOCKDEBUG stops at the next set-up at their address */
+	spin_lock_destroy(&ts_lock);
+	spin_lock_destroy(&tf_lock);
 	printf("drm2-dma-resv: %d checks, %d failed\n", t_run, t_fail);
 	return t_fail;
 }
