@@ -7,6 +7,7 @@
 .if !defined(_BSD_LLVM_SOURCE_MK_)
 _BSD_LLVM_SOURCE_MK_=1
 
+REPRO_EXTERNAL_SOURCE_VARS+= EMBER_LLVM_SOURCE
 .if defined(EMBER_LLVM_SOURCE)
 .if empty(EMBER_LLVM_SOURCE:tW:M/*) || \
     "${EMBER_LLVM_SOURCE:tW:C,[A-Za-z0-9_./+@%=-],,g}" != ""

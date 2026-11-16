@@ -1,6 +1,7 @@
 # Common Ports zlib source for the base system and standalone consumers.
 .if !defined(_EMBER_ZLIB_SOURCE_MK_)
 _EMBER_ZLIB_SOURCE_MK_=1
+REPRO_EXTERNAL_SOURCE_VARS+= EMBER_ZLIB_SOURCE
 .if !defined(EMBER_ZLIB_SOURCE) || empty(EMBER_ZLIB_SOURCE)
 .error Set EMBER_ZLIB_SOURCE to the prepared common Ports source
 .elif empty(EMBER_ZLIB_SOURCE:M/*)

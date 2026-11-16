@@ -3,6 +3,7 @@
 .include <bsd.own.mk>
 
 .if defined(EMBER_MDNS_SOURCE)
+REPRO_EXTERNAL_SOURCE_VARS+= EMBER_MDNS_SOURCE
 DIST?=	${EMBER_MDNS_SOURCE}
 .if "${DIST}" != "${EMBER_MDNS_SOURCE}"
 .error DIST must match the prepared common mDNSResponder source

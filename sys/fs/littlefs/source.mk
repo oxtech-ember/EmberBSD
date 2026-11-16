@@ -1,5 +1,6 @@
 # Common littlefs source; shared by kernel and native makefs consumers.
 .if !defined(_EMBER_LITTLEFS_SOURCE_MK_)
+REPRO_EXTERNAL_SOURCE_VARS+= EMBER_LITTLEFS_SOURCE
 _EMBER_LITTLEFS_SOURCE_MK_=1
 .if !defined(EMBER_LITTLEFS_SOURCE) || empty(EMBER_LITTLEFS_SOURCE)
 .error Set EMBER_LITTLEFS_SOURCE to the prepared common Ports source

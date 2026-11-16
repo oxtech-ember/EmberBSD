@@ -17,6 +17,7 @@ BINDIR?= /usr/bin
     !exists(${EMBER_BYACC_SOURCE}/btyaccpar.c)
 .error EMBER_BYACC_SOURCE must name the prepared absolute byacc source
 .endif
+REPRO_EXTERNAL_SOURCE_VARS+= EMBER_BYACC_SOURCE
 IDIST=	${EMBER_BYACC_SOURCE}
 YYPATCH != cat ${IDIST}/VERSION
 

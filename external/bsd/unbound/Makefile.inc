@@ -7,6 +7,7 @@ UNBOUND_GENERATED_DIR= ${.OBJDIR}/unbound-generated
 .error Set EMBER_UNBOUND_SOURCE to the prepared common Ports source
 .endif
 .if defined(EMBER_UNBOUND_SOURCE)
+REPRO_EXTERNAL_SOURCE_VARS+= EMBER_UNBOUND_SOURCE
 UNBOUND=	${EMBER_UNBOUND_SOURCE}
 .if make(obj) && empty(.TARGETS:Nobj)
 UNBOUND_VERSION=	0.0.0

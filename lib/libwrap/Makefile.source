@@ -9,6 +9,7 @@
     !exists(${EMBER_TCP_WRAPPERS_SOURCE}/tcpdmatch.c)
 .error EMBER_TCP_WRAPPERS_SOURCE must name the prepared common Ports TCP wrappers source
 .endif
+REPRO_EXTERNAL_SOURCE_VARS+= EMBER_TCP_WRAPPERS_SOURCE
 TCPWRAPPERS_SRCDIR := ${EMBER_TCP_WRAPPERS_SOURCE}
 .elif empty(.MAKEFLAGS:M-V*) && (make(all) || make(depend) || \
     make(dependall) || make(install))

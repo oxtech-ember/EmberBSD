@@ -2,6 +2,7 @@
 
 SRCDIR=		${NETBSDSRCDIR}/external/bsd/dhcpcd
 .if defined(EMBER_DHCPCD_SOURCE)
+REPRO_EXTERNAL_SOURCE_VARS+= EMBER_DHCPCD_SOURCE
 DIST?=		${EMBER_DHCPCD_SOURCE}
 .if "${DIST}" != "${EMBER_DHCPCD_SOURCE}"
 .error DIST must match the prepared common dhcpcd source

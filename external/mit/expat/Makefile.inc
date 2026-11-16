@@ -6,6 +6,7 @@ EXPATDIR=	${NETBSDSRCDIR}/external/mit/expat
 .if !defined(EMBER_EXPAT_SOURCE) && !(make(obj) && empty(.TARGETS:Nobj))
 .error Set EMBER_EXPAT_SOURCE to the prepared common Ports source
 .endif
+REPRO_EXTERNAL_SOURCE_VARS+= EMBER_EXPAT_SOURCE
 EXPATSRCDIR=	${EMBER_EXPAT_SOURCE}
 
 .for _LIB in expat

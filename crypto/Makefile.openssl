@@ -61,6 +61,7 @@ CLEANFILES+= *.o *.po *.pico *.go *.ln *.d *.d.tmp .depend
 .error EMBER_OPENSSL_GENERATED must name the prepared target object directory
 .endif
 EMBER_OPENSSL_GENERATED?= ${.OBJDIR}/openssl-not-generated
+REPRO_EXTERNAL_SOURCE_VARS+= EMBER_OPENSSL_SOURCE
 OPENSSLSRC=	${EMBER_OPENSSL_SOURCE}
 OPENSSLGENINC=	${EMBER_OPENSSL_GENERATED}/include
 .else

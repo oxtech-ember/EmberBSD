@@ -17,6 +17,7 @@ BINDIR=/usr/sbin
     !exists(${EMBER_TCPDUMP_SOURCE}/print-pfsync.c)
 .error EMBER_TCPDUMP_SOURCE must name the prepared common Ports tcpdump source
 .endif
+REPRO_EXTERNAL_SOURCE_VARS+= EMBER_TCPDUMP_SOURCE
 SRCDIR=	${EMBER_TCPDUMP_SOURCE}
 .elif empty(.MAKEFLAGS:M-V*) && (make(all) || make(dependall) || make(install) || \
     make(maninstall) || make(tcpdump.8) || make(config.h) || make(version.c))

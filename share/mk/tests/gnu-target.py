@@ -61,11 +61,14 @@ all: gnu-target-build
        root / 'share/mk/bsd.gnutarget.mk'))
     env = dict(os.environ, PATH=str(host / 'bin') + ':' + str(host / 'gnu/bin'),
                TMPDIR=str(a.work_dir))
-    command = [str(host / 'bin/bmake'), '-r', '-f', str(makefile), 'all']
-    dry = subprocess.run([str(host / 'bin/bmake'), '-n', '-r', '-f', str(makefile), 'all'],
+    command = [str(host / 'bin/bmake'), '-r', '-m', str(root / 'share/mk'),
+               '-f', str(makefile), 'all']
+    dry = subprocess.run([str(host / 'bin/bmake'), '-n', '-r', '-m', str(root / 'share/mk'),
+                          '-f', str(makefile), 'all'],
                          cwd=work, env=env, capture_output=True, text=True)
     if dry.returncode or (work / 'build').exists():
-        raise SystemExit('dry run created a new GNU object directory')
+        raise SystemExit('dry run created a new GNU object directory: rc=%d %s%s' %
+                         (dry.returncode, dry.stdout, dry.stderr))
     previous = None
     for _ in range(2):
         result = subprocess.run(command, cwd=work, env=env, capture_output=True, text=True)
@@ -105,7 +108,8 @@ all: gnu-target-build
     if warning.returncode == 0 or 'error:' not in warning.stderr:
         raise SystemExit('actual build failed to enforce -Werror')
     (source / 'fixture.c').write_text('int target_value(void) { return VALUE; }\n')
-    result = subprocess.run([str(host / 'bin/bmake'), '-n', '-r', '-f', str(makefile), 'all'],
+    result = subprocess.run([str(host / 'bin/bmake'), '-n', '-r', '-m', str(root / 'share/mk'),
+                             '-f', str(makefile), 'all'],
                             cwd=work, env=env, capture_output=True, text=True)
     if result.returncode or (build / 'fixture.o').exists():
         raise SystemExit('dry run executed the GNU target build')
@@ -182,8 +186,129 @@ all: gnu-target-build
     failed_makefile = work / 'failed.mk'
     failed_makefile.write_text(makefile.read_text().replace(str(source), str(failed_source))
                                .replace(str(work / 'build'), str(work / 'failed-build')))
-    result = subprocess.run([str(host / 'bin/bmake'), '-r', '-f', str(failed_makefile), 'all'],
+    result = subprocess.run([str(host / 'bin/bmake'), '-r', '-m', str(root / 'share/mk'),
+                             '-f', str(failed_makefile), 'all'],
                             cwd=work, env=env, capture_output=True, text=True)
     if result.returncode == 0 or (work / 'failed-build/Makefile').exists():
         raise SystemExit('failed configure left a reusable partial Makefile')
+
+# Exercise the actual OpenSSH source import and the regular GNU configure
+# adapter. Prepared WPA and mDNS trees are present in the build environment,
+# but they are not inputs to this component and must not invalidate its warm
+# configure/object state.
+with tempfile.TemporaryDirectory(prefix='gnu-openssh-warm-', dir=a.work_dir) as temporary:
+    work = Path(temporary)
+    openssh_roots = [work / 'openssh-1', work / 'openssh-2']
+    wpa_roots = [work / 'wpa-1', work / 'wpa-2']
+    mdns_roots = [work / 'mdns-1', work / 'mdns-2']
+    state = work / 'configure-count'
+    for index, source in enumerate(openssh_roots):
+        source.mkdir()
+        (source / 'fixture.c').write_text(
+            'int target_value(void) { return %d; }\n' % (index + 1))
+        (source / 'configure').write_text('''#!/bin/sh
+set -eu
+printf 'configured\\n' >> "$STATE"
+cat > Makefile <<'END'
+all: fixture.o
+distclean:
+\ttouch distcleaned
+\trm -f fixture.o Makefile
+fixture.o:
+\t$(CC) $(CPPFLAGS) $(CFLAGS) -c $(SOURCE)/fixture.c -o $@
+END
+''')
+        (source / 'configure').chmod(0o755)
+    for source in wpa_roots + mdns_roots:
+        source.mkdir()
+
+    build_dir = work / 'build'
+    build_dir.mkdir()
+    gnu_source = build_dir / 'source-view'
+    gnu_source.symlink_to(openssh_roots[0], target_is_directory=True)
+    makefile = work / 'openssh-config.mk'
+    makefile.write_text('''MAKECONF= /dev/null
+MACHINE= evbarm
+MACHINE_ARCH= aarch64
+MKREPRO= yes
+EMBER_COMPILER_FAMILY= clang
+NETBSDSRCDIR= %s
+NETBSDOBJDIR= %s
+DESTDIR= %s
+EMBER_OPENSSH_SOURCE= %s
+EMBER_WPA_SOURCE= %s
+EMBER_MDNS_SOURCE= %s
+GNU_SOURCE= %s
+GNU_OBJDIR= %s
+GNU_BUILD_TRIPLE= aarch64-apple-darwin27.0.0
+GNU_HOST_TRIPLE= aarch64--netbsd
+HOST_SH= %s
+HOST_GMAKE= %s
+CC= %s --target=aarch64--netbsd
+CPPFLAGS= --sysroot=%s
+CFLAGS= -O1 -Werror -DVALUE=1
+GNU_CONFIGURE_CFLAGS= ${CFLAGS:N-Werror}
+LDFLAGS= --sysroot=%s
+LD_DRIVER_FLAGS= --ld-path=%s
+GNU_CONFIGURE_ENV= SOURCE=${GNU_SOURCE} STATE=%s
+GNU_MAKE_ENV= SOURCE=${GNU_SOURCE}
+GNU_MAKE_DIRS= .
+.include <bsd.own.mk>
+.include "%s"
+.include <bsd.sys.mk>
+.include <bsd.gnutarget.mk>
+all: gnu-target-build
+''' % (root, work / 'obj', work / 'dest', openssh_roots[0],
+       wpa_roots[0], mdns_roots[0], gnu_source, work / 'build', host / 'bin/mksh',
+       host / 'bin/gmake', host / 'bin/clang', a.sysroot, a.sysroot,
+       host / 'bin/ld.lld', state,
+       root / 'crypto/external/bsd/openssh/source.mk'))
+    env = dict(os.environ, PATH=str(host / 'bin') + ':' + str(host / 'gnu/bin'),
+               TMPDIR=str(a.work_dir))
+    command = [str(host / 'bin/bmake'), '-r', '-m', str(root / 'share/mk'),
+               '-f', str(makefile), 'all']
+    result = subprocess.run(command, cwd=work, env=env, capture_output=True, text=True)
+    if result.returncode:
+        raise SystemExit(result.stdout + result.stderr)
+    build = work / 'build'
+    config_inputs = build / '.configure-inputs'
+    openssh_map = '-ffile-prefix-map=%s=/usr/src/external/openssh' % openssh_roots[0]
+    if openssh_map not in config_inputs.read_text():
+        raise SystemExit('actual OpenSSH source import is absent from configure flags')
+    before = ((build / 'Makefile').stat().st_ino,
+              (build / 'Makefile').stat().st_mtime_ns,
+              (build / 'fixture.o').stat().st_ino,
+              (build / 'fixture.o').stat().st_mtime_ns)
+    before_inputs = config_inputs.read_bytes()
+    # Refresh unrelated prepared package roots while the SSH inputs stay fixed.
+    result = subprocess.run(command + ['EMBER_WPA_SOURCE=' + str(wpa_roots[1]),
+                                       'EMBER_MDNS_SOURCE=' + str(mdns_roots[1])],
+                            cwd=work, env=env, capture_output=True, text=True)
+    if result.returncode:
+        raise SystemExit(result.stdout + result.stderr)
+    after = ((build / 'Makefile').stat().st_ino,
+             (build / 'Makefile').stat().st_mtime_ns,
+             (build / 'fixture.o').stat().st_ino,
+             (build / 'fixture.o').stat().st_mtime_ns)
+    after_inputs = config_inputs.read_bytes()
+    if (after != before or after_inputs != before_inputs or
+            (build / 'distcleaned').exists() or
+            state.read_text().splitlines().count('configured') != 1):
+        changed = sorted(set(after_inputs.decode().splitlines()) -
+                         set(before_inputs.decode().splitlines()))
+        raise SystemExit('unrelated WPA/mDNS roots invalidated warm OpenSSH: %r' % changed)
+    # The imported OpenSSH root itself remains a real configure input.
+    (build / 'distcleaned').unlink(missing_ok=True)
+    gnu_source.unlink()
+    gnu_source.symlink_to(openssh_roots[1], target_is_directory=True)
+    result = subprocess.run(command + ['EMBER_OPENSSH_SOURCE=' + str(openssh_roots[1])],
+                            cwd=work, env=env, capture_output=True, text=True)
+    if result.returncode:
+        raise SystemExit(result.stdout + result.stderr)
+    if (build / 'fixture.o').stat().st_ino == before[2]:
+        raise SystemExit('changed imported OpenSSH source reused a stale target object')
+    if state.read_text().splitlines().count('configured') != 2:
+        raise SystemExit('changed imported OpenSSH source did not reconfigure')
+    if not (build / 'distcleaned').exists():
+        raise SystemExit('changed imported OpenSSH source skipped configure invalidation')
 print('PASS: selected configure/make, incremental GNU target compile')

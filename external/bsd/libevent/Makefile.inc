@@ -12,6 +12,7 @@ LIBEVENT_DIR=	${NETBSDSRCDIR}/external/bsd/libevent
     !exists(${EMBER_LIBEVENT_SOURCE}/event.c)
 .error EMBER_LIBEVENT_SOURCE must name the prepared absolute libevent source
 .endif
+REPRO_EXTERNAL_SOURCE_VARS+= EMBER_LIBEVENT_SOURCE
 LIBEVENT_DIST=	${EMBER_LIBEVENT_SOURCE}
 
 CPPFLAGS+=	-DHAVE_CONFIG_H

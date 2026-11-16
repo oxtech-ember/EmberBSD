@@ -77,8 +77,11 @@ REPROFLAGS+=	-fdebug-regex-map='/usr/src/(.*)/obj\..*/(.*)=/usr/obj/\1/\2'
 # EmberBSD external sources and staged runtimes are outside NETBSDSRCDIR.
 # The external toolchain root holds compiler headers (Clang's resource
 # directory, GCC's include directories) that debug info names.
-# Map each selected root to a canonical path. The SDK is then the same on
-# every build host. REPRO_EXTERNAL_ROOTS also feeds lib/libc tags.
+# Source import files declare REPRO_EXTERNAL_SOURCE_VARS for source and
+# headers actually compiled here. Unrelated prepared roots must not change
+# compiler/configure inputs when another component is refreshed. Compiler
+# and runtime roots apply to all components because their headers are implicit.
+# Keep the complete REPRO_EXTERNAL_ROOTS for metadata such as lib/libc tags.
 .for _var _path in EMBER_LIBEDIT_SOURCE /usr/src/external/libedit \
     EMBER_LIBEVENT_SOURCE /usr/src/external/libevent \
     EMBER_LIBARCHIVE_SOURCE /usr/src/external/libarchive \
@@ -124,7 +127,12 @@ REPROFLAGS+=	-fdebug-regex-map='/usr/src/(.*)/obj\..*/(.*)=/usr/obj/\1/\2'
 .error MKREPRO=yes requires ${_var} to be an absolute path without special characters
 .endif
 REPRO_EXTERNAL_ROOTS+=	${${_var}}=${_path}
+.if "${_var}" == "EXTERNAL_TOOLCHAIN" || \
+    "${_var}" == "EMBER_EXTERNAL_LLVM_RUNTIME" || \
+    "${_var}" == "EMBER_EXTERNAL_GCC_RUNTIME" || \
+    !empty(REPRO_EXTERNAL_SOURCE_VARS:M${_var})
 REPROFLAGS+=	-ffile-prefix-map=${${_var}}=${_path}
+.endif
 .endif
 .endfor
 

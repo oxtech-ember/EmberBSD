@@ -1,4 +1,5 @@
 # Native libwrap selection; preserve the existing default for both source owners.
+REPRO_EXTERNAL_SOURCE_VARS+= EMBER_OPENSSH_SOURCE
 WITH_NETBSD_LIBWRAP?=yes
 .if defined(EMBER_OPENSSH_SOURCE) && !empty(EMBER_OPENSSH_SOURCE)
 SSHDIST?= ${EMBER_OPENSSH_SOURCE}

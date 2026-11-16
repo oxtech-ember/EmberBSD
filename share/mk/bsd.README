@@ -234,6 +234,19 @@ NOSHARE		Force MKSHARE=no.
 NOSSP		Force USE_SSP=no.
 NOSTATICLIB	Force MKSTATICLIB=no.
 
+REPRO_EXTERNAL_SOURCE_VARS
+		Names of prepared external source variables used by this
+		component, including direct source-header dependencies.
+		Append these in the file that imports the source, before
+		including bsd.sys.mk (via bsd.lib.mk/prog.mk), for example:
+		REPRO_EXTERNAL_SOURCE_VARS+= EMBER_OPENSSH_SOURCE
+		With MKREPRO=yes, bsd.sys.mk adds canonical prefix maps only
+		for these sources, plus compiler and runtime roots. Installed
+		headers use the DESTDIR map. Merely passing an unrelated source
+		variable does not change compiler flags or configure inputs.
+		REPRO_EXTERNAL_ROOTS retains all defined source maps for
+		generated metadata (libc tags and Heimdal source normalization).
+
 Special variations:
 
 NOFULLRELRO!=no Force MKRELRO=no if MKRELRO=full

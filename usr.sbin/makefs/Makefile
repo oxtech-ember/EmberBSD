@@ -14,6 +14,7 @@ SRCS=	cd9660.c chfs.c ffs.c v7fs.c msdos.c udf.c\
 .if defined(EMBER_LITTLEFS_SOURCE) && !empty(EMBER_LITTLEFS_SOURCE)
 .PATH:		${EMBER_LITTLEFS_SOURCE}
 SRCS+=		littlefs.c lfs.c lfs_util.c
+REPRO_EXTERNAL_SOURCE_VARS+= EMBER_LITTLEFS_SOURCE
 CPPFLAGS+=	-I${EMBER_LITTLEFS_SOURCE} -I${NETBSDSRCDIR}/sys/fs/littlefs \
 	-DMAKEFS_LITTLEFS
 .endif

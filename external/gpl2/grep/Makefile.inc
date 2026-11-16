@@ -1,6 +1,7 @@
 # Origin: EmberBSD (AI-assisted).
 .include <bsd.own.mk>
 .if defined(EMBER_GREP_SOURCE)
+REPRO_EXTERNAL_SOURCE_VARS+= EMBER_GREP_SOURCE
 IDIST= ${EMBER_GREP_SOURCE}
 .endif
 BINDIR= /usr/bin

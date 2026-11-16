@@ -12,6 +12,7 @@ BINDIR=	/usr/bin
     !exists(${EMBER_TOP_SOURCE}/machine/m_netbsd.c)
 .error EMBER_TOP_SOURCE must name the prepared common Ports top source
 .endif
+REPRO_EXTERNAL_SOURCE_VARS+= EMBER_TOP_SOURCE
 TOPDIR= ${EMBER_TOP_SOURCE}
 .elif empty(.MAKEFLAGS:M-V*) && (make(all) || make(dependall) || make(install))
 .error Set EMBER_TOP_SOURCE to the prepared common Ports top source

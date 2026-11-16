@@ -6,6 +6,7 @@
 .error Set EMBER_LIBFETCH_SOURCE to the prepared common Ports source
 .endif
 .if defined(EMBER_LIBFETCH_SOURCE)
+REPRO_EXTERNAL_SOURCE_VARS+= EMBER_LIBFETCH_SOURCE
 LIBFETCHDIR=	${EMBER_LIBFETCH_SOURCE}
 .else
 LIBFETCHDIR=	${.CURDIR}/../dist/libfetch

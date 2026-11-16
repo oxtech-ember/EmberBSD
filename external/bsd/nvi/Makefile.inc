@@ -12,6 +12,7 @@ SANITIZER_RENAME_SYMBOL+=	regcomp regerror regexec regfree
     !exists(${EMBER_NVI_SOURCE}/dist/ember-gen-headers.sh)
 .error EMBER_NVI_SOURCE must name the prepared common Ports nvi source
 .endif
+REPRO_EXTERNAL_SOURCE_VARS+= EMBER_NVI_SOURCE
 DIST= ${EMBER_NVI_SOURCE}
 .PATH: ${DIST}
 .elif empty(.MAKEFLAGS:M-V*) && (make(all) || make(dependall) || make(install))

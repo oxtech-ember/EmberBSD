@@ -4,6 +4,7 @@
 .include <bsd.init.mk>
 
 .if defined(EMBER_LIBXML2_SOURCE)
+REPRO_EXTERNAL_SOURCE_VARS+= EMBER_LIBXML2_SOURCE
 .if empty(.MAKEFLAGS:M-V*) && (!defined(HOST_PKG_CONFIG) || !defined(GNU_TARGET_LIBTOOL) || \
     !defined(EMBER_TARGET_TOOL_DIR) || !defined(EMBER_NATIVE_TOOLS)) && \
     (make(all) || make(dependall) || make(gnu-target-build))

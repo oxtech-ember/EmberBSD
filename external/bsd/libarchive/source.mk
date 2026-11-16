@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 # Copyright (c) 2026 EmberBSD contributors.
 # Select the source prepared by the common Ports libarchive producer.
+REPRO_EXTERNAL_SOURCE_VARS+= EMBER_LIBARCHIVE_SOURCE
 .if !defined(EMBER_LIBARCHIVE_SOURCE)
 .error Set EMBER_LIBARCHIVE_SOURCE to the prepared common Ports libarchive source
 .endif

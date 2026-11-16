@@ -13,6 +13,7 @@ USE_FORT?=yes	# network client/server
     !exists(${EMBER_PPP_SOURCE}/chat/chat.c)
 .error EMBER_PPP_SOURCE must name the prepared common Ports PPP source
 .endif
+REPRO_EXTERNAL_SOURCE_VARS+= EMBER_PPP_SOURCE
 DIST= ${EMBER_PPP_SOURCE}
 .elif empty(.MAKEFLAGS:M-V*) && (make(all) || make(dependall) || make(install))
 .error Set EMBER_PPP_SOURCE to the prepared common Ports PPP source

@@ -1,5 +1,6 @@
 # Consume only the source tree prepared from the canonical Ports recipe.
 .if !defined(_EMBER_LIBEDIT_SOURCE_MK_)
+REPRO_EXTERNAL_SOURCE_VARS+= EMBER_LIBEDIT_SOURCE
 _EMBER_LIBEDIT_SOURCE_MK_=1
 
 .if !defined(EMBER_LIBEDIT_SOURCE) || empty(EMBER_LIBEDIT_SOURCE)

@@ -18,6 +18,7 @@ WARNS?=	4
     !exists(${EMBER_NTP_SOURCE}/ntpd/ntpd.c)
 .error EMBER_NTP_SOURCE must name the prepared common Ports NTP source
 .endif
+REPRO_EXTERNAL_SOURCE_VARS+= EMBER_NTP_SOURCE
 IDIST= ${EMBER_NTP_SOURCE}
 .elif empty(.MAKEFLAGS:M-V*) && (make(all) || make(dependall) || make(install))
 .error Set EMBER_NTP_SOURCE to the prepared common Ports NTP source
@@ -30,6 +31,7 @@ IDIST= ${EMBER_NTP_SOURCE}
     !exists(${EMBER_LIBOPTS_SOURCE}/autoopts/options.h)
 .error EMBER_LIBOPTS_SOURCE must name the prepared common AutoGen libopts source
 .endif
+REPRO_EXTERNAL_SOURCE_VARS+= EMBER_LIBOPTS_SOURCE
 NTP_LIBOPTS_SOURCE= ${EMBER_LIBOPTS_SOURCE}
 .elif empty(.MAKEFLAGS:M-V*) && (make(all) || make(dependall) || make(install))
 .error Set EMBER_LIBOPTS_SOURCE to the prepared common AutoGen libopts source

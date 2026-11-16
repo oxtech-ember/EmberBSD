@@ -3,6 +3,7 @@
 .include <bsd.own.mk>
 
 .if defined(EMBER_GETTEXT_SOURCE)
+REPRO_EXTERNAL_SOURCE_VARS+= EMBER_GETTEXT_SOURCE
 DIST=		${EMBER_GETTEXT_SOURCE}
 .else
 DIST=		${NETBSDSRCDIR}/external/gpl2/gettext/dist

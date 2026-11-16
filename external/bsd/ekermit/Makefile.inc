@@ -10,6 +10,7 @@
     !exists(${EMBER_EKERMIT_SOURCE}/unixio.c)
 .error EMBER_EKERMIT_SOURCE must name the prepared common Ports E-Kermit source
 .endif
+REPRO_EXTERNAL_SOURCE_VARS+= EMBER_EKERMIT_SOURCE
 EKERMITDIST= ${EMBER_EKERMIT_SOURCE}
 .elif empty(.MAKEFLAGS:M-V*) && (make(all) || make(dependall) || make(install))
 .error Set EMBER_EKERMIT_SOURCE to the prepared common Ports E-Kermit source

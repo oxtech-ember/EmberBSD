@@ -17,6 +17,7 @@ LDAP_SRCDIR=	${NETBSDSRCDIR}/external/bsd/openldap
 .error Set EMBER_OPENLDAP_SOURCE to the prepared common Ports source
 .endif
 .if defined(EMBER_OPENLDAP_SOURCE)
+REPRO_EXTERNAL_SOURCE_VARS+= EMBER_OPENLDAP_SOURCE
 LDAP_DISTDIR=	${EMBER_OPENLDAP_SOURCE}
 .if make(obj) && empty(.TARGETS:Nobj)
 LDAP_VERSION=	0.0.0

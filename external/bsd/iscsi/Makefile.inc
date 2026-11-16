@@ -13,6 +13,7 @@ WARNS?=		4
     !exists(${EMBER_ISCSI_SOURCE}/src/target/iscsi-target.c)
 .error EMBER_ISCSI_SOURCE must name the prepared common Ports iSCSI source
 .endif
+REPRO_EXTERNAL_SOURCE_VARS+= EMBER_ISCSI_SOURCE
 ISCSIDIST= ${EMBER_ISCSI_SOURCE}
 .elif empty(.MAKEFLAGS:M-V*) && (make(all) || make(dependall) || make(install))
 .error Set EMBER_ISCSI_SOURCE to the prepared common Ports iSCSI source

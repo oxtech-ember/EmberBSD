@@ -65,12 +65,13 @@ def libc_tags_rules(os_root):
     return '\n'.join(rules)
 
 
-def make_variables(make, os_root, fixture, work, root, names):
+def make_variables(make, os_root, fixture, work, root, names, selected=(), overrides=()):
     variables = ['MKREPRO=yes', 'EMBER_COMPILER_FAMILY=clang', 'MAKECONF=/dev/null',
                  'MACHINE=evbarm', 'MACHINE_ARCH=aarch64',
                  'NETBSDSRCDIR=' + str(root / 'src'), 'NETBSDOBJDIR=' + str(root / 'obj'),
                  'DESTDIR=' + str(root / 'dest')]
     variables += [f'{var}={root / name}' for var, name, _ in ROOTS]
+    variables += ['REPRO_EXTERNAL_SOURCE_VARS=' + ' '.join(selected), *overrides]
     query = [part for name in names for part in ('-V', '${' + name + '}')]
     result = subprocess.run([make, '-r', '-m', str(os_root / 'share/mk'), '-f', str(fixture), *variables, *query],
                             cwd=work, capture_output=True, text=True,
@@ -106,31 +107,76 @@ def main():
             for var, name, canonical in ROOTS:
                 if mapped.get(str(root / name)) != canonical:
                     raise SystemExit(f'{var} has no canonical {canonical} map')
+                if var.endswith('_SOURCE') and str(root / name) in reproflags:
+                    raise SystemExit(f'{var}: an unimported source changes compiler flags')
+            selected = ('EMBER_OPENSSH_SOURCE', 'EMBER_ZLIB_SOURCE')
+            before = make_variables(args.make, os_root, fixture, work, root,
+                                    ('CFLAGS', 'CXXFLAGS'), selected)
+            after = make_variables(args.make, os_root, fixture, work, root,
+                                   ('CFLAGS', 'CXXFLAGS'), selected,
+                                   ('EMBER_WPA_SOURCE=' + str(root / 'new-wpa'),
+                                    'EMBER_MDNS_SOURCE=' + str(root / 'new-mdns')))
+            if before != after:
+                raise SystemExit('unrelated source refresh changes imported compiler flags')
+            gccflags, = make_variables(args.make, os_root, fixture, work, root,
+                                      ('REPROFLAGS',), overrides=(
+                                          'EMBER_COMPILER_FAMILY=gcc',
+                                          'EMBER_EXTERNAL_LLVM_RUNTIME=',
+                                          'EMBER_EXTERNAL_GCC_RUNTIME=' + str(root / 'gcc-runtime')))
+            if '-ffile-prefix-map=' + str(root / 'gcc-runtime') + '=/usr/pkg/gcc16' not in gccflags:
+                raise SystemExit('GCC runtime map requires an explicit source import')
             (root / 'runtime/include/runtime.h').write_text('static const char runtime_name[] = __FILE__;\n')
             resource = root / 'toolchain/lib/clang/23/include'
             resource.mkdir(parents=True)
             (resource / 'resource.h').write_text('static const char resource_name[] = __FILE__;\n'
                                                  'typedef int resource_t;\n')
             objects = []
-            for var, name, canonical in ROOTS[:-1]:
+            for var, name, canonical in ROOTS:
+                if not var.endswith('_SOURCE') and var != 'EXTERNAL_TOOLCHAIN':
+                    continue
+                reproflags, = make_variables(args.make, os_root, fixture, work, root,
+                                             ('REPROFLAGS',), (var,))
+                (root / name / 'include/external.h').write_text(
+                    'static const char external_name[] = __FILE__;\n')
                 source = root / name / 'probe.c'
-                source.write_text('#include <runtime.h>\n#include <resource.h>\n'
+                source.write_text('#include <runtime.h>\n'
+                                  '#include <resource.h>\n#include <external.h>\n'
                                   'const char *probe(void) { return __FILE__; }\n'
                                   'const char *header(void) { return runtime_name; }\n'
+                                  'const char *external(void) { return external_name; }\n'
                                   'const char *compiler(resource_t *unused) { return resource_name; }\n')
                 output = work / f'{name}-{index}.o'
                 subprocess.run([args.clang, '--target=aarch64--netbsd', '-ffreestanding', '-nostdinc',
-                                '-isystem', str(root / 'runtime/include'), '-isystem', str(resource), '-O1', '-g', *shlex.split(reproflags),
+                                '-isystem', str(root / 'runtime/include'), '-isystem', str(resource),
+                                '-I', str(root / name / 'include'), '-O1', '-g', *shlex.split(reproflags),
                                 '-c', str(source), '-o', str(output)], check=True, cwd=root / 'obj')
                 data = output.read_bytes()
                 if str(work).encode() in data:
                     leaked = [s for s in data.split(b'\0') if str(work).encode() in s]
                     raise SystemExit(f'{var}: a host build root leaked into {output.name}: {leaked[:2]!r}')
                 for expected in (canonical + '/probe.c', '/usr/pkg/llvm/include/runtime.h',
+                                 canonical + '/include/external.h',
                                  '/usr/toolchain/lib/clang/23/include/resource.h'):
                     if expected.encode() + b'\0' not in data:
                         raise SystemExit(f'{var}: {expected} is not the __FILE__ value')
                 objects.append(data)
+            # GNU adapters can compile through a symlink view in the objdir.
+            view = root / 'obj/source-view'
+            view.symlink_to(root / 'openssh', target_is_directory=True)
+            (view / 'view.c').write_text('#include <external.h>\n'
+                                       'const char *probe(void) { return __FILE__; }\n'
+                                       'const char *header(void) { return external_name; }\n')
+            reproflags, = make_variables(args.make, os_root, fixture, work, root,
+                                         ('REPROFLAGS',), ('EMBER_OPENSSH_SOURCE',))
+            output = work / f'view-{index}.o'
+            subprocess.run([args.clang, '--target=aarch64--netbsd', '-ffreestanding', '-nostdinc',
+                            '-I', str(root / 'openssh/include'), '-O1', '-g', *shlex.split(reproflags),
+                            '-c', str(view / 'view.c'), '-o', str(output)], check=True, cwd=root / 'obj')
+            data = output.read_bytes()
+            if str(work).encode() in data or any(expected.encode() + b'\0' not in data for expected in
+                    ('/usr/obj/source-view/view.c', '/usr/src/external/openssh/include/external.h')):
+                raise SystemExit('GNU source view leaks host roots or loses canonical source/header names')
+            objects.append(data)
             tags = '\n'.join(f'probe {root / name}/probe.c /^probe$/' for _, name, _ in ROOTS) + '\n'
             mapped_tags = subprocess.run(['sed', *shlex.split(sed)], input=tags, capture_output=True,
                                          text=True, check=True).stdout
@@ -139,7 +185,7 @@ def main():
             outputs.append((objects, mapped_tags))
         if outputs[0] != outputs[1]:
             raise SystemExit('objects or tags differ between two host roots')
-    print('PASS: Clang MKREPRO maps common source, runtime and toolchain roots; '
+    print('PASS: Clang MKREPRO scopes imported sources and maps runtime/toolchain roots; '
           'identical objects and libc tags from two host roots')
 
 

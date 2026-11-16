@@ -11,6 +11,7 @@ PCAP_CONFIG_TEMPLATE := ${.PARSEDIR}/include/config.h
     !exists(${EMBER_LIBPCAP_SOURCE}/rpcapd/rpcapd.c)
 .error EMBER_LIBPCAP_SOURCE must name the prepared common Ports libpcap source
 .endif
+REPRO_EXTERNAL_SOURCE_VARS+= EMBER_LIBPCAP_SOURCE
 SRCDIR := ${EMBER_LIBPCAP_SOURCE}
 .elif empty(.MAKEFLAGS:M-V*) && (make(all) || make(dependall) || make(install))
 .error Set EMBER_LIBPCAP_SOURCE to the prepared common Ports libpcap source

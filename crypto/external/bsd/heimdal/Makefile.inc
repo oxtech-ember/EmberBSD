@@ -9,6 +9,7 @@ HEIMBASE?=	${NETBSDSRCDIR}/crypto/external/bsd/heimdal
 .error Set EMBER_HEIMDAL_SOURCE to the prepared common Ports source
 .endif
 .if defined(EMBER_HEIMDAL_SOURCE) && !empty(EMBER_HEIMDAL_SOURCE)
+REPRO_EXTERNAL_SOURCE_VARS+= EMBER_HEIMDAL_SOURCE
 HEIMDIST?=	${EMBER_HEIMDAL_SOURCE}
 .if "${HEIMDIST}" != "${EMBER_HEIMDAL_SOURCE}"
 .error HEIMDIST must match the prepared common Heimdal source

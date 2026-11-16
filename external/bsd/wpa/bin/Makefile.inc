@@ -9,6 +9,7 @@ USE_FORT?= yes	# network client/server
 WPA_BSD_DRIVER:=		${.PARSEDIR}/../dist/src/drivers/driver_bsd.c
 
 .if defined(EMBER_WPA_SOURCE)
+REPRO_EXTERNAL_SOURCE_VARS+= EMBER_WPA_SOURCE
 WPA_DISTDIR?=			${EMBER_WPA_SOURCE}
 .if "${WPA_DISTDIR}" != "${EMBER_WPA_SOURCE}"
 .error WPA_DISTDIR must match the prepared common WPA source
