@@ -1480,6 +1480,7 @@ virtio_child_detach(struct virtio_softc *sc)
 
 	sc->sc_vqs = NULL;
 	sc->sc_child = NULL;
+	sc->sc_child_state = VIRTIO_NO_CHILD;
 }
 
 void
