@@ -105,6 +105,17 @@ drm618_gem_set_limit(device_t dev, size_t bytes)
 	mutex_exit(&shmem_limits_lock);
 }
 
+/* Before the module goes: the lock is part of the module memory, which is mapped again for the next module. */
+void
+drm618_gem_shmem_fini(void)
+{
+
+	if (shmem_limits_init) {
+		mutex_destroy(&shmem_limits_lock);
+		shmem_limits_init = false;
+	}
+}
+
 static size_t
 shmem_limit(device_t dev)
 {

@@ -31,11 +31,12 @@ int	drm2_drm618_hdr_run(void);
 int	drm2_p4_layer_run(void);
 int	drm618_file_fini(void);
 void	drm618_sleep_fini(void);
+void	drm618_vma_fini(void);
 
 static int
 drmkms_linux_test_modcmd(modcmd_t cmd, void *arg __unused)
 {
-	int failed;
+	int failed, error;
 
 	switch (cmd) {
 	case MODULE_CMD_INIT:
@@ -63,14 +64,20 @@ drmkms_linux_test_modcmd(modcmd_t cmd, void *arg __unused)
 			 * in this module) back now.
 			 */
 			drm618_sleep_fini();
+			drm618_vma_fini();
 			(void)drm618_file_fini();
 			return EIO;
 		}
 		return 0;
 	case MODULE_CMD_FINI:
 		/* the per lwp keys of the layer (and their destructors) live in this module */
+		/* what can refuse first, then the destruction of the locks */
+		error = drm618_file_fini();
+		if (error != 0)
+			return error;
 		drm618_sleep_fini();
-		return drm618_file_fini();
+		drm618_vma_fini();
+		return 0;
 	default:
 		return ENOTTY;
 	}

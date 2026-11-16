@@ -195,6 +195,21 @@ register_virtio_driver(struct virtio_driver *drv)
 	return ret;
 }
 
+/*
+ * The lock of the table is set up on first use and is part of the module
+ * memory, which is mapped again for the next module: destroy it before the
+ * module goes (a kernel with LOCKDEBUG stops at the next set-up otherwise).
+ */
+void
+drm618_virtio_fini(void)
+{
+
+	if (drm618_vdrv_init) {
+		mutex_destroy(&drm618_vdrv_lock);
+		drm618_vdrv_init = false;
+	}
+}
+
 void
 unregister_virtio_driver(struct virtio_driver *drv)
 {

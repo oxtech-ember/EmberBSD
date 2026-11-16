@@ -467,6 +467,8 @@ void
 drm618_vma_fini(void)
 {
 
-	if (vma_once.o_status)
+	if (vma_once.o_status) {
 		mutex_destroy(&vma_list_lock);
+		vma_once.o_status = 0;	/* the lock is set up again on the next use */
+	}
 }

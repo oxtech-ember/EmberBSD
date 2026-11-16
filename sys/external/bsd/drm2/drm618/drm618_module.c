@@ -51,6 +51,8 @@ fail2:		drm618_modexit_drm_display_helper_module_exit();
 fail1:		drm618_modexit_gpu_buddy_module_exit();
 fail0:		drm618_static_fini();
 		drm618_sleep_fini();
+		drm618_vma_fini();
+		drm618_gem_shmem_fini();
 		(void)drm618_file_fini();
 		return -error;	/* the 6.18 code returns Linux errnos */
 	case MODULE_CMD_FINI:
@@ -70,10 +72,15 @@ fail0:		drm618_static_fini();
 		drm618_modexit_drm_core_exit();
 		drm618_modexit_drm_display_helper_module_exit();
 		drm618_modexit_gpu_buddy_module_exit();
+		/* what can refuse first, then the destruction of the locks */
+		error = drm618_file_fini();
+		if (error)
+			return error;
 		drm618_static_fini();
 		drm618_sleep_fini();
 		drm618_vma_fini();
-		return drm618_file_fini();
+		drm618_gem_shmem_fini();
+		return 0;
 	default:
 		return ENOTTY;
 	}

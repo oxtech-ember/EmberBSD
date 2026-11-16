@@ -19,6 +19,7 @@ struct virtio_device;
  * device with open files).
  */
 int	drm618_virtio_busy(int (*)(struct virtio_device *, void *), void *);
+void	drm618_virtio_fini(void);	/* before the module goes: the lock of the driver table */
 
 /*
  * Set by the driver module: asked by the detach of a device (not forced)

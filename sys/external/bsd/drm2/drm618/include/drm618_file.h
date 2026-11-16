@@ -250,6 +250,7 @@ int	drm618_file_fini(void);
 int	drm618_file_busy(void);	/* EBUSY while a reserved descriptor exists */
 int	drm618_sync_file_busy(void);	/* EBUSY while a sync file exists */
 void	drm618_sleep_fini(void);
+void	drm618_gem_shmem_fini(void);	/* the lock of the limits of the devices */
 
 int	register_chrdev(unsigned int, const char *, const struct file_operations *);
 void	unregister_chrdev(unsigned int, const char *);

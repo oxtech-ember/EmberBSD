@@ -107,8 +107,10 @@ virtiogpu618_modcmd(modcmd_t cmd, void *arg __unused)
 	switch (cmd) {
 	case MODULE_CMD_INIT:
 		error = drm618_modinit_virtio_gpu_driver_init();
-		if (error != 0)
+		if (error != 0) {
+			drm618_virtio_fini();	/* the table of drivers may have set up its lock */
 			return -error;
+		}
 		VGPU_SYSCTL_SETUP();
 		drm618_virtio_busy_fn = virtiogpu618_busy;
 		error = config_init_component(cfdriver_ioconf_virtiogpu618,
@@ -117,6 +119,7 @@ virtiogpu618_modcmd(modcmd_t cmd, void *arg __unused)
 			drm618_virtio_busy_fn = NULL;
 			drm618_modexit_virtio_gpu_driver_exit();
 			VGPU_SYSCTL_TEARDOWN();
+			drm618_virtio_fini();
 		}
 		return error;
 	case MODULE_CMD_FINI:
@@ -135,6 +138,7 @@ virtiogpu618_modcmd(modcmd_t cmd, void *arg __unused)
 		drm618_virtio_busy_fn = NULL;
 		drm618_modexit_virtio_gpu_driver_exit();
 		VGPU_SYSCTL_TEARDOWN();
+		drm618_virtio_fini();
 		return 0;
 	default:
 		return ENOTTY;
