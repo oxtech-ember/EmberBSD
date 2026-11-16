@@ -69,7 +69,8 @@ for contract in a733-accelerator-clock a733-power a733-display-observer a733-gpu
     a733-gpu-fwmem a733-gpu-fwinit a733-gpu-fwstart a733-gpu-fwboot \
     a733-gpu-fwprobe a733-gpu-fwcompute a733-gpu-fwfile a733-gpu-mmu \
     a733-gpu-vm pvr-freelist pvr-exec-hwrt a733-gpu-fwbridge \
-    a733-gpu-fwservice a733-gpu-fwcompute-vm a733-gpu-fwheap-observe pvr-exec; do
+    a733-gpu-fwservice a733-gpu-fwcompute-vm a733-gpu-fwheap-observe pvr-exec \
+    cpu-acpi-capacity; do
     cat > "$work/src/ember/tools/$contract-contract.sh" <<'SH'
 #!/bin/sh
 set -eu
@@ -524,7 +525,7 @@ export RUBY="$work/bin/ruby"
 export CC=/target/compiler CXX=/target/compiler-cxx CFLAGS=-Dwrong_target CXXFLAGS=-Dwrong_target LDFLAGS=-Lwrong-target
 check_contract_counts() {
     test "$(grep -c '^contract ' "$TEST_LOG")" -eq "$1"
-    test "$(grep -c '^a733-contract ' "$TEST_LOG")" -eq 24
+    test "$(grep -c '^a733-contract ' "$TEST_LOG")" -eq 25
     test "$(grep -c '^gpu-contract ' "$TEST_LOG")" -eq 41
     test "$(grep -c '^ruby-contract ' "$TEST_LOG")" -eq 15
     test "$(grep -c '^network-contract ' "$TEST_LOG")" -eq 9
