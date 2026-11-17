@@ -5,7 +5,7 @@ OBJFMT=		pei-i386
 
 EXTRA_SOURCES=	efibootia32.c startprog32.S multiboot32.S
 
-CPUFLAGS=	-march=i686 -mtune=i686
+CPUFLAGS=	-m32 -march=i686 -mtune=i686
 GNUEFIARCH=	ia32
 LIBKERN_ARCH=	i386
 LIBGNUEFI_ARCH=	i386
