@@ -14,10 +14,20 @@ fi
 # The actual red-black tree library with its own invariant checks (RBDEBUG
 # changes the node layout, so both objects use it); only header plumbing is shimmed.
 sed '/^#include <sys\/endian.h>/d' "$src/sys/sys/rbtree.h" > "$work/rbtree.h"
+# Some host libc headers do not give uintptr_t here, or __RCSID.
+cat > "$work/host-shim.h" <<'SHIM'
+#include <stdint.h>
+#if __has_include(<sys/cdefs.h>)
+#include <sys/cdefs.h>
+#endif
+#ifndef __RCSID
+#define __RCSID(x)
+#endif
+SHIM
 # shellcheck disable=SC2086
 "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Wno-unused-parameter \
     ${CFLAGS:-} -DRBTEST -DRBDEBUG -D'__unused=__attribute__((unused))' \
-    -D'__predict_false(x)=__builtin_expect((x) != 0, 0)' -I"$work" \
+    -D'__predict_false(x)=__builtin_expect((x) != 0, 0)' -include "$work/host-shim.h" -I"$work" \
     -c "$src/common/lib/libc/gen/rb.c" -o "$work/rb.o"
 # shellcheck disable=SC2086
 "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Wno-unused-parameter \
