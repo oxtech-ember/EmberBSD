@@ -581,6 +581,60 @@ sdmmc_print_csd(sdmmc_response resp, struct sdmmc_csd *csd)
  * Initialize a SD/MMC memory card.
  */
 int
+sdmmc_mem_reinit(struct sdmmc_softc *sc, struct sdmmc_function *sf)
+{
+	struct sdmmc_function candidate = *sf;
+	sdmmc_response response;
+	int error;
+
+	KASSERT(mutex_owned(&sc->sc_mtx));
+	if (!ISSET(sc->sc_caps, SMC_CAPS_PMF_REINIT) ||
+	    ISSET(sc->sc_caps, SMC_CAPS_DMA | SMC_CAPS_SPI_MODE) ||
+	    !ISSET(sc->sc_flags, SMF_SD_MODE) ||
+	    !ISSET(sc->sc_flags, SMF_MEM_MODE) ||
+	    ISSET(sc->sc_flags, SMF_IO_MODE))
+		return ENOTSUP;
+
+	/* The live function and its ld binding change only after validation. */
+	sc->sc_card = NULL;
+	candidate.rca = 1;
+	candidate.width = 1;
+	candidate.flags = 0;
+	error = sdmmc_mem_send_cid(sc, &response);
+	if (error)
+		return error;
+	/* R2 stores CID bits 127..8 in the low 120 response bits. */
+	if (response[0] != sf->raw_cid[0] ||
+	    response[1] != sf->raw_cid[1] ||
+	    response[2] != sf->raw_cid[2] ||
+	    (response[3] & 0x00ffffff) != (sf->raw_cid[3] & 0x00ffffff))
+		return ENXIO;
+	memcpy(candidate.raw_cid, response, sizeof(candidate.raw_cid));
+	error = sdmmc_set_relative_addr(sc, &candidate);
+	if (error)
+		return error;
+	sdmmc_chip_bus_rod(sc->sc_sct, sc->sc_sch, 0);
+	error = sdmmc_mem_send_csd(sc, &candidate, &response);
+	if (error)
+		return error;
+	if (sdmmc_decode_csd(sc, response, &candidate) != 0 ||
+	    sdmmc_decode_cid(sc, candidate.raw_cid, &candidate) != 0 ||
+	    candidate.csd.capacity != sf->csd.capacity ||
+	    candidate.csd.read_bl_len != sf->csd.read_bl_len ||
+	    candidate.csd.write_bl_len != sf->csd.write_bl_len ||
+	    ISSET(candidate.flags, SFF_SDHC) != ISSET(sf->flags, SFF_SDHC))
+		return ENXIO;
+	error = sdmmc_mem_init(sc, &candidate);
+	if (error) {
+		sc->sc_card = NULL;
+		return error;
+	}
+	*sf = candidate;
+	sc->sc_card = sf;
+	return 0;
+}
+
+int
 sdmmc_mem_init(struct sdmmc_softc *sc, struct sdmmc_function *sf)
 {
 	int error = 0;

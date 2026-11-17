@@ -41,11 +41,12 @@ struct urtsx_reg {
 struct urtsx_softc {
 	device_t sc_dev, sc_sdmmc;
 	struct usbd_device *sc_udev;
+	struct usbd_interface *sc_iface;
 	struct usbd_pipe *sc_in, *sc_out;
 	struct usbd_xfer *sc_ixfer, *sc_oxfer;
 	kmutex_t sc_lock;
 	struct usb_task sc_poll;
-	unsigned sc_dying, sc_status;
+	unsigned sc_dying, sc_status, sc_suspended;
 	unsigned sc_recovery_wait;
 	bool sc_ready, sc_failed, sc_unready, sc_powered;
 	bool sc_power_dirty;
@@ -57,6 +58,8 @@ struct urtsx_softc {
 static int urtsx_match(device_t, cfdata_t, void *);
 static void urtsx_attach(device_t, device_t, void *);
 static int urtsx_detach(device_t, int);
+static bool urtsx_suspend(device_t, const pmf_qual_t *);
+static bool urtsx_resume(device_t, const pmf_qual_t *);
 static void urtsx_childdetached(device_t, device_t);
 static void urtsx_poll(void *);
 static int urtsx_host_reset(sdmmc_chipset_handle_t);
@@ -332,6 +335,7 @@ urtsx_attach(device_t parent, device_t self, void *aux)
 
 	sc->sc_dev = self;
 	sc->sc_udev = uiaa->uiaa_device;
+	sc->sc_iface = uiaa->uiaa_iface;
 	mutex_init(&sc->sc_lock, MUTEX_DEFAULT, IPL_NONE);
 	usb_init_task(&sc->sc_poll, urtsx_poll, sc, USB_TASKQ_MPSAFE);
 	aprint_naive("\n");
@@ -377,8 +381,10 @@ urtsx_attach(device_t parent, device_t self, void *aux)
 	saa.saa_clkmin = 400;
 	saa.saa_clkmax = 25000;
 	saa.saa_caps = SMC_CAPS_SINGLE_ONLY | SMC_CAPS_POLL_CARD_DET |
-	    SMC_CAPS_NO_WRITE_RETRY;
+	    SMC_CAPS_NO_WRITE_RETRY | SMC_CAPS_PMF_REINIT;
 	sc->sc_sdmmc = config_found(self, &saa, NULL, CFARGS_NONE);
+	if (!pmf_device_register(self, urtsx_suspend, urtsx_resume))
+		aprint_error_dev(self, "couldn't establish power handler\n");
 	return;
 fail:
 	aprint_error_dev(self, "USB SD host is unavailable\n");
@@ -398,7 +404,8 @@ urtsx_poll(void *arg)
 	uint16_t status;
 
 	mutex_enter(&sc->sc_lock);
-	if (!sc->sc_ready || atomic_load_relaxed(&sc->sc_dying)) {
+	if (!sc->sc_ready || atomic_load_relaxed(&sc->sc_dying) ||
+	    atomic_load_relaxed(&sc->sc_suspended)) {
 		mutex_exit(&sc->sc_lock);
 		return;
 	}
@@ -433,7 +440,8 @@ urtsx_card_detect(sdmmc_chipset_handle_t handle)
 	/* sdmmc calls this from its polling callout. USB work must sleep elsewhere. */
 	if (atomic_load_relaxed(&sc->sc_dying))
 		return 0;
-	usb_add_task(sc->sc_udev, &sc->sc_poll, USB_TASKQ_DRIVER);
+	if (!atomic_load_relaxed(&sc->sc_suspended))
+		usb_add_task(sc->sc_udev, &sc->sc_poll, USB_TASKQ_DRIVER);
 	return (atomic_load_relaxed(&sc->sc_status) & 0x31) == URTSX_SD_CD;
 }
 
@@ -629,6 +637,10 @@ urtsx_exec_command(sdmmc_chipset_handle_t handle, struct sdmmc_command *command)
 	else
 		cfg2 = command->c_flags & SCF_RSP_CRC ? 1 : 5;
 	mutex_enter(&sc->sc_lock);
+	if (atomic_load_relaxed(&sc->sc_suspended)) {
+		error = EBUSY;
+		goto unlock;
+	}
 	if (write) {
 		unsigned status = atomic_load_relaxed(&sc->sc_status);
 		if (!(status & URTSX_SD_CD)) {
@@ -728,6 +740,85 @@ urtsx_childdetached(device_t parent, device_t child)
 		sc->sc_sdmmc = NULL;
 }
 
+/* Restore controller state only. The sdmmc child verifies the card identity. */
+static int
+urtsx_restore_locked(struct urtsx_softc *sc)
+{
+	const usb_device_descriptor_t *dd;
+	const usb_interface_descriptor_t *id;
+	static const uint16_t registers[] = {URTSX_CARD_EXIST, URTSX_OCP_STATUS};
+	uint16_t status;
+	int error;
+
+	KASSERT(mutex_owned(&sc->sc_lock));
+	sc->sc_unready = true;
+	if (atomic_load_relaxed(&sc->sc_dying))
+		return ENXIO;
+	dd = usbd_get_device_descriptor(sc->sc_udev);
+	id = usbd_get_interface_descriptor(sc->sc_iface);
+	if (dd == NULL || id == NULL || UGETW(dd->idVendor) != 0x0bda ||
+	    UGETW(dd->idProduct) != 0x0129 || id->bInterfaceNumber != 0 ||
+	    id->bInterfaceClass != 0xff || id->bInterfaceSubClass != 6 ||
+	    id->bInterfaceProtocol != 0x50)
+		return ENXIO;
+	sc->sc_power_dirty = true;
+	error = urtsx_initialize(sc);
+	if (!error)
+		error = urtsx_power_off_locked(sc);
+	if (!error)
+		error = urtsx_read(sc, registers, __arraycount(registers));
+	if (!error)
+		error = urtsx_bulk_status_decode(sc->sc_response, 2, &status);
+	if (!error && (status & URTSX_OCP_MASK))
+		error = EIO;
+	if (error) {
+		sc->sc_unready = true;
+		return error;
+	}
+	atomic_store_relaxed(&sc->sc_status, status);
+	sc->sc_recovery_wait = 0;
+	return 0;
+}
+
+static bool
+urtsx_suspend(device_t self, const pmf_qual_t *qual)
+{
+	struct urtsx_softc *sc = device_private(self);
+	int error;
+
+	if (!sc->sc_ready || atomic_load_relaxed(&sc->sc_dying))
+		return false;
+	atomic_store_relaxed(&sc->sc_suspended, 1);
+	/* The child has stopped its callout. Drain queued and running instances. */
+	(void)usb_rem_task(sc->sc_udev, &sc->sc_poll);
+	usb_rem_task_wait(sc->sc_udev, &sc->sc_poll, USB_TASKQ_DRIVER, NULL);
+	mutex_enter(&sc->sc_lock);
+	error = urtsx_power_off_locked(sc);
+	if (error) {
+		/* PMF does not resume a callback which vetoed suspension. */
+		(void)urtsx_restore_locked(sc);
+		atomic_store_relaxed(&sc->sc_suspended, 0);
+	}
+	mutex_exit(&sc->sc_lock);
+	return error == 0;
+}
+
+static bool
+urtsx_resume(device_t self, const pmf_qual_t *qual)
+{
+	struct urtsx_softc *sc = device_private(self);
+	int error;
+
+	if (!atomic_load_relaxed(&sc->sc_suspended))
+		return true;
+	mutex_enter(&sc->sc_lock);
+	error = urtsx_restore_locked(sc);
+	if (!error)
+		atomic_store_relaxed(&sc->sc_suspended, 0);
+	mutex_exit(&sc->sc_lock);
+	return error == 0;
+}
+
 static int
 urtsx_detach(device_t self, int flags)
 {
@@ -742,6 +833,7 @@ urtsx_detach(device_t self, int flags)
 		atomic_store_relaxed(&sc->sc_dying, 0);
 		return error;
 	}
+	pmf_device_deregister(self);
 	/* Child detach stops the callout which can enqueue our polling task. */
 	(void)usb_rem_task(sc->sc_udev, &sc->sc_poll);
 	usb_rem_task_wait(sc->sc_udev, &sc->sc_poll, USB_TASKQ_DRIVER, NULL);

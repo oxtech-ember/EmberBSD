@@ -275,6 +275,7 @@ struct sdmmc_softc {
 				    | SMC_CAPS_UHS_DDR50)
 #define SMC_CAPS_MMC_HS200	__BIT(15)	/* eMMC HS200 timing */
 #define SMC_CAPS_NO_WRITE_RETRY	__BIT(16)	/* failed write may be partial */
+#define SMC_CAPS_PMF_REINIT	__BIT(17)	/* reidentify SD memory on resume */
 #define SMC_CAPS_POLLING	__BIT(30)	/* driver supports cmd polling */
 
 	/* function */
@@ -289,6 +290,8 @@ struct sdmmc_softc {
 	struct kmutex sc_tskq_mtx;
 	struct kcondvar sc_tskq_cv;
 	struct sdmmc_task *sc_curtask;
+	bool sc_pmf_suspended;		/* task queue paused by PMF */
+	bool sc_pmf_card_present;	/* preserve the existing card binding */
 
 	/* discover task */
 	struct sdmmc_task sc_discover_task; /* card attach/detach task */
@@ -410,6 +413,7 @@ void	sdmmc_check_cis_quirks(struct sdmmc_function *);
 int	sdmmc_mem_enable(struct sdmmc_softc *);
 void	sdmmc_mem_scan(struct sdmmc_softc *);
 int	sdmmc_mem_init(struct sdmmc_softc *, struct sdmmc_function *);
+int	sdmmc_mem_reinit(struct sdmmc_softc *, struct sdmmc_function *);
 int	sdmmc_mem_send_op_cond(struct sdmmc_softc *, uint32_t, uint32_t *);
 int	sdmmc_mem_send_if_cond(struct sdmmc_softc *, uint32_t, uint32_t *);
 int	sdmmc_mem_set_blocklen(struct sdmmc_softc *, struct sdmmc_function *,

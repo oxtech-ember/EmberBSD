@@ -26,6 +26,11 @@ It reads and writes one block at a time through the controller's 512-byte buffer
 The SD/MMC bus splits larger requests into single blocks.
 Card detection uses a cached status value.
 USB requests run in process context.
+.Pp
+Suspend stops card polling and powers off the slot after child devices drain I/O.
+Resume restores the controller and reidentifies the card through the SD/MMC bus.
+The bus checks the card identifier and geometry before it resumes the existing block device.
+If the card is missing, changed or unavailable, the block device remains suspended.
 .Sh LIMITATIONS
 Write transfers wait for the card's physical busy signal to clear.
 An uncertain write failure reaches the caller without an automatic block retry.

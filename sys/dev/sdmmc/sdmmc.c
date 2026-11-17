@@ -99,6 +99,8 @@ static int sdmmc_enable(struct sdmmc_softc *);
 static void sdmmc_disable(struct sdmmc_softc *);
 static int sdmmc_scan(struct sdmmc_softc *);
 static int sdmmc_init(struct sdmmc_softc *);
+static bool sdmmc_suspend(device_t, const pmf_qual_t *);
+static bool sdmmc_resume(device_t, const pmf_qual_t *);
 
 static int
 sdmmc_match(device_t parent, cfdata_t cf, void *aux)
@@ -148,6 +150,8 @@ sdmmc_attach(device_t parent, device_t self, void *aux)
 
 	sdmmc_init_task(&sc->sc_discover_task, sdmmc_discover_task, sc);
 	sdmmc_init_task(&sc->sc_intr_task, sdmmc_intr_task, sc);
+	/* Include deferred initial discovery in the PMF drain condition. */
+	sc->sc_curtask = &sc->sc_discover_task;
 
 	mutex_init(&sc->sc_mtx, MUTEX_DEFAULT, IPL_NONE);
 	mutex_init(&sc->sc_tskq_mtx, MUTEX_DEFAULT, IPL_SDMMC);
@@ -183,7 +187,9 @@ sdmmc_attach(device_t parent, device_t self, void *aux)
 		    sdmmc_polling_card, sc);
 	}
 
-	if (!pmf_device_register(self, NULL, NULL)) {
+	if (!pmf_device_register(self,
+	    ISSET(sc->sc_caps, SMC_CAPS_PMF_REINIT) ? sdmmc_suspend : NULL,
+	    ISSET(sc->sc_caps, SMC_CAPS_PMF_REINIT) ? sdmmc_resume : NULL)) {
 		aprint_error_dev(self, "couldn't establish power handler\n");
 	}
 
@@ -322,16 +328,133 @@ sdmmc_del_task(struct sdmmc_softc *sc, struct sdmmc_task *task,
 }
 
 static void
+sdmmc_pmf_start(struct sdmmc_softc *sc)
+{
+	mutex_enter(&sc->sc_tskq_mtx);
+	sc->sc_pmf_suspended = false;
+	cv_broadcast(&sc->sc_tskq_cv);
+	mutex_exit(&sc->sc_tskq_mtx);
+	if (ISSET(sc->sc_caps, SMC_CAPS_POLL_CARD_DET))
+		callout_schedule(&sc->sc_card_detect_ch, hz);
+}
+
+/* Children have drained their I/O before this callback runs. */
+static bool
+sdmmc_suspend(device_t self, const pmf_qual_t *qual)
+{
+	struct sdmmc_softc *sc = device_private(self);
+	struct sdmmc_function *sf;
+	u_int start, waits = 0;
+	bool supported;
+
+	mutex_enter(&sc->sc_tskq_mtx);
+	if (sc->sc_pmf_suspended) {
+		mutex_exit(&sc->sc_tskq_mtx);
+		return true;
+	}
+	sc->sc_pmf_suspended = true;
+	start = (u_int)getticks();
+	while (sc->sc_curtask != NULL) {
+		u_int elapsed = (u_int)getticks() - start;
+		if (elapsed >= (u_int)(30 * hz) || waits++ == 30) {
+			mutex_exit(&sc->sc_tskq_mtx);
+			sdmmc_pmf_start(sc);
+			return false;
+		}
+		(void)cv_timedwait(&sc->sc_tskq_cv, &sc->sc_tskq_mtx,
+		    MIN(hz, 30 * hz - elapsed));
+	}
+	mutex_exit(&sc->sc_tskq_mtx);
+	if (ISSET(sc->sc_caps, SMC_CAPS_POLL_CARD_DET))
+		callout_halt(&sc->sc_card_detect_ch, NULL);
+
+	mutex_enter(&sc->sc_mtx);
+	sf = SIMPLEQ_FIRST(&sc->sf_head);
+	sc->sc_pmf_card_present = ISSET(sc->sc_flags, SMF_CARD_PRESENT);
+	supported = !sc->sc_dying &&
+	    !ISSET(sc->sc_caps, SMC_CAPS_DMA | SMC_CAPS_SPI_MODE) &&
+	    ((!sc->sc_pmf_card_present && sf == NULL) ||
+	    (sc->sc_pmf_card_present && sf != NULL &&
+	    SIMPLEQ_NEXT(sf, sf_list) == NULL && sf->number == -1 &&
+	    !ISSET(sf->flags, SFF_ERROR) &&
+	    ISSET(sc->sc_flags, SMF_CARD_ATTACHED) &&
+	    ISSET(sc->sc_flags, SMF_SD_MODE) &&
+	    ISSET(sc->sc_flags, SMF_MEM_MODE) &&
+	    !ISSET(sc->sc_flags, SMF_IO_MODE)));
+	mutex_exit(&sc->sc_mtx);
+	if (!supported)
+		sdmmc_pmf_start(sc);
+	return supported;
+}
+
+/* The parent has restored the host. Keep ld suspended until CID matches. */
+static bool
+sdmmc_resume(device_t self, const pmf_qual_t *qual)
+{
+	struct sdmmc_softc *sc = device_private(self);
+	struct sdmmc_function *sf;
+	int error = 0;
+
+	mutex_enter(&sc->sc_tskq_mtx);
+	if (!sc->sc_pmf_suspended) {
+		mutex_exit(&sc->sc_tskq_mtx);
+		return true;
+	}
+	mutex_exit(&sc->sc_tskq_mtx);
+	mutex_enter(&sc->sc_mtx);
+	if (sc->sc_dying) {
+		error = ENXIO;
+		goto out;
+	}
+	if (sc->sc_pmf_card_present) {
+		sf = SIMPLEQ_FIRST(&sc->sf_head);
+		sc->sc_card = NULL;
+		if (sf == NULL || SIMPLEQ_NEXT(sf, sf_list) != NULL ||
+		    !sdmmc_chip_card_detect(sc->sc_sct, sc->sc_sch)) {
+			error = ENXIO;
+			goto out;
+		}
+		sc->sc_busclk = sc->sc_clkmax;
+		sc->sc_busddr = false;
+		sc->sc_buswidth = 1;
+		sc->sc_transfer_mode = NULL;
+		error = sdmmc_enable(sc);
+		if (!error)
+			error = sdmmc_mem_reinit(sc, sf);
+	}
+out:
+	mutex_exit(&sc->sc_mtx);
+	if (error) {
+		aprint_error_dev(self, "card resume failed: %d\n", error);
+		return false;
+	}
+	sdmmc_pmf_start(sc);
+	sdmmc_needs_discover(self);
+	return true;
+}
+
+static void
 sdmmc_task_thread(void *arg)
 {
 	struct sdmmc_softc *sc = (struct sdmmc_softc *)arg;
 	struct sdmmc_task *task;
 
+	mutex_enter(&sc->sc_tskq_mtx);
+	sc->sc_curtask = &sc->sc_discover_task;
+	mutex_exit(&sc->sc_tskq_mtx);
 	sdmmc_discover_task(sc);
 	config_pending_decr(sc->sc_dev);
 
 	mutex_enter(&sc->sc_tskq_mtx);
+	sc->sc_curtask = NULL;
+	cv_broadcast(&sc->sc_tskq_cv);
 	for (;;) {
+		if (sc->sc_pmf_suspended) {
+			if (sc->sc_dying)
+				break;
+			cv_wait(&sc->sc_tskq_cv, &sc->sc_tskq_mtx);
+			continue;
+		}
 		task = TAILQ_FIRST(&sc->sc_tskq);
 		if (task != NULL) {
 			sdmmc_del_task1(sc, task);

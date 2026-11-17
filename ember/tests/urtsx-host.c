@@ -41,7 +41,7 @@ struct urtsx_softc {
 	void *sc_udev;
 	void *sc_in, *sc_out, *sc_ixfer, *sc_oxfer;
 	int sc_poll;
-	unsigned sc_status, sc_dying, sc_recovery_wait;
+	unsigned sc_status, sc_dying, sc_recovery_wait, sc_suspended;
 	uint8_t sc_command[1024], sc_response[256];
 };
 static unsigned transfers, reads;
@@ -210,6 +210,7 @@ static void usbd_destroy_xfer(void *xfer) {
 }
 static void usbd_close_pipe(void *pipe) { (void)pipe; assert(!task_running); }
 static void mutex_destroy(int *lock) { (void)lock; assert(!task_running); }
+static void pmf_device_deregister(device_t dev) { (void)dev; assert(child_stopped); }
 
 #include "urtsx-power-helpers.inc"
 #include "urtsx-power.inc"
@@ -255,6 +256,15 @@ main(void)
 	urtsx_exec_command(&sc, &command);
 	assert(command.c_error == 0 && command.c_resp[0] == 0x1aa);
 	assert((command.c_flags & SCF_ITSDONE) && command.c_resid == 0);
+
+	reset_model();
+	sc.sc_suspended = 1;
+	urtsx_exec_command(&sc, &command);
+	assert(command.c_error == EBUSY && transfers == 0 && reads == 0);
+	sc.sc_ready = true;
+	urtsx_poll(&sc);
+	assert(transfers == 0 && reads == 0 && recoveries == 0);
+	sc.sc_suspended = 0;
 
 	reset_model();
 	command = (struct sdmmc_command){.c_opcode = 24, .c_data = buffer,
