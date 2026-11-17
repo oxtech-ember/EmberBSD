@@ -31,6 +31,8 @@ GNU_CONFIGURE_ARGS+= --disable-nls
 GNU_MAKE_DIRS= lib src
 GNU_MAKE_TARGETS= gdiff=/usr/bin/diff all
 GNU_CONFIGURE_CFLAGS= ${CFLAGS:N-Werror}
+# The common gnulib ASCII check also supports targets with unsigned char.
+CWARNFLAGS.clang+= -Wno-error=tautological-constant-out-of-range-compare
 
 .include <bsd.gnutarget.mk>
 .include <bsd.info.mk>
