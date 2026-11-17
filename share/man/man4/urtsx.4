@@ -1,0 +1,39 @@
+.\" Origin: EmberBSD (AI-assisted).
+.\" SPDX-License-Identifier: BSD-2-Clause
+.Dd November 17, 2026
+.Dt URTSX 4
+.Os
+.Sh NAME
+.Nm urtsx
+.Nd Realtek USB SD card host controller
+.Sh SYNOPSIS
+.Cd "urtsx* at uhub?"
+.Cd "sdmmc* at urtsx?"
+.Cd "ld* at sdmmc?"
+.Sh DESCRIPTION
+The
+.Nm
+driver supports the Realtek RTS5129 USB card reader with vendor ID 0x0bda
+and product ID 0x0129.
+It connects the controller to the
+.Xr sdmmc 4
+subsystem, which discovers the card and provides block devices through
+.Xr ld 4 .
+.Pp
+The initial implementation supports SD memory cards at 3.3 volts,
+with one data line and a maximum clock of 25 MHz.
+It transfers one block at a time through the controller's 512-byte buffer.
+Card detection uses a cached status value.
+USB requests run in process context.
+.Sh LIMITATIONS
+This implementation supports read access only.
+It rejects data writes, erase commands, lock commands and persistent switches.
+The reported write-protect switch state remains the physical card state.
+.Pp
+SDIO, MMC, UHS, 1.8-volt signalling and multiblock transfers are not supported.
+Memory Stick and xD media are not supported.
+.Sh SEE ALSO
+.Xr ld 4 ,
+.Xr rtsx 4 ,
+.Xr sdmmc 4 ,
+.Xr usb 4

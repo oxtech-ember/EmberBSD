@@ -1125,9 +1125,11 @@ btsco* at bthub?
 # SD/MMC controller
 sdhc*	at pci?		# SD Host Controller
 rtsx*	at pci?		# Realtek RTS5209/RTS5229 Card Reader
+urtsx*	at uhub?		# Realtek RTS5129 USB SD Card Reader
 sdhc*	at cardbus?	# SD Host Controller
 sdmmc*	at sdhc?	# SD/MMC bus
 sdmmc*	at rtsx?	# SD/MMC bus
+sdmmc*	at urtsx?	# SD/MMC bus
 
 ld*	at sdmmc?
 

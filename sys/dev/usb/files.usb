@@ -210,6 +210,11 @@ file	dev/usb/ulpt.c			ulpt			needs-flag
 
 
 # Mass storage
+device	urtsx: sdmmcbus
+attach	urtsx at usbifif
+file	dev/usb/urtsx.c			urtsx
+file	dev/usb/urtsx_proto.c		urtsx
+
 device	umass: scsi, atapi
 attach	umass at usbifif
 file	dev/usb/umass.c			umass
