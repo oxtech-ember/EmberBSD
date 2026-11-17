@@ -75,16 +75,19 @@ case "$heimdal_source" in
 esac
 [ -f "$heimdal_source/emberbsd-prepared-source.json" ] && [ -d "$heimdal_source/lib/asn1" ] ||
     fail 'EMBER_HEIMDAL_SOURCE does not contain the prepared Heimdal source'
-# Kernel libz uses the same prepared common source as the base system.
+# A kernel with libz reads the prepared common zlib source of the base
+# system. The EMBER kernels do not; ember/shared-sources.json names the
+# configurations that do.
 zlib_source=${EMBER_ZLIB_SOURCE:-}
 case "$zlib_source" in
-/*) case "$zlib_source" in *[!A-Za-z0-9_./+@%=-]*) fail 'invalid EMBER_ZLIB_SOURCE path';; esac;;
-*) fail 'set EMBER_ZLIB_SOURCE to the absolute Ports-prepared zlib source';;
+'') ;;
+/*) case "$zlib_source" in *[!A-Za-z0-9_./+@%=-]*) fail 'invalid EMBER_ZLIB_SOURCE path';; esac
+    for input in zlib.h zconf.h zutil.h inflate.c inftrees.c emberbsd-prepared-source.json; do
+        [ -f "$zlib_source/$input" ] ||
+            fail "EMBER_ZLIB_SOURCE is missing prepared zlib input: $input"
+    done;;
+*) fail 'EMBER_ZLIB_SOURCE must be the absolute Ports-prepared zlib source';;
 esac
-for input in zlib.h zconf.h zutil.h inflate.c inftrees.c emberbsd-prepared-source.json; do
-    [ -f "$zlib_source/$input" ] ||
-        fail "EMBER_ZLIB_SOURCE is missing prepared zlib input: $input"
-done
 mode=${EMBER_BUILD_MODE:-cross}
 compiler_family=${EMBER_COMPILER_FAMILY:-clang}
 case "$compiler_family" in
@@ -176,7 +179,7 @@ set -- -U -u -j"$jobs" -c "$compiler_family" -m evbarm -a aarch64 \
     -O "$out/obj" -T "$out/tools" -D "$out/dest" \
     -V "KERNOBJDIR=$out/obj/kernels" -V MKCROSSGDB=no \
     -V "EMBER_LLVM_SOURCE=$llvm_source" -V "EMBER_BYACC_SOURCE=$byacc_source" \
-    -V "EMBER_HEIMDAL_SOURCE=$heimdal_source" -V "EMBER_ZLIB_SOURCE=$zlib_source" \
+    -V "EMBER_HEIMDAL_SOURCE=$heimdal_source" \
     -V "EXTERNAL_TOOLCHAIN=$EMBER_EXTERNAL_TOOLCHAIN" -V TOOLCHAIN_MISSING=yes \
     -V MKREPRO=yes -V "MKREPRO_TIMESTAMP=$repro_timestamp"
 case ${EMBER_HOST_BFD_CONFIG:-} in
@@ -184,6 +187,7 @@ case ${EMBER_HOST_BFD_CONFIG:-} in
 *) fail 'EMBER_HOST_BFD_CONFIG must be an absolute file path';;
 esac
 set -- "$@" -V "EMBER_HOST_BFD_CONFIG=$EMBER_HOST_BFD_CONFIG"
+if [ -n "$zlib_source" ]; then set -- "$@" -V "EMBER_ZLIB_SOURCE=$zlib_source"; fi
 if [ -n "${BUILDINFO:-}" ]; then set -- "$@" -V "BUILDINFO=$BUILDINFO"; fi
 # newvers.mk does not track BUILDINFO or MKREPRO_TIMESTAMP under -u. Remember
 # the values accepted by the previous successful kernel build and invalidate
@@ -245,6 +249,22 @@ for module in if_cemac_acpi bcm2712btcom bcmexpgpio rp1wmcodec rpi5button; do
     module_obj=$(run_make -V .OBJDIR)
     cp "$module_obj/$module.kmod" "$stage/"
 done
+# The SDK build plan reads the prepared sources of a kernel from
+# ember/shared-sources.json. Stop if this kernel and its modules register
+# other sources (REPRO_EXTERNAL_SOURCE_VARS) than that file declares.
+# Query with the sources that the build had. The paths have no spaces.
+selected="EMBER_BYACC_SOURCE=$byacc_source EMBER_HEIMDAL_SOURCE=$heimdal_source"
+[ -z "$zlib_source" ] || selected="$selected EMBER_ZLIB_SOURCE=$zlib_source"
+set -f
+registered=$(cd "$kernel_obj" && run_make -V REPRO_EXTERNAL_SOURCE_VARS $selected)
+for module in if_cemac_acpi bcm2712btcom bcmexpgpio rp1wmcodec rpi5button; do
+    registered="$registered $(cd "$src/sys/modules/$module" && run_make -V REPRO_EXTERNAL_SOURCE_VARS \
+        EMBER_KERNEL_CONFIG="$config" EMBER_KERNEL_OBJDIR="$kernel_obj" $selected)"
+done
+run_native_check python "$out/shared-sources.log" \
+    "$src/ember/tools/shared-sources.py" check-kernel "$src/ember/shared-sources.json" \
+    "$config" $registered
+set +f
 cp "$stage/"* "$out/"
 success=yes
 echo "kernel and five modules built ($mode): $out"

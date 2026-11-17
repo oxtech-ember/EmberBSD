@@ -56,8 +56,9 @@ mkdir -p "$work/zlib"
 for input in zlib.h zconf.h zutil.h inflate.c inftrees.c emberbsd-prepared-source.json; do
     : > "$work/zlib/$input"
 done
-export EMBER_ZLIB_SOURCE="$work/zlib"
 cp "$repo/ember/build-kernel.sh" "$work/src/ember/"
+cp "$repo/ember/shared-sources.json" "$work/src/ember/"
+cp "$repo/ember/tools/shared-sources.py" "$work/src/ember/tools/"
 cp "$repo/ember/check-kernel.sh" "$work/src/ember/"
 cp "$repo/ember/tools/kernel-contracts.sh" "$repo/ember/tools/kernel-contracts-select.py" \
     "$repo/ember/tools/kernel-contracts-inputs.txt" "$work/src/ember/tools/"
@@ -170,6 +171,7 @@ fi
 SCRIPT
 : > "$work/src/tools/Makefile"
 : > "$work/src/share/mk/bsd.own.mk"
+cp "$repo/share/mk/bsd.sys.mk" "$work/src/share/mk/"
 for module in if_cemac_acpi bcm2712btcom bcmexpgpio rp1wmcodec rpi5button; do
     mkdir -p "$work/src/sys/modules/$module"
 done
@@ -184,6 +186,7 @@ case $1 in
 esac
 echo "contract $*" >> "$TEST_LOG"
 case $1 in
+    */ember/tools/shared-sources.py) exec "$TEST_PYTHON" -B "$@";;
     */drm-dmabuf-contract.py)
         [ "$#" -eq 2 ] || exit 1
         case $2 in map|lifetime|array|sync) ;; *) exit 1;; esac
@@ -208,8 +211,12 @@ echo "build.sh $*" >> "$TEST_LOG"
 case " $* " in *" -V HOST_CC=$TEST_ROOT/bin/host-cc "*) ;; *) exit 83;; esac
 case " $* " in *" -V HOST_CFLAGS=-Dfixture_host "*) ;; *) exit 84;; esac
 # The SDK discards arbitrary environment variables; zlib must be make data.
-case " $* " in *" -V EMBER_ZLIB_SOURCE=$TEST_ROOT/zlib "*) ;; *)
-    echo 'missing explicit prepared zlib source' >&2; exit 87;; esac
+if [ -n "${TEST_ZLIB:-}" ]; then
+    case " $* " in *" -V EMBER_ZLIB_SOURCE=$TEST_ROOT/zlib "*) ;; *)
+        echo 'missing explicit prepared zlib source' >&2; exit 87;; esac
+else
+    case " $* " in *" EMBER_ZLIB_SOURCE="*) echo 'unselected zlib source' >&2; exit 88;; esac
+fi
 for argument do case $argument in BUILDINFO=*) BUILDINFO=${argument#BUILDINFO=};; esac; done
 [ "${FAIL_AT:-}" != tools ]
 if [ "${FAIL_AT:-}" = interrupt ]; then
@@ -256,6 +263,10 @@ while [ $# -gt 0 ]; do
                 echo "$TEST_OUT/tools/bin/target-cpp --target=aarch64--netbsd -E"
             fi;;
         TOOL_DTC) echo '${TOOLDIR}/bin/${_TOOL_PREFIX}dtc';;
+        REPRO_EXTERNAL_SOURCE_VARS) case $dir in
+            */obj/kernels/*) echo EMBER_LLVM_SOURCE;;
+            */sys/modules/*) echo "${TEST_MODULE_SOURCE:-}";;
+            esac;;
         '${TOOL_DTC}') echo "$TEST_OUT/tools/bin/nbdtc";;
         .OBJDIR) echo "$TEST_OUT/obj/modules/${dir##*/}";;
         esac
@@ -534,11 +545,13 @@ count_contracts() {
     test "$(grep -c '^ruby-contract ' "$TEST_LOG")" -eq 15
     test "$(grep -c '^network-contract ' "$TEST_LOG")" -eq 9
 }
-# The build runs only its DTB boot-mode contract. check-kernel.sh then runs
-# the source contracts: $1 Python contracts on host ${2:-Darwin}.
+# The build runs only its DTB boot-mode contract and the shared source check.
+# check-kernel.sh then runs the source contracts: $1 Python contracts on
+# host ${2:-Darwin}.
 check_contract_counts() {
-    test "$(grep -c '^contract ' "$TEST_LOG")" -eq 1
     grep -q '^contract .*/a733-boot-modes-contract.py ' "$TEST_LOG"
+    grep -q "^contract .*/ember/tools/shared-sources.py check-kernel .*/ember/shared-sources.json [A-Z0-9_]* EMBER_LLVM_SOURCE\$" "$TEST_LOG"
+    ! grep '^contract ' "$TEST_LOG" | grep -v -e '/a733-boot-modes-contract.py ' -e '/shared-sources.py check-kernel ' | grep -q .
     ! grep -Eq '^(a733|gpu|ruby|network)-contract ' "$TEST_LOG"
     : > "$TEST_LOG"
     TEST_HOST=${2:-Darwin} sh "$work/src/ember/check-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1
@@ -561,7 +574,6 @@ grep -q ' -c clang ' "$TEST_LOG"
 grep -Fq -- "-V EMBER_LLVM_SOURCE=$EMBER_LLVM_SOURCE" "$TEST_LOG"
 grep -Fq -- "-V EMBER_BYACC_SOURCE=$EMBER_BYACC_SOURCE" "$TEST_LOG"
 grep -Fq -- "-V EMBER_HEIMDAL_SOURCE=$EMBER_HEIMDAL_SOURCE" "$TEST_LOG"
-grep -Fq -- "-V EMBER_ZLIB_SOURCE=$EMBER_ZLIB_SOURCE" "$TEST_LOG"
 grep -q 'cpp .*/target-cpp --target=aarch64--netbsd -E ' "$TEST_LOG"
 grep -q 'EMBER_KERNEL_OBJDIR=.*/obj/kernels/EMBER64' "$TEST_LOG"
 grep -q 'cpp .*/tools/bin/target-cpp ' "$TEST_LOG"
@@ -686,6 +698,19 @@ if (unset MKREPRO_TIMESTAMP; exec sh "$work/src/ember/build-kernel.sh" "$work/no
 fi
 grep -q 'set MKREPRO_TIMESTAMP or build from a Git checkout' "$work/run.log"
 check_contract_counts 16
+# A selected zlib source reaches build.sh as make data.
+: > "$TEST_LOG"
+TEST_ZLIB=yes EMBER_ZLIB_SOURCE="$work/zlib" sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1
+grep -Fq -- "-V EMBER_ZLIB_SOURCE=$work/zlib" "$TEST_LOG"
+# A module that reads a source which ember/shared-sources.json does not
+# declare for the kernel stops the build without a result.
+: > "$TEST_LOG"
+if TEST_MODULE_SOURCE=EMBER_ZLIB_SOURCE sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1; then
+    echo 'accepted an undeclared kernel source' >&2; exit 1
+fi
+grep -q 'EMBER64 reads EMBER_LLVM_SOURCE EMBER_ZLIB_SOURCE, but ember/shared-sources.json declares EMBER_LLVM_SOURCE' \
+    "$TEST_OUT/shared-sources.log"
+test ! -e "$TEST_OUT/netbsd-EMBER64"
 # Preserve the existing single-executable CPP spelling, including spaces.
 : > "$TEST_LOG"
 TEST_CPP_SINGLE=yes sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1
@@ -859,7 +884,7 @@ for heimdal in '' relative "$work/missing-heimdal" "$work/bad source" \
     ! grep -q '^build.sh ' "$TEST_LOG"
     test ! -e "$TEST_OUT/netbsd-EMBER64"
 done
-for zlib in '' relative "$work/missing-zlib" "$work/bad source"; do
+for zlib in relative "$work/missing-zlib" "$work/bad source"; do
     : > "$TEST_LOG"
     if EMBER_ZLIB_SOURCE="$zlib" sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1; then
         echo 'accepted missing or invalid common zlib source' >&2; exit 1
@@ -872,7 +897,7 @@ done
 for input in zlib.h zconf.h zutil.h inflate.c inftrees.c emberbsd-prepared-source.json; do
     rm "$work/zlib/$input"
     : > "$TEST_LOG"
-    if sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1; then
+    if EMBER_ZLIB_SOURCE="$work/zlib" sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1; then
         echo "accepted prepared zlib source without $input" >&2; exit 1
     fi
     grep -q EMBER_ZLIB_SOURCE "$work/run.log"

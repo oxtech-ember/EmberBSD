@@ -43,11 +43,21 @@ an application sysroot or supply a complete application runtime. Both families
 consume the common Ports-prepared LLVM sources through `EMBER_LLVM_SOURCE`.
 The tools phase also needs Ports-prepared byacc and Heimdal sources through
 `EMBER_BYACC_SOURCE` and `EMBER_HEIMDAL_SOURCE`; the latter supplies the host
-ASN.1 compiler even for a kernel-only build. Kernel libz also requires
-the common Ports-prepared zlib source through `EMBER_ZLIB_SOURCE`; see the
-[base zlib contract](../../lib/libz/README.md). The wrapper forwards all four
-source paths explicitly to `build.sh`, including on Linux where the SDK runner
-does not inherit arbitrary source variables from the environment.
+ASN.1 compiler even for a kernel-only build. A kernel with libz also reads the
+common Ports-prepared zlib source through the optional `EMBER_ZLIB_SOURCE`
+(see the [base zlib contract](../../lib/libz/README.md)); the EMBER kernels do
+not. The wrapper forwards the source paths explicitly to `build.sh`, including
+on Linux where the SDK runner does not inherit arbitrary source variables from
+the environment.
+
+[`ember/shared-sources.json`](../shared-sources.json) names the Ports producer
+and package of each prepared source in the `REPRO_EXTERNAL_ROOTS` table of
+`share/mk/bsd.sys.mk`, and the sources that each kernel configuration reads.
+The SDK build plan uses it to select and identify the sources of a kernel.
+After the build, `build-kernel.sh` reads `REPRO_EXTERNAL_SOURCE_VARS` from the
+kernel and module objects and stops if they differ from the declaration, with
+`ember/tools/shared-sources.py`. When a configuration reads another source,
+for example littlefs, add the configuration to `kernel.configs`.
 Host contracts use the shared SDK native-check runner and independent
 `EMBER_HOST_PREFIX`/`EMBER_HOST_COMPILER_FAMILY` selection. The wrapper passes
 that prefix's include, library and runtime-library search paths to the runner's

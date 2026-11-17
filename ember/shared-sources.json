@@ -1,0 +1,159 @@
+{
+  "schema": "emberbsd.os-shared-sources.v1",
+  "sources": {
+    "EMBER_BYACC_SOURCE": {
+      "package": "devel/byacc",
+      "producer": "ports:scripts/source-inputs/byacc"
+    },
+    "EMBER_DHCPCD_SOURCE": {
+      "package": "net/dhcpcd",
+      "producer": "ports:scripts/source-inputs/dhcpcd"
+    },
+    "EMBER_DIFFUTILS_SOURCE": {
+      "package": "devel/diffutils",
+      "producer": "ports:scripts/source-inputs/diffutils"
+    },
+    "EMBER_EKERMIT_SOURCE": {
+      "package": "comms/ekermit",
+      "producer": "ports:scripts/source-inputs/ekermit"
+    },
+    "EMBER_EXPAT_SOURCE": {
+      "package": "textproc/expat",
+      "producer": "ports:scripts/source-inputs/expat"
+    },
+    "EMBER_GETTEXT_SOURCE": {
+      "package": "devel/gettext",
+      "producer": "ports:scripts/source-inputs/gettext"
+    },
+    "EMBER_GREP_SOURCE": {
+      "package": "textproc/grep",
+      "producer": "ports:scripts/source-inputs/grep"
+    },
+    "EMBER_HEIMDAL_SOURCE": {
+      "package": "security/heimdal",
+      "producer": "ports:scripts/source-inputs/heimdal"
+    },
+    "EMBER_ISCSI_SOURCE": {
+      "package": "devel/netbsd-iscsi-lib",
+      "producer": "ports:scripts/source-inputs/iscsi"
+    },
+    "EMBER_LIBARCHIVE_SOURCE": {
+      "package": "archivers/libarchive",
+      "producer": "ports:scripts/libarchive-source.py"
+    },
+    "EMBER_LIBCBOR_SOURCE": {
+      "package": "devel/libcbor",
+      "producer": "ports:scripts/source-inputs/libcbor"
+    },
+    "EMBER_LIBEDIT_SOURCE": {
+      "package": "devel/editline",
+      "producer": "sdk:scripts/prepare-libedit.py"
+    },
+    "EMBER_LIBEVENT_SOURCE": {
+      "package": "devel/libevent",
+      "producer": "ports:scripts/source-inputs/libevent"
+    },
+    "EMBER_LIBFETCH_SOURCE": {
+      "package": "net/libfetch",
+      "producer": "ports:scripts/source-inputs/libfetch"
+    },
+    "EMBER_LIBFIDO2_SOURCE": {
+      "package": "security/libfido2",
+      "producer": "ports:scripts/source-inputs/libfido2"
+    },
+    "EMBER_LIBOPTS_SOURCE": {
+      "package": "devel/autogen",
+      "producer": "ports:scripts/source-inputs/autogen"
+    },
+    "EMBER_LIBPCAP_SOURCE": {
+      "package": "net/libpcap",
+      "producer": "ports:scripts/source-inputs/libpcap"
+    },
+    "EMBER_LIBXML2_SOURCE": {
+      "package": "textproc/libxml2",
+      "producer": "ports:scripts/source-inputs/libxml2"
+    },
+    "EMBER_LITTLEFS_SOURCE": {
+      "package": "devel/littlefs",
+      "producer": "ports:scripts/source-inputs/littlefs"
+    },
+    "EMBER_LLVM_SOURCE": {
+      "package": "lang/compiler-rt",
+      "producer": "ports:pkgsrc/lang/compiler-rt/files/source.py"
+    },
+    "EMBER_MDNS_SOURCE": {
+      "package": "net/mDNSResponder",
+      "producer": "ports:scripts/source-inputs/mdns"
+    },
+    "EMBER_NTP_SOURCE": {
+      "package": "net/ntp4",
+      "producer": "ports:scripts/source-inputs/ntp"
+    },
+    "EMBER_NVI_SOURCE": {
+      "package": "editors/nvi",
+      "producer": "ports:scripts/source-inputs/nvi"
+    },
+    "EMBER_OPENLDAP_SOURCE": {
+      "package": "databases/openldap",
+      "producer": "ports:scripts/source-inputs/openldap"
+    },
+    "EMBER_OPENSSH_SOURCE": {
+      "package": "security/openssh",
+      "producer": "ports:scripts/source-inputs/openssh"
+    },
+    "EMBER_OPENSSL_SOURCE": {
+      "package": "security/openssl",
+      "producer": "ports:scripts/source-inputs/openssl"
+    },
+    "EMBER_PPP_SOURCE": {
+      "package": "net/pppd",
+      "producer": "ports:scripts/source-inputs/ppp"
+    },
+    "EMBER_RCS_SOURCE": {
+      "package": "devel/rcs",
+      "producer": "ports:scripts/source-inputs/rcs"
+    },
+    "EMBER_TCPDUMP_SOURCE": {
+      "package": "net/tcpdump",
+      "producer": "ports:scripts/source-inputs/tcpdump"
+    },
+    "EMBER_TCP_WRAPPERS_SOURCE": {
+      "package": "security/tcp_wrappers",
+      "producer": "ports:scripts/source-inputs/tcp_wrappers"
+    },
+    "EMBER_TDB_SOURCE": {
+      "package": "databases/tdb",
+      "producer": "ports:scripts/source-inputs/tdb"
+    },
+    "EMBER_TEXINFO_SOURCE": {
+      "package": "devel/gtexinfo",
+      "producer": "ports:scripts/source-inputs/texinfo"
+    },
+    "EMBER_TOP_SOURCE": {
+      "package": "sysutils/top",
+      "producer": "ports:scripts/source-inputs/top"
+    },
+    "EMBER_TREE_SITTER_SOURCE": {
+      "package": "textproc/tree-sitter",
+      "producer": "ports:scripts/source-inputs/tree-sitter"
+    },
+    "EMBER_UNBOUND_SOURCE": {
+      "package": "net/unbound",
+      "producer": "ports:scripts/source-inputs/unbound"
+    },
+    "EMBER_WPA_SOURCE": {
+      "package": "net/wpa_supplicant",
+      "producer": "ports:scripts/source-inputs/wpa"
+    },
+    "EMBER_ZLIB_SOURCE": {
+      "package": "devel/zlib",
+      "producer": "ports:scripts/source-inputs/zlib"
+    }
+  },
+  "kernel": {
+    "default": [
+      "EMBER_LLVM_SOURCE"
+    ],
+    "configs": {}
+  }
+}
