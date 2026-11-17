@@ -82,6 +82,7 @@ static kmutex_t bus_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t gate = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t gate_cv = PTHREAD_COND_INITIALIZER;
 static bool pause_abort, abort_entered, abort_release, late_claim;
+static bool queued_waiting;
 static unsigned owner_waiters, aborts, starts, completions, sync_wakeups;
 static struct usbd_bus test_bus;
 static struct usbd_device test_device;
@@ -114,6 +115,12 @@ static void
 cv_wait(kcondvar_t *cv, kmutex_t *lock)
 {
 	assert(mutex_owned(lock));
+	if (cv == &queued.ux_cv) {
+		assert(pthread_mutex_lock(&gate) == 0);
+		queued_waiting = true;
+		assert(pthread_cond_broadcast(&gate_cv) == 0);
+		assert(pthread_mutex_unlock(&gate) == 0);
+	}
 	if (cv == &test_pipe.up_callingcv) {
 		assert(pthread_mutex_lock(&gate) == 0);
 		owner_waiters++;
@@ -255,6 +262,7 @@ reset(bool with_queue)
 	assert(test_pipe.up_abortlwp == NULL);
 	aborts = starts = completions = sync_wakeups = owner_waiters = 0;
 	pause_abort = abort_entered = abort_release = late_claim = false;
+	queued_waiting = false;
 	test_pipe.up_running = true;
 	test_pipe.up_aborting = false;
 	test_pipe.up_queue.first = &active;
@@ -283,13 +291,16 @@ pipe_abort_thread(void *unused)
 }
 
 static void *
-sync_waiter(void *unused)
+/* pthread_create requires a mutable void pointer in its callback signature. */
+// cppcheck-suppress constParameterCallback
+sync_waiter(void *expected)
 {
-	(void)unused;
+	const usbd_status status = expected != NULL ?
+	    *(const usbd_status *)expected : USBD_NORMAL_COMPLETION;
 	mutex_enter(&bus_lock);
 	while (!queued.ux_done)
 		cv_wait(&queued.ux_cv, &bus_lock);
-	assert(queued.ux_status == USBD_NORMAL_COMPLETION);
+	assert(queued.ux_status == status);
 	sync_wakeups++;
 	mutex_exit(&bus_lock);
 	return NULL;
@@ -346,6 +357,49 @@ queued_request(void)
 }
 
 static void
+whole_pipe_queued(void)
+{
+	usbd_status expected = USBD_CANCELLED;
+	pthread_t waiter;
+	unsigned with_active;
+
+	for (with_active = 0; with_active < 2; with_active++) {
+		reset(true);
+		if (!with_active)
+			test_pipe.up_queue.first = &queued;
+		assert(pthread_create(&waiter, NULL, sync_waiter, &expected) == 0);
+		assert(pthread_mutex_lock(&gate) == 0);
+		while (!queued_waiting)
+			assert(pthread_cond_wait(&gate_cv, &gate) == 0);
+		assert(pthread_mutex_unlock(&gate) == 0);
+
+		usbd_abort_default_pipe(&test_device);
+		assert(queued.ux_done && queued.ux_status == USBD_CANCELLED);
+		assert(test_pipe.up_queue.first == NULL);
+		assert(starts == 0 && aborts == with_active);
+		if (with_active)
+			assert(active.ux_done && active.ux_status == USBD_CANCELLED);
+		assert(pthread_join(waiter, NULL) == 0);
+		assert(sync_wakeups == 1);
+		assert(!test_pipe.up_aborting && !test_pipe.up_running);
+
+		/* Reuse the same request and pipe after abort resumes it. */
+		mutex_enter(&bus_lock);
+		queued.ux_status = USBD_NOT_STARTED;
+		queued.ux_done = false;
+		test_pipe.up_queue.first = &queued;
+		test_pipe.up_running = true;
+		usbd_start_next(&test_pipe);
+		assert(starts == 1 && queued.ux_status == USBD_IN_PROGRESS);
+		queued.ux_status = USBD_NORMAL_COMPLETION;
+		usb_transfer_complete(&queued);
+		assert(queued.ux_done && test_pipe.up_queue.first == NULL);
+		assert(!test_pipe.up_running);
+		mutex_exit(&bus_lock);
+	}
+}
+
+static void
 no_access(void)
 {
 	reset(false);
@@ -396,6 +450,8 @@ main(int argc, char **argv)
 		no_access();
 	if (!strcmp(which, "all") || !strcmp(which, "queued"))
 		queued_request();
+	if (!strcmp(which, "all") || !strcmp(which, "pipe-queued"))
+		whole_pipe_queued();
 	if (!strcmp(which, "all") || !strcmp(which, "concurrent")) {
 		concurrent_aborts(false, false, false);
 		concurrent_aborts(false, false, true);

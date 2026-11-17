@@ -1,3 +1,4 @@
+/* Origin: EmberBSD (AI-assisted): wake queued synchronous USB requests on abort. */
 /*	$NetBSD: usbdi.c,v 1.253 2024/04/05 18:57:10 riastradh Exp $	*/
 
 /*
@@ -1100,6 +1101,14 @@ usbd_ar_pipe(struct usbd_pipe *pipe)
 			xfer->ux_state = XFER_BUSY;
 #endif
 			SIMPLEQ_REMOVE_HEAD(&pipe->up_queue, ux_next);
+			/*
+			 * A synchronous caller may already be waiting for a
+			 * request queued behind the active transfer.  It never
+			 * reached the HC, but must still complete the wait.
+			 */
+			xfer->ux_status = USBD_CANCELLED;
+			xfer->ux_done = 1;
+			cv_broadcast(&xfer->ux_cv);
 		} else {
 			/* Make the HC abort it (and invoke the callback). */
 			SDT_PROBE1(usb, device, xfer, abort,  xfer);
