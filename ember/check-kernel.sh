@@ -43,6 +43,11 @@ if [ -n "$base" ]; then
     "$python" "$src/ember/tools/kernel-contracts-select.py" "$src" \
         "$out/contract-changes" "$selection"
 fi
+# EMBER_CONTRACT_JOBS selects how many contracts run at the same time.
+# With more than one, a failed contract does not stop the others, and each
+# contract gets no standard input.
+contract_jobs=${EMBER_CONTRACT_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)}
+case $contract_jobs in ''|0|*[!0-9]*) fail 'EMBER_CONTRACT_JOBS must be a positive number';; esac
 contracts=all
 if [ "$(uname -s)" != NetBSD ]; then
     contracts=portable
@@ -60,6 +65,6 @@ status=0
     --tool sh --cwd "$src" --bindings "$out/native-check-commands" \
     --log "$out/contracts.log" -- \
     "$src/ember/tools/kernel-contracts.sh" "$src" "$contracts" \
-    "${PVR_QUERY_FIRMWARE:-}" "$selection" || status=$?
+    "${PVR_QUERY_FIRMWARE:-}" "$selection" "$contract_jobs" || status=$?
 [ ! -f "$out/contracts.log" ] || cat "$out/contracts.log"
 exit "$status"

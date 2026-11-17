@@ -1,8 +1,8 @@
 #!/bin/sh
 # Existing source contracts: portable subset on the build host, all on NetBSD.
 set -eu
-[ "$#" -ge 1 ] && [ "$#" -le 4 ] || {
-    echo 'usage: kernel-contracts.sh SOURCE_ROOT [all|portable] [PVR_FIRMWARE] [SELECTION]' >&2; exit 1;
+[ "$#" -ge 1 ] && [ "$#" -le 5 ] || {
+    echo 'usage: kernel-contracts.sh SOURCE_ROOT [all|portable] [PVR_FIRMWARE] [SELECTION] [JOBS]' >&2; exit 1;
 }
 src=$(CDPATH= cd -- "$1" && pwd)
 mode=${2:-all}
@@ -12,6 +12,50 @@ selection=${4:-}
 if [ -n "$selection" ] && [ ! -f "$selection" ]; then
     echo 'contract selection file missing' >&2; exit 1
 fi
+# JOBS runs up to that many contracts at the same time. The output of each
+# contract comes complete and in dispatch order. A failed contract does not
+# stop the others; the run fails after all of them finish.
+jobs=${5:-1}
+case $jobs in ''|0|*[!0-9]*) echo 'invalid contract job count' >&2; exit 1;; esac
+logs=
+queue=
+started=0
+failed=0
+if [ "$jobs" -gt 1 ]; then
+    logs=$(mktemp -d "${TMPDIR:-/tmp}/kernel-contracts.XXXXXXXX")
+    # Stop the started contracts on each early exit. Contract processes
+    # that a contract starts itself can continue after a signal; the SDK
+    # runner of check-kernel.sh stops its whole process session.
+    stop_queue() {
+        for queued in $queue; do
+            kill "${queued#*:}" 2>/dev/null || :
+        done
+        # A contract can catch TERM and continue. Stop it after one second.
+        [ -z "$queue" ] || sleep 1
+        for queued in $queue; do
+            kill -KILL "${queued#*:}" 2>/dev/null || :
+        done
+        rm -rf "$logs"
+    }
+    trap stop_queue EXIT
+    # mksh can skip the EXIT trap after a signal trap. Clean up here.
+    trap 'stop_queue; trap - EXIT; exit 1' HUP INT TERM
+fi
+# Wait for the oldest running contract and show its output.
+reap() {
+    set -- $queue
+    reap_entry=$1
+    shift
+    queue=$*
+    reap_number=${reap_entry%%:*}
+    reap_status=0
+    wait "${reap_entry#*:}" || reap_status=$?
+    cat "$logs/$reap_number"
+    if [ "$reap_status" -ne 0 ]; then
+        echo "contract failed with status $reap_status: $(cat "$logs/$reap_number.command")" >&2
+        failed=$((failed + 1))
+    fi
+}
 run() {
     if [ -n "$selection" ]; then
         script=
@@ -25,7 +69,16 @@ run() {
             [ "$status" -eq 0 ] || { echo 'cannot read the contract selection' >&2; exit 1; }
         fi
     fi
-    "$@"
+    if [ -z "$logs" ]; then
+        "$@"
+        return
+    fi
+    started=$((started + 1))
+    printf '%s\n' "$*" > "$logs/$started.command"
+    "$@" > "$logs/$started" 2>&1 < /dev/null &
+    queue="$queue $started:$!"
+    set -- $queue
+    [ "$#" -lt "$jobs" ] || reap
 }
 case "$mode" in all|portable) ;; *) echo 'invalid contract mode' >&2; exit 1;; esac
 python=${NETBSD2_PYTHON:-$(command -v python3 || true)}
@@ -150,4 +203,11 @@ if [ "$mode" = all ]; then
     run "$python" "$src/ember/tools/codec-contract.py" "$src"
 else
     echo 'Native contracts pending: run kernel-contracts.sh SOURCE_ROOT all on NetBSD.'
+fi
+while [ -n "$logs" ] && [ -n "$queue" ]; do
+    reap
+done
+if [ "$failed" -ne 0 ]; then
+    echo "$failed kernel contracts failed" >&2
+    exit 1
 fi

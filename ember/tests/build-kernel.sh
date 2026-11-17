@@ -8,6 +8,8 @@ export EMBER_VERSION=9.9
 unset EMBER_HOST_BFD_CONFIG EMBERBSD_SDK_SOURCE EMBER_HOST_PREFIX EMBER_HOST_COMPILER_FAMILY EMBER_BUILD_MODE EMBER_EXTERNAL_TOOLCHAIN EMBER_COMPILER_FAMILY EMBER_LLVM_SOURCE EMBER_BYACC_SOURCE EMBER_HEIMDAL_SOURCE EMBER_ZLIB_SOURCE PVR_QUERY_FIRMWARE MKREPRO_TIMESTAMP
 # A fixed source timestamp keeps the fixture kernels reproducible.
 export MKREPRO_TIMESTAMP=1700000000
+# Most cases check the dispatch order, so run one contract at a time.
+export EMBER_CONTRACT_JOBS=1
 repo=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 TEST_SHELL=${EMBER_TEST_SHELL:-$(command -v sh)}
 TEST_PYTHON=${EMBER_TEST_PYTHON:-$(command -v python3)}
@@ -950,6 +952,22 @@ if sh "$work/src/ember/check-kernel.sh" "$work/busy" > "$work/run.log" 2>&1; the
     echo 'accepted a check output in use' >&2; exit 1
 fi
 test -d "$work/busy/.build-lock"
+# Parallel contracts run all contracts and report each failure.
+export TEST_OUT="$work/parallel"
+: > "$TEST_LOG"
+EMBER_CONTRACT_JOBS=4 sh "$work/src/ember/check-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1
+count_contracts 16
+: > "$TEST_LOG"
+if FAIL_AT=a733-power-contract.sh EMBER_CONTRACT_JOBS=4 sh "$work/src/ember/check-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1; then
+    echo 'accepted a failed parallel contract' >&2; exit 1
+fi
+test "$(grep -c '^network-contract ' "$TEST_LOG")" -eq 9
+grep -q 'contract failed with status 1: sh .*/a733-power-contract.sh' "$work/run.log"
+grep -q '^1 kernel contracts failed$' "$work/run.log"
+test ! -e "$TEST_OUT/.build-lock"
+if EMBER_CONTRACT_JOBS=0 sh "$work/src/ember/check-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1; then
+    echo 'accepted EMBER_CONTRACT_JOBS=0' >&2; exit 1
+fi
 # A base commit selects the contracts whose recorded inputs changed.
 mkdir -p "$work/src/sys/arch/x86/x86"
 printf 'source\n' > "$work/src/sys/arch/x86/x86/efi_machdep.c"
