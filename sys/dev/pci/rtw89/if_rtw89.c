@@ -349,7 +349,9 @@ rtw89_attach_hook(device_t self)
 	ieee80211_announce(ic);
 
 	aprint_normal_dev(self, "address %s\n", ether_sprintf(ic->ic_myaddr));
-	if (!pmf_device_register(self, NULL, NULL))
+	if (pmf_device_register(self, NULL, NULL))
+		pmf_class_network_register(self, ifp);
+	else
 		aprint_error_dev(self, "couldn't establish power handler\n");
 }
 
