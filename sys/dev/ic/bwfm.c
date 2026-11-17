@@ -133,7 +133,7 @@ struct ieee80211_channel *bwfm_bss2chan(struct bwfm_softc *, struct bwfm_bss_inf
 int	 bwfm_scan(struct bwfm_softc *, const uint16_t *, size_t);
 static int bwfm_sta_mgmt(struct ieee80211com *, struct ieee80211req_sta_mgmt *);
 static void bwfm_sta_mgmt_cb(struct bwfm_softc *, struct ieee80211req_sta_mgmt *);
-static void bwfm_sta_tx_done(struct bwfm_softc *, bool);
+static void bwfm_sta_tx_done(struct bwfm_softc *, int, bool, bool);
 static bool bwfm_sta_ready(struct bwfm_softc *);
 static void bwfm_sta_scan_cancel(struct bwfm_softc *);
 static void bwfm_sta_scan_done(struct bwfm_softc *, bool);
@@ -1234,7 +1234,7 @@ bwfm_newstate(struct ieee80211com *ic, enum ieee80211_state nstate, int arg)
 		if (++sc->sc_sta_generation == 0)
 			sc->sc_sta_generation++;
 		ieee80211_sta_action_invalidate(&ic->ic_sta_action);
-		bwfm_sta_tx_done(sc, false);
+		bwfm_sta_tx_done(sc, 0, false, false);
 		sc->sc_sta_assoc_len = 0;
 	}
 	/* Invalidate an in-flight poll before the queued transition executes. */
@@ -2512,7 +2512,8 @@ bwfm_sta_ready(struct bwfm_softc *sc)
 }
 
 static void
-bwfm_sta_tx_done(struct bwfm_softc *sc, bool ack)
+bwfm_sta_tx_done(struct bwfm_softc *sc, int tx_error, bool ack_known,
+    bool ack)
 {
 	struct ieee80211req_sta_mgmt notice;
 	struct ieee80211com *ic = &sc->sc_ic;
@@ -2522,7 +2523,7 @@ bwfm_sta_tx_done(struct bwfm_softc *sc, bool ack)
 		return;
 	sc->sc_sta_tx_pending = false;
 	notify = ieee80211_sta_action_report(&ic->ic_sta_action,
-	    &sc->sc_sta_tx, ack, &notice);
+	    &sc->sc_sta_tx, tx_error, ack_known, ack, &notice);
 	(void)ieee80211_sta_action_release(&ic->ic_sta_action, &sc->sc_sta_tx);
 	if (notify)
 		rt_ieee80211msg(&sc->sc_if, RTM_IEEE80211_STA_TX, &notice,
@@ -2535,6 +2536,34 @@ bwfm_sta_tx_event_match(struct bwfm_softc *sc, uint32_t packetid)
 {
 	return sc->sc_sta_tx_pending && packetid != 0 &&
 	    packetid == sc->sc_sta_packetid;
+}
+
+/* Decode only status classes whose action-frame meaning is explicit. */
+static void
+bwfm_sta_tx_status(uint32_t status, int *tx_error, bool *ack_known,
+    bool *ack)
+{
+	*tx_error = 0;
+	*ack_known = false;
+	*ack = false;
+	switch (status) {
+	case BWFM_E_STATUS_SUCCESS:
+		*ack_known = true;
+		*ack = true;
+		break;
+	case BWFM_E_STATUS_NO_ACK:
+		*ack_known = true;
+		break;
+	case BWFM_E_STATUS_TIMEOUT:
+		*tx_error = ETIMEDOUT;
+		break;
+	case BWFM_E_STATUS_ABORT:
+		*tx_error = ECANCELED;
+		break;
+	default:
+		*tx_error = EIO;
+		break;
+	}
 }
 
 static void
@@ -2627,8 +2656,8 @@ bwfm_sta_mgmt(struct ieee80211com *ic, struct ieee80211req_sta_mgmt *req)
 	s = splnet();
 	switch (req->op) {
 	case IEEE80211_STA_GET:
-		req->flags = IEEE80211_STA_CAP_BTM | IEEE80211_STA_CAP_RRM |
-		    IEEE80211_STA_CAP_SCAN;
+		req->flags = IEEE80211_STA_CAP_BTM | IEEE80211_STA_CAP_NR |
+		    IEEE80211_STA_CAP_RM_REPORT_TX | IEEE80211_STA_CAP_SCAN;
 		req->generation = sc->sc_sta_generation;
 		req->len = IEEE80211_ADDR_LEN;
 		IEEE80211_ADDR_COPY(req->data, ic->ic_myaddr);
@@ -2652,7 +2681,7 @@ bwfm_sta_mgmt(struct ieee80211com *ic, struct ieee80211req_sta_mgmt *req)
 		sc->sc_sta_enabled = req->op == IEEE80211_STA_ENABLE;
 		if (!sc->sc_sta_enabled) {
 			ieee80211_sta_action_invalidate(&ic->ic_sta_action);
-			bwfm_sta_tx_done(sc, false);
+			bwfm_sta_tx_done(sc, 0, false, false);
 			bwfm_sta_scan_cancel(sc);
 			error = bwfm_sta_wnm(sc, false);
 			if (error && (sc->sc_if.if_flags & IFF_RUNNING))
@@ -2684,7 +2713,7 @@ bwfm_sta_mgmt(struct ieee80211com *ic, struct ieee80211req_sta_mgmt *req)
 			error = ESTALE;
 			goto out;
 		}
-		bwfm_sta_tx_done(sc, false);
+		bwfm_sta_tx_done(sc, 0, false, false);
 		goto out;
 	case IEEE80211_STA_TX:
 		if (req->cookie == 0 || !bwfm_sta_action_valid(req->data, req->len, false)) {
@@ -2770,7 +2799,7 @@ bwfm_sta_mgmt_cb(struct bwfm_softc *sc, struct ieee80211req_sta_mgmt *req)
 			goto out;
 		if (!bwfm_sta_ready(sc) || req->generation != sc->sc_sta_generation ||
 		    !IEEE80211_ADDR_EQ(req->bssid, ic->ic_bss->ni_bssid)) {
-			bwfm_sta_tx_done(sc, false);
+			bwfm_sta_tx_done(sc, ENOTCONN, false, false);
 			goto out;
 		}
 		/* actframe v1: channel, dwell, BSSID, padding, DA, length, ID, body. */
@@ -2792,7 +2821,7 @@ bwfm_sta_mgmt_cb(struct bwfm_softc *sc, struct ieee80211req_sta_mgmt *req)
 		error = bwfm_fwvar_var_set_data(sc, "actframe", af, len);
 		kmem_free(af, len);
 		if (error && req->flags == sc->sc_sta_packetid)
-			bwfm_sta_tx_done(sc, false);
+			bwfm_sta_tx_done(sc, error, false, false);
 	} else if (sc->sc_sta_bgscan && req->flags == sc->sc_sta_scan_generation) {
 		if (!bwfm_sta_ready(sc) || req->generation != sc->sc_sta_generation ||
 		    !IEEE80211_ADDR_EQ(req->bssid, ic->ic_bss->ni_bssid)) {
@@ -3421,8 +3450,14 @@ bwfm_rx_event_cb(struct bwfm_softc *sc, struct mbuf *m, uint32_t generation)
 	case BWFM_E_ACTION_FRAME_COMPLETE:
 		/* Firmware echoes the little-endian packet ID, not the user cookie. */
 		if (len - sizeof(*e) >= 4 &&
-		    bwfm_sta_tx_event_match(sc, le32dec(&e[1])))
-			bwfm_sta_tx_done(sc, ntohl(e->msg.status) == BWFM_E_STATUS_SUCCESS);
+		    bwfm_sta_tx_event_match(sc, le32dec(&e[1]))) {
+			int tx_error;
+			bool ack_known, ack;
+
+			bwfm_sta_tx_status(ntohl(e->msg.status), &tx_error,
+			    &ack_known, &ack);
+			bwfm_sta_tx_done(sc, tx_error, ack_known, ack);
+		}
 		break;
 	case BWFM_E_ESCAN_RESULT: {
 		struct bwfm_escan_results *res = (void *)&e[1];

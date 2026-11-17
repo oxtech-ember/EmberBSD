@@ -28,17 +28,27 @@ Firmware PMF support and successful key installation remain separate requirement
 `to_ap` is true for station TX and false for RX from its AP.
 The caller selects supported action kinds and the firmware body-size limit.
 
-| Capability | Station TX | Station RX |
+| Action syntax capability | Station TX | Station RX |
 | --- | --- | --- |
 | `IEEE80211_STA_ACTION_BTM` | BTM query and response | BTM request |
 | `IEEE80211_STA_ACTION_NR` | Neighbor report request | Neighbor report response |
 | `IEEE80211_STA_ACTION_RM_REPORT` | Measurement report | None |
 | `IEEE80211_STA_ACTION_RM_REQUEST` | None | Measurement request |
 
-The AIC and BWFM adapters select BTM, neighbor reports and measurement reports.
-Only AIC selects measurement request reception. ESP selects BTM and neighbor
-reports; its capability selection leaves measurement exchanges disabled.
-The shared code has no chip names or firmware-version tests.
+The STA GET ABI reports operation direction with separate capability bits:
+
+| STA GET capability | Meaning |
+| --- | --- |
+| IEEE80211_STA_CAP_NR | Neighbor report request TX and reply RX are both available. |
+| IEEE80211_STA_CAP_RM_REQUEST_RX | Measurement request reception from the AP is available. |
+| IEEE80211_STA_CAP_RM_REPORT_TX | Measurement report transmission to the AP is available. |
+
+AIC exposes NR in both directions and transports measurement requests and
+reports. The measurement IEs remain opaque to the adapter; the capability
+does not claim a measurement implementation. BWFM exposes NR in both
+directions and measurement report TX. ESP exposes NR in both directions only.
+BTM and connected scan keep their independent bits. The shared code has no
+chip names or firmware-version tests.
 
 BTM termination duration and URL fields must fit when their request flags are set.
 An accepted BTM response must include its target BSSID.
@@ -57,12 +67,17 @@ in each driver.
 `ieee80211_sta_action.h` owns the logical lifetime shared by ESP, AIC and BWFM.
 Its compact state holds the accepted cookie, association generation, BSSID and
 frequency, plus cancellation and completion state. The adapter retains the
-body, firmware token and any resources borrowed by its transport.
+body, firmware token and any resources borrowed by its transport. This ABI is
+version 3; tx_error is zero or a positive BSD errno for a local submission or
+firmware completion error.
 
-Call the helpers under the interface's existing serialization. `begin` admits
-one operation; `match` checks its full identity. `report` prepares at most one
-fixed STA_TX notice, with ACK set only when the adapter supplies a confirmed
-acknowledgement. Deliver that notice after dropping driver locks. Syntax,
+Call the helpers under the interface's existing serialization. begin admits
+one operation; match checks its full identity. report prepares at most one
+fixed STA_TX notice. A local error is carried in tx_error with ACK flags clear.
+On local success, IEEE80211_STA_TX_ACK_KNOWN means the adapter knows the peer
+ACK result; IEEE80211_STA_TX_ACK is valid only with ACK_KNOWN. Clear ACK with
+ACK_KNOWN means a confirmed no-ACK result. With both bits clear, the peer ACK
+result is unknown. Deliver that notice after dropping driver locks. Syntax,
 capabilities and current association authorization are checked before
 admission through the existing common validators and adapter state.
 
@@ -76,9 +91,14 @@ stale tuple cannot release its replacement.
 Transport retirement depends on the adapter's firmware contract. ESP retains
 its slot until the ordinary management output buffer drains or submission
 proves that no buffer was accepted. AIC and BWFM correlate independent command
-buffers with firmware tokens. Each adapter keeps that correlation across late
-events and admits reuse only when its own resources are safe. The common
-helper does not call firmware, acquire driver locks or deliver route events.
+buffers with firmware tokens. AIC firmware confirmation distinguishes ACK
+from no-ACK. BWFM maps SUCCESS and NO_ACK explicitly; timeout and other
+firmware errors carry a local errno without inferring a peer result. ESP carries
+the lower management-send result through its callback only after the vendor
+request buffer drains; the vendor callback does not establish peer ACK. Each
+adapter keeps correlation across late events and admits reuse only when its own
+resources are safe. The common helper does not call firmware, acquire driver
+locks or deliver route events.
 
 ## Connected scan offload
 
@@ -108,10 +128,10 @@ after an ioctl has been accepted, launch failures must report an aborted event
 before release. A failed firmware abort does not end the drain.
 
 `CANCEL_SCAN` identifies the saved request with its nonzero cookie, association
-generation and BSSID; its v2 `freq` field is zero. The completion event still
-contains the original SCAN frequency. A cancelled operation cannot be replaced
-until its adapter has drained it. Both bwfm and aicwf advertise the capability
-and use these common validation and event-lifetime helpers.
+generation and BSSID; its request `freq` field is zero. The completion event
+still contains the original SCAN frequency. A cancelled operation cannot be
+replaced until its adapter has drained it. Both bwfm and aicwf advertise the
+capability and use these common validation and event-lifetime helpers.
 The bwfm adapter preserves the old firmware sync ID through cancellation, queues
 the legacy S_SCAN transition behind that drain, and retires it at a terminal
 event or successful firmware DOWN acknowledgement. The aicwf adapter keeps its

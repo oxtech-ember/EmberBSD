@@ -4,6 +4,7 @@
 #error "fullmac_wpa2 requires the external BSD WPA interface"
 #endif
 #include <stdbool.h>
+#include <errno.h>
 #include <limits.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -522,11 +523,11 @@ espwifi_ext_action_tx(const unsigned char *bssid, const void *body,
 
 	if (bssid == NULL || body == NULL || len < 2 || len > 1024 ||
 	    cookie == 0 || generation == 0)
-		return ESP_ERR_INVALID_ARG;
+		return EINVAL;
 	size = offsetof(wifi_mgmt_frm_req_t, data) + len;
 	req = espwifi_os_malloc(size);
 	if (req == NULL)
-		return ESP_ERR_NO_MEM;
+		return ENOMEM;
 	memset(req, 0, offsetof(wifi_mgmt_frm_req_t, data));
 	req->ifx = WIFI_IF_STA;
 	/* IDF S31 wifi_mgmt_frm_req_t.subtype is the FC byte (0xd0). */
@@ -540,7 +541,7 @@ espwifi_ext_action_tx(const unsigned char *bssid, const void *body,
 		forced_memzero(req, size);
 		espwifi_os_free(req);
 	}
-	return error;
+	return error == ESP_OK ? 0 : EIO;
 }
 
 int

@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -36,6 +37,7 @@ struct os_reltime { unsigned sec, usec; };
 struct bsd_driver_data {
     void *ctx;
     int sta_btm, sta_rrm, sta_scan, sta_scan_pending;
+    int sta_nr, sta_rm_request_rx, sta_rm_report_tx;
     uintptr_t sta_scan_generation;
     uint32_t sta_scan_cookie, sta_scan_epoch, sta_cookie, sta_tx_generation;
     uint16_t sta_scan_freq, sta_tx_freq;
@@ -46,12 +48,12 @@ struct bsd_driver_data {
 };
 union wpa_event_data {
     struct { int aborted; } scan_info;
-    struct { int type, stype, ack, link_id; const u8 *dst, *data; size_t data_len; } tx_status;
+    struct { int type, stype, ack, ack_known, tx_error, link_id; const u8 *dst, *data; size_t data_len; } tx_status;
     struct { const u8 *frame; size_t frame_len; unsigned freq; int link_id; } rx_mgmt;
 };
 static struct ieee80211req_sta_mgmt current, cancelled;
 static unsigned checks, failures, rx, tx, scans, disconnects, cancellations;
-static int info_error, set_error, last_ack, last_aborted;
+static int info_error, set_error, last_ack, last_ack_known, last_tx_error, last_aborted;
 static char debug_log[256];
 static void check(bool pass, const char *why)
 { checks++; if (!pass) { fprintf(stderr,"FAIL: %s\n",why); failures++; } }
@@ -82,7 +84,7 @@ static void wpa_supplicant_event(void *ctx, int event, union wpa_event_data *dat
             data->tx_status.stype == WLAN_FC_STYPE_ACTION &&
             data->tx_status.data_len >= 27 && data->tx_status.data != NULL,
             "TX completion retains frame through event dispatch");
-        tx++; last_ack = data->tx_status.ack; break;
+        tx++; last_ack = data->tx_status.ack; last_ack_known = data->tx_status.ack_known; last_tx_error = data->tx_status.tx_error; break;
     case EVENT_SCAN_RESULTS:
         scans++; last_aborted = data->scan_info.aborted; break;
     case EVENT_DISASSOC:
@@ -121,14 +123,15 @@ static void fixture(struct bsd_driver_data *drv)
     memset(&cancelled,0,sizeof(cancelled));
     current.version = IEEE80211_STA_VERSION; current.generation = 40;
     current.freq = 5300; current.bssid[0] = 2; current.flags = IEEE80211_STA_ASSOCIATED;
-    drv->sta_btm = drv->sta_rrm = drv->sta_scan = 1; drv->sta_cookie = 42;
+    drv->sta_btm = drv->sta_rrm = drv->sta_scan = 1;
+    drv->sta_nr = drv->sta_rm_request_rx = drv->sta_rm_report_tx = 1; drv->sta_cookie = 42;
     drv->sta_tx_generation = current.generation; drv->sta_tx_freq = current.freq;
     drv->sta_scan_cookie = 50; drv->sta_scan_epoch = current.generation;
     drv->sta_scan_freq = current.freq;
     drv->sta_scan_generation = 100;
     memcpy(drv->sta_scan_bssid,current.bssid,6);
     rx = tx = scans = disconnects = cancellations = 0; info_error = set_error = 0;
-    last_ack = last_aborted = 0;
+    last_ack = last_ack_known = last_tx_error = last_aborted = 0;
     debug_log[0] = '\0';
 }
 static struct ieee80211req_sta_mgmt event_request(void)
@@ -183,7 +186,7 @@ int main(void)
     req.data[1] = WLAN_RRM_NEIGHBOR_REPORT_RESPONSE; req.len = 3;
     bsd_sta_event(&drv,RTM_IEEE80211_STA_RX,&req,header+3);
     check(rx == 1,"Neighbor Report response reaches supplicant");
-    drv.sta_rrm = 0;
+    drv.sta_rrm = drv.sta_nr = drv.sta_rm_request_rx = drv.sta_rm_report_tx = 0;
     bsd_sta_event(&drv,RTM_IEEE80211_STA_RX,&req,header+3);
     check(rx == 1,"disabled RRM cannot inject a response");
     fixture(&drv); req = event_request(); req.data[1] = WNM_BSS_TRANS_MGMT_QUERY; req.len = 4;
@@ -192,7 +195,7 @@ int main(void)
     check(bsd_sta_tx_body(&drv,req.data,3) && !bsd_sta_tx_body(&drv,req.data,2),"Neighbor Report request needs token");
     for (i = 0; i < 9; i++) {
         fixture(&drv); pending_tx(&drv); req = event_request(); req.len = 0; req.cookie = 42; req.op = IEEE80211_STA_TX;
-        req.flags = IEEE80211_STA_TX_ACK;
+        req.flags = IEEE80211_STA_TX_ACK | IEEE80211_STA_TX_ACK_KNOWN;
         switch (i) {
         case 0: req.cookie--; break;
         case 1: req.generation--; break;
@@ -206,22 +209,22 @@ int main(void)
         }
         bsd_sta_event(&drv,RTM_IEEE80211_STA_TX,&req,header+req.len);
         check(tx == 0 && drv.sta_tx_frame != NULL,"TX completion must match cookie, epoch, peer, frequency and shape");
-        bsd_sta_tx_status(&drv,0,0);
+        bsd_sta_tx_status(&drv,0,0,0,0);
     }
-    fixture(&drv); pending_tx(&drv); req = event_request(); req.len = 0; req.cookie = 42; req.op = IEEE80211_STA_TX; req.flags = IEEE80211_STA_TX_ACK;
+    fixture(&drv); pending_tx(&drv); req = event_request(); req.len = 0; req.cookie = 42; req.op = IEEE80211_STA_TX; req.flags = IEEE80211_STA_TX_ACK | IEEE80211_STA_TX_ACK_KNOWN;
     bsd_sta_event(&drv,RTM_IEEE80211_STA_TX,&req,header);
-    check(tx == 1 && last_ack && drv.sta_tx_frame == NULL,"matching TX completion notifies ACK and releases frame");
-    check(strstr(debug_log,"cookie=42 generation=40 freq=5300 category=10 action=8 token=7 ack=1") != NULL,
+    check(tx == 1 && last_ack && last_ack_known && !last_tx_error && drv.sta_tx_frame == NULL,"matching TX completion notifies ACK and releases frame");
+    check(strstr(debug_log,"cookie=42 generation=40 freq=5300 category=10 action=8 token=7 ack_known=1 ack=1 tx_error=0") != NULL,
         "TX diagnostic identifies the acknowledged action without its payload");
     bsd_sta_event(&drv,RTM_IEEE80211_STA_TX,&req,header); check(tx == 1,"duplicate TX event ignored");
     fixture(&drv); pending_tx(&drv); bsd_sta_tx_timeout(&drv,(void *)(uintptr_t)41);
     check(tx == 0 && drv.sta_tx_frame != NULL,"old TX timeout cannot cancel a replacement");
     bsd_sta_tx_timeout(&drv,(void *)(uintptr_t)42);
-    check(tx == 1 && !last_ack && cancellations == 1 && cancelled.cookie == 42 &&
+    check(tx == 1 && !last_ack && !last_ack_known && last_tx_error == ETIMEDOUT && cancellations == 1 && cancelled.cookie == 42 &&
         cancelled.generation == 40 && cancelled.op == IEEE80211_STA_CANCEL_TX,
         "TX timeout cancels original epoch and cookie and reports failure");
-    check(strstr(debug_log,"token=7 ack=0") != NULL,
-        "TX diagnostic distinguishes timeout from ACK");
+    check(strstr(debug_log,"token=7 ack_known=0 ack=0 tx_error=60") != NULL,
+        "timeout reports local ETIMEDOUT without claiming peer ACK knowledge");
     for (i = 0; i < 8; i++) {
         fixture(&drv); drv.sta_scan_pending = 1; req = event_request();
         req.len = 0; req.op = IEEE80211_STA_SCAN; req.cookie = drv.sta_scan_cookie;
@@ -230,7 +233,7 @@ int main(void)
         case 1: req.generation--; break;
         case 2: req.bssid[5]++; break;
         case 3: req.op = IEEE80211_STA_TX; break;
-        case 4: req.flags = IEEE80211_STA_TX_ACK; break;
+        case 4: req.flags = IEEE80211_STA_TX_ACK | IEEE80211_STA_TX_ACK_KNOWN; break;
         case 5: req.len = 1; break;
         case 6: drv.sta_scan_epoch--; break;
         case 7: drv.sta_scan = 0; break;

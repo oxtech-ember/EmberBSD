@@ -686,7 +686,7 @@ ieee80211_notify_scan_done(struct ieee80211com *ic)
 	rt_ieee80211msg(ifp, RTM_IEEE80211_SCAN, NULL, 0);
 }
 
-/* The STA scan route carries only the fixed header of the v2 request. */
+/* The STA scan route carries only the fixed versioned request header. */
 static void
 ieee80211_notify_sta_scan(struct ieee80211com *ic,
 	const struct ieee80211_sta_scan_state *scan, bool aborted)
@@ -694,6 +694,7 @@ ieee80211_notify_sta_scan(struct ieee80211com *ic,
 	struct ieee80211_sta_scan_notice {
 		uint16_t version, op;
 		uint32_t cookie, generation, flags;
+		int32_t tx_error;
 		uint16_t freq, len;
 		uint8_t bssid[IEEE80211_ADDR_LEN];
 		uint16_t reserved;

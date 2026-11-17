@@ -18,7 +18,7 @@ typedef unsigned int u_int;
 #define IEEE80211_CHAN_BYTES 4
 #define IEEE80211_ADDR_LEN 6
 #define IEEE80211_STA_MAX_CHANNELS 32
-#define IEEE80211_STA_VERSION 2
+#define IEEE80211_STA_VERSION 3
 #define IEEE80211_STA_SCAN 5
 #define IEEE80211_STA_CANCEL_SCAN 6
 #define IEEE80211_STA_SCAN_ABORTED 0x0020
@@ -38,6 +38,7 @@ struct ieee80211_node_table { unsigned nt_scan_epoch; };
 struct ieee80211req_sta_mgmt {
 	uint16_t version, op;
 	uint32_t cookie, generation, flags;
+	int32_t tx_error;
 	uint16_t freq, len;
 	uint8_t bssid[IEEE80211_ADDR_LEN];
 	uint16_t reserved;
@@ -76,6 +77,7 @@ static void ieee80211_cancel_scan(struct ieee80211com *ic) {
 static int ieee80211_sta_request_validate(
     const struct ieee80211req_sta_mgmt *req) {
 	return req->version == IEEE80211_STA_VERSION && req->reserved == 0 &&
+	    req->tx_error == 0 &&
 	    req->flags == 0 ? 0 : EINVAL;
 }
 static void rt_ieee80211msg(void *ifp, unsigned what, const void *payload,

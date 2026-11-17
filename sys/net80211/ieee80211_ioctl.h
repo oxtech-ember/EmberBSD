@@ -589,7 +589,7 @@ int ieee80211_sae_auth_frame_validate(const uint8_t *, size_t,
  * unsupported drivers return EOPNOTSUPP.
  */
 #define IEEE80211_IOC_STA_PORT           76
-#define IEEE80211_STA_VERSION           2
+#define IEEE80211_STA_VERSION           3
 #define IEEE80211_STA_MAX_BODY          1024
 #define IEEE80211_STA_MAX_CHANNELS      32
 #define IEEE80211_STA_GET               0
@@ -602,16 +602,20 @@ int ieee80211_sae_auth_frame_validate(const uint8_t *, size_t,
 #define IEEE80211_STA_CAP_BTM           0x0001
 #define IEEE80211_STA_ASSOCIATED        0x0002
 #define IEEE80211_STA_TX_ACK            0x0004
-#define IEEE80211_STA_CAP_RRM           0x0008
+#define IEEE80211_STA_TX_ACK_KNOWN      0x0008
 #define IEEE80211_STA_ASSOC_IES         0x0010
 #define IEEE80211_STA_SCAN_ABORTED      0x0020
 #define IEEE80211_STA_CAP_SCAN           0x0040
+#define IEEE80211_STA_CAP_NR             0x0080
+#define IEEE80211_STA_CAP_RM_REQUEST_RX  0x0100
+#define IEEE80211_STA_CAP_RM_REPORT_TX   0x0200
 struct ieee80211req_sta_mgmt {
 	uint16_t version;
 	uint16_t op;
 	uint32_t cookie;
 	uint32_t generation;
 	uint32_t flags;
+	int32_t tx_error; /* STA_TX completion: zero or positive local errno */
 	uint16_t freq;
 	uint16_t len;
 	uint8_t bssid[IEEE80211_ADDR_LEN];

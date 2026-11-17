@@ -49,9 +49,14 @@ tx = '\n'.join(function(source, name, result) for name, result in (
 rx = '\n'.join(function(source, name, result) for name, result in (
     ('espwifi_if_action_rx', 'int'),
     ('espwifi_if_action_rx_process', 'void')))
+scan_capture = function(source, 'espwifi_if_scan_frame', 'void')
+drop_report_due = function(source, 'espwifi_if_rx_drop_report_due', 'bool')
+drop_report = function(source, 'espwifi_if_rx_drop_report', 'void')
 scanthread = function(source, 'espwifi_if_scanthread', 'void')
 assert re.search(r'if \(frame\.action\)\s*\{\s*'
                   r'espwifi_if_action_rx_process\(sc, &frame\);', scanthread)
+assert re.search(r'mutex_spin_exit\(&sc->sc_scan_lock\);\s*'
+                  r'espwifi_if_rx_drop_report\(sc\);', scanthread)
 action_header = (root.parent.parent / 'net80211/ieee80211_sta_action.h').read_text()
 def c_block(text, marker):
     start = text.index(marker)
@@ -67,7 +72,10 @@ action_state = c_block(action_header, 'struct ieee80211_sta_action_state {') + '
 action_helpers = '\n'.join(c_block(action_header, 'static inline ' + ret +
     '\nieee80211_sta_action_' + name) for name, ret in (
     ('begin', 'int'), ('match', 'bool'), ('cancel', 'bool'),
-    ('invalidate', 'void'), ('report', 'bool'), ('release', 'bool')))
+    ('invalidate', 'void'), ('report', 'bool'), ('release', 'bool'))) + '\n' + \
+    c_block(action_header[action_header.rindex(
+        'static inline bool\nieee80211_sta_tx_result_valid'):],
+        'static inline bool\nieee80211_sta_tx_result_valid')
 syntax = '\n'.join(inline_function(sta_header, name) for name in (
     'ieee80211_sta_ies_valid', 'ieee80211_sta_action_ies_valid',
     'ieee80211_sta_action_valid'))
@@ -77,22 +85,27 @@ code = r'''
 #include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h>
+#include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
+#include <stdio.h>
 #define ETHER_ADDR_LEN 6
 #define IEEE80211_ADDR_LEN 6
-#define CHECK(e) ((e) ? (void)0 : abort())
-#define ESPWIFI_SCAN_RING 4
+#define CHECK(e) ((e) ? (void)0 : (fprintf(stderr, "CHECK failed %s:%d: %s\n", \
+    __FILE__, __LINE__, #e), abort()))
+#define ESPWIFI_SCAN_RING 8
+#define ESPWIFI_ACTION_RX_RESERVED 1
 #define ESPWIFI_SCAN_FRAME_MAX 2304
 #define IEEE80211_STA_MAX_BODY 1024
-#define IEEE80211_STA_VERSION 2
+#define IEEE80211_STA_VERSION 3
 #define IEEE80211_STA_GET 0
 #define IEEE80211_STA_TX 3
 #define IEEE80211_STA_CANCEL_TX 4
 #define IEEE80211_STA_TX_ACK 0x0004
+#define IEEE80211_STA_TX_ACK_KNOWN 0x0008
 #define IEEE80211_STA_CAP_BTM 0x0001
-#define IEEE80211_STA_CAP_RRM 0x0008
+#define IEEE80211_STA_CAP_NR 0x0080
 #define IEEE80211_STA_ASSOCIATED 0x0002
 #define IEEE80211_STA_ACTION_BTM 0x01U
 #define IEEE80211_STA_ACTION_NR 0x02U
@@ -107,11 +120,12 @@ code = r'''
 #define KERNEL_LOCK(a,b) ((void)(a),(void)(b),kernel_depth++,test_kernel_lock())
 #define KERNEL_UNLOCK_ONE(a) ((void)(a),assert(kernel_depth==1),kernel_depth--)
 struct ieee80211req_sta_mgmt {
- uint16_t version,op;uint32_t cookie,generation,flags;uint16_t freq,len;
- uint8_t bssid[6];uint16_t reserved;uint8_t data[1024]; };
+	uint16_t version,op;uint32_t cookie,generation,flags;int32_t tx_error;
+	uint16_t freq,len;uint8_t bssid[6];uint16_t reserved;uint8_t data[1024]; };
 ''' + action_state + r'''
 struct ieee80211_sta_scan_state { bool active; };
 struct ieee80211_channel { uint16_t ic_freq; unsigned number; };
+struct ieee80211_frame { uint8_t data[24]; };
 struct ieee80211_node { struct ieee80211_channel *ni_chan;uint8_t ni_bssid[6]; };
 struct ifnet { void *if_softc; };
 struct ieee80211com { struct ifnet *ic_ifp;int ic_state,ic_opmode;
@@ -128,21 +142,24 @@ struct espwifi_softc {
  uint64_t sc_scan_active;
  bool sc_radio_ready,sc_sta_started,sc_join_stopped,sc_joined,sc_link;
  unsigned sc_port_authorized,sc_scan_head,sc_scan_count;uint64_t sc_join_active;
- uint8_t sc_join_bssid[6];struct espwifi_scan_frame sc_scan_ring[4];
+ uint32_t sc_scan_rx_drops,sc_action_rx_drops;
+ uint32_t sc_scan_rx_drop_next_log,sc_action_rx_drop_next_log;
+ uint8_t sc_join_bssid[6];struct espwifi_scan_frame sc_scan_ring[ESPWIFI_SCAN_RING];
  bool sc_action_tx_owned,sc_action_tx_pending,sc_action_tx_started;
  bool sc_action_tx_send_done,sc_action_tx_send_ok,sc_action_tx_cb_seen;
- uint16_t sc_action_tx_len;uint64_t sc_action_tx_serial;
+ uint16_t sc_action_tx_len;uint64_t sc_action_tx_serial;int sc_action_tx_error;
  uint8_t sc_action_tx_data[1024];
  };
 static struct espwifi_softc sc,*espwifi_global=&sc;
 #define espwifi_sc (*espwifi_global)
 static int kernel_depth,spin_depth,rx_events,tx_events,sem_rx,sem_ctl;
+static unsigned scan_drop_logs,action_drop_logs;static uint32_t scan_drop_value,action_drop_value;
 static bool report_race;static struct ieee80211req_sta_mgmt report_race_req;
 static void test_kernel_lock(void);
 static int vendor_calls,vendor_error,vendor_sync_callback;
 static struct ieee80211req_sta_mgmt rx_event,tx_event;
 static void espwifi_if_action_tx_report(struct espwifi_softc *);
-static void espwifi_if_action_tx_done(uint32_t,uint32_t,const uint8_t *);
+static void espwifi_if_action_tx_done(uint32_t,uint32_t,const uint8_t *,int);
 static void espwifi_if_action_tx_control(struct espwifi_softc *);
 static int espwifi_if_action_tx_cancel(struct espwifi_softc *,
     const struct ieee80211req_sta_mgmt *);
@@ -164,7 +181,7 @@ static int espwifi_ext_action_tx(const unsigned char *bssid,const void *body,
  unsigned int len,uint32_t cookie,uint32_t generation) {
  vendor_calls++;assert(len>=3 && cookie==77 && generation==9);
  assert(memcmp(bssid,sc.sc_join_bssid,6)==0);(void)body;
- if(vendor_sync_callback)espwifi_if_action_tx_done(cookie,generation,bssid);
+ if(vendor_sync_callback)espwifi_if_action_tx_done(cookie,generation,bssid,0);
  return vendor_error; }
 static void rt_ieee80211msg(struct ifnet *ifp,int type,const void *data,size_t len) {
  (void)ifp;assert(!spin_depth);
@@ -172,7 +189,15 @@ static void rt_ieee80211msg(struct ifnet *ifp,int type,const void *data,size_t l
   assert(len==offsetof(struct ieee80211req_sta_mgmt,data)+rx_event.len);rx_events++;}
  else {assert(type==RTM_IEEE80211_STA_TX);memcpy(&tx_event,data,len);tx_events++;} }
 static void explicit_memset(void *p,int c,size_t n) { memset(p,c,n); }
-''' + syntax + action_helpers + tx_helpers + tx + rx + r'''
+static void espwifi_os_log(const char *fmt,...) {
+ va_list ap;va_start(ap,fmt);
+ if(strstr(fmt,"scan RX queue drops")!=NULL){scan_drop_logs++;scan_drop_value=va_arg(ap,unsigned);}
+ if(strstr(fmt,"Action RX queue drops")!=NULL){action_drop_logs++;action_drop_value=va_arg(ap,unsigned);}
+ va_end(ap); }
+''' + 'static inline bool ieee80211_sta_tx_result_valid(\n' \
+    '    const struct ieee80211req_sta_mgmt *);\n' + syntax + action_helpers + \
+    tx_helpers + tx + rx + scan_capture + \
+    drop_report_due + drop_report + r'''
 static void setup(void) {
  memset(&sc,0,sizeof(sc));espwifi_global=&sc;
  sc.sc_ifp.if_softc=&sc;sc.sc_ic.ic_ifp=&sc.sc_ifp;
@@ -223,12 +248,49 @@ int main(void) {
   rx_event.generation==9 && rx_event.freq==2437 && rx_event.len==3 &&
   rx_event.data[1]==5 && memcmp(rx_event.bssid,sc.sc_join_bssid,6)==0);
  body[1]=5;
+ /* Background scans leave one ring slot available for Action RX. */
+ setup();sc.sc_scan_active=9;uint8_t scan_data[24]={0};scan_data[0]=0x80;
+ for(unsigned i=0;i<ESPWIFI_SCAN_RING-ESPWIFI_ACTION_RX_RESERVED;i++)
+  espwifi_if_scan_frame(scan_data,sizeof(scan_data),6,-40,1);
+ assert(sc.sc_scan_count==ESPWIFI_SCAN_RING-ESPWIFI_ACTION_RX_RESERVED);
+ assert(sc.sc_scan_rx_drops==0);
+ espwifi_if_scan_frame(scan_data,sizeof(scan_data),6,-40,1);
+ assert(sc.sc_scan_count==ESPWIFI_SCAN_RING-ESPWIFI_ACTION_RX_RESERVED &&
+  sc.sc_scan_rx_drops==1);
+ assert(espwifi_if_action_rx(body,sizeof(body),sc.sc_join_bssid,6)==0);
+ assert(sc.sc_scan_count==ESPWIFI_SCAN_RING);
+ assert(espwifi_if_action_rx(body,sizeof(body),sc.sc_join_bssid,6)==-1 &&
+  sc.sc_action_rx_drops==1);
+ assert(scan_drop_logs==0 && action_drop_logs==0);
+ espwifi_if_rx_drop_report(&sc);
+ assert(scan_drop_logs==1 && scan_drop_value==1 &&
+  action_drop_logs==1 && action_drop_value==1);
+ espwifi_if_rx_drop_report(&sc);
+ assert(scan_drop_logs==1 && action_drop_logs==1);
+ sc.sc_scan_rx_drops=3;sc.sc_action_rx_drops=4;
+ espwifi_if_rx_drop_report(&sc);
+ assert(scan_drop_logs==2 && scan_drop_value==3 &&
+  action_drop_logs==2 && action_drop_value==4);
+ setup();scan_drop_logs=action_drop_logs=0;
+ scan_drop_value=action_drop_value=0;sc.sc_scan_active=1;
+ sc.sc_scan_count=ESPWIFI_SCAN_RING-ESPWIFI_ACTION_RX_RESERVED;
+ sc.sc_scan_rx_drops=UINT32_MAX;
+ espwifi_if_scan_frame(scan_data,sizeof(scan_data),6,-40,1);
+ assert(sc.sc_scan_rx_drops==UINT32_MAX);
+ sc.sc_scan_count=ESPWIFI_SCAN_RING;sc.sc_action_rx_drops=UINT32_MAX;
+ assert(espwifi_if_action_rx(body,sizeof(body),sc.sc_join_bssid,6)==-1);
+ assert(sc.sc_action_rx_drops==UINT32_MAX);
+ espwifi_if_rx_drop_report(&sc);
+ assert(scan_drop_logs==1 && scan_drop_value==UINT32_MAX &&
+  action_drop_logs==1 && action_drop_value==UINT32_MAX);
+ espwifi_if_rx_drop_report(&sc);
+ assert(scan_drop_logs==1 && action_drop_logs==1);
  /* Reject malformed, foreign-peer, and full-ring input before route delivery. */
  setup();uint8_t bad[]={5,5,1,52,1};
  assert(espwifi_if_action_rx(bad,sizeof(bad),sc.sc_join_bssid,6)==-1);
  uint8_t peer[6]={2,3,4,5,6,8};
  assert(espwifi_if_action_rx(body,sizeof(body),peer,6)==-1);
- sc.sc_scan_count=4;
+ sc.sc_scan_count=ESPWIFI_SCAN_RING;
  assert(espwifi_if_action_rx(body,sizeof(body),sc.sc_join_bssid,6)==-1);
  /* Stale epoch, wrong BSS/channel, disabled port, or revoked authorization
   * after enqueue cannot become a STA_RX event. */
@@ -247,9 +309,10 @@ int main(void) {
  assert(espwifi_if_action_tx_request(&sc,&r)==EBUSY);
  espwifi_if_action_tx_control(&sc);assert(vendor_calls==1 && tx_events==0 &&
   sc.sc_action_tx_owned && !sc.sc_action_tx_pending);
- espwifi_if_action_tx_done(77,9,sc.sc_join_bssid);
+	espwifi_if_action_tx_done(77,9,sc.sc_join_bssid,0);
  espwifi_if_action_tx_report(&sc);assert(tx_events==1 && !sc.sc_action_tx_owned &&
-  tx_event.cookie==77 && tx_event.generation==9 && tx_event.flags==0);
+	 tx_event.cookie==77 && tx_event.generation==9 && tx_event.flags==0 &&
+	 tx_event.tx_error==0 && ieee80211_sta_tx_result_valid(&tx_event));
  /* Queued cancellation avoids firmware; in-flight cancellation quarantines
   * ownership until callback drain and suppresses route completion. */
  setup();r=request();assert(espwifi_if_action_tx_request(&sc,&r)==0);
@@ -260,13 +323,13 @@ int main(void) {
  espwifi_if_action_tx_control(&sc);assert(vendor_calls==1);
  cancel=r;cancel.op=IEEE80211_STA_CANCEL_TX;cancel.len=0;cancel.freq=0;
  assert(espwifi_if_action_tx_cancel(&sc,&cancel)==0 && sc.sc_action_tx_owned);
- espwifi_if_action_tx_done(77,9,sc.sc_join_bssid);
+	espwifi_if_action_tx_done(77,9,sc.sc_join_bssid,0);
  espwifi_if_action_tx_report(&sc);assert(tx_events==0 && !sc.sc_action_tx_owned);
  /* If the report snapshot crosses KERNEL_LOCK while the old tuple is
   * cancelled/released and an identical wire tuple is reused, it must not
   * invalidate or retire the replacement physical request. */
  setup();r=request();assert(espwifi_if_action_tx_request(&sc,&r)==0);
- espwifi_if_action_tx_control(&sc);espwifi_if_action_tx_done(77,9,sc.sc_join_bssid);
+	espwifi_if_action_tx_control(&sc);espwifi_if_action_tx_done(77,9,sc.sc_join_bssid,0);
  report_race_req=r;report_race=true;uint64_t old_serial=sc.sc_action_tx_serial;
  espwifi_if_action_tx_report(&sc);
  assert(!report_race && sc.sc_action_tx_serial!=old_serial &&
@@ -278,11 +341,12 @@ int main(void) {
  setup();vendor_sync_callback=1;r=request();
  assert(espwifi_if_action_tx_request(&sc,&r)==0);
  espwifi_if_action_tx_control(&sc);assert(tx_events==1 && !sc.sc_action_tx_owned);
- /* Submission failure is drained and reported with ACK clear. */
+	/* Submission failure is distinct from completion without ACK knowledge. */
  setup();vendor_error=EIO;r=request();
  assert(espwifi_if_action_tx_request(&sc,&r)==0);
  espwifi_if_action_tx_control(&sc);
- assert(tx_events==1 && tx_event.flags==0 && !sc.sc_action_tx_owned);
+	assert(tx_events==1 && tx_event.flags==0 && tx_event.tx_error==EIO &&
+	 ieee80211_sta_tx_result_valid(&tx_event) && !sc.sc_action_tx_owned);
  /* Disconnect invalidates queued work; started work remains owned to drain. */
  setup();r=request();assert(espwifi_if_action_tx_request(&sc,&r)==0);
  espwifi_if_action_tx_invalidate(&sc);assert(!sc.sc_action_tx_owned);

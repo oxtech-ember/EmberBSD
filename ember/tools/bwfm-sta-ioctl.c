@@ -107,7 +107,8 @@ child_expect(const char *name, int result, int expected_result,
 static void
 get_info(void)
 {
-	const uint32_t caps = IEEE80211_STA_CAP_BTM | IEEE80211_STA_CAP_RRM;
+	const uint32_t caps = IEEE80211_STA_CAP_BTM | IEEE80211_STA_CAP_NR |
+	    IEEE80211_STA_CAP_RM_REPORT_TX;
 	const uint32_t flags = caps | IEEE80211_STA_ASSOCIATED |
 	    IEEE80211_STA_ASSOC_IES;
 	size_t request, response;

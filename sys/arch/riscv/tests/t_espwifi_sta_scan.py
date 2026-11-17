@@ -70,7 +70,10 @@ def c_block(text, marker):
     raise AssertionError(marker)
 
 action_state = c_block(action_header, 'struct ieee80211_sta_action_state {') + ';'
-action_helpers = '\n'.join(c_block(action_header, 'static inline ' + ret +
+action_helpers = c_block(action_header,
+    'static inline bool\nieee80211_sta_tx_result_valid(const struct '
+    'ieee80211req_sta_mgmt *notice)\n{')
+action_helpers += '\n' + '\n'.join(c_block(action_header, 'static inline ' + ret +
     '\nieee80211_sta_action_' + name) for name, ret in (
     ('begin', 'int'), ('match', 'bool'), ('cancel', 'bool'),
     ('invalidate', 'void'), ('report', 'bool'), ('release', 'bool')))
@@ -96,7 +99,7 @@ code = r'''
 #define IEEE80211_ADDR_LEN 6
 #define CHECK(e) ((e) ? (void)0 : abort())
 #define IEEE80211_STA_MAX_BODY 1024
-#define IEEE80211_STA_VERSION 2
+#define IEEE80211_STA_VERSION 3
 #define IEEE80211_STA_GET 0
 #define IEEE80211_STA_ENABLE 1
 #define IEEE80211_STA_DISABLE 2
@@ -105,9 +108,10 @@ code = r'''
 #define IEEE80211_STA_TX 3
 #define IEEE80211_STA_CANCEL_TX 4
 #define IEEE80211_STA_TX_ACK 0x0004
+#define IEEE80211_STA_TX_ACK_KNOWN 0x0008
 #define IEEE80211_STA_CAP_SCAN 0x0040
 #define IEEE80211_STA_CAP_BTM 0x0001
-#define IEEE80211_STA_CAP_RRM 0x0008
+#define IEEE80211_STA_CAP_NR 0x0080
 #define IEEE80211_STA_ASSOCIATED 0x0002
 #define IEEE80211_STA_ACTION_BTM 0x01U
 #define IEEE80211_STA_ACTION_NR 0x02U
@@ -124,8 +128,8 @@ code = r'''
 #define KERNEL_LOCK(a,b) ((void)(a),(void)(b),kernel_depth++)
 #define KERNEL_UNLOCK_ONE(a) ((void)(a),assert(kernel_depth==1),kernel_depth--)
 struct ieee80211req_sta_mgmt {
- uint16_t version,op;uint32_t cookie,generation,flags;uint16_t freq,len;
- uint8_t bssid[6];uint16_t reserved;uint8_t data[1024]; };
+	uint16_t version,op;uint32_t cookie,generation,flags;int32_t tx_error;
+	uint16_t freq,len;uint8_t bssid[6];uint16_t reserved;uint8_t data[1024]; };
 ''' + action_state + r'''
 struct ieee80211_sta_scan_state { bool active; };
 struct ieee80211_channel { uint16_t ic_freq; };
@@ -148,7 +152,7 @@ struct espwifi_softc { struct ieee80211com sc_ic;struct ifnet sc_ifp;
  uint64_t sc_scan_generation,sc_scan_active,sc_join_active;
  bool sc_action_tx_owned,sc_action_tx_pending,sc_action_tx_started,
  sc_action_tx_send_done,sc_action_tx_send_ok,sc_action_tx_cb_seen;
- uint16_t sc_action_tx_len;uint64_t sc_action_tx_serial;
+ uint16_t sc_action_tx_len;uint64_t sc_action_tx_serial;int sc_action_tx_error;
  uint8_t sc_action_tx_data[IEEE80211_STA_MAX_BODY];
  uint8_t sc_join_bssid[6]; };
 static int kernel_depth,spin_depth,sem_gives,begin_calls,report_calls,release_calls;
@@ -163,7 +167,7 @@ static struct ieee80211req_sta_mgmt action_event;
 static struct espwifi_softc sc;
 static struct espwifi_softc *espwifi_global;
 #define espwifi_sc (*espwifi_global)
-static void espwifi_if_action_tx_done(uint32_t,uint32_t,const uint8_t *);
+static void espwifi_if_action_tx_done(uint32_t,uint32_t,const uint8_t *,int);
 static void mutex_spin_enter(int *p) { (void)p;assert(!spin_depth);spin_depth++; }
 static void mutex_spin_exit(int *p) { (void)p;assert(spin_depth==1);spin_depth--; }
 static void mutex_enter(int *p) { (void)p; }
@@ -173,7 +177,8 @@ static unsigned atomic_load_acquire(unsigned *p) { return *p; }
 static int splnet(void) { return 0; }static void splx(int s) { (void)s; }
 static int ieee80211_sta_request_validate(const struct ieee80211req_sta_mgmt *r) {
  if (!r || r->version!=IEEE80211_STA_VERSION || r->len>sizeof(r->data) ||
-     r->reserved!=0 || (r->op!=IEEE80211_STA_GET && r->flags!=0)) return EINVAL;
+	    r->reserved!=0 || r->tx_error!=0 ||
+	    (r->op!=IEEE80211_STA_GET && r->flags!=0)) return EINVAL;
  return 0; }
 static int ieee80211_sta_scan_begin(struct ieee80211com *ic,
  const struct ieee80211req_sta_mgmt *r,uint32_t generation) {
@@ -208,9 +213,9 @@ static int espwifi_ext_action_tx(const unsigned char *bssid,const void *body,
  action_ext_calls++;assert(len>=3 && cookie!=0 && generation==9);
  assert(memcmp(bssid,sc.sc_join_bssid,6)==0);
  if(action_auto_callback){action_callbacks++;
-   espwifi_if_action_tx_done(cookie,generation,bssid);
+   espwifi_if_action_tx_done(cookie,generation,bssid,0);
    if(action_auto_callback>1){action_callbacks++;
-     espwifi_if_action_tx_done(cookie,generation,bssid);}}
+     espwifi_if_action_tx_done(cookie,generation,bssid,0);}}
  (void)body;return action_ext_error; }
 static void rt_ieee80211msg(struct ifnet *ifp,int type,const void *data,size_t len) {
  (void)ifp;assert(type==RTM_IEEE80211_STA_TX);
@@ -274,13 +279,13 @@ int main(void) {
  struct ieee80211req_sta_mgmt r=request(IEEE80211_STA_GET);r.freq=2412;
  memset(r.bssid,0xa5,sizeof(r.bssid));
  int geterr=espwifi_if_sta_mgmt(&sc.sc_ic,&r);assert(geterr==0);
- assert(r.flags==(IEEE80211_STA_CAP_SCAN|IEEE80211_STA_CAP_BTM|IEEE80211_STA_CAP_RRM) && r.len==6 && r.freq==0);
+ assert(r.flags==(IEEE80211_STA_CAP_SCAN|IEEE80211_STA_CAP_BTM|IEEE80211_STA_CAP_NR) && r.len==6 && r.freq==0);
  for(unsigned i=0;i<sizeof(r.bssid);i++)assert(r.bssid[i]==0);
  assert(r.generation==9 && r.freq==0);
  sc.sc_joined=sc.sc_link=true;
  r=request(IEEE80211_STA_GET);sc.sc_ic.ic_state=IEEE80211_S_RUN;
  assert(espwifi_if_sta_mgmt(&sc.sc_ic,&r)==0 &&
-   r.flags==(IEEE80211_STA_CAP_SCAN|IEEE80211_STA_CAP_BTM|IEEE80211_STA_CAP_RRM|IEEE80211_STA_ASSOCIATED) && r.freq==2437);
+   r.flags==(IEEE80211_STA_CAP_SCAN|IEEE80211_STA_CAP_BTM|IEEE80211_STA_CAP_NR|IEEE80211_STA_ASSOCIATED) && r.freq==2437);
  sc.sc_ic.ic_state=IEEE80211_S_RUN;
  /* Unsupported/malformed/stale and busy requests do not enter the worker. */
  r=request(99);assert(espwifi_if_sta_mgmt(&sc.sc_ic,&r)==EOPNOTSUPP);
@@ -370,20 +375,20 @@ int main(void) {
 	espwifi_if_action_tx_control(&sc);
 	assert(action_ext_calls==1 && action_tx_events==0 &&
 	    sc.sc_action_tx_owned && !sc.sc_action_tx_pending);
-	espwifi_if_action_tx_done(18,9,sc.sc_join_bssid);
+	espwifi_if_action_tx_done(18,9,sc.sc_join_bssid,0);
 	espwifi_if_action_tx_report(&sc);assert(action_tx_events==0);
-	espwifi_if_action_tx_done(17,10,sc.sc_join_bssid);
+	espwifi_if_action_tx_done(17,10,sc.sc_join_bssid,0);
 	espwifi_if_action_tx_report(&sc);assert(action_tx_events==0);
 	uint8_t wrong_bssid[6];memcpy(wrong_bssid,sc.sc_join_bssid,6);wrong_bssid[5]^=1;
-	espwifi_if_action_tx_done(17,9,wrong_bssid);
+	espwifi_if_action_tx_done(17,9,wrong_bssid,0);
 	espwifi_if_action_tx_report(&sc);assert(action_tx_events==0);
-	espwifi_if_action_tx_done(17,9,sc.sc_join_bssid);
+	espwifi_if_action_tx_done(17,9,sc.sc_join_bssid,0);
 	espwifi_if_action_tx_report(&sc);assert(action_tx_events==1 && !sc.sc_action_tx_owned);
 	assert(action_event.cookie==17 && action_event.generation==9 &&
 	    action_event.flags==0 && action_event.len==0 &&
 	    memcmp(action_event.bssid,sc.sc_join_bssid,6)==0);
 	/* Duplicate and stale callbacks cannot generate a second route event. */
-	espwifi_if_action_tx_done(17,9,sc.sc_join_bssid);
+	espwifi_if_action_tx_done(17,9,sc.sc_join_bssid,0);
 	espwifi_if_action_tx_report(&sc);assert(action_tx_events==1);
 
 	/* Immediate callback is legal before vendor enqueue returns; it is still
@@ -413,7 +418,7 @@ int main(void) {
 	cancel=request(IEEE80211_STA_CANCEL_TX);cancel.cookie=r.cookie;
 	cancel.generation=r.generation;memcpy(cancel.bssid,r.bssid,sizeof(cancel.bssid));
 	assert(espwifi_if_sta_mgmt(&sc.sc_ic,&cancel)==0 && sc.sc_action_tx_owned);
-	espwifi_if_action_tx_done(17,9,sc.sc_join_bssid);
+	espwifi_if_action_tx_done(17,9,sc.sc_join_bssid,0);
 	espwifi_if_action_tx_report(&sc);assert(action_tx_events==0 && !sc.sc_action_tx_owned);
 
 	/* Invalidation follows the same queued-vs-in-flight ownership rule. */
@@ -423,7 +428,7 @@ int main(void) {
 	setup();r=action_request();assert(espwifi_if_sta_mgmt(&sc.sc_ic,&r)==0);
 	espwifi_if_action_tx_control(&sc);espwifi_if_action_tx_invalidate(&sc);
 	assert(sc.sc_action_tx_owned && action_ext_calls==1);
-	espwifi_if_action_tx_done(17,9,sc.sc_join_bssid);
+	espwifi_if_action_tx_done(17,9,sc.sc_join_bssid,0);
 	espwifi_if_action_tx_report(&sc);assert(action_tx_events==0 && !sc.sc_action_tx_owned);
 
 	/* A synchronous callback followed by a failed submit is not a success. */

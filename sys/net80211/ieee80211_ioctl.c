@@ -1577,7 +1577,8 @@ ieee80211_sta_request_validate(const struct ieee80211req_sta_mgmt *req)
 {
 	if (req->version != IEEE80211_STA_VERSION || req->reserved != 0 ||
 	    req->len > sizeof(req->data) ||
-	    (req->op != IEEE80211_STA_GET && req->flags != 0))
+	    (req->op != IEEE80211_STA_GET && req->flags != 0) ||
+	    req->tx_error != 0)
 		return EINVAL;
 	return 0;
 }

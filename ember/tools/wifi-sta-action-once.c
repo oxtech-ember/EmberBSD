@@ -14,6 +14,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -237,13 +238,28 @@ main(int argc, char **argv)
 		if (event.version != IEEE80211_STA_VERSION ||
 		    event.op != IEEE80211_STA_TX || event.cookie != req.cookie ||
 		    event.generation != req.generation || event.len != 0 ||
-		    memcmp(event.bssid, req.bssid, sizeof(req.bssid)) != 0)
+		    memcmp(event.bssid, req.bssid, sizeof(req.bssid)) != 0 ||
+		    !ieee80211_sta_tx_result_valid(&event))
 			continue;
-		if ((event.flags & IEEE80211_STA_TX_ACK) != 0)
-			write_all(STDOUT_FILENO, "TX completion observed; ACK reported\n", 37);
-		else
+		if (event.tx_error != 0) {
+			char result[96];
+			int len = snprintf(result, sizeof(result),
+			    "Local TX failed with errno %d; peer ACK unknown\n",
+			    event.tx_error);
+			if (len > 0 && (size_t)len < sizeof(result))
+				write_all(STDERR_FILENO, result, (size_t)len);
+			close(route);
+			close(fd);
+			return EXIT_FAILURE;
+		} else if ((event.flags & IEEE80211_STA_TX_ACK_KNOWN) != 0 &&
+		    (event.flags & IEEE80211_STA_TX_ACK) != 0) {
+			write_all(STDOUT_FILENO, "TX completed; peer ACK confirmed\n", 33);
+		} else if ((event.flags & IEEE80211_STA_TX_ACK_KNOWN) != 0) {
+			write_all(STDOUT_FILENO, "TX completed; peer ACK not received\n", 36);
+		} else {
 			write_all(STDOUT_FILENO,
 			    "TX completion observed; peer ACK unconfirmed\n", 45);
+		}
 		close(route);
 		close(fd);
 		return EXIT_SUCCESS;

@@ -18,6 +18,22 @@ struct ieee80211_sta_action_state {
 	uint8_t bssid[IEEE80211_ADDR_LEN];
 };
 
+/* Check result encoding before a STA_TX event crosses the kernel ABI. */
+static inline bool
+ieee80211_sta_tx_result_valid(const struct ieee80211req_sta_mgmt *notice)
+{
+	if (notice == NULL || notice->op != IEEE80211_STA_TX ||
+	    notice->version != IEEE80211_STA_VERSION || notice->len != 0 ||
+	    notice->reserved != 0 || notice->tx_error < 0 ||
+	    (notice->flags & ~(IEEE80211_STA_TX_ACK_KNOWN |
+	    IEEE80211_STA_TX_ACK)) != 0 ||
+	    ((notice->flags & IEEE80211_STA_TX_ACK) != 0 &&
+	    (notice->flags & IEEE80211_STA_TX_ACK_KNOWN) == 0) ||
+	    (notice->tx_error != 0 && notice->flags != 0))
+		return false;
+	return true;
+}
+
 /* Caller supplies the serialization used for this station interface. */
 static inline int
 ieee80211_sta_action_begin(struct ieee80211_sta_action_state *state,
@@ -29,6 +45,7 @@ ieee80211_sta_action_begin(struct ieee80211_sta_action_state *state,
 	    req->version != IEEE80211_STA_VERSION || req->op != IEEE80211_STA_TX ||
 	    req->cookie == 0 || req->generation == 0 || req->freq == 0 ||
 	    req->len > IEEE80211_STA_MAX_BODY || req->reserved != 0 ||
+	    req->tx_error != 0 ||
 	    req->flags != 0)
 		return EINVAL;
 	for (size_t i = 0; i < IEEE80211_ADDR_LEN; i++)
@@ -84,21 +101,27 @@ ieee80211_sta_action_invalidate(struct ieee80211_sta_action_state *state)
 /* Fills only the fixed STA_TX route header; caller routes after unlock. */
 static inline bool
 ieee80211_sta_action_report(struct ieee80211_sta_action_state *state,
-    const struct ieee80211req_sta_mgmt *req, bool ack,
+    const struct ieee80211req_sta_mgmt *req, int tx_error,
+    bool ack_known, bool ack,
     struct ieee80211req_sta_mgmt *notice)
 {
 	if (!ieee80211_sta_action_match(state, req) || state->cancelled ||
-	    state->reported || notice == NULL)
+	    state->reported || notice == NULL || tx_error < 0 ||
+	    (tx_error != 0 && (ack_known || ack)) || (ack && !ack_known))
 		return false;
-	state->reported = true;
 	memset(notice, 0, offsetof(struct ieee80211req_sta_mgmt, data));
 	notice->version = IEEE80211_STA_VERSION;
 	notice->op = IEEE80211_STA_TX;
 	notice->cookie = state->cookie;
 	notice->generation = state->generation;
-	notice->flags = ack ? IEEE80211_STA_TX_ACK : 0;
+	notice->flags = (ack_known ? IEEE80211_STA_TX_ACK_KNOWN : 0) |
+	    (ack ? IEEE80211_STA_TX_ACK : 0);
+	notice->tx_error = tx_error;
 	notice->freq = state->freq;
 	memcpy(notice->bssid, state->bssid, sizeof(notice->bssid));
+	if (!ieee80211_sta_tx_result_valid(notice))
+		return false;
+	state->reported = true;
 	return true;
 }
 

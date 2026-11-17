@@ -2,6 +2,7 @@
 /* Correlate WPA Action requests with IDF's ordinary management TX path. */
 
 #include <stdbool.h>
+#include <errno.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
@@ -32,6 +33,18 @@ struct action_tx_state {
 
 static struct action_tx_state action_tx;
 
+static int
+action_tx_errno(int error)
+{
+	if (error == ESP_OK)
+		return 0;
+	if (error == ESP_ERR_INVALID_ARG)
+		return EINVAL;
+	if (error == ESP_ERR_NO_MEM)
+		return ENOMEM;
+	return EIO;
+}
+
 extern int __real_esp_wifi_send_mgmt_frm_internal(const void *);
 extern int __real_ieee80211_ioctl(void *);
 extern int __real_wifi_send_mgmt_frame(void *);
@@ -55,6 +68,7 @@ action_tx_finish(void)
 	unsigned long size;
 	uint32_t cookie, generation;
 	uint8_t bssid[6];
+	int tx_error;
 	unsigned int s;
 
 	s = espwifi_os_critical_enter();
@@ -71,6 +85,7 @@ action_tx_finish(void)
 	generation = action_tx.generation;
 	for (unsigned i = 0; i < sizeof(bssid); i++)
 		bssid[i] = action_tx.bssid[i];
+	tx_error = action_tx_errno(action_tx.send_error);
 	memset(&action_tx, 0, sizeof(action_tx));
 	espwifi_os_critical_exit(s);
 
@@ -78,8 +93,8 @@ action_tx_finish(void)
 		action_tx_zero((void *)request, size);
 		espwifi_os_free((void *)request);
 	}
-	/* The common adapter reports TX completion with ACK clear. */
-	espwifi_if_action_tx_done(cookie, generation, bssid);
+	/* This path knows local submission status, but never peer ACK status. */
+	espwifi_if_action_tx_done(cookie, generation, bssid, tx_error);
 }
 
 int

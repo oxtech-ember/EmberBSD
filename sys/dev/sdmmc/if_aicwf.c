@@ -2243,7 +2243,8 @@ aicwf_sta_ready(struct aicwf_softc *sc)
 
 /* Capture only the fixed ABI header. Deliver it after dropping sc_lock. */
 static bool
-aicwf_sta_tx_finish_locked(struct aicwf_softc *sc, bool ack, void *event)
+aicwf_sta_tx_finish_locked(struct aicwf_softc *sc, int tx_error,
+    bool ack_known, bool ack, void *event)
 {
 	struct ieee80211req_sta_mgmt notice;
 	bool notify;
@@ -2256,7 +2257,7 @@ aicwf_sta_tx_finish_locked(struct aicwf_softc *sc, bool ack, void *event)
 	sc->sc_sta_tx_sent = false;
 	s = splnet();
 	notify = ieee80211_sta_action_report(&sc->sc_ic.ic_sta_action,
-	    &sc->sc_sta_tx, ack, &notice);
+	    &sc->sc_sta_tx, tx_error, ack_known, ack, &notice);
 	(void)ieee80211_sta_action_release(&sc->sc_ic.ic_sta_action,
 	    &sc->sc_sta_tx);
 	splx(s);
@@ -2309,7 +2310,7 @@ aicwf_sta_retire_locked(struct aicwf_softc *sc, uint8_t *tx, bool *tx_event,
 	s = splnet();
 	ieee80211_sta_action_invalidate(&sc->sc_ic.ic_sta_action);
 	splx(s);
-	*tx_event = aicwf_sta_tx_finish_locked(sc, false, tx);
+	*tx_event = aicwf_sta_tx_finish_locked(sc, 0, false, false, tx);
 	*scan_event = aicwf_sta_scan_finish_locked(sc);
 	if (sc->sc_sta_scan_draining)
 		aicwf_sta_scan_cancel_locked(sc);
@@ -2343,7 +2344,7 @@ aicwf_sta_tx_cfm(struct aicwf_softc *sc, const uint8_t *p, size_t len)
 		    "station TX confirmation: cookie %u token %u raw 0x%08x "
 		    "status 0x%08x ACK %u\n", sc->sc_sta_tx.cookie, token,
 		    le32dec(p + 4), status, (status & AICWF_STA_CFM_ACK) != 0);
-		notify = aicwf_sta_tx_finish_locked(sc,
+		notify = aicwf_sta_tx_finish_locked(sc, 0, true,
 		    (status & AICWF_STA_CFM_ACK) != 0, event);
 	}
 	mutex_exit(&sc->sc_lock);
@@ -2428,8 +2429,9 @@ aicwf_sta_mgmt(struct ieee80211com *ic, struct ieee80211req_sta_mgmt *req)
 			error = EOVERFLOW;
 			break;
 		}
-		req->flags = IEEE80211_STA_CAP_BTM | IEEE80211_STA_CAP_RRM |
-		    IEEE80211_STA_CAP_SCAN;
+		req->flags = IEEE80211_STA_CAP_BTM | IEEE80211_STA_CAP_NR |
+		    IEEE80211_STA_CAP_RM_REQUEST_RX |
+		    IEEE80211_STA_CAP_RM_REPORT_TX | IEEE80211_STA_CAP_SCAN;
 		req->generation = (uint32_t)sc->sc_sae_epoch;
 		memset(req->bssid, 0, sizeof(req->bssid));
 		IEEE80211_ADDR_COPY(req->data, ic->ic_myaddr);
@@ -2460,7 +2462,8 @@ aicwf_sta_mgmt(struct ieee80211com *ic, struct ieee80211req_sta_mgmt *req)
 			int s = splnet();
 			ieee80211_sta_action_invalidate(&ic->ic_sta_action);
 			splx(s);
-			tx_notify = aicwf_sta_tx_finish_locked(sc, false, event);
+			tx_notify = aicwf_sta_tx_finish_locked(sc, 0, false, false,
+			    event);
 			scan_notify = aicwf_sta_scan_finish_locked(sc);
 			if (sc->sc_sta_scan_draining)
 				aicwf_sta_scan_cancel_locked(sc);
@@ -2485,7 +2488,7 @@ aicwf_sta_mgmt(struct ieee80211com *ic, struct ieee80211req_sta_mgmt *req)
 				break;
 			}
 		}
-		tx_notify = aicwf_sta_tx_finish_locked(sc, false, event);
+		tx_notify = aicwf_sta_tx_finish_locked(sc, 0, false, false, event);
 		break;
 	case IEEE80211_STA_CANCEL_SCAN:
 		if (req->cookie == 0 || req->cookie != sc->sc_sta_scan.cookie) {
@@ -2695,7 +2698,7 @@ failed:
 	    "station request aborted: generation %u cookie %u op %u error %d\n",
 	    req->generation, req->cookie, req->op, error);
 	if (req->op == IEEE80211_STA_TX)
-		notify = aicwf_sta_tx_finish_locked(sc, false, event);
+		notify = aicwf_sta_tx_finish_locked(sc, error, false, false, event);
 	else {
 		scan_notify = aicwf_sta_scan_finish_locked(sc);
 		if (sc->sc_sta_scan_draining)

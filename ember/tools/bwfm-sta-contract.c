@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
+#include "status.h"
 #define IEEE80211_ADDR_LEN 6
 #define IEEE80211_ELEMID_RSN 48
 #define IEEE80211_ADDR_EQ(a,b) (memcmp((a),(b),6) == 0)
@@ -298,6 +299,8 @@ static bool
 #include "bwfm_sta_ready.h"
 static void
 #include "bwfm_sta_tx_done.h"
+static void
+#include "bwfm_sta_tx_status.h"
 static bool
 #include "bwfm_sta_tx_event_match.h"
 static void
@@ -480,12 +483,35 @@ static void action_tests(void)
     body[0] = 0;
     check(!bwfm_sta_action_valid(body,100,true) && !bwfm_sta_action_valid(body,100,false), "unsupported categories rejected");
 }
+
+static void
+tx_status_tests(void)
+{
+	int error;
+	bool known, ack;
+
+	bwfm_sta_tx_status(BWFM_E_STATUS_SUCCESS, &error, &known, &ack);
+	check(error == 0 && known && ack, "success confirms peer ACK");
+	bwfm_sta_tx_status(BWFM_E_STATUS_NO_ACK, &error, &known, &ack);
+	check(error == 0 && known && !ack, "explicit NO_ACK confirms peer no-ACK");
+	bwfm_sta_tx_status(BWFM_E_STATUS_TIMEOUT, &error, &known, &ack);
+	check(error == ETIMEDOUT && !known && !ack,
+	    "firmware timeout is local error without inferred ACK result");
+	bwfm_sta_tx_status(BWFM_E_STATUS_ABORT, &error, &known, &ack);
+	check(error == ECANCELED && !known && !ack,
+	    "firmware abort is local cancellation without inferred ACK result");
+	bwfm_sta_tx_status(BWFM_E_STATUS_FAIL, &error, &known, &ack);
+	check(error == EIO && !known && !ack,
+	    "firmware failure does not fabricate peer ACK knowledge");
+}
+
 int main(void)
 {
     struct bwfm_softc sc; struct ieee80211_node bss;
     struct ieee80211_channel chan; struct ieee80211req_sta_mgmt r, old, scanreq;
     unsigned i; uint32_t old_packetid; uint8_t readback[28];
-    fixture(&sc,&bss,&chan); security_tests(&sc); action_tests(); association_tests(&sc,&bss,&chan);
+    fixture(&sc,&bss,&chan); security_tests(&sc); action_tests();
+    tx_status_tests(); association_tests(&sc,&bss,&chan);
         fixture(&sc,&bss,&chan); reply_name = "wnm"; reply_delta = -1;
     memset(readback,0xa5,sizeof(readback));
     check(bwfm_fwvar_var_get_checked(&sc,"wnm",readback,4) == EIO &&
@@ -545,11 +571,13 @@ int main(void)
         "firmware connected scan may overlap Action TX");
     check(bwfm_sta_mgmt(&sc.sc_ic,&r) == EBUSY, "second TX cannot overwrite current cookie");
     drain(); check(tx_commands == 1 && tx_events == 0, "firmware submission is not reported as ACK");
-    bwfm_sta_tx_done(&sc,true);
+	bwfm_sta_tx_done(&sc,0,true,true);
     check(tx_events == 1 && last_tx.cookie == 42 && last_tx.generation == 40 &&
-        (last_tx.flags & IEEE80211_STA_TX_ACK) && last_tx.freq == 5300 &&
+	    (last_tx.flags & IEEE80211_STA_TX_ACK_KNOWN) &&
+	    (last_tx.flags & IEEE80211_STA_TX_ACK) && last_tx.tx_error == 0 &&
+	    last_tx.freq == 5300 &&
         !sc.sc_ic.ic_sta_action.active, "completion preserves tuple and firmware ACK");
-    bwfm_sta_tx_done(&sc,true); check(tx_events == 1, "TX completion is emitted once");
+	bwfm_sta_tx_done(&sc,0,true,true); check(tx_events == 1, "TX completion is emitted once");
     fixture(&sc,&bss,&chan); r = request(&sc,IEEE80211_STA_TX);
     check(bwfm_sta_mgmt(&sc.sc_ic,&r) == 0, "queue TX before cancellation");
     old_packetid = sc.sc_sta_packetid;
@@ -574,8 +602,9 @@ int main(void)
         bwfm_sta_tx_event_match(&sc,sc.sc_sta_packetid),
         "old firmware completion cannot match replacement");
     drain(); check(tx_commands == 1, "replacement transport request reaches firmware");
-    bwfm_sta_tx_done(&sc,true);
-    check(tx_events == 1 && (last_tx.flags & IEEE80211_STA_TX_ACK),
+	bwfm_sta_tx_done(&sc,0,true,true);
+	check(tx_events == 1 && (last_tx.flags & IEEE80211_STA_TX_ACK_KNOWN) &&
+	    (last_tx.flags & IEEE80211_STA_TX_ACK) && last_tx.tx_error == 0,
         "replacement receives its own ACK completion");
     for (i = 1; i <= 4; i++) {
         fixture(&sc,&bss,&chan); r = request(&sc,IEEE80211_STA_TX);
@@ -586,7 +615,8 @@ int main(void)
     fixture(&sc,&bss,&chan); r = request(&sc,IEEE80211_STA_TX);
     check(bwfm_sta_mgmt(&sc.sc_ic,&r) == 0, "queue TX before firmware error");
     fw_error = EIO; drain();
-    check(tx_events == 1 && !(last_tx.flags & IEEE80211_STA_TX_ACK), "firmware send error is a negative completion");
+	check(tx_events == 1 && last_tx.tx_error == EIO && last_tx.flags == 0,
+	    "firmware submission error is distinct from ACK status");
     fixture(&sc,&bss,&chan); r = request(&sc,IEEE80211_STA_TX);
     check(bwfm_sta_mgmt(&sc.sc_ic,&r) == 0, "queue TX before replacement during firmware I/O");
     fw_error = EIO; firmware_mutation = 1; drain();

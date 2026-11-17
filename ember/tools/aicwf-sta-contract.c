@@ -394,6 +394,7 @@ static void aicwf_rx_msg(struct aicwf_softc *s, const uint8_t *msg, size_t len)
 
 struct bsd_driver_data {
 	int sta_btm, sta_rrm, sta_scan;
+	bool sta_nr, sta_rm_request_rx, sta_rm_report_tx;
 	uint8_t sta_addr[6], sta_extcap[4], sta_extcap_mask[4];
 	struct {
 		uint8_t *extended_capa, *extended_capa_mask;
@@ -464,7 +465,8 @@ abi_checks(void)
 {
     struct ieee80211req_sta_mgmt req;
     struct bsd_driver_data drv={0};
-	const unsigned caps=IEEE80211_STA_CAP_BTM|IEEE80211_STA_CAP_RRM|
+	const unsigned caps=IEEE80211_STA_CAP_BTM|IEEE80211_STA_CAP_NR|
+	    IEEE80211_STA_CAP_RM_REQUEST_RX|IEEE80211_STA_CAP_RM_REPORT_TX|
 	    IEEE80211_STA_CAP_SCAN;
     reset();
     CHECK(bsd_sta_info(&drv,&req)==0 && req.len==14 && req.generation==39);
@@ -497,13 +499,15 @@ abi_checks(void)
     reset();sc.sc_ic.ic_opt_ie=NULL;sc.sc_ic.ic_opt_ie_len=0;
 	CHECK(bsd_sta_info(&drv,&req)==0 &&
 	    (req.flags & IEEE80211_STA_CAP_SCAN) != 0 &&
-	    (req.flags & (IEEE80211_STA_CAP_BTM | IEEE80211_STA_CAP_RRM)) == 0);
+	    (req.flags & (IEEE80211_STA_CAP_BTM | IEEE80211_STA_CAP_NR |
+	    IEEE80211_STA_CAP_RM_REQUEST_RX | IEEE80211_STA_CAP_RM_REPORT_TX)) == 0);
 }
 
 static void
 action_checks(void)
 {
-	struct bsd_driver_data drv = {.sta_btm = 1, .sta_rrm = 1};
+	struct bsd_driver_data drv = {.sta_btm = 1, .sta_rrm = 1,
+	    .sta_nr = 1, .sta_rm_request_rx = 1, .sta_rm_report_tx = 1};
 	uint8_t b[IEEE80211_STA_MAX_BODY + 1] = {0};
 	const unsigned tx[] = {WNM_BSS_TRANS_MGMT_QUERY, WNM_BSS_TRANS_MGMT_RESP};
 	const unsigned rx[] = {WLAN_RRM_NEIGHBOR_REPORT_RESPONSE,
@@ -872,7 +876,9 @@ tx_checks(void)
 		CHECK(deliveries == 1 && !sc.sc_sta_tx_pending && !sc.sc_sta_tx_sent);
 		memcpy(&ev, event_data, sizeof(ev));
 		CHECK(event_type == RTM_IEEE80211_STA_TX && ev.cookie == 71 && ev.generation == 39);
-		CHECK(ev.len == 0 && ev.flags == ((statuses[i] & 8) ? IEEE80211_STA_TX_ACK : 0));
+		CHECK(ev.len == 0 && ev.tx_error == 0 &&
+		    ev.flags == (IEEE80211_STA_TX_ACK_KNOWN |
+		    ((statuses[i] & 8) ? IEEE80211_STA_TX_ACK : 0)));
 		CHECK(ev.freq == req.freq && !sc.sc_ic.ic_sta_action.active);
 		cfm_receive(statuses[i], 1, 8);
 		CHECK(deliveries == 1);
@@ -913,7 +919,8 @@ tx_checks(void)
 	write_error = EIO;
 	CHECK(aicwf_sta_mgmt(&sc.sc_ic, &req) == 0); run_task();
 	CHECK(deliveries == 1 && !sc.sc_sta_tx_pending);
-	memcpy(&ev, event_data, sizeof(ev)); CHECK(ev.flags == 0);
+	memcpy(&ev, event_data, sizeof(ev));
+	CHECK(ev.flags == 0 && ev.tx_error == EIO);
 	reset(); sc.sc_sta_enabled = sc.sc_sae_enabled = true;
 	sc.sc_ic.ic_opt_ie[19] = 8; sc.sc_ic.ic_opt_ie[20] = 0xc0;
 	req = request_make(IEEE80211_STA_TX, 74);

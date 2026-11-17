@@ -18,6 +18,7 @@ source = r'''
 #include <assert.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <errno.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <string.h>
@@ -58,9 +59,12 @@ void espwifi_os_free(void *p) {
     for (unsigned i = 0; i < 64; i++) assert(bytes[i] == 0);
     frees++;
 }
-void espwifi_if_action_tx_done(uint32_t c, uint32_t g, const uint8_t *b)
+void espwifi_if_action_tx_done(uint32_t c, uint32_t g, const uint8_t *b,
+    int tx_error)
 {
     assert(c == 17 && g == 23 && memcmp(b, peer, 6) == 0);
+    assert(tx_error >= 0);
+    observed_error = tx_error;
     events++;
     if (reenter_on_done) {
         reenter_on_done = 0;
@@ -269,7 +273,10 @@ static void run_one(const char *scenario)
             17, 23, peer) == ESP_OK);
         assert(events == 2 && frees == 2);
     }
-    (void)observed_error;
+    if (mode == 5 || mode == 7 || mode == 9 || mode == 11 || mode == 12)
+        assert(observed_error == EIO);
+    else
+        assert(observed_error == 0);
 }
 
 int main(int argc, char **argv)
@@ -284,7 +291,7 @@ int main(int argc, char **argv)
 
 with tempfile.TemporaryDirectory() as td:
     tmp = Path(td)
-    (tmp / 'esp_err.h').write_text('''#define ESP_OK 0\n#define ESP_FAIL 0x101\n#define ESP_ERR_INVALID_ARG 0x102\n#define ESP_ERR_INVALID_STATE 0x103\n''')
+    (tmp / 'esp_err.h').write_text('''#define ESP_OK 0\n#define ESP_FAIL 0x101\n#define ESP_ERR_INVALID_ARG 0x102\n#define ESP_ERR_INVALID_STATE 0x103\n#define ESP_ERR_NO_MEM 0x104\n''')
     cfile = tmp / 'fixture.c'
     cfile.write_text(source)
     binary = tmp / 'fixture'

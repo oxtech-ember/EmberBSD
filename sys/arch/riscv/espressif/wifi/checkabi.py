@@ -41,8 +41,9 @@ __attribute__((noinline)) int j(const unsigned char *b, const void *d,
     unsigned int n, uint32_t c, uint32_t g) {
     return espwifi_ext_action_tx(b, d, n, c, g);
 }
-__attribute__((noinline)) void k(uint32_t c, uint32_t g, const uint8_t *b) {
-    espwifi_if_action_tx_done(c, g, b);
+__attribute__((noinline)) void k(uint32_t c, uint32_t g, const uint8_t *b,
+    int e) {
+    espwifi_if_action_tx_done(c, g, b, e);
 }
 __attribute__((noinline)) int l(const void *p, unsigned int n,
     const unsigned char *s, unsigned int c) {

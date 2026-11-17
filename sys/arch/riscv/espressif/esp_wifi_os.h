@@ -116,7 +116,7 @@ int	espwifi_os_sae_parse(const unsigned char *, unsigned int, unsigned int,
 void	espwifi_os_radio_started(void);
 void	espwifi_os_radio_stopped(void);
 /* Asynchronous TX-done identity from the pinned vendor wrapper. */
-void	espwifi_if_action_tx_done(uint32_t, uint32_t, const uint8_t *);
+void	espwifi_if_action_tx_done(uint32_t, uint32_t, const uint8_t *, int);
 
 /* Entry points of the radio code; the caller is a thread made for it. */
 int	espwifi_start(void);

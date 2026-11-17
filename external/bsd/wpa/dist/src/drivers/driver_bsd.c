@@ -94,6 +94,9 @@ struct bsd_driver_data {
 #endif
 #if !defined(HOSTAPD) && defined(__NetBSD__) && defined(IEEE80211_IOC_STA_MGMT)
 	int sta_btm;
+	int sta_nr;
+	int sta_rm_request_rx;
+	int sta_rm_report_tx;
 	int sta_rrm;
 	int sta_scan;
 	int sta_enabled;
@@ -117,7 +120,7 @@ struct bsd_driver_data {
 
 #if !defined(HOSTAPD) && defined(__NetBSD__) && defined(IEEE80211_IOC_STA_MGMT)
 static void bsd_sta_scan_clear(struct bsd_driver_data *);
-static void bsd_sta_tx_status(struct bsd_driver_data *, int, int);
+static void bsd_sta_tx_status(struct bsd_driver_data *, int, int, int, int);
 #endif
 #if defined(__NetBSD__) && defined(IEEE80211_MLME_VERSION) && \
     defined(IEEE80211_ASSOC_EVENT_VERSION)
@@ -990,7 +993,7 @@ bsd_route_overflow(int sock, void *ctx, struct bsd_driver_global *global)
 				   drv->ifname);
 #if !defined(HOSTAPD) && defined(__NetBSD__) && defined(IEEE80211_IOC_STA_MGMT)
 			bsd_sta_scan_clear(drv);
-			bsd_sta_tx_status(drv, 0, 0);
+			bsd_sta_tx_status(drv, 0, 0, 0, 0);
 #endif
 			wpa_supplicant_event(drv->ctx, EVENT_INTERFACE_DISABLED,
 					     NULL);
@@ -1091,7 +1094,8 @@ bsd_sta_abort_scan(void *priv, u64 scan_cookie)
 static void bsd_sta_tx_timeout(void *eloop_ctx, void *timeout_ctx);
 
 static void
-bsd_sta_tx_status(struct bsd_driver_data *drv, int ack, int notify)
+bsd_sta_tx_status(struct bsd_driver_data *drv, int ack, int ack_known,
+                  int tx_error, int notify)
 {
 	union wpa_event_data event;
 	u8 *frame = drv->sta_tx_frame;
@@ -1104,18 +1108,20 @@ bsd_sta_tx_status(struct bsd_driver_data *drv, int ack, int notify)
 	drv->sta_tx_len = 0;
 	if (notify) {
 		wpa_printf(MSG_DEBUG,
-			   "BSD: STA TX status cookie=%u generation=%u freq=%u category=%d action=%d token=%d ack=%d",
+			   "BSD: STA TX status cookie=%u generation=%u freq=%u category=%d action=%d token=%d ack_known=%d ack=%d tx_error=%d",
 			   drv->sta_cookie, drv->sta_tx_generation, drv->sta_tx_freq,
 			   len >= 27 ? frame[24] : -1,
 			   len >= 27 ? frame[25] : -1,
-			   len >= 27 ? frame[26] : -1, ack);
+			   len >= 27 ? frame[26] : -1, ack_known, ack, tx_error);
 		os_memset(&event, 0, sizeof(event));
 		event.tx_status.type = WLAN_FC_TYPE_MGMT;
 		event.tx_status.stype = WLAN_FC_STYPE_ACTION;
 		event.tx_status.dst = frame + 4;
 		event.tx_status.data = frame;
 		event.tx_status.data_len = len;
-		event.tx_status.ack = ack;
+		event.tx_status.ack = ack_known && ack;
+		event.tx_status.ack_known = ack_known;
+		event.tx_status.tx_error = tx_error;
 		event.tx_status.link_id = -1;
 		wpa_supplicant_event(drv->ctx, EVENT_TX_STATUS, &event);
 	}
@@ -1128,7 +1134,7 @@ bsd_sta_disconnected(struct bsd_driver_data *drv)
 	union wpa_event_data event;
 	int aborted = drv->sta_scan_pending;
 
-	bsd_sta_tx_status(drv, 0, 0);
+	bsd_sta_tx_status(drv, 0, 0, 0, 0);
 	bsd_sta_scan_clear(drv);
 	wpa_supplicant_event(drv->ctx, EVENT_DISASSOC, NULL);
 	if (aborted) {
@@ -1153,7 +1159,7 @@ bsd_sta_tx_timeout(void *eloop_ctx, void *timeout_ctx)
 	os_memcpy(req.bssid, drv->sta_tx_frame + 4, ETH_ALEN);
 	bsd_sta_set(drv, &req, IEEE80211_STA_CANCEL_TX);
 	wpa_printf(MSG_DEBUG, "BSD: station action TX completion timed out");
-	bsd_sta_tx_status(drv, 0, 1);
+	bsd_sta_tx_status(drv, 0, 0, ETIMEDOUT, 1);
 }
 
 static int
@@ -1166,9 +1172,10 @@ bsd_sta_tx_body(struct bsd_driver_data *drv, const u8 *data, size_t len)
 		    (data[1] == WNM_BSS_TRANS_MGMT_QUERY ||
 		     (data[1] == WNM_BSS_TRANS_MGMT_RESP && len >= 5));
 	if (data[0] == WLAN_ACTION_RADIO_MEASUREMENT)
-		return drv->sta_rrm &&
-		    (data[1] == WLAN_RRM_NEIGHBOR_REPORT_REQUEST ||
-		     data[1] == WLAN_RRM_RADIO_MEASUREMENT_REPORT);
+		return (data[1] == WLAN_RRM_NEIGHBOR_REPORT_REQUEST &&
+			drv->sta_nr) ||
+		    (data[1] == WLAN_RRM_RADIO_MEASUREMENT_REPORT &&
+			drv->sta_rm_report_tx);
 	return 0;
 }
 
@@ -1231,7 +1238,7 @@ bsd_send_action(void *priv, unsigned int freq, unsigned int wait,
 	if (eloop_register_timeout(2, 0, bsd_sta_tx_timeout, drv, (void *) (uintptr_t) drv->sta_cookie) < 0) {
 		req.len = 0;
 		bsd_sta_set(drv, &req, IEEE80211_STA_CANCEL_TX);
-		bsd_sta_tx_status(drv, 0, 0);
+		bsd_sta_tx_status(drv, 0, 0, 0, 0);
 		return -1;
 	}
 	return 0;
@@ -1246,9 +1253,10 @@ bsd_sta_rx_body(struct bsd_driver_data *drv, const u8 *data, size_t len)
 		return drv->sta_btm && len >= 7 &&
 		    data[1] == WNM_BSS_TRANS_MGMT_REQ;
 	if (data[0] == WLAN_ACTION_RADIO_MEASUREMENT)
-		return drv->sta_rrm &&
-		    (data[1] == WLAN_RRM_NEIGHBOR_REPORT_RESPONSE ||
-		     (data[1] == WLAN_RRM_RADIO_MEASUREMENT_REQUEST && len >= 5));
+		return (data[1] == WLAN_RRM_NEIGHBOR_REPORT_RESPONSE &&
+			drv->sta_nr) ||
+		    (data[1] == WLAN_RRM_RADIO_MEASUREMENT_REQUEST && len >= 5 &&
+			drv->sta_rm_request_rx);
 	return 0;
 }
 
@@ -1271,7 +1279,7 @@ bsd_sta_event(struct bsd_driver_data *drv, unsigned int what,
 		return;
 	if (what == RTM_IEEE80211_STA_SCAN) {
 		if (!drv->sta_scan || !drv->sta_scan_pending ||
-		    req->op != IEEE80211_STA_SCAN || req->len ||
+		    req->op != IEEE80211_STA_SCAN || req->len || req->tx_error ||
 		    (req->flags & ~IEEE80211_STA_SCAN_ABORTED) ||
 		    req->cookie != drv->sta_scan_cookie ||
 		    req->generation != drv->sta_scan_epoch ||
@@ -1298,15 +1306,24 @@ bsd_sta_event(struct bsd_driver_data *drv, unsigned int what,
 		return;
 	if (what == RTM_IEEE80211_STA_TX) {
 		if (req->op == IEEE80211_STA_TX && !req->len &&
-		    !(req->flags & ~IEEE80211_STA_TX_ACK) && drv->sta_tx_frame &&
+		    !(req->flags & ~(IEEE80211_STA_TX_ACK |
+				     IEEE80211_STA_TX_ACK_KNOWN)) &&
+		    (!(req->flags & IEEE80211_STA_TX_ACK) ||
+		     (req->flags & IEEE80211_STA_TX_ACK_KNOWN)) &&
+		    req->tx_error >= 0 &&
+		    (!req->tx_error || !req->flags) && drv->sta_tx_frame &&
 		    req->cookie == drv->sta_cookie &&
 		    req->generation == drv->sta_tx_generation &&
 		    req->freq == drv->sta_tx_freq &&
 		    !os_memcmp(req->bssid, drv->sta_tx_frame + 4, ETH_ALEN))
-			bsd_sta_tx_status(drv, !!(req->flags & IEEE80211_STA_TX_ACK), 1);
+			bsd_sta_tx_status(drv,
+				!!(req->flags & IEEE80211_STA_TX_ACK),
+				!!(req->flags & IEEE80211_STA_TX_ACK_KNOWN),
+				req->tx_error, 1);
 		return;
 	}
 	if (what != RTM_IEEE80211_STA_RX || req->op != IEEE80211_STA_GET ||
+	    req->tx_error ||
 	    req->cookie || req->flags ||
 	    !bsd_sta_rx_body(drv, req->data, req->len))
 		return;
@@ -1348,10 +1365,19 @@ bsd_sta_init(struct bsd_driver_data *drv)
 		drv->sta_extcap_mask[2] = 0x02;
 		wpa_printf(MSG_DEBUG, "BSD: host-managed BSS transitions available");
 	}
-	if (info.flags & IEEE80211_STA_CAP_RRM) {
-		drv->sta_rrm = 1;
+	drv->sta_nr = !!(info.flags & IEEE80211_STA_CAP_NR);
+	drv->sta_rm_request_rx =
+		!!(info.flags & IEEE80211_STA_CAP_RM_REQUEST_RX);
+	drv->sta_rm_report_tx =
+		!!(info.flags & IEEE80211_STA_CAP_RM_REPORT_TX);
+	drv->sta_rrm = drv->sta_nr || drv->sta_rm_request_rx ||
+		drv->sta_rm_report_tx;
+	if (drv->sta_rm_request_rx && drv->sta_rm_report_tx) {
+		drv->capa.rrm_flags |= WPA_DRIVER_FLAGS_SUPPORT_RRM;
+		wpa_printf(MSG_DEBUG, "BSD: host-managed radio measurements available");
+	} else if (drv->sta_nr) {
 		drv->capa.rrm_flags |= WPA_DRIVER_FLAGS_SUPPORT_RRM |
-		    WPA_DRIVER_FLAGS_RRM_NEIGHBOR_REPORT_ONLY;
+			WPA_DRIVER_FLAGS_RRM_NEIGHBOR_REPORT_ONLY;
 		wpa_printf(MSG_DEBUG, "BSD: host-managed neighbor reports available");
 	}
 }
@@ -1397,7 +1423,7 @@ bsd_sta_associate(struct bsd_driver_data *drv,
 	    (params->key_mgmt_suite == WPA_KEY_MGMT_PSK ||
 	     (params->key_mgmt_suite == WPA_KEY_MGMT_SAE &&
 	      params->mgmt_frame_protection == MGMT_FRAME_PROTECTION_REQUIRED));
-	bsd_sta_tx_status(drv, 0, 0);
+	bsd_sta_tx_status(drv, 0, 0, 0, 0);
 	bsd_sta_scan_clear(drv);
 	drv->sta_enabled = 0;
 	os_memset(&req, 0, sizeof(req));
@@ -1756,7 +1782,7 @@ bsd_wireless_event_receive(int sock, void *ctx, void *sock_ctx)
 				   drv->ifname);
 #if !defined(HOSTAPD) && defined(__NetBSD__) && defined(IEEE80211_IOC_STA_MGMT)
 			bsd_sta_scan_clear(drv);
-			bsd_sta_tx_status(drv, 0, 0);
+			bsd_sta_tx_status(drv, 0, 0, 0, 0);
 #endif
 			wpa_supplicant_event(drv->ctx, EVENT_INTERFACE_DISABLED,
 					     NULL);
@@ -2774,7 +2800,7 @@ wpa_driver_bsd_deinit(void *priv)
 
 #if !defined(HOSTAPD) && defined(__NetBSD__) && defined(IEEE80211_IOC_STA_MGMT)
 	bsd_sta_scan_clear(drv);
-	bsd_sta_tx_status(drv, 0, 0);
+	bsd_sta_tx_status(drv, 0, 0, 0, 0);
 	if ((drv->sta_scan || drv->sta_btm || drv->sta_rrm) &&
 	    drv->ifindex != 0 && !drv->if_removed) {
 		struct ieee80211req_sta_mgmt req;

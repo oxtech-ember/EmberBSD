@@ -16,7 +16,7 @@ run_test() {
         "$1"
     fi
 }
-for fn in bwfm_sta_action_valid bwfm_sta_security bwfm_sta_wnm bwfm_sta_ready bwfm_sta_tx_done bwfm_sta_tx_event_match \
+for fn in bwfm_sta_action_valid bwfm_sta_security bwfm_sta_wnm bwfm_sta_ready bwfm_sta_tx_done bwfm_sta_tx_event_match bwfm_sta_tx_status \
     bwfm_sta_scan_cancel bwfm_sta_scan_defer_legacy bwfm_sta_scan_reset \
     bwfm_sta_mgmt bwfm_sta_mgmt_cb bwfm_sta_assoc_ies \
     bwfm_sta_scan_done bwfm_fwvar_var_get_checked; do
@@ -24,6 +24,10 @@ for fn in bwfm_sta_action_valid bwfm_sta_security bwfm_sta_wnm bwfm_sta_ready bw
         copy {print} copy && /^}/ {exit}' "$src/sys/dev/ic/bwfm.c" > "$work/$fn.h"
     test -s "$work/$fn.h"
 done
+awk '/^enum bwfm_fweh_event_status[[:space:]]*{/ {copy=1}
+    copy {print} copy && /^};/ {exit}' \
+    "$src/sys/dev/ic/bwfmreg.h" > "$work/status.h"
+test -s "$work/status.h"
 awk '/^#define[[:space:]]+IEEE80211_STA_/ {print}
     /^struct ieee80211req_sta_mgmt/ {copy=1}
     copy {print} copy && /^};/ {exit}' \

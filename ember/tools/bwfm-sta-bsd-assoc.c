@@ -32,6 +32,7 @@ struct bsd_driver_data {
 	void *ctx, *sock_xmit;
 	char ifname[16];
 	int is_ap, flags, opmode, sta_btm, sta_rrm, sta_scan, sta_enabled;
+	int sta_nr, sta_rm_request_rx, sta_rm_report_tx;
 	int sta_scan_pending;
 	int sae_blocked, sae_key_epoch, sae_configured;
 	struct wpa_driver_capa capa;
@@ -110,9 +111,11 @@ bsd_sta_set(struct bsd_driver_data *drv, struct ieee80211req_sta_mgmt *req,
 }
 
 static void
-bsd_sta_tx_status(struct bsd_driver_data *drv, int ack, int notify)
+bsd_sta_tx_status(struct bsd_driver_data *drv, int ack, int ack_known,
+    int tx_error, int notify)
 {
-	check(ack == 0 && notify == 0, "association retires TX without an ACK");
+	check(ack == 0 && ack_known == 0 && tx_error == 0 && notify == 0,
+	    "association retires TX without an ACK");
 	clear_tx_calls++;
 }
 
@@ -372,7 +375,8 @@ fixture(struct bsd_driver_data *drv)
 	drv->sta_scan_generation = 50;
 	current.version = IEEE80211_STA_VERSION;
 	current.flags = IEEE80211_STA_ASSOCIATED |
-	    IEEE80211_STA_CAP_BTM | IEEE80211_STA_CAP_RRM;
+	    IEEE80211_STA_CAP_BTM | IEEE80211_STA_CAP_NR |
+	    IEEE80211_STA_CAP_RM_REPORT_TX;
 	current.generation = 60;
 	accepted_epoch = 61;
 	current.freq = 5180;
@@ -769,7 +773,7 @@ connected_scans(void)
 		drv.sta_btm = i == 0;
 		drv.sta_rrm = i == 1;
 		current.flags = IEEE80211_STA_ASSOCIATED |
-		    (i == 0 ? IEEE80211_STA_CAP_BTM : IEEE80211_STA_CAP_RRM);
+		    (i == 0 ? IEEE80211_STA_CAP_BTM : IEEE80211_STA_CAP_NR);
 		check(wpa_driver_bsd_scan(&drv, &p) == 0 && set_calls == 0 &&
 		    legacy_scans == 1,
 		    "BTM or RRM alone does not imply connected-scan support");

@@ -63,6 +63,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <net80211/ieee80211_rsn.h>
 #include <net80211/ieee80211_sta.h>
 #define ESPWIFI_SCAN_RING 8
+#define ESPWIFI_ACTION_RX_RESERVED 1
 #define ESPWIFI_SCAN_FRAME_MAX 2304
 #define ESPWIFI_SAE_WAIT_SECONDS 5
 #define ESPWIFI_SAE_HEADER_LEN 30
@@ -111,6 +112,7 @@ struct espwifi_softc {
 	bool		sc_action_tx_owned, sc_action_tx_pending, sc_action_tx_started;
 	bool		sc_action_tx_send_done, sc_action_tx_send_ok;
 	bool		sc_action_tx_cb_seen;
+	int		sc_action_tx_error;
 	uint16_t	sc_action_tx_len;
 	uint64_t	sc_action_tx_serial;
 	uint8_t		sc_action_tx_data[IEEE80211_STA_MAX_BODY];
@@ -143,6 +145,8 @@ struct espwifi_softc {
 	void		*sc_scan_sem;
 	void		*sc_scan_ctl_sem;
 	unsigned	sc_scan_head, sc_scan_count;
+	uint32_t	sc_scan_rx_drops, sc_action_rx_drops;
+	uint32_t	sc_scan_rx_drop_next_log, sc_action_rx_drop_next_log;
 	uint64_t	sc_scan_generation, sc_scan_active;
 	bool		sc_scan_enabled, sc_scan_pending, sc_scan_busy, sc_radio_ready;
 	bool		sc_scan_shutdown;
@@ -734,6 +738,48 @@ espwifi_if_is_eapol(const uint8_t *data, unsigned len)
 	    data[13] == (ETHERTYPE_PAE & 0xff);
 }
 
+static bool
+espwifi_if_rx_drop_report_due(uint32_t count, uint32_t *next)
+{
+	if (count == 0)
+		return false;
+	if (*next == UINT32_MAX)
+		return false;
+	if (*next == 0)
+		*next = 1;
+	if (count < *next)
+		return false;
+	while (*next != 0 && *next != UINT32_MAX && *next <= count) {
+		if (*next > UINT32_MAX / 2)
+			*next = UINT32_MAX;
+		else
+			*next *= 2;
+	}
+	return true;
+}
+
+/* Report cumulative queue drops from the worker, never a vendor callback. */
+static void
+espwifi_if_rx_drop_report(struct espwifi_softc *sc)
+{
+	uint32_t scan, action;
+	bool report_scan, report_action;
+
+	mutex_spin_enter(&sc->sc_scan_lock);
+	scan = sc->sc_scan_rx_drops;
+	action = sc->sc_action_rx_drops;
+	report_scan = espwifi_if_rx_drop_report_due(scan,
+	    &sc->sc_scan_rx_drop_next_log);
+	report_action = espwifi_if_rx_drop_report_due(action,
+	    &sc->sc_action_rx_drop_next_log);
+	mutex_spin_exit(&sc->sc_scan_lock);
+
+	if (report_scan)
+		espwifi_os_log("espwifi: scan RX queue drops=%u\n", scan);
+	if (report_action)
+		espwifi_os_log("espwifi: Action RX queue drops=%u\n", action);
+}
+
 /* The vendor callback can run outside sleepable thread context. */
 void
 espwifi_if_scan_frame(const void *data, unsigned len, unsigned channel, int rssi,
@@ -747,7 +793,14 @@ espwifi_if_scan_frame(const void *data, unsigned len, unsigned channel, int rssi
 	    len > ESPWIFI_SCAN_FRAME_MAX || channel == 0 || channel > 14)
 		return;
 	mutex_spin_enter(&sc->sc_scan_lock);
-	if (sc->sc_scan_active == 0 || sc->sc_scan_count == ESPWIFI_SCAN_RING) {
+	if (sc->sc_scan_active == 0) {
+		mutex_spin_exit(&sc->sc_scan_lock);
+		return;
+	}
+	if (sc->sc_scan_count >= ESPWIFI_SCAN_RING -
+	    ESPWIFI_ACTION_RX_RESERVED) {
+		if (sc->sc_scan_rx_drops != UINT32_MAX)
+			sc->sc_scan_rx_drops++;
 		mutex_spin_exit(&sc->sc_scan_lock);
 		return;
 	}
@@ -786,8 +839,13 @@ espwifi_if_action_rx(const void *body, unsigned len,
 	    generation > UINT32_MAX || !sc->sc_radio_ready ||
 	    !sc->sc_sta_started || sc->sc_join_stopped || !sc->sc_joined ||
 	    !sc->sc_link || atomic_load_acquire(&sc->sc_port_authorized) == 0 ||
-	    memcmp(sender, sc->sc_join_bssid, ETHER_ADDR_LEN) != 0 ||
-	    sc->sc_scan_count == ESPWIFI_SCAN_RING) {
+	    memcmp(sender, sc->sc_join_bssid, ETHER_ADDR_LEN) != 0) {
+		mutex_spin_exit(&sc->sc_scan_lock);
+		return -1;
+	}
+	if (sc->sc_scan_count == ESPWIFI_SCAN_RING) {
+		if (sc->sc_action_rx_drops != UINT32_MAX)
+			sc->sc_action_rx_drops++;
 		mutex_spin_exit(&sc->sc_scan_lock);
 		return -1;
 	}
@@ -878,6 +936,7 @@ espwifi_if_scanthread(void *v)
 			sc->sc_scan_count--;
 			sc->sc_scan_busy = true;
 			mutex_spin_exit(&sc->sc_scan_lock);
+			espwifi_if_rx_drop_report(sc);
 			if (frame.action) {
 				espwifi_if_action_rx_process(sc, &frame);
 				goto done;
@@ -977,6 +1036,7 @@ espwifi_if_action_tx_clear(struct espwifi_softc *sc)
 	sc->sc_action_tx_send_done = false;
 	sc->sc_action_tx_send_ok = false;
 	sc->sc_action_tx_cb_seen = false;
+	sc->sc_action_tx_error = 0;
 	sc->sc_action_tx_len = 0;
 	explicit_memset(sc->sc_action_tx_data, 0,
 	    sizeof(sc->sc_action_tx_data));
@@ -1017,7 +1077,8 @@ espwifi_if_action_tx_report(struct espwifi_softc *sc)
 		if (!current)
 			ieee80211_sta_action_invalidate(&sc->sc_ic.ic_sta_action);
 		report = current && ieee80211_sta_action_report(
-		    &sc->sc_ic.ic_sta_action, &req, false, &notice);
+		    &sc->sc_ic.ic_sta_action, &req, sc->sc_action_tx_error,
+		    false, false, &notice);
 		release = ieee80211_sta_action_release(
 		    &sc->sc_ic.ic_sta_action, &req);
 		if (release)
@@ -1033,13 +1094,13 @@ espwifi_if_action_tx_report(struct espwifi_softc *sc)
 
 void
 espwifi_if_action_tx_done(uint32_t cookie, uint32_t generation,
-    const uint8_t *bssid)
+	    const uint8_t *bssid, int tx_error)
 {
 	struct espwifi_softc * const sc = &espwifi_sc;
 	struct ieee80211req_sta_mgmt req;
 	bool match = false;
 
-	if (!sc->sc_attached || bssid == NULL)
+	if (!sc->sc_attached || bssid == NULL || tx_error < 0)
 		return;
 	mutex_spin_enter(&sc->sc_scan_lock);
 	if (sc->sc_action_tx_owned && sc->sc_action_tx_started) {
@@ -1047,8 +1108,10 @@ espwifi_if_action_tx_done(uint32_t cookie, uint32_t generation,
 		match = req.cookie == cookie && req.generation == generation &&
 		    memcmp(req.bssid, bssid, ETHER_ADDR_LEN) == 0 &&
 		    ieee80211_sta_action_match(&sc->sc_ic.ic_sta_action, &req);
-		if (match)
+		if (match) {
 			sc->sc_action_tx_cb_seen = true;
+			sc->sc_action_tx_error = tx_error;
+		}
 	}
 	mutex_spin_exit(&sc->sc_scan_lock);
 	if (match)
@@ -1085,6 +1148,7 @@ espwifi_if_action_tx_request(struct espwifi_softc *sc,
 		sc->sc_action_tx_send_done = false;
 		sc->sc_action_tx_send_ok = false;
 		sc->sc_action_tx_cb_seen = false;
+		sc->sc_action_tx_error = 0;
 		if (++sc->sc_action_tx_serial == 0)
 			sc->sc_action_tx_serial++;
 		sc->sc_action_tx_len = req->len;
@@ -1187,6 +1251,7 @@ espwifi_if_action_tx_control(struct espwifi_softc *sc)
 	mutex_spin_enter(&sc->sc_scan_lock);
 	sc->sc_action_tx_send_done = true;
 	sc->sc_action_tx_send_ok = error == 0;
+	sc->sc_action_tx_error = error;
 	if (error != 0)
 		sc->sc_action_tx_cb_seen = true; /* No firmware ownership was taken. */
 	mutex_spin_exit(&sc->sc_scan_lock);
@@ -1227,7 +1292,7 @@ espwifi_if_sta_mgmt(struct ieee80211com *ic,
 			return EOVERFLOW;
 		/* RRM is neighbor-report only; measurement exchange is not exposed. */
 		req->flags = IEEE80211_STA_CAP_SCAN | IEEE80211_STA_CAP_BTM |
-		    IEEE80211_STA_CAP_RRM;
+		    IEEE80211_STA_CAP_NR;
 		req->generation = (uint32_t)generation;
 		req->freq = 0;
 		memset(req->bssid, 0, sizeof(req->bssid));

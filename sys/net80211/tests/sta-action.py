@@ -43,13 +43,17 @@ def macro(text, name):
 
 req = block(ioctl, 'struct ieee80211req_sta_mgmt {') + ';'
 state = block(header, 'struct ieee80211_sta_action_state {') + ';'
-funcs = '\n'.join(block(header, 'static inline ' + ret + '\nieee80211_sta_action_' + name)
+funcs = block(header,
+    'static inline bool\nieee80211_sta_tx_result_valid(const struct '
+    'ieee80211req_sta_mgmt *notice)\n{')
+funcs += '\n' + '\n'.join(block(header, 'static inline ' + ret + '\nieee80211_sta_action_' + name)
     for name, ret in (('begin', 'int'), ('match', 'bool'), ('cancel', 'bool'),
                       ('invalidate', 'void'), ('report', 'bool'),
                       ('release', 'bool')))
 consts = '\n'.join('#define %s %s' % (name, macro(ioctl, name)) for name in (
     'IEEE80211_STA_VERSION', 'IEEE80211_STA_MAX_BODY', 'IEEE80211_STA_TX',
-    'IEEE80211_STA_CANCEL_TX', 'IEEE80211_STA_TX_ACK'))
+    'IEEE80211_STA_CANCEL_TX', 'IEEE80211_STA_TX_ACK',
+    'IEEE80211_STA_TX_ACK_KNOWN'))
 code = r'''#include <assert.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -93,7 +97,7 @@ main(void)
 	assert(!ieee80211_sta_action_match(&state, &changed));
 	changed = first; changed.bssid[5]++;
 	assert(!ieee80211_sta_action_match(&state, &changed));
-	assert(!ieee80211_sta_action_report(&state, &changed, false, &notice));
+	assert(!ieee80211_sta_action_report(&state, &changed, 0, false, false, &notice));
 	assert(!state.reported);
 
 	/* Cancellation marks the logical tuple but never releases transport state. */
@@ -103,7 +107,7 @@ main(void)
 	changed.len = 0;
 	assert(ieee80211_sta_action_cancel(&state, &changed));
 	assert(state.active && state.cancelled);
-	assert(!ieee80211_sta_action_report(&state, &first, true, &notice));
+	assert(!ieee80211_sta_action_report(&state, &first, 0, true, true, &notice));
 	assert(ieee80211_sta_action_release(&state, &first));
 	assert(!state.active);
 
@@ -113,21 +117,52 @@ main(void)
 	assert(!ieee80211_sta_action_release(&state, &first));
 	assert(state.active && state.cookie == second.cookie &&
 	    state.generation == second.generation);
-	assert(ieee80211_sta_action_report(&state, &second, false, &notice));
+	assert(ieee80211_sta_action_report(&state, &second, 0, false, false, &notice));
 	assert(notice.version == IEEE80211_STA_VERSION &&
 	    notice.op == IEEE80211_STA_TX && notice.cookie == second.cookie &&
 	    notice.generation == second.generation && notice.freq == second.freq &&
-	    notice.flags == 0 && notice.len == 0 &&
+	    notice.flags == 0 && notice.tx_error == 0 && notice.len == 0 &&
 	    memcmp(notice.bssid, second.bssid, IEEE80211_ADDR_LEN) == 0);
-	assert(!ieee80211_sta_action_report(&state, &second, true, &notice));
+	assert(!ieee80211_sta_action_report(&state, &second, 0, true, true, &notice));
 	assert(ieee80211_sta_action_release(&state, &second));
 
 	/* ACK is explicit; a TX-done path without peer ACK cannot set its flag. */
 	struct ieee80211req_sta_mgmt third = request(3, 9, 2462, 11);
 	assert(ieee80211_sta_action_begin(&state, &third) == 0);
-	assert(ieee80211_sta_action_report(&state, &third, true, &notice));
-	assert(notice.flags == IEEE80211_STA_TX_ACK);
+	assert(ieee80211_sta_action_report(&state, &third, 0, true, true, &notice));
+	assert(notice.flags == (IEEE80211_STA_TX_ACK_KNOWN | IEEE80211_STA_TX_ACK));
+	assert(ieee80211_sta_tx_result_valid(&notice));
 	assert(ieee80211_sta_action_release(&state, &third));
+
+	/* Local failure, local success without ACK knowledge, and known no-ACK
+	 * have distinct valid ABI representations. Contradictory status is rejected.
+	 */
+	struct ieee80211req_sta_mgmt fourth = request(4, 10, 2412, 12);
+	assert(ieee80211_sta_action_begin(&state, &fourth) == 0);
+	assert(ieee80211_sta_action_report(&state, &fourth, EIO, false, false,
+	    &notice));
+	assert(notice.tx_error == EIO && notice.flags == 0 &&
+	    ieee80211_sta_tx_result_valid(&notice));
+	assert(ieee80211_sta_action_release(&state, &fourth));
+	struct ieee80211req_sta_mgmt fifth = request(5, 11, 2412, 13);
+	assert(ieee80211_sta_action_begin(&state, &fifth) == 0);
+	assert(ieee80211_sta_action_report(&state, &fifth, 0, false, false,
+	    &notice));
+	assert(notice.tx_error == 0 && notice.flags == 0 &&
+	    ieee80211_sta_tx_result_valid(&notice));
+	assert(ieee80211_sta_action_release(&state, &fifth));
+	struct ieee80211req_sta_mgmt sixth = request(6, 12, 2412, 14);
+	assert(ieee80211_sta_action_begin(&state, &sixth) == 0);
+	assert(ieee80211_sta_action_report(&state, &sixth, 0, true, false,
+	    &notice));
+	assert(notice.flags == IEEE80211_STA_TX_ACK_KNOWN &&
+	    ieee80211_sta_tx_result_valid(&notice));
+	assert(ieee80211_sta_action_release(&state, &sixth));
+	notice.flags = IEEE80211_STA_TX_ACK;
+	assert(!ieee80211_sta_tx_result_valid(&notice));
+	notice.flags = IEEE80211_STA_TX_ACK_KNOWN;
+	notice.tx_error = EIO;
+	assert(!ieee80211_sta_tx_result_valid(&notice));
 
 	/* Invalid tuple forms and stale cancel do not reserve or cancel state. */
 	changed = request(4, 10, 2412, 12); changed.bssid[0] = 1;
@@ -141,7 +176,7 @@ main(void)
 	assert(!state.cancelled);
 	ieee80211_sta_action_invalidate(&state);
 	assert(state.active && state.cancelled);
-	assert(!ieee80211_sta_action_report(&state, &first, true, &notice));
+	assert(!ieee80211_sta_action_report(&state, &first, 0, true, true, &notice));
 	assert(ieee80211_sta_action_release(&state, &first));
 	return 0;
 }

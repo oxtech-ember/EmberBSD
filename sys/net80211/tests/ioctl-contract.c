@@ -397,7 +397,7 @@ main(void)
 	ireq.i_len--;
 	CHECK(ieee80211_ioctl_sta_mgmt(&ic, &ireq, true) == EINVAL);
 	ireq.i_len++;
-	for (unsigned field = 0; field < 7; field++) {
+	for (unsigned field = 0; field < 8; field++) {
 		memset(&sta, 0, sizeof(sta));
 		sta.version = IEEE80211_STA_VERSION;
 		sta.op = IEEE80211_STA_ENABLE;
@@ -409,6 +409,7 @@ main(void)
 		case 4: sta.len = sizeof(sta.data) + 1; break;
 		case 5: sta.op = IEEE80211_STA_GET; break;
 		case 6: callback_error = EIO; break;
+		case 7: sta.tx_error = EIO; break;
 		}
 		memset(sta.data, 0xa5, sizeof(sta.data));
 		before = calls;

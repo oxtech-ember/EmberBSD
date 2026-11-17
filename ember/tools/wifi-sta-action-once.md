@@ -20,8 +20,10 @@ accepts another request after the preceding transport operation has drained.
 An in-flight operation keeps its firmware resources even after logical
 cancellation.
 
-Success means a matching common TX completion arrived. ESP completes after
-the correlated firmware callback drains or submission proves that no buffer
-was accepted. Its callback has no ACK result, so the output says that peer ACK
-is unconfirmed. A timeout or ioctl error is not completion evidence. A peer
-response is needed to establish a successful RRM/BTM exchange.
+A zero exit status means a matching local TX completion reported success; a
+nonzero status means the adapter reported a local send failure. ESP completes
+after the correlated firmware callback drains or submission proves that no
+buffer was accepted. Its callback has no ACK result, so the output says that
+peer ACK is unconfirmed. Adapters that can report ACK status distinguish a
+confirmed ACK from a known no-ACK result. A peer response is needed to
+establish a successful RRM/BTM exchange.
