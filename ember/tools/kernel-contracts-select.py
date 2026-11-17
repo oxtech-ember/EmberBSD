@@ -15,8 +15,8 @@ import sys
 
 INPUTS = 'ember/tools/kernel-contracts-inputs.txt'
 # A change to the selection itself can change each result.
-RUNNER = {'ember/check-kernel.sh', 'ember/tools/kernel-contracts.sh',
-          'ember/tools/kernel-contracts-select.py', INPUTS}
+RUNNER = {'.github/workflows/kernel-contracts.yml', 'ember/check-kernel.sh',
+          'ember/tools/kernel-contracts.sh', 'ember/tools/kernel-contracts-select.py', INPUTS}
 
 
 def contracts(src):

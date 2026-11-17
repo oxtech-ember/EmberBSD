@@ -1,0 +1,83 @@
+name: Portable kernel source contracts
+
+# Each push and pull request runs the contracts that its changes can affect
+# (ember/tools/kernel-contracts-inputs.txt). A manual run runs all of them,
+# for example before a release.
+'on':
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/kernel-contracts.yml'
+      - 'sys/**'
+      - 'common/**'
+      - 'external/bsd/wpa/dist/src/**'
+      - 'ember/**'
+  pull_request:
+    paths:
+      - '.github/workflows/kernel-contracts.yml'
+      - 'sys/**'
+      - 'common/**'
+      - 'external/bsd/wpa/dist/src/**'
+      - 'ember/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kernel-contracts-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  contracts:
+    runs-on: ubuntu-24.04
+    # All contracts take about 3 minutes on Linux.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /ember/
+            /sys/
+            /common/
+            /external/bsd/wpa/dist/src/
+      - name: Prepare compilers and sanitizer runtimes
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang-18 libclang-rt-18-dev ruby
+          clang-18 --version
+          ruby --version
+          python3 --version
+      - name: Select contracts
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          : > "$RUNNER_TEMP/selection-argument"
+          if [ "$EVENT" = workflow_dispatch ] || [ -z "$BASE" ] ||
+              [ "$BASE" = 0000000000000000000000000000000000000000 ]; then
+            echo 'Running all contracts.'
+            exit 0
+          fi
+          # After a force push the earlier commit can be absent. Then run all.
+          if ! git fetch -q --depth=1 --filter=blob:none origin "$BASE" ||
+              ! git -c core.quotePath=false diff --no-renames --name-only "$BASE" HEAD -- \
+                > "$RUNNER_TEMP/changes"; then
+            echo "Base $BASE is not available. Running all contracts."
+            exit 0
+          fi
+          python3 ember/tools/kernel-contracts-select.py "$PWD" \
+            "$RUNNER_TEMP/changes" "$RUNNER_TEMP/selection"
+          printf '%s\n' "$RUNNER_TEMP/selection" > "$RUNNER_TEMP/selection-argument"
+      - name: Run contracts
+        env:
+          UBSAN_OPTIONS: halt_on_error=1
+        run: |
+          export CC="$(command -v clang-18)" CXX="$(command -v clang++-18)"
+          export HOST_CC="$CC" HOST_CXX="$CXX"
+          export NETBSD2_PYTHON="$(command -v python3)" RUBY="$(command -v ruby)"
+          sh ember/tools/kernel-contracts.sh "$PWD" portable "" \
+            "$(cat "$RUNNER_TEMP/selection-argument")"
