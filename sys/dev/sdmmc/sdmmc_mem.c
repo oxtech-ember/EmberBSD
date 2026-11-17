@@ -2394,7 +2394,10 @@ sdmmc_mem_write_block_subr(struct sdmmc_function *sf, bus_dmamap_t dmap,
 	}
 
 	if (!ISSET(sc->sc_caps, SMC_CAPS_SPI_MODE)) {
-		do {
+		const u_int start = (u_int)getticks();
+		u_int waits = 0;
+
+		for (;;) {
 			memset(&cmd, 0, sizeof(cmd));
 			cmd.c_opcode = MMC_SEND_STATUS;
 			if (!ISSET(sc->sc_caps, SMC_CAPS_SPI_MODE))
@@ -2403,8 +2406,26 @@ sdmmc_mem_write_block_subr(struct sdmmc_function *sf, bus_dmamap_t dmap,
 			error = sdmmc_mmc_command(sc, &cmd);
 			if (error)
 				break;
-			/* XXX time out */
-		} while (!ISSET(MMC_R1(cmd.c_resp), MMC_R1_READY_FOR_DATA));
+			/* READY can accompany a delayed rejection of the data write. */
+			if (ISSET(sc->sc_flags, SMF_SD_MODE) &&
+			    SD_R1_WRITE_REJECTED(MMC_R1(cmd.c_resp))) {
+				error = EIO;
+				break;
+			}
+			if (ISSET(MMC_R1(cmd.c_resp), MMC_R1_READY_FOR_DATA))
+				break;
+			/* Bound valid status replies that never report ready. */
+			if ((u_int)getticks() - start >= (u_int)(5 * hz) ||
+			    waits++ >= 500) {
+				error = ETIMEDOUT;
+				break;
+			}
+			/* Bound dump-time polling even without advancing ticks. */
+			if (panicstr != NULL || doing_shutdown)
+				sdmmc_delay(10000);
+			else
+				sdmmc_pause(10000, NULL);
+		}
 	}
 
 out:

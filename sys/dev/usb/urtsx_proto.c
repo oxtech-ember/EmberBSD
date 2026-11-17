@@ -244,3 +244,70 @@ urtsx_sd_readonly_opcode(unsigned opcode)
 		return 0;
 	}
 }
+
+/* Source and destination are separate buffers. This only fills controller RAM. */
+int
+urtsx_ppbuf_write_packet(uint8_t *buffer, size_t capacity, const uint8_t *data,
+    size_t length, size_t *packet_length)
+{
+	if (buffer == NULL || data == NULL || packet_length == NULL ||
+	    length == 0 || length > 512 || capacity > URTSX_CMD_SIZE ||
+	    capacity < 12 + length)
+		return EINVAL;
+	buffer[0] = 'R'; buffer[1] = 'T'; buffer[2] = 'C'; buffer[3] = 'R';
+	buffer[4] = 2; /* Sequential register write. */
+	buffer[5] = (uint8_t)(length >> 8);
+	buffer[6] = (uint8_t)length;
+	buffer[7] = URTSX_STAGE_C;
+	buffer[8] = URTSX_PPBUF >> 8;
+	buffer[9] = URTSX_PPBUF & 0xff;
+	buffer[10] = buffer[11] = 0;
+	for (size_t i = 0; i < length; i++)
+		buffer[12 + i] = data[i];
+	*packet_length = 12 + length;
+	return 0;
+}
+
+/* The preceding command phase has already sent CMD24 and accepted its R1. */
+int
+urtsx_sd_write_data(struct urtsx_cmd *packet)
+{
+	int error;
+
+	if (packet == NULL || packet->buffer == NULL ||
+	    packet->capacity < URTSX_CMD_HEADER ||
+	    packet->capacity > URTSX_CMD_SIZE ||
+	    packet->count > (packet->capacity - URTSX_CMD_HEADER) / 4 ||
+	    11 > (packet->capacity - URTSX_CMD_HEADER) / 4 - packet->count)
+		return ENOSPC;
+#define ADD(t, a, m, v) do { \
+	error = urtsx_cmd_add(packet, (t), (a), (m), (v)); \
+	if (error) return error; \
+} while (0)
+	ADD(1, URTSX_SD_BYTE_COUNT_L, 0xff, 0);
+	ADD(1, URTSX_SD_BYTE_COUNT_H, 0xff, 2);
+	ADD(1, URTSX_SD_BLOCK_COUNT_L, 0xff, 1);
+	ADD(1, URTSX_SD_BLOCK_COUNT_H, 0xff, 0);
+	ADD(1, URTSX_CARD_DATA_SOURCE, 1, 1);
+	ADD(1, URTSX_SD_CFG2, 0xff, 0);
+	ADD(1, URTSX_SD_TRANSFER, 0xff, 0x81);
+	ADD(2, URTSX_SD_TRANSFER, 0x40, 0x40);
+	/* Wait for the card's physical busy line before reporting completion. */
+	ADD(2, URTSX_SD_BUS_STATUS, 2, 2);
+	ADD(0, URTSX_SD_STATUS1, 0, 0);
+	ADD(0, URTSX_SD_STATUS2, 0, 0);
+#undef ADD
+	return 0;
+}
+
+int
+urtsx_sd_write_status(const uint8_t *data, size_t length)
+{
+	if (data == NULL || length != 4)
+		return EINVAL;
+	if ((data[0] & 0x50) != 0x40 || (data[2] & 0xe0))
+		return EIO;
+	if (!(data[1] & 2) || (data[2] & 2) || (data[3] & 1))
+		return ETIMEDOUT;
+	return 0;
+}

@@ -9,7 +9,7 @@
  * sdmmc host contract. The sdmmc bus owns card discovery and SD commands.
  *
  * Initial support uses 3.3 V, one data line and the 512-byte ping-pong
- * buffer. Outbound data transfers are not supported yet.
+ * buffer. The sdmmc bus splits larger requests into single blocks.
  */
 #include <sys/cdefs.h>
 #include <sys/param.h>
@@ -32,8 +32,6 @@
 #include <dev/sdmmc/sdmmcvar.h>
 
 #define URTSX_TIMEOUT 4000
-#define URTSX_SD_CD 0x01
-#define URTSX_SD_WP 0x08
 
 struct urtsx_reg {
 	uint16_t address;
@@ -378,7 +376,8 @@ urtsx_attach(device_t parent, device_t self, void *aux)
 	saa.saa_sch = sc;
 	saa.saa_clkmin = 400;
 	saa.saa_clkmax = 25000;
-	saa.saa_caps = SMC_CAPS_SINGLE_ONLY | SMC_CAPS_POLL_CARD_DET;
+	saa.saa_caps = SMC_CAPS_SINGLE_ONLY | SMC_CAPS_POLL_CARD_DET |
+	    SMC_CAPS_NO_WRITE_RETRY;
 	sc->sc_sdmmc = config_found(self, &saa, NULL, CFARGS_NONE);
 	return;
 fail:
@@ -602,11 +601,17 @@ urtsx_exec_command(sdmmc_chipset_handle_t handle, struct sdmmc_command *command)
 	uint16_t registers[128];
 	uint8_t cfg2;
 	size_t offset, length;
+	bool write;
 	int error;
 
 	command->c_resid = command->c_datalen;
-	if (!urtsx_sd_readonly_opcode(command->c_opcode) ||
-	    (command->c_data && !(command->c_flags & SCF_CMD_READ))) {
+	write = command->c_opcode == 24 && command->c_data != NULL &&
+	    !(command->c_flags & SCF_CMD_READ) && command->c_datalen == 512 &&
+	    command->c_blklen == 512 &&
+	    (command->c_flags & SCF_RSP_MASK) == SCF_RSP_R1 &&
+	    (command->c_flags & SCF_CMD_MASK) == SCF_CMD_ADTC;
+	if ((!urtsx_sd_readonly_opcode(command->c_opcode) && !write) ||
+	    (command->c_data && !(command->c_flags & SCF_CMD_READ) && !write)) {
 		error = ENOTSUP;
 		goto done;
 	}
@@ -624,6 +629,21 @@ urtsx_exec_command(sdmmc_chipset_handle_t handle, struct sdmmc_command *command)
 	else
 		cfg2 = command->c_flags & SCF_RSP_CRC ? 1 : 5;
 	mutex_enter(&sc->sc_lock);
+	if (write) {
+		unsigned status = atomic_load_relaxed(&sc->sc_status);
+		if (!(status & URTSX_SD_CD)) {
+			error = ENXIO;
+			goto unlock;
+		}
+		if (status & URTSX_SD_WP) {
+			error = EROFS;
+			goto unlock;
+		}
+		if (status & URTSX_OCP_MASK) {
+			error = EIO;
+			goto unlock;
+		}
+	}
 	if (sc->sc_unready) {
 		error = EIO;
 		goto unlock;
@@ -633,12 +653,39 @@ urtsx_exec_command(sdmmc_chipset_handle_t handle, struct sdmmc_command *command)
 	error = urtsx_cmd_init(&packet, sc->sc_command, sizeof(sc->sc_command));
 	if (!error)
 		error = urtsx_sd_command(&packet, command->c_opcode, command->c_arg,
-		    cfg2, command->c_datalen);
+		    cfg2, write ? 0 : command->c_datalen);
 	if (!error)
 		error = urtsx_submit(sc, &packet);
 	if (!error) {
 		(void)urtsx_cmd_response_size(&packet, &length);
 		error = urtsx_sd_response(sc->sc_response, length, cfg2, command->c_resp);
+	}
+	if (write) {
+		static const struct urtsx_reg flush = {
+			URTSX_FIFO_CTL, URTSX_FIFO_FLUSH, URTSX_FIFO_FLUSH,
+		};
+		/* Send CMD24 exactly once. A later error can mean partial success. */
+		if (!error && SD_R1_WRITE_REJECTED(command->c_resp[0]))
+			error = EIO;
+		if (!error)
+			error = urtsx_ppbuf_write_packet(sc->sc_command,
+			    sizeof(sc->sc_command), command->c_data, 512, &length);
+		if (!error)
+			error = urtsx_bulk(sc, false, sc->sc_command, length);
+		if (!error)
+			error = urtsx_cmd_init(&packet, sc->sc_command,
+			    sizeof(sc->sc_command));
+		if (!error)
+			error = urtsx_sd_write_data(&packet);
+		if (!error)
+			error = urtsx_submit(sc, &packet);
+		if (!error)
+			error = urtsx_sd_write_status(sc->sc_response, 4);
+		if (!error)
+			error = urtsx_control_write(sc, &flush);
+		if (!error)
+			command->c_resid = 0;
+		goto transfer_done;
 	}
 	for (offset = 0; !error && offset < (size_t)command->c_datalen; offset += length) {
 		length = MIN(sizeof(registers) / sizeof(registers[0]),
@@ -651,6 +698,7 @@ urtsx_exec_command(sdmmc_chipset_handle_t handle, struct sdmmc_command *command)
 			command->c_resid -= length;
 		}
 	}
+transfer_done:
 	if (error)
 		sc->sc_failed = true;
 unlock:

@@ -116,6 +116,24 @@
 #define MMC_R1_SWITCH_ERROR		(1<<7)	/* switch command failed */
 #define MMC_R1_APP_CMD			(1<<5)	/* app. commands supported */
 
+/* Native SD memory status for a single-block write. MMC-reserved bits differ. */
+#define SD_R1_OUT_OF_RANGE		(1U << 31)
+#define SD_R1_ADDRESS_ERROR		(1U << 30)
+#define SD_R1_BLOCK_LEN_ERROR		(1U << 29)
+#define SD_R1_WP_VIOLATION		(1U << 26)
+#define SD_R1_CARD_IS_LOCKED		(1U << 25)
+#define SD_R1_COM_CRC_ERROR		(1U << 23)
+#define SD_R1_ILLEGAL_COMMAND		(1U << 22)
+#define SD_R1_CARD_ECC_FAILED		(1U << 21)
+#define SD_R1_CC_ERROR			(1U << 20)
+#define SD_R1_ERROR			(1U << 19)
+/* CARD_IS_LOCKED is a state flag, but it also prevents a write. */
+#define SD_R1_WRITE_REJECT_MASK \
+	(SD_R1_OUT_OF_RANGE | SD_R1_ADDRESS_ERROR | SD_R1_BLOCK_LEN_ERROR | \
+	 SD_R1_WP_VIOLATION | SD_R1_CARD_IS_LOCKED | SD_R1_COM_CRC_ERROR | \
+	 SD_R1_ILLEGAL_COMMAND | SD_R1_CARD_ECC_FAILED | SD_R1_CC_ERROR | SD_R1_ERROR)
+#define SD_R1_WRITE_REJECTED(status) (((status) & SD_R1_WRITE_REJECT_MASK) != 0)
+
 /* 48-bit response decoding (32 bits w/o CRC) */
 #define MMC_R1(resp)			((resp)[0])
 #define MMC_R3(resp)			((resp)[0])

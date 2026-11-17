@@ -202,6 +202,60 @@ sd_host_contract(void)
 	assert(urtsx_clock_params(25001, &clock) == EINVAL);
 }
 
+static void
+sd_write_contract(void)
+{
+	uint8_t bytes[1024], payload[512];
+	size_t length = 123;
+	struct urtsx_cmd packet;
+	for (unsigned i = 0; i < sizeof(payload); i++)
+		payload[i] = (uint8_t)i;
+	const uint8_t prefix[] = {'R','T','C','R',2,2,0,0,0xfa,0,0,0};
+	assert(urtsx_ppbuf_write_packet(bytes, sizeof(bytes), payload, 512, &length) == 0);
+	assert(length == 524 && memcmp(bytes, prefix, 12) == 0);
+	assert(memcmp(bytes + 12, payload, 512) == 0);
+	memset(bytes, 0x7a, sizeof(bytes));
+	length = 123;
+	assert(urtsx_ppbuf_write_packet(bytes, 523, payload, 512, &length) == EINVAL);
+	assert(bytes[0] == 0x7a && length == 123);
+	assert(urtsx_ppbuf_write_packet(bytes, sizeof(bytes), payload, 0, &length) == EINVAL);
+	assert(urtsx_ppbuf_write_packet(bytes, sizeof(bytes), payload, 513, &length) == EINVAL);
+	assert(urtsx_cmd_init(&packet, bytes, sizeof(bytes)) == 0);
+	assert(urtsx_sd_write_data(&packet) == 0);
+	assert(urtsx_cmd_finish(&packet, URTSX_STAGE_CR, &length) == 0);
+	const uint8_t expected[] = {
+	    'R','T','C','R',0,0,11,1,
+	    0x7d,0xaf,0xff,0, 0x7d,0xb0,0xff,2,
+	    0x7d,0xb1,0xff,1, 0x7d,0xb2,0xff,0,
+	    0x7d,0x5d,1,1, 0x7d,0xa1,0xff,0,
+	    0x7d,0xb3,0xff,0x81, 0xbd,0xb3,0x40,0x40,
+	    0xbd,0xa5,2,2, 0x3d,0xa3,0,0, 0x3d,0xa4,0,0
+	};
+	assert(length == sizeof(expected) && memcmp(bytes, expected, length) == 0);
+	assert(packet.responses == 4);
+	const uint8_t good[] = {0x60, 3, 0, 0};
+	assert(urtsx_sd_write_status(good, 4) == 0);
+	assert(urtsx_sd_write_status(good, 3) == EINVAL);
+	uint8_t response[4];
+	for (unsigned i = 0; i < 4; i++)
+		response[i] = good[i];
+	response[0] = 0x50;
+	assert(urtsx_sd_write_status(response, 4) == EIO);
+	response[0] = 0x60;
+	response[1] = 1; /* DAT0 has not returned high. */
+	assert(urtsx_sd_write_status(response, 4) == ETIMEDOUT);
+	response[1] = 3;
+	for (unsigned bit = 0x20; bit <= 0x80; bit <<= 1) {
+		response[2] = bit;
+		assert(urtsx_sd_write_status(response, 4) == EIO);
+	}
+	response[2] = 2;
+	assert(urtsx_sd_write_status(response, 4) == ETIMEDOUT);
+	response[2] = 0;
+	response[3] = 1;
+	assert(urtsx_sd_write_status(response, 4) == ETIMEDOUT);
+}
+
 int
 main(void)
 {
@@ -212,6 +266,7 @@ main(void)
 	bounds();
 	status_and_control();
 	sd_host_contract();
+	sd_write_contract();
 	puts("urtsx protocol: PASS");
 	return 0;
 }

@@ -29,7 +29,7 @@ struct sdmmc_command {
 	uint16_t c_opcode;
 	uint32_t c_arg, c_resp[4];
 	void *c_data;
-	int c_datalen, c_flags, c_error, c_resid;
+	int c_datalen, c_blklen, c_flags, c_error, c_resid;
 };
 struct urtsx_softc {
 	int sc_lock;
@@ -54,6 +54,12 @@ static int control_error_at;
 static bool task_running, task_queued, child_stopped;
 static unsigned legacy_registers;
 static bool partial_power, full_power, output_enabled, fail_full_power;
+static char phases[16];
+static unsigned phase_count;
+static uint32_t write_r1;
+static int ppbuf_error;
+static int flush_error;
+static uint8_t write_status[4] = {0x60, 3, 0, 0};
 
 static void mutex_enter(int *lock) { (void)lock; assert(!owned); owned = true; }
 static void mutex_exit(int *lock) { (void)lock; assert(owned); owned = false; }
@@ -74,7 +80,21 @@ urtsx_submit(struct urtsx_softc *sc, struct urtsx_cmd *packet)
 	transfers++;
 	if (transfer_error)
 		return transfer_error;
-	assert(packet->count == 16 || packet->count == 20);
+	assert(packet->count == 16 || packet->count == 20 || packet->count == 11);
+	if (packet->count == 11) {
+		phases[phase_count++] = 'D';
+		memcpy(sc->sc_response, write_status, 4);
+		return 0;
+	}
+	phases[phase_count++] = 'C';
+	if (packet->buffer[11] == (0x40 | 24)) {
+		sc->sc_response[0] = 0x60;
+		sc->sc_response[1] = 24;
+		for (unsigned i = 0; i < 4; i++)
+			sc->sc_response[2 + i] = write_r1 >> (24 - 8 * i);
+		sc->sc_response[6] = sc->sc_response[7] = 0;
+		return 0;
+	}
 	const uint8_t response[] = {0x60, 8, 0, 0, 1, 0xaa, 0, 0};
 	memcpy(sc->sc_response, response, sizeof(response));
 	return 0;
@@ -97,10 +117,30 @@ urtsx_read(struct urtsx_softc *sc, const uint16_t *registers, size_t count)
 	return 0;
 }
 static int
+urtsx_bulk(struct urtsx_softc *sc, bool input, void *data, size_t length)
+{
+	(void)sc;
+	const uint8_t *bytes = data;
+	const uint8_t prefix[] = {'R','T','C','R',2,2,0,0,0xfa,0,0,0};
+	assert(owned && !input && length == 524);
+	assert(memcmp(bytes, prefix, sizeof(prefix)) == 0);
+	for (unsigned i = 0; i < 512; i++)
+		assert(bytes[12 + i] == (uint8_t)i);
+	phases[phase_count++] = 'P';
+	return ppbuf_error;
+}
+static int
 urtsx_control_write(struct urtsx_softc *sc, const struct urtsx_reg *reg)
 {
 	assert(owned);
 	controls++;
+	if (reg->address == URTSX_FIFO_CTL) {
+		assert(reg->mask == 1 && reg->value == 1);
+		phases[phase_count++] = 'F';
+		if (flush_error)
+			sc->sc_unready = true;
+		return flush_error;
+	}
 	if ((int)controls == control_error_at) {
 		sc->sc_unready = true;
 		return EIO;
@@ -189,12 +229,24 @@ reset_model(void)
 	control_error_at = 0;
 	legacy_registers = 0;
 	partial_power = full_power = output_enabled = fail_full_power = false;
+	phase_count = 0;
+	write_r1 = 0x100;
+	ppbuf_error = 0;
+	flush_error = 0;
+	write_status[0] = 0x60; write_status[1] = 3;
+	write_status[2] = write_status[3] = 0;
 	assert(!owned);
 }
 
 int
 main(void)
 {
+	/* R1 error and status interpretation belongs to the shared SD contract. */
+	assert(SD_R1_WRITE_REJECTED(0x04000000U)); /* write protection */
+	assert(SD_R1_WRITE_REJECTED(0x02000000U)); /* locked status blocks writes */
+	assert(SD_R1_WRITE_REJECTED(0x00800100U)); /* CRC error even when READY */
+	assert(!SD_R1_WRITE_REJECTED(0x00004100U)); /* READY + ECC-disabled status */
+	assert(!SD_R1_WRITE_REJECTED(0x00060100U)); /* MMC-reserved SD bits */
 	struct urtsx_softc sc = {0};
 	uint8_t buffer[512];
 	struct sdmmc_command command = {
@@ -211,6 +263,54 @@ main(void)
 	assert(command.c_error == ENOTSUP && (command.c_flags & SCF_ITSDONE));
 	assert(command.c_resid == 512 && transfers == 0 && reads == 0);
 	assert(!sc.sc_failed);
+
+	reset_model();
+	sc = (struct urtsx_softc){.sc_status = 1};
+	for (unsigned i = 0; i < sizeof(buffer); i++)
+		buffer[i] = (uint8_t)i;
+	command = (struct sdmmc_command){.c_opcode = 24, .c_data = buffer,
+	    .c_datalen = 512, .c_blklen = 512, .c_flags = SCF_RSP_R1 | SCF_CMD_ADTC};
+	urtsx_exec_command(&sc, &command);
+	assert(command.c_error == 0 && command.c_resid == 0);
+	assert(command.c_resp[0] == 0x100 && (command.c_flags & SCF_ITSDONE));
+	assert(phase_count == 4 && memcmp(phases, "CPDF", 4) == 0);
+
+	const unsigned blocked_status[] = {0, 9, 0x11};
+	const int blocked_error[] = {ENXIO, EROFS, EIO};
+	for (unsigned i = 0; i < 3; i++) {
+		reset_model();
+		sc = (struct urtsx_softc){.sc_status = blocked_status[i]};
+		urtsx_exec_command(&sc, &command);
+		assert(command.c_error == blocked_error[i]);
+		assert(command.c_resid == 512 && phase_count == 0);
+	}
+	reset_model();
+	sc = (struct urtsx_softc){.sc_status = 1};
+	write_r1 = 0x04000100; /* WP rejected, even though READY is set. */
+	urtsx_exec_command(&sc, &command);
+	assert(command.c_error == EIO && command.c_resid == 512);
+	assert(phase_count == 1 && phases[0] == 'C');
+	reset_model();
+	sc = (struct urtsx_softc){.sc_status = 1};
+	ppbuf_error = ETIMEDOUT;
+	urtsx_exec_command(&sc, &command);
+	assert(command.c_error == ETIMEDOUT && command.c_resid == 512 && sc.sc_failed);
+	assert(phase_count == 2 && memcmp(phases, "CP", 2) == 0);
+	reset_model();
+	sc = (struct urtsx_softc){.sc_status = 1};
+	write_status[2] = 0x20;
+	urtsx_exec_command(&sc, &command);
+	assert(command.c_error == EIO && command.c_resid == 512);
+	assert(phase_count == 3 && memcmp(phases, "CPD", 3) == 0);
+	reset_model();
+	sc = (struct urtsx_softc){.sc_status = 1};
+	flush_error = EIO;
+	urtsx_exec_command(&sc, &command);
+	assert(command.c_error == EIO && command.c_resid == 512 && sc.sc_unready);
+	assert(phase_count == 4 && memcmp(phases, "CPDF", 4) == 0);
+	urtsx_exec_command(&sc, &command);
+	assert(command.c_error == EIO && phase_count == 4); /* no implicit replay */
+	sc = (struct urtsx_softc){0};
 
 	/* Data-less erase, lock and persistent switches must not reach USB. */
 	const uint16_t destructive[] = {6, 28, 29, 32, 33, 35, 36, 38, 42, 56};
@@ -312,7 +412,8 @@ main(void)
 	sc = (struct urtsx_softc){.sc_status = 1, .sc_powered = true};
 	control_error_at = 10;
 	assert(urtsx_bus_power(&sc, 0) == EIO);
-	assert(urtsx_recover(&sc) == 0);
+	int recovered = urtsx_recover(&sc);
+	assert(recovered == 0);
 	reset_model();
 	assert(urtsx_bus_power(&sc, MMC_OCR_3_2V_3_3V) == 0);
 	assert(controls >= 4 && full_power && output_enabled);

@@ -35,14 +35,25 @@ for name in ['urtsx_power_off_locked', 'urtsx_legacy_setup_locked']:
 (args.new_work / 'urtsx-power-helpers.inc').write_text(helpers)
 (args.new_work / 'urtsx-power.inc').write_text(extract('urtsx_bus_power'))
 (args.new_work / 'urtsx-detach.inc').write_text(extract('urtsx_detach'))
+def defines(text, prefixes):
+    result = []
+    lines = iter(text.splitlines())
+    for line in lines:
+        definition = line
+        while line.endswith('\\'):
+            line = next(lines)
+            definition += '\n' + line
+        name = re.match(r'#define\s+(\w+)', definition)
+        if name and name.group(1).startswith(prefixes):
+            result.append(definition)
+    return result
 flags = (args.source / 'sys/dev/sdmmc/sdmmcvar.h').read_text()
-selected = [line for line in flags.splitlines() if re.match(r'#define\s+SCF_', line)]
+selected = defines(flags, ('SCF_',))
 registers = (args.source / 'sys/dev/sdmmc/sdmmc_ioreg.h').read_text()
 selected.extend(line for line in registers.splitlines()
                 if re.match(r'#define\s+SD_IO_SEND_OP_COND\s', line))
 registers = (args.source / 'sys/dev/sdmmc/sdmmcreg.h').read_text()
-selected.extend(line for line in registers.splitlines()
-                if re.match(r'#define\s+MMC_OCR_3_[23]V_', line))
+selected.extend(defines(registers, ('MMC_OCR_3_2V_', 'MMC_OCR_3_3V_', 'SD_R1_')))
 (args.new_work / 'sdmmc-flags.inc').write_text('\n'.join(selected) + '\n')
 compiler = shlex.split(os.environ['CC'])
 compiler += shlex.split(os.environ.get('CFLAGS', '-O2 -g -std=c11 -Wall -Wextra -Werror'))

@@ -3,6 +3,10 @@
 #ifndef _DEV_USB_URTSXREG_H_
 #define _DEV_USB_URTSXREG_H_
 
+#define URTSX_SD_CD		0x01
+#define URTSX_SD_WP		0x08
+#define URTSX_OCP_MASK		0x30
+
 /* USB controller ABI. Several CARD register addresses differ from PCI rtsx. */
 #define URTSX_PPBUF		0xfa00
 #define URTSX_FPDCTL		0xfc00
@@ -39,6 +43,7 @@
 #define URTSX_SD_CFG2		0xfda1
 #define URTSX_SD_STATUS1		0xfda3
 #define URTSX_SD_STATUS2		0xfda4
+#define URTSX_SD_BUS_STATUS	0xfda5
 #define URTSX_SD_PAD_CTL		0xfda6
 #define URTSX_SD_SAMPLE_CTL	0xfda7
 #define URTSX_SD_PUSH_CTL		0xfda8
@@ -52,6 +57,7 @@
 #define URTSX_HS_PHY_DATA		0xfe27
 #define URTSX_HS_PHY_LOAD		0xfe28
 #define URTSX_FIFO_CTL		0xff02
+#define URTSX_FIFO_FLUSH		0x01
 #define URTSX_DMA_RESET		0xff15
 
 #endif /* _DEV_USB_URTSXREG_H_ */

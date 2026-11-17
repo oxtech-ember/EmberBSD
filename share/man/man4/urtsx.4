@@ -22,12 +22,15 @@ subsystem, which discovers the card and provides block devices through
 .Pp
 The initial implementation supports SD memory cards at 3.3 volts,
 with one data line and a maximum clock of 25 MHz.
-It transfers one block at a time through the controller's 512-byte buffer.
+It reads and writes one block at a time through the controller's 512-byte buffer.
+The SD/MMC bus splits larger requests into single blocks.
 Card detection uses a cached status value.
 USB requests run in process context.
 .Sh LIMITATIONS
-This implementation supports read access only.
-It rejects data writes, erase commands, lock commands and persistent switches.
+Write transfers wait for the card's physical busy signal to clear.
+An uncertain write failure reaches the caller without an automatic block retry.
+.Pp
+The driver rejects erase commands, lock commands and persistent switches.
 The reported write-protect switch state remains the physical card state.
 .Pp
 SDIO, MMC, UHS, 1.8-volt signalling and multiblock transfers are not supported.

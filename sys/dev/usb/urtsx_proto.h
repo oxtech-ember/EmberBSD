@@ -38,5 +38,8 @@ struct urtsx_clock {
 };
 int urtsx_clock_params(unsigned, struct urtsx_clock *);
 int urtsx_sd_readonly_opcode(unsigned);
+int urtsx_ppbuf_write_packet(uint8_t *, size_t, const uint8_t *, size_t, size_t *);
+int urtsx_sd_write_data(struct urtsx_cmd *);
+int urtsx_sd_write_status(const uint8_t *, size_t);
 
 #endif /* _DEV_USB_URTSX_PROTO_H_ */

@@ -473,7 +473,10 @@ ld_sdmmc_dobio(void *arg)
 		error = sdmmc_mem_write_block(sc->sc_sf, bp->b_rawblkno,
 		    bp->b_data, bp->b_bcount);
 	if (error) {
-		if (task->task_retries < LD_SDMMC_IORETRIES) {
+		/* A host can report an uncertain or partially completed write. */
+		if (task->task_retries < LD_SDMMC_IORETRIES &&
+		    ((bp->b_flags & B_READ) ||
+		     !(sc->sc_sf->sc->sc_caps & SMC_CAPS_NO_WRITE_RETRY))) {
 			struct dk_softc *dksc = &sc->sc_ld.sc_dksc;
 			struct cfdriver *cd = device_cfdriver(dksc->sc_dev);
 
