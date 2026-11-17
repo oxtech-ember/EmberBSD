@@ -680,7 +680,12 @@ typedef struct {
 #define  UISUBCLASS_MOBILE_BROADBAND_INTERFACE_MODEL	14
 #define  UIPROTO_CDC_NOCLASS			0 /* no class specific
 						     protocol required */
-#define  UIPROTO_CDC_AT				1
+#define  UIPROTO_CDC_AT				1 /* V.250 */
+#define  UIPROTO_CDC_AT_PCCA101			2
+#define  UIPROTO_CDC_AT_PCCA101_WAKE		3 /* Annex O */
+#define  UIPROTO_CDC_AT_GSM			4 /* GSM 07.07 */
+#define  UIPROTO_CDC_AT_3GPP			5 /* 3GPP TS 27.007 */
+#define  UIPROTO_CDC_AT_CDMA			6 /* TIA for CDMA */
 
 #define UICLASS_HID		0x03
 #define  UISUBCLASS_BOOT	1

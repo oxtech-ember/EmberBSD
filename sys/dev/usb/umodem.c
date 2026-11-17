@@ -96,9 +96,21 @@ umodem_match(device_t parent, cfdata_t match, void *aux)
 	int cm, acm;
 
 	if (uiaa->uiaa_class != UICLASS_CDC ||
-	    uiaa->uiaa_subclass != UISUBCLASS_ABSTRACT_CONTROL_MODEL ||
-	    !(uiaa->uiaa_proto == UIPROTO_CDC_NOCLASS || uiaa->uiaa_proto == UIPROTO_CDC_AT))
+	    uiaa->uiaa_subclass != UISUBCLASS_ABSTRACT_CONTROL_MODEL)
 		return UMATCH_NONE;
+
+	switch (uiaa->uiaa_proto) {
+	case UIPROTO_CDC_NOCLASS:
+	case UIPROTO_CDC_AT:
+	case UIPROTO_CDC_AT_PCCA101:
+	case UIPROTO_CDC_AT_PCCA101_WAKE:
+	case UIPROTO_CDC_AT_GSM:
+	case UIPROTO_CDC_AT_3GPP:
+	case UIPROTO_CDC_AT_CDMA:
+		break;
+	default:
+		return UMATCH_NONE;
+	}
 
 	id = usbd_get_interface_descriptor(uiaa->uiaa_iface);
 	if (umodem_get_caps(uiaa->uiaa_device, &cm, &acm, id) == -1)

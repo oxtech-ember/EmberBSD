@@ -289,6 +289,36 @@ ucom_match(device_t parent, cfdata_t match, void *aux)
 	return 1;
 }
 
+static void
+ucom_free_xfers(struct ucom_buffer *buf, size_t nbuf)
+{
+
+	for (size_t i = 0; i < nbuf; i++) {
+		if (buf[i].ub_xfer != NULL) {
+			usbd_destroy_xfer(buf[i].ub_xfer);
+			buf[i].ub_xfer = NULL;
+			buf[i].ub_data = NULL;
+		}
+	}
+}
+
+/* Used both for partial attachment and after I/O has stopped on detach. */
+static void
+ucom_close_pipes(struct ucom_softc *sc)
+{
+
+	ucom_free_xfers(sc->sc_ibuff, __arraycount(sc->sc_ibuff));
+	ucom_free_xfers(sc->sc_obuff, __arraycount(sc->sc_obuff));
+	if (sc->sc_bulkin_pipe != NULL) {
+		usbd_close_pipe(sc->sc_bulkin_pipe);
+		sc->sc_bulkin_pipe = NULL;
+	}
+	if (sc->sc_bulkout_pipe != NULL) {
+		usbd_close_pipe(sc->sc_bulkout_pipe);
+		sc->sc_bulkout_pipe = NULL;
+	}
+}
+
 void
 ucom_attach(device_t parent, device_t self, void *aux)
 {
@@ -354,7 +384,7 @@ ucom_attach(device_t parent, device_t self, void *aux)
 	if (sc->sc_transport != NULL) {
 		error = ucom_transport_attach(sc);
 		if (error)
-			goto fail_0;
+			goto fail;
 		goto attach_tty;
 	}
 
@@ -365,7 +395,7 @@ ucom_attach(device_t parent, device_t self, void *aux)
 		DPRINTF("open bulk in error (addr %jd), err=%jd",
 		    sc->sc_bulkin_no, err, 0, 0);
 		error = EIO;
-		goto fail_0;
+		goto fail;
 	}
 	/* Allocate input buffers */
 	for (ub = &sc->sc_ibuff[0]; ub != &sc->sc_ibuff[UCOM_IN_BUFFS];
@@ -374,7 +404,7 @@ ucom_attach(device_t parent, device_t self, void *aux)
 		    sc->sc_ibufsizepad, 0, 0,
 		    &ub->ub_xfer);
 		if (error)
-			goto fail_1;
+			goto fail;
 		ub->ub_data = usbd_get_buffer(ub->ub_xfer);
 	}
 
@@ -384,14 +414,14 @@ ucom_attach(device_t parent, device_t self, void *aux)
 		DPRINTF("open bulk out error (addr %jd), err=%jd",
 		    sc->sc_bulkout_no, err, 0, 0);
 		error = EIO;
-		goto fail_1;
+		goto fail;
 	}
 	for (ub = &sc->sc_obuff[0]; ub != &sc->sc_obuff[UCOM_OUT_BUFFS];
 	    ub++) {
 		error = usbd_create_xfer(sc->sc_bulkout_pipe,
 		    sc->sc_obufsize, 0, 0, &ub->ub_xfer);
 		if (error)
-			goto fail_2;
+			goto fail;
 		ub->ub_data = usbd_get_buffer(ub->ub_xfer);
 		SIMPLEQ_INSERT_TAIL(&sc->sc_obuff_free, ub, ub_link);
 	}
@@ -412,25 +442,8 @@ attach_tty:
 	sc->sc_state = UCOM_ATTACHED;
 	return;
 
-fail_2:
-	for (ub = &sc->sc_obuff[0]; ub != &sc->sc_obuff[UCOM_OUT_BUFFS];
-	    ub++) {
-		if (ub->ub_xfer)
-			usbd_destroy_xfer(ub->ub_xfer);
-	}
-	usbd_close_pipe(sc->sc_bulkout_pipe);
-	sc->sc_bulkout_pipe = NULL;
-
-fail_1:
-	for (ub = &sc->sc_ibuff[0]; ub != &sc->sc_ibuff[UCOM_IN_BUFFS];
-	    ub++) {
-		if (ub->ub_xfer)
-			usbd_destroy_xfer(ub->ub_xfer);
-	}
-	usbd_close_pipe(sc->sc_bulkin_pipe);
-	sc->sc_bulkin_pipe = NULL;
-
-fail_0:
+fail:
+	ucom_close_pipes(sc);
 	aprint_error_dev(self, "attach failed, error=%d\n", error);
 }
 
@@ -440,7 +453,6 @@ ucom_detach(device_t self, int flags)
 	struct ucom_softc *sc = device_private(self);
 	struct tty *tp = sc->sc_tty;
 	int maj, mn;
-	int i;
 
 	UCOMHIST_FUNC(); UCOMHIST_CALLED();
 
@@ -492,25 +504,7 @@ ucom_detach(device_t self, int flags)
 		sc->sc_tty = NULL;
 	}
 
-	for (i = 0; i < UCOM_IN_BUFFS; i++) {
-		if (sc->sc_ibuff[i].ub_xfer != NULL)
-			usbd_destroy_xfer(sc->sc_ibuff[i].ub_xfer);
-	}
-
-	for (i = 0; i < UCOM_OUT_BUFFS; i++) {
-		if (sc->sc_obuff[i].ub_xfer != NULL)
-			usbd_destroy_xfer(sc->sc_obuff[i].ub_xfer);
-	}
-
-	if (sc->sc_bulkin_pipe != NULL) {
-		usbd_close_pipe(sc->sc_bulkin_pipe);
-		sc->sc_bulkin_pipe = NULL;
-	}
-
-	if (sc->sc_bulkout_pipe != NULL) {
-		usbd_close_pipe(sc->sc_bulkout_pipe);
-		sc->sc_bulkout_pipe = NULL;
-	}
+	ucom_close_pipes(sc);
 
 	if (sc->sc_tbuf != NULL) {
 		kmem_free(sc->sc_tbuf, sc->sc_obufsize);

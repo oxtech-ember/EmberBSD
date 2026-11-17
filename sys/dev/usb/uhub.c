@@ -155,10 +155,9 @@ struct uhub_softc {
 	kcondvar_t		 sc_cv;
 
 	uint8_t			*sc_statusbuf;
-	uint8_t			*sc_statuspend;
-	uint8_t			*sc_status;
+	uint8_t			*sc_statuspend;	/* changes under sc_lock */
+	uint8_t			*sc_status;	/* event thread's snapshot */
 	size_t			 sc_statuslen;
-	bool			 sc_explorepending;
 	bool			 sc_first_explore;
 	bool			 sc_running;
 	bool			 sc_rescan;
@@ -410,14 +409,13 @@ uhub_attach(device_t parent, device_t self, void *aux)
 
 	sc->sc_statuslen = (nports + 1 + 7) / 8;
 	sc->sc_statusbuf = kmem_alloc(sc->sc_statuslen, KM_SLEEP);
-	sc->sc_statuspend = kmem_zalloc(sc->sc_statuslen, KM_SLEEP);
+	sc->sc_statuspend = kmem_alloc(sc->sc_statuslen, KM_SLEEP);
 	sc->sc_status = kmem_alloc(sc->sc_statuslen, KM_SLEEP);
 	mutex_init(&sc->sc_lock, MUTEX_DEFAULT, IPL_SOFTUSB);
 	cv_init(&sc->sc_cv, "uhubex");
 
 	/* force initial scan */
-	memset(sc->sc_status, 0xff, sc->sc_statuslen);
-	sc->sc_explorepending = true;
+	memset(sc->sc_statuspend, 0xff, sc->sc_statuslen);
 
 	err = usbd_open_pipe_intr(iface, ed->bEndpointAddress,
 		  USBD_SHORT_XFER_OK|USBD_MPSAFE, &sc->sc_ipipe, sc,
@@ -425,6 +423,8 @@ uhub_attach(device_t parent, device_t self, void *aux)
 		  uhub_intr, USBD_DEFAULT_INTERVAL);
 	if (err) {
 		aprint_error_dev(self, "cannot open interrupt pipe\n");
+		cv_destroy(&sc->sc_cv);
+		mutex_destroy(&sc->sc_lock);
 		goto bad;
 	}
 
@@ -526,6 +526,21 @@ uhub_attach(device_t parent, device_t self, void *aux)
 	config_pending_decr(self);
 }
 
+/* Take this pass's snapshot before any port operations can sleep. */
+static bool
+uhub_begin_explore(struct uhub_softc *sc)
+{
+	bool rescan;
+
+	mutex_enter(&sc->sc_lock);
+	memcpy(sc->sc_status, sc->sc_statuspend, sc->sc_statuslen);
+	memset(sc->sc_statuspend, 0, sc->sc_statuslen);
+	rescan = sc->sc_rescan;
+	sc->sc_rescan = false;
+	mutex_exit(&sc->sc_lock);
+	return rescan;
+}
+
 usbd_status
 uhub_explore(struct usbd_device *dev)
 {
@@ -536,7 +551,7 @@ uhub_explore(struct usbd_device *dev)
 	usbd_status err;
 	int speed;
 	int port;
-	int change, status, reconnect, rescan;
+	int change, status, reconnect;
 
 	UHUBHIST_FUNC();
 	UHUBHIST_CALLARGS("uhub%jd dev=%#jx addr=%jd speed=%ju",
@@ -554,12 +569,7 @@ uhub_explore(struct usbd_device *dev)
 
 	SDT_PROBE1(usb, hub, explore, start,  dev);
 
-	/* Process rescan if requested.  */
-	mutex_enter(&sc->sc_lock);
-	rescan = sc->sc_rescan;
-	sc->sc_rescan = false;
-	mutex_exit(&sc->sc_lock);
-	if (rescan) {
+	if (uhub_begin_explore(sc)) {
 		for (port = 1; port <= hd->bNbrPorts; port++) {
 			SDT_PROBE3(usb, hub, explore, rescan,
 			    dev, port, &dev->ud_hub->uh_ports[port - 1]);
@@ -877,18 +887,6 @@ uhub_explore(struct usbd_device *dev)
 				up->up_dev->ud_hub->uh_explore(up->up_dev);
 		}
 	}
-	mutex_enter(&sc->sc_lock);
-	sc->sc_explorepending = false;
-	for (int i = 0; i < sc->sc_statuslen; i++) {
-		if (sc->sc_statuspend[i] != 0) {
-			memcpy(sc->sc_status, sc->sc_statuspend,
-			    sc->sc_statuslen);
-			memset(sc->sc_statuspend, 0, sc->sc_statuslen);
-			usb_needs_explore(sc->sc_hub);
-			break;
-		}
-	}
-	mutex_exit(&sc->sc_lock);
 	if (sc->sc_first_explore) {
 		config_pending_decr(sc->sc_dev);
 		sc->sc_first_explore = false;
@@ -975,6 +973,8 @@ uhub_rescan(device_t self, const char *ifattr, const int *locators)
 
 	/* Trigger bus exploration.  */
 	/* XXX locators */
+	if (!sc->sc_running)
+		return ENXIO;
 	mutex_enter(&sc->sc_lock);
 	sc->sc_rescan = true;
 	mutex_exit(&sc->sc_lock);
@@ -1038,38 +1038,20 @@ uhub_intr(struct usbd_xfer *xfer, void *addr, usbd_status status)
 	SDT_PROBE2(usb, hub, interrupt, ,  sc->sc_hub, status);
 
 	if (status == USBD_STALLED)
-		usbd_clear_endpoint_stall_async(sc->sc_ipipe);
+		usbd_clear_endpoint_stall_async(xfer->ux_pipe);
 	else if (status == USBD_NORMAL_COMPLETION) {
+		uint32_t len;
+		bool changed = false;
 
+		usbd_get_xfer_status(xfer, NULL, NULL, &len, NULL);
 		mutex_enter(&sc->sc_lock);
-
-		DPRINTFN(5, "uhub%jd: explore pending %jd",
-		    device_unit(sc->sc_dev), sc->sc_explorepending, 0, 0);
-
-		/* merge port bitmap into pending interrupts list */
-		for (size_t i = 0; i < sc->sc_statuslen; i++) {
+		for (size_t i = 0; i < len && i < sc->sc_statuslen; i++) {
 			sc->sc_statuspend[i] |= sc->sc_statusbuf[i];
-
-			DPRINTFN(5, "uhub%jd: pending/new ports "
-			    "[%jd] %#jx/%#jx", device_unit(sc->sc_dev),
-			    i, sc->sc_statuspend[i], sc->sc_statusbuf[i]);
-		}
-
-		if (!sc->sc_explorepending) {
-			sc->sc_explorepending = true;
-
-			memcpy(sc->sc_status, sc->sc_statuspend,
-			    sc->sc_statuslen);
-			memset(sc->sc_statuspend, 0, sc->sc_statuslen);
-
-			for (size_t i = 0; i < sc->sc_statuslen; i++) {
-				DPRINTFN(5, "uhub%jd: exploring ports "
-				    "[%jd] %#jx", device_unit(sc->sc_dev),
-				    i, sc->sc_status[i], 0);
-			}
-
-			usb_needs_explore(sc->sc_hub);
+			if (sc->sc_statusbuf[i] != 0)
+				changed = true;
 		}
 		mutex_exit(&sc->sc_lock);
+		if (changed)
+			usb_needs_explore(sc->sc_hub);
 	}
 }

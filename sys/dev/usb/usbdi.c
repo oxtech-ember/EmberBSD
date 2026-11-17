@@ -292,6 +292,7 @@ out:	if (p)
 	return err;
 }
 
+/* The interrupt callback may run before the caller receives the pipe. */
 usbd_status
 usbd_open_pipe_intr(struct usbd_interface *iface, uint8_t address,
 		    uint8_t flags, struct usbd_pipe **pipe,
@@ -319,9 +320,9 @@ usbd_open_pipe_intr(struct usbd_interface *iface, uint8_t address,
 	ipipe->up_intrxfer = xfer;
 	ipipe->up_repeat = 1;
 	err = usbd_transfer(xfer);
-	*pipe = ipipe;
 	if (err != USBD_IN_PROGRESS)
 		goto bad3;
+	*pipe = ipipe;
 	SDT_PROBE7(usb, device, pipe, open__intr,
 	    iface, address, flags, ival, cb, priv, ipipe);
 	return USBD_NORMAL_COMPLETION;

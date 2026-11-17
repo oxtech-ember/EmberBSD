@@ -350,7 +350,7 @@ umodem_intr(struct usbd_xfer *xfer, void *priv,
 		printf("%s: abnormal status: %s\n", device_xname(sc->sc_dev),
 		       usbd_errstr(status));
 		if (status == USBD_STALLED)
-			usbd_clear_endpoint_stall_async(sc->sc_notify_pipe);
+			usbd_clear_endpoint_stall_async(xfer->ux_pipe);
 		return;
 	}
 
@@ -456,6 +456,9 @@ umodem_get_status(void *addr, int portno, u_char *lsr, u_char *msr)
 
 	*lsr = sc->sc_lsr;
 	*msr = sc->sc_msr;
+	/* Without a notification endpoint, a dial-in open cannot wait for DCD. */
+	if (sc->sc_ctl_notify == -1)
+		*msr |= UMSR_DCD;
 }
 
 int
