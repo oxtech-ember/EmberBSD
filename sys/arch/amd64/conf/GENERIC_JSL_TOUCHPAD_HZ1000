@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Jasper Lake Precision Touchpad profile with millisecond clock granularity.
+include "arch/amd64/conf/GENERIC_JSL_TOUCHPAD"
+options HZ=1000
