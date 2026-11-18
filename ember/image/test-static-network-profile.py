@@ -6,9 +6,11 @@
 import importlib.util
 import os
 from pathlib import Path
+import select
 import subprocess
 import sys
 import tempfile
+import tty
 
 
 path = Path(__file__).with_name('static-profile.py')
@@ -64,17 +66,39 @@ def syslog_has_forward_action(config):
 rc_source = (source / 'etc/rc').read_text()
 status_helper_start = rc_source.index('rc_status_display_metadata()\n{')
 status_helper_end = rc_source.index('\n}\n\n#\n# rc_postprocess_metadata', status_helper_start)
-status_helper = rc_source[status_helper_start:status_helper_end]
+status_helper = rc_source[status_helper_start:status_helper_end + 2]
 plain_handler_start = rc_source.index('rc_postprocess_plain_line()\n{')
 plain_handler_end = rc_source.index('\n}\n', plain_handler_start)
-check('[ -c "$rc_status_display" ]' in status_helper and
-      'local name="${2##*/}"' in status_helper and
-      "*[!A-Za-z0-9._-]*" in status_helper and
-      'printf \'%s\\n\' "$1" > "$rc_status_display"' not in status_helper and
-      'rc_status_display_metadata stage "$1"' in rc_source and
+check('rc_status_display_metadata stage "$1"' in rc_source and
       'rc_status_display_metadata result "$1" "$2"' in rc_source and
       'rc_status_display' not in rc_source[plain_handler_start:plain_handler_end],
-      'rc status output uses sanitized metadata only, never arbitrary service lines')
+      'rc sends stage metadata to the display')
+
+master, slave = os.openpty()
+try:
+    tty.setraw(slave)
+    calls = """
+rc_status_display_metadata stage /etc/rc.d/sshd
+rc_status_display_metadata result /etc/rc.d/sshd 0
+rc_status_display_metadata result 'bad name' 3
+rc_status_display_metadata stop 'unexpected exit text'
+rc_status_display_metadata stop 7
+rc_status_display_metadata finish success
+"""
+    run = subprocess.run(['/bin/sh', '-c', status_helper + calls], check=True,
+                         capture_output=True,
+                         env=dict(os.environ, rc_status_display=os.ttyname(slave)))
+    screen = bytearray()
+    while select.select([master], [], [], 0)[0]:
+        screen.extend(os.read(master, 4096))
+    check(not run.stdout and not run.stderr and
+          screen.splitlines() == [b'> sshd', b'ok sshd', b'FAIL script rc=3',
+                                  b'Startup stopped', b'Startup stopped rc=7',
+                                  b'Startup complete'],
+          'secondary tty shows sanitized stages and stop codes')
+finally:
+    os.close(slave)
+    os.close(master)
 
 
 def has_multiuser_rc_dependencies(root):
