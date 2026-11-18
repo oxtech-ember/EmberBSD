@@ -155,6 +155,7 @@ int main(void)
 {
     struct bsd_driver_data drv;
     struct ieee80211req_sta_mgmt req;
+    char timeout_log[64];
     size_t i, header = offsetof(struct ieee80211req_sta_mgmt,data);
     fixture(&drv); req = event_request();
     bsd_sta_event(&drv,RTM_IEEE80211_STA_RX,&req,header+req.len);
@@ -223,7 +224,9 @@ int main(void)
     check(tx == 1 && !last_ack && !last_ack_known && last_tx_error == ETIMEDOUT && cancellations == 1 && cancelled.cookie == 42 &&
         cancelled.generation == 40 && cancelled.op == IEEE80211_STA_CANCEL_TX,
         "TX timeout cancels original epoch and cookie and reports failure");
-    check(strstr(debug_log,"token=7 ack_known=0 ack=0 tx_error=60") != NULL,
+    (void)snprintf(timeout_log, sizeof(timeout_log),
+        "token=7 ack_known=0 ack=0 tx_error=%d", ETIMEDOUT);
+    check(strstr(debug_log, timeout_log) != NULL,
         "timeout reports local ETIMEDOUT without claiming peer ACK knowledge");
     for (i = 0; i < 8; i++) {
         fixture(&drv); drv.sta_scan_pending = 1; req = event_request();

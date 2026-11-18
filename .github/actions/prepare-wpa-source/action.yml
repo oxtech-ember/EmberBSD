@@ -67,8 +67,9 @@ runs:
         patch_bin=$(command -v patch)
         source="$RUNNER_TEMP/ember-wpa-prepared"
         source_py="$ports/scripts/source-inputs/wpa/source.py"
+        # verify-source checks the pinned pkgsrc gitlink even on a cache hit.
+        git -C "$ports" submodule update --init --depth 1 upstream/pkgsrc
         if [ "${{ steps.wpa-cache.outputs.cache-hit }}" != true ]; then
-          git -C "$ports" submodule update --init --depth 1 upstream/pkgsrc
           export_dir="$RUNNER_TEMP/ember-wpa-pkgsrc-export"
           version=$(awk '$1 == "WPA_SUPPLICANT_VERSION=" { count++; value=$2 } END { if (count != 1 || value !~ /^[0-9]+(\.[0-9]+){1,2}$/) exit 1; print value }' \
             "$ports/pkgsrc/net/wpa_supplicant/Makefile.common")

@@ -132,25 +132,6 @@ permissions:
   contents: read
 
 jobs:
-  prepare-wpa-source:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    container:
-      image: gcc@sha256:3f73339bf0d3d64081cac3f6d9fdafc6dd4cef2b9c49e0a09f91e97cb0eb139a
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          persist-credentials: false
-          sparse-checkout-cone-mode: false
-          sparse-checkout: |
-            /.github/actions/prepare-wpa-source/action.yml
-      - name: Install source preparation tools
-        run: |
-          apt-get update
-          apt-get install -y --no-install-recommends git curl patch
-      - name: Prepare canonical WPA source cache
-        uses: ./.github/actions/prepare-wpa-source
   contracts:
     # Memcheck and path analysis dominate; shards run in parallel and
     # rtw88-workflow-contract.py proves each runner has exactly one shard.
@@ -159,7 +140,6 @@ jobs:
       matrix:
         shard: [rfk, enable, routing, signal, rest-0, rest-1]
     runs-on: ubuntu-24.04
-    needs: prepare-wpa-source
     timeout-minutes: 120
     container:
       image: gcc@sha256:3f73339bf0d3d64081cac3f6d9fdafc6dd4cef2b9c49e0a09f91e97cb0eb139a
@@ -252,7 +232,15 @@ jobs:
           valgrind --version
           echo "PYTHON=$(command -v python3)" >> "$GITHUB_ENV"
           echo "TEST_SH=$(command -v sh)" >> "$GITHUB_ENV"
-      - name: Restore verified canonical WPA source
+      - name: Select source contracts for this shard
+        id: select
+        run: |
+          sh ember/tools/rtw88-ci-shard.sh "${{ matrix.shard }}" > "$RUNNER_TEMP/rtw88-contracts"
+          if grep -Eq '^ember/tools/rtw88-(aploss|manualscan)-contract\.sh$' "$RUNNER_TEMP/rtw88-contracts"; then
+            echo 'wpa=true' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Prepare canonical WPA source for station contracts
+        if: steps.select.outputs.wpa == 'true'
         uses: ./.github/actions/prepare-wpa-source
       - name: Verify native Wi-Fi sparse checkout inputs
         run: python3 ember/tools/rtw88-workflow-contract.py
@@ -263,7 +251,7 @@ jobs:
           ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
         run: |
-          contracts=$(sh ember/tools/rtw88-ci-shard.sh "${{ matrix.shard }}")
+          contracts=$(cat "$RUNNER_TEMP/rtw88-contracts")
           test -n "$contracts"
           for contract in $contracts; do
             echo "::group::$contract"
@@ -298,7 +286,7 @@ jobs:
           SH
           chmod 755 "$RUNNER_TEMP/memcheck"
           export TEST_RUNNER="$RUNNER_TEMP/memcheck"
-          contracts=$(sh ember/tools/rtw88-ci-shard.sh "${{ matrix.shard }}")
+          contracts=$(cat "$RUNNER_TEMP/rtw88-contracts")
           test -n "$contracts"
           for contract in $contracts; do
             echo "::group::$contract"

@@ -17,8 +17,6 @@ markers = [i for i, line in enumerate(lines)
            if line.strip() == "sparse-checkout: |"]
 if not markers:
     raise SystemExit("rtw88 workflow has no sparse-checkout block")
-# The source-preparation job checks out only the composite action; the later
-# matrix-job block is the sparse input contract exercised below.
 marker = markers[-1]
 
 patterns = []
@@ -149,12 +147,13 @@ print(f"rtw88 push/pull_request triggers: {len(required)} inputs covered")
 # the sanitizer and the Memcheck/analyzer steps.
 text = workflow.read_text()
 action = (root / ".github/actions/prepare-wpa-source/action.yml").read_text()
-if (text.count("uses: ./.github/actions/prepare-wpa-source") != 2 or
-        "  prepare-wpa-source:" not in text or
-        "    needs: prepare-wpa-source" not in text or
+if (text.count("uses: ./.github/actions/prepare-wpa-source") != 1 or
+        "if: steps.select.outputs.wpa == 'true'" not in text or
+        'sh ember/tools/rtw88-ci-shard.sh "${{ matrix.shard }}" > "$RUNNER_TEMP/rtw88-contracts"' not in text or
+        "rtw88-(aploss|manualscan)-contract" not in text or
         "EMBER_WPA_SOURCE=%s" not in action or
         "verify-source --source \"$source\"" not in action):
-    raise SystemExit("rtw88 shards must use the cached prepared WPA source job")
+    raise SystemExit("rtw88 station contracts must use the verified Ports WPA source")
 match = re.search(r"^        shard: \[([^]]*)\]$", text, re.M)
 if match is None:
     raise SystemExit("rtw88 workflow has no contract shard matrix")
@@ -166,7 +165,7 @@ unknown = subprocess.run(["sh", str(root / "ember/tools/rtw88-ci-shard.sh"),
 if (unknown.returncode != 2 or unknown.stdout != "" or
         unknown.stderr != "unknown shard: unknown\n"):
     raise SystemExit("rtw88 shard selector did not reject an unknown shard")
-selector = 'contracts=$(sh ember/tools/rtw88-ci-shard.sh "${{ matrix.shard }}")'
+selector = 'contracts=$(cat "$RUNNER_TEMP/rtw88-contracts")'
 runner = ('sh "$contract" || { rc=$?; echo "::endgroup::"; '
           'echo "::error::$contract failed ($rc)"; exit "$rc"; }')
 for needle in (selector, 'test -n "$contracts"',
