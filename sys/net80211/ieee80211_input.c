@@ -2342,6 +2342,196 @@ ieee80211_sta_csa_beacon(struct ieee80211com *ic, struct ieee80211_node *ni,
 	return ieee80211_sta_csa_exit(ic, ni, recoverable);
 }
 
+/*
+ * Decode the fixed beacon body and its borrowed IEs for the RX channel.
+ * Both native management input and firmware scan observations use this path.
+ */
+static bool
+ieee80211_scan_parse(struct ieee80211com *ic, const struct ieee80211_frame *wh,
+    size_t len, unsigned int channel, struct ieee80211_scanparams *sp,
+    struct ieee80211_beacon_ies *ies)
+{
+	const uint8_t *body;
+	IEEE80211_DEBUGVAR(int subtype = wh->i_fc[0] &
+	    IEEE80211_FC0_SUBTYPE_MASK);
+
+	if (len < sizeof(*wh) + 12) {
+		ic->ic_stats.is_rx_elem_toosmall++;
+		return false;
+	}
+	body = (const uint8_t *)(wh + 1);
+	memset(sp, 0, sizeof(*sp));
+	sp->sp_tstamp = __UNCONST(body);
+	sp->sp_bintval = LE_READ_2(body + 8);
+	sp->sp_capinfo = LE_READ_2(body + 10);
+	sp->sp_bchan = channel;
+	sp->sp_chan = sp->sp_bchan;
+	if (ieee80211_beacon_ies_parse(ies, body + 12,
+	    len - sizeof(*wh) - 12) != 0) {
+		ic->ic_stats.is_rx_elem_toosmall++;
+		return false;
+	}
+	sp->sp_ssid = __UNCONST(ies->ssid);
+	sp->sp_rates = __UNCONST(ies->rates);
+	sp->sp_country = __UNCONST(ies->country);
+	sp->sp_tim = __UNCONST(ies->tim);
+	sp->sp_xrates = __UNCONST(ies->xrates);
+	sp->sp_wpa = __UNCONST(ies->security);
+	sp->sp_rrm = __UNCONST(ies->rrm);
+	sp->sp_extcap = __UNCONST(ies->extcap);
+	sp->sp_rsnx = __UNCONST(ies->rsnx);
+	sp->sp_erp = ies->erp != NULL ? ies->erp[2] : 0;
+	sp->sp_phy_ies = ies->phy;
+	sp->sp_wme = __UNCONST(ies->wme);
+	/* Cache offsets start at the MAC header. */
+	sp->sp_timoff = ies->tim != NULL ?
+	    sizeof(*wh) + 12 + ies->timoff : 0;
+	ic->ic_stats.is_rx_elem_toobig += ies->bad_erp;
+	ic->ic_stats.is_rx_elem_unknown += ies->unknown;
+	if (ic->ic_phytype == IEEE80211_T_FH && ies->fh != NULL) {
+		sp->sp_fhdwell = LE_READ_2(ies->fh + 2);
+		sp->sp_chan = IEEE80211_FH_CHAN(ies->fh[4], ies->fh[5]);
+		sp->sp_fhindex = ies->fh[6];
+	} else if (ic->ic_phytype != IEEE80211_T_FH && ies->ds != NULL)
+		sp->sp_chan = ies->ds[2];
+
+	if (sp->sp_rates == NULL || sp->sp_ssid == NULL) {
+		IEEE80211_DISCARD(ic, IEEE80211_MSG_ELEMID, wh,
+		    ieee80211_mgt_subtype_name[subtype >>
+		    IEEE80211_FC0_SUBTYPE_SHIFT],
+		    "%s", "missing supported rates or SSID");
+		ic->ic_stats.is_rx_elem_missing++;
+		return false;
+	}
+	if (sp->sp_rates[1] > IEEE80211_RATE_MAXSIZE ||
+	    sp->sp_ssid[1] > IEEE80211_NWID_LEN) {
+		IEEE80211_DISCARD(ic, IEEE80211_MSG_ELEMID, wh,
+		    ieee80211_mgt_subtype_name[subtype >>
+		    IEEE80211_FC0_SUBTYPE_SHIFT],
+		    "%s", "invalid supported rates or SSID length");
+		ic->ic_stats.is_rx_elem_toobig++;
+		return false;
+	}
+	if (
+#if IEEE80211_CHAN_MAX < 255
+	    sp->sp_chan > IEEE80211_CHAN_MAX ||
+#endif
+	    isclr(ic->ic_chan_active, sp->sp_chan)) {
+		IEEE80211_DISCARD(ic,
+		    IEEE80211_MSG_ELEMID | IEEE80211_MSG_INPUT,
+		    wh, ieee80211_mgt_subtype_name[subtype >>
+			IEEE80211_FC0_SUBTYPE_SHIFT],
+		    "invalid channel %u", sp->sp_chan);
+		ic->ic_stats.is_rx_badchan++;
+		return false;
+	}
+
+	if (sp->sp_chan != sp->sp_bchan &&
+	    ic->ic_phytype != IEEE80211_T_FH) {
+		/*
+		 * Frame was received on a channel different from the
+		 * one indicated in the DS params element id;
+		 * silently discard it.
+		 *
+		 * NB: this can happen due to signal leakage.
+		 *     But we should take it for FH phy because
+		 *     the rssi value should be correct even for
+		 *     different hop pattern in FH.
+		 */
+		IEEE80211_DISCARD(ic,
+		    IEEE80211_MSG_ELEMID | IEEE80211_MSG_INPUT,
+		    wh, ieee80211_mgt_subtype_name[subtype >>
+			IEEE80211_FC0_SUBTYPE_SHIFT],
+		    "for off-channel %u", sp->sp_chan);
+		ic->ic_stats.is_rx_chanmismatch++;
+		return false;
+	}
+
+	if (!(IEEE80211_BINTVAL_MIN <= sp->sp_bintval &&
+	      sp->sp_bintval <= IEEE80211_BINTVAL_MAX)) {
+		IEEE80211_DISCARD(ic,
+		    IEEE80211_MSG_ELEMID | IEEE80211_MSG_INPUT,
+		    wh, ieee80211_mgt_subtype_name[subtype >>
+			IEEE80211_FC0_SUBTYPE_SHIFT],
+		    "bogus beacon interval", sp->sp_bintval);
+		ic->ic_stats.is_rx_badbintval++;
+		return false;
+	}
+	return true;
+}
+
+/* Synchronous scan-cache input; the producer owns the frame and scan lifetime. */
+bool
+ieee80211_scan_observe(struct ieee80211com *ic, const void *frame, size_t len,
+    unsigned int channel, int rssi, int8_t rssi_dbm, uint32_t rstamp)
+{
+	const struct ieee80211_frame *wh = frame;
+	struct ieee80211_scanparams scan;
+	struct ieee80211_beacon_ies ies;
+	unsigned primary;
+	int subtype;
+
+	if (frame == NULL || len < sizeof(*wh)) {
+		ic->ic_stats.is_rx_tooshort++;
+		return false;
+	}
+	if (len > UINT16_MAX) {	/* sp_timoff is a 16-bit MAC-header offset. */
+		ic->ic_stats.is_rx_mgtdiscard++;
+		return false;
+	}
+	subtype = wh->i_fc[0] & IEEE80211_FC0_SUBTYPE_MASK;
+	if ((wh->i_fc[0] & (IEEE80211_FC0_VERSION_MASK |
+	    IEEE80211_FC0_TYPE_MASK)) != IEEE80211_FC0_TYPE_MGT ||
+	    (subtype != IEEE80211_FC0_SUBTYPE_BEACON &&
+	    subtype != IEEE80211_FC0_SUBTYPE_PROBE_RESP) ||
+	    (wh->i_fc[1] & (IEEE80211_FC1_DIR_MASK | IEEE80211_FC1_WEP |
+	    IEEE80211_FC1_ORDER | IEEE80211_FC1_MORE_FRAG)) != 0 ||
+	    (wh->i_seq[0] & IEEE80211_SEQ_FRAG_MASK) != 0) {
+		ic->ic_stats.is_rx_mgtdiscard++;
+		return false;
+	}
+	if (channel == 0 || channel > IEEE80211_CHAN_MAX ||
+	    isclr(ic->ic_chan_active, channel)) {
+		ic->ic_stats.is_rx_badchan++;
+		return false;
+	}
+	if (ic->ic_bss == NULL) {
+		ic->ic_stats.is_rx_mgtdiscard++;
+		return false;
+	}
+	/*
+	 * A foreground scan can start before firmware leaves RUN. Its cache
+	 * may contain the live station node. Only the same transmitter, BSSID
+	 * and channel can refresh that entry while the association is active.
+	 */
+	if (ic->ic_opmode == IEEE80211_M_STA &&
+	    ic->ic_state == IEEE80211_S_RUN) {
+		const struct ieee80211_node *bss = ic->ic_bss;
+		bool same_ta = IEEE80211_ADDR_EQ(wh->i_addr2, bss->ni_macaddr);
+		bool same_bssid = IEEE80211_ADDR_EQ(wh->i_addr3, bss->ni_bssid);
+
+		if ((same_ta || same_bssid) && (!same_ta || !same_bssid ||
+		    bss->ni_chan != &ic->ic_channels[channel])) {
+			ic->ic_stats.is_rx_mgtdiscard++;
+			return false;
+		}
+	}
+	if (!ieee80211_scan_parse(ic, wh, len, channel, &scan, &ies))
+		return false;
+	/* A 5 GHz beacon can omit DS and identify its primary in HT Operation. */
+	primary = ieee80211_beacon_primary_channel(&ies);
+	if (ic->ic_phytype != IEEE80211_T_FH && primary != 0 &&
+	    primary != channel) {
+		ic->ic_stats.is_rx_chanmismatch++;
+		return false;
+	}
+	if (subtype == IEEE80211_FC0_SUBTYPE_BEACON)
+		ic->ic_stats.is_rx_beacon++;
+	scan.sp_rssi_dbm = rssi_dbm;
+	scan.sp_rssi_dbm_valid = true;
+	return ieee80211_add_scan(ic, &scan, wh, subtype, rssi, rstamp);
+}
+
 static void
 ieee80211_recv_mgmt_beacon(struct ieee80211com *ic, struct mbuf *m0,
     struct ieee80211_node *ni, int subtype, int rssi, u_int32_t rstamp)
@@ -2351,7 +2541,6 @@ ieee80211_recv_mgmt_beacon(struct ieee80211com *ic, struct mbuf *m0,
 	IEEE80211_DEBUGVAR(char ebuf[3 * ETHER_ADDR_LEN]);
 	struct ieee80211_scanparams scan;
 	struct ieee80211_beacon_ies ies;
-	int wme_duplicate = 0;
 
 	wh = mtod(m0, struct ieee80211_frame *);
 	frm = (u_int8_t *)(wh + 1);
@@ -2380,105 +2569,9 @@ ieee80211_recv_mgmt_beacon(struct ieee80211com *ic, struct mbuf *m0,
 		return;
 	}
 
-	/*
-	 * beacon/probe response frame format
-	 *	[8] time stamp
-	 *	[2] beacon interval
-	 *	[2] capability information
-	 *	[tlv] ssid
-	 *	[tlv] supported rates
-	 *	[tlv] country information
-	 *	[tlv] parameter set (FH/DS)
-	 *	[tlv] erp information
-	 *	[tlv] extended supported rates
-	 *	[tlv] WME
-	 *	[tlv] WPA or RSN
-	 */
-	IEEE80211_VERIFY_LENGTH(efrm - frm, 12);
-	memset(&scan, 0, sizeof(scan));
-	scan.sp_tstamp  = frm;				frm += 8;
-	scan.sp_bintval = le16toh(*(u_int16_t *)frm);	frm += 2;
-	scan.sp_capinfo = le16toh(*(u_int16_t *)frm);	frm += 2;
-	scan.sp_bchan = ieee80211_chan2ieee(ic, ic->ic_curchan);
-	scan.sp_chan = scan.sp_bchan;
-
-	if (ieee80211_beacon_ies_parse(&ies, frm, efrm - frm) != 0) {
-		ic->ic_stats.is_rx_elem_toosmall++;
+	if (!ieee80211_scan_parse(ic, wh, m0->m_len,
+	    ieee80211_chan2ieee(ic, ic->ic_curchan), &scan, &ies))
 		return;
-	}
-	scan.sp_ssid = __UNCONST(ies.ssid);
-	scan.sp_rates = __UNCONST(ies.rates);
-	scan.sp_country = __UNCONST(ies.country);
-	scan.sp_tim = __UNCONST(ies.tim);
-	scan.sp_xrates = __UNCONST(ies.xrates);
-	scan.sp_wpa = __UNCONST(ies.security);
-	scan.sp_rrm = __UNCONST(ies.rrm);
-	scan.sp_extcap = __UNCONST(ies.extcap);
-	scan.sp_rsnx = __UNCONST(ies.rsnx);
-	scan.sp_erp = ies.erp != NULL ? ies.erp[2] : 0;
-	scan.sp_phy_ies = ies.phy;
-	scan.sp_wme = __UNCONST(ies.wme);
-	wme_duplicate = ies.wme_duplicate;
-	/* Native scan offsets start at the MAC header. */
-	scan.sp_timoff = ies.tim != NULL ?
-	    frm - mtod(m0, uint8_t *) + ies.timoff : 0;
-	ic->ic_stats.is_rx_elem_toobig += ies.bad_erp;
-	ic->ic_stats.is_rx_elem_unknown += ies.unknown;
-	if (ic->ic_phytype == IEEE80211_T_FH && ies.fh != NULL) {
-		scan.sp_fhdwell = LE_READ_2(ies.fh + 2);
-		scan.sp_chan = IEEE80211_FH_CHAN(ies.fh[4], ies.fh[5]);
-		scan.sp_fhindex = ies.fh[6];
-	} else if (ic->ic_phytype != IEEE80211_T_FH && ies.ds != NULL)
-		scan.sp_chan = ies.ds[2];
-
-	IEEE80211_VERIFY_ELEMENT(scan.sp_rates, IEEE80211_RATE_MAXSIZE);
-	IEEE80211_VERIFY_ELEMENT(scan.sp_ssid, IEEE80211_NWID_LEN);
-
-	if (
-#if IEEE80211_CHAN_MAX < 255
-	    scan.sp_chan > IEEE80211_CHAN_MAX ||
-#endif
-	    isclr(ic->ic_chan_active, scan.sp_chan)) {
-		IEEE80211_DISCARD(ic,
-		    IEEE80211_MSG_ELEMID | IEEE80211_MSG_INPUT,
-		    wh, ieee80211_mgt_subtype_name[subtype >>
-			IEEE80211_FC0_SUBTYPE_SHIFT],
-		    "invalid channel %u", scan.sp_chan);
-		ic->ic_stats.is_rx_badchan++;
-		return;
-	}
-
-	if (scan.sp_chan != scan.sp_bchan &&
-	    ic->ic_phytype != IEEE80211_T_FH) {
-		/*
-		 * Frame was received on a channel different from the
-		 * one indicated in the DS params element id;
-		 * silently discard it.
-		 *
-		 * NB: this can happen due to signal leakage.
-		 *     But we should take it for FH phy because
-		 *     the rssi value should be correct even for
-		 *     different hop pattern in FH.
-		 */
-		IEEE80211_DISCARD(ic,
-		    IEEE80211_MSG_ELEMID | IEEE80211_MSG_INPUT,
-		    wh, ieee80211_mgt_subtype_name[subtype >>
-			IEEE80211_FC0_SUBTYPE_SHIFT],
-		    "for off-channel %u", scan.sp_chan);
-		ic->ic_stats.is_rx_chanmismatch++;
-		return;
-	}
-
-	if (!(IEEE80211_BINTVAL_MIN <= scan.sp_bintval &&
-	      scan.sp_bintval <= IEEE80211_BINTVAL_MAX)) {
-		IEEE80211_DISCARD(ic,
-		    IEEE80211_MSG_ELEMID | IEEE80211_MSG_INPUT,
-		    wh, ieee80211_mgt_subtype_name[subtype >>
-			IEEE80211_FC0_SUBTYPE_SHIFT],
-		    "bogus beacon interval", scan.sp_bintval);
-		ic->ic_stats.is_rx_badbintval++;
-		return;
-	}
 
 	if (ni != ic->ic_bss) {
 		ni = ieee80211_refine_node_for_beacon(ic, ni,
@@ -2547,7 +2640,7 @@ ieee80211_recv_mgmt_beacon(struct ieee80211com *ic, struct mbuf *m0,
 			if (ic->ic_wme.wme_sta_apply != NULL) {
 				struct chanAccParams candidate =
 				    ic->ic_wme.wme_wmeChanParams;
-				if (!wme_duplicate && scan.sp_wme != NULL)
+				if (!ies.wme_duplicate && scan.sp_wme != NULL)
 					(void)ieee80211_decode_wmeparams(ic,
 					    scan.sp_wme, wh, &candidate);
 				if (ieee80211_wme_apply_sta(ic, ni, &candidate,
@@ -2557,7 +2650,7 @@ ieee80211_recv_mgmt_beacon(struct ieee80211com *ic, struct mbuf *m0,
 					ieee80211_new_state(ic, IEEE80211_S_SCAN, 0);
 					return;
 				}
-			} else if (!wme_duplicate && scan.sp_wme != NULL &&
+			} else if (!ies.wme_duplicate && scan.sp_wme != NULL &&
 			    ieee80211_parse_wmeparams(ic, scan.sp_wme, wh) > 0) {
 				ieee80211_wme_updateparams(ic);
 			}

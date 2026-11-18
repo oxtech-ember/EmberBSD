@@ -534,10 +534,6 @@ void	iwx_bss_disown(struct iwx_softc *, int);
 int	iwx_scan_assoc_start(struct iwx_softc *);
 void	iwx_scan_assoc_timeout(void *);
 void	iwx_scan_assoc_task(void *);
-int	iwx_scan_assoc_rx(struct iwx_softc *, struct mbuf *, int,
-	    struct ieee80211_rxinfo *);
-void	iwx_scan_assoc_drop(struct iwx_softc *,
-	    const struct ieee80211_frame *, int, const char *);
 int	iwx_scan_assoc_req(struct iwx_softc *, u_long, void *, int *);
 int	iwx_bgscan(struct ieee80211com *);
 void	iwx_bgscan_done(struct ieee80211com *,
@@ -5117,53 +5113,13 @@ iwx_rx_frame(struct iwx_softc *sc, struct mbuf *m, int chanidx,
 	struct ieee80211com *ic = &sc->sc_ic;
 	struct ieee80211_frame *wh;
 	struct ieee80211_node *ni;
-	int offchan;
+	int s;
+	bool scan_result, bgscan, fgscan, home, home_channel, own;
 
 	if (chanidx < 0 || chanidx >= (int)nitems(ic->ic_channels))
 		chanidx = ieee80211_chan2ieee(ic, ic->ic_ibss_chan);
 
 	wh = mtod(m, struct ieee80211_frame *);
-
-	/*
-	 * A beacon or probe response naming another channel than the one
-	 * the firmware reports was heard off its channel, or reported late.
-	 * net80211 drops it only by the DS element, which 5 GHz beacons
-	 * usually lack, and would file it under the wrong channel.
-	 */
-	offchan = iwx_ht_scan_offchan(mtod(m, uint8_t *), m->m_len, chanidx);
-
-	/*
-	 * The firmware scans all channels on its own.  NetBSD net80211
-	 * drops beacons whose DS channel differs from ic_curchan, so follow
-	 * the receive channel while scanning, as iwm_fix_channel() does.
-	 * iwx_scan() marks the scan in ic_flags before its command, which
-	 * sleeps, and enters SCAN state after it; the firmware reports
-	 * results meanwhile, and net80211 files them from that mark on.
-	 */
-	if (!offchan && (ic->ic_state == IEEE80211_S_SCAN ||
-	    (ic->ic_state == IEEE80211_S_INIT &&
-	    (ic->ic_flags & IEEE80211_F_SCAN))) &&
-	    (wh->i_fc[0] & IEEE80211_FC0_TYPE_MASK) == IEEE80211_FC0_TYPE_MGT) {
-		uint8_t subtype = wh->i_fc[0] & IEEE80211_FC0_SUBTYPE_MASK;
-
-		if (subtype == IEEE80211_FC0_SUBTYPE_BEACON ||
-		    subtype == IEEE80211_FC0_SUBTYPE_PROBE_RESP)
-			ic->ic_curchan = &ic->ic_channels[chanidx];
-	}
-
-	ni = ieee80211_find_rxnode(ic, (struct ieee80211_frame_min *)wh);
-	/*
-	 * net80211 takes an unknown sender for the BSS in use.  Once that
-	 * BSS is chosen, only its own frames tell its channel: not what a
-	 * scan while associated hears elsewhere, nor the BSS being left
-	 * during a join.  During such a scan even its own frames may be
-	 * heard on a neighbouring channel.
-	 */
-	if (!offchan && (ni != ic->ic_bss || ic->ic_state <= IEEE80211_S_SCAN ||
-	    ((sc->sc_flags & IWX_FLAG_BGSCAN) == 0 &&
-	    (size_t)m->m_len >= sizeof(struct ieee80211_frame_min) &&
-	    IEEE80211_ADDR_EQ(wh->i_addr2, ni->ni_bssid))))
-		ni->ni_chan = &ic->ic_channels[chanidx];
 
 #if NBPFILTER > 0
 	if (sc->sc_drvbpf != NULL) {
@@ -5243,59 +5199,72 @@ iwx_rx_frame(struct iwx_softc *sc, struct mbuf *m, int chanidx,
 		    m, BPF_DIRECTION_IN);
 	}
 #endif
-	if (offchan) {
-		ic->ic_stats.is_rx_chanmismatch++;
-		iwx_scan_assoc_drop(sc, wh, chanidx, "names another channel");
-		ieee80211_free_node(ni);
-		m_freem(m);
-		return;
-	}
+	scan_result = iwx_ht_scan_result(mtod(m, const uint8_t *), m->m_len);
+	bgscan = (sc->sc_flags & IWX_FLAG_BGSCAN) &&
+	    ic->ic_state == IEEE80211_S_RUN;
+	fgscan = (ic->ic_flags & IEEE80211_F_SCAN) && !bgscan;
+	home = scan_result && ic->ic_bss != NULL &&
+	    IEEE80211_ADDR_EQ(wh->i_addr2, ic->ic_bss->ni_bssid) &&
+	    IEEE80211_ADDR_EQ(wh->i_addr3, ic->ic_bss->ni_bssid);
+	home_channel = home && ic->ic_bss->ni_chan != NULL &&
+	    ic->ic_bss->ni_chan != IEEE80211_CHAN_ANYC &&
+	    chanidx == (int)ieee80211_chan2ieee(ic, ic->ic_bss->ni_chan);
 
-	/*
-	 * During a scan while associated, what other BSSes send is a scan
-	 * result and bypasses net80211 input.
-	 */
-	if ((sc->sc_flags & IWX_FLAG_BGSCAN) &&
-	    ic->ic_state == IEEE80211_S_RUN &&
-	    iwx_scan_assoc_rx(sc, m, chanidx, rxi)) {
-		ieee80211_free_node(ni);
-		m_freem(m);
-		return;
-	}
-{
-		struct ieee80211_node *sni;
-		uint8_t sa[IEEE80211_ADDR_LEN];
-		int s = splnet(), scanres, own;
+	/* In RUN, an exact home-BSS beacon still drives native CSA, ERP, and
+	 * TIM processing. Other foreground results and background foreign BSSes
+	 * go through the shared scan observer. */
+	if (scan_result && ((fgscan &&
+	    (ic->ic_state != IEEE80211_S_RUN || !home)) ||
+	    (bgscan && !home))) {
+		int8_t dbm = iwx_ht_dbm(rxi->rxi_rssi);
 
-		/*
-		 * net80211 files beacons and probe responses in its scan
-		 * table with a level in driver units.  User space decides
-		 * about roaming by levels in dBm, so add that to the entry
-		 * once net80211 is done with the frame: to the BSS in use
-		 * from its own frames, to the others while net80211 files
-		 * scan results.
-		 */
-		scanres = iwx_ht_scan_result(mtod(m, uint8_t *), m->m_len);
-		if (scanres)
-			IEEE80211_ADDR_COPY(sa, wh->i_addr2);
-		own = scanres && ni == ic->ic_bss &&
-		    IEEE80211_ADDR_EQ(sa, ni->ni_bssid);
-
-		m_set_rcvif(m, IC2IFP(ic));
-		ieee80211_input(ic, m, ni, rxi->rxi_rssi, rxi->rxi_tstamp);
-		if (own) {
-			ni->ni_rssi_dbm = iwx_ht_dbm(rxi->rxi_rssi);
-			ni->ni_rssi_dbm_valid = true;
-		}
-		ieee80211_free_node(ni);
-		if (scanres && !own && (ic->ic_flags & IEEE80211_F_SCAN) &&
-		    (sni = ieee80211_find_node(&ic->ic_scan, sa)) != NULL) {
-			sni->ni_rssi_dbm = iwx_ht_dbm(rxi->rxi_rssi);
-			sni->ni_rssi_dbm_valid = true;
-			ieee80211_free_node(sni);
-		}
+#if NBPFILTER > 0
+		if (ic->ic_rawbpf != NULL)
+			bpf_mtap3(ic->ic_rawbpf, m, BPF_D_IN);
+#endif
+		s = splnet();
+		(void)ieee80211_scan_observe(ic, mtod(m, const void *),
+		    m->m_len, chanidx, rxi->rxi_rssi, dbm,
+		    rxi->rxi_tstamp);
 		splx(s);
+		m_freem(m);
+		return;
 	}
+	if (scan_result && (bgscan || (fgscan &&
+	    ic->ic_state == IEEE80211_S_RUN)) && home && !home_channel) {
+		ic->ic_stats.is_rx_chanmismatch++;
+		m_freem(m);
+		return;
+	}
+	/* An explicit DS/HT primary mismatch is stale off-channel input. A
+	 * malformed home beacon still reaches native management, whose CSA
+	 * handling fails closed before the ordinary beacon parser. */
+	if (scan_result && ieee80211_sta_beacon_offchannel(
+	    (const uint8_t *)(wh + 1), m->m_len - sizeof(*wh), chanidx)) {
+		ic->ic_stats.is_rx_chanmismatch++;
+		m_freem(m);
+		return;
+	}
+
+	ni = ieee80211_find_rxnode(ic, (struct ieee80211_frame_min *)wh);
+	if (ni != ic->ic_bss || ic->ic_state <= IEEE80211_S_SCAN ||
+	    ((sc->sc_flags & IWX_FLAG_BGSCAN) == 0 &&
+	    (size_t)m->m_len >= sizeof(struct ieee80211_frame_min) &&
+	    IEEE80211_ADDR_EQ(wh->i_addr2, ni->ni_bssid)))
+		ni->ni_chan = &ic->ic_channels[chanidx];
+	/* Native input owns management effects; retain dBm on the referenced
+	 * home node after net80211 has processed its beacon. */
+	own = scan_result && home && home_channel && ni == ic->ic_bss;
+	s = splnet();
+
+	m_set_rcvif(m, IC2IFP(ic));
+	ieee80211_input(ic, m, ni, rxi->rxi_rssi, rxi->rxi_tstamp);
+	if (own) {
+		ni->ni_rssi_dbm = iwx_ht_dbm(rxi->rxi_rssi);
+		ni->ni_rssi_dbm_valid = true;
+	}
+	ieee80211_free_node(ni);
+	splx(s);
 }
 
 /* net80211 has admitted the frame and verified/decrypted native PMF. */
@@ -5403,7 +5372,7 @@ iwx_release_frames(struct iwx_softc *sc, struct ieee80211_node *ni,
 		 */
 		while ((m = ml_dequeue(&entries[index].frames)) != NULL) {
 			iwx_rx_frame(sc, m, chanidx, rx_pkt_status, is_shortpre,
-			    rate_n_flags, device_timestamp, rxi, ml);
+			    rate_n_flags, device_timestamp, rxi);
 			reorder_buf->num_stored--;
 
 			/*
@@ -8927,7 +8896,7 @@ iwx_scan(struct iwx_softc *sc)
  * A scan while associated.  A scan request through net80211 first leaves
  * the BSS.  Here the association stays: the firmware visits the other
  * channels between the beacons of the BSS.  No net80211 state changes:
- * iwx_scan_assoc_rx() files the results in its scan table and
+ * the shared net80211 scan observer files foreign results and
  * iwx_endscan() reports the scan as finished.
  */
 #define IWX_SCAN_ASSOC_TIMEOUT	30	/* seconds */
@@ -8995,121 +8964,6 @@ iwx_scan_assoc_task(void *arg)
 	}
 	refcnt_rele_wake(&sc->task_refs);
 	splx(s);
-}
-
-/*
- * With IFF_DEBUG, say why a beacon or probe response was not filed as a
- * scan result: nothing else records it.
- */
-void
-iwx_scan_assoc_drop(struct iwx_softc *sc, const struct ieee80211_frame *wh,
-    int chan, const char *why)
-{
-	if ((IC2IFP(&sc->sc_ic)->if_flags & IFF_DEBUG) == 0)
-		return;
-	printf("%s: scan result from %s on channel %d not filed: %s\n",
-	    device_xname(sc->sc_dev), ether_sprintf(wh->i_addr2), chan, why);
-}
-
-/*
- * File a beacon or probe response of another BSS, heard during a scan
- * while associated, in the scan table of net80211.  Returns nonzero for
- * such a frame, filed or not; the caller frees it.
- *
- * ieee80211_input() cannot take these frames: it files scan results only
- * while net80211 itself scans, and only from the channel it believes
- * current.  The checks below are those of ieee80211_recv_mgmt_beacon(),
- * with the receive channel in place of the current one.
- */
-int
-iwx_scan_assoc_rx(struct iwx_softc *sc, struct mbuf *m, int chanidx,
-    struct ieee80211_rxinfo *rxi)
-{
-	struct ieee80211com *ic = &sc->sc_ic;
-	struct ieee80211_frame *wh = mtod(m, struct ieee80211_frame *);
-	struct ieee80211_scanparams scan;
-	struct ieee80211_beacon_ies ies;
-	uint8_t *frm, *efrm;
-	int s;
-
-	if (!iwx_ht_scan_foreign(mtod(m, uint8_t *), m->m_len,
-	    ic->ic_bss->ni_bssid))
-		return 0;
-
-	frm = (uint8_t *)(wh + 1);
-	efrm = mtod(m, uint8_t *) + m->m_len;
-	memset(&scan, 0, sizeof(scan));
-	scan.sp_tstamp = frm;
-	scan.sp_bintval = le16dec(frm + 8);
-	scan.sp_capinfo = le16dec(frm + 10);
-	frm += 12;
-	scan.sp_bchan = chanidx;
-	scan.sp_chan = scan.sp_bchan;
-	scan.sp_rssi_dbm = iwx_ht_dbm(rxi->rxi_rssi);
-	scan.sp_rssi_dbm_valid = true;
-
-	if (ieee80211_beacon_ies_parse(&ies, frm, efrm - frm) != 0) {
-		ic->ic_stats.is_rx_elem_toosmall++;
-		iwx_scan_assoc_drop(sc, wh, chanidx, "malformed elements");
-		return 1;
-	}
-	scan.sp_ssid = __UNCONST(ies.ssid);
-	scan.sp_rates = __UNCONST(ies.rates);
-	scan.sp_country = __UNCONST(ies.country);
-	scan.sp_tim = __UNCONST(ies.tim);
-	scan.sp_xrates = __UNCONST(ies.xrates);
-	scan.sp_wpa = __UNCONST(ies.security);
-	scan.sp_rrm = __UNCONST(ies.rrm);
-	scan.sp_extcap = __UNCONST(ies.extcap);
-	scan.sp_rsnx = __UNCONST(ies.rsnx);
-	scan.sp_erp = ies.erp != NULL ? ies.erp[2] : 0;
-	scan.sp_phy_ies = ies.phy;
-	scan.sp_wme = __UNCONST(ies.wme);
-	scan.sp_timoff = ies.tim != NULL ?
-	    frm - mtod(m, uint8_t *) + ies.timoff : 0;
-	if (ies.ds != NULL)
-		scan.sp_chan = ies.ds[2];
-
-	if (scan.sp_rates == NULL || scan.sp_ssid == NULL) {
-		ic->ic_stats.is_rx_elem_missing++;
-		iwx_scan_assoc_drop(sc, wh, chanidx, "no SSID or rates");
-		return 1;
-	}
-	if (scan.sp_rates[1] > IEEE80211_RATE_MAXSIZE ||
-	    scan.sp_ssid[1] > IEEE80211_NWID_LEN) {
-		ic->ic_stats.is_rx_elem_toobig++;
-		iwx_scan_assoc_drop(sc, wh, chanidx, "SSID or rates too long");
-		return 1;
-	}
-	if (
-#if IEEE80211_CHAN_MAX < 255
-	    scan.sp_chan > IEEE80211_CHAN_MAX ||
-#endif
-	    isclr(ic->ic_chan_active, scan.sp_chan)) {
-		ic->ic_stats.is_rx_badchan++;
-		iwx_scan_assoc_drop(sc, wh, scan.sp_chan, "channel not active");
-		return 1;
-	}
-	/* Heard on a channel other than its own: signal leakage. */
-	if (scan.sp_chan != scan.sp_bchan) {
-		ic->ic_stats.is_rx_chanmismatch++;
-		iwx_scan_assoc_drop(sc, wh, chanidx, scan.sp_chan == 0 ?
-		    "no channel" : "heard off its channel");
-		return 1;
-	}
-	if (scan.sp_bintval < IEEE80211_BINTVAL_MIN ||
-	    scan.sp_bintval > IEEE80211_BINTVAL_MAX) {
-		ic->ic_stats.is_rx_badbintval++;
-		iwx_scan_assoc_drop(sc, wh, chanidx, "bad beacon interval");
-		return 1;
-	}
-
-	s = splnet();
-	ieee80211_add_scan(ic, &scan, wh,
-	    wh->i_fc[0] & IEEE80211_FC0_SUBTYPE_MASK, rxi->rxi_rssi,
-	    rxi->rxi_tstamp);
-	splx(s);
-	return 1;
 }
 
 /*

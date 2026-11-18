@@ -5,6 +5,28 @@ It accepts no MAC header or fixed beacon body. It does not allocate memory.
 The native beacon consumer and the bwfm/aicwf scan adapters share this parser.
 Firmware envelopes, channel policy and lifecycle checks stay in the callers.
 
+## Raw scan observations
+
+`ieee80211_scan_observe()` accepts one contiguous beacon or probe response,
+starting at its MAC header and ending after the IEs. The adapter strips the
+FCS and reports the channel on which the frame was received, the driver's
+signal value, signed dBm, and the receive timestamp. The caller serializes
+access to the scan table and admits only observations from its current scan.
+This also allows a firmware scan to publish results while the station remains
+associated on its home channel.
+
+The call borrows the frame synchronously. A true result means that the scan cache
+recorded the observation. A failure to allocate a scan node returns false and
+increments the node-allocation counter. Native management input owns link updates
+from the current AP. A foreground scan that starts while the station is still in
+RUN can refresh its cached entry only for the same transmitter, BSSID and channel.
+A native adapter can reject an advertised channel mismatch with
+`ieee80211_sta_beacon_offchannel()`. A malformed home-channel beacon still
+reaches native management input so that Quiet and channel-switch admission
+can withdraw transmission.
+The scan path keeps the operating channel intact and checks the observed
+channel against the advertised DS channel, or the HT primary when DS is absent.
+
 ## Ownership and errors
 
 Every pointer in `struct ieee80211_beacon_ies` borrows the input window.

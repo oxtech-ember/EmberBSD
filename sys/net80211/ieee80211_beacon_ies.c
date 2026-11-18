@@ -130,6 +130,27 @@ ieee80211_beacon_ies_parse(struct ieee80211_beacon_ies *ies,
 	return 0;
 }
 
+unsigned
+ieee80211_beacon_primary_channel(const struct ieee80211_beacon_ies *ies)
+{
+	if (ies->ds_exact != NULL)
+		return ies->ds_exact[2];
+	return ies->ht != NULL ? ies->ht[2] : 0;
+}
+
+int
+ieee80211_sta_beacon_offchannel(const uint8_t *body, size_t len, unsigned chan)
+{
+	struct ieee80211_beacon_ies ies;
+	unsigned primary;
+
+	if (body == NULL || len < 12 || chan == 0 || chan > 255 ||
+	    ieee80211_beacon_ies_parse(&ies, body + 12, len - 12) != 0)
+		return 0;
+	primary = ieee80211_beacon_primary_channel(&ies);
+	return primary != 0 && primary != chan;
+}
+
 int
 ieee80211_sta_action_announcement(const uint8_t *body, size_t len)
 {

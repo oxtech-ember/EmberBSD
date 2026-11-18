@@ -1346,7 +1346,7 @@ saveie(u_int8_t **iep, const u_int8_t *ie)
 /*
  * Process a beacon or probe response frame.
  */
-void
+bool
 ieee80211_add_scan(struct ieee80211com *ic,
     const struct ieee80211_scanparams *sp, const struct ieee80211_frame *wh,
     int subtype, int rssi, int rstamp)
@@ -1364,7 +1364,7 @@ ieee80211_add_scan(struct ieee80211com *ic,
 		ni = ic->ic_node_alloc(nt);
 		if (ni == NULL) {
 			ic->ic_stats.is_rx_nodealloc++;
-			return;
+			return false;
 		}
 		ieee80211_setup_node(nt, ni, wh->i_addr2);
 
@@ -1374,7 +1374,7 @@ ieee80211_add_scan(struct ieee80211com *ic,
 		ni->ni_authmode = ic->ic_bss->ni_authmode;
 		ni->ni_txpower = ic->ic_bss->ni_txpower;
 		ni->ni_vlan = ic->ic_bss->ni_vlan;	/* XXX?? */
-		ieee80211_set_chan(ic, ni, ic->ic_curchan);
+		ieee80211_set_chan(ic, ni, &ic->ic_channels[sp->sp_chan]);
 		ni->ni_rsn = ic->ic_bss->ni_rsn;
 		newnode = 1;
 	}
@@ -1443,6 +1443,7 @@ ieee80211_add_scan(struct ieee80211com *ic,
 
 	if (!newnode)
 		ieee80211_free_node(ni);
+	return true;
 #undef ISPROBE
 }
 

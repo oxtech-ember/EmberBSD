@@ -479,18 +479,29 @@ ieee80211_refine_node_for_beacon(struct ieee80211com *ic,
 	(void)ssid;
 	return ni;
 }
-static void
+static unsigned scan_observations;
+static uint8_t last_scan_channel;
+static int8_t last_scan_dbm;
+static bool last_scan_dbm_valid;
+static int last_scan_quality;
+static uint32_t last_scan_stamp;
+
+static bool
 ieee80211_add_scan(struct ieee80211com *ic,
 		   const struct ieee80211_scanparams *sp,
 		   const struct ieee80211_frame *wh, int type, int rssi,
 		   uint32_t stamp)
 {
 	(void)ic;
-	(void)sp;
+	last_scan_channel = sp->sp_chan;
+	last_scan_dbm = sp->sp_rssi_dbm;
+	last_scan_dbm_valid = sp->sp_rssi_dbm_valid;
+	scan_observations++;
 	(void)wh;
 	(void)type;
-	(void)rssi;
-	(void)stamp;
+	last_scan_quality = rssi;
+	last_scan_stamp = stamp;
+	return true;
 }
 static void
 ieee80211_update_adhoc_node(struct ieee80211com *ic, struct ieee80211_node *ni,
@@ -2649,9 +2660,80 @@ test_scan_probe_policy(void)
     release_capture();test_channel.ic_flags=0;
 }
 
+static void
+test_scan_observation(void)
+{
+	uint8_t beacon[36 + 3 + 3 + 3 + 24] = {0};
+	uint8_t *ie = beacon + 36;
+	const uint8_t elements[] = {0, 1, 'x', 1, 1, 12, 3, 1, 6, 61, 22, 6};
+	struct ieee80211_channel *home;
+
+	setup();
+	home = test_ic.ic_curchan;
+	beacon[0] = IEEE80211_FC0_SUBTYPE_BEACON;
+	beacon[32] = 100;
+	memcpy(ie, elements, sizeof(elements));
+	scan_observations = 0;
+	test_ic.ic_bss = NULL;
+	CHECK(!ieee80211_scan_observe(&test_ic, beacon, sizeof(beacon),
+	    6, 43, -57, 123));
+	test_ic.ic_bss = &test_node;
+	CHECK(ieee80211_scan_observe(&test_ic, beacon, sizeof(beacon),
+	    6, 43, -57, 123));
+	CHECK(scan_observations == 1 && last_scan_channel == 6 &&
+	    last_scan_dbm_valid && last_scan_dbm == -57 &&
+	    last_scan_quality == 43 && last_scan_stamp == 123);
+	CHECK(test_ic.ic_curchan == home);
+	CHECK(!ieee80211_scan_observe(&test_ic, beacon, sizeof(beacon),
+	    11, 0, -80, 0));
+	CHECK(!ieee80211_scan_observe(&test_ic, beacon, sizeof(beacon),
+	    0, 0, -80, 0));
+	CHECK(!ieee80211_scan_observe(&test_ic, beacon, sizeof(beacon),
+	    IEEE80211_CHAN_MAX + 1, 0, -80, 0));
+	test_ic.ic_chan_active[0] &= ~(1U << 6);
+	CHECK(!ieee80211_scan_observe(&test_ic, beacon, sizeof(beacon),
+	    6, 0, -80, 0));
+	test_ic.ic_chan_active[0] |= 1U << 6;
+	beacon[0] = IEEE80211_FC0_SUBTYPE_PROBE_RESP;
+	CHECK(!ieee80211_sta_beacon_offchannel(beacon + 24, sizeof(beacon) - 24, 6));
+	CHECK(ieee80211_sta_beacon_offchannel(beacon + 24, sizeof(beacon) - 24, 11));
+	CHECK(!ieee80211_sta_beacon_offchannel(beacon + 24,
+	    sizeof(beacon) - 25, 6));
+	/* With no DS parameter, the HT primary must still match RX. */
+	ie[6] = 200;
+	CHECK(ieee80211_sta_beacon_offchannel(beacon + 24, sizeof(beacon) - 24, 11));
+	CHECK(ieee80211_scan_observe(&test_ic, beacon, sizeof(beacon),
+	    6, 42, -58, 124));
+	CHECK(!ieee80211_scan_observe(&test_ic, beacon, sizeof(beacon),
+	    11, 42, -58, 124));
+	CHECK(!ieee80211_scan_observe(&test_ic, beacon, 35, 6, 0, -80, 0));
+	CHECK(!ieee80211_scan_observe(&test_ic, beacon, sizeof(beacon) - 1,
+	    6, 0, -80, 0));
+	/* A foreign-channel observation cannot rewrite the associated scan node. */
+	test_ic.ic_opmode = IEEE80211_M_STA;
+	test_ic.ic_state = IEEE80211_S_RUN;
+	test_node.ni_associd = 1;
+	memcpy(beacon + 10, test_node.ni_macaddr, 6);
+	memcpy(beacon + 16, test_node.ni_bssid, 6);
+	CHECK(!ieee80211_scan_observe(&test_ic, beacon, sizeof(beacon),
+	    6, 0, -80, 0));
+	test_node.ni_chan = &test_ic.ic_channels[6];
+	CHECK(ieee80211_scan_observe(&test_ic, beacon, sizeof(beacon),
+	    6, 40, -60, 125));
+	beacon[16] ^= 1;
+	CHECK(!ieee80211_scan_observe(&test_ic, beacon, sizeof(beacon),
+	    6, 40, -60, 125));
+	test_ic.ic_state = IEEE80211_S_SCAN;
+	beacon[1] = IEEE80211_FC1_WEP;
+	CHECK(!ieee80211_scan_observe(&test_ic, beacon, sizeof(beacon),
+	    6, 0, -80, 0));
+	CHECK(scan_observations == 3 && test_ic.ic_curchan == home);
+}
+
 int
 main(void)
 {
+	test_scan_observation();
 	test_pending_lifetime();
 	test_scan_probe_policy();
 	test_csa_beacon_stop();

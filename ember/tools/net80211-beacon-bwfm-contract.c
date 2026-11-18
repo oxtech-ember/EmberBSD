@@ -51,12 +51,12 @@ static struct ieee80211_scanparams observed;
 static unsigned bwfm_scan_channel(unsigned ctl, unsigned spec, unsigned type)
 { (void)spec; (void)type; return ctl; }
 static unsigned bwfm_scan_rssi(int dbm) { return dbm+100; }
-static void ieee80211_add_scan(struct ieee80211com *ic,
+static bool ieee80211_add_scan(struct ieee80211com *ic,
     const struct ieee80211_scanparams *sp, const struct ieee80211_frame *wh,
     int subtype, int rssi, int stamp)
 {
     (void)ic;(void)wh;(void)subtype;(void)rssi;(void)stamp;
-    observed=*sp; added++;
+    observed=*sp; added++; return true;
 }
 #include "bwfm-scan.inc"
 static void check(const uint8_t *suffix,size_t n,bool accept, bool security)

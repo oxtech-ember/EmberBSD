@@ -147,12 +147,16 @@ parts.append(function(node, "ieee80211_probe_curchan", "static void"))
 parts.append("#define ISREASSOC(st) ((st) == IEEE80211_FC0_SUBTYPE_REASSOC_RESP)\n")
 parts.append(function(ipt, "ieee80211_recv_mgmt_assoc_resp", "static void"))
 parts.append(function("sys/net80211/ieee80211_beacon_ies.c", "ieee80211_beacon_ies_parse", "int"))
+parts.append(function("sys/net80211/ieee80211_beacon_ies.c", "ieee80211_beacon_primary_channel", "unsigned"))
+parts.append(function("sys/net80211/ieee80211_beacon_ies.c", "ieee80211_sta_beacon_offchannel", "int"))
 parts.append(function("sys/net80211/ieee80211_beacon_ies.c", "ieee80211_sta_beacon_interval", "uint16_t"))
 for name in ("ieee80211_sta_action_announcement", "ieee80211_sta_beacon_announcement"):
     parts.append(function("sys/net80211/ieee80211_beacon_ies.c", name, "int"))
 if "\nieee80211_sta_csa_beacon(" in read(ipt):
     for name in ("ieee80211_sta_csa_current", "ieee80211_sta_csa_exit", "ieee80211_sta_csa_beacon"):
         parts.append(function(ipt, name, "static int"))
+parts.append(function(ipt, "ieee80211_scan_parse", "static bool"))
+parts.append(function(ipt, "ieee80211_scan_observe", "bool"))
 parts.append(function(ipt, "ieee80211_recv_mgmt_beacon", "static void"))
 for line in read("sys/net80211/ieee80211_ioctl.h").splitlines():
     if re.match(r"#define\s+IEEE80211_(IOC_WME_|WMEPARAM_)", line):

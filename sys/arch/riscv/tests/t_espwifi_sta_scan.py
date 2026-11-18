@@ -34,6 +34,7 @@ tx_request = function(source, 'espwifi_if_action_tx_request', 'int')
 tx_cancel = function(source, 'espwifi_if_action_tx_cancel', 'int')
 tx_invalidate = function(source, 'espwifi_if_action_tx_invalidate', 'void')
 tx_control = function(source, 'espwifi_if_action_tx_control', 'void')
+scan_frame_process = function(source, 'espwifi_if_scan_frame_process', 'void')
 sta_header = (root.parent.parent / 'net80211/ieee80211_sta.h').read_text()
 action_header = (root.parent.parent / 'net80211/ieee80211_sta_action.h').read_text()
 
@@ -120,6 +121,13 @@ code = r'''
 #define IEEE80211_S_RUN 4
 #define IEEE80211_M_STA 1
 #define IEEE80211_F_SCAN 1
+#define BPF_D_IN 1
+#define if_ierrors 1
+#define __UNCONST(p) ((void *)(uintptr_t)(const void *)(p))
+#define IEEE80211_S_RUN 4
+#define IEEE80211_ADDR_EQ(a,b) (memcmp((a),(b),6)==0)
+#define MAX(a,b) ((a)>(b)?(a):(b))
+#define MIN(a,b) ((a)<(b)?(a):(b))
 #define ESPWIFI_WAIT_FOREVER 0
 #define hz 100
 #define RTM_IEEE80211_STA_TX 113
@@ -133,14 +141,19 @@ struct ieee80211req_sta_mgmt {
 ''' + action_state + r'''
 struct ieee80211_sta_scan_state { bool active; };
 struct ieee80211_channel { uint16_t ic_freq; };
-struct ieee80211_node { struct ieee80211_channel *ni_chan;uint8_t ni_bssid[6]; };
+struct ieee80211_node { struct ieee80211_channel *ni_chan;uint8_t ni_bssid[6];
+ int8_t ni_rssi_dbm;bool ni_rssi_dbm_valid; };
 struct ifnet { void *if_softc; };
 struct ieee80211com { struct ifnet *ic_ifp;int ic_state,ic_flags;
- struct ieee80211_node *ic_bss;uint8_t ic_myaddr[6];uint8_t ic_chan_active[2];
+ struct ieee80211_node *ic_bss;void *ic_rawbpf;uint8_t ic_myaddr[6];uint8_t ic_chan_active[2];
  struct ieee80211_sta_scan_state ic_sta_scan;struct ieee80211_sta_action_state ic_sta_action;
  int ic_opmode;
  struct ieee80211_channel ic_channels[15]; };
 struct ethercom { struct ifnet ec_if; };
+struct mbuf { int m_len; };
+struct ieee80211_frame { uint8_t fc[2],dur[2],i_addr1[6],i_addr2[6],i_addr3[6],seq[2]; };
+struct espwifi_scan_frame { bool action;unsigned len,channel;uint32_t timestamp;
+ uint64_t generation;int rssi;uint8_t sender[6],data[2304]; };
 struct espwifi_softc { struct ieee80211com sc_ic;struct ifnet sc_ifp;
  struct ethercom sc_ec;int sc_scan_lock,sc_key_lock;
  void *sc_scan_ctl_sem;unsigned sc_scan_count,sc_port_authorized;
@@ -160,6 +173,10 @@ static int abort_reports,success_reports,scan_start_result,scan_result,scan_mask
 static bool report_aborted,inject_abort,report_once;static int admission_mutation;
 static jmp_buf worker_done;static int sem_takes;
 static int drain_delays;
+static int scan_observe_calls,scan_input_calls,scan_bpf_calls,scan_find_calls;
+static int scan_mbuf_fail,scan_mbuf_calls;
+static unsigned scan_observe_channel;static int scan_observe_rssi;static int8_t scan_observe_dbm;
+static uint32_t scan_observe_stamp;static bool scan_observe_result=true;
 static int action_enabled,action_ext_error,action_ext_calls,action_callbacks;
 static int action_tx_events;
 static int action_auto_callback;
@@ -175,6 +192,29 @@ static void mutex_exit(int *p) { (void)p; }
 static void espwifi_if_action_tx_control(struct espwifi_softc *);
 static unsigned atomic_load_acquire(unsigned *p) { return *p; }
 static int splnet(void) { return 0; }static void splx(int s) { (void)s; }
+static bool bpf_peers_present(void *p) { return p != NULL; }
+static void bpf_mtap3(void *bp,struct mbuf *m,unsigned direction) {
+ assert(bp && m && direction==1 && !spin_depth);scan_bpf_calls++; }
+static struct mbuf *m_devget(const void *p,size_t n,int h,struct ifnet *ifp) {
+ (void)p;(void)n;(void)h;assert(ifp);scan_mbuf_calls++;
+ return scan_mbuf_fail?NULL:calloc(1,sizeof(struct mbuf)); }
+static void m_freem(struct mbuf *m) { free(m); }
+static unsigned ieee80211_chan2ieee(struct ieee80211com *ic,
+ const struct ieee80211_channel *c) { (void)ic;return (unsigned)(c-ic->ic_channels); }
+static void m_set_rcvif(struct mbuf *m,struct ifnet *ifp) { assert(m&&ifp); }
+static void if_statinc(struct ifnet *ifp,int field) { (void)ifp;(void)field; }
+static bool ieee80211_scan_observe(struct ieee80211com *ic,const void *p,size_t n,
+ unsigned int ch,int rssi,int8_t dbm,uint32_t stamp) {
+ assert(ic && p && n>=36 && !spin_depth);scan_observe_calls++;
+ scan_observe_channel=ch;scan_observe_rssi=rssi;scan_observe_dbm=dbm;
+ scan_observe_stamp=stamp;return scan_observe_result; }
+static struct ieee80211_node *ieee80211_find_rxnode(struct ieee80211com *ic,
+ const void *p) { assert(ic && p && !spin_depth);scan_find_calls++;return ic->ic_bss; }
+static void ieee80211_free_node(struct ieee80211_node *ni) { (void)ni; }
+static void ieee80211_input(struct ieee80211com *ic,struct mbuf *m,
+ struct ieee80211_node *ni,int rssi,uint32_t stamp) {
+ assert(ic && m && ni && !spin_depth);scan_input_calls++;m_freem(m);
+ (void)rssi;(void)stamp; }
 static int ieee80211_sta_request_validate(const struct ieee80211req_sta_mgmt *r) {
  if (!r || r->version!=IEEE80211_STA_VERSION || r->len>sizeof(r->data) ||
 	    r->reserved!=0 || r->tx_error!=0 ||
@@ -239,7 +279,7 @@ static void espwifi_os_log(const char *fmt,...) { (void)fmt; }
 static int printf(const char *fmt,...) { (void)fmt;return 0; }
 static void ieee80211_cancel_scan(struct ieee80211com *ic) { ic->ic_flags&=~IEEE80211_F_SCAN; }
 static void ieee80211_end_scan(struct ieee80211com *ic) { ic->ic_flags&=~IEEE80211_F_SCAN; }
-''' + sta_validation + action_helpers + abort + tx_snapshot + tx_clear + tx_report + tx_done + tx_request + tx_cancel + tx_invalidate + tx_control + adapter + worker + r'''
+''' + sta_validation + action_helpers + abort + tx_snapshot + tx_clear + tx_report + tx_done + tx_request + tx_cancel + tx_invalidate + tx_control + scan_frame_process + adapter + worker + r'''
 static void clear_events(void) { report_once=false;report_calls=abort_reports=
  success_reports=release_calls=0;report_aborted=false; }
 static void setup(void) {
@@ -259,6 +299,10 @@ static void setup(void) {
  action_enabled=1;action_ext_error=action_ext_calls=action_callbacks=0;
  action_tx_events=0;
  action_auto_callback=0;memset(&action_event,0,sizeof(action_event));
+ scan_observe_calls=scan_input_calls=scan_bpf_calls=scan_find_calls=0;
+ scan_mbuf_fail=scan_mbuf_calls=0;
+ scan_observe_channel=0;scan_observe_rssi=0;scan_observe_dbm=0;
+ scan_observe_stamp=0;scan_observe_result=true;
  inject_abort=false;sem_takes=0;clear_events(); }
 static struct ieee80211req_sta_mgmt request(unsigned op) {
  struct ieee80211req_sta_mgmt r={0};r.version=IEEE80211_STA_VERSION;
@@ -273,6 +317,33 @@ static void run_worker(void) { sem_takes=0;if(setjmp(worker_done)==0)
  espwifi_if_scan_control(&sc); }
 int main(void) {
  setup();
+ /* Foreign observations use the shared scan parser directly, validate the
+  * queued scan generation, and tap raw BPF only for attached listeners. */
+ struct espwifi_scan_frame sf={.len=36,.channel=6,.timestamp=1234,
+   .generation=9,.rssi=-47};sf.data[0]=0x80;
+ sc.sc_scan_generation=9;sc.sc_ic.ic_flags=IEEE80211_F_SCAN;
+ espwifi_if_scan_frame_process(&sc,&sf);
+ assert(scan_observe_calls==1 && scan_observe_channel==6 &&
+   scan_observe_rssi==53 && scan_observe_dbm==-47 && scan_observe_stamp==1234);
+ assert(scan_mbuf_calls==0);
+ assert(scan_input_calls==0 && scan_find_calls==0 && scan_bpf_calls==0);
+ sc.sc_ic.ic_rawbpf=(void *)1;
+ espwifi_if_scan_frame_process(&sc,&sf);
+ assert(scan_observe_calls==2 && scan_bpf_calls==1 && scan_input_calls==0);
+ scan_mbuf_fail=1;espwifi_if_scan_frame_process(&sc,&sf);
+ assert(scan_observe_calls==3 && scan_bpf_calls==1 && scan_input_calls==0);
+ scan_mbuf_fail=0;
+ sf.generation=8;
+ espwifi_if_scan_frame_process(&sc,&sf);
+ assert(scan_observe_calls==3 && scan_bpf_calls==1 && scan_input_calls==0);
+ /* Current home BSS stays on native input for CSA and associated state. */
+ sf.generation=9;sf.channel=6;sf.data[16]=2;sf.data[17]=3;sf.data[18]=4;
+ sf.data[19]=5;sf.data[20]=6;sf.data[21]=7;memcpy(sf.data+10,sf.data+16,6);
+ sc.sc_joined=sc.sc_link=true;sc.sc_ic.ic_state=IEEE80211_S_RUN;
+ sc.sc_ic.ic_bss->ni_chan=&sc.sc_ic.ic_channels[6];
+ espwifi_if_scan_frame_process(&sc,&sf);
+ assert(scan_observe_calls==3 && scan_input_calls==1 && scan_find_calls==1 &&
+   scan_bpf_calls==1);
  /* GET reports only scan capability while disconnected, and scan+association
   * details only for the live RUN BSS. */
  sc.sc_joined=sc.sc_link=false;

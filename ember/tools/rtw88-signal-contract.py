@@ -26,7 +26,7 @@ s=s.replace('unsigned ni_rssi, ni_rstamp, ni_rsn;', 'unsigned ni_rssi, ni_rstamp
 s=s.replace('struct ieee80211com;','struct ieee80211_rateset { uint8_t rs_nrates,rs_rates[IEEE80211_RATE_MAXSIZE]; };\nstruct ieee80211com;',1)
 s=s.replace('struct {\n\t\tuint8_t rs_nrates, rs_rates[IEEE80211_RATE_MAXSIZE];\n\t} ni_rates;','struct ieee80211_rateset ni_rates;')
 (out/'signal-scan-model.inc').write_text(s)
-parts=[body('sys/net80211/ieee80211_input.c','ieee80211_saveie','void'),body('sys/net80211/ieee80211_node.c','saveie','static void'),body('sys/net80211/ieee80211_node.c','ieee80211_add_scan','void')]
+parts=[body('sys/net80211/ieee80211_input.c','ieee80211_saveie','void'),body('sys/net80211/ieee80211_node.c','saveie','static void'),body('sys/net80211/ieee80211_node.c','ieee80211_add_scan','bool')]
 (out/'signal-add-scan.inc').write_text(''.join(parts))
 parts=['#define IEEE80211_CAPINFO_PRIVACY 0x10\n#define IEEE80211_RATE_VAL 0x7f\n#define IEEE80211_IS_CHAN_5GHZ(c) ((c)->ic_freq>3000)\n']
 for n,r in [('node_getrssi','static uint8_t'),('maxrate','static uint8_t'),('ieee80211_node_compare','static int')]:parts.append(body('sys/net80211/ieee80211_node.c',n,r))

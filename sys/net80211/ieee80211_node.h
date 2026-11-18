@@ -401,10 +401,12 @@ ieee80211_unref_node(struct ieee80211_node **ni)
 	*ni = NULL;			/* guard against use */
 }
 
-void	ieee80211_add_scan(struct ieee80211com *,
+bool	ieee80211_add_scan(struct ieee80211com *,
 		const struct ieee80211_scanparams *,
 		const struct ieee80211_frame *,
 		int subtype, int rssi, int rstamp);
+bool	ieee80211_scan_observe(struct ieee80211com *, const void *, size_t,
+		unsigned int channel, int rssi, int8_t rssi_dbm, uint32_t rstamp);
 void ieee80211_init_neighbor(struct ieee80211com *, struct ieee80211_node *,
 		const struct ieee80211_frame *,
 		const struct ieee80211_scanparams *, int);

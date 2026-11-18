@@ -151,7 +151,7 @@ net80211 leaves the BSS before any scan it is asked for, so
 associated station itself: the firmware scans with the timing OpenBSD
 uses for a background scan (at most 120 TU away from the channel of the
 BSS at a time), beacons and probe responses of other BSSes go straight
-to the net80211 scan table (`iwx_scan_assoc_rx()`), and the end is
+to the net80211 scan table through `ieee80211_scan_observe()`, and the end is
 reported as a finished scan (`RTM_IEEE80211_SCAN`), without
 `ieee80211_end_scan()`. No net80211 state changes meanwhile. The other
 requests `wpa_supplicant` makes before a scan (manual roaming, the WPA
@@ -165,19 +165,18 @@ built without its periodic background scan, so such a scan starts on
 request only (`wpa_cli scan`). Contracts: `test_scan()` in
 `ember/tools/iwx-ht-contract.sh`; the request, the end of the scan, the
 overrun and the state dispatcher in `ember/tools/iwx-width-contract.sh`;
-the receive path in `ember/tests/iwx-sae.sh`. `iwx_scan_assoc_rx()` has
-no fixture.
+the receive path in `ember/tests/iwx-sae.sh`.
 
-A beacon or probe response is filed under the channel it names for its
-BSS: the DS Parameter Set, or, as 5 GHz beacons usually carry no DS
-element, the primary channel of HT Operation. net80211 checks only the DS
-element, so the firmware's receive channel used to decide; on hardware
-`wpa_supplicant` then tried one 5 GHz BSS at three frequencies and timed
-out on the wrong ones. `iwx_rx_frame()` now drops such a frame when the
-two disagree, counts it in `is_rx_chanmismatch` and, with `IFF_DEBUG`,
-logs it like the other scan results it does not file. Contracts:
-`test_scan_chan()` in `ember/tools/iwx-ht-contract.sh` and the `offchan`
-case in `ember/tests/iwx-sae.sh`.
+A beacon or probe response is admitted to the scan cache through the
+shared net80211 observer, which checks its DS or HT primary channel against
+the firmware receive channel. Foreground results in INIT/SCAN and foreign
+BSSes seen during a RUN scan use that observer. An exact home BSS beacon in
+RUN stays on native input, including the early foreground-scan window, so
+CSA, ERP and TIM handling remain active. The driver checks its receive channel
+against the home channel first; malformed home IEs reach net80211's
+fail-closed CSA path. Contracts: `test_scan()` in
+`ember/tools/iwx-ht-contract.sh` and the receive-path cases in
+`ember/tests/iwx-sae.sh`.
 
 The country the firmware reports (`MCC_UPDATE` notification) is taken over
 only before a BSS is chosen. As Linux does, a country the firmware made of

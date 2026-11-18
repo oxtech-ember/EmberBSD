@@ -140,6 +140,12 @@ ieee80211_find_node(struct ieee80211_node_table *nt, const uint8_t *a)
 	(void)a;
 	return selected_node;
 }
+static struct ieee80211_node *
+unavailable_node(struct ieee80211_node_table *nt)
+{
+	(void)nt;
+	return NULL;
+}
 static void
 ieee80211_setup_node(struct ieee80211_node_table *nt, struct ieee80211_node *ni,
 		     const uint8_t *a)
@@ -304,7 +310,14 @@ main(void)
 	    "TIM passes the shared parser");
 	sp.sp_tim = (uint8_t *)(uintptr_t)ies.tim;
 	sp.sp_timoff = 36 + ies.timoff;
-	ieee80211_add_scan(&ic, &sp, &wh, 0x50, 42, 123);
+	selected_node = NULL;
+	ic.ic_node_alloc = unavailable_node;
+	check(!ieee80211_add_scan(&ic, &sp, &wh, 0x50, 42, 123) &&
+	    ic.ic_stats.is_rx_nodealloc == 1, "scan node allocation failure is reported");
+	selected_node = &ni;
+	ic.ic_node_alloc = node_alloc;
+	check(ieee80211_add_scan(&ic, &sp, &wh, 0x50, 42, 123),
+	    "scan cache records the observation");
 	check(ni.ni_dtim_count == 7 && ni.ni_dtim_period == 9 && ni.ni_timoff == 36,
 	    "real scan storage reads validated TIM fields and preserves offset");
 	sp.sp_tim = NULL;

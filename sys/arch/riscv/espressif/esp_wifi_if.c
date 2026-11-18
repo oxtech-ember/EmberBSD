@@ -912,6 +912,62 @@ espwifi_if_action_rx_process(struct espwifi_softc *sc,
 }
 
 static void
+espwifi_if_scan_frame_process(struct espwifi_softc *sc,
+    const struct espwifi_scan_frame *frame)
+{
+	struct ieee80211com *ic = &sc->sc_ic;
+	const struct ieee80211_frame *wh = (const void *)frame->data;
+	struct ieee80211_node *ni;
+	struct mbuf *m;
+	bool current, home;
+	int quality, s;
+
+	KERNEL_LOCK(1, NULL);
+	s = splnet();
+	mutex_spin_enter(&sc->sc_scan_lock);
+	current = frame->generation == sc->sc_scan_generation;
+	mutex_spin_exit(&sc->sc_scan_lock);
+	if (!current || (ic->ic_flags & IEEE80211_F_SCAN) == 0 ||
+	    frame->len < sizeof(*wh) + 12 || frame->len > sizeof(frame->data))
+		goto out;
+
+	ni = ic->ic_bss;
+	home = sc->sc_joined && sc->sc_link && ic->ic_state == IEEE80211_S_RUN &&
+	    ni != NULL && ni->ni_chan != NULL && ni->ni_chan != IEEE80211_CHAN_ANYC &&
+	    frame->channel == ieee80211_chan2ieee(ic, ni->ni_chan) &&
+	    IEEE80211_ADDR_EQ(wh->i_addr2, ni->ni_bssid) &&
+	    IEEE80211_ADDR_EQ(wh->i_addr3, ni->ni_bssid);
+	quality = MAX(1, MIN(100, frame->rssi + 100));
+	if (home) {
+		m = m_devget(__UNCONST(frame->data), frame->len, 0, &sc->sc_ec.ec_if);
+		if (m == NULL) {
+			if_statinc(&sc->sc_ec.ec_if, if_ierrors);
+			goto out;
+		}
+		ni = ieee80211_find_rxnode(ic, (const void *)wh);
+		m_set_rcvif(m, &sc->sc_ec.ec_if);
+		ieee80211_input(ic, m, ni, quality, frame->timestamp);
+		ni->ni_rssi_dbm = frame->rssi;
+		ni->ni_rssi_dbm_valid = true;
+		ieee80211_free_node(ni);
+	} else {
+		if (bpf_peers_present(ic->ic_rawbpf)) {
+			m = m_devget(__UNCONST(frame->data), frame->len, 0,
+			    &sc->sc_ec.ec_if);
+			if (m != NULL) {
+				bpf_mtap3(ic->ic_rawbpf, m, BPF_D_IN);
+				m_freem(m);
+			}
+		}
+		(void)ieee80211_scan_observe(ic, frame->data, frame->len,
+		    frame->channel, quality, frame->rssi, frame->timestamp);
+	}
+out:
+	splx(s);
+	KERNEL_UNLOCK_ONE(NULL);
+}
+
+static void
 espwifi_if_scanthread(void *v)
 {
 	struct espwifi_softc * const sc = v;
@@ -920,8 +976,6 @@ espwifi_if_scanthread(void *v)
 	for (;;) {
 		espwifi_os_sem_take(sc->sc_scan_sem, ESPWIFI_WAIT_FOREVER);
 		for (;;) {
-			bool current;
-
 			mutex_spin_enter(&sc->sc_scan_lock);
 			if (sc->sc_scan_shutdown) {
 				mutex_spin_exit(&sc->sc_scan_lock);
@@ -942,39 +996,7 @@ espwifi_if_scanthread(void *v)
 				goto done;
 			}
 
-			struct mbuf *m = m_devget(__UNCONST(frame.data), frame.len, 0,
-			    &sc->sc_ec.ec_if);
-			if (m == NULL)
-				goto done;
-			KERNEL_LOCK(1, NULL);
-			const int s = splnet();
-			mutex_spin_enter(&sc->sc_scan_lock);
-			current = frame.generation == sc->sc_scan_generation;
-			mutex_spin_exit(&sc->sc_scan_lock);
-			if (!current || (sc->sc_ic.ic_flags & IEEE80211_F_SCAN) == 0) {
-				splx(s);
-				KERNEL_UNLOCK_ONE(NULL);
-				m_freem(m);
-				goto done;
-			}
-			struct ieee80211_channel * const saved_channel =
-			    sc->sc_ic.ic_curchan;
-			sc->sc_ic.ic_curchan = &sc->sc_ic.ic_channels[frame.channel];
-			struct ieee80211_node *ni = ieee80211_find_rxnode(&sc->sc_ic,
-			    mtod(m, const struct ieee80211_frame_min *));
-			/* The legacy scan quality byte is unsigned, not dBm. */
-			int quality = MAX(1, MIN(100, frame.rssi + 100));
-			ieee80211_input(&sc->sc_ic, m, ni, quality, frame.timestamp);
-			ieee80211_free_node(ni);
-			ni = ieee80211_find_node(&sc->sc_ic.ic_scan, frame.data + 10);
-			if (ni != NULL) {
-				ni->ni_rssi_dbm = frame.rssi;
-				ni->ni_rssi_dbm_valid = true;
-				ieee80211_free_node(ni);
-			}
-			sc->sc_ic.ic_curchan = saved_channel;
-			splx(s);
-			KERNEL_UNLOCK_ONE(NULL);
+			espwifi_if_scan_frame_process(sc, &frame);
 done:
 			mutex_spin_enter(&sc->sc_scan_lock);
 			sc->sc_scan_busy = false;

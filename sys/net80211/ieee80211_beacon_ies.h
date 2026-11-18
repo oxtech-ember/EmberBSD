@@ -28,6 +28,11 @@ struct ieee80211_beacon_ies {
  */
 int ieee80211_beacon_ies_parse(struct ieee80211_beacon_ies *,
     const uint8_t *, size_t);
+/* Advertised DS channel, or the HT primary if DS is absent; 0 if unknown. */
+unsigned ieee80211_beacon_primary_channel(const struct ieee80211_beacon_ies *);
+/* Return 1 for an established mismatch. Missing or malformed IEs leave
+ * channel and quiet/CSA admission to the native management path. */
+int ieee80211_sta_beacon_offchannel(const uint8_t *, size_t, unsigned);
 /* Pure body classifiers after current-peer/RX-envelope validation.
  * Beacon accepts the fixed body plus its IE window. Action recognizes the
  * two channel-switch prefixes. Return 1 to withdraw transmission, else 0.

@@ -25,7 +25,7 @@ ht20 = read('sys/net80211/ieee80211_ht20.c')
 text += ht20[:ht20.index('#include')]
 text += function(ht20, 'ieee80211_ht20_reset', 'void')
 text += function(node, 'node_cleanup', 'static void')
-text += function(node, 'ieee80211_add_scan', 'void')
+text += function(node, 'ieee80211_add_scan', 'bool')
 (out / 'native-node.inc').write_text(text)
 
 # Use the actual input request and wire layouts, not shortened stand-ins.
