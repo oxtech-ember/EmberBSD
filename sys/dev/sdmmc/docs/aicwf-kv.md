@@ -70,6 +70,7 @@ The current implementation needs a firmware restart to recover that last case.
 Run from the source root on a supported development host:
 
 ```sh
+export EMBER_WPA_SOURCE=/absolute/path/to/prepared-wpa-source
 sh ember/tests/aicwf-sta.sh
 sh ember/tests/aicwf-command.sh
 sh ember/tests/aicwf-scan.sh

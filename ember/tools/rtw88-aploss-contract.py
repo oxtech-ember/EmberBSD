@@ -6,13 +6,19 @@ import pathlib
 import re
 import sys
 import subprocess
+import os
 
 src, out = map(pathlib.Path, sys.argv[1:3])
+wpa_source = pathlib.Path(os.environ['EMBER_WPA_SOURCE'])
 subprocess.run([sys.executable,str(src/'ember/tools/net80211-rxba-lifecycle-extract.py'),str(src),str(out)],check=True)
 mutant = sys.argv[3] if len(sys.argv) > 3 else 'none'
 assert mutant in ('none', 'supervision', 'withdrawal', 'ra', 'notification', 'dfs', 'sae-request', 'sae-snapshot', 'sae-leave')
 
 def read(path):
+    if str(path).startswith('external/bsd/wpa/dist/'):
+        return (wpa_source / str(path)[len('external/bsd/wpa/dist/'):]).read_text()
+    if str(path).startswith('external/bsd/wpa/'):
+        return (wpa_source / str(path)[len('external/bsd/wpa/'):]).read_text()
     return (src/path).read_text()
 
 def notice(path):
@@ -35,7 +41,7 @@ net = 'sys/dev/ic/rtw88_net.c'
 proto = 'sys/net80211/ieee80211_proto.c'
 node = 'sys/net80211/ieee80211_node.c'
 nbsd = 'sys/net80211/ieee80211_netbsd.c'
-wpa = 'external/bsd/wpa/dist/src/drivers/driver_bsd.c'
+wpa = 'external/bsd/wpa/src/drivers/driver_bsd.c'
 sae = 'sys/net80211/ieee80211_sae.c'
 constants = [re.search(r'^enum sae_phase \{.*?\};', read(sae), re.M|re.S).group()+'\n']
 for path, name in [('sys/net80211/ieee80211_proto.h', 'ieee80211_state'),

@@ -15,6 +15,7 @@ import subprocess
 import tempfile
 
 ROOT = Path(os.environ.get('MANUAL_SCAN_SOURCE', Path(__file__).resolve().parents[2]))
+WPA_SOURCE = Path(os.environ['EMBER_WPA_SOURCE'])
 
 def function(source, name):
     match = re.search(r'^' + re.escape(name) + r'\(', source, re.M)
@@ -32,7 +33,7 @@ def arm(source, name):
         raise RuntimeError('missing next case: ' + name)
     return source[match.start():match.end() + following.start()]
 
-bsd = (ROOT / 'external/bsd/wpa/dist/src/drivers/driver_bsd.c').read_text()
+bsd = (WPA_SOURCE / 'src/drivers/driver_bsd.c').read_text()
 stack = (ROOT / 'sys/net80211/ieee80211_ioctl.c').read_text()
 net = (ROOT / 'sys/dev/ic/rtw88_net.c').read_text()
 net80211 = (ROOT / 'sys/net80211/_ieee80211.h').read_text()

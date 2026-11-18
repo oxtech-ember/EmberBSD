@@ -207,7 +207,7 @@ typedef uint8_t u8;
 #define ETH_ALEN 6
 #define is_multicast_ether_addr(a) (((const uint8_t *)(a))[0] & 1)
 static int is_zero_ether_addr(const uint8_t *a) { return memcmp(a,"\0\0\0\0\0\0",6)==0; }
-static void bsd_sta_tx_status(struct bsd_driver_data *drv,int a,int b) { (void)drv;(void)a;(void)b;user_tx_clear++; }
+static void bsd_sta_tx_status(struct bsd_driver_data *drv,int ack,int ack_known,int tx_error,int notify) { (void)drv;(void)ack;(void)ack_known;(void)tx_error;(void)notify;user_tx_clear++; }
 static void bsd_sta_scan_clear(struct bsd_driver_data *drv) { drv->sta_scan_pending=0;user_scan_clear++; }
 /* Event queue is the actual consumer boundary, not a fake successful scan. */
 static void wpa_supplicant_event(void *ctx,int event,union wpa_event_data *data) {

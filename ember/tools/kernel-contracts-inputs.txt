@@ -32,8 +32,8 @@ ember/tests/a733-npu-observe.py sys/arch/arm/sunxi/
 ember/tests/a733-npu-observe.py sys/dev/fdt/
 ember/tests/a733-npu-observe.py sys/external/gpl2/dts/dist/arch/arm64/boot/dts/allwinner/
 ember/tests/aicwf-sta.sh ember/tools/aicwf-sta-contract.c
-ember/tests/aicwf-sta.sh external/bsd/wpa/dist/src/common/
-ember/tests/aicwf-sta.sh external/bsd/wpa/dist/src/drivers/
+ember/tests/aicwf-sta.sh .github/actions/prepare-wpa-source/action.yml
+ember/tests/aicwf-sta.sh ember/shared-sources.json
 ember/tests/aicwf-sta.sh sys/dev/sdmmc/
 ember/tests/aicwf-sta.sh sys/net80211/
 ember/tests/aicwf-vht.sh ember/tools/aicwf-vht-test.c
@@ -59,12 +59,11 @@ ember/tests/bwfm-link-events.sh sys/dev/ic/
 ember/tests/bwfm-scan-padding.sh ember/tools/bwfm-scan-padding.c
 ember/tests/bwfm-scan-padding.sh sys/net80211/
 ember/tests/bwfm-sta.sh ember/tools/bwfm-sta-bsd-assoc.c
+ember/tests/bwfm-sta.sh .github/actions/prepare-wpa-source/action.yml
 ember/tests/bwfm-sta.sh ember/tools/bwfm-sta-bsd.c
 ember/tests/bwfm-sta.sh ember/tools/bwfm-sta-contract.c
 ember/tests/bwfm-sta.sh ember/tools/bwfm-sta-scan.c
-ember/tests/bwfm-sta.sh external/bsd/wpa/dist/src/common/
-ember/tests/bwfm-sta.sh external/bsd/wpa/dist/src/drivers/
-ember/tests/bwfm-sta.sh external/bsd/wpa/dist/src/utils/
+ember/tests/bwfm-sta.sh ember/shared-sources.json
 ember/tests/bwfm-sta.sh sys/dev/ic/
 ember/tests/bwfm-sta.sh sys/net80211/
 ember/tests/cemac-stop.sh ember/tests/cemac-stop.c

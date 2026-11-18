@@ -570,7 +570,7 @@ management capabilities and physical radio operations are outside this contract.
 Run with a native GCC16 compiler:
 
 ```sh
-CC=/absolute/gcc16/bin/gcc python3 ember/tools/net80211-manual-scan-contract.py
+EMBER_WPA_SOURCE=/absolute/path/to/prepared-wpa-source CC=/absolute/gcc16/bin/gcc python3 ember/tools/net80211-manual-scan-contract.py
 ```
 
 `MANUAL_SCAN_CFLAGS` accepts ASan/UBSan flags. `MANUAL_SCAN_ANALYZE=1` runs
@@ -680,7 +680,7 @@ CC=gcc-16 RTW88_ROUTING_ANALYZE=1 sh ember/tools/rtw88-routing-contract.sh
 CC=gcc-16 RTW88_ENABLE_ANALYZE=1 sh ember/tools/rtw88-enable-contract.sh
 CC=gcc-16 RTW88_RA_ANALYZE=1 sh ember/tools/rtw88-ra-contract.sh
 CC=gcc-16 RTW88_RECONNECT_ANALYZE=1 sh ember/tools/rtw88-reconnect-contract.sh
-CC=gcc-16 RTW88_RECONNECT_ANALYZE=1 sh ember/tools/rtw88-aploss-contract.sh
+EMBER_WPA_SOURCE=/absolute/path/to/prepared-wpa-source CC=gcc-16 RTW88_RECONNECT_ANALYZE=1 sh ember/tools/rtw88-aploss-contract.sh
 CC=gcc-16 RTW88_HWFEATURE_ANALYZE=1 sh ember/tools/rtw88-hwfeature-contract.sh
 CC=gcc-16 HT20_ANALYZE=1 sh ember/tools/net80211-ht20-contract.sh
 CC=gcc-16 sh ember/tools/rtw88-wme-contract.sh
@@ -850,7 +850,7 @@ qualification.
 The separate crypto and HT contracts retain their own key/node lifecycle gates.
 
 ```sh
-CC=gcc-16 RTW88_START_ANALYZE=1 sh ember/tools/rtw88-manualscan-contract.sh
+EMBER_WPA_SOURCE=/absolute/path/to/prepared-wpa-source CC=gcc-16 RTW88_START_ANALYZE=1 sh ember/tools/rtw88-manualscan-contract.sh
 ```
 
 GCC16 kernel `d175df270` passes two manual scans from a linked STA on one

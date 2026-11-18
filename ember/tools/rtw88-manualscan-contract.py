@@ -11,7 +11,12 @@ import re
 import sys
 
 src, out = map(Path, sys.argv[1:])
+wpa_source = Path(os.environ['EMBER_WPA_SOURCE'])
 def read(p):
+    if p.startswith('external/bsd/wpa/dist/'):
+        return (wpa_source / p.removeprefix('external/bsd/wpa/dist/')).read_text()
+    if p.startswith('external/bsd/wpa/'):
+        return (wpa_source / p.removeprefix('external/bsd/wpa/')).read_text()
     if p == 'sys/net80211/ieee80211_ioctl.c' and os.environ.get('MANUALSCAN_IOCTL_SOURCE'):
         return Path(os.environ['MANUALSCAN_IOCTL_SOURCE']).read_text()
     return (src/p).read_text()
@@ -114,8 +119,8 @@ parts.append(notice(node)+'static void manualscan_end_scan(struct ieee80211com *
              '\nCHECK(0); /* This fixture selects manual sequencing only. */\n}\n')
 (out/'manualscan-shared.inc').write_text(''.join(parts))
 
-wpa = 'external/bsd/wpa/dist/src/drivers/driver_bsd.c'
-events = 'external/bsd/wpa/dist/wpa_supplicant/events.c'
+wpa = 'external/bsd/wpa/src/drivers/driver_bsd.c'
+events = 'external/bsd/wpa/wpa_supplicant/events.c'
 parts = [function(events, 'wpa_supplicant_mark_disassoc', 'static void'),
          function(events, 'wpa_supplicant_connect', 'static int'),
          function(wpa, 'bsd_sta_disconnected', 'static void'),

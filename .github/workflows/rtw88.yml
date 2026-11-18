@@ -5,6 +5,8 @@ name: Native rtw88 source contracts
     branches: [main]
     paths:
       - '.github/workflows/rtw88.yml'
+      - '.github/actions/prepare-wpa-source/action.yml'
+      - 'ember/shared-sources.json'
       - 'sys/dev/ic/rtw*'
       - 'sys/dev/sdmmc/rtw88*'
       - 'sys/dev/sdmmc/sdmmc_io_status.h'
@@ -32,8 +34,6 @@ name: Native rtw88 source contracts
       - 'sys/sys/queue.h'
       - 'sys/net/if.h'
       - 'sys/net/if.c'
-      - 'external/bsd/wpa/dist/src/drivers/driver_bsd.c'
-      - 'external/bsd/wpa/dist/wpa_supplicant/events.c'
       - 'sys/net/if_media.h'
       - 'sys/net/if_media.c'
       - 'sys/net/bpf.c'
@@ -67,6 +67,8 @@ name: Native rtw88 source contracts
   pull_request:
     paths:
       - '.github/workflows/rtw88.yml'
+      - '.github/actions/prepare-wpa-source/action.yml'
+      - 'ember/shared-sources.json'
       - 'sys/dev/ic/rtw*'
       - 'sys/dev/sdmmc/rtw88*'
       - 'sys/dev/sdmmc/sdmmc_io_status.h'
@@ -94,8 +96,6 @@ name: Native rtw88 source contracts
       - 'sys/sys/queue.h'
       - 'sys/net/if.h'
       - 'sys/net/if.c'
-      - 'external/bsd/wpa/dist/src/drivers/driver_bsd.c'
-      - 'external/bsd/wpa/dist/wpa_supplicant/events.c'
       - 'sys/net/if_media.h'
       - 'sys/net/if_media.c'
       - 'sys/net/bpf.c'
@@ -132,6 +132,25 @@ permissions:
   contents: read
 
 jobs:
+  prepare-wpa-source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    container:
+      image: gcc@sha256:3f73339bf0d3d64081cac3f6d9fdafc6dd4cef2b9c49e0a09f91e97cb0eb139a
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /.github/actions/prepare-wpa-source/action.yml
+      - name: Install source preparation tools
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends git curl patch
+      - name: Prepare canonical WPA source cache
+        uses: ./.github/actions/prepare-wpa-source
   contracts:
     # Memcheck and path analysis dominate; shards run in parallel and
     # rtw88-workflow-contract.py proves each runner has exactly one shard.
@@ -140,6 +159,7 @@ jobs:
       matrix:
         shard: [rfk, enable, routing, signal, rest-0, rest-1]
     runs-on: ubuntu-24.04
+    needs: prepare-wpa-source
     timeout-minutes: 120
     container:
       image: gcc@sha256:3f73339bf0d3d64081cac3f6d9fdafc6dd4cef2b9c49e0a09f91e97cb0eb139a
@@ -151,6 +171,8 @@ jobs:
           sparse-checkout-cone-mode: false
           sparse-checkout: |
             /.github/workflows/rtw88.yml
+            /.github/actions/prepare-wpa-source/action.yml
+            /ember/shared-sources.json
             /ember/tools/rtw*
             /ember/tools/net80211-wme-contract.*
             /ember/tools/net80211-ht20-contract.*
@@ -206,8 +228,6 @@ jobs:
             /sys/sys/queue.h
             /sys/net/if.h
             /sys/net/if.c
-            /external/bsd/wpa/dist/src/drivers/driver_bsd.c
-            /external/bsd/wpa/dist/wpa_supplicant/events.c
             /sys/net/if_media.h
             /sys/net/if_media.c
             /sys/net/bpf.c
@@ -228,10 +248,12 @@ jobs:
         run: |
           test "$(gcc -dumpfullversion)" = 16.2.0
           apt-get update
-          apt-get install -y --no-install-recommends valgrind libc6-dbg ruby clang cppcheck python3
+          apt-get install -y --no-install-recommends valgrind libc6-dbg ruby clang cppcheck python3 git curl patch
           valgrind --version
           echo "PYTHON=$(command -v python3)" >> "$GITHUB_ENV"
           echo "TEST_SH=$(command -v sh)" >> "$GITHUB_ENV"
+      - name: Restore verified canonical WPA source
+        uses: ./.github/actions/prepare-wpa-source
       - name: Verify native Wi-Fi sparse checkout inputs
         run: python3 ember/tools/rtw88-workflow-contract.py
       - name: Execute source contracts under ASan and UBSan

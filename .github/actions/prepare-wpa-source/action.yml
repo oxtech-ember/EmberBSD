@@ -1,0 +1,85 @@
+name: Prepare canonical WPA source
+description: Prepare or verify the pinned Ports WPA source for an OS job.
+inputs:
+  ports-ref:
+    description: Published EmberBSD-Ports commit that owns the WPA source recipe.
+    required: false
+    default: cc78830db2d9345589074f8e966b1cb4e384a500
+  sdk-ref:
+    description: Published EmberBSD-SDK commit with the prepared-tree API.
+    required: false
+    default: 1cd9a08b71490a4b6e4c2d81b9eed9f827dc4afe
+outputs:
+  wpa-source:
+    description: Verified canonical prepared WPA source directory.
+    value: ${{ steps.prepare.outputs.wpa-source }}
+runs:
+  using: composite
+  steps:
+    - name: Checkout Ports source owner
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        repository: oxtech-ember/EmberBSD-Ports
+        ref: ${{ inputs.ports-ref }}
+        path: .wpa-source-prep/ports
+        persist-credentials: false
+        submodules: false
+    - name: Checkout pinned SDK source API
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        repository: oxtech-ember/EmberBSD-SDK
+        ref: ${{ inputs.sdk-ref }}
+        path: .wpa-source-prep/sdk
+        persist-credentials: false
+        submodules: false
+        sparse-checkout-cone-mode: false
+        sparse-checkout: |
+          /src/emberbsd_sdk/
+    - name: Select Python 3.15
+      uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+      id: python
+      with:
+        python-version: '3.15'
+        update-environment: false
+    - name: Restore prepared WPA source
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      id: wpa-cache
+      with:
+        path: ${{ runner.temp }}/ember-wpa-prepared
+        key: ember-wpa-source-v1-${{ inputs.ports-ref }}-${{ inputs.sdk-ref }}
+    - name: Prepare and verify canonical WPA source
+      id: prepare
+      shell: bash
+      env:
+        PYTHON: ${{ steps.python.outputs.python-path }}
+      run: |
+        set -eu
+        ports="$GITHUB_WORKSPACE/.wpa-source-prep/ports"
+        sdk="$GITHUB_WORKSPACE/.wpa-source-prep/sdk"
+        git_bin=$(command -v git)
+        patch_bin=$(command -v patch)
+        source="$RUNNER_TEMP/ember-wpa-prepared"
+        source_py="$ports/scripts/source-inputs/wpa/source.py"
+        if [ "${{ steps.wpa-cache.outputs.cache-hit }}" != true ]; then
+          git -C "$ports" submodule update --init --depth 1 upstream/pkgsrc
+          export_dir="$RUNNER_TEMP/ember-wpa-pkgsrc-export"
+          version=$(awk '$1 == "WPA_SUPPLICANT_VERSION=" { count++; value=$2 } END { if (count != 1 || value !~ /^[0-9]+(\.[0-9]+){1,2}$/) exit 1; print value }' \
+            "$ports/pkgsrc/net/wpa_supplicant/Makefile.common")
+          mkdir -p "$RUNNER_TEMP/ember-wpa-distfiles"
+          curl --fail --location --silent --show-error \
+            --output "$RUNNER_TEMP/ember-wpa-distfiles/wpa_supplicant-$version.tar.gz" \
+            "https://w1.fi/releases/wpa_supplicant-$version.tar.gz"
+          curl --fail --location --silent --show-error \
+            --output "$RUNNER_TEMP/ember-wpa-distfiles/hostapd-$version.tar.gz" \
+            "https://w1.fi/releases/hostapd-$version.tar.gz"
+          "$PYTHON" -B "$ports/scripts/pkgsrc-shared-export.py" "$export_dir" \
+            --sdk-source "$sdk" --git "$git_bin" --patch "$patch_bin"
+          "$PYTHON" -B "$source_py" --sdk-source "$sdk" --git "$git_bin" prepare \
+            --archive "$RUNNER_TEMP/ember-wpa-distfiles/wpa_supplicant-$version.tar.gz" \
+            --hostapd-archive "$RUNNER_TEMP/ember-wpa-distfiles/hostapd-$version.tar.gz" \
+            --output "$source" --patch "$patch_bin" --pkgsrc-export "$export_dir"
+        fi
+        "$PYTHON" -B "$source_py" --sdk-source "$sdk" --git "$git_bin" \
+          verify-source --source "$source"
+        printf 'EMBER_WPA_SOURCE=%s\n' "$source" >> "$GITHUB_ENV"
+        printf 'wpa-source=%s\n' "$source" >> "$GITHUB_OUTPUT"

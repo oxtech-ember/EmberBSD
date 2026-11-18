@@ -4,8 +4,9 @@
 # Origin: EmberBSD; keep the extracted RX contract aligned with the driver ABI.
 set -eu
 src=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+wpa=${EMBER_WPA_SOURCE:?Set EMBER_WPA_SOURCE to the prepared Ports WPA source}
 driver=${AICWF_STA_SOURCE:-$src/sys/dev/sdmmc/if_aicwf.c}
-defs=${AICWF_STA_DEFS:-$src/external/bsd/wpa/dist/src/common/ieee802_11_defs.h}
+defs=${AICWF_STA_DEFS:-$wpa/src/common/ieee802_11_defs.h}
 work=$(mktemp -d "${TEST_OBJDIR:-${TMPDIR:-/tmp}}/aicwf-sta.XXXXXXXX")
 if [ "${AICWF_STA_KEEP:-0}" = 1 ]; then
     printf 'Test sources: %s\n' "$work"
@@ -67,13 +68,15 @@ cat >> "$work/driver.h" <<'C'
     (void)qos; (void)amsdu; (void)tid; (void)&hdr; (void)&current; (void)serial;
 }
 C
+awk '/^#define[[:space:]]+WPA_DRIVER_FLAGS_(SUPPORT_RRM|RRM_NEIGHBOR_REPORT(_ONLY)?)[[:space:]]/ {print}' \
+    "$wpa/src/drivers/driver.h" >> "$work/driver.h"
 : > "$work/client.h"
 for spec in bsd_sta_init:void bsd_sta_tx_body:int bsd_sta_rx_body:int; do
     fn=${spec%%:*}; type=${spec#*:}
     awk -v fn="$fn" -v type="$type" '
         $0 ~ "^" fn "\\(" {copy=1; print "static " type}
         copy {print} copy && /^}/ {exit}' \
-        "$src/external/bsd/wpa/dist/src/drivers/driver_bsd.c" >> "$work/client.h"
+        "$wpa/src/drivers/driver_bsd.c" >> "$work/client.h"
 done
 cp "$src/ember/tools/aicwf-sta-contract.c" "$work/check.c"
 mkdir -p "$work/sys" "$work/net80211"

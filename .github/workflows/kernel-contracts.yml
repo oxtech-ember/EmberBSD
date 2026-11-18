@@ -8,16 +8,16 @@ name: Portable kernel source contracts
     branches: [main]
     paths:
       - '.github/workflows/kernel-contracts.yml'
+      - '.github/actions/prepare-wpa-source/action.yml'
       - 'sys/**'
       - 'common/**'
-      - 'external/bsd/wpa/dist/src/**'
       - 'ember/**'
   pull_request:
     paths:
       - '.github/workflows/kernel-contracts.yml'
+      - '.github/actions/prepare-wpa-source/action.yml'
       - 'sys/**'
       - 'common/**'
-      - 'external/bsd/wpa/dist/src/**'
       - 'ember/**'
   workflow_dispatch:
 
@@ -41,9 +41,9 @@ jobs:
           sparse-checkout-cone-mode: false
           sparse-checkout: |
             /ember/
+            /.github/actions/prepare-wpa-source/action.yml
             /sys/
             /common/
-            /external/bsd/wpa/dist/src/
       - name: Prepare compilers and sanitizer runtimes
         run: |
           sudo apt-get update
@@ -52,6 +52,7 @@ jobs:
           ruby --version
           python3 --version
       - name: Select contracts
+        id: select
         env:
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
           EVENT: ${{ github.event_name }}
@@ -72,6 +73,21 @@ jobs:
           python3 ember/tools/kernel-contracts-select.py "$PWD" \
             "$RUNNER_TEMP/changes" "$RUNNER_TEMP/selection"
           printf '%s\n' "$RUNNER_TEMP/selection" > "$RUNNER_TEMP/selection-argument"
+      - name: Determine whether selected contracts need WPA
+        id: wpa-selection
+        shell: bash
+        run: |
+          set -eu
+          selection="$RUNNER_TEMP/selection"
+          # An absent selection means the selector chose the full suite.
+          if [ ! -f "$selection" ] || grep -Eq '^ember/tests/(aicwf-sta|bwfm-sta)\.sh$' "$selection"; then
+            echo 'required=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'required=false' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Prepare canonical WPA source for selected station contracts
+        if: ${{ steps.wpa-selection.outputs.required == 'true' }}
+        uses: ./.github/actions/prepare-wpa-source
       - name: Run contracts
         env:
           UBSAN_OPTIONS: halt_on_error=1

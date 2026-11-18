@@ -137,6 +137,7 @@ behavior is required. This is full reauthentication, not fast roaming.
 The cache-selection regression exercises the actual client block:
 
 ```sh
+export EMBER_WPA_SOURCE=/absolute/path/to/prepared-wpa-source
 sh ember/tests/bwfm-sae-pmksa.sh
 ```
 

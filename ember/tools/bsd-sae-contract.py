@@ -35,8 +35,9 @@ def main():
     parser.add_argument("--variant", choices=("sae", "no-sae", "netbsd", "hostapd", "old-abi"))
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[2]
-    wpa_source = (args.wpa_source or root / "external/bsd/wpa/dist").resolve()
-    source = (args.source or root / "external/bsd/wpa/dist/src/drivers/driver_bsd.c").read_text()
+    prepared_source = Path(os.environ["EMBER_WPA_SOURCE"])
+    wpa_source = (args.wpa_source or prepared_source).resolve()
+    source = (args.source or wpa_source / "src/drivers/driver_bsd.c").read_text()
     abi = (root / "sys/net80211/ieee80211_ioctl.h").read_text()
     netbsd_abi = (root / "sys/net80211/ieee80211_netbsd.h").read_text()
     crypto = (root / "sys/net80211/ieee80211_crypto.h").read_text()

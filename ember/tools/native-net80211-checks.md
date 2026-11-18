@@ -49,6 +49,10 @@ a causal NULL dereference. The GCC analyzer remains selected through `CC` and
 its `-fanalyzer` flags.
 
 The station SAE fixtures run together through `ember/tests/net80211-sae.sh`.
+All WPA-dependent contracts read the pinned prepared Ports source selected by
+`EMBER_WPA_SOURCE`; prepare it with the owner command from `net/wpa_supplicant`
+and export that directory before running these fixtures. The OS checkout no
+longer supplies a fallback WPA driver source.
 The script checks the native kernel owner, all BSD supplicant variants and
 the actual RTL8852BE link-loss/state-transition paths,
 using `SAE_TEST_CFLAGS` and the selected `CC`/`PYTHON`. Set `SAE_ANALYZE=1`

@@ -179,6 +179,7 @@ grants regulatory, DFS or radio permission; the driver owns admission.
 Run the real source and its existing firmware consumers with GCC 16:
 
 ```sh
+export EMBER_WPA_SOURCE=/absolute/path/to/prepared-wpa-source
 CC=gcc-16 sh ember/tools/net80211-vht-ies-contract.sh
 CC=gcc-16 sh ember/tests/aicwf-vht.sh
 CC=gcc-16 sh ember/tests/aicwf-sta.sh

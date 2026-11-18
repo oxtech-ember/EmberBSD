@@ -62,6 +62,7 @@ require an access point or injector that can send those frames.
 Run the source regressions on the build host:
 
 ```sh
+export EMBER_WPA_SOURCE=/absolute/path/to/prepared-wpa-source
 sh ember/tests/bwfm-sta.sh
 sh ember/tests/bwfm-scan-padding.sh
 sh ember/tests/bwfm-key-epoch.sh

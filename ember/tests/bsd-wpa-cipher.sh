@@ -3,7 +3,8 @@
 # SPDX-License-Identifier: BSD-2-Clause
 set -eu
 src=${1:-$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)}
-driver=${BSD_WPA_CIPHER_SOURCE:-$src/external/bsd/wpa/dist/src/drivers/driver_bsd.c}
+wpa=${EMBER_WPA_SOURCE:?Set EMBER_WPA_SOURCE to the prepared Ports WPA source}
+driver=${BSD_WPA_CIPHER_SOURCE:-$wpa/src/drivers/driver_bsd.c}
 work=$(mktemp -d "${TMPDIR:-/tmp}/bsd-wpa-cipher.XXXXXXXX")
 if [ "${BSD_WPA_CIPHER_KEEP:-0}" = 1 ]; then
     printf 'Test sources: %s\n' "$work"
@@ -18,6 +19,6 @@ awk '/^#define[[:space:]]+IEEE80211_CIPHER_/ {print}' \
 awk '/^#define[[:space:]]+IEEE80211_IOC_(MCASTCIPHER|MCASTKEYLEN|UCASTCIPHERS|KEYMGTALGS|RSNCAPS|WPA)[[:space:]]/ {print}' \
     "$src/sys/net80211/ieee80211_ioctl.h" > "$work/ioctls.h"
 ${CC:-cc} -std=c99 -Wall -Wextra -Werror -Wno-unused-parameter ${CFLAGS:-} \
-    -D_DEFAULT_SOURCE -I"$src/external/bsd/wpa/dist/src" -I"$work" \
+    -D_DEFAULT_SOURCE -I"$wpa/src" -I"$work" \
     "$src/ember/tools/bsd-wpa-cipher.c" -o "$work/check"
 "$work/check"

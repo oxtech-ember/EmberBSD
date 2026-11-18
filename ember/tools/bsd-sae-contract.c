@@ -153,7 +153,11 @@ static int ioctl(int fd, unsigned long cmd, void *data)
 		struct ieee80211req *req = data;
 		if (req->i_type == IEEE80211_IOC_SAE) { req->i_val = caps; return caps < 0 ? -1 : 0; }
 #ifdef IEEE80211_IOC_STA_PORT
-		if (req->i_type == IEEE80211_IOC_STA_PORT) { req->i_val = port_supported; return port_supported < 0 ? -1 : 0; }
+		if (req->i_type == IEEE80211_IOC_STA_PORT) {
+			req->i_val = port_supported;
+			if (port_supported < 0) { errno = EOPNOTSUPP; return -1; }
+			return 0;
+		}
 #endif
 	}
 	if (cmd == SIOCS80211) {
@@ -247,8 +251,9 @@ static int bsd_sta_associate(struct bsd_driver_data *drv,
 	struct wpa_driver_associate_params *params)
 { (void)drv; (void)params; return fail_op == -2 ? -1 : 0; }
 static void bsd_sta_scan_clear(struct bsd_driver_data *drv) { (void)drv; }
-static void bsd_sta_tx_status(struct bsd_driver_data *drv, int ack, int aborted)
-{ (void)drv; (void)ack; (void)aborted; }
+static void bsd_sta_tx_status(struct bsd_driver_data *drv, int ack,
+	int ack_known, int tx_error, int notify)
+{ (void)drv; (void)ack; (void)ack_known; (void)tx_error; (void)notify; }
 static int bsd_sta_set(struct bsd_driver_data *drv,
 	void *req, int op) { (void)drv; (void)req; (void)op; return 0; }
 #endif

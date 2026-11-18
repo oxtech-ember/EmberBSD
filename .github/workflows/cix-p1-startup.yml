@@ -5,6 +5,8 @@ name: CIX P1 startup contracts
     branches: [main]
     paths:
       - '.github/workflows/cix-p1-startup.yml'
+      - '.github/actions/prepare-wpa-source/action.yml'
+      - 'ember/shared-sources.json'
       - 'ember/image/cix-p1-*'
       - 'ember/image/test-cix-p1-*'
       - 'ember/image/test-static-network-profile.py'
@@ -25,6 +27,8 @@ name: CIX P1 startup contracts
   pull_request:
     paths:
       - '.github/workflows/cix-p1-startup.yml'
+      - '.github/actions/prepare-wpa-source/action.yml'
+      - 'ember/shared-sources.json'
       - 'ember/image/cix-p1-*'
       - 'ember/image/test-cix-p1-*'
       - 'ember/image/test-static-network-profile.py'
@@ -104,6 +108,8 @@ jobs:
           echo "EMBER_TEST_NATIVE_PREFIX=$native" >> "$GITHUB_ENV"
       - name: Check the native prefix contract
         run: python3 ember/tools/cix-native-prefix-contract.py
+      - name: Prepare canonical WPA source for selected WPA profile
+        uses: ./.github/actions/prepare-wpa-source
       - name: Check reduced-root startup and failures
         run: |
           export PATH="$EMBER_TEST_NATIVE_PREFIX/bin:$EMBER_TEST_NATIVE_PREFIX/gnu/bin"

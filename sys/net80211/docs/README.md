@@ -28,7 +28,7 @@ The retained NetBSD interfaces are the base; the optional EmberBSD providers bel
 | Network device lifecycle | `if_init`, `if_stop`, `if_start`, `if_ioctl`; `ieee80211_ifattach`, `ieee80211_ifdetach`, `ieee80211_media_init` | Fill interface identity, rates, channels, and capabilities before attach. Install optional providers after attach initializes their defaults. Stop hardware and drain deferred work before releasing its state. |
 | State changes | `ic_newstate` and [ieee80211_proto.c](../ieee80211_proto.c) | Native wrappers preserve the common state handler and apply hardware state in the required order. Firmware adapters implement their declared management overrides. Do not infer completion from command submission. |
 | Raw frame path | `ieee80211_input`, `ieee80211_encap`, node references, `ic_mgtq` | Preserve management frames and RX status needed by the selected common consumer. Follow mbuf and node ownership on success, error, and deferred handoff. See [input](../../../share/man/man9/ieee80211_input.9) and [output](../../../share/man/man9/ieee80211_output.9). |
-| User control | `ieee80211_ioctl`, [ieee80211_ioctl.h](../ieee80211_ioctl.h) | Reuse shared validation and authorization. Keep unsupported operations explicit. The [BSD supplicant backend](../../../external/bsd/wpa/dist/src/drivers/driver_bsd.c) is the existing userland consumer. |
+| User control | `ieee80211_ioctl`, [ieee80211_ioctl.h](../ieee80211_ioctl.h) | Reuse shared validation and authorization. Keep unsupported operations explicit. The canonical prepared WPA source is selected with `EMBER_WPA_SOURCE` in `ember/shared-sources.json`. |
 | Key installation | `ic_crypto.cs_key_alloc`, `cs_key_set`, `cs_key_delete`, `cs_key_update_begin`, `cs_key_update_end` in [ieee80211_crypto.h](../ieee80211_crypto.h) | Retain common software defaults where applicable. Hardware callbacks must preserve key lifetime and fence asynchronous work around key changes. |
 | Station authorization | `ic_sta_set_port` when the adapter needs a hardware/firmware controlled port | Propagate apply failure. Association and RUN alone do not authorize protected data. See [port implementation](../ieee80211_ioctl.c) and [port tests](../tests/t_sta_port.py). |
 
@@ -79,7 +79,7 @@ Use the check commands documented with the affected contract; do not create a se
 
 | Changed boundary | Existing checks and consumer |
 | --- | --- |
-| Station selection or event identity | [Association lifecycle fixtures](../tests/assoc-lifecycle.py), [BSD supplicant backend](../../../external/bsd/wpa/dist/src/drivers/driver_bsd.c) |
+| Station selection or event identity | [Association lifecycle fixtures](../tests/assoc-lifecycle.py), canonical prepared WPA source selected with `EMBER_WPA_SOURCE` |
 | Request validation, native SAE, key retirement | [SAE checks](sae.md), [crypto](net80211-crypto.md), [BIP](net80211-bip.md) |
 | Action transport or scan cancellation | [Station and adapter fixtures](station-management.md#software-checks) |
 | QoS, HT/VHT, aggregation | [WME checks](net80211-wme.md#host-source-contracts), [VHT checks](net80211-vht-ies.md#software-contracts), [BA checks](net80211-rxba.md#source-checks) |

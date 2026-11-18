@@ -75,6 +75,10 @@ def has_multiuser_rc_dependencies(root):
 
 selected = profile.network('riscv32')
 littlefs = profile.network('riscv32', root_filesystem='littlefs')
+wpa_selected = 'external/bsd/wpa/bin/wpa_supplicant' in selected['crunch_programs']
+wpa_source = Path(os.environ['EMBER_WPA_SOURCE']) if wpa_selected and os.environ.get('EMBER_WPA_SOURCE') else None
+check(not wpa_selected or wpa_source is not None,
+      'the prepared WPA source is required only when the selected network profile includes WPA')
 check('sys/net80211' in selected['headers'] and
       'sys/net80211' in littlefs['headers'],
       'network profile stages the current net80211 userland ABI headers')
@@ -893,10 +897,12 @@ with tempfile.TemporaryDirectory(prefix='static-network-') as temporary:
           (services / 'etc/syslog.conf').is_file() and
           (services / 'etc/newsyslog.conf').is_file(),
           'forwarding detection reads action fields; local-only logging needs no services file')
-    check('-DCONFIG_DEBUG_SYSLOG' in
+    wpa_logging = (not wpa_selected or
+          ('-DCONFIG_DEBUG_SYSLOG' in
           (source / 'external/bsd/wpa/bin/wpa_supplicant/Makefile').read_text() and
           '  -s = log output to syslog instead of stdout' in
-          (source / 'external/bsd/wpa/dist/wpa_supplicant/main.c').read_text() and
+          (wpa_source / 'wpa_supplicant/main.c').read_text()))
+    check(wpa_logging and
           'tmpfs /tmp tmpfs rw' in (services / 'etc/fstab').read_text() and
           'tmpfs /var/run tmpfs rw' in (services / 'etc/fstab').read_text(),
           'selected wpa_supplicant supports routing normal and debug logs to syslog')

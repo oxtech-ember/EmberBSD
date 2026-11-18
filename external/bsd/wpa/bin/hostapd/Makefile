@@ -60,19 +60,12 @@ wpa_ctrl.c
 
 # drivers
 SRCS+= \
-driver_emberbsd.c \
+driver_bsd.c \
 driver_none.c \
 driver_wired.c \
 driver_wired_common.c \
 driver_common.c \
 drivers.c
-
-CLEANFILES+= driver_emberbsd.c
-
-# Keep the generated source/object private to this program and architecture.
-driver_emberbsd.c: ${WPA_BSD_DRIVER}
-	${MKTARGET_CREATE}
-	cp ${.ALLSRC} ${.TARGET}
 
 # radius
 SRCS+= \
@@ -258,8 +251,8 @@ ikev2.c \
 tncs.c
 
 
-DPADD+= ${LIBSSL} ${LIBCRYPTO} ${LIBDES}
-LDADD+= -lssl -lcrypto -ldes
+DPADD+= ${LIBSSL} ${LIBCRYPTO} ${LIBDES} ${LIBPTHREAD}
+LDADD+= -lssl -lcrypto -ldes -lpthread
 .else
 CPPFLAGS+= -DINTERNAL_AES -DINTERNAL_MD5 -DINTERNAL_SHA1 -DCONFIG_NO_PBKDF2
 CPPFLAGS+= -DCONFIG_CRYPTO_INTERNAL

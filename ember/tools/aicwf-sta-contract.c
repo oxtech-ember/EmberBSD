@@ -405,8 +405,6 @@ struct bsd_driver_data {
 #define os_memcpy memcpy
 #define MSG_DEBUG 0
 #define wpa_printf(...) ((void)0)
-#define WPA_DRIVER_FLAGS_SUPPORT_RRM 1
-#define WPA_DRIVER_FLAGS_RRM_NEIGHBOR_REPORT_ONLY 2
 static int bsd_sta_info(struct bsd_driver_data *drv,
     struct ieee80211req_sta_mgmt *req)
 {

@@ -2,13 +2,14 @@
 # Exercise the actual cache-selection block before association RSNE generation.
 set -eu
 src=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+wpa=${EMBER_WPA_SOURCE:?Set EMBER_WPA_SOURCE to the prepared Ports WPA source}
 work=$(mktemp -d "${TMPDIR:-/tmp}/bwfm-sae-pmksa.XXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM
 awk '/^#define WPA_DRIVER_FLAGS2_SAE_NO_PMKSA/ {print}' \
-    "$src/external/bsd/wpa/dist/src/drivers/driver.h" > "$work/flag.h"
+    "$wpa/src/drivers/driver.h" > "$work/flag.h"
 awk '/Select a cached PMKSA only when/ {copy=1; next}
 copy && /wpa_ie_len = max_wpa_ie_len/ {exit}
-copy {print}' "$src/external/bsd/wpa/dist/wpa_supplicant/wpa_supplicant.c" > "$work/cache.h"
+    copy {print}' "$wpa/wpa_supplicant/wpa_supplicant.c" > "$work/cache.h"
 cat > "$work/check.c" <<'C'
 #include <assert.h>
 #include <stdbool.h>

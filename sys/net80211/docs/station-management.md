@@ -148,6 +148,7 @@ and userland consumers must be upgraded together to use this ABI.
 Use the selected native SDK compiler and shell:
 
 ```sh
+export EMBER_WPA_SOURCE=/absolute/path/to/prepared-wpa-source
 CC="$host_cc" "$sdk_sh" ember/tests/net80211-sta.sh
 CC="$host_cc" "$sdk_sh" ember/tests/bwfm-sta.sh
 CC="$host_cc" "$sdk_sh" ember/tests/aicwf-sta.sh

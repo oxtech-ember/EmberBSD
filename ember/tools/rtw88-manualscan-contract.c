@@ -101,15 +101,19 @@ struct reltime { long sec,usec; };
 struct wpa_supplicant {
     int wpa_state,reassociate,key_mgmt,allowed_key_mgmts,drv_authorized_port;
     int assoc_freq,ap_ies_from_associnfo,wnmsleep_used,disable_mbo_oce,ieee80211ac;
-    bool enabled_4addr_mode,wps_scan_done,ssid_verified,bigtk_set;
+    bool enabled_4addr_mode,wps_scan_done,ssid_verified,bigtk_set,assisted_dfs;
     uint8_t bssid[6],pending_bssid[6];
     struct wpa_ssid *current_ssid;
     struct wpa_bss *current_bss;
     struct reltime session_start,session_length;
     void *eapol;
+    void *pending_eapol_rx;
+    bool ext_auth_to_same_bss;
 };
+static void wpabuf_free(void *buf) { free(buf); }
 static struct state_fixture *manualscan_current;
 static void wnm_bss_keep_alive_deinit(struct wpa_supplicant *s) { (void)s; }
+static void wpas_scs_deinit(struct wpa_supplicant *s) { (void)s; }
 static int os_reltime_initialized(struct reltime *t) { return t->sec||t->usec; }
 static void os_reltime_age(struct reltime *a,struct reltime *b) { (void)a;(void)b; }
 static void wpas_notify_session_length(struct wpa_supplicant *s) { (void)s; }
@@ -151,7 +155,7 @@ struct bsd_driver_data {
 #define is_multicast_ether_addr(a) (((const uint8_t *)(a))[0] & 1)
 typedef uint8_t u8;
 static void wpa_supplicant_mark_disassoc(struct wpa_supplicant *);
-static void bsd_sta_tx_status(struct bsd_driver_data *drv,int ack,int notify) { (void)drv;(void)ack;(void)notify; }
+static void bsd_sta_tx_status(struct bsd_driver_data *drv,int ack,int ack_known,int tx_error,int notify) { (void)drv;(void)ack;(void)ack_known;(void)tx_error;(void)notify; }
 static void bsd_sta_scan_clear(struct bsd_driver_data *drv) { drv->sta_scan_pending=0; }
 static void os_get_reltime(struct reltime *r) { r->sec=1;r->usec=0; }
 /* OS event dispatch invokes the actual identity-reset consumer synchronously.

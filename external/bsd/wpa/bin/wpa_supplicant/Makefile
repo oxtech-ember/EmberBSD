@@ -40,7 +40,7 @@ sha256-prf.c \
 
 # drivers
 SRCS+= \
-driver_emberbsd.c \
+driver_bsd.c \
 driver_common.c \
 driver_wired_common.c \
 driver_wired.c \
@@ -84,12 +84,7 @@ wpabuf.c \
 
 MAN=	wpa_supplicant.8 wpa_supplicant.conf.5
 
-CLEANFILES+= config_line.c driver_emberbsd.c
-
-# Keep the generated source/object private to this program and architecture.
-driver_emberbsd.c: ${WPA_BSD_DRIVER}
-	${MKTARGET_CREATE}
-	cp ${.ALLSRC} ${.TARGET}
+CLEANFILES+= config_line.c
 
 config_line.c: ${WPA_DISTDIR}/src/utils/config.c
 	${MKTARGET_CREATE}
@@ -234,14 +229,14 @@ aes-omac1.c \
 #SRCS+=	eap_fast.c
 
 .if ${EMBER_WPA_PROFILE} == "full"
-DPADD+= ${LIBSSL} ${LIBCRYPTO} ${LIBDES}
-LDADD+= -lssl -lcrypto -ldes
+DPADD+= ${LIBSSL} ${LIBCRYPTO} ${LIBDES} ${LIBPTHREAD}
+LDADD+= -lssl -lcrypto -ldes -lpthread
 .elif ${EMBER_WPA_CRYPTO_BACKEND} == "wolfssl"
 DPADD+= ${EMBER_WOLFSSL_PREFIX}/lib/libwolfssl.a ${LIBPTHREAD}
 LDADD+= -L${EMBER_WOLFSSL_PREFIX}/lib -lwolfssl -lm -lpthread
 .else
-DPADD+= ${LIBCRYPTO}
-LDADD+= -lcrypto
+DPADD+= ${LIBCRYPTO} ${LIBPTHREAD}
+LDADD+= -lcrypto -lpthread
 .endif
 .else
 CPPFLAGS+= -DINTERNAL_AES -DINTERNAL_MD5 -DINTERNAL_SHA1 -DCONFIG_NO_PBKDF2
