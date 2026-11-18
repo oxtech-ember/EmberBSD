@@ -54,6 +54,13 @@ runs:
         PYTHON: ${{ steps.python.outputs.python-path }}
       run: |
         set -eu
+        # Ports subprocesses start the same interpreter with a clean environment.
+        if ! env -u LD_LIBRARY_PATH "$PYTHON" -V >/dev/null 2>&1; then
+          python_lib="$(cd "$(dirname "$PYTHON")/../lib" && pwd)"
+          printf '%s\n' "$python_lib" > /etc/ld.so.conf.d/ember-wpa-python.conf
+          ldconfig -X
+          env -u LD_LIBRARY_PATH "$PYTHON" -V
+        fi
         ports="$GITHUB_WORKSPACE/.wpa-source-prep/ports"
         sdk="$GITHUB_WORKSPACE/.wpa-source-prep/sdk"
         git_bin=$(command -v git)
@@ -73,13 +80,13 @@ runs:
             --output "$RUNNER_TEMP/ember-wpa-distfiles/hostapd-$version.tar.gz" \
             "https://w1.fi/releases/hostapd-$version.tar.gz"
           "$PYTHON" -B "$ports/scripts/pkgsrc-shared-export.py" "$export_dir" \
-            --sdk-source "$sdk" --git "$git_bin" --patch "$patch_bin"
+            --sdk-source "$sdk" --git "$git_bin" --patch "$patch_bin" >/dev/null
           "$PYTHON" -B "$source_py" --sdk-source "$sdk" --git "$git_bin" prepare \
             --archive "$RUNNER_TEMP/ember-wpa-distfiles/wpa_supplicant-$version.tar.gz" \
             --hostapd-archive "$RUNNER_TEMP/ember-wpa-distfiles/hostapd-$version.tar.gz" \
-            --output "$source" --patch "$patch_bin" --pkgsrc-export "$export_dir"
+            --output "$source" --patch "$patch_bin" --pkgsrc-export "$export_dir" >/dev/null
         fi
         "$PYTHON" -B "$source_py" --sdk-source "$sdk" --git "$git_bin" \
-          verify-source --source "$source"
+          verify-source --source "$source" >/dev/null
         printf 'EMBER_WPA_SOURCE=%s\n' "$source" >> "$GITHUB_ENV"
         printf 'wpa-source=%s\n' "$source" >> "$GITHUB_OUTPUT"
