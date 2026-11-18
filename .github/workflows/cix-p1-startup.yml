@@ -76,9 +76,12 @@ jobs:
           PYTHON: ${{ steps.python.outputs.python-path }}
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends mksh original-awk llvm-18
+          sudo apt-get install -y --no-install-recommends mksh original-awk llvm-18 make perl
           native=$RUNNER_TEMP/native-prefix
           mkdir -p "$native/bin" "$native/gnu/bin"
+          # The CIX userland builder runs the host generator tools via this prefix.
+          ln -s /usr/bin/make "$native/bin/gmake"
+          ln -s /usr/bin/perl "$native/bin/perl"
           ln -s /usr/bin/mksh "$native/bin/mksh"
           ln -s /usr/bin/mksh "$native/bin/sh"
           # Keep the host's interactive bashrc from changing the PTY fixture.
