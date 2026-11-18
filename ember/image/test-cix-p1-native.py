@@ -111,7 +111,7 @@ with tempfile.TemporaryDirectory() as tmp:
     assert run['shell'] and run['source'] == str(source)
     assert ('runtime', '/sysroot', 'aarch64') in calls
     assert any(row[0] == 'verify-source' and 'verify-source' in row[1] for row in calls)
-    assert any(row[0] == 'verify-source' and '/ports/scripts/libarchive-source.py' in row[1] for row in calls)
+    assert any(row[0] == 'verify-source' and '/ports/scripts/source-inputs/libarchive/source.py' in row[1] for row in calls)
     assert any(row[0] == 'verify-source' and '/ports/scripts/source-inputs/libevent/source.py' in row[1] for row in calls)
     assert ('libedit', str(libedit_source), '/ports', '/usr/bin/git') in calls
     assert ('clang', '/compiler', 'aarch64--netbsd') in calls

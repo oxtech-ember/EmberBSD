@@ -85,26 +85,22 @@ def main():
             raise SDKError('select a Git executable for source inspection with EMBER_GIT')
         libedit.validate_source(os.environ['EMBER_LIBEDIT_SOURCE'], ports=ports, git=git)
         env = native_os.native_os_environment(native, output / 'routing')
-        for package, entry, operation in (
-            ('EMBER_LIBARCHIVE_SOURCE', 'scripts/libarchive-source.py', 'libarchive'),
-            ('EMBER_LIBEVENT_SOURCE', 'scripts/source-inputs/libevent/source.py', 'libevent'),
-            ('EMBER_BYACC_SOURCE', 'scripts/source-inputs/byacc/source.py', 'byacc'),
-            ('EMBER_ISCSI_SOURCE', 'scripts/source-inputs/iscsi/source.py', 'iscsi'),
-            ('EMBER_LIBPCAP_SOURCE', 'scripts/source-inputs/libpcap/source.py', 'libpcap'),
-            ('EMBER_TCP_WRAPPERS_SOURCE', 'scripts/source-inputs/tcp_wrappers/source.py', 'tcp_wrappers'),
-            ('EMBER_LIBCBOR_SOURCE', 'scripts/source-inputs/libcbor/source.py', 'libcbor'),
-            ('EMBER_LIBFIDO2_SOURCE', 'scripts/source-inputs/libfido2/source.py', 'libfido2'),
-            ('EMBER_LIBFETCH_SOURCE', 'scripts/source-inputs/libfetch/source.py', 'libfetch'),
-            ('EMBER_MDNS_SOURCE', 'scripts/source-inputs/mdns/source.py', 'mdns'),
-            ('EMBER_DHCPCD_SOURCE', 'scripts/source-inputs/dhcpcd/source.py', 'dhcpcd'),
+        for package, entry in (
+            ('EMBER_LIBARCHIVE_SOURCE', 'scripts/source-inputs/libarchive/source.py'),
+            ('EMBER_LIBEVENT_SOURCE', 'scripts/source-inputs/libevent/source.py'),
+            ('EMBER_BYACC_SOURCE', 'scripts/source-inputs/byacc/source.py'),
+            ('EMBER_ISCSI_SOURCE', 'scripts/source-inputs/iscsi/source.py'),
+            ('EMBER_LIBPCAP_SOURCE', 'scripts/source-inputs/libpcap/source.py'),
+            ('EMBER_TCP_WRAPPERS_SOURCE', 'scripts/source-inputs/tcp_wrappers/source.py'),
+            ('EMBER_LIBCBOR_SOURCE', 'scripts/source-inputs/libcbor/source.py'),
+            ('EMBER_LIBFIDO2_SOURCE', 'scripts/source-inputs/libfido2/source.py'),
+            ('EMBER_LIBFETCH_SOURCE', 'scripts/source-inputs/libfetch/source.py'),
+            ('EMBER_MDNS_SOURCE', 'scripts/source-inputs/mdns/source.py'),
+            ('EMBER_DHCPCD_SOURCE', 'scripts/source-inputs/dhcpcd/source.py'),
         ):
             script = str(Path(ports) / entry)
-            if operation == 'libarchive':
-                command = [native.tool('python'), '-B', script, 'verify', os.environ[package],
-                           '--sdk-source', str(sdk), '--git', git]
-            else:
-                command = [native.tool('python'), '-B', script, '--sdk-source', str(sdk),
-                           '--git', git, 'verify-source', '--source', os.environ[package]]
+            command = [native.tool('python'), '-B', script, '--sdk-source', str(sdk),
+                       '--git', git, 'verify-source', '--source', os.environ[package]]
             process.capture(command, env=env)
         verifier = str(Path(ports) / 'pkgsrc/lang/compiler-rt/files/runtime.py')
         source_record = jsonio.loads_json(process.capture(

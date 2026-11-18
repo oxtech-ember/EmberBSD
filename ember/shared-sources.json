@@ -39,7 +39,7 @@
     },
     "EMBER_LIBARCHIVE_SOURCE": {
       "package": "archivers/libarchive",
-      "producer": "ports:scripts/libarchive-source.py"
+      "producer": "ports:scripts/source-inputs/libarchive"
     },
     "EMBER_LIBCBOR_SOURCE": {
       "package": "devel/libcbor",
