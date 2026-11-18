@@ -112,7 +112,6 @@ static void iwx_ht_rx_assoc(struct iwx_softc *sc, struct mbuf *m)
 static void iwx_ht_rx_action(struct iwx_softc *sc, struct mbuf *m)
     { assert(sc && m); action++; }
 static int scan_observe_calls, scan_observe_result = 1;
-static struct mbuf scan_mbuf[16]; static unsigned scan_mbuf_next;
 static unsigned scan_observe_chan; static int scan_observe_rssi;
 static int8_t scan_observe_dbm; static uint32_t scan_observe_stamp;
 static bool ieee80211_scan_observe(struct ieee80211com *ic, const void *frame,
@@ -128,7 +127,7 @@ static void saved_recv(struct ieee80211com *ic, struct mbuf *m,
       assert(assoc == 1 && action == 1 && csa == 1); ordinary++; }
 static void ieee80211_input(struct ieee80211com *ic, struct mbuf *m,
     struct ieee80211_node *ni, int rssi, uint32_t stamp)
-    { if (admitted) ic->ic_recv_mgmt(ic,m,ni,0,rssi,stamp); }
+    { if (admitted) ic->ic_recv_mgmt(ic,m,ni,0,rssi,stamp); free(m); }
 static void iwx_ht_local(struct iwx_softc *sc, struct ieee80211_channel *c,
     struct iwx_ht_local *loc) { assert(sc && c); memset(loc,0,sizeof(*loc)); loc->nss=1; }
 static void iwx_ht_print_ies(struct iwx_softc *sc, const char *what,
@@ -138,9 +137,7 @@ static struct mbuf *m_gethdr(int how, int type)
 static void m_cluster(struct mbuf *m, int how)
     { assert(how == 0); if (!failcluster) m->m_flags |= M_EXT; }
 #define MCLGET(m,how) m_cluster(m,how)
-static void m_freem(struct mbuf *m) { bool pooled=false; freed++;
-    for (unsigned i=0;i<16;i++) if (m==&scan_mbuf[i]) pooled=true;
-    if (!pooled) free(m); }
+static void m_freem(struct mbuf *m) { freed++; free(m); }
 static void m_copydata(struct mbuf *m, size_t off, size_t len, void *out)
     { assert(off+len <= (size_t)m->m_pkthdr.len); memcpy(out,m->data+off,len); }
 int m_tag_copy_chain(struct mbuf *n, const struct mbuf *m)
@@ -187,13 +184,14 @@ int main(int argc, char **argv)
         m->m_len=m->m_pkthdr.len=24;
         iwx_rx_frame(&sc,m,1,0,0,0,0,&rxi);
         assert(assoc == 0 && action == 0 && ordinary == 0);
+        m=calloc(1,sizeof(*m)); assert(m != NULL);
+        m->m_len=m->m_pkthdr.len=24;
         admitted=1; iwx_rx_frame(&sc,m,1,0,0,0,0,&rxi);
         assert(assoc == 1 && action == 1 && ordinary == 1);
-        free(m);
         /* Only scan observations bypass native input, and the common owner
          * validates beacon primary channel and records the result. */
 #define RX(home,rxchan) do { \
-    m=&scan_mbuf[scan_mbuf_next++]; memset(m,0,sizeof(*m)); \
+    m=calloc(1,sizeof(*m)); assert(m != NULL); \
     m->m_len=m->m_pkthdr.len=36; m->data[0]=0x80; \
     memset(m->data+10,0x07,6); memset(m->data+16,0x07,6); \
     if (home==1 || home==2) memcpy(m->data+10,rxnode.ni_bssid,6); \

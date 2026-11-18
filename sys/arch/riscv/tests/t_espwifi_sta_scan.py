@@ -175,6 +175,7 @@ static jmp_buf worker_done;static int sem_takes;
 static int drain_delays;
 static int scan_observe_calls,scan_input_calls,scan_bpf_calls,scan_find_calls;
 static int scan_mbuf_fail,scan_mbuf_calls;
+static int scan_rawbpf_fixture;
 static unsigned scan_observe_channel;static int scan_observe_rssi;static int8_t scan_observe_dbm;
 static uint32_t scan_observe_stamp;static bool scan_observe_result=true;
 static int action_enabled,action_ext_error,action_ext_calls,action_callbacks;
@@ -327,7 +328,7 @@ int main(void) {
    scan_observe_rssi==53 && scan_observe_dbm==-47 && scan_observe_stamp==1234);
  assert(scan_mbuf_calls==0);
  assert(scan_input_calls==0 && scan_find_calls==0 && scan_bpf_calls==0);
- sc.sc_ic.ic_rawbpf=(void *)1;
+ sc.sc_ic.ic_rawbpf=&scan_rawbpf_fixture;
  espwifi_if_scan_frame_process(&sc,&sf);
  assert(scan_observe_calls==2 && scan_bpf_calls==1 && scan_input_calls==0);
  scan_mbuf_fail=1;espwifi_if_scan_frame_process(&sc,&sf);
