@@ -303,7 +303,7 @@ export EMBER_NETWORK_INTERFACE=wifi0
 export EMBER_NETWORK_ROOT_DEVICE=md0
 export EMBER_NETWORK_ROOT_PARTITION=a
 export EMBER_NETWORK_OVERLAY=/absolute/private/network-overlay
-# Optional: export EMBER_NETWORK_TOOLSETS=mdns,ssh,logging
+# Optional: export EMBER_NETWORK_TOOLSETS=mdns,ssh,logging,display
 # Optional: export EMBER_MDNS_SOURCE=/absolute/prepared-mdns
 # With OpenSSL WPA or OpenSSH mode: export EMBER_OPENSSL_SOURCE=/absolute/prepared-openssl
 # Optional for ssh: export EMBER_OPENSSH_CRYPTO=builtin
@@ -324,8 +324,8 @@ image. `MAKEDEV` supplies the standard entropy devices and BPF node used by
 the selected WPA/DHCP paths; the staged resolver, DHCP state and runtime
 directories remain writable on the root filesystem or under `/var/run`.
 Optional `EMBER_NETWORK_TOOLSETS` is a comma-separated selection of `system`,
-`audio`, `video`, `envsys`, `spi`, `transfer`, `mdns`, `ssh`, `sftp`, and
-`logging`. Select `sftp` together with `ssh`. These choices add the corresponding standard
+`audio`, `video`, `envsys`, `spi`, `transfer`, `mdns`, `ssh`, `sftp`,
+`logging`, and `display`. Select `sftp` together with `ssh`. These choices add the corresponding standard
 tools to the shared `console-tools` executable and ask target `MAKEDEV` for
 their device nodes. `system` includes `env`, `uname`, and `df`; `audio` includes `audioctl`, `audioplay`, `audiorecord`,
 `mixerctl`, `timeout`, and `wc`; `video` includes `videoctl`; `envsys` includes
@@ -339,6 +339,11 @@ tools out.
 `transfer` adds `cksum`, `uuencode`, and `uudecode` to the shared utility
 binary for standard text-safe transfers over a captured console. It is opt-in;
 the normal network profile remains unchanged.
+`display` adds `/dev/ttyE0` through the `wscons` MAKEDEV group and selects it as
+an optional secondary startup status sink. The screen receives a fixed title,
+rc script stage names, completion statuses, and the final startup result. Script
+output, service configuration, credentials, and network readiness are never
+displayed there. The standard console and UART remain the primary boot output.
 `mdns` adds `mdnsd` to `console-tools` and stages its standard service script,
 service account, and enabled rc configuration. Without `mdns`, the service
 program and its staged service configuration are omitted.

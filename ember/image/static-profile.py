@@ -456,7 +456,7 @@ def network(target, toolsets=(), spi_units=(), root_filesystem='ffs',
     import re
 
     allowed_toolsets = {'system', 'audio', 'video', 'envsys', 'spi', 'transfer',
-                        'mdns', 'ssh', 'sftp', 'logging'}
+                        'mdns', 'ssh', 'sftp', 'logging', 'display'}
     if (len(set(toolsets)) != len(toolsets) or
             any(not re.fullmatch(r'[a-z]+', item) or item not in allowed_toolsets
                 for item in toolsets)):
@@ -580,6 +580,9 @@ def network(target, toolsets=(), spi_units=(), root_filesystem='ffs',
         selected['crunch_programs'] += (
             'usr.sbin/syslogd/syslogd', 'usr.bin/newsyslog/newsyslog',
             'usr.bin/logger', 'usr.bin/tail')
+    if 'display' in toolsets:
+        selected['device_nodes'] += ('ttyE0',)
+        selected['device_make_groups'] += ('wscons',)
     selected['libraries'] = tuple(dict.fromkeys(selected['libraries']))
     selected['install_map'] = tuple(install_map)
     return selected
@@ -613,6 +616,8 @@ def network_device_selection(settings, root_device, root_partition='a', applicat
     if application:
         nodes += ('ttyE0', 'wsmouse0', 'iic0')
         make_devices += ('wscons', 'iic0')
+    nodes = tuple(dict.fromkeys(nodes))
+    make_devices = tuple(dict.fromkeys(make_devices))
     return nodes, settings['device_links'], make_devices, block_nodes
 
 
@@ -689,7 +694,7 @@ def network_crunch_make_assignments(crunch_programs):
 def stage_network(root, source, overlay, interface, pwd_mkdb, dhcpcd_dest,
                   root_device, root_partition='a', root_filesystem='ffs',
                   mdns_enabled=False, ssh_enabled=False, logging_enabled=False,
-                  openssh_crypto='openssl', sftp_enabled=False):
+                  openssh_crypto='openssl', sftp_enabled=False, display_enabled=False):
     """Stage standard init/rc network services over the normal OS defaults."""
     import os
     import re
@@ -714,6 +719,8 @@ def stage_network(root, source, overlay, interface, pwd_mkdb, dhcpcd_dest,
         raise ValueError('OpenSSH crypto mode must be openssl or builtin')
     if sftp_enabled and not ssh_enabled:
         raise ValueError('SFTP requires SSH to be enabled')
+    if not isinstance(display_enabled, bool):
+        raise ValueError('display switch must be boolean')
     critical_filesystems = '/tmp /var/run' + (' /dev/pts' if ssh_enabled else '')
     for name in ('bin', 'sbin', 'usr/bin', 'usr/sbin', 'usr/libexec', 'etc/defaults',
                  'etc/rc.network.d', 'tmp', 'var/run', 'var/run/dhcpcd',
@@ -749,6 +756,7 @@ def stage_network(root, source, overlay, interface, pwd_mkdb, dhcpcd_dest,
         + 'tmpfs /var/run tmpfs rw\n')
     write_if_different(root / 'etc/rc.conf',
         'rc_configured=YES\n'
+        f'rc_status_display="{ "/dev/ttyE0" if display_enabled else "" }"\n'
         'rc_directories=/etc/rc.network.d\n'
         f'critical_filesystems_local="{critical_filesystems}"\n'
         'hostname=\n'
@@ -1467,6 +1475,7 @@ def run_console(arguments):
                                'EMBER_LIBEVENT_SOURCE', 'EMBER_TCP_WRAPPERS_SOURCE',
                                'EMBER_ZLIB_SOURCE'))
             command.append(openssh_crypto)
+            command.append('yes' if 'display' in selected_toolsets else 'no')
         orchestrator_log = network_orchestrator_log(output) if is_network else output / 'logs/orchestrator.log'
         native_os.run_native_os(native, source=str(source), routing=str(output / 'routing'), cwd=str(source),
                                 arguments=command, shell=True, log=str(orchestrator_log))
@@ -1567,19 +1576,22 @@ if __name__ == '__main__':
         write_if_different(sys.argv[2], network_crunch_configuration(sys.argv[4], sys.argv[3]))
     elif len(sys.argv) == 3 and sys.argv[1] == 'network-crunch-makeflags':
         print(network_crunch_make_assignments(sys.argv[2]))
-    elif len(sys.argv) == 16 and sys.argv[1] == 'stage-network':
+    elif len(sys.argv) == 17 and sys.argv[1] == 'stage-network':
         if any(value not in ('yes', 'no') for value in sys.argv[11:14]):
             raise SystemExit('stage-network feature switches must be yes or no')
         if sys.argv[14] not in ('openssl', 'builtin'):
             raise SystemExit('stage-network OpenSSH crypto mode must be openssl or builtin')
         if sys.argv[15] not in ('yes', 'no'):
             raise SystemExit('stage-network SFTP switch must be yes or no')
+        if sys.argv[16] not in ('yes', 'no'):
+            raise SystemExit('stage-network display switch must be yes or no')
         stage_network(sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6],
                       sys.argv[7], sys.argv[8], sys.argv[9], sys.argv[10],
                       mdns_enabled=sys.argv[11] == 'yes',
                       ssh_enabled=sys.argv[12] == 'yes',
                       logging_enabled=sys.argv[13] == 'yes',
                       openssh_crypto=sys.argv[14],
-                      sftp_enabled=sys.argv[15] == 'yes')
+                      sftp_enabled=sys.argv[15] == 'yes',
+                      display_enabled=sys.argv[16] == 'yes')
     else:
-        raise SystemExit('usage: static-profile.py stage-overlay DIRECTORY ROOT | link-if-same TARGET LINK | stage-network ROOT SOURCE OVERLAY INTERFACE PWD_MKDB DHCPCD_SOURCE ROOT_DEVICE ROOT_PARTITION ROOT_FILESYSTEM MDNS_ENABLED SSH_ENABLED LOGGING_ENABLED OPENSSH_CRYPTO SFTP_ENABLED')
+        raise SystemExit('usage: static-profile.py stage-overlay DIRECTORY ROOT | link-if-same TARGET LINK | stage-network ROOT SOURCE OVERLAY INTERFACE PWD_MKDB DHCPCD_SOURCE ROOT_DEVICE ROOT_PARTITION ROOT_FILESYSTEM MDNS_ENABLED SSH_ENABLED LOGGING_ENABLED OPENSSH_CRYPTO SFTP_ENABLED DISPLAY_ENABLED')

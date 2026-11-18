@@ -274,6 +274,77 @@ rc_postprocess_partial_line()
 	fi
 }
 
+# rc_status_display_metadata event [name [status]]
+#	Write fixed, sanitized rc metadata to an explicitly selected character
+#	device.  Never forward rc script output through this path.
+rc_status_display_metadata()
+{
+	[ -n "${rc_status_display:-}" ] &&
+	    [ -c "$rc_status_display" ] || return 0
+	local event="$1"
+	local name="${2##*/}"
+	local status="${3:-}"
+
+	case "$event" in
+	start)
+		{ printf '%s\n' 'EmberBSD - starting services'; } \
+		    2>/dev/null > "$rc_status_display" || :
+		;;
+	stage|result)
+		case "$name" in
+		''|*[!A-Za-z0-9._-]*) name=script ;;
+		esac
+		[ ${#name} -le 24 ] || name=script
+		if [ "$event" = stage ]; then
+			{ printf '> %s\n' "$name" > "$rc_status_display"; } 2>/dev/null || :
+		elif [ "$status" = 0 ]; then
+			{ printf 'ok %s\n' "$name" > "$rc_status_display"; } 2>/dev/null || :
+		elif [ -n "$status" ] && [ ${#status} -le 3 ]; then
+			case "$status" in
+			*[!0-9]*) status='' ;;
+			esac
+			if [ -n "$status" ]; then
+				{ printf 'FAIL %s rc=%s\n' "$name" "$status"; } \
+				    2>/dev/null > "$rc_status_display" || :
+			else
+				{ printf 'FAIL %s\n' "$name"; } \
+				    2>/dev/null > "$rc_status_display" || :
+			fi
+		else
+			{ printf 'FAIL %s\n' "$name"; } \
+			    2>/dev/null > "$rc_status_display" || :
+		fi
+		;;
+	finish)
+		if [ "$2" = failures ]; then
+			{ printf '%s\n' 'Startup completed with failures'; } \
+			    2>/dev/null > "$rc_status_display" || :
+		else
+			{ printf '%s\n' 'Startup complete'; } \
+			    2>/dev/null > "$rc_status_display" || :
+		fi
+		;;
+	stop)
+		if [ -n "$name" ] && [ ${#name} -le 3 ]; then
+			case "$name" in
+			*[!0-9]*) name='' ;;
+			esac
+		fi
+		if [ -n "$name" ]; then
+			{ printf 'Startup stopped rc=%s\n' "$name"; } \
+			    2>/dev/null > "$rc_status_display" || :
+		else
+			{ printf '%s\n' 'Startup stopped'; } \
+			    2>/dev/null > "$rc_status_display" || :
+		fi
+		;;
+	interrupted)
+		{ printf '%s\n' 'Startup interrupted'; } \
+		    2>/dev/null > "$rc_status_display" || :
+		;;
+	esac
+}
+
 #
 # rc_postprocess_metadata string
 #	$1 is a string containing metadata from the rc_real_work()
@@ -301,6 +372,7 @@ rc_postprocess_metadata()
 		# Marks the start of the entire /etc/rc script.
 		# $args contains a date/time.
 		rc_log_message "[$0 starting at $args]"
+		rc_status_display_metadata start
 		if ! $rc_silent; then
 			printf "%s\n" "$args"
 		fi
@@ -309,6 +381,7 @@ rc_postprocess_metadata()
 		# Marks the start of a child script (usually one of
 		# the /etc/rc.d/* scripts).
 		rc_log_message "[running $1]"
+		rc_status_display_metadata stage "$1"
 		;;
 	cmd-status)
 		# Marks the end of a child script.
@@ -322,6 +395,7 @@ rc_postprocess_metadata()
 				printf "%s\n" "$msg"
 			fi
 		fi
+		rc_status_display_metadata result "$1" "$2"
 		# After the CRITLOCALMOUNTED script has finished, it's
 		# OK to flush the log to disk
 		case "$1" in
@@ -349,12 +423,16 @@ rc_postprocess_metadata()
 		# If any child scripts (or other commands) failed, report them.
 		#
 		if [ -n "$rc_failures" ]; then
+			rc_status_display_metadata finish failures
 			rc_log_message "[failures]"
 			msg="The following components reported failures:"
 			msg="${msg}${nl}$( echo "    ${rc_failures}" | fmt )"
 			msg="${msg}${nl}See ${RC_LOG_FILE} for more information."
 			rc_log_message "${msg}"
 			printf "%s\n" "${msg}"
+		fi
+		if [ -z "$rc_failures" ]; then
+			rc_status_display_metadata finish success
 		fi
 		#
 		# Report the end date/time, even in silent mode
@@ -367,12 +445,16 @@ rc_postprocess_metadata()
 		# This may be a normal or abnormal exit.
 		#
 		rc_log_message "[$0 exiting with status $1]"
+		if [ "$1" != 0 ]; then
+			rc_status_display_metadata stop "$1"
+		fi
 		exit $1
 		;;
 	interrupted)
 		# Marks an interrupt trapped by the rc_real_work() function.
 		# $args is a human-readable message.
 		rc_log_message "$args"
+		rc_status_display_metadata interrupted
 		printf "%s\n" "$args"
 		;;
 	*)

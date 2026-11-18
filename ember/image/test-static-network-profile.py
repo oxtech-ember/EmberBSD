@@ -61,6 +61,22 @@ def syslog_has_forward_action(config):
     return False
 
 
+rc_source = (source / 'etc/rc').read_text()
+status_helper_start = rc_source.index('rc_status_display_metadata()\n{')
+status_helper_end = rc_source.index('\n}\n\n#\n# rc_postprocess_metadata', status_helper_start)
+status_helper = rc_source[status_helper_start:status_helper_end]
+plain_handler_start = rc_source.index('rc_postprocess_plain_line()\n{')
+plain_handler_end = rc_source.index('\n}\n', plain_handler_start)
+check('[ -c "$rc_status_display" ]' in status_helper and
+      'local name="${2##*/}"' in status_helper and
+      "*[!A-Za-z0-9._-]*" in status_helper and
+      'printf \'%s\\n\' "$1" > "$rc_status_display"' not in status_helper and
+      'rc_status_display_metadata stage "$1"' in rc_source and
+      'rc_status_display_metadata result "$1" "$2"' in rc_source and
+      'rc_status_display' not in rc_source[plain_handler_start:plain_handler_end],
+      'rc status output uses sanitized metadata only, never arbitrary service lines')
+
+
 def has_multiuser_rc_dependencies(root):
     provides, requirements, missing = staged_rc_dependencies(root)
     return (not missing and
@@ -106,6 +122,7 @@ ssh_builtin = profile.network('riscv32', ('ssh',), wpa_backend='wolfssl',
 sftp_toolset = profile.network('riscv32', ('ssh', 'sftp'))
 logging_toolset = profile.network('riscv32', ('logging',))
 logging_wolfssl = profile.network('riscv32', ('logging',), wpa_backend='wolfssl')
+display_toolset = profile.network('riscv32', ('display',))
 combined_services = profile.network('riscv32', ('ssh', 'logging'))
 try:
     profile.network('riscv32', ('sftp',))
@@ -179,6 +196,11 @@ check(logging_wolfssl['syslogd_tls'] == 'no' and
       'crypto/external/apache2/openssl/lib/libcrypto' not in logging_wolfssl['libraries'] and
       'crypto/external/apache2/openssl/lib/libssl' not in logging_wolfssl['libraries'],
       'local diagnostic logging disables TLS/signing and retains no OpenSSL closure')
+display_devices = profile.network_device_selection(display_toolset, 'md0')
+check('ttyE0' in display_devices[0] and display_devices[2] ==
+      ('bpf', 'md0', 'wscons') and
+      not {'wsmouse0', 'iic0'} & set(display_devices[0]),
+      'the display toolset adds only ttyE0 and its wscons MAKEDEV group')
 with tempfile.TemporaryDirectory(prefix='network-crunch-config-') as temporary:
     config = Path(temporary) / 'console-tools.conf'
     generated = subprocess.run(
@@ -219,7 +241,7 @@ peripheral = profile.network('riscv32', ('system', 'audio', 'video', 'envsys', '
 transfer = profile.network('riscv32', ('transfer',))
 spi_toolset = profile.network('riscv32', ('spi',))
 all_network_toolsets = ('system', 'audio', 'video', 'envsys', 'spi',
-                        'transfer', 'mdns', 'ssh', 'sftp', 'logging')
+                        'transfer', 'mdns', 'ssh', 'sftp', 'logging', 'display')
 owner_profiles = (
     selected,
     profile.network('riscv32', all_network_toolsets, ('1',)),
@@ -745,6 +767,10 @@ with tempfile.TemporaryDirectory(prefix='static-network-') as temporary:
           'dhcpcd=YES' in (out / 'etc/rc.conf').read_text() and
           'mdnsd=YES' in (out / 'etc/rc.conf').read_text(),
           'generated rc enables standard WPA, DHCP and mDNS services')
+    check('rc_status_display=""' in (out / 'etc/rc.conf').read_text() and
+          'rc_status_display=""' in
+          (source / 'etc/defaults/rc.conf').read_text(),
+          'secondary startup display is disabled in common and generated defaults')
     check('constty "/usr/libexec/getty std.115200" vt100 on secure' in
           (out / 'etc/ttys').read_text(), 'standard getty preserves a login console')
     rc_conf = (out / 'etc/rc.conf').read_text()
@@ -930,11 +956,20 @@ with tempfile.TemporaryDirectory(prefix='static-network-') as temporary:
     cli_result = subprocess.run(
         [sys.executable, '-B', str(path), 'stage-network', str(cli_minimal),
          str(source), str(overlay), 'wifi0', str(pwd_mkdb), str(dhcp_dest),
-         'md0', 'a', 'ffs', 'no', 'no', 'no', 'builtin', 'no'],
+         'md0', 'a', 'ffs', 'no', 'no', 'no', 'builtin', 'no', 'no'],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
     check(cli_result.returncode == 0 and
           'sshd=NO' in (cli_minimal / 'etc/rc.conf').read_text(),
           'network staging CLI accepts the resolved no-SSH builtin-mode default')
+    display_root = temporary / 'root-display'
+    display_root.mkdir()
+    profile.stage_network(display_root, source, overlay, 'wifi0', pwd_mkdb,
+                          dhcp_dest, 'md0', 'a', display_enabled=True)
+    display_rc = (display_root / 'etc/rc.conf').read_text()
+    check('rc_status_display="/dev/ttyE0"' in display_rc and
+          'wscons=' not in display_rc and
+          not (display_root / 'etc/rc.network.d/wscons').exists(),
+          'display staging selects only a secondary sink without wscons startup')
     check(not (services / 'etc/ssh/ssh_host_ed25519_key').exists() and
           not (services / 'root/.ssh/authorized_keys').exists() and
           not (services / 'etc/rc.d').exists() and
@@ -959,6 +994,7 @@ with tempfile.TemporaryDirectory(prefix='static-network-') as temporary:
           'syslogd=NO' in (minimal / 'etc/rc.conf').read_text() and
           'syslogd_flags=' not in (minimal / 'etc/rc.conf').read_text() and
           'newsyslog=NO' in (minimal / 'etc/rc.conf').read_text() and
+          'rc_status_display=""' in (minimal / 'etc/rc.conf').read_text() and
           '/dev/pts' not in (minimal / 'etc/fstab').read_text() and
           'ptm' not in (minimal / 'etc/rc.conf').read_text() and
           'sysdb=NO' not in (minimal / 'etc/rc.conf').read_text() and
