@@ -155,5 +155,11 @@
       "EMBER_LLVM_SOURCE"
     ],
     "configs": {}
+  },
+  "release": {
+    "select": [
+      "EMBER_LLVM_SOURCE",
+      "EMBER_OPENSSL_SOURCE"
+    ]
   }
 }

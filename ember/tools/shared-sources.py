@@ -4,8 +4,11 @@
 """Read ember/shared-sources.json and check the sources of a kernel build.
 
 The file names the Ports producer of each prepared source that the OS can
-consume (EMBER_*_SOURCE), and the sources that a kernel consumes. Its source
-names must be the EMBER_*_SOURCE names of the REPRO_EXTERNAL_ROOTS table in
+consume (EMBER_*_SOURCE), the sources that a kernel consumes, and the sources
+that a release selects although no make guard requires them: the Ports
+sources of the release are made for the OpenSSL of Ports, so the release
+selects that OpenSSL too. The source names
+of the file must be the EMBER_*_SOURCE names of the REPRO_EXTERNAL_ROOTS table in
 share/mk/bsd.sys.mk. "describe" prints the checked file for the SDK build
 plan. A kernel build registers the sources that it really reads in
 REPRO_EXTERNAL_SOURCE_VARS; "check-kernel" stops the build when they differ
@@ -41,7 +44,7 @@ def load(path):
         doc = json.loads(Path(path).read_text(encoding='utf-8'), object_pairs_hook=unique)
     except (OSError, UnicodeError, ValueError) as error:
         fail(f'cannot read {path}: {error}')
-    if not isinstance(doc, dict) or set(doc) != {'schema', 'sources', 'kernel'} or doc['schema'] != SCHEMA:
+    if not isinstance(doc, dict) or set(doc) != {'schema', 'sources', 'kernel', 'release'} or doc['schema'] != SCHEMA:
         fail('unknown document form')
     sources = doc['sources']
     if not isinstance(sources, dict) or not sources:
@@ -60,6 +63,11 @@ def load(path):
         if (not CONFIG.match(config) or not isinstance(names, list) or names != sorted(set(names)) or
                 any(name not in sources for name in names)):
             fail('invalid kernel sources for ' + config)
+    release = doc['release']
+    if (not isinstance(release, dict) or set(release) != {'select'} or not isinstance(release['select'], list) or
+            release['select'] != sorted(set(release['select'])) or
+            any(name not in sources for name in release['select'])):
+        fail('release must have a sorted select list of known sources')
     table_path = Path(path).resolve().parents[1] / 'share/mk/bsd.sys.mk'
     try:
         table = re.search(r'^\.for _var _path in (.*?)^\.if', table_path.read_text(encoding='utf-8'), re.M | re.S)
