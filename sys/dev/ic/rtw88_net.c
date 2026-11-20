@@ -16,6 +16,7 @@
 #include <sys/atomic.h>
 #include <sys/mbuf.h>
 #include <sys/callout.h>
+#include <sys/timearith.h>
 #include <sys/timevar.h>
 #include <sys/workqueue.h>
 #include <sys/intr.h>
@@ -2037,6 +2038,21 @@ rtw88_net_ra_prepare(struct ieee80211com *ic, unsigned channel,
 #include <dev/ic/rtw88_net_rfk.inc>
 #endif
 
+/* The pending work item owns restart across a settling interval.
+ * Round up by a tick so the hardware receives its full settling time. */
+static int
+rtw88_net_bootstrap_wait(unsigned us)
+{
+	struct timeval delay = {
+		.tv_sec = us / 1000000,
+		.tv_usec = us % 1000000
+	};
+	int error;
+
+	error = kpause("rtwboot", false, tvtohz(&delay), NULL);
+	return error == EWOULDBLOCK ? 0 : EAGAIN;
+}
+
 /* Giant serializes state and queues. Never wait for this worker from itself. */
 static int
 rtw88_net_restart_peer(struct rtw88_net *net)
@@ -2089,9 +2105,11 @@ rtw88_net_restart_peer(struct rtw88_net *net)
 	/* INIT must retain a real READY core for the next WPA SCAN_REQ.
 	 * Only this stopped core may change RF width, before HCI start. */
 	if (start) {
+		net->core->sc_bootstrap_wait = rtw88_net_bootstrap_wait;
 		error = tuple.width_mhz != 20 ?
 		    rtw88_start_tuple(net->core, &tuple) :
 		    rtw88_start(net->core);
+		net->core->sc_bootstrap_wait = NULL;
 		if (error != 0)
 			return error;
 	}
@@ -4798,6 +4816,10 @@ rtw88_net_init(struct ifnet *ifp)
 		return EBUSY;
 	if (net->policy.dying || net->ic.ic_opmode != IEEE80211_M_STA)
 		return EOPNOTSUPP;
+	/* Stop and detach wait for state_work; another init must not start
+	 * the same hardware while that worker has yielded Giant. */
+	if (net->core->sc_bootstrap_wait != NULL)
+		return EBUSY;
 	if (net->core->sc_executor == NULL &&
 	    (ifp->if_flags & IFF_RUNNING) != 0)
 		rtw88_net_stop(ifp, 0);

@@ -251,6 +251,9 @@ struct rtw88_softc {
 	int sc_power_error;	/* Last failed off sequence. */
 	int sc_dma_error;	/* Last unconfirmed bus-master disable. */
 	int sc_bootstrapping;
+	/* Optional restart wait, in microseconds. A nonzero result means
+	 * the hardware still needs the full delay. */
+	int (*sc_bootstrap_wait)(unsigned);
 	int sc_stop_requested;
 	struct rtw88_mailbox sc_mailbox;
 	uint16_t sc_vendor;

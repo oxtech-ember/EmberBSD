@@ -257,7 +257,7 @@ dack_raw_trace(const struct rtw8822c_dack_result *dack)
 
 		if (trace->count == 0 && trace->error == 0)
 			continue;
-		printf("rtwce: DACK ADC raw B %s initial %u reads %u "
+		printf_tolog("rtwce: DACK ADC raw B %s initial %u reads %u "
 		    "filter %u spread %u/%u mean %d/%d valid %u error %d\n",
 		    name, (unsigned)trace->count, (unsigned)trace->reads,
 		    (unsigned)trace->filter_passes, (unsigned)trace->spread[0],
@@ -268,10 +268,10 @@ dack_raw_trace(const struct rtw8822c_dack_result *dack)
 			count = RTW8822C_DACK_ADC_TRACE_SAMPLES;
 		for (i = 0; i < count; i++) {
 			if (i % 10 == 0)
-				printf("rtwce: DACK ADC raw B %s %u:", name, i);
-			printf(" %06x", trace->samples[i]);
+				printf_tolog("rtwce: DACK ADC raw B %s %u:", name, i);
+			printf_tolog(" %06x", trace->samples[i]);
 			if (i % 10 == 9 || i + 1 == count)
-				printf("\n");
+				printf_tolog("\n");
 		}
 	}
 }
@@ -317,10 +317,12 @@ rtw8822c_phy_post(struct rtw88_softc *sc)
 		    (unsigned)dack.dac_nonconverged);
 	if (error != 0 || dack.adc_nonconverged != 0 ||
 	    dack.dac_nonconverged != 0) {
-		printf("rtwce: DACK identity syscfg %#x cut %u RFE %u XTAL %u\n",
+		/* Reconnect can repeat cold calibration with Giant held. Keep the
+		 * diagnostic dump off the synchronous console. */
+		printf_tolog("rtwce: DACK identity syscfg %#x cut %u RFE %u XTAL %u\n",
 		    sc->sc_sys_cfg1, (unsigned)sc->sc_cut, (unsigned)sc->sc_rfe,
 		    (unsigned)sc->sc_xtal);
-		printf("rtwce: DACK stage %u path %u ADC attempts %u/%u "
+		printf_tolog("rtwce: DACK stage %u path %u ADC attempts %u/%u "
 		    "DAC attempts %u/%u measure %u/%u samples %u/%u "
 		    "filter %u spread %u/%u "
 		    "mean %d/%d valid %u\n", (unsigned)dack.stage,
@@ -331,13 +333,13 @@ rtw8822c_phy_post(struct rtw88_softc *sc)
 		    (unsigned)dack.sample_reads, (unsigned)dack.filter_passes,
 		    (unsigned)dack.spread[0], (unsigned)dack.spread[1],
 		    dack.mean[0], dack.mean[1], (unsigned)dack.mean_valid);
-		printf("rtwce: DACK ADC before A %d/%d B %d/%d "
+		printf_tolog("rtwce: DACK ADC before A %d/%d B %d/%d "
 		    "comp A %u/%u B %u/%u\n", dack.adc_before[0][0],
 		    dack.adc_before[0][1], dack.adc_before[1][0],
 		    dack.adc_before[1][1], (unsigned)dack.adc[0][0],
 		    (unsigned)dack.adc[0][1], (unsigned)dack.adc[1][0],
 		    (unsigned)dack.adc[1][1]);
-		printf("rtwce: DACK ADC snapshot path %u valid %u error %d "
+		printf_tolog("rtwce: DACK ADC snapshot path %u valid %u error %d "
 		    "comp %#x mux %#x sample %#x AFE %#x control %#x\n",
 		    (unsigned)dack.adc_snapshot_path,
 		    (unsigned)dack.adc_snapshot_valid, dack.adc_snapshot_error,

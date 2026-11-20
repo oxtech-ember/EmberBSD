@@ -3,6 +3,7 @@
 /* Complete native state consumer plus real core; kernel scheduling is modeled. */
 #include <stdarg.h>
 #include <stdbool.h>
+#include <sys/time.h>
 /* BSD sys/types.h alias used by the unchanged shared channel functions. */
 typedef unsigned int u_int;
 #include <dev/ic/rtw88_net_policy.h>
@@ -166,7 +167,15 @@ static unsigned state_beacon_lock;
 #define IEEE80211_BEACON_UNLOCK(ic) do { (void)(ic); assert(state_beacon_lock); state_beacon_lock=0; } while (0)
 unsigned ieee80211_chan2ieee(struct ieee80211com *,struct ieee80211_channel *);
 #define mstohz(ms) (ms)
+static unsigned state_tick_us = 1000;
+static int tvtohz(const struct timeval *tv)
+{
+	assert(tv->tv_sec == 0 && tv->tv_usec > 0);
+	return ((unsigned long)tv->tv_usec + state_tick_us - 1) /
+	    state_tick_us + 1;
+}
 static unsigned state_ticks=1;
+static void (*state_dack_wait)(int);
 static unsigned getticks(void) { return state_ticks; }
 #ifndef MAX
 #define MAX(a,b) ((a)>(b)?(a):(b))
@@ -175,6 +184,8 @@ static inline int kpause(const char *name,bool intr,int ticks,kmutex_t *lock)
 {
     (void)name;(void)intr;assert(lock==NULL && !state_lock.held && ticks>0);
     state_ticks+=(unsigned)ticks;
+    if (strcmp(name, "rtwboot") == 0 && state_dack_wait != NULL)
+        state_dack_wait(ticks);
     if(state_sae_sleep_change) {
         state_current_net->ic.ic_sae_serial++;
         state_sae_sleep_change=0;
