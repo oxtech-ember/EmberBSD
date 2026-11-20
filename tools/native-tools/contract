@@ -47,6 +47,7 @@ rm rm HOST_MV_RM
 rmdir rmdir -
 sed sed SED
 sh sh HOST_SH
+sleep sleep -
 sort sort -
 tee tee -
 touch touch -
