@@ -220,7 +220,7 @@ static const struct {
     uint32_t minimum, maximum, address;
 } frame_alloc_wire[] = {
     {19176,1733208,0x24004000U}, {128,65536,0x241ac000U},
-    {384,24576,0x241bc000U}
+    {384,24576,0x241bc000U}, {384,24576,0x241c2000U}
 };
 static bool boot_term_issued;
 static uint64_t boot_now;
@@ -604,7 +604,7 @@ static void frame_trial_tests(void)
         boot_actual=boot_fixture_prepare_frame();struct cixvpu_prepared *owner=boot_actual;
         CHECK(cixvpu_acpi_boot_once(b,&owner)==0 && owner==NULL);
         CHECK(boot_fixture_frame_publications()==13 && frame_alloc_pending==0);
-        CHECK(b->report.rpc_commits==(scenario==0 ? 6U : 3U) &&
+        CHECK(b->report.rpc_commits==(scenario==0 ? 7U : 3U) &&
             b->report.rpc_notifications==b->report.rpc_commits);
         CHECK(b->report.exposed && b->report.held && boot_disestablish==0 && boot_masks==1);
         CHECK(cixvpu_prepared_free(&boot_actual)==EBUSY);

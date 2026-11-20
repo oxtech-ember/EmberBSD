@@ -103,7 +103,9 @@ _Static_assert(CIXVPU_FW_PLAN_FRAME_RPC_ADDRESS % CIXVPU_FW_PAGE_SIZE == 0 &&
     CIXVPU_FW_PLAN_FRAME_RPC_AUX_SIZE <= CIXVPU_FW_PLAN_FRAME_RPC_AUX_CAPACITY &&
     CIXVPU_FW_PLAN_FRAME_RPC_THIRD_ADDRESS % CIXVPU_FW_PAGE_SIZE == 0 &&
     CIXVPU_FW_PLAN_FRAME_RPC_THIRD_SIZE <= CIXVPU_FW_PLAN_FRAME_RPC_THIRD_CAPACITY &&
-    CIXVPU_FW_PLAN_FRAME_RPC_THIRD_ADDRESS + CIXVPU_FW_PLAN_FRAME_RPC_THIRD_CAPACITY <=
+    CIXVPU_FW_PLAN_FRAME_RPC_THIRD_CAPACITY % CIXVPU_FW_PAGE_SIZE == 0 &&
+    CIXVPU_FW_PLAN_FRAME_RPC_THIRD_ADDRESS +
+    CIXVPU_FW_PLAN_FRAME_RPC_THIRD_INSTANCES * CIXVPU_FW_PLAN_FRAME_RPC_THIRD_CAPACITY <=
     CIXVPU_FW_PLAN_BOOT_RPC_SECOND_ADDRESS + PLAN_LEAF_BYTES &&
     CIXVPU_FW_PLAN_BOOT_RPC_SECOND_ADDRESS + PLAN_LEAF_BYTES <=
     CIXVPU_FW_PLAN_BITSTREAM_ADDRESS,
@@ -111,11 +113,11 @@ _Static_assert(CIXVPU_FW_PLAN_FRAME_RPC_ADDRESS % CIXVPU_FW_PAGE_SIZE == 0 &&
 
 const struct cixvpu_fw_rpc_object cixvpu_fw_frame_rpc_objects[CIXVPU_FW_FRAME_RPC_COUNT] = {
 	{ CIXVPU_FW_PLAN_FRAME_RPC_SIZE, CIXVPU_FW_PLAN_FRAME_RPC_CAPACITY,
-	  CIXVPU_FW_PLAN_FRAME_RPC_ADDRESS },
+	  CIXVPU_FW_PLAN_FRAME_RPC_ADDRESS, 1 },
 	{ CIXVPU_FW_PLAN_FRAME_RPC_AUX_SIZE, CIXVPU_FW_PLAN_FRAME_RPC_AUX_CAPACITY,
-	  CIXVPU_FW_PLAN_FRAME_RPC_AUX_ADDRESS },
+	  CIXVPU_FW_PLAN_FRAME_RPC_AUX_ADDRESS, 1 },
 	{ CIXVPU_FW_PLAN_FRAME_RPC_THIRD_SIZE, CIXVPU_FW_PLAN_FRAME_RPC_THIRD_CAPACITY,
-	  CIXVPU_FW_PLAN_FRAME_RPC_THIRD_ADDRESS }
+	  CIXVPU_FW_PLAN_FRAME_RPC_THIRD_ADDRESS, CIXVPU_FW_PLAN_FRAME_RPC_THIRD_INSTANCES }
 };
 
 _Static_assert(CIXVPU_FW_PLAN_FRAME_ADDRESS % PLAN_LEAF_BYTES == 0 &&
@@ -480,17 +482,21 @@ cixvpu_fw_plan_mapping(const struct cixvpu_fw_plan *plan, unsigned int index,
 		    CIXVPU_FW_PLAN_BOOT_RPC_SECOND_PAGES + index - first;
 		if (i == 3) {
 			const struct cixvpu_fw_rpc_object *object;
+			uint32_t pages, instance;
 			unsigned int object_index;
 
 			for (object_index = 0; object_index < CIXVPU_FW_FRAME_RPC_COUNT; object_index++) {
 				object = &cixvpu_fw_frame_rpc_objects[object_index];
-				if (local < CIXVPU_FW_PLAN_RPC_PAGE_COUNT(object->size))
+				pages = CIXVPU_FW_PLAN_RPC_PAGE_COUNT(object->size);
+				if (local < pages * object->instances)
 					break;
-				local -= CIXVPU_FW_PLAN_RPC_PAGE_COUNT(object->size);
+				local -= pages * object->instances;
 			}
 			if (object_index == CIXVPU_FW_FRAME_RPC_COUNT)
 				return EINVAL;
-			map.address = object->address + local * CIXVPU_FW_PAGE_SIZE;
+			instance = local / pages;
+			map.address = cixvpu_fw_rpc_address(object, instance) +
+			    (local % pages) * CIXVPU_FW_PAGE_SIZE;
 			map.leaf_backing_index = first_leaf + plan->cores + 2;
 			goto ready;
 		}

@@ -313,10 +313,10 @@ On 2026-11-20 the physical frame probe reached FRAME_RUN and recorded action
 operation. Successful output submission requires a separate completion result.
 Every committed publication gets one notification before another operation.
 
-The open frame queue can respond to three ordered region-zero ALLOC requests
+The open frame queue can respond to four ordered region-zero ALLOC requests
 with 4 KiB alignment. Initial/maximum sizes in bytes are 19176/1733208,
-128/65536 and 384/24576. Before exposure the planner maps five, one and one
-pages at 0x24004000, 0x241ac000 and 0x241bc000 respectively. Each base follows
+128/65536 and two instances of 384/24576. Before exposure the planner maps
+five pages at 0x24004000 and one each at 0x241ac000, 0x241bc000 and 0x241c2000. Each base follows
 the preceding object's full page-rounded virtual reservation. The remaining
 PTEs in these reservations stay invalid. The bootstrap-only profile retains
 its original page layout. Unknown requests or unsupported growth stop the
@@ -468,8 +468,10 @@ checks with GCC16 path analysis, configured Cppcheck/CSA and ASan/UBSan.
 Causal runtime mutations cover the new boundaries.
 Only the separate manual RPC profile selects this plan. Default and strict
 manual profiles keep the ordinary plan. A physical run on 2026-11-20 confirmed
-the bootstrap ALLOC, RESIZE and second ALLOC, followed by the first two frame
-ALLOC replies. The next frame request was 384 bytes with a 24576-byte maximum.
+the bootstrap ALLOC, RESIZE and second ALLOC, followed by three frame ALLOC
+replies. The firmware issued another 384-byte call with the same 24576-byte
+maximum after the first such return. The new second-instance grant has
+source-level coverage.
 General allocation, resize/free, live PTE changes and safe DMA teardown
 remain unqualified.
 

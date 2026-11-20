@@ -47,14 +47,25 @@
     CIXVPU_FW_PLAN_FRAME_RPC_AUX_CAPACITY)
 #define CIXVPU_FW_PLAN_FRAME_RPC_THIRD_SIZE UINT32_C(384)
 #define CIXVPU_FW_PLAN_FRAME_RPC_THIRD_CAPACITY UINT32_C(24576)
+#define CIXVPU_FW_PLAN_FRAME_RPC_THIRD_INSTANCES 2U
 #define CIXVPU_FW_PLAN_FRAME_RPC_PAGES \
     (CIXVPU_FW_PLAN_RPC_PAGE_COUNT(CIXVPU_FW_PLAN_FRAME_RPC_SIZE) + \
     CIXVPU_FW_PLAN_RPC_PAGE_COUNT(CIXVPU_FW_PLAN_FRAME_RPC_AUX_SIZE) + \
+    CIXVPU_FW_PLAN_FRAME_RPC_THIRD_INSTANCES * \
     CIXVPU_FW_PLAN_RPC_PAGE_COUNT(CIXVPU_FW_PLAN_FRAME_RPC_THIRD_SIZE))
 
 struct cixvpu_fw_rpc_object {
-	uint32_t size, capacity, address;
+	uint32_t size, capacity, address, instances;
 };
+/* Both the page tables and the RPC reply use this reserved virtual stride. */
+static inline uint32_t
+cixvpu_fw_rpc_address(const struct cixvpu_fw_rpc_object *object,
+    unsigned int instance)
+{
+	return object->address + instance *
+	    CIXVPU_FW_PLAN_RPC_PAGE_COUNT(object->capacity) * CIXVPU_FW_PAGE_SIZE;
+}
+
 #define CIXVPU_FW_FRAME_RPC_COUNT 3U
 extern const struct cixvpu_fw_rpc_object
     cixvpu_fw_frame_rpc_objects[CIXVPU_FW_FRAME_RPC_COUNT];

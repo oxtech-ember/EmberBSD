@@ -37,7 +37,7 @@ static unsigned int hashes, page_calls, map_calls, link_calls, encode_calls;
 static unsigned int meta_calls, fail_meta, fail_page, fail_map, fail_link, fail_encode;
 /* Fixed data layout precedes the packed frame RPC backing and page tables. */
 enum {
-    FRAME_RPC_BACKING_PAGES = 7,
+    FRAME_RPC_BACKING_PAGES = 8,
     SLOT_ROOT = 394 + FRAME_RPC_BACKING_PAGES,
     SLOT_FIRST_LEAF = SLOT_ROOT + 1,
     SLOT_LAST_LEAF = SLOT_ROOT + 6,
@@ -952,13 +952,14 @@ static void rpc_observe(unsigned int i, bus_addr_t off, bus_size_t len, int ops)
     if (word(dev,1)==2 && maximum==65536)
         address = 0x241ac000U;
     if (word(dev,1)==2 && maximum==24576)
-        address = 0x241bc000U;
+        address = rpc_active->dma->rpc_frame_alloc_count==4 ? 0x241c2000U : 0x241bc000U;
     if(ops==BUS_DMASYNC_POSTWRITE && off==0) {
         if(word(dev,1)==2 && address==0x20000000U) CHECK(rpc_active->dma->rpc_alloc_used);
         if(word(dev,1)==2 && address==0x24000000U) CHECK(rpc_active->dma->rpc_second_alloc_used);
         if(word(dev,1)==2 && address==0x24004000U) CHECK(rpc_active->dma->rpc_frame_alloc_count==1);
         if(word(dev,1)==2 && address==0x241ac000U) CHECK(rpc_active->dma->rpc_frame_alloc_count==2);
         if(word(dev,1)==2 && address==0x241bc000U) CHECK(rpc_active->dma->rpc_frame_alloc_count==3);
+        if(word(dev,1)==2 && address==0x241c2000U) CHECK(rpc_active->dma->rpc_frame_alloc_count==4);
         if(word(dev,1)==3) CHECK(rpc_active->dma->rpc_resize_used && !rpc_active->dma->rpc_resize_committed);
         if(word(dev,1)==1) CHECK(rpc_active->dma->rpc_debug_count>0 && rpc_active->dma->rpc_debug_count<=16);
     }
@@ -2110,7 +2111,7 @@ static const struct {
     uint32_t minimum, maximum, address;
 } frame_alloc_requests[] = {
     {19176,1733208,0x24004000U}, {128,65536,0x241ac000U},
-    {384,24576,0x241bc000U}
+    {384,24576,0x241bc000U}, {384,24576,0x241c2000U}
 };
 static void rpc_frame_request(unsigned int alloc)
 {
@@ -2129,7 +2130,7 @@ static void boot_rpc_frame_tests(void)
         bool cacheline;
         int error;
     } cases[] = {
-        {3,0,NONE,false,EBUSY}, {3,1,NONE,false,EBUSY}, {3,2,NONE,true,EBUSY},
+        {4,0,NONE,false,EBUSY}, {4,1,NONE,false,EBUSY}, {4,2,NONE,true,ENOSPC},
         {0,0,BOOT_ONLY,false,ENOTSUP}, {0,0,NO_QUEUE,false,ENOTSUP},
         {0,0,BEFORE_SECOND_BOOT,false,ENOTSUP},
         {0,0,MIN,false,ENOTSUP}, {0,0,MAX,false,ENOTSUP},
@@ -2139,7 +2140,9 @@ static void boot_rpc_frame_tests(void)
         {1,1,ALIGN,false,ENOTSUP},
         {1,2,NONE,false,ENOTSUP}, {2,2,MIN,false,ENOTSUP},
         {2,2,MAX,false,ENOTSUP}, {2,2,REGION,false,ENOTSUP},
-        {2,2,ALIGN,false,ENOTSUP}
+        {2,2,ALIGN,false,ENOTSUP},
+        {3,3,MIN,false,ENOTSUP}, {3,3,MAX,false,ENOTSUP},
+        {3,3,REGION,false,ENOTSUP}, {3,3,ALIGN,false,ENOTSUP}
     };
     for (unsigned int test=0;test<__arraycount(cases);test++) {
         const enum fault fault=cases[test].fault;
@@ -2152,7 +2155,7 @@ static void boot_rpc_frame_tests(void)
             struct cixvpu_dma *owner=team_frame_begin(&plan,&source);
             static const uint32_t frame_vas[] = {
                 0x24004000U, 0x24005000U, 0x24006000U, 0x24007000U, 0x24008000U,
-                0x241ac000U, 0x241bc000U
+                0x241ac000U, 0x241bc000U, 0x241c2000U
             };
             unsigned int mapped=0;
             for (unsigned int i=0;i<plan.mappings;i++) {
@@ -2160,7 +2163,9 @@ static void boot_rpc_frame_tests(void)
                 CHECK(cixvpu_fw_plan_mapping(&plan,i,&m)==0);
                 if (m.address>=0x24004000U && m.address<0x24400000U) {
                     CHECK(mapped<__arraycount(frame_vas));
-                    CHECK(m.address==frame_vas[mapped++]);
+                    CHECK(m.address==frame_vas[mapped]);
+                    CHECK(m.backing_index==TEAM_ROOT-FRAME_RPC_BACKING_PAGES+mapped);
+                    mapped++;
                 }
             }
             CHECK(mapped==__arraycount(frame_vas));
@@ -2208,6 +2213,17 @@ static void boot_rpc_frame_tests(void)
             CHECK(memcmp(original+4,rpc+4,4)==0 &&
                 memcmp(original+16,rpc+16,sizeof(original)-16)==0);
             CHECK(heap==live_kmem && owners==depth);
+
+            /* Firmware may poll with the response still present. Only a new
+             * CALL can consume another object, even for an identical tuple. */
+            memcpy(original,rpc,sizeof(original));
+            boot_nevents=0;
+            CHECK(cixvpu_prepared_boot_rpc_step(p,&result)==0 &&
+                result==CIXVPU_BOOT_RPC_PENDING && boot_nevents==4);
+            for (unsigned int i=0;i<boot_nevents;i++)
+                CHECK(!(boot_events[i].ops & BUS_DMASYNC_PREWRITE));
+            CHECK(p->dma->rpc_frame_alloc_count==alloc+1 &&
+                memcmp(original,rpc,sizeof(original))==0);
         }
 
         rpc_frame_request(cases[test].requested);
@@ -2221,7 +2237,8 @@ static void boot_rpc_frame_tests(void)
         CHECK(cixvpu_prepared_boot_rpc_step(p,&result)==want &&
             result==CIXVPU_BOOT_RPC_IDLE && p->boot.error==want);
         CHECK(memcmp(original,rpc,sizeof(original))==0 &&
-            heap==live_kmem && owners==depth);
+            heap==live_kmem && owners==depth &&
+            p->dma->rpc_frame_alloc_count==cases[test].accepted);
         for (unsigned int i=0;i<boot_nevents;i++)
             CHECK(!(boot_events[i].ops & BUS_DMASYNC_PREWRITE));
         const unsigned int calls=native_calls;

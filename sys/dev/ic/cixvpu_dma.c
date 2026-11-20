@@ -811,25 +811,27 @@ cixvpu_dma_boot_rpc_step(struct cixvpu_dma *dma,
 		    observed[20] == CIXVPU_FW_PLAN_BOOT_RPC_REGION &&
 		    observed[21] == CIXVPU_FW_PLAN_BOOT_RPC_SECOND_LOG2_ALIGNMENT) {
 			const struct cixvpu_fw_rpc_object *object;
-			unsigned int i;
+			unsigned int first = 0, instance, i;
 
 			for (i = 0; i < CIXVPU_FW_FRAME_RPC_COUNT; i++) {
 				object = &cixvpu_fw_frame_rpc_objects[i];
 				if (le32dec(observed + 12) == object->size &&
 				    le32dec(observed + 16) == object->capacity)
 					break;
+				first += object->instances;
 			}
 			if (i == CIXVPU_FW_FRAME_RPC_COUNT ||
-			    i > dma->rpc_frame_alloc_count) {
+			    first > dma->rpc_frame_alloc_count) {
 				error = ENOTSUP;
 				goto rearm;
 			}
-			if (i < dma->rpc_frame_alloc_count) {
-				error = EBUSY;
+			instance = dma->rpc_frame_alloc_count - first;
+			if (instance >= object->instances) {
+				error = object->instances == 1 ? EBUSY : ENOSPC;
 				goto rearm;
 			}
 			dma->rpc_frame_alloc_count++;
-			address = object->address;
+			address = cixvpu_fw_rpc_address(object, instance);
 			result = CIXVPU_DMA_RPC_FRAME_ALLOC_REPLIED;
 		} else {
 			error = ENOTSUP;
