@@ -122,7 +122,10 @@ wait_us(struct dack_context *c, unsigned us)
 		return;
 	}
 	c->out->delay_us += us;
-	c->sc->sc_ops->delay_us(c->sc->sc_bus, us);
+	/* Keep RF register timing unchanged for short polling delays. */
+	if (us < 20000 || c->sc->sc_bootstrap_wait == NULL ||
+	    c->sc->sc_bootstrap_wait(us) != 0)
+		c->sc->sc_ops->delay_us(c->sc->sc_bus, us);
 	if (canceled(c))
 		c->error = EINTR;
 }

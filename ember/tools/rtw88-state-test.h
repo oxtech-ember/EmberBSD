@@ -167,6 +167,7 @@ static unsigned state_beacon_lock;
 unsigned ieee80211_chan2ieee(struct ieee80211com *,struct ieee80211_channel *);
 #define mstohz(ms) (ms)
 static unsigned state_ticks=1;
+static void (*state_dack_wait)(int);
 static unsigned getticks(void) { return state_ticks; }
 #ifndef MAX
 #define MAX(a,b) ((a)>(b)?(a):(b))
@@ -175,6 +176,8 @@ static inline int kpause(const char *name,bool intr,int ticks,kmutex_t *lock)
 {
     (void)name;(void)intr;assert(lock==NULL && !state_lock.held && ticks>0);
     state_ticks+=(unsigned)ticks;
+    if (strcmp(name, "rtwdack") == 0 && state_dack_wait != NULL)
+        state_dack_wait(ticks);
     if(state_sae_sleep_change) {
         state_current_net->ic.ic_sae_serial++;
         state_sae_sleep_change=0;

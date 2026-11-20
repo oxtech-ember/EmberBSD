@@ -66,6 +66,25 @@ reconnect_bus_master(void *cookie,int enable)
 	return bus_master(cookie,enable);
 }
 
+static unsigned reconnect_dack_waits;
+
+static void
+reconnect_dack_wait(int ticks)
+{
+	struct rtw88_net *net = state_current_net;
+
+	CHECK(ticks > 20);
+	CHECK(net->core->sc_bootstrapping && !net->core->sc_running);
+	CHECK((net->ec.ec_if.if_flags & IFF_RUNNING) == 0);
+	CHECK(!net->policy.accepting);
+	if (reconnect_dack_waits++ == 0) {
+		unsigned loads = f.firmware_loads;
+
+		CHECK(rtw88_net_init(&net->ec.ec_if) == EBUSY);
+		CHECK(f.firmware_loads == loads);
+	}
+}
+
 static void
 test_reconnect_coalesced_peer_barrier(void)
 {
@@ -100,7 +119,11 @@ test_reconnect_coalesced_peer_barrier(void)
 	/* Latest-request coalescing must not lose the old hardware peer. */
 	CHECK(rtw88_net_newstate(&s.net.ic,IEEE80211_S_INIT,-1)==0);
 	CHECK(rtw88_net_newstate(&s.net.ic,IEEE80211_S_SCAN,-1)==0);
+	reconnect_dack_waits = 0;
+	state_dack_wait = reconnect_dack_wait;
 	rtw88_net_state_work(&s.net.state_work,&s.net);
+	state_dack_wait = NULL;
+	CHECK(reconnect_dack_waits == 4);
 	CHECK(f.firmware_loads==loads+1 && s.sc.sc_generation>generation);
 	CHECK(s.sc.sc_txq[RTW88_TXQ_BE].queued==0);
 	CHECK(s.sc.sc_stats.tx_dropped==4 && s.sc.sc_stats.tx_done==0);
@@ -226,9 +249,26 @@ reconnect_firmware_load(void *cookie,const char *driver,const char *name,
 	return e;
 }
 static void
+reconnect_cancel_dack_wait(int ticks)
+{
+	struct rtw88_net *net = state_current_net;
+
+	CHECK(ticks > 20);
+	if (reconnect_event == 5) {
+		net->policy.dying = 1;
+	} else if (reconnect_event == 6) {
+		net->ec.ec_if.if_flags &= ~IFF_UP;
+		CHECK(rtw88_net_newstate(&net->ic, IEEE80211_S_INIT, -1) == 0);
+	} else {
+		return;
+	}
+	reconnect_event = 0;
+}
+
+static void
 test_reconnect_cancel_boundaries(void)
 {
-	for (unsigned event=1;event<=4;event++) {
+	for (unsigned event=1;event<=6;event++) {
 		struct state_fixture s;
 		unsigned loads,parents;
 		if (!state_fixture_start(&s,1,20)) continue;
@@ -239,8 +279,11 @@ test_reconnect_cancel_boundaries(void)
 		s.bus.intr_barrier=reconnect_interrupt_barrier;
 		s.bus.firmware_load=reconnect_firmware_load;
 		reconnect_event=event;
+		state_dack_wait = event >= 5 ? reconnect_cancel_dack_wait : NULL;
 		CHECK(rtw88_net_newstate(&s.net.ic,IEEE80211_S_SCAN,-1)==0);
 		rtw88_net_state_work(&s.net.state_work,&s.net);
+		state_dack_wait = NULL;
+		CHECK(s.sc.sc_bootstrap_wait == NULL);
 		CHECK(reconnect_event==0 && ra_parent_data==parents);
 		CHECK(!s.net.policy.accepting && !s.net.work_pending);
 		CHECK(f.firmware_loads==loads+1);
