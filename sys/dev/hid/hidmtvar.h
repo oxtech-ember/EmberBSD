@@ -45,6 +45,19 @@ struct hidmt_pointer {
 	 */
 	bool drag_held, dragging;
 	uint64_t drag_deadline;
+	/*
+	 * Three-finger drag (HIDMT_DRAG3): three contacts arm a drag at
+	 * their mean position (drag3_x, drag3_y) at drag3_armed_at.  After
+	 * HIDMT_DRAG3_SETTLE_US, travel beyond HIDMT_DRAG3_START presses the
+	 * left button; it goes up when every finger is lifted.  drag3_ids
+	 * are the armed contacts.  drag3_blocked keeps a touch sequence that
+	 * had more than three contacts, scrolled, or got its third contact
+	 * late from arming until every finger is lifted.
+	 */
+	bool drag3_armed, drag3, drag3_blocked;
+	int drag3_x, drag3_y;
+	unsigned drag3_ids[3];
+	uint64_t drag3_armed_at;
 	/* Two-finger scroll state; cleared with the rest on release. */
 	bool scroll_valid, scrolling;
 	unsigned scroll_id[2];
@@ -101,6 +114,11 @@ struct hidmt_motion {
 	 * (left up), report one more left click (down and up).
 	 */
 	bool click_after;
+	/*
+	 * A three-finger drag owns this frame (HIDMT_DRAG3): scrolling and
+	 * gestures must leave it alone.
+	 */
+	bool drag3;
 	/* Precision scroll units for wsmouse_precision_scroll(). */
 	int scroll_x, scroll_y;
 	/*
@@ -146,6 +164,14 @@ struct hidmt_gstate {
 #define HIDMT_TAP_LEFT	0x01u	/* one-finger tap → left button */
 #define HIDMT_TAP_RIGHT	0x02u	/* two-finger tap → right button */
 #define HIDMT_TAP_DRAG	0x04u	/* one-finger tap, then touch: left drag */
+#define HIDMT_DRAG3	0x08u	/* three contacts move: left drag */
+
+/* Mean travel of three contacts (contact units) before a drag starts. */
+#define HIDMT_DRAG3_START	50
+/* Three contacts must stay this long before the press (microseconds). */
+#define HIDMT_DRAG3_SETTLE_US	80000
+/* The third contact must land this soon after the first (microseconds). */
+#define HIDMT_DRAG3_LAND_US	200000
 
 /* Time after a tap in which a new touch starts a drag (microseconds). */
 #define HIDMT_DRAG_US	250000
@@ -176,5 +202,6 @@ bool hidmt_live(const struct hidmt_pointer *, const struct hidmt_assembler *,
 unsigned hidmt_stall(struct hidmt_pointer *, struct hidmt_assembler *,
     struct hidmt_gstate *, uint64_t, uint64_t, bool *);
 bool hidmt_drag_expire(struct hidmt_pointer *, uint64_t);
+bool hidmt_holds(const struct hidmt_pointer *);
 
 #endif

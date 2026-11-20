@@ -29,6 +29,13 @@ within `HIDMT_DRAG_US` drags, its lift releases, a short second touch adds
 one click, a second finger ends the drag (a physical click with two
 contacts stays right only), and `hidmt_drag_expire()` releases an unused
 hold.
+With `HIDMT_DRAG3` three contacts arm a drag and keep the pointer still.
+After `HIDMT_DRAG3_SETTLE_US`, travel of their mean beyond
+`HIDMT_DRAG3_START` presses the left button. Lifting fingers stops the
+pointer, the last lift releases the button. A sequence with four contacts,
+a scroll, or a third contact later than `HIDMT_DRAG3_LAND_US` never arms;
+a new set of three contacts re-arms; frames of a drag never scroll or start
+a gesture; the stall timer gives a resting drag `HIDMT_DRAG_STALL_US`.
 
 The I2C transport must also compile against the selected kernel configuration.
 These tests do not simulate I2C hardware, wscons queues, device detach,

@@ -368,7 +368,7 @@ hidmt_assemble(const struct hidmt_config *cfg, struct hidmt_assembler *as,
 }
 
 static void
-hidmt_pointer_base(struct hidmt_pointer *ptr, const struct hidmt_frame *frame,
+hidmt_pointer_core(struct hidmt_pointer *ptr, const struct hidmt_frame *frame,
     uint64_t now, unsigned tap_flags, struct hidmt_motion *motion)
 {
 	const struct hidmt_contact *contact;
@@ -515,6 +515,101 @@ hidmt_pointer_base(struct hidmt_pointer *ptr, const struct hidmt_frame *frame,
 	ptr->y = contact->y;
 }
 
+/*
+ * Pointer policy with three-finger drag (HIDMT_DRAG3), as on macOS.  Three
+ * contacts without a physical button arm the drag; the pointer stays still
+ * while armed, so the button goes down where the pointer was.  After
+ * HIDMT_DRAG3_SETTLE_US, once the mean of the three contacts has travelled
+ * HIDMT_DRAG3_START, the left button goes down and the tracked contact moves
+ * the pointer.  Lifting fingers one by one stops the pointer; the button
+ * goes up when every finger is lifted.  A touch sequence that had four or
+ * more contacts, scrolled, or got its third contact more than
+ * HIDMT_DRAG3_LAND_US after the first never arms, so four-finger swipes,
+ * scrolling and pinching are not taken over.  A new set of three contacts
+ * re-arms from its own position.  A drag in progress ends only on the last
+ * lift or on a release (lifecycle, lost frame, stall timer).
+ */
+static void
+hidmt_pointer_base(struct hidmt_pointer *ptr, const struct hidmt_frame *frame,
+    uint64_t now, unsigned tap_flags, struct hidmt_motion *motion)
+{
+	const bool drag3 = ptr->drag3, armed = ptr->drag3_armed;
+	const bool blocked = ptr->drag3_blocked;
+	const int ax = ptr->drag3_x, ay = ptr->drag3_y;
+	const uint64_t armed_at = ptr->drag3_armed_at;
+	unsigned ids[3], i;
+	int64_t cx, cy;
+	bool same;
+
+	memcpy(ids, ptr->drag3_ids, sizeof(ids));
+	hidmt_pointer_core(ptr, frame, now, tap_flags, motion);
+	ptr->drag3 = ptr->drag3_armed = false;
+	ptr->drag3_blocked = blocked && frame->ncontacts != 0;
+	if (drag3) {
+		motion->tap = motion->click_after = false;
+		motion->tap_button = 0;
+		if (frame->ncontacts == 0) {
+			/* Last lift: up, unless the physical button is down. */
+			if ((frame->buttons & 1u) == 0)
+				motion->buttons &= ~1u;
+			return;
+		}
+		ptr->drag3 = true;
+		ptr->tap_candidate = false;
+		motion->drag3 = true;
+		/* A physical click during the drag is the same left button. */
+		motion->buttons = 1u;
+		if (frame->ncontacts < 3)
+			motion->dx = motion->dy = 0;
+		return;
+	}
+	if ((tap_flags & HIDMT_DRAG3) == 0 || frame->ncontacts == 0)
+		return;
+	if (frame->ncontacts > 3 || ptr->scrolling ||
+	    (frame->ncontacts == 3 && !armed &&
+	    (now < ptr->started || now - ptr->started > HIDMT_DRAG3_LAND_US)))
+		ptr->drag3_blocked = true;
+	if (ptr->drag3_blocked || frame->ncontacts != 3 || frame->buttons)
+		return;
+	cx = cy = 0;
+	same = armed;
+	for (i = 0; i < 3; i++) {
+		cx += frame->contacts[i].x;
+		cy += frame->contacts[i].y;
+		if (frame->contacts[i].id != ids[0] &&
+		    frame->contacts[i].id != ids[1] &&
+		    frame->contacts[i].id != ids[2])
+			same = false;
+	}
+	cx /= 3;
+	cy /= 3;
+	motion->drag3 = true;
+	motion->dx = motion->dy = 0;
+	ptr->drag3_armed = true;
+	if (!same) {
+		/* Arm, or re-arm for a new set of contacts. */
+		for (i = 0; i < 3; i++)
+			ptr->drag3_ids[i] = frame->contacts[i].id;
+		ptr->drag3_x = (int)cx;
+		ptr->drag3_y = (int)cy;
+		ptr->drag3_armed_at = now;
+		return;
+	}
+	memcpy(ptr->drag3_ids, ids, sizeof(ids));
+	ptr->drag3_x = ax;
+	ptr->drag3_y = ay;
+	ptr->drag3_armed_at = armed_at;
+	if (now < armed_at || now - armed_at < HIDMT_DRAG3_SETTLE_US ||
+	    (cx - ax < HIDMT_DRAG3_START && ax - cx < HIDMT_DRAG3_START &&
+	    cy - ay < HIDMT_DRAG3_START && ay - cy < HIDMT_DRAG3_START))
+		return;
+	/* Press without motion in this frame: the press lands in place. */
+	ptr->drag3 = true;
+	ptr->drag3_armed = false;
+	ptr->tap_candidate = false;
+	motion->buttons |= 1u;
+}
+
 /* Contact distance (sum of two contacts, i.e. twice the mean) to start. */
 #define HIDMT_SCROLL_START	40
 
@@ -543,6 +638,11 @@ hidmt_pointer_update_scroll(struct hidmt_pointer *ptr,
 	bool same;
 
 	hidmt_pointer_base(ptr, frame, now, tap_flags, motion);
+	if (motion->drag3) {
+		/* The fingers of a three-finger drag never scroll. */
+		ptr->scroll_valid = false;
+		return;
+	}
 	if (sc == NULL || !sc->enable || sc->scale == 0 || sc->range <= 0 ||
 	    frame->ncontacts == 0)
 		return;
@@ -749,6 +849,13 @@ hidmt_gesture_update(struct hidmt_gstate *gs, const struct hidmt_gconf *gc,
 		memset(gs, 0, sizeof(*gs));
 		return;
 	}
+	if (motion->drag3) {
+		/* A three-finger drag owns the frame; drop any candidate. */
+		if (gs->started)
+			motion->gesture |= HIDMT_GESTURE_CANCEL;
+		memset(gs, 0, sizeof(*gs));
+		return;
+	}
 	if (n == 0) {
 		if (gs->started)
 			motion->gesture |= HIDMT_GESTURE_END;
@@ -858,8 +965,15 @@ bool
 hidmt_live(const struct hidmt_pointer *ptr, const struct hidmt_assembler *as,
     const struct hidmt_gstate *gs)
 {
-	return ptr->active || ptr->tap_candidate || ptr->drag_held ||
+	return ptr->active || ptr->tap_candidate || hidmt_holds(ptr) ||
 	    as->pending || gs->latched || gs->started;
+}
+
+/* Does the policy hold the left button (tap and drag, three-finger drag)? */
+bool
+hidmt_holds(const struct hidmt_pointer *ptr)
+{
+	return ptr->drag_held || ptr->drag3;
 }
 
 /*
@@ -894,7 +1008,9 @@ unsigned
 hidmt_stall(struct hidmt_pointer *ptr, struct hidmt_assembler *as,
     struct hidmt_gstate *gs, uint64_t now, uint64_t last, bool *released)
 {
-	bool silent = now >= last && now - last >= HIDMT_STALL_US;
+	/* A three-finger drag may rest; it uses the longer drag limit. */
+	const uint64_t limit = ptr->drag3 ? HIDMT_DRAG_STALL_US : HIDMT_STALL_US;
+	bool silent = now >= last && now - last >= limit;
 
 	*released = false;
 	if (as->pending && (now < as->started ||

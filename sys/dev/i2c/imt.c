@@ -64,6 +64,7 @@ struct imt_softc {
 	int sc_tapping;
 	int sc_tapping_right;
 	int sc_tapping_drag;	/* one-finger tap, then touch: left drag */
+	int sc_three_drag;	/* three contacts move: left drag */
 	int sc_hybrid;		/* assemble hybrid frames from several reports */
 	int sc_scroll;		/* two-finger scrolling */
 	int sc_scroll_natural;
@@ -153,6 +154,7 @@ imt_attach(device_t parent, device_t self, void *aux)
 	sc->sc_tapping = 0;
 	sc->sc_tapping_right = 1;
 	sc->sc_tapping_drag = 0;
+	sc->sc_three_drag = 0;
 	/* Everything below is off by default: the pre-existing behaviour. */
 	sc->sc_hybrid = 0;
 	sc->sc_scroll = 0;
@@ -178,6 +180,10 @@ imt_attach(device_t parent, device_t self, void *aux)
 		    CTLFLAG_READWRITE, CTLTYPE_INT, "tapping_drag",
 		    SYSCTL_DESCR("With tapping: tap, then touch to drag"),
 		    NULL, 0, &sc->sc_tapping_drag, 0, CTL_CREATE, CTL_EOL);
+		sysctl_createv(&sc->sc_sysctllog, 0, &node, NULL,
+		    CTLFLAG_READWRITE, CTLTYPE_INT, "three_finger_drag",
+		    SYSCTL_DESCR("Drag with three fingers (left button)"),
+		    NULL, 0, &sc->sc_three_drag, 0, CTL_CREATE, CTL_EOL);
 		sysctl_createv(&sc->sc_sysctllog, 0, &node, NULL,
 		    CTLFLAG_READWRITE, CTLTYPE_INT, "hybrid",
 		    SYSCTL_DESCR("Assemble frames from several hybrid reports"),
@@ -441,13 +447,13 @@ imt_gesture_emit(struct imt_softc *sc, unsigned mask, unsigned fingers,
 }
 
 /*
- * Is something waiting for the timer?  A held tap (tap and drag) always;
- * otherwise only with hybrid or gestures on.
+ * Is something waiting for the timer?  A held button (tap and drag,
+ * three-finger drag) always; otherwise only with hybrid or gestures on.
  */
 static bool
 imt_tmo_wanted(struct imt_softc *sc)
 {
-	if (sc->sc_pointer.drag_held)
+	if (hidmt_holds(&sc->sc_pointer))
 		return true;
 	if (sc->sc_hybrid == 0 && sc->sc_gestures == 0 && !sc->sc_g_need_cancel)
 		return false;
@@ -476,7 +482,7 @@ imt_reset_state(struct imt_softc *sc, bool release)
 	bool held;
 
 	callout_stop(&sc->sc_tmo);
-	held = sc->sc_pointer.drag_held;
+	held = hidmt_holds(&sc->sc_pointer);
 	g = hidmt_reset(&sc->sc_pointer, &sc->sc_asm, &sc->sc_gstate);
 	s = spltty();
 	imt_gesture_emit(sc, g, 0, 0, 0, 0);
@@ -513,7 +519,8 @@ imt_tmo(void *arg)
 	 */
 	if (sc->sc_hybrid == 0 && sc->sc_gestures == 0 &&
 	    !sc->sc_g_need_cancel) {
-		if (sc->sc_pointer.dragging && usec >= sc->sc_last_usec &&
+		if ((sc->sc_pointer.dragging || sc->sc_pointer.drag3) &&
+		    usec >= sc->sc_last_usec &&
 		    usec - sc->sc_last_usec >= HIDMT_DRAG_STALL_US) {
 			(void)hidmt_release(&sc->sc_pointer, &sc->sc_gstate);
 			s = spltty();
@@ -565,7 +572,8 @@ imt_intr(struct ihidev *hdev, void *buf, u_int len)
 	taps = (sc->sc_tapping != 0 ? HIDMT_TAP_LEFT : 0) |
 	    (sc->sc_tapping_right != 0 ? HIDMT_TAP_RIGHT : 0) |
 	    (sc->sc_tapping != 0 && sc->sc_tapping_drag != 0 ?
-		HIDMT_TAP_DRAG : 0);
+		HIDMT_TAP_DRAG : 0) |
+	    (sc->sc_three_drag != 0 ? HIDMT_DRAG3 : 0);
 	if (sc->sc_rawlog > 0) {
 		sc->sc_rawlog--;
 		imt_log_raw(sc, buf, len, &now);
@@ -581,7 +589,7 @@ imt_intr(struct ihidev *hdev, void *buf, u_int len)
 			 * consumer; the new report below starts afresh.
 			 */
 			sc->sc_asm.lost = false;
-			held = sc->sc_pointer.drag_held;
+			held = hidmt_holds(&sc->sc_pointer);
 			g = hidmt_release(&sc->sc_pointer, &sc->sc_gstate);
 			s = spltty();
 			imt_gesture_emit(sc, g, 0, 0, 0, 0);
@@ -597,7 +605,7 @@ imt_intr(struct ihidev *hdev, void *buf, u_int len)
 	} else if (hidmt_decode(&sc->sc_config, buf, len, &frame) != 0) {
 		/* Reject malformed frames without retaining a possible tap. */
 		sc->sc_drops++;
-		held = sc->sc_pointer.drag_held;
+		held = hidmt_holds(&sc->sc_pointer);
 		g = hidmt_release(&sc->sc_pointer, &sc->sc_gstate);
 		s = spltty();
 		imt_gesture_emit(sc, g, 0, 0, 0, 0);

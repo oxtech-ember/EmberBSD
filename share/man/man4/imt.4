@@ -1,5 +1,5 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd October 23, 2026
+.Dd November 20, 2026
 .Dt IMT 4
 .Os
 .Sh NAME
@@ -45,6 +45,31 @@ A short second tap gives a double click.
 A second finger ends the drag.
 If the touchpad stops reporting during a drag for two seconds, the button
 releases.
+The default value is zero.
+.Pp
+.Va hw.imtN.three_finger_drag
+set to one drags with three fingers.
+The third finger must land within 200 milliseconds of the first.
+Three contacts that stay for 80 milliseconds and whose mean position
+moves 50 native coordinate units from where the third finger landed press
+the left button.
+The pointer does not move before the button goes down.
+The tracked contact then moves the pointer.
+When fingers lift one by one, the pointer stops.
+The button releases when the last finger lifts.
+A fourth finger before the press, or a touch that scrolled or had four
+fingers, does not drag until every finger is lifted, so four-finger swipes
+still work.
+A fourth finger after the press keeps the drag.
+Three contacts that come back more than 200 milliseconds after the first
+finger landed do not arm again until every finger is lifted.
+A touch that arms a drag does not start a three-finger swipe.
+A physical click with three fingers before the press is a middle click;
+during the drag it stays a left click.
+If the touchpad stops reporting during a drag for two seconds, the button
+releases.
+This setting does not depend on
+.Va hw.imtN.tapping .
 The default value is zero.
 .Pp
 Use
