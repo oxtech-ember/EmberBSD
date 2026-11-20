@@ -365,7 +365,9 @@ static int boot_rpc_step_actual(struct cixvpu_prepared *p, enum cixvpu_boot_rpc_
 #define CTL_QUERY -2
 #define CTL_DESCRIBE -7
 #define SYSCTL_DESCR(s) s
+#ifndef __UNCONST
 #define __UNCONST(a) ((void *)(uintptr_t)(const void *)(a))
+#endif
 #define SYSCTL_NAMELEN 32
 #define SYSCTL_VERSION 0x01000000
 #define SYSCTL_VERS_0 0

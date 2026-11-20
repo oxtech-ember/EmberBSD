@@ -29,7 +29,9 @@ static struct cixvpu_fw_plan make_plan(unsigned int cores)
 /* Native SHA is a service boundary, not a modeled cryptographic claim.
  * Match the complete immutable synthetic fixture_pin; native object uses libkern SHA. */
 #define SHA256_DIGEST_LENGTH 32
+#ifndef __arraycount
 #define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
+#endif
 typedef struct { unsigned int phase; bool matches; } SHA256_CTX;
 static unsigned int hashes, page_calls, map_calls, link_calls, encode_calls;
 static unsigned int meta_calls, fail_meta, fail_page, fail_map, fail_link, fail_encode;

@@ -361,7 +361,9 @@ static void bus_space_barrier(bus_space_tag_t t, bus_space_handle_t h,
 }
 static void bus_space_unmap(bus_space_tag_t t, bus_space_handle_t h, bus_size_t n)
 { (void)t; assert((h == 1 || (profile_mode && h == 2)) && n == 0x10000); event(h == 2 ? 'X' : 'U'); unmaps++; }
+#ifndef __arraycount
 #define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
+#endif
 #include "control-header.inc"
 #include "control-source.inc"
 static struct acpi_devnode node = { .ad_handle = VPU };
@@ -531,7 +533,9 @@ static void retention_tests(void)
 }
 #ifdef CIXVPU_ATTACH_API
 /* The actual consumer uses modeled parser ownership and a deferred queue. */
+#ifndef __CTASSERT
 #define __CTASSERT(x) _Static_assert(x, #x)
+#endif
 struct device_compatible_entry { const char *compat; };
 #define DEVICE_COMPAT_EOL { NULL }
 struct test_cfdata { unsigned int cf_flags; };

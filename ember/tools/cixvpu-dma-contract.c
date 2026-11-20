@@ -11,6 +11,9 @@
 
 /* Native endian/atomic services for actual-source DMA publication. */
 #define atomic_store_release(p,v) __atomic_store_n((p),(v),__ATOMIC_RELEASE)
+#if defined(__NetBSD__)
+#include <sys/endian.h>
+#else
 #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
 #define htole32(v) ((uint32_t)(v))
 #else
@@ -21,6 +24,7 @@ static uint32_t le32dec(const void *p)
     const uint8_t *b=p;
     return (uint32_t)b[0]|(uint32_t)b[1]<<8|(uint32_t)b[2]<<16|(uint32_t)b[3]<<24;
 }
+#endif
 
 static unsigned int checks;
 #define CHECK(c) do { checks++; if (!(c)) { \
