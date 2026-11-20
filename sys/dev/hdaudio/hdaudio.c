@@ -42,6 +42,7 @@ __KERNEL_RCSID(0, "$NetBSD: hdaudio.c,v 1.18.12.1 2026/08/02 13:21:37 martin Exp
 #include <sys/kmem.h>
 #include <sys/module.h>
 #include <sys/systm.h>
+#include <sys/time.h>
 
 #include "hdaudiovar.h"
 #include "hdaudioreg.h"
@@ -54,6 +55,17 @@ __KERNEL_RCSID(0, "$NetBSD: hdaudio.c,v 1.18.12.1 2026/08/02 13:21:37 martin Exp
 #define	HDAUDIO_RESET_TIMEOUT	5000
 #define HDAUDIO_CORB_TIMEOUT	1000
 #define	HDAUDIO_RIRB_TIMEOUT	5000
+
+/*
+ * A codec that does not answer costs HDAUDIO_RIRB_TIMEOUT polls for each
+ * verb while sc_corb_mtx is held at IPL_AUDIO.  An Intel display audio
+ * codec stops answering when the GPU powers down the display audio link.
+ * After HDAUDIO_CODEC_TIMEOUT_LIMIT consecutive timeouts, fail the verbs
+ * of that codec at once for HDAUDIO_CODEC_QUIET_SECS.  Then send one verb
+ * again: a codec that answers is used normally.
+ */
+#define	HDAUDIO_CODEC_TIMEOUT_LIMIT	3
+#define	HDAUDIO_CODEC_QUIET_SECS	10
 
 #define	HDAUDIO_CODEC_DELAY	1000	/* spec calls for 250 */
 
@@ -258,6 +270,9 @@ hdaudio_rirb_unsol(struct hdaudio_softc *sc, struct rirb_entry *entry)
 		hda_error(sc, "unsol: codec id 0x%02x not valid\n", codecid);
 		return;
 	}
+	/* An unsolicited response shows that the codec answers again. */
+	co->co_timeouts = 0;
+	co->co_quiet_until = 0;
 
 	for (i = 0; i < co->co_nfg; i++) {
 		fg = &co->co_fg[i];
@@ -267,7 +282,7 @@ hdaudio_rirb_unsol(struct hdaudio_softc *sc, struct rirb_entry *entry)
 }
 
 static uint32_t
-hdaudio_rirb_dequeue(struct hdaudio_softc *sc, bool unsol)
+hdaudio_rirb_dequeue(struct hdaudio_softc *sc, bool unsol, bool *timedout)
 {
 	uint16_t rirbwp;
 	uint64_t *rirb = DMA_KERNADDR(&sc->sc_rirb);
@@ -289,6 +304,8 @@ hdaudio_rirb_dequeue(struct hdaudio_softc *sc, bool unsol)
 		}
 		if (retry == 0) {
 			hda_error(sc, "RIRB timeout\n");
+			if (timedout != NULL)
+				*timedout = true;
 			return 0xffffffff;
 		}
 
@@ -333,14 +350,31 @@ hdaudio_command_unlocked(struct hdaudio_codec *co, int nid, uint32_t control,
 {
 	struct hdaudio_softc *sc = co->co_host;
 	uint32_t result;
+	bool timedout = false;
+
+	if (co->co_quiet_until != 0 && time_uptime < co->co_quiet_until)
+		return 0xffffffff;
 
 	hda_trace(sc, "cmd  : request %08X %08X (%02X)\n",
 	    control, param, nid);
 	hdaudio_corb_enqueue(sc, co->co_addr, nid, control, param);
-	result = hdaudio_rirb_dequeue(sc, false);
+	result = hdaudio_rirb_dequeue(sc, false, &timedout);
 
 	/* Clear response interrupt status */
 	hda_write1(sc, HDAUDIO_MMIO_RIRBSTS, hda_read1(sc, HDAUDIO_MMIO_RIRBSTS));
+
+	if (!timedout) {
+		if (co->co_quiet_until != 0)
+			hda_print(sc, "codec %02X answers again\n", co->co_addr);
+		co->co_timeouts = 0;
+		co->co_quiet_until = 0;
+	} else if (++co->co_timeouts >= HDAUDIO_CODEC_TIMEOUT_LIMIT) {
+		if (co->co_quiet_until == 0)
+			hda_error(sc, "codec %02X does not answer, "
+			    "skipping its verbs for %d s at a time\n",
+			    co->co_addr, HDAUDIO_CODEC_QUIET_SECS);
+		co->co_quiet_until = time_uptime + HDAUDIO_CODEC_QUIET_SECS;
+	}
 
 	return result;
 }
@@ -913,8 +947,16 @@ hdaudio_detach(struct hdaudio_softc *sc, int flags)
 bool
 hdaudio_resume(struct hdaudio_softc *sc)
 {
+	unsigned int codec;
+
 	if (hdaudio_reset(sc) != 0)
 		return false;
+
+	/* The link was reset: give every codec a new chance to answer. */
+	for (codec = 0; codec < HDAUDIO_MAX_CODECS; codec++) {
+		sc->sc_codec[codec].co_timeouts = 0;
+		sc->sc_codec[codec].co_quiet_until = 0;
+	}
 
 	hda_delay(HDAUDIO_CODEC_DELAY);
 
@@ -996,7 +1038,7 @@ hdaudio_intr(struct hdaudio_softc *sc)
 		rirbsts = hda_read1(sc, HDAUDIO_MMIO_RIRBSTS);
 		if (rirbsts & HDAUDIO_RIRBSTS_RINTFL) {
 			mutex_enter(&sc->sc_corb_mtx);
-			hdaudio_rirb_dequeue(sc, true);
+			hdaudio_rirb_dequeue(sc, true, NULL);
 			mutex_exit(&sc->sc_corb_mtx);
 		}
 		if (rirbsts & (HDAUDIO_RIRBSTS_RIRBOIS|HDAUDIO_RIRBSTS_RINTFL))
