@@ -2402,7 +2402,7 @@ hdafg_mixer_child_is_input(const struct hdafg_softc *sc,
 }
 
 static void
-hdafg_control_commit(struct hdafg_softc *sc)
+hdafg_control_commit(struct hdafg_softc *sc, bool restore)
 {
 	struct hdaudio_control *ctl;
 	int i, z;
@@ -2412,6 +2412,15 @@ hdafg_control_commit(struct hdafg_softc *sc)
 		//if (ctl->ctl_enable == false || ctl->ctl_audiomask != 0)
 		if (ctl->ctl_enable == false)
 			continue;
+		if (restore) {
+			/*
+			 * After resume, send the saved mute and gain again
+			 * so that volume and capture settings survive.
+			 */
+			hdafg_control_amp_set(ctl, HDAUDIO_AMP_MUTE_DEFAULT,
+			    HDAUDIO_AMP_VOL_DEFAULT, HDAUDIO_AMP_VOL_DEFAULT);
+			continue;
+		}
 		/* Init fixed controls to 0dB amplification */
 		z = ctl->ctl_offset;
 		if (z > ctl->ctl_step)
@@ -3073,15 +3082,15 @@ hdafg_build_mixers(struct hdafg_softc *sc)
 }
 
 static void
-hdafg_commit(struct hdafg_softc *sc)
+hdafg_commit(struct hdafg_softc *sc, bool restore)
 {
 	struct hdaudio_widget *w;
 	uint32_t gdata, gmask, gdir;
 	int commitgpio;
 	int i;
 
-	/* Commit controls */
-	hdafg_control_commit(sc);
+	/* Commit controls: defaults at attach, saved values after resume */
+	hdafg_control_commit(sc, restore);
 
 	/* Commit selectors, pins, and EAPD */
 	for (i = 0; i < sc->sc_nwidgets; i++) {
@@ -3829,7 +3838,7 @@ hdafg_attach(device_t parent, device_t self, void *opaque)
 	hda_debug(sc, "preparing pin controls\n");
 	hdafg_prepare_pin_controls(sc);
 	hda_debug(sc, "committing settings\n");
-	hdafg_commit(sc);
+	hdafg_commit(sc, false);
 
 	hda_debug(sc, "setup jack sensing\n");
 	hdafg_hp_switch_init(sc);
@@ -3983,7 +3992,7 @@ hdafg_resume(device_t self, const pmf_qual_t *qual)
 	}
 	hda_delay(1000);
 
-	hdafg_commit(sc);
+	hdafg_commit(sc, true);
 	hdafg_stream_connect(sc, AUMODE_PLAY);
 	hdafg_stream_connect(sc, AUMODE_RECORD);
 
