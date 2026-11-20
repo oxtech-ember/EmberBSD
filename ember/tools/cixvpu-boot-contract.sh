@@ -118,6 +118,7 @@ static unsigned int frame_wire_debug,frame_wire_idle,frame_wire_ticks;
 static bool frame_wire_waiting;
 static uint8_t frame_wire_delayed[40],frame_wire_input[72];
 static bool frame_wire_confirm_pending;
+static uint32_t frame_wire_confirm_index;
 static uint16_t frame_wire_msg, frame_wire_buffers[2];
 static uint32_t frame_wire_sum;
 static uint8_t frame_wire_pixels[24576];
@@ -140,6 +141,10 @@ struct cixvpu_prepared *boot_fixture_prepare_frame(void) {
     bridge_ack_hook=bridge_rpc_commit_hook=NULL;bridge_acks=0;
     frame_wire_step=frame_wire_rpc=frame_wire_debug=frame_wire_idle=frame_wire_ticks=0;frame_wire_waiting=frame_wire_confirm_pending=false;frame_wire_buffers[0]=frame_wire_buffers[1]=0;
     return p;
+}
+/* Scenarios with debug requests, one IDLE burst and a delayed output return. */
+static bool frame_wire_limit(void) {
+    return (frame_wire_scenario>=20 && frame_wire_scenario<=22) || frame_wire_scenario==32 || frame_wire_scenario==33;
 }
 static void frame_wire_message(uint16_t code,const uint8_t *data,size_t n) {
     uint8_t *m=device_memory[119];uint32_t header=code|(uint32_t)n<<16;
@@ -182,10 +187,16 @@ void boot_fixture_frame_notify(void) {
     uint16_t early_read=(uint16_t)device_memory[119][2]|(uint16_t)device_memory[119][3]<<8;
     if((word(device_memory[118],4+early_read)&65535)==1012) {
         uint8_t *host=device_memory[118],*mve=device_memory[119];
-        CHECK(frame_wire_scenario>=20 && frame_wire_scenario<=22 && frame_wire_idle<3);
+        CHECK((frame_wire_limit() && frame_wire_idle<3) ||
+            (frame_wire_scenario==31 && frame_wire_idle<64));
         CHECK(word(host,4+early_read)==1012);
         mve[2]=host[2];mve[3]=host[3];frame_wire_idle++;
-        if(frame_wire_idle<3)frame_wire_message(2013,NULL,0);
+        /* Scenario 31 follows the board: each IDLE_ACK gets a new IDLE. */
+        if(frame_wire_scenario==31) {
+            /* The answer comes before a waiting CONFIRM, as the review found. */
+            frame_wire_message(2013,NULL,0);
+            if(frame_wire_confirm_pending)frame_wire_ticks=9;
+        } else if(frame_wire_idle<3)frame_wire_message(2013,NULL,0);
         return;
     }
     static const struct {unsigned int q,code,n,a,b;} expected[]={
@@ -212,22 +223,32 @@ void boot_fixture_frame_notify(void) {
     if(n)CHECK(word(payload,0)==expected[literal].a && word(payload,1)==expected[literal].b);
     CHECK(write==(read+2+(n+3)/4)%1020);
     mve[2]=(uint8_t)write;mve[3]=(uint8_t)(write>>8);
+    if(step==0 && frame_wire_scenario==31) {
+        /* Board 2026-11-17: one 8-byte advisory, then IDLE, before any option. */
+        uint8_t state[4]={0};put32(state,1);
+        frame_wire_message(2004,state,4);frame_wire_message(2013,NULL,0);
+    }
     if(step>=1 && step<=5) {
         uint8_t confirmed[132]={0};put32(confirmed,expected[literal].a);
         if(step==1 && frame_wire_scenario==2)put32(confirmed,99);
         if(step==1 && (frame_wire_scenario==3 || frame_wire_scenario==30))return;
-        if(step==1 && frame_wire_scenario==28) {frame_wire_confirm_pending=true;return;}
+        if(step==1 && frame_wire_scenario==28) {frame_wire_confirm_index=1;frame_wire_confirm_pending=true;return;}
+        /* Scenario 31: IDLE follows each consumed option; CONFIRM comes later. */
+        if(frame_wire_scenario==31) {
+            frame_wire_message(2013,NULL,0);
+            frame_wire_confirm_index=expected[literal].a;frame_wire_ticks=0;frame_wire_confirm_pending=true;return;
+        }
         if(step==1 && (frame_wire_scenario==4 || frame_wire_scenario==5)) {
             frame_wire_message(frame_wire_scenario==4?2010:2017,confirmed,132);return;
         }
         frame_wire_message(2003,confirmed,frame_wire_scenario==1?0:4);
     } else if(step==6) {
         if(frame_wire_scenario==6)boot_fixture_rpc_words(1,4,12,16384,16384,0,12);
-        if(frame_wire_scenario>=20 && frame_wire_scenario<=22)boot_fixture_rpc_words(1,1,1012,0,0,0,0);
+        if(frame_wire_limit())boot_fixture_rpc_words(1,1,1012,0,0,0,0);
         if(frame_wire_scenario==23)for(unsigned int j=0;j<130;j++)frame_wire_message(2009,NULL,0);
     } else if(step==7) {
         frame_wire_message(2009,NULL,0);
-        if(frame_wire_scenario>=20 && frame_wire_scenario<=22)frame_wire_message(2013,NULL,0);
+        if(frame_wire_limit())frame_wire_message(2013,NULL,0);
     }
     else if(step==10) {
         CHECK(word(payload,2)==3 && word(payload,3)==0 && word(payload,4)==0x10404);
@@ -247,22 +268,25 @@ void boot_fixture_frame_notify(void) {
         if(frame_wire_scenario==11)put32(payload+16,0x200);
         if(frame_wire_scenario==29)put32(payload+28,65537);
         if(frame_wire_scenario==12) {put32(payload+16,0x10);put32(payload+28,0);}
-        if(frame_wire_scenario==24 || frame_wire_scenario==25) {
-            put32(payload+16,frame_wire_scenario==24 && step==14?0x10:0x80);
+        if(frame_wire_scenario==24 || frame_wire_scenario==25 || frame_wire_scenario>=32) {
+            put32(payload+16,frame_wire_scenario!=25 && step==14?0x10:0x80);
             put32(payload+24,0);put32(payload+28,65536);
             for(unsigned int j=0;j<16;j++)memset(device_memory[391+j],0x31+step,4096);
         }
-        if((frame_wire_scenario>=20 && frame_wire_scenario<=22) && step==12) {
+        if((frame_wire_limit() || frame_wire_scenario==31) && step==12) {
             memcpy(frame_wire_delayed,payload,40);frame_wire_waiting=true;
+            if(frame_wire_scenario==31)frame_wire_ticks=0;
             if(frame_wire_scenario==21)boot_fixture_rpc_words(1,1,1012,0,0,0,0);
         } else {frame_wire_buffer(2,3002,payload,40);frame_wire_message(2006,NULL,0);}
+        /* Scenario 33: one more request waits when publication 32 is spent. */
+        if(frame_wire_scenario==33 && step==14)boot_fixture_rpc_words(1,1,1012,0,0,0,0);
         if(frame_wire_scenario==27 && step==12) {frame_wire_buffer(1,3001,frame_wire_input,72);frame_wire_message(2005,NULL,0);}
 
     }
 }
 void boot_fixture_frame_tick(void) {
     if(frame_wire_confirm_pending && ++frame_wire_ticks==10) {
-        uint8_t confirm[4];put32(confirm,1);frame_wire_confirm_pending=false;frame_wire_message(2003,confirm,4);
+        uint8_t confirm[4];put32(confirm,frame_wire_confirm_index);frame_wire_confirm_pending=false;frame_wire_message(2003,confirm,4);
     }
     if(frame_wire_waiting && ++frame_wire_ticks==10) {
 

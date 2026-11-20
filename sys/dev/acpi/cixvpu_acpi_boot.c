@@ -745,8 +745,7 @@ cixvpu_frame_event(struct cixvpu_acpi_boot *b,
 	case CIXVPU_Q_PONG:
 		return 0;
 	case CIXVPU_Q_IDLE:
-		if (*idle_ack)
-			return EPROTO;
+		/* IDLE can repeat while its acknowledgement waits. */
 		*idle_ack = true;
 		return 0;
 	case CIXVPU_Q_RESPONSE:
@@ -781,7 +780,8 @@ cixvpu_frame_run(struct cixvpu_acpi_boot *b)
 	static const uint32_t indices[] = { 1, 3, 16, 17, 56 };
 	uint64_t start = cixvpu_boot_now();
 	unsigned int action = 0, pending = 0, visit;
-	bool waiting = false, idle_ack = false, refill = false;
+	bool waiting = false, idle_ack = false, ack_spent = false;
+	bool refill = false;
 	int error;
 
 	b->report.stage = CIXVPU_BOOT_FRAME_OPEN;
@@ -792,7 +792,7 @@ cixvpu_frame_run(struct cixvpu_acpi_boot *b)
 		return error;
 	for (visit = 0; visit < 5001; visit++) {
 		unsigned int calls = 0, bytes = 0;
-		bool progress = false;
+		bool progress = false, command, ack;
 
 		b->report.frame_visits++;
 		while (calls < 16) {
@@ -894,14 +894,25 @@ cixvpu_frame_run(struct cixvpu_acpi_boot *b)
 					cixvpu_frame_charge(b, &bytes, size);
 					if (error != 0)
 						return error;
+					/* No answer to an IDLE_ACK reply. */
+					if (ack_spent)
+						idle_ack = false;
 					progress = true;
 					continue;
 				}
 			}
 			if (error != EAGAIN)
 				return error;
-			if (calls == 16 || (waiting && !idle_ack) ||
-			    (action == 12 && !refill && !idle_ack))
+			/*
+			 * The firmware answers each IDLE_ACK with a new IDLE
+			 * while it has no work. Only one host message is in
+			 * flight. A command therefore goes before the
+			 * acknowledgement. Each command permits one
+			 * acknowledgement at most.
+			 */
+			command = !waiting && (refill || action < 12);
+			ack = idle_ack && !command;
+			if (calls == 16 || (!command && !ack))
 				break;
 			if (b->report.frame_publications == 32)
 				return E2BIG;
@@ -912,17 +923,20 @@ cixvpu_frame_run(struct cixvpu_acpi_boot *b)
 			b->report.frame_action = action;
 			b->report.stage = action <= 5 ? CIXVPU_BOOT_FRAME_SETUP :
 			    CIXVPU_BOOT_FRAME_RUN;
-			error = cixvpu_frame_publish(b, action, idle_ack, refill);
+			error = cixvpu_frame_publish(b, action, ack, refill);
 			if (error == EAGAIN)
 				break;
 			if (error != 0)
 				return error;
 			b->report.frame_publications++;
-			if (idle_ack) {
+			if (ack) {
 				idle_ack = false;
+				ack_spent = true;
 			} else if (refill) {
+				ack_spent = false;
 				refill = false;
 			} else {
+				ack_spent = false;
 				if (action >= 1 && action <= 5) {
 					b->report.frame_option = indices[action - 1];
 					waiting = true;

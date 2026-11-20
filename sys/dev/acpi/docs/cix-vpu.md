@@ -300,6 +300,16 @@ committed bootstrap RPC replies. It does not reset those budgets. It then sends
 JOB_ONE; NALU start codes, HEVC Main/token13, P0, B0 and QP26; GO; PING;
 FRAME_RATE 30<<16; RC_OFF; one FORCE_IDR+EOS input; and one empty output slot.
 Only one option waits for CONFIRM. An indexed CONFIRM must match it.
+The firmware sends IDLE again after each IDLE_ACK while it has no work.
+On the Orange Pi 6 Plus this exchange used all 32 publications before the
+first option (2026-11-17, `frame action 1 option 0`, primary 7).
+A command therefore goes before a pending IDLE_ACK. Each command permits one
+IDLE_ACK at most. The IDLE that answers an IDLE_ACK gets no answer.
+The host model uses 18 publications for this sequence: 13 commands and one
+IDLE_ACK in each CONFIRM wait. Debug RPC replies use the same 32 publications;
+16 of them with this sequence exceed the limit.
+This order is checked on the host model only; the board has not run it.
+The model does not show that the firmware accepts a command before IDLE_ACK.
 Every committed publication gets one notification before another operation.
 
 The active phase allows 5001 visits, 5 seconds, 128 messages, 32 publications,

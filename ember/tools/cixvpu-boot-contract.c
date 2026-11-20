@@ -596,7 +596,7 @@ static void frame_fault_tests(void)
     const struct {unsigned int scenario;int error;} cases[]={
         {2,EPROTO},{3,ETIMEDOUT},{4,EIO},{5,EIO},{6,ENOTSUP},
         {7,EPROTO},{8,EIO},{9,EIO},{10,EPROTO},{11,ENOTSUP},{12,EPROTO},
-        {13,0},{14,EIO},{15,EIO},{16,EIO},{17,EIO},{20,0},{21,E2BIG},{22,0},{23,E2BIG},{24,0},{25,E2BIG},{26,EIO},{27,0},{28,0},{29,EPROTO},{30,ETIMEDOUT}
+        {13,0},{14,EIO},{15,EIO},{16,EIO},{17,EIO},{20,0},{21,E2BIG},{22,0},{23,E2BIG},{24,0},{25,E2BIG},{26,EIO},{27,0},{28,0},{29,EPROTO},{30,ETIMEDOUT},{31,0},{32,0},{33,E2BIG}
     };
     for(unsigned int i=0;i<__arraycount(cases);i++) {
         boot_fixture();frame_trial=true;frame_scenario=cases[i].scenario;
@@ -612,12 +612,25 @@ static void frame_fault_tests(void)
         CHECK(b->report.frame_publications<=32 && b->report.frame_notifications<=32);
         CHECK(b->report.frame_messages<=128 && b->report.frame_output_returns<=4);
         CHECK(b->report.frame_output_bytes<=262144 && b->report.frame_received_bytes<=65536);
+        /* 12 commands, 16 debug replies, one refill and one IDLE_ACK. */
         if(frame_scenario==20 || frame_scenario==22) {
-            CHECK(b->report.frame_publications==32 && b->report.frame_notifications==32);
+            CHECK(b->report.frame_publications==30 && b->report.frame_notifications==30);
             CHECK(b->report.frame_complete && b->report.frame_output_bytes==8 && boot_delays>=10);
             CHECK(b->report.rpc_commits==19 && b->report.rpc_notifications==19);
         }
+        /* The seventeenth debug request stays pending at the debug limit. */
         if(frame_scenario==21) {
+            CHECK(b->report.frame_publications==29 && b->report.rpc_commits==19);
+            CHECK(boot_fixture_rpc_word(0)==1 && !b->report.frame_complete);
+        }
+        /* Three refills more reach the publication limit exactly. */
+        if(frame_scenario==32) {
+            CHECK(b->report.frame_publications==32 && b->report.frame_notifications==32);
+            CHECK(b->report.frame_complete && b->report.frame_output_bytes==262144 && b->report.frame_output_returns==4);
+            CHECK(b->report.rpc_commits==19 && b->report.rpc_notifications==19);
+        }
+        /* A request that waits at the publication limit ends the trial. */
+        if(frame_scenario==33) {
             CHECK(b->report.frame_publications==32 && b->report.rpc_commits==19);
             CHECK(boot_fixture_rpc_word(0)==1 && !b->report.frame_complete);
         }
@@ -634,6 +647,8 @@ static void frame_fault_tests(void)
             CHECK(old_sysctl(NULL,0,status,&count,NULL,0,NULL)==0 && count==96);
             CHECK(status[0]==1 && status[8]==(uint8_t)error && status[9]==0 && status[10]==0 && status[11]==0 && status[28]==0);
         }
+        /* 13 commands and one IDLE_ACK in each of the five CONFIRM waits. */
+        if(frame_scenario==31)CHECK(b->report.frame_complete && boot_fixture_frame_publications()==13 && b->report.frame_publications==18 && boot_delays>=10);
         if(frame_scenario==30)CHECK(b->report.frame_visits==5001 && b->report.frame_publications==2 && boot_delays==4999);
         if(frame_scenario==28)CHECK(boot_delays>=10 && boot_fixture_frame_publications()==13);
         if(frame_scenario==23)CHECK(b->report.frame_messages==128);
