@@ -92,6 +92,7 @@ static int spcr_status;
 static ACPI_TABLE_SPCR stock_spcr;
 static ACPI_TABLE_SPCR *present_spcr;
 static bool hash_bad, change_prefix;
+static size_t dsdt_len, hashed_len;
 static void put(uint8_t *p,uint64_t value,unsigned int n)
 { for (unsigned int i=0;i<n;i++) p[i]=(uint8_t)(value>>(8*i)); }
 static void checksum(uint8_t *p,size_t n,size_t offset)
@@ -111,7 +112,8 @@ static void init(void)
     checksum(rsdp,20,8);checksum(rsdp,36,32);
     put(xsdt+36,0x3000,8);header(xsdt,"XSDT",44);
     put(fadt+40,0x4000,4);put(fadt+140,0x4000,8);header(fadt,"FACP",sizeof(fadt));
-    header(dsdt,"DSDT",sizeof(dsdt));memcpy(reference,dsdt,sizeof(dsdt));
+    dsdt_len=sizeof(dsdt);header(dsdt,"DSDT",dsdt_len);
+    memcpy(reference,dsdt,sizeof(dsdt));hashed_len=0;
     header(other,"SPCR",sizeof(other));
     root_pa=0x1000;maps=unmaps=live=fail_at=attaches=hashes=0;largest_map=0;
     lookups=0;regions[3].pa=0x4000;regions[0].size=sizeof(rsdp);
@@ -156,12 +158,25 @@ typedef struct { unsigned int updated; } SHA256_CTX;
 static const uint8_t accepted_digest[32]={
     0x9e,0x7b,0xf3,0x0c,0xb2,0x94,0x84,0x91,0x0c,0xce,0xec,0x20,0x8a,0xdf,0x6f,0xa9,
     0xf1,0xfa,0xb4,0xed,0x54,0xc9,0x32,0x36,0xd5,0x3b,0xb4,0x11,0x9b,0x04,0x26,0x0a};
+/* BiosV1.4-W20260130-97268c4c: 77645-byte stock DSDT. */
+static const uint8_t bios14_digest[32]={
+    0xf2,0xf6,0xdd,0x34,0xf1,0x6e,0x3b,0x5f,0x04,0xdd,0xbf,0xee,0xa1,0x9b,0x45,0x66,
+    0x05,0x84,0x0b,0xbf,0x2e,0xf9,0x9f,0x8c,0x95,0x59,0x3b,0x38,0x87,0x7e,0x42,0x39};
 #define SHA256_DIGEST_LENGTH 32
 static void SHA256_Init(SHA256_CTX *c) { c->updated=0; }
 static void SHA256_Update(SHA256_CTX *c,const void *p,size_t len)
-{ CHECK(len==sizeof(dsdt)); c->updated=memcmp(p,reference,len)==0?1:2;hashes++; }
+{ CHECK(len==dsdt_len); c->updated=memcmp(p,reference,len)==0?1:2;hashed_len=len;hashes++; }
+/* Model each exact synthetic image as the stock image of its size. */
 static void SHA256_Final(uint8_t *out,SHA256_CTX *c)
-{ memcpy(out,accepted_digest,32);if(c->updated!=1||hash_bad)out[0]^=1; }
+{
+    memcpy(out,hashed_len==77645?bios14_digest:accepted_digest,32);
+    if(c->updated!=1||hash_bad)out[0]^=1;
+}
+static void set_dsdt(size_t n)
+{
+    memset(dsdt,0,sizeof(dsdt));dsdt_len=n;header(dsdt,"DSDT",n);
+    memcpy(reference,dsdt,sizeof(dsdt));
+}
 
 #ifdef CIX_UART2_GATE
 #include "gate.inc"
@@ -238,6 +253,24 @@ int main(void)
     init();put(xsdt+36,0x20000,8);header(other,"TEST",36);checksum(xsdt,44,9);
     CHECK(cix_uart2_console_probe()!=0);CHECK(live==0);
     init();put(fadt+4,147,4);CHECK(cix_uart2_console_probe()!=0);CHECK(largest_map<=44 && live==0);
+    /* BiosV1.4 profile: exact size and digest, selected before full mapping. */
+    init();set_dsdt(77645);CHECK(cix_uart2_console_probe()==0);
+    CHECK(hashes==1 && hashed_len==77645 && largest_map==77645 && live==0);
+    unsigned int bios14_maps=maps;
+    for(unsigned int i=1;i<=bios14_maps;i++) {
+        init();set_dsdt(77645);fail_at=i;CHECK(cix_uart2_console_probe()!=0);CHECK(live==0);
+    }
+    init();set_dsdt(77645);hash_bad=true;
+    CHECK(cix_uart2_console_probe()==ENOTSUP);CHECK(hashes==1 && live==0);
+    init();set_dsdt(77645);dsdt[40]=1;checksum(dsdt,77645,9);
+    CHECK(cix_uart2_console_probe()==ENOTSUP);CHECK(hashes==1 && live==0);
+    init();set_dsdt(77645);dsdt[9]^=1;CHECK(cix_uart2_console_probe()!=0);CHECK(hashes==0 && live==0);
+    size_t near[]={77644,77646,81062,81064};
+    for(unsigned int i=0;i<sizeof(near)/sizeof(near[0]);i++) {
+        init();set_dsdt(near[i]>sizeof(dsdt)?sizeof(dsdt):near[i]);put(dsdt+4,near[i],4);
+        checksum(dsdt,near[i]>sizeof(dsdt)?sizeof(dsdt):near[i],9);
+        CHECK(cix_uart2_console_probe()==EPROTO);CHECK(hashes==0 && largest_map<=276 && live==0);
+    }
     init();acpi_platform_startup();
 #ifdef CIXP1_UART2_CONSOLE
     CHECK(attaches==1 && live==0);
@@ -245,6 +278,13 @@ int main(void)
     CHECK(attaches==0 && maps==0);
 #endif
     init();hash_bad=true;acpi_platform_startup();CHECK(attaches==0 && live==0);
+    init();set_dsdt(77645);acpi_platform_startup();
+#ifdef CIXP1_UART2_CONSOLE
+    CHECK(attaches==1 && hashes==1 && live==0);
+#else
+    CHECK(attaches==0 && maps==0);
+#endif
+    init();set_dsdt(77645);hash_bad=true;acpi_platform_startup();CHECK(attaches==0 && live==0);
     init();spcr_status=AE_ERROR;acpi_platform_startup();CHECK(attaches==0 && live==0);
     init();spcr_status=AE_OK;acpi_platform_startup();
 #ifdef CIXP1_UART2_CONSOLE
