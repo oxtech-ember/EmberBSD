@@ -222,7 +222,7 @@ copy_file(FTSENT *entp, int dne)
 
 			need_copy = false;
 
-			(void) madvise(p, (size_t)fs->st_size, MADV_SEQUENTIAL);
+			(void)posix_madvise(p, fsize, POSIX_MADV_SEQUENTIAL);
 
 			/*
 			 * Write out the data in small chunks to
