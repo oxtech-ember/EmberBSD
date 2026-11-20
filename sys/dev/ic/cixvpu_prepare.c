@@ -11,8 +11,8 @@
 #include <dev/ic/cixvpu_ring.h>
 #include <dev/ic/cixvpu_dma_private.h>
 
-/* Slots require one core: ROOT + core/common/RPC2/FRAME2/BITSTREAM leaves. */
-#define PREPARE_TABLES (CIXVPU_FW_PLAN_MAX_CORES + 4U)
+/* Probe maximum: ROOT + core/common/RPC2/FRAME2/BITSTREAM/OUTBUF leaves. */
+#define PREPARE_TABLES (CIXVPU_FW_PLAN_MAX_CORES + 5U)
 
 struct cixvpu_prepare_entry {
 	uint32_t table, backing, address, word;
@@ -146,6 +146,7 @@ cixvpu_prepare_gather(struct cixvpu_dma *dma,
 		tables += 1 + (y.pages + uv.pages + CIXVPU_MMU_ENTRIES - 1) /
 		    CIXVPU_MMU_ENTRIES;
 	}
+	tables += plan->outbuf_pages != 0;
 	if (tables > PREPARE_TABLES)
 		return E2BIG;
 
@@ -343,6 +344,7 @@ cixvpu_prepare_common(struct cixvpu_dma **owned,
 	snapshot = *expected_plan;
 	/* Ordinary entry points never silently downgrade a slot request. */
 	if (source == NULL && (snapshot.slots_enabled != 0 ||
+	    snapshot.outbuf_pages != 0 ||
 	    snapshot.slots.width != 0 ||
 	    snapshot.slots.height != 0 || snapshot.slots.stride_y != 0 ||
 	    snapshot.slots.stride_uv != 0 || snapshot.slots.bitstream_bytes != 0))
@@ -355,7 +357,10 @@ cixvpu_prepare_common(struct cixvpu_dma **owned,
 	(void)SHA256_Final(digest, &hash);
 	if (memcmp(digest, pin, sizeof(pin)) != 0)
 		return EINVAL;
-	if (source != NULL)
+	if (source != NULL && snapshot.outbuf_pages != 0)
+		error = cixvpu_fw_plan_build_frame_probe(image, image_size,
+		    snapshot.cores, &snapshot.slots, &checked);
+	else if (source != NULL)
 		error = cixvpu_fw_plan_build_frame_slots(image, image_size,
 		    snapshot.cores, &snapshot.slots, &checked);
 	else if (snapshot.boot_rpc == 1)
@@ -371,6 +376,7 @@ cixvpu_prepare_common(struct cixvpu_dma **owned,
 	    snapshot.backing_pages != checked.backing_pages ||
 	    snapshot.mappings != checked.mappings ||
 	    snapshot.slots_enabled != checked.slots_enabled ||
+	    snapshot.outbuf_pages != checked.outbuf_pages ||
 	    snapshot.slots.width != checked.slots.width ||
 	    snapshot.slots.height != checked.slots.height ||
 	    snapshot.slots.stride_y != checked.slots.stride_y ||
@@ -392,7 +398,7 @@ cixvpu_prepare_common(struct cixvpu_dma **owned,
 		}
 	}
 	capacity = (size_t)checked.mappings + CIXVPU_FW_PLAN_MAX_CORES + 1 +
-	    2 * checked.boot_rpc;
+	    2 * checked.boot_rpc + (checked.outbuf_pages != 0);
 	pages = checked.backing_pages;
 
 	if (checked.backing_pages > CIXVPU_FW_PLAN_MAX_PAGES ||
@@ -594,7 +600,7 @@ cixvpu_prepare_boot_output(struct cixvpu_prepared *p, const void *out,
 		return error;
 	}
 	capacity = (size_t)p->plan.mappings + CIXVPU_FW_PLAN_MAX_CORES + 1 +
-	    2 * p->plan.boot_rpc;
+	    2 * p->plan.boot_rpc + (p->plan.outbuf_pages != 0);
 	if (capacity > (SIZE_MAX - sizeof(*p)) / sizeof(p->entries[0]) ||
 	    p->bytes != sizeof(*p) + capacity * sizeof(p->entries[0])) {
 		*fault = true;

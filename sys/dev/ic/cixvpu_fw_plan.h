@@ -73,6 +73,10 @@ extern const struct cixvpu_fw_rpc_object
 /* Optional stopped-only local slot layout, not an encoder geometry default. */
 #define CIXVPU_FW_PLAN_FRAME_ADDRESS UINT32_C(0x70000000)
 #define CIXVPU_FW_PLAN_BITSTREAM_ADDRESS UINT32_C(0x24400000)
+/* Private to the one-frame probe. Region 1 shares its VA aperture with Y/UV. */
+#define CIXVPU_FW_PLAN_OUTBUF_ADDRESS UINT32_C(0x70800000)
+#define CIXVPU_FW_PLAN_OUTBUF_PAGES 256U
+#define CIXVPU_FW_PLAN_OUTBUF_REGION 1U
 struct cixvpu_fw_slot_request {
 	uint32_t width, height, stride_y, stride_uv, bitstream_bytes;
 };
@@ -113,6 +117,7 @@ struct cixvpu_fw_plan {
 	uint32_t backing_pages;
 	uint32_t mappings;
 	uint32_t slots_enabled;        /* Exactly0/1; disabled request is all zero. */
+	uint32_t outbuf_pages;         /* Probe-only fixed-size RPC arena. */
 	struct cixvpu_fw_slot_request slots;
 };
 
@@ -193,6 +198,9 @@ int cixvpu_fw_plan_build_boot_rpc(const void *, size_t, unsigned int,
  * Getters recheck metadata; this is not caller-pointer authentication.
  */
 int cixvpu_fw_plan_build_frame_slots(const void *, size_t, unsigned int,
+    const struct cixvpu_fw_slot_request *, struct cixvpu_fw_plan *);
+/* Adds a pre-mapped region-1 arena for fixed-capacity firmware work buffers. */
+int cixvpu_fw_plan_build_frame_probe(const void *, size_t, unsigned int,
     const struct cixvpu_fw_slot_request *, struct cixvpu_fw_plan *);
 int cixvpu_fw_plan_slot(const struct cixvpu_fw_plan *, unsigned int,
     struct cixvpu_fw_slot_span *);

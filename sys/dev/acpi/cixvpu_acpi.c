@@ -194,9 +194,11 @@ cixvpu_acpi_allocation(device_t self)
 		error = EINVAL;
 		goto out;
 	}
-	if (sc->sc_mode == 9 || frame)
-		error = cixvpu_fw_plan_build_frame_slots(image, size, 1,
-		    frame ? &frame_slots : &slots, &plan);
+	if (frame)
+		error = cixvpu_fw_plan_build_frame_probe(image, size, 1,
+		    &frame_slots, &plan);
+	else if (sc->sc_mode == 9)
+		error = cixvpu_fw_plan_build_frame_slots(image, size, 1, &slots, &plan);
 	else if (sc->sc_mode == 8)
 		error = cixvpu_fw_plan_build_boot_rpc(image, size, 1, &plan);
 	else

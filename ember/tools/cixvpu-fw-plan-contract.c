@@ -604,6 +604,58 @@ team_frame_tests(void)
     CHECK(build_slots(image, 420736, 1, &request, &bad) == E2BIG);
 }
 
+static void
+frame_probe_tests(void)
+{
+    uint8_t image[CIXVPU_FW_HEADER_SIZE];
+    struct cixvpu_fw_slot_request request = {2048, 1500, 2048, 2048, 65536};
+    struct cixvpu_fw_plan plan, old, before;
+    struct cixvpu_fw_plan_page page;
+    struct cixvpu_fw_plan_mapping map;
+    struct cixvpu_fw_slot_span old_span, new_span;
+
+    fixture(image);
+    put32(image + 96, 420736); put32(image + 100, 0x70000);
+    put32(image + 104, 15); put32(image + 108, 0x7fff);
+    put32(image + 172, 0x7f000); put32(image + 176, 0);
+    CHECK(cixvpu_fw_plan_build_frame_probe(image, 420736, 1, &request, &plan) == 0);
+    CHECK(plan.outbuf_pages == 256 && plan.mappings == 1790 && plan.backing_pages == 1799);
+    CHECK(build_slots(image, 420736, 1, &request, &old) == 0 && old.outbuf_pages == 0);
+    for (unsigned int slot = 0; slot < 3; slot++) {
+        CHECK(cixvpu_fw_plan_slot(&old, slot, &old_span) == 0);
+        CHECK(cixvpu_fw_plan_slot(&plan, slot, &new_span) == 0);
+        CHECK(old_span.address == new_span.address &&
+            old_span.rounded_bytes == new_span.rounded_bytes &&
+            old_span.first_backing == new_span.first_backing);
+        CHECK(new_span.address + new_span.rounded_bytes <= 0x70800000U);
+    }
+    CHECK(cixvpu_fw_plan_page(&plan, 1798, &page) == 0 &&
+        page.role == CIXVPU_FW_PLAN_LEAF && page.leaf_address == 0x70800000U);
+    for (unsigned int i = 0; i < 256; i++) {
+        CHECK(cixvpu_fw_plan_page(&plan, 1534 + i, &page) == 0 &&
+            page.role == CIXVPU_FW_PLAN_FRAME_RPC_DATA && page.image_bytes == 0);
+        CHECK(cixvpu_fw_plan_mapping(&plan, 1534 + i, &map) == 0 &&
+            map.address == 0x70800000U + i * 4096 && map.backing_index == 1534 + i &&
+            map.leaf_backing_index == 1798 && map.role == CIXVPU_FW_PLAN_FRAME_RPC_DATA &&
+            map.attribute == CIXVPU_MMU_SHARED_RW && map.permission == CIXVPU_MMU_WRITE);
+    }
+    before = plan;
+    before.outbuf_pages = 255;
+    tampered(&before);
+    before = plan;
+    before.outbuf_pages = 0;
+    tampered(&before);
+    request.bitstream_bytes = 265 * 4096;
+    CHECK(cixvpu_fw_plan_build_frame_probe(image, 420736, 1, &request, &plan) == 0 &&
+        plan.backing_pages == 2048);
+    memset(&plan, 0xa5, sizeof(plan));
+    memcpy(&before, &plan, sizeof(before));
+    request.bitstream_bytes++;
+    CHECK(cixvpu_fw_plan_build_frame_probe(image, 420736, 1, &request, &plan) == E2BIG &&
+        memcmp(&plan, &before, sizeof(plan)) == 0);
+}
+
+
 int
 main(void)
 {
@@ -777,6 +829,7 @@ main(void)
     boot_rpc_tests();
     team_frame_tests();
     slot_tests();
+    frame_probe_tests();
     printf("CIX VPU firmware plan: %u checks, 0 failures\n", checks);
     return 0;
 }

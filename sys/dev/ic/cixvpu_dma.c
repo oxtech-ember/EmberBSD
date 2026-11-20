@@ -38,6 +38,7 @@ struct cixvpu_dma {
 	bool rpc_alloc_used, rpc_resize_used, rpc_resize_committed;
 	bool rpc_second_alloc_used;
 	unsigned int rpc_frame_alloc_count;
+	uint32_t outbuf_pages_used;
 	unsigned int rpc_debug_count;
 	enum cixvpu_dma_phase phase;
 	const struct cixvpu_prepared *prepared_owner;
@@ -806,6 +807,29 @@ cixvpu_dma_boot_rpc_step(struct cixvpu_dma *dma,
 			dma->rpc_second_alloc_used = true;
 			address = CIXVPU_FW_PLAN_BOOT_RPC_SECOND_ADDRESS;
 			result = CIXVPU_DMA_RPC_SECOND_ALLOC_REPLIED;
+		} else if (frame_queue && plan->outbuf_pages != 0 &&
+		    observed[20] == CIXVPU_FW_PLAN_OUTBUF_REGION &&
+		    observed[21] == CIXVPU_FW_PLAN_BOOT_RPC_SECOND_LOG2_ALIGNMENT &&
+		    le32dec(observed + 12) != 0 &&
+		    le32dec(observed + 12) == le32dec(observed + 16)) {
+			/* Every committed fixed-size ALLOC owns a distinct full span. */
+			unsigned int required = 0, i;
+
+			for (i = 0; i < CIXVPU_FW_FRAME_RPC_COUNT; i++)
+				required += cixvpu_fw_frame_rpc_objects[i].instances;
+			if (!dma->rpc_second_alloc_used || dma->rpc_frame_alloc_count != required) {
+				error = ENOTSUP;
+				goto rearm;
+			}
+			if (dma->outbuf_pages_used > plan->outbuf_pages ||
+			    pages > plan->outbuf_pages - dma->outbuf_pages_used) {
+				error = ENOSPC;
+				goto rearm;
+			}
+			address = CIXVPU_FW_PLAN_OUTBUF_ADDRESS +
+			    dma->outbuf_pages_used * CIXVPU_FW_PAGE_SIZE;
+			dma->outbuf_pages_used += (uint32_t)pages;
+			result = CIXVPU_DMA_RPC_FRAME_ALLOC_REPLIED;
 		} else if (frame_queue && plan->slots_enabled == 1 &&
 		    dma->rpc_second_alloc_used &&
 		    observed[20] == CIXVPU_FW_PLAN_BOOT_RPC_REGION &&

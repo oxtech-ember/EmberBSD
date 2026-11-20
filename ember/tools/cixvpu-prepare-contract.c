@@ -938,6 +938,7 @@ static void rpc_reserve_tests(void)
 
 }
 static bool rpc_cacheline, rpc_churn;
+static uint32_t rpc_outbuf_address;
 static struct cixvpu_prepared *rpc_active;
 static void rpc_observe(unsigned int i, bus_addr_t off, bus_size_t len, int ops)
 {
@@ -953,6 +954,8 @@ static void rpc_observe(unsigned int i, bus_addr_t off, bus_size_t len, int ops)
         address = 0x241ac000U;
     if (word(dev,1)==2 && maximum==24576)
         address = rpc_active->dma->rpc_frame_alloc_count==4 ? 0x241c2000U : 0x241bc000U;
+    if (word(dev,1)==2 && dev[20]==1)
+        address = rpc_outbuf_address;
     if(ops==BUS_DMASYNC_POSTWRITE && off==0) {
         if(word(dev,1)==2 && address==0x20000000U) CHECK(rpc_active->dma->rpc_alloc_used);
         if(word(dev,1)==2 && address==0x24000000U) CHECK(rpc_active->dma->rpc_second_alloc_used);
@@ -2087,17 +2090,20 @@ static void team_frame_bytes(bool device)
 }
 static void team_frame_seal(void)
 { team_frame_bytes(false); team_sealed++; }
-static struct cixvpu_dma *team_frame_begin(struct cixvpu_fw_plan *plan,
-    struct cixvpu_frame_source *source)
+static struct cixvpu_dma *team_frame_begin_with_profile(struct cixvpu_fw_plan *plan,
+    struct cixvpu_frame_source *source, bool probe)
 {
     struct cixvpu_dma *owner = frame_slots_begin(plan, source);
     CHECK(cixvpu_dma_free(&owner) == 0);
     const struct cixvpu_fw_slot_request request = {2048, 1500, 2048, 2048, 65536};
-    CHECK(cixvpu_fw_plan_build_frame_slots(rpc_image, sizeof(rpc_image), 1,
-        &request, plan) == 0 && plan->backing_pages == TEAM_TOTAL_PAGES && plan->mappings == TEAM_ROOT);
+    const int error = probe ?
+        cixvpu_fw_plan_build_frame_probe(rpc_image, sizeof(rpc_image), 1, &request, plan) :
+        cixvpu_fw_plan_build_frame_slots(rpc_image, sizeof(rpc_image), 1, &request, plan);
+    CHECK(error == 0 && plan->backing_pages == TEAM_TOTAL_PAGES + (probe ? 257 : 0) &&
+        plan->mappings == TEAM_ROOT + (probe ? 256 : 0));
     reset();
     CHECK(cixvpu_dma_alloc(&tag32, &tag64, plan, &owner) == 0);
-    for (unsigned int i = 0; i < TEAM_TOTAL_PAGES; i++) memset(resources[i].kva, 0xa5, 4096);
+    for (unsigned int i = 0; i < plan->backing_pages; i++) memset(resources[i].kva, 0xa5, 4096);
     for (unsigned int i = 0; i < sizeof(team_y); i++) team_y[i] = (uint8_t)(17+i*37+i/251);
     for (unsigned int i = 0; i < sizeof(team_uv); i++) team_uv[i] = (uint8_t)(0x83^(i*23+i/113));
     *source = (struct cixvpu_frame_source){team_y, team_uv, sizeof(team_y), sizeof(team_uv)};
@@ -2107,23 +2113,32 @@ static struct cixvpu_dma *team_frame_begin(struct cixvpu_fw_plan *plan,
     fail_free=fail_seal=false; seal_observer=team_frame_seal;
     return owner;
 }
+static struct cixvpu_dma *team_frame_begin(struct cixvpu_fw_plan *plan,
+    struct cixvpu_frame_source *source)
+{
+    return team_frame_begin_with_profile(plan, source, false);
+}
 static const struct {
     uint32_t minimum, maximum, address;
+    uint8_t region;
 } frame_alloc_requests[] = {
-    {19176,1733208,0x24004000U}, {128,65536,0x241ac000U},
-    {384,24576,0x241bc000U}, {384,24576,0x241c2000U}
+    {19176,1733208,0x24004000U,0}, {128,65536,0x241ac000U,0},
+    {384,24576,0x241bc000U,0}, {384,24576,0x241c2000U,0},
+    {186048,186048,0x70800000U,1}, {186048,186048,0x7082e000U,1},
+    {1,1,0x7085c000U,1}, {667648,667648,0x7085d000U,1}
 };
 static void rpc_frame_request(unsigned int alloc)
 {
     rpc_request(1,2,12);
     put32(device_memory[boot_rpc]+12,frame_alloc_requests[alloc].minimum);
     put32(device_memory[boot_rpc]+16,frame_alloc_requests[alloc].maximum);
+    device_memory[boot_rpc][20]=frame_alloc_requests[alloc].region;
     device_memory[boot_rpc][21]=12;
 }
 
 static void boot_rpc_frame_tests(void)
 {
-    enum fault { NONE, BOOT_ONLY, NO_QUEUE, BEFORE_SECOND_BOOT, MIN, MAX, REGION, ALIGN };
+    enum fault { NONE, BOOT_ONLY, NO_QUEUE, BEFORE_SECOND_BOOT, OLD_SLOTS, MIN, MAX, REGION, UNKNOWN_REGION, ALIGN, ZERO, OVERSIZE, OVERFLOW };
     static const struct {
         unsigned int accepted, requested;
         enum fault fault;
@@ -2131,6 +2146,13 @@ static void boot_rpc_frame_tests(void)
         int error;
     } cases[] = {
         {4,0,NONE,false,EBUSY}, {4,1,NONE,false,EBUSY}, {4,2,NONE,true,ENOSPC},
+        {3,4,NONE,false,ENOTSUP}, {4,4,MIN,false,ENOTSUP},
+        {4,4,MAX,false,ENOTSUP}, {4,4,REGION,false,ENOTSUP},
+        {4,4,UNKNOWN_REGION,false,ENOTSUP}, {4,4,ALIGN,false,ENOTSUP},
+        {4,4,ZERO,false,ENOTSUP}, {7,7,OVERSIZE,false,ENOSPC},
+        {4,4,OVERFLOW,false,ENOSPC}, {4,4,OLD_SLOTS,false,ENOTSUP},
+        {8,6,NONE,true,ENOSPC},
+        {0,4,BOOT_ONLY,false,ENOTSUP}, {0,4,NO_QUEUE,false,ENOTSUP},
         {0,0,BOOT_ONLY,false,ENOTSUP}, {0,0,NO_QUEUE,false,ENOTSUP},
         {0,0,BEFORE_SECOND_BOOT,false,ENOTSUP},
         {0,0,MIN,false,ENOTSUP}, {0,0,MAX,false,ENOTSUP},
@@ -2152,7 +2174,9 @@ static void boot_rpc_frame_tests(void)
         } else {
             struct cixvpu_fw_plan plan;
             struct cixvpu_frame_source source;
-            struct cixvpu_dma *owner=team_frame_begin(&plan,&source);
+            const bool probe=fault!=OLD_SLOTS;
+            struct cixvpu_dma *owner=team_frame_begin_with_profile(&plan,&source,probe);
+            CHECK(plan.outbuf_pages==(probe ? 256U : 0U));
             static const uint32_t frame_vas[] = {
                 0x24004000U, 0x24005000U, 0x24006000U, 0x24007000U, 0x24008000U,
                 0x241ac000U, 0x241bc000U, 0x241c2000U
@@ -2169,10 +2193,35 @@ static void boot_rpc_frame_tests(void)
                 }
             }
             CHECK(mapped==__arraycount(frame_vas));
+            static const uint8_t zero_page[4096]={0};
+            const uint32_t outbuf=0x70800000U;
+            for (unsigned int i=0;i<plan.mappings;i++) {
+                struct cixvpu_fw_plan_mapping mapping;
+                CHECK(cixvpu_fw_plan_mapping(&plan,i,&mapping)==0);
+                if (i<TEAM_ROOT) {
+                    CHECK(mapping.address<outbuf || mapping.address>=outbuf+0x100000U);
+                } else {
+                    CHECK(mapping.address==outbuf+(i-TEAM_ROOT)*4096 &&
+                        mapping.backing_index==i && mapping.leaf_backing_index==TEAM_TOTAL_PAGES+256 &&
+                        mapping.role==CIXVPU_FW_PLAN_FRAME_RPC_DATA &&
+                        mapping.attribute==CIXVPU_MMU_SHARED_RW &&
+                        mapping.permission==CIXVPU_MMU_WRITE);
+                }
+            }
             CHECK(prepare_frame_slots(&owner,&plan,rpc_image,sizeof(rpc_image),
                 fixture_pin,&source,&p)==0);
             sync_fixture(&plan,true);
             CHECK(cixvpu_prepared_sync_initial(p)==0);
+            if (probe) {
+                CHECK(word(device_memory[plan.mappings],outbuf>>22)==
+                    ((uint32_t)(bus_address(TEAM_TOTAL_PAGES+256)>>12)<<2|1));
+                for (unsigned int i=0;i<1024;i++) {
+                    const uint32_t want=i<256 ?
+                        ((uint32_t)(bus_address(TEAM_ROOT+i)>>12)<<2|0xc0000003U) : 0;
+                    CHECK(word(device_memory[TEAM_TOTAL_PAGES+256],i)==want);
+                    if (i<256) CHECK(memcmp(device_memory[TEAM_ROOT+i],zero_page,4096)==0);
+                }
+            }
             boot_host=118;boot_mve=119;boot_rpc=124;boot_nevents=0;
             boot_unstable=boot_append=false;boot_alloc_change=boot_resize_change=0;
             sync_observer=boot_observe;
@@ -2203,6 +2252,7 @@ static void boot_rpc_frame_tests(void)
         const unsigned int heap=live_kmem,owners=depth;
         for (unsigned int alloc=0;alloc<cases[test].accepted;alloc++) {
             rpc_frame_request(alloc);
+            rpc_outbuf_address=frame_alloc_requests[alloc].address;
             memcpy(original,rpc,sizeof(original));
             const unsigned int calls=native_calls;
             CHECK(cixvpu_prepared_boot_rpc_step(p,&result)==0 &&
@@ -2222,15 +2272,22 @@ static void boot_rpc_frame_tests(void)
                 result==CIXVPU_BOOT_RPC_PENDING && boot_nevents==4);
             for (unsigned int i=0;i<boot_nevents;i++)
                 CHECK(!(boot_events[i].ops & BUS_DMASYNC_PREWRITE));
-            CHECK(p->dma->rpc_frame_alloc_count==alloc+1 &&
+            CHECK(p->dma->rpc_frame_alloc_count==(alloc<4 ? alloc+1 : 4) &&
                 memcmp(original,rpc,sizeof(original))==0);
         }
 
         rpc_frame_request(cases[test].requested);
         if (fault==MIN) put32(rpc+12,word(rpc,3)+1);
         if (fault==MAX) put32(rpc+16,word(rpc,4)+1);
-        if (fault==REGION) rpc[20]=1;
+        if (fault==REGION) rpc[20]^=1;
+        if (fault==UNKNOWN_REGION) rpc[20]=2;
         if (fault==ALIGN) rpc[21]=11;
+        if (fault==ZERO || fault==OVERSIZE || fault==OVERFLOW) {
+            const uint32_t bytes=fault==ZERO ? 0 : fault==OVERFLOW ? UINT32_MAX :
+                frame_alloc_requests[cases[test].requested].maximum+1;
+            put32(rpc+12,bytes);
+            put32(rpc+16,bytes);
+        }
         const int want=cases[test].error;
         memcpy(original,rpc,sizeof(original));
         result=CIXVPU_BOOT_RPC_IDLE;
@@ -2238,7 +2295,7 @@ static void boot_rpc_frame_tests(void)
             result==CIXVPU_BOOT_RPC_IDLE && p->boot.error==want);
         CHECK(memcmp(original,rpc,sizeof(original))==0 &&
             heap==live_kmem && owners==depth &&
-            p->dma->rpc_frame_alloc_count==cases[test].accepted);
+            p->dma->rpc_frame_alloc_count==(cases[test].accepted<4 ? cases[test].accepted : 4));
         for (unsigned int i=0;i<boot_nevents;i++)
             CHECK(!(boot_events[i].ops & BUS_DMASYNC_PREWRITE));
         const unsigned int calls=native_calls;
