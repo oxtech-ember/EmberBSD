@@ -67,12 +67,15 @@ reconnect_bus_master(void *cookie,int enable)
 }
 
 static unsigned reconnect_dack_waits, reconnect_dack_busy_waits;
+static unsigned reconnect_table_waits, reconnect_table_busy_waits;
 
 static void
 reconnect_delay(void *cookie, unsigned us)
 {
 	if (f.sc->sc_bootstrapping && f.dack_seen && us == 20000)
 		reconnect_dack_busy_waits++;
+	if (f.sc->sc_bootstrapping && !f.dack_seen && us == 50000)
+		reconnect_table_busy_waits++;
 	delay_us(cookie, us);
 }
 
@@ -81,10 +84,16 @@ reconnect_dack_wait(int ticks)
 {
 	struct rtw88_net *net = state_current_net;
 
-	CHECK(ticks == 3);
 	CHECK(net->core->sc_bootstrapping && !net->core->sc_running);
 	CHECK((net->ec.ec_if.if_flags & IFF_RUNNING) == 0);
 	CHECK(!net->policy.accepting);
+	if (ticks == 5) {
+		reconnect_table_waits++;
+		CHECK(!f.dack_seen);
+		return;
+	}
+	CHECK(ticks == 3);
+	CHECK(f.dack_seen);
 	if (reconnect_dack_waits++ == 0) {
 		unsigned loads = f.firmware_loads;
 
@@ -128,6 +137,7 @@ test_reconnect_coalesced_peer_barrier(void)
 	CHECK(rtw88_net_newstate(&s.net.ic,IEEE80211_S_INIT,-1)==0);
 	CHECK(rtw88_net_newstate(&s.net.ic,IEEE80211_S_SCAN,-1)==0);
 	reconnect_dack_waits = reconnect_dack_busy_waits = 0;
+	reconnect_table_waits = reconnect_table_busy_waits = 0;
 	s.bus.delay_us = reconnect_delay;
 	/* Model 64 Hz: one full tick could be lost at the clock boundary. */
 	state_tick_us = 15625;
@@ -137,6 +147,8 @@ test_reconnect_coalesced_peer_barrier(void)
 	state_tick_us = 1000;
 	CHECK(reconnect_dack_waits == 4);
 	CHECK(reconnect_dack_busy_waits == 0);
+	CHECK(reconnect_table_waits == 3);
+	CHECK(reconnect_table_busy_waits == 0);
 	s.bus.delay_us = delay_us;
 	CHECK(f.firmware_loads==loads+1 && s.sc.sc_generation>generation);
 	CHECK(s.sc.sc_txq[RTW88_TXQ_BE].queued==0);
@@ -267,7 +279,8 @@ reconnect_cancel_dack_wait(int ticks)
 {
 	struct rtw88_net *net = state_current_net;
 
-	CHECK(ticks > 20);
+	if (ticks != 21)
+		return;
 	if (reconnect_event == 5) {
 		net->policy.dying = 1;
 	} else if (reconnect_event == 6) {

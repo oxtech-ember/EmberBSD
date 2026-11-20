@@ -518,7 +518,8 @@ verifies bus-master disable. A failed shutdown or fresh start keeps acceptance
 closed and reports stage6. No new peer table or payload is published on failure.
 
 The worker runs lifecycle operations under Giant without the PCI lock. It
-sleeps through the 20 ms RTL8822C DAC settling intervals, releasing Giant.
+sleeps through the 50 ms RTL8822C table holds and 20 ms DAC settling
+intervals, releasing Giant.
 The current work item retains restart ownership. A second init returns
 `EBUSY`, and stop and detach wait for the work item before releasing resources.
 The worker does not call net_init/net_stop, which wait for the same workqueue. After successful

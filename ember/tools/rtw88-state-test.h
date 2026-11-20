@@ -184,7 +184,7 @@ static inline int kpause(const char *name,bool intr,int ticks,kmutex_t *lock)
 {
     (void)name;(void)intr;assert(lock==NULL && !state_lock.held && ticks>0);
     state_ticks+=(unsigned)ticks;
-    if (strcmp(name, "rtwdack") == 0 && state_dack_wait != NULL)
+    if (strcmp(name, "rtwboot") == 0 && state_dack_wait != NULL)
         state_dack_wait(ticks);
     if(state_sae_sleep_change) {
         state_current_net->ic.ic_sae_serial++;

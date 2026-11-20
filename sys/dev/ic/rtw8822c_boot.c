@@ -14,6 +14,7 @@
 #endif
 
 #include <dev/ic/rtw88var.h>
+#include <dev/ic/rtw88_io.h>
 #include "rtw8822c.h"
 #include "rtw8822c_table.h"
 #include "rtw88_phy_table.h"
@@ -412,7 +413,7 @@ rtw8822c_cfg_bb(struct rtw88_softc *sc, uint32_t addr, uint32_t data)
 
 	switch (addr) {
 	case 0xfe:
-		sc->sc_ops->delay_us(sc->sc_bus, 50000);
+		rtw88_bootstrap_delay(sc, 50000);
 		return 0;
 	case 0xfd:
 		sc->sc_ops->delay_us(sc->sc_bus, 5000);
@@ -440,7 +441,7 @@ rtw8822c_cfg_rf(struct rtw88_softc *sc, int path, uint32_t addr, uint32_t data)
 	uint32_t direct;
 
 	if (addr == 0xffe) {
-		sc->sc_ops->delay_us(sc->sc_bus, 50000);
+		rtw88_bootstrap_delay(sc, 50000);
 		return 0;
 	}
 	if (addr == 0xfe) {
@@ -538,7 +539,7 @@ rtw8822c_apply_pg(struct rtw88_softc *sc, const struct rtw8822c_table *tbl)
 		if (sc->sc_stop_requested)
 			return EINTR;
 		if (p->addr == 0xfe || p->addr == 0xffe) {
-			sc->sc_ops->delay_us(sc->sc_bus, 50000);
+			rtw88_bootstrap_delay(sc, 50000);
 			continue;
 		}
 		sc->sc_pg_rows++;

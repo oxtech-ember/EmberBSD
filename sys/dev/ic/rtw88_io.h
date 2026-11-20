@@ -90,6 +90,16 @@ rtw88_io_delay(struct rtw88_io *io, unsigned us)
 		io->ops->delay_us(io->cookie, us);
 }
 
+/* Fixed settling time before the IRQ and traffic paths open. The restart
+ * worker may sleep, but direct initialization retains the bus delay. */
+static inline void
+rtw88_bootstrap_delay(struct rtw88_softc *sc, unsigned us)
+{
+
+	if (sc->sc_bootstrap_wait == NULL || sc->sc_bootstrap_wait(us) != 0)
+		sc->sc_ops->delay_us(sc->sc_bus, us);
+}
+
 static inline void
 rtw88_io_set(struct rtw88_io *io, uint32_t addr, unsigned size, uint32_t bits)
 {

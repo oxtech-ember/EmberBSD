@@ -2049,7 +2049,7 @@ rtw88_net_bootstrap_wait(unsigned us)
 	};
 	int error;
 
-	error = kpause("rtwdack", false, tvtohz(&delay), NULL);
+	error = kpause("rtwboot", false, tvtohz(&delay), NULL);
 	return error == EWOULDBLOCK ? 0 : EAGAIN;
 }
 

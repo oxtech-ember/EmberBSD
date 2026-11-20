@@ -16,6 +16,7 @@
 #include <sys/systm.h>
 #include <sys/errno.h>
 #include <dev/ic/rtw88var.h>
+#include <dev/ic/rtw88_io.h>
 #include <dev/ic/rtw8822c.h>
 
 #define SAMPLE_COUNT 100U
@@ -123,8 +124,9 @@ wait_us(struct dack_context *c, unsigned us)
 	}
 	c->out->delay_us += us;
 	/* Keep RF register timing unchanged for short polling delays. */
-	if (us < 20000 || c->sc->sc_bootstrap_wait == NULL ||
-	    c->sc->sc_bootstrap_wait(us) != 0)
+	if (us >= 20000)
+		rtw88_bootstrap_delay(c->sc, us);
+	else
 		c->sc->sc_ops->delay_us(c->sc->sc_bus, us);
 	if (canceled(c))
 		c->error = EINTR;
