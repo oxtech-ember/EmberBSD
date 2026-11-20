@@ -36,7 +36,7 @@ struct cixvpu_dma {
 	bool tag_acquired;
 	bool ever_visible;
 	bool rpc_alloc_used, rpc_resize_used, rpc_resize_committed;
-	bool rpc_second_alloc_used;
+	bool rpc_second_alloc_used, rpc_frame_alloc_used;
 	unsigned int rpc_debug_count;
 	enum cixvpu_dma_phase phase;
 	const struct cixvpu_prepared *prepared_owner;
@@ -72,6 +72,7 @@ cixvpu_dma_record(const struct cixvpu_fw_plan_page *page, uint32_t index)
 	case CIXVPU_FW_PLAN_ROOT:
 	case CIXVPU_FW_PLAN_LEAF:
 	case CIXVPU_FW_PLAN_RPC_SECOND_DATA:
+	case CIXVPU_FW_PLAN_FRAME_RPC_DATA:
 	case CIXVPU_FW_PLAN_FRAME_Y:
 	case CIXVPU_FW_PLAN_FRAME_UV:
 	case CIXVPU_FW_PLAN_BITSTREAM:
@@ -344,6 +345,7 @@ cixvpu_dma_initial_ops(enum cixvpu_fw_plan_role role)
 	case CIXVPU_FW_PLAN_PRINT:
 	case CIXVPU_FW_PLAN_RPC_DATA:
 	case CIXVPU_FW_PLAN_RPC_SECOND_DATA:
+	case CIXVPU_FW_PLAN_FRAME_RPC_DATA:
 	case CIXVPU_FW_PLAN_BITSTREAM:
 		return BUS_DMASYNC_PREWRITE | BUS_DMASYNC_PREREAD;
 	default:
@@ -680,7 +682,8 @@ cixvpu_dma_boot_debugparam(struct cixvpu_dma *dma,
 int
 cixvpu_dma_boot_rpc_step(struct cixvpu_dma *dma,
     const struct cixvpu_prepared *owner, const struct cixvpu_fw_plan *plan,
-    struct cixvpu_dma_boot_snapshot *snapshot, enum cixvpu_dma_rpc_result *out)
+    bool frame_queue, struct cixvpu_dma_boot_snapshot *snapshot,
+    enum cixvpu_dma_rpc_result *out)
 {
 	struct cixvpu_dma_owner *host, *mve, *rpc;
 	enum cixvpu_dma_rpc_result result;
@@ -802,6 +805,19 @@ cixvpu_dma_boot_rpc_step(struct cixvpu_dma *dma,
 			dma->rpc_second_alloc_used = true;
 			address = CIXVPU_FW_PLAN_BOOT_RPC_SECOND_ADDRESS;
 			result = CIXVPU_DMA_RPC_SECOND_ALLOC_REPLIED;
+		} else if (frame_queue && plan->slots_enabled == 1 &&
+		    dma->rpc_second_alloc_used &&
+		    le32dec(observed + 12) == CIXVPU_FW_PLAN_FRAME_RPC_SIZE &&
+		    le32dec(observed + 16) == CIXVPU_FW_PLAN_FRAME_RPC_CAPACITY &&
+		    observed[20] == CIXVPU_FW_PLAN_BOOT_RPC_REGION &&
+		    observed[21] == CIXVPU_FW_PLAN_BOOT_RPC_SECOND_LOG2_ALIGNMENT) {
+			if (dma->rpc_frame_alloc_used) {
+				error = EBUSY;
+				goto rearm;
+			}
+			dma->rpc_frame_alloc_used = true;
+			address = CIXVPU_FW_PLAN_FRAME_RPC_ADDRESS;
+			result = CIXVPU_DMA_RPC_FRAME_ALLOC_REPLIED;
 		} else {
 			error = ENOTSUP;
 			goto rearm;

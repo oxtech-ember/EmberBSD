@@ -685,7 +685,8 @@ cixvpu_frame_rpc(struct cixvpu_acpi_boot *b, uint64_t start,
 	if (result != CIXVPU_BOOT_RPC_DEBUG_REPLIED &&
 	    result != CIXVPU_BOOT_RPC_ALLOC_REPLIED &&
 	    result != CIXVPU_BOOT_RPC_RESIZE_REPLIED &&
-	    result != CIXVPU_BOOT_RPC_SECOND_ALLOC_REPLIED)
+	    result != CIXVPU_BOOT_RPC_SECOND_ALLOC_REPLIED &&
+	    result != CIXVPU_BOOT_RPC_FRAME_ALLOC_REPLIED)
 		return EPROTO;
 	b->report.rpc_commits++;
 	b->report.frame_publications++;

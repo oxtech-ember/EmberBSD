@@ -129,7 +129,7 @@ struct cixvpu_prepared *boot_fixture_prepare_frame(void) {
     CHECK(cixvpu_dma_free(&raw)==0);reset();seal_observer=NULL;
     const struct cixvpu_fw_slot_request request={128,128,128,128,65536};
     CHECK(cixvpu_fw_plan_build_frame_slots(rpc_image,sizeof(rpc_image),1,&request,&plan)==0);
-    CHECK(plan.backing_pages==414 && plan.mappings==407);
+    CHECK(plan.backing_pages==419 && plan.mappings==412);
     CHECK(cixvpu_dma_alloc(&tag32,&tag64,&plan,&raw)==0);
     for(unsigned int y=0;y<128;y++)for(unsigned int x=0;x<128;x++)
         frame_wire_pixels[128*y+x]=(uint8_t)(16+28*((x/16+2*(y/16))%8));

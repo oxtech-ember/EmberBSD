@@ -154,7 +154,7 @@ cixvpu_acpi_allocation(device_t self)
 	firmware_handle_t firmware;
 	SHA256_CTX hash;
 	uint8_t digest[SHA256_DIGEST_LENGTH];
-	unsigned int roles[CIXVPU_FW_PLAN_BITSTREAM + 1] = { 0 };
+	unsigned int roles[CIXVPU_FW_PLAN_FRAME_RPC_DATA + 1] = { 0 };
 	unsigned int i, j, pages = 0, checked = 0;
 	off_t extent;
 	size_t size = 0;

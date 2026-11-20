@@ -670,10 +670,10 @@ int cixvpu_dma_alloc(bus_dma_tag_t dmat, bus_dma_tag_t dmat64,
     const struct cixvpu_fw_plan *plan, struct cixvpu_dma **out)
 {
     CHECK(dmat == &dma_tags[0] && dmat64 == &dma_tags[1] && fw_live == (attach_cf.cf_flags == 5 || attach_cf.cf_flags == 7 || attach_cf.cf_flags == 8 || attach_cf.cf_flags == 9 || attach_cf.cf_flags == 10 ? 1U : 0U));
-    CHECK(plan->cores == 1 && plan->backing_pages == (attach_cf.cf_flags == 10 ? 414U : attach_cf.cf_flags == 9 ? 401U : attach_cf.cf_flags == 8 ? 274U : 140U) && *out == NULL);
+    CHECK(plan->cores == 1 && plan->backing_pages == (attach_cf.cf_flags == 10 ? 419U : attach_cf.cf_flags == 9 ? 406U : attach_cf.cf_flags == 8 ? 274U : 140U) && *out == NULL);
     CHECK(plan->boot_rpc == (attach_cf.cf_flags == 8 || attach_cf.cf_flags == 9 || attach_cf.cf_flags == 10 ? 1U : 0U));
     if (attach_cf.cf_flags == 9) {
-        CHECK(plan->mappings == 394 && plan->slots_enabled == 1);
+        CHECK(plan->mappings == 399 && plan->slots_enabled == 1);
         CHECK(slot_live == 1 && slot_allocs == 1 && slot_frees == 0);
     }
     dma_allocs++; fw_event('a');
@@ -686,7 +686,7 @@ int cixvpu_dma_page(struct cixvpu_dma *owner, unsigned int index,
 {
     CHECK(owner == &dma_owner && dma_live && index < owner->count);
     dma_views++;
-    if (fw_fault == 27 && index == 400) return EIO;
+    if (fw_fault == 27 && index == owner->count - 1) return EIO;
     if (fw_fault == 9 && index == 1) return EIO;
     memset(dma_bytes, 0, sizeof(dma_bytes));
     if (fw_fault == 10 && index == 1) dma_bytes[4095] = 1;
@@ -712,11 +712,11 @@ static int fixture_prepare(struct cixvpu_dma **owner, const struct cixvpu_fw_pla
     const void *bytes, size_t size, const uint8_t pin[32], struct cixvpu_prepared **out)
 {
     CHECK(*owner == &dma_owner && dma_live && *out == NULL && !prepared_live);
-    CHECK(fw_live == 1 && fw_closes == 1 && dma_views == (attach_cf.cf_flags == 10 ? 414U : attach_cf.cf_flags == 9 ? 401U : attach_cf.cf_flags == 8 ? 274U : 140U));
+    CHECK(fw_live == 1 && fw_closes == 1 && dma_views == (attach_cf.cf_flags == 10 ? 419U : attach_cf.cf_flags == 9 ? 406U : attach_cf.cf_flags == 8 ? 274U : 140U));
     CHECK(bytes != NULL);
     if (bytes == NULL) return EINVAL;
     CHECK(size == sizeof(fw_image) && memcmp(bytes, fw_image, size) == 0);
-    CHECK(plan->cores == 1 && plan->backing_pages == (attach_cf.cf_flags == 10 ? 414U : attach_cf.cf_flags == 9 ? 401U : attach_cf.cf_flags == 8 ? 274U : 140U));
+    CHECK(plan->cores == 1 && plan->backing_pages == (attach_cf.cf_flags == 10 ? 419U : attach_cf.cf_flags == 9 ? 406U : attach_cf.cf_flags == 8 ? 274U : 140U));
     CHECK(plan->boot_rpc == (attach_cf.cf_flags == 8 || attach_cf.cf_flags == 9 || attach_cf.cf_flags == 10 ? 1U : 0U));
     for (unsigned int i = 0; i < 32; i++) {
         char byte[3] = {selected_digest[i * 2], selected_digest[i * 2 + 1], 0};
@@ -755,7 +755,7 @@ int cixvpu_prepare_frame_slots_cpu(struct cixvpu_dma **owner,
         CHECK(source->y_bytes == 16384 && source->uv_bytes == 8192);
         CHECK(plan->slots.width == 128 && plan->slots.height == 128);
         CHECK(plan->slots.stride_y == 128 && plan->slots.stride_uv == 128);
-        CHECK(plan->slots.bitstream_bytes == 65536 && plan->mappings == 407);
+        CHECK(plan->slots.bitstream_bytes == 65536 && plan->mappings == 412);
         for (unsigned int y=0;y<128;y++) for(unsigned int x=0;x<128;x++)
             CHECK(((const uint8_t *)source->y)[128*y+x] == (uint8_t)(16+28*((x/16+2*(y/16))%8)));
         for (unsigned int i=0;i<8192;i++) CHECK(((const uint8_t *)source->uv)[i] == (i%2 ? 160 : 90));
@@ -764,7 +764,7 @@ int cixvpu_prepare_frame_slots_cpu(struct cixvpu_dma **owner,
         CHECK(source->y_bytes == 16388 && source->uv_bytes == 4102);
         CHECK(plan->slots.width == 2 && plan->slots.height == 4);
         CHECK(plan->slots.stride_y == 4097 && plan->slots.stride_uv == 2051);
-        CHECK(plan->slots.bitstream_bytes == 4097 && plan->mappings == 394);
+        CHECK(plan->slots.bitstream_bytes == 4097 && plan->mappings == 399);
         for (unsigned int i=0;i<16388;i++) CHECK(((const uint8_t *)source->y)[i] == (uint8_t)(i*17U+3U));
         for (unsigned int i=0;i<4102;i++) CHECK(((const uint8_t *)source->uv)[i] == (uint8_t)(i*29U+0x91U));
     }
@@ -1061,9 +1061,9 @@ static void slot_probe_tests(void)
         CHECK(boot_create_calls == 0 && boot_once_calls == 0 && boot_report_calls == 0 && boot_rpc_create_calls == 0);
         CHECK(nevents == 0 && reads == 0 && maps == 0 && sta_count == 0);
         if (f == 0) {
-            CHECK(dma_count == 401 && dma_views == 401 && !dma_live && !prepared_live);
+            CHECK(dma_count == 406 && dma_views == 406 && !dma_live && !prepared_live);
             CHECK(strcmp(fw_events, "osmrchxapfziq") == 0);
-            CHECK(strstr(diagnostic, "CPU slot fixture: pages 401 checked 401 mappings 394 tables 7") != NULL);
+            CHECK(strstr(diagnostic, "CPU slot fixture: pages 406 checked 406 mappings 399 tables 7") != NULL);
             CHECK(strstr(diagnostic, "sync attempted yes, error 0") != NULL);
             CHECK(strstr(diagnostic, "slot result 0, primary 0 close 0 prepared cleanup 0 DMA cleanup 0") != NULL);
         }
@@ -1085,7 +1085,7 @@ static void slot_probe_tests(void)
         CHECK(strstr(diagnostic, expected) != NULL);
         if (f == 25 || f == 26)
             CHECK(strstr(diagnostic, "sync attempted yes, error 5") != NULL);
-        if (f == 27) CHECK(dma_views == 401 && slot_prepare_calls == 0);
+        if (f == 27) CHECK(dma_views == 406 && slot_prepare_calls == 0);
         /* Dispose only host service models; no production retry or bypass. */
         dma_live = prepared_live = false;
     }
@@ -1149,7 +1149,7 @@ static void frame_attach_tests(void)
         CHECK(boot_once_calls==(invoked?1U:0U) && boot_report_calls==(invoked?1U:0U));
         CHECK(initial_sync_calls==0 && prepared_frees==(f==21?1U:0U));
         if(f==0) {
-            CHECK(dma_count==414 && dma_views==414 && dma_owner.plan.mappings==407);
+            CHECK(dma_count==419 && dma_views==419 && dma_owner.plan.mappings==412);
             CHECK(strcmp(fw_events,"osmrchxapfzCUV")==0);
             CHECK(attachment_boot.prepared==&prepared_owner && prepared_live);
         }

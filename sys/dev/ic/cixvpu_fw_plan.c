@@ -96,6 +96,14 @@ _Static_assert(CIXVPU_FW_PLAN_BOOT_RPC_SECOND_ADDRESS ==
     CIXVPU_FW_PLAN_BOOT_RPC_SECOND_SIZE <= UINT32_C(0x70000000),
     "second object must follow the first reserve inside the v3 protected VA");
 
+_Static_assert(CIXVPU_FW_PLAN_FRAME_RPC_ADDRESS % CIXVPU_FW_PAGE_SIZE == 0 &&
+    CIXVPU_FW_PLAN_FRAME_RPC_SIZE <= CIXVPU_FW_PLAN_FRAME_RPC_CAPACITY &&
+    CIXVPU_FW_PLAN_FRAME_RPC_CAPACITY <= PLAN_LEAF_BYTES -
+    CIXVPU_FW_PLAN_BOOT_RPC_SECOND_SIZE &&
+    CIXVPU_FW_PLAN_BOOT_RPC_SECOND_ADDRESS + PLAN_LEAF_BYTES <=
+    CIXVPU_FW_PLAN_BITSTREAM_ADDRESS,
+    "frame RPC reserve must fit the second RPC leaf before the bitstream");
+
 _Static_assert(CIXVPU_FW_PLAN_FRAME_ADDRESS % PLAN_LEAF_BYTES == 0 &&
     CIXVPU_FW_PLAN_FRAME_ADDRESS >= UINT32_C(0x70000000) &&
     CIXVPU_FW_PLAN_FRAME_ADDRESS < UINT32_C(0xf0000000) &&
@@ -181,6 +189,8 @@ cixvpu_fw_plan_check(const struct cixvpu_fw_info *info, unsigned int cores,
 		backing += spans[i].pages;
 		mappings += spans[i].pages;
 	}
+	mappings += slots_enabled * CIXVPU_FW_PLAN_FRAME_RPC_PAGES;
+	backing += slots_enabled * CIXVPU_FW_PLAN_FRAME_RPC_PAGES;
 	backing += slots_enabled + cixvpu_fw_frame_leaves(spans);
 	if (backing > CIXVPU_FW_PLAN_MAX_PAGES || mappings > UINT32_MAX)
 		return E2BIG;
@@ -314,7 +324,7 @@ cixvpu_fw_plan_page_get(const struct cixvpu_fw_plan *plan, uint32_t index,
 	const struct cixvpu_fw_info *info = &plan->info;
 	struct cixvpu_fw_plan_page page = { 0 };
 	struct cixvpu_fw_slot_span spans[3];
-	uint32_t shared, common, print, rpc, second, slots, root;
+	uint32_t shared, common, print, rpc, second, slots, frame_rpc, root;
 
 	shared = info->text_pages + plan->cores * info->private_pages;
 	common = shared + info->shared_pages;
@@ -323,7 +333,8 @@ cixvpu_fw_plan_page_get(const struct cixvpu_fw_plan *plan, uint32_t index,
 	second = rpc + plan->boot_rpc * CIXVPU_FW_PLAN_BOOT_RPC_BACKING_PAGES;
 	slots = second + plan->boot_rpc * CIXVPU_FW_PLAN_BOOT_RPC_SECOND_PAGES;
 	(void)cixvpu_fw_slots(&plan->slots, plan->slots_enabled, spans);
-	root = slots + spans[0].pages + spans[1].pages + spans[2].pages;
+	frame_rpc = slots + spans[0].pages + spans[1].pages + spans[2].pages;
+	root = frame_rpc + plan->slots_enabled * CIXVPU_FW_PLAN_FRAME_RPC_PAGES;
 	page.backing_index = index;
 	page.core = CIXVPU_FW_PLAN_NO_CORE;
 	page.attribute = CIXVPU_MMU_PRIVATE;
@@ -359,7 +370,7 @@ cixvpu_fw_plan_page_get(const struct cixvpu_fw_plan *plan, uint32_t index,
 		page.role = CIXVPU_FW_PLAN_RPC_SECOND_DATA;
 		page.ordinal = index - second;
 		page.attribute = CIXVPU_MMU_SHARED_RW;
-	} else if (index < root) {
+	} else if (index < frame_rpc) {
 		uint32_t local, i;
 
 		local = index - slots;
@@ -368,6 +379,10 @@ cixvpu_fw_plan_page_get(const struct cixvpu_fw_plan *plan, uint32_t index,
 		page.role = i == 0 ? CIXVPU_FW_PLAN_FRAME_Y :
 		    i == 1 ? CIXVPU_FW_PLAN_FRAME_UV : CIXVPU_FW_PLAN_BITSTREAM;
 		page.ordinal = local;
+		page.attribute = CIXVPU_MMU_SHARED_RW;
+	} else if (index < root) {
+		page.role = CIXVPU_FW_PLAN_FRAME_RPC_DATA;
+		page.ordinal = index - frame_rpc;
 		page.attribute = CIXVPU_MMU_SHARED_RW;
 	} else if (index == root) {
 		page.role = CIXVPU_FW_PLAN_ROOT;
@@ -443,12 +458,18 @@ cixvpu_fw_plan_mapping(const struct cixvpu_fw_plan *plan, unsigned int index,
 	    CIXVPU_FW_PLAN_BOOT_RPC_SECOND_PAGES);
 	if (plan->slots_enabled != 0 && index >= first) {
 		local = index - first;
-		for (i = 0; i < 2 && local >= spans[i].pages; i++)
+		for (i = 0; i < 3 && local >= spans[i].pages; i++)
 			local -= spans[i].pages;
 		map.backing_index = shared + info->shared_pages +
 		    PLAN_COMMON_PAGES + PLAN_PRINT_PAGES +
 		    CIXVPU_FW_PLAN_BOOT_RPC_BACKING_PAGES +
 		    CIXVPU_FW_PLAN_BOOT_RPC_SECOND_PAGES + index - first;
+		if (i == 3) {
+			map.address = CIXVPU_FW_PLAN_FRAME_RPC_ADDRESS +
+			    local * CIXVPU_FW_PAGE_SIZE;
+			map.leaf_backing_index = first_leaf + plan->cores + 2;
+			goto ready;
+		}
 		map.address = spans[i].address + local * CIXVPU_FW_PAGE_SIZE;
 		map.leaf_backing_index = first_leaf + plan->cores + 3 +
 		    (i == 2 ? cixvpu_fw_frame_leaves(spans) :

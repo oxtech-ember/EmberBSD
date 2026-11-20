@@ -760,7 +760,7 @@ cixvpu_prepared_boot_rpc_step(struct cixvpu_prepared *p,
 	p->boot.snapshot.rpc_alloc_valid = false;
 	p->boot.snapshot.rpc_resize_valid = false;
 	error = cixvpu_dma_boot_rpc_step(p->dma, p, &p->plan,
-	    &p->boot.snapshot, &observed);
+	    p->queue.enabled, &p->boot.snapshot, &observed);
 	if (error != 0) {
 		if (error != EAGAIN)
 			p->boot.error = error;
@@ -781,6 +781,9 @@ cixvpu_prepared_boot_rpc_step(struct cixvpu_prepared *p,
 		break;
 	case CIXVPU_DMA_RPC_SECOND_ALLOC_REPLIED:
 		result = CIXVPU_BOOT_RPC_SECOND_ALLOC_REPLIED;
+		break;
+	case CIXVPU_DMA_RPC_FRAME_ALLOC_REPLIED:
+		result = CIXVPU_BOOT_RPC_FRAME_ALLOC_REPLIED;
 		break;
 	case CIXVPU_DMA_RPC_RESIZE_REPLIED:
 		result = CIXVPU_BOOT_RPC_RESIZE_REPLIED;
