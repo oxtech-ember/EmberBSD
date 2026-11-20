@@ -26,7 +26,9 @@ clickfinger works with all tap flags off.
 Enabling tapping during an existing contact must not synthesize a click.
 With `HIDMT_TAP_DRAG` a one-finger tap holds the left button: a new touch
 within `HIDMT_DRAG_US` drags, its lift releases, a short second touch adds
-one click, and `hidmt_drag_expire()` releases an unused hold.
+one click, a second finger ends the drag (a physical click with two
+contacts stays right only), and `hidmt_drag_expire()` releases an unused
+hold.
 
 The I2C transport must also compile against the selected kernel configuration.
 These tests do not simulate I2C hardware, wscons queues, device detach,

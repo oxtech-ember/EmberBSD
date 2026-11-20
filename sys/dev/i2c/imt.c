@@ -512,7 +512,15 @@ imt_tmo(void *arg)
 	 * that a drag whose touch went silent (lost lift report) is released.
 	 */
 	if (sc->sc_hybrid == 0 && sc->sc_gestures == 0 &&
-	    !sc->sc_g_need_cancel && !sc->sc_pointer.drag_held) {
+	    !sc->sc_g_need_cancel) {
+		if (sc->sc_pointer.dragging && usec >= sc->sc_last_usec &&
+		    usec - sc->sc_last_usec >= HIDMT_DRAG_STALL_US) {
+			(void)hidmt_release(&sc->sc_pointer, &sc->sc_gstate);
+			s = spltty();
+			wsmouse_input(sc->sc_mouse, 0, 0, 0, 0, 0,
+			    WSMOUSE_INPUT_DELTA);
+			splx(s);
+		}
 		imt_tmo_arm(sc);
 		return;
 	}

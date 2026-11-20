@@ -149,6 +149,12 @@ struct hidmt_gstate {
 
 /* Time after a tap in which a new touch starts a drag (microseconds). */
 #define HIDMT_DRAG_US	250000
+/*
+ * A drag whose touch sends no reports for this long is released (a lost
+ * lift report).  Longer than HIDMT_STALL_US: some pads may stay silent
+ * while a finger rests.
+ */
+#define HIDMT_DRAG_STALL_US	2000000
 
 int hidmt_parse(const void *, int, struct hidmt_config *);
 int hidmt_decode(const struct hidmt_config *, const uint8_t *, unsigned,

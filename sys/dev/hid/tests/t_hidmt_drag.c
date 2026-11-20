@@ -146,10 +146,42 @@ main(void)
 	update(&ptr, 9860000, T, &m);
 	assert(m.buttons == 1 && !ptr.drag_held);
 
+	/* A second finger during a drag releases and ends the drag. */
+	lift();
+	update(&ptr, 10500000, T, &m);
+	tap(&ptr, 10600000, T, &m);
+	touch(10, 1000, 800);
+	update(&ptr, 10750000, T, &m);
+	assert(ptr.dragging && m.buttons == 1);
+	frame.ncontacts = 2;
+	frame.contacts[1].id = 11; frame.contacts[1].x = 1500; frame.contacts[1].y = 800;
+	update(&ptr, 10760000, T, &m);
+	assert(m.buttons == 0 && !ptr.dragging && !ptr.drag_held);
+	update(&ptr, 10780000, T, &m);
+	assert(m.buttons == 0);
+	lift();
+	update(&ptr, 10800000, T, &m);
+	assert(m.buttons == 0 && !m.click_after);
+	/* ... and the two-finger tap that it was still gives a right click. */
+	assert(m.tap && m.tap_button == 4);
+
+	/* A two-finger physical click during a drag is right only. */
+	lift();
+	update(&ptr, 10900000, T, &m);
+	tap(&ptr, 11000000, T, &m);
+	touch(12, 1000, 800);
+	update(&ptr, 11150000, T, &m);
+	assert(ptr.dragging && m.buttons == 1);
+	frame.ncontacts = 2;
+	frame.contacts[1].id = 13; frame.contacts[1].x = 1500; frame.contacts[1].y = 800;
+	frame.buttons = 1;
+	update(&ptr, 11160000, T, &m);
+	assert(m.buttons == 4 && !ptr.dragging);
+
 	/* A lifecycle release forgets a held tap (the driver reports up). */
 	lift();
-	update(&ptr, 9900000, T, &m);
-	tap(&ptr, 10000000, T, &m);
+	update(&ptr, 11900000, T, &m);
+	tap(&ptr, 12000000, T, &m);
 	assert(ptr.drag_held);
 	(void)hidmt_release(&ptr, &gs);
 	assert(!ptr.drag_held && !hidmt_live(&ptr, &as, &gs));

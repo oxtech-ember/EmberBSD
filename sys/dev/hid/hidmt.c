@@ -396,6 +396,17 @@ hidmt_pointer_base(struct hidmt_pointer *ptr, const struct hidmt_frame *frame,
 		motion->buttons |= 1u;
 	if (frame->cancel_tap)
 		ptr->tap_candidate = false;
+	if (dragging && frame->ncontacts >= 2) {
+		/*
+		 * A second finger during a drag means scroll or a two-finger
+		 * tap: release the left button and end the drag.  With two
+		 * or more contacts a physical click is right or middle
+		 * (clickfinger), so bit 0 can only come from the drag.
+		 */
+		motion->buttons &= ~1u;
+		ptr->drag_held = ptr->dragging = false;
+		ptr->drag_deadline = 0;
+	}
 	if (frame->ncontacts == 0) {
 		tap_fingers = ptr->tap_fingers;
 		allowed = tap_fingers >= 2 ? HIDMT_TAP_RIGHT : HIDMT_TAP_LEFT;
@@ -404,7 +415,7 @@ hidmt_pointer_base(struct hidmt_pointer *ptr, const struct hidmt_frame *frame,
 		    now >= ptr->started && now - ptr->started <= 250000;
 		if (motion->tap)
 			motion->tap_button = tap_fingers >= 2 ? 4u : 1u;
-		if (dragging) {
+		if (ptr->dragging) {
 			/*
 			 * The drag touch ended: release the left button.  A
 			 * short still touch was the second tap of a double
