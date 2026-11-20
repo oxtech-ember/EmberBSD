@@ -1286,6 +1286,11 @@ __GEN_ENDIAN_DEC(64, le)
 
 /* <sys/stat.h> */
 
+#if defined(__NetBSD__) && !defined(S_BLKSIZE)
+/* The NetBSD stat ABI counts allocated blocks in 512-byte units. */
+#define S_BLKSIZE	512
+#endif
+
 #ifndef ALLPERMS
 #define ALLPERMS (S_ISUID|S_ISGID|S_ISTXT|S_IRWXU|S_IRWXG|S_IRWXO)
 #endif
