@@ -552,6 +552,6 @@
     "external/gpl2/rcs/gnu/gnu-build": "external/gpl2/rcs/gnu",
     "external/gpl2/diffutils/gnu/gnu-build": "external/gpl2/diffutils/gnu",
     "external/gpl2/texinfo/bin/gnu-build": "external/gpl2/texinfo/bin",
-    "rescue/wsconsctl": "rescue"
+    "rescue/*": "rescue"
   }
 }
