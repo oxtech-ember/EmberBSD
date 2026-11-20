@@ -13,6 +13,12 @@
 #ifndef __arraycount
 #define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
 #endif
+#ifdef RTW88_TEST_CAPTURE_LOG_ONLY
+void printf_tolog(const char *, ...);
+#else
+#define printf_tolog(...) ((void)printf(__VA_ARGS__))
+#endif
+
 #define KASSERT(x) assert(x)
 #define KM_NOSLEEP 0
 #define BUS_DMA_NOWAIT 1

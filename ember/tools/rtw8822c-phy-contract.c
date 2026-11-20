@@ -18,18 +18,16 @@ static unsigned checks, failures;
 
 static int capture_log, log_overflow, report_fixture, report_error;
 static size_t log_used;
+static unsigned console_writes;
 static unsigned dack_entry_writes;
 static char calibration_log[4096];
 static struct rtw8822c_dack_result fixture_report;
 
-/* The runner redirects printf in the actual PHY source and this fixture. */
-int
-rtw8822c_test_printf(const char *format, ...)
+static int
+capture_printf(const char *format, va_list ap)
 {
-	va_list ap;
 	int n;
 
-	va_start(ap, format);
 	if (capture_log) {
 		n = vsnprintf(calibration_log + log_used,
 		    sizeof(calibration_log) - log_used, format, ap);
@@ -42,8 +40,32 @@ rtw8822c_test_printf(const char *format, ...)
 	} else {
 		n = vprintf(format, ap);
 	}
+	return n;
+}
+
+/* The runner redirects printf in the actual PHY source and this fixture. */
+int
+rtw8822c_test_printf(const char *format, ...)
+{
+	va_list ap;
+	int n;
+
+	if (capture_log)
+		console_writes++;
+	va_start(ap, format);
+	n = capture_printf(format, ap);
 	va_end(ap);
 	return n;
+}
+
+void
+printf_tolog(const char *format, ...)
+{
+	va_list ap;
+
+	va_start(ap, format);
+	(void)capture_printf(format, ap);
+	va_end(ap);
 }
 
 /* Isolate the historical PHY trace from measured calibration here only.
@@ -392,6 +414,7 @@ test_calibration_reporting(void)
 				trace->samples[j] = 0x3e93fa;
 		}
 		log_used = 0;
+		console_writes = 0;
 		log_overflow = 0;
 		calibration_log[0] = '\0';
 		capture_log = 1;
@@ -399,6 +422,7 @@ test_calibration_reporting(void)
 		capture_log = 0;
 		CHECK(result == report_error);
 		CHECK(!log_overflow);
+		CHECK(console_writes == (i == 1 || i == 2 ? 2U : 1U));
 		details = i != 0;
 		CHECK((strstr(calibration_log, "DACK identity") != NULL) == details);
 		CHECK((strstr(calibration_log, "DACK stage") != NULL) == details);
