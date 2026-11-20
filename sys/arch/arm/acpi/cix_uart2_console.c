@@ -15,7 +15,25 @@ __CTASSERT(offsetof(ACPI_TABLE_FADT, XDsdt) == 140);
 
 #define CIX_UART2_HEADER 36
 #define CIX_UART2_ENTRIES 256
-#define CIX_UART2_DSDT_SIZE 81063
+
+/* Both firmware tables describe COM2 with the same PL011 resources. */
+static const struct {
+	uint32_t length;
+	uint8_t digest[SHA256_DIGEST_LENGTH];
+} cix_uart2_dsdt_profiles[] = {
+	{ 81063, { /* Orange Pi 6 Plus UEFI V1.5 */
+	    0x9e, 0x7b, 0xf3, 0x0c, 0xb2, 0x94, 0x84, 0x91,
+	    0x0c, 0xce, 0xec, 0x20, 0x8a, 0xdf, 0x6f, 0xa9,
+	    0xf1, 0xfa, 0xb4, 0xed, 0x54, 0xc9, 0x32, 0x36,
+	    0xd5, 0x3b, 0xb4, 0x11, 0x9b, 0x04, 0x26, 0x0a
+	} },
+	{ 77645, { /* Orange Pi 6 Plus UEFI V1.4, firmware DSDT */
+	    0xf2, 0xf6, 0xdd, 0x34, 0xf1, 0x6e, 0x3b, 0x5f,
+	    0x04, 0xdd, 0xbf, 0xee, 0xa1, 0x9b, 0x45, 0x66,
+	    0x05, 0x84, 0x0b, 0xbf, 0x2e, 0xf9, 0x9f, 0x8c,
+	    0x95, 0x59, 0x3b, 0x38, 0x87, 0x7e, 0x42, 0x39
+	} },
+};
 
 /* Mapping is a trusted native service, not hostile-firmware containment. */
 static int
@@ -64,20 +82,12 @@ cix_uart2_header(uint64_t pa, uint8_t header[CIX_UART2_HEADER])
 }
 
 static int
-cix_uart2_table(uint64_t pa, const char *signature, uint32_t min,
-    uint32_t max, const uint8_t **out, uint32_t *size)
+cix_uart2_map_table(uint64_t pa, const uint8_t header[CIX_UART2_HEADER],
+    uint32_t length, const uint8_t **out)
 {
-	uint8_t header[CIX_UART2_HEADER];
 	const uint8_t *p;
-	uint32_t length;
 	int error;
 
-	error = cix_uart2_header(pa, header);
-	if (error != 0)
-		return error;
-	length = (uint32_t)cix_uart2_le(header + 4, 4);
-	if (memcmp(header, signature, 4) != 0 || length < min || length > max)
-		return EPROTO;
 	error = cix_uart2_map(pa, length, &p);
 	if (error != 0)
 		return error;
@@ -87,25 +97,70 @@ cix_uart2_table(uint64_t pa, const char *signature, uint32_t min,
 		return EPROTO;
 	}
 	*out = p;
-	*size = length;
 	return 0;
+}
+
+static int
+cix_uart2_table(uint64_t pa, const char *signature, uint32_t min,
+    uint32_t max, const uint8_t **out, uint32_t *size)
+{
+	uint8_t header[CIX_UART2_HEADER];
+	uint32_t length;
+	int error;
+
+	error = cix_uart2_header(pa, header);
+	if (error != 0)
+		return error;
+	length = (uint32_t)cix_uart2_le(header + 4, 4);
+	if (memcmp(header, signature, 4) != 0 || length < min || length > max)
+		return EPROTO;
+	error = cix_uart2_map_table(pa, header, length, out);
+	if (error == 0)
+		*size = length;
+	return error;
+}
+
+static int
+cix_uart2_check_dsdt(uint64_t pa)
+{
+	uint8_t header[CIX_UART2_HEADER], digest[SHA256_DIGEST_LENGTH];
+	const uint8_t *table;
+	uint32_t length;
+	SHA256_CTX hash;
+	int error;
+
+	error = cix_uart2_header(pa, header);
+	if (error != 0)
+		return error;
+	if (memcmp(header, "DSDT", 4) != 0)
+		return EPROTO;
+	length = (uint32_t)cix_uart2_le(header + 4, 4);
+	/* Only map a full DSDT after matching its exact recorded size. */
+	for (size_t i = 0; i < __arraycount(cix_uart2_dsdt_profiles); i++) {
+		if (length != cix_uart2_dsdt_profiles[i].length)
+			continue;
+		error = cix_uart2_map_table(pa, header, length, &table);
+		if (error != 0)
+			return error;
+		SHA256_Init(&hash);
+		SHA256_Update(&hash, table, length);
+		SHA256_Final(digest, &hash);
+		acpi_md_OsUnmapMemory(__UNCONST(table), length);
+		if (memcmp(digest, cix_uart2_dsdt_profiles[i].digest,
+		    sizeof(digest)) == 0)
+			return 0;
+		return ENOTSUP;
+	}
+	return EPROTO;
 }
 
 int
 cix_uart2_console_probe(void)
 {
-	static const uint8_t expected[SHA256_DIGEST_LENGTH] = {
-		0x9e, 0x7b, 0xf3, 0x0c, 0xb2, 0x94, 0x84, 0x91,
-		0x0c, 0xce, 0xec, 0x20, 0x8a, 0xdf, 0x6f, 0xa9,
-		0xf1, 0xfa, 0xb4, 0xed, 0x54, 0xc9, 0x32, 0x36,
-		0xd5, 0x3b, 0xb4, 0x11, 0x9b, 0x04, 0x26, 0x0a
-	};
 	uint8_t prefix[20], header[CIX_UART2_HEADER];
-	uint8_t digest[SHA256_DIGEST_LENGTH];
 	const uint8_t *table;
 	uint64_t address, fadt = 0, dsdt, legacy;
 	uint32_t length, entries;
-	SHA256_CTX hash;
 	int error;
 	bool present = false;
 
@@ -180,14 +235,5 @@ root_done:
 		return EPROTO;
 	if (dsdt == 0)
 		dsdt = legacy;
-	/* A separate exact nested DSDT bound; no generic table limit changes. */
-	error = cix_uart2_table(dsdt, "DSDT", CIX_UART2_DSDT_SIZE,
-	    CIX_UART2_DSDT_SIZE, &table, &length);
-	if (error != 0)
-		return error;
-	SHA256_Init(&hash);
-	SHA256_Update(&hash, table, length);
-	SHA256_Final(digest, &hash);
-	acpi_md_OsUnmapMemory(__UNCONST(table), length);
-	return memcmp(digest, expected, sizeof(digest)) == 0 ? 0 : ENOTSUP;
+	return cix_uart2_check_dsdt(dsdt);
 }

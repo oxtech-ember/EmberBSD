@@ -9,14 +9,25 @@
 #include <string.h>
 #include <errno.h>
 
-/* Signed constant count matches the existing consumer's signed loop variable. */
+/* Keep the modeled array count signed for the consumer's loop variable. */
+#undef __arraycount
 #define __arraycount(a) ((int)(sizeof(a) / sizeof((a)[0])))
+#ifndef __CTASSERT
 #define __CTASSERT(x) _Static_assert(x, #x)
+#endif
+#ifndef __UNCONST
 #define __UNCONST(p) ((void *)(uintptr_t)(p))
+#endif
 #define PAGE_SIZE 4096
+#ifndef le64toh
 #define le64toh(x) (x)
+#endif
+#ifndef le16toh
 #define le16toh(x) (x)
+#endif
+#ifndef le32toh
 #define le32toh(x) (x)
+#endif
 typedef unsigned int u_int;
 typedef int ACPI_STATUS;
 typedef uint64_t ACPI_PHYSICAL_ADDRESS;
@@ -77,7 +88,23 @@ static unsigned int checks, failures;
 #define CHECK(x) do { checks++; if (!(x)) { failures++; \
     fprintf(stderr,"FAIL line %u: %s\n",(unsigned int)__LINE__,#x); } } while (0)
 
-static uint8_t rsdp[36], xsdt[60], fadt[276], dsdt[81063], reference[81063];
+static const uint8_t v15_digest[32] = {
+    0x9e, 0x7b, 0xf3, 0x0c, 0xb2, 0x94, 0x84, 0x91,
+    0x0c, 0xce, 0xec, 0x20, 0x8a, 0xdf, 0x6f, 0xa9,
+    0xf1, 0xfa, 0xb4, 0xed, 0x54, 0xc9, 0x32, 0x36,
+    0xd5, 0x3b, 0xb4, 0x11, 0x9b, 0x04, 0x26, 0x0a,
+};
+static const uint8_t v14_digest[32] = {
+    0xf2, 0xf6, 0xdd, 0x34, 0xf1, 0x6e, 0x3b, 0x5f,
+    0x04, 0xdd, 0xbf, 0xee, 0xa1, 0x9b, 0x45, 0x66,
+    0x05, 0x84, 0x0b, 0xbf, 0x2e, 0xf9, 0x9f, 0x8c,
+    0x95, 0x59, 0x3b, 0x38, 0x87, 0x7e, 0x42, 0x39,
+};
+enum { DSDT_V15_SIZE = 81063, DSDT_V14_SIZE = 77645, V14_ACPIDUMP_SIZE = 97104 };
+static uint8_t rsdp[36], xsdt[60], fadt[276];
+static uint8_t dsdt[V14_ACPIDUMP_SIZE], reference[sizeof(dsdt)];
+static size_t reference_size;
+static const uint8_t *modeled_digest;
 static uint8_t other[36];
 static struct { uint64_t pa; uint8_t *bytes; size_t size; } regions[] = {
     {0x1000,rsdp,sizeof(rsdp)}, {0x2000,xsdt,sizeof(xsdt)},
@@ -102,6 +129,13 @@ static void checksum(uint8_t *p,size_t n,size_t offset)
 }
 static void header(uint8_t *p,const char *sig,size_t n)
 { memcpy(p,sig,4);put(p+4,n,4);p[8]=2;checksum(p,n,9); }
+static void set_dsdt(size_t length, const uint8_t digest[32])
+{
+    header(dsdt, "DSDT", length);
+    memcpy(reference, dsdt, length);
+    reference_size = length;
+    modeled_digest = digest;
+}
 static void init(void)
 {
     memset(rsdp,0,sizeof(rsdp));memset(xsdt,0,sizeof(xsdt));
@@ -111,7 +145,7 @@ static void init(void)
     checksum(rsdp,20,8);checksum(rsdp,36,32);
     put(xsdt+36,0x3000,8);header(xsdt,"XSDT",44);
     put(fadt+40,0x4000,4);put(fadt+140,0x4000,8);header(fadt,"FACP",sizeof(fadt));
-    header(dsdt,"DSDT",sizeof(dsdt));memcpy(reference,dsdt,sizeof(dsdt));
+    set_dsdt(DSDT_V15_SIZE, v15_digest);
     header(other,"SPCR",sizeof(other));
     root_pa=0x1000;maps=unmaps=live=fail_at=attaches=hashes=0;largest_map=0;
     lookups=0;regions[3].pa=0x4000;regions[0].size=sizeof(rsdp);
@@ -153,15 +187,16 @@ static void acpi_md_OsUnmapMemory(void *p,UINT32 len)
 }
 /* The native SHA service is not reimplemented. Check exact synthetic input. */
 typedef struct { unsigned int updated; } SHA256_CTX;
-static const uint8_t accepted_digest[32]={
-    0x9e,0x7b,0xf3,0x0c,0xb2,0x94,0x84,0x91,0x0c,0xce,0xec,0x20,0x8a,0xdf,0x6f,0xa9,
-    0xf1,0xfa,0xb4,0xed,0x54,0xc9,0x32,0x36,0xd5,0x3b,0xb4,0x11,0x9b,0x04,0x26,0x0a};
 #define SHA256_DIGEST_LENGTH 32
 static void SHA256_Init(SHA256_CTX *c) { c->updated=0; }
 static void SHA256_Update(SHA256_CTX *c,const void *p,size_t len)
-{ CHECK(len==sizeof(dsdt)); c->updated=memcmp(p,reference,len)==0?1:2;hashes++; }
+{
+    CHECK(len == reference_size);
+    c->updated = len == reference_size && memcmp(p, reference, len) == 0;
+    hashes++;
+}
 static void SHA256_Final(uint8_t *out,SHA256_CTX *c)
-{ memcpy(out,accepted_digest,32);if(c->updated!=1||hash_bad)out[0]^=1; }
+{ memcpy(out,modeled_digest,32);if(c->updated!=1||hash_bad)out[0]^=1; }
 
 #ifdef CIX_UART2_GATE
 #include "gate.inc"
@@ -231,7 +266,7 @@ int main(void)
     regions[3].pa=UINT64_MAX-4096;
     CHECK(cix_uart2_console_probe()!=0);CHECK(largest_map<=276 && live==0);
     init();dsdt[9]^=1;CHECK(cix_uart2_console_probe()!=0);CHECK(live==0);
-    init();dsdt[40]=1;checksum(dsdt,sizeof(dsdt),9);CHECK(cix_uart2_console_probe()!=0);CHECK(hashes==1 && live==0);
+    init();dsdt[40]=1;checksum(dsdt,DSDT_V15_SIZE,9);CHECK(cix_uart2_console_probe()!=0);CHECK(hashes==1 && live==0);
     init();hash_bad=true;CHECK(cix_uart2_console_probe()!=0);CHECK(live==0);
     init();put(xsdt+44,0x20000,8);header(xsdt,"XSDT",52);CHECK(cix_uart2_console_probe()!=0);CHECK(live==0);
     init();put(xsdt+44,0x3000,8);header(xsdt,"XSDT",52);CHECK(cix_uart2_console_probe()!=0);CHECK(live==0);
@@ -244,6 +279,48 @@ int main(void)
 #else
     CHECK(attaches==0 && maps==0);
 #endif
+    /* V1.4 describes the same UART2 using its own exact firmware table. */
+    init();
+    set_dsdt(DSDT_V14_SIZE, v14_digest);
+    CHECK(cix_uart2_console_probe() == 0);
+    CHECK(hashes == 1 && live == 0);
+    init();
+    set_dsdt(DSDT_V14_SIZE, v14_digest);
+    acpi_platform_startup();
+#ifdef CIXP1_UART2_CONSOLE
+    CHECK(attaches == 1 && hashes == 1 && live == 0);
+#else
+    CHECK(attaches == 0 && maps == 0 && lookups == 1);
+#endif
+    init();
+    set_dsdt(DSDT_V14_SIZE, v14_digest);
+    dsdt[DSDT_V14_SIZE - 1] ^= 1;
+    checksum(dsdt, DSDT_V14_SIZE, 9);
+    CHECK(cix_uart2_console_probe() != 0);
+    CHECK(hashes == 1 && live == 0);
+
+    /* acpidump -o appends SSDT bodies and rewrites the DSDT header. */
+    init();
+    put(dsdt + 4, V14_ACPIDUMP_SIZE, 4);
+    checksum(dsdt, V14_ACPIDUMP_SIZE, 9);
+    CHECK(cix_uart2_console_probe() != 0);
+    CHECK(largest_map <= sizeof(fadt) && hashes == 0 && live == 0);
+
+    /* A recognized size and a recognized hash must belong to the same profile. */
+    init();
+    set_dsdt(DSDT_V14_SIZE, v15_digest);
+    CHECK(cix_uart2_console_probe() != 0);
+    CHECK(hashes == 1 && live == 0);
+    init();
+    set_dsdt(DSDT_V15_SIZE, v14_digest);
+    CHECK(cix_uart2_console_probe() != 0);
+    CHECK(hashes == 1 && live == 0);
+
+    init();
+    put(dsdt + 4, DSDT_V15_SIZE + 1, 4);
+    checksum(dsdt, DSDT_V15_SIZE + 1, 9);
+    CHECK(cix_uart2_console_probe() != 0);
+    CHECK(largest_map <= sizeof(fadt) && hashes == 0 && live == 0);
     init();hash_bad=true;acpi_platform_startup();CHECK(attaches==0 && live==0);
     init();spcr_status=AE_ERROR;acpi_platform_startup();CHECK(attaches==0 && live==0);
     init();spcr_status=AE_OK;acpi_platform_startup();
