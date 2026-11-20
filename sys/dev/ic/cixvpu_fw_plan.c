@@ -100,9 +100,19 @@ _Static_assert(CIXVPU_FW_PLAN_FRAME_RPC_ADDRESS % CIXVPU_FW_PAGE_SIZE == 0 &&
     CIXVPU_FW_PLAN_FRAME_RPC_SIZE <= CIXVPU_FW_PLAN_FRAME_RPC_CAPACITY &&
     CIXVPU_FW_PLAN_FRAME_RPC_CAPACITY <= PLAN_LEAF_BYTES -
     CIXVPU_FW_PLAN_BOOT_RPC_SECOND_SIZE &&
+    CIXVPU_FW_PLAN_FRAME_RPC_AUX_SIZE <= CIXVPU_FW_PLAN_FRAME_RPC_AUX_CAPACITY &&
+    CIXVPU_FW_PLAN_FRAME_RPC_AUX_ADDRESS + CIXVPU_FW_PLAN_FRAME_RPC_AUX_CAPACITY <=
+    CIXVPU_FW_PLAN_BOOT_RPC_SECOND_ADDRESS + PLAN_LEAF_BYTES &&
     CIXVPU_FW_PLAN_BOOT_RPC_SECOND_ADDRESS + PLAN_LEAF_BYTES <=
     CIXVPU_FW_PLAN_BITSTREAM_ADDRESS,
     "frame RPC reserve must fit the second RPC leaf before the bitstream");
+
+const struct cixvpu_fw_rpc_object cixvpu_fw_frame_rpc_objects[CIXVPU_FW_FRAME_RPC_COUNT] = {
+	{ CIXVPU_FW_PLAN_FRAME_RPC_SIZE, CIXVPU_FW_PLAN_FRAME_RPC_CAPACITY,
+	  CIXVPU_FW_PLAN_FRAME_RPC_ADDRESS },
+	{ CIXVPU_FW_PLAN_FRAME_RPC_AUX_SIZE, CIXVPU_FW_PLAN_FRAME_RPC_AUX_CAPACITY,
+	  CIXVPU_FW_PLAN_FRAME_RPC_AUX_ADDRESS }
+};
 
 _Static_assert(CIXVPU_FW_PLAN_FRAME_ADDRESS % PLAN_LEAF_BYTES == 0 &&
     CIXVPU_FW_PLAN_FRAME_ADDRESS >= UINT32_C(0x70000000) &&
@@ -465,8 +475,18 @@ cixvpu_fw_plan_mapping(const struct cixvpu_fw_plan *plan, unsigned int index,
 		    CIXVPU_FW_PLAN_BOOT_RPC_BACKING_PAGES +
 		    CIXVPU_FW_PLAN_BOOT_RPC_SECOND_PAGES + index - first;
 		if (i == 3) {
-			map.address = CIXVPU_FW_PLAN_FRAME_RPC_ADDRESS +
-			    local * CIXVPU_FW_PAGE_SIZE;
+			const struct cixvpu_fw_rpc_object *object;
+			unsigned int object_index;
+
+			for (object_index = 0; object_index < CIXVPU_FW_FRAME_RPC_COUNT; object_index++) {
+				object = &cixvpu_fw_frame_rpc_objects[object_index];
+				if (local < CIXVPU_FW_PLAN_RPC_PAGE_COUNT(object->size))
+					break;
+				local -= CIXVPU_FW_PLAN_RPC_PAGE_COUNT(object->size);
+			}
+			if (object_index == CIXVPU_FW_FRAME_RPC_COUNT)
+				return EINVAL;
+			map.address = object->address + local * CIXVPU_FW_PAGE_SIZE;
 			map.leaf_backing_index = first_leaf + plan->cores + 2;
 			goto ready;
 		}

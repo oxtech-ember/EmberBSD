@@ -67,10 +67,10 @@ static int prepare_page(struct cixvpu_dma *dma, unsigned int index, struct cixvp
         if (view_fault == 6) out->kva = (void *)(UINTPTR_MAX - 3);
         if (view_fault == 7) out->kva = image;
     }
-    if (error == 0 && index == 1537) {
+    if (error == 0 && index == 1538) {
         if (team_view_fault == 1) out->plan_page.leaf_address = 0x70000000;
-        if (team_view_fault == 2) out->bus_address = bus_address(1536);
-        if (team_view_fault == 3) out->kva = resources[1536].kva;
+        if (team_view_fault == 2) out->bus_address = bus_address(1537);
+        if (team_view_fault == 3) out->kva = resources[1537].kva;
     }
     return error;
 }
@@ -935,10 +935,13 @@ static void rpc_observe(unsigned int i, bus_addr_t off, bus_size_t len, int ops)
         address = 0x24000000U;
     if (word(dev,1)==2 && maximum==1733208)
         address = 0x24004000U;
+    if (word(dev,1)==2 && maximum==65536)
+        address = 0x241ac000U;
     if(ops==BUS_DMASYNC_POSTWRITE && off==0) {
         if(word(dev,1)==2 && address==0x20000000U) CHECK(rpc_active->dma->rpc_alloc_used);
         if(word(dev,1)==2 && address==0x24000000U) CHECK(rpc_active->dma->rpc_second_alloc_used);
-        if(word(dev,1)==2 && address==0x24004000U) CHECK(rpc_active->dma->rpc_frame_alloc_used);
+        if(word(dev,1)==2 && address==0x24004000U) CHECK(rpc_active->dma->rpc_frame_alloc_count==1);
+        if(word(dev,1)==2 && address==0x241ac000U) CHECK(rpc_active->dma->rpc_frame_alloc_count==2);
         if(word(dev,1)==3) CHECK(rpc_active->dma->rpc_resize_used && !rpc_active->dma->rpc_resize_committed);
         if(word(dev,1)==1) CHECK(rpc_active->dma->rpc_debug_count>0 && rpc_active->dma->rpc_debug_count<=16);
     }
@@ -1625,7 +1628,7 @@ static void closed_slot_profile_tests(void)
     CHECK(cixvpu_dma_free(&owner) == 0);
     reset();
     CHECK(cixvpu_dma_alloc(&tag32, &tag64, &slots, &owner) == 0);
-    CHECK(owner != NULL && owner->count == 406);
+    CHECK(owner != NULL && owner->count == 407);
     CHECK(cixvpu_dma_free(&owner) == 0 && depth == 0 && live_kmem == 0);
     for (unsigned int boot = 0; boot < 2; boot++) {
         for (unsigned int fault = 0; fault < 9; fault++) {
@@ -1710,7 +1713,7 @@ static void frame_slot_bytes(bool device)
             CHECK(memcmp((const uint8_t *)p + bytes, zero, 4096 - bytes) == 0);
         }
     }
-    for (unsigned int j = 392; j < 399; j++)
+    for (unsigned int j = 392; j < 400; j++)
         CHECK(memcmp(device ? device_bytes(j) : resources[j].kva, zero, 4096) == 0);
 }
 static void frame_slot_seal(void)
@@ -1720,17 +1723,17 @@ static void frame_slot_tables(const struct cixvpu_fw_plan *plan)
     uint32_t expected[7][1024] = {{0}};
     const uint32_t roots[] = {0, 64, 128, 144, 448, 145};
     for (unsigned int i = 0; i < 6; i++)
-        expected[0][roots[i]] = (uint32_t)(bus_address(400 + i) >> 12) << 2 | 1;
+        expected[0][roots[i]] = (uint32_t)(bus_address(401 + i) >> 12) << 2 | 1;
     for (unsigned int i = 0; i < plan->mappings; i++) {
         struct cixvpu_fw_plan_mapping m;
         CHECK(cixvpu_fw_plan_mapping(plan, i, &m) == 0 &&
-            m.leaf_backing_index >= 400 && m.leaf_backing_index <= 405);
-        expected[m.leaf_backing_index - 399][(m.address >> 12) & 1023] =
+            m.leaf_backing_index >= 401 && m.leaf_backing_index <= 406);
+        expected[m.leaf_backing_index - 400][(m.address >> 12) & 1023] =
             (uint32_t)(bus_address(m.backing_index) >> 12) << 2 | m.attribute << 30 | m.permission;
     }
     for (unsigned int t = 0; t < 7; t++)
         for (unsigned int j = 0; j < 1024; j++)
-            CHECK(word(resources[399 + t].kva, j) == expected[t][j]);
+            CHECK(word(resources[400 + t].kva, j) == expected[t][j]);
 }
 static void frame_slot_failure_tests(void)
 {
@@ -1773,7 +1776,7 @@ static void frame_slot_failure_tests(void)
             fixture_pin, argument, &out) == expected);
         CHECK(owner == saved && out == NULL && owner->phase == CIXVPU_DMA_ALLOC &&
             !owner->ever_visible && native_calls == calls);
-        for (unsigned int i = 0; i < 406; i++)
+        for (unsigned int i = 0; i < 407; i++)
             CHECK(memcmp(resources[i].kva, canary, 4096) == 0);
         intr = softintr = false;
         CHECK(cixvpu_dma_free(&owner) == 0 && depth == 0 && live_kmem == 0);
@@ -1817,9 +1820,9 @@ static void frame_slot_failure_tests(void)
         if (fault == 0) fail_meta = 1;
         if (fault == 1) fail_meta = 2;
         if (fault == 2) fail_page = 386;
-        if (fault == 3) fail_page = 399;
+        if (fault == 3) fail_page = 400;
         if (fault == 4) fail_map = 386;
-        if (fault == 5) fail_map = 399;
+        if (fault == 5) fail_map = 400;
         if (fault == 6) fail_link = 5;
         if (fault == 7) fail_link = 6;
         if (fault == 8) fail_seal = true;
@@ -1829,7 +1832,7 @@ static void frame_slot_failure_tests(void)
         CHECK(owner == saved && out == NULL && owner->phase == CIXVPU_DMA_ALLOC &&
             !owner->ever_visible && owner->prepared_owner == NULL);
         if (fault < 4 || fault == 9)
-            for (unsigned int i = 0; i < 406; i++)
+            for (unsigned int i = 0; i < 407; i++)
                 CHECK(memcmp(resources[i].kva, canary, 4096) == 0);
         fail_seal = false; seal_observer = NULL;
         CHECK(cixvpu_dma_free(&owner) == 0 && depth == 0 && live_kmem == 0);
@@ -1861,26 +1864,26 @@ static void frame_slot_phase_tests(void)
             fixture_pin, &source, &out) == 0 && owner == NULL);
         sync_fixture(&plan, true);
         if (mode == 0) {
-            struct test_map *map = out->dma->owners[405].map;
+            struct test_map *map = out->dma->owners[406].map;
             map->dm_nsegs = 2;
             CHECK(cixvpu_prepared_sync_initial(out) == EIO && sync_calls == 0);
-            for (unsigned int i = 0; i < 406; i++) CHECK(pres[i] == 0 && posts[i] == 0);
+            for (unsigned int i = 0; i < 407; i++) CHECK(pres[i] == 0 && posts[i] == 0);
             map->dm_nsegs = 1;
             CHECK(cixvpu_prepared_free(&out) == 0 && out == NULL && sync_calls == 0);
             CHECK(depth == 0 && live_kmem == 0);
         } else {
-            CHECK(cixvpu_prepared_sync_initial(out) == 0 && sync_calls == 406);
+            CHECK(cixvpu_prepared_sync_initial(out) == 0 && sync_calls == 407);
             CHECK(cixvpu_prepared_publish_root(out, resources[385].kva) == EINVAL &&
-                !out->dma->ever_visible && sync_calls == 406);
+                !out->dma->ever_visible && sync_calls == 407);
             uint32_t root = 0;
             CHECK(cixvpu_prepared_publish_root(out, &root) == 0 &&
-                root == ((uint32_t)(bus_address(399) >> 12) << 2 | 3));
+                root == ((uint32_t)(bus_address(400) >> 12) << 2 | 3));
             struct cixvpu_prepared *saved = out;
             unsigned int calls = native_calls;
             CHECK(out->dma->ever_visible && cixvpu_prepared_free(&out) == EBUSY && out == saved);
             struct cixvpu_dma *alias = out->dma;
             CHECK(cixvpu_dma_free(&alias) == EBUSY && alias == out->dma);
-            CHECK(sync_calls == 406 && native_calls == calls);
+            CHECK(sync_calls == 407 && native_calls == calls);
             boot_drop(out); /* Host-only quarantine disposal, no production bypass. */
         }
     }
@@ -1907,8 +1910,8 @@ static void frame_slot_owner_tests(void)
         CHECK(prepare_frame_slots(&owner, &plan, rpc_image, sizeof(rpc_image),
             fixture_pin, &source, &out) == 0);
         CHECK(owner == NULL && out != NULL && out->boot.enabled &&
-            out->count == 405 && out->plan.slots_enabled == 1);
-        CHECK(map_calls == 399 && link_calls == 6);
+            out->count == 406 && out->plan.slots_enabled == 1);
+        CHECK(map_calls == 400 && link_calls == 6);
         frame_slot_bytes(false); frame_slot_tables(&plan);
         CHECK(memcmp(resources[0].kva, rpc_image, 4096) == 0);
         const uint8_t *host = resources[118].kva;
@@ -1919,16 +1922,16 @@ static void frame_slot_owner_tests(void)
         struct cixvpu_dma *alias = old;
         CHECK(cixvpu_dma_free(&alias) == EBUSY && alias == old);
         sync_fixture(&plan, mode != 0);
-        CHECK(cixvpu_prepared_sync_initial(out) == 0 && sync_calls == 406);
+        CHECK(cixvpu_prepared_sync_initial(out) == 0 && sync_calls == 407);
         frame_slot_bytes(true);
         CHECK(pres[385] == 4 && pres[390] == 4 && pres[392] == 5);
-        CHECK(memcmp(device_bytes(399), resources[399].kva, 4096) == 0);
+        CHECK(memcmp(device_bytes(400), resources[400].kva, 4096) == 0);
         fail_free = true; struct cixvpu_prepared *saved = out;
         CHECK(cixvpu_prepared_free(&out) == EIO && out == saved);
         fail_free = false;
         unload_observer = observe_unload;
         CHECK(cixvpu_prepared_free(&out) == 0 && out == NULL);
-        CHECK(sync_calls == 812 && depth == 0 && live_kmem == 0);
+        CHECK(sync_calls == 814 && depth == 0 && live_kmem == 0);
     }
 }
 
@@ -2000,7 +2003,7 @@ static bool queue_refill, queue_check_copy, queue_churn, queue_consumer_churn;
 static uint8_t *queue_copy_target;
 static void queue_observe(unsigned int i, bus_addr_t offset, bus_size_t length, int ops)
 {
-    CHECK(i < 406 && offset <= 4096 && length <= 4096-offset);
+    CHECK(i < 407 && offset <= 4096 && length <= 4096-offset);
     CHECK(!((ops & 3) && (ops & 12)));
     if (ops & BUS_DMASYNC_POSTREAD) {
         memcpy((uint8_t *)resources[i].kva+offset,device_memory[i]+offset,(size_t)length);
@@ -2073,10 +2076,10 @@ static struct cixvpu_dma *team_frame_begin(struct cixvpu_fw_plan *plan,
     CHECK(cixvpu_dma_free(&owner) == 0);
     const struct cixvpu_fw_slot_request request = {2048, 1500, 2048, 2048, 65536};
     CHECK(cixvpu_fw_plan_build_frame_slots(rpc_image, sizeof(rpc_image), 1,
-        &request, plan) == 0 && plan->backing_pages == 1539 && plan->mappings == 1531);
+        &request, plan) == 0 && plan->backing_pages == 1540 && plan->mappings == 1532);
     reset();
     CHECK(cixvpu_dma_alloc(&tag32, &tag64, plan, &owner) == 0);
-    for (unsigned int i = 0; i < 1539; i++) memset(resources[i].kva, 0xa5, 4096);
+    for (unsigned int i = 0; i < 1540; i++) memset(resources[i].kva, 0xa5, 4096);
     for (unsigned int i = 0; i < sizeof(team_y); i++) team_y[i] = (uint8_t)(17+i*37+i/251);
     for (unsigned int i = 0; i < sizeof(team_uv); i++) team_uv[i] = (uint8_t)(0x83^(i*23+i/113));
     *source = (struct cixvpu_frame_source){team_y, team_uv, sizeof(team_y), sizeof(team_uv)};
@@ -2086,11 +2089,11 @@ static struct cixvpu_dma *team_frame_begin(struct cixvpu_fw_plan *plan,
     fail_free=fail_seal=false; seal_observer=team_frame_seal;
     return owner;
 }
-static void rpc_frame_request(void)
+static void rpc_frame_request(bool small)
 {
     rpc_request(1,2,12);
-    put32(device_memory[boot_rpc]+12,19176);
-    put32(device_memory[boot_rpc]+16,1733208);
+    put32(device_memory[boot_rpc]+12,small ? 128 : 19176);
+    put32(device_memory[boot_rpc]+16,small ? 65536 : 1733208);
     device_memory[boot_rpc][21]=12;
 }
 
@@ -2098,9 +2101,11 @@ static void boot_rpc_frame_tests(void)
 {
     enum frame_case {
         FRAME_OK, FRAME_CACHELINE, FRAME_BOOT_ONLY, FRAME_NO_QUEUE, FRAME_EARLY,
-        FRAME_MIN, FRAME_MAX, FRAME_REGION, FRAME_ALIGNMENT
+        FRAME_MIN, FRAME_MAX, FRAME_REGION, FRAME_ALIGNMENT,
+        FRAME_SMALL_EARLY, FRAME_SMALL_MIN, FRAME_SMALL_MAX,
+        FRAME_SMALL_REGION, FRAME_SMALL_ALIGNMENT
     };
-    for (enum frame_case test=FRAME_OK;test<=FRAME_ALIGNMENT;test++) {
+    for (enum frame_case test=FRAME_OK;test<=FRAME_SMALL_ALIGNMENT;test++) {
         struct cixvpu_prepared *p=NULL;
         if (test==FRAME_BOOT_ONLY) {
             p=rpc_protocol_begin(true);
@@ -2109,15 +2114,21 @@ static void boot_rpc_frame_tests(void)
             struct cixvpu_frame_source source;
             struct cixvpu_dma *owner=team_frame_begin(&plan,&source);
             unsigned int mapped=0;
+            bool small_mapped=false;
             for (unsigned int i=0;i<plan.mappings;i++) {
                 struct cixvpu_fw_plan_mapping m;
                 CHECK(cixvpu_fw_plan_mapping(&plan,i,&m)==0);
                 if (m.address>=0x24004000U && m.address<0x24400000U) {
-                    CHECK(m.address==0x24004000U+4096*mapped);
-                    mapped++;
+                    if (m.address==0x241ac000U) {
+                        CHECK(!small_mapped);
+                        small_mapped=true;
+                    } else {
+                        CHECK(m.address==0x24004000U+4096*mapped);
+                        mapped++;
+                    }
                 }
             }
-            CHECK(mapped==5);
+            CHECK(mapped==5 && small_mapped);
             CHECK(prepare_frame_slots(&owner,&plan,rpc_image,sizeof(rpc_image),
                 fixture_pin,&source,&p)==0);
             sync_fixture(&plan,true);
@@ -2148,28 +2159,34 @@ static void boot_rpc_frame_tests(void)
                 result==CIXVPU_BOOT_RPC_SECOND_ALLOC_REPLIED);
         }
 
-        rpc_frame_request();
         uint8_t *rpc=device_memory[boot_rpc],original[4096];
-        if (test==FRAME_MIN) put32(rpc+12,19177);
-        if (test==FRAME_MAX) put32(rpc+16,1733209);
-        if (test==FRAME_REGION) rpc[20]=1;
-        if (test==FRAME_ALIGNMENT) rpc[21]=11;
         const unsigned int heap=live_kmem,owners=depth;
-        int want=ENOTSUP;
-        if (test==FRAME_OK || test==FRAME_CACHELINE) {
+        const bool accept_first=test==FRAME_OK || test==FRAME_CACHELINE ||
+            test>=FRAME_SMALL_MIN;
+        const bool accept_small=test==FRAME_CACHELINE;
+        const unsigned int accepted=(unsigned int)accept_first+(unsigned int)accept_small;
+        for (unsigned int alloc=0;alloc<accepted;alloc++) {
+            rpc_frame_request(alloc!=0);
             memcpy(original,rpc,sizeof(original));
             const unsigned int calls=native_calls;
             CHECK(cixvpu_prepared_boot_rpc_step(p,&result)==0 &&
                 result==CIXVPU_BOOT_RPC_FRAME_ALLOC_REPLIED);
             CHECK(native_calls==calls+9 && boot_nevents==9);
-            CHECK(word(rpc,0)==2 && word(rpc,2)==4 && word(rpc,3)==0x24004000U);
+            CHECK(word(rpc,0)==2 && word(rpc,2)==4 &&
+                word(rpc,3)==(alloc==0 ? 0x24004000U : 0x241ac000U));
             CHECK(memcmp(original+4,rpc+4,4)==0 &&
                 memcmp(original+16,rpc+16,sizeof(original)-16)==0);
             CHECK(heap==live_kmem && owners==depth);
-            rpc_frame_request();
-            want=EBUSY;
         }
 
+        rpc_frame_request(accept_small || test>=FRAME_SMALL_EARLY);
+        if (test==FRAME_MIN) put32(rpc+12,19177);
+        if (test==FRAME_MAX) put32(rpc+16,1733209);
+        if (test==FRAME_SMALL_MIN) put32(rpc+12,129);
+        if (test==FRAME_SMALL_MAX) put32(rpc+16,65537);
+        if (test==FRAME_REGION || test==FRAME_SMALL_REGION) rpc[20]=1;
+        if (test==FRAME_ALIGNMENT || test==FRAME_SMALL_ALIGNMENT) rpc[21]=11;
+        const int want=test==FRAME_OK || test==FRAME_CACHELINE ? EBUSY : ENOTSUP;
         memcpy(original,rpc,sizeof(original));
         result=CIXVPU_BOOT_RPC_IDLE;
         CHECK(cixvpu_prepared_boot_rpc_step(p,&result)==want &&
@@ -2189,28 +2206,28 @@ static void team_frame_tables(const struct cixvpu_fw_plan *plan)
     uint32_t expected[8][1024] = {{0}};
     static const unsigned int indices[] = {0,64,128,144,448,449,145};
     for (unsigned int i = 0; i < 7; i++)
-        expected[0][indices[i]] = (uint32_t)(bus_address(1532+i)>>12)<<2|1;
-    for (unsigned int i = 0; i < 1531; i++) {
+        expected[0][indices[i]] = (uint32_t)(bus_address(1533+i)>>12)<<2|1;
+    for (unsigned int i = 0; i < 1532; i++) {
         struct cixvpu_fw_plan_mapping m;
         CHECK(cixvpu_fw_plan_mapping(plan,i,&m)==0 &&
-            m.leaf_backing_index>=1532 && m.leaf_backing_index<=1538);
+            m.leaf_backing_index>=1533 && m.leaf_backing_index<=1539);
         if (i>=385 && i<1510)
-            CHECK(m.leaf_backing_index==(i<1409 ? 1536U : 1537U) &&
+            CHECK(m.leaf_backing_index==(i<1409 ? 1537U : 1538U) &&
                 m.address==0x70000000+(i-385)*4096);
-        expected[m.leaf_backing_index-1531][(m.address>>12)&1023] =
+        expected[m.leaf_backing_index-1532][(m.address>>12)&1023] =
             (uint32_t)(bus_address(m.backing_index)>>12)<<2|m.attribute<<30|m.permission;
     }
     for (unsigned int t=0;t<8;t++)
         for (unsigned int j=0;j<1024;j++)
-            CHECK(word(resources[1531+t].kva,j)==expected[t][j]);
-    CHECK(word(resources[1536].kva,1023)==((uint32_t)(bus_address(1408)>>12)<<2|0xc0000003));
-    CHECK(word(resources[1537].kva,0)==((uint32_t)(bus_address(1409)>>12)<<2|0xc0000003));
-    CHECK(word(resources[1537].kva,100)==((uint32_t)(bus_address(1509)>>12)<<2|0xc0000003));
-    for (unsigned int j=101;j<1024;j++) CHECK(word(resources[1537].kva,j)==0);
+            CHECK(word(resources[1532+t].kva,j)==expected[t][j]);
+    CHECK(word(resources[1537].kva,1023)==((uint32_t)(bus_address(1408)>>12)<<2|0xc0000003));
+    CHECK(word(resources[1538].kva,0)==((uint32_t)(bus_address(1409)>>12)<<2|0xc0000003));
+    CHECK(word(resources[1538].kva,100)==((uint32_t)(bus_address(1509)>>12)<<2|0xc0000003));
+    for (unsigned int j=101;j<1024;j++) CHECK(word(resources[1538].kva,j)==0);
 }
 static void team_frame_observe(unsigned int i,bus_addr_t offset,bus_size_t length,int ops)
 {
-    CHECK(i<1539 && offset<=4096 && length<=4096-offset);
+    CHECK(i<1540 && offset<=4096 && length<=4096-offset);
     if (ops & BUS_DMASYNC_POSTREAD)
         memcpy((uint8_t *)resources[i].kva+offset,device_memory[i]+offset,(size_t)length);
     if (i>=385 && i<1510 && ops==BUS_DMASYNC_POSTWRITE) {
@@ -2234,17 +2251,17 @@ static void team_frame_owner_tests(void)
     struct cixvpu_dma *raw=team_frame_begin(&plan,&source);
     struct cixvpu_prepared *p=NULL;
     CHECK(prepare_frame_slots(&raw,&plan,rpc_image,sizeof(rpc_image),fixture_pin,&source,&p)==0);
-    CHECK(raw==NULL && p!=NULL && p->count==1538 && team_sealed==1 &&
-        map_calls==1531 && link_calls==7);
+    CHECK(raw==NULL && p!=NULL && p->count==1539 && team_sealed==1 &&
+        map_calls==1532 && link_calls==7);
     team_frame_bytes(false); team_frame_tables(&plan);
     sync_fixture(&plan,true);
-    struct test_map *map=p->dma->owners[1537].map;
+    struct test_map *map=p->dma->owners[1538].map;
     map->dm_nsegs=2;
     CHECK(cixvpu_prepared_sync_initial(p)==EIO && sync_calls==0);
     map->dm_nsegs=1;
-    CHECK(cixvpu_prepared_sync_initial(p)==0 && sync_calls==1539);
+    CHECK(cixvpu_prepared_sync_initial(p)==0 && sync_calls==1540);
     team_frame_bytes(true);
-    for (unsigned int i=1531;i<1539;i++)
+    for (unsigned int i=1532;i<1540;i++)
         CHECK(memcmp(device_memory[i],resources[i].kva,4096)==0 && pres[i]==4);
     boot_host=118;boot_mve=119;boot_rpc=124;boot_nevents=0;
     boot_unstable=boot_append=false;boot_alloc_change=boot_resize_change=0;
@@ -2280,7 +2297,7 @@ static void team_frame_failure_tests(void)
         struct cixvpu_frame_source source;
         struct cixvpu_dma *raw=team_frame_begin(&plan,&source),*saved=raw;
         struct cixvpu_prepared *p=NULL;
-        if(fault==0) fail_page=1538;
+        if(fault==0) fail_page=1539;
         if(fault>=1 && fault<=3) team_view_fault=fault;
         if(fault==4) fail_seal=true;
         if(fault==5) fail_link=6;
@@ -2291,7 +2308,7 @@ static void team_frame_failure_tests(void)
         CHECK(raw==saved && p==NULL && raw->phase==CIXVPU_DMA_ALLOC &&
             raw->prepared_owner==NULL && !raw->ever_visible);
         if(fault<4 || fault>=7)
-            for(unsigned int i=0;i<1539;i++) CHECK(memcmp(resources[i].kva,canary,4096)==0);
+            for(unsigned int i=0;i<1540;i++) CHECK(memcmp(resources[i].kva,canary,4096)==0);
         fail_seal=false;seal_observer=NULL;
         CHECK(cixvpu_dma_free(&raw)==0 && depth==0 && live_kmem==0);
     }
@@ -2301,7 +2318,7 @@ static void team_frame_failure_tests(void)
     struct cixvpu_dma *raw=team_frame_begin(&plan,&source);
     CHECK(cixvpu_dma_free(&raw)==0);
     for(unsigned int stage=0;stage<4;stage++) {
-        reset();fail_at=2+1537*4+stage;
+        reset();fail_at=2+1538*4+stage;
         CHECK(cixvpu_dma_alloc(&tag32,&tag64,&plan,&raw)!=0);
         CHECK(raw==NULL && depth==0 && live_kmem==0);
     }
@@ -2388,9 +2405,9 @@ static void queue_failure_tests(void)
             CHECK(cixvpu_prepared_queue_command(p,(void *)resources[0].kva)==EINVAL && native_calls==calls);
             command.value=1;CHECK(cixvpu_prepared_queue_command(p,&command)==EINVAL && native_calls==calls);
         } else if(kind==1) {
-            p->dma->owners[405].map->dm_nsegs=2;
+            p->dma->owners[406].map->dm_nsegs=2;
             CHECK(cixvpu_prepared_queue_command(p,&command)==EIO && native_calls==calls);
-            p->dma->owners[405].map->dm_nsegs=1;
+            p->dma->owners[406].map->dm_nsegs=1;
             CHECK(cixvpu_prepared_queue_command(p,&command)==EIO && native_calls==calls);
         } else if(kind==2) {
             put32(device_memory[124],1);
@@ -2478,7 +2495,7 @@ static void queue_admission_tests(void)
     CHECK(cixvpu_prepared_boot_receive_rpc(p,&reply)==0);
     calls=native_calls;
     CHECK(cixvpu_prepared_queue_open(p,NULL)==EINVAL && native_calls==calls);
-    CHECK(cixvpu_prepared_queue_open(p,(void *)resources[405].kva)==EINVAL && native_calls==calls);
+    CHECK(cixvpu_prepared_queue_open(p,(void *)resources[406].kva)==EINVAL && native_calls==calls);
     CHECK(cixvpu_prepared_queue_open(p,&id)==0 && native_calls==calls);
     boot_drop(p);
     /* A second owner cannot inherit the first owner's successful replies. */
@@ -2542,7 +2559,7 @@ static void queue_atomic_tests(void)
             queue_notify(p,2005);CHECK(cixvpu_prepared_queue_receive(p,&event)==0);
             queue_return_wire(121,0,3001,queue_frame,72);
         }
-        p->dma->owners[405].map->dm_nsegs=2;
+        p->dma->owners[406].map->dm_nsegs=2;
         unsigned int calls=native_calls;
         if(op==0) CHECK(cixvpu_prepared_queue_input_param(p,&param)==EIO);
         if(op==1) CHECK(cixvpu_prepared_queue_submit(p,CIXVPU_Q_INPUT_ONCE)==EIO);
@@ -2552,7 +2569,7 @@ static void queue_atomic_tests(void)
         if(op==5) CHECK(cixvpu_prepared_queue_output_copy(p,(void *)resources[0].kva,8,&result)==EIO);
         if(op==6) CHECK(cixvpu_prepared_queue_submit(p,CIXVPU_Q_OUTPUT_EMPTY)==EIO);
         CHECK(native_calls==calls && (op==6 || copy[0]==0xa5));
-        p->dma->owners[405].map->dm_nsegs=1;
+        p->dma->owners[406].map->dm_nsegs=1;
         CHECK(cixvpu_prepared_queue_command(p,&command)==EIO && native_calls==calls);
         boot_drop(p);
     }
@@ -2700,9 +2717,9 @@ static void queue_rpc_gate_tests(void)
     put32(device_memory[124],1);
     CHECK(cixvpu_prepared_queue_rpc_pending(p,&pending)==0 && pending && device_memory[124][0]==0);
     queue_gate_churn=false;
-    p->dma->owners[405].map->dm_nsegs=2;calls=native_calls;
+    p->dma->owners[406].map->dm_nsegs=2;calls=native_calls;
     CHECK(cixvpu_prepared_queue_rpc_pending(p,&pending)==EIO && native_calls==calls);
-    p->dma->owners[405].map->dm_nsegs=1;
+    p->dma->owners[406].map->dm_nsegs=1;
     CHECK(cixvpu_prepared_queue_rpc_pending(p,&pending)==EIO && native_calls==calls);
     boot_drop(p);
 }

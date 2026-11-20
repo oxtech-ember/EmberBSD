@@ -214,7 +214,8 @@ static bool frame_bootstrap_test;
 static unsigned int frame_bootstrap_notifies;
 static bool frame_trial;
 static unsigned int frame_scenario,frame_command_calls,frame_gate_calls,frame_fault_acks;
-static bool frame_rpc_faulted, frame_third_pending;
+static bool frame_rpc_faulted;
+static unsigned int frame_alloc_pending;
 static bool boot_term_issued;
 static uint64_t boot_now;
 static uint32_t boot_regs[2][0x400 / 4];
@@ -300,16 +301,22 @@ static void bus_space_write_4(bus_space_tag_t t, bus_space_handle_t h,
         if (boot_fault == 25) boot_fixture_rpc_alloc();
     }
     if(h==1 && offset==0x220 && value==1 && boot_regs[1][1]==1 && frame_trial) {
-        if (frame_third_pending) {
+        if (frame_alloc_pending!=0) {
             CHECK(boot_fixture_rpc_word(0)==2 && boot_fixture_rpc_word(1)==2 &&
-                boot_fixture_rpc_word(2)==4 && boot_fixture_rpc_word(3)==0x24004000U);
-            boot_fixture_rpc(0,0,0);
-            frame_third_pending=false;
+                boot_fixture_rpc_word(2)==4 && boot_fixture_rpc_word(3)==
+                (frame_alloc_pending==1 ? 0x24004000U : 0x241ac000U));
+            if (frame_alloc_pending==1) {
+                boot_fixture_rpc_words(1,2,12,128,65536,0,12);
+                frame_alloc_pending=2;
+            } else {
+                boot_fixture_rpc(0,0,0);
+                frame_alloc_pending=0;
+            }
         } else {
             boot_fixture_frame_notify();
             if (frame_scenario==0 && boot_fixture_frame_publications()==10) {
                 boot_fixture_rpc_words(1,2,12,19176,1733208,0,12);
-                frame_third_pending=true;
+                frame_alloc_pending=1;
             }
         }
     } else if(h==1 && offset==0x220 && value==1 && frame_bootstrap_test)
@@ -523,7 +530,7 @@ static void boot_fixture(void)
     boot_rpc_test=false; boot_rpc_commit_events=boot_rpc_notify_events=0;
     boot_rpc_deferrals=0;
     frame_bootstrap_test=false;frame_bootstrap_notifies=0;
-    frame_trial=false;frame_scenario=frame_command_calls=frame_gate_calls=frame_fault_acks=0;frame_rpc_faulted=frame_third_pending=false;
+    frame_trial=false;frame_scenario=frame_command_calls=frame_gate_calls=frame_fault_acks=0;frame_rpc_faulted=false;frame_alloc_pending=0;
     frame_node_count=frame_node_calls=frame_teardowns=frame_lookups=0;
     frame_copy_fault=frame_tree_locked=frame_query_churn=false;frame_copyins=frame_copyouts=frame_copyout_fault=0;frame_selected_node=NULL;memset(frame_nodes,0,sizeof(frame_nodes));
     memset(boot_regs, 0, sizeof(boot_regs));
@@ -587,8 +594,8 @@ static void frame_trial_tests(void)
         CHECK(cixvpu_acpi_boot_create_frame(VPU,&fixture_aa,&attach_description,&b)==0);assert(b!=NULL);
         boot_actual=boot_fixture_prepare_frame();struct cixvpu_prepared *owner=boot_actual;
         CHECK(cixvpu_acpi_boot_once(b,&owner)==0 && owner==NULL);
-        CHECK(boot_fixture_frame_publications()==13 && !frame_third_pending);
-        CHECK(b->report.rpc_commits==(scenario==0 ? 4U : 3U) &&
+        CHECK(boot_fixture_frame_publications()==13 && frame_alloc_pending==0);
+        CHECK(b->report.rpc_commits==(scenario==0 ? 5U : 3U) &&
             b->report.rpc_notifications==b->report.rpc_commits);
         CHECK(b->report.exposed && b->report.held && boot_disestablish==0 && boot_masks==1);
         CHECK(cixvpu_prepared_free(&boot_actual)==EBUSY);

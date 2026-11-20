@@ -165,7 +165,8 @@ compose(const struct cixvpu_fw_plan *plan)
         CHECK(cixvpu_mmu_lookup(root,4096,144,&value)==0 && value!=0);
         for (i=0;i<1024;i++) {
             CHECK(cixvpu_mmu_lookup(leaves[3],4096,i,&value)==0);
-            CHECK((value != 0) == (i < (plan->slots_enabled ? 9U : 4U)));
+            CHECK((value != 0) == (i < 4 || (plan->slots_enabled &&
+                (i < 9 || i == 428))));
         }
         for (i=129;i<144;i++) {
 
@@ -363,7 +364,7 @@ slot_tests(void)
         base.slots.height == 0 && base.slots.stride_y == 0 &&
         base.slots.stride_uv == 0 && base.slots.bitstream_bytes == 0);
     CHECK(plan.boot_rpc == 1 && plan.slots_enabled == 1 &&
-        plan.backing_pages == 406 && plan.mappings == 399);
+        plan.backing_pages == 407 && plan.mappings == 400);
     for (unsigned int i = 0; i < 385; i++) {
         CHECK(cixvpu_fw_plan_page(&base, i, &oldpage) == 0);
         CHECK(cixvpu_fw_plan_page(&plan, i, &page) == 0);
@@ -371,7 +372,7 @@ slot_tests(void)
         CHECK(cixvpu_fw_plan_mapping(&base, i, &oldmap) == 0);
         CHECK(cixvpu_fw_plan_mapping(&plan, i, &map) == 0);
         CHECK(map.address == oldmap.address && map.backing_index == oldmap.backing_index &&
-            map.leaf_backing_index == oldmap.leaf_backing_index + 14 &&
+            map.leaf_backing_index == oldmap.leaf_backing_index + 15 &&
             map.role == oldmap.role && map.attribute == oldmap.attribute &&
             map.permission == oldmap.permission);
     }
@@ -389,7 +390,7 @@ slot_tests(void)
             CHECK(cixvpu_fw_plan_mapping(&plan, owners[slot] + j, &map) == 0);
             CHECK(map.address == addresses[slot] + j * 4096 &&
                 map.backing_index == owners[slot] + j && map.role == roles[slot] &&
-                map.leaf_backing_index == (slot == 2 ? 405U : 404U));
+                map.leaf_backing_index == (slot == 2 ? 406U : 405U));
             /* Full RPC logical reserve, not merely mapped128-page prefix. */
             CHECK(map.address >= 0x24004000);
         }
@@ -398,13 +399,16 @@ slot_tests(void)
     for (unsigned int j = 0; j < 5; j++) {
         CHECK(cixvpu_fw_plan_mapping(&plan, 394 + j, &map) == 0);
         CHECK(map.address == 0x24004000 + j * 4096 &&
-            map.backing_index == 394 + j && map.leaf_backing_index == 403 &&
+            map.backing_index == 394 + j && map.leaf_backing_index == 404 &&
             map.role == CIXVPU_FW_PLAN_FRAME_RPC_DATA &&
             map.attribute == CIXVPU_MMU_SHARED_RW && map.permission == CIXVPU_MMU_WRITE);
     }
-    CHECK(cixvpu_fw_plan_page(&plan, 399, &page) == 0 && page.role == CIXVPU_FW_PLAN_ROOT);
-    CHECK(cixvpu_fw_plan_page(&plan, 404, &page) == 0 && page.leaf_address == 0x70000000);
-    CHECK(cixvpu_fw_plan_page(&plan, 405, &page) == 0 && page.leaf_address == 0x24400000);
+    CHECK(cixvpu_fw_plan_mapping(&plan, 399, &map) == 0 &&
+        map.address == 0x241ac000 && map.backing_index == 399 &&
+        map.leaf_backing_index == 404 && map.role == CIXVPU_FW_PLAN_FRAME_RPC_DATA);
+    CHECK(cixvpu_fw_plan_page(&plan, 400, &page) == 0 && page.role == CIXVPU_FW_PLAN_ROOT);
+    CHECK(cixvpu_fw_plan_page(&plan, 405, &page) == 0 && page.leaf_address == 0x70000000);
+    CHECK(cixvpu_fw_plan_page(&plan, 406, &page) == 0 && page.leaf_address == 0x24400000);
     compose(&plan);
     /* Literal composed table words with discontiguous bus pages. */
     uint8_t root[4096] = {0}, input[4096] = {0}, output[4096] = {0};
@@ -475,7 +479,7 @@ slot_tests(void)
         span.bytes == 131072 && span.pages == 32);
     /* Exact aggregate2048 owners, then one additional output page fails. */
 
-    request = (struct cixvpu_fw_slot_request){2, 4, 700000, 4096, 965 * 4096};
+    request = (struct cixvpu_fw_slot_request){2, 4, 700000, 4096, 964 * 4096};
     CHECK(build_slots(image, 420736, 1, &request, &bad) == 0);
     CHECK(bad.backing_pages == 2048 && bad.mappings == 2041);
     request.bitstream_bytes += 1;
@@ -485,14 +489,14 @@ slot_tests(void)
     fixture(small);
     request = (struct cixvpu_fw_slot_request){2, 4, 700000, 4096, 1014 * 4096};
     CHECK(build_slots(small, 8192, 1, &request, &plan) == 0);
-    CHECK(plan.backing_pages == 1986 && plan.mappings == 1979);
+    CHECK(plan.backing_pages == 1987 && plan.mappings == 1980);
     /* Exact one-leaf input; one row-stride byte needs a second FRAME leaf. */
 
     request = (struct cixvpu_fw_slot_request){2, 2, 1048576, 2097152, 1};
     CHECK(build_slots(image, 420736, 1, &request, &plan) == 0);
     request.stride_y++;
     CHECK(build_slots(image, 420736, 1, &request, &bad) == 0 &&
-        bad.backing_pages == 1424 && bad.mappings == 1416);
+        bad.backing_pages == 1425 && bad.mappings == 1417);
     request = (struct cixvpu_fw_slot_request){2, 4, 4097, 2051, 0x400000};
     CHECK(build_slots(image, 420736, 1, &request, &plan) == 0);
     CHECK(cixvpu_fw_plan_slot(&plan, CIXVPU_FW_SLOT_BITSTREAM, &span) == 0 &&
@@ -539,7 +543,7 @@ team_frame_tests(void)
     put32(image + 104, 15); put32(image + 108, 0x7fff);
     put32(image + 172, 0x7f000); put32(image + 176, 0);
     CHECK(build_slots(image, 420736, 1, &request, &plan) == 0);
-    CHECK(plan.backing_pages == 1539 && plan.mappings == 1531);
+    CHECK(plan.backing_pages == 1540 && plan.mappings == 1532);
     CHECK(cixvpu_fw_plan_slot(&plan, CIXVPU_FW_SLOT_Y, &span) == 0 &&
         span.address == 0x70000000 && span.bytes == 3072000 &&
         span.rounded_bytes == 3072000 && span.pages == 750 && span.first_backing == 385);
@@ -548,25 +552,25 @@ team_frame_tests(void)
         span.rounded_bytes == 1536000 && span.pages == 375 && span.first_backing == 1135);
     CHECK(cixvpu_fw_plan_slot(&plan, CIXVPU_FW_SLOT_BITSTREAM, &span) == 0 &&
         span.address == 0x24400000 && span.pages == 16 && span.first_backing == 1510);
-    CHECK(cixvpu_fw_plan_page(&plan, 1531, &page) == 0 && page.role == CIXVPU_FW_PLAN_ROOT);
+    CHECK(cixvpu_fw_plan_page(&plan, 1532, &page) == 0 && page.role == CIXVPU_FW_PLAN_ROOT);
     for (unsigned int i = 0; i < 7; i++) {
-        CHECK(cixvpu_fw_plan_page(&plan, 1532 + i, &page) == 0 &&
+        CHECK(cixvpu_fw_plan_page(&plan, 1533 + i, &page) == 0 &&
             page.role == CIXVPU_FW_PLAN_LEAF && page.leaf_address == leaf_vas[i]);
-        CHECK(cixvpu_mmu_link(root, sizeof(root), page.leaf_address, test_bus(1532 + i)) == 0);
+        CHECK(cixvpu_mmu_link(root, sizeof(root), page.leaf_address, test_bus(1533 + i)) == 0);
     }
     for (unsigned int i = 0; i < 1125; i++) {
         unsigned int leaf = i < 1024 ? 0 : 1;
         CHECK(cixvpu_fw_plan_mapping(&plan, 385 + i, &map) == 0 &&
             map.address == 0x70000000 + i * 4096 && map.backing_index == 385 + i &&
-            map.leaf_backing_index == 1536 + leaf &&
+            map.leaf_backing_index == 1537 + leaf &&
             map.role == (i < 750 ? CIXVPU_FW_PLAN_FRAME_Y : CIXVPU_FW_PLAN_FRAME_UV));
         CHECK(cixvpu_mmu_map(leaves[leaf], 4096, map.address, test_bus(map.backing_index),
             map.attribute, map.permission) == 0);
     }
     CHECK(cixvpu_mmu_lookup(root, 4096, 448, &value) == 0 &&
-        value == ((uint32_t)(test_bus(1536) >> 12) << 2 | 1));
-    CHECK(cixvpu_mmu_lookup(root, 4096, 449, &value) == 0 &&
         value == ((uint32_t)(test_bus(1537) >> 12) << 2 | 1));
+    CHECK(cixvpu_mmu_lookup(root, 4096, 449, &value) == 0 &&
+        value == ((uint32_t)(test_bus(1538) >> 12) << 2 | 1));
     CHECK(cixvpu_mmu_lookup(leaves[0], 4096, 1023, &value) == 0 &&
         value == ((uint32_t)(test_bus(1408) >> 12) << 2 | 0xc0000003));
     CHECK(cixvpu_mmu_lookup(leaves[1], 4096, 0, &value) == 0 &&
@@ -577,9 +581,9 @@ team_frame_tests(void)
         CHECK(cixvpu_mmu_lookup(leaves[1], 4096, i, &value) == 0 && value == 0);
     for (unsigned int i = 1510; i < 1526; i++)
         CHECK(cixvpu_fw_plan_mapping(&plan, i, &map) == 0 &&
-            map.leaf_backing_index == 1538 && map.address == 0x24400000 + (i-1510)*4096);
+            map.leaf_backing_index == 1539 && map.address == 0x24400000 + (i-1510)*4096);
     /* The new leaf consumes quota too: exactly2048 owners, then one byte fails. */
-    request.bitstream_bytes = 525 * 4096;
+    request.bitstream_bytes = 524 * 4096;
     CHECK(build_slots(image, 420736, 1, &request, &bad) == 0 &&
         bad.backing_pages == 2048 && bad.mappings == 2040);
     memset(&bad, 0xa5, sizeof(bad)); memcpy(&before, &bad, sizeof(before));

@@ -36,7 +36,8 @@ struct cixvpu_dma {
 	bool tag_acquired;
 	bool ever_visible;
 	bool rpc_alloc_used, rpc_resize_used, rpc_resize_committed;
-	bool rpc_second_alloc_used, rpc_frame_alloc_used;
+	bool rpc_second_alloc_used;
+	unsigned int rpc_frame_alloc_count;
 	unsigned int rpc_debug_count;
 	enum cixvpu_dma_phase phase;
 	const struct cixvpu_prepared *prepared_owner;
@@ -807,16 +808,28 @@ cixvpu_dma_boot_rpc_step(struct cixvpu_dma *dma,
 			result = CIXVPU_DMA_RPC_SECOND_ALLOC_REPLIED;
 		} else if (frame_queue && plan->slots_enabled == 1 &&
 		    dma->rpc_second_alloc_used &&
-		    le32dec(observed + 12) == CIXVPU_FW_PLAN_FRAME_RPC_SIZE &&
-		    le32dec(observed + 16) == CIXVPU_FW_PLAN_FRAME_RPC_CAPACITY &&
 		    observed[20] == CIXVPU_FW_PLAN_BOOT_RPC_REGION &&
 		    observed[21] == CIXVPU_FW_PLAN_BOOT_RPC_SECOND_LOG2_ALIGNMENT) {
-			if (dma->rpc_frame_alloc_used) {
+			const struct cixvpu_fw_rpc_object *object;
+			unsigned int i;
+
+			for (i = 0; i < CIXVPU_FW_FRAME_RPC_COUNT; i++) {
+				object = &cixvpu_fw_frame_rpc_objects[i];
+				if (le32dec(observed + 12) == object->size &&
+				    le32dec(observed + 16) == object->capacity)
+					break;
+			}
+			if (i == CIXVPU_FW_FRAME_RPC_COUNT ||
+			    i > dma->rpc_frame_alloc_count) {
+				error = ENOTSUP;
+				goto rearm;
+			}
+			if (i < dma->rpc_frame_alloc_count) {
 				error = EBUSY;
 				goto rearm;
 			}
-			dma->rpc_frame_alloc_used = true;
-			address = CIXVPU_FW_PLAN_FRAME_RPC_ADDRESS;
+			dma->rpc_frame_alloc_count++;
+			address = object->address;
 			result = CIXVPU_DMA_RPC_FRAME_ALLOC_REPLIED;
 		} else {
 			error = ENOTSUP;
