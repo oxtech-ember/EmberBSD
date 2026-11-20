@@ -264,6 +264,8 @@ void boot_fixture_frame_notify(void) {
         put32(payload+16,step==11?0x80:0x10);put32(payload+24,step==11?3:4095);put32(payload+28,step==11?3:5);
         if(step==11) {device_memory[391][3]=0;device_memory[391][4]=0;device_memory[391][5]=1;}
         else {device_memory[391][4095]=0x26;for(unsigned int i=0;i<4;i++)device_memory[392][i]=(uint8_t)(i+1);}
+        /* SUBFRAME alone requires refill; the measured final word includes EOF. */
+        if(frame_wire_scenario==0)put32(payload+16,step==11?0x480:0x1004b1);
         if(frame_wire_scenario==10)put32(payload+8,4);
         if(frame_wire_scenario==11)put32(payload+16,0x200);
         if(frame_wire_scenario==29)put32(payload+28,65537);

@@ -607,6 +607,8 @@ static void frame_trial_tests(void)
         boot_actual=boot_fixture_prepare_frame();struct cixvpu_prepared *owner=boot_actual;
         CHECK(cixvpu_acpi_boot_once(b,&owner)==0 && owner==NULL);
         CHECK(boot_fixture_frame_publications()==13 && frame_alloc_pending==0);
+        CHECK(b->report.frame_complete && b->report.frame_output_returns==2);
+        CHECK(b->report.frame_output_flags==(scenario==0 ? 0x1004b1U : 0x10U));
         CHECK(b->report.rpc_commits==(scenario==0 ? 8U : 3U) &&
             b->report.rpc_notifications==b->report.rpc_commits);
         CHECK(b->report.exposed && b->report.held && boot_disestablish==0 && boot_masks==1);

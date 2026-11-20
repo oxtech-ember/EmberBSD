@@ -849,7 +849,8 @@ cixvpu_frame_run(struct cixvpu_acpi_boot *b)
 						b->report.frame_output_returns++;
 						b->report.frame_output_bytes += result.filled;
 						b->report.frame_output_flags = result.flags;
-						if ((result.flags & ~UINT32_C(0x1000b1)) != 0)
+						/* ENDOFSUBFRAME (bit 10) can also accompany either EOF bit. */
+						if ((result.flags & ~UINT32_C(0x1004b1)) != 0)
 							return ENOTSUP;
 						b->report.frame_output_eof = (result.flags & UINT32_C(0x100010)) != 0;
 						refill = !b->report.frame_output_eof;
