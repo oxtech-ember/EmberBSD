@@ -375,6 +375,8 @@ hidmt_pointer_base(struct hidmt_pointer *ptr, const struct hidmt_frame *frame,
 	unsigned i, tap_fingers, fingers, allowed;
 	int dx, dy;
 	bool same_contact, want_left, want_right;
+	const bool drag_held = ptr->drag_held, dragging = ptr->dragging;
+	const uint64_t drag_deadline = ptr->drag_deadline;
 
 	want_left = (tap_flags & HIDMT_TAP_LEFT) != 0;
 	want_right = (tap_flags & HIDMT_TAP_RIGHT) != 0;
@@ -389,6 +391,9 @@ hidmt_pointer_base(struct hidmt_pointer *ptr, const struct hidmt_frame *frame,
 		motion->buttons = 2u;
 	else if (frame->buttons && frame->ncontacts >= 2)
 		motion->buttons = 4u;
+	/* A held tap keeps the left button down (HIDMT_TAP_DRAG). */
+	if (drag_held)
+		motion->buttons |= 1u;
 	if (frame->cancel_tap)
 		ptr->tap_candidate = false;
 	if (frame->ncontacts == 0) {
@@ -399,7 +404,33 @@ hidmt_pointer_base(struct hidmt_pointer *ptr, const struct hidmt_frame *frame,
 		    now >= ptr->started && now - ptr->started <= 250000;
 		if (motion->tap)
 			motion->tap_button = tap_fingers >= 2 ? 4u : 1u;
+		if (dragging) {
+			/*
+			 * The drag touch ended: release the left button.  A
+			 * short still touch was the second tap of a double
+			 * tap, so add one more click after the release.
+			 */
+			if ((frame->buttons & 1u) == 0)
+				motion->buttons &= ~1u;
+			motion->click_after = motion->tap &&
+			    motion->tap_button == 1u;
+			motion->tap = false;
+			memset(ptr, 0, sizeof(*ptr));
+			return;
+		}
+		if (motion->tap && motion->tap_button == 1u &&
+		    (tap_flags & HIDMT_TAP_DRAG) != 0) {
+			/* Press now; release on expiry or after a drag. */
+			motion->tap = false;
+			motion->buttons |= 1u;
+			memset(ptr, 0, sizeof(*ptr));
+			ptr->drag_held = true;
+			ptr->drag_deadline = now + HIDMT_DRAG_US;
+			return;
+		}
 		memset(ptr, 0, sizeof(*ptr));
+		ptr->drag_held = drag_held;
+		ptr->drag_deadline = drag_deadline;
 		return;
 	}
 	contact = &frame->contacts[0];
@@ -412,6 +443,14 @@ hidmt_pointer_base(struct hidmt_pointer *ptr, const struct hidmt_frame *frame,
 	if (!ptr->active) {
 		memset(ptr, 0, sizeof(*ptr));
 		ptr->active = true;
+		if (drag_held) {
+			if (now <= drag_deadline && frame->ncontacts == 1 &&
+			    !frame->buttons) {
+				ptr->drag_held = ptr->dragging = true;
+				ptr->drag_deadline = drag_deadline;
+			} else if ((frame->buttons & 1u) == 0)
+				motion->buttons &= ~1u;	/* came too late */
+		}
 		/*
 		 * HIDMT_TAP_LEFT: one-finger tap → left.
 		 * HIDMT_TAP_RIGHT: two-finger tap → right. A right-only
@@ -808,8 +847,24 @@ bool
 hidmt_live(const struct hidmt_pointer *ptr, const struct hidmt_assembler *as,
     const struct hidmt_gstate *gs)
 {
-	return ptr->active || ptr->tap_candidate || as->pending ||
-	    gs->latched || gs->started;
+	return ptr->active || ptr->tap_candidate || ptr->drag_held ||
+	    as->pending || gs->latched || gs->started;
+}
+
+/*
+ * Timer rule for tap and drag: a tap whose button is held and that got no
+ * new touch by drag_deadline becomes a plain click.  Returns true when the
+ * caller must report the left button up.  A drag in progress waits for its
+ * touch to end.
+ */
+bool
+hidmt_drag_expire(struct hidmt_pointer *ptr, uint64_t now)
+{
+	if (!ptr->drag_held || ptr->dragging || now < ptr->drag_deadline)
+		return false;
+	ptr->drag_held = false;
+	ptr->drag_deadline = 0;
+	return true;
 }
 
 /*

@@ -20,7 +20,6 @@ It can generate a left click from a short single-finger tap.
 The driver requires complete parallel contact reports.
 It rejects frames with an invalid size, excessive contact count,
 duplicate contact identifiers, or coordinates outside the descriptor ranges.
-Hybrid reports, multitouch gestures, and tap dragging are not supported.
 .Pp
 The driver selects Precision Touchpad input mode when the device opens.
 It restores this mode after the parent device resumes.
@@ -36,6 +35,14 @@ Taps longer than 180 milliseconds do not click.
 Motion beyond 50 native coordinate units cancels the tap.
 Multiple fingers, a physical button press, or a low-confidence contact also
 cancel the tap.
+.Pp
+With tapping enabled,
+.Va hw.imtN.tapping_drag
+set to one holds the left button after a tap for 250 milliseconds.
+A new single-finger contact in this time drags with the button held.
+The button releases when that contact lifts.
+A short second tap gives a double click.
+The default value is zero.
 .Pp
 Use
 .Pa /etc/sysctl.conf

@@ -63,6 +63,7 @@ struct imt_softc {
 	bool sc_ready, sc_enabled, sc_suspended;
 	int sc_tapping;
 	int sc_tapping_right;
+	int sc_tapping_drag;	/* one-finger tap, then touch: left drag */
 	int sc_hybrid;		/* assemble hybrid frames from several reports */
 	int sc_scroll;		/* two-finger scrolling */
 	int sc_scroll_natural;
@@ -151,6 +152,7 @@ imt_attach(device_t parent, device_t self, void *aux)
 	 */
 	sc->sc_tapping = 0;
 	sc->sc_tapping_right = 1;
+	sc->sc_tapping_drag = 0;
 	/* Everything below is off by default: the pre-existing behaviour. */
 	sc->sc_hybrid = 0;
 	sc->sc_scroll = 0;
@@ -172,6 +174,10 @@ imt_attach(device_t parent, device_t self, void *aux)
 		    CTLFLAG_READWRITE, CTLTYPE_INT, "tapping_right",
 		    SYSCTL_DESCR("Enable two-finger tap (right button)"),
 		    NULL, 0, &sc->sc_tapping_right, 0, CTL_CREATE, CTL_EOL);
+		sysctl_createv(&sc->sc_sysctllog, 0, &node, NULL,
+		    CTLFLAG_READWRITE, CTLTYPE_INT, "tapping_drag",
+		    SYSCTL_DESCR("With tapping: tap, then touch to drag"),
+		    NULL, 0, &sc->sc_tapping_drag, 0, CTL_CREATE, CTL_EOL);
 		sysctl_createv(&sc->sc_sysctllog, 0, &node, NULL,
 		    CTLFLAG_READWRITE, CTLTYPE_INT, "hybrid",
 		    SYSCTL_DESCR("Assemble frames from several hybrid reports"),
@@ -434,10 +440,15 @@ imt_gesture_emit(struct imt_softc *sc, unsigned mask, unsigned fingers,
 	}
 }
 
-/* Is something waiting for the timer? Only with hybrid or gestures on. */
+/*
+ * Is something waiting for the timer?  A held tap (tap and drag) always;
+ * otherwise only with hybrid or gestures on.
+ */
 static bool
 imt_tmo_wanted(struct imt_softc *sc)
 {
+	if (sc->sc_pointer.drag_held)
+		return true;
 	if (sc->sc_hybrid == 0 && sc->sc_gestures == 0 && !sc->sc_g_need_cancel)
 		return false;
 	return sc->sc_g_need_cancel ||
@@ -462,11 +473,14 @@ imt_reset_state(struct imt_softc *sc, bool release)
 	unsigned g;
 	int s;
 
+	bool held;
+
 	callout_stop(&sc->sc_tmo);
+	held = sc->sc_pointer.drag_held;
 	g = hidmt_reset(&sc->sc_pointer, &sc->sc_asm, &sc->sc_gstate);
 	s = spltty();
 	imt_gesture_emit(sc, g, 0, 0, 0, 0);
-	if (release && sc->sc_mouse != NULL)
+	if ((release || held) && sc->sc_mouse != NULL)
 		wsmouse_input(sc->sc_mouse, 0, 0, 0, 0, 0, WSMOUSE_INPUT_DELTA);
 	splx(s);
 	imt_tmo_arm(sc);
@@ -485,11 +499,23 @@ imt_tmo(void *arg)
 
 	if (!sc->sc_enabled || sc->sc_suspended || sc->sc_mouse == NULL)
 		return;
-	/* Default behaviour (everything off): no timer rules. */
-	if (sc->sc_hybrid == 0 && sc->sc_gestures == 0 && !sc->sc_g_need_cancel)
-		return;
 	getnanouptime(&now);
 	usec = (uint64_t)now.tv_sec * 1000000 + now.tv_nsec / 1000;
+	if (hidmt_drag_expire(&sc->sc_pointer, usec)) {
+		/* No new touch after the tap: it was a click. */
+		s = spltty();
+		wsmouse_input(sc->sc_mouse, 0, 0, 0, 0, 0, WSMOUSE_INPUT_DELTA);
+		splx(s);
+	}
+	/*
+	 * Default behaviour (everything off): no other timer rules, except
+	 * that a drag whose touch went silent (lost lift report) is released.
+	 */
+	if (sc->sc_hybrid == 0 && sc->sc_gestures == 0 &&
+	    !sc->sc_g_need_cancel && !sc->sc_pointer.drag_held) {
+		imt_tmo_arm(sc);
+		return;
+	}
 	g = hidmt_stall(&sc->sc_pointer, &sc->sc_asm, &sc->sc_gstate, usec,
 	    sc->sc_last_usec, &released);
 	s = spltty();
@@ -510,14 +536,28 @@ imt_intr(struct ihidev *hdev, void *buf, u_int len)
 	struct hidmt_gconf gconf;
 	struct timespec now;
 	uint64_t usec;
-	unsigned g;
+	unsigned g, taps;
 	int s, r;
+	bool held;
 
 	if (!sc->sc_enabled || sc->sc_suspended || sc->sc_mouse == NULL)
 		return;
 	getnanouptime(&now);
 	usec = (uint64_t)now.tv_sec * 1000000 + now.tv_nsec / 1000;
 	sc->sc_last_usec = usec;
+	/*
+	 * Expire a held tap here too: a stream of reports without contacts
+	 * (a palm) keeps rescheduling the callout.
+	 */
+	if (hidmt_drag_expire(&sc->sc_pointer, usec)) {
+		s = spltty();
+		wsmouse_input(sc->sc_mouse, 0, 0, 0, 0, 0, WSMOUSE_INPUT_DELTA);
+		splx(s);
+	}
+	taps = (sc->sc_tapping != 0 ? HIDMT_TAP_LEFT : 0) |
+	    (sc->sc_tapping_right != 0 ? HIDMT_TAP_RIGHT : 0) |
+	    (sc->sc_tapping != 0 && sc->sc_tapping_drag != 0 ?
+		HIDMT_TAP_DRAG : 0);
 	if (sc->sc_rawlog > 0) {
 		sc->sc_rawlog--;
 		imt_log_raw(sc, buf, len, &now);
@@ -533,9 +573,13 @@ imt_intr(struct ihidev *hdev, void *buf, u_int len)
 			 * consumer; the new report below starts afresh.
 			 */
 			sc->sc_asm.lost = false;
+			held = sc->sc_pointer.drag_held;
 			g = hidmt_release(&sc->sc_pointer, &sc->sc_gstate);
 			s = spltty();
 			imt_gesture_emit(sc, g, 0, 0, 0, 0);
+			if (held)
+				wsmouse_input(sc->sc_mouse, 0, 0, 0, 0, 0,
+				    WSMOUSE_INPUT_DELTA);
 			splx(s);
 		}
 		if (r != HIDMT_ASM_READY) {
@@ -545,10 +589,15 @@ imt_intr(struct ihidev *hdev, void *buf, u_int len)
 	} else if (hidmt_decode(&sc->sc_config, buf, len, &frame) != 0) {
 		/* Reject malformed frames without retaining a possible tap. */
 		sc->sc_drops++;
+		held = sc->sc_pointer.drag_held;
 		g = hidmt_release(&sc->sc_pointer, &sc->sc_gstate);
 		s = spltty();
 		imt_gesture_emit(sc, g, 0, 0, 0, 0);
+		if (held)
+			wsmouse_input(sc->sc_mouse, 0, 0, 0, 0, 0,
+			    WSMOUSE_INPUT_DELTA);
 		splx(s);
+		imt_tmo_arm(sc);
 		return;
 	}
 	if (sc->sc_scroll != 0) {
@@ -557,13 +606,9 @@ imt_intr(struct ihidev *hdev, void *buf, u_int len)
 		scroll.scale = sc->sc_scroll_scale;
 		scroll.range = sc->sc_config.maxy - sc->sc_config.miny;
 		hidmt_pointer_update_scroll(&sc->sc_pointer, &frame, usec,
-		    (sc->sc_tapping != 0 ? HIDMT_TAP_LEFT : 0) |
-		    (sc->sc_tapping_right != 0 ? HIDMT_TAP_RIGHT : 0),
-		    &scroll, &motion);
+		    taps, &scroll, &motion);
 	} else
-		hidmt_pointer_update(&sc->sc_pointer, &frame, usec,
-		    (sc->sc_tapping != 0 ? HIDMT_TAP_LEFT : 0) |
-		    (sc->sc_tapping_right != 0 ? HIDMT_TAP_RIGHT : 0),
+		hidmt_pointer_update(&sc->sc_pointer, &frame, usec, taps,
 		    &motion);
 	/* Also when off: a switch-off cancels a swipe and drops a candidate. */
 	gconf.enable = sc->sc_gestures != 0;
@@ -581,6 +626,13 @@ imt_intr(struct ihidev *hdev, void *buf, u_int len)
 	if (motion.tap)
 		wsmouse_input(sc->sc_mouse, motion.buttons, 0, 0, 0, 0,
 		    WSMOUSE_INPUT_DELTA);
+	if (motion.click_after) {
+		/* Second tap of a double tap after a held tap. */
+		wsmouse_input(sc->sc_mouse, motion.buttons | 1u, 0, 0, 0, 0,
+		    WSMOUSE_INPUT_DELTA);
+		wsmouse_input(sc->sc_mouse, motion.buttons, 0, 0, 0, 0,
+		    WSMOUSE_INPUT_DELTA);
+	}
 	splx(s);
 	imt_tmo_arm(sc);
 }

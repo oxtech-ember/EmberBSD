@@ -38,6 +38,13 @@ struct hidmt_pointer {
 	unsigned id, tap_fingers;
 	int x, y, startx, starty, remx, remy;
 	uint64_t started;
+	/*
+	 * Tap and drag (HIDMT_TAP_DRAG): after a one-finger tap the left
+	 * button stays down until drag_deadline.  A touch that starts before
+	 * the deadline drags with it; the button goes up when that touch ends.
+	 */
+	bool drag_held, dragging;
+	uint64_t drag_deadline;
 	/* Two-finger scroll state; cleared with the rest on release. */
 	bool scroll_valid, scrolling;
 	unsigned scroll_id[2];
@@ -89,6 +96,11 @@ struct hidmt_motion {
 	bool tap;
 	/* wscons button bit: 1 = left, 4 = right */
 	unsigned tap_button;
+	/*
+	 * Tap and drag ended with a second tap: after reporting buttons
+	 * (left up), report one more left click (down and up).
+	 */
+	bool click_after;
 	/* Precision scroll units for wsmouse_precision_scroll(). */
 	int scroll_x, scroll_y;
 	/*
@@ -133,6 +145,10 @@ struct hidmt_gstate {
 /* Tap synthesis flags for hidmt_pointer_update(). */
 #define HIDMT_TAP_LEFT	0x01u	/* one-finger tap → left button */
 #define HIDMT_TAP_RIGHT	0x02u	/* two-finger tap → right button */
+#define HIDMT_TAP_DRAG	0x04u	/* one-finger tap, then touch: left drag */
+
+/* Time after a tap in which a new touch starts a drag (microseconds). */
+#define HIDMT_DRAG_US	250000
 
 int hidmt_parse(const void *, int, struct hidmt_config *);
 int hidmt_decode(const struct hidmt_config *, const uint8_t *, unsigned,
@@ -153,5 +169,6 @@ bool hidmt_live(const struct hidmt_pointer *, const struct hidmt_assembler *,
     const struct hidmt_gstate *);
 unsigned hidmt_stall(struct hidmt_pointer *, struct hidmt_assembler *,
     struct hidmt_gstate *, uint64_t, uint64_t, bool *);
+bool hidmt_drag_expire(struct hidmt_pointer *, uint64_t);
 
 #endif
