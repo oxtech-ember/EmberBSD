@@ -578,6 +578,11 @@ int setenv(const char *, const char *, int);
 int setgroupent(int);
 #endif
 
+#ifdef __NetBSD__
+/* The host tool feature-test macros hide this libc declaration. */
+int sethostname(const char *, size_t);
+#endif
+
 #if !HAVE_DECL_SETPASSENT
 int setpassent(int);
 #endif
