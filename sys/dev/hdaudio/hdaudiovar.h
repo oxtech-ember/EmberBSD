@@ -85,6 +85,7 @@ struct hdaudio_codec {
 	struct hdaudio_softc		*co_host;
 	u_int				co_timeouts;	/* consecutive */
 	time_t				co_quiet_until;	/* uptime, 0: off */
+	u_int				co_quiet_secs;	/* current quiet period */
 };
 
 #define	DMA_KERNADDR(dma)	((dma)->dma_addr)

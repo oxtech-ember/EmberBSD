@@ -61,11 +61,13 @@ __KERNEL_RCSID(0, "$NetBSD: hdaudio.c,v 1.18.12.1 2026/08/02 13:21:37 martin Exp
  * verb while sc_corb_mtx is held at IPL_AUDIO.  An Intel display audio
  * codec stops answering when the GPU powers down the display audio link.
  * After HDAUDIO_CODEC_TIMEOUT_LIMIT consecutive timeouts, fail the verbs
- * of that codec at once for HDAUDIO_CODEC_QUIET_SECS.  Then send one verb
- * again: a codec that answers is used normally.
+ * of that codec at once for a quiet period.  Then send one verb again: a
+ * codec that answers is used normally.  Each failed probe doubles the
+ * quiet period, from HDAUDIO_CODEC_QUIET_SECS up to HDAUDIO_CODEC_QUIET_MAX.
  */
 #define	HDAUDIO_CODEC_TIMEOUT_LIMIT	3
 #define	HDAUDIO_CODEC_QUIET_SECS	10
+#define	HDAUDIO_CODEC_QUIET_MAX		600
 
 #define	HDAUDIO_CODEC_DELAY	1000	/* spec calls for 250 */
 
@@ -273,6 +275,7 @@ hdaudio_rirb_unsol(struct hdaudio_softc *sc, struct rirb_entry *entry)
 	/* An unsolicited response shows that the codec answers again. */
 	co->co_timeouts = 0;
 	co->co_quiet_until = 0;
+	co->co_quiet_secs = 0;
 
 	for (i = 0; i < co->co_nfg; i++) {
 		fg = &co->co_fg[i];
@@ -303,9 +306,11 @@ hdaudio_rirb_dequeue(struct hdaudio_softc *sc, bool unsol, bool *timedout)
 			rirbwp = hda_read2(sc, HDAUDIO_MMIO_RIRBWP);
 		}
 		if (retry == 0) {
-			hda_error(sc, "RIRB timeout\n");
+			/* The command path reports its own timeouts. */
 			if (timedout != NULL)
 				*timedout = true;
+			else
+				hda_error(sc, "RIRB timeout\n");
 			return 0xffffffff;
 		}
 
@@ -368,12 +373,20 @@ hdaudio_command_unlocked(struct hdaudio_codec *co, int nid, uint32_t control,
 			hda_print(sc, "codec %02X answers again\n", co->co_addr);
 		co->co_timeouts = 0;
 		co->co_quiet_until = 0;
-	} else if (++co->co_timeouts >= HDAUDIO_CODEC_TIMEOUT_LIMIT) {
-		if (co->co_quiet_until == 0)
+		co->co_quiet_secs = 0;
+	} else if (co->co_quiet_until != 0) {
+		/* A probe after a quiet period failed: wait longer. */
+		co->co_quiet_secs = MIN(co->co_quiet_secs * 2,
+		    HDAUDIO_CODEC_QUIET_MAX);
+		co->co_quiet_until = time_uptime + co->co_quiet_secs;
+	} else {
+		hda_error(sc, "RIRB timeout\n");
+		if (++co->co_timeouts >= HDAUDIO_CODEC_TIMEOUT_LIMIT) {
 			hda_error(sc, "codec %02X does not answer, "
-			    "skipping its verbs for %d s at a time\n",
-			    co->co_addr, HDAUDIO_CODEC_QUIET_SECS);
-		co->co_quiet_until = time_uptime + HDAUDIO_CODEC_QUIET_SECS;
+			    "skipping its verbs\n", co->co_addr);
+			co->co_quiet_secs = HDAUDIO_CODEC_QUIET_SECS;
+			co->co_quiet_until = time_uptime + co->co_quiet_secs;
+		}
 	}
 
 	return result;
@@ -956,6 +969,7 @@ hdaudio_resume(struct hdaudio_softc *sc)
 	for (codec = 0; codec < HDAUDIO_MAX_CODECS; codec++) {
 		sc->sc_codec[codec].co_timeouts = 0;
 		sc->sc_codec[codec].co_quiet_until = 0;
+		sc->sc_codec[codec].co_quiet_secs = 0;
 	}
 
 	hda_delay(HDAUDIO_CODEC_DELAY);
