@@ -16,6 +16,7 @@
 #include <sys/atomic.h>
 #include <sys/mbuf.h>
 #include <sys/callout.h>
+#include <sys/timearith.h>
 #include <sys/timevar.h>
 #include <sys/workqueue.h>
 #include <sys/intr.h>
@@ -2042,9 +2043,13 @@ rtw88_net_ra_prepare(struct ieee80211com *ic, unsigned channel,
 static int
 rtw88_net_bootstrap_wait(unsigned us)
 {
+	struct timeval delay = {
+		.tv_sec = us / 1000000,
+		.tv_usec = us % 1000000
+	};
 	int error;
 
-	error = kpause("rtwdack", false, mstohz(us / 1000) + 1, NULL);
+	error = kpause("rtwdack", false, tvtohz(&delay), NULL);
 	return error == EWOULDBLOCK ? 0 : EAGAIN;
 }
 

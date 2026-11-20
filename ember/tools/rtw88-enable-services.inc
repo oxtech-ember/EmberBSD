@@ -3,6 +3,7 @@
 /* Explicit kernel registration/service model for the owning attach function. */
 #include <stdarg.h>
 #include <time.h>
+#include <sys/time.h>
 #include <limits.h>
 #ifndef MAX
 #define MAX(a,b) ((a)>(b)?(a):(b))
@@ -51,6 +52,11 @@ static void callout_destroy(int *c) { (void)c; }
 static void callout_halt(int *c,void *lock) { (void)c;assert(lock==NULL); }
 static void callout_schedule(int *c,unsigned ticks) { (void)c;(void)ticks; }
 static unsigned mstohz(unsigned ms) { return ms; }
+static int tvtohz(const struct timeval *tv)
+{
+    assert(tv->tv_sec == 0 && tv->tv_usec > 0);
+    return (tv->tv_usec + 999) / 1000 + 1;
+}
 /* Process sleep/clock boundary: the real kernel owns Giant release semantics. */
 static int (*enable_pause_hook)(unsigned);
 static int (*enable_drain_pause_hook)(unsigned);

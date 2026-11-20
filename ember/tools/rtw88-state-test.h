@@ -3,6 +3,7 @@
 /* Complete native state consumer plus real core; kernel scheduling is modeled. */
 #include <stdarg.h>
 #include <stdbool.h>
+#include <sys/time.h>
 /* BSD sys/types.h alias used by the unchanged shared channel functions. */
 typedef unsigned int u_int;
 #include <dev/ic/rtw88_net_policy.h>
@@ -166,6 +167,13 @@ static unsigned state_beacon_lock;
 #define IEEE80211_BEACON_UNLOCK(ic) do { (void)(ic); assert(state_beacon_lock); state_beacon_lock=0; } while (0)
 unsigned ieee80211_chan2ieee(struct ieee80211com *,struct ieee80211_channel *);
 #define mstohz(ms) (ms)
+static unsigned state_tick_us = 1000;
+static int tvtohz(const struct timeval *tv)
+{
+	assert(tv->tv_sec == 0 && tv->tv_usec > 0);
+	return ((unsigned long)tv->tv_usec + state_tick_us - 1) /
+	    state_tick_us + 1;
+}
 static unsigned state_ticks=1;
 static void (*state_dack_wait)(int);
 static unsigned getticks(void) { return state_ticks; }
