@@ -147,9 +147,23 @@ gpio_resume(device_t self, const pmf_qual_t *qual)
 	struct gpio_softc *sc = device_private(self);
 	int pin;
 
+	/*
+	 * Origin: EmberBSD (AI-assisted).  Restore only the pins that a
+	 * consumer configured.  A pin with no flags keeps the configuration
+	 * of the firmware or of the controller driver: on Intel PCHs most
+	 * pads carry a native function (I2C, PCIe CLKREQ, SCI events), and
+	 * gpiobus_pin_ctl(0) turns such a pad into a disabled GPIO.  Only
+	 * outputs get their saved level back.
+	 */
 	for (pin = 0; pin < sc->sc_npins; pin++) {
-		gpiobus_pin_ctl(sc->sc_gc, pin, sc->sc_pins[pin].pin_flags);
-		gpiobus_pin_write(sc->sc_gc, pin, sc->sc_pins[pin].pin_state);
+		const int flags = sc->sc_pins[pin].pin_flags;
+
+		if (flags == 0)
+			continue;
+		gpiobus_pin_ctl(sc->sc_gc, pin, flags);
+		if (flags & (GPIO_PIN_OUTPUT | GPIO_PIN_INOUT))
+			gpiobus_pin_write(sc->sc_gc, pin,
+			    sc->sc_pins[pin].pin_state);
 	}
 	return true;
 }

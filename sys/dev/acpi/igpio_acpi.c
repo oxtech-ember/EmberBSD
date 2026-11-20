@@ -56,6 +56,8 @@ struct igpio_acpi_softc {
 static int	igpio_acpi_match(device_t, cfdata_t, void *);
 static void	igpio_acpi_attach(device_t, device_t, void *);
 static int	igpio_acpi_detach(device_t, int);
+static bool	igpio_acpi_suspend(device_t, const pmf_qual_t *);
+static bool	igpio_acpi_resume(device_t, const pmf_qual_t *);
 
 static void	igpio_acpi_register_event(void *, struct acpi_event *, ACPI_RESOURCE_GPIO *);
 static int	igpio_acpi_intr(void *);
@@ -192,8 +194,26 @@ igpio_acpi_attach(device_t parent, device_t self, void *aux)
 
 done:
 	acpi_resource_cleanup(&res);
-	(void)pmf_device_register(self, NULL, NULL);
+	(void)pmf_device_register(self, igpio_acpi_suspend, igpio_acpi_resume);
 	asc->sc_pmf = 1;
+}
+
+static bool
+igpio_acpi_suspend(device_t self, const pmf_qual_t *qual)
+{
+	struct igpio_acpi_softc *asc = device_private(self);
+
+	igpio_suspend(&asc->sc_isc);
+	return true;
+}
+
+static bool
+igpio_acpi_resume(device_t self, const pmf_qual_t *qual)
+{
+	struct igpio_acpi_softc *asc = device_private(self);
+
+	igpio_resume(&asc->sc_isc);
+	return true;
 }
 
 static int

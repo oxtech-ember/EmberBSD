@@ -50,6 +50,11 @@ struct igpio_intr {
 	void *ii_arg;
 	struct igpio_bank *ii_bank;
 	int ii_pin;
+	/* GPP path: the logical GPI enable, set by igpio_gpp_set_ie(). */
+	bool ii_ie;
+	/* Saved by igpio_suspend() for igpio_resume(). */
+	uint32_t ii_padcfg0;
+	bool ii_saved;
 };
 
 struct igpio_bank {
@@ -291,13 +296,33 @@ igpio_gpp_mask(const struct igpio_gpp *gg)
 	return __BITS(gg->igg_npads - 1, 0);
 }
 
+/* Mask and clear every GPI interrupt; drivers enable their own. */
+static void
+igpio_gpp_quiet(struct igpio_softc *sc)
+{
+	const struct igpio_gpp_device *igd = sc->sc_gpp_device;
+	const struct igpio_gpp *gg;
+	bus_space_handle_t bsh;
+	int i;
+
+	for (i = 0; i < igd->igd_ngpps; i++) {
+		gg = &igd->igd_gpps[i];
+		bsh = sc->sc_bsh[gg->igg_barno];
+		mutex_enter(&sc->sc_banks[gg->igg_barno].ib_mtx);
+		bus_space_write_4(sc->sc_bst, bsh,
+		    igd->igd_gpi_ie + gg->igg_regno * 4, 0);
+		bus_space_write_4(sc->sc_bst, bsh,
+		    igd->igd_gpi_is + gg->igg_regno * 4, igpio_gpp_mask(gg));
+		mutex_exit(&sc->sc_banks[gg->igg_barno].ib_mtx);
+	}
+}
+
 static bool
 igpio_gpp_attach(struct igpio_softc *sc)
 {
 	const struct igpio_gpp_device *igd = sc->sc_gpp_device;
 	const struct igpio_gpp *gg;
 	struct igpio_bank_setup *ibs;
-	bus_space_handle_t bsh;
 	int i, npins = 0;
 
 	for (i = 0; i < igd->igd_ngpps; i++) {
@@ -318,16 +343,7 @@ igpio_gpp_attach(struct igpio_softc *sc)
 	sc->sc_npins = npins;
 	sc->sc_gpp_intr =
 	    kmem_zalloc(sizeof(*sc->sc_gpp_intr) * npins, KM_SLEEP);
-
-	/* Mask and clear every GPI interrupt; drivers enable their own. */
-	for (i = 0; i < igd->igd_ngpps; i++) {
-		gg = &igd->igd_gpps[i];
-		bsh = sc->sc_bsh[gg->igg_barno];
-		bus_space_write_4(sc->sc_bst, bsh,
-		    igd->igd_gpi_ie + gg->igg_regno * 4, 0);
-		bus_space_write_4(sc->sc_bst, bsh,
-		    igd->igd_gpi_is + gg->igg_regno * 4, igpio_gpp_mask(gg));
-	}
+	igpio_gpp_quiet(sc);
 
 	return true;
 }
@@ -344,6 +360,7 @@ igpio_gpp_set_ie(struct igpio_softc *sc, struct igpio_intr *ii, bool on)
 	uint32_t val;
 
 	KASSERT(mutex_owned(&ib->ib_mtx));
+	ii->ii_ie = on;
 	val = bus_space_read_4(sc->sc_bst, bsh, ie);
 	val = on ? (val | bit) : (val & ~bit);
 	bus_space_write_4(sc->sc_bst, bsh, ie, val);
@@ -421,6 +438,7 @@ igpio_gpp_intr_establish(struct igpio_softc *sc, int pin, int irqmode,
 	ii->ii_arg = arg;
 	ii->ii_bank = ib;
 	ii->ii_pin = pin;
+	ii->ii_saved = false;
 
 	bus_space_write_4(sc->sc_bst, bsh,
 	    igd->igd_gpi_is + gg->igg_regno * 4, bit);
@@ -440,6 +458,7 @@ igpio_gpp_intr_disestablish(struct igpio_softc *sc, struct igpio_intr *ii)
 	igpio_gpp_set_ie(sc, ii, false);
 	ii->ii_func = NULL;
 	ii->ii_arg = NULL;
+	ii->ii_saved = false;
 	mutex_exit(&ib->ib_mtx);
 }
 
@@ -962,6 +981,7 @@ igpio_intr_establish(void *priv, int pin, int ipl, int irqmode,
 	ii->ii_arg = arg;
 	ii->ii_pin = pin;
 	ii->ii_bank = ib;
+	ii->ii_saved = false;
 
 	mutex_enter(&ib->ib_mtx);
 
@@ -1067,6 +1087,7 @@ igpio_intr_disestablish(void *priv, void *ih)
 
 	ii->ii_func = NULL;
 	ii->ii_arg = NULL;
+	ii->ii_saved = false;
 
 	return;
 }
@@ -1082,6 +1103,116 @@ igpio_intr_str(void *priv, int pin, int irqmode,
 	rv = snprintf(buf, buflen, "%s pin %d", name, pin);
 
 	return (rv < buflen);
+}
+
+/*
+ * Origin: EmberBSD (AI-assisted).  Firmware restores its own pad
+ * configuration on resume from S3.  igpio_suspend() saves PADCFG0 of each
+ * pad that carries an established interrupt.  igpio_resume() first masks
+ * and clears every GPI interrupt of the GPP path, as attach does, so that
+ * an enable left by firmware cannot storm, then writes the saved PADCFG0
+ * back.  On the GPP path it also clears the GPI status of the pad and
+ * restores its logical enable (ii_ie, kept by igpio_gpp_set_ie()); a
+ * pending edge from before the resume is dropped, as on Linux.  The legacy
+ * bank path restores PADCFG0 only.  Other pads keep the firmware
+ * configuration.
+ */
+static bool
+igpio_intr_pad(struct igpio_softc *sc, struct igpio_intr *ii,
+    bus_addr_t *cfg0, const struct igpio_gpp **ggp)
+{
+	int pad;
+
+	*ggp = NULL;
+	if (ii->ii_func == NULL || ii->ii_bank == NULL)
+		return false;
+	if (sc->sc_gpp_device == NULL)
+		pad = ii->ii_pin;
+	else if (igpio_pin_bank(sc, ii->ii_pin, &pad, ggp) != ii->ii_bank)
+		return false;
+	*cfg0 = igpio_pincfg(ii->ii_bank, pad, IGPIO_PADCFG0);
+	return true;
+}
+
+static void
+igpio_intr_save(struct igpio_softc *sc, struct igpio_intr *ii)
+{
+	const struct igpio_gpp *gg;
+	struct igpio_bank *ib = ii->ii_bank;
+	bus_addr_t cfg0;
+
+	ii->ii_saved = false;
+	if (!igpio_intr_pad(sc, ii, &cfg0, &gg))
+		return;
+	mutex_enter(&ib->ib_mtx);
+	ii->ii_padcfg0 = bus_space_read_4(sc->sc_bst,
+	    sc->sc_bsh[ib->ib_barno], cfg0);
+	ii->ii_saved = true;
+	mutex_exit(&ib->ib_mtx);
+}
+
+static void
+igpio_intr_restore(struct igpio_softc *sc, struct igpio_intr *ii)
+{
+	const struct igpio_gpp *gg;
+	struct igpio_bank *ib = ii->ii_bank;
+	bus_space_handle_t bsh;
+	bus_addr_t cfg0;
+
+	if (!igpio_intr_pad(sc, ii, &cfg0, &gg))
+		return;
+	bsh = sc->sc_bsh[ib->ib_barno];
+	mutex_enter(&ib->ib_mtx);
+	/* An interrupt established while suspended has no saved pad. */
+	if (ii->ii_saved)
+		bus_space_write_4(sc->sc_bst, bsh, cfg0, ii->ii_padcfg0);
+	ii->ii_saved = false;
+	if (gg != NULL) {
+		bus_space_write_4(sc->sc_bst, bsh,
+		    sc->sc_gpp_device->igd_gpi_is + gg->igg_regno * 4,
+		    igpio_gpp_bit(gg, ii->ii_pin));
+		igpio_gpp_set_ie(sc, ii, ii->ii_ie);
+	}
+	mutex_exit(&ib->ib_mtx);
+}
+
+static void
+igpio_intr_foreach(struct igpio_softc *sc,
+    void (*fn)(struct igpio_softc *, struct igpio_intr *))
+{
+	struct igpio_bank *ib;
+	int i, j, npins;
+
+	if (sc->sc_banks == NULL)
+		return;
+	if (sc->sc_gpp_device != NULL) {
+		for (i = 0; sc->sc_gpp_intr != NULL && i < sc->sc_npins; i++)
+			fn(sc, &sc->sc_gpp_intr[i]);
+		return;
+	}
+	for (i = 0; i < sc->sc_nbar; i++) {
+		ib = &sc->sc_banks[i];
+		if (ib->ib_intr == NULL || ib->ib_setup == NULL)
+			continue;
+		npins = 1 + ib->ib_setup->ibs_last_pin -
+		    ib->ib_setup->ibs_first_pin;
+		for (j = 0; j < npins; j++)
+			fn(sc, &ib->ib_intr[j]);
+	}
+}
+
+void
+igpio_suspend(struct igpio_softc *sc)
+{
+	igpio_intr_foreach(sc, igpio_intr_save);
+}
+
+void
+igpio_resume(struct igpio_softc *sc)
+{
+	if (sc->sc_banks != NULL && sc->sc_gpp_device != NULL)
+		igpio_gpp_quiet(sc);
+	igpio_intr_foreach(sc, igpio_intr_restore);
 }
 
 int
