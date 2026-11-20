@@ -216,6 +216,12 @@ static bool frame_trial;
 static unsigned int frame_scenario,frame_command_calls,frame_gate_calls,frame_fault_acks;
 static bool frame_rpc_faulted;
 static unsigned int frame_alloc_pending;
+static const struct {
+    uint32_t minimum, maximum, address;
+} frame_alloc_wire[] = {
+    {19176,1733208,0x24004000U}, {128,65536,0x241ac000U},
+    {384,24576,0x241bc000U}
+};
 static bool boot_term_issued;
 static uint64_t boot_now;
 static uint32_t boot_regs[2][0x400 / 4];
@@ -302,12 +308,14 @@ static void bus_space_write_4(bus_space_tag_t t, bus_space_handle_t h,
     }
     if(h==1 && offset==0x220 && value==1 && boot_regs[1][1]==1 && frame_trial) {
         if (frame_alloc_pending!=0) {
+            CHECK(frame_alloc_pending<=__arraycount(frame_alloc_wire));
             CHECK(boot_fixture_rpc_word(0)==2 && boot_fixture_rpc_word(1)==2 &&
                 boot_fixture_rpc_word(2)==4 && boot_fixture_rpc_word(3)==
-                (frame_alloc_pending==1 ? 0x24004000U : 0x241ac000U));
-            if (frame_alloc_pending==1) {
-                boot_fixture_rpc_words(1,2,12,128,65536,0,12);
-                frame_alloc_pending=2;
+                frame_alloc_wire[frame_alloc_pending-1].address);
+            if (frame_alloc_pending<__arraycount(frame_alloc_wire)) {
+                boot_fixture_rpc_words(1,2,12,frame_alloc_wire[frame_alloc_pending].minimum,
+                    frame_alloc_wire[frame_alloc_pending].maximum,0,12);
+                frame_alloc_pending++;
             } else {
                 boot_fixture_rpc(0,0,0);
                 frame_alloc_pending=0;
@@ -315,7 +323,8 @@ static void bus_space_write_4(bus_space_tag_t t, bus_space_handle_t h,
         } else {
             boot_fixture_frame_notify();
             if (frame_scenario==0 && boot_fixture_frame_publications()==10) {
-                boot_fixture_rpc_words(1,2,12,19176,1733208,0,12);
+                boot_fixture_rpc_words(1,2,12,frame_alloc_wire[0].minimum,
+                    frame_alloc_wire[0].maximum,0,12);
                 frame_alloc_pending=1;
             }
         }
@@ -595,7 +604,7 @@ static void frame_trial_tests(void)
         boot_actual=boot_fixture_prepare_frame();struct cixvpu_prepared *owner=boot_actual;
         CHECK(cixvpu_acpi_boot_once(b,&owner)==0 && owner==NULL);
         CHECK(boot_fixture_frame_publications()==13 && frame_alloc_pending==0);
-        CHECK(b->report.rpc_commits==(scenario==0 ? 5U : 3U) &&
+        CHECK(b->report.rpc_commits==(scenario==0 ? 6U : 3U) &&
             b->report.rpc_notifications==b->report.rpc_commits);
         CHECK(b->report.exposed && b->report.held && boot_disestablish==0 && boot_masks==1);
         CHECK(cixvpu_prepared_free(&boot_actual)==EBUSY);
