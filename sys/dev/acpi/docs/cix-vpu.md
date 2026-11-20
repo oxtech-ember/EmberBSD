@@ -308,9 +308,20 @@ IDLE_ACK at most. The IDLE that answers an IDLE_ACK gets no answer.
 The host model uses 18 publications for this sequence: 13 commands and one
 IDLE_ACK in each CONFIRM wait. Debug RPC replies use the same 32 publications;
 16 of them with this sequence exceed the limit.
-This order is checked on the host model only; the board has not run it.
-The model does not show that the firmware accepts a command before IDLE_ACK.
+On 2026-11-20 the physical frame probe reached FRAME_RUN and recorded action
+11 after the option sequence. The action counter identifies an attempted
+operation. Successful output submission requires a separate completion result.
 Every committed publication gets one notification before another operation.
+
+The open frame queue can respond to three ordered region-zero ALLOC requests
+with 4 KiB alignment. Initial/maximum sizes in bytes are 19176/1733208,
+128/65536 and 384/24576. Before exposure the planner maps five, one and one
+pages at 0x24004000, 0x241ac000 and 0x241bc000 respectively. Each base follows
+the preceding object's full page-rounded virtual reservation. The remaining
+PTEs in these reservations stay invalid. The bootstrap-only profile retains
+its original page layout. Unknown requests or unsupported growth stop the
+diagnostic and preserve the captured request.
+
 
 The active phase allows 5001 visits, 5 seconds, 128 messages, 32 publications,
 65536 received protocol bytes, 4 output returns and 262144 accumulated host bytes.
@@ -456,9 +467,11 @@ The planner contract passes 682182 checks. Actual preparation passes 15724748
 checks with GCC16 path analysis, configured Cppcheck/CSA and ASan/UBSan.
 Causal runtime mutations cover the new boundaries.
 Only the separate manual RPC profile selects this plan. Default and strict
-manual profiles keep the ordinary plan. The second-object extension still
-needs a target build and physical acceptance. General allocation, resize/free,
-live PTE changes and physical coherency remain unqualified.
+manual profiles keep the ordinary plan. A physical run on 2026-11-20 confirmed
+the bootstrap ALLOC, RESIZE and second ALLOC, followed by the first two frame
+ALLOC replies. The next frame request was 384 bytes with a 24576-byte maximum.
+General allocation, resize/free, live PTE changes and safe DMA teardown
+remain unqualified.
 
 ## CPU preparation and opaque ownership
 
