@@ -90,6 +90,11 @@ Account for kernel/userland interfaces and each dependent consumer when an ABI c
 
 The portable kernel suite has one owner: `ember/tools/kernel-contracts.sh`.
 `ember/check-kernel.sh OUTPUT [BASE_COMMIT]` runs it; `ember/build-kernel.sh` does not.
+On native EmberBSD amd64, set `EMBER_NATIVE_ASAN_RESOURCE_DIR` to the
+absolute `lib/clang/<major>` directory of the selected compiler-rt package
+for ASan contracts. The SDK runner selects the resource directory and applies
+the required PaX setting to the sanitized test executables.
+See [SDK native source checks](https://github.com/oxtech-ember/EmberBSD-SDK/blob/main/docs/native-checks.md#netbsd-amd64-addresssanitizer).
 Set `EMBER_WPA_SOURCE` to the absolute path to the prepared Ports WPA tree
 when running the full suite or selecting either station contract.
 Set `PVR_QUERY_FIRMWARE` to the pinned image to include the PowerVR query contract.

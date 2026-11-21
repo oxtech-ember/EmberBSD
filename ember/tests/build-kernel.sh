@@ -5,7 +5,7 @@ set -eu
 # An ambient product version must not replace the selected source version.
 export EMBER_VERSION=9.9
 # Fixtures select their own build mode and toolchain, independent of the shell.
-unset EMBER_HOST_BFD_CONFIG EMBERBSD_SDK_SOURCE EMBER_HOST_PREFIX EMBER_HOST_COMPILER_FAMILY EMBER_BUILD_MODE EMBER_EXTERNAL_TOOLCHAIN EMBER_COMPILER_FAMILY EMBER_LLVM_SOURCE EMBER_BYACC_SOURCE EMBER_HEIMDAL_SOURCE EMBER_ZLIB_SOURCE PVR_QUERY_FIRMWARE EMBER_WPA_SOURCE MKREPRO_TIMESTAMP
+unset EMBER_HOST_BFD_CONFIG EMBERBSD_SDK_SOURCE EMBER_HOST_PREFIX EMBER_HOST_COMPILER_FAMILY EMBER_BUILD_MODE EMBER_EXTERNAL_TOOLCHAIN EMBER_COMPILER_FAMILY EMBER_LLVM_SOURCE EMBER_BYACC_SOURCE EMBER_HEIMDAL_SOURCE EMBER_ZLIB_SOURCE PVR_QUERY_FIRMWARE EMBER_WPA_SOURCE EMBER_NATIVE_ASAN_RESOURCE_DIR MKREPRO_TIMESTAMP
 # A fixed source timestamp keeps the fixture kernels reproducible.
 export MKREPRO_TIMESTAMP=1700000000
 # Most cases check the dispatch order, so run one contract at a time.
@@ -389,7 +389,7 @@ import sys
 
 args = sys.argv[1:]
 values = {"--host-prefix": "", "--compiler-family": "", "--cwd": "",
-          "--bindings": "", "--log": ""}
+          "--bindings": "", "--log": "", "--netbsd-asan-resource-dir": ""}
 roles = []
 flags = {"--cppflag": [], "--ldflag": []}
 role = None
@@ -424,6 +424,7 @@ if (values["--host-prefix"] != root or
         values["--compiler-family"] != os.environ.get("EMBER_HOST_COMPILER_FAMILY", "clang") or
         values["--cwd"] != root + "/src" or
         values["--bindings"] != os.environ["TEST_OUT"] + "/native-check-commands" or
+        values["--netbsd-asan-resource-dir"] != os.environ.get("EMBER_NATIVE_ASAN_RESOURCE_DIR", "") or
         sorted(roles) != ["awk", "ruby"]):
     raise SystemExit(81)
 # Model the SDK's strict reuse contract for caller-owned compiler bindings.
@@ -966,6 +967,13 @@ NETBSD2_PYTHON=/outside/bin/python3 PVR_QUERY_FIRMWARE="$work/pinned firmware" E
 grep -q '^native-check gcc sh ' "$TEST_LOG"
 grep -q '^pvr-query-contract ' "$TEST_LOG"
 count_contracts 16
+EMBER_NATIVE_ASAN_RESOURCE_DIR="$work/compiler rt/lib/clang/23" \
+    sh "$work/src/ember/check-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1
+if EMBER_NATIVE_ASAN_RESOURCE_DIR=relative \
+    sh "$work/src/ember/check-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1; then
+    echo "accepted relative ASan resource directory" >&2; exit 1
+fi
+grep -q 'EMBER_NATIVE_ASAN_RESOURCE_DIR' "$work/run.log"
 for wpa in relative "$work/missing WPA"; do
     : > "$TEST_LOG"
     if EMBER_WPA_SOURCE="$wpa" sh "$work/src/ember/check-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1; then

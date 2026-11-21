@@ -26,6 +26,13 @@ native_check="$sdk_source/scripts/run-native-check.py"
 [ -f "$native_check" ] || fail 'SDK source lacks the shared native-check runner'
 python="$host_prefix/bin/python3.15"
 [ -x "$python" ] || fail 'selected prefix lacks its Python 3.15'
+set --
+if [ -n "${EMBER_NATIVE_ASAN_RESOURCE_DIR:-}" ]; then
+    case "$EMBER_NATIVE_ASAN_RESOURCE_DIR" in
+        /*) set -- --netbsd-asan-resource-dir "$EMBER_NATIVE_ASAN_RESOURCE_DIR" ;;
+        *) fail 'EMBER_NATIVE_ASAN_RESOURCE_DIR must be an absolute path' ;;
+    esac
+fi
 mkdir -p "$out"
 out=$(CDPATH= cd -- "$out" && pwd -P)
 case "$out/" in //|"$src/"*) fail 'output must be outside the source tree' ;; esac
@@ -70,7 +77,7 @@ status=0
     --cppflag="-I$host_prefix/include" --ldflag="-L$host_prefix/lib" \
     --ldflag="-Wl,-rpath,$host_prefix/lib" \
     --tool sh --cwd "$src" --bindings "$out/native-check-commands" \
-    --log "$out/contracts.log" -- \
+    --log "$out/contracts.log" "$@" -- \
     "$src/ember/tools/kernel-contracts.sh" "$src" "$contracts" \
     "${PVR_QUERY_FIRMWARE:-}" "$selection" "$contract_jobs" "$wpa_source" || status=$?
 [ ! -f "$out/contracts.log" ] || cat "$out/contracts.log"
