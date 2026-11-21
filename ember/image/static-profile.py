@@ -429,37 +429,22 @@ def disable_syslogd_chroot_discovery(root, generated_rc_conf, overlay_kept_rc_co
         if script.is_symlink() or not script.is_file():
             return
         data = script.read_bytes()
-        # rcorder uses fparseln: only an odd trailing backslash continues a
-        # line. CRLF and NUL are ambiguous to this small producer check, so
-        # leave discovery enabled for those files.
+        # Stay conservative on binary or CRLF inputs; either can be handled by
+        # rcorder without changing the generated default profile.
         if b'\r' in data or b'\0' in data:
             return
-        physical = data.split(b'\n')
-        if physical[-1] == b'' and data.endswith(b'\n'):
-            physical.pop()
-        logical = b''
-        parsing = False
-        for index, line in enumerate(physical):
-            slash_count = len(line) - len(line.rstrip(b'\\'))
-            continued = slash_count % 2 == 1
-            logical += line[:-1] if continued else line
-            if continued and index != len(physical) - 1:
-                continue
-            directive = next((prefix for prefix in
-                              (b'# REQUIRE:', b'# REQUIRES:', b'# PROVIDE:',
-                               b'# PROVIDES:', b'# BEFORE:', b'# KEYWORD:',
-                               b'# KEYWORDS:') if logical.startswith(prefix)), None)
-            if directive is None:
-                if parsing:
-                    break
-                logical = b''
-                continue
-            parsing = True
-            if directive in (b'# KEYWORD:', b'# KEYWORDS:'):
-                words = logical[len(directive):].replace(b'\t', b' ').split()
-                if b'chrootdir' in words:
-                    return
-            logical = b''
+        keyword_prefixes = (b'# KEYWORD:', b'# KEYWORDS:')
+        for line in data.split(b'\n'):
+            without_trailing_slashes = line.rstrip(b'\\')
+            has_trailing_slash = len(without_trailing_slashes) != len(line)
+            if any(line.startswith(prefix) and
+                   (b'chrootdir' in line or has_trailing_slash)
+                   for prefix in keyword_prefixes):
+                return
+            if has_trailing_slash and any(
+                    prefix.startswith(without_trailing_slashes)
+                    for prefix in keyword_prefixes):
+                return
     with (root / 'etc/rc.conf').open('a') as stream:
         stream.write('syslogd_chroot_services=NO\n')
 

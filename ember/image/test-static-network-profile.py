@@ -892,8 +892,9 @@ with tempfile.TemporaryDirectory(prefix='static-network-') as temporary:
     chroot_overlay = temporary / 'chroot-overlay'
     (chroot_overlay / 'etc/rc.network.d').mkdir(parents=True)
     (chroot_overlay / 'etc/rc.network.d/custom_chroot').write_text(
-        '#!/bin/sh\n# ordinary comment \\\\\n'
-        '# PROVIDE: custom_chroot\n# KEYWOR\\\nD: chrootdir\n')
+        '#!/bin/sh\n# ordinary comment \\\\\n# KEYWORD: chrootdir\n')
+    (chroot_overlay / 'etc/rc.network.d/folded_chroot').write_text(
+        '#!/bin/sh\n# KEYWOR\\\nD: chrootdir\n')
     chroot_root = temporary / 'root-chroot-overlay'
     chroot_root.mkdir()
     (chroot_root / 'dev').mkdir()
@@ -902,6 +903,18 @@ with tempfile.TemporaryDirectory(prefix='static-network-') as temporary:
     check('syslogd_chroot_services=' not in
           (chroot_root / 'etc/rc.conf').read_text(),
           'logging profile retains automatic discovery when overlay adds a chroot service')
+    ambiguous_overlay = temporary / 'ambiguous-keyword-overlay'
+    (ambiguous_overlay / 'etc/rc.network.d').mkdir(parents=True)
+    (ambiguous_overlay / 'etc/rc.network.d/continued_keyword').write_text(
+        '#!/bin/sh\n# KEYWORD: network-appliance \\\n# harmless continuation\n')
+    ambiguous_root = temporary / 'root-ambiguous-keyword'
+    ambiguous_root.mkdir()
+    (ambiguous_root / 'dev').mkdir()
+    profile.stage_network(ambiguous_root, source, ambiguous_overlay, 'wifi0',
+                          pwd_mkdb, dhcp_dest, 'md0', 'a', logging_enabled=True)
+    check('syslogd_chroot_services=' not in
+          (ambiguous_root / 'etc/rc.conf').read_text(),
+          'profile stays conservative for a continued keyword without chrootdir')
     override_overlay = temporary / 'chroot-override-overlay'
     (override_overlay / 'etc/rc.extra.d').mkdir(parents=True)
     (override_overlay / 'etc/rc.extra.d/custom_chroot').write_text(
