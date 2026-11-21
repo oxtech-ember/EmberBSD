@@ -242,7 +242,7 @@ CPPFLAGS+=	-DSYSINST_CDROM_DIR=\"${SYSINST_CDROM_DIR}\"
 
 DPSRCS+=	msg_defs.h menu_defs.h
 
-CLEANFILES=	menu_defs.c menu_defs.h menus.def \
+CLEANFILES=	menu_defs.c menu_defs.h menus.def menus.def.rendered menus.def.tmp \
 		msg_defs.c msg_defs.h msg.def msgtouch \
 		sysinstmsgs.* ember-build-config ember-build-config.tmp \
 		${_EMBER_SYSINST_STAMPS} ${_EMBER_SYSINST_STAMPS:S/$/.tmp/}
@@ -291,7 +291,14 @@ msg.def: msg.mi.${SYSINSTLANG} ${MSG_MD} msgtouch
 	${TOOL_SED} -e "s/@@EMBER_VERSION@@/${EMBER_VERSION}/" -e "s/@@MACHINE@@/${MACHINE}/" -e "s/@@BUILD@@/${EMBER_BUILD_ID}/" | \
 	${TOOL_AWK} -f ${UNIF_AWK} -v defines="${MD_OPTIONS}" > ${.TARGET}
 
-menus.def: ${MENUS_MI} ${MENUS_MD} msgtouch
+# Current menus have no release placeholders. Keep their timestamp stable
+# while allowing a platform menu to embed its selected build identity.
+menus.def: menus.def.rendered
+	@if ! cmp -s ${.ALLSRC} ${.TARGET}; then \
+		cp ${.ALLSRC} ${.TARGET}.tmp && mv -f ${.TARGET}.tmp ${.TARGET}; \
+	fi
+
+menus.def.rendered: ${MENUS_MI} ${MENUS_MD} msgtouch
 	${_MKTARGET_CREATE}
 	${TOOL_SED} "s/@@VERSION@@/${DISTRIBVER}/" ${.ALLSRC} | \
 	${TOOL_SED} -e "s/@@EMBER_VERSION@@/${EMBER_VERSION}/" -e "s/@@MACHINE@@/${MACHINE}/" -e "s/@@BUILD@@/${EMBER_BUILD_ID}/" | \

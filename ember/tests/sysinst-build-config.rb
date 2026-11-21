@@ -35,9 +35,9 @@ obj = out + '/obj/usr.sbin/sysinst/arch/' + machine
 FileUtils.mkdir_p(obj)
 abort 'Object isolation failed' unless checked(make, '-C', dir, '-V', '.OBJDIR') == obj
 catalogs = %w[sysinstmsgs.de sysinstmsgs.es sysinstmsgs.fr sysinstmsgs.pl]
-messages = %w[msg.def menus.def msg_defs.c menu_defs.c sysinstmsgs.fmtcnt] + catalogs
-objects = %w[wizard.o main.o util.o txtwalk.o]
-files = objects + messages
+messages = %w[msg.def msg_defs.c sysinstmsgs.fmtcnt] + catalogs
+objects = %w[wizard.o main.o util.o txtwalk.o menu_defs.o]
+files = objects + messages + %w[menus.def menu_defs.c]
 targets = objects + ['filesbuild']
 identity = ['wizard.o'] + messages
 identity_with_url = identity.dup
@@ -102,5 +102,21 @@ end
 run.call('switch-back', '1.0', a, false, identity_with_url | (runtime ? runtime_objects : []))
 files.each do |file|
   abort 'Switch-back changed reproducible output: ' + file unless previous[file][:sha256] == initial[file][:sha256]
+end
+# Recreate a missing published input even when the render is up to date.
+menu_def = obj + '/menus.def'
+content = File.binread(menu_def)
+File.unlink(menu_def)
+checked(make, '-C', dir, 'EMBER_VERSION=1.0', 'EMBER_BUILD_ID=' + a, 'menus.def')
+abort 'Missing menu was not recovered' unless File.binread(menu_def) == content
+
+# A platform can also supply a menu that embeds the release identity.
+menu = out + '/release-menu'
+File.write(menu, "menu release, title \"@@EMBER_VERSION@@ @@BUILD@@\";\n")
+[a, b].each do |id|
+  sleep 1.1
+  checked(make, '-C', dir, 'MENUS_MI=' + menu, 'MENUS_MD=', 'EMBER_VERSION=2.0',
+    'EMBER_BUILD_ID=' + id, 'menus.def')
+  abort 'Platform menu has stale identity' unless File.read(obj + '/menus.def').include?('2.0 ' + id)
 end
 puts "PASS: sysinst ID/version, #{runtime ? 'base and GCC runtimes' : 'base runtime'}, unchanged repeats and reproducible switch-back"
