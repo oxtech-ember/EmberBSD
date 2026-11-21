@@ -229,13 +229,15 @@
 			    ESP32S31_I2S0_BCK)>,
 			    <ESP32S31_PINMUX(49, ESP32S31_SIG_NONE,
 			    ESP32S31_I2S0_WS)>,
-			    <ESP32S31_PINMUX(40, ESP32S31_SIG_NONE,
+			    /* ES8311 DSDIN (pin 9), net I2S_DIN. */
+			    <ESP32S31_PINMUX(52, ESP32S31_SIG_NONE,
 			    ESP32S31_I2S0_SD)>;
 			output-enable;
 			bias-disable;
 		};
 		input {
-			pinmux = <ESP32S31_PINMUX(52, ESP32S31_I2S0_SD,
+			/* ES8311 ASDOUT (pin 7), net I2S_DOUT. */
+			pinmux = <ESP32S31_PINMUX(40, ESP32S31_I2S0_SD,
 			    ESP32S31_SIG_NONE)>;
 			input-enable;
 			bias-disable;
