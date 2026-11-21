@@ -229,11 +229,35 @@ ATF_TC_BODY(aligned_alloc_basic, tc)
 }
 
 
+ATF_TC(aligned_realloc);
+ATF_TC_HEAD(aligned_realloc, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "Reallocate an aligned BSD ACL-sized block");
+}
+ATF_TC_BODY(aligned_realloc, tc)
+{
+	enum { alignment = 8192, size = 5000 };
+	unsigned char *larger;
+	void *p;
+	size_t i;
+
+	/* acl_init(3) uses this alignment even on 4K-page targets. */
+	ATF_REQUIRE_EQ(posix_memalign(&p, alignment, size), 0);
+	ATF_REQUIRE_EQ((uintptr_t)p % alignment, 0);
+	memset(p, 0xa5, size);
+	larger = realloc(p, 3 * size);
+	ATF_REQUIRE(larger != NULL);
+	for (i = 0; i < size; i++)
+		ATF_REQUIRE_EQ(larger[i], 0xa5);
+	free(larger);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, posix_memalign_basic);
 	ATF_TP_ADD_TC(tp, aligned_alloc_basic);
+	ATF_TP_ADD_TC(tp, aligned_realloc);
 
 	return atf_no_error();
 }

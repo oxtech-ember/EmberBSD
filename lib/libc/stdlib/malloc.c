@@ -312,6 +312,7 @@ static int extend_pgdir(size_t idx);
 static void *imalloc(size_t size);
 static void ifree(void *ptr);
 static void *irealloc(void *ptr, size_t size);
+static void wrterror(const char *) __dead;
 
 static void
 wrtmessage(const char *p1, const char *p2, const char *p3, const char *p4)
@@ -374,6 +375,7 @@ map_pages(size_t pages)
 	    if (brk(result)) {
 		wrterror("brk(2) failed [internal error]\n");
 	    }
+	    return NULL;
 	}
     }
     tail = rresult + (size_t)bytes;
@@ -814,6 +816,39 @@ imalloc(size_t size)
     return result;
 }
 
+/* Allocate a page run, then return its unneeded ends to the allocator. */
+static void *
+imemalign(size_t alignment, size_t size)
+{
+    char *base, *result;
+    size_t length, padding, prefix;
+
+    if (alignment <= malloc_pagesize)
+	return imalloc(size < alignment ? alignment : size);
+
+    /* The base is page-aligned, so at most this much padding is needed. */
+    padding = alignment - malloc_pagesize;
+    length = pageround(size);
+    if (length < size || length > SIZE_MAX - padding)
+	return NULL;
+    base = imalloc(length + padding);
+    if (base == NULL)
+	return NULL;
+
+    prefix = (-(uintptr_t)base) & (alignment - 1);
+    result = base + prefix;
+    /* Mark each run before freeing either neighbour. */
+    if (prefix != 0)
+	page_dir[ptr2idx(result)] = MALLOC_FIRST;
+    if (prefix < padding)
+	page_dir[ptr2idx(result + length)] = MALLOC_FIRST;
+    if (prefix != 0)
+	ifree(base);
+    if (prefix < padding)
+	ifree(result + length);
+    return result;
+}
+
 /*
  * Change the size of an allocation.
  */
@@ -1147,7 +1182,7 @@ static int malloc_active; /* Recursion flag for public interface. */
 static unsigned malloc_started; /* Set when initialization has been done */
 
 static void *
-pubrealloc(void *ptr, size_t size, const char *func)
+pubrealloc(void *ptr, size_t size, size_t alignment, const char *func)
 {
     void *r;
     int err = 0;
@@ -1192,6 +1227,9 @@ pubrealloc(void *ptr, size_t size, const char *func)
 	if (ptr != NULL)
 	    ifree(ptr);
 	r = ZEROSIZEPTR;
+    } else if (alignment != 0) {
+	r = imemalign(alignment, size);
+	err = (r == NULL);
     } else if (ptr == NULL) {
 	r = imalloc(size);
 	err = (r == NULL);
@@ -1217,7 +1255,7 @@ void *
 malloc(size_t size)
 {
 
-    return pubrealloc(NULL, size, " in malloc():");
+    return pubrealloc(NULL, size, 0, " in malloc():");
 }
 
 int
@@ -1226,21 +1264,13 @@ posix_memalign(void **memptr, size_t alignment, size_t size)
     int err;
     void *result;
 
-    if (!malloc_started) {
-	    malloc_init();
-	    malloc_started = 1;
-    }
     /* Make sure that alignment is a large enough power of 2. */
-    if (((alignment - 1) & alignment) != 0 || alignment < sizeof(void *) ||
-	alignment > malloc_pagesize)
+    if (((alignment - 1) & alignment) != 0 || alignment < sizeof(void *))
 	    return EINVAL;
 
-    /* 
-     * (size | alignment) is enough to assure the requested alignment, since
-     * the allocator always allocates power-of-two blocks.
-     */
     err = errno; /* Protect errno against changes in pubrealloc(). */
-    result = pubrealloc(NULL, (size | alignment), " in posix_memalign()");
+    result = pubrealloc(NULL, size == 0 ? 1 : size, alignment,
+	"in posix_memalign()");
     errno = err;
 
     if (result == NULL)
@@ -1261,7 +1291,7 @@ calloc(size_t num, size_t size)
 	return (NULL);
     }
 
-    ret = pubrealloc(NULL, num * size, " in calloc():");
+    ret = pubrealloc(NULL, num * size, 0, " in calloc():");
 
     if (ret != NULL)
 	memset(ret, 0, num * size);
@@ -1273,14 +1303,14 @@ void
 free(void *ptr)
 {
 
-    pubrealloc(ptr, 0, " in free():");
+    pubrealloc(ptr, 0, 0, " in free():");
 }
 
 void *
 realloc(void *ptr, size_t size)
 {
 
-    return pubrealloc(ptr, size, " in realloc():");
+    return pubrealloc(ptr, size, 0, " in realloc():");
 }
 
 /*

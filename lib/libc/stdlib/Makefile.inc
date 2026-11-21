@@ -33,7 +33,7 @@ SRCS+= erand48_ieee754.c
 SRCS+=	jemalloc.c aligned_alloc.c
 .      endif 
 .   else
-SRCS+=	malloc.c
+SRCS+=	malloc.c aligned_alloc.c
 .   endif
 .endif
 
