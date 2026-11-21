@@ -184,6 +184,14 @@ export EMBER_LLVM_RUNTIME_ORIGINAL_SOURCE=/absolute/earlier-prepared-llvm
     /absolute/source /absolute/network-output /absolute/os-host-tools /absolute/target-clang-prefix
 ```
 
+For the compact ESP-Mosaico profile, select a C foundation built with the
+SDK's `build-sysroot.py --c-foundation --no-jemalloc`. This selects the OS
+`USE_JEMALLOC=no` allocator at libc build time. Use that foundation and its
+matching runtime for the console, login, SSH server and application links.
+Static executables carry the allocator they were linked against. The OS
+default remains available to other profiles, including consumers of
+jemalloc-specific interfaces.
+
 The profile extends the verified foundation in a separate destination; it
 installs the native `libterminfo`, `libedit` and `libutil` build inputs and
 links `sh` and `init` with `SMALLPROG=1`. The root contains those programs and
@@ -252,11 +260,11 @@ remain available. If an output has no `NETWORK-OBJECT-SOURCES.json`, the
 completed-root receipt cannot establish which source paths produced its
 objects. The first refresh cleans only the selected imported-source owners;
 foundation and unrelated object directories remain available.
-The optional `ssh` toolset adds the OpenSSH server, authentication and session
+By default the optional `ssh` toolset adds the OpenSSH server, authentication and session
 helpers, and host-key generator. The separate optional `sftp` toolset adds the
 OpenSSH SFTP server and requires `ssh`. This separation lets a constrained
 root use authenticated SSH commands and streams without the additional SFTP
-binary. SSH requires prepared
+binary. The OpenSSH provider requires prepared
 OpenSSH, TCP wrappers and zlib source inputs. The default
 `EMBER_OPENSSH_CRYPTO=openssl` mode also requires prepared OpenSSL; `builtin`
 uses OpenSSH's built-in crypto and does not select OpenSSL. The generated
@@ -265,7 +273,21 @@ server configuration accepts public-key authentication only; put
 the `pty` pseudo-device and `PTYFS`; the profile stages the `ptm`/`ptmx` nodes,
 `/sbin/mount_ptyfs`, and mounts `/dev/pts` from `fstab`. The SSH profile
 requires those kernel facilities to boot; noninteractive SSH commands and SFTP
-do not themselves allocate a PTY. The optional `logging` toolset adds
+do not themselves allocate a PTY.
+
+Set `EMBER_SSH_SERVER=dropbear` with the `ssh` toolset for a small command
+and PTY server. Set `EMBER_DROPBEAR_PREFIX` to the staged target package prefix
+containing `sbin/dropbear` and `share/examples/rc.d/dropbear`, built for
+`/usr/pkg`. The image selects these two files, checks the static executable
+against the target ABI and enables public-key authentication. Supply the
+device’s Dropbear-format Ed25519 host key at
+`/etc/dropbear/dropbear_ed25519_host_key` (mode 0600) and each user’s
+`.ssh/authorized_keys` in the private overlay. For an existing OpenSSH host,
+convert the host key with `dropbearconvert openssh dropbear INPUT OUTPUT` on
+the provisioning host and verify the existing SSH host-key pin when connecting.
+This provider supports commands, streams and PTYs. Select OpenSSH for SFTP.
+
+The optional `logging` toolset adds
 syslogd, newsyslog, logger and tail to the shared `console-tools` binary, and
 requires prepared libevent and TCP wrappers sources. The crunch link preserves
 libwrap's public severity symbols and the standard `/dev/log` socket path.

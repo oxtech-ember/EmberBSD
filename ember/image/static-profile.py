@@ -25,7 +25,7 @@ def network_orchestrator_log(output):
             return path
 
 
-def network_output_action(output, compatibility, wrapper_checks, build_checks=()):
+def network_output_action(output, compatibility, wrapper_checks, build_checks=(), foundation_libc=None):
     """Accept a fresh output or reuse a profile-owned compatible build tree."""
     import json
     import os
@@ -68,6 +68,12 @@ def network_output_action(output, compatibility, wrapper_checks, build_checks=()
         item = output / name
         if item.is_symlink() or (item.exists() and not item.is_dir()):
             raise ValueError('existing network output contains an invalid staging path')
+    if foundation_libc is not None:
+        import filecmp
+        installed = output / 'dest/usr/lib/libc.a'
+        if installed.is_symlink() or not installed.is_file() or not filecmp.cmp(
+                foundation_libc, installed, shallow=False):
+            raise ValueError('existing network output uses a different libc; select its matching foundation or a fresh output')
     return 'reuse'
 
 
@@ -451,7 +457,7 @@ def console(target, compact=False, toolsets=()):
 
 
 def network(target, toolsets=(), spi_units=(), root_filesystem='ffs',
-            wpa_backend='', openssh_crypto='openssl'):
+            wpa_backend='', openssh_crypto='openssl', ssh_server='openssh'):
     """Select the ordinary-init network userland from the same C foundation."""
     import re
 
@@ -472,17 +478,23 @@ def network(target, toolsets=(), spi_units=(), root_filesystem='ffs',
         raise ValueError('network root filesystem must be ffs or littlefs')
     if openssh_crypto not in ('openssl', 'builtin'):
         raise ValueError('OpenSSH crypto mode must be openssl or builtin')
+    if ssh_server not in ('openssh', 'dropbear'):
+        raise ValueError('SSH server must be openssh or dropbear')
     if 'ssh' not in toolsets:
+        ssh_server = 'not-selected'
+    if ssh_server != 'openssh' and 'sftp' in toolsets:
+        raise ValueError('the static SFTP toolset requires the OpenSSH provider')
+    if ssh_server != 'openssh':
         openssh_crypto = 'not-selected'
     needs_openssl = wpa_backend != 'wolfssl' or openssh_crypto == 'openssl'
     selected = console(target)
     selected['root_filesystem'] = root_filesystem
     selected.update(profile='network', compact=False,
-                    openssh_crypto=openssh_crypto,
+                    ssh_server=ssh_server, openssh_crypto=openssh_crypto,
                     syslogd_tls='no' if 'logging' in toolsets else 'not-selected',
                     syslogd_sign='no' if 'logging' in toolsets else 'not-selected')
     selected['headers'] = ('lib/libcurses', 'sys/net80211')
-    if 'ssh' in toolsets or 'logging' in toolsets:
+    if ssh_server == 'openssh' or 'logging' in toolsets:
         selected['headers'] += ('external/bsd/blocklist/include',)
     if 'logging' in toolsets:
         selected['headers'] += ('external/bsd/libevent/include',)
@@ -551,14 +563,16 @@ def network(target, toolsets=(), spi_units=(), root_filesystem='ffs',
             'external/apache2/mDNSResponder/usr.sbin/mdnsd',)
     install_map = [('usr.bin/login', 'usr/bin/login')]
     if 'ssh' in toolsets:
+        selected['device_nodes'] += ('ptm', 'ptmx')
+        selected['crunch_programs'] += ('sbin/mount_ptyfs',)
+    if ssh_server == 'openssh':
         selected['libraries'] += (
             'lib/libz',
             'external/bsd/blocklist/lib',
             'lib/libwrap',
             'crypto/external/bsd/openssh/lib',
             'lib/libcrypt')
-        selected['device_nodes'] += ('ptm', 'ptmx')
-        selected['crunch_programs'] += ('usr.bin/cmp/cmp', 'sbin/mount_ptyfs')
+        selected['crunch_programs'] += ('usr.bin/cmp/cmp',)
         selected['programs'] += (
             'crypto/external/bsd/openssh/bin/sshd',
             'crypto/external/bsd/openssh/libexec/sshd-auth',
@@ -596,6 +610,8 @@ def output_programs(settings, extra=''):
         selected = ('bin/console-tools', *(destination for _, destination in settings['install_map']))
     else:
         selected = tuple(pair[1] for pair in settings.get('install_map', ())) or settings['programs']
+    if settings.get('ssh_server') == 'dropbear':
+        selected += ('usr/pkg/sbin/dropbear',)
     return selected + (('bin/' + Path(extra).name,) if extra else ())
 
 
@@ -691,10 +707,28 @@ def network_crunch_make_assignments(crunch_programs):
     return ' '.join(assignments)
 
 
+def stage_dropbear(root, prefix):
+    """Install the server and rc script from a staged static Ports package."""
+    prefix = Path(prefix)
+    binary = root / 'usr/pkg/sbin/dropbear'
+    copy_if_different(prefix / 'sbin/dropbear', binary)
+    binary.chmod(0o555)
+    stage_rc_script(prefix / 'share/examples/rc.d/dropbear', root / 'etc/rc.network.d/dropbear')
+    (root / 'etc/dropbear').mkdir(parents=True, exist_ok=True)
+    override = root / 'etc/rc.conf.d/dropbear'
+    override.parent.mkdir(parents=True, exist_ok=True)
+    write_if_different(override,
+        ': "${dropbear:=YES}"\n'
+        'required_files="/etc/dropbear/dropbear_ed25519_host_key"\n'
+        'dropbear_flags="-s -j -k"\n'
+        'command_args="-r /etc/dropbear/dropbear_ed25519_host_key -P /var/run/dropbear.pid"\n')
+
+
 def stage_network(root, source, overlay, interface, pwd_mkdb, dhcpcd_dest,
                   root_device, root_partition='a', root_filesystem='ffs',
                   mdns_enabled=False, ssh_enabled=False, logging_enabled=False,
-                  openssh_crypto='openssl', sftp_enabled=False, display_enabled=False):
+                  openssh_crypto='openssl', sftp_enabled=False, display_enabled=False,
+                  dropbear_prefix=None):
     """Stage standard init/rc network services over the normal OS defaults."""
     import os
     import re
@@ -717,7 +751,10 @@ def stage_network(root, source, overlay, interface, pwd_mkdb, dhcpcd_dest,
         raise ValueError('network root filesystem must be ffs or littlefs')
     if openssh_crypto not in ('openssl', 'builtin'):
         raise ValueError('OpenSSH crypto mode must be openssl or builtin')
-    if sftp_enabled and not ssh_enabled:
+    openssh_enabled = ssh_enabled and not dropbear_prefix
+    if dropbear_prefix and not ssh_enabled:
+        raise ValueError('Dropbear requires the ssh toolset')
+    if sftp_enabled and not openssh_enabled:
         raise ValueError('SFTP requires SSH to be enabled')
     if not isinstance(display_enabled, bool):
         raise ValueError('display switch must be boolean')
@@ -772,9 +809,10 @@ def stage_network(root, source, overlay, interface, pwd_mkdb, dhcpcd_dest,
         'dhcpcd=YES\n'
         f'dhcpcd_flags="-b -C wpa_supplicant {interface}"\n'
         'mdnsd=' + ('YES' if mdns_enabled else 'NO') + '\n'
-        'sshd=' + ('YES' if ssh_enabled else 'NO') + '\n'
+        'sshd=' + ('YES' if openssh_enabled else 'NO') + '\n'
+        + ('dropbear=YES\n' if dropbear_prefix else '')
         + ('sshd_key_types="' + ('ed25519' if openssh_crypto == 'builtin' else
-                                 'ecdsa ed25519 rsa') + '"\n' if ssh_enabled else '') +
+                                 'ecdsa ed25519 rsa') + '"\n' if openssh_enabled else '') +
         'syslogd=' + ('YES' if logging_enabled else 'NO') + '\n'
         + ('syslogd_flags="-s"\n' if logging_enabled else '')
         + 'newsyslog=' + ('YES' if logging_enabled else 'NO') + '\n'
@@ -788,7 +826,7 @@ def stage_network(root, source, overlay, interface, pwd_mkdb, dhcpcd_dest,
                'LOGIN')
     if mdns_enabled:
         scripts += ('mdnsd',)
-    if ssh_enabled:
+    if openssh_enabled:
         scripts += ('sshd',)
     if logging_enabled:
         scripts += ('sysdb', 'wscons', 'newsyslog', 'syslogd')
@@ -813,7 +851,7 @@ def stage_network(root, source, overlay, interface, pwd_mkdb, dhcpcd_dest,
         write_if_different(runtime_dirs, runtime_dirs_text, mode=0o555)
     else:
         write_if_different(runtime_dirs, runtime_dirs_text, mode=0o555)
-    if ssh_enabled:
+    if openssh_enabled:
         (root / 'etc/ssh').mkdir(parents=True, exist_ok=True)
         write_if_different(root / 'etc/ssh/sshd_config',
             'Port 22\n'
@@ -888,25 +926,21 @@ def stage_network(root, source, overlay, interface, pwd_mkdb, dhcpcd_dest,
             'load_rc_config $name\n'
             'run_rc_command "$1"\n')
         write_if_different(log_mount, log_mount_text, mode=0o555)
+    if dropbear_prefix:
+        stage_dropbear(root, dropbear_prefix)
     stage_overlay(overlay, root, allow_identical=True,
                   allow_suffixes={'etc/ifconfig.' + interface: b'up\n'},
                   replace_regular=True)
-    if not ssh_enabled:
-        ssh_script = root / 'etc/rc.network.d/sshd'
-        if ssh_script.exists() or ssh_script.is_symlink():
-            if ssh_script.is_symlink() or not ssh_script.is_file():
-                raise ValueError('disabled ssh script must be a regular staged file')
-            ssh_script.unlink()
-        ssh_config = root / 'etc/ssh/sshd_config'
-        if ssh_config.exists() or ssh_config.is_symlink():
-            if ssh_config.is_symlink() or not ssh_config.is_file():
-                raise ValueError('disabled ssh config must be a regular staged file')
-            ssh_config.unlink()
-        ssh_override = root / 'etc/rc.conf.d/sshd'
-        if ssh_override.exists() or ssh_override.is_symlink():
-            if ssh_override.is_symlink() or not ssh_override.is_file():
-                raise ValueError('disabled ssh rc override must be a regular file')
-            ssh_override.unlink()
+    disabled = []
+    if not openssh_enabled:
+        disabled += ['etc/rc.network.d/sshd', 'etc/ssh/sshd_config', 'etc/rc.conf.d/sshd']
+    if not dropbear_prefix:
+        disabled += ['etc/rc.network.d/dropbear', 'etc/rc.conf.d/dropbear']
+    for name in disabled:
+        item = root / name
+        if item.is_symlink() or (item.exists() and not item.is_file()):
+            raise ValueError('disabled SSH service path must be a regular file: ' + name)
+        item.unlink(missing_ok=True)
     if not logging_enabled:
         for name in ('sysdb', 'wscons', 'newsyslog', 'syslogd', 'network_logfs'):
             script = root / 'etc/rc.network.d' / name
@@ -1114,11 +1148,13 @@ def run_console(arguments):
     is_network = profile == 'network'
     wpa_backend = os.environ.get('EMBER_WPA_CRYPTO_BACKEND', '') if is_network else ''
     openssh_crypto = 'builtin'
+    dropbear_prefix = ''
     selected_toolsets = ()
     if is_network:
         selected_toolsets = tuple(filter(None,
             os.environ.get('EMBER_NETWORK_TOOLSETS', '').split(',')))
-        if 'ssh' in selected_toolsets:
+        ssh_server = os.environ.get('EMBER_SSH_SERVER', 'openssh')
+        if 'ssh' in selected_toolsets and ssh_server == 'openssh':
             openssh_crypto = os.environ.get('EMBER_OPENSSH_CRYPTO', 'openssl')
             if openssh_crypto not in ('openssl', 'builtin'):
                 raise SystemExit('EMBER_OPENSSH_CRYPTO must be openssl or builtin')
@@ -1127,7 +1163,7 @@ def run_console(arguments):
         try:
             settings = network(target, selected_toolsets, selected_spi_units,
                                os.environ.get('EMBER_NETWORK_ROOT_FILESYSTEM', 'ffs'),
-                               wpa_backend, openssh_crypto)
+                               wpa_backend, openssh_crypto, ssh_server)
         except ValueError as exc:
             raise SystemExit('static-console: ' + str(exc)) from exc
     else:
@@ -1176,7 +1212,10 @@ def run_console(arguments):
             needs_openssl = wpa_backend != 'wolfssl' or openssh_crypto == 'openssl'
             if needs_openssl:
                 network_service_sources.append('EMBER_OPENSSL_SOURCE')
-            if 'ssh' in selected_toolsets:
+            if settings['ssh_server'] == 'dropbear':
+                extra_path_names.append('EMBER_DROPBEAR_PREFIX')
+                dropbear_prefix = os.environ.get('EMBER_DROPBEAR_PREFIX', '')
+            if settings['ssh_server'] == 'openssh':
                 network_service_sources.extend((
                     'EMBER_OPENSSH_SOURCE', 'EMBER_TCP_WRAPPERS_SOURCE', 'EMBER_ZLIB_SOURCE'))
             if 'logging' in selected_toolsets:
@@ -1386,7 +1425,8 @@ def run_console(arguments):
             wrapper_checks.extend('-V ' + flag for flag in settings['flags'])
             try:
                 output_action = network_output_action(output, compatibility, wrapper_checks,
-                    ('-V COPTS=-Oz -ffunction-sections -fdata-sections',))
+                    ('-V COPTS=-Oz -ffunction-sections -fdata-sections',),
+                    foundation_libc=foundation / 'usr/lib/libc.a')
             except ValueError as exc:
                 raise SDKError(str(exc)) from exc
         elif output.exists():
@@ -1476,6 +1516,7 @@ def run_console(arguments):
                                'EMBER_ZLIB_SOURCE'))
             command.append(openssh_crypto)
             command.append('yes' if 'display' in selected_toolsets else 'no')
+            command.append(dropbear_prefix)
         orchestrator_log = network_orchestrator_log(output) if is_network else output / 'logs/orchestrator.log'
         native_os.run_native_os(native, source=str(source), routing=str(output / 'routing'), cwd=str(source),
                                 arguments=command, shell=True, log=str(orchestrator_log))
@@ -1518,6 +1559,9 @@ def run_console(arguments):
             (f'network-interface={network_interface}\nwpa-crypto-backend={wpa_backend or "default"}\n' +
              f'root-filesystem={settings["root_filesystem"]}\n' +
              'network-toolsets=' + ' '.join(selected_toolsets) + '\n' +
+             f'ssh-server={settings["ssh_server"]}\n' +
+             (f'dropbear-sha256={hashlib.sha256((candidate_root / "usr/pkg/sbin/dropbear").read_bytes()).hexdigest()}\n'
+              if dropbear_prefix else '') +
              f'openssh-crypto={settings["openssh_crypto"]}\n' +
              f'syslogd-tls={settings["syslogd_tls"]}\n' +
              f'syslogd-sign={settings["syslogd_sign"]}\n' +
@@ -1576,7 +1620,7 @@ if __name__ == '__main__':
         write_if_different(sys.argv[2], network_crunch_configuration(sys.argv[4], sys.argv[3]))
     elif len(sys.argv) == 3 and sys.argv[1] == 'network-crunch-makeflags':
         print(network_crunch_make_assignments(sys.argv[2]))
-    elif len(sys.argv) == 17 and sys.argv[1] == 'stage-network':
+    elif len(sys.argv) in (17, 18) and sys.argv[1] == 'stage-network':
         if any(value not in ('yes', 'no') for value in sys.argv[11:14]):
             raise SystemExit('stage-network feature switches must be yes or no')
         if sys.argv[14] not in ('openssl', 'builtin'):
@@ -1592,6 +1636,7 @@ if __name__ == '__main__':
                       logging_enabled=sys.argv[13] == 'yes',
                       openssh_crypto=sys.argv[14],
                       sftp_enabled=sys.argv[15] == 'yes',
-                      display_enabled=sys.argv[16] == 'yes')
+                      display_enabled=sys.argv[16] == 'yes',
+                      dropbear_prefix=sys.argv[17] if len(sys.argv) == 18 else '')
     else:
-        raise SystemExit('usage: static-profile.py stage-overlay DIRECTORY ROOT | link-if-same TARGET LINK | stage-network ROOT SOURCE OVERLAY INTERFACE PWD_MKDB DHCPCD_SOURCE ROOT_DEVICE ROOT_PARTITION ROOT_FILESYSTEM MDNS_ENABLED SSH_ENABLED LOGGING_ENABLED OPENSSH_CRYPTO SFTP_ENABLED DISPLAY_ENABLED')
+        raise SystemExit('usage: static-profile.py stage-overlay DIRECTORY ROOT | link-if-same TARGET LINK | stage-network ROOT SOURCE OVERLAY INTERFACE PWD_MKDB DHCPCD_SOURCE ROOT_DEVICE ROOT_PARTITION ROOT_FILESYSTEM MDNS_ENABLED SSH_ENABLED LOGGING_ENABLED OPENSSH_CRYPTO SFTP_ENABLED DISPLAY_ENABLED [DROPBEAR_PREFIX]')

@@ -143,6 +143,14 @@ check(not optional_programs.intersection(selected['crunch_programs']) and
 ssh_toolset = profile.network('riscv32', ('ssh',))
 ssh_builtin = profile.network('riscv32', ('ssh',), wpa_backend='wolfssl',
                               openssh_crypto='builtin')
+dropbear = profile.network('riscv32', ('ssh',), wpa_backend='wolfssl', ssh_server='dropbear')
+check(dropbear['openssh_crypto'] == 'not-selected' and
+      not any('openssh' in path or 'openssl' in path
+              for path in dropbear['programs'] + dropbear['libraries']) and
+      'sbin/mount_ptyfs' in dropbear['crunch_programs'] and
+      {'ptm', 'ptmx'} <= set(dropbear['device_nodes']) and
+      'usr/pkg/sbin/dropbear' in profile.output_programs(dropbear),
+      'static Dropbear uses the selected package, PTYs and target ELF checks')
 sftp_toolset = profile.network('riscv32', ('ssh', 'sftp'))
 logging_toolset = profile.network('riscv32', ('logging',))
 logging_wolfssl = profile.network('riscv32', ('logging',), wpa_backend='wolfssl')
@@ -524,6 +532,22 @@ with tempfile.TemporaryDirectory(prefix='network-reuse-') as temporary:
     check(profile.network_output_action(output, compatibility, wrapper_checks,
                                         build_checks) == 'reuse',
           'matching target, ABI, runtime, and compile configuration allows incremental reuse')
+    candidate_libc = Path(temporary) / 'libc.a'
+    staged_libc = output / 'dest/usr/lib/libc.a'
+    staged_libc.parent.mkdir(parents=True)
+    staged_libc.write_bytes(b'allocator A')
+    candidate_libc.write_bytes(b'allocator A')
+    check(profile.network_output_action(output, compatibility, wrapper_checks,
+                                        foundation_libc=candidate_libc) == 'reuse',
+          'a matching libc supports normal incremental reuse')
+    candidate_libc.write_bytes(b'allocator B')
+    try:
+        profile.network_output_action(output, compatibility, wrapper_checks,
+                                      foundation_libc=candidate_libc)
+    except ValueError as error:
+        check('different libc' in str(error), 'a changed allocator requires its corresponding output')
+    else:
+        raise AssertionError('reused objects with the wrong allocator')
     incompatible = dict(compatibility, arch='aarch64')
     try:
         profile.network_output_action(output, incompatible, wrapper_checks,
@@ -895,6 +919,26 @@ with tempfile.TemporaryDirectory(prefix='static-network-') as temporary:
     check((services / 'dev/log').is_symlink() and
           __import__('os').readlink(services / 'dev/log') == '/var/run/log',
           'repeating network staging accepts the same syslog socket link')
+    package = temporary / 'dropbear-prefix'
+    for name, body in (('sbin/dropbear', 'test server'),
+                       ('share/examples/rc.d/dropbear', '#!/bin/sh\n# PROVIDE: dropbear\n# REQUIRE: DAEMON\n')):
+        entry = package / name
+        entry.parent.mkdir(parents=True)
+        entry.write_text(body)
+    dbroot = temporary / 'dropbear-root'
+    dbroot.mkdir()
+    profile.stage_network(dbroot, source, overlay, 'wifi0', pwd_mkdb,
+                          dhcp_dest, 'md0', ssh_enabled=True, dropbear_prefix=package)
+    dbpolicy = (dbroot / 'etc/rc.conf.d/dropbear').read_text()
+    check((dbroot / 'usr/pkg/sbin/dropbear').read_bytes() == (package / 'sbin/dropbear').read_bytes()
+          and (dbroot / 'etc/rc.network.d/dropbear').stat().st_mode & 0o111
+          and (dbroot / 'dev/pts').is_dir()
+          and 'dropbear=YES' in (dbroot / 'etc/rc.conf').read_text()
+          and not (dbroot / 'etc/rc.network.d/sshd').exists()
+          and not (dbroot / 'etc/ssh/sshd_config').exists()
+          and '-s -j -k' in dbpolicy and '-R' not in dbpolicy
+          and 'required_files="/etc/dropbear/dropbear_ed25519_host_key"' in dbpolicy,
+          'the packaged daemon uses a provisioned host key and public-key authentication')
     sftp_services = temporary / 'root-ssh-sftp'
     sftp_services.mkdir()
     profile.stage_network(sftp_services, source, overlay, 'wifi0', pwd_mkdb,
