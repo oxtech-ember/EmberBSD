@@ -131,17 +131,18 @@ def main():
                 configured.update(len(value).to_bytes(8, 'big'))
                 configured.update(value)
         # Configure links these selected target libraries when testing Kerberos.
-        # Track replacements and in-place changes without reading whole libraries.
+        # Use the bytes of each library. A release installs these libraries
+        # again in each run. If the bytes do not change, do not configure
+        # OpenSSH again.
         for path in args.target_lib:
             try:
                 resolved = path.resolve(strict=True)
-                st = resolved.stat()
+                with resolved.open('rb') as stream:
+                    content = hashlib.file_digest(stream, 'sha256').hexdigest()
             except FileNotFoundError:
                 fields = (str(path), 'missing')
             else:
-                fields = (str(path), str(resolved), str(st.st_dev),
-                          str(st.st_ino), str(st.st_size), str(st.st_mtime_ns),
-                          str(st.st_ctime_ns))
+                fields = (str(path), str(resolved), content)
             for field in fields:
                 value = os.fsencode(field)
                 configured.update(len(value).to_bytes(8, 'big'))
