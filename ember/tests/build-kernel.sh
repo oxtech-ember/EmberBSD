@@ -580,14 +580,17 @@ grep -q 'cpp .*/tools/bin/target-cpp ' "$TEST_LOG"
 grep -q 'dtc .*/tools/bin/nbdtc ' "$TEST_LOG"
 ! grep -q native-make "$TEST_LOG"
 check_contract_counts 16
-# A previous invocation's generated bindings may select older flag arguments.
-# Only this caller-owned routing directory is refreshed; objects stay reusable.
+# A previous invocation's generated bindings may select older flag arguments,
+# and its routing may come from an older OS native-tool contract.
+# Only these caller-owned routing directories are refreshed; objects stay reusable.
 printf 'previous compiler flags\n' > "$TEST_OUT/native-check-commands/selection.json"
+: > "$TEST_OUT/native-build-tools/previous-contract-member"
 # An unchanged BUILDINFO must retain the incremental version object.
 printf 'same-buildinfo-source\n' > "$TEST_OUT/obj/kernels/EMBER64/vers.c"
 printf 'same-buildinfo-object\n' > "$TEST_OUT/obj/kernels/EMBER64/vers.o"
 : > "$TEST_LOG"
 sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1
+test ! -e "$TEST_OUT/native-build-tools/previous-contract-member"
 test "$(cat "$TEST_OUT/obj/kernels/EMBER64/vers.c")" = same-buildinfo-source
 test "$(cat "$TEST_OUT/obj/kernels/EMBER64/vers.o")" = same-buildinfo-object
 # Ctrl-C reaches the whole build. The SDK runner then exits with an error
