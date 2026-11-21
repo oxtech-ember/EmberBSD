@@ -8,8 +8,12 @@
 #include <string.h>
 
 typedef unsigned int u_int;
+#ifndef __BIT
 #define __BIT(n) (UINT32_C(1) << (n))
+#endif
+#ifndef __arraycount
 #define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
+#endif
 #include "sun60i_a733_display.h"
 #include "display-body.h"
 

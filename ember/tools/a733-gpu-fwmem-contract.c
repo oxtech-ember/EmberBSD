@@ -23,7 +23,9 @@
 	} \
 } while (0)
 #define KASSERT(c) CHECK(c)
+#ifndef __arraycount
 #define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
+#endif
 #define BUS_DMASYNC_PREWRITE 1
 #define BUS_DMASYNC_POSTREAD 2
 #define BUS_DMASYNC_PREREAD 4

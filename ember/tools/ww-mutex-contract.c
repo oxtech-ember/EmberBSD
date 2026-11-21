@@ -19,12 +19,18 @@
 #define __BEGIN_DECLS
 #define __END_DECLS
 #endif
+#ifndef __KERNEL_RCSID
 #define __KERNEL_RCSID(a, b)
+#endif
 #ifndef __unused
 #define __unused __attribute__((unused))
 #endif
+#ifndef __diagused
 #define __diagused __attribute__((unused))
+#endif
+#ifndef __predict_false
 #define __predict_false(x) __builtin_expect(!!(x), 0)
+#endif
 #define ERESTART 85
 #define _KERNEL 1
 #define CHECK(x)                                                                       \

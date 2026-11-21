@@ -17,7 +17,9 @@
 		exit(1); \
 	} \
 } while (0)
+#ifndef __arraycount
 #define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
+#endif
 #define BUS_SPACE_BARRIER_READ 1
 #define BUS_SPACE_BARRIER_WRITE 2
 typedef void *bus_space_tag_t;

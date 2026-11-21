@@ -363,7 +363,9 @@ static struct proc model_proc;
 #ifndef __NetBSD__
 #define __NetBSD__ 1
 #endif
+#ifndef __KERNEL_RCSID
 #define __KERNEL_RCSID(a,b)
+#endif
 #define EXPORT_SYMBOL(s)
 #define module_init(f)
 #define module_exit(f)

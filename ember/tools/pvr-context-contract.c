@@ -70,9 +70,12 @@ static int hz = 100;
 static int kpause(const char *, bool, int, void *);
 static void delay(unsigned);
 static void nanouptime(struct timespec *);
+#ifndef timespeccmp
 #define timespeccmp(a, b, op) ((a)->tv_sec == (b)->tv_sec ? \
     (a)->tv_nsec op (b)->tv_nsec : (a)->tv_sec op (b)->tv_sec)
+#endif
 
+#ifndef timespecsub
 static void
 timespecsub(const struct timespec *a, const struct timespec *b,
     struct timespec *out)
@@ -84,6 +87,7 @@ timespecsub(const struct timespec *a, const struct timespec *b,
 		out->tv_nsec += 1000000000;
 	}
 }
+#endif
 
 /* Bounded positive intervals; match native tvtohz rounding and its extra tick. */
 static int

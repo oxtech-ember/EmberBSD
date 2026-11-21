@@ -24,7 +24,9 @@ typedef struct { bool held; unsigned int enters; } kmutex_t;
 #define BUS_DMASYNC_POSTREAD 2
 #define BUS_DMASYNC_PREWRITE 4
 #define BUS_DMASYNC_POSTWRITE 8
+#ifndef __arraycount
 #define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
+#endif
 #include "mem.h"
 #include "start.h"
 #include "boot.h"

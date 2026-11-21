@@ -11,7 +11,9 @@
 #include "sun60i_a733_gpu_mmu.h"
 #include "powervr/pvr_rogue_fwif.h"
 
+#ifndef __CTASSERT
 #define __CTASSERT(e) _Static_assert(e, #e)
+#endif
 #define BUS_DMA_WAITOK 0
 #define BUS_DMA_COHERENT 4
 #define _BUS_DMAMAP_COHERENT 0x10000

@@ -27,8 +27,12 @@
 #ifndef makedev
 #define makedev(m,u) ((dev_t)(((unsigned long)(m) << 16) | (unsigned int)(u)))
 #endif
+#ifndef __SHIFTIN
 #define __SHIFTIN(v,m) ((v) * ((m) & (0U - (m))))
+#endif
+#ifndef TIOCFLAG_SOFTCAR
 #define TIOCFLAG_SOFTCAR 1
+#endif
 #define KM_SLEEP 0
 #define MUTEX_DEFAULT 0
 #define IPL_HIGH 7
@@ -38,7 +42,9 @@
 #define FDT_INTR_MPSAFE 1
 #define VCHR 1
 #define PLCOMDIALOUT_MASK 0x80
+#ifndef __arraycount
 #define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
+#endif
 
 typedef unsigned int u_int;
 typedef unsigned char u_char;
@@ -298,6 +304,8 @@ static const struct device_compatible_entry *of_compatible_lookup(int p,
 static void *fdtbus_intr_establish_xname(int p, int i, int ipl, int flags,
     int (*fn)(void *), void *arg, const char *name)
 { (void)p; (void)i; (void)flags; return acpi_intr_establish(&device, 0, ipl, true, fn, arg, name); }
+/* The model supplies FDT values in host order. */
+#undef be32toh
 #define be32toh(x) (x)
 #include "fdt.inc"
 

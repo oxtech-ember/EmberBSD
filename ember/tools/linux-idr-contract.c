@@ -21,11 +21,17 @@ static unsigned checks;
 #define KASSERT(e) CHECK(e)
 #define ASSERT_SLEEPABLE() do { } while (0)
 #define ISSET(t, f) ((t) & (f))
+#ifndef __predict_false
 #define __predict_false(e) (e)
+#endif
+#ifndef __diagused
 #define __diagused
+#endif
 #define __unused __attribute__((__unused__))
 #define __read_mostly
+#ifndef __KERNEL_RCSID
 #define __KERNEL_RCSID(n, s)
+#endif
 #define SDT_PROBE_DEFINE0(...)
 #define SDT_PROBE_DEFINE1(...)
 #define SDT_PROBE_DEFINE3(...)
@@ -35,7 +41,9 @@ static unsigned checks;
 #define SDT_PROBE3(...) do { } while (0)
 #define SDT_PROBE4(...) do { } while (0)
 #define ERR_PTR(e) ((void *)(intptr_t)(e))
+#ifndef __UNCONST
 #define __UNCONST(a) ((void *)(uintptr_t)(const void *)(a))
+#endif
 
 typedef unsigned gfp_t;
 #define __GFP_WAIT 1u

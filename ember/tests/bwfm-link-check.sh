@@ -42,6 +42,9 @@ cat > "$work/check.c" <<'C'
 #define IEEE80211_ADDR_EQ(a, b) (memcmp((a), (b), 6) == 0)
 #define IEEE80211_ADDR_COPY(a, b) memcpy((a), (b), 6)
 #define explicit_memset memset
+/* The firmware response fixture is populated in host order. */
+#undef le16toh
+#undef le32toh
 #define le16toh(x) (x)
 #define le32toh(x) (x)
 enum ieee80211_state { IEEE80211_S_INIT, IEEE80211_S_SCAN,
@@ -127,8 +130,9 @@ static int bwfm_scan(struct bwfm_softc *sc, const uint16_t *freqs, size_t n)
 static int bwfm_connect(struct bwfm_softc *sc) { (void)sc; return 0; }
 static void bwfm_sta_assoc_ies(struct bwfm_softc *sc) { (void)sc; }
 static void bwfm_sta_scan_cancel(struct bwfm_softc *sc) { (void)sc; }
-static void bwfm_sta_tx_done(struct bwfm_softc *sc, bool ack)
-{ (void)sc; (void)ack; }
+static void bwfm_sta_tx_done(struct bwfm_softc *sc, int tx_error,
+    bool ack_known, bool ack)
+{ (void)sc; (void)tx_error; (void)ack_known; (void)ack; }
 static int bwfm_sta_wnm(struct bwfm_softc *sc, bool enable)
 { (void)sc; (void)enable; return 0; }
 static void bwfm_sta_mgmt_cb(struct bwfm_softc *sc, struct ieee80211req_sta_mgmt *req)

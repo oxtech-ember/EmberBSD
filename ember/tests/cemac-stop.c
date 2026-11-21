@@ -8,9 +8,15 @@
 #include <string.h>
 #include <time.h>
 
+#ifndef __BIT
 #define __BIT(n) (UINT32_C(1) << (n))
+#endif
+#ifndef __BITS
 #define __BITS(hi, lo) ((UINT32_MAX >> (31 - (hi))) & (UINT32_MAX << (lo)))
+#endif
+#ifndef __SHIFTIN
 #define __SHIFTIN(v, mask) ((v) * ((mask) & -(mask)))
+#endif
 #define ISSET(v, bits) ((v) & (bits))
 #define ETHER_ADDR_LEN 6
 #define MAXCOMLEN 16

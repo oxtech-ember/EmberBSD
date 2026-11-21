@@ -25,6 +25,19 @@ cat > "$work/host-shim.h" <<'SHIM'
 #ifndef __RCSID
 #define __RCSID(x)
 #endif
+/*
+ * Keep the RBDEBUG layout separate from the host libc ABI. libpthread
+ * uses the host rb_tree functions with its own, non-debug objects.
+ */
+#define rb_tree_init pvr_test_rb_tree_init
+#define rb_tree_insert_node pvr_test_rb_tree_insert_node
+#define rb_tree_find_node pvr_test_rb_tree_find_node
+#define rb_tree_find_node_geq pvr_test_rb_tree_find_node_geq
+#define rb_tree_find_node_leq pvr_test_rb_tree_find_node_leq
+#define rb_tree_remove_node pvr_test_rb_tree_remove_node
+#define rb_tree_iterate pvr_test_rb_tree_iterate
+#define rb_tree_check pvr_test_rb_tree_check
+#define rb_tree_depths pvr_test_rb_tree_depths
 SHIM
 # shellcheck disable=SC2086
 "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Wno-unused-parameter \
@@ -34,7 +47,8 @@ SHIM
 for shift in 12 14; do
     # shellcheck disable=SC2086
     "${CC:-cc}" -std=c11 -Wall -Wextra -Werror -Wno-unused-parameter \
-        ${CFLAGS:-} -pthread -DRBDEBUG -DPAGE_SHIFT="$shift" -I"$work" -I"$src/sys/arch" -I"$src/sys/external/bsd/drm2/powervr" \
+        ${CFLAGS:-} -pthread -DRBDEBUG -DPAGE_SHIFT="$shift" -include "$work/host-shim.h" \
+        -I"$work" -I"$src/sys/arch" -I"$src/sys/external/bsd/drm2/powervr" \
         "$src/ember/tools/pvr-file-contract.c" "$work/rb.o" -o "$work/contract"
     "$work/contract"
 done

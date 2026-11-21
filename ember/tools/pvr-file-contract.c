@@ -50,8 +50,12 @@ static atomic_uint checks, allocations, objects, vms;
 	fprintf(stderr, "FAIL line %d: %s\n", __LINE__, #e); abort(); \
 } } while (0)
 #define KASSERT(e) CHECK(e)
+#ifndef __diagused
 #define __diagused
+#endif
+#ifndef __UNCONST
 #define __UNCONST(p) ((void *)(uintptr_t)(const void *)(p))
+#endif
 typedef struct {
 	pthread_mutex_t lock;
 	pthread_t owner;

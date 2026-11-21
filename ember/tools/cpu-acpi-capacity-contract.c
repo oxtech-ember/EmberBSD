@@ -8,7 +8,9 @@
 /* The runner extracts cpu_acpi_capacity() verbatim from cpu_acpi.c.  The
  * first-class rule of arm_cpu_do_topology() (slow means below the best
  * capacity seen) is modeled here.  This does not qualify the scheduler. */
+#ifndef __arraycount
 #define __arraycount(x) (sizeof(x) / sizeof((x)[0]))
+#endif
 #include "cpu-acpi-capacity.inc"
 
 static unsigned int checks, failures;
