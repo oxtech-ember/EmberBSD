@@ -36,6 +36,7 @@ OPENSSLINC=	${OPENSSLSRC}/include/openssl
 
 .include "${NETBSDSRCDIR}/crypto/Makefile.openssl"
 .if defined(EMBER_OPENSSL_SOURCE)
+LINTFLAGS+=	-Ac11		# for _Atomic in OpenSSL headers
 CPPFLAGS+= -I${OPENSSLGENINC}
 .PATH: ${OPENSSLGENINC}/openssl
 .endif
