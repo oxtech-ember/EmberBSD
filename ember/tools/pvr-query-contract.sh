@@ -9,7 +9,18 @@ if [ -z "$firmware" ]; then
     exit 2
 fi
 expected=1db1c399c17401d1f79d46c880db81c724d748c784d4639433b076aba2f9c0d2
-actual=$(openssl dgst -sha256 "$firmware" | awk '{print $NF}')
+python=${NETBSD2_PYTHON:-${PYTHON:-python3}}
+actual=$("$python" - "$firmware" <<'PYTHON'
+import hashlib
+import sys
+
+digest = hashlib.sha256()
+with open(sys.argv[1], 'rb') as firmware:
+    for block in iter(lambda: firmware.read(65536), b''):
+        digest.update(block)
+print(digest.hexdigest())
+PYTHON
+)
 [ "$actual" = "$expected" ] || { echo 'Unexpected firmware SHA256.' >&2; exit 1; }
 work=$(mktemp -d "${TMPDIR:-/tmp}/pvr-query.XXXXXXXX")
 trap 'rm -rf "$work"' EXIT HUP INT TERM

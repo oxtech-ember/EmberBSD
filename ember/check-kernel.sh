@@ -12,6 +12,13 @@ case "$out" in /*) ;; *) fail 'output must be an absolute path' ;; esac
 sdk_source=${EMBERBSD_SDK_SOURCE:-}
 host_prefix=${EMBER_HOST_PREFIX:-}
 host_family=${EMBER_HOST_COMPILER_FAMILY:-clang}
+wpa_source=${EMBER_WPA_SOURCE:-}
+case "$wpa_source" in ''|/*) ;; *) fail 'EMBER_WPA_SOURCE must be an absolute path';; esac
+if [ -n "$wpa_source" ]; then
+    [ -f "$wpa_source/src/drivers/driver_bsd.c" ] &&
+        [ -f "$wpa_source/src/common/ieee802_11_defs.h" ] ||
+        fail 'EMBER_WPA_SOURCE must point to the prepared Ports WPA tree'
+fi
 case "$sdk_source" in /*) ;; *) fail 'set EMBERBSD_SDK_SOURCE to the SDK source root';; esac
 case "$host_prefix" in /*) ;; *) fail 'set EMBER_HOST_PREFIX to the selected native prefix';; esac
 case "$host_family" in clang|gcc) ;; *) fail 'EMBER_HOST_COMPILER_FAMILY must be clang or gcc';; esac
@@ -65,6 +72,6 @@ status=0
     --tool sh --cwd "$src" --bindings "$out/native-check-commands" \
     --log "$out/contracts.log" -- \
     "$src/ember/tools/kernel-contracts.sh" "$src" "$contracts" \
-    "${PVR_QUERY_FIRMWARE:-}" "$selection" "$contract_jobs" || status=$?
+    "${PVR_QUERY_FIRMWARE:-}" "$selection" "$contract_jobs" "$wpa_source" || status=$?
 [ ! -f "$out/contracts.log" ] || cat "$out/contracts.log"
 exit "$status"

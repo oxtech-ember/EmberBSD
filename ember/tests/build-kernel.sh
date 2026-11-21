@@ -5,7 +5,7 @@ set -eu
 # An ambient product version must not replace the selected source version.
 export EMBER_VERSION=9.9
 # Fixtures select their own build mode and toolchain, independent of the shell.
-unset EMBER_HOST_BFD_CONFIG EMBERBSD_SDK_SOURCE EMBER_HOST_PREFIX EMBER_HOST_COMPILER_FAMILY EMBER_BUILD_MODE EMBER_EXTERNAL_TOOLCHAIN EMBER_COMPILER_FAMILY EMBER_LLVM_SOURCE EMBER_BYACC_SOURCE EMBER_HEIMDAL_SOURCE EMBER_ZLIB_SOURCE PVR_QUERY_FIRMWARE MKREPRO_TIMESTAMP
+unset EMBER_HOST_BFD_CONFIG EMBERBSD_SDK_SOURCE EMBER_HOST_PREFIX EMBER_HOST_COMPILER_FAMILY EMBER_BUILD_MODE EMBER_EXTERNAL_TOOLCHAIN EMBER_COMPILER_FAMILY EMBER_LLVM_SOURCE EMBER_BYACC_SOURCE EMBER_HEIMDAL_SOURCE EMBER_ZLIB_SOURCE PVR_QUERY_FIRMWARE EMBER_WPA_SOURCE MKREPRO_TIMESTAMP
 # A fixed source timestamp keeps the fixture kernels reproducible.
 export MKREPRO_TIMESTAMP=1700000000
 # Most cases check the dispatch order, so run one contract at a time.
@@ -17,6 +17,10 @@ test -x "$TEST_SHELL" && test -x "$TEST_PYTHON"
 export TEST_SHELL TEST_PYTHON
 work=$(mktemp -d "${TMPDIR:-/tmp}/ember-build-kernel.XXXXXX")
 work=$(CDPATH= cd -- "$work" && pwd -P)
+export EMBER_WPA_SOURCE="$work/prepared WPA"
+mkdir -p "$EMBER_WPA_SOURCE/src/drivers" "$EMBER_WPA_SOURCE/src/common"
+: > "$EMBER_WPA_SOURCE/src/drivers/driver_bsd.c"
+: > "$EMBER_WPA_SOURCE/src/common/ieee802_11_defs.h"
 show_failure_logs() {
     for log in "$work/run.log" "${TEST_OUT:-$work}/build.log" \
         "${TEST_OUT:-$work}/contracts.log" "$work/commands"; do
@@ -136,6 +140,13 @@ echo "network-contract ${0##*/} $*" >> "$TEST_LOG"
 case ${0##*/} in
     aicwf-sta.sh|aicwf-vht.sh|drm2-linux-compat.sh) test "$#" -eq 0;;
     *) test "$#" -eq 1; test "$1" = "$TEST_ROOT/src";;
+esac
+case ${0##*/} in
+    bwfm-sta.sh|aicwf-sta.sh)
+        test "$EMBER_WPA_SOURCE" = "$TEST_ROOT/prepared WPA"
+        test -f "$EMBER_WPA_SOURCE/src/drivers/driver_bsd.c"
+        test -f "$EMBER_WPA_SOURCE/src/common/ieee802_11_defs.h"
+        ;;
 esac
 if [ "${FAIL_AT:-}" = network-contract ] || [ "${FAIL_AT:-}" = "${0##*/}" ]; then
     echo "injected contract failure: ${0##*/}" >&2
@@ -429,6 +440,7 @@ with open(os.environ["TEST_LOG"], "a") as stream:
         values["--compiler-family"], role, values["--bindings"]))
 env = os.environ.copy()
 env.pop("NETBSD2_PYTHON", None)
+env.pop("EMBER_WPA_SOURCE", None)
 env.update(CC=root + "/bin/host-cc", CXX=root + "/bin/host-cxx",
            CFLAGS="-Dfixture_host", CXXFLAGS="-Dfixture_cxx", LDFLAGS="-Lfixture-host")
 if role == "python":
@@ -954,6 +966,14 @@ NETBSD2_PYTHON=/outside/bin/python3 PVR_QUERY_FIRMWARE="$work/pinned firmware" E
 grep -q '^native-check gcc sh ' "$TEST_LOG"
 grep -q '^pvr-query-contract ' "$TEST_LOG"
 count_contracts 16
+for wpa in relative "$work/missing WPA"; do
+    : > "$TEST_LOG"
+    if EMBER_WPA_SOURCE="$wpa" sh "$work/src/ember/check-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1; then
+        echo "accepted invalid WPA source: $wpa" >&2; exit 1
+    fi
+    grep -q 'EMBER_WPA_SOURCE' "$work/run.log"
+    ! grep -q '^native-check ' "$TEST_LOG"
+done
 for invalid in '' 00 -1 x; do
     if NETBSD2_JOBS=$invalid sh "$work/src/ember/build-kernel.sh" "$work/invalid-jobs" > "$work/run.log" 2>&1; then
         echo "accepted invalid NETBSD2_JOBS: $invalid" >&2; exit 1

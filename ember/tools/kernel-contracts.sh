@@ -1,12 +1,13 @@
 #!/bin/sh
 # Existing source contracts: portable subset on the build host, all on NetBSD.
 set -eu
-[ "$#" -ge 1 ] && [ "$#" -le 5 ] || {
-    echo 'usage: kernel-contracts.sh SOURCE_ROOT [all|portable] [PVR_FIRMWARE] [SELECTION] [JOBS]' >&2; exit 1;
+[ "$#" -ge 1 ] && [ "$#" -le 6 ] || {
+    echo 'usage: kernel-contracts.sh SOURCE_ROOT [all|portable] [PVR_FIRMWARE] [SELECTION] [JOBS] [WPA_SOURCE]' >&2; exit 1;
 }
 src=$(CDPATH= cd -- "$1" && pwd)
 mode=${2:-all}
 if [ "$#" -ge 3 ]; then PVR_QUERY_FIRMWARE=$3; export PVR_QUERY_FIRMWARE; fi
+if [ "$#" -ge 6 ]; then EMBER_WPA_SOURCE=$6; export EMBER_WPA_SOURCE; fi
 # SELECTION is a file from kernel-contracts-select.py. Without it, run all.
 selection=${4:-}
 if [ -n "$selection" ] && [ ! -f "$selection" ]; then

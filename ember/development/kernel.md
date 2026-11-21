@@ -90,6 +90,9 @@ Account for kernel/userland interfaces and each dependent consumer when an ABI c
 
 The portable kernel suite has one owner: `ember/tools/kernel-contracts.sh`.
 `ember/check-kernel.sh OUTPUT [BASE_COMMIT]` runs it; `ember/build-kernel.sh` does not.
+Set `EMBER_WPA_SOURCE` to the absolute path to the prepared Ports WPA tree
+when running the full suite or selecting either station contract.
+Set `PVR_QUERY_FIRMWARE` to the pinned image to include the PowerVR query contract.
 With `BASE_COMMIT`, it runs only the contracts that the changes can affect.
 `ember/tools/kernel-contracts-inputs.txt` records the source inputs of each contract.
 A contract without an entry runs on each change.
