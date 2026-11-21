@@ -1,4 +1,4 @@
-/* $NetBSD: netbsd32_syscalls.c,v 1.162 2025/05/09 10:20:08 martin Exp $ */
+/* $NetBSD$ */
 
 /*
  * System call names.
@@ -8,7 +8,7 @@
  */
 
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: netbsd32_syscalls.c,v 1.162 2025/05/09 10:20:08 martin Exp $");
+__KERNEL_RCSID(0, "$NetBSD$");
 
 #if defined(_KERNEL_OPT)
 #if defined(_KERNEL_OPT)
@@ -545,7 +545,7 @@ const char *const netbsd32_syscallnames[] = {
 	/* 504 */	"netbsd32_epoll_pwait2",
 	/* 505 */	"netbsd32___dup3100",
 	/* 506 */	"netbsd32_semtimedop",
-	/* 507 */	"# filler",
+	/* 507 */	"netbsd32_renameat2",
 	/* 508 */	"# filler",
 	/* 509 */	"# filler",
 	/* 510 */	"# filler",
@@ -1070,7 +1070,7 @@ const char *const altnetbsd32_syscallnames[] = {
 	/* 504 */	"epoll_pwait2",
 	/* 505 */	"dup3",
 	/* 506 */	"semtimedop",
-	/* 507 */	NULL, /* filler */
+	/* 507 */	"renameat2",
 	/* 508 */	NULL, /* filler */
 	/* 509 */	NULL, /* filler */
 	/* 510 */	NULL, /* filler */

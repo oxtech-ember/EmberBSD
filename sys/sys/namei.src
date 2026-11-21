@@ -154,7 +154,8 @@ NAMEIFL	EMULROOTSET	0x00000080	/* emulation root already
 NAMEIFL	LOCKSHARED	0x00000100	/* want shared locks if possible */
 NAMEIFL	NOCHROOT	0x01000000	/* no chroot on abs path lookups */
 NAMEIFL	NONEXCLHACK	0x02000000	/* open wwith O_CREAT but not O_EXCL */
-NAMEIFL	MODMASK		0x030001fc	/* mask of operational modifiers */
+NAMEIFL	CN_NOREPLACE	0x04000000	/* reject an existing rename target */
+NAMEIFL	MODMASK		0x070001fc	/* mask of operational modifiers */
 /*
  * Namei parameter descriptors.
  */

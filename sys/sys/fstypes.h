@@ -233,6 +233,7 @@ typedef struct fhandle	fhandle_t;
 #define	IMNT_MPSAFE	0x00000100	/* file system code MP safe */
 #define	IMNT_CAN_RWTORO	0x00000200	/* can downgrade fs to from rw to r/o */
 #define	IMNT_ONWORKLIST	0x00000400	/* on syncer worklist */
+#define	IMNT_NOREPLACE	0x00000800	/* VOP_RENAME honors CN_NOREPLACE */
 
 #define	__MNT_FLAGS \
 	__MNT_BASIC_FLAGS \

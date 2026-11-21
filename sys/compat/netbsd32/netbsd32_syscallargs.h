@@ -1,4 +1,4 @@
-/* $NetBSD: netbsd32_syscallargs.h,v 1.162 2025/05/09 10:20:08 martin Exp $ */
+/* $NetBSD$ */
 
 /*
  * System call argument lists.
@@ -2842,6 +2842,15 @@ struct netbsd32_semtimedop_args {
 };
 check_syscall_args(netbsd32_semtimedop)
 
+struct netbsd32_renameat2_args {
+	syscallarg(int) fromfd;
+	syscallarg(const netbsd32_charp) from;
+	syscallarg(int) tofd;
+	syscallarg(const netbsd32_charp) to;
+	syscallarg(unsigned int) flags;
+};
+check_syscall_args(netbsd32_renameat2)
+
 /*
  * System call prototypes.
  */
@@ -3725,5 +3734,7 @@ int	netbsd32_epoll_pwait2(struct lwp *, const struct netbsd32_epoll_pwait2_args 
 int	netbsd32___dup3100(struct lwp *, const struct netbsd32___dup3100_args *, register_t *);
 
 int	netbsd32_semtimedop(struct lwp *, const struct netbsd32_semtimedop_args *, register_t *);
+
+int	netbsd32_renameat2(struct lwp *, const struct netbsd32_renameat2_args *, register_t *);
 
 #endif /* _NETBSD32_SYS_SYSCALLARGS_H_ */

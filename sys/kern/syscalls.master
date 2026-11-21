@@ -1068,3 +1068,5 @@
 506	STD MODULAR sysv_ipc { int|sys||semtimedop(int semid, \
 			    struct sembuf *sops, size_t nsops, \
 			    struct timespec *timeout); }
+507	STD	RUMP	{ int|sys||renameat2(int fromfd, const char *from, \
+			    int tofd, const char *to, unsigned int flags); }

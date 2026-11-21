@@ -2106,8 +2106,9 @@ struct sysent netbsd32_sysent[] = {
 		.sy_call = (sy_call_t *)sys_nomodule
 	},		/* 506 = netbsd32_semtimedop */
 	{
-		.sy_call = sys_nosys,
-	},		/* 507 = filler */
+		ns(struct netbsd32_renameat2_args),
+		.sy_call = (sy_call_t *)netbsd32_renameat2
+	},		/* 507 = netbsd32_renameat2 */
 	{
 		.sy_call = sys_nosys,
 	},		/* 508 = filler */

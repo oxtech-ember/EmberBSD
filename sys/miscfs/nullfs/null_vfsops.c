@@ -139,7 +139,8 @@ nullfs_mount(struct mount *mp, const char *path, void *data, size_t *data_len)
 	nmp = kmem_zalloc(sizeof(struct null_mount), KM_SLEEP);
 	mp->mnt_data = nmp;
 	mp->mnt_iflag |= lowerrootvp->v_mount->mnt_iflag & IMNT_MPSAFE;
-	mp->mnt_iflag |= lowerrootvp->v_mount->mnt_iflag & IMNT_SHRLOOKUP;
+	mp->mnt_iflag |= lowerrootvp->v_mount->mnt_iflag &
+	    (IMNT_SHRLOOKUP | IMNT_NOREPLACE);
 
 	/*
 	 * Make sure that the mount point is sufficiently initialized

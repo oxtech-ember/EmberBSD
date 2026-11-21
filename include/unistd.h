@@ -320,6 +320,10 @@ int	unlinkat(int, const char *, int);
 int	fexecve(int, char * const *, char * const *);
 #endif
 
+#if defined(_NETBSD_SOURCE)
+int	renameat2(int, const char *, int, const char *, unsigned int);
+#endif
+
 /*
  * IEEE Std 1003.1-2024 (POSIX.1-2024)
  */

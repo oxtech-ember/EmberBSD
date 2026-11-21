@@ -22,7 +22,7 @@
 ./lib/libblocklist.so.0.1			base-sys-shlib		dynamicroot
 ./lib/libc.so					base-sys-shlib		dynamicroot
 ./lib/libc.so.12				base-sys-shlib		dynamicroot
-./lib/libc.so.12.224				base-sys-shlib		dynamicroot
+./lib/libc.so.12.225				base-sys-shlib		dynamicroot
 ./lib/libcrypt.so				base-sys-shlib		dynamicroot
 ./lib/libcrypt.so.1				base-sys-shlib		dynamicroot
 ./lib/libcrypt.so.1.0				base-sys-shlib		dynamicroot
@@ -266,7 +266,7 @@
 ./usr/lib/libc++.so.1.0				base-sys-shlib		compatfile,libcxx,!common_libcxx
 ./usr/lib/libc.so				base-sys-shlib		compatfile
 ./usr/lib/libc.so.12				base-sys-shlib		compatfile
-./usr/lib/libc.so.12.224			base-sys-shlib		compatfile
+./usr/lib/libc.so.12.225			base-sys-shlib		compatfile
 ./usr/lib/libcbor.so				base-sys-shlib		compatfile
 ./usr/lib/libcbor.so.1				base-sys-shlib		compatfile
 ./usr/lib/libcbor.so.1.0			base-sys-shlib		compatfile

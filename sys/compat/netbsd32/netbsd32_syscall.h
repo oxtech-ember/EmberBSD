@@ -1,4 +1,4 @@
-/* $NetBSD: netbsd32_syscall.h,v 1.163 2025/05/09 10:20:08 martin Exp $ */
+/* $NetBSD$ */
 
 /*
  * System call numbers.
@@ -1359,6 +1359,9 @@
 /* syscall: "netbsd32_semtimedop" ret: "int" args: "int" "netbsd32_sembufp_t" "netbsd32_size_t" "netbsd32_timespecp_t" */
 #define	NETBSD32_SYS_netbsd32_semtimedop	506
 
-#define	NETBSD32_SYS_MAXSYSCALL	507
+/* syscall: "netbsd32_renameat2" ret: "int" args: "int" "const netbsd32_charp" "int" "const netbsd32_charp" "unsigned int" */
+#define	NETBSD32_SYS_netbsd32_renameat2	507
+
+#define	NETBSD32_SYS_MAXSYSCALL	508
 #define	NETBSD32_SYS_NSYSENT	512
 #endif /* _NETBSD32_SYS_SYSCALL_H_ */

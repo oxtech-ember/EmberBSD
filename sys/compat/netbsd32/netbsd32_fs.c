@@ -1176,6 +1176,21 @@ netbsd32_renameat(struct lwp *l, const struct netbsd32_renameat_args *uap,
 }
 
 int
+netbsd32_renameat2(struct lwp *l, const struct netbsd32_renameat2_args *uap,
+    register_t *retval)
+{
+	struct sys_renameat2_args ua;
+
+	NETBSD32TO64_UAP(fromfd);
+	NETBSD32TOP_UAP(from, const char);
+	NETBSD32TO64_UAP(tofd);
+	NETBSD32TOP_UAP(to, const char);
+	NETBSD32TO64_UAP(flags);
+
+	return sys_renameat2(l, &ua, retval);
+}
+
+int
 netbsd32_mkfifoat(struct lwp *l, const struct netbsd32_mkfifoat_args *uap,
 		 register_t *retval)
 {

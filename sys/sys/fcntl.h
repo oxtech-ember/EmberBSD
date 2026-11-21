@@ -335,6 +335,10 @@ struct flock {
 #endif
 
 
+#if defined(_KERNEL) || defined(_NETBSD_SOURCE)
+#define	RENAME_NOREPLACE	0x01	/* Fail if destination exists */
+#endif
+
 #ifndef _KERNEL
 #include <sys/cdefs.h>
 

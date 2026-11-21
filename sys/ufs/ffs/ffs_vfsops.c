@@ -1547,7 +1547,7 @@ ffs_mountfs(struct vnode *devvp, struct mount *mp, struct lwp *l)
 	mp->mnt_dev_bshift = DEV_BSHIFT;	/* XXX */
 	mp->mnt_flag |= MNT_LOCAL;
 	mp->mnt_iflag |= IMNT_MPSAFE | IMNT_CAN_RWTORO | IMNT_SHRLOOKUP |
-	    IMNT_NCLOOKUP;
+	    IMNT_NCLOOKUP | IMNT_NOREPLACE;
 #ifdef FFS_EI
 	if (needswap)
 		ump->um_flags |= UFS_NEEDSWAP;

@@ -1,4 +1,4 @@
-/* $NetBSD: rump_syscalls.c,v 1.164 2024/10/09 16:29:11 christos Exp $ */
+/* $NetBSD$ */
 
 /*
  * System call vector and marshalling for rump.
@@ -15,7 +15,7 @@
 
 #ifdef __NetBSD__
 #include <sys/cdefs.h>
-__KERNEL_RCSID(0, "$NetBSD: rump_syscalls.c,v 1.164 2024/10/09 16:29:11 christos Exp $");
+__KERNEL_RCSID(0, "$NetBSD$");
 
 #include <sys/fstypes.h>
 #include <sys/proc.h>
@@ -6681,6 +6681,38 @@ __weak_alias(___dup3100,rump___sysimpl_dup3100);
 __strong_alias(_sys___dup3100,rump___sysimpl_dup3100);
 #endif /* RUMP_KERNEL_IS_LIBC */
 
+int rump___sysimpl_renameat2(int, const char *, int, const char *, unsigned int);
+int
+rump___sysimpl_renameat2(int fromfd, const char * from, int tofd, const char * to, unsigned int flags)
+{
+	register_t retval[2];
+	int error = 0;
+	int rv = -1;
+	struct sys_renameat2_args callarg;
+
+	memset(&callarg, 0, sizeof(callarg));
+	SPARG(&callarg, fromfd) = fromfd;
+	SPARG(&callarg, from) = from;
+	SPARG(&callarg, tofd) = tofd;
+	SPARG(&callarg, to) = to;
+	SPARG(&callarg, flags) = flags;
+
+	error = rsys_syscall(SYS_renameat2, &callarg, sizeof(callarg), retval);
+	rsys_seterrno(error);
+	if (error == 0) {
+		if (sizeof(int) > sizeof(register_t))
+			rv = *(int *)retval;
+		else
+			rv = *retval;
+	}
+	return rv;
+}
+#ifdef RUMP_KERNEL_IS_LIBC
+__weak_alias(renameat2,rump___sysimpl_renameat2);
+__weak_alias(_renameat2,rump___sysimpl_renameat2);
+__strong_alias(_sys_renameat2,rump___sysimpl_renameat2);
+#endif /* RUMP_KERNEL_IS_LIBC */
+
 int rump_sys_pipe(int *);
 int
 rump_sys_pipe(int *fd)
@@ -8664,9 +8696,9 @@ struct sysent rump_sysent[] = {
 		.sy_call = (sy_call_t *)(void *)rumpns_sys_nomodule,
 },		/* 506 = semtimedop */
 	{
-		.sy_flags = SYCALL_NOSYS,
+		ns(struct sys_renameat2_args),
 		.sy_call = (sy_call_t *)(void *)rumpns_enosys,
-	},		/* 507 = filler */
+	},		/* 507 = renameat2 */
 	{
 		.sy_flags = SYCALL_NOSYS,
 		.sy_call = (sy_call_t *)(void *)rumpns_enosys,

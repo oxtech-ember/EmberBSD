@@ -1,4 +1,4 @@
-/* $NetBSD: rump_syscalls.h,v 1.133 2024/10/09 16:29:11 christos Exp $ */
+/* $NetBSD$ */
 
 /*
  * System call protos in rump namespace.
@@ -680,6 +680,10 @@
 #define RUMP_SYS_RENAME_RENAMEAT rump___sysimpl_renameat
 #endif
 
+#ifndef RUMP_SYS_RENAME_RENAMEAT2
+#define RUMP_SYS_RENAME_RENAMEAT2 rump___sysimpl_renameat2
+#endif
+
 #ifndef RUMP_SYS_RENAME_REVOKE
 #define RUMP_SYS_RENAME_REVOKE rump___sysimpl_revoke
 #endif
@@ -1078,6 +1082,7 @@ int rump_sys_statvfs1(const char *, struct statvfs *, int) __RENAME(RUMP_SYS_REN
 int rump_sys_fstatvfs1(int, struct statvfs *, int) __RENAME(RUMP_SYS_RENAME_FSTATVFS1);
 int rump_sys_fhstatvfs1(const void *, size_t, struct statvfs *, int) __RENAME(RUMP_SYS_RENAME_FHSTATVFS1);
 long rump_sys_lpathconf(const char *, int) __RENAME(RUMP_SYS_RENAME_LPATHCONF);
+int rump_sys_renameat2(int, const char *, int, const char *, unsigned int) __RENAME(RUMP_SYS_RENAME_RENAMEAT2);
 int rump_sys_pipe(int *);
 
 #endif /* _RUMP_RUMP_SYSCALLS_H_ */

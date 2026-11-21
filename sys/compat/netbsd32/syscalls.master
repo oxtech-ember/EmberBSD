@@ -1235,3 +1235,6 @@
 506	STD MODULAR compat_netbsd32_sysvipc { int|netbsd32||semtimedop(int semid, \
 			    netbsd32_sembufp_t sops, netbsd32_size_t nsops, \
 			    netbsd32_timespecp_t timeout); }
+507	STD		{ int|netbsd32||renameat2(int fromfd, \
+			    const netbsd32_charp from, int tofd, \
+			    const netbsd32_charp to, unsigned int flags); }

@@ -154,6 +154,10 @@ and
 .Li nosuid
 .Xr mount 8
 options.
+.It Li vfs.generic.renameat2_flags
+Read-only mask of flags accepted by the running kernel for
+.Xr renameat2 2 .
+A file system may support only a subset of these flags.
 .It Li vfs.generic.magiclinks ( Dv VFS_MAGICLINKS )
 Controls whether expansion of variables is going to be performed on
 pathnames or not.

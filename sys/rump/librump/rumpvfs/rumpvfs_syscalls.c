@@ -112,6 +112,7 @@ extern sy_call_t sys___statvfs190;
 extern sy_call_t sys___fstatvfs190;
 extern sy_call_t sys___fhstatvfs190;
 extern sy_call_t sys_lpathconf;
+extern sy_call_t sys_renameat2;
 
 static const struct rump_onesyscall mysys[] = {
 	{ 5,	sys_open },
@@ -217,6 +218,7 @@ static const struct rump_onesyscall mysys[] = {
 	{ 485,	sys___fstatvfs190 },
 	{ 486,	sys___fhstatvfs190 },
 	{ 499,	sys_lpathconf },
+	{ 507,	sys_renameat2 },
 };
 
 RUMP_COMPONENT(RUMP_COMPONENT_SYSCALL)

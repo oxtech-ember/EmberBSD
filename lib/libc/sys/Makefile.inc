@@ -145,7 +145,7 @@ ASM=\
 		__posix_rename.S profil.S \
 	__quotactl.S \
 	rasctl.S readlinkat.S reboot.S \
-		rename.S renameat.S revoke.S rmdir.S \
+		rename.S renameat.S renameat2.S revoke.S rmdir.S \
 	semconfig.S semget.S semop.S semtimedop.S \
 		setegid.S seteuid.S \
 		setgid.S setgroups.S __setitimer50.S __setlogin.S setpgid.S \
@@ -376,7 +376,7 @@ MLINKS+=poll.2 pollts.2 poll.2 ppoll.2
 MLINKS+=read.2 readv.2 read.2 pread.2 read.2 preadv.2
 MLINKS+=readlink.2 readlinkat.2
 MLINKS+=recv.2 recvfrom.2 recv.2 recvmsg.2 recv.2 recvmmsg.2
-MLINKS+=rename.2 renameat.2
+MLINKS+=rename.2 renameat.2 rename.2 renameat2.2
 MLINKS+=select.2 pselect.2
 MLINKS+=send.2 sendmsg.2 send.2 sendto.2 send.2 sendmmsg.2
 MLINKS+=setpgid.2 setpgrp.2

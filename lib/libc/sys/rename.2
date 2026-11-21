@@ -29,12 +29,13 @@
 .\"
 .\"     @(#)rename.2	8.1 (Berkeley) 6/4/93
 .\"
-.Dd February 14, 2025
+.Dd November 21, 2026
 .Dt RENAME 2
 .Os
 .Sh NAME
 .Nm rename ,
-.Nm renameat
+.Nm renameat ,
+.Nm renameat2
 .Nd change the name of a file
 .Sh LIBRARY
 .Lb libc
@@ -45,6 +46,16 @@
 .In unistd.h
 .Ft int
 .Fn renameat "int fromfd" "const char *from" "int tofd" "const char *to"
+.In fcntl.h
+.In unistd.h
+.Ft int
+.Fo renameat2
+.Fa "int fromfd"
+.Fa "const char *from"
+.Fa "int tofd"
+.Fa "const char *to"
+.Fa "unsigned int flags"
+.Fc
 .Sh DESCRIPTION
 .Fn rename
 causes the link named
@@ -120,12 +131,30 @@ or
 can be set to
 .Dv AT_FDCWD
 in order to specify the current directory.
-.Sh RETURN VALUES
-.Rv -std rename renameat
-.Sh ERRORS
-.Fn rename
-and
+.Pp
+.Fn renameat2
+works the same way as
 .Fn renameat
+when
+.Fa flags
+is zero.
+With
+.Dv RENAME_NOREPLACE ,
+it atomically checks for an existing destination directory entry
+and fails if one exists, including a symbolic link.
+This flag is supported by FFS, tmpfs and null mounts over supporting
+file systems.
+The running kernel advertises the flags it recognizes in
+.Li vfs.generic.renameat2_flags
+(see
+.Xr sysctl 7 ) .
+.Sh RETURN VALUES
+.Rv -std rename renameat renameat2
+.Sh ERRORS
+.Fn rename ,
+.Fn renameat ,
+and
+.Fn renameat2
 will fail and neither of the argument files will be
 affected if:
 .Bl -tag -width Er
@@ -244,6 +273,19 @@ is not an absolute path and
 or
 .Fa tofd ,
 respectively, is a file descriptor associated with a non-directory file.
+.El
+.Pp
+.Fn renameat2
+may also fail with:
+.Bl -tag -width Er
+.It Bq Er EEXIST
+.Dv RENAME_NOREPLACE
+was specified and the destination already exists.
+.It Bq Er EINVAL
+.Fa flags
+contains an unsupported flag.
+.It Bq Er EOPNOTSUPP
+The file system does not support the requested rename flags.
 .El
 .Sh SEE ALSO
 .Xr open 2 ,

@@ -135,7 +135,7 @@ static int do_sys_mkfifoat(struct lwp *, int, const char *, mode_t);
 static int do_sys_symlinkat(struct lwp *, const char *, int, const char *,
     enum uio_seg);
 static int do_sys_renameat(struct lwp *l, int, const char *, int, const char *,
-    enum uio_seg, int);
+    enum uio_seg, int, unsigned int);
 static int do_sys_readlinkat(struct lwp *, int, const char *, char *,
     size_t, register_t *);
 static int do_sys_unlinkat(struct lwp *, int, const char *, int, enum uio_seg);
@@ -4373,7 +4373,7 @@ sys_rename(struct lwp *l, const struct sys_rename_args *uap,
 	} */
 
 	return do_sys_renameat(l, AT_FDCWD, SCARG(uap, from), AT_FDCWD,
-	    SCARG(uap, to), UIO_USERSPACE, 0);
+	    SCARG(uap, to), UIO_USERSPACE, 0, 0);
 }
 
 int
@@ -4388,7 +4388,19 @@ sys_renameat(struct lwp *l, const struct sys_renameat_args *uap,
 	} */
 
 	return do_sys_renameat(l, SCARG(uap, fromfd), SCARG(uap, from),
-	    SCARG(uap, tofd), SCARG(uap, to), UIO_USERSPACE, 0);
+	    SCARG(uap, tofd), SCARG(uap, to), UIO_USERSPACE, 0, 0);
+}
+
+int
+sys_renameat2(struct lwp *l, const struct sys_renameat2_args *uap,
+    register_t *retval)
+{
+	unsigned int flags = SCARG(uap, flags);
+
+	if (flags & ~RENAME_NOREPLACE)
+		return EINVAL;
+	return do_sys_renameat(l, SCARG(uap, fromfd), SCARG(uap, from),
+	    SCARG(uap, tofd), SCARG(uap, to), UIO_USERSPACE, 0, flags);
 }
 
 /*
@@ -4405,7 +4417,7 @@ sys___posix_rename(struct lwp *l, const struct sys___posix_rename_args *uap,
 	} */
 
 	return do_sys_renameat(l, AT_FDCWD, SCARG(uap, from), AT_FDCWD,
-	    SCARG(uap, to), UIO_USERSPACE, 1);
+	    SCARG(uap, to), UIO_USERSPACE, 1, 0);
 }
 
 /*
@@ -4425,12 +4437,12 @@ do_sys_rename(const char *from, const char *to, enum uio_seg seg, int retain)
 {
 
 	return do_sys_renameat(NULL, AT_FDCWD, from, AT_FDCWD, to, seg,
-	    retain);
+	    retain, 0);
 }
 
 static int
 do_sys_renameat(struct lwp *l, int fromfd, const char *from, int tofd,
-    const char *to, enum uio_seg seg, int retain)
+    const char *to, enum uio_seg seg, int retain, unsigned int flags)
 {
 	struct pathbuf *fpb, *tpb;
 	struct nameidata fnd, tnd;
@@ -4583,6 +4595,11 @@ do_sys_renameat(struct lwp *l, int fromfd, const char *from, int tofd,
 		goto abort1;
 	}
 
+	if ((flags & RENAME_NOREPLACE) && !(mp->mnt_iflag & IMNT_NOREPLACE)) {
+		error = EOPNOTSUPP;
+		goto abort1;
+	}
+
 	/*
 	 * Take the vfs rename lock to avoid cross-directory screw cases.
 	 * Nothing is locked currently, so taking this lock is safe.
@@ -4636,6 +4653,15 @@ do_sys_renameat(struct lwp *l, int fromfd, const char *from, int tofd,
 	 * exist, not actually to handle them, but here you go
 	 * anyway...
 	 */
+
+	if (flags & RENAME_NOREPLACE) {
+		if (tvp != NULL) {
+			error = EEXIST;
+			goto abort3;
+		}
+		/* VOP_RENAME may drop the parent lock and look up the leaf again. */
+		tnd.ni_cnd.cn_flags |= CN_NOREPLACE;
+	}
 
 	/*
 	 * Acknowledge that directories and non-directories aren't

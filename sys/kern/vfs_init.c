@@ -70,6 +70,7 @@
 __KERNEL_RCSID(0, "$NetBSD: vfs_init.c,v 1.67 2024/12/07 02:27:38 riastradh Exp $");
 
 #include <sys/param.h>
+#include <sys/fcntl.h>
 #include <sys/types.h>
 
 #include <sys/buf.h>
@@ -174,6 +175,12 @@ sysctl_vfs_setup(void)
 	    NULL, 0, &vfs_timestamp_precision, 0,
 	    CTL_VFS, VFS_GENERIC, VFS_TIMESTAMP_PRECISION,
 	    CTL_EOL);
+	sysctl_createv(&vfs_sysctllog, 0, NULL, NULL,
+	    CTLFLAG_PERMANENT | CTLFLAG_IMMEDIATE,
+	    CTLTYPE_INT, "renameat2_flags",
+	    SYSCTL_DESCR("Rename flags understood by the running kernel"),
+	    NULL, RENAME_NOREPLACE, NULL, 0,
+	    CTL_VFS, VFS_GENERIC, CTL_CREATE, CTL_EOL);
 }
 
 /*

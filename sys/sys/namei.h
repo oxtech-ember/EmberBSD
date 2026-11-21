@@ -1,4 +1,4 @@
-/*	$NetBSD: namei.h,v 1.120 2024/07/01 00:58:43 christos Exp $	*/
+/*	$NetBSD: gennameih.awk,v 1.5 2009/12/23 14:17:19 pooka Exp $	*/
 
 
 /*
@@ -162,7 +162,8 @@ struct nameidata {
 #define	LOCKSHARED	0x00000100	/* want shared locks if possible */
 #define	NOCHROOT	0x01000000	/* no chroot on abs path lookups */
 #define	NONEXCLHACK	0x02000000	/* open wwith O_CREAT but not O_EXCL */
-#define	MODMASK		0x030001fc	/* mask of operational modifiers */
+#define	CN_NOREPLACE	0x04000000	/* reject an existing rename target */
+#define	MODMASK		0x070001fc	/* mask of operational modifiers */
 /*
  * Namei parameter descriptors.
  */
@@ -380,7 +381,8 @@ struct	nchstats _NAMEI_CACHE_STATS(uint64_t);
 #define NAMEI_LOCKSHARED	0x00000100
 #define NAMEI_NOCHROOT	0x01000000
 #define NAMEI_NONEXCLHACK	0x02000000
-#define NAMEI_MODMASK	0x030001fc
+#define NAMEI_CN_NOREPLACE	0x04000000
+#define NAMEI_MODMASK	0x070001fc
 #define NAMEI_NOCROSSMOUNT	0x0000800
 #define NAMEI_RDONLY	0x0001000
 #define NAMEI_ISDOTDOT	0x0002000

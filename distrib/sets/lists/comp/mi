@@ -5111,6 +5111,7 @@
 ./usr/share/man/cat2/recvmsg.0			comp-c-catman		.cat
 ./usr/share/man/cat2/rename.0			comp-c-catman		.cat
 ./usr/share/man/cat2/renameat.0			comp-c-catman		.cat
+./usr/share/man/cat2/renameat2.0			comp-c-catman		.cat
 ./usr/share/man/cat2/revoke.0			comp-c-catman		.cat
 ./usr/share/man/cat2/rmdir.0			comp-c-catman		.cat
 ./usr/share/man/cat2/sa_enable.0		comp-obsolete		obsolete
@@ -14139,6 +14140,7 @@
 ./usr/share/man/html2/recvmsg.html		comp-c-htmlman		html
 ./usr/share/man/html2/rename.html		comp-c-htmlman		html
 ./usr/share/man/html2/renameat.html		comp-c-htmlman		html
+./usr/share/man/html2/renameat2.html		comp-c-htmlman		html
 ./usr/share/man/html2/revoke.html		comp-c-htmlman		html
 ./usr/share/man/html2/rmdir.html		comp-c-htmlman		html
 ./usr/share/man/html2/sbrk.html			comp-c-htmlman		html
@@ -22997,6 +22999,7 @@
 ./usr/share/man/man2/recvmsg.2			comp-c-man		.man
 ./usr/share/man/man2/rename.2			comp-c-man		.man
 ./usr/share/man/man2/renameat.2			comp-c-man		.man
+./usr/share/man/man2/renameat2.2			comp-c-man		.man
 ./usr/share/man/man2/revoke.2			comp-c-man		.man
 ./usr/share/man/man2/rmdir.2			comp-c-man		.man
 ./usr/share/man/man2/sa_enable.2		comp-obsolete		obsolete

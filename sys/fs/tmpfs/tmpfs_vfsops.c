@@ -183,7 +183,7 @@ tmpfs_mount(struct mount *mp, const char *path, void *data, size_t *data_len)
 	mp->mnt_fs_bshift = PAGE_SHIFT;
 	mp->mnt_dev_bshift = DEV_BSHIFT;
 	mp->mnt_iflag |= IMNT_MPSAFE | IMNT_CAN_RWTORO | IMNT_SHRLOOKUP |
-	    IMNT_NCLOOKUP;
+	    IMNT_NCLOOKUP | IMNT_NOREPLACE;
 	vfs_getnewfsid(mp);
 
 	/* Allocate the tmpfs mount structure and fill it. */

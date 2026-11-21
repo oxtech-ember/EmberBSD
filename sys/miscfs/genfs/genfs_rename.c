@@ -248,6 +248,7 @@ genfs_sane_rename(const struct genfs_rename_ops *ops,
 	struct mount *mp;
 	struct vnode *fvp = NULL, *tvp = NULL;
 	nlink_t tvp_new_nlink = 0;
+	bool noreplace;
 	int error;
 
 	KASSERT(ops != NULL);
@@ -278,6 +279,8 @@ genfs_sane_rename(const struct genfs_rename_ops *ops,
 	if ((fcnp->cn_flags | tcnp->cn_flags) & ISDOTDOT)
 		return EINVAL;	/* XXX EISDIR?  */
 
+	/* Filesystem relookup may clear namei operation modifiers. */
+	noreplace = (tcnp->cn_flags & CN_NOREPLACE) != 0;
 	error = genfs_rename_enter(ops, mp, cred,
 	    fdvp, fcnp, fde, &fvp,
 	    tdvp, tcnp, tde, &tvp);
@@ -292,6 +295,12 @@ genfs_sane_rename(const struct genfs_rename_ops *ops,
 	KASSERT(VOP_ISLOCKED(fvp) == LK_EXCLUSIVE);
 	KASSERT(VOP_ISLOCKED(tdvp) == LK_EXCLUSIVE);
 	KASSERT((tvp == NULL) || (VOP_ISLOCKED(tvp) == LK_EXCLUSIVE));
+
+	/* The final lookup and the mutation share the directory locks. */
+	if (noreplace && tvp != NULL) {
+		error = EEXIST;
+		goto out;
+	}
 
 	/*
 	 * If the source and destination are the same object, we need
