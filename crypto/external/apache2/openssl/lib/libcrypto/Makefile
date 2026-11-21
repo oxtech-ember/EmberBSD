@@ -328,6 +328,18 @@ $i: $i.in
 
 .endif # !EMBER_OPENSSL_SOURCE
 
+# Lint cannot parse Clang's x86 vector extensions and target builtins.
+# Check these original sources with both frontends.  The normal object build
+# uses Clang's full headers and target flags.  Only the .ln rules use the
+# declarations in lint-include, and the .ln files still participate in lint2.
+.if defined(EMBER_OPENSSL_SOURCE) && \
+    ${MACHINE_ARCH} == "x86_64" && ${ACTIVE_CC} == "clang"
+.for _f in ${SRCS:Maes_cbc_vaes_intrinsic.c} ${SRCS:Menc_b64_avx2.c}
+LINTFLAGS.${_f}+= -I${.CURDIR}/lint-include
+${_f:R}.ln: ${_f:R}.o ${.CURDIR}/lint-include/immintrin.h
+.endfor
+.endif
+
 .include <bsd.lib.mk>
 
 # Changes to the shared library's dependency list require a relink even when
