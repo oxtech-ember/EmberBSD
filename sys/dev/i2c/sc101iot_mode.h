@@ -220,7 +220,7 @@ static const struct sc101iot_reginfo sc101iot_mode_640x480_uyvy[] = {
     {0xed, 0x27},
     {0xe9, 0x20},
     {0xf0, 0x01},
-    {0x79, 0x89}, /* YUV422 UYVY sequence (Espressif format constant). */
+    {0x79, 0x02}, /* SC101IOT_YUV422_FMT_UYVY in sc101iot_settings.h. */
     {0xf0, 0x31},
     {0x00, 0x00}, // sleep mode enable
 };

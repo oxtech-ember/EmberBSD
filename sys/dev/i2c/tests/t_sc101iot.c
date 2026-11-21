@@ -102,6 +102,7 @@ struct fixture {
 	int pclk_prop_present;
 	uint32_t pclk_delay_ns;
 	uint8_t pclk_reg;
+	uint8_t yuv_order_reg;
 	int release_count;
 	int bus_acquired;
 	unsigned int acquires;
@@ -281,6 +282,8 @@ iic_exec(i2c_tag_t tag, i2c_op_t op, i2c_addr_t addr, const void *cmd,
 				return EIO;
 			f->pclk_reg = bytes[1];
 		}
+		if (f->selected_page == 0x01 && bytes[0] == 0x79)
+			f->yuv_order_reg = bytes[1];
 		return 0;
 	}
 	assert(op == I2C_OP_READ_WITH_STOP);
@@ -506,6 +509,7 @@ main(void)
 		assert(sc101iot_set_format(&f.sc, &format) == 0);
 		assert(f.sc.sc_configured);
 		assert(f.pclk_reg == 0x03); /* No FDT override preserves the mode table. */
+		assert(f.yuv_order_reg == 0x02); /* SC101IOT UYVY wire order. */
 		f.fail_write = (int)f.writes + 3;
 		assert(sc101iot_set_format(&f.sc, &format) == EIO);
 		assert(!f.sc.sc_configured);
