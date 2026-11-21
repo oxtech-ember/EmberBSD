@@ -9,6 +9,7 @@ import re
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 
 
 def main():
@@ -168,6 +169,15 @@ def main():
                         'EMBER_OPENSSH_CRYPTO=' + args.crypto_mode,
                         'openssh-target-config'],
                        env=env, check=True)
+        # A GNU distclean may recreate an identical config.h. Install the
+        # consumer header outside build/ so that only changed bytes invalidate C.
+        header = obj / 'config.h'
+        content = (build / 'config.h').read_bytes()
+        if header.is_symlink() or not header.exists() or header.read_bytes() != content:
+            with tempfile.TemporaryDirectory(dir=obj) as temporary:
+                staged = Path(temporary) / 'config.h'
+                staged.write_bytes(content)
+                staged.replace(header)
 
 
 if __name__ == '__main__':

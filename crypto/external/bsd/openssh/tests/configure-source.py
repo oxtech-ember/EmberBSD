@@ -85,7 +85,8 @@ try:
         f.write('make-' + ('cold' if not (build / 'Makefile').exists() else 'warm') + '\\n')
     time.sleep(0.1)
     (build / 'Makefile').write_text('makefile\\n')
-    (build / 'config.h').write_text('config\\n')
+    (build / 'config.h').write_text(os.environ.get('TEST_HEADER', 'config') + '\\n')
+    if os.environ.get('TEST_MAKE_FAIL'): sys.exit(1)
 finally:
     active.unlink()
 ''')
@@ -106,6 +107,20 @@ finally:
     assert log.read_text().splitlines() == ['autoconf', 'make-cold', 'make-warm']
     assert role_log.read_text().splitlines() == ['os', 'os']
     assert crypto_log.read_text().splitlines() == ['builtin', 'builtin']
+    header = obj / 'config.h'
+    assert header.read_bytes() == b'config\n'
+    os.utime(header, (1000000000, 1000000000))
+    original_mtime = header.stat().st_mtime_ns
+    (obj / 'build' / 'config.h').unlink()
+    subprocess.run(command, env=env, check=True)
+    assert header.stat().st_mtime_ns == original_mtime
+    changed_header = dict(env, TEST_HEADER='changed')
+    failed = subprocess.run(command, env=dict(changed_header, TEST_MAKE_FAIL='1'),
+                            capture_output=True)
+    assert failed.returncode and header.read_bytes() == b'config\n'
+    assert header.stat().st_mtime_ns == original_mtime
+    subprocess.run(command, env=changed_header, check=True)
+    assert header.read_bytes() == b'changed\n' and header.stat().st_mtime_ns > original_mtime
     os_role_inputs = (obj / '.configure-source-inputs').read_text()
     private_role = command + ['--role', 'private-libssh']
     subprocess.run(private_role, env=env, check=True)

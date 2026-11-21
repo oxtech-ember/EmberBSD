@@ -16,13 +16,13 @@ OPENSSH_CONFIG_OBJECT?= ${OPENSSH_PRIVATE_LIBSSH_CONFIG_OBJECT}
 .else
 OPENSSH_CONFIG_OBJECT?= ${OPENSSH_OS_CONFIG_OBJECT}
 .endif
-OPENSSH_CONFIG_HEADER= ${OPENSSH_CONFIG_OBJECT}/build/config.h
-CPPFLAGS+= -I${OPENSSH_CONFIG_OBJECT}/build
+OPENSSH_CONFIG_HEADER= ${OPENSSH_CONFIG_OBJECT}/config.h
+CPPFLAGS+= -I${OPENSSH_CONFIG_OBJECT} -I${OPENSSH_CONFIG_OBJECT}/build
 CPPFLAGS+= -I${OPENSSH_CONFIG_OBJECT}/build/openbsd-compat/include
 DPSRCS+= ${OPENSSH_CONFIG_HEADER}
 
 # Every consumer checks the shared configuration; the helper serializes
-# generation and the GNU adapter preserves a warm configuration unchanged.
+# generation and publishes the header when its contents change.
 openssh-config-check: .PHONY
 ${OPENSSH_CONFIG_HEADER}: openssh-config-check
 	${HOST_PYTHON:Q} -B ${NETBSDSRCDIR:Q}/crypto/external/bsd/openssh/tools/configure-source.py \

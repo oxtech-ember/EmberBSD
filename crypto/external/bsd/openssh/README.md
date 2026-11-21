@@ -20,6 +20,14 @@ The selected symbol inventory is shared across dynamic targets; current build
 and symbol validation has been performed on AArch64. Static platforms retain
 their native selection and are not covered by that dynamic-library result.
 
+For a prepared source, each native configuration checks its target libraries,
+configure inputs and selected tools. GNU configure writes `build/config.h`.
+After a successful check, the helper publishes `config.h` in the configuration
+object directory for C compilation and dependency generation. Reconfiguring
+that role with identical header bytes preserves the consumer header's timestamp.
+A changed header invalidates its consumers. Programs with and without Kerberos
+and the private library keep their existing configuration selection.
+
 When `EMBER_OPENSSH_SOURCE` changes to a different prepared directory in an
 existing object tree, generated `.depend` and compiler `.d` files may still
 name the old absolute source path. This change is not automatically

@@ -15,13 +15,21 @@ def run(*assignments):
     # -v expands the library paths. source.mk accepts -v only with a prepared
     # source, so give one.
     result = subprocess.run([str(args.bmake), '-f', str(helper),
+                             '-f', str(helper.with_name('config.mk')),
                              '-v', 'OPENSSH_OS_CONFIG_NAME',
                              '-v', 'OPENSSH_KRB5_CONFIG_LIBS',
+                             '-v', 'OPENSSH_CONFIG_HEADER', '-v', 'CPPFLAGS',
+                             'HOST_AUTOCONF=/autoconf', '_SRC_TOP_OBJ_=/obj',
+                             'NETBSDSRCDIR=' + str(root),
                              'DESTDIR=/dest', 'EMBER_OPENSSH_SOURCE=/openssh',
                              *assignments], cwd=root,
                             text=True, capture_output=True)
     assert result.returncode == 0, result.stderr
-    name, libraries = result.stdout.split('\n', 1)
+    name, libraries, header, cppflags = result.stdout.splitlines()
+    config = Path('/obj/crypto/external/bsd/openssh/config') / name
+    assert Path(header) == config / 'config.h'
+    includes = cppflags.split()
+    assert includes.index('-I' + str(config)) < includes.index('-I' + str(config / 'build'))
     return name, libraries.split()
 
 

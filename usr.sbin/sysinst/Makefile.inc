@@ -109,26 +109,42 @@ CPPFLAGS+=	-DHAVE_MODULES
 .endif
 
 EMBER_BUILD_ID?=development
+# Only these translation units use the release identity or runtime mode.
+.if defined(SYSINST_FTP_DIR)
+_EMBER_INPUTS.ember-download-dir= override ${SYSINST_FTP_DIR:Q}
+.elif ${MACHINE} == "amd64"
+_EMBER_INPUTS.ember-download-dir= pinned
+.else
+_EMBER_INPUTS.ember-download-dir= release ${EMBER_BUILD_ID:Q}
+CPPFLAGS.main.c+= -DEMBER_BUILD_ID=\"${EMBER_BUILD_ID}\"
+.endif
+CPPFLAGS.wizard.c+= -DEMBER_VERSION=\"${EMBER_VERSION}\" \
+    -DEMBER_BUILD_ID=\"${EMBER_BUILD_ID}\"
 .if defined(EMBER_EXTERNAL_GCC_RUNTIME)
-CPPFLAGS+= -DEMBER_BASE_RUNTIME_GCC16
+CPPFLAGS.util.c+= -DEMBER_BASE_RUNTIME_GCC16
+CPPFLAGS.wizard.c+= -DEMBER_BASE_RUNTIME_GCC16
 _EMBER_SYSINST_RUNTIME= gcc16
 .else
 _EMBER_SYSINST_RUNTIME= base
 .endif
-CPPFLAGS+= -DEMBER_VERSION=\"${EMBER_VERSION}\"
-CPPFLAGS+= -DEMBER_BUILD_ID=\"${EMBER_BUILD_ID}\"
 
-# Command-line macros and substitutions are also incremental build inputs.
-DPSRCS+= ember-build-config
+main.o wizard.o: .NOTMAIN ember-download-dir
+wizard.o: .NOTMAIN ember-build-version ember-build-id
+util.o wizard.o: .NOTMAIN ember-runtime-config
+_EMBER_INPUTS.ember-build-version= ${EMBER_VERSION:Q}
+_EMBER_INPUTS.ember-build-id= ${EMBER_BUILD_ID:Q}
+_EMBER_INPUTS.ember-runtime-config= ${_EMBER_SYSINST_RUNTIME:Q}
 ember-build-config-force: .PHONY .NOTMAIN
-ember-build-config: .NOTMAIN ember-build-config-force
-	@printf '%s\n' ${EMBER_VERSION:Q} ${EMBER_BUILD_ID:Q} \
-	    ${_EMBER_SYSINST_RUNTIME:Q} > ${.TARGET}.tmp
+_EMBER_SYSINST_STAMPS= ember-build-version ember-build-id ember-runtime-config ember-download-dir
+.for _stamp in ${_EMBER_SYSINST_STAMPS}
+${_stamp}: .NOTMAIN ember-build-config-force
+	@printf '%s\n' ${_EMBER_INPUTS.${_stamp}} > ${.TARGET}.tmp
 	@if ! cmp -s ${.TARGET}.tmp ${.TARGET}; then \
 		mv -f ${.TARGET}.tmp ${.TARGET}; \
 	else \
 		rm -f ${.TARGET}.tmp; \
 	fi
+.endfor
 
 CATALOGDIR=	/usr/share/sysinst/catalog
 CPPFLAGS+=	-I. -I${.CURDIR}/../.. -I${.CURDIR} \
@@ -228,7 +244,8 @@ DPSRCS+=	msg_defs.h menu_defs.h
 
 CLEANFILES=	menu_defs.c menu_defs.h menus.def \
 		msg_defs.c msg_defs.h msg.def msgtouch \
-		sysinstmsgs.* ember-build-config ember-build-config.tmp
+		sysinstmsgs.* ember-build-config ember-build-config.tmp \
+		${_EMBER_SYSINST_STAMPS} ${_EMBER_SYSINST_STAMPS:S/$/.tmp/}
 
 .PATH: ${.CURDIR}/../..
 
@@ -257,7 +274,7 @@ msg_defs.c: msg.def
 	@rm -f msg_defs.oh
 
 # Needed to get proper dependency checks on osrelease
-msgtouch: ${DISTRIBVERDEP} ember-build-config
+msgtouch: ${DISTRIBVERDEP} ember-build-version ember-build-id
 	touch ${.TARGET}
 
 .if !defined(NOPARTMAN)
@@ -296,7 +313,7 @@ sysinstmsgs.${LANG}: msg.mi.${LANG} ${MSG_MD:S/.${SYSINSTLANG}$/.${LANG}/} msgto
 	${TOOL_AWK} -f ${UNIF_AWK} -v defines="${MD_OPTIONS}" | \
 	${HOST_SH} ${MSG_XLAT_SH} -f sysinstmsgs.fmtcnt > ${.TARGET}
 
-DPSRCS+=	sysinstmsgs.${LANG}
+FILESBUILD_sysinstmsgs.${LANG}= yes
 FILES+=		sysinstmsgs.${LANG}
 FILESDIR_sysinstmsgs.${LANG}=	${CATALOGDIR}
 .endfor
