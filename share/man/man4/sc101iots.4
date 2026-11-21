@@ -1,5 +1,5 @@
 .\" SPDX-License-Identifier: BSD-2-Clause AND Apache-2.0
-.Dd November 1, 2026
+.Dd November 21, 2026
 .Dt SC101IOTS 4
 .Os
 .Sh NAME
@@ -10,7 +10,8 @@
 .Sh DESCRIPTION
 The
 .Nm
-driver identifies a SmartSens SC101IOT image sensor over SCCB/I2C.
+driver identifies and configures a SmartSens SC101IOT image sensor over
+SCCB/I2C.
 It asserts reset and power-down while acquiring the controls, enables the
 referenced shared supply, waits for the module-provided external oscillator,
 then releases power-down and reset before reading the sensor ID.
@@ -27,6 +28,25 @@ The sensor uses paged 8-bit register access: the driver writes the page
 number to register 0xf0, then reads the low register byte.
 It reads registers 0x31f7 and 0x31f8 and expects ID 0xda4a.
 .Pp
+The driver programs the sensor's 640x480 UYVY mode with a nominal
+rate of 15 frames per second.
+Its mode table uses the Espressif 640x480 crop of the native 1280x720 array:
+horizontal coordinates 320 through 960 and vertical coordinates 120 through
+600.
+The table comes from esp-video-components commit
+.Pa ad043ab9f2e248ca8cb5b424014aac6613843e0a .
+.Pp
+The optional device-tree property
+.Va smartsens,pclk-delay-ns
+selects the sensor pixel-clock delay in nanoseconds and accepts 0, 2, 4, or
+6.
+When present, the driver applies it to bits 1:0 of page 0x36 register 0x40
+after programming the mode table.
+When absent, the mode table's 6 ns setting is retained.
+The Mosaico SC101IOT device tree selects 0 ns, matching the
+.Pa esp-cam-sensor-sc101iot-pclk-delay.patch
+in esp-mosaico-bsp commit 7cbfb39.
+.Pp
 The module provides its own XCLK.
 The operating system does not control or declare a fixed frequency for that
 oscillator.
@@ -40,9 +60,8 @@ The base
 tree leaves it disabled.
 The OV3640 camera variant remains separate.
 .Sh LIMITATIONS
-This driver only identifies the SC101IOT sensor.
-It does not configure image formats, attach a video device, or capture
-frames.
+The driver currently supports only 640x480 UYVY. Other dimensions and pixel
+formats are rejected.
 .Sh SEE ALSO
 .Xr iic 4 ,
 .Xr ov3640s 4

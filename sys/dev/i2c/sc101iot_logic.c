@@ -133,3 +133,30 @@ sc101iot_mode_layout(uint32_t width, uint32_t height, size_t *stride,
 	*frame_size = *stride * height;
 	return 0;
 }
+
+int
+sc101iot_pclk_delay_reg(uint32_t delay_ns, uint8_t current, uint8_t *value)
+{
+	uint8_t step;
+
+	if (value == NULL)
+		return EINVAL;
+	switch (delay_ns) {
+	case 0:
+		step = 0;
+		break;
+	case 2:
+		step = 1;
+		break;
+	case 4:
+		step = 2;
+		break;
+	case 6:
+		step = 3;
+		break;
+	default:
+		return EINVAL;
+	}
+	*value = (current & 0xfc) | step;
+	return 0;
+}

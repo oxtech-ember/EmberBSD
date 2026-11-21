@@ -62,6 +62,8 @@ fixture.write_text(
     + extract("sc101iot_sequence_ops")
     + extract("sc101iot_write_reg_locked")
     + extract("sc101iot_write_mode")
+    + extract("sc101iot_get_pclk_delay")
+    + extract("sc101iot_apply_pclk_delay")
     + extract("sc101iot_power_up")
     + extract("sc101iot_set_format")
     + extract("sc101iot_init")

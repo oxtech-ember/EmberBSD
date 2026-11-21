@@ -21,5 +21,6 @@ struct sc101iot_sequence_ops {
 int sc101iot_identify(const struct sc101iot_sequence_ops *, uint16_t *);
 int sc101iot_power_on(const struct sc101iot_sequence_ops *);
 int sc101iot_mode_layout(uint32_t, uint32_t, size_t *, size_t *);
+int sc101iot_pclk_delay_reg(uint32_t, uint8_t, uint8_t *);
 
 #endif /* _DEV_I2C_SC101IOT_LOGIC_H_ */

@@ -63,6 +63,8 @@ static int sc101iot_power_up(struct sc101iot_softc *);
 static struct sc101iot_sequence_ops sc101iot_sequence_ops(
     struct sc101iot_softc *);
 static int sc101iot_write_mode(struct sc101iot_softc *);
+static int sc101iot_get_pclk_delay(struct sc101iot_softc *, bool *, uint32_t *);
+static int sc101iot_apply_pclk_delay(struct sc101iot_softc *, uint32_t);
 static int sc101iot_write_reg_locked(struct sc101iot_softc *, uint8_t,
     uint8_t);
 
@@ -234,6 +236,53 @@ sc101iot_write_mode(struct sc101iot_softc *sc)
 }
 
 static int
+sc101iot_get_pclk_delay(struct sc101iot_softc *sc, bool *present,
+    uint32_t *delay_ns)
+{
+	uint8_t value;
+	int len, error;
+
+	*present = false;
+	len = OF_getproplen(sc->sc_phandle, "smartsens,pclk-delay-ns");
+	if (len < 0)
+		return 0;
+	if (len != sizeof(*delay_ns))
+		return EINVAL;
+	error = of_getprop_uint32(sc->sc_phandle, "smartsens,pclk-delay-ns",
+	    delay_ns);
+	if (error != 0)
+		return error;
+	error = sc101iot_pclk_delay_reg(*delay_ns, 0, &value);
+	if (error != 0)
+		return error;
+	*present = true;
+	return 0;
+}
+
+static int
+sc101iot_apply_pclk_delay(struct sc101iot_softc *sc, uint32_t delay_ns)
+{
+	uint8_t page_command[2] = { 0xf0, 0x36 };
+	uint8_t reg = 0x40, current, value;
+	int error;
+
+	error = iic_acquire_bus(sc->sc_tag, 0);
+	if (error != 0)
+		return error;
+	error = iic_exec(sc->sc_tag, I2C_OP_WRITE_WITH_STOP, sc->sc_addr,
+	    page_command, sizeof(page_command), NULL, 0, 0);
+	if (error == 0)
+		error = iic_exec(sc->sc_tag, I2C_OP_READ_WITH_STOP, sc->sc_addr,
+		    &reg, sizeof(reg), &current, sizeof(current), 0);
+	if (error == 0)
+		error = sc101iot_pclk_delay_reg(delay_ns, current, &value);
+	if (error == 0)
+		error = sc101iot_write_reg_locked(sc, reg, value);
+	iic_release_bus(sc->sc_tag, 0);
+	return error;
+}
+
+static int
 sc101iot_get_format(void *cookie, struct video_format *format)
 {
 	struct sc101iot_softc *sc = cookie;
@@ -291,6 +340,8 @@ sc101iot_set_format(void *cookie, const struct video_format *requested)
 {
 	struct sc101iot_softc *sc = cookie;
 	struct video_format format = *requested;
+	uint32_t pclk_delay_ns;
+	bool pclk_delay_present;
 	int error;
 
 	mutex_enter(&sc->sc_lock);
@@ -300,6 +351,12 @@ sc101iot_set_format(void *cookie, const struct video_format *requested)
 		error = EBUSY;
 	else
 		error = sc101iot_try_format_locked(sc, &format);
+	if (error != 0) {
+		mutex_exit(&sc->sc_lock);
+		return error;
+	}
+	error = sc101iot_get_pclk_delay(sc, &pclk_delay_present,
+	    &pclk_delay_ns);
 	if (error != 0) {
 		mutex_exit(&sc->sc_lock);
 		return error;
@@ -314,6 +371,8 @@ sc101iot_set_format(void *cookie, const struct video_format *requested)
 		return error;
 	}
 	error = sc101iot_write_mode(sc);
+	if (error == 0 && pclk_delay_present)
+		error = sc101iot_apply_pclk_delay(sc, pclk_delay_ns);
 	if (error != 0) {
 		fdtbus_gpio_write(sc->sc_power.reset, 1);
 		fdtbus_gpio_write(sc->sc_power.powerdown, 1);

@@ -97,6 +97,11 @@ struct fixture {
 	unsigned int writes;
 	unsigned int page_writes;
 	int fail_acquire;
+	int fail_pclk_write;
+	int pclk_read_seen;
+	int pclk_prop_present;
+	uint32_t pclk_delay_ns;
+	uint8_t pclk_reg;
 	int release_count;
 	int bus_acquired;
 	unsigned int acquires;
@@ -132,6 +137,8 @@ static int iic_acquire_bus(i2c_tag_t, int);
 static void iic_release_bus(i2c_tag_t, int);
 static int iic_exec(i2c_tag_t, i2c_op_t, i2c_addr_t, const void *, size_t,
     void *, size_t, int);
+static int OF_getproplen(int, const char *);
+static int of_getprop_uint32(int, const char *, uint32_t *);
 
 static void
 record(struct fixture *f, enum event_type type, unsigned int value)
@@ -253,37 +260,67 @@ iic_exec(i2c_tag_t tag, i2c_op_t op, i2c_addr_t addr, const void *cmd,
 	memcpy(bytes, cmd, cmdlen);
 	if (op == I2C_OP_WRITE_WITH_STOP) {
 		assert(cmdlen == 2 && datalen == 0 && data == NULL);
-		if (bytes[0] == 0xf0 && f->fail_page && f->page_writes == 0) {
-			record(f, EVENT_PAGE_WRITE, bytes[1]);
-			return EIO;
-		}
-		if (bytes[0] == 0xf0 && f->page_writes < 2) {
-			record(f, EVENT_PAGE_WRITE, bytes[1]);
+		if (bytes[0] == 0xf0) {
+			if (f->fail_page && f->page_writes == 0) {
+				record(f, EVENT_PAGE_WRITE, bytes[1]);
+				return EIO;
+			}
+			if (f->page_writes < 2)
+				record(f, EVENT_PAGE_WRITE, bytes[1]);
 			f->page_writes++;
-		} else
-			record(f, EVENT_REG_WRITE, ((unsigned int)bytes[0] << 8) |
-			    bytes[1]);
+			f->selected_page = bytes[1];
+			return 0;
+		}
+		record(f, EVENT_REG_WRITE, ((unsigned int)bytes[0] << 8) |
+		    bytes[1]);
 		f->writes++;
 		if (f->fail_write != 0 && f->writes == (unsigned int)f->fail_write)
 			return EIO;
-		if (bytes[0] == 0xf0)
-			f->selected_page = bytes[1];
+		if (f->selected_page == 0x36 && bytes[0] == 0x40) {
+			if (f->fail_pclk_write && f->pclk_read_seen)
+				return EIO;
+			f->pclk_reg = bytes[1];
+		}
 		return 0;
 	}
 	assert(op == I2C_OP_READ_WITH_STOP);
 	assert(cmdlen == 1 && datalen == 1 && data != NULL);
-	assert(f->selected_page == 0x31);
 	assert(f->reset.physical_level == 1);
 	assert(f->powerdown.physical_level == 0);
 	record(f, EVENT_REG_READ, bytes[0]);
 	if (f->fail_reg == bytes[0])
 		return EIO;
-	if (bytes[0] == 0xf7)
+	if (f->selected_page == 0x31 && bytes[0] == 0xf7)
 		*(uint8_t *)data = f->pid_hi;
-	else if (bytes[0] == 0xf8)
+	else if (f->selected_page == 0x31 && bytes[0] == 0xf8)
 		*(uint8_t *)data = f->pid_lo;
+	else if (f->selected_page == 0x36 && bytes[0] == 0x40) {
+		*(uint8_t *)data = f->pclk_reg | 0xa0;
+		f->pclk_read_seen = 1;
+	}
 	else
 		return EINVAL;
+	return 0;
+}
+
+static int
+OF_getproplen(int phandle, const char *name)
+{
+	struct fixture *f = active_fixture;
+
+	assert(phandle == f->sc.sc_phandle);
+	assert(strcmp(name, "smartsens,pclk-delay-ns") == 0);
+	return f->pclk_prop_present ? sizeof(uint32_t) : -1;
+}
+
+static int
+of_getprop_uint32(int phandle, const char *name, uint32_t *value)
+{
+	struct fixture *f = active_fixture;
+
+	assert(phandle == f->sc.sc_phandle);
+	assert(strcmp(name, "smartsens,pclk-delay-ns") == 0);
+	*value = f->pclk_delay_ns;
 	return 0;
 }
 
@@ -367,6 +404,18 @@ main(void)
 	assert(stride == 1280 && frame_size == 614400);
 	assert(sc101iot_mode_layout(1280, 720, &stride, &frame_size) == ENOTSUP);
 	assert(sc101iot_mode_layout(640, 480, NULL, &frame_size) == EINVAL);
+	{
+		const uint32_t delays[] = { 0, 2, 4, 6 };
+		uint8_t reg;
+
+		for (size_t i = 0; i < __arraycount(delays); i++) {
+			assert(sc101iot_pclk_delay_reg(delays[i], 0xfc, &reg) == 0);
+			assert(reg == (uint8_t)(0xfc | i));
+		}
+		assert(sc101iot_pclk_delay_reg(1, 0xfc, &reg) == EINVAL);
+		assert(sc101iot_pclk_delay_reg(8, 0xfc, &reg) == EINVAL);
+		assert(sc101iot_pclk_delay_reg(0, 0xfc, NULL) == EINVAL);
+	}
 
 	check_success();
 	fixture_init(&f, 0xda, 0x4a);
@@ -456,10 +505,78 @@ main(void)
 
 		assert(sc101iot_set_format(&f.sc, &format) == 0);
 		assert(f.sc.sc_configured);
+		assert(f.pclk_reg == 0x03); /* No FDT override preserves the mode table. */
 		f.fail_write = (int)f.writes + 3;
 		assert(sc101iot_set_format(&f.sc, &format) == EIO);
 		assert(!f.sc.sc_configured);
 		assert(f.reset.physical_level == 0 && f.powerdown.physical_level == 1);
+	}
+	fixture_init(&f, 0xda, 0x4a);
+	mutex_init(&f.sc.sc_lock, MUTEX_DEFAULT, 0);
+	assert(sc101iot_default_format(&f.sc.sc_format) == 0);
+	sc101iot_init(&f.sc);
+	{
+		struct video_format format = {
+			.pixel_format = VIDEO_FORMAT_UYVY,
+			.width = 640,
+			.height = 480,
+		};
+
+		f.pclk_prop_present = 1;
+		f.pclk_delay_ns = 0;
+		assert(sc101iot_set_format(&f.sc, &format) == 0);
+		assert(f.pclk_read_seen && (f.pclk_reg & 0xfc) == 0xa0 &&
+		    (f.pclk_reg & 3) == 0);
+	}
+	fixture_init(&f, 0xda, 0x4a);
+	mutex_init(&f.sc.sc_lock, MUTEX_DEFAULT, 0);
+	assert(sc101iot_default_format(&f.sc.sc_format) == 0);
+	sc101iot_init(&f.sc);
+	{
+		struct video_format format = {
+			.pixel_format = VIDEO_FORMAT_UYVY,
+			.width = 640,
+			.height = 480,
+		};
+
+		f.pclk_prop_present = 1;
+		f.pclk_delay_ns = 2;
+		f.fail_reg = 0x40;
+		assert(sc101iot_set_format(&f.sc, &format) == EIO);
+		assert(!f.sc.sc_configured && !f.bus_acquired);
+	}
+	fixture_init(&f, 0xda, 0x4a);
+	mutex_init(&f.sc.sc_lock, MUTEX_DEFAULT, 0);
+	assert(sc101iot_default_format(&f.sc.sc_format) == 0);
+	sc101iot_init(&f.sc);
+	{
+		struct video_format format = {
+			.pixel_format = VIDEO_FORMAT_UYVY,
+			.width = 640,
+			.height = 480,
+		};
+
+		f.pclk_prop_present = 1;
+		f.pclk_delay_ns = 4;
+		f.fail_pclk_write = 1;
+		assert(sc101iot_set_format(&f.sc, &format) == EIO);
+		assert(!f.sc.sc_configured && !f.bus_acquired);
+	}
+	fixture_init(&f, 0xda, 0x4a);
+	mutex_init(&f.sc.sc_lock, MUTEX_DEFAULT, 0);
+	assert(sc101iot_default_format(&f.sc.sc_format) == 0);
+	sc101iot_init(&f.sc);
+	{
+		struct video_format format = {
+			.pixel_format = VIDEO_FORMAT_UYVY,
+			.width = 640,
+			.height = 480,
+		};
+
+		f.pclk_prop_present = 1;
+		f.pclk_delay_ns = 3;
+		assert(sc101iot_set_format(&f.sc, &format) == EINVAL);
+		assert(f.writes == 0 && !f.sc.sc_configured);
 	}
 	return 0;
 }
