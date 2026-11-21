@@ -11,6 +11,29 @@ main(void)
 {
 	uint16_t eof_num = 123;
 
+	/* These are the actual RX/TX CONF words written by the driver. */
+	assert((ESP_I2S_RX_CONF_WORD & ESP_I2S_PCM_BYPASS) != 0);
+	assert((ESP_I2S_TX_CONF_WORD & ESP_I2S_PCM_BYPASS) != 0);
+	assert((ESP_I2S_RX_CONF_WORD & (3U << 10)) == 0);
+	assert((ESP_I2S_TX_CONF_WORD & (3U << 10)) == 0);
+	/* RX bit 14 is RX_DONE_MODE, not TX's BCK_NO_DLY field. */
+	assert((ESP_I2S_RX_CONF_WORD & (1U << 14)) == 0);
+	assert((ESP_I2S_TX_CONF_WORD & ESP_I2S_TX_BCK_NO_DLY) != 0);
+	assert((ESP_I2S_TX_CONF_WORD & ESP_I2S_TX_MONO_FST_VLD) != 0);
+	assert(((ESP_I2S_RX_CONF_WORD >> 21) & 0x3fU) == ESP_I2S_BCK_DIV - 1);
+	assert(((ESP_I2S_TX_CONF_WORD >> 21) & 0x3fU) == ESP_I2S_BCK_DIV - 1);
+	/* 40 MHz / (3 + 49/192) / 8 / (2 x 16) = 48 kHz. */
+	assert((uint64_t)ESP_I2S_XTAL_HZ * ESP_I2S_MCLK_DIV_DEN ==
+	    (uint64_t)ESP_I2S_MCLK_HZ *
+	    (ESP_I2S_MCLK_DIV_N * ESP_I2S_MCLK_DIV_DEN +
+	    ESP_I2S_MCLK_DIV_Z));
+	assert(ESP_I2S_MCLK_DIV_X ==
+	    ESP_I2S_MCLK_DIV_DEN / ESP_I2S_MCLK_DIV_Z - 1);
+	assert(ESP_I2S_MCLK_DIV_Y ==
+	    ESP_I2S_MCLK_DIV_DEN % ESP_I2S_MCLK_DIV_Z);
+	assert(ESP_I2S_MCLK_HZ == ESP_I2S_SAMPLE_RATE * ESP_I2S_BCK_DIV *
+	    ESP_I2S_SLOT_BITS * ESP_I2S_SLOT_COUNT);
+
 	assert(!esp_i2s_rx_eof_encode(0, &eof_num));
 	assert(eof_num == 123);
 	assert(!esp_i2s_rx_eof_encode(1, NULL));

@@ -40,18 +40,9 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define I2S_CONF_RESET		__BIT(0)
 #define I2S_CONF_FIFO_RESET	__BIT(1)
 #define I2S_CONF_START		__BIT(2)
-#define I2S_RX_SLAVE_MOD	__BIT(3)
-#define I2S_CONF_MONO		__BIT(6)
-#define I2S_RX_MONO_FST_VLD	__BIT(9)
-#define I2S_CONF_MSB_SHIFT	__BIT(13)
-#define I2S_CONF_TDM		__BIT(19)
-#define I2S_CONF_WS_IDLE_POL	__BIT(17)
-#define I2S_CONF_BCK_NO_DLY	__BIT(14)
-#define I2S_CONF_SIG_LOOPBACK	__BIT(30)
 #define I2S_CONF_TX_STOP_EN	__BIT(4)
 #define I2S_RX_UPDATE		__BIT(8)
 #define I2S_TX_UPDATE		__BIT(8)
-#define I2S_CONF_BCK_DIV	__BITS(26, 21)
 #define I2S_CONF1_WS_WIDTH	__BITS(8, 0)
 #define I2S_CONF1_BITS_MOD	__BITS(18, 14)
 #define I2S_CONF1_HALF_BITS	__BITS(26, 19)
@@ -75,14 +66,15 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define I2S_DIV_Y		__BITS(17, 9)
 #define I2S_DIV_Z		__BITS(26, 18)
 #define I2S_DIV_YN1		__BIT(27)
+#define I2S_DIV_TARGET		(__SHIFTIN(ESP_I2S_MCLK_DIV_X, I2S_DIV_X) | \
+	__SHIFTIN(ESP_I2S_MCLK_DIV_Y, I2S_DIV_Y) | \
+	__SHIFTIN(ESP_I2S_MCLK_DIV_Z, I2S_DIV_Z))
 #define I2S0_MCLK_PAD		0x8
 #define I2S0_MCLK_PAD_ENABLE	__BIT(31)
 
 #define ESP_I2S_PERIODS_MAX	512
 #define ESP_I2S_DESC_MAX	512
 #define ESP_I2S_TRIGGER		1
-#define ESP_I2S_MCLK		12288000
-#define ESP_I2S_RATE		48000
 #define ESP_I2S_UPDATE_TIMEOUT_US	1000
 #define I2S_RXEOF_NUM_MASK	__BITS(15, 0)
 
@@ -180,7 +172,7 @@ esp_i2s_match(device_t parent, cfdata_t cf, void *aux)
 static int
 esp_i2s_params_supported(const audio_params_t *p)
 {
-	return p != NULL && p->sample_rate == ESP_I2S_RATE && p->channels == 1 &&
+	return p != NULL && p->sample_rate == ESP_I2S_SAMPLE_RATE && p->channels == 1 &&
 	    p->precision == 16 && p->validbits == 16 &&
 	    p->encoding == AUDIO_ENCODING_SLINEAR_LE;
 }
@@ -228,7 +220,7 @@ esp_i2s_set_format(void *priv, int mode, const audio_params_t *play,
 	    ((mode & AUMODE_PLAY) != 0 && !esp_i2s_params_supported(play)) ||
 	    ((mode & AUMODE_RECORD) != 0 && !esp_i2s_params_supported(record)) ||
 	    sc->polarity != AUDIO_DAI_POLARITY_NB_NF ||
-	    !sc->dai_format_set || sc->mclk != ESP_I2S_MCLK)
+	    !sc->dai_format_set || sc->mclk != ESP_I2S_MCLK_HZ)
 		return EINVAL;
 
 	/* audio(4) enters set_format with its thread lock held. */
@@ -240,14 +232,8 @@ esp_i2s_set_format(void *priv, int mode, const audio_params_t *play,
 	}
 	sc->configured = false;
 	/* Configure two 16-bit slots; expose only the mono left slot to audio(4). */
-	I2S_WRITE(sc, I2S_RX_CONF, I2S_RX_SLAVE_MOD |
-	    I2S_CONF_MONO | I2S_RX_MONO_FST_VLD |
-	    I2S_CONF_MSB_SHIFT |
-	    I2S_CONF_TDM | I2S_CONF_BCK_NO_DLY |
-	    __SHIFTIN(7, I2S_CONF_BCK_DIV));
-	I2S_WRITE(sc, I2S_TX_CONF, I2S_CONF_MONO | I2S_CONF_MSB_SHIFT |
-	    I2S_CONF_TDM | I2S_CONF_BCK_NO_DLY | I2S_CONF_SIG_LOOPBACK |
-	    I2S_CONF_TX_STOP_EN | __SHIFTIN(7, I2S_CONF_BCK_DIV));
+	I2S_WRITE(sc, I2S_RX_CONF, ESP_I2S_RX_CONF_WORD);
+	I2S_WRITE(sc, I2S_TX_CONF, ESP_I2S_TX_CONF_WORD);
 	I2S_WRITE(sc, I2S_RX_CONF1, __SHIFTIN(15, I2S_CONF1_WS_WIDTH) |
 	    __SHIFTIN(15, I2S_CONF1_BITS_MOD) |
 	    __SHIFTIN(15, I2S_CONF1_HALF_BITS) |
@@ -258,8 +244,6 @@ esp_i2s_set_format(void *priv, int mode, const audio_params_t *play,
 	    __SHIFTIN(15, I2S_CONF1_CHAN_BITS));
 	I2S_WRITE(sc, I2S_RX_TDM_CTRL, __SHIFTIN(1, I2S_TDM_CHANS) | 1);
 	I2S_WRITE(sc, I2S_TX_TDM_CTRL, __SHIFTIN(1, I2S_TDM_CHANS) | 1);
-	I2S_WRITE(sc, I2S_TX_CONF,
-	    I2S_READ(sc, I2S_TX_CONF) | __BIT(5));
 	/* TX generates the shared BCLK/WS; NB_NF is the supported bus format. */
 	I2S_WRITE(sc, I2S_INT_CLR, UINT32_MAX);
 	error = esp_i2s_update(sc, I2S_RX_CONF, I2S_RX_UPDATE);
@@ -271,37 +255,67 @@ esp_i2s_set_format(void *priv, int mode, const audio_params_t *play,
 	return error;
 }
 
+/*
+ * RX and TX have independent module clock dividers on S31. Keep the field
+ * update order required by the IDF workaround for the double-division bug.
+ */
+static void
+esp_i2s_program_clock(struct esp_i2s_softc *sc, bus_size_t ctrl_reg,
+	bus_size_t div_reg, bool rx)
+{
+	uint32_t v;
+	uint32_t mask = I2S_CLK_SRC | I2S_CLK_DIV_N;
+
+	if (rx)
+		mask |= I2S_RX_MCLK_TX;
+	v = syscon_read_4(sc->syscon, ctrl_reg);
+	syscon_write_4(sc->syscon, ctrl_reg,
+	    (v & ~mask) | I2S_CLK_ENABLE |
+	    (rx ? I2S_RX_MCLK_TX : 0) | __SHIFTIN(2, I2S_CLK_DIV_N));
+
+	/* Intermediate divider: YN1=0, Y=1, Z=0, X=0 (IDF LL order). */
+	v = syscon_read_4(sc->syscon, div_reg);
+	syscon_write_4(sc->syscon, div_reg, v & ~I2S_DIV_YN1);
+	v = syscon_read_4(sc->syscon, div_reg);
+	syscon_write_4(sc->syscon, div_reg,
+	    (v & ~I2S_DIV_Y) | __SHIFTIN(1, I2S_DIV_Y));
+	v = syscon_read_4(sc->syscon, div_reg);
+	syscon_write_4(sc->syscon, div_reg, v & ~I2S_DIV_Z);
+	v = syscon_read_4(sc->syscon, div_reg);
+	syscon_write_4(sc->syscon, div_reg, v & ~I2S_DIV_X);
+
+	/* Target divider: YN1=0, Z, Y, X, then integer N. */
+	v = syscon_read_4(sc->syscon, div_reg);
+	syscon_write_4(sc->syscon, div_reg, v & ~I2S_DIV_YN1);
+	v = syscon_read_4(sc->syscon, div_reg);
+	syscon_write_4(sc->syscon, div_reg,
+	    (v & ~I2S_DIV_Z) | __SHIFTIN(ESP_I2S_MCLK_DIV_Z, I2S_DIV_Z));
+	v = syscon_read_4(sc->syscon, div_reg);
+	syscon_write_4(sc->syscon, div_reg,
+	    (v & ~I2S_DIV_Y) | __SHIFTIN(ESP_I2S_MCLK_DIV_Y, I2S_DIV_Y));
+	v = syscon_read_4(sc->syscon, div_reg);
+	syscon_write_4(sc->syscon, div_reg, (v & ~(I2S_DIV_X | I2S_DIV_Y |
+	    I2S_DIV_Z | I2S_DIV_YN1)) | I2S_DIV_TARGET);
+	v = syscon_read_4(sc->syscon, ctrl_reg);
+	syscon_write_4(sc->syscon, ctrl_reg,
+	    (v & ~I2S_CLK_DIV_N) | __SHIFTIN(ESP_I2S_MCLK_DIV_N,
+	    I2S_CLK_DIV_N));
+}
+
 static int
 esp_i2s_set_sysclk(audio_dai_tag_t dai, u_int rate, int dir)
 {
 	struct esp_i2s_softc *sc = audio_dai_private(dai);
 	uint32_t v;
 
-	if (dir != AUDIO_DAI_CLOCK_OUT || rate != ESP_I2S_MCLK)
+	if (dir != AUDIO_DAI_CLOCK_OUT || rate != ESP_I2S_MCLK_HZ)
 		return EINVAL;
 
-	/* 40 MHz XTAL / (3 + 49/192) = 12.288 MHz. */
+	/* 40 MHz XTAL / (3 + 49/192) = 12.288 MHz for both engines. */
 	syscon_lock(sc->syscon);
-	v = syscon_read_4(sc->syscon, I2S0_RX_CTRL0);
-	syscon_write_4(sc->syscon, I2S0_RX_CTRL0,
-	    (v & ~(I2S_CLK_SRC | I2S_CLK_DIV_N | I2S_RX_MCLK_TX)) |
-	    I2S_RX_MCLK_TX);
-	/* IDF workaround: set a small divider before programming the fraction. */
-	v = syscon_read_4(sc->syscon, I2S0_TX_CTRL0);
-	syscon_write_4(sc->syscon, I2S0_TX_CTRL0,
-	    (v & ~(I2S_CLK_SRC | I2S_CLK_DIV_N)) | I2S_CLK_ENABLE |
-	    __SHIFTIN(2, I2S_CLK_DIV_N));
-	syscon_write_4(sc->syscon, I2S0_TX_DIV_CTRL0,
-	    __SHIFTIN(1, I2S_DIV_Y));
-	syscon_write_4(sc->syscon, I2S0_TX_DIV_CTRL0,
-		__SHIFTIN(2, I2S_DIV_X) | __SHIFTIN(45, I2S_DIV_Y) |
-	    __SHIFTIN(49, I2S_DIV_Z));
-	v = syscon_read_4(sc->syscon, I2S0_TX_CTRL0);
-	syscon_write_4(sc->syscon, I2S0_TX_CTRL0,
-	    (v & ~I2S_CLK_DIV_N) | __SHIFTIN(3, I2S_CLK_DIV_N));
-	/* RX derives MCLK from the TX source on S31; keep both module clocks live. */
-	v = syscon_read_4(sc->syscon, I2S0_RX_CTRL0);
-	syscon_write_4(sc->syscon, I2S0_RX_CTRL0, v | I2S_CLK_ENABLE);
+	/* S31's RX bit selects the MCLK pad source, not the RX engine clock. */
+	esp_i2s_program_clock(sc, I2S0_RX_CTRL0, I2S0_RX_DIV_CTRL0, true);
+	esp_i2s_program_clock(sc, I2S0_TX_CTRL0, I2S0_TX_DIV_CTRL0, false);
 	syscon_unlock(sc->syscon);
 
 	syscon_lock(sc->alive_syscon);
@@ -818,7 +832,7 @@ esp_i2s_attach(device_t parent, device_t self, void *aux)
 		.channels = 1,
 		.channel_mask = AUFMT_MONAURAL,
 		.frequency_type = 1,
-		.frequency = { ESP_I2S_RATE },
+		.frequency = { ESP_I2S_SAMPLE_RATE },
 	};
 	bus_addr_t addr;
 	bus_size_t size;
