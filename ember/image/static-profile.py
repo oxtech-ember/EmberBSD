@@ -412,6 +412,58 @@ def stage_overlay(overlay, root, allow_identical=False, allow_suffixes=None,
             dest.chmod(stat.S_IMODE(source.stat().st_mode))
 
 
+def disable_syslogd_chroot_discovery(root, generated_rc_conf, overlay_kept_rc_conf):
+    """Skip rcorder only for the unchanged, closed network service profile."""
+    root = Path(root)
+    if (not overlay_kept_rc_conf or
+            'rc_directories=/etc/rc.network.d\n' not in generated_rc_conf or
+            'syslogd_chroot_services=' in generated_rc_conf):
+        return
+    if (root / 'etc/rc.conf.d/syslogd').exists() or \
+            (root / 'etc/rc.conf.d/syslogd').is_symlink():
+        return
+    service_dir = root / 'etc/rc.network.d'
+    if service_dir.is_symlink() or not service_dir.is_dir():
+        return
+    for script in service_dir.iterdir():
+        if script.is_symlink() or not script.is_file():
+            return
+        data = script.read_bytes()
+        # rcorder uses fparseln: only an odd trailing backslash continues a
+        # line. CRLF and NUL are ambiguous to this small producer check, so
+        # leave discovery enabled for those files.
+        if b'\r' in data or b'\0' in data:
+            return
+        physical = data.split(b'\n')
+        if physical[-1] == b'' and data.endswith(b'\n'):
+            physical.pop()
+        logical = b''
+        parsing = False
+        for index, line in enumerate(physical):
+            slash_count = len(line) - len(line.rstrip(b'\\'))
+            continued = slash_count % 2 == 1
+            logical += line[:-1] if continued else line
+            if continued and index != len(physical) - 1:
+                continue
+            directive = next((prefix for prefix in
+                              (b'# REQUIRE:', b'# REQUIRES:', b'# PROVIDE:',
+                               b'# PROVIDES:', b'# BEFORE:', b'# KEYWORD:',
+                               b'# KEYWORDS:') if logical.startswith(prefix)), None)
+            if directive is None:
+                if parsing:
+                    break
+                logical = b''
+                continue
+            parsing = True
+            if directive in (b'# KEYWORD:', b'# KEYWORDS:'):
+                words = logical[len(directive):].replace(b'\t', b' ').split()
+                if b'chrootdir' in words:
+                    return
+            logical = b''
+    with (root / 'etc/rc.conf').open('a') as stream:
+        stream.write('syslogd_chroot_services=NO\n')
+
+
 SYSTEM_TOOLSET_PROGRAMS = ('bin/df', 'usr.bin/env', 'usr.bin/uname')
 
 
@@ -791,7 +843,7 @@ def stage_network(root, source, overlay, interface, pwd_mkdb, dhcpcd_dest,
         + ('ptyfs /dev/pts ptyfs rw\n' if ssh_enabled else '')
         + 'tmpfs /tmp tmpfs rw\n'
         + 'tmpfs /var/run tmpfs rw\n')
-    write_if_different(root / 'etc/rc.conf',
+    network_rc_conf = (
         'rc_configured=YES\n'
         f'rc_status_display="{ "/dev/ttyE0" if display_enabled else "" }"\n'
         'rc_directories=/etc/rc.network.d\n'
@@ -819,6 +871,7 @@ def stage_network(root, source, overlay, interface, pwd_mkdb, dhcpcd_dest,
         + 'network_logfs=' + ('YES' if logging_enabled else 'NO') + '\n'
         + ('network_logfs_size=1m\n' if logging_enabled else '')
         + ('sysdb=NO\nwscons=NO\n' if logging_enabled else ''))
+    write_if_different(root / 'etc/rc.conf', network_rc_conf)
     scripts = ('fsck_root', 'resize_root', 'root', 'devpubd', 'DISKS', 'swap1', 'fsck',
                'mountcritlocal', 'CRITLOCALMOUNTED', 'bootconf.sh', 'ttys', 'sysctl',
                'ipfilter', 'ipsec', 'network', 'staticroute', 'wpa_supplicant',
@@ -931,6 +984,7 @@ def stage_network(root, source, overlay, interface, pwd_mkdb, dhcpcd_dest,
     stage_overlay(overlay, root, allow_identical=True,
                   allow_suffixes={'etc/ifconfig.' + interface: b'up\n'},
                   replace_regular=True)
+    overlay_kept_rc_conf = (root / 'etc/rc.conf').read_text() == network_rc_conf
     disabled = []
     if not openssh_enabled:
         disabled += ['etc/rc.network.d/sshd', 'etc/ssh/sshd_config', 'etc/rc.conf.d/sshd']
@@ -975,6 +1029,9 @@ def stage_network(root, source, overlay, interface, pwd_mkdb, dhcpcd_dest,
         rc_text = rc_conf.read_text()
         rc_text = __import__('re').sub(r'(?m)^mdnsd=.*(?:\n|$)', '', rc_text)
         write_if_different(rc_conf, rc_text + 'mdnsd=NO\n')
+    if logging_enabled:
+        disable_syslogd_chroot_discovery(root, network_rc_conf,
+                                         overlay_kept_rc_conf)
     interface_config = root / 'etc' / ('ifconfig.' + interface)
     interface_text = interface_config.read_text() if interface_config.exists() else ''
     interface_lines = interface_text.splitlines()

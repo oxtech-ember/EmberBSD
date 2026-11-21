@@ -35,19 +35,33 @@ syslogd_precmd()
 	#	and if $${app}_chrootdir is a directory, add appropriate
 	#	syslog socket to list of sockets to watch.
 	#
-	for _rd in ${rc_directories:-/etc/rc.d}; do
-	    [ -d "${_rd}" ] || continue
-	    for _lr in $(rcorder -k chrootdir "${_rd}"/*); do
-		(
-			_l=${_lr##*/}
-			load_rc_config ${_l}
-			eval _ldir=\$${_l}_chrootdir
-			if checkyesno $_l && [ -n "$_ldir" ]; then
-				echo "${_ldir}/var/run/log" >> $_sockfile
-			fi
-		)
-	    done
-	done
+	: ${syslogd_chroot_services:=YES}
+	_syslogd_bool_status=0
+	checkyesnox syslogd_chroot_services || \
+	    _syslogd_bool_status=$?
+	case ${_syslogd_bool_status} in
+	0) _syslogd_scan_chroot=yes ;;
+	1) _syslogd_scan_chroot=no ;;
+	*)
+		warn '$syslogd_chroot_services is not set properly - see rc.conf(5).'
+		_syslogd_scan_chroot=yes
+		;;
+	esac
+	if [ "${_syslogd_scan_chroot}" = yes ]; then
+		for _rd in ${rc_directories:-/etc/rc.d}; do
+			[ -d "${_rd}" ] || continue
+			for _lr in $(rcorder -k chrootdir "${_rd}"/*); do
+				(
+					_l=${_lr##*/}
+					load_rc_config "${_l}"
+					eval _ldir=\$${_l}_chrootdir
+					if checkyesno "${_l}" && [ -n "${_ldir}" ]; then
+						echo "${_ldir}/var/run/log" >> "${_sockfile}"
+					fi
+				)
+			done
+		done
+	fi
 
 	#	If other sockets have been provided, change run_rc_command()'s
 	#	internal copy of $syslogd_flags to force use of specific

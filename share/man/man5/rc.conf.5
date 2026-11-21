@@ -1244,6 +1244,32 @@ Runs
 .Xr syslogd 8
 and passes
 .Sy syslogd_flags .
+.It Sy syslogd_chroot_services
+Boolean value.
+If set to
+.Ql NO ,
+the
+.Xr syslogd 8
+startup script skips its scan for chrooted services.
+Use this only when the configured
+.Sy rc_directories
+are known to contain no
+.Sy chrootdir
+services.
+The default is
+.Ql YES .
+An unset or empty value uses this default.
+An invalid value produces a warning and retains the automatic scan.
+Otherwise the startup script discovers services from
+.Sy rc_directories
+with
+.Xr rcorder 8
+and reads their current enable and
+.Pa _chrootdir
+settings on every start.
+Any additional sockets configured through
+.Sy syslogd_flags
+remain in effect.
 .It Sy timed
 Boolean value.
 Runs

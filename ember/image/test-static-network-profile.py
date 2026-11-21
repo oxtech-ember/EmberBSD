@@ -868,6 +868,7 @@ with tempfile.TemporaryDirectory(prefix='static-network-') as temporary:
                           ssh_enabled=True, logging_enabled=True,
                           openssh_crypto='builtin')
     service_scripts = services / 'etc/rc.network.d'
+    service_rc = (services / 'etc/rc.conf').read_text()
     service_provides, service_requires, service_missing = staged_rc_dependencies(services)
     sshd_config = (services / 'etc/ssh/sshd_config').read_text()
     check(not service_missing and
@@ -884,6 +885,52 @@ with tempfile.TemporaryDirectory(prefix='static-network-') as temporary:
           'newsyslog syslogd wpa_supplicant mdnsd' in
           (service_scripts / 'network_logfs').read_text(),
           'logging profile starts hostname, log storage and syslog before clients')
+    check('syslogd_chroot_services=NO' in service_rc and
+          not any('# KEYWORD: chrootdir' in path.read_text()
+                  for path in service_scripts.iterdir() if path.is_file()),
+          'closed network logging profile opts out of an empty chroot service scan')
+    chroot_overlay = temporary / 'chroot-overlay'
+    (chroot_overlay / 'etc/rc.network.d').mkdir(parents=True)
+    (chroot_overlay / 'etc/rc.network.d/custom_chroot').write_text(
+        '#!/bin/sh\n# ordinary comment \\\\\n'
+        '# PROVIDE: custom_chroot\n# KEYWOR\\\nD: chrootdir\n')
+    chroot_root = temporary / 'root-chroot-overlay'
+    chroot_root.mkdir()
+    (chroot_root / 'dev').mkdir()
+    profile.stage_network(chroot_root, source, chroot_overlay, 'wifi0', pwd_mkdb,
+                          dhcp_dest, 'md0', 'a', logging_enabled=True)
+    check('syslogd_chroot_services=' not in
+          (chroot_root / 'etc/rc.conf').read_text(),
+          'logging profile retains automatic discovery when overlay adds a chroot service')
+    override_overlay = temporary / 'chroot-override-overlay'
+    (override_overlay / 'etc/rc.extra.d').mkdir(parents=True)
+    (override_overlay / 'etc/rc.extra.d/custom_chroot').write_text(
+        '#!/bin/sh\n# PROVIDE: custom_chroot\n# KEYWORD: chrootdir\n')
+    (override_overlay / 'etc/rc.conf.d').mkdir()
+    (override_overlay / 'etc/rc.conf.d/syslogd').write_text(
+        'rc_directories="/etc/rc.network.d /etc/rc.extra.d"\n')
+    override_root = temporary / 'root-chroot-override'
+    override_root.mkdir()
+    (override_root / 'dev').mkdir()
+    profile.stage_network(override_root, source, override_overlay, 'wifi0',
+                          pwd_mkdb, dhcp_dest, 'md0', 'a', logging_enabled=True)
+    check('syslogd_chroot_services=' not in
+          (override_root / 'etc/rc.conf').read_text(),
+          'syslogd keeps live discovery when rc.conf.d changes rc_directories')
+    tagged_overlay = temporary / 'tagged-syslogd-overlay'
+    (tagged_overlay / 'etc/rc.network.d').mkdir(parents=True)
+    (tagged_overlay / 'etc/rc.network.d/syslogd').write_text(
+        '#!/bin/sh\n# PROVIDE: syslogd\n# REQUIRE: network_logfs\n'
+        '# BEFORE: wpa_supplicant SERVERS\n# KEYWORD: network-appliance\n'
+        '# Existing syslogd comment mentions rcorder -k chrootdir.\n')
+    tagged_root = temporary / 'root-tagged-syslogd'
+    tagged_root.mkdir()
+    (tagged_root / 'dev').mkdir()
+    profile.stage_network(tagged_root, source, tagged_overlay, 'wifi0', pwd_mkdb,
+                          dhcp_dest, 'md0', 'a', logging_enabled=True)
+    check('syslogd_chroot_services=NO' in
+          (tagged_root / 'etc/rc.conf').read_text(),
+          'ordinary keyword and body mention of chrootdir keeps the closed-profile opt-out')
     rcorder_path = os.environ.get('RCORDER_PATH')
     if rcorder_path:
         rc_scripts = sorted(service_scripts.iterdir())
@@ -952,7 +999,7 @@ with tempfile.TemporaryDirectory(prefix='static-network-') as temporary:
     check('for _rd in ${rc_directories:-/etc/rc.d}; do' in syslogd_source and
           'rcorder -k chrootdir "${_rd}"/*' in syslogd_source and
           'rcorder -k chrootdir /etc/rc.d/*' not in syslogd_source,
-          'syslogd discovers chroot services from the configured rc directories')
+          'syslogd retains automatic discovery for dynamic rc directory configurations')
     check('sshd=YES' in (services / 'etc/rc.conf').read_text() and
           'syslogd=YES' in (services / 'etc/rc.conf').read_text() and
           'syslogd_flags="-s"' in (services / 'etc/rc.conf').read_text() and
