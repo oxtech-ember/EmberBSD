@@ -276,8 +276,8 @@ requires those kernel facilities to boot; noninteractive SSH commands and SFTP
 do not themselves allocate a PTY.
 
 Set `EMBER_SSH_SERVER=dropbear` with the `ssh` toolset for a small command
-and PTY server. Set `EMBER_DROPBEAR_PREFIX` to the staged target package prefix
-containing `sbin/dropbear` and `share/examples/rc.d/dropbear`, built for
+and PTY server. Build the `security/dropbear-appliance` Ports package for the
+target. Set `EMBER_DROPBEAR_PREFIX` to its staged target prefix containing `sbin/dropbear` and `share/examples/rc.d/dropbear`, built for
 `/usr/pkg`. The image selects these two files, checks the static executable
 against the target ABI and enables public-key authentication. Supply the
 device’s Dropbear-format Ed25519 host key at
