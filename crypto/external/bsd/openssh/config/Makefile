@@ -3,7 +3,7 @@
 .include "${NETBSDSRCDIR}/crypto/external/bsd/openssh/source.mk"
 .include "${NETBSDSRCDIR}/crypto/external/bsd/openssh/crypto.mk"
 OPENSSH_CONFIG_ROLE?= os
-OPENSSH_OS_CONFIG_OBJECT?= ${.OBJDIR}/generated
+OPENSSH_OS_CONFIG_OBJECT?= ${.OBJDIR}/${OPENSSH_OS_CONFIG_NAME}
 OPENSSH_PRIVATE_LIBSSH_CONFIG_OBJECT?= ${.OBJDIR}/private-libssh
 .if ${OPENSSH_CONFIG_ROLE} == "private-libssh"
 OPENSSH_CONFIG_OBJECT?= ${OPENSSH_PRIVATE_LIBSSH_CONFIG_OBJECT}
@@ -53,6 +53,7 @@ all depend dependall: .PHONY
 	    --object ${OPENSSH_CONFIG_OBJECT:Q} --autoconf ${HOST_AUTOCONF:Q} \
 	    --role ${OPENSSH_CONFIG_ROLE:Q} \
 	    --crypto-mode ${OPENSSH_CRYPTO_MODE:Q} \
+	    ${OPENSSH_KRB5_CONFIG_LIBS} \
 	    --make ${MAKE:Q} --makefile-dir ${NETBSDSRCDIR:Q}/crypto/external/bsd/openssh/config
 .PHONY: openssh-target-config
 openssh-target-config: ${GNU_OBJDIR}/Makefile
@@ -60,22 +61,16 @@ openssh-target-config: ${GNU_OBJDIR}/Makefile
 .endif
 
 includes install: .PHONY
+# Clean each configuration, also the one for the other Kerberos choice.
+_OPENSSH_CONFIG_OBJECTS= ${OPENSSH_CONFIG_OBJECT} ${OPENSSH_OS_CONFIG_OBJECT} \
+    ${.OBJDIR}/generated ${.OBJDIR}/generated-no-kerberos \
+    ${OPENSSH_PRIVATE_LIBSSH_CONFIG_OBJECT}
 clean cleandir: .PHONY
+.for _object in ${_OPENSSH_CONFIG_OBJECTS:O:u}
 	${HOST_PYTHON:Q} -B ${NETBSDSRCDIR:Q}/crypto/external/bsd/openssh/tools/configure-source.py \
-	    --clean --objdir ${.OBJDIR:Q} --object ${OPENSSH_CONFIG_OBJECT:Q} \
+	    --clean --objdir ${.OBJDIR:Q} --object ${_object:Q} \
 	    --os-source ${NETBSDSRCDIR:Q} \
 	    --clean-helper ${NETBSDSRCDIR:Q}/share/mk/waf-clean.py
-.if ${OPENSSH_CONFIG_OBJECT} != ${OPENSSH_OS_CONFIG_OBJECT}
-	${HOST_PYTHON:Q} -B ${NETBSDSRCDIR:Q}/crypto/external/bsd/openssh/tools/configure-source.py \
-	    --clean --objdir ${.OBJDIR:Q} --object ${OPENSSH_OS_CONFIG_OBJECT:Q} \
-	    --os-source ${NETBSDSRCDIR:Q} \
-	    --clean-helper ${NETBSDSRCDIR:Q}/share/mk/waf-clean.py
-.endif
-.if ${OPENSSH_CONFIG_OBJECT} != ${OPENSSH_PRIVATE_LIBSSH_CONFIG_OBJECT}
-	${HOST_PYTHON:Q} -B ${NETBSDSRCDIR:Q}/crypto/external/bsd/openssh/tools/configure-source.py \
-	    --clean --objdir ${.OBJDIR:Q} --object ${OPENSSH_PRIVATE_LIBSSH_CONFIG_OBJECT:Q} \
-	    --os-source ${NETBSDSRCDIR:Q} \
-	    --clean-helper ${NETBSDSRCDIR:Q}/share/mk/waf-clean.py
-.endif
+.endfor
 
 .include <bsd.obj.mk>

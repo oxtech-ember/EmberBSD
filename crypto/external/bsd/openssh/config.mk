@@ -9,7 +9,7 @@ _EMBER_OPENSSH_CONFIG_MK_= 1
 .error OpenSSH target config requires selected HOST_AUTOCONF
 .endif
 OPENSSH_CONFIG_ROLE?= os
-OPENSSH_OS_CONFIG_OBJECT?= ${_SRC_TOP_OBJ_}/crypto/external/bsd/openssh/config/generated
+OPENSSH_OS_CONFIG_OBJECT?= ${_SRC_TOP_OBJ_}/crypto/external/bsd/openssh/config/${OPENSSH_OS_CONFIG_NAME}
 OPENSSH_PRIVATE_LIBSSH_CONFIG_OBJECT?= ${_SRC_TOP_OBJ_}/crypto/external/bsd/openssh/config/private-libssh
 .if ${OPENSSH_CONFIG_ROLE} == "private-libssh"
 OPENSSH_CONFIG_OBJECT?= ${OPENSSH_PRIVATE_LIBSSH_CONFIG_OBJECT}
@@ -23,16 +23,6 @@ DPSRCS+= ${OPENSSH_CONFIG_HEADER}
 
 # Every consumer checks the shared configuration; the helper serializes
 # generation and the GNU adapter preserves a warm configuration unchanged.
-_OPENSSH_KRB5_CONFIG_LIBS=
-.if ${USE_KERBEROS:Uyes} != "no"
-.for _lib in kafs krb5 com_err asn1 roken des crypto
-_OPENSSH_KRB5_CONFIG_LIBS+= --target-lib ${DESTDIR:Q}/usr/lib/lib${_lib}.so
-.if !empty(LDSTATIC:M-static) || !exists(${DESTDIR}/usr/lib/lib${_lib}.so)
-_OPENSSH_KRB5_CONFIG_LIBS+= --target-lib ${DESTDIR:Q}/usr/lib/lib${_lib}.a
-.endif
-.endfor
-.endif
-
 openssh-config-check: .PHONY
 ${OPENSSH_CONFIG_HEADER}: openssh-config-check
 	${HOST_PYTHON:Q} -B ${NETBSDSRCDIR:Q}/crypto/external/bsd/openssh/tools/configure-source.py \
@@ -40,7 +30,7 @@ ${OPENSSH_CONFIG_HEADER}: openssh-config-check
 	    --object ${OPENSSH_CONFIG_OBJECT:Q} --autoconf ${HOST_AUTOCONF:Q} \
 	    --role ${OPENSSH_CONFIG_ROLE:Q} \
 	    --crypto-mode ${OPENSSH_CRYPTO_MODE:Q} \
-	    ${_OPENSSH_KRB5_CONFIG_LIBS} \
+	    ${OPENSSH_KRB5_CONFIG_LIBS} \
 	    --make ${MAKE:Q} --makefile-dir ${NETBSDSRCDIR:Q}/crypto/external/bsd/openssh/config
 .endif
 
