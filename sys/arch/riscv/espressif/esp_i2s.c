@@ -35,6 +35,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define I2S_TX_CONF1		0x2c
 #define I2S_RX_TDM_CTRL	0x50
 #define I2S_TX_TDM_CTRL	0x54
+#define I2S_RXEOF_NUM		0x64
 
 #define I2S_CONF_RESET		__BIT(0)
 #define I2S_CONF_FIFO_RESET	__BIT(1)
@@ -48,6 +49,8 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define I2S_CONF_BCK_NO_DLY	__BIT(14)
 #define I2S_CONF_SIG_LOOPBACK	__BIT(30)
 #define I2S_CONF_TX_STOP_EN	__BIT(4)
+#define I2S_RX_UPDATE		__BIT(8)
+#define I2S_TX_UPDATE		__BIT(8)
 #define I2S_CONF_BCK_DIV	__BITS(26, 21)
 #define I2S_CONF1_WS_WIDTH	__BITS(8, 0)
 #define I2S_CONF1_BITS_MOD	__BITS(18, 14)
@@ -80,6 +83,8 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define ESP_I2S_TRIGGER		1
 #define ESP_I2S_MCLK		12288000
 #define ESP_I2S_RATE		48000
+#define ESP_I2S_UPDATE_TIMEOUT_US	1000
+#define I2S_RXEOF_NUM_MASK	__BITS(15, 0)
 
 struct esp_i2s_softc;
 struct esp_i2s_buffer {
@@ -142,6 +147,20 @@ static int esp_i2s_trigger(struct esp_i2s_stream *, void *, void *, int,
 	void (*)(void *), void *, const audio_params_t *);
 static int esp_i2s_halt(struct esp_i2s_stream *);
 
+static int
+esp_i2s_update(struct esp_i2s_softc *sc, bus_size_t reg, uint32_t update)
+{
+	I2S_WRITE(sc, reg, I2S_READ(sc, reg) | update);
+	bus_space_barrier(sc->bst, sc->bsh, reg, sizeof(uint32_t),
+	    BUS_SPACE_BARRIER_READ | BUS_SPACE_BARRIER_WRITE);
+	for (u_int i = 0; i < ESP_I2S_UPDATE_TIMEOUT_US; i++) {
+		if ((I2S_READ(sc, reg) & update) == 0)
+			return 0;
+		delay(1);
+	}
+	return ETIMEDOUT;
+}
+
 static const struct device_compatible_entry esp_i2s_compat[] = {
 	{ .compat = "espressif,esp32s31-i2s0" },
 	DEVICE_COMPAT_EOL
@@ -202,6 +221,7 @@ esp_i2s_set_format(void *priv, int mode, const audio_params_t *play,
 	audio_filter_reg_t *rfil)
 {
 	struct esp_i2s_softc *sc = priv;
+	int error;
 	(void)pfil;
 	(void)rfil;
 	if (mode == 0 || (mode & ~(AUMODE_PLAY | AUMODE_RECORD)) != 0 ||
@@ -218,6 +238,7 @@ esp_i2s_set_format(void *priv, int mode, const audio_params_t *play,
 		mutex_exit(&sc->intr_lock);
 		return EBUSY;
 	}
+	sc->configured = false;
 	/* Configure two 16-bit slots; expose only the mono left slot to audio(4). */
 	I2S_WRITE(sc, I2S_RX_CONF, I2S_RX_SLAVE_MOD |
 	    I2S_CONF_MONO | I2S_RX_MONO_FST_VLD |
@@ -241,9 +262,13 @@ esp_i2s_set_format(void *priv, int mode, const audio_params_t *play,
 	    I2S_READ(sc, I2S_TX_CONF) | __BIT(5));
 	/* TX generates the shared BCLK/WS; NB_NF is the supported bus format. */
 	I2S_WRITE(sc, I2S_INT_CLR, UINT32_MAX);
-	sc->configured = true;
+	error = esp_i2s_update(sc, I2S_RX_CONF, I2S_RX_UPDATE);
+	if (error == 0)
+		error = esp_i2s_update(sc, I2S_TX_CONF, I2S_TX_UPDATE);
+	if (error == 0)
+		sc->configured = true;
 	mutex_exit(&sc->intr_lock);
-	return 0;
+	return error;
 }
 
 static int
@@ -438,12 +463,18 @@ esp_i2s_trigger(struct esp_i2s_stream *stream, void *start, void *end,
 	struct esp_i2s_buffer *buf;
 	bus_addr_t paddr;
 	size_t length, nperiods, i, align;
+	uint16_t rx_eof_num;
+	uint32_t old_tx_conf, start_tx_conf;
+	bool tx_conf_changed;
 	int error;
 
 	if (stream->dma == NULL || start == NULL || end == NULL ||
 	    (uintptr_t)end <= (uintptr_t)start || blksize <= 0 ||
 	    !esp_i2s_params_supported(params))
 		return EINVAL;
+	if (stream->mode == AUMODE_RECORD &&
+	    !esp_i2s_rx_eof_encode((size_t)blksize, &rx_eof_num))
+		return EFBIG;
 	KASSERT(mutex_owned(&sc->lock));
 	KASSERT(mutex_owned(&sc->intr_lock));
 	length = (uintptr_t)end - (uintptr_t)start;
@@ -491,6 +522,36 @@ esp_i2s_trigger(struct esp_i2s_stream *stream, void *start, void *end,
 		I2S_WRITE(sc, I2S_RX_CONF,
 		    I2S_READ(sc, I2S_RX_CONF) & ~I2S_CONF_FIFO_RESET);
 	}
+	/*
+	 * A segment is one audio period in the cyclic GDMA request. The S31
+	 * RXEOF_NUM field is programmed from that DMA buffer length in bytes,
+	 * matching ESP-IDF's i2s_get_buf_size()/i2s_ll_rx_set_eof_num() path.
+	 */
+	old_tx_conf = I2S_READ(sc, I2S_TX_CONF);
+	start_tx_conf = old_tx_conf;
+	if (stream->mode == AUMODE_RECORD || sc->record.running)
+		start_tx_conf &= ~I2S_CONF_TX_STOP_EN;
+	tx_conf_changed = start_tx_conf != old_tx_conf;
+	if (tx_conf_changed)
+		I2S_WRITE(sc, I2S_TX_CONF, start_tx_conf);
+	if (stream->mode == AUMODE_RECORD)
+		I2S_WRITE(sc, I2S_RXEOF_NUM,
+		    __SHIFTIN(rx_eof_num, I2S_RXEOF_NUM_MASK));
+	/* Apply per-start settings before starting GDMA or I2S. */
+	error = esp_i2s_update(sc, I2S_TX_CONF, I2S_TX_UPDATE);
+	if (error == 0 && stream->mode == AUMODE_RECORD)
+		error = esp_i2s_update(sc, I2S_RX_CONF, I2S_RX_UPDATE);
+	if (error != 0) {
+		sc->configured = false;
+		if (tx_conf_changed) {
+			I2S_WRITE(sc, I2S_TX_CONF, old_tx_conf);
+			(void)esp_i2s_update(sc, I2S_TX_CONF, I2S_TX_UPDATE);
+		}
+		bus_dmamap_sync(sc->dmat, buf->map, 0, length,
+		    stream->mode == AUMODE_PLAY ? BUS_DMASYNC_POSTWRITE :
+		    BUS_DMASYNC_POSTREAD);
+		return error;
+	}
 	stream->intr = intr;
 	stream->intrarg = intrarg;
 	stream->nperiods = nperiods;
@@ -503,18 +564,12 @@ esp_i2s_trigger(struct esp_i2s_stream *stream, void *start, void *end,
 	error = fdtbus_dma_transfer(stream->dma, &stream->req);
 	if (error == 0) {
 		if (stream->mode == AUMODE_PLAY) {
-			/* Keep clocks continuous if capture is sharing the TX clock. */
-			if (sc->record.running)
-				I2S_WRITE(sc, I2S_TX_CONF,
-				    I2S_READ(sc, I2S_TX_CONF) &
-				    ~I2S_CONF_TX_STOP_EN);
 			I2S_WRITE(sc, I2S_TX_CONF,
 			    I2S_READ(sc, I2S_TX_CONF) | I2S_CONF_START);
 		} else {
 			/* TX is the master clock source even for record-only streams. */
 			I2S_WRITE(sc, I2S_TX_CONF,
-			    (I2S_READ(sc, I2S_TX_CONF) & ~I2S_CONF_TX_STOP_EN) |
-			    I2S_CONF_START);
+			    I2S_READ(sc, I2S_TX_CONF) | I2S_CONF_START);
 			I2S_WRITE(sc, I2S_RX_CONF,
 			    I2S_READ(sc, I2S_RX_CONF) | I2S_CONF_START);
 		}
@@ -527,6 +582,11 @@ esp_i2s_trigger(struct esp_i2s_stream *stream, void *start, void *end,
 		bus_dmamap_sync(sc->dmat, buf->map, 0, length,
 		    stream->mode == AUMODE_PLAY ? BUS_DMASYNC_POSTWRITE :
 		    BUS_DMASYNC_POSTREAD);
+		if (tx_conf_changed) {
+			I2S_WRITE(sc, I2S_TX_CONF, old_tx_conf);
+			if (esp_i2s_update(sc, I2S_TX_CONF, I2S_TX_UPDATE) != 0)
+				sc->configured = false;
+		}
 	}
 	return error;
 }
