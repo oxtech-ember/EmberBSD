@@ -26,12 +26,10 @@ __KERNEL_RCSID(0, "$NetBSD$");
 
 #include "esp32s31_dvp_lifecycle.h"
 #include "esp32s31_dvp_frame.h"
+#include "esp32s31_dvp_regs.h"
 
 #define DVP_CAM_CTRL		0x004
 #define DVP_CAM_CTRL1		0x008
-#define DVP_CAM_STOP_EN		__BIT(0)
-#define DVP_CAM_VS_EOF_EN	__BIT(8)
-#define DVP_CAM_UPDATE_REG	__BIT(4)
 #define DVP_CAM_REC_LEN		__BITS(15, 0)
 #define DVP_CAM_CLK_INV		__BIT(22)
 #define DVP_CAM_2BYTE		__BIT(24)
@@ -83,7 +81,7 @@ static void esp32s31_dvp_init(device_t);
 static void *esp32s31_dvp_ep_data(device_t, struct fdt_endpoint *);
 static void esp32s31_dvp_dma_done(void *);
 static void esp32s31_dvp_work(struct work *, void *);
-static int esp32s31_dvp_start_locked(struct esp32s31_dvp_softc *);
+static int esp32s31_dvp_start_locked(struct esp32s31_dvp_softc *, bool);
 static void esp32s31_dvp_stop_cam(struct esp32s31_dvp_softc *);
 static int esp32s31_dvp_open(void *, int);
 static void esp32s31_dvp_close(void *);
@@ -280,11 +278,46 @@ esp32s31_dvp_dma_done(void *arg)
 static void
 esp32s31_dvp_stop_cam(struct esp32s31_dvp_softc *sc)
 {
-	bus_space_write_4(sc->sc_bst, sc->sc_bsh, DVP_CAM_CTRL1, 0);
+	uint32_t ctrl1, ctrl;
+
+	ctrl1 = bus_space_read_4(sc->sc_bst, sc->sc_bsh, DVP_CAM_CTRL1);
+	bus_space_write_4(sc->sc_bst, sc->sc_bsh, DVP_CAM_CTRL1,
+	    esp32s31_dvp_stop_control1(ctrl1));
+	ctrl = bus_space_read_4(sc->sc_bst, sc->sc_bsh, DVP_CAM_CTRL);
+	bus_space_write_4(sc->sc_bst, sc->sc_bsh, DVP_CAM_CTRL,
+	    esp32s31_dvp_latch_control(ctrl));
+}
+
+/* Caller holds sc_lock.  Keep DMA memory owned until a checked halt. */
+static int
+esp32s31_dvp_abort_locked(struct esp32s31_dvp_softc *sc)
+{
+	int error = 0, e;
+
+	esp32s31_dvp_lifecycle_begin_stop(&sc->sc_lifecycle);
+	esp32s31_dvp_stop_cam(sc);
+	if (sc->sc_lifecycle.dma_active) {
+		e = fdtbus_dma_halt_checked(sc->sc_dma);
+		if (e == 0) {
+			sc->sc_lifecycle.dma_active = false;
+			bus_dmamap_sync(sc->sc_dmat, sc->sc_map, 0,
+			    sc->sc_dma_size, BUS_DMASYNC_POSTREAD);
+		} else {
+			error = e;
+		}
+	}
+	if (sc->sc_lifecycle.sensor_streaming) {
+		e = video_sensor_set_stream(sc->sc_sensor, false);
+		if (e == 0)
+			sc->sc_lifecycle.sensor_streaming = false;
+		else if (error == 0)
+			error = e;
+	}
+	return error;
 }
 
 static int
-esp32s31_dvp_start_locked(struct esp32s31_dvp_softc *sc)
+esp32s31_dvp_start_locked(struct esp32s31_dvp_softc *sc, bool reset_cam)
 {
 	struct fdtbus_dma_req req = { 0 };
 	bus_dma_segment_t req_segs[2];
@@ -320,15 +353,15 @@ esp32s31_dvp_start_locked(struct esp32s31_dvp_softc *sc)
 	esp32s31_dvp_lifecycle_transfer_started(&sc->sc_lifecycle);
 
 	/* The sensor supplies DE and VSYNC, but no HSYNC.  Keep vh_de_mode
-	 * clear (CAM_CTRL1 bit 28) so the controller uses the DE/VSYNC pair.
-	 * Reinitialize the CAM AFIFO, then listen for one VSYNC-delimited frame.
+	 * clear (CAM_CTRL1 bit 28).  Reset the CAM block only on first arm;
+	 * subsequent frame retries reset only its AFIFO.
 	 */
 	bus_space_write_4(sc->sc_bst, sc->sc_bsh, DVP_CAM_CTRL1,
-	    DVP_CAM_RESET | DVP_CAM_AFIFO_RESET);
+	    DVP_CAM_AFIFO_RESET | (reset_cam ? DVP_CAM_RESET : 0));
 	bus_space_write_4(sc->sc_bst, sc->sc_bsh, DVP_CAM_CTRL1,
 	    DVP_CAM_VSYNC_INV);
 	bus_space_write_4(sc->sc_bst, sc->sc_bsh, DVP_CAM_CTRL,
-	    DVP_CAM_STOP_EN | DVP_CAM_VS_EOF_EN | DVP_CAM_UPDATE_REG);
+	    esp32s31_dvp_capture_control());
 	bus_space_write_4(sc->sc_bst, sc->sc_bsh, DVP_CAM_CTRL1,
 	    DVP_CAM_VSYNC_INV | DVP_CAM_START);
 	return 0;
@@ -341,6 +374,7 @@ esp32s31_dvp_work(struct work *wk, void *arg)
 	struct fdtbus_dma_result result;
 	struct video_payload payload;
 	size_t payload_size;
+	enum esp32s31_dvp_frame_status frame_status;
 	int error, halt_error;
 
 	(void)wk;
@@ -352,53 +386,59 @@ esp32s31_dvp_work(struct work *wk, void *arg)
 	}
 	/* Stop the frame producer before inspecting or draining the DMA result. */
 	esp32s31_dvp_stop_cam(sc);
+	memset(&result, 0, sizeof(result));
 	error = fdtbus_dma_result(sc->sc_dma, &result);
-	if (error == 0 && result.dres_error != 0)
+	if (error == 0 && result.dres_error != 0) {
 		error = result.dres_error;
-	if (error == 0 && !esp32s31_dvp_frame_payload_size(sc->sc_bufsize,
-	    sc->sc_dma_size, result.dres_bytes, &payload_size))
+	}
+	frame_status = ESP32S31_DVP_FRAME_INVALID;
+	if (error == 0) {
+		frame_status = esp32s31_dvp_frame_classify(sc->sc_bufsize,
+		    sc->sc_dma_size, result.dres_bytes, &payload_size);
+	}
+	if (error == 0 && frame_status == ESP32S31_DVP_FRAME_INVALID) {
 		error = EIO;
+	}
 	if (error == 0 && !esp32s31_dvp_lifecycle_result_ready(
 	    &sc->sc_lifecycle, sc->sc_work_generation))
 		error = EIO;
 	halt_error = fdtbus_dma_halt_checked(sc->sc_dma);
 	if (halt_error == 0) {
 		sc->sc_lifecycle.dma_active = false;
+		bus_dmamap_sync(sc->sc_dmat, sc->sc_map, 0, sc->sc_dma_size,
+		    BUS_DMASYNC_POSTREAD);
 		if (error == 0 && !esp32s31_dvp_lifecycle_dma_quiesced(
 		    &sc->sc_lifecycle, sc->sc_work_generation))
 			error = EIO;
-	} else if (error == 0)
+	} else if (error == 0) {
 		error = halt_error;
+	}
 	if (error != 0) {
-		esp32s31_dvp_lifecycle_begin_stop(&sc->sc_lifecycle);
-		esp32s31_dvp_stop_cam(sc);
-		if (sc->sc_lifecycle.sensor_streaming &&
-		    video_sensor_set_stream(sc->sc_sensor, false) == 0) {
-			sc->sc_lifecycle.sensor_streaming = false;
-		}
+		(void)esp32s31_dvp_abort_locked(sc);
 		(void)esp32s31_dvp_lifecycle_finish_stop(&sc->sc_lifecycle);
 		aprint_error_dev(sc->sc_dev, "capture stopped (%d)\n", error);
 		mutex_exit(&sc->sc_lock);
 		return;
 	}
-	bus_dmamap_sync(sc->sc_dmat, sc->sc_map, 0, sc->sc_dma_size,
-	    BUS_DMASYNC_POSTREAD);
-	payload.data = sc->sc_buf;
-	payload.size = payload_size;
-	payload.frameno = sc->sc_frameno++ & 1;
-	payload.end_of_frame = true;
-	video_submit_payload(sc->sc_videodev, &payload);
+	/* Drop successful short warm-up frames; only complete frames reach
+	 * video(4).  Both outcomes rearm the same single DMA buffer below.
+	 */
+	if (frame_status == ESP32S31_DVP_FRAME_COMPLETE) {
+		payload.data = sc->sc_buf;
+		payload.size = payload_size;
+		payload.frameno = sc->sc_frameno++ & 1;
+		payload.end_of_frame = true;
+		video_submit_payload(sc->sc_videodev, &payload);
+	}
 	if (esp32s31_dvp_lifecycle_rearm_allowed(&sc->sc_lifecycle,
 	    sc->sc_work_generation)) {
-		error = esp32s31_dvp_start_locked(sc);
+		error = esp32s31_dvp_start_locked(sc, false);
 		if (error != 0) {
-			esp32s31_dvp_lifecycle_begin_stop(&sc->sc_lifecycle);
-			esp32s31_dvp_stop_cam(sc);
-			if (video_sensor_set_stream(sc->sc_sensor, false) == 0)
-				sc->sc_lifecycle.sensor_streaming = false;
-			(void)esp32s31_dvp_lifecycle_finish_stop(&sc->sc_lifecycle);
-			aprint_error_dev(sc->sc_dev,
-			    "cannot restart capture (%d)\n", error);
+			(void)esp32s31_dvp_abort_locked(sc);
+			(void)esp32s31_dvp_lifecycle_finish_stop(
+			    &sc->sc_lifecycle);
+			aprint_error_dev(sc->sc_dev, "cannot restart capture (%d)\n",
+			    error);
 		}
 	}
 	mutex_exit(&sc->sc_lock);
@@ -473,22 +513,34 @@ esp32s31_dvp_start_transfer(void *arg)
 		return EBUSY;
 	}
 	error = video_sensor_set_format(sc->sc_sensor, &sc->sc_format);
-	if (error == 0)
-		error = video_sensor_set_stream(sc->sc_sensor, true);
 	if (error == 0) {
-		sc->sc_lifecycle.sensor_streaming = true;
 		sc->sc_work_generation =
 		    esp32s31_dvp_lifecycle_begin_stream(&sc->sc_lifecycle);
-		error = esp32s31_dvp_start_locked(sc);
+		error = esp32s31_dvp_start_locked(sc, true);
+	}
+	if (error == 0 && !esp32s31_dvp_lifecycle_sensor_start_allowed(
+	    &sc->sc_lifecycle))
+		error = EIO;
+	if (error == 0) {
+		int sensor_error;
+
+		sensor_error = video_sensor_set_stream(sc->sc_sensor, true);
+		if (!esp32s31_dvp_lifecycle_sensor_start_result(
+		    &sc->sc_lifecycle, sensor_error) && sensor_error == 0)
+			sensor_error = EIO;
+		error = sensor_error;
 	}
 	if (error != 0) {
-		esp32s31_dvp_lifecycle_begin_stop(&sc->sc_lifecycle);
-		esp32s31_dvp_stop_cam(sc);
-		if (sc->sc_lifecycle.sensor_streaming &&
-		    video_sensor_set_stream(sc->sc_sensor, false) == 0) {
-			sc->sc_lifecycle.sensor_streaming = false;
-		}
+		(void)esp32s31_dvp_abort_locked(sc);
+		mutex_exit(&sc->sc_lock);
+		/* A completion may have queued while start_transfer held sc_lock.
+		 * Keep stopping set until that stale generation has drained.
+		 */
+		workqueue_wait(sc->sc_wq, &sc->sc_work);
+		mutex_enter(&sc->sc_lock);
 		(void)esp32s31_dvp_lifecycle_finish_stop(&sc->sc_lifecycle);
+		mutex_exit(&sc->sc_lock);
+		return error;
 	}
 	mutex_exit(&sc->sc_lock);
 	return error;
@@ -515,6 +567,8 @@ esp32s31_dvp_stop_transfer(void *arg)
 	if (error == 0 && dma_active) {
 		mutex_enter(&sc->sc_lock);
 		sc->sc_lifecycle.dma_active = false;
+		bus_dmamap_sync(sc->sc_dmat, sc->sc_map, 0, sc->sc_dma_size,
+		    BUS_DMASYNC_POSTREAD);
 		mutex_exit(&sc->sc_lock);
 	}
 	workqueue_wait(sc->sc_wq, &sc->sc_work);

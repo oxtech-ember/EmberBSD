@@ -98,6 +98,25 @@ esp32s31_dvp_lifecycle_transfer_started(struct esp32s31_dvp_lifecycle *lc)
 	lc->phase = ESP32S31_DVP_WAIT_DMA;
 }
 
+/* Do not enable the sensor until the receiver and DMA are already armed. */
+static inline bool
+esp32s31_dvp_lifecycle_sensor_start_allowed(
+	const struct esp32s31_dvp_lifecycle *lc)
+{
+	return lc->streaming && lc->dma_active && !lc->sensor_streaming &&
+	    !lc->stopping;
+}
+
+static inline bool
+esp32s31_dvp_lifecycle_sensor_start_result(
+	struct esp32s31_dvp_lifecycle *lc, int error)
+{
+	if (error != 0 || !esp32s31_dvp_lifecycle_sensor_start_allowed(lc))
+		return false;
+	lc->sensor_streaming = true;
+	return true;
+}
+
 static inline bool
 esp32s31_dvp_lifecycle_completion_current(
 	const struct esp32s31_dvp_lifecycle *lc, uint64_t generation)
