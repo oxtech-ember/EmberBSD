@@ -25,6 +25,7 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <dev/video_sensor_if.h>
 
 #include "esp32s31_dvp_lifecycle.h"
+#include "esp32s31_dvp_frame.h"
 
 #define DVP_CAM_CTRL		0x004
 #define DVP_CAM_CTRL1		0x008
@@ -69,6 +70,7 @@ struct esp32s31_dvp_softc {
 	bus_dmamap_t sc_map;
 	void *sc_buf;
 	size_t sc_bufsize;
+	size_t sc_dma_size;
 	struct video_format sc_format;
 	struct esp32s31_dvp_lifecycle sc_lifecycle;
 	uint64_t sc_work_generation;
@@ -210,11 +212,16 @@ esp32s31_dvp_init(device_t self)
 		return;
 	}
 	sc->sc_bufsize = sc->sc_format.sample_size;
-	if (sc->sc_bufsize == 0 || (sc->sc_bufsize & 63) != 0) {
+	if (sc->sc_bufsize == 0 || (sc->sc_bufsize & 63) != 0 ||
+	    sc->sc_bufsize > SIZE_MAX - ESP32S31_DVP_FRAME_TAIL_SIZE) {
 		error = EINVAL;
 		goto fail_dma;
 	}
-	error = bus_dmamem_alloc(sc->sc_dmat, sc->sc_bufsize, 64, 0,
+	/* The esp-mosaico-bsp esp-idf-dvp-frame-capture-stability.patch
+	 * (7cbfb39) requires a 64-byte non-image DMA tail for uncompressed
+	 * frames. */
+	sc->sc_dma_size = sc->sc_bufsize + ESP32S31_DVP_FRAME_TAIL_SIZE;
+	error = bus_dmamem_alloc(sc->sc_dmat, sc->sc_dma_size, 64, 0,
 	    &sc->sc_seg, 1, &nsegs, BUS_DMA_WAITOK);
 	if (error != 0)
 		goto fail_dma;
@@ -222,16 +229,16 @@ esp32s31_dvp_init(device_t self)
 		error = EFBIG;
 		goto fail_alloc;
 	}
-	error = bus_dmamem_map(sc->sc_dmat, &sc->sc_seg, 1, sc->sc_bufsize,
+	error = bus_dmamem_map(sc->sc_dmat, &sc->sc_seg, 1, sc->sc_dma_size,
 	    &sc->sc_buf, BUS_DMA_WAITOK | BUS_DMA_COHERENT);
 	if (error != 0)
 		goto fail_mem;
-	error = bus_dmamap_create(sc->sc_dmat, sc->sc_bufsize, 1,
-	    sc->sc_bufsize, 0, BUS_DMA_WAITOK, &sc->sc_map);
+	error = bus_dmamap_create(sc->sc_dmat, sc->sc_dma_size, 1,
+	    sc->sc_dma_size, 0, BUS_DMA_WAITOK, &sc->sc_map);
 	if (error != 0)
 		goto fail_mapping;
 	error = bus_dmamap_load(sc->sc_dmat, sc->sc_map, sc->sc_buf,
-	    sc->sc_bufsize, NULL, BUS_DMA_WAITOK);
+	    sc->sc_dma_size, NULL, BUS_DMA_WAITOK);
 	if (error != 0)
 		goto fail_map;
 	error = workqueue_create(&sc->sc_wq, device_xname(self),
@@ -253,7 +260,7 @@ fail_loaded:
 fail_map:
 	bus_dmamap_destroy(sc->sc_dmat, sc->sc_map);
 fail_mapping:
-	bus_dmamem_unmap(sc->sc_dmat, sc->sc_buf, sc->sc_bufsize);
+	bus_dmamem_unmap(sc->sc_dmat, sc->sc_buf, sc->sc_dma_size);
 fail_mem:
 fail_alloc:
 	bus_dmamem_free(sc->sc_dmat, &sc->sc_seg, 1);
@@ -280,17 +287,35 @@ static int
 esp32s31_dvp_start_locked(struct esp32s31_dvp_softc *sc)
 {
 	struct fdtbus_dma_req req = { 0 };
+	bus_dma_segment_t req_segs[2];
+	bus_dma_segment_t *map_seg;
 	int error;
 
-	bus_dmamap_sync(sc->sc_dmat, sc->sc_map, 0, sc->sc_bufsize,
+	if (sc->sc_map->dm_nsegs != 1 ||
+	    sc->sc_map->dm_segs[0].ds_len < sc->sc_dma_size ||
+	    (size_t)(bus_addr_t)sc->sc_dma_size != sc->sc_dma_size ||
+	    sc->sc_map->dm_segs[0].ds_addr > (bus_addr_t)-1 -
+	    (bus_addr_t)sc->sc_dma_size)
+		return EFBIG;
+	map_seg = &sc->sc_map->dm_segs[0];
+	/* Keep the public frame size nominal; the BSP-required 64-byte tail is
+	 * a separate DMA segment in the same contiguous allocation. */
+	req_segs[0] = *map_seg;
+	req_segs[0].ds_len = sc->sc_bufsize;
+	req_segs[1].ds_addr = map_seg->ds_addr + sc->sc_bufsize;
+	req_segs[1].ds_len = ESP32S31_DVP_FRAME_TAIL_SIZE;
+	bus_dmamap_sync(sc->sc_dmat, sc->sc_map, 0, sc->sc_dma_size,
 	    BUS_DMASYNC_PREREAD);
-	req.dreq_segs = sc->sc_map->dm_segs;
-	req.dreq_nsegs = sc->sc_map->dm_nsegs;
+	req.dreq_segs = req_segs;
+	req.dreq_nsegs = 2;
 	req.dreq_sel = 0;
 	req.dreq_dir = FDT_DMA_READ;
 	error = fdtbus_dma_transfer(sc->sc_dma, &req);
-	if (error != 0)
+	if (error != 0) {
+		bus_dmamap_sync(sc->sc_dmat, sc->sc_map, 0, sc->sc_dma_size,
+		    BUS_DMASYNC_POSTREAD);
 		return error;
+	}
 	sc->sc_lifecycle.dma_active = true;
 	esp32s31_dvp_lifecycle_transfer_started(&sc->sc_lifecycle);
 
@@ -315,6 +340,7 @@ esp32s31_dvp_work(struct work *wk, void *arg)
 	struct esp32s31_dvp_softc *sc = arg;
 	struct fdtbus_dma_result result;
 	struct video_payload payload;
+	size_t payload_size;
 	int error, halt_error;
 
 	(void)wk;
@@ -329,7 +355,8 @@ esp32s31_dvp_work(struct work *wk, void *arg)
 	error = fdtbus_dma_result(sc->sc_dma, &result);
 	if (error == 0 && result.dres_error != 0)
 		error = result.dres_error;
-	if (error == 0 && result.dres_bytes != sc->sc_format.sample_size)
+	if (error == 0 && !esp32s31_dvp_frame_payload_size(sc->sc_bufsize,
+	    sc->sc_dma_size, result.dres_bytes, &payload_size))
 		error = EIO;
 	if (error == 0 && !esp32s31_dvp_lifecycle_result_ready(
 	    &sc->sc_lifecycle, sc->sc_work_generation))
@@ -354,10 +381,10 @@ esp32s31_dvp_work(struct work *wk, void *arg)
 		mutex_exit(&sc->sc_lock);
 		return;
 	}
-	bus_dmamap_sync(sc->sc_dmat, sc->sc_map, 0, result.dres_bytes,
+	bus_dmamap_sync(sc->sc_dmat, sc->sc_map, 0, sc->sc_dma_size,
 	    BUS_DMASYNC_POSTREAD);
 	payload.data = sc->sc_buf;
-	payload.size = result.dres_bytes;
+	payload.size = payload_size;
 	payload.frameno = sc->sc_frameno++ & 1;
 	payload.end_of_frame = true;
 	video_submit_payload(sc->sc_videodev, &payload);

@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include "../espressif/esp_axi_gdma_desc.c"
+#include "../espressif/esp32s31_dvp_frame.h"
 
 #define CHECK_STATUS(expression, expected) do { \
 	int status = (expression); \
@@ -20,6 +21,7 @@ main(void)
 		{ .ds_addr = 0x50010000, .ds_len = 64 }
 	};
 	size_t used = 0, bytes = 0;
+	size_t payload_size;
 
 	assert(sizeof(d[0]) == 16);
 	CHECK_STATUS(esp_axi_gdma_desc_build(d, 3, 0x50000000, s, 2,
@@ -74,5 +76,57 @@ main(void)
 	CHECK_STATUS(esp_axi_gdma_desc_result(d, 3, &bytes), EIO);
 	d[2].control = 64 | (65U << 12) | ESP_AXI_GDMA_DESC_SUC_EOF;
 	CHECK_STATUS(esp_axi_gdma_desc_result(d, 3, &bytes), EIO);
+
+	/* Mosaico's uncompressed capture needs a separate 64-byte tail. */
+	{
+		const size_t frame_size = 640 * 480 * 2;
+		const size_t tail_size = ESP32S31_DVP_FRAME_TAIL_SIZE;
+		const size_t total_size = frame_size + tail_size;
+		struct esp_axi_gdma_desc frame_desc[154];
+		bus_dma_segment_t frame_segs[2] = {
+			{ .ds_addr = 0x50001000, .ds_len = frame_size },
+			{ .ds_addr = 0x50001000 + frame_size,
+			  .ds_len = tail_size }
+		};
+
+		CHECK_STATUS(esp_axi_gdma_desc_build(frame_desc,
+		    154, 0x50000000, frame_segs, 2,
+		    &used), 0);
+		assert(used == 154);
+		assert(frame_desc[152].address == 0x50001000 + 152 * 4032);
+		assert((frame_desc[152].control & ESP_AXI_GDMA_DESC_SIZE_MASK)
+		    == 1536);
+		assert(frame_desc[152].next == 0x50000000 + 153 * 16);
+		assert(frame_desc[153].address == 0x50001000 + frame_size);
+		assert((frame_desc[153].control & ESP_AXI_GDMA_DESC_SIZE_MASK)
+		    == tail_size && frame_desc[153].next == 0);
+
+		/* A valid completed hardware chain reports nominal plus tail bytes. */
+		for (size_t i = 0; i < used; i++) {
+			uint32_t capacity = frame_desc[i].control &
+			    ESP_AXI_GDMA_DESC_SIZE_MASK;
+			frame_desc[i].control = capacity |
+			    (capacity << ESP_AXI_GDMA_DESC_LENGTH_SHIFT);
+		}
+		frame_desc[used - 1].control |= ESP_AXI_GDMA_DESC_SUC_EOF;
+		CHECK_STATUS(esp_axi_gdma_desc_result(frame_desc, used, &bytes),
+		    0);
+		assert(bytes == total_size);
+		assert(esp32s31_dvp_frame_payload_size(frame_size, total_size,
+		    bytes, &payload_size));
+		assert(payload_size == frame_size);
+		assert(esp32s31_dvp_frame_payload_size(frame_size, total_size,
+		    frame_size, &payload_size) && payload_size == frame_size);
+		assert(!esp32s31_dvp_frame_payload_size(frame_size, total_size,
+		    frame_size - 1, &payload_size));
+		assert(!esp32s31_dvp_frame_payload_size(frame_size, total_size,
+		    total_size + 1, &payload_size));
+		assert(!esp32s31_dvp_frame_payload_size(0, total_size, total_size,
+		    &payload_size));
+		assert(!esp32s31_dvp_frame_payload_size(frame_size, frame_size - 1,
+		    frame_size, &payload_size));
+		assert(!esp32s31_dvp_frame_payload_size(frame_size, total_size,
+		    total_size, NULL));
+	}
 	return 0;
 }
