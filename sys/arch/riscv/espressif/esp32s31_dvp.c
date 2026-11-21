@@ -36,7 +36,6 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #define DVP_CAM_2BYTE		__BIT(24)
 #define DVP_CAM_DE_INV		__BIT(25)
 #define DVP_CAM_VSYNC_INV	__BIT(27)
-#define DVP_CAM_DE_VSYNC	__BIT(28)
 #define DVP_CAM_START		__BIT(29)
 #define DVP_CAM_RESET		__BIT(30)
 #define DVP_CAM_AFIFO_RESET	__BIT(31)
@@ -295,16 +294,18 @@ esp32s31_dvp_start_locked(struct esp32s31_dvp_softc *sc)
 	sc->sc_lifecycle.dma_active = true;
 	esp32s31_dvp_lifecycle_transfer_started(&sc->sc_lifecycle);
 
-	/* Reinitialize the CAM AFIFO, then listen for one VSYNC-delimited frame. */
+	/* The sensor supplies DE and VSYNC, but no HSYNC.  Keep vh_de_mode
+	 * clear (CAM_CTRL1 bit 28) so the controller uses the DE/VSYNC pair.
+	 * Reinitialize the CAM AFIFO, then listen for one VSYNC-delimited frame.
+	 */
 	bus_space_write_4(sc->sc_bst, sc->sc_bsh, DVP_CAM_CTRL1,
 	    DVP_CAM_RESET | DVP_CAM_AFIFO_RESET);
 	bus_space_write_4(sc->sc_bst, sc->sc_bsh, DVP_CAM_CTRL1,
-	    DVP_CAM_VSYNC_INV | DVP_CAM_DE_VSYNC);
+	    DVP_CAM_VSYNC_INV);
 	bus_space_write_4(sc->sc_bst, sc->sc_bsh, DVP_CAM_CTRL,
 	    DVP_CAM_STOP_EN | DVP_CAM_VS_EOF_EN | DVP_CAM_UPDATE_REG);
 	bus_space_write_4(sc->sc_bst, sc->sc_bsh, DVP_CAM_CTRL1,
-	    DVP_CAM_VSYNC_INV | DVP_CAM_DE_VSYNC |
-	    DVP_CAM_START);
+	    DVP_CAM_VSYNC_INV | DVP_CAM_START);
 	return 0;
 }
 
