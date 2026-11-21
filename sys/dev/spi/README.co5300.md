@@ -47,22 +47,34 @@ The driver creates a wired, zeroed native-endian RGB565 framebuffer exposed
 through genfb/wsdisplay, including its normal mmap and framebuffer information
 ioctls. Mappings use the cacheable bus-space attribute to match the wired
 kernel RAM mapping. Executable mappings are rejected. UART remains the console.
-A worker compares adjacent two-row snapshots to a separate shadow buffer at up
-to 20 scans per second. It converts changed row pairs to big-endian wire pixels,
-sends a two-row CO5300 address window and four-line pixel data in one RAMWR,
-and updates both shadow rows only after successful transmission. If either row
-is dirty or differs from the shadow, both rows are sent; a failed pair remains
-dirty for retry. Even panel heights are required so no unpaired final row is
-sent. This follows the CO5300 address-window requirement that the selected
-column and row extents each contain an even number of pixels (datasheet pp. 159,
-161). The initial scan sends all rows.
+The worker compares adjacent two-row snapshots to a separate shadow buffer.
+Its idle cadence remains 20 scans per second. After a pair is transmitted, the
+next scan targets `ceil(hz / 60)` ticks from the previous scan's start (17 ms,
+about 59 Hz at `hz=1000`); if a scan exceeds the period, the worker still waits
+at least one scheduler tick. Scan and transfer time are therefore not added to
+a fixed delay after every pass. On a transfer error, the previous 50 ms retry
+delay after the scan is preserved.
+
+For a clean pair with changed pixels, the driver computes the minimum horizontal
+extent spanning changes in either row, rounds the start down and end up to an
+even-aligned two-column boundary, converts only that slice to big-endian wire
+pixels and sends both rows in one RAMWR. A one-pixel change therefore sends the
+smallest legal two-column window. A dirty pair (including initial contents and
+any failed transfer retry) still sends the full width. Both shadow rows are
+updated from the captured snapshot only after all commands succeed. Even panel
+heights are required so no unpaired final row is sent. Windows follow the
+CO5300 requirement that selected column and row extents each contain an even
+number of pixels (datasheet pp. 159, 161). The initial scan sends the full
+framebuffer.
 There is no atomic frame presentation: concurrent writes can tear and are
-observed again on a later scan. On a transfer error the scan stops, logs once, and retries next interval.
+observed again on a later scan. On a transfer error the scan stops, logs once,
+and retries the dirty full-width pair after the preserved 50 ms delay.
 The framebuffer and shadow use 2 * width * height * 2 bytes. Pair snapshot and
 wire staging add four rows plus bookkeeping; the wired framebuffer is
-page-rounded. Diagnostic row records report the pair's starting `y`, row count,
-combined nonzero count and hashes; the first nonzero sample includes its actual
-row and column.
+page-rounded. Diagnostic row records report the pair's starting `y`, horizontal
+`x+columns` window, row count, combined nonzero count and hashes. Raw hashes
+cover the full captured pair; wire hashes and edge bytes cover the transmitted
+window. The first nonzero sample includes its actual row and column.
 
 This driver has no detach or panel power-off operation; its worker and shared
 regulator remain active for the device lifetime. A shared supply is never

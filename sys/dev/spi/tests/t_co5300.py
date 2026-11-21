@@ -45,8 +45,9 @@ prefix = r'''
 #define CO5300_INLINE_BYTES 64
 #define CO5300_DIAG_DELAYS 4
 #define CO5300_MAX_HEIGHT 480
+#define CO5300_ACTIVE_RATE 60
 #define KM_SLEEP 0
-struct co5300_row_diag { bool valid, fingerprinted; unsigned int y, rows; uint32_t nonzero;
+struct co5300_row_diag { bool valid, fingerprinted; unsigned int y, rows, x, columns; uint32_t nonzero;
     bool dirty, different, sample_valid; unsigned int sample_x; uint16_t sample_raw;
     unsigned int sample_y;
     uint8_t sample_wire[2]; uint64_t raw_hash, wire_hash;
@@ -56,6 +57,10 @@ struct co5300_delay_diag { char phase; unsigned int command, requested_ms; int t
 typedef uintptr_t vaddr_t;
 typedef uint64_t paddr_t;
 #define MAX(a,b) ((a) > (b) ? (a) : (b))
+#define MIN(a,b) ((a) < (b) ? (a) : (b))
+#ifndef howmany
+#define howmany(x,y) (((x) + (y) - 1) / (y))
+#endif
 #define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
 struct co5300_softc { void *sc_spi, *sc_bst, *sc_dev; unsigned int sc_width, sc_height;
     uint32_t sc_tx_width;
@@ -178,6 +183,9 @@ static paddr_t bus_space_mmap(void *tag, paddr_t pa, off_t off, int prot, int fl
     maps++; return (pa >> 12) | 0x40000000;
 }
 static int hz = 1000;
+static unsigned int fake_ticks;
+static int expected_wait_ticks = 51;
+static int getticks(void) { return (int)fake_ticks; }
 static int cold = 1;
 static uint64_t fake_elapsed_us;
 static void getnanouptime(struct timespec *ts) {
@@ -192,7 +200,7 @@ static void mutex_enter(int *p) { (void)p; }
 static void mutex_exit(int *p) { (void)p; }
 static void cv_wait(int *c, int *m) { (void)c; (void)m; assert(!"unexpected wait"); }
 static int cv_timedwait(int *c, int *m, int ticks) {
-    (void)c; (void)m; assert(ticks==51); waits++; worker_sc->sc_stop=true; return 0;
+    (void)c; (void)m; assert(ticks==expected_wait_ticks); waits++; worker_sc->sc_stop=true; return 0;
 }
 #define aprint_error_dev(dev, ...) ((void)(dev), reports++)
 static char status_log[256];
@@ -211,6 +219,7 @@ suffix = r'''
 int main(void) {
     uint8_t init[] = {0x11,0,0,80, 0x36,2,0,5,0x12,0x34};
     struct co5300_softc sc = {0};
+    bool worked;
     uint32_t selected_width;
     assert(co5300_get_tx_width(42,&selected_width)==0 && selected_width==4);
     dt_width_present=1; dt_width_value=1;
@@ -327,7 +336,7 @@ int main(void) {
     sc.sc_shadow=shadow;sc.sc_snapshot=snapshot;sc.sc_wire=wire;
     sc.sc_dirty=dirty; memset(dirty,1,sizeof(dirty));
     ncalls=0; fail_call=3;
-    assert(co5300_row(&sc,0)==EIO && ncalls==3);
+    assert(co5300_row(&sc,0,&worked)==EIO && worked && ncalls==3);
     assert(calls[0].cmd==0x2a && calls[0].data[3]==0xdf && calls[0].width==1);
     assert(calls[1].cmd==0x2b && calls[1].wire_len==8 &&
         calls[1].wire[4]==0 && calls[1].wire[5]==0 &&
@@ -355,44 +364,74 @@ int main(void) {
         sc.sc_first_nonzero_row.raw_hash==co5300_fingerprint((const uint8_t *)fb,1920) &&
         sc.sc_first_nonzero_row.wire_hash==co5300_fingerprint(expected,1920));
     ncalls=0; fail_call=0;
-    assert(co5300_row(&sc,0)==0 && ncalls==3 && !dirty[0] && !dirty[1]);
+    assert(co5300_row(&sc,0,&worked)==0 && worked && ncalls==3 && !dirty[0] && !dirty[1]);
+    assert(calls[0].data[1]==0 && calls[0].data[3]==0xdf &&
+        calls[2].len==1920 && calls[2].wire_len==1924);
+    ncalls=0;
+    assert(co5300_row(&sc,0,&worked)==0 && !worked && ncalls==0);
     assert(!memcmp(shadow,fb,1920));
-    fb[480+5]=0x1234; dirty[1]=1; ncalls=0;
-    for (size_t i=0;i<960;i++) {
-        expected[i*2]=(uint8_t)(fb[i]>>8);
-        expected[i*2+1]=(uint8_t)fb[i];
-    }
-    assert(co5300_row(&sc,0)==0 && ncalls==3 && !dirty[0] && !dirty[1]);
-    assert(calls[1].wire[7]==1 && calls[2].len==1920 &&
-        !memcmp(calls[2].wire+4,expected,sizeof(expected)) &&
+    fb[8]=0x2222; fb[480+5]=0x1234; ncalls=0;
+    assert(co5300_row(&sc,0,&worked)==0 && worked && ncalls==3 && !dirty[0] && !dirty[1]);
+    assert(calls[0].data[0]==0 && calls[0].data[1]==4 &&
+        calls[0].data[2]==0 && calls[0].data[3]==9 &&
+        calls[2].len==24 && calls[2].wire_len==28 &&
+        calls[2].wire[4]==0 && calls[2].wire[5]==5 &&
+        calls[2].wire[6]==0 && calls[2].wire[7]==6 &&
+        calls[2].wire[8]==0 && calls[2].wire[9]==7 &&
+        calls[2].wire[10]==0 && calls[2].wire[11]==8 &&
+        calls[2].wire[12]==0x22 && calls[2].wire[13]==0x22 &&
+        calls[2].wire[14]==0 && calls[2].wire[15]==10 &&
+        calls[2].wire[16]==1 && calls[2].wire[17]==0xe5 &&
+        calls[2].wire[18]==0x12 && calls[2].wire[19]==0x34 &&
+        !memcmp(shadow,fb,1920));
+    assert(sc.sc_latest_row.x==4 && sc.sc_latest_row.columns==6);
+    fb[480+479]=0x4567; ncalls=0;
+    assert(co5300_row(&sc,0,&worked)==0 && worked && ncalls==3);
+    assert(calls[0].data[1]==0xde && calls[0].data[3]==0xdf &&
+        calls[2].len==8 && calls[2].wire_len==12 &&
+        calls[2].wire[10]==0x45 && calls[2].wire[11]==0x67);
+    assert(sc.sc_latest_row.x==478 && sc.sc_latest_row.columns==2);
+    fb[480+7]=0x6abc; fail_call=3; ncalls=0;
+    assert(co5300_row(&sc,0,&worked)==EIO && worked && ncalls==3 &&
+        dirty[0] && dirty[1]);
+    assert(calls[0].data[1]==6 && calls[0].data[3]==7 &&
+        calls[2].len==8 && calls[2].wire_len==12 &&
+        memcmp(shadow,fb,1920)!=0);
+    fail_call=0; ncalls=0;
+    assert(co5300_row(&sc,0,&worked)==0 && worked && ncalls==3 &&
+        !dirty[0] && !dirty[1]);
+    assert(calls[0].data[1]==0 && calls[0].data[3]==0xdf &&
+        calls[2].len==1920 && calls[2].wire_len==1924 &&
         !memcmp(shadow,fb,1920));
     fb[480+6]=0xabcd; dirty[1]=1; fail_call=3; ncalls=0;
-    assert(co5300_row(&sc,0)==EIO && ncalls==3 && dirty[0] && dirty[1]);
+    assert(co5300_row(&sc,0,&worked)==EIO && worked && ncalls==3 && dirty[0] && dirty[1]);
+    assert(calls[0].data[1]==0 && calls[0].data[3]==0xdf &&
+        calls[2].len==1920 && calls[2].wire_len==1924);
     assert(memcmp(shadow,fb,1920)!=0);
     fail_call=0; ncalls=0;
-    assert(co5300_row(&sc,0)==0 && ncalls==3 && !dirty[0] && !dirty[1]);
+    assert(co5300_row(&sc,0,&worked)==0 && worked && ncalls==3 && !dirty[0] && !dirty[1]);
     fb[478*480]=0x1111; fb[479*480+479]=0x2222;
     dirty[478]=dirty[479]=1; ncalls=0;
-    assert(co5300_row(&sc,478)==0 && ncalls==3);
+    assert(co5300_row(&sc,478,&worked)==0 && worked && ncalls==3);
     assert(calls[1].wire[4]==1 && calls[1].wire[5]==0xde &&
         calls[1].wire[6]==1 && calls[1].wire[7]==0xdf);
     assert(calls[2].len==1920 && !dirty[478] && !dirty[479]);
     ncalls=0;
-    assert(co5300_row(&sc,479)==EINVAL && ncalls==0);
-    assert(co5300_row(&sc,480)==EINVAL && ncalls==0);
-    assert(sc.sc_rows_changed==12 && sc.sc_rows_sent==8 &&
-        sc.sc_row_errors==4 && sc.sc_last_error==EIO);
+    assert(co5300_row(&sc,479,&worked)==EINVAL && !worked && ncalls==0);
+    assert(co5300_row(&sc,480,&worked)==EINVAL && !worked && ncalls==0);
+    assert(sc.sc_rows_changed==18 && sc.sc_rows_sent==12 &&
+        sc.sc_row_errors==6 && sc.sc_last_error==EIO);
     struct sysctlnode status_node={ .sysctl_data=&sc };
     assert(co5300_sysctl_status(&status_node)==0);
     char expected_status[128];
     snprintf(expected_status,sizeof(expected_status),
-        "rows_changed=12 rows_sent=8 errors=4 last_error=%d",EIO);
+        "rows_changed=18 rows_sent=12 errors=6 last_error=%d",EIO);
     assert(!strcmp(status_text,expected_status));
     assert(co5300_sysctl_diagnostic(&status_node)==0 &&
         strstr(status_text,"first=y0:nz960:d1/x1:h1:") != NULL &&
-        strstr(status_text,"rows2:p1@y0,x0=0001/0001") != NULL &&
+        strstr(status_text,"x0+480:rows2:p1@y0,x0=0001/0001") != NULL &&
         strstr(status_text,"nonzero=y0:nz960:") != NULL &&
-        strstr(status_text,"latest=y478:nz2:") != NULL &&
+        strstr(status_text,"latest=y478:nz2:d1/x1:h0:") != NULL &&
         strstr(status_text,"d0=i11:80ms/81t/81000us/c1") != NULL);
     sc.sc_delay_count=CO5300_DIAG_DELAYS;
     sc.sc_delays[2]=(struct co5300_delay_diag){.phase='s',.command=0x11,
@@ -402,13 +441,23 @@ int main(void) {
     assert(co5300_sysctl_diagnostic(&status_node)==0 &&
         strstr(status_text,"first=y0:") != NULL &&
         strstr(status_text,"nonzero=y0:") != NULL &&
-        strstr(status_text,"latest=y478:") != NULL &&
-        strstr(status_text,"rows2:p1@y0,x0=0001/0001") != NULL &&
+        strstr(status_text,"latest=y478:nz2:d1/x1:h0:") != NULL &&
+        strstr(status_text,"x0+480:rows2:p1@y0,x0=0001/0001") != NULL &&
         strstr(status_text,"d3=i29:10ms/11t/11000us/c0") != NULL);
     assert(strlen(status_text)<2048);
     char short_row[8];
     assert(co5300_format_row(short_row,sizeof(short_row),"nonzero",
         &sc.sc_first_nonzero_row)==EOVERFLOW);
+    hz=1000; fake_ticks=100;
+    assert(co5300_scan_ticks(fake_ticks,60)==17);
+    fake_ticks=108;
+    assert(co5300_scan_ticks(100,60)==9);
+    fake_ticks=117;
+    assert(co5300_scan_ticks(100,60)==1);
+    fake_ticks=3;
+    assert(co5300_scan_ticks(UINT_MAX-2,60)==11);
+    fake_ticks=108;
+    assert(co5300_scan_ticks(100,20)==42);
     struct co5300_softc black_sc={0};
     uint16_t black_fb[16]={0}; uint8_t black_shadow[32]={0}, black_snap[16],
         black_wire[16], black_dirty[4]={1,1,1,1};
@@ -416,14 +465,19 @@ int main(void) {
     black_sc.sc_fb=(uintptr_t)black_fb; black_sc.sc_rowbytes=8;
     black_sc.sc_shadow=black_shadow; black_sc.sc_snapshot=black_snap;
     black_sc.sc_wire=black_wire; black_sc.sc_dirty=black_dirty;
-    ncalls=0; assert(co5300_row(&black_sc,0)==0 && ncalls==3);
+    ncalls=0; assert(co5300_row(&black_sc,0,&worked)==0 && worked && ncalls==3);
     assert(black_sc.sc_first_row.valid && black_sc.sc_first_row.nonzero==0 &&
         !black_sc.sc_first_nonzero_row.valid);
+    black_fb[0]=0x2345; ncalls=0;
+    assert(co5300_row(&black_sc,0,&worked)==0 && worked && ncalls==3);
+    assert(calls[0].data[1]==0 && calls[0].data[3]==1 &&
+        calls[2].len==8 && calls[2].wire_len==12 &&
+        calls[2].wire[4]==0x23 && calls[2].wire[5]==0x45);
     black_fb[8]=0x1234; ncalls=0;
-    assert(co5300_row(&black_sc,2)==0 && ncalls==3);
+    assert(co5300_row(&black_sc,2,&worked)==0 && worked && ncalls==3);
     assert(black_sc.sc_first_nonzero_row.valid &&
-        black_sc.sc_first_nonzero_row.y==2 &&
-        black_sc.sc_first_nonzero_row.sample_y==2 &&
+        black_sc.sc_first_nonzero_row.y==0 &&
+        black_sc.sc_first_nonzero_row.sample_y==0 &&
         black_sc.sc_first_nonzero_row.nonzero==1 &&
         black_sc.sc_latest_row.y==2);
     assert(co5300_mmap_valid(0,8192) && co5300_mmap_valid(4096,8192));
@@ -448,13 +502,17 @@ int main(void) {
     reports=0; waits=0;
     if (setjmp(worker_return)==0) co5300_worker(&sc);
     assert(ncalls==1 && reports==1 && waits==1 && sc.sc_stop);
+    sc.sc_stop=false; ncalls=0; fail_call=0; reports=0; waits=0;
+    expected_wait_ticks=17;
+    if (setjmp(worker_return)==0) co5300_worker(&sc);
+    assert(ncalls==6 && reports==0 && waits==1 && sc.sc_stop);
     puts("PASS CO5300 width selection, pixel wire format, init and mmap bounds");
 }
 '''
 a.work.mkdir(parents=True, exist_ok=True)
 cfile = a.work / 'co5300-test.c'
 exe = a.work / 'co5300-test'
-names = ('co5300_get_tx_width', 'co5300_height_valid', 'co5300_send', 'co5300_read_reg', 'co5300_read_status', 'co5300_ticks', 'co5300_fingerprint', 'co5300_pause', 'co5300_init_valid', 'co5300_init_sequence', 'co5300_to_wire', 'co5300_row', 'co5300_sysctl_status', 'co5300_format_row', 'co5300_sysctl_diagnostic', 'co5300_mmap_valid', 'co5300_mmap', 'co5300_worker')
+names = ('co5300_get_tx_width', 'co5300_height_valid', 'co5300_send', 'co5300_read_reg', 'co5300_read_status', 'co5300_ticks', 'co5300_scan_ticks', 'co5300_fingerprint', 'co5300_pause', 'co5300_init_valid', 'co5300_init_sequence', 'co5300_to_wire', 'co5300_row', 'co5300_sysctl_status', 'co5300_format_row', 'co5300_sysctl_diagnostic', 'co5300_mmap_valid', 'co5300_mmap', 'co5300_worker')
 cfile.write_text(prefix + ''.join(extract(n) for n in names) + suffix)
 subprocess.run([str(cc), '-fuse-ld=lld', '-std=c11', '-Wall', '-Wextra', '-Werror',
                 '-fsanitize=address,undefined', '-fno-sanitize-recover=all',
