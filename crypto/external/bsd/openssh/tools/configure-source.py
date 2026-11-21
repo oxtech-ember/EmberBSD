@@ -12,6 +12,19 @@ import sys
 import tempfile
 
 
+def publish(path, content):
+    """Replace a generated consumer input only when the bytes differ."""
+    if path.parent.resolve() != path.parent:
+        raise ValueError('symlink in published header directory: ' + str(path.parent))
+    if not path.is_symlink() and path.is_file() and path.read_bytes() == content:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=path.parent) as directory:
+        staged = Path(directory) / 'output'
+        staged.write_bytes(content)
+        staged.replace(path)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--clean', action='store_true')
@@ -152,9 +165,15 @@ def main():
         text = configured.hexdigest() + '\n'
         if not inputs.is_file() or inputs.read_text() != text:
             inputs.write_text(text)
-        # A lost generated header must not be accepted as a warm configure.
+        # Recover missing generated inputs before accepting a warm configure.
         build = obj / 'build'
-        if not (build / 'config.h').is_file() and (build / 'Makefile').is_file():
+        raw = build / 'openbsd-compat/include'
+        published = obj / 'compat-include'
+        if published.is_symlink():
+            raise ValueError('compat-include must be an object directory')
+        previous_headers = set(published.rglob('*.h'))
+        if (build / 'Makefile').is_file() and (not (build / 'config.h').is_file() or
+                any(not (raw / path.relative_to(published)).is_file() for path in previous_headers)):
             (build / 'Makefile').unlink()
         # Recipes do not inherit bmake's jobserver descriptors.  Preserve
         # variable overrides, but run this single configure consumer serially.
@@ -169,15 +188,23 @@ def main():
                         'EMBER_OPENSSH_CRYPTO=' + args.crypto_mode,
                         'openssh-target-config'],
                        env=env, check=True)
-        # A GNU distclean may recreate an identical config.h. Install the
-        # consumer header outside build/ so that only changed bytes invalidate C.
-        header = obj / 'config.h'
-        content = (build / 'config.h').read_bytes()
-        if header.is_symlink() or not header.exists() or header.read_bytes() != content:
-            with tempfile.TemporaryDirectory(dir=obj) as temporary:
-                staged = Path(temporary) / 'config.h'
-                staged.write_bytes(content)
-                staged.replace(header)
+        # GNU distclean removes both config.h and the configure-selected
+        # compatibility headers. Keep the native compiler's inputs outside it.
+        shims = []
+        for path in raw.rglob('*.h'):
+            relative = path.relative_to(raw)
+            target = published / relative
+            content = path.read_bytes()
+            publish(target, content)
+            previous_headers.discard(target)
+            shims.append(str(relative))
+        for path in previous_headers:
+            path.unlink()
+        publish(obj / 'config.h', (build / 'config.h').read_bytes())
+        # A new shim can shadow a system header absent from the old .d file.
+        # Publish the complete selection last, after a successful configure.
+        publish(obj / 'compat-headers.json',
+                (json.dumps(sorted(shims)) + '\n').encode())
 
 
 if __name__ == '__main__':

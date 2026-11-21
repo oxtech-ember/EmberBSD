@@ -25,7 +25,11 @@ configure inputs and selected tools. GNU configure writes `build/config.h`.
 After a successful check, the helper publishes `config.h` in the configuration
 object directory for C compilation and dependency generation. Reconfiguring
 that role with identical header bytes preserves the consumer header's timestamp.
-A changed header invalidates its consumers. Programs with and without Kerberos
+The helper also publishes the headers selected by configure in `compat-include`.
+Changing a shim updates the native objects that include it. Adding or removing
+a shim rechecks the include paths, since a new shim can replace a system header
+in a retained object directory. The helper removes obsolete shims after
+configure succeeds. Programs with and without Kerberos
 and the private library keep their existing configuration selection.
 
 When `EMBER_OPENSSH_SOURCE` changes to a different prepared directory in an

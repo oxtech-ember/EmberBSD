@@ -18,18 +18,21 @@ def run(*assignments):
                              '-f', str(helper.with_name('config.mk')),
                              '-v', 'OPENSSH_OS_CONFIG_NAME',
                              '-v', 'OPENSSH_KRB5_CONFIG_LIBS',
-                             '-v', 'OPENSSH_CONFIG_HEADER', '-v', 'CPPFLAGS',
+                             '-v', 'OPENSSH_CONFIG_HEADER', '-v', 'CPPFLAGS', '-v', 'DPSRCS',
                              'HOST_AUTOCONF=/autoconf', '_SRC_TOP_OBJ_=/obj',
                              'NETBSDSRCDIR=' + str(root),
                              'DESTDIR=/dest', 'EMBER_OPENSSH_SOURCE=/openssh',
                              *assignments], cwd=root,
                             text=True, capture_output=True)
     assert result.returncode == 0, result.stderr
-    name, libraries, header, cppflags = result.stdout.splitlines()
+    name, libraries, header, cppflags, generated = result.stdout.splitlines()
     config = Path('/obj/crypto/external/bsd/openssh/config') / name
     assert Path(header) == config / 'config.h'
+    assert str(config / 'compat-headers.json') in generated.split()
     includes = cppflags.split()
     assert includes.index('-I' + str(config)) < includes.index('-I' + str(config / 'build'))
+    assert '-I' + str(config / 'compat-include') in includes
+    assert '-I' + str(config / 'build/openbsd-compat/include') not in includes
     return name, libraries.split()
 
 

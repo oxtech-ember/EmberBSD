@@ -18,11 +18,15 @@ OPENSSH_CONFIG_OBJECT?= ${OPENSSH_OS_CONFIG_OBJECT}
 .endif
 OPENSSH_CONFIG_HEADER= ${OPENSSH_CONFIG_OBJECT}/config.h
 CPPFLAGS+= -I${OPENSSH_CONFIG_OBJECT} -I${OPENSSH_CONFIG_OBJECT}/build
-CPPFLAGS+= -I${OPENSSH_CONFIG_OBJECT}/build/openbsd-compat/include
-DPSRCS+= ${OPENSSH_CONFIG_HEADER}
+CPPFLAGS+= -I${OPENSSH_CONFIG_OBJECT}/compat-include
+OPENSSH_COMPAT_HEADERS= ${OPENSSH_CONFIG_OBJECT}/compat-headers.json
+DPSRCS+= ${OPENSSH_CONFIG_HEADER} ${OPENSSH_COMPAT_HEADERS}
 
 # Every consumer checks the shared configuration; the helper serializes
 # generation and publishes the header when its contents change.
+${OPENSSH_COMPAT_HEADERS}: .NOTMAIN ${OPENSSH_CONFIG_HEADER}
+	@test -f ${.TARGET:Q}
+
 openssh-config-check: .PHONY
 ${OPENSSH_CONFIG_HEADER}: openssh-config-check
 	${HOST_PYTHON:Q} -B ${NETBSDSRCDIR:Q}/crypto/external/bsd/openssh/tools/configure-source.py \

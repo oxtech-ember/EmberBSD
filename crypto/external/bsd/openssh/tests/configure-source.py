@@ -64,7 +64,7 @@ pathlib.Path(sys.argv[-1]).write_text('generated configure\\n')
 ''')
     make = root / 'make'
     make.write_text(f'''#!{sys.executable}
-import os, pathlib, sys, time
+import json, os, pathlib, shutil, sys, time
 obj = pathlib.Path(next(a.split('=',1)[1] for a in sys.argv if a.startswith('OPENSSH_CONFIG_OBJECT=')))
 role = next(a.split('=',1)[1] for a in sys.argv if a.startswith('OPENSSH_CONFIG_ROLE='))
 crypto_mode = next(a.split('=',1)[1] for a in sys.argv if a.startswith('EMBER_OPENSSH_CRYPTO='))
@@ -86,6 +86,12 @@ try:
     time.sleep(0.1)
     (build / 'Makefile').write_text('makefile\\n')
     (build / 'config.h').write_text(os.environ.get('TEST_HEADER', 'config') + '\\n')
+    raw = build / 'openbsd-compat/include'
+    if raw.is_dir(): shutil.rmtree(raw)
+    for name, text in json.loads(os.environ.get('TEST_SHIMS', '{{}}')).items():
+        path = raw / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
     if os.environ.get('TEST_MAKE_FAIL'): sys.exit(1)
 finally:
     active.unlink()
@@ -121,6 +127,33 @@ finally:
     assert header.stat().st_mtime_ns == original_mtime
     subprocess.run(command, env=changed_header, check=True)
     assert header.read_bytes() == b'changed\n' and header.stat().st_mtime_ns > original_mtime
+    shims = obj / 'compat-include'
+    queue = shims / 'sys/queue.h'
+    glob = shims / 'glob.h'
+    selection = obj / 'compat-headers.json'
+    both = dict(env, TEST_SHIMS='{"sys/queue.h":"queue","glob.h":"glob"}')
+    subprocess.run(command, env=both, check=True)
+    for path in (queue, glob, selection):
+        os.utime(path, (1000000000, 1000000000))
+    before = [path.stat().st_mtime_ns for path in (queue, glob, selection)]
+    subprocess.run(command, env=both, check=True)
+    assert before == [path.stat().st_mtime_ns for path in (queue, glob, selection)]
+    updated = dict(env, TEST_SHIMS='{"sys/queue.h":"changed","glob.h":"glob"}')
+    subprocess.run(command, env=updated, check=True)
+    assert queue.read_text() == 'changed' and queue.stat().st_mtime_ns > before[0]
+    assert glob.stat().st_mtime_ns == before[1] and selection.stat().st_mtime_ns == before[2]
+    (obj / 'build/openbsd-compat/include/glob.h').unlink()
+    subprocess.run(command, env=updated, check=True)
+    assert log.read_text().splitlines()[-1] == 'make-cold'
+    assert glob.stat().st_mtime_ns == before[1] and selection.stat().st_mtime_ns == before[2]
+    newer = dict(env, TEST_SHIMS='{"sys/queue.h":"next"}')
+    failed = subprocess.run(command, env=dict(newer, TEST_MAKE_FAIL='1'), capture_output=True)
+    assert failed.returncode and queue.read_text() == 'changed' and glob.read_text() == 'glob'
+    subprocess.run(command, env=newer, check=True)
+    assert queue.read_text() == 'next' and not glob.exists()
+    assert queue.stat().st_mtime_ns > before[0] and selection.stat().st_mtime_ns > before[2]
+    subprocess.run(command, env=env, check=True)
+    assert not queue.exists()
     os_role_inputs = (obj / '.configure-source-inputs').read_text()
     private_role = command + ['--role', 'private-libssh']
     subprocess.run(private_role, env=env, check=True)
