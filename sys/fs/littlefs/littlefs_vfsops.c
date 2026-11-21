@@ -46,12 +46,21 @@ int
 littlefs_readattr(struct littlefs_mount *lm, const char *path,
     struct littlefs_bsd_attr *attr, struct lfs_info *info)
 {
-	uint8_t raw[LITTLEFS_BSD_SIZE];
 	int error;
 
 	error = lfs_stat(&lm->lfs, path, info);
 	if (error)
 		return littlefs_error(error);
+	return littlefs_read_bsd_attr(lm, path, attr, info);
+}
+
+int
+littlefs_read_bsd_attr(struct littlefs_mount *lm, const char *path,
+    struct littlefs_bsd_attr *attr, const struct lfs_info *info)
+{
+	uint8_t raw[LITTLEFS_BSD_SIZE];
+	int error;
+
 	error = lfs_getattr(&lm->lfs, path, LITTLEFS_BSD_ATTR, raw, sizeof(raw));
 	if (error != sizeof(raw) || littlefs_bsd_decode(attr, raw, sizeof(raw)))
 		return EIO;

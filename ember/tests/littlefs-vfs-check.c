@@ -8,6 +8,7 @@
 #include <sys/statvfs.h>
 
 #include <err.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
 #include <stdio.h>
@@ -84,7 +85,7 @@ int
 main(int argc, char **argv)
 {
 	struct statvfs sv;
-	struct stat st;
+	struct stat st, replacement;
 	char path[PATH_MAX], linkbuf[32];
 	unsigned char *map;
 	int oldfd, newfd, rofd, cwd;
@@ -145,8 +146,15 @@ main(int argc, char **argv)
 	stage("create replacement file");
 	newfd = make_file("new", 0x73);
 	stage("rename over open old file and unlink");
-	if (rename("new", "old") == -1 || unlink("old") == -1)
-		err(1, "rename/unlink");
+	if (stat("old", &st) == -1 || rename("new", "old") == -1)
+		err(1, "rename");
+	if (fstat(newfd, &replacement) == -1 || stat("old", &st) == -1)
+		err(1, "lookup replacement");
+	check(st.st_ino == replacement.st_ino, "cached name after replacement");
+	check(stat("new", &st) == -1 && errno == ENOENT, "old name after rename");
+	if (unlink("old") == -1)
+		err(1, "unlink");
+	check(stat("old", &st) == -1 && errno == ENOENT, "cached name after unlink");
 	check_bytes(rofd, 0, 513, 0x31);
 	check_bytes(rofd, 513, FILESIZE - 513, 0);
 	check_bytes(newfd, 0, FILESIZE, 0x73);

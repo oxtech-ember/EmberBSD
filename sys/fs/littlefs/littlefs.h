@@ -68,6 +68,8 @@ extern const struct genfs_ops littlefs_genfsops;
 int littlefs_error(int);
 int littlefs_readattr(struct littlefs_mount *, const char *,
     struct littlefs_bsd_attr *, struct lfs_info *);
+int littlefs_read_bsd_attr(struct littlefs_mount *, const char *,
+    struct littlefs_bsd_attr *, const struct lfs_info *);
 int littlefs_writeattr(struct littlefs_node *);
 int littlefs_getpath(struct mount *, const char *, struct vnode **);
 int littlefs_getchild(struct littlefs_node *, const char *, size_t, struct vnode **);

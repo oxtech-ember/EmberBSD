@@ -37,6 +37,10 @@ littlefs_lookup(void *v)
 	error = VOP_ACCESS(ap->a_dvp, VEXEC, cnp->cn_cred);
 	if (error)
 		return error;
+	if (cnp->cn_nameiop == LOOKUP &&
+	    cache_lookup(ap->a_dvp, cnp->cn_nameptr, cnp->cn_namelen,
+	    cnp->cn_nameiop, cnp->cn_flags, NULL, ap->a_vpp))
+		return *ap->a_vpp == NULL ? ENOENT : 0;
 	error = littlefs_getchild(dir, cnp->cn_nameptr, cnp->cn_namelen, ap->a_vpp);
 	if (error == ENOENT && (cnp->cn_flags & ISLASTCN) &&
 	    (cnp->cn_nameiop == CREATE || cnp->cn_nameiop == RENAME)) {
@@ -691,7 +695,7 @@ littlefs_readdir(void *v)
 	struct littlefs_node *node = VTOLITTLEFS(ap->a_vp);
 	struct littlefs_mount *lm = node->mount;
 	struct uio *uio = ap->a_uio;
-	struct lfs_info info, childinfo;
+	struct lfs_info info;
 	struct littlefs_bsd_attr attr;
 	struct dirent de;
 	char *path;
@@ -722,7 +726,10 @@ littlefs_readdir(void *v)
 			error = ENOENT;
 			break;
 		}
-		error = lfs_dir_seek(&lm->lfs, &node->dir, uio->uio_offset);
+		/* A seek to the current cookie also reloads the directory head. */
+		error = 0;
+		if (lfs_dir_tell(&lm->lfs, &node->dir) != uio->uio_offset)
+			error = lfs_dir_seek(&lm->lfs, &node->dir, uio->uio_offset);
 		if (!error)
 			error = lfs_dir_read(&lm->lfs, &node->dir, &info);
 		if (error <= 0) {
@@ -741,7 +748,7 @@ littlefs_readdir(void *v)
 		}
 		error = littlefs_childpath(node, info.name, strlen(info.name), path);
 		if (!error)
-			error = littlefs_readattr(lm, path, &attr, &childinfo);
+			error = littlefs_read_bsd_attr(lm, path, &attr, &info);
 		mutex_exit(&lm->lock);
 		if (error)
 			break;

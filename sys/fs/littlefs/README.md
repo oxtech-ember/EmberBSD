@@ -91,10 +91,10 @@ IMAGE_SIZE=10m
     -F "$ROOT_SPEC" -N "$OS_SOURCE/etc" "$IMAGE" "$ROOT_TREE"
 ```
 
-Choose `read_size` and `prog_size` to match the target device. For example,
-the generic flash driver reports a one-byte read size and uses its device
-program size; the erase block size comes from the device geometry. The
-`block_size` passed to `makefs` must match that erase size.
+The NOR backend reads in 256-byte units so successive metadata lookups can
+share the littlefs read cache. It uses the device's program and erase sizes.
+The `block_size` passed to `makefs` must match that erase size. The read
+unit is a runtime setting, so existing images use it on their next mount.
 
 The static network profile accepts `EMBER_NETWORK_ROOT_FILESYSTEM=littlefs`.
 This selects `mount_littlefs` and omits the FFS-specific mount/check tools.

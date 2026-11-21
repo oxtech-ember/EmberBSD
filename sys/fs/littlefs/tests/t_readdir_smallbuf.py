@@ -75,8 +75,9 @@ struct vop_readdir_args { struct vnode *a_vp; struct uio *a_uio;
 
 static const char **names;
 static size_t name_count;
+static unsigned seeks;
 static int lfs_dir_seek(struct lfs *l, struct lfs_dir *d, off_t off)
-{ (void)d; l->index = (int)off; return 0; }
+{ (void)d; seeks++; l->index = (int)off; return 0; }
 static int lfs_dir_read(struct lfs *l, struct lfs_dir *d, struct lfs_info *i)
 {
     (void)d;
@@ -89,8 +90,8 @@ static off_t lfs_dir_tell(struct lfs *l, struct lfs_dir *d)
 { (void)d; return l->index; }
 static int littlefs_childpath(struct littlefs_node *n, const char *s,
     size_t z, char *p) { (void)n; (void)z; strcpy(p, s); return 0; }
-static int littlefs_readattr(struct littlefs_mount *m, const char *p,
-    struct littlefs_bsd_attr *a, struct lfs_info *i)
+static int littlefs_read_bsd_attr(struct littlefs_mount *m, const char *p,
+    struct littlefs_bsd_attr *a, const struct lfs_info *i)
 { (void)m; (void)p; (void)i; a->ino = 2; a->mode = 8; return 0; }
 static int littlefs_error(int e) { return e; }
 static int uiomove(void *p, size_t n, struct uio *u)
@@ -135,6 +136,11 @@ int main(void)
     eof = false;
     assert(run(hidden_then_long, 2, 20, 0, &end, &eof) == EINVAL);
     assert(end == 1 && !eof);
+    const char *three[] = { "one", "two", "three" };
+    assert(run(three, 3, 128, 0, &end, &eof) == 0);
+    assert(end == 3 && eof && seeks == 0);
+    assert(run(three, 3, 128, 1, &end, &eof) == 0);
+    assert(end == 3 && eof && seeks == 1);
     return 0;
 }
 """

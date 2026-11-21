@@ -12,6 +12,8 @@
 #include <sys/mount.h>
 #include <sys/vnode.h>
 #include <miscfs/specfs/specdev.h>
+#define LITTLEFS_DEFAULT_CACHE_SIZE	256
+
 #ifdef LITTLEFS_FLASH
 #include <dev/flash/flash.h>
 extern const struct bdevsw flash_bdevsw;
@@ -177,7 +179,8 @@ littlefs_device_init(struct littlefs_mount *lm, uint32_t block_size)
 			return EINVAL;
 		block_size = fi->erasesize;
 		c->prog_size = MAX(fi->writesize, 1);
-		c->read_size = 1;
+		/* Fill the existing read cache on a short NOR metadata read. */
+		c->read_size = LITTLEFS_DEFAULT_CACHE_SIZE;
 		lm->flashdev = flash_get_device(lm->devvp->v_rdev);
 		lm->mediasize = flash_get_size(lm->devvp->v_rdev);
 	} else
@@ -209,7 +212,7 @@ littlefs_device_init(struct littlefs_mount *lm, uint32_t block_size)
 	c->block_size = block_size;
 	c->block_count = lm->mediasize / block_size;
 	c->block_cycles = 500;
-	c->cache_size = MAX(256, c->prog_size);
+	c->cache_size = MAX(LITTLEFS_DEFAULT_CACHE_SIZE, c->prog_size);
 	c->lookahead_size = 32;
 	lm->readbuf = kmem_alloc(c->cache_size, KM_SLEEP);
 	lm->progbuf = kmem_alloc(c->cache_size, KM_SLEEP);
