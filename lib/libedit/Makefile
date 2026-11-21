@@ -94,6 +94,8 @@ CLEANFILES+=help.h.tmp vi.h.tmp tc1.o tc1 .depend
 
 # Do not let portable compatibility headers shadow target libc headers.
 CPPFLAGS+=-I. -I${.CURDIR} -iquote ${LIBEDITDIR}
+# The .c.ln rule forwards -I but drops -iquote from CPPFLAGS.
+LINTFLAGS+=	-Z -iquote -Z ${LIBEDITDIR}
 #CPPFLAGS+=-DDEBUG_TTY -DDEBUG_KEY -DDEBUG -DDEBUG_REFRESH
 #CPPFLAGS+=-DDEBUG_PASTE -DDEBUG_EDIT
 
