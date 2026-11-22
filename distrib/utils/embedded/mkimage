@@ -38,12 +38,14 @@
 # "conf" directory, which is expected to provide the following shell
 # functions, which are called in the following order:
 #
+#  - validate_inputs: Checks profile inputs before writing the image (optional).
 #  - make_fstab: Creates the host's /etc/fstab with / on ${rootdev}.
 #    If -m is given, a number of directories are put on a tmpfs RAM disk
 #  - customize: After unpacking the sets, this gets the system to
 #    a working state, e.g., by setting up /etc/rc.conf and /dev
 #  - populate: Add common goods like kernel and bootloader
 #  - make_label: Prints disklabel to stdout
+#  - finalize_image: Adds raw boot data after partitioning (optional).
 #
 
 set -e
@@ -88,6 +90,25 @@ fail() {
 	IFS=' '
 	echo >&2 "${PROG}: $*"
 	exit 1
+}
+
+validate_inputs() { :; }
+finalize_image() { :; }
+
+# Profiles opt in to a root-filesystem overlay. Other -c users keep their
+# existing contract. makefs -r selects the final directory's file contents;
+# the final mtree entries select its modes with target root/wheel ownership.
+prepare_root_overlay() {
+	$root_overlay || return 0
+	[ -n "${custom}" ] || return 0
+	[ -d "${custom}" ] || fail "Root overlay is not a directory"
+	${MTREE} -cn -k type,mode,link -p "${custom}" > "$tmp/overlay.tree"
+	${MTREE} -C -k type,mode,link -f "$tmp/overlay.tree" > "$tmp/overlay.flat"
+	# The overlay directory's own mode must not change the image root.
+	printf '/unset all\n' >> "$tmp/selected_sets"
+	awk '$1 != "." && $1 != "./" { print $0 " uname=root gname=wheel" }' \
+	    "$tmp/overlay.flat" >> "$tmp/selected_sets"
+	root_overlay_dir="${custom}"
 }
 
 getsize() {
@@ -228,6 +249,8 @@ gpt_hybrid=false
 fsize=8192
 bsize=65536
 ffsversion=1
+root_overlay=false
+root_overlay_dir=
 
 . "${DIR}/conf/${h}.conf"
 release="/usr/obj/${MACHINE}/release"
@@ -285,6 +308,8 @@ case "$image" in
 *)	compress=false;;
 esac
 
+validate_inputs
+
 if [ -z "${bootonly}" ]; then
 	echo ${bar} configuring sets ${bar}
 	(cat "${release}/etc/mtree/NetBSD.dist"
@@ -299,6 +324,7 @@ fi
 make_fstab
 customize
 populate
+prepare_root_overlay
 
 if [ ! "${MKDTB}" = "no" ]; then
 	#
@@ -335,10 +361,12 @@ fi
 
 if [ -z "${bootonly}" ]; then
 	echo ${bar} Populating ffs filesystem ${bar}
+	set -- "${release}" "${mnt}"
+	[ -z "${root_overlay_dir}" ] || set -- "$@" "${root_overlay_dir}"
 	${MAKEFS} -rx ${endian} -N ${release}/etc -t ffs \
 	    -O ${ffsoffset} ${timestamp_opt} \
 	    -o d=4096,f=${fsize},b=${bsize},v=${ffsversion} -b $((${extra}))m \
-	    -F "$tmp/selected_sets" ${image} "${release}" "${mnt}"
+	    -F "$tmp/selected_sets" ${image} "$@"
 fi
 
 if [ "${size}" = 0 ]; then
@@ -407,6 +435,8 @@ else
 		${INSTALLBOOT} -f -v ${image} ${release}/usr/mdec/bootxx_ffsv1
 	fi
 fi
+
+finalize_image
 
 if $compress; then
 	echo ${bar} Compressing image ${bar}
