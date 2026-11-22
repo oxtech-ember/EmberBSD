@@ -147,6 +147,9 @@ They do not contact the network, build firmware or access a device.
 
 ## Installation identity
 
+For opt-in headless startup collection, see the
+[Wi-Fi diagnostic service](ember/etc/rc.d/README.wifi-diag.md).
+
 The [installer branding](usr.sbin/sysinst/docs/installer-branding.md) keeps the x86
 BIOS, PXE, UEFI and sysinst screens consistent with EmberBSD.
 The colored ASCII mascot follows the project's flame, capsule eyes and smile.

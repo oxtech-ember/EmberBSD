@@ -1,0 +1,119 @@
+#!/bin/sh
+# SPDX-License-Identifier: BSD-2-Clause
+# Origin: EmberBSD contributors (AI-assisted).
+# PROVIDE: ember_wifi_diag
+# REQUIRE: CRITLOCALMOUNTED
+# BEFORE: network wpa_supplicant dhcpcd
+
+diag_limit()
+{
+	/usr/bin/timeout -f -k 1 3 "$@"
+}
+
+diag_capture()
+{
+	local output=$1 status=0
+	shift
+	diag_limit "$@" > "$output" 2>&1 || status=$?
+	printf 'exit=%s\n' "$status" >> "$output"
+}
+
+diag_snapshot()
+{
+	local directory=$1 interface=$2
+	diag_limit /bin/mkdir "$directory" || return 1
+	diag_capture "$directory/dmesg.txt" /sbin/dmesg
+	diag_capture "$directory/ifconfig.txt" /sbin/ifconfig -a
+	diag_capture "$directory/wpa-status.txt" /usr/sbin/wpa_cli -i "$interface" status
+	diag_capture "$directory/wpa-scan-results.txt" /usr/sbin/wpa_cli -i "$interface" scan_results
+	diag_capture "$directory/netstat.txt" /usr/bin/netstat -rn
+	# comm excludes command arguments, which can contain private values.
+	diag_capture "$directory/ps.txt" /bin/ps -axo pid,ppid,stat,comm
+	diag_capture "$directory/rc-log.txt" /usr/bin/tail -n 200 /var/run/rc.log
+	diag_capture "$directory/messages.txt" /usr/bin/tail -n 200 /var/log/messages
+	diag_capture "$directory/sync.txt" /bin/sync
+	diag_limit /bin/sync || :
+}
+
+diag_collect()
+{
+	local directory=$1 interface=$2 index=1
+	# The supervisor also supplies a wall-clock timeout for this whole loop.
+	while [ "$index" -le 18 ]; do
+		/usr/bin/timeout -f -k 1 11 /bin/sleep 10 || return 1
+		diag_snapshot "$directory/snapshot-$index" "$interface" || return 1
+		index=$((index + 1))
+	done
+}
+
+# Internal worker: no rc configuration, keys, or supplicant configuration reads.
+if [ "$1" = collect ]; then
+	[ "$#" = 3 ] || exit 1
+	diag_collect "$2" "$3"
+	exit $?
+fi
+
+$_rc_subr_loaded . /etc/rc.subr
+name=ember_wifi_diag
+rcvar=$name
+start_cmd=ember_wifi_diag_start
+stop_cmd=:
+command=/etc/rc.d/ember_wifi_diag
+
+ember_wifi_diag_start()
+{
+	local mounts directory index=1 started finished remaining status
+	case "${ember_wifi_diag_interface}" in
+	''|*[!a-zA-Z0-9_-]*) warn 'Set ember_wifi_diag_interface'; return 1 ;;
+	esac
+	case "${ember_wifi_diag_poweroff}" in
+	YES|NO) ;;
+	*) warn 'ember_wifi_diag_poweroff must be YES or NO'; return 1 ;;
+	esac
+	[ -x /usr/bin/timeout ] || return 1
+	mounts=$(diag_limit /sbin/mount) || return 1
+	# Never create logs in an unmounted /boot directory on the root filesystem.
+	printf '%s\n' "$mounts" | diag_limit /usr/bin/awk '
+	    $2 == "on" && $3 == "/boot" && $4 == "type" && $5 == "msdos" { found=1 }
+	    END { exit !found }' || { warn '/boot must be mounted as msdos'; return 1; }
+	umask 077
+	diag_limit /bin/mkdir -p /boot/ember-diag || return 1
+	while [ "$index" -le 9999 ]; do
+		directory="/boot/ember-diag/run-$index"
+		if diag_limit /bin/mkdir "$directory" 2>/dev/null; then
+			break
+		fi
+		[ -e "$directory" ] || return 1
+		index=$((index + 1))
+	done
+	[ "$index" -le 9999 ] || return 1
+	started=$(diag_limit /bin/date +%s) || return 1
+	case "$started" in ''|*[!0-9]*) return 1;; esac
+	# This snapshot finishes before the dependent network services can start.
+	diag_snapshot "$directory/snapshot-0" "$ember_wifi_diag_interface" || return 1
+	finished=$(diag_limit /bin/date +%s) || return 1
+	case "$finished" in ''|*[!0-9]*) return 1;; esac
+	remaining=$((180 - (finished - started)))
+	[ "$remaining" -le 180 ] || remaining=180
+	[ "$remaining" -gt 0 ] || remaining=1
+	(
+		# Inner command timeouts use -f, so this outer process group includes
+		# their children. TERM, then KILL, bounds a stalled userspace command.
+		status=0
+		/usr/bin/timeout -k 5 "$remaining" "$command" collect "$directory" "$ember_wifi_diag_interface" || status=$?
+		printf 'collector_exit=%s\n' "$status" > "$directory/completed.txt"
+		status=0
+		diag_limit /bin/sync || status=$?
+		printf 'final_sync_exit=%s\n' "$status" >> "$directory/completed.txt"
+		diag_limit /bin/sync || :
+		if [ "$ember_wifi_diag_poweroff" = YES ]; then
+			/sbin/shutdown -p now
+		fi
+	) </dev/null > "$directory/collector.log" 2>&1 &
+}
+
+load_rc_config "$name"
+: ${ember_wifi_diag:=NO}
+: ${ember_wifi_diag_interface:=}
+: ${ember_wifi_diag_poweroff:=NO}
+run_rc_command "$1"
