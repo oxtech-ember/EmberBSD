@@ -32,13 +32,15 @@ if ARGV.first == '--tool'
         fields = line.split
         entries[fields.first] = fields
       end
-      entries.each_value { |fields| puts fields.join(' ') }
+      entries.each_value do |fields|
+        puts fields.map { |field| { 'uname=root' => 'uid=0', 'gname=wheel' => 'gid=0' }.fetch(field, field) }.join(' ')
+      end
     end
   when 'makefs'
     if ARGV[ARGV.index('-t') + 1] == 'ffs'
       at = ARGV.index('-F')
       spec, image, *trees = ARGV[(at + 1)..-1]
-      result, status = Open3.capture2e(ENV.fetch('A733_TEST_MTREE'), '-C', '-f', spec)
+      result, status = Open3.capture2e(ENV.fetch('A733_TEST_MTREE'), '-C', '-k', 'type,mode,uid,gid', '-f', spec)
       abort result unless status.success?
       File.write(ENV.fetch('A733_TEST_SPEC'), result)
       abort 'overlay was not the last source' unless trees.last == ENV.fetch('A733_TEST_OVERLAY')
@@ -171,7 +173,7 @@ Dir.mktmpdir('a733-image-test-') do |work|
     fields = metadata.fetch(path)
     value = fields.find { |s| s.start_with?('mode=') }.split('=').last.to_i(8)
     check(value == mode, "wrong image mode for #{path}")
-    check(fields.include?('uname=root') && fields.include?('gname=wheel'), "wrong image owner for #{path}")
+    check(fields.include?('uid=0') && fields.include?('gid=0'), "wrong image owner for #{path}")
   end
   [[boot0, 8192], [package, 16793600]].each do |file, offset|
     File.open(image, 'rb') { |f| f.seek(offset); check(f.read(File.size(file)) == File.binread(file), 'vendor bytes differ') }
