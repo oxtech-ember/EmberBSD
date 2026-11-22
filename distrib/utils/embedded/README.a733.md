@@ -102,3 +102,9 @@ Before writing a card, use real host tools to build and inspect GPT/MBR, compare
 both vendor ranges, inspect FAT files, check FAT in preen mode, and verify FFS
 contents and ownership. Then verify the board identity and perform a separate
 physical startup check.
+
+Use the [bounded FFS1 reader](README.ffs1-check.md) to compare small configuration
+files and private-key permissions with explicit local expectations. It reads
+the completed image without mounting it and does not print file contents.
+Its real `nbmakefs` fixtures cover metadata, bytes, and malformed-input refusal.
+It is not a filesystem integrity check or physical startup acceptance.
