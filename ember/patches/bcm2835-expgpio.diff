@@ -4,8 +4,8 @@ firmware GPIO expander, reachable only by the VideoCore mailbox, and NetBSD has 
 driver for it. The bcmexpgpio module drives the line through the mailbox. After
 boot the controller answers HCI only once BT_ON has gone low and high again, so
 loading the module holds the line low for a second before raising it; unloading
-lowers it. ember_bluetooth selects the PL011 pins 30 to 33 before loading the
-module and attaches the controller on /dev/dplcom0 without hardware flow
+lowers it. ember_modules selects the PL011 pins 30 to 33 before loading the
+module; ember_bluetooth attaches the controller on /dev/dplcom0 without hardware flow
 control, which the board's devicetree does not wire. The PL011 also needs
 plcom-pl011-tx-fill.diff to deliver the first HCI command.
 

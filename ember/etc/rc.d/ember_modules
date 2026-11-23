@@ -1,0 +1,58 @@
+#!/bin/sh
+# SPDX-License-Identifier: BSD-2-Clause
+# PROVIDE: ember_modules
+# REQUIRE: mountcritremote
+# BEFORE: securelevel
+# Load the board modules before securelevel 1 forbids modload. The
+# services that use them start later: ember_bluetooth needs bcm2712btcom on
+# the Pi 5 and bcmexpgpio on the Pi 3 B; rpi5button=YES needs rpi5button.
+
+$_rc_subr_loaded . /etc/rc.subr
+
+name=ember_modules
+start_cmd=ember_modules_start
+stop_cmd=:
+
+ember_modules_load()
+{
+	/sbin/modstat | awk -v m="$1" '$1 == m {found = 1} END {exit !found}' ||
+	    /sbin/modload "$1"
+}
+
+ember_modules_start()
+{
+	status=0
+	board=$(sysctl -n machdep.dmi.system-product 2>/dev/null)
+	[ -n "$board" ] || board=$(sysctl -n hw.model 2>/dev/null)
+	if checkyesno ember_bluetooth; then
+		case "$board" in
+		'Raspberry Pi 5 Model B')
+			ember_modules_load bcm2712btcom || status=1 ;;
+		raspberrypi,3-model-b)
+			# The devicetree's pin setup for the PL011 is not applied.
+			# Select the pins before bcmexpgpio power-cycles the
+			# controller through BT_ON, a line of the firmware's GPIO
+			# expander. Securelevel 1 also forbids this pin setup.
+			for pin in 30 31 32 33; do
+				gpioctl gpio0 $pin set alt3 >/dev/null || status=1
+			done
+			[ $status -ne 0 ] || ember_modules_load bcmexpgpio || status=1 ;;
+		esac
+	fi
+	if checkyesno rpi5button; then
+		case "$board" in
+		'Raspberry Pi 5 Model B'|'Raspberry Pi Compute Module 5')
+			# Without powerd a press powers the board off at once.
+			checkyesno powerd || warn 'rpi5button without powerd powers off at once'
+			ember_modules_load rpi5button || status=1 ;;
+		esac
+	fi
+	return $status
+}
+
+load_rc_config $name
+for var in ember_bluetooth rpi5button powerd; do
+	load_rc_config_var $var $var
+done
+: ${ember_bluetooth:=NO} ${rpi5button:=NO} ${powerd:=NO}
+run_rc_command "$1"

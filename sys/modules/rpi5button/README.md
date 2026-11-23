@@ -15,9 +15,8 @@ No upstream acceptance or new authorship is claimed.
 
 `ember/build-kernel.sh` builds this module with the kernel and the other
 board modules. Deploy only the module from the matching kernel build.
-Loading remains opt-in: preserve an existing installation's `rpi5button`
-rc service, or load it with `modload rpi5button` after starting `powerd`.
-Do not enable it alongside a working ACPI power-button event source.
+Loading remains opt-in. Do not enable it alongside a working ACPI
+power-button event source.
 
 A successful build or module load does not prove that pressing the button
 shuts down the board. A physical press and subsequent power-on must be
@@ -33,16 +32,19 @@ CM5-NANO-B use the **PSW** power button; KEY is a separate GPIO21 user button,
 and BOOT selects USB provisioning. See the [carrier guide](https://www.waveshare.com/wiki/CM5-NANO-B).
 
 For firmware without an ACPI button event source, install the matching module
-and the optional [rc service](../../../ember/etc/rc.d/rpi5button), then enable:
+and the [ember_modules](../../../ember/etc/rc.d/ember_modules) rc service with
+mode 0555, then enable:
 
 ```conf
 powerd=YES
 rpi5button=YES
 ```
 
-Place the service in `/etc/rc.d/rpi5button` with mode 0555. Start `powerd`
-first, then `rpi5button`. The service verifies powerd is running. The module
-still refuses foreign product names and a GPIO pin not configured as input.
+`ember_modules` loads the module before securelevel 1 forbids `modload`.
+It replaces the former `/etc/rc.d/rpi5button` service; remove that file.
+Until `powerd` starts, a press makes the kernel power off the board at once.
+The module still refuses foreign product names and a GPIO pin not configured
+as input.
 Keep the normal `/etc/powerd/scripts/power_button` handler for an orderly
 `shutdown -p now`. A short press is enough; holding the physical button for
 more than five seconds requests a firmware hard power-off.

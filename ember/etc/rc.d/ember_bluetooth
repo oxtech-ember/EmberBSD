@@ -11,23 +11,22 @@ rcvar=$name
 start_cmd=ember_bluetooth_start
 stop_cmd=:
 
+# ember_modules loads the module before securelevel 1 forbids modload.
+ember_bluetooth_module()
+{
+	modstat | awk -v m="$1" '$1 == m {found = 1} END {exit !found}' && return
+	warn "$1 is not loaded: install ember_modules and reboot"
+	return 1
+}
+
 ember_bluetooth_attach()
 {
 	case "$1" in
 	'Raspberry Pi 5 Model B')
-		modstat | awk '{print $1}' | grep -qx bcm2712btcom || \
-		    modload bcm2712btcom || return 1
+		ember_bluetooth_module bcm2712btcom || return 1
 		btattach -f -i 115200 bcm43xx /dev/dty00 115200 ;;
 	raspberrypi,3-model-b)
-		# The devicetree's pin setup for the PL011 is not applied. Select
-		# the pins before the controller is powered, then power-cycle it
-		# through BT_ON, a line of the firmware's GPIO expander.
-		for pin in 30 31 32 33; do
-			gpioctl gpio0 $pin set alt3 >/dev/null || return 1
-		done
-		modstat | awk '{print $1}' | grep -qx bcmexpgpio || \
-		    modload bcmexpgpio || return 1
-		sleep 1
+		ember_bluetooth_module bcmexpgpio || return 1
 		# The devicetree wires no flow control. btattach returns once
 		# the patch RAM is loaded; a silent controller must not stall boot.
 		timeout 60 btattach -i 115200 bcm43xx /dev/dplcom0 921600 ;;

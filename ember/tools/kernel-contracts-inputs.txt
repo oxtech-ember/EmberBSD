@@ -329,6 +329,7 @@ ember/tools/bcmv3d-vblank-native-contract.rb sys/external/bsd/drm2/bcmv3d/
 ember/tools/bluetooth-control-contract.py ember/tools/bluetooth-control.c
 ember/tools/bluetooth-pair-contract.py ember/tools/bluetooth-pair.c
 ember/tools/bluetooth-rc-contract.py ember/etc/rc.d/ember_bluetooth
+ember/tools/bluetooth-rc-contract.py ember/etc/rc.d/ember_modules
 ember/tools/bluetooth-uart-contract.py sys/dev/ic/
 ember/tools/bootfb-serial-handoff-contract.rb ember/tools/bcm2712-display-clock-contract.c
 ember/tools/bootfb-serial-handoff-contract.rb ember/tools/bcm2712-iommuc-contract.c
