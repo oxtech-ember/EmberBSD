@@ -23,7 +23,10 @@ For example, use `--overlay "$WORK/package-layer"` with
 [SDK root personalization](https://github.com/oxtech-ember/EmberBSD-SDK/blob/main/docs/os-release.md#private-root-personalization).
 Start from a base without installed packages. The layer supplies its own
 `/usr/pkg` and package database. The base must provide OpenSSL and pkg_tools
-under `/usr`. Set the clock and configure network access for the image.
+under `/usr`. Keep the owners and modes from the base and etc set manifests
+when you create a multi-user filesystem. SDK private root personalization
+uses UID and GID zero by default. Reserve free inodes for package files on
+writable FFS images. Set the clock and configure network access for the image.
 
 The service starts the existing client's `auto-update` loop at boot.
 It checks the public channel immediately and updates compatible installed packages.
