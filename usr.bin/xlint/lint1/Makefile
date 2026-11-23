@@ -13,6 +13,7 @@ SRCS=		cgram.y \
 .PATH: ${NETBSDSRCDIR}/lib/libc/gdtoa
 SRCS+= lint_fp.c lint_softfloat.c lint_fp_parse.c lint_fp_format.c
 SRCS+= strtodg.c gethex.c hexnan.c misc.c smisc.c gmisc.c hd_init.c gdtoa.c dmisc.c
+SRCS+= sum.c
 CPPFLAGS+= -DGDTOA_XLINT_HOST -I${NETBSDSRCDIR}/usr.bin/xlint/lint1/gdtoa-host
 CPPFLAGS+= -I${NETBSDSRCDIR}/lib/libc/gdtoa
 .endif

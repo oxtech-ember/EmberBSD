@@ -51,6 +51,7 @@
 #define __set_ones_D2A lint_gdtoa_set_ones_D2A
 #define __strcp_D2A lint_gdtoa_strcp_D2A
 #define __strtodg_D2A lint_gdtoa_strtodg_D2A
+#define __sum_D2A lint_gdtoa_sum_D2A
 #define __tens_D2A lint_gdtoa_tens_D2A
 #define __tinytens_D2A lint_gdtoa_tinytens_D2A
 #define __trailz_D2A lint_gdtoa_trailz_D2A
