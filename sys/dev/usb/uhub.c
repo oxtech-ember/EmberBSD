@@ -541,6 +541,42 @@ uhub_begin_explore(struct uhub_softc *sc)
 	return rescan;
 }
 
+/*
+ * Origin: EmberBSD (AI-assisted).  A port reset can end with the device gone
+ * or with the port still disabled.  Clear every change bit that the reset
+ * status reports: an xHCI root hub port generates no further Port Status
+ * Change event while a change bit stays set, so a later connect would go
+ * unnoticed.  Return true when a device is connected after the clear; the
+ * caller then explores the port once more.
+ */
+static bool
+uhub_drop_reset_changes(struct usbd_device *dev, int port, int change)
+{
+	static const struct {
+		int bit, feature;
+	} changes[] = {
+		{ UPS_C_CONNECT_STATUS, UHF_C_PORT_CONNECTION },
+		{ UPS_C_PORT_ENABLED, UHF_C_PORT_ENABLE },
+		{ UPS_C_SUSPEND, UHF_C_PORT_SUSPEND },
+		{ UPS_C_OVERCURRENT_INDICATOR, UHF_C_PORT_OVER_CURRENT },
+		{ UPS_C_PORT_RESET, UHF_C_PORT_RESET },
+		{ UPS_C_BH_PORT_RESET, UHF_C_BH_PORT_RESET },
+		{ UPS_C_PORT_LINK_STATE, UHF_C_PORT_LINK_STATE },
+		{ UPS_C_PORT_CONFIG_ERROR, UHF_C_PORT_CONFIG_ERROR },
+	};
+	usb_port_status_t ps;
+	size_t i;
+
+	for (i = 0; i < __arraycount(changes); i++) {
+		if (change & changes[i].bit)
+			(void)usbd_clear_port_feature(dev, port,
+			    changes[i].feature);
+	}
+	if (usbd_get_port_status(dev, port, &ps) != USBD_NORMAL_COMPLETION)
+		return false;
+	return (UGETW(ps.wPortStatus) & UPS_CURRENT_CONNECT_STATUS) != 0;
+}
+
 usbd_status
 uhub_explore(struct usbd_device *dev)
 {
@@ -690,7 +726,16 @@ uhub_explore(struct usbd_device *dev)
 			usbd_clear_port_feature(dev, port,
 			    UHF_C_PORT_CONFIG_ERROR);
 
-		/* XXX handle overcurrent and resume events! */
+		if (change & UPS_C_OVERCURRENT_INDICATOR) {
+			/* Clear it, or an xHCI port sends no more changes. */
+			if (status & UPS_OVERCURRENT_INDICATOR)
+				aprint_error_dev(sc->sc_dev,
+				    "port %d over-current\n", port);
+			usbd_clear_port_feature(dev, port,
+			    UHF_C_PORT_OVER_CURRENT);
+		}
+
+		/* XXX handle resume events! */
 
 		if (!reconnect && !(change & UPS_C_CONNECT_STATUS)) {
 			/* No status change, just do recursive explore. */
@@ -770,20 +815,23 @@ uhub_explore(struct usbd_device *dev)
 		DPRINTF("uhub%jd port %jd after reset: s/c=%jx/%jx",
 		    device_unit(sc->sc_dev), port, status, change);
 
-		if (!(status & UPS_CURRENT_CONNECT_STATUS)) {
-			/* Nothing connected, just ignore it. */
+		if (!(status & UPS_CURRENT_CONNECT_STATUS) ||
+		    !(status & UPS_PORT_ENABLED)) {
 #ifdef DIAGNOSTIC
-			aprint_debug_dev(sc->sc_dev,
-			    "port %d, device disappeared after reset\n", port);
+			if (!(status & UPS_CURRENT_CONNECT_STATUS))
+				aprint_debug_dev(sc->sc_dev,
+				    "port %d, device disappeared after reset\n",
+				    port);
+			else
+				printf("%s: port %d, device not enabled\n",
+				    device_xname(sc->sc_dev), port);
 #endif
-			continue;
-		}
-		if (!(status & UPS_PORT_ENABLED)) {
-			/* Not allowed send/receive packet. */
-#ifdef DIAGNOSTIC
-			printf("%s: port %d, device not enabled\n",
-			       device_xname(sc->sc_dev), port);
-#endif
+			/* Explore again if a device is back, within the limit. */
+			if (uhub_drop_reset_changes(dev, port, change) &&
+			    up->up_restartcnt++ < USBD_RESTART_MAX) {
+				up->up_reattach = 1;
+				usb_needs_explore(dev);
+			}
 			continue;
 		}
 		/* port reset may cause Warm Reset Change, drop it. */

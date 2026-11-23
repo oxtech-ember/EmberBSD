@@ -4262,9 +4262,18 @@ xhci_roothub_ctrl_locked(struct usbd_bus *bus, usb_device_request_t *req,
 		case UHF_C_PORT_CONNECTION:
 			xhci_op_write_4(sc, port, v | XHCI_PS_CSC);
 			break;
+		/*
+		 * Origin: EmberBSD (AI-assisted).  Clear every change bit
+		 * that UR_GET_STATUS reports.  The controller sends no new
+		 * Port Status Change Event while one change bit stays set.
+		 */
 		case UHF_C_PORT_ENABLE:
-		case UHF_C_PORT_SUSPEND:
+			xhci_op_write_4(sc, port, v | XHCI_PS_PEC);
+			break;
 		case UHF_C_PORT_OVER_CURRENT:
+			xhci_op_write_4(sc, port, v | XHCI_PS_OCC);
+			break;
+		case UHF_C_PORT_SUSPEND:
 			return -1;
 		case UHF_C_BH_PORT_RESET:
 			xhci_op_write_4(sc, port, v | XHCI_PS_WRC);
