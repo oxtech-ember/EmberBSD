@@ -47,31 +47,8 @@ name: CIX platform resource contracts
       - 'ember/tools/pic-teardown-*'
       - 'ember/tools/acpi-iort-dma-*'
       - 'sys/arch/evbarm/conf/EMBER64'
-      - 'sys/arch/evbarm/conf/EMBER64_CIX_UART2'
-      - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_UART2_BOOT_PROBE'
-      - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_RPC_UART2_BOOT_PROBE'
-      - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_PROBE'
-      - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_QUERY'
-      - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_CLOCK_QUERY'
-      - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_CLOCK_ATTRS'
-      - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_CLOCK67_ATTRS'
-      - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_CLOCK67_RATE'
-      - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_REPEAT_QUERY'
-      - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_UART_RATE_QUERY'
-      - 'sys/arch/evbarm/conf/EMBER64_CIXUART_NATIVE'
-      - 'sys/arch/evbarm/conf/EMBER64_CIX_PERIPHERALS'
-      - 'sys/arch/evbarm/conf/EMBER64_CIXGPIO_OBSERVE'
-      - 'sys/arch/evbarm/conf/EMBER64_CIX_IO_OBSERVE'
-      - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_MIXED_QUERY'
-      - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_NATIVE_PROBE'
-      - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_DMA_PROBE'
-      - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_PREPARE_PROBE'
-      - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_SLOT_PREPARE_PROBE'
-      - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_HEVC_FRAME_PROBE'
       - 'sys/kern/kern_sysctl.c'
       - 'sys/sys/sysctl.h'
-      - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_PROFILE_PROBE'
-      - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_BOOT_PROBE'
       - 'sys/external/bsd/acpica/dist/include/**'
       - 'ember/tools/cixclk-*'
       - 'ember/tools/cix-uart2-console-*'
@@ -128,31 +105,8 @@ name: CIX platform resource contracts
       - 'ember/tools/pic-teardown-*'
       - 'ember/tools/acpi-iort-dma-*'
       - 'sys/arch/evbarm/conf/EMBER64'
-      - 'sys/arch/evbarm/conf/EMBER64_CIX_UART2'
-      - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_UART2_BOOT_PROBE'
-      - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_RPC_UART2_BOOT_PROBE'
-      - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_PROBE'
-      - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_QUERY'
-      - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_CLOCK_QUERY'
-      - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_CLOCK_ATTRS'
-      - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_CLOCK67_ATTRS'
-      - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_CLOCK67_RATE'
-      - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_REPEAT_QUERY'
-      - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_UART_RATE_QUERY'
-      - 'sys/arch/evbarm/conf/EMBER64_CIXUART_NATIVE'
-      - 'sys/arch/evbarm/conf/EMBER64_CIX_PERIPHERALS'
-      - 'sys/arch/evbarm/conf/EMBER64_CIXGPIO_OBSERVE'
-      - 'sys/arch/evbarm/conf/EMBER64_CIX_IO_OBSERVE'
-      - 'sys/arch/evbarm/conf/EMBER64_CIXSCMI_MIXED_QUERY'
-      - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_NATIVE_PROBE'
-      - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_DMA_PROBE'
-      - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_PREPARE_PROBE'
-      - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_SLOT_PREPARE_PROBE'
-      - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_HEVC_FRAME_PROBE'
       - 'sys/kern/kern_sysctl.c'
       - 'sys/sys/sysctl.h'
-      - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_PROFILE_PROBE'
-      - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_BOOT_PROBE'
       - 'sys/external/bsd/acpica/dist/include/**'
       - 'ember/tools/cixclk-*'
       - 'ember/tools/cix-uart2-console-*'
@@ -203,24 +157,11 @@ jobs:
             /sys/arch/arm/acpi/plcom_acpi.c
             /sys/arch/evbarm/dev/plcom.c
             /sys/arch/arm/acpi/files.acpi
-            /sys/arch/evbarm/conf/EMBER64_CIX_UART2
-            /sys/arch/evbarm/conf/EMBER64_CIXVPU_UART2_BOOT_PROBE
-            /sys/arch/evbarm/conf/EMBER64_CIXVPU_RPC_UART2_BOOT_PROBE
-            /sys/arch/evbarm/conf/EMBER64_CIXVPU_SLOT_PREPARE_PROBE
-            /sys/arch/evbarm/conf/EMBER64_CIXVPU_HEVC_FRAME_PROBE
-            /sys/arch/evbarm/conf/EMBER64_CIXVPU_BOOT_PROBE
-            /sys/arch/evbarm/conf/EMBER64_CIXVPU_NATIVE_PROBE
             /sys/kern/kern_sysctl.c
             /sys/sys/sysctl.h
             /sys/sys/reboot.h
             /sys/net/if.h
             /sys/dev/pci/pcireg.h
-            /sys/arch/evbarm/conf/EMBER64_CIXSCMI_QUERY
-            /sys/arch/evbarm/conf/EMBER64_CIXSCMI_UART_RATE_QUERY
-            /sys/arch/evbarm/conf/EMBER64_CIXUART_NATIVE
-            /sys/arch/evbarm/conf/EMBER64_CIX_PERIPHERALS
-            /sys/arch/evbarm/conf/EMBER64_CIXGPIO_OBSERVE
-            /sys/arch/evbarm/conf/EMBER64_CIX_IO_OBSERVE
             /sys/arch/arm/acpi/acpi_iort.c
             /sys/arch/arm/pic/pic.c
             /sys/arch/arm/pic/picvar.h

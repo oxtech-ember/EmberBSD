@@ -11,7 +11,6 @@ name: CIX VPU source contracts
       - 'sys/dev/acpi/cixvpu_acpi.c'
       - 'sys/dev/acpi/files.acpi'
       - 'sys/arch/evbarm/conf/EMBER64'
-      - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_*'
       - 'ember/tools/cixvpu-*'
       - 'sys/dev/acpi/docs/cix-vpu.md'
   pull_request:
@@ -23,7 +22,6 @@ name: CIX VPU source contracts
       - 'sys/dev/acpi/cixvpu_acpi.c'
       - 'sys/dev/acpi/files.acpi'
       - 'sys/arch/evbarm/conf/EMBER64'
-      - 'sys/arch/evbarm/conf/EMBER64_CIXVPU_*'
       - 'sys/sys/videoio.h'
       - 'ember/tools/cixvpu-*'
       - 'sys/dev/acpi/docs/cix-vpu.md'
