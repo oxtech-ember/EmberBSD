@@ -515,6 +515,10 @@ simplefb_attach_genfb(struct simplefb_softc *sc)
 #endif
 
 	prop_dictionary_set_bool(dict, "is_console", is_console);
+#ifdef SPLASHSCREEN
+	prop_dictionary_set_bool(dict, "splash-rotate-cw",
+	    of_hasprop(sc->sc_phandle, "netbsd,splash-rotate-cw"));
+#endif
 
 #if defined(SPLASHSCREEN) && defined(WSDISPLAY_EARLYFB_PRESERVE_SPLASH)
 	/* Keep firmware pixels while a usable independent console owns text. */

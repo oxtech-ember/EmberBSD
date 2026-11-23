@@ -26,7 +26,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd November 7, 2026
+.Dd November 23, 2026
 .Dt GENFB 4
 .Os
 .Sh NAME
@@ -65,6 +65,13 @@ The simple-framebuffer frontend requests this behavior only with
 .Dv WSDISPLAY_EARLYFB_PRESERVE_SPLASH
 enabled and a usable independent console.
 The default behavior is unchanged.
+.Ss Splash orientation
+A simple-framebuffer device tree node can set the boolean property
+.Dv netbsd,splash-rotate-cw .
+When the driver draws the embedded splash, it rotates the image clockwise
+by 90 degrees and then centers it.
+An image that exactly matches the native framebuffer dimensions already
+uses panel coordinates and is drawn as supplied.
 .Ss PCI
 When attaching to a
 .Xr pci 4

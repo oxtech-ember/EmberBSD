@@ -195,6 +195,15 @@ splash_render(struct splash_info *si, int flg)
 	aprint_debug("%s: splash loaded, width %d height %d comp %d\n",
 	    __func__, width, height, comp);
 
+	/* A full native-sized image is already in panel coordinates. */
+	if (width == si->si_width && height == si->si_height)
+		flg &= ~SPLASH_F_ROTATE_CW;
+	if (flg & SPLASH_F_ROTATE_CW) {
+		int tmp = width;
+		width = height;
+		height = tmp;
+	}
+
 	if ((width > si->si_width) || (height > si->si_height)) {
 		aprint_error(
 			"WARNING: splash size (%dx%d) too big for framebuffer (%dx%d)\n",
@@ -238,15 +247,27 @@ splash_render(struct splash_info *si, int flg)
 	return error;
 }
 
+/* Width and height describe the output rectangle after rotation. */
+static inline const u_char *
+splash_pixel(const char *data, int x, int y, int width, int height, int flags)
+{
+	size_t offset;
+
+	if (flags & SPLASH_F_ROTATE_CW)
+		offset = (size_t)(width - 1 - x) * height + y;
+	else
+		offset = (size_t)y * width + x;
+	return (const u_char *)data + offset * 3;
+}
+
 #if NSPLASH8 > 0
 
 static void
 splash_render8(struct splash_info *si, const char *data, int xoff, int yoff,
 	       int swidth, int sheight, int flg)
 {
-	const char *d;
 	u_char *fb, *p;
-	u_char pix[3];
+	const u_char *pix;
 	int x, y, i;
 	int filled;
 
@@ -257,14 +278,11 @@ splash_render8(struct splash_info *si, const char *data, int xoff, int yoff,
 	else
 		filled = 1;
 
-	d = data;
 	fb += xoff + yoff * si->si_stride;
 
 	for (y = 0; y < sheight; y++) {
 		for (x = 0; x < swidth; x++) {
-			pix[0] = *d++;
-			pix[1] = *d++;
-			pix[2] = *d++;
+			pix = splash_pixel(data, x, y, swidth, sheight, flg);
 			if (filled == 0) {
 				p = si->si_bits;
 				i = 0;
@@ -286,12 +304,12 @@ splash_render8(struct splash_info *si, const char *data, int xoff, int yoff,
 	if (si->si_hwbits) {
 		if (flg & SPLASH_F_FILL) {
 			memcpy(si->si_hwbits, si->si_bits,
-			    si->si_height*si->si_width);
+			    si->si_height*si->si_stride);
 		} else {
 			u_char *rp, *hrp;
 
-			rp = si->si_bits + xoff + (yoff * si->si_width);
-			hrp = si->si_hwbits + xoff + (yoff * si->si_width);
+			rp = si->si_bits + xoff + (yoff * si->si_stride);
+			hrp = si->si_hwbits + xoff + (yoff * si->si_stride);
 
 			for (y = 0; y < sheight; y++) {
 				memcpy(hrp, rp, swidth);
@@ -318,9 +336,8 @@ static void
 splash_render16(struct splash_info *si, const char *data, int xoff, int yoff,
 		int swidth, int sheight, int flg)
 {
-	const char *d;
 	u_char *fb, *p;
-	u_char pix[3];
+	const u_char *pix;
 	int x, y, i;
 	int filled;
 
@@ -331,14 +348,11 @@ splash_render16(struct splash_info *si, const char *data, int xoff, int yoff,
 	else
 		filled = 1;
 
-	d = data;
 	fb += xoff * 2 + yoff * si->si_stride;
 
 	for (y = 0; y < sheight; y++) {
 		for (x = 0; x < swidth; x++) {
-			pix[0] = *d++;
-			pix[1] = *d++;
-			pix[2] = *d++;
+			pix = splash_pixel(data, x, y, swidth, sheight, flg);
 			if (filled == 0) {
 				p = si->si_bits;
 				i = 0;
@@ -383,9 +397,8 @@ static void
 splash_render32(struct splash_info *si, const char *data, int xoff, int yoff,
 		int swidth, int sheight, int flg)
 {
-	const char *d;
 	u_char *fb, *p;
-	u_char pix[3];
+	const u_char *pix;
 	int x, y, i;
 	int filled;
 
@@ -396,14 +409,11 @@ splash_render32(struct splash_info *si, const char *data, int xoff, int yoff,
 	else
 		filled = 1;
 
-	d = data;
 	fb += xoff * 4 + yoff * si->si_stride;
 
 	for (y = 0; y < sheight; y++) {
 		for (x = 0; x < swidth; x++) {
-			pix[0] = *d++;
-			pix[1] = *d++;
-			pix[2] = *d++;
+			pix = splash_pixel(data, x, y, swidth, sheight, flg);
 			if (filled == 0) {
 				p = si->si_bits;
 				i = 0;

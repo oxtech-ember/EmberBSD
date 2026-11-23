@@ -102,6 +102,7 @@ struct genfb_private {
 	bool sc_want_clear;
 #ifdef SPLASHSCREEN
 	struct splash_info sc_splash;
+	int sc_splash_flags;
 	bool sc_hold_first_vt;
 #endif
 	struct wsdisplay_accessops sc_accessops;
@@ -382,7 +383,7 @@ genfb_attach(struct genfb_softc *sc, struct genfb_ops *ops)
 #ifdef SPLASHSCREEN
 	int i, j;
 	int error = ENXIO;
-	bool preserve_splash = false;
+	bool preserve_splash = false, rotate_cw = false;
 #endif
 
 	KASSERTMSG(scp != NULL, "missing genfb_init");
@@ -506,7 +507,7 @@ genfb_attach(struct genfb_softc *sc, struct genfb_ops *ops)
 
 #ifdef SPLASHSCREEN
 	j = 0;
-	for (i = 0; i < uimin(1 << sc->sc_depth, 256); i++) {
+	for (i = 0; i < (1 << uimin(sc->sc_depth, 8)); i++) {
 		if (i >= SPLASH_CMAP_OFFSET &&
 		    i < SPLASH_CMAP_OFFSET + SPLASH_CMAP_SIZE) {
 			splash_get_cmap(i,
@@ -523,6 +524,10 @@ genfb_attach(struct genfb_softc *sc, struct genfb_ops *ops)
 	if (!preserve_splash)
 		genfb_restore_palette(sc);
 
+	scp->sc_splash_flags = SPLASH_F_CENTER | SPLASH_F_FILL;
+	if (prop_dictionary_get_bool(dict, "splash-rotate-cw", &rotate_cw) &&
+	    rotate_cw)
+		scp->sc_splash_flags |= SPLASH_F_ROTATE_CW;
 	scp->sc_splash.si_depth = sc->sc_depth;
 	scp->sc_splash.si_bits = scp->sc_console_screen.scr_ri.ri_origbits;
 	scp->sc_splash.si_hwbits = sc->sc_fbaddr;
@@ -535,7 +540,7 @@ genfb_attach(struct genfb_softc *sc, struct genfb_ops *ops)
 			error = 0;
 		else
 			error = splash_render(&scp->sc_splash,
-			    SPLASH_F_CENTER|SPLASH_F_FILL);
+			    scp->sc_splash_flags);
 		if (error) {
 			SCREEN_ENABLE_DRAWING(&scp->sc_console_screen);
 			genfb_init_palette(sc);
@@ -658,7 +663,7 @@ genfb_ioctl(void *v, void *vs, u_long cmd, void *data, int flag,
 		if (*(int *)data == 1) {
 			SCREEN_DISABLE_DRAWING(&scp->sc_console_screen);
 			splash_render(&scp->sc_splash,
-			    SPLASH_F_CENTER|SPLASH_F_FILL);
+			    scp->sc_splash_flags);
 		} else {
 			SCREEN_ENABLE_DRAWING(&scp->sc_console_screen);
 			if (ms != NULL)

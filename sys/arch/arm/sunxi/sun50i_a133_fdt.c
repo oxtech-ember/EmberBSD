@@ -298,6 +298,7 @@ a133_framebuffer(void *fdt)
 	A133_CELL(path, "width", 800);
 	A133_CELL(path, "height", 1280);
 	A133_CELL(path, "stride", 3200);
+	A133_SET(path, "netbsd,splash-rotate-cw", NULL, 0);
 	A133_STRING(path, "format", "x8r8g8b8");
 	A133_STRING(path, "status", "okay");
 

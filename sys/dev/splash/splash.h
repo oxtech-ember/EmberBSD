@@ -63,6 +63,8 @@ struct splash_info {
 				 * in the splash image
 				 */
 
+#define	SPLASH_F_ROTATE_CW	0x04	/* Rotate logical artwork clockwise. */
+
 int	splash_setimage(const void *, size_t);
 int	splash_render(struct splash_info *, int);
 int	splash_get_cmap(int, uint8_t *, uint8_t *, uint8_t *);

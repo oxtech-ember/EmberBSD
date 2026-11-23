@@ -23,6 +23,16 @@ Dir.mktmpdir('late-splash-', ENV.fetch('TMPDIR', '/tmp')) do |work|
   File.write(work + '/draw-flags.h', draw_flags.join)
   cc = Shellwords.split(ENV.fetch('CC', 'cc'))
   flags = Shellwords.split(ENV.fetch('CFLAGS', ''))
+  renderer = File.read(source + '/sys/dev/splash/splash.c').lines.reject do |line|
+    line.start_with?('#include ', '__KERNEL_RCSID(')
+  end
+  File.write(work + '/splash-render-body.h', renderer.join)
+  File.write(work + '/opt_splash.h', "#define SPLASHSCREEN 1\n")
+  FileUtils.cp(source + '/sys/dev/splash/splash.h', work)
+  pixel_test = source + '/ember/tools/splash-rotation-test.c'
+  pixel_args = [*cc, '-std=gnu11', '-Wall', '-Werror', *flags, '-I' + work, pixel_test]
+  abort 'pixel test compile failed' unless system(*pixel_args, '-o', work + '/pixels')
+  abort 'pixel test failed' unless system(work + '/pixels')
   [[true, true, false], [true, false, false], [false, true, false], [true, true, true]].each do |splash, preserve, multi|
     defs = []
     defs << '-DSPLASHSCREEN' if splash
@@ -35,11 +45,13 @@ Dir.mktmpdir('late-splash-', ENV.fetch('TMPDIR', '/tmp')) do |work|
     abort 'late splash contract failed' unless system(work + '/contract')
     if splash && preserve && !multi && ENV['LATE_SPLASH_ANALYZE'] == '1'
       analyzer = argv[0...-2] + ['--analyze', '-Xanalyzer', '-analyzer-output=text']
-      abort 'Clang analysis failed' unless system(*analyzer)
+      abort 'Clang analysis failed' unless system(*analyzer) &&
+        system(*pixel_args, '--analyze', '-Xanalyzer', '-analyzer-output=text')
       cppcheck = ENV.fetch('CPPCHECK', 'cppcheck')
-      abort 'Cppcheck failed' unless system(cppcheck, '--enable=warning,performance,portability',
-        '--error-exitcode=1', '--inline-suppr', '--check-level=exhaustive', *defs, '-I' + work,
-        source + '/ember/tools/late-splash-contract.c')
+      checks = [cppcheck, '--enable=warning,performance,portability', '--error-exitcode=1',
+                '--inline-suppr', '--check-level=exhaustive', '-I' + work]
+      abort 'Cppcheck failed' unless system(*checks, *defs, source + '/ember/tools/late-splash-contract.c') &&
+        system(*checks, pixel_test)
     end
   end
 end

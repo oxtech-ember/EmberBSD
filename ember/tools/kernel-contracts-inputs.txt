@@ -414,6 +414,7 @@ ember/tools/i915-engine-uabi-contract.py sys/external/bsd/drm2/dist/drm/i915/gt/
 ember/tools/i915-rps-lifetime-contract.sh ember/tools/i915-rps-lifetime-contract.c
 ember/tools/i915-rps-lifetime-contract.sh sys/external/bsd/drm2/dist/drm/i915/gt/
 ember/tools/late-splash-contract.rb ember/tools/late-splash-contract.c
+ember/tools/late-splash-contract.rb ember/tools/splash-rotation-test.c
 ember/tools/late-splash-contract.rb sys/dev/fdt/
 ember/tools/late-splash-contract.rb sys/dev/splash/
 ember/tools/late-splash-contract.rb sys/dev/wscons/

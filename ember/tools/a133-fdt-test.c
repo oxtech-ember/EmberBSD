@@ -177,6 +177,7 @@ main(void)
 	assert(sun50i_a133_fdt_fixup(fdt) == 0);
 	fb = fdt_node_offset_by_compatible(fdt, -1, "simple-framebuffer");
 	assert(fb >= 0);
+	assert(fdt_getprop(fdt, fb, "netbsd,splash-rotate-cw", &len) != NULL && len == 0);
 	cells = fdt_getprop(fdt, fb, "width", NULL);
 	assert(cells != NULL && fdt32_to_cpu(*cells) == 800);
 	cells = fdt_getprop(fdt, fb, "height", NULL);

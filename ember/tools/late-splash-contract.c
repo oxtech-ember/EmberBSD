@@ -26,6 +26,7 @@
 #include "splash-mask.h"
 #ifdef SPLASHSCREEN
 #define GENFB_DISABLE_TEXT
+#define SPLASH_F_ROTATE_CW 4
 #endif
 #define DISABLESPLASH (boothowto & SPLASH_BOOT_DISABLE_MASK)
 #define CN_NULL 0
@@ -143,6 +144,7 @@ struct genfb_private {
 	int sc_mode;
 	uint8_t sc_cmap_red[256], sc_cmap_green[256], sc_cmap_blue[256];
 	struct splash_info sc_splash;
+	int sc_splash_flags;
 	struct wsdisplay_accessops sc_accessops;
 };
 struct genfb_softc {
@@ -203,9 +205,17 @@ static prop_dictionary_t device_properties(device_t d)
 {
 	return &d->props;
 }
+static bool panel_rotation, requested_rotation;
+static bool of_hasprop(int node, const char *property)
+{
+	return node == 1 && !strcmp(property, "netbsd,splash-rotate-cw") &&
+	    panel_rotation;
+}
 static void prop_dictionary_set_bool(prop_dictionary_t p, const char *n, bool v)
 {
-	if (!strcmp(n, "is_console"))
+	if (!strcmp(n, "splash-rotate-cw"))
+		requested_rotation = v;
+	else if (!strcmp(n, "is_console"))
 		p->console = v;
 	else if (!strcmp(n, "preserve-splash"))
 		p->preserve = v;
@@ -217,7 +227,9 @@ static void prop_dictionary_set_bool(prop_dictionary_t p, const char *n, bool v)
 static bool prop_dictionary_get_bool(prop_dictionary_t p, const char *n,
 				     bool *v)
 {
-	if (!strcmp(n, "is_console"))
+	if (!strcmp(n, "splash-rotate-cw"))
+		*v = requested_rotation;
+	else if (!strcmp(n, "is_console"))
 		*v = p->console;
 	else if (!strcmp(n, "preserve-splash"))
 		*v = p->preserve;
@@ -363,7 +375,7 @@ static void splash_get_cmap(int i, uint8_t *r, uint8_t *g, uint8_t *b)
 static int splash_render(struct splash_info *s, int f)
 {
 	(void)s;
-	CHECK(f == (SPLASH_F_CENTER | SPLASH_F_FILL));
+	CHECK(f == (SPLASH_F_CENTER | SPLASH_F_FILL | (panel_rotation ? 4 : 0)));
 	splashes++;
 	memset(pixels, 0xff, sizeof(pixels));
 	return 0;
@@ -493,6 +505,7 @@ static void reset(void)
 	memcpy(original, pixels, sizeof(pixels));
 	clears = splashes = replays = attaches = palettes = 0;
 	shadow = false;
+	panel_rotation = requested_rotation = false;
 	boothowto = 0;
 	fail_map = false;
 	simplefb_console_phandle = -1;
@@ -532,6 +545,7 @@ int main(void)
 #endif
 	}
 	reset();
+	panel_rotation = true;
 	shadow = true;
 	CHECK(simplefb_attach_genfb(&fb) == 0);
 	if (preserve) {
