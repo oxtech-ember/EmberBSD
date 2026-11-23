@@ -48,14 +48,21 @@ Select the narrowest mechanism that serves the functional task:
 
 ## Modify a kernel
 
-A trial or diagnostic configuration is a temporary local file. It includes a
-general-purpose configuration and changes only the trial options. Build it by
-its absolute path: `ember/build-kernel.sh OUTPUT /path/to/NAME`. Its name must
-not be the name of an OS configuration: the objects and outputs are named by
-it. When the trial is accepted, add its drivers or options to the
-general-purpose configuration; then remove the trial. Board records in
-[DevBoards](https://github.com/oxtech-ember/EmberBSD-DevBoards) use the
-general-purpose kernel.
+A temporary configuration for a test or for development is normal. Keep it
+as a local file, not in a repository. It includes a general-purpose
+configuration and changes only the trial options. Build it by its absolute
+path: `ember/build-kernel.sh OUTPUT /path/to/NAME`. Its name must not be the
+name of an OS configuration: the objects and outputs are named by it.
+
+Do not keep a temporary configuration after the work:
+
+- When the code is checked and debugged, merge it into `main`, add its drivers
+  or options to the general-purpose configuration, and delete the temporary
+  configuration.
+- Run a single test on the general-purpose kernel. Do not keep a configuration
+  for one test.
+- Board records in [DevBoards](https://github.com/oxtech-ember/EmberBSD-DevBoards)
+  use the general-purpose kernel.
 
 ## Reproduce on pinned input
 
