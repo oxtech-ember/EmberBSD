@@ -206,7 +206,11 @@ Use the agreed external media or disposable VM first.
 Define a known working kernel and recovery path before writing a device.
 On a running efiboot AArch64 board with one GPT disk,
 `ember/install-kernel.sh BUILD_OUTPUT [CONFIG]` replaces the file that the
-default `boot.cfg` entry boots, as efiboot finds it. That file must be the
+default `boot.cfg` entry boots, as efiboot finds it. Supply a kernel from the
+selected trusted build output. The installer requires a little-endian AArch64
+ELF64 executable with a file-backed entry point. It checks the load segments
+against the file size and verifies the staged copy before it changes the boot
+menu or recovery kernel. The file selected by the default entry must be the
 running kernel; it stays as `netbsd.recovery` on the same partition, and
 `boot.cfg` gets the new kernel, the recovery kernel in single-user mode and a
 command prompt. Otherwise the script stops without a change. Reboot into the

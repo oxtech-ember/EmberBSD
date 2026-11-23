@@ -22,8 +22,62 @@ kernel=$build/netbsd-$config
 cfg=$root/boot/boot.cfg
 [ -f "$kernel" ] || fail "no $kernel"
 [ -f "$cfg" ] || fail "no $cfg"
-release=$(grep -a -o -m1 'NetBSD [0-9][0-9]*\.[0-9][0-9]*' "$kernel" | cut -d' ' -f2)
-[ -n "$release" ] || fail "$kernel is not a NetBSD kernel"
+# The board base has od and awk. Read the ELF header and the program table
+# in file byte order. Stop before scanning the kernel payload.
+check_kernel() (
+	size=$(wc -c < "$1") || exit 1
+	od -An -v -tu1 "$1" | LC_ALL=C awk -v size="$size" '
+	function le(at, n,    i, value) {
+		for (i = at + n - 1; i >= at; i--) value = value * 256 + byte[i]
+		return value + 0
+	}
+	function fits(start, len) { return start <= size && len <= size - start }
+	function header(    sections) {
+		phoff = le(32, 8); phnum = le(56, 2)
+		entrylo = le(24, 4); entryhi = le(28, 4)
+		sections = le(60, 2)
+		return sprintf("%c%c%c%c", byte[0], byte[1], byte[2], byte[3]) == "\177ELF" &&
+		    byte[4] == 2 && byte[5] == 1 && byte[6] == 1 &&
+		    le(16, 2) == 2 && le(18, 2) == 183 && le(20, 4) == 1 &&
+		    le(52, 2) == 64 && le(54, 2) == 56 && phnum > 0 &&
+		    phoff >= 64 && fits(phoff, 56 * phnum) &&
+		    (!sections || (le(58, 2) == 64 && fits(le(40, 8), 64 * sections)))
+	}
+	# Check whether an ELF64 load range wraps, without rounding its address.
+	function wraps(at,    carry) {
+		carry = le(at, 4) + le(40, 4) >= 4294967296
+		return le(at + 4, 4) + le(44, 4) + carry >= 4294967296
+	}
+	function segment(    offset, filesz, delta) {
+		if (le(0, 4) != 1) return 1
+		offset = le(8, 8); filesz = le(32, 8)
+		if (filesz > le(40, 8) || (filesz && !fits(offset, filesz)) ||
+		    wraps(16) || wraps(24)) return 0
+		# Subtract high and low words separately for high kernel addresses.
+		delta = (entryhi - le(20, 4)) * 4294967296 + entrylo - le(16, 4)
+		if (le(4, 4) % 2 && delta >= 0 && delta < filesz) executable = 1
+		return 1
+	}
+	BEGIN { pos = -1; size += 0 }
+	{
+		for (i = 1; i <= NF; i++) {
+			pos++
+			if (pos < 64) {
+				byte[pos] = $i
+				if (pos == 63 && !header()) exit
+			} else if (pos >= phoff) {
+				field = (pos - phoff) % 56
+				byte[field] = $i
+				if (field == 55) {
+					if (!segment()) exit
+					if (++seen == phnum) { valid = executable; exit }
+				}
+			}
+		}
+	}
+	END { exit !valid }'
+)
+check_kernel "$kernel" || fail "$kernel is not a loadable little-endian AArch64 ELF64 executable"
 
 # The kernel file of the default entry.
 settings=$(sed -e 's/\r$//' -e 's/#.*//' "$cfg")
@@ -60,10 +114,36 @@ running=$(sysctl -n kern.version | head -1)
 grep -a -q -F "$running" "$current" ||
     fail "$current is not the running kernel ($running); if netbsd.recovery runs, copy it to $current first"
 
-copy() { mkdir -p "$(dirname "$2")"; cp "$1" "$2.new"; sync; mv "$2.new" "$2"; }
+checked_copy() {
+	cp "$1" "$2" || fail "could not copy $1"
+	sync
+	cmp -s "$1" "$2" || fail "copy of $1 differs"
+}
+copy() (
+	parent=$(dirname "$2")
+	mkdir -p "$parent"
+	tmp=$(mktemp -d "$parent/.ember-copy.XXXXXXXX") || exit 1
+	trap 'rm -rf "$tmp"' 0
+	trap 'exit 1' HUP INT TERM
+	checked_copy "$1" "$tmp/file"
+	mv -f "$tmp/file" "$2"
+)
+
+# Stage on the same filesystem as the active kernel. Check the bytes that
+# will be renamed before changing recovery, the menu, or the modules.
+stage=$(mktemp -d "$(dirname "$current")/.ember-kernel.XXXXXXXX") || fail 'could not stage kernel'
+trap 'rm -rf "$stage"' 0
+trap 'exit 1' HUP INT TERM
+checked_copy "$kernel" "$stage/kernel"
+check_kernel "$stage/kernel" || fail 'invalid staged kernel'
+# newvers.sh includes this kernel identification in reproducible builds too.
+release=$(LC_ALL=C grep -a -E -o -m1 '@\(#\)NetBSD [0-9]+\.[0-9]+[[:alnum:]_.-]* \([^()[:cntrl:]]+\)' "$stage/kernel" |
+	sed -nE '1s/.*NetBSD ([0-9]+\.[0-9]+).*/\1/p')
+[ -n "$release" ] || fail "$kernel has no NetBSD kernel identification"
+
 # Keep a bootable recovery entry at each step.
 copy "$current" "$recovery"
-[ -f "$cfg.before-install" ] || cp "$cfg" "$cfg.before-install"
+[ -f "$cfg.before-install" ] || copy "$cfg" "$cfg.before-install"
 {
 	printf '%s\n' "$settings" | grep -v -e '^menu=' -e '^default=' -e '^timeout=' -e '^$' || :
 	echo "menu=Boot EmberBSD:boot $device$file${arguments:+ $arguments}"
@@ -71,10 +151,9 @@ copy "$current" "$recovery"
 	echo 'menu=Command prompt:prompt'
 	echo 'default=1'
 	echo 'timeout=5'
-} > "$cfg.tmp"
-copy "$cfg.tmp" "$cfg"
-rm -f "$cfg.tmp"
-copy "$kernel" "$current"
+} > "$stage/boot.cfg"
+copy "$stage/boot.cfg" "$cfg"
+mv -f "$stage/kernel" "$current"
 set +f
 for module in "$build"/*.kmod; do
 	[ -f "$module" ] || continue
