@@ -1,6 +1,6 @@
 # Native fixed-mode BCM2712 KMS
 
-The explicit `WSDISPLAY_BOOTFB_HANDOFF` profile adds one primary plane, CRTC,
+The [display trial configuration](../../../../../arch/arm/broadcom/docs/bcm2712-display-contract.md#display-trial-configuration) adds one primary plane, CRTC,
 TMDS encoder and HDMI-A connector to the native V3D DRM device. The ordinary
 render profile keeps its existing feature set. The display uses the same native
 GEM objects as V3D. HVS has a separate MMU4 consumer mapping for each frame.

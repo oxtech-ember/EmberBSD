@@ -1,7 +1,7 @@
 # CIX UART1/3 native rate consumer
 
 `plcom* at acpi? flags 0x1` in a trial configuration selects it. It needs the
-read-only UART rate requests (`cixscmi` flags 0x100) and `CIXP1_UART2_CONSOLE`, keeps the VPU inactive, and retains the UART2
+read-only UART rate requests (`cixscmi` flags 0x100) and `CIXP1_UART2_CONSOLE` with VPU flags 0x0, and retains the UART2
 console gate. It enables the closed UART1/3 consumer with `plcom` flags 1.
 The default profile and generic non-CIX, BCM and RP1 attachments keep their
 existing paths. DEBUG UART2 (ACPI UID 3) bypasses the new rate consumer. CIXCOM0 remains
@@ -46,9 +46,7 @@ Use the native boot log to identify plcom units; COM names and ACPI UID are not 
 `cixgpioin* at acpi? flags 0x1` with this UART attachment adds the fixed GPI5 input attachment
 as [the separate GPIO profile](../../../../dev/acpi/docs/cix-gpio.md#manual-fixed-gpi5-inputs). It retains
 the UART2 console gate, checked SCMI256 rate cache and GPI4 power button; the
-VPU stays inactive. The source-tree default and both individual profiles are
-unchanged. Generated configuration checks cover the combined attachment flags
-and provider counts.
+VPU stays at flags 0x0. `EMBER64` does not select these attachments.
 
 On one physical sample, source `24b6895ec` is installed as the persistent
 default. One automatic warm boot completes the default countdown without a

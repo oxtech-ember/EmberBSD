@@ -114,8 +114,8 @@ Reports keep helper, framing, firmware, ACK, budget and cleanup results separate
 
 The separate `cixscmi_acpi` diagnostic binds CIXHA006, UID 0. Its default
 flags 0 mode performs no AML evaluation, claims, mapping or transport access.
-The explicit
-trial configuration selects flags 1 and disables deferred VPU provider queries.
+A trial
+configuration selects flags 1 and disables deferred VPU provider queries.
 VPU descriptor validation remains enabled. The normal
 EMBER64 configuration does not select this diagnostic attachment.
 
@@ -387,8 +387,7 @@ validity and released controls. It runs at most once per attachment.
 
 ## Manual native hardware profile
 
-A trial configuration includes the native identity profile, preserving SCMI service128 and selecting
-VPU mode6. Build it with GCC16 and select it manually. Preserve a working default
+A trial configuration selects SCMI flags 0x80 and VPU mode 6. Build it with GCC16 and select it manually. Preserve a working default
 and recovery kernel. The profile requires boot context with `cold == 1`.
 It accepts only MEM0 `0x14230000`, MEM1 `0x14240000`, two `0x10000` spans,
 GSI358, `_CCA=0`, ID `0x56648002`, four cores, four slots and SVN `0xe0c1afe1`.

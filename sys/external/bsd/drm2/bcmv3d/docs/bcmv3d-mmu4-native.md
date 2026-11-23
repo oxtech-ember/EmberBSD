@@ -1,8 +1,8 @@
 # Private native MMU4 display owner
 
 This source-only component combines native backing, the fixed MMU4 sequencer
-and the shared ICAC executor. Default profiles do not call it. With
-`WSDISPLAY_BOOTFB_HANDOFF`, the kernel calls it after its same-owner dual-pipeline stop.
+and the shared ICAC executor. Default profiles do not call it. The
+[display trial configuration](../../../../../arch/arm/broadcom/docs/bcm2712-display-contract.md#display-trial-configuration) calls it after its same-owner dual-pipeline stop.
 Completion does not prove physical translation, scanout, display ownership or AXI drain.
 
 The canonical BCMV3D ACPI attachment passes its actual `aa_memt` through the sole
@@ -13,14 +13,14 @@ stay unchanged. The adapter, backing and frame-helper TUs require all three
 existing selectors: `bcmv3drender`, `bcm2712_display_components` and
 `bcm2712iommuc_acpi`. The provider alone has no DRM dependency.
 
-A trial configuration with `BCM2712_V3D_RENDER` and `bcm2712iommuc* at acpi?`
+The [display trial configuration](../../../../../arch/arm/broadcom/docs/bcm2712-display-contract.md#display-trial-configuration) without `WSDISPLAY_BOOTFB_HANDOFF`
 attaches the ICAC software owner and selects `WSDISPLAY_BOOTFB_DEFER`.
 It links the three adapter translation units with the cold framebuffer issuer.
 It is an integration profile. It does not select an exclusive console path,
 close readers, issue firmware handoff or start MMU4, scanout or a desktop.
 The ICAC attachment validates its descriptor without mapping registers.
 Use a coherent GCC16 kernel and matching modules. The ordinary `EMBER64`
-configuration keeps their existing options and attachments.
+configuration does not select them.
 
 The private renderer attach returns the actual registered `bcmv3d_device *` only
 on success. An error preserves output storage. The ACPI owner stores this borrowed

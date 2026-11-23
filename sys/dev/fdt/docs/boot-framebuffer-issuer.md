@@ -1,7 +1,7 @@
 # Cold boot framebuffer defer issuer
 
 `WSDISPLAY_BOOTFB_DEFER` is default-off. It selects
-`WSDISPLAY_EARLYFB_HOOKS`. No default configuration selects it. A trial configuration with `WSDISPLAY_BOOTFB_DEFER`
+`WSDISPLAY_EARLYFB_HOOKS`. No default configuration selects it. `WSDISPLAY_BOOTFB_DEFER` in the [display trial configuration](../../../arch/arm/broadcom/docs/bcm2712-display-contract.md#display-trial-configuration)
 selects the issuer. `WSDISPLAY_BOOTFB_HANDOFF` additionally selects the CPU serial close, firmware notification and bounded two-pipeline stop.
 The issuer alone can defer one actual cold simplefb fallback and issue one opaque
 lease. It does not close console output, drain writers, install a replacement

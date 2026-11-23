@@ -78,8 +78,8 @@ done
 
 The [power-button fallback](../../../sys/modules/rpi5button/README.md) must not
 run alongside a working ACPI button event source. On the validated device,
-these four were the only modules loaded from disk; their dependencies and
-the root filesystem driver were built into `EMBER64`. This profile does
+these three were the only modules loaded from disk; their dependencies,
+CEMAC and the root filesystem driver are built into `EMBER64`. This profile does
 not provide other optional loadable drivers. Check the actual device's
 module requirements before using that reduced module tree.
 

@@ -45,7 +45,7 @@ def main():
         work = Path(tmp)
         for name, suffix, adapter in (
                 ("GENERIC", "", "arch/arm/xilinx/zynq_cemac.c"),
-                ("EMBER64", "cemac* at acpi?\n", "dev/acpi/cemac_acpi.c")):
+                ("EMBER64", "", "dev/acpi/cemac_acpi.c")):
             config = work / name
             config.write_text('include "arch/evbarm/conf/' + name + '"\n' + suffix)
             files, ioconf, makefile = configure(config, source, args.nbconfig, work)

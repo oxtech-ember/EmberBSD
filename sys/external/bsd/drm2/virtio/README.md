@@ -233,7 +233,7 @@ interrupt safety, visible scanout or an accelerated userland session.
 
 ## Ordinary console recovery
 
-`VIRTGPU_CONSOLE` enables and the native `virtiodrmfb`
+`VIRTGPU_CONSOLE` enables the native `virtiodrmfb`
 child. The selected FDT simple framebuffer postpones its final wsdisplay
 attachment until autoconfiguration finishes; the early ARM renderer stays
 available. A selected PCI VirtGPU can reserve it and prepare a private

@@ -1,6 +1,6 @@
 # Joined CPU console and firmware notification contract
 
-A trial configuration with the render and `WSDISPLAY_BOOTFB_DEFER` options adds
+The [display trial configuration](../../../arch/arm/broadcom/docs/bcm2712-display-contract.md#display-trial-configuration) includes
 `WSDISPLAY_BOOTFB_HANDOFF`. The joined boot job holds the serial console, closes
 and drains CPU framebuffer access, then sends one firmware display notification.
 Default profiles stay unchanged. This stage adds no HVS programming, KMS operation

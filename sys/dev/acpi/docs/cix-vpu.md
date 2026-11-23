@@ -282,9 +282,8 @@ host decode remain unqualified.
 
 ## Manual first-frame experiment
 
-A trial configuration
-is a source-only manual experiment. It inherits the accepted RPC/UART2 profile,
-including SCMI service 128, and selects VPU flags 0xa. The default remains inactive.
+A trial configuration with `CIXP1_UART2_CONSOLE`, SCMI flags 0x80 and VPU flags 0xa
+is a source-only manual experiment. The default remains inactive.
 Its complete kernel build, native trial and host decode remain pending. Preserve working
 default and recovery entries. Do not reuse a boot-long held owner.
 
@@ -699,9 +698,7 @@ records the limited IRQ observation and an incomplete firmware handshake.
 
 ## Manual firmware handshake trial
 
-A trial configuration
-includes the native diagnostic parent and selects VPU `flags 0x7` with SCMI
-`flags 0x80`. Build it with GCC16. Select its kernel manually and preserve the
+A trial configuration selects VPU `flags 0x7` with SCMI `flags 0x80`. Build it with GCC16. Select its kernel manually and preserve the
 working default and recovery kernels. Qualify the physical resource profile,
 DMA address limits and CPU preparation before this trial.
 

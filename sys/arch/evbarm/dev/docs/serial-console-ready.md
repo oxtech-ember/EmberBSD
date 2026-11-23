@@ -1,7 +1,7 @@
 # Resident PLCOM console readiness
 
 This private kernel interface describes one real attached serial tty. It is
-compiled only with the default-off `WSDISPLAY_BOOTFB_HANDOFF` option. With `BCM2712_V3D_RENDER`,
+compiled only with the default-off `WSDISPLAY_BOOTFB_HANDOFF` option. In the [display trial configuration](../../../arm/broadcom/docs/bcm2712-display-contract.md#display-trial-configuration),
 `WSDISPLAY_BOOTFB_HANDOFF` selects the joined CPU console transaction described in
 [the issuer guide](../../../../dev/fdt/docs/boot-framebuffer-issuer.md#native-joined-boot-job). Default
 profiles stay unchanged. A coherent kernel link and physical serial acceptance

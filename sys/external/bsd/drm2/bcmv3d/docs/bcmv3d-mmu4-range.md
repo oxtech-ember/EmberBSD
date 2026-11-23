@@ -119,7 +119,7 @@ kernel services; its exposure case does not perform a physical HVS read.
 
 ## Manual boot check
 
-`WSDISPLAY_BOOTFB_HANDOFF` runs `bcmv3d_mmu4_check_ranges` after successful fixed HVS
+The [display trial configuration](../../../../../arch/arm/broadcom/docs/bcm2712-display-contract.md#display-trial-configuration) runs `bcmv3d_mmu4_check_ranges` after successful fixed HVS
 publication and its two progress samples. The same actual renderer and native
 owner remain held. Giant stays fully released for this sleepable check.
 The check stages three new contiguous native BOs, publishes all three private

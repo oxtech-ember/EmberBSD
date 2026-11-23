@@ -16,7 +16,7 @@ makeoptions	SPLASHSCREEN_IMAGE="${S}/../ember/boot/emberbsd-boot-splash.png"
 no vmt0	at cpu0
 
 #	The Cadence GEM Ethernet of the Raspberry Pi 5 and CM5, through RP1
-#	(../patches/cemac-acpi.diff).
+#	(../patches/cemac-acpi.diff). Do not load if_cemac_acpi.kmod with it.
 cemac*		at acpi?
 
 #	The BCM2712's power management, reset and watchdog block, which our

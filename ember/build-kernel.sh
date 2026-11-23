@@ -20,9 +20,11 @@ run_cpp() (
 )
 [ "$#" -ge 1 ] && [ "$#" -le 2 ] || fail 'usage: build-kernel.sh ABSOLUTE_OUTPUT [CONFIG | ABSOLUTE_CONFIG_PATH]'
 out=$1
-# CONFIG names a configuration of sys/arch/evbarm/conf. A trial configuration
-# outside the OS, for example in DevBoards, is given by its absolute path.
+# CONFIG names a configuration of sys/arch/evbarm/conf. A local trial
+# configuration is given by its absolute path.
 config_arg=${2:-EMBER64}
+# The board modules built against each kernel.
+modules='bcm2712btcom bcmexpgpio rp1wmcodec rpi5button'
 config=${config_arg##*/}
 case "$out" in /*) ;; *) fail 'output must be an absolute path' ;; esac
 case "$config" in ''|*[!A-Za-z0-9_]*) fail 'invalid kernel configuration' ;; esac
@@ -48,8 +50,8 @@ clear_outputs() {
         "$out/sun60i-a733-orangepi-zero3w.dtb" \
         "$out/sun60i-a733-orangepi-zero3w-diagnostic.dtb" \
         "$out/sun50i-a133-ys-m33.dtb"
-    # EMBER64 has the CEMAC driver built in; remove an old module of it too.
-    for module in if_cemac_acpi bcm2712btcom bcmexpgpio rp1wmcodec rpi5button; do
+    # Also remove if_cemac_acpi.kmod: EMBER64 has CEMAC built in.
+    for module in if_cemac_acpi $modules; do
         rm -f "$out/$module.kmod"
     done
 }
@@ -253,7 +255,7 @@ run_native_os --capture -- "$dtc" -I dts -O dtb -o "$stage/sun50i-a133-ys-m33.dt
     "$out/a133-ys-m33.dts" 2> "$out/a133-ys-m33-dtb.log"
 run_native_check python "$out/dtb-modes.log" \
     "$src/ember/tools/a733-boot-modes-contract.py" "$stage"
-for module in bcm2712btcom bcmexpgpio rp1wmcodec rpi5button; do
+for module in $modules; do
     cd "$src/sys/modules/$module"
     run_make_build obj
     run_make_build -j"$jobs" EMBER_KERNEL_CONFIG="$config" \
@@ -269,7 +271,7 @@ selected="EMBER_BYACC_SOURCE=$byacc_source EMBER_HEIMDAL_SOURCE=$heimdal_source"
 [ -z "$zlib_source" ] || selected="$selected EMBER_ZLIB_SOURCE=$zlib_source"
 set -f
 registered=$(cd "$kernel_obj" && run_make -V REPRO_EXTERNAL_SOURCE_VARS $selected)
-for module in bcm2712btcom bcmexpgpio rp1wmcodec rpi5button; do
+for module in $modules; do
     registered="$registered $(cd "$src/sys/modules/$module" && run_make -V REPRO_EXTERNAL_SOURCE_VARS \
         EMBER_KERNEL_CONFIG="$config" EMBER_KERNEL_OBJDIR="$kernel_obj" $selected)"
 done
@@ -279,5 +281,5 @@ run_native_check python "$out/shared-sources.log" \
 set +f
 cp "$stage/"* "$out/"
 success=yes
-echo "kernel and five modules built ($mode): $out"
+echo "kernel and modules built ($mode): $out"
 echo "check the kernel sources: ember/check-kernel.sh $out [BASE_COMMIT]"

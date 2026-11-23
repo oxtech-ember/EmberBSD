@@ -1,6 +1,6 @@
 # Native held clocks and two-pipeline stop
 
-With `WSDISPLAY_BOOTFB_HANDOFF` and `BCM2712_V3D_RENDER`, the kernel extends its existing CPU serial close and
+The [display trial configuration](bcm2712-display-contract.md#display-trial-configuration) extends its existing CPU serial close and
 firmware notification. After successful `bcmv3d_render_attach`, the same resident
 boot owner runs one fixed continuation. Default profiles remain unchanged.
 This is a bounded stop of both inherited firmware PV/HVS pipelines. It is not KMS, display

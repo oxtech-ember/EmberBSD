@@ -632,19 +632,23 @@ if [ -e "$TEST_OUT/.build-lock" ]; then
 fi
 test ! -e "$TEST_OUT/netbsd-EMBER64"
 # A trial configuration outside the OS is selected by its absolute path.
-mkdir -p "$work/devboards/kernels"
-printf 'include "arch/evbarm/conf/EMBER64"\n' > "$work/devboards/kernels/EMBER64_TRIAL"
+mkdir -p "$work/trials"
+printf 'include "arch/evbarm/conf/EMBER64"\n' > "$work/trials/EMBER64_TRIAL"
 export TEST_OUT="$work/external"
+# An old CEMAC module must not stay next to a kernel with CEMAC built in.
+mkdir -p "$TEST_OUT"
+printf stale > "$TEST_OUT/if_cemac_acpi.kmod"
 : > "$TEST_LOG"
-"$TEST_SHELL" "$work/src/ember/build-kernel.sh" "$TEST_OUT" "$work/devboards/kernels/EMBER64_TRIAL" \
+"$TEST_SHELL" "$work/src/ember/build-kernel.sh" "$TEST_OUT" "$work/trials/EMBER64_TRIAL" \
     > "$work/run.log" 2>&1
 test -s "$TEST_OUT/netbsd-EMBER64_TRIAL"
-grep -q "kernel=$work/devboards/kernels/EMBER64_TRIAL" "$TEST_LOG"
+test ! -e "$TEST_OUT/if_cemac_acpi.kmod"
+grep -q "kernel=$work/trials/EMBER64_TRIAL" "$TEST_LOG"
 # The board DTBs do not depend on the configuration.
 test -s "$TEST_OUT/sun50i-a133-ys-m33.dtb"
 grep -q 'sun50i-a133-ys-m33.dts' "$TEST_LOG"
-cp "$work/devboards/kernels/EMBER64_TRIAL" "$work/devboards/kernels/EMBER64"
-if "$TEST_SHELL" "$work/src/ember/build-kernel.sh" "$work/clash" "$work/devboards/kernels/EMBER64" \
+cp "$work/trials/EMBER64_TRIAL" "$work/trials/EMBER64"
+if "$TEST_SHELL" "$work/src/ember/build-kernel.sh" "$work/clash" "$work/trials/EMBER64" \
     > "$work/run.log" 2>&1; then
     echo 'FAIL: an external configuration replaced an OS configuration name' >&2
     exit 1

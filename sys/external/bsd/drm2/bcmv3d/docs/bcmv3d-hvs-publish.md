@@ -1,8 +1,8 @@
 # Fixed private HVS/PV0 publication mechanism
 
 The [helper](../bcmv3d_hvs_publish.c) publishes
-one sealed initial test frame through HVS0 and PV0. With
-`WSDISPLAY_BOOTFB_HANDOFF`, the kernel calls it from the same retained ACPI boot owner after
+one sealed initial test frame through HVS0 and PV0. The
+[display trial configuration](../../../../../arch/arm/broadcom/docs/bcm2712-display-contract.md#display-trial-configuration) calls it from the same retained ACPI boot owner after
 [actual native MMU4 completion](bcmv3d-mmu4-native.md). Ordinary profiles do not
 select this caller. The mechanism has no attachment, clock control, mapping or
 allocation. This source slice does not establish physical scanout, DRM/KMS or a

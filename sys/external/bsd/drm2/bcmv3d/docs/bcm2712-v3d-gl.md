@@ -54,8 +54,8 @@ after the originating handles and descriptors close.
 ## Display and event completion
 
 The [fixed-mode KMS layer](bcmv3d-kms.md) adds a primary plane, CRTC, TMDS
-encoder and HDMI-A connector to the same DRM device. The explicit
-`WSDISPLAY_BOOTFB_HANDOFF` profile binds the existing native HVS/PV0 owners
+encoder and HDMI-A connector to the same DRM device. The
+[display trial configuration](../../../../../arch/arm/broadcom/docs/bcm2712-display-contract.md#display-trial-configuration) binds the existing native HVS/PV0 owners
 after the boot console handoff. Ordinary profiles do not select that display
 ownership path.
 

@@ -79,7 +79,6 @@ SMBIOS strings are not used as a gate.
 
 A console-only diagnostic kernel adds `options CIXP1_UART2_CONSOLE` to `EMBER64`.
 Build it with the [GCC16 kernel procedure](../../../../ember/development/kernel.md).
-It includes `EMBER64` and adds only `CIXP1_UART2_CONSOLE`.
 It adds no early console, active VPU probe or SCMI service.
 Generic `EMBER64` keeps its existing console selection.
 
