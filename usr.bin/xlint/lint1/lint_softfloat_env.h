@@ -25,6 +25,10 @@
 #endif
 #endif
 #define LIT64(a) a##LL
+/* softfloat.c marks unused locals; glibc's <sys/cdefs.h> has no __unused. */
+#ifndef __unused
+#define __unused __attribute__((__unused__))
+#endif
 #define INLINE static inline
 #define FP_RN 0
 #define FP_RZ 1
