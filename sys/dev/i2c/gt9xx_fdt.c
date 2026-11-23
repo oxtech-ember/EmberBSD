@@ -17,13 +17,21 @@ static const struct device_compatible_entry a133_compat[] = {
 	{ .compat = "allwinner,a133" },
 	DEVICE_COMPAT_EOL
 };
+static bool
+gt9xx_ys_m33_wiring(int phandle)
+{
+	return of_hasprop(phandle, "ember,ys-m33-reset") &&
+	    of_compatible_match(OF_finddevice("/"), a133_compat) != 0;
+}
+
 int
 gt9xx_fdt_match(struct i2c_attach_args *ia, cfdata_t cf)
 {
 	int result;
 
 	if (ia->ia_cookietype == I2C_COOKIE_OF && ia->ia_addr == 0x5d &&
-	    iic_use_direct_match(ia, cf, gt9xx_compat, &result))
+	    iic_use_direct_match(ia, cf, gt9xx_compat, &result) &&
+	    result != 0 && gt9xx_ys_m33_wiring(ia->ia_cookie))
 		return (result);
 	return (0);
 }
@@ -33,8 +41,7 @@ gt9xx_fdt_prepare(struct i2c_attach_args *ia)
 	int phandle = ia->ia_cookie, error;
 	bus_space_tag_t bst;
 
-	if (!of_hasprop(phandle, "ember,ys-m33-reset") ||
-	    !of_compatible_match(OF_finddevice("/"), a133_compat))
+	if (!gt9xx_ys_m33_wiring(phandle))
 		return (EINVAL);
 	bst = fdtbus_bus_tag_create(phandle, 0);
 	error = gt9xx_ys_m33_reset(bst);

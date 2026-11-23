@@ -269,7 +269,7 @@ static int
 iic_search(device_t parent, cfdata_t cf, const int *ldesc, void *aux)
 {
 	struct iic_softc *sc = device_private(parent);
-	struct i2c_attach_args ia;
+	struct i2c_attach_args ia = { 0 };
 	int (*probe_func)(struct iic_softc *,
 			  const struct i2c_attach_args *, int);
 	prop_string_t pstr;
@@ -308,11 +308,6 @@ iic_search(device_t parent, cfdata_t cf, const int *ldesc, void *aux)
 	}
 
 	ia.ia_tag = sc->sc_tag;
-
-	ia.ia_name = NULL;
-	ia.ia_ncompat = 0;
-	ia.ia_compat = NULL;
-	ia.ia_prop = NULL;
 
 	if (cf->cf_loc[IICCF_ADDR] == IICCF_ADDR_DEFAULT) {
 		/*

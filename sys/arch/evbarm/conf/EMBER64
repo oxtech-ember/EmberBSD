@@ -1,6 +1,5 @@
 # Origin: EmberBSD BCM2712 V3D observation, 2026-10-09.
-#	Our aarch64 kernel: NetBSD 11.0 GENERIC64 plus what the Raspberry Pi 5
-#	needs (patches in ../patches).
+#	General AArch64 kernel with the EmberBSD device attachments.
 #
 #	vmt(4) is left out: its VMware backdoor probe traps under QEMU's HVF
 #	and panics the kernel before the disk is found, and none of our
@@ -56,3 +55,12 @@ fusbtc*		at iic?			# FUSB302 USB Type-C controller
 
 # Serial Bluetooth transport; UART description and firmware are board-specific.
 pseudo-device	btuart
+
+# Touchscreen, volume keys and audio on supported tablets.
+gt9xx*		at iic?
+wsmouse*	at gt9xx? mux 1
+sunxilradc*	at fdt?
+a133codec*	at fdt?
+
+# RTL8723DS attaches only to a matching SDIO function and host profile.
+rtwsdio*	at sdmmc?
