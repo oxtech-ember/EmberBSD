@@ -204,11 +204,13 @@ Do not reapply the historical patch to current `main`.
 
 Use the agreed external media or disposable VM first.
 Define a known working kernel and recovery path before writing a device.
-On a running efiboot AArch64 board, `ember/install-kernel.sh BUILD_OUTPUT [CONFIG]`
-installs the kernel and modules of one `build-kernel.sh` output in place of
-the kernel of the default `boot.cfg` entry. The first replaced kernel stays as
-`netbsd.recovery`. `boot.cfg` keeps its other settings and gets three entries:
-the new kernel, the recovery kernel in single-user mode and a command prompt. Its test is
+On a running efiboot AArch64 board with one GPT disk,
+`ember/install-kernel.sh BUILD_OUTPUT [CONFIG]` replaces the file that the
+default `boot.cfg` entry boots, as efiboot finds it. That file must be the
+running kernel; it stays as `netbsd.recovery` on the same partition, and
+`boot.cfg` gets the new kernel, the recovery kernel in single-user mode and a
+command prompt. Otherwise the script stops without a change. Reboot into the
+new kernel before the next installation. Its test is
 `sh ember/tests/install-kernel.sh`.
 Record console output, memory, storage/network checks, workload and duration.
 Identify the running kernel and matching module hashes.
