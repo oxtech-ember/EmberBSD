@@ -59,7 +59,7 @@ test_golden(void)
 	struct hidmt_assembler as = {0};
 	uint8_t in[64];
 	uint64_t now = 1000000;
-	unsigned i, k, ra;
+	unsigned i, k, ra, expected_button = 0;
 	int rb;
 
 	CHECK(hidmt_parse(ptp_descriptor, sizeof(ptp_descriptor), &a) == 0);
@@ -120,11 +120,14 @@ test_golden(void)
 		hidmt_pointer_update(&pa, &fa, now, k, &ma);
 		old_hidmt_pointer_update(&pb, &fb, now, k, &mb);
 		hidmt_pointer_update_scroll(&pc, &fa, now, k, &off, &mc);
+		/* Use the old clickfinger choice at switch-down, until up. */
+		if (fa.buttons == 0 || expected_button == 0)
+			expected_button = mb.buttons;
 		CHECK(ma.dx == mb.dx && ma.dy == mb.dy &&
-		    ma.buttons == mb.buttons && ma.tap == mb.tap &&
+		    ma.buttons == expected_button && ma.tap == mb.tap &&
 		    ma.tap_button == mb.tap_button);
 		CHECK(mc.dx == mb.dx && mc.dy == mb.dy &&
-		    mc.buttons == mb.buttons && mc.tap == mb.tap &&
+		    mc.buttons == expected_button && mc.tap == mb.tap &&
 		    mc.tap_button == mb.tap_button);
 		CHECK(ma.scroll_x == 0 && ma.scroll_y == 0 &&
 		    mc.scroll_x == 0 && mc.scroll_y == 0);

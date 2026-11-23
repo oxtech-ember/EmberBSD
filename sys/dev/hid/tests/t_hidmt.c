@@ -271,11 +271,41 @@ main(void)
 	frame.contacts[1] = (struct hidmt_contact){1200, 800, 3};
 	hidmt_pointer_update(&ptr, &frame, 8200000, HIDMT_TAP_LEFT | HIDMT_TAP_RIGHT, &motion);
 	assert(motion.buttons == 4 && !motion.tap);
+	/* Lifting contacts before the switch opens must not press left. */
+	frame.ncontacts = 1;
+	hidmt_pointer_update(&ptr, &frame, 8201000, 0, &motion);
+	assert(motion.buttons == 4 && !motion.tap);
+	frame.ncontacts = 0;
+	hidmt_pointer_update(&ptr, &frame, 8202000, 0, &motion);
+	assert(motion.buttons == 4);
+	hidmt_pointer_update(&ptr, &frame, 8203000, 0, &motion);
+	assert(motion.buttons == 4 && hidmt_holds(&ptr));
+	frame.buttons = 0;
+	hidmt_pointer_update(&ptr, &frame, 8204000, 0, &motion);
+	assert(motion.buttons == 0 && !motion.tap);
+	/* MSI resize: the second contact lands during a held left click. */
+	frame.ncontacts = 1; frame.buttons = 1;
+	hidmt_pointer_update(&ptr, &frame, 8205000, HIDMT_TAP_DRAG, &motion);
+	assert(motion.buttons == 1);
+	frame.ncontacts = 2;
+	hidmt_pointer_update(&ptr, &frame, 8206000, HIDMT_TAP_DRAG, &motion);
+	assert(motion.buttons == 1);
+	frame.buttons = 0;
+	hidmt_pointer_update(&ptr, &frame, 8207000, HIDMT_TAP_DRAG, &motion);
+	assert(motion.buttons == 0 && !motion.tap);
 	/* Three contacts with a physical click are middle. */
 	frame.ncontacts = 3; frame.buttons = 1;
 	frame.contacts[2] = (struct hidmt_contact){1400, 800, 4};
 	hidmt_pointer_update(&ptr, &frame, 8210000, HIDMT_TAP_LEFT | HIDMT_TAP_RIGHT, &motion);
 	assert(motion.buttons == 2 && !motion.tap);
+	/* A reset must release the held button and forget its mapping. */
+	struct hidmt_gstate gs = {0};
+	assert(hidmt_holds(&ptr));
+	(void)hidmt_release(&ptr, &gs);
+	assert(!hidmt_holds(&ptr));
+	frame.ncontacts = 2;
+	hidmt_pointer_update(&ptr, &frame, 8220000, 0, &motion);
+	assert(motion.buttons == 4);
 	/* Right-only: one-finger tap must not synthesize left click. */
 	frame.ncontacts = 1; frame.buttons = 0; frame.cancel_tap = false;
 	frame.contacts[0] = (struct hidmt_contact){1000, 800, 2};

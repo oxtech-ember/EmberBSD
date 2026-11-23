@@ -369,7 +369,7 @@ hidmt_assemble(const struct hidmt_config *cfg, struct hidmt_assembler *as,
 
 static void
 hidmt_pointer_core(struct hidmt_pointer *ptr, const struct hidmt_frame *frame,
-    uint64_t now, unsigned tap_flags, struct hidmt_motion *motion)
+    uint64_t now, unsigned tap_flags, unsigned click, struct hidmt_motion *motion)
 {
 	const struct hidmt_contact *contact;
 	unsigned i, tap_fingers, fingers, allowed;
@@ -381,16 +381,7 @@ hidmt_pointer_core(struct hidmt_pointer *ptr, const struct hidmt_frame *frame,
 	want_left = (tap_flags & HIDMT_TAP_LEFT) != 0;
 	want_right = (tap_flags & HIDMT_TAP_RIGHT) != 0;
 	memset(motion, 0, sizeof(*motion));
-	/*
-	 * Clickfinger: a physical click with two contacts is right, with
-	 * three contacts is middle. One contact keeps the hardware button.
-	 * This path does not depend on tap synthesis flags.
-	 */
-	motion->buttons = frame->buttons;
-	if (frame->buttons && frame->ncontacts >= 3)
-		motion->buttons = 2u;
-	else if (frame->buttons && frame->ncontacts >= 2)
-		motion->buttons = 4u;
+	motion->buttons = click;
 	/* A held tap keeps the left button down (HIDMT_TAP_DRAG). */
 	if (drag_held)
 		motion->buttons |= 1u;
@@ -399,11 +390,9 @@ hidmt_pointer_core(struct hidmt_pointer *ptr, const struct hidmt_frame *frame,
 	if (dragging && frame->ncontacts >= 2) {
 		/*
 		 * A second finger during a drag means scroll or a two-finger
-		 * tap: release the left button and end the drag.  With two
-		 * or more contacts a physical click is right or middle
-		 * (clickfinger), so bit 0 can only come from the drag.
+		 * tap: end the synthetic drag, preserving a physical click.
 		 */
-		motion->buttons &= ~1u;
+		motion->buttons = click;
 		ptr->drag_held = ptr->dragging = false;
 		ptr->drag_deadline = 0;
 	}
@@ -421,7 +410,7 @@ hidmt_pointer_core(struct hidmt_pointer *ptr, const struct hidmt_frame *frame,
 			 * short still touch was the second tap of a double
 			 * tap, so add one more click after the release.
 			 */
-			if ((frame->buttons & 1u) == 0)
+			if ((click & 1u) == 0)
 				motion->buttons &= ~1u;
 			motion->click_after = motion->tap &&
 			    motion->tap_button == 1u;
@@ -459,7 +448,7 @@ hidmt_pointer_core(struct hidmt_pointer *ptr, const struct hidmt_frame *frame,
 			    !frame->buttons) {
 				ptr->drag_held = ptr->dragging = true;
 				ptr->drag_deadline = drag_deadline;
-			} else if ((frame->buttons & 1u) == 0)
+			} else if ((click & 1u) == 0)
 				motion->buttons &= ~1u;	/* came too late */
 		}
 		/*
@@ -537,12 +526,31 @@ hidmt_pointer_base(struct hidmt_pointer *ptr, const struct hidmt_frame *frame,
 	const bool blocked = ptr->drag3_blocked;
 	const int ax = ptr->drag3_x, ay = ptr->drag3_y;
 	const uint64_t armed_at = ptr->drag3_armed_at;
-	unsigned ids[3], i;
+	unsigned ids[3], i, click;
 	int64_t cx, cy;
 	bool same;
 
 	memcpy(ids, ptr->drag3_ids, sizeof(ids));
-	hidmt_pointer_core(ptr, frame, now, tap_flags, motion);
+	/*
+	 * Classify the mechanical press once. Contacts may arrive or lift
+	 * separately while the same switch stays closed.
+	 */
+	click = ptr->click_button;
+	if (!frame->buttons)
+		click = 0;
+	else if (click == 0) {
+		if (drag3)
+			click = 1u;
+		else if (frame->ncontacts >= 3)
+			click = 2u;
+		else if (frame->ncontacts == 2)
+			click = 4u;
+		else
+			click = frame->buttons;
+	}
+	hidmt_pointer_core(ptr, frame, now, tap_flags, click, motion);
+	/* The contact tracker can reset while the switch is still closed. */
+	ptr->click_button = click;
 	ptr->drag3 = ptr->drag3_armed = false;
 	ptr->drag3_blocked = blocked && frame->ncontacts != 0;
 	if (drag3) {
@@ -550,7 +558,7 @@ hidmt_pointer_base(struct hidmt_pointer *ptr, const struct hidmt_frame *frame,
 		motion->tap_button = 0;
 		if (frame->ncontacts == 0) {
 			/* Last lift: up, unless the physical button is down. */
-			if ((frame->buttons & 1u) == 0)
+			if ((click & 1u) == 0)
 				motion->buttons &= ~1u;
 			return;
 		}
@@ -969,11 +977,11 @@ hidmt_live(const struct hidmt_pointer *ptr, const struct hidmt_assembler *as,
 	    as->pending || gs->latched || gs->started;
 }
 
-/* Does the policy hold the left button (tap and drag, three-finger drag)? */
+/* A reset must release either a physical or a synthesized press. */
 bool
 hidmt_holds(const struct hidmt_pointer *ptr)
 {
-	return ptr->drag_held || ptr->drag3;
+	return ptr->click_button != 0 || ptr->drag_held || ptr->drag3;
 }
 
 /*

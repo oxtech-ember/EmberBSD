@@ -34,6 +34,7 @@ struct hidmt_frame {
 };
 
 struct hidmt_pointer {
+	unsigned click_button;	/* clickfinger choice until switch release */
 	bool active, tap_candidate;
 	unsigned id, tap_fingers;
 	int x, y, startx, starty, remx, remy;

@@ -453,7 +453,7 @@ imt_gesture_emit(struct imt_softc *sc, unsigned mask, unsigned fingers,
 static bool
 imt_tmo_wanted(struct imt_softc *sc)
 {
-	if (hidmt_holds(&sc->sc_pointer))
+	if (sc->sc_pointer.drag_held || sc->sc_pointer.drag3)
 		return true;
 	if (sc->sc_hybrid == 0 && sc->sc_gestures == 0 && !sc->sc_g_need_cancel)
 		return false;
