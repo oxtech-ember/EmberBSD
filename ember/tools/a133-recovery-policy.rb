@@ -90,11 +90,27 @@ module A133Recovery
       values=A133Env.decode(prefix).fetch(:entries).to_h
       prepared=A133Recovery.trial(@data[:original_prefix])
       expected=A133Env.decode(prepared.fetch(:rearmed_env)).fetch(:entries).to_h
+      # Older rearmed tablets have the same recovery route without the native helper.
+      legacy = !values.key?('ember_native_args')
+      if legacy
+        expected.delete('ember_native_args')
+        expected.delete('ember_native_root')
+        expected.delete('ember_entry_fdt') unless @profile == 'direct'
+      end
       raise Invalid,'native_environment_not_rearmed',cause:nil unless consumed_values_match?(values,expected)
-      factory=A133Env.decode(@data[:original_prefix]).fetch(:entries).to_h
-      key=@profile=='direct' ? 'bootcmd' : 'boot_normal'
-      restored=A133Env.patch(prefix,key=>factory.fetch(key))
-      (restored+tail).freeze
+      if legacy
+        # A pending release binds the original format to its normal_env_sha256.
+        key = @profile == 'direct' ? 'bootcmd' : 'boot_normal'
+        factory = A133Env.decode(@data[:original_prefix]).fetch(:entries).to_h
+        return (A133Env.patch(prefix, key => factory.fetch(key)) + tail).freeze
+      end
+      selector = if @profile == 'direct'
+        {'bootcmd' => "run setargs_nand #{NATIVE_ROOT_STEPS} ember_trial_load ember_trial_boot"}
+      else
+        {'boot_normal' => "run #{NATIVE_ROOT_STEPS} boot_android"}
+      end
+      normal = A133Env.patch(prefix, selector)
+      (normal+tail).freeze
     rescue A133Env::Invalid
       raise Invalid,'invalid_native_environment',cause:nil
     end

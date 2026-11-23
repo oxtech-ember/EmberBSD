@@ -17,9 +17,14 @@ module A133Recovery
     'ember_restore_normal' => 'setenv hook; saveenv',
     'ember_recovery_once' => 'fdt addr ${fdtcontroladdr}; fdt set /soc@03000000/usbc0@0 usb_port_type <0>; run boot_recovery'
   }.freeze
+  CONTROL_FDT = 'fdt addr ${fdtcontroladdr}'.freeze
+  NATIVE_ROOT_STEPS = 'ember_native_args ember_entry_fdt ember_native_root'.freeze
   TRIAL_HELPERS = {
     'ember_trial_rearm' => 'setenv boot_normal run ember_recovery_once',
-    'ember_trial_save' => 'saveenv'
+    'ember_trial_save' => 'saveenv',
+    'ember_native_args' => 'setenv bootargs root=wedge:UDISK ${bootargs}',
+    'ember_entry_fdt' => CONTROL_FDT,
+    'ember_native_root' => 'fdt set /chosen netbsd,gpt-label UDISK'
   }.transform_values(&:freeze).freeze
   DIRECT_PROFILE = {
     'bootcmd'=>'run setargs_nand boot_normal',
@@ -35,7 +40,7 @@ module A133Recovery
   DIRECT_HELPERS = {
     'ember_entry_restore'=>'setenv bootcmd run setargs_nand boot_normal',
     'ember_entry_save'=>'saveenv',
-    'ember_entry_fdt'=>'fdt addr ${fdtcontroladdr}',
+    'ember_entry_fdt'=>CONTROL_FDT,
     'ember_entry_usb'=>'fdt set /soc@03000000/usbc0@0 usb_port_type <0>'
   }.transform_values(&:freeze).freeze
   PROTECTION_UPDATES = {
@@ -139,8 +144,8 @@ module A133Recovery
     raise Invalid, 'trial_hook_already_present', cause: nil if helpers.keys.any? { |key| vars.key?(key) }
     protected = protect(original)
     rearmed = A133Env.patch(protected, helpers)
-    boot = direct ? {'bootcmd' => 'run ember_trial_rearm ember_trial_save setargs_nand ember_trial_load ember_trial_boot'} :
-      {'boot_normal' => 'run ember_trial_rearm ember_trial_save boot_android'}
+    boot = direct ? {'bootcmd' => "run ember_trial_rearm ember_trial_save setargs_nand #{NATIVE_ROOT_STEPS} ember_trial_load ember_trial_boot"} :
+      {'boot_normal' => "run ember_trial_rearm ember_trial_save #{NATIVE_ROOT_STEPS} boot_android"}
     candidate = A133Env.patch(rearmed, boot)
     changed = helpers.keys + (direct ? DIRECT_PROTECTION_UPDATES.keys : PROTECTION_UPDATES.keys)
     restored = A133Env.patch(candidate, changed.to_h { |key| [key, vars.fetch(key, '')] })

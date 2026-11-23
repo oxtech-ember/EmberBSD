@@ -54,10 +54,22 @@ end
   protected_value=direct ? 'run setargs_nand ember_recovery_once' : 'run ember_recovery_once'
   values=factory.merge(key=>protected_value).merge(helpers)
   current=encode.call(values,pad,leading)+tail
+  helper={'ember_native_args'=>'setenv bootargs root=wedge:UDISK ${bootargs}',
+          'ember_entry_fdt'=>'fdt addr ${fdtcontroladdr}',
+          'ember_native_root'=>'fdt set /chosen netbsd,gpt-label UDISK'}
+  selector=direct ? 'run setargs_nand ember_native_args ember_entry_fdt ember_native_root ember_trial_load ember_trial_boot' : 'run ember_native_args ember_entry_fdt ember_native_root boot_android'
+  released=values.merge(key=>selector).merge(helper)
   expected=encode.call(values.merge(key=>factory.fetch(key)),pad,leading)+tail
   before=current.dup
   result=policy.normal_boot_env(current)
   abort 'FAIL: wrong bytes, tail, immutability or changed input' unless result==expected && result.frozen? && current==before
+  new_rearmed=encode.call(values.merge(helper),pad,leading)+tail
+  helper.each_key do |key|
+    changed=values.merge(helper).merge(key=>'run foreign')
+    reject.call(policy,encode.call(changed,pad,leading)+tail,'native_environment_not_rearmed')
+  end
+  abort 'FAIL: native root selection differs after upgrade' unless policy.normal_boot_env(new_rearmed)==encode.call(released,pad,leading)+tail
+  reject.call(policy,encode.call(values.merge('ember_native_args'=>'run foreign'),pad,leading)+tail,'native_environment_not_rearmed')
   current.replace('changed caller input')
   abort 'FAIL: result aliases caller input' unless result==expected
   checks+=1

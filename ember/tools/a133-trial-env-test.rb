@@ -25,20 +25,23 @@ end
 helpers={
   'ember_recovery_once'=>'fdt addr ${fdtcontroladdr}; fdt set /soc@03000000/usbc0@0 usb_port_type <0>; run boot_recovery',
   'ember_trial_rearm'=>'setenv boot_normal run ember_recovery_once',
-  'ember_trial_save'=>'saveenv'
+  'ember_trial_save'=>'saveenv',
+  'ember_native_args'=>'setenv bootargs root=wedge:UDISK ${bootargs}',
+  'ember_entry_fdt'=>'fdt addr ${fdtcontroladdr}',
+  'ember_native_root'=>'fdt set /chosen netbsd,gpt-label UDISK'
 }
 checks=0
 [0,255].product([true,false]).each do |pad,leading|
   original=encode.call(vars,pad,leading)
   before=original.dup
   result=A133Recovery.trial(original)
-  trial=encode.call(vars.merge('boot_normal'=>'run ember_trial_rearm ember_trial_save boot_android').merge(helpers),pad,leading)
+  trial=encode.call(vars.merge('boot_normal'=>'run ember_trial_rearm ember_trial_save ember_native_args ember_entry_fdt ember_native_root boot_android').merge(helpers),pad,leading)
   rearmed=encode.call(vars.merge('boot_normal'=>'run ember_recovery_once').merge(helpers),pad,leading)
   abort 'FAIL: trial bytes, metadata or input preservation' unless result.keys.sort==[:installation_ready,:rearmed_env,:trial_env] &&
     result[:trial_env]==trial && result[:rearmed_env]==rearmed && result[:installation_ready]==false && original==before
   abort 'FAIL: mutable prepared bytes' unless result.frozen? && result[:trial_env].frozen? && result[:rearmed_env].frozen?
   recovered=A133Env.patch(result[:rearmed_env],{'boot_normal'=>vars['boot_normal'],
-    'ember_recovery_once'=>'','ember_trial_rearm'=>'','ember_trial_save'=>''})
+    'ember_recovery_once'=>'','ember_trial_rearm'=>'','ember_trial_save'=>'','ember_native_args'=>'','ember_entry_fdt'=>'','ember_native_root'=>''})
   abort 'FAIL: trial is not exactly reversible' unless recovered==before
   original.replace('changed caller input')
   abort 'FAIL: caller owns prepared bytes' unless result[:trial_env]==trial && result[:rearmed_env]==rearmed
@@ -53,7 +56,7 @@ reject=lambda do |input,reason|
   end
   checks+=1
 end
-%w[ember_trial_rearm ember_trial_save].each do |name|
+%w[ember_trial_rearm ember_trial_save ember_native_args ember_entry_fdt ember_native_root].each do |name|
   ['', 'run foreign'].each { |value| reject.call(encode.call(vars.merge(name=>value)),'trial_hook_already_present') }
 end
 %w[hook ember_restore_normal ember_recovery_once].each do |name|

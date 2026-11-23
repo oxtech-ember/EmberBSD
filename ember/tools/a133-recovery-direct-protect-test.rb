@@ -34,6 +34,8 @@ recovery = {
 trial_helpers = {
   'ember_trial_rearm' => 'setenv bootcmd run setargs_nand ember_recovery_once',
   'ember_trial_save' => 'saveenv',
+  'ember_native_args'=>'setenv bootargs root=wedge:UDISK ${bootargs}',
+  'ember_native_root'=>'fdt set /chosen netbsd,gpt-label UDISK',
   'ember_trial_load' => 'sunxi_flash read 45000000 boot',
   'ember_trial_boot' => 'bootm 45000000'
 }
@@ -47,7 +49,7 @@ checks = 0
     protected == encode(protected_vars, pad, leading) && original == before
   expected_rearmed = protected_vars.merge(trial_helpers)
   expected_trial = expected_rearmed.merge('bootcmd' =>
-    'run ember_trial_rearm ember_trial_save setargs_nand ember_trial_load ember_trial_boot')
+    'run ember_trial_rearm ember_trial_save setargs_nand ember_native_args ember_entry_fdt ember_native_root ember_trial_load ember_trial_boot')
   result = A133Recovery.trial(original)
   abort 'FAIL: direct trial/rearmed bytes' unless result == {
     trial_env: encode(expected_trial, pad, leading),

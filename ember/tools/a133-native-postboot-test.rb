@@ -76,11 +76,34 @@ prepare=lambda do |dir|
 end
 Dir.mktmpdir('a133-native-postboot-') do |base|
   # Each test has an independent existing verified cable/image session.
-  %w[accepted refused marker epoch ambiguous images bundle missing marker_resume confirm_resume kernel_context trial_binding].each do |name|
+  %w[accepted refused marker epoch ambiguous images bundle missing marker_resume confirm_resume kernel_context trial_binding legacy_confirming legacy_confirmed].each do |name|
     dir=File.join(base,name);prepare.call(dir)
     src=NativeFixture.new(rearmed,'4'*48)
     params={directory:dir,policy:policy,source:src,nonce:'4'*48,acceptance:-> { src.accept }}
     case name
+    when 'legacy_confirming', 'legacy_confirmed'
+      tail = original.byteslice(A133Env::SIZE..)
+      old_prefix = A133Env.patch(rearmed.byteslice(0,A133Env::SIZE),
+        'ember_native_args' => '', 'ember_native_root' => '')
+      old_normal = A133Env.patch(old_prefix, 'bootcmd' => factory.fetch('bootcmd')) + tail
+      src = NativeFixture.new(old_prefix + tail,'4'*48)
+      params[:source] = src
+      native = {'phase'=>'confirming','host_key_sha256'=>src.host_key_sha256,
+        'kernel_version_sha256'=>src.kernel_version_sha256,'nonce_sha256'=>sha.call('4'*48),
+        'boot_sha256'=>'3'*64,'epoch_sha256'=>sha.call(src.epoch),
+        'before_env_sha256'=>sha.call(old_prefix+tail),'normal_env_sha256'=>sha.call(old_normal)}
+      A133Cable::Journal.open(dir,nil) do |store|
+        store.record_native(native)
+        if name == 'legacy_confirmed'
+          src.marker = nil
+          store.record_native(native.merge('phase'=>'confirmed'))
+        end
+      end
+      result=A133Cable.native_postboot(**params,release:true)
+      abort 'FAIL: legacy journal changed its bound release' unless result[:normal_boot_released] && src.environment==old_normal
+      A133Cable.native_postboot(**params,release:true)
+      abort 'FAIL: legacy release repeated a write' unless src.writes==1
+      checks+=1
     when 'trial_binding'
       trial={'phase'=>'arming','host_key_sha256'=>src.host_key_sha256,
         'kernel_version_sha256'=>src.kernel_version_sha256,'nonce_sha256'=>sha.call('4'*48),

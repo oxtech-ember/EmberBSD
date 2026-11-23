@@ -31,6 +31,7 @@
 
 	chosen {
 		stdout-path = "serial0:115200n8";
+		netbsd,gpt-label = "UDISK";
 	};
 
 	memory@40000000 {
