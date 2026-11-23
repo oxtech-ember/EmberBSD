@@ -32,15 +32,14 @@ task cannot use an existing one, and add its row here.
 | --- | --- | --- |
 | `EMBER64` | General AArch64 system; the default | `GENERIC64` with the passive drivers of the supported boards and the boot splash. `INSECURE` stays until the CEMAC driver is built in. |
 
-A trial or diagnostic configuration for one board belongs in
-[DevBoards](https://github.com/oxtech-ember/EmberBSD-DevBoards), next to the
-evidence of that board, as a configuration `boards/<id>/configs/<scenario>/<NAME>`
-with its manifest. It includes a general-purpose OS configuration and changes
-only the trial options. Build it by its absolute path:
-`ember/build-kernel.sh OUTPUT /path/to/DevBoards/boards/<id>/configs/<scenario>/<NAME>`.
-Its name must not be the name of an OS configuration: the objects and outputs
-are named by it. When the trial is accepted, add its drivers or options to the
-general configuration and remove the trial.
+A trial or diagnostic configuration is a temporary local file. It includes a
+general-purpose configuration and changes only the trial options. Build it by
+its absolute path: `ember/build-kernel.sh OUTPUT /path/to/NAME`. Its name must
+not be the name of an OS configuration: the objects and outputs are named by
+it. When the trial is accepted, add its drivers or options to the
+general-purpose configuration; then remove the trial. Board records in
+[DevBoards](https://github.com/oxtech-ember/EmberBSD-DevBoards) use the
+general-purpose kernel.
 
 ## Reproduce on pinned input
 
