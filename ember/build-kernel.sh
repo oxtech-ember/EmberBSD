@@ -48,6 +48,7 @@ clear_outputs() {
         "$out/sun60i-a733-orangepi-zero3w.dtb" \
         "$out/sun60i-a733-orangepi-zero3w-diagnostic.dtb" \
         "$out/sun50i-a133-ys-m33.dtb"
+    # EMBER64 has the CEMAC driver built in; remove an old module of it too.
     for module in if_cemac_acpi bcm2712btcom bcmexpgpio rp1wmcodec rpi5button; do
         rm -f "$out/$module.kmod"
     done
@@ -252,7 +253,7 @@ run_native_os --capture -- "$dtc" -I dts -O dtb -o "$stage/sun50i-a133-ys-m33.dt
     "$out/a133-ys-m33.dts" 2> "$out/a133-ys-m33-dtb.log"
 run_native_check python "$out/dtb-modes.log" \
     "$src/ember/tools/a733-boot-modes-contract.py" "$stage"
-for module in if_cemac_acpi bcm2712btcom bcmexpgpio rp1wmcodec rpi5button; do
+for module in bcm2712btcom bcmexpgpio rp1wmcodec rpi5button; do
     cd "$src/sys/modules/$module"
     run_make_build obj
     run_make_build -j"$jobs" EMBER_KERNEL_CONFIG="$config" \
@@ -268,7 +269,7 @@ selected="EMBER_BYACC_SOURCE=$byacc_source EMBER_HEIMDAL_SOURCE=$heimdal_source"
 [ -z "$zlib_source" ] || selected="$selected EMBER_ZLIB_SOURCE=$zlib_source"
 set -f
 registered=$(cd "$kernel_obj" && run_make -V REPRO_EXTERNAL_SOURCE_VARS $selected)
-for module in if_cemac_acpi bcm2712btcom bcmexpgpio rp1wmcodec rpi5button; do
+for module in bcm2712btcom bcmexpgpio rp1wmcodec rpi5button; do
     registered="$registered $(cd "$src/sys/modules/$module" && run_make -V REPRO_EXTERNAL_SOURCE_VARS \
         EMBER_KERNEL_CONFIG="$config" EMBER_KERNEL_OBJDIR="$kernel_obj" $selected)"
 done

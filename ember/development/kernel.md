@@ -30,7 +30,7 @@ task cannot use an existing one, and add its row here.
 
 | Configuration | Task | Contents |
 | --- | --- | --- |
-| `EMBER64` | General AArch64 system; the default | `GENERIC64` with the passive drivers of the supported boards and the boot splash. `INSECURE` stays until the CEMAC driver is built in. |
+| `EMBER64` | General AArch64 system; the default | `GENERIC64` with the passive drivers of the supported boards and the boot splash. |
 
 ## Extend the kernel
 

@@ -15,11 +15,9 @@ makeoptions	SPLASHSCREEN_IMAGE="${S}/../ember/boot/emberbsd-boot-splash.png"
 
 no vmt0	at cpu0
 
-#	The stand stays at securelevel -1 while the Ethernet driver is being
-#	written: it is loaded and unloaded as a module on a running board,
-#	and a module that panics costs a reboot into this kernel, not a card
-#	taken back to the laptop. Goes when cemac is built in.
-options 	INSECURE
+#	The Cadence GEM Ethernet of the Raspberry Pi 5 and CM5, through RP1
+#	(../patches/cemac-acpi.diff).
+cemac*		at acpi?
 
 #	The BCM2712's power management, reset and watchdog block, which our
 #	firmware describes in ACPI (../firmware/pm-watchdog.diff).

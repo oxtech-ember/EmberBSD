@@ -179,7 +179,7 @@ SCRIPT
 : > "$work/src/tools/Makefile"
 : > "$work/src/share/mk/bsd.own.mk"
 cp "$repo/share/mk/bsd.sys.mk" "$work/src/share/mk/"
-for module in if_cemac_acpi bcm2712btcom bcmexpgpio rp1wmcodec rpi5button; do
+for module in bcm2712btcom bcmexpgpio rp1wmcodec rpi5button; do
     mkdir -p "$work/src/sys/modules/$module"
 done
 cat > "$work/bin/uname" <<'SH'
@@ -739,7 +739,7 @@ grep -q 'injected contract failure: pvr-query-contract.sh' "$work/query.log"
 outputs='netbsd-EMBER64 netbsd-EMBER64.img bcm2837-rpi-zero-2-w.dtb
 sun60i-a733-orangepi-zero4.dtb sun60i-a733-orangepi-zero3w.dtb
 sun60i-a733-orangepi-zero3w-diagnostic.dtb sun50i-a133-ys-m33.dtb
-if_cemac_acpi.kmod bcm2712btcom.kmod bcmexpgpio.kmod rp1wmcodec.kmod rpi5button.kmod'
+bcm2712btcom.kmod bcmexpgpio.kmod rp1wmcodec.kmod rpi5button.kmod'
 export TEST_OUT="$work/a133-dtb-failure"
 mkdir -p "$TEST_OUT"
 for output in netbsd-EMBER64 netbsd-EMBER64.img sun50i-a133-ys-m33.dtb; do

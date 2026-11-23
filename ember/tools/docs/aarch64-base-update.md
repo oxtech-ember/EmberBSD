@@ -67,7 +67,7 @@ headers, after the kernel finishes:
 
 ```sh
 mkdir "$out/board-modules"
-for module in if_cemac_acpi bcm2712btcom rp1wmcodec rpi5button; do
+for module in bcm2712btcom rp1wmcodec rpi5button; do
     "$out/tools/bin/nbmake-evbarm" -C "$src/sys/modules/$module" obj
     "$out/tools/bin/nbmake-evbarm" -C "$src/sys/modules/$module" -j"$jobs" all
     module_obj=$("$out/tools/bin/nbmake-evbarm" \
