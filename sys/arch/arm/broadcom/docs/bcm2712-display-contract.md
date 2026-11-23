@@ -12,7 +12,7 @@ drain, power or shared-MMU/cache exclusion grant.
 
 `BCM2712_DISPLAY_COMPONENTS` links the explicit ICAC descriptor queries, typed
 shared-cache core, MMU4 table encoder and initialization sequencer, and firmware
-display notification. `EMBERV3DRENDER` selects it when `bcmv3d_acpi` is present.
+display notification. `BCM2712_DISPLAY_COMPONENTS` selects it when `bcmv3d_acpi` is present.
 It adds no attachment,
 mailbox transaction or MMIO invocation. Linking these APIs does not grant display
 ownership or enable scanout. `BCM2712_DISPLAY_DDC` remains a separate option.

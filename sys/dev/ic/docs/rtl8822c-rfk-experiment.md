@@ -9,7 +9,7 @@ physical calibration.
 
 ## Controlled boot boundary
 
-Use only the separate `EMBER64_CIX_RFK_NATIVE` kernel profile. Keep the working
+Use only a separate trial configuration with `options RTW88_RFK_EXPERIMENT`. Keep the working
 kernel and the existing default and recovery menus. Stage the kernel without
 changing their selection. Boot the experimental kernel manually in single-user
 mode (`-s`). Do not start network or supplicant services automatically. An
@@ -264,7 +264,7 @@ mailbox retry retention. Focused body-parser tests seed numeric metadata.
 ### Physical boundary
 
 One cold single-user trial of `d8ebd899afea66704277280c70ec8b618863f863`
-used GCC16.2 and `EMBER64_CIX_RFK_NATIVE` on CIX P1 A4/PHECDA Rev A,
+used GCC16.2 and `RTW88_RFK_EXPERIMENT` on CIX P1 A4/PHECDA Rev A,
 with UEFI `BiosV1.5-W20260706-e321056a`, EC 1.15 and both antennas.
 Firmware emitted channel-1 memory-training and DDR BIST failure diagnostics
 before the candidate booted. Their relation to RFK is unknown.

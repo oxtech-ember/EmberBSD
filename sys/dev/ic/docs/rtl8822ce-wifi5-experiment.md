@@ -7,7 +7,7 @@ record how the HT path was introduced.
 
 ## Controlled boot boundary
 
-Build the separate `EMBER64_CIX_WIFI5_DFS64` kernel profile. It sets
+Build a separate trial configuration. It sets
 `RTW88_VHT_EXPERIMENT` and `RTW88_DFS64_EXPERIMENT`; both are compiled out
 when `RTW88_RFK_EXPERIMENT` is set. Keep the working kernel and the default
 and recovery menus. Stage the experimental kernel without changing their

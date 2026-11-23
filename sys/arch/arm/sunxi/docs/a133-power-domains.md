@@ -2,8 +2,8 @@
 
 The native PPU provider owns power requests independently of the GPU driver.
 It does not implement Services, GPU virtual memory, firmware execution or EGL.
-The experimental `EMBER64_A133_GPU` kernel and
-`sun50i-a133-ys-m33-gpu.dts` select this provider explicitly.
+A trial configuration with `options SUNXI_A133_GPU_FDT` and
+`sun50ippu* at fdt?`, with `sun50i-a133-ys-m33-gpu.dts`, selects this provider.
 The ordinary YS-M33 device tree keeps it disabled.
 
 The experimental kernel also selects `SUNXI_A133_GPU_FDT`. The early adapter

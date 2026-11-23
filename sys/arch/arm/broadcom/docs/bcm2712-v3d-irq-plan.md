@@ -1,6 +1,6 @@
 # BCM2712 V3D interrupt contract
 
-The opt-in `BCM2712_V3D_IRQ_PROBE` and `EMBERV3DIRQ` configuration
+The opt-in `BCM2712_V3D_IRQ_PROBE` option, with `BCM2712_V3D_TAKEOVER`,
 test owned TFUC, FLDONE and FRDONE completion through ACPI interrupts.
 They reuse the bounded [TFU](bcm2712-v3d-dma.md) and
 [bin/render](bcm2712-v3d-binrender-plan.md) payloads with exclusive job ownership.
@@ -57,8 +57,7 @@ board (sdhc at acpi0 uses irq 305/306).
 
 ## Scope and design
 
-A separate opt-in `BCM2712_V3D_IRQ_PROBE` and `EMBERV3DIRQ`
-configuration, after a completed takeover, with **no** other V3D probe
+A separate trial configuration with `BCM2712_V3D_IRQ_PROBE`, after a completed takeover, with **no** other V3D probe
 enabled in the same kernel: the experiment owns the job lifecycle end to
 end, because a shared polling probe would race the interrupt handler for
 the same latched status bits. It reuses the two accepted job payloads
@@ -108,5 +107,5 @@ exactly-once delivery, storm detection, remask-on-exit, disestablish on
 every path, and the full job verification. Mutants: missing ack (storm),
 missing remask, wait without timeout, unmask before establish, handler
 that never wakes, ack of bits not handled, and release-after-publication.
-Independent review and a clean `EMBERV3DIRQ` build before installation;
+Independent review and a clean build of that trial kernel before installation;
 the ordinary recovery bundle must still verify.

@@ -246,12 +246,10 @@ for board in orangepi-zero4 orangepi-zero3w orangepi-zero3w-diagnostic; do
     run_native_os --capture -- "$dtc" -I dts -O dtb -o "$stage/sun60i-a733-$board.dtb" \
         "$out/$board.dts" 2> "$out/$board-dtb.log"
 done
-if [ "$config" = EMBER64_A133_WLAN ]; then
-    run_cpp -P -xassembler-with-cpp -I include -I arch/arm64/boot/dts/allwinner \
-        arch/arm64/boot/dts/allwinner/sun50i-a133-ys-m33.dts > "$out/a133-ys-m33.dts"
-    run_native_os --capture -- "$dtc" -I dts -O dtb -o "$stage/sun50i-a133-ys-m33.dtb" \
-        "$out/a133-ys-m33.dts" 2> "$out/a133-ys-m33-dtb.log"
-fi
+run_cpp -P -xassembler-with-cpp -I include -I arch/arm64/boot/dts/allwinner \
+    arch/arm64/boot/dts/allwinner/sun50i-a133-ys-m33.dts > "$out/a133-ys-m33.dts"
+run_native_os --capture -- "$dtc" -I dts -O dtb -o "$stage/sun50i-a133-ys-m33.dtb" \
+    "$out/a133-ys-m33.dts" 2> "$out/a133-ys-m33-dtb.log"
 run_native_check python "$out/dtb-modes.log" \
     "$src/ember/tools/a733-boot-modes-contract.py" "$stage"
 for module in if_cemac_acpi bcm2712btcom bcmexpgpio rp1wmcodec rpi5button; do

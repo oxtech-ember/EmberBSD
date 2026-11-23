@@ -4,7 +4,7 @@ This opt-in probe advances physical V3D identification to exclusive native
 reset ownership. It does not allocate DMA memory, program the MMU, submit
 TFU/CSD/CL work, expose DRM, or establish graphics acceleration.
 The normal `EMBER64` configuration remains a passive, unclaimed observer.
-`EMBERV3D` adds `BCM2712_V3D_TAKEOVER` explicitly.
+A trial configuration adds `BCM2712_V3D_TAKEOVER` explicitly.
 
 ## Design and boundary
 

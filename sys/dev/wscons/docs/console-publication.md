@@ -1,8 +1,8 @@
 # Checked console publication and present-lease drain
 
 `WSDISPLAY_BOOTFB_HANDOFF` is default-off. It selects
-`WSDISPLAY_BOOTFB_DEFER` and the early framebuffer reader hooks. The explicit
-`EMBERV3DCONSOLE` profile enables its joined CPU console transaction. Default
+`WSDISPLAY_BOOTFB_DEFER` and the early framebuffer reader hooks. A trial configuration with
+`WSDISPLAY_BOOTFB_HANDOFF` enables its joined CPU console transaction. Default
 profiles stay unchanged. The exact-lease close and retained serial route are
 source-tested. The separate native owner gates one
 [firmware notification](../../../arch/arm/broadcom/docs/bcm2712-display-handoff.md) after successful CPU close.

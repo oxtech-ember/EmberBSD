@@ -1,7 +1,7 @@
 # Explicit firmware display notification
 
 The BSD helper sends one fixed `NOTIFY_DISPLAY_DONE` property transaction.
-The explicit `EMBERV3DCONSOLE` profile calls it from the same native boot owner
+With `WSDISPLAY_BOOTFB_HANDOFF` and `BCM2712_V3D_RENDER`, the kernel calls it from the same native boot owner
 after successful complete CPU serial close and drain. Default profiles do not
 invoke it. It adds no MMIO or power operation and changes no read-only HVS observer.
 An ACK grants no inherited-state or display ownership. The same selected profile

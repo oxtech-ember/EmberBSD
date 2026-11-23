@@ -1,13 +1,13 @@
 # BCM2712 bounded DMA/TFU design
 
-`EMBERV3DDMA` implements the opt-in translation experiment described by
+`BCM2712_V3D_DMA_PROBE` implements the opt-in translation experiment described by
 the [probe contract](bcm2712-v3d-dma.md). This document records its
 memory layout, synchronization and register constraints.
 
 ## Scope and prerequisites
 
-Use a separate opt-in `BCM2712_V3D_DMA_PROBE` and `EMBERV3DDMA`
-configuration after successful takeover. Reuse the
+Use a separate trial configuration with `BCM2712_V3D_DMA_PROBE`
+after successful takeover. Reuse the
 claimed HUB/CORE mappings and retain masked interrupts. Do not add DRM,
 user-submitted commands, an IRQ handler, frequency changes or reset retries.
 

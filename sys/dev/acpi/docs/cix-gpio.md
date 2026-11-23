@@ -76,10 +76,8 @@ maps mode0 GPIO015/016/017 to S5 GPIO1 local0/1/2. Their header contacts are
 11/13/12. This source mapping does not establish the current mux or electrical
 state. The observer prints raw words without changing their configuration.
 
-[EMBER64_CIXGPIO_OBSERVE](../../../arch/evbarm/conf/EMBER64_CIXGPIO_OBSERVE)
-selects the observer with VPU0 and the UART2 gate. The combined
-[EMBER64_CIX_IO_OBSERVE](../../../arch/evbarm/conf/EMBER64_CIX_IO_OBSERVE)
-adds the two [UART functional-rate requests](cix-platform.md#manual-uart-rate-observations).
+`cixgpioobs* at acpi? flags 0x1` selects the observer, with VPU flags 0 and `CIXP1_UART2_CONSOLE`.
+With `cixscmi` flags 0x100 it adds the two [UART functional-rate requests](cix-platform.md#manual-uart-rate-observations).
 Default EMBER64 and the GPI4 power-button path remain unchanged.
 
 One physical CD8180 trial with source `db0adb0378` reaches the native root
@@ -105,7 +103,7 @@ CC=gcc-16 CFLAGS='-O2 -g -fanalyzer' CIXGPIOOBS_ANALYZE=1 \
 
 The separate [cixgpioin attachment](../cixgpio_inputs_acpi.c)
 provides three fixed S0 inputs in the manual
-[EMBER64_CIXGPIO_INPUT](../../../arch/evbarm/conf/EMBER64_CIXGPIO_INPUT) profile.
+`cixgpioin* at acpi? flags 0x1` attachment.
 It includes the UART2 console gate, sets VPU0, and preserves the default kernel,
 GPI4 power button and read-only observer. No SCMI query is selected.
 One cold boot with source `8a9ae94e2` exposes three pins through native
@@ -153,8 +151,7 @@ CC=gcc-16 CFLAGS='-O2 -g -fanalyzer' CIXGPIOINPUT_ANALYZE=1 \
 
 ## Combined manual peripherals profile
 
-[EMBER64_CIX_PERIPHERALS](../../../arch/evbarm/conf/EMBER64_CIX_PERIPHERALS)
-includes [the native UART1/3 profile](../../../arch/evbarm/dev/docs/cix-uart.md) and adds `cixgpioin` flags1.
+`cixgpioin` flags 1 combines with [the native UART1/3 attachment](../../../arch/evbarm/dev/docs/cix-uart.md).
 Its GPI5 input service has the same policy as the individual input profile.
 DEBUG UART2, the GPI4 power button and VPU0 are retained; SCMI256 supplies only
 the checked UART rate cache. The default kernel and individual profiles remain

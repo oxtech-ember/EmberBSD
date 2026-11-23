@@ -1,7 +1,7 @@
 <!-- Origin: EmberBSD A133 WLAN warm trial, AI-assisted. -->
 # A133 WLAN warm trial
 
-`EMBER64_A133_WLAN_WARM` is an explicit test configuration for the
+`options A133_YS_M33_WLAN_WARM` in a trial configuration selects the
 YS-M33 vendor FDT handoff. It is not a cold-boot or release configuration.
 It requires the bootloader to leave the WLAN power rail and enable signal
 in a usable state. The kernel does not verify that electrical state.

@@ -1,2 +1,0 @@
-# The inherited EMBER64 configuration already attaches rtwce at PCI.
-include "arch/evbarm/conf/EMBER64"

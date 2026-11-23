@@ -1,6 +1,6 @@
 # BCM2712 V3D MMU fault recovery contract
 
-The opt-in `BCM2712_V3D_FAULT_PROBE` and `EMBERV3DFAULT` configuration
+The opt-in `BCM2712_V3D_FAULT_PROBE` option, with `BCM2712_V3D_TAKEOVER`,
 test one invalid-destination TFU fault and one following good job in the same boot.
 The probe requires completed takeover and exclusive ownership of the GPU.
 It retains published allocations until reboot. General recovery remains outside this contract.
@@ -31,8 +31,7 @@ The generation-specific client map uses
 
 ## Scope and design
 
-A separate opt-in `BCM2712_V3D_FAULT_PROBE` and `EMBERV3DFAULT`
-configuration, after a completed takeover and with no other V3D probe
+A separate trial configuration with `BCM2712_V3D_FAULT_PROBE`, after a completed takeover and with no other V3D probe
 enabled. One HUB handler (established first, storm-protected), the proven
 TFU payload, six objects: page table, guarded three-page scratch, actual and alias source
 and destination images (alias entries per the accepted DMA experiment).

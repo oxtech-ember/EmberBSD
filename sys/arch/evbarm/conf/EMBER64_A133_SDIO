@@ -1,3 +1,0 @@
-# Origin: EmberBSD - compile the guarded, read-only YS-M33 SDIO diagnostic.
-include "arch/evbarm/conf/EMBER64_A133_AUDIO"
-rtl8723dsprobe* at sdmmc?

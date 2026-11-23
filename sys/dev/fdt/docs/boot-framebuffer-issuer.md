@@ -1,8 +1,8 @@
 # Cold boot framebuffer defer issuer
 
 `WSDISPLAY_BOOTFB_DEFER` is default-off. It selects
-`WSDISPLAY_EARLYFB_HOOKS`. No default configuration selects it. The explicit `EMBERV3DHDMI` profile
-selects the issuer. `EMBERV3DCONSOLE` additionally selects the CPU serial close, firmware notification and bounded two-pipeline stop.
+`WSDISPLAY_EARLYFB_HOOKS`. No default configuration selects it. A trial configuration with `WSDISPLAY_BOOTFB_DEFER`
+selects the issuer. `WSDISPLAY_BOOTFB_HANDOFF` additionally selects the CPU serial close, firmware notification and bounded two-pipeline stop.
 The issuer alone can defer one actual cold simplefb fallback and issue one opaque
 lease. It does not close console output, drain writers, install a replacement
 console, issue a firmware request or grant MMIO, DMA or display ownership.
@@ -189,7 +189,7 @@ fallback. CLOSED and unknown admitted outcomes retain the opaque owner without
 hardware authority. The same owner then gates one
 [firmware display notification](../../../arch/arm/broadcom/docs/bcm2712-display-handoff.md) on the exact successful
 serial close. Firmware errors retain CLOSED and cannot restore fallback. The
-manual `EMBERV3DCONSOLE` profile selects this path. After successful render
+`WSDISPLAY_BOOTFB_HANDOFF` option selects this path. After successful render
 attachment, its same resident owner can hold clocks and run the
 [bounded two-pipeline stop](../../../arch/arm/broadcom/docs/bcm2712-native-display-quiesce.md). The renderer's opaque
 pointer still grants no display access. After both pipelines stop, that exact

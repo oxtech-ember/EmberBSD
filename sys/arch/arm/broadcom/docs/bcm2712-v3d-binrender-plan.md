@@ -1,6 +1,6 @@
 # BCM2712 bounded bin/render queue contract
 
-`BCM2712_V3D_QUEUE_PROBE` in `bcm2712_v3d_queue.c` and `EMBERV3DQUEUE`
+`BCM2712_V3D_QUEUE_PROBE` in `bcm2712_v3d_queue.c`, with the takeover and DMA options,
 implements one bounded tile clear/store after successful takeover and DMA.
 All register, sequence and packet facts below are pinned to
 Raspberry Pi Linux `43c132e8863c3bff3647033b6a7d2bf87b15501c`
@@ -11,8 +11,7 @@ Raspberry Pi Linux `43c132e8863c3bff3647033b6a7d2bf87b15501c`
 
 ## Scope and prerequisites
 
-A separate opt-in `BCM2712_V3D_QUEUE_PROBE` and `EMBERV3DQUEUE`
-configuration, after a completed takeover, in the same boot as the accepted
+A separate trial configuration with `BCM2712_V3D_QUEUE_PROBE`, after a completed takeover, in the same boot as the accepted
 DMA experiment. The probe performs its own bounded allocations and republishes
 the MMU exactly like the DMA experiment, keeping its bounded MMUC/TLB waits
 and control read-back (same six rules: one segment, 4 KiB alignment, 32-bit
@@ -156,7 +155,7 @@ BCL/RCL written by the GPU, retention after publication, one-shot.
 Mutants: at least missing second invalidate, missing INT_CLR after FLDONE,
 wrong store address/format/stride, missing START_TILE_BINNING, missing
 FLUSH epilogue, release-after-publication. Independent review and a
-complete clean-commit build of `EMBERV3DQUEUE` before any installation;
+complete clean-commit build of that trial kernel before any installation;
 the ordinary CM5 recovery bundle must still verify.
 
 ## Hardware applicability

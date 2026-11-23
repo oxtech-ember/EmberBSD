@@ -282,7 +282,7 @@ host decode remain unqualified.
 
 ## Manual first-frame experiment
 
-[EMBER64_CIXVPU_HEVC_FRAME_PROBE](../../../arch/evbarm/conf/EMBER64_CIXVPU_HEVC_FRAME_PROBE)
+A trial configuration
 is a source-only manual experiment. It inherits the accepted RPC/UART2 profile,
 including SCMI service 128, and selects VPU flags 0xa. The default remains inactive.
 Its complete kernel build, native trial and host decode remain pending. Preserve working
@@ -373,7 +373,7 @@ sustained operation, runtime DMA teardown or the public M2M interface.
 
 ## Manual CPU-only slot probe
 
-[EMBER64_CIXVPU_SLOT_PREPARE_PROBE](../../../arch/evbarm/conf/EMBER64_CIXVPU_SLOT_PREPARE_PROBE)
+A trial configuration
 uses plain EMBER64, manual UART2 console selection and VPU `flags 0x9`.
 It selects no SCMI service. Keep the working default and recovery entries.
 This manual diagnostic passed a full GCC16 kernel build and one physical warm
@@ -411,7 +411,7 @@ It does not qualify device-visible pixels, an encoded frame or a cold/default bo
 
 
 
-[EMBER64_CIXVPU_DMA_PROBE](../../../arch/evbarm/conf/EMBER64_CIXVPU_DMA_PROBE)
+A trial configuration
 includes ordinary EMBER64 and selects VPU `flags 0x4`, without an SCMI service.
 Select it manually and retain the working default and recovery kernels.
 After root mounts, one `config_mountroot` callback calls
@@ -699,18 +699,17 @@ records the limited IRQ observation and an incomplete firmware handshake.
 
 ## Manual firmware handshake trial
 
-[EMBER64_CIXVPU_BOOT_PROBE](../../../arch/evbarm/conf/EMBER64_CIXVPU_BOOT_PROBE)
+A trial configuration
 includes the native diagnostic parent and selects VPU `flags 0x7` with SCMI
 `flags 0x80`. Build it with GCC16. Select its kernel manually and preserve the
 working default and recovery kernels. Qualify the physical resource profile,
 DMA address limits and CPU preparation before this trial.
 
 When the observed firmware loses SPCR, the separate
-[EMBER64_CIXVPU_UART2_BOOT_PROBE](../../../arch/evbarm/conf/EMBER64_CIXVPU_UART2_BOOT_PROBE)
-adds only the [exact-board UART2 console gate](../../../stand/efiboot/docs/cix-spcr.md#manual-kernel-console-profile)
+trial configuration adds only the [exact-board UART2 console gate](../../../stand/efiboot/docs/cix-spcr.md#manual-kernel-console-profile)
 to that boot profile. It does not change the RPC policy or exposure lifetime.
 
-[EMBER64_CIXVPU_RPC_UART2_BOOT_PROBE](../../../arch/evbarm/conf/EMBER64_CIXVPU_RPC_UART2_BOOT_PROBE)
+A trial configuration
 selects the separate fixed RPC policy with VPU `flags 0x8` and SCMI `flags 0x80`.
 It preserves the UART2 console gate and all boot-long exposure rules.
 Its source checks pass, including both exact ALLOCs, fixed RESIZE, notifications
@@ -773,7 +772,7 @@ Complete interrupt behavior remains unqualified.
 
 ## Manual CPU preparation probe
 
-[EMBER64_CIXVPU_PREPARE_PROBE](../../../arch/evbarm/conf/EMBER64_CIXVPU_PREPARE_PROBE)
+A trial configuration
 includes ordinary EMBER64 and selects VPU `flags 0x5`, without an SCMI service.
 Build it with the common GCC16 toolchain. Select its kernel manually and retain
 the working default and recovery kernels.

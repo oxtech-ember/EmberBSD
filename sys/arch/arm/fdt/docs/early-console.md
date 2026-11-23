@@ -18,12 +18,12 @@ The helper cannot diagnose its own MMIO or firmware setup failure.
 
 ## Diagnostic kernel profile
 
-`EMBER64_A733_DIAG` includes `EMBER64` and sets `EARLYCONS=com32`,
+A diagnostic configuration includes `EMBER64` and sets `EARLYCONS=com32`,
 `CONSADDR=0x02500000`, `VERBOSE_INIT_ARM` and `BOOT_ARGS="-s"`.
 It removes `MODULAR` and `MODULAR_DEFAULT_AUTOLOAD`.
 Built-in drivers remain available. External `.kmod` files cannot be loaded.
-Build it with the native `build.sh kernel=EMBER64_A733_DIAG` target and the
-same explicit GCC16 toolchain settings as the normal kernel.
+Build it by its path with `build.sh kernel=` and the same explicit GCC16
+toolchain settings as the normal kernel.
 Use a separate configuration directory under the common kernel object root.
 No module bundle is needed for this diagnostic profile.
 

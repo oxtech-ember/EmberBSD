@@ -42,9 +42,6 @@ Its name must not be the name of an OS configuration: the objects and outputs
 are named by it. When the trial is accepted, add its drivers or options to the
 general configuration and remove the trial.
 
-The other `EMBER*` files in `sys/arch/evbarm/conf/` are trials from before
-this rule. Move each one to DevBoards with the evidence of its board.
-
 ## Reproduce on pinned input
 
 Record the symptom, source revision, configuration and smallest reproducer.
@@ -92,7 +89,7 @@ Keep historical GCC build results separate from Clang build and boot checks.
 
 Inspect the selected builder before choosing a configuration.
 `ember/build-kernel.sh` explicitly selects DTBs and matched modules for each invocation.
-`EMBER64_A133_WLAN` also compiles and publishes the native YS-M33 A133 DTB; its WLAN node remains disabled.
+It also publishes the native YS-M33 A133 DTB; its WLAN node remains disabled.
 This adds a build artifact, not a firmware/loader selection or radio-enable path.
 The wrapper is not an automatic image builder for new boards.
 Each DTS needs build/install integration and an actual firmware or loader selection path.

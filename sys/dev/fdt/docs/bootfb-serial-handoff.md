@@ -1,6 +1,6 @@
 # Joined CPU console and firmware notification contract
 
-The manual `EMBERV3DCONSOLE` kernel profile includes `EMBERV3DHDMI` and adds
+A trial configuration with the render and `WSDISPLAY_BOOTFB_DEFER` options adds
 `WSDISPLAY_BOOTFB_HANDOFF`. The joined boot job holds the serial console, closes
 and drains CPU framebuffer access, then sends one firmware display notification.
 Default profiles stay unchanged. This stage adds no HVS programming, KMS operation

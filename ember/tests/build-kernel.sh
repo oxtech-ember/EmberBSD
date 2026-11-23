@@ -67,10 +67,6 @@ cp "$repo/ember/check-kernel.sh" "$work/src/ember/"
 cp "$repo/ember/tools/kernel-contracts.sh" "$repo/ember/tools/kernel-contracts-select.py" \
     "$repo/ember/tools/kernel-contracts-inputs.txt" "$work/src/ember/tools/"
 cp "$repo/sys/arch/evbarm/conf/EMBER64" "$work/src/sys/arch/evbarm/conf/"
-cp "$repo/sys/arch/evbarm/conf/EMBER64_A133_AUDIO" "$work/src/sys/arch/evbarm/conf/"
-cp "$repo/sys/arch/evbarm/conf/EMBER64_A133_SDIO" "$work/src/sys/arch/evbarm/conf/"
-cp "$repo/sys/arch/evbarm/conf/EMBER64_A133_WLAN" "$work/src/sys/arch/evbarm/conf/"
-cp "$repo/sys/arch/evbarm/conf/EMBER64_RTW88_PCI" "$work/src/sys/arch/evbarm/conf/"
 mkdir -p "$work/src/sys/external/gpl2/dts/dist/arch/arm64/boot/dts/allwinner"
 : > "$work/src/sys/external/gpl2/dts/dist/arch/arm64/boot/dts/allwinner/sun50i-a133-ys-m33.dts"
 # Model only dispatcher arguments and exit status. These fixtures do not
@@ -635,33 +631,6 @@ if [ -e "$TEST_OUT/.build-lock" ]; then
     echo 'interrupted build left .build-lock' >&2; exit 1
 fi
 test ! -e "$TEST_OUT/netbsd-EMBER64"
-# The A133 WLAN profile adds its DTB; PCI keeps its selected kernel identity.
-export TEST_OUT="$work/wlan"
-"$TEST_SHELL" "$work/src/ember/build-kernel.sh" "$TEST_OUT" EMBER64_A133_WLAN > "$work/run.log" 2>&1
-for output in netbsd-EMBER64_A133_WLAN netbsd-EMBER64_A133_WLAN.img sun50i-a133-ys-m33.dtb; do
-    if [ ! -s "$TEST_OUT/$output" ]; then
-        echo "FAIL: WLAN orchestration did not publish $output" >&2
-        exit 1
-    fi
-done
-grep -q 'kernel=EMBER64_A133_WLAN' "$TEST_LOG"
-grep -q 'sun50i-a133-ys-m33.dts' "$TEST_LOG"
-grep -q 'sun50i-a133-ys-m33.dtb' "$TEST_LOG"
-test -s "$TEST_OUT/if_cemac_acpi.kmod"
-test -s "$TEST_OUT/rpi5button.kmod"
-export TEST_OUT="$work/pci"
-"$TEST_SHELL" "$work/src/ember/build-kernel.sh" "$TEST_OUT" EMBER64_RTW88_PCI > "$work/run.log" 2>&1
-for output in netbsd-EMBER64_RTW88_PCI netbsd-EMBER64_RTW88_PCI.img; do
-    if [ ! -s "$TEST_OUT/$output" ]; then
-        echo "FAIL: PCI orchestration did not publish $output" >&2
-        exit 1
-    fi
-done
-if [ -e "$TEST_OUT/sun50i-a133-ys-m33.dtb" ]; then
-    echo 'FAIL: PCI orchestration published the A133 WLAN DTB' >&2
-    exit 1
-fi
-grep -q 'kernel=EMBER64_RTW88_PCI' "$TEST_LOG"
 # A trial configuration outside the OS is selected by its absolute path.
 mkdir -p "$work/devboards/kernels"
 printf 'include "arch/evbarm/conf/EMBER64"\n' > "$work/devboards/kernels/EMBER64_TRIAL"
@@ -671,13 +640,16 @@ export TEST_OUT="$work/external"
     > "$work/run.log" 2>&1
 test -s "$TEST_OUT/netbsd-EMBER64_TRIAL"
 grep -q "kernel=$work/devboards/kernels/EMBER64_TRIAL" "$TEST_LOG"
-cp "$work/devboards/kernels/EMBER64_TRIAL" "$work/devboards/kernels/EMBER64_RTW88_PCI"
-if "$TEST_SHELL" "$work/src/ember/build-kernel.sh" "$work/clash" "$work/devboards/kernels/EMBER64_RTW88_PCI" \
+# The board DTBs do not depend on the configuration.
+test -s "$TEST_OUT/sun50i-a133-ys-m33.dtb"
+grep -q 'sun50i-a133-ys-m33.dts' "$TEST_LOG"
+cp "$work/devboards/kernels/EMBER64_TRIAL" "$work/devboards/kernels/EMBER64"
+if "$TEST_SHELL" "$work/src/ember/build-kernel.sh" "$work/clash" "$work/devboards/kernels/EMBER64" \
     > "$work/run.log" 2>&1; then
     echo 'FAIL: an external configuration replaced an OS configuration name' >&2
     exit 1
 fi
-grep -q 'has the name of the OS configuration EMBER64_RTW88_PCI' "$work/run.log"
+grep -q 'has the name of the OS configuration EMBER64' "$work/run.log"
 export TEST_OUT="$work/cross"
 # Reuse all objects, but the selected kernel must embed the new build identity.
 printf 'old-source-id\n' > "$TEST_OUT/obj/kernels/EMBER64/vers.c"
@@ -768,16 +740,16 @@ outputs='netbsd-EMBER64 netbsd-EMBER64.img bcm2837-rpi-zero-2-w.dtb
 sun60i-a733-orangepi-zero4.dtb sun60i-a733-orangepi-zero3w.dtb
 sun60i-a733-orangepi-zero3w-diagnostic.dtb sun50i-a133-ys-m33.dtb
 if_cemac_acpi.kmod bcm2712btcom.kmod bcmexpgpio.kmod rp1wmcodec.kmod rpi5button.kmod'
-export TEST_OUT="$work/wlan-failure"
+export TEST_OUT="$work/a133-dtb-failure"
 mkdir -p "$TEST_OUT"
-for output in netbsd-EMBER64_A133_WLAN netbsd-EMBER64_A133_WLAN.img sun50i-a133-ys-m33.dtb; do
+for output in netbsd-EMBER64 netbsd-EMBER64.img sun50i-a133-ys-m33.dtb; do
     printf stale > "$TEST_OUT/$output"
 done
 if FAIL_AT=a133-dtb "$TEST_SHELL" "$work/src/ember/build-kernel.sh" \
-    "$TEST_OUT" EMBER64_A133_WLAN > "$work/run.log" 2>&1; then
+    "$TEST_OUT" EMBER64 > "$work/run.log" 2>&1; then
     echo 'accepted A133 DTB failure' >&2; exit 1
 fi
-for output in netbsd-EMBER64_A133_WLAN netbsd-EMBER64_A133_WLAN.img sun50i-a133-ys-m33.dtb; do
+for output in netbsd-EMBER64 netbsd-EMBER64.img sun50i-a133-ys-m33.dtb; do
     test ! -e "$TEST_OUT/$output"
 done
 test ! -e "$TEST_OUT/.build-lock"

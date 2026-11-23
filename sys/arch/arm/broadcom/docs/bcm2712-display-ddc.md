@@ -11,8 +11,8 @@ change clocks or provide modesetting.
 
 `BCM2712_DISPLAY_DDC` selects the adapter only with `bcmv3d_acpi`.
 Its dependencies are the `brcmstb_i2c`, `i2cexec` and `edid` attributes.
-The ordinary configuration does not select this option. The experimental
-`EMBERV3DRENDER` configuration selects the API. It does not start transfers
+The ordinary configuration does not select this option. A trial
+configuration with `BCM2712_V3D_RENDER` selects the API. It does not start transfers
 or perform automatic MMIO. Load a finite acceptance probe explicitly.
 The core is `sys/dev/i2c/brcmstb_i2c.c`. The adapter and API are
 `bcm2712_display_ddc_acpi.c` and `bcm2712_display_ddc.h` under

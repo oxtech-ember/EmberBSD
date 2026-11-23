@@ -115,14 +115,12 @@ Reports keep helper, framing, firmware, ACK, budget and cleanup results separate
 The separate `cixscmi_acpi` diagnostic binds CIXHA006, UID 0. Its default
 flags 0 mode performs no AML evaluation, claims, mapping or transport access.
 The explicit
-[EMBER64_CIXSCMI_QUERY](../../../arch/evbarm/conf/EMBER64_CIXSCMI_QUERY)
-configuration selects flags 1 and disables deferred VPU provider queries.
+trial configuration selects flags 1 and disables deferred VPU provider queries.
 VPU descriptor validation remains enabled. The normal
 EMBER64 configuration does not select this diagnostic attachment.
 
 The separate
-[EMBER64_CIXSCMI_CLOCK_QUERY](../../../arch/evbarm/conf/EMBER64_CIXSCMI_CLOCK_QUERY)
-configuration selects exact flags 2. It sends only CLOCK PROTOCOL_VERSION,
+trial configuration selects exact flags 2. It sends only CLOCK PROTOCOL_VERSION,
 protocol 0x14, message 0, with no clock ID argument. Flags 3 and all values
 except 0, 1, 2, 4, 8, 16, 32, 64 and 128 are rejected before deferred evaluation, mapping or bus access.
 This diagnostic does not query clock attributes, rates or clock ID 67.
@@ -143,8 +141,7 @@ No result starts another request or changes a clock. The physical receipt below
 qualifies one CLOCK_VERSION exchange; other clock commands need separate gates.
 
 The separate
-[EMBER64_CIXSCMI_CLOCK_ATTRS](../../../arch/evbarm/conf/EMBER64_CIXSCMI_CLOCK_ATTRS)
-configuration selects exact flags 4. It sends only CLOCK PROTOCOL_ATTRIBUTES,
+trial configuration selects exact flags 4. It sends only CLOCK PROTOCOL_ATTRIBUTES,
 protocol 0x14, message 1, without a clock ID. The VPU remains inactive.
 The binding requires exactly four successful data bytes. It reports the raw word
 with separate validity, then rejects reserved bits 31:24 before typed output.
@@ -160,8 +157,7 @@ protocol-attributes exchange. Entity attributes use a separate selector and boot
 notifications and extended-name queries remain unavailable.
 
 The separate
-[EMBER64_CIXSCMI_CLOCK67_ATTRS](../../../arch/evbarm/conf/EMBER64_CIXSCMI_CLOCK67_ATTRS)
-configuration selects exact flags 8. It sends only CLOCK_ATTRIBUTES for ID 67,
+trial configuration selects exact flags 8. It sends only CLOCK_ATTRIBUTES for ID 67,
 protocol 0x14, message 3. The request contains literal ID 67; no returned name
 selects another clock. Success requires the exact Clock 2.0 body of 24 bytes.
 The binding records raw attributes, four little-endian name words and the full
@@ -189,8 +185,7 @@ accept the old schema or change ownership. This uses only the checked local
 reply. It adds no firmware request or mailbox access.
 
 The separate
-[EMBER64_CIXSCMI_CLOCK67_RATE](../../../arch/evbarm/conf/EMBER64_CIXSCMI_CLOCK67_RATE)
-configuration selects exact flags 16. It sends only CLOCK_RATE_GET for ID 67,
+trial configuration selects exact flags 16. It sends only CLOCK_RATE_GET for ID 67,
 protocol 0x14, message 6. A successful body must contain exactly eight bytes.
 Two LE32 words form the full unsigned 64-bit rate in Hertz, low word first.
 Zero and UINT64_MAX are valid numeric replies; no guessed or fallback rate is
@@ -205,8 +200,7 @@ No result sets a rate, enables a clock, clears ACK or starts another query.
 The physical receipt below qualifies one rate read, without clock control.
 
 The separate
-[EMBER64_CIXSCMI_REPEAT_QUERY](../../../arch/evbarm/conf/EMBER64_CIXSCMI_REPEAT_QUERY)
-configuration selects exact flags 32. This experimental manual diagnostic sends
+trial configuration selects exact flags 32. This experimental manual diagnostic sends
 three serial BASE_VERSION requests on one initialized wire and one owned lease.
 The expected request headers are `0x44000`, `0x84000` and `0xc4000`; tokens are
 not reset or reused. Each record retains the helper result, exact-body decode,
@@ -225,8 +219,7 @@ passive. No result changes a clock or VPU resource. The physical receipt below
 qualifies only this fixed three-request cold-boot sequence.
 
 The separate
-[EMBER64_CIXSCMI_MIXED_QUERY](../../../arch/evbarm/conf/EMBER64_CIXSCMI_MIXED_QUERY)
-configuration selects exact flags 64 and keeps the VPU at flags0. One initialized
+trial configuration selects exact flags 64 and keeps the VPU at flags0. One initialized
 wire and lease carry five read-only requests: BASE_VERSION, CLOCK_VERSION,
 CLOCK_PROTOCOL_ATTRIBUTES, CLOCK_PROTOCOL_MESSAGE_ATTRIBUTES for message7, and
 CLOCK_RATE_GET for ID67. Tokens1 through5 produce headers `0x44000`, `0x85000`,
@@ -249,8 +242,7 @@ VPU access or physical mixed-batch acceptance follows from a source result.
 
 ## Manual UART rate observations
 
-[EMBER64_CIXSCMI_UART_RATE_QUERY](../../../arch/evbarm/conf/EMBER64_CIXSCMI_UART_RATE_QUERY)
-selects exact SCMI flags256, VPU0 and the checked UART2 console gate.
+A trial configuration selects exact SCMI flags256, VPU0 and the checked UART2 console gate.
 It queries only functional clock IDs264 and266 with fresh tokens1 and2.
 It shares the checked metadata, exclusive lease, bounded waits and ACK checks.
 An error stops the sequence. A possible publication retains the boot-long lease.
@@ -259,7 +251,7 @@ Exactly eight reply data bytes form each uint64 rate. Zero is raw telemetry,
 not an accepted UART input frequency. Clock67 control and entity queries keep
 their fixed ID rules. Instrument exchange and actual baud require separate
 board tests.
-The optional [IO observation profile](../../../arch/evbarm/conf/EMBER64_CIX_IO_OBSERVE)
+The optional `cixgpioobs* at acpi? flags 0x1` attachment
 adds only the [nonclearing header-mux snapshot](cix-gpio.md#manual-header-observation)
 to that profile. It preserves VPU0, UART2 and the GPI4 button policy.
 
@@ -388,16 +380,14 @@ with the same control restrictions.
 Exact `flags 0x6` selects the [native hardware profile](#manual-native-hardware-profile).
 Other flags are rejected. No mode starts device DMA, executes firmware or
 registers a video device.
-The separate [EMBER64_CIXVPU_PROBE](../../../arch/evbarm/conf/EMBER64_CIXVPU_PROBE)
-configuration selects mode 2. Build it with the common GCC16 toolchain.
+The separate trial configuration selects mode 2. Build it with the common GCC16 toolchain.
 Select its kernel manually and retain the working default and recovery paths.
 The callback reports primary and cleanup errors, ACPI statuses, identity
 validity and released controls. It runs at most once per attachment.
 
 ## Manual native hardware profile
 
-[EMBER64_CIXVPU_PROFILE_PROBE](../../../arch/evbarm/conf/EMBER64_CIXVPU_PROFILE_PROBE)
-includes the native identity profile, preserving SCMI service128 and selecting
+A trial configuration includes the native identity profile, preserving SCMI service128 and selecting
 VPU mode6. Build it with GCC16 and select it manually. Preserve a working default
 and recovery kernel. The profile requires boot context with `cold == 1`.
 It accepts only MEM0 `0x14230000`, MEM1 `0x14240000`, two `0x10000` spans,
@@ -438,8 +428,7 @@ The additional reads request no fresh repair. Electrical rails, clock waveform,
 functional clock271, repair execution and DMA routing retain separate boundaries.
 
 The separate
-[EMBER64_CIXVPU_NATIVE_PROBE](../../../arch/evbarm/conf/EMBER64_CIXVPU_NATIVE_PROBE)
-selects SCMI 128 and VPU 3. It requires one same-root cached SCMI HID/UID match
+trial configuration selects SCMI 128 and VPU 3. It requires one same-root cached SCMI HID/UID match
 and a ready native service. Missing or ambiguous providers fail before power
 or reset control. It keeps the same power, RCSU, main-reset and cleanup sequence.
 An enable error prevents VPU mapping and identity reads. Failed native disable

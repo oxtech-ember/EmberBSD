@@ -1,8 +1,0 @@
-# Origin: EmberBSD A133 combined preserved-WLAN and GE8300 firmware trial.
-# Explicit firmware boot only; no cold WLAN or graphics acceptance.
-include "arch/evbarm/conf/EMBER64_A133_GPU_WARM"
-options PVR_GE8300_EXPERIMENTAL
-options PVR_GE8300_DRM
-sun50ia133gpu* at fdt?
-# Page-flipped scanout on the boot loader's DSI output path.
-sun50ia133drm*	at fdt?

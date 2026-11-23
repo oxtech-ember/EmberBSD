@@ -1,6 +1,6 @@
 # BCM2712 V3D first DMA/TFU experiment
 
-The opt-in `EMBERV3DDMA` configuration implements the bounded
+The opt-in `BCM2712_V3D_DMA_PROBE` option implements the bounded
 [DMA design](bcm2712-v3d-dma-plan.md) after completed
 [takeover](bcm2712-v3d-takeover.md). The probe tests address translation
 and one fixed TFU copy. It is not an application rendering interface.
@@ -63,7 +63,7 @@ The experiment constrains one translated copy through addresses this
 probe owns. It does not establish guard-page isolation, invalid-PTE
 fault recovery, IRQ delivery, exclusion of firmware work, cache
 correctness beyond the synced ranges, Mesa operation or any render
-interface. `EMBERV3DDMA` is an experiment kernel: it is not the
+interface. A kernel with `BCM2712_V3D_DMA_PROBE` is an experiment: it is not the
 ordinary CM5 kernel and must not become one until a real DRM driver
 owns this hardware.
 
@@ -103,7 +103,7 @@ One translated TFU copy does not establish arbitrary buffer formats, concurrent 
    passive observer lines (clock state 1, nonzero rate, `V3D 7.1`).
 2. Verify the recovery bundle from the takeover acceptance still
    matches its recorded SHA256 before installing anything.
-3. Build the complete `EMBERV3DDMA` kernel from a clean commit with
+3. Build a complete trial kernel with `BCM2712_V3D_DMA_PROBE` from a clean commit with
    the cross-build guide; keep the artifacts, contracts log and
    provenance verifications.
 4. Install the experimental kernel next to the ordinary one without

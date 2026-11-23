@@ -103,7 +103,7 @@ remain unknown.
 
 The revised probe (`64cc0863c54885399f7a35f1f2f2cd812ec55e624e0f39f94bfaa1d4053d840f`)
 again found firmware geometry 0 x 0 and no GOP. It restored and chainloaded
-the original loader successfully. The installed EMBERV3DRENDER #11 kernel,
+the original loader successfully. The installed render trial kernel,
 matching modules and depth=32 configuration were unchanged; no framebuffer
 attached. This does not invalidate the separate offscreen V3D acceptance.
 
