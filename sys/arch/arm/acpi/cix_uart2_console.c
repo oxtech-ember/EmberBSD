@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /* Copyright (c) 2026 EmberBSD contributors. */
-/* Origin: original opt-in CIX UART2 applicability gate, AI-assisted. */
+/* Origin: original CIX UART2 console applicability gate, AI-assisted. */
 #include <sys/param.h>
 #include <sys/errno.h>
 #include <sys/sha2.h>
@@ -162,7 +162,6 @@ cix_uart2_console_probe(void)
 	uint64_t address, fadt = 0, dsdt, legacy;
 	uint32_t length, entries;
 	int error;
-	bool present = false;
 
 	address = acpi_md_OsGetRootPointer();
 	error = cix_uart2_map(address, sizeof(prefix), &table);
@@ -202,9 +201,6 @@ cix_uart2_console_probe(void)
 			error = EPROTO;
 			goto root_done;
 		}
-		if (memcmp(header, "SPCR", 4) == 0) {
-			present = true;
-		}
 		if (memcmp(header, "FACP", 4) == 0) {
 			if (fadt != 0) {
 				error = EPROTO;
@@ -213,14 +209,12 @@ cix_uart2_console_probe(void)
 			fadt = address;
 		}
 	}
-	if (!present && fadt == 0)
+	if (fadt == 0)
 		error = ENOENT;
 root_done:
 	acpi_md_OsUnmapMemory(__UNCONST(table), length);
 	if (error != 0)
 		return error;
-	if (present)
-		return EBUSY;
 	/*
 	 * Only Dsdt[40:44] and XDsdt[140:148] are used. Like native ACPICA,
 	 * trust the complete field extent, not the unreliable revision byte.

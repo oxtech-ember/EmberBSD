@@ -1,8 +1,9 @@
 # CIX UART1/3 native rate consumer
 
 `plcom* at acpi? flags 0x1` in a trial configuration selects it. It needs the
-read-only UART rate requests (`cixscmi` flags 0x100) and `CIXP1_UART2_CONSOLE` with VPU flags 0x0, and retains the UART2
-console gate. It enables the closed UART1/3 consumer with `plcom` flags 1.
+read-only UART rate requests (`cixscmi` flags 0x100) with VPU flags 0x0.
+The UART2 console gate (`CIXP1_UART2_CONSOLE`) comes from `EMBER64`.
+It enables the closed UART1/3 consumer with `plcom` flags 1.
 The default profile and generic non-CIX, BCM and RP1 attachments keep their
 existing paths. DEBUG UART2 (ACPI UID 3) bypasses the new rate consumer. CIXCOM0 remains
 outside the closed UART1/3 profile; it is not a generic fallback.

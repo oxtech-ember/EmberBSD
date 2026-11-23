@@ -39,6 +39,10 @@ aicwf*		at sdmmc?
 #	bus mastering and radio stay off until firmware bootstrap is accepted.
 rtwce*		at pci?
 
+#	CIX P1: a known DSDT selects the DEBUG UART2 console, also when SPCR
+#	is absent or describes UART3. Other systems keep the SPCR console.
+options 	CIXP1_UART2_CONSOLE
+
 # CIX P1 codec resources only; power, MMIO, DMA and video stay disabled.
 cixclk*		at acpi?		# Passive checked CCLK provider registration.
 cixreset*	at acpi?		# Passive RST0 mapping; no reset operations.

@@ -76,7 +76,7 @@ maps mode0 GPIO015/016/017 to S5 GPIO1 local0/1/2. Their header contacts are
 11/13/12. This source mapping does not establish the current mux or electrical
 state. The observer prints raw words without changing their configuration.
 
-`cixgpioobs* at acpi? flags 0x1` selects the observer, with VPU flags 0 and `CIXP1_UART2_CONSOLE`.
+`cixgpioobs* at acpi? flags 0x1` selects the observer, with VPU flags 0. The UART2 console gate comes from `EMBER64`.
 With `cixscmi` flags 0x100 it adds the two [UART functional-rate requests](cix-platform.md#manual-uart-rate-observations).
 Default EMBER64 and the GPI4 power-button path remain unchanged.
 

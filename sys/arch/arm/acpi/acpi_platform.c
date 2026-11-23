@@ -271,40 +271,12 @@ acpi_platform_attach_uart(ACPI_TABLE_SPCR *spcr)
         printf_flags(TOCONS|NOTSTAMP, "\033[0J");
 }
 
-#if defined(CIXP1_UART2_CONSOLE) && NPLCOM > 0
-static bool
-acpi_platform_cix_uart2_spcr(const ACPI_TABLE_SPCR *spcr)
-{
-	const uint8_t *bytes = (const uint8_t *)spcr;
-	uint8_t sum = 0;
-
-	/* The accepted revision-2 prefix is 80 bytes, not sizeof(*spcr). */
-	if (le32toh(spcr->Header.Length) != 80)
-		return false;
-	for (unsigned int i = 0; i < 80; i++)
-		sum += bytes[i];
-	return sum == 0 && memcmp(spcr->Header.Signature, "SPCR", 4) == 0 &&
-	    spcr->Header.Revision == 2 &&
-	    spcr->InterfaceType == ACPI_DBG2_ARM_PL011 &&
-	    spcr->SerialPort.SpaceId == ACPI_ADR_SPACE_SYSTEM_MEMORY &&
-	    spcr->SerialPort.BitWidth == 32 && spcr->SerialPort.BitOffset == 0 &&
-	    spcr->SerialPort.AccessWidth == 3 &&
-	    le64toh(spcr->SerialPort.Address) == 0x040d0000 &&
-	    spcr->InterruptType == 8 && le32toh(spcr->Interrupt) == 330 &&
-	    spcr->BaudRate == SPCR_BAUD_115200 && spcr->Parity == 0 &&
-	    spcr->StopBits == 1 && spcr->FlowControl == 0;
-}
-#endif
-
 static void
 acpi_platform_startup(void)
 {
 	ACPI_TABLE_SPCR *spcr;
 	ACPI_TABLE_FADT *fadt;
-	ACPI_STATUS console_status;
-#if defined(CIXP1_UART2_CONSOLE) && NPLCOM > 0
-	int console_profile;
-#endif
+	bool console_selected = false;
 #ifdef MULTIPROCESSOR
 	ACPI_TABLE_MADT *madt;
 #endif
@@ -313,44 +285,32 @@ acpi_platform_startup(void)
 	 * Setup serial console device
 	 */
 #if defined(CIXP1_UART2_CONSOLE) && NPLCOM > 0
-	/* Bound console descriptions before the legacy full-table lookup. */
-	console_profile = cix_uart2_console_probe();
-#endif
-#if defined(CIXP1_UART2_CONSOLE) && NPLCOM > 0
-	if (console_profile != 0 && console_profile != EBUSY)
-		console_status = AE_ERROR;
-	else
-#endif
-		console_status = acpi_table_find(ACPI_SIG_SPCR, (void **)&spcr);
-	if (ACPI_SUCCESS(console_status)) {
-#if defined(CIXP1_UART2_CONSOLE) && NPLCOM > 0
-		/* UART1/UART3 are instrument interfaces in this manual profile. */
-		if (!acpi_platform_cix_uart2_spcr(spcr))
-			printf("CIX UART2 console: SPCR profile rejected\n");
-		else
-#endif
-		acpi_platform_attach_uart(spcr);
-		acpi_table_unmap((ACPI_TABLE_HEADER *)spcr);
-	}
-#if defined(CIXP1_UART2_CONSOLE) && NPLCOM > 0
-	else if (console_status == AE_NOT_FOUND && console_profile == 0) {
+	/*
+	 * A known CIX P1 DSDT has the DEBUG UART2 at a fixed address. Its SPCR
+	 * can describe UART3 or be absent, so do not use SPCR there. On every
+	 * other system the probe only reads firmware tables, and the ordinary
+	 * SPCR selection below is unchanged.
+	 */
+	if (cix_uart2_console_probe() == 0) {
 		int error;
 
 		plcom_console.pi_type = PLCOM_TYPE_PL011;
 		plcom_console.pi_iot = &arm_generic_bs_tag;
 		plcom_console.pi_iobase = 0x040d0000;
-		plcom_console.pi_size = 0x1000;
+		plcom_console.pi_size = PL011COM_UART_SIZE;
 		plcom_console.pi_flags = PLC_FLAG_32BIT_ACCESS;
 		error = plcomcnattach(&plcom_console, 115200, 0,
 		    TTYDEF_CFLAG, -1);
+		console_selected = error == 0;
 		printf("CIX UART2 console: %s (%d)\n",
-		    error == 0 ? "selected" : "profile rejected", error);
-	}
-	else if (console_profile != 0 && console_profile != EBUSY) {
-		printf("CIX UART2 console: profile rejected (%d)\n",
-		    console_profile);
+		    console_selected ? "selected" : "failed", error);
 	}
 #endif
+	if (!console_selected &&
+	    ACPI_SUCCESS(acpi_table_find(ACPI_SIG_SPCR, (void **)&spcr))) {
+		acpi_platform_attach_uart(spcr);
+		acpi_table_unmap((ACPI_TABLE_HEADER *)spcr);
+	}
 
 	/*
 	 * Initialize PSCI 0.2+ if implemented

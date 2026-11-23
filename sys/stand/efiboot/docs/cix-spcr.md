@@ -75,48 +75,50 @@ Another system with identical tables would also match. DBG2 has no interrupt
 field: GSI 330 belongs to this observed profile and is not derived from DBG2.
 SMBIOS strings are not used as a gate.
 
-## Manual kernel console profile
+## Kernel console on a known CIX DSDT
 
-A console-only diagnostic kernel adds `options CIXP1_UART2_CONSOLE` to `EMBER64`.
-Build it with the [GCC16 kernel procedure](../../../../ember/development/kernel.md).
-It adds no early console, active VPU probe or SCMI service.
-Generic `EMBER64` keeps its existing console selection.
+`EMBER64` sets `options CIXP1_UART2_CONSOLE`. With this option, the kernel
+selects DEBUG UART2 at `0x040d0000`, 115200 8N1, on a known CIX P1 DSDT.
+On such a system the kernel ignores SPCR, also when SPCR names another UART.
+The stock SPCR names UART3. Without an RTC battery, the board loses the
+firmware setting `Support SPCR`, and SPCR is absent. The loader command above
+is not necessary for this kernel console. To use another console on a known
+DSDT, build a kernel without the option.
 
-When SPCR is absent, the manual profile can select DEBUG UART2 at
-`0x040d0000`, 115200 8N1. It first validates bounded RSDP, XSDT and FADT
-descriptions through trusted native firmware mappings. FADT must reference
-the exact 81063-byte DSDT with SHA256
-`9e7bf30cb29484910cceec208adf6fa9f1fab4ed54c93236d53bb4119b04260a`.
-The check validates checksums, table limits and agreement between nonzero
-legacy and extended DSDT references. The ordinary SPCR lookup must then
-return `AE_NOT_FOUND`; other lookup errors do not select UART2.
+The kernel first validates bounded RSDP, XSDT and FADT descriptions through
+trusted native firmware mappings. The check validates checksums, table limits
+and agreement between nonzero legacy and extended DSDT references. FADT must
+reference one of these exact DSDTs:
 
-When SPCR exists, this manual profile accepts only the checked 80-byte
-revision-2 PL011 description for UART2, GSI330 and 115200 8N1.
-It rejects the original UART3 description and descriptions for UART1.
-The existing loader shadow matches the accepted UART2 fields.
-Rejected descriptions cause no new UART register access.
+| Firmware | Length | SHA256 |
+| --- | --- | --- |
+| Orange Pi 6 Plus UEFI V1.5 | 81063 | `9e7bf30cb29484910cceec208adf6fa9f1fab4ed54c93236d53bb4119b04260a` |
+| Orange Pi 6 Plus UEFI V1.4 | 77645 | `f2f6dd34f16e3b5f04ddbfeea19b456605840bbf2ef99f8c95593b38877e4239` |
+
+The V1.4 digest is of the DSDT that FADT `X_DSDT` references. An `acpidump`
+export merges SSDT bodies into it and has a different length and digest.
+
+On any other system, the check only reads firmware tables. A failure of the
+check keeps the ordinary SPCR console selection without a message. Examples
+are a different DSDT, RSDP revision 0 and more than 256 XSDT entries. If the
+UART2 attachment fails on a known DSDT, the kernel also uses SPCR.
 
 Selection uses the existing polled PL011 console with frequency zero.
 This preserves firmware divisors but still writes UART control/line registers.
 Later ACPI attachment remains responsible for the native UART and interrupt.
-The profile changes no firmware table, variable, pinmux or clock setting.
+The kernel changes no firmware table, variable, pinmux or clock setting.
 It does not repair NVRAM retention or restart by the power button.
+A new firmware with a different DSDT gets the SPCR console until its DSDT is
+added to `cix_uart2_console.c`.
 
-On the observed board, GCC16 kernel `f84fcb5efef545db3f148035873a99ad23d7fe60`
-passes a manual cold boot with SPCR absent and an automatic cold default boot.
-An automatic warm default boot also passes. The cold default selects UART2,
-hands the console to `plcom2` at 115200 8N1 and reaches a clean FFS root.
-WPA2/CCMP, authenticated SSH/PTY and 2 MiB files each way recover with matching
-SHA256. Association is initially pending and recovers without intervention;
-instant availability is not established. This is one board and one cold default
-cycle. Firmware settings retention, RTC time and S5 wake remain unresolved.
+Earlier opt-in versions of this check also booted on hardware. On UEFI V1.5,
+GCC16 kernel `f84fcb5efef545db3f148035873a99ad23d7fe60` passed a manual cold
+boot with SPCR absent and automatic cold and warm default boots. On UEFI V1.4,
+OS `166d6c2e` passed boots with SPCR absent and with the loader correction.
+Those versions rejected a present uncorrected SPCR; the current version
+selects UART2 instead.
 
-A VPU boot trial with VPU `flags 0x7` can add this console gate. It retains VPU7/SCMI128 and all exposure guards.
-It is a separate manual configuration; the console-only and default profiles
-keep their existing activation policy.
-
-Run its actual-source host contract with GCC16:
+Run the actual-source host contract with GCC16:
 
 ```sh
 CC=gcc-16 CFLAGS='-O2 -g -fanalyzer' CIX_UART2_ANALYZE=1 \
@@ -124,11 +126,13 @@ CC=gcc-16 CFLAGS='-O2 -g -fanalyzer' CIX_UART2_ANALYZE=1 \
 ```
 
 The contract models native mapping, SHA and PL011 services.
-It exercises both option states. CI is configured to run it with sanitizers
+It exercises both option states: a known DSDT with and without SPCR, the
+fallback after a failed UART2 attachment, and the SPCR console on other
+systems after each probe failure. CI is configured to run it with sanitizers
 and Memcheck.
-These checks do not establish a physical cold boot or UART handoff.
+These checks do not establish a physical boot or UART handoff.
 Existing PSCI/MADT discovery still uses its native ACPI routines;
-this profile does not harden the complete ACPI parser.
+this check does not harden the complete ACPI parser.
 
 ## Validation and ownership
 

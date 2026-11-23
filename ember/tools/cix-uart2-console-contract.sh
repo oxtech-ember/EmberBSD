@@ -25,10 +25,6 @@ fi
 ruby - "$src/sys/arch/arm/acpi/acpi_platform.c" "$work/consumer.inc" <<'RUBY'
 source = File.read(ARGV[0])
 parts = []
-guard = source.match(/^static bool\nacpi_platform_cix_uart2_spcr\([^\n]*\)\n\{.*?^\}/m)
-if guard
-  parts << "#if defined(CIXP1_UART2_CONSOLE) && NPLCOM > 0\n#{guard[0]}\n#endif"
-end
 %w[acpi_platform_attach_uart acpi_platform_startup].each do |name|
   body = source.match(/^static void\n#{name}\([^\n]*\)\n\{.*?^\}/m)
   abort "missing complete function #{name}" unless body

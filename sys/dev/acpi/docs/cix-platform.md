@@ -242,7 +242,7 @@ VPU access or physical mixed-batch acceptance follows from a source result.
 
 ## Manual UART rate observations
 
-A trial configuration selects exact SCMI flags256, VPU0 and the checked UART2 console gate.
+A trial configuration selects exact SCMI flags256 and VPU0. The UART2 console gate comes from `EMBER64`.
 It queries only functional clock IDs264 and266 with fresh tokens1 and2.
 It shares the checked metadata, exclusive lease, bounded waits and ACK checks.
 An error stops the sequence. A possible publication retains the boot-long lease.

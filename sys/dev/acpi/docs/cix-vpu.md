@@ -282,7 +282,7 @@ host decode remain unqualified.
 
 ## Manual first-frame experiment
 
-A trial configuration with `CIXP1_UART2_CONSOLE`, SCMI flags 0x80 and VPU flags 0xa
+A trial configuration with SCMI flags 0x80 and VPU flags 0xa on `EMBER64`
 is a source-only manual experiment. The default remains inactive.
 Its complete kernel build, native trial and host decode remain pending. Preserve working
 default and recovery entries. Do not reuse a boot-long held owner.
@@ -373,7 +373,7 @@ sustained operation, runtime DMA teardown or the public M2M interface.
 ## Manual CPU-only slot probe
 
 A trial configuration
-uses plain EMBER64, manual UART2 console selection and VPU `flags 0x9`.
+uses plain EMBER64, which has the UART2 console gate, and VPU `flags 0x9`.
 It selects no SCMI service. Keep the working default and recovery entries.
 This manual diagnostic passed a full GCC16 kernel build and one physical warm
 boot on CIX P1 CD8180 with PHECDA UEFI 1.5 and EC 1.15.
@@ -702,9 +702,8 @@ A trial configuration selects VPU `flags 0x7` with SCMI `flags 0x80`. Build it w
 working default and recovery kernels. Qualify the physical resource profile,
 DMA address limits and CPU preparation before this trial.
 
-When the observed firmware loses SPCR, the separate
-trial configuration adds only the [exact-board UART2 console gate](../../../stand/efiboot/docs/cix-spcr.md#manual-kernel-console-profile)
-to that boot profile. It does not change the RPC policy or exposure lifetime.
+When the observed firmware loses SPCR, the [UART2 console gate](../../../stand/efiboot/docs/cix-spcr.md#kernel-console-on-a-known-cix-dsdt)
+of `EMBER64` keeps the console. It does not change the RPC policy or exposure lifetime.
 
 A trial configuration
 selects the separate fixed RPC policy with VPU `flags 0x8` and SCMI `flags 0x80`.
