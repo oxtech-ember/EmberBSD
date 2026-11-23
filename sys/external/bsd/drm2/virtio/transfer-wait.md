@@ -101,7 +101,7 @@ and exposed the lost errno, missing FROM PRE, unpaired error POST and WAIT error
 
 The same 59 new and 204 prior groups pass natively on NetBSD 11/AArch64 with
 GCC 16.2. A clean export of `089544e22b2b02b5d51806392a7263d1fc0be8f5`
-regenerated EMBERGPU configuration/dependencies and compiled fourteen fresh
+regenerated a VirtGPU trial configuration and dependencies and compiled fourteen fresh
 driver objects with base GCC 12.5 and normal `-Werror`: 2.64 seconds, peak RSS
 67068 KiB and zero swaps. The guarded run completed with status 0. It did not
 link a kernel, install files or boot the changed driver; these objects must not

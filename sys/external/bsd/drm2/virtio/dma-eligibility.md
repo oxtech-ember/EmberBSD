@@ -91,7 +91,7 @@ exist. Host GREEN and ASan/UBSan pass the MD and integration groups.
 
 The committed export also passes all 56 MD vectors and 11 integration groups
 on NetBSD/AArch64 with GCC 16.2, together with the 97 existing driver groups.
-Regenerated EMBERGPU configuration/dependencies and thirteen fresh VirtGPU
+A regenerated VirtGPU trial configuration and dependencies and thirteen fresh VirtGPU
 objects pass with the base GCC 12.5 and the existing `-Werror` policy.
 This is native contract/compilation evidence: no complete kernel was linked,
 installed or booted, and actual native loaded-map inspection remains pending.

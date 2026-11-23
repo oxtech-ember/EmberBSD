@@ -1,8 +1,10 @@
 <!-- Origin: EmberBSD native experimental VirtGPU integration, 2026-10-06. -->
 # Experimental native VirtGPU
 
-`EMBERGPU` replaces the existing framebuffer-only `viogpu` attachment with
-native `virtiodrm` DRM/KMS. The ordinary `EMBER64` configuration is unchanged.
+A VirtGPU trial configuration replaces the framebuffer-only `viogpu` attachment
+with native `virtiodrm` DRM/KMS: `no viogpu* at virtio?`, `virtiodrm* at virtio?`,
+`virtiodrmfb* at virtiodrm?`, `options VIRTGPU_CONSOLE` and
+`no options MODULAR_DEFAULT_AUTOLOAD` on top of `EMBER64`. The ordinary `EMBER64` configuration is unchanged.
 This is an experimental 2D integration, not a claim of a validated graphics
 session. On 2026-10-06, revision `67a611acb9b` booted under UTM 4.7.5 with
 virtio-ramfb and GL disabled. Native PCI discovery, 32 cross-process dumb
@@ -214,8 +216,8 @@ On a native NetBSD/aarch64 build host with its normal tool PATH:
 
 ```sh
 cd sys/arch/evbarm/conf
-config EMBERGPU
-cd ../compile/EMBERGPU
+config /absolute/path/VIRTGPU_TRIAL
+cd ../compile/VIRTGPU_TRIAL
 make depend
 make -j8
 ```
@@ -231,7 +233,7 @@ interrupt safety, visible scanout or an accelerated userland session.
 
 ## Ordinary console recovery
 
-EMBERGPU alone enables `VIRTGPU_CONSOLE` and the native `virtiodrmfb`
+`VIRTGPU_CONSOLE` enables and the native `virtiodrmfb`
 child. The selected FDT simple framebuffer postpones its final wsdisplay
 attachment until autoconfiguration finishes; the early ARM renderer stays
 available. A selected PCI VirtGPU can reserve it and prepare a private

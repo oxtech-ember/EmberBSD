@@ -12,7 +12,7 @@ A private character-device protocol would force a separate Mesa backend;
 importing the full Linux driver would require unimplemented platform and
 scheduler interfaces. Neither is needed for this first native path.
 
-`EMBERV3DRENDER` is opt-in and excludes every boot-time job probe. The
+`BCM2712_V3D_RENDER` is opt-in and excludes every boot-time job probe. The
 existing ACPI observer verifies the board resources and completes takeover
 before registering a render-capable DRM device. The ordinary kernel keeps
 its current passive observer. Display modesetting is a separate driver.
@@ -180,7 +180,7 @@ Hardware results belong to DevBoards; implementation contracts stay with the dri
 
 ## Reproduce the userspace check
 
-Build `EMBERV3DRENDER` with the normal kernel builder and a pinned EmberBSD
+Build a trial kernel with `BCM2712_V3D_RENDER` with the normal kernel builder and a pinned EmberBSD
 checkout. Preserve the tested ordinary kernel and matching module bundle.
 This configuration owns GPU0 until reboot; it cannot coexist with boot probes.
 

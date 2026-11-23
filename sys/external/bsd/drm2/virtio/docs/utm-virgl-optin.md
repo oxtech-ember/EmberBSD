@@ -1,8 +1,8 @@
 # Experimental classic VirGL kernel
 
-`EMBERVIRGL` includes `EMBERGPU` and adds the compile-time `VIRTGPU_VIRGL`
-option. It requests only `VIRTIO_GPU_F_VIRGL` (bit 0) through the native
-VirtIO feature negotiation. `EMBERGPU` continues requesting no GPU features;
+A VirGL trial configuration adds the compile-time `VIRTGPU_VIRGL` option to the
+[VirtGPU trial configuration](../README.md). It requests only `VIRTIO_GPU_F_VIRGL` (bit 0) through the native
+VirtIO feature negotiation. Without the option the driver requests no GPU features;
 the normal framebuffer/recovery configuration remains `EMBER64`.
 EmberBSD owns this native attachment adaptation. The protocol feature number
 comes from the retained Linux v5.6 `linux/virtio_gpu.h` import.
@@ -16,14 +16,14 @@ Build this separate kernel from a reviewed, committed source export using the
 [cross-build workflow](../../../../../../tools/docs/cross-build.md), keeping a matched recovery bundle:
 
 ```sh
-sh ember/build-kernel.sh /absolute/output EMBERVIRGL
+sh ember/build-kernel.sh /absolute/output /absolute/path/VIRGL_TRIAL
 ```
 
 The option does not bypass DMA eligibility, coherency, address translation,
 bounce/IOMMU rejection, lease ownership, fences or reset guards. Those checks
 may reject a host/device path. Do not relax them to obtain the first draw.
 The experimental configuration retains the existing console and exclusive
-VirtGPU child selection from `EMBERGPU`.
+VirtGPU child selection of the VirtGPU trial.
 
 The production attach contract covers both requested masks, 32 host feature
 combinations, nonmodern transport, initialization and queue failures. Removing

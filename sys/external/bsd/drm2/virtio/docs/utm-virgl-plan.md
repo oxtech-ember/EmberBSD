@@ -40,7 +40,7 @@ advertised. Record interfaces and remaining integration checks; commit.
 
 Files: native shmem helper under `drm2/drm`, corresponding include header,
 `drm2/virtio` autoconfiguration/build files, existing VirtGPU sources as
-required, and `sys/arch/evbarm/conf/EMBERGPU`.
+required, and the VirtGPU trial configuration.
 
 Consume Task 1's transport. Use native GEM pages and pager operations.
 Retain pinning until detach/unref completion. Use DMA addresses from maps,

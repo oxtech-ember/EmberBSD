@@ -84,7 +84,7 @@ requires every instruction to survive pack/unpack/repack identically.
 sequence; this shader uses four threads and multiple segments.
 
 Cross-compile `ember/tools/bcm2712-v3d-csd-check.c` with the same flags and
-provenance checks as the TFU acceptance tool. On `EMBERV3DRENDER`, run
+provenance checks as the TFU acceptance tool. On a kernel with `BCM2712_V3D_RENDER`, run
 `./csd-check /dev/dri/renderD128`. Expected: 389 real QPU dispatches, each
 writing 16 integers derived from changing uniforms and lane IDs. The test
 checks every code/output/guard word, two concurrent processes,

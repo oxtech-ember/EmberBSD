@@ -57,7 +57,7 @@ Memory/undefined-behavior runs use
 set `V3D_SKIP_MUTANTS=1` for instrumented CSD/TFU runs.
 These models exercise source behavior, not a physical cache or GPU.
 
-Cross-build `EMBERV3DRENDER` from pinned EmberBSD sources. Build the static
+Cross-build a trial kernel with `BCM2712_V3D_RENDER` from pinned EmberBSD sources. Build the static
 acceptance tool with the same compiler, UAPI and recorded target ABI inputs
 as [the render check](bcm2712-v3d-render.md#reproduce-the-userspace-check):
 

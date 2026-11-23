@@ -89,7 +89,7 @@ Current physical Plasma evidence is separate from these earlier finite native ch
 ## Reproduce the native CL check
 
 Use a clean pinned source checkout and the matched kernel/module bundle.
-Cross-build `EMBERV3DRENDER` with GCC16. Select the recorded EmberBSD sysroot
+Cross-build a trial kernel with `BCM2712_V3D_RENDER` with GCC16. Select the recorded EmberBSD sysroot
 and build the static checker:
 
 ```sh

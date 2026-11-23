@@ -77,8 +77,8 @@ SMBIOS strings are not used as a gate.
 
 ## Manual kernel console profile
 
-`EMBER64_CIX_UART2` is a separate console-only diagnostic kernel.
-Build this configuration with the [GCC16 kernel procedure](../../../../ember/development/kernel.md).
+A console-only diagnostic kernel adds `options CIXP1_UART2_CONSOLE` to `EMBER64`.
+Build it with the [GCC16 kernel procedure](../../../../ember/development/kernel.md).
 It includes `EMBER64` and adds only `CIXP1_UART2_CONSOLE`.
 It adds no early console, active VPU probe or SCMI service.
 Generic `EMBER64` keeps its existing console selection.
@@ -113,8 +113,7 @@ SHA256. Association is initially pending and recovers without intervention;
 instant availability is not established. This is one board and one cold default
 cycle. Firmware settings retention, RTC time and S5 wake remain unresolved.
 
-`EMBER64_CIXVPU_UART2_BOOT_PROBE` combines this console gate with the existing
-manual VPU boot profile. It retains VPU7/SCMI128 and all exposure guards.
+A VPU boot trial with VPU `flags 0x7` can add this console gate. It retains VPU7/SCMI128 and all exposure guards.
 It is a separate manual configuration; the console-only and default profiles
 keep their existing activation policy.
 

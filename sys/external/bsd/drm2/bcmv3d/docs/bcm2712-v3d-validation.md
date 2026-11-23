@@ -115,7 +115,7 @@ sanitizers can be enabled with `CFLAGS='-fsanitize=address,undefined
 -fno-omit-frame-pointer'`. The kernel wrapper runs the contracts before
 publishing outputs, including when cross-compiling.
 
-Then cross-build `EMBER64`, `EMBERV3DQUEUE`, `EMBERV3DIRQ` and `EMBERV3DFAULT`
+Then cross-build `EMBER64` and trial kernels with `BCM2712_V3D_QUEUE_PROBE`, `BCM2712_V3D_IRQ_PROBE` and `BCM2712_V3D_FAULT_PROBE`
 from a recorded clean commit. Preserve matching modules, source provenance
 and artifact hashes. A later physical run must use the corresponding recovery
 bundle and record its own result; previous acceptance cannot certify the

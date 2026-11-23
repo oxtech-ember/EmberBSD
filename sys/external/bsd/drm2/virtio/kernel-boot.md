@@ -1,7 +1,7 @@
-# Complete EMBERGPU cross build and isolated boot
+# Complete VirtGPU trial cross build and isolated boot
 
 On 2026-10-07, clean revision `c6aba7d1e2400cd1ec43b2a9d96905be86c346d1`
-cross-built on Apple Silicon macOS using `ember/build-kernel.sh`, `EMBERGPU`,
+cross-built on Apple Silicon macOS using `ember/build-kernel.sh`, the VirtGPU trial configuration,
 six jobs and the in-tree GCC12.5 bootstrap. Both kernel formats, four matching
 board modules and three DTBs were produced. Portable contracts passed on
 the host; all six wrapper contracts passed in AArch64 NetBSD 11 with GCC16.
@@ -15,7 +15,7 @@ userland, the existing UTM desktop or its disks.
 
 ```sh
 qemu-system-aarch64 -machine virt,accel=hvf -cpu host -m 1024 -smp 2 \
-  -display none -serial stdio -no-reboot -kernel netbsd-EMBERGPU.img \
+  -display none -serial stdio -no-reboot -kernel netbsd-VIRTGPU_TRIAL.img \
   -append 'root=ld4a console=plcom0' \
   -drive file=root.ffs,if=none,format=raw,id=root \
   -device virtio-blk-pci,drive=root -device virtio-gpu-pci \
@@ -52,8 +52,8 @@ rendering and a sustained session remain unverified for this kernel.
 
 | Artifact | SHA256 |
 |---|---|
-| netbsd-EMBERGPU | `bb5d53a2c6e503322f175f42cf0d4049ae92d95c47351ec7b400f5852c20c847` |
-| netbsd-EMBERGPU.img | `b029a0cc5eb685a610e57b9ac4bc6d1267bbdeda9124a1d5a82d5b2349784565` |
+| netbsd (VirtGPU trial) | `bb5d53a2c6e503322f175f42cf0d4049ae92d95c47351ec7b400f5852c20c847` |
+| netbsd.img (VirtGPU trial) | `b029a0cc5eb685a610e57b9ac4bc6d1267bbdeda9124a1d5a82d5b2349784565` |
 | libdrm.so.2.134.0 | `69c97678919c929a5f71ab4c5f2bcb4d922c267c1255079dae09b65bfca23bfc` |
 | drm-memory | `15e88792f7008fe16bbb76259ae7e08393b1df643ca69ca5d6c35c9f7326e4e4` |
 
