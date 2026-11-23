@@ -3,7 +3,7 @@
 These native providers support the first bounded CIX P1 VPU resource path.
 They are selected by EMBER64. Registration does not activate the codec.
 The [VPU attachment](cix-vpu.md) has no operational DMA or firmware path.
-Its default query does not activate the block or prove its physical power state.
+Its optional `flags 0x1` query does not activate the block or prove its physical power state.
 
 ## Clock provider
 
@@ -21,6 +21,15 @@ Different IDs have independent claims. Every request carries its actual ID.
 UART clock claims reject enable and disable without evaluating AML. No PL011
 consumer is added at this stage. This table limits the driver API; firmware
 can still reject an operation. It does not establish physical UART frequency.
+
+The CCLK methods send SCMI CLOCK requests through the PMMX mailbox: shared
+memory `0x065d0000` with its own doorbell. The native SCMI service uses a
+different channel, SHM0 at `0x06590000` with MBX6/7. On UEFI V1.4 and V1.5,
+GCLK for clock 67 gets status `-4` (`NOT_FOUND`) on the PMMX channel. On V1.5,
+CLKC for clock 67 also gets `-4`, and the native channel enabled clock 67 and
+read its rate. The CCLK and PMMX AML of the two firmware versions is the same.
+We infer that the firmware does not give the PMMX channel access to clock 67.
+`cixclk0` then reports "GCLK returned clock status 4294967292".
 
 GCLK returns a little-endian status and a 64-bit rate. CLKC returns a
 little-endian status. The implementation checks the returned object, payload
@@ -369,8 +378,10 @@ packages before acquiring these providers. The attachment defers the probe
 until the ACPI children have attached. It copies attachment values and releases
 parsed resource lists before deferring; it retains no stack arguments.
 
-EMBER64 selects `flags 0x1`: validate metadata, acquire claims, query GCLK and
-release untouched claims. `flags 0x0` retains descriptions-only attachment.
+EMBER64 selects `flags 0x0`, the descriptions-only attachment. `flags 0x1`
+validates metadata, acquires claims, queries GCLK and releases untouched
+claims. On the observed firmware its GCLK query fails; see the
+[clock provider](#clock-provider).
 `flags 0x2` explicitly selects the AML identity probe. Exact `flags 0x3`
 selects the native clock backend. Exact `flags 0x4` selects the
 [CPU-only allocation fixture](cix-vpu.md#manual-cpu-only-allocation-probe)

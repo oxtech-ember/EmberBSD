@@ -482,7 +482,7 @@ cixvpu_acpi_attach(device_t parent, device_t self, void *aux)
 	ACPI_STATUS rv;
 	enum cixvpu_resource_status status;
 	unsigned int i;
-	bool defer_probe = false;
+	bool defer_probe = false, described = false;
 
 	(void)parent;
 	aprint_naive(": CIX P1 video codec (disabled)\n");
@@ -547,6 +547,7 @@ cixvpu_acpi_attach(device_t parent, device_t self, void *aux)
 	}
 	aprint_normal_dev(self, "IRQ %u level, _CCA %" PRIu64
 	    " (not activated)\n", description.irq, description.cca);
+	described = true;
 	if (sc->sc_mode != 0) {
 		/* The node is ACPI-owned. Keep no pointer to attach-stack arguments. */
 		sc->sc_aa = *aa;
@@ -568,8 +569,13 @@ done:
 		return;
 	}
 disabled:
-	aprint_error_dev(self,
-	    "codec disabled: resource activation, DMA and firmware are not enabled\n");
+	/* Mode 0 stops here by design; only a rejected description is an error. */
+	if (described)
+		aprint_normal_dev(self, "codec disabled: resource activation, "
+		    "DMA and firmware are not enabled\n");
+	else
+		aprint_error_dev(self, "codec disabled: resource activation, "
+		    "DMA and firmware are not enabled\n");
 }
 
 CFATTACH_DECL_NEW(cixvpu_acpi, sizeof(struct cixvpu_acpi_softc),

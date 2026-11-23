@@ -46,7 +46,10 @@ options 	CIXP1_UART2_CONSOLE
 # CIX P1 codec resources only; power, MMIO, DMA and video stay disabled.
 cixclk*		at acpi?		# Passive checked CCLK provider registration.
 cixreset*	at acpi?		# Passive RST0 mapping; no reset operations.
-cixvpu*		at acpi? flags 0x1 # Query resources; do not activate the VPU.
+#	cixvpu flags 0x0 describes the resources only. The flags 0x1 rate
+#	query fails on UEFI V1.4 and V1.5: the CCLK GCLK channel gets SCMI
+#	NOT_FOUND for clock 67. See sys/dev/acpi/docs/cix-platform.md.
+cixvpu*		at acpi? flags 0x0 # Describe resources; do not activate the VPU.
 cixgpio*	at acpi? flags 0x1	# Bounded GPI4 pin6 ACPI event; 0x0 is passive.
 
 #	The power management chip of the Orange Pi Zero 4: its power key

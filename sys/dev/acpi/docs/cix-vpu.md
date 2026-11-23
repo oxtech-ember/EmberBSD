@@ -5,7 +5,7 @@ The hardware driver is incomplete.
 Origin: EmberBSD contributors, AI-assisted.
 
 EmberBSD identifies the CIX P1 codec and validates its ACPI descriptions.
-The default resource query does not activate the codec or establish its power state.
+The optional resource query does not activate the codec or establish its power state.
 There is no video device or M2M interface.
 The manual allocation and preparation profiles read an image into CPU memory.
 An explicit boot trial publishes the prepared root and starts the engine.
@@ -67,13 +67,17 @@ Firmware tables from one Orange Pi 6 Plus, CIX CD8180, A4 PHECDA-Rev A,
 GSI 358 and `_CCA = 0`. This is firmware evidence, not codec execution.
 The driver reads the running firmware's descriptions rather than copying those addresses.
 
-The default EMBER64 attachment defers a checked resource query until the ACPI
-providers have attached. It validates the CLKT/RSTL/_PR0/_PR3 references,
-claims the providers, reads GCLK and releases untouched claims. It does not
-operate reset, activate VPU power, map VPU MMIO, allocate DMA, load firmware,
-establish an interrupt handler or register a video device.
-`flags 0x0` selects descriptions only. An explicit `flags 0x2` enables the
-bounded [identity probe](cix-platform.md); it still does not start DMA or firmware.
+EMBER64 uses `flags 0x0`: the driver prints the descriptions only.
+This mode is not an autoconfiguration error.
+`flags 0x1` defers a checked resource query until the ACPI providers have
+attached. It validates the CLKT/RSTL/_PR0/_PR3 references, claims the
+providers, reads GCLK and releases untouched claims. On the observed UEFI
+V1.4 and V1.5 firmware, the GCLK rate of clock 67 returns SCMI `NOT_FOUND`
+([clock provider](cix-platform.md#clock-provider)). Neither mode operates
+reset, activates VPU power, maps VPU MMIO, allocates DMA, loads firmware,
+establishes an interrupt handler or registers a video device.
+An explicit `flags 0x2` enables the bounded [identity probe](cix-platform.md);
+it still does not start DMA or firmware.
 The separate native profile uses SCMI128 and VPU3. One physical diagnostic boot
 accepts clock67 enable/disable and reads ID `0x56648002`, four cores and four slots.
 Checked reset/clock/power cleanup releases the controls. This does not qualify
@@ -887,8 +891,8 @@ The reference ACPI identifier is `CIXH3010`. Read the target's actual ACPI
 resources; do not assume a Linux DTS register range or interrupt number.
 Establish clock/reset and power ownership before touching the block.
 The [native CIX clock/reset providers](cix-platform.md) now have checked source
-contracts and passive registration. The default query consumes and releases
-untouched provider claims. The optional identity probe uses native power
+contracts and passive registration. The optional `flags 0x1` query consumes and
+releases untouched provider claims. The optional identity probe uses native power
 ownership and checked cleanup. Neither path implements full SCMI support.
 The VPU has its own MMU. Use bus_dma for any platform translation; do not
 assume IOMMU bypass or infer a mandatory external SMMU from another device.

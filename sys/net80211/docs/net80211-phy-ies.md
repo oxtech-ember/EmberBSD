@@ -87,8 +87,9 @@ supplicant behavior, HT/VHT negotiation or physical radio acceptance.
 ## Target boundary
 
 The GCC16.2 aarch64 kernel at `560101dfe575d50eda9ee90f8665572062e74c01`
-builds with `EMBER64` and these trial settings: `cixscmi` flags 0x100,
-`cixvpu` flags 0x0, `plcom` flags 0x1 and `cixgpioin` flags 0x1.
+builds with `EMBER64` and these trial settings: `options CIXP1_UART2_CONSOLE`,
+`cixscmi` flags 0x100, `cixvpu` flags 0x0, `plcom` flags 0x1 and
+`cixgpioin` flags 0x1.
 It boots on CIX P1.
 The installed `ifconfig -v rtwce0 list scan` exports all four observed IE types.
 Legacy WPA2-PSK/CCMP, DHCP ACK, IPv6 link-local and 8 MiB in each direction pass.

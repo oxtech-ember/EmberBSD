@@ -114,7 +114,10 @@ static void print_error(device_t d, const char *fmt, ...)
     if (used < sizeof(diagnostic)) vsnprintf(diagnostic + used, sizeof(diagnostic) - used, fmt, ap);
     va_end(ap);
 }
-#define aprint_error_dev print_error
+static unsigned int error_prints;
+static const char *last_error = "";
+#define aprint_error_dev(d, ...) \
+    (error_prints++, last_error = #__VA_ARGS__, print_error(d, __VA_ARGS__))
 struct blob { ACPI_OBJECT o[16]; char strings[64]; };
 static void package(ACPI_OBJECT *o, unsigned int n, ACPI_OBJECT *p)
 { o->Type = ACPI_TYPE_PACKAGE; o->Package.Count = n; o->Package.Elements = p; }
@@ -1275,8 +1278,11 @@ static void attach_tests(void)
     (void)device_private; (void)device_cfdata; (void)config_defer; (void)config_mountroot; (void)attach_refs;
     CHECK(attach_softc_size > 0 && attach_softc_size <= sizeof(attachment_storage));
     CHECK(cixvpu_acpi_match(NULL, NULL, &fixture_aa) != 0);
-    attach_fixture(0); cixvpu_acpi_attach(NULL, VPU, &fixture_aa);
+    attach_fixture(0); error_prints = 0; last_error = ""; cixvpu_acpi_attach(NULL, VPU, &fixture_aa);
     CHECK(parser_calls == 1 && cleanup_calls == 1 && defer_calls == 0);
+    /* The descriptions-only mode is the general kernel default, not an error. */
+    CHECK(error_prints == 0 && strstr(diagnostic, "codec disabled") != NULL);
+    CHECK(strstr(last_error, "codec disabled") == NULL);
     CHECK(nevents == 0 && reads == 0 && maps == 0); released();
     for (unsigned int mode = 1; mode <= 2; mode++) {
         struct acpi_attach_args temporary = fixture_aa;
@@ -1320,9 +1326,11 @@ static void attach_tests(void)
         switch (i) { case 0: raw_extra = 14; break; case 1: parser_status = AE_ERROR; break;
         case 2: attach_description.nmem = 1; break; case 3: attach_description.mem[1] = attach_description.mem[0]; break;
         case 4: attach_description.nirq = 0; break; case 5: attach_cca_status = AE_NOT_FOUND; break; case 6: attach_description.irq_trigger = 1; break; }
-        cixvpu_acpi_attach(NULL, VPU, &fixture_aa);
+        error_prints = 0; last_error = ""; cixvpu_acpi_attach(NULL, VPU, &fixture_aa);
         CHECK(defer_calls == 0 && nevents == 0 && reads == 0 && maps == 0);
         CHECK(cleanup_calls == (i == 0 ? 0U : 1U));
+        /* A rejected description ends with an autoconfiguration error. */
+        CHECK(error_prints >= 1 && strstr(last_error, "codec disabled") != NULL);
     }
     attach_fixture(2); faults = F_POWER_ON | F_POWER_OFF;
     cixvpu_acpi_attach(NULL, VPU, &fixture_aa);
@@ -1612,9 +1620,10 @@ static void native_tests(void)
         switch (i) { case 0: raw_extra = 14; break; case 1: parser_status = AE_ERROR; break;
         case 2: attach_description.nmem = 1; break; case 3: attach_description.mem[1] = attach_description.mem[0]; break;
         case 4: attach_description.nirq = 0; break; case 5: attach_cca_status = AE_NOT_FOUND; break; case 6: attach_description.irq_trigger = 1; break; }
-        cixvpu_acpi_attach(NULL, VPU, &fixture_aa);
+        error_prints = 0; last_error = ""; cixvpu_acpi_attach(NULL, VPU, &fixture_aa);
         CHECK(defer_calls == 0 && nevents == 0 && reads == 0 && maps == 0);
         CHECK(cleanup_calls == (i == 0 ? 0U : 1U));
+        CHECK(error_prints >= 1 && strstr(last_error, "codec disabled") != NULL);
     }
 }
 #endif
