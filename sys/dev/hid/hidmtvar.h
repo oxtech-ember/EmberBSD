@@ -59,6 +59,14 @@ struct hidmt_pointer {
 	int drag3_x, drag3_y;
 	unsigned drag3_ids[3];
 	uint64_t drag3_armed_at;
+	/*
+	 * Drag with the mechanical button: a finger pressed the switch as
+	 * the left button and holds it; a second contact (bdrag_id) moves
+	 * the pointer from its own position (bdrag_x, bdrag_y).
+	 */
+	bool bdrag_valid;
+	unsigned bdrag_id;
+	int bdrag_x, bdrag_y, bdrag_remx, bdrag_remy;
 	/* Two-finger scroll state; cleared with the rest on release. */
 	bool scroll_valid, scrolling;
 	unsigned scroll_id[2];
@@ -120,6 +128,11 @@ struct hidmt_motion {
 	 * gestures must leave it alone.
 	 */
 	bool drag3;
+	/*
+	 * The second finger of a drag with the mechanical button moves the
+	 * pointer in this frame: two-finger scrolling must leave it alone.
+	 */
+	bool bdrag;
 	/* Precision scroll units for wsmouse_precision_scroll(). */
 	int scroll_x, scroll_y;
 	/*

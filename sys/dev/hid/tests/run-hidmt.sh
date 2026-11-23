@@ -14,7 +14,7 @@ cc=${CC:-cc}
 build=${BUILD_DIR:-$(mktemp -d)}
 mkdir -p "$build"
 if [ -z "${BUILD_DIR:-}" ]; then
-    trap 'rm -f "$build/hid.o" "$build/baseline.o" "$build/t_hidmt" "$build/t_hidmt_hybrid" "$build/t_hidmt_gesture" "$build/t_hidmt_lifecycle" "$build/t_hidmt_pinch" "$build/t_hidmt_drag" "$build/t_hidmt_drag3"; rmdir "$build"' EXIT HUP INT TERM
+    trap 'rm -f "$build/hid.o" "$build/baseline.o" "$build/t_hidmt" "$build/t_hidmt_hybrid" "$build/t_hidmt_gesture" "$build/t_hidmt_lifecycle" "$build/t_hidmt_pinch" "$build/t_hidmt_drag" "$build/t_hidmt_drag3" "$build/t_hidmt_bdrag"; rmdir "$build"' EXIT HUP INT TERM
 fi
 # The existing HID parser retains its native warning policy.
 "$cc" -std=c23 ${CFLAGS:-} -I"$tests/include" -idirafter "$sys" \
@@ -61,3 +61,9 @@ fi
     -I"$tests/include" -idirafter "$sys" "$build/hid.o" "$hid/hidmt.c" \
     "$tests/t_hidmt_drag3.c" -o "$build/t_hidmt_drag3"
 "$build/t_hidmt_drag3"
+
+# Drag with the mechanical button: one finger holds, a second one moves.
+"$cc" -std=c23 -Wall -Wextra -Werror ${CFLAGS:-} \
+    -I"$tests/include" -idirafter "$sys" "$build/hid.o" "$hid/hidmt.c" \
+    "$tests/t_hidmt_bdrag.c" -o "$build/t_hidmt_bdrag"
+"$build/t_hidmt_bdrag"

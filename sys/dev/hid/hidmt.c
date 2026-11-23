@@ -505,6 +505,60 @@ hidmt_pointer_core(struct hidmt_pointer *ptr, const struct hidmt_frame *frame,
 }
 
 /*
+ * Drag with the mechanical button, as on macOS: one finger presses the
+ * switch as the left button and stays on it, a second finger moves the
+ * pointer.  The contact tracker keeps the pressing finger (ptr->id); the
+ * other contact is tracked by its own increments from where it landed, so
+ * a new second finger never makes the pointer jump.  In each frame the
+ * contact that moved more moves the pointer: the pressing finger can still
+ * drag by itself while another finger rests.  Lifting the second finger
+ * keeps the button down; opening the switch ends the drag at once.  A press
+ * with two contacts is the right button (clickfinger) and stays a plain
+ * right press.
+ */
+static void
+hidmt_button_drag(struct hidmt_pointer *ptr, const struct hidmt_frame *frame,
+    unsigned click, struct hidmt_motion *motion)
+{
+	const struct hidmt_contact *mover = NULL;
+	unsigned i;
+	int dx, dy;
+
+	if (click == 1u && frame->ncontacts == 2 && ptr->active)
+		for (i = 0; i < 2; i++)
+			if (frame->contacts[i].id != ptr->id)
+				mover = &frame->contacts[i];
+	if (mover == NULL) {
+		ptr->bdrag_valid = false;
+		return;
+	}
+	motion->bdrag = true;
+	if (!ptr->bdrag_valid || ptr->bdrag_id != mover->id) {
+		ptr->bdrag_valid = true;
+		ptr->bdrag_id = mover->id;
+		ptr->bdrag_x = mover->x;
+		ptr->bdrag_y = mover->y;
+		ptr->bdrag_remx = ptr->bdrag_remy = 0;
+		motion->dx = motion->dy = 0;
+		return;
+	}
+	/* Contact Y grows downwards; positive dy means up. */
+	dx = mover->x - ptr->bdrag_x + ptr->bdrag_remx;
+	dy = ptr->bdrag_y - mover->y + ptr->bdrag_remy;
+	ptr->bdrag_x = mover->x;
+	ptr->bdrag_y = mover->y;
+	ptr->bdrag_remx = dx % 8;
+	ptr->bdrag_remy = dy % 8;
+	dx /= 8;
+	dy /= 8;
+	/* The core already set the motion of the pressing finger. */
+	if (abs(dx) + abs(dy) > abs(motion->dx) + abs(motion->dy)) {
+		motion->dx = dx;
+		motion->dy = dy;
+	}
+}
+
+/*
  * Pointer policy with three-finger drag (HIDMT_DRAG3), as on macOS.  Three
  * contacts without a physical button arm the drag; the pointer stays still
  * while armed, so the button goes down where the pointer was.  After
@@ -571,6 +625,7 @@ hidmt_pointer_base(struct hidmt_pointer *ptr, const struct hidmt_frame *frame,
 			motion->dx = motion->dy = 0;
 		return;
 	}
+	hidmt_button_drag(ptr, frame, click, motion);
 	if ((tap_flags & HIDMT_DRAG3) == 0 || frame->ncontacts == 0)
 		return;
 	if (frame->ncontacts > 3 || ptr->scrolling ||
@@ -646,8 +701,8 @@ hidmt_pointer_update_scroll(struct hidmt_pointer *ptr,
 	bool same;
 
 	hidmt_pointer_base(ptr, frame, now, tap_flags, motion);
-	if (motion->drag3) {
-		/* The fingers of a three-finger drag never scroll. */
+	if (motion->drag3 || motion->bdrag) {
+		/* The fingers of a drag never scroll. */
 		ptr->scroll_valid = false;
 		return;
 	}

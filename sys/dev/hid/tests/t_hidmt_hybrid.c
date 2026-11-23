@@ -123,10 +123,18 @@ test_golden(void)
 		/* Use the old clickfinger choice at switch-down, until up. */
 		if (fa.buttons == 0 || expected_button == 0)
 			expected_button = mb.buttons;
-		CHECK(ma.dx == mb.dx && ma.dy == mb.dy &&
+		/*
+		 * A drag with the mechanical button (one finger pressed left,
+		 * a second one moves) is new: its pointer motion follows the
+		 * second contact.  It happens only there; other frames match.
+		 */
+		CHECK(!ma.bdrag || (fa.ncontacts == 2 && fa.buttons &&
+		    expected_button == 1u));
+		CHECK(ma.bdrag == mc.bdrag);
+		CHECK((ma.bdrag || (ma.dx == mb.dx && ma.dy == mb.dy)) &&
 		    ma.buttons == expected_button && ma.tap == mb.tap &&
 		    ma.tap_button == mb.tap_button);
-		CHECK(mc.dx == mb.dx && mc.dy == mb.dy &&
+		CHECK((mc.bdrag || (mc.dx == mb.dx && mc.dy == mb.dy)) &&
 		    mc.buttons == expected_button && mc.tap == mb.tap &&
 		    mc.tap_button == mb.tap_button);
 		CHECK(ma.scroll_x == 0 && ma.scroll_y == 0 &&

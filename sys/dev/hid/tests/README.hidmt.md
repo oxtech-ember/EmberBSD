@@ -36,6 +36,16 @@ pointer, the last lift releases the button. A sequence with four contacts,
 a scroll, or a third contact later than `HIDMT_DRAG3_LAND_US` never arms;
 a new set of three contacts re-arms; frames of a drag never scroll or start
 a gesture; the stall timer gives a resting drag `HIDMT_DRAG_STALL_US`.
+A drag with the mechanical button (`t_hidmt_bdrag.c`): one finger presses
+the switch as the left button and stays on it, a second finger moves the
+pointer by its own increments from where it landed (no jump, also after the
+report order changes or a new second finger lands). In each frame the contact
+that moved more moves the pointer, so the pressing finger still drags while
+another finger rests. Lifting either finger keeps the button down while the
+switch stays closed; opening the switch ends the drag. A press with two
+contacts stays the clickfinger right button, with three the middle one. Such
+frames never scroll or start a gesture; two fingers without the switch still
+scroll.
 
 The I2C transport must also compile against the selected kernel configuration.
 These tests do not simulate I2C hardware, wscons queues, device detach,
