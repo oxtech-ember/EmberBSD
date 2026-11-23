@@ -2,10 +2,10 @@
 
 The native `sun60igpuid` consumer starts an A733 GPU through checked
 provider and firmware interfaces. A node without diagnostic properties uses
-PLL_GPU0 at 600 MHz and the native mountroot sequence below. Zero 3W selects
-this mode. The separate [Zero 3W diagnostic DTB](a733-boot-modes.md)
-disables automatic GPU and KMS startup. Zero 4 keeps the explicit
-`netbsd,observe-only` GPU mode.
+PLL_GPU0 at 600 MHz and the native mountroot sequence below. The normal
+Zero 3W and the optional Zero 4 graphics DTBs select this mode. The Zero 3W
+diagnostic DTB disables automatic GPU and KMS startup. The normal Zero 4 DTB
+selects the explicit `netbsd,observe-only` GPU mode. See [A733 DTB modes](a733-boot-modes.md).
 Observe-only mode never maps GPU registers or starts firmware.
 The [driver](../sun60i_a733_gpu.c) is owned by EmberBSD.
 The previous explicit PLL600 sequence identifies the physical GPU; see the
@@ -87,7 +87,7 @@ The local binding requires:
 - One domain, `<&pck600 PD_GPU_TOP>`, with domain ID 5 and one argument cell.
 - `gpu-supply` referencing the AXP8191 `dcdc4` regulator node.
 - The empty boolean property `netbsd,consumer-managed-power`.
-- Zero 4 sets empty `netbsd,observe-only`, a local EmberBSD
+- The normal Zero 4 DTB sets empty `netbsd,observe-only`, a local EmberBSD
   diagnostic opt-in. Nonempty values fail with `EINVAL`. It preserves provider
   error handling but exits after completed CCU observation, before OPP checks
   or GPU mapping, including when readiness succeeds.
@@ -95,8 +95,9 @@ The local binding requires:
 The hardware description also records GPU reset and SPI interrupt 63, but
 the identity probe does not acquire or operate them. CCU readiness
 checks the actual GPU reset bit. The SoC node is disabled by default.
-Zero 4 supplies DCDC4 and enables the consumer. Zero 3W inherits those
-declarations and removes the observe-only property. Use these DTBs with their matching kernel.
+Zero 4 supplies DCDC4 and enables the consumer. Zero 3W and the optional
+Zero 4 graphics profile inherit those declarations and remove the observe-only
+property. Use these DTBs with their matching kernel.
 
 ## FDT power opt-in
 

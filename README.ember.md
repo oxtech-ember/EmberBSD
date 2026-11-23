@@ -79,7 +79,9 @@ EMBER_BUILD_MODE=cross EMBER_EXTERNAL_TOOLCHAIN=/absolute/llvm \
 
 The build produces an ELF kernel, a native kernel image, device trees for
 Zero 2 W, Orange Pi Zero 4 and Zero 3W, and Ethernet, Bluetooth UART, and WM8960
-modules, plus the optional Pi 5 power-button fallback module. The build does
+modules, plus the optional Pi 5 power-button fallback module. See the
+[A733 DTB modes](sys/arch/arm/sunxi/docs/a733-boot-modes.md) for the graphics
+and recovery choices. The build does
 not run the kernel source contracts. Run them with
 `sh ember/check-kernel.sh /absolute/output`. A foreign host runs the portable
 contracts and reports native contracts as pending; run the full suite on

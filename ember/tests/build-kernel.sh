@@ -337,6 +337,8 @@ echo "dtc $0 $*" >> "$TEST_LOG"
 case "$*" in
 *sun60i-a733-orangepi-zero3w-diagnostic.dtb*)
     [ "${FAIL_AT:-}" != diagnostic-dtb ];;
+*sun60i-a733-orangepi-zero4-graphics.dtb*)
+    [ "${FAIL_AT:-}" != graphics-dtb ];;
 *sun50i-a133-ys-m33.dtb*)
     [ "${FAIL_AT:-}" != a133-dtb ];;
 esac
@@ -578,6 +580,7 @@ test -s "$TEST_OUT/rpi5button.kmod"
 test -s "$TEST_OUT/bcmexpgpio.kmod"
 test -s "$TEST_OUT/sun60i-a733-orangepi-zero3w.dtb"
 test -s "$TEST_OUT/sun60i-a733-orangepi-zero3w-diagnostic.dtb"
+test -s "$TEST_OUT/sun60i-a733-orangepi-zero4-graphics.dtb"
 test -f "$TEST_OUT/obj/kernels/EMBER64/.ember-version-inputs"
 grep -Fq -- "-V MKREPRO=yes -V MKREPRO_TIMESTAMP=1700000000" "$TEST_LOG"
 grep -q 'build.sh .* -m evbarm -a aarch64 ' "$TEST_LOG"
@@ -742,7 +745,8 @@ grep -q 'injected contract failure: pvr-query-contract.sh' "$work/query.log"
 ! grep -q '^gpu-contract bcm2712-display-contract.sh ' "$TEST_LOG"
 outputs='netbsd-EMBER64 netbsd-EMBER64.img bcm2837-rpi-zero-2-w.dtb
 sun60i-a733-orangepi-zero4.dtb sun60i-a733-orangepi-zero3w.dtb
-sun60i-a733-orangepi-zero3w-diagnostic.dtb sun50i-a133-ys-m33.dtb
+sun60i-a733-orangepi-zero3w-diagnostic.dtb sun60i-a733-orangepi-zero4-graphics.dtb
+sun50i-a133-ys-m33.dtb
 bcm2712btcom.kmod bcmexpgpio.kmod rp1wmcodec.kmod rpi5button.kmod'
 export TEST_OUT="$work/a133-dtb-failure"
 mkdir -p "$TEST_OUT"
@@ -766,7 +770,7 @@ bcmv3d-vblank-contract.rb bcmv3d-vblank-native-contract.rb bcmv3d-flip-contract.
 bcmv3d-scanout-contract.rb bcmv3d-job-resv-contract.rb serial-console-ready-contract.rb
 bootfb-serial-handoff-contract.rb late-splash-contract.rb'
 root_argument_failures_checked=0
-for failure in tools module cpp dtb diagnostic-dtb contract publish; do
+for failure in tools module cpp dtb diagnostic-dtb graphics-dtb contract publish; do
     : > "$TEST_LOG"
     for output in $outputs; do
         printf stale > "$TEST_OUT/$output"

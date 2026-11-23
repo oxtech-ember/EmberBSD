@@ -75,11 +75,6 @@
 	};
 };
 
-/* Start the checked PLL600 firmware service after the root mount. */
-&gpu {
-	/delete-property/ netbsd,observe-only;
-};
-
 /* Attach diagnostics only. Runtime power and MMIO steps remain explicit. */
 &npu {
 	netbsd,consumer-managed-power;
@@ -107,24 +102,4 @@
 	};
 };
 
-/* The native provider borrows exact enabled rails. Attach does not start output. */
-&sys_cfg {
-	status = "okay";
-};
-
-&hdmi_output {
-	vdd08-supply = <&reg_dcdc2>;
-	vcc18-supply = <&reg_cldo2>;
-	allwinner,external-resistor;
-	status = "okay";
-};
-
-&de0 {
-	output = <&hdmi_output>;
-	status = "okay";
-};
-
-/* Register DRM only through its explicit stage after native DE admission. */
-&display {
-	status = "okay";
-};
+#include "sun60i-a733-orangepi-zero-graphics.dtsi"

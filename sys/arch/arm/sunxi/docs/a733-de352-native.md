@@ -252,7 +252,8 @@ Its raw memory record stays at version 1 with seven CCU words per sample.
 The host contract extracts that enum from the public CCU header.
 
 The SoC DE, memory-provider and output nodes are disabled by default.
-The Zero 3W board provides the complete DE and native output bindings.
+The normal Zero 3W and the optional Zero 4 graphics DTBs provide the complete
+DE and native output bindings. See [A733 DTB modes](a733-boot-modes.md).
 Attach exposes the explicit stage. It does not start DMA or scanout.
 The memory-provider nodes remain disabled; the coordinator still requires its
 strict memory proof before DMA. The output provider registers under the same

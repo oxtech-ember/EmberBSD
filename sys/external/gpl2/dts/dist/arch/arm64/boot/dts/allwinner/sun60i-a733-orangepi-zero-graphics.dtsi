@@ -1,0 +1,35 @@
+/* SPDX-License-Identifier: (GPL-2.0-only OR MIT) */
+/*
+ * Extracted from the native Zero 3W board bindings.
+ * Native graphics bindings shared by the A733 Orange Pi Zero 4 and Zero 3W.
+ * The vendor trees for both boards use DCDC2 and CLDO2 for HDMI, select the
+ * external PHY resistor, and connect the GPU to DCDC4. See a733-boot-modes.md
+ * for source revisions and the Zero 4 DietPi DTB identity.
+ */
+
+/* Start the checked PLL600 firmware service after the root mount. */
+&gpu {
+	/delete-property/ netbsd,observe-only;
+};
+
+/* The native provider borrows exact enabled rails. Attach does not start output. */
+&sys_cfg {
+	status = "okay";
+};
+
+&hdmi_output {
+	vdd08-supply = <&reg_dcdc2>;
+	vcc18-supply = <&reg_cldo2>;
+	allwinner,external-resistor;
+	status = "okay";
+};
+
+&de0 {
+	output = <&hdmi_output>;
+	status = "okay";
+};
+
+/* Start DRM after the native DE provider admits scanout. */
+&display {
+	status = "okay";
+};

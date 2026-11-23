@@ -2,7 +2,7 @@
 #
 # The board vendor's U-Boot looks for boot.scr on the first partition of
 # the card. An image builder wraps this file into that script and puts the
-# native kernel and both device trees beside it. The tree gets spare room
+# native kernel and device trees beside it. The tree gets spare room
 # before booti, because the boot loader adds its own properties to it.
 #
 # The same card starts both boards, and the boot loader does not name the
@@ -12,9 +12,10 @@
 # board that follows both pulls gets the Zero 3W tree. The pins are put
 # back the way they were found.
 # Each loader entry selects its mode before it sources this shared script.
-# An unset mode preserves normal boot. Diagnostic mode is specific to Zero 3W.
+# An unset mode preserves normal boot.
+# Diagnostic selects Zero 3W. Graphics selects Zero 4.
 if test -z "${ember_boot_mode}"; then setenv ember_boot_mode normal; fi
-if test "${ember_boot_mode}" != normal -a "${ember_boot_mode}" != diagnostic; then
+if test "${ember_boot_mode}" != normal -a "${ember_boot_mode}" != diagnostic -a "${ember_boot_mode}" != graphics; then
     echo "Invalid EmberBSD boot mode"
     exit 1
 fi
@@ -39,6 +40,12 @@ if test "${ember_boot_mode}" = diagnostic; then
         exit 1
     fi
     setenv fdtname sun60i-a733-orangepi-zero3w-diagnostic.dtb
+elif test "${ember_boot_mode}" = graphics; then
+    if test "${fdtname}" != sun60i-a733-orangepi-zero4.dtb; then
+        echo "Graphics DTB requires Zero 4"
+        exit 1
+    fi
+    setenv fdtname sun60i-a733-orangepi-zero4-graphics.dtb
 fi
 # Never enter the kernel with stale memory after a failed load or FDT command.
 load ${devtype} ${devnum}:${distro_bootpart} ${fdt_addr_r} ${prefix}dtb/allwinner/${fdtname} || exit 1

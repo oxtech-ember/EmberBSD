@@ -92,8 +92,10 @@ def check_boot(script):
     cases = 0
     for prefix in ("", "/", "/boot/"):
         for board, up, down in (("zero3w", "7fff", "0"), ("zero4", "2", "1")):
-            for mode in ("", "normal", "diagnostic", "invalid"):
-                allowed = mode != "invalid" and not (mode == "diagnostic" and board == "zero4")
+            for mode in ("", "normal", "diagnostic", "graphics", "invalid"):
+                allowed = (mode in ("", "normal")
+                           or (mode == "diagnostic" and board == "zero3w")
+                           or (mode == "graphics" and board == "zero4"))
                 for failure in (("", "dtb", "addr", "resize", "kernel") if allowed else ("",)):
                     env = dict(os.environ, ember_boot_mode=mode, prefix=prefix,
                                devtype="mmc", devnum="1", distro_bootpart="2",
@@ -111,7 +113,7 @@ def check_boot(script):
                         if mode == "invalid":
                             require(not any(line.startswith("MW ") for line in lines), "invalid mode touched GPIO")
                     else:
-                        suffix = "-diagnostic" if mode == "diagnostic" else ""
+                        suffix = f"-{mode}" if mode in ("diagnostic", "graphics") else ""
                         dtb = f"sun60i-a733-orangepi-{board}{suffix}.dtb"
                         require(loads[0] == f"LOAD mmc 1:2 0x4fa00000 {prefix}dtb/allwinner/{dtb}",
                                 f"DTB path: {label}")
@@ -126,14 +128,102 @@ def check_boot(script):
     return cases
 
 
+def phandles(tree):
+    nodes = [(value, node) for (node, name), value in tree.items() if name == "phandle"]
+    handles = dict(nodes)
+    require(len(handles) == len(nodes), "duplicate provider phandle")
+    return handles
+
+
+def resolve_references(tree, handles, data, argument_count):
+    """Return provider paths and literal arguments for a known binding."""
+    refs = []
+    offset = 0
+    while offset < len(data):
+        handle = data[offset:offset + 4]
+        require(handle in handles, "unknown provider phandle")
+        provider = handles[handle]
+        count = argument_count
+        if isinstance(count, str):
+            count, = struct.unpack(">I", tree[provider, count])
+        end = offset + 4 + count * 4
+        require(end <= len(data), "truncated provider arguments")
+        refs.append((provider, data[offset + 4:end]))
+        offset = end
+    return refs
+
+
+def check_zero4_graphics(normal, graphics):
+    sys_cfg = "/soc/syscon@3000000"
+    hdmi = "/soc/hdmi@5520000"
+    engine = "/soc/display-engine@5000000"
+    display = "/display"
+    gpu = "/soc/gpu@1800000"
+    enabled = (sys_cfg, hdmi, engine, display)
+    for node in enabled:
+        require(normal[node, "status"] == b"disabled\0", f"Zero 4 normal enabled {node}")
+        require(graphics[node, "status"] == b"okay\0", f"Zero 4 graphics disabled {node}")
+
+    zero4_compatible = b"xunlong,orangepi-zero4\0allwinner,sun60i-a733\0"
+    for tree in (normal, graphics):
+        require(tree["/", "compatible"] == zero4_compatible, "Zero 4 identity changed")
+
+    require(graphics[hdmi, "allwinner,external-resistor"] == b"", "HDMI resistor binding")
+    require(graphics[hdmi, "syscon"] == graphics[sys_cfg, "phandle"], "HDMI SYS_CFG binding")
+    require(graphics[engine, "output"] == graphics[hdmi, "phandle"], "DE native output binding")
+    require(graphics[display, "display-engine"] == graphics[engine, "phandle"], "KMS DE binding")
+    for consumer, supply, regulator in ((hdmi, "vdd08-supply", b"dcdc2\0"),
+                                        (hdmi, "vcc18-supply", b"cldo2\0"),
+                                        (gpu, "gpu-supply", b"dcdc4\0")):
+        targets = [node for (node, name), value in graphics.items()
+                   if name == "regulator-name" and value == regulator]
+        require(len(targets) == 1, f"Zero 4 regulator binding: {regulator!r}")
+        require(graphics[consumer, supply] == graphics[targets[0], "phandle"],
+                f"{consumer} regulator binding: {supply}")
+
+    # Compare all other properties byte for byte, except for phandle values
+    # in known binding slots. Keep literal cells and provider arguments intact.
+    added = {(hdmi, name) for name in
+             ("vdd08-supply", "vcc18-supply", "allwinner,external-resistor")}
+    added.add((engine, "output"))
+    removed = {(gpu, "netbsd,observe-only")}
+    normal_keys = {key for key in normal if key[1] != "phandle"}
+    graphics_keys = {key for key in graphics if key[1] != "phandle"}
+    require(graphics_keys == (normal_keys - removed) | added, "Zero 4 graphics property scope")
+
+    reference_args = {
+        "clocks": "#clock-cells", "iommus": "#iommu-cells",
+        "nsi": 1, "phy-handle": 0, "pinctrl-0": 0, "syscon": 0,
+        "resets": "#reset-cells", "mmc-pwrseq": 0, "phys": "#phy-cells",
+        "gpio": "#gpio-cells", "reset-gpios": "#gpio-cells",
+        "gpu-supply": 0, "vbus-supply": 0, "vqmmc-supply": 0,
+    }
+    normal_handles = phandles(normal)
+    graphics_handles = phandles(graphics)
+    for key in sorted(normal_keys - removed):
+        node, name = key
+        if node in enabled and name == "status":
+            continue
+        if name in reference_args:
+            count = reference_args[name]
+            require(resolve_references(normal, normal_handles, normal[key], count) ==
+                    resolve_references(graphics, graphics_handles, graphics[key], count),
+                    f"Zero 4 graphics changed providers or arguments for {node} {name}")
+        else:
+            require(normal[key] == graphics[key], f"Zero 4 graphics changed {node} {name}")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("dtb_directory", type=Path)
     parser.add_argument("--source-root", type=Path, default=Path(__file__).resolve().parents[2])
     args = parser.parse_args()
     trees = {name: properties(args.dtb_directory / f"sun60i-a733-orangepi-{name}.dtb")
-             for name in ("zero3w", "zero3w-diagnostic", "zero4")}
-    normal, diagnostic, zero4 = (trees[name] for name in ("zero3w", "zero3w-diagnostic", "zero4"))
+             for name in ("zero3w", "zero3w-diagnostic", "zero4", "zero4-graphics")}
+    normal = trees["zero3w"]
+    diagnostic = trees["zero3w-diagnostic"]
+    zero4 = trees["zero4"]
+    graphics = trees["zero4-graphics"]
     gpu = "/soc/gpu@1800000"
     observe = "netbsd,observe-only"
     for node in (gpu, "/display"):
@@ -145,12 +235,14 @@ def main():
     expected["/display", observe] = b""
     require(diagnostic == expected, "diagnostic must change exactly the two mode properties")
     require(zero4[gpu, observe] == b"", "Zero 4 GPU mode changed")
-    require(zero4["/display", "status"] == b"disabled\0", "Zero 4 display mode changed")
+    check_zero4_graphics(zero4, graphics)
+    for node in (gpu, "/display"):
+        require((node, observe) not in graphics, f"Zero 4 graphics {node} must start")
     require(normal["/", "compatible"] == b"xunlong,orangepi-zero3w\0allwinner,sun60i-a733\0",
             "Zero 3W identity changed")
     script = (args.source_root / "ember/boot/orangepi-zero4-boot.cmd").read_text()
     cases = check_boot(script)
-    print(f"PASS: 3 compiled DTBs, exact 2-property diagnostic delta, {cases} boot mode/path/failure cases")
+    print(f"PASS: 4 compiled DTBs, Zero 4 bindings, exact 2-property diagnostic delta, {cases} boot mode/path/failure cases")
 
 
 if __name__ == "__main__":

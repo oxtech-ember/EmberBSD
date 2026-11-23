@@ -35,15 +35,15 @@ It does not change a rail voltage or enable state.
 A missing enabled rail requires a separate owned power preparation step.
 
 The SoC nodes stay disabled by default.
-The Zero 3W board supplies this complete binding and connects
-`output = <&hdmi_output>` on its DE coordinator.
+The normal Zero 3W and the optional Zero 4 graphics DTBs supply this complete
+binding and set `output = <&hdmi_output>` on the DE coordinator.
 Attach registers the provider and coordinator. It does not start output.
 The explicit DE stage still requires its strict memory and ownership proofs.
 A device-tree node does not establish DMA readiness or visible HDMI.
 Do not add assigned clocks, resets or automatic pin control to this profile.
 
-The rail and external-resistor wiring comes from the
-[pinned board source](https://github.com/orangepi-xunlong/linux-orangepi/blob/2ac08e8c7cdc28abbdc5c9a9dd812f887ae9c79f/arch/arm64/boot/dts/allwinner/sun60i-a733-orangepi-zero3w.dts).
+See [A733 DTB modes](a733-boot-modes.md) for the sources of both boards’ rail
+and external-resistor wiring.
 The native binding uses no vendor control implementation.
 
 ## Explicit operation sequence

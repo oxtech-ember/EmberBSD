@@ -1,0 +1,5 @@
+/* SPDX-License-Identifier: (GPL-2.0-only OR MIT) */
+/* Orange Pi Zero 4 with native graphics enabled. */
+
+#include "sun60i-a733-orangepi-zero4.dts"
+#include "sun60i-a733-orangepi-zero-graphics.dtsi"
