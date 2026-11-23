@@ -238,6 +238,9 @@ fi
 config=
 for argument do case $argument in kernel=*) config=${argument#kernel=};; esac; done
 [ -n "$config" ]
+# build.sh names the kernel by the last component of a configuration path.
+[ -f "$config" ] || [ -f "sys/arch/evbarm/conf/$config" ]
+config=${config##*/}
 mkdir -p "$TEST_OUT/tools/bin" "$TEST_OUT/obj/kernels/$config"
 cp "$TEST_ROOT/bin/nbmake-evbarm" "$TEST_OUT/tools/bin/"
 cp "$TEST_ROOT/bin/cpp" "$TEST_OUT/tools/bin/target-cpp"
@@ -659,6 +662,22 @@ if [ -e "$TEST_OUT/sun50i-a133-ys-m33.dtb" ]; then
     exit 1
 fi
 grep -q 'kernel=EMBER64_RTW88_PCI' "$TEST_LOG"
+# A trial configuration outside the OS is selected by its absolute path.
+mkdir -p "$work/devboards/kernels"
+printf 'include "arch/evbarm/conf/EMBER64"\n' > "$work/devboards/kernels/EMBER64_TRIAL"
+export TEST_OUT="$work/external"
+: > "$TEST_LOG"
+"$TEST_SHELL" "$work/src/ember/build-kernel.sh" "$TEST_OUT" "$work/devboards/kernels/EMBER64_TRIAL" \
+    > "$work/run.log" 2>&1
+test -s "$TEST_OUT/netbsd-EMBER64_TRIAL"
+grep -q "kernel=$work/devboards/kernels/EMBER64_TRIAL" "$TEST_LOG"
+cp "$work/devboards/kernels/EMBER64_TRIAL" "$work/devboards/kernels/EMBER64_RTW88_PCI"
+if "$TEST_SHELL" "$work/src/ember/build-kernel.sh" "$work/clash" "$work/devboards/kernels/EMBER64_RTW88_PCI" \
+    > "$work/run.log" 2>&1; then
+    echo 'FAIL: an external configuration replaced an OS configuration name' >&2
+    exit 1
+fi
+grep -q 'has the name of the OS configuration EMBER64_RTW88_PCI' "$work/run.log"
 export TEST_OUT="$work/cross"
 # Reuse all objects, but the selected kernel must embed the new build identity.
 printf 'old-source-id\n' > "$TEST_OUT/obj/kernels/EMBER64/vers.c"

@@ -18,12 +18,24 @@ run_cpp() (
     set -- $cpp "$@"
     run_native_os --capture -- "$@"
 )
-[ "$#" -ge 1 ] && [ "$#" -le 2 ] || fail 'usage: build-kernel.sh ABSOLUTE_OUTPUT [CONFIG]'
+[ "$#" -ge 1 ] && [ "$#" -le 2 ] || fail 'usage: build-kernel.sh ABSOLUTE_OUTPUT [CONFIG | ABSOLUTE_CONFIG_PATH]'
 out=$1
-config=${2:-EMBER64}
+# CONFIG names a configuration of sys/arch/evbarm/conf. A trial configuration
+# outside the OS, for example in DevBoards, is given by its absolute path.
+config_arg=${2:-EMBER64}
+config=${config_arg##*/}
 case "$out" in /*) ;; *) fail 'output must be an absolute path' ;; esac
 case "$config" in ''|*[!A-Za-z0-9_]*) fail 'invalid kernel configuration' ;; esac
-[ -f "$src/sys/arch/evbarm/conf/$config" ] || fail 'kernel configuration missing'
+case "$config_arg" in
+/*)
+    case "$config_arg" in *[!A-Za-z0-9_./+@%=-]*) fail 'invalid kernel configuration path' ;; esac
+    # The kernel objects and outputs are named by the configuration name.
+    [ ! -e "$src/sys/arch/evbarm/conf/$config" ] ||
+        fail "the external configuration has the name of the OS configuration $config"
+    [ -f "$config_arg" ] || fail 'kernel configuration missing' ;;
+*/*) fail 'give a configuration name or an absolute configuration path' ;;
+*) [ -f "$src/sys/arch/evbarm/conf/$config" ] || fail 'kernel configuration missing' ;;
+esac
 mkdir -p "$out"
 out=$(CDPATH= cd -- "$out" && pwd -P)
 case "$out/" in //|"$src/"*) fail 'output must be outside the source tree' ;; esac
@@ -212,7 +224,7 @@ if [ ! -f "$version_record" ] || [ "$previous_version" != "$current_version" ] |
     [ ! -f "$kernel_obj/vers.c" ] || [ ! -f "$kernel_obj/vers.o" ]; then
     rm -f "$kernel_obj/vers.c" "$kernel_obj/vers.o"
 fi
-(cd "$src"; run_native_os --log "$out/build.log" --append-log --build-sh -- "$@" tools "kernel=$config")
+(cd "$src"; run_native_os --log "$out/build.log" --append-log --build-sh -- "$@" tools "kernel=$config_arg")
 printf '%s\n%s' "$repro_timestamp" "$buildinfo" > "$version_record.new"
 mv -f "$version_record.new" "$version_record"
 # Use the same selected command mapping for subsequent orchestration utilities.

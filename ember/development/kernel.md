@@ -21,6 +21,30 @@ The patches in `ember/patches` are already applied to this tree.
 Firmware series are separate inputs applied by their pinned builder.
 Do not apply either series to arbitrary sources.
 
+## Kernel configurations
+
+The OS keeps general-purpose configurations, one for each functional task,
+not one for each board. A driver of an absent device stays passive, so one
+configuration serves all supported boards. Add a configuration only when a
+task cannot use an existing one, and add its row here.
+
+| Configuration | Task | Contents |
+| --- | --- | --- |
+| `EMBER64` | General AArch64 system; the default | `GENERIC64` with the passive drivers of the supported boards and the boot splash. `INSECURE` stays until the CEMAC driver is built in. |
+
+A trial or diagnostic configuration for one board belongs in
+[DevBoards](https://github.com/oxtech-ember/EmberBSD-DevBoards), next to the
+evidence of that board, as a configuration `boards/<id>/configs/<scenario>/<NAME>`
+with its manifest. It includes a general-purpose OS configuration and changes
+only the trial options. Build it by its absolute path:
+`ember/build-kernel.sh OUTPUT /path/to/DevBoards/boards/<id>/configs/<scenario>/<NAME>`.
+Its name must not be the name of an OS configuration: the objects and outputs
+are named by it. When the trial is accepted, add its drivers or options to the
+general configuration and remove the trial.
+
+The other `EMBER*` files in `sys/arch/evbarm/conf/` are trials from before
+this rule. Move each one to DevBoards with the evidence of its board.
+
 ## Reproduce on pinned input
 
 Record the symptom, source revision, configuration and smallest reproducer.
