@@ -49,6 +49,8 @@ struct pci_genfb_softc {
 	struct range sc_ranges[8];
 	int sc_ranges_used;
 	int sc_want_wsfb;
+	bus_space_handle_t sc_panel_pwm;
+	struct genfb_parameter_callback sc_panel_brightness;
 };
 
 #endif /* !_SYS_DEV_PCI_GENFB_PCIVAR_H */
