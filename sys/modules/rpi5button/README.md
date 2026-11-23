@@ -42,7 +42,8 @@ rpi5button=YES
 
 `ember_modules` loads the module before securelevel 1 forbids `modload`.
 It replaces the former `/etc/rc.d/rpi5button` service; remove that file.
-Until `powerd` starts, a press makes the kernel power off the board at once.
+It loads it only with `powerd=YES`. During boot, before `powerd` starts, a
+press makes the kernel power off the board at once.
 The module still refuses foreign product names and a GPIO pin not configured
 as input.
 Keep the normal `/etc/powerd/scripts/power_button` handler for an orderly

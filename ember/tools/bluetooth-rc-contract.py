@@ -99,18 +99,22 @@ esac
         ("pi3", "NO", "YES"): [],
         ("orangepi", "YES", "YES"): [],
         ("loaded", "YES", "YES"): [],
+        ("cm5", "NO", "NOPOWERD"): [],
     }
     for (board, bluetooth, button), commands in expected.items():
+        powerd = "NO" if button == "NOPOWERD" else "YES"
+        button = "YES" if button == "NOPOWERD" else button
         log = base / "commands"
         log.write_text("")
         result = subprocess.run(["sh", str(script), "start"], capture_output=True, text=True,
                                 env=dict(os.environ, PATH=str(base)+os.pathsep+os.environ['PATH'],
                                          TEST_LOG=str(log), TEST_CASE="modules-" + board,
-                                         ember_bluetooth=bluetooth, rpi5button=button))
+                                         ember_bluetooth=bluetooth, rpi5button=button, powerd=powerd))
         lines = [line for line in log.read_text().splitlines()
                  if line.startswith(("modload ", "gpioctl ", "sleep "))]
-        good = result.returncode == 0 and lines == commands
-        print("modules %s bluetooth=%s button=%s: %s" % (board, bluetooth, button, "PASS" if good else "FAIL"))
+        warned = "warn rpi5button needs powerd=YES" in log.read_text().splitlines()
+        good = result.returncode == (1 if powerd == "NO" else 0) and lines == commands and warned == (powerd == "NO")
+        print("modules %s bluetooth=%s button=%s powerd=%s: %s" % (board, bluetooth, button, powerd, "PASS" if good else "FAIL"))
         if not good:
             print(log.read_text(), result.stderr)
             failed = True

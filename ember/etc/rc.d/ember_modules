@@ -42,9 +42,14 @@ ember_modules_start()
 	if checkyesno rpi5button; then
 		case "$board" in
 		'Raspberry Pi 5 Model B'|'Raspberry Pi Compute Module 5')
-			# Without powerd a press powers the board off at once.
-			checkyesno powerd || warn 'rpi5button without powerd powers off at once'
-			ember_modules_load rpi5button || status=1 ;;
+			# Without powerd a press would power the board off at once.
+			# During boot, before powerd starts, it still does.
+			if checkyesno powerd; then
+				ember_modules_load rpi5button || status=1
+			else
+				warn 'rpi5button needs powerd=YES'
+				status=1
+			fi ;;
 		esac
 	fi
 	return $status
