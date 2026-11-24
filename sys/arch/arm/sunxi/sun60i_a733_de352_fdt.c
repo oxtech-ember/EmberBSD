@@ -1891,6 +1891,7 @@ de352_replacement_vblank(struct sun60i_de352_softc *sc,
 	uint64_t baseline, last, sequence, start, raw;
 	uint64_t limit = DE352_TIMEOUT_NS, extra;
 	bool irq, final_irq_sampled = false, extra_probe = false;
+	bool final_extra_sampled = false;
 	int error;
 
 	trace->wait_phase = UW_BASELINE;
@@ -1917,9 +1918,9 @@ de352_replacement_vblank(struct sun60i_de352_softc *sc,
 	irq = error == 0;
 	extra = irq ? de352_replacement_extra(&sc->mode) : 0;
 	for (;;) {
-		if (limit != DE352_TIMEOUT_NS) {
+		if (extra_probe) {
 			trace->elapsed_ns = de352_now() - start;
-			if (trace->elapsed_ns > limit)
+			if (trace->elapsed_ns >= DE352_TIMEOUT_NS + extra)
 				return ETIMEDOUT;
 		}
 		if (irq) {
@@ -1946,11 +1947,8 @@ de352_replacement_vblank(struct sun60i_de352_softc *sc,
 		if (error == 0 && sequence - baseline >= 2) {
 			uint64_t now = de352_now();
 
-			if (extra_probe || limit != DE352_TIMEOUT_NS) {
+			if (extra_probe || limit != DE352_TIMEOUT_NS)
 				trace->elapsed_ns = now - start;
-				if (trace->elapsed_ns > DE352_TIMEOUT_NS + extra)
-					return ETIMEDOUT;
-			}
 			completion->observed_sequence = sequence;
 			completion->observed_time_ns = now;
 			return 0;
@@ -1975,9 +1973,14 @@ deadline:
 		/* Always check for accumulated IRQs before declaring expiry. */
 		trace->elapsed_ns = de352_now() - start;
 		if (trace->elapsed_ns >= limit) {
-			if (limit != DE352_TIMEOUT_NS || !irq)
+			if (!irq)
 				return ETIMEDOUT;
-			if (final_irq_sampled) {
+			if (limit != DE352_TIMEOUT_NS) {
+				if (final_extra_sampled)
+					return ETIMEDOUT;
+				/* One last raw sample, with no further wait. */
+				final_extra_sampled = true;
+			} else if (final_irq_sampled) {
 				if (extra == 0 || raw - baseline != 1 ||
 				    baseline > UINT64_MAX - 2 ||
 				    baseline != trace->initial_baseline ||
@@ -1985,9 +1988,10 @@ deadline:
 					return ETIMEDOUT;
 				extra_probe = true;
 				continue;
+			} else {
+				/* The worker may have been descheduled after sampling. */
+				final_irq_sampled = true;
 			}
-			/* The worker may have been descheduled after sampling. */
-			final_irq_sampled = true;
 		} else if (irq) {
 			if (baseline <= UINT64_MAX - 2 &&
 			    start <= UINT64_MAX - limit) {

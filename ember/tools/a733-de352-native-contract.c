@@ -671,15 +671,19 @@ replacement_extra_checks(void)
 		{{41, 41, 42},
 		    {{40, 0, ENOENT}, {41, 0, 0}, {42, 0, ENOENT}},
 		    3, 3, 1000000, ETIMEDOUT},
-		/* An IRQ first visible after the absolute cap does not retire. */
-		{{41, 41, 42}, {{40, 0, ENOENT}, {41, 0, 0}},
-		    3, 2, 27000000, ETIMEDOUT},
+		/* A final raw read still validates two advances after expiry. */
+		{{41, 41, 41, 42},
+		    {{40, 0, ENOENT}, {41, 0, 0}, {42, 0, 0}},
+		    4, 3, 27000000, 0},
 		/* A delayed ordinary final +2 still uses the original proof. */
 		{{41, 42}, {{40, 0, ENOENT}, {42, 0, 0}},
 		    2, 2, 1, 0},
-		/* A delayed new full +2 misses the extra path's cap. */
-		{{41, 41}, {{40, 0, ENOENT}, {42, 0, 0}},
-		    2, 2, 1, ETIMEDOUT},
+		/* A full +2 begun before cutoff finishes at the hardware time. */
+		{{1592, 1592}, {{1591, 0, ENOENT}, {1593, 0, 0}},
+		    2, 2, 1, 0},
+		/* Raw +1 first checked beyond the cap cannot trigger validation. */
+		{{41, 41}, {{40, 0, ENOENT}},
+		    2, 1, 1, ETIMEDOUT},
 		/* Regressions retain even when the sampled raw count advances. */
 		{{41, 41}, {{40, 0, ENOENT}, {39, 0, 0}},
 		    2, 2, 1, EPROTO},
@@ -703,17 +707,32 @@ replacement_extra_checks(void)
 			/* Only the test's last pause occurs in the extra window. */
 			irq_sleep_ns = test->sleep_ns;
 			irq_sample_pause_ns = DE352_TIMEOUT_NS;
-			next_observation_pause_ns = (i == 5 || i == 6) ?
-			    27000000 : 0;
+			next_observation_pause_ns = i == 5 ? 27000000 : 0;
+			if (i == 6) {
+				sc.mode.htotal = 1688;
+				sc.mode.vtotal = 1066;
+				sc.mode.pixel_clock_hz = 108000000;
+				CHECK(de352_replacement_extra(&sc.mode) == 26661186);
+				irq_sample_pause_ns = 107609692;
+				next_observation_pause_ns = 21471808;
+			}
+			if (i == 7)
+				irq_sample_pause_ns = 129085500;
 			vblank_script = test->observed;
 			vblank_samples = test->nv;
 			vblank_index = 0;
 			CHECK(de352_replacement_vblank(&sc, &done) ==
 			    test->expected);
+			if (i == 6) {
+				CHECK(sc.update_trace.elapsed_ns == 129085500);
+				CHECK(sc.update_trace.wait_samples == 2 &&
+				    sc.update_trace.last_validated == 1593);
+				CHECK(!sc.update_trace.tv0_timeout.attempted);
+			}
 			CHECK(irq_index == irq_samples &&
 			    vblank_index == vblank_samples);
 			CHECK(done.observed_sequence ==
-			    (test->expected == 0 ? 42u : 0u));
+			    (i == 6 ? 1593u : test->expected == 0 ? 42u : 0u));
 			irq_script = NULL;
 			irq_sample_pause_ns = 0;
 			irq_cv_supported = false;
@@ -867,7 +886,8 @@ plane_disable_checks(void)
    irq_sample_pause_ns = DE352_TIMEOUT_NS;
   }
   const uint64_t expired_extra_irqs[] = {
-   sequence + 1, sequence + 1, sequence + 1, sequence + 2, sequence + 3
+   sequence + 1, sequence + 1, sequence + 1, sequence + 1,
+   sequence + 2, sequence + 3
   };
   const struct vblank_sample extra_observed[] = {
    {sequence, 0, ENOENT}, {sequence + 1, 0, 0}
@@ -913,8 +933,8 @@ plane_disable_checks(void)
     irq_sample_pause_ns = 0;
    } else if (failure == 6) {
     CHECK(t->before_error == 0 && t->after_error == 0);
-    CHECK(t->raw_before == expired_extra_irqs[3] &&
-        t->raw_after == expired_extra_irqs[4]);
+    CHECK(t->raw_before == expired_extra_irqs[4] &&
+        t->raw_after == expired_extra_irqs[5]);
     CHECK(irq_index == irq_samples && vblank_index == vblank_samples);
     CHECK(sc.update_trace.last_validated == extra_observed[1].sequence);
     irq_script = NULL;

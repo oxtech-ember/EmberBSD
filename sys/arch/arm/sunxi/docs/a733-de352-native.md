@@ -210,9 +210,12 @@ cutoff, a final raw sample exactly one advance beyond the
 initial post-RCQ baseline permits a fresh full observation. If that
 observation validates only one advance, it grants one extra window. The
 window expires one nominal mode period plus one scheduler tick after the
-original cutoff, with at most 50 ms extra. Full validation from this new
-path must finish within the same cap, even if it observes two advances on
-the first try. An unvalidated advance in the extra window ends the wait.
+original cutoff, with at most 50 ms extra. The first full observation must
+finish within that cap to grant the extra window. If it starts within the
+cap and validates two advances, its result is accepted after the cutoff.
+Once the window is granted, its cap ends all further waits. One final raw
+sample can still show two advances and trigger full validation. An
+unvalidated advance in the extra window ends the wait.
 If the ordinary final raw sample already has two advances, the existing full
 validation after a scheduling delay still applies. A passive timeout sample
 never completes an update.
