@@ -166,8 +166,8 @@ test_swipe_right(void)
 	CHECK(r.nend == 0 && r.ncancel == 0);
 	CHECK(r.order[0] == HIDMT_GESTURE_BEGIN &&
 	    r.order[1] == HIDMT_GESTURE_UPDATE);
-	/* Pointer units are 1/8 contact unit; the start distance is included. */
-	CHECK(r.gdx >= 49 && r.gdx <= 50 && r.gdy == 0);
+	/* Contact units; the start distance is included. */
+	CHECK(r.gdx == 400 && r.gdy == 0);
 	CHECK(r.pdx == 0 && r.pdy == 0 && r.sx == 0 && r.sy == 0 &&
 	    r.taps == 0);
 	lift(&r, 3, xy);
@@ -187,7 +187,7 @@ test_swipe_up_and_left(void)
 	(void)frame(&r, 3, xy, NULL);
 	swipe(&r, 3, 0, -20, 20, xy);	/* fingers up, Y shrinks */
 	CHECK(r.nbegin == 1 && r.fingers == 3);
-	CHECK(r.gdy >= 49 && r.gdy <= 50 && r.gdx == 0);	/* up > 0 */
+	CHECK(r.gdy == 400 && r.gdx == 0);	/* up > 0 */
 	CHECK(r.pdx == 0 && r.pdy == 0 && r.sy == 0);
 	lift(&r, 3, xy);
 	CHECK(r.nend == 1);
@@ -195,7 +195,7 @@ test_swipe_up_and_left(void)
 	place(3, 2000, 1200, xy);
 	(void)frame(&r, 3, xy, NULL);
 	swipe(&r, 3, -20, 0, 20, xy);
-	CHECK(r.gdx <= -49 && r.gdx >= -50 && r.gdy == 0);
+	CHECK(r.gdx == -400 && r.gdy == 0);
 	lift(&r, 3, xy);
 	CHECK(r.nbegin == 1 && r.nend == 1);
 }
@@ -210,8 +210,30 @@ test_four_fingers(void)
 	place(4, 500, 1200, xy);
 	(void)frame(&r, 4, xy, NULL);
 	swipe(&r, 4, -20, 0, 20, xy);
-	CHECK(r.nbegin == 1 && r.fingers == 4 && r.gdx < -40);
+	CHECK(r.nbegin == 1 && r.fingers == 4 && r.gdx == -400);
 	CHECK(r.pdx == 0 && r.pdy == 0);
+	lift(&r, 4, xy);
+	CHECK(r.nend == 1 && r.ncancel == 0);
+}
+
+static void
+test_slow_swipe_every_frame(void)
+{
+	struct rig r;
+	int xy[8];
+
+	/* A slow swipe still moves the desktop in each frame. */
+	rig_init(&r, true);
+	place(4, 500, 1200, xy);
+	(void)frame(&r, 4, xy, NULL);
+	swipe(&r, 4, 20, 0, 10, xy);
+	CHECK(r.nbegin == 1);
+	rig_clear(&r);
+	swipe(&r, 4, 3, 0, 20, xy);
+	CHECK(r.nupdate == 20 && r.gdx == 60 && r.gdy == 0);
+	rig_clear(&r);
+	swipe(&r, 4, 0, -1, 8, xy);
+	CHECK(r.nupdate == 8 && r.gdy == 8 && r.gdx == 0);
 	lift(&r, 4, xy);
 	CHECK(r.nend == 1 && r.ncancel == 0);
 }
@@ -394,6 +416,7 @@ main(void)
 	test_swipe_right();
 	test_swipe_up_and_left();
 	test_four_fingers();
+	test_slow_swipe_every_frame();
 	test_count_change();
 	test_below_threshold();
 	test_one_two_fingers_unchanged();

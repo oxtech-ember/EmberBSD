@@ -138,8 +138,8 @@ struct hidmt_motion {
 	/*
 	 * Three/four-finger gesture (hidmt_gesture_update()): a mask of
 	 * HIDMT_GESTURE_* phases in the order END/CANCEL, BEGIN, UPDATE;
-	 * gesture_fingers is valid with BEGIN, gesture_dx/dy (pointer units,
-	 * dy positive upwards) with UPDATE.
+	 * gesture_fingers is valid with BEGIN, gesture_dx/dy (contact units,
+	 * that is 1/8 pointer unit, dy positive upwards) with UPDATE.
 	 */
 	unsigned gesture;
 	unsigned gesture_fingers;
@@ -166,7 +166,7 @@ struct hidmt_gstate {
 	bool started;			/* BEGIN has been sent */
 	bool lifting;			/* swipe ended by a lift, until all lift */
 	unsigned fingers;		/* 3 or 4 while a candidate exists */
-	int startx, starty, lastx, lasty, remx, remy;
+	int startx, starty, lastx, lasty;
 	/* Two-contact candidates arbitrate pinch against centroid scrolling. */
 	bool two_valid, two_scroll;
 	unsigned two_id[2];

@@ -976,7 +976,6 @@ hidmt_gesture_update(struct hidmt_gstate *gs, const struct hidmt_gconf *gc,
 		gs->fingers = n;
 		gs->startx = gs->lastx = x;
 		gs->starty = gs->lasty = y;
-		gs->remx = gs->remy = 0;
 		return;
 	}
 	if (gs->lifting)
@@ -989,15 +988,19 @@ hidmt_gesture_update(struct hidmt_gstate *gs, const struct hidmt_gconf *gc,
 		motion->gesture |= HIDMT_GESTURE_BEGIN;
 		motion->gesture_fingers = n;
 	}
-	/* Contact Y grows downwards; positive output means fingers moved up. */
-	dx = x - gs->lastx + gs->remx;
-	dy = gs->lasty - y + gs->remy;
+	/*
+	 * Contact units (1/8 pointer unit) in every frame: a compositor that
+	 * moves the desktop with the fingers gets a step per frame, not a
+	 * pointer unit every few frames.  Fingers at rest can now give small
+	 * updates too; there are up to eight times more swipe events.  Contact
+	 * Y grows downwards; positive output means fingers moved up.
+	 */
+	dx = x - gs->lastx;
+	dy = gs->lasty - y;
 	gs->lastx = x;
 	gs->lasty = y;
-	motion->gesture_dx = dx / 8;
-	motion->gesture_dy = dy / 8;
-	gs->remx = dx % 8;
-	gs->remy = dy % 8;
+	motion->gesture_dx = dx;
+	motion->gesture_dy = dy;
 	if (motion->gesture_dx != 0 || motion->gesture_dy != 0)
 		motion->gesture |= HIDMT_GESTURE_UPDATE;
 }

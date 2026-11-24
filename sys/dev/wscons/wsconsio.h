@@ -82,13 +82,17 @@ struct wscons_event {
 /*
  * Multi-finger touchpad swipe gestures (wsmouse_gesture()). Programs that
  * do not know them must ignore events of these types: struct wscons_event
- * is unchanged, only new type numbers are used.
+ * is unchanged, only new type numbers are used.  UPDATE_X and UPDATE_Y
+ * carry WSCONS_GESTURE_SWIPE_SUBUNITS units per pointer unit since
+ * 25 November 2026 (before, pointer units).
  */
 #define	WSCONS_EVENT_GESTURE_SWIPE_BEGIN	18	/* number of fingers */
-#define	WSCONS_EVENT_GESTURE_SWIPE_UPDATE_X	19	/* X delta, pointer units */
+#define	WSCONS_EVENT_GESTURE_SWIPE_UPDATE_X	19	/* X delta, 1/8 pointer unit */
 #define	WSCONS_EVENT_GESTURE_SWIPE_UPDATE_Y	20	/* Y delta, up is positive */
 #define	WSCONS_EVENT_GESTURE_SWIPE_END		21	/* void, finished */
 #define	WSCONS_EVENT_GESTURE_SWIPE_CANCEL	22	/* void, aborted */
+/* UPDATE_X and UPDATE_Y units in one pointer unit. */
+#define	WSCONS_GESTURE_SWIPE_SUBUNITS	8
 /* Two-finger pinch, with absolute 16.16 scale from its start. */
 #define WSCONS_EVENT_GESTURE_PINCH_BEGIN 23 /* two fingers */
 #define WSCONS_EVENT_GESTURE_PINCH_SCALE 24 /* positive absolute 16.16 scale */
