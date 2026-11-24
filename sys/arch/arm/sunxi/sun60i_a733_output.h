@@ -55,6 +55,12 @@ struct sun60i_a733_output_sample {
 	uint32_t words[A733_OUTPUT_SAMPLE_WORDS];
 };
 
+/* Last ordinary TV0 observation, copied without register I/O. */
+struct sun60i_a733_output_tv0_trace {
+	uint64_t raw_sequence, underflow_events;
+	uint32_t valid, irq_mode, gint0, debug, underflow_pending, reserved;
+};
+
 /* Cached first failed vblank observation. No MMIO is done by the reader. */
 enum sun60i_a733_observe_phase {
 	A733_OBSERVE_READY = 1,
@@ -107,6 +113,8 @@ struct sun60i_a733_output_ops {
 	/* Optional. Copy the first failed vblank observation without I/O. */
 	void (*cached_observe_trace)(const void *,
 	    struct sun60i_a733_output_observe_trace *);
+	void (*cached_tv0_trace)(const void *,
+	    struct sun60i_a733_output_tv0_trace *);
 };
 int sun60i_a733_output_register(int, const struct sun60i_a733_output_ops *, void *);
 int sun60i_a733_output_get_mode(int, const void *,
@@ -126,6 +134,8 @@ int sun60i_a733_output_cached_observe_trace(int,
 int sun60i_a733_output_cached_phy_trace(int,
     struct sun60i_a733_hdmi_phy_trace *);
 /* Reads only, after prepare. An error does not latch an output fault. */
+int sun60i_a733_output_cached_tv0_trace(int,
+    struct sun60i_a733_output_tv0_trace *);
 int sun60i_a733_output_sample(int, const void *,
     struct sun60i_a733_output_sample *);
 /* After start. EOPNOTSUPP means polled vblank observation only. */

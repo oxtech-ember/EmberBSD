@@ -235,6 +235,18 @@ sun60i_a733_output_cached_phy_trace(int node,
 	memset(out, 0, sizeof(*out));
 	return 0;
 }
+int
+sun60i_a733_output_cached_tv0_trace(int node,
+    struct sun60i_a733_output_tv0_trace *out)
+{
+	CHECK(node == 7);
+	*out = (struct sun60i_a733_output_tv0_trace) {
+		.raw_sequence = sequence, .underflow_events = 3,
+		.valid = 0x48, .irq_mode = 1, .gint0 = 0x40000000,
+		.debug = 0x40000000, .underflow_pending = 1,
+	};
+	return 0;
+}
 static unsigned vblank_binds;
 static int vblank_bind_error;
 static sun60i_a733_vblank_fn bound_fn;
@@ -474,6 +486,20 @@ replacement_wait_checks(void)
 		CHECK(de352_replacement_vblank(&sc, &done) == cases[i].expected);
 		CHECK(done.observed_sequence == cases[i].completion);
 		CHECK(vblank_index == vblank_samples);
+		CHECK(sc.update_trace.wait_samples == vblank_samples);
+		CHECK(sc.update_trace.wait_phase == UW_WAIT);
+		if (i == 2) {
+			CHECK(sc.update_trace.wait_enoent == 2);
+			CHECK(sc.update_trace.baseline == 11);
+			CHECK(sc.update_trace.last_sequence == 11);
+			CHECK(sc.update_trace.last_validated == 11);
+		}
+		if (i == 5) {
+			CHECK(sc.update_trace.wait_enoent == 1);
+			CHECK(sc.update_trace.baseline == 11);
+			CHECK(sc.update_trace.last_sequence == 13);
+			CHECK(sc.update_trace.last_validated == 13);
+		}
 		vblank_script = NULL;
 		reboot_fixture(&sc);
 	}
@@ -546,6 +572,7 @@ static void scanout_checks(void)
   case 7: no_finish=true;expected=ETIMEDOUT;break;
   }
   CHECK(sun60i_a733_de352_submit(client,&input[1],&done)==expected);
+  CHECK(sc.update_trace.version == 2 && sc.update_trace.operation == UO_FRAME);
   CHECK(memcmp(&done,&old_done,sizeof(done))==0&&f[0].held==1&&f[0].drops==0&&posts==0);
   if(fault<2){
    CHECK(writes==previous_writes&&f[1].held==0&&f[1].drops==1&&sc.pending.dma==NULL);
@@ -576,12 +603,23 @@ plane_disable_checks(void)
   if(failure==2)no_vblank=true;
   if(failure==3)corrupt_copy_reg=0x1c1000;
   int error=sun60i_a733_de352_disable_plane(client,&done);
-  CHECK(sc.update_trace.version==1&&sc.update_trace.valid==3);
+  CHECK(sc.update_trace.version == 2 && sc.update_trace.valid == 3);
+  CHECK(sc.update_trace.operation == UO_DISABLE);
   CHECK(sc.update_trace.result==(uint32_t)error);
   if(failure==1) CHECK(sc.update_trace.phase==UT_SUBMIT&&
       sc.update_trace.submit_phase==ST_QUEUE);
-  if(failure==2) CHECK(sc.update_trace.phase==UT_VBLANK&&
-      sc.update_trace.submit_phase==ST_DONE);
+  if (failure == 2) {
+   CHECK(sc.update_trace.phase == UT_VBLANK &&
+       sc.update_trace.submit_phase == ST_DONE);
+   CHECK(sc.update_trace.elapsed_ns >= DE352_TIMEOUT_NS);
+   CHECK(sc.update_trace.initial_baseline == sc.update_trace.tv0.raw_sequence);
+   CHECK(sc.update_trace.tv0.valid == 0x48 &&
+       sc.update_trace.tv0.irq_mode == 1 &&
+       sc.update_trace.tv0.gint0 == 0x40000000 &&
+       sc.update_trace.tv0.debug == 0x40000000 &&
+       sc.update_trace.tv0.underflow_pending == 1 &&
+       sc.update_trace.tv0.underflow_events == 3);
+  }
   if(failure==3) CHECK(sc.update_trace.phase==UT_SUBMIT&&
       sc.update_trace.submit_phase==ST_COPY&&
       sc.update_trace.reg==0x1c1000&&
@@ -655,6 +693,7 @@ output_stop_checks(void)
    CHECK(f.held==0&&f.drops==1&&sc.active.dma->disabled);
    int old_writes=writes;
    CHECK(sun60i_a733_de352_stop(client,&done)==0);
+ CHECK(sc.update_trace.operation == UO_STOP);
    CHECK(stop_calls==1&&writes==old_writes);
    if(failure==3)start_error=EIO;
    error=sun60i_a733_de352_submit(client,&frame,&done);

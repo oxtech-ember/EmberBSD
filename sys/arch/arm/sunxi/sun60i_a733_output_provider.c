@@ -313,6 +313,26 @@ sun60i_a733_output_cached_observe_trace(int phandle,
 	return error;
 }
 
+int
+sun60i_a733_output_cached_tv0_trace(int phandle,
+    struct sun60i_a733_output_tv0_trace *out)
+{
+	int error = 0;
+
+	if (out == NULL)
+		return EINVAL;
+	RUN_ONCE(&output_once, output_init);
+	mutex_enter(&output_lock);
+	if (output_ops == NULL || phandle != output_phandle)
+		error = ENXIO;
+	else if (output_ops->cached_tv0_trace == NULL)
+		error = EOPNOTSUPP;
+	else
+		output_ops->cached_tv0_trace(output_arg, out);
+	mutex_exit(&output_lock);
+	return error;
+}
+
 /* A sample error leaves the provider state and the sticky error unchanged. */
 int
 sun60i_a733_output_sample(int phandle, const void *owner,

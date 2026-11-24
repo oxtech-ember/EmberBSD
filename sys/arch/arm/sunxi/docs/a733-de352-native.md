@@ -359,10 +359,23 @@ the cause of that timeout.
 
 ## Cached external update diagnostics
 
-`hw.sun60ide0.update_trace` returns eight native-endian `uint32_t` words
-(32 bytes) under the DE lock. It performs no hardware access. The words are
-version, valid bits, update phase, RCQ submit phase, result, register,
-expected value and observed value. Version 1 identifies this layout. Valid
+`hw.sun60ide0.update_trace` returns a 128-byte native-endian version 2 record
+under the DE lock. It performs no hardware access. The first eight
+`uint32_t` words are version, valid bits, update phase, RCQ submit phase,
+result, register, expected value and observed value. Four more `uint32_t`
+words identify operation (1 frame, 2 disable, 3 stop), retirement wait
+phase (1 baseline, 2 wait), number of samples and number of ENOENT results.
+Five `uint64_t` values give the initial baseline, effective baseline, last
+sampled sequence, last validated sequence and elapsed wait time in ns.
+The effective baseline moves to an unvalidated advance. On a retirement
+timeout, the owner copies the last TV0 observation before latching the fault.
+The final 40 bytes hold two `uint64_t` values (raw sequence and cumulative
+underflow count), then six `uint32_t` values (register valid bits, IRQ mode,
+GINT0, TV_DEBUG, underflow pending and a reserved zero). GINT0 uses valid
+bit 3 and TV_DEBUG uses bit 6. The cached raw sequence is the IRQ count
+sampled by the last ordinary observation, or the acknowledged poll count.
+The snapshot adds no MMIO.
+A zero wait phase means the update did not enter the wait. Valid
 bit 0 means an external update started; bit 1 means its result is complete.
 Update phases are 0 none, 1 preparation, 2 output start, 3 old-list check,
 4 RCQ submission, 5 vblank retirement, 6 memory admission, 7 output stop and

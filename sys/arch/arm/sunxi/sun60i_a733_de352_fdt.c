@@ -112,11 +112,17 @@ enum {
 	UT_NONE, UT_PREPARE, UT_START, UT_READY, UT_SUBMIT,
 	UT_VBLANK, UT_MEMORY, UT_STOP, UT_DONE
 };
+enum { UO_NONE, UO_FRAME, UO_DISABLE, UO_STOP };
+enum { UW_NONE, UW_BASELINE, UW_WAIT };
 struct de352_update_trace {
 	uint32_t version, valid, phase, submit_phase, result;
 	uint32_t reg, expected, observed;
+	uint32_t operation, wait_phase, wait_samples, wait_enoent;
+	uint64_t initial_baseline, baseline, last_sequence, last_validated;
+	uint64_t elapsed_ns;
+	struct sun60i_a733_output_tv0_trace tv0;
 };
-CTASSERT(sizeof(struct de352_update_trace) == 8 * sizeof(uint32_t));
+CTASSERT(sizeof(struct de352_update_trace) == 32 * sizeof(uint32_t));
 static const uint32_t de352_submit_regs[ST_NREGS] = {
 	0x8100, 0x8104, 0x8108, 0x810c, 0x8110, 0x8114, 0x8118, 0x811c,
 	0x8010, 0x804c
@@ -1790,35 +1796,54 @@ static int
 de352_replacement_vblank(struct sun60i_de352_softc *sc,
     struct sun60i_a733_de352_completion *completion)
 {
+	struct de352_update_trace *trace = &sc->update_trace;
 	const uint64_t start = de352_now();
 	uint64_t baseline, last, sequence;
 	int error;
 
+	trace->wait_phase = UW_BASELINE;
+	trace->wait_samples = 1;
 	error = sun60i_a733_output_observed_vblank(sc->output_phandle, sc,
 	    &baseline);
 	if (error != 0 && error != ENOENT)
 		return error;
+	trace->initial_baseline = trace->baseline =
+	    trace->last_sequence = baseline;
+	if (error == ENOENT)
+		trace->wait_enoent = 1;
+	else
+		trace->last_validated = baseline;
 	if (baseline < sc->vblank)
 		return EPROTO;
 	last = baseline;
+	trace->wait_phase = UW_WAIT;
 	for (;;) {
+		trace->wait_samples++;
 		error = sun60i_a733_output_observed_vblank(sc->output_phandle,
 		    sc, &sequence);
 		if (error != 0 && error != ENOENT)
 			return error;
+		trace->last_sequence = sequence;
+		if (error == ENOENT)
+			trace->wait_enoent++;
 		if (sequence < last || (error == 0 && sequence == last))
 			return EPROTO;
+		if (error == 0)
+			trace->last_validated = sequence;
 		if (error == 0 && sequence - baseline >= 2) {
 			completion->observed_sequence = sequence;
 			completion->observed_time_ns = de352_now();
 			return 0;
 		}
 		/* An unvalidated advance (for example underflow) starts a new epoch. */
-		if (error == ENOENT && sequence > last)
+		if (error == ENOENT && sequence > last) {
 			baseline = sequence;
+			trace->baseline = baseline;
+		}
 		last = sequence;
 		/* Always check for accumulated IRQs before declaring expiry. */
-		if (de352_now() - start >= DE352_TIMEOUT_NS)
+		trace->elapsed_ns = de352_now() - start;
+		if (trace->elapsed_ns >= DE352_TIMEOUT_NS)
 			return ETIMEDOUT;
 		delay(10);
 	}
@@ -1880,8 +1905,9 @@ de352_update(struct sun60i_a733_de352_client *client,
 	}
 	client->busy = true;
 	sc->update_trace = (struct de352_update_trace){
-		.version = 1, .valid = 1, .phase = UT_PREPARE,
-		.reg = UINT32_MAX
+		.version = 2, .valid = 1, .phase = UT_PREPARE,
+		.reg = UINT32_MAX,
+		.operation = stop ? UO_STOP : frame == NULL ? UO_DISABLE : UO_FRAME
 	};
 	mutex_exit(&sc->lock);
 
@@ -1916,6 +1942,9 @@ de352_update(struct sun60i_a733_de352_client *client,
 		if (error == 0) {
 			sc->update_trace.phase = UT_VBLANK;
 			error = de352_replacement_vblank(sc, &completion);
+			if (error == ETIMEDOUT)
+				(void)sun60i_a733_output_cached_tv0_trace(
+				    sc->output_phandle, &sc->update_trace.tv0);
 		}
 		if (error == 0) {
 			sc->update_trace.phase = UT_MEMORY;

@@ -50,6 +50,7 @@ struct sun60i_a733_hdmi_softc {
 	struct sun60i_a733_output_mode mode;
 	struct sun60i_a733_output_trace trace;
 	struct sun60i_a733_output_observe_trace observe_trace;
+	struct sun60i_a733_output_tv0_trace tv0_trace;
 	struct edid_info edid;
 	uint8_t edid_block[128];
 	/*
@@ -664,6 +665,7 @@ native_observe(void *arg, const void *owner, uint64_t *sequence)
 	uint32_t phase = A733_OBSERVE_READY;
 	int error = native_ready(sc, owner);
 
+	sc->tv0_trace = (struct sun60i_a733_output_tv0_trace){0};
 	if (error == 0) {
 		phase = A733_OBSERVE_PHY;
 		error = sun60i_a733_hdmi_phy_observe(&sc->phy);
@@ -678,8 +680,17 @@ native_observe(void *arg, const void *owner, uint64_t *sequence)
 			mutex_spin_exit(&sc->intr_lock);
 			error = sun60i_a733_tv0_observe_count(&sc->tv,
 			    count, sequence);
-		} else
+			sc->tv0_trace.raw_sequence = count;
+			sc->tv0_trace.irq_mode = 1;
+		} else {
 			error = sun60i_a733_tv0_observe(&sc->tv, sequence);
+			sc->tv0_trace.raw_sequence = sc->tv.sequence;
+		}
+		sc->tv0_trace.valid = sc->tv.observe_valid;
+		sc->tv0_trace.gint0 = sc->tv.observe_gint0;
+		sc->tv0_trace.debug = sc->tv.observe_debug;
+		sc->tv0_trace.underflow_pending = sc->tv.underflow_pending;
+		sc->tv0_trace.underflow_events = sc->tv.underflow_events;
 	}
 	if (error != 0 && error != ENOENT && sc->observe_trace.valid == 0) {
 		struct sun60i_a733_output_observe_trace *t =
@@ -865,11 +876,20 @@ native_detect(const void *arg, const void *owner, bool *out)
 	return 0;
 }
 
+static void
+native_cached_tv0_trace(const void *arg,
+    struct sun60i_a733_output_tv0_trace *out)
+{
+	const struct sun60i_a733_hdmi_softc *sc = arg;
+
+	*out = sc->tv0_trace;
+}
+
 static const struct sun60i_a733_output_ops output_ops = {
 	native_get_mode, native_prepare, native_start, native_observe, native_fault,
 	native_cached_trace, native_cached_phy_trace, native_sample,
 	native_set_vblank_handler, native_detect, native_stop,
-	native_cached_observe_trace
+	native_cached_observe_trace, native_cached_tv0_trace
 };
 
 static int

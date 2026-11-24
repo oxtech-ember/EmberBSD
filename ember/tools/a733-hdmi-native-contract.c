@@ -453,7 +453,18 @@ irq_checks(void)
 		CHECK(tvregs[1] == UINT32_C(0x40000100));
 	}
 	CHECK(native_observe(&sc, &owner_cookie, &sequence) == 0 && sequence == 3);
+	sc.tv.underflow_pending = true;
+	sc.tv.underflow_events = 9;
+	tvregs[0xfc / 4] = UINT32_C(0x10000000);
 	CHECK(native_observe(&sc, &owner_cookie, &sequence) == ENOENT);
+	struct sun60i_a733_output_tv0_trace trace;
+	unsigned before_reads = irq_reads, before_writes = irq_writes;
+	native_cached_tv0_trace(&sc, &trace);
+	CHECK(irq_reads == before_reads && irq_writes == before_writes);
+	CHECK(trace.raw_sequence == 3 && trace.valid == 0x68 &&
+	    trace.irq_mode == 1 && trace.gint0 == 0x40000100 &&
+	    trace.debug == 0x10000000 && trace.underflow_events == 9 &&
+	    trace.underflow_pending == 1 && trace.reserved == 0);
 	/* No pending flag, or no enable: not this source. */
 	tvregs[1] = UINT32_C(0x40000000);
 	CHECK(intr_fn(&sc) == 0 && sc.irq_sequence == 3);
