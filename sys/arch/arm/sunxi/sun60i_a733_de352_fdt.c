@@ -1936,6 +1936,16 @@ deadline:
 			/* The worker may have been descheduled after sampling. */
 			final_irq_sampled = true;
 		} else if (irq) {
+			if (baseline <= UINT64_MAX - 2 &&
+			    start <= UINT64_MAX - DE352_TIMEOUT_NS) {
+				error = sun60i_a733_output_wait_vblank_irq(
+				    sc->output_phandle, sc, baseline + 2,
+				    start + DE352_TIMEOUT_NS, &raw);
+				if (error == 0)
+					continue;
+				if (error != EOPNOTSUPP)
+					return error;
+			}
 			kpause("a733vb", false, 1, NULL);
 		} else {
 			delay(10);

@@ -241,6 +241,28 @@ sun60i_a733_output_sample_vblank_irq(int phandle, const void *owner,
 }
 
 int
+sun60i_a733_output_wait_vblank_irq(int phandle, const void *owner,
+    uint64_t target, uint64_t deadline_ns, uint64_t *out)
+{
+	int error;
+
+	if (out == NULL)
+		return EINVAL;
+	RUN_ONCE(&output_once, output_init);
+	mutex_enter(&output_lock);
+	error = output_lookup(phandle, owner);
+	if (error == 0 && !output_started)
+		error = EINVAL;
+	if (error == 0 && output_ops->wait_vblank_irq == NULL)
+		error = EOPNOTSUPP;
+	if (error == 0)
+		error = output_ops->wait_vblank_irq(output_arg, owner, target,
+		    deadline_ns, out);
+	mutex_exit(&output_lock);
+	return error;
+}
+
+int
 sun60i_a733_output_fault(int phandle, const void *owner, int failure)
 {
 	int error;

@@ -117,6 +117,9 @@ struct sun60i_a733_output_ops {
 	    struct sun60i_a733_output_tv0_trace *);
 	/* Optional raw interrupt count. No readiness or register I/O. */
 	int (*sample_vblank_irq)(void *, const void *, uint64_t *);
+	/* Optional wait for a raw count. A deadline also returns the raw count. */
+	int (*wait_vblank_irq)(void *, const void *, uint64_t, uint64_t,
+	    uint64_t *);
 };
 int sun60i_a733_output_register(int, const struct sun60i_a733_output_ops *, void *);
 int sun60i_a733_output_get_mode(int, const void *,
@@ -129,6 +132,8 @@ int sun60i_a733_output_stop(int, const void *);
 /* ENOENT reports the sampled sequence but does not validate a new event. */
 int sun60i_a733_output_observed_vblank(int, const void *, uint64_t *);
 int sun60i_a733_output_sample_vblank_irq(int, const void *, uint64_t *);
+int sun60i_a733_output_wait_vblank_irq(int, const void *, uint64_t, uint64_t,
+    uint64_t *);
 int sun60i_a733_output_fault(int, const void *, int);
 /* No readiness check or I/O. Failure leaves the output unchanged. */
 int sun60i_a733_output_cached_trace(int, struct sun60i_a733_output_trace *);

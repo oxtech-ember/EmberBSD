@@ -95,10 +95,13 @@ delay(unsigned us)
 }
 static int splhigh(void) { CHECK(!irq_masked);irq_masked=true;return 42; }
 static uint64_t irq_sleep_ns;
+static bool irq_cv_supported;
+static unsigned irq_cv_calls, irq_kpauses;
 static void
 kpause(const char *reason, bool interruptible, int ticks, void *lock)
 {
 	CHECK(reason != NULL && !interruptible && ticks == 1 && lock == NULL);
+	irq_kpauses++;
 	tick += irq_sleep_ns;
 }
 static void splx(int level) { CHECK(level==42&&irq_masked);irq_masked=false; }
@@ -278,6 +281,21 @@ sun60i_a733_output_cached_tv0_trace(int node,
 		.valid = 0x48, .irq_mode = 1, .gint0 = 0x40000000,
 		.debug = 0x40000000, .underflow_pending = 1,
 	};
+	return 0;
+}
+int
+sun60i_a733_output_wait_vblank_irq(int node, const void *owner, uint64_t target,
+    uint64_t deadline_ns, uint64_t *out)
+{
+	CHECK(node == 7 && owner == lease_owner && retained && started);
+	CHECK(target > 0 && deadline_ns > tick && out != NULL);
+	if (!irq_cv_supported)
+		return EOPNOTSUPP;
+	irq_cv_calls++;
+	do {
+		tick += irq_sleep_ns;
+		CHECK(sun60i_a733_output_sample_vblank_irq(node, owner, out) == 0);
+	} while (*out < target && tick < deadline_ns);
 	return 0;
 }
 static unsigned vblank_binds;
@@ -581,34 +599,41 @@ replacement_irq_checks(void)
 		/* Two IRQs arrive after the sample but before the deadline check. */
 		{{40, 42}, {{40, 0, ENOENT}, {42, 0, 0}}, 2, 2, 0, 42, 0},
 	};
-	for (size_t i = 0; i < __arraycount(cases); i++) {
-		struct sun60i_de352_softc sc;
-		struct sun60i_a733_de352_completion done = {0};
-		const struct irq_case *test = &cases[i];
+	for (unsigned use_cv = 0; use_cv < 2; use_cv++) {
+		irq_cv_supported = use_cv != 0;
+		irq_cv_calls = irq_kpauses = 0;
+		for (size_t i = 0; i < __arraycount(cases); i++) {
+			struct sun60i_de352_softc sc;
+			struct sun60i_a733_de352_completion done = {0};
+			const struct irq_case *test = &cases[i];
 
-		init(&sc);
-		CHECK(de352_run(&sc) == 0);
-		vblank_script = test->samples;
-		vblank_samples = test->observation_count;
-		vblank_index = 0;
-		irq_script = test->count;
-		irq_samples = test->irq_count;
-		irq_index = 0;
-		irq_sleep_ns = test->sleep_ns;
-		irq_sample_pause_ns = i == __arraycount(cases) - 1 ?
-		    DE352_TIMEOUT_NS + 1000 : 0;
-		CHECK(de352_replacement_vblank(&sc, &done) == test->expected);
-		CHECK(vblank_index == vblank_samples && irq_index == irq_samples);
-		CHECK(done.observed_sequence == test->completion);
-		if (test->expected == ETIMEDOUT) {
-			CHECK(sc.update_trace.last_sequence == 41);
-			CHECK(sc.update_trace.wait_samples == 1);
+			init(&sc);
+			CHECK(de352_run(&sc) == 0);
+			vblank_script = test->samples;
+			vblank_samples = test->observation_count;
+			vblank_index = 0;
+			irq_script = test->count;
+			irq_samples = test->irq_count;
+			irq_index = 0;
+			irq_sleep_ns = test->sleep_ns;
+			irq_sample_pause_ns = i == __arraycount(cases) - 1 ?
+			    DE352_TIMEOUT_NS + 1000 : 0;
+			CHECK(de352_replacement_vblank(&sc, &done) == test->expected);
+			CHECK(vblank_index == vblank_samples && irq_index == irq_samples);
+			CHECK(done.observed_sequence == test->completion);
+			if (test->expected == ETIMEDOUT) {
+				CHECK(sc.update_trace.last_sequence == 41);
+				CHECK(sc.update_trace.wait_samples == 1);
+			}
+			vblank_script = NULL;
+			irq_script = NULL;
+			irq_sample_pause_ns = 0;
+			reboot_fixture(&sc);
 		}
-		vblank_script = NULL;
-		irq_script = NULL;
-		irq_sample_pause_ns = 0;
-		reboot_fixture(&sc);
+		CHECK(use_cv == 0 ? irq_kpauses != 0 && irq_cv_calls == 0 :
+		    irq_cv_calls != 0 && irq_kpauses == 0);
 	}
+	irq_cv_supported = false;
 }
 
 static void scanout_checks(void)

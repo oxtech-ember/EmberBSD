@@ -196,10 +196,13 @@ flags. An unvalidated sequence advance discards earlier retirement credit.
 The 100 ms wait starts after the baseline is sampled. Each native output
 observation validates shared resources once, then checks the PHY and TV0.
 An IRQ-backed output samples the counter under its interrupt lock after
-shared resource and PHY checks. Between baseline and completion, the worker
-sleeps for one tick and samples the counter without MMIO or rail checks.
-After two counted IRQs it performs the standard full observation before
-retiring the old buffer. A count advance without validation replaces the
+shared resource and PHY checks. HDMI waits on a condition variable under
+that lock. Its interrupt handler acknowledges vblank, advances the raw
+count and signals the waiter. The waiter rechecks the count under the
+same lock after any wake. It also returns the count at the monotonic
+deadline. The raw wait reads no registers or rails. An IRQ provider without
+a wait callback uses the one-tick sleep and raw sample. After two counted
+IRQs the worker performs the full observation before retiring the old buffer. A count advance without validation replaces the
 baseline. On expiry, the worker takes one final IRQ-only sample to cover
 scheduling delays between a sample and the deadline check. Without an IRQ, it uses ordinary poll observations. The completion time is the software
 observation time.

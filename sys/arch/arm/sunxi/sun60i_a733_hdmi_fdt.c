@@ -9,6 +9,7 @@
 __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/param.h>
 #include <sys/bus.h>
+#include <sys/condvar.h>
 #include <sys/device.h>
 #include <sys/errno.h>
 #include <sys/kernel.h>
@@ -60,6 +61,7 @@ struct sun60i_a733_hdmi_softc {
 	 * output clocks were proven ready. It stays true.
 	 */
 	kmutex_t intr_lock;
+	kcondvar_t intr_cv;
 	void *ih;
 	bool irq_hw, irq_armed;
 	uint64_t irq_sequence;
@@ -92,6 +94,7 @@ native_fail(struct sun60i_a733_hdmi_softc *sc, int error)
 		/* No MMIO here. The IRQ handler masks a later source. */
 		mutex_spin_enter(&sc->intr_lock);
 		sc->irq_armed = false;
+		cv_signal(&sc->intr_cv);
 		mutex_spin_exit(&sc->intr_lock);
 		if (sc->owner != NULL)
 			(void)sun60i_a733_ccu_display_fault(sc->de0, sc->owner, error);
@@ -663,6 +666,7 @@ native_stop(void *arg, const void *owner)
 		sc->irq_armed = false;
 		/* Preserve counted IRQs that observe() has not consumed yet. */
 		sc->tv.sequence = sc->irq_sequence;
+		cv_signal(&sc->intr_cv);
 		mutex_spin_exit(&sc->intr_lock);
 	}
 	error = sun60i_a733_tv0_stop(&sc->tv);
@@ -762,6 +766,7 @@ native_intr(void *arg)
 	}
 	if (!sc->irq_armed || sc->irq_sequence == UINT64_MAX) {
 		sc->irq_armed = false;
+		cv_signal(&sc->intr_cv);
 		bus_space_write_4(sc->bst, sc->tv0, A733_TV0_GINT0,
 		    ack & ~A733_TV0_VB_ENABLE);
 		bus_space_barrier(sc->bst, sc->tv0, A733_TV0_GINT0, 4,
@@ -773,6 +778,7 @@ native_intr(void *arg)
 	bus_space_barrier(sc->bst, sc->tv0, A733_TV0_GINT0, 4,
 	    BUS_SPACE_BARRIER_WRITE);
 	sc->irq_sequence++;
+	cv_signal(&sc->intr_cv);
 	/* The callback runs under intr_lock, so a removal drains it. */
 	if (sc->vblank_fn != NULL)
 		sc->vblank_fn(sc->vblank_arg, sc->irq_sequence);
@@ -927,12 +933,51 @@ native_sample_vblank_irq(void *arg, const void *owner, uint64_t *out)
 	return error;
 }
 
+/* The provider lock keeps the owner, clock lease and start state stable. */
+static int
+native_wait_vblank_irq(void *arg, const void *owner, uint64_t target,
+    uint64_t deadline_ns, uint64_t *out)
+{
+	struct sun60i_a733_hdmi_softc *sc = arg;
+	int error = 0;
+
+	if (sc->fault != 0)
+		return sc->fault;
+	if (owner == NULL || owner != sc->owner)
+		return EBUSY;
+	if (sc->ih == NULL)
+		return EOPNOTSUPP;
+	mutex_enter(&sc->intr_lock);
+	while (sc->irq_armed && sc->irq_sequence < target) {
+		struct timespec now, left;
+		uint64_t current_ns, remaining_ns;
+
+		nanouptime(&now);
+		current_ns = (uint64_t)now.tv_sec * UINT64_C(1000000000) +
+		    now.tv_nsec;
+		if (current_ns >= deadline_ns)
+			break;
+		remaining_ns = deadline_ns - current_ns;
+		left.tv_sec = remaining_ns / UINT64_C(1000000000);
+		left.tv_nsec = remaining_ns % UINT64_C(1000000000);
+		/* This interlock covers both the predicate and the IRQ signal. */
+		(void)cv_timedwait(&sc->intr_cv, &sc->intr_lock,
+		    MAX(1, tstohz(&left)));
+	}
+	if (!sc->irq_armed)
+		error = EIO;
+	else
+		*out = sc->irq_sequence;
+	mutex_exit(&sc->intr_lock);
+	return error;
+}
+
 static const struct sun60i_a733_output_ops output_ops = {
 	native_get_mode, native_prepare, native_start, native_observe, native_fault,
 	native_cached_trace, native_cached_phy_trace, native_sample,
 	native_set_vblank_handler, native_detect, native_stop,
 	native_cached_observe_trace, native_cached_tv0_trace,
-	native_sample_vblank_irq
+	native_sample_vblank_irq, native_wait_vblank_irq
 };
 
 static int
@@ -1032,6 +1077,7 @@ sun60i_a733_hdmi_attach(device_t parent, device_t self, void *aux)
 	sc->bst = faa->faa_bst;
 	sc->dw.sc_dev = self;
 	mutex_init(&sc->intr_lock, MUTEX_DEFAULT, IPL_VM);
+	cv_init(&sc->intr_cv, "a733vb");
 	aprint_naive("\n");
 	aprint_normal(": A733 native HDMI output (explicit stages)\n");
 	error = native_bindings(sc);
@@ -1072,6 +1118,7 @@ sun60i_a733_hdmi_attach(device_t parent, device_t self, void *aux)
 		sc->ih = NULL;
 	}
 failed:
+	cv_destroy(&sc->intr_cv);
 	while (mapped != 0) {
 		mapped--;
 		bus_space_unmap(sc->bst, *handles[mapped], sizes[mapped]);

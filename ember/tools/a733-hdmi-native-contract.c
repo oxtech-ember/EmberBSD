@@ -9,6 +9,7 @@
 #include <errno.h>
 #include <limits.h>
 #include <stdarg.h>
+#include <time.h>
 
 typedef unsigned u_int;
 typedef uintptr_t bus_addr_t;
@@ -30,6 +31,7 @@ struct fdt_attach_args { int faa_phandle; bus_space_tag_t faa_bst; };
 #ifndef __arraycount
 #define __arraycount(a) (sizeof(a) / sizeof((a)[0]))
 #endif
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 #define container_of(p,t,m) ((t *)((char *)(p) - offsetof(t,m)))
 #define BUS_SPACE_BARRIER_WRITE 2
@@ -47,6 +49,7 @@ struct fdt_attach_args { int faa_phandle; bus_space_tag_t faa_bst; };
 #define IPL_VM 6
 #define FDT_INTR_MPSAFE 1
 typedef struct { int held, ipl, init; } kmutex_t;
+typedef struct { bool initialized; } kcondvar_t;
 
 static unsigned checks;
 #define CHECK(c) do { checks++; if (!(c)) { \
@@ -211,6 +214,35 @@ static kmutex_t *cb_lock;
 static void mutex_init(kmutex_t *m,int type,int ipl) { CHECK(type==MUTEX_DEFAULT&&ipl==IPL_VM);m->held=0;m->ipl=ipl;m->init=1; }
 static void mutex_spin_enter(kmutex_t *m) { CHECK(m->init&&m->ipl==IPL_VM&&!m->held);m->held=1; }
 static void mutex_spin_exit(kmutex_t *m) { CHECK(m->held);m->held=0; }
+static void mutex_enter(kmutex_t *m) { mutex_spin_enter(m); }
+static void mutex_exit(kmutex_t *m) { mutex_spin_exit(m); }
+
+static uint64_t now_ns;
+static unsigned cv_waits, cv_signals;
+static void (*cv_wait_hook)(void);
+
+static void cv_init(kcondvar_t *cv, const char *name)
+{ CHECK(!cv->initialized && name != NULL); cv->initialized = true; }
+static void cv_destroy(kcondvar_t *cv)
+{ CHECK(cv->initialized); cv->initialized = false; }
+static void cv_signal(kcondvar_t *cv)
+{ CHECK(cv->initialized); cv_signals++; }
+static void nanouptime(struct timespec *now)
+{ now->tv_sec = now_ns / 1000000000; now->tv_nsec = now_ns % 1000000000; }
+static int tstohz(const struct timespec *ts)
+{ return ts->tv_sec * 100 + (ts->tv_nsec + 9999999) / 10000000; }
+static int cv_timedwait(kcondvar_t *cv, kmutex_t *m, int ticks)
+{
+	CHECK(cv->initialized && m->held && ticks > 0);
+	cv_waits++;
+	mutex_spin_exit(m);
+	if (cv_wait_hook != NULL)
+		cv_wait_hook();
+	else
+		now_ns += (uint64_t)ticks * 10000000;
+	mutex_spin_enter(m);
+	return cv_wait_hook != NULL ? 0 : EWOULDBLOCK;
+}
 static const char *device_xname(device_t d) { (void)d;return "sun60ihdmi0"; }
 static void aprint_normal_dev(device_t d,const char *s,...) { (void)d;(void)s; }
 static void *fdtbus_intr_establish_xname(int node,unsigned index,int ipl,int flags,int (*fn)(void *),void *arg,const char *name)
@@ -233,6 +265,7 @@ static void fixture(void)
  calls=fail=reads=writes=maps=unmaps=clock_puts=faults=releases=0;
  map_failure=wrong_node=bad_range=missing_property=reject_syscfg=syscfg_writes=bad_name=events=0;
  hpd_after_ddc=false;transient_step=0;
+ now_ns=cv_waits=cv_signals=0;cv_wait_hook=NULL;
  retained=true;ccu_hdmi=ccu_tv0=dw_started=tv_started=registered=dcxo_drift=hpd_loss=false;
  intr_present=false;intr_establish=intr_disestablish=irq_reads=irq_writes=cb_calls=0;intr_fn=NULL;intr_arg=NULL;cb_sequence=0;
  rail_voltage[0]=800000;rail_voltage[1]=1800000;rail_enabled[0]=rail_enabled[1]=1;
@@ -603,6 +636,48 @@ observation_ready_checks(void)
 	CHECK(events == first);
 }
 
+static void
+test_wait_irq(void)
+{
+	struct sun60i_a733_output_mode mode;
+	uint64_t sequence = UINT64_MAX;
+	unsigned before;
+
+	fixture(); intr_present = true; attach();
+	CHECK(native_get_mode(&sc, &owner_cookie, &mode) == 0);
+	CHECK(native_prepare(&sc, &owner_cookie, &mode) == 0);
+	CHECK(native_start(&sc, &owner_cookie) == 0);
+
+	/* An IRQ before entering the waiter must not be lost. */
+	voltage_delay_irq();
+	CHECK(native_wait_vblank_irq(&sc, &owner_cookie, 1, 5000000,
+	    &sequence) == 0 && sequence == 1 && cv_waits == 0);
+	before = irq_writes;
+	/* Deadline is below one tick. Return raw without performing MMIO. */
+	CHECK(native_wait_vblank_irq(&sc, &owner_cookie, 2, 5000000,
+	    &sequence) == 0 && sequence == 1 && cv_waits == 1 &&
+	    now_ns >= 5000000 && irq_writes == before);
+	CHECK(native_wait_vblank_irq(&sc, &owner_cookie, 2, now_ns,
+	    &sequence) == 0 && sequence == 1 && cv_waits == 1);
+
+	/* Only the IRQ path publishes progress while the lock is released. */
+	cv_wait_hook = voltage_delay_irq;
+	before = cv_signals;
+	CHECK(native_wait_vblank_irq(&sc, &owner_cookie, 3, now_ns + 5000000,
+	    &sequence) == 0 && sequence == 3 && cv_waits == 3 &&
+	    cv_signals == before + 2);
+	CHECK(native_wait_vblank_irq(&sc, &sequence, 4, now_ns + 5000000,
+	    &sequence) == EBUSY && sequence == 3);
+
+	/* Disarm on counter overflow must wake a waiter with an error. */
+	sc.irq_sequence = UINT64_MAX - 1;
+	CHECK(native_wait_vblank_irq(&sc, &owner_cookie, UINT64_MAX,
+	    now_ns + 5000000, &sequence) == 0 && sequence == UINT64_MAX);
+	voltage_delay_irq();
+	CHECK(native_wait_vblank_irq(&sc, &owner_cookie, UINT64_MAX, now_ns,
+	    &sequence) == EIO && sequence == UINT64_MAX);
+}
+
 int main(void)
 {
  struct sun60i_a733_output_mode mode, saved;
@@ -676,6 +751,7 @@ int main(void)
  prepare_trace_checks();
  irq_checks();
  observation_ready_checks();
+ test_wait_irq();
  stop_restart_checks();
  printf("A733 native HDMI adapter: %u checks passed (%u fallible calls)\n",checks,count);
  return 0;
