@@ -188,8 +188,10 @@ the blend pipe word. It samples a TV0 baseline after successful RCQ readback.
 Only two validated events beyond that baseline permit retirement. One IRQ
 sample can report several counted events. Polling counts only acknowledged
 flags. An unvalidated sequence advance discards earlier retirement credit.
-The worker samples before deciding that the 100 ms wait expired, including
-when it resumes after a delay. The completion time is the software
+The 100 ms wait starts after the baseline is sampled. Each native output
+observation validates shared resources once, then checks the PHY and TV0.
+The IRQ count is sampled after the shared resource and PHY checks. The worker
+samples before deciding that the wait expired, including after a delay. The completion time is the software
 observation time.
 
 Only that proof retires the previous external frame. The provider performs

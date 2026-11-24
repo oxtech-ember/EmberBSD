@@ -1797,8 +1797,7 @@ de352_replacement_vblank(struct sun60i_de352_softc *sc,
     struct sun60i_a733_de352_completion *completion)
 {
 	struct de352_update_trace *trace = &sc->update_trace;
-	const uint64_t start = de352_now();
-	uint64_t baseline, last, sequence;
+	uint64_t baseline, last, sequence, start;
 	int error;
 
 	trace->wait_phase = UW_BASELINE;
@@ -1816,6 +1815,7 @@ de352_replacement_vblank(struct sun60i_de352_softc *sc,
 	if (baseline < sc->vblank)
 		return EPROTO;
 	last = baseline;
+	start = de352_now();
 	trace->wait_phase = UW_WAIT;
 	for (;;) {
 		trace->wait_samples++;

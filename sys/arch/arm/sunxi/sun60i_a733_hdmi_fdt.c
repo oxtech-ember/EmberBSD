@@ -51,6 +51,7 @@ struct sun60i_a733_hdmi_softc {
 	struct sun60i_a733_output_trace trace;
 	struct sun60i_a733_output_observe_trace observe_trace;
 	struct sun60i_a733_output_tv0_trace tv0_trace;
+	bool observing_ready;
 	struct edid_info edid;
 	uint8_t edid_block[128];
 	/*
@@ -149,6 +150,23 @@ native_ready(void *arg, const void *owner)
 		syscon_unlock(sc->syscfg);
 	}
 	return native_fail(sc, error);
+}
+
+/*
+ * native_observe has already verified the shared resources while holding
+ * the output provider mutex. The observation helpers still check their
+ * local state and every MMIO access retains its native fault checks.
+ */
+static int
+native_helper_ready(void *arg, const void *owner)
+{
+	struct sun60i_a733_hdmi_softc *sc = arg;
+
+	if (!sc->observing_ready)
+		return native_ready(sc, owner);
+	if (sc->fault != 0)
+		return sc->fault;
+	return owner != NULL && owner == sc->owner ? 0 : EBUSY;
 }
 
 static void
@@ -666,6 +684,7 @@ native_observe(void *arg, const void *owner, uint64_t *sequence)
 	int error = native_ready(sc, owner);
 
 	sc->tv0_trace = (struct sun60i_a733_output_tv0_trace){0};
+	sc->observing_ready = error == 0;
 	if (error == 0) {
 		phase = A733_OBSERVE_PHY;
 		error = sun60i_a733_hdmi_phy_observe(&sc->phy);
@@ -675,6 +694,7 @@ native_observe(void *arg, const void *owner, uint64_t *sequence)
 		if (sc->ih != NULL) {
 			uint64_t count;
 
+			/* Sample after the shared resource and PHY checks. */
 			mutex_spin_enter(&sc->intr_lock);
 			count = sc->irq_sequence;
 			mutex_spin_exit(&sc->intr_lock);
@@ -692,6 +712,7 @@ native_observe(void *arg, const void *owner, uint64_t *sequence)
 		sc->tv0_trace.underflow_pending = sc->tv.underflow_pending;
 		sc->tv0_trace.underflow_events = sc->tv.underflow_events;
 	}
+	sc->observing_ready = false;
 	if (error != 0 && error != ENOENT && sc->observe_trace.valid == 0) {
 		struct sun60i_a733_output_observe_trace *t =
 		    &sc->observe_trace;
@@ -1010,10 +1031,10 @@ sun60i_a733_hdmi_attach(device_t parent, device_t self, void *aux)
 	sc->dw.sc_reg_width = 1;
 	sc->dw.sc_read = native_dw_read;
 	sc->dw.sc_write = native_dw_write;
-	sc->phy_io = (struct sun60i_a733_hdmi_io){ sc, native_ready,
+	sc->phy_io = (struct sun60i_a733_hdmi_io){ sc, native_helper_ready,
 	    native_phy_read, native_phy_write, native_delay };
 	sc->phy.io = &sc->phy_io;
-	sc->tv_io = (struct sun60i_a733_tv0_io){ sc, native_ready,
+	sc->tv_io = (struct sun60i_a733_tv0_io){ sc, native_helper_ready,
 	    native_tv_read, native_tv_write };
 	sc->tv.io = &sc->tv_io;
 	/* Without an interrupt property, vblank observation stays polled. */

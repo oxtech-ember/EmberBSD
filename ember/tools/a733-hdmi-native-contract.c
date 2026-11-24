@@ -86,6 +86,7 @@ static struct dwhdmi_softc *ddc_dw;
 static unsigned calls, fail, reads, writes, maps, unmaps, clock_puts, faults, releases;
 static unsigned map_failure, wrong_node, bad_range, missing_property, reject_syscfg;
 static unsigned syscfg_writes, rail_voltage[2], rail_enabled[2], bad_name;
+static void (*voltage_delay_hook)(void);
 static bool retained, ccu_hdmi, ccu_tv0, dw_started, tv_started, registered;
 static bool dcxo_drift, hpd_loss, hpd_after_ddc;
 static unsigned transient_step;
@@ -127,7 +128,14 @@ static struct fdtbus_regulator *fdtbus_regulator_acquire(int node,const char *na
 static int fdtbus_regulator_is_enabled(struct fdtbus_regulator *r,bool *out)
 { int e=step(4);if(!e)*out=rail_enabled[r->rail]!=0;return e; }
 static int fdtbus_regulator_get_voltage(struct fdtbus_regulator *r,u_int *out)
-{ int e=step(5);if(!e)*out=rail_voltage[r->rail];return e; }
+{
+	int error = step(5);
+	if (voltage_delay_hook != NULL)
+		voltage_delay_hook();
+	if (error == 0)
+		*out = rail_voltage[r->rail];
+	return error;
+}
 int sunxi_rtc_dcxo_query(int node,struct sunxi_rtc_dcxo_state *out)
 { CHECK(node==3);int e=step(2);if(!e)*out=(struct sunxi_rtc_dcxo_state){{0x183fb0f7,0x183fb0f7},dcxo_drift?24000000:26000000};return e; }
 int sun60i_a733_ccu_display_ready(struct clk *c,const void *owner)
@@ -534,6 +542,57 @@ irq_checks(void)
 	}
 }
 
+static void
+voltage_delay_irq(void)
+{
+	/* One real handler invocation while slow rail validation is in flight. */
+	voltage_delay_hook = NULL;
+	tvregs[1] = UINT32_C(0x40004000);
+	CHECK(intr_fn(&sc) == 1);
+}
+
+static void
+observation_ready_checks(void)
+{
+	struct sun60i_a733_output_mode mode;
+	uint64_t sequence = UINT64_MAX;
+	unsigned first, rail_enable_calls = 0, rail_voltage_calls = 0;
+	unsigned clock_calls = 0, dcxo_calls = 0, saved_reads, saved_writes;
+
+	fixture();
+	intr_present = true;
+	attach();
+	CHECK(native_get_mode(&sc, &owner_cookie, &mode) == 0);
+	CHECK(native_prepare(&sc, &owner_cookie, &mode) == 0);
+	CHECK(native_start(&sc, &owner_cookie) == 0);
+	first = events;
+	voltage_delay_hook = voltage_delay_irq;
+	CHECK(native_observe(&sc, &owner_cookie, &sequence) == 0);
+	CHECK(sequence == 1 && sc.irq_sequence == 1);
+	CHECK(!sc.observing_ready && voltage_delay_hook == NULL);
+	for (unsigned i = first; i < events; i++) {
+		switch (event[i]) {
+		case 1: clock_calls++; break;
+		case 2: dcxo_calls++; break;
+		case 4: rail_enable_calls++; break;
+		case 5: rail_voltage_calls++; break;
+		}
+	}
+	CHECK(clock_calls == 1 && dcxo_calls == 1 &&
+	    rail_enable_calls == 2 && rail_voltage_calls == 2);
+	/* A new observation must revalidate the shared resources. */
+	rail_enabled[1] = 0;
+	saved_reads = reads;
+	saved_writes = writes;
+	CHECK(native_observe(&sc, &owner_cookie, &sequence) == EOPNOTSUPP);
+	CHECK(!sc.observing_ready && reads == saved_reads && writes == saved_writes);
+	/* The retained fault stops all later observation calls. */
+	first = events;
+	rail_enabled[1] = 1;
+	CHECK(native_observe(&sc, &owner_cookie, &sequence) == EOPNOTSUPP);
+	CHECK(events == first && !sc.observing_ready);
+}
+
 int main(void)
 {
  struct sun60i_a733_output_mode mode, saved;
@@ -606,6 +665,7 @@ int main(void)
  adapter_access_checks();
  prepare_trace_checks();
  irq_checks();
+ observation_ready_checks();
  stop_restart_checks();
  printf("A733 native HDMI adapter: %u checks passed (%u fallible calls)\n",checks,count);
  return 0;

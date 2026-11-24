@@ -189,6 +189,7 @@ struct vblank_sample {
 };
 static const struct vblank_sample *vblank_script;
 static size_t vblank_samples, vblank_index;
+static uint64_t baseline_pause_ns;
 
 int sun60i_a733_output_observed_vblank(int node,const void *owner,uint64_t *out)
 {
@@ -197,6 +198,8 @@ int sun60i_a733_output_observed_vblank(int node,const void *owner,uint64_t *out)
 		CHECK(vblank_index < vblank_samples);
 		const struct vblank_sample *sample = &vblank_script[vblank_index++];
 		delay_pause_ns = sample->pause_on_delay_ns;
+		if (vblank_index == 1)
+			tick += baseline_pause_ns;
 		*out = sample->sequence;
 		return sample->error;
 	}
@@ -473,6 +476,9 @@ replacement_wait_checks(void)
 		    4, 0, 13},
 		{{{9, 0, ENOENT}, {9, 0, 0}}, 2, EPROTO, 0},
 		{{{9, 0, ENOENT}, {0, 0, EIO}}, 2, EIO, 0},
+		/* Slow baseline admission cannot spend the retirement window. */
+		{{{20, 0, ENOENT}, {20, 0, ENOENT}, {21, 0, 0},
+		    {22, 0, 0}}, 4, 0, 22},
 	};
 	for (size_t i = 0; i < __arraycount(cases); i++) {
 		struct sun60i_de352_softc sc;
@@ -483,6 +489,8 @@ replacement_wait_checks(void)
 		vblank_script = cases[i].samples;
 		vblank_samples = cases[i].length;
 		vblank_index = 0;
+		baseline_pause_ns = i == __arraycount(cases) - 1 ?
+		    DE352_TIMEOUT_NS + 1000 : 0;
 		CHECK(de352_replacement_vblank(&sc, &done) == cases[i].expected);
 		CHECK(done.observed_sequence == cases[i].completion);
 		CHECK(vblank_index == vblank_samples);
@@ -501,6 +509,7 @@ replacement_wait_checks(void)
 			CHECK(sc.update_trace.last_validated == 13);
 		}
 		vblank_script = NULL;
+		baseline_pause_ns = 0;
 		reboot_fixture(&sc);
 	}
 }
