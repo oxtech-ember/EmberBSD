@@ -50,8 +50,8 @@ static int power_error, power_releases, ccu_release_error, pck_release_error, cc
 static int reserve_error, memory_error, begin_error, mode_error, prepare_error, start_error;
 static bool attempt_begin, claimed, memory_claimed, retained, started, irq_masked, power_claimed;
 static bool no_busy, no_finish, no_copy, no_vblank, same_sequence, bad_w1c;
-static bool delay_rcq_finish, rcq_finish_pending;
-static unsigned rcq_requests;
+static bool delay_rcq_finish, rcq_finish_pending, suppress_rcq_finish;
+static unsigned rcq_requests, timeout_reads;
 static int read_fault_region, write_fault, memory_calls, memory_fault_call;
 static uint32_t read_fault_reg, run_readback_reg;
 static unsigned run_read_fault, run_read_count;
@@ -326,6 +326,11 @@ sun60i_a733_output_sample(int node, const void *owner,
 static int bus_space_peek_4(bus_space_tag_t tag,bus_space_handle_t h,bus_size_t off,uint32_t *out)
 {
  (void)tag;reads++;CHECK((off&3)==0);
+ if (h == 1 &&
+     ((struct sun60i_de352_softc *)active_softc)->update_trace.timeout.attempted) {
+  CHECK(faults == 0);
+  timeout_reads++;
+ }
  if ((int)h == 1 && ((struct sun60i_de352_softc *)active_softc)->step == 7 &&
      off == 0x8050 && ++run_read_count == run_read_fault)
   return EIO;
@@ -403,7 +408,7 @@ static int bus_space_poke_4(bus_space_tag_t tag,bus_space_handle_t h,bus_size_t 
   }
   if(corrupt_copy_reg)de[corrupt_copy_reg/4]^=1;
   if(delay_rcq_finish)rcq_finish_pending=true;
-  else de[0x8104/4]|=4;
+  else if(!suppress_rcq_finish)de[0x8104/4]|=4;
   return 0;
  }
  if (sc->step == 7 && off == run_readback_reg)
@@ -423,7 +428,7 @@ static void init(struct sun60i_de352_softc *sc)
  cold_test=peer_power_on=cold_flush_clear=false;peer_power_error=0;cold_writes=cold_fault_write=cold_readback_write=cold_change_write=0;
  memory_writes=memory_write_fault=memory_readback_fault=memory_change_call=cold_change_call=memory_map_fault=0;memset(memory_order,0,sizeof(memory_order));
  no_busy=no_finish=no_copy=no_vblank=same_sequence=bad_w1c=false;
- delay_rcq_finish=rcq_finish_pending=false;rcq_requests=0;
+ delay_rcq_finish=rcq_finish_pending=suppress_rcq_finish=false;rcq_requests=timeout_reads=0;
  output_samples=0;output_sample_error=0;
  run_readback_reg=run_read_fault=run_read_count=0;
  read_fault_region=write_fault=memory_calls=memory_fault_call=0;read_fault_reg=0;sequence=0;event_polls=event_limit=corrupt_copy_reg=0;
@@ -655,7 +660,7 @@ static void scanout_checks(void)
  CHECK(sun60i_a733_de352_submit(client,&input[0],&done)==EIO);
  reboot_fixture(&sc);CHECK(f[1].held==0&&f[2].held==0);
  /* Each new failure starts after a real accepted active external frame. */
- for(unsigned fault=0;fault<8;fault++){
+ for(unsigned fault=0;fault<9;fault++){
   init(&sc);de352_provider=&sc;CHECK(de352_run(&sc)==0);sc.stage=1;
   CHECK(sun60i_a733_de352_get_state(1,&state)==0);
   CHECK(sun60i_a733_de352_acquire(1,&sc,&client)==0);
@@ -671,9 +676,27 @@ static void scanout_checks(void)
   case 5: event_limit=(unsigned)sequence+1;expected=ETIMEDOUT;break;
   case 6: memory_fault_call=memory_calls+2;expected=EIO;break;
   case 7: no_finish=true;expected=ETIMEDOUT;break;
+  case 8: suppress_rcq_finish=true;expected=ETIMEDOUT;break;
   }
   CHECK(sun60i_a733_de352_submit(client,&input[1],&done)==expected);
-  CHECK(sc.update_trace.version == 3 && sc.update_trace.operation == UO_FRAME);
+  CHECK(sc.update_trace.version == 4 && sc.update_trace.operation == UO_FRAME);
+  const struct de352_rcq_timeout *timeout = &sc.update_trace.timeout;
+  if (fault == 7 || fault == 8) {
+   CHECK(timeout->attempted == 1 && timeout->valid == 0x1fff);
+   CHECK(timeout_reads == RCQ_TIMEOUT_REGS);
+   CHECK(timeout->old_queue == sc.active.dma->queue.address);
+   CHECK(timeout->new_queue == sc.pending.dma->queue.address);
+   CHECK(timeout->old_queue != timeout->new_queue);
+   CHECK(timeout->old_words[4] != timeout->new_words[4]);
+   CHECK(timeout->observed[0] == 0x10 && timeout->observed[1] == 0);
+   CHECK(timeout->observed[2] == timeout->new_queue);
+   CHECK(timeout->observed[3] == 0 && timeout->observed[4] == 32);
+   CHECK(memcmp(&timeout->observed[5],
+       fault == 7 ? timeout->old_words : timeout->new_words,
+       sizeof(timeout->old_words)) == 0);
+  } else {
+   CHECK(timeout->attempted == 0 && timeout->valid == 0);
+  }
   CHECK(memcmp(&done,&old_done,sizeof(done))==0&&f[0].held==1&&f[0].drops==0&&posts==0);
   if(fault<2){
    CHECK(writes==previous_writes&&f[1].held==0&&f[1].drops==1&&sc.pending.dma==NULL);
@@ -707,7 +730,7 @@ plane_disable_checks(void)
   if(failure==0)delay_rcq_finish=true;
   unsigned previous_requests=rcq_requests;
   int error=sun60i_a733_de352_disable_plane(client,&done);
-  CHECK(sc.update_trace.version == 3 && sc.update_trace.valid == 3);
+  CHECK(sc.update_trace.version == 4 && sc.update_trace.valid == 3);
   CHECK(sc.update_trace.operation == UO_DISABLE);
   CHECK(sc.update_trace.result==(uint32_t)error);
   if(failure==1) CHECK(sc.update_trace.phase==UT_SUBMIT&&

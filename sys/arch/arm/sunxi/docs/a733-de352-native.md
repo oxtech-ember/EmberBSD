@@ -372,7 +372,7 @@ the cause of that timeout.
 
 ## Cached external update diagnostics
 
-`hw.sun60ide0.update_trace` returns a 176-byte native-endian version 3 record
+`hw.sun60ide0.update_trace` returns a 312-byte native-endian version 4 record
 under the DE lock. It performs no hardware access. The first eight
 `uint32_t` words are version, valid bits, update phase, RCQ submit phase,
 result, register, expected value and observed value. Four more `uint32_t`
@@ -390,12 +390,26 @@ GINT0, TV_DEBUG, underflow pending and a reserved zero). GINT0 uses valid
 bit 3 and TV_DEBUG uses bit 6. The cached raw sequence is the IRQ count
 sampled by the last ordinary observation, or the acknowledged poll count.
 The snapshot adds no MMIO.
-The last 48 bytes contain the same eleven `uint32_t` request, poll, and
+The next 48 bytes contain the same eleven `uint32_t` request, poll, and
 status words as `submit_trace`, then a reserved zero. Sample counts include
 successful reads. The elapsed microseconds cover each attempted wait, and
 status AND starts at all ones. The fields come from the normal RCQ
-command and status path. Reading this record adds no MMIO, and an RCQ
-failure adds no diagnostic read or command retry to an external update.
+command and status path. Reading this record adds no MMIO.
+The final 136 bytes describe one read-only snapshot at an external RCQ
+finish timeout. Two words give the attempt flag and read-valid bitmap.
+Two words give old and new queue addresses. Two eight-word arrays give
+the old and new list values for OVL and BLD, in register order.
+The next thirteen words give reads of 0x8104, 0x8110, 0x8114, 0x8118,
+0x811c, seven words starting at 0x1c1000, and 0x281000. A final word
+is reserved zero. The snapshot stops at its first read error.
+The old array comes from the retained prior list. The earlier transaction
+verified these values after the previous copy. The new array describes
+the pending list. Use a distinct old and new pixel address when comparing
+the observed words. Full agreement with the distinct new list proves the
+copy reached these registers even if the poll missed the finish flag.
+Agreement with the old list shows no new copy at the time of this sample.
+An identical or mixed list cannot settle that distinction. The snapshot
+does not retry, change the timeout result, or release either list.
 A zero wait phase means the update did not enter the wait. Valid
 bit 0 means an external update started; bit 1 means its result is complete.
 Update phases are 0 none, 1 preparation, 2 output start, 3 old-list check,

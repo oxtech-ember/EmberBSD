@@ -119,6 +119,13 @@ enum {
 };
 enum { UO_NONE, UO_FRAME, UO_DISABLE, UO_STOP };
 enum { UW_NONE, UW_BASELINE, UW_WAIT };
+enum { RCQ_COPY_WORDS = 8, RCQ_TIMEOUT_REGS = 13 };
+struct de352_rcq_timeout {
+	uint32_t attempted, valid;
+	uint32_t old_queue, new_queue;
+	uint32_t old_words[RCQ_COPY_WORDS], new_words[RCQ_COPY_WORDS];
+	uint32_t observed[RCQ_TIMEOUT_REGS], reserved;
+};
 struct de352_update_trace {
 	uint32_t version, valid, phase, submit_phase, result;
 	uint32_t reg, expected, observed;
@@ -128,8 +135,9 @@ struct de352_update_trace {
 	struct sun60i_a733_output_tv0_trace tv0;
 	struct de352_rcq_trace rcq;
 	uint32_t reserved;
+	struct de352_rcq_timeout timeout;
 };
-CTASSERT(sizeof(struct de352_update_trace) == 44 * sizeof(uint32_t));
+CTASSERT(sizeof(struct de352_update_trace) == 78 * sizeof(uint32_t));
 static const uint32_t de352_submit_regs[ST_NREGS] = {
 	0x8100, 0x8104, 0x8108, 0x810c, 0x8110, 0x8114, 0x8118, 0x811c,
 	0x8010, 0x804c
@@ -996,13 +1004,51 @@ de352_vblank(struct sun60i_de352_softc *sc)
 	return ETIMEDOUT;
 }
 
+static void
+de352_rcq_words(const struct sun60i_a733_de352_dma *dma,
+    uint32_t words[RCQ_COPY_WORDS])
+{
+	const uint32_t list[RCQ_COPY_WORDS] = {
+		dma->layer.attribute, dma->layer.size, dma->layer.coordinate,
+		dma->layer.pitch, dma->layer.address_low, dma->layer.bottom_low,
+		dma->layer.fill_color, dma->disabled ? 0x001 : 0x100
+	};
+
+	memcpy(words, list, sizeof(list));
+}
+
+/* The last poll read succeeded; the display resources are still retained. */
+static void
+de352_rcq_timeout_sample(struct sun60i_de352_softc *sc,
+    const struct sun60i_a733_de352_dma *dma,
+    const uint32_t words[RCQ_COPY_WORDS])
+{
+	static const uint32_t regs[RCQ_TIMEOUT_REGS] = {
+		0x8104, 0x8110, 0x8114, 0x8118, 0x811c,
+		0x1c1000, 0x1c1004, 0x1c1008, 0x1c100c, 0x1c1010,
+		0x1c1014, 0x1c1018, 0x281000
+	};
+	const struct sun60i_a733_de352_dma *old =
+	    sc->active.dma != NULL ? sc->active.dma : sc->dma;
+	struct de352_rcq_timeout *trace = &sc->update_trace.timeout;
+
+	trace->attempted = 1;
+	trace->old_queue = (uint32_t)old->queue.address;
+	trace->new_queue = (uint32_t)dma->queue.address;
+	de352_rcq_words(old, trace->old_words);
+	memcpy(trace->new_words, words, sizeof(trace->new_words));
+	for (u_int i = 0; i < __arraycount(regs); i++) {
+		if (de352_read(sc, regs[i], &trace->observed[i]) != 0)
+			break;
+		trace->valid |= 1U << i;
+	}
+}
+
 static int
 de352_submit_dma(struct sun60i_de352_softc *sc,
     struct sun60i_a733_de352_dma *dma, bool initial)
 {
-	const uint32_t words[] = { dma->layer.attribute, dma->layer.size,
-	    dma->layer.coordinate, dma->layer.pitch, dma->layer.address_low,
-	    dma->layer.bottom_low, dma->layer.fill_color };
+	uint32_t words[RCQ_COPY_WORDS];
 	struct de352_submit_trace *t = initial && sc->step == 8 &&
 	    sc->submit_trace.valid == 1 ? &sc->submit_trace : NULL;
 	struct de352_rcq_trace *rcq = initial ? (t != NULL ? &t->rcq : NULL) :
@@ -1010,6 +1056,7 @@ de352_submit_dma(struct sun60i_de352_softc *sc,
 	uint32_t value;
 	int error;
 
+	de352_rcq_words(dma, words);
 	if (t != NULL)
 		t->phase = ST_MEMORY;
 	if (!initial)
@@ -1068,8 +1115,11 @@ de352_submit_dma(struct sun60i_de352_softc *sc,
 		t->phase = ST_POLL;
 	if (error == 0 && !initial)
 		sc->update_trace.submit_phase = ST_POLL;
-	if (error == 0)
+	if (error == 0) {
 		error = de352_poll(sc, 4, rcq);
+		if (!initial && error == ETIMEDOUT)
+			de352_rcq_timeout_sample(sc, dma, words);
+	}
 	if (error != 0)
 		return error;
 	if (t != NULL)
@@ -1077,7 +1127,7 @@ de352_submit_dma(struct sun60i_de352_softc *sc,
 	if (!initial)
 		sc->update_trace.submit_phase = ST_COPY;
 	/* A flag alone is not proof that this list reached the owned registers. */
-	for (u_int i = 0; i < __arraycount(words); i++) {
+	for (u_int i = 0; i < __arraycount(words) - 1; i++) {
 		if (!initial) {
 			sc->update_trace.reg = 0x1c1000 + 4 * i;
 			sc->update_trace.expected = words[i];
@@ -1090,14 +1140,14 @@ de352_submit_dma(struct sun60i_de352_softc *sc,
 	}
 	if (!initial) {
 		sc->update_trace.reg = 0x281000;
-		sc->update_trace.expected = dma->disabled ? 0x001 : 0x100;
+		sc->update_trace.expected = words[RCQ_COPY_WORDS - 1];
 	}
 	error = de352_read(sc, 0x281000, &value);
 	if (!initial && error == 0)
 		sc->update_trace.observed = value;
 	if (error == 0 && !initial && value == sc->update_trace.expected)
 		sc->update_trace.submit_phase = ST_DONE;
-	return error != 0 ? error : value == (dma->disabled ? 0x001 : 0x100) ? 0 : EIO;
+	return error != 0 ? error : value == words[RCQ_COPY_WORDS - 1] ? 0 : EIO;
 }
 
 static int
@@ -1948,7 +1998,7 @@ de352_update(struct sun60i_a733_de352_client *client,
 	}
 	client->busy = true;
 	sc->update_trace = (struct de352_update_trace){
-		.version = 3, .valid = 1, .phase = UT_PREPARE,
+		.version = 4, .valid = 1, .phase = UT_PREPARE,
 		.rcq.status_and = UINT32_MAX,
 		.reg = UINT32_MAX,
 		.operation = stop ? UO_STOP : frame == NULL ? UO_DISABLE : UO_FRAME
