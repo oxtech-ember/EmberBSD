@@ -663,7 +663,7 @@ static void scanout_checks(void)
   CHECK(sun60i_a733_de352_submit(client,&input[0],&done)==0);
   old_done=done;previous_writes=writes;int expected=0;
   switch(fault){
-  case 0: fail_nosleep=true;expected=ENOMEM;break;
+  case 0: fail_call=calls+2;fail_error=ENOMEM;expected=ENOMEM;break;
   case 1: de[0x8114/4]^=0x1000;expected=EBUSY;break;
   case 2: no_vblank=true;expected=ETIMEDOUT;break;
   case 3: same_sequence=true;expected=EPROTO;break;

@@ -66,7 +66,8 @@ int sun60i_a733_de352_set_vblank_handler(struct sun60i_a733_de352_client *,
  * success, the caller owns cleanup. The provider calls release
  * only before any DMA attempt, or after a later accepted list and two new TV0
  * observations retire this frame. Active frames remain pinned.
- * This bounded synchronous operation returns success after RCQ completion,
+ * This synchronous operation can sleep to prepare the queue. It returns
+ * success after RCQ completion,
  * register verification and two distinct TV0 observations. Failure after a
  * pointer-write attempt retains both old and new frames and their queues.
  * It quarantines the client until reboot. No implicit reset or stop is made.
@@ -79,12 +80,14 @@ int sun60i_a733_de352_submit(struct sun60i_a733_de352_client *,
 int sun60i_a733_de352_detect(struct sun60i_a733_de352_client *, bool *);
 
 /* Retire pixel DMA through a disabled OVL and hardware background fill.
- * The timing engine stays active. Failure retains every attempted list. */
+ * This operation can sleep. The timing engine stays active.
+ * Failure retains every attempted list. */
 int sun60i_a733_de352_disable_plane(struct sun60i_a733_de352_client *,
     struct sun60i_a733_de352_completion *);
 
 /* Retire pixel DMA before stopping output. A later submit restarts timing.
- * Retain all native leases and queues. An uncertain stop blocks restart. */
+ * This operation can sleep. Retain all native leases and queues.
+ * An uncertain stop blocks restart. */
 int sun60i_a733_de352_stop(struct sun60i_a733_de352_client *,
     struct sun60i_a733_de352_completion *);
 

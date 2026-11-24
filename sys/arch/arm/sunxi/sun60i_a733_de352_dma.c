@@ -257,11 +257,10 @@ de352_dma_prepare_map(bus_dma_tag_t parent, bus_dmamap_t map,
 		if (error != 0)
 			return error;
 	}
-	m = kmem_zalloc(sizeof(*m), KM_NOSLEEP);
-	if (m == NULL)
-		return ENOMEM;
+	/* The caller prepares the unpublished list in sleepable context. */
+	m = kmem_zalloc(sizeof(*m), KM_SLEEP);
 	error = bus_dmatag_subregion(parent, 0, DE352_DMA_LIMIT - 1,
-	    &m->tag, BUS_DMA_NOWAIT);
+	    &m->tag, BUS_DMA_WAITOK);
 	if (error != 0) {
 		kmem_free(m, sizeof(*m));
 		return error;
@@ -278,7 +277,7 @@ de352_dma_prepare_map(bus_dma_tag_t parent, bus_dmamap_t map,
 	m->pitch = pitch;
 	m->layer = words;
 	error = de352_buffer_alloc(m->tag, DE352_DMA_QUEUE_BYTES,
-	    DE352_DMA_PAGE, BUS_DMA_NOWAIT,
+	    DE352_DMA_PAGE, BUS_DMA_WAITOK,
 	    &m->queue);
 	if (error != 0)
 		goto fail;

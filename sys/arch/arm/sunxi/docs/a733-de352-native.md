@@ -181,6 +181,8 @@ A sleepable frontend worker first waits for producers. Under the reservation
 lock it rechecks writers and publishes a pending READ scanout fence. It then
 unlocks the reservation and submits. A producer wait alone does not exclude
 later writers. Submission must not hold DRM, reservation or provider locks.
+The provider can wait for memory for the unpublished RCQ list before it
+takes the DE lock again. An admitted list stays immutable until retirement.
 The retain callback pins the loaded map, backing storage and callback code.
 The DE provider synchronizes pixels and the queue with PREWRITE before its
 first pointer attempt. It never unloads the caller's pixel map.

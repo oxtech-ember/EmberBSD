@@ -29,27 +29,32 @@ static unsigned checks;
 #define CHECK(x) do { checks++; if (!(x)) { \
 	fprintf(stderr, "line %d: %s\n", __LINE__, #x); abort(); } } while (0)
 static int calls, fail_call, tags, allocations, cpus, maps, loads, syncs, posts;
+static int fail_error;
 static int bad_alloc_segments, bad_map_segments, short_map, overlap;
 static uint64_t address_override;
 static int loaded_count;
-static bool published_seen, fail_nosleep, guard_allocating;
+static bool memory_pressure, guard_allocating;
 static void *kmem_zalloc(size_t n, int f)
-{ if (f == KM_NOSLEEP && fail_nosleep) return NULL; void *p = calloc(1,n); CHECK(p != NULL); return p; }
+{ if (f == KM_NOSLEEP && memory_pressure) return NULL; void *p = calloc(1,n); CHECK(p != NULL); return p; }
 static void kmem_free(void *p, size_t n) { (void)n; free(p); }
 static bool fails(void) { return ++calls == fail_call; }
 static int bus_dmatag_subregion(bus_dma_tag_t p, uint64_t lo, uint64_t hi,
     bus_dma_tag_t *out, int flags)
 {
-	(void)p; (void)flags; CHECK(lo == 0 && hi == UINT32_MAX);
-	if (fails()) return EIO;
+	(void)p;
+	if (memory_pressure && (flags & BUS_DMA_NOWAIT)) return ENOMEM;
+	CHECK(lo == 0 && hi == UINT32_MAX);
+	if (fails()) return fail_error;
 	*out = malloc(1); CHECK(*out != NULL); tags++; return 0;
 }
 static void bus_dmatag_destroy(bus_dma_tag_t p) { CHECK(tags > 0); tags--; free(p); }
 static int bus_dmamem_alloc(bus_dma_tag_t t, size_t n, size_t align,
     size_t boundary, bus_dma_segment_t *seg, int maxseg, int *count, int flags)
 {
-	(void)t; (void)flags; CHECK((align == 4096 || (align == 16384 && n == 16384)) && boundary == 0 && maxseg == 1);
-	if (fails()) return EIO;
+	(void)t;
+	if (memory_pressure && (flags & BUS_DMA_NOWAIT)) return ENOMEM;
+	CHECK((align == 4096 || (align == 16384 && n == 16384)) && boundary == 0 && maxseg == 1);
+	if (fails()) return fail_error;
 	seg->ds_len = n; seg->ds_addr = 0; guard_allocating = align == 16384;
 	*count = bad_alloc_segments ? 2 : 1; allocations++; return 0;
 }
@@ -58,8 +63,10 @@ static void bus_dmamem_free(bus_dma_tag_t t, bus_dma_segment_t *s, int n)
 static int bus_dmamem_map(bus_dma_tag_t t, bus_dma_segment_t *s, int n,
     size_t bytes, void **out, int flags)
 {
-	(void)t; (void)s; (void)flags; CHECK(n == 1);
-	if (fails()) return EIO;
+	(void)t; (void)s;
+	if (memory_pressure && (flags & BUS_DMA_NOWAIT)) return ENOMEM;
+	CHECK(n == 1);
+	if (fails()) return fail_error;
 	*out = malloc(bytes); CHECK(*out != NULL); memset(*out, 0xa5, bytes);
 	cpus++; return 0;
 }
@@ -68,8 +75,10 @@ static void bus_dmamem_unmap(bus_dma_tag_t t, void *p, size_t n)
 static int bus_dmamap_create(bus_dma_tag_t t, size_t n, int maxseg,
     size_t maxbytes, size_t boundary, int flags, bus_dmamap_t *out)
 {
-	(void)t; (void)flags; CHECK(n == maxbytes && maxseg == 1 && boundary == 0);
-	if (fails()) return EIO;
+	(void)t;
+	if (memory_pressure && (flags & BUS_DMA_NOWAIT)) return ENOMEM;
+	CHECK(n == maxbytes && maxseg == 1 && boundary == 0);
+	if (fails()) return fail_error;
 	*out = calloc(1,sizeof(**out)); CHECK(*out != NULL); maps++; return 0;
 }
 static void bus_dmamap_destroy(bus_dma_tag_t t, bus_dmamap_t p)
@@ -77,8 +86,10 @@ static void bus_dmamap_destroy(bus_dma_tag_t t, bus_dmamap_t p)
 static int bus_dmamap_load(bus_dma_tag_t t, bus_dmamap_t m, void *p,
     size_t n, void *proc, int flags)
 {
-	(void)t; (void)p; (void)proc; (void)flags;
-	if (fails()) return EIO;
+	(void)t; (void)p; (void)proc;
+	if (memory_pressure && (flags & BUS_DMA_NOWAIT)) return ENOMEM;
+
+	if (fails()) return fail_error;
 	m->dm_nsegs = bad_map_segments ? 2 : 1;
 	m->dm_mapsize = n;
 	m->dm_segs[0].ds_len = short_map ? n-4 : n;
@@ -116,8 +127,9 @@ static void reset(void)
 {
 	CHECK(tags == 0 && allocations == 0 && cpus == 0 && maps == 0 && loads == 0);
 	calls = fail_call = syncs = posts = loaded_count = 0;
+	fail_error = EIO;
 	bad_alloc_segments = bad_map_segments = short_map = overlap = 0;
-	address_override = 0; published_seen = fail_nosleep = guard_allocating = false;
+	address_override = 0; memory_pressure = guard_allocating = false;
 }
 static void reject(int expected)
 {
@@ -190,7 +202,6 @@ int main(void)
 	for (size_t i=68;i<m->queue.bytes;i++) CHECK(((uint8_t *)m->queue.cpu)[i] == 0);
 	CHECK(sun60i_a733_de352_dma_publish(m) == 0);
 	CHECK(m->published && m->synchronized && syncs == 2);
-	published_seen=true;
 	CHECK(sun60i_a733_de352_dma_publish(m) == EBUSY && syncs == 2);
 	CHECK(sun60i_a733_de352_dma_destroy(m) == EBUSY);
 	CHECK(tags == 1 && allocations == 2 && loads == 2);
@@ -207,11 +218,15 @@ int main(void)
 	struct dma_map external = { .dm_nsegs = 1, .dm_mapsize = 1228800,
 	    .dm_segs = {{ .ds_addr = 0x20000000, .ds_len = 1228800 }} };
 	const struct dma_map original = external;
-	fail_nosleep = true;
-	m = (void *)(uintptr_t)1;
+	/* A sleepable prepare must work under simulated NOWAIT pressure. */
+	memory_pressure = true;
 	CHECK(sun60i_a733_de352_dma_prepare_map((void *)2, &external,
-	    1228800, 640, 480, 2560, &m) == ENOMEM);
-	CHECK(m == (void *)(uintptr_t)1 && calls == 0);
+	    1228800, 640, 480, 2560, &m) == 0);
+	CHECK(calls == 5 && !m->published && syncs == 0);
+	CHECK(sun60i_a733_de352_dma_destroy(m) == 0);
+	CHECK(sun60i_a733_de352_dma_prepare_disabled((void *)2, &m) == 0);
+	CHECK(calls == 10 && !m->published && syncs == 0);
+	CHECK(sun60i_a733_de352_dma_destroy(m) == 0);
 	reset();
 	for (int i = 1; i <= 5; i++) {
 		fail_call = i;
@@ -257,7 +272,6 @@ int main(void)
 	    get32((uint8_t *)m->queue.cpu + 48) == 0x20000000);
 	CHECK(sun60i_a733_de352_dma_retire(m) == EINVAL);
 	CHECK(sun60i_a733_de352_dma_publish(m) == 0);
-	published_seen = true;
 	CHECK(syncs == 2 && posts == 0);
 	CHECK(sun60i_a733_de352_dma_destroy(m) == EBUSY);
 	/* Caller models accepted replacement and two later TV0 observations. */
@@ -274,7 +288,6 @@ int main(void)
 	CHECK(get32((uint8_t *)m->queue.cpu + 64) == 0x001);
 	CHECK(allocations == 1 && loads == 1 && syncs == 0);
 	CHECK(sun60i_a733_de352_dma_publish(m) == 0 && syncs == 1);
-	published_seen = true;
 	CHECK(sun60i_a733_de352_dma_destroy(m) == EBUSY);
 	CHECK(sun60i_a733_de352_dma_retire(m) == 0 && posts == 1);
 	reset();

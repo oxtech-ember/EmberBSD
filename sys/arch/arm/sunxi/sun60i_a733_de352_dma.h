@@ -38,10 +38,11 @@ int sun60i_a733_de352_dma_prepare(bus_dma_tag_t, uint32_t, uint32_t,
  * pins the map and storage before this call and keeps both immutable. The
  * allocator owns only its queue and child tag. It never unloads the pixel map.
  * This profile accepts a single segment below 4 GiB and an offset of zero.
+ * This function can sleep while allocating the queue.
  */
 int sun60i_a733_de352_dma_prepare_map(bus_dma_tag_t, bus_dmamap_t, size_t,
     uint32_t, uint32_t, uint32_t, struct sun60i_a733_de352_dma **);
-/* Build an immutable disabled OVL / BLD background list, without pixel DMA. */
+/* Build a disabled OVL / BLD list without pixel DMA. This function can sleep. */
 int sun60i_a733_de352_dma_prepare_disabled(bus_dma_tag_t,
     struct sun60i_a733_de352_dma **);
 /*
