@@ -140,6 +140,7 @@ struct sun60i_npu_softc {
 	uint64_t sc_pid, sc_rev, sc_date;
 	bool sc_run_pass;
 	bool sc_mmio_ready;
+	bool sc_init_on_demand, sc_init_attempted;
 	struct clk *sc_owned_clock;
 	struct fdtbus_regulator *sc_rail;
 	int sc_owned_power;
@@ -423,31 +424,28 @@ put:
 	return error;
 }
 
-static void
+static int
 sun60i_npu_run_stage(struct sun60i_npu_softc *sc, u_int stage)
 {
 	int power_node, error = EINVAL;
 
-	mutex_enter(&sc->sc_run_lock);
+	KASSERT(mutex_owned(&sc->sc_run_lock));
 	/* Stage 0 is a dry run of the sysctl machinery: no hardware calls. */
 	if (stage == 0) {
 		sc->sc_run_result = 0;
 		sc->sc_mmio_ready = false;
-		mutex_exit(&sc->sc_run_lock);
-		return;
+		return sc->sc_run_result;
 	}
 	if (sc->sc_native_profile != 0) {
 		sc->sc_run_result = EBUSY;
 		sc->sc_mmio_ready = false;
-		mutex_exit(&sc->sc_run_lock);
-		return;
+		return sc->sc_run_result;
 	}
 	if (stage < A733_NPU_STAGE_DOMAIN || stage > A733_NPU_STAGE_POWER_ID ||
 	    stage != sc->sc_run_stage + 1 || !sc->sc_run_pass) {
 		sc->sc_run_result = EINVAL;
 		sc->sc_mmio_ready = false;
-		mutex_exit(&sc->sc_run_lock);
-		return;
+		return sc->sc_run_result;
 	}
 	power_node = sun60i_npu_power_node(sc);
 	if (power_node < 0 || !of_compatible_match(power_node, power_compat))
@@ -473,7 +471,36 @@ out:
 	sc->sc_run_result = error;
 	if (error != 0)
 		sc->sc_mmio_ready = false;
-	mutex_exit(&sc->sc_run_lock);
+	return error;
+}
+
+/* Use the diagnostic sequence only for the first native tile request. */
+static int
+sun60i_npu_init_on_demand(struct sun60i_npu_softc *sc)
+{
+	int error;
+
+	KASSERT(mutex_owned(&sc->sc_run_lock));
+	if (!sc->sc_init_on_demand)
+		return 0;
+	if (sc->sc_run_stage == A733_NPU_STAGE_POWER_ID)
+		return sc->sc_mmio_ready ? 0 : EBUSY;
+	if (sc->sc_init_attempted || sc->sc_run_stage != 0 ||
+	    sc->sc_run_result != 0 || !sc->sc_run_pass ||
+	    sc->sc_native_profile != 0)
+		return EBUSY;
+
+	sc->sc_init_attempted = true;
+	error = sun60i_npu_run_stage(sc, A733_NPU_STAGE_DOMAIN);
+	if (error != 0)
+		return error;
+	error = sun60i_npu_run_stage(sc, A733_NPU_STAGE_CLOCKS);
+	if (error != 0)
+		return error;
+	error = sun60i_npu_run_stage(sc, A733_NPU_STAGE_PREFLIGHT);
+	if (error != EBUSY)
+		return error != 0 ? error : EIO;
+	return sun60i_npu_run_stage(sc, A733_NPU_STAGE_POWER_ID);
 }
 
 /* Caller holds sc_run_lock. Database constants do not prove hardware state. */
@@ -770,7 +797,9 @@ sun60i_npu_tile_ioctl(struct sun60i_npu_softc *sc, struct a733_npu_tile *tile,
 		    sc->sc_owned_power, sc, tile);
 		sun60i_npu_task_cache(sc);
 	} else {
-		error = sun60i_npu_task_prepare(sc, tile);
+		error = sun60i_npu_init_on_demand(sc);
+		if (error == 0)
+			error = sun60i_npu_task_prepare(sc, tile);
 		if (error == 0) {
 			sc->sc_tile_selected = true;
 			error = sun60i_npu_task_run(sc);
@@ -865,14 +894,18 @@ sun60i_npu_sysctl_stage(SYSCTLFN_ARGS)
 
 	if (sc == NULL)
 		return ENXIO;
+	mutex_enter(&sc->sc_run_lock);
 	value = sc->sc_run_stage;
+	mutex_exit(&sc->sc_run_lock);
 	node.sysctl_data = &value;
 	error = sysctl_lookup(SYSCTLFN_CALL(&node));
 	if (error != 0 || newp == NULL)
 		return error;
 	/* No console output from this handler; see the GPU staging lesson. */
-	sun60i_npu_run_stage(sc, value);
-	return sc->sc_run_result;
+	mutex_enter(&sc->sc_run_lock);
+	error = sun60i_npu_run_stage(sc, value);
+	mutex_exit(&sc->sc_run_lock);
+	return error;
 }
 
 /* Copy cached values under the run mutex. No register access is permitted. */
@@ -1408,6 +1441,8 @@ sun60i_npu_attach(device_t parent, device_t self, void *aux)
 	sc->sc_bst = faa->faa_bst;
 	sc->sc_dmat = faa->faa_dmat;
 	sc->sc_run_pass = true;
+	sc->sc_init_on_demand =
+	    OF_getproplen(sc->sc_phandle, "netbsd,init-on-demand") == 0;
 	mutex_init(&sc->sc_run_lock, MUTEX_DEFAULT, IPL_NONE);
 	sun60i_npu_instance = sc;
 	if (fdtbus_get_reg(sc->sc_phandle, 0, &addr, &size) != 0 ||

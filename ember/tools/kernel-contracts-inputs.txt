@@ -13,6 +13,8 @@ ember/tests/a733-npu-observe.py ember/tools/a733-npu-dma-contract.py
 ember/tests/a733-npu-observe.py ember/tools/a733-npu-engine-contract.c
 ember/tests/a733-npu-observe.py ember/tools/a733-npu-fe-contract.c
 ember/tests/a733-npu-observe.py ember/tools/a733-npu-fe-contract.py
+ember/tests/a733-npu-observe.py ember/tools/a733-npu-init-contract.c
+ember/tests/a733-npu-observe.py ember/tools/a733-npu-init-contract.py
 ember/tests/a733-npu-observe.py ember/tools/a733-npu-mmu-contract.c
 ember/tests/a733-npu-observe.py ember/tools/a733-npu-mmu-contract.py
 ember/tests/a733-npu-observe.py ember/tools/a733-npu-nn-contract.c

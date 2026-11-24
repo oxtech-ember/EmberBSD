@@ -79,6 +79,10 @@ def main():
                 print(result.stdout + result.stderr, end="")
                 result.check_returncode()
             print(result.stdout.strip().splitlines()[-1])
+    init_env = dict(os.environ, NPU_INIT_SOURCE_ROOT=str(source))
+    init_env.setdefault("NPU_INIT_CFLAGS", os.environ.get("NPU_TEST_CFLAGS", ""))
+    subprocess.run([sys.executable, str(root / "ember/tools/a733-npu-init-contract.py")],
+                   env=init_env, check=True)
     mmu_env = dict(os.environ, NPU_MMU_SOURCE_ROOT=str(source))
     mmu_env.setdefault("NPU_MMU_CFLAGS", os.environ.get("NPU_TEST_CFLAGS", ""))
     subprocess.run([sys.executable, str(root / "ember/tools/a733-npu-mmu-contract.py")],

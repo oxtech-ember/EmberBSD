@@ -3,9 +3,16 @@
 Use `<arm/a733_npu_tile.h>` with the native NetBSD ioctl ABI. Open the registered
 `/dev/vipcore` with read and write access. The caller must pass the kernel
 superuser check. Check the current `vipmajor` before using a device node from
-an older boot. Use the [fixed TASK procedure](a733-npu-tiny-task.md) to select
-the matched Zero 3W kernel and complete diagnostic stages 1 through 4.
-On the same boot, do not select either native diagnostic profile before the ioctl.
+an older boot. On the Zero 4 graphics DTB, the NPU node has the boolean property
+`netbsd,init-on-demand`. The first authorized, valid tile request from stage 0
+checks the power domain and clocks, expects the cold MMIO preflight refusal,
+and verifies identity under retained power, clock and rail proofs. It then runs
+the fixed TASK. The driver holds the run lock across this sequence and returns
+the first unexpected stage error. It makes one automatic attempt per boot.
+The Zero 4 NPU observe profile and Zero 3W use the manual sequence in the
+[fixed TASK procedure](a733-npu-tiny-task.md). Complete stages 1 through 4
+before calling the ioctl on those profiles or after starting manual staging.
+Keep both native diagnostic profiles unselected on the boot for the tile ioctl.
 
 Call `ioctl(fd, A733_NPU_TILE_RUN, &tile)` for each tile. Fill all four input planes
 with rows of eight samples. Each plane has 64 bytes. The call ignores the

@@ -14,7 +14,7 @@ struct sun60i_npu_softc {
 	void *sc_dev;
 	int sc_phandle, sc_bst, sc_run_lock;
 	void *sc_dmat;
-	bool sc_run_pass, sc_cdev_attached;
+	bool sc_run_pass, sc_cdev_attached, sc_init_on_demand;
 	devmajor_t sc_cmajor;
 };
 typedef struct sun60i_npu_softc *device_t;
@@ -30,7 +30,7 @@ static devmajor_t sun60i_npu_cmajor = -1;
 static int sun60i_npu_cdevsw;
 static unsigned sysctls, registrations, power_calls, pin_calls;
 static bool managed = true;
-static int property_size;
+static int property_size, init_property_size = -1;
 #define A733_NPU_BASE 0x03600000
 #define A733_NPU_ID_SIZE 0x34
 #define MUTEX_DEFAULT 0
@@ -89,8 +89,10 @@ of_hasprop(int node, const char *name)
 static int
 OF_getproplen(int node, const char *name)
 {
-	assert(node == 17 &&
-	    strcmp(name, "netbsd,consumer-managed-power") == 0);
+	assert(node == 17);
+	if (strcmp(name, "netbsd,init-on-demand") == 0)
+		return init_property_size;
+	assert(strcmp(name, "netbsd,consumer-managed-power") == 0);
 	return property_size;
 }
 static int
@@ -126,6 +128,13 @@ main(void)
 	assert(sc.sc_run_pass && sc.sc_run_lock == 1 && sc.sc_dmat == args.faa_dmat);
 	assert(sysctls == 1 && registrations == 1);
 	assert(sc.sc_cdev_attached && sc.sc_cmajor == 368);
+	assert(!sc.sc_init_on_demand);
+	init_property_size = 4;
+	sun60i_npu_attach(NULL, &sc, &args);
+	assert(!sc.sc_init_on_demand);
+	init_property_size = 0;
+	sun60i_npu_attach(NULL, &sc, &args);
+	assert(sc.sc_init_on_demand && power_calls == 1 && registrations == 1);
 	puts("PASS: actual-source FDT managed power and NPU attach; no MMIO API");
 	return 0;
 }

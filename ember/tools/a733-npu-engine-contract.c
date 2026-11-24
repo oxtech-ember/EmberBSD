@@ -283,6 +283,15 @@ static uint64_t cache_result;
 static int lookup_error;
 static void mutex_enter(int *lock) { CHECK(*lock == 0); *lock = 1; cache_locks++; }
 static void mutex_exit(int *lock) { CHECK(*lock == 1); *lock = 0; }
+/* This fixture starts with the manual stage 4 results. */
+static int
+sun60i_npu_init_on_demand(struct sun60i_npu_softc *sc)
+{
+
+	CHECK(sc == &state && sc->sc_run_lock == 1);
+	return 0;
+}
+
 #include "sun60i_npu_tile_ioctl.h"
 static void *cache_copy(void *to, const void *from, size_t bytes)
 {
