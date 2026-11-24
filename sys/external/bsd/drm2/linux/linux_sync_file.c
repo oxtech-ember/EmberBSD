@@ -119,10 +119,12 @@ sync_file_poll(struct file *fp, int events)
 		if (ret < 0) {
 			sf->sf_signalled = true;
 			selnotify(&sf->sf_selq, POLLIN, NOTE_SUBMIT);
-			revents |= POLLIN;
-		} else {
-			selrecord(curlwp, &sf->sf_selq);
 		}
+		/* The callback may have signalled while sf_lock was dropped. */
+		if (sf->sf_signalled)
+			revents |= POLLIN;
+		else
+			selrecord(curlwp, &sf->sf_selq);
 	}
 	mutex_exit(&sf->sf_lock);
 
