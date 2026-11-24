@@ -95,12 +95,17 @@ enum {
 	ST_REQUEST, ST_POLL, ST_COPY, ST_DONE
 };
 enum { ST_NREGS = 10 };
-struct de352_submit_trace {
-	uint32_t version, valid, phase, result;
+struct de352_rcq_trace {
 	uint32_t request_samples, request_busy, request_first, request_last;
 	uint32_t request_control, request_us;
 	uint32_t poll_samples, poll_last, poll_us;
 	uint32_t status_or, status_and;
+};
+CTASSERT(sizeof(struct de352_rcq_trace) == 11 * sizeof(uint32_t));
+
+struct de352_submit_trace {
+	uint32_t version, valid, phase, result;
+	struct de352_rcq_trace rcq;
 	uint32_t regs_valid, regs[ST_NREGS];
 	uint32_t sample_error;
 	struct sun60i_a733_output_sample sample;
@@ -121,8 +126,10 @@ struct de352_update_trace {
 	uint64_t initial_baseline, baseline, last_sequence, last_validated;
 	uint64_t elapsed_ns;
 	struct sun60i_a733_output_tv0_trace tv0;
+	struct de352_rcq_trace rcq;
+	uint32_t reserved;
 };
-CTASSERT(sizeof(struct de352_update_trace) == 32 * sizeof(uint32_t));
+CTASSERT(sizeof(struct de352_update_trace) == 44 * sizeof(uint32_t));
 static const uint32_t de352_submit_regs[ST_NREGS] = {
 	0x8100, 0x8104, 0x8108, 0x810c, 0x8110, 0x8114, 0x8118, 0x811c,
 	0x8010, 0x804c
@@ -870,57 +877,60 @@ de352_configure(struct sun60i_de352_softc *sc)
 }
 
 static void
-de352_trace_status(struct de352_submit_trace *t, uint32_t status)
+de352_trace_status(struct de352_rcq_trace *t, uint32_t status)
 {
 	t->status_or |= status;
 	t->status_and &= status;
 }
 
 static uint32_t
-de352_elapsed_us(uint64_t start)
+de352_elapsed_us(uint64_t elapsed_ns)
 {
-	const uint64_t us = (de352_now() - start) / 1000;
+	const uint64_t us = elapsed_ns / 1000;
 
 	return us > UINT32_MAX ? UINT32_MAX : (uint32_t)us;
 }
 
-/* The trace pointer is NULL except for the first step 8 submission. */
+/* Record only the reads already needed to prove the queue update. */
 static int
 de352_poll(struct sun60i_de352_softc *sc, uint32_t mask,
-    struct de352_submit_trace *t)
+    struct de352_rcq_trace *t)
 {
 	const uint64_t start = de352_now();
+	uint64_t elapsed;
 	int error;
 
-	do {
+	for (;;) {
 		error = de352_read(sc, 0x8104, &sc->last_status);
-		if (error != 0)
-			return error;
+		elapsed = de352_now() - start;
 		if (t != NULL) {
-			t->poll_samples++;
-			t->poll_last = sc->last_status;
-			t->poll_us = de352_elapsed_us(start);
-			de352_trace_status(t, sc->last_status);
+			t->poll_us = de352_elapsed_us(elapsed);
+			if (error == 0) {
+				t->poll_samples++;
+				t->poll_last = sc->last_status;
+				de352_trace_status(t, sc->last_status);
+			}
 		}
-		if ((sc->last_status & mask) == mask)
-			return 0;
+		if (error != 0 || (sc->last_status & mask) == mask)
+			return error;
+		/* Check the status even when the delay crossed the deadline. */
+		if (elapsed >= DE352_TIMEOUT_NS)
+			return ETIMEDOUT;
 		delay(10);
-	} while (de352_now() - start < DE352_TIMEOUT_NS);
-	if (t != NULL)
-		t->poll_us = de352_elapsed_us(start);
-	return ETIMEDOUT;
+	}
 }
 
 /* The request is a command. It need not remain set after the write. */
 static int
-de352_request(struct sun60i_de352_softc *sc, struct de352_submit_trace *t)
+de352_request(struct sun60i_de352_softc *sc, struct de352_rcq_trace *t)
 {
 	const uint64_t start = de352_now();
+	uint64_t elapsed;
 	uint32_t status, control;
 	int error, level;
 	bool submitted;
 
-	do {
+	for (;;) {
 		submitted = false;
 		level = splhigh();
 		error = de352_read(sc, 0x8104, &status);
@@ -948,13 +958,15 @@ de352_request(struct sun60i_de352_softc *sc, struct de352_submit_trace *t)
 			}
 		}
 		splx(level);
+		elapsed = de352_now() - start;
 		if (t != NULL)
-			t->request_us = de352_elapsed_us(start);
+			t->request_us = de352_elapsed_us(elapsed);
 		if (error != 0 || submitted)
 			return error;
+		if (elapsed >= DE352_TIMEOUT_NS)
+			return ETIMEDOUT;
 		delay(10);
-	} while (de352_now() - start < DE352_TIMEOUT_NS);
-	return ETIMEDOUT;
+	}
 }
 
 static int
@@ -993,6 +1005,8 @@ de352_submit_dma(struct sun60i_de352_softc *sc,
 	    dma->layer.bottom_low, dma->layer.fill_color };
 	struct de352_submit_trace *t = initial && sc->step == 8 &&
 	    sc->submit_trace.valid == 1 ? &sc->submit_trace : NULL;
+	struct de352_rcq_trace *rcq = initial ? (t != NULL ? &t->rcq : NULL) :
+	    &sc->update_trace.rcq;
 	uint32_t value;
 	int error;
 
@@ -1049,13 +1063,13 @@ de352_submit_dma(struct sun60i_de352_softc *sc,
 		t->phase = ST_REQUEST;
 	if (!initial)
 		sc->update_trace.submit_phase = ST_REQUEST;
-	error = de352_request(sc, t);
+	error = de352_request(sc, rcq);
 	if (error == 0 && t != NULL)
 		t->phase = ST_POLL;
 	if (error == 0 && !initial)
 		sc->update_trace.submit_phase = ST_POLL;
 	if (error == 0)
-		error = de352_poll(sc, 4, t);
+		error = de352_poll(sc, 4, rcq);
 	if (error != 0)
 		return error;
 	if (t != NULL)
@@ -1234,7 +1248,7 @@ discover:
 	memset(&sc->submit_trace, 0, sizeof(sc->submit_trace));
 	sc->submit_trace.version = sc->submit_trace.valid = 1;
 	sc->submit_trace.phase = ST_START;
-	sc->submit_trace.status_and = UINT32_MAX;
+	sc->submit_trace.rcq.status_and = UINT32_MAX;
 	error = sun60i_a733_output_start(sc->output_phandle, sc);
 	if (error == 0)
 		error = de352_submit(sc);
@@ -1905,7 +1919,8 @@ de352_update(struct sun60i_a733_de352_client *client,
 	}
 	client->busy = true;
 	sc->update_trace = (struct de352_update_trace){
-		.version = 2, .valid = 1, .phase = UT_PREPARE,
+		.version = 3, .valid = 1, .phase = UT_PREPARE,
+		.rcq.status_and = UINT32_MAX,
 		.reg = UINT32_MAX,
 		.operation = stop ? UO_STOP : frame == NULL ? UO_DISABLE : UO_FRAME
 	};

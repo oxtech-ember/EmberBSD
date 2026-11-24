@@ -150,7 +150,10 @@ owned fields and preserves unrelated bits. The output order is:
 
 The busy sample and request have a short interrupt-disabled critical section.
 The request bit can clear itself; the consumer does not require readback 1.
-Waits have a 100 ms deadline. RCQ flags use W1C. Output TV0 vblank uses a separate
+Each RCQ wait makes a final status sample before it reports expiry at
+100 ms. A busy sample still requires a zero request-control register
+before the single command. A finish sample still requires the owned
+register readback. RCQ flags use W1C. Output TV0 vblank uses a separate
 provider contract and W0C. A stale finish flag or one old vblank is insufficient.
 The fixed list length 32 does not establish a full 32-bit writable length field.
 
@@ -351,7 +354,8 @@ Bit 1 means the result is complete. Phases are 0 none, 1 output start,
 acknowledgment, 6 request during DE busy, 7 RCQ finish poll, 8 copy check
 and 9 step 8 complete. The status AND starts at all ones.
 The request and poll fields come from the existing reads in those loops.
-Only the first submission records them; later frame submissions do not.
+These fields cover the first submission. The external update record
+carries the same fields for later submissions.
 
 After a step 8 failure, the coordinator reads the ten registers and requests
 one output sample. It does this before it latches the output fault.
@@ -361,7 +365,7 @@ the cause of that timeout.
 
 ## Cached external update diagnostics
 
-`hw.sun60ide0.update_trace` returns a 128-byte native-endian version 2 record
+`hw.sun60ide0.update_trace` returns a 176-byte native-endian version 3 record
 under the DE lock. It performs no hardware access. The first eight
 `uint32_t` words are version, valid bits, update phase, RCQ submit phase,
 result, register, expected value and observed value. Four more `uint32_t`
@@ -371,12 +375,18 @@ Five `uint64_t` values give the initial baseline, effective baseline, last
 sampled sequence, last validated sequence and elapsed wait time in ns.
 The effective baseline moves to an unvalidated advance. On a retirement
 timeout, the owner copies the last TV0 observation before latching the fault.
-The final 40 bytes hold two `uint64_t` values (raw sequence and cumulative
+The next 40 bytes hold two `uint64_t` values (raw sequence and cumulative
 underflow count), then six `uint32_t` values (register valid bits, IRQ mode,
 GINT0, TV_DEBUG, underflow pending and a reserved zero). GINT0 uses valid
 bit 3 and TV_DEBUG uses bit 6. The cached raw sequence is the IRQ count
 sampled by the last ordinary observation, or the acknowledged poll count.
 The snapshot adds no MMIO.
+The last 48 bytes contain the same eleven `uint32_t` request, poll, and
+status words as `submit_trace`, then a reserved zero. Sample counts include
+successful reads. The elapsed microseconds cover each attempted wait, and
+status AND starts at all ones. The fields come from the normal RCQ
+command and status path. Reading this record adds no MMIO, and an RCQ
+failure adds no diagnostic read or command retry to an external update.
 A zero wait phase means the update did not enter the wait. Valid
 bit 0 means an external update started; bit 1 means its result is complete.
 Update phases are 0 none, 1 preparation, 2 output start, 3 old-list check,
