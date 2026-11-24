@@ -196,7 +196,7 @@ test_display_native(void)
 				CHECK(sun60i_a733_ccu_gpu_prepare(CLOCK(A733_CLK_GPU0), &wrong, &retained) == 0);
 				break;
 			case 1:
-				CHECK(sun60i_a733_ccu_npu_reserve(CLOCK(A733_CLK_NPU), &wrong) == 0);
+				CHECK(sun60i_a733_ccu_npu_reserve(CLOCK(A733_CLK_NPU), &wrong, 600000000) == 0);
 				CHECK(sun60i_a733_ccu_npu_prepare(CLOCK(A733_CLK_NPU), &wrong, &retained) == 0);
 				break;
 			case 2:

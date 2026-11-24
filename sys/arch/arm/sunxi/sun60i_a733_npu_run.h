@@ -72,7 +72,13 @@ int sun60i_a733_npu_run_task_finish(struct sun60i_a733_npu_run *,
  */
 bool sun60i_a733_npu_run_task_completed(struct sun60i_a733_npu_run *,
     const struct sun60i_a733_npu_dma *);
+/* Reuse the fixed TASK maps only after successful final proof. */
+int sun60i_a733_npu_run_task_again(struct sun60i_a733_npu_run *,
+    struct sun60i_a733_npu_dma *, struct sun60i_a733_npu_dma_task_reference *,
+    struct clk *, int, const void *, const uint8_t *, const uint8_t *);
 /* Copy cached state under its IRQ spin lock. This performs no hardware I/O. */
 void sun60i_a733_npu_run_status(struct sun60i_a733_npu_run *,
     struct sun60i_a733_npu_run_status *);
+/* Read-only board rail proof at each native run readiness barrier. */
+int sun60i_a733_npu_rail_ready(const void *);
 #endif

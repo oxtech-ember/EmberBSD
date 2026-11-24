@@ -50,6 +50,7 @@ clear_outputs() {
         "$out/sun60i-a733-orangepi-zero3w.dtb" \
         "$out/sun60i-a733-orangepi-zero3w-diagnostic.dtb" \
         "$out/sun60i-a733-orangepi-zero4-graphics.dtb" \
+        "$out/sun60i-a733-orangepi-zero4-npu-observe.dtb" \
         "$out/sun50i-a133-ys-m33.dtb"
     # Also remove if_cemac_acpi.kmod: EMBER64 has CEMAC built in.
     for module in if_cemac_acpi $modules; do
@@ -243,7 +244,7 @@ run_cpp -P -xassembler-with-cpp -I include -I arch/arm/boot/dts \
     arch/arm/boot/dts/bcm2837-rpi-zero-2-w.dts > "$out/zero-2.dts"
 run_native_os --capture -- "$dtc" -I dts -O dtb -p 1024 -b 0 -@ -o "$stage/bcm2837-rpi-zero-2-w.dtb" \
     "$out/zero-2.dts" 2> "$out/zero-2-dtb.log"
-for board in orangepi-zero4 orangepi-zero3w orangepi-zero3w-diagnostic orangepi-zero4-graphics; do
+for board in orangepi-zero4 orangepi-zero3w orangepi-zero3w-diagnostic orangepi-zero4-graphics orangepi-zero4-npu-observe; do
     run_cpp -P -xassembler-with-cpp -I include -I arch/arm64/boot/dts/allwinner \
         "arch/arm64/boot/dts/allwinner/sun60i-a733-$board.dts" > "$out/$board.dts"
     run_native_os --capture -- "$dtc" -I dts -O dtb -o "$stage/sun60i-a733-$board.dtb" \

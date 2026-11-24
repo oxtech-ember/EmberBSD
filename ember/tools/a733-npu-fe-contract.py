@@ -29,6 +29,7 @@ def main():
                              ("sun60i_npu_task_cache", "void"),
                              ("sun60i_npu_task_prepare", "int"),
                              ("sun60i_npu_task_run", "int"),
+                             ("sun60i_npu_tile_ioctl", "int"),
                              ("sun60i_npu_sysctl_task_stage", "int"),
                              ("sun60i_npu_sysctl_task_setup", "void"),
                              ("sun60i_npu_sysctl_engine_value", "int")):
@@ -51,6 +52,10 @@ def main():
             root / "sys/arch/arm/sunxi/sun60i_a733_npu_task.h").read_text()
         (work / "sun60i_a733_npu_task.h").write_text("\n".join(
             line for line in task_header.splitlines()
+            if not line.startswith("#include ")) + "\n")
+        tile_header = (root / "sys/arch/arm/include/a733_npu_tile.h").read_text()
+        (work / "a733_npu_tile.h").write_text("\n".join(
+            line for line in tile_header.splitlines()
             if not line.startswith("#include ")) + "\n")
         fe = (root / "sys/arch/arm/sunxi/sun60i_a733_npu_fe.c").read_text()
         pure = []

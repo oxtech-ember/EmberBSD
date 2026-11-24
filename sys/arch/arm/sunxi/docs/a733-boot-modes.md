@@ -43,9 +43,23 @@ See the [GPU binding](a733-gpu-identification.md) and
 Loader applicability and recovery procedures belong to
 [DevBoards](https://github.com/oxtech-ember/EmberBSD-DevBoards/blob/main/boards/a733-zero3w/boot.md).
 
+## Zero 4 NPU observe mode
+
+The optional Zero 4 NPU observe DTB enables the passive NPU node and
+describes its supply and one operating point.
+It keeps the GPU in observe-only mode and the display disabled. Ethernet,
+Wi-Fi and storage retain the normal Zero 4 configuration. The passive
+NPU attachment exposes diagnostics without starting the power or DMA stages.
+
+The Zero 4 DietPi DTB cited above connects the NPU supply to AXP8191 DCDC2,
+which also supplies HDMI. The donor table specifies 492 MHz at 800 mV across the listed silicon bins.
+Verify rail state, power ownership and the clock rate through the driver
+before any explicit NPU power stage.
+The NPU observe mode has no physical acceptance yet.
+
 ## Native build target
 
-`ember/build-kernel.sh` exports the normal, diagnostic and graphics DTBs together.
+`ember/build-kernel.sh` exports the normal, diagnostic, graphics and NPU observe DTBs together.
 An existing configured kernel object directory can build only the DTBs.
 Use the matching selected-toolchain build wrapper and its source tree:
 
@@ -53,7 +67,8 @@ Use the matching selected-toolchain build wrapper and its source tree:
 "$nbmake" -C "$kernel_obj" DTSGNUARCH=arm64 DTSSUBDIR=allwinner \
     sun60i-a733-orangepi-zero3w.dtb \
     sun60i-a733-orangepi-zero3w-diagnostic.dtb \
-    sun60i-a733-orangepi-zero4.dtb sun60i-a733-orangepi-zero4-graphics.dtb
+    sun60i-a733-orangepi-zero4.dtb sun60i-a733-orangepi-zero4-graphics.dtb \
+    sun60i-a733-orangepi-zero4-npu-observe.dtb
 python3 ember/tools/a733-boot-modes-contract.py "$kernel_obj"
 ```
 
@@ -67,14 +82,16 @@ Verify the unchanged input interfaces. A new DTB does not update an old kernel.
 An unset value or `normal` selects the existing normal board DTB.
 `diagnostic` selects the separate diagnostic DTB after Zero 3W detection.
 `graphics` selects the separate graphics DTB after Zero 4 detection.
-An unknown mode, a diagnostic request on Zero 4 or a graphics request on
-Zero 3W stops before file loading.
+`npu-observe` selects the passive NPU DTB after Zero 4 detection.
+An unknown mode or a mode for another board stops before file loading.
 A failed DTB load, FDT operation or kernel load stops before `booti`.
 The existing `devtype`, `devnum`, `distro_bootpart` and `prefix` select storage.
 All modes use the same native kernel image and the same shared script.
 To use the explicit graphics mode, the boot partition must contain the
 compiled `boot.scr` from the updated source and
 `dtb/allwinner/sun60i-a733-orangepi-zero4-graphics.dtb`.
+The NPU observe mode requires the updated script and
+`dtb/allwinner/sun60i-a733-orangepi-zero4-npu-observe.dtb`.
 
 Each independent loader entry must set its mode before it sources `boot.scr`.
 The normal entry must set `normal` explicitly.
@@ -84,9 +101,9 @@ Verify the independent entry through the actual loader before relying on it.
 
 ## Checks and limits
 
-The contract reads the four compiled DTBs. It requires the complete diagnostic
+The contract reads the five compiled DTBs. It requires the complete diagnostic
 property map to match normal mode except for the two empty mode properties.
-It checks both board identities and the Zero 4 graphics bindings.
+It checks the Zero 4 NPU supply and operating point, both board identities and the Zero 4 graphics bindings.
 It compares the full Zero 4 property set outside the graphics changes.
 For known reference bindings, it compares provider paths and literal arguments.
 The actual boot script runs with modeled U-Boot command boundaries.

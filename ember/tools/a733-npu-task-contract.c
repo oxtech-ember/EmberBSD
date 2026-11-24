@@ -253,6 +253,8 @@ struct clk {
 #include "sun60i_a733_npu_dma.h"
 #include "sun60i_a733_npu_fe.h"
 #include "sun60i_a733_npu_run.h"
+#define CTASSERT(e) _Static_assert(e, #e)
+#include "a733_npu_tile.h"
 #include "sun60i_a733_npu_task.h"
 #include "sun60i_a733_npu_mmu.c"
 #include "sun60i_a733_npu_nn.c"
@@ -286,6 +288,7 @@ static unsigned command_writes;
 static bool lose_command_address;
 static int (*callback) (void *);
 static void *callback_arg;
+static bool stale_on_mask;
 static unsigned final_reads, admission_reads, post_ready_calls;
 static unsigned admission_fail, admission_flip, final_fail, final_flip;
 static uint32_t final_offsets[7];
@@ -416,6 +419,14 @@ sun60i_a733_pck_npu_ready(int power, const void *owner)
 	CHECK(!in_irq && power == 9 && owner == &cookie);
 	return ++proofs == fail_proof ? EIO : 0;
 }
+
+int
+sun60i_a733_npu_rail_ready(const void *owner)
+{
+	(void)owner;
+	return 0;
+}
+
 static int
 bus_space_map(bus_space_tag_t tag, uint64_t addr, bus_size_t size,
     int flags, bus_space_handle_t * handle)
@@ -551,6 +562,8 @@ bus_space_poke_4(bus_space_tag_t tag, bus_space_handle_t h,
 		regs[0x3a8 / 4] |= fresh_reset_unknown;
 	if (offset == 0x14 && value == 0)
 		mask_drained = false;
+	else if (offset == 0x14 && stale_on_mask)
+		regs[4] = 0x10;
 	if (offset == 0x654) {
 		command_writes++;
 		address_drained = false;
@@ -559,7 +572,7 @@ bus_space_poke_4(bus_space_tag_t tag, bus_space_handle_t h,
 		regs[offset / 4] = command_readback;
 	}
 	if (offset == 0x3a4) {
-		CHECK(value == 0x00010200 && command_writes == 1);
+		CHECK(value == 0x00010200 && command_writes == syncs / 12 + 1);
 		CHECK(command_requested == (lose_command_address ? 0 :
 		    0x01001000));
 		CHECK(state.status.started && state.irq_lock.held &&
@@ -622,12 +635,11 @@ task_sync(bus_dmamap_t map, bus_size_t n, int flags)
 	CHECK(active->task_run == rstate && active->task_reference ==
 	    &current_task->reference);
 	CHECK(map->id == syncs % 6 && n == slots[map->id].bytes);
-	CHECK(flags == (syncs < 6 ?
+	CHECK(flags == (syncs % 12 < 6 ?
 	    BUS_DMASYNC_PREWRITE | BUS_DMASYNC_PREREAD :
 	    BUS_DMASYNC_POSTWRITE | BUS_DMASYNC_POSTREAD));
-	if (syncs >= 6)
+	if (syncs % 12 >= 6)
 		CHECK(sun60i_a733_npu_run_task_completed(rstate, active));
-	CHECK(syncs < 12);
 	syncs++;
 }
 
@@ -674,7 +686,7 @@ task_peek(bus_size_t offset, uint32_t * value)
 	}
 	if (current_task != NULL && current_task->status.compare.valid &&
 	    current_task->status.compare.pass) {
-		CHECK(state.irq_lock.held && !state.armed && syncs == 12);
+		CHECK(state.irq_lock.held && !state.armed && syncs % 12 == 0);
 		CHECK(final_reads < 7 && offset == final[final_reads]);
 		final_offsets[final_reads++] = offset;
 		if (final_reads == final_fail)
@@ -708,7 +720,7 @@ task_ready_probe(void)
 	if (current_task == NULL || !current_task->status.compare.valid ||
 	    !current_task->status.compare.pass)
 		return 0;
-	CHECK(!state.irq_lock.held && !state.armed && syncs == 12);
+	CHECK(!state.irq_lock.held && !state.armed && syncs % 12 == 0);
 	post_ready_calls++;
 	if (late_after_compare) {
 		unsigned old = ordinary_reads;
@@ -724,7 +736,7 @@ task_ready_probe(void)
 static void
 task_device_work(void)
 {
-	CHECK(syncs == 6 && active->retained && state.task_retained);
+	CHECK(syncs % 12 == 6 && active->retained && state.task_retained);
 	CHECK(memcmp(slots[2].cpu, current_task->reference.commands, 144) == 0);
 	/* Only this simulated device double can write oracle bytes to output. */
 	if (output_enabled)
@@ -783,6 +795,7 @@ reset_all(void)
 	bad_at = bad_kind = 0;
 	borrowed = false;
 	task_mode = true;
+	stale_on_mask = false;
 	for (unsigned i = 0; i < 6; i++)
 		addresses[i] = 0x100000 + i * 0x10000;
 	regs[0x20 / 4] = 0x9000;
@@ -802,14 +815,22 @@ reset_all(void)
 }
 
 static void
-prepare(void)
+prepare_tile(const struct a733_npu_tile *tile)
 {
-	CHECK(sun60i_a733_npu_task_prepare(&parent_tag, &current_task) == 0);
+	CHECK(sun60i_a733_npu_task_prepare_tile(&parent_tag, &current_task,
+	    tile) == 0);
 	CHECK(current_task != NULL && current_task->status.prepared && calls == 25 && depth ==
 	    27);
 	active = current_task->dma;
 	rstate = &current_task->run;
 	CHECK(!syncs && !peeks && !writes && !maps && !established);
+}
+
+static void
+prepare(void)
+{
+
+	prepare_tile(NULL);
 }
 
 static int
@@ -981,9 +1002,143 @@ hwdb_without_more(void)
 	cleanup();
 }
 
+static void
+check_tile(void)
+{
+	struct a733_npu_tile tile;
+	uint8_t expected[8][64];
+
+	for (unsigned i = 0; i < 64; i++) {
+		tile.input[0][i] = i % 11 + 123;
+		tile.input[1][i] = 128;
+		tile.input[2][i] = 133;
+		tile.input[3][i] = 123;
+		expected[0][i] = i % 11 + 124;
+		expected[1][i] = 130;
+		expected[2][i] = 136;
+		expected[3][i] = 127;
+		expected[4][i] = i % 11 + 128;
+		expected[5][i] = 129;
+		expected[6][i] = 145;
+		expected[7][i] = 136 - i % 11;
+	}
+	memset(tile.output, 0x42, sizeof(tile.output));
+	reset_all();
+	tile.input[3][63] = 122;
+	CHECK(sun60i_a733_npu_task_prepare_tile(&parent_tag, &current_task,
+	    &tile) == EINVAL && current_task == NULL && calls == 0);
+	tile.input[3][63] = 123;
+	prepare_tile(&tile);
+	CHECK(memcmp(slots[4].cpu, tile.input, sizeof(tile.input)) == 0);
+	CHECK(memcmp(current_task->reference.image.expected,
+	    expected, sizeof(expected)) == 0);
+	CHECK(sun60i_a733_npu_task_output(current_task, &tile) == EINVAL);
+	CHECK(tile.output[0][0] == 0x42);
+	CHECK(execute() == 0);
+	CHECK(sun60i_a733_npu_task_output(current_task, &tile) == 0);
+	CHECK(memcmp(tile.output, expected, sizeof(expected)) == 0);
+	/* The output source is a snapshot of the bytes compared earlier. */
+	memset(slots[5].cpu, 0x42, sizeof(expected));
+	CHECK(sun60i_a733_npu_task_output(current_task, &tile) == 0);
+	CHECK(memcmp(tile.output, expected, sizeof(expected)) == 0);
+	CHECK(execute() == EALREADY);
+	cleanup();
+
+	reset_all();
+	prepare_tile(&tile);
+	late_after_compare = true;
+	CHECK(execute() != 0 && active->task_report.pass);
+	memset(tile.output, 0x42, sizeof(tile.output));
+	CHECK(sun60i_a733_npu_task_output(current_task, &tile) == EINVAL);
+	CHECK(tile.output[0][0] == 0x42);
+	cleanup();
+}
+
+static void
+check_warm_tile(void)
+{
+	struct a733_npu_tile tile;
+
+	for (unsigned mode = 0; mode < 7; mode++) {
+		reset_all();
+		memset(tile.input, 128, sizeof(tile.input));
+		prepare_tile(&tile);
+		CHECK(execute() == 0);
+		uint64_t irq_count = state.status.irq_count;
+		unsigned before = writes;
+		memset(tile.input, mode == 6 ? 128 : 129, sizeof(tile.input));
+		memset(tile.output, 0x42, sizeof(tile.output));
+		final_reads = 0;
+		switch (mode) {
+		case 1:
+			regs[4] = 0x10;
+			break;
+		case 2:
+			regs[0x3b4 / 4] ^= 0x10;
+			break;
+		case 3:
+			stale_on_mask = true;
+			break;
+		case 4:
+			((uint8_t *)slots[2].cpu)[1] ^= 1;
+			break;
+		case 5:
+			fail_proof = proofs + 1;
+			break;
+		case 6:
+			output_enabled = false;
+			break;
+		}
+		int error = sun60i_a733_npu_task_again(current_task, &clock1,
+		    9, &cookie, &tile);
+		CHECK((error == 0) == (mode == 0));
+		CHECK(established == 1 && maps == 1 && !unmaps && !removed);
+		if (mode == 0) {
+			CHECK(state.status.irq_baseline == irq_count);
+			CHECK(state.status.irq_count == irq_count + 1);
+			CHECK(command_writes == 2 && syncs == 24 && writes > before);
+			CHECK(write_offsets[before] == 0x654);
+			CHECK(write_offsets[before + 1] == 0x14);
+			CHECK(write_offsets[before + 2] == 0x3a4);
+			CHECK(sun60i_a733_npu_task_output(current_task, &tile) == 0);
+			for (size_t i = 0; i < 64; i++)
+				CHECK(tile.output[0][i] == 130);
+		} else {
+			CHECK(state.status.irq_baseline == irq_count);
+			CHECK(!state.status.final_valid && !state.status.model_pass);
+			if (mode == 6) {
+				CHECK(command_writes == 2 && syncs == 24);
+				CHECK(state.status.irq_count == irq_count + 1);
+				CHECK(state.status.terminal &&
+				    current_task->status.compare.valid &&
+				    !current_task->status.compare.pass);
+				CHECK(current_task->status.compare.mismatches[5] == 512);
+			} else {
+				CHECK(command_writes == (mode == 3 ? 2 : 1));
+				CHECK(syncs == (mode == 3 ? 18 : 12));
+				CHECK(state.status.irq_count == irq_count);
+				CHECK(!state.status.started && !state.status.terminal);
+				CHECK(state.status.final_dma[0] == 0 &&
+				    state.status.terminal_dma[0] == 0 &&
+				    state.status.irq_bits == 0);
+				CHECK(state.status.error == (uint32_t)error);
+			}
+			CHECK(sun60i_a733_npu_task_output(current_task, &tile) == EINVAL);
+			CHECK(tile.output[0][0] == 0x42);
+			before = writes;
+			CHECK(sun60i_a733_npu_task_again(current_task, &clock1,
+			    9, &cookie, &tile) == EIO);
+			CHECK(writes == before);
+		}
+		cleanup();
+	}
+}
+
 int
 main(void)
 {
+	check_tile();
+	check_warm_tile();
 	struct sun60i_a733_npu_task_status status;
 	struct sun60i_a733_npu_task *out = (void *)(uintptr_t) 1;
 	const size_t sizes[] = {4096, 16384, 4096, 4096, 4096, 4096};
@@ -1013,15 +1168,15 @@ main(void)
 	return 0;
 #endif
 	reset_all();
-	CHECK(sun60i_a733_npu_task_prepare(NULL, &out) == EINVAL);
-	CHECK(sun60i_a733_npu_task_prepare(&parent_tag, NULL) == EINVAL);
-	CHECK(sun60i_a733_npu_task_prepare(&parent_tag,
-	    (void *)(UINTPTR_MAX - 3)) == EINVAL);
+	CHECK(sun60i_a733_npu_task_prepare_tile(NULL, &out, NULL) == EINVAL);
+	CHECK(sun60i_a733_npu_task_prepare_tile(&parent_tag, NULL, NULL) == EINVAL);
+	CHECK(sun60i_a733_npu_task_prepare_tile(&parent_tag,
+	    (void *)(UINTPTR_MAX - 3), NULL) == EINVAL);
 	CHECK(out == (void *)(uintptr_t) 1 && !calls && !depth);
 	for (unsigned n = 1; n <= 25; n++) {
 		reset_all();
 		fail_call = n;
-		CHECK(sun60i_a733_npu_task_prepare(&parent_tag, &out) == EIO);
+		CHECK(sun60i_a733_npu_task_prepare_tile(&parent_tag, &out, NULL) == EIO);
 		CHECK(out == (void *)(uintptr_t) 1 && !depth && !syncs &&
 		    !writes);
 	}

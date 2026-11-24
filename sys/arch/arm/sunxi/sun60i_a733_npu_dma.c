@@ -35,6 +35,7 @@ struct sun60i_a733_npu_dma {
 	struct sun60i_a733_npu_run *task_run;
 	const struct sun60i_a733_npu_dma_task_reference *task_reference;
 	struct sun60i_a733_npu_dma_task_report task_report;
+	uint8_t task_output[A733_NPU_NN_EXPECTED_BYTES];
 };
 
 static size_t
@@ -456,7 +457,7 @@ npu_dma_task_external(const struct sun60i_a733_npu_dma *m,
 
 static struct sun60i_a733_npu_dma_task_report
 npu_dma_task_compare(const struct sun60i_a733_npu_dma *m,
-    const struct sun60i_a733_npu_dma_task_reference *r, bool output)
+    const struct sun60i_a733_npu_dma_task_reference *r, uint8_t *output)
 {
 	const uint8_t *refs[NPU_DMA_TASK_NBUFFERS] = {
 		r->mtlb, r->stlb, r->commands, r->image.constants,
@@ -476,8 +477,11 @@ npu_dma_task_compare(const struct sun60i_a733_npu_dma *m,
 		for (size_t j = 0; j < m->buffers[i].bytes; j++) {
 			uint8_t expected = j < lengths[i] ? refs[i][j] :
 			    i == 5 ? A733_NPU_DMA_TASK_OUTPUT_POISON : 0;
+			uint8_t observed = data[j];
 
-			if (data[j] == expected)
+			if (output != NULL && i == 5 && j < lengths[i])
+				output[j] = observed;
+			if (observed == expected)
 				continue;
 			if (report.mismatches[i]++ == 0)
 				report.first[i] = j;
@@ -497,7 +501,7 @@ sun60i_a733_npu_dma_task_validate(const struct sun60i_a733_npu_dma *m,
 		return EINVAL;
 	if (m->retained)
 		return EBUSY;
-	if (!npu_dma_task_compare(m, r, false).pass)
+	if (!npu_dma_task_compare(m, r, NULL).pass)
 		return EIO;
 	return 0;
 }
@@ -554,7 +558,7 @@ sun60i_a733_npu_dma_task_check(struct sun60i_a733_npu_dma *m,
 	for (size_t i = 0; i < NPU_DMA_TASK_NBUFFERS; i++)
 		bus_dmamap_sync(m->tag, m->buffers[i].map, 0, m->buffers[i].bytes,
 		    BUS_DMASYNC_POSTREAD | BUS_DMASYNC_POSTWRITE);
-	report = npu_dma_task_compare(m, r, true);
+	report = npu_dma_task_compare(m, r, m->task_output);
 	m->task_report = report;
 	*out = report;
 	return report.pass ? 0 : EIO;
@@ -569,4 +573,47 @@ sun60i_a733_npu_dma_task_verified(const struct sun60i_a733_npu_dma *m,
 	    m->profile == A733_NPU_DMA_PROFILE_TASK && m->retained &&
 	    m->task_run == run && m->task_reference != NULL &&
 	    m->task_report.valid == 1 && m->task_report.pass == 1;
+}
+
+/*
+ * The caller must prove final completion and fresh quiescence before rearm.
+ * The previous comparison owns a complete POST for every map.
+ */
+int
+sun60i_a733_npu_dma_task_rearm(struct sun60i_a733_npu_dma *m,
+    struct sun60i_a733_npu_run *run,
+    struct sun60i_a733_npu_dma_task_reference *r, const uint8_t *input,
+    const uint8_t *expected)
+{
+	if (!sun60i_a733_npu_dma_task_verified(m, run) ||
+	    m->task_reference != r ||
+	    !npu_dma_task_external(m, input, sizeof(r->image.input)) ||
+	    !npu_dma_task_external(m, expected, sizeof(r->image.expected)))
+		return EINVAL;
+	if (!npu_dma_task_compare(m, r, m->task_output).pass)
+		return EIO;
+	memset(&m->task_report, 0, sizeof(m->task_report));
+	memcpy(r->image.input, input, sizeof(r->image.input));
+	memcpy(r->image.expected, expected, sizeof(r->image.expected));
+	memcpy(m->buffers[4].cpu, input, sizeof(r->image.input));
+	memset(m->buffers[5].cpu, A733_NPU_DMA_TASK_OUTPUT_POISON,
+	    m->buffers[5].bytes);
+	for (size_t i = 0; i < NPU_DMA_TASK_NBUFFERS; i++)
+		bus_dmamap_sync(m->tag, m->buffers[i].map, 0, m->buffers[i].bytes,
+		    BUS_DMASYNC_PREWRITE | BUS_DMASYNC_PREREAD);
+	return 0;
+}
+
+/* This reads the kernel snapshot, not hardware or DMA storage. */
+int
+sun60i_a733_npu_dma_task_output(const struct sun60i_a733_npu_dma *m,
+    const struct sun60i_a733_npu_run *run, void *out, size_t bytes)
+{
+
+	if (bytes != sizeof(m->task_output) ||
+	    !sun60i_a733_npu_dma_task_verified(m, run) ||
+	    !npu_dma_task_external(m, out, bytes))
+		return EINVAL;
+	memcpy(out, m->task_output, bytes);
+	return 0;
 }

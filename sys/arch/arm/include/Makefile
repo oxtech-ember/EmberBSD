@@ -2,7 +2,8 @@
 
 INCSDIR= /usr/include/arm
 
-INCS=	aeabi.h ansi.h aout_machdep.h apmvar.h armreg.h asm.h \
+INCS=	a733_npu_tile.h \
+	aeabi.h ansi.h aout_machdep.h apmvar.h armreg.h asm.h \
 	bswap.h byte_swap.h \
 	cdefs.h cpu.h cpuconf.h cputypes.h \
 	disklabel.h \

@@ -92,10 +92,10 @@ def check_boot(script):
     cases = 0
     for prefix in ("", "/", "/boot/"):
         for board, up, down in (("zero3w", "7fff", "0"), ("zero4", "2", "1")):
-            for mode in ("", "normal", "diagnostic", "graphics", "invalid"):
+            for mode in ("", "normal", "diagnostic", "graphics", "npu-observe", "invalid"):
                 allowed = (mode in ("", "normal")
                            or (mode == "diagnostic" and board == "zero3w")
-                           or (mode == "graphics" and board == "zero4"))
+                           or (mode in ("graphics", "npu-observe") and board == "zero4"))
                 for failure in (("", "dtb", "addr", "resize", "kernel") if allowed else ("",)):
                     env = dict(os.environ, ember_boot_mode=mode, prefix=prefix,
                                devtype="mmc", devnum="1", distro_bootpart="2",
@@ -113,7 +113,7 @@ def check_boot(script):
                         if mode == "invalid":
                             require(not any(line.startswith("MW ") for line in lines), "invalid mode touched GPIO")
                     else:
-                        suffix = f"-{mode}" if mode in ("diagnostic", "graphics") else ""
+                        suffix = f"-{mode}" if mode in ("diagnostic", "graphics", "npu-observe") else ""
                         dtb = f"sun60i-a733-orangepi-{board}{suffix}.dtb"
                         require(loads[0] == f"LOAD mmc 1:2 0x4fa00000 {prefix}dtb/allwinner/{dtb}",
                                 f"DTB path: {label}")
@@ -151,6 +151,15 @@ def resolve_references(tree, handles, data, argument_count):
         refs.append((provider, data[offset + 4:end]))
         offset = end
     return refs
+
+
+REFERENCE_ARGS = {
+    "clocks": "#clock-cells", "iommus": "#iommu-cells",
+    "nsi": 1, "phy-handle": 0, "pinctrl-0": 0, "syscon": 0,
+    "resets": "#reset-cells", "mmc-pwrseq": 0, "phys": "#phy-cells",
+    "gpio": "#gpio-cells", "reset-gpios": "#gpio-cells",
+    "gpu-supply": 0, "vbus-supply": 0, "vqmmc-supply": 0,
+}
 
 
 def check_zero4_graphics(normal, graphics):
@@ -191,21 +200,14 @@ def check_zero4_graphics(normal, graphics):
     graphics_keys = {key for key in graphics if key[1] != "phandle"}
     require(graphics_keys == (normal_keys - removed) | added, "Zero 4 graphics property scope")
 
-    reference_args = {
-        "clocks": "#clock-cells", "iommus": "#iommu-cells",
-        "nsi": 1, "phy-handle": 0, "pinctrl-0": 0, "syscon": 0,
-        "resets": "#reset-cells", "mmc-pwrseq": 0, "phys": "#phy-cells",
-        "gpio": "#gpio-cells", "reset-gpios": "#gpio-cells",
-        "gpu-supply": 0, "vbus-supply": 0, "vqmmc-supply": 0,
-    }
     normal_handles = phandles(normal)
     graphics_handles = phandles(graphics)
     for key in sorted(normal_keys - removed):
         node, name = key
         if node in enabled and name == "status":
             continue
-        if name in reference_args:
-            count = reference_args[name]
+        if name in REFERENCE_ARGS:
+            count = REFERENCE_ARGS[name]
             require(resolve_references(normal, normal_handles, normal[key], count) ==
                     resolve_references(graphics, graphics_handles, graphics[key], count),
                     f"Zero 4 graphics changed providers or arguments for {node} {name}")
@@ -219,7 +221,7 @@ def main():
     parser.add_argument("--source-root", type=Path, default=Path(__file__).resolve().parents[2])
     args = parser.parse_args()
     trees = {name: properties(args.dtb_directory / f"sun60i-a733-orangepi-{name}.dtb")
-             for name in ("zero3w", "zero3w-diagnostic", "zero4", "zero4-graphics")}
+             for name in ("zero3w", "zero3w-diagnostic", "zero4", "zero4-graphics", "zero4-npu-observe")}
     normal = trees["zero3w"]
     diagnostic = trees["zero3w-diagnostic"]
     zero4 = trees["zero4"]
@@ -236,13 +238,51 @@ def main():
     require(diagnostic == expected, "diagnostic must change exactly the two mode properties")
     require(zero4[gpu, observe] == b"", "Zero 4 GPU mode changed")
     check_zero4_graphics(zero4, graphics)
+    npu = "/soc/npu@3600000"
+    require(zero4[npu, "status"] == b"disabled\0", "Zero 4 normal enabled NPU")
+    require(zero4[npu, observe] == b"", "Zero 4 NPU mode changed")
+    require(zero4[npu, "netbsd,consumer-managed-power"] == b"",
+            "Zero 4 NPU power ownership changed")
+    npu_observe = trees["zero4-npu-observe"]
+    opp_table = "/opp-table-npu"
+    opp = opp_table + "/opp-492000000"
+    handles = phandles(npu_observe)
+    dcdc2 = [node for (node, name), value in npu_observe.items()
+             if name == "regulator-name" and value == b"dcdc2\0"]
+    require(len(dcdc2) == 1, "Zero 4 NPU DCDC2 supply")
+    added = {
+        (npu, "npu-supply"): npu_observe[dcdc2[0], "phandle"],
+        (npu, "operating-points-v2"): npu_observe[opp_table, "phandle"],
+        (opp_table, "compatible"): b"operating-points-v2\0",
+        (opp, "opp-hz"): struct.pack(">Q", 492000000),
+        (opp, "opp-microvolt"): struct.pack(">I", 800000),
+    }
+    require({key for key in npu_observe if key[1] != "phandle"} ==
+            {key for key in zero4 if key[1] != "phandle"} | added.keys(),
+            "Zero 4 NPU observe property scope")
+    for key, value in added.items():
+        require(npu_observe[key] == value, f"Zero 4 NPU binding: {key}")
+    require(npu_observe[npu, "status"] == b"okay\0", "Zero 4 NPU observe disabled")
+    normal_handles = phandles(zero4)
+    require(set(handles.values()) == set(normal_handles.values()) | {opp_table, dcdc2[0]},
+            "Zero 4 NPU observe changed provider scope")
+    for key, value in zero4.items():
+        if key == (npu, "status") or key[1] == "phandle":
+            continue
+        if key[1] in REFERENCE_ARGS:
+            count = REFERENCE_ARGS[key[1]]
+            require(resolve_references(zero4, normal_handles, value, count) ==
+                    resolve_references(npu_observe, handles, npu_observe[key], count),
+                    f"Zero 4 NPU observe changed providers or arguments: {key}")
+        else:
+            require(npu_observe[key] == value, f"Zero 4 NPU observe changed {key}")
     for node in (gpu, "/display"):
         require((node, observe) not in graphics, f"Zero 4 graphics {node} must start")
     require(normal["/", "compatible"] == b"xunlong,orangepi-zero3w\0allwinner,sun60i-a733\0",
             "Zero 3W identity changed")
     script = (args.source_root / "ember/boot/orangepi-zero4-boot.cmd").read_text()
     cases = check_boot(script)
-    print(f"PASS: 4 compiled DTBs, Zero 4 bindings, exact 2-property diagnostic delta, {cases} boot mode/path/failure cases")
+    print(f"PASS: 5 compiled DTBs, Zero 4 bindings, exact 2-property diagnostic delta, {cases} boot mode/path/failure cases")
 
 
 if __name__ == "__main__":

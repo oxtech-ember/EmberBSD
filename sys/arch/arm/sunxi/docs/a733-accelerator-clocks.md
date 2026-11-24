@@ -61,7 +61,9 @@ cannot change a reserved local mask or borrowed ancestor. Borrowed enable
 returns success without a physical write. Native admission counts remain
 balanced, and the actual RMW hook rechecks protected masks under its mutex.
 
-The NPU reserve/prepare/ready/release APIs use its fixed profile. Prepare
+The NPU reserve/prepare/ready/release APIs select a fixed profile. The same
+proved 600 MHz parent supplies rates of 600 MHz (/1) and 300 MHz (/2).
+Prepare
 requires PCK4 retention first. It writes only its mux/divider, three resets
 and four gates. It retains its slot before any write attempt, including a
 fault. A fresh ready query requires a completed retained sequence and the

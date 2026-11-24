@@ -7,6 +7,7 @@
 #include <sys/kmem.h>
 #include <sys/mutex.h>
 #include <sys/systm.h>
+#include <arm/a733_npu_tile.h>
 #include <arm/sunxi/sun60i_a733_npu_mmu.h>
 #include <arm/sunxi/sun60i_a733_npu_nn.h>
 #include <arm/sunxi/sun60i_a733_npu_task.h>
@@ -43,9 +44,43 @@ sun60i_a733_npu_task_destroy(struct sun60i_a733_npu_task *t)
 	return 0;
 }
 
+bool
+sun60i_a733_npu_task_tile_valid(const struct a733_npu_tile *tile)
+{
+
+	if (tile == NULL)
+		return false;
+	for (size_t c = 0; c < A733_NPU_TILE_INPUTS; c++)
+		for (size_t i = 0; i < A733_NPU_TILE_PIXELS; i++)
+			if (tile->input[c][i] < A733_NPU_TILE_MIN ||
+			    tile->input[c][i] > A733_NPU_TILE_MAX)
+				return false;
+	return true;
+}
+
+static void
+npu_task_tile_expected(uint8_t *expected, const struct a733_npu_tile *tile)
+{
+	CTASSERT(A733_NPU_NN_INPUT_BYTES == sizeof(tile->input));
+	CTASSERT(A733_NPU_NN_EXPECTED_BYTES == sizeof(tile->output));
+	for (size_t c = 0; c < A733_NPU_TILE_INPUTS; c++) {
+		size_t next = (c + 1) % A733_NPU_TILE_INPUTS;
+
+		for (size_t i = 0; i < A733_NPU_TILE_PIXELS; i++) {
+			int sample = tile->input[c][i];
+
+			expected[c * A733_NPU_TILE_PIXELS + i] =
+			    sample + c + 1;
+			expected[(c + A733_NPU_TILE_INPUTS) *
+			    A733_NPU_TILE_PIXELS + i] = A733_NPU_TILE_ZERO +
+			    sample - tile->input[next][i] + c + 5;
+		}
+	}
+}
+
 int
-sun60i_a733_npu_task_prepare(bus_dma_tag_t parent,
-    struct sun60i_a733_npu_task **out)
+sun60i_a733_npu_task_prepare_tile(bus_dma_tag_t parent,
+    struct sun60i_a733_npu_task **out, const struct a733_npu_tile *tile)
 {
 	struct sun60i_a733_npu_mmu_page pages[4];
 	struct sun60i_a733_npu_mmu_plan plan;
@@ -54,7 +89,8 @@ sun60i_a733_npu_task_prepare(bus_dma_tag_t parent,
 	int error, release_error;
 
 	if (parent == NULL || out == NULL ||
-	    sizeof(*out) > UINTPTR_MAX - (uintptr_t)out)
+	    sizeof(*out) > UINTPTR_MAX - (uintptr_t)out ||
+	    (tile != NULL && !sun60i_a733_npu_task_tile_valid(tile)))
 		return EINVAL;
 	t = kmem_zalloc(sizeof(*t), KM_SLEEP);
 	if (t == NULL)
@@ -66,6 +102,11 @@ sun60i_a733_npu_task_prepare(bus_dma_tag_t parent,
 		    sizeof(t->reference.commands));
 	if (error != 0)
 		goto fail;
+	if (tile != NULL) {
+		memcpy(t->reference.image.input, tile->input,
+		    sizeof(t->reference.image.input));
+		npu_task_tile_expected(t->reference.image.expected, tile);
+	}
 	error = sun60i_a733_npu_dma_task_prepare(parent,
 	    t->reference.commands, sizeof(t->reference.commands),
 	    t->reference.image.constants, sizeof(t->reference.image.constants),
@@ -151,4 +192,46 @@ sun60i_a733_npu_task_status(struct sun60i_a733_npu_task *t,
 		return;
 	*out = t->status;
 	sun60i_a733_npu_run_status(&t->run, &out->run);
+}
+
+int
+sun60i_a733_npu_task_again(struct sun60i_a733_npu_task *t, struct clk *clock,
+    int power, const void *owner, const struct a733_npu_tile *tile)
+{
+	uint8_t expected[A733_NPU_NN_EXPECTED_BYTES];
+	int error;
+
+	if (t == NULL || !t->status.attempted || !t->status.retained ||
+	    t->status.result != 0)
+		return EIO;
+	if (!sun60i_a733_npu_task_tile_valid(tile))
+		return EINVAL;
+	npu_task_tile_expected(expected, tile);
+	memset(&t->status.compare, 0, sizeof(t->status.compare));
+	error = sun60i_a733_npu_run_task_again(&t->run, t->dma, &t->reference,
+	    clock, power, owner, &tile->input[0][0], expected);
+	if (error == 0)
+		error = sun60i_a733_npu_dma_task_check(t->dma, &t->run,
+		    &t->reference, &t->status.compare);
+	if (error == 0)
+		error = sun60i_a733_npu_run_task_finish(&t->run, t->dma, clock,
+		    power, owner);
+	t->status.result = error;
+	return error;
+}
+
+int
+sun60i_a733_npu_task_output(struct sun60i_a733_npu_task *t,
+    struct a733_npu_tile *tile)
+{
+	struct sun60i_a733_npu_run_status status;
+
+	if (t == NULL || tile == NULL || !t->status.attempted ||
+	    t->status.result != 0)
+		return EINVAL;
+	sun60i_a733_npu_run_status(&t->run, &status);
+	if (status.final_valid != 1 || status.model_pass != 1)
+		return EBUSY;
+	return sun60i_a733_npu_dma_task_output(t->dma, &t->run,
+	    tile->output, sizeof(tile->output));
 }

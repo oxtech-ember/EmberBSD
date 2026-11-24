@@ -1033,6 +1033,7 @@ static struct {
 	const void *owner;
 	bool attempted, prepared;
 	struct sun60i_a733_npu_state before, after;
+	uint32_t divider;
 } sun60i_npu_lease;
 
 /* Fixed inactive IOMMU1 peers. A733 manual v1.00 sections 4.1.6.84,106-116. */
@@ -1659,7 +1660,7 @@ sun60i_a733_npu_shared_same(const struct sun60i_a733_npu_state *a,
 }
 
 int
-sun60i_a733_ccu_npu_reserve(struct clk *npu, const void *owner)
+sun60i_a733_ccu_npu_reserve(struct clk *npu, const void *owner, u_int rate_hz)
 {
 	struct sun60i_a733_npu_state state;
 	struct sunxi_ccu_softc *sc;
@@ -1667,6 +1668,8 @@ sun60i_a733_ccu_npu_reserve(struct clk *npu, const void *owner)
 
 	if (owner == NULL)
 		return EINVAL;
+	if (rate_hz != 600000000 && rate_hz != 300000000)
+		return EOPNOTSUPP;
 	error = sun60i_a733_npu_handle(npu, &sc);
 	if (error != 0)
 		return error;
@@ -1684,6 +1687,7 @@ sun60i_a733_ccu_npu_reserve(struct clk *npu, const void *owner)
 		goto out;
 	}
 	sun60i_npu_lease.before = state;
+	sun60i_npu_lease.divider = 600000000 / rate_hz - 1;
 	sun60i_npu_lease.owner = owner;
 	sun60i_npu_lease.attempted = sun60i_npu_lease.prepared = false;
 out:
@@ -1754,7 +1758,8 @@ static int
 sun60i_a733_npu_check_ready(struct sunxi_ccu_softc *sc,
     struct sun60i_a733_npu_state *state)
 {
-	const uint32_t module = ACCEL_CLK_ENABLE | __SHIFTIN(2, ACCEL_CLK_SEL);
+	const uint32_t module = ACCEL_CLK_ENABLE | __SHIFTIN(2, ACCEL_CLK_SEL) |
+	    sun60i_npu_lease.divider;
 	int error = sun60i_a733_npu_observe(sc, state);
 
 	if (error != 0 || (error = sun60i_a733_npu_parents(state)) != 0)
@@ -1773,8 +1778,6 @@ int
 sun60i_a733_ccu_npu_prepare(struct clk *npu, const void *owner, bool *retained)
 {
 	static const struct { bus_size_t reg; uint32_t mask, bits; } steps[] = {
-		{ NPU_CLK_REG, ACCEL_CLK_SEL | __BITS(4,0),
-		    __SHIFTIN(2, ACCEL_CLK_SEL) },
 		{ NPU_BGR_REG, __BIT(18), __BIT(18) },
 		{ NPU_BGR_REG, __BIT(17), __BIT(17) },
 		{ NPU_BGR_REG, __BIT(16), __BIT(16) },
@@ -1807,6 +1810,11 @@ sun60i_a733_ccu_npu_prepare(struct clk *npu, const void *owner, bool *retained)
 	/* Caller must retain PCK4 first. Failed writes cannot release this slot. */
 	sun60i_npu_lease.attempted = true;
 	*retained = true;
+	error = sun60i_a733_npu_write(sc, NPU_CLK_REG,
+	    ACCEL_CLK_SEL | __BITS(4,0),
+	    __SHIFTIN(2, ACCEL_CLK_SEL) | sun60i_npu_lease.divider);
+	if (error != 0)
+		goto out;
 	for (u_int i = 0; i < __arraycount(steps); i++) {
 		error = sun60i_a733_npu_write(sc, steps[i].reg,
 		    steps[i].mask, steps[i].bits);

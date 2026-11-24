@@ -57,6 +57,8 @@ npu_run_ready(struct clk *clock, int power, const void *owner)
 	error = sun60i_a733_ccu_npu_ready(clock, owner);
 	if (error == 0)
 		error = sun60i_a733_pck_npu_ready(power, owner);
+	if (error == 0)
+		error = sun60i_a733_npu_rail_ready(owner);
 	return error;
 }
 
@@ -465,6 +467,139 @@ sun60i_a733_npu_run_task_finish(struct sun60i_a733_npu_run *s,
 		s->status.model_pass = 1;
 	else
 		s->status.error = error;
+	mutex_exit(&s->irq_lock);
+	return error;
+}
+
+/*
+ * The synchronous VIPLite submit path at the pin above starts another command
+ * with 0x654, a barrier and 0x3a4. It does not repeat the boot write sequence.
+ * This path uses the retained MMU root and fixed END-terminated command.
+ * ACK is read last; any stale event or fault closes the retained context.
+ */
+static int
+npu_run_warm_quiescent(struct sun60i_a733_npu_run *s,
+    const struct sun60i_a733_npu_dma_info *info, uint32_t previous_dma)
+{
+	uint32_t mask, idle, dma, control, root, ack;
+
+	for (size_t i = 0; i < 2; i++) {
+		if (bus_space_peek_4(s->bst, s->bsh, 0x014, &mask) != 0 ||
+		    bus_space_peek_4(s->bst, s->bsh, 0x004, &idle) != 0 ||
+		    bus_space_peek_4(s->bst, s->bsh, 0x664, &dma) != 0 ||
+		    bus_space_peek_4(s->bst, s->bsh, 0x388, &control) != 0 ||
+		    bus_space_peek_4(s->bst, s->bsh, 0x3b4, &root) != 0)
+			return EFAULT;
+		if (mask != 0 || idle != 0x7fffffff || dma != previous_dma ||
+		    control != 0x21 || root != info->pd_entry)
+			return EBUSY;
+	}
+	if (bus_space_peek_4(s->bst, s->bsh, 0x010, &ack) != 0)
+		return EFAULT;
+	return ack == 0 ? 0 : EIO;
+}
+
+int
+sun60i_a733_npu_run_task_again(struct sun60i_a733_npu_run *s,
+    struct sun60i_a733_npu_dma *dma,
+    struct sun60i_a733_npu_dma_task_reference *reference, struct clk *clock,
+    int power, const void *owner, const uint8_t *input, const uint8_t *expected)
+{
+	struct sun60i_a733_npu_dma_info info;
+	uint32_t previous_dma;
+	bool enable_attempted = false;
+	int error, mask_error;
+
+	if (!s->lock_initialized)
+		return EBUSY;
+	mutex_enter(&s->irq_lock);
+	if (!s->status.model_pass || !s->status.final_valid ||
+	    !npu_run_task_completed_locked(s, dma)) {
+		mutex_exit(&s->irq_lock);
+		return EBUSY;
+	}
+	previous_dma = s->status.final_dma[1];
+	/* Publish the new generation before any guard that can refuse it. */
+	s->status.started = s->status.terminal = 0;
+	s->status.final_attempted = s->status.final_valid = 0;
+	s->status.model_pass = s->status.error = s->status.step = 0;
+	s->status.last_readback = s->status.irq_mask_readback = 0;
+	s->status.irq_raw = s->status.irq_bits = s->status.irq_fault = 0;
+	s->status.irq_baseline = s->status.irq_count;
+	memset(s->status.stale, 0, sizeof(s->status.stale));
+	memset(s->status.terminal_idle, 0, sizeof(s->status.terminal_idle));
+	memset(s->status.terminal_dma, 0, sizeof(s->status.terminal_dma));
+	memset(s->status.final_mask, 0, sizeof(s->status.final_mask));
+	memset(s->status.final_idle, 0, sizeof(s->status.final_idle));
+	memset(s->status.final_dma, 0, sizeof(s->status.final_dma));
+	s->status.terminal_status = s->status.final_status = 0;
+	error = s->status.irq_count == UINT64_MAX ? EBUSY : 0;
+	mutex_exit(&s->irq_lock);
+	if (error != 0)
+		goto out;
+	error = sun60i_a733_npu_dma_info(dma, &info);
+	if (error != 0)
+		goto out;
+	error = npu_run_ready(clock, power, owner);
+	if (error != 0)
+		goto out;
+	mutex_enter(&s->irq_lock);
+	error = npu_run_warm_quiescent(s, &info, previous_dma);
+	mutex_exit(&s->irq_lock);
+	if (error != 0)
+		goto out;
+	error = sun60i_a733_npu_dma_task_rearm(dma, s, reference, input,
+	    expected);
+	if (error != 0)
+		goto out;
+	error = npu_run_ready(clock, power, owner);
+	if (error != 0)
+		goto out;
+	mutex_enter(&s->irq_lock);
+	error = npu_run_warm_quiescent(s, &info, previous_dma);
+	if (error == 0)
+		error = npu_run_step(s, 11, &info);
+	if (error == 0) {
+		enable_attempted = true;
+		error = npu_run_step(s, 10, &info);
+	}
+	if (error == 0) {
+		/* Mask/ACK/arm/start are serialized with the existing IRQ cookie. */
+		if (bus_space_peek_4(s->bst, s->bsh, 0x010,
+		    &s->status.stale[1]) != 0)
+			error = EFAULT;
+		else if (s->status.stale[1] != 0)
+			error = EIO;
+	}
+	if (error == 0) {
+		s->armed = true;
+		s->status.started = 1;
+		error = npu_run_step(s, 12, &info);
+	}
+	mutex_exit(&s->irq_lock);
+	if (error == 0)
+		error = npu_run_wait(s, info.command_virtual);
+	if (enable_attempted) {
+		mask_error = npu_run_mask(s);
+		if (error == 0)
+			error = mask_error;
+	}
+	if (error == 0) {
+		mutex_enter(&s->irq_lock);
+		error = npu_run_warm_quiescent(s, &info, s->status.terminal_dma[1]);
+		if (error == 0 && s->status.irq_fault != 0)
+			error = EIO;
+		if (error == 0) {
+			s->status.terminal_status = 0;
+			s->status.terminal = 1;
+		}
+		mutex_exit(&s->irq_lock);
+	}
+out:
+	mutex_enter(&s->irq_lock);
+	s->status.error = error;
+	if (error != 0)
+		s->status.model_pass = 0;
 	mutex_exit(&s->irq_lock);
 	return error;
 }

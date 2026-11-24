@@ -1,0 +1,21 @@
+/* SPDX-License-Identifier: (GPL-2.0-only OR MIT) */
+/* Origin: EmberBSD; Orange Pi Zero 4 passive NPU diagnostics. */
+
+#include "sun60i-a733-orangepi-zero4.dts"
+
+/ {
+	npu_opp: opp-table-npu {
+		compatible = "operating-points-v2";
+
+		opp-492000000 {
+			opp-hz = /bits/ 64 <492000000>;
+			opp-microvolt = <800000>;
+		};
+	};
+};
+
+&npu {
+	npu-supply = <&reg_dcdc2>;
+	operating-points-v2 = <&npu_opp>;
+	status = "okay";
+};

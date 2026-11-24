@@ -51,6 +51,7 @@
 ./usr/include/aarch64/vmparam.h			comp-c-include
 ./usr/include/aarch64/wchar_limits.h		comp-c-include
 ./usr/include/arm				comp-c-include
+./usr/include/arm/a733_npu_tile.h		comp-c-include
 ./usr/include/arm/aeabi.h			comp-c-include
 ./usr/include/arm/ansi.h			comp-c-include
 ./usr/include/arm/aout_machdep.h		comp-c-include

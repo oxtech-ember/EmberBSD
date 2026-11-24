@@ -125,6 +125,14 @@ static int sun60i_a733_pck_npu_ready(int power, const void *owner)
  CHECK(!in_irq && power == 9 && owner == &cookie);
  return ++proofs == fail_proof ? EIO : 0;
 }
+
+int
+sun60i_a733_npu_rail_ready(const void *owner)
+{
+	(void)owner;
+	return 0;
+}
+
 static int bus_space_map(bus_space_tag_t tag, uint64_t addr, bus_size_t size,
     int flags, bus_space_handle_t *handle)
 {
@@ -306,6 +314,19 @@ sun60i_a733_npu_dma_task_verified(const struct sun60i_a733_npu_dma *m,
 	return false;
 }
 #include "sun60i_a733_npu_fe.c"
+static int
+sun60i_a733_npu_dma_task_rearm(struct sun60i_a733_npu_dma *m,
+    struct sun60i_a733_npu_run *run, struct sun60i_a733_npu_dma_task_reference *r,
+    const uint8_t *input, const uint8_t *expected)
+{
+	(void)m;
+	(void)run;
+	(void)r;
+	(void)input;
+	(void)expected;
+	CHECK(false);
+	return EINVAL;
+}
 #include "sun60i_a733_npu_run.c"
 static void reset(void)
 {

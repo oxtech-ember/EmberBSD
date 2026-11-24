@@ -13,9 +13,9 @@
 # back the way they were found.
 # Each loader entry selects its mode before it sources this shared script.
 # An unset mode preserves normal boot.
-# Diagnostic selects Zero 3W. Graphics selects Zero 4.
+# Diagnostic selects Zero 3W. Graphics and npu-observe select Zero 4.
 if test -z "${ember_boot_mode}"; then setenv ember_boot_mode normal; fi
-if test "${ember_boot_mode}" != normal -a "${ember_boot_mode}" != diagnostic -a "${ember_boot_mode}" != graphics; then
+if test "${ember_boot_mode}" != normal -a "${ember_boot_mode}" != diagnostic -a "${ember_boot_mode}" != graphics -a "${ember_boot_mode}" != npu-observe; then
     echo "Invalid EmberBSD boot mode"
     exit 1
 fi
@@ -46,6 +46,12 @@ elif test "${ember_boot_mode}" = graphics; then
         exit 1
     fi
     setenv fdtname sun60i-a733-orangepi-zero4-graphics.dtb
+elif test "${ember_boot_mode}" = npu-observe; then
+    if test "${fdtname}" != sun60i-a733-orangepi-zero4.dtb; then
+        echo "NPU observe DTB requires Zero 4"
+        exit 1
+    fi
+    setenv fdtname sun60i-a733-orangepi-zero4-npu-observe.dtb
 fi
 # Never enter the kernel with stale memory after a failed load or FDT command.
 load ${devtype} ${devnum}:${distro_bootpart} ${fdt_addr_r} ${prefix}dtb/allwinner/${fdtname} || exit 1

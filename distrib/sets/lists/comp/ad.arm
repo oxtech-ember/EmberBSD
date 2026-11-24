@@ -108,6 +108,7 @@
 ./usr/include/acorn32/vmparam.h			comp-obsolete		obsolete
 ./usr/include/acorn32/wchar_limits.h		comp-obsolete		obsolete
 ./usr/include/arm				comp-c-include
+./usr/include/arm/a733_npu_tile.h		comp-c-include
 ./usr/include/arm/aeabi.h			comp-c-include
 ./usr/include/arm/ansi.h			comp-c-include
 ./usr/include/arm/aout_machdep.h		comp-c-include

@@ -104,4 +104,9 @@ int sun60i_a733_npu_dma_set_commands(struct sun60i_a733_npu_dma *,
 int sun60i_a733_npu_dma_retain(struct sun60i_a733_npu_dma *);
 /* Retained storage cannot be destroyed, including after errors or timeouts. */
 int sun60i_a733_npu_dma_destroy(struct sun60i_a733_npu_dma *);
+int sun60i_a733_npu_dma_task_rearm(struct sun60i_a733_npu_dma *,
+    struct sun60i_a733_npu_run *, struct sun60i_a733_npu_dma_task_reference *,
+    const uint8_t *, const uint8_t *);
+int sun60i_a733_npu_dma_task_output(const struct sun60i_a733_npu_dma *,
+    const struct sun60i_a733_npu_run *, void *, size_t);
 #endif

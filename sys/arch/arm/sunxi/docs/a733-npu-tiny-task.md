@@ -2,7 +2,8 @@
 
 This interface selects one trusted NN profile. It does not accept user tensors,
 commands, device addresses, or a model file. The source and host tests define the
-contract. The fixed INT8 profile has bounded
+contract. A separate [typed tile ioctl](a733-npu-tile.md) uses the same hardware
+profile on caller samples in the fixture range. The fixed INT8 profile has bounded
 [physical acceptance](#physical-acceptance).
 
 ## Before a run

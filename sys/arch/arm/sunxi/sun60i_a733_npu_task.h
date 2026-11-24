@@ -7,6 +7,7 @@
 #include <arm/sunxi/sun60i_a733_npu_run.h>
 
 struct clk;
+struct a733_npu_tile;
 struct sun60i_a733_npu_task;
 struct sun60i_a733_npu_task_status {
 	uint32_t prepared, attempted, retained, result, release_error;
@@ -20,13 +21,21 @@ struct sun60i_a733_npu_task_status {
  * It does not perform MMIO, IRQ setup or sync. Normal failure preserves *out.
  * If cleanup fails, failure returns the kept context in *out, with prepared == 0
  * and release_error. The caller must keep this pointer and must not run it.
- * There is no arbitrary tensor, command, address or output-readback API.
+ * A null tile selects the diagnostic fixture. A tile changes only the
+ * bounded input and CPU reference.
  */
-int sun60i_a733_npu_task_prepare(bus_dma_tag_t,
-    struct sun60i_a733_npu_task **);
+bool sun60i_a733_npu_task_tile_valid(const struct a733_npu_tile *);
+int sun60i_a733_npu_task_prepare_tile(bus_dma_tag_t,
+    struct sun60i_a733_npu_task **, const struct a733_npu_tile *);
 /* A cold one-shot run. Caller must first revoke legacy MMIO readiness. */
 int sun60i_a733_npu_task_run(struct sun60i_a733_npu_task *, bus_space_tag_t,
     struct clk *, int, const void *, int, const char *);
+/* Warm dispatch is available only through the serialized tile entry. */
+int sun60i_a733_npu_task_again(struct sun60i_a733_npu_task *, struct clk *,
+    int, const void *, const struct a733_npu_tile *);
+/* Copies the measured snapshot only after fresh final proof. */
+int sun60i_a733_npu_task_output(struct sun60i_a733_npu_task *,
+    struct a733_npu_tile *);
 /* Copies cached metadata. It performs no MMIO or DMA data read. */
 void sun60i_a733_npu_task_status(struct sun60i_a733_npu_task *,
     struct sun60i_a733_npu_task_status *);

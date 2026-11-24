@@ -15,9 +15,10 @@ fixed-profile physical result. CPU image generation alone does not prove it.
 This split preserves the closed diagnostic TASK contract. The hardware command
 encoder, submit, DMA, MMU, IRQ and terminal checks remain in the driver.
 The kernel retains expected bytes for its existing terminal-gated comparison.
-It does not evaluate a CPU convolution. No user model, command or address enters
-this path. A userland result comparison needs a separate bounded result API
-that preserves ownership and terminal proof; this change does not add that API.
+The diagnostic fixture path does not evaluate a CPU convolution. The separate
+[typed tile ioctl](a733-npu-tile.md) computes reference bytes for caller samples
+and copies the measured snapshot after the final proof. Both paths use the
+same immutable constants and command stream.
 
 The image has 864 constants bytes, 256 input bytes and 512 expected bytes.
 The 192-byte config starts at constants offset 0. A zero 64-byte gap precedes

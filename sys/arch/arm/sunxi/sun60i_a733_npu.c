@@ -44,12 +44,15 @@ __KERNEL_RCSID(0, "$NetBSD$");
 #include <sys/conf.h>
 #include <sys/fcntl.h>
 #include <sys/kauth.h>
+#include <sys/lwp.h>
 #include <sys/mutex.h>
 #include <sys/sysctl.h>
 #include <sys/systm.h>
 
 #include <dev/clk/clk_backend.h>
 #include <dev/fdt/fdtvar.h>
+#include <dev/ofw/openfirm.h>
+#include <arm/a733_npu_tile.h>
 #include <arm/sunxi/sun60i_a733_ccu.h>
 #include <arm/sunxi/sun60i_a733_pck600.h>
 #include <arm/sunxi/sun60i_a733_npu_dma.h>
@@ -138,6 +141,7 @@ struct sun60i_npu_softc {
 	bool sc_run_pass;
 	bool sc_mmio_ready;
 	struct clk *sc_owned_clock;
+	struct fdtbus_regulator *sc_rail;
 	int sc_owned_power;
 	/* Engine1 is CPU preparation and a non-destructive raw snapshot only. */
 	u_int sc_engine_attempted, sc_engine_prepared, sc_engine_stage;
@@ -150,6 +154,7 @@ struct sun60i_npu_softc {
 	struct sun60i_a733_npu_run_status sc_engine_run_cache;
 	/* One native profile is selected for this boot. TASK revokes legacy MMIO. */
 	u_int sc_native_profile, sc_task_stage, sc_task_result, sc_task_attempted;
+	bool sc_tile_selected;
 	uint32_t sc_task_command_bytes, sc_task_constants_bytes;
 	uint32_t sc_task_input_bytes, sc_task_output_bytes;
 	struct sun60i_a733_npu_task *sc_task;
@@ -248,12 +253,107 @@ sun60i_npu_read_ids(struct sun60i_npu_softc *sc)
 	return error;
 }
 
+/* The normalized Zero 4 table describes the donor's voltage anchor. */
+static int
+sun60i_npu_board_profile(int phandle, u_int *rate_hz, bool *check_rail)
+{
+	static const char * const zero3w[] = { "xunlong,orangepi-zero3w", NULL };
+	static const char * const zero4[] = { "xunlong,orangepi-zero4", NULL };
+	static const char * const opp_v2[] = { "operating-points-v2", NULL };
+	static const char * const axp8191[] = { "x-powers,axp8191", NULL };
+	const int root = OF_finddevice("/");
+	int table, entry, supply, regulators, provider;
+	uint64_t opp_hz;
+	uint32_t opp_uv, address;
+
+	if (root <= 0)
+		return ENXIO;
+	if (of_compatible(root, zero3w)) {
+		*rate_hz = 600000000;
+		*check_rail = false;
+		return 0;
+	}
+	if (!of_compatible(root, zero4))
+		return EOPNOTSUPP;
+	if (OF_getproplen(phandle, "operating-points-v2") != 4 ||
+	    OF_getproplen(phandle, "npu-supply") != 4)
+		return EINVAL;
+	supply = fdtbus_get_phandle(phandle, "npu-supply");
+	if (supply <= 0)
+		return EINVAL;
+	regulators = OF_parent(supply);
+	if (regulators <= 0)
+		return EINVAL;
+	provider = OF_parent(regulators);
+	/* Match the regulator node used by axppmic to select its DCDC2 row. */
+	if (provider <= 0 || !of_compatible(provider, axp8191) ||
+	    of_getprop_uint32(provider, "reg", &address) != 0 ||
+	    address != 0x36 ||
+	    of_find_firstchild_byname(provider, "regulators") != regulators ||
+	    of_find_firstchild_byname(regulators, "dcdc2") != supply ||
+	    !fdtbus_status_okay(provider) || !fdtbus_status_okay(supply))
+		return EINVAL;
+	table = fdtbus_get_phandle(phandle, "operating-points-v2");
+	if (table <= 0 || !of_compatible(table, opp_v2) ||
+	    !fdtbus_status_okay(table))
+		return EINVAL;
+	entry = OF_child(table);
+	if (entry <= 0 || OF_peer(entry) != 0 || !fdtbus_status_okay(entry) ||
+	    OF_getproplen(entry, "required-opps") >= 0 ||
+	    OF_getproplen(entry, "opp-peak-kBps") >= 0 ||
+	    OF_getproplen(entry, "opp-avg-kBps") >= 0 ||
+	    OF_getproplen(entry, "opp-supported-hw") >= 0 ||
+	    of_getprop_uint64(entry, "opp-hz", &opp_hz) != 0 ||
+	    of_getprop_uint32(entry, "opp-microvolt", &opp_uv) != 0 ||
+	    opp_hz != 492000000 || opp_uv != 800000)
+		return EOPNOTSUPP;
+	/* Keep the proved PERIPH0 and AHB clocks. Change only the NPU divisor. */
+	*rate_hz = 300000000;
+	*check_rail = true;
+	return 0;
+}
+
+static int
+sun60i_npu_check_rail(struct fdtbus_regulator *rail)
+{
+	bool enabled;
+	u_int voltage;
+	int error;
+
+	for (size_t i = 0; i < 2; i++) {
+		error = fdtbus_regulator_is_enabled(rail, &enabled);
+		if (error != 0)
+			return error;
+		if (!enabled)
+			return EBUSY;
+		error = fdtbus_regulator_get_voltage(rail, &voltage);
+		if (error != 0)
+			return error;
+		if (voltage != 800000)
+			return EBUSY;
+	}
+	return 0;
+}
+
+int
+sun60i_a733_npu_rail_ready(const void *owner)
+{
+	const struct sun60i_npu_softc *sc = owner;
+
+	KASSERT(mutex_owned(&sc->sc_run_lock));
+	if (sc->sc_rail == NULL)
+		return 0;
+	return sun60i_npu_check_rail(sc->sc_rail);
+}
+
 /* Stage 4: retain PCK before the first typed CCU write attempt. */
 static int
 sun60i_npu_stage_power_id(struct sun60i_npu_softc *sc)
 {
 	struct clk *mod;
-	bool ccu_reserved = false, attempted = false;
+	struct fdtbus_regulator *rail = NULL;
+	bool ccu_reserved = false, attempted = false, check_rail;
+	u_int rate_hz;
 	int power_node, error;
 
 	KASSERT(mutex_owned(&sc->sc_run_lock));
@@ -264,17 +364,33 @@ sun60i_npu_stage_power_id(struct sun60i_npu_softc *sc)
 	mod = fdtbus_clock_get(sc->sc_phandle, "clk_npu");
 	if (mod == NULL)
 		return ENODEV;
+	error = sun60i_npu_board_profile(sc->sc_phandle, &rate_hz, &check_rail);
+	if (error != 0)
+		goto put;
+	if (check_rail) {
+		rail = fdtbus_regulator_acquire(sc->sc_phandle, "npu-supply");
+		if (rail == NULL) {
+			error = ENXIO;
+			goto put;
+		}
+		error = sun60i_npu_check_rail(rail);
+		if (error != 0)
+			goto put;
+	}
 	error = sun60i_a733_pck_npu_reserve(power_node, sc);
 	if (error != 0)
 		goto put;
-	error = sun60i_a733_ccu_npu_reserve(mod, sc);
+	error = sun60i_a733_ccu_npu_reserve(mod, sc, rate_hz);
 	if (error != 0)
 		goto clean;
 	ccu_reserved = true;
+	if (rail != NULL && (error = sun60i_npu_check_rail(rail)) != 0)
+		goto clean;
 	error = sun60i_a733_pck_npu_retain(power_node, sc);
 	if (error != 0)
 		goto clean;
 	sc->sc_owned_clock = mod;
+	sc->sc_rail = rail;
 	sc->sc_owned_power = power_node;
 	error = sun60i_a733_ccu_npu_prepare(mod, sc, &attempted);
 	if (error != 0)
@@ -285,6 +401,8 @@ sun60i_npu_stage_power_id(struct sun60i_npu_softc *sc)
 	error = sun60i_a733_ccu_npu_ready(mod, sc);
 	if (error == 0)
 		error = sun60i_a733_pck_npu_ready(power_node, sc);
+	if (error == 0)
+		error = sun60i_a733_npu_rail_ready(sc);
 	if (error == 0)
 		error = sun60i_npu_read_ids(sc);
 	if (error == 0 && (sc->sc_pid != A733_NPU_EXPECTED_PID ||
@@ -299,6 +417,8 @@ clean:
 		(void)sun60i_a733_ccu_npu_release(mod, sc);
 	(void)sun60i_a733_pck_npu_release(power_node, sc);
 put:
+	if (rail != NULL)
+		fdtbus_regulator_release(rail);
 	clk_put(mod);
 	return error;
 }
@@ -372,7 +492,10 @@ sun60i_npu_mmio_ready(struct sun60i_npu_softc *sc)
 	error = sun60i_a733_ccu_npu_ready(sc->sc_owned_clock, sc);
 	if (error != 0)
 		return error;
-	return sun60i_a733_pck_npu_ready(sc->sc_owned_power, sc);
+	error = sun60i_a733_pck_npu_ready(sc->sc_owned_power, sc);
+	if (error != 0)
+		return error;
+	return sun60i_a733_npu_rail_ready(sc);
 }
 
 /* Caller holds sc_run_lock. No NPU register writes or FE start occur here. */
@@ -477,7 +600,8 @@ sun60i_npu_task_cache(struct sun60i_npu_softc *sc)
 
 /* The first TASK choice permanently revokes legacy register access. */
 static int
-sun60i_npu_task_prepare(struct sun60i_npu_softc *sc)
+sun60i_npu_task_prepare(struct sun60i_npu_softc *sc,
+    const struct a733_npu_tile *tile)
 {
 	int error;
 
@@ -494,7 +618,7 @@ sun60i_npu_task_prepare(struct sun60i_npu_softc *sc)
 	if (error != 0)
 		return error;
 	/* This fixed constructor has no NPU MMIO, IRQ setup or DMA sync. */
-	error = sun60i_a733_npu_task_prepare(sc->sc_dmat, &sc->sc_task);
+	error = sun60i_a733_npu_task_prepare_tile(sc->sc_dmat, &sc->sc_task, tile);
 	if (sc->sc_task != NULL)
 		sun60i_npu_task_cache(sc);
 	return error;
@@ -626,6 +750,39 @@ sun60i_npu_vip_command(struct sun60i_npu_softc *sc, uint32_t command,
 	}
 }
 
+/* The framework copies the fixed-size ioctl buffer. */
+static int
+sun60i_npu_tile_ioctl(struct sun60i_npu_softc *sc, struct a733_npu_tile *tile,
+    int flags, struct lwp *l)
+{
+	int error;
+
+	if ((flags & (FREAD | FWRITE)) != (FREAD | FWRITE))
+		return EACCES;
+	error = kauth_authorize_generic(l->l_cred, KAUTH_GENERIC_ISSUSER, NULL);
+	if (error != 0)
+		return error;
+	if (!sun60i_a733_npu_task_tile_valid(tile))
+		return EINVAL;
+	mutex_enter(&sc->sc_run_lock);
+	if (sc->sc_tile_selected) {
+		error = sun60i_a733_npu_task_again(sc->sc_task, sc->sc_owned_clock,
+		    sc->sc_owned_power, sc, tile);
+		sun60i_npu_task_cache(sc);
+	} else {
+		error = sun60i_npu_task_prepare(sc, tile);
+		if (error == 0) {
+			sc->sc_tile_selected = true;
+			error = sun60i_npu_task_run(sc);
+		}
+	}
+	if (error == 0)
+		error = sun60i_a733_npu_task_output(sc->sc_task, tile);
+	sc->sc_task_result = error;
+	mutex_exit(&sc->sc_run_lock);
+	return error;
+}
+
 /*
  * The vendor picked a plain number (30000) as the ioctl command; its
  * NetBSD decode has a zero data size, so the framework hands the raw
@@ -643,6 +800,8 @@ sun60i_npu_vip_ioctl(dev_t dev, u_long cmd, void *vdata, int flags,
 
 	if (sc == NULL)
 		return ENXIO;
+	if (cmd == A733_NPU_TILE_RUN)
+		return sun60i_npu_tile_ioctl(sc, vdata, flags, l);
 	if (cmd != VIP_DRV_IOCTL)
 		return ENOTTY;
 	if ((flags & FWRITE) == 0)
@@ -799,7 +958,7 @@ sun60i_npu_sysctl_task_stage(SYSCTLFN_ARGS)
 	if (value == 0)
 		error = 0;
 	else if (value == 1)
-		error = sun60i_npu_task_prepare(sc);
+		error = sun60i_npu_task_prepare(sc, NULL);
 	else if (value == 2)
 		error = sun60i_npu_task_run(sc);
 	else

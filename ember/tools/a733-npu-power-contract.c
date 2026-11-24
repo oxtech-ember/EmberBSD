@@ -22,6 +22,7 @@ struct sun60i_npu_softc {
 	kmutex_t sc_run_lock;
 	bool sc_mmio_ready;
 	struct clk *sc_owned_clock;
+	struct fdtbus_regulator *sc_rail;
 	int sc_owned_power;
 	uint64_t sc_pid, sc_rev, sc_date;
 };
@@ -36,6 +37,10 @@ static int binding_len;
 static struct clk clock;
 static struct sun60i_npu_softc sc;
 static const int power_compat[1];
+static bool zero4, active_rail, missing_opp, wrong_rail;
+static unsigned rail_uv, rate;
+struct fdtbus_regulator { int unused; };
+static struct fdtbus_regulator supply;
 static char trace[64];
 #define CHECK(c) do { assert(c); checks++; } while (0)
 static void
@@ -105,10 +110,11 @@ sun60i_a733_pck_npu_reserve(int node, const void *owner)
 }
 
 static int
-sun60i_a733_ccu_npu_reserve(struct clk *clk, const void *owner)
+sun60i_a733_ccu_npu_reserve(struct clk *clk, const void *owner, u_int hz)
 {
 	CHECK(clk == &clock && owner == &sc && power_reserved);
 	record('c');
+	rate = hz;
 	if (failure == 3)
 		return EBUSY;
 	ccu_reserved = true;
@@ -203,6 +209,150 @@ bus_space_unmap(bus_space_tag_t tag, bus_space_handle_t handle, bus_size_t size)
 	CHECK(tag == 3 && handle == 41 && size == A733_NPU_ID_SIZE);
 	record('u');
 }
+static int
+OF_finddevice(const char *path)
+{
+
+	CHECK(strcmp(path, "/") == 0);
+	return 1;
+}
+
+static int
+of_compatible(int node, const char * const *ids)
+{
+
+	if (node == 1)
+		return strcmp(ids[0], zero4 ? "xunlong,orangepi-zero4" :
+		    "xunlong,orangepi-zero3w") == 0;
+	if (node == 29)
+		return strcmp(ids[0], "x-powers,axp8191") == 0;
+	CHECK(node == 25);
+	return strcmp(ids[0], "operating-points-v2") == 0;
+}
+
+static int
+OF_getproplen(int node, const char *prop)
+{
+
+	if (node == 5)
+		return missing_opp ? -1 : 4;
+	CHECK(node == 26);
+	return -1;
+}
+
+static int
+fdtbus_get_phandle(int node, const char *prop)
+{
+
+	CHECK(node == 5);
+	if (strcmp(prop, "npu-supply") == 0)
+		return wrong_rail ? 30 : 27;
+	CHECK(strcmp(prop, "operating-points-v2") == 0);
+	return 25;
+}
+
+static int
+OF_parent(int node)
+{
+
+	if (node == 27 || node == 30)
+		return 28;
+	CHECK(node == 28);
+	return 29;
+}
+
+static int
+of_find_firstchild_byname(int node, const char *name)
+{
+
+	if (node == 29 && strcmp(name, "regulators") == 0)
+		return 28;
+	CHECK(node == 28 && strcmp(name, "dcdc2") == 0);
+	return 27;
+}
+
+static bool
+fdtbus_status_okay(int node)
+{
+
+	return node == 25 || node == 26 || node == 27 || node == 29;
+}
+
+static int
+OF_child(int node)
+{
+
+	CHECK(node == 25);
+	return 26;
+}
+
+static int
+OF_peer(int node)
+{
+
+	CHECK(node == 26);
+	return 0;
+}
+
+static int
+of_getprop_uint64(int node, const char *prop, uint64_t *value)
+{
+
+	CHECK(node == 26 && strcmp(prop, "opp-hz") == 0);
+	*value = 492000000;
+	return 0;
+}
+
+static int
+of_getprop_uint32(int node, const char *prop, uint32_t *value)
+{
+
+	if (node == 29 && strcmp(prop, "reg") == 0) {
+		*value = 0x36;
+		return 0;
+	}
+	CHECK(node == 26 && strcmp(prop, "opp-microvolt") == 0);
+	*value = 800000;
+	return 0;
+}
+
+static struct fdtbus_regulator *
+fdtbus_regulator_acquire(int node, const char *prop)
+{
+
+	CHECK(node == 5 && strcmp(prop, "npu-supply") == 0);
+	record('a');
+	return &supply;
+}
+
+static void
+fdtbus_regulator_release(struct fdtbus_regulator *rail)
+{
+
+	CHECK(rail == &supply && !power_retained);
+	record('d');
+}
+
+static int
+fdtbus_regulator_is_enabled(struct fdtbus_regulator *rail, bool *on)
+{
+
+	CHECK(rail == &supply);
+	record('e');
+	*on = active_rail;
+	return 0;
+}
+
+static int
+fdtbus_regulator_get_voltage(struct fdtbus_regulator *rail, u_int *uv)
+{
+
+	CHECK(rail == &supply);
+	record('v');
+	*uv = rail_uv;
+	return 0;
+}
+
 #include "npu-power.h"
 int
 main(void)
@@ -231,6 +381,33 @@ main(void)
 		CHECK(failure < 5 || (releases == 0 && put_calls == 0 && power_retained));
 		CHECK(failure >= 8 || maps == (failure == 0 ? 1 : 0));
 		CHECK(failure > 4 || failure == 0 || (!power_reserved && !ccu_reserved));
+	}
+	CHECK(rate == 600000000);
+	for (unsigned mode = 0; mode < 5; mode++) {
+		memset(&sc, 0, sizeof(sc));
+		sc.sc_bst = 3;
+		sc.sc_phandle = 5;
+		sc.sc_run_lock.held = true;
+		trace[0] = 0;
+		maps = peeks = put_calls = releases = 0;
+		power_reserved = power_retained = ccu_reserved = write_attempted = false;
+		failure = 0;
+		zero4 = true;
+		active_rail = mode != 1;
+		rail_uv = mode != 2 ? 800000 : 790000;
+		missing_opp = mode == 0;
+		wrong_rail = mode == 4;
+		CHECK(sun60i_npu_stage_power_id(&sc) == (mode == 3 ? 0 :
+		    mode == 0 || wrong_rail ? EINVAL : EBUSY));
+		if (wrong_rail)
+			CHECK(strcmp(trace, "gx") == 0);
+		CHECK(write_attempted == (mode == 3) && maps == (mode == 3));
+		if (mode == 3) {
+			CHECK(rate == 300000000 && sc.sc_rail == &supply);
+			CHECK(sun60i_a733_npu_rail_ready(&sc) == 0);
+			rail_uv = 790000;
+			CHECK(sun60i_a733_npu_rail_ready(&sc) == EBUSY);
+		}
 	}
 	printf("PASS: %u actual-source NPU acquire, retain, write and ID checks\n", checks);
 	return 0;

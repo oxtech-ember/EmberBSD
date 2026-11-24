@@ -2,7 +2,7 @@
 
 The Zero 3W device tree enables the existing NPU consumer. It keeps
 `netbsd,consumer-managed-power` and `netbsd,observe-only` on the node.
-Other A733 board trees keep the SoC default, `status = "disabled"`.
+Other boards require their own device tree opt-in and admitted board profile.
 AI assistance was used for this change and its source controls.
 
 ## Attachment boundary
@@ -82,8 +82,17 @@ fixed local reset/gate sequence. It preserves SRAM reset 19 and unrelated
 fields. It neither changes GPU ownership nor enables PLL_NPU. GPU and NPU
 can hold separate local leases while borrowing unchanged running parents.
 
-The NPU profile requires fresh stable REF normalization, integer 600 MHz,
+Both NPU profiles require fresh stable REF normalization, integer 600 MHz,
 manual/configured/effective 600M post-gating, and the static 200 MHz AHB path.
+Zero 3W selects the established 600 MHz core profile. Zero 4 requires the
+board-provided single `operating-points-v2` entry at 492 MHz and 800 mV
+and the board's `npu-supply` reference to the DCDC2 node of AXP8191
+at address 0x36. The 492 MHz donor entry establishes
+the voltage anchor. The native profile runs at 300 MHz from the same
+600 MHz parent with the local /2 divider. The driver reads the shared
+regulator state and requires two enabled 800 mV observations before
+local clock preparation, before ID reads, and at native run readiness
+barriers. The driver does not set voltage or enable or disable the rail.
 The provider checks its own retained local sequence before ID access.
 The consumer sets MMIO readiness only after the observed PID/revision match.
 Public reads repeat CCU and PCK ownership proofs before NPU mapping.

@@ -28,6 +28,7 @@ struct sun60i_npu_softc {
 	bool sc_mmio_ready, sc_run_pass;
 	u_int sc_run_stage, sc_run_result;
 	u_int sc_native_profile, sc_task_attempted, sc_task_stage, sc_task_result;
+	bool sc_tile_selected;
 	uint32_t sc_task_command_bytes, sc_task_constants_bytes;
 	uint32_t sc_task_input_bytes, sc_task_output_bytes;
 	struct sun60i_a733_npu_task *sc_task;
@@ -77,6 +78,14 @@ int sun60i_a733_npu_fe_snapshot(bus_space_tag_t tag, struct clk *clock,
 	*out = raw;
 	return 0;
 }
+
+int
+sun60i_a733_npu_rail_ready(const void *owner)
+{
+	(void)owner;
+	return 0;
+}
+
 #include "npu-fe-pure.h"
 int sun60i_a733_npu_dma_prepare(bus_dma_tag_t tag, const void *image, size_t bytes,
     struct sun60i_a733_npu_dma **out)
@@ -140,16 +149,51 @@ struct sun60i_a733_npu_task {
 	struct sun60i_a733_npu_task_status status;
 };
 static struct sun60i_a733_npu_task task_context;
+#include "a733_npu_tile.h"
+#define FREAD 1
+#define FWRITE 2
+#define KAUTH_GENERIC_ISSUSER 1
+struct lwp {
+	int l_cred;
+};
+
+static int
+kauth_authorize_generic(int cred, int action, void *arg)
+{
+
+	CHECK(action == KAUTH_GENERIC_ISSUSER && arg == NULL);
+	return cred == 0 ? 0 : EPERM;
+}
+
+bool
+sun60i_a733_npu_task_tile_valid(const struct a733_npu_tile *tile)
+{
+
+	return tile != NULL && tile->input[0][0] == A733_NPU_TILE_ZERO;
+}
+
+int
+sun60i_a733_npu_task_output(struct sun60i_a733_npu_task *task,
+    struct a733_npu_tile *tile)
+{
+
+	CHECK(state.sc_run_lock == 1);
+	CHECK(task != NULL && task->status.result == 0);
+	tile->output[0][0] = A733_NPU_TILE_ZERO + 1;
+	return 0;
+}
+
 static unsigned task_allocations, task_runs, task_copies;
 static int task_prepare_error, task_release_error, task_run_error;
 static bool task_keep, task_publish, task_compare, task_model, task_valid;
 
 int
-sun60i_a733_npu_task_prepare(bus_dma_tag_t tag,
-    struct sun60i_a733_npu_task **out)
+sun60i_a733_npu_task_prepare_tile(bus_dma_tag_t tag,
+    struct sun60i_a733_npu_task **out, const struct a733_npu_tile *tile)
 {
 
 	CHECK(tag == state.sc_dmat && state.sc_run_lock == 1);
+	CHECK(tile == NULL || sun60i_a733_npu_task_tile_valid(tile));
 	CHECK(state.sc_native_profile == A733_NPU_DMA_PROFILE_TASK);
 	CHECK(state.sc_task_attempted == 1 && !state.sc_mmio_ready);
 	task_allocations++;
@@ -208,6 +252,22 @@ sun60i_a733_npu_task_status(struct sun60i_a733_npu_task *t,
 }
 #include "sun60i_npu_task_cache.h"
 #include "sun60i_npu_task_prepare.h"
+int
+sun60i_a733_npu_task_again(struct sun60i_a733_npu_task *task,
+    struct clk *clock, int power, const void *owner,
+    const struct a733_npu_tile *tile)
+{
+
+	CHECK(task != NULL && state.sc_run_lock == 1);
+	CHECK(sun60i_a733_npu_task_tile_valid(tile));
+	CHECK(clock == state.sc_owned_clock && power == state.sc_owned_power &&
+	    owner == &state);
+	if (task->status.result != 0)
+		return EIO;
+	task_runs++;
+	return 0;
+}
+
 #include "sun60i_npu_task_run.h"
 
 #define CTLTYPE_INT 2
@@ -222,6 +282,7 @@ static uint64_t cache_result;
 static int lookup_error;
 static void mutex_enter(int *lock) { CHECK(*lock == 0); *lock = 1; cache_locks++; }
 static void mutex_exit(int *lock) { CHECK(*lock == 1); *lock = 0; }
+#include "sun60i_npu_tile_ioctl.h"
 static void *cache_copy(void *to, const void *from, size_t bytes)
 {
 	CHECK(state.sc_run_lock == 1); cache_copies++; return memcpy(to, from, bytes);
@@ -463,7 +524,7 @@ task_profiles(void)
 	CHECK(sun60i_npu_engine_prepare(&state) == 0);
 	CHECK(state.sc_native_profile == A733_NPU_DMA_PROFILE_FE);
 	before = proofs;
-	CHECK(sun60i_npu_task_prepare(&state) == EBUSY);
+	CHECK(sun60i_npu_task_prepare(&state, NULL) == EBUSY);
 	CHECK(sun60i_npu_task_run(&state) == EBUSY);
 	CHECK(task_allocations == 0 && task_runs == 0 && proofs == before);
 	CHECK(!state.sc_task_attempted && state.sc_mmio_ready);
@@ -472,10 +533,10 @@ task_profiles(void)
 	CHECK(sun60i_npu_engine_prepare(&state) == EIO);
 	CHECK(state.sc_native_profile == A733_NPU_DMA_PROFILE_FE);
 	before = proofs;
-	CHECK(sun60i_npu_task_prepare(&state) == EBUSY);
+	CHECK(sun60i_npu_task_prepare(&state, NULL) == EBUSY);
 	CHECK(proofs == before && task_allocations == 0);
 	reset();
-	CHECK(sun60i_npu_task_prepare(&state) == 0);
+	CHECK(sun60i_npu_task_prepare(&state, NULL) == 0);
 	CHECK(state.sc_native_profile == A733_NPU_DMA_PROFILE_TASK);
 	CHECK(state.sc_task_attempted == 1 && state.sc_task_stage == 1);
 	CHECK(!state.sc_mmio_ready && state.sc_task == &task_context);
@@ -488,7 +549,7 @@ task_profiles(void)
 	CHECK(sun60i_npu_engine_prepare(&state) == EBUSY);
 	CHECK(sun60i_npu_engine_run(&state) == EBUSY);
 	CHECK(state.sc_native_profile == A733_NPU_DMA_PROFILE_TASK);
-	CHECK(sun60i_npu_task_prepare(&state) == EALREADY);
+	CHECK(sun60i_npu_task_prepare(&state, NULL) == EALREADY);
 	CHECK(proofs == before && snapshots == 0 && allocations == 0);
 	CHECK(task_allocations == 1 && task_runs == 0 && !state.sc_mmio_ready);
 }
@@ -509,14 +570,14 @@ task_failures(void)
 		case 4: state.sc_run_result = EIO; break;
 		case 5: proof_error = EIO; break;
 		}
-		CHECK(sun60i_npu_task_prepare(&state) != 0);
+		CHECK(sun60i_npu_task_prepare(&state, NULL) != 0);
 		CHECK(state.sc_task_attempted == 1 && state.sc_task_stage == 1);
 		CHECK(state.sc_native_profile == A733_NPU_DMA_PROFILE_TASK);
 		CHECK(!state.sc_mmio_ready && task_allocations == 0);
 		before = proofs;
 		state.sc_mmio_ready = true;
 		CHECK(sun60i_npu_mmio_ready(&state) == EBUSY);
-		CHECK(sun60i_npu_task_prepare(&state) == EALREADY);
+		CHECK(sun60i_npu_task_prepare(&state, NULL) == EALREADY);
 		CHECK(sun60i_npu_task_run(&state) == EINVAL);
 		CHECK(proofs == before && task_allocations == 0 && task_runs == 0);
 	}
@@ -525,13 +586,13 @@ task_failures(void)
 		task_prepare_error = ENOMEM;
 		task_keep = keep != 0;
 		task_release_error = EBUSY;
-		CHECK(sun60i_npu_task_prepare(&state) == ENOMEM);
+		CHECK(sun60i_npu_task_prepare(&state, NULL) == ENOMEM);
 		CHECK(state.sc_task_attempted == 1 && !state.sc_mmio_ready);
 		CHECK(state.sc_task == (keep ? &task_context : NULL));
 		CHECK(state.sc_task_cache.prepared == 0);
 		CHECK(state.sc_task_cache.release_error == (keep ? EBUSY : 0U));
 		CHECK(sun60i_npu_task_run(&state) == EINVAL);
-		CHECK(sun60i_npu_task_prepare(&state) == EALREADY);
+		CHECK(sun60i_npu_task_prepare(&state, NULL) == EALREADY);
 		CHECK(task_allocations == 1 && task_runs == 0);
 	}
 }
@@ -546,7 +607,7 @@ task_execution(void)
 		reset();
 		CHECK(sun60i_npu_task_run(&state) == EINVAL);
 		CHECK(proofs == 0 && task_runs == 0);
-		CHECK(sun60i_npu_task_prepare(&state) == 0);
+		CHECK(sun60i_npu_task_prepare(&state, NULL) == 0);
 		task_run_error = kind == 0 ? 0 : EIO;
 		task_publish = kind != 1;
 		task_valid = kind == 0 || kind >= 3;
@@ -563,7 +624,7 @@ task_execution(void)
 		state.sc_mmio_ready = true;
 		CHECK(sun60i_npu_mmio_ready(&state) == EBUSY);
 		CHECK(sun60i_npu_task_run(&state) == EALREADY);
-		CHECK(sun60i_npu_task_prepare(&state) == EALREADY);
+		CHECK(sun60i_npu_task_prepare(&state, NULL) == EALREADY);
 		CHECK(sun60i_npu_engine_prepare(&state) == EBUSY);
 		CHECK(sun60i_npu_engine_run(&state) == EBUSY);
 		CHECK(task_runs == 1 && task_copies == 2 && proofs == before);
@@ -668,8 +729,49 @@ task_cached_nodes(void)
 	state.sc_run_lock = 1;
 }
 
+static void
+check_tile_ioctl(void)
+{
+	struct lwp user = { .l_cred = 1 };
+	struct lwp root = { .l_cred = 0 };
+	struct a733_npu_tile tile = {0};
+
+	reset();
+	state.sc_run_lock = 0;
+	CHECK(sun60i_npu_tile_ioctl(&state, &tile, FREAD, &root) == EACCES);
+	CHECK(sun60i_npu_tile_ioctl(&state, &tile, FREAD | FWRITE, &user) == EPERM);
+	CHECK(sun60i_npu_tile_ioctl(&state, &tile, FREAD | FWRITE, &root) == EINVAL);
+	CHECK(task_allocations == 0 && task_runs == 0 && state.sc_mmio_ready);
+
+	tile.input[0][0] = A733_NPU_TILE_ZERO;
+	CHECK(sun60i_npu_tile_ioctl(&state, &tile, FREAD | FWRITE, &root) == 0);
+	CHECK(tile.output[0][0] == A733_NPU_TILE_ZERO + 1);
+	CHECK(task_allocations == 1 && task_runs == 1 && !state.sc_mmio_ready);
+	CHECK(!state.sc_run_lock);
+	CHECK(sun60i_npu_tile_ioctl(&state, &tile, FREAD | FWRITE, &root) == 0);
+	CHECK(task_allocations == 1 && task_runs == 2);
+
+	reset();
+	CHECK(sun60i_npu_task_prepare(&state, NULL) == 0);
+	CHECK(sun60i_npu_task_run(&state) == 0);
+	state.sc_run_lock = 0;
+	CHECK(sun60i_npu_tile_ioctl(&state, &tile, FREAD | FWRITE, &root) ==
+	    EALREADY);
+	CHECK(task_allocations == 1 && task_runs == 1);
+
+	reset();
+	state.sc_run_lock = 0;
+	task_run_error = EIO;
+	tile.output[0][0] = 0x42;
+	CHECK(sun60i_npu_tile_ioctl(&state, &tile, FREAD | FWRITE, &root) == EIO);
+	CHECK(tile.output[0][0] == 0x42);
+	CHECK(task_allocations == 1 && task_runs == 1 && !state.sc_mmio_ready);
+	CHECK(!state.sc_run_lock);
+}
+
 int main(void)
 {
+	check_tile_ioctl();
 	cold(); failures(); reset();
 	CHECK(sun60i_npu_engine_prepare(&state) == 0);
 	CHECK(state.sc_engine_stage == 1 && state.sc_engine_prepared && state.sc_engine_snapshot_valid);

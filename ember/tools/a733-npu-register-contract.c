@@ -51,6 +51,14 @@ static int sun60i_a733_pck_npu_ready(int node, const void *owner) {
 }
 
 static int
+sun60i_a733_npu_rail_ready(const void *owner)
+{
+	(void)owner;
+	return 0;
+}
+
+
+static int
 bus_space_map(bus_space_tag_t tag, bus_addr_t addr, bus_size_t size,
     int flags, bus_space_handle_t *handle)
 {

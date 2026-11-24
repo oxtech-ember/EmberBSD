@@ -58,6 +58,9 @@ def main():
         (work / "npu-power.h").write_text(
             function(driver, "sun60i_npu_power_node", "int") +
             function(driver, "sun60i_npu_read_ids", "int") +
+            function(driver, "sun60i_npu_board_profile", "int") +
+            function(driver, "sun60i_npu_check_rail", "int") +
+            function(driver, "sun60i_a733_npu_rail_ready", "int") +
             function(driver, "sun60i_npu_stage_power_id", "int"))
         (work / "npu-preflight.h").write_text(
             function(driver, "sun60i_npu_stage_domain", "int") +

@@ -585,6 +585,7 @@ test -s "$TEST_OUT/bcmexpgpio.kmod"
 test -s "$TEST_OUT/sun60i-a733-orangepi-zero3w.dtb"
 test -s "$TEST_OUT/sun60i-a733-orangepi-zero3w-diagnostic.dtb"
 test -s "$TEST_OUT/sun60i-a733-orangepi-zero4-graphics.dtb"
+test -s "$TEST_OUT/sun60i-a733-orangepi-zero4-npu-observe.dtb"
 test -f "$TEST_OUT/obj/kernels/EMBER64/.ember-version-inputs"
 grep -Fq -- "-V MKREPRO=yes -V MKREPRO_TIMESTAMP=1700000000" "$TEST_LOG"
 grep -q 'build.sh .* -m evbarm -a aarch64 ' "$TEST_LOG"
@@ -750,7 +751,7 @@ grep -q 'injected contract failure: pvr-query-contract.sh' "$work/query.log"
 outputs='netbsd-EMBER64 netbsd-EMBER64.img bcm2837-rpi-zero-2-w.dtb
 sun60i-a733-orangepi-zero4.dtb sun60i-a733-orangepi-zero3w.dtb
 sun60i-a733-orangepi-zero3w-diagnostic.dtb sun60i-a733-orangepi-zero4-graphics.dtb
-sun50i-a133-ys-m33.dtb
+sun60i-a733-orangepi-zero4-npu-observe.dtb sun50i-a133-ys-m33.dtb
 bcm2712btcom.kmod bcmexpgpio.kmod rp1wmcodec.kmod rpi5button.kmod'
 export TEST_OUT="$work/a133-dtb-failure"
 mkdir -p "$TEST_OUT"
