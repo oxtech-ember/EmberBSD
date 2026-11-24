@@ -15,7 +15,11 @@ NPU mode is unchanged.
 The normal Zero 4 DTB keeps the GPU in observe-only mode and leaves display
 disabled. The optional Zero 4 graphics DTB includes the normal Zero 4 board
 description and enables the native GPU and display paths shared with Zero 3W.
-It retains the Zero 4 Ethernet, USB, pinmux and NPU configuration.
+It retains the Zero 4 Ethernet, USB and pinmux configuration. It also
+attaches the passive NPU with the same supply and operating point as the
+NPU observe mode. Its empty `netbsd,init-on-demand` property permits
+checked preparation on the first admitted tile ioctl. Attachment at boot
+remains passive. NPU observe mode uses explicit stages.
 GPU startup requires the PowerVR firmware on the root filesystem.
 HDMI startup borrows DCDC2 at 800 mV and CLDO2 at 1800 mV from the platform
 boot firmware. The HDMI provider checks the enabled rails without changing them. GPU and KMS
@@ -55,7 +59,10 @@ The Zero 4 DietPi DTB cited above connects the NPU supply to AXP8191 DCDC2,
 which also supplies HDMI. The donor table specifies 492 MHz at 800 mV across the listed silicon bins.
 Verify rail state, power ownership and the clock rate through the driver
 before any explicit NPU power stage.
-The NPU observe mode has no physical acceptance yet.
+The NPU observe mode has a physical acceptance record for the fixed INT8
+tile profile. See [Zero 4 boot and recovery][zero4-boot].
+
+[zero4-boot]: https://github.com/oxtech-ember/EmberBSD-DevBoards/blob/main/boards/a733-zero4/boot.md
 
 ## Native build target
 
@@ -104,7 +111,8 @@ Verify the independent entry through the actual loader before relying on it.
 The contract reads the five compiled DTBs. It requires the complete diagnostic
 property map to match normal mode except for the two empty mode properties.
 It checks the Zero 4 NPU supply and operating point, both board identities and the Zero 4 graphics bindings.
-It compares the full Zero 4 property set outside the graphics changes.
+It compares the full Zero 4 NPU observe property set outside the graphics
+changes.
 For known reference bindings, it compares provider paths and literal arguments.
 The actual boot script runs with modeled U-Boot command boundaries.
 Controls cover modes, board decisions, storage prefixes and failed loads.

@@ -159,10 +159,11 @@ REFERENCE_ARGS = {
     "resets": "#reset-cells", "mmc-pwrseq": 0, "phys": "#phy-cells",
     "gpio": "#gpio-cells", "reset-gpios": "#gpio-cells",
     "gpu-supply": 0, "vbus-supply": 0, "vqmmc-supply": 0,
+    "npu-supply": 0, "operating-points-v2": 0,
 }
 
 
-def check_zero4_graphics(normal, graphics):
+def check_zero4_graphics(npu_observe, graphics):
     sys_cfg = "/soc/syscon@3000000"
     hdmi = "/soc/hdmi@5520000"
     engine = "/soc/display-engine@5000000"
@@ -170,11 +171,11 @@ def check_zero4_graphics(normal, graphics):
     gpu = "/soc/gpu@1800000"
     enabled = (sys_cfg, hdmi, engine, display)
     for node in enabled:
-        require(normal[node, "status"] == b"disabled\0", f"Zero 4 normal enabled {node}")
+        require(npu_observe[node, "status"] == b"disabled\0", f"Zero 4 NPU observe enabled {node}")
         require(graphics[node, "status"] == b"okay\0", f"Zero 4 graphics disabled {node}")
 
     zero4_compatible = b"xunlong,orangepi-zero4\0allwinner,sun60i-a733\0"
-    for tree in (normal, graphics):
+    for tree in (npu_observe, graphics):
         require(tree["/", "compatible"] == zero4_compatible, "Zero 4 identity changed")
 
     require(graphics[hdmi, "allwinner,external-resistor"] == b"", "HDMI resistor binding")
@@ -195,24 +196,27 @@ def check_zero4_graphics(normal, graphics):
     added = {(hdmi, name) for name in
              ("vdd08-supply", "vcc18-supply", "allwinner,external-resistor")}
     added.add((engine, "output"))
+    init_on_demand = ("/soc/npu@3600000", "netbsd,init-on-demand")
+    require(graphics.get(init_on_demand) == b"", "Zero 4 graphics NPU init on demand")
+    added.add(init_on_demand)
     removed = {(gpu, "netbsd,observe-only")}
-    normal_keys = {key for key in normal if key[1] != "phandle"}
+    npu_observe_keys = {key for key in npu_observe if key[1] != "phandle"}
     graphics_keys = {key for key in graphics if key[1] != "phandle"}
-    require(graphics_keys == (normal_keys - removed) | added, "Zero 4 graphics property scope")
+    require(graphics_keys == (npu_observe_keys - removed) | added, "Zero 4 graphics property scope")
 
-    normal_handles = phandles(normal)
+    npu_observe_handles = phandles(npu_observe)
     graphics_handles = phandles(graphics)
-    for key in sorted(normal_keys - removed):
+    for key in sorted(npu_observe_keys - removed):
         node, name = key
         if node in enabled and name == "status":
             continue
         if name in REFERENCE_ARGS:
             count = REFERENCE_ARGS[name]
-            require(resolve_references(normal, normal_handles, normal[key], count) ==
+            require(resolve_references(npu_observe, npu_observe_handles, npu_observe[key], count) ==
                     resolve_references(graphics, graphics_handles, graphics[key], count),
                     f"Zero 4 graphics changed providers or arguments for {node} {name}")
         else:
-            require(normal[key] == graphics[key], f"Zero 4 graphics changed {node} {name}")
+            require(npu_observe[key] == graphics[key], f"Zero 4 graphics changed {node} {name}")
 
 
 def main():
@@ -222,6 +226,10 @@ def main():
     args = parser.parse_args()
     trees = {name: properties(args.dtb_directory / f"sun60i-a733-orangepi-{name}.dtb")
              for name in ("zero3w", "zero3w-diagnostic", "zero4", "zero4-graphics", "zero4-npu-observe")}
+    for mode, tree in trees.items():
+        if mode != "zero4-graphics":
+            require(all(name != "netbsd,init-on-demand" for _, name in tree),
+                    f"{mode} must keep explicit NPU stages")
     normal = trees["zero3w"]
     diagnostic = trees["zero3w-diagnostic"]
     zero4 = trees["zero4"]
@@ -237,7 +245,6 @@ def main():
     expected["/display", observe] = b""
     require(diagnostic == expected, "diagnostic must change exactly the two mode properties")
     require(zero4[gpu, observe] == b"", "Zero 4 GPU mode changed")
-    check_zero4_graphics(zero4, graphics)
     npu = "/soc/npu@3600000"
     require(zero4[npu, "status"] == b"disabled\0", "Zero 4 normal enabled NPU")
     require(zero4[npu, observe] == b"", "Zero 4 NPU mode changed")
@@ -276,6 +283,7 @@ def main():
                     f"Zero 4 NPU observe changed providers or arguments: {key}")
         else:
             require(npu_observe[key] == value, f"Zero 4 NPU observe changed {key}")
+    check_zero4_graphics(npu_observe, graphics)
     for node in (gpu, "/display"):
         require((node, observe) not in graphics, f"Zero 4 graphics {node} must start")
     require(normal["/", "compatible"] == b"xunlong,orangepi-zero3w\0allwinner,sun60i-a733\0",

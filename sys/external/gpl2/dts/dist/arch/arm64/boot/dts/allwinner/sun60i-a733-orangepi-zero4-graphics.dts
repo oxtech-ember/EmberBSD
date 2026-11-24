@@ -1,5 +1,9 @@
 /* SPDX-License-Identifier: (GPL-2.0-only OR MIT) */
-/* Orange Pi Zero 4 with native graphics enabled. */
+/* Orange Pi Zero 4 with native graphics and passive NPU attachment enabled. */
 
-#include "sun60i-a733-orangepi-zero4.dts"
+#include "sun60i-a733-orangepi-zero4-npu-observe.dts"
 #include "sun60i-a733-orangepi-zero-graphics.dtsi"
+
+&npu {
+	netbsd,init-on-demand;
+};
