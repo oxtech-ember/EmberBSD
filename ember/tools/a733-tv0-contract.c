@@ -227,7 +227,8 @@ main(void)
 	fixture(); CHECK(pipeline(&seq) == 0);
 	m.reg[0][0xfc/4] |= UINT32_C(0x40000000);
 	old_writes = m.writes;
-	CHECK(sun60i_a733_tv0_observe_count(&s, 9, &seq) == ENOENT);
+	CHECK(sun60i_a733_tv0_observe_count(&s, 9, &seq) == ENOENT &&
+	    seq == 9);
 	CHECK(s.fault == 0 && s.sequence == 1 && s.underflow_pending &&
 	    s.underflow_sequence == 9 && s.underflow_events == 1);
 	CHECK(m.writes == old_writes + 1 &&
@@ -235,12 +236,13 @@ main(void)
 	    UINT32_C(0x10000000));
 	old_writes = m.writes;
 	CHECK(sun60i_a733_tv0_observe_count(&s, 9, &seq) == ENOENT &&
-	    m.writes == old_writes);
+	    seq == 9 && m.writes == old_writes);
 	CHECK(sun60i_a733_tv0_observe_count(&s, 10, &seq) == 0 &&
 	    seq == 10 && !s.underflow_pending && s.fault == 0);
 	fixture(); CHECK(pipeline(&seq) == 0);
 	m.reg[0][0xfc/4] |= UINT32_C(0x40000000);
-	CHECK(sun60i_a733_tv0_observe_count(&s, 9, &seq) == ENOENT);
+	CHECK(sun60i_a733_tv0_observe_count(&s, 9, &seq) == ENOENT &&
+	    seq == 9);
 	m.reg[0][0xfc/4] |= UINT32_C(0x40000000);
 	old_writes = m.writes;
 	CHECK(sun60i_a733_tv0_observe_count(&s, 10, &seq) == EIO &&

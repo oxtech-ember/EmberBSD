@@ -198,7 +198,7 @@ sun60i_a733_output_stop(int phandle, const void *owner)
 int
 sun60i_a733_output_observed_vblank(int phandle, const void *owner, uint64_t *out)
 {
-	uint64_t sequence;
+	uint64_t sequence = 0;
 	int error;
 
 	if (out == NULL)
@@ -212,7 +212,7 @@ sun60i_a733_output_observed_vblank(int phandle, const void *owner, uint64_t *out
 		error = output_ops->observed_vblank(output_arg, owner, &sequence);
 		if (error != 0 && error != ENOENT)
 			output_fail(error);
-		if (error == 0)
+		if (error == 0 || error == ENOENT)
 			*out = sequence;
 	}
 	mutex_exit(&output_lock);

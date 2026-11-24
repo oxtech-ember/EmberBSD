@@ -1785,40 +1785,43 @@ de352_replace_ready(struct sun60i_de352_softc *sc)
 	return 0;
 }
 
-/* Discard a pending old event; only later observed events retire old storage. */
+/* Samples newer than the post-RCQ baseline retire the old storage. */
 static int
 de352_replacement_vblank(struct sun60i_de352_softc *sc,
     struct sun60i_a733_de352_completion *completion)
 {
 	const uint64_t start = de352_now();
-	uint64_t sequence, last = sc->vblank;
-	u_int count = 0;
+	uint64_t baseline, last, sequence;
 	int error;
 
 	error = sun60i_a733_output_observed_vblank(sc->output_phandle, sc,
-	    &sequence);
-	if (error == 0)
-		last = sequence;
-	else if (error != ENOENT)
+	    &baseline);
+	if (error != 0 && error != ENOENT)
 		return error;
-	do {
+	if (baseline < sc->vblank)
+		return EPROTO;
+	last = baseline;
+	for (;;) {
 		error = sun60i_a733_output_observed_vblank(sc->output_phandle,
 		    sc, &sequence);
-		if (error == 0) {
-			if (sequence <= last)
-				return EPROTO;
-			last = sequence;
-			if (++count == 2) {
-				completion->observed_sequence = sequence;
-				completion->observed_time_ns = de352_now();
-				return 0;
-			}
-		} else if (error != ENOENT) {
+		if (error != 0 && error != ENOENT)
 			return error;
+		if (sequence < last || (error == 0 && sequence == last))
+			return EPROTO;
+		if (error == 0 && sequence - baseline >= 2) {
+			completion->observed_sequence = sequence;
+			completion->observed_time_ns = de352_now();
+			return 0;
 		}
+		/* An unvalidated advance (for example underflow) starts a new epoch. */
+		if (error == ENOENT && sequence > last)
+			baseline = sequence;
+		last = sequence;
+		/* Always check for accumulated IRQs before declaring expiry. */
+		if (de352_now() - start >= DE352_TIMEOUT_NS)
+			return ETIMEDOUT;
 		delay(10);
-	} while (de352_now() - start < DE352_TIMEOUT_NS);
-	return ETIMEDOUT;
+	}
 }
 
 static void

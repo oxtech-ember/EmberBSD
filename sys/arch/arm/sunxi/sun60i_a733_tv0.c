@@ -269,6 +269,8 @@ sun60i_a733_tv0_observe(struct sun60i_a733_tv0 *s, uint64_t *sequence)
 	if ((value & UINT32_C(0x5f000000)) != UINT32_C(0x40000000))
 		return tv_fail(s, EIO);
 	error = sun60i_a733_tcon_vblank_ack(value, &ack);
+	if (error == ENOENT)
+		*sequence = s->sequence;
 	if (error != 0)
 		return error == ENOENT ? error : tv_fail(s, error);
 	if (s->sequence == UINT64_MAX)
@@ -323,8 +325,10 @@ sun60i_a733_tv0_observe_count(struct sun60i_a733_tv0 *s, uint64_t count,
 		return tv_fail(s, EIO);
 	if (count < s->sequence)
 		return tv_fail(s, EIO);
-	if (s->underflow_pending && count <= s->underflow_sequence)
+	if (s->underflow_pending && count <= s->underflow_sequence) {
+		*sequence = count;
 		return ENOENT;
+	}
 	if ((debug & A733_TV0_FIFO_UNDERFLOW) != 0) {
 		/* One cleared edge needs a later clean IRQ; a repeat is fatal. */
 		if (s->underflow_pending)
@@ -336,11 +340,14 @@ sun60i_a733_tv0_observe_count(struct sun60i_a733_tv0 *s, uint64_t count,
 		s->underflow_sequence = count;
 		if (s->underflow_events != UINT64_MAX)
 			s->underflow_events++;
+		*sequence = count;
 		return ENOENT;
 	}
 	s->underflow_pending = false;
-	if (count == s->sequence)
+	if (count == s->sequence) {
+		*sequence = count;
 		return ENOENT;
+	}
 	s->sequence = count;
 	*sequence = count;
 	return 0;

@@ -44,7 +44,7 @@ struct fdt_attach_args { int faa_phandle; bus_space_tag_t faa_bst; bus_dma_tag_t
 #define CFATTACH_DECL_NEW(n,s,m,a,d,r)
 #define be32toh(x) __builtin_bswap32(x)
 
-static uint64_t tick;
+static uint64_t tick, delay_pause_ns;
 static int reads, writes, space_maps, space_unmaps, releases, faults, begins;
 static int power_error, power_releases, ccu_release_error, pck_release_error, ccu_faults;
 static int reserve_error, memory_error, begin_error, mode_error, prepare_error, start_error;
@@ -80,7 +80,12 @@ static unsigned clock_puts;
 static void *active_softc;
 
 static void getnanouptime(struct timespec *t) { tick+=1000;t->tv_sec=tick/1000000000;t->tv_nsec=tick%1000000000; }
-static void delay(unsigned us) { tick+=(uint64_t)us*1000; }
+static void
+delay(unsigned us)
+{
+	tick += (uint64_t)us * 1000 + delay_pause_ns;
+	delay_pause_ns = 0;
+}
 static int splhigh(void) { CHECK(!irq_masked);irq_masked=true;return 42; }
 static void splx(int level) { CHECK(level==42&&irq_masked);irq_masked=false; }
 static void mutex_init(kmutex_t *m,int kind,int ipl) { (void)kind;(void)ipl;*m=0; }
@@ -177,8 +182,34 @@ static int stop_error;
 static unsigned stop_calls;
 int sun60i_a733_output_stop(int node,const void *owner)
 { CHECK(node==7&&owner==lease_owner&&retained&&started);CHECK(de[0x1c1000/4]==0&&de[0x281000/4]==0x001);stop_calls++;if(stop_error)return stop_error;started=false;return 0; }
+struct vblank_sample {
+	uint64_t sequence;
+	uint64_t pause_on_delay_ns;
+	int error;
+};
+static const struct vblank_sample *vblank_script;
+static size_t vblank_samples, vblank_index;
+
 int sun60i_a733_output_observed_vblank(int node,const void *owner,uint64_t *out)
-{ CHECK(node==7&&owner==lease_owner&&retained&&started);event_polls++;if(no_vblank||event_polls%2||(event_limit&&sequence>=event_limit))return ENOENT;if(!same_sequence)sequence++;*out=sequence;return 0; }
+{
+	CHECK(node == 7 && owner == lease_owner && retained && started);
+	if (vblank_script != NULL) {
+		CHECK(vblank_index < vblank_samples);
+		const struct vblank_sample *sample = &vblank_script[vblank_index++];
+		delay_pause_ns = sample->pause_on_delay_ns;
+		*out = sample->sequence;
+		return sample->error;
+	}
+	event_polls++;
+	*out = sequence;
+	if (no_vblank || event_polls % 2 ||
+	    (event_limit && sequence >= event_limit))
+		return ENOENT;
+	if (!same_sequence)
+		sequence++;
+	*out = sequence;
+	return 0;
+}
 int sun60i_a733_output_fault(int node,const void *owner,int error)
 { CHECK(node==7&&owner==lease_owner&&retained&&error);faults++;return error; }
 int
@@ -402,6 +433,52 @@ static struct sun60i_a733_de352_frame frame_input(struct frame_fixture *f,
  return (struct sun60i_a733_de352_frame){tag,&f->map,2880*480,
   720,480,2880,f,frame_retain,frame_release};
 }
+static void
+replacement_wait_checks(void)
+{
+	const struct wait_case {
+		struct vblank_sample samples[5];
+		size_t length;
+		int expected;
+		uint64_t completion;
+	} cases[] = {
+		/* Polling advances one event at a time. */
+		{{{9, 0, 0}, {9, 0, ENOENT}, {10, 0, 0}, {11, 0, 0}},
+		    4, 0, 11},
+		/* A worker observes several validated IRQs in a single sample. */
+		{{{11, 0, ENOENT}, {14, 0, 0}}, 2, 0, 14},
+		/* With no events, a worker delayed past expiry times out. */
+		{{{11, 0, 0}, {11, DE352_TIMEOUT_NS, ENOENT},
+		    {11, 0, ENOENT}}, 3, ETIMEDOUT, 0},
+		/* The delayed worker still reads the accumulated IRQ count. */
+		{{{11, 0, 0}, {11, DE352_TIMEOUT_NS, ENOENT}, {13, 0, 0}},
+		    3, 0, 13},
+		/* IRQs already present at the post-RCQ baseline do not retire. */
+		{{{12, 0, 0}, {13, DE352_TIMEOUT_NS, 0}, {13, 0, ENOENT}},
+		    3, ETIMEDOUT, 0},
+		/* An unvalidated advance cannot contribute retirement credit. */
+		{{{9, 0, 0}, {11, 0, ENOENT}, {12, 0, 0}, {13, 0, 0}},
+		    4, 0, 13},
+		{{{9, 0, ENOENT}, {9, 0, 0}}, 2, EPROTO, 0},
+		{{{9, 0, ENOENT}, {0, 0, EIO}}, 2, EIO, 0},
+	};
+	for (size_t i = 0; i < __arraycount(cases); i++) {
+		struct sun60i_de352_softc sc;
+		struct sun60i_a733_de352_completion done = {0};
+		init(&sc);
+		CHECK(de352_run(&sc) == 0);
+		sc.vblank = 8;
+		vblank_script = cases[i].samples;
+		vblank_samples = cases[i].length;
+		vblank_index = 0;
+		CHECK(de352_replacement_vblank(&sc, &done) == cases[i].expected);
+		CHECK(done.observed_sequence == cases[i].completion);
+		CHECK(vblank_index == vblank_samples);
+		vblank_script = NULL;
+		reboot_fixture(&sc);
+	}
+}
+
 static void scanout_checks(void)
 {
  struct sun60i_de352_softc sc;struct sun60i_a733_de352_state state,canary;
@@ -882,6 +959,7 @@ submit_trace_timeout(struct sun60i_de352_softc *sc, uint32_t phase)
 
 int main(void)
 {
+ replacement_wait_checks();
  run_trace_checks();
  guard_checks();
  cold_global_checks();

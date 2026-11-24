@@ -184,9 +184,13 @@ first pointer attempt. It never unloads the caller's pixel map.
 
 Before each replacement, the coordinator verifies the owned old queue and
 route. It requires a new RCQ finish and all seven expected layer words plus
-the blend pipe word. It consumes a possible prior TV0 event, then requires two
-new distinct observations. The completion sequence and time describe software
-observations. They are not an exact hardware frame counter or timestamp.
+the blend pipe word. It samples a TV0 baseline after successful RCQ readback.
+Only two validated events beyond that baseline permit retirement. One IRQ
+sample can report several counted events. Polling counts only acknowledged
+flags. An unvalidated sequence advance discards earlier retirement credit.
+The worker samples before deciding that the 100 ms wait expired, including
+when it resumes after a delay. The completion time is the software
+observation time.
 
 Only that proof retires the previous external frame. The provider performs
 POSTWRITE and releases its queue, then calls the frontend release callback

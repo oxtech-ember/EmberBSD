@@ -116,6 +116,7 @@ int sun60i_a733_output_prepare(int, const void *,
 int sun60i_a733_output_start(int, const void *);
 int sun60i_a733_output_stop(int, const void *);
 /* ENOENT means no new vblank. It does not latch a fault. */
+/* ENOENT reports the sampled sequence but does not validate a new event. */
 int sun60i_a733_output_observed_vblank(int, const void *, uint64_t *);
 int sun60i_a733_output_fault(int, const void *, int);
 /* No readiness check or I/O. Failure leaves the output unchanged. */

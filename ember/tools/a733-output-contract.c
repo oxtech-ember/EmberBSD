@@ -182,7 +182,7 @@ provider_vblank(void *arg, const void *owner, uint64_t *out)
 	struct provider_fixture *f = arg;
 	int error = provider_step(arg, owner, 3);
 
-	*out = 99; /* A failing callback must not publish even this value. */
+	*out = 99; /* Publish the sample only for success or ENOENT. */
 	return error != 0 ? error : f->no_vblank ? ENOENT : 0;
 }
 
@@ -243,7 +243,7 @@ provider(void)
 	CHECK(sun60i_a733_output_start(7, &f) == EALREADY);
 	f.no_vblank = true;
 	CHECK(sun60i_a733_output_observed_vblank(7, &f, &sequence) == ENOENT);
-	CHECK(sequence == 123 && f.calls[4] == 0);
+	CHECK(sequence == 99 && f.calls[4] == 0);
 	f.no_vblank = false;
 	CHECK(sun60i_a733_output_observed_vblank(7, &f, &sequence) == 0);
 	CHECK(sequence == 99);
