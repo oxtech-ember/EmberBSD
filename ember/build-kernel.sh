@@ -1,5 +1,6 @@
 #!/bin/sh
-# Build the AArch64 kernel, matched modules and board device trees.
+# Build an AArch64 or amd64 kernel and its matched modules; for AArch64 also
+# the board device trees.
 set -eu
 unset EMBER_VERSION
 src=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
@@ -20,11 +21,23 @@ run_cpp() (
 )
 [ "$#" -ge 1 ] && [ "$#" -le 2 ] || fail 'usage: build-kernel.sh ABSOLUTE_OUTPUT [CONFIG | ABSOLUTE_CONFIG_PATH]'
 out=$1
-# CONFIG names a configuration of sys/arch/evbarm/conf. A local trial
+# EMBER_KERNEL_TARGET names the SDK target of the kernel: aarch64 or amd64.
+target=${EMBER_KERNEL_TARGET:-aarch64}
+case "$target" in
+aarch64)
+    machine=evbarm arch=aarch64 default_config=EMBER64
+    # The board modules built against each kernel.
+    modules='bcm2712btcom bcmexpgpio rp1wmcodec rpi5button' ;;
+amd64)
+    machine=amd64 arch=x86_64 default_config=GENERIC
+    # The UEFI display and USB description modules built against each kernel.
+    modules='efidrm usbverbose' ;;
+*) fail 'EMBER_KERNEL_TARGET must be aarch64 or amd64' ;;
+esac
+# CONFIG names a configuration of sys/arch/MACHINE/conf. A local trial
 # configuration is given by its absolute path.
-config_arg=${2:-EMBER64}
-# The board modules built against each kernel.
-modules='bcm2712btcom bcmexpgpio rp1wmcodec rpi5button'
+conf_dir="$src/sys/arch/$machine/conf"
+config_arg=${2:-$default_config}
 config=${config_arg##*/}
 case "$out" in /*) ;; *) fail 'output must be an absolute path' ;; esac
 case "$config" in ''|*[!A-Za-z0-9_]*) fail 'invalid kernel configuration' ;; esac
@@ -32,28 +45,38 @@ case "$config_arg" in
 /*)
     case "$config_arg" in *[!A-Za-z0-9_./+@%=-]*) fail 'invalid kernel configuration path' ;; esac
     # The kernel objects and outputs are named by the configuration name.
-    [ ! -e "$src/sys/arch/evbarm/conf/$config" ] ||
+    [ ! -e "$conf_dir/$config" ] ||
         fail "the external configuration has the name of the OS configuration $config"
     [ -f "$config_arg" ] || fail 'kernel configuration missing' ;;
 */*) fail 'give a configuration name or an absolute configuration path' ;;
-*) [ -f "$src/sys/arch/evbarm/conf/$config" ] || fail 'kernel configuration missing' ;;
+*) [ -f "$conf_dir/$config" ] || fail 'kernel configuration missing' ;;
 esac
 mkdir -p "$out"
 out=$(CDPATH= cd -- "$out" && pwd -P)
 case "$out/" in //|"$src/"*) fail 'output must be outside the source tree' ;; esac
 mkdir "$out/.build-lock" 2>/dev/null || fail 'output is already in use (or has a stale .build-lock)'
+# The tools and objects of an output belong to one target machine.
+target_record="$out/.ember-kernel-target"
+if [ -f "$target_record" ] && [ "$(cat "$target_record")" != "$target" ]; then
+    rmdir "$out/.build-lock"
+    fail "output holds a $(cat "$target_record") build; use another output for $target"
+fi
+printf '%s\n' "$target" > "$target_record"
 stage=
 success=no
 clear_outputs() {
-    rm -f "$out/netbsd-$config" "$out/netbsd-$config.img" \
-        "$out/bcm2837-rpi-zero-2-w.dtb" "$out/sun60i-a733-orangepi-zero4.dtb" \
-        "$out/sun60i-a733-orangepi-zero3w.dtb" \
-        "$out/sun60i-a733-orangepi-zero3w-diagnostic.dtb" \
-        "$out/sun60i-a733-orangepi-zero4-graphics.dtb" \
-        "$out/sun60i-a733-orangepi-zero4-npu-observe.dtb" \
-        "$out/sun50i-a133-ys-m33.dtb"
-    # Also remove if_cemac_acpi.kmod: EMBER64 has CEMAC built in.
-    for module in if_cemac_acpi $modules; do
+    rm -f "$out/netbsd-$config" "$out/netbsd-$config.img"
+    if [ "$target" = aarch64 ]; then
+        rm -f "$out/bcm2837-rpi-zero-2-w.dtb" "$out/sun60i-a733-orangepi-zero4.dtb" \
+            "$out/sun60i-a733-orangepi-zero3w.dtb" \
+            "$out/sun60i-a733-orangepi-zero3w-diagnostic.dtb" \
+            "$out/sun60i-a733-orangepi-zero4-graphics.dtb" \
+            "$out/sun60i-a733-orangepi-zero4-npu-observe.dtb" \
+            "$out/sun50i-a133-ys-m33.dtb"
+        # Also remove if_cemac_acpi.kmod: EMBER64 has CEMAC built in.
+        rm -f "$out/if_cemac_acpi.kmod"
+    fi
+    for module in $modules; do
         rm -f "$out/$module.kmod"
     done
 }
@@ -113,14 +136,14 @@ clang|gcc) ;;
 esac
 if [ "$mode" = auto ]; then
     mode=cross
-    if [ "$(uname -s)" = NetBSD ] && [ "$(uname -p)" = aarch64 ]; then
+    if [ "$(uname -s)" = NetBSD ] && [ "$(uname -p)" = "$arch" ]; then
         mode=native
     fi
 fi
 case "$mode" in
 native)
-    [ "$(uname -s)" = NetBSD ] && [ "$(uname -p)" = aarch64 ] ||
-        fail 'native mode requires an AArch64 NetBSD host; use EMBER_BUILD_MODE=cross'
+    [ "$(uname -s)" = NetBSD ] && [ "$(uname -p)" = "$arch" ] ||
+        fail "native mode requires a $arch NetBSD host; use EMBER_BUILD_MODE=cross"
     ;;
 cross) ;;
 *) fail 'EMBER_BUILD_MODE must be auto, native or cross' ;;
@@ -192,7 +215,7 @@ fi
 case $repro_timestamp in ''|*[!0-9]*) fail 'invalid MKREPRO_TIMESTAMP';; esac
 # build.sh handles both a native build host and cross compilation. Its generated
 # wrapper retains target settings and the shared runner's native HOST_* flags.
-set -- -U -u -j"$jobs" -c "$compiler_family" -m evbarm -a aarch64 \
+set -- -U -u -j"$jobs" -c "$compiler_family" -m "$machine" -a "$arch" \
     -O "$out/obj" -T "$out/tools" -D "$out/dest" \
     -V "KERNOBJDIR=$out/obj/kernels" -V MKCROSSGDB=no \
     -V "EMBER_LLVM_SOURCE=$llvm_source" -V "EMBER_BYACC_SOURCE=$byacc_source" \
@@ -234,28 +257,30 @@ mv -f "$version_record.new" "$version_record"
 # Use the same selected command mapping for subsequent orchestration utilities.
 PATH="$out/native-build-tools:$host_prefix/bin:$host_prefix/sbin:$host_prefix/gnu/bin"
 export PATH
-make="$out/tools/bin/nbmake-evbarm"
-cpp=$(run_make -C "$src" -V '${CPP}')
-dtc=$(run_make -C "$src" -V '${TOOL_DTC}')
+make="$out/tools/bin/nbmake-$machine"
 cp "$kernel_obj/netbsd" "$stage/netbsd-$config"
-cp "$kernel_obj/netbsd.img" "$stage/netbsd-$config.img"
-cd "$src/sys/external/gpl2/dts/dist"
-run_cpp -P -xassembler-with-cpp -I include -I arch/arm/boot/dts \
-    arch/arm/boot/dts/bcm2837-rpi-zero-2-w.dts > "$out/zero-2.dts"
-run_native_os --capture -- "$dtc" -I dts -O dtb -p 1024 -b 0 -@ -o "$stage/bcm2837-rpi-zero-2-w.dtb" \
-    "$out/zero-2.dts" 2> "$out/zero-2-dtb.log"
-for board in orangepi-zero4 orangepi-zero3w orangepi-zero3w-diagnostic orangepi-zero4-graphics orangepi-zero4-npu-observe; do
+if [ "$target" = aarch64 ]; then
+    cpp=$(run_make -C "$src" -V '${CPP}')
+    dtc=$(run_make -C "$src" -V '${TOOL_DTC}')
+    cp "$kernel_obj/netbsd.img" "$stage/netbsd-$config.img"
+    cd "$src/sys/external/gpl2/dts/dist"
+    run_cpp -P -xassembler-with-cpp -I include -I arch/arm/boot/dts \
+        arch/arm/boot/dts/bcm2837-rpi-zero-2-w.dts > "$out/zero-2.dts"
+    run_native_os --capture -- "$dtc" -I dts -O dtb -p 1024 -b 0 -@ -o "$stage/bcm2837-rpi-zero-2-w.dtb" \
+        "$out/zero-2.dts" 2> "$out/zero-2-dtb.log"
+    for board in orangepi-zero4 orangepi-zero3w orangepi-zero3w-diagnostic orangepi-zero4-graphics orangepi-zero4-npu-observe; do
+        run_cpp -P -xassembler-with-cpp -I include -I arch/arm64/boot/dts/allwinner \
+            "arch/arm64/boot/dts/allwinner/sun60i-a733-$board.dts" > "$out/$board.dts"
+        run_native_os --capture -- "$dtc" -I dts -O dtb -o "$stage/sun60i-a733-$board.dtb" \
+            "$out/$board.dts" 2> "$out/$board-dtb.log"
+    done
     run_cpp -P -xassembler-with-cpp -I include -I arch/arm64/boot/dts/allwinner \
-        "arch/arm64/boot/dts/allwinner/sun60i-a733-$board.dts" > "$out/$board.dts"
-    run_native_os --capture -- "$dtc" -I dts -O dtb -o "$stage/sun60i-a733-$board.dtb" \
-        "$out/$board.dts" 2> "$out/$board-dtb.log"
-done
-run_cpp -P -xassembler-with-cpp -I include -I arch/arm64/boot/dts/allwinner \
-    arch/arm64/boot/dts/allwinner/sun50i-a133-ys-m33.dts > "$out/a133-ys-m33.dts"
-run_native_os --capture -- "$dtc" -I dts -O dtb -o "$stage/sun50i-a133-ys-m33.dtb" \
-    "$out/a133-ys-m33.dts" 2> "$out/a133-ys-m33-dtb.log"
-run_artifact_check "$out/dtb-modes.log" \
-    "$src/ember/tools/a733-boot-modes-contract.py" "$stage"
+        arch/arm64/boot/dts/allwinner/sun50i-a133-ys-m33.dts > "$out/a133-ys-m33.dts"
+    run_native_os --capture -- "$dtc" -I dts -O dtb -o "$stage/sun50i-a133-ys-m33.dtb" \
+        "$out/a133-ys-m33.dts" 2> "$out/a133-ys-m33-dtb.log"
+    run_artifact_check "$out/dtb-modes.log" \
+        "$src/ember/tools/a733-boot-modes-contract.py" "$stage"
+fi
 for module in $modules; do
     cd "$src/sys/modules/$module"
     run_make_build obj

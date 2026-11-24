@@ -11,6 +11,7 @@ For a new physical target, also follow [adding a board](adding-a-board.md).
 | Architecture entry, MMU, interrupts and platform code | `sys/arch/` |
 | Common drivers and bus attachments | `sys/dev/` |
 | AArch64 kernel configuration | `sys/arch/evbarm/conf/` |
+| amd64 kernel configuration | `sys/arch/amd64/conf/` |
 | Device trees | Architecture DTS and `sys/external/gpl2/dts/dist/`; inspect the selected build |
 | Loadable modules | `sys/modules/` and the selected kernel headers |
 | Loader and firmware integration | `sys/stand/`, architecture stand directories, and `ember/boot/` / `ember/firmware/` |
@@ -41,7 +42,7 @@ Select the narrowest mechanism that serves the functional task:
 | Built-in driver | A device of a supported board | Add its attachment to the general-purpose configuration. Without its ACPI or FDT match it does nothing: no MMIO, power, clock or firmware action. |
 | Default-off option | An experimental or bounded code path | Declare it with `defflag` in the owning `files.*`. The general-purpose configuration does not set it; a trial configuration does. |
 | Attachment flags | A bounded diagnostic mode of one driver | The default flags keep the driver passive or minimal. A trial configuration sets other flags. |
-| Loadable module | A driver loaded at run time | Add it under `sys/modules/` and to `modules` in `ember/build-kernel.sh`, which builds it against the objects of the same kernel; install them together. Load it before securelevel 1 in `ember/etc/rc.d/ember_modules`. |
+| Loadable module | A driver loaded at run time | Add it under `sys/modules/` and to the `modules` list of its target in `ember/build-kernel.sh`, which builds it against the objects of the same kernel; install them together. Load it before securelevel 1 in `ember/etc/rc.d/ember_modules`. |
 | Device tree | An FDT board description | Integrate the DTS in the builder output and in an actual loader selection path. |
 | Prepared external source | Code that a Ports producer prepares | Declare it in [`ember/shared-sources.json`](../shared-sources.json) under `kernel.configs`. A local trial uses the `default` entry; an option that reads another source belongs in a general-purpose configuration first. |
 | Contract | A host check of actual kernel source | Add it to `ember/tools/kernel-contracts.sh` and its inputs to `kernel-contracts-inputs.txt`. |
@@ -110,7 +111,11 @@ validates their reuse between checks within that invocation.
 Keep historical GCC build results separate from Clang build and boot checks.
 
 Inspect the selected builder before choosing a configuration.
-`ember/build-kernel.sh` explicitly selects DTBs and matched modules for each invocation.
+`ember/build-kernel.sh` builds the `aarch64` target by default;
+`EMBER_KERNEL_TARGET=amd64` selects an amd64 configuration from
+`sys/arch/amd64/conf/` (default `GENERIC`), see the
+[cross-build guide](../../tools/docs/cross-build.md).
+The wrapper explicitly selects DTBs and matched modules for each invocation.
 It also publishes the native YS-M33 A133 DTB; its WLAN node remains disabled.
 This adds a build artifact, not a firmware/loader selection or radio-enable path.
 The wrapper is not an automatic image builder for new boards.

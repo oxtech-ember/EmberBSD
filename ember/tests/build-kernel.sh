@@ -5,7 +5,7 @@ set -eu
 # An ambient product version must not replace the selected source version.
 export EMBER_VERSION=9.9
 # Fixtures select their own build mode and toolchain, independent of the shell.
-unset EMBER_HOST_BFD_CONFIG EMBERBSD_SDK_SOURCE EMBER_HOST_PREFIX EMBER_HOST_COMPILER_FAMILY EMBER_BUILD_MODE EMBER_EXTERNAL_TOOLCHAIN EMBER_COMPILER_FAMILY EMBER_LLVM_SOURCE EMBER_BYACC_SOURCE EMBER_HEIMDAL_SOURCE EMBER_ZLIB_SOURCE PVR_QUERY_FIRMWARE EMBER_WPA_SOURCE EMBER_NATIVE_ASAN_RESOURCE_DIR MKREPRO_TIMESTAMP
+unset EMBER_KERNEL_TARGET EMBER_HOST_BFD_CONFIG EMBERBSD_SDK_SOURCE EMBER_HOST_PREFIX EMBER_HOST_COMPILER_FAMILY EMBER_BUILD_MODE EMBER_EXTERNAL_TOOLCHAIN EMBER_COMPILER_FAMILY EMBER_LLVM_SOURCE EMBER_BYACC_SOURCE EMBER_HEIMDAL_SOURCE EMBER_ZLIB_SOURCE PVR_QUERY_FIRMWARE EMBER_WPA_SOURCE EMBER_NATIVE_ASAN_RESOURCE_DIR MKREPRO_TIMESTAMP
 # A fixed source timestamp keeps the fixture kernels reproducible.
 export MKREPRO_TIMESTAMP=1700000000
 # Most cases check the dispatch order, so run one contract at a time.
@@ -43,7 +43,7 @@ trap 'trap - EXIT; rm -rf "$work"; exit 1' HUP INT TERM
 export TEST_ROOT="$work" TEST_LOG="$work/commands"
 mkdir -p "$work/src/ember/tools" "$work/bin" "$work/src/tools" \
     "$work/src/ember/tests" \
-    "$work/src/share/mk" "$work/src/sys/arch/evbarm/conf" \
+    "$work/src/share/mk" "$work/src/sys/arch/evbarm/conf" "$work/src/sys/arch/amd64/conf" \
     "$work/src/sys/external/gpl2/dts/dist"
 mkdir -p "$work/llvm/runtimes" "$work/llvm/compiler-rt/lib/builtins"
 : > "$work/llvm/runtimes/CMakeLists.txt"
@@ -67,6 +67,9 @@ cp "$repo/ember/check-kernel.sh" "$work/src/ember/"
 cp "$repo/ember/tools/kernel-contracts.sh" "$repo/ember/tools/kernel-contracts-select.py" \
     "$repo/ember/tools/kernel-contracts-inputs.txt" "$work/src/ember/tools/"
 cp "$repo/sys/arch/evbarm/conf/EMBER64" "$work/src/sys/arch/evbarm/conf/"
+for config in GENERIC GENERIC_ARL_TOUCHPAD_HZ1000; do
+    printf '# amd64 fixture configuration\n' > "$work/src/sys/arch/amd64/conf/$config"
+done
 mkdir -p "$work/src/sys/external/gpl2/dts/dist/arch/arm64/boot/dts/allwinner"
 : > "$work/src/sys/external/gpl2/dts/dist/arch/arm64/boot/dts/allwinner/sun50i-a133-ys-m33.dts"
 # Model only dispatcher arguments and exit status. These fixtures do not
@@ -179,12 +182,12 @@ SCRIPT
 : > "$work/src/tools/Makefile"
 : > "$work/src/share/mk/bsd.own.mk"
 cp "$repo/share/mk/bsd.sys.mk" "$work/src/share/mk/"
-for module in bcm2712btcom bcmexpgpio rp1wmcodec rpi5button; do
+for module in bcm2712btcom bcmexpgpio rp1wmcodec rpi5button efidrm usbverbose; do
     mkdir -p "$work/src/sys/modules/$module"
 done
 cat > "$work/bin/uname" <<'SH'
 #!/bin/sh
-case $1 in -s) echo "${TEST_HOST:-Darwin}";; -m|-p) echo aarch64;; -r) echo 11.0;; esac
+case $1 in -s) echo "${TEST_HOST:-Darwin}";; -m|-p) echo "${TEST_ARCH:-aarch64}";; -r) echo 11.0;; esac
 SH
 cat > "$work/bin/python3" <<'SH'
 #!/bin/sh
@@ -232,13 +235,19 @@ if [ "${FAIL_AT:-}" = interrupt ]; then
     "$TEST_PYTHON" -c "import time; time.sleep(60)"
 fi
 config=
-for argument do case $argument in kernel=*) config=${argument#kernel=};; esac; done
-[ -n "$config" ]
+machine=
+previous=
+for argument do
+    case $argument in kernel=*) config=${argument#kernel=};; esac
+    [ "$previous" != -m ] || machine=$argument
+    previous=$argument
+done
+[ -n "$config" ] && [ -n "$machine" ]
 # build.sh names the kernel by the last component of a configuration path.
-[ -f "$config" ] || [ -f "sys/arch/evbarm/conf/$config" ]
+[ -f "$config" ] || [ -f "sys/arch/$machine/conf/$config" ]
 config=${config##*/}
 mkdir -p "$TEST_OUT/tools/bin" "$TEST_OUT/obj/kernels/$config"
-cp "$TEST_ROOT/bin/nbmake-evbarm" "$TEST_OUT/tools/bin/"
+cp "$TEST_ROOT/bin/nbmake-evbarm" "$TEST_OUT/tools/bin/nbmake-$machine"
 cp "$TEST_ROOT/bin/cpp" "$TEST_OUT/tools/bin/target-cpp"
 cp "$TEST_ROOT/bin/cpp" "$TEST_OUT/tools/bin/target cpp"
 cp "$TEST_ROOT/bin/dtc" "$TEST_OUT/tools/bin/nbdtc"
@@ -249,7 +258,8 @@ if [ ! -f "$version_obj" ]; then
     cp "$TEST_OUT/obj/kernels/$config/vers.c" "$version_obj"
 fi
 cp "$version_obj" "$TEST_OUT/obj/kernels/$config/netbsd"
-printf image > "$TEST_OUT/obj/kernels/$config/netbsd.img"
+# Only evbarm makes a kernel image.
+[ "$machine" != evbarm ] || printf image > "$TEST_OUT/obj/kernels/$config/netbsd.img"
 SH
 cat > "$work/bin/nbmake-evbarm" <<'SH'
 #!/bin/sh
@@ -869,6 +879,54 @@ check_contract_counts 20 NetBSD
 if EMBER_BUILD_MODE=native sh "$work/src/ember/build-kernel.sh" "$work/wrong-host" > "$work/run.log" 2>&1; then
     echo 'accepted native tools on Darwin' >&2; exit 1
 fi
+# amd64: the same kernel and module orchestration, without board device trees
+# or a kernel image.
+export TEST_OUT="$work/amd64"
+: > "$TEST_LOG"
+EMBER_KERNEL_TARGET=amd64 sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" \
+    GENERIC_ARL_TOUCHPAD_HZ1000 > "$work/run.log" 2>&1
+grep -q 'build.sh .* -m amd64 -a x86_64 ' "$TEST_LOG"
+grep -q ' kernel=GENERIC_ARL_TOUCHPAD_HZ1000' "$TEST_LOG"
+test -s "$TEST_OUT/netbsd-GENERIC_ARL_TOUCHPAD_HZ1000"
+test ! -e "$TEST_OUT/netbsd-GENERIC_ARL_TOUCHPAD_HZ1000.img"
+test -s "$TEST_OUT/efidrm.kmod"
+test -s "$TEST_OUT/usbverbose.kmod"
+test ! -e "$TEST_OUT/bcm2712btcom.kmod"
+! ls "$TEST_OUT"/*.dtb > /dev/null 2>&1
+grep -q 'EMBER_KERNEL_OBJDIR=.*/obj/kernels/GENERIC_ARL_TOUCHPAD_HZ1000' "$TEST_LOG"
+! grep -Eq '^(cpp|dtc) ' "$TEST_LOG"
+! grep -q a733-boot-modes-contract "$TEST_LOG"
+grep -q '^contract .*/shared-sources.py check-kernel .* GENERIC_ARL_TOUCHPAD_HZ1000 EMBER_LLVM_SOURCE$' "$TEST_LOG"
+# An output keeps the tools and objects of one target.
+if sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1; then
+    echo 'accepted an aarch64 build into an amd64 output' >&2; exit 1
+fi
+grep -q 'output holds a amd64 build; use another output for aarch64' "$work/run.log"
+test ! -e "$TEST_OUT/.build-lock"
+test -s "$TEST_OUT/netbsd-GENERIC_ARL_TOUCHPAD_HZ1000"
+# The default amd64 configuration is GENERIC. Native mode needs an x86_64 NetBSD host.
+export TEST_OUT="$work/amd64-native"
+TEST_HOST=NetBSD TEST_ARCH=x86_64 EMBER_KERNEL_TARGET=amd64 EMBER_BUILD_MODE=native \
+    sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1
+test -s "$TEST_OUT/netbsd-GENERIC"
+export TEST_OUT="$work/amd64-refused"
+if TEST_HOST=NetBSD EMBER_KERNEL_TARGET=amd64 EMBER_BUILD_MODE=native \
+    sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1; then
+    echo 'accepted an AArch64 host for a native amd64 kernel' >&2; exit 1
+fi
+grep -q 'native mode requires a x86_64 NetBSD host' "$work/run.log"
+# A configuration of another machine is not selected.
+if EMBER_KERNEL_TARGET=amd64 sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" EMBER64 \
+    > "$work/run.log" 2>&1; then
+    echo 'accepted an evbarm configuration for amd64' >&2; exit 1
+fi
+grep -q 'kernel configuration missing' "$work/run.log"
+if EMBER_KERNEL_TARGET=riscv32 sh "$work/src/ember/build-kernel.sh" "$TEST_OUT" \
+    > "$work/run.log" 2>&1; then
+    echo 'accepted an unsupported kernel target' >&2; exit 1
+fi
+grep -q 'EMBER_KERNEL_TARGET must be aarch64 or amd64' "$work/run.log"
+export TEST_OUT="$work/native"
 if EMBER_COMPILER_FAMILY=unknown sh "$work/src/ember/build-kernel.sh" "$work/bad-family" > "$work/run.log" 2>&1; then
     echo 'accepted unknown compiler family' >&2; exit 1
 fi
@@ -1079,5 +1137,5 @@ printf '# changed\n' >> "$work/src/ember/tools/kernel-contracts.sh"
 : > "$TEST_LOG"
 sh "$work/src/ember/check-kernel.sh" "$TEST_OUT" HEAD > "$work/run.log" 2>&1
 count_contracts 16
-echo 'PASS: cross/native routing, refreshed kernel identity, retained objects, matched module headers, external tools, base/A733/GPU/Ruby/CEMAC/Wi-Fi contract dispatch and selection, failure cleanup'
+echo 'PASS: cross/native routing, AArch64 and amd64 targets, refreshed kernel identity, retained objects, matched module headers, external tools, base/A733/GPU/Ruby/CEMAC/Wi-Fi contract dispatch and selection, failure cleanup'
 echo 'MODEL ONLY: SDK build and check boundaries used controlled fixtures; no production kernel, module, CPP, or DTC build ran.'

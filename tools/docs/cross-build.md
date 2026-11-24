@@ -1,4 +1,4 @@
-# Build AArch64 kernels on another host
+# Build AArch64 and amd64 kernels on another host
 
 EmberBSD does not require a NetBSD build host. The kernel wrapper uses the
 fork's standard `build.sh` on macOS and other foreign hosts. That script
@@ -34,6 +34,12 @@ EMBER_BUILD_MODE=cross EMBER_EXTERNAL_TOOLCHAIN=/absolute/llvm \
     sh "$src/ember/build-kernel.sh" "$out" EMBER64
 ```
 
+The wrapper builds the `aarch64` target by default. Set
+`EMBER_KERNEL_TARGET=amd64` for an amd64 kernel. A configuration name then
+selects `sys/arch/amd64/conf/`, and the default configuration is `GENERIC`.
+Use the host BFD configuration of the selected target. An output directory
+holds the tools and objects of one target; the wrapper refuses another target.
+
 The output must be outside the source tree. Keep one output directory per
 source export, kernel configuration and toolchain. The default `cross` mode
 uses `build.sh` on every host, including NetBSD.
@@ -43,9 +49,12 @@ do not establish the selected SDK cross-build workflow.
 
 Cross builds keep host tools under `out/tools`, object files under `out/obj`
 and the kernel configuration's generated headers under `out/obj/kernels`.
-The four board modules use the same make wrapper, target settings and kernel
-headers. DTBs use the target preprocessor and the native Ports `dtc` selected
-by the OS routing contract.
+The modules of the target use the same make wrapper, target settings and
+kernel headers: the four board modules for `aarch64`, `efidrm` and `usbverbose`
+for `amd64`. The `efidrm` module of a selected kernel refuses to load into a
+kernel with another version string. For `aarch64` only, the wrapper also
+publishes `netbsd-CONFIG.img` and the board DTBs. DTBs use the target
+preprocessor and the native Ports `dtc` selected by the OS routing contract.
 `build.sh -u` reuses tools and object files for repeated builds. Before each
 cross build, the wrapper removes only the selected configuration's generated
 `vers.c` and `vers.o`. The version make rule does not track `BUILDINFO` changes
