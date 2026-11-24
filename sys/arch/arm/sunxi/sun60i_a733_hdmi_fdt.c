@@ -906,11 +906,33 @@ native_cached_tv0_trace(const void *arg,
 	*out = sc->tv0_trace;
 }
 
+static int
+native_sample_vblank_irq(void *arg, const void *owner, uint64_t *out)
+{
+	struct sun60i_a733_hdmi_softc *sc = arg;
+	int error = 0;
+
+	if (sc->fault != 0)
+		return sc->fault;
+	if (owner == NULL || owner != sc->owner)
+		return EBUSY;
+	if (sc->ih == NULL)
+		return EOPNOTSUPP;
+	mutex_spin_enter(&sc->intr_lock);
+	if (!sc->irq_armed)
+		error = EIO;
+	else
+		*out = sc->irq_sequence;
+	mutex_spin_exit(&sc->intr_lock);
+	return error;
+}
+
 static const struct sun60i_a733_output_ops output_ops = {
 	native_get_mode, native_prepare, native_start, native_observe, native_fault,
 	native_cached_trace, native_cached_phy_trace, native_sample,
 	native_set_vblank_handler, native_detect, native_stop,
-	native_cached_observe_trace, native_cached_tv0_trace
+	native_cached_observe_trace, native_cached_tv0_trace,
+	native_sample_vblank_irq
 };
 
 static int

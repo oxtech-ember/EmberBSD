@@ -1811,7 +1811,8 @@ de352_replacement_vblank(struct sun60i_de352_softc *sc,
     struct sun60i_a733_de352_completion *completion)
 {
 	struct de352_update_trace *trace = &sc->update_trace;
-	uint64_t baseline, last, sequence, start;
+	uint64_t baseline, last, sequence, start, raw;
+	bool irq, final_irq_sampled = false;
 	int error;
 
 	trace->wait_phase = UW_BASELINE;
@@ -1831,12 +1832,26 @@ de352_replacement_vblank(struct sun60i_de352_softc *sc,
 	last = baseline;
 	start = de352_now();
 	trace->wait_phase = UW_WAIT;
+	error = sun60i_a733_output_sample_vblank_irq(sc->output_phandle, sc,
+	    &raw);
+	if (error != 0 && error != EOPNOTSUPP)
+		return error;
+	irq = error == 0;
 	for (;;) {
+		if (irq) {
+			if (raw < trace->last_sequence)
+				return EPROTO;
+			trace->last_sequence = raw;
+			if (raw - baseline < 2)
+				goto deadline;
+		}
 		trace->wait_samples++;
 		error = sun60i_a733_output_observed_vblank(sc->output_phandle,
 		    sc, &sequence);
 		if (error != 0 && error != ENOENT)
 			return error;
+		if (irq && sequence < raw)
+			return EPROTO;
 		trace->last_sequence = sequence;
 		if (error == ENOENT)
 			trace->wait_enoent++;
@@ -1855,11 +1870,25 @@ de352_replacement_vblank(struct sun60i_de352_softc *sc,
 			trace->baseline = baseline;
 		}
 		last = sequence;
+deadline:
 		/* Always check for accumulated IRQs before declaring expiry. */
 		trace->elapsed_ns = de352_now() - start;
-		if (trace->elapsed_ns >= DE352_TIMEOUT_NS)
-			return ETIMEDOUT;
-		delay(10);
+		if (trace->elapsed_ns >= DE352_TIMEOUT_NS) {
+			if (!irq || final_irq_sampled)
+				return ETIMEDOUT;
+			/* The worker may have been descheduled after sampling. */
+			final_irq_sampled = true;
+		} else if (irq) {
+			kpause("a733vb", false, 1, NULL);
+		} else {
+			delay(10);
+		}
+		if (irq) {
+			error = sun60i_a733_output_sample_vblank_irq(
+			    sc->output_phandle, sc, &raw);
+			if (error != 0)
+				return error;
+		}
 	}
 }
 

@@ -569,6 +569,13 @@ observation_ready_checks(void)
 	voltage_delay_hook = voltage_delay_irq;
 	CHECK(native_observe(&sc, &owner_cookie, &sequence) == 0);
 	CHECK(sequence == 1 && sc.irq_sequence == 1);
+	saved_reads = reads;
+	saved_writes = writes;
+	unsigned saved_events = events;
+	CHECK(native_sample_vblank_irq(&sc, &owner_cookie, &sequence) == 0);
+	CHECK(sequence == 1 && events == saved_events &&
+	    reads == saved_reads && writes == saved_writes);
+	CHECK(native_sample_vblank_irq(&sc, &sequence, &sequence) == EBUSY);
 	CHECK(!sc.observing_ready && voltage_delay_hook == NULL);
 	for (unsigned i = first; i < events; i++) {
 		switch (event[i]) {
@@ -591,6 +598,9 @@ observation_ready_checks(void)
 	rail_enabled[1] = 1;
 	CHECK(native_observe(&sc, &owner_cookie, &sequence) == EOPNOTSUPP);
 	CHECK(events == first && !sc.observing_ready);
+	CHECK(native_sample_vblank_irq(&sc, &owner_cookie, &sequence) ==
+	    EOPNOTSUPP);
+	CHECK(events == first);
 }
 
 int main(void)

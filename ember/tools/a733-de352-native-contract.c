@@ -94,6 +94,13 @@ delay(unsigned us)
 	}
 }
 static int splhigh(void) { CHECK(!irq_masked);irq_masked=true;return 42; }
+static uint64_t irq_sleep_ns;
+static void
+kpause(const char *reason, bool interruptible, int ticks, void *lock)
+{
+	CHECK(reason != NULL && !interruptible && ticks == 1 && lock == NULL);
+	tick += irq_sleep_ns;
+}
 static void splx(int level) { CHECK(level==42&&irq_masked);irq_masked=false; }
 static void mutex_init(kmutex_t *m,int kind,int ipl) { (void)kind;(void)ipl;*m=0; }
 static void mutex_enter(kmutex_t *m) { CHECK(!*m);*m=1; }
@@ -218,6 +225,22 @@ int sun60i_a733_output_observed_vblank(int node,const void *owner,uint64_t *out)
 	if (!same_sequence)
 		sequence++;
 	*out = sequence;
+	return 0;
+}
+static const uint64_t *irq_script;
+static size_t irq_samples, irq_index;
+static uint64_t irq_sample_pause_ns;
+
+int
+sun60i_a733_output_sample_vblank_irq(int node, const void *owner, uint64_t *out)
+{
+	CHECK(node == 7 && owner == lease_owner && retained && started);
+	if (irq_script == NULL)
+		return EOPNOTSUPP;
+	CHECK(irq_index < irq_samples);
+	*out = irq_script[irq_index++];
+	if (irq_index == 1)
+		tick += irq_sample_pause_ns;
 	return 0;
 }
 int sun60i_a733_output_fault(int node,const void *owner,int error)
@@ -521,6 +544,64 @@ replacement_wait_checks(void)
 		}
 		vblank_script = NULL;
 		baseline_pause_ns = 0;
+		reboot_fixture(&sc);
+	}
+}
+
+static void
+replacement_irq_checks(void)
+{
+	const struct irq_case {
+		uint64_t count[5];
+		struct vblank_sample samples[3];
+		size_t irq_count, observation_count;
+		uint64_t sleep_ns, completion;
+		int expected;
+	} cases[] = {
+		/* Two separate IRQs trigger only one full post-baseline check. */
+		{{40, 41, 42}, {{40, 0, ENOENT}, {42, 0, 0}}, 3, 2,
+		    1000000, 42, 0},
+		/* A worker rescheduled after deadline still samples both IRQs. */
+		{{40, 42}, {{40, 0, ENOENT}, {42, 0, 0}}, 2, 2,
+		    DE352_TIMEOUT_NS + 1000, 42, 0},
+		/* One IRQ at expiry does not authorize DMA retirement. */
+		{{40, 41, 41}, {{40, 0, ENOENT}}, 3, 1,
+		    DE352_TIMEOUT_NS + 1000, 0, ETIMEDOUT},
+		/* Untested progress is discarded after the health check. */
+		{{40, 42, 43, 44}, {{40, 0, 0}, {42, 0, ENOENT}, {44, 0, 0}},
+		    4, 3, 1000000, 44, 0},
+		/* A health error wins over the raw IRQ count. */
+		{{42}, {{40, 0, ENOENT}, {0, 0, EIO}}, 1, 2,
+		    1000000, 0, EIO},
+		/* Two IRQs arrive after the sample but before the deadline check. */
+		{{40, 42}, {{40, 0, ENOENT}, {42, 0, 0}}, 2, 2, 0, 42, 0},
+	};
+	for (size_t i = 0; i < __arraycount(cases); i++) {
+		struct sun60i_de352_softc sc;
+		struct sun60i_a733_de352_completion done = {0};
+		const struct irq_case *test = &cases[i];
+
+		init(&sc);
+		CHECK(de352_run(&sc) == 0);
+		vblank_script = test->samples;
+		vblank_samples = test->observation_count;
+		vblank_index = 0;
+		irq_script = test->count;
+		irq_samples = test->irq_count;
+		irq_index = 0;
+		irq_sleep_ns = test->sleep_ns;
+		irq_sample_pause_ns = i == __arraycount(cases) - 1 ?
+		    DE352_TIMEOUT_NS + 1000 : 0;
+		CHECK(de352_replacement_vblank(&sc, &done) == test->expected);
+		CHECK(vblank_index == vblank_samples && irq_index == irq_samples);
+		CHECK(done.observed_sequence == test->completion);
+		if (test->expected == ETIMEDOUT) {
+			CHECK(sc.update_trace.last_sequence == 41);
+			CHECK(sc.update_trace.wait_samples == 1);
+		}
+		vblank_script = NULL;
+		irq_script = NULL;
+		irq_sample_pause_ns = 0;
 		reboot_fixture(&sc);
 	}
 }
@@ -1041,6 +1122,7 @@ submit_trace_timeout(struct sun60i_de352_softc *sc, uint32_t phase)
 int main(void)
 {
  replacement_wait_checks();
+ replacement_irq_checks();
  run_trace_checks();
  guard_checks();
  cold_global_checks();

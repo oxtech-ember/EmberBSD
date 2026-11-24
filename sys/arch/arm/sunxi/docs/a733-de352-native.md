@@ -193,8 +193,13 @@ sample can report several counted events. Polling counts only acknowledged
 flags. An unvalidated sequence advance discards earlier retirement credit.
 The 100 ms wait starts after the baseline is sampled. Each native output
 observation validates shared resources once, then checks the PHY and TV0.
-The IRQ count is sampled after the shared resource and PHY checks. The worker
-samples before deciding that the wait expired, including after a delay. The completion time is the software
+An IRQ-backed output samples the counter under its interrupt lock after
+shared resource and PHY checks. Between baseline and completion, the worker
+sleeps for one tick and samples the counter without MMIO or rail checks.
+After two counted IRQs it performs the standard full observation before
+retiring the old buffer. A count advance without validation replaces the
+baseline. On expiry, the worker takes one final IRQ-only sample to cover
+scheduling delays between a sample and the deadline check. Without an IRQ, it uses ordinary poll observations. The completion time is the software
 observation time.
 
 Only that proof retires the previous external frame. The provider performs
@@ -373,6 +378,8 @@ words identify operation (1 frame, 2 disable, 3 stop), retirement wait
 phase (1 baseline, 2 wait), number of samples and number of ENOENT results.
 Five `uint64_t` values give the initial baseline, effective baseline, last
 sampled sequence, last validated sequence and elapsed wait time in ns.
+The last sampled sequence includes IRQ-only samples. The sample and ENOENT
+counts cover full observations.
 The effective baseline moves to an unvalidated advance. On a retirement
 timeout, the owner copies the last TV0 observation before latching the fault.
 The next 40 bytes hold two `uint64_t` values (raw sequence and cumulative
