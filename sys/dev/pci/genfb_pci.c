@@ -99,13 +99,13 @@ pci_genfb_match(device_t parent, cfdata_t match, void *aux)
  * Only the duty cycle belongs to this provider; firmware owns the period,
  * polarity and enable bits.  Offsets follow intel_backlight_regs.h.
  */
-#define ARL_PWM0_CTL    0xc8250
-#define ARL_PWM_PERIOD  4
-#define ARL_PWM_DUTY    8
-#define ARL_PWM1_CTL    0x100
-#define ARL_PWM_MAPSIZE (ARL_PWM1_CTL + sizeof(uint32_t))
-#define ARL_PWM_ENABLE  __BIT(31)
-#define ARL_PWM_INVERT  __BIT(29)
+#define	ARL_PWM0_CTL	0xc8250
+#define	ARL_PWM_PERIOD	4
+#define	ARL_PWM_DUTY	8
+#define	ARL_PWM1_CTL	0x100
+#define	ARL_PWM_MAPSIZE	(ARL_PWM1_CTL + sizeof(uint32_t))
+#define	ARL_PWM_ENABLE	__BIT(31)
+#define	ARL_PWM_INVERT	__BIT(29)
 
 static int
 pci_genfb_pwm_state(struct pci_genfb_softc *sc, uint32_t *period,
