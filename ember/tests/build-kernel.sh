@@ -101,7 +101,7 @@ for contract in bcm2712-display bcm2712-display-irq bcm2712-display-hsm bcm2712-
     bcm2712-v3d bcm2712-v3d-takeover bcm2712-v3d-dma \
     bcm2712-v3d-queue bcm2712-v3d-irq bcm2712-v3d-fault \
     bcm2712-v3d-uapi bcm2712-v3d-bo bcm2712-v3d-sg bcm2712-v3d-job bcm2712-v3d-csd \
-    bcm2712-v3d-cl bcm2712-v3d-wait bcm2712-v3d-sync drm-syncobj-wait \
+    bcm2712-v3d-cl bcm2712-v3d-wait bcm2712-v3d-sync drm-sync-file drm-syncobj-wait \
     drm-syncobj-dispatch drm-syncobj-find drm-syncobj-flatten dma-fence-chain drm-jiffies \
     linux-idr ww-mutex i915-elsq-desc i915-rps-lifetime drm-pci-identity linux-rcu-replace \
     pvr-render pvr-heap pvr-bo pvr-vm pvr-file pvr-stream pvr-context pvr-hwrt drm-scheduler pvr-submit pvr-render-attach; do
@@ -153,6 +153,16 @@ if [ "${FAIL_AT:-}" = network-contract ] || [ "${FAIL_AT:-}" = "${0##*/}" ]; the
 fi
 SH
 done
+cat > "$work/src/ember/tests/efidrm-kver.sh" <<'SH'
+#!/bin/sh
+set -eu
+echo "efidrm-contract ${0##*/}" >> "$TEST_LOG"
+test "$#" -eq 0
+if [ "${FAIL_AT:-}" = "${0##*/}" ]; then
+    echo "injected contract failure: ${0##*/}" >&2
+    exit 1
+fi
+SH
 ruby_without_source='bcm2712-v3d-prime simplefb drm-hotplug bcm2712-v3d-bo-stats'
 ruby_with_source='drm-gem-fb bcmv3d-resv bcmv3d-read bcmv3d-vblank
 bcmv3d-vblank-native bcmv3d-flip bcmv3d-scanout bcmv3d-job-resv
@@ -569,9 +579,10 @@ export CC=/target/compiler CXX=/target/compiler-cxx CFLAGS=-Dwrong_target CXXFLA
 count_contracts() {
     test "$(grep -c '^contract ' "$TEST_LOG")" -eq "$1"
     test "$(grep -c '^a733-contract ' "$TEST_LOG")" -eq 25
-    test "$(grep -c '^gpu-contract ' "$TEST_LOG")" -eq 41
+    test "$(grep -c '^gpu-contract ' "$TEST_LOG")" -eq 42
     test "$(grep -c '^ruby-contract ' "$TEST_LOG")" -eq 15
     test "$(grep -c '^network-contract ' "$TEST_LOG")" -eq 9
+    test "$(grep -c '^efidrm-contract ' "$TEST_LOG")" -eq 1
 }
 # The build runs only its DTB boot-mode contract and the shared source check.
 # check-kernel.sh then runs the source contracts: $1 Python contracts on
@@ -804,10 +815,10 @@ for failure in $root_argument_failures contract a733-contract \
     a733-gpu-fwheap-observe-contract.sh a733-gpu-fwbridge-contract.sh \
     a733-gpu-fwservice-contract.sh pvr-exec-contract.sh \
     pvr-render-contract.sh pvr-heap-contract.sh pvr-bo-contract.sh pvr-vm-contract.sh pvr-file-contract.sh pvr-stream-contract.sh pvr-context-contract.sh pvr-hwrt-contract.sh pvr-submit-contract.sh pvr-render-attach-contract.sh \
-    drm-scheduler-contract.sh gpu-contract drm-syncobj-flatten-contract.sh bcm2712-display-contract.sh \
+    drm-scheduler-contract.sh gpu-contract drm-sync-file-contract.sh drm-syncobj-flatten-contract.sh bcm2712-display-contract.sh \
     bcm2712-display-irq-contract.sh bcm2712-display-hsm-contract.sh bcm2712-display-dvp-contract.sh dmabuf-map dmabuf-lifetime dmabuf-array dmabuf-sync ruby-contract simplefb-contract.rb drm-hotplug-contract.rb \
     bcm2712-v3d-prime-contract.rb bcm2712-v3d-bo-stats-contract.rb network-contract cemac-stop.sh bwfm-link-check.sh \
-    aicwf-sta.sh aicwf-vht.sh drm2-linux-compat.sh; do
+    aicwf-sta.sh aicwf-vht.sh drm2-linux-compat.sh efidrm-kver.sh; do
     : > "$TEST_LOG"
     if FAIL_AT=$failure sh "$work/src/ember/check-kernel.sh" "$TEST_OUT" > "$work/run.log" 2>&1; then
         echo "accepted contract failure: $failure" >&2; exit 1
@@ -829,6 +840,11 @@ for failure in $root_argument_failures contract a733-contract \
         grep -Fq "injected contract failure: $failure" "$TEST_OUT/contracts.log"
         ! grep -q '^gpu-contract bcm2712-v3d-contract.sh ' "$TEST_LOG"
         ;;
+    drm-sync-file-contract.sh)
+        grep -Fq "gpu-contract $failure " "$TEST_LOG"
+        grep -Fq "injected contract failure: $failure" "$TEST_OUT/contracts.log"
+        ! grep -q '^gpu-contract drm-syncobj-wait-contract.sh ' "$TEST_LOG"
+        ;;
     drm-syncobj-flatten-contract.sh)
         grep -Fq "gpu-contract $failure " "$TEST_LOG"
         ! grep -q '^gpu-contract drm-jiffies-contract.sh ' "$TEST_LOG"
@@ -840,6 +856,10 @@ for failure in $root_argument_failures contract a733-contract \
         ;;
     drm2-linux-compat.sh)
         grep -Fq "network-contract $failure " "$TEST_LOG"
+        grep -Fq "injected contract failure: $failure" "$TEST_OUT/contracts.log"
+        ;;
+    efidrm-kver.sh)
+        grep -Fxq "efidrm-contract $failure" "$TEST_LOG"
         grep -Fq "injected contract failure: $failure" "$TEST_OUT/contracts.log"
         ;;
     aicwf-sta.sh|aicwf-vht.sh)
@@ -1098,7 +1118,7 @@ if sh "$work/src/ember/check-kernel.sh" "$TEST_OUT" no-such-commit > "$work/run.
     echo 'accepted an unknown base commit' >&2; exit 1
 fi
 grep -q 'unknown base commit: no-such-commit' "$work/run.log"
-contract_lines() { grep -Ec '^(contract|a733-contract|gpu-contract|ruby-contract|network-contract|pvr-query-contract) ' "$TEST_LOG" || :; }
+contract_lines() { grep -Ec '^(contract|a733-contract|gpu-contract|ruby-contract|network-contract|pvr-query-contract|efidrm-contract) ' "$TEST_LOG" || :; }
 # No contract reads a change outside the recorded inputs.
 printf 'note\n' > "$work/src/NOTES"
 : > "$TEST_LOG"

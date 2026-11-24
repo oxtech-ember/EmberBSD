@@ -403,6 +403,8 @@ ember/tools/drm-scheduler-contract.sh ember/tools/drm-scheduler-contract.c
 ember/tools/drm-scheduler-contract.sh ember/tools/drm-scheduler-model.h
 ember/tools/drm-scheduler-contract.sh sys/external/bsd/drm2/dist/drm/scheduler/
 ember/tools/drm-scheduler-contract.sh sys/external/bsd/drm2/dist/include/drm/
+ember/tools/drm-sync-file-contract.sh ember/tools/drm-sync-file-contract.c
+ember/tools/drm-sync-file-contract.sh sys/external/bsd/drm2/linux/linux_sync_file.c
 ember/tools/drm-syncobj-dispatch-contract.sh ember/tools/drm-syncobj-dispatch-contract.c
 ember/tools/drm-syncobj-dispatch-contract.sh sys/external/bsd/drm2/dist/drm/
 ember/tools/drm-syncobj-find-contract.sh ember/tools/drm-syncobj-find-contract.c
