@@ -60,10 +60,10 @@ __KERNEL_RCSID(0, "$NetBSD$");
 
 /*
  * Optional build guard.  A loadable module is accepted by any kernel of the
- * same __NetBSD_Version__, even a different build, so the build script may
- * write efidrm_kver.h with the version line of the kernel it was built for
- * (EFIDRM_KERNEL_VERSION); the module then refuses to attach to any other
- * kernel instead of risking a struct-layout mismatch.
+ * same __NetBSD_Version__, even a different build.  With EMBER_KERNEL_OBJDIR,
+ * the module Makefile writes efidrm_kver.h with the version string of that
+ * kernel (EFIDRM_KERNEL_VERSION); the module then refuses to attach to any
+ * other kernel instead of risking a struct-layout mismatch.
  */
 #if defined(__has_include)
 #if __has_include("efidrm_kver.h")
