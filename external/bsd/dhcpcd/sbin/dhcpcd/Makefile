@@ -86,7 +86,9 @@ CONFIGFILES=			dhcpcd.conf
 FILESDIR_dhcpcd.conf=		/etc
 FILESMODE_dhcpcd.conf=		644	# -rw-r--r--
 
-MAN=			dhcpcd.conf.5 dhcpcd.8 
+MAN=			dhcpcd.conf.5 dhcpcd.8
+DHCPCD_MANSRC=		${DIST}/src
+.include "../../template-subst.mk"
 
 COPTS.logerr.c+=    ${${ACTIVE_CC} == "clang" && ${MACHINE_ARCH} == "powerpc":? -O0 :}
 

@@ -4,11 +4,12 @@
 
 .include "../../Makefile.inc"
 .PATH:			${DIST}/src
+.include "../../template-subst.mk"
 
 .if ${MKSHARE} != "no"
 FILES=			dhcpcd.conf
 
-FILESDIR=		/usr/share/examples/dhcpcd/
+FILESDIR=		${DHCPCD_DATADIR}/dhcpcd/
 .endif
 
 .include <bsd.prog.mk>

@@ -6,7 +6,7 @@
 .include "../../Makefile.inc"
 HOOKSRC=	${DIST}/hooks
 .PATH:		${HOOKSRC}
-.include "../hook-subst.mk"
+.include "../../template-subst.mk"
 
 FILES=		01-test 20-resolv.conf 30-hostname
 FILES+=		50-ntp.conf

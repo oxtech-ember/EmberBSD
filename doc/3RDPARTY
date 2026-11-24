@@ -365,6 +365,9 @@ License:	BSD (2-clause)
 Location:	external/bsd/dhcpcd (OS integration); common Ports net/dhcpcd-source
 Notes:
 The OS selects the prepared common source through EMBER_DHCPCD_SOURCE.
+external/bsd/dhcpcd/template-subst.mk generates the scripts and manual
+pages from the source templates. The paths come from
+external/bsd/dhcpcd/include/config.h and template-subst.mk.
 The recipe is in EmberBSD-Ports commit 99dfa0970d5f0c524d0ccedc19ce1d4f05c70cff;
 the DHCP state fix is in commit 4cbeb4eaf5378a3f01d8d740590dc974ccf88ca3.
 The former 10.2.3 vendor snapshot was removed after migrating the OS build
